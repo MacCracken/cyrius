@@ -110,4 +110,104 @@ assert_eq(unicode_category(0x7FFFFFFF), GC_CN, "huge cp → Cn");
 assert_eq(unicode_category(0xE000), GC_CO, "0xE000 (Private Use start) = Co");
 assert_eq(unicode_category(0xF8FF), GC_CO, "0xF8FF (Private Use end) = Co");
 
+# ── (12) Boundary codepoints — added v5.8.52 ──────────────────────
+# Catches off-by-one regressions in the merged-range table by hitting
+# the exact cp on each side of major category transitions.
+
+# ASCII boundaries (transition into Latin-1)
+assert_eq(unicode_category(0x002F), GC_PO, "0x002F '/' = Po (ASCII pre-digit)");
+assert_eq(unicode_category(0x003A), GC_PO, "0x003A ':' = Po (ASCII post-digit)");
+assert_eq(unicode_category(0x0040), GC_PO, "0x0040 '@' = Po (ASCII pre-Lu)");
+assert_eq(unicode_category(0x005B), GC_PS, "0x005B '[' = Ps (ASCII post-Lu)");
+assert_eq(unicode_category(0x0060), GC_SK, "0x0060 '`' = Sk (ASCII pre-Ll)");
+assert_eq(unicode_category(0x007B), GC_PS, "0x007B '{' = Ps (ASCII post-Ll)");
+
+# Latin-1 supplement Lu/Ll alternation edges
+assert_eq(unicode_category(0x00FF), GC_LL, "0x00FF ÿ = Ll (Latin-1 last)");
+assert_eq(unicode_category(0x00D7), GC_SM, "0x00D7 × = Sm (Latin-1 multiplication)");
+assert_eq(unicode_category(0x00DE), GC_LU, "0x00DE Þ = Lu (Latin-1 thorn upper)");
+
+# Latin Extended A/B Lu↔Ll alternation: 0x0100 Ā Lu, 0x0101 ā Ll, etc.
+assert_eq(unicode_category(0x0102), GC_LU, "0x0102 Ă = Lu");
+assert_eq(unicode_category(0x0103), GC_LL, "0x0103 ă = Ll");
+assert_eq(unicode_category(0x017F), GC_LL, "0x017F ſ (long s) = Ll");
+assert_eq(unicode_category(0x0180), GC_LL, "0x0180 ƀ = Ll (Latin-Ext-B start)");
+assert_eq(unicode_category(0x024F), GC_LL, "0x024F ɏ = Ll (Latin-Ext-B end)");
+
+# IPA + Spacing Modifiers boundary (Latin-Ext-B → IPA)
+assert_eq(unicode_category(0x0250), GC_LL, "0x0250 ɐ = Ll (IPA start)");
+assert_eq(unicode_category(0x02AF), GC_LL, "0x02AF ʯ = Ll (IPA end)");
+assert_eq(unicode_category(0x02FF), GC_SK, "0x02FF (Spacing Modifier end) = Sk");
+
+# Combining Diacriticals block (0x0300-0x036F all Mn)
+assert_eq(unicode_category(0x0300), GC_MN, "0x0300 (combining grave) = Mn (block start)");
+assert_eq(unicode_category(0x036F), GC_MN, "0x036F (combining latin x) = Mn (block end)");
+
+# Greek block edges
+assert_eq(unicode_category(0x0370), GC_LU, "0x0370 Ͱ = Lu (Greek block start)");
+assert_eq(unicode_category(0x03FF), GC_LU, "0x03FF Ͽ = Lu (Greek block end)");
+
+# Cyrillic block edges
+assert_eq(unicode_category(0x0400), GC_LU, "0x0400 Ѐ = Lu (Cyrillic start)");
+assert_eq(unicode_category(0x04FF), GC_LL, "0x04FF ӿ = Ll (Cyrillic end)");
+
+# Armenian block edges
+assert_eq(unicode_category(0x0531), GC_LU, "0x0531 Ա = Lu (Armenian capital start)");
+assert_eq(unicode_category(0x0561), GC_LL, "0x0561 ա = Ll (Armenian small start)");
+
+# CJK Unified Ideographs full block boundaries (mass Lo region)
+assert_eq(unicode_category(0x3400), GC_LO, "0x3400 (CJK Ext A start) = Lo");
+assert_eq(unicode_category(0x4DBF), GC_LO, "0x4DBF (CJK Ext A end) = Lo");
+assert_eq(unicode_category(0x4DC0), GC_SO, "0x4DC0 (Yijing Hexagram) = So (post-CJK-A)");
+
+# Hangul Syllables full block (one giant Lo run)
+assert_eq(unicode_category(0xAC00), GC_LO, "0xAC00 (Hangul start)");
+assert_eq(unicode_category(0xD7A3), GC_LO, "0xD7A3 (Hangul last syllable) = Lo");
+assert_eq(unicode_category(0xD7A4), GC_CN, "0xD7A4 (post-Hangul gap) = Cn");
+
+# Surrogate range — exact boundaries
+assert_eq(unicode_category(0xD7FF), GC_CN, "0xD7FF (pre-surrogate) = Cn");
+assert_eq(unicode_category(0xDB7F), GC_CS, "0xDB7F (high surrogate mid) = Cs");
+assert_eq(unicode_category(0xDB80), GC_CS, "0xDB80 (high private surrogate start) = Cs");
+assert_eq(unicode_category(0xDBFF), GC_CS, "0xDBFF (high surrogate end) = Cs");
+assert_eq(unicode_category(0xDC00), GC_CS, "0xDC00 (low surrogate start) = Cs");
+assert_eq(unicode_category(0xE000), GC_CO, "0xE000 (post-surrogate PUA start) = Co");
+
+# Noncharacter sentinels in FDD0..FDEF
+assert_eq(unicode_category(0xFDD0), GC_CN, "0xFDD0 (noncharacter range start) = Cn");
+assert_eq(unicode_category(0xFDEF), GC_CN, "0xFDEF (noncharacter range end) = Cn");
+
+# Plane boundaries — last BMP cp + first SMP cp
+assert_eq(unicode_category(0xFFFD), GC_SO, "0xFFFD (replacement char) = So");
+assert_eq(unicode_category(0x10000), GC_LO, "0x10000 (SMP start, Linear B) = Lo");
+assert_eq(unicode_category(0xFFFFF), GC_CN, "0xFFFFF (Plane 15 last) = Cn");
+assert_eq(unicode_category(0x100000), GC_CO, "0x100000 (Plane 16 PUA start) = Co");
+assert_eq(unicode_category(0x10FFFD), GC_CO, "0x10FFFD (last assigned PUA) = Co");
+assert_eq(unicode_category(0x10FFFE), GC_CN, "0x10FFFE (final noncharacter) = Cn");
+assert_eq(unicode_category(0x10FFFF), GC_CN, "0x10FFFF (max valid cp, noncharacter) = Cn");
+
+# Tag characters block (Cf, used in flag emoji sequences)
+assert_eq(unicode_category(0xE0001), GC_CF, "0xE0001 (LANGUAGE TAG) = Cf");
+assert_eq(unicode_category(0xE0020), GC_CF, "0xE0020 (TAG SPACE) = Cf");
+assert_eq(unicode_category(0xE007F), GC_CF, "0xE007F (CANCEL TAG) = Cf");
+
+# Number sub-categories — Nd vs Nl vs No
+assert_eq(unicode_category(0x2160), GC_NL, "0x2160 Ⅰ (Roman numeral I) = Nl");
+assert_eq(unicode_category(0x2178), GC_NL, "0x2178 ⅸ (Roman numeral lowercase ix) = Nl");
+assert_eq(unicode_category(0x00B2), GC_NO, "0x00B2 ² (superscript 2) = No");
+assert_eq(unicode_category(0x00BC), GC_NO, "0x00BC ¼ (vulgar fraction) = No");
+
+# Symbol sub-categories — Sm vs Sc vs Sk vs So
+assert_eq(unicode_category(0x0024), GC_SC, "0x0024 '$' = Sc");
+assert_eq(unicode_category(0x00A3), GC_SC, "0x00A3 '£' = Sc");
+assert_eq(unicode_category(0x20AC), GC_SC, "0x20AC '€' = Sc");
+assert_eq(unicode_category(0x002B), GC_SM, "0x002B '+' = Sm");
+assert_eq(unicode_category(0x003C), GC_SM, "0x003C '<' = Sm");
+assert_eq(unicode_category(0x005E), GC_SK, "0x005E '^' = Sk");
+
+# Whitespace sub-categories — Zs vs Zl vs Zp
+assert_eq(unicode_category(0x2028), GC_ZL, "0x2028 LINE SEPARATOR = Zl");
+assert_eq(unicode_category(0x2029), GC_ZP, "0x2029 PARAGRAPH SEPARATOR = Zp");
+assert_eq(unicode_category(0x3000), GC_ZS, "0x3000 IDEOGRAPHIC SPACE = Zs");
+
 var r = assert_summary();

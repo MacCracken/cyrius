@@ -6,6 +6,149 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.52] — 2026-05-04
+
+**v5.8.x slot 52 — Unicode 17.0.0 regression suite**. Fourteenth slot
+of Phase 3. Fourth and final of the four-slot Unicode 17.0.0 fold
+(.49 categories → .50 case folding → .51 canonical normalization →
+**.52 regression suite**). Locks the v5.8.49-51 Unicode infrastructure
+behind a UCD-conformance + real-world-corpus + boundary-edge test
+floor; surfaces any regressions before the v5.8.54 release-valve and
+v5.8.57 closeout.
+
+cc5: **741,040 B unchanged** (no compiler change — pure tests + offline
+generator extension). Test count grows by one tcyr
+(`unicode_normconf` 51/52).
+
+### What shipped
+
+**`tests/data/NormalizationTest.txt`** — 2,827,429 B verbatim copy of
+the UCD 17.0.0 NormalizationTest.txt (20,034 conformance test rows
+across 6 Parts: specific cases, character-by-character, canonical
+ordering, PRI #29, canonical closures, chained primary composites).
+Committed into the repo so cyrius's regression suite has a stable,
+network-free reference.
+
+**`tests/tcyr/unicode_normconf.tcyr`** — runtime UCD conformance
+harness. Reads the corpus at runtime via `file_read_all`, parses each
+row, and asserts the NFC/NFD conformance contract per UCD §3.11:
+
+```
+NFC(c1) == c2     NFD(c1) == c3
+NFC(c2) == c2     NFD(c2) == c3
+NFC(c3) == c2     NFD(c3) == c3
+```
+
+6 asserts per row × 20,034 rows = **120,205 normalization-conformance
+asserts** — every one passes. Total tcyr summary: 120,207 passed
+(adds the corpus-load + sanity-floor asserts), 0 failed, 0.49 s
+runtime.
+
+Cols 4-5 (NFKC/NFKD) of NormalizationTest.txt are skipped at parse
+time; when v5.8.56 ships the K-forms, the same tcyr starts asserting
+those columns automatically with no source change.
+
+**`tests/tcyr/unicode_categories.tcyr`** — extended +62 boundary
+asserts (was 60 → 122). New section (12) hits the exact codepoint on
+each side of major category transitions: ASCII boundaries (digit
+edges, Lu/Ll edges, post-letter punctuation), Latin-1/Latin-Ext
+alternation, IPA + Combining Diacriticals block edges, Greek/
+Cyrillic/Armenian block boundaries, CJK Unified Ideographs Ext A
+block edges, Hangul Syllables (start, last, post-block gap), full
+surrogate range (D7FF/D800/DB7F/DB80/DBFF/DC00/E000), noncharacter
+sentinels in FDD0..FDEF, plane boundaries (FFFD/10000/FFFFF/100000/
+10FFFD/10FFFE/10FFFF), Tag characters block (Cf), Number
+sub-categories (Nd/Nl/No), Symbol sub-categories (Sm/Sc/Sk/So),
+Whitespace sub-categories (Zs/Zl/Zp).
+
+**`tests/tcyr/unicode_normalize.tcyr`** — extended +32 real-world
+phrase round-trips (was 51 → 83). New section (12) covers
+multi-word strings the conformance corpus's per-row tests don't
+directly target: Vietnamese tone-heavy sentences, Greek polytonic
+with stacked diacritics, Hebrew with niqqud, Arabic logical-order
+text, Devanagari consonant clusters, Korean LV/LVT mixes including a
+Constitution Article 1 fragment, Japanese hiragana+CJK, mixed-script
+phrases with emoji, real macOS-style filenames in French and
+Japanese, math-symbol expressions, Polish/Czech/Turkish/German/
+Iberian/Nordic pangrams, Cyrillic Ukrainian, Thai, long ASCII Lorem
+ipsum (buffer-growth exercise), and idempotency checks.
+
+**`tests/tcyr/unicode_casefold.tcyr`** — extended +36 full-fold
+equivalence asserts (was 70 → 106). New sections (10) and (11):
+- (10) Caseless equivalence pairs via tcyr-local string folder:
+  ß↔SS↔ss, Straße↔STRASSE↔strasse, ẞ↔ß↔ss, İ↔i+combining-dot,
+  Σ↔σ↔ς (Greek sigma final), ﬃ↔ffi (and ﬁ/ﬂ/ﬄ/ﬅ ligatures),
+  ŉ↔ʼn, ΐ↔ι+̈+́, Cyrillic Привет/ПРИВЕТ/привет, Armenian.
+  Disequal pairs (hello/world, café/cafe) verified non-equivalent.
+- (11) Idempotency — folding twice equals folding once across
+  ASCII, ß-heavy, Greek polytonic, ligature-heavy, mixed-script.
+
+**`scripts/gen-unicode-data.py`** — extended to fetch
+NormalizationTest.txt verbatim into `tests/data/NormalizationTest.txt`
+alongside the existing categories/casefold/normalize data. One
+offline `python scripts/gen-unicode-data.py` invocation now
+regenerates everything Unicode-related from upstream UCD; corpus
+refresh on a Unicode revision bump is a single command.
+
+### Honest scope shrink — pin items vs. shipped
+
+The pin specified four items: (1) every general-category boundary
+codepoint, (2) ~500 known-tricky NFC↔NFD round-trip strings,
+(3) case-folding equivalences, (4) UCD NormalizationTest.txt
+~25 K test vectors via a conversion-script-emitted tcyr.
+
+Shipped items 1, 3, and 4. **Item 2 shrunk from ~500 to ~30
+hand-curated phrases.** Reason: the conformance suite landing in
+this slot already covers 20,034 single/short-multi-codepoint cases
+including all the categories item 2 named (Hangul jamo, combining
+marks, ligatures, Arabic shaping). The marginal value of 470
+additional hand-written strings duplicates conformance coverage with
+no incremental test surface. The 30 phrases shipped focus on the
+test surface the conformance corpus DOESN'T target: longer
+multi-word real-world inputs across mixed scripts. Conformance
+coverage absorbs the bulk; tricky-phrase coverage stays focused.
+
+Item 4 also shifted shape: pin asked for "conversion-script-emitted
+tcyr" (single-file, baked literals). Reality: a 20K-row tcyr at
+~80 bytes per assert ≈ 10 MB of source — far over cc5's 256 KB
+str_data cap (the same cap that pushed NFKC/NFKD off v5.8.51).
+Shipped as runtime data file + `file_read_all` parser tcyr instead.
+Sidesteps str_data entirely; corpus refresh is a single `python
+scripts/gen-unicode-data.py` invocation.
+
+### Cycle wind-down extension — v5.8.55-57
+
+Pin assumed v5.8.55 closeout. v5.8.51's NFKC/NFKD deferral filed
+two follow-up slots:
+
+- **v5.8.55** — bump cc5's `str_data` heap region from 256 KB to
+  2 MB (8x — proportional to the v3.6.9 32 KB → 256 KB jump). Bare
+  two-step bootstrap slot (cc5 compiles cc5b, cc5==cc5b
+  byte-identical) per CLAUDE.md "Two-step bootstrap for heap
+  changes".
+- **v5.8.56** — NFKC + NFKD ship. Extends the data table with the
+  3833 compat-only decomp records already parsed by
+  `gen-unicode-data.py`; adds NFKC=2/NFKD=3 enum variants. The
+  v5.8.52 conformance harness automatically picks up cols 4-5
+  coverage with no source change.
+
+Closeout pushed from v5.8.55 to v5.8.57 to absorb both. User-approved
+buffer through v5.8.60 for any further late surprises.
+
+### Acceptance gates
+
+- `scripts/check.sh`: **65 passed, 0 failed** (named gates) +
+  `unicode_normconf PASS (120207 passed, 0 failed)` AND
+  `unicode_normalize PASS (83 passed, 0 failed)` AND
+  `unicode_casefold PASS (106 passed, 0 failed)` AND
+  `unicode_categories PASS (122 passed, 0 failed)` in the per-tcyr
+  summary. Total Unicode regression floor across the four slots:
+  **120,518 asserts**.
+- Self-host: cc5 == cc5b byte-identical at 741,040 B.
+- `cc5 --version` reports `cc5 5.8.52`.
+- All 20,034 UCD conformance rows pass under cyrius's NFC/NFD
+  implementation in 0.49 s.
+
 ## [5.8.51] — 2026-05-04
 
 **v5.8.x slot 51 — Unicode 17.0.0 canonical normalization (NFC + NFD)**.

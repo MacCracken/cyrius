@@ -150,4 +150,160 @@ assert_eq(str_len(empty_lower), 0, "str_lower_unicode('') is empty");
 var ascii_lower = str_lower_unicode(str_from("AbCdEfG 123"));
 assert_eq(str_eq(ascii_lower, str_from("abcdefg 123")), 1, "str_lower_unicode ASCII passthrough");
 
+# ── (10) Full-fold equivalences — added v5.8.52 ──────────────────
+# Two strings are "caseless-equal" if their full case folds compare
+# byte-equal. The lib doesn't ship str_fold_unicode (full one-to-many
+# fold is only at codepoint level), so we build a tcyr-local string
+# folder that walks codepoints, applies `unicode_fold`, and re-encodes.
+
+fn _eq_emit(out_buf, off, cp) {
+    if (cp < 128) {
+        store8(out_buf + off, cp);
+        return 1;
+    }
+    if (cp < 2048) {
+        store8(out_buf + off,     192 | (cp >> 6));
+        store8(out_buf + off + 1, 128 | (cp & 63));
+        return 2;
+    }
+    if (cp < 65536) {
+        store8(out_buf + off,     224 | (cp >> 12));
+        store8(out_buf + off + 1, 128 | ((cp >> 6) & 63));
+        store8(out_buf + off + 2, 128 | (cp & 63));
+        return 3;
+    }
+    store8(out_buf + off,     240 | (cp >> 18));
+    store8(out_buf + off + 1, 128 | ((cp >> 12) & 63));
+    store8(out_buf + off + 2, 128 | ((cp >> 6) & 63));
+    store8(out_buf + off + 3, 128 | (cp & 63));
+    return 4;
+}
+
+fn _eq_decode(src, off, src_len, cp_out) {
+    if (off >= src_len) { store64(cp_out, 0xFFFD); return 1; }
+    var b0 = load8(src + off);
+    if (b0 < 128) { store64(cp_out, b0); return 1; }
+    if (b0 < 192) { store64(cp_out, 0xFFFD); return 1; }
+    if (b0 < 224) {
+        if (off + 1 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
+        var b1 = load8(src + off + 1);
+        store64(cp_out, ((b0 & 31) << 6) | (b1 & 63));
+        return 2;
+    }
+    if (b0 < 240) {
+        if (off + 2 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
+        var c1 = load8(src + off + 1);
+        var c2 = load8(src + off + 2);
+        store64(cp_out, ((b0 & 15) << 12) | ((c1 & 63) << 6) | (c2 & 63));
+        return 3;
+    }
+    if (off + 3 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
+    var d1 = load8(src + off + 1);
+    var d2 = load8(src + off + 2);
+    var d3 = load8(src + off + 3);
+    store64(cp_out, ((b0 & 7) << 18) | ((d1 & 63) << 12) | ((d2 & 63) << 6) | (d3 & 63));
+    return 4;
+}
+
+fn _eq_fold_str(s) {
+    var src_data = str_data(s);
+    var src_len = str_len(s);
+    var out_buf = alloc(src_len * 6 + 16);
+    var w = 0;
+    var off = 0;
+    var cp_holder = alloc(8);
+    var fold_buf = alloc(32);
+    while (off < src_len) {
+        var step = _eq_decode(src_data, off, src_len, cp_holder);
+        var cp = load64(cp_holder);
+        var fn_count = unicode_fold(cp, fold_buf, 3);
+        var fi = 0;
+        while (fi < fn_count) {
+            var fcp = load64(fold_buf + fi * 8);
+            w = w + _eq_emit(out_buf, w, fcp);
+            fi = fi + 1;
+        }
+        off = off + step;
+    }
+    return str_new(out_buf, w);
+}
+
+fn _eq_caseless(a, b) {
+    return str_eq(_eq_fold_str(a), _eq_fold_str(b));
+}
+
+# German ß equivalence: ß ↔ SS ↔ Ss ↔ sS ↔ ss
+assert_eq(_eq_caseless(str_from("ß"), str_from("ss")), 1, "ß ≡ ss");
+assert_eq(_eq_caseless(str_from("ß"), str_from("SS")), 1, "ß ≡ SS");
+assert_eq(_eq_caseless(str_from("Straße"), str_from("STRASSE")), 1, "Straße ≡ STRASSE");
+assert_eq(_eq_caseless(str_from("Straße"), str_from("strasse")), 1, "Straße ≡ strasse");
+assert_eq(_eq_caseless(str_from("weiß"), str_from("weiss")), 1, "weiß ≡ weiss");
+
+# Capital sharp-s ẞ (U+1E9E) folds to "ss" same as ß
+assert_eq(_eq_caseless(str_from("ẞ"), str_from("ss")), 1, "ẞ ≡ ss");
+assert_eq(_eq_caseless(str_from("ẞ"), str_from("ß")), 1, "ẞ ≡ ß");
+
+# Turkish dotted İ → i + combining dot (U+0307)
+assert_eq(_eq_caseless(str_from("İ"), str_from("i\xCC\x87")), 1, "İ ≡ i+dot-above");
+# (Plain ASCII "i" does NOT fold to "İ" — Turkish I/i pair is locale-sensitive
+#  in the tailored fold; default fold treats them as non-equivalent. This is
+#  the correct UCD default-fold behavior.)
+assert_eq(_eq_caseless(str_from("İ"), str_from("I")), 0, "İ ≢ I (default fold; Turkish locale would equate)");
+
+# Greek final sigma ς ↔ σ ↔ Σ — all fold to σ
+assert_eq(_eq_caseless(str_from("ς"), str_from("σ")), 1, "ς ≡ σ");
+assert_eq(_eq_caseless(str_from("Σ"), str_from("σ")), 1, "Σ ≡ σ");
+assert_eq(_eq_caseless(str_from("Σ"), str_from("ς")), 1, "Σ ≡ ς");
+assert_eq(_eq_caseless(str_from("ΟΔΥΣΣΕΥΣ"), str_from("οδυσσευς")), 1, "Greek ΟΔΥΣΣΕΥΣ ≡ οδυσσευς");
+
+# Latin ligatures fold to component letters
+assert_eq(_eq_caseless(str_from("ﬃ"), str_from("ffi")), 1, "ﬃ ≡ ffi");
+assert_eq(_eq_caseless(str_from("ﬁ"), str_from("fi")), 1, "ﬁ ≡ fi");
+assert_eq(_eq_caseless(str_from("ﬂ"), str_from("fl")), 1, "ﬂ ≡ fl");
+assert_eq(_eq_caseless(str_from("ﬄ"), str_from("ffl")), 1, "ﬄ ≡ ffl");
+assert_eq(_eq_caseless(str_from("ﬅ"), str_from("st")), 1, "ﬅ ≡ st");
+
+# Latin ŉ (preceded by apostrophe) folds to ʼ + n
+assert_eq(_eq_caseless(str_from("ŉ"), str_from("\xCA\xBCn")), 1, "ŉ ≡ ʼn");
+
+# Greek small letter iota with dialytika and tonos folds to ι+◌̈+◌́
+assert_eq(_eq_caseless(str_from("ΐ"), str_from("\xCE\xB9\xCC\x88\xCC\x81")), 1, "ΐ ≡ ι+̈+́");
+# And ΐ (separate cps) is also caseless-equal
+assert_eq(_eq_caseless(str_from("ΐ"), str_from("ΐ")), 1, "ΐ ≡ ΐ (self)");
+
+# Plain ASCII case equivalences
+assert_eq(_eq_caseless(str_from("Hello"), str_from("HELLO")), 1, "Hello ≡ HELLO");
+assert_eq(_eq_caseless(str_from("Hello"), str_from("hello")), 1, "Hello ≡ hello");
+assert_eq(_eq_caseless(str_from("Hello"), str_from("HeLLo")), 1, "Hello ≡ HeLLo");
+
+# Cyrillic case equivalences
+assert_eq(_eq_caseless(str_from("Привет"), str_from("ПРИВЕТ")), 1, "Привет ≡ ПРИВЕТ");
+assert_eq(_eq_caseless(str_from("Привет"), str_from("привет")), 1, "Привет ≡ привет");
+
+# Armenian case equivalences (paired alphabet — Lu + Ll)
+assert_eq(_eq_caseless(str_from("Հայերեն"), str_from("ՀԱՅԵՐԵՆ")), 1, "Armenian Հայերեն ≡ ՀԱՅԵՐԵՆ");
+
+# Disequal: different letters do NOT fold to the same thing
+assert_eq(_eq_caseless(str_from("hello"), str_from("world")), 0, "hello ≢ world");
+assert_eq(_eq_caseless(str_from("café"), str_from("cafe")), 0, "café ≢ cafe (no diacritic stripping)");
+
+# Empty + whitespace
+assert_eq(_eq_caseless(str_from(""), str_from("")), 1, "'' ≡ ''");
+assert_eq(_eq_caseless(str_from(" "), str_from(" ")), 1, "' ' ≡ ' '");
+
+# ── (11) Round-trip stability — added v5.8.52 ────────────────────
+# Folding twice is the same as folding once.
+fn _fold_idempotent(label, s) {
+    var once = _eq_fold_str(s);
+    var twice = _eq_fold_str(once);
+    assert_eq(str_eq(once, twice), 1, label);
+    return 0;
+}
+
+_fold_idempotent("idempotent: ASCII",     str_from("Hello World"));
+_fold_idempotent("idempotent: ß-heavy",   str_from("Straße über Größe"));
+_fold_idempotent("idempotent: Greek",     str_from("Ἑλληνικὴ γλῶσσα"));
+_fold_idempotent("idempotent: ligatures", str_from("ﬃcient ofﬁce"));
+_fold_idempotent("idempotent: mixed",     str_from("Hello МИР Σιγμα ßeta"));
+
 var r = assert_summary();

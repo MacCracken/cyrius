@@ -39,6 +39,7 @@ URL = "https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategor
 URL_CASEFOLDING = "https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt"
 URL_UNICODEDATA = "https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt"
 URL_COMPEXCL = "https://www.unicode.org/Public/17.0.0/ucd/CompositionExclusions.txt"
+URL_NORMTEST = "https://www.unicode.org/Public/17.0.0/ucd/NormalizationTest.txt"
 
 # Order matches GeneralCategory enum in lib/unicode/categories.cyr.
 # Index = enum value. 30 categories total per Unicode standard.
@@ -626,6 +627,22 @@ def main():
     with open(nz_path, "w") as f:
         f.write(nz_src)
     print(f"wrote {nz_path}", file=sys.stderr)
+
+    # Conformance corpus (v5.8.52) — verbatim copy of the UCD test vectors.
+    #
+    # The full file (~2.7 MB, 20034 test rows) is too large to embed as
+    # cyrius string literals (cc5's str_data cap is 256 KB). The matching
+    # tcyr `tests/tcyr/unicode_normconf.tcyr` opens this file at runtime
+    # via `file_read_all` and parses it line-by-line — sidesteps str_data
+    # entirely. Cols 4-5 (NFKC/NFKD) are skipped at parse time until
+    # K-forms ship at v5.8.56.
+    nt_text = fetch_url(URL_NORMTEST)
+    nt_path = "tests/data/NormalizationTest.txt"
+    import os
+    os.makedirs(os.path.dirname(nt_path), exist_ok=True)
+    with open(nt_path, "w") as f:
+        f.write(nt_text)
+    print(f"wrote {nt_path} ({len(nt_text)} bytes)", file=sys.stderr)
 
 
 if __name__ == "__main__":

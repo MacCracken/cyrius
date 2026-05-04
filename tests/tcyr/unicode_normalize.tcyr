@@ -201,4 +201,146 @@ assert_eq(str_len(empty_nfd), 0, "empty string NFD → empty");
 var empty_nfc = str_normalize(str_from(""), NFC);
 assert_eq(str_len(empty_nfc), 0, "empty string NFC → empty");
 
+# ── (12) Real-world tricky strings — added v5.8.52 ───────────────
+# Bulk single-codepoint + short-sequence coverage moved to the new
+# unicode_normconf.tcyr (UCD NormalizationTest.txt; 120K asserts).
+# This section adds multi-word real-world phrases to exercise the
+# implementation under longer, mixed-script inputs that the
+# conformance corpus's per-row tests don't directly target. Each
+# assertion is a "NFC = NFC ∘ NFD ∘ NFC" round-trip — the property
+# any conforming normalizer must satisfy.
+
+fn _nfc_roundtrip(s) {
+    return str_normalize(str_normalize(s, NFD), NFC);
+}
+
+# Latin-heavy phrases with multi-mark stacking
+var rt1 = str_from("Pâté de foie gras à la maison");
+assert_eq(str_eq(_nfc_roundtrip(rt1), str_normalize(rt1, NFC)), 1, "Latin: French phrase round-trip");
+
+var rt2 = str_from("Über naïve façade — résumé café");
+assert_eq(str_eq(_nfc_roundtrip(rt2), str_normalize(rt2, NFC)), 1, "Latin: mixed diacritics phrase");
+
+# Vietnamese — heavy combining marks (multiple per syllable)
+var rt3 = str_from("Tiếng Việt là một ngôn ngữ thanh điệu");
+assert_eq(str_eq(_nfc_roundtrip(rt3), str_normalize(rt3, NFC)), 1, "Vietnamese: tone-heavy sentence");
+
+# Greek polytonic — stacked diacritics
+var rt4 = str_from("Ἑλληνικὴ γλῶσσα");
+assert_eq(str_eq(_nfc_roundtrip(rt4), str_normalize(rt4, NFC)), 1, "Greek polytonic: stacked breathing+accent");
+
+# Hebrew with niqqud
+var rt5 = str_from("בְּרֵאשִׁית בָּרָא אֱלֹהִים");
+assert_eq(str_eq(_nfc_roundtrip(rt5), str_normalize(rt5, NFC)), 1, "Hebrew with niqqud (vowel marks)");
+
+# Arabic — shaping forms in logical order
+var rt6 = str_from("بسم الله الرحمن الرحيم");
+assert_eq(str_eq(_nfc_roundtrip(rt6), str_normalize(rt6, NFC)), 1, "Arabic: bismillah");
+
+# Devanagari — consonant clusters with virama
+var rt7 = str_from("नमस्ते भारत");
+assert_eq(str_eq(_nfc_roundtrip(rt7), str_normalize(rt7, NFC)), 1, "Devanagari: namaste with cluster");
+
+# Korean — full Hangul syllables (LVT-heavy)
+var rt8 = str_from("한국어 처리는 정규화 테스트의 핵심입니다");
+assert_eq(str_eq(_nfc_roundtrip(rt8), str_normalize(rt8, NFC)), 1, "Korean: NFC-test sentence");
+
+# Korean — jamo round-trip (compose check)
+var rt9 = str_from("안녕하세요 세계");
+assert_eq(str_eq(_nfc_roundtrip(rt9), str_normalize(rt9, NFC)), 1, "Korean: hello world");
+
+# Korean — mix of LV (no T) and LVT syllables
+var rt10 = str_from("나라 가게 오늘 바위");
+assert_eq(str_eq(_nfc_roundtrip(rt10), str_normalize(rt10, NFC)), 1, "Korean: LV/LVT mix");
+
+# Japanese — kana + CJK (not decomposable but common in real text)
+var rt11 = str_from("日本語のテストです");
+assert_eq(str_eq(_nfc_roundtrip(rt11), str_normalize(rt11, NFC)), 1, "Japanese: hiragana + CJK");
+
+# CJK — long ideographic sequence
+var rt12 = str_from("漢字日本語中文台灣香港");
+assert_eq(str_eq(_nfc_roundtrip(rt12), str_normalize(rt12, NFC)), 1, "CJK: ideograph sequence");
+
+# Mixed script — one phrase, multiple writing systems
+var rt13 = str_from("Hello мир שלום 世界 🌍");
+assert_eq(str_eq(_nfc_roundtrip(rt13), str_normalize(rt13, NFC)), 1, "mixed script + emoji");
+
+# Filename use case — extended (real macOS-style filenames)
+var rt14 = str_from("Mémoires d'outre-tombe (Chateaubriand).pdf");
+assert_eq(str_eq(_nfc_roundtrip(rt14), str_normalize(rt14, NFC)), 1, "filename: French title with diacritics");
+
+var rt15 = str_from("ファイル名_日本語.txt");
+assert_eq(str_eq(_nfc_roundtrip(rt15), str_normalize(rt15, NFC)), 1, "filename: Japanese");
+
+# Math symbols + Latin
+var rt16 = str_from("∀x ∈ ℝ : x² ≥ 0");
+assert_eq(str_eq(_nfc_roundtrip(rt16), str_normalize(rt16, NFC)), 1, "math symbols: forall");
+
+# Polish — multiple combining-mark scenarios
+var rt17 = str_from("Zażółć gęślą jaźń");
+assert_eq(str_eq(_nfc_roundtrip(rt17), str_normalize(rt17, NFC)), 1, "Polish: pangram with diacritics");
+
+# Czech — háček + acute combinations
+var rt18 = str_from("Příliš žluťoučký kůň úpěl ďábelské ódy");
+assert_eq(str_eq(_nfc_roundtrip(rt18), str_normalize(rt18, NFC)), 1, "Czech: pangram");
+
+# Turkish — dotted/dotless I disambiguation pairs
+var rt19 = str_from("İstanbul Türkçe ışık");
+assert_eq(str_eq(_nfc_roundtrip(rt19), str_normalize(rt19, NFC)), 1, "Turkish: I/İ + ı");
+
+# German — sharp s + umlauts
+var rt20 = str_from("Straße über Größe — weiße Ähren");
+assert_eq(str_eq(_nfc_roundtrip(rt20), str_normalize(rt20, NFC)), 1, "German: ß + umlauts");
+
+# Spanish + Portuguese — tilde + acute
+var rt21 = str_from("Año Niño señorita coração tradição");
+assert_eq(str_eq(_nfc_roundtrip(rt21), str_normalize(rt21, NFC)), 1, "Iberian: tildes");
+
+# Nordic — extended Latin (æ ø å)
+var rt22 = str_from("Æthelflæd Ærø Skåne smør");
+assert_eq(str_eq(_nfc_roundtrip(rt22), str_normalize(rt22, NFC)), 1, "Nordic: æ ø å");
+
+# Cyrillic — plain (no decomposition)
+var rt23 = str_from("Привет мир из Москвы");
+assert_eq(str_eq(_nfc_roundtrip(rt23), str_normalize(rt23, NFC)), 1, "Cyrillic: greeting");
+
+# Cyrillic Ukrainian + Belarusian — additional diacritic-bearing letters
+var rt24 = str_from("Українська мова — найкраща");
+assert_eq(str_eq(_nfc_roundtrip(rt24), str_normalize(rt24, NFC)), 1, "Ukrainian: with apostrophe ї");
+
+# Thai — no NFC/NFD decomp but tone marks order matters
+var rt25 = str_from("ภาษาไทยเรียนยาก");
+assert_eq(str_eq(_nfc_roundtrip(rt25), str_normalize(rt25, NFC)), 1, "Thai: with tone marks");
+
+# Numerical + emoji + multi-mark
+var rt26 = str_from("Café №42 ☕ — €5.99");
+assert_eq(str_eq(_nfc_roundtrip(rt26), str_normalize(rt26, NFC)), 1, "café-receipt mixed");
+
+# Long sentence — exercises buffer growth in normalize
+var rt27 = str_from("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.");
+assert_eq(str_eq(_nfc_roundtrip(rt27), str_normalize(rt27, NFC)), 1, "long ASCII sentence");
+
+# Long Korean — exercises Hangul algorithmic decomp + recompose at scale
+var rt28 = str_from("대한민국은 민주공화국이다. 대한민국의 주권은 국민에게 있고, 모든 권력은 국민으로부터 나온다.");
+assert_eq(str_eq(_nfc_roundtrip(rt28), str_normalize(rt28, NFC)), 1, "long Korean: Constitution Article 1");
+
+# Empty / whitespace-only edge cases
+var rt29 = str_from("   ");
+assert_eq(str_eq(_nfc_roundtrip(rt29), str_normalize(rt29, NFC)), 1, "whitespace-only NFC round-trip");
+
+# Single combining mark on its own (degenerate but valid)
+var rt30 = str_from("a\xCC\x81");
+assert_eq(str_eq(_nfc_roundtrip(rt30), str_normalize(rt30, NFC)), 1, "trailing combining mark NFC");
+
+# Idempotency — NFC twice == NFC once
+var rt31_pre = str_from("café résumé naïve");
+var rt31_once = str_normalize(rt31_pre, NFC);
+var rt31_twice = str_normalize(rt31_once, NFC);
+assert_eq(str_eq(rt31_once, rt31_twice), 1, "NFC idempotent on real-world Latin");
+
+var rt32_pre = str_from("한국어 NFD 테스트");
+var rt32_once = str_normalize(rt32_pre, NFD);
+var rt32_twice = str_normalize(rt32_once, NFD);
+assert_eq(str_eq(rt32_once, rt32_twice), 1, "NFD idempotent on Hangul");
+
 var r = assert_summary();

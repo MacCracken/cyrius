@@ -1,0 +1,217 @@
+# unicode_normconf.tcyr — v5.8.52 — UCD NormalizationTest.txt conformance.
+#
+# Reads `tests/data/NormalizationTest.txt` (the verbatim Unicode 17.0.0
+# test corpus, 20034 rows across 6 Parts) at runtime and asserts cyrius's
+# NFC/NFD implementation against the canonical reference for every row.
+#
+# Why a runtime data file (not baked-in literals): the corpus is ~2.7 MB
+# and would expand to >10 MB of cyrius string-literal source — well past
+# cc5's 256 KB str_data cap. The same cap deferred NFKC + NFKD off
+# v5.8.51, and forced this slot to ship the conformance suite via
+# `file_read_all` instead of as a generated tcyr. Sidesteps str_data
+# entirely; corpus refresh is one offline `python scripts/gen-unicode-data.py`
+# invocation (which now also writes tests/data/NormalizationTest.txt).
+#
+# Per-row conformance check (subset of the UCD test contract — only the
+# canonical forms shipped at v5.8.51):
+#     NFC(c1) == c2       NFD(c1) == c3
+#     NFC(c2) == c2       NFD(c2) == c3
+#     NFC(c3) == c2       NFD(c3) == c3
+# 6 asserts per row × 20034 rows = ~120 K asserts. Cols 4-5 (NFKC/NFKD)
+# parsed but skipped at row time — they start asserting automatically
+# when v5.8.56 ships the K-forms (no source change to this tcyr needed).
+#
+# CWD assumption: this tcyr opens the corpus at the relative path
+# `tests/data/NormalizationTest.txt`. `scripts/check.sh` (and CI) run
+# binaries with CWD = repo root, so the path resolves. Running the
+# compiled tcyr binary directly from a different CWD will fail the
+# read-corpus assertion below — start with `cd $(repo root)` first.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+include "lib/unicode/normalize.cyr"
+
+alloc_init();
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+# Decode 1 hex char → 0..15, or -1 if not a hex digit. Distinct from
+# lib/unicode/_decode.cyr's `_uc_hex1` which returns 0 on miss (we need
+# to distinguish "0" from "non-hex" while parsing variable-width cp
+# fields like "1E0A 0307" where the space terminates the field).
+fn _ncf_hex(c) {
+    if (c >= 48) { if (c <= 57) { return c - 48; } }
+    if (c >= 97) { if (c <= 102) { return c - 87; } }
+    if (c >= 65) { if (c <= 70) { return c - 55; } }
+    return 0 - 1;
+}
+
+# Encode a single codepoint to UTF-8 at out_buf, return bytes written.
+fn _ncf_emit_utf8(out_buf, cp) {
+    if (cp < 128) {
+        store8(out_buf, cp);
+        return 1;
+    }
+    if (cp < 2048) {
+        store8(out_buf,     192 | (cp >> 6));
+        store8(out_buf + 1, 128 | (cp & 63));
+        return 2;
+    }
+    if (cp < 65536) {
+        store8(out_buf,     224 | (cp >> 12));
+        store8(out_buf + 1, 128 | ((cp >> 6) & 63));
+        store8(out_buf + 2, 128 | (cp & 63));
+        return 3;
+    }
+    store8(out_buf,     240 | (cp >> 18));
+    store8(out_buf + 1, 128 | ((cp >> 12) & 63));
+    store8(out_buf + 2, 128 | ((cp >> 6) & 63));
+    store8(out_buf + 3, 128 | (cp & 63));
+    return 4;
+}
+
+# Parse a hex codepoint sequence in src[col_start..col_end), encoding
+# each codepoint to UTF-8 at out_buf. Returns total UTF-8 byte count.
+# Field format: "1E0A 0307 0323" — hex digits separated by single spaces.
+fn _ncf_parse_seq(src, col_start, col_end, out_buf) {
+    var i = col_start;
+    var w = 0;
+    while (i < col_end) {
+        # Skip leading spaces between codepoints.
+        while (i < col_end) {
+            if (load8(src + i) != 32) { break; }
+            i = i + 1;
+        }
+        if (i >= col_end) { break; }
+        # Read one hex codepoint (variable width: 4-6 hex chars typical).
+        var cp = 0;
+        var any = 0;
+        while (i < col_end) {
+            var d = _ncf_hex(load8(src + i));
+            if (d < 0) { break; }
+            cp = (cp << 4) | d;
+            any = 1;
+            i = i + 1;
+        }
+        if (any == 0) { break; }
+        w = w + _ncf_emit_utf8(out_buf + w, cp);
+    }
+    return w;
+}
+
+# Per-row check. Bumps lib/assert.cyr's global counters directly so the
+# tcyr's `assert_summary()` ending captures the full row count. On
+# mismatch, prints diagnostic to stderr (row_id + part + form_label)
+# matching the assert.cyr "  FAIL: ..." prefix format.
+fn _ncf_check(got, want, part, row, form_label) {
+    _assert_total = _assert_total + 1;
+    if (str_eq(got, want) == 1) {
+        _assert_pass = _assert_pass + 1;
+        return 0;
+    }
+    _assert_fail = _assert_fail + 1;
+    syscall(1, 2, "  FAIL: normconf row ", 21);
+    efmt_int(row);
+    syscall(1, 2, " (Part", 6);
+    efmt_int(part);
+    syscall(1, 2, ") ", 2);
+    syscall(1, 2, form_label, strlen(form_label));
+    syscall(1, 2, "\n", 1);
+    return 0;
+}
+
+# ── Read the corpus ──────────────────────────────────────────────────
+
+var BUF_CAP = 4194304;   # 4 MB — corpus is ~2.7 MB
+var corpus = alloc(BUF_CAP);
+assert_nonnull(corpus, "alloc corpus buffer");
+
+var corpus_len = file_read_all("tests/data/NormalizationTest.txt", corpus, BUF_CAP - 1);
+assert_gt(corpus_len, 0, "read tests/data/NormalizationTest.txt (corpus must exist; regenerate via scripts/gen-unicode-data.py)");
+store8(corpus + corpus_len, 0);
+
+# Per-row scratch (reused across iterations to avoid per-row buffer churn).
+var c1_buf = alloc(256);
+var c2_buf = alloc(256);
+var c3_buf = alloc(256);
+
+# ── Iterate rows ─────────────────────────────────────────────────────
+
+var pos = 0;
+var row = 0;
+var part = 0;
+
+while (pos < corpus_len) {
+    # Find end of line.
+    var line_start = pos;
+    while (pos < corpus_len) {
+        if (load8(corpus + pos) == 10) { break; }
+        pos = pos + 1;
+    }
+    var line_end = pos;
+    pos = pos + 1;   # consume newline
+
+    if (line_end <= line_start) { continue; }
+
+    var first = load8(corpus + line_start);
+
+    # Track Part headers so failure messages can name the section.
+    if (first == 64) {   # '@'
+        # Format: "@PartN # description". Read the digit at offset+5.
+        if (line_end - line_start >= 6) {
+            var pd = _ncf_hex(load8(corpus + line_start + 5));
+            if (pd >= 0) { part = pd; }
+        }
+        continue;
+    }
+
+    if (first == 35) { continue; }   # '#' comment
+
+    # Each conformance row is `c1 ; c2 ; c3 ; c4 ; c5 ; # comment`.
+    # Cols 4-5 are NFKC/NFKD — skipped at parse time per slot scope.
+    # Locate the first three semicolons.
+    var s1 = 0 - 1;
+    var s2 = 0 - 1;
+    var s3 = 0 - 1;
+    var k = line_start;
+    while (k < line_end) {
+        if (load8(corpus + k) == 59) {  # ';'
+            if (s1 < 0) { s1 = k; }
+            else { if (s2 < 0) { s2 = k; }
+                   else { if (s3 < 0) { s3 = k; } } }
+        }
+        k = k + 1;
+    }
+    if (s3 < 0) { continue; }   # Malformed row — defensively skip.
+
+    # Decode cols 1-3 into UTF-8 buffers.
+    var n1 = _ncf_parse_seq(corpus, line_start, s1, c1_buf);
+    var n2 = _ncf_parse_seq(corpus, s1 + 1,     s2, c2_buf);
+    var n3 = _ncf_parse_seq(corpus, s2 + 1,     s3, c3_buf);
+
+    var c1 = str_new(c1_buf, n1);
+    var c2 = str_new(c2_buf, n2);
+    var c3 = str_new(c3_buf, n3);
+
+    # The 6 canonical-form asserts per UCD's conformance contract.
+    _ncf_check(str_normalize(c1, NFC), c2, part, row, "NFC(c1)==c2");
+    _ncf_check(str_normalize(c2, NFC), c2, part, row, "NFC(c2)==c2");
+    _ncf_check(str_normalize(c3, NFC), c2, part, row, "NFC(c3)==c2");
+    _ncf_check(str_normalize(c1, NFD), c3, part, row, "NFD(c1)==c3");
+    _ncf_check(str_normalize(c2, NFD), c3, part, row, "NFD(c2)==c3");
+    _ncf_check(str_normalize(c3, NFD), c3, part, row, "NFD(c3)==c3");
+
+    row = row + 1;
+}
+
+# Sanity floor — guard against silently degenerate runs (bad relative
+# path, truncated corpus). UCD 17.0.0 has 20034 conformance rows; allow
+# slack for upstream revisions but reject runs that processed nothing.
+assert_gt(row, 19000, "processed ≥19000 conformance rows (full corpus = 20034 at UCD 17.0.0)");
+
+var r = assert_summary();

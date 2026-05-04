@@ -1660,18 +1660,51 @@ hand-roll incompletely.
     v3.6.9's 32 KB → 256 KB jump). Two-step heap-change
     bootstrap. Ships NFKC + NFKD as immediate follow-on.
 
-- **v5.8.52** — Unicode 17.0.0 regression suite.
-  `tests/tcyr/unicode_*.tcyr` exhaustive coverage: every
-  general-category boundary codepoint, NFC↔NFD round-trips
-  for ~500 known-tricky strings (Hangul jamo, combining
-  marks, ligatures, Arabic shaping), case-folding equivalences
-  (ß/SS, ı/I/i, etc.), and the canonical UCD test suite
-  (`NormalizationTest.txt` ~25 K test vectors via a
-  conversion-script-emitted tcyr). Locks the v5.8.49-51
-  Unicode infrastructure; surfaces any boundary cases for
-  the .54 release-valve to catch.
+- **v5.8.52** ✅ SHIPPED 2026-05-04 — Unicode 17.0.0 regression
+  suite. Locks the v5.8.49-51 Unicode infrastructure behind a
+  120,518-assert regression floor.
 
-### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.55)
+  Delivered:
+  - `tests/data/NormalizationTest.txt` — 2.7 MB verbatim UCD
+    17.0.0 corpus (20034 rows × 6 Parts).
+  - `tests/tcyr/unicode_normconf.tcyr` — runtime UCD conformance
+    harness reading the corpus via `file_read_all`. Asserts the
+    NFC/NFD conformance contract for every row (6 asserts × 20034
+    = 120,205 conformance asserts; 120,207 total in the tcyr).
+    Cols 4-5 (NFKC/NFKD) skipped at parse time; auto-pick-up
+    when v5.8.56 ships K-forms.
+  - `unicode_categories.tcyr` extended +62 boundary asserts
+    (60→122) — script-block boundaries, plane edges, surrogate
+    range, noncharacter sentinels, sub-category transitions.
+  - `unicode_normalize.tcyr` extended +32 real-world phrase
+    round-trips (51→83) — multi-script multi-word inputs the
+    conformance corpus's per-row tests don't directly target.
+  - `unicode_casefold.tcyr` extended +36 full-fold equivalence
+    asserts (70→106) — ß↔SS, İ↔i+dot, Σ↔σ↔ς, ligatures,
+    idempotency.
+  - `scripts/gen-unicode-data.py` extended to fetch
+    NormalizationTest.txt verbatim alongside the existing UCD
+    files; one offline invocation refreshes everything.
+  - cc5 unchanged at 741,040 B (no compiler change — pure tests
+    + offline tooling).
+
+  Honest scope shrink:
+  - Pin item 2 ("~500 known-tricky strings") shrunk to ~30
+    multi-word real-world phrases. The 20034-row conformance
+    suite already covers the bulk single/short-multi-codepoint
+    surface; 470 additional hand-written strings would duplicate
+    conformance coverage. The 30 phrases focus on inputs the
+    conformance corpus DOESN'T target (longer multi-word
+    multi-script real-world strings).
+  - Pin item 4 ("conversion-script-emitted tcyr") shifted shape
+    — single-file 20K-row tcyr would be ~10 MB of source, far
+    over cc5's 256 KB str_data cap (same cap that pushed
+    NFKC/NFKD off v5.8.51). Shipped as runtime data file +
+    `file_read_all` parser instead. Sidesteps str_data entirely;
+    corpus refresh is a single `python scripts/gen-unicode-data.py`
+    invocation.
+
+### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.57, with .58-.60 buffer)
 
 - **v5.8.53** — Cascaded v5.8.48 refactor work +
   closeout-prep audit. Pure refactor slot, sitting
@@ -1735,13 +1768,79 @@ hand-roll incompletely.
   Note: downstream pin bumps (per-repo `cyrius` field updates
   in mabda / sigil / sakshi / yukti / kybernet / hadara / …)
   are NOT executed in this slot — they happen in each
-  downstream repo's own cycle, against the v5.8.55 release
+  downstream repo's own cycle, against the v5.8.57 release
   tag.
 
-- **v5.8.55** — Cycle closeout pass. **The cycle backstop
-  and the actual final patch of v5.8.x.** Per CLAUDE.md
-  "Closeout Pass" (11-step protocol — mechanical first,
-  judgment-call passes, doc sync):
+- **v5.8.55** — `str_data` heap-region bump for Unicode
+  compat-only decomposition. Two-step bootstrap slot per
+  CLAUDE.md "Two-step bootstrap for heap changes — cc5
+  compiles cc5b, cc5==cc5b". Stands alone — no other
+  changes — to keep the bootstrap delta auditable.
+
+  Background: v5.8.51 shipped NFC + NFD only because the
+  compatibility-only decomposition table (~445 KB encoded
+  in cyrius's printable hex-pair format) overflows cc5's
+  256 KB `str_data` cap at heap offset `0x14A000`, sized
+  v3.6.9 (32 KB → 256 KB jump). Same cap also blocks the
+  v5.8.52 conformance-suite-as-tcyr-literals option, which
+  is why .52 ships the conformance suite as a runtime data
+  file instead.
+
+  Scope:
+  - Bump `str_data` from 256 KB to 2 MB (8x — proportional
+    to the v3.6.9 jump). Audit downstream regions for
+    offset shifts; update heap map.
+  - Verify cc5 self-host: cc5 (old layout) compiles cc5b
+    (new layout); cc5b compiles cc5b'; cc5b == cc5b'
+    byte-identical at the new size.
+  - No stdlib / lib/ changes in this slot. Bare heap-cap
+    bump only — keeps the two-step bootstrap audit narrow.
+
+  Acceptance: cc5 == cc5b byte-identical post-bump;
+  bootstrap closure intact (seed → cyrc → asm → cyrc); all
+  existing tcyrs still pass.
+
+  Filed at v5.8.51 ship 2026-05-04; user-approved cycle
+  extension past v5.8.55 closeout pin to absorb this and
+  v5.8.56's NFKC/NFKD ship.
+
+- **v5.8.56** — Unicode 17.0.0 NFKC + NFKD compatibility
+  normalization. Depends on v5.8.55 heap bump. Ships the
+  K-forms originally pinned with v5.8.51 but deferred per
+  the str_data cap.
+
+  Scope:
+  - Extend `lib/unicode/_normalize_data.cyr` with the
+    compat-only decomposition table (3833 records already
+    parsed by `scripts/gen-unicode-data.py`; emit-time
+    drop reverses).
+  - Add `NFKC=2` / `NFKD=3` enum variants to
+    `lib/unicode/normalize.cyr`'s `NormalForm`.
+  - Extend `unicode_canonical_decomp` (or add
+    `unicode_compat_decomp`) to consult the compat-only
+    table when form is K-flavored.
+  - Auto-discover: `tests/tcyr/unicode_normconf.tcyr`
+    (shipped at .52) currently skips cols 4-5 of
+    NormalizationTest.txt; once the K-forms ship, the same
+    tcyr starts asserting cols 4-5 with no source change
+    needed.
+  - Extend `tests/tcyr/unicode_normalize.tcyr` with
+    K-specific tricky-string asserts (compat ligatures,
+    fullwidth/halfwidth equivalents, super/subscript
+    digits).
+
+  Acceptance: cc5 == cc5b byte-identical; all
+  NormalizationTest.txt 5-column rows pass via .52's
+  conformance harness; existing NFC+NFD coverage
+  unaffected.
+
+  Filed at v5.8.51 ship 2026-05-04.
+
+- **v5.8.57** — Cycle closeout pass. **The cycle backstop
+  and the actual final patch of v5.8.x** (extended from
+  v5.8.55 to absorb str_data heap bump + K-forms). Per
+  CLAUDE.md "Closeout Pass" (11-step protocol —
+  mechanical first, judgment-call passes, doc sync):
 
   §1-3 **Mechanical (fast-fail):**
   - Self-host verify (cc5 == cc5b byte-identical)
@@ -1749,7 +1848,8 @@ hand-roll incompletely.
     byte-identical)
   - Full check.sh — all gates green; record the test count
     (grew from 65 at v5.8.48; expected to reach ~70+ with
-    Unicode tcyrs)
+    Unicode tcyrs including the v5.8.52 conformance harness
+    and the v5.8.56 K-form additions)
 
   §4-8 **Judgment (cross-check, since v5.8.53 already did
   the deep passes):**
@@ -1776,7 +1876,7 @@ hand-roll incompletely.
     repo behind on bumps for the consumer to catch up)
 
   §11 **Docs sync (silent-rot prevention):**
-  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.55
+  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.57
     state
   - **Vidya per-minor refresh** — `language.cyml` (Unicode
     APIs new entries), `field_notes/compiler.cyml` /
@@ -1792,9 +1892,13 @@ hand-roll incompletely.
   completed-phases.md migration of all v5.8.* sections; cc5
   byte-identical; no new warnings.
 
-  **Cycle backstop hard at v5.8.55** (was v5.8.51
-  pre-Unicode-pin; extended +4 slots per user direction
-  2026-05-03 PM).
+  **Cycle backstop hard at v5.8.57** (was v5.8.51 pre-
+  Unicode-pin → extended to v5.8.55 on 2026-05-03 PM →
+  extended to v5.8.57 on 2026-05-04 to absorb the v5.8.51-
+  deferred str_data heap bump (.55) + NFKC/NFKD ship
+  (.56)). User-approved buffer through v5.8.60 for any
+  further late surprises ("ok to slip past .55 — .60 is
+  needed").
 
 ### v5.8.x — held items (surfacing-ask only; not pinned, no slot consumed)
 
