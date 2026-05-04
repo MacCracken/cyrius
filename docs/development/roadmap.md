@@ -1623,14 +1623,42 @@ hand-roll incompletely.
     directory symlink remains the leading suspect — may need
     removal sooner than v5.8.49 closeout indicated.
 
-- **v5.8.51** — Unicode 17.0.0 normalization (NFC/NFD/NFKC/NFKD).
-  Add `lib/unicode/normalize.cyr` with the canonical
-  decomposition tables + composition algorithm (Hangul +
-  general). API: `str_normalize(s, form)` where form is enum
-  `NormalForm { NFC; NFD; NFKC; NFKD; }`. The biggest table —
-  decomposition mappings — is ~80 KB compressed. Wire to
-  `str_eq_normalized(a, b, form)` for use cases like filename
-  comparison on macOS (NFD on disk vs NFC in code).
+- **v5.8.51** ✅ SHIPPED 2026-05-04 — Unicode 17.0.0 canonical
+  normalization (NFC + NFD).
+
+  Delivered:
+  - `lib/unicode/normalize.cyr` — `NormalForm` enum (NFC=0, NFD=1) +
+    `unicode_canonical_combining_class` + `unicode_canonical_decomp`
+    (Hangul algorithmic) + `unicode_compose` (Hangul L+V→LV +
+    LV+T→LVT) + `str_normalize(s, form)` + `str_eq_normalized`.
+  - `lib/unicode/_normalize_data.cyr` — auto-generated; 3 tables
+    (968 CCC / 2081 canonical decomp / 961 composition) ~70 KB.
+  - `scripts/gen-unicode-data.py` extended (now fetches
+    CompositionExclusions.txt; emits all three sub-tables).
+  - `tests/tcyr/unicode_normalize.tcyr` — 51 assertions across 11
+    verification categories.
+  - cc5 unchanged at 741,040 B.
+
+  Honest scope shrink:
+  - Pin specified all 4 forms (NFC/NFD/NFKC/NFKD). Shipped NFC+NFD
+    only. Compat-only decomposition table (~445 KB hex) overflows
+    cc5's 256 KB `str_data` heap region (`0x14A000`, sized v3.6.9).
+    Bumping that cap requires the two-step heap-change bootstrap
+    per CLAUDE.md — out of scope for this slot.
+  - The compat-only table IS parsed by `gen-unicode-data.py` (3833
+    records, ready to emit); it's just dropped at emit time. NFKC
+    + NFKD ship as a follow-up once `str_data` is bumped.
+
+  In-slot bug fix:
+  - `_uc_compose_pass` had a position-tracking bug (writing
+    composed cps to `buf[0]` instead of the current starter's
+    position). Caught by the multi-syllable Hangul / multi-mark
+    Latin tests; fixed by tracking `starter_pos` explicitly.
+
+  Filed for follow-up:
+  - Bump cc5's `str_data` from 256 KB to ~2 MB (proportional to
+    v3.6.9's 32 KB → 256 KB jump). Two-step heap-change
+    bootstrap. Ships NFKC + NFKD as immediate follow-on.
 
 - **v5.8.52** — Unicode 17.0.0 regression suite.
   `tests/tcyr/unicode_*.tcyr` exhaustive coverage: every

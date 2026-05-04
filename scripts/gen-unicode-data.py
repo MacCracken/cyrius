@@ -38,6 +38,7 @@ import urllib.request
 URL = "https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt"
 URL_CASEFOLDING = "https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt"
 URL_UNICODEDATA = "https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt"
+URL_COMPEXCL = "https://www.unicode.org/Public/17.0.0/ucd/CompositionExclusions.txt"
 
 # Order matches GeneralCategory enum in lib/unicode/categories.cyr.
 # Index = enum value. 30 categories total per Unicode standard.
@@ -329,6 +330,237 @@ def emit_casefold_source(
     return "\n".join(out) + "\n"
 
 
+# ── Normalization (v5.8.51) ───────────────────────────────────────────
+
+def parse_normalize(ud_text, ce_text):
+    """Parse UnicodeData.txt + CompositionExclusions.txt → normalization tables.
+
+    Returns (ccc, canonical_decomp, compat_only_decomp, composition):
+      ccc: dict[cp, ccc_byte]   — non-zero CCC only (most are 0; lookup
+                                  miss returns 0).
+      canonical_decomp: dict[cp, list[cp]] (length ≤ 2) — canonical
+                                  decomposition only (no compat tag).
+                                  Used by NFD/NFC.
+      compat_only_decomp: dict[cp, list[cp]] (length 1..18) —
+                                  decompositions with a compat tag
+                                  (<font>, <wide>, <super>, etc.).
+                                  Disjoint from canonical_decomp. Used
+                                  by NFKD/NFKC IN ADDITION to canonical.
+      composition: dict[(cp1, cp2), cp] — reverse of canonical_decomp,
+                                  filtered by composition exclusions
+                                  + non-starter constraints. NFC/NFKC
+                                  use this to recombine after decomp +
+                                  reorder.
+
+    Hangul (S = LV / LVT) is handled algorithmically in normalize.cyr;
+    UnicodeData.txt does not list its decomposition (would be redundant).
+
+    UnicodeData.txt fields (semicolon-separated):
+        0  codepoint
+        3  canonical combining class
+        5  decomposition: empty | "<tag> CPS" | "CPS"
+    """
+    ccc = {}
+    canon = {}
+    compat_only = {}
+    for line in ud_text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        f = line.split(";")
+        if len(f) < 6:
+            continue
+        try:
+            cp = int(f[0], 16)
+        except ValueError:
+            continue
+        # CCC (field 3)
+        try:
+            c = int(f[3])
+        except ValueError:
+            c = 0
+        if c != 0:
+            ccc[cp] = c
+        # Decomposition (field 5)
+        d = f[5].strip()
+        if not d:
+            continue
+        parts = d.split()
+        if parts[0].startswith("<"):
+            # Compat decomp — strip tag, parse remaining cps
+            tag = parts[0]
+            cps = [int(x, 16) for x in parts[1:]]
+            compat_only[cp] = cps
+        else:
+            cps = [int(x, 16) for x in parts]
+            if len(cps) > 2:
+                raise ValueError(f"canonical decomp > 2 cps at {cp:x}: {cps}")
+            canon[cp] = cps
+
+    # Composition exclusions: codepoints whose canonical decomp must NOT
+    # be re-composed during NFC. Read from CompositionExclusions.txt.
+    excl = set()
+    for line in ce_text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        # Lines are single codepoints in hex (the file lists single cps,
+        # not ranges).
+        try:
+            excl.add(int(line, 16))
+        except ValueError:
+            continue
+
+    # Build composition table: (cp1, cp2) → cp from canonical decomps
+    # of length 2, filtered by:
+    #   1. cp not in CompositionExclusions
+    #   2. cp1's CCC is 0 (cp1 is a starter)
+    # Single-cp canonical decomps (rare — singleton decompositions like
+    # 0x2126 OHM SIGN → 0x03A9 GREEK CAPITAL OMEGA) cannot recompose.
+    composition = {}
+    for cp, cps in canon.items():
+        if cp in excl:
+            continue
+        if len(cps) != 2:
+            continue
+        cp1, cp2 = cps
+        if ccc.get(cp1, 0) != 0:
+            continue   # cp1 is a non-starter; can't act as composition base
+        composition[(cp1, cp2)] = cp
+
+    return ccc, canon, compat_only, composition
+
+
+def emit_ccc_table(ccc):
+    """Encode CCC: each record 8 hex chars = cp(u24, 6) + ccc(u8, 2).
+    Sorted by cp.
+    """
+    parts = []
+    for cp in sorted(ccc):
+        c = ccc[cp]
+        if cp > 0xFFFFFF or c > 0xFF:
+            raise ValueError(f"CCC out-of-range: {cp:x} → {c}")
+        parts.append(f"{cp:06x}{c:02x}")
+    return "".join(parts), len(ccc)
+
+
+def emit_canonical_decomp(canon):
+    """Encode canonical decomp: each record 20 hex chars =
+    cp(u24, 6) + count(u8, 2) + cp1(u24, 6) + cp2(u24, 6).
+    cp2 = 0 when count = 1. Sorted by cp.
+    """
+    parts = []
+    for cp in sorted(canon):
+        cps = canon[cp]
+        n = len(cps)
+        c1 = cps[0]
+        c2 = cps[1] if n >= 2 else 0
+        for v in (cp, c1, c2):
+            if v > 0xFFFFFF:
+                raise ValueError(f"canon decomp cp > 24 bits: {v:x}")
+        parts.append(f"{cp:06x}{n:02x}{c1:06x}{c2:06x}")
+    return "".join(parts), len(canon)
+
+
+def emit_compat_decomp(compat):
+    """Encode compat-only decomp: each record 116 hex chars =
+    cp(u24, 6) + count(u8, 2) + 18 × cp(u24, 6).
+    Trailing slots are 0 when count < 18. Sorted by cp.
+    """
+    parts = []
+    for cp in sorted(compat):
+        cps = compat[cp]
+        n = len(cps)
+        if n < 1 or n > 18:
+            raise ValueError(f"compat decomp count out of [1,18]: {cp:x} → {cps}")
+        # Pad to exactly 18 slots
+        padded = cps + [0] * (18 - n)
+        rec = f"{cp:06x}{n:02x}"
+        for v in padded:
+            if v > 0xFFFFFF:
+                raise ValueError(f"compat decomp cp > 24 bits: {v:x}")
+            rec += f"{v:06x}"
+        parts.append(rec)
+    return "".join(parts), len(compat)
+
+
+def emit_composition_table(composition):
+    """Encode composition: each record 18 hex chars =
+    cp1(u24, 6) + cp2(u24, 6) + cp_composed(u24, 6).
+    Sorted by (cp1, cp2) — composition lookup uses 2-key binary search
+    treating cp1 as primary, cp2 as secondary.
+    """
+    parts = []
+    for (cp1, cp2) in sorted(composition):
+        cp = composition[(cp1, cp2)]
+        for v in (cp1, cp2, cp):
+            if v > 0xFFFFFF:
+                raise ValueError(f"compose cp > 24 bits: {v:x}")
+        parts.append(f"{cp1:06x}{cp2:06x}{cp:06x}")
+    return "".join(parts), len(composition)
+
+
+def emit_normalize_source(
+    ccc_blob, ccc_count,
+    canon_blob, canon_count,
+    compose_blob, compose_count,
+    sources,
+):
+    """Emit lib/unicode/_normalize_data.cyr.
+
+    v5.8.51: NFC + NFD only. The compat-only decomposition table
+    (~445 KB hex, used for NFKC/NFKD) is parsed by gen-unicode-data.py
+    but NOT emitted here — it overflows cc5's 256 KB str_data heap
+    region. Bumping that cap is a compiler change scoped to a later
+    slot (two-step heap bootstrap per CLAUDE.md).
+    """
+    CCC_PER_PIECE = 800
+    CANON_PER_PIECE = 350
+    COMPOSE_PER_PIECE = 380
+
+    def chunk(blob, chars_per_rec, rec_per_piece):
+        chunk_size = chars_per_rec * rec_per_piece
+        return [blob[i : i + chunk_size] for i in range(0, len(blob), chunk_size)]
+
+    ccc_pieces = chunk(ccc_blob, 8, CCC_PER_PIECE)
+    canon_pieces = chunk(canon_blob, 20, CANON_PER_PIECE)
+    compose_pieces = chunk(compose_blob, 18, COMPOSE_PER_PIECE)
+
+    out = []
+    out.append("# lib/unicode/_normalize_data.cyr — AUTO-GENERATED by")
+    out.append("# `scripts/gen-unicode-data.py`. Do NOT edit by hand; the next")
+    out.append("# regeneration will overwrite. Sources of truth:")
+    for s in sources:
+        out.append(f"#   {s}")
+    out.append("# Unicode 17.0.0. THREE tables for NFC + NFD normalization:")
+    out.append("#   CCC (canonical combining class): 8 hex chars/rec")
+    out.append("#                                    (cp u24 + ccc u8).")
+    out.append("#   canonical decomp: 20 hex chars/rec (cp u24 + count u8 +")
+    out.append("#                     cp1/cp2 each u24).")
+    out.append("#   composition: 18 hex chars/rec (cp1 u24 + cp2 u24 +")
+    out.append("#                cp_composed u24). Sorted by (cp1, cp2).")
+    out.append("# Hangul L+V[+T] composition is algorithmic — no table.")
+    out.append("# NFKC/NFKD compat-only decomp NOT shipped at v5.8.51")
+    out.append("# (overflows cc5's 256 KB str_data cap; deferred until")
+    out.append("# the cap is bumped in a later slot).")
+    out.append("# Public surface lives in normalize.cyr; this file is data.")
+    out.append("")
+
+    def emit_table(label, pieces, count, per_piece):
+        out.append(f"var _UNICODE_{label}_RECORD_COUNT = {count};")
+        out.append(f"var _UNICODE_{label}_PIECE_COUNT = {len(pieces)};")
+        out.append(f"var _UNICODE_{label}_RECORDS_PER_PIECE = {per_piece};")
+        out.append("")
+        for i, p in enumerate(pieces):
+            out.append(f'var _UNICODE_{label}_PIECE_{i} = "{p}";')
+        out.append("")
+
+    emit_table("CCC", ccc_pieces, ccc_count, CCC_PER_PIECE)
+    emit_table("CANON", canon_pieces, canon_count, CANON_PER_PIECE)
+    emit_table("COMPOSE", compose_pieces, compose_count, COMPOSE_PER_PIECE)
+
+    return "\n".join(out) + "\n"
+
+
 def main():
     # Categories (v5.8.49)
     cat_text = fetch()
@@ -365,6 +597,35 @@ def main():
     with open(cf_path, "w") as f:
         f.write(cf_src)
     print(f"wrote {cf_path}", file=sys.stderr)
+
+    # Normalization (v5.8.51) — re-uses ud_text from above.
+    #
+    # v5.8.51 ships NFC + NFD only. NFKC + NFKD compat-only decomp data
+    # (~445 KB hex) overflows cc5's 256 KB str_data heap region; bumping
+    # the cap is a compiler change requiring its own slot (two-step
+    # heap-change bootstrap per CLAUDE.md). Compat-only table is
+    # generated for parity with the parser but NOT emitted to the
+    # cyrius source — the table dict is dropped on the floor.
+    ce_text = fetch_url(URL_COMPEXCL)
+    ccc_map, canon, compat_only, composition = parse_normalize(ud_text, ce_text)
+    ccc_blob, ccc_n = emit_ccc_table(ccc_map)
+    canon_blob, canon_n = emit_canonical_decomp(canon)
+    compose_blob, compose_n = emit_composition_table(composition)
+    print(
+        f"normalize: ccc={ccc_n} canon={canon_n} compose={compose_n} "
+        f"(compat_only={len(compat_only)} parsed but not emitted — v5.8.51 NFC/NFD only)",
+        file=sys.stderr,
+    )
+    nz_path = "lib/unicode/_normalize_data.cyr"
+    nz_src = emit_normalize_source(
+        ccc_blob, ccc_n,
+        canon_blob, canon_n,
+        compose_blob, compose_n,
+        sources=[URL_UNICODEDATA, URL_COMPEXCL],
+    )
+    with open(nz_path, "w") as f:
+        f.write(nz_src)
+    print(f"wrote {nz_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

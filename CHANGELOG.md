@@ -6,6 +6,117 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.51] — 2026-05-04
+
+**v5.8.x slot 51 — Unicode 17.0.0 canonical normalization (NFC + NFD)**.
+Thirteenth slot of Phase 3. Third of the four-slot Unicode 17.0.0 fold
+(.49 categories → .50 case folding → **.51 canonical normalization**
+→ .52 regression suite).
+
+cc5: **741,040 B unchanged** (no compiler change — pure stdlib
+addition). Test count grows by one tcyr (`unicode_normalize` 51/51).
+
+### What shipped
+
+**`lib/unicode/normalize.cyr`** — public normalization surface:
+- `NormalForm` enum (NFC=0, NFD=1) — NFKC/NFKD intentionally absent
+  (see scope shrink below).
+- `unicode_canonical_combining_class(cp)` — 0..255; default 0 on miss.
+- `unicode_canonical_decomp(cp, out_buf, cap)` — 1..3 cps; Hangul
+  algorithmic (LV→2, LVT→3 — UAX #15 §5 documented exception).
+- `unicode_compose(cp1, cp2)` — general table + Hangul L+V→LV +
+  LV+T→LVT.
+- `str_normalize(s, form)` — recursive decompose → canonical reorder
+  (CCC bubble sort fenced by starters) → conditional re-compose
+  (NFC only) → re-encode UTF-8.
+- `str_eq_normalized(a, b, form)` — for the macOS filename use case
+  (NFD on disk vs NFC in source compare equal).
+
+**`lib/unicode/_normalize_data.cyr`** — auto-generated; 3 tables:
+- CCC: 968 records, 2 pieces, 8 hex chars/rec
+- Canonical decomp: 2081 records, 6 pieces, 20 hex chars/rec
+- Composition: 961 records, 3 pieces, 18 hex chars/rec
+Total ~70 KB. Hangul L+V[+T] composition algorithmic — no table.
+
+**`scripts/gen-unicode-data.py`** — extended with `parse_normalize` /
+`emit_ccc_table` / `emit_canonical_decomp` /
+`emit_composition_table` + `emit_normalize_source`. Single offline
+invocation regenerates v5.8.49 categories + v5.8.50 case fold +
+v5.8.51 normalization data; now also fetches
+CompositionExclusions.txt.
+
+**`tests/tcyr/unicode_normalize.tcyr`** — 51 assertions across 11
+verification categories (CCC sanity / canonical decomp /
+Hangul algorithmic / composition / composition exclusions /
+NFD round-trips / NFC identity / Hangul Str round-trips /
+canonical reordering / macOS filename use case / out-of-range +
+empty). Auto-discovered. Canonical `var r = assert_summary();`
+ending — exit=0 verified.
+
+**`cyrius.cyml [deps] stdlib`** — added `"unicode/normalize"` +
+`"unicode/_normalize_data"` (7 unicode entries total).
+
+### Honest scope shrink — NFKC/NFKD deferred
+
+The roadmap pin specified all four normalization forms. **Shipped
+NFC + NFD only.** The compatibility-only decomposition table
+(~445 KB hex when encoded in cyrius's printable hex-pair format)
+overflows cc5's `str_data` heap region (256 KB cap at `0x14A000`,
+sized v3.6.9). Bumping that cap is a compiler change that requires
+its own slot per CLAUDE.md "Two-step bootstrap for heap changes —
+cc5 compiles cc5b, cc5==cc5b" — out of scope for v5.8.51.
+
+NFC + NFD covers the documented primary use case (macOS filename
+NFD↔NFC interop, basic combining-mark canonical equivalence). The
+compat-only decomp table is still PARSED by
+`scripts/gen-unicode-data.py` (3833 records) — it's just dropped at
+emit time. When `str_data` is bumped, regenerating the data file
+picks up the compat-only table without further parser changes.
+
+**Filed for v5.8.x release-valve / v5.9.x:** bump cc5's `str_data`
+heap region from 256 KB to ~2 MB (8x — same proportion as the
+v3.6.9 bump from 32 KB → 256 KB); ship NFKC+NFKD as the immediate
+follow-up. Two-step bootstrap required (heap change touches the
+compiler itself).
+
+### NFC composition pass — bug caught and fixed in-slot
+
+First `_uc_compose_pass` impl had a position-tracking bug: when
+composing a starter + combining-mark pair, the composed codepoint
+was written to `buf[0]` instead of the current starter's position.
+After the first composition, subsequent compositions would overwrite
+slot 0 while the actual starter sat at a later offset. Symptom:
+NFD → NFC round-trips on multi-syllable phrases failed (4 of 51
+asserts).
+
+Fixed by tracking `starter_pos` explicitly and writing
+`buf[starter_pos * 8] = composed`. Also tightened the
+composition-blocking check (only block when prior CCC > 0 AND ≥
+current cp's CCC — avoids false-blocking Hangul L+V which has both
+operands at CCC=0).
+
+### Test expectation correction (not an implementation bug)
+
+Initial tcyr asserted "한국어 NFD has 27 bytes (3 jamo × 3
+syllables × 3 bytes)". Wrong assumption — 어 (U+C5B4) is an LV
+syllable (no T), decomposing to 2 jamos not 3. Correct count is
+한 (LVT, 3 jamo) + 국 (LVT, 3 jamo) + 어 (LV, 2 jamo) = 8 jamo ×
+3 bytes UTF-8 = 24 bytes. Implementation was right; assertion was
+wrong. Cross-checked against Python's
+`unicodedata.normalize('NFD', '한국어')`. Test corrected.
+
+### Acceptance gates
+
+- `scripts/check.sh`: **65 passed, 0 failed** (named gates) +
+  `unicode_normalize PASS (51 passed, 0 failed)` AND
+  `unicode_casefold PASS (70 passed, 0 failed)` AND
+  `unicode_categories PASS (60 passed, 0 failed)` in the per-tcyr
+  summary.
+- Self-host: cc5 == cc5b byte-identical at 741,040 B.
+- `cc5 --version` reports `cc5 5.8.51`.
+- 51 normalization assertions verified against Python's
+  `unicodedata.normalize('NFC'/'NFD', ...)` reference.
+
 ## [5.8.50] — 2026-05-04
 
 **v5.8.x slot 50 — Unicode 17.0.0 case folding (simple + full)**.

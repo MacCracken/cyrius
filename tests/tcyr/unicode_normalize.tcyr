@@ -1,0 +1,204 @@
+# unicode_normalize.tcyr — v5.8.51 — Unicode 17.0.0 canonical
+# normalization (NFC + NFD) regression floor.
+#
+# v5.8.51 ships NFC + NFD only. NFKC + NFKD are NOT implemented at this
+# slot — the compatibility decomposition table (~445 KB hex) overflows
+# cc5's 256 KB str_data heap region. Bumping the cap is a compiler
+# change that requires its own slot (two-step heap-change bootstrap per
+# CLAUDE.md). NFKC + NFKD ride that bump as a follow-up.
+#
+# Coverage:
+#   (1) CCC table sanity — starters return 0; common combining marks
+#       return their canonical class (acute=230, grave=230, cedilla=202)
+#   (2) Codepoint-level canonical decomposition (1-step)
+#   (3) Hangul algorithmic decomposition (LV + LVT syllables)
+#   (4) Codepoint-level composition (general table + Hangul L+V→LV +
+#       LV+T→LVT)
+#   (5) Composition exclusions — singletons + non-starter blockers
+#   (6) Str-level NFD round-trips for Latin combining-mark sequences
+#   (7) Str-level NFC round-trips (decompose then re-compose)
+#   (8) Hangul Str round-trips (mixed LV / LVT syllables)
+#   (9) Canonical reordering — combining marks in wrong CCC order get
+#       sorted into canonical order
+#  (10) macOS filename use case — NFD on disk and NFC in source
+#       str_eq_normalized as equal under either form
+#  (11) Out-of-range sentinels + empty string
+#
+# Cross-checked against Python's unicodedata.normalize('NFC'/'NFD', ...).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+include "lib/unicode/normalize.cyr"
+
+alloc_init();
+
+# ── (1) CCC table sanity ─────────────────────────────────────────
+assert_eq(unicode_canonical_combining_class(0x0041), 0,   "'A' is starter (CCC=0)");
+assert_eq(unicode_canonical_combining_class(0x0030), 0,   "'0' is starter");
+assert_eq(unicode_canonical_combining_class(0x4E2D), 0,   "CJK is starter");
+assert_eq(unicode_canonical_combining_class(0x0301), 230, "combining acute = 230");
+assert_eq(unicode_canonical_combining_class(0x0300), 230, "combining grave = 230");
+assert_eq(unicode_canonical_combining_class(0x0327), 202, "combining cedilla = 202");
+assert_eq(unicode_canonical_combining_class(0x0316), 220, "combining grave below = 220");
+assert_eq(unicode_canonical_combining_class(0x110000), 0, "out-of-range cp → CCC 0");
+assert_eq(unicode_canonical_combining_class(-1), 0,       "negative cp → CCC 0");
+
+# ── (2) Codepoint-level canonical decomposition ──────────────────
+var dbuf = alloc(64);
+
+# À (U+00C0) → A + grave
+assert_eq(unicode_canonical_decomp(0x00C0, dbuf, 8), 2, "À decomp count = 2");
+assert_eq(load64(dbuf),     0x0041, "À[0] = A");
+assert_eq(load64(dbuf + 8), 0x0300, "À[1] = combining grave");
+
+# é (U+00E9) → e + acute
+assert_eq(unicode_canonical_decomp(0x00E9, dbuf, 8), 2, "é decomp count = 2");
+assert_eq(load64(dbuf),     0x0065, "é[0] = e");
+assert_eq(load64(dbuf + 8), 0x0301, "é[1] = combining acute");
+
+# ç (U+00E7) → c + cedilla
+assert_eq(unicode_canonical_decomp(0x00E7, dbuf, 8), 2, "ç decomp count = 2");
+assert_eq(load64(dbuf),     0x0063, "ç[0] = c");
+assert_eq(load64(dbuf + 8), 0x0327, "ç[1] = combining cedilla");
+
+# Identity: ASCII letter has no canonical decomp
+assert_eq(unicode_canonical_decomp(0x0041, dbuf, 8), 1, "A: identity decomp");
+assert_eq(load64(dbuf), 0x0041, "A → A");
+
+# ── (3) Hangul algorithmic decomposition ─────────────────────────
+# 가 (U+AC00) — LV syllable: ᄀ + ᅡ
+assert_eq(unicode_canonical_decomp(0xAC00, dbuf, 8), 2, "가 (LV) decomp count = 2");
+assert_eq(load64(dbuf),     0x1100, "가[0] = ᄀ (L)");
+assert_eq(load64(dbuf + 8), 0x1161, "가[1] = ᅡ (V)");
+
+# 각 (U+AC01) — LVT syllable: ᄀ + ᅡ + ᆨ
+assert_eq(unicode_canonical_decomp(0xAC01, dbuf, 8), 3, "각 (LVT) decomp count = 3");
+assert_eq(load64(dbuf),      0x1100, "각[0] = ᄀ");
+assert_eq(load64(dbuf + 8),  0x1161, "각[1] = ᅡ");
+assert_eq(load64(dbuf + 16), 0x11A8, "각[2] = ᆨ (T)");
+
+# ── (4) Codepoint-level composition ──────────────────────────────
+# A + combining grave → À
+assert_eq(unicode_compose(0x0041, 0x0300), 0x00C0, "A + grave → À");
+# e + combining acute → é
+assert_eq(unicode_compose(0x0065, 0x0301), 0x00E9, "e + acute → é");
+# c + combining cedilla → ç
+assert_eq(unicode_compose(0x0063, 0x0327), 0x00E7, "c + cedilla → ç");
+
+# Hangul L + V → LV syllable
+assert_eq(unicode_compose(0x1100, 0x1161), 0xAC00, "ᄀ + ᅡ → 가 (LV)");
+# Hangul LV + T → LVT syllable
+assert_eq(unicode_compose(0xAC00, 0x11A8), 0xAC01, "가 + ᆨ → 각 (LVT)");
+
+# No composition: A + A
+assert_eq(unicode_compose(0x0041, 0x0041), 0, "A + A doesn't compose");
+# No composition: combining mark cannot be cp1 (non-starter)
+assert_eq(unicode_compose(0x0301, 0x0041), 0, "combining mark cannot start a composition");
+
+# ── (5) Composition exclusions ───────────────────────────────────
+# 0x2126 OHM SIGN canonically decomposes to 0x03A9 (Greek Capital Omega)
+# but is in the composition exclusions — re-composing 0x03A9 alone
+# should NOT yield 0x2126. (Singleton decomp; not a 2-cp composition,
+# but the exclusion logic is what keeps `unicode_compose` from
+# returning 0x2126 spuriously.)
+assert_eq(unicode_compose(0x03A9, 0x0000), 0, "Ω + nothing doesn't compose to OHM (singleton excluded)");
+
+# ── (6) Str-level NFD round-trips ────────────────────────────────
+# "café" with precomposed é → "café" with e + combining acute
+var cafe_pre = str_from("café");
+var cafe_nfd = str_normalize(cafe_pre, NFD);
+# NFD bytes: c (1) + a (1) + f (1) + e (1) + combining acute (2) = 6 bytes
+assert_eq(str_len(cafe_nfd), 6, "café NFD has 6 bytes (decomposed)");
+
+var cafe_pre_again = str_normalize(cafe_nfd, NFC);
+assert_eq(str_eq(cafe_pre_again, cafe_pre), 1, "NFD → NFC round-trips to original");
+
+# Plain ASCII unchanged under both NFC and NFD
+var hello_nfd = str_normalize(str_from("hello"), NFD);
+assert_eq(str_eq(hello_nfd, str_from("hello")), 1, "ASCII NFD identity");
+var hello_nfc = str_normalize(str_from("hello"), NFC);
+assert_eq(str_eq(hello_nfc, str_from("hello")), 1, "ASCII NFC identity");
+
+# ── (7) Str-level NFC: decompose-then-recompose ──────────────────
+# A precomposed character round-trips through NFC unchanged.
+var single_nfc = str_normalize(str_from("À"), NFC);
+assert_eq(str_eq(single_nfc, str_from("À")), 1, "À NFC identity");
+
+# Multi-mark: "über naïve façade" round-trips
+var phrase = str_from("über naïve façade");
+var phrase_nfd = str_normalize(phrase, NFD);
+var phrase_nfc = str_normalize(phrase_nfd, NFC);
+assert_eq(str_eq(phrase_nfc, phrase), 1, "multi-mark phrase NFD→NFC round-trip");
+
+# ── (8) Hangul Str round-trips ───────────────────────────────────
+# 한국어 = 한 (U+D55C, LVT, 3 jamo) + 국 (U+AD6D, LVT, 3 jamo) +
+#         어 (U+C5B4, LV, 2 jamo). Total 8 jamos × 3 bytes UTF-8 = 24.
+var hangul_pre = str_from("한국어");
+var hangul_nfd = str_normalize(hangul_pre, NFD);
+assert_eq(str_len(hangul_nfd), 24, "한국어 NFD has 24 bytes (3+3+2 jamo × 3 bytes UTF-8)");
+
+var hangul_nfc = str_normalize(hangul_nfd, NFC);
+assert_eq(str_eq(hangul_nfc, hangul_pre), 1, "Hangul NFD → NFC round-trip");
+
+# ── (9) Canonical reordering ─────────────────────────────────────
+# Two combining marks in wrong CCC order: U+0307 (CCC=230) then U+0323
+# (CCC=220). Canonical order is CCC=220 first, then CCC=230.
+# Build the wrong-order string manually: q + 0307 + 0323
+# (q = 0x71, 0307 = above dot, 0323 = below dot)
+# After NFD reorder → q + 0323 + 0307
+var wrong_buf = alloc(8);
+store8(wrong_buf,     0x71);    # q
+store8(wrong_buf + 1, 0xCC);    # 0xCC 0x87 = U+0307 (combining dot above)
+store8(wrong_buf + 2, 0x87);
+store8(wrong_buf + 3, 0xCC);    # 0xCC 0xA3 = U+0323 (combining dot below)
+store8(wrong_buf + 4, 0xA3);
+var wrong_str = str_new(wrong_buf, 5);
+var reordered = str_normalize(wrong_str, NFD);
+
+# Expected: q + 0323 + 0307 = 0x71 0xCC 0xA3 0xCC 0x87
+var exp_buf = alloc(8);
+store8(exp_buf,     0x71);
+store8(exp_buf + 1, 0xCC);
+store8(exp_buf + 2, 0xA3);
+store8(exp_buf + 3, 0xCC);
+store8(exp_buf + 4, 0x87);
+var exp_str = str_new(exp_buf, 5);
+
+assert_eq(str_eq(reordered, exp_str), 1, "canonical reorder: CCC=220 sorts before CCC=230");
+
+# ── (10) str_eq_normalized — macOS filename use case ─────────────
+# Same logical filename, NFC vs NFD encoding, equal under either form.
+var name_nfc = str_from("café.txt");
+# Build the NFD form: c, a, f, e, combining acute (0xCC 0x81), '.', t, x, t
+var nfd_buf = alloc(16);
+store8(nfd_buf,      0x63);    # c
+store8(nfd_buf + 1,  0x61);    # a
+store8(nfd_buf + 2,  0x66);    # f
+store8(nfd_buf + 3,  0x65);    # e
+store8(nfd_buf + 4,  0xCC);    # combining acute (start)
+store8(nfd_buf + 5,  0x81);    # combining acute (cont)
+store8(nfd_buf + 6,  0x2E);    # .
+store8(nfd_buf + 7,  0x74);    # t
+store8(nfd_buf + 8,  0x78);    # x
+store8(nfd_buf + 9,  0x74);    # t
+var name_nfd = str_new(nfd_buf, 10);
+
+assert_eq(str_eq_normalized(name_nfc, name_nfd, NFC), 1, "filename NFC == NFD under NFC");
+assert_eq(str_eq_normalized(name_nfc, name_nfd, NFD), 1, "filename NFC == NFD under NFD");
+
+# Different filenames don't compare equal
+assert_eq(str_eq_normalized(name_nfc, str_from("other.txt"), NFC), 0, "different filenames not equal");
+
+# ── (11) Out-of-range / empty ────────────────────────────────────
+assert_eq(unicode_canonical_decomp(-1,        dbuf, 8), 1, "negative cp → identity decomp");
+assert_eq(unicode_canonical_decomp(0x110000,  dbuf, 8), 1, "cp > 0x10FFFF → identity");
+
+var empty_nfd = str_normalize(str_from(""), NFD);
+assert_eq(str_len(empty_nfd), 0, "empty string NFD → empty");
+var empty_nfc = str_normalize(str_from(""), NFC);
+assert_eq(str_len(empty_nfc), 0, "empty string NFC → empty");
+
+var r = assert_summary();

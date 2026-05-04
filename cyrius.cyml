@@ -49,6 +49,7 @@ stdlib = [
     "json",
     "unicode/_decode", "unicode/categories", "unicode/_categories_data",
     "unicode/casefold", "unicode/_casefold_data",
+    "unicode/normalize", "unicode/_normalize_data",
 ]
 
 [deps.sakshi]
