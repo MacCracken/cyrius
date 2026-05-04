@@ -1786,9 +1786,9 @@ hand-roll incompletely.
   install pipeline rebuild discipline), let emit-fn parity be its
   own .54 slot, cascade remaining items.
 
-- **v5.8.54** — aarch64 emit-fn parity (cross-arch propagation
-  follow-up to v5.8.53). Three latent gaps from
-  `cat src/main_aarch64.cyr | build/cc5` warnings:
+- **v5.8.54** ✅ SHIPPED 2026-05-04 — aarch64 emit-fn parity
+  (cross-arch propagation follow-up to v5.8.53). Three latent gaps
+  from `cat src/main_aarch64.cyr | build/cc5` warnings:
 
   - **`EFLADDR(S, lli)` + `EFLADDR_X1(S, lli)`** in
     `src/backend/aarch64/emit.cyr`. x86 versions live at

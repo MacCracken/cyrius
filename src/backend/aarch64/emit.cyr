@@ -81,6 +81,25 @@ fn EGETTICKS_PE(S) {
     return 0;
 }
 
+# v5.8.54 — completing the PE-shim cohort. Same justification as
+# EWRITE_PE / EGETTICKS_PE above: parse_expr.cyr (lines ~564-590)
+# emits these unconditionally inside its `if (_TARGET_PE == 1)`
+# branch — Win64 syscall reroutes for read/open/close/lseek/mmap.
+# `_TARGET_PE` is always 0 on aarch64 so the branch is statically
+# dead at runtime, but cc5's symbol resolution still requires the
+# fns to exist at compile time. Pre-v5.8.54 only EWRITE_PE +
+# EGETTICKS_PE had stubs here — the others (read/open/close/lseek/
+# mmap) were defined ONLY in `src/backend/x86/emit.cyr`, surfacing
+# as five "undefined function ... (will crash at runtime)" cc5
+# warnings on every aarch64 cross-build. Latent issue (dead branches
+# never executed) but exactly the kind of half-fix the user has
+# called out — landing the cohort closes the symmetry gap.
+fn EREAD_PE(S)   { return 0; }
+fn EOPEN_PE(S)   { return 0; }
+fn ECLOSE_PE(S)  { return 0; }
+fn ELSEEK_PE(S)  { return 0; }
+fn EMMAP_PE(S)   { return 0; }
+
 # Marker that the aarch64 backend is present in this compiler binary.
 # Checked by EMITMACHO_ARM64 to refuse Mach-O ARM output when accidentally
 # invoked through the x86 backend (which would emit x86 code inside an
@@ -837,6 +856,63 @@ fn EFLSTORE(S, idx) {
     }
     _EFP_ADDR_X9(S, disp);
     EW(S, 0xF9000120);  # str x0, [x9]
+    return 0;
+}
+
+# v5.8.54 — frame-local-address pair, peer of x86's EFLADDR / EFLADDR_X1
+# (`src/backend/x86/emit.cyr:1391` / `:1373`). Compute the address of
+# local slot `lli` into x0 (EFLADDR) or x1 (EFLADDR_X1) for caller code
+# that needs an &local — struct-field LEA, hidden retbuf-arg push,
+# slice canonical-slot init via `slice_set` / `slice_ptr`. Pre-v5.8.54
+# these were defined in x86/emit.cyr only; parse_decl.cyr (lines 127,
+# 236, 301, 355, 931, 1019, 1060) and parse_expr.cyr:234 call them
+# unconditionally — the aarch64 cross-build emitted "undefined function"
+# warnings + "will crash at runtime" errors. sit v0.7.2 release flow
+# never hit them (sit's source doesn't trip the parser paths that emit
+# these); the cross-build was building a binary that would have SIGILL'd
+# on the first struct-field-load or slice-init had any consumer reached
+# them on aarch64. Latent bug, not active regression — surfaced when
+# v5.8.53's install-pipeline fix cleared the noise from the cross-build
+# warnings.
+#
+# **Asymmetry to flag**: x86's EFLADDR formula adjusts disp for
+# `_cur_fn_regalloc * 8` (callee-saved register save slots) and
+# `_cur_fn_ret_stash` (hidden retbuf alignment). aarch64's existing
+# EFLLOAD / EFLSTORE / ESTOREPARM don't apply these adjustments —
+# aarch64 doesn't currently stash callee-saved x19-x28 to the frame,
+# and its multi-return path uses x0+x2 register-pair return rather
+# than a stack-allocated retbuf with hidden first-arg.
+# EFLADDR / EFLADDR_X1 below mirror the existing aarch64 formula
+# (`disp = -((lli+1)*8)`, no adjustments) for consistency. **If a
+# future slot adds callee-saved register stashing on aarch64**, this
+# pair must update in lockstep with EFLLOAD / EFLSTORE — they're a
+# coupled set; fixing one without the others silently corrupts
+# locals.
+fn EFLADDR(S, lli) {
+    var disp = (lli + 1) * 8;     # positive magnitude — locals below x29
+    if (disp <= 4095) {
+        # sub x0, x29, #disp (imm12, no shift)
+        EW(S, 0xD10003A0 | (disp << 10));
+        return 0;
+    }
+    # Fallback — disp >= 4096. Synthesize via x9 scratch then sub.
+    # cyrius functions with > 511 locals are implausible (would need
+    # 4096 / 8 = 512 frame slots before hitting this), but the path
+    # exists for safety.
+    _EFP_ADDR_X9(S, 0 - disp);   # x9 = x29 - disp
+    EW(S, 0xAA0903E0);           # mov x0, x9
+    return 0;
+}
+
+fn EFLADDR_X1(S, lli) {
+    var disp = (lli + 1) * 8;
+    if (disp <= 4095) {
+        # sub x1, x29, #disp (imm12, no shift)
+        EW(S, 0xD10003A1 | (disp << 10));
+        return 0;
+    }
+    _EFP_ADDR_X9(S, 0 - disp);   # x9 = x29 - disp
+    EW(S, 0xAA0903E1);           # mov x1, x9
     return 0;
 }
 

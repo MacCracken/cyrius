@@ -6,6 +6,153 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.54] — 2026-05-04
+
+**v5.8.x slot 54 — aarch64 emit-fn parity (cross-arch propagation
+follow-up)**. Sixteenth slot of Phase 3. Closes the symbol-resolution
+gaps surfaced by v5.8.53's install-pipeline fix once the cc5_aarch64
+cross-build was actually being regenerated on every patch and its
+warnings became visible.
+
+cc5: **741,040 B → 741,120 B** (+80 B for the EFLADDR / EFLADDR_X1
++ 5 PE stubs in aarch64/emit.cyr + the syscall arity-skip extension
+in parse_expr.cyr). cc5_aarch64: **438,960 B → 439,904 B** (+944 B
+— same source change, but the aarch64 backend now actually carries
+the 7 new emit fns instead of declaring them undefined).
+
+### Background
+
+v5.8.53 patched `install.sh --refresh-only` to detect-stale-and-
+rebuild every `[release].bins` + `[release].cross_bins` target,
+with stderr surfaced (no more `2>/dev/null`). The fresh
+`cat src/main_aarch64.cyr | build/cc5` run that landed in v5.8.53
+emitted, in addition to the cap-fix unblock:
+
+```
+warning:src/backend/aarch64/fixup.cyr:19: syscall arity mismatch
+warning: undefined function 'EFLADDR'
+warning: undefined function 'EREAD_PE'
+warning: undefined function 'EOPEN_PE'
+warning: undefined function 'ECLOSE_PE'
+warning: undefined function 'ELSEEK_PE'
+warning: undefined function 'EMMAP_PE'
+warning: undefined function 'EFLADDR_X1'
+error: undefined function 'EFLADDR' (will crash at runtime)
+[+ 6 more matching errors]
+```
+
+Latent gaps. None were sit v0.7.2-blocking (sit's source doesn't
+trip the parser paths that emit `EFLADDR` / `EFLADDR_X1`), and the
+PE shims are dead at runtime on aarch64 (gated behind
+`if (_TARGET_PE == 1)`). But the cross-built binary would have
+SIGILL'd on the first struct-field-load or slice-init had any
+consumer reached those paths on aarch64. Per the pinned cross-arch
+propagation rule (`feedback_cross_arch_propagation_mandatory`),
+landing the cohort fix is its own slot.
+
+### What shipped
+
+**`src/backend/aarch64/emit.cyr`** — three additions:
+
+1. **`EFLADDR(S, lli)` + `EFLADDR_X1(S, lli)`** — peer of x86's
+   `src/backend/x86/emit.cyr:1391` / `:1373`. Compute the address
+   of frame-local slot `lli` into x0 (EFLADDR) or x1 (EFLADDR_X1).
+   Encoding: `sub x0, x29, #imm12` / `sub x1, x29, #imm12` for
+   imm12-fittable disps; fallback via `_EFP_ADDR_X9 + mov x0, x9`
+   for disps ≥ 4096 (cyrius functions with > 511 frame slots are
+   implausible but the path exists for safety).
+
+   **Asymmetry intentionally documented**: x86's EFLADDR adjusts
+   disp for `_cur_fn_regalloc * 8` + `_cur_fn_ret_stash`; aarch64
+   does not (its existing `EFLLOAD` / `EFLSTORE` / `ESTOREPARM`
+   don't apply these adjustments either — aarch64 doesn't currently
+   stash callee-saved x19-x28 to the frame, and its multi-return
+   path uses x0+x2 register-pair return rather than stack-allocated
+   retbuf with hidden first-arg). Header comment flags the coupling:
+   if a future slot adds callee-saved register stashing on aarch64,
+   EFLADDR / EFLADDR_X1 must update in lockstep with the rest of
+   the frame-pointer addressing helpers — they're a coupled set.
+
+2. **PE-shim cohort completion** — `EREAD_PE` / `EOPEN_PE` /
+   `ECLOSE_PE` / `ELSEEK_PE` / `EMMAP_PE` no-op stubs. Pre-v5.8.54
+   only `EWRITE_PE` (v5.4.7) and `EGETTICKS_PE` (v5.6.6) had aarch64
+   stubs; the other five remained x86-only. Same rationale as the
+   existing two: `_TARGET_PE` is always 0 on aarch64, so the
+   `if (_TARGET_PE == 1)` branches in `parse_expr.cyr:564-590` are
+   statically dead at runtime — but cc5's symbol resolution still
+   requires the fns to exist at compile time.
+
+**`src/frontend/parse_expr.cyr`** — one addition to the syscall-
+arity-skip table at line 663:
+
+```cyr
+if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+```
+
+Same shape as the existing `sc_num == 2` skip (open vs openat
+across x86/aarch64). Linux x86_64 `SYS_SETUID = 113` (1 user arg);
+Linux aarch64 `SYS_CLOCK_GETTIME = 113` (2 user args:
+`clock_id` + `timespec_ptr`). `src/backend/aarch64/fixup.cyr`'s
+`_prof_clock_ns()` helper calls `syscall(113, 1, &ts)` (3
+cyrius-args, got=2) inside a `#ifdef CYRIUS_TARGET_LINUX` block.
+Pre-fix this fired the arity warning on every aarch64 cross-build
+because `_SC_ARITY` is the x86_64 table and it sees got=2 vs
+expect=1. setuid is never legitimately called with 2 user args, so
+the structural match is unambiguous.
+
+### Verified
+
+**x86_64 Linux** (local):
+- `scripts/check.sh`: 65/65 named gates green; 0 failures.
+- Self-host: cc5 == cc5b byte-identical at 741,120 B.
+- aarch64 cross-build (`cat src/main_aarch64.cyr | build/cc5`):
+  **0 warnings, 0 errors** (was 8 before this slot).
+- cc5_aarch64 grew 438,960 → 439,904 B as expected from the
+  added emit fns.
+
+**aarch64 Linux** (`pi`, agnosarm.local) — verified via two paths:
+- Existing `regression-aarch64-native-selfhost.sh` gate in check.sh:
+  PASS — native cc5 self-hosts byte-identical on Pi.
+- Hand-crafted EFLADDR exercise: cyrius program with stack-local
+  `var local_buf[24]` + `&local_buf` passed as fn arg, fn body does
+  `load64(p + 0/8/16)` and sums (10+20+12=42), then exits. Built
+  via cc5_aarch64, scp'd to pi, executed: exit code 42 ✓ (the new
+  EFLADDR emits correct `sub x0, x29, #disp` for the local
+  address-take).
+
+**macOS aarch64** (`ecb`, Apple Silicon Darwin) — verified via
+`regression-macho-exit.sh` in check.sh: PASS — Mach-O arm64
+syscall(60,42) → exit 42 on ecb (pin v5.6.33). The new EFLADDR
+encodings are arm64-shape, not Linux-specific; the macOS gate
+runs through the same backend code path.
+
+**Windows** (`cass`, PowerShell) — verified via
+`regression-pe-exit.sh` in check.sh: PASS — PE syscall(60,42) →
+exit 42 on cass (pin v5.6.36). The PE-shim stubs added are no-ops
+on aarch64; x86 PE codegen is unchanged. cass confirms zero
+regression on the Windows path.
+
+All three SSH-wired verification hosts (pi / ecb / cass) green —
+the cross-arch propagation rule from the v5.8.53 retro is honored
+in this slot.
+
+### Cycle wind-down (unchanged)
+
+v5.8.55 (audit/refactor) → .56 (deps/release-valve) → .57 (str_data
+heap bump) → .58 (NFKC/NFKD) → .59 (closeout). User-approved buffer
+through v5.8.60.
+
+### Acceptance gates
+
+- `scripts/check.sh`: **65 passed, 0 failed** (named gates).
+- Self-host: cc5 == cc5b byte-identical at 741,120 B.
+- `cc5 --version` reports `cc5 5.8.54`.
+- `cat src/main_aarch64.cyr | build/cc5` emits zero warnings or
+  errors (was 8 at v5.8.53 ship).
+- aarch64 binary built via cc5_aarch64 + EFLADDR exercise runs
+  correctly on pi (exit 42).
+- Mach-O arm64 + PE Windows gates pass on ecb + cass.
+
 ## [5.8.53] — 2026-05-04
 
 **v5.8.x slot 53 — aarch64 cross-compiler staleness unblock +

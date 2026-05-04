@@ -660,6 +660,17 @@ fn PARSE_FACTOR(S) {
                     # match is unambiguous.
                     var skip_warn = 0;
                     if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
+                    # v5.8.54: same cross-arch number-reuse pattern as
+                    # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
+                    # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
+                    # args: clock_id + timespec_ptr — `syscall(113, 1,
+                    # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
+                    # Surfaced by `src/backend/aarch64/fixup.cyr`'s
+                    # `_prof_clock_ns()` helper; warning fired on every
+                    # aarch64 cross-build. setuid is never legitimately
+                    # called with 2 user args, so the structural match
+                    # is unambiguous (same logic as the SYS_OPEN skip).
+                    if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
                     if (skip_warn == 0) {
                         WARN(S, "syscall arity mismatch", 22);
                     }
