@@ -1704,9 +1704,119 @@ hand-roll incompletely.
     corpus refresh is a single `python scripts/gen-unicode-data.py`
     invocation.
 
-### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.57, with .58-.60 buffer)
+### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.59, with .60 buffer)
 
-- **v5.8.53** — Cascaded v5.8.48 refactor work +
+- **v5.8.53** ✅ SHIPPED 2026-05-04 — aarch64 cross-compiler
+  staleness unblock + install pipeline rebuild discipline.
+  Single-purpose unblock slot triggered by sit v0.7.2 release flow
+  surfacing a v5.8.46 token-cap miss on aarch64 cross-build.
+
+  Root cause was NOT a source-code propagation gap — `src/main_aarch64.cyr`
+  already had the v5.8.46 layout (`0x368C000` / `0x3E8C000` / `0x468C000`,
+  brk to `0x4E8C000`) and `src/frontend/lex.cyr`'s cap check was
+  already raised (`tc >= 1048576`). The gap was in the **install
+  pipeline**: `scripts/install.sh --refresh-only` (invoked by
+  `scripts/version-bump.sh` on every patch) only `cp`'d
+  `build/<bin>` into the per-version snapshot — it never rebuilt.
+  `build/cc5_aarch64` is gitignored (dev-local, never tracked) and
+  was last rebuilt before v5.8.46. So every version-bump from .46
+  through .52 silently copied the same stale 438896 B aarch64
+  cross-compiler forward, with the pre-cap-raise codegen baked in.
+
+  Delivered:
+  - `build/cc5_aarch64` rebuilt from current source — 438960 B,
+    new error format `"token limit exceeded: needed N, cap is 1048576"`
+    (was: `"token limit exceeded (262144)"` — the smoking-gun
+    string sit's release flow caught).
+  - `scripts/install.sh --refresh-only` patched to detect-stale-and-
+    rebuild for each `[release].bins` + `[release].cross_bins`
+    target. Source-mapping rules: `cyrius` ← `cbt/cyrius.cyr`;
+    `cc5_aarch64` ← `src/main_aarch64.cyr`; `cc5_<arch>` ←
+    `src/main_<arch>.cyr` (future-proof); other `bins` ←
+    `programs/<name>.cyr`. Staleness defined as missing binary or
+    source mtime newer than binary mtime. `cc5` itself is
+    seed-bootstrapped, never rebuilt by `--refresh-only`.
+  - Silent error suppression dropped from BOTH `--refresh-only`
+    rebuilds AND the bootstrap-from-source path (`2>/dev/null`
+    + `|| true` was hiding cc5 warnings AND build failures; the
+    downstream `cp` step's `[ -x build/$bin ]` check then silently
+    dropped missing artifacts). Now: stderr captured to a tempfile,
+    surfaced as warnings on success, surfaced + binary deleted on
+    failure. `cc5`'s "note: N unreachable fns" diagnostic is now
+    visible (it's expected, not a bug).
+  - `dlopen-helper` rebuild added to `--refresh-only` (was only
+    rebuilt by full install). Same shape of bug — host libc
+    upgrade between version-bumps would leave the snapshot
+    stale.
+  - cc5 unchanged at 741040 B (no compiler change).
+
+  Verified:
+  - x86_64 Linux: `scripts/check.sh` 65/65 named gates green;
+    self-host cc5 == cc5b byte-identical at 741040 B.
+  - aarch64 Linux (`pi`, agnosarm.local): native self-host gate
+    in check.sh passes; minimal cross-built smoke binary scp'd to
+    pi runs correctly (prints + exits 42).
+  - sit v0.7.2 cross-build via `cyrius build --aarch64`: the
+    token-cap error is gone. (sit's release still hits a SECOND
+    aarch64 issue downstream — its `lib/agnosys.cyr` is pinned to
+    agnosys 1.0.0 which references `SYS_OPEN` unconditionally;
+    aarch64 Linux uses `SYS_OPENAT`. agnosys 1.0.4 fixed this with
+    `#ifdef CYRIUS_ARCH_X86` gating. **Sit needs an agnosys pin
+    bump to ≥1.0.4** to clear this; not a cyrius-side regression.)
+
+  Out of scope (deferred to v5.8.54):
+  - aarch64 emit-fn parity gaps — `EFLADDR`, `EFLADDR_X1`,
+    `EREAD_PE`, `EOPEN_PE`, `ECLOSE_PE`, `ELSEEK_PE`, `EMMAP_PE`
+    are defined in `src/backend/x86/emit.cyr` only. cc5 emits
+    "undefined function" warnings on every aarch64 cross-build.
+    The PE shims are dead at runtime on aarch64 (gated behind
+    `_TARGET_PE == 1`); EFLADDR/EFLADDR_X1 are called
+    unconditionally and would crash if reached. Latent issue,
+    not sit-blocking — gets its own slot.
+  - `aarch64/fixup.cyr:19` syscall arity warning (3-arg `syscall`
+    on macOS clock_gettime branch). Likely benign lint, confirm
+    or fix in v5.8.54.
+  - install.sh P2 audit findings (cosmetic): refresh-only
+    `pwd == repo root` defensive check; `cp -L` symlink-cycle
+    risk (already CLAUDE.md-mitigated).
+
+  Filed at v5.8.52 ship 2026-05-04; surfaced by sit v0.7.2 release
+  process when its `cyrius build --aarch64` hit the pre-cap error
+  format. User direction: tight-scope this slot (cap unblock +
+  install pipeline rebuild discipline), let emit-fn parity be its
+  own .54 slot, cascade remaining items.
+
+- **v5.8.54** — aarch64 emit-fn parity (cross-arch propagation
+  follow-up to v5.8.53). Three latent gaps from
+  `cat src/main_aarch64.cyr | build/cc5` warnings:
+
+  - **`EFLADDR(S, lli)` + `EFLADDR_X1(S, lli)`** in
+    `src/backend/aarch64/emit.cyr`. x86 versions live at
+    `src/backend/x86/emit.cyr:1391` / `1373` and emit
+    `lea rax, [rbp - disp]` / `lea rcx, [rbp - disp]`. aarch64
+    equivalents: `add x0, x29, #disp` / `add x1, x29, #disp`
+    with proper imm12 range handling and the move-into-temp
+    fallback for out-of-range offsets. Called unconditionally
+    from `parse_decl.cyr` (lines 127, 236, 301, 355, 931, 1019,
+    1060) and `parse_expr.cyr:234` — would crash if hit.
+  - **PE-shim stubs** for `EREAD_PE / EOPEN_PE / ECLOSE_PE /
+    ELSEEK_PE / EMMAP_PE`. Dead at runtime on aarch64 (parser
+    gates with `if (_TARGET_PE == 1)`) but cc5 still flags them
+    as undefined symbols. No-op stubs satisfy the fn table
+    without runtime cost.
+  - **`aarch64/fixup.cyr:19` syscall arity warning** —
+    investigate; fix or annotate.
+
+  Verification: x86 check.sh + aarch64 cross-build with zero
+  "undefined function" warnings + native pi self-host. Per
+  user-pinned cross-arch propagation rule, all three SSH hosts
+  (pi / cass / ecb) get touched even where the change is
+  arch-specific, to confirm zero regression.
+
+  Filed at v5.8.52 ship 2026-05-04. User direction: tight-A-then-B
+  split with v5.8.53 above.
+
+- **v5.8.55** — Cascaded v5.8.48 refactor work +
   closeout-prep audit. Pure refactor slot, sitting
   immediately before closeout per the standard "audit-just-
   before-closeout" structure (audits feed a clean tree into
@@ -1748,7 +1858,7 @@ hand-roll incompletely.
     preferred over folding into the closeout; this slot
     honors that pattern.
 
-- **v5.8.54** — Deps cleanup + release-valve (combined slot).
+- **v5.8.56** — Deps cleanup + release-valve (combined slot).
   Two purposes:
   1. **Deps cleanup** — update `cyrius/cyrius.cyml`
      `[deps.*]` fields to whatever new dep tags the v5.8.x
@@ -1756,10 +1866,11 @@ hand-roll incompletely.
      distfiles via `cyrius distlib` if any dep cut a new
      release. Per user direction 2026-05-03 PM.
   2. **Release-valve** — buffer slot for any issue surfaced
-     by the Unicode 17.0.0 fold (v5.8.49-52) before
-     closeout commits the cycle. Mirrors the v5.7.50 P(-1)
-     unblock pattern from the v5.7.x cycle's end-of-cycle.
-     If Unicode shipped clean and no consumer flagged
+     by the Unicode 17.0.0 fold (v5.8.49-52) or the cross-
+     arch propagation work (v5.8.53-54) before closeout
+     commits the cycle. Mirrors the v5.7.50 P(-1) unblock
+     pattern from the v5.7.x cycle's end-of-cycle. If
+     everything shipped clean and no consumer flagged
      anything, this absorbs housekeeping (stale-comment
      sweep, orphan file cleanup, the small-but-not-urgent
      items deferred from earlier slots). Per user framing:
@@ -1768,10 +1879,10 @@ hand-roll incompletely.
   Note: downstream pin bumps (per-repo `cyrius` field updates
   in mabda / sigil / sakshi / yukti / kybernet / hadara / …)
   are NOT executed in this slot — they happen in each
-  downstream repo's own cycle, against the v5.8.57 release
+  downstream repo's own cycle, against the v5.8.59 release
   tag.
 
-- **v5.8.55** — `str_data` heap-region bump for Unicode
+- **v5.8.57** — `str_data` heap-region bump for Unicode
   compat-only decomposition. Two-step bootstrap slot per
   CLAUDE.md "Two-step bootstrap for heap changes — cc5
   compiles cc5b, cc5==cc5b". Stands alone — no other
@@ -1802,10 +1913,12 @@ hand-roll incompletely.
 
   Filed at v5.8.51 ship 2026-05-04; user-approved cycle
   extension past v5.8.55 closeout pin to absorb this and
-  v5.8.56's NFKC/NFKD ship.
+  v5.8.58's NFKC/NFKD ship. Renumbered v5.8.55 → v5.8.57
+  at v5.8.53 ship to absorb the cross-arch propagation
+  slots (.53 install pipeline + .54 emit-fn parity).
 
-- **v5.8.56** — Unicode 17.0.0 NFKC + NFKD compatibility
-  normalization. Depends on v5.8.55 heap bump. Ships the
+- **v5.8.58** — Unicode 17.0.0 NFKC + NFKD compatibility
+  normalization. Depends on v5.8.57 heap bump. Ships the
   K-forms originally pinned with v5.8.51 but deferred per
   the str_data cap.
 
@@ -1836,11 +1949,12 @@ hand-roll incompletely.
 
   Filed at v5.8.51 ship 2026-05-04.
 
-- **v5.8.57** — Cycle closeout pass. **The cycle backstop
+- **v5.8.59** — Cycle closeout pass. **The cycle backstop
   and the actual final patch of v5.8.x** (extended from
-  v5.8.55 to absorb str_data heap bump + K-forms). Per
-  CLAUDE.md "Closeout Pass" (11-step protocol —
-  mechanical first, judgment-call passes, doc sync):
+  v5.8.55 to absorb str_data heap bump + K-forms + the
+  cross-arch propagation slots). Per CLAUDE.md "Closeout
+  Pass" (11-step protocol — mechanical first, judgment-call
+  passes, doc sync):
 
   §1-3 **Mechanical (fast-fail):**
   - Self-host verify (cc5 == cc5b byte-identical)
@@ -1849,9 +1963,9 @@ hand-roll incompletely.
   - Full check.sh — all gates green; record the test count
     (grew from 65 at v5.8.48; expected to reach ~70+ with
     Unicode tcyrs including the v5.8.52 conformance harness
-    and the v5.8.56 K-form additions)
+    and the v5.8.58 K-form additions)
 
-  §4-8 **Judgment (cross-check, since v5.8.53 already did
+  §4-8 **Judgment (cross-check, since v5.8.55 already did
   the deep passes):**
   - §4 Heap-map audit (re-verify Unicode-table regions
     documented in heap map — Unicode normalize +
@@ -1876,14 +1990,14 @@ hand-roll incompletely.
     repo behind on bumps for the consumer to catch up)
 
   §11 **Docs sync (silent-rot prevention):**
-  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.57
+  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.59
     state
   - **Vidya per-minor refresh** — `language.cyml` (Unicode
     APIs new entries), `field_notes/compiler.cyml` /
     `field_notes/language.cyml` (cycle gotchas),
     `implementation.cyml` / `types.cyml` (heap map +
     structural changes), `dependencies.cyml` /
-    `ecosystem.cyml` (dep refresh from .54)
+    `ecosystem.cyml` (dep refresh from .56)
   - Cross-check version refs in vidya match VERSION file
   - Migrate completed v5.8.* slot narratives from roadmap
     into `docs/development/completed-phases.md`
@@ -1892,11 +2006,13 @@ hand-roll incompletely.
   completed-phases.md migration of all v5.8.* sections; cc5
   byte-identical; no new warnings.
 
-  **Cycle backstop hard at v5.8.57** (was v5.8.51 pre-
+  **Cycle backstop hard at v5.8.59** (was v5.8.51 pre-
   Unicode-pin → extended to v5.8.55 on 2026-05-03 PM →
   extended to v5.8.57 on 2026-05-04 to absorb the v5.8.51-
-  deferred str_data heap bump (.55) + NFKC/NFKD ship
-  (.56)). User-approved buffer through v5.8.60 for any
+  deferred str_data heap bump + NFKC/NFKD ship → extended
+  to v5.8.59 on 2026-05-04 PM to absorb the cross-arch
+  propagation slots .53 (install pipeline) + .54 (emit-fn
+  parity)). User-approved buffer through v5.8.60 for any
   further late surprises ("ok to slip past .55 — .60 is
   needed").
 

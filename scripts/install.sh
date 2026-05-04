@@ -96,6 +96,82 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     _R_CROSS=$(_parse_release_array cross_bins)
     _R_SCRIPTS=$(_parse_release_array scripts)
 
+    # v5.8.53: rebuild stale build/<bin> from source before copying.
+    # Pre-fix, --refresh-only only `cp`'d existing build/<bin> into the
+    # snapshot — so a stale binary (gitignored, dev-local) propagated
+    # forever. Symptom: cc5_aarch64 froze at 438896 B from v5.8.46
+    # through v5.8.52 because `build/cc5_aarch64` was last rebuilt
+    # before the v5.8.46 token-cap raise; sit v0.7.2 release flow hit
+    # the old 262144 cap on aarch64 cross-build six version-bumps
+    # later. The version-bump.sh post-hook calls --refresh-only on
+    # every patch; if rebuild is the contract, the contract has to
+    # actually rebuild.
+    #
+    # Source-mapping rules:
+    #   - bins entry "cc5"     → seed-bootstrapped, NOT rebuilt here.
+    #   - bins entry "cyrius"  → cbt/cyrius.cyr
+    #   - bins entry <other>   → programs/<name>.cyr (cyrlint, cyrfmt, ark, …)
+    #   - cross_bins "cc5_aarch64" → src/main_aarch64.cyr
+    #   - cross_bins <other>      → src/main_<arch>.cyr (future-proof)
+    #
+    # Staleness rule: rebuild if binary is missing OR source mtime is
+    # newer than binary mtime (`-nt`). Errors are surfaced (no
+    # `2>/dev/null` swallow) — if cc5 emits warnings we want them
+    # visible so the next stale-binary trap doesn't take six bumps
+    # to discover.
+    _rebuild_stale() {
+        local target="$1"
+        local source="$2"
+        [ -f "$source" ] || return 0
+        if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ]; then
+            return 0
+        fi
+        if [ ! -x "build/cc5" ]; then
+            warn "build/cc5 missing — cannot rebuild $target from $source; falling back to existing binary"
+            return 1
+        fi
+        local err_log
+        err_log=$(mktemp)
+        if cat "$source" | ./build/cc5 > "build/$target" 2>"$err_log"; then
+            chmod +x "build/$target"
+            info "rebuilt $target from $source"
+            if [ -s "$err_log" ]; then
+                # cc5 emitted warnings/notes. Don't fail — these are
+                # commonly the "note: N unreachable fns" diagnostic and
+                # cross-arch latent-fn warnings (see v5.8.54 EFLADDR/PE
+                # parity slot). Surface them so they don't rot silently.
+                sed 's/^/    /' "$err_log" >&2
+            fi
+            rm -f "$err_log"
+            return 0
+        else
+            warn "rebuild of $target from $source failed:"
+            sed 's/^/    /' "$err_log" >&2
+            rm -f "$err_log"
+            rm -f "build/$target"
+            return 1
+        fi
+    }
+
+    for bin in $_R_BINS; do
+        case "$bin" in
+            cc5)    : ;;  # seed-bootstrapped, never rebuilt by --refresh-only
+            cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" ;;
+            *)      _rebuild_stale "$bin"    "programs/${bin}.cyr" ;;
+        esac
+    done
+    for cbin in $_R_CROSS; do
+        case "$cbin" in
+            cc5_aarch64) _rebuild_stale "cc5_aarch64" "src/main_aarch64.cyr" ;;
+            cc5_*)
+                # Convention: cc5_<arch> ← src/main_<arch>.cyr
+                _arch="${cbin#cc5_}"
+                _rebuild_stale "$cbin" "src/main_${_arch}.cyr"
+                ;;
+            *) warn "unknown cross_bins entry '$cbin' — no rebuild rule, will copy existing build/$cbin if present" ;;
+        esac
+    done
+
     _refreshed=0
     for bin in $_R_BINS $_R_CROSS; do
         if [ -x "build/$bin" ]; then
@@ -104,6 +180,29 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         fi
     done
     [ -f bootstrap/asm ] && cp bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin/"
+
+    # v5.8.53: also rebuild dlopen-helper from C source. Pre-fix, the
+    # full-install path (lines below) compiled the helper but
+    # --refresh-only skipped it entirely — so a host libc upgrade
+    # between two version-bump.sh invocations would leave the snapshot
+    # with a stale helper. Same shape as the cross-compiler trap.
+    if [ -f "programs/dlopen-helper.c" ]; then
+        if command -v cc > /dev/null 2>&1; then _CC=cc
+        elif command -v gcc > /dev/null 2>&1; then _CC=gcc
+        else _CC=""
+        fi
+        if [ -n "$_CC" ]; then
+            if "$_CC" -O2 -fPIE -pie -o "$CYRIUS_HOME/dlopen-helper" \
+                programs/dlopen-helper.c -ldl 2>/tmp/dlopen_err_$$; then
+                info "dlopen-helper rebuilt"
+            else
+                warn "dlopen-helper rebuild failed:"
+                sed 's/^/    /' /tmp/dlopen_err_$$ >&2
+            fi
+            rm -f /tmp/dlopen_err_$$
+            cp programs/dlopen-helper.c "$CYRIUS_HOME/versions/$VERSION/bin/dlopen-helper.c"
+        fi
+    fi
 
     for script in $_R_SCRIPTS; do
         if [ -f "scripts/$script" ]; then
@@ -243,25 +342,47 @@ if [ "$installed" -eq 0 ]; then
     # Build tools from cyrius.cyml [release].bins + cross_bins
     # (single source of truth introduced at v5.4.18). cyrius itself is
     # special-cased below because its source lives in cbt/, not programs/.
+    #
+    # v5.8.53: stderr no longer suppressed via `2>/dev/null` and the
+    # `|| true` shell trick is gone. Pre-fix, a build failure produced
+    # no diagnostic and the downstream `cp` step silently dropped the
+    # missing artifact — exactly the trap that froze cc5_aarch64 from
+    # v5.8.46 → v5.8.52. Now: capture stderr to a tempfile, surface
+    # warnings/notes (cc5 emits a "note: N unreachable fns" diagnostic
+    # that's normal), and warn loudly if the build itself fails.
+    _build_tool() {
+        local target="$1"
+        local source="$2"
+        local err_log
+        err_log=$(mktemp)
+        if cat "$source" | ./build/cc5 > "./build/$target" 2>"$err_log"; then
+            chmod +x "./build/$target"
+            if [ -s "$err_log" ]; then sed 's/^/    /' "$err_log" >&2; fi
+            rm -f "$err_log"
+        else
+            warn "failed to build $target from $source:"
+            sed 's/^/    /' "$err_log" >&2
+            rm -f "$err_log"
+            rm -f "./build/$target"
+        fi
+    }
+
     _BINS=$(_parse_release_array bins)
     _CROSS_BINS=$(_parse_release_array cross_bins)
     for tool in $_BINS; do
         if [ "$tool" = "cc5" ] || [ "$tool" = "cyrius" ]; then continue; fi
         if [ -f "programs/${tool}.cyr" ]; then
-            cat "programs/${tool}.cyr" | ./build/cc5 > "./build/${tool}" 2>/dev/null && \
-                chmod +x "./build/${tool}" || true
+            _build_tool "$tool" "programs/${tool}.cyr"
         fi
     done
     # cyrius build tool (lives in cbt/cyrius.cyr, not programs/)
     if [ -f cbt/cyrius.cyr ]; then
-        cat cbt/cyrius.cyr | ./build/cc5 > ./build/cyrius 2>/dev/null && \
-            chmod +x ./build/cyrius || true
+        _build_tool "cyrius" "cbt/cyrius.cyr"
     fi
 
     # Cross-compiler(s)
     if [ -f src/main_aarch64.cyr ]; then
-        cat src/main_aarch64.cyr | ./build/cc5 > ./build/cc5_aarch64 2>/dev/null && \
-            chmod +x ./build/cc5_aarch64 || true
+        _build_tool "cc5_aarch64" "src/main_aarch64.cyr"
     fi
 
     # Copy binaries

@@ -6,6 +6,171 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.53] — 2026-05-04
+
+**v5.8.x slot 53 — aarch64 cross-compiler staleness unblock +
+install pipeline rebuild discipline**. Single-purpose unblock slot
+triggered by sit v0.7.2 release flow surfacing a v5.8.46 token-cap
+miss on aarch64 cross-build. Fifteenth slot of Phase 3.
+
+cc5: **741,040 B unchanged** (no compiler change — install pipeline
+fix + cross-compiler binary regen).
+
+### Root cause (NOT what it looked like)
+
+User-facing symptom: sit v0.7.2's `cyrius build --aarch64` failed
+with `error: token limit exceeded (262144)` — the **pre-v5.8.46
+error format**. v5.8.46 raised the token-table cap 262144 →
+1048576, relocated the token arrays to the post-fixup_tbl block at
+`0x368C000 / 0x3E8C000 / 0x468C000`, and extended brk to
+`0x4E8C000`. cc5 grew ~700 KB → 741 KB to absorb the change.
+`cc5_aarch64` stayed byte-identical at **438896 B across v5.8.46,
+v5.8.48, v5.8.51, v5.8.52** — six bumps later, the cross-compiler
+was still emitting the pre-cap-raise codegen.
+
+Initial hypothesis was a source-level propagation gap (cap constants
+or layout offsets missed in `src/main_aarch64.cyr`). **That
+hypothesis was wrong.** Premise-check confirmed:
+
+- `src/main_aarch64.cyr` already had the v5.8.46 layout (lines
+  53-56: `0x368C000 / 0x3E8C000 / 0x468C000`, brk to `0x4E8C000`).
+- `src/frontend/lex.cyr` (shared by x86 and aarch64 cross-compilers)
+  already had the cap raise (`tc >= 1048576`) and the new error
+  format (`needed N, cap is 1048576`).
+- A fresh cross-build (`cat src/main_aarch64.cyr | build/cc5 >
+  build/cc5_aarch64`) produced a 438960 B binary with the new
+  format string baked in.
+
+The gap was in the **install pipeline**, not the source.
+
+### Pipeline gap
+
+`scripts/install.sh --refresh-only` (invoked by
+`scripts/version-bump.sh` on every patch) only `cp`'d
+`build/<bin>` into the per-version snapshot — it never rebuilt
+anything. `build/cc5_aarch64` is gitignored (only `cc3`, `cc5`,
+`cc3-native-aarch64`, `cc5-native-aarch64` are tracked) and was
+last rebuilt by some dev session **before v5.8.46 landed**. Every
+subsequent `version-bump.sh` ran `--refresh-only` which silently
+copied the same stale binary forward into v5.8.46 → v5.8.47 →
+v5.8.48 → … → v5.8.52's install snapshots.
+
+Compounding the trap: the bootstrap-from-source build invocations
+were `cat src/main_aarch64.cyr | ./build/cc5 > ./build/cc5_aarch64
+2>/dev/null && chmod ... || true`. The `2>/dev/null` swallowed
+every cc5 warning AND every build failure; the `|| true` masked
+non-zero exit codes; the downstream `cp` step's `[ -x build/$bin ]`
+check then silently dropped any missing artifact. So a half-failed
+build produced "release artifact missing" with zero diagnostic.
+Same shape of bug as the freeze itself.
+
+### What shipped
+
+**`build/cc5_aarch64` rebuilt** — 438896 B → 438960 B (+64 B,
+mostly the longer error format string). New error format:
+`token limit exceeded: needed N, cap is 1048576` (was: `token limit
+exceeded (262144)`).
+
+**`scripts/install.sh` — `--refresh-only` patched (~80 lines):**
+
+- New `_rebuild_stale(target, source)` helper. Detects staleness
+  (binary missing OR source mtime > binary mtime), rebuilds via
+  `./build/cc5`, captures stderr to a tempfile, surfaces warnings
+  visibly on success, surfaces failure + deletes the (possibly
+  half-written) binary on error.
+- Source-mapping rules for the rebuild loop:
+  - `bins` entry `cc5` → seed-bootstrapped, NOT rebuilt by
+    `--refresh-only` (that's bootstrap.sh's job).
+  - `bins` entry `cyrius` → `cbt/cyrius.cyr`.
+  - `bins` other → `programs/<name>.cyr` (cyrlint, cyrfmt, ark,
+    cyrld, etc.).
+  - `cross_bins` `cc5_aarch64` → `src/main_aarch64.cyr`.
+  - `cross_bins` `cc5_<arch>` → `src/main_<arch>.cyr`
+    (future-proof for any subsequent cross-compiler).
+- `dlopen-helper` rebuild added to `--refresh-only` (was only
+  rebuilt by full install). Same trap shape — host libc upgrade
+  between version-bumps could leave the snapshot's helper stale.
+
+**`scripts/install.sh` — bootstrap-from-source path patched:**
+
+- New `_build_tool(target, source)` helper replacing the inline
+  `cat | cc5 > ... 2>/dev/null && chmod ... || true` pattern.
+  Captures stderr, surfaces warnings on success, surfaces failures
+  loudly with the full stderr content. cc5's `note: N unreachable
+  fns` diagnostic is now visible on every build (it's expected;
+  not a bug). The same trap is now closed in both code paths.
+
+### Verified
+
+- **x86_64 Linux**: `scripts/check.sh` 65/65 named gates green;
+  self-host cc5 == cc5b byte-identical at 741,040 B; all tcyrs pass
+  including the v5.8.52 Unicode regression suite (120,518 asserts
+  across 4 unicode tcyrs).
+- **aarch64 Linux** (`pi`, agnosarm.local): existing
+  `regression-aarch64-native-selfhost.sh` gate passes (already
+  plumbs the SSH host); minimal cross-built smoke binary scp'd to
+  pi runs correctly (prints `aarch64 hello`, exits 42).
+- **sit v0.7.2 cross-build**: `cyrius build --aarch64
+  src/main.cyr` no longer hits the cap. (Sit's release still
+  fails on aarch64 for an UNRELATED downstream issue: sit's
+  `cyrius.cyml` pins `agnosys 1.0.0` which references `SYS_OPEN`
+  unconditionally — broken on aarch64 Linux where the constant
+  doesn't exist (aarch64 uses `SYS_OPENAT`). agnosys 1.0.4 fixed
+  this with `#ifdef CYRIUS_ARCH_X86` gating, which is what cyrius's
+  own stdlib uses. **Sit needs an agnosys pin bump to ≥1.0.4** to
+  clear this — not a cyrius-side regression.)
+
+### Out of scope (deferred to v5.8.54)
+
+aarch64 emit-fn parity gaps surfaced by the cross-build but NOT
+sit-blocking:
+
+- `EFLADDR(S, lli)` / `EFLADDR_X1(S, lli)` defined in
+  `src/backend/x86/emit.cyr:1391` / `1373` only. Called
+  unconditionally from `parse_decl.cyr` (8 sites) and
+  `parse_expr.cyr:234`. Would crash if reached on aarch64. Need
+  parallel implementations using aarch64's frame-pointer
+  addressing (`add x0, x29, #disp` etc.).
+- PE-shim stubs (`EREAD_PE`, `EOPEN_PE`, `ECLOSE_PE`,
+  `ELSEEK_PE`, `EMMAP_PE`) — defined x86-only; dead at runtime
+  on aarch64 (gated behind `_TARGET_PE == 1`) but cc5 flags them
+  as undefined symbols. Need no-op stubs to satisfy the fn table.
+- `aarch64/fixup.cyr:19` syscall arity warning — investigate;
+  fix or annotate as benign lint.
+
+### Cycle wind-down extension
+
+Insertion of v5.8.53 + v5.8.54 cascades the existing wind-down by
+two slots:
+- v5.8.55 = audit/refactor (was .53)
+- v5.8.56 = deps cleanup + release-valve (was .54)
+- v5.8.57 = `str_data` heap bump (was .55)
+- v5.8.58 = NFKC/NFKD ship (was .56)
+- v5.8.59 = closeout (was .57)
+
+Backstop now v5.8.59, still under user-approved v5.8.60 buffer.
+
+### Acceptance gates
+
+- `scripts/check.sh`: **65 passed, 0 failed** (named gates).
+- Self-host: cc5 == cc5b byte-identical at 741,040 B.
+- `cc5 --version` reports `cc5 5.8.53`.
+- `~/.cyrius/versions/5.8.53/bin/cc5_aarch64` is 438,960 B with
+  new error format.
+- Fresh cross-built aarch64 ELF runs correctly on pi.
+
+### Cross-platform scope (honest framing)
+
+This slot's blast radius is the **x86_64 Linux cross-compile
+pipeline**. `install.sh` refuses non-Linux at line 81 (`err
+"unsupported OS: $OS (Cyrius targets Linux only)"`). The patch
+touches the install pipeline (Linux-only by design) and the
+cc5_aarch64 binary (run on x86 to produce aarch64 outputs).
+Neither macOS (`ecb`) nor Windows (`cass`) install paths share
+this code. The genuine cross-platform compiler-side work is
+v5.8.54's emit-fn parity slot, where the SSH triple-host
+verification IS in scope.
+
 ## [5.8.52] — 2026-05-04
 
 **v5.8.x slot 52 — Unicode 17.0.0 regression suite**. Fourteenth slot

@@ -13,9 +13,9 @@
 # version-bump.sh writes ONE file every time and the sources just
 # reference these vars. No regex hunting; no drift.
 
-var _VERSION_STR_CC5         = "cc5 5.8.52\n";
+var _VERSION_STR_CC5         = "cc5 5.8.53\n";
 var _VERSION_LEN_CC5         = 11;
-var _VERSION_STR_CC5_WIN     = "cc5_win 5.8.52\n";
+var _VERSION_STR_CC5_WIN     = "cc5_win 5.8.53\n";
 var _VERSION_LEN_CC5_WIN     = 15;
-var _VERSION_STR_CC5_AARCH64 = "cc5_aarch64 5.8.52\n";
+var _VERSION_STR_CC5_AARCH64 = "cc5_aarch64 5.8.53\n";
 var _VERSION_LEN_CC5_AARCH64 = 19;
