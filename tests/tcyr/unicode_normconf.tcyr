@@ -16,14 +16,18 @@
 # corpus at tests/data/ucd/. The Python predecessor was retired at
 # v5.8.57 in favor of the sovereign cyrius implementation.
 #
-# Per-row conformance check (subset of the UCD test contract — only the
-# canonical forms shipped at v5.8.51):
-#     NFC(c1) == c2       NFD(c1) == c3
-#     NFC(c2) == c2       NFD(c2) == c3
-#     NFC(c3) == c2       NFD(c3) == c3
-# 6 asserts per row × 20034 rows = ~120 K asserts. Cols 4-5 (NFKC/NFKD)
-# parsed but skipped at row time — they start asserting automatically
-# when v5.8.56 ships the K-forms (no source change to this tcyr needed).
+# Per-row conformance check — full UCD contract for all four normal forms:
+#     NFC(c1)  == c2     NFD(c1)  == c3
+#     NFC(c2)  == c2     NFD(c2)  == c3
+#     NFC(c3)  == c2     NFD(c3)  == c3
+#     NFKC(c1) == c4     NFKD(c1) == c5
+#     NFKC(c2) == c4     NFKD(c2) == c5
+#     NFKC(c3) == c4     NFKD(c3) == c5
+#     NFKC(c4) == c4     NFKD(c4) == c5
+#     NFKC(c5) == c4     NFKD(c5) == c5
+# 14 asserts per row × 20034 rows = ~280 K asserts. The K-form asserts
+# (cols 4-5) shipped at v5.8.60 once the str_data heap cap (raised at
+# .59) was sized to fit the compat-decomposition data.
 #
 # CWD assumption: this tcyr opens the corpus at the relative path
 # `tests/data/NormalizationTest.txt`. `scripts/check.sh` (and CI) run
@@ -140,9 +144,13 @@ assert_gt(corpus_len, 0, "read tests/data/NormalizationTest.txt (corpus must exi
 store8(corpus + corpus_len, 0);
 
 # Per-row scratch (reused across iterations to avoid per-row buffer churn).
+# c4/c5 = NFKC/NFKD reference outputs; sized 512 because compat
+# decompositions can expand a single cp to 18 cps (≤72 UTF-8 bytes).
 var c1_buf = alloc(256);
 var c2_buf = alloc(256);
 var c3_buf = alloc(256);
+var c4_buf = alloc(512);
+var c5_buf = alloc(512);
 
 # ── Iterate rows ─────────────────────────────────────────────────────
 
@@ -177,38 +185,57 @@ while (pos < corpus_len) {
     if (first == 35) { continue; }   # '#' comment
 
     # Each conformance row is `c1 ; c2 ; c3 ; c4 ; c5 ; # comment`.
-    # Cols 4-5 are NFKC/NFKD — skipped at parse time per slot scope.
-    # Locate the first three semicolons.
+    # Cols 1-3 are canonical (NFC/NFD reference); cols 4-5 are
+    # compatibility (NFKC/NFKD reference). All five used at v5.8.60+.
     var s1 = 0 - 1;
     var s2 = 0 - 1;
     var s3 = 0 - 1;
+    var s4 = 0 - 1;
+    var s5 = 0 - 1;
     var k = line_start;
     while (k < line_end) {
         if (load8(corpus + k) == 59) {  # ';'
-            if (s1 < 0) { s1 = k; }
-            else { if (s2 < 0) { s2 = k; }
-                   else { if (s3 < 0) { s3 = k; } } }
+            if (s1 < 0)      { s1 = k; }
+            elif (s2 < 0)    { s2 = k; }
+            elif (s3 < 0)    { s3 = k; }
+            elif (s4 < 0)    { s4 = k; }
+            elif (s5 < 0)    { s5 = k; }
         }
         k = k + 1;
     }
-    if (s3 < 0) { continue; }   # Malformed row — defensively skip.
+    if (s5 < 0) { continue; }   # Malformed row — defensively skip.
 
-    # Decode cols 1-3 into UTF-8 buffers.
+    # Decode cols 1-5 into UTF-8 buffers.
     var n1 = _ncf_parse_seq(corpus, line_start, s1, c1_buf);
     var n2 = _ncf_parse_seq(corpus, s1 + 1,     s2, c2_buf);
     var n3 = _ncf_parse_seq(corpus, s2 + 1,     s3, c3_buf);
+    var n4 = _ncf_parse_seq(corpus, s3 + 1,     s4, c4_buf);
+    var n5 = _ncf_parse_seq(corpus, s4 + 1,     s5, c5_buf);
 
     var c1 = str_new(c1_buf, n1);
     var c2 = str_new(c2_buf, n2);
     var c3 = str_new(c3_buf, n3);
+    var c4 = str_new(c4_buf, n4);
+    var c5 = str_new(c5_buf, n5);
 
-    # The 6 canonical-form asserts per UCD's conformance contract.
+    # Canonical-form asserts (UCD conformance contract).
     _ncf_check(str_normalize(c1, NFC), c2, part, row, "NFC(c1)==c2");
     _ncf_check(str_normalize(c2, NFC), c2, part, row, "NFC(c2)==c2");
     _ncf_check(str_normalize(c3, NFC), c2, part, row, "NFC(c3)==c2");
     _ncf_check(str_normalize(c1, NFD), c3, part, row, "NFD(c1)==c3");
     _ncf_check(str_normalize(c2, NFD), c3, part, row, "NFD(c2)==c3");
     _ncf_check(str_normalize(c3, NFD), c3, part, row, "NFD(c3)==c3");
+    # Compatibility-form asserts (UCD conformance contract).
+    _ncf_check(str_normalize(c1, NFKC), c4, part, row, "NFKC(c1)==c4");
+    _ncf_check(str_normalize(c2, NFKC), c4, part, row, "NFKC(c2)==c4");
+    _ncf_check(str_normalize(c3, NFKC), c4, part, row, "NFKC(c3)==c4");
+    _ncf_check(str_normalize(c4, NFKC), c4, part, row, "NFKC(c4)==c4");
+    _ncf_check(str_normalize(c5, NFKC), c4, part, row, "NFKC(c5)==c4");
+    _ncf_check(str_normalize(c1, NFKD), c5, part, row, "NFKD(c1)==c5");
+    _ncf_check(str_normalize(c2, NFKD), c5, part, row, "NFKD(c2)==c5");
+    _ncf_check(str_normalize(c3, NFKD), c5, part, row, "NFKD(c3)==c5");
+    _ncf_check(str_normalize(c4, NFKD), c5, part, row, "NFKD(c4)==c5");
+    _ncf_check(str_normalize(c5, NFKD), c5, part, row, "NFKD(c5)==c5");
 
     row = row + 1;
 }

@@ -6,6 +6,139 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.60] — 2026-05-05
+
+**v5.8.x slot 60 — Unicode 17.0.0 NFKC + NFKD compatibility
+normalization**. Twenty-second slot of Phase 3. Ships the K-forms
+originally pinned with v5.8.51 but deferred per the str_data cap;
+v5.8.59 raised that cap from 256 KB to 2 MB, this slot fills the room.
+
+cc5: **741,128 B unchanged** — no compiler change (pure stdlib + data
+work).
+
+### Background
+
+UAX #15 defines four normal forms — NFC, NFD, NFKC, NFKD. The K-forms
+("compatibility") expand compat-equivalent characters (ligatures,
+full-width / half-width, super/subscript digits, Roman numeral letters,
+Arabic presentation forms) to their base sequences. v5.8.51 shipped
+NFC + NFD only because the compat-decomposition table overflowed the
+256 KB str_data cap. v5.8.59 bumped the cap to 2 MB; this slot ships
+the K-forms.
+
+### Compat data encoding — 2-table split (~87 KB instead of 445 KB)
+
+Initial design used fixed-width 116-char records (cp + count + 18 cps,
+sized to U+FDFA's 18-cp ligature decomposition). 3833 records ×
+116 chars = ~445 KB, matching the v5.8.51 pin's sizing assumption.
+
+Mid-slot pivot to a 2-table split after a tcyr that includes
+`lib/unicode/normalize.cyr` hit the **preprocess_out 2 MB cap**
+(separate from str_data — the expanded-source buffer overflows when
+the data file pushes total includes past 2 MB). The histogram showed
+70% of compat decompositions are 1-cp, so fixed-width padded ~100 chars
+of zeros per record. Switched to:
+
+- **COMPAT_IDX** (sorted, binary-searchable): `(cp u24, data_off u24)`
+  = 12 chars/rec × 3833 records = ~46 KB across 5 pieces.
+- **COMPAT_DATA** (single string, variable-width): `count u8 +
+  cp1..cp_count u24` per record, packed back-to-back. 3833 records ×
+  2 chars (count) + 5613 cps × 6 chars = **41,344 chars** total.
+  Single-string variable (under the 64 KB string-token-encoding length
+  cap; no piece splitting needed).
+
+Total compat data: ~87 KB. Saves ~360 KB vs fixed-width, keeps
+preprocess_out under cap, and the final `lib/unicode/_normalize_data.cyr`
+sits at 156,732 bytes (was 68,265 at v5.8.59).
+
+### Delivered
+
+**`programs/gen_unicode_data.cyr`** (sovereign UCD generator, native
+cyrius — extends v5.8.57's Python-replacement work):
+- `_parse_normalize_ud` now also extracts compat-tagged decomp
+  records (UCD field 5 with `<tag>` prefix). 3833 records.
+- `_emit_compat_data_blob` emits the variable-width DATA blob and
+  populates a parallel `compat_idx_recs` array with the per-record
+  data offsets.
+- `_emit_compat_idx_blob` emits the IDX as 12-char records.
+- `gen_normalize` threads both through to the source emit, splitting
+  IDX into pieces and DATA into a single string.
+
+**`lib/unicode/normalize.cyr`** (public API):
+- New enum variants: `NFKC = 2`, `NFKD = 3`.
+- New public fn `unicode_compat_decomp(cp, out_buf, cap)` — binary
+  searches COMPAT_IDX, indirects into COMPAT_DATA. Hangul handled
+  algorithmically (same as canonical). Falls back to
+  `unicode_canonical_decomp` for cps without explicit compat
+  mapping (UAX #15 §1.3 semantics: compat decomp = compat-or-
+  canonical).
+- New private fn `_uc_decompose_cp_recursive_compat` — same shape as
+  the canonical recursive decomposer but uses `unicode_compat_decomp`
+  at each step. Single recursion handles compat + canonical as one
+  pass (per UAX #15).
+- `str_normalize` dispatch updated: `use_compat = (form in {NFKC,
+  NFKD})` selects the recursive path; `should_compose = (form in
+  {NFC, NFKC})` reuses the canonical composition pass per UAX #15
+  §1.3 (NFKC = compat-decompose then canonical-recompose).
+- Worst-case decomposition expansion bumped to 18x for K-forms
+  (Hangul LVT was 3x for canonical; U+FDFA's 18-cp expansion sets
+  the new ceiling).
+
+**`tests/tcyr/unicode_normalize.tcyr`** (+16 K-form asserts):
+- Ligatures (ﬁ→fi, ﬂ→fl, ﬃ→ffi).
+- Full-width Latin / digits (Ａ→A, １２３→123).
+- Super/subscript digits (²→2, ₅→5).
+- Roman numerals (Ⅷ→VIII).
+- NBSP → SPACE collapse.
+- U+2100 → "a/c" (multi-cp ASCII fraction).
+- NFKD-vs-NFD parity on canonical-only input.
+- NFKC-vs-NFC parity on canonical-only input.
+- K-form idempotency (NFKC-NFKC == NFKC).
+- U+FDFA 33-byte expansion check (longest record in UCD).
+
+**`tests/tcyr/unicode_normconf.tcyr`** (auto-discovered cols 4-5):
+- Per-row asserts extended from 6 (NFC/NFD only) to **16** (adds 10
+  K-form asserts: NFKC for cols 1-5 paired against c4, NFKD for
+  cols 1-5 paired against c5).
+- Total: 16 × 20034 rows + 1 row-count floor = **320,547 asserts**
+  (was 120,207 at v5.8.59 — +200,340 K-form asserts).
+- Per-row scratch added: `c4_buf` + `c5_buf` at 512 bytes each
+  (compat decomp can expand 1 cp to 18 cps ≤ 72 UTF-8 bytes; 512 is
+  >7x headroom).
+
+### Verified
+
+- **Self-host**: cc5 == cc5b byte-identical at 741,128 B (no compiler
+  change — stdlib + data only).
+- **`tests/tcyr/unicode_normconf.tcyr`**: 320,547 PASS (was 120,207
+  at v5.8.59).
+- **`tests/tcyr/unicode_normalize.tcyr`**: 99 PASS (was 83 at .59;
+  +16 K-form asserts).
+- **`scripts/check.sh`: 65/65 named gates green** including the
+  cross-host suite (pi aarch64 native self-host, ecb macOS arm64,
+  cass Windows PE, libssl fdlopen TLS).
+- All other 125 tcyr files PASS unchanged.
+- aarch64 cross-build: `build/cc5_aarch64` rebuilt at 439,880 B
+  (unchanged from v5.8.59).
+
+### Cycle wind-down (cascaded post-ship)
+
+v5.8.61 = heap-map refactor (pinned at v5.8.59 ship for the Option-B
+high-block layout reorg) → v5.8.62 = cycle closeout. Backstop hard at
+v5.8.62.
+
+### Acceptance gates
+
+- Self-host: cc5 == cc5b byte-identical at 741,128 B.
+- `cc5 --version` reports `cc5 5.8.60`.
+- `tests/tcyr/unicode_normconf.tcyr`: 320,547 PASS — every
+  NormalizationTest.txt 5-column row passes for all four normal forms.
+- `scripts/check.sh`: 65/65 named gates green.
+- Cross-host gates green: pi (Linux aarch64), ecb (macOS arm64), cass
+  (Windows PE) — all PASS via existing SSH wiring.
+- Total str_data consumption by the new compat data: ~87 KB (4.4% of
+  the 2 MB cap raised at v5.8.59); preprocess_out room preserved.
+
 ## [5.8.59] — 2026-05-05
 
 **v5.8.x slot 59 — `str_data` heap-region bump for Unicode compat-only
@@ -101,12 +234,13 @@ heap-map refactor pinned for a pre-closeout slot.
   (was 439,904 B at v5.8.58 — same -24 B delta from cap-string
   symmetry); install.sh `--refresh-only` re-snapshots cleanly.
 
-### Cycle wind-down (unchanged)
+### Cycle wind-down (cascaded post-ship)
 
-v5.8.60 = NFKC + NFKD ship (depends on this slot's heap room) → .61 =
-cycle closeout. Heap-map refactor slot pinned forward at user direction
-2026-05-05 to reorganize the gaps left by Option B before closeout (TBD
-slot — likely .60.5 or absorbed into .61). Backstop holds.
+v5.8.60 = NFKC + NFKD ship (depends on this slot's heap room) → **.61 =
+heap-map refactor** (its own dedicated slot per user direction at
+v5.8.59 ship "give it its own release pin and cascade appropriately") →
+.62 = cycle closeout (was .61, cascaded forward by one). Backstop hard
+at v5.8.62.
 
 ### Acceptance gates
 

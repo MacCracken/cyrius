@@ -5,6 +5,28 @@
 
 ## Version
 
+**5.8.60** (shipped 2026-05-05 — **v5.8.x SLOT 60 — Unicode 17.0.0
+NFKC + NFKD compatibility normalization**. Twenty-second slot of
+Phase 3. cc5 unchanged at **741,128 B** — pure stdlib + data work,
+no compiler change. K-forms originally pinned with v5.8.51 deferred
+per the str_data cap; v5.8.59 raised the cap, this slot fills the
+room. Mid-slot pivot from fixed-width 116-char compat encoding (445
+KB) to 2-table split (sorted IDX + variable-width DATA blob, ~87 KB
+total) when fixed-width hit the **preprocess_out 2 MB cap** —
+histogram shows 70% of compat decomps are 1-cp so fixed-width
+padded ~100 chars of zeros per record. `lib/unicode/normalize.cyr`
+gets `NFKC=2` / `NFKD=3` enum variants + new public fn
+`unicode_compat_decomp` + new private fn
+`_uc_decompose_cp_recursive_compat`; `str_normalize` dispatch
+selects compat vs canonical decomp by form, reuses canonical
+composition pass for both NFC + NFKC per UAX #15 §1.3. Test surface
+expanded: `unicode_normalize.tcyr` 83 → 99 asserts (+16 K-form
+unit tests covering ligatures, full-width, super/subscript, Roman
+numerals, NBSP→SPACE, U+FDFA 18-cp ligature); `unicode_normconf.tcyr`
+auto-discovers cols 4-5 of NormalizationTest.txt — 6 asserts/row →
+**16 asserts/row**, **320,547 conformance asserts PASS** (was
+120,207). 65/65 check.sh; cross-host pi/cass/ecb green.)
+
 **5.8.59** (shipped 2026-05-05 — **v5.8.x SLOT 59 — `str_data`
 heap-region bump for Unicode compat-only decomposition**.
 Twenty-first slot of Phase 3. Two-step bootstrap slot per CLAUDE.md
@@ -45,21 +67,18 @@ ABI-shim `programs/dlopen-helper.c`, IDE integrations
 `editors/*.lua` + `editors/*.js`). 120,518 unicode asserts hold
 at the regression floor v5.8.52 set.)
 
-**Cycle wind-down (v5.8.60 → v5.8.61, hard backstop at .61; +
-TBD heap-map refactor slot)**:
-.60 = NFKC + NFKD ship (str_data room unblocked at .59); .61 =
-full cycle closeout. **Heap-map refactor** pinned forward at
-v5.8.59 ship 2026-05-05 per user direction — the Option B high-
-block relocation of str_data left a non-monotonic layout (small
-string buffer above the big IR/fixup/tok regions); a pre-closeout
-slot will reorganize. Slot number TBD: either .60.5 (insertion)
-or absorbed into .61 closeout depending on .60 surface area.
-Backstop history: was .55 pre-Unicode-pin → .57 to absorb
-v5.8.51-deferred heap bump + K-forms → .59 for cross-arch
+**Cycle wind-down (v5.8.61 → v5.8.62, hard backstop at .62)**:
+.61 = **heap-map refactor** (Option-B high-block relocation from .59
+left a non-monotonic layout — small string buffer above the big
+IR/fixup/tok regions; pre-closeout slot reorganizes monotonically,
+absorbs the .46 + .59 gaps, two-step bootstrap audit); .62 = full
+cycle closeout. Backstop history: was .55 pre-Unicode-pin → .57 to
+absorb v5.8.51-deferred heap bump + K-forms → .59 for cross-arch
 propagation slots (.53 install-pipeline + .54 emit-fn parity) →
-**.61** to absorb the audit/dedup/refactor trio at .55-.57 per
-user direction "flatten some runway for all the items"; v5.8.59
-ship absorbed in-cycle (no extension).
+.61 to absorb the audit/dedup/refactor trio at .55-.57 per user
+direction "flatten some runway for all the items" → **.62** at
+v5.8.59 ship 2026-05-05 to absorb the heap-map refactor as its own
+dedicated slot.
 
 **v5.9.0 cycle theme pinned forward** (from v5.8.58 audit
 2026-05-04): **Sovereignty pass — bash-toolchain conversion to

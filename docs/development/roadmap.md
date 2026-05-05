@@ -259,7 +259,7 @@ enabler audit trail.
 
 
 
-## v5.8.x — Optimization + language-vocabulary stabilization (55 pinned slots; cycle backstop hard at .55 — extended from .51 at v5.8.45 ship to absorb Unicode 17.0.0 fold; release-valve slot at .51 absorbs surface-during-deps-update items, Unicode work occupies .52–.55)
+## v5.8.x — Optimization + language-vocabulary stabilization (62 pinned slots; cycle backstop hard at .62 — extended from .51 at v5.8.45 ship to absorb Unicode 17.0.0 fold, then to .55/.57/.59/.61/.62 across the wind-down to absorb cross-arch propagation, audit/dedup/refactor trio, str_data heap bump, NFKC/NFKD K-forms, and the v5.8.61 heap-map refactor; release-valve slot at .51 absorbed surface-during-deps-update items, Unicode work occupied .52–.55, cycle wind-down at .53–.62)
 
 **Theme** (re-scoped 2026-05-01 at v5.8.0 ship): bug-fix /
 optimization minor that ALSO folds forward the language-feature
@@ -1704,7 +1704,7 @@ hand-roll incompletely.
     corpus refresh is a single `python scripts/gen-unicode-data.py`
     invocation.
 
-### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.61)
+### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.62)
 
 - **v5.8.53** ✅ SHIPPED 2026-05-04 — aarch64 cross-compiler
   staleness unblock + install pipeline rebuild discipline.
@@ -2028,7 +2028,7 @@ hand-roll incompletely.
   Note: downstream pin bumps (per-repo `cyrius` field updates
   in mabda / sigil / sakshi / yukti / kybernet / hadara / …)
   are NOT executed in this slot — they happen in each
-  downstream repo's own cycle, against the v5.8.61 release
+  downstream repo's own cycle, against the v5.8.62 release
   tag.
 
 - **v5.8.59** ✅ SHIPPED 2026-05-05 — `str_data` heap-region
@@ -2105,45 +2105,149 @@ hand-roll incompletely.
   insertion); v5.8.57 → v5.8.59 at v5.8.55 ship (audit/
   dedup/refactor trio insertion at .55-.57).
 
-- **v5.8.60** — Unicode 17.0.0 NFKC + NFKD compatibility
-  normalization. Depends on v5.8.59 heap bump. Ships the
-  K-forms originally pinned with v5.8.51 but deferred per
-  the str_data cap.
+- **v5.8.60** ✅ SHIPPED 2026-05-05 — Unicode 17.0.0 NFKC + NFKD
+  compatibility normalization. Stdlib + data work only — no compiler
+  change. Ships the K-forms originally pinned with v5.8.51 but
+  deferred per the str_data cap; v5.8.59 raised that cap, this
+  slot fills the room.
 
-  Scope:
-  - Extend `lib/unicode/_normalize_data.cyr` with the
-    compat-only decomposition table (3833 records already
-    parsed by `scripts/gen-unicode-data.py`; emit-time
-    drop reverses).
-  - Add `NFKC=2` / `NFKD=3` enum variants to
-    `lib/unicode/normalize.cyr`'s `NormalForm`.
-  - Extend `unicode_canonical_decomp` (or add
-    `unicode_compat_decomp`) to consult the compat-only
-    table when form is K-flavored.
-  - Auto-discover: `tests/tcyr/unicode_normconf.tcyr`
-    (shipped at .52) currently skips cols 4-5 of
-    NormalizationTest.txt; once the K-forms ship, the same
-    tcyr starts asserting cols 4-5 with no source change
-    needed.
-  - Extend `tests/tcyr/unicode_normalize.tcyr` with
-    K-specific tricky-string asserts (compat ligatures,
-    fullwidth/halfwidth equivalents, super/subscript
-    digits).
+  Mid-slot encoding pivot (worth flagging — tracking this for
+  future heap-map sizing decisions): initial design used fixed-
+  width 116-char compat records (cp + count + 18-cp slots, sized
+  to U+FDFA's 18-cp Arabic ligature). 3833 × 116 = ~445 KB,
+  matching the v5.8.51 pin's sizing assumption. **Hit the
+  preprocess_out 2 MB cap** when the data file pushed expanded-
+  source past 2 MB on consumer tcyrs. preprocess_out is a
+  separate buffer from str_data — the latter holds the
+  compiler's string-literal data, the former holds the
+  expanded include-resolved source. Pivoted to a 2-table split
+  (sorted IDX + variable-width DATA blob, ~87 KB total — saves
+  ~360 KB) since the histogram showed 70% of compat decomps are
+  1-cp (fixed-width was padding ~100 chars of zeros per record).
 
-  Acceptance: cc5 == cc5b byte-identical; all
-  NormalizationTest.txt 5-column rows pass via .52's
-  conformance harness; existing NFC+NFD coverage
-  unaffected.
+  Delivered:
+  - **`lib/unicode/_normalize_data.cyr`** regrew from 68,265 →
+    156,732 bytes (was 513,758 with fixed-width encoding pre-
+    pivot; -71% via 2-table split). New tables: COMPAT_IDX (5
+    pieces × 800 records × 12 chars = ~46 KB) + COMPAT_DATA
+    (single string, 41,344 chars).
+  - **`programs/gen_unicode_data.cyr`** extended (sovereign UCD
+    generator):
+    - `_parse_normalize_ud` now extracts compat-tagged decomp
+      records from UCD field 5 (3833 records).
+    - `_emit_compat_data_blob` writes variable-width records and
+      populates parallel `compat_idx_recs` with per-record offsets.
+    - `_emit_compat_idx_blob` emits the 12-char IDX records.
+  - **`lib/unicode/normalize.cyr`** public API:
+    - `NormalForm::NFKC = 2`, `NormalForm::NFKD = 3` enum variants.
+    - `unicode_compat_decomp(cp, out_buf, cap)` — IDX binary search
+      + DATA indirect read; falls back to canonical decomp on miss
+      (UAX #15 §1.3 semantics).
+    - `_uc_decompose_cp_recursive_compat` private helper —
+      single recursion handles compat + canonical as one pass.
+    - `str_normalize` dispatch: `use_compat = form ∈ {NFKC,NFKD}`,
+      `should_compose = form ∈ {NFC,NFKC}`. Canonical composition
+      pass reused (UAX #15 §1.3: NFKC = compat-decompose then
+      canonical-recompose).
+    - Worst-case decomposition expansion bumped 3x → 18x for
+      K-forms (U+FDFA sets the new ceiling).
+  - **`tests/tcyr/unicode_normalize.tcyr`** +16 K-form unit
+    asserts: ligatures (ﬁ→fi, ﬂ→fl, ﬃ→ffi), full-width Latin/
+    digits (Ａ→A, １２３→123), super/subscript digits (²→2,
+    ₅→5), Roman numerals (Ⅷ→VIII), NBSP→SPACE collapse,
+    U+2100→"a/c", NFKD-vs-NFD parity on canonical-only input,
+    K-form idempotency, U+FDFA 33-byte expansion check.
+    Asserts: 83 → **99**.
+  - **`tests/tcyr/unicode_normconf.tcyr`** auto-discovered cols
+    4-5 of NormalizationTest.txt — 6 asserts/row → **16
+    asserts/row**, total **320,547 conformance asserts PASS**
+    (was 120,207). Per-row scratch added: c4_buf + c5_buf at
+    512 bytes (compat decomp can expand 1 cp to 18 cps ≤ 72
+    UTF-8 bytes; 7x headroom).
+
+  Verified:
+  - Self-host: cc5 == cc5b byte-identical at 741,128 B (no
+    compiler change).
+  - `scripts/check.sh`: 65/65 named gates green.
+  - All 127 tcyr files PASS — total unicode asserts now
+    **320,874** (122 + 106 + 99 + 320,547; was 120,518).
+  - Cross-host gates: pi (Linux aarch64 native self-host), ecb
+    (macOS arm64), cass (Windows PE), libssl fdlopen TLS — all
+    PASS via existing SSH wiring.
+  - aarch64 cross-build: `build/cc5_aarch64` rebuilt at 439,880 B
+    (unchanged from v5.8.59).
+  - Total str_data consumption by the new compat data: ~87 KB
+    (4.4% of the 2 MB cap raised at v5.8.59); preprocess_out
+    room preserved for downstream consumer growth.
 
   Filed at v5.8.51 ship 2026-05-04.
 
-- **v5.8.61** — Cycle closeout pass. **The cycle backstop
+- **v5.8.61** — Heap-map refactor (post-v5.8.59 layout
+  reorganization). Stands alone — no other changes — to keep
+  the bootstrap delta auditable. Two-step bootstrap slot per
+  CLAUDE.md "Two-step bootstrap for heap changes — cc5 compiles
+  cc5b, cc5==cc5b".
+
+  Background: v5.8.59 chose Option B (relocate `str_data` to
+  high block at `0x4E8C000` post-`tok_lines`, brk → `0x508C000`)
+  over Option A (in-place grow + shift downstream) for blast
+  radius / byte-identity reasons. Trade-off: the layout is now
+  non-monotonic — the small string-literal buffer sits above
+  the big IR/fixup/tok regions. v5.8.46's tok-array relocation
+  set the same precedent. Both reorganizations are pinned for
+  resolution at this slot. User direction at v5.8.59 ship
+  2026-05-05: "you should be able to review to re-organize and
+  not leave heavy gaps in the layout".
+
+  Scope:
+  - **Heap-map deep audit**. Re-evaluate every region. Identify:
+    (a) regions out of monotonic offset order (str_data, tok_*),
+    (b) gaps no code uses that would close cleanly under
+    consolidation, (c) regions that have grown past their
+    original sizing rationale, (d) candidates for retirement
+    (legacy fixup-table slot at `0x124A000` is already a
+    256 KB documented gap; check if any others sit unused).
+  - **Reorganize layout** to monotonic. Fold str_data + tok_*
+    back into proper offset order. Concrete proposal (to be
+    refined at slot entry):
+    - Keep var_* tables at 0x11A000-0x13A000.
+    - Insert str_data at 0x14A000 + 2 MB span (ends 0x34A000) —
+      back to its v3.6.9-precedent offset, now 8x larger. Every
+      downstream region (preprocess_out, codebuf, output_buf,
+      struct_*, ir_*, fixup_tbl, tok_*) shifts down to close the
+      v5.8.46 + .59 high-block gaps. Scratch state at
+      `0x18C100..0x19A000` (currently inside the 256 KB padding
+      after old str_data) relocates to a fresh band ABOVE the new
+      str_data end. Exact offsets sized at slot entry.
+    - Or alternative: keep str_data at 0x4E8C000 and reorganize
+      the rest to absorb the gap (less reorganization, less
+      win). Decision deferred to slot-entry sizing.
+  - Update every offset reference across the 13 source files
+    that v5.8.59 touched, plus any others that the reorg
+    surfaces. Update heap-map comments in all seven main_*.cyr
+    files. Update `tests/heapmap.sh` if its parsing assumptions
+    need adjustment.
+  - **Two-step bootstrap audit**: cc5 (v5.8.60 layout) compiles
+    cc5b (v5.8.61 layout); cc5b compiles cc5b'; cc5b == cc5b'
+    byte-identical at the new size.
+
+  Acceptance: cc5 == cc5b byte-identical post-reorg; bootstrap
+  closure intact; `tests/heapmap.sh` reports monotonic layout
+  (no out-of-order regions, gap distribution improved over
+  v5.8.60); all existing tcyrs still pass; cross-host gates
+  pi/cass/ecb green via existing SSH wiring.
+
+  Filed at v5.8.59 ship 2026-05-05. User direction: cascade the
+  closeout slot forward by one to absorb this — **closeout moves
+  from .61 to .62**, backstop hard at v5.8.62.
+
+- **v5.8.62** — Cycle closeout pass. **The cycle backstop
   and the actual final patch of v5.8.x** (extended from
   v5.8.55 to absorb str_data heap bump + K-forms + the
   cross-arch propagation slots + the audit/dedup/refactor
-  trio at .55/.56/.57). Per CLAUDE.md "Closeout
-  Pass" (11-step protocol — mechanical first, judgment-call
-  passes, doc sync):
+  trio at .55/.56/.57 + the v5.8.61 heap-map refactor). Per
+  CLAUDE.md "Closeout Pass" (11-step protocol — mechanical
+  first, judgment-call passes, doc sync):
 
   §1-3 **Mechanical (fast-fail):**
   - Self-host verify (cc5 == cc5b byte-identical)
@@ -2179,11 +2283,12 @@ hand-roll incompletely.
     repo behind on bumps for the consumer to catch up)
 
   §11 **Docs sync (silent-rot prevention):**
-  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.59
+  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.61
     state
   - **Vidya per-minor refresh** — `language.cyml` (Unicode
     APIs new entries), `field_notes/compiler.cyml` /
-    `field_notes/language.cyml` (cycle gotchas),
+    `field_notes/language.cyml` (cycle gotchas including
+    the v5.8.59 high-block relocation + v5.8.61 reorg),
     `implementation.cyml` / `types.cyml` (heap map +
     structural changes), `dependencies.cyml` /
     `ecosystem.cyml` (dep refresh from .56)
@@ -2195,7 +2300,7 @@ hand-roll incompletely.
   completed-phases.md migration of all v5.8.* sections; cc5
   byte-identical; no new warnings.
 
-  **Cycle backstop hard at v5.8.61** (was v5.8.51 pre-
+  **Cycle backstop hard at v5.8.62** (was v5.8.51 pre-
   Unicode-pin → extended to v5.8.55 on 2026-05-03 PM →
   extended to v5.8.57 on 2026-05-04 to absorb the v5.8.51-
   deferred str_data heap bump + NFKC/NFKD ship → extended
@@ -2203,10 +2308,15 @@ hand-roll incompletely.
   propagation slots .53 (install pipeline) + .54 (emit-fn
   parity) → extended to v5.8.61 on 2026-05-04 evening to
   absorb the audit/dedup/refactor trio at .55-.57 per user
-  direction "flatten some runway for all the items"). The
-  cycle now exceeds the original v5.8.60 buffer that was
-  pre-approved at the .51 ship; user-approved on the .55
-  bump because the runway flattening required it.
+  direction "flatten some runway for all the items" →
+  extended to **v5.8.62** on 2026-05-05 at v5.8.59 ship to
+  absorb the heap-map refactor as its own dedicated slot
+  (the Option-B high-block relocation from .59 left a
+  non-monotonic layout that warrants a clean reorg before
+  closeout)). The cycle now exceeds the original v5.8.60
+  buffer that was pre-approved at the .51 ship;
+  user-approved at every extension because the runway
+  flattening required it.
 
 ### v5.8.x — held items (surfacing-ask only; not pinned, no slot consumed)
 

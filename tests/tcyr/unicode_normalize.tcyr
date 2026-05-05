@@ -343,4 +343,72 @@ var rt32_once = str_normalize(rt32_pre, NFD);
 var rt32_twice = str_normalize(rt32_once, NFD);
 assert_eq(str_eq(rt32_once, rt32_twice), 1, "NFD idempotent on Hangul");
 
+# ── K-forms (NFKC / NFKD) — v5.8.60 ──────────────────────────────────
+# Compatibility decomposition expands compat-equivalent characters
+# (ligatures, full-width / half-width, super/subscript digits, Roman
+# numeral letters) to their base sequences. NFKD = compat-decompose
+# only; NFKC = compat-decompose then canonical-recompose.
+
+# Ligatures
+var k_fi = str_from("\xEF\xAC\x81");                # U+FB01 LATIN SMALL LIGATURE FI
+assert_eq(str_eq(str_normalize(k_fi, NFKC), str_from("fi")), 1, "NFKC: ﬁ → fi");
+assert_eq(str_eq(str_normalize(k_fi, NFKD), str_from("fi")), 1, "NFKD: ﬁ → fi");
+
+var k_fl = str_from("\xEF\xAC\x82");                # U+FB02 LATIN SMALL LIGATURE FL
+assert_eq(str_eq(str_normalize(k_fl, NFKC), str_from("fl")), 1, "NFKC: ﬂ → fl");
+
+var k_ffi = str_from("\xEF\xAC\x83");               # U+FB03 LATIN SMALL LIGATURE FFI
+assert_eq(str_eq(str_normalize(k_ffi, NFKC), str_from("ffi")), 1, "NFKC: ﬃ → ffi");
+
+# Full-width / half-width forms
+var k_fw_a = str_from("\xEF\xBC\xA1");              # U+FF21 FULLWIDTH LATIN CAPITAL A
+assert_eq(str_eq(str_normalize(k_fw_a, NFKC), str_from("A")), 1, "NFKC: Ａ → A");
+
+var k_fw_digits = str_from("\xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93");  # U+FF11..U+FF13 = "１２３"
+assert_eq(str_eq(str_normalize(k_fw_digits, NFKC), str_from("123")), 1, "NFKC: full-width digits → ASCII digits");
+
+# Super/sub-script digits
+var k_sup2 = str_from("\xC2\xB2");                  # U+00B2 SUPERSCRIPT TWO
+assert_eq(str_eq(str_normalize(k_sup2, NFKC), str_from("2")), 1, "NFKC: ² → 2");
+
+var k_sub5 = str_from("\xE2\x82\x85");              # U+2085 SUBSCRIPT FIVE
+assert_eq(str_eq(str_normalize(k_sub5, NFKC), str_from("5")), 1, "NFKC: ₅ → 5");
+
+# Roman numerals (compat-decompose to letter sequences)
+var k_rom_viii = str_from("\xE2\x85\xA7");          # U+2167 ROMAN NUMERAL EIGHT
+assert_eq(str_eq(str_normalize(k_rom_viii, NFKC), str_from("VIII")), 1, "NFKC: Ⅷ → VIII");
+
+# Compat decomposition includes canonical decomposition: NFKD on é
+# should still give base + combining acute (same shape as NFD).
+var k_eacute = str_from("\xC3\xA9");                # U+00E9 LATIN SMALL E WITH ACUTE
+assert_eq(str_eq(str_normalize(k_eacute, NFKD), str_normalize(k_eacute, NFD)), 1, "NFKD vs NFD on canonical-only e-acute");
+
+# NFKC of a canonical-only character should equal NFC.
+assert_eq(str_eq(str_normalize(k_eacute, NFKC), str_normalize(k_eacute, NFC)), 1, "NFKC vs NFC on canonical-only e-acute");
+
+# K-form idempotency.
+var k_id_pre = str_from("ﬁat ²+²=4 №");
+var k_nfkc_once = str_normalize(k_id_pre, NFKC);
+var k_nfkc_twice = str_normalize(k_nfkc_once, NFKC);
+assert_eq(str_eq(k_nfkc_once, k_nfkc_twice), 1, "NFKC idempotent on mixed compat input");
+
+var k_nfkd_once = str_normalize(k_id_pre, NFKD);
+var k_nfkd_twice = str_normalize(k_nfkd_once, NFKD);
+assert_eq(str_eq(k_nfkd_once, k_nfkd_twice), 1, "NFKD idempotent on mixed compat input");
+
+# K-forms collapse NO-BREAK SPACE (U+00A0) to ordinary space (U+0020).
+var k_nbsp = str_from("a\xC2\xA0b");                # U+00A0 NO-BREAK SPACE
+assert_eq(str_eq(str_normalize(k_nbsp, NFKC), str_from("a b")), 1, "NFKC: NBSP → SPACE");
+
+# 18-cp record (U+FDFA Arabic ligature صلى الله عليه وسلم) — exercises
+# the longest compat decomposition in UCD 17.0.0. Decomposes to 15
+# Arabic letters (2 bytes each in UTF-8) + 3 ASCII spaces = 33 bytes.
+var k_fdfa = str_from("\xEF\xB7\xBA");              # U+FDFA
+var k_fdfa_nfkd = str_normalize(k_fdfa, NFKD);
+assert_eq(str_len(k_fdfa_nfkd), 33, "NFKD: U+FDFA expands to 33 UTF-8 bytes");
+
+# Existing-form compat: U+2100 = "a/c" (fraction-style ASCII triple).
+var k_ac = str_from("\xE2\x84\x80");                # U+2100 ACCOUNT OF
+assert_eq(str_eq(str_normalize(k_ac, NFKC), str_from("a/c")), 1, "NFKC: U+2100 → a/c");
+
 var r = assert_summary();

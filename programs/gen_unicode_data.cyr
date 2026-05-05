@@ -750,14 +750,20 @@ fn _sort_records_by_slot(arr, n, stride, key_slot) {
     return 0;
 }
 
-# ── Normalize: parse UnicodeData (CCC + canonical decomp) ─────────────
+# ── Normalize: parse UnicodeData (CCC + canonical decomp + compat decomp) ────
 
 # Records: ccc = (cp, ccc_byte) — stride 2
 # Records: canon = (cp, n, cp1, cp2) — stride 4
+# Records: compat = (cp, n, cp1..cp18) — stride 20 (160 bytes/rec)
+# Compat max cps observed at UCD 17.0.0: 18 (cp FDFA — Arabic ligature
+# "salaam alayhi wa-sallam"). Histogram: 1=2685, 2=648, 3=411, 4=67,
+# 5=16, 6=3, 7=1, 8=1, 18=1.
+var _UC_COMPAT_MAX_CPS = 18;
 
-fn _parse_normalize_ud(ud_buf, ud_len, ccc_recs, ccc_n_out, canon_recs, canon_n_out) {
+fn _parse_normalize_ud(ud_buf, ud_len, ccc_recs, ccc_n_out, canon_recs, canon_n_out, compat_recs, compat_n_out) {
     var ccc_n = 0;
     var canon_n = 0;
+    var compat_n = 0;
     var pos = 0;
     while (pos < ud_len) {
         var le = _line_end(ud_buf, pos, ud_len);
@@ -800,6 +806,32 @@ fn _parse_normalize_ud(ud_buf, ud_len, ccc_recs, ccc_n_out, canon_recs, canon_n_
                                 canon_n = canon_n + 1;
                             }
                         }
+                    } else {
+                        # Compatibility decomposition: starts with `<tag>`.
+                        # Skip the tag (everything up to and including '>').
+                        while (p < f5_end) {
+                            var c = load8(ud_buf + p);
+                            p = p + 1;
+                            if (c == 62) { break; }   # '>'
+                        }
+                        p = _skip_ws(ud_buf, p, f5_end);
+                        # Compat blob: stride 20 i64 = (cp + count + 18 cps).
+                        var ccps[160];
+                        var cn2 = _parse_cp_seq(ud_buf, p, f5_end, &ccps, _UC_COMPAT_MAX_CPS);
+                        if (cn2 >= 1) {
+                            if (cn2 <= _UC_COMPAT_MAX_CPS) {
+                                store64(compat_recs + compat_n * 160,     cp);
+                                store64(compat_recs + compat_n * 160 + 8, cn2);
+                                var ci = 0;
+                                while (ci < _UC_COMPAT_MAX_CPS) {
+                                    var slot = 0;
+                                    if (ci < cn2) { slot = load64(&ccps + ci * 8); }
+                                    store64(compat_recs + compat_n * 160 + 16 + ci * 8, slot);
+                                    ci = ci + 1;
+                                }
+                                compat_n = compat_n + 1;
+                            }
+                        }
                     }
                 }
             }
@@ -808,6 +840,7 @@ fn _parse_normalize_ud(ud_buf, ud_len, ccc_recs, ccc_n_out, canon_recs, canon_n_
     }
     store64(ccc_n_out, ccc_n);
     store64(canon_n_out, canon_n);
+    store64(compat_n_out, compat_n);
     return 0;
 }
 
@@ -921,6 +954,59 @@ fn _emit_compose_blob(comp_recs, n, out_blob) {
     return bo;
 }
 
+# Compat decomp emits as TWO tables to avoid the fixed-width waste of
+# 116-char records (445 KB) — the histogram shows 70% of records are
+# 1-cp, so fixed-width pads 100+ chars of zeros per record. The 2-table
+# split + piece-aligned data blob brings total compat data to ~87 KB,
+# preventing preprocess_out 2 MB cap pressure on consumer tcyrs.
+#
+# COMPAT_IDX records: (cp u24 + data_off u24) = 12 hex chars/rec. Sorted
+#   by cp, binary-searchable.
+# COMPAT_DATA blob: concatenated variable-width records:
+#   count (u8, 2 chars) + cp1..cp_count (each u24, 6 chars).
+#   Total = 3833 records × 2 chars (count) + Σcounts × 6 chars
+#         = 7,666 + 5,613 × 6 = 41,344 chars.
+#   Pieces aligned to record boundaries — emitter only splits between
+#   complete records, so consumer can address by absolute offset within
+#   piece without spanning logic.
+
+# Index emit: pairs of (cp u24, data_offset u24) → 12 chars per record.
+fn _emit_compat_idx_blob(idx_recs, n, out_blob) {
+    var i = 0;
+    var bo = 0;
+    while (i < n) {
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(idx_recs + i * 16),     6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(idx_recs + i * 16 + 8), 6);
+        i = i + 1;
+    }
+    return bo;
+}
+
+# Data emit: variable-width records (count + cps). Returns blob length.
+# Side effect: writes per-record offsets into idx_recs slot 1.
+fn _emit_compat_data_blob(compat_recs, n, out_blob, idx_recs) {
+    var i = 0;
+    var bo = 0;
+    while (i < n) {
+        var cp = load64(compat_recs + i * 160);
+        var count = load64(compat_recs + i * 160 + 8);
+        # Stash (cp, current offset) into the parallel index record.
+        store64(idx_recs + i * 16,     cp);
+        store64(idx_recs + i * 16 + 8, bo);
+        # Emit count + cps.
+        bo = bo + _emit_hex_padded(out_blob, bo, count, 2);
+        var ci = 0;
+        while (ci < count) {
+            bo = bo + _emit_hex_padded(out_blob, bo,
+                                       load64(compat_recs + i * 160 + 16 + ci * 8),
+                                       6);
+            ci = ci + 1;
+        }
+        i = i + 1;
+    }
+    return bo;
+}
+
 fn gen_normalize() {
     var ud_buf = alloc(4194304);
     var ud_len = file_read_all("tests/data/ucd/UnicodeData.txt", ud_buf, 4194303);
@@ -931,20 +1017,24 @@ fn gen_normalize() {
 
     var ccc_recs = alloc(2048 * 16);
     var canon_recs = alloc(4096 * 32);
+    var compat_recs = alloc(4096 * 160);
     var ccc_n_out[8];
     var canon_n_out[8];
-    _parse_normalize_ud(ud_buf, ud_len, ccc_recs, &ccc_n_out, canon_recs, &canon_n_out);
+    var compat_n_out[8];
+    _parse_normalize_ud(ud_buf, ud_len, ccc_recs, &ccc_n_out, canon_recs, &canon_n_out, compat_recs, &compat_n_out);
     var ccc_n = load64(&ccc_n_out);
     var canon_n = load64(&canon_n_out);
+    var compat_n = load64(&compat_n_out);
 
     var excl_cps = alloc(256 * 8);
     var excl_n = _parse_compexcl(ce_buf, ce_len, excl_cps);
 
-    # Sort CCC + canon by cp ascending (already in cp-order from
-    # UnicodeData.txt iteration — sort defensively to match Python's
-    # explicit sort).
+    # Sort CCC + canon + compat by cp ascending (already in cp-order
+    # from UnicodeData.txt iteration — sort defensively to match
+    # Python's explicit sort).
     _sort_records(ccc_recs, ccc_n, 2);
     _sort_records(canon_recs, canon_n, 4);
+    _sort_records(compat_recs, compat_n, 20);
 
     # Build composition table from canonical decomps minus exclusions.
     var comp_recs = alloc(2048 * 24);
@@ -958,15 +1048,22 @@ fn gen_normalize() {
     _sort_records(comp_recs, comp_n, 3);
 
     # Emit blobs.
-    var ccc_blob   = alloc(ccc_n * 8 + 16);
-    var canon_blob = alloc(canon_n * 20 + 16);
-    var comp_blob  = alloc(comp_n * 18 + 16);
-    var ccc_blob_len   = _emit_ccc_blob(ccc_recs, ccc_n, ccc_blob);
-    var canon_blob_len = _emit_canon_blob(canon_recs, canon_n, canon_blob);
-    var comp_blob_len  = _emit_compose_blob(comp_recs, comp_n, comp_blob);
+    var ccc_blob       = alloc(ccc_n * 8 + 16);
+    var canon_blob     = alloc(canon_n * 20 + 16);
+    var comp_blob      = alloc(comp_n * 18 + 16);
+    var compat_idx_recs = alloc(compat_n * 16);          # (cp, data_off) i64 pairs
+    var compat_data_blob = alloc(compat_n * 110 + 16);   # 41 KB worst case
+    var compat_idx_blob  = alloc(compat_n * 12 + 16);
+    var ccc_blob_len    = _emit_ccc_blob(ccc_recs, ccc_n, ccc_blob);
+    var canon_blob_len  = _emit_canon_blob(canon_recs, canon_n, canon_blob);
+    var comp_blob_len   = _emit_compose_blob(comp_recs, comp_n, comp_blob);
+    # DATA must be emitted first — it populates the compat_idx_recs offsets
+    # which the IDX blob then consumes.
+    var compat_data_blob_len = _emit_compat_data_blob(compat_recs, compat_n, compat_data_blob, compat_idx_recs);
+    var compat_idx_blob_len  = _emit_compat_idx_blob(compat_idx_recs, compat_n, compat_idx_blob);
 
     # Emit cyrius source.
-    var total = ccc_blob_len + canon_blob_len + comp_blob_len;
+    var total = ccc_blob_len + canon_blob_len + comp_blob_len + compat_idx_blob_len + compat_data_blob_len;
     var out_buf = alloc(total + 32768);
     var oo = 0;
 
@@ -975,21 +1072,49 @@ fn gen_normalize() {
     oo = oo + _emit_cstr(out_buf, oo, "# regeneration will overwrite. Sources of truth:\n");
     oo = oo + _emit_cstr(out_buf, oo, "#   https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt\n");
     oo = oo + _emit_cstr(out_buf, oo, "#   https://www.unicode.org/Public/17.0.0/ucd/CompositionExclusions.txt\n");
-    oo = oo + _emit_cstr(out_buf, oo, "# Unicode 17.0.0. Three tables (NFC + NFD only at v5.8.51 ship;\n");
-    oo = oo + _emit_cstr(out_buf, oo, "# NFKC/NFKD compat-only decomp deferred per str_data heap cap):\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# Unicode 17.0.0. Five tables (NFC + NFD + NFKC + NFKD at v5.8.60;\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# compat decomp uses 2-table split (sorted IDX + variable DATA blob)\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# to keep size at ~87 KB instead of fixed-width 445 KB):\n");
     oo = oo + _emit_cstr(out_buf, oo, "#   CCC:           8 hex chars/rec (cp u24 + ccc u8). Sorted by cp.\n");
     oo = oo + _emit_cstr(out_buf, oo, "#   canonical:    20 hex chars/rec (cp u24 + count u8 + cp1 u24 + cp2 u24).\n");
     oo = oo + _emit_cstr(out_buf, oo, "#   composition:  18 hex chars/rec (cp1 u24 + cp2 u24 + composed u24).\n");
-    oo = oo + _emit_cstr(out_buf, oo, "# All tables consumed by binary search in normalize.cyr; composition\n");
-    oo = oo + _emit_cstr(out_buf, oo, "# is sorted by (cp1, cp2) — primary cp1 with secondary linear-scan\n");
-    oo = oo + _emit_cstr(out_buf, oo, "# for cp2 within the cp1 run.\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   compat IDX:   12 hex chars/rec (cp u24 + data_off u24). Sorted by cp.\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   compat DATA:  variable per record — count u8 (2 chars) + cp1..cp_count\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                  u24 (6 chars each). Max count = 18 (U+FDFA Arabic\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                  ligature). Histogram (UCD 17.0.0): 1=2685, 2=648,\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                  3=411, 4=67, 5=16, 6=3, 7=1, 8=1, 18=1. Single-string\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                  variable (~41 KB) — under the 64 KB length cap of the\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                  cc5 string-token encoding (offset<<16 | length, length\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                  is u16); no piece splitting needed.\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# All sorted tables consumed by binary search in normalize.cyr;\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# composition is sorted by (cp1, cp2) — primary cp1 with secondary\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# linear-scan for cp2 within the cp1 run. Compat lookup: binary search\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# IDX by cp → data_off → DATA[data_off] count + count cps.\n");
     oo = oo + _emit_cstr(out_buf, oo, "# Public surface lives in normalize.cyr; this file is data.\n\n");
 
-    oo = oo + _emit_piece_block(out_buf, oo, "CCC",     ccc_blob,   ccc_blob_len,   ccc_n,   800, 8);
+    oo = oo + _emit_piece_block(out_buf, oo, "CCC",        ccc_blob,        ccc_blob_len,        ccc_n,    800, 8);
     oo = oo + _emit_cstr(out_buf, oo, "\n");
-    oo = oo + _emit_piece_block(out_buf, oo, "CANON",   canon_blob, canon_blob_len, canon_n, 350, 20);
+    oo = oo + _emit_piece_block(out_buf, oo, "CANON",      canon_blob,      canon_blob_len,      canon_n,  350, 20);
     oo = oo + _emit_cstr(out_buf, oo, "\n");
-    oo = oo + _emit_piece_block(out_buf, oo, "COMPOSE", comp_blob,  comp_blob_len,  comp_n,  380, 18);
+    oo = oo + _emit_piece_block(out_buf, oo, "COMPOSE",    comp_blob,       comp_blob_len,       comp_n,   380, 18);
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+    # COMPAT IDX: piece-based (sorted, binary-searchable). 800 records ×
+    # 12 chars = 9600 chars/piece × 5 pieces (3833 records).
+    oo = oo + _emit_piece_block(out_buf, oo, "COMPAT_IDX", compat_idx_blob, compat_idx_blob_len, compat_n, 800, 12);
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+    # COMPAT DATA: single string variable. ~41 KB; addressed by absolute
+    # byte offset returned from IDX lookup. No piece splitting.
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_COMPAT_DATA_LEN = ");
+    oo = oo + _emit_decimal(out_buf, oo, compat_data_blob_len);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n");
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_COMPAT_DATA = \"");
+    var dj = 0;
+    while (dj < compat_data_blob_len) {
+        store8(out_buf + oo, load8(compat_data_blob + dj));
+        oo = oo + 1;
+        dj = dj + 1;
+    }
+    oo = oo + _emit_cstr(out_buf, oo, "\";\n");
     # Trailing blank line — matches Python emit_table helper's per-table
     # `out.append("")` which lands on the LAST table too in normalize
     # source. Categories + casefold inline their per-table emit (no
