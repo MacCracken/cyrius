@@ -5,6 +5,30 @@
 
 ## Version
 
+**5.8.64** (shipped 2026-05-05 — **v5.8.x SLOT 64 — cycle closeout
+pass** per CLAUDE.md 11-step protocol. Twenty-sixth slot of Phase 3.
+cc5 unchanged at **741,048 B** — closeout is audit + docs only, no
+source code change. **§1-3 Mechanical**: self-host byte-identical,
+bootstrap closure clean, check.sh 65/65 + cross-host pi/cass/ecb
+green. **§4 Heap**: 84 regions, 0 overlaps, monotonic; 8.4 MB of
+closeable gaps pinned for pre-v6.0 hardening. **§5 Dead-code**: 32
+fns / 22,571 B floor stable since v5.8.56; all retained per
+mode-flag-reachable rule. **§6-8**: refactor consolidations
+absorbed in cycle (.55-.57, .61-.63); 1 TODO retained (cx
+ESTORESTACKPARM, held); no orphans. **§9 Security**: quick scan
+clean; full audit pinned for v5.9.x. **§10 Downstream**: 6 fold-
+target deps (sakshi/patra/sigil/vani/yukti/sankoch) inventoried at
+5.7.48 pin — work-list captured for out-of-band patch round before
+.65; mabda excluded per user direction. **§11 Docs**: CHANGELOG/
+roadmap/state.md/completed-phases.md synced; v5.8.0-.63 migrated to
+completed-phases.md (94 lines, sub-arc grouped); vidya refresh
+tracked as out-of-band. **Cycle summary**: 64 patches across 5 days
+(2026-05-01 → 2026-05-05); cc5 720,928 → 741,048 B (+20,120 B /
++2.79%); check.sh 64 → 65 gates; tcyr 108 → 127 files; unicode
+asserts 0 → 320,874 covering NFC/NFD/NFKC/NFKD. **Next**: out-of-
+band sibling-dep version-patch round, then v5.8.65 stdlib foldin,
+then v5.8.66 release-valve. Backstop hard at .66.)
+
 **5.8.63** (shipped 2026-05-05 — **v5.8.x SLOT 63 — refactor pass B:
 main_*.cyr boilerplate extraction**. Twenty-fifth slot of Phase 3.
 Two-step bootstrap slot. cc5: 741,128 B → **741,048 B (-80 B)** —
@@ -138,9 +162,7 @@ ABI-shim `programs/dlopen-helper.c`, IDE integrations
 `editors/*.lua` + `editors/*.js`). 120,518 unicode asserts hold
 at the regression floor v5.8.52 set.)
 
-**Cycle wind-down (v5.8.64 → v5.8.66, hard backstop at .66)**:
-.64 = closeout pass per CLAUDE.md 11-step protocol (reference
-release tag for the dep-version-patch + foldin work at .65);
+**Cycle wind-down (v5.8.65 → v5.8.66, hard backstop at .66)**:
 .65 = stdlib foldin (vendor 6 sibling distfiles into lib/ +
 remove from `[deps]`; sans mabda per user direction —
 3.0.0-rc.2 not GA, Class B FFI deferred to v5.9.x); .66 =

@@ -2399,13 +2399,25 @@ hand-roll incompletely.
   Filed at v5.8.62 entry 2026-05-05 per user direction "main_
   boilerplate extraction should be .63 with .64 closeout".
 
-- **v5.8.64** — Cycle closeout pass. Reference release tag for
-  the dep-version-patch + foldin work happening at .65. Per
-  CLAUDE.md "Closeout Pass" (11-step protocol — mechanical first,
-  judgment-call passes, doc sync). Was previously pinned as the
-  final patch of v5.8.x; the cycle now extends to **.66** at
-  user direction 2026-05-05 to absorb the stdlib foldin (.65)
-  and a release-valve for any foldin fallout (.66):
+- **v5.8.64** ✅ SHIPPED 2026-05-05 — Cycle closeout pass per
+  CLAUDE.md 11-step protocol. Reference release tag for the
+  dep-version-patch + foldin work at .65. cc5 unchanged at
+  741,048 B — closeout is audit + docs only. All 11 steps
+  ticked: §1-3 mechanical PASS (self-host, bootstrap closure,
+  check.sh 65/65 + cross-host); §4 heap audit (84 regions,
+  monotonic, 8.4 MB closeable gaps pinned for pre-v6.0); §5
+  dead-code floor stable at 32 fns / 22,571 B; §6 refactor —
+  remaining items pinned forward (path A named-op + cmdline
+  parser); §7 code review — no new ABI leaks; §8 cleanup
+  clean; §9 security quick scan clean (full audit pinned for
+  v5.9.x); §10 downstream 6-dep work-list captured (mabda
+  excluded); §11 docs synced + v5.8.0-.63 migrated to
+  completed-phases.md (94 lines). See CHANGELOG for detail.
+
+  Was previously pinned as the final patch of v5.8.x; the cycle
+  extended to **.66** at user direction 2026-05-05 to absorb the
+  stdlib foldin (.65) and a release-valve for foldin fallout
+  (.66):
 
   §1-3 **Mechanical (fast-fail):**
   - Self-host verify (cc5 == cc5b byte-identical)

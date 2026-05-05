@@ -402,3 +402,97 @@ Deferred to v5.6.x+:
 - **v5.7.48 — TRUE CLOSEOUT BACKSTOP — v5.7.x cycle complete**: CLAUDE.md 11-step closeout-pass run end-to-end. Mechanical (§1-3) all PASS; judgment passes (§4-8) all clean (heap map 80 regions/0 overlaps; dead-code floor stable at 36); compliance (§9-10) clean; docs (§11) refreshed. Compiler size delta v5.7.x: 531 KB → 720,928 B (+~190 KB). check.sh growth: 26 → 64 gates (+38).
 - **v5.7.49 — ecosystem deps refresh**: 5 of 6 deps bumped — sakshi 2.0.0 → 2.2.2, patra 1.9.0 → 1.9.2, sigil 2.9.3 → **3.0.0** (major; audited safe — cyrius doesn't consume sigil API), yukti 2.1.1 → 2.2.1, sankoch 2.1.0 → 2.2.3; agnosys 1.0.4 transitive refresh. Mabda held at 2.5.0 — v3.0.0-rc.2 in soak; cyrius doesn't consume mabda's API so the hold is cost-free. cc5 byte-identical at 720,928 B (data-only refresh).
 - **v5.7.50 — pre-v5.8.0 P(-1) unblock (true final v5.7.x patch)**: pre-v5.8.0 P(-1) audit (`docs/audit/2026-05-01-pre-5.8.0-audit.md`) surfaced one BLOCKER — `cyrius bench` and `cyrius test` both failing at compile time with `error:lib/patra.cyr:101: undefined variable 'SYS_LSEEK'`. Root cause: cyrius's own `cyrius.cyml` was missing the `[deps].stdlib` auto-prepend block that every other consumer has had since their respective folds. Latent at v5.7.48 (patra 1.9.0 had the same SYS_LSEEK refs); only surfaced when P(-1) ran `cyrius bench` end-to-end (check.sh-based closeouts don't go through auto-prepend). Single-issue config-only fix: 19-module `[deps].stdlib` block added (union of every dep's own stdlib needs at v5.7.49 pin time). cc5 unchanged at 720,928 B; `cyrius bench` 15/15 PASS (was 2/13); check.sh 64/64. **The .50 headroom held open from v5.7.42 closeout planning was used for exactly this kind of late-cycle finding — used once, retired.** v5.8.x slot list opens with a clean `cyrius bench` baseline.
+
+## v5.8.0–v5.8.63 — Optimization + language-vocabulary stabilization (closed; 64 patches, 2026-05-01 → 2026-05-05)
+
+**Theme**: Bug-fix + optimization minor that folds forward language-feature suites originally pinned for v5.10–v5.12: slices (6-patch true-completion arc), effect annotations, tagged unions with exhaustive match, `Result<T,E>` with `?` propagation, and allocators-as-parameter. Strategic re-theming compresses 4–5 separate minors into one cycle, letting hisab and downstream consumers port once instead of across v5.9–v5.12. Coherent with optimization theme — `Result` optimizes -1/0/errno paths; allocator parameters enable per-request arenas; slices optimize crypto/network/I/O hot paths.
+
+**Phase 1 (v5.8.1–v5.8.8)**: Quick-win unblockers — format-string buffer caps, packaging fixes, f64_log2 aarch64 polyfill + SSH-gate test, syscall surface symmetry, false-positive gates, NI-class investigation.
+
+**Phase 2 (v5.8.9–v5.8.38)**: Language vocabulary — slices foundation (5, v5.8.9–v5.8.13) + true-completion arc (6, v5.8.14–v5.8.19), per-fn effect annotations, tagged unions with exhaustive match (7, v5.8.21–v5.8.27 + cap-bump/dedup cascade), `Result<T,E>` + `?` operator (5, v5.8.28–v5.8.32), allocator vtable + stdlib migration (6, v5.8.33–v5.8.38).
+
+**Phase 3 (v5.8.39–v5.8.63)**: Polish + hardening — sandhi 1.1.0 fold-in, preprocessor string-literal awareness, linter/UX polish, allocator peripheral pass, API-surface refresh, reserved-word flexibility, prompt customization, Unicode 17.0.0 fold (categories/case-folding/canonical/K-forms via v5.8.49–v5.8.52 + v5.8.60), aarch64 cross-arch parity, audit/dedup/refactor trio (v5.8.55–v5.8.57), deps refresh, two-step bootstrap slots for heap layout (v5.8.59, v5.8.61), library + main boilerplate refactor (v5.8.62–v5.8.63). **v5.8.64–v5.8.66 in-progress**: closeout (.64) → out-of-band sibling-dep version-patch round → stdlib foldin (.65) → release-valve for foldin fallout (.66).
+
+**Cycle stats**: 64 patches across 5 days (compressed because the language-vocabulary suites were each a multi-patch arc with same-day merging). cc5 binary 720,928 B → 741,048 B (+20,120 B; +2.8%). check.sh 64 → 65 gates (+1). tcyr count 108 → 127 files (+19). Heap regions 80 → 84 (+4: var_enum_id, enum_count, enum_variant_count, enum_name added at v5.8.22-.24 for tagged-unions). Total unicode asserts 0 → 320,874 (122 categories + 106 casefold + 99 normalize + 320,547 normconf at NFC/NFD/NFKC/NFKD coverage).
+
+### Phase 1: Quick-win unblockers (v5.8.0–v5.8.8)
+
+- **v5.8.0 — v5.8.x cycle opens — optimization + bug-fix theme**: P(-1) hardening close, vani audio distlib fold-in, cyriusly starship.toml rework.
+- **v5.8.1 — `cyrlint` / `cyrfmt` 128 KiB buffer cap raise + `cyrius-prompt-info` redundancy fix**: First patch of the 64-slot cycle; two bundled hygiene items.
+- **v5.8.2 — `cc5_aarch64` packaging fix + `build/cyrc_check` orphan delete**: Build-tree hygiene; release-pipeline cleanup with zero compiler impact.
+- **v5.8.3 — `src/frontend/ts/parse.cyr` fmt sweep follow-up**: Closes the v5.8.0 fmt-sweep deferral on the 195 KB TypeScript parser file.
+- **v5.8.4 — `f64_log2` aarch64 polyfill (phylax #1 unblock)**: First substantive stdlib slot; closes x86-only float log implementation.
+- **v5.8.5 — aarch64 SSH-gate extension for `f64_log2` (phylax #1 hardware verification)**: Isolated SSH-gate test slot for phylax cross-arch float log verification.
+- **v5.8.6 — `sys_stat` / `sys_fstat` x86_64 wrapper backfill (phylax #2)**: Closes cross-arch surface asymmetry in syscall surface.
+- **v5.8.7 — `_SC_ARITY` cross-arch false-positive gate (phylax #3 + sakshi)**: Closes 11 spurious `syscall arity mismatch` warnings on aarch64 builds.
+- **v5.8.8 — phylax #4 NI-class duplicate-fn investigation (STALE PIN, closed by upstream churn)**: Phase 1 closes; issue no longer reproduces at v5.8.7.
+
+### Phase 2: Language vocabulary (v5.8.9–v5.8.38)
+
+**Slices foundation & true-completion (v5.8.9–v5.8.19, 11 slots)**:
+- **v5.8.9 — Phase 2 opens; slices §1 parse-acceptance + slot-map cascade**: Foundation for slices; PARSE_SLICE_TYPE AST addition + 14-slot cascade carve-out.
+- **v5.8.10 — slices §2 codegen: 16-byte alloc + field-access helpers**: Allocates 16-byte {ptr,len} stack slot and provides field-access infrastructure.
+- **v5.8.11 — slices §3: Str ↔ slice<u8> structural equivalence + stack-slice builders**: Str type treated as slice<u8> equivalent; scope-shrink honors honest assessment.
+- **v5.8.12 — slices §4: vec ↔ slice<T> structural-prefix equivalence + scope-shrink doc**: Vec<T> structural prefix compatibility with slice<T>; documentation reframing.
+- **v5.8.13 — slices §5 closeout: sub-arc retrospective + acceptance gates + downstream audit**: Fifth and final foundation slot; 5-patch sub-arc verified complete.
+- **v5.8.14 — slices §6: TYPE_SLICE element-type tracking + slot-map cascade +6**: Opens the 6-slot true-completion sub-arc; AST slot-map extended by 6.
+- **v5.8.15 — slices §7: bounds-aware indexing `s[i]` + fn-local slot-collision fix**: Slice indexing with bounds checking; fixes long-latent 16-byte slot-collision bug.
+- **v5.8.16 — slices §8: dot-syntax field access `s.ptr` / `s.len` + fn-local layout-flip**: Field access on slices and pointers to structs; tail-call escape optimization.
+- **v5.8.17 — slices §9: pointer-to-struct dot-syntax capability + Str fn-param SLTYPE tagging**: Completes pointer-based field access; Str params tagged with SLTYPE for optimization.
+- **v5.8.18 — slices §10: slice-typed wrapper helpers (`sys_read_slice`, `slice_copy_bytes`, `slice_eq_bytes`)**: User-facing slice-typed stdlib convenience functions.
+- **v5.8.19 — slices §11: TRUE sub-arc closeout. Slices true-completion sub-arc COMPLETE**: Sixth and final slot of the completion arc; full slice support verified end-to-end.
+
+**Effect annotations (v5.8.20)**:
+- **v5.8.20 — per-fn effect/purity annotations (`#pure` / `#io` / `#alloc`)**: Compiler-checked decorators marking side-effect categories on function definitions.
+
+**Tagged unions + exhaustive match (v5.8.21–v5.8.27, 7 slots)**:
+- **v5.8.21 — sum-type syntax + constructor parsing**: Generalizes single-arg enum constructors into full canonical sum-type syntax.
+- **v5.8.22 — exhaustive pattern match in `match`**: Compiler ensures all sum-type constructors matched; extends tagged-unions sub-suite.
+- **v5.8.23 — stdlib adoption pass 1: `lib/tagged.cyr` migration to compiler-generated sum types**: First stdlib consumer; ports to native sum-type support.
+- **v5.8.24 — exhaustive-match table cap bump 256 → 1024**: Cascaded from stdlib adoption pressure; single-bite slot for table capacity raise.
+- **v5.8.25 — exhaustive-match arm-tag dedup**: Cascaded from compiler refinements; removes duplicate arm-tag entries.
+- **v5.8.26 — stdlib adoption pass 2 + ecosystem hardening**: Peripheral module migration (hashmap, net); prophylaxis on downstream consumers.
+- **v5.8.27 — tagged-unions sub-suite closeout**: Seventh and final slot; 7-patch tagged-unions complete.
+
+**Result<T, E> + `?` operator (v5.8.28–v5.8.32, 5 slots)**:
+- **v5.8.28 — `Result<T, E>` carve-out into `lib/result.cyr`**: First of Result+? sub-suite; stdlib-only, zero compiler change yet.
+- **v5.8.29 — postfix `?` propagation operator on `Result<T, E>`**: Compiler addition: lex + parse + emit for `?` unwrap-or-return.
+- **v5.8.30 — stdlib `Result` migration pass 1**: Adds `Result`-returning variants across file-loading paths in lib/io.cyr.
+- **v5.8.31 — stdlib `Result` migration pass 2**: Extends to HTTP, dynamic library, and pwd modules.
+- **v5.8.32 — Result+? sub-suite closeout**: Fifth and final slot; Result+? propagation complete.
+
+**Allocator vtable + stdlib migration (v5.8.33–v5.8.38, 6 slots)**:
+- **v5.8.33 — Allocator vtable interface**: First of Allocators sub-suite; vtable shape + 3 default impls (bump/arena/test).
+- **v5.8.34 — failing-allocator test harness**: Adds `fail_after_n_allocs(n)` helper for allocation-failure testing.
+- **v5.8.35 — stdlib Allocator migration pass 1**: Threads `Allocator` as first argument across lib/vec.cyr and peers.
+- **v5.8.36 — stdlib Allocator migration pass 2**: Extends to JSON, regex, and other allocating modules.
+- **v5.8.37 — `alloc_init()` becomes optional via lazy-init**: Global allocator initialization becomes demand-driven.
+- **v5.8.38 — Allocators sub-suite closeout**: Sixth and final slot; allocator vtable integration verified.
+
+### Phase 3: Polish + hardening (v5.8.39–v5.8.63)
+
+- **v5.8.39 — fold sandhi v1.1.0 dist into stdlib**: Opens Phase 3; vendors sandhi 1.1.0 distribution inline.
+- **v5.8.40 — preprocessor string-literal awareness**: Closes long-standing bug where #if/#define strings tripped false positives.
+- **v5.8.41 — cyrlint large-file false-positive verification slot**: Closes mabda-filed phantom `unclosed braces at EOF` issue on large test files.
+- **v5.8.42 — paired UX/diagnostic polish**: Two unrelated mabda-surfaced UX bugs bundled into one release.
+- **v5.8.43 — Phase 3 polish absorber: stdlib Allocator migration pass 3**: Absorbs deferred `_a` allocator variants; completes Allocator vtable rollout.
+- **v5.8.44 — api-surface refresh + auto-build wiring + null-byte-in-shell-substitution fix**: Three-part deliverable; restores API surface diffing infrastructure.
+- **v5.8.45 — `kernel` demoted from reserved token to plain ident**: Surfaced from vidya `audio_dsp` port; language flexibility.
+- **v5.8.46 — arithmetic-in-fn-args regression-floor lock + token-array cap raised 262144 → 1048576**: Two cohesive items; sit v0.7.2 unblocked; sandhi consumers freed.
+- **v5.8.47 — starship + p10k prompt color split AND vidya cyrius-language audit**: Shell prompt rework + ecosystem language audit bundled.
+- **v5.8.48 — P(-1) audit + alloc tcyr rename + CHANGELOG `## [Unreleased]` anchor restoration**: Tenth slot of Phase 3; administrative consistency.
+- **v5.8.49 — Unicode 17.0.0 character categories + general-category lookup**: Opens the Unicode 17.0.0 fold; categorization layer foundation.
+- **v5.8.50 — Unicode 17.0.0 case folding (simple + full)**: Case transformation tables for Unicode 17.0.0.
+- **v5.8.51 — Unicode 17.0.0 canonical normalization (NFC + NFD)**: Canonical normalization forms NFC and NFD complete; NFKC/NFKD deferred over the 256 KB str_data cap.
+- **v5.8.52 — Unicode 17.0.0 regression suite**: Four-slot Unicode 17.0.0 fold verified (categories → case → canonical → regression).
+- **v5.8.53 — aarch64 cross-compiler staleness unblock + install pipeline rebuild discipline**: Unblock slot triggered by sit v0.7.2 release; cross-compiler refresh; install.sh `--refresh-only` patched to detect-stale-and-rebuild.
+- **v5.8.54 — aarch64 emit-fn parity (cross-arch propagation follow-up)**: Closes symbol-resolution gaps from v5.8.53 install-pipeline fix.
+- **v5.8.55 — UTF-8 codec dedup + audit baseline capture**: First of three audit/refactor slots; lifts shared codec into `lib/unicode/_decode.cyr`.
+- **v5.8.56 — dead-code removal pass**: Second of three audit/refactor slots; 4 fn names / 11 fn defs removed; floor 36 → 32.
+- **v5.8.57 — sovereign UCD generator**: Third of audit/refactor trio; `programs/gen_unicode_data.cyr` replaces retired Python predecessor; project zero non-cyrius general-logic code.
+- **v5.8.58 — deps cleanup + release-valve**: All deps audited at latest GA (zero bumps); state.md refresh after 10-slot silent rot; v5.9.0 sovereignty pass pinned forward.
+- **v5.8.59 — `str_data` heap-region bump (256 KB → 2 MB)**: Two-step bootstrap slot; 8x grow proportional to v3.6.9; Option B high-block relocation to `0x4E8C000` to avoid scratch-state collision; cc5 741,120 → 741,128 B (+8 B for wider cap-value digits).
+- **v5.8.60 — Unicode 17.0.0 NFKC + NFKD compatibility normalization**: K-forms (compat normalization) deferred from v5.8.51 ship; mid-slot pivot from fixed-width 116-char encoding (445 KB) to 2-table IDX+DATA split (~87 KB); 320,547 normconf asserts pass (was 120,207).
+- **v5.8.61 — heap-map monotonic reorganization**: Two-step bootstrap; minimum-blast-radius reorg (str_data folded back to `0x21A000` between enum_name and preprocess_out); brk shrinks 0x508C000 → 0x4E8C000 (-2 MB); 84 regions, 0 overlaps, monotonic; remaining 8.4 MB closeable gaps pinned for pre-v6.0 hardening.
+- **v5.8.62 — refactor pass A: lib/ structural cleanups + stale-comment sweep**: lib/vidya.cyr → programs/vidya.cyr (no API consumers); stale-comment sweep across 6 main_*.cyr (~50 LOC trimmed); main.cyr heap-map block tightened; hashmap_fast experimental-zero-consumers annotation; cc5 byte-identical at 741,128 B.
+- **v5.8.63 — refactor pass B: main_*.cyr boilerplate extraction**: `_HEAP_INIT_SCRATCH(S)` helper in src/common/util.cyr; 237 lines of init-block duplication collapsed across 6 mains; cc5 741,128 → 741,048 B (-80 B); cmdline parser extraction deferred (only 2 of 6 mains have it).

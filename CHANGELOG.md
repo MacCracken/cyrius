@@ -6,6 +6,189 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.64] — 2026-05-05
+
+**v5.8.x slot 64 — cycle closeout pass** per CLAUDE.md 11-step
+protocol. Twenty-sixth slot of Phase 3. Reference release tag for
+the out-of-band sibling-dep version-patch round + v5.8.65 stdlib
+foldin work. Final patch was previously planned for this slot;
+extended to v5.8.66 at user direction "lets push final closeout
+to .63 [later .64]; .62 is focused on refactors", then ".65 is
+stdlib foldin... hold .66 open as fixing any rising issues from
+foldin".
+
+cc5: **741,048 B unchanged** — closeout is audit + docs only, no
+source code change.
+
+### §1-3 Mechanical (PASS)
+
+- **Self-host verify**: `cc5 == cc5b` byte-identical at 741,048 B.
+- **Bootstrap closure**: `seed → cyrc → asm → cyrc` byte-identical
+  via `bootstrap/bootstrap.sh`.
+- **Full check.sh**: **65 / 65** named gates green; cross-host
+  pi/cass/ecb green via existing SSH wiring; libssl fdlopen TLS
+  round-trip clean; 127 tcyr files PASS (including 320,547
+  unicode_normconf asserts at NFC/NFD/NFKC/NFKD coverage).
+
+### §4 Heap-map audit
+
+84 regions, 0 overlaps, 0 warnings — monotonic layout intact post
+v5.8.61 reorg. Total gaps ~21.7 MB; 13.5 MB is the TS frontend
+functional reservation (DO NOT close); 8.4 MB closeable across
+output_buf-to-struct_ftypes (6 MB), struct_ftypes-to-struct_fnames
+(0.45 MB), struct_fnames-to-fn_names (0.69 MB), and assorted
+small bands. **Pinned for pre-v6.0 hardening sweep** per the
+Long-term considerations section. No new regions added across
+v5.8.62-.64.
+
+### §5 Dead-code audit
+
+Floor unchanged from v5.8.56: **32 fn names / 22,571 bytes**. All
+explicitly retained per `feedback_dead_code_audit_scope` memory
+pin: TS_*/macho_*/IR-staging/CLASSIFY_CF/CF_TARGET/GFVA fns are
+mode-flag-reachable infrastructure, not safe-to-remove despite
+0 grep callers. No new dead code introduced across .57-.63.
+
+### §6 Refactor pass
+
+Most consolidation already absorbed across the cycle: .55 codec
+dedup, .56 dead-code removal, .57 sovereignty fix, .61 heap-map
+monotonic, .62 lib/ structural cleanup, .63 main_*.cyr boilerplate
+extraction. Remaining structural items pinned forward:
+- **Path A named-op refactor** (parse_*.cyr direct x86 emit
+  sites): 64 _TARGET_X dispatch sites remain; pinned long-term
+  at v5.7.12 audit (`docs/audit/2026-04-27-cx-direct-emit-
+  inventory.md`).
+- **Cmdline parser extraction** (`_PARSE_VERSION_FLAGS()`):
+  surveyed at .63, deferred — exists only in 2 of 6 mains
+  (main.cyr + main_win.cyr), variant differences (TS flags +
+  #ifdef) make a clean shared helper awkward.
+
+### §7 Code review (cycle-wide diff walk)
+
+Walked the v5.8.x diffs — particularly the late-cycle slots
+(Unicode .49-.52, .60; cross-arch propagation .53-.54; heap-map
+work .59 + .61; refactor passes .62-.63). No NEW ABI leaks /
+byte-order typos / off-by-one errors surfaced. Existing path-B
+unguarded x86 emit sites in parse_*.cyr (64 total) are documented
+debt, not new debt. Aarch64 native self-host gate green per
+check.sh (paths either aren't exercised on aarch64 in self-host or
+are shimmed by the aarch64 emit fns). One TODO retained:
+`src/backend/cx/emit.cyr:385: ESTORESTACKPARM(S, pidx, disp, pc)
+{ return 0; } # TODO: >6 args` — held item per roadmap pinning,
+fires only when a cx consumer surfaces a 7+arg fn.
+
+### §8 Cleanup sweep
+
+- **Orphan files**: build/ has 16 binaries, all expected per
+  cyrius.cyml `[release].bins` + `cross_bins`. tests/ layout
+  standard (heapmap.sh, regression-*.sh, data/, tcyr/). No
+  orphans.
+- **Stale comments**: already covered by .62 sweep; spot-check
+  clean.
+- **Dead `#ifdef` branches**: spot-check clean; CYRIUS_TARGET_*
+  guards all paired.
+- **TODOs in src/**: 1 (cx ESTORESTACKPARM, held).
+
+### §9 Security re-scan
+
+Quick scan clean:
+- `sys_execve` only in `programs/cyrius-lsp.cyr:650` (standard
+  LSP child-process spawn pattern; path from CYRIUS_HOME env).
+- `READFILE` / `sys_open` paths all bounded — include resolution
+  + `/proc/self/cmdline` (hardcoded).
+- 56 `store8`/`store64` calls in lex.cyr — all CVE-06 cap-
+  guarded (str_data 2 MB cap + bounds check at .59 + .61).
+- No new unsafe patterns introduced across the cycle.
+
+**Last full security audit**: 2026-04-13 (v5.7.x level). Per
+CLAUDE.md "every 2-3 minors" rule, a fresh audit is overdue but
+is its own scope — pinned for v5.9.x or pre-v6.0 hardening. No
+findings demand it sooner.
+
+### §10 Downstream check
+
+Inventory of `cyrius.cyml` `cyrius` pin across ecosystem repos:
+
+| Repo | Cyrius pin | Repo version | Action |
+|---|---|---|---|
+| sakshi | 5.7.48 | 2.2.2 | Bump → 5.8.64 + patch (out-of-band before .65) |
+| patra | 5.7.48 | 1.9.2 | Bump → 5.8.64 + patch |
+| sigil | 5.7.48 | 3.0.0 | Bump → 5.8.64 + patch |
+| vani | 5.7.48 | 0.9.1 | Bump → 5.8.64 + patch |
+| yukti | 5.7.48 | 2.2.1 | Bump → 5.8.64 + patch |
+| sankoch | 5.7.48 | 2.2.3 | Bump → 5.8.64 + patch |
+| **mabda** | 5.7.48 | 3.0.0-rc.2 | **SANS** per user direction; v3 pre-GA |
+| agnosys | 5.7.48 | 1.0.4 | Stays as transitive via mabda |
+| niyama | 5.8.42 | 0.7.0 | Independent ecosystem repo |
+| sit | 5.8.51 | 0.7.2 | Independent ecosystem repo |
+
+The 6 fold-target deps will be patched out-of-band between
+v5.8.64 and v5.8.65 per the cycle plan.
+
+### §11 Docs sync
+
+- **CHANGELOG.md**: source of truth (this file); 64 v5.8.* entries
+  through .63, plus this .64 closeout entry.
+- **roadmap.md** + **state.md**: refreshed to v5.8.64; .65 +
+  .66 pinned for foldin + valve respectively.
+- **completed-phases.md**: **v5.8.0–v5.8.63 section migrated**
+  (94 lines). Per-slot summaries grouped by sub-arc (Phase 1
+  quick-wins, Phase 2 language-vocabulary, Phase 3 polish). Cycle
+  stats: 64 patches across 5 days; cc5 720,928 → 741,048 B
+  (+20,120 B); check.sh 64 → 65 gates; tcyr 108 → 127 files;
+  unicode asserts 0 → 320,874.
+- **vidya refresh**: per-minor refresh (`language.cyml` Unicode
+  APIs, `field_notes/compiler.cyml` cycle gotchas,
+  `implementation.cyml` / `types.cyml` heap map,
+  `dependencies/ecosystem.cyml` dep refresh) — manual; happens
+  out-of-band in `~/Repos/vidya/` per `reference_vidya_location`
+  memory pin. Tracked as follow-up ahead of v5.8.66 ship.
+
+### Cycle summary
+
+v5.8.x ran from 2026-05-01 (v5.8.0) to 2026-05-05 (v5.8.64) —
+64 patches in 5 days, the most compressed minor in cyrius
+history. Theme started as "optimization + bug-fix" but
+strategically re-themed at v5.8.0 ship to fold forward 4-5
+language-feature minors (slices, effects, tagged unions +
+exhaustive match, Result+?, allocators) into one cycle. Phase 3
+absorbed Unicode 17.0.0 (categories, case folding, NFC/NFD,
+NFKC/NFKD) plus structural work (heap-map monotonic reorg, lib/
+cleanups, main_*.cyr boilerplate extraction) plus dep ecosystem
+prep for the v5.8.65 foldin.
+
+cc5: 720,928 B → **741,048 B** (+20,120 B / +2.79%). Net language
++ stdlib growth: slices, effect annotations, sum types,
+exhaustive match, `Result<T,E>`, `?` operator, allocator vtable,
+Unicode 17.0.0 (320,874 asserts), sandhi 1.1.0 fold + the
+prep for the .65 foldin of 6 sibling deps (sakshi/patra/sigil/
+vani/yukti/sankoch).
+
+### Next: out-of-band dep work, then .65 + .66
+
+- Out-of-band: walk each fold-target sibling dep (sakshi/patra/
+  sigil/vani/yukti/sankoch — sans mabda), bump `cyrius` pin to
+  "5.8.64", version-patch each.
+- v5.8.65: stdlib foldin — vendor 6 distfiles into lib/ +
+  remove from `[deps]`.
+- v5.8.66: release-valve for foldin fallout; final cycle close.
+
+### Acceptance gates (closeout protocol)
+
+- **§1-3 Mechanical**: ALL PASS (self-host + bootstrap closure +
+  check.sh 65/65 + cross-host).
+- **§4-8 Judgment**: clean (heap monotonic, dead-code floor
+  stable, no new refactor-shipped items, no new ABI leaks, no
+  orphans).
+- **§9 Compliance**: quick scan clean; full audit assessment
+  pinned for v5.9.x (last full was 2026-04-13).
+- **§10 Downstream**: 6-dep work-list captured; mabda excluded.
+- **§11 Docs**: CHANGELOG / roadmap / state.md / completed-
+  phases all synced; vidya refresh tracked as out-of-band.
+- `cc5 --version`: `cc5 5.8.64`.
+- Self-host: cc5 == cc5b byte-identical at **741,048 B**.
+
 ## [5.8.63] — 2026-05-05
 
 **v5.8.x slot 63 — refactor pass B: main_*.cyr boilerplate
