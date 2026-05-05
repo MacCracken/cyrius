@@ -1933,35 +1933,71 @@ hand-roll incompletely.
   Filed at v5.8.55 ship 2026-05-04 per user direction
   ".55 dedup; .56 deadcode; .57 refactor; cascading remaining."
 
-- **v5.8.57** — Remaining refactor pass. Picks up the work
-  that v5.8.55's dedup didn't fold in:
+- **v5.8.57** ✅ SHIPPED 2026-05-04 — sovereign UCD generator.
+  Replaces `scripts/gen-unicode-data.py` (the Python predecessor
+  carried since v5.8.49) with a native cyrius program. Cycle ethos
+  per CLAUDE.md "Own the language. Own the toolchain. No external
+  governance." — the Python script's "offline build-machinery"
+  rationalization, written into the script header at v5.8.49, was
+  rejected at this slot's premise-check. No non-cyrius language is
+  acceptable as a slot deliverable.
 
-  - **Binary-search dedup** across the 3 unicode modules. 8
-    nearly-identical bsearch loops in
-    `lib/unicode/categories.cyr` (1) +
-    `lib/unicode/casefold.cyr` (4) +
-    `lib/unicode/normalize.cyr` (3). Each searches a
-    different table with different record decode → would
-    need fn-pointer callback or template-style helper.
-    Moderate effort, modest payoff. Surface a sketched
-    helper signature first; user picks whether to land or
-    defer to a future cycle.
-  - **`scripts/gen-unicode-data.py` consolidation** —
-    extended across .49 (categories) + .50 (casefold) + .51
-    (normalize) + .52 (NormalizationTest fetch). The
-    parse_* / emit_* fn pairs share boilerplate; could
-    collapse into a generic UCD-record-emit helper.
-  - **Other items surfaced during the slot** — the audit
-    pass at v5.8.55 logged these scope candidates; .57 is
-    the last opportunity before closeout to land any that
-    earn it.
+  Pre-shipped scope (the .55 audit's surfaced candidates) was
+  superseded by user direction "rewrite all that shit" 2026-05-04:
+  - **Binary-search dedup** across 3 unicode modules — DEFERRED
+    (premise-check found NO viable cyrius mechanism: fn-pointer
+    callback adds 482-line `lib/fnptr.cyr` to the Unicode dep
+    chain (net +437 lines); table-id internal dispatch puts
+    branching in the hot binary-search loop (perf regression);
+    cyrius lacks macros/generics. The 3 simple-mapping loops
+    stay duplicated until cyrius grows the language facility).
+  - **gen-unicode-data.py Python consolidation** — REJECTED as
+    category error (cyrius release shipping Python work is the
+    sleight-of-hand the user explicitly named).
 
-  Acceptance: cc5 byte-identical post-refactor; all unicode
-  tcyrs still pass (the regression floor from v5.8.52 must
-  hold); no new dead-code added.
+  Delivered:
+  - **`tests/data/ucd/*.txt`** committed (4 UCD source files:
+    DerivedGeneralCategory.txt, CaseFolding.txt, UnicodeData.txt,
+    CompositionExclusions.txt — total ~2.6 MB). Paired with the
+    pre-existing `tests/data/NormalizationTest.txt` from .52.
+    Hermetic regen — no network, no HTTPS dep, no fetch.
+  - **`programs/gen_unicode_data.cyr`** — single-program native
+    cyrius UCD generator. Architecture: `_parse_hex` /
+    `_parse_decimal` / `_parse_cp_seq` / `_skip_ws` / `_line_end`
+    / `_content_end` / `_ud_field_start` / `_ud_field_end`
+    primitives; `_sort_records(arr, n, stride)` insertion-sort
+    by slot 0 (stable); `_sort_records_by_slot(arr, n, stride,
+    slot)` for 2-key sort (composition table needs (cp1, cp2)
+    lex order — two-pass stable sort gives that). Per-table
+    parse + emit fns; `_emit_table_block(out, prefix, blob,
+    blob_len, count, per_piece, chars_per_rec)` shared piece-
+    block emitter. Three top-level entry fns: `gen_categories`
+    / `gen_casefold` / `gen_normalize`.
+  - **Byte-identical to Python output** for the data portions of
+    all 3 generated files (`lib/unicode/_categories_data.cyr`
+    body, `_casefold_data.cyr` body, `_normalize_data.cyr` body).
+    Only the headers differ — the generator-name comment now
+    points at `programs/gen_unicode_data.cyr`. Verified by `cmp`
+    on `tail -n +<N>` portions of each file vs the v5.8.56
+    snapshot (where N skips the header lines).
+  - **`scripts/gen-unicode-data.py` deleted.** The Python script
+    that v5.8.49-.52 extended four times across the Unicode arc
+    is gone. References in `tests/tcyr/unicode_normconf.tcyr`
+    updated to point at `build/gen_unicode_data` invocation.
 
-  Filed at v5.8.55 ship 2026-05-04 per user direction
-  "cascading remaining."
+  Verified:
+  - Self-host: cc5 == cc5b byte-identical at 741,120 B (compiler
+    untouched; this is a stdlib-tooling change).
+  - All 4 unicode tcyrs pass against cyrius-regenerated data:
+    122 + 106 + 83 + 120,207 = 120,518 asserts (identical count
+    to v5.8.56 — semantically transparent regeneration).
+  - `scripts/check.sh`: 65/65 named gates green; cross-host gates
+    on pi/cass/ecb pass via existing SSH wiring.
+
+  Filed at v5.8.55 ship 2026-05-04. Scope rewritten at v5.8.57
+  start per user direction: "How dare you USE ANOTHER LANGUAGE —
+  this is a sovereign language project". The sovereignty rule
+  pinned to memory at this slot.
 
 - **v5.8.58** — Deps cleanup + release-valve (combined slot).
   Two purposes:

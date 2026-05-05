@@ -9,8 +9,12 @@
 # cc5's 256 KB str_data cap. The same cap deferred NFKC + NFKD off
 # v5.8.51, and forced this slot to ship the conformance suite via
 # `file_read_all` instead of as a generated tcyr. Sidesteps str_data
-# entirely; corpus refresh is one offline `python scripts/gen-unicode-data.py`
-# invocation (which now also writes tests/data/NormalizationTest.txt).
+# entirely; corpus refresh is one offline build of the native cyrius
+# generator (`cyrius build programs/gen_unicode_data.cyr -o
+# build/gen_unicode_data && build/gen_unicode_data`) which also reads
+# tests/data/NormalizationTest.txt verbatim from the committed UCD
+# corpus at tests/data/ucd/. The Python predecessor was retired at
+# v5.8.57 in favor of the sovereign cyrius implementation.
 #
 # Per-row conformance check (subset of the UCD test contract — only the
 # canonical forms shipped at v5.8.51):
@@ -132,7 +136,7 @@ var corpus = alloc(BUF_CAP);
 assert_nonnull(corpus, "alloc corpus buffer");
 
 var corpus_len = file_read_all("tests/data/NormalizationTest.txt", corpus, BUF_CAP - 1);
-assert_gt(corpus_len, 0, "read tests/data/NormalizationTest.txt (corpus must exist; regenerate via scripts/gen-unicode-data.py)");
+assert_gt(corpus_len, 0, "read tests/data/NormalizationTest.txt (corpus must exist; regenerate via build/gen_unicode_data — see programs/gen_unicode_data.cyr)");
 store8(corpus + corpus_len, 0);
 
 # Per-row scratch (reused across iterations to avoid per-row buffer churn).

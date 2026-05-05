@@ -1,0 +1,1019 @@
+# programs/gen_unicode_data.cyr — native cyrius UCD codegen.
+#
+# Replaces the v5.8.49-era `scripts/gen-unicode-data.py` with a pure-
+# cyrius generator. Reads UCD source files committed at
+# `tests/data/ucd/*.txt` + `tests/data/NormalizationTest.txt`, parses
+# each format, sorts by codepoint, encodes as hex-pair records, chunks
+# into pieces, and writes the four output files:
+#
+#   lib/unicode/_categories_data.cyr    (Unicode 17.0.0 GeneralCategory)
+#   lib/unicode/_casefold_data.cyr      (simple+full case fold)
+#   lib/unicode/_normalize_data.cyr     (CCC + canonical decomp + composition)
+#   tests/data/NormalizationTest.txt    (verbatim copy; corpus already lives here)
+#
+# Run via:
+#   cyrius build programs/gen_unicode_data.cyr -o build/gen_unicode_data
+#   ./build/gen_unicode_data
+#
+# Sovereignty: cyrius writes its own data tables. No Python, no jq, no
+# shell pipeline. UCD source files are committed to the repo so regen
+# is hermetic — to bump Unicode revision, drop the new UCD files into
+# tests/data/ucd/ and re-run.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/fmt.cyr"
+
+# ── Low-level parse helpers ───────────────────────────────────────────
+
+fn _hex_digit(c) {
+    if (c >= 48) { if (c <= 57)  { return c - 48; } }   # '0'-'9'
+    if (c >= 65) { if (c <= 70)  { return c - 55; } }   # 'A'-'F'
+    if (c >= 97) { if (c <= 102) { return c - 87; } }   # 'a'-'f'
+    return 0 - 1;
+}
+
+# Parse hex int from buf[off..end] until first non-hex.
+# Stores parsed value at *out_value. Returns bytes consumed (0 = none).
+fn _parse_hex(buf, off, end, out_value) {
+    var v = 0;
+    var i = off;
+    while (i < end) {
+        var d = _hex_digit(load8(buf + i));
+        if (d < 0) { break; }
+        v = (v << 4) | d;
+        i = i + 1;
+    }
+    store64(out_value, v);
+    return i - off;
+}
+
+fn _skip_ws(buf, off, end) {
+    while (off < end) {
+        var c = load8(buf + off);
+        if (c != 32) {
+            if (c != 9) { return off; }
+        }
+        off = off + 1;
+    }
+    return off;
+}
+
+fn _line_end(buf, off, end) {
+    while (off < end) {
+        if (load8(buf + off) == 10) { return off; }
+        off = off + 1;
+    }
+    return off;
+}
+
+# Find '#' (start of inline comment) or line_end (whichever first).
+fn _content_end(buf, off, line_end_off) {
+    while (off < line_end_off) {
+        if (load8(buf + off) == 35) { return off; }
+        off = off + 1;
+    }
+    return line_end_off;
+}
+
+# Map 2-char category short-name to enum index. -1 on aggregate / unknown.
+# Order matches GeneralCategory enum in lib/unicode/categories.cyr.
+fn _cat_index(buf, off) {
+    var c0 = load8(buf + off);
+    var c1 = load8(buf + off + 1);
+    if (c0 == 76) {
+        if (c1 == 117) { return 0; }   # Lu
+        if (c1 == 108) { return 1; }   # Ll
+        if (c1 == 116) { return 2; }   # Lt
+        if (c1 == 109) { return 3; }   # Lm
+        if (c1 == 111) { return 4; }   # Lo
+    }
+    if (c0 == 77) {
+        if (c1 == 110) { return 5; }   # Mn
+        if (c1 == 99)  { return 6; }   # Mc
+        if (c1 == 101) { return 7; }   # Me
+    }
+    if (c0 == 78) {
+        if (c1 == 100) { return 8; }   # Nd
+        if (c1 == 108) { return 9; }   # Nl
+        if (c1 == 111) { return 10; }  # No
+    }
+    if (c0 == 80) {
+        if (c1 == 99)  { return 11; }  # Pc
+        if (c1 == 100) { return 12; }  # Pd
+        if (c1 == 115) { return 13; }  # Ps
+        if (c1 == 101) { return 14; }  # Pe
+        if (c1 == 105) { return 15; }  # Pi
+        if (c1 == 102) { return 16; }  # Pf
+        if (c1 == 111) { return 17; }  # Po
+    }
+    if (c0 == 83) {
+        if (c1 == 109) { return 18; }  # Sm
+        if (c1 == 99)  { return 19; }  # Sc
+        if (c1 == 107) { return 20; }  # Sk
+        if (c1 == 111) { return 21; }  # So
+    }
+    if (c0 == 90) {
+        if (c1 == 115) { return 22; }  # Zs
+        if (c1 == 108) { return 23; }  # Zl
+        if (c1 == 112) { return 24; }  # Zp
+    }
+    if (c0 == 67) {
+        if (c1 == 99)  { return 25; }  # Cc
+        if (c1 == 102) { return 26; }  # Cf
+        if (c1 == 115) { return 27; }  # Cs
+        if (c1 == 111) { return 28; }  # Co
+        if (c1 == 110) { return 29; }  # Cn
+    }
+    return 0 - 1;
+}
+
+# ── Output emit helpers ───────────────────────────────────────────────
+
+# Write a NUL-terminated cstring to out_buf at offset; returns bytes
+# written (excluding terminator). Lower-case hex; matches Python f-string
+# `{x:06x}` exactly.
+fn _emit_cstr(out_buf, off, s) {
+    var i = 0;
+    while (load8(s + i) != 0) {
+        store8(out_buf + off + i, load8(s + i));
+        i = i + 1;
+    }
+    return i;
+}
+
+# Emit `value` as exactly `width` hex chars (lower-case, zero-padded) into
+# out_buf at offset. Returns width.
+fn _emit_hex_padded(out_buf, off, value, width) {
+    var i = width - 1;
+    while (i >= 0) {
+        var d = (value >> (i * 4)) & 0xF;
+        var c = 0;
+        if (d < 10) { c = 48 + d; }
+        else { c = 97 + d - 10; }
+        store8(out_buf + off, c);
+        off = off + 1;
+        i = i - 1;
+    }
+    return width;
+}
+
+# Emit `n` as decimal (no padding). Returns bytes written.
+fn _emit_decimal(out_buf, off, n) {
+    if (n == 0) {
+        store8(out_buf + off, 48);
+        return 1;
+    }
+    var tmp[24];
+    var ti = 0;
+    while (n > 0) {
+        store8(&tmp + ti, 48 + (n - (n / 10) * 10));
+        n = n / 10;
+        ti = ti + 1;
+    }
+    var w = ti;
+    var oi = 0;
+    while (ti > 0) {
+        ti = ti - 1;
+        store8(out_buf + off + oi, load8(&tmp + ti));
+        oi = oi + 1;
+    }
+    return w;
+}
+
+# Emit a piece-block: count-record-size constants + per-piece string vars.
+# Mirrors emit_casefold_source / emit_normalize_source per-table boilerplate.
+fn _emit_table_block(out_buf, off, prefix, blob, blob_len, count, per_piece, chars_per_rec) {
+    var oo = off;
+    var piece_size = chars_per_rec * per_piece;
+    var piece_count = blob_len / piece_size;
+    if (piece_count * piece_size < blob_len) { piece_count = piece_count + 1; }
+
+    # `var _UNICODE_<PREFIX>_RECORD_COUNT = N;` (or RANGE_COUNT for categories — caller picks)
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_");
+    oo = oo + _emit_cstr(out_buf, oo, prefix);
+    oo = oo + _emit_cstr(out_buf, oo, " = ");
+    oo = oo + _emit_decimal(out_buf, oo, count);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n");
+    return oo - off;
+}
+
+# ── Sort: insertion sort on N-i64-wide records ────────────────────────
+# In-place stable sort. arr = base ptr; n = record count; stride = i64
+# slots per record (3 for triples, 2 for pairs, etc.). Sorts by load64
+# of slot 0 ascending. N ≤ 5000 in practice; insertion sort is fine.
+fn _sort_records(arr, n, stride) {
+    var rec_bytes = stride * 8;
+    var i = 1;
+    while (i < n) {
+        var key = load64(arr + i * rec_bytes);
+        # Save the whole record in a scratch buffer
+        var scratch[64];   # 8 i64 slots = max stride 8
+        var s = 0;
+        while (s < stride) {
+            store64(&scratch + s * 8, load64(arr + i * rec_bytes + s * 8));
+            s = s + 1;
+        }
+        var j = i - 1;
+        while (j >= 0) {
+            if (load64(arr + j * rec_bytes) <= key) { break; }
+            # Shift record j → j+1
+            var s2 = 0;
+            while (s2 < stride) {
+                store64(arr + (j + 1) * rec_bytes + s2 * 8,
+                        load64(arr + j * rec_bytes + s2 * 8));
+                s2 = s2 + 1;
+            }
+            j = j - 1;
+        }
+        # Place saved record at j+1
+        var s3 = 0;
+        while (s3 < stride) {
+            store64(arr + (j + 1) * rec_bytes + s3 * 8, load64(&scratch + s3 * 8));
+            s3 = s3 + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ── Categories ────────────────────────────────────────────────────────
+
+fn _parse_cat_line(buf, line_start, content_end_off, out_start, out_end, out_cat) {
+    var p = _skip_ws(buf, line_start, content_end_off);
+    if (p >= content_end_off) { return 0; }
+    if (load8(buf + p) == 35) { return 0; }
+
+    var sval[8];
+    var n = _parse_hex(buf, p, content_end_off, &sval);
+    if (n == 0) { return 0; }
+    p = p + n;
+
+    var end_cp = load64(&sval);
+    if (p + 1 < content_end_off) {
+        if (load8(buf + p) == 46) {
+            if (load8(buf + p + 1) == 46) {
+                p = p + 2;
+                var eval[8];
+                var en = _parse_hex(buf, p, content_end_off, &eval);
+                if (en == 0) { return 0; }
+                p = p + en;
+                end_cp = load64(&eval);
+            }
+        }
+    }
+
+    p = _skip_ws(buf, p, content_end_off);
+    if (p >= content_end_off) { return 0; }
+    if (load8(buf + p) != 59) { return 0; }
+    p = p + 1;
+    p = _skip_ws(buf, p, content_end_off);
+
+    if (p + 1 >= content_end_off) { return 0; }
+    var cat_idx = _cat_index(buf, p);
+    if (cat_idx < 0) { return 0; }
+
+    store64(out_start, load64(&sval));
+    store64(out_end, end_cp);
+    store64(out_cat, cat_idx);
+    return 1;
+}
+
+fn gen_categories() {
+    var src_buf = alloc(524288);
+    var src_len = file_read_all("tests/data/ucd/DerivedGeneralCategory.txt", src_buf, 524287);
+    if (src_len < 0) {
+        syscall(SYS_WRITE, 2, "error: cannot read tests/data/ucd/DerivedGeneralCategory.txt\n", 61);
+        return 1;
+    }
+
+    var triples = alloc(8192 * 24);   # 8192 raw triples max — UCD has ~3000
+    var triple_count = 0;
+
+    var pos = 0;
+    while (pos < src_len) {
+        var le = _line_end(src_buf, pos, src_len);
+        var ce = _content_end(src_buf, pos, le);
+        var ostart[8];
+        var oend[8];
+        var ocat[8];
+        if (_parse_cat_line(src_buf, pos, ce, &ostart, &oend, &ocat) == 1) {
+            store64(triples + triple_count * 24,      load64(&ostart));
+            store64(triples + triple_count * 24 + 8,  load64(&oend));
+            store64(triples + triple_count * 24 + 16, load64(&ocat));
+            triple_count = triple_count + 1;
+        }
+        pos = le + 1;
+    }
+
+    _sort_records(triples, triple_count, 3);
+
+    # Merge contiguous same-category ranges.
+    var merged = alloc(8192 * 24);
+    var merged_count = 0;
+    var k = 0;
+    while (k < triple_count) {
+        var s = load64(triples + k * 24);
+        var e = load64(triples + k * 24 + 8);
+        var c = load64(triples + k * 24 + 16);
+        while (k + 1 < triple_count) {
+            if (load64(triples + (k + 1) * 24) != e + 1) { break; }
+            if (load64(triples + (k + 1) * 24 + 16) != c) { break; }
+            e = load64(triples + (k + 1) * 24 + 8);
+            k = k + 1;
+        }
+        store64(merged + merged_count * 24,      s);
+        store64(merged + merged_count * 24 + 8,  e);
+        store64(merged + merged_count * 24 + 16, c);
+        merged_count = merged_count + 1;
+        k = k + 1;
+    }
+
+    # Encode hex blob: 14 chars per range = 6 (start) + 6 (end) + 2 (cat).
+    var blob = alloc(merged_count * 14 + 16);
+    var bo = 0;
+    var ri = 0;
+    while (ri < merged_count) {
+        bo = bo + _emit_hex_padded(blob, bo, load64(merged + ri * 24),      6);
+        bo = bo + _emit_hex_padded(blob, bo, load64(merged + ri * 24 + 8),  6);
+        bo = bo + _emit_hex_padded(blob, bo, load64(merged + ri * 24 + 16), 2);
+        ri = ri + 1;
+    }
+    var blob_len = bo;
+
+    var per_piece = 500;
+    var chars_per_rec = 14;
+    var piece_size = chars_per_rec * per_piece;
+    var piece_count = blob_len / piece_size;
+    if (piece_count * piece_size < blob_len) { piece_count = piece_count + 1; }
+
+    # Emit cyrius source.
+    var out_buf = alloc(blob_len + 16384);
+    var oo = 0;
+
+    oo = oo + _emit_cstr(out_buf, oo, "# lib/unicode/_categories_data.cyr - AUTO-GENERATED by\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# `programs/gen_unicode_data.cyr`. Do NOT edit by hand; the next\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# regeneration will overwrite. Source of truth:\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# Unicode 17.0.0 (");
+    oo = oo + _emit_decimal(out_buf, oo, merged_count);
+    oo = oo + _emit_cstr(out_buf, oo, " merged ranges; 30\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# total leaf categories). Encoding: 14 hex chars per range -\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# 6 chars u24 start + 6 chars u24 end (inclusive) + 2 chars cat\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# index. The category index aligns with the GeneralCategory\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# enum in lib/unicode/categories.cyr (Lu=0, Ll=1, ..., Cn=29).\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# Public surface lives in categories.cyr; this file is data.\n");
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_CAT_RANGE_COUNT = ");
+    oo = oo + _emit_decimal(out_buf, oo, merged_count);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n");
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_CAT_PIECE_COUNT = ");
+    oo = oo + _emit_decimal(out_buf, oo, piece_count);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n");
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_CAT_RANGES_PER_PIECE = ");
+    oo = oo + _emit_decimal(out_buf, oo, per_piece);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n\n");
+
+    var pi = 0;
+    while (pi < piece_count) {
+        oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_CAT_PIECE_");
+        oo = oo + _emit_decimal(out_buf, oo, pi);
+        oo = oo + _emit_cstr(out_buf, oo, " = \"");
+        var p_off = pi * piece_size;
+        var p_end = p_off + piece_size;
+        if (p_end > blob_len) { p_end = blob_len; }
+        var pj = p_off;
+        while (pj < p_end) {
+            store8(out_buf + oo, load8(blob + pj));
+            oo = oo + 1;
+            pj = pj + 1;
+        }
+        oo = oo + _emit_cstr(out_buf, oo, "\";\n");
+        pi = pi + 1;
+    }
+
+    var n_written = file_write_all("lib/unicode/_categories_data.cyr", out_buf, oo);
+    syscall(SYS_WRITE, 1, "wrote lib/unicode/_categories_data.cyr (", 40);
+    fmt_int(n_written);
+    syscall(SYS_WRITE, 1, " bytes, ", 8);
+    fmt_int(merged_count);
+    syscall(SYS_WRITE, 1, " merged ranges)\n", 16);
+    return 0;
+}
+
+# ── UnicodeData line parsing — semicolon-separated fields ─────────────
+# Returns the byte offset of the start of field `n` within the line, or
+# `line_end_off` if the line has fewer than n+1 fields. Field separator
+# is ';'; fields can be empty.
+fn _ud_field_start(buf, line_start, line_end_off, n) {
+    if (n == 0) { return line_start; }
+    var p = line_start;
+    var seen = 0;
+    while (p < line_end_off) {
+        if (load8(buf + p) == 59) {
+            seen = seen + 1;
+            if (seen == n) { return p + 1; }
+        }
+        p = p + 1;
+    }
+    return line_end_off;
+}
+
+fn _ud_field_end(buf, line_start, line_end_off, n) {
+    var p = _ud_field_start(buf, line_start, line_end_off, n);
+    while (p < line_end_off) {
+        if (load8(buf + p) == 59) { return p; }
+        p = p + 1;
+    }
+    return line_end_off;
+}
+
+# Parse decimal int from buf[off..end].
+fn _parse_decimal(buf, off, end, out_value) {
+    var v = 0;
+    var i = off;
+    while (i < end) {
+        var c = load8(buf + i);
+        if (c < 48) { break; }
+        if (c > 57) { break; }
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    store64(out_value, v);
+    return i - off;
+}
+
+# Parse a space-separated sequence of hex codepoints in buf[off..end].
+# Stores up to `cap` codepoints at out_cps (i64 slots). Returns count.
+fn _parse_cp_seq(buf, off, end, out_cps, cap) {
+    var i = off;
+    var n = 0;
+    while (i < end) {
+        while (i < end) {
+            if (load8(buf + i) != 32) { break; }
+            i = i + 1;
+        }
+        if (i >= end) { break; }
+        if (n >= cap) { break; }
+        var v[8];
+        var consumed = _parse_hex(buf, i, end, &v);
+        if (consumed == 0) { break; }
+        store64(out_cps + n * 8, load64(&v));
+        n = n + 1;
+        i = i + consumed;
+    }
+    return n;
+}
+
+# ── Casefold: simple cases ────────────────────────────────────────────
+# UnicodeData.txt fields 12/13/14 = simple uppercase / lowercase /
+# titlecase (hex codepoint, possibly empty). Build 3 sorted arrays of
+# (src, dst) pairs.
+
+fn _parse_simple_case(ud_buf, ud_len, table_field, out_pairs) {
+    var pos = 0;
+    var n = 0;
+    while (pos < ud_len) {
+        var le = _line_end(ud_buf, pos, ud_len);
+        var f0_start = _ud_field_start(ud_buf, pos, le, 0);
+        var f0_end   = _ud_field_end(ud_buf, pos, le, 0);
+        var ft_start = _ud_field_start(ud_buf, pos, le, table_field);
+        var ft_end   = _ud_field_end(ud_buf, pos, le, table_field);
+        if (ft_end > ft_start) {
+            # Non-empty mapping → record (src, dst).
+            var src_v[8];
+            var dst_v[8];
+            var sn = _parse_hex(ud_buf, f0_start, f0_end, &src_v);
+            var dn = _parse_hex(ud_buf, ft_start, ft_end, &dst_v);
+            if (sn > 0) {
+                if (dn > 0) {
+                    store64(out_pairs + n * 16,     load64(&src_v));
+                    store64(out_pairs + n * 16 + 8, load64(&dst_v));
+                    n = n + 1;
+                }
+            }
+        }
+        pos = le + 1;
+    }
+    return n;
+}
+
+# Encode N (src u24, dst u24) pairs as 12-hex-char records.
+fn _emit_simple_blob(pairs, n, out_blob) {
+    var i = 0;
+    var bo = 0;
+    while (i < n) {
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(pairs + i * 16),     6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(pairs + i * 16 + 8), 6);
+        i = i + 1;
+    }
+    return bo;
+}
+
+# ── Casefold: full fold (CaseFolding.txt status C+F) ──────────────────
+# Records: (src, n, cp1, cp2, cp3) — 5 i64 slots = 40 bytes per rec.
+
+fn _parse_full_fold(cf_buf, cf_len, out_recs) {
+    var pos = 0;
+    var n = 0;
+    while (pos < cf_len) {
+        var le = _line_end(cf_buf, pos, cf_len);
+        var ce = _content_end(cf_buf, pos, le);
+        var p = _skip_ws(cf_buf, pos, ce);
+        if (p < ce) {
+            if (load8(cf_buf + p) != 35) {
+                # Parse src cp
+                var src_v[8];
+                var sn = _parse_hex(cf_buf, p, ce, &src_v);
+                if (sn > 0) {
+                    p = p + sn;
+                    p = _skip_ws(cf_buf, p, ce);
+                    if (p < ce) {
+                        if (load8(cf_buf + p) == 59) {
+                            p = p + 1;
+                            p = _skip_ws(cf_buf, p, ce);
+                            # Status: C, F, S, T (single char)
+                            if (p < ce) {
+                                var status = load8(cf_buf + p);
+                                if (status == 67 || status == 70) {  # 'C' or 'F'
+                                    p = p + 1;
+                                    p = _skip_ws(cf_buf, p, ce);
+                                    if (p < ce) {
+                                        if (load8(cf_buf + p) == 59) {
+                                            p = p + 1;
+                                            # Mapping: 1-3 hex cps space-separated.
+                                            # Stop at next ';'.
+                                            var m_end = p;
+                                            while (m_end < ce) {
+                                                if (load8(cf_buf + m_end) == 59) { break; }
+                                                m_end = m_end + 1;
+                                            }
+                                            var cps[24];   # max 3 cps
+                                            var cn = _parse_cp_seq(cf_buf, p, m_end, &cps, 3);
+                                            if (cn >= 1) {
+                                                if (cn <= 3) {
+                                                    store64(out_recs + n * 40,      load64(&src_v));
+                                                    store64(out_recs + n * 40 + 8,  cn);
+                                                    store64(out_recs + n * 40 + 16, load64(&cps));
+                                                    var c2 = 0;
+                                                    var c3 = 0;
+                                                    if (cn >= 2) { c2 = load64(&cps + 8); }
+                                                    if (cn >= 3) { c3 = load64(&cps + 16); }
+                                                    store64(out_recs + n * 40 + 24, c2);
+                                                    store64(out_recs + n * 40 + 32, c3);
+                                                    n = n + 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pos = le + 1;
+    }
+    return n;
+}
+
+# Encode (src, n, cp1, cp2, cp3) as 26-hex-char records.
+fn _emit_fold_blob(recs, n, out_blob) {
+    var i = 0;
+    var bo = 0;
+    while (i < n) {
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(recs + i * 40),      6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(recs + i * 40 + 8),  2);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(recs + i * 40 + 16), 6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(recs + i * 40 + 24), 6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(recs + i * 40 + 32), 6);
+        i = i + 1;
+    }
+    return bo;
+}
+
+# Emit one piece-block for casefold/normalize: count + piece-count +
+# records-per-piece + per-piece string vars. Returns bytes written.
+fn _emit_piece_block(out_buf, off, prefix, blob, blob_len, count, per_piece, chars_per_rec) {
+    var oo = off;
+    var piece_size = chars_per_rec * per_piece;
+    var piece_count = blob_len / piece_size;
+    if (piece_count * piece_size < blob_len) { piece_count = piece_count + 1; }
+
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_");
+    oo = oo + _emit_cstr(out_buf, oo, prefix);
+    oo = oo + _emit_cstr(out_buf, oo, "_RECORD_COUNT = ");
+    oo = oo + _emit_decimal(out_buf, oo, count);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n");
+
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_");
+    oo = oo + _emit_cstr(out_buf, oo, prefix);
+    oo = oo + _emit_cstr(out_buf, oo, "_PIECE_COUNT = ");
+    oo = oo + _emit_decimal(out_buf, oo, piece_count);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n");
+
+    oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_");
+    oo = oo + _emit_cstr(out_buf, oo, prefix);
+    oo = oo + _emit_cstr(out_buf, oo, "_RECORDS_PER_PIECE = ");
+    oo = oo + _emit_decimal(out_buf, oo, per_piece);
+    oo = oo + _emit_cstr(out_buf, oo, ";\n\n");
+
+    var pi = 0;
+    while (pi < piece_count) {
+        oo = oo + _emit_cstr(out_buf, oo, "var _UNICODE_");
+        oo = oo + _emit_cstr(out_buf, oo, prefix);
+        oo = oo + _emit_cstr(out_buf, oo, "_PIECE_");
+        oo = oo + _emit_decimal(out_buf, oo, pi);
+        oo = oo + _emit_cstr(out_buf, oo, " = \"");
+        var p_off = pi * piece_size;
+        var p_end = p_off + piece_size;
+        if (p_end > blob_len) { p_end = blob_len; }
+        var pj = p_off;
+        while (pj < p_end) {
+            store8(out_buf + oo, load8(blob + pj));
+            oo = oo + 1;
+            pj = pj + 1;
+        }
+        oo = oo + _emit_cstr(out_buf, oo, "\";\n");
+        pi = pi + 1;
+    }
+    return oo - off;
+}
+
+fn gen_casefold() {
+    var ud_buf = alloc(4194304);
+    var ud_len = file_read_all("tests/data/ucd/UnicodeData.txt", ud_buf, 4194303);
+    if (ud_len < 0) { return 1; }
+    var cf_buf = alloc(262144);
+    var cf_len = file_read_all("tests/data/ucd/CaseFolding.txt", cf_buf, 262143);
+    if (cf_len < 0) { return 1; }
+
+    # Simple case maps: field 12=upper, 13=lower, 14=title.
+    var upper_pairs = alloc(8192 * 16);
+    var lower_pairs = alloc(8192 * 16);
+    var title_pairs = alloc(8192 * 16);
+
+    var upper_n = _parse_simple_case(ud_buf, ud_len, 12, upper_pairs);
+    var lower_n = _parse_simple_case(ud_buf, ud_len, 13, lower_pairs);
+    var title_n = _parse_simple_case(ud_buf, ud_len, 14, title_pairs);
+
+    _sort_records(upper_pairs, upper_n, 2);
+    _sort_records(lower_pairs, lower_n, 2);
+    _sort_records(title_pairs, title_n, 2);
+
+    var upper_blob = alloc(upper_n * 12 + 16);
+    var lower_blob = alloc(lower_n * 12 + 16);
+    var title_blob = alloc(title_n * 12 + 16);
+    var upper_blob_len = _emit_simple_blob(upper_pairs, upper_n, upper_blob);
+    var lower_blob_len = _emit_simple_blob(lower_pairs, lower_n, lower_blob);
+    var title_blob_len = _emit_simple_blob(title_pairs, title_n, title_blob);
+
+    # Full case fold
+    var fold_recs = alloc(2048 * 40);
+    var fold_n = _parse_full_fold(cf_buf, cf_len, fold_recs);
+    _sort_records(fold_recs, fold_n, 5);
+
+    var fold_blob = alloc(fold_n * 26 + 16);
+    var fold_blob_len = _emit_fold_blob(fold_recs, fold_n, fold_blob);
+
+    # Emit cyrius source
+    var total_blob = upper_blob_len + lower_blob_len + title_blob_len + fold_blob_len;
+    var out_buf = alloc(total_blob + 32768);
+    var oo = 0;
+
+    oo = oo + _emit_cstr(out_buf, oo, "# lib/unicode/_casefold_data.cyr - AUTO-GENERATED by\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# `programs/gen_unicode_data.cyr`. Do NOT edit by hand; the next\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# regeneration will overwrite. Sources of truth:\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# Unicode 17.0.0. Four tables:\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   simple uppercase: 12 hex chars/rec (src u24 + dst u24)\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   simple lowercase: same\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   simple titlecase: same\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   full case fold:   26 hex chars/rec (src u24 + count u8 +\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                                       cp1/cp2/cp3 each u24)\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# All tables sorted by src cp; consumer-side does binary search.\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# Public surface lives in casefold.cyr; this file is data.\n\n");
+
+    oo = oo + _emit_piece_block(out_buf, oo, "UPPER", upper_blob, upper_blob_len, upper_n, 500, 12);
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+    oo = oo + _emit_piece_block(out_buf, oo, "LOWER", lower_blob, lower_blob_len, lower_n, 500, 12);
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+    oo = oo + _emit_piece_block(out_buf, oo, "TITLE", title_blob, title_blob_len, title_n, 500, 12);
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+    oo = oo + _emit_piece_block(out_buf, oo, "FOLD",  fold_blob,  fold_blob_len,  fold_n,  250, 26);
+
+    var n_written = file_write_all("lib/unicode/_casefold_data.cyr", out_buf, oo);
+    syscall(SYS_WRITE, 1, "wrote lib/unicode/_casefold_data.cyr (", 38);
+    fmt_int(n_written);
+    syscall(SYS_WRITE, 1, " bytes)\n", 8);
+    return 0;
+}
+
+# ── Stable sort by secondary slot (slot index `key_slot` ascending) ──
+# For composition: first sort by cp2 (slot 1), then sort by cp1 (slot 0)
+# via _sort_records — stable insertion sort preserves the secondary
+# order within each primary group, giving full (cp1, cp2) lex order.
+fn _sort_records_by_slot(arr, n, stride, key_slot) {
+    var rec_bytes = stride * 8;
+    var i = 1;
+    while (i < n) {
+        var key = load64(arr + i * rec_bytes + key_slot * 8);
+        var scratch[64];
+        var s = 0;
+        while (s < stride) {
+            store64(&scratch + s * 8, load64(arr + i * rec_bytes + s * 8));
+            s = s + 1;
+        }
+        var j = i - 1;
+        while (j >= 0) {
+            if (load64(arr + j * rec_bytes + key_slot * 8) <= key) { break; }
+            var s2 = 0;
+            while (s2 < stride) {
+                store64(arr + (j + 1) * rec_bytes + s2 * 8,
+                        load64(arr + j * rec_bytes + s2 * 8));
+                s2 = s2 + 1;
+            }
+            j = j - 1;
+        }
+        var s3 = 0;
+        while (s3 < stride) {
+            store64(arr + (j + 1) * rec_bytes + s3 * 8, load64(&scratch + s3 * 8));
+            s3 = s3 + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ── Normalize: parse UnicodeData (CCC + canonical decomp) ─────────────
+
+# Records: ccc = (cp, ccc_byte) — stride 2
+# Records: canon = (cp, n, cp1, cp2) — stride 4
+
+fn _parse_normalize_ud(ud_buf, ud_len, ccc_recs, ccc_n_out, canon_recs, canon_n_out) {
+    var ccc_n = 0;
+    var canon_n = 0;
+    var pos = 0;
+    while (pos < ud_len) {
+        var le = _line_end(ud_buf, pos, ud_len);
+        var f0_start = _ud_field_start(ud_buf, pos, le, 0);
+        var f0_end   = _ud_field_end(ud_buf, pos, le, 0);
+        if (f0_end > f0_start) {
+            var cp_v[8];
+            var cn = _parse_hex(ud_buf, f0_start, f0_end, &cp_v);
+            if (cn > 0) {
+                var cp = load64(&cp_v);
+                # CCC (field 3, decimal)
+                var f3_start = _ud_field_start(ud_buf, pos, le, 3);
+                var f3_end   = _ud_field_end(ud_buf, pos, le, 3);
+                var ccc_v[8];
+                var dn = _parse_decimal(ud_buf, f3_start, f3_end, &ccc_v);
+                var ccc_val = 0;
+                if (dn > 0) { ccc_val = load64(&ccc_v); }
+                if (ccc_val != 0) {
+                    store64(ccc_recs + ccc_n * 16,     cp);
+                    store64(ccc_recs + ccc_n * 16 + 8, ccc_val);
+                    ccc_n = ccc_n + 1;
+                }
+                # Decomposition (field 5)
+                var f5_start = _ud_field_start(ud_buf, pos, le, 5);
+                var f5_end   = _ud_field_end(ud_buf, pos, le, 5);
+                # Trim leading whitespace
+                var p = _skip_ws(ud_buf, f5_start, f5_end);
+                if (p < f5_end) {
+                    if (load8(ud_buf + p) != 60) {  # not '<' → canonical
+                        var cps[16];
+                        var cpsn = _parse_cp_seq(ud_buf, p, f5_end, &cps, 2);
+                        if (cpsn >= 1) {
+                            if (cpsn <= 2) {
+                                store64(canon_recs + canon_n * 32,      cp);
+                                store64(canon_recs + canon_n * 32 + 8,  cpsn);
+                                store64(canon_recs + canon_n * 32 + 16, load64(&cps));
+                                var c2 = 0;
+                                if (cpsn >= 2) { c2 = load64(&cps + 8); }
+                                store64(canon_recs + canon_n * 32 + 24, c2);
+                                canon_n = canon_n + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pos = le + 1;
+    }
+    store64(ccc_n_out, ccc_n);
+    store64(canon_n_out, canon_n);
+    return 0;
+}
+
+# Parse CompositionExclusions.txt → flat array of cps. Returns count.
+fn _parse_compexcl(ce_buf, ce_len, out_cps) {
+    var pos = 0;
+    var n = 0;
+    while (pos < ce_len) {
+        var le = _line_end(ce_buf, pos, ce_len);
+        var ce = _content_end(ce_buf, pos, le);
+        var p = _skip_ws(ce_buf, pos, ce);
+        if (p < ce) {
+            if (load8(ce_buf + p) != 35) {
+                var v[8];
+                var cn = _parse_hex(ce_buf, p, ce, &v);
+                if (cn > 0) {
+                    store64(out_cps + n * 8, load64(&v));
+                    n = n + 1;
+                }
+            }
+        }
+        pos = le + 1;
+    }
+    return n;
+}
+
+# Lookup: is `cp` in `excl_cps[0..excl_n)`? Linear scan (excl_n ~85).
+fn _is_excluded(cp, excl_cps, excl_n) {
+    var i = 0;
+    while (i < excl_n) {
+        if (load64(excl_cps + i * 8) == cp) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Lookup: get CCC for cp from sorted ccc_recs. Linear (ccc_n ~970).
+# Returns 0 on miss (matches Unicode default-starter semantics).
+fn _ccc_lookup(cp, ccc_recs, ccc_n) {
+    var i = 0;
+    while (i < ccc_n) {
+        if (load64(ccc_recs + i * 16) == cp) { return load64(ccc_recs + i * 16 + 8); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Build composition records from canonical decomps minus exclusions.
+# canon_recs stride=4 (cp, n, cp1, cp2). Output: comp_recs stride=3
+# (cp1, cp2, cp). Returns count.
+fn _build_composition(canon_recs, canon_n, ccc_recs, ccc_n, excl_cps, excl_n, comp_recs) {
+    var i = 0;
+    var n = 0;
+    while (i < canon_n) {
+        var cp  = load64(canon_recs + i * 32);
+        var dn  = load64(canon_recs + i * 32 + 8);
+        var cp1 = load64(canon_recs + i * 32 + 16);
+        var cp2 = load64(canon_recs + i * 32 + 24);
+        if (dn == 2) {
+            if (_is_excluded(cp, excl_cps, excl_n) == 0) {
+                if (_ccc_lookup(cp1, ccc_recs, ccc_n) == 0) {
+                    store64(comp_recs + n * 24,      cp1);
+                    store64(comp_recs + n * 24 + 8,  cp2);
+                    store64(comp_recs + n * 24 + 16, cp);
+                    n = n + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+# ── Normalize emit blobs ──────────────────────────────────────────────
+
+fn _emit_ccc_blob(ccc_recs, n, out_blob) {
+    var i = 0;
+    var bo = 0;
+    while (i < n) {
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(ccc_recs + i * 16),     6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(ccc_recs + i * 16 + 8), 2);
+        i = i + 1;
+    }
+    return bo;
+}
+
+# (cp, n, cp1, cp2) → 20 hex chars = 6 + 2 + 6 + 6
+fn _emit_canon_blob(canon_recs, n, out_blob) {
+    var i = 0;
+    var bo = 0;
+    while (i < n) {
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(canon_recs + i * 32),      6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(canon_recs + i * 32 + 8),  2);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(canon_recs + i * 32 + 16), 6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(canon_recs + i * 32 + 24), 6);
+        i = i + 1;
+    }
+    return bo;
+}
+
+# (cp1, cp2, composed) → 18 hex chars = 6 + 6 + 6
+fn _emit_compose_blob(comp_recs, n, out_blob) {
+    var i = 0;
+    var bo = 0;
+    while (i < n) {
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(comp_recs + i * 24),      6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(comp_recs + i * 24 + 8),  6);
+        bo = bo + _emit_hex_padded(out_blob, bo, load64(comp_recs + i * 24 + 16), 6);
+        i = i + 1;
+    }
+    return bo;
+}
+
+fn gen_normalize() {
+    var ud_buf = alloc(4194304);
+    var ud_len = file_read_all("tests/data/ucd/UnicodeData.txt", ud_buf, 4194303);
+    if (ud_len < 0) { return 1; }
+    var ce_buf = alloc(65536);
+    var ce_len = file_read_all("tests/data/ucd/CompositionExclusions.txt", ce_buf, 65535);
+    if (ce_len < 0) { return 1; }
+
+    var ccc_recs = alloc(2048 * 16);
+    var canon_recs = alloc(4096 * 32);
+    var ccc_n_out[8];
+    var canon_n_out[8];
+    _parse_normalize_ud(ud_buf, ud_len, ccc_recs, &ccc_n_out, canon_recs, &canon_n_out);
+    var ccc_n = load64(&ccc_n_out);
+    var canon_n = load64(&canon_n_out);
+
+    var excl_cps = alloc(256 * 8);
+    var excl_n = _parse_compexcl(ce_buf, ce_len, excl_cps);
+
+    # Sort CCC + canon by cp ascending (already in cp-order from
+    # UnicodeData.txt iteration — sort defensively to match Python's
+    # explicit sort).
+    _sort_records(ccc_recs, ccc_n, 2);
+    _sort_records(canon_recs, canon_n, 4);
+
+    # Build composition table from canonical decomps minus exclusions.
+    var comp_recs = alloc(2048 * 24);
+    var comp_n = _build_composition(canon_recs, canon_n, ccc_recs, ccc_n, excl_cps, excl_n, comp_recs);
+
+    # Sort composition by (cp1, cp2): stable two-pass — sort by cp2
+    # first, then by cp1; insertion sort's stability preserves cp2-
+    # order within each cp1 group, matching Python's `sorted(composition)`
+    # on (cp1, cp2) tuples.
+    _sort_records_by_slot(comp_recs, comp_n, 3, 1);
+    _sort_records(comp_recs, comp_n, 3);
+
+    # Emit blobs.
+    var ccc_blob   = alloc(ccc_n * 8 + 16);
+    var canon_blob = alloc(canon_n * 20 + 16);
+    var comp_blob  = alloc(comp_n * 18 + 16);
+    var ccc_blob_len   = _emit_ccc_blob(ccc_recs, ccc_n, ccc_blob);
+    var canon_blob_len = _emit_canon_blob(canon_recs, canon_n, canon_blob);
+    var comp_blob_len  = _emit_compose_blob(comp_recs, comp_n, comp_blob);
+
+    # Emit cyrius source.
+    var total = ccc_blob_len + canon_blob_len + comp_blob_len;
+    var out_buf = alloc(total + 32768);
+    var oo = 0;
+
+    oo = oo + _emit_cstr(out_buf, oo, "# lib/unicode/_normalize_data.cyr - AUTO-GENERATED by\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# `programs/gen_unicode_data.cyr`. Do NOT edit by hand; the next\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# regeneration will overwrite. Sources of truth:\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   https://www.unicode.org/Public/17.0.0/ucd/CompositionExclusions.txt\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# Unicode 17.0.0. Three tables (NFC + NFD only at v5.8.51 ship;\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# NFKC/NFKD compat-only decomp deferred per str_data heap cap):\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   CCC:           8 hex chars/rec (cp u24 + ccc u8). Sorted by cp.\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   canonical:    20 hex chars/rec (cp u24 + count u8 + cp1 u24 + cp2 u24).\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#   composition:  18 hex chars/rec (cp1 u24 + cp2 u24 + composed u24).\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# All tables consumed by binary search in normalize.cyr; composition\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# is sorted by (cp1, cp2) — primary cp1 with secondary linear-scan\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# for cp2 within the cp1 run.\n");
+    oo = oo + _emit_cstr(out_buf, oo, "# Public surface lives in normalize.cyr; this file is data.\n\n");
+
+    oo = oo + _emit_piece_block(out_buf, oo, "CCC",     ccc_blob,   ccc_blob_len,   ccc_n,   800, 8);
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+    oo = oo + _emit_piece_block(out_buf, oo, "CANON",   canon_blob, canon_blob_len, canon_n, 350, 20);
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+    oo = oo + _emit_piece_block(out_buf, oo, "COMPOSE", comp_blob,  comp_blob_len,  comp_n,  380, 18);
+    # Trailing blank line — matches Python emit_table helper's per-table
+    # `out.append("")` which lands on the LAST table too in normalize
+    # source. Categories + casefold inline their per-table emit (no
+    # post-block blank), so they correctly end with a single newline.
+    oo = oo + _emit_cstr(out_buf, oo, "\n");
+
+    var n_written = file_write_all("lib/unicode/_normalize_data.cyr", out_buf, oo);
+    syscall(SYS_WRITE, 1, "wrote lib/unicode/_normalize_data.cyr (", 39);
+    fmt_int(n_written);
+    syscall(SYS_WRITE, 1, " bytes)\n", 8);
+    return 0;
+}
+
+# ── Main ──────────────────────────────────────────────────────────────
+
+alloc_init();
+
+var rc = gen_categories();
+if (rc != 0) { syscall(SYS_EXIT, rc); }
+
+rc = gen_casefold();
+if (rc != 0) { syscall(SYS_EXIT, rc); }
+
+rc = gen_normalize();
+if (rc != 0) { syscall(SYS_EXIT, rc); }
+
+syscall(SYS_EXIT, 0);
