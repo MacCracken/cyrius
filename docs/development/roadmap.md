@@ -1999,6 +1999,14 @@ hand-roll incompletely.
   this is a sovereign language project". The sovereignty rule
   pinned to memory at this slot.
 
+- **v5.8.58** ✅ SHIPPED 2026-05-04 — Deps cleanup + release-valve.
+  All deps audited at latest GA (zero bumps needed). Release-valve
+  shipped state.md refresh (10-slot silent rot since v5.8.47) +
+  sovereignty audit pinning v5.9.0 cycle theme. See CHANGELOG for
+  detail.
+
+  Original slot pin retained below for historical reference.
+
 - **v5.8.58** — Deps cleanup + release-valve (combined slot).
   Two purposes:
   1. **Deps cleanup** — update `cyrius/cyrius.cyml`
@@ -2186,14 +2194,82 @@ hand-roll incompletely.
 
 ---
 
-## v5.9.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64
+## v5.9.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64 + sovereignty pass
 
-Two arch-port-style efforts grouped into one minor since both land at
-the "no libc, direct hardware/different ABI" layer. Moved from v5.8.x
-at 2026-05-01 v5.7.49 ship — v5.8.x became the slices true-completion
-+ language-feature arc instead (slot-map cascade +6 at v5.8.14 absorbed
-the deferred §6-§11 work; sub-arc through v5.8.18 = halfway mark);
-arch-port work needs its own dedicated cycle.
+Three arc-style efforts grouped into one minor:
+1. **Bare-metal output** (no libc, direct hardware) for the AGNOS
+   kernel. The original v5.9.x theme.
+2. **RISC-V rv64 port** — arch port at the "no libc, different ABI"
+   layer.
+3. **Sovereignty pass** — bash-toolchain conversion to cyrius. Pinned
+   forward at v5.8.58 release-valve from the audit findings.
+
+The sovereignty arc was added 2026-05-04 after the v5.8.x cycle
+retired Python entirely (`scripts/gen-unicode-data.py` → native
+`programs/gen_unicode_data.cyr` at v5.8.57). The remaining sovereignty
+debt is bash, not Python — too large to cram into v5.8.x's wind-down,
+sized correctly for a v5.9.0 cycle theme.
+
+Original framing carried forward: "Two arch-port-style efforts grouped
+into one minor since both land at the 'no libc, direct hardware/
+different ABI' layer." Moved from v5.8.x at 2026-05-01 v5.7.49 ship —
+v5.8.x became the slices true-completion + language-feature arc
+instead (slot-map cascade +6 at v5.8.14 absorbed the deferred §6-§11
+work; sub-arc through v5.8.18 = halfway mark); arch-port work needs
+its own dedicated cycle.
+
+### v5.9.x — Sovereignty pass scope (forward-pinned 2026-05-04)
+
+Inventory captured at v5.8.58 release-valve audit:
+
+| Target | LOC | Effort | Priority |
+|---|---|---|---|
+| `tests/regression-*.sh` (60 scripts) | 6,679 | Large (batch by template) | Med-high — every CI run touches these |
+| `scripts/cyrius-init.sh` | 1,021 | Med-large | Med — project scaffolder; mostly heredoc templates |
+| `scripts/check.sh` | 200 | Small-Med | High — central audit dispatcher |
+| `scripts/cyriusly` | 349 | Med (stays partial bash) | Med — version manager |
+| `scripts/cyrius-port.sh` | ? | Med | Med — Rust→cyrius migration tool |
+| `scripts/cyrius-watch.sh` | 37 | Trivial | Low |
+| `scripts/cyrius-repl.sh` | 98 | Small | Low |
+| `scripts/version-bump.sh` | 80 | Small | Med — runs every release |
+| `scripts/release-lib.sh` | ? | Small | Low — runs once per release |
+| `scripts/bench-history.sh` | 50 | Small | Low |
+| `scripts/mac-diagnose.sh` + `mac-selfhost.sh` | ? | Small | Low — macOS helpers |
+| `scripts/lib/audit-walk.sh` | ? | Small | Med — shared audit helper |
+| `scripts/ci.sh` | ? | Small | Low — CI dispatcher |
+| `tests/heapmap.sh` | ? | Small | Med — heap-map auditor |
+| `benches/bench_capacity_overhead.sh` | 75 | Small | Low |
+
+**Total convertible bash: ~8,500 LOC across ~75 files.** Sized for
+a multi-slot cycle.
+
+**KEEP-as-bash (intrinsic; sovereignty-allowed):**
+- `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh` (45 LOC) —
+  runs before cyrius exists.
+- `scripts/install.sh` (575 LOC) — bootstrap-from-zero path can't be
+  cyrius (the cyrius binary it installs may not yet exist).
+  `--refresh-only` post-install path is portable but the trunk
+  stays bash.
+- `scripts/cyrius` shim (30 LOC) — PATH-discovery wrapper that finds
+  & execs `build/cyrius`. Required to bridge "cyrius not on PATH"
+  to the compiled tool.
+- `programs/dlopen-helper.c` — explicit ABI shim per sovereignty
+  pin (binds host glibc).
+- `editors/neovim.lua` + `editors/vscode/extension.js` — host-IDE-
+  side; can't port (Neovim runs Lua, VS Code runs JS).
+
+**ARCHIVED (no longer active):**
+- `archive/seed/*.rs` (10 Rust files, 240 KB) — original pre-self-
+  hosting seed assembler. `archive/stages/*.sh` (6 stage-bootstrap
+  scripts, 320 KB). Both retired at commits `d042853 no more rust`
+  and `53301cc fixing repo` respectively. Remain in `archive/` for
+  historical reference per `feedback_archive_dont_delete_docs`
+  memory pin.
+
+Slot map for v5.9.x sovereignty arc TBD — sized at audit, decisions
+deferred to v5.9.0 cycle entry.
+
+
 
 ### v5.9.0 — Bare-metal / AGNOS kernel target + niyama fold-in
 

@@ -6,6 +6,123 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.58] — 2026-05-04
+
+**v5.8.x slot 58 — deps cleanup + release-valve**. Twentieth slot of
+Phase 3. Per the slot's original pin: "update `cyrius.cyml` `[deps.*]`
+fields to whatever new dep tags the v5.8.x cycle's stdlib changes
+motivated; re-bundle stdlib distfiles via `cyrius distlib` if any dep
+cut a new release. ... Release-valve — buffer slot for any issue
+surfaced by the Unicode 17.0.0 fold (v5.8.49-52) or the cross-arch
+propagation work (v5.8.53-54) before closeout commits the cycle."
+
+cc5: **741,120 B unchanged** — no compiler change.
+
+### Deps cleanup — already at latest GA
+
+Audited every `[deps.<name>]` pin in `cyrius.cyml` against the local
+sibling repos at `/home/macro/Repos/<dep>/`:
+
+| dep | pinned | latest GA | status |
+|---|---|---|---|
+| sakshi | 2.2.2 | 2.2.2 | ✓ current |
+| patra | 1.9.2 | 1.9.2 | ✓ current |
+| sigil | 3.0.0 | 3.0.0 | ✓ current |
+| vani | 0.9.1 | 0.9.1 | ✓ current |
+| yukti | 2.2.1 | 2.2.1 | ✓ current |
+| mabda | 2.5.0 | 2.5.0 (3.0.0-rc.2 not GA) | ✓ current |
+| sankoch | 2.2.3 | 2.2.3 | ✓ current |
+| agnosys (transitive) | 1.0.4 | 1.0.4 | ✓ current |
+
+**Zero bumps needed** — the user kept the dep ecosystem in sync
+across the cycle. No `cyrius distlib` re-bundling required either
+(no dep cut a new release that's not already pinned).
+
+### Release-valve — sovereignty audit + state.md refresh
+
+The pinned mandate of this slot ("absorbs housekeeping (stale-comment
+sweep, orphan file cleanup, the small-but-not-urgent items deferred
+from earlier slots)") shifted under audit:
+
+- **Stale-comment sweep — clean.** Every reference to retired
+  symbols (gen-unicode-data.py from .57, ELVR* + ESHRIMM from .56,
+  `_uc_nz_*` from .55) sits in an explicit removal-tombstone
+  comment that documents WHY the symbol isn't there. Load-bearing
+  for future readers; intentional retention.
+- **Orphan file cleanup — clean.** `archive/seed/*.rs` (10 Rust
+  files, 240 KB historical seed assembler) and `archive/stages/*.sh`
+  (6 stage-bootstrap scripts, 320 KB) are correctly retired in
+  `archive/` per `feedback_archive_dont_delete_docs` memory pin —
+  archived not deleted, no CI/release dependency. Leave intact.
+- **state.md silent rot.** Last-touched at v5.8.47 ship 2026-05-03;
+  10 cycle slots passed without refresh despite the doc explicitly
+  saying "Refreshed every release". This IS the deferred item.
+
+**Shipped state.md refresh**:
+- New current-state Version section for v5.8.57 (concise — 25-line
+  summary, vs. the 60+ line per-slot historical narratives below
+  that stay correct-as-shipped).
+- Compiler section bumped to `cc5 = 741,120 B at v5.8.57` with
+  cycle-growth narrative (720,928 → 741,120 across 47 patches; the
+  .46 token-cap raise + .54 cross-arch propagation are the only
+  compiler-side bumps).
+- `cc5_aarch64` section bumped to 439,904 B at v5.8.57 with the
+  full v5.8.46 → v5.8.53 silent-freeze story (install-pipeline rebuild
+  miss; fixed at .53).
+- Suites: `check.sh` 64/64 → **65/65** at v5.8.57; `tests/tcyr/*.tcyr`
+  108 → **127 files** (Unicode arc added 4 totaling 120,518 asserts).
+
+### Sovereignty audit — v5.9.0 cycle theme pinned forward
+
+The audit ITSELF is the substantive find of this slot. Triggered by
+v5.8.57's Python retirement + user direction "let's do a review on
+non-cyr files in the project and if they can be converted to cyrius
+files, before full closeout."
+
+**Inventory by language** (tracked files):
+
+| language | files | LOC | category |
+|---|---|---|---|
+| bash/sh | 83 | ~10,800 | bootstrap (133) + scripts/ (3,885) + tests/regression-*.sh (6,679) + benches (75) + archive (~200) |
+| C | 1 | ~50 | `programs/dlopen-helper.c` (ABI shim) |
+| JavaScript | 1 | — | `editors/vscode/extension.js` (IDE) |
+| Lua | 1 | — | `editors/neovim.lua` (IDE) |
+| Rust | 10 | — | `archive/seed/*.rs` (historical seed assembler) |
+| Python | **0** | 0 | retired at v5.8.57 |
+
+**Convertible-to-cyrius bash: ~8,500 LOC across ~75 files.** Sized
+for a multi-slot cycle, not a release-valve slot. Pinning to v5.9.0
+as **"Sovereignty pass — bash-toolchain conversion"** alongside the
+existing v5.9.0 themes (bare-metal arc + RISC-V rv64). Slot map
+TBD at v5.9.0 cycle entry.
+
+**Keep-as-bash (sovereignty-allowed)**:
+- `bootstrap/bootstrap.sh` + `verify.sh` (133 LOC) — runs before
+  cyrius exists. Chicken-and-egg.
+- `scripts/install.sh` (575 LOC) — bootstrap-from-zero path runs
+  before cyrius is installed.
+- `scripts/cyrius` shim (30 LOC) — PATH-discovery wrapper.
+- `programs/dlopen-helper.c` — ABI shim (binds host glibc).
+- `editors/neovim.lua` + `editors/vscode/extension.js` — host-IDE-
+  side; can't port.
+
+### Cycle wind-down (unchanged)
+
+v5.8.59 = `str_data` heap bump → .60 = NFKC + NFKD ship → .61 =
+cycle closeout. Backstop holds at .61.
+
+### Acceptance gates
+
+- Self-host: cc5 == cc5b byte-identical at 741,120 B.
+- `cc5 --version` reports `cc5 5.8.58`.
+- `scripts/check.sh`: 65/65 named gates green.
+- Cross-host gates green: pi (Linux aarch64), ecb (macOS arm64),
+  cass (Windows PE) — all PASS via existing SSH wiring.
+- All deps verified at latest GA; no bumps needed.
+- state.md refreshed to current cycle state.
+- v5.9.0 sovereignty cycle theme pinned to roadmap forward-looking
+  section with full inventory + classification.
+
 ## [5.8.57] — 2026-05-04
 
 **v5.8.x slot 57 — sovereign UCD generator**. Nineteenth slot of

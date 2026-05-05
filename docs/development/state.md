@@ -5,6 +5,47 @@
 
 ## Version
 
+**5.8.57** (shipped 2026-05-04 — **v5.8.x SLOT 57 — sovereign UCD
+generator**. Nineteenth slot of Phase 3. Last of three audit/
+refactor slots (.55 codec dedup → .56 dead-code → **.57 sovereignty
+fix**). cc5 unchanged at **741,120 B** — stdlib-tooling work, no
+compiler delta. Native `programs/gen_unicode_data.cyr` (~640 lines)
+replaced retired `scripts/gen-unicode-data.py` (~640 lines of
+Python carried since v5.8.49 across the Unicode arc); UCD source
+files committed at `tests/data/ucd/*.txt` for hermetic regen; all
+3 generated `lib/unicode/_*_data.cyr` files byte-identical to
+Python output (data portions). Project zero non-cyrius general-
+logic code now (only sovereign-allowed: bash bootstrap glue,
+ABI-shim `programs/dlopen-helper.c`, IDE integrations
+`editors/*.lua` + `editors/*.js`). 120,518 unicode asserts hold
+at the regression floor v5.8.52 set.)
+
+**Cycle wind-down (v5.8.58 → v5.8.61, hard backstop at .61)**:
+.58 = deps cleanup + release-valve (this slot — deps already at
+latest GA, ships state.md refresh + v5.9.0 forward-pin); .59 =
+`str_data` heap-region bump for Unicode compat-only decomposition
+(two-step bootstrap); .60 = NFKC + NFKD ship (depends on .59);
+.61 = full cycle closeout. Backstop history: was .55 pre-Unicode-
+pin → .57 to absorb v5.8.51-deferred heap bump + K-forms → .59
+for cross-arch propagation slots (.53 install-pipeline + .54
+emit-fn parity) → **.61** to absorb the audit/dedup/refactor trio
+at .55-.57 per user direction "flatten some runway for all the
+items".
+
+**v5.9.0 cycle theme pinned forward** (from v5.8.58 audit
+2026-05-04): **Sovereignty pass — bash-toolchain conversion to
+cyrius**. v5.8.x retired Python in one shot at .57; the remaining
+sovereignty debt is ~10,800 LOC of bash across `scripts/` (3,885
+LOC), `tests/regression-*.sh` (60 scripts, 6,679 LOC),
+`benches/` (75 LOC), `tests/heapmap.sh`. Bootstrap (`bootstrap/
+bootstrap.sh` + `verify.sh`, 133 LOC) and the dispatch shim
+(`scripts/cyrius`, 30 LOC) stay bash by intrinsic necessity (run
+before cyrius exists / before cyrius is on PATH). v5.9.0 ports
+the convertible bulk; v5.9.x continues with bare-metal arc +
+RISC-V port as originally pinned.
+
+### Historical Version narratives (pre-v5.8.48)
+
 **5.8.47** (shipped 2026-05-03 — **v5.8.x SLOT 47 — starship +
 p10k prompt color split AND vidya cyrius-language audit**. Ninth
 slot of Phase 3. cc5 unchanged at **741,040 B** — no compiler
@@ -3518,23 +3559,29 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **720,928 B** at v5.7.48 (unchanged from
-  v5.7.45 — v5.7.46 audit-pass + v5.7.47 refactor pass +
-  v5.7.48 closeout were all zero compiler change). Aggregate
-  growth across v5.7.x: v5.7.0 ~531 KB → v5.7.5 697,840 (JSX)
-  → v5.7.20 ~712 KB (JSON tagged tree) → v5.7.27 ~720 KB
-  (codebuf 1MB→3MB reshuffle) → v5.7.41 720,640 (JSON streaming
-  parser, lib-only) → v5.7.44 720,864 (variadic tuples AST) →
-  v5.7.45 720,928 (const type params) → v5.7.46/47/48 720,928
-  (audit + refactor + closeout, all zero compiler change).
-  Total: +~190 KB across 49 patches. `cc5 --version` reports
-  `cc5 5.7.48`.
+- **cc5 (x86_64)**: **741,120 B** at v5.8.57 (unchanged since
+  v5.8.54). Aggregate growth across v5.8.x cycle: 720,928 B at
+  cycle entry (v5.8.0 / inherited from v5.7.48) → 741,040 B at
+  v5.8.46 (token-array cap raise 262144→1048576 + tok_types/
+  values/lines relocation, +20.1 KB) → 741,040 B held steady
+  through .47-.53 (no compiler change in those slots) → 741,120
+  B at v5.8.54 (+80 B for aarch64 EFLADDR + EFLADDR_X1 + 5 PE
+  shim stubs + parse_expr.cyr syscall-arity skip extension) →
+  741,120 B held .54-.57. Total v5.8.x growth: +20.2 KB across
+  47 patches (.0-.57); the .46 token-cap raise + .54 cross-arch
+  propagation are the only compiler-side bumps. `cc5 --version`
+  reports `cc5 5.8.57`.
 - **cc5_win (cross)**: 526,856 B (unchanged from v5.6.42 — same reason)
 - **cc5_aarch64 native (Pi)**: 463,768 B (was: did not build — v5.6.32 added
   the missing `include "src/common/ir.cyr"` to `main_aarch64_native.cyr` that
   had been orphaned since v5.6.12 O3a shipped the IR instrumentation
   references to `IR_RAW_EMIT`)
-- **cc5_aarch64 (cross)**: 411,520 B (was 411,136 at v5.6.39; +384 B from heap-shift constants)
+- **cc5_aarch64 (cross)**: 439,904 B at v5.8.57 (was 411,136 at
+  v5.6.39 → 411,520 B v5.7.x → 438,896 B v5.8.46 token-cap raise
+  → 438,896 B silently frozen across v5.8.46-52 from the v5.8.53
+  install-pipeline rebuild miss → 438,960 B v5.8.53 fresh build
+  + new error format → 439,904 B v5.8.54 EFLADDR + EFLADDR_X1 +
+  5 PE shim stubs + relevant byte deltas).
 - **cc5_win (cross)**: 526,552 B (was 526,376 at v5.6.39)
 - **cc5 native aarch64** (Pi 4 output): 503,328 B at v5.6.27 (+6,320 B vs
   v5.6.25's 497,008; the x86-only compaction code is dead-emitted on aarch64
@@ -3559,8 +3606,23 @@ throughput win on hosts with hw support).)
 
 ## Suites
 
-- **check.sh**: 64/64 PASS (Linux x86_64 daily-driver + cross-platform skip-stubs; unchanged from v5.7.46 — v5.7.47 refactor + v5.7.48 closeout + v5.7.49 deps-refresh + v5.7.50 P(-1) unblock + v5.8.x slot work introduce no new gates. v5.7.x cycle growth: 26 → 64 gates, +38 across 51 patches; v5.8.x: 64 unchanged through v5.8.28 — `result.tcyr` added v5.8.28 is auto-discovered by the existing tcyr suite gate, no new gate required)
-- **`tests/tcyr/*.tcyr`**: 108 files (v5.8.43 added `alloc_stdlib_pass3.tcyr` — 33 assertions across 11 groups covering str/map_u64 peripheral _a variants. v5.8.40 added `preprocessor_string_literal.tcyr` — 12 assertions across 5 groups for the PP string-literal awareness fix. v5.8.37 added `alloc_no_init.tcyr` — 17 assertions across 8 groups verifying alloc/alloc_via/arena_new/vec/str/hashmap all work without explicit alloc_init() (lazy-init proves out). v5.8.36 added `alloc_stdlib_pass2.tcyr` — 30 assertions across 10 groups covering json/toml/cyml/http _a variants, per-request-arena pattern, OOM behavior. v5.8.35 added `alloc_stdlib.tcyr` — 33 assertions across 14 groups covering vec/str/hashmap _a variants, bump/arena/test allocator dispatch, OOM via fail_after_n_allocs, default_alloc singleton consistency. v5.8.34 added `oom_handling.tcyr` — 33 assertions across 9 groups covering fail_after_n_allocs thresholds 0/1/3, alloc_count + bytes_total tracking, reset_via behavior, consumer-pattern fallback, vtable sanity. v5.8.33 added `alloc_iface.tcyr` — 43 assertions across 12 groups covering Allocator vtable layout, 3 default impls (bump/arena/test), dispatch helpers, fail_after threshold, cross-impl uniformity. v5.8.31 added `result_stdlib_pass2.tcyr` — 24 assertions across 12 groups covering the *_r variants of http/dynlib/pwd/grp/shadow/pam + ? propagation chain on pwd_getpwuid_r. v5.8.30 added `result_stdlib.tcyr` — 29 assertions across 14 groups covering the *_r variants of the io/json/toml/cyml modules, `?` propagation chain over open+read+close, round-trip write+read, json/toml/cyml synthetic-file Ok cases. v5.8.29 added `result_propagation.tcyr` — 29 assertions across 11 groups covering Ok unwrap, Err short-circuit at first/second `?`, `return expr?;` shape, `?` in binary-op context, `?` as first fn-body statement, `?` inside `if` body, payload roundtrip negatives + zero. v5.8.28 added `result.tcyr` — 24 assertions across 9 groups covering typed `Result<T, E>` + 6 helpers + match consumer + Result-returning fn shape. Plus v5.8.x sub-suite tcyrs: enum_generics 31/31, exhaustive_match 10/10, match_dedup 10/10, tagged 14/14, enums 10/10. ~3400 total assertions across the cyrius surface)
+- **check.sh**: **65/65 PASS** at v5.8.57 (Linux x86_64 daily-
+  driver + cross-platform regressions via SSH wiring to pi/cass/
+  ecb). v5.8.x growth: 64 → 65 across 57 patches (the new gate
+  was ts_advanced_pin_audit at v5.7.46-49; v5.8.x added zero
+  named gates — Unicode arc + cross-arch propagation work all
+  rode the existing auto-discovered tcyr suite gate). Cross-host
+  gates: aarch64 native self-host + aarch64 syscalls + Mach-O
+  cross-build runtime + PE Win64 runtime all go via the SSH
+  config'd hosts (pi=Linux aarch64, ecb=Apple Silicon Darwin,
+  cass=Windows PowerShell — empirically confirmed at v5.8.52
+  cross-arch propagation slot).
+- **`tests/tcyr/*.tcyr`**: **127 files** at v5.8.57 (Unicode arc
+  added 4 — unicode_categories .49, unicode_casefold .50,
+  unicode_normalize .51, unicode_normconf .52 — totaling 120,518
+  asserts; cross-arch propagation work added zero new tcyrs but
+  the .53 install-pipeline fix surfaced sit v0.7.2 as an
+  end-to-end gate). v5.8.43 added `alloc_stdlib_pass3.tcyr` — 33 assertions across 11 groups covering str/map_u64 peripheral _a variants. v5.8.40 added `preprocessor_string_literal.tcyr` — 12 assertions across 5 groups for the PP string-literal awareness fix. v5.8.37 added `alloc_no_init.tcyr` — 17 assertions across 8 groups verifying alloc/alloc_via/arena_new/vec/str/hashmap all work without explicit alloc_init() (lazy-init proves out). v5.8.36 added `alloc_stdlib_pass2.tcyr` — 30 assertions across 10 groups covering json/toml/cyml/http _a variants, per-request-arena pattern, OOM behavior. v5.8.35 added `alloc_stdlib.tcyr` — 33 assertions across 14 groups covering vec/str/hashmap _a variants, bump/arena/test allocator dispatch, OOM via fail_after_n_allocs, default_alloc singleton consistency. v5.8.34 added `oom_handling.tcyr` — 33 assertions across 9 groups covering fail_after_n_allocs thresholds 0/1/3, alloc_count + bytes_total tracking, reset_via behavior, consumer-pattern fallback, vtable sanity. v5.8.33 added `alloc_iface.tcyr` — 43 assertions across 12 groups covering Allocator vtable layout, 3 default impls (bump/arena/test), dispatch helpers, fail_after threshold, cross-impl uniformity. v5.8.31 added `result_stdlib_pass2.tcyr` — 24 assertions across 12 groups covering the *_r variants of http/dynlib/pwd/grp/shadow/pam + ? propagation chain on pwd_getpwuid_r. v5.8.30 added `result_stdlib.tcyr` — 29 assertions across 14 groups covering the *_r variants of the io/json/toml/cyml modules, `?` propagation chain over open+read+close, round-trip write+read, json/toml/cyml synthetic-file Ok cases. v5.8.29 added `result_propagation.tcyr` — 29 assertions across 11 groups covering Ok unwrap, Err short-circuit at first/second `?`, `return expr?;` shape, `?` in binary-op context, `?` as first fn-body statement, `?` inside `if` body, payload roundtrip negatives + zero. v5.8.28 added `result.tcyr` — 24 assertions across 9 groups covering typed `Result<T, E>` + 6 helpers + match consumer + Result-returning fn shape. Plus v5.8.x sub-suite tcyrs: enum_generics 31/31, exhaustive_match 10/10, match_dedup 10/10, tagged 14/14, enums 10/10. ~3400 total assertions across the cyrius surface)
 - **`tests/scyr/*.scyr`**: 1 file (v5.7.38 added `tests/scyr/alloc_pressure.scyr` — 10,000× alloc(4KB) + sentinel readback; runs via `cyrius soak`)
 - **`tests/smcyr/*.smcyr`**: 1 file (v5.7.38 added `tests/smcyr/compile_minimal.smcyr` — minimal "fn returns literal" smoke; runs via `cyrius smoke`)
 - **Release toolchain**: 10 bins (v5.7.39 promoted `cyrius-lsp` to `[release].bins` so fresh installs ship the navigation-capable language server; pre-v5.7.39 was install-on-demand via `cyrius lsp` subcommand)
