@@ -5,6 +5,26 @@
 
 ## Version
 
+**5.8.63** (shipped 2026-05-05 — **v5.8.x SLOT 63 — refactor pass B:
+main_*.cyr boilerplate extraction**. Twenty-fifth slot of Phase 3.
+Two-step bootstrap slot. cc5: 741,128 B → **741,048 B (-80 B)** —
+inlined heap-zero sequence (~30 S64 calls) in each main_*.cyr
+collapses to a single `call _HEAP_INIT_SCRATCH` instruction.
+cc5_aarch64: 439,880 B → **440,008 B (+128 B)** — helper body
+lives once in .text. Net source: **-162 LOC** (removed 237 lines
+of init-block duplication across 6 main_*.cyr; added 75 lines for
+the helper + header in src/common/util.cyr). New helper
+`_HEAP_INIT_SCRATCH(S)` writes the SUPERSET of all init blocks
+(compiler state + IR state + global-var-init + module-system
+slots), with two sentinel-value exceptions preserved
+(0x18FCB0 = -1 last_var sentinel, 0x18FCB8 = 1 cur_line). Cmdline
+parser extraction deferred — exists only in main.cyr + main_win.cyr
+(4 of 6 mains skip cmdline parsing entirely), variant differences
+(--lex-ts/--parse-ts flags + #ifdef CYRIUS_TARGET_LINUX guard)
+make clean shared helper awkward. 65/65 check.sh; 127 tcyr files
+PASS; cross-host pi/cass/ecb green via existing SSH wiring;
+heapmap unchanged at 84 regions monotonic.)
+
 **5.8.62** (shipped 2026-05-05 — **v5.8.x SLOT 62 — refactor pass A:
 lib/ structural cleanups + stale-comment sweep**. Twenty-fourth slot
 of Phase 3. cc5 unchanged at **741,128 B** — no byte-identity risk
@@ -118,11 +138,18 @@ ABI-shim `programs/dlopen-helper.c`, IDE integrations
 `editors/*.lua` + `editors/*.js`). 120,518 unicode asserts hold
 at the regression floor v5.8.52 set.)
 
-**Cycle wind-down (v5.8.63 → v5.8.64, hard backstop at .64)**:
-.63 = refactor pass B (main_*.cyr boilerplate extraction —
-`_HEAP_INIT_SCRATCH(S)` + `_PARSE_VERSION_FLAGS()` helpers;
-cc5 byte size will change; two-step bootstrap audit);
-.64 = full cycle closeout per CLAUDE.md 11-step protocol.
+**Cycle wind-down (v5.8.64 → v5.8.66, hard backstop at .66)**:
+.64 = closeout pass per CLAUDE.md 11-step protocol (reference
+release tag for the dep-version-patch + foldin work at .65);
+.65 = stdlib foldin (vendor 6 sibling distfiles into lib/ +
+remove from `[deps]`; sans mabda per user direction —
+3.0.0-rc.2 not GA, Class B FFI deferred to v5.9.x); .66 =
+release-valve for any issues surfaced by the foldin. Backstop
+extended to .66 at v5.8.62 ship per user direction "hold .66
+open as fixing any rising issues from foldin". Out-of-band
+between .64 and .65: walk each dep repo (sakshi/patra/sigil/
+vani/yukti/sankoch — sans mabda), bump its `cyrius` pin to
+"5.8.64", version-patch, retag.
 Backstop history: was .55 pre-Unicode-pin → .57 to absorb
 v5.8.51-deferred heap bump + K-forms → .59 for cross-arch
 propagation slots → .61 to absorb the audit/dedup/refactor trio

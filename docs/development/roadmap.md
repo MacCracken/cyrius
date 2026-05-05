@@ -314,7 +314,7 @@ enabler audit trail.
 
 
 
-## v5.8.x — Optimization + language-vocabulary stabilization (64 pinned slots; cycle backstop hard at .64 — extended from .51 at v5.8.45 ship to absorb Unicode 17.0.0 fold, then to .55/.57/.59/.61/.62/.64 across the wind-down to absorb cross-arch propagation, audit/dedup/refactor trio, str_data heap bump, NFKC/NFKD K-forms, heap-map monotonic reorg, lib/ structural cleanups, and main_*.cyr boilerplate extraction; release-valve slot at .51 absorbed surface-during-deps-update items, Unicode work occupied .52–.55, cycle wind-down at .53–.64)
+## v5.8.x — Optimization + language-vocabulary stabilization (66 pinned slots; cycle backstop hard at .66 — extended from .51 at v5.8.45 ship to absorb Unicode 17.0.0 fold, then to .55/.57/.59/.61/.62/.64/.66 across the wind-down to absorb cross-arch propagation, audit/dedup/refactor trio, str_data heap bump, NFKC/NFKD K-forms, heap-map monotonic reorg, lib/ structural cleanups, main_*.cyr boilerplate extraction, stdlib foldin, and a foldin-fallout valve; release-valve slot at .51 absorbed surface-during-deps-update items, Unicode work occupied .52–.55, cycle wind-down at .53–.66)
 
 **Theme** (re-scoped 2026-05-01 at v5.8.0 ship): bug-fix /
 optimization minor that ALSO folds forward the language-feature
@@ -1759,7 +1759,7 @@ hand-roll incompletely.
     corpus refresh is a single `python scripts/gen-unicode-data.py`
     invocation.
 
-### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.64)
+### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.66)
 
 - **v5.8.53** ✅ SHIPPED 2026-05-04 — aarch64 cross-compiler
   staleness unblock + install pipeline rebuild discipline.
@@ -2366,10 +2366,10 @@ hand-roll incompletely.
   v5.8.62 entry per "main_ boilerplate extraction should be .63
   with .64 closeout" — closeout pushed once more to v5.8.64.
 
-- **v5.8.63** — Refactor pass B: main_*.cyr boilerplate extraction.
-  Two-step bootstrap slot per CLAUDE.md (cc5 byte size will change
-  when duplicated init-blocks become a shared helper). Stands
-  alone — no other changes.
+- **v5.8.63** ✅ SHIPPED 2026-05-05 — Refactor pass B: main_*.cyr
+  boilerplate extraction (`_HEAP_INIT_SCRATCH(S)` only; cmdline
+  parser extraction deferred per audit). Two-step bootstrap slot.
+  Stood alone — no other changes.
 
   Background: each of the 7 main_*.cyr files (main.cyr,
   main_aarch64*.cyr, main_cx.cyr, main_win.cyr) duplicates the
@@ -2399,14 +2399,13 @@ hand-roll incompletely.
   Filed at v5.8.62 entry 2026-05-05 per user direction "main_
   boilerplate extraction should be .63 with .64 closeout".
 
-- **v5.8.64** — Cycle closeout pass. **The cycle backstop
-  and the actual final patch of v5.8.x** (extended from
-  v5.8.55 to absorb str_data heap bump + K-forms + the
-  cross-arch propagation slots + the audit/dedup/refactor
-  trio at .55/.56/.57 + the v5.8.61 heap-map refactor + the
-  v5.8.62 lib/ cleanups + the v5.8.63 main_*.cyr boilerplate
-  extraction). Per CLAUDE.md "Closeout Pass" (11-step
-  protocol — mechanical first, judgment-call passes, doc sync):
+- **v5.8.64** — Cycle closeout pass. Reference release tag for
+  the dep-version-patch + foldin work happening at .65. Per
+  CLAUDE.md "Closeout Pass" (11-step protocol — mechanical first,
+  judgment-call passes, doc sync). Was previously pinned as the
+  final patch of v5.8.x; the cycle now extends to **.66** at
+  user direction 2026-05-05 to absorb the stdlib foldin (.65)
+  and a release-valve for any foldin fallout (.66):
 
   §1-3 **Mechanical (fast-fail):**
   - Self-host verify (cc5 == cc5b byte-identical)
@@ -2458,17 +2457,101 @@ hand-roll incompletely.
 
   Acceptance gate: every CLAUDE.md §1-11 step ticked;
   completed-phases.md migration of all v5.8.* sections; cc5
-  byte-identical; no new warnings.
+  byte-identical; no new warnings. Note: this is no longer the
+  final patch — see .65 (foldin) + .66 (valve) below.
 
-  **Cycle backstop hard at v5.8.64** (was v5.8.51 pre-
-  Unicode-pin → extended through .55 / .57 / .59 / .61 /
-  .62 / .64 across the wind-down to absorb cross-arch
+### Out-of-band sibling-dep work (between v5.8.64 and v5.8.65)
+
+Walk each sibling-distfile dep in `[deps]` and update for the
+v5.8.64 cyrius release. Pinned at user direction 2026-05-05:
+"we will review each of the deps and update the repo to .64
+cyrius usage and make sure to version patch it - sans mabda".
+
+Per-dep workflow (in each sibling repo):
+1. Update sibling's `cyrius.cyml` `cyrius = "5.8.64"` field.
+2. Run sibling's `scripts/check.sh` (or equivalent gate).
+3. Version-patch (e.g., `sigil 3.0.0 → 3.0.1`).
+4. Re-bundle dist file (`cyrius distlib` or sibling-specific
+   build).
+5. Tag + release.
+
+**Inventory** (current `[deps]` pins → expected post-patch):
+
+| Dep | Current | Repo | Dist size | Fold target | Notes |
+|---|---|---|---|---|---|
+| sakshi | 2.2.2 | `~/Repos/sakshi` | 38 KB | `lib/sakshi.cyr` | |
+| patra | 1.9.2 | `~/Repos/patra` | 160 KB | `lib/patra.cyr` | |
+| sigil | 3.0.0 | `~/Repos/sigil` | 317 KB | `lib/sigil.cyr` | |
+| vani | 0.9.1 | `~/Repos/vani` | 76 KB | `lib/vani.cyr` | |
+| yukti | 2.2.1 | `~/Repos/yukti` | 212 KB | `lib/yukti.cyr` | |
+| sankoch | 2.2.3 | `~/Repos/sankoch` | 167 KB | `lib/sankoch.cyr` | |
+| **mabda** | 2.5.0 | `~/Repos/mabda` | (excluded) | — | **Sans** per user direction; mabda is at 3.0.0-rc.2 in repo, has Class B FFI/wgpu fncall6 ABI deferred to v5.9.x; not stable enough to fold |
+| agnosys (transitive via mabda) | 1.0.4 | `~/Repos/agnosys` | — | — | Stays as transitive dep (parented to mabda which stays in `[deps]`) |
+
+After all 6 deps are patched + tagged, update `cyrius.cyml`
+`[deps.<name>].tag` lines to point at the new patch tags. That
+sets the stage for the v5.8.65 foldin.
+
+- **v5.8.65** — Stdlib foldin: vendor sibling-dep dist files into
+  `lib/` byte-identical, remove `[deps.<name>]` sections from
+  cyrius.cyml, add the modules to `[deps].stdlib` auto-prepend.
+  Mirrors the v5.7.0 sandhi-fold precedent (which carved sandhi
+  out of `[deps]` into `lib/sandhi.cyr` byte-identical).
+
+  Scope:
+  - For each of the 6 patched deps (sakshi, patra, sigil, vani,
+    yukti, sankoch — sans mabda + transitive agnosys):
+    - Copy `<sibling>/dist/<name>.cyr` byte-identical to
+      `lib/<name>.cyr` (already pulled by `cyrius deps` today;
+      foldin makes it static-vendored).
+    - Remove `[deps.<name>]` section from `cyrius.cyml`.
+    - Add `<name>` to `[deps].stdlib` auto-prepend list (so all
+      consumers see it without an explicit include).
+    - Bump cyrius version-bump.sh's `[release].bins` /
+      `cross_bins` if any new helpers ship from the dep.
+  - **mabda + agnosys stay in `[deps]`**. Mabda hasn't reached
+    GA in its v3.x line (currently 3.0.0-rc.2); folding pre-GA
+    code into stdlib creates a stability liability. Once mabda
+    3.0.0 GA + the v5.9.x Class B FFI work lands, mabda can fold
+    in a future minor.
+  - Verify byte-identity: cc5 == cc5b at the new size; the
+    folded modules don't reach cc5 (lib/ doesn't), but consumer
+    tcyrs that previously included `lib/<dep>.cyr` should compile
+    identically against the now-vendored copies. (`cyrius deps`
+    becomes a no-op for the folded deps because `[deps].<name>]`
+    is gone.)
+
+  Acceptance:
+  - cc5 self-host byte-identical.
+  - 6 deps removed from `[deps]`; 6 new entries in
+    `[deps].stdlib`; 6 lib/ files vendored byte-identical to
+    their dist counterparts at the patched tags.
+  - All 127 tcyr files PASS — no regressions vs the pre-foldin
+    builds.
+  - Cross-host pi/cass/ecb green.
+
+  Filed at v5.8.62 ship 2026-05-05. Backstop extended to .66 at
+  the same time to leave room for foldin fallout.
+
+- **v5.8.66** — **Release-valve for foldin fallout.** Held open
+  per user direction "hold .66 open as fixing any rising issues
+  from foldin". Buffer slot for any issue surfaced by the v5.8.65
+  foldin before the cycle truly closes. If everything shipped
+  clean and no consumer flagged anything, this absorbs
+  housekeeping (stale-comment sweep on the newly-folded modules,
+  any header-doc refresh needed, doc sync). Mirrors the v5.7.50
+  P(-1) unblock pattern from the v5.7.x cycle's end.
+
+  **Final cycle backstop hard at v5.8.66** (was v5.8.51 pre-
+  Unicode-pin → extended through .55 / .57 / .59 / .61 / .62 /
+  .64 / .66 across the wind-down to absorb cross-arch
   propagation, audit/dedup/refactor trio, str_data heap bump,
-  NFKC/NFKD K-forms, heap-map monotonic reorg, lib/
-  structural cleanups, and main_*.cyr boilerplate extraction).
-  The cycle now exceeds the original v5.8.60 buffer that was
-  pre-approved at the .51 ship; user-approved at every
-  extension because the runway flattening required it.
+  NFKC/NFKD K-forms, heap-map monotonic reorg, lib/ structural
+  cleanups, main_*.cyr boilerplate extraction, stdlib foldin,
+  and a foldin-fallout valve). The cycle now exceeds the
+  original v5.8.60 buffer pre-approved at the .51 ship;
+  user-approved at every extension because the runway
+  flattening required it.
 
 ### v5.8.x — held items (surfacing-ask only; not pinned, no slot consumed)
 

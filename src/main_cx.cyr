@@ -28,47 +28,8 @@ var S = syscall(SYS_BRK, 0);
 # unused on this path; kept for offset parity with main.cyr.
 syscall(SYS_BRK, S + 0x4E8C000);
 
-# Zero state
-S64(S + 0x18C100, 0);
-S64(S + 0x18C108, 0);
-S64(S + 0x18C110, 0);
-S64(S + 0x18C118, 0);
-S64(S + 0x18C120, 0);
-S64(S + 0x18C128, 0);
-S64(S + 0x18FCA8, 0);
-S64(S + 0x18FCB0, 0 - 1);
-S64(S + 0x18FCC8, 0);       # str_pos (moved from 0x70000 in 4.6.2)
-# Function state
-S64(S + 0x18DA00, 0);
-S64(S + 0x18DA08, 0);
-S64(S + 0x18DA10, 0);
-S64(S + 0x18DC20, 0);
-# Struct state
-S64(S + 0x18F830, 0);
-# Condition patch state
-S64(S + 0x18F888, 0);
-# Global var init state
-S64(S + 0x19A000, 0);
-S64(S + 0x197000, 0);
-S64(S + 0x197F00, 0);
-
-# Kernel mode
-S64(S + 0x18FCA0, 0);
-# Lexer line tracking
-S64(S + 0x18FCB8, 1);
-# Block scoping
-S64(S + 0x18FCC0, 0);
-# Expression type tracking
-S64(S + 0x1903D8, 0);
-# Inline depth
-S64(S + 0x1903E8, 0);
-# Expression width
-S64(S + 0x1903F0, 0);
-# Continue forward patch (for-loop) — relocated from 0x18F850 to avoid &&/|| overlap
-S64(S + 0x18F898, 0);
-# Module system
-S64(S + 0x18FEC8, 0);
-S64(S + 0x1903D0, 0);
+# Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
+_HEAP_INIT_SCRATCH(S);
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;

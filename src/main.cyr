@@ -400,55 +400,8 @@ var S = syscall(SYS_BRK, 0);
 # modes; the +13.5 MB brk extension is paid unconditionally.
 syscall(SYS_BRK, S + 0x4E8C000);
 
-# Zero state
-S64(S + 0x18C100, 0);
-S64(S + 0x18C108, 0);
-S64(S + 0x18C110, 0);
-S64(S + 0x18C118, 0);
-S64(S + 0x18C120, 0);
-S64(S + 0x18C128, 0);
-S64(S + 0x18FCA8, 0);
-S64(S + 0x18FCB0, 0 - 1);
-S64(S + 0x18FCC8, 0);       # str_pos (moved from 0x70000 in 4.6.2)
-# Function state
-S64(S + 0x18DA00, 0);
-S64(S + 0x18DA08, 0);
-S64(S + 0x18DA10, 0);
-S64(S + 0x18DC20, 0);
-# IR state (cc5)
-S64(S + 0x17CA000, 0);    # ir_node_count
-S64(S + 0x16CA008, 0);    # ir_block_count
-S64(S + 0x16CA010, 0);    # ir_cur_block (current BB index, -1 = none)
-S64(S + 0x16CA018, 0);    # ir_edge_count
-S64(S + 0x16CA020, 0);    # ir_enabled (0=off, 1=on)
-# Struct state
-S64(S + 0x18F830, 0);
-# Condition patch state
-S64(S + 0x18F888, 0);
-# Global var init state
-S64(S + 0x19A000, 0);
-S64(S + 0x197000, 0);
-S64(S + 0x197F00, 0);
-
-# Kernel mode
-S64(S + 0x18FCA0, 0);
-# Lexer line tracking
-S64(S + 0x18FCB8, 1);
-# Block scoping
-S64(S + 0x18FCC0, 0);
-# Expression type tracking
-S64(S + 0x1903D8, 0);
-# Inline depth
-S64(S + 0x1903E8, 0);
-# Expression width
-S64(S + 0x1903F0, 0);
-# Continue forward patch (for-loop) — relocated from 0x18F850 to avoid &&/|| overlap.
-# (The r12 loop-var register cache init that used to live here was reverted
-# in v3.3.12 after a 2x perf regression; the 0x1903F8 slot is now init_offset.)
-S64(S + 0x18F898, 0);
-# Module system
-S64(S + 0x18FEC8, 0);
-S64(S + 0x1903D0, 0);
+# Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
+_HEAP_INIT_SCRATCH(S);
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating

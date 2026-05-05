@@ -6,6 +6,123 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.63] — 2026-05-05
+
+**v5.8.x slot 63 — refactor pass B: main_*.cyr boilerplate
+extraction**. Twenty-fifth slot of Phase 3. Two-step bootstrap
+slot per CLAUDE.md "Two-step bootstrap for heap changes — cc5
+compiles cc5b, cc5==cc5b". Stands alone — no other changes.
+
+cc5: **741,128 B → 741,048 B (-80 B)** — the inlined heap-zero
+sequence in each main_*.cyr (~30 S64 calls) collapses to a
+single `call _HEAP_INIT_SCRATCH` instruction. cc5_aarch64:
+**439,880 B → 440,008 B (+128 B)** — the helper fn body lives
+once in the .text section (universal across mains in the include
+chain), trading per-main inlining for a shared body. Net source
+LOC: **-162 LOC** (removed 237 lines of init-block duplication
+across 6 main_*.cyr; added 75 lines for the helper + its header
+in src/common/util.cyr).
+
+### Background
+
+Each of the 6 main entry-points (main.cyr, main_aarch64.cyr,
+main_aarch64_native.cyr, main_aarch64_macho.cyr, main_cx.cyr,
+main_win.cyr) inlined the same ~30-line "zero scratch state"
+block at startup, with minor variation:
+- main.cyr / main_win.cyr: 30+ S64 calls (full set incl. IR state
+  + extra global-var-init slots `0x197000` / `0x197F00`).
+- main_aarch64.cyr / main_aarch64_native.cyr / main_aarch64_macho.cyr:
+  ~22 S64 calls (no IR state init, no extra global-var-init slots,
+  + a duplicate `0x18F898` continue-patch line that's a copy-paste
+  artifact).
+- main_cx.cyr: ~25 S64 calls (no IR state init, but has the extra
+  global-var-init slots).
+
+Net: 6-way duplication of the same family of writes, with subtle
+drift across files.
+
+### Delivered
+
+**`src/common/util.cyr`** — new `_HEAP_INIT_SCRATCH(S)` fn at the
+end of the file (right after `ERR_MSG`):
+- Writes the SUPERSET of all main_*.cyr init blocks: the universal
+  compiler-state core (S+0x18C100..S+0x1903F8) + IR state
+  (S+0x16CA008..S+0x17CA000) + global-var-init scratch slots
+  (S+0x197000 / S+0x197F00) + module-system slots.
+- Two non-zero values preserved: `0x18FCB0 = -1` (last_var
+  sentinel) and `0x18FCB8 = 1` (cur_line counter starts at 1).
+- Over-zeroing on aarch64 / cx mains is harmless: zero-init
+  matches the post-brk kernel-zeroed state, and brk extends
+  through 0x4E8C000 in every main so writes land in mapped memory.
+- Header documents the universal-superset rationale + the
+  brk-coverage safety note.
+
+**6 main_*.cyr files** — replaced inlined ~30-line init blocks
+with single `_HEAP_INIT_SCRATCH(S);` call.
+
+| File | Before (lines) | After | Removed |
+|---|---|---|---|
+| main.cyr | 47 | 2 | -45 |
+| main_aarch64.cyr | 38 | 2 | -36 |
+| main_aarch64_native.cyr | 38 | 2 | -36 |
+| main_aarch64_macho.cyr | 38 | 2 | -36 |
+| main_cx.cyr | 41 | 2 | -39 |
+| main_win.cyr | 47 | 2 | -45 |
+| **Total** | **249** | **12** | **-237** |
+
+### Out of scope (deferred)
+
+- **Cmdline parser extraction (`_PARSE_VERSION_FLAGS()`)**.
+  Surveyed but not extracted: the parser exists ONLY in main.cyr
+  and main_win.cyr (4 of 6 mains skip cmdline parsing entirely),
+  and the variant differences (main.cyr's --lex-ts/--parse-ts
+  flags + main_win.cyr's `#ifdef CYRIUS_TARGET_LINUX` guard) make
+  a clean shared helper awkward. The 2-way duplication is left
+  in place — extraction would save ~40 LOC at the cost of
+  awkward parameterization. Pre-v6.0 hardening sweep can revisit
+  if the variant set converges.
+
+### Verified
+
+- **Self-host**: cc5 == cc5b byte-identical at 741,048 B.
+- **Two-step bootstrap**: cc5 (v5.8.62 layout) → cc5b (v5.8.63
+  layout) → cc5b' = cc5b byte-identical.
+- **`tests/heapmap.sh`**: 84 regions, 0 overlaps, 0 warnings —
+  monotonic layout intact (no heap change this slot).
+- **`scripts/check.sh`: 65/65 named gates green** including the
+  cross-host suite (pi aarch64 native self-host, ecb macOS arm64,
+  cass Windows PE, libssl fdlopen TLS).
+- **All 127 tcyr files PASS** — total unicode asserts 320,874
+  unchanged.
+- aarch64 cross-build: `build/cc5_aarch64` rebuilt at **440,008
+  B** (was 439,880 B; +128 B for the shared helper body).
+- Per-main correctness verified via the standard cross-host
+  pipeline — no behavioral regressions from the over-zero
+  extension (aarch64/cx mains now writing IR state slots their
+  inline blocks previously skipped; reads are still gated by
+  CYRIUS_IR=1 env so the zero-init is invisible at runtime).
+
+### Cycle wind-down (cascaded post-ship)
+
+v5.8.64 = closeout pass (CLAUDE.md 11-step protocol; reference
+release tag for the dep-version-patch + foldin work at .65).
+Out-of-band between .64 and .65: walk each sibling-dep repo
+(sakshi/patra/sigil/vani/yukti/sankoch — sans mabda), bump
+`cyrius` pin to "5.8.64", version-patch, retag. v5.8.65 = stdlib
+foldin (vendor 6 distfiles into lib/ + remove from `[deps]`).
+v5.8.66 = release-valve for foldin issues. Backstop hard at
+v5.8.66.
+
+### Acceptance gates
+
+- Self-host: cc5 == cc5b byte-identical at 741,048 B.
+- `cc5 --version` reports `cc5 5.8.63`.
+- `tests/heapmap.sh`: 84 regions, monotonic, 0 overlaps.
+- `scripts/check.sh`: 65/65 named gates green.
+- Cross-host gates green: pi / ecb / cass.
+- ~150 LOC of init-block duplication removed; helper body lives
+  once in src/common/util.cyr.
+
 ## [5.8.62] — 2026-05-05
 
 **v5.8.x slot 62 — refactor pass A: lib/ structural cleanups +

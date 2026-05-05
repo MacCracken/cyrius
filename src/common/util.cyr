@@ -438,3 +438,73 @@ fn ERR_MSG(S, msg, len) {
     syscall(SYS_EXIT, 1);
     return 0;
 }
+
+# ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
+# Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
+# IR state at S+0x16CA008..S+0x17CA000 + global-var-init slots) to
+# zero, with two sentinel-value exceptions:
+#   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
+#   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
+# All other slots zeroed.
+#
+# Universal across all 6 main_*.cyr entry points (main.cyr,
+# main_aarch64.cyr, main_aarch64_native.cyr, main_aarch64_macho.cyr,
+# main_cx.cyr, main_win.cyr — bridge.cyr has its own layout). Pre-
+# v5.8.63 each main inlined this ~30-line block; extraction here
+# saves ~150 LOC of duplication. The aarch64 and cx mains over-zero
+# IR state (they include ir.cyr but don't actively use the IR
+# pipeline) — harmless because zero-init matches the post-brk
+# kernel-zeroed state, and brk extends through 0x4E8C000 in every
+# main so the writes land in mapped memory.
+fn _HEAP_INIT_SCRATCH(S) {
+    # Compiler-state scalars (BL, CP, VCNT, TCNT, TI, NPOS)
+    S64(S + 0x18C100, 0);
+    S64(S + 0x18C108, 0);
+    S64(S + 0x18C110, 0);
+    S64(S + 0x18C118, 0);
+    S64(S + 0x18C120, 0);
+    S64(S + 0x18C128, 0);
+    # Function state (fn_count, in_fn, local_cnt, ret_patch_cnt)
+    S64(S + 0x18DA00, 0);
+    S64(S + 0x18DA08, 0);
+    S64(S + 0x18DA10, 0);
+    S64(S + 0x18DC20, 0);
+    # IR state (cc5 — gated by CYRIUS_IR=1 env at runtime; init
+    # unconditionally so the gate read sees zero, not garbage)
+    S64(S + 0x17CA000, 0);    # ir_node_count
+    S64(S + 0x16CA008, 0);    # ir_block_count
+    S64(S + 0x16CA010, 0);    # ir_cur_block (current BB index)
+    S64(S + 0x16CA018, 0);    # ir_edge_count
+    S64(S + 0x16CA020, 0);    # ir_enabled (0=off, 1=on)
+    # Struct state
+    S64(S + 0x18F830, 0);
+    # Condition patch state
+    S64(S + 0x18F888, 0);
+    # Continue forward patch (for-loop, relocated v3.3.12)
+    S64(S + 0x18F898, 0);
+    # Global-var-init bookkeeping (gvar_cnt + scratch slots)
+    S64(S + 0x19A000, 0);
+    S64(S + 0x197000, 0);
+    S64(S + 0x197F00, 0);
+    # Kernel mode
+    S64(S + 0x18FCA0, 0);
+    # Fixup count
+    S64(S + 0x18FCA8, 0);
+    # last_var sentinel (-1 = "no var seen yet")
+    S64(S + 0x18FCB0, 0 - 1);
+    # cur_line (lexer starts at line 1)
+    S64(S + 0x18FCB8, 1);
+    # Block scoping
+    S64(S + 0x18FCC0, 0);
+    # str_pos (string write position)
+    S64(S + 0x18FCC8, 0);
+    # Module system (current_module + use_count)
+    S64(S + 0x18FEC8, 0);
+    S64(S + 0x1903D0, 0);
+    # Expression tracking (stype, var, inline_depth, width)
+    S64(S + 0x1903D8, 0);
+    S64(S + 0x1903E0, 0);
+    S64(S + 0x1903E8, 0);
+    S64(S + 0x1903F0, 0);
+    return 0;
+}
