@@ -179,85 +179,12 @@ fn unicode_fold(cp, out_buf, cap) {
     return 1;
 }
 
-# ── UTF-8 codec (private helpers) ─────────────────────────────────────
-# Same encode shape as lib/json.cyr's _jp_emit_utf8 (proven on the
-# JSON parse + emit corpus); duplicated here so casefold.cyr doesn't
-# transitively depend on json.cyr.
-
-# Encode codepoint cp as UTF-8 into dst; return bytes written (1..4).
-fn _uc_emit_utf8(dst, cp) {
-    if (cp < 128) {
-        store8(dst, cp);
-        return 1;
-    }
-    if (cp < 2048) {
-        store8(dst, 192 | (cp >> 6));
-        store8(dst + 1, 128 | (cp & 63));
-        return 2;
-    }
-    if (cp < 65536) {
-        store8(dst, 224 | (cp >> 12));
-        store8(dst + 1, 128 | ((cp >> 6) & 63));
-        store8(dst + 2, 128 | (cp & 63));
-        return 3;
-    }
-    store8(dst, 240 | (cp >> 18));
-    store8(dst + 1, 128 | ((cp >> 12) & 63));
-    store8(dst + 2, 128 | ((cp >> 6) & 63));
-    store8(dst + 3, 128 | (cp & 63));
-    return 4;
-}
-
-# Decode UTF-8 from src+offset; on success store cp into cp_out (i64
-# slot) and return bytes consumed (1..4). On invalid sequence, store
-# 0xFFFD (replacement) and return 1 (skip the bad byte). Caller bounds-
-# checks src_len.
-fn _uc_decode_utf8(src, off, src_len, cp_out) {
-    if (off >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-    var b0 = load8(src + off);
-    if (b0 < 128) {
-        store64(cp_out, b0);
-        return 1;
-    }
-    if (b0 < 192) {
-        # Continuation byte at start of cp — invalid.
-        store64(cp_out, 0xFFFD);
-        return 1;
-    }
-    if (b0 < 224) {
-        # 2-byte: 110xxxxx 10xxxxxx
-        if (off + 1 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-        var b1 = load8(src + off + 1);
-        if ((b1 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        store64(cp_out, ((b0 & 31) << 6) | (b1 & 63));
-        return 2;
-    }
-    if (b0 < 240) {
-        # 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
-        if (off + 2 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-        var c1 = load8(src + off + 1);
-        var c2 = load8(src + off + 2);
-        if ((c1 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        if ((c2 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        store64(cp_out, ((b0 & 15) << 12) | ((c1 & 63) << 6) | (c2 & 63));
-        return 3;
-    }
-    if (b0 < 248) {
-        # 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
-        if (off + 3 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-        var d1 = load8(src + off + 1);
-        var d2 = load8(src + off + 2);
-        var d3 = load8(src + off + 3);
-        if ((d1 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        if ((d2 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        if ((d3 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        store64(cp_out, ((b0 & 7) << 18) | ((d1 & 63) << 12) | ((d2 & 63) << 6) | (d3 & 63));
-        return 4;
-    }
-    # Invalid leading byte (>= 0xF8)
-    store64(cp_out, 0xFFFD);
-    return 1;
-}
+# UTF-8 codec helpers `_uc_emit_utf8` + `_uc_decode_utf8` are provided
+# by the included `lib/unicode/_decode.cyr`. v5.8.55 lifted both fns
+# out of the per-module copies that lived here and in normalize.cyr —
+# the prior duplicates were byte-identical modulo whitespace and the
+# normalize.cyr copies had a synthetic `_nz_` prefix to dodge a
+# name-collision that disappears once the shared module owns them.
 
 # ── Str-level wrappers (simple case fold, codepoint-by-codepoint) ─────
 

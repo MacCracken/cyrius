@@ -6,6 +6,163 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.55] — 2026-05-04
+
+**v5.8.x slot 55 — UTF-8 codec dedup + audit baseline capture**.
+Seventeenth slot of Phase 3. First of three audit/refactor slots
+(.55 dedup → .56 dead-code → .57 remaining refactor) per user
+direction "flatten some runway for all the items".
+
+cc5: **741,120 B unchanged** (no compiler change — stdlib-only
+edit). Net stdlib LOC delta: ~80 lines deleted (160 lines of
+duplicate body across 2 files, replaced by 1 canonical body in 1
+file plus 2 short comment blocks pointing to it).
+
+### Audit baseline (captured before any refactor)
+
+The slot opened with three audits — heap-map, dead-code, and
+refactor scope. Findings folded into the slot prose because
+v5.8.55's only ship was the codec dedup; the audits surface
+candidates for .56 (dead-code) and .57 (remaining refactor).
+
+**Dead-code floor unchanged at v5.8.48's 36 fns / 22,571 B.** Six
+slots of Unicode work (.49-.51 fold, .52 conformance suite) and
+two slots of cross-arch propagation (.53 install pipeline, .54
+emit-fn parity) added zero new dead-code. Every fn shipped found
+a caller.
+
+The 36 fns classify as:
+- 10 `TS_*` (TypeScript frontend, mode-flag-reachable via
+  `--parse-ts`) — KEEP.
+- 5 `_macho_*` / `EMITMACHO_ARM64` (Mach-O backend, reachable via
+  `main_aarch64_macho.cyr`) — KEEP.
+- ~9 IR-pipeline pre-`_capped` fns (`ir_dce`, `ir_dead_store`,
+  `ir_dead_block_elim`, `ir_lower_all`, `_ir_lower_node`,
+  `ir_emit2`, `IR_BB_*`, `IR_EDGE_*`, `IR_NODE_FL`, `CLASSIFY_CF`,
+  `CF_TARGET`) — superseded by `_capped` variants actively called
+  from main.cyr:1218-1220; one call site at main.cyr:1229
+  commented-out. **Removal candidates pending vidya cross-check
+  per `feedback_dead_code_audit_scope` memory pin** — moved to
+  v5.8.56.
+- 5 superseded emit-side fns (`ELVRLOAD`, `ELVRSTORE`,
+  `ELVRINIT`, `GFVA`, `ESHRIMM`). ELVR* delegates to EFLSTORE.
+  No callers anywhere. **Removal candidates moved to v5.8.56.**
+
+**Heap map: 95 regions, all actively used.** v5.8.x added 4
+fields for sum-types (var_enum_id .22, enum_count/variant_count/
+name .22-.24) and relocated tok_types/values/lines (.46). No
+cap pressure visible at audit time. No obvious low-effort
+consolidation — the 24 MB token-block triple at
+`0x368C000/0x3E8C000/0x468C000` could fold into struct-of-arrays
+but every read/write site changes; not worth this slot.
+
+**Refactor candidates surfaced**:
+1. UTF-8 codec duplication (shipped this slot, see below).
+2. 8 nearly-identical binary-search loops across the 3 unicode
+   modules — moderate effort, modest payoff. **Moved to v5.8.57.**
+3. `_a` (41 fns) and `_r` (9 fns) stdlib variants — pin guessed
+   helper-collapse opportunity; under audit there isn't. Pattern
+   IS the consolidation.
+
+### What shipped — UTF-8 codec dedup
+
+Pre-v5.8.55, two unicode modules each carried their own private
+copy of UTF-8 emit + decode helpers:
+- `lib/unicode/casefold.cyr` (lines 188-260): `_uc_emit_utf8` +
+  `_uc_decode_utf8`.
+- `lib/unicode/normalize.cyr` (lines 245-302): `_uc_nz_emit_utf8`
+  + `_uc_nz_decode_utf8` — the synthetic `_nz_` prefix dodging a
+  name-collision that would have fired if both files were
+  included in the same compilation unit.
+
+Bodies were byte-identical modulo whitespace. Both modules
+already include `lib/unicode/_decode.cyr` (the existing private-
+shared file holding `_uc_hex1` / `_uc_hex2` / `_uc_u24`). Lifting
+the codec there folds the duplicate into a single canonical pair
+and retires the synthetic prefix.
+
+**Changes**:
+- `lib/unicode/_decode.cyr` — added `_uc_emit_utf8` +
+  `_uc_decode_utf8` (canonical body, ~80 lines including
+  comments).
+- `lib/unicode/casefold.cyr` — deleted lines 182-260 (4-line
+  comment header + 80-line body); replaced with a 6-line
+  pointer-comment.
+- `lib/unicode/normalize.cyr` — deleted lines 243-302 (1-line
+  comment header + 60-line body); replaced with a 5-line
+  pointer-comment. Renamed 2 internal callers (`_uc_nz_decode_utf8`
+  → `_uc_decode_utf8` at line 363; `_uc_nz_emit_utf8` →
+  `_uc_emit_utf8` at line 379).
+
+**Test-local UTF-8 codec copies retained** (intentional). The
+v5.8.52 conformance harness `tests/tcyr/unicode_normconf.tcyr`
+defines its own `_ncf_emit_utf8` / `_ncf_decode_utf8`, and the
+extended `unicode_casefold.tcyr` defines `_eq_emit_utf8` /
+`_eq_decode_utf8`. Those are test fixtures and isolation from
+stdlib internals is a feature, not duplication-to-fix. If a
+future slot wants to fold those too, the test files just need to
+drop their wrapper helpers and call the canonical
+`_uc_emit_utf8` / `_uc_decode_utf8` directly (after adding the
+include).
+
+### Snapshot-ping-pong incident (in-slot resolution)
+
+First edit pass was reverted by `scripts/check.sh`'s `cyrius
+deps` resolution step — the install snapshot at
+`~/.cyrius/versions/5.8.54/lib/unicode/*` still held the
+pre-dedup contents, and cyrius's own `[deps].stdlib` list
+(which includes `unicode/_decode`, `unicode/casefold`,
+`unicode/normalize` per v5.8.49) caused those stale files to be
+copied back into the repo's `lib/unicode/`, overwriting the
+edits.
+
+This is the exact trap CLAUDE.md's "Snapshot-ping-pong
+protection" section explicitly documents. Mitigation per the
+doc: re-applied edits, then immediately ran
+`sh scripts/install.sh --refresh-only` to seal the snapshot,
+then re-ran check.sh. Edits stuck.
+
+No source code change required beyond honoring the documented
+mitigation. The trap remains a process hazard for any future
+`lib/*.cyr` edit that doesn't refresh the snapshot before
+running `check.sh` or any tool that triggers `cyrius deps`.
+
+### Cycle wind-down extension — second renumber
+
+User direction: ".55 dedup; .56 deadcode; .57 refactor;
+cascading remaining." The audit pass at .55 was originally pinned
+as a SINGLE slot covering audit + dead-code + refactor; user
+flattened the runway by splitting the audit's three workstreams
+into three sequential slots. The existing .56-.59 wind-down
+cascades by 2 slots:
+
+- .55 = UTF-8 codec dedup ✅ SHIPPED THIS PATCH
+- .56 = dead-code removal (was: bundled into .55's audit)
+- .57 = remaining refactor — bsearch dedup + gen-unicode-data.py
+  consolidation + any other surfacing items
+- .58 = deps cleanup + release-valve (was .56)
+- .59 = `str_data` heap-region bump (was .57)
+- .60 = NFKC + NFKD ship (was .58)
+- .61 = cycle closeout (was .59)
+
+**Cycle backstop now v5.8.61** (was .59 → exceeds the v5.8.60
+buffer pre-approved at .51 ship). User-approved on this bump per
+the runway-flattening direction.
+
+### Acceptance gates
+
+- `scripts/check.sh`: **65 passed, 0 failed** (named gates).
+- Self-host: cc5 == cc5b byte-identical at 741,120 B.
+- `cc5 --version` reports `cc5 5.8.55`.
+- All 4 unicode tcyrs pass: 122 + 106 + 83 + 120,207 =
+  **120,518 unicode asserts** (identical count to v5.8.54 —
+  semantically transparent dedup).
+- Install snapshot at
+  `~/.cyrius/versions/5.8.55/lib/unicode/_decode.cyr` carries the
+  unified codec; `~/.cyrius/versions/5.8.55/lib/unicode/normalize.cyr`
+  carries the canonical caller names (no `_uc_nz_*` references
+  except the changelog-style comment preserving naming history).
+
 ## [5.8.54] — 2026-05-04
 
 **v5.8.x slot 54 — aarch64 emit-fn parity (cross-arch propagation

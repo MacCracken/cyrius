@@ -1704,7 +1704,7 @@ hand-roll incompletely.
     corpus refresh is a single `python scripts/gen-unicode-data.py`
     invocation.
 
-### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.59, with .60 buffer)
+### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.61)
 
 - **v5.8.53** ✅ SHIPPED 2026-05-04 — aarch64 cross-compiler
   staleness unblock + install pipeline rebuild discipline.
@@ -1816,49 +1816,143 @@ hand-roll incompletely.
   Filed at v5.8.52 ship 2026-05-04. User direction: tight-A-then-B
   split with v5.8.53 above.
 
-- **v5.8.55** — Cascaded v5.8.48 refactor work +
-  closeout-prep audit. Pure refactor slot, sitting
-  immediately before closeout per the standard "audit-just-
-  before-closeout" structure (audits feed a clean tree into
-  closeout cross-checks).
+- **v5.8.55** ✅ SHIPPED 2026-05-04 — UTF-8 codec dedup
+  (Unicode stdlib refactor, first of three audit/refactor
+  slots). Audit pass for v5.8.x (heap-map deep audit +
+  dead-code audit + refactor scope identification) folded
+  into the slot prose; the only ship this slot was the
+  codec dedup. Dead-code removal moved to v5.8.56;
+  remaining refactor opportunities moved to v5.8.57.
 
-  Per user direction 2026-05-04 — originally cascaded into
-  v5.8.49 ("cascade remaining; .49 picks up the remaining
-  .48 work") then re-pinned to .53 ("audits belong before
-  closeout") so Unicode work could start at .49. Originally
-  pinned for v5.8.48 itself.
+  Audit baseline captured:
+  - **Dead-code floor unchanged** at v5.8.48's 36 fns /
+    22,571 B. Unicode (.49-51) + cross-arch (.53-54) work
+    added zero new dead code.
+  - **Heap map: 95 regions** — no unused regions, no cap
+    pressure. v5.8.x additions (var_enum_id from .22,
+    enum_count/variant_count/name from .22-.24, tok_types/
+    values/lines relocation .46) all actively used; no
+    obvious low-effort consolidation.
+  - **Refactor candidates surfaced**: UTF-8 codec dup
+    across casefold + normalize (shipped), 8 nearly-
+    identical binary-search loops across the 3 unicode
+    modules (deferred — moderate effort, low payoff for
+    closeout), `_a`/`_r` stdlib variants (no obvious
+    collapse — pattern IS the consolidation).
 
-  - **Heap-map deep audit** — review every region added
-    across v5.8.x (var_enum_id / enum_count /
-    enum_variant_count / enum_name from v5.8.21-27; any
-    v5.8.x slot's new region INCLUDING the v5.8.49-51
-    Unicode bake-in regions for categories / casefold /
-    normalize tables). Document offsets, look for
-    consolidation opportunities (adjacent regions owned by
-    the same subsystem), grow caps that hit during the
-    cycle. The surface-level "84 regions / 0 overlaps" check
-    from v5.8.48 is NOT this audit — this is the per-region
-    consolidation review.
-  - **Dead-code audit** — beyond v5.8.48's recorded floor
-    (36 fns / 22,571 B), check whether any of the 36 truly
-    are removable (cross-check vs. mode-dispatch entry
-    points in `main_*.cyr` / `--parse-ts` / `--target=macho`
-    / etc.). Per the `feedback_dead_code_audit_scope` memory
-    pin, 0-callers-in-grep is NOT safe-to-remove on its own.
-    Re-record the floor with Unicode additions counted.
-  - **Refactor pass** — review the cycle's additions for
-    consolidation. Phase 2's 30 `_a` variants across
-    vec/str/hashmap/json/toml/cyml/http might collapse
-    helpers. The Result-shaped `_r` variants from
-    v5.8.30/.31 might share common Err-construction paths.
-    Unicode 17.0.0 fold (.49-.51) added 3 new lib/unicode/*
-    modules — review for cross-module helper duplication
-    (range-table binary-search, UCD-blob format, etc.).
-    Per the v5.7.47 precedent, refactor-as-own-slot is
-    preferred over folding into the closeout; this slot
-    honors that pattern.
+  Delivered:
+  - Lifted `_uc_emit_utf8` + `_uc_decode_utf8` from
+    `lib/unicode/casefold.cyr` (lines 188-260) and
+    `_uc_nz_emit_utf8` + `_uc_nz_decode_utf8` from
+    `lib/unicode/normalize.cyr` (lines 245-302) into the
+    existing private-shared `lib/unicode/_decode.cyr`
+    (which both files already include).
+  - Single canonical name pair `_uc_emit_utf8` /
+    `_uc_decode_utf8`; the synthetic `_uc_nz_*` collision-
+    dodge prefix retired with the deduplication.
+  - Updated `normalize.cyr`'s 2 internal callers (lines
+    363, 379) to use the canonical names; `casefold.cyr`
+    already used canonical names so no rename needed.
+  - Test-local UTF-8 codec copies in
+    `tests/tcyr/unicode_normconf.tcyr` +
+    `unicode_casefold.tcyr` retained — those are test
+    fixtures and isolation from stdlib internals is a
+    feature, not duplication-to-fix.
 
-- **v5.8.56** — Deps cleanup + release-valve (combined slot).
+  Dedup metrics: ~80 lines deleted (160 lines of duplicate
+  body across 2 files, replaced by 1 canonical body in 1
+  file plus 2 short comment blocks pointing to it).
+
+  Snapshot-ping-pong incident (in-slot resolution): first
+  edit pass was reverted by `check.sh`'s `cyrius deps`
+  resolution (the trap CLAUDE.md's "Snapshot-ping-pong
+  protection" section explicitly documents — the install
+  snapshot still had the pre-dedup unicode/* contents and
+  cyrius's own `[deps].stdlib` resolution copied them back
+  over the repo edits). Re-applied edits, then immediately
+  ran `sh scripts/install.sh --refresh-only` to seal the
+  snapshot, then re-ran check.sh — edits stuck. Reinforces
+  the documented mitigation; no source code change needed
+  beyond the snapshot refresh discipline.
+
+  Verified:
+  - `scripts/check.sh`: 65/65 named gates green.
+  - Self-host: cc5 == cc5b byte-identical at 741,120 B
+    (cc5 unchanged — stdlib-only edit).
+  - All 4 unicode tcyrs pass: 122 + 106 + 83 + 120,207 =
+    **120,518 unicode asserts** (identical count to
+    v5.8.54).
+
+- **v5.8.56** — Dead-code removal pass. Audit pinned at v5.8.55
+  surfaced removal candidates that need per-fn vidya cross-check
+  before deletion (per `feedback_dead_code_audit_scope` memory pin:
+  TS_*/macho_*/cross-arch fns are reachable via mode flags;
+  0-callers-in-grep is NOT safe-to-remove on its own).
+
+  Candidates (from the v5.8.55 audit, current 36 fns / 22,571 B
+  floor):
+
+  - **IR optim pipeline pre-`_capped` fns** (~7-9 fns:
+    `ir_dce`, `ir_dead_store`, `ir_dead_block_elim`,
+    `ir_lower_all`, `_ir_lower_node`, `ir_emit2`, `IR_BB_*`,
+    `IR_EDGE_*`, `IR_NODE_FL`, `CLASSIFY_CF`, `CF_TARGET`).
+    Look like superseded predecessors of the `_capped`
+    variants that ARE actively called from main.cyr:1218-1220.
+    `ir_dead_block_elim` call site at main.cyr:1229 is
+    commented-out. Cross-check vidya field-notes for any
+    "staged future work" pin before deletion.
+  - **Superseded emit-side fns** (5 fns): `ELVRLOAD`,
+    `ELVRSTORE`, `ELVRINIT` (defined in cx + aarch64 + x86
+    backends; ELVR* bodies just delegate to EFLSTORE — clear
+    superseded older naming); `GFVA` (single-line accessor
+    with no callers); `ESHRIMM` (x86-only emit fn with no
+    callers). Cross-check whether downstream consumers
+    reference them via extension points.
+
+  Per-removal verification: cc5 self-host byte-identical (the
+  removal mustn't change codegen for live paths); all 65
+  check.sh gates still green; floor recorded post-pass with
+  the new fn count and bytes saved.
+
+  KEEP (no removal):
+  - `TS_*` (10 fns) — reachable via `--parse-ts` flag.
+  - `_macho_*` / `EMITMACHO_ARM64` (5 fns) — reachable via
+    `--target=macho` + `main_aarch64_macho.cyr` includes.
+
+  Filed at v5.8.55 ship 2026-05-04. User direction:
+  ".55 dedup; .56 deadcode; .57 refactor; cascading remaining."
+
+- **v5.8.57** — Remaining refactor pass. Picks up the work
+  that v5.8.55's dedup didn't fold in:
+
+  - **Binary-search dedup** across the 3 unicode modules. 8
+    nearly-identical bsearch loops in
+    `lib/unicode/categories.cyr` (1) +
+    `lib/unicode/casefold.cyr` (4) +
+    `lib/unicode/normalize.cyr` (3). Each searches a
+    different table with different record decode → would
+    need fn-pointer callback or template-style helper.
+    Moderate effort, modest payoff. Surface a sketched
+    helper signature first; user picks whether to land or
+    defer to a future cycle.
+  - **`scripts/gen-unicode-data.py` consolidation** —
+    extended across .49 (categories) + .50 (casefold) + .51
+    (normalize) + .52 (NormalizationTest fetch). The
+    parse_* / emit_* fn pairs share boilerplate; could
+    collapse into a generic UCD-record-emit helper.
+  - **Other items surfaced during the slot** — the audit
+    pass at v5.8.55 logged these scope candidates; .57 is
+    the last opportunity before closeout to land any that
+    earn it.
+
+  Acceptance: cc5 byte-identical post-refactor; all unicode
+  tcyrs still pass (the regression floor from v5.8.52 must
+  hold); no new dead-code added.
+
+  Filed at v5.8.55 ship 2026-05-04 per user direction
+  "cascading remaining."
+
+- **v5.8.58** — Deps cleanup + release-valve (combined slot).
   Two purposes:
   1. **Deps cleanup** — update `cyrius/cyrius.cyml`
      `[deps.*]` fields to whatever new dep tags the v5.8.x
@@ -1879,10 +1973,10 @@ hand-roll incompletely.
   Note: downstream pin bumps (per-repo `cyrius` field updates
   in mabda / sigil / sakshi / yukti / kybernet / hadara / …)
   are NOT executed in this slot — they happen in each
-  downstream repo's own cycle, against the v5.8.59 release
+  downstream repo's own cycle, against the v5.8.61 release
   tag.
 
-- **v5.8.57** — `str_data` heap-region bump for Unicode
+- **v5.8.59** — `str_data` heap-region bump for Unicode
   compat-only decomposition. Two-step bootstrap slot per
   CLAUDE.md "Two-step bootstrap for heap changes — cc5
   compiles cc5b, cc5==cc5b". Stands alone — no other
@@ -1913,12 +2007,13 @@ hand-roll incompletely.
 
   Filed at v5.8.51 ship 2026-05-04; user-approved cycle
   extension past v5.8.55 closeout pin to absorb this and
-  v5.8.58's NFKC/NFKD ship. Renumbered v5.8.55 → v5.8.57
-  at v5.8.53 ship to absorb the cross-arch propagation
-  slots (.53 install pipeline + .54 emit-fn parity).
+  v5.8.60's NFKC/NFKD ship. Renumbering history:
+  v5.8.55 → v5.8.57 at v5.8.53 ship (cross-arch propagation
+  insertion); v5.8.57 → v5.8.59 at v5.8.55 ship (audit/
+  dedup/refactor trio insertion at .55-.57).
 
-- **v5.8.58** — Unicode 17.0.0 NFKC + NFKD compatibility
-  normalization. Depends on v5.8.57 heap bump. Ships the
+- **v5.8.60** — Unicode 17.0.0 NFKC + NFKD compatibility
+  normalization. Depends on v5.8.59 heap bump. Ships the
   K-forms originally pinned with v5.8.51 but deferred per
   the str_data cap.
 
@@ -1949,10 +2044,11 @@ hand-roll incompletely.
 
   Filed at v5.8.51 ship 2026-05-04.
 
-- **v5.8.59** — Cycle closeout pass. **The cycle backstop
+- **v5.8.61** — Cycle closeout pass. **The cycle backstop
   and the actual final patch of v5.8.x** (extended from
   v5.8.55 to absorb str_data heap bump + K-forms + the
-  cross-arch propagation slots). Per CLAUDE.md "Closeout
+  cross-arch propagation slots + the audit/dedup/refactor
+  trio at .55/.56/.57). Per CLAUDE.md "Closeout
   Pass" (11-step protocol — mechanical first, judgment-call
   passes, doc sync):
 
@@ -1963,7 +2059,7 @@ hand-roll incompletely.
   - Full check.sh — all gates green; record the test count
     (grew from 65 at v5.8.48; expected to reach ~70+ with
     Unicode tcyrs including the v5.8.52 conformance harness
-    and the v5.8.58 K-form additions)
+    and the v5.8.60 K-form additions)
 
   §4-8 **Judgment (cross-check, since v5.8.55 already did
   the deep passes):**
@@ -2006,15 +2102,18 @@ hand-roll incompletely.
   completed-phases.md migration of all v5.8.* sections; cc5
   byte-identical; no new warnings.
 
-  **Cycle backstop hard at v5.8.59** (was v5.8.51 pre-
+  **Cycle backstop hard at v5.8.61** (was v5.8.51 pre-
   Unicode-pin → extended to v5.8.55 on 2026-05-03 PM →
   extended to v5.8.57 on 2026-05-04 to absorb the v5.8.51-
   deferred str_data heap bump + NFKC/NFKD ship → extended
   to v5.8.59 on 2026-05-04 PM to absorb the cross-arch
   propagation slots .53 (install pipeline) + .54 (emit-fn
-  parity)). User-approved buffer through v5.8.60 for any
-  further late surprises ("ok to slip past .55 — .60 is
-  needed").
+  parity) → extended to v5.8.61 on 2026-05-04 evening to
+  absorb the audit/dedup/refactor trio at .55-.57 per user
+  direction "flatten some runway for all the items"). The
+  cycle now exceeds the original v5.8.60 buffer that was
+  pre-approved at the .51 ship; user-approved on the .55
+  bump because the runway flattening required it.
 
 ### v5.8.x — held items (surfacing-ask only; not pinned, no slot consumed)
 

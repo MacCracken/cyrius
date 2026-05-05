@@ -240,66 +240,11 @@ fn unicode_compose(cp1, cp2) {
     return 0;
 }
 
-# ── UTF-8 codec (private; same shape as casefold.cyr) ─────────────────
-
-fn _uc_nz_emit_utf8(dst, cp) {
-    if (cp < 128) {
-        store8(dst, cp);
-        return 1;
-    }
-    if (cp < 2048) {
-        store8(dst, 192 | (cp >> 6));
-        store8(dst + 1, 128 | (cp & 63));
-        return 2;
-    }
-    if (cp < 65536) {
-        store8(dst, 224 | (cp >> 12));
-        store8(dst + 1, 128 | ((cp >> 6) & 63));
-        store8(dst + 2, 128 | (cp & 63));
-        return 3;
-    }
-    store8(dst, 240 | (cp >> 18));
-    store8(dst + 1, 128 | ((cp >> 12) & 63));
-    store8(dst + 2, 128 | ((cp >> 6) & 63));
-    store8(dst + 3, 128 | (cp & 63));
-    return 4;
-}
-
-fn _uc_nz_decode_utf8(src, off, src_len, cp_out) {
-    if (off >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-    var b0 = load8(src + off);
-    if (b0 < 128) { store64(cp_out, b0); return 1; }
-    if (b0 < 192) { store64(cp_out, 0xFFFD); return 1; }
-    if (b0 < 224) {
-        if (off + 1 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-        var b1 = load8(src + off + 1);
-        if ((b1 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        store64(cp_out, ((b0 & 31) << 6) | (b1 & 63));
-        return 2;
-    }
-    if (b0 < 240) {
-        if (off + 2 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-        var c1 = load8(src + off + 1);
-        var c2 = load8(src + off + 2);
-        if ((c1 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        if ((c2 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        store64(cp_out, ((b0 & 15) << 12) | ((c1 & 63) << 6) | (c2 & 63));
-        return 3;
-    }
-    if (b0 < 248) {
-        if (off + 3 >= src_len) { store64(cp_out, 0xFFFD); return 1; }
-        var d1 = load8(src + off + 1);
-        var d2 = load8(src + off + 2);
-        var d3 = load8(src + off + 3);
-        if ((d1 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        if ((d2 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        if ((d3 & 192) != 128) { store64(cp_out, 0xFFFD); return 1; }
-        store64(cp_out, ((b0 & 7) << 18) | ((d1 & 63) << 12) | ((d2 & 63) << 6) | (d3 & 63));
-        return 4;
-    }
-    store64(cp_out, 0xFFFD);
-    return 1;
-}
+# UTF-8 codec helpers `_uc_emit_utf8` + `_uc_decode_utf8` live in the
+# included `lib/unicode/_decode.cyr`. v5.8.55 lifted both fns out of
+# the per-module duplicates that previously lived here (with the
+# `_uc_nz_*` synthetic-collision-dodge prefix) and in casefold.cyr —
+# the prior copies were byte-identical modulo whitespace.
 
 # ── Recursive decomposition ───────────────────────────────────────────
 # Walk s, decomposing each cp recursively until no further expansion.
@@ -415,7 +360,7 @@ fn str_normalize(s, form) {
     var dec_len = 0;
     var cp_slot = alloc(8);
     while (i < src_len) {
-        var consumed = _uc_nz_decode_utf8(src, i, src_len, cp_slot);
+        var consumed = _uc_decode_utf8(src, i, src_len, cp_slot);
         var cp = load64(cp_slot);
         dec_len = _uc_decompose_cp_recursive(cp, dec_buf, dec_len, max_cps);
         i = i + consumed;
@@ -431,7 +376,7 @@ fn str_normalize(s, form) {
     var oi = 0;
     var k = 0;
     while (k < dec_len) {
-        oi = oi + _uc_nz_emit_utf8(out_buf + oi, load64(dec_buf + k * 8));
+        oi = oi + _uc_emit_utf8(out_buf + oi, load64(dec_buf + k * 8));
         k = k + 1;
     }
     return str_new(out_buf, oi);
