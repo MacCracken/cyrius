@@ -974,7 +974,7 @@ fn EMITPE_EXEC(S) {
     # ============================================================
     # .rdata section — gvar storage (zero-filled) + string bytes.
     # Strings are copied from the compiler's str_data region
-    # (S + 0x14A000) so `movabs rax, imm64` fixups patched with
+    # (S + 0x4E8C000) so `movabs rax, imm64` fixups patched with
     # ImageBase + _pe_rdata_rva + totvar + str_offset resolve to
     # real content at runtime. gvars stay zero-initialized on PE
     # (same treatment as ELF); runtime stores into them use the
@@ -988,7 +988,7 @@ fn EMITPE_EXEC(S) {
     o = o + _pe_rdata_totvar;
     ti = 0;
     while (ti < _pe_rdata_spos) {
-        store8(O + o + ti, load8(S + 0x14A000 + ti));
+        store8(O + o + ti, load8(S + 0x4E8C000 + ti));
         ti = ti + 1;
     }
     o = o + _pe_rdata_spos;

@@ -28,7 +28,7 @@ var _unsafe_depth = 0;
 # v5.6.4: pending `#deprecated("msg")` → next `fn` definition. Lexer
 # token 124 arms _deprecated_pending and the parser consumes the
 # `(STR)` args, storing the string token value (offset<<16 | length
-# into str_data at 0x14A000) in _deprecated_msg_pending. PARSE_FN_DEF
+# into str_data at 0x4E8C000) in _deprecated_msg_pending. PARSE_FN_DEF
 # transfers both into fn_flags[fi] bit 2 + fn_deprecated_msg[fi].
 # Call-site check lives in PARSE_FNCALL — fires at every call, not
 # just statement-level discards (that's #must_use's job).
@@ -611,7 +611,7 @@ fn PARSE_STMT(S) {
                 var soff = sv >> 16;
                 var slen = sv & 0xFFFF;
                 syscall(SYS_WRITE, 2, ": ", 2);
-                syscall(SYS_WRITE, 2, S + 0x14A000 + soff, slen);
+                syscall(SYS_WRITE, 2, S + 0x4E8C000 + soff, slen);
             }
             syscall(SYS_WRITE, 2, "\n", 1);
             syscall(SYS_EXIT, 1);
@@ -640,7 +640,7 @@ fn PARSE_STMT(S) {
         if (PEEKT(S) != 30) { ERR_EXPECT(S, 30); }
         var pe_sv = PEEKV(S);
         var pe_soff = pe_sv >> 16;
-        _pe_pending_imp_add(S, S + 0x14A000 + pe_soff);
+        _pe_pending_imp_add(S, S + 0x4E8C000 + pe_soff);
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
         STI(S, GTI(S) + 1);

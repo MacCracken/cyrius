@@ -2031,34 +2031,72 @@ hand-roll incompletely.
   downstream repo's own cycle, against the v5.8.61 release
   tag.
 
-- **v5.8.59** — `str_data` heap-region bump for Unicode
-  compat-only decomposition. Two-step bootstrap slot per
-  CLAUDE.md "Two-step bootstrap for heap changes — cc5
-  compiles cc5b, cc5==cc5b". Stands alone — no other
-  changes — to keep the bootstrap delta auditable.
+- **v5.8.59** ✅ SHIPPED 2026-05-05 — `str_data` heap-region
+  bump for Unicode compat-only decomposition. Two-step bootstrap
+  slot per CLAUDE.md "Two-step bootstrap for heap changes — cc5
+  compiles cc5b, cc5==cc5b". Stood alone — no other changes — to
+  keep the bootstrap delta auditable.
 
-  Background: v5.8.51 shipped NFC + NFD only because the
-  compatibility-only decomposition table (~445 KB encoded
-  in cyrius's printable hex-pair format) overflows cc5's
-  256 KB `str_data` cap at heap offset `0x14A000`, sized
-  v3.6.9 (32 KB → 256 KB jump). Same cap also blocks the
-  v5.8.52 conformance-suite-as-tcyr-literals option, which
-  is why .52 ships the conformance suite as a runtime data
-  file instead.
+  Background unchanged from original pin: v5.8.51 shipped NFC +
+  NFD only because the ~445 KB compat-only decomposition table
+  overflowed the 256 KB `str_data` cap at `0x14A000` (sized
+  v3.6.9). v5.8.59 bumps the cap 8x — proportional to the v3.6.9
+  jump.
 
-  Scope:
-  - Bump `str_data` from 256 KB to 2 MB (8x — proportional
-    to the v3.6.9 jump). Audit downstream regions for
-    offset shifts; update heap map.
-  - Verify cc5 self-host: cc5 (old layout) compiles cc5b
-    (new layout); cc5b compiles cc5b'; cc5b == cc5b'
-    byte-identical at the new size.
-  - No stdlib / lib/ changes in this slot. Bare heap-cap
-    bump only — keeps the two-step bootstrap audit narrow.
+  Layout decision (Option B chosen — relocate str_data to high
+  block): the scratch-state cluster at `0x18C100..0x19A000` sits
+  inside what an in-place 2 MB grow would consume. Option A
+  (in-place + shift downstream — ~200 edits across ~20 files;
+  monotonic) vs Option B (relocate to `0x4E8C000` post-tok_lines
+  high block, brk → `0x508C000`; ~50 edits, single-purpose;
+  non-monotonic). Precedent: v5.8.46 tok-array relocation used
+  the same Option-B pattern. User-approved at slot entry
+  2026-05-05 with explicit acknowledgment that gaps are
+  acceptable — heap-map refactor pinned forward to a pre-closeout
+  slot to reorganize.
 
-  Acceptance: cc5 == cc5b byte-identical post-bump;
-  bootstrap closure intact (seed → cyrc → asm → cyrc); all
-  existing tcyrs still pass.
+  Delivered:
+  - `str_data` offset `0x14A000` → `0x4E8C000`; size `0x40000`
+    (256 KB) → `0x200000` (2 MB).
+  - brk: `0x4E8C000` → `0x508C000` (~80.5 MB) in main.cyr,
+    main_aarch64.cyr, main_aarch64_native.cyr,
+    main_aarch64_macho.cyr, main_cx.cyr.
+  - Windows MMAP region: `0x5000000` → `0x5100000` in
+    main_win.cyr.
+  - 41 `0x14A000` references rewritten across 8 source files
+    (lex.cyr 17, x86 fixup.cyr 4, aarch64 fixup.cyr 2, macho
+    emit.cyr 2, pe emit.cyr 2, parse.cyr 3, parse_fn.cyr 1,
+    main_cx.cyr 1). Historical-context comments in the seven
+    main_*.cyr files preserved with "(was 0x14A000)" annotation.
+  - 3 cap-check sites in lex.cyr: `262144` → `2097152`. Three
+    error messages: "256KB limit" → "2MB limit". Cap-tracking
+    85% warnings in main.cyr + main_win.cyr likewise updated.
+  - Heap-map comments in all seven main_*.cyr files refreshed.
+  - In-slot fix: duplicate `str_data` line in main.cyr's heap
+    map parsed by `tests/heapmap.sh` as two regions; resolved
+    by demoting the cross-reference to a non-parser-matched
+    form (parens around the line).
+
+  Verified:
+  - Self-host: cc5 == cc5b byte-identical at **741,128 B**
+    (was 741,120 B; +8 B from wider cap-value digits).
+  - Two-step: cc5 (v5.8.58 layout) → cc5b (v5.8.59) → cc5b' =
+    cc5b byte-identical.
+  - `tests/heapmap.sh`: 84 regions, 0 overlaps, 0 warnings.
+  - `scripts/check.sh`: 65/65 named gates green.
+  - All 127 tcyr files PASS (120,518 unicode asserts unchanged).
+  - Cross-host: pi (aarch64 native self-host), ecb (macOS arm64),
+    cass (Windows PE), libssl fdlopen TLS — all PASS.
+  - aarch64 cross-build: `build/cc5_aarch64` rebuilt at
+    **439,880 B** (was 439,904 B; -24 B delta on aarch64).
+
+  Heap-map refactor pin (forward to pre-closeout slot): the
+  high-block relocation leaves str_data at `0x4E8C000` above the
+  IR/fixup/tok regions — non-monotonic. A pre-closeout slot
+  (TBD: .60.5 insertion or absorbed into .61) will reorganize
+  the layout. Acceptable per user direction "you should be able
+  to review to re-organize and not leave heavy gaps in the
+  layout".
 
   Filed at v5.8.51 ship 2026-05-04; user-approved cycle
   extension past v5.8.55 closeout pin to absorb this and

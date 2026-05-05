@@ -142,17 +142,17 @@ fn _LEX_HEX_VAL(c) {
     return 0 - 1;
 }
 
-# v5.7.13: emit codepoint cp as UTF-8 into str_data at S+0x14A000+spos.
+# v5.7.13: emit codepoint cp as UTF-8 into str_data at S+0x4E8C000+spos.
 # Returns the new spos. Callers must reject surrogates (D800-DFFF)
 # and codepoints > U+10FFFF before calling.
 fn _LEX_EMIT_UTF8(S, spos, cp) {
-    var dst = S + 0x14A000;
+    var dst = S + 0x4E8C000;
     var need = 1;
     if (cp >= 128) { need = 2; }
     if (cp >= 2048) { need = 3; }
     if (cp >= 65536) { need = 4; }
-    if (spos + need > 262144) {
-        syscall(SYS_WRITE, 2, "error: string data overflow (256KB limit)\n", 42);
+    if (spos + need > 2097152) {
+        syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
         syscall(SYS_EXIT, 1);
     }
     if (cp < 128) {
@@ -998,9 +998,9 @@ fn LEX(S) {
                                                                                                                             var sgo = 1;
                                                                                                                             while (sgo == 1) {
                                                                                                                                 if (p >= bl) { sgo = 0; }
-                                                                                                                                # CVE-06: bounds check str_data (256KB at 0x14A000)
-                                                                                                                                if (spos >= 262144) {
-                                                                                                                                    syscall(SYS_WRITE, 2, "error: string data overflow (256KB limit)\n", 42);
+                                                                                                                                # CVE-06: bounds check str_data (2MB at 0x4E8C000; v5.8.59 was 256KB at 0x14A000)
+                                                                                                                                if (spos >= 2097152) {
+                                                                                                                                    syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
                                                                                                                                     syscall(SYS_EXIT, 1);
                                                                                                                                 }
                                                                                                                                 if (sgo == 1) {
@@ -1011,17 +1011,17 @@ fn LEX(S) {
                                                                                                                                             p = p + 1;
                                                                                                                                             var ec = load8(S + 0x44A000 + p);
                                                                                                                                             p = p + 1;
-                                                                                                                                            if (ec == 110)      { store8(S + 0x14A000 + spos, 10); spos = spos + 1; }
-                                                                                                                                            elif (ec == 114)    { store8(S + 0x14A000 + spos, 13); spos = spos + 1; }
-                                                                                                                                            elif (ec == 116)    { store8(S + 0x14A000 + spos,  9); spos = spos + 1; }
-                                                                                                                                            elif (ec == 48)     { store8(S + 0x14A000 + spos,  0); spos = spos + 1; }
-                                                                                                                                            elif (ec == 92)     { store8(S + 0x14A000 + spos, 92); spos = spos + 1; }
-                                                                                                                                            elif (ec == 34)     { store8(S + 0x14A000 + spos, 34); spos = spos + 1; }
-                                                                                                                                            elif (ec == 39)     { store8(S + 0x14A000 + spos, 39); spos = spos + 1; }
-                                                                                                                                            elif (ec == 97)     { store8(S + 0x14A000 + spos,  7); spos = spos + 1; }
-                                                                                                                                            elif (ec == 98)     { store8(S + 0x14A000 + spos,  8); spos = spos + 1; }
-                                                                                                                                            elif (ec == 102)    { store8(S + 0x14A000 + spos, 12); spos = spos + 1; }
-                                                                                                                                            elif (ec == 118)    { store8(S + 0x14A000 + spos, 11); spos = spos + 1; }
+                                                                                                                                            if (ec == 110)      { store8(S + 0x4E8C000 + spos, 10); spos = spos + 1; }
+                                                                                                                                            elif (ec == 114)    { store8(S + 0x4E8C000 + spos, 13); spos = spos + 1; }
+                                                                                                                                            elif (ec == 116)    { store8(S + 0x4E8C000 + spos,  9); spos = spos + 1; }
+                                                                                                                                            elif (ec == 48)     { store8(S + 0x4E8C000 + spos,  0); spos = spos + 1; }
+                                                                                                                                            elif (ec == 92)     { store8(S + 0x4E8C000 + spos, 92); spos = spos + 1; }
+                                                                                                                                            elif (ec == 34)     { store8(S + 0x4E8C000 + spos, 34); spos = spos + 1; }
+                                                                                                                                            elif (ec == 39)     { store8(S + 0x4E8C000 + spos, 39); spos = spos + 1; }
+                                                                                                                                            elif (ec == 97)     { store8(S + 0x4E8C000 + spos,  7); spos = spos + 1; }
+                                                                                                                                            elif (ec == 98)     { store8(S + 0x4E8C000 + spos,  8); spos = spos + 1; }
+                                                                                                                                            elif (ec == 102)    { store8(S + 0x4E8C000 + spos, 12); spos = spos + 1; }
+                                                                                                                                            elif (ec == 118)    { store8(S + 0x4E8C000 + spos, 11); spos = spos + 1; }
                                                                                                                                             elif (ec == 120) {
                                                                                                                                                 # v5.7.13: \x## - exactly two hex digits.
                                                                                                                                                 if (p + 1 >= bl) {
@@ -1044,7 +1044,7 @@ fn LEX(S) {
                                                                                                                                                     syscall(SYS_WRITE, 2, ": \\x escape: bad hex digit\n", 27);
                                                                                                                                                     syscall(SYS_EXIT, 1);
                                                                                                                                                 }
-                                                                                                                                                store8(S + 0x14A000 + spos, (h1 << 4) | h2);
+                                                                                                                                                store8(S + 0x4E8C000 + spos, (h1 << 4) | h2);
                                                                                                                                                 spos = spos + 1;
                                                                                                                                                 p = p + 2;
                                                                                                                                             }
@@ -1125,9 +1125,9 @@ fn LEX(S) {
                                                                                                                                                 }
                                                                                                                                                 spos = _LEX_EMIT_UTF8(S, spos, cp);
                                                                                                                                             }
-                                                                                                                                            else { store8(S + 0x14A000 + spos, ec); spos = spos + 1; }
+                                                                                                                                            else { store8(S + 0x4E8C000 + spos, ec); spos = spos + 1; }
                                                                                                                                         } else {
-                                                                                                                                            store8(S + 0x14A000 + spos, sc);
+                                                                                                                                            store8(S + 0x4E8C000 + spos, sc);
                                                                                                                                             spos = spos + 1;
                                                                                                                                             p = p + 1;
                                                                                                                                         }
@@ -1135,7 +1135,7 @@ fn LEX(S) {
                                                                                                                                 }
                                                                                                                             }
                                                                                                                             # Add null terminator after string literal
-                                                                                                                            store8(S + 0x14A000 + spos, 0);
+                                                                                                                            store8(S + 0x4E8C000 + spos, 0);
                                                                                                                             var slen = spos - sstart;
                                                                                                                             # String interning: check if an identical string already
                                                                                                                             # exists in str_data. If so, reuse its offset — deduplicates string
@@ -1146,20 +1146,20 @@ fn LEX(S) {
                                                                                                                                 var eq = 1;
                                                                                                                                 var sk = 0;
                                                                                                                                 while (sk <= slen) {
-                                                                                                                                    if (load8(S + 0x14A000 + si + sk) != load8(S + 0x14A000 + sstart + sk)) { eq = 0; break; }
+                                                                                                                                    if (load8(S + 0x4E8C000 + si + sk) != load8(S + 0x4E8C000 + sstart + sk)) { eq = 0; break; }
                                                                                                                                     sk = sk + 1;
                                                                                                                                 }
                                                                                                                                 if (eq == 1) { interned = si; si = sstart; }
                                                                                                                                 else {
-                                                                                                                                    while (si < sstart) { if (load8(S + 0x14A000 + si) == 0) { si = si + 1; break; } si = si + 1; }
+                                                                                                                                    while (si < sstart) { if (load8(S + 0x4E8C000 + si) == 0) { si = si + 1; break; } si = si + 1; }
                                                                                                                                 }
                                                                                                                             }
                                                                                                                             if (interned >= 0) {
                                                                                                                                 sstart = interned;
                                                                                                                             } else {
                                                                                                                                 spos = spos + 1;
-                                                                                                                                if (spos >= 262144) {
-                                                                                                                                    syscall(SYS_WRITE, 2, "error: string data buffer full (256KB limit)\n", 44);
+                                                                                                                                if (spos >= 2097152) {
+                                                                                                                                    syscall(SYS_WRITE, 2, "error: string data buffer full (2MB limit)\n", 43);
                                                                                                                                     syscall(SYS_EXIT, 1);
                                                                                                                                 }
                                                                                                                                 SSPOS(S, spos);

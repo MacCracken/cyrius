@@ -42,7 +42,7 @@
 #   0x11A000 var_noffs     [65536]       8192 variables
 #   0x12A000 var_sizes     [65536]
 #   0x13A000 var_types     [65536]
-#   0x14A000 str_data      [262144]      256KB string literal bytes
+#   0x14A000 (was str_data, 256KB; relocated to 0x4E8C000 high block at v5.8.59)
 #   0x44A000 preprocess_out[2097152]     2MB expanded source buffer
 #   0x64A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
 #   0x94A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43)
@@ -54,12 +54,16 @@
 #   0x368C000 tok_types     [8388608]     1048576 entries × 8 bytes
 #   0x3E8C000 tok_values    [8388608]     1048576 entries × 8 bytes
 #   0x468C000 tok_lines     [8388608]     1048576 entries × 8 bytes
+#   0x4E8C000 str_data      [2097152]     2MB string literal bytes (RELOCATED v5.8.59;
+#                                        was 0x14A000/256KB, in-place 8x grow would
+#                                        clobber scratch state at 0x18C100..0x19A000)
 #   0x114A000 struct_ftypes [65536]       256 structs × 32 fields (cap 256, v5.7.17)
 #   0x11CA000 struct_fnames [65536]       256 structs × 32 fields (cap 256, v5.7.17)
 #   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
 #   0x12CA000 (fn tables end here — IR region not used by aarch64 compiler)
-#   0x290B000 brk                         39 MB total heap (v5.7.7 fixup-cap
-#                                        262K → 1M, +12 MB; synced with main.cyr)
+#   0x508C000 brk                         ~80.5 MB total heap (v5.8.59 str_data relocation
+#                                        +2 MB; was 0x4E8C000 / 78.5 MB pre-v5.8.59;
+#                                        synced with main.cyr)
 
 
 # ================================================================
@@ -95,7 +99,10 @@ var S = syscall(SYS_BRK, 0);
 # the TS frontend, so the ~13.5 MiB between fixup_tbl-end
 # (0x290B000) and tok-block-start (0x368C000) is unused padding —
 # kept aligned with main.cyr's layout for offset parity.
-syscall(SYS_BRK, S + 0x4E8C000);
+# v5.8.59: brk extended further to S + 0x508C000 (~80.5 MB) for
+# the str_data high-block relocation (was 0x14A000/256KB, now
+# 0x4E8C000/2MB).
+syscall(SYS_BRK, S + 0x508C000);
 
 # Zero state
 S64(S + 0x18C100, 0);

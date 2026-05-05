@@ -5,6 +5,31 @@
 
 ## Version
 
+**5.8.59** (shipped 2026-05-05 — **v5.8.x SLOT 59 — `str_data`
+heap-region bump for Unicode compat-only decomposition**.
+Twenty-first slot of Phase 3. Two-step bootstrap slot per CLAUDE.md
+"Two-step bootstrap for heap changes". cc5: 741,120 B → **741,128
+B** (+8 B for wider cap-value digits). `str_data` 256 KB → 2 MB
+(8x, proportional to v3.6.9's 32KB→256KB jump); cap was the
+v5.8.51 NFKC/NFKD blocker. Layout option B chosen — relocate
+str_data to high block at `0x4E8C000` (above tok_lines), brk →
+`0x508C000` (~80.5 MB), Windows MMAP → `0x5100000`. ~50 edits
+across 13 files. Heap-map refactor pinned forward to a pre-closeout
+slot to reorganize the gap left by the high-block relocation.
+Two-step verify: cc5 (old layout) → cc5b (new) → cc5b' = cc5b
+byte-identical at 741,128 B. 65/65 check.sh gates green; 127 tcyr
+files PASS including 120,518 unicode asserts; cross-host gates
+pi/cass/ecb green via existing SSH wiring.)
+
+**5.8.58** (shipped 2026-05-04 — **v5.8.x SLOT 58 — deps cleanup
++ release-valve**. Twentieth slot of Phase 3. cc5 unchanged at
+**741,120 B** — no compiler change. All 8 `[deps.*]` pins audited
+at latest GA (zero bumps needed). Release-valve absorbed
+sovereignty audit (~10,800 LOC bash; pinned forward as v5.9.0
+cycle theme — "Sovereignty pass — bash-toolchain conversion to
+cyrius"). state.md refresh shipped after 10-slot silent rot since
+v5.8.47.)
+
 **5.8.57** (shipped 2026-05-04 — **v5.8.x SLOT 57 — sovereign UCD
 generator**. Nineteenth slot of Phase 3. Last of three audit/
 refactor slots (.55 codec dedup → .56 dead-code → **.57 sovereignty
@@ -20,17 +45,21 @@ ABI-shim `programs/dlopen-helper.c`, IDE integrations
 `editors/*.lua` + `editors/*.js`). 120,518 unicode asserts hold
 at the regression floor v5.8.52 set.)
 
-**Cycle wind-down (v5.8.58 → v5.8.61, hard backstop at .61)**:
-.58 = deps cleanup + release-valve (this slot — deps already at
-latest GA, ships state.md refresh + v5.9.0 forward-pin); .59 =
-`str_data` heap-region bump for Unicode compat-only decomposition
-(two-step bootstrap); .60 = NFKC + NFKD ship (depends on .59);
-.61 = full cycle closeout. Backstop history: was .55 pre-Unicode-
-pin → .57 to absorb v5.8.51-deferred heap bump + K-forms → .59
-for cross-arch propagation slots (.53 install-pipeline + .54
-emit-fn parity) → **.61** to absorb the audit/dedup/refactor trio
-at .55-.57 per user direction "flatten some runway for all the
-items".
+**Cycle wind-down (v5.8.60 → v5.8.61, hard backstop at .61; +
+TBD heap-map refactor slot)**:
+.60 = NFKC + NFKD ship (str_data room unblocked at .59); .61 =
+full cycle closeout. **Heap-map refactor** pinned forward at
+v5.8.59 ship 2026-05-05 per user direction — the Option B high-
+block relocation of str_data left a non-monotonic layout (small
+string buffer above the big IR/fixup/tok regions); a pre-closeout
+slot will reorganize. Slot number TBD: either .60.5 (insertion)
+or absorbed into .61 closeout depending on .60 surface area.
+Backstop history: was .55 pre-Unicode-pin → .57 to absorb
+v5.8.51-deferred heap bump + K-forms → .59 for cross-arch
+propagation slots (.53 install-pipeline + .54 emit-fn parity) →
+**.61** to absorb the audit/dedup/refactor trio at .55-.57 per
+user direction "flatten some runway for all the items"; v5.8.59
+ship absorbed in-cycle (no extension).
 
 **v5.9.0 cycle theme pinned forward** (from v5.8.58 audit
 2026-05-04): **Sovereignty pass — bash-toolchain conversion to

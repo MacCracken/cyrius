@@ -98,7 +98,7 @@
 #   0x13A000 var_types     [65536]       8192 variable type IDs
 #
 # --- Relocated string data (v3.6.7) ---
-#   0x14A000 str_data      [262144]      256KB string literal bytes (v3.6.9, was 32KB at 0x40000)
+#   0x14A000 (was str_data, 256KB; relocated to 0x4E8C000 high block at v5.8.59)
 #
 # --- Large buffers ---
 #   0x44A000 preprocess_out[2097152]     2MB expanded source buffer
@@ -126,7 +126,11 @@
 #   0x17CB000 ir_edges     [262144]      32768 CFG edges × 8 bytes
 #   0x180B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
 #
-#   0x290B000 brk                         39 MB total heap (v5.7.7 fixup-cap +12 MB)
+#   0x4E8C000 str_data      [2097152]     2MB string literal bytes (RELOCATED v5.8.59;
+#                                        was 0x14A000/256KB — see main.cyr for rationale.
+#                                        On Windows, MMAP-allocated heap covers this range.)
+#   0x508C000 brk-equivalent              ~80.5 MB MMAP region (v5.8.59 +2 MB; was
+#                                        0x5000000/80 MB pre-v5.8.59 / 0x290B000 pre-v5.8.46)
 #
 # Token types:
 #   1=NUM 2=IDENT 3=VAR 4=EQ 5=SEMI 6=PLUS 7=MINUS 8=STAR 9=SLASH
@@ -234,7 +238,10 @@ if (_vn > 0) {
 # v5.8.46: heap raised 0x2000000 (32 MB) → 0x5000000 (80 MB) for
 # the relocated tok arrays (post-fixup_tbl high block at
 # 0x368C000 + 24 MiB for typ/val/lines @ 1M-entry cap).
-var S = syscall(SYS_MMAP, 0, 0x5000000, 3, 0x22, 0 - 1, 0);
+# v5.8.59: heap raised 0x5000000 (80 MB) → 0x5100000 (~80.5 MB +
+# alignment) for the str_data high-block relocation (was
+# 0x14A000/256KB, now 0x4E8C000/2MB; needs through 0x508C000).
+var S = syscall(SYS_MMAP, 0, 0x5100000, 3, 0x22, 0 - 1, 0);
 
 # Zero state
 S64(S + 0x18C100, 0);
@@ -777,7 +784,7 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, "  fixup_table: ", 15); PRNUM(GFCNT(S));
         syscall(SYS_WRITE, 2, " / 16384\n",       9);
         syscall(SYS_WRITE, 2, "  string_data: ", 15); PRNUM(GSPOS(S));
-        syscall(SYS_WRITE, 2, " / 262144\n",     10);
+        syscall(SYS_WRITE, 2, " / 2097152\n",    11);
         syscall(SYS_WRITE, 2, "  code_size:   ", 15); PRNUM(GCP(S));
         syscall(SYS_WRITE, 2, " / 1048576\n",    11);
     }
@@ -811,11 +818,11 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFCNT(S));
         syscall(SYS_WRITE, 2, "/16384) — too many cross-fn refs\n", 33);
     }
-    if (GSPOS(S) * 100 / 262144 >= 85) {
+    if (GSPOS(S) * 100 / 2097152 >= 85) {
         syscall(SYS_WRITE, 2, "warning: string_data at ", 24);
-        PRNUM(GSPOS(S) * 100 / 262144);
+        PRNUM(GSPOS(S) * 100 / 2097152);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GSPOS(S));
-        syscall(SYS_WRITE, 2, "/262144 bytes)\n", 15);
+        syscall(SYS_WRITE, 2, "/2097152 bytes)\n", 16);
     }
     if (GCP(S) * 100 / 3145728 >= 85) {
         syscall(SYS_WRITE, 2, "warning: code buffer at ", 24);
