@@ -6,6 +6,108 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.56] — 2026-05-04
+
+**v5.8.x slot 56 — dead-code removal pass**. Eighteenth slot of Phase
+3. Second of three audit/refactor slots (.55 dedup → **.56 dead-code**
+→ .57 remaining refactor) per user direction "flatten some runway for
+all the items".
+
+cc5: **741,120 B unchanged** — the removed fns had zero callers and
+weren't being included in the binary anyway (cc5 doesn't link dead
+unused fns). The savings are in the SOURCE-side LOC, not the binary
+size.
+
+Dead-fn diagnostic count: **36 → 32** (-4 fn names).
+
+### What got removed (11 fn defs across 3 backends)
+
+**ELVRLOAD / ELVRSTORE / ELVRINIT** — loop-variable r12 caching from
+v4.8.4-alpha6 that was never wired up to the parser. Three backends
+× three fns = 9 defs total:
+
+- `src/backend/x86/emit.cyr:1435-1458` — actual emit bodies
+  (`mov rax, r12`, `mov r12, rax; EFLSTORE`, `mov r12, [rbp+disp32]`).
+- `src/backend/aarch64/emit.cyr:681-683` — no-op stubs that existed
+  only to satisfy cc5's symbol resolution when the x86 versions
+  shipped.
+- `src/backend/cx/emit.cyr:456-458` — same stub pattern.
+
+Vidya cross-check (`feedback_dead_code_audit_scope` memory pin):
+ELVRINIT appears in `vidya/content/cyrius/archive/implementation.cyml`
+— the **archive**, i.e. historical. Not in any active-canonical
+field-note pin. No `for`-loop parser path ever called these; the
+regalloc picker (`#regalloc` flag) chose its hot slot via byte-walking
+EFLLOAD/EFLSTORE patterns, never via ELVR*.
+
+Frees up the r12 register from any reserved-for-loop-var implication
+(it was already free in practice — the regalloc picker had no
+ELVR-aware code path).
+
+**ESHRIMM** — `shr rax, imm` emit fn, sibling of the heavily-used
+`ESHLIMM`. Two backends:
+
+- `src/backend/x86/emit.cyr:237` — `EB(0x48); EB(0xC1); EB(0xE8); EB(n & 0x3F)` + flag-reflect.
+- `src/backend/aarch64/emit.cyr:302` — `lsr x0, x0, #n` via UBFM.
+
+Zero callers anywhere; no parser path ever needed `shr rax, imm`
+(arithmetic right-shift uses a different opcode and isn't a sibling).
+
+### What was investigated and KEPT (despite zero callers)
+
+Per `feedback_dead_code_audit_scope` pin, 0-callers-in-grep ≠
+safe-to-remove. The audit ruled out removal for:
+
+- **`GFVA(S, fi)`** — the READER for `fn_variadic` (heap region
+  `0x1F4000`). Has zero callers, BUT its paired writer `SFVA(S,
+  fi, v)` IS actively called from `parse_fn.cyr:729,943`. Vidya pin
+  at `field_notes/language/platform_abi.cyml:90` documents the
+  variadic-ABI design — Phase 3-min (v5.5.36) was supposed to read
+  the flag at call sites for Win64 float-dup; the writer landed but
+  the reader integration didn't. **KEEP** as staged infrastructure.
+- **IR optim pipeline pre-`_capped` fns** (`ir_dce`, `ir_dead_store`,
+  `ir_dead_block_elim`, `ir_lower_all`, `_ir_lower_node`, `ir_emit2`,
+  `IR_BB_*`, `IR_EDGE_*`, `IR_NODE_FL`). Multiple commented-out call
+  sites in `main.cyr:1229` + `main_win.cyr:741` gate them behind
+  env-var flags (`_ir_env`). Coupled set; removing requires
+  reasoning about the IR-emit pipeline as a whole, not piece-meal.
+- **`CLASSIFY_CF` / `CF_TARGET`** — `src/backend/x86/decode.cyr`
+  header explicitly documents these as "Foundation for byte-walking
+  CFG construction (4.5.x), DCE correctness validation, and future
+  register allocation work." Staged for future use.
+- **`TS_*`** (10 fns) — mode-flag-reachable via `--parse-ts`. KEEP.
+- **`_macho_*` / `EMITMACHO_ARM64`** (5 fns) — mode-flag-reachable
+  via `--target=macho` + `main_aarch64_macho.cyr`. KEEP.
+
+### Verified
+
+- `scripts/check.sh`: **65 passed, 0 failed** (named gates).
+- Self-host: cc5 == cc5b byte-identical at 741,120 B
+  (no source-removal effect on the binary; removed fns had no callers
+  so weren't in the build to begin with).
+- Cross-arch gates green on all three SSH-wired hosts:
+  - **`pi`** (Linux aarch64): native self-host + aarch64 syscalls +
+    Mach-O cross-build all PASS via existing
+    `regression-aarch64-*.sh` wiring.
+  - **`ecb`** (macOS arm64): Mach-O `syscall(60,42)` → exit 42 PASS
+    via `regression-macho-exit.sh`.
+  - **`cass`** (Windows): PE `syscall(60,42)` → exit 42 PASS via
+    `regression-pe-exit.sh`.
+
+### Acceptance gates
+
+- Self-host: cc5 == cc5b byte-identical at 741,120 B.
+- `cc5 --version` reports `cc5 5.8.56`.
+- Dead-fn diagnostic: **32 unreachable fns** (was 36 at .55 / .48
+  baseline). The 4-name reduction matches the names removed
+  (ELVRLOAD, ELVRSTORE, ELVRINIT, ESHRIMM — counted per name, not
+  per arch instance).
+- `note: ... bytes` figure unchanged (~22571) — the removed names
+  weren't contributing dead-bytes to the binary, since they had no
+  reachability path to begin with. The remaining 32 fns' total
+  bytes is the new floor for v5.8.59 closeout's dead-code re-record.
+- All three SSH-host gates green; no regression on x86/aarch64/macho/PE.
+
 ## [5.8.55] — 2026-05-04
 
 **v5.8.x slot 55 — UTF-8 codec dedup + audit baseline capture**.

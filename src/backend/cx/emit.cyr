@@ -453,9 +453,9 @@ fn ASM_MNEMONIC(S) {
 # Stubs for features not yet in bytecode
 var _INLINE_OK = 0;
 var _LOOPVAR_OK = 0;
-fn ELVRLOAD(S) { return 0; }
-fn ELVRSTORE(S, idx) { EFLSTORE(S, idx); return 0; }
-fn ELVRINIT(S, idx) { return 0; }
+# v5.8.56: ELVRLOAD / ELVRSTORE / ELVRINIT stubs removed in lockstep
+# with x86 + aarch64 removal — the x86 versions were never wired in,
+# and these cx stubs only existed to mirror that backend.
 fn EDISP32(S, disp) { return 0; }
 fn E2(S, v) { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); return 0; }
 fn E3(S, v) { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF); return 0; }

@@ -1883,43 +1883,54 @@ hand-roll incompletely.
     **120,518 unicode asserts** (identical count to
     v5.8.54).
 
-- **v5.8.56** — Dead-code removal pass. Audit pinned at v5.8.55
-  surfaced removal candidates that need per-fn vidya cross-check
-  before deletion (per `feedback_dead_code_audit_scope` memory pin:
-  TS_*/macho_*/cross-arch fns are reachable via mode flags;
-  0-callers-in-grep is NOT safe-to-remove on its own).
+- **v5.8.56** ✅ SHIPPED 2026-05-04 — Dead-code removal pass.
+  Audit pinned at v5.8.55 surfaced removal candidates that needed
+  per-fn vidya cross-check before deletion (per
+  `feedback_dead_code_audit_scope` memory pin: TS_*/macho_*/cross-arch
+  fns are reachable via mode flags; 0-callers-in-grep is NOT
+  safe-to-remove on its own).
 
-  Candidates (from the v5.8.55 audit, current 36 fns / 22,571 B
-  floor):
+  Delivered (4 fn names removed, 11 fn defs deleted across 3 backends):
+  - **ELVRLOAD / ELVRSTORE / ELVRINIT** — loop-var r12 caching
+    from v4.8.4-alpha6 never wired to the parser. 9 fn defs
+    across x86 (real bodies) + aarch64 + cx (no-op stubs).
+    Vidya only referenced ELVRINIT in archive (historical, not
+    canonical).
+  - **ESHRIMM** — `shr rax, imm` emit fn; sibling of ESHLIMM
+    (heavily used at parse_expr.cyr:1141) that never got a call
+    site. 2 fn defs across x86 + aarch64.
 
-  - **IR optim pipeline pre-`_capped` fns** (~7-9 fns:
-    `ir_dce`, `ir_dead_store`, `ir_dead_block_elim`,
-    `ir_lower_all`, `_ir_lower_node`, `ir_emit2`, `IR_BB_*`,
-    `IR_EDGE_*`, `IR_NODE_FL`, `CLASSIFY_CF`, `CF_TARGET`).
-    Look like superseded predecessors of the `_capped`
-    variants that ARE actively called from main.cyr:1218-1220.
-    `ir_dead_block_elim` call site at main.cyr:1229 is
-    commented-out. Cross-check vidya field-notes for any
-    "staged future work" pin before deletion.
-  - **Superseded emit-side fns** (5 fns): `ELVRLOAD`,
-    `ELVRSTORE`, `ELVRINIT` (defined in cx + aarch64 + x86
-    backends; ELVR* bodies just delegate to EFLSTORE — clear
-    superseded older naming); `GFVA` (single-line accessor
-    with no callers); `ESHRIMM` (x86-only emit fn with no
-    callers). Cross-check whether downstream consumers
-    reference them via extension points.
+  Kept after vidya cross-check (despite 0 callers):
+  - **GFVA** — coupled with `SFVA` writer (actively called from
+    parse_fn.cyr:729,943); accessor for v5.5.36 Phase 3-min/full
+    variadic-ABI infrastructure pinned in
+    vidya/.../platform_abi.cyml:90.
+  - **IR optim pipeline pre-`_capped` fns** (`ir_dce`,
+    `ir_dead_store`, `ir_dead_block_elim`, `ir_lower_all`,
+    `_ir_lower_node`, `ir_emit2`, `IR_BB_*`, `IR_EDGE_*`,
+    `IR_NODE_FL`) — multiple commented-out call sites in
+    main.cyr:1229 + main_win.cyr:741 gate them behind env-var
+    flags. Staged infrastructure; coupled set; removing
+    requires reasoning about IR-emit pipeline as a whole.
+  - **CLASSIFY_CF / CF_TARGET** — decode.cyr header explicitly
+    documents them as "Foundation for byte-walking CFG
+    construction (4.5.x), DCE correctness validation, and future
+    register allocation work."
+  - **TS_*** (10 fns) — mode-flag-reachable via `--parse-ts`.
+  - **_macho_* / EMITMACHO_ARM64** (5 fns) — mode-flag-reachable
+    via `--target=macho` + `main_aarch64_macho.cyr`.
 
-  Per-removal verification: cc5 self-host byte-identical (the
-  removal mustn't change codegen for live paths); all 65
-  check.sh gates still green; floor recorded post-pass with
-  the new fn count and bytes saved.
+  Verified across all three SSH-wired hosts (pi/cass/ecb) via
+  existing check.sh wiring per the cross-arch propagation memory
+  pin. Self-host cc5 == cc5b byte-identical at 741,120 B (no
+  binary delta — removed fns had no reachability path; savings
+  are source-side LOC).
 
-  KEEP (no removal):
-  - `TS_*` (10 fns) — reachable via `--parse-ts` flag.
-  - `_macho_*` / `EMITMACHO_ARM64` (5 fns) — reachable via
-    `--target=macho` + `main_aarch64_macho.cyr` includes.
+  Dead-fn floor: **36 → 32** fn names. Bytes-figure stable at
+  22,571 since the removed fns weren't contributing dead-bytes
+  to the binary.
 
-  Filed at v5.8.55 ship 2026-05-04. User direction:
+  Filed at v5.8.55 ship 2026-05-04 per user direction
   ".55 dedup; .56 deadcode; .57 refactor; cascading remaining."
 
 - **v5.8.57** — Remaining refactor pass. Picks up the work

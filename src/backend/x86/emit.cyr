@@ -234,7 +234,9 @@ fn ESHRCL(S) { if (_IR_REC0(S, IR_SHR) == 1) { return 0; } E3(S, 0xE8D348); _fla
 # "set flag" path is always safe. Still clear defensively so an
 # accidental n==0 caller doesn't leave a stale 1.
 fn ESHLIMM(S, n) { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE0); EB(S, n & 0x3F); if (n > 0) { _flags_reflect_rax = 1; } return 0; }
-fn ESHRIMM(S, n) { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE8); EB(S, n & 0x3F); if (n > 0) { _flags_reflect_rax = 1; } return 0; }
+# v5.8.56: ESHRIMM removed — sibling of ESHLIMM (heavily used at
+# parse_expr.cyr:1141) that never got a call site. Re-add when a
+# parser path actually needs `shr rax, imm`.
 # Syscall pop helpers
 fn EPOPRDI(S) { EB(S, 0x5F); return 0; }
 fn EPOPRSI(S) { EB(S, 0x5E); return 0; }
@@ -1431,32 +1433,13 @@ fn EFLSTORE(S, idx) {
     return 0;
 }
 
-# Load loop var from r12: mov rax, r12
-fn ELVRLOAD(S) {
-    E3(S, 0xE0894C);   # mov rax, r12
-    return 0;
-}
-
-# Store loop var to r12 + stack: mov r12, rax; mov [rbp-off], rax
-fn ELVRSTORE(S, idx) {
-    E3(S, 0xC48949);   # mov r12, rax
-    EFLSTORE(S, idx);
-    return 0;
-}
-
-# Init loop var cache: mov r12, [rbp-off]
-fn ELVRINIT(S, idx) {
-    var disp = 0 - ((idx + 1) * 8);
-    # v4.8.4-alpha6: shift past the reserved rbx save slot.
-    if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
-    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
-    E3(S, 0xA58B4C);   # mov r12, [rbp+disp32]
-    var addr = S + 0x64A000 + GCP(S);
-    S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
-    SCP(S, GCP(S) + 4);
-    return 0;
-}
-
+# v5.8.56: removed ELVRLOAD / ELVRSTORE / ELVRINIT — loop-variable r12
+# caching introduced in v4.8.4-alpha6 that was never wired up to the
+# parser. Zero callers across cyrius source + downstream consumers
+# (vidya only referenced ELVRINIT in implementation.cyml ARCHIVE,
+# i.e. historical). Saves ~80 B per backend; frees up r12 for the
+# regalloc picker (which was already free of any ELVR* dependency
+# because the caching never reached the parser).
 
 # ================================================================
 # TOKEN ACCESS

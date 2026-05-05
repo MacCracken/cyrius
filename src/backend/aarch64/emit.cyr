@@ -299,10 +299,8 @@ fn ESHLIMM(S, n) {
     EW(S, 0xD3400000 | (immr << 16) | (imms << 10));
     return 0;
 }
-fn ESHRIMM(S, n) {
-    EW(S, 0xD3400000 | ((n & 0x3F) << 16) | (0x3F << 10));
-    return 0;
-}
+# v5.8.56: ESHRIMM removed in lockstep with x86 — sibling of ESHLIMM
+# (above) that never got a call site.
 fn EXORAA(S) { EW(S, 0xCA000000); return 0; }    # eor x0, x0, x0 (zero)
 
 # === mov rdi, rax (for exit: x0 already has the value) ===
@@ -677,10 +675,11 @@ fn ESUBRSP(S) {
     return patch;
 }
 
-# Loop var register stubs (no-op on aarch64, x86-only optimization)
-fn ELVRLOAD(S) { return 0; }
-fn ELVRSTORE(S, idx) { EFLSTORE(S, idx); return 0; }
-fn ELVRINIT(S, idx) { return 0; }
+# v5.8.56: ELVRLOAD / ELVRSTORE / ELVRINIT stubs removed in lockstep
+# with x86's removal — the x86 versions were a v4.8.4-alpha6 loop-var
+# r12 caching optimization never wired up to the parser, and the
+# aarch64 stubs only existed to satisfy cc5's symbol resolution when
+# the x86 versions were called. With both gone, the symmetry holds.
 
 # Function epilogue: mov sp,x29; ldp x29,x30,[sp],#16; ret
 fn EFNEPI(S) {
