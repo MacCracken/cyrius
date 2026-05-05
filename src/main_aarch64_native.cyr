@@ -41,7 +41,8 @@
 #   0x11A000 var_noffs     [65536]       8192 variables
 #   0x12A000 var_sizes     [65536]
 #   0x13A000 var_types     [65536]
-#   0x14A000 (was str_data, 256KB; relocated to 0x4E8C000 high block at v5.8.59)
+#   0x14A000 (free band — was str_data pre-v5.8.59; see main.cyr for full lineage)
+#   0x21A000 str_data      [2097152]     2MB string literal bytes (v5.8.61 monotonic — see main.cyr)
 #   0x44A000 preprocess_out[2097152]     2MB expanded source buffer
 #   0x64A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
 #   0x94A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43)
@@ -51,10 +52,8 @@
 #   0x11CA000 struct_fnames [16384]
 #   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
 #   0x12CA000 (fn tables end here — IR region not used by aarch64 compiler)
-#   0x4E8C000 str_data      [2097152]     2MB string literal bytes (RELOCATED v5.8.59;
-#                                        was 0x14A000/256KB — see main.cyr for rationale)
-#   0x508C000 brk                         ~80.5 MB total heap (v5.8.59 +2 MB; was
-#                                        0x4E8C000 pre-v5.8.59; synced with main.cyr)
+#   0x4E8C000 brk                         ~78.5 MB total heap (v5.8.61 monotonic;
+#                                        was 0x508C000 at .59-.60; synced with main.cyr)
 
 
 # ================================================================
@@ -86,12 +85,8 @@ include "src/backend/aarch64/fixup.cyr"
 # Allocate heap
 # aarch64 syscall numbers (no translation layer — native numbers)
 var S = syscall(SYS_BRK, 0);
-# v5.8.46: brk extended to S + 0x4E8C000 (~78.5 MB) — see
-# main_aarch64.cyr for rationale (relocated tok arrays).
-# v5.8.59: brk extended to S + 0x508C000 (~80.5 MB) for the
-# str_data high-block relocation (was 0x14A000/256KB, now
-# 0x4E8C000/2MB).
-syscall(SYS_BRK, S + 0x508C000);
+# brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
+syscall(SYS_BRK, S + 0x4E8C000);
 
 # Zero state
 S64(S + 0x18C100, 0);

@@ -200,7 +200,7 @@ fn EMITMACHO_EXEC(S) {
     # String data (from str_data)
     # ================================================================
     i = 0;
-    while (i < spos) { store8(O + o, load8(S + 0x4E8C000 + i)); o = o + 1; i = i + 1; }
+    while (i < spos) { store8(O + o, load8(S + 0x21A000 + i)); o = o + 1; i = i + 1; }
 
     # Pad to 8-byte alignment
     while (o % 8 != 0) { store8(O + o, 0); o = o + 1; }
@@ -632,7 +632,7 @@ fn EMITMACHO_ARM64(S) {
     # __cstring data (if any) sits immediately after padded code.
     if (has_cstring == 1) {
         i = 0;
-        while (i < spos) { store8(O + o, load8(S + 0x4E8C000 + i)); o = o + 1; i = i + 1; }
+        while (i < spos) { store8(O + o, load8(S + 0x21A000 + i)); o = o + 1; i = i + 1; }
     }
     # Zero-fill to end of __TEXT segment (next segment starts at TEXT_VMSIZE).
     while (o < TEXT_VMSIZE) { store8(O + o, 0); o = o + 1; }

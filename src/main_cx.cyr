@@ -22,16 +22,11 @@ var S = syscall(SYS_BRK, 0);
 # tok_types region at S+0x94A000 — main_cx.cyr SIGSEGVd at LEX
 # the moment a non-empty input landed any token. Match
 # main_aarch64.cyr's brk extent.
-# v5.8.46: brk extended to S + 0x4E8C000 (~78.5 MB) for the
-# relocated tok arrays (post-fixup_tbl high block; cap raised
-# 262144 → 1048576). cx skips the TS frontend, so the
-# ~13.5 MiB padding between fixup_tbl-end (0x290B000) and
-# tok-block-start (0x368C000) is unused — kept aligned with
-# main.cyr for offset parity.
-# v5.8.59: brk extended to S + 0x508C000 (~80.5 MB) for the
-# str_data high-block relocation (was 0x14A000/256KB, now
-# 0x4E8C000/2MB).
-syscall(SYS_BRK, S + 0x508C000);
+# brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
+# cx skips the TS frontend, so the ~13.5 MiB pad between
+# fixup_tbl-end (0x290B000) and tok-block-start (0x368C000) is
+# unused on this path; kept for offset parity with main.cyr.
+syscall(SYS_BRK, S + 0x4E8C000);
 
 # Zero state
 S64(S + 0x18C100, 0);
@@ -458,7 +453,7 @@ while (vi < totvar) { syscall(SYS_WRITE, 1, &zero_byte, 1); vi = vi + 1; }
 bw = 0;
 bwgo = 1;
 while (bwgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x4E8C000 + bw, spos - bw);
+    var w = syscall(SYS_WRITE, 1, S + 0x21A000 + bw, spos - bw);
     if (w <= 0) { bwgo = 0; }
     else { bw = bw + w; if (bw >= spos) { bwgo = 0; } }
 }

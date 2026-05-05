@@ -6,6 +6,263 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.62] — 2026-05-05
+
+**v5.8.x slot 62 — refactor pass A: lib/ structural cleanups +
+stale-comment sweep**. Twenty-fourth slot of Phase 3. No
+byte-identity risk — lib/ doesn't reach cc5 binary, and src/
+edits this slot are all comments. Per user direction at v5.8.61
+ship: "lets push final closeout to .63; .62 is focused on
+refactors ... lets look at src and lib to see where we could
+improve the structure". Closeout cascaded forward at v5.8.62
+entry per "main_ boilerplate extraction should be .63 with .64
+closeout" — `.63` slot now pinned for the cc5-byte-changing
+extraction work; closeout is now `.64`.
+
+cc5: **741,128 B unchanged** — pure docs/structural work.
+
+### Delivered
+
+**`lib/vidya.cyr` → `programs/vidya.cyr`** (per user-flagged review):
+- Relocated 231 LOC / 24 fns from `lib/` to `programs/`. Vidya is
+  a helper program for working with the `~/Repos/vidya/` knowledge
+  corpus, not stdlib — only cyrius itself adds entries.
+- File was never in `cyrius.cyml`'s `[deps].stdlib` auto-prepend;
+  no live API consumers anywhere in the cyrius ecosystem (sit/niyama
+  copies are stale lib-snapshots from a prior bulk-sync, not live).
+- Three cyrius tcyrs (large_input, preprocessor_past_cap,
+  large_source) included it as a "large source" stress fixture —
+  updated their include paths from `lib/vidya.cyr` to
+  `programs/vidya.cyr`.
+- File header refreshed: now documents the relocation lineage and
+  the helper-program-not-stdlib designation.
+- `docs/api-surface.snapshot` regenerated: 24 `vidya::` symbols
+  removed from the public API surface (intentional — they were
+  never consumed externally).
+
+**Stale-comment sweep in `src/main_*.cyr`**:
+- Trimmed v5.8.46 / .59 / .60 / .61 brk-extension narratives in
+  the heap-init blocks. Each main_*.cyr's brk syscall now has 2-3
+  lines of structural rationale instead of a 5-10 line evolutionary
+  history. Total ~50 LOC of comment trimmed across 6 files
+  (main_aarch64.cyr, main_aarch64_native.cyr, main_aarch64_macho.cyr,
+  main_cx.cyr, main_win.cyr).
+- The `0x14A000 (was str_data, ...)` annotation in 4 files (4-line
+  detailed lineage) collapsed to a single-line "(free band — was
+  str_data pre-v5.8.59; see main.cyr for full lineage)".
+
+**Heap-map block in `src/main.cyr` (~270 lines)**:
+- Header section refreshed: "Last full audit: v5.5.40" → "v5.8.61
+  monotonic layout shipped, 84 regions, 0 overlaps, 0 warnings".
+  Added upfront note about section-grouping vs offset-order so
+  future readers don't get confused by the interleaving (compiler-
+  scratch scalars at `0x18C100..0x1903F8` sit between var_types and
+  str_data).
+- str_data section header trimmed from 22 lines to 14 — same
+  lineage, denser prose.
+- Per-entry version annotations preserved (e.g. "moved from 0x70000
+  in v4.6.2") — those are archaeological context that helps future
+  maintainers reason about offset-choice rationale.
+
+### Audits — split-file documentation
+
+Per the v5.8.61 audit findings, surveyed three pairs of stdlib
+modules whose names suggested potential redundancy:
+
+- **`lib/str.cyr` (580 LOC) vs `lib/string.cyr` (217 LOC)**: both
+  have crisp purpose-statements at the top — no action needed.
+  `str.cyr` ships the `Str` fat-pointer struct (data+len, heap-
+  allocated, slice-compatible per v5.8.11 §3); `string.cyr` ships
+  raw cstring helpers (strlen, memcpy on raw pointers). Naming is
+  conventional (Str type vs string ops).
+- **`lib/ws.cyr` (278 LOC) vs `lib/ws_server.cyr` (309 LOC)**:
+  client-side vs server-side WebSocket; ws_server integrates with
+  http_server.cyr. Both headers explain the split clearly. No
+  action.
+- **`lib/hashmap.cyr` (602 LOC) vs `lib/hashmap_fast.cyr` (328
+  LOC)**: the production map (3 key-type surfaces — cstr/Str/u64)
+  is in `[deps].stdlib` auto-prepend; the SIMD/Swiss-table variant
+  is **experimental with zero consumers** anywhere in the cyrius
+  ecosystem. Added a header note marking it as such; pinned for
+  pre-v6.0 hardening sweep re-evaluation. No file move this slot
+  (hashmap_fast.cyr stays in lib/) — promote-or-retire decision
+  deferred to a slot with benchmark data.
+
+### Out of scope (deferred to v5.8.63)
+
+- **`main_*.cyr` boilerplate extraction**. Each of the 6 main
+  entry-points duplicates the scratch-state heap-zero block at
+  `S+0x18C100..S+0x1903F8` (~30 S64 calls) plus the --version /
+  --strict / --lex-ts / --parse-ts cmdline parsing block (~40
+  lines). Total duplication: ~600 LOC across 6 files. Extraction
+  to `_HEAP_INIT_SCRATCH(S)` + `_PARSE_VERSION_FLAGS()` helpers
+  changes cc5 byte size (inlined blocks become fn calls), so it
+  needs its own two-step bootstrap audit slot. Pinned to v5.8.63.
+
+### Out of scope (held forward)
+
+- **`syscalls_*.cyr` / `alloc_*.cyr` per-arch splits**: stay split
+  per their file headers (the v5.4.10 monolith was the bug; merging
+  back would re-introduce the yukti aarch64 portability regression
+  filed 2026-04-19).
+
+### Verified
+
+- Self-host: cc5 == cc5b byte-identical at 741,128 B (lib/ +
+  comment edits don't reach cc5).
+- `tests/heapmap.sh`: 84 regions, 0 overlaps, 0 warnings —
+  monotonic layout intact.
+- `scripts/check.sh`: 65/65 named gates green.
+- All 127 tcyr files PASS — the 3 vidya-consuming tcyrs build with
+  the new `programs/vidya.cyr` include path.
+- Cross-host gates green: pi (Linux aarch64), ecb (macOS arm64),
+  cass (Windows PE), libssl fdlopen TLS — all PASS via existing
+  SSH wiring.
+- aarch64 cross-build: `build/cc5_aarch64` rebuilt at 439,880 B
+  (unchanged from v5.8.61).
+- `docs/api-surface.snapshot` regenerated: 2726 public fns (was
+  2750; -24 vidya symbols removed cleanly).
+- Install snapshot refresh: 83 stdlib files (was 84 — vidya
+  removed; reflects the `[deps].stdlib` change tracking from
+  cyrius.cyml).
+
+### Cycle wind-down (cascaded post-ship)
+
+v5.8.63 = main_*.cyr boilerplate extraction (changes cc5 byte
+size; two-step bootstrap audit). v5.8.64 = cycle closeout per
+CLAUDE.md 11-step protocol. Backstop hard at v5.8.64.
+
+### Acceptance gates
+
+- Self-host: cc5 == cc5b byte-identical at 741,128 B.
+- `cc5 --version` reports `cc5 5.8.62`.
+- `tests/heapmap.sh`: 84 regions, monotonic, 0 overlaps.
+- `scripts/check.sh`: 65/65 named gates green.
+- Cross-host gates green: pi / ecb / cass.
+- vidya removed from `lib/` + `docs/api-surface.snapshot`;
+  3 tcyrs rewired to `programs/vidya.cyr`.
+- `lib/hashmap_fast.cyr` annotated experimental + zero-consumers.
+
+## [5.8.61] — 2026-05-05
+
+**v5.8.x slot 61 — heap-map monotonic reorganization**. Twenty-third
+slot of Phase 3. Two-step bootstrap slot per CLAUDE.md "Two-step
+bootstrap for heap changes — cc5 compiles cc5b, cc5==cc5b". Stands
+alone — no other changes — to keep the bootstrap delta auditable.
+
+cc5: **741,128 B unchanged** — pure offset relocation; same hex
+literal width.
+
+### Background
+
+v5.8.59's Option-B str_data relocation placed the 2 MB string buffer
+at `0x4E8C000` (post-tok_lines high block) because an in-place 8x grow
+at the v3.6.7-precedent offset `0x14A000` would have collided with
+the scratch-state cluster at `0x18C100..0x19A000`. That ship traded
+clean monotonicity for a much smaller blast radius (~50 edits vs
+~800). User direction at .59 ship: "you should be able to review to
+re-organize and not leave heavy gaps in the layout" — pinned a
+heap-map refactor as its own slot before closeout.
+
+### Audit findings (v5.8.61)
+
+Surveyed all 84 heap regions via `tests/heapmap.sh`; documented total
+gaps of ~22 MB. Categorized by closeability:
+
+| Gap | Size | Closeable? |
+|---|---|---|
+| `0x14A000..0x18C100` (post-old-str_data) | 264 KB | Only by relocating ~750 scratch refs |
+| `0x218008..0x44A000` (post-enum_name, pre-preprocess_out) | **2.2 MB** | Yes — fits a 2 MB str_data cleanly |
+| `0xB4A000..0x114A000` (post-output_buf, pre-struct_ftypes) | 6 MB | ~200 ref shifts downstream |
+| `0x115A000..0x11CA000` / `0x11DA000..0x128A000` | 0.45+0.69 MB | Same shift cascade |
+| `0x290B000..0x368C000` (TS frontend) | 13.5 MB | Functional reservation — DO NOT close |
+
+### Layout decision: minimum-blast-radius monotonic fix
+
+Picked the targeted reorg over the full one per user direction
+"minimum blast is probably the safer bet to allow for some
+potential bumps in the future without a full restructure ... should
+be something we consider as a last minor effort before 6.0":
+
+- Move `str_data` from `0x4E8C000` → `0x21A000` (fits the 2.2 MB
+  var_enum_id..preprocess_out gap).
+- brk shrinks `0x508C000` → `0x4E8C000` (-2 MB mmap reservation).
+- Windows MMAP region shrinks `0x5100000` → `0x5000000` correspondingly.
+- Layout becomes fully monotonic from input_buf at `0x00000` through
+  brk at `0x4E8C000`.
+
+The 8.4 MB closeable gap (across output_buf-to-struct_ftypes,
+struct_ftypes-to-struct_fnames, struct_fnames-to-fn_names) is left
+as documented headroom. Pinned as a pre-v6.0 hardening item in the
+roadmap's "Long-term considerations" section.
+
+### Delivered
+
+**Source touches** (~80 edits; mirror of v5.8.59 scope, just with
+different offset constants):
+- 53 `0x4E8C000` → `0x21A000` references across lex.cyr (21),
+  backend/x86/fixup.cyr (4), backend/aarch64/fixup.cyr (2),
+  backend/macho/emit.cyr (2), backend/pe/emit.cyr (2), parse.cyr (3),
+  parse_fn.cyr (1), main_cx.cyr (1) — plus the heap-map comments in
+  main_*.cyr files (11). One in-file fix in lex.cyr line 104: the
+  v5.8.46 historical brk-extension comment (`extended to S +
+  0x4E8C000 in every main_*.cyr`) is preserved at its original value
+  since the v5.8.46 brk-extension narrative is historical truth.
+- 5 brk syscall changes: `0x508C000` → `0x4E8C000` in main.cyr,
+  main_aarch64.cyr, main_aarch64_native.cyr, main_aarch64_macho.cyr
+  (mmap), main_cx.cyr.
+- 1 Windows MMAP change: `0x5100000` → `0x5000000` in main_win.cyr.
+- Heap-map comments in all 7 main_*.cyr files refreshed: str_data
+  entry moves from the high-block position to the new monotonic
+  position; brk entries updated; v5.8.59-specific high-block
+  documentation collapsed into a one-line v5.8.61 lineage note.
+
+### Verified
+
+- **Self-host**: cc5 == cc5b byte-identical at 741,128 B (no compiler
+  size change — same hex literal widths; pure offset relocation).
+- **Two-step bootstrap**: cc5 (v5.8.60 layout) → cc5b (v5.8.61
+  layout) → cc5b' = cc5b byte-identical.
+- **`tests/heapmap.sh`**: 84 regions, **0 overlaps, 0 warnings —
+  layout is monotonic** from `0x00000` (input_buf) to `0x4E8C000`
+  (brk-final). Concretely: enum_name ends at `0x218008` → str_data
+  at `0x21A000..0x41A000` → preprocess_out at `0x44A000..` →
+  ... → tok_lines at `0x4E8C000` (= brk).
+- **`scripts/check.sh`: 65/65 named gates green** including the
+  cross-host suite (pi aarch64 native self-host, ecb macOS arm64,
+  cass Windows PE, libssl fdlopen TLS).
+- **All 127 tcyr files PASS** including 320,547 unicode_normconf
+  asserts unchanged from v5.8.60.
+- aarch64 cross-build: `build/cc5_aarch64` rebuilt at 439,880 B
+  (unchanged from v5.8.60).
+- Heap reservation: `0x508C000` → `0x4E8C000` saves 2 MB of mmap
+  reservation per cc5 invocation.
+
+### Pinned forward — pre-v6.0 heap-map full reorg
+
+The remaining 8.4 MB of closeable gaps (output_buf-to-struct_ftypes,
+struct gaps) sit as documented headroom. Pinned in roadmap's
+"Long-term considerations" as a last-minor-before-v6.0 hardening
+effort. Trigger: pre-v6.0 closeout, region cap pressure, or
+consumer-facing slowdown traceable to layout. Deferred because
+closing those gaps is one-time mechanical cost (~800 edits)
+worth aligning with a larger restructure rather than mid-cycle.
+
+### Cycle wind-down (cascaded post-ship)
+
+v5.8.62 = cycle closeout. Backstop hard at v5.8.62.
+
+### Acceptance gates
+
+- Self-host: cc5 == cc5b byte-identical at 741,128 B.
+- `cc5 --version` reports `cc5 5.8.61`.
+- `tests/heapmap.sh`: 84 regions, 0 overlaps, monotonic layout.
+- `scripts/check.sh`: 65/65 named gates green.
+- Cross-host gates green: pi (Linux aarch64), ecb (macOS arm64),
+  cass (Windows PE) — all PASS via existing SSH wiring.
+- brk shrunk 2 MB (`0x508C000` → `0x4E8C000`); Windows MMAP shrunk
+  to match.
+
 ## [5.8.60] — 2026-05-05
 
 **v5.8.x slot 60 — Unicode 17.0.0 NFKC + NFKD compatibility

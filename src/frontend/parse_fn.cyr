@@ -439,7 +439,7 @@ fn PARSE_FNCALL(S, noff) {
             var _dep_off = _dep_msg >> 16;
             var _dep_len = _dep_msg & 0xFFFF;
             syscall(SYS_WRITE, 2, ": ", 2);
-            syscall(SYS_WRITE, 2, S + 0x4E8C000 + _dep_off, _dep_len);
+            syscall(SYS_WRITE, 2, S + 0x21A000 + _dep_off, _dep_len);
         }
         syscall(SYS_WRITE, 2, "\n", 1);
     }

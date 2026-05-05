@@ -242,6 +242,61 @@ consumers may opt into" makes bare-metal targets cleaner —
 the AGNOS kernel target (v5.9.0) only needs the primitives.
 Today there's no clean line; this carve-out draws it.
 
+### Heap-map full reorganization (pre-v6.0 hardening pin)
+
+**Status**: pinned 2026-05-05 at v5.8.61 ship as a
+**last-minor-before-v6.0** effort. v5.8.61 took the minimum-
+blast-radius reorg (str_data relocated to fit the var_enum_id..
+preprocess_out gap; ~76 edits) over the full reorganization
+(closing all gaps; 800+ edits) per user direction "minimum blast
+is probably the safer bet to allow for some potential bumps in
+the future without a full restructure ... should be something we
+consider as a last minor effort before 6.0".
+
+**The remaining gaps** (post-v5.8.61) — total ~22 MB of unused
+heap reserved as documented headroom over the years:
+- `0x41A000..0x44A000` (192 KB) — small pad before preprocess_out
+- `0xB4A000..0x114A000` (6 MB) — between output_buf and
+  struct_ftypes; sized when output_buf was 1 MB and could grow
+- `0x115A000..0x11CA000` (450 KB) — between struct_ftypes and
+  struct_fnames; v5.7.17 cap-grow sized for further struct cap
+  raises
+- `0x11DA000..0x128A000` (700 KB) — between struct_fnames and
+  fn_names; pad for struct cap raises
+- `0x290B000..0x368C000` (13.5 MB) — **TS frontend functional
+  reservation**; used in `--lex-ts` / `--parse-ts` modes only.
+  This gap is NOT a candidate for closure unless TS frontend is
+  retired; flag as DO-NOT-CLOSE.
+
+**Closeable**: 8.4 MB across 4 gaps (excluding the TS reservation).
+
+**Scope estimate** (per the v5.8.61 audit):
+- ~200 references to shift across struct_*/fn_*/ir/fixup/tok
+  region offsets
+- ~750 references to relocate scratch state at
+  `0x18C100..0x1A6018` if the band consolidates
+- Total: 800-1000 edits across 20+ source files
+- Two-step bootstrap audit at byte-identity criticality
+
+**Trigger conditions** (any one):
+1. **Pre-v6.0 closeout** — last v5.x minor (likely v5.9.x tail or
+   a dedicated v5.10.x hardening minor) absorbs this as the
+   "tighten everything" pass before the v5→v6 binary rename.
+2. **A region cap pressure** that would benefit from the closed
+   gap — e.g., output_buf hitting 6 MB would naturally consume
+   the gap to struct_ftypes.
+3. **A consumer-facing slowdown** traceable to the heap layout
+   (page fault patterns, mmap overhead) — unlikely but possible.
+
+**Why deferred to pre-v6.0**: v5.8.61's minimum reorg fixes the
+actual non-monotonicity defect from v5.8.59. The remaining gaps
+are documented headroom. Closing them is a one-time mechanical
+cost that's worth doing exactly once, ideally aligned with a
+larger restructure rather than mid-cycle.
+
+**Reference**: full audit data in v5.8.61 CHANGELOG entry +
+`tests/heapmap.sh` output (84 regions documented).
+
 ---
 
 ## Sigil 3.0 enablers — remaining
@@ -259,7 +314,7 @@ enabler audit trail.
 
 
 
-## v5.8.x — Optimization + language-vocabulary stabilization (62 pinned slots; cycle backstop hard at .62 — extended from .51 at v5.8.45 ship to absorb Unicode 17.0.0 fold, then to .55/.57/.59/.61/.62 across the wind-down to absorb cross-arch propagation, audit/dedup/refactor trio, str_data heap bump, NFKC/NFKD K-forms, and the v5.8.61 heap-map refactor; release-valve slot at .51 absorbed surface-during-deps-update items, Unicode work occupied .52–.55, cycle wind-down at .53–.62)
+## v5.8.x — Optimization + language-vocabulary stabilization (64 pinned slots; cycle backstop hard at .64 — extended from .51 at v5.8.45 ship to absorb Unicode 17.0.0 fold, then to .55/.57/.59/.61/.62/.64 across the wind-down to absorb cross-arch propagation, audit/dedup/refactor trio, str_data heap bump, NFKC/NFKD K-forms, heap-map monotonic reorg, lib/ structural cleanups, and main_*.cyr boilerplate extraction; release-valve slot at .51 absorbed surface-during-deps-update items, Unicode work occupied .52–.55, cycle wind-down at .53–.64)
 
 **Theme** (re-scoped 2026-05-01 at v5.8.0 ship): bug-fix /
 optimization minor that ALSO folds forward the language-feature
@@ -1704,7 +1759,7 @@ hand-roll incompletely.
     corpus refresh is a single `python scripts/gen-unicode-data.py`
     invocation.
 
-### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.62)
+### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.64)
 
 - **v5.8.53** ✅ SHIPPED 2026-05-04 — aarch64 cross-compiler
   staleness unblock + install pipeline rebuild discipline.
@@ -2182,72 +2237,176 @@ hand-roll incompletely.
 
   Filed at v5.8.51 ship 2026-05-04.
 
-- **v5.8.61** — Heap-map refactor (post-v5.8.59 layout
-  reorganization). Stands alone — no other changes — to keep
-  the bootstrap delta auditable. Two-step bootstrap slot per
-  CLAUDE.md "Two-step bootstrap for heap changes — cc5 compiles
-  cc5b, cc5==cc5b".
+- **v5.8.61** ✅ SHIPPED 2026-05-05 — heap-map monotonic
+  reorganization. Stood alone — no other changes — to keep the
+  bootstrap delta auditable. Two-step bootstrap slot.
 
-  Background: v5.8.59 chose Option B (relocate `str_data` to
-  high block at `0x4E8C000` post-`tok_lines`, brk → `0x508C000`)
-  over Option A (in-place grow + shift downstream) for blast
-  radius / byte-identity reasons. Trade-off: the layout is now
-  non-monotonic — the small string-literal buffer sits above
-  the big IR/fixup/tok regions. v5.8.46's tok-array relocation
-  set the same precedent. Both reorganizations are pinned for
-  resolution at this slot. User direction at v5.8.59 ship
-  2026-05-05: "you should be able to review to re-organize and
-  not leave heavy gaps in the layout".
+  Background unchanged from original pin: v5.8.59 chose Option B
+  (relocate `str_data` to high block at `0x4E8C000`) over Option A
+  (in-place grow + shift downstream) for blast radius / byte-
+  identity reasons. The non-monotonic layout was pinned for
+  resolution at this slot.
+
+  **User direction at slot entry 2026-05-05** (after the audit
+  surfaced ~22 MB of gaps with two scope options): "minimum blast
+  is probably the safer bet to allow for some potential bumps in
+  the future without a full restructure ... should be something we
+  consider as a last minor effort before 6.0". Picked the targeted
+  reorg over the full reorg.
+
+  Audit summary:
+  - 84 heap regions surveyed; total gaps ~22 MB
+  - 8.4 MB closeable across 4 gaps (output_buf-to-struct_ftypes
+    6 MB + struct_ftypes-to-struct_fnames 0.45 MB +
+    struct_fnames-to-fn_names 0.69 MB + post-enum_name 2.2 MB)
+  - 13.5 MB TS frontend reservation flagged DO-NOT-CLOSE (used
+    in `--lex-ts` / `--parse-ts` modes)
+  - 264 KB old-str_data slot at `0x14A000` would only close by
+    relocating ~750 scratch refs
+
+  Delivered (~80 edits — mirror of v5.8.59 scope, opposite direction):
+  - **str_data offset**: `0x4E8C000` → `0x21A000` (fits the 2.2 MB
+    var_enum_id..preprocess_out gap; layout becomes fully monotonic
+    from input_buf at `0x00000` to brk at `0x4E8C000`).
+  - **brk syscall**: `0x508C000` → `0x4E8C000` in main.cyr,
+    main_aarch64.cyr, main_aarch64_native.cyr, main_aarch64_macho.cyr,
+    main_cx.cyr (-2 MB mmap reservation per cc5 invocation).
+  - **Windows MMAP**: `0x5100000` → `0x5000000` in main_win.cyr.
+  - 53 `0x4E8C000` → `0x21A000` references across lex.cyr (21),
+    backend/x86/fixup.cyr (4), backend/aarch64/fixup.cyr (2),
+    backend/macho/emit.cyr (2), backend/pe/emit.cyr (2), parse.cyr (3),
+    parse_fn.cyr (1), main_cx.cyr (1) plus heap-map comments in
+    main_*.cyr (11).
+  - Heap-map comments in all 7 main_*.cyr files refreshed; v5.8.59-
+    specific high-block documentation collapsed into a one-line
+    v5.8.61 lineage note.
+  - In-file fix in lex.cyr line 104: the historical v5.8.46 brk-
+    extension comment (`extended to S + 0x4E8C000 in every
+    main_*.cyr`) preserved at its original value — that narrative
+    is historical truth about v5.8.46.
+
+  The remaining 8.4 MB of closeable gaps **NOT** addressed —
+  pinned forward in the roadmap's "Long-term considerations" section
+  as a pre-v6.0 hardening item per user direction. Closing those
+  gaps requires ~800 edits and aligns better with a larger
+  restructure than mid-cycle.
+
+  Verified:
+  - Self-host: cc5 == cc5b byte-identical at **741,128 B** (no
+    compiler size change — same hex literal widths; pure offset
+    relocation).
+  - Two-step: cc5 (v5.8.60 layout) → cc5b (v5.8.61 layout) →
+    cc5b' = cc5b byte-identical.
+  - `tests/heapmap.sh`: 84 regions, **0 overlaps, 0 warnings —
+    layout is monotonic** (enum_name ends at `0x218008` →
+    str_data at `0x21A000..0x41A000` → preprocess_out at
+    `0x44A000..` → ... → tok_lines at `0x4E8C000` = brk).
+  - `scripts/check.sh`: 65/65 named gates green.
+  - All 127 tcyr files PASS — total unicode asserts unchanged at
+    320,874 (122 + 106 + 99 + 320,547).
+  - Cross-host: pi (Linux aarch64 native self-host), ecb (macOS
+    arm64), cass (Windows PE), libssl fdlopen TLS — all PASS via
+    existing SSH wiring.
+  - aarch64 cross-build: `build/cc5_aarch64` rebuilt at 439,880 B
+    (unchanged from v5.8.60).
+
+  Filed at v5.8.59 ship 2026-05-05. User direction at .59 ship
+  cascaded the closeout slot forward by one to absorb this slot:
+  closeout moved from .61 to .62, backstop hard at v5.8.62.
+
+- **v5.8.62** ✅ SHIPPED 2026-05-05 — Refactor pass A: lib/
+  structural cleanups + stale-comment sweep. No cc5 byte-identity
+  risk (lib/ doesn't affect cc5 binary; src/main_*.cyr edits are
+  comment-only). Survey + targeted cleanups identified during the
+  v5.8.61 heap-map audit:
+
+  - **`lib/vidya.cyr` → `programs/vidya.cyr`**. Per user direction
+    2026-05-05: vidya is a helper-program, not stdlib. 231 LOC,
+    24 fns; not in cyrius.cyml `[deps].stdlib` auto-prepend; no
+    consumers of its API anywhere in the cyrius ecosystem (sit/
+    niyama copies are stale snapshots, not live syncs). Three
+    cyrius tcyrs include it as a "large source" stress fixture
+    (large_input, preprocessor_past_cap, large_source) — update
+    their include paths to `programs/vidya.cyr`.
+  - **Stale-comment sweep in src/main_*.cyr**. The 7 main_*.cyr
+    files accumulated v5.8.46/.59/.60/.61-specific narratives
+    (high-block placement, brk extensions, layout pivots). Now
+    that the layout is monotonic at .61, trim to: one canonical
+    block + brief lineage. Goal: drop ~150 LOC of redundant
+    history without losing the why-this-shape-now context.
+  - **Heap-map block in main.cyr (~270 lines)**. Restructure to
+    canonical-entry-per-region sorted by offset, with concise
+    per-region history. Authoritative layout reads top-to-bottom
+    matching the runtime layout; history sidebars are short.
+  - **Audits without commitment to merge**: hashmap vs
+    hashmap_fast (different cache strategies?); str vs string
+    (Str type vs raw bytes?); ws vs ws_server (client vs server?).
+    Each gets a clear header note documenting the split intent;
+    no merges this slot unless the audit surfaces actual
+    redundancy.
+
+  Out of scope (deferred):
+  - syscalls_*.cyr / alloc_*.cyr per-arch splits stay split per
+    their file headers (the v5.4.10 monolith was the bug; merging
+    back would re-introduce the yukti aarch64 portability
+    regression).
+  - main_*.cyr boilerplate extraction (`_HEAP_INIT(S)` helper)
+    moved to v5.8.63 because it changes cc5 byte size — wants
+    its own slot for the two-step bootstrap audit.
+
+  Acceptance:
+  - cc5 == cc5b byte-identical at 741,128 B (lib/ + comment
+    edits don't reach cc5).
+  - 65/65 check.sh including 127 tcyr files (3 with new
+    `programs/vidya.cyr` include path).
+  - Cross-host pi/cass/ecb green.
+
+  Filed at v5.8.61 ship 2026-05-05 per user direction "lets push
+  final closeout to .63; .62 is focused on refactors". Updated at
+  v5.8.62 entry per "main_ boilerplate extraction should be .63
+  with .64 closeout" — closeout pushed once more to v5.8.64.
+
+- **v5.8.63** — Refactor pass B: main_*.cyr boilerplate extraction.
+  Two-step bootstrap slot per CLAUDE.md (cc5 byte size will change
+  when duplicated init-blocks become a shared helper). Stands
+  alone — no other changes.
+
+  Background: each of the 7 main_*.cyr files (main.cyr,
+  main_aarch64*.cyr, main_cx.cyr, main_win.cyr) duplicates the
+  scratch-state heap-zero block at S+0x18C100..S+0x1903F8 (~30
+  S64 calls) plus the --version / --strict / --lex-ts / --parse-ts
+  cmdline parsing block (~40 lines). Total duplication: ~600 LOC
+  across 6 files (each main has its own backend-specific include
+  set, but the init/cmdline boilerplate is identical modulo
+  CYRIUS_TARGET_LINUX guards on Windows/macOS).
 
   Scope:
-  - **Heap-map deep audit**. Re-evaluate every region. Identify:
-    (a) regions out of monotonic offset order (str_data, tok_*),
-    (b) gaps no code uses that would close cleanly under
-    consolidation, (c) regions that have grown past their
-    original sizing rationale, (d) candidates for retirement
-    (legacy fixup-table slot at `0x124A000` is already a
-    256 KB documented gap; check if any others sit unused).
-  - **Reorganize layout** to monotonic. Fold str_data + tok_*
-    back into proper offset order. Concrete proposal (to be
-    refined at slot entry):
-    - Keep var_* tables at 0x11A000-0x13A000.
-    - Insert str_data at 0x14A000 + 2 MB span (ends 0x34A000) —
-      back to its v3.6.9-precedent offset, now 8x larger. Every
-      downstream region (preprocess_out, codebuf, output_buf,
-      struct_*, ir_*, fixup_tbl, tok_*) shifts down to close the
-      v5.8.46 + .59 high-block gaps. Scratch state at
-      `0x18C100..0x19A000` (currently inside the 256 KB padding
-      after old str_data) relocates to a fresh band ABOVE the new
-      str_data end. Exact offsets sized at slot entry.
-    - Or alternative: keep str_data at 0x4E8C000 and reorganize
-      the rest to absorb the gap (less reorganization, less
-      win). Decision deferred to slot-entry sizing.
-  - Update every offset reference across the 13 source files
-    that v5.8.59 touched, plus any others that the reorg
-    surfaces. Update heap-map comments in all seven main_*.cyr
-    files. Update `tests/heapmap.sh` if its parsing assumptions
-    need adjustment.
-  - **Two-step bootstrap audit**: cc5 (v5.8.60 layout) compiles
-    cc5b (v5.8.61 layout); cc5b compiles cc5b'; cc5b == cc5b'
-    byte-identical at the new size.
+  - Add `_HEAP_INIT_SCRATCH(S)` helper to a shared module
+    (likely `src/common/util.cyr` or new `src/common/main_init.cyr`).
+  - Add `_PARSE_VERSION_FLAGS()` helper for the cmdline parsing.
+  - Replace the inlined blocks in each main_*.cyr with a single
+    fn call.
+  - Re-verify cc5 self-host byte-identical at the new size.
+  - Save: ~600 LOC of duplication; cleaner main_*.cyr files
+    (entry-point boilerplate stays minimal, backend-specific
+    include set + brk extension stays).
 
-  Acceptance: cc5 == cc5b byte-identical post-reorg; bootstrap
-  closure intact; `tests/heapmap.sh` reports monotonic layout
-  (no out-of-order regions, gap distribution improved over
-  v5.8.60); all existing tcyrs still pass; cross-host gates
-  pi/cass/ecb green via existing SSH wiring.
+  Acceptance:
+  - cc5 self-host byte-identical (new size, two-step verified).
+  - 65/65 check.sh.
+  - All 7 main_*.cyr files build + run identically.
 
-  Filed at v5.8.59 ship 2026-05-05. User direction: cascade the
-  closeout slot forward by one to absorb this — **closeout moves
-  from .61 to .62**, backstop hard at v5.8.62.
+  Filed at v5.8.62 entry 2026-05-05 per user direction "main_
+  boilerplate extraction should be .63 with .64 closeout".
 
-- **v5.8.62** — Cycle closeout pass. **The cycle backstop
+- **v5.8.64** — Cycle closeout pass. **The cycle backstop
   and the actual final patch of v5.8.x** (extended from
   v5.8.55 to absorb str_data heap bump + K-forms + the
   cross-arch propagation slots + the audit/dedup/refactor
-  trio at .55/.56/.57 + the v5.8.61 heap-map refactor). Per
-  CLAUDE.md "Closeout Pass" (11-step protocol — mechanical
-  first, judgment-call passes, doc sync):
+  trio at .55/.56/.57 + the v5.8.61 heap-map refactor + the
+  v5.8.62 lib/ cleanups + the v5.8.63 main_*.cyr boilerplate
+  extraction). Per CLAUDE.md "Closeout Pass" (11-step
+  protocol — mechanical first, judgment-call passes, doc sync):
 
   §1-3 **Mechanical (fast-fail):**
   - Self-host verify (cc5 == cc5b byte-identical)
@@ -2283,12 +2442,13 @@ hand-roll incompletely.
     repo behind on bumps for the consumer to catch up)
 
   §11 **Docs sync (silent-rot prevention):**
-  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.61
+  - CHANGELOG/roadmap/state.md/vidya all reflect v5.8.63
     state
   - **Vidya per-minor refresh** — `language.cyml` (Unicode
     APIs new entries), `field_notes/compiler.cyml` /
     `field_notes/language.cyml` (cycle gotchas including
-    the v5.8.59 high-block relocation + v5.8.61 reorg),
+    the v5.8.59 high-block relocation + v5.8.61 reorg +
+    v5.8.63 boilerplate extraction),
     `implementation.cyml` / `types.cyml` (heap map +
     structural changes), `dependencies.cyml` /
     `ecosystem.cyml` (dep refresh from .56)
@@ -2300,23 +2460,15 @@ hand-roll incompletely.
   completed-phases.md migration of all v5.8.* sections; cc5
   byte-identical; no new warnings.
 
-  **Cycle backstop hard at v5.8.62** (was v5.8.51 pre-
-  Unicode-pin → extended to v5.8.55 on 2026-05-03 PM →
-  extended to v5.8.57 on 2026-05-04 to absorb the v5.8.51-
-  deferred str_data heap bump + NFKC/NFKD ship → extended
-  to v5.8.59 on 2026-05-04 PM to absorb the cross-arch
-  propagation slots .53 (install pipeline) + .54 (emit-fn
-  parity) → extended to v5.8.61 on 2026-05-04 evening to
-  absorb the audit/dedup/refactor trio at .55-.57 per user
-  direction "flatten some runway for all the items" →
-  extended to **v5.8.62** on 2026-05-05 at v5.8.59 ship to
-  absorb the heap-map refactor as its own dedicated slot
-  (the Option-B high-block relocation from .59 left a
-  non-monotonic layout that warrants a clean reorg before
-  closeout)). The cycle now exceeds the original v5.8.60
-  buffer that was pre-approved at the .51 ship;
-  user-approved at every extension because the runway
-  flattening required it.
+  **Cycle backstop hard at v5.8.64** (was v5.8.51 pre-
+  Unicode-pin → extended through .55 / .57 / .59 / .61 /
+  .62 / .64 across the wind-down to absorb cross-arch
+  propagation, audit/dedup/refactor trio, str_data heap bump,
+  NFKC/NFKD K-forms, heap-map monotonic reorg, lib/
+  structural cleanups, and main_*.cyr boilerplate extraction).
+  The cycle now exceeds the original v5.8.60 buffer that was
+  pre-approved at the .51 ship; user-approved at every
+  extension because the runway flattening required it.
 
 ### v5.8.x — held items (surfacing-ask only; not pinned, no slot consumed)
 

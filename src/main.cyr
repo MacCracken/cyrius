@@ -7,14 +7,18 @@
 # Build: cat src/main.cyr | ./build/cc5 > /tmp/cc5 && chmod +x /tmp/cc5
 # Self-host: cat src/main.cyr | /tmp/cc5 > /tmp/cc5b && cmp /tmp/cc5 /tmp/cc5b
 # ================================================================
-# HEAP MAP — Authoritative offset registry (v5.5.40)
+# HEAP MAP — Authoritative offset registry
 # ================================================================
 # Check here FIRST before allocating new state.
-# Last full audit: v5.5.40. Verified by tests/heapmap.sh (72 regions,
-# 0 warnings). The auditor's regex was fixed in v5.5.40 — previously
-# it required 2+ spaces after the hex offset and silently dropped
-# every region past 0x1FC000 (including the IR region, output buffers,
-# token arrays, and the v5.5.37 relocated fixup_tbl at 0x190B000).
+# Last full audit: v5.8.61 — monotonic layout shipped, 84 regions
+# (0 overlaps, 0 warnings) verified by tests/heapmap.sh. The
+# auditor's parser was last fixed in v5.5.40 (regex required 2+
+# spaces after hex offset, silently dropped every region past
+# 0x1FC000). Layout reads top-to-bottom matching runtime offsets;
+# section headers below group by purpose, NOT strict offset order
+# (e.g. compiler-scratch scalars at 0x18C100..0x1903F8 sit between
+# var_types end and str_data start; preprocessor scratch interleaves
+# in the same range).
 #
 # --- Low heap: I/O + identifiers ---
 #   0x00000  input_buf     [1048576]      1MB raw stdin input (v3.6.7, was 256KB)
@@ -177,7 +181,7 @@
 #   0x104000 fn_deprecated_msg [32768]   4096 × 8B — per-fn deprecation
 #                                        message token value (v5.6.4). 0 =
 #                                        no message; nonzero = (offset<<16)
-#                                        | length into str_data at 0x4E8C000
+#                                        | length into str_data at 0x21A000
 #                                        (same encoding as string-literal
 #                                        token values). Parallel to
 #                                        fn_flags bit 2.
@@ -197,16 +201,19 @@
 #   0x12A000 var_sizes     [65536]       8192 variable sizes
 #   0x13A000 var_types     [65536]       8192 variable type IDs
 #
-# --- Relocated string data (v3.6.7; v5.8.59 high-block move) ---
-#   0x4E8C000 str_data     [2097152]     2MB string literal bytes (v5.8.59, was 256KB at 0x14A000;
-#                                        relocated to high block to grow 8x without disturbing
-#                                        the scratch-state cluster at 0x18C100..0x19A000.
-#                                        Earlier v3.6.9 jump was 32KB→256KB at 0x14A000; same
-#                                        proportional 8x grow this time, but address relocates
-#                                        because in-place grow would clobber scratch slots.
-#                                        Bump motivated by Unicode 17.0.0 NFKC/NFKD compat-only
-#                                        decomposition table (~445 KB hex-pair encoded), originally
-#                                        deferred from v5.8.51 over the 256KB cap.)
+# --- String literal data ---
+#   0x21A000 str_data     [2097152]     2MB string literal bytes. Sized for the
+#                                        Unicode 17.0.0 compat-decomp table
+#                                        (~445 KB hex-pair encoded; v5.8.51-deferred
+#                                        / v5.8.59-bumped). Lineage: 32KB at 0x40000
+#                                        (v3.6.7) → 256KB at 0x14A000 (v3.6.9, 8x)
+#                                        → 2MB at 0x4E8C000 (v5.8.59 high-block, 8x
+#                                        forced off 0x14A000 by the 0x18C100 scratch
+#                                        collision) → 2MB at 0x21A000 (v5.8.61
+#                                        monotonic, fits the var_enum_id..
+#                                        preprocess_out gap; brk -2 MB). 192 KB
+#                                        residual at 0x41A000..0x44A000 is
+#                                        documented headroom for str_data growth.
 #
 # --- Large buffers ---
 #   0x44A000 preprocess_out[2097152]     2MB expanded source buffer
@@ -268,9 +275,10 @@
 #                                        v5.8.46 `needed M, cap is N` diagnostic.
 #   0x3E8C000 tok_values    [8388608]     1048576 entries × 8 bytes — was 0xD4A000
 #   0x468C000 tok_lines     [8388608]     1048576 entries × 8 bytes — was 0xF4A000
-#   (str_data RELOCATED v5.8.59 to 0x4E8C000 — canonical entry above; was 0x14A000 / 256KB)
-#   0x508C000 brk-final                   ~80.5 MB — heap end after str_data high-block relocation
-#                                        (was 0x4E8C000 pre-v5.8.59 / 0x368C000 pre-v5.8.46)
+#   0x4E8C000 brk-final                   ~78.5 MB — heap end. v5.8.61 shrunk this
+#                                        from 0x508C000 (~80.5 MB at v5.8.59) when
+#                                        str_data folded back to 0x21A000; layout
+#                                        is now monotonic from 0x00000 to brk.
 #
 # Token types:
 #   1=NUM 2=IDENT 3=VAR 4=EQ 5=SEMI 6=PLUS 7=MINUS 8=STAR 9=SLASH
@@ -390,7 +398,7 @@ var S = syscall(SYS_BRK, 0);
 # + 0xD81000 size, per src/frontend/ts/{lex,parse}.cyr design after
 # v5.7.2 P2.1). TS region is only TOUCHED in --lex-ts / --parse-ts
 # modes; the +13.5 MB brk extension is paid unconditionally.
-syscall(SYS_BRK, S + 0x508C000);
+syscall(SYS_BRK, S + 0x4E8C000);
 
 # Zero state
 S64(S + 0x18C100, 0);

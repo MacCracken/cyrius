@@ -2,11 +2,22 @@
 # Usage: include "lib/hashmap_fast.cyr"
 # Requires: alloc.cyr, string.cyr, fnptr.cyr
 #
-# Layout: separate metadata array (1 byte per slot) + key/value arrays (8 bytes each)
-# Metadata byte: 0x00 = empty, 0xFF = tombstone, 0x01-0xFE = H2 hash (top 7 bits + 1)
-# Probe: load 16 metadata bytes → SSE2 pcmpeqb → pmovmskb → bitmask of matches
+# **Status (v5.8.62 audit): experimental, zero consumers.** Not in
+# cyrius.cyml's `[deps].stdlib` auto-prepend, not included by any
+# tcyr / program / sibling-distfile. Production code uses
+# `lib/hashmap.cyr` (open-addressing, 3 key-type surfaces). Kept in
+# tree as a future optimization candidate — promote to stdlib only
+# once a consumer benchmarks a measurable win over hashmap.cyr;
+# pinned for re-evaluation in the pre-v6.0 hardening sweep.
 #
-# Group size: 16 (one SSE2 register). Linear probing within group, then next group.
+# Layout: separate metadata array (1 byte per slot) + key/value
+# arrays (8 bytes each).
+# Metadata byte: 0x00 = empty, 0xFF = tombstone, 0x01-0xFE = H2
+# hash (top 7 bits + 1).
+# Probe: load 16 metadata bytes → SSE2 pcmpeqb → pmovmskb →
+# bitmask of matches.
+# Group size: 16 (one SSE2 register). Linear probing within group,
+# then next group.
 
 include "lib/fnptr.cyr"
 
