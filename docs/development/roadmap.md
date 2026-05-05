@@ -2504,11 +2504,24 @@ After all 6 deps are patched + tagged, update `cyrius.cyml`
 `[deps.<name>].tag` lines to point at the new patch tags. That
 sets the stage for the v5.8.65 foldin.
 
-- **v5.8.65** — Stdlib foldin: vendor sibling-dep dist files into
-  `lib/` byte-identical, remove `[deps.<name>]` sections from
-  cyrius.cyml, add the modules to `[deps].stdlib` auto-prepend.
-  Mirrors the v5.7.0 sandhi-fold precedent (which carved sandhi
-  out of `[deps]` into `lib/sandhi.cyr` byte-identical).
+- **v5.8.65** ✅ SHIPPED 2026-05-05 — Stdlib foldin: 6 sibling-dep
+  distfiles vendored into `lib/` byte-identical, `[deps.<name>]`
+  sections removed from cyrius.cyml. Mirrors the v5.7.0 sandhi
+  precedent. cc5 unchanged at 741,048 B (foldin is manifest +
+  vendored-content; doesn't reach the binary). See CHANGELOG for
+  full detail.
+
+  **Slot scope deviation** (worth noting): the original pin called
+  for adding the 6 names to `[deps].stdlib` auto-prepend so
+  consumers wouldn't need explicit `include` directives. Reverted
+  at slot entry after surveying — all cyrius tcyrs already do
+  explicit `include "lib/<dep>.cyr"`, and auto-prepending ~28
+  KLOC into every consumer's preprocess_out risks the v5.8.60-
+  tested 2 MB cap. Sandhi precedent (v5.7.0) also kept the
+  folded `lib/sandhi.cyr` out of `[deps].stdlib` for the same
+  reason. Original pin retained below for historical reference.
+
+  Original slot pin retained:
 
   Scope:
   - For each of the 6 patched deps (sakshi, patra, sigil, vani,

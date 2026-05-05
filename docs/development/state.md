@@ -5,6 +5,27 @@
 
 ## Version
 
+**5.8.65** (shipped 2026-05-05 — **v5.8.x SLOT 65 — stdlib foldin
+(sandhi-pattern)**. Twenty-seventh slot of Phase 3. cc5 unchanged at
+**741,048 B** — foldin is dep-resolution + manifest work only.
+Six sibling distfiles vendored byte-identical into `lib/` from their
+patched tags (sakshi 2.2.3, patra 1.9.3, sigil 3.0.1, vani 0.9.2,
+yukti 2.2.2, sankoch 2.2.4 — out-of-band patched against cyrius
+5.8.64 in topological order). `[deps.X]` sections removed from
+cyrius.cyml for all 6; `[deps.mabda]` retained per user direction
+("sans mabda" — 3.0.0-rc.2 not GA, Class B FFI work deferred to
+v5.9.x). Decision NOT to add the 6 to `[deps].stdlib` auto-prepend
+list (originally pinned in slot scope but reverted at slot entry):
+all cyrius tcyrs that reference dep symbols already use explicit
+`include "lib/<dep>.cyr"`; auto-prepending ~28 KLOC of folded code
+to every consumer's preprocess_out would risk the v5.8.60-tested
+2 MB cap. Sandhi precedent (v5.7.0) followed — explicit-include
+only. Acceptance: 65/65 check.sh; 127 tcyr files PASS (320,874
+unicode asserts unchanged); cross-host pi/cass/ecb green via
+existing SSH wiring; cyrius.lock regenerated with 8 file-hash
+entries (6 folded + agnosys transitive + mabda); cyrius deps
+--verify: 8 verified, 0 failed.)
+
 **5.8.64** (shipped 2026-05-05 — **v5.8.x SLOT 64 — cycle closeout
 pass** per CLAUDE.md 11-step protocol. Twenty-sixth slot of Phase 3.
 cc5 unchanged at **741,048 B** — closeout is audit + docs only, no
@@ -162,16 +183,15 @@ ABI-shim `programs/dlopen-helper.c`, IDE integrations
 `editors/*.lua` + `editors/*.js`). 120,518 unicode asserts hold
 at the regression floor v5.8.52 set.)
 
-**Cycle wind-down (v5.8.65 → v5.8.66, hard backstop at .66)**:
-.65 = stdlib foldin (vendor 6 sibling distfiles into lib/ +
-remove from `[deps]`; sans mabda per user direction —
-3.0.0-rc.2 not GA, Class B FFI deferred to v5.9.x); .66 =
-release-valve for any issues surfaced by the foldin. Backstop
-extended to .66 at v5.8.62 ship per user direction "hold .66
-open as fixing any rising issues from foldin". Out-of-band
-between .64 and .65: walk each dep repo (sakshi/patra/sigil/
-vani/yukti/sankoch — sans mabda), bump its `cyrius` pin to
-"5.8.64", version-patch, retag.
+**Cycle wind-down (v5.8.66, hard backstop)**:
+.66 = release-valve for any issues surfaced by the .65 foldin.
+Mirrors the v5.7.50 P(-1) unblock pattern from the v5.7.x
+cycle's end. If foldin shipped clean and no consumer flagged
+anything, .66 absorbs housekeeping (stale-comment sweep on
+the newly-folded modules, header-doc refresh, vidya dep-graph
+update, doc sync). Backstop extended to .66 at v5.8.62 ship per
+user direction "hold .66 open as fixing any rising issues from
+foldin".
 Backstop history: was .55 pre-Unicode-pin → .57 to absorb
 v5.8.51-deferred heap bump + K-forms → .59 for cross-arch
 propagation slots → .61 to absorb the audit/dedup/refactor trio

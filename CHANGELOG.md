@@ -6,6 +6,113 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.8.65] — 2026-05-05
+
+**v5.8.x slot 65 — stdlib foldin (sandhi-pattern)**. Twenty-seventh
+slot of Phase 3. Six sibling distfiles vendored byte-identical
+into `lib/` from their patched tags; `[deps].<name>]` sections
+removed from cyrius.cyml. Mirrors the v5.7.0 sandhi precedent.
+
+cc5: **741,048 B unchanged** — foldin is dep-resolution + manifest
+work; `lib/` content doesn't reach the cc5 binary.
+
+### Out-of-band prerequisites (completed before this slot)
+
+The 6 fold-target deps were patched against cyrius 5.8.64 in
+topological order over the prior cycle window. Each shipped a
+patch-version bump plus the canonical CI invocation fix
+(`cyrius fmt "$f"` instead of the stale `cyrius fmt "$f" --check`
+that emitted no stdout):
+
+| Dep | New tag | Change |
+|---|---|---|
+| sakshi | 2.2.3 | cyrius pin 5.7.48 → 5.8.64; CHANGELOG entry. |
+| sankoch | 2.2.4 | cyrius pin bump; fmt drift cleared (CI-side); dist regen. |
+| patra | 1.9.3 | cyrius pin bump; `[deps.sakshi].tag` 0.9.0 → 2.2.3 (closing a 1.3.0+ version-of-sakshi gap); manifest module path corrected `"sakshi.cyr"` → `"dist/sakshi.cyr"`. |
+| yukti | 2.2.2 | cyrius pin bump; `[deps.sakshi]` 2.0.0 → 2.2.3; `[deps.patra]` 1.9.2 → 1.9.3; CI fmt invocation fix; dist + dist-core regen. |
+| sigil | 3.0.1 | cyrius pin bump; `[deps.sakshi]` 2.0.0 → 2.2.3; `[deps.agnosys]` held at 1.0.4. |
+| vani | 0.9.2 | cyrius pin bump; `[deps.yukti]` 2.2.1 → 2.2.2; `[deps.patra]` 1.9.2 → 1.9.3; CI fmt fix; dist + dist-core regen. |
+
+Mabda was excluded per user direction `sans mabda` — it's at
+3.0.0-rc.2 (not GA), with Class B FFI / wgpu fncall6 ABI work
+deferred to v5.9.x. Mabda stays as a `[deps.mabda]` git-resolved
+dep until that work lands.
+
+### Foldin delivered
+
+**Manifest changes** in `cyrius.cyml`:
+- `[deps].<name>.tag` bumped for all 6 deps to the new patched
+  versions (sakshi 2.2.3, patra 1.9.3, sigil 3.0.1, vani 0.9.2,
+  yukti 2.2.2, sankoch 2.2.4).
+- `cyrius deps` re-run; `lib/<name>.cyr` for each of the 6
+  refreshed byte-identical to `<sibling>/dist/<name>.cyr` at the
+  new tags. Each cmp'd identical to the cache-staged copy.
+- `[deps.sakshi]`, `[deps.patra]`, `[deps.sigil]`, `[deps.vani]`,
+  `[deps.yukti]`, `[deps.sankoch]` sections **REMOVED** from
+  cyrius.cyml. `[deps.mabda]` retained.
+- `cyrius.cyml` now has a single `[deps.mabda]` section (was 7
+  pre-foldin); the 6 folded distfiles are documented inline.
+
+**Decision: NOT added to `[deps].stdlib` auto-prepend list**.
+Originally pinned in the v5.8.65 slot scope ("Add `<name>` to
+`[deps].stdlib` auto-prepend list so all consumers see it without
+an explicit include"), but reverted at slot entry after surveying
+how cyrius's own tcyrs use the deps:
+
+- All cyrius tcyrs that reference dep symbols already
+  `include "lib/<dep>.cyr"` explicitly (large_input,
+  large_source, preprocessor_past_cap include sigil/yukti/vani/
+  sakshi/patra explicitly).
+- Auto-prepending the 6 folded dist files to every consumer's
+  preprocess_out would add ~28 KLOC of expanded source per build,
+  pushing close to (or past) the v5.8.60-tested preprocess_out
+  2 MB cap.
+- The v5.7.0 sandhi precedent **also** kept `lib/sandhi.cyr`
+  out of `[deps].stdlib` — explicit include only. Sandhi has 0
+  cyrius-side consumers using auto-prepend.
+
+The folded `lib/<name>.cyr` files behave identically to lib/sandhi
+post-fold: present in lib/, version-controlled, available for
+explicit `include "lib/<name>.cyr"`. Future updates fold at the
+next dep ship rather than git-resolving at consume time.
+
+### Verified
+
+- **Self-host**: cc5 == cc5b byte-identical at 741,048 B (no
+  compiler delta — `lib/` doesn't reach cc5; pure manifest +
+  vendored content work).
+- **Heap audit**: `tests/heapmap.sh` 84 regions, 0 overlaps —
+  layout intact (no heap change this slot).
+- **`scripts/check.sh`: 65/65 named gates green**.
+- **All 127 tcyr files PASS** — total unicode asserts 320,874
+  unchanged. Tcyrs that previously included `lib/<dep>.cyr` via
+  `cyrius deps` resolution now include the same byte-identical
+  vendored copy; no behavioral or test-count delta.
+- Cross-host gates green: pi (Linux aarch64), ecb (macOS arm64),
+  cass (Windows PE), libssl fdlopen TLS — all PASS via existing
+  SSH wiring.
+- aarch64 cross-build: `build/cc5_aarch64` rebuilt clean.
+- `cyrius.lock` regenerated: 8 file-hash entries (6 folded +
+  agnosys transitive + mabda). `cyrius deps --verify`: 8
+  verified, 0 failed. Lock-tracking the folded files gives
+  consumers a tamper-detection check on the vendored content.
+
+### Cycle wind-down (cascaded post-ship)
+
+v5.8.66 = release-valve for foldin fallout (any consumer-surfaced
+issue from the foldin lands here). Backstop hard at v5.8.66.
+
+### Acceptance gates
+
+- Self-host: cc5 == cc5b byte-identical at 741,048 B.
+- `cc5 --version` reports `cc5 5.8.65`.
+- `tests/heapmap.sh`: 84 regions, monotonic, 0 overlaps.
+- `scripts/check.sh`: 65/65 named gates green.
+- Cross-host gates green: pi / ecb / cass.
+- 6 deps removed from `[deps]`; mabda retained.
+- 6 `lib/<name>.cyr` vendored byte-identical to dist counterparts.
+- cyrius.cyml `[deps].stdlib` unchanged (sandhi-pattern preserved).
+
 ## [5.8.64] — 2026-05-05
 
 **v5.8.x slot 64 — cycle closeout pass** per CLAUDE.md 11-step
