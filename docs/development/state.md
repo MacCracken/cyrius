@@ -5,6 +5,42 @@
 
 ## Version
 
+**5.9.4** (shipped 2026-05-06 — **v5.9.x SLOT 4 — CI hotfix +
+`cyrius audit` review pin**. Post-v5.9.3 push surfaced a CI
+failure: `.github/workflows/ci.yml`'s `Test (ubuntu)` job
+invoked `sh tests/regression-object-init.sh` and
+`sh tests/regression-linker.sh` directly — both retired in
+v5.9.3 into `programs/check.cyr` dispatcher fns, breaking the
+direct-invocation steps. cc5 unchanged at **741,048 B** — slot
+is `.github/` + docs only. **Premise-check at slot entry**:
+`grep -rn "regression-" .github/workflows/` returned 4
+direct invocations in `Test (ubuntu)`; 2 were retired in
+v5.9.3 (object-init, linker) → BROKEN; 2 still ship as
+standalone .sh (shared, capacity) → still work. Same lesson as
+the v5.8.31 docs-deletion incident (memory pin
+`feedback_archive_dont_delete_docs`): grep `.github/workflows/`
+before deleting any file the dispatcher consolidated.
+Memory-pin extended this slot to cover test scripts, not just
+docs. **What shipped**: ci.yml's two broken steps replaced
+with inline equivalents — `_cyrius_init STB_GLOBAL` step uses
+inline heredoc + `readelf -s` + awk Bind extraction;
+`cyrld multi-module link` step uses the v5.9.3
+`tests/fixtures/linker/{a,c,d,m}.cyr` fixtures directly,
+compiles via cc5, links via cyrld, runs both binaries, checks
+exit codes 43 / 44. No dependency on retired .sh files. Both
+verified locally via mirror-of-CI-step shell execution.
+**Roadmap pin (NOT fixed this slot)**: `cyrius audit` broken
+outside the cyrius repo — `cbt/commands.cyr:415` `cmd_audit()`
+invokes `~/.cyrius/bin/check.sh` which doesn't exist (check.sh
+not in `[release].scripts`); `run_tool` validates only
+`/bin/sh`, never the script arg. Two open design questions
+waiting on user direction; earmarked for v5.9.8+ once the
+design call lands. v5.9.5 inherits batch 3/3 of the
+regression-*.sh conversion arc (shifted from v5.9.4 to
+accommodate this hotfix slot). **Next**: v5.9.5 — sovereignty
+pass batch 3/3 (cross-host SSH + TS acceptance + shared-library
+cyrius-side test).)
+
 **5.9.3** (shipped 2026-05-06 — **v5.9.x SLOT 3 — sovereignty
 pass: tests/regression-*.sh batch 2/3 (12 conversions, 50 → 38
 scripts)**. Second batch of the 60-script `tests/regression-*.sh`

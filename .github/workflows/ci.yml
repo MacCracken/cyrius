@@ -209,7 +209,27 @@ jobs:
           # v5.4.9 re-flipped to GLOBAL + taught cyrld to skip the
           # symbol from its dup-check. This gate is the tripwire so
           # the next silent flip can't ship.
-          sh tests/regression-object-init.sh
+          #
+          # v5.9.3 retired tests/regression-object-init.sh into
+          # programs/check.cyr's `_object_init_gate` (native cyrius
+          # ELF symbol-table parse, no readelf shell-out). The CI
+          # equivalent below mirrors the same fixture + assertion
+          # in shell so this job stays granular.
+          cat > /tmp/cyr_objinit.cyr <<'EOF'
+          object;
+          fn x() { return 0; }
+          EOF
+          ./build/cc5 < /tmp/cyr_objinit.cyr > /tmp/cyr_objinit.o 2>/dev/null
+          bind=$(readelf -s /tmp/cyr_objinit.o | awk '$NF == "_cyrius_init" { print $5; exit }')
+          rm -f /tmp/cyr_objinit.cyr /tmp/cyr_objinit.o
+          if [ -z "$bind" ]; then
+            echo "FAIL: _cyrius_init missing from .o symbol table"
+            exit 1
+          fi
+          if [ "$bind" != "GLOBAL" ]; then
+            echo "FAIL: _cyrius_init bind=$bind (expected GLOBAL — see v5.4.9 regression)"
+            exit 1
+          fi
       - name: Regression — cyrld multi-module link
         run: |
           # Companion gate: cyrld must still link multi-module
@@ -217,8 +237,36 @@ jobs:
           # regression in the dup-symbol-skip handshake between
           # cc5 (`src/backend/x86/fixup.cyr`) and cyrld
           # (`programs/cyrld.cyr` `merge_symbols`).
+          #
+          # v5.9.3 retired tests/regression-linker.sh into
+          # programs/check.cyr's `_linker_gate`; CI equivalent
+          # below uses the same `tests/fixtures/linker/*.cyr`
+          # objects.
           if [ -x build/cyrld ]; then
-            sh tests/regression-linker.sh
+            mkdir -p /tmp/cyr_linktest
+            ./build/cc5 < tests/fixtures/linker/a.cyr > /tmp/cyr_linktest/a.o 2>/dev/null
+            ./build/cc5 < tests/fixtures/linker/c.cyr > /tmp/cyr_linktest/c.o 2>/dev/null
+            ./build/cc5 < tests/fixtures/linker/d.cyr > /tmp/cyr_linktest/d.o 2>/dev/null
+            ./build/cc5 < tests/fixtures/linker/m.cyr > /tmp/cyr_linktest/m.o 2>/dev/null
+
+            ./build/cyrld -o /tmp/cyr_linktest/exe1 /tmp/cyr_linktest/c.o /tmp/cyr_linktest/a.o >/dev/null
+            chmod +x /tmp/cyr_linktest/exe1
+            set +e; /tmp/cyr_linktest/exe1; rv=$?; set -e
+            if [ "$rv" -ne 43 ]; then
+              echo "FAIL: cross-module call exit $rv (expected 43)"
+              rm -rf /tmp/cyr_linktest
+              exit 1
+            fi
+
+            ./build/cyrld -o /tmp/cyr_linktest/exe2 /tmp/cyr_linktest/m.o /tmp/cyr_linktest/d.o >/dev/null
+            chmod +x /tmp/cyr_linktest/exe2
+            set +e; /tmp/cyr_linktest/exe2; rv=$?; set -e
+            if [ "$rv" -ne 44 ]; then
+              echo "FAIL: data + init ordering exit $rv (expected 44)"
+              rm -rf /tmp/cyr_linktest
+              exit 1
+            fi
+            rm -rf /tmp/cyr_linktest
           else
             echo "skip: build/cyrld not present"
           fi

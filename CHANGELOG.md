@@ -6,6 +6,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.4] — 2026-05-06
+
+**v5.9.x SLOT 4 — CI hotfix + `cyrius audit` review pin**.
+v5.9.3's `tests/regression-*.sh` deletions (object-init +
+linker) broke `.github/workflows/ci.yml`'s `Test (ubuntu)` job —
+the CI invokes those scripts directly, not through
+`scripts/check.sh`. Same lesson as the v5.8.31 docs incident
+(`feedback_archive_dont_delete_docs`): grep
+`.github/workflows/` before deleting any file the dispatcher
+consolidated.
+
+cc5: **741,048 B unchanged** — slot is `.github/` + docs only.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+CI failure surfaced post-v5.9.3 push:
+`sh: 0: cannot open tests/regression-object-init.sh: No such
+file`. Audit of `.github/workflows/ci.yml`: 4 direct
+`sh tests/regression-X.sh` invocations in the `Test (ubuntu)`
+job. Two of the four (object-init, linker) were retired in
+v5.9.3 → BREAK. The other two (shared, capacity) still ship
+as standalone .sh → still work. Memory-pin extension below.
+
+### Changed
+
+- **`.github/workflows/ci.yml`** — `Test (ubuntu)` job's two
+  broken regression steps replaced with inline equivalents:
+  - `Regression — _cyrius_init STB_GLOBAL in object; mode
+    (v5.4.9)`: inline heredoc compile + `readelf -s` + awk
+    Bind-column extraction. Same fixture (one-line
+    `object; fn x() { return 0; }`) and same assertion
+    (Bind == GLOBAL) the v5.9.3 `_object_init_gate` mirror
+    exercises in cyrius.
+  - `Regression — cyrld multi-module link`: inline cc5
+    compile of `tests/fixtures/linker/{a,c,d,m}.cyr` (the
+    v5.9.3 fixture pair) → cyrld link → exec the two
+    binaries → check exit codes 43 / 44. No script
+    dependency; uses fixture files directly.
+
+  The two still-shipping scripts (`regression-shared.sh`,
+  `regression-capacity.sh`) stay as direct invocations until
+  their conversion slot lands (shared = v5.9.5, capacity =
+  v5.9.5 batch).
+
+### Roadmap pin (NOT fixed this slot)
+
+- **`cyrius audit` broken outside cyrius repo** — earned its
+  own v5.9.x slot. `cbt/commands.cyr:415` `cmd_audit()` resolves
+  `make_path(_scripts_dir, "check.sh")`; outside the repo
+  `_scripts_dir = ~/.cyrius/bin/`, but `check.sh` isn't in
+  `cyrius.cyml`'s `[release].scripts` install list. Compounded
+  by `cbt/build.cyr:222` `run_tool` only validating the *tool*
+  exists (`/bin/sh`), never the script arg. Two open design
+  questions waiting on user direction: (a) intended semantics
+  outside the cyrius repo (clean error vs polymorphic
+  project-level audit); (b) defensive `file_exists(script)` in
+  `run_script` (one-line fix, applies to all script callers).
+  Earmarked for v5.9.8+ once the design call lands.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 65/65 gates green, exit 0.
+- CI hotfix smoke (local, mirroring the GH-Actions step body):
+  - `object-init` step: bind == GLOBAL ✓
+  - `linker` step: exe1 exit 43 ✓, exe2 exit 44 ✓
+
 ## [5.9.3] — 2026-05-06
 
 **v5.9.x SLOT 3 — sovereignty pass: tests/regression-*.sh batch

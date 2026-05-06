@@ -354,7 +354,29 @@ at cycle entry):
   `~/.cyrius/bin/check.sh` which doesn't exist; check.sh not in
   `[release].scripts`); two open questions earmarked for
   follow-up.
-- **v5.9.4** — sovereignty pass batch 3/3: continue
+- **v5.9.4** — **CI hotfix + `cyrius audit` review pin**.
+  v5.9.3's batch-2 deletions (regression-object-init.sh +
+  regression-linker.sh) broke `.github/workflows/ci.yml` —
+  the `Test (ubuntu)` job invokes those scripts directly,
+  not through `scripts/check.sh`. Slot scope: replace the two
+  broken steps with inline equivalents (preserving granular
+  CI step visibility); use the new `tests/fixtures/linker/`
+  objects from v5.9.3. **Pinned for separate review (NOT
+  fixed in this slot)**: `cyrius audit` is broken outside the
+  cyrius repo — `cbt/commands.cyr:415` `cmd_audit()` invokes
+  `~/.cyrius/bin/check.sh` which doesn't exist (check.sh not
+  in `cyrius.cyml`'s `[release].scripts`); `cbt/build.cyr:222`
+  `run_tool` only validates the *tool* (`/bin/sh`), never the
+  script arg. Two open design questions waiting on user
+  direction: (a) intended semantics outside the cyrius repo
+  (clean error vs polymorphic project-level audit); (b)
+  defensive `file_exists(script)` check in `run_script`
+  (one-line fix, applies to all script callers). Earned a
+  later v5.9.x slot once the design call lands. Memory-pin
+  update: extend `feedback_archive_dont_delete_docs` from
+  doc-only to test-script-too — grep `.github/workflows/`
+  before deleting any file the dispatcher consolidated.
+- **v5.9.5** — sovereignty pass batch 3/3: continue
   `tests/regression-*.sh` (38 scripts remaining). Categories
   earned for this slot:
   - **Cross-host SSH gates** (8 scripts): aarch64-syscalls,
@@ -386,18 +408,19 @@ at cycle entry):
     lint-global-init-order, syscall-surface-v5735,
     fuzz-deps-prepend, api-surface, cx-build, cx-roundtrip,
     cx-syscall-literal, cx-token-offsets. Mostly one-off ports.
-- **v5.9.5** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+- **v5.9.6** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-- **v5.9.6** — sovereignty pass: small utilities batch
+- **v5.9.7** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
-- **v5.9.7+** — release-valve + closeout per CLAUDE.md 11-step
-  protocol.
+- **v5.9.8+** — `cyrius audit` fix slot (once user picks
+  semantics per v5.9.4 pin) + release-valve + closeout per
+  CLAUDE.md 11-step protocol.
 
 **KEEP-as-bash (intrinsic; sovereignty-allowed):**
 - `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`
