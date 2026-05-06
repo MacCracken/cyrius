@@ -5,6 +5,64 @@
 
 ## Version
 
+**5.9.6** (shipped 2026-05-06 — **v5.9.x SLOT 6 — testsuite-
+gate fix chain + args regression harness + 1 conversion**. The
+v5.9.5-pinned `_testsuite_gate "0 files"` audit unraveled into
+three stacked bugs in `lib/fs.cyr` + `programs/check.cyr`,
+each masking the next: (1) `dir_list` pushed borrowed
+filename pointers into a getdents64 batch buffer that
+overwrote on the next outer-loop iteration → all post-first-
+batch entries silently corrupted; (2) `path_has_ext(path,
+ext)` delegated to `str_ends_with(Str, Str)` but check.cyr
+called it with a cstring literal `.tcyr` — `str_ends_with`
+read junk past the literal as the suffix length, making every
+comparison silently false; (3) once #1 and #2 were fixed and
+the gate actually iterated, `_tcyr_compile_and_run` (sibling
+code-path to the v5.9.2 `_tcyr_relay_gate` fix) tripped the
+same orphan-setuid pipe deadlock on `shadow_pam.tcyr`. All
+three landed this slot. cc5 unchanged at **741,048 B** —
+`lib/` + `programs/` work; the compiler binary is not touched.
+
+**Premise-check at slot entry**: the "0 files" report looked
+like a one-line printf bug. It was actually a chain of three
+real bugs hiding behind it. The fix-cascade was discovered by
+applying #1, re-running, finding #2, applying #2, re-running,
+finding #3 (which the gate had been masking from v5.9.2
+onward — the testsuite-gate path missed the v5.9.2 capture
+migration because it never iterated to the deadlock site).
+
+**What also shipped**: (a) `_exec_with_arg_capture(bin, arg,
+buf, buflen)` helper for argv-shape regression gates; (b)
+`_args_init_4kb_gate()` for cyim BUG-001 (fixed v5.9.5) —
+8 KB synthetic arg → `argc() == 2` post-fix; pre-fix returned 1.
+Audit total 65 → 66. (c) `tests/fixtures/argc_print.cyr`
+minimal fixture. (d) `_struct_cap_gate()` + helper
+`_gen_struct_decls_source(path, n)` — converted
+`regression-struct-cap.sh` (v5.7.17 kybernet-class fix).
+3/3 sub-cases (80-struct compile+run+exit-0, 200-struct
+compile clean, 257-struct overflow with diagnostic substring
+matches). 60 → 50 → 38 → 37 .sh remaining across v5.9.2 +
+v5.9.3 + v5.9.6.
+
+**Verification**: 66/66 check.sh green; testsuite-gate now
+actually iterates 128 .tcyr files (all PASS); cc5 self-host
+byte-identical; args_init regression smoke (8 KB arg →
+argc=2, was 1 pre-v5.9.5).
+
+**Roadmap pin (NOT fixed this slot)**: tcyr-relay gates from
+v5.9.2 (shadow_pam / fdlopen / thread_local / atomics /
+thread_safety / flags + json_pretty / json_stream /
+json_pointer / test_lib expected-output gates) now run twice
+per audit — once as named relay gates, once via the
+now-actually-walking testsuite-gate. Relay gates have richer
+output ("N assertions") so removing them costs UX
+granularity; cleanup decision deferred to v5.9.x closeout.
+
+**Next**: v5.9.7 — sovereignty pass batch 3/3 (cross-host SSH
+gates + TS acceptance cluster + shared-library cyrius-side
+test) continues from where v5.9.3 left off; remaining 36
+`tests/regression-*.sh` queued.)
+
 **5.9.5** (shipped 2026-05-06 — **v5.9.x SLOT 5 — two consumer-
 filed bug fixes**. Both surfaced 2026-05-06 with detailed
 reproducers + suggested fixes from downstream repos.

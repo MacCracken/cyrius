@@ -1398,6 +1398,250 @@ fn _linker_gate_cleanup(a, b, c, d) {
     return 0;
 }
 
+# Fork+exec bin_path with one positional argv arg, capture stdout
+# to a temp file, return bytes read into buf. stdin + stderr go to
+# /dev/null. Used by gates that need to verify behavior under a
+# specific argv shape (e.g. args_init >4 KB cmdline regression).
+fn _exec_with_arg_capture(bin_path, arg, buf, buflen) {
+    var out_path = _tmp_path("audit_xa_");
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0; }
+
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
+    if (pid == 0) {
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var dn_r = sys_open("/dev/null", 0, 0);
+        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        var dn_e = sys_open("/dev/null", 1, 0);
+        if (dn_e >= 0) { sys_dup2(dn_e, 2); sys_close(dn_e); }
+        var argv[3];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, arg);
+        store64(&argv + 16, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(bin_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+
+    var total = file_read_all(out_path, buf, buflen);
+    sys_unlink(out_path);
+    if (total < 0) { return 0; }
+    return total;
+}
+
+# Synthesize a cyrius source containing N empty `struct SK { x; }`
+# decls plus a trailing `syscall(60, 0);`. Writes to `path`. Used by
+# `_struct_cap_gate` for cap-stress sub-cases.
+fn _gen_struct_decls_source(path, n) {
+    var fd = sys_open(path, 577, 420);
+    if (fd < 0) { return 0 - 1; }
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < n) {
+        str_builder_add_cstr(sb, "struct S");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, " { x; }\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "syscall(60, 0);\n");
+    var s = str_builder_build(sb);
+    sys_write(fd, str_data(s), str_len(s));
+    sys_close(fd);
+    return 0;
+}
+
+# Bespoke gate: struct cap raise 64 → 256 + overflow diagnostic
+# (v5.7.17; kybernet repro). Three sub-cases:
+# (1) 80 structs — pre-v5.7.17 would fail at #65; post-fix compiles
+#     + runs + exits 0.
+# (2) 200 structs — kybernet-class multi-dep workload; compiles
+#     clean.
+# (3) 257 structs — overflow; compile MUST fail with diagnostic
+#     substrings: "note: 256 structs registered" (header),
+#     "#0 S0" (first dumped struct), "#255 S255" (last dumped),
+#     and "too many struct definitions (max 256)" (final error).
+fn _struct_cap_gate() {
+    var fail = 0;
+
+    # Case 1: 80 structs compile + run + exit 0.
+    var src1 = _tmp_path("audit_sc1_src_");
+    _gen_struct_decls_source(src1, 80);
+    var ec1 = _compile_run_get_exit(src1);
+    sys_unlink(src1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case1 — 80-struct binary exit ");
+        print_num(ec1);
+        println(" (expected 0; cap regressed below 80)");
+        fail = fail + 1;
+    }
+
+    # Case 2: 200 structs must compile clean.
+    var src2 = _tmp_path("audit_sc2_src_");
+    _gen_struct_decls_source(src2, 200);
+    var bin2 = _tmp_path("audit_sc2_bin_");
+    var rc2 = _self_host_pipe(src2, CC_PATH, bin2);
+    sys_unlink(src2);
+    sys_unlink(bin2);
+    if (rc2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case2 — 200-struct compile failed (rc=");
+        print_num(rc2);
+        println("; cap regressed below 200)");
+        fail = fail + 1;
+    }
+
+    # Case 3: 257 structs overflow — compile MUST fail with
+    # specific diagnostic strings.
+    var src3 = _tmp_path("audit_sc3_src_");
+    _gen_struct_decls_source(src3, 257);
+    var err3 = _tmp_path("audit_sc3_err_");
+    var rc3 = _compile_capture_stderr(src3, CC_PATH, err3);
+    sys_unlink(src3);
+
+    # rc3 is the wait-status from cc5. WIFEXITED + non-zero exit
+    # means compile aborted (expected). If exit was 0 the source
+    # compiled past 256 structs — that's a cap-not-enforced bug.
+    var compile_failed = 1;
+    if (WIFEXITED(rc3) == 1) {
+        if (WEXITSTATUS(rc3) == 0) { compile_failed = 0; }
+    }
+    if (compile_failed != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case3 — 257-struct compile unexpectedly succeeded (cap > 256?)");
+        fail = fail + 1;
+    } else {
+        # Check the four expected diagnostic substrings.
+        if (_file_contains_substr(err3, "note: 256 structs registered") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — overflow note missing 'note: 256 structs registered'");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(err3, "#0 S0") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — name-dump missing '#0 S0'");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(err3, "#255 S255") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — name-dump missing '#255 S255'");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(err3, "too many struct definitions (max 256)") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — final error line not updated to 'max 256'");
+            fail = fail + 1;
+        }
+    }
+    sys_unlink(err3);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": struct cap 64→256 + diagnostic dump (3/3 cases)");
+    }
+    _check("200-struct compile clean; 257-struct overflow dumps registered names (v5.7.17; kybernet)", fail);
+    return fail;
+}
+
+# Bespoke gate: lib/args.cyr 4 KB cmdline cap (cyim BUG-001,
+# fixed v5.9.5). Compiles tests/fixtures/argc_print.cyr — a
+# fixture that calls args_init() and prints argc(); forks the
+# binary with one synthetic >4 KB arg (8192 bytes); verifies the
+# captured stdout reports `argc() == 2` (program + arg). Pre-fix
+# (4 KB stack buffer in args_init), the >4063-byte cmdline
+# truncated and argc() reported 1 (program only — arg lost).
+fn _args_init_4kb_gate() {
+    var fix = _root_path("tests/fixtures/argc_print.cyr");
+    var bin = _tmp_path("audit_argc_bin_");
+    var rc = _self_host_pipe(fix, CC_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": argc_print fixture compile (rc=");
+        print_num(rc);
+        println(")");
+        _check("args_init reads >4 KB cmdline; argc()==2 with 8 KB arg (cyim BUG-001)", 1);
+        return 1;
+    }
+    sys_chmod(bin, 493);
+
+    # Synthesize an 8192-byte arg — 'A' repeated 8192 times,
+    # null-terminated. Comfortably above the pre-v5.9.5 4063-byte
+    # truncation threshold; comfortably below ARG_MAX (2 MB).
+    var arg_len = 8192;
+    var arg = alloc(arg_len + 1);
+    var ai = 0;
+    while (ai < arg_len) {
+        store8(arg + ai, 65);   # 'A'
+        ai = ai + 1;
+    }
+    store8(arg + arg_len, 0);
+
+    var out_cap = 4096;
+    var out_buf = alloc(out_cap);
+    var out_n = _exec_with_arg_capture(bin, arg, out_buf, out_cap);
+    sys_unlink(bin);
+
+    # Parse leading int from captured stdout. Fixture prints
+    # `<argc>\n` only.
+    var got = _aw_parse_leading_int(out_buf, out_n);
+    if (got != 2) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": argc()==");
+        print_num(got);
+        _p(" with 8 KB arg (expected 2; pre-v5.9.5 cap returned 1, captured ");
+        print_num(out_n);
+        println(" bytes)");
+        _check("args_init reads >4 KB cmdline; argc()==2 with 8 KB arg (cyim BUG-001)", 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": argc()==2 with 8 KB arg (heap-backed buffer, cap 2 MB = ARG_MAX)");
+    println("");
+    _check("args_init reads >4 KB cmdline; argc()==2 with 8 KB arg (cyim BUG-001)", 0);
+    return 0;
+}
+
 # Bespoke gate: stdlib doc coverage (pinned post-v5.7.20). Walks
 # lib/*.cyr (skipping symlinks + distlib bundles, same convention
 # as audit_lint_walk), runs `cyrdoc --check` on each, sums
@@ -1750,11 +1994,19 @@ fn _tcyr_compile_and_run(src_path) {
     }
     sys_chmod(bin_path, 493);
 
-    var args = vec_new();
-    vec_push(args, bin_path);
+    # v5.9.6 — switched from lib/process.cyr's pipe-based
+    # exec_capture to the file-backed _exec_capture_clean.
+    # exec_capture deadlocks when the test fixture forks a setuid
+    # helper that's reparented to init as an orphan keeping the
+    # pipe write-end open (shadow_pam.tcyr → unix_chkpwd; same
+    # incident fixed for `_tcyr_relay_gate` in v5.9.2). Pre-v5.9.6
+    # the gate reported "0 files" — the dir_list +
+    # path_has_ext bugs masked this hang because the loop never
+    # iterated; now that those are fixed, the underlying capture
+    # bug surfaces here too.
     var out_cap = 65536;
     var out_buf = alloc(out_cap);
-    var out_n = exec_capture(args, out_buf, out_cap);
+    var out_n = _exec_capture_clean(bin_path, out_buf, out_cap);
     sys_unlink(bin_path);
 
     return _tcyr_parse_failed(out_buf, out_n);
@@ -1770,7 +2022,7 @@ fn _testsuite_gate() {
     var i = 0;
     while (i < vec_len(entries)) {
         var name = vec_get(entries, i);
-        if (path_has_ext(name, ".tcyr") == 1) {
+        if (path_has_ext(name, str_from(".tcyr")) == 1) {
             var full = path_join(dir_str, name);
             var basename = path_basename(full);
             var bn_data = str_data(basename);
@@ -2038,7 +2290,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("struct cap raise + diag");
-    _gate("200-struct compile clean; 257-struct overflow dumps registered names (v5.7.17; kybernet)", "tests/regression-struct-cap.sh");
+    _struct_cap_gate();
     println("");
 
     _section("kmode emit order");
@@ -2148,6 +2400,10 @@ fn _run_regression_gates() {
 
     _section("advanced-TS pin audit");
     _gate("TS advanced-pin audit — as const + satisfies + never/unknown + conditional types (v5.7.46)", "tests/regression-ts-advanced-pin-audit.sh");
+    println("");
+
+    _section("args_init >4 KB cmdline (v5.9.5; cyim BUG-001)");
+    _args_init_4kb_gate();
     println("");
 
     return 0;

@@ -398,16 +398,19 @@ at cycle entry):
   `tests/tcyr/derive_cap.tcyr` (36 derive structs, 9 assertions).
   cc5 unchanged at 741,048 B; two-step self-host byte-identical;
   65/65 check.sh green; 104/104 cyrius test green.
-- **v5.9.6** — sovereignty pass batch 3/3: continue
-  `tests/regression-*.sh` (38 scripts remaining) + **args_init
-  >4 KB arg regression harness** (deferred from v5.9.5; needs
-  CLI-arg-passing helper that builds a binary, fork+execs with
-  one >4 KB arg, captures stdout, parses argc count). Plus
-  pre-existing `check.sh _testsuite_gate "0 files"` audit (the
-  dispatcher's tcyr walk doesn't discover files; cyrius test
-  works fine, so coverage isn't lost — earn a fix slot to
-  reconcile the duplicate walk). Categories earned for the
-  regression-*.sh batch:
+- **v5.9.6** ✅ — **testsuite-gate fix chain + args regression
+  harness + 1 conversion shipped 2026-05-06**. The pinned
+  `_testsuite_gate "0 files"` audit unraveled into three
+  stacked bugs (`lib/fs.cyr` `dir_list` borrowed-pointer +
+  `path_has_ext` cstring-vs-Str type leak +
+  `_tcyr_compile_and_run` orphan-pipe deadlock); all three
+  landed. Plus args_init >4 KB regression gate (cyim BUG-001
+  guardrail) — audit total 65 → 66. Plus 1 conversion:
+  struct-cap (v5.7.17 kybernet-class fix). Remaining
+  regression-*.sh: 37 (was 38). cc5 unchanged at 741,048 B.
+- **v5.9.7** — sovereignty pass batch 3/3 continued: target
+  ~10-15 more conversions from the remaining 37
+  `tests/regression-*.sh`. Categories earned for this slot:
   - **Cross-host SSH gates** (8 scripts): aarch64-syscalls,
     aarch64-native-selfhost, macho-exit, pe-exit, sit-status,
     tls-live, aarch64-f64, aarch64-f64-polyfill. Skip-if-
@@ -437,19 +440,20 @@ at cycle entry):
     lint-global-init-order, syscall-surface-v5735,
     fuzz-deps-prepend, api-surface, cx-build, cx-roundtrip,
     cx-syscall-literal, cx-token-offsets. Mostly one-off ports.
-- **v5.9.7** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+- **v5.9.8** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-- **v5.9.8** — sovereignty pass: small utilities batch
+- **v5.9.9** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
-- **v5.9.9+** — `cyrius audit` fix slot (once user picks
-  semantics per v5.9.4 pin) + release-valve + closeout per
-  CLAUDE.md 11-step protocol.
+- **v5.9.10+** — `cyrius audit` fix slot (once user picks
+  semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
+  redundancy cleanup (per v5.9.6 pin) + release-valve +
+  closeout per CLAUDE.md 11-step protocol.
 
 **KEEP-as-bash (intrinsic; sovereignty-allowed):**
 - `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`

@@ -6,6 +6,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.6] — 2026-05-06
+
+**v5.9.x SLOT 6 — testsuite-gate fix chain + args regression
+harness + 1 conversion**. The pinned-from-v5.9.5 `_testsuite_gate
+"0 files"` audit unraveled into a chain of three real bugs in
+`lib/fs.cyr` + `programs/check.cyr` (each was masking the next),
+plus the args_init >4 KB regression harness pinned in v5.9.5.
+Sovereignty-pass batch 3/3 only got 1 conversion this slot
+(struct-cap) — the underlying bugs took precedence; remaining
+36 `tests/regression-*.sh` carry to v5.9.7.
+
+cc5: **741,048 B unchanged** — `lib/` + `programs/` work; the
+compiler binary is not touched.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+The "0 files" gate report was a 1-line printf-bug stand-in for
+three stacked bugs:
+
+1. **`lib/fs.cyr` `dir_list`** pushed `str_from(name)` Strs that
+   borrowed pointers into a 4096-byte getdents64 batch buffer;
+   on the next outer-loop iteration getdents64 overwrote that
+   buffer, and previously-pushed Strs silently pointed at
+   garbage. Surfaced when the dispatcher iterated 128 entries
+   and got back filenames like `tate_slot` (corrupted suffix
+   bytes) for every entry past the first batch.
+2. **`lib/fs.cyr` `path_has_ext(path, ext)`** delegated to
+   `str_ends_with(path, ext)` which expects both args as `Str`.
+   Callers passing a cstring literal (`path_has_ext(name,
+   ".tcyr")`) had `str_ends_with` read `load64(suffix + 8)` as
+   the suffix length — junk bytes past the 6-byte literal —
+   making every comparison silently false.
+3. **`programs/check.cyr` `_tcyr_compile_and_run`** used
+   `lib/process.cyr`'s pipe-based `exec_capture`, which
+   deadlocks when a fixture forks a setuid orphan that keeps
+   the pipe write-end open after the test binary exits. Same
+   incident chain as the v5.9.2 `_tcyr_relay_gate` fix; this
+   sibling code-path missed the migration because the
+   testsuite-gate appeared to work (it was reporting "0 files",
+   so the loop never iterated and the deadlock never tripped).
+   Fixing #1 + #2 in this slot exposed #3 — the gate now
+   actually iterates and runs `shadow_pam.tcyr`, which forks
+   `unix_chkpwd` and reproduces the v5.9.2 deadlock on the
+   testsuite-gate path.
+
+All three landed in this slot.
+
+### Changed
+
+- **`lib/fs.cyr` — `dir_list(path)`**: deep-copy each filename
+  via `str_clone(str_from(name))` before pushing to the result
+  vec. Pre-fix the borrowed pointer became stale on the next
+  getdents64 batch read. `dir_list_full` + `dir_walk` inherit
+  the fix transitively (they call `dir_list`).
+
+- **`programs/check.cyr` — `_testsuite_gate`**: caller of
+  `path_has_ext(name, ".tcyr")` updated to wrap the cstring
+  literal as a `Str` via `str_from`. The `path_has_ext` API
+  contract is "both args are `Str`" — confirmed via the
+  fs.tcyr test that already wrapped with `str_from`. The
+  one-liner caller fix preserves the contract.
+
+- **`programs/check.cyr` — `_tcyr_compile_and_run`**: switched
+  from `exec_capture` (lib/process.cyr, pipe-based) to the
+  in-dispatcher `_exec_capture_clean` (file-backed,
+  stdin/stderr → /dev/null). Same fix shape as the v5.9.2
+  `_tcyr_relay_gate` migration. Comment in the fn body documents
+  the orphan-pipe deadlock for next-time-this-comes-up.
+
+### Added
+
+- **`programs/check.cyr` — `_exec_with_arg_capture(bin, arg,
+  buf, buflen)`**: fork+exec a binary with one positional argv
+  arg, capture stdout to a temp file, return bytes read. stdin +
+  stderr go to /dev/null. Sister to `_exec_capture_clean`. Used
+  by gates that need to verify behavior under a specific argv
+  shape (e.g. args_init >4 KB cmdline regression).
+
+- **`programs/check.cyr` — `_args_init_4kb_gate()`**: bespoke
+  regression for cyim BUG-001 (fixed v5.9.5). Compiles
+  `tests/fixtures/argc_print.cyr`, forks the binary with one
+  synthetic 8 KB arg ('A' × 8192), parses the captured stdout
+  for `argc()`, asserts == 2 (program + arg). Pre-v5.9.5 the
+  4 KB stack buffer truncated; argc() returned 1 (program only).
+  New audit gate: `args_init >4 KB cmdline (v5.9.5; cyim
+  BUG-001)`. Audit total 65 → 66 gates.
+
+- **`programs/check.cyr` — `_struct_cap_gate()` + helper
+  `_gen_struct_decls_source(path, n)`**: bespoke conversion of
+  `tests/regression-struct-cap.sh` (v5.7.17 — kybernet's 80+
+  struct cap regression). Three sub-cases: 80-struct compile +
+  run + exit 0, 200-struct compile clean, 257-struct overflow
+  with diagnostic substring matches (`"note: 256 structs
+  registered"`, `"#0 S0"`, `"#255 S255"`, `"too many struct
+  definitions (max 256)"`). Existing gate label preserved.
+
+- **`tests/fixtures/argc_print.cyr`**: minimal fixture for the
+  args_init regression (calls `args_init()`, prints `argc()`,
+  exits 0). Forked with the synthetic 8 KB arg by
+  `_args_init_4kb_gate`.
+
+### Removed
+
+- **`tests/regression-struct-cap.sh`** retired alongside its
+  conversion. Total: 60 → 50 → 38 → 37 across v5.9.2 + v5.9.3 +
+  v5.9.6.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 66/66 gates green, exit 0. Pre-fix the testsuite-
+  gate reported "0 files" PASS-by-vacuity; post-fix it actually
+  exercises 128 .tcyr files (all PASS).
+- args_init gate (new): 8 KB arg → `argc() == 2`. PASS.
+- struct cap gate (converted): 3/3 sub-cases (80-struct,
+  200-struct, 257-struct overflow). PASS.
+
+### Roadmap pin (NOT fixed this slot)
+
+- **`tcyr-relay gates redundant with testsuite-gate`**: the six
+  v5.9.2-converted relay gates (shadow_pam, fdlopen,
+  thread_local, atomics, thread_safety, flags) + four v5.9.2
+  expected-output gates (json_pretty, json_stream, json_pointer,
+  test_lib) now run twice per audit — once as a named relay
+  gate, once via the testsuite-gate's full directory walk. The
+  relay gates have richer output ("(N assertions)") so removing
+  them costs UX granularity; deferred a cleanup decision until
+  v5.9.x closeout.
+
 ## [5.9.5] — 2026-05-06
 
 **v5.9.x SLOT 5 — two consumer-filed bug fixes**. Both surfaced

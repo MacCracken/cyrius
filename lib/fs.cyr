@@ -52,12 +52,26 @@ fn path_dirname(path) {
     return str_sub(path, 0, last_slash);
 }
 
-# Check if path has a specific extension
+# Check if path has a specific extension. Both args are Str
+# (matches str_ends_with's signature). Callers passing a cstring
+# literal must wrap via str_from(".tcyr"). v5.9.6 added the wrap
+# at programs/check.cyr's _testsuite_gate caller.
 fn path_has_ext(path, ext) {
     return str_ends_with(path, ext);
 }
 
 # List directory entries. Returns vec of Str (filenames).
+#
+# v5.9.6 fix: clone each filename out of the getdents64 batch
+# buffer before pushing to the vec. Pre-fix `vec_push(entries,
+# str_from(name))` borrowed the byte pointer into the 4096-byte
+# `buf`; on the next outer iteration, getdents64 overwrote that
+# buf with the next batch, and previously-pushed Strs silently
+# pointed at garbage. Surfaced when programs/check.cyr's
+# `_testsuite_gate` reported "0 files" despite 128 .tcyr files
+# present — `path_has_ext(name, ".tcyr")` returned false for
+# every borrowed-then-clobbered name. dir_list_full + dir_walk
+# inherit the fix transitively (they call dir_list).
 fn dir_list(path) {
     var entries = vec_new();
     var fd = sys_open(str_data(path), O_RDONLY, 0);
@@ -82,7 +96,7 @@ fn dir_list(path) {
                     }
                 }
                 if (skip == 0) {
-                    vec_push(entries, str_from(name));
+                    vec_push(entries, str_clone(str_from(name)));
                 }
                 pos = pos + reclen;
             }

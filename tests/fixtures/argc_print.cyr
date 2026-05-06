@@ -1,0 +1,23 @@
+# argc_print.cyr — fixture for the args_init >4 KB regression
+# (cyim BUG-001, fixed v5.9.5; harness landed v5.9.6).
+#
+# Prints argc() as a decimal followed by newline, then exits 0.
+# The dispatcher gate forks this with one >4 KB arg and verifies
+# argc() reports 2 (program + arg). Pre-v5.9.5 the 4 KB stack
+# buffer truncated argv on cmdlines longer than 4063 bytes and
+# argc() returned 1.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/args.cyr"
+include "lib/io.cyr"
+include "lib/fmt.cyr"
+
+args_init();
+var n = argc();
+var b[16];
+var l = fmt_int_buf(n, &b);
+print(&b, l);
+print("\n", 1);
+syscall(60, 0);
