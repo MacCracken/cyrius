@@ -27,9 +27,11 @@ sigil / vani / yukti / sankoch). cc5 720,928 → 741,048 B
 ## Long-term considerations (no version pin yet)
 
 Items still without a slot pin after the v5.8.65 audit. Items
-that earned a v5.9.x or v5.10.x pin during the audit have moved
-to those sections; what remains here is genuinely waiting on a
-trigger condition.
+that earned a v5.9.x / v5.10.x / v5.11.x pin during the audit
+have moved to those sections (the bare-metal + RISC-V cycle
+re-pinned v5.10.x → v5.11.x at v5.9.7 ship per
+"cleanup-before-platform-add" reframe); what remains here is
+genuinely waiting on a trigger condition.
 
 ### `.gnu.hash` for shared-object emission
 
@@ -85,13 +87,15 @@ chains can span BBs and the cascade math changes — copy-prop
 might earn its keep alongside register-renaming opportunities
 the regalloc surfaces.
 
-### Parser-to-emit named-op refactor (path A) — pinned to v5.10.x
+### Parser-to-emit named-op refactor (path A) — pinned to v5.11.x
 
-**Pinned 2026-05-05 at v5.8.65 close.** RISC-V landing as the
-4th backend in v5.10.x triggers the path-A precondition #1
-(`_TARGET_CX == 0 && _TARGET_RISCV == 0` chains become
-unwieldy). Full scope and per-backend impact lives in the
-[v5.10.x section](#v510x--bare-metal-arc-agnos-kernel--risc-v-rv64).
+**Pinned 2026-05-05 at v5.8.65 close; re-pinned v5.10.x →
+v5.11.x at v5.9.7 ship** (the bare-metal/RISC-V cycle moved to
+v5.11.x). RISC-V landing as the 4th backend in v5.11.x triggers
+the path-A precondition #1 (`_TARGET_CX == 0 &&
+_TARGET_RISCV == 0` chains become unwieldy). Full scope and
+per-backend impact lives in the
+[v5.11.x section](#v511x--bare-metal-arc-agnos-kernel--risc-v-rv64).
 Reference: [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
 
 ### Extended dead-store elimination (cross-BB)
@@ -141,7 +145,7 @@ through stdlib, so the carve-out trigger fires. Targets: ~13
 data-domain modules (`json`, `toml`, `cyml`, `csv`, `base64`,
 `regex`, `math`, `matrix`, `linalg`, `bigint`, `u128`) fold-out
 into a `cyrius-data` sibling distlib using the v5.7.0
-sandhi-pattern. Bare-metal v5.10.0 benefits from a clean
+sandhi-pattern. Bare-metal v5.11.0 benefits from a clean
 primitives-only stdlib that doesn't drag the data offshoots into
 kernel objects. Full slot scope under the [v5.9.x section](#v59x--niyama-fold--sovereignty-pass-bash--cyrius).
 
@@ -184,10 +188,10 @@ heap reserved as documented headroom over the years:
 **Trigger conditions** (any one):
 1. **Pre-v6.0 closeout** — last v5.x minor before the v5→v6
    binary rename (`cc5` → `cyc`) absorbs this as the "tighten
-   everything" pass. v5.9.x is consumed by niyama fold +
-   sovereignty pass; v5.10.x by bare-metal + RISC-V; this
-   likely lands at v5.11.x or whatever the final v5.x minor
-   is before the v6.0.0 rename.
+   everything" pass. v5.9.x is cleanup + lib improvement;
+   v5.10.x is the open bug/optimization arc; v5.11.x is
+   bare-metal + RISC-V; this likely lands at v5.12.x or
+   whatever the final v5.x minor is before the v6.0.0 rename.
 2. **A region cap pressure** that would benefit from the closed
    gap — e.g., output_buf hitting 6 MB would naturally consume
    the gap to struct_ftypes.
@@ -242,36 +246,52 @@ during v5.8.x that may surface in v5.9.x or later.
   movabs rax, 0x7FFF...; mov rcx, rax; pop rax; and rax, rcx`
   may reduce to 3 bytes; preflight with bench delta.
 
-### Deferred to v5.10.x or later
+### Deferred to v5.11.x or later
 
 - **Class B FFI/wgpu fncall6 ABI** (mabda B1/B2). Mabda-only
   blast radius today; complex root-cause (ABI bug in Cyrius's
   fncall6 vs SysV AMD64 calling convention). Pairs naturally
-  with v5.10.x's bare-metal / RISC-V cycle when ABI invariants
-  get touched anyway.
+  with v5.11.x's bare-metal / RISC-V cycle when ABI invariants
+  get touched anyway. Could land in v5.10.x's bug arc if mabda
+  resurfaces it as blocking — slot-fits the open-bug theme.
 
 ---
 
 
-## v5.9.x — niyama fold + sovereignty pass (bash → cyrius)
+## v5.9.x — Cleanup + lib improvement
 
-**Theme**: clean-cut maintenance minor. Two work streams:
+**Theme** (re-framed at v5.9.7 ship per user direction): a
+cleanup-and-lib-improvement minor. The slot inventory ended up
+broader than the original "niyama fold + sovereignty pass"
+framing — what actually shipped through v5.9.7 spans niyama
+fold, bash-toolchain → cyrius dispatcher migration, two
+consumer-filed bug fixes (cyim BUG-001 args_init 4 KB cap;
+agnosys 1.1.0 derive 32-struct cap), a chain of three lib/fs.cyr
++ check.cyr bugs (testsuite-gate "0 files"), CI-deps hotfix,
+and a TS-acceptance helper template. The unifying theme is
+**the existing surface gets cleaner and stdlib gets richer
+before adding new platform/feature surface**, on the principle
+that more surface area to manage costs more in every future
+slot — better to clean what's there first.
+
+Three work streams (one originally-pinned, two emergent):
 
 1. **niyama fold-in** (v5.9.0) — vendor `niyama/dist/niyama.cyr`
    byte-identical into `lib/niyama.cyr` once niyama hits v1.0
    fold-ready bar (5 engines: bre / re2 / pcre / fuzzy / vim).
    Same sandhi-pattern mechanics as v5.7.0 (sandhi) and v5.8.65
-   (sakshi/patra/sigil/vani/yukti/sankoch). niyama upstream is
-   v0.1.0 scaffold as of 2026-05-03; engine work begins at M1
-   (POSIX BRE → v0.2.0). v5.9.0 fold conditional on niyama
-   reaching v1.0 — if it slips, the fold cascades to a v5.9.x
-   patch slot or to v5.10.x. Bare-metal scope is no longer
-   coupled here (moved to v5.10.x at v5.8.x close).
+   (sakshi/patra/sigil/vani/yukti/sankoch). Shipped v5.9.0.
 
 2. **Sovereignty pass — bash-toolchain → cyrius conversion**
    (v5.9.0 → v5.9.x). Forward-pinned 2026-05-04 at v5.8.58
    release-valve audit. ~8,500 LOC across ~75 files. Sized for
    a multi-slot cycle.
+
+3. **Consumer-filed bug fixes + lib improvements** (emergent
+   v5.9.5 onward) — args_init heap-backed buffer, derive-emitter
+   heap-layout reshuffle, lib/fs.cyr deep-copy + cstring-vs-Str
+   API contract fixes. The minor absorbs these as they land
+   rather than deferring them.
 
 ### Sovereignty pass scope (forward-pinned 2026-05-04)
 
@@ -453,20 +473,60 @@ at cycle entry):
     lint-global-init-order, syscall-surface-v5735,
     fuzz-deps-prepend, api-surface, cx-build, cx-roundtrip,
     cx-syscall-literal, cx-token-offsets. Mostly one-off ports.
-- **v5.9.9** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+- **v5.9.9** — **LSP feature additions**. Two LSP capabilities
+  promoted from "held forward / surfaces-on-ask" into a concrete
+  slot per user direction at v5.9.7 ship:
+  - **`textDocument/semanticTokens/full`** — token-coloring
+    response for editors whose textmate grammar can't satisfy
+    the request. ~150 LOC per LSP 3.16 spec; reuses the v5.7.39
+    cross-file symbol table.
+  - **`textDocument/references`** — find-all-uses on top of the
+    v5.7.39 symbol-table infrastructure. ~80 LOC.
+  - **`tests/regression-lsp-definition.sh` conversion** —
+    rolls in alongside the feature work since it's the same
+    subsystem; bespoke gate `_lsp_definition_gate` over a
+    LSP-protocol scaffolder fixture.
+  - Update `docs/cyrius-guide.md` LSP section to document the
+    new providers; regenerate any vidya entries that mention
+    "LSP definitionProvider + documentSymbol".
+- **v5.9.10** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-- **v5.9.10** — sovereignty pass: small utilities batch
+- **v5.9.11** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
-- **v5.9.11+** — `cyrius audit` fix slot (once user picks
+- **v5.9.12+** — `cyrius audit` fix slot (once user picks
   semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
-  redundancy cleanup (per v5.9.6 pin) + release-valve +
-  closeout per CLAUDE.md 11-step protocol.
+  redundancy cleanup (per v5.9.6 pin) + **`lib/regression.cyr`
+  testing-stdlib carve-out** (pinned at v5.9.7 ship per user
+  ask) + release-valve + closeout per CLAUDE.md 11-step
+  protocol.
+
+  **Testing-stdlib carve-out (pinned, design TBD)**: the v5.9.6
+  + v5.9.7 dispatcher gates accumulated a layer of reusable
+  primitives (`_stderr_match_subcase`, `_count_substr_buf`,
+  `_exec_with_arg_capture` + `_capture_both`,
+  `_compile_run_get_exit`, `_file_contains_substr`,
+  `_ts_mode_run`, `_cyrlint_count_marker`, `_compile_capture_stderr`,
+  `_exec_capture_clean`, `_exec_run_clean`,
+  `_expected_output_gate`, `_tcyr_relay_gate`) that other
+  consumers — yantra, downstream test suites in cyim / agnosys
+  / mabda, future test runners — could profitably share.
+  Carve them up into `lib/regression.cyr` so the dispatcher's
+  bespoke gates become thin wrappers and downstream consumers
+  can reach for the same shapes via a regular `include
+  "lib/regression.cyr"`. ~150-250 LOC migration; stdlib
+  module count 78 → 79; api-surface adds ~12-15 entries.
+  Tradeoff: new public surface to maintain vs. the dispatcher
+  becoming a single-purpose orchestrator that stops growing
+  primitives. Slot earns when v5.9.x .sh-conversion arc closes
+  out and the helper inventory has stabilized — do not
+  carve mid-arc, the API will keep churning until the dispatcher
+  has its full helper set.
 
 **KEEP-as-bash (intrinsic; sovereignty-allowed):**
 - `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`
@@ -492,9 +552,9 @@ the previously unpinned/long-term sections:
   v5.8.65 close): trigger was "post-v5.8.41 closeout, once
   language-vocabulary migration has rippled through stdlib."
   That precondition holds. v5.9.x is the natural fit because
-  the AGNOS bare-metal target at v5.10.x will want a clean
+  the AGNOS bare-metal target at v5.11.x will want a clean
   primitives-only stdlib (no data-domain modules pulled in).
-  Whether a separate v5.9.x slot or carried into v5.10.x kernel
+  Whether a separate v5.9.x slot or carried into v5.11.x kernel
   prep: **pin at v5.9.0 cycle entry** with empirical sizing.
   Carve-out targets: `json`, `toml`, `cyml`, `csv`, `base64`,
   `regex`, `math`, `matrix`, `linalg`, `bigint`, `u128` (~13
@@ -516,12 +576,6 @@ the previously unpinned/long-term sections:
 These remain unpinned long-term; promote to slot when a consumer
 concretely surfaces:
 
-- **LSP `textDocument/semanticTokens/full`** — earns slot when
-  an editor's textmate grammar can't satisfy a token-coloring
-  request.
-- **LSP `textDocument/references`** — easy add on top of
-  v5.7.39's symbol-table infrastructure (~80 LOC). Claims slot
-  when a downstream consumer asks.
 - **TS test harness program** (option E from v5.7.37) — single
   `programs/ts_test_runner.cyr` consuming both internal-symbol
   fn dispatch and TS fixture files. v5.7.37 group-level
@@ -529,21 +583,101 @@ concretely surfaces:
   surfaces a test pattern that doesn't fit either current
   shape.
 
+(LSP feature pins promoted to a concrete v5.9.x slot — see
+v5.9.9 entry above. They were `held forward` here pre-v5.9.7.)
+
 ---
 
-## v5.10.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64
+## v5.10.x — Open bug / optimization arc
+
+**Theme** (re-framed at v5.9.7 ship per user direction): a
+dedicated bug-backlog + perf-optimization minor. v5.9.x's
+"clean what's there before adding new surface" principle
+extends one minor — v5.10.x reduces existing surface area
+through bug-fix work and performance optimization rather than
+adding new platforms or feature surface (which costs more in
+every future slot).
+
+**Original v5.10.x content** — bare-metal/AGNOS kernel + RISC-V
+rv64 — pushed to v5.11.x. Both are parallel work tracks (kernel
+is downstream-driven by AGNOS; RISC-V is just-another-platform
+add); slip is fine, neither is hard-baked. RISC-V has slipped
+multiple minors with no pressure (no consumer surfaced); kernel
+has slipped four (v5.7 → .8 → .9 → .10 → .11) with AGNOS still
+unblocked-but-unrushed at its own pace.
+
+### v5.10.x — Slot inventory
+
+Categories the arc draws from (each individual slot picks
+work from one or more):
+
+- **Open bug fixes** — items already pinned in
+  `Long-term considerations`, `v5.8.x — Held items`, deferred
+  notes from v5.9.x slot retros, plus consumer-filed issues
+  that surface during the arc. Examples already on the docket:
+  - `aarch64/fixup.cyr:19` syscall arity warning (deferred from
+    v5.8.53; "likely benign lint, confirm or fix").
+  - macOS arm64 struct-by-value calling-convention path
+    (v5.5.36 deferred; surfaces on consumer cross-build).
+  - Any consumer reports landing during the arc (cyim,
+    agnosys, mabda, sigil, sakshi, etc.).
+- **Compile-time optimization** — the cyrius compiler's own
+  cycle time. Profile-driven; identify hot paths in cc5 →
+  trim allocations, inline hot fns, reshuffle heap regions
+  for cache locality, etc. Bench tier-2 (`scripts/bench-
+  history.sh --tier2`) tracks the floor.
+- **Runtime optimization** — code-emit improvements visible
+  in stdlib + downstream consumers. Patches like the v5.6.x
+  combine-shuttle peephole shape — earn slot when
+  microbenchmark or consumer profile surfaces.
+- **Surface review** — periodic cleanup of items that
+  accumulated through v5.9.x (e.g., the
+  tcyr-relay-vs-testsuite-gate redundancy pinned at v5.9.6,
+  the `cyrius audit` outside-repo behavior pinned at v5.9.4,
+  doc/vidya version-ref drift). Each gets a slot when
+  the cleanup makes sense.
+- **`lib/regression.cyr` testing-stdlib carve-out** (pinned
+  at v5.9.7 ship, see v5.9.x §) — earns a slot once the v5.9.x
+  helper inventory has stabilized post-arc-close.
+
+**No hard cap on slot count.** v5.10.x runs as long as the
+work is productive — could be 5 patches, could be 20. Slip is
+fine; the bug/optimization backlog isn't a deadline. When the
+backlog drains or AGNOS / RISC-V work concretely picks up,
+v5.11.0 cuts.
+
+### v5.10.x — Acceptance principle
+
+Each v5.10.x slot ships ONE thing — a single bug fix, one
+optimization, one cleanup. No bundled work; no "while we're
+in here" scope creep. The minor's value comes from each patch
+being independently auditable, not from a grand theme.
+
+---
+
+## v5.11.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64
+
+**Pushed from v5.10.x at v5.9.7 ship** per user direction:
+"kernel work is a parallel task and not hard baked... more the
+RISCV work has slipped but its fine as another platform is
+just another item to keep up to date." Both tracks are
+parallel/long-running and don't need a hard trigger; they land
+when their respective drivers (AGNOS kernel readiness,
+RISC-V consumer ask) line up with cycle availability. Slip is
+fine — the v5.10.x cleanup minor takes precedence on the
+principle of "fewer surface items to manage future slots."
 
 Two arch-port-style efforts grouped into one minor since both
 land at the "no libc, direct hardware / different ABI" layer.
-Moved from v5.9.x at v5.8.x close once it became clear v5.9.x
-is wholly consumed by the niyama fold + sovereignty pass.
 
-### v5.10.0 — Bare-metal / AGNOS kernel target
+### v5.11.0 — Bare-metal / AGNOS kernel target
 
 Bare-metal output (no libc, no syscalls, direct hardware).
-AGNOS kernel is the concrete consumer. Slid through multiple
-minors (v5.7.0 → v5.8.0 → v5.9.0 → **v5.10.0**). Details
-pinned closer to landing — rough scope:
+AGNOS kernel is the concrete consumer. Has slid four minors
+already (v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → **v5.11.0**); no
+hard trigger required — earns slot when AGNOS kernel work
+concretely needs the toolchain capability AND the v5.10.x
+backlog has drained enough to free a minor. Rough scope:
 
 - ELF no-libc output format
 - interrupt-handler emit conventions
@@ -552,16 +686,17 @@ pinned closer to landing — rough scope:
   13B (v5.6.29 gate)
 
 Acceptance: AGNOS kernel can be built end-to-end with the
-v5.10.0 toolchain; no host-libc symbols leak into the kernel
+v5.11.0 toolchain; no host-libc symbols leak into the kernel
 object.
 
-### v5.10.x — RISC-V rv64 (3-5 sub-patches)
+### v5.11.x — RISC-V rv64 (3-5 sub-patches)
 
 First-class RISC-V 64-bit target. Inherits a frontend-complete
 compiler against a clean toolchain UX with the full v5.7.x →
 v5.8.x prerequisite chain shipped, including the v5.7.30 +
 v5.7.31 aarch64 f64 pair that gives RISC-V a working
-f64-on-non-x87 reference.
+f64-on-non-x87 reference. Just-another-platform work; lands
+when scheduling allows.
 
 **RISC-V needs:**
 
@@ -594,23 +729,23 @@ f64-on-non-x87 reference.
 7. `[release]` table in `cyrius.cyml` gets a `cross_bins` entry
    for `cc5_riscv64`.
 
-### v5.10.x — Triggered prereq pin
+### v5.11.x — Triggered prereq pin
 
 - **Parser-to-emit named-op refactor (path A)** — pinned to
-  v5.10.x because RISC-V landing as the 4th backend triggers
+  v5.11.x because RISC-V landing as the 4th backend triggers
   the prior long-term pin's condition #1 ("RISC-V lands and
   adds 4th backend, making path B's `_TARGET_CX == 0 &&
   _TARGET_RISCV == 0` chains unwieldy at every site"). Scope:
   ~10 abstract ops × 4 backends = 40 fn definitions +
   parse_*.cyr rewrites. Multi-session real engineering. Pin at
-  v5.10.0 cycle entry; sequence before RISC-V backend
+  v5.11.0 cycle entry; sequence before RISC-V backend
   implementation if prudent (RISC-V starts with the named-op
   interface from day one — cleanest path). Audit doc:
   [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
 
-Deliberately NOT bundling other items into v5.10.x — bare-metal
-+ RISC-V are plenty of work. Bare-metal (v5.10.0) lands first;
-RISC-V picks up the rest of the v5.10.x range.
+Deliberately NOT bundling other items into v5.11.x — bare-metal
++ RISC-V are plenty of work. Bare-metal (v5.11.0) lands first;
+RISC-V picks up the rest of the v5.11.x range.
 
 ---
 
