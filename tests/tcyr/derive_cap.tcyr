@@ -1,0 +1,153 @@
+# derive_cap.tcyr — v5.9.5 regression for derive(accessors) past
+# the pre-v5.9.5 32-struct cap.
+#
+# Bug history: pre-v5.9.5, src/frontend/lex_pp.cyr's derive emitter
+# stored per-struct sizes/names in [32]-capped tables that overlapped
+# with the shared parse-state buffer (op at S+0x197400 fell inside
+# struct_names entries 23+; struct[33+]'s size store at
+# S+0x197008 + 32*8 = S+0x197108 overwrote struct_names[0]'s first
+# 8 bytes). Two surfaceable modes:
+#   - Mode 1 — clean truncation: 33rd struct's accessors silently
+#     fail to register; build warns "undefined function" and the
+#     binary SIGILLs at runtime when control reaches the missing
+#     accessor.
+#   - Mode 2 — prefix corruption: long struct names (≥24 chars)
+#     get their leading bytes overwritten by stuck-state reuse; the
+#     emitter emits accessors under corrupted names like
+#     `tate_slot` instead of `update_state_slot`.
+#
+# Filed by agnosys 1.0.10 V1.1.0 migration (pam + netns + update
+# modules pushed the integration test compilation past the cap):
+# `agnosys/docs/development/issues/2026-05-06-cyrius-derive-accessors-32-struct-cap.md`.
+#
+# Fix: v5.9.5 reshuffles the 0x197XXX layout so per-struct tables
+# (struct_sizes[64], struct_names[64*32]) live at 0x197500..0x197F00
+# entirely separate from the shared parse-state buffer at
+# 0x197008..0x1974E0. Cap raised 32 → 64.
+#
+# This file declares 36 derive(accessors) structs with
+# moderately-long names (≥24 chars in a few cases — exercises the
+# pre-v5.9.5 Mode 2 prefix-corruption shape) and calls every
+# accessor on heap-allocated instances. Pre-v5.9.5 the build emitted
+# undefined-fn warnings on the 33rd+ struct AND mis-named accessors
+# for any struct with a long name interacting with high indices;
+# either way the runtime calls would not resolve. Post-fix, all
+# accessors resolve and the runtime values round-trip.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+#derive(accessors)
+struct derive_cap_smoke_struct_01 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_02 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_03 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_04 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_05 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_06 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_07 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_08 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_09 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_10 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_11 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_12 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_13 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_14 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_15 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_16 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_17 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_18 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_19 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_20 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_21 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_22 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_23 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_24 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_25 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_26 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_27 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_28 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_29 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_30 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_31 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_32 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_33 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_34 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_35 { aaa; bbb; ccc; ddd; eee; }
+#derive(accessors)
+struct derive_cap_smoke_struct_36 { aaa; bbb; ccc; ddd; eee; }
+
+# Tests
+alloc_init();
+
+test_group("derive cap — past pre-v5.9.5 32-struct threshold");
+
+# struct[0] (first slot in derive table — pre-v5.9.5 most-corrupted
+# slot when struct[32]+'s size store overwrote 0x197108)
+var s01 = alloc(40);
+derive_cap_smoke_struct_01_set_aaa(s01, 1001);
+assert_eq(derive_cap_smoke_struct_01_aaa(s01), 1001, "struct[0] aaa round-trip");
+
+# struct[31] (last slot under pre-v5.9.5 cap)
+var s32 = alloc(40);
+derive_cap_smoke_struct_32_set_eee(s32, 3232);
+assert_eq(derive_cap_smoke_struct_32_eee(s32), 3232, "struct[31] eee round-trip");
+
+# struct[32] (33rd — first to exceed pre-v5.9.5 cap; pre-fix this
+# accessor was silently not emitted, build warned, runtime SIGILL'd)
+var s33 = alloc(40);
+derive_cap_smoke_struct_33_set_aaa(s33, 3333);
+assert_eq(derive_cap_smoke_struct_33_aaa(s33), 3333, "struct[32] aaa — past pre-v5.9.5 cap");
+derive_cap_smoke_struct_33_set_eee(s33, 7777);
+assert_eq(derive_cap_smoke_struct_33_eee(s33), 7777, "struct[32] eee — past pre-v5.9.5 cap");
+
+# struct[35] (36th — well past pre-v5.9.5 cap; agnosys saw multiple
+# accessor families fail at this depth)
+var s36 = alloc(40);
+derive_cap_smoke_struct_36_set_aaa(s36, 3601);
+derive_cap_smoke_struct_36_set_bbb(s36, 3602);
+derive_cap_smoke_struct_36_set_ccc(s36, 3603);
+derive_cap_smoke_struct_36_set_ddd(s36, 3604);
+derive_cap_smoke_struct_36_set_eee(s36, 3605);
+assert_eq(derive_cap_smoke_struct_36_aaa(s36), 3601, "struct[35] aaa");
+assert_eq(derive_cap_smoke_struct_36_bbb(s36), 3602, "struct[35] bbb");
+assert_eq(derive_cap_smoke_struct_36_ccc(s36), 3603, "struct[35] ccc");
+assert_eq(derive_cap_smoke_struct_36_ddd(s36), 3604, "struct[35] ddd");
+assert_eq(derive_cap_smoke_struct_36_eee(s36), 3605, "struct[35] eee");
+
+var r = assert_summary();

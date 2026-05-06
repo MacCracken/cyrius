@@ -5,6 +5,74 @@
 
 ## Version
 
+**5.9.5** (shipped 2026-05-06 — **v5.9.x SLOT 5 — two consumer-
+filed bug fixes**. Both surfaced 2026-05-06 with detailed
+reproducers + suggested fixes from downstream repos.
+
+(1) cyim BUG-001: `lib/args.cyr` `args_init()` read
+`/proc/self/cmdline` into a 4096-byte stack buffer; argv > 4063
+bytes truncated silently and `argc()` undercounted. Linux
+ARG_MAX is 2 MB — the cap rejected ~99.8% of valid argv. Fixed
+by switching to `alloc(2097152)` heap-backed buffer. Verified
+locally: 8192-byte arg → `argc() == 2` post-fix (vs `argc() == 1`
+pre-fix).
+
+(2) agnosys 1.1.0 blocker: `src/frontend/lex_pp.cyr`'s derive
+emitter shared one 4 KB heap region for both per-struct tables
+([32] cap) AND shared parse-state buffers, with overlapping
+extents — struct_names[31] reached past the op slot at 0x197400,
+and the 33rd struct's size store at 0x197008 + 32*8 = 0x197108
+overwrote struct_names[0]'s first 8 bytes. Two surface modes:
+clean truncation (33rd struct's accessors silently fail to
+register; binary SIGILLs at runtime when the missing accessor is
+reached) and prefix corruption (struct[0]'s name first 8 chars
+overwritten, e.g., `update_state_X` emitted as `tate_X`). Fixed
+by reshuffling the 0x197XXX layout: per-struct tables move to
+the high half (0x197500..0x197F00) entirely separate from
+shared parse-state in the low half (0x197008..0x1974E0). Cap
+raised 32 → 64. All ~109 offset references in lex_pp.cyr
+updated via two-step token swap; external callers
+(src/main.cyr, src/main_win.cyr, src/common/util.cyr) only
+touch 0x197000 and 0x197F00, both unchanged. Verified against
+the agnosys reproducer at `/tmp/cyrius-derive-truncation/`:
+threshold probe N=28..36 reports 0 undefined-fn warnings
+post-fix (pre-fix: 0,0,0,0,0,1,1,2,2); the 37-struct
+minimal_repro builds clean and runs to exit 0 (pre-fix: 12+
+undefined-fn warnings, SIGILL exit 132). Added
+`tests/tcyr/derive_cap.tcyr` (36 derive structs across the
+pre-v5.9.5 cap, 9 assertions) as the regression floor.
+
+cc5: **741,048 B unchanged** — heap-layout reshuffle, no
+code-size change. Two-step self-host byte-identical.
+
+**Premise-check at slot entry**: both bugs filed with full
+reproducers + suggested fixes, so the slot's ambiguity was
+bounded — investigate, confirm, implement, regression-test,
+ship. The derive bug analysis revealed the root cause was BOTH
+a fixed [32] cap AND a heap-region overlap (struct_names[23+]
+overlapping with op at 0x197400), so the fix had to address
+both in the same reshuffle. Cap-only-bump would still leave
+struct_names[39+] overlapping op in the new range, so clean
+separation was the right call.
+
+**Verification**: check.sh 65/65 green; cyrius test 104/104
+including new derive_cap.tcyr (9 assertions); cc5 self-host
+byte-identical; both consumer reproducers re-checked locally
+post-fix.
+
+**Roadmap pins (NOT fixed this slot)**: (a) args_init >4 KB
+arg regression test earned its own slot — needs a CLI-arg-
+passing harness; deferred alongside batch 3/3. (b) check.sh
+`_testsuite_gate` reports "0 files" (pre-existing; predates
+v5.9.5); cyrius test discovers them fine, so test coverage
+isn't lost — but the dispatcher's duplicate walk earns a
+separate fix slot.
+
+**Next**: v5.9.6 — sovereignty pass batch 3/3 (cross-host SSH
+gates + TS acceptance cluster + shared-library cyrius-side
+test) + args_init regression harness. v5.9.7+ inherits from
+the v5.9.4 roadmap.)
+
 **5.9.4** (shipped 2026-05-06 — **v5.9.x SLOT 4 — CI hotfix +
 `cyrius audit` review pin**. Post-v5.9.3 push surfaced a CI
 failure: `.github/workflows/ci.yml`'s `Test (ubuntu)` job

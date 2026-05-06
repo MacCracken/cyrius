@@ -6,6 +6,122 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.5] — 2026-05-06
+
+**v5.9.x SLOT 5 — two consumer-filed bug fixes**. Both surfaced
+2026-05-06 from downstream repos with full reproducers + suggested
+fixes:
+
+1. **`lib/args.cyr` 4 KB stack-buffer truncation** (cyim BUG-001).
+   `args_init()` read `/proc/self/cmdline` into a 4096-byte stack
+   buffer; argv > 4063 bytes truncated silently and `argc()`
+   undercounted, causing downstream verbs to fall through to "usage"
+   error branches. Threshold bisected at 4063 / 4064 byte boundary.
+   Linux ARG_MAX is 2 MB — the cap rejected ~99.8% of valid argv.
+   Unchanged across cyrius 5.7.5 → 5.9.4 (six minors); fixed in
+   v5.9.5. Filed at
+   `cyim/docs/development/issues/2026-05-06-cyrius-args-init-4kb-cap.md`.
+
+2. **`#derive(accessors)` 32-struct cap + prefix corruption**
+   (agnosys 1.1.0 blocker). `src/frontend/lex_pp.cyr`'s derive
+   emitter shared the same 0x197XXX 4 KB region for both per-struct
+   tables (struct_sizes[32] at 0x197008, struct_names[32×32] at
+   0x197108) AND shared parse-state (op at 0x197400, field_count
+   at 0x197500, etc.). struct_names entries 23+ overlapped with op;
+   the size store for the 33rd struct (`store64(S + 0x197008 + 32*8,
+   ...)` = `store64(S + 0x197108, ...)`) overwrote struct_names[0]'s
+   first 8 bytes. Two surface modes:
+   - Mode 1 (clean truncation): 33rd struct's accessors silently
+     not registered → undefined-fn warnings → SIGILL at runtime.
+   - Mode 2 (prefix corruption): struct[0]'s name gets first 8 chars
+     overwritten by struct[32]'s size store; emitter generates
+     accessors as `tate_X` instead of `update_state_X`.
+   Build still exits 0 in both modes — silent breakage. Filed at
+   `agnosys/docs/development/issues/2026-05-06-cyrius-derive-accessors-32-struct-cap.md`.
+
+cc5: **741,048 B unchanged** — heap-layout reshuffle, no code-size
+change. Two-step self-host byte-identical.
+
+### Changed
+
+- **`lib/args.cyr` — `args_init()`**: replaced fixed 4 KB stack
+  buffer with a 2 MB heap-backed buffer (`alloc(2097152)`). Linux
+  ARG_MAX = 2 MB matches the kernel's hard cap on argv+envp
+  combined; `alloc()` lazy-inits the heap via the v5.8.37
+  auto-bootstrap so calling `args_init()` first-thing still works.
+  Added `include "lib/alloc.cyr"` inside the
+  `#ifdef CYRIUS_TARGET_LINUX` block so the file is self-contained
+  for cyrlint walks. macOS `lib/args_macos.cyr` is unaffected (it
+  reads from kernel-stashed `x28`, not /proc/self/cmdline).
+
+- **`src/frontend/lex_pp.cyr` — derive-state heap layout reshuffle**:
+  separated per-struct tables from shared parse-state buffer and
+  bumped the cap 32 → 64. New layout (4 KB region 0x197000..0x198000):
+  - `0x197000`: derive_count (8 bytes — unchanged)
+  - `0x197008..0x1974E0`: shared parse-state (op, field_count,
+    cumul, sname, field_names, field_types, field_offsets) — moved
+    to low half
+  - `0x197500..0x197700`: struct_sizes[64] (512 bytes — was 32 at
+    0x197008)
+  - `0x197700..0x197F00`: struct_names[64×32] (2048 bytes — was 32
+    at 0x197108)
+  - `0x197F00..0x197F08`: include count (8 bytes — unchanged)
+  - `0x197F10..0x197F50`: pp_state[64] (unchanged)
+
+  All ~109 offset references in `src/frontend/lex_pp.cyr` updated
+  via two-step token swap (no collisions). External callers
+  (`src/main.cyr` line 672, `src/main_win.cyr` line 316,
+  `src/common/util.cyr` line 487) only touch 0x197000 and
+  0x197F00 — both unchanged.
+
+### Added
+
+- **`tests/tcyr/derive_cap.tcyr`** — 36 `#derive(accessors)`
+  structs, calls accessors on heap instances at struct[0]
+  (pre-v5.9.5 most-corrupted slot), struct[31] (last under
+  pre-v5.9.5 cap), struct[32] (33rd — first past pre-v5.9.5 cap),
+  struct[35] (well past pre-v5.9.5 cap). 9 assertions; pre-v5.9.5
+  the 33rd+ accessor calls would resolve as undefined-fn warnings
+  at compile and SIGILL at runtime. tcyr ordering note:
+  `alloc_init();` MUST come AFTER all `#derive(...)` directives —
+  putting any non-include statement between an include block and a
+  `#derive` directive corrupts the PP output and yields an
+  `unexpected struct` parse error. Pre-existing PP behavior;
+  documented in the regression's leading comment.
+
+### Verification
+
+- args_init smoke (local): 8192-byte single arg → `argc()` returns
+  2 (program + arg). Pre-fix returned 1 (program only — arg lost).
+- derive cap smoke (local, agnosys reproducer at
+  `/tmp/cyrius-derive-truncation/`):
+  - `threshold_probe.sh` N=28..36: all 0 undefined-fn warnings.
+    Pre-fix: 0,0,0,0,0,1,1,2,2.
+  - `minimal_repro` (37 derive structs, agnosys-flavor names):
+    builds clean (0 warnings), runs to exit 0 with correct output
+    `1\n100\n200\n300`. Pre-fix: 12+ undefined-fn warnings, exit
+    132 (SIGILL).
+- Self-host: cc5 → cc5b byte-identical (741,048 B unchanged).
+  Heap-layout change only; no code-size change because the
+  reshuffle moves code-emit positions but doesn't add/remove code.
+- check.sh: 65/65 gates green, exit 0.
+- `cyrius test`: 104/104 pass including new `derive_cap.tcyr`
+  (9 assertions).
+
+### Roadmap pin (NOT fixed this slot)
+
+- **`args_init` regression test** earned its own slot — needs a
+  CLI-arg-passing harness (build a binary that prints `argc()`,
+  fork+exec it with a >4096-byte arg, parse stdout). The bespoke
+  gate is more involved than the existing helpers; deferred to
+  v5.9.6 alongside batch 3/3 of the sovereignty pass.
+- **`check.sh` test-suite gate reports "0 files"** — pre-existing
+  bug (predates v5.9.5; `_testsuite_gate` in `programs/check.cyr`
+  walks `tests/tcyr/` via `dir_list` but `total = 0` consistently).
+  `cyrius test` works fine and discovers all 104 .tcyr files. Test
+  coverage is preserved via `cyrius test`; the dispatcher's
+  duplicate walk earns a separate fix slot.
+
 ## [5.9.4] — 2026-05-06
 
 **v5.9.x SLOT 4 — CI hotfix + `cyrius audit` review pin**.

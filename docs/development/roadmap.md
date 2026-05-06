@@ -376,9 +376,38 @@ at cycle entry):
   update: extend `feedback_archive_dont_delete_docs` from
   doc-only to test-script-too — grep `.github/workflows/`
   before deleting any file the dispatcher consolidated.
-- **v5.9.5** — sovereignty pass batch 3/3: continue
-  `tests/regression-*.sh` (38 scripts remaining). Categories
-  earned for this slot:
+- **v5.9.5** ✅ — **two consumer-filed bug fixes shipped 2026-05-06**.
+  (a) **cyim BUG-001 — `lib/args.cyr` 4 KB stack-buffer
+  truncation**: `args_init()` switched from 4096-byte stack
+  buffer to 2 MB heap-backed buffer (`alloc(2097152)` matches
+  Linux ARG_MAX). Threshold pre-fix: argv > 4063 bytes silently
+  truncated; verified 8192-byte arg → `argc() == 2` post-fix.
+  (b) **agnosys 1.1.0 blocker — `#derive(accessors)` 32-struct
+  cap + prefix corruption**: `src/frontend/lex_pp.cyr` derive-
+  state heap layout reshuffled, separating per-struct tables
+  (struct_sizes[64], struct_names[64×32] at 0x197500..0x197F00)
+  from shared parse-state buffer (op, field_count, cumul, sname,
+  field_names, field_types, field_offsets at
+  0x197008..0x1974E0). Cap raised 32 → 64. All ~109 offset
+  references in lex_pp.cyr updated; external callers
+  (src/main.cyr, src/main_win.cyr, src/common/util.cyr) only
+  touch 0x197000 and 0x197F00 — both unchanged. Verified against
+  agnosys repro: N=28..36 threshold probe all 0 warnings (was
+  0,0,0,0,0,1,1,2,2); 37-struct minimal_repro builds clean +
+  runs to exit 0 (was 12+ warnings + SIGILL exit 132). Added
+  `tests/tcyr/derive_cap.tcyr` (36 derive structs, 9 assertions).
+  cc5 unchanged at 741,048 B; two-step self-host byte-identical;
+  65/65 check.sh green; 104/104 cyrius test green.
+- **v5.9.6** — sovereignty pass batch 3/3: continue
+  `tests/regression-*.sh` (38 scripts remaining) + **args_init
+  >4 KB arg regression harness** (deferred from v5.9.5; needs
+  CLI-arg-passing helper that builds a binary, fork+execs with
+  one >4 KB arg, captures stdout, parses argc count). Plus
+  pre-existing `check.sh _testsuite_gate "0 files"` audit (the
+  dispatcher's tcyr walk doesn't discover files; cyrius test
+  works fine, so coverage isn't lost — earn a fix slot to
+  reconcile the duplicate walk). Categories earned for the
+  regression-*.sh batch:
   - **Cross-host SSH gates** (8 scripts): aarch64-syscalls,
     aarch64-native-selfhost, macho-exit, pe-exit, sit-status,
     tls-live, aarch64-f64, aarch64-f64-polyfill. Skip-if-
@@ -408,17 +437,17 @@ at cycle entry):
     lint-global-init-order, syscall-surface-v5735,
     fuzz-deps-prepend, api-surface, cx-build, cx-roundtrip,
     cx-syscall-literal, cx-token-offsets. Mostly one-off ports.
-- **v5.9.6** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+- **v5.9.7** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-- **v5.9.7** — sovereignty pass: small utilities batch
+- **v5.9.8** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
-- **v5.9.8+** — `cyrius audit` fix slot (once user picks
+- **v5.9.9+** — `cyrius audit` fix slot (once user picks
   semantics per v5.9.4 pin) + release-valve + closeout per
   CLAUDE.md 11-step protocol.
 
