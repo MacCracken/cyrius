@@ -403,6 +403,33 @@ Deferred to v5.6.x+:
 - **v5.7.49 — ecosystem deps refresh**: 5 of 6 deps bumped — sakshi 2.0.0 → 2.2.2, patra 1.9.0 → 1.9.2, sigil 2.9.3 → **3.0.0** (major; audited safe — cyrius doesn't consume sigil API), yukti 2.1.1 → 2.2.1, sankoch 2.1.0 → 2.2.3; agnosys 1.0.4 transitive refresh. Mabda held at 2.5.0 — v3.0.0-rc.2 in soak; cyrius doesn't consume mabda's API so the hold is cost-free. cc5 byte-identical at 720,928 B (data-only refresh).
 - **v5.7.50 — pre-v5.8.0 P(-1) unblock (true final v5.7.x patch)**: pre-v5.8.0 P(-1) audit (`docs/audit/2026-05-01-pre-5.8.0-audit.md`) surfaced one BLOCKER — `cyrius bench` and `cyrius test` both failing at compile time with `error:lib/patra.cyr:101: undefined variable 'SYS_LSEEK'`. Root cause: cyrius's own `cyrius.cyml` was missing the `[deps].stdlib` auto-prepend block that every other consumer has had since their respective folds. Latent at v5.7.48 (patra 1.9.0 had the same SYS_LSEEK refs); only surfaced when P(-1) ran `cyrius bench` end-to-end (check.sh-based closeouts don't go through auto-prepend). Single-issue config-only fix: 19-module `[deps].stdlib` block added (union of every dep's own stdlib needs at v5.7.49 pin time). cc5 unchanged at 720,928 B; `cyrius bench` 15/15 PASS (was 2/13); check.sh 64/64. **The .50 headroom held open from v5.7.42 closeout planning was used for exactly this kind of late-cycle finding — used once, retired.** v5.8.x slot list opens with a clean `cyrius bench` baseline.
 
+## v5.9.0 — niyama fold-in (sandhi-pattern) — 2026-05-06
+
+v5.9.x cycle opens with the niyama regex distlib fold. Eighth
+sibling distfile vendored byte-identical into `lib/`. cc5
+unchanged at **741,048 B** — foldin is `lib/` content only;
+the compiler binary doesn't include niyama.
+
+- **`lib/niyama.cyr`** — 6,664 lines vendored byte-identical
+  from niyama 1.0.1 `dist/niyama.cyr` (sha256 `4f6bf9fd...4fe06a`).
+  Five regex engines (bre / re2 / pcre / fuzzy / vim) + 2 shared
+  modules (posix_classes + unicode_props), inlined via
+  `cyrius distlib` against niyama's new `[lib] modules = [...]`
+  block. Public API surface frozen per niyama ADR 0010.
+- **niyama ADR 0011 → Triggered** (2026-05-06 via cyrius v5.9.0).
+  Multi-consumer gate met by cyim (#1, active) + queued AGNOS
+  bare-metal kernel (#2, v5.10.0). niyama-the-repo enters
+  fold-maintenance mode.
+- **niyama 1.0.0 → 1.0.1 patch** corrected a v1.0.0 dist defect
+  (the originally-shipped manifest scaffold had unresolved
+  `include "src/*.cyr"` paths that would have dangled at fold
+  time; v1.0.1 wired the [lib] block + regenerated via the
+  canonical bundling tool).
+- **api-surface snapshot regenerated** — 2,725 → 2,760 public
+  fns (+35 from niyama; non-breaking). check.sh 65/65.
+- **README.md / state.md / docs/ecosystem.md** all synced with
+  the v5.9.0 fold-in lineage entry.
+
 ## v5.8.0–v5.8.65 — Optimization + language-vocabulary stabilization (closed; 65 patches, 2026-05-01 → 2026-05-05)
 
 **Theme**: Bug-fix + optimization minor that folds forward language-feature suites originally pinned for v5.10–v5.12: slices (6-patch true-completion arc), effect annotations, tagged unions with exhaustive match, `Result<T,E>` with `?` propagation, and allocators-as-parameter. Strategic re-theming compresses 4–5 separate minors into one cycle, letting hisab and downstream consumers port once instead of across v5.9–v5.12. Coherent with optimization theme — `Result` optimizes -1/0/errno paths; allocator parameters enable per-request arenas; slices optimize crypto/network/I/O hot paths.

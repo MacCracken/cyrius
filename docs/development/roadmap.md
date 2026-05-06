@@ -26,10 +26,10 @@ sigil / vani / yukti / sankoch). cc5 720,928 → 741,048 B
 
 ## Long-term considerations (no version pin yet)
 
-Items deferred without a v5.6.x or v5.7.x slot. Add to a future
-minor only when the right preconditions land — typically when
-v5.6.19 regalloc + cross-BB liveness machinery exists to make a
-meaningful version land cleanly.
+Items still without a slot pin after the v5.8.65 audit. Items
+that earned a v5.9.x or v5.10.x pin during the audit have moved
+to those sections; what remains here is genuinely waiting on a
+trigger condition.
 
 ### `.gnu.hash` for shared-object emission
 
@@ -85,78 +85,14 @@ chains can span BBs and the cascade math changes — copy-prop
 might earn its keep alongside register-renaming opportunities
 the regalloc surfaces.
 
-### Parser-to-emit named-op refactor (path A from v5.7.12 inventory)
+### Parser-to-emit named-op refactor (path A) — pinned to v5.10.x
 
-**Status**: pinned long-term 2026-04-27 after v5.7.12 took
-path B (`_TARGET_CX == 0` guards on ~10 sites). The path A
-refactor is the right long-term architecture; v5.7.12 ships
-the tactical fix without committing to it.
-
-**The problem path A solves**: `parse_*.cyr` directly emits
-x86 instruction bytes via `EB(S, 0xNN)` / `E2(S, 0xNNNN)` /
-`E3(S, 0xNNNNNN)` calls in shared codepaths. Each backend
-(x86, aarch64, cx, future-RISC-V) has to either map those
-literal bytes to its own emit (cx already does, but x86 hex
-literals aren't CYX opcodes) or guard the site
-arch-conditionally. Path B chose the latter; path A would
-replace every direct emit with a named abstract op that each
-backend implements natively.
-
-**Scope estimate** (per the v5.7.12 inventory at
-[`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md)):
-- ~10 distinct logical sites at v5.7.11. Each is a 3-12 byte
-  x86 sequence that needs a single named op in each backend.
-- Roughly: 10 new abstract ops × 3 backends (= 4 with RISC-V)
-  = 30-40 fn definitions, plus rewriting the 10 parse_*.cyr
-  call sites to use the named ops.
-- Multi-session real engineering. Not a wedge.
-
-**Trigger conditions** (any one):
-
-1. **RISC-V (v5.7.26-v5.7.30) lands and adds 4th backend**, making
-   path B's `_TARGET_CX == 0 && _TARGET_RISCV == 0` chains
-   unwieldy at every site.
-2. **2+ new direct-emit sites slip past the static-analysis
-   gate** (TBD if a regex-scanner check.sh gate gets added in
-   the v5.7.x cycle). If parse_*.cyr drift recurs, path A
-   becomes the durable fix.
-3. **A bytecode VM consumer surfaces** that needs the cx
-   backend to handle ops path B currently no-ops (f64,
-   struct return, regalloc). Adding those one at a time to
-   cx would expose the same architectural mismatch path A
-   solves once.
-
-**Per-backend impact** when path A lands:
-- x86 emit: every existing direct-byte sequence in
-  `parse_*.cyr` becomes a 1-line wrapper in `backend/x86/emit.cyr`
-  (mostly already wrapped — EMOVCA, EADDR, ESUBR, etc.).
-  Direct-emit sites in parse_*.cyr replaced with named ops.
-  Byte-identity must hold (the new named op emits the same
-  bytes the old direct call did).
-- aarch64 emit: implements the same named ops with aarch64
-  encodings. Many already exist; the new ones map to
-  patterns currently handled by `if (_AARCH64_BACKEND == 1)`
-  branches (which path B leaves in place).
-- cx emit: implements the named ops as CYX bytecode opcodes —
-  THIS is where the real semantic work happens. Half the
-  v5.7.12 path-B sites are currently no-ops on cx;
-  path A forces a real CYX opcode for each (which means
-  cxvm interpreter changes too, in lockstep).
-- RISC-V emit: starts with the named-op interface from day
-  one. Cleanest backend addition path.
-
-**Why deferred**: v5.7.12 needs to STOP THE BLEEDING (cx
-output is x86 noise + valid CYX interleaved) on a tractable
-budget. Path B does that in ~50 LOC. Committing to path A's
-30-40 fn definitions + cxvm coordination + byte-identity
-across 3 backends is a different scope category. Defer until
-a trigger fires.
-
-**Reference**: full inventory + per-site classification at
-`docs/audit/2026-04-27-cx-direct-emit-inventory.md`. When a
-trigger fires, the audit doc is the starting point — every
-class B/C/D site listed there becomes a named-op design
-decision in path A.
+**Pinned 2026-05-05 at v5.8.65 close.** RISC-V landing as the
+4th backend in v5.10.x triggers the path-A precondition #1
+(`_TARGET_CX == 0 && _TARGET_RISCV == 0` chains become
+unwieldy). Full scope and per-backend impact lives in the
+[v5.10.x section](#v510x--bare-metal-arc-agnos-kernel--risc-v-rv64).
+Reference: [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
 
 ### Extended dead-store elimination (cross-BB)
 
@@ -197,62 +133,17 @@ plan already exists (`ir_copyprop_recon` and `ir_extdse_recon`
 prototypes lived in `src/common/ir.cyr` during v5.6.19 evaluation,
 and the data structures + gate criteria are documented above).
 
-### Stdlib data-domain distlib carve-out (sibling-repo consolidation)
+### Stdlib data-domain distlib carve-out — pinned to v5.9.x
 
-**Status**: long-term thought captured 2026-05-01 during the
-v5.8.x slot-pinning conversation. Not pinned to any minor; revisit
-post-v5.8.x when the language vocabulary stabilizes and hisab-
-class consumers have ported.
-
-**The idea**: extend the v5.7.0 sandhi-fold precedent (HTTP/RPC
-moved out of stdlib into a sibling distlib) across the rest of
-the data-domain stdlib modules. Cyrius core retains primitives
-(syscalls, alloc, str/string, vec, hashmap, fmt, io, fs); the
-"data offshoots" (json, toml, cyml, csv, base64, regex, math,
-matrix, linalg, bigint, u128) carve out into a new sibling-
-distlib repo. Consumers pull what they need via `[deps.<name>]`:
-
-```
-[deps.core]   = "cyrius-core"   (always — language primitives)
-[deps.json]   = "cyrius-data"   (modules = ["dist/json.cyr"])
-[deps.math]   = "cyrius-data"   (modules = ["dist/math.cyr", "dist/matrix.cyr"])
-[deps.regex]  = "cyrius-data"   (modules = ["dist/regex.cyr"])
-```
-
-**Why the precedent fits**: sandhi proved the model works (clean-
-break fold at minor cut, byte-identical distfile, consumer
-adopts `[deps.<name>]` line, stdlib surface trims). Each carve-
-out shrinks cyrius's stdlib footprint without changing what
-consumers can build with the toolchain. Downstream usage gets
-cleaner — projects pull only what they touch instead of
-inheriting the kitchen-sink.
-
-**Why deferred (not v5.8.x scope)**: the v5.8.x cycle is already
-folding 5 language features forward; adding a 13-module-carve-out
-would blow scope. More importantly, the v5.8.x language-
-vocabulary work (slices / Result / allocators) WILL touch these
-modules' APIs (`json.cyr` parses via `Result<Value, JsonError>`,
-`vec_push` takes an allocator). Carving them out before the API
-shape stabilizes means re-folding right after — wasted motion.
-
-**Trigger to pin**: post-v5.8.41 closeout, once the language-
-vocabulary migration has rippled through stdlib. At that point
-each carve-out is a clean lift-and-shift (no API churn imminent).
-Likely v5.9.x consideration if the carve-out aligns with bare-
-metal needs (kernel target may want NO data-distlib, just
-core), or v6.0.0 cleanup if held longer.
-
-**Out of scope for this entry**: the specific repo split (one
-big "cyrius-data" sibling vs. multiple narrow ones — `cyrius-
-json` / `cyrius-math` / `cyrius-regex`). Pin that decision when
-the trigger fires. Sandhi is one repo with `dist/sandhi.cyr` —
-multiple-modules-per-distlib pattern works.
-
-**Why `dep.core` matters as a primitive**: separating "language
-primitives the compiler needs to see" from "stdlib modules
-consumers may opt into" makes bare-metal targets cleaner —
-the AGNOS kernel target (v5.9.0) only needs the primitives.
-Today there's no clean line; this carve-out draws it.
+**Pinned 2026-05-05 at v5.8.65 close.** The v5.8.x language-
+vocabulary migration (slices / Result / allocators) has rippled
+through stdlib, so the carve-out trigger fires. Targets: ~13
+data-domain modules (`json`, `toml`, `cyml`, `csv`, `base64`,
+`regex`, `math`, `matrix`, `linalg`, `bigint`, `u128`) fold-out
+into a `cyrius-data` sibling distlib using the v5.7.0
+sandhi-pattern. Bare-metal v5.10.0 benefits from a clean
+primitives-only stdlib that doesn't drag the data offshoots into
+kernel objects. Full slot scope under the [v5.9.x section](#v59x--niyama-fold--sovereignty-pass-bash--cyrius).
 
 ### Heap-map full reorganization (pre-v6.0 hardening pin)
 
@@ -291,9 +182,12 @@ heap reserved as documented headroom over the years:
 - Two-step bootstrap audit at byte-identity criticality
 
 **Trigger conditions** (any one):
-1. **Pre-v6.0 closeout** — last v5.x minor (likely v5.9.x tail or
-   a dedicated v5.10.x hardening minor) absorbs this as the
-   "tighten everything" pass before the v5→v6 binary rename.
+1. **Pre-v6.0 closeout** — last v5.x minor before the v5→v6
+   binary rename (`cc5` → `cyc`) absorbs this as the "tighten
+   everything" pass. v5.9.x is consumed by niyama fold +
+   sovereignty pass; v5.10.x by bare-metal + RISC-V; this
+   likely lands at v5.11.x or whatever the final v5.x minor
+   is before the v6.0.0 rename.
 2. **A region cap pressure** that would benefit from the closed
    gap — e.g., output_buf hitting 6 MB would naturally consume
    the gap to struct_ftypes.
@@ -348,188 +242,232 @@ during v5.8.x that may surface in v5.9.x or later.
   movabs rax, 0x7FFF...; mov rcx, rax; pop rax; and rax, rcx`
   may reduce to 3 bytes; preflight with bench delta.
 
-### Deferred to v5.9.x or later
+### Deferred to v5.10.x or later
 
 - **Class B FFI/wgpu fncall6 ABI** (mabda B1/B2). Mabda-only
   blast radius today; complex root-cause (ABI bug in Cyrius's
   fncall6 vs SysV AMD64 calling convention). Pairs naturally
-  with v5.9.x's bare-metal / RISC-V cycle when ABI invariants
+  with v5.10.x's bare-metal / RISC-V cycle when ABI invariants
   get touched anyway.
 
 ---
 
-## v5.9.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64 + sovereignty pass
 
-Three arc-style efforts grouped into one minor:
-1. **Bare-metal output** (no libc, direct hardware) for the AGNOS
-   kernel. The original v5.9.x theme.
-2. **RISC-V rv64 port** — arch port at the "no libc, different ABI"
-   layer.
-3. **Sovereignty pass** — bash-toolchain conversion to cyrius. Pinned
-   forward at v5.8.58 release-valve from the audit findings.
+## v5.9.x — niyama fold + sovereignty pass (bash → cyrius)
 
-The sovereignty arc was added 2026-05-04 after the v5.8.x cycle
-retired Python entirely (`scripts/gen-unicode-data.py` → native
-`programs/gen_unicode_data.cyr` at v5.8.57). The remaining sovereignty
-debt is bash, not Python — too large to cram into v5.8.x's wind-down,
-sized correctly for a v5.9.0 cycle theme.
+**Theme**: clean-cut maintenance minor. Two work streams:
 
-Original framing carried forward: "Two arch-port-style efforts grouped
-into one minor since both land at the 'no libc, direct hardware/
-different ABI' layer." Moved from v5.8.x at 2026-05-01 v5.7.49 ship —
-v5.8.x became the slices true-completion + language-feature arc
-instead (slot-map cascade +6 at v5.8.14 absorbed the deferred §6-§11
-work; sub-arc through v5.8.18 = halfway mark); arch-port work needs
-its own dedicated cycle.
+1. **niyama fold-in** (v5.9.0) — vendor `niyama/dist/niyama.cyr`
+   byte-identical into `lib/niyama.cyr` once niyama hits v1.0
+   fold-ready bar (5 engines: bre / re2 / pcre / fuzzy / vim).
+   Same sandhi-pattern mechanics as v5.7.0 (sandhi) and v5.8.65
+   (sakshi/patra/sigil/vani/yukti/sankoch). niyama upstream is
+   v0.1.0 scaffold as of 2026-05-03; engine work begins at M1
+   (POSIX BRE → v0.2.0). v5.9.0 fold conditional on niyama
+   reaching v1.0 — if it slips, the fold cascades to a v5.9.x
+   patch slot or to v5.10.x. Bare-metal scope is no longer
+   coupled here (moved to v5.10.x at v5.8.x close).
 
-### v5.9.x — Sovereignty pass scope (forward-pinned 2026-05-04)
+2. **Sovereignty pass — bash-toolchain → cyrius conversion**
+   (v5.9.0 → v5.9.x). Forward-pinned 2026-05-04 at v5.8.58
+   release-valve audit. ~8,500 LOC across ~75 files. Sized for
+   a multi-slot cycle.
 
-Inventory captured at v5.8.58 release-valve audit:
+### Sovereignty pass scope (forward-pinned 2026-05-04)
+
+Inventory (LOC + priority):
 
 | Target | LOC | Effort | Priority |
 |---|---|---|---|
 | `tests/regression-*.sh` (60 scripts) | 6,679 | Large (batch by template) | Med-high — every CI run touches these |
 | `scripts/cyrius-init.sh` | 1,021 | Med-large | Med — project scaffolder; mostly heredoc templates |
-| `scripts/check.sh` | 200 | Small-Med | High — central audit dispatcher |
 | `scripts/cyriusly` | 349 | Med (stays partial bash) | Med — version manager |
-| `scripts/cyrius-port.sh` | ? | Med | Med — Rust→cyrius migration tool |
-| `scripts/cyrius-watch.sh` | 37 | Trivial | Low |
-| `scripts/cyrius-repl.sh` | 98 | Small | Low |
+| `scripts/cyrius-port.sh` | ~400 | Med | Med — Rust→cyrius migration tool |
+| `scripts/check.sh` | 200 | Small-Med | High — central audit dispatcher |
+| `scripts/lib/audit-walk.sh` | ~80 | Small | Med — shared audit helper |
 | `scripts/version-bump.sh` | 80 | Small | Med — runs every release |
-| `scripts/release-lib.sh` | ? | Small | Low — runs once per release |
-| `scripts/bench-history.sh` | 50 | Small | Low |
-| `scripts/mac-diagnose.sh` + `mac-selfhost.sh` | ? | Small | Low — macOS helpers |
-| `scripts/lib/audit-walk.sh` | ? | Small | Med — shared audit helper |
-| `scripts/ci.sh` | ? | Small | Low — CI dispatcher |
-| `tests/heapmap.sh` | ? | Small | Med — heap-map auditor |
+| `scripts/cyrius-repl.sh` | 98 | Small | Low |
+| `tests/heapmap.sh` | ~60 | Small | Med — heap-map auditor |
 | `benches/bench_capacity_overhead.sh` | 75 | Small | Low |
+| `scripts/cyrius-watch.sh` + `bench-history.sh` + `release-lib.sh` + `mac-{diagnose,selfhost}.sh` + `ci.sh` | ~250 | Small | Low |
 
-**Total convertible bash: ~8,500 LOC across ~75 files.** Sized for
-a multi-slot cycle.
+**Total convertible bash: ~8,500 LOC.** v5.9.x slot map (pinned
+at cycle entry):
+
+- **v5.9.0** ✅ — **niyama fold-in shipped 2026-05-06**. niyama
+  1.0.1 `dist/niyama.cyr` (6,664 lines) vendored byte-identical
+  as `lib/niyama.cyr`. niyama ADR 0011 status: **Triggered:
+  2026-05-06 via cyrius v5.9.0**. cc5 unchanged at 741,048 B
+  (no heap-shape change; foldin is `lib/` content only).
+  api-surface snapshot regenerated (2,725 → 2,760 public fns;
+  +35 non-breaking). 65/65 check.sh; self-host two-step
+  byte-identical. Sovereignty pass kickoff items moved forward
+  to v5.9.1.
+- **v5.9.1** — sovereignty pass kickoff: `scripts/check.sh` →
+  cyrius (high-priority; central audit dispatcher) +
+  `scripts/lib/audit-walk.sh` → cyrius (shared audit helper).
+  P(-1) hardening + vidya per-minor refresh.
+- **v5.9.2-v5.9.4** — sovereignty pass: `tests/regression-*.sh`
+  batch conversion (60 scripts, 6,679 LOC). Templated — group
+  by category (aarch64-cross-tests, lint-tests, syscall-tests,
+  etc.). Each slot ships ~15 conversions + the conversion
+  template if applicable.
+- **v5.9.5** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+  `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
+  `cyrius-port.sh`. The two project-scaffolder scripts are
+  mostly heredoc templates — converting requires designing a
+  templating facility OR keeping the heredocs as data-files
+  read at runtime.
+- **v5.9.6** — sovereignty pass: small utilities batch
+  (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
+  `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
+  `benches/bench_capacity_overhead.sh`).
+- **v5.9.7+** — release-valve + closeout per CLAUDE.md 11-step
+  protocol.
 
 **KEEP-as-bash (intrinsic; sovereignty-allowed):**
-- `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh` (45 LOC) —
-  runs before cyrius exists.
-- `scripts/install.sh` (575 LOC) — bootstrap-from-zero path can't be
-  cyrius (the cyrius binary it installs may not yet exist).
-  `--refresh-only` post-install path is portable but the trunk
-  stays bash.
-- `scripts/cyrius` shim (30 LOC) — PATH-discovery wrapper that finds
-  & execs `build/cyrius`. Required to bridge "cyrius not on PATH"
-  to the compiled tool.
+- `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`
+  (45 LOC) — runs before cyrius exists.
+- `scripts/install.sh` (575 LOC) — bootstrap-from-zero path;
+  cyrius binary may not yet exist.
+- `scripts/cyrius` shim (30 LOC) — PATH-discovery wrapper.
 - `programs/dlopen-helper.c` — explicit ABI shim per sovereignty
   pin (binds host glibc).
-- `editors/neovim.lua` + `editors/vscode/extension.js` — host-IDE-
-  side; can't port (Neovim runs Lua, VS Code runs JS).
+- `editors/neovim.lua` + `editors/vscode/extension.js` —
+  host-IDE-side; can't port (Neovim runs Lua, VS Code runs JS).
 
-**ARCHIVED (no longer active):**
-- `archive/seed/*.rs` (10 Rust files, 240 KB) — original pre-self-
-  hosting seed assembler. `archive/stages/*.sh` (6 stage-bootstrap
-  scripts, 320 KB). Both retired at commits `d042853 no more rust`
-  and `53301cc fixing repo` respectively. Remain in `archive/` for
-  historical reference per `feedback_archive_dont_delete_docs`
-  memory pin.
+**ARCHIVED**: `archive/seed/*.rs` + `archive/stages/*.sh`
+retained in `archive/` per `feedback_archive_dont_delete_docs`
+memory pin.
 
-Slot map for v5.9.x sovereignty arc TBD — sized at audit, decisions
-deferred to v5.9.0 cycle entry.
+### v5.9.x — Other pin candidates (folded in from prior unpinned)
 
+These items have triggers that fire in v5.9.x — moved here from
+the previously unpinned/long-term sections:
 
+- **Stdlib data-domain distlib carve-out** (long-term review at
+  v5.8.65 close): trigger was "post-v5.8.41 closeout, once
+  language-vocabulary migration has rippled through stdlib."
+  That precondition holds. v5.9.x is the natural fit because
+  the AGNOS bare-metal target at v5.10.x will want a clean
+  primitives-only stdlib (no data-domain modules pulled in).
+  Whether a separate v5.9.x slot or carried into v5.10.x kernel
+  prep: **pin at v5.9.0 cycle entry** with empirical sizing.
+  Carve-out targets: `json`, `toml`, `cyml`, `csv`, `base64`,
+  `regex`, `math`, `matrix`, `linalg`, `bigint`, `u128` (~13
+  modules). Sandhi-pattern fold-out into a `cyrius-data` sibling
+  distlib (single repo, multi-module dist).
 
-### v5.9.0 — Bare-metal / AGNOS kernel target + niyama fold-in
+- **Phase 2b-aarch64 struct copy** (`LDRB`/`STRB` loop): x86
+  path shipped v5.5.36; aarch64 path pending. **Pin to a
+  v5.9.x patch slot** — single-purpose unblock; surfaces
+  whenever a consumer cross-builds struct-by-value calls for
+  aarch64.
 
-**Bare-metal target.** Bare-metal output (no libc, no syscalls,
-direct hardware). AGNOS kernel is the concrete consumer. Slid through
-multiple minors (was v5.7.0 pre-v5.6.x pin → v5.8.0 → v5.9.0). Details
-pinned closer to landing — rough scope: ELF no-libc output format,
-interrupt-handler emit conventions, kernel-mode syscall stubs
-stripped, boot pipeline from `scripts/boot.cyr` landed in genesis
-Phase 13B (v5.6.29 gate).
+- **`aarch64/fixup.cyr:19` syscall arity warning** (deferred
+  from v5.8.53 install-pipeline slot): likely benign lint,
+  confirm or fix during a v5.9.x patch cycle.
 
-**niyama fold-in** (pinned 2026-05-03). niyama is the additional-
-regex-engine library — bre / re2 / pcre / fuzzy / vim flavors that
-extend the existing `lib/regex.cyr` Thompson-NFA engine in stdlib.
-Sandhi-pattern fold lifecycle (per niyama ADR 0001 + niyama roadmap
-M5 → v1.0): when niyama hits its v1.0 fold-ready bar (all 5 engines
-shipped, public surface frozen, ≥2 long-horizon AGNOS-lineage
-consumers, security audit, fold ADR drafted), cyrius vendors
-`niyama/dist/niyama.cyr` byte-identical as `lib/niyama.cyr` (same
-mechanics as the v5.7.0 sandhi fold and the v5.8.39 sandhi v1.1.0
-re-fold). niyama-side roadmap at
-[`/home/macro/Repos/niyama/docs/development/roadmap.md`](https://github.com/MacCracken/niyama/blob/main/docs/development/roadmap.md);
-niyama at v0.1.0 (scaffold) as of 2026-05-03 — engine work begins
-at M1 (POSIX BRE → v0.2.0). niyama's own roadmap previously listed
-"Speculative cyrius fold target: 5.8.0" — that target was
-overoptimistic; v5.8.x consumed by Phase 2 (Result+? + Allocators
-sub-suites + Phase 3 polish). v5.9.0 is the new realistic fold
-target conditional on niyama hitting v1.0 first.
+### v5.9.x — Held forward (no slot consumed; surfaces-on-ask)
 
-**Fold mechanics** (per the v5.7.0 sandhi + v5.8.39 sandhi-v1.1.0
-precedent):
-- niyama upstream ships v1.0 → `dist/niyama.cyr` regenerated via
-  `cyrius distlib`.
-- cyrius v5.9.0 slot does the fold: `cp niyama/dist/niyama.cyr
-  cyrius/lib/niyama.cyr` + snapshot refresh per ping-pong protection
-  + verify cyrius-side consumers (none yet — niyama would be a
-  fresh stdlib add) + downstream propagation via `cyrius deps` on
-  next resolution.
-- Roadmap entry's bare-metal scope is the larger v5.9.0 deliverable;
-  niyama fold rides as a smaller bundled item. If niyama hasn't hit
-  v1.0 by the v5.9.0 cut, the fold cascades to a later v5.9.x patch
-  slot or v5.10.x — bare-metal AGNOS kernel work doesn't block on
-  it.
+These remain unpinned long-term; promote to slot when a consumer
+concretely surfaces:
 
-### v5.9.x — RISC-V rv64 (3-5 sub-patches)
+- **LSP `textDocument/semanticTokens/full`** — earns slot when
+  an editor's textmate grammar can't satisfy a token-coloring
+  request.
+- **LSP `textDocument/references`** — easy add on top of
+  v5.7.39's symbol-table infrastructure (~80 LOC). Claims slot
+  when a downstream consumer asks.
+- **TS test harness program** (option E from v5.7.37) — single
+  `programs/ts_test_runner.cyr` consuming both internal-symbol
+  fn dispatch and TS fixture files. v5.7.37 group-level
+  consolidation is sufficient until a downstream consumer
+  surfaces a test pattern that doesn't fit either current
+  shape.
 
-First-class RISC-V 64-bit target. Moved from v5.8.x at 2026-05-01
-along with bare-metal — pairs naturally with the bare-metal scope
-since both deal with new ABI / non-libc runtime considerations and
-both are arch-port-shaped efforts.
+---
 
-Inherits a frontend-complete compiler against a clean toolchain UX
-with the full v5.7.x → v5.8.x prerequisite chain shipped, including
-the v5.7.30 + v5.7.31 aarch64 f64 pair that gives RISC-V a working
-f64-on-non-x87 reference (likely reuse the polyfill shape — RISC-V
-has hardware f64 in the F/D extensions but the polynomial reuses
-cleanly).
+## v5.10.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64
+
+Two arch-port-style efforts grouped into one minor since both
+land at the "no libc, direct hardware / different ABI" layer.
+Moved from v5.9.x at v5.8.x close once it became clear v5.9.x
+is wholly consumed by the niyama fold + sovereignty pass.
+
+### v5.10.0 — Bare-metal / AGNOS kernel target
+
+Bare-metal output (no libc, no syscalls, direct hardware).
+AGNOS kernel is the concrete consumer. Slid through multiple
+minors (v5.7.0 → v5.8.0 → v5.9.0 → **v5.10.0**). Details
+pinned closer to landing — rough scope:
+
+- ELF no-libc output format
+- interrupt-handler emit conventions
+- kernel-mode syscall stubs stripped
+- boot pipeline from `scripts/boot.cyr` landed in genesis Phase
+  13B (v5.6.29 gate)
+
+Acceptance: AGNOS kernel can be built end-to-end with the
+v5.10.0 toolchain; no host-libc symbols leak into the kernel
+object.
+
+### v5.10.x — RISC-V rv64 (3-5 sub-patches)
+
+First-class RISC-V 64-bit target. Inherits a frontend-complete
+compiler against a clean toolchain UX with the full v5.7.x →
+v5.8.x prerequisite chain shipped, including the v5.7.30 +
+v5.7.31 aarch64 f64 pair that gives RISC-V a working
+f64-on-non-x87 reference.
 
 **RISC-V needs:**
 
 - **New backend module** — `src/backend/riscv64/` with its own
   `emit.cyr`, `jump.cyr`, `fixup.cyr` mirroring x86/aarch64.
-- **New stdlib syscall peer** — `lib/syscalls_riscv64_linux.cyr` with
-  the Linux rv64 generic-table numbers (different from aarch64's even
-  though both use the generic table — numbers match aarch64 for most
-  syscalls but rv64 drops `renameat`, `link`, `unlink` which means
-  the at-family wrappers need review). Selector in
-  `lib/syscalls.cyr` gains an `#ifplat riscv64` arm (the v5.4.19
-  directive extends naturally here).
+- **New stdlib syscall peer** — `lib/syscalls_riscv64_linux.cyr`
+  with the Linux rv64 generic-table numbers. Selector in
+  `lib/syscalls.cyr` gains an `#ifplat riscv64` arm.
 - **New cross-entry** — `src/main_riscv64.cyr` mirroring
   `main_aarch64.cyr`'s arch-include swap.
-- **New test runner** — QEMU or real hardware (HiFive Unmatched or
-  equivalent) for self-host verification.
-- **New CI matrix** — `linux/riscv64` runners via qemu-user-static,
-  analogous to the aarch64 cross-test flow.
-- **ABI** — RISC-V Linux ELF psABI (different register names: `a0–a7`
-  for args, `sp` for stack, no frame pointer by default but we'll
-  use `s0` for parity with aarch64's `x29`).
+- **New test runner** — QEMU or real hardware (HiFive Unmatched
+  or equivalent) for self-host verification.
+- **New CI matrix** — `linux/riscv64` runners via
+  qemu-user-static, analogous to the aarch64 cross-test flow.
+- **ABI** — RISC-V Linux ELF psABI (different register names:
+  `a0–a7` for args, `sp` for stack; use `s0` for parity with
+  aarch64's `x29`).
 
 **Acceptance gates:**
 
-1. Cross-compiler (`build/cc5_riscv64`) emits valid rv64 ELF that
-   `file(1)` identifies correctly.
-2. A single-syscall "exit 42" probe runs under `qemu-riscv64-static`
-   and exits 42.
-3. Hello-world probe via `sys_write` + `sys_exit` runs under QEMU.
+1. Cross-compiler (`build/cc5_riscv64`) emits valid rv64 ELF
+   that `file(1)` identifies correctly.
+2. Single-syscall "exit 42" probe runs under
+   `qemu-riscv64-static`.
+3. Hello-world via `sys_write` + `sys_exit` runs under QEMU.
 4. `regression.tcyr` 102/102 via QEMU cross-test.
-5. Native self-host byte-identical on real rv64 hardware (not QEMU
-   — hardware-gated like the aarch64 ssh-pi check).
+5. Native self-host byte-identical on real rv64 hardware
+   (hardware-gated like the aarch64 ssh-pi check).
 6. Tarball includes `cc5_riscv64` alongside `cc5_aarch64`.
-7. `[release]` table in `cyrius.cyml` gets a `cross_bins` entry for
-   `cc5_riscv64`.
+7. `[release]` table in `cyrius.cyml` gets a `cross_bins` entry
+   for `cc5_riscv64`.
 
-Deliberately NOT bundling other items into the v5.9.x RISC-V arc —
-a new architecture port is plenty of work on its own. Bare-metal
-(v5.9.0) lands first; RISC-V picks up the rest of the v5.9.x range.
+### v5.10.x — Triggered prereq pin
+
+- **Parser-to-emit named-op refactor (path A)** — pinned to
+  v5.10.x because RISC-V landing as the 4th backend triggers
+  the prior long-term pin's condition #1 ("RISC-V lands and
+  adds 4th backend, making path B's `_TARGET_CX == 0 &&
+  _TARGET_RISCV == 0` chains unwieldy at every site"). Scope:
+  ~10 abstract ops × 4 backends = 40 fn definitions +
+  parse_*.cyr rewrites. Multi-session real engineering. Pin at
+  v5.10.0 cycle entry; sequence before RISC-V backend
+  implementation if prudent (RISC-V starts with the named-op
+  interface from day one — cleanest path). Audit doc:
+  [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
+
+Deliberately NOT bundling other items into v5.10.x — bare-metal
++ RISC-V are plenty of work. Bare-metal (v5.10.0) lands first;
+RISC-V picks up the rest of the v5.10.x range.
 
 ---
 
@@ -549,45 +487,43 @@ enables adding new targets without touching the frontend.
 | **v5.5.34** | fdlopen foreign-dlopen completion | ELF | **Done** — 40/40 round-trip `dlopen("libc.so.6")+dlsym("getpid")` |
 | **v5.5.35** | Windows PE .reloc + 32-bit ASLR | PE/COFF | **Done** — `DYNAMIC_BASE` + HIGH_ENTROPY_VA enabled v5.6.31 |
 | **v5.5.36** | Windows Win64 ABI completion | PE/COFF | **Done** — struct-return via hidden RCX retptr + __chkstk via R11 + variadic float dup |
-| **v5.9.x** | RISC-V rv64 | ELF | **Moved from v5.8.x at v5.7.49 ship** — paired with v5.9.0 bare-metal AGNOS scope (both "no libc / new ABI" arch-port work); v5.8.x reframed as bug-fix/optimization minor. |
-| **v5.9.0** | Bare-metal | ELF (no-libc) | Queued — AGNOS kernel target |
+| **v5.10.x** | RISC-V rv64 | ELF | **Moved v5.9.x → v5.10.x at v5.8.x close** — v5.9.x consumed by niyama fold + bash-sovereignty pass; RISC-V keeps its pairing with bare-metal AGNOS scope (both "no libc / new ABI" arch-port work). |
+| **v5.10.0** | Bare-metal | ELF (no-libc) | Queued — AGNOS kernel target. Slid v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 across multiple cycles. |
 | ~~**v5.9.0–5.9.5**~~ | ~~Pure-cyrius TLS 1.3~~ | — | **Removed from roadmap 2026-04-24** — pure-Cyrius TLS work outside Cyrius's compiler/stdlib scope per sandhi scope-absorption decision; `lib/tls.cyr` continues using `libssl.so.3` bridge from stdlib's perspective; canonical home for pure-Cyrius TLS implementation TBD. See v5.9.x slot bullet in *What's next* for details. |
 
 ---
 
 ## v5.x — Toolchain Quality
 
-| Feature | Effort | Status / Description |
-|---------|--------|----------------------|
-| `cyrius api-surface` | Medium | **✅ Shipped v5.7.33.** Snapshot-based public API diff. Scans `fn` declarations, tracks `mod::name/arity`, diffs against committed snapshot. Catches breaking removals/renames, allows additions. Pure-cyrius impl in `programs/api_surface.cyr`; pattern from agnosys `scripts/check-api-surface.sh`. |
-| `cyrius api-surface --update` | Low | **✅ Shipped v5.7.33.** Regenerate snapshot after intentional API bump. |
-| CI template with api-surface gate | Low | **✅ Shipped v5.7.33** (gate 4ao in cyrius's own check.sh; downstream consumers add their own copy). |
-| LSP cross-file resolution + go-to-def | Medium | **✅ Shipped v5.7.39.** Symbol indexer (parallel-array table cap 4096), recursive include walker, `textDocument/definition`, `textDocument/documentSymbol`. cyrius-lsp promoted to release binary. Cross-file resolution verified by `tests/regression-lsp-definition.sh` (5 sub-tests including includer→included resolution). |
-| LSP `textDocument/semanticTokens/full` | Medium | **Pinned long-term 2026-04-30 at v5.7.39 ship.** Deferred from v5.7.39's "polish" framing — go-to-def landed as the headline; semanticTokens earns its own slot when a real consumer surfaces a token-coloring request the editor's textmate grammar can't satisfy. Adds a mini-lexer + delta-encoded token array per the LSP 3.16 spec. ~150 LOC. |
-| LSP `textDocument/references` | Low-Medium | **Pinned long-term 2026-04-30 at v5.7.39 ship.** Easy add on top of v5.7.39's symbol-table infrastructure — needs an inverted index (name → use-sites). ~80 LOC. Claims a slot when a downstream consumer asks. |
-| cyrlint forward-ref scanner — string-literal awareness | Low-Medium | **✅ Shipped v5.7.36.** Pulled forward from the v5.7.37 trio. Pass-2 scan loop in `lint_globals_init_order` skips IDENTs inside `"..."` and `'...'` literals (with `\\` / `\"` / `\'` escapes); regression test 4 in `tests/regression-lint-global-init-order.sh` covers the shape. |
-| TS test harness program (option E from v5.7.37) | Medium | **Pinned long-term 2026-04-30 at v5.7.37 ship.** A single `programs/ts_test_runner.cyr` consuming both internal-symbol fn dispatch (replacing the current `tests/tcyr/ts_{lex_combined,parse_core,parse_decls,parse_advanced}.tcyr` runners) and TS fixture files (replacing the SY-corpus regression gates `regression-ts-{lex,parse,parse-tsx,asserts,decorators,mapped}.sh`). One tool, two modes. v5.7.37 group-level consolidation is sufficient until a downstream consumer surfaces a test pattern that doesn't fit either current shape; at that point claims a v5.7.x slot (likely v5.7.45 floating slot in the queue). Out of scope: replacing `cc5 --parse-ts`-style flags themselves — the harness CALLS them, doesn't replace them. |
+Shipped toolchain rows (api-surface + LSP cross-file go-to-def +
+cyrlint forward-ref scanner) moved to
+[completed-phases.md](completed-phases.md). Remaining
+toolchain-quality items are all consumer-trigger-gated and live
+in [v5.9.x §Held forward](#v59x--held-forward-no-slot-consumed-surfaces-on-ask):
+
+| Feature | Effort | Status |
+|---------|--------|--------|
+| LSP `textDocument/semanticTokens/full` | Medium | Held forward — earns slot when an editor's textmate grammar can't satisfy a token-coloring request. ~150 LOC per LSP 3.16 spec. |
+| LSP `textDocument/references` | Low-Medium | Held forward — ~80 LOC on top of v5.7.39's symbol-table infrastructure. Claims slot on downstream ask. |
+| TS test harness program (option E from v5.7.37) | Medium | Held forward — single `programs/ts_test_runner.cyr` consuming internal-symbol fn dispatch + TS fixture files. v5.7.37 group-level consolidation suffices until a consumer surfaces a pattern outside both shapes. |
 
 ---
 
 ## v5.x — Language Refinements
 
-**Pinned arc** (re-eval'd 2026-04-28 at v5.7.33 ship — arc holds; ordering reflects "smaller language adds first, big own-minor features as their slot opens"):
+The v5.8.x language-vocabulary arc (slices / effect annotations
+/ tagged unions + exhaustive match / `Result<T,E>` + `?` /
+allocators-as-parameter) shipped end-to-end across slots 10-25
+of the v5.8.x cycle; per-feature detail moved to
+[completed-phases.md](completed-phases.md).
 
-| Feature | Pinned | Effort | Notes |
-|---------|--------|--------|-------|
-| First-class slices (`slice<T>` / `[T]` generalizing `Str`) | **v5.8.x** | Medium | **Moved from v5.9.0 (defunct TLS arc) at v5.7.49 ship.** Bounds-aware (ptr, len) pair as a first-class type — sandhi / sigil / stdlib net.cyr / fs.cyr all want this; `slice<u8>` collapses the ptr+len pattern repeated across stdlib. Pinned as a v5.8.x slot candidate alongside the dep-surfaced bug fixes. |
-| Per-fn effect annotations (`#pure` / `#io` / `#alloc`) | **v5.8.x** | Medium | **Moved from v5.9.1 (defunct TLS arc) at v5.7.49 ship.** Compiler-checked decorators (`#pure`, `#io`, `#alloc`) catch helpers that silently allocate or touch I/O in "pure" crypto paths; simpler than OCaml5/Koka effects (no polymorphism, no row types). sigil + sankoch want this. Pinned as a v5.8.x slot candidate. |
-| Tagged unions + exhaustive pattern match | **v5.8.x** (slots 10-14) | Large | **Moved from v5.10.x at 2026-05-01 v5.8.x re-theming** — folded into the language-vocabulary stabilization phase. Biggest ergonomics win; replaces tagged.cyr + manual dispatch. See v5.8.x §Phase 2 for sub-patch breakdown. |
-| `Result<T,E>` + `?` propagation | **v5.8.x** (slots 15-19) | Large | **Moved from v5.11.x at 2026-05-01 re-theming.** Depends on tagged unions (slots 10-14). Replaces -1/0/errno convention across stdlib + ecosystem. |
-| Allocators-as-parameter | **v5.8.x** (slots 20-25) | Large | **Moved from v5.12.x at 2026-05-01 re-theming.** Per-call-site allocator selection. Last language addition of the compressed v5.8.x cycle. |
-
-**Still unpinned / lower priority** (re-eval'd 2026-04-28):
+**Still unpinned / lower priority** (re-eval'd 2026-05-05 at
+v5.8.65 close):
 
 | Feature | Effort | Surfacing / votes | Disposition |
 |---------|--------|-------------------|-------------|
-| Phase 2b-aarch64 struct copy (LDRB/STRB loop) | Medium | x86 shipped v5.5.36; aarch64 path pending | **Pin candidate** — likely v5.7.x patch slate or v5.8.x aarch64-polish slot. Surfaces whenever a consumer cross-builds struct-by-value calls for aarch64. Phylax / mabda may hit. |
-| Closures capturing variables | High | gotcha #8 — consumers feel the absence | **Watching.** Promote to pinned slot when a consumer concretely blocks on it (vs. lambda-pattern workaround). v5.10.x ADTs make captured-state encoding cleaner. |
+| Phase 2b-aarch64 struct copy (LDRB/STRB loop) | Medium | x86 shipped v5.5.36; aarch64 path pending | **Pinned to a v5.9.x patch slot** at v5.8.65 close — see [v5.9.x §Other pin candidates](#v59x--other-pin-candidates-folded-in-from-prior-unpinned). |
+| Closures capturing variables | High | gotcha #8 — consumers feel the absence | **Watching.** Promote when a consumer concretely blocks on it (vs. lambda-pattern workaround). v5.8.x ADTs make captured-state encoding cleaner. |
 | Generics / traits | High | 1 vote (kavach) | **Watching.** Wait for kavach to actively reach for it; speculative implementation pre-need is risk. |
 | Hardware 128-bit div-mod | Medium | — | **Stays unpinned.** abaco / sigil currently work around via u128 shifts; not blocking. |
 | Phase 3-full varargs (va_arg for structs-by-value + nested) | Medium | Phase 3-min shipped v5.5.36 | **Stays unpinned.** Niche — most consumers use array-of-args pattern instead. |
@@ -622,63 +558,22 @@ consumers in the ecosystem). Canonical view of the table is
 
 ## Platform Status
 
-| Platform | Format | Status |
-|----------|--------|--------|
-| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cc5 710 KB (v5.7.12); 3-step fixpoint byte-identical. |
-| Linux aarch64 | ELF | **✅ Narrow + Broad** — cross-build byte-identity + native self-host on Pi 4 (repaired v5.6.32). Three libs (`lib/hashmap_fast`, `lib/u128`, `lib/mabda`) still contain ungated x86 asm — arch-gating queued. |
-| cyrius-x bytecode | .cyx | **✅ Narrow** — clean CYX bytecode (path B, v5.7.12); literal-arg propagation pinned v5.7.x patch slot. |
-| macOS x86_64 | Mach-O | **✅ Narrow** (v5.1.0). |
-| macOS aarch64 | Mach-O | **✅ Narrow + Broad** — gate fixture repaired v5.6.33 (no compiler regression existed; bytes unchanged since v5.5.13). |
-| Windows x86_64 | PE/COFF | **✅ Narrow + Broad** — gate fixture repaired v5.6.36; HIGH_ENTROPY_VA enabled v5.6.31. Win64 ABI complete (v5.5.36); .reloc + 32-bit ASLR (v5.5.35). |
-| Compiler optimization (O1–O6) | — | **✅ Closed** (v5.6.5 + v5.6.7–v5.6.27). |
-| RISC-V (rv64) | ELF | Queued — **v5.7.26-v5.7.30** |
-| Bare-metal | ELF (no-libc) | Queued — **v5.9.0** |
+Moved to [`docs/platform-status.md`](../platform-status.md) at
+v5.8.x cycle close. That file is the canonical "what works now"
+snapshot; this section retained as a back-link only. Refresh
+target: every closeout pass (CLAUDE.md step 11).
 
 ---
 
 ## Ecosystem
 
-| Status | Repos |
-|--------|-------|
-| **Done** | agnostik, agnosys, argonaut, kybernet, nous, ark |
-| **Done** | sakshi, majra, bsp, cyrius-doom, mabda, hadara |
-| **Done** | sigil, patra, libro, shravan, tarang, yukti |
-| **Done** | avatara, ai-hwaccel, hoosh, itihas, sankoch |
-| **Done** | hisab |
-| **In progress** | bhava |
-| **In progress** | **bote** — MCP core service (JSON-RPC 2.0, tool registry, schema validation). Active port; unblocks vidya MCP. |
-| **Blocked** | vidya MCP (needs bote) |
+Moved to [`docs/ecosystem.md`](../ecosystem.md) at v5.8.x cycle
+close. That file is the canonical state board for downstream
+consumer repos + folded-in distlibs + live deps. Refresh target:
+every closeout pass (CLAUDE.md step 11), plus whenever a port
+lands or a new repo joins.
 
-### Downstream server-stack arc
-
-10-layer hardened-server stack is consumer of the Cyrius toolchain.
-Current status: **kavach is the last port blocking completion**
-(memory: `project_server_stack.md`). Once kavach lands, the server
-OS stack is feature-complete at the consumer layer. No direct
-Cyrius-compiler release targets this — progress is tracked in
-consumer repos. Listed here so it's not forgotten across account
-switches.
-
-### Deferred consumer projects
-
-- **CYIM** — postponed until the server base OS is wrapped
-  (memory: `project_cyim_deferred.md`). No Cyrius release target;
-  resumes when the server-stack arc above closes.
-- **sandhi repo extraction** (सन्धि — *junction, connection, joining*;
-  named 2026-04-24, formerly the "services" placeholder) —
-  `lib/http_server.cyr` extraction into `sandhi::server` landed
-  at sandhi v0.2.0 (M1, 2026-04-24). **sandhi** is the
-  service-boundary layer that composes stdlib primitives
-  (`http.cyr`, `ws.cyr`, `tls.cyr`, `json.cyr`, `net.cyr`) into
-  full-featured client patterns + service discovery.
-  **Fold target: v5.7.0 clean-break** per [sandhi ADR
-  0002](https://github.com/MacCracken/sandhi/blob/main/docs/adr/0002-clean-break-fold-at-cyrius-v5-7-0.md)
-  — v5.7.0 stdlib deletes `lib/http_server.cyr` and adds
-  `lib/sandhi.cyr` in one event; 5.6.YY releases carry a
-  deprecation warning naming the cutover. Revised 2026-04-24
-  from the original "before v5.6.x closeout" target after
-  reconsidering the alias-window migration model.
-
+---
 
 ## Future 6.0
 

@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.0] — 2026-05-06
+
+**v5.9.x cycle opener — niyama fold-in (sandhi-pattern)**. Eighth
+sibling distfile vendored byte-identical into `lib/`. niyama
+provides 5 regex engines (bre / re2 / pcre / fuzzy / vim) that
+the cyim consumer (#1) and the queued AGNOS bare-metal kernel
+(#2, v5.10.0) lean on. Per niyama ADR 0011 (Triggered: 2026-05-06
+via cyrius v5.9.0) the multi-consumer gate is met.
+
+cc5: **741,048 B unchanged** — foldin is `lib/` content only;
+the compiler binary doesn't include niyama.
+
+### Added
+
+- **`lib/niyama.cyr`** — 6,664-line bundled artifact vendored
+  byte-identical from niyama 1.0.1 `dist/niyama.cyr`
+  (sha256 `4f6bf9fd...4fe06a`). Inlines all 7 niyama modules
+  (posix_classes, unicode_props, bre, re2, pcre, fuzzy, vim).
+  Public API surface frozen per niyama ADR 0010.
+  - **bre** — POSIX BRE + GNU `\<\>` boundaries + bracket
+    classes. Public fns prefixed `niyama_bre_*`.
+  - **re2** — ERE flavor with linear-time guarantee at the
+    API boundary. Compile-time rejection of backref /
+    lookaround / atomic / recursion. Named captures + inline
+    flags + `\p{L}` Unicode property classes. Public fns
+    prefixed `niyama_re2_*`.
+  - **pcre** — Perl-compatible backtracking matcher. Backref,
+    lookahead/lookbehind, atomic, named captures, possessive
+    quantifiers, `(?R)` recursion. Catastrophic-backtracking
+    mitigated by configurable step-limit + recursion-depth
+    bound. Public fns prefixed `niyama_pcre_*`.
+  - **fuzzy** — Levenshtein edit-distance matcher (anchored +
+    substring + prefix modes; Unicode NFD via stdlib
+    `str_normalize`). Not regex per ADR 0005. Public fns
+    prefixed `niyama_fuzzy_*`.
+  - **vim** — vim/cyim flavor Pike NFA matcher with all 4
+    magicness modes, `\<\>` boundaries, `\zs` / `\ze` markers.
+    Public fns prefixed `niyama_vim_*`.
+
+### Changed
+
+- **api-surface snapshot** — `docs/api-surface.snapshot`
+  regenerated via `cyrius api-surface --update`. **2,725 → 2,760**
+  public fn entries (+35 from niyama). All additions are
+  non-breaking per the api-surface gate.
+
+### Verification
+
+- Self-host two-step: cc5 → cc5b byte-identical (741,048 B).
+- check.sh: 65/65 gates green.
+- niyama smoke: `niyama_re2_compile("hello") + niyama_re2_search(...)`
+  links and runs from the vendored `lib/niyama.cyr`.
+- niyama side: tag 1.0.1 ships with corrected `dist/niyama.cyr`
+  generated via `cyrius distlib` (v1.0.0 had a manifest scaffold
+  with unresolved `include "src/*.cyr"` references that would
+  have dangled at fold time).
+- Snapshot byte-identity: `~/.cyrius/versions/5.9.0/lib/niyama.cyr`
+  and `~/.cyrius/lib/niyama.cyr` match repo `lib/niyama.cyr` and
+  niyama 1.0.1 `dist/niyama.cyr` — sha256 `4f6bf9fd...4fe06a`.
+
 ## [5.8.65] — 2026-05-05
 
 **v5.8.x slot 65 — stdlib foldin (sandhi-pattern)**. Twenty-seventh

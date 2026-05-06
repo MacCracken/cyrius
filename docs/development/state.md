@@ -5,6 +5,30 @@
 
 ## Version
 
+**5.9.0** (shipped 2026-05-06 — **v5.9.x cycle opener — niyama
+fold-in (sandhi-pattern)**. Eighth sibling distfile vendored
+byte-identical into `lib/`. cc5 unchanged at **741,048 B** —
+foldin is `lib/` content only; the compiler binary doesn't
+include niyama. niyama 1.0.1 `dist/niyama.cyr` (6,664 lines,
+sha256 `4f6bf9fd...4fe06a`) → `lib/niyama.cyr`; inlines all 7
+niyama modules (posix_classes, unicode_props, bre, re2, pcre,
+fuzzy, vim) covering the full regex-engine surface area cyim
+threads through `--regex=<flavor>`. niyama ADR 0011 status:
+**Triggered: 2026-05-06 via cyrius v5.9.0** — multi-consumer
+gate met by cyim (#1) + queued AGNOS bare-metal kernel (#2,
+v5.10.0). niyama 1.0.0 → 1.0.1 patch corrected a v1.0.0 dist
+defect: the originally-shipped `dist/niyama.cyr` was a 108-line
+`include`-manifest scaffold with unresolved `include
+"src/*.cyr"` paths; v1.0.1 wired `[lib] modules = [...]` in
+`niyama/cyrius.cyml` and regenerated via `cyrius distlib`
+(canonical bundling tool). api-surface snapshot regenerated:
+**2,725 → 2,760** public fns (+35 from niyama; all non-breaking).
+Acceptance: 65/65 check.sh; cc5 self-host two-step byte-
+identical; niyama smoke (`niyama_re2_compile + niyama_re2_search`)
+links and runs from the vendored stdlib path. v5.9.x cycle
+theme proceeds with sovereignty pass (bash → cyrius) per
+roadmap pin.)
+
 **5.8.65** (shipped 2026-05-05 — **v5.8.x SLOT 65 — stdlib foldin
 (sandhi-pattern)**. Twenty-seventh slot of Phase 3. cc5 unchanged at
 **741,048 B** — foldin is dep-resolution + manifest work only.

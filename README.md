@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, and its own build tool.
 
-~741KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode. 76 stdlib modules + 1 git dep (mabda; 6 sibling distfiles folded into stdlib at v5.8.65 — sakshi / patra / sigil / vani / yukti / sankoch). 127 test suites + 1 soak + 1 smoke harness, 5 fuzz harnesses, 15 benchmarks.
+~741KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode. 77 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 127 test suites + 1 soak + 1 smoke harness, 5 fuzz harnesses, 15 benchmarks.
 
 ## Install
 
@@ -91,7 +91,7 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler | **~741KB** x86_64 (v5.8.65), **~430KB** aarch64 cross |
+| Compiler | **~741KB** x86_64 (v5.9.0; unchanged from v5.8.65), **~430KB** aarch64 cross |
 | Seed binary | **29KB** |
 | External dependencies | **0** |
 | Tests | 127 .tcyr (TS suite consolidated 24→4 at v5.7.37; v5.8.x added slices sub-arc + sum types + Result+? + allocators + Unicode 17.0.0 conformance harness with 320,547 NormalizationTest.txt asserts at NFC/NFD/NFKC/NFKD), 5 .fcyr fuzz, 15 .bcyr bench, 1 .scyr soak, 1 .smcyr smoke |
@@ -123,7 +123,7 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (76 modules + 1 git dep)
+## Standard Library (77 modules + 1 git dep)
 
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
@@ -131,6 +131,7 @@ vendor at the patched tag, removed from `[deps]`):
 - v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy, ~10,500 lines)
 - v5.8.0 — `vani` (audio distlib; replaced inlined `lib/audio.cyr`)
 - **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
+- **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; ~6,664 lines)
 
 Mabda (GPU integration; held at 2.5.0 GA pre-v3.0.0-rc soak) +
 its transitive `agnosys` stay live as the only `[deps.*]` git
@@ -155,6 +156,7 @@ slot redesign).
 | Crypto | sha1, keccak, ct (constant-time primitives), overflow, **random** (kernel entropy via getrandom) |
 | Sandboxing | **security** (Landlock policy enums; v5.7.35) |
 | Network | net, http, ws, ws_server, tls, **sandhi** (HTTP/2 + RPC; folded v5.7.0) |
+| Regex | **niyama** (5 engines: bre / re2 / pcre / fuzzy / vim; folded v5.9.0) |
 | Filesystem | fs |
 | Audio | **vani** (ALSA PCM + ring buffer + mixer; folded v5.8.0, refolded v5.8.65) |
 | Logging | log (structured, over sakshi) |
@@ -223,7 +225,15 @@ notes (Helix / Zed / VS Code / JetBrains).
 
 ## Migration
 
-`cyrius port` scaffolds Cyrius projects from Rust repos. See the [roadmap](docs/development/roadmap.md) for the full ecosystem state and [migration strategy](docs/development/migration-strategy.md) for the porting playbook.
+`cyrius port` scaffolds Cyrius projects from Rust repos. See [migration strategy](docs/development/migration-strategy.md) for the porting playbook.
+
+## See also
+
+- [docs/platform-status.md](docs/platform-status.md) — what works on which platform today (refreshed every closeout)
+- [docs/ecosystem.md](docs/ecosystem.md) — downstream consumer repos + folded distlibs + live deps (refreshed every closeout)
+- [docs/development/roadmap.md](docs/development/roadmap.md) — release plan + pinned slots + long-term considerations
+- [docs/development/state.md](docs/development/state.md) — current version, cc5 size, in-flight slots
+- [docs/development/completed-phases.md](docs/development/completed-phases.md) — historical release narrative
 
 ## License
 
