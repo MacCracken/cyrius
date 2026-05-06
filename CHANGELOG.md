@@ -167,8 +167,10 @@ next dep ship rather than git-resolving at consume time.
 
 ### Cycle wind-down (cascaded post-ship)
 
-v5.8.66 = release-valve for foldin fallout (any consumer-surfaced
-issue from the foldin lands here). Backstop hard at v5.8.66.
+**v5.8.65 is the cycle's true final patch** — held-open v5.8.66
+release-valve retired unused; foldin fallout was absorbed in .65
+itself via mid-slot fix-ups (see the "Mid-slot fix-up" paragraph
+above).
 
 ### Acceptance gates
 
