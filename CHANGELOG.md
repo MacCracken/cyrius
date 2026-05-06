@@ -6,6 +6,92 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.12] — 2026-05-06
+
+**v5.9.x SLOT 12 — `cyrius api-surface --scope=project`
+dispatcher pass-through fix** (user-reported v5.9.11 no-op).
+The v5.9.11 binary correctly implements the flag; the dispatcher
+in `cbt/cyrius.cyr` only parsed `--update` from argv[2] and
+silently dropped every other flag including `--scope=project`.
+Reproducer: `cyrius api-surface --update --scope=project`
+written 1,113 entries via dispatcher (default scope) but 721
+direct via `build/cyrius_api_surface --update --scope=project`.
+
+cc5: **741,048 B unchanged** — `cbt/` only; no compiler-source
+change.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+v5.9.12 was originally pinned for scaffolder conversions
+(cyriusly + cyrius-init.sh + cyrius-port.sh). Investigating
+cyriusly surfaced a real bootstrap-chicken-egg problem:
+`cyriusly setup` is the verb that bootstraps cc5 from a fresh
+source checkout (it runs `bootstrap/bootstrap.sh` then builds
+the release tools via the just-built cc5). If cyriusly itself
+becomes a cyrius binary (compiled BY cc5), the `setup` verb
+can't run before cc5 exists. Possible mitigations
+(precompiled-cyriusly-in-tarball, hybrid bash-bootstrap-shim
++ cyrius-binary-post-install) each warrant a real design
+discussion. Pinned for v5.9.13 alongside the IPC + SSH cluster
+work; not unilaterally re-scoped this slot.
+
+Mid-slot the user surfaced the api-surface dispatcher no-op,
+explicitly asked to fold it into v5.9.12. Slot pivots to that
+fix as the single deliverable; scaffolder conversions cascade
+to v5.9.13.
+
+### Changed
+
+- **`cbt/cyrius.cyr` — `api-surface` dispatch path**: pre-fix
+  parsed only `argv[2]` for the literal `"--update"` token;
+  every other token was discarded. Fix: walk `argv[2..argc())`
+  scanning for both `--update` and `--scope=project` tokens,
+  set local flags accordingly, pass both through to
+  `cmd_api_surface`.
+
+- **`cbt/commands.cyr` — `cmd_api_surface(update_flag,
+  scope_project)`**: signature extended to take both flags.
+  Forwards via `run_tool(tool, "--update"-or-0,
+  "--scope=project"-or-0, 0)` — `run_tool` skips 0-arg slots
+  cleanly (existing behavior; matches the 3-positional-arg
+  shape established in v5.7.33). The cyrius_api_surface binary
+  has supported `--scope=project` since v5.9.11; this slot
+  fixes the missing dispatcher pass-through.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change).
+- check.sh: 66/66 gates green, exit 0.
+- Real-project verify on `/home/macro/Repos/agnosys`:
+  - `cyrius api-surface --update` → 1,113 entries (default
+    scope; lib/* included).
+  - `cyrius api-surface --update --scope=project` → 721
+    entries (lib/* excluded; matches agnosys's awk-walker
+    reference count exactly).
+  - 392-entry delta = the `alloc::*`, `args::*`, `assert::*`
+    etc. stdlib leakage agnosys reported.
+
+### Roadmap pin (NOT fixed this slot)
+
+- **Scaffolder conversions** (cyriusly + cyrius-init.sh +
+  cyrius-port.sh) cascaded to v5.9.13 alongside the
+  bootstrap-chicken-egg design discussion. Three approaches
+  to evaluate: (a) keep cyriusly as bash for the bootstrap
+  path only; (b) precompile cyriusly into the release tarball
+  (works for installed users; source-checkout users still need
+  bash entry); (c) hybrid bash-bootstrap-shim + cyrius-binary
+  for post-install verbs. cyrius-init.sh + cyrius-port.sh
+  don't have the bootstrap dep — they could land independently
+  in v5.9.13 even if cyriusly stays bash.
+
+- **`--snapshot=PATH` dispatcher pass-through** — the v5.9.12
+  fix added `--update` + `--scope=project` parsing, but
+  `--snapshot=PATH` (also a v5.7.33 feature on the binary) is
+  still dropped. Same shape; pin a follow-up if a consumer
+  surfaces it (or fold into the next api-surface dispatcher
+  touch).
+
 ## [5.9.11] — 2026-05-06
 
 **v5.9.x SLOT 11 — `cyrius api-surface --scope=project` flag

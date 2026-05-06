@@ -5,6 +5,53 @@
 
 ## Version
 
+**5.9.12** (shipped 2026-05-06 — **v5.9.x SLOT 12 — `cyrius
+api-surface --scope=project` dispatcher pass-through fix**
+(user-reported v5.9.11 no-op, 2026-05-06). The v5.9.11 binary
+correctly implements the flag; the dispatcher in
+`cbt/cyrius.cyr` was only parsing `--update` from `argv[2]`
+and silently dropping every other flag including
+`--scope=project`. cc5 unchanged at **741,048 B** — `cbt/` only;
+no compiler-source change.
+
+**Premise-check at slot entry**: v5.9.12 was pinned for
+scaffolder conversions (cyriusly + cyrius-init.sh +
+cyrius-port.sh). Investigating cyriusly surfaced a
+bootstrap-chicken-egg problem (`cyriusly setup` bootstraps cc5;
+if cyriusly is a cyrius binary, the verb can't run before cc5
+exists). Mitigations (precompiled-in-tarball / hybrid
+bash-bootstrap-shim) warrant a real design discussion. Mid-slot
+the user surfaced the api-surface dispatcher no-op and asked
+to fold it into v5.9.12; slot pivoted to that single
+deliverable. Scaffolders cascade to v5.9.13 alongside the
+bootstrap design discussion.
+
+**What shipped**: `cbt/cyrius.cyr` api-surface dispatch path
+extended to walk `argv[2..argc())` scanning for both
+`--update` and `--scope=project` tokens; `cbt/commands.cyr`
+`cmd_api_surface(update_flag, scope_project)` signature
+extended. Both flags forward via `run_tool(tool, ..., ..., 0)`.
+
+**Verification**: 66/66 check.sh green; cc5 self-host
+byte-identical. Real-project verify on
+`/home/macro/Repos/agnosys`: `cyrius api-surface --update` →
+1,113 entries (default); `cyrius api-surface --update
+--scope=project` → 721 entries (lib/* excluded; matches
+agnosys's awk-walker reference count). 392-entry delta =
+exactly the alloc::*, args::*, assert::* stdlib leakage
+agnosys reported.
+
+**Roadmap pin (NOT fixed this slot)**: scaffolder conversions
++ bootstrap-chicken-egg design discussion → v5.9.13.
+`--snapshot=PATH` dispatcher pass-through (same shape as the
+v5.9.12 fix; still dropped) → follow-up if consumer surfaces.
+
+**Next**: v5.9.13 — bootstrap-chicken-egg design + scaffolder
+conversions (cyrius-init.sh + cyrius-port.sh land independently
+since they have no bootstrap dep; cyriusly path TBD per design)
++ bidirectional-IPC helper + LSP gate conversion +
+tar-pipe-to-ssh helper + SSH cluster.)
+
 **5.9.11** (shipped 2026-05-06 — **v5.9.x SLOT 11 — `cyrius
 api-surface --scope=project` flag (agnosys 1.0.11 follow-up
 review) + cx-token-offsets conversion (v5.9.9 deferred)**. Two

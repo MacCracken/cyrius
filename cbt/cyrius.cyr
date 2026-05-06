@@ -472,12 +472,21 @@ fn main() {
     }
 
     # v5.7.33: api-surface — snapshot-based public API diff.
+    # v5.9.12: forward `--scope=project` (v5.9.11 agnosys flag) too —
+    # the v5.7.33 dispatcher only parsed `--update`, so the scope
+    # flag was dropped before reaching `cyrius_api_surface`.
+    # Reported by user 2026-05-06: "5.9.11 --scope= NO OPS".
     if (streq(cmd, "api-surface") == 1) {
         var update_flag = 0;
-        if (argc() >= 3) {
-            if (streq(argv(2), "--update") == 1) { update_flag = 1; }
+        var scope_project = 0;
+        var ai = 2;
+        while (ai < argc()) {
+            var fa = argv(ai);
+            if (streq(fa, "--update") == 1) { update_flag = 1; }
+            if (streq(fa, "--scope=project") == 1) { scope_project = 1; }
+            ai = ai + 1;
         }
-        return cmd_api_surface(update_flag);
+        return cmd_api_surface(update_flag, scope_project);
     }
 
     if (streq(cmd, "audit") == 1) {

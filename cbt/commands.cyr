@@ -389,12 +389,17 @@ fn cmd_lint(file) {
 # v5.7.33: snapshot-based public API surface diff. Pattern from
 # agnosys/scripts/check-api-surface.sh; cyrius-native impl in
 # programs/api_surface.cyr ($_tools_dir/cyrius_api_surface).
-fn cmd_api_surface(update_flag) {
+# v5.9.12: `scope_project` flag forward (v5.9.11 agnosys filing
+# §4 — exclude lib/ entries from the scan so downstream
+# consumers don't pick up cyrius stdlib that churns across
+# releases). Pre-v5.9.12 this dispatcher dropped the flag.
+fn cmd_api_surface(update_flag, scope_project) {
     var tool = make_path(_tools_dir, "cyrius_api_surface");
-    if (update_flag != 0) {
-        return run_tool(tool, "--update", 0, 0);
-    }
-    return run_tool(tool, 0, 0, 0);
+    var u = 0;
+    var s = 0;
+    if (update_flag != 0)   { u = "--update"; }
+    if (scope_project != 0) { s = "--scope=project"; }
+    return run_tool(tool, u, s, 0);
 }
 
 fn cmd_doc(arg1, arg2) {

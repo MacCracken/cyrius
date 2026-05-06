@@ -521,18 +521,43 @@ at cycle entry):
   741,048 B; 66/66 check.sh green; cc5 self-host byte-identical.
   22 .sh remaining (was 23). Scaffolders + LSP IPC + SSH cluster
   cascaded to v5.9.12+.
-- **v5.9.12** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
-  `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
-  `cyrius-port.sh`. The two project-scaffolder scripts are
-  mostly heredoc templates — converting requires designing a
-  templating facility OR keeping the heredocs as data-files
-  read at runtime.
-  - **Opportunistic deferred gates**: capacity probe,
-    init-lib-bin, init-doctree — all share the
-    `cyrius init`/`cyrius capacity` invocation shape that
-    cyriusly conversion may surface helpers for.
-- **v5.9.13** — **bidirectional-IPC helper + LSP gate
-  conversion + tar-pipe-to-ssh helper + SSH cluster**.
+- **v5.9.12** ✅ — **`cyrius api-surface --scope=project`
+  dispatcher pass-through fix shipped 2026-05-06**. User-
+  reported v5.9.11 no-op (the binary correctly implements the
+  flag; `cbt/cyrius.cyr` was only parsing `--update` from
+  `argv[2]` and dropping every other flag). Walked
+  `argv[2..argc())` for both `--update` and `--scope=project`
+  in cyrius.cyr; extended `cmd_api_surface(update,
+  scope_project)` signature in commands.cyr. Verified end-to-
+  end on agnosys: 1,113 entries default → 721 with
+  `--scope=project` (matches agnosys awk-walker reference).
+  Slot was originally pinned for scaffolder conversions but
+  pivoted mid-slot per user direction. cc5 unchanged at
+  741,048 B; 66/66 check.sh green.
+- **v5.9.13** — **scaffolder conversions + bootstrap-chicken-egg
+  design + bidirectional-IPC helper + LSP gate conversion +
+  tar-pipe-to-ssh helper + SSH cluster**. Cascaded from
+  v5.9.12 (scaffolders) and v5.9.13 (IPC + SSH cluster).
+  - **cyriusly bootstrap-chicken-egg DECIDED 2026-05-06 (option
+    a, per user direction)**: cyriusly stays bash.
+    `scripts/cyriusly` is the canonical entrypoint; no
+    `programs/cyriusly.cyr` ever lands. Sovereignty pass
+    explicitly excludes cyriusly from the bash → cyrius
+    conversion arc — `cyriusly setup` is the verb that
+    bootstraps cc5 from a fresh source checkout, so it must
+    work before any cyrius binary exists. Documented as a
+    KEEP-as-bash entry in the sovereignty inventory below
+    (sibling of `bootstrap/bootstrap.sh` and
+    `scripts/install.sh`).
+  - **cyrius-init.sh + cyrius-port.sh** can land independently
+    of the cyriusly decision — they have no bootstrap
+    dependency. cyrius-init.sh's 17 heredocs become data files
+    in `programs/cyrius-init-templates/`; cyrius-port.sh's
+    Rust→cyrius migration becomes a cyrius port with the same
+    move-old-source-to-`<lang>-old/` shape.
+  - `--snapshot=PATH` dispatcher pass-through (same shape as
+    the v5.9.12 `--scope=project` fix; still dropped post-
+    v5.9.12). One-line addition while the dispatcher is open.
   - `_lsp_session(bin, requests_buf, requests_len, out_buf,
     out_cap)`: parent-writes-stdin + parent-reads-stdout
     simultaneously. Sibling of the v5.9.6 capture helpers but
@@ -612,6 +637,14 @@ at cycle entry):
 - `scripts/install.sh` (575 LOC) — bootstrap-from-zero path;
   cyrius binary may not yet exist.
 - `scripts/cyrius` shim (30 LOC) — PATH-discovery wrapper.
+- **`scripts/cyriusly` (349 LOC)** — version manager + setup
+  verb. Decided KEEP-as-bash 2026-05-06 (v5.9.12 ship): the
+  `setup` verb bootstraps cc5 from a fresh source checkout
+  via `bootstrap/bootstrap.sh` + `scripts/install.sh`. If
+  cyriusly itself were a cyrius binary, `cyriusly setup`
+  couldn't run before cc5 exists. Three options were on the
+  table (full conversion / precompile-in-tarball / hybrid
+  shim); user picked option (a) to keep cyriusly bash entirely.
 - `programs/dlopen-helper.c` — explicit ABI shim per sovereignty
   pin (binds host glibc).
 - `editors/neovim.lua` + `editors/vscode/extension.js` —
