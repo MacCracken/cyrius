@@ -1,0 +1,4 @@
+object;
+var r1 = inc_counter();
+var r2 = inc_counter();
+var r = r2;

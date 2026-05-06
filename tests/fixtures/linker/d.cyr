@@ -1,0 +1,4 @@
+object;
+var counter = 42;
+fn inc_counter() { counter = counter + 1; return counter; }
+fn never_called() { return 99; }

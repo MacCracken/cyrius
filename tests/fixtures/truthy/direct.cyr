@@ -1,0 +1,12 @@
+# Direct shape: `if (fn_call())` (no intermediate var)
+fn match_one(x) {
+    if (x == 0) { return 0; }
+    return 1;
+}
+
+fn check(arg) {
+    if (match_one(arg)) { return 77; }
+    return 0 - 1;
+}
+
+syscall(60, check(1));

@@ -1,0 +1,3 @@
+object;
+fn call_greet() { return greet() + 1; }
+var result = call_greet();

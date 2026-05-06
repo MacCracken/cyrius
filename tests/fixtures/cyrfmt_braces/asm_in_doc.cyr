@@ -1,0 +1,10 @@
+# Load cr3_val. Replaces the `var x = y; asm { mov cr3,
+# rax; }` pattern — that pattern relied on cc3-era codegen leaving
+# the assigned value in RAX, which cc5's regalloc breaks.
+fn cr3_load(cr3_val) {
+    asm {
+        0x48; 0x8B; 0x45; 0xF8;
+        0x0F; 0x22; 0xD8;
+    }
+    return 0;
+}

@@ -58,6 +58,7 @@ var ROOT_PATH    = 0;   # repo root absolute path (cstring)
 var CC_PATH      = 0;   # build/cc5 (cstring)
 var CYRFMT_PATH  = 0;   # build/cyrfmt or PATH-resolved cyrfmt (cstring)
 var CYRLINT_PATH = 0;   # build/cyrlint or PATH-resolved cyrlint (cstring)
+var CYRDOC_PATH  = 0;   # build/cyrdoc or PATH-resolved cyrdoc (cstring)
 
 # Counters.
 var G_PASS = 0;
@@ -444,6 +445,446 @@ fn _exec_capture_clean(bin_path, buf, buflen) {
     return total;
 }
 
+# Returns 1 if the file at path contains the c-string `substr`,
+# 0 otherwise. Generic source-grep canary helper for v5.9.3
+# bespoke gates.
+fn _file_contains_substr(path, substr) {
+    var cap = 524288;
+    var buf = alloc(cap + 1);
+    var n = file_read_all(path, buf, cap);
+    if (n <= 0) { return 0; }
+    store8(buf + n, 0);   # null-terminate so strstr is safe
+    if (strstr(buf, substr) >= 0) { return 1; }
+    return 0;
+}
+
+# Fork+exec bin_path with all 3 fds to /dev/null. Wait, return
+# WEXITSTATUS of the direct child, or -1 on fork failure /
+# signal exit. Used by gates that care about exit code only,
+# not stdout.
+fn _exec_run_clean(bin_path) {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn_r = sys_open("/dev/null", 0, 0);
+        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        var dn_o = sys_open("/dev/null", 1, 0);
+        if (dn_o >= 0) { sys_dup2(dn_o, 1); sys_close(dn_o); }
+        var dn_e = sys_open("/dev/null", 1, 0);
+        if (dn_e >= 0) { sys_dup2(dn_e, 2); sys_close(dn_e); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(bin_path, &argv, &envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# Compile fixture .cyr at fixture_path via cc5, run resulting
+# binary, return its exit code (or -1 on compile / fork issue).
+fn _compile_run_get_exit(fixture_path) {
+    var bin = _tmp_path("audit_xrun_");
+    var rc = _self_host_pipe(fixture_path, CC_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        return 0 - 1;
+    }
+    sys_chmod(bin, 493);
+    var ec = _exec_run_clean(bin);
+    sys_unlink(bin);
+    return ec;
+}
+
+# Bespoke gate: cc5 accepts source files between 512 KB and 1 MB.
+# Pinned to v5.7.10 — pre-v5.7.10 cc5 had a 524288-byte cap.
+# Generates a synthetic source ~700 KB of `# pad-line` comments
+# (comments are stripped at lex without consuming the tok_names
+# 128 KB cap; identifier padding would hit that cap before
+# input_buf), pipes to cc5, runs the binary, asserts exit 0.
+fn _input_1mb_gate() {
+    var src_path = _tmp_path("audit_1mb_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) {
+        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+    # Build the source in a single buffer to minimize syscalls.
+    # Each pad line is ~78 chars × 9000 ≈ 702 KB. Comfortably above
+    # the old 512 KB cap, comfortably below the new 1 MB cap.
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < 9000) {
+        str_builder_add_cstr(sb, "# pad-line ");
+        # 5-digit zero-padded index, awk's "%05d" equivalent.
+        if (i < 10) { str_builder_add_cstr(sb, "0000"); }
+        else { if (i < 100) { str_builder_add_cstr(sb, "000"); }
+            else { if (i < 1000) { str_builder_add_cstr(sb, "00"); }
+                else { if (i < 10000) { str_builder_add_cstr(sb, "0"); }
+                    else { } } } }
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, ": this is a no-op comment line for input-buffer sizing\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "var pad_done = 1;\nsyscall(60, 0);\n");
+    var src_str = str_builder_build(sb);
+    var src_data = str_data(src_str);
+    var src_len = str_len(src_str);
+    sys_write(fd, src_data, src_len);
+    sys_close(fd);
+
+    # Sanity: must be > 524288 (old cap) and < 1048576 (new cap).
+    if (src_len < 524288) {
+        sys_unlink(src_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": synthetic source ");
+        print_num(src_len);
+        println(" B is under the old 512 KB cap; regression doesn't exercise the cap");
+        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+    if (src_len > 1048576) {
+        sys_unlink(src_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": synthetic source ");
+        print_num(src_len);
+        println(" B is over the new 1 MB cap; regression should fit");
+        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+
+    var ec = _compile_run_get_exit(src_path);
+    sys_unlink(src_path);
+    if (ec != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5 + run on a ");
+        print_num(src_len);
+        _p(" B source produced exit ");
+        print_num(ec);
+        println(" (expected 0)");
+        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": cc5 compiles + runs a ");
+    print_num(src_len);
+    println(" B source (pre-v5.7.10 cap was 524288 B)");
+    _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 0);
+    return 0;
+}
+
+# Bespoke gate: `if (fn_call())` and `var r = fn_call(); if (r)`
+# branch correctly when r != 0 (v5.6.21 fix). Two sub-cases —
+# var-bound and direct-call — each compiles a fixture, runs it,
+# checks exit code matches the expected sentinel (99 / 77).
+# Pre-v5.6.21 the bare-truthy branch fired on stale flags from
+# inside the callee and mis-branched on every PASS path.
+fn _truthy_after_fncall_gate() {
+    var fix1 = _root_path("tests/fixtures/truthy/var.cyr");
+    var fix2 = _root_path("tests/fixtures/truthy/direct.cyr");
+    var rc1 = _compile_run_get_exit(fix1);
+    var rc2 = _compile_run_get_exit(fix2);
+    var fail = 0;
+    if (rc1 != 99) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": bare-truthy-after-fncall (var r): exit ");
+        print_num(rc1);
+        println(" (expected 99). v5.6.x _flags_reflect_rax stale-flag regression has returned.");
+        fail = 1;
+    }
+    if (rc2 != 77) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": bare-truthy-direct-fncall: exit ");
+        print_num(rc2);
+        println(" (expected 77).");
+        fail = 1;
+    }
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": bare-truthy after fn-call returns correct branch");
+    }
+    _check("bare-truthy 'if (r)' after fn-call branches correctly (v5.6.21 fix)", fail);
+    return fail;
+}
+
+# Bespoke gate: `object;` mode emits `_cyrius_init` with
+# STB_GLOBAL (v3.4.14 → silently flipped to LOCAL at v4.6.0-alpha2
+# → restored at v5.4.9 after mabda's GPU-integration build broke).
+# Compiles a 2-line `object; fn x() { return 0; }` source via cc5,
+# parses the resulting ELF object's symbol table directly (no
+# external readelf), looks up `_cyrius_init`, asserts the binding
+# (high nibble of st_info) is 1 = STB_GLOBAL.
+fn _object_init_gate() {
+    var src_path = _tmp_path("audit_oinit_src_");
+    var src_fd = sys_open(src_path, 577, 420);
+    if (src_fd < 0) {
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+    var src_text = "object;\nfn x() { return 0; }\n";
+    sys_write(src_fd, src_text, strlen(src_text));
+    sys_close(src_fd);
+
+    var obj_path = _tmp_path("audit_oinit_obj_");
+    var rc = _self_host_pipe(src_path, CC_PATH, obj_path);
+    sys_unlink(src_path);
+    if (rc != 0) {
+        sys_unlink(obj_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": object; fixture did not compile (rc=");
+        print_num(rc);
+        println(")");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    var buf_cap = 1048576;
+    var buf = alloc(buf_cap);
+    var n = file_read_all(obj_path, buf, buf_cap);
+    sys_unlink(obj_path);
+    if (n <= 0) {
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    # ELF64 header (little-endian on x86_64): e_shoff @ 40 (u64),
+    # e_shentsize @ 58 (u16), e_shnum @ 60 (u16). Walk section
+    # headers to find SHT_SYMTAB (sh_type == 2). Each section
+    # header is e_shentsize bytes; sh_type @ +4, sh_offset @ +24,
+    # sh_size @ +32, sh_link @ +40.
+    var e_shoff = load64(buf + 40);
+    var e_shentsize = load16(buf + 58);
+    var e_shnum = load16(buf + 60);
+
+    var symtab_off = 0;
+    var symtab_size = 0;
+    var symtab_link = 0;
+    var i = 0;
+    while (i < e_shnum) {
+        var sh = buf + e_shoff + i * e_shentsize;
+        var sh_type = load32(sh + 4);
+        if (sh_type == 2) {                 # SHT_SYMTAB
+            symtab_off = load64(sh + 24);
+            symtab_size = load64(sh + 32);
+            symtab_link = load32(sh + 40);
+        }
+        i = i + 1;
+    }
+
+    if (symtab_off == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": no SHT_SYMTAB section in .o");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    # The associated strtab is symtab_link's section header.
+    var strtab_sh = buf + e_shoff + symtab_link * e_shentsize;
+    var strtab_off = load64(strtab_sh + 24);
+
+    # Walk symbol entries. Elf64_Sym is 24 bytes: st_name @ +0
+    # (u32 — offset into strtab), st_info @ +4 (u8 — high nibble
+    # is the bind, low nibble is the type).
+    var entries = symtab_size / 24;
+    var found_bind = 0 - 1;
+    var j = 0;
+    while (j < entries) {
+        var sym = buf + symtab_off + j * 24;
+        var st_name = load32(sym);
+        var name_ptr = buf + strtab_off + st_name;
+        if (streq(name_ptr, "_cyrius_init") == 1) {
+            var st_info = load8(sym + 4);
+            found_bind = st_info / 16;       # high nibble
+            j = entries;
+        } else {
+            j = j + 1;
+        }
+    }
+
+    if (found_bind == 0 - 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": _cyrius_init missing from .o symbol table");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    if (found_bind != 1) {                   # STB_GLOBAL == 1
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": _cyrius_init bind=");
+        print_num(found_bind);
+        println(" (expected 1=STB_GLOBAL — see v5.4.9 regression)");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    _check("_cyrius_init STB_GLOBAL in object; mode", 0);
+    return 0;
+}
+
+# Bespoke gate: main_aarch64_macho.cyr cross-build smoke
+# (v5.6.40 — pinned after the file silently broke when v5.6.12 O3a
+# shipped IR_RAW_EMIT markers and main_aarch64_macho.cyr was
+# missing `include "src/common/ir.cyr"`). Compiles the cross-
+# scaffold via cc5, verifies output is >100 KB and starts with
+# the ELF magic 7f 45 4c 46. No execution — host-side the binary
+# is a Linux ELF that *emits* Mach-O.
+fn _macho_cross_build_gate() {
+    var src = _root_path("src/main_aarch64_macho.cyr");
+    var out = _tmp_path("audit_macho_cross_");
+    var rc = _self_host_pipe(src, CC_PATH, out);
+    if (rc != 0) {
+        sys_unlink(out);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": main_aarch64_macho.cyr did not compile (rc=");
+        print_num(rc);
+        println(")");
+        _check("main_aarch64_macho.cyr compiles to ELF", 1);
+        return 1;
+    }
+    var sz = _file_size(out);
+    if (sz < 100000) {
+        sys_unlink(out);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5_aarch64_macho_cross output too small (");
+        print_num(sz);
+        println(" B; expected >100KB)");
+        _check("main_aarch64_macho.cyr compiles to ELF", 1);
+        return 1;
+    }
+    # Read first 4 bytes; ELF magic is 0x7f 'E' 'L' 'F' = 7f 45 4c 46.
+    var magic_buf[1];
+    var fd = sys_open(out, 0, 0);
+    if (fd >= 0) {
+        sys_read(fd, &magic_buf, 4);
+        sys_close(fd);
+    }
+    sys_unlink(out);
+    var b0 = load8(&magic_buf);
+    var b1 = load8(&magic_buf + 1);
+    var b2 = load8(&magic_buf + 2);
+    var b3 = load8(&magic_buf + 3);
+    if (b0 != 127) { _check_macho_magic_fail(b0, b1, b2, b3); return 1; }
+    if (b1 != 69)  { _check_macho_magic_fail(b0, b1, b2, b3); return 1; }
+    if (b2 != 76)  { _check_macho_magic_fail(b0, b1, b2, b3); return 1; }
+    if (b3 != 70)  { _check_macho_magic_fail(b0, b1, b2, b3); return 1; }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": cc5_aarch64_macho_cross built (");
+    print_num(sz);
+    println(" B, ELF)");
+    _check("main_aarch64_macho.cyr compiles to ELF", 0);
+    return 0;
+}
+
+fn _check_macho_magic_fail(b0, b1, b2, b3) {
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": output is not ELF (magic: ");
+    print_num(b0);
+    _p(" ");
+    print_num(b1);
+    _p(" ");
+    print_num(b2);
+    _p(" ");
+    print_num(b3);
+    println(")");
+    _check("main_aarch64_macho.cyr compiles to ELF", 1);
+    return 0;
+}
+
+# Source-grep canary: aarch64 EB codebuf cap (v5.7.34).
+# Asserts src/backend/aarch64/emit.cyr has the v5.7.27 3 MB cap
+# present AND does NOT have the pre-v5.7.27 512 KB cap (canary
+# against accidental revert). No execution — pure grep.
+fn _aarch64_codebuf_cap_gate() {
+    var emit_path = _root_path("src/backend/aarch64/emit.cyr");
+    if (file_exists(emit_path) != 1) {
+        _p("  skip: ");
+        _p(emit_path);
+        println(" missing");
+        _check("aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)", 0);
+        return 0;
+    }
+    var has_3mb = _file_contains_substr(emit_path, "if (cp >= 3145728)");
+    var has_512kb = _file_contains_substr(emit_path, "if (cp >= 524288)");
+    var fail = 0;
+    if (has_3mb != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": aarch64 EB codebuf cap < 3 MB — re-grow to match v5.7.27");
+        fail = 1;
+    }
+    if (has_512kb == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": aarch64 EB still has the 512 KB cap (canary tripped)");
+        fail = 1;
+    }
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)");
+    }
+    _check("aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)", fail);
+    return fail;
+}
+
 # ── Self-host gate — inline pipe-fork-exec ──────────────────────
 # bash:
 #   cat $ROOT/src/main.cyr | $CC > $cc_a 2>/dev/null
@@ -501,6 +942,686 @@ fn _self_host_pipe(src_path, compiler_path, out_path) {
     var status_buf[1];
     sys_waitpid(pid, &status_buf, 0);
     return load32(&status_buf);
+}
+
+# Sibling of _self_host_pipe: pipes src_path to compiler_path's
+# stdin, redirects compiler's stdout to /dev/null and stderr to
+# stderr_path. Returns child's wait-status. Used by gates that
+# verify cc5's error/warning diagnostics.
+fn _compile_capture_stderr(src_path, compiler_path, stderr_path) {
+    var src_cap = 2000000;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n <= 0) { return 0 - 1; }
+
+    var err_fd = sys_open(stderr_path, 577, 420);
+    if (err_fd < 0) { return 0 - 2; }
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(err_fd); return 0 - 3; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd);
+        sys_close(write_fd);
+        sys_close(err_fd);
+        return 0 - 4;
+    }
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0);
+        sys_close(read_fd);
+        sys_dup2(err_fd, 2);
+        sys_close(err_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 1); sys_close(devnull); }
+        var argv[3];
+        store64(&argv,     compiler_path);
+        store64(&argv + 8, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(compiler_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(err_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(write_fd);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return load32(&status_buf);
+}
+
+# Sub-case helper for stderr-grep gates. Compiles src_str via cc5,
+# captures stderr, checks for the expected substring presence.
+# want_present == 1: stderr MUST contain expect_substr (warn fired).
+# want_present == 0: stderr MUST NOT contain expect_substr (no
+# false-positive). Returns 0 on PASS, 1 on FAIL. Per-case label
+# is printed only on FAIL.
+fn _stderr_match_subcase(case_label, src_str, expect_substr, want_present) {
+    var src_path = _tmp_path("audit_smc_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) { return 1; }
+    sys_write(fd, src_str, strlen(src_str));
+    sys_close(fd);
+
+    var err_path = _tmp_path("audit_smc_err_");
+    _compile_capture_stderr(src_path, CC_PATH, err_path);
+    sys_unlink(src_path);
+
+    var got = _file_contains_substr(err_path, expect_substr);
+    sys_unlink(err_path);
+
+    if (want_present == 1) {
+        if (got != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": ");
+            _p(case_label);
+            _p(" — stderr missing: ");
+            println(expect_substr);
+            return 1;
+        }
+    } else {
+        if (got == 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": ");
+            _p(case_label);
+            _p(" — stderr contains forbidden: ");
+            println(expect_substr);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+# Find first occurrence of needle bytes in buf[0..n]. Returns
+# offset, or -1 if not found.
+fn _find_bytes(buf, n, needle, nlen) {
+    if (nlen == 0) { return 0; }
+    if (nlen > n) { return 0 - 1; }
+    var i = 0;
+    while (i <= n - nlen) {
+        if (_buf_eq(buf + i, needle, nlen) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Bespoke gate: kmode emit order (v5.7.19; agnos boot regression).
+# Compiles a minimal `kernel;` source with two recognizable byte
+# markers — top-level asm 4× 0xF4 (HLT) and a single gvar init
+# (var marker = 0xDEADBEEF; emits REX.W `mov rcx, imm64` =
+# 48 b9 ...) — and asserts the asm marker's file offset is
+# strictly less than the first 48 b9 sequence. Pre-v5.7.19 cc5
+# emitted gvar inits before top-level asm; in kmode the
+# multiboot loader hands control in 32-bit protected mode, so a
+# 64-bit `mov [rcx], rax` before the boot-shim long-mode
+# transition triple-faulted on real hardware.
+fn _kmode_emit_order_gate() {
+    var src_path = _tmp_path("audit_kmode_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) {
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    var src = "kernel;\n\nvar marker_var = 0xDEADBEEF;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";
+    sys_write(fd, src, strlen(src));
+    sys_close(fd);
+
+    var bin_path = _tmp_path("audit_kmode_bin_");
+    var rc = _self_host_pipe(src_path, CC_PATH, bin_path);
+    sys_unlink(src_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": kmode compile (rc=");
+        print_num(rc);
+        println(")");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+
+    var cap = 524288;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+
+    # Build the two needle byte sequences via store8 (cyrius string
+    # literals can't carry raw 0xF4 / 0x48 bytes ergonomically).
+    var asm_needle[1];
+    store8(&asm_needle,     0xF4);
+    store8(&asm_needle + 1, 0xF4);
+    store8(&asm_needle + 2, 0xF4);
+    store8(&asm_needle + 3, 0xF4);
+    var gvar_needle[1];
+    store8(&gvar_needle,     0x48);
+    store8(&gvar_needle + 1, 0xB9);
+
+    var asm_off = _find_bytes(buf, n, &asm_needle, 4);
+    var gvar_off = _find_bytes(buf, n, &gvar_needle, 2);
+
+    if (asm_off < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": asm marker (f4 f4 f4 f4) not found in kmode binary");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    if (gvar_off < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": gvar-init marker (48 b9) not found in kmode binary");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    if (asm_off >= gvar_off) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": asm marker at byte ");
+        print_num(asm_off);
+        _p(" not before gvar init at byte ");
+        print_num(gvar_off);
+        println("");
+        println("    This is the v5.7.19 regression — kmode emit order broken;");
+        println("    agnos kernel will triple-fault on multiboot entry.");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": kmode emit order — asm (offset ");
+    print_num(asm_off);
+    _p(") before gvar init (offset ");
+    print_num(gvar_off);
+    println(")");
+    _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 0);
+    return 0;
+}
+
+# Sub-case helper: run cyrfmt against fixture_path, capture
+# stdout, byte-compare against fixture (idempotency check).
+# Returns 0 on PASS, 1 on FAIL. Per-case label printed only on
+# FAIL, with a brief size diff for diagnostic.
+fn _cyrfmt_idempotent_subcase(case_label, fixture_path) {
+    var args = vec_new();
+    vec_push(args, CYRFMT_PATH);
+    vec_push(args, fixture_path);
+    var cap = 65536;
+    var out_buf = alloc(cap);
+    var out_n = exec_capture(args, out_buf, cap);
+
+    var orig_buf = alloc(cap);
+    var orig_n = file_read_all(fixture_path, orig_buf, cap);
+    if (orig_n < 0) { orig_n = 0; }
+
+    var ok = 0;
+    if (out_n == orig_n) { ok = _buf_eq(out_buf, orig_buf, out_n); }
+    if (ok != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(case_label);
+        _p(" — cyrfmt output drifted (");
+        print_num(out_n);
+        _p(" got, ");
+        print_num(orig_n);
+        println(" original)");
+        return 1;
+    }
+    return 0;
+}
+
+# Bespoke gate: cyrfmt skips `{` / `}` tracking inside `#`
+# comments and `"..."` string literals (v5.7.22; agnos issue).
+# Pre-v5.7.22 the brace-counter incremented on every `{` and `}`
+# regardless of context; a doc comment quoting `asm { mov cr3,
+# rax; }` re-indented the next comment line, surfacing as
+# spurious `cyrfmt --check` NEEDS-FORMAT in agnos kernel CI.
+# Four sub-cases: asm-in-doc-comment, string-with-braces,
+# well-formed (regression coverage), mixed.
+fn _cyrfmt_comment_braces_gate() {
+    if (CYRFMT_PATH == 0) {
+        _p("  skip: cyrfmt not built");
+        println("");
+        _check("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", 0);
+        return 0;
+    }
+    if (file_exists(CYRFMT_PATH) != 1) {
+        _p("  skip: cyrfmt not built");
+        println("");
+        _check("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", 0);
+        return 0;
+    }
+    var fail = 0;
+    fail = fail + _cyrfmt_idempotent_subcase("asm-in-doc-comment",
+        _root_path("tests/fixtures/cyrfmt_braces/asm_in_doc.cyr"));
+    fail = fail + _cyrfmt_idempotent_subcase("string-with-braces",
+        _root_path("tests/fixtures/cyrfmt_braces/string_with_braces.cyr"));
+    fail = fail + _cyrfmt_idempotent_subcase("well-formed",
+        _root_path("tests/fixtures/cyrfmt_braces/well_formed.cyr"));
+    fail = fail + _cyrfmt_idempotent_subcase("mixed",
+        _root_path("tests/fixtures/cyrfmt_braces/mixed.cyr"));
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrfmt skips braces in comments/strings (4/4 cases)");
+    }
+    _check("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", fail);
+    return fail;
+}
+
+# Fork+exec cyrld with output path + N input .o paths. Returns
+# 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
+# goes to /dev/null; stderr inherited from dispatcher (so a real
+# link error is visible).
+fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec) {
+    var nobjs = vec_len(obj_paths_vec);
+    var argv = alloc((nobjs + 4) * 8);
+    store64(argv,         cyrld_path);
+    store64(argv + 8,     "-o");
+    store64(argv + 16,    out_path);
+    var i = 0;
+    while (i < nobjs) {
+        store64(argv + (i + 3) * 8, vec_get(obj_paths_vec, i));
+        i = i + 1;
+    }
+    store64(argv + (nobjs + 3) * 8, 0);
+
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 1); sys_close(dn); }
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(cyrld_path, argv, &envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# Compile fixture .cyr → .o via cc5. Returns 0 on success.
+fn _compile_to_obj(src_path, obj_path) {
+    return _self_host_pipe(src_path, CC_PATH, obj_path);
+}
+
+# Bespoke gate: cyrld cross-module linker. Two test cases:
+# (1) cross-module fn call — c.cyr's call_greet() resolves to
+#     a.cyr's greet(); link order [c, a]; expect exit 43.
+# (2) cross-module data + init ordering — m.cyr reads counter
+#     defined in d.cyr after two inc_counter() calls; link order
+#     [m, d]; expect exit 44. Also exercises DCE on
+#     `never_called` (must drop without breaking live dispatch).
+fn _linker_gate() {
+    var cyrld = _root_path("build/cyrld");
+    if (file_exists(cyrld) != 1) {
+        _p("  skip: build/cyrld not present");
+        println("");
+        _check("cyrld cross-module link", 0);
+        return 0;
+    }
+    var fa = _root_path("tests/fixtures/linker/a.cyr");
+    var fc = _root_path("tests/fixtures/linker/c.cyr");
+    var fd = _root_path("tests/fixtures/linker/d.cyr");
+    var fm = _root_path("tests/fixtures/linker/m.cyr");
+
+    var oa = _tmp_path("audit_link_a_");
+    var oc = _tmp_path("audit_link_c_");
+    var od = _tmp_path("audit_link_d_");
+    var om = _tmp_path("audit_link_m_");
+
+    var rca = _compile_to_obj(fa, oa);
+    var rcc = _compile_to_obj(fc, oc);
+    var rcd = _compile_to_obj(fd, od);
+    var rcm = _compile_to_obj(fm, om);
+    if (rca != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+    if (rcc != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+    if (rcd != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+    if (rcm != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+
+    # Test 1: link [c, a] → exe1, run, expect exit 43.
+    var exe1 = _tmp_path("audit_link_exe1_");
+    var args1 = vec_new();
+    vec_push(args1, oc);
+    vec_push(args1, oa);
+    var lrc1 = _link_objects_invoke(cyrld, exe1, args1);
+    if (lrc1 != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cyrld test1 returned ");
+        print_num(lrc1);
+        println("");
+        _linker_gate_cleanup(oa, oc, od, om);
+        sys_unlink(exe1);
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+    sys_chmod(exe1, 493);
+    var ec1 = _exec_run_clean(exe1);
+    sys_unlink(exe1);
+    if (ec1 != 43) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cross-module call exit ");
+        print_num(ec1);
+        println(" (expected 43)");
+        _linker_gate_cleanup(oa, oc, od, om);
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+
+    # Test 2: link [m, d] → exe2, run, expect exit 44.
+    var exe2 = _tmp_path("audit_link_exe2_");
+    var args2 = vec_new();
+    vec_push(args2, om);
+    vec_push(args2, od);
+    var lrc2 = _link_objects_invoke(cyrld, exe2, args2);
+    _linker_gate_cleanup(oa, oc, od, om);
+    if (lrc2 != 0) {
+        sys_unlink(exe2);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cyrld test2 returned ");
+        print_num(lrc2);
+        println("");
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+    sys_chmod(exe2, 493);
+    var ec2 = _exec_run_clean(exe2);
+    sys_unlink(exe2);
+    if (ec2 != 44) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": data + init ordering exit ");
+        print_num(ec2);
+        println(" (expected 44)");
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+
+    _check("cyrld cross-module link", 0);
+    return 0;
+}
+
+fn _linker_gate_cleanup(a, b, c, d) {
+    sys_unlink(a);
+    sys_unlink(b);
+    sys_unlink(c);
+    sys_unlink(d);
+    return 0;
+}
+
+# Bespoke gate: stdlib doc coverage (pinned post-v5.7.20). Walks
+# lib/*.cyr (skipping symlinks + distlib bundles, same convention
+# as audit_lint_walk), runs `cyrdoc --check` on each, sums
+# "<N> undocumented" totals. Asserts total == 0 and tracks the
+# worst offender for diagnostic.
+fn _stdlib_doc_coverage_gate() {
+    if (CYRDOC_PATH == 0) {
+        _p("  skip: cyrdoc not built (cat programs/cyrdoc.cyr | build/cc5 > build/cyrdoc)");
+        println("");
+        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+        return 0;
+    }
+    if (file_exists(CYRDOC_PATH) != 1) {
+        _p("  skip: cyrdoc not built (");
+        _p(CYRDOC_PATH);
+        println(" missing)");
+        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+        return 0;
+    }
+    var lib_dir = str_from(_root_path("lib"));
+    var names = vec_new();
+    var dtypes = vec_new();
+    _aw_dir_list_typed(lib_dir, names, dtypes);
+    var total = 0;
+    var worst_n = 0;
+    var worst_name = 0;
+    var skipped = 0;
+    var cap = 200000;
+    var buf = alloc(cap);
+    var i = 0;
+    while (i < vec_len(names)) {
+        var name = vec_get(names, i);
+        if (_aw_is_cyr(name) == 1) {
+            var dtype = vec_get(dtypes, i);
+            var full = path_join(lib_dir, name);
+            if (dtype == 10) {                       # DT_LNK — symlink
+                skipped = skipped + 1;
+            } else {
+                if (_aw_is_distlib_bundle(full) == 1) {
+                    skipped = skipped + 1;
+                } else {
+                    var args = vec_new();
+                    vec_push(args, CYRDOC_PATH);
+                    vec_push(args, "--check");
+                    vec_push(args, str_data(full));
+                    var n = exec_capture(args, buf, cap);
+                    var u = _doc_parse_undocumented(buf, n);
+                    if (u > 0) {
+                        total = total + u;
+                        if (u > worst_n) {
+                            worst_n = u;
+                            worst_name = str_data(path_basename(full));
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if (total > 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        print_num(total);
+        println(" undocumented public fns across lib/*.cyr");
+        if (worst_name != 0) {
+            _p("    worst offender: ");
+            _p(worst_name);
+            _p(" (");
+            print_num(worst_n);
+            println(" undocumented)");
+        }
+        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 1);
+        return 1;
+    }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    println(": lib/*.cyr doc coverage (0 undocumented)");
+    _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+    return 0;
+}
+
+# Find the LAST " undocumented" needle in buf; walk back to leading
+# integer. Mirrors the bash `tail -1 | grep -oE '[0-9]+ undocumented'`
+# pattern: cyrdoc emits one summary line per file at the bottom.
+fn _doc_parse_undocumented(buf, n) {
+    var needle = " undocumented";
+    var nlen = strlen(needle);
+    var found = 0 - 1;
+    var i = 0;
+    while (i + nlen <= n) {
+        if (_buf_eq(buf + i, needle, nlen) == 1) {
+            found = i;
+        }
+        i = i + 1;
+    }
+    if (found < 0) { return 0; }
+    var end = found;
+    var start = end;
+    while (start > 0) {
+        var c = load8(buf + start - 1);
+        if (c < 48) { return _aw_parse_leading_int(buf + start, end - start); }
+        if (c > 57) { return _aw_parse_leading_int(buf + start, end - start); }
+        start = start - 1;
+    }
+    return _aw_parse_leading_int(buf + start, end - start);
+}
+
+# Bespoke gate: reserved-keyword diagnostic (v5.5.26). Asserts
+# `var <kw> = 1;` with kw in {match, in, default, shared} triggers
+# both "reserved keyword '<kw>'" and "cannot be used as an
+# identifier" hints, AND that a legitimate identifier (`my_var`)
+# does NOT trigger the path.
+fn _reserved_kw_diag_gate() {
+    var fail = 0;
+    fail = fail + _stderr_match_subcase("var match",
+        "include \"lib/syscalls.cyr\"\nfn foo() { var match = 1; return match; }\nfoo();\nsyscall(60, 0);\n",
+        "reserved keyword 'match'", 1);
+    fail = fail + _stderr_match_subcase("var in",
+        "include \"lib/syscalls.cyr\"\nfn foo() { var in = 1; return in; }\nfoo();\nsyscall(60, 0);\n",
+        "reserved keyword 'in'", 1);
+    fail = fail + _stderr_match_subcase("var default",
+        "include \"lib/syscalls.cyr\"\nfn foo() { var default = 1; return default; }\nfoo();\nsyscall(60, 0);\n",
+        "reserved keyword 'default'", 1);
+    fail = fail + _stderr_match_subcase("var shared",
+        "include \"lib/syscalls.cyr\"\nfn foo() { var shared = 1; return shared; }\nfoo();\nsyscall(60, 0);\n",
+        "reserved keyword 'shared'", 1);
+    fail = fail + _stderr_match_subcase("hint-text-match",
+        "include \"lib/syscalls.cyr\"\nfn foo() { var match = 1; return match; }\nfoo();\nsyscall(60, 0);\n",
+        "cannot be used as an identifier", 1);
+    fail = fail + _stderr_match_subcase("legit-ident-no-falsepositive",
+        "include \"lib/syscalls.cyr\"\nfn foo() { var my_var = 1; return my_var; }\nfoo();\nsyscall(60, 0);\n",
+        "reserved keyword", 0);
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": reserved keyword diagnostic (4 kw + hint + negative control)");
+    }
+    _check("'var match/in/default/shared' \xe2\x86\x92 'reserved keyword ... cannot be used as identifier'", fail);
+    return fail;
+}
+
+# Bespoke gate: fn-name collision warning (v5.7.9). Three sub-cases:
+# (1) same-arity duplicate must warn, (2) different-arity duplicate
+# must warn, (3) forward-decl + later body must NOT warn (false-
+# positive guard for legitimate mutual-recursion idiom).
+fn _fn_collision_gate() {
+    var fail = 0;
+    fail = fail + _stderr_match_subcase("same-arity duplicate",
+        "fn dup_a(x) { return x + 1; }\nfn dup_a(x) { return x + 2; }\nsyscall(60, 0);\n",
+        "duplicate fn 'dup_a'", 1);
+    fail = fail + _stderr_match_subcase("different-arity duplicate",
+        "fn dup_b(a) { return a; }\nfn dup_b(a, b) { return a + b; }\nsyscall(60, 0);\n",
+        "duplicate fn 'dup_b'", 1);
+    fail = fail + _stderr_match_subcase("forward-decl mutual recursion",
+        "fn caller_one(n) { if (n <= 0) { return 0; } return callee_two(n - 1); }\nfn callee_two(n) { if (n <= 0) { return 0; } return caller_one(n - 1); }\nsyscall(60, caller_one(3));\n",
+        "duplicate fn", 0);
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": fn-name collision warning (3/3 cases)");
+    }
+    _check("duplicate fn warns; forward-decl no false-positive (v5.7.9)", fail);
+    return fail;
+}
+
+# Bespoke gate: lexer reject paths for malformed string escapes
+# (v5.7.13). 11 sub-cases — \x##, \u####, \u{...} variants. Each
+# fixture is expected to fail compile with a specific lex error;
+# substring grep on cc5's stderr verifies the right diagnostic
+# fired. Positive coverage lives in tests/tcyr/string_escapes.tcyr
+# (compile-success-only); this gate covers reject paths.
+fn _string_escape_rejects_gate() {
+    var fail = 0;
+    fail = fail + _stderr_match_subcase("x: bad-hex-1st-nibble",
+        "var s = \"\\xZ0\"; syscall(60, 0);",
+        "\\x escape: bad hex digit", 1);
+    fail = fail + _stderr_match_subcase("x: bad-hex-2nd-nibble",
+        "var s = \"\\x1Z\"; syscall(60, 0);",
+        "\\x escape: bad hex digit", 1);
+    fail = fail + _stderr_match_subcase("u: bad-hex",
+        "var s = \"\\u00Z0\"; syscall(60, 0);",
+        "\\u escape: bad hex digit", 1);
+    fail = fail + _stderr_match_subcase("u: surrogate-low",
+        "var s = \"\\uD800\"; syscall(60, 0);",
+        "surrogate codepoint not allowed", 1);
+    fail = fail + _stderr_match_subcase("u: surrogate-high",
+        "var s = \"\\uDFFF\"; syscall(60, 0);",
+        "surrogate codepoint not allowed", 1);
+    fail = fail + _stderr_match_subcase("u{}: empty",
+        "var s = \"\\u{}\"; syscall(60, 0);",
+        "\\u{...} escape: no hex digits", 1);
+    fail = fail + _stderr_match_subcase("u{}: bad-hex",
+        "var s = \"\\u{1G}\"; syscall(60, 0);",
+        "\\u{...} escape: bad hex digit", 1);
+    fail = fail + _stderr_match_subcase("u{}: too-many-digits",
+        "var s = \"\\u{1234567}\"; syscall(60, 0);",
+        "\\u{...} escape: > 6 hex digits", 1);
+    fail = fail + _stderr_match_subcase("u{}: above-max-codepoint",
+        "var s = \"\\u{110000}\"; syscall(60, 0);",
+        "codepoint > U+10FFFF", 1);
+    fail = fail + _stderr_match_subcase("u{}: surrogate-low",
+        "var s = \"\\u{D800}\"; syscall(60, 0);",
+        "surrogate codepoint not allowed", 1);
+    fail = fail + _stderr_match_subcase("u{}: surrogate-high",
+        "var s = \"\\u{DFFF}\"; syscall(60, 0);",
+        "surrogate codepoint not allowed", 1);
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": string-escape reject cases (11/11)");
+    }
+    _check("lex rejects malformed \\x## / \\u#### / \\u{...} + surrogates (v5.7.13)", fail);
+    return fail;
 }
 
 # Returns 1 if the two files have identical content, 0 otherwise.
@@ -781,6 +1902,7 @@ fn _setup_paths() {
     CC_PATH = _root_path("build/cc5");
     CYRFMT_PATH = _resolve_tool("build/cyrfmt", "cyrfmt");
     CYRLINT_PATH = _resolve_tool("build/cyrlint", "cyrlint");
+    CYRDOC_PATH = _resolve_tool("build/cyrdoc", "cyrdoc");
     return 0;
 }
 
@@ -792,7 +1914,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("Linker");
-    _gate("cyrld cross-module link", "tests/regression-linker.sh");
+    _linker_gate();
     println("");
 
     _section("Capacity meter");
@@ -800,7 +1922,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("Object init binding");
-    _gate("_cyrius_init STB_GLOBAL in object; mode", "tests/regression-object-init.sh");
+    _object_init_gate();
     println("");
 
     _section("aarch64 syscalls + threads");
@@ -808,7 +1930,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("Mach-O aarch64 cross-build");
-    _gate("main_aarch64_macho.cyr compiles to ELF", "tests/regression-macho-cross-build.sh");
+    _macho_cross_build_gate();
     println("");
 
     _section("Inline-asm discard-result");
@@ -820,7 +1942,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("Reserved-keyword diag");
-    _gate("'var match/in/default/shared' → 'reserved keyword ... cannot be used as identifier'", "tests/regression-reserved-kw-diag.sh");
+    _reserved_kw_diag_gate();
     println("");
 
     _section("Shadow + PAM");
@@ -880,15 +2002,15 @@ fn _run_regression_gates() {
     println("");
 
     _section("Bare-truthy after fn-call");
-    _gate("bare-truthy 'if (r)' after fn-call branches correctly (v5.6.21 fix)", "tests/regression-truthy-after-fncall.sh");
+    _truthy_after_fncall_gate();
     println("");
 
     _section("fn-name collision warning");
-    _gate("duplicate fn warns; forward-decl no false-positive (v5.7.9)", "tests/regression-fn-collision.sh");
+    _fn_collision_gate();
     println("");
 
     _section("input_buf 1 MB cap");
-    _gate("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", "tests/regression-input-1mb.sh");
+    _input_1mb_gate();
     println("");
 
     _section("cyrius-x bytecode entry");
@@ -900,7 +2022,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("String-escape rejects");
-    _gate("lex rejects malformed \\x## / \\u#### / \\u{...} + surrogates (v5.7.13)", "tests/regression-string-escapes.sh");
+    _string_escape_rejects_gate();
     println("");
 
     _section("cyrius deps transitive");
@@ -920,11 +2042,11 @@ fn _run_regression_gates() {
     println("");
 
     _section("kmode emit order");
-    _gate("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", "tests/regression-kmode-emit-order.sh");
+    _kmode_emit_order_gate();
     println("");
 
     _section("stdlib doc coverage");
-    _gate("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", "tests/regression-stdlib-doc-coverage.sh");
+    _stdlib_doc_coverage_gate();
     println("");
 
     _section("cyrius fuzz auto-prepend");
@@ -932,7 +2054,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("cyrfmt comment/string brace skip");
-    _gate("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", "tests/regression-cyrfmt-comment-braces.sh");
+    _cyrfmt_comment_braces_gate();
     println("");
 
     _section("install --refresh-only shim");
@@ -981,7 +2103,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("aarch64 codebuf cap");
-    _gate("aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)", "tests/regression-aarch64-codebuf-cap.sh");
+    _aarch64_codebuf_cap_gate();
     println("");
 
     _section("stdlib syscall surface (v5.7.35)");

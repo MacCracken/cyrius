@@ -1,0 +1,4 @@
+fn pattern() {
+    var s = "asm { mov cr3, rax; }";
+    return s;
+}

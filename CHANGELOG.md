@@ -6,6 +6,150 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.3] — 2026-05-06
+
+**v5.9.x SLOT 3 — sovereignty pass: tests/regression-*.sh batch
+2/3 (12 conversions, 50 → 38 scripts)**. Second batch of the
+60-script `tests/regression-*.sh` conversion arc; v5.9.2 shipped
+batch 1/3 (10 conversions, all tcyr-relay or expected-output
+shapes). This slot tackles bespoke-shape gates — direct ports
+each with their own dispatcher fn — plus one shape-cluster
+helper for stderr-diagnostic gates.
+
+cc5: **741,048 B unchanged** — slot is `programs/` + `tests/`
+work; the compiler binary is not touched.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Roadmap pin was "~15-20 conversions". Empirical at slot entry:
+the remaining 50 scripts cluster into uneven shapes — only one
+3-script cluster (multi-case stderr-diagnostic) earns a helper
+template; everything else needs a one-off dispatcher fn (ELF
+symbol-table parse, source-grep canary, compile + ELF magic
+check, cyrfmt idempotency, cyrld multi-module link,
+synthesised-source compile, kmode emit-order byte-offset
+search, `cyrdoc --check` walk over stdlib). Pragmatic ceiling
+this slot: 12 conversions before per-script porting cost
+exceeds aggregate value. Cross-host SSH gates (8 scripts:
+aarch64-syscalls, native-selfhost, macho-exit, pe-exit,
+sit-status, tls-live, aarch64-f64, aarch64-f64-polyfill) and
+the TS corpus / acceptance cluster (9 scripts) deferred to
+v5.9.4. The shared-library test (regression-shared.sh) defers
+to v5.9.4 too — its current shape ships an inline C harness;
+the cyrius-side replacement (lib/dynlib.cyr / lib/fdlopen.cyr
+consumer fixture) is its own design step worth one slot.
+
+### Added
+
+- **`programs/check.cyr` — `_compile_capture_stderr(src_path,
+  compiler_path, stderr_path)`**: sibling of `_self_host_pipe`
+  that pipes source to cc5 stdin, redirects cc5's stdout to
+  /dev/null and stderr to a file. Used by the three
+  stderr-diagnostic gates (fn-collision, reserved-kw-diag,
+  string-escapes) — all of which assert cc5 emits a specific
+  warning/error substring on a deliberately-broken source.
+
+- **`programs/check.cyr` — `_stderr_match_subcase(label, src,
+  expect, want_present)`**: sub-case helper for stderr-grep
+  gates. Compiles `src`, captures stderr, checks substring
+  presence (or absence — for false-positive guards like
+  fn-collision's forward-decl case). Returns 0 on PASS, 1 on
+  FAIL; per-case label printed only on FAIL.
+
+- **`programs/check.cyr` — `_exec_run_clean(bin)`**: fork+exec
+  bin with all 3 fds to /dev/null, wait, return WEXITSTATUS.
+  Sister to `_exec_capture_clean` for gates that only care about
+  the exit code (no stdout capture needed).
+
+- **`programs/check.cyr` — `_compile_run_get_exit(fixture)`**:
+  compose helper — compile fixture .cyr → run → return exit
+  code. Used by `_truthy_after_fncall_gate` (two sub-cases at
+  exits 99 / 77) and `_input_1mb_gate` (synth source ~700 KB,
+  expect exit 0).
+
+- **`programs/check.cyr` — `_link_objects_invoke(cyrld_path,
+  out_path, obj_paths_vec)`**: fork+exec cyrld with `-o
+  <out>` followed by N input `.o` paths. Used by
+  `_linker_gate` for multi-module link smoke.
+
+- **`programs/check.cyr` — `_file_contains_substr(path, substr)`**:
+  generic source-grep helper (file_read_all → null-terminate →
+  strstr). Used by `_aarch64_codebuf_cap_gate` and elsewhere.
+
+- **`programs/check.cyr` — `_find_bytes(buf, n, needle, nlen)`**:
+  byte-sequence search over a buffer. Used by
+  `_kmode_emit_order_gate` to locate the asm-marker `f4 f4 f4
+  f4` and gvar-init-marker `48 b9` byte offsets.
+
+- **`programs/check.cyr` — `_doc_parse_undocumented(buf, n)`**:
+  parse the `<N> undocumented` summary line cyrdoc emits. Used
+  by `_stdlib_doc_coverage_gate`.
+
+- **Twelve bespoke gate fns** (each replacing one
+  `tests/regression-*.sh`):
+  - `_aarch64_codebuf_cap_gate` (source-grep canary)
+  - `_macho_cross_build_gate` (compile + size + ELF magic)
+  - `_object_init_gate` (compile + native ELF symbol-table parse,
+    no readelf shell-out — assert `_cyrius_init` bind ==
+    STB_GLOBAL)
+  - `_truthy_after_fncall_gate` (two fixture sub-cases at
+    expected exits 99 / 77)
+  - `_input_1mb_gate` (synth ~700 KB source, expect exit 0)
+  - `_fn_collision_gate` (3 stderr-grep sub-cases)
+  - `_reserved_kw_diag_gate` (4 keyword sub-cases + hint match
+    + negative control)
+  - `_string_escape_rejects_gate` (11 lex-reject sub-cases)
+  - `_stdlib_doc_coverage_gate` (audit-walk-style cyrdoc walk
+    over `lib/*.cyr`)
+  - `_linker_gate` (compile 4 fixtures, cyrld two binaries,
+    expect exit 43 / 44)
+  - `_cyrfmt_comment_braces_gate` (4 idempotency sub-cases)
+  - `_kmode_emit_order_gate` (compile kernel; minimal source,
+    locate `f4 f4 f4 f4` and `48 b9` byte offsets, assert asm
+    < gvar)
+
+- **`tests/fixtures/`** — new sub-directories:
+  - `truthy/` — `var.cyr`, `direct.cyr` (truthy-after-fncall sub-cases)
+  - `linker/` — `a.cyr`, `c.cyr`, `d.cyr`, `m.cyr` (cross-module
+    link object fixtures)
+  - `cyrfmt_braces/` — `asm_in_doc.cyr`, `string_with_braces.cyr`,
+    `well_formed.cyr`, `mixed.cyr` (idempotency targets)
+
+- **`programs/check.cyr` — `CYRDOC_PATH`**: dispatcher tool
+  registry now resolves `build/cyrdoc` (or PATH-resolved
+  cyrdoc) at startup, mirroring `CYRFMT_PATH` / `CYRLINT_PATH`.
+
+### Removed
+
+- **12 `tests/regression-*.sh`** scripts retired alongside their
+  conversions: aarch64-codebuf-cap, macho-cross-build,
+  object-init, truthy-after-fncall, input-1mb, fn-collision,
+  reserved-kw-diag, string-escapes, stdlib-doc-coverage, linker,
+  cyrfmt-comment-braces, kmode-emit-order. Total:
+  60 → 50 → 38 across v5.9.2 + v5.9.3.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 65/65 gates green, exit 0 — pre- and post-deletion.
+
+### Noted for review (NOT fixed this slot)
+
+- **`cyrius audit` is broken outside the cyrius repo**:
+  `cbt/commands.cyr:415` `cmd_audit()` resolves
+  `make_path(_scripts_dir, "check.sh")`, but `check.sh` isn't in
+  `cyrius.cyml`'s `[release].scripts` install list — so from
+  `~/.cyrius/bin/` it resolves to a non-existent path and the
+  invocation falls through to a raw `/bin/sh: ... No such file
+  or directory` exit 127. Compounded by `cbt/build.cyr:222`
+  `run_tool` only validating the *tool* exists (`/bin/sh`),
+  never the script arg. In-repo it works fine. Two open
+  questions surfaced to user: (a) intended semantics outside
+  the cyrius repo (clean error vs polymorphic project-level
+  audit); (b) defensive `file_exists(script)` in `run_script`
+  applies to all callers. Earmarked for a follow-up slot.
+
 ## [5.9.2] — 2026-05-06
 
 **v5.9.x SLOT 2 — sovereignty pass: tests/regression-*.sh batch

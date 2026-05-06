@@ -1,0 +1,8 @@
+# Wraps the asm { ... } pattern.
+fn wrapper() {
+    var msg = "block { with } braces";
+    if (msg != 0) {
+        return 1;
+    }
+    return 0;
+}

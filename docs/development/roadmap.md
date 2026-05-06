@@ -333,25 +333,59 @@ at cycle entry):
   reaches the release tarball (cyim-surfaced; mirrors v5.8.49
   fix in `install.sh`). cc5 unchanged (741,048 B); 65/65 check.sh
   green pre- and post-deletion.
-- **v5.9.3-v5.9.4** — sovereignty pass: continue
-  `tests/regression-*.sh` batch conversion (50 scripts remaining).
-  Larger-shape categories left for these slots: cross-host SSH
-  gates (aarch64-syscalls, native-selfhost, macho-exit, pe-exit,
-  sit-status, tls-live), TS corpus threshold gates (ts-lex,
-  ts-parse, ts-parse-tsx, ts-asserts, ts-mapped, ts-decorators,
-  ts-variadic-tuples, ts-const-type-params, ts-advanced-pin-audit),
-  source-grep canaries (aarch64-codebuf-cap), readelf/binary-shape
-  checks (object-init, macho-cross-build), multi-case scaffolders
-  (string-escapes, fn-collision, deps-transitive, init-lib-bin,
-  init-doctree, struct-cap, kmode-emit-order, capacity, linker,
-  shared, lsp-definition, smoke-discovery, distlib-large-module,
-  inline-asm-discard, install-shim-symlink, cyrfmt-write,
-  cyrfmt-comment-braces, cyrlint-large-file,
-  lint-global-init-order, syscall-surface-v5735, fuzz-deps-prepend,
-  reserved-kw-diag, stdlib-doc-coverage, input-1mb,
-  truthy-after-fncall, api-surface, cx-build, cx-roundtrip,
-  cx-syscall-literal, cx-token-offsets, aarch64-f64,
-  aarch64-f64-polyfill). Templating may earn 1-2 more helpers.
+- **v5.9.3** ✅ — **sovereignty pass batch 2/3 shipped 2026-05-06**.
+  12 `_gate()` calls converted off `tests/regression-*.sh`
+  (50 → 38 remaining). One shape-cluster helper template
+  (`_stderr_match_subcase` + `_compile_capture_stderr`) covering
+  3 stderr-diagnostic gates (fn-collision, reserved-kw-diag,
+  string-escapes); 12 bespoke gate fns for the rest
+  (aarch64-codebuf-cap source-grep, macho-cross-build ELF-magic,
+  object-init native ELF symbol-table parse, truthy-after-fncall,
+  input-1mb synth-source, stdlib-doc-coverage cyrdoc-walk,
+  linker cyrld-multi-module, cyrfmt-comment-braces, kmode-emit-
+  order). 7 small generic helpers landed alongside (exec-run-
+  clean, compile-run-get-exit, link-objects-invoke, file-
+  contains-substr, find-bytes, doc-parse-undocumented,
+  CYRDOC_PATH resolver). 11 new fixture files in
+  `tests/fixtures/{truthy,linker,cyrfmt_braces}/`. cc5 unchanged
+  (741,048 B); 65/65 check.sh green pre- and post-deletion.
+  Surfaced but NOT fixed this slot: `cyrius audit` broken
+  outside cyrius repo (cmd_audit invokes
+  `~/.cyrius/bin/check.sh` which doesn't exist; check.sh not in
+  `[release].scripts`); two open questions earmarked for
+  follow-up.
+- **v5.9.4** — sovereignty pass batch 3/3: continue
+  `tests/regression-*.sh` (38 scripts remaining). Categories
+  earned for this slot:
+  - **Cross-host SSH gates** (8 scripts): aarch64-syscalls,
+    aarch64-native-selfhost, macho-exit, pe-exit, sit-status,
+    tls-live, aarch64-f64, aarch64-f64-polyfill. Skip-if-
+    unreachable shape; need `_ssh_skip_check(target)` helper +
+    cyrius-side scp/ssh fork-exec wrappers.
+  - **TS acceptance cluster** (9 scripts): ts-lex, ts-parse,
+    ts-parse-tsx, ts-asserts, ts-mapped, ts-decorators,
+    ts-variadic-tuples, ts-const-type-params,
+    ts-advanced-pin-audit. ts-asserts / ts-mapped / ts-decorators
+    / ts-variadic-tuples / ts-const-type-params /
+    ts-advanced-pin-audit have ~6-7 inline TS heredocs each
+    (~38 fixture files total) and a uniform "feed each through
+    `cc5 --parse-ts`, all must exit 0" shape — earns
+    `_parse_ts_dir_gate(gate, label, fixtures_subdir)`. ts-lex
+    uses `--lex-ts`; ts-parse + ts-parse-tsx walk an external
+    `~/Repos/secureyeoman` corpus with a pass-count threshold.
+  - **Shared-library `regression-shared.sh`** (1 script): currently
+    embeds an inline C harness that dlopens cyrius's `shared;`
+    output and dlsyms exports. Sovereignty pin says no shipped
+    C; needs a cyrius-side test fixture using `lib/dynlib.cyr`
+    or `lib/fdlopen.cyr` to dlopen+dlsym.
+  - **Remaining bespoke** (~20 scripts): cyrfmt-write multi-
+    test, capacity meter probe, deps-transitive, init-lib-bin,
+    init-doctree, struct-cap, lsp-definition, smoke-discovery,
+    distlib-large-module, inline-asm-discard,
+    install-shim-symlink, cyrlint-large-file,
+    lint-global-init-order, syscall-surface-v5735,
+    fuzz-deps-prepend, api-surface, cx-build, cx-roundtrip,
+    cx-syscall-literal, cx-token-offsets. Mostly one-off ports.
 - **v5.9.5** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are

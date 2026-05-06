@@ -1,0 +1,2 @@
+object;
+fn greet() { return 42; }

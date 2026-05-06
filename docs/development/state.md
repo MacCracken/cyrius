@@ -5,6 +5,42 @@
 
 ## Version
 
+**5.9.3** (shipped 2026-05-06 — **v5.9.x SLOT 3 — sovereignty
+pass: tests/regression-*.sh batch 2/3 (12 conversions, 50 → 38
+scripts)**. Second batch of the 60-script `tests/regression-*.sh`
+conversion arc. cc5 unchanged at **741,048 B** — slot is
+`programs/` + `tests/` work; the compiler binary is not touched.
+**Premise-check finding at slot entry**: the remaining 50 scripts
+clustered into uneven shapes — only 1 cluster (3 stderr-diagnostic
+gates) earned a helper template; everything else needed a one-off
+dispatcher fn. Pragmatic ceiling 12 conversions before
+per-script porting cost outpaced aggregate value. Cross-host
+SSH gates (8 scripts), TS corpus / acceptance cluster (9
+scripts), and the C-harness shared-library test (1 script)
+deferred to v5.9.4. **What shipped**: 1 helper template
+(`_stderr_match_subcase` + `_compile_capture_stderr`); 7 generic
+helpers (`_exec_run_clean`, `_compile_run_get_exit`,
+`_link_objects_invoke`, `_file_contains_substr`,
+`_find_bytes`, `_doc_parse_undocumented`, plus dispatcher's
+`CYRDOC_PATH` resolver); 12 bespoke gate fns each replacing one
+.sh script (aarch64-codebuf-cap source-grep, macho-cross-build
+ELF-magic, object-init native ELF symbol-table parse, truthy-after-
+fncall 2-sub-case, input-1mb synth-source, fn-collision /
+reserved-kw-diag / string-escapes stderr-grep clusters, stdlib-
+doc-coverage cyrdoc-walk, linker cyrld-multi-module, cyrfmt-
+comment-braces idempotency, kmode-emit-order byte-offset
+search); 11 fixture files in 3 new `tests/fixtures/` sub-dirs
+(truthy, linker, cyrfmt_braces). Acceptance: 65/65 check.sh both
+pre- and post-deletion; cc5 self-host byte-identical. **Surfaced
+but NOT fixed this slot**: `cyrius audit` from outside the
+cyrius repo prints a raw sh "no such file or directory" and
+exits 127 because check.sh isn't in `[release].scripts` (so
+`~/.cyrius/bin/check.sh` doesn't exist) and `run_tool`
+validates only `/bin/sh` not the script arg. Two open
+design questions surfaced to user; earmarked for a follow-up
+slot. **Next**: v5.9.4 continues with the SSH cross-host gates
++ TS acceptance cluster + shared-library cyrius-side test.)
+
 **5.9.2** (shipped 2026-05-06 — **v5.9.x SLOT 2 — sovereignty
 pass: tests/regression-*.sh batch 1/3 (10 conversions, 60 → 50
 scripts)**. First batch of the 60-script `tests/regression-*.sh`
