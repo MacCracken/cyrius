@@ -506,42 +506,50 @@ at cycle entry):
   check.sh green; cc5 self-host byte-identical. macho-exit +
   pe-exit opportunistic co-targets deferred (slot kept
   single-theme).
-- **v5.9.11** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+- **v5.9.11** ✅ — **api-surface --scope=project + cx-token-offsets
+  shipped 2026-05-06**. Two focused deliverables. (1)
+  `programs/api_surface.cyr` `--scope=project` flag (agnosys
+  1.0.11 follow-up review): default unchanged (scan src/ +
+  lib/); with flag, src/ only — excludes cyrius stdlib that
+  churns across releases. agnosys reproducer default→47 entries
+  / `--scope=project`→6 entries (no stdlib leakage). (2)
+  cx-token-offsets bespoke conversion (deferred from v5.9.9)
+  via new `_extract_hex_in_line_with` source-grep primitive +
+  `_cx_token_offsets_gate` reading lex.cyr / util.cyr /
+  3 backend emit.cyr files and verifying TOKTYP/TOKVAL/STLINE-
+  GTLINE all agree at canonical offsets. cc5 unchanged at
+  741,048 B; 66/66 check.sh green; cc5 self-host byte-identical.
+  22 .sh remaining (was 23). Scaffolders + LSP IPC + SSH cluster
+  cascaded to v5.9.12+.
+- **v5.9.12** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-  - **`cyrius api-surface --scope=project` flag** (agnosys
-    1.0.11 follow-up review, 2026-05-06): pinned per user
-    direction at v5.9.10 ship. agnosys reviewed the v5.9.9
-    derive-blind fix and found that `cyrius api-surface`
-    snapshots BUBBLE UP stdlib items — when a project is
-    scanned, the snapshot includes `alloc::*`, `string::*`,
-    `vec::*`, etc. lib entries that churn across cyrius stdlib
-    releases. Same item as the v5.9.9 stretch goal — projects
-    can't use `cyrius api-surface` for stable regression
-    detection because their snapshot drifts on every cyrius
-    stdlib bump. Slot scope: add `--scope=project` flag to
-    `programs/api_surface.cyr` that excludes lib-prefixed
-    paths from the scan; default behavior unchanged for
-    backward compat. Agnosys-side: switch their gate
-    invocation to `cyrius api-surface --scope=project`.
-  - **`tests/regression-lsp-definition.sh` → cyrius-side
-    bespoke gate** (deferred from v5.9.10): needs a
-    bidirectional-IPC helper `_lsp_session(bin, requests_buf,
-    requests_len, out_buf, out_cap)` for parent-writes-stdin +
-    parent-reads-stdout simultaneously. The IPC helper may
-    surface a near-equivalent for the scaffolders' subprocess
-    plumbing.
-  - **Opportunistic deferred gates**: `cx-token-offsets`
-    (deferred from v5.9.9); `aarch64-syscalls` +
-    `aarch64-native-selfhost` (need tar-pipe-to-ssh helper;
-    pair as a cluster); 1-2 simpler bespokes (capacity probe,
+  - **Opportunistic deferred gates**: capacity probe,
     init-lib-bin, init-doctree — all share the
     `cyrius init`/`cyrius capacity` invocation shape that
-    cyriusly conversion may surface helpers for).
-- **v5.9.12** — sovereignty pass: small utilities batch
+    cyriusly conversion may surface helpers for.
+- **v5.9.13** — **bidirectional-IPC helper + LSP gate
+  conversion + tar-pipe-to-ssh helper + SSH cluster**.
+  - `_lsp_session(bin, requests_buf, requests_len, out_buf,
+    out_cap)`: parent-writes-stdin + parent-reads-stdout
+    simultaneously. Sibling of the v5.9.6 capture helpers but
+    full duplex.
+  - `tests/regression-lsp-definition.sh` → cyrius-side
+    bespoke gate using the new IPC helper. Tests 1-8 from the
+    extended .sh roll into the bespoke shape.
+  - `_tar_pipe_ssh(target, src_dir, remote_dir)` helper: stream
+    a tar archive over ssh stdin so `aarch64-native-selfhost`
+    can ship src + lib to pi.
+  - aarch64-syscalls + aarch64-native-selfhost conversions
+    using the new tar-pipe helper.
+  - macho-exit + pe-exit (cross-host run-fixture pattern).
+    macho-exit needs env-var exec for `CYRIUS_MACHO_ARM=1` +
+    codesign on the remote; pe-exit needs .bat fixture
+    handling + `cmd /c` stdout-parse.
+- **v5.9.14** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
@@ -552,11 +560,11 @@ at cycle entry):
     distlib-large-module, deps-transitive, syscall-surface-v5735,
     install-shim-symlink, cyrfmt-write, inline-asm-discard,
     api-surface).
-- **v5.9.13** — TS corpus + shared-library cleanup. Earned its
+- **v5.9.15** — TS corpus + shared-library cleanup. Earned its
   own slot because both items are blocked on a corpus-walker
   helper (ts-parse / ts-parse-tsx) or a lib/dynlib.cyr consumer
   fixture redesign (regression-shared.sh) — neither pairs
-  cleanly with v5.9.10-12 themes. Scope:
+  cleanly with v5.9.12-14 themes. Scope:
   - **`ts-parse` + `ts-parse-tsx`**: walk external
     `~/Repos/secureyeoman` corpus with a recursive walker that
     respects `node_modules` / `dist` / `build` / `.next` /
@@ -567,7 +575,7 @@ at cycle entry):
     a cyrius-side dlopen-test fixture using `lib/dynlib.cyr` or
     `lib/fdlopen.cyr` (the v5.6.37 fdlopen path is the more
     sovereign choice). Sovereignty pin per memory.
-- **v5.9.14+** — `cyrius audit` fix slot (once user picks
+- **v5.9.16+** — `cyrius audit` fix slot (once user picks
   semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
   redundancy cleanup (per v5.9.6 pin) + **`lib/regression.cyr`
   testing-stdlib carve-out** (pinned at v5.9.7 ship per user

@@ -581,13 +581,23 @@ fn main() {
     ENTRIES_LENS = alloc(65536);
 
     var update_mode = 0;
+    # v5.9.11: --scope=project (agnosys 1.0.11 follow-up review).
+    # Default = scan src/ + lib/ (preserves pre-v5.9.11 behavior;
+    # cyrius's own snapshot stays self-consistent). With
+    # --scope=project, only src/ is scanned; lib/ entries are
+    # excluded so downstream consumers (agnosys, cyim, mabda)
+    # don't pick up cyrius stdlib fns that churn across cyrius
+    # releases. Filing:
+    #   agnosys/docs/development/issues/2026-05-06-cyrius-api-surface-derive-blind.md §4
+    var scope_project = 0;
     var snapshot_path = DEFAULT_SNAPSHOT;
     var i = 1;
     while (i < argc()) {
         var a = argv(i);
         if (streq(a, "--update") == 1) { update_mode = 1; }
+        elif (streq(a, "--scope=project") == 1) { scope_project = 1; }
         elif (streq(a, "--help") == 1) {
-            println("Usage: cyrius_api_surface [--update] [--snapshot=PATH]");
+            println("Usage: cyrius_api_surface [--update] [--snapshot=PATH] [--scope=project]");
             return 0;
         }
         elif (strlen(a) > 11) {
@@ -600,7 +610,7 @@ fn main() {
 
     _reset_entries();
     _scan_dir("src");
-    _scan_dir("lib");
+    if (scope_project == 0) { _scan_dir("lib"); }
 
     _sort_entries();
 

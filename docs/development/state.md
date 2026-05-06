@@ -5,6 +5,46 @@
 
 ## Version
 
+**5.9.11** (shipped 2026-05-06 — **v5.9.x SLOT 11 — `cyrius
+api-surface --scope=project` flag (agnosys 1.0.11 follow-up
+review) + cx-token-offsets conversion (v5.9.9 deferred)**. Two
+focused deliverables; the multi-target slot framing in the
+v5.9.10 cascade tightened to single-theme single-commit-each
+per the v5.10.x acceptance principle voluntarily applied here.
+cc5 unchanged at **741,048 B** — `programs/api_surface.cyr` +
+`programs/check.cyr` only; no compiler-source change.
+
+**Premise-check at slot entry**: 5 items pinned. Items 1+2
+(api-surface flag + cx-token-offsets) clean-land in a focused
+slot. Items 3+4+5 (scaffolder conversions, LSP IPC helper, SSH
+gates) each need their own helper-design step or a slot's worth
+of work on their own. Honest cascade: 3 → v5.9.12, 4 →
+v5.9.13, 5 → v5.9.13/14.
+
+**What shipped**: `--scope=project` flag in
+`programs/api_surface.cyr` (default unchanged: scan src/ +
+lib/; with flag: src/ only — excludes cyrius stdlib that churns
+across releases for downstream consumers). Plus
+`_extract_hex_in_line_with` source-grep primitive (handles
+markers before or after hex on the line) +
+`_read_source_for_grep` wrapper + `_cx_token_offsets_gate` +
+`_check_backend_token_offsets` helpers; `regression-cx-token-
+offsets.sh` retired. 22 .sh remaining (was 23).
+
+**Verification**: 66/66 check.sh green; cc5 self-host
+byte-identical; agnosys reproducer default→47 entries,
+`--scope=project`→6 entries (no stdlib leakage); cyrius
+self-snapshot 2,763 unchanged in default mode; cx-token-offsets
+gate PASS at typ=0x368C000 / val=0x3E8C000 / line=0x468C000.
+
+**Next**: v5.9.12 — scaffolder conversions (cyriusly +
+cyrius-init.sh + cyrius-port.sh; ~1,370 LOC of bash, mostly
+heredoc templates). v5.9.13 — bidirectional-IPC helper +
+lsp-definition.sh conversion + opportunistic SSH gate cluster.
+v5.9.14+ inherits per the v5.9.10 roadmap (small utilities →
+TS corpus / shared-library → closeout / audit fix /
+regression-stdlib carve).)
+
 **5.9.10** (shipped 2026-05-06 — **v5.9.x SLOT 10 — LSP feature
 additions: textDocument/references + textDocument/semanticTokens/full**.
 Two LSP capabilities promoted from "held forward" to a concrete

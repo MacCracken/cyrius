@@ -1711,6 +1711,211 @@ fn _pipe_file_to_bin(bin_path, src_path) {
     return _pipe_file_to_bin_capture(bin_path, src_path, 0);
 }
 
+# v5.9.11: hex-substring extractor used by source-grep parity
+# gates. Find line containing `marker` substring in buf[0..n];
+# read the FIRST `0x...` hex literal on that line (whether
+# before or after the marker) into a fresh null-terminated
+# cstring. Returns 0 on miss.
+fn _extract_hex_in_line_with(buf, n, marker) {
+    var mlen = strlen(marker);
+    var i = 0;
+    while (i + mlen <= n) {
+        if (_buf_eq(buf + i, marker, mlen) == 1) {
+            # Walk back to line start.
+            var ls = i;
+            while (ls > 0) {
+                if (load8(buf + ls - 1) == 10) { break; }
+                ls = ls - 1;
+            }
+            # Walk forward to line end.
+            var le = i + mlen;
+            while (le < n) {
+                if (load8(buf + le) == 10) { break; }
+                le = le + 1;
+            }
+            # Within [ls, le), find the first "0x" + read hex digits.
+            var p = ls;
+            while (p + 1 < le) {
+                if (load8(buf + p) == 48 && load8(buf + p + 1) == 120) {
+                    var hex_start = p;
+                    var hex_end = p + 2;
+                    while (hex_end < le) {
+                        var c = load8(buf + hex_end);
+                        var is_hex = 0;
+                        if (c >= 48 && c <= 57)  { is_hex = 1; }
+                        if (c >= 65 && c <= 70)  { is_hex = 1; }
+                        if (c >= 97 && c <= 102) { is_hex = 1; }
+                        if (is_hex == 0) { break; }
+                        hex_end = hex_end + 1;
+                    }
+                    var hl = hex_end - hex_start;
+                    var copy = alloc(hl + 1);
+                    var k = 0;
+                    while (k < hl) {
+                        store8(copy + k, load8(buf + hex_start + k));
+                        k = k + 1;
+                    }
+                    store8(copy + hl, 0);
+                    return copy;
+                }
+                p = p + 1;
+            }
+            i = i + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+# Read a source file into a freshly-alloc'd buffer; return the
+# pointer (with null-terminator). Length is set in *len_out.
+# Returns 0 on read failure.
+fn _read_source_for_grep(path, len_out) {
+    var cap = 524288;
+    var buf = alloc(cap + 1);
+    var n = file_read_all(path, buf, cap);
+    if (n <= 0) { store64(len_out, 0); return 0; }
+    store8(buf + n, 0);
+    store64(len_out, n);
+    return buf;
+}
+
+# Bespoke gate: cross-backend token-offset parity (v5.7.28).
+# Walks src/frontend/lex.cyr (canonical write offsets for typ /
+# val), src/common/util.cyr (STLINE write + GTLINE read for
+# line), and the three backend emit.cyr files (TOKTYP / TOKVAL
+# read offsets). All backends must agree with the lex writes;
+# any drift = silent miscompile (the v5.7.28 incident:
+# cc5_cx silently broken on every input because src/backend/cx/
+# emit.cyr was skipped during the v5.7.27 heap reshuffle).
+fn _cx_token_offsets_gate() {
+    var label = "lex token writes match every backend's TOKTYP / TOKVAL reads (v5.7.28)";
+    var fail = 0;
+
+    var lex_n[1];
+    var lex_buf = _read_source_for_grep(_root_path("src/frontend/lex.cyr"), &lex_n);
+    var util_n[1];
+    var util_buf = _read_source_for_grep(_root_path("src/common/util.cyr"), &util_n);
+    var x86_n[1];
+    var x86_buf = _read_source_for_grep(_root_path("src/backend/x86/emit.cyr"), &x86_n);
+    var aa_n[1];
+    var aa_buf = _read_source_for_grep(_root_path("src/backend/aarch64/emit.cyr"), &aa_n);
+    var cx_n[1];
+    var cx_buf = _read_source_for_grep(_root_path("src/backend/cx/emit.cyr"), &cx_n);
+
+    if (lex_buf == 0 || util_buf == 0 || x86_buf == 0 || aa_buf == 0 || cx_buf == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": could not read one or more lex/util/backend source files");
+        _check(label, 1);
+        return 1;
+    }
+
+    var lex_typ  = _extract_hex_in_line_with(lex_buf,  load64(&lex_n),  "tc * 8, typ");
+    var lex_val  = _extract_hex_in_line_with(lex_buf,  load64(&lex_n),  "tc * 8, val");
+    var lex_line = _extract_hex_in_line_with(util_buf, load64(&util_n), "fn STLINE(");
+    var gtline   = _extract_hex_in_line_with(util_buf, load64(&util_n), "fn GTLINE(");
+
+    if (lex_typ == 0 || lex_val == 0 || lex_line == 0 || gtline == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": could not extract canonical lex/util write offsets");
+        _check(label, 1);
+        return 1;
+    }
+
+    if (gtline != lex_line) {
+        if (streq(gtline, lex_line) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": GTLINE reads ");
+            _p(gtline);
+            _p(", STLINE writes at ");
+            _p(lex_line);
+            println(" — drift!");
+            fail = fail + 1;
+        }
+    }
+
+    fail = fail + _check_backend_token_offsets("x86",
+        x86_buf, load64(&x86_n), lex_typ, lex_val);
+    fail = fail + _check_backend_token_offsets("aarch64",
+        aa_buf, load64(&aa_n), lex_typ, lex_val);
+    fail = fail + _check_backend_token_offsets("cx",
+        cx_buf, load64(&cx_n), lex_typ, lex_val);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": lex tokens (typ=");
+        _p(lex_typ);
+        _p(", val=");
+        _p(lex_val);
+        _p(", line=");
+        _p(lex_line);
+        println(") — all backends in sync (v5.7.28)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Helper for `_cx_token_offsets_gate`: extract a backend's
+# TOKTYP + TOKVAL offsets, compare against the canonical lex
+# writes. Returns 0 on PASS, count of mismatches on FAIL.
+fn _check_backend_token_offsets(name, buf, n, lex_typ, lex_val) {
+    var typ = _extract_hex_in_line_with(buf, n, "fn TOKTYP(");
+    var val = _extract_hex_in_line_with(buf, n, "fn TOKVAL(");
+    var fails = 0;
+    if (typ == 0 || val == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(name);
+        println(" backend — missing TOKTYP / TOKVAL definitions");
+        return 1;
+    }
+    if (streq(typ, lex_typ) != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(name);
+        _p(" TOKTYP reads ");
+        _p(typ);
+        _p(", lex writes typ at ");
+        _p(lex_typ);
+        println(" — drift!");
+        fails = fails + 1;
+    }
+    if (streq(val, lex_val) != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(name);
+        _p(" TOKVAL reads ");
+        _p(val);
+        _p(", lex writes val at ");
+        _p(lex_val);
+        println(" — drift!");
+        fails = fails + 1;
+    }
+    return fails;
+}
+
 # Helper for `_cx_syscall_literal_gate`: write `syscall(60, V);`
 # to a temp source file, compile with cc5_cx (capturing bytecode
 # to a temp file), feed bytecode to cxvm, return cxvm's exit
@@ -3539,7 +3744,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("Token-offset parity");
-    _gate("lex token writes match every backend's TOKTYP / TOKVAL reads (v5.7.28)", "tests/regression-cx-token-offsets.sh");
+    _cx_token_offsets_gate();
     println("");
 
     _section("aarch64 f64 basic ops");

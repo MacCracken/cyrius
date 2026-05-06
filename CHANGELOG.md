@@ -6,6 +6,116 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.11] — 2026-05-06
+
+**v5.9.x SLOT 11 — `cyrius api-surface --scope=project` flag
+(agnosys 1.0.11 follow-up review) + cx-token-offsets
+conversion (v5.9.9 deferred)**. Two focused deliverables; the
+multi-target slot framing in the v5.9.10 cascade tightened to
+single-theme single-commit-each per the v5.10.x acceptance
+principle voluntarily applied here.
+
+cc5: **741,048 B unchanged** — `programs/api_surface.cyr` +
+`programs/check.cyr` only; no compiler-source change.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Five items were pinned for v5.9.11:
+1. agnosys-filed `--scope=project` flag (priority — they're
+   blocked).
+2. cx-token-offsets conversion (deferred from v5.9.9).
+3. Scaffolder conversions (cyriusly + cyrius-init.sh +
+   cyrius-port.sh) — 1,370+ LOC of bash, mostly heredoc
+   templates.
+4. lsp-definition.sh → cyrius-side gate (needs a
+   bidirectional-IPC helper).
+5. Opportunistic SSH gates (aarch64-syscalls +
+   aarch64-native-selfhost; tar-pipe-to-ssh helper).
+
+Scope-shrink at slot entry: items 1+2 are small and cleanly
+land. Items 3+4+5 each need their own helper-design step or
+are themselves a slot's worth of work. Cascading 3 → v5.9.12,
+4 → v5.9.13, 5 → v5.9.13/14 keeps each future slot
+single-theme.
+
+### Added
+
+- **`programs/api_surface.cyr` — `--scope=project` flag**
+  (agnosys 1.0.11 follow-up review, 2026-05-06). Default
+  behavior unchanged: scan `src/` + `lib/`. With
+  `--scope=project`, only `src/` is scanned — `lib/` entries
+  excluded so downstream consumers don't pick up cyrius
+  stdlib fns that churn across cyrius releases. Filing:
+  `agnosys/docs/development/issues/2026-05-06-cyrius-api-surface-derive-blind.md` §4.
+  Verified end-to-end against the agnosys reproducer at
+  `/tmp/cyrius-api-surface-derive-blind/`: default snapshot
+  47 entries (6 widget + 41 stdlib leakage); `--scope=project`
+  snapshot 6 entries (just widget). Backward compat: cyrius's
+  own snapshot regenerated default-mode at 2,763 entries
+  unchanged.
+
+- **`programs/check.cyr` — `_extract_hex_in_line_with(buf, n,
+  marker)`**: source-grep parity primitive. Finds the line
+  containing `marker`, walks `[line_start, line_end)` for the
+  first `0x...` hex literal (handles markers BEFORE or AFTER
+  the hex on the line), copies hex digits into a fresh
+  null-terminated cstring. Used by cx-token-offsets and
+  reusable for any future source-grep parity gate.
+
+- **`programs/check.cyr` — `_read_source_for_grep(path,
+  len_out)`**: small wrapper over `file_read_all` that
+  null-terminates the read buffer and writes the byte count to
+  `*len_out`. Convenience for source-grep gates that need both
+  the buffer and its length.
+
+- **`programs/check.cyr` — `_cx_token_offsets_gate()` +
+  `_check_backend_token_offsets(name, buf, n, lex_typ,
+  lex_val)`**: bespoke conversion of
+  `tests/regression-cx-token-offsets.sh` (v5.7.28; cross-
+  backend token-offset parity). Reads `src/frontend/lex.cyr`,
+  `src/common/util.cyr`, and the three backend `emit.cyr`
+  files; extracts the hex offsets at canonical anchor points
+  (`tc * 8, typ`, `tc * 8, val`, `fn STLINE(`, `fn GTLINE(`,
+  `fn TOKTYP(`, `fn TOKVAL(`); asserts every backend's TOKTYP
+  matches lex's typ-write, every TOKVAL matches val-write, and
+  GTLINE matches STLINE. Same v5.7.28 invariant the .sh
+  enforced; the gate now runs in-dispatcher with no shell
+  dependency.
+
+### Removed
+
+- **`tests/regression-cx-token-offsets.sh`** retired alongside
+  its conversion. Total: 60 → 50 → 38 → 37 → 28 → 23 → 22 .sh
+  across v5.9.2 + v5.9.3 + v5.9.6 + v5.9.7 + v5.9.8 + v5.9.10
+  (`+ extension`) + v5.9.11.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 66/66 gates green, exit 0 — pre- and post-deletion.
+- agnosys reproducer (`/tmp/cyrius-api-surface-derive-blind/`):
+  default scope → 47 entries; `--scope=project` → 6 entries
+  (just widget — no stdlib leakage).
+- cyrius self-snapshot: 2,763 entries unchanged in default
+  mode.
+- cx-token-offsets gate: PASS, all backends in sync at
+  typ=0x368C000 / val=0x3E8C000 / line=0x468C000.
+
+### Roadmap pin (NOT fixed this slot)
+
+- **Scaffolder conversions** (cyriusly + cyrius-init.sh +
+  cyrius-port.sh) cascaded to v5.9.12. ~1,370 LOC of bash,
+  mostly heredoc templates — a slot's worth of work on its
+  own.
+- **`tests/regression-lsp-definition.sh` → cyrius-side
+  bespoke gate** (deferred from v5.9.10, re-deferred from
+  v5.9.11) cascaded to v5.9.13. Needs a bidirectional-IPC
+  helper that's its own design step.
+- **Opportunistic SSH gates** (aarch64-syscalls +
+  aarch64-native-selfhost) cascaded to v5.9.13 — tar-pipe-to-
+  ssh helper is its own design step.
+
 ## [5.9.10] — 2026-05-06
 
 **v5.9.x SLOT 10 — LSP feature additions: textDocument/references
