@@ -476,7 +476,23 @@ at cycle entry):
     lsp-definition, smoke-discovery, distlib-large-module,
     inline-asm-discard, install-shim-symlink, syscall-surface-
     v5735, fuzz-deps-prepend, api-surface. Mostly one-off ports.
-- **v5.9.9** — **LSP feature additions**. Two LSP capabilities
+- **v5.9.9** ✅ — **`cyrius api-surface` derive-blind fix shipped
+  2026-05-06** (agnosys 1.0.11 filing). `programs/api_surface.cyr`
+  scanner extended via `_scan_derive_struct` + `_push_synthesized`
+  helpers to detect `#derive(accessors)` and `#derive(Serialize)`
+  directives at depth 0 + emit synthesized accessor pairs
+  (`<struct>_<field>/1`, `<struct>_set_<field>/2`,
+  `<struct>_to_json/1`, `<struct>_from_json/1`) in the same
+  `module::name/arity` shape as hand-written fn entries. cc5
+  unchanged at 741,048 B; 66/66 check.sh green; cc5 self-host
+  byte-identical. Cyrius self-snapshot unchanged at 2,763 entries
+  (vendored stdlib bundles ship distlib-expanded fn forms, so
+  cyrius's own source uses no raw `#derive(...)` directives — fix
+  payoff is for downstream consumers). agnosys reproducer
+  end-to-end: 4 derive-emitted accessors now appear in the
+  snapshot. cx-token-offsets co-target deferred to v5.9.10
+  (slot kept single-purpose).
+- **v5.9.10** — **LSP feature additions**. Two LSP capabilities
   promoted from "held forward / surfaces-on-ask" into a concrete
   slot per user direction at v5.9.7 ship:
   - **`textDocument/semanticTokens/full`** — token-coloring
@@ -492,17 +508,51 @@ at cycle entry):
   - Update `docs/cyrius-guide.md` LSP section to document the
     new providers; regenerate any vidya entries that mention
     "LSP definitionProvider + documentSymbol".
-- **v5.9.10** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+  - **Opportunistic deferred gates**: `macho-exit` + `pe-exit`
+    (cross-host run-fixture pattern) — both need their own
+    helper-design step (env-var exec + codesign for macho-exit;
+    .bat fixture + Windows cmd /c stdout-parse for pe-exit) but
+    share the "build cross-binary, scp, ssh-run, parse exit"
+    shape established in v5.9.8.
+- **v5.9.11** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-- **v5.9.11** — sovereignty pass: small utilities batch
+  - **Opportunistic deferred gates**: `aarch64-syscalls` +
+    `aarch64-native-selfhost` (need tar-pipe-to-ssh helper;
+    pair as a cluster) + 1-2 simpler bespokes (capacity probe,
+    init-lib-bin, init-doctree — all share the
+    `cyrius init`/`cyrius capacity` invocation shape that
+    cyriusly conversion may surface helpers for).
+- **v5.9.12** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
-- **v5.9.12+** — `cyrius audit` fix slot (once user picks
+  - **Opportunistic deferred gates**: `sit-status` (local
+    `../sit` consumer; no SSH) + `tls-live` (network probe) +
+    remaining bespokes that fit `cyrius` CLI subcommand
+    invocation shape (smoke-discovery, fuzz-deps-prepend,
+    distlib-large-module, deps-transitive, syscall-surface-v5735,
+    install-shim-symlink, cyrfmt-write, inline-asm-discard,
+    api-surface).
+- **v5.9.13** — TS corpus + shared-library cleanup. Earned its
+  own slot because both items are blocked on a corpus-walker
+  helper (ts-parse / ts-parse-tsx) or a lib/dynlib.cyr consumer
+  fixture redesign (regression-shared.sh) — neither pairs
+  cleanly with v5.9.10-12 themes. Scope:
+  - **`ts-parse` + `ts-parse-tsx`**: walk external
+    `~/Repos/secureyeoman` corpus with a recursive walker that
+    respects `node_modules` / `dist` / `build` / `.next` /
+    `coverage` prune patterns. Pass-count threshold gate (≥2053
+    .ts; ≥435 .tsx). Helper `_walk_corpus_with_prunes(root_path,
+    ext, prunes_vec)` reusable by future corpus regressions.
+  - **`regression-shared.sh`**: replace the inline C harness with
+    a cyrius-side dlopen-test fixture using `lib/dynlib.cyr` or
+    `lib/fdlopen.cyr` (the v5.6.37 fdlopen path is the more
+    sovereign choice). Sovereignty pin per memory.
+- **v5.9.14+** — `cyrius audit` fix slot (once user picks
   semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
   redundancy cleanup (per v5.9.6 pin) + **`lib/regression.cyr`
   testing-stdlib carve-out** (pinned at v5.9.7 ship per user
@@ -510,26 +560,28 @@ at cycle entry):
   protocol.
 
   **Testing-stdlib carve-out (pinned, design TBD)**: the v5.9.6
-  + v5.9.7 dispatcher gates accumulated a layer of reusable
-  primitives (`_stderr_match_subcase`, `_count_substr_buf`,
-  `_exec_with_arg_capture` + `_capture_both`,
+  + v5.9.7 + v5.9.8 dispatcher gates accumulated a layer of
+  reusable primitives (`_stderr_match_subcase`,
+  `_count_substr_buf`, `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
-  `_ts_mode_run`, `_cyrlint_count_marker`, `_compile_capture_stderr`,
-  `_exec_capture_clean`, `_exec_run_clean`,
-  `_expected_output_gate`, `_tcyr_relay_gate`) that other
-  consumers — yantra, downstream test suites in cyim / agnosys
-  / mabda, future test runners — could profitably share.
-  Carve them up into `lib/regression.cyr` so the dispatcher's
-  bespoke gates become thin wrappers and downstream consumers
-  can reach for the same shapes via a regular `include
-  "lib/regression.cyr"`. ~150-250 LOC migration; stdlib
-  module count 78 → 79; api-surface adds ~12-15 entries.
+  `_ts_mode_run`, `_cyrlint_count_marker`,
+  `_compile_capture_stderr`, `_exec_capture_clean`,
+  `_exec_run_clean`, `_expected_output_gate`, `_tcyr_relay_gate`,
+  `_pipe_file_to_bin` + `_capture`, `_ssh_skip_check`, `_scp_to`,
+  `_ssh_remote_exit`, `_ssh_target`) that other consumers —
+  yantra, downstream test suites in cyim / agnosys / mabda,
+  future test runners — could profitably share. Carve them up
+  into `lib/regression.cyr` so the dispatcher's bespoke gates
+  become thin wrappers and downstream consumers can reach for
+  the same shapes via a regular `include "lib/regression.cyr"`.
+  ~200-300 LOC migration (helper count grew through v5.9.8);
+  stdlib module count 78 → 79; api-surface adds ~18-22 entries.
   Tradeoff: new public surface to maintain vs. the dispatcher
   becoming a single-purpose orchestrator that stops growing
   primitives. Slot earns when v5.9.x .sh-conversion arc closes
-  out and the helper inventory has stabilized — do not
-  carve mid-arc, the API will keep churning until the dispatcher
-  has its full helper set.
+  out and the helper inventory has stabilized — do not carve
+  mid-arc, the API will keep churning until the dispatcher has
+  its full helper set.
 
 **KEEP-as-bash (intrinsic; sovereignty-allowed):**
 - `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`
@@ -587,7 +639,10 @@ concretely surfaces:
   shape.
 
 (LSP feature pins promoted to a concrete v5.9.x slot — see
-v5.9.9 entry above. They were `held forward` here pre-v5.9.7.)
+v5.9.10 entry above. They were `held forward` here pre-v5.9.7;
+re-pinned to v5.9.10 at v5.9.8 ship after the v5.9.9 slot
+inserted for the agnosys-filed `cyrius api-surface` derive-blind
+fix.)
 
 ---
 

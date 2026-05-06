@@ -5,6 +5,59 @@
 
 ## Version
 
+**5.9.9** (shipped 2026-05-06 — **v5.9.x SLOT 9 — `cyrius
+api-surface` derive-blind fix** (agnosys 1.0.11 filing). Pre-fix
+the official surface tool walked `^fn name(...)` declarations
+only and was blind to `#derive(accessors)`-emitted accessor
+pairs and `#derive(Serialize)`-emitted helpers — projects with
+derive-heavy structs got snapshots that were a strict subset of
+their actual public API, and breaking changes to derive-emitted
+fns passed silently. Filed at
+`agnosys/docs/development/issues/2026-05-06-cyrius-api-surface-derive-blind.md`.
+Severity MEDIUM. agnosys 1.0.11 had a 386-entry delta (721 vs
+335) exactly equal to its 37 `#derive(accessors)` structs'
+emitted accessor count. cc5 unchanged at **741,048 B** — slot
+is `programs/api_surface.cyr` only.
+
+**Premise-check at slot entry**: inserted ahead of the v5.9.10
+LSP slot per user direction at v5.9.8 ship. The opportunistic
+v5.9.9 co-target (cx-token-offsets) deferred to v5.9.10 to keep
+the slot single-purpose (api-surface fix only) — a voluntary
+application of the v5.10.x acceptance principle ("each slot
+ships ONE thing") to this bug-fix slot.
+
+**What shipped**: `_push_synthesized(...)` helper that builds
+synthesized fn entry names (`<struct>_<field>`,
+`<struct>_set_<field>`, `<struct>_to_json`, `<struct>_from_json`)
++ `_scan_derive_struct(...)` parser that walks a `struct <name>
+{ <fields> }` body emitting the accessor pairs. `_scan_file`'s
+depth-0 line classifier extended to detect `#derive(accessors)`
+and `#derive(Serialize)` directives, tolerating
+blank / `#`-comment intervening lines and resetting on any
+non-derive non-struct line.
+
+**Verification**: 66/66 check.sh green; cc5 self-host
+byte-identical; agnosys reproducer at
+`/tmp/cyrius-api-surface-derive-blind/` end-to-end — 4
+derive-emitted entries now appear in the snapshot (widget_x/1,
+widget_set_x/2, widget_y/1, widget_set_y/2). Cyrius
+self-snapshot 2,763 entries unchanged (vendored stdlib bundles
+ship distlib-expanded fn forms, so cyrius's own source uses no
+raw `#derive(...)` directives — fix payoff is for downstream
+consumers).
+
+**Roadmap pin (NOT fixed this slot)**: cx-token-offsets
+conversion (deferred to v5.9.10) + `--scope=project` flag
+(orthogonal to the fix; earns slot when a consumer surfaces
+snapshot-churn pain across stdlib releases).
+
+**Next**: v5.9.10 — LSP feature additions (semanticTokens +
+references + lsp-definition conversion) per pinned slot, plus
+opportunistic cx-token-offsets + macho-exit + pe-exit. v5.9.11+
+inherits per the v5.9.8 roadmap (cyriusly+init scaffolders →
+small utilities → TS corpus / shared-library → closeout / audit
+fix / regression-stdlib carve at v5.9.14+).)
+
 **5.9.8** (shipped 2026-05-06 — **v5.9.x SLOT 8 — sovereignty
 pass batch 3b/3 (5 conversions: SSH cluster landing + cx
 family closeout)**. Two cross-host SSH gates earned new ssh /

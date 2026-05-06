@@ -6,6 +6,111 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.9] — 2026-05-06
+
+**v5.9.x SLOT 9 — `cyrius api-surface` derive-blind fix**
+(agnosys 1.0.11 filing). Pre-fix the official surface tool walked
+`^fn name(...)` declarations only and was blind to
+`#derive(accessors)`-emitted accessor pairs and
+`#derive(Serialize)`-emitted helpers — projects with
+derive-heavy structs got snapshots that were a strict subset
+of their actual public API, and breaking changes to derive-
+emitted fns passed silently. Filed at
+`agnosys/docs/development/issues/2026-05-06-cyrius-api-surface-derive-blind.md`.
+
+cc5: **741,048 B unchanged** — `programs/` work; no compiler-
+source change. The cyrius-self-snapshot is also unchanged
+(2,763 entries) because cyrius's vendored stdlib bundles
+(lib/agnosys.cyr, lib/sigil.cyr, etc.) ship distlib-expanded
+fn forms — the derive directives were already cooked off
+before the bundled .cyr landed in cyrius. The fix's payoff is
+for downstream consumers (agnosys 1.0.11 + future cyrius
+projects) that scan their OWN raw source.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Inserted ahead of the v5.9.10 LSP slot per user direction at
+v5.9.8 ship — agnosys closeout was actively evaluating
+`cyrius api-surface` as a replacement for their local
+`scripts/check-api-surface.sh` and would block on the official
+tool. The 386-entry delta between agnosys's awk-walker (721)
+and `cyrius api-surface` (335) lines up exactly with the count
+of derive-emitted accessors in agnosys 1.0.11's 37
+`#derive(accessors)` structs. Severity MEDIUM — the gap is
+silent regression-detection drift, not runtime breakage.
+
+The opportunistic v5.9.9 co-target (cx-token-offsets) deferred
+to v5.9.10 — slot scope kept tight on the api-surface fix
+(single deliverable, single auditable commit per the v5.10.x
+acceptance principle re-applied here voluntarily).
+
+### Added
+
+- **`programs/api_surface.cyr` — `_push_synthesized(module_off,
+  module_len, struct_off, struct_len, suffix_cstr, field_off,
+  field_len, arity)`**: builds a synthesized public-fn entry
+  name like `<struct>_<field>` (getter), `<struct>_set_<field>`
+  (setter), or `<struct>_to_json` / `<struct>_from_json`
+  (Serialize). Pushes via the existing `_push_entry` so the
+  synthesized rows ride the same sort + diff path as
+  hand-written fn rows. `module::name/arity` shape preserved —
+  downstream snapshot diff tools don't need a parser change.
+
+- **`programs/api_surface.cyr` — `_scan_derive_struct(filebuf,
+  filelen, module_off, module_len, struct_pos, want_accessors,
+  want_serialize)`**: walks a `struct <name> { <fields> }`
+  definition starting at the `struct ` keyword. For each field,
+  emits synthesized accessor fn entries (getter/setter pair for
+  accessors; to_json/from_json pair for Serialize). Returns the
+  position past the closing `}`. Tolerates multi-line struct
+  bodies, `#`-line comments inside the body, and `<name>: <type>`
+  field type annotations.
+
+### Changed
+
+- **`programs/api_surface.cyr` — `_scan_file`**: at depth 0,
+  detects `#derive(accessors)` and `#derive(Serialize)`
+  directives. Sets a pending flag; the next `struct` decl
+  consumes it and dispatches to `_scan_derive_struct`. Tolerates
+  blank / `#`-comment lines between the derive directive and
+  the struct decl. Resets pending flags on any other
+  intervening line.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 66/66 gates green, exit 0. The api-surface gate
+  (`cyrius api-surface diff`) still passes — synthetic add /
+  remove detection unchanged.
+- agnosys reproducer end-to-end (against
+  `/tmp/cyrius-api-surface-derive-blind/`): pre-fix
+  `cyrius api-surface --update` recorded 2 widget entries
+  (widget_new/2, main/0); post-fix records 6 widget entries
+  including the 4 derive-emitted accessors (widget_x/1,
+  widget_set_x/2, widget_y/1, widget_set_y/2). Snapshot total
+  on the reproducer: 47 entries (was 43; +4 derive accessors).
+- Cyrius self-snapshot: 2,763 entries unchanged (vendored
+  bundles ship distlib-expanded fn forms; cyrius source uses
+  no raw `#derive(...)` directives).
+
+### Roadmap pin (NOT fixed this slot)
+
+- **`cx-token-offsets` conversion** — the v5.9.8-deferred
+  source-grep parity check. Was earmarked for an opportunistic
+  v5.9.9 co-target alongside the api-surface fix; deferred to
+  v5.9.10 to keep the api-surface slot single-purpose. The
+  hex-substring-extract helper `_extract_hex_after(buf, n,
+  anchor)` it needs is a shape that may also appear in other
+  source-grep gates — earn slot when v5.9.10 has bandwidth.
+
+- **`--scope=project` flag** (per agnosys filing §4) — optional
+  flag to skip stdlib `alloc::*` / `string::*` / etc. so the
+  snapshot doesn't churn across cyrius stdlib releases.
+  Orthogonal to the derive-blindness fix; deferred. Earns slot
+  when a downstream consumer concretely surfaces snapshot
+  churn pain.
+
 ## [5.9.8] — 2026-05-06
 
 **v5.9.x SLOT 8 — sovereignty pass batch 3b/3 (SSH cluster
