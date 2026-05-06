@@ -194,15 +194,18 @@ ABI-shim `programs/dlopen-helper.c`, IDE integrations
 `editors/*.lua` + `editors/*.js`). 120,518 unicode asserts hold
 at the regression floor v5.8.52 set.)
 
-**Cycle wind-down (v5.8.66, hard backstop)**:
-.66 = release-valve for any issues surfaced by the .65 foldin.
-Mirrors the v5.7.50 P(-1) unblock pattern from the v5.7.x
-cycle's end. If foldin shipped clean and no consumer flagged
-anything, .66 absorbs housekeeping (stale-comment sweep on
-the newly-folded modules, header-doc refresh, vidya dep-graph
-update, doc sync). Backstop extended to .66 at v5.8.62 ship per
-user direction "hold .66 open as fixing any rising issues from
-foldin".
+**Cycle CLOSED at v5.8.65** (2026-05-05). The held-open v5.8.66
+release-valve retired unused — foldin fallout (Ubuntu CI symlink-
+dangling + audit-walk distlib-bundle marker missing sakshi's
+bundle.sh header) was absorbed in v5.8.65 itself via mid-slot
+fix-ups (three pushes: initial foldin, audit-walk + symlink-revert,
+ci.yml inline-marker fan-out). With foldin clean at .65, the valve
+had nothing to absorb. Mirror of the v5.7.50 P(-1) unblock pattern
+except the unblock happened in-slot rather than needing its own
+patch. **65 patches across 5 days (2026-05-01 → 2026-05-05)** —
+the longest minor in cyrius history by patch count, more
+compressed than v5.7.x's 51-patch / 36-day cycle. Next: v5.9.x —
+bare-metal arc + RISC-V port + sovereignty pass.
 Backstop history: was .55 pre-Unicode-pin → .57 to absorb
 v5.8.51-deferred heap bump + K-forms → .59 for cross-arch
 propagation slots → .61 to absorb the audit/dedup/refactor trio

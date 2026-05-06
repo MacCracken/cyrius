@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, and its own build tool.
 
-~720KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode. 67 stdlib modules + 7 deps. 93 test suites + 1 soak + 1 smoke harness, 5 fuzz harnesses, 15 benchmarks.
+~741KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode. 76 stdlib modules + 1 git dep (mabda; 6 sibling distfiles folded into stdlib at v5.8.65 — sakshi / patra / sigil / vani / yukti / sankoch). 127 test suites + 1 soak + 1 smoke harness, 5 fuzz harnesses, 15 benchmarks.
 
 ## Install
 
@@ -91,12 +91,13 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler | **~728KB** x86_64 (v5.8.18), **~412KB** aarch64 cross |
+| Compiler | **~741KB** x86_64 (v5.8.65), **~430KB** aarch64 cross |
 | Seed binary | **29KB** |
 | External dependencies | **0** |
-| Tests | 105 .tcyr (TS suite consolidated 24→4 at v5.7.37; v5.8.x slices sub-arc added 8 slice tcyrs + 1 str_dot_syntax), 5 .fcyr fuzz, 15 .bcyr bench, 1 .scyr soak, 1 .smcyr smoke |
+| Tests | 127 .tcyr (TS suite consolidated 24→4 at v5.7.37; v5.8.x added slices sub-arc + sum types + Result+? + allocators + Unicode 17.0.0 conformance harness with 320,547 NormalizationTest.txt asserts at NFC/NFD/NFKC/NFKD), 5 .fcyr fuzz, 15 .bcyr bench, 1 .scyr soak, 1 .smcyr smoke |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode |
-| Caps | ident buffer 128KB, fn table 4096, fixup table 1M (v5.7.7), input_buf 1MB (v5.7.10), distlib per-module 256KB (v5.7.36), aarch64 codebuf 3MB (v5.7.34) |
+| Caps | ident buffer 128KB, fn table 4096, fixup table 1M (v5.7.7), input_buf 1MB (v5.7.10), str_data 2MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 256KB (v5.7.36), aarch64 codebuf 3MB (v5.7.34) |
+| Heap layout | 84 regions, monotonic post-v5.8.61 reorg (str_data at 0x21A000), brk-final at 0x4E8C000 (~78.5 MB) |
 
 ## Build Tool (cyrius)
 
@@ -113,42 +114,59 @@ Info:      version, which, help
 Dependencies declared in `cyrius.cyml` are auto-resolved on `build`/`run`/`test`:
 
 ```toml
-[deps.agnostik]
-git = "https://github.com/MacCracken/agnostik.git"
-tag = "1.0.0"
-modules = ["dist/agnostik.cyr"]
+[deps.mabda]
+git = "https://github.com/MacCracken/mabda.git"
+tag = "2.5.0"
+modules = ["dist/mabda.cyr"]
 ```
 
-Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/agnostik_types.cyr`).
+Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (67 modules + 7 deps)
+## Standard Library (76 modules + 1 git dep)
 
-`sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy, ~9,650 lines / 469 fns) was folded into stdlib at v5.7.0 from a sibling crate — `lib/http_server.cyr` retired in the same release. Same precedent as sakshi / mabda / sankoch (started as sibling crates, folded once stable). v5.7.35 added `lib/random.cyr` (getrandom + GrndFlag enum + random_bytes loop) and `lib/security.cyr` (LandlockAccessFs + LandlockRuleType enums) as new first-party modules, agnosys-surfaced.
+Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
+vendor at the patched tag, removed from `[deps]`):
+
+- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy, ~10,500 lines)
+- v5.8.0 — `vani` (audio distlib; replaced inlined `lib/audio.cyr`)
+- **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
+
+Mabda (GPU integration; held at 2.5.0 GA pre-v3.0.0-rc soak) +
+its transitive `agnosys` stay live as the only `[deps.*]` git
+resolutions until v5.9.x's Class B FFI / wgpu fncall6 ABI work
+lands. v5.7.35 added `lib/random.cyr` (kernel entropy via
+getrandom) and `lib/security.cyr` (Landlock policy enums) as new
+first-party modules. v5.8.49–.52 + .60 added the
+`lib/unicode/` family (categories / casefold / NFC / NFD / NFKC
+/ NFKD per UAX #15 against Unicode 17.0.0). The compat-decomp
+data uses a 2-table IDX+DATA encoding (~87 KB total — 80%
+smaller than fixed-width would have been; per the v5.8.60 mid-
+slot redesign).
 
 | Category | Modules |
 |----------|---------|
 | Core | string, fmt, alloc, io, vec, str, args, fnptr, flags |
-| Types | tagged (Option/Result), hashmap, hashmap_fast, trait, assert, bounds |
+| Types | tagged (Option), result (Result + ? operator; v5.8.28-.32), hashmap, hashmap_fast, trait, assert, bounds |
 | System | syscalls, callback, process, bench |
 | Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, freelist |
 | Data | json, toml, cyml, csv, base64, regex, math, matrix, linalg, bigint, u128 |
+| Unicode | unicode/categories, unicode/casefold, unicode/normalize (NFC/NFD/NFKC/NFKD), unicode/_decode |
 | Crypto | sha1, keccak, ct (constant-time primitives), overflow, **random** (kernel entropy via getrandom) |
 | Sandboxing | **security** (Landlock policy enums; v5.7.35) |
-| Network | net, http, ws, tls, **sandhi** (HTTP/2 + RPC + service discovery; folded v5.7.0) |
+| Network | net, http, ws, ws_server, tls, **sandhi** (HTTP/2 + RPC; folded v5.7.0) |
 | Filesystem | fs |
-| Audio | audio (ALSA PCM) |
+| Audio | **vani** (ALSA PCM + ring buffer + mixer; folded v5.8.0, refolded v5.8.65) |
 | Logging | log (structured, over sakshi) |
 | Time | chrono |
-| Knowledge | vidya |
 | Interop | mmap, dynlib, fdlopen (foreign-dlopen), cffi |
 | Identity | pwd, grp, shadow, pam |
-| Tracing (dep) | sakshi |
-| Database (dep) | patra |
-| Security (dep) | sigil |
-| Hardware (dep) | yukti |
-| GPU (dep) | mabda |
-| Compression (dep) | sankoch |
+| Tracing | **sakshi** (folded v5.8.65) |
+| Database | **patra** (folded v5.8.65) |
+| Security | **sigil** (folded v5.8.65) |
+| Hardware | **yukti** (folded v5.8.65) |
+| Compression | **sankoch** (folded v5.8.65) |
+| GPU (dep) | mabda (held — v3 pre-GA; agnosys transitive) |
 
 ## Compiler Architecture
 
@@ -183,7 +201,7 @@ src/
 bootstrap/asm (29KB committed binary -- root of trust)
   -> cyrc (12KB compiler)
     -> bridge.cyr (bridge compiler)
-      -> cc5 (modular compiler + IR, ~728KB at v5.8.18)
+      -> cc5 (modular compiler + IR, ~741KB at v5.8.65)
         -> cc5_aarch64, cc5_win_cross, cc5_macho_cross, cc5_cx (cross-compilers)
 ```
 

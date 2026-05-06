@@ -1,8 +1,11 @@
-# ADR-001: Registry Sovereignty — Ark Replaces crates.io as Default
+# ADR-006: Registry Sovereignty — Ark Replaces crates.io as Default
 
-**Status**: Implemented  
-**Date**: 2026-04-03  
+**Status**: Implemented
+**Date**: 2026-04-03
 **Deciders**: Robert MacCracken
+**Renumbered**: 2026-05-05 (was ADR-001 in the dropped `docs/architecture/adr/`
+sub-tree; consolidated into `docs/adr/` at v5.8.x cycle close. ADR-001
+through ADR-005 already existed in `docs/adr/`.)
 
 ## Context
 

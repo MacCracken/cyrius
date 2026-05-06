@@ -314,7 +314,7 @@ enabler audit trail.
 
 
 
-## v5.8.x — Optimization + language-vocabulary stabilization (66 pinned slots; cycle backstop hard at .66 — extended from .51 at v5.8.45 ship to absorb Unicode 17.0.0 fold, then to .55/.57/.59/.61/.62/.64/.66 across the wind-down to absorb cross-arch propagation, audit/dedup/refactor trio, str_data heap bump, NFKC/NFKD K-forms, heap-map monotonic reorg, lib/ structural cleanups, main_*.cyr boilerplate extraction, stdlib foldin, and a foldin-fallout valve; release-valve slot at .51 absorbed surface-during-deps-update items, Unicode work occupied .52–.55, cycle wind-down at .53–.66)
+## v5.8.x — Optimization + language-vocabulary stabilization (CLOSED; 65 patches shipped, 2026-05-01 → 2026-05-05; backstop ended at .65 — foldin fallout was absorbed in v5.8.65 itself via mid-slot fix-ups, so the held-open v5.8.66 release-valve slot retired unused. Original backstop progression: .51 at v5.8.45 ship → .55/.57/.59/.61/.62/.64/.66 across the wind-down to absorb cross-arch propagation, audit/dedup/refactor trio, str_data heap bump, NFKC/NFKD K-forms, heap-map monotonic reorg, lib/ structural cleanups, main_*.cyr boilerplate extraction, stdlib foldin, and a foldin-fallout valve. Release-valve slot at .51 absorbed surface-during-deps-update items, Unicode work occupied .52–.55, cycle wind-down at .53–.65.)
 
 **Theme** (re-scoped 2026-05-01 at v5.8.0 ship): bug-fix /
 optimization minor that ALSO folds forward the language-feature
@@ -1759,7 +1759,7 @@ hand-roll incompletely.
     corpus refresh is a single `python scripts/gen-unicode-data.py`
     invocation.
 
-### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.66)
+### v5.8.x — Cycle wind-down (v5.8.53 → v5.8.65)
 
 - **v5.8.53** ✅ SHIPPED 2026-05-04 — aarch64 cross-compiler
   staleness unblock + install pipeline rebuild discipline.
@@ -2571,25 +2571,31 @@ sets the stage for the v5.8.65 foldin.
   Filed at v5.8.62 ship 2026-05-05. Backstop extended to .66 at
   the same time to leave room for foldin fallout.
 
-- **v5.8.66** — **Release-valve for foldin fallout.** Held open
-  per user direction "hold .66 open as fixing any rising issues
-  from foldin". Buffer slot for any issue surfaced by the v5.8.65
-  foldin before the cycle truly closes. If everything shipped
-  clean and no consumer flagged anything, this absorbs
-  housekeeping (stale-comment sweep on the newly-folded modules,
-  any header-doc refresh needed, doc sync). Mirrors the v5.7.50
-  P(-1) unblock pattern from the v5.7.x cycle's end.
+- **v5.8.66** — **RETIRED unused** at v5.8.65 ship 2026-05-05.
+  Originally pinned as the release-valve for foldin fallout per
+  user direction "hold .66 open as fixing any rising issues from
+  foldin". The actual fallout (CI symlink-dangling on Ubuntu +
+  audit-walk distlib-bundle marker missing sakshi's bundle.sh
+  header style) **was absorbed in v5.8.65 itself via mid-slot
+  fix-ups** — the slot pushed three times before settling clean
+  (initial foldin push, audit-walk + symlink-revert push, ci.yml
+  inline-marker fan-out push). With the foldin clean at .65, the
+  .66 valve had nothing to absorb and retired without shipping.
+  Mirror of the v5.7.50 P(-1) unblock pattern except the unblock
+  this time happened in-slot rather than needing its own patch.
 
-  **Final cycle backstop hard at v5.8.66** (was v5.8.51 pre-
+  **Final cycle backstop ended at v5.8.65** (was v5.8.51 pre-
   Unicode-pin → extended through .55 / .57 / .59 / .61 / .62 /
   .64 / .66 across the wind-down to absorb cross-arch
   propagation, audit/dedup/refactor trio, str_data heap bump,
   NFKC/NFKD K-forms, heap-map monotonic reorg, lib/ structural
   cleanups, main_*.cyr boilerplate extraction, stdlib foldin,
-  and a foldin-fallout valve). The cycle now exceeds the
-  original v5.8.60 buffer pre-approved at the .51 ship;
-  user-approved at every extension because the runway
-  flattening required it.
+  and a held-open foldin-fallout valve that retired unused). The
+  cycle exceeded the original v5.8.60 buffer pre-approved at the
+  .51 ship; user-approved at every extension because the runway
+  flattening required it. **65 patches over 5 days (2026-05-01 →
+  2026-05-05)** — the longest minor in cyrius history by patch
+  count, more compressed than v5.7.x's 51-patch / 36-day cycle.
 
 ### v5.8.x — held items (surfacing-ask only; not pinned, no slot consumed)
 
