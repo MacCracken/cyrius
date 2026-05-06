@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, and its own build tool.
 
-~741KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode. 77 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 127 test suites + 1 soak + 1 smoke harness, 5 fuzz harnesses, 15 benchmarks.
+~741KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode. 78 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; +`lib/audit_walk.cyr` at v5.9.1). 127 test suites + 1 soak + 1 smoke harness, 5 fuzz harnesses, 15 benchmarks.
 
 ## Install
 
@@ -91,7 +91,7 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler | **~741KB** x86_64 (v5.9.0; unchanged from v5.8.65), **~430KB** aarch64 cross |
+| Compiler | **~741KB** x86_64 (v5.9.1; unchanged since v5.8.65), **~430KB** aarch64 cross |
 | Seed binary | **29KB** |
 | External dependencies | **0** |
 | Tests | 127 .tcyr (TS suite consolidated 24→4 at v5.7.37; v5.8.x added slices sub-arc + sum types + Result+? + allocators + Unicode 17.0.0 conformance harness with 320,547 NormalizationTest.txt asserts at NFC/NFD/NFKC/NFKD), 5 .fcyr fuzz, 15 .bcyr bench, 1 .scyr soak, 1 .smcyr smoke |
@@ -123,7 +123,7 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (77 modules + 1 git dep)
+## Standard Library (78 modules + 1 git dep)
 
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):

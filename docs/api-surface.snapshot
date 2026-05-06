@@ -523,6 +523,9 @@ atomic::atomic_fence/0
 atomic::atomic_fetch_add/2
 atomic::atomic_load/1
 atomic::atomic_store/2
+audit_walk::audit_fmt_walk/2
+audit_walk::audit_lint_walk/2
+audit_walk::str_starts_with_buf/3
 base64::base64_decode/2
 base64::base64_encode/2
 base64::base64url_decode/2

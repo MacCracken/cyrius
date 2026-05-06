@@ -1,0 +1,834 @@
+# check.cyr — full project audit dispatcher.
+#
+# Cyrius port of scripts/check.sh shipped at v5.9.1 as the first
+# slot of the v5.9.x sovereignty pass (bash-toolchain → cyrius
+# conversion). scripts/check.sh becomes a 1-line shim that builds
+# build/cyrius_check on demand and dispatches here.
+#
+# What we run:
+#   1. Self-host two-step (cc5 → cc5b byte-identical)
+#   2. Heap-map audit (sh tests/heapmap.sh)
+#   3. Test suite (every .tcyr file under tests/tcyr/)
+#   4. ~50 regression gates (sh tests/regression-X.sh)
+#   5. Format walk (cyrfmt across lib/)
+#   6. Lint walk (cyrlint across lib/)
+#
+# Each gate emits PASS/FAIL with ANSI color and increments
+# pass/fail/total counters. Exit code = number of failed gates;
+# 0 = all green.
+#
+# Architectural notes:
+# * The 50+ regression-X.sh gates remain bash for v5.9.1 — those
+#   batch-convert in v5.9.2-v5.9.4 per the roadmap. This dispatcher
+#   spawns each via lib/process.cyr's run() (sovereign cyrius fork+
+#   execve+wait — not sh -c).
+# * `set -e` is deliberately not part of the cyrius dispatcher
+#   semantics. Every gate captures its exit code into a local and
+#   reports PASS/FAIL via _check(); a single gate failure does not
+#   abort the full audit (matches the bash version's v5.7.29 fix).
+# * Self-host gate inlines the stdin-pipe fork+execve+dup2 dance
+#   that bash expressed as `cat src/main.cyr | $CC > $cc_a` —
+#   ~25 LOC of cyrius primitives instead of a sh -c invocation.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/fnptr.cyr"
+include "lib/flags.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+include "lib/bounds.cyr"
+include "lib/tagged.cyr"
+include "lib/result.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+
+# ANSI color escapes — match scripts/check.sh's printf "\033[3Xm".
+var ANSI_GREEN = "\033[32m";
+var ANSI_RED   = "\033[31m";
+var ANSI_RESET = "\033[0m";
+
+# Discovered tool paths (resolved at startup).
+var ROOT_PATH    = 0;   # repo root absolute path (cstring)
+var CC_PATH      = 0;   # build/cc5 (cstring)
+var CYRFMT_PATH  = 0;   # build/cyrfmt or PATH-resolved cyrfmt (cstring)
+var CYRLINT_PATH = 0;   # build/cyrlint or PATH-resolved cyrlint (cstring)
+
+# Counters.
+var G_PASS = 0;
+var G_FAIL = 0;
+var G_TOTAL = 0;
+
+# Cached environment pointer-array, built once at startup from
+# /proc/self/environ. Child processes inherit this env via execve.
+var ENVP_BUF = 0;       # raw environ buffer (null-separated KEY=VAL)
+var ENVP_LEN = 0;
+var ENVP_ARR = 0;       # null-terminated array of pointers into ENVP_BUF
+var ENVP_COUNT = 0;
+
+# Convenience: print null-terminated c-string to stdout (no newline).
+fn _p(cstr) {
+    print(cstr, strlen(cstr));
+    return 0;
+}
+
+# Print "PASS"/"FAIL" line with name.
+fn _check(name, exit_code) {
+    G_TOTAL = G_TOTAL + 1;
+    _p("  ");
+    if (exit_code == 0) {
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        G_PASS = G_PASS + 1;
+    } else {
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        G_FAIL = G_FAIL + 1;
+    }
+    _p(": ");
+    println(name);
+    return 0;
+}
+
+fn _section(label) {
+    _p("── ");
+    _p(label);
+    println(" ──");
+    return 0;
+}
+
+# Build absolute path under ROOT_PATH from a relative tail. Returns
+# a freshly allocated null-terminated c-string.
+fn _root_path(tail) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, ROOT_PATH);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, tail);
+    var s = str_builder_build(sb);
+    return str_data(s);
+}
+
+# Resolve an executable: prefer in-repo build/<name>; otherwise
+# fall back to ~/.cyrius/bin/<name> (the cyriusly-installed path).
+# We don't probe arbitrary PATH because that requires shell-level
+# `command -v` with the parent's env; the two well-known locations
+# cover both fresh-checkout and installed-toolchain workflows.
+fn _resolve_tool(rel_build_path, name) {
+    var absp = _root_path(rel_build_path);
+    if (file_exists(absp) == 1) { return absp; }
+    var home = getenv("HOME");
+    if (home == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, home);
+    str_builder_add_cstr(sb, "/.cyrius/bin/");
+    str_builder_add_cstr(sb, name);
+    var s = str_builder_build(sb);
+    var cand = str_data(s);
+    if (file_exists(cand) == 1) { return cand; }
+    return 0;
+}
+
+# Build envp pointer array from /proc/self/environ. Called once
+# at startup. lib/process.cyr's run() ships an empty envp, which
+# leaves child shells without HOME/PATH/TMPDIR — incorrect for the
+# audit gates (regression scripts depend on HOME for ~/.cyrius
+# paths and PATH for cyrius-toolchain binary discovery). We
+# rebuild the parent's env into a properly-terminated pointer
+# array and pass it explicitly via execve in _gate_run().
+fn _load_environ() {
+    var cap = 65536;
+    ENVP_BUF = alloc(cap);
+    var fd = file_open("/proc/self/environ", 0, 0);
+    if (fd < 0) { return 0; }
+    ENVP_LEN = file_read(fd, ENVP_BUF, cap);
+    file_close(fd);
+    if (ENVP_LEN <= 0) { return 0; }
+    # Count entries (null-separated) and allocate pointer array.
+    var count = 0;
+    var i = 0;
+    while (i < ENVP_LEN) {
+        if (load8(ENVP_BUF + i) == 0) { count = count + 1; }
+        i = i + 1;
+    }
+    ENVP_COUNT = count;
+    ENVP_ARR = alloc((count + 1) * 8);
+    var ai = 0;
+    var start = 0;
+    var j = 0;
+    while (j < ENVP_LEN) {
+        if (load8(ENVP_BUF + j) == 0) {
+            store64(ENVP_ARR + ai * 8, ENVP_BUF + start);
+            ai = ai + 1;
+            start = j + 1;
+        }
+        j = j + 1;
+    }
+    store64(ENVP_ARR + count * 8, 0);
+    return count;
+}
+
+# Spawn `sh script_abs` with the parent's env and return exit code.
+# Replaces lib/process.cyr's run() (which ships empty envp). The
+# child inherits stdin/stdout/stderr from the dispatcher, so any
+# regression-script diagnostic surfaces inline on FAIL — same shape
+# as bash's `cat /tmp/audit_X_$$` post-fail dump.
+fn _gate_run(script_abs) {
+    var pid = sys_fork();
+    if (pid < 0) { return 1; }
+    if (pid == 0) {
+        var argv[3];
+        store64(&argv,     "/bin/sh");
+        store64(&argv + 8, script_abs);
+        store64(&argv + 16, 0);
+        sys_execve("/bin/sh", &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    return 1;
+}
+
+# Run a `sh tests/<rel>` gate. Returns the gate's exit code.
+# On non-zero, the diagnostic is already on stderr from the first
+# run (we don't re-spawn — the v5.7.29 bash convention only re-cat'd
+# the captured tmp file, but our child shares stderr directly with
+# the dispatcher).
+fn _gate(name, script_rel) {
+    var script_abs = _root_path(script_rel);
+    var rc = _gate_run(script_abs);
+    _check(name, rc);
+    return rc;
+}
+
+# ── Self-host gate — inline pipe-fork-exec ──────────────────────
+# bash:
+#   cat $ROOT/src/main.cyr | $CC > $cc_a 2>/dev/null
+# Reads source file, opens out_path for write, forks: child gets
+# stdin from the pipe + stdout to out_path, then execve's compiler.
+# Parent writes source bytes to write end, waits, returns child's
+# exit status.
+fn _self_host_pipe(src_path, compiler_path, out_path) {
+    var src_cap = 2000000;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n <= 0) { return 0 - 1; }
+
+    var out_fd = sys_open(out_path, 577, 420);   # O_WRONLY|O_CREAT|O_TRUNC | 0644
+    if (out_fd < 0) { return 0 - 2; }
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 3; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd);
+        sys_close(write_fd);
+        sys_close(out_fd);
+        return 0 - 4;
+    }
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0);
+        sys_close(read_fd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var argv[3];
+        store64(&argv,     compiler_path);
+        store64(&argv + 8, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(compiler_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(write_fd);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return load32(&status_buf);
+}
+
+# Returns 1 if the two files have identical content, 0 otherwise.
+# cmp -s equivalent.
+fn _files_identical(path_a, path_b) {
+    var cap = 2000000;
+    var buf_a = alloc(cap);
+    var buf_b = alloc(cap);
+    var na = file_read_all(path_a, buf_a, cap);
+    var nb = file_read_all(path_b, buf_b, cap);
+    if (na != nb) { return 0; }
+    var i = 0;
+    while (i < na) {
+        if (load8(buf_a + i) != load8(buf_b + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Returns the file size in bytes via sys_stat (struct stat layout
+# st_size at offset 48 on x86_64 Linux per arch/x86/include/uapi/asm/
+# stat.h). Returns 0 on failure.
+fn _file_size(path) {
+    var sbuf = alloc(144);
+    var rc = sys_stat(path, sbuf);
+    if (rc < 0) { return 0; }
+    return load64(sbuf + 48);
+}
+
+# Build a tmp file path "/tmp/<prefix><pid>".
+fn _tmp_path(prefix) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/");
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add_int(sb, sys_getpid());
+    var s = str_builder_build(sb);
+    return str_data(s);
+}
+
+fn _self_host_gate() {
+    _section("Self-Hosting");
+    var src = _root_path("src/main.cyr");
+    var cc_a = _tmp_path("audit_cc_a_");
+    var cc_b = _tmp_path("audit_cc_b_");
+    var rc1 = _self_host_pipe(src, CC_PATH, cc_a);
+    if (rc1 != 0) {
+        _check("cc5==cc5 byte-identical", 1);
+        println("");
+        return 1;
+    }
+    sys_chmod(cc_a, 493);
+    var rc2 = _self_host_pipe(src, cc_a, cc_b);
+    if (rc2 != 0) {
+        _check("cc5==cc5 byte-identical", 1);
+        sys_unlink(cc_a);
+        println("");
+        return 1;
+    }
+    var ok = _files_identical(cc_a, cc_b);
+    if (ok == 1) { _check("cc5==cc5 byte-identical", 0); }
+    else         { _check("cc5==cc5 byte-identical", 1); }
+    _p("    binary: ");
+    print_num(_file_size(cc_a));
+    println(" bytes");
+    sys_unlink(cc_a);
+    sys_unlink(cc_b);
+    println("");
+    if (ok == 1) { return 0; }
+    return 1;
+}
+
+# ── Heap-map audit ──
+fn _heapmap_gate() {
+    _section("Heap Map");
+    _gate("no heap overlaps", "tests/heapmap.sh");
+    println("");
+    return 0;
+}
+
+# Returns 1 if the buffer at p starts with the c-string `s` for n
+# bytes; 0 otherwise.
+fn _buf_eq(p, s, n) {
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(s + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Find " failed" in buffer; if present, walk back to the leading
+# integer and return it. Returns 0 if not found (no summary line ⇒
+# treat as PASS-by-default; the caller separately considers exit
+# code).
+fn _tcyr_parse_failed(buf, n) {
+    var needle = " failed";
+    var nlen = strlen(needle);
+    var i = 0;
+    while (i + nlen <= n) {
+        if (_buf_eq(buf + i, needle, nlen) == 1) {
+            # Walk back from `i` to find run of digits.
+            var end = i;
+            var start = end;
+            while (start > 0) {
+                var c = load8(buf + start - 1);
+                if (c < 48) { start = 0 - 1; }
+                else { if (c > 57) { start = 0 - 1; } }
+                if (start == 0 - 1) { start = end; }
+                else { start = start - 1; }
+                # Bail loop on out-of-range
+                if (start == 0 - 1) { i = i + 1; }
+            }
+            # If we can't find digits, skip and continue
+            if (start < 0) { i = i + 1; }
+            else { return _aw_parse_leading_int(buf + start, end - start); }
+        } else {
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+# Compile a .tcyr file via stdin pipe to cc5, run the resulting
+# binary, parse "X passed, Y failed" from output. Returns:
+#   0 on PASS, positive int = failed count from summary, -1 on
+#   compile failure.
+fn _tcyr_compile_and_run(src_path) {
+    var bin_path = _tmp_path("audit_t_");
+    var rc1 = _self_host_pipe(src_path, CC_PATH, bin_path);
+    if (rc1 != 0) {
+        sys_unlink(bin_path);
+        return 0 - 1;
+    }
+    sys_chmod(bin_path, 493);
+
+    var args = vec_new();
+    vec_push(args, bin_path);
+    var out_cap = 65536;
+    var out_buf = alloc(out_cap);
+    var out_n = exec_capture(args, out_buf, out_cap);
+    sys_unlink(bin_path);
+
+    return _tcyr_parse_failed(out_buf, out_n);
+}
+
+fn _testsuite_gate() {
+    _section("Test Suite");
+    var dir = _root_path("tests/tcyr");
+    var dir_str = str_from(dir);
+    var entries = dir_list(dir_str);
+    var fail_count = 0;
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var name = vec_get(entries, i);
+        if (path_has_ext(name, ".tcyr") == 1) {
+            var full = path_join(dir_str, name);
+            var basename = path_basename(full);
+            var bn_data = str_data(basename);
+            var bn_len = str_len(basename);
+            var label_len = bn_len - 5;   # remove ".tcyr"
+            _p("  ");
+            print(bn_data, label_len);
+            # Pad to 22 columns.
+            var pad = 22 - label_len;
+            while (pad > 0) { _p(" "); pad = pad - 1; }
+            var failed = _tcyr_compile_and_run(str_data(full));
+            if (failed < 0) {
+                println("FAIL (compile)");
+                fail_count = fail_count + 1;
+            } else { if (failed > 0) {
+                    _p("FAIL (");
+                    print_num(failed);
+                    println(" failed)");
+                    fail_count = fail_count + 1;
+                } else {
+                    println("PASS");
+                } }
+            total = total + 1;
+        }
+        i = i + 1;
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "test suite (");
+    str_builder_add_int(sb, total);
+    str_builder_add_cstr(sb, " files)");
+    var label = str_builder_build(sb);
+    _check(str_data(label), fail_count);
+    println("");
+    return fail_count;
+}
+
+# ── Format / Lint sections ──
+fn _format_gate() {
+    _section("Format");
+    if (CYRFMT_PATH == 0) {
+        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        _check("format (stdlib)", 1);
+        println("");
+        return 1;
+    }
+    if (file_exists(CYRFMT_PATH) != 1) {
+        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        _check("format (stdlib)", 1);
+        println("");
+        return 1;
+    }
+    var dirs = vec_new();
+    vec_push(dirs, str_from(_root_path("lib")));
+    audit_fmt_walk(CYRFMT_PATH, dirs);
+    _check("format (stdlib)", AW_FMT_FAIL);
+    if (AW_FMT_SKIPPED > 0) {
+        _p("    (");
+        print_num(AW_FMT_SKIPPED);
+        println(" dep files skipped)");
+    }
+    println("");
+    return AW_FMT_FAIL;
+}
+
+fn _lint_gate() {
+    _section("Lint");
+    if (CYRLINT_PATH == 0) {
+        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        _check("lint (stdlib)", 1);
+        println("");
+        return 1;
+    }
+    if (file_exists(CYRLINT_PATH) != 1) {
+        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        _check("lint (stdlib)", 1);
+        println("");
+        return 1;
+    }
+    var dirs = vec_new();
+    vec_push(dirs, str_from(_root_path("lib")));
+    audit_lint_walk(CYRLINT_PATH, dirs);
+    var fail = 0;
+    if (AW_LINT_TOTAL > 0) {
+        _p("  ");
+        print_num(AW_LINT_TOTAL);
+        println(" warnings");
+        fail = 1;
+    }
+    _check("lint (stdlib)", fail);
+    if (AW_LINT_SKIPPED > 0) {
+        _p("    (");
+        print_num(AW_LINT_SKIPPED);
+        println(" dep files skipped)");
+    }
+    println("");
+    return fail;
+}
+
+# ── Build cyrius_api_surface on demand ──
+# Mirrors the v5.8.44 fix: if build/cyrius_api_surface is missing,
+# build it before the api-surface gate runs (otherwise the gate
+# silently skips and the audit reports false-green).
+fn _build_api_surface_if_missing() {
+    var bin = _root_path("build/cyrius_api_surface");
+    if (file_exists(bin) == 1) { return 0; }
+    var src = _root_path("programs/api_surface.cyr");
+    if (file_exists(src) != 1) { return 0; }
+    if (file_exists(CC_PATH) != 1) { return 0; }
+    _self_host_pipe(src, CC_PATH, bin);
+    sys_chmod(bin, 493);
+    return 0;
+}
+
+# ── Main dispatch ──
+# ROOT = absolute path to repo root. Resolved via getcwd; the shim
+# in scripts/check.sh sets cwd to repo root before exec'ing.
+fn _resolve_root() {
+    var cwd_buf = alloc(4096);
+    var n = syscall(79, cwd_buf, 4096);   # SYS_GETCWD on x86_64
+    if (n <= 0) {
+        store8(cwd_buf, 46);   # '.'
+        store8(cwd_buf + 1, 0);
+    }
+    return cwd_buf;
+}
+
+fn _setup_paths() {
+    ROOT_PATH = _resolve_root();
+    CC_PATH = _root_path("build/cc5");
+    CYRFMT_PATH = _resolve_tool("build/cyrfmt", "cyrfmt");
+    CYRLINT_PATH = _resolve_tool("build/cyrlint", "cyrlint");
+    return 0;
+}
+
+# Gate registry: each entry is a (label, script_rel) pair we dispatch
+# via _gate(). Matches scripts/check.sh sections 4a–4ba inclusive.
+fn _run_regression_gates() {
+    _section("Shared-object");
+    _gate("shared; + dlopen round-trip", "tests/regression-shared.sh");
+    println("");
+
+    _section("Linker");
+    _gate("cyrld cross-module link", "tests/regression-linker.sh");
+    println("");
+
+    _section("Capacity meter");
+    _gate("cyrius capacity (default / --check / --json / fnc>2048)", "tests/regression-capacity.sh");
+    println("");
+
+    _section("Object init binding");
+    _gate("_cyrius_init STB_GLOBAL in object; mode", "tests/regression-object-init.sh");
+    println("");
+
+    _section("aarch64 syscalls + threads");
+    _gate("aarch64 syscall stdlib + post-clone trampoline (via ssh pi)", "tests/regression-aarch64-syscalls.sh");
+    println("");
+
+    _section("Mach-O aarch64 cross-build");
+    _gate("main_aarch64_macho.cyr compiles to ELF", "tests/regression-macho-cross-build.sh");
+    println("");
+
+    _section("Inline-asm discard-result");
+    _gate("120B asm fn + standalone sys_write (sigil AES-NI shape)", "tests/regression-inline-asm-discard.sh");
+    println("");
+
+    _section("cyrfmt --write");
+    _gate("cyrfmt --write / -w in-place rewrite + idempotent mtime", "tests/regression-cyrfmt-write.sh");
+    println("");
+
+    _section("Reserved-keyword diag");
+    _gate("'var match/in/default/shared' → 'reserved keyword ... cannot be used as identifier'", "tests/regression-reserved-kw-diag.sh");
+    println("");
+
+    _section("Shadow + PAM");
+    _gate("shadow_getspnam + unix_chkpwd auth paths", "tests/regression-shadow-pam.sh");
+    println("");
+
+    _section("fdlopen primitives");
+    _gate("setjmp/longjmp + helper-path + state-buf API", "tests/regression-fdlopen.sh");
+    println("");
+
+    _section("thread-local slots");
+    _gate("%fs / TPIDR_EL0 slots + CLONE_SETTLS worker isolation", "tests/regression-thread-local.sh");
+    println("");
+
+    _section("atomics + mutex race-free");
+    _gate("atomic_cas/fetch_add/fence + 4-thread contention + mutex", "tests/regression-atomics.sh");
+    println("");
+
+    _section("thread-safety pattern");
+    _gate("mutex-wrapped hashmap + vec under 4-thread contention", "tests/regression-thread-safety.sh");
+    println("");
+
+    _section("flags parser");
+    _gate("bool/int/str flags + positionals + error paths", "tests/regression-flags.sh");
+    println("");
+
+    _section("aarch64 native self-host");
+    _gate("native cc5 self-hosts byte-identical on Pi (pin v5.6.32)", "tests/regression-aarch64-native-selfhost.sh");
+    println("");
+
+    _section("Mach-O arm64 runtime");
+    _gate("Mach-O arm64 syscall(60,42) → exit 42 on ecb (pin v5.6.33)", "tests/regression-macho-exit.sh");
+    println("");
+
+    _section("PE32+ Windows runtime");
+    _gate("PE syscall(60,42) → exit 42 on cass (pin v5.6.36)", "tests/regression-pe-exit.sh");
+    println("");
+
+    _section("sit 100-commit fixture");
+    _gate("sit fsck on 100-commit fixture reports 0 bad (pin v5.6.35; sankoch deflate)", "tests/regression-sit-status.sh");
+    println("");
+
+    _section("TLS live");
+    _gate("libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)", "tests/regression-tls-live.sh");
+    println("");
+
+    _section("TS lexer (cyrius-ts)");
+    _gate("cc5 --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", "tests/regression-ts-lex.sh");
+    println("");
+
+    _section("TS parser (SY acceptance)");
+    _gate("cc5 --parse-ts vs SY .ts corpus ≥98%% baseline (v5.7.3 P3.1)", "tests/regression-ts-parse.sh");
+    println("");
+
+    _section("TS parser .tsx (JSX)");
+    _gate("cc5 --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", "tests/regression-ts-parse-tsx.sh");
+    println("");
+
+    _section("Bare-truthy after fn-call");
+    _gate("bare-truthy 'if (r)' after fn-call branches correctly (v5.6.21 fix)", "tests/regression-truthy-after-fncall.sh");
+    println("");
+
+    _section("fn-name collision warning");
+    _gate("duplicate fn warns; forward-decl no false-positive (v5.7.9)", "tests/regression-fn-collision.sh");
+    println("");
+
+    _section("input_buf 1 MB cap");
+    _gate("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", "tests/regression-input-1mb.sh");
+    println("");
+
+    _section("cyrius-x bytecode entry");
+    _gate("cc5 builds main_cx.cyr; cc5_cx starts clean (v5.7.11; bytecode correctness pinned v5.7.12)", "tests/regression-cx-build.sh");
+    println("");
+
+    _section("cyrius-x bytecode cleanliness");
+    _gate("cc5_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)", "tests/regression-cx-roundtrip.sh");
+    println("");
+
+    _section("String-escape rejects");
+    _gate("lex rejects malformed \\x## / \\u#### / \\u{...} + surrogates (v5.7.13)", "tests/regression-string-escapes.sh");
+    println("");
+
+    _section("cyrius deps transitive");
+    _gate("cyrius deps walks [deps.X] transitively (3-level + diamond + cycle + rel-path; v5.7.14)", "tests/regression-deps-transitive.sh");
+    println("");
+
+    _section("cyrius init --lib/--bin");
+    _gate("cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)", "tests/regression-init-lib-bin.sh");
+    println("");
+
+    _section("cyrius init/port doc-tree");
+    _gate("cyrius init/port emit adr/architecture/guides/examples/development + CLAUDE.md (v5.7.16)", "tests/regression-init-doctree.sh");
+    println("");
+
+    _section("struct cap raise + diag");
+    _gate("200-struct compile clean; 257-struct overflow dumps registered names (v5.7.17; kybernet)", "tests/regression-struct-cap.sh");
+    println("");
+
+    _section("kmode emit order");
+    _gate("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", "tests/regression-kmode-emit-order.sh");
+    println("");
+
+    _section("stdlib doc coverage");
+    _gate("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", "tests/regression-stdlib-doc-coverage.sh");
+    println("");
+
+    _section("cyrius fuzz auto-prepend");
+    _gate("cyrius fuzz manifest-deps auto-prepend parity with test/bench (v5.7.21)", "tests/regression-fuzz-deps-prepend.sh");
+    println("");
+
+    _section("cyrfmt comment/string brace skip");
+    _gate("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", "tests/regression-cyrfmt-comment-braces.sh");
+    println("");
+
+    _section("install --refresh-only shim");
+    _gate("install.sh --refresh-only re-links ~/.cyrius/bin to current version (v5.7.22; H3)", "tests/regression-install-shim-symlink.sh");
+    println("");
+
+    _section("cx syscall literal propagation");
+    _gate("cc5_cx propagates literal syscall args; cxvm exits with user code (v5.7.23)", "tests/regression-cx-syscall-literal.sh");
+    println("");
+
+    _section("TS asserts predicate signatures");
+    _gate("cc5 --parse-ts accepts asserts predicate signatures + this-type (v5.7.24)", "tests/regression-ts-asserts.sh");
+    println("");
+
+    _section("TS mapped types + modifiers");
+    _gate("cc5 --parse-ts accepts mapped types + as-clause + +/- modifiers (v5.7.25)", "tests/regression-ts-mapped.sh");
+    println("");
+
+    _section("TS decorators");
+    _gate("cc5 --parse-ts accepts TS 5.0 stage-3 decorators (v5.7.26)", "tests/regression-ts-decorators.sh");
+    println("");
+
+    _section("Token-offset parity");
+    _gate("lex token writes match every backend's TOKTYP / TOKVAL reads (v5.7.28)", "tests/regression-cx-token-offsets.sh");
+    println("");
+
+    _section("aarch64 f64 basic ops");
+    _gate("aarch64 f64 add/sub/mul/div/sqrt/neg/floor/ceil/round + int↔f64 bit-exact on Pi (v5.7.30)", "tests/regression-aarch64-f64.sh");
+    println("");
+
+    _section("aarch64 f64_exp / f64_ln / f64_log2 polyfills");
+    _gate("aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate on Pi (v5.7.31 + v5.8.4; phylax-unblock)", "tests/regression-aarch64-f64-polyfill.sh");
+    println("");
+
+    _section("cyrlint global-init-order");
+    _gate("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", "tests/regression-lint-global-init-order.sh");
+    println("");
+
+    _section("cyrlint large-file");
+    _gate("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", "tests/regression-cyrlint-large-file.sh");
+    println("");
+
+    _build_api_surface_if_missing();
+    _section("cyrius api-surface");
+    _gate("cyrius api-surface diff: snapshot match + add/remove detection (v5.7.33; auto-build at v5.8.44)", "tests/regression-api-surface.sh");
+    println("");
+
+    _section("aarch64 codebuf cap");
+    _gate("aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)", "tests/regression-aarch64-codebuf-cap.sh");
+    println("");
+
+    _section("stdlib syscall surface (v5.7.35)");
+    _gate("stdlib syscall surface — getrandom + getdents64 + landlock + random_bytes (v5.7.35)", "tests/regression-syscall-surface-v5735.sh");
+    println("");
+
+    _section("distlib >64KB module");
+    _gate("cyrius distlib bundles >64KB modules without truncation (mabda-surfaced; v5.7.36)", "tests/regression-distlib-large-module.sh");
+    println("");
+
+    _section("smoke discovery");
+    _gate("cyrius smoke discovers .smcyr + fail-fast bailout (v5.7.38)", "tests/regression-smoke-discovery.sh");
+    println("");
+
+    _section("lsp definition");
+    _gate("cyrius-lsp definitionProvider + documentSymbol + cross-file indexing (v5.7.39)", "tests/regression-lsp-definition.sh");
+    println("");
+
+    _section("json pretty");
+    _gate("json_v_build_pretty(v, indent) end-to-end canonical shape (v5.7.40)", "tests/regression-json-pretty.sh");
+    println("");
+
+    _section("json stream");
+    _gate("json_stream_parse(buf, len, h) event order canonical sequence (v5.7.41)", "tests/regression-json-stream.sh");
+    println("");
+
+    _section("json pointer");
+    _gate("json_v_pointer(v, ptr) RFC 6901 paths + ~0/~1 escapes + OOB/miss (v5.7.42)", "tests/regression-json-pointer.sh");
+    println("");
+
+    _section("test_each");
+    _gate("test_each(cases_vec, fp) iteration order + transitive include chain (v5.7.43)", "tests/regression-test-lib.sh");
+    println("");
+
+    _section("variadic tuples");
+    _gate("TS variadic tuples — parse acceptance for spread element forms (v5.7.44)", "tests/regression-ts-variadic-tuples.sh");
+    println("");
+
+    _section("const type params");
+    _gate("TS const type params <const T> — parse acceptance (v5.7.45)", "tests/regression-ts-const-type-params.sh");
+    println("");
+
+    _section("advanced-TS pin audit");
+    _gate("TS advanced-pin audit — as const + satisfies + never/unknown + conditional types (v5.7.46)", "tests/regression-ts-advanced-pin-audit.sh");
+    println("");
+
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _load_environ();
+    _setup_paths();
+
+    println("=== Cyrius v2.0 Audit ===");
+    println("");
+
+    _self_host_gate();
+    _heapmap_gate();
+    _testsuite_gate();
+    _run_regression_gates();
+    _format_gate();
+    _lint_gate();
+
+    println("════════════════════════");
+    print_num(G_PASS);
+    _p(" passed, ");
+    print_num(G_FAIL);
+    _p(" failed (");
+    print_num(G_TOTAL);
+    println(" total)");
+
+    return G_FAIL;
+}
+
+var r = main();
+syscall(60, r);

@@ -303,10 +303,16 @@ at cycle entry):
   +35 non-breaking). 65/65 check.sh; self-host two-step
   byte-identical. Sovereignty pass kickoff items moved forward
   to v5.9.1.
-- **v5.9.1** — sovereignty pass kickoff: `scripts/check.sh` →
-  cyrius (high-priority; central audit dispatcher) +
-  `scripts/lib/audit-walk.sh` → cyrius (shared audit helper).
-  P(-1) hardening + vidya per-minor refresh.
+- **v5.9.1** ✅ — **sovereignty pass kickoff shipped 2026-05-06**.
+  `scripts/check.sh` (743 LOC bash → 30-line shim + 700-line
+  cyrius `programs/check.cyr`); fmt/lint walk logic ported into
+  new stdlib module `lib/audit_walk.cyr` (77 → 78). Premise-check
+  finding: roadmap had check.sh at 200 LOC; empirical was 743
+  (3.7× pin). audit-walk.sh stayed bash because it has a second
+  consumer (bash `scripts/cyrius` dispatcher, queued for v5.9.5)
+  — slot scope-corrected to check.sh-only at entry. cc5
+  unchanged (741,048 B); 65/65 check.sh green; api-surface
+  snapshot regenerated 2,760 → 2,763 (+3 non-breaking).
 - **v5.9.2-v5.9.4** — sovereignty pass: `tests/regression-*.sh`
   batch conversion (60 scripts, 6,679 LOC). Templated — group
   by category (aarch64-cross-tests, lint-tests, syscall-tests,

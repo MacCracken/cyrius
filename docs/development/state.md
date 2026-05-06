@@ -5,6 +5,35 @@
 
 ## Version
 
+**5.9.1** (shipped 2026-05-06 — **v5.9.x SLOT 1 — sovereignty
+pass kickoff: scripts/check.sh → cyrius**. First slot of the
+v5.9.x bash-toolchain → cyrius conversion arc. cc5 unchanged at
+**741,048 B** — slot is `programs/` + `lib/` work; the compiler
+binary is not touched. **Premise-check finding at slot entry**:
+roadmap pin estimated check.sh at 200 LOC + audit-walk.sh at 80
+LOC; empirical was **743 LOC for check.sh** (3.7× pin) and
+audit-walk.sh has a second consumer (bash `scripts/cyrius`
+dispatcher, queued for v5.9.5). Slot scope-corrected to check.sh
+only; audit-walk.sh stays bash and pairs with `scripts/cyrius`
+in v5.9.5. The fmt/lint walk logic was simultaneously ported into
+a new cyrius stdlib module (`lib/audit_walk.cyr`) so
+`programs/check.cyr` doesn't reach back into bash. **What
+shipped**: `programs/check.cyr` (~700 LOC cyrius port of the
+audit dispatcher; replicates self-host two-step, heap-map, .tcyr
+loop, ~50 regression gates, format/lint walks; sovereign
+fork+execve+wait via lib/process.cyr; environ passthrough via
+`/proc/self/environ` — load-bearing because regression scripts
+need HOME/PATH set), `lib/audit_walk.cyr` (cyrius stdlib walker
+with self-contained getdents64 d_type extraction; 77 → 78
+stdlib modules), `scripts/check.sh` collapsed to a ~30-line
+shim that builds `build/cyrius_check` on demand and exec's it.
+api-surface snapshot regenerated 2,760 → 2,763 public fns (+3
+from `lib/audit_walk.cyr`; non-breaking). Acceptance: 65/65
+check.sh; cc5 self-host two-step byte-identical; idempotent
+rebuild from a clean `build/cyrius_check` deletion. **Next**:
+v5.9.2 begins the regression-*.sh batch conversion (60 scripts /
+6,679 LOC across .2–.4).)
+
 **5.9.0** (shipped 2026-05-06 — **v5.9.x cycle opener — niyama
 fold-in (sandhi-pattern)**. Eighth sibling distfile vendored
 byte-identical into `lib/`. cc5 unchanged at **741,048 B** —

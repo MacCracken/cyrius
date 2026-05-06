@@ -403,6 +403,36 @@ Deferred to v5.6.x+:
 - **v5.7.49 — ecosystem deps refresh**: 5 of 6 deps bumped — sakshi 2.0.0 → 2.2.2, patra 1.9.0 → 1.9.2, sigil 2.9.3 → **3.0.0** (major; audited safe — cyrius doesn't consume sigil API), yukti 2.1.1 → 2.2.1, sankoch 2.1.0 → 2.2.3; agnosys 1.0.4 transitive refresh. Mabda held at 2.5.0 — v3.0.0-rc.2 in soak; cyrius doesn't consume mabda's API so the hold is cost-free. cc5 byte-identical at 720,928 B (data-only refresh).
 - **v5.7.50 — pre-v5.8.0 P(-1) unblock (true final v5.7.x patch)**: pre-v5.8.0 P(-1) audit (`docs/audit/2026-05-01-pre-5.8.0-audit.md`) surfaced one BLOCKER — `cyrius bench` and `cyrius test` both failing at compile time with `error:lib/patra.cyr:101: undefined variable 'SYS_LSEEK'`. Root cause: cyrius's own `cyrius.cyml` was missing the `[deps].stdlib` auto-prepend block that every other consumer has had since their respective folds. Latent at v5.7.48 (patra 1.9.0 had the same SYS_LSEEK refs); only surfaced when P(-1) ran `cyrius bench` end-to-end (check.sh-based closeouts don't go through auto-prepend). Single-issue config-only fix: 19-module `[deps].stdlib` block added (union of every dep's own stdlib needs at v5.7.49 pin time). cc5 unchanged at 720,928 B; `cyrius bench` 15/15 PASS (was 2/13); check.sh 64/64. **The .50 headroom held open from v5.7.42 closeout planning was used for exactly this kind of late-cycle finding — used once, retired.** v5.8.x slot list opens with a clean `cyrius bench` baseline.
 
+## v5.9.1 — sovereignty pass kickoff: scripts/check.sh → cyrius — 2026-05-06
+
+First slot of the v5.9.x bash-toolchain → cyrius conversion arc.
+cc5 unchanged at **741,048 B** — slot is `programs/` + `lib/`
+work; the compiler binary is not touched.
+
+- **Premise-check at slot entry** — roadmap pinned check.sh at
+  200 LOC + audit-walk.sh at 80 LOC; empirical was 743 LOC for
+  check.sh (3.7× pin). audit-walk.sh has a second consumer (bash
+  `scripts/cyrius` dispatcher) queued for v5.9.5; bundling its
+  retirement into v5.9.1 would either duplicate walk logic or
+  pull v5.9.5 forward. Slot scope-corrected to check.sh only.
+- **`programs/check.cyr`** — ~700 LOC cyrius port of the bash
+  audit dispatcher. Self-host two-step via inline pipe-fork-exec;
+  heap-map / tcyr-loop / 50+ regression gates / fmt-lint walks;
+  sovereign `fork+execve` (no `sh -c`); environ passthrough via
+  `/proc/self/environ` (load-bearing — without it child shells
+  have no HOME and ~/.cyrius gates fail).
+- **`lib/audit_walk.cyr`** — cyrius stdlib module (77 → 78);
+  self-contained getdents64 walk reading d_type directly
+  (DT_LNK skipped); distlib-bundle marker skip for sandhi-pattern
+  vendored files.
+- **`scripts/check.sh`** — collapsed 743 LOC of bash → ~30-line
+  shim. Builds `build/cyrius_check` on demand (mirrors v5.8.44's
+  auto-build pattern for `build/cyrius_api_surface`); preserves
+  CI invocation `sh scripts/check.sh` unchanged.
+- **api-surface snapshot regenerated** — 2,760 → 2,763 public
+  fns (+3 from `lib/audit_walk.cyr`; non-breaking). check.sh
+  65/65 green; cc5 self-host two-step byte-identical.
+
 ## v5.9.0 — niyama fold-in (sandhi-pattern) — 2026-05-06
 
 v5.9.x cycle opens with the niyama regex distlib fold. Eighth
