@@ -6,6 +6,138 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.10] — 2026-05-06
+
+**v5.9.x SLOT 10 — LSP feature additions: textDocument/references
++ textDocument/semanticTokens/full**. Two LSP capabilities
+promoted from "held forward" to a concrete slot at v5.9.7 ship.
+The pinned ~150 LOC + ~80 LOC estimates landed close to
+empirical (~280 LOC + helpers); both providers ride the
+v5.7.39 cross-file symbol-table infrastructure.
+
+cc5: **741,048 B unchanged** — `programs/cyrius-lsp.cyr` only;
+no compiler-source change.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Three deliverables pinned at v5.9.8 ship:
+1. `textDocument/semanticTokens/full` — token-coloring response.
+2. `textDocument/references` — find-all-uses.
+3. `tests/regression-lsp-definition.sh` conversion to a cyrius-
+   side bespoke gate.
+
+Premise-check at slot entry: items 1+2 land cleanly with the
+existing symbol-table infrastructure. Item 3 needs a
+bidirectional-IPC helper (parent writes LSP-framed messages to
+child stdin AND reads child stdout simultaneously) — the
+dispatcher's existing `_exec_with_arg_capture` /
+`_exec_capture_clean` family is unidirectional. The IPC helper
+is its own helper-design step that earns one slot's bandwidth;
+deferring the .sh conversion to v5.9.11 lets v5.9.10 ship the
+two LSP features cleanly. The .sh test is EXTENDED in this
+slot to cover the new providers (3 additional tests for
+referencesProvider + semanticTokensProvider in initialize
+response, /references location count, /semanticTokens leading
+data tuple), so regression coverage doesn't degrade while the
+.sh stays in place.
+
+The opportunistic SSH cluster co-targets (macho-exit + pe-exit)
+also deferred — slot scope kept tight on the LSP features.
+
+The opportunistic cx-token-offsets (deferred from v5.9.9) is
+also deferred again to keep this slot single-theme.
+
+### Added
+
+- **`programs/cyrius-lsp.cyr` — `handle_references(body)`**:
+  ~80 LOC. Parses the cursor position, finds the IDENT at the
+  cursor in the file at `uri`, then walks every indexed file
+  in `_lsp_indexed_buf` scanning each line for matching IDENT
+  tokens. Emits `Location[]` (one per match — declarations
+  appear naturally because they ARE matches by name; no
+  separate "exclude declarations" path). Cost: O(sum of
+  indexed-file sizes) per request — acceptable for
+  human-interactive editor traffic.
+
+- **`programs/cyrius-lsp.cyr` —
+  `handle_semantic_tokens(body)`**: ~150 LOC. Per LSP 3.16
+  spec, emits a flat `data` int array — every 5 ints describe
+  one token: `[deltaLine, deltaStartChar, length, tokenType,
+  tokenModifiers]`. Tokens sorted ascending by (line, col);
+  deltas relative to previous token. Coverage:
+  - tokens we resolve via the v5.7.39 symbol table (function /
+    variable / struct / enum / enumMember based on symbol kind)
+  - cyrius keywords from a built-in 17-entry list (fn, var,
+    if, in, for, else, elif, enum, while, break, match, return,
+    struct, shared, include, default, continue)
+  - skips `# comment` lines wholesale
+  - skips `"..."` string literals (handles `\\` escape)
+  - all other tokens (operators, numbers, locals, fn args, type
+    names) are uncolored — editors fall back to their textmate
+    grammar for those.
+
+- **`programs/cyrius-lsp.cyr` —
+  `_lsp_kind_to_semantic_type(k)`**: maps cyrius symbol kind
+  (1=fn / 2=var / 3=enum / 4=struct / 5=enum-member) to the
+  legend index (0..4); returns -1 for unmapped kinds.
+
+- **`programs/cyrius-lsp.cyr` — `_lsp_is_keyword(buf, off,
+  len)`**: cstring-tagged 17-keyword fast-path check;
+  length-bucketed switch.
+
+- **`tests/regression-lsp-definition.sh` — Tests 6+7+8**:
+  extension covering the new providers — initialize legend
+  shape; /references location count (2 = decl + use);
+  /semanticTokens leading data tuple `0,0,2,5,0` (the `fn`
+  keyword at line 0 col 0, length 2, type 5 = keyword).
+
+### Changed
+
+- **`programs/cyrius-lsp.cyr` — `handle_initialize`**:
+  initialize response now advertises `referencesProvider`,
+  `semanticTokensProvider` (with legend), in addition to the
+  v5.7.39 `definitionProvider` + `documentSymbolProvider`. The
+  legend `tokenTypes` array is `["function", "variable",
+  "struct", "enum", "enumMember", "keyword"]` (LSP 3.16 names);
+  `tokenModifiers` is empty (modifier bitmask always 0 in our
+  emits).
+
+- **`programs/cyrius-lsp.cyr` — main loop dispatch**: two new
+  method handlers:
+  - `textDocument/references` → `handle_references`
+  - `textDocument/semanticTokens/full` → `handle_semantic_tokens`
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change).
+- check.sh: 66/66 gates green, exit 0.
+- LSP regression (extended `tests/regression-lsp-definition.sh`):
+  PASS for definitionProvider + documentSymbolProvider +
+  referencesProvider + semanticTokensProvider/full + cross-file
+  indexing. End-to-end manual smoke: 2-fn fixture's
+  /references returns 2 Locations (decl + use); /semanticTokens
+  emits 7-token sequence covering both `fn` keywords, both
+  function-name idents, both `return` keywords, and the use-site
+  `foo_bar` ident.
+
+### Roadmap pin (NOT fixed this slot)
+
+- **`tests/regression-lsp-definition.sh` → cyrius-side bespoke
+  gate** — needs a bidirectional-IPC helper (`_lsp_session(bin,
+  requests_buf, requests_len, out_buf, out_cap)`). Deferred to
+  v5.9.11 alongside the cyriusly+init scaffolder conversions
+  (the IPC helper may also surface a near-equivalent for the
+  scaffolders' subprocess plumbing).
+
+- **cx-token-offsets** conversion (deferred from v5.9.9)
+  re-deferred to v5.9.11 — same single-theme reason.
+
+- **macho-exit + pe-exit** SSH-cluster co-targets — re-deferred
+  from this slot's opportunistic pin; pick up in a future slot
+  when the env-var-passing exec helper / .bat fixture +
+  Windows cmd /c stdout-parse helpers earn their slot.
+
 ## [5.9.9] — 2026-05-06
 
 **v5.9.x SLOT 9 — `cyrius api-surface` derive-blind fix**

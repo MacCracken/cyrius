@@ -158,5 +158,68 @@ if ! grep -q '"line":0,"character":3' "$WORK/out2"; then
     exit 1
 fi
 
-echo "  PASS: cyrius-lsp definitionProvider + documentSymbolProvider + cross-file indexing (v5.7.39)"
+# ── v5.9.10 — Test 6 + 7: new providers (references + semanticTokens) ──
+# Single-file fixture with a fn decl + a use site so /references
+# returns 2 locations and /semanticTokens emits a recognizable
+# token stream.
+NEW="$WORK/newproviders.cyr"
+cat > "$NEW" <<'EOF'
+fn foo_bar() {
+    return 42;
+}
+
+fn caller() {
+    return foo_bar();
+}
+EOF
+NEW_URI="file://$NEW"
+
+{
+    send_lsp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+    send_lsp "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"$NEW_URI\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}"
+    # /references — cursor in the IDENT `foo_bar` at line 0, col 5.
+    send_lsp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"$NEW_URI\"},\"position\":{\"line\":0,\"character\":5},\"context\":{\"includeDeclaration\":true}}}"
+    # /semanticTokens/full — should return a `data` array with at least
+    # the 7-token sequence the file produces (fn / foo_bar / return /
+    # fn / caller / return / foo_bar).
+    send_lsp "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/semanticTokens/full\",\"params\":{\"textDocument\":{\"uri\":\"$NEW_URI\"}}}"
+    send_lsp '{"jsonrpc":"2.0","id":4,"method":"shutdown"}'
+} | "$LSP" > "$WORK/out3" 2>"$WORK/err3"
+
+# Test 6: initialize advertises both new providers + the
+# semanticTokens legend.
+if ! grep -q '"referencesProvider":true' "$WORK/out3"; then
+    echo "  FAIL test6: initialize did not advertise referencesProvider"
+    cat "$WORK/out3" | head -20
+    exit 1
+fi
+if ! grep -q '"semanticTokensProvider":' "$WORK/out3"; then
+    echo "  FAIL test6b: initialize did not advertise semanticTokensProvider"
+    cat "$WORK/out3" | head -20
+    exit 1
+fi
+if ! grep -q '"tokenTypes":\["function","variable","struct","enum","enumMember","keyword"\]' "$WORK/out3"; then
+    echo "  FAIL test6c: semanticTokensProvider legend missing or in wrong shape"
+    cat "$WORK/out3" | head -20
+    exit 1
+fi
+
+# Test 7: /references returns 2 Locations (decl + use).
+ref_count=$(grep -oE '"uri":"file://[^"]*newproviders\.cyr"' "$WORK/out3" | wc -l)
+if [ "$ref_count" -lt 2 ]; then
+    echo "  FAIL test7: /references returned $ref_count Locations (expected 2)"
+    cat "$WORK/out3" | head -30
+    exit 1
+fi
+
+# Test 8: /semanticTokens emits the first-token tuple of the
+# fixture: "fn" at line 0 col 0 length 2, type 5 (keyword),
+# modifier 0 → leading data is "0,0,2,5,0".
+if ! grep -q '"data":\[0,0,2,5,0' "$WORK/out3"; then
+    echo "  FAIL test8: /semanticTokens data did not start with the expected 'fn' keyword token tuple"
+    cat "$WORK/out3" | head -30
+    exit 1
+fi
+
+echo "  PASS: cyrius-lsp definitionProvider + documentSymbolProvider + referencesProvider + semanticTokensProvider/full + cross-file indexing (v5.7.39 + v5.9.10)"
 exit 0

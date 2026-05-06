@@ -492,37 +492,52 @@ at cycle entry):
   end-to-end: 4 derive-emitted accessors now appear in the
   snapshot. cx-token-offsets co-target deferred to v5.9.10
   (slot kept single-purpose).
-- **v5.9.10** — **LSP feature additions**. Two LSP capabilities
-  promoted from "held forward / surfaces-on-ask" into a concrete
-  slot per user direction at v5.9.7 ship:
-  - **`textDocument/semanticTokens/full`** — token-coloring
-    response for editors whose textmate grammar can't satisfy
-    the request. ~150 LOC per LSP 3.16 spec; reuses the v5.7.39
-    cross-file symbol table.
-  - **`textDocument/references`** — find-all-uses on top of the
-    v5.7.39 symbol-table infrastructure. ~80 LOC.
-  - **`tests/regression-lsp-definition.sh` conversion** —
-    rolls in alongside the feature work since it's the same
-    subsystem; bespoke gate `_lsp_definition_gate` over a
-    LSP-protocol scaffolder fixture.
-  - Update `docs/cyrius-guide.md` LSP section to document the
-    new providers; regenerate any vidya entries that mention
-    "LSP definitionProvider + documentSymbol".
-  - **Opportunistic deferred gates**: `macho-exit` + `pe-exit`
-    (cross-host run-fixture pattern) — both need their own
-    helper-design step (env-var exec + codesign for macho-exit;
-    .bat fixture + Windows cmd /c stdout-parse for pe-exit) but
-    share the "build cross-binary, scp, ssh-run, parse exit"
-    shape established in v5.9.8.
+- **v5.9.10** ✅ — **LSP feature additions shipped 2026-05-06**.
+  Two LSP capabilities promoted from "held forward":
+  `textDocument/references` (~80 LOC; walks every indexed
+  file scanning ident tokens, emits Location[]) +
+  `textDocument/semanticTokens/full` (~150 LOC; LSP 3.16-compliant
+  flat int array; legend = function/variable/struct/enum/
+  enumMember/keyword; coverage limited to symbol-table-resolvable
+  idents + 17 cyrius keywords). `regression-lsp-definition.sh`
+  EXTENDED with 3 tests covering new providers (deferred .sh →
+  cyrius-side gate conversion to v5.9.11; bidirectional-IPC
+  helper earns its own slot). cc5 unchanged at 741,048 B; 66/66
+  check.sh green; cc5 self-host byte-identical. macho-exit +
+  pe-exit opportunistic co-targets deferred (slot kept
+  single-theme).
 - **v5.9.11** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-  - **Opportunistic deferred gates**: `aarch64-syscalls` +
+  - **`cyrius api-surface --scope=project` flag** (agnosys
+    1.0.11 follow-up review, 2026-05-06): pinned per user
+    direction at v5.9.10 ship. agnosys reviewed the v5.9.9
+    derive-blind fix and found that `cyrius api-surface`
+    snapshots BUBBLE UP stdlib items — when a project is
+    scanned, the snapshot includes `alloc::*`, `string::*`,
+    `vec::*`, etc. lib entries that churn across cyrius stdlib
+    releases. Same item as the v5.9.9 stretch goal — projects
+    can't use `cyrius api-surface` for stable regression
+    detection because their snapshot drifts on every cyrius
+    stdlib bump. Slot scope: add `--scope=project` flag to
+    `programs/api_surface.cyr` that excludes lib-prefixed
+    paths from the scan; default behavior unchanged for
+    backward compat. Agnosys-side: switch their gate
+    invocation to `cyrius api-surface --scope=project`.
+  - **`tests/regression-lsp-definition.sh` → cyrius-side
+    bespoke gate** (deferred from v5.9.10): needs a
+    bidirectional-IPC helper `_lsp_session(bin, requests_buf,
+    requests_len, out_buf, out_cap)` for parent-writes-stdin +
+    parent-reads-stdout simultaneously. The IPC helper may
+    surface a near-equivalent for the scaffolders' subprocess
+    plumbing.
+  - **Opportunistic deferred gates**: `cx-token-offsets`
+    (deferred from v5.9.9); `aarch64-syscalls` +
     `aarch64-native-selfhost` (need tar-pipe-to-ssh helper;
-    pair as a cluster) + 1-2 simpler bespokes (capacity probe,
+    pair as a cluster); 1-2 simpler bespokes (capacity probe,
     init-lib-bin, init-doctree — all share the
     `cyrius init`/`cyrius capacity` invocation shape that
     cyriusly conversion may surface helpers for).

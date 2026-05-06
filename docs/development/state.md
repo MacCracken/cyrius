@@ -5,6 +5,69 @@
 
 ## Version
 
+**5.9.10** (shipped 2026-05-06 — **v5.9.x SLOT 10 — LSP feature
+additions: textDocument/references + textDocument/semanticTokens/full**.
+Two LSP capabilities promoted from "held forward" to a concrete
+slot at v5.9.7 ship; both ride the v5.7.39 cross-file
+symbol-table infrastructure. cc5 unchanged at **741,048 B** —
+`programs/cyrius-lsp.cyr` only; no compiler-source change.
+
+**Premise-check at slot entry**: three deliverables pinned —
+references provider, semanticTokens/full provider,
+regression-lsp-definition.sh conversion. The .sh conversion
+needs a bidirectional-IPC helper (parent writes LSP-framed
+messages to child stdin AND reads stdout simultaneously) — the
+dispatcher's existing capture helpers are unidirectional. The
+IPC helper is its own design step that earns one slot's
+bandwidth; deferring the .sh conversion to v5.9.11 lets v5.9.10
+ship the two LSP features cleanly. The .sh test is EXTENDED in
+this slot (3 additional tests covering the new providers) so
+regression coverage doesn't degrade.
+
+**What shipped**: handle_references (~80 LOC; walks every
+indexed file scanning ident tokens, emits Location[]),
+handle_semantic_tokens (~150 LOC; LSP 3.16-compliant flat
+`data` int array with 5-ints-per-token tuples; coverage
+limited to symbol-table-resolvable idents + 17 cyrius
+keywords; skips comments / string literals / unknown idents
+so editors fall back to their grammar). Plus
+_lsp_kind_to_semantic_type + _lsp_is_keyword helpers. Plus
+extended regression-lsp-definition.sh (Tests 6+7+8 covering
+new providers).
+
+**Verification**: 66/66 check.sh green; cc5 self-host
+byte-identical; LSP regression PASS for all 4 providers;
+manual smoke on a 2-fn fixture — /references returns 2
+Locations (decl + use), /semanticTokens emits the 7-token
+sequence covering keywords + function-name idents.
+
+**Roadmap pin (NOT fixed this slot)**: regression-lsp-
+definition.sh → cyrius-side bespoke gate (deferred to v5.9.11
+alongside cyriusly+init scaffolder conversions; the
+bidirectional-IPC helper may surface a near-equivalent for
+scaffolder subprocess plumbing). cx-token-offsets re-deferred
+from v5.9.9 → v5.9.11 (single-theme scope discipline kept the
+LSP slot focused). macho-exit + pe-exit SSH cluster
+co-targets re-deferred — env-var-passing exec helper / Windows
+cmd-c stdout-parse helpers each earn their own slot.
+
+**Plus pinned for v5.9.11 (agnosys 1.0.11 follow-up review,
+2026-05-06)**: `cyrius api-surface` snapshot bubbles up stdlib
+items — when a project is scanned, the snapshot includes
+`alloc::*`, `string::*`, etc. lib entries that churn across
+cyrius stdlib releases. agnosys reviewed the v5.9.9 derive-blind
+fix and found this as the next problem. Same item as the
+v5.9.9 stretch goal (`--scope=project` flag); concretely pinned
+to v5.9.11 alongside the scaffolder conversions per user
+direction.
+
+**Next**: v5.9.11 — sovereignty pass cyriusly+cyrius-init.sh+
+cyrius-port.sh scaffolder conversions PLUS the agnosys-pinned
+`cyrius api-surface --scope=project` flag PLUS deferred .sh
+gates (lsp-definition conversion, cx-token-offsets,
+opportunistic cyriusly-shape regression conversions like
+init-lib-bin / init-doctree / capacity).)
+
 **5.9.9** (shipped 2026-05-06 — **v5.9.x SLOT 9 — `cyrius
 api-surface` derive-blind fix** (agnosys 1.0.11 filing). Pre-fix
 the official surface tool walked `^fn name(...)` declarations

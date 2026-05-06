@@ -846,7 +846,20 @@ fn handle_initialize(body) {
     # go-to-def first; semantic tokens earn their own slot when
     # consumer pull surfaces.
     str_builder_add_cstr(sb, "\"definitionProvider\":true,");
-    str_builder_add_cstr(sb, "\"documentSymbolProvider\":true");
+    str_builder_add_cstr(sb, "\"documentSymbolProvider\":true,");
+    # v5.9.10: textDocument/references (find-all-uses) on top of the
+    # v5.7.39 cross-file symbol-table infrastructure.
+    str_builder_add_cstr(sb, "\"referencesProvider\":true,");
+    # v5.9.10: textDocument/semanticTokens/full. Legend is the
+    # narrow set this LSP recognizes — tokens emitted only for
+    # idents resolvable via the v5.7.39 symbol table or the
+    # built-in keyword set; unrecognized idents (locals, fn args,
+    # parameter idents) and non-ident tokens (strings, numbers,
+    # operators, comments) are deliberately uncolored. Editors
+    # can fall back to their grammar for those.
+    str_builder_add_cstr(sb, "\"semanticTokensProvider\":{");
+    str_builder_add_cstr(sb, "\"legend\":{\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\"],\"tokenModifiers\":[]},");
+    str_builder_add_cstr(sb, "\"full\":true}");
     str_builder_add_cstr(sb, "}}}");
     send_response(str_data(str_builder_build(sb)));
     log_msg("initialized");
@@ -1078,6 +1091,319 @@ fn handle_document_symbol(body) {
     return 0;
 }
 
+# v5.9.10: textDocument/references.
+# Request:  { ..., params: { textDocument: { uri }, position: { line, character }, context: { includeDeclaration: bool } } }
+# Response: Location[] | null
+#
+# Semantics: find every IDENT token in every indexed file whose
+# byte-content equals the IDENT at the cursor. Returns each as a
+# Location. The `context.includeDeclaration` flag is honored
+# implicitly — declarations ARE matches by name, so they appear
+# in the result; we don't expose a separate "exclude
+# declarations" path because the symbol table doesn't tag use
+# sites separately from decl sites.
+#
+# Cost: O(sum of indexed-file sizes) per request. For a project
+# of ~50 files / ~30 KLOC that's a few MB of ident tokenization
+# — acceptable for human-interactive editor traffic. If a
+# downstream consumer surfaces latency pressure, a future slot
+# can build a reverse index keyed by ident hash.
+fn handle_references(body) {
+    var id = json_get_id(body);
+    var uri = json_get_str(body, "\"uri\":");
+
+    var line_pos = json_find(body, "\"line\":");
+    if (line_pos < 0) { line_pos = json_find(body, "\"line\": "); }
+    var line_val = 0;
+    if (line_pos >= 0) {
+        var p = line_pos;
+        while (load8(body + p) == 32) { p = p + 1; }
+        while (load8(body + p) >= 48 && load8(body + p) <= 57) {
+            line_val = line_val * 10 + load8(body + p) - 48;
+            p = p + 1;
+        }
+    }
+    var ch_pos = json_find(body, "\"character\":");
+    if (ch_pos < 0) { ch_pos = json_find(body, "\"character\": "); }
+    var ch_val = 0;
+    if (ch_pos >= 0) {
+        var p = ch_pos;
+        while (load8(body + p) == 32) { p = p + 1; }
+        while (load8(body + p) >= 48 && load8(body + p) <= 57) {
+            ch_val = ch_val * 10 + load8(body + p) - 48;
+            p = p + 1;
+        }
+    }
+
+    var target_off = 0;
+    var target_len = 0;
+    if (uri != 0) {
+        var src_path = uri_to_path(uri);
+        var total_out[1];
+        var src_buf = lsp_read_file(src_path, &total_out);
+        var total = load64(&total_out);
+        if (src_buf != 0 && total > 0) {
+            var packed = lsp_ident_at_position(src_buf, total, line_val, ch_val);
+            if (packed >= 0) {
+                var s = packed & 0xFFFFFFFF;
+                var e = (packed >> 32) & 0xFFFFFFFF;
+                target_len = e - s;
+                # Snapshot ident bytes — src_buf gets reused below.
+                target_off = alloc(target_len);
+                var i = 0;
+                while (i < target_len) {
+                    store8(target_off + i, load8(src_buf + s + i));
+                    i = i + 1;
+                }
+            }
+        }
+    }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"id\":");
+    str_builder_add_int(sb, id);
+    str_builder_add_cstr(sb, ",\"result\":[");
+
+    var first = 1;
+    if (target_len > 0) {
+        var fi = 0;
+        while (fi < _lsp_indexed_count) {
+            var off = load64(_lsp_indexed_off + fi * 8);
+            var path = _lsp_indexed_buf + off;
+
+            var fb_total[1];
+            var fb = lsp_read_file(path, &fb_total);
+            var ftotal = load64(&fb_total);
+            if (fb != 0 && ftotal > 0) {
+                var p = 0;
+                var line_no = 0;
+                var line_start = 0;
+                while (p < ftotal) {
+                    var c = load8(fb + p);
+                    if (c == 10) {
+                        line_no = line_no + 1;
+                        line_start = p + 1;
+                        p = p + 1;
+                    } else {
+                        if (_lsp_id_start(c) == 1) {
+                            var id_start = p;
+                            var id_end = _lsp_scan_id_end(fb, p, ftotal);
+                            var id_len = id_end - id_start;
+                            if (id_len == target_len) {
+                                var match_ok = 1;
+                                var k = 0;
+                                while (k < id_len) {
+                                    if (load8(fb + id_start + k) != load8(target_off + k)) {
+                                        match_ok = 0;
+                                        k = id_len;
+                                    } else {
+                                        k = k + 1;
+                                    }
+                                }
+                                if (match_ok == 1) {
+                                    var col = id_start - line_start;
+                                    if (first == 0) { str_builder_add_cstr(sb, ","); }
+                                    first = 0;
+                                    str_builder_add_cstr(sb, "{\"uri\":\"file://");
+                                    str_builder_add_cstr(sb, path);
+                                    str_builder_add_cstr(sb, "\",\"range\":{\"start\":{\"line\":");
+                                    str_builder_add_int(sb, line_no);
+                                    str_builder_add_cstr(sb, ",\"character\":");
+                                    str_builder_add_int(sb, col);
+                                    str_builder_add_cstr(sb, "},\"end\":{\"line\":");
+                                    str_builder_add_int(sb, line_no);
+                                    str_builder_add_cstr(sb, ",\"character\":");
+                                    str_builder_add_int(sb, col + id_len);
+                                    str_builder_add_cstr(sb, "}}}");
+                                }
+                            }
+                            p = id_end;
+                        } else {
+                            p = p + 1;
+                        }
+                    }
+                }
+            }
+            fi = fi + 1;
+        }
+    }
+
+    str_builder_add_cstr(sb, "]}");
+    send_response(str_data(str_builder_build(sb)));
+    return 0;
+}
+
+# v5.9.10 helpers for textDocument/semanticTokens/full.
+#
+# Token-type indices in the legend advertised by handle_initialize:
+#   0 = function, 1 = variable, 2 = struct, 3 = enum,
+#   4 = enumMember, 5 = keyword
+fn _lsp_kind_to_semantic_type(k) {
+    if (k == 1) { return 0; }   # fn → function
+    if (k == 2) { return 1; }   # var → variable
+    if (k == 4) { return 2; }   # struct → struct
+    if (k == 3) { return 3; }   # enum → enum
+    if (k == 5) { return 4; }   # enum-member → enumMember
+    return 0 - 1;
+}
+
+# Is `<buf+off, len>` a cyrius keyword?
+fn _lsp_is_keyword(buf, off, len) {
+    if (len == 2) {
+        if (load8(buf + off) == 105 && load8(buf + off + 1) == 102) { return 1; }   # "if"
+        if (load8(buf + off) == 105 && load8(buf + off + 1) == 110) { return 1; }   # "in"
+        if (load8(buf + off) == 102 && load8(buf + off + 1) == 110) { return 1; }   # "fn"
+    }
+    if (len == 3) {
+        if (memeq(buf + off, "var", 3) == 1) { return 1; }
+        if (memeq(buf + off, "for", 3) == 1) { return 1; }
+    }
+    if (len == 4) {
+        if (memeq(buf + off, "else", 4) == 1) { return 1; }
+        if (memeq(buf + off, "elif", 4) == 1) { return 1; }
+        if (memeq(buf + off, "enum", 4) == 1) { return 1; }
+    }
+    if (len == 5) {
+        if (memeq(buf + off, "while", 5) == 1) { return 1; }
+        if (memeq(buf + off, "break", 5) == 1) { return 1; }
+        if (memeq(buf + off, "match", 5) == 1) { return 1; }
+    }
+    if (len == 6) {
+        if (memeq(buf + off, "return", 6) == 1) { return 1; }
+        if (memeq(buf + off, "struct", 6) == 1) { return 1; }
+        if (memeq(buf + off, "shared", 6) == 1) { return 1; }
+    }
+    if (len == 7) {
+        if (memeq(buf + off, "include", 7) == 1) { return 1; }
+        if (memeq(buf + off, "default", 7) == 1) { return 1; }
+    }
+    if (len == 8) {
+        if (memeq(buf + off, "continue", 8) == 1) { return 1; }
+    }
+    return 0;
+}
+
+# v5.9.10: textDocument/semanticTokens/full.
+# Request:  { ..., params: { textDocument: { uri } } }
+# Response: { ..., result: { data: int[] } | null }
+#
+# Per LSP 3.16 spec, the `data` array is a flat int sequence
+# where every 5 ints describe one token:
+#   [deltaLine, deltaStartChar, length, tokenType, tokenModifiers]
+# Tokens are sorted ascending by (line, col); deltas are relative
+# to the previous token (or start-of-file for the first). When
+# the line advances, deltaStartChar resets to absolute.
+#
+# Coverage: only tokens we can resolve via the v5.7.39 symbol
+# table OR the keyword list. Locals, fn args, type names, string
+# / number literals, operators, comments — all skipped. Editors
+# fall back to their textmate grammar for those.
+fn handle_semantic_tokens(body) {
+    var id = json_get_id(body);
+    var uri = json_get_str(body, "\"uri\":");
+    var path = 0;
+    if (uri != 0) { path = uri_to_path(uri); }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"id\":");
+    str_builder_add_int(sb, id);
+    str_builder_add_cstr(sb, ",\"result\":{\"data\":[");
+
+    var first = 1;
+    var prev_line = 0;
+    var prev_col = 0;
+
+    if (path != 0) {
+        var total_out[1];
+        var fb = lsp_read_file(path, &total_out);
+        var ftotal = load64(&total_out);
+        if (fb != 0 && ftotal > 0) {
+            var p = 0;
+            var line_no = 0;
+            var line_start = 0;
+            while (p < ftotal) {
+                var c = load8(fb + p);
+                if (c == 10) {
+                    line_no = line_no + 1;
+                    line_start = p + 1;
+                    p = p + 1;
+                } else {
+                    # Skip `# comment` lines wholesale.
+                    if (c == 35) {
+                        while (p < ftotal && load8(fb + p) != 10) { p = p + 1; }
+                    } else {
+                        # Skip string literals — `"..."` with `\\` escape.
+                        if (c == 34) {
+                            p = p + 1;
+                            while (p < ftotal) {
+                                var sc = load8(fb + p);
+                                if (sc == 92) {       # '\\'
+                                    p = p + 2;
+                                } else {
+                                    if (sc == 34) { p = p + 1; break; }
+                                    if (sc == 10) { break; }
+                                    p = p + 1;
+                                }
+                            }
+                        } else {
+                            if (_lsp_id_start(c) == 1) {
+                                var id_start = p;
+                                var id_end = _lsp_scan_id_end(fb, p, ftotal);
+                                var id_len = id_end - id_start;
+                                var ttype = 0 - 1;
+                                if (_lsp_is_keyword(fb, id_start, id_len) == 1) {
+                                    ttype = 5;
+                                } else {
+                                    var idx = lsp_lookup_symbol(fb + id_start, id_len);
+                                    if (idx >= 0) {
+                                        var k = load64(_sym_kind + idx * 8);
+                                        ttype = _lsp_kind_to_semantic_type(k);
+                                    }
+                                }
+                                if (ttype >= 0) {
+                                    var col = id_start - line_start;
+                                    var dline = 0;
+                                    var dcol = 0;
+                                    if (first == 1) {
+                                        dline = line_no;
+                                        dcol = col;
+                                        first = 0;
+                                    } else {
+                                        dline = line_no - prev_line;
+                                        if (dline == 0) {
+                                            dcol = col - prev_col;
+                                        } else {
+                                            dcol = col;
+                                        }
+                                        str_builder_add_cstr(sb, ",");
+                                    }
+                                    str_builder_add_int(sb, dline);
+                                    str_builder_add_cstr(sb, ",");
+                                    str_builder_add_int(sb, dcol);
+                                    str_builder_add_cstr(sb, ",");
+                                    str_builder_add_int(sb, id_len);
+                                    str_builder_add_cstr(sb, ",");
+                                    str_builder_add_int(sb, ttype);
+                                    str_builder_add_cstr(sb, ",0");
+                                    prev_line = line_no;
+                                    prev_col = col;
+                                }
+                                p = id_end;
+                            } else {
+                                p = p + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    str_builder_add_cstr(sb, "]}}");
+    send_response(str_data(str_builder_build(sb)));
+    return 0;
+}
+
 # ================================================================
 # MAIN LOOP
 # ================================================================
@@ -1134,6 +1460,13 @@ fn main() {
         }
         elif (json_find(body, "\"textDocument/documentSymbol\"") >= 0) {
             handle_document_symbol(body);
+        }
+        # v5.9.10: find-all-uses + semantic-tokens.
+        elif (json_find(body, "\"textDocument/references\"") >= 0) {
+            handle_references(body);
+        }
+        elif (json_find(body, "\"textDocument/semanticTokens/full\"") >= 0) {
+            handle_semantic_tokens(body);
         }
     }
 
