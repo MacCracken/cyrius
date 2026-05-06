@@ -59,6 +59,7 @@ var CC_PATH      = 0;   # build/cc5 (cstring)
 var CYRFMT_PATH  = 0;   # build/cyrfmt or PATH-resolved cyrfmt (cstring)
 var CYRLINT_PATH = 0;   # build/cyrlint or PATH-resolved cyrlint (cstring)
 var CYRDOC_PATH  = 0;   # build/cyrdoc or PATH-resolved cyrdoc (cstring)
+var CC_AARCH64_PATH = 0; # build/cc5_aarch64 cross-compiler (cstring)
 
 # Counters.
 var G_PASS = 0;
@@ -1637,6 +1638,820 @@ fn _cyrlint_count_marker(file_path, marker, buf, buflen) {
     return _count_substr_buf(buf, n, marker);
 }
 
+# Pipe `src_path`'s bytes to `bin_path`'s stdin, capture stdout
+# to `out_path` (pass 0 for /dev/null), send stderr to /dev/null,
+# return WEXITSTATUS (or 128 + signum on signal). Used by gates
+# that need to inspect the bin's output bytes (cx-roundtrip
+# byte-noise check) AND by gates that only care about exit status
+# (cx-build).
+fn _pipe_file_to_bin_capture(bin_path, src_path, out_path) {
+    var src_cap = 1048576;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n < 0) { src_n = 0; }
+
+    var out_fd = 0 - 1;
+    if (out_path == 0) {
+        out_fd = sys_open("/dev/null", 1, 0);
+    } else {
+        out_fd = sys_open(out_path, 577, 420);
+    }
+    if (out_fd < 0) { return 0 - 1; }
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 1; }
+    var rfd = load32(&pipefd);
+    var wfd = load32(&pipefd + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(rfd); sys_close(wfd); sys_close(out_fd);
+        return 0 - 1;
+    }
+    if (pid == 0) {
+        sys_close(wfd);
+        sys_dup2(rfd, 0);
+        sys_close(rfd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(bin_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(rfd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(wfd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(wfd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    return 0 - 1;
+}
+
+# Pipe `src_path`'s bytes to `bin_path`'s stdin, send stdout +
+# stderr to /dev/null, return WEXITSTATUS (or 128 + signum on
+# signal). Thin wrapper over `_pipe_file_to_bin_capture` with
+# /dev/null output. For "does the binary crash on this input?"
+# gates.
+fn _pipe_file_to_bin(bin_path, src_path) {
+    return _pipe_file_to_bin_capture(bin_path, src_path, 0);
+}
+
+# Helper for `_cx_syscall_literal_gate`: write `syscall(60, V);`
+# to a temp source file, compile with cc5_cx (capturing bytecode
+# to a temp file), feed bytecode to cxvm, return cxvm's exit
+# code. Returns -1 on internal error. Cleans up both temp files.
+fn _cx_syscall_run(cc_cx, cxvm, v) {
+    var src_path = _tmp_path("audit_cxsy_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) { return 0 - 1; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "syscall(60, ");
+    str_builder_add_int(sb, v);
+    str_builder_add_cstr(sb, ");\n");
+    var s = str_builder_build(sb);
+    sys_write(fd, str_data(s), str_len(s));
+    sys_close(fd);
+
+    var bc_path = _tmp_path("audit_cxsy_bc_");
+    var compile_ec = _pipe_file_to_bin_capture(cc_cx, src_path, bc_path);
+    sys_unlink(src_path);
+    if (compile_ec >= 128) { sys_unlink(bc_path); return 0 - 1; }
+
+    var run_ec = _pipe_file_to_bin(cxvm, bc_path);
+    sys_unlink(bc_path);
+    return run_ec;
+}
+
+# Bespoke gate: cx codegen propagates literal syscall args
+# (v5.7.23). Builds cc5_cx + cxvm; compiles `syscall(60, 42);`
+# and inspects the bytecode for `01 00 3c 00` (MOVI r0, 60) and
+# `01 00 2a 00` (MOVI r0, 42); runs the bytecode through cxvm
+# and confirms exit 42; loops V in {0, 7, 99, 200} and confirms
+# cxvm exit == V each time.
+fn _cx_syscall_literal_gate() {
+    var label = "cc5_cx propagates literal syscall args; cxvm exits with user code (v5.7.23)";
+    var cc_cx = _tmp_path("audit_cxsy_cc_");
+    var cxvm  = _tmp_path("audit_cxsy_vm_");
+    var rc1 = _self_host_pipe(_root_path("src/main_cx.cyr"), CC_PATH, cc_cx);
+    var rc2 = _self_host_pipe(_root_path("programs/cxvm.cyr"), CC_PATH, cxvm);
+    if (WIFEXITED(rc1) != 1) { rc1 = 0 - 1; } else { rc1 = WEXITSTATUS(rc1); }
+    if (WIFEXITED(rc2) != 1) { rc2 = 0 - 1; } else { rc2 = WEXITSTATUS(rc2); }
+    if (rc1 != 0 || rc2 != 0) {
+        sys_unlink(cc_cx); sys_unlink(cxvm);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cc5_cx / cxvm build failed");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(cc_cx, 493);
+    sys_chmod(cxvm,  493);
+
+    var fail = 0;
+
+    # Sub-check 1+2: bytecode for `syscall(60, 42);` must contain
+    # the two MOVI byte sequences. Compile to a buffer + scan.
+    var lit_src = _tmp_path("audit_cxsy_litsrc_");
+    var lf = sys_open(lit_src, 577, 420);
+    var lit_text = "syscall(60, 42);\n";
+    sys_write(lf, lit_text, strlen(lit_text));
+    sys_close(lf);
+
+    var lit_bc = _tmp_path("audit_cxsy_litbc_");
+    _pipe_file_to_bin_capture(cc_cx, lit_src, lit_bc);
+    sys_unlink(lit_src);
+
+    var bc_size = _file_size(lit_bc);
+    if (bc_size > 0) {
+        var bc_buf = alloc(bc_size);
+        file_read_all(lit_bc, bc_buf, bc_size);
+        var movi60[1];
+        store8(&movi60,     0x01);
+        store8(&movi60 + 1, 0x00);
+        store8(&movi60 + 2, 0x3c);
+        store8(&movi60 + 3, 0x00);
+        if (_find_bytes(bc_buf, bc_size, &movi60, 4) < 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": bytecode missing MOVI r0, 60 (01 00 3c 00) — literal not propagating");
+            fail = fail + 1;
+        }
+        var movi42[1];
+        store8(&movi42,     0x01);
+        store8(&movi42 + 1, 0x00);
+        store8(&movi42 + 2, 0x2a);
+        store8(&movi42 + 3, 0x00);
+        if (_find_bytes(bc_buf, bc_size, &movi42, 4) < 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": bytecode missing MOVI r0, 42 (01 00 2a 00) — literal not propagating");
+            fail = fail + 1;
+        }
+    } else {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": cc5_cx produced empty bytecode");
+        fail = fail + 1;
+    }
+
+    # Sub-check 3: cxvm executes lit_bc and exits 42.
+    var ec_lit = _pipe_file_to_bin(cxvm, lit_bc);
+    sys_unlink(lit_bc);
+    if (ec_lit != 42) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": cxvm exit was ");
+        print_num(ec_lit);
+        println(" (expected 42)");
+        fail = fail + 1;
+    }
+
+    # Sub-check 4: loop V ∈ {0, 7, 99, 200}, expect cxvm exit == V.
+    var vals[5];
+    store64(&vals,      0);
+    store64(&vals + 8,  7);
+    store64(&vals + 16, 99);
+    store64(&vals + 24, 200);
+    var i = 0;
+    while (i < 4) {
+        var v = load64(&vals + i * 8);
+        var got = _cx_syscall_run(cc_cx, cxvm, v);
+        if (got != v) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": cxvm exit was ");
+            print_num(got);
+            _p(" for syscall(60, ");
+            print_num(v);
+            _p(") (expected ");
+            print_num(v);
+            println(")");
+            fail = fail + 1;
+        }
+        i = i + 1;
+    }
+
+    sys_unlink(cc_cx);
+    sys_unlink(cxvm);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cx codegen propagates syscall literal args; cxvm exits with the user-supplied code");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Bespoke gate: cc5_cx output is well-formed CYX bytecode with
+# no x86 instruction-byte pollution (v5.7.12 path B). Builds
+# cc5_cx + cxvm via cc5; pipes empty input to cc5_cx and checks
+# output ≥ 8 B + starts with "CYX"; pipes a one-fn program and
+# checks output contains no `48 89 5d f8` (x86 callee-save) or
+# `4c 8b 65 f0` (callee-restore) byte sequences; pipes the
+# bytecode to cxvm and checks it doesn't SIGSEGV and doesn't
+# emit "not a .cyx file".
+fn _cx_roundtrip_gate() {
+    var label = "cc5_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)";
+    var src_cx = _root_path("src/main_cx.cyr");
+    var src_vm = _root_path("programs/cxvm.cyr");
+    var cc_cx = _tmp_path("audit_cxrt_cc_");
+    var cxvm  = _tmp_path("audit_cxrt_vm_");
+    var rc1 = _self_host_pipe(src_cx, CC_PATH, cc_cx);
+    var rc2 = _self_host_pipe(src_vm, CC_PATH, cxvm);
+    if (WIFEXITED(rc1) != 1) { rc1 = 0 - 1; } else { rc1 = WEXITSTATUS(rc1); }
+    if (WIFEXITED(rc2) != 1) { rc2 = 0 - 1; } else { rc2 = WEXITSTATUS(rc2); }
+    if (rc1 != 0) {
+        sys_unlink(cc_cx); sys_unlink(cxvm);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cc5 build of main_cx.cyr failed");
+        _check(label, 1);
+        return 1;
+    }
+    if (rc2 != 0) {
+        sys_unlink(cc_cx); sys_unlink(cxvm);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cc5 build of programs/cxvm.cyr failed");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(cc_cx, 493);
+    sys_chmod(cxvm,  493);
+
+    var fail = 0;
+
+    # Sub-check 1+2: empty input → ≥8 B output starting with "CYX".
+    var empty_path = _tmp_path("audit_cxrt_empty_");
+    var ef = sys_open(empty_path, 577, 420);
+    sys_close(ef);
+    var out1 = _tmp_path("audit_cxrt_out1_");
+    _pipe_file_to_bin_capture(cc_cx, empty_path, out1);
+    sys_unlink(empty_path);
+    var size1 = _file_size(out1);
+    if (size1 < 8) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5_cx output for empty input is ");
+        print_num(size1);
+        println(" B (expected >= 8 for magic header)");
+        fail = fail + 1;
+    } else {
+        var hdr_buf = alloc(8);
+        var hdr_n = file_read_all(out1, hdr_buf, 8);
+        # Magic is "CYX\0" (4 bytes). Check first 3 bytes.
+        if (hdr_n < 3) { fail = fail + 1; }
+        else {
+            if (load8(hdr_buf) != 67) { fail = fail + 1; }       # 'C'
+            else { if (load8(hdr_buf + 1) != 89) { fail = fail + 1; }   # 'Y'
+                else { if (load8(hdr_buf + 2) != 88) {                  # 'X'
+                        _p("    ");
+                        _p(ANSI_RED);
+                        _p("case-FAIL");
+                        _p(ANSI_RESET);
+                        println(": cc5_cx output magic is not 'CYX'");
+                        fail = fail + 1;
+                    } } }
+        }
+    }
+    sys_unlink(out1);
+
+    # Sub-check 3: no x86 callee-save / callee-restore byte sequences.
+    var prog_path = _tmp_path("audit_cxrt_prog_");
+    var pf = sys_open(prog_path, 577, 420);
+    var prog = "fn main() { return 0; } syscall(60, main());\n";
+    sys_write(pf, prog, strlen(prog));
+    sys_close(pf);
+    var out2 = _tmp_path("audit_cxrt_out2_");
+    _pipe_file_to_bin_capture(cc_cx, prog_path, out2);
+    sys_unlink(prog_path);
+
+    var out2_size = _file_size(out2);
+    if (out2_size > 0) {
+        var out2_buf = alloc(out2_size);
+        file_read_all(out2, out2_buf, out2_size);
+        var save_needle[1];
+        store8(&save_needle,     0x48);
+        store8(&save_needle + 1, 0x89);
+        store8(&save_needle + 2, 0x5d);
+        store8(&save_needle + 3, 0xf8);
+        if (_find_bytes(out2_buf, out2_size, &save_needle, 4) >= 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": cc5_cx output contains x86 callee-save bytes 48 89 5d f8 (regalloc save leak; v5.7.12 path-B regression)");
+            fail = fail + 1;
+        }
+        var rest_needle[1];
+        store8(&rest_needle,     0x4c);
+        store8(&rest_needle + 1, 0x8b);
+        store8(&rest_needle + 2, 0x65);
+        store8(&rest_needle + 3, 0xf0);
+        if (_find_bytes(out2_buf, out2_size, &rest_needle, 4) >= 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": cc5_cx output contains x86 callee-restore bytes 4c 8b 65 f0");
+            fail = fail + 1;
+        }
+    }
+
+    # Sub-check 4: cxvm consumes the bytecode without SIGSEGV.
+    var ec_vm = _pipe_file_to_bin(cxvm, out2);
+    sys_unlink(out2);
+    if (ec_vm >= 128) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": cxvm died on signal ");
+        print_num(ec_vm - 128);
+        println(" running cc5_cx output");
+        fail = fail + 1;
+    }
+
+    sys_unlink(cc_cx);
+    sys_unlink(cxvm);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cc5_cx produces clean CYX bytecode (no x86 noise); cxvm consumes it without crash");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Bespoke gate: cc5 builds main_cx.cyr; cc5_cx starts clean on
+# empty + trivial input (v5.7.11; bytecode correctness pinned
+# v5.7.12). Three sub-checks:
+# (1) `cc5 < src/main_cx.cyr` exits 0 with > 100 KB output.
+# (2) `cc5_cx < /dev/null` doesn't die on signal (exit < 128).
+# (3) `cc5_cx < "syscall(60, 0);"` doesn't die on signal.
+fn _cx_build_gate() {
+    var label = "cc5 builds main_cx.cyr; cc5_cx starts clean (v5.7.11; bytecode correctness pinned v5.7.12)";
+    var src = _root_path("src/main_cx.cyr");
+    var cc_cx = _tmp_path("audit_cc_cx_");
+    var rc1 = _self_host_pipe(src, CC_PATH, cc_cx);
+    if (WIFEXITED(rc1) != 1) {
+        sys_unlink(cc_cx);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cc5 < src/main_cx.cyr exited abnormally");
+        _check(label, 1);
+        return 1;
+    }
+    if (WEXITSTATUS(rc1) != 0) {
+        sys_unlink(cc_cx);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5 < src/main_cx.cyr exited ");
+        print_num(WEXITSTATUS(rc1));
+        println("");
+        _check(label, 1);
+        return 1;
+    }
+    var size = _file_size(cc_cx);
+    if (size < 100000) {
+        sys_unlink(cc_cx);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5_cx output is ");
+        print_num(size);
+        println(" B (suspiciously small; expected > 100 KB)");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(cc_cx, 493);
+
+    # Sub-check 2: empty input. /dev/null doesn't need a write,
+    # but _pipe_file_to_bin handles src_n=0 cleanly.
+    var empty_path = _tmp_path("audit_cx_empty_");
+    var ef = sys_open(empty_path, 577, 420);
+    sys_close(ef);
+    var ec_empty = _pipe_file_to_bin(cc_cx, empty_path);
+    sys_unlink(empty_path);
+    if (ec_empty >= 128) {
+        sys_unlink(cc_cx);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5_cx died on signal ");
+        print_num(ec_empty - 128);
+        println(" on empty input (regression past v5.7.11 startup-clean bar)");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Sub-check 3: trivial non-empty input.
+    var triv_path = _tmp_path("audit_cx_triv_");
+    var tf = sys_open(triv_path, 577, 420);
+    var triv = "syscall(60, 0);\n";
+    sys_write(tf, triv, strlen(triv));
+    sys_close(tf);
+    var ec_triv = _pipe_file_to_bin(cc_cx, triv_path);
+    sys_unlink(triv_path);
+    sys_unlink(cc_cx);
+    if (ec_triv >= 128) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5_cx died on signal ");
+        print_num(ec_triv - 128);
+        println(" on trivial input");
+        _check(label, 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": cc5 builds main_cx.cyr (");
+    print_num(size);
+    println(" B); cc5_cx starts clean on empty + trivial input");
+    _check(label, 0);
+    return 0;
+}
+
+# ── Cross-host SSH primitives (v5.9.8) ─────────────────────────
+# Three small fork+exec wrappers used by the aarch64 / Mach-O /
+# PE / sit / TLS gates that scp a binary to a verification host
+# and run it remotely. Each gate decomposes to: skip-check →
+# scp-to → ssh-remote-exit, with one decode of the captured
+# remote exit code.
+
+# Fork+exec `ssh -o BatchMode=yes -o ConnectTimeout=2 <target>
+# true`. Returns 1 on reachable, 0 on unreachable. BatchMode
+# disables interactive auth — gate skip is the right answer if
+# the target needs a password or key prompt.
+fn _ssh_skip_check(target) {
+    var pid = sys_fork();
+    if (pid < 0) { return 0; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[8];
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  "-o");
+        store64(&argv + 16, "BatchMode=yes");
+        store64(&argv + 24, "-o");
+        store64(&argv + 32, "ConnectTimeout=2");
+        store64(&argv + 40, target);
+        store64(&argv + 48, "true");
+        store64(&argv + 56, 0);
+        sys_execve("/usr/bin/ssh", &argv, ENVP_ARR);
+        sys_execve("/bin/ssh",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) {
+        if (WEXITSTATUS(status) == 0) { return 1; }
+    }
+    return 0;
+}
+
+# Fork+exec `scp -q <local> <target>:<remote>`. Returns
+# WEXITSTATUS (0 on success).
+fn _scp_to(target, local_path, remote_path) {
+    var dest_sb = str_builder_new();
+    str_builder_add_cstr(dest_sb, target);
+    str_builder_add_cstr(dest_sb, ":");
+    str_builder_add_cstr(dest_sb, remote_path);
+    var dest = str_data(str_builder_build(dest_sb));
+
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 1); sys_close(dn); }
+        var argv[5];
+        store64(&argv,      "scp");
+        store64(&argv + 8,  "-q");
+        store64(&argv + 16, local_path);
+        store64(&argv + 24, dest);
+        store64(&argv + 32, 0);
+        sys_execve("/usr/bin/scp", &argv, ENVP_ARR);
+        sys_execve("/bin/scp",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# Fork+exec `ssh <target> <command>` — single-string command.
+# Returns WEXITSTATUS, which equals the REMOTE command's exit
+# code (ssh propagates it on normal exit; 255 on ssh-level
+# error). stdin / stdout / stderr go to /dev/null.
+fn _ssh_remote_exit(target, command) {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[4];
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  target);
+        store64(&argv + 16, command);
+        store64(&argv + 24, 0);
+        sys_execve("/usr/bin/ssh", &argv, ENVP_ARR);
+        sys_execve("/bin/ssh",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# Resolve the SSH target for a given env-var (e.g. "SSH_TARGET",
+# "SSH_TARGET_MACOS", "SSH_TARGET_WIN") with a default fallback.
+# Returns a cstring pointer.
+fn _ssh_target(env_name, default_name) {
+    var i = 0;
+    while (i < ENVP_COUNT) {
+        var ent = load64(ENVP_ARR + i * 8);
+        # Match `env_name=`
+        var en_len = strlen(env_name);
+        var hit = 1;
+        var j = 0;
+        while (j < en_len) {
+            if (load8(ent + j) != load8(env_name + j)) { hit = 0; }
+            j = j + 1;
+        }
+        if (hit == 1) {
+            if (load8(ent + en_len) == 61) {     # '='
+                return ent + en_len + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return default_name;
+}
+
+# Bespoke gate: aarch64 f64 basic-op correctness (v5.7.30).
+# Cross-builds an f64-op smoke fixture with cc5_aarch64, scp's
+# the binary to the configured SSH target (default `pi`),
+# ssh-runs it, decodes the exit code (1-11 = per-op failure,
+# 99 = all PASS).
+fn _aarch64_f64_basic_gate() {
+    var label = "aarch64 f64 add/sub/mul/div/sqrt/neg/floor/ceil/round + int↔f64 bit-exact on Pi (v5.7.30)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_f64/basic_ops.cyr");
+    var bin = _tmp_path("audit_f64_basic_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyrius_f64_aa_smoke";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": aarch64 f64 basic ops bit-exact on ");
+        _p(target);
+        println(" (v5.7.30)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": aarch64 f64 basic op failure (exit=");
+    print_num(ec);
+    if (ec == 1) { _p(" — f64_add(2.0, 3.0) != 5.0"); }
+    if (ec == 2) { _p(" — f64_sub(3.0, 2.0) != 1.0"); }
+    if (ec == 3) { _p(" — f64_mul(2.0, 3.0) != 6.0"); }
+    if (ec == 4) { _p(" — f64_div(3.0, 2.0) != 1.5"); }
+    if (ec == 5) { _p(" — f64_neg(2.0) != -2.0"); }
+    if (ec == 6) { _p(" — f64_sqrt(4.0) != 2.0"); }
+    if (ec == 7) { _p(" — f64_floor(2.5) != 2.0"); }
+    if (ec == 8) { _p(" — f64_ceil(2.5) != 3.0"); }
+    if (ec == 9) { _p(" — f64_round(2.5) != 2.0 (ties-to-even)"); }
+    if (ec == 10) { _p(" — f64_to(f64_from(42)) != 42"); }
+    if (ec == 11) { _p(" — f64_to(f64_from(-7)) != -7"); }
+    println(")");
+    _check(label, 1);
+    return 1;
+}
+
+# Bespoke gate: aarch64 f64_exp / f64_ln / f64_log2 polyfill
+# correctness (v5.7.31 + v5.8.4; phylax-unblock). Same shape as
+# `_aarch64_f64_basic_gate` — cross-build via cc5_aarch64, scp,
+# ssh-run, decode exit code (1-10 = per-shape failure within ulp
+# budget; 99 = all PASS).
+fn _aarch64_f64_polyfill_gate() {
+    var label = "aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate on Pi (v5.7.31 + v5.8.4; phylax-unblock)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_f64/polyfill_ops.cyr");
+    var bin = _tmp_path("audit_f64_poly_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build of polyfill smoke test failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyrius_polyfill_aa_smoke";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate within ulp budget on ");
+        _p(target);
+        println(" (v5.7.31 + v5.8.4)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": polyfill failure (exit=");
+    print_num(ec);
+    if (ec == 1)  { _p(" — f64_exp(0) != 1.0 exactly"); }
+    if (ec == 2)  { _p(" — f64_exp(1) deviates >1024 ulp from e"); }
+    if (ec == 3)  { _p(" — f64_ln(1) deviates >1024 ulp from 0"); }
+    if (ec == 4)  { _p(" — f64_ln(e) deviates >1024 ulp from 1.0"); }
+    if (ec == 5)  { _p(" — exp(ln(2)) deviates >4096 ulp from 2.0 (round-trip)"); }
+    if (ec == 6)  { _p(" — f64_exp(-1) deviates >1024 ulp from 1/e"); }
+    if (ec == 7)  { _p(" — f64_log2(1) deviates >1024 ulp from 0"); }
+    if (ec == 8)  { _p(" — f64_log2(8) deviates >8192 ulp from 3.0"); }
+    if (ec == 9)  { _p(" — f64_log2(1024) deviates >8192 ulp from 10.0"); }
+    if (ec == 10) { _p(" — f64_log2(0.5) deviates >8192 ulp from -1.0"); }
+    println(")");
+    _check(label, 1);
+    return 1;
+}
+
 # Bespoke gate: cyrlint large-file false-positive regression
 # floor (v5.8.41; mabda v3 Step 3d/3e). Generates a ~3500-line
 # synthetic .cyr (700 _check_N fns × 5 lines each + includes +
@@ -2548,6 +3363,7 @@ fn _setup_paths() {
     CYRFMT_PATH = _resolve_tool("build/cyrfmt", "cyrfmt");
     CYRLINT_PATH = _resolve_tool("build/cyrlint", "cyrlint");
     CYRDOC_PATH = _resolve_tool("build/cyrdoc", "cyrdoc");
+    CC_AARCH64_PATH = _root_path("build/cc5_aarch64");
     return 0;
 }
 
@@ -2659,11 +3475,11 @@ fn _run_regression_gates() {
     println("");
 
     _section("cyrius-x bytecode entry");
-    _gate("cc5 builds main_cx.cyr; cc5_cx starts clean (v5.7.11; bytecode correctness pinned v5.7.12)", "tests/regression-cx-build.sh");
+    _cx_build_gate();
     println("");
 
     _section("cyrius-x bytecode cleanliness");
-    _gate("cc5_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)", "tests/regression-cx-roundtrip.sh");
+    _cx_roundtrip_gate();
     println("");
 
     _section("String-escape rejects");
@@ -2707,7 +3523,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("cx syscall literal propagation");
-    _gate("cc5_cx propagates literal syscall args; cxvm exits with user code (v5.7.23)", "tests/regression-cx-syscall-literal.sh");
+    _cx_syscall_literal_gate();
     println("");
 
     _section("TS asserts predicate signatures");
@@ -2727,11 +3543,11 @@ fn _run_regression_gates() {
     println("");
 
     _section("aarch64 f64 basic ops");
-    _gate("aarch64 f64 add/sub/mul/div/sqrt/neg/floor/ceil/round + int↔f64 bit-exact on Pi (v5.7.30)", "tests/regression-aarch64-f64.sh");
+    _aarch64_f64_basic_gate();
     println("");
 
     _section("aarch64 f64_exp / f64_ln / f64_log2 polyfills");
-    _gate("aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate on Pi (v5.7.31 + v5.8.4; phylax-unblock)", "tests/regression-aarch64-f64-polyfill.sh");
+    _aarch64_f64_polyfill_gate();
     println("");
 
     _section("cyrlint global-init-order");

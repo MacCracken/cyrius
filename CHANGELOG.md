@@ -6,6 +6,154 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.8] — 2026-05-06
+
+**v5.9.x SLOT 8 — sovereignty pass batch 3b/3 (SSH cluster
+landing + cx family closeout)**. Five conversions: two cross-host
+SSH gates earned new SSH/scp helpers; three cyrius-x bytecode
+gates earned a stdin-pipe-to-bin helper. Remaining
+`tests/regression-*.sh`: 28 → 23.
+
+cc5: **741,048 B unchanged** — `programs/` + `tests/fixtures/`
+work; the compiler binary is not touched.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+The original v5.9.4 SSH-cluster pin was 8 scripts. Empirical at
+slot entry: only 2 of those 8 share a clean shape with the
+existing helper inventory (`aarch64-f64` + `aarch64-f64-polyfill`,
+both light-touch ssh + scp + remote-exit). The other 6
+(`aarch64-syscalls`, `aarch64-native-selfhost`, `macho-exit`,
+`pe-exit` + `sit-status`, `tls-live`) each need additional
+infrastructure: tar-pipe-to-ssh streaming for native-selfhost,
+env-var-passing exec for macho-exit's `CYRIUS_MACHO_ARM=1`,
+.bat-fixture handling and stdout-parse for pe-exit, local
+`../sit` consumer for sit-status, network-probe for tls-live.
+Each is its own helper-design step; deferred to v5.9.9+. The
+two clean-shape SSH gates landed this slot, validating the
+helpers (`_ssh_skip_check`, `_scp_to`, `_ssh_remote_exit`,
+`_ssh_target`) for downstream slots to reach for.
+
+The cx family (4 gates: cx-build, cx-roundtrip,
+cx-syscall-literal, cx-token-offsets) earned a closeout
+attempt. Three converted (cx-build, cx-roundtrip,
+cx-syscall-literal) — they share a "build cc5_cx + cxvm; pipe
+test source through cc5_cx; pipe bytecode through cxvm; check
+exit / output bytes" shape covered by new helpers
+`_pipe_file_to_bin` + `_pipe_file_to_bin_capture`.
+cx-token-offsets is a source-grep parity check that needs a
+hex-substring-extract helper; kept as .sh and pinned for
+v5.9.9.
+
+### Added
+
+- **`programs/check.cyr` — `_ssh_skip_check(target)`**: fork+exec
+  `ssh -o BatchMode=yes -o ConnectTimeout=2 <target> true`. Returns
+  1 on reachable, 0 on unreachable. BatchMode disables interactive
+  auth — gate skip is the right answer if the target needs a
+  password or key prompt. Tries `/usr/bin/ssh` then `/bin/ssh`.
+
+- **`programs/check.cyr` — `_scp_to(target, local, remote)`**:
+  fork+exec `scp -q <local> <target>:<remote>`. Returns
+  WEXITSTATUS.
+
+- **`programs/check.cyr` — `_ssh_remote_exit(target, command)`**:
+  fork+exec `ssh <target> <command>`. Returns WEXITSTATUS, which
+  on normal completion equals the REMOTE command's exit code (ssh
+  propagates it; 255 on ssh-level error). stdin / stdout / stderr
+  go to /dev/null.
+
+- **`programs/check.cyr` — `_ssh_target(env_name, default_name)`**:
+  resolve an SSH target from an env var (e.g. `SSH_TARGET`,
+  `SSH_TARGET_MACOS`, `SSH_TARGET_WIN`) with a default fallback.
+  Walks `ENVP_ARR` (the dispatcher's loaded environ) for an
+  `<env_name>=<value>` entry; returns `<value>` cstring pointer
+  or `default_name` if not set.
+
+- **`programs/check.cyr` — `_pipe_file_to_bin_capture(bin, src,
+  out)`**: pipe `src`'s bytes to `bin`'s stdin, capture stdout
+  to `out` (pass 0 for /dev/null), send stderr to /dev/null,
+  return WEXITSTATUS or 128+signum on signal. The "pipe test
+  source through a binary" primitive — used by cx-build,
+  cx-roundtrip, cx-syscall-literal sub-checks where the
+  bytecode output needs inspection.
+
+- **`programs/check.cyr` — `_pipe_file_to_bin(bin, src)`**: thin
+  wrapper over `_pipe_file_to_bin_capture` with `out = 0`. For
+  "does the binary crash on this input?" gates that don't need
+  the bin's output.
+
+- **`programs/check.cyr` — `_aarch64_f64_basic_gate()`**: bespoke
+  conversion of `tests/regression-aarch64-f64.sh` (v5.7.30). Cross-
+  builds the 11-op fixture via cc5_aarch64, scp's to pi,
+  ssh-runs, decodes per-op exit codes 1-11 (failure) / 99 (PASS).
+
+- **`programs/check.cyr` — `_aarch64_f64_polyfill_gate()`**:
+  bespoke conversion of `tests/regression-aarch64-f64-polyfill.sh`
+  (v5.7.31 + v5.8.4 phylax-unblock). Same shape as
+  `_aarch64_f64_basic_gate`; 10 sub-cases checking f64_exp /
+  f64_ln / f64_log2 polyfills bit-accurate within ulp budgets
+  (1024 / 4096 / 8192 ulp).
+
+- **`programs/check.cyr` — `_cx_build_gate()`**: bespoke
+  conversion of `tests/regression-cx-build.sh` (v5.7.11).
+  Compiles `src/main_cx.cyr` via cc5 (must be > 100 KB, exit 0);
+  pipes empty input + `syscall(60, 0);` through cc5_cx, asserts
+  no signal exit (< 128).
+
+- **`programs/check.cyr` — `_cx_roundtrip_gate()`**: bespoke
+  conversion of `tests/regression-cx-roundtrip.sh` (v5.7.12 path
+  B). Builds cc5_cx + cxvm; pipes empty input through cc5_cx,
+  asserts ≥ 8 B output starting with `CYX`; pipes a one-fn program
+  through cc5_cx, asserts no `48 89 5d f8` (x86 callee-save) /
+  `4c 8b 65 f0` (callee-restore) byte sequences in the bytecode;
+  pipes the bytecode through cxvm, asserts no signal exit.
+
+- **`programs/check.cyr` — `_cx_syscall_literal_gate()`** +
+  helper `_cx_syscall_run(cc_cx, cxvm, v)`: bespoke conversion
+  of `tests/regression-cx-syscall-literal.sh` (v5.7.23). Builds
+  cc5_cx + cxvm; checks bytecode for `syscall(60, 42);` contains
+  `01 00 3c 00` (MOVI r0, 60) + `01 00 2a 00` (MOVI r0, 42);
+  loops V ∈ {0, 7, 99, 200} and confirms cxvm exit == V each
+  time (catches a hypothetical TOKVAL-reads-constant regression).
+
+- **`programs/check.cyr` — `CC_AARCH64_PATH`**: dispatcher tool
+  registry now resolves `build/cc5_aarch64` (the aarch64 cross-
+  compiler) at startup. Used by the SSH cross-host gates.
+
+- **`tests/fixtures/aarch64_f64/basic_ops.cyr`,
+  `polyfill_ops.cyr`** — extracted from the bash heredocs;
+  forked into pi-side execution via the SSH helpers.
+
+### Removed
+
+- **5 `tests/regression-*.sh`** scripts retired alongside their
+  conversions: aarch64-f64, aarch64-f64-polyfill, cx-build,
+  cx-roundtrip, cx-syscall-literal. Total: 60 → 50 → 38 → 37 → 28
+  → 23 across v5.9.2 + v5.9.3 + v5.9.6 + v5.9.7 + v5.9.8.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 66/66 gates green, exit 0 — pre- and post-deletion.
+- aarch64-f64 + aarch64-f64-polyfill: cross-built via
+  cc5_aarch64, scp'd to pi, ssh-run, all sub-cases PASS.
+- cx-build / cx-roundtrip / cx-syscall-literal: cc5_cx + cxvm
+  built via cc5, bytecode + execution sub-cases PASS.
+
+### Roadmap pin (NOT fixed this slot)
+
+- **6 SSH-cluster gates remain unconverted**: aarch64-syscalls
+  (tar-pipe-to-ssh), aarch64-native-selfhost (env-var exec +
+  tar-pipe), macho-exit (env-var `CYRIUS_MACHO_ARM=1` + codesign +
+  multi-fixture), pe-exit (.bat fixtures + Windows cmd /c +
+  stdout-parse), sit-status (local `../sit` consumer),
+  tls-live (network probe). Each needs additional helper
+  infrastructure; spread across v5.9.9+ alongside the LSP slot.
+- **cx-token-offsets**: source-grep parity check; needs a
+  hex-substring-extract helper. ~30-40 LOC; pinned for v5.9.9.
+
 ## [5.9.7] — 2026-05-06
 
 **v5.9.x SLOT 7 — sovereignty pass batch 3a/3 (9 conversions:

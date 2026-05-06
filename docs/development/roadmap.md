@@ -441,38 +441,41 @@ at cycle entry):
   `_exec_with_arg_capture_both` (stdout+stderr capture). 37 →
   28 .sh remaining. cc5 unchanged at 741,048 B; 66/66 check.sh
   green; cc5 self-host byte-identical.
-- **v5.9.8** — sovereignty pass batch 3b/3 continued: target
-  ~8-12 more conversions from the remaining 28
-  `tests/regression-*.sh`. Categories earned for this slot:
-  - **Cross-host SSH gates** (8 scripts): aarch64-syscalls,
+- **v5.9.8** ✅ — **sovereignty pass batch 3b/3 shipped 2026-05-06**.
+  5 conversions: 2 cross-host SSH gates (aarch64-f64,
+  aarch64-f64-polyfill) earning new SSH/scp helpers
+  (`_ssh_skip_check`, `_scp_to`, `_ssh_remote_exit`,
+  `_ssh_target`) + 3 cyrius-x bytecode gates (cx-build,
+  cx-roundtrip, cx-syscall-literal) earning stdin-pipe-to-bin
+  primitives (`_pipe_file_to_bin` / `_capture`). cc5 unchanged
+  at 741,048 B; 66/66 check.sh green pre- and post-deletion.
+  28 → 23 .sh remaining. Honest scope shrink: original v5.9.4
+  pin had 8 SSH scripts; only 2 fit the clean shape this
+  slot's helpers covered. Six SSH gates + cx-token-offsets
+  queued for v5.9.9+.
+- **Remaining `tests/regression-*.sh` (23 scripts)** — picked up
+  opportunistically by v5.9.9+ slots when they fit the slot's
+  primary work. Categories at v5.9.8 close:
+  - **6 cross-host SSH gates** (aarch64-syscalls,
     aarch64-native-selfhost, macho-exit, pe-exit, sit-status,
-    tls-live, aarch64-f64, aarch64-f64-polyfill. Skip-if-
-    unreachable shape; need `_ssh_skip_check(target)` helper +
-    cyrius-side scp/ssh fork-exec wrappers.
-  - **TS acceptance cluster** (9 scripts): ts-lex, ts-parse,
-    ts-parse-tsx, ts-asserts, ts-mapped, ts-decorators,
-    ts-variadic-tuples, ts-const-type-params,
-    ts-advanced-pin-audit. ts-asserts / ts-mapped / ts-decorators
-    / ts-variadic-tuples / ts-const-type-params /
-    ts-advanced-pin-audit have ~6-7 inline TS heredocs each
-    (~38 fixture files total) and a uniform "feed each through
-    `cc5 --parse-ts`, all must exit 0" shape — earns
-    `_parse_ts_dir_gate(gate, label, fixtures_subdir)`. ts-lex
-    uses `--lex-ts`; ts-parse + ts-parse-tsx walk an external
-    `~/Repos/secureyeoman` corpus with a pass-count threshold.
-  - **Shared-library `regression-shared.sh`** (1 script): currently
-    embeds an inline C harness that dlopens cyrius's `shared;`
-    output and dlsyms exports. Sovereignty pin says no shipped
-    C; needs a cyrius-side test fixture using `lib/dynlib.cyr`
-    or `lib/fdlopen.cyr` to dlopen+dlsym.
-  - **Remaining bespoke** (~20 scripts): cyrfmt-write multi-
-    test, capacity meter probe, deps-transitive, init-lib-bin,
-    init-doctree, struct-cap, lsp-definition, smoke-discovery,
-    distlib-large-module, inline-asm-discard,
-    install-shim-symlink, cyrlint-large-file,
-    lint-global-init-order, syscall-surface-v5735,
-    fuzz-deps-prepend, api-surface, cx-build, cx-roundtrip,
-    cx-syscall-literal, cx-token-offsets. Mostly one-off ports.
+    tls-live) — each needs additional helper infrastructure
+    (tar-pipe-to-ssh, env-var exec, .bat fixtures, local
+    `../sit` consumer, network probe). Helpers earn slot when
+    their target gate is the next consumer-driven blocker.
+  - **2 TS corpus gates** (ts-parse, ts-parse-tsx) — walk
+    external `~/Repos/secureyeoman` corpus with pass-count
+    threshold. Needs a recursive corpus-walker helper that
+    respects `node_modules` / `dist` / `build` prune patterns.
+  - **1 shared-library** (regression-shared.sh) — embeds an
+    inline C harness; sovereignty redesign needed using
+    `lib/dynlib.cyr` / `lib/fdlopen.cyr` consumer fixture.
+  - **1 cx parity check** (cx-token-offsets) — source-grep;
+    needs hex-substring-extract helper (~30-40 LOC).
+  - **~13 bespoke** — cyrfmt-write multi-test, capacity meter
+    probe, deps-transitive, init-lib-bin, init-doctree,
+    lsp-definition, smoke-discovery, distlib-large-module,
+    inline-asm-discard, install-shim-symlink, syscall-surface-
+    v5735, fuzz-deps-prepend, api-surface. Mostly one-off ports.
 - **v5.9.9** — **LSP feature additions**. Two LSP capabilities
   promoted from "held forward / surfaces-on-ask" into a concrete
   slot per user direction at v5.9.7 ship:

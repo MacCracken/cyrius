@@ -1,0 +1,68 @@
+include "lib/math.cyr"
+include "lib/syscalls.cyr"
+
+fn main() {
+    # exp(0) == 1.0 exactly (polynomial(0) = 1, 2^0 = 1).
+    if (f64_exp(0) != 0x3FF0000000000000) { return 1; }
+
+    # exp(1.0) ≈ e ≈ 2.718281828. F64_E = 0x4005BF0A8B145769.
+    var e1 = f64_exp(0x3FF0000000000000);
+    var d_e1 = e1 - 0x4005BF0A8B145769;
+    if (d_e1 < 0) { d_e1 = 0 - d_e1; }
+    if (d_e1 > 1024) { return 2; }
+
+    # ln(1.0) == 0 (m=1 → u=0 → polynomial gives exactly 0).
+    var l1 = f64_ln(0x3FF0000000000000);
+    var d_l1 = l1;
+    if (d_l1 < 0) { d_l1 = 0 - d_l1; }
+    if (d_l1 > 1024) { return 3; }
+
+    # ln(e) ≈ 1.0.
+    var l_e = f64_ln(0x4005BF0A8B145769);
+    var d_le = l_e - 0x3FF0000000000000;
+    if (d_le < 0) { d_le = 0 - d_le; }
+    if (d_le > 1024) { return 4; }
+
+    # exp(ln(2)) ≈ 2.0 — round-trip through both polyfills.
+    var two = 0x4000000000000000;
+    var rt = f64_exp(f64_ln(two));
+    var d_rt = rt - two;
+    if (d_rt < 0) { d_rt = 0 - d_rt; }
+    if (d_rt > 4096) { return 5; }
+
+    # exp(-1) ≈ 1/e ≈ 0.367879441. Bits: 0x3FD78B56362CEF38.
+    var e_neg1 = f64_exp(f64_neg(0x3FF0000000000000));
+    var d_neg = e_neg1 - 0x3FD78B56362CEF38;
+    if (d_neg < 0) { d_neg = 0 - d_neg; }
+    if (d_neg > 1024) { return 6; }
+
+    # v5.8.4: f64_log2 polyfill. log2(1) == 0 (m=1 → u=0 → poly=0
+    # → mul by F64_LOG2E = 0).
+    var l2_1 = f64_log2(0x3FF0000000000000);
+    var d_l2_1 = l2_1;
+    if (d_l2_1 < 0) { d_l2_1 = 0 - d_l2_1; }
+    if (d_l2_1 > 1024) { return 7; }
+
+    # log2(8) ≈ 3.0. Bits: 0x4008000000000000.
+    var l2_8 = f64_log2(0x4020000000000000);
+    var d_l2_8 = l2_8 - 0x4008000000000000;
+    if (d_l2_8 < 0) { d_l2_8 = 0 - d_l2_8; }
+    if (d_l2_8 > 8192) { return 8; }
+
+    # log2(1024) ≈ 10.0.
+    var l2_1024 = f64_log2(0x4090000000000000);
+    var d_l2_1024 = l2_1024 - 0x4024000000000000;
+    if (d_l2_1024 < 0) { d_l2_1024 = 0 - d_l2_1024; }
+    if (d_l2_1024 > 8192) { return 9; }
+
+    # log2(0.5) ≈ -1.0.
+    var l2_half = f64_log2(0x3FE0000000000000);
+    var d_l2_half = l2_half - 0xBFF0000000000000;
+    if (d_l2_half < 0) { d_l2_half = 0 - d_l2_half; }
+    if (d_l2_half > 8192) { return 10; }
+
+    return 99;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

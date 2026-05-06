@@ -5,6 +5,53 @@
 
 ## Version
 
+**5.9.8** (shipped 2026-05-06 — **v5.9.x SLOT 8 — sovereignty
+pass batch 3b/3 (5 conversions: SSH cluster landing + cx
+family closeout)**. Two cross-host SSH gates earned new ssh /
+scp / remote-exit helpers (`_ssh_skip_check`, `_scp_to`,
+`_ssh_remote_exit`, `_ssh_target` env-var resolver); three
+cyrius-x bytecode gates earned a stdin-pipe-to-bin primitive
+(`_pipe_file_to_bin` / `_capture` for inspecting bytecode
+output bytes). cc5 unchanged at **741,048 B** — `programs/` +
+`tests/fixtures/` work; the compiler binary is not touched.
+
+**Premise-check at slot entry**: v5.9.4 SSH-cluster pin had 8
+scripts; only 2 fit the clean ssh+scp+remote-exit shape this
+slot's helpers covered (`aarch64-f64`, `aarch64-f64-polyfill`).
+The other 6 each need their own helper-design step:
+tar-pipe-to-ssh streaming for native-selfhost, env-var-passing
+exec for macho-exit's `CYRIUS_MACHO_ARM=1`, .bat fixture +
+stdout-parse for pe-exit, local `../sit` consumer for
+sit-status, network-probe for tls-live, multi-step composition
+for aarch64-syscalls. Honest scope shrink: 5 conversions
+instead of an originally-projected 8-12.
+
+The cx-* family (4 gates) earned a closeout attempt; 3 of 4
+landed (cx-build, cx-roundtrip, cx-syscall-literal). The 4th
+(cx-token-offsets) is a source-grep parity check needing a
+hex-substring-extract helper; pinned for v5.9.9.
+
+**What also shipped**: `tests/fixtures/aarch64_f64/{basic_ops,
+polyfill_ops}.cyr` extracted from heredocs; `CC_AARCH64_PATH`
+dispatcher global. 60 → 50 → 38 → 37 → 28 → 23 .sh remaining
+across v5.9.2 + v5.9.3 + v5.9.6 + v5.9.7 + v5.9.8.
+
+**Verification**: 66/66 check.sh green pre- and post-deletion;
+cc5 self-host byte-identical; aarch64-f64 + polyfill cross-
+build + scp + ssh-run on pi all sub-cases PASS; cc5_cx +
+cxvm bytecode + execution sub-cases PASS.
+
+**Roadmap pin (NOT fixed this slot)**: 6 SSH gates
+(aarch64-syscalls, aarch64-native-selfhost, macho-exit,
+pe-exit, sit-status, tls-live) + cx-token-offsets queued for
+v5.9.9+ alongside the LSP feature slot.
+
+**Next**: v5.9.9 — LSP feature additions (semanticTokens +
+references + lsp-definition conversion) per pinned slot, plus
+opportunistic SSH-cluster work as helpers earn their slot. v5.9.10+
+inherits per the v5.9.7 roadmap (open bug/optimization arc moved
+from v5.10.x; bare-metal/RISC-V to v5.11.x).)
+
 **5.9.7** (shipped 2026-05-06 — **v5.9.x SLOT 7 — sovereignty
 pass batch 3a/3 (9 conversions: TS acceptance cluster + 3
 cyrlint regressions)**. The TS acceptance cluster pinned in

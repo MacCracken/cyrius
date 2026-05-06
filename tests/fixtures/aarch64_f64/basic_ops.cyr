@@ -1,0 +1,21 @@
+include "lib/syscalls.cyr"
+
+fn main() {
+    var a = 0x4000000000000000;  # 2.0
+    var b = 0x4008000000000000;  # 3.0
+    if (f64_add(a, b) != 0x4014000000000000) { return 1; }
+    if (f64_sub(b, a) != 0x3FF0000000000000) { return 2; }
+    if (f64_mul(a, b) != 0x4018000000000000) { return 3; }
+    if (f64_div(b, a) != 0x3FF8000000000000) { return 4; }
+    if (f64_neg(a) != 0xC000000000000000) { return 5; }
+    if (f64_sqrt(0x4010000000000000) != 0x4000000000000000) { return 6; }
+    if (f64_floor(0x4004000000000000) != 0x4000000000000000) { return 7; }
+    if (f64_ceil(0x4004000000000000) != 0x4008000000000000) { return 8; }
+    if (f64_round(0x4004000000000000) != 0x4000000000000000) { return 9; }
+    if (f64_to(f64_from(42)) != 42) { return 10; }
+    if (f64_to(f64_from(0 - 7)) != (0 - 7)) { return 11; }
+    return 99;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);
