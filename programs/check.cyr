@@ -250,11 +250,9 @@ fn _tcyr_relay_gate(gate_name, inner_label, tcyr_basename) {
     }
     sys_chmod(bin_path, 493);
 
-    var args = vec_new();
-    vec_push(args, bin_path);
     var out_cap = 65536;
     var out_buf = alloc(out_cap);
-    var out_n = exec_capture(args, out_buf, out_cap);
+    var out_n = _exec_capture_clean(bin_path, out_buf, out_cap);
     sys_unlink(bin_path);
 
     var failed = _tcyr_parse_failed(out_buf, out_n);
@@ -302,6 +300,148 @@ fn _tcyr_parse_passed(buf, n) {
         i = i + 1;
     }
     return 0;
+}
+
+# ── expected-output relay gate (v5.9.2) ─────────────────────────
+# Replaces the strict-template `tests/regression-X.sh` shape:
+#   compile $ROOT/tests/fixtures/<NAME>.cyr via stdin pipe to cc5,
+#   run binary, exact-byte compare stdout against
+#   $ROOT/tests/fixtures/<NAME>.expected. PASS prints
+#   "  PASS: <inner_label> (<N> bytes match)"; the dispatcher's
+#   _check() then prints the gate-level PASS/FAIL line.
+#
+# Four v5.9.2-converted gates use this: json_pretty, json_stream,
+# json_pointer, test_lib.
+fn _expected_output_gate(gate_name, inner_label, fixture_basename) {
+    var sb_src = str_builder_new();
+    str_builder_add_cstr(sb_src, ROOT_PATH);
+    str_builder_add_cstr(sb_src, "/tests/fixtures/");
+    str_builder_add_cstr(sb_src, fixture_basename);
+    str_builder_add_cstr(sb_src, ".cyr");
+    var fixture_path = str_data(str_builder_build(sb_src));
+
+    var sb_exp = str_builder_new();
+    str_builder_add_cstr(sb_exp, ROOT_PATH);
+    str_builder_add_cstr(sb_exp, "/tests/fixtures/");
+    str_builder_add_cstr(sb_exp, fixture_basename);
+    str_builder_add_cstr(sb_exp, ".expected");
+    var expected_path = str_data(str_builder_build(sb_exp));
+
+    var bin_path = _tmp_path("audit_eo_");
+    var rc1 = _self_host_pipe(fixture_path, CC_PATH, bin_path);
+    if (rc1 != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(inner_label);
+        println(" — compile error");
+        sys_unlink(bin_path);
+        _check(gate_name, 1);
+        return 1;
+    }
+    sys_chmod(bin_path, 493);
+
+    var out_cap = 65536;
+    var out_buf = alloc(out_cap);
+    var out_n = _exec_capture_clean(bin_path, out_buf, out_cap);
+    sys_unlink(bin_path);
+
+    var exp_cap = 65536;
+    var exp_buf = alloc(exp_cap);
+    var exp_n = file_read_all(expected_path, exp_buf, exp_cap);
+    if (exp_n < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(inner_label);
+        println(" — expected file missing");
+        _check(gate_name, 1);
+        return 1;
+    }
+
+    var ok = 0;
+    if (out_n == exp_n) { ok = _buf_eq(out_buf, exp_buf, out_n); }
+    if (ok != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(inner_label);
+        _p(" — output drift (");
+        print_num(out_n);
+        _p(" got, ");
+        print_num(exp_n);
+        println(" expected)");
+        _check(gate_name, 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": ");
+    _p(inner_label);
+    _p(" (");
+    print_num(out_n);
+    println(" bytes match)");
+    _check(gate_name, 0);
+    return 0;
+}
+
+# Run a built binary with stdin=/dev/null and stderr=/dev/null, capture
+# stdout into buf (up to cap bytes), return bytes read.
+#
+# Why a temp file instead of a pipe: lib/process.cyr's exec_capture uses
+# a pipe + read-until-EOF. When the test fixture forks a helper (e.g.
+# shadow_pam.tcyr → unix_chkpwd, a setuid helper that may persist as an
+# orphan reparented to init), the helper inherits the test binary's
+# stdout — so the pipe stays open via the orphan even after waitpid()
+# on the test binary returns, and the dispatcher's read() blocks. The
+# .sh equivalents masked this by piping into `grep` (which exited on
+# its own when the test binary's main output was consumed and grep saw
+# the predicate match), but a direct read on the pipe hangs.
+#
+# Routing stdout to a temp file avoids the pipe-EOF wait entirely:
+# waitpid() blocks only on the direct child, and after it returns we
+# read whatever the test binary wrote to the file. Orphan grandchildren
+# may still hold the file fd open; we don't care — we already have the
+# bytes we need.
+fn _exec_capture_clean(bin_path, buf, buflen) {
+    var out_path = _tmp_path("audit_cap_");
+    var out_fd = sys_open(out_path, 577, 420);   # O_WRONLY|O_CREAT|O_TRUNC | 0644
+    if (out_fd < 0) { return 0; }
+
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
+    if (pid == 0) {
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var devnull_r = sys_open("/dev/null", 0, 0);   # O_RDONLY
+        if (devnull_r >= 0) { sys_dup2(devnull_r, 0); sys_close(devnull_r); }
+        var devnull_w = sys_open("/dev/null", 1, 0);   # O_WRONLY (fresh fd → fd 2)
+        if (devnull_w >= 0) { sys_dup2(devnull_w, 2); sys_close(devnull_w); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(bin_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+
+    var total = file_read_all(out_path, buf, buflen);
+    sys_unlink(out_path);
+    if (total < 0) { return 0; }
+    return total;
 }
 
 # ── Self-host gate — inline pipe-fork-exec ──────────────────────
@@ -451,34 +591,27 @@ fn _buf_eq(p, s, n) {
     return 1;
 }
 
-# Find " failed" in buffer; if present, walk back to the leading
-# integer and return it. Returns 0 if not found (no summary line ⇒
+# Find " failed" in buffer; walk back to the leading integer and
+# return it. Returns 0 if needle not found (no summary line ⇒
 # treat as PASS-by-default; the caller separately considers exit
-# code).
+# code). Mirrors _tcyr_parse_passed's shape.
 fn _tcyr_parse_failed(buf, n) {
     var needle = " failed";
     var nlen = strlen(needle);
     var i = 0;
     while (i + nlen <= n) {
         if (_buf_eq(buf + i, needle, nlen) == 1) {
-            # Walk back from `i` to find run of digits.
             var end = i;
             var start = end;
             while (start > 0) {
                 var c = load8(buf + start - 1);
-                if (c < 48) { start = 0 - 1; }
-                else { if (c > 57) { start = 0 - 1; } }
-                if (start == 0 - 1) { start = end; }
-                else { start = start - 1; }
-                # Bail loop on out-of-range
-                if (start == 0 - 1) { i = i + 1; }
+                if (c < 48) { return _aw_parse_leading_int(buf + start, end - start); }
+                if (c > 57) { return _aw_parse_leading_int(buf + start, end - start); }
+                start = start - 1;
             }
-            # If we can't find digits, skip and continue
-            if (start < 0) { i = i + 1; }
-            else { return _aw_parse_leading_int(buf + start, end - start); }
-        } else {
-            i = i + 1;
+            return _aw_parse_leading_int(buf + start, end - start);
         }
+        i = i + 1;
     }
     return 0;
 }
@@ -868,19 +1001,19 @@ fn _run_regression_gates() {
     println("");
 
     _section("json pretty");
-    _gate("json_v_build_pretty(v, indent) end-to-end canonical shape (v5.7.40)", "tests/regression-json-pretty.sh");
+    _expected_output_gate("json_v_build_pretty(v, indent) end-to-end canonical shape (v5.7.40)", "json pretty-print indent=2", "json_pretty");
     println("");
 
     _section("json stream");
-    _gate("json_stream_parse(buf, len, h) event order canonical sequence (v5.7.41)", "tests/regression-json-stream.sh");
+    _expected_output_gate("json_stream_parse(buf, len, h) event order canonical sequence (v5.7.41)", "json streaming events canonical order", "json_stream");
     println("");
 
     _section("json pointer");
-    _gate("json_v_pointer(v, ptr) RFC 6901 paths + ~0/~1 escapes + OOB/miss (v5.7.42)", "tests/regression-json-pointer.sh");
+    _expected_output_gate("json_v_pointer(v, ptr) RFC 6901 paths + ~0/~1 escapes + OOB/miss (v5.7.42)", "JSON Pointer RFC 6901 + ~0/~1 escapes", "json_pointer");
     println("");
 
     _section("test_each");
-    _gate("test_each(cases_vec, fp) iteration order + transitive include chain (v5.7.43)", "tests/regression-test-lib.sh");
+    _expected_output_gate("test_each(cases_vec, fp) iteration order + transitive include chain (v5.7.43)", "test_each iteration + include chain", "test_lib");
     println("");
 
     _section("variadic tuples");

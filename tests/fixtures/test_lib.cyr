@@ -1,0 +1,39 @@
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/test.cyr"
+
+alloc_init();
+
+fn _emit(c) {
+    var n = load64(c);
+    var b[2];
+    store8(&b, 48 + n);
+    store8(&b + 1, 0);
+    print(&b, 1);
+    print(".", 1);
+    return 0;
+}
+
+var cases = vec_new();
+var i = 0;
+while (i < 5) {
+    var c = alloc(8);
+    store64(c, i);
+    vec_push(cases, c);
+    i = i + 1;
+}
+test_each(cases, &_emit);
+print("\n", 1);
+
+# Empty vec is a no-op; trace stays empty.
+var empty = vec_new();
+test_each(empty, &_emit);
+print("end\n", 4);
+
+return 0;

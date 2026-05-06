@@ -6,6 +6,121 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.2] — 2026-05-06
+
+**v5.9.x SLOT 2 — sovereignty pass: tests/regression-*.sh batch
+1/3 (10 conversions, 60 → 50 scripts)**. First batch of the
+`tests/regression-*.sh` 60-script conversion arc pinned in
+v5.9.1's roadmap. Two helper templates landed in
+`programs/check.cyr`; ten `_gate()` calls converted off bash; the
+ten retired `.sh` scripts deleted.
+
+cc5: **741,048 B unchanged** — slot is `programs/` + `tests/`
+work; the compiler binary is not touched.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Roadmap pin was "10 conversions". Empirical scope at slot entry:
+`tests/regression-*.sh` actually has 7 scripts that match the
+tcyr-relay shape (compile a `tests/tcyr/<NAME>.tcyr`, run binary,
+grep `0 failed`); 6 were drop-in candidates for a single helper.
+A second helper template `_expected_output_gate` covered 4 more
+scripts that follow a fixture-compile → cmp-stdout shape (the four
+JSON / test_each gates pinned at v5.7.40-43 release). 6 + 4 = the
+10 the slot pinned. Larger-shape scripts (cross-host SSH gates,
+multi-case scaffolders) defer to v5.9.3.
+
+### Added
+
+- **`programs/check.cyr` — `_tcyr_relay_gate(gate, label, basename)`**:
+  compiles `$ROOT/tests/tcyr/<basename>` via stdin pipe to cc5,
+  runs the binary, parses the trailing `<N> passed, <M> failed`
+  summary, prints the inner `PASS: <label> (<N> assertions)` line
+  before dispatching `_check()` for the outer gate-level result.
+  *(Helper landed empty-shipped in 69603ae; first end-to-end use
+  is this slot.)*
+
+- **`programs/check.cyr` — `_expected_output_gate(gate, label, basename)`**:
+  compiles `$ROOT/tests/fixtures/<basename>.cyr`, runs the binary
+  with stdin/stderr redirected to /dev/null and stdout to a temp
+  file, exact-byte cmp against `$ROOT/tests/fixtures/<basename>.expected`.
+  Same PASS/FAIL output style as the tcyr-relay helper, with a
+  `(<N> bytes match)` inner annotation.
+
+- **`programs/check.cyr` — `_exec_capture_clean(bin_path, buf, cap)`**:
+  forks bin with stdin=/dev/null, stderr=/dev/null, stdout
+  redirected to a temp file. Replaces `lib/process.cyr`'s
+  `exec_capture` for both relay helpers. *Why a temp file instead
+  of a pipe:* the v5.9.1 helper used `exec_capture` (pipe-based)
+  and shipped without end-to-end verification. When tested in this
+  slot, the pipe-based version blocked indefinitely on
+  `shadow_pam.tcyr` — the test binary forks `unix_chkpwd` (setuid
+  root) which is reparented to init as an orphan, holding the
+  pipe write-end open after the test binary exited. Reading the
+  pipe to EOF never returned. Routing stdout to a file lets
+  `waitpid()` on the direct child gate the read; orphan
+  grandchildren can't deadlock the dispatcher.
+
+- **`tests/fixtures/`** — new directory housing the four
+  expected-output fixtures (`json_pretty.cyr` + `.expected`,
+  `json_stream.cyr` + `.expected`, `json_pointer.cyr` + `.expected`,
+  `test_lib.cyr` + `.expected`). The `.cyr` bodies are the
+  byte-for-byte fixture content extracted from the now-deleted
+  bash scripts; the `.expected` bodies are the canonical
+  cmp targets the bash scripts shipped inline.
+
+### Changed
+
+- **`programs/check.cyr` — `_run_regression_gates()`**: 10
+  `_gate(...)` calls replaced. Six tcyr-relay-shape gates
+  (shadow_pam, fdlopen, thread_local, atomics, thread_safety,
+  flags) call `_tcyr_relay_gate`; four expected-output-shape gates
+  (json_pretty, json_stream, json_pointer, test_lib) call
+  `_expected_output_gate`.
+
+- **`programs/check.cyr` — `_tcyr_parse_failed`**: rewrote the
+  inner digit-walkback loop. The v5.9.1 version had a control-flow
+  bug — when the byte before " failed" was a digit (i.e., every
+  PASS path matching `0 failed`), the loop reset its scan index
+  on every iteration without advancing, infinite-looping. Mirrors
+  the clean shape of `_tcyr_parse_passed`. *(This was the
+  proximate hang at the v5.9.1 `Shadow + PAM` gate when the helper
+  was first run end-to-end; symptom looked like the
+  `_exec_capture_clean` pipe deadlock above, but both were real
+  prereq bugs and both needed the fix.)*
+
+- **`scripts/release-lib.sh`**: walk `lib/` recursively when
+  staging the release tarball. Preserves the `lib/`-relative
+  subdirectory layout (e.g. `lib/unicode/categories.cyr` lands
+  at `<dest>/unicode/categories.cyr`). Pre-fix, the flat
+  `for f in lib/*.cyr` glob silently dropped subdir files —
+  the v5.9.1 release tarball was missing all 7 `lib/unicode/*.cyr`
+  files, breaking downstream `cyrius deps` resolution for any
+  consumer pulling unicode modules. Mirrors the v5.8.49 fix in
+  `scripts/install.sh`'s `--refresh-only` path; the bug existed
+  in both packaging entry points and only one was fixed at the
+  time. *(Surfaced by cyim against the v5.9.1 tarball.)*
+
+### Removed
+
+- **10 `tests/regression-*.sh`** scripts retired alongside their
+  `_gate()` conversions: shadow-pam, fdlopen, thread-local,
+  atomics, thread-safety, flags, json-pretty, json-stream,
+  json-pointer, test-lib. The conversions are byte-shape-identical
+  end-to-end checks; the bash scripts are dead weight.
+  Remaining: 50 `tests/regression-*.sh` scripts queued for
+  v5.9.3-v5.9.4.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 65/65 gates green, exit 0 — both pre-deletion and
+  post-deletion runs.
+- Release tarball smoke: `sh scripts/release-lib.sh /tmp/stage`
+  stages all 7 `lib/unicode/*.cyr` files at `<dest>/unicode/`;
+  pre-fix dropped the entire subdir.
+
 ## [5.9.1] — 2026-05-06
 
 **v5.9.x SLOT 1 — sovereignty pass kickoff: scripts/check.sh →

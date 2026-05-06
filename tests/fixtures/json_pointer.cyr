@@ -1,26 +1,3 @@
-#!/bin/sh
-# Regression: lib/json.cyr JSON Pointer (RFC 6901) — v5.7.42.
-#
-# Pinned to v5.7.42. Pairs with tests/tcyr/json_pointer.tcyr (36
-# unit-level assertions). This gate is the end-to-end check: parse
-# a known nested document, evaluate several pointers (including ~0
-# and ~1 escapes plus an OOB array index), and exact-byte cmp the
-# output against the canonical expected sequence.
-
-set -e
-
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CC="$ROOT/build/cc5"
-
-if [ ! -x "$CC" ]; then
-    echo "  skip: build/cc5 not built"
-    exit 0
-fi
-
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-
-cat > "$WORK/fixture.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -81,39 +58,3 @@ else {
 }
 
 return 0;
-EOF
-
-cat "$WORK/fixture.cyr" | "$CC" > "$WORK/fixture.bin" 2>"$WORK/cc.err"
-if [ ! -s "$WORK/fixture.bin" ]; then
-    echo "  FAIL: fixture compile error"
-    cat "$WORK/cc.err"
-    exit 1
-fi
-chmod +x "$WORK/fixture.bin"
-
-"$WORK/fixture.bin" > "$WORK/out.txt" 2>&1 || true
-
-cat > "$WORK/expected.txt" <<'EOF'
-/users/0/id=1
-/users/1/id=2
-/users/9/id=MISS
-/a~1b=42
-/m~0n=99
-/missing=MISS
-/users/0/id/x=MISS
-/users/0/name=alice
-EOF
-
-if cmp -s "$WORK/out.txt" "$WORK/expected.txt"; then
-    echo "  PASS: JSON Pointer evaluates RFC 6901 paths + ~0/~1 escapes + OOB/miss as expected (8 cases)"
-    exit 0
-else
-    echo "  FAIL: JSON Pointer output drifted"
-    echo "  ── expected ──"
-    sed 's/^/    /' "$WORK/expected.txt"
-    echo "  ── got ──"
-    sed 's/^/    /' "$WORK/out.txt"
-    echo "  ── diff ──"
-    diff "$WORK/expected.txt" "$WORK/out.txt" || true
-    exit 1
-fi

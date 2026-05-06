@@ -5,6 +5,41 @@
 
 ## Version
 
+**5.9.2** (shipped 2026-05-06 — **v5.9.x SLOT 2 — sovereignty
+pass: tests/regression-*.sh batch 1/3 (10 conversions, 60 → 50
+scripts)**. First batch of the 60-script `tests/regression-*.sh`
+conversion arc pinned in v5.9.1's roadmap. cc5 unchanged at
+**741,048 B** — slot is `programs/` + `tests/` work; the compiler
+binary is not touched. **Premise-check finding at slot entry**:
+the v5.9.1 commit 69603ae shipped one helper (`_tcyr_relay_gate`)
+plus 6 `_gate()` conversions but never ran the result end-to-end
+— two prereq bugs surfaced when this slot first ran the dispatcher
+through the converted gates: (a) `_tcyr_relay_gate` used
+`exec_capture` (pipe-based) and the `shadow_pam.tcyr` test binary
+forks `unix_chkpwd` (setuid root, reparented to init as an orphan)
+which kept the pipe write-end open after the test binary exited,
+deadlocking read-to-EOF; (b) `_tcyr_parse_failed` had a
+control-flow bug in its digit-walkback loop that infinite-looped
+on every PASS path (the byte before " failed" being a digit, e.g.
+`0 failed`). Both fixed in this slot's commit-through. **What
+shipped**: `_tcyr_relay_gate` + `_expected_output_gate` helpers
+in `programs/check.cyr` + new `_exec_capture_clean(bin, buf, cap)`
+private capture helper (file-based, stdin/stderr to /dev/null,
+waits only on the direct child so orphan grandchildren can't
+deadlock the read); 4 fixture pairs in new `tests/fixtures/`
+directory (json_pretty, json_stream, json_pointer, test_lib —
+each `.cyr` source + `.expected` cmp target); 10 `_gate()` calls
+converted (6 tcyr-relay + 4 expected-output); 10
+`tests/regression-*.sh` files retired
+(60 → 50 remaining); **`scripts/release-lib.sh` packaging fix**
+(walk lib/ recursively so lib/unicode/*.cyr lands in the release
+tarball — surfaced by cyim against the v5.9.1 tarball; mirrors
+the v5.8.49 fix in install.sh's --refresh-only path). Acceptance:
+65/65 check.sh both pre- and post-deletion; cc5 self-host
+byte-identical; release-lib.sh smoke stages all 7
+`lib/unicode/*.cyr` at `<dest>/unicode/`. **Next**: v5.9.3
+continues with regression-*.sh batch 2/3 (next ~15-20 conversions).)
+
 **5.9.1** (shipped 2026-05-06 — **v5.9.x SLOT 1 — sovereignty
 pass kickoff: scripts/check.sh → cyrius**. First slot of the
 v5.9.x bash-toolchain → cyrius conversion arc. cc5 unchanged at

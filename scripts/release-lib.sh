@@ -16,15 +16,29 @@ DEST="$1"
 if [ -z "$DEST" ]; then echo "Usage: release-lib.sh <dest-dir>"; exit 1; fi
 mkdir -p "$DEST"
 
-# 1. Copy all real files and valid symlinks
-for f in lib/*.cyr; do
-    [ -f "$f" ] || continue
+# 1. Copy all real files and valid symlinks.
+#
+# v5.9.2: walk subdirs recursively so nested stdlib (e.g.
+# `lib/unicode/*.cyr`) reaches the release tarball. Pre-fix, the
+# flat `for f in lib/*.cyr` glob silently dropped subdir files —
+# the v5.9.1 release tarball was missing lib/unicode/*.cyr,
+# breaking downstream `cyrius deps` resolution for any consumer
+# that pulled unicode modules. Mirrors the v5.8.49 fix in
+# scripts/install.sh's --refresh-only path; the bug existed in
+# both packaging entry points and only one was fixed at the time.
+while IFS= read -r f; do
+    [ -e "$f" ] || continue                # skip broken symlinks (deps fetched below)
+    rel="${f#lib/}"
+    dst="$DEST/$rel"
+    mkdir -p "$(dirname "$dst")"
     if [ -L "$f" ]; then
-        [ -e "$f" ] && cp -L "$f" "$DEST/" || true
+        cp -L "$f" "$dst"
     else
-        cp "$f" "$DEST/"
+        cp "$f" "$dst"
     fi
-done
+done <<EOF_LIB
+$(find -L lib -type f -name '*.cyr')
+EOF_LIB
 
 # 2. Dep bundles — single source of truth is cyrius.cyml.
 CYML="${CYRIUS_CYML:-cyrius.cyml}"
@@ -63,5 +77,5 @@ else
     done
 fi
 
-COUNT=$(ls "$DEST"/*.cyr 2>/dev/null | wc -l)
+COUNT=$(find "$DEST" -type f -name '*.cyr' 2>/dev/null | wc -l)
 echo "  $COUNT stdlib files staged"

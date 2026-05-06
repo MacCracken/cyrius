@@ -313,11 +313,45 @@ at cycle entry):
   — slot scope-corrected to check.sh-only at entry. cc5
   unchanged (741,048 B); 65/65 check.sh green; api-surface
   snapshot regenerated 2,760 → 2,763 (+3 non-breaking).
-- **v5.9.2-v5.9.4** — sovereignty pass: `tests/regression-*.sh`
-  batch conversion (60 scripts, 6,679 LOC). Templated — group
-  by category (aarch64-cross-tests, lint-tests, syscall-tests,
-  etc.). Each slot ships ~15 conversions + the conversion
-  template if applicable.
+- **v5.9.2** ✅ — **sovereignty pass batch 1/3 shipped 2026-05-06**.
+  10 `_gate()` calls converted off `tests/regression-*.sh`
+  (60 → 50 remaining). Two helper templates in `programs/check.cyr`:
+  `_tcyr_relay_gate(gate, label, basename)` for the
+  compile-tcyr-and-grep-`0 failed` shape (6 conversions: shadow_pam,
+  fdlopen, thread_local, atomics, thread_safety, flags) and
+  `_expected_output_gate(gate, label, basename)` for the
+  compile-fixture-and-cmp-stdout shape (4 conversions: json_pretty,
+  json_stream, json_pointer, test_lib). 10 retired `.sh` files
+  deleted. Two prereq bugs landed in v5.9.1's helper commit
+  (69603ae) surfaced when this slot ran the dispatcher end-to-end:
+  pipe-based `exec_capture` deadlocked on `unix_chkpwd` orphan
+  reparenting → fixed by new `_exec_capture_clean` (file-based,
+  stdin/stderr → /dev/null), and `_tcyr_parse_failed` infinite-
+  looped on every PASS path → rewrote to mirror clean
+  `_tcyr_parse_passed` shape. Bonus: `scripts/release-lib.sh`
+  packaging fix — walk lib/ recursively so `lib/unicode/*.cyr`
+  reaches the release tarball (cyim-surfaced; mirrors v5.8.49
+  fix in `install.sh`). cc5 unchanged (741,048 B); 65/65 check.sh
+  green pre- and post-deletion.
+- **v5.9.3-v5.9.4** — sovereignty pass: continue
+  `tests/regression-*.sh` batch conversion (50 scripts remaining).
+  Larger-shape categories left for these slots: cross-host SSH
+  gates (aarch64-syscalls, native-selfhost, macho-exit, pe-exit,
+  sit-status, tls-live), TS corpus threshold gates (ts-lex,
+  ts-parse, ts-parse-tsx, ts-asserts, ts-mapped, ts-decorators,
+  ts-variadic-tuples, ts-const-type-params, ts-advanced-pin-audit),
+  source-grep canaries (aarch64-codebuf-cap), readelf/binary-shape
+  checks (object-init, macho-cross-build), multi-case scaffolders
+  (string-escapes, fn-collision, deps-transitive, init-lib-bin,
+  init-doctree, struct-cap, kmode-emit-order, capacity, linker,
+  shared, lsp-definition, smoke-discovery, distlib-large-module,
+  inline-asm-discard, install-shim-symlink, cyrfmt-write,
+  cyrfmt-comment-braces, cyrlint-large-file,
+  lint-global-init-order, syscall-surface-v5735, fuzz-deps-prepend,
+  reserved-kw-diag, stdlib-doc-coverage, input-1mb,
+  truthy-after-fncall, api-surface, cx-build, cx-roundtrip,
+  cx-syscall-literal, cx-token-offsets, aarch64-f64,
+  aarch64-f64-polyfill). Templating may earn 1-2 more helpers.
 - **v5.9.5** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are

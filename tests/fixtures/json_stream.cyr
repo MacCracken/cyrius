@@ -1,0 +1,39 @@
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/fnptr.cyr"
+include "lib/json.cyr"
+
+alloc_init();
+
+fn cb_obj_start(ctx) { print("{", 1); return 0; }
+fn cb_obj_end(ctx)   { print("}", 1); return 0; }
+fn cb_arr_start(ctx) { print("[", 1); return 0; }
+fn cb_arr_end(ctx)   { print("]", 1); return 0; }
+fn cb_key(ctx, k)    { print("k", 1); return 0; }
+fn cb_str(ctx, s)    { print("s", 1); return 0; }
+fn cb_int(ctx, n)    { print("i", 1); return 0; }
+fn cb_bool(ctx, b)   { print("b", 1); return 0; }
+fn cb_null(ctx)      { print("n", 1); return 0; }
+
+var h = json_stream_handler_new(0);
+json_stream_on(h, JS_EV_OBJECT_START, &cb_obj_start);
+json_stream_on(h, JS_EV_OBJECT_END,   &cb_obj_end);
+json_stream_on(h, JS_EV_ARRAY_START,  &cb_arr_start);
+json_stream_on(h, JS_EV_ARRAY_END,    &cb_arr_end);
+json_stream_on(h, JS_EV_KEY,          &cb_key);
+json_stream_on(h, JS_EV_STRING,       &cb_str);
+json_stream_on(h, JS_EV_INT,          &cb_int);
+json_stream_on(h, JS_EV_BOOL,         &cb_bool);
+json_stream_on(h, JS_EV_NULL,         &cb_null);
+
+var src = "{\"name\":\"alice\",\"id\":42,\"flags\":[true,null],\"meta\":{\"k\":\"v\"}}";
+var rc = json_stream_parse(str_data(str_from(src)), strlen(src), h);
+print("\n", 1);
+if (rc == 0) { print("OK\n", 3); } else { print("ERR\n", 4); }
+return 0;
