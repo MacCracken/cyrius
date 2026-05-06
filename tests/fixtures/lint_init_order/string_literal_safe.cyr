@@ -1,0 +1,10 @@
+var MSG = "FLAG_LATER not yet defined here";
+var CHR = 'X';
+
+fn dummy() { return 0; }
+
+var FLAG_LATER = 0x1;
+
+fn main() { return 0; }
+var r = main();
+syscall(60, r);

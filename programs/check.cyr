@@ -1573,6 +1573,399 @@ fn _struct_cap_gate() {
     return fail;
 }
 
+# Count occurrences of needle (cstring) in buf[0..n].
+fn _count_substr_buf(buf, n, needle) {
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 0; }
+    var count = 0;
+    var i = 0;
+    while (i + nlen <= n) {
+        if (_buf_eq(buf + i, needle, nlen) == 1) {
+            count = count + 1;
+            i = i + nlen;
+        } else {
+            i = i + 1;
+        }
+    }
+    return count;
+}
+
+# Variant of _exec_with_arg_capture that captures BOTH stdout
+# and stderr into the same temp file. Used when the target tool
+# emits diagnostics to stderr (cyrlint warnings) but the gate
+# wants to scan them.
+fn _exec_with_arg_capture_both(bin_path, arg, buf, buflen) {
+    var out_path = _tmp_path("audit_xa_");
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0; }
+
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
+    if (pid == 0) {
+        sys_dup2(out_fd, 1);
+        sys_dup2(out_fd, 2);
+        sys_close(out_fd);
+        var dn_r = sys_open("/dev/null", 0, 0);
+        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        var argv[3];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, arg);
+        store64(&argv + 16, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(bin_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+
+    var total = file_read_all(out_path, buf, buflen);
+    sys_unlink(out_path);
+    if (total < 0) { return 0; }
+    return total;
+}
+
+# Run `cyrlint <file_path>`, capture combined stdout+stderr,
+# count occurrences of the marker substring. cyrlint emits its
+# per-line warnings to stderr; the trailing "N warnings" summary
+# line goes to stdout — both are captured. Used by
+# `_lint_init_order_gate` (and any future cyrlint-output
+# regression). Returns the count.
+fn _cyrlint_count_marker(file_path, marker, buf, buflen) {
+    var n = _exec_with_arg_capture_both(CYRLINT_PATH, file_path, buf, buflen);
+    return _count_substr_buf(buf, n, marker);
+}
+
+# Bespoke gate: cyrlint large-file false-positive regression
+# floor (v5.8.41; mabda v3 Step 3d/3e). Generates a ~3500-line
+# synthetic .cyr (700 _check_N fns × 5 lines each + includes +
+# alloc_init + trailing syscall) past the historic ~3270-line
+# trigger threshold; runs cyrlint; asserts zero "unclosed
+# braces at end of file" and zero "trailing whitespace"
+# warnings — both are the file-size false-positive shape
+# resolved between v5.7.23 (filing) and v5.8.40 (premise check).
+fn _cyrlint_large_file_gate() {
+    if (CYRLINT_PATH == 0) {
+        _p("  skip: cyrlint not built");
+        println("");
+        _check("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", 0);
+        return 0;
+    }
+    if (file_exists(CYRLINT_PATH) != 1) {
+        _p("  skip: cyrlint not built");
+        println("");
+        _check("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", 0);
+        return 0;
+    }
+
+    var src_path = _tmp_path("audit_cyrlint_lf_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) {
+        _check("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", 1);
+        return 1;
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "# v5.8.41 regression floor - cyrlint large-file false-positive.\n");
+    str_builder_add_cstr(sb, "include \"lib/syscalls.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/assert.cyr\"\n\n");
+    str_builder_add_cstr(sb, "alloc_init();\n\n");
+    var i = 0;
+    while (i < 700) {
+        str_builder_add_cstr(sb, "fn _check_");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, "() {\n    test_group(\"group ");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, "\");\n    assert_eq(\n        ");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, ",\n        ");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, ",\n        \"self equality\"\n    );\n    return 0;\n}\n\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "syscall(60, 0);\n");
+    var s = str_builder_build(sb);
+    sys_write(fd, str_data(s), str_len(s));
+    sys_close(fd);
+
+    var line_count = _count_substr_buf(str_data(s), str_len(s), "\n");
+    if (line_count < 3270) {
+        sys_unlink(src_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": synthetic only ");
+        print_num(line_count);
+        println(" lines (need >=3270 to trigger the historic bug)");
+        _check("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", 1);
+        return 1;
+    }
+
+    var cap = 65536;
+    var buf = alloc(cap);
+    var unclosed = _cyrlint_count_marker(src_path, "unclosed braces at end of file", buf, cap);
+    var trailing_ws = _cyrlint_count_marker(src_path, "trailing whitespace", buf, cap);
+    sys_unlink(src_path);
+
+    var fail = 0;
+    if (unclosed != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        print_num(line_count);
+        _p("-line file produced ");
+        print_num(unclosed);
+        println(" 'unclosed braces' warning(s) — historic bug regression");
+        fail = fail + 1;
+    }
+    if (trailing_ws != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        print_num(line_count);
+        _p("-line file produced ");
+        print_num(trailing_ws);
+        println(" 'trailing whitespace' warning(s) — likely v5.8.41 file-size false-positive regression");
+        fail = fail + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": cyrlint clean on ");
+        print_num(line_count);
+        println("-line synthetic (mabda 2026-04-28 repro shape; floor for v5.8.41)");
+    }
+    _check("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", fail);
+    return fail;
+}
+
+# Bespoke gate: cyrlint global-init-order forward-ref warning
+# (v5.7.32 + v5.7.36 string-lit awareness; mabda-surfaced).
+# Four sub-cases:
+# (1) forward_refs.cyr fixture — ≥3 "global var init refs"
+#     warnings (3 forward refs intentionally).
+# (2) lib/math.cyr — exactly 0 (regression vs false positives).
+# (3) lib/string.cyr — exactly 0.
+# (4) string_literal_safe.cyr fixture — exactly 0 (v5.7.36 fix:
+#     string-literal contents must NOT match IDENTs against the
+#     forward-decl table).
+fn _lint_init_order_gate() {
+    if (CYRLINT_PATH == 0) {
+        _p("  skip: cyrlint not built");
+        println("");
+        _check("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", 0);
+        return 0;
+    }
+    if (file_exists(CYRLINT_PATH) != 1) {
+        _p("  skip: cyrlint not built");
+        println("");
+        _check("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", 0);
+        return 0;
+    }
+    var fail = 0;
+    var cap = 65536;
+    var buf = alloc(cap);
+    var marker = "global var init refs";
+
+    var bad_fixture = _root_path("tests/fixtures/lint_init_order/forward_refs.cyr");
+    var bad_count = _cyrlint_count_marker(bad_fixture, marker, buf, cap);
+    if (bad_count < 3) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": forward_refs fixture produced ");
+        print_num(bad_count);
+        println(" warnings (expected ≥3)");
+        fail = fail + 1;
+    }
+
+    var math_path = _root_path("lib/math.cyr");
+    var math_count = _cyrlint_count_marker(math_path, marker, buf, cap);
+    if (math_count != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": lib/math.cyr produced ");
+        print_num(math_count);
+        println(" false-positive forward-ref warnings");
+        fail = fail + 1;
+    }
+
+    var str_path = _root_path("lib/string.cyr");
+    var str_count = _cyrlint_count_marker(str_path, marker, buf, cap);
+    if (str_count != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": lib/string.cyr produced ");
+        print_num(str_count);
+        println(" false-positive forward-ref warnings");
+        fail = fail + 1;
+    }
+
+    var strlit_fixture = _root_path("tests/fixtures/lint_init_order/string_literal_safe.cyr");
+    var strlit_count = _cyrlint_count_marker(strlit_fixture, marker, buf, cap);
+    if (strlit_count != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": string-literal fixture produced ");
+        print_num(strlit_count);
+        println(" false-positive forward-ref warnings (v5.7.36 string-lit awareness)");
+        fail = fail + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": cyrlint flags forward-ref var inits (");
+        print_num(bad_count);
+        println(" on fixture; 0 false-positives on stdlib + string-literal scope; v5.7.32 + v5.7.36)");
+    }
+    _check("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", fail);
+    return fail;
+}
+
+# Open fixture as stdin, fork cc5 with one mode flag (e.g.
+# `--parse-ts` / `--lex-ts`), return WEXITSTATUS (0 on success,
+# non-zero on reject). stdout + stderr go to /dev/null. Used by
+# `_parse_ts_dir_gate` and `_ts_lex_gate`.
+fn _ts_mode_run(fixture_path, mode_flag) {
+    var fd = sys_open(fixture_path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(fd); return 0 - 1; }
+    if (pid == 0) {
+        sys_dup2(fd, 0);
+        sys_close(fd);
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[3];
+        store64(&argv,     CC_PATH);
+        store64(&argv + 8, mode_flag);
+        store64(&argv + 16, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(CC_PATH, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# Backward-compat wrapper.
+fn _parse_ts_run(fixture_path) {
+    return _ts_mode_run(fixture_path, "--parse-ts");
+}
+
+# Bespoke gate (v5.9.7): single-fixture `cc5 --lex-ts` on the
+# synthetic TS sample at `tests/fixtures/ts_lex/sample.ts`. The
+# fixture exercises every lex feature shipped in v5.7.2 P1.1-P1.6
+# (shebang, JSDoc, identifiers, 30+ keywords, all numeric literal
+# bases with separators, template literals + interpolation,
+# regex/division disambiguation). Acceptance: exit 0.
+fn _ts_lex_gate() {
+    var fix = _root_path("tests/fixtures/ts_lex/sample.ts");
+    var rc = _ts_mode_run(fix, "--lex-ts");
+    if (rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5 --lex-ts on sample.ts exit ");
+        print_num(rc);
+        println("");
+        _check("cc5 --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 1);
+        return 1;
+    }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    println(": TS lexer integration (P1.1-P1.6 features)");
+    _check("cc5 --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 0);
+    return 0;
+}
+
+# Bespoke gate template (v5.9.7): walk
+# `tests/fixtures/<subdir>/*.ts`, run `cc5 --parse-ts` on each
+# fixture, expect every fixture to parse cleanly (exit 0). Used
+# by the six TS acceptance gates (ts-asserts, ts-mapped,
+# ts-decorators, ts-variadic-tuples, ts-const-type-params,
+# ts-advanced-pin-audit), each with its own subdir of 5-7 .ts
+# fixtures extracted from the v5.7.x bash heredocs. Per-fixture
+# diagnostic on FAIL prints the case filename so a regression
+# in `cc5 --parse-ts` reports which input shape rejected.
+fn _parse_ts_dir_gate(gate_name, inner_label, subdir) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, ROOT_PATH);
+    str_builder_add_cstr(sb, "/tests/fixtures/");
+    str_builder_add_cstr(sb, subdir);
+    var dir_path = str_data(str_builder_build(sb));
+    var dir_str = str_from(dir_path);
+    var entries = dir_list(dir_str);
+    var fail = 0;
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var name = vec_get(entries, i);
+        if (path_has_ext(name, str_from(".ts")) == 1) {
+            total = total + 1;
+            var full = path_join(dir_str, name);
+            var rc = _parse_ts_run(str_data(full));
+            if (rc != 0) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                _p(": ");
+                var nm_data = str_data(name);
+                var nm_len = str_len(name);
+                print(nm_data, nm_len);
+                _p(" — cc5 --parse-ts exit ");
+                print_num(rc);
+                println("");
+                fail = fail + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(inner_label);
+        _p(" (");
+        print_num(total);
+        println(" cases)");
+    }
+    _check(gate_name, fail);
+    return fail;
+}
+
 # Bespoke gate: lib/args.cyr 4 KB cmdline cap (cyim BUG-001,
 # fixed v5.9.5). Compiles tests/fixtures/argc_print.cyr — a
 # fixture that calls args_init() and prints argc(); forks the
@@ -2242,7 +2635,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("TS lexer (cyrius-ts)");
-    _gate("cc5 --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", "tests/regression-ts-lex.sh");
+    _ts_lex_gate();
     println("");
 
     _section("TS parser (SY acceptance)");
@@ -2318,15 +2711,15 @@ fn _run_regression_gates() {
     println("");
 
     _section("TS asserts predicate signatures");
-    _gate("cc5 --parse-ts accepts asserts predicate signatures + this-type (v5.7.24)", "tests/regression-ts-asserts.sh");
+    _parse_ts_dir_gate("cc5 --parse-ts accepts asserts predicate signatures + this-type (v5.7.24)", "asserts predicates + this-type (TS 3.7+)", "ts_asserts");
     println("");
 
     _section("TS mapped types + modifiers");
-    _gate("cc5 --parse-ts accepts mapped types + as-clause + +/- modifiers (v5.7.25)", "tests/regression-ts-mapped.sh");
+    _parse_ts_dir_gate("cc5 --parse-ts accepts mapped types + as-clause + +/- modifiers (v5.7.25)", "mapped types + as-clause + +/- modifiers", "ts_mapped");
     println("");
 
     _section("TS decorators");
-    _gate("cc5 --parse-ts accepts TS 5.0 stage-3 decorators (v5.7.26)", "tests/regression-ts-decorators.sh");
+    _parse_ts_dir_gate("cc5 --parse-ts accepts TS 5.0 stage-3 decorators (v5.7.26)", "TS 5.0 stage-3 decorators", "ts_decorators");
     println("");
 
     _section("Token-offset parity");
@@ -2342,11 +2735,11 @@ fn _run_regression_gates() {
     println("");
 
     _section("cyrlint global-init-order");
-    _gate("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", "tests/regression-lint-global-init-order.sh");
+    _lint_init_order_gate();
     println("");
 
     _section("cyrlint large-file");
-    _gate("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", "tests/regression-cyrlint-large-file.sh");
+    _cyrlint_large_file_gate();
     println("");
 
     _build_api_surface_if_missing();
@@ -2391,15 +2784,15 @@ fn _run_regression_gates() {
     println("");
 
     _section("variadic tuples");
-    _gate("TS variadic tuples — parse acceptance for spread element forms (v5.7.44)", "tests/regression-ts-variadic-tuples.sh");
+    _parse_ts_dir_gate("TS variadic tuples — parse acceptance for spread element forms (v5.7.44)", "variadic tuple spread forms", "ts_variadic_tuples");
     println("");
 
     _section("const type params");
-    _gate("TS const type params <const T> — parse acceptance (v5.7.45)", "tests/regression-ts-const-type-params.sh");
+    _parse_ts_dir_gate("TS const type params <const T> — parse acceptance (v5.7.45)", "const type params <const T>", "ts_const_type_params");
     println("");
 
     _section("advanced-TS pin audit");
-    _gate("TS advanced-pin audit — as const + satisfies + never/unknown + conditional types (v5.7.46)", "tests/regression-ts-advanced-pin-audit.sh");
+    _parse_ts_dir_gate("TS advanced-pin audit — as const + satisfies + never/unknown + conditional types (v5.7.46)", "advanced-TS pin audit", "ts_advanced_pin_audit");
     println("");
 
     _section("args_init >4 KB cmdline (v5.9.5; cyim BUG-001)");

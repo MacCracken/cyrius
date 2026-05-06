@@ -1,29 +1,3 @@
-#!/bin/sh
-# v5.7.2 P1.7 regression gate — TS lexer integration via cc5 --lex-ts.
-#
-# Synthetic TS sample exercises every lex feature shipped in P1.1–P1.6:
-#   - shebang (#!/usr/bin/env tsx)
-#   - // line + /* */ block comments (incl. JSDoc /** */)
-#   - identifiers + 30+ keywords + contextual keywords (from/as/of/get/set/type)
-#   - integer literals: decimal, 0x, 0o, 0b, with _ separators
-#   - string literals: " and ' with escapes
-#   - template literals incl. ${} interpolation + nested
-#   - 30+ multi-char operators: ===, !==, <=, >=, <<, >>, >>>, &&, ||, ??, ?., **, =>, ..., ++, --, += etc.
-#   - regex literals with flags + char classes + escapes
-#   - regex/division disambiguation (incl. postfix ! non-null assertion walk-back)
-#
-# Acceptance: cc5 --lex-ts on the synthetic file exits 0.
-#
-# Self-contained: no dependency on /home/macro/Repos/secureyeoman.
-# Wires into scripts/check.sh as gate "TS lexer integration".
-
-set -eu
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CC="$ROOT/build/cc5"
-TMP="/tmp/cyrius-ts-lex-regression-$$.ts"
-trap 'rm -f "$TMP"' EXIT INT TERM
-
-cat > "$TMP" <<'TS_SAMPLE'
 #!/usr/bin/env tsx
 // v5.7.2 P1.7 regression sample — covers all P1.1-P1.6 lex features.
 /**
@@ -154,21 +128,3 @@ interface Repo {
   readonly id: string;
   fetch(): Promise<Repo>;
 }
-TS_SAMPLE
-
-if [ ! -x "$CC" ]; then
-    echo "skip: $CC not present (run cyrius build first)"
-    exit 0
-fi
-
-cat "$TMP" | "$CC" --lex-ts > /dev/null 2>/tmp/cyrius-ts-lex-err
-rc=$?
-if [ "$rc" -ne 0 ]; then
-    echo "FAIL: cc5 --lex-ts exited $rc on synthetic sample"
-    echo "  stderr:"
-    sed 's/^/    /' /tmp/cyrius-ts-lex-err
-    exit 1
-fi
-
-echo "PASS: cc5 --lex-ts (synthetic TS sample, all P1.1-P1.6 features)"
-exit 0

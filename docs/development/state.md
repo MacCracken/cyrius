@@ -5,6 +5,59 @@
 
 ## Version
 
+**5.9.7** (shipped 2026-05-06 — **v5.9.x SLOT 7 — sovereignty
+pass batch 3a/3 (9 conversions: TS acceptance cluster + 3
+cyrlint regressions)**. The TS acceptance cluster pinned in
+v5.9.4 lands as one 6-script batch sharing a single helper
+template (`_parse_ts_dir_gate`) — six `tests/regression-ts-*.sh`
+scripts, each with 5-7 inline TS heredocs, extracted to 38 .ts
+fixture files in `tests/fixtures/ts_*/` and run through
+`cc5 --parse-ts` per fixture. Plus three bespoke cyrlint-
+output gates: ts-lex (single 130-line `--lex-ts` fixture),
+lint-init-order (4 sub-cases asserting cyrlint's
+forward-ref-warning behavior), cyrlint-large-file (7008-line
+synthesized fixture asserting zero file-size false-positives).
+cc5 unchanged at **741,048 B** — `programs/` +
+`tests/fixtures/` work; the compiler binary is not touched.
+
+**Premise-check at slot entry**: v5.9.4 roadmap pinned the TS
+acceptance cluster at 9 scripts; empirical at slot entry only
+6 fit the uniform "compile each TS heredoc with `cc5
+--parse-ts`, all must exit 0" shape. ts-lex uses a different
+mode flag (single-fixture `--lex-ts`) and was a one-off port
+this slot. ts-parse + ts-parse-tsx walk an external SY corpus
+with a pass-count threshold (deferred to v5.9.8 — the corpus
+walker is its own helper-design step). Honest scope shrink:
+9 conversions instead of an originally-projected ~12.
+
+**What also shipped**: helpers `_count_substr_buf`,
+`_cyrlint_count_marker`, `_exec_with_arg_capture_both`
+(stdout+stderr variant of v5.9.6's `_exec_with_arg_capture`),
+plus the parameterized `_ts_mode_run(fixture, mode_flag)` so
+`_parse_ts_dir_gate` and `_ts_lex_gate` share one fork+exec
+implementation. 11 new fixture sub-directories under
+`tests/fixtures/`. 60 → 50 → 38 → 37 → 28 .sh remaining
+across v5.9.2 + v5.9.3 + v5.9.6 + v5.9.7.
+
+**Verification**: 66/66 check.sh green pre- and post-deletion;
+cc5 self-host byte-identical (no compiler-source change);
+38 TS fixtures smoke under `--parse-ts`; ts-lex 130-line
+fixture smoke under `--lex-ts`; cyrlint regressions
+(forward_refs → 3 warnings, string_literal_safe / lib/math /
+lib/string → 0 warnings, 7008-line synthetic → 0 file-size
+false-positives).
+
+**Next**: v5.9.8 — sovereignty pass batch 3b/3. Earned
+categories remaining: ts-parse + ts-parse-tsx (external SY
+corpus walker + threshold check), shared-library cyrius-side
+test (lib/dynlib.cyr / lib/fdlopen.cyr consumer), cross-host
+SSH gates (8 scripts: aarch64-syscalls,
+aarch64-native-selfhost, macho-exit, pe-exit, sit-status,
+tls-live, aarch64-f64, aarch64-f64-polyfill — needs
+`_ssh_skip_check(target)` helper + cyrius-side scp/ssh
+fork-exec wrappers), plus ~17 remaining bespoke. v5.9.9+
+inherits from the v5.9.6 roadmap.)
+
 **5.9.6** (shipped 2026-05-06 — **v5.9.x SLOT 6 — testsuite-
 gate fix chain + args regression harness + 1 conversion**. The
 v5.9.5-pinned `_testsuite_gate "0 files"` audit unraveled into

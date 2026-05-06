@@ -408,8 +408,21 @@ at cycle entry):
   guardrail) — audit total 65 → 66. Plus 1 conversion:
   struct-cap (v5.7.17 kybernet-class fix). Remaining
   regression-*.sh: 37 (was 38). cc5 unchanged at 741,048 B.
-- **v5.9.7** — sovereignty pass batch 3/3 continued: target
-  ~10-15 more conversions from the remaining 37
+- **v5.9.7** ✅ — **sovereignty pass batch 3a/3 shipped 2026-05-06**.
+  9 conversions: TS acceptance cluster (6 scripts share a single
+  `_parse_ts_dir_gate` helper template; 38 .ts fixtures
+  extracted to `tests/fixtures/ts_*/` from inline heredocs) +
+  ts-lex (single-fixture `--lex-ts` one-off,
+  `_ts_lex_gate`) + lint-init-order (4 sub-cases via
+  `_lint_init_order_gate`) + cyrlint-large-file (7008-line
+  synthesized fixture via `_cyrlint_large_file_gate`). Helpers
+  earned: parameterized `_ts_mode_run(fixture, mode_flag)`,
+  `_count_substr_buf`, `_cyrlint_count_marker`,
+  `_exec_with_arg_capture_both` (stdout+stderr capture). 37 →
+  28 .sh remaining. cc5 unchanged at 741,048 B; 66/66 check.sh
+  green; cc5 self-host byte-identical.
+- **v5.9.8** — sovereignty pass batch 3b/3 continued: target
+  ~8-12 more conversions from the remaining 28
   `tests/regression-*.sh`. Categories earned for this slot:
   - **Cross-host SSH gates** (8 scripts): aarch64-syscalls,
     aarch64-native-selfhost, macho-exit, pe-exit, sit-status,
@@ -440,17 +453,17 @@ at cycle entry):
     lint-global-init-order, syscall-surface-v5735,
     fuzz-deps-prepend, api-surface, cx-build, cx-roundtrip,
     cx-syscall-literal, cx-token-offsets. Mostly one-off ports.
-- **v5.9.8** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
+- **v5.9.9** — sovereignty pass: `scripts/cyriusly` (349 LOC) +
   `scripts/cyrius-init.sh` (1,021 LOC heredoc-heavy) +
   `cyrius-port.sh`. The two project-scaffolder scripts are
   mostly heredoc templates — converting requires designing a
   templating facility OR keeping the heredocs as data-files
   read at runtime.
-- **v5.9.9** — sovereignty pass: small utilities batch
+- **v5.9.10** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
-- **v5.9.10+** — `cyrius audit` fix slot (once user picks
+- **v5.9.11+** — `cyrius audit` fix slot (once user picks
   semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
   redundancy cleanup (per v5.9.6 pin) + release-valve +
   closeout per CLAUDE.md 11-step protocol.

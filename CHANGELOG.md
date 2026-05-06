@@ -6,6 +6,131 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.7] — 2026-05-06
+
+**v5.9.x SLOT 7 — sovereignty pass batch 3a/3 (9 conversions:
+TS acceptance cluster + 3 cyrlint regressions)**. The TS
+acceptance cluster pinned in v5.9.4 lands as a single 6-script
+batch sharing one helper template (`_parse_ts_dir_gate`); plus
+three bespoke cyrlint-output gates (lint-init-order,
+cyrlint-large-file, ts-lex). 37 → 28 `tests/regression-*.sh`
+remaining.
+
+cc5: **741,048 B unchanged** — `programs/` + `tests/fixtures/`
+work; the compiler binary is not touched.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+The v5.9.4 roadmap had the TS acceptance cluster at 9 scripts;
+empirical at slot entry: only 6 fit the uniform "compile each TS
+heredoc with `cc5 --parse-ts`, all must exit 0" shape (ts-asserts,
+ts-mapped, ts-decorators, ts-variadic-tuples,
+ts-const-type-params, ts-advanced-pin-audit). The other three
+TS scripts have different shapes — ts-lex uses `--lex-ts` with a
+single 130-line synthetic fixture (one-off port this slot);
+ts-parse + ts-parse-tsx walk an external SY corpus with a
+pass-count threshold (deferred to v5.9.8 — the corpus walker is
+its own helper-design step). Total this slot: 9 conversions
+(6 TS-cluster + ts-lex + lint-init-order + cyrlint-large-file).
+
+### Added
+
+- **`programs/check.cyr` — `_ts_mode_run(fixture_path, mode_flag)`**:
+  open fixture as stdin, fork cc5 with one mode flag arg
+  (`--parse-ts` / `--lex-ts`), return WEXITSTATUS. stdout +
+  stderr go to /dev/null. Backward-compat wrapper
+  `_parse_ts_run` delegates with `--parse-ts`.
+
+- **`programs/check.cyr` — `_parse_ts_dir_gate(gate, label, subdir)`**:
+  walk `tests/fixtures/<subdir>/*.ts`, run `cc5 --parse-ts` on
+  each, expect every fixture to parse cleanly (exit 0). Per-
+  fixture diagnostic on FAIL prints the case filename so a
+  regression in `cc5 --parse-ts` reports which input shape
+  rejected. Powers 6 gates this slot.
+
+- **`programs/check.cyr` — `_ts_lex_gate()`**: single-fixture
+  `cc5 --lex-ts` on `tests/fixtures/ts_lex/sample.ts`. Exercises
+  the v5.7.2 P1.1-P1.6 lex features (shebang, JSDoc,
+  identifiers, 30+ keywords, all numeric bases with separators,
+  template literals + interpolation, regex/division
+  disambiguation). One-off because ts-lex doesn't fit the
+  multi-case `_parse_ts_dir_gate` shape.
+
+- **`programs/check.cyr` — `_count_substr_buf(buf, n, needle)`**:
+  count occurrences of `needle` (cstring) in `buf[0..n]`. Reusable
+  across cyrlint/cyrdoc-output gates.
+
+- **`programs/check.cyr` — `_exec_with_arg_capture_both(bin, arg,
+  buf, buflen)`**: stdout+stderr capture variant of
+  `_exec_with_arg_capture` (added v5.9.6). Used when the target
+  tool emits diagnostics to stderr but the gate wants to scan
+  them. cyrlint emits its per-line warnings to stderr; the
+  trailing "N warnings" summary goes to stdout — capturing both
+  is required.
+
+- **`programs/check.cyr` — `_cyrlint_count_marker(file_path,
+  marker, buf, buflen)`**: thin wrapper over
+  `_exec_with_arg_capture_both` + `_count_substr_buf`. Returns
+  the count of `marker` substring matches in cyrlint's combined
+  output for `file_path`.
+
+- **`programs/check.cyr` — `_lint_init_order_gate()`**: bespoke
+  conversion of `tests/regression-lint-global-init-order.sh`
+  (v5.7.32 + v5.7.36; mabda-surfaced). Four sub-cases:
+  forward-refs fixture (≥3 warnings expected), lib/math.cyr
+  (0 false-positives), lib/string.cyr (0 false-positives),
+  string-literal fixture (0 false-positives — v5.7.36
+  string-lit awareness).
+
+- **`programs/check.cyr` — `_cyrlint_large_file_gate()`**:
+  bespoke conversion of `tests/regression-cyrlint-large-file.sh`
+  (v5.8.41 floor; mabda v3 Step 3d/3e). Synthesizes a ~7008-line
+  source (700 `_check_N` fns × 5 lines + boilerplate),
+  asserts cyrlint produces zero "unclosed braces at end of file"
+  and zero "trailing whitespace" warnings.
+
+- **`tests/fixtures/ts_asserts/`, `ts_mapped/`, `ts_decorators/`,
+  `ts_variadic_tuples/`, `ts_const_type_params/`,
+  `ts_advanced_pin_audit/`** — 38 .ts fixtures total extracted
+  from the v5.7.x bash heredocs (6, 7, 5, 7, 6, 7 cases per
+  topic).
+
+- **`tests/fixtures/ts_lex/sample.ts`** — 130-line synthetic TS
+  exercising v5.7.2 P1.1-P1.6 lex features.
+
+- **`tests/fixtures/lint_init_order/forward_refs.cyr`,
+  `string_literal_safe.cyr`** — 2 fixtures for
+  `_lint_init_order_gate`'s sub-cases.
+
+### Changed
+
+- **`programs/check.cyr` — `_run_regression_gates`**: 9 `_gate(...)`
+  calls replaced. Six TS-cluster gates call
+  `_parse_ts_dir_gate`; ts-lex calls `_ts_lex_gate`;
+  lint-init-order calls `_lint_init_order_gate`;
+  cyrlint-large-file calls `_cyrlint_large_file_gate`.
+
+### Removed
+
+- **9 `tests/regression-*.sh`** scripts retired alongside their
+  conversions: ts-asserts, ts-mapped, ts-decorators,
+  ts-variadic-tuples, ts-const-type-params, ts-advanced-pin-audit,
+  ts-lex, lint-global-init-order, cyrlint-large-file. Total:
+  60 → 50 → 38 → 37 → 28 across v5.9.2 + v5.9.3 + v5.9.6 +
+  v5.9.7.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change this slot).
+- check.sh: 66/66 gates green, exit 0 — pre- and post-deletion.
+- TS fixtures smoke (local): 38/38 fixtures `cc5 --parse-ts`
+  exit 0; ts-lex 130-line `cc5 --lex-ts` exit 0.
+- cyrlint regressions: forward_refs fixture produces 3 warnings;
+  string_literal_safe / lib/math / lib/string all produce 0
+  warnings; 7008-line synthetic produces 0 "unclosed braces" /
+  "trailing whitespace" warnings.
+
 ## [5.9.6] — 2026-05-06
 
 **v5.9.x SLOT 6 — testsuite-gate fix chain + args regression

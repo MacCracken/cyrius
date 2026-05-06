@@ -1,0 +1,13 @@
+var COMPUTED = FLAG_A | FLAG_B | FLAG_C;
+
+fn dummy() { return 0; }
+
+var FLAG_A = 0x1;
+var FLAG_B = 0x2;
+var FLAG_C = 0x4;
+
+var SAFE_REF = FLAG_A;
+
+fn main() { return 0; }
+var r = main();
+syscall(60, r);
