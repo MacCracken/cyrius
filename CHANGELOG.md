@@ -6,6 +6,113 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.17] — 2026-05-06
+
+**v5.9.x SLOT 17 — TS corpus + shared-library cleanup**.
+Pinned theme per the v5.9.7-onward roadmap: convert the three
+remaining external-dep gates that needed special-shape helpers
+(corpus walker with prune semantics; cyrius-side dlopen replacement
+for the inline-C harness).
+
+cc5: **741,048 B unchanged** — `programs/check.cyr` adds three
+gates (`_ts_corpus_gate` parameterizes the .ts/.tsx pair);
+`lib/fs.cyr` gains `dir_walk_with_prunes` + `find_files_with_prunes`
+public stdlib helpers; `tests/fixtures/shared/{lib.cyr,dlopen_runner.cyr}`
+replace the .sh's heredocs and inline-C harness; api-surface
+snapshot regenerates 2763 → 2765 (+2 from the new fs.cyr exports).
+No compiler-source change.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+The v5.9.7+ pin scoped this slot as "TS corpus walker + shared-
+library cleanup", noting `_walk_corpus_with_prunes` as a private
+dispatcher helper. Mid-slot decision: **promote to public stdlib**
+in `lib/fs.cyr` instead of keeping private. Reasoning: the helper
+is generic file-walk-with-prune, sits next to the no-prune
+`find_files` already in `lib/fs.cyr`, and the api-surface delta
+is +2 entries (trivial). Same rationale applies to the carve-out
+slated for v5.9.19+ — public stdlib is the long-term home.
+
+The shared-library gate hit a non-obvious snag: `dynlib_init`
+returns 2 (`_dynlib_ifunc_safe == 0` early-out) without a
+prior `dynlib_bootstrap_cpu_features()` call, even though the
+cyrius `shared;` .so has no IFUNCs. Mid-slot probe traced this
+to dynlib's defense-in-depth check — fdlopen.cyr's bootstrap
+flow normally sets the flag; the runner does it explicitly so
+the test logic matches the v5.6.37 sovereign path.
+
+### Added
+
+- **`lib/fs.cyr` — `dir_walk_with_prunes(path, results, prunes)`**:
+  recursive directory walk; pushes file paths to `results`,
+  pruning any subtree whose entry name matches a member of
+  `prunes` (vec of Str, exact match; no glob, no path-prefix).
+  Equivalent to `find PATH -type f \( -path '*/X/*' -o ... \)
+  -prune -o -print` with X drawn from `prunes`. Mirrors
+  `dir_walk(path, results)`'s shape so the prune variant is
+  a one-arg-extension.
+- **`lib/fs.cyr` — `find_files_with_prunes(path, ext, prunes)`**:
+  pruned variant of `find_files`. Walks via
+  `dir_walk_with_prunes`, then filters by extension. Used by
+  the v5.9.17 TS corpus gates; reusable by future corpus
+  regressions (vidya, downstream test runners).
+- **`programs/check.cyr` — `_ts_corpus_gate(label, ext, threshold)`**:
+  parameterized SY corpus acceptance gate. Reads `SY_CORPUS`
+  env (default `/home/macro/Repos/secureyeoman`), prunes
+  `node_modules/dist/build/.next/coverage`, walks for `ext`,
+  runs `cc5 --parse-ts < file` for each, asserts pass count
+  meets `threshold`. v5.7.3 P3.1 / P3.3 baseline pinned at
+  v5.9.17 ship: 2053/2053 .ts, 435/435 .tsx (both 100%).
+- **`programs/check.cyr` — `_shared_dlopen_gate()`**: cyrius-
+  side replacement for the v4.7.0-pinned `regression-shared.sh`
+  inline-C harness. Compiles `tests/fixtures/shared/lib.cyr`
+  to `/tmp/cyrius_audit_shared.so`, compiles the dlopen-runner
+  fixture, runs it, decodes exit code. Runner uses
+  `dynlib_bootstrap_cpu_features` + `dynlib_open` + `dynlib_init`
+  + `dynlib_sym` + `fncall0/2` — the v5.6.37 sovereign path
+  (no `cc` dependency).
+- **`tests/fixtures/shared/lib.cyr`**: minimal `shared;` source
+  with 4 exports (add, greeting, get_counter, inc_counter) +
+  one mutable global `counter = 100` whose value must survive
+  DT_INIT. Replaces the heredoc in the deleted .sh.
+- **`tests/fixtures/shared/dlopen_runner.cyr`**: companion
+  runner. Hardcodes `/tmp/cyrius_audit_shared.so`; exit-code
+  contract documented in its header (99 = green; 10/11/12 =
+  bootstrap/open/init failures; 21..24 = dynlib_sym lookup
+  failures; 31..36 = per-fn return-value mismatches).
+
+### Changed
+
+- **`programs/check.cyr` — dispatcher**: replaced three
+  `_gate(...)` calls (`tests/regression-ts-parse.sh`,
+  `tests/regression-ts-parse-tsx.sh`, `tests/regression-shared.sh`)
+  with parameterized gate calls. The two TS-corpus calls share
+  the same gate fn; the shared-library call gets its own.
+- **`docs/api-surface.snapshot`**: regenerated 2763 → 2765
+  entries to absorb the two new `lib/fs.cyr` exports
+  (`dir_walk_with_prunes`, `find_files_with_prunes`).
+
+### Removed
+
+- **`tests/regression-ts-parse.sh`** (56 LOC), **`tests/regression-
+  ts-parse-tsx.sh`** (56 LOC), **`tests/regression-shared.sh`**
+  (72 LOC) — all folded into cyrius-side gates + fixtures.
+
+### Audit
+
+- 66/66 audit gates green; both TS-corpus gates report 100% pass
+  on the SY corpus (2053/2053 .ts, 435/435 .tsx). cc5==cc5
+  byte-identical at 741,048 B.
+- `.sh` count: 15 → 12.
+
+### Cascaded to v5.9.18
+
+- **`lib/ct.cyr` — add `ct_eq_bytes(a, b, n)`** (agnosys 1.1.2
+  filing 2026-05-06; user-decided slot insert 2026-05-06).
+  Minimum-viable single-fn add to lib/ct.cyr matching agnosys's
+  literal ask. Sigil-paired bigger consolidation (lift
+  `ct_eq` / `ct_eq_32`) deferred to a paired downstream slot.
+
 ## [5.9.16] — 2026-05-06
 
 **v5.9.x SLOT 16 — opportunistic deferred-gates batch:

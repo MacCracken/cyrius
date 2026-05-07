@@ -602,7 +602,35 @@ at cycle entry):
     a cyrius-side dlopen-test fixture using `lib/dynlib.cyr` or
     `lib/fdlopen.cyr` (the v5.6.37 fdlopen path is the more
     sovereign choice). Sovereignty pin per memory.
-- **v5.9.18+** — `cyrius audit` fix slot (once user picks
+- **v5.9.18** — **`lib/ct.cyr` — add `ct_eq_bytes(a, b, n)`**
+  (agnosys 1.1.2 filing 2026-05-06 at `agnosys/docs/development/
+  issues/2026-05-06-cyrius-ct-eq-bytes-stdlib.md`). User
+  decision 2026-05-06: land between v5.9.17 (TS corpus +
+  shared-library cleanup) and v5.9.19+ (regression-stdlib
+  carve-out).
+
+  Scope minimum-viable: ONE new public fn — `ct_eq_bytes(a,
+  b, n)` matching agnosys's literal ask (canonical XOR-
+  accumulate, single-length, equal-length-by-construction).
+  ~10 lines added to `lib/ct.cyr` (current contents: only
+  `ct_select`). api-surface snapshot adds 1 entry; cc5
+  unchanged (pure stdlib add).
+
+  Out of scope (deferred to a paired sigil-bump slot):
+  lifting sigil's dual-length `ct_eq(a, a_len, b, b_len)` +
+  `ct_eq_32(a, b)` (`lib/sigil.cyr:1316,1332`) into
+  `lib/ct.cyr`. Both have name collisions with sigil's
+  hand-rolls — would emit "duplicate fn" warnings the moment
+  sigil includes the new `lib/ct.cyr`. Naming + sigil-side
+  delete must be coordinated.
+
+  Vidya pin: `vidya/content/cyrius/language/features.cyml`
+  `secret_var_compound_ops` entry already half-promises
+  `ct_eq` as the "intended primitive"; refresh to name
+  `ct_eq_bytes` as the canonical stdlib helper, and clarify
+  that scalar `ct_eq` was vidya-aspirational not shipped.
+
+- **v5.9.19+** — `cyrius audit` fix slot (once user picks
   semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
   redundancy cleanup (per v5.9.6 pin) + **`lib/regression.cyr`
   testing-stdlib carve-out** (pinned at v5.9.7 ship per user
@@ -631,7 +659,8 @@ at cycle entry):
   primitives. Slot earns when v5.9.x .sh-conversion arc closes
   out and the helper inventory has stabilized — do not carve
   mid-arc, the API will keep churning until the dispatcher has
-  its full helper set.
+  its full helper set. Now positioned at v5.9.19+ after the
+  v5.9.18 `ct_eq_bytes` insert (agnosys 1.1.2 filing).
 
 **KEEP-as-bash (intrinsic; sovereignty-allowed):**
 - `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`

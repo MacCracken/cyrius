@@ -1,0 +1,14 @@
+# shared library fixture for v5.9.17 cyrius-side dlopen gate.
+# Replaces the inline `cat > lib.cyr <<EOF ... EOF` heredoc in
+# tests/regression-shared.sh (deleted v5.9.17). Compiled with
+# `cc5 < lib.cyr > lib.so`; dynlib_open + dynlib_sym in the
+# audit's `_shared_dlopen_gate()` resolves the four exports
+# below.
+shared;
+
+var counter = 100;
+
+fn add(a, b) { return a + b; }
+fn greeting() { return "hello from cyrius"; }
+fn get_counter() { return counter; }
+fn inc_counter() { counter = counter + 1; return counter; }

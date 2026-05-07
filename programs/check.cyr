@@ -3880,6 +3880,97 @@ fn _ts_lex_gate() {
     return 0;
 }
 
+# Bespoke gate (v5.9.17): SecureYeoman corpus acceptance gate.
+# Walks `~/Repos/secureyeoman` (configurable via SY_CORPUS env)
+# for every file with `ext`, pruning the standard JS/TS build-
+# artifact dirs, runs `cc5 --parse-ts` on each, asserts the PASS
+# count meets `threshold`. v5.7.3 P3.1 baseline:
+#   .ts  → 2053 files, threshold 2053 (100% pinned at v5.9.17)
+#   .tsx → 435 files,  threshold 435  (same)
+# Pre-v5.9.17 the .sh used `find ... -not -path */node_modules/* …`;
+# the cyrius-side version uses `find_files_with_prunes` from
+# lib/fs.cyr (added v5.9.17) for the same prune semantics.
+fn _ts_corpus_gate(label, ext, threshold) {
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var corpus_root = _ssh_target("SY_CORPUS", "/home/macro/Repos/secureyeoman");
+    if (is_dir(str_from(corpus_root)) != 1) {
+        _p("  skip: SY corpus not at ");
+        _p(corpus_root);
+        println(" (override via SY_CORPUS=...)");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Build prune vec — same set as the .sh's find -not -path *.
+    var prunes = vec_new();
+    vec_push(prunes, str_from("node_modules"));
+    vec_push(prunes, str_from("dist"));
+    vec_push(prunes, str_from("build"));
+    vec_push(prunes, str_from(".next"));
+    vec_push(prunes, str_from("coverage"));
+
+    var files = find_files_with_prunes(str_from(corpus_root),
+                                       str_from(ext), prunes);
+    var total = vec_len(files);
+
+    # For .ts we need to ALSO exclude .tsx (the .sh did this via
+    # `-not -name '*.tsx'`). path_has_ext(".ts") matches both
+    # foo.ts AND foo.tsx (the trailing 3 chars match either way
+    # — actually no, `.ts` is exact suffix; `.tsx` ends with `.tsx`
+    # not `.ts`). Verify: str_ends_with(".tsx", ".ts") on ASCII —
+    # ".tsx"[len-3..] == ".sx" not ".ts", so no false match. Good.
+
+    var pass = 0;
+    var fail = 0;
+    var fi = 0;
+    while (fi < total) {
+        var fp = vec_get(files, fi);
+        var rc = _ts_mode_run(str_data(fp), "--parse-ts");
+        if (rc == 0) { pass = pass + 1; }
+        else { fail = fail + 1; }
+        fi = fi + 1;
+    }
+
+    if (pass < threshold) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(ext);
+        _p(" corpus pass count ");
+        print_num(pass);
+        _p("/");
+        print_num(total);
+        _p(" below threshold ");
+        print_num(threshold);
+        println(" (regression)");
+        _check(label, 1);
+        return 1;
+    }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": ");
+    _p(ext);
+    _p(" corpus ");
+    print_num(pass);
+    _p("/");
+    print_num(total);
+    _p(" parses (≥");
+    print_num(threshold);
+    println(" threshold)");
+    _check(label, 0);
+    return 0;
+}
+
 # Bespoke gate template (v5.9.7): walk
 # `tests/fixtures/<subdir>/*.ts`, run `cc5 --parse-ts` on each
 # fixture, expect every fixture to parse cleanly (exit 0). Used
@@ -4501,6 +4592,108 @@ fn _build_api_surface_if_missing() {
     return 0;
 }
 
+# Bespoke gate: `shared;` directive produces a dlopen-able .so
+# (v4.7.0 alpha1/alpha2/GA + shared-mode fn-body elision fix).
+# Compiles tests/fixtures/shared/lib.cyr (4 exports: add,
+# greeting, get_counter, inc_counter; one mutable global
+# `counter = 100` whose value must survive DT_INIT) to a /tmp
+# .so, compiles the dlopen-runner companion fixture, runs it,
+# decodes exit code (99 = all green; 10..36 = specific sub-test
+# failure with mapping in dlopen_runner.cyr's header).
+#
+# v5.9.17 cyrius-side replacement for tests/regression-shared.sh's
+# inline-C harness. dynlib_open + dynlib_init + dynlib_sym +
+# fncall0/2 covers what `dlopen` + `dlsym` + cast-and-call
+# covered in the .sh, fully sovereign (no `cc` dependency).
+fn _shared_dlopen_gate() {
+    var label = "shared; + dlopen round-trip";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Step 1: compile the shared-library fixture to /tmp/<fixed>.so.
+    # Uses a fixed path because the runner has it baked in (avoids
+    # arg passing in a one-shot fixture; dlopen_runner.cyr documents
+    # the contract).
+    var lib_src = _root_path("tests/fixtures/shared/lib.cyr");
+    var so_path = "/tmp/cyrius_audit_shared.so";
+    var rc1 = _self_host_pipe(lib_src, CC_PATH, so_path);
+    if (rc1 != 0) {
+        sys_unlink(so_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5 < lib.cyr → .so failed (rc=");
+        print_num(rc1);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(so_path, 493);
+
+    # Step 2: compile the runner.
+    var runner_src = _root_path("tests/fixtures/shared/dlopen_runner.cyr");
+    var runner_bin = _tmp_path("audit_dlopen_runner_");
+    var rc2 = _self_host_pipe(runner_src, CC_PATH, runner_bin);
+    if (rc2 != 0) {
+        sys_unlink(so_path);
+        sys_unlink(runner_bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5 compile of dlopen_runner.cyr failed (rc=");
+        print_num(rc2);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(runner_bin, 493);
+
+    # Step 3: run the runner, decode exit code.
+    var ec = _exec_run_clean(runner_bin);
+    sys_unlink(so_path);
+    sys_unlink(runner_bin);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius `shared;` .so loadable via dynlib_open + dynlib_init; 4 exports + DT_INIT counter + state persistence");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": dlopen runner exit=");
+    print_num(ec);
+    if (ec == 10) { _p(" — dynlib_bootstrap_cpu_features (no /lib64/ld-linux?)"); }
+    if (ec == 11) { _p(" — dynlib_open returned 0"); }
+    if (ec == 12) { _p(" — dynlib_init non-zero"); }
+    if (ec == 21) { _p(" — dynlib_sym(\"add\") returned 0"); }
+    if (ec == 22) { _p(" — dynlib_sym(\"greeting\") returned 0"); }
+    if (ec == 23) { _p(" — dynlib_sym(\"get_counter\") returned 0"); }
+    if (ec == 24) { _p(" — dynlib_sym(\"inc_counter\") returned 0"); }
+    if (ec == 31) { _p(" — add(17, 25) != 42"); }
+    if (ec == 32) { _p(" — greeting() string mismatch"); }
+    if (ec == 33) { _p(" — get_counter() != 100 (DT_INIT didn't run)"); }
+    if (ec == 34) { _p(" — inc_counter() first call != 101"); }
+    if (ec == 35) { _p(" — inc_counter() second call != 102"); }
+    if (ec == 36) { _p(" — get_counter() didn't persist"); }
+    println("");
+    _check(label, 1);
+    return 1;
+}
+
 # Bespoke gate: inline-asm SSE m128 operand alignment regression
 # (v5.5.21). Two fixture shapes — both must succeed:
 #   A. with leading global   (sigil 2.9.0 workaround shape)
@@ -4772,7 +4965,7 @@ fn _setup_paths() {
 # via _gate(). Matches scripts/check.sh sections 4a–4ba inclusive.
 fn _run_regression_gates() {
     _section("Shared-object");
-    _gate("shared; + dlopen round-trip", "tests/regression-shared.sh");
+    _shared_dlopen_gate();
     println("");
 
     _section("Linker");
@@ -4856,11 +5049,11 @@ fn _run_regression_gates() {
     println("");
 
     _section("TS parser (SY acceptance)");
-    _gate("cc5 --parse-ts vs SY .ts corpus ≥98%% baseline (v5.7.3 P3.1)", "tests/regression-ts-parse.sh");
+    _ts_corpus_gate("cc5 --parse-ts vs SY .ts corpus ≥98%% baseline (v5.7.3 P3.1)", ".ts", 2053);
     println("");
 
     _section("TS parser .tsx (JSX)");
-    _gate("cc5 --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", "tests/regression-ts-parse-tsx.sh");
+    _ts_corpus_gate("cc5 --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", ".tsx", 435);
     println("");
 
     _section("Bare-truthy after fn-call");

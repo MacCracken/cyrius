@@ -1,0 +1,51 @@
+# dlopen runner for v5.9.17 _shared_dlopen_gate. Companion to
+# tests/fixtures/shared/lib.cyr; the dispatcher compiles lib.cyr
+# to /tmp/cyrius_audit_shared.so, then compiles + runs this
+# binary. Exit code:
+#   99 — all sub-tests green
+#   10 — dynlib_bootstrap_cpu_features failed (need /lib64/ld-linux)
+#   11 — dynlib_open failed
+#   12 — dynlib_init failed
+#   21..24 — dynlib_sym lookup failed (add/greeting/get/inc)
+#   31 — add(17, 25) wrong
+#   32 — greeting() string mismatch
+#   33 — get_counter() != 100 (DT_INIT didn't run)
+#   34 — inc_counter() first call != 101
+#   35 — inc_counter() second call != 102
+#   36 — get_counter() didn't persist after inc()s
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/mmap.cyr"
+include "lib/dynlib.cyr"
+include "lib/fnptr.cyr"
+
+fn main() {
+    alloc_init();
+    if (dynlib_bootstrap_cpu_features() != 0) { syscall(60, 10); }
+    var h = dynlib_open("/tmp/cyrius_audit_shared.so");
+    if (h == 0) { syscall(60, 11); }
+    if (dynlib_init(h) != 0) { syscall(60, 12); }
+    var p_add = dynlib_sym(h, "add");
+    var p_greet = dynlib_sym(h, "greeting");
+    var p_get = dynlib_sym(h, "get_counter");
+    var p_inc = dynlib_sym(h, "inc_counter");
+    if (p_add == 0) { syscall(60, 21); }
+    if (p_greet == 0) { syscall(60, 22); }
+    if (p_get == 0) { syscall(60, 23); }
+    if (p_inc == 0) { syscall(60, 24); }
+    if (fncall2(p_add, 17, 25) != 42) { syscall(60, 31); }
+    var g = fncall0(p_greet);
+    if (streq(g, "hello from cyrius") != 1) { syscall(60, 32); }
+    if (fncall0(p_get) != 100) { syscall(60, 33); }
+    if (fncall0(p_inc) != 101) { syscall(60, 34); }
+    if (fncall0(p_inc) != 102) { syscall(60, 35); }
+    if (fncall0(p_get) != 102) { syscall(60, 36); }
+    syscall(60, 99);
+}
+main();

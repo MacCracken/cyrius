@@ -858,7 +858,9 @@ freelist::fl_init/0
 fs::dir_list/1
 fs::dir_list_full/1
 fs::dir_walk/2
+fs::dir_walk_with_prunes/3
 fs::find_files/2
+fs::find_files_with_prunes/3
 fs::is_dir/1
 fs::path_basename/1
 fs::path_dirname/1
