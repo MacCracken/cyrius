@@ -20,3 +20,32 @@ fn ct_select(cond, a, b) {
     var mask = 0 - cond;
     return a ^ (mask & (a ^ b));
 }
+
+# Branchless byte-array equality. Returns 1 if `a[0..n] == b[0..n]`,
+# 0 otherwise. No data-dependent branch on the comparison result —
+# the canonical XOR-accumulate. Both buffers must be exactly `n`
+# bytes; equal-length is a contract on the caller (length is not
+# treated as secret here, so a length mismatch is a caller bug,
+# not a CT-leak risk handled by this fn). For variable-length
+# comparisons where length itself is non-secret but unequal-length
+# inputs are valid, hand-roll a length check that early-returns 0
+# AROUND `ct_eq_bytes` — see sigil's `lib/sigil.cyr:1316` `ct_eq`
+# for the dual-length wrapper shape.
+#
+# Pinned v5.9.18 (agnosys 1.1.2 filing 2026-05-06). Pre-v5.9.18
+# this primitive was hand-rolled three places — sigil:1316
+# (`ct_eq`, dual-length), sigil:1332 (`ct_eq_32`, 32-byte fast
+# path), agnosys/src/certpin.cyr:120 (`certpin_ct_streq`,
+# cstring variant). v5.9.18 stdlib adds the single-length core;
+# the dual-length / 32-byte / cstring wrappers stay downstream
+# pending a paired sigil-bump slot (collision risk with sigil's
+# existing `ct_eq` / `ct_eq_32` names if both are public).
+fn ct_eq_bytes(a, b, n) {
+    var acc = 0;
+    var i = 0;
+    while (i < n) {
+        acc = acc | (load8(a + i) ^ load8(b + i));
+        i = i + 1;
+    }
+    return acc == 0;
+}

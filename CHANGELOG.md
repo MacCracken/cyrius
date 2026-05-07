@@ -6,6 +6,80 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.18] — 2026-05-06
+
+**v5.9.x SLOT 18 — `lib/ct.cyr` adds `ct_eq_bytes(a, b, n)`**.
+Pinned slot per agnosys 1.1.2 filing 2026-05-06
+(`agnosys/docs/development/issues/2026-05-06-cyrius-ct-eq-bytes-stdlib.md`),
+user-decided slot insert at v5.9.17 ship.
+
+cc5: **741,048 B unchanged** — pure stdlib add, no compiler-source
+change. `lib/ct.cyr` 22 → ~50 lines (one new public fn +
+docstring); api-surface snapshot 2765 → 2766.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Pre-v5.9.18 `lib/ct.cyr` shipped exactly one helper
+(`ct_select`); the canonical XOR-accumulate byte-equality
+primitive was hand-rolled three places — sigil
+`lib/sigil.cyr:1316` (`ct_eq` dual-length), sigil:1332
+(`ct_eq_32` 32-byte fast path), agnosys
+`src/certpin.cyr:120` (`certpin_ct_streq` cstring variant).
+agnosys's filing called LOW severity because every site is
+correct; the cost was duplication + a vague vidya pin
+(`secret_var_compound_ops` mentioning `ct_eq` as the
+"intended primitive" without specifying its stdlib location).
+
+Slot scope locked at minimum-viable per the v5.9.17 ship
+decision: ONE new public fn matching agnosys's literal ask
+(single-length, equal-length-by-construction). The bigger
+consolidation (lift sigil's `ct_eq` / `ct_eq_32` upstream)
+needs a paired sigil-bump slot to avoid duplicate-fn
+warnings the moment sigil includes the new `lib/ct.cyr` —
+deferred.
+
+### Added
+
+- **`lib/ct.cyr` — `ct_eq_bytes(a, b, n)`**: branchless
+  byte-array equality. Returns 1 if `a[0..n] == b[0..n]`,
+  0 otherwise. Canonical XOR-accumulate: no data-dependent
+  branch on the comparison result. Equal-length is a caller
+  contract (length is not treated as secret here; mismatch
+  is a caller bug, not a CT-leak risk handled by this fn).
+  Docstring directs callers wanting variable-length to wrap
+  a length early-return AROUND it (sigil's dual-length
+  `ct_eq` wrapper shape).
+- **`tests/tcyr/ct.tcyr`**: extended from 10 → 17 assertions
+  to cover the new primitive — equal 16-byte buffers,
+  single-byte and multi-byte mismatches, n=0 trivial-equal,
+  32-byte SHA-256-shape digest comparison (rejection-late
+  path testing the loop's full traversal).
+
+### Changed
+
+- **`docs/api-surface.snapshot`**: regenerated 2765 → 2766
+  to absorb `ct::ct_eq_bytes/3`.
+- **vidya `content/cyrius/language/features.cyml` —
+  `secret_var_compound_ops` entry**: refreshed the SECRET
+  VAR section. Pre-v5.9.18 the example used aspirational
+  `if (ct_eq(key, candidate))` without naming a stdlib home;
+  post-v5.9.18 names `ct_eq_bytes(a, b, n)` as the canonical
+  helper and clarifies the array-only contract on
+  `secret var` (scalar form is rejected at compile time).
+  Notes that sigil's dual-length `ct_eq` + `ct_eq_32`
+  remain downstream pending the paired-slot consolidation.
+
+### Cascaded to v5.9.19+
+
+- Sigil-paired consolidation: lift dual-length
+  `ct_eq(a, a_len, b, b_len)` and `ct_eq_32(a, b)` from
+  `lib/sigil.cyr:1316,1332` into `lib/ct.cyr` + retire
+  sigil's hand-rolls in a paired downstream slot.
+  Naming has to settle (cyrius `ct_eq_bytes_lens` to avoid
+  bare-`ct_eq` ambiguity vs sigil's bare `ct_eq` symbol).
+- regression-stdlib carve-out (now v5.9.20+).
+- `cyrius audit` fix slot.
+
 ## [5.9.17] — 2026-05-06
 
 **v5.9.x SLOT 17 — TS corpus + shared-library cleanup**.

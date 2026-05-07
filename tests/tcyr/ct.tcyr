@@ -1,8 +1,12 @@
 # Test: lib/ct.cyr constant-time primitives
 include "lib/string.cyr"
 include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 include "lib/ct.cyr"
+
+alloc_init();
 
 test_group("ct_select cond=0 returns a");
 assert_eq(ct_select(0, 42, 99), 42, "ct_select(0, 42, 99) = 42");
@@ -22,5 +26,40 @@ test_group("ct_select preserves each arg when the other matters");
 # a and b differ in every bit: 0xAA... vs 0x55...
 assert_eq(ct_select(0, 0xAAAAAAAAAAAAAAAA, 0x5555555555555555), 0xAAAAAAAAAAAAAAAA, "ct_select(0, 0xAA, 0x55)");
 assert_eq(ct_select(1, 0xAAAAAAAAAAAAAAAA, 0x5555555555555555), 0x5555555555555555, "ct_select(1, 0xAA, 0x55)");
+
+# ─── ct_eq_bytes (v5.9.18; agnosys 1.1.2 filing) ─────────────
+test_group("ct_eq_bytes equal 16-byte buffers");
+var ea = alloc(16);
+var eb = alloc(16);
+var i = 0;
+while (i < 16) { store8(ea + i, i); store8(eb + i, i); i = i + 1; }
+assert_eq(ct_eq_bytes(ea, eb, 16), 1, "16-byte identical buffers → 1");
+
+test_group("ct_eq_bytes single-byte mismatch");
+store8(eb + 7, 0xFF);
+assert_eq(ct_eq_bytes(ea, eb, 16), 0, "diff at byte 7 → 0");
+store8(eb + 7, 7);
+assert_eq(ct_eq_bytes(ea, eb, 16), 1, "restore → 1");
+
+test_group("ct_eq_bytes multi-byte mismatch");
+store8(eb + 0,  0xAA);
+store8(eb + 15, 0xBB);
+assert_eq(ct_eq_bytes(ea, eb, 16), 0, "diff at byte 0 + byte 15 → 0");
+
+test_group("ct_eq_bytes empty buffers");
+assert_eq(ct_eq_bytes(ea, eb, 0), 1, "n=0 is trivially equal");
+
+test_group("ct_eq_bytes 32-byte digest shape (SHA-256)");
+var d1 = alloc(32);
+var d2 = alloc(32);
+var j = 0;
+while (j < 32) {
+    store8(d1 + j, j * 7 & 0xFF);
+    store8(d2 + j, j * 7 & 0xFF);
+    j = j + 1;
+}
+assert_eq(ct_eq_bytes(d1, d2, 32), 1, "two identical 32-byte digests");
+store8(d2 + 31, 0xFF);
+assert_eq(ct_eq_bytes(d1, d2, 32), 0, "rejection-late mismatch (last byte)");
 
 var r = assert_summary();

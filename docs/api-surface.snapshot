@@ -768,6 +768,7 @@ chrono::sleep_ms/1
 csv::csv_escape/1
 csv::csv_parse_line/1
 csv::csv_write_line/1
+ct::ct_eq_bytes/3
 ct::ct_select/3
 cyml::cyml_doc_entries/1
 cyml::cyml_doc_entry/2
