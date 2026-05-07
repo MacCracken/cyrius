@@ -6,6 +6,88 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.25] — 2026-05-07
+
+**v5.9.x SLOT 25 — tcyr-relay-vs-testsuite-gate redundancy
+cleanup + aarch64/fixup.cyr:19 stale-pin verification**.
+Two-item cleanup batch per the v5.9.6 + v5.8.53 deferred pins.
+Net effect: dispatcher carries less double-coverage and the
+v5.8.53 deferred warning is confirmed already-fixed.
+
+cc5: **742,816 B unchanged** — dispatcher-only changes.
+api-surface: **2,769 unchanged**. check.sh: **67 → 61 gates**
+(six relay duplicates retired; same .tcyr files still run via
+the testsuite walk).
+
+### Premise-check finding (a) — aarch64/fixup.cyr:19 already fixed
+
+The v5.8.53 install-pipeline slot surfaced
+`warning:src/backend/aarch64/fixup.cyr:19: syscall arity mismatch`
+during `cat src/main_aarch64.cyr | build/cc5` cross-build.
+v5.8.54 then shipped the syscall arity-skip extension at
+`parse_expr.cyr:661-679` covering the cross-arch
+syscall-number reuse pattern (SYS_OPEN=2 with 4 user args
+[openat shape] + SYS_CLOCK_GETTIME=113 with 2 user args
+[setuid number reuse]). The macOS-path `syscall(228, 4, 0)` at
+`fixup.cyr:19` itself: `_SC_ARITY(228)` returns -1 (table
+absent), so the arity check short-circuits and never warns.
+Re-run cross-build at v5.9.25 confirms the warning is gone.
+
+Pin retired. No fix needed; the deferred-from-v5.8.53 task
+landed in v5.8.54 alongside the EFLADDR / EFLADDR_X1 + 5 PE
+stub adds. Roadmap pin marked stale per
+`feedback_premise_check_at_slot_entry` memory.
+
+### Cleanup (b) — tcyr-relay-vs-testsuite-gate redundancy
+
+Six `_tcyr_relay_gate` calls in `_run_regression_gates` ran
+`shadow_pam.tcyr` / `fdlopen.tcyr` / `thread_local.tcyr` /
+`atomics.tcyr` / `thread_safety.tcyr` / `flags.tcyr` once each
+— compile-via-stdin-pipe-to-cc5, exec, parse `passed/failed`.
+The same six files were ALSO swept by `_testsuite_gate()`'s
+`tests/tcyr/*` walk later in the same `check.sh` invocation,
+so each ran twice per audit. The relay-gate output emitted
+PASS lines like `PASS: shadow_pam (6 assertions)`; the
+testsuite walk emitted column-formatted `shadow_pam   PASS`.
+
+Cleanup: the 6 `_tcyr_relay_gate` calls + their `_section`
+headers retired from `_run_regression_gates`. Each .tcyr now
+runs exactly once per audit via the testsuite walk.
+
+### Changed
+
+- **`programs/check.cyr` `_run_regression_gates`**: 6 `Shadow
+  + PAM` / `fdlopen primitives` / `thread-local slots` /
+  `atomics + mutex race-free` / `thread-safety pattern` /
+  `flags parser` sections removed. Replaced with a single
+  comment block citing v5.9.25 + the v5.9.6 pin lineage. The
+  helper fn `_tcyr_relay_gate()` (line 231) stays — public
+  surface for future tcyrs that don't fit
+  `_testsuite_gate`'s default walk shape (e.g. tcyrs needing
+  custom env-vars or scratch-dir setup).
+
+### Verified
+
+- 61/61 check.sh gates green (audit count drop 67 → 61
+  reflects the 6 retired relay duplicates; 0 actual coverage
+  loss — all 6 tcyrs still run + pass via the testsuite
+  walk).
+- Two-step self-host byte-identical.
+- cc5 unchanged at 742,816 B.
+- Cross-build (`src/main_aarch64.cyr | build/cc5`) confirms
+  no `fixup.cyr:19` warning (v5.8.54 fix still in place).
+
+### Cascaded to v5.9.26+
+
+- v5.9.26 — Phase 2b-aarch64 struct copy.
+- v5.9.27/28 — cyrius-init.sh + cyrius-port.sh sovereignty
+  port (multi-slot).
+- v5.9.29 — init-doctree + init-lib-bin gates.
+- v5.9.30 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.31 — tls-live + network-probe helper.
+- v5.9.32 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.33 — closeout pass before v5.10.0.
+
 ## [5.9.24] — 2026-05-07
 
 **v5.9.x SLOT 24 — `match` exhaustiveness check fires

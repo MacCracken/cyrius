@@ -6524,29 +6524,14 @@ fn _run_regression_gates() {
     _reserved_kw_diag_gate();
     println("");
 
-    _section("Shadow + PAM");
-    _tcyr_relay_gate("shadow_getspnam + unix_chkpwd auth paths", "shadow_pam", "shadow_pam.tcyr");
-    println("");
-
-    _section("fdlopen primitives");
-    _tcyr_relay_gate("setjmp/longjmp + helper-path + state-buf API", "fdlopen primitives", "fdlopen.tcyr");
-    println("");
-
-    _section("thread-local slots");
-    _tcyr_relay_gate("%fs / TPIDR_EL0 slots + CLONE_SETTLS worker isolation", "thread_local slot storage", "thread_local.tcyr");
-    println("");
-
-    _section("atomics + mutex race-free");
-    _tcyr_relay_gate("atomic_cas/fetch_add/fence + 4-thread contention + mutex", "atomic primitives + mutex race-free", "atomics.tcyr");
-    println("");
-
-    _section("thread-safety pattern");
-    _tcyr_relay_gate("mutex-wrapped hashmap + vec under 4-thread contention", "mutex-wrapped hashmap + vec + counter", "thread_safety.tcyr");
-    println("");
-
-    _section("flags parser");
-    _tcyr_relay_gate("bool/int/str flags + positionals + error paths", "flags getopt-long parser", "flags.tcyr");
-    println("");
+    # v5.9.25 (per v5.9.6 pin): the 6 _tcyr_relay_gate calls
+    # previously here (shadow_pam / fdlopen / thread_local /
+    # atomics / thread_safety / flags) are removed — each tcyr is
+    # ALSO covered by `_testsuite_gate()` below, which walks
+    # tests/tcyr/* alphabetically. Pre-v5.9.25 each of these 6
+    # files compiled + ran twice per check.sh invocation; now each
+    # runs exactly once via the testsuite walk. Audit gate count
+    # drops 67 → 61 (six relay-pass lines retired).
 
     _section("aarch64 native self-host");
     _aarch64_native_selfhost_gate();
