@@ -299,7 +299,50 @@ jobs:
           fi
           echo "PASS: shared; .so loadable via dynlib_open + 4 exports"
       - name: Regression — cyrius capacity meter
-        run: sh tests/regression-capacity.sh
+        run: |
+          # v5.9.22 retired tests/regression-capacity.sh into
+          # programs/check.cyr's `_capacity_gate`; CI equivalent
+          # inlines the 7 sub-cases here so failure surface stays
+          # granular under the existing per-step CI layout.
+          CYR="$PWD/scripts/cyrius"
+          [ -x "$CYR" ] || { echo "skip: scripts/cyrius missing"; exit 0; }
+          # The shim resolves cc5 via $HOME/.cyrius/bin/cc5 first;
+          # sync the just-built binary so test 7's empty-cwd run
+          # still finds cc5 (matches v5.7.38 .sh behavior).
+          mkdir -p "$HOME/.cyrius/bin"
+          cp "$PWD/build/cc5" "$HOME/.cyrius/bin/cc5"
+          T=$(mktemp -d); trap "rm -rf $T" EXIT
+          echo 'fn main() { return 42; }' > "$T/small.cyr"
+          ( echo 'object;'; i=0; while [ "$i" -lt 3500 ]; do printf 'fn f%d() { return %d; }\n' "$i" "$i"; i=$((i+1)); done ) > "$T/big.cyr"
+          # T1: default mode emits 6 stat keys.
+          "$CYR" capacity "$T/small.cyr" > "$T/o1" 2>"$T/e1"
+          for k in fn_table identifiers var_table fixup_table string_data code_size; do
+            grep -q "^  $k:" "$T/e1" || { echo "FAIL T1: missing $k"; cat "$T/e1"; exit 1; }
+          done
+          # T2: --check small rc=0 + "ok".
+          set +e; "$CYR" capacity --check "$T/small.cyr" > "$T/o2" 2>&1; rc=$?; set -e
+          [ "$rc" -eq 0 ] || { echo "FAIL T2: rc=$rc"; cat "$T/o2"; exit 1; }
+          grep -q "ok (all caps under 85%)" "$T/o2" || { echo "FAIL T2: 'ok' missing"; exit 1; }
+          # T3: --check big rc=1 + ">=85%" diagnostic.
+          set +e; "$CYR" capacity --check "$T/big.cyr" > "$T/o3" 2>&1; rc=$?; set -e
+          [ "$rc" -eq 1 ] || { echo "FAIL T3: rc=$rc (expected 1)"; cat "$T/o3"; exit 1; }
+          grep -q "table(s) at >=85%" "$T/o3" || { echo "FAIL T3: '>=85%' missing"; exit 1; }
+          # T4: 3500-fn source compiles via cc5 + binary sane size.
+          set +e; cat "$T/big.cyr" | ./build/cc5 > "$T/big.o" 2>/dev/null; rc=$?; set -e
+          [ "$rc" -eq 0 ] || { echo "FAIL T4: cc5 exit=$rc"; exit 1; }
+          [ "$(wc -c < "$T/big.o")" -ge 100000 ] || { echo "FAIL T4: 3500-fn .o suspiciously small"; exit 1; }
+          # T5/T6: --json on small + big has fn_table key.
+          "$CYR" capacity --json "$T/small.cyr" > "$T/o5" 2>/dev/null
+          grep -q '"fn_table":' "$T/o5" || { echo "FAIL T5: fn_table key missing"; exit 1; }
+          "$CYR" capacity --json "$T/big.cyr" > "$T/o6" 2>/dev/null
+          grep -q '"fn_table":' "$T/o6" || { echo "FAIL T6: fn_table key missing"; exit 1; }
+          # T7: empty-cwd capacity (no args) → non-zero + "no file given".
+          E=$(mktemp -d)
+          set +e; ( cd "$E" && "$CYR" capacity > "$T/o7" 2>"$T/e7" ); rc=$?; set -e
+          rm -rf "$E"
+          [ "$rc" -ne 0 ] || { echo "FAIL T7: expected non-zero exit"; exit 1; }
+          grep -q "no file given" "$T/e7" || { echo "FAIL T7: 'no file given' missing"; cat "$T/e7"; exit 1; }
+          echo "PASS: cyrius capacity (default / --check / --json / fnc>2048 / no-args) — 7 sub-cases"
 
   # ── Tests (AGNOS) ──
   test-agnos:

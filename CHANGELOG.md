@@ -6,6 +6,76 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.22] — 2026-05-06
+
+**v5.9.x SLOT 22 — capacity gate sovereignty conversion + CI inline
+replacement**. Single-gate slot. `tests/regression-capacity.sh`
+(161 LOC bash) retired in favor of cyrius-side
+`_capacity_gate()`; CI step inlined per the v5.9.17 shared-object
+template (granular per-step visibility preserved). 7 sub-cases
+(default-stats / --check pass+fail / 3500-fn fnc>2048 stress /
+--json shape / no-args error path).
+
+cc5: **741,048 B unchanged** — dispatcher-only change, no compiler
+emit touch. api-surface: **2,765 unchanged**. 7 → 6
+`tests/regression-*.sh` remaining.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Of the 7 .sh remaining at v5.9.21 close: capacity is the only one
+unblocked + new-helper-light. The other init/scaffolder shapes
+(init-doctree, init-lib-bin) both depend on `scripts/cyrius-init.sh`
+(1,021 LOC bash) being ported first — converting their regressions
+without porting the underlying scaffolder would just bake in the
+bash dep. install-shim-symlink needs an env-var-passing exec helper
+as its own slot's primary work. Held all three for later slots;
+capacity-only single-theme slot ships clean.
+
+### Added
+
+- **`programs/check.cyr` — `_capacity_gate()`**: 7 sub-cases over
+  the `scripts/cyrius` wrapper. Tests 1-3 invoke `cyrius capacity`
+  in default / `--check` / 3500-fn-stress modes via existing
+  `_exec_in_dir3` helper. Test 4 directly pipes the 3500-fn source
+  through `_self_host_pipe` to exercise cc5's fnc>2048 path
+  (alpha4 fix). Tests 5-6 verify `--json` shape (`fn_table` key
+  present in stdout). Test 7 chdirs into a fresh empty subdir and
+  runs `cyrius capacity` with no args — must exit non-zero with
+  "no file given" diagnostic.
+
+### Changed
+
+- **`.github/workflows/ci.yml` Regression — cyrius capacity
+  meter step**: replaced `sh tests/regression-capacity.sh` with an
+  inline 7-sub-case shell equivalent, matching the
+  `_capacity_gate` coverage. Same shape as the v5.9.17 shared-
+  object inline (referenced in the new step's leading comment).
+
+### Removed
+
+- **`tests/regression-capacity.sh`** (161 LOC).
+
+### Verified
+
+- 66/66 check.sh gates green.
+- Two-step self-host byte-identical (cc5 → cc5b → cc5c).
+- api-surface snapshot match exact.
+
+### Cascaded to v5.9.23+
+
+- `cyrius audit` semantics review (still pending user input).
+- 6 remaining `tests/regression-*.sh`:
+  - **Held pending `scripts/cyrius-init.sh` port** (originally
+    pinned to v5.9.14 but still bash at v5.9.22): init-doctree,
+    init-lib-bin.
+  - **Needs env-var-passing exec helper** (own slot):
+    install-shim-symlink.
+  - **Needs cross-host SSH helper infra** (env-var exec, codesign,
+    .bat fixtures): macho-exit, pe-exit.
+  - **Needs network-probe helper**: tls-live.
+- `lib/regression.cyr` testing-stdlib carve-out (held until the
+  .sh-conversion arc closes; helper inventory still growing).
+
 ## [5.9.21] — 2026-05-06
 
 **v5.9.x SLOT 21 — sovereignty pass batch (3 cyrius-CLI gates) +

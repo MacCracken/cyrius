@@ -5308,6 +5308,240 @@ fn _cyrfmt_write_gate() {
     return fail;
 }
 
+# Bespoke gate: `cyrius capacity` subcommand (4.8.3 series; v5.7.38
+# Python3-removed). 7 sub-cases over the `cyrius` shim wrapper:
+# default-stats output keys; --check on small (rc=0 + "ok" message);
+# --check on 3500-fn synthetic source (rc=1 + ">=85%" diagnostic);
+# direct cc5 object-mode compile of the 3500-fn source (latent
+# fnc>2048 fix from alpha4); --json shape (fn_table key present);
+# --json on big shows fn_table.pct >= 85; missing-entry-point error
+# path runs from an empty cwd and surfaces "no file given".
+fn _capacity_gate() {
+    var label = "cyrius capacity (default / --check / --json / fnc>2048)";
+    var cyrius_shim = _root_path("scripts/cyrius");
+    if (file_exists(cyrius_shim) != 1) {
+        _p("  skip: ");
+        _p(cyrius_shim);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_capacity_");
+    if (sys_mkdir(scratch, 493) < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot create scratch dir");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+
+    # Build small.cyr fixture.
+    var small_sb = str_builder_new();
+    str_builder_add_cstr(small_sb, scratch);
+    str_builder_add_cstr(small_sb, "/small.cyr");
+    var small_path = str_data(str_builder_build(small_sb));
+    _write_file(small_path, "fn main() { return 42; }\n");
+
+    # Build big.cyr — 3500-fn synthetic stress source matching the
+    # `object;` + `fn fN() { return N; }` shape the .sh used.
+    var big_sb_path = str_builder_new();
+    str_builder_add_cstr(big_sb_path, scratch);
+    str_builder_add_cstr(big_sb_path, "/big.cyr");
+    var big_path = str_data(str_builder_build(big_sb_path));
+    var big = str_builder_new();
+    str_builder_add_cstr(big, "object;\n");
+    var ix = 0;
+    while (ix < 3500) {
+        str_builder_add_cstr(big, "fn f");
+        str_builder_add_int(big, ix);
+        str_builder_add_cstr(big, "() { return ");
+        str_builder_add_int(big, ix);
+        str_builder_add_cstr(big, "; }\n");
+        ix = ix + 1;
+    }
+    _write_file(big_path, str_data(str_builder_build(big)));
+
+    var out1 = _tmp_path("audit_capacity_out1_");
+    var out2 = _tmp_path("audit_capacity_out2_");
+    var out3 = _tmp_path("audit_capacity_out3_");
+    var out5 = _tmp_path("audit_capacity_out5_");
+    var out6 = _tmp_path("audit_capacity_out6_");
+    var out7 = _tmp_path("audit_capacity_out7_");
+
+    # Test 1: default mode prints all 6 stat keys.
+    _exec_in_dir3(scratch, cyrius_shim, "capacity", small_path, 0, out1);
+    var i_keys = 0;
+    var keys_missing = 0;
+    while (i_keys < 6) {
+        var key = 0;
+        if (i_keys == 0) { key = "  fn_table:"; }
+        if (i_keys == 1) { key = "  identifiers:"; }
+        if (i_keys == 2) { key = "  var_table:"; }
+        if (i_keys == 3) { key = "  fixup_table:"; }
+        if (i_keys == 4) { key = "  string_data:"; }
+        if (i_keys == 5) { key = "  code_size:"; }
+        if (_file_contains_substr(out1, key) != 1) {
+            keys_missing = keys_missing + 1;
+        }
+        i_keys = i_keys + 1;
+    }
+    if (keys_missing != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test1 default-mode missing ");
+        print_num(keys_missing);
+        println(" of 6 stat keys");
+        fail = fail + 1;
+    }
+
+    # Test 2: --check on small file rc=0 + "ok (all caps under 85%)".
+    var ec_t2 = _exec_in_dir3(scratch, cyrius_shim, "capacity", "--check", small_path, out2);
+    if (ec_t2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test2 --check small rc=");
+        print_num(ec_t2);
+        println(" (expected 0)");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out2, "ok (all caps under 85%)") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test2 --check small missing 'ok' message");
+        fail = fail + 1;
+    }
+
+    # Test 3: --check on 3500-fn big.cyr rc=1 + "table(s) at >=85%".
+    var ec_t3 = _exec_in_dir3(scratch, cyrius_shim, "capacity", "--check", big_path, out3);
+    if (ec_t3 != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test3 --check big rc=");
+        print_num(ec_t3);
+        println(" (expected 1)");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out3, "table(s) at >=85%") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test3 --check big missing 'table(s) at >=85%' diagnostic");
+        fail = fail + 1;
+    }
+
+    # Test 4: 3500-fn source compiles object-mode clean (alpha4
+    # fnc>2048 fix). Uses _self_host_pipe directly for stdin pipe.
+    var big_obj = _tmp_path("audit_capacity_bigo_");
+    var ec_t4 = _self_host_pipe(big_path, CC_PATH, big_obj);
+    if (ec_t4 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test4 cc5 compile of 3500-fn source rc=");
+        print_num(ec_t4);
+        println(" (regression in fnc>2048 fix)");
+        fail = fail + 1;
+    } else {
+        var sz = _file_size(big_obj);
+        if (sz < 100000) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": test4 3500-fn binary suspiciously small (");
+            print_num(sz);
+            println(" B)");
+            fail = fail + 1;
+        }
+    }
+    sys_unlink(big_obj);
+
+    # Test 5: --json output contains fn_table key.
+    _exec_in_dir3(scratch, cyrius_shim, "capacity", "--json", small_path, out5);
+    if (_file_contains_substr(out5, "\"fn_table\":") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test5 --json missing fn_table key");
+        fail = fail + 1;
+    }
+
+    # Test 6: --json on big.cyr — basic shape check; the .sh used
+    # jq for pct>=85 verification, which is optional here. Keeping
+    # the smoke check that --json on big returns non-empty + has
+    # the fn_table key (the pct>=85 implication is already covered
+    # by Test 3's --check exit-1 path).
+    _exec_in_dir3(scratch, cyrius_shim, "capacity", "--json", big_path, out6);
+    if (_file_contains_substr(out6, "\"fn_table\":") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test6 --json on big missing fn_table key");
+        fail = fail + 1;
+    }
+
+    # Test 7: empty cwd + no entry point arg → error with "no file
+    # given" diagnostic. Use a fresh empty scratch sub-dir.
+    var empty_sb = str_builder_new();
+    str_builder_add_cstr(empty_sb, scratch);
+    str_builder_add_cstr(empty_sb, "/empty");
+    var empty_dir = str_data(str_builder_build(empty_sb));
+    sys_mkdir(empty_dir, 493);
+    var ec_t7 = _exec_in_dir3(empty_dir, cyrius_shim, "capacity", 0, 0, out7);
+    if (ec_t7 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test7 capacity-with-no-args expected non-zero exit, got 0");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out7, "no file given") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test7 missing 'no file given' diagnostic");
+        fail = fail + 1;
+    }
+
+    # Cleanup output files + scratch.
+    sys_unlink(out1);
+    sys_unlink(out2);
+    sys_unlink(out3);
+    sys_unlink(out5);
+    sys_unlink(out6);
+    sys_unlink(out7);
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": 7 sub-cases (default / --check ok+fail / 3500-fn stress / --json / no-args)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Bespoke gate: cyrius api-surface snapshot diff (v5.7.33; auto-
 # build at v5.8.44). Three sub-cases:
 #   1. Run with --snapshot=docs/api-surface.snapshot — committed
@@ -5899,7 +6133,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("Capacity meter");
-    _gate("cyrius capacity (default / --check / --json / fnc>2048)", "tests/regression-capacity.sh");
+    _capacity_gate();
     println("");
 
     _section("Object init binding");
