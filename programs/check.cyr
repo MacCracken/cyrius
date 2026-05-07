@@ -2381,6 +2381,45 @@ fn _exec_in_dir(work_dir, bin_path, arg, out_path) {
     return 0 - 1;
 }
 
+# Multi-arg sibling of _exec_in_dir. Up to 3 trailing argv entries;
+# pass 0 for unused slots (argv truncated at first NULL slot).
+# Same dup2 + chdir + waitpid scaffolding as _exec_in_dir.
+fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path) {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var cd_rc = syscall(SYS_CHDIR, work_dir);
+        if (cd_rc < 0) { sys_exit(126); }
+        var out_fd = 0 - 1;
+        if (out_path == 0) {
+            out_fd = sys_open("/dev/null", 1, 0);
+        } else {
+            out_fd = sys_open(out_path, 577, 420);
+        }
+        if (out_fd >= 0) {
+            sys_dup2(out_fd, 1);
+            sys_dup2(out_fd, 2);
+            sys_close(out_fd);
+        }
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var argv[5];
+        store64(&argv, bin_path);
+        var off = 8;
+        if (arg1 != 0) { store64(&argv + off, arg1); off = off + 8; }
+        if (arg1 != 0) { if (arg2 != 0) { store64(&argv + off, arg2); off = off + 8; } }
+        if (arg1 != 0) { if (arg2 != 0) { if (arg3 != 0) { store64(&argv + off, arg3); off = off + 8; } } }
+        store64(&argv + off, 0);
+        sys_execve(bin_path, &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
 # Write `text` (cstring) to `path`, creating/truncating. Returns
 # bytes written on success, -1 on open failure.
 fn _write_file(path, text) {
@@ -4775,6 +4814,500 @@ fn _inline_asm_discard_gate() {
     return fail;
 }
 
+# Bespoke gate: v5.7.35 stdlib syscall surface (agnosys-surfaced
+# drm/luks/security additions). Inline-source compile + rc-switch
+# shape — each kernel-side failure mode encodes as a unique exit
+# code (1/2 = sys_getrandom; 7 = enum constant mismatch;
+# 11/12 = random_bytes wrapper; 0 = pass). Test 3 (getdents64 +
+# landlock_*) is wiring-only — fns referenced from an unreachable
+# `if (0 != 0)` branch so cc5 emits the call sites (proving symbol
+# resolution + arg shape) but the syscalls don't fire (avoids the
+# CI seccomp-kill that retired this from the tcyr loop at v5.7.35
+# ship — see the original .sh header for the long backstory).
+fn _syscall_surface_v5735_gate() {
+    var label = "stdlib syscall surface — getrandom + getdents64 + landlock + random_bytes (v5.7.35)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var s_syscalls = _root_path("lib/syscalls.cyr");
+    var s_random   = _root_path("lib/random.cyr");
+    var s_security = _root_path("lib/security.cyr");
+    var s_alloc    = _root_path("lib/alloc.cyr");
+    if (file_exists(s_syscalls) != 1) { _p("  skip: lib/syscalls.cyr missing"); println(""); _check(label, 0); return 0; }
+    if (file_exists(s_random)   != 1) { _p("  skip: lib/random.cyr missing");   println(""); _check(label, 0); return 0; }
+    if (file_exists(s_security) != 1) { _p("  skip: lib/security.cyr missing"); println(""); _check(label, 0); return 0; }
+    if (file_exists(s_alloc)    != 1) { _p("  skip: lib/alloc.cyr missing");    println(""); _check(label, 0); return 0; }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/syscalls.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/random.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/security.cyr\"\n");
+    str_builder_add_cstr(sb, "var buf1[32];\n");
+    str_builder_add_cstr(sb, "var n1 = sys_getrandom(&buf1, 32, 0);\n");
+    str_builder_add_cstr(sb, "if (n1 != 32) { syscall(60, 1); }\n");
+    str_builder_add_cstr(sb, "var any1 = 0;\n");
+    str_builder_add_cstr(sb, "var i1 = 0;\n");
+    str_builder_add_cstr(sb, "while (i1 < 32) {\n");
+    str_builder_add_cstr(sb, "    if (load8(&buf1 + i1) != 0) { any1 = 1; }\n");
+    str_builder_add_cstr(sb, "    i1 = i1 + 1;\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "if (any1 != 1) { syscall(60, 2); }\n");
+    str_builder_add_cstr(sb, "var buf2[64];\n");
+    str_builder_add_cstr(sb, "var i2 = 0;\n");
+    str_builder_add_cstr(sb, "while (i2 < 64) { store8(&buf2 + i2, 0); i2 = i2 + 1; }\n");
+    str_builder_add_cstr(sb, "var n2 = random_bytes(&buf2, 64);\n");
+    str_builder_add_cstr(sb, "if (n2 != 64) { syscall(60, 11); }\n");
+    str_builder_add_cstr(sb, "var any2 = 0;\n");
+    str_builder_add_cstr(sb, "i2 = 0;\n");
+    str_builder_add_cstr(sb, "while (i2 < 64) {\n");
+    str_builder_add_cstr(sb, "    if (load8(&buf2 + i2) != 0) { any2 = 1; }\n");
+    str_builder_add_cstr(sb, "    i2 = i2 + 1;\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "if (any2 != 1) { syscall(60, 12); }\n");
+    # Wiring-only references (unreachable branch; symbol resolution
+    # required, runtime invocation skipped — CI seccomp guard).
+    str_builder_add_cstr(sb, "if (0 != 0) {\n");
+    str_builder_add_cstr(sb, "    var trash[64];\n");
+    str_builder_add_cstr(sb, "    var _g  = sys_getdents64(0 - 1, &trash, 64);\n");
+    str_builder_add_cstr(sb, "    var _l1 = sys_landlock_create_ruleset(0, 0, 1);\n");
+    str_builder_add_cstr(sb, "    var _l2 = sys_landlock_add_rule(0 - 1, 1, 0, 0);\n");
+    str_builder_add_cstr(sb, "    var _l3 = sys_landlock_restrict_self(0 - 1, 0);\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_EXECUTE    != 1)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_WRITE_FILE != 2)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_READ_FILE  != 4)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_READ_DIR   != 8)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_MAKE_SYM   != 4096) { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_RULE_PATH_BENEATH    != 1)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (GRND_NONBLOCK                 != 1)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (GRND_RANDOM                   != 2)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (GRND_INSECURE                 != 4)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "syscall(60, 0);\n");
+
+    var src_path = _tmp_path("audit_syscall_surface_");
+    var src = str_builder_build(sb);
+    if (_write_file(src_path, str_data(src)) <= 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot write tmp source");
+        sys_unlink(src_path);
+        _check(label, 1);
+        return 1;
+    }
+
+    var ec = _compile_run_get_exit(src_path);
+    sys_unlink(src_path);
+
+    if (ec == 0) {
+        _check(label, 0);
+        return 0;
+    }
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": ");
+    if (ec == 1)  { println("sys_getrandom returned wrong byte count"); }
+    if (ec == 2)  { println("sys_getrandom buffer all-zero (CSPRNG?)"); }
+    if (ec == 7)  { println("enum constant mismatch (security.cyr or random.cyr)"); }
+    if (ec == 11) { println("random_bytes returned wrong count"); }
+    if (ec == 12) { println("random_bytes buffer all-zero"); }
+    if (ec == 0 - 1) { println("compile or fork issue"); }
+    var known = 0;
+    if (ec == 1)  { known = 1; }
+    if (ec == 2)  { known = 1; }
+    if (ec == 7)  { known = 1; }
+    if (ec == 11) { known = 1; }
+    if (ec == 12) { known = 1; }
+    if (ec == 0 - 1) { known = 1; }
+    if (known == 0) {
+        _p("unexpected exit code ");
+        print_num(ec);
+        println(" (segfault or sandbox kill)");
+    }
+    _check(label, 1);
+    return 1;
+}
+
+# Bespoke gate: sit `status` + `fsck` on a 100-commit fixture
+# (v5.6.35 pin — sankoch 2.0.3 deflate roundtrip fix). Skips
+# cleanly if `../sit` isn't checked out or `../sit/build/sit`
+# isn't built (sit is a downstream consumer of cyrius+sankoch,
+# not always present). Override location with SIT_DIR=...
+fn _sit_status_gate() {
+    var label = "sit fsck on 100-commit fixture reports 0 bad (pin v5.6.35; sankoch deflate)";
+    var sit_dir = getenv("SIT_DIR");
+    if (sit_dir == 0) { sit_dir = _root_path("../sit"); }
+
+    var sit_bin_sb = str_builder_new();
+    str_builder_add_cstr(sit_bin_sb, sit_dir);
+    str_builder_add_cstr(sit_bin_sb, "/build/sit");
+    var sit_bin = str_data(str_builder_build(sit_bin_sb));
+
+    if (file_exists(sit_bin) != 1) {
+        _p("  skip: ");
+        _p(sit_bin);
+        println(" not built");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_sit_");
+    if (sys_mkdir(scratch, 493) < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot create scratch dir");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+
+    # sit init in scratch.
+    var ec = _exec_in_dir3(scratch, sit_bin, "init", 0, 0, 0);
+    if (ec != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": sit init exit ");
+        print_num(ec);
+        println("");
+        fail = fail + 1;
+    }
+
+    # 100 add+commit iterations.
+    var i = 0;
+    while (i < 100) {
+        if (fail != 0) { i = 100; }
+        else {
+            # Write fN.txt with content "file N content\n".
+            var fname_sb = str_builder_new();
+            str_builder_add_cstr(fname_sb, scratch);
+            str_builder_add_cstr(fname_sb, "/f");
+            str_builder_add_int(fname_sb, i);
+            str_builder_add_cstr(fname_sb, ".txt");
+            var fname = str_data(str_builder_build(fname_sb));
+
+            var content_sb = str_builder_new();
+            str_builder_add_cstr(content_sb, "file ");
+            str_builder_add_int(content_sb, i);
+            str_builder_add_cstr(content_sb, " content\n");
+            var content = str_data(str_builder_build(content_sb));
+            _write_file(fname, content);
+
+            # sit add fN.txt — relative path from cwd=scratch.
+            var rel_sb = str_builder_new();
+            str_builder_add_cstr(rel_sb, "f");
+            str_builder_add_int(rel_sb, i);
+            str_builder_add_cstr(rel_sb, ".txt");
+            var rel = str_data(str_builder_build(rel_sb));
+
+            var ec_a = _exec_in_dir3(scratch, sit_bin, "add", rel, 0, 0);
+            if (ec_a != 0) {
+                _p("  ");
+                _p(ANSI_RED);
+                _p("FAIL");
+                _p(ANSI_RESET);
+                _p(": sit add f");
+                print_num(i);
+                _p(".txt exit ");
+                print_num(ec_a);
+                println("");
+                fail = fail + 1;
+            } else {
+                # sit commit -m cN.
+                var cmsg_sb = str_builder_new();
+                str_builder_add_cstr(cmsg_sb, "c");
+                str_builder_add_int(cmsg_sb, i);
+                var cmsg = str_data(str_builder_build(cmsg_sb));
+
+                var ec_c = _exec_in_dir3(scratch, sit_bin, "commit", "-m", cmsg, 0);
+                if (ec_c != 0) {
+                    _p("  ");
+                    _p(ANSI_RED);
+                    _p("FAIL");
+                    _p(ANSI_RESET);
+                    _p(": sit commit c");
+                    print_num(i);
+                    _p(" exit ");
+                    print_num(ec_c);
+                    println("");
+                    fail = fail + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    if (fail == 0) {
+        # sit fsck — capture output, must contain "0 bad".
+        var fsck_out = _tmp_path("audit_sit_fsck_");
+        var ec_f = _exec_in_dir3(scratch, sit_bin, "fsck", 0, 0, fsck_out);
+        # fsck may exit non-zero on bad objects, but we use the
+        # output text to determine pass/fail (matches .sh shape).
+        if (_file_contains_substr(fsck_out, "0 bad") != 1) {
+            _p("  ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": fsck output didn't report '0 bad' (exit ");
+            print_num(ec_f);
+            println(")");
+            fail = fail + 1;
+        }
+        sys_unlink(fsck_out);
+
+        # sit status — must exit 0.
+        var ec_s = _exec_in_dir3(scratch, sit_bin, "status", 0, 0, 0);
+        if (ec_s != 0) {
+            _p("  ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": sit status exit ");
+            print_num(ec_s);
+            println("");
+            fail = fail + 1;
+        }
+    }
+
+    # Cleanup scratch dir tree (sit creates a .sit subdir + 100
+    # f*.txt files). Fork /bin/rm -rf — simpler than reimplementing
+    # recursive descent; the scratch path is dispatcher-owned so
+    # there's no path-injection surface to worry about.
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    _check(label, fail);
+    return fail;
+}
+
+# Bespoke gate: cyrfmt --write / -w in-place rewrite + idempotent
+# mtime (v5.5.22). Seven sub-cases against an ugly fixture and
+# its canonical formatted twin. Test 6 (mtime idempotency) uses
+# the cross-arch STAT_MTIME / STAT_MTIME_NSEC offsets — read
+# nanosecond mtime after a first --write, run --write again on
+# the now-clean file, assert the (sec, nsec) pair didn't move.
+# Catches regressions where --write's "no-op" path actually
+# rewrites the file (which would advance mtime even on bytewise-
+# equal output).
+fn _cyrfmt_write_gate() {
+    var label = "cyrfmt --write / -w in-place rewrite + idempotent mtime";
+    var cyrfmt_bin = _root_path("build/cyrfmt");
+    if (file_exists(cyrfmt_bin) != 1) {
+        _p("  skip: ");
+        _p(cyrfmt_bin);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_cyrfmt_w_");
+    if (sys_mkdir(scratch, 493) < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot create scratch dir");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Fixture paths.
+    var ugly_sb = str_builder_new();
+    str_builder_add_cstr(ugly_sb, scratch);
+    str_builder_add_cstr(ugly_sb, "/ugly.cyr");
+    var ugly_path = str_data(str_builder_build(ugly_sb));
+
+    var expected_sb = str_builder_new();
+    str_builder_add_cstr(expected_sb, scratch);
+    str_builder_add_cstr(expected_sb, "/expected.cyr");
+    var expected_path = str_data(str_builder_build(expected_sb));
+
+    var target_sb = str_builder_new();
+    str_builder_add_cstr(target_sb, scratch);
+    str_builder_add_cstr(target_sb, "/target.cyr");
+    var target_path = str_data(str_builder_build(target_sb));
+
+    var short_sb = str_builder_new();
+    str_builder_add_cstr(short_sb, scratch);
+    str_builder_add_cstr(short_sb, "/short.cyr");
+    var short_path = str_data(str_builder_build(short_sb));
+
+    var stdout_sb = str_builder_new();
+    str_builder_add_cstr(stdout_sb, scratch);
+    str_builder_add_cstr(stdout_sb, "/stdout_src.cyr");
+    var stdout_src_path = str_data(str_builder_build(stdout_sb));
+
+    var stdout_out_sb = str_builder_new();
+    str_builder_add_cstr(stdout_out_sb, scratch);
+    str_builder_add_cstr(stdout_out_sb, "/stdout.out");
+    var stdout_out_path = str_data(str_builder_build(stdout_out_sb));
+
+    # Ugly source — leading tabs, stray indent, mixed widths.
+    var ugly_src = "fn foo() {\n  var x = 1;\n    var y = 2;\n   return x + y;\n}\n";
+    # Canonical formatted output (4-space indent, consistent).
+    var expected_src = "fn foo() {\n    var x = 1;\n    var y = 2;\n    return x + y;\n}\n";
+
+    _write_file(ugly_path, ugly_src);
+    _write_file(expected_path, expected_src);
+
+    var fail = 0;
+
+    # Test 1: --check on ugly returns rc=1.
+    var ec_t1 = _exec_in_dir3(scratch, cyrfmt_bin, "--check", ugly_path, 0, 0);
+    if (ec_t1 != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test1 --check on ugly rc=");
+        print_num(ec_t1);
+        println(" (expected 1)");
+        fail = fail + 1;
+    }
+
+    # Test 3: --write reformats target.cyr in place; result == expected.
+    _write_file(target_path, ugly_src);
+    var ec_t3 = _exec_in_dir3(scratch, cyrfmt_bin, "--write", target_path, 0, 0);
+    if (ec_t3 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test3 --write rc=");
+        print_num(ec_t3);
+        println("");
+        fail = fail + 1;
+    } else { if (_files_identical(target_path, expected_path) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test3 --write produced unexpected formatted output");
+            fail = fail + 1;
+        } }
+
+    # Test 4: --check on the rewritten file returns rc=0.
+    var ec_t4 = _exec_in_dir3(scratch, cyrfmt_bin, "--check", target_path, 0, 0);
+    if (ec_t4 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test4 --check post-rewrite rc=");
+        print_num(ec_t4);
+        println(" (expected 0)");
+        fail = fail + 1;
+    }
+
+    # Test 5: -w short-form behaves identically.
+    _write_file(short_path, ugly_src);
+    var ec_t5 = _exec_in_dir3(scratch, cyrfmt_bin, "-w", short_path, 0, 0);
+    if (ec_t5 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test5 -w rc=");
+        print_num(ec_t5);
+        println("");
+        fail = fail + 1;
+    } else { if (_files_identical(short_path, expected_path) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test5 -w produced unexpected formatted output");
+            fail = fail + 1;
+        } }
+
+    # Test 6: mtime idempotency on already-clean target. Read mtime
+    # (sec, nsec), run --write again, read mtime again. If --write
+    # rewrote the (now-canonical) file unnecessarily, mtime would
+    # advance — STAT_MTIME_NSEC at offset 96 catches sub-second drift.
+    var stat_buf1 = alloc(STAT_BUFSZ);
+    var stat_buf2 = alloc(STAT_BUFSZ);
+    if (sys_stat(target_path, stat_buf1) >= 0) {
+        var sec1 = load64(stat_buf1 + STAT_MTIME);
+        var nsec1 = load64(stat_buf1 + STAT_MTIME_NSEC);
+        _exec_in_dir3(scratch, cyrfmt_bin, "--write", target_path, 0, 0);
+        if (sys_stat(target_path, stat_buf2) >= 0) {
+            var sec2 = load64(stat_buf2 + STAT_MTIME);
+            var nsec2 = load64(stat_buf2 + STAT_MTIME_NSEC);
+            if (sec1 != sec2) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": test6 --write touched mtime on already-clean file (sec drift)");
+                fail = fail + 1;
+            } else { if (nsec1 != nsec2) {
+                    _p("    ");
+                    _p(ANSI_RED);
+                    _p("case-FAIL");
+                    _p(ANSI_RESET);
+                    println(": test6 --write touched mtime on already-clean file (nsec drift)");
+                    fail = fail + 1;
+                } }
+        }
+    }
+
+    # Test 7: default (no flag) writes to stdout, not to the file.
+    _write_file(stdout_src_path, ugly_src);
+    var stdout_size_before = _file_size(stdout_src_path);
+    var ec_t7 = _exec_in_dir3(scratch, cyrfmt_bin, stdout_src_path, 0, 0, stdout_out_path);
+    if (ec_t7 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test7 default-mode rc=");
+        print_num(ec_t7);
+        println("");
+        fail = fail + 1;
+    } else { if (_files_identical(stdout_out_path, expected_path) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test7 default-mode stdout output didn't match expected");
+            fail = fail + 1;
+        } }
+    # Test 7b: stdout-mode must NOT modify the source file.
+    var stdout_size_after = _file_size(stdout_src_path);
+    if (stdout_size_before != stdout_size_after) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test7b default-mode modified the source file");
+        fail = fail + 1;
+    }
+
+    # Cleanup.
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": 7 sub-cases (--check / --write / -w / mtime / default-stdout)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Bespoke gate: cyrius api-surface snapshot diff (v5.7.33; auto-
 # build at v5.8.44). Three sub-cases:
 #   1. Run with --snapshot=docs/api-surface.snapshot — committed
@@ -5386,7 +5919,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("cyrfmt --write");
-    _gate("cyrfmt --write / -w in-place rewrite + idempotent mtime", "tests/regression-cyrfmt-write.sh");
+    _cyrfmt_write_gate();
     println("");
 
     _section("Reserved-keyword diag");
@@ -5430,7 +5963,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("sit 100-commit fixture");
-    _gate("sit fsck on 100-commit fixture reports 0 bad (pin v5.6.35; sankoch deflate)", "tests/regression-sit-status.sh");
+    _sit_status_gate();
     println("");
 
     _section("TLS live");
@@ -5555,7 +6088,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("stdlib syscall surface (v5.7.35)");
-    _gate("stdlib syscall surface — getrandom + getdents64 + landlock + random_bytes (v5.7.35)", "tests/regression-syscall-surface-v5735.sh");
+    _syscall_surface_v5735_gate();
     println("");
 
     _section("distlib >64KB module");

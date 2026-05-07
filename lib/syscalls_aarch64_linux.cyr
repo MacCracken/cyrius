@@ -311,6 +311,8 @@ enum Stat {
     STAT_UID = 24;
     STAT_GID = 28;
     STAT_SIZE = 48;
+    STAT_MTIME = 88;
+    STAT_MTIME_NSEC = 96;
     STAT_BUFSZ = 144;
 }
 

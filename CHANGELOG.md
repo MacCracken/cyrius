@@ -11,11 +11,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 **v5.9.x SLOT 20 — sigil-paired `ct_eq` consolidation**. The
 deferred half of v5.9.18's agnosys-filing fix lands here. Cyrius
 adds the dual-length companion to v5.9.18's `ct_eq_bytes`; sigil
-3.0.2 ships paired (separate release; user-handled) retiring
-sigil's hand-rolled `ct_eq` + `ct_eq_32`.
+3.1.0 ships paired (separate release; user-handled) retiring
+sigil's hand-rolled `ct_eq` + `ct_eq_32`. (The sigil release was
+initially tagged 3.0.2 mid-slot; relabeled to a minor bump
+post-ship because removing public symbols `ct_eq` / `ct_eq_32`
+from the bundle is a SemVer minor, not a patch — the 3.1.0 tag
+ships the same content with the correct level.)
 
 cc5: **741,048 B unchanged** — pure stdlib add (`lib/ct.cyr`
-+1 fn). `lib/sigil.cyr` refolded from sigil 3.0.2's rebuilt
++1 fn). `lib/sigil.cyr` refolded from sigil 3.1.0's rebuilt
 `dist/sigil.cyr`. api-surface snapshot: 2766 → 2765 (+1 cyrius
 `ct::ct_eq_bytes_lens/4`, -2 sigil `ct_eq*` exports retired).
 
@@ -52,21 +56,21 @@ ambiguity agnosys's filing called out.
 
 ### Changed
 
-- **`lib/sigil.cyr`** (vendored): refolded from sigil 3.0.2's
+- **`lib/sigil.cyr`** (vendored): refolded from sigil 3.1.0's
   `dist/sigil.cyr`. The bundle no longer contains `fn ct_eq`
   / `fn ct_eq_32`; the 5 internal call sites now route through
   `ct_eq_bytes_lens` (cyrius's lib/ct.cyr is `include`'d earlier
   in sigil's `src/lib.cyr`, so the upstream symbol is in scope).
 - **`docs/api-surface.snapshot`**: 2766 → 2765 entries.
   +1 `ct::ct_eq_bytes_lens/4`. -2 `sigil::ct_eq/4` +
-  `sigil::ct_eq_32/2` (retired in sigil 3.0.2).
+  `sigil::ct_eq_32/2` (retired in sigil 3.1.0).
 - **vidya `content/cyrius/language/features.cyml` —
   `secret_var_compound_ops` entry**: stdlib helper section
   refreshed to name `ct_eq_bytes_lens` alongside `ct_eq_bytes`,
   removes the "stays downstream" caveat about sigil's
   hand-rolled wrappers (now retired).
 
-### Sigil 3.0.2 (paired downstream release; user-handled)
+### Sigil 3.1.0 (paired downstream release; user-handled)
 
 - Bumps `cyrius` pin 5.8.64 → 5.9.20.
 - Deletes `src/ct.cyr` entirely (zero unique fns left after
@@ -77,12 +81,14 @@ ambiguity agnosys's filing called out.
   `ct_eq_bytes_lens(...)` — `src/integrity.cyr` (×2),
   `src/aes_gcm.cyr`, `src/ed25519.cyr`, `src/verify.cyr`.
 - `cyrius distlib` rebuild produces `dist/sigil.cyr` clean
-  (no `ct_eq` symbol).
+  (no `ct_eq` symbol). Bundle header `# Version: 3.1.0`.
 - Verified locally against cyrius v5.9.20 — sigil's tcyr suite:
   aes_gcm 15/15, ed25519 20/20, verify 48/48 (all the suites
   that touch the migrated paths).
-- See `sigil/CHANGELOG.md` 3.0.2 entry for the full sigil-side
-  narrative.
+- Initial 3.0.2 tag relabeled 3.1.0 post-ship (public-symbol
+  removal is a SemVer minor, not a patch). See `sigil/CHANGELOG.md`
+  3.1.0 entry for the version-label correction narrative;
+  3.0.2 entry retained for the original ship detail.
 
 ### Cascaded to v5.9.21+
 
