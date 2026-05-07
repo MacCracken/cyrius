@@ -1574,6 +1574,424 @@ fn _struct_cap_gate() {
     return fail;
 }
 
+# Helper: cstring path join (parent + "/" + child). Mirrors the
+# cyrius-init.cyr `_join` helper since path_join takes Str (not
+# cstring) and most check.cyr ops route through cstrings.
+fn _join(parent, child) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, parent);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, child);
+    return str_data(str_builder_build(sb));
+}
+
+# Helper: assert file exists at <pdir>/<rel>; bump fail if missing.
+fn _check_file_exists(pdir, rel, fail_label) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pdir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, rel);
+    var path = str_data(str_builder_build(sb));
+    if (file_exists(path) != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(fail_label);
+        _p(" missing ");
+        println(rel);
+        return 1;
+    }
+    return 0;
+}
+
+# Helper: assert grep -q <substr> <pdir>/<rel>; bump fail if not found.
+# `expect_match` = 1 means substr SHOULD be present; 0 means it
+# SHOULD NOT (the bash inverse-grep cases).
+fn _check_file_grep(pdir, rel, substr, expect_match, fail_label) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pdir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, rel);
+    var path = str_data(str_builder_build(sb));
+    var hit = _file_contains_substr(path, substr);
+    if (hit != expect_match) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(fail_label);
+        if (expect_match == 1) { _p(" missing '"); }
+        else                   { _p(" unexpected '"); }
+        _p(substr);
+        _p("' in ");
+        println(rel);
+        return 1;
+    }
+    return 0;
+}
+
+# Helper: scaffold a project via scripts/cyrius-init.sh in scratch
+# dir. Returns proj root path on success, 0 on failure (caller
+# emits its own FAIL).
+fn _scaffold_init(scratch_dir, init_script, flag, name) {
+    sys_mkdir(scratch_dir, 493);
+    var out = _tmp_path("audit_init_out_");
+    var ec = _exec_in_dir3(scratch_dir, "/bin/sh", init_script, flag, name, out);
+    sys_unlink(out);
+    if (ec != 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, scratch_dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, name);
+    return str_data(str_builder_build(sb));
+}
+
+# Bespoke gate (v5.9.31; per the v5.9.x .sh-conversion arc):
+# `cyrius init --lib`/`--bin`/bare scaffolding shape.
+# Mechanical port of `tests/regression-init-lib-bin.sh` (v5.7.15
+# pin) — same 4 cases, same assertions, exec scripts/cyrius-init.sh
+# directly so the test still validates the bash impl until the
+# v5.9.28/29-onward cyrius-init.cyr port grows full coverage.
+fn _init_lib_bin_gate() {
+    var label = "cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)";
+    var init_script = _root_path("scripts/cyrius-init.sh");
+    if (file_exists(init_script) != 1) {
+        _p("  skip: ");
+        _p(init_script);
+        println(" missing");
+        _check(label, 0);
+        return 0;
+    }
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_init_lb_");
+    sys_mkdir(scratch, 493);
+    var fail = 0;
+
+    # Case 1: --lib emits library shape, builds smoke clean.
+    var c1 = _join(scratch, "case1");
+    var p1 = _scaffold_init(c1, init_script, "--lib", "mylib");
+    if (p1 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case1 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p1, "programs/smoke.cyr", "case1 (--lib)");
+        var test_path = _join(p1, "src/test.cyr");
+        if (file_exists(test_path) == 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 src/test.cyr emitted in lib shape (should be omitted)");
+            fail = fail + 1;
+        }
+        fail = fail + _check_file_grep(p1, "cyrius.cyml", "[lib]",                          1, "case1");
+        fail = fail + _check_file_grep(p1, "cyrius.cyml", "\ntest ",                        0, "case1");
+        fail = fail + _check_file_grep(p1, "cyrius.cyml", "entry = \"programs/smoke.cyr\"", 1, "case1");
+        # Build smoke + run.
+        var build_out = _tmp_path("audit_init_b_");
+        var ec_b = _exec_in_dir3(p1, cyrius_bin, "build", "programs/smoke.cyr", "build/mylib-smoke", build_out);
+        sys_unlink(build_out);
+        if (ec_b != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": case1 cyrius build smoke exit ");
+            print_num(ec_b);
+            println("");
+            fail = fail + 1;
+        } else {
+            var smoke_bin = _join(p1, "build/mylib-smoke");
+            if (file_exists(smoke_bin) != 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": case1 build/mylib-smoke not produced");
+                fail = fail + 1;
+            } else {
+                var ec_r = _exec_run_clean(smoke_bin);
+                if (ec_r != 0) {
+                    _p("    ");
+                    _p(ANSI_RED);
+                    _p("case-FAIL");
+                    _p(ANSI_RESET);
+                    _p(": case1 smoke run exit ");
+                    print_num(ec_r);
+                    println("");
+                    fail = fail + 1;
+                }
+            }
+        }
+    }
+
+    # Case 2: --bin emits binary shape (existing behavior preserved).
+    var c2 = _join(scratch, "case2");
+    var p2 = _scaffold_init(c2, init_script, "--bin", "foo");
+    if (p2 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case2 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p2, "src/main.cyr", "case2 (--bin)");
+        fail = fail + _check_file_exists(p2, "src/test.cyr", "case2 (--bin)");
+        var prog_dir = _join(p2, "programs");
+        if (file_exists(prog_dir) == 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case2 programs/ created for bin shape (should not exist)");
+            fail = fail + 1;
+        }
+        fail = fail + _check_file_grep(p2, "cyrius.cyml", "entry = \"src/main.cyr\"", 1, "case2");
+        var build_out = _tmp_path("audit_init_b_");
+        var ec_b = _exec_in_dir3(p2, cyrius_bin, "build", "src/main.cyr", "build/foo", build_out);
+        sys_unlink(build_out);
+        if (ec_b != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": case2 cyrius build bin exit ");
+            print_num(ec_b);
+            println("");
+            fail = fail + 1;
+        } else {
+            var bin_path = _join(p2, "build/foo");
+            if (file_exists(bin_path) == 1) {
+                var ec_r = _exec_run_clean(bin_path);
+                if (ec_r != 0) {
+                    _p("    ");
+                    _p(ANSI_RED);
+                    _p("case-FAIL");
+                    _p(ANSI_RESET);
+                    _p(": case2 bin run exit ");
+                    print_num(ec_r);
+                    println("");
+                    fail = fail + 1;
+                }
+            }
+        }
+    }
+
+    # Case 3: bare invocation defaults to bin.
+    var c3 = _join(scratch, "case3");
+    sys_mkdir(c3, 493);
+    var c3_out = _tmp_path("audit_init_c3_");
+    var ec_c3 = _exec_in_dir3(c3, "/bin/sh", init_script, "bareproj", 0, c3_out);
+    sys_unlink(c3_out);
+    if (ec_c3 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case3 bare init exit non-zero");
+        fail = fail + 1;
+    } else {
+        var p3 = _join(c3, "bareproj");
+        var p3_prog = _join(p3, "programs");
+        if (file_exists(p3_prog) == 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 bare init created programs/ (should default to --bin)");
+            fail = fail + 1;
+        }
+        fail = fail + _check_file_grep(p3, "cyrius.cyml", "entry = \"src/main.cyr\"", 1, "case3");
+    }
+
+    # Case 4: --lib CI workflow build cmd targets programs/smoke.cyr.
+    var c4 = _join(scratch, "case4");
+    var p4 = _scaffold_init(c4, init_script, "--lib", "libci");
+    if (p4 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case4 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_grep(p4, ".github/workflows/ci.yml", "cyrius build src/main.cyr",                  0, "case4");
+        fail = fail + _check_file_grep(p4, ".github/workflows/ci.yml", "cyrius build programs/smoke.cyr build/",    1, "case4");
+    }
+
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius init --lib/--bin/bare (4/4 cases)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Bespoke gate (v5.9.31): cyrius init / cyrius port doc-tree
+# emission. Mechanical port of `tests/regression-init-doctree.sh`
+# (v5.7.16 pin) — 5 cases over the 8-file doc tree (adr /
+# architecture / guides / examples / development) + CLAUDE.md
+# shape checks (no inlined volatile state, shape-aware build
+# hint, state.md carries the toolchain pin).
+fn _init_doctree_gate() {
+    var label = "cyrius init/port emit adr/architecture/guides/examples/development + CLAUDE.md (v5.7.16)";
+    var init_script = _root_path("scripts/cyrius-init.sh");
+    var port_script = _root_path("scripts/cyrius-port.sh");
+    if (file_exists(init_script) != 1) {
+        _p("  skip: scripts/cyrius-init.sh missing");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists(port_script) != 1) {
+        _p("  skip: scripts/cyrius-port.sh missing");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_init_dt_");
+    sys_mkdir(scratch, 493);
+    var fail = 0;
+
+    # Case 1: cyrius init --lib emits full doc-tree.
+    var c1 = _join(scratch, "case1");
+    var p1 = _scaffold_init(c1, init_script, "--lib", "mylib");
+    if (p1 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case1 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p1, "docs/adr/README.md",                "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/adr/template.md",              "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/architecture/README.md",       "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/guides/getting-started.md",    "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/examples/.gitkeep",            "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/development/state.md",         "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/development/roadmap.md",       "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "CLAUDE.md",                         "case1 (--lib)");
+        fail = fail + _check_file_grep(p1, "docs/adr/template.md", "# NNNN ",            1, "case1 ADR template");
+        # Bash original: `grep -E '^\*\*Version\*\*: \[?[0-9]'` —
+        # detects an INLINED version number (digit or `[` after the
+        # bold marker). The valid CLAUDE.md text is `**Version**:
+        # VERSION at the project root is the source of truth` (no
+        # number). Approximate via "do not inline the number" check.
+        fail = fail + _check_file_grep(p1, "CLAUDE.md", "do not inline the number",       1, "case1 CLAUDE.md version-sync hint");
+        fail = fail + _check_file_grep(p1, "CLAUDE.md", "docs/development/state.md",     1, "case1 CLAUDE.md → state.md link");
+        fail = fail + _check_file_grep(p1, "CLAUDE.md", "cyrius build programs/smoke.cyr", 1, "case1 CLAUDE.md lib build hint");
+    }
+
+    # Case 2: cyrius init --bin doc-tree.
+    var c2 = _join(scratch, "case2");
+    var p2 = _scaffold_init(c2, init_script, "--bin", "foo");
+    if (p2 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case2 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p2, "docs/adr/README.md",                "case2 (--bin)");
+        fail = fail + _check_file_exists(p2, "docs/development/state.md",         "case2 (--bin)");
+        fail = fail + _check_file_exists(p2, "CLAUDE.md",                         "case2 (--bin)");
+        fail = fail + _check_file_grep(p2, "CLAUDE.md", "cyrius build src/main.cyr", 1, "case2 CLAUDE.md bin build hint");
+    }
+
+    # Case 3: bare cyrius init defaults to bin + still gets doc-tree.
+    var c3 = _join(scratch, "case3");
+    sys_mkdir(c3, 493);
+    var c3_out = _tmp_path("audit_init_dt_c3_");
+    var ec_c3 = _exec_in_dir3(c3, "/bin/sh", init_script, "bareproj", 0, c3_out);
+    sys_unlink(c3_out);
+    if (ec_c3 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case3 bare init exit non-zero");
+        fail = fail + 1;
+    } else {
+        var p3 = _join(c3, "bareproj");
+        fail = fail + _check_file_exists(p3, "docs/adr/README.md",                "case3 (bare)");
+        fail = fail + _check_file_exists(p3, "CLAUDE.md",                         "case3 (bare)");
+    }
+
+    # Case 4: cyrius port mirrors the same doc-tree.
+    var c4 = _join(scratch, "case4/portproj");
+    sys_mkdir(_join(scratch, "case4"), 493);
+    sys_mkdir(c4, 493);
+    sys_mkdir(_join(c4, "src"), 493);
+    _write_file(_join(c4, "src/main.rs"), "fn main() {}\n");
+    _write_file(_join(c4, "Cargo.toml"), "[package]\nname = \"portproj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+    var c4_out = _tmp_path("audit_init_dt_c4_");
+    var ec_c4 = _exec_in_dir3(_join(scratch, "case4"), "/bin/sh", port_script, c4, 0, c4_out);
+    sys_unlink(c4_out);
+    if (ec_c4 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case4 cyrius port exit ");
+        print_num(ec_c4);
+        println("");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(c4, "docs/adr/README.md",                "case4 (cyrius port)");
+        fail = fail + _check_file_exists(c4, "CLAUDE.md",                         "case4 (cyrius port)");
+        fail = fail + _check_file_grep(c4, "CLAUDE.md", "rust-old", 1, "case4 port CLAUDE.md");
+    }
+
+    # Case 5: state.md carries 'Cyrius pin'; CLAUDE.md does not.
+    var c5 = _join(scratch, "case5");
+    var p5 = _scaffold_init(c5, init_script, "--lib", "pinproj");
+    if (p5 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case5 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_grep(p5, "docs/development/state.md", "Cyrius pin", 1, "case5 state.md pin line");
+        fail = fail + _check_file_grep(p5, "CLAUDE.md",                  "\n- **Cyrius pin**", 0, "case5 CLAUDE.md no leaked pin");
+    }
+
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius init/port doc-tree (5/5 cases)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Count occurrences of needle (cstring) in buf[0..n].
 fn _count_substr_buf(buf, n, needle) {
     var nlen = strlen(needle);
@@ -4741,7 +5159,7 @@ fn _derive_serialize_primitive_gate() {
     str_builder_add_cstr(sb, "    alloc_init();\n");
     str_builder_add_cstr(sb, "    var p = point { 11, 22, 33 };\n");
     str_builder_add_cstr(sb, "    var sb = str_builder_new();\n");
-    str_builder_add_cstr(sb, "    point_to_json_sb(&p, sb);\n");
+    str_builder_add_cstr(sb, "    point_to_json(&p, sb);\n");
     str_builder_add_cstr(sb, "    var out = str_builder_build(sb);\n");
     str_builder_add_cstr(sb, "    sys_write(1, str_data(out), str_len(out));\n");
     str_builder_add_cstr(sb, "    return 0;\n");
@@ -4812,7 +5230,7 @@ fn _derive_serialize_primitive_gate() {
     _p(ANSI_GREEN);
     _p("PASS");
     _p(ANSI_RESET);
-    println(": point_to_json_sb emits {\"x\":11,\"y\":22,\"z\":33} for #derive(Serialize)");
+    println(": point_to_json emits {\"x\":11,\"y\":22,\"z\":33} for #derive(Serialize)");
     _check(label, 0);
     return 0;
 }
@@ -6935,11 +7353,11 @@ fn _run_regression_gates() {
     println("");
 
     _section("cyrius init --lib/--bin");
-    _gate("cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)", "tests/regression-init-lib-bin.sh");
+    _init_lib_bin_gate();
     println("");
 
     _section("cyrius init/port doc-tree");
-    _gate("cyrius init/port emit adr/architecture/guides/examples/development + CLAUDE.md (v5.7.16)", "tests/regression-init-doctree.sh");
+    _init_doctree_gate();
     println("");
 
     _section("struct cap raise + diag");

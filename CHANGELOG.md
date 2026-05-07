@@ -6,6 +6,125 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.31] — 2026-05-07
+
+**v5.9.x SLOT 31 — `#derive(Serialize)` API rename hotfix +
+init-doctree / init-lib-bin gate conversions**. v5.9.30 fixed
+the typed-i64 codegen path emit but missed the deeper API
+naming bug; agnosys 1.1.12 re-filed verbatim. This slot
+ships the API rename + the .sh-conversion arc continuation.
+
+cc5: **745,336 → 744,936 B** (−400 / −0.05%) — the dropped
+1-arg wrapper saves a few bytes; the gate gate fns add to
+build/cyrius_check, not cc5. api-surface: **2,769 unchanged**.
+check.sh: **64 unchanged** (gate-count preserved by the
+1:1 dispatcher conversion of the two .sh files).
+
+### Hotfix: agnosys 1.1.12 verbatim repro now produces working JSON
+
+**Root cause of v5.9.30's incomplete-fix**: the codegen emitted
+TWO fns per `#derive(Serialize)` struct:
+- `<Name>_to_json_sb(ptr, sb)` — 2-arg composable form (what
+  v5.9.30 fixed for typed-i64 fields).
+- `<Name>_to_json(ptr)` — 1-arg wrapper that built its own
+  `str_builder` internally and returned the str.
+
+The vidya `derive_str_fields` doc + the existing
+`lib/yukti.cyr device_info_to_json(info, sb)` convention
+establish the canonical API as **2-arg `<Name>_to_json(ptr,
+sb)`**. The agnosys filing's repro called
+`status_to_json(&s, sb)` per that contract — and silently bound
+to the 1-arg wrapper, which:
+1. Created a NEW `str_builder` (shadowing the user's `sb`).
+2. Filled the new sb via `_to_json_sb(ptr, new_sb)`.
+3. Returned the built str.
+4. Caller's `var sb = ...; status_to_json(&s, sb); var out =
+   str_builder_build(sb);` — the user's `sb` was never written;
+   `out` empty; `[]\n0` printed.
+
+This was the OBSERVED bug. v5.9.30's "primitive-helper"
+codegen fix was correct as far as it went, but the wrong-API-
+shadowing was the SOURCE of the empty-output the agnosys
+filing actually reported. v5.9.30 didn't reach this layer
+because the slot's gate ran the 2-arg `_to_json_sb` form
+directly (bypassing the 1-arg shadow).
+
+### Fix
+
+`src/frontend/lex_pp.cyr PP_DERIVE_SERIALIZE`:
+- Renamed the 2-arg form from `<Name>_to_json_sb(ptr, sb)`
+  to `<Name>_to_json(ptr, sb)` — matches vidya doc + yukti
+  consumer.
+- **Dropped the 1-arg wrapper entirely**. Callers who want a
+  fresh str use `var sb = str_builder_new(); Name_to_json(p,
+  sb); var out = str_builder_build(sb);` (one extra line, no
+  shadowed-API foot-gun).
+- Updated nested-struct field emission to call the renamed
+  `<type>_to_json(ptr + off, sb)` form (was `_to_json_sb`).
+- Updated `programs/check.cyr _derive_serialize_primitive_gate`
+  probe + label to use the renamed fn.
+
+### v5.9.31 main scope: init regression-script conversions
+
+Mechanical .sh→cyrius port per the v5.9.x sovereignty pass:
+
+- **`tests/regression-init-lib-bin.sh`** (119 LOC, v5.7.15
+  pin) → `_init_lib_bin_gate()`. 4 sub-cases over `cyrius
+  init --lib` / `--bin` / bare invocation: lib emits
+  `programs/smoke.cyr` + `[lib]` section + smoke build/run;
+  bin emits `src/main.cyr` + `src/test.cyr` + bin build/run;
+  bare defaults to bin; lib CI workflow targets
+  `programs/smoke.cyr`.
+- **`tests/regression-init-doctree.sh`** (121 LOC, v5.7.16
+  pin) → `_init_doctree_gate()`. 5 sub-cases over the
+  8-file doc tree (adr / architecture / guides / examples /
+  development) + CLAUDE.md shape (no inlined volatile state,
+  shape-aware build hint, state.md carries toolchain pin) +
+  `cyrius port` mirror.
+
+Both gates exec `scripts/cyrius-init.sh` + `scripts/cyrius-port.sh`
+directly via `_exec_in_dir3`, validating the existing bash
+implementations until the v5.9.28/29-onward `cyrius-init.cyr`
+port grows full coverage. New helpers:
+- `_join(parent, child)` — cstring path join (mirrors the
+  cyrius-init.cyr helper; existing `path_join` is Str-typed).
+- `_check_file_exists(pdir, rel, fail_label)` — assert-helper
+  for file-existence per-case bookkeeping.
+- `_check_file_grep(pdir, rel, substr, expect_match,
+  fail_label)` — substring-match helper with bidirectional
+  expect/expect-not.
+- `_scaffold_init(scratch_dir, init_script, flag, name)` —
+  shorthand for the common "mkdir + sh init.sh + return
+  proj_root" flow.
+
+### Removed
+
+- **`tests/regression-init-lib-bin.sh`** (119 LOC).
+- **`tests/regression-init-doctree.sh`** (121 LOC).
+
+### Verified
+
+- **agnosys 1.1.12 verbatim repro** (`/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`)
+  now produces `[{"x":1,"y":42,"z":7}]` + length `20` (was
+  `[]\n0` empty pre-fix). The `status_to_json(&s, sb)` call
+  binds to the renamed 2-arg form correctly.
+- 64/64 check.sh gates green.
+- Two-step self-host byte-identical.
+- cc5 745,336 → 744,936 B (−400, dropped wrapper).
+- aarch64 cross-test gates remain PASS — codegen change is
+  in the cyrius-source-emitting preprocessor (arch-
+  independent).
+- 5 → 3 `tests/regression-*.sh` remaining (capacity arc closed
+  earlier; only macho-exit / pe-exit / tls-live left).
+
+### Cascaded to v5.9.32+
+
+- v5.9.32 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.33 — tls-live + network-probe helper.
+- v5.9.34 — cx Phase 2c parity.
+- v5.9.35 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.36 — closeout pass before v5.10.0.
+
 ## [5.9.30] — 2026-05-07
 
 **v5.9.x SLOT 30 — `#derive(Serialize)` primitive-field codegen

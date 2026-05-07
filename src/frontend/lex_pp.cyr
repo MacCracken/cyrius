@@ -501,11 +501,21 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
     var field_count = load64(S + 0x197010);
     var cumul_off = load64(S + 0x197018);
     # Aliases: sname=S+0x197020, names=S+0x197060, types=S+0x197260, offsets=S+0x197460
-    # === Emit Name_to_json_sb (2-arg composable form) ===
-    # fn Name_to_json_sb(ptr, sb) { ... writes to caller's sb ... }
+    # === Emit Name_to_json (2-arg composable form) ===
+    # fn Name_to_json(ptr, sb) { ... writes to caller's sb ... }
+    # v5.9.31 (agnosys 1.1.12 follow-up): renamed from
+    # Name_to_json_sb to Name_to_json to match the canonical
+    # 2-arg API the vidya `derive_str_fields` doc + existing
+    # consumer convention (`lib/yukti.cyr device_info_to_json`)
+    # establish. Pre-fix the codegen emitted both the 2-arg
+    # Name_to_json_sb AND a 1-arg Name_to_json wrapper that
+    # built its own sb internally, which mis-routed
+    # consumer calls of the documented `Name_to_json(ptr, sb)`
+    # shape into the 1-arg path → wrapper ignored the user's
+    # sb → empty output.
     op = op + PP_EMIT_STR(out, op, "fn ");
     op = op + PP_EMIT_STR(out, op, S + 0x197020);
-    op = op + PP_EMIT_STR(out, op, "_to_json_sb(ptr, sb) {\n");
+    op = op + PP_EMIT_STR(out, op, "_to_json(ptr, sb) {\n");
     # For each field
     var fi = 0;
     while (fi < field_count) {
@@ -587,9 +597,11 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, "));\n");
             } else {
-                # Nested struct: use composable 2-arg form
+                # Nested struct: use composable 2-arg form.
+                # v5.9.31: matched the renamed top-level fn
+                # (Name_to_json, no `_sb` suffix).
                 op = op + PP_EMIT_STR(out, op, S + 0x197260 + fi * 32);
-                op = op + PP_EMIT_STR(out, op, "_to_json_sb(ptr + ");
+                op = op + PP_EMIT_STR(out, op, "_to_json(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ", sb);\n");
             } }
@@ -603,12 +615,15 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
     }
     # Close 2-arg form
     op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"}\");\nreturn 0;\n}\n");
-    # === Emit Name_to_json (1-arg wrapper) ===
-    op = op + PP_EMIT_STR(out, op, "fn ");
-    op = op + PP_EMIT_STR(out, op, S + 0x197020);
-    op = op + PP_EMIT_STR(out, op, "_to_json(ptr) {\nvar sb = str_builder_new();\n");
-    op = op + PP_EMIT_STR(out, op, S + 0x197020);
-    op = op + PP_EMIT_STR(out, op, "_to_json_sb(ptr, sb);\nreturn str_builder_build(sb);\n}\n");
+    # v5.9.31: the previous 1-arg wrapper Name_to_json(ptr) →
+    # str_builder_new + Name_to_json_sb + str_builder_build was
+    # retired. It collided with the documented 2-arg
+    # Name_to_json(ptr, sb) API: a consumer call of
+    # `Name_to_json(&s, sb)` (per vidya `derive_str_fields`)
+    # silently bound to the 1-arg fn, ignored the user's sb,
+    # built into a throwaway internal sb, and returned a value
+    # the caller dropped → empty output (agnosys 1.1.12 filing).
+    # The 2-arg form above is now the canonical Name_to_json.
     # === Also emit Name_from_json (Deserialize) ===
     op = op + PP_EMIT_STR(out, op, "fn ");
     op = op + PP_EMIT_STR(out, op, S + 0x197020);
