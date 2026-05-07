@@ -33,12 +33,19 @@ check.sh green. Two-step self-host byte-identical
 (Linux aarch64), **ecb** (macOS arm64 Mach-O), **cass**
 (Windows 11 PE32+) — 13/13 each.
 
-**Next**: v5.9.34 — `tls-live` gate conversion +
-`_network_probe_check` (closes the .sh-conversion arc at 0
-remaining). v5.9.35 — cx Phase 2c parity (struct-by-value +
-sub-byte field load + ESTORESTACKPARM >6 args). v5.9.36 —
-`lib/regression.cyr` testing-stdlib carve-out. v5.9.37 —
-closeout pass before v5.10.0.
+**Next**: v5.9.34 — vyakarana 1.0.2 include-graph regression
+(filed 2026-05-07; root cause pinpointed: `in_string` state
+machine in `PP_IFDEF_PASS` trips on `"` inside comments,
+masking subsequent include directives — HIGH severity blocks
+vyakarana 1.0.0 cut and every downstream pin bump).
+v5.9.35 — agnosys 1.1.12 re-file resolution (add
+`i64_from_json` stdlib helper or rename codegen reference;
+vidya `derive_str_fields` doc refresh covering required-
+include set and `Str`-vs-cstring `println` distinction).
+v5.9.36 — cx Phase 2c parity. v5.9.37 — tls-live +
+network-probe helper (cascaded down; closes the .sh-conversion
+arc). v5.9.38 — `lib/regression.cyr` testing-stdlib carve-out.
+v5.9.39 — closeout pass before v5.10.0.
 
 **5.9.13** (shipped 2026-05-06 — **v5.9.x SLOT 13 —
 bidirectional-IPC helper + `regression-lsp-definition.sh`

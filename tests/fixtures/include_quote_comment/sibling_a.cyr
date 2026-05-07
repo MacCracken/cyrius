@@ -1,0 +1,11 @@
+# sibling_a.cyr — vyakarana-shape sibling that re-includes the
+# leaf at the top. Pre-v5.9.34, when sibling_a is parsed AFTER
+# leaf was already mark-included, the directive at top stayed
+# in the buffer as raw text (because PP_IFDEF_PASS's `in_string`
+# was stuck at 1 from leaf's `\"` comment). The lexer then
+# tokenized `include` as an identifier and reported `expected
+# '=', got string`.
+
+include "tests/fixtures/include_quote_comment/leaf.cyr"
+
+fn _sibling_a_call() { return _leaf_value() + 100; }

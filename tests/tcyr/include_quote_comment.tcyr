@@ -1,0 +1,62 @@
+# include_quote_comment.tcyr — v5.9.34 regression for
+# PP_IFDEF_PASS string-state-machine over-tracking on `"`
+# inside comments.
+#
+# Bug history: vyakarana 1.0.2's pin bump from cyrius 5.6.0 to
+# 5.9.32 surfaced this — `cyrius build src/main.cyr build/vyk`
+# failed with `error:src/tokenize.cyr:16: expected '=', got
+# string` at the `include "src/token.cyr"` line. Filed at
+# `vyakarana/docs/development/issues/2026-05-07-cyrius-include-
+# graph-regression.md`.
+#
+# Root cause (pinpointed via instrumentation 2026-05-07):
+# `PP_IFDEF_PASS`'s `in_string` state machine, added at v5.8.40
+# to suppress directive false-positives inside string literals,
+# treated EVERY `"` byte as a string boundary — including `"`
+# in comments. vyakarana's `src/grammar.cyr` had a comment
+# documenting JSON escape syntax with `` `\"` `` (backtick-
+# backslash-quote-backtick). The state machine's `\` outside a
+# string was a no-op; the next `"` toggled `in_string=1`;
+# there was no closing `"` on that or any subsequent line until
+# much later in the buffer, so `in_string` stayed 1 through
+# every later `include` directive in included files. Each
+# include then failed the `bol == 1 && in_string == 0` gate
+# at PP_IFDEF_PASS:1603 and was passed through to lex as raw
+# text — where `include` became an identifier token and the
+# parser errored at the next `=` expectation.
+#
+# The "sibling-transitive structural shape" the filing's bisect
+# isolated was incidental — any include graph would break IF
+# the included content has a `\"`-bearing comment somewhere
+# upstream of an include directive.
+#
+# Fix at v5.9.34 (`src/frontend/lex_pp.cyr` PP_PASS +
+# PP_IFDEF_PASS): comment-aware state machine. `#` outside a
+# string starts a line comment; comments end at the next
+# newline. Inside a comment `"` does NOT toggle in_string.
+# Newline also resets `in_string` + `escape_next` + `in_comment`
+# to 0 as a safety net (cyrius source uses single-line strings
+# via `\n` escape, never literal multi-line strings, so per-
+# line state reset is safe).
+#
+# This tcyr exercises the bug shape with a minimal include
+# graph: a leaf with a `\"`-bearing comment AND two siblings
+# that both re-include the leaf. Pre-fix, the sibling-side
+# include directive is left in the buffer, parser errors with
+# `expected '=', got string` at the include line. Post-fix,
+# both sibling includes are correctly skipped (already-included)
+# and the program builds + asserts pass.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+include "tests/fixtures/include_quote_comment/leaf.cyr"
+include "tests/fixtures/include_quote_comment/sibling_a.cyr"
+include "tests/fixtures/include_quote_comment/sibling_b.cyr"
+
+assert_eq(_leaf_value(), 7, "leaf.cyr exposed _leaf_value");
+assert_eq(_sibling_a_call(), 107, "sibling_a re-include of leaf resolved");
+assert_eq(_sibling_b_call(), 207, "sibling_b re-include of leaf resolved");
+
+var r = assert_summary();

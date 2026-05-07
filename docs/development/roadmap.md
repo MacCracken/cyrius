@@ -1059,15 +1059,173 @@ satisfied by earlier slots.
   upstream of any need for the formatter so that path may
   not actually be defective).
 
-- **v5.9.34** — **tls-live gate conversion + network-probe
-  helper**. `_network_probe_check(host, port)` — quick TCP
-  connect+disconnect to verify network reachability before
-  the TLS round-trip; skip cleanly if unreachable (CI runner
-  contexts vary). `_tls_live_gate()` retires the `.sh`. With
-  this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.36.
+- **v5.9.34** — **vyakarana 1.0.2 include-graph regression fix**
+  (`vyakarana/docs/development/issues/2026-05-07-cyrius-include-graph-regression.md`,
+  filed 2026-05-07 during pin bump 5.6.0 → 5.9.32). HIGH severity
+  — vyakarana 1.0.0 cut blocked; downstream consumers (owl,
+  cyim, agnoshi, vidya) can't pick up new vyakarana tags
+  until either the language fixes the regression or vyakarana
+  flattens its include graph (consumer-side workaround they're
+  reluctant to take because the canonical "modules declare
+  their own deps" pattern is widely used by sandhi, agnosys,
+  yukti, kavach).
 
-- **v5.9.35** — **cx (cyrius-x bytecode) Phase 2c parity**.
+  **Failure shape (verified 2026-05-07 against v5.9.33)**:
+  `cyrius build src/main.cyr build/vyk` →
+  `error:src/tokenize.cyr:16: expected '=', got string` at
+  the `include "src/token.cyr"` line. The parser consumed
+  `include` as an identifier — meaning the directive escaped
+  the preprocessor and got to the lexer untouched.
+
+  **Root cause (pinpointed via instrumentation, 2026-05-07)**:
+  `PP_IFDEF_PASS`'s `in_string` state machine (added v5.8.40 to
+  prevent `"include "..."` inside string literals from being
+  mistaken for directives) over-tracks. It treats EVERY `"`
+  byte as a string boundary — including `"` characters inside
+  comments. vyakarana's `src/grammar.cyr` has a comment
+  documenting JSON parser escape syntax:
+
+  ```cyr
+  # references inside strings: `\\`, `\"`,
+  # `\n`, `\t`. ...
+  ```
+
+  The bytes `` `\"` `` (4 bytes: `` ` ``, `\`, `"`, `` ` ``)
+  trip the state machine: outside a string, `\` does nothing,
+  then `"` toggles `in_string=1`. There's no closing `"` on
+  this comment line (or any subsequent line until much later),
+  so `in_string` stays 1 through the rest of the buffer —
+  every subsequent `include` directive inside an included file
+  fails the `bol == 1 && in_string == 0` gate at PP_IFDEF_PASS
+  line 1603 and is left as a raw byte sequence in the output.
+
+  **Why `cat repro.cyr | cc5` minimal repros didn't trigger**
+  (per the filing's "ruled-out hypotheses"): the grammar.cyr
+  comment with `` `\"` `` is the actual trigger; structural
+  shape (sibling-transitive includes) is incidental — any
+  include graph would break IF the included content has a
+  `\"`-bearing comment somewhere upstream of an include
+  directive. The bisect's "probe 5 fails, probe 4 ok" pattern
+  is just whether `grammar.cyr` (with the comment) is parsed
+  before tokenize.cyr's includes.
+
+  **Fix candidates** (slot picks one; design-call live):
+  1. **Comment-aware state machine**: track `#` to next
+     newline, suppress `in_string` toggling inside comments.
+     Mirrors cyrius's actual lexer (which treats `#` as
+     line-comment start). Lowest blast radius.
+  2. **Char-literal aware**: also suppress for `'X'` patterns.
+     Pairs with (1) since the same comment-with-stray-quote
+     issue affects char literals.
+  3. **Reset `in_string=0` on newline**: assumes single-line
+     strings (true in cyrius's hand-rolled stdlib but not
+     enforced at the lexer level — multi-line strings would
+     break). Cheaper but riskier.
+  4. **Roll back v5.8.40** and use a different mechanism to
+     suppress `"include "..."`-in-literals false positives
+     (e.g. require column-0 strict for directives — but
+     cyrfmt indents `#ifdef` inside fn bodies, so this would
+     re-break `#ifdef` detection).
+
+  **Acceptance**:
+  - `cd /home/macro/Repos/vyakarana && cyrius build src/main.cyr
+    build/vyk` succeeds.
+  - vyakarana's existing test suite (`smoke.sh`) green
+    against the fixed compiler.
+  - New `tests/tcyr/include_with_quote_comment.tcyr` —
+    minimal repro inlined: an included file with a comment
+    containing `` `\"` `` followed by a sibling that
+    includes the same leaf. Pre-fix `error: ... expected
+    '='`. Post-fix builds + asserts pass.
+  - 64/64 check.sh green; two-step self-host byte-identical;
+    cross-host SSH cluster (pi/ecb/cass) all PASS.
+
+  Diagnostic improvement (folded in): when the parser sees
+  `include` as identifier in PARSE_VAR / PARSE_GVAR_REG,
+  emit a hint about preprocessor failures (`include directive
+  not expanded — possible PP state corruption upstream;
+  check for unmatched "" or " inside comments`). Helps
+  consumers diagnose without bisecting.
+
+  **Out of scope** (held forward): the agnosys 1.1.12 re-file
+  (`agnosys/docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`)
+  pins to v5.9.35 — see below. Distinct issue; the agnosys
+  re-file is `Str`-vs-cstring API misuse + `i64_from_json`
+  missing helper, NOT a derive codegen failure.
+
+- **v5.9.35** — **agnosys 1.1.12 re-file
+  resolution: `i64_from_json` stdlib gap + `Str`/cstring API
+  documentation**. agnosys re-filed v5.9.33 (corrigendum):
+  the earlier "5.9.31 fixes Serialize on x86_64" claim was
+  wrong; runtime serializer was always broken on both arches,
+  but the cause is NOT codegen — it's API misuse + a missing
+  helper.
+
+  **Verified 2026-05-07 against v5.9.33** (this session):
+  - PP_DERIVE_SERIALIZE codegen IS correct. The emitted
+    `<Name>_to_json(ptr, sb)` body works; `point_to_json(&p,
+    sb)` produces `{"x":1,"y":42,"z":7}` on both x86_64 and
+    aarch64 (qemu + real pi hardware, verified).
+  - The "5 bytes garbage" the filing reports is from the
+    consumer using `println(out)` where `out` is a `Str`
+    (16-byte heap header `{ptr, len}`). `println` is a
+    cstring fn (calls `strlen`); `str_print(out)` is the Str
+    fn. Switching the repro from `println` to
+    `str_print` + `\n` produces the correct JSON. Same on
+    aarch64 — the filing's "qemu-aarch64 SIGILL" claim
+    didn't reproduce in this session (qemu OR real pi both
+    show the same 4-5 byte garbage as x86 — no SIGILL).
+  - The "fncall4 undefined" warning the filing reports is
+    actually `dead: fncall4` (DCE'd because nothing
+    references it once the typed-i64 codegen path is taken).
+    Not undefined — it's eliminated. Filing misread.
+  - The `i64_from_json` undefined warning IS real:
+    `lib/json.cyr` ships `json_get_int`, not `i64_from_json`.
+    The auto-generated `_from_json` body references the
+    wrong name. DCE-eliminated when the consumer is
+    serializer-only (agnosys's V1.1.12 case), but warns.
+
+  **Slot scope**:
+  1. **Add `i64_from_json(s)` to `lib/json.cyr`** (or rename
+     codegen reference to `json_get_int` — pick one). Either
+     way the auto-generated `_from_json` body should bind to
+     a real fn at link time. Same for `i32_from_json`,
+     `i16_from_json`, `i8_from_json`, `Str_from_json` if the
+     deserializer side is meant to round-trip the
+     serializer's typed paths.
+  2. **Vidya doc refresh**:
+     `vidya/content/cyrius/language/features.cyml`
+     `derive_str_fields` entry — name the required include
+     set explicitly (`lib/syscalls.cyr`, `lib/string.cyr`,
+     `lib/str.cyr`, `lib/alloc.cyr`, `lib/fmt.cyr`; +
+     `lib/json.cyr` if deserializer round-trip is needed).
+     Document the `Str` vs cstring distinction at the example
+     site: "to print the result, use `str_print(out)` (Str-
+     typed) — `println` is for cstrings and will print the
+     16-byte Str header as garbage."
+  3. **Optional**: a `_to_cstr_println(s)` convenience or a
+     `Str`-typed `println` overload — but cyrius doesn't do
+     overloading, so this is a naming question. Likely just
+     vidya doc + a `Str_println(s)` alias. Held until consumer
+     surfaces the ergonomic ask.
+
+  **Acceptance**:
+  - agnosys 1.1.12 verbatim repro (the corrected version with
+    `str_print` + `\n`) prints `{"x":1,"y":42,"z":7}` on
+    both x86_64 AND aarch64 (qemu + real pi). Already
+    verified 2026-05-07 — but the slot adds a tcyr that
+    captures this regression target so future PP_DERIVE
+    changes can't silently break it.
+  - `i64_from_json` resolves at link time (no `undefined
+    function` warning when `lib/json.cyr` is included).
+  - Vidya `derive_str_fields` entry includes both the include
+    set and the `Str` vs cstring note.
+
+  **Out of scope** (intentionally held): the `Str_println`
+  ergonomic helper. Pin if a downstream consumer surfaces
+  the ask explicitly.
+
+- **v5.9.36** — **cx (cyrius-x bytecode) Phase 2c parity**.
   Closes the two `ERR_MSG`-guarded cx pending sites that
   v5.9.26 + v5.9.27 narrowed but didn't fix:
   - `parse_fn.cyr:371` — struct return by value
@@ -1105,10 +1263,20 @@ satisfied by earlier slots.
   byte-memory-ops shape this slot is centered on. Pin them
   individually if a cx consumer surfaces.
 
-- **v5.9.36** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.34 (arc
+- **v5.9.37** — **tls-live gate conversion + network-probe
+  helper** (cascaded down from v5.9.34 after the vyakarana +
+  agnosys re-files claimed the earlier slots).
+  `_network_probe_check(host, port)` — quick TCP
+  connect+disconnect to verify network reachability before
+  the TLS round-trip; skip cleanly if unreachable (CI runner
+  contexts vary). `_tls_live_gate()` retires the `.sh`. With
+  this slot the `.sh-conversion arc closes (0 .sh remaining)
+  — precondition for v5.9.38.
+
+- **v5.9.38** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.37 (arc
   closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.34 dispatcher work
+  accumulated through the v5.9.6 → v5.9.37 dispatcher work
   (`_stderr_match_subcase`, `_count_substr_buf`,
   `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
@@ -1125,7 +1293,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.37** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.39** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup

@@ -95,13 +95,29 @@ to the scalar expression branch (`PCMPE`) where they belong.
 
 ### Cascaded to v5.9.34+
 
-- v5.9.34 — tls-live + network-probe helper. Last `.sh` to
-  retire; after this slot the `.sh-conversion arc closes
-  (0 remaining).
-- v5.9.35 — cx Phase 2c parity (struct-by-value + sub-byte
+- v5.9.34 — **vyakarana 1.0.2 include-graph regression** (filed
+  2026-05-07 during pin bump 5.6.0 → 5.9.32). Root cause
+  pinpointed mid-this-session: `PP_IFDEF_PASS`'s `in_string`
+  state machine (added v5.8.40) trips on `"` inside comments
+  (e.g. `` # `\"` `` inside vyakarana `src/grammar.cyr`),
+  leaves `in_string=1`, and PP misses every subsequent
+  `include` directive. HIGH severity — vyakarana 1.0.0 cut +
+  every downstream pin bump blocked.
+- v5.9.35 — **agnosys 1.1.12 re-file resolution**: add missing
+  `i64_from_json` to `lib/json.cyr` (or rename codegen
+  reference) + vidya `derive_str_fields` doc refresh
+  (required-include set + `Str`-vs-cstring `println` note).
+  Root cause confirmed mid-session: PP_DERIVE_SERIALIZE
+  codegen IS correct; the filing's "garbage output" is from
+  the consumer using `println(out)` (cstring fn) on a `Str`
+  (16-byte `{ptr,len}` header) — `str_print(out)` produces
+  the right JSON on both arches.
+- v5.9.36 — cx Phase 2c parity (struct-by-value + sub-byte
   field load + ESTORESTACKPARM >6 args).
-- v5.9.36 — `lib/regression.cyr` testing-stdlib carve-out.
-- v5.9.37 — closeout pass before v5.10.0.
+- v5.9.37 — tls-live + network-probe helper (cascaded down
+  from earlier v5.9.34 pin). Closes the `.sh-conversion arc.
+- v5.9.38 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.39 — closeout pass before v5.10.0.
 
 ## [5.9.32] — 2026-05-07
 

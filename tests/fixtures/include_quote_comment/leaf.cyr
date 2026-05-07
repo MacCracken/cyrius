@@ -1,0 +1,16 @@
+# leaf.cyr — fixture for v5.9.34 PP comment-quote regression.
+#
+# Documents JSON escape syntax inside backticks. The literal byte
+# sequence `\"` (backtick-backslash-quote-backtick) inside a
+# comment was the trigger for vyakarana 1.0.2's include-graph
+# build break under cyrius v5.8.40 .. v5.9.33: the backslash
+# was a no-op outside a string and the unescaped `"` toggled
+# `in_string=1`, leaving every subsequent include directive
+# unexpanded.
+#
+# Quote-bearing comment line below stays single-source-of-truth:
+# references inside strings: `\\`, `\"`,
+# `\n`, `\t`. That's enough for grammar files; we don't need
+# `\u` (Unicode escape) in 1.0.
+
+fn _leaf_value() { return 7; }

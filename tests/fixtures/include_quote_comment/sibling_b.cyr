@@ -1,0 +1,10 @@
+# sibling_b.cyr — second sibling re-including the same leaf.
+# The vyakarana repro had `grammar.cyr` and `tokenize.cyr`
+# (both top-level included by main) each re-include `token.cyr`
+# at the top. Pre-v5.9.34 sibling_b's include directive
+# slipped through unexpanded for the same in_string-stuck
+# reason as sibling_a's.
+
+include "tests/fixtures/include_quote_comment/leaf.cyr"
+
+fn _sibling_b_call() { return _leaf_value() + 200; }

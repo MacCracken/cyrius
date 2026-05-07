@@ -1170,8 +1170,11 @@ fn PP_PASS(S) {
     # so a string literal containing `include "..."` (or any other
     # directive prefix) doesn't get mistaken for a real directive.
     # Mirrors the cyrlint v5.7.36 string-literal fix.
+    # v5.9.34 — `in_comment` added (vyakarana 1.0.2 fix). See the
+    # state-machine site below for the full rationale.
     var in_string = 0;
     var escape_next = 0;
+    var in_comment = 0;
     while (ip < bl) {
         var c = load8(S + ip);
         var handled = 0;
@@ -1432,23 +1435,52 @@ fn PP_PASS(S) {
             # detection while inside a literal. `\` inside a
             # string sets escape_next so the following byte (a
             # quote, backslash, n, etc.) doesn't toggle the
-            # in_string flag. Newlines inside literals also
-            # advance escape_next handling — the parser/lex
-            # rejects unescaped LF in strings, but the
-            # preprocessor doesn't, so we tolerate it for tools
-            # that scan source defensively (e.g. cyrlint).
-            if (escape_next == 1) {
-                escape_next = 0;
+            # in_string flag.
+            #
+            # v5.9.34 — comment-aware. `#` outside a string starts
+            # a line comment; comments end at the next newline.
+            # Inside a comment, `"` does NOT toggle in_string.
+            # Pre-fix vyakarana 1.0.2 tripped on a `\"` inside a
+            # backtick-quoted comment in `src/grammar.cyr` —
+            # `"` was treated as a string opener, `in_string`
+            # stayed 1 through the rest of the buffer, every
+            # subsequent `include` directive failed the bol+in_string
+            # gate at PP_IFDEF_PASS:1603 and was passed through as
+            # raw text. The lexer then reported `expected '=', got
+            # string` at the include line because `include` was
+            # consumed as an identifier.
+            #
+            # Newline also resets in_string + escape_next + in_comment
+            # to 0 as a safety net. cyrius source uses single-line
+            # strings (`\n` escape, not literal LF inside a string);
+            # any state corruption from comments / char literals /
+            # other oddities is bounded to one line.
+            if (in_comment == 1) {
+                if (c == 10) { in_comment = 0; bol = 1; }
+                else { bol = 0; }
+                ip = ip + 1;
             } else {
-                if (in_string == 0) {
-                    if (c == 34) { in_string = 1; }
+                if (escape_next == 1) {
+                    escape_next = 0;
                 } else {
-                    if (c == 92)      { escape_next = 1; }
-                    elif (c == 34)    { in_string = 0; }
+                    if (in_string == 0) {
+                        if (c == 35)      { in_comment = 1; }   # '#' starts comment
+                        elif (c == 34)    { in_string = 1; }    # '"' opens string
+                    } else {
+                        if (c == 92)      { escape_next = 1; }
+                        elif (c == 34)    { in_string = 0; }
+                    }
+                }
+                ip = ip + 1;
+                if (c == 10) {
+                    bol = 1;
+                    in_string = 0;
+                    escape_next = 0;
+                    in_comment = 0;
+                } else {
+                    bol = 0;
                 }
             }
-            ip = ip + 1;
-            if (c == 10) { bol = 1; } else { bol = 0; }
         }
     }
     # Check preprocess output size. Buffer is 2MB at 0x44A000 (v5.6.40).
@@ -1591,8 +1623,10 @@ fn PP_IFDEF_PASS(S) {
         # loop scans expanded source again with its own ISINCLUDE
         # check, so the same string-literal blindness applies and
         # gets the same in_string + escape_next gate.
+        # v5.9.34 — `in_comment` added (vyakarana 1.0.2 fix).
         var in_string = 0;
         var escape_next = 0;
+        var in_comment = 0;
         while (ip < bl) {
             var c = load8(tmp + ip);
             var handled = 0;
@@ -1733,18 +1767,35 @@ fn PP_IFDEF_PASS(S) {
                 if (skip_depth == 0) { store8(out + op, c); op = op + 1; }
                 # v5.8.40 — string-literal state machine; mirrors
                 # PP_PASS. See PP_PASS for the rationale.
-                if (escape_next == 1) {
-                    escape_next = 0;
+                # v5.9.34 — comment-aware + reset on newline.
+                # See PP_PASS state-machine site for the full
+                # vyakarana 1.0.2 root-cause writeup.
+                if (in_comment == 1) {
+                    if (c == 10) { in_comment = 0; bol = 1; }
+                    else { bol = 0; }
+                    ip = ip + 1;
                 } else {
-                    if (in_string == 0) {
-                        if (c == 34) { in_string = 1; }
+                    if (escape_next == 1) {
+                        escape_next = 0;
                     } else {
-                        if (c == 92)      { escape_next = 1; }
-                        elif (c == 34)    { in_string = 0; }
+                        if (in_string == 0) {
+                            if (c == 35)      { in_comment = 1; }
+                            elif (c == 34)    { in_string = 1; }
+                        } else {
+                            if (c == 92)      { escape_next = 1; }
+                            elif (c == 34)    { in_string = 0; }
+                        }
+                    }
+                    ip = ip + 1;
+                    if (c == 10) {
+                        bol = 1;
+                        in_string = 0;
+                        escape_next = 0;
+                        in_comment = 0;
+                    } else {
+                        bol = 0;
                     }
                 }
-                ip = ip + 1;
-                if (c == 10) { bol = 1; } else { bol = 0; }
             }
         }
         # v4.8.4 post-GA fix (reported by bote 2.5.0 in
