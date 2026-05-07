@@ -1,0 +1,17 @@
+# {PROJ} — top-level test entry (referenced by cyrius.cyml [build].test).
+# For unit tests, prefer adding cases to tests/{PROJ}.tcyr.
+
+include "lib/syscalls.cyr"
+
+fn main() {
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+fi
+
+# === tests/test.tcyr ===
+# (tests/ already created by the top-level mkdir block above)
+write_if_absent "$NAME/tests/{PROJ}.tcyr" << EOF

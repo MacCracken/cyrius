@@ -1,0 +1,15 @@
+[package]
+name = "{PROJ}"
+version = "0.1.0"
+description = "{DESCRIPTION}"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "{CYRIUS_VER}"
+
+[build]
+entry = "src/main.cyr"
+test = "src/test.cyr"
+output = "{PROJ}"
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]

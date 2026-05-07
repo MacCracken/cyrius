@@ -1,0 +1,392 @@
+# cyrius-init.cyr — cyrius project scaffolder (v5.9.28 part 1).
+#
+# Sovereignty port of scripts/cyrius-init.sh, originally pinned
+# to v5.9.14 but rescheduled to v5.9.28 after the v5.9.x cycle's
+# emergent consumer-filed work consumed earlier slots. This is
+# part 1 of 2: greenfield `--bin` path with 14 essential
+# templates externalized to programs/cyrius-init-templates/.
+# Part 2 (v5.9.29) adds:
+#   - `--lib` and bare-shape detection
+#   - In-place mode (`cyrius init .`)
+#   - Full flag matrix (--language / --agent / --cmtools /
+#     --description / --dry-run)
+#   - Remaining ~12 templates (CI workflow, doc tree, CLAUDE.md,
+#     README variants, getting-started)
+#   - cyrius-port.sh sovereignty port (shares this scaffold's
+#     template-substitution layer)
+#
+# Until part 2 lands, the cbt/cyrius.cyr dispatcher routes
+# unsupported flag combos to scripts/cyrius-init.sh as fallback.
+#
+# Template substitution: data files under
+# `programs/cyrius-init-templates/` carry `{KEY}` placeholders
+# (e.g. `{PROJ}`, `{CYRIUS_VER}`, `{DESCRIPTION}`). The
+# `_subst_template` helper does single-pass byte-walk replacement
+# against a fixed set of known keys.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/syscalls.cyr"
+
+# ────────────────────────────────────────────────────────────
+# Path helpers
+# ────────────────────────────────────────────────────────────
+
+# Read /proc/self/exe via readlink to find the cyrius-init binary
+# location → resolve `programs/cyrius-init-templates/` next to it
+# in the repo, OR `~/.cyrius/share/cyrius-init-templates/` in the
+# install snapshot. v5.9.28: dev-mode only (repo-local). Install-
+# snapshot path lands at v5.9.29 once the install pipeline knows
+# to copy the template tree.
+fn _resolve_templates_dir(argv0) {
+    var buf = alloc(4096);
+    # Try readlink /proc/self/exe.
+    var n = sys_readlink("/proc/self/exe", buf, 4095);
+    if (n <= 0) {
+        # Fall back to argv0 — best effort.
+        var l = strlen(argv0);
+        if (l >= 4095) { l = 4095; }
+        memcpy(buf, argv0, l);
+        n = l;
+    }
+    store8(buf + n, 0);
+    # Walk back to last `/` to get the bin's directory.
+    var i = n - 1;
+    while (i >= 0) {
+        if (load8(buf + i) == 47) { break; }
+        i = i - 1;
+    }
+    if (i < 0) { return 0; }
+    # Strip `/cyrius-init` to get the bin dir; from there `..` is
+    # the repo root. Templates live at
+    # `<repo-root>/programs/cyrius-init-templates/`.
+    store8(buf + i, 0);
+    # buf now holds the bin dir (e.g. `/path/to/repo/build`).
+    # Walk back to find the parent (strip the final dir component).
+    var j = i - 1;
+    while (j >= 0) {
+        if (load8(buf + j) == 47) { break; }
+        j = j - 1;
+    }
+    if (j < 0) { return 0; }
+    store8(buf + j, 0);
+    # buf now holds the repo root.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, buf);
+    str_builder_add_cstr(sb, "/programs/cyrius-init-templates");
+    return str_data(str_builder_build(sb));
+}
+
+# Read VERSION file from `<repo>/VERSION` (sibling of bin/build/
+# / scripts/). Returns null-terminated cstring or 0 if missing.
+fn _read_repo_version(templates_dir) {
+    # templates_dir = <repo>/programs/cyrius-init-templates
+    # VERSION       = <repo>/VERSION
+    var buf = alloc(4096);
+    var l = strlen(templates_dir);
+    memcpy(buf, templates_dir, l);
+    # Walk back two `/` segments: strip cyrius-init-templates,
+    # then programs.
+    var k = 0;
+    var i = l - 1;
+    while (i >= 0 && k < 2) {
+        if (load8(buf + i) == 47) { k = k + 1; }
+        if (k < 2) { i = i - 1; }
+    }
+    if (i < 0) { return 0; }
+    store8(buf + i, 0);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, buf);
+    str_builder_add_cstr(sb, "/VERSION");
+    var version_path = str_data(str_builder_build(sb));
+
+    var fd = sys_open(version_path, 0, 0);
+    if (fd < 0) { return 0; }
+    var vbuf = alloc(64);
+    var vn = sys_read(fd, vbuf, 63);
+    sys_close(fd);
+    if (vn <= 0) { return 0; }
+    # Trim trailing newline / whitespace.
+    while (vn > 0) {
+        var c = load8(vbuf + vn - 1);
+        if (c == 10) { vn = vn - 1; }
+        else { if (c == 13) { vn = vn - 1; }
+            else { if (c == 32) { vn = vn - 1; }
+                else { break; } } }
+    }
+    store8(vbuf + vn, 0);
+    return vbuf;
+}
+
+# ────────────────────────────────────────────────────────────
+# Template substitution
+# ────────────────────────────────────────────────────────────
+
+# Read template file at <templates_dir>/<name> + substitute
+# placeholders. Returns a cstring buffer with the rendered text,
+# or 0 if the template can't be read.
+#
+# Placeholder grammar: `{KEY}` is replaced by looking up KEY in
+# the (proj_name, cyrius_ver, description) triple. Unknown keys
+# pass through unchanged.
+fn _render_template(templates_dir, name, proj_name, cyrius_ver, description) {
+    var path_sb = str_builder_new();
+    str_builder_add_cstr(path_sb, templates_dir);
+    str_builder_add_cstr(path_sb, "/");
+    str_builder_add_cstr(path_sb, name);
+    var path = str_data(str_builder_build(path_sb));
+
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) {
+        syscall(SYS_WRITE, 2, "error: missing template '", 25);
+        sys_write(2, name, strlen(name));
+        syscall(SYS_WRITE, 2, "'\n", 2);
+        return 0;
+    }
+    var cap = 65536;
+    var raw = alloc(cap);
+    var n = sys_read(fd, raw, cap - 1);
+    sys_close(fd);
+    if (n <= 0) { return 0; }
+    store8(raw + n, 0);
+
+    var out = str_builder_new();
+    var i = 0;
+    while (i < n) {
+        var c = load8(raw + i);
+        if (c == 123) {
+            # `{` — look for closing `}` within next 32 bytes.
+            var j = i + 1;
+            var found = 0;
+            while (j < n && j < i + 32) {
+                if (load8(raw + j) == 125) { found = 1; break; }
+                j = j + 1;
+            }
+            if (found == 1) {
+                var key_len = j - i - 1;
+                # Resolve the key.
+                var sub = 0;
+                if (key_len == 4) {
+                    if (memeq(raw + i + 1, "PROJ", 4) == 1) {
+                        sub = proj_name;
+                    }
+                }
+                if (sub == 0) {
+                    if (key_len == 11) {
+                        if (memeq(raw + i + 1, "CYRIUS_VER", 10) == 1) {
+                            sub = cyrius_ver;
+                        }
+                    }
+                }
+                if (sub == 0) {
+                    if (key_len == 10) {
+                        if (memeq(raw + i + 1, "CYRIUS_VER", 10) == 1) {
+                            sub = cyrius_ver;
+                        }
+                    }
+                }
+                if (sub == 0) {
+                    if (key_len == 11) {
+                        if (memeq(raw + i + 1, "DESCRIPTION", 11) == 1) {
+                            sub = description;
+                        }
+                    }
+                }
+                if (sub != 0) {
+                    str_builder_add_cstr(out, sub);
+                    i = j + 1;
+                } else {
+                    # Unknown key — emit literal `{` and keep
+                    # walking from i+1.
+                    str_builder_add_byte(out, 123);
+                    i = i + 1;
+                }
+            } else {
+                str_builder_add_byte(out, 123);
+                i = i + 1;
+            }
+        } else {
+            str_builder_add_byte(out, c);
+            i = i + 1;
+        }
+    }
+    return str_data(str_builder_build(out));
+}
+
+# ────────────────────────────────────────────────────────────
+# Filesystem ops
+# ────────────────────────────────────────────────────────────
+
+# Write `content` (cstring) to `path`, creating parent dirs as
+# needed. Returns 0 on success, -1 on any failure.
+fn _write_file(path, content) {
+    var fd = sys_open(path, 577, 420);    # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    if (fd < 0) { return 0 - 1; }
+    var len = strlen(content);
+    sys_write(fd, content, len);
+    sys_close(fd);
+    return 0;
+}
+
+fn _join(parent, child) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, parent);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, child);
+    return str_data(str_builder_build(sb));
+}
+
+# Render template + write to <proj>/<rel_path>. Returns 0 on
+# success, -1 on render or write failure.
+fn _render_and_write(templates_dir, tpl_name, proj_root, rel_path, proj_name, cyrius_ver, description) {
+    var content = _render_template(templates_dir, tpl_name, proj_name, cyrius_ver, description);
+    if (content == 0) { return 0 - 1; }
+    var dst = _join(proj_root, rel_path);
+    return _write_file(dst, content);
+}
+
+# ────────────────────────────────────────────────────────────
+# Main
+# ────────────────────────────────────────────────────────────
+
+fn main() {
+    alloc_init();
+    args_init();
+
+    var argc_n = argc();
+    if (argc_n < 2) {
+        syscall(SYS_WRITE, 2, "Usage: cyrius-init <project-name>\n", 34);
+        syscall(SYS_WRITE, 2, "  (v5.9.28 part 1: only greenfield --bin shape; --lib / bare / flags route to scripts/cyrius-init.sh)\n", 102);
+        syscall(SYS_EXIT, 1);
+    }
+
+    var name = argv(1);
+
+    # In-place mode (`cyrius init .`) deferred to v5.9.29 part 2.
+    # Fail fast so caller knows to use the bash fallback.
+    if (strlen(name) == 1) {
+        if (load8(name) == 46) {
+            syscall(SYS_WRITE, 2, "cyrius-init: in-place mode (`.`) deferred to v5.9.29 — falling through to bash\n", 79);
+            syscall(SYS_EXIT, 2);
+        }
+    }
+
+    # Reject names with `/` (subdirs). Must be a simple project
+    # name in v5.9.28 part 1.
+    var ni = 0;
+    var nlen = strlen(name);
+    while (ni < nlen) {
+        if (load8(name + ni) == 47) {
+            syscall(SYS_WRITE, 2, "cyrius-init: project name with `/` deferred to v5.9.29 — falling through to bash\n", 81);
+            syscall(SYS_EXIT, 2);
+        }
+        ni = ni + 1;
+    }
+
+    # Reject if target dir already exists (greenfield-only in
+    # v5.9.28 part 1). file_exists returns 1 for files OR dirs.
+    if (file_exists(name) == 1) {
+        syscall(SYS_WRITE, 2, "error: directory '", 18);
+        sys_write(2, name, nlen);
+        syscall(SYS_WRITE, 2, "' already exists (in-place mode pending v5.9.29)\n", 49);
+        syscall(SYS_EXIT, 1);
+    }
+
+    # Resolve template dir + cyrius version.
+    var templates_dir = _resolve_templates_dir(argv(0));
+    if (templates_dir == 0) {
+        syscall(SYS_WRITE, 2, "error: cannot resolve templates dir from argv[0]\n", 49);
+        syscall(SYS_EXIT, 1);
+    }
+
+    var cyrius_ver = _read_repo_version(templates_dir);
+    if (cyrius_ver == 0) {
+        # Fall back to env / install snapshot. v5.9.28 keeps it
+        # simple — fail and let the bash fallback take over.
+        syscall(SYS_WRITE, 2, "cyrius-init: VERSION lookup failed (cascade pending v5.9.29) — falling through to bash\n", 87);
+        syscall(SYS_EXIT, 2);
+    }
+
+    # Description: default placeholder for v5.9.28; --description
+    # flag handled in v5.9.29.
+    var desc_sb = str_builder_new();
+    str_builder_add_cstr(desc_sb, name);
+    str_builder_add_cstr(desc_sb, " — TODO");
+    var description = str_data(str_builder_build(desc_sb));
+
+    # Create project skeleton. v5.9.28: --bin shape only (5
+    # subdirs + 14 templates).
+    sys_mkdir(name, 493);
+    sys_mkdir(_join(name, "src"), 493);
+    sys_mkdir(_join(name, "tests"), 493);
+    sys_mkdir(_join(name, "docs"), 493);
+    sys_mkdir(_join(name, "docs/adr"), 493);
+    sys_mkdir(_join(name, "docs/architecture"), 493);
+    sys_mkdir(_join(name, "docs/examples"), 493);
+    sys_mkdir(_join(name, ".github"), 493);
+    sys_mkdir(_join(name, ".github/workflows"), 493);
+
+    var fail = 0;
+    # 8 no-expansion templates (still rendered through the same
+    # path — the {KEY} substitution is a no-op when no placeholders
+    # are present).
+    if (_render_and_write(templates_dir, "gitignore",            name, ".gitignore",                       name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "license",              name, "LICENSE",                          name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "changelog.md",         name, "CHANGELOG.md",                     name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "ci.yml",               name, ".github/workflows/ci.yml",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "release.yml",          name, ".github/workflows/release.yml",    name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "adr-template.md",      name, "docs/adr/template.md",             name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "architecture-readme.md", name, "docs/architecture/README.md",    name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "examples-gitkeep",     name, "docs/examples/.gitkeep",           name, cyrius_ver, description) != 0) { fail = fail + 1; }
+
+    # 6 with-expansion templates ({PROJ}, {CYRIUS_VER}, {DESCRIPTION}).
+    if (_render_and_write(templates_dir, "cyrius-cyml-bin",      name, "cyrius.cyml",                      name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "main-cyr-bin",         name, "src/main.cyr",                     name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    if (_render_and_write(templates_dir, "src-test-cyr",         name, "src/test.cyr",                     name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    # tests/<name>.tcyr / .bcyr / .fcyr — basename varies. Build
+    # paths inline.
+    var tcyr_sb = str_builder_new();
+    str_builder_add_cstr(tcyr_sb, "tests/");
+    str_builder_add_cstr(tcyr_sb, name);
+    str_builder_add_cstr(tcyr_sb, ".tcyr");
+    if (_render_and_write(templates_dir, "proj-tcyr",            name, str_data(str_builder_build(tcyr_sb)),    name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    var bcyr_sb = str_builder_new();
+    str_builder_add_cstr(bcyr_sb, "tests/");
+    str_builder_add_cstr(bcyr_sb, name);
+    str_builder_add_cstr(bcyr_sb, ".bcyr");
+    if (_render_and_write(templates_dir, "proj-bcyr",            name, str_data(str_builder_build(bcyr_sb)),    name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    var fcyr_sb = str_builder_new();
+    str_builder_add_cstr(fcyr_sb, "tests/");
+    str_builder_add_cstr(fcyr_sb, name);
+    str_builder_add_cstr(fcyr_sb, ".fcyr");
+    if (_render_and_write(templates_dir, "proj-fcyr",            name, str_data(str_builder_build(fcyr_sb)),    name, cyrius_ver, description) != 0) { fail = fail + 1; }
+
+    if (fail > 0) {
+        syscall(SYS_WRITE, 2, "cyrius-init: ", 13);
+        # No PRNUM equivalent in this scope; bash equiv would be
+        # `printf "%d failed templates\n" $fail`. Skipping count
+        # for v5.9.28 — caller can grep for "failed".
+        syscall(SYS_WRITE, 2, "one or more templates failed to render\n", 39);
+        syscall(SYS_EXIT, 1);
+    }
+
+    # Success message — mirrors the bash version's tail.
+    var ok_sb = str_builder_new();
+    str_builder_add_cstr(ok_sb, "Created ");
+    str_builder_add_cstr(ok_sb, name);
+    str_builder_add_cstr(ok_sb, "/ (cyrius ");
+    str_builder_add_cstr(ok_sb, cyrius_ver);
+    str_builder_add_cstr(ok_sb, ", --bin shape; v5.9.28 part 1 — flag matrix + --lib / bare / in-place pending v5.9.29)\n");
+    var ok = str_data(str_builder_build(ok_sb));
+    sys_write(1, ok, strlen(ok));
+
+    return 0;
+}
+
+var ec = main();
+syscall(SYS_EXIT, ec);

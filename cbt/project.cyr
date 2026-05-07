@@ -3,6 +3,17 @@
 # ================================================================
 
 fn cmd_init(name) {
+    # v5.9.28 part 1: try cyrius-init binary first (greenfield
+    # --bin shape only). Bash fallback handles --lib / bare /
+    # in-place / flag matrix until v5.9.29 lands the rest.
+    # Binary signals fall-through with exit code 2 (deferred-
+    # feature use), 0 = success, 1 = real failure.
+    var bin = "./build/cyrius-init";
+    if (file_exists(bin) == 0) { bin = make_path(_home, "bin/cyrius-init"); }
+    if (file_exists(bin) == 1) {
+        var rc = run_tool(bin, name, 0, 0);
+        if (rc != 2) { return rc; }
+    }
     var script = make_path(_scripts_dir, "cyrius-init.sh");
     if (file_exists(script) == 0) {
         script = make_path(_home, "bin/cyrius-init.sh");
@@ -11,6 +22,12 @@ fn cmd_init(name) {
 }
 
 fn cmd_init_args(arg1, arg2) {
+    # Two-arg form covers `cyrius init --flag <name>` patterns —
+    # the cyrius-init binary's part-1 surface only handles
+    # single-arg `cyrius init <name>`, so any 2-arg invocation
+    # routes straight to the bash fallback (which knows the full
+    # flag matrix). v5.9.29 lifts this once part 2 lands the
+    # flag parser.
     var script = make_path(_scripts_dir, "cyrius-init.sh");
     if (file_exists(script) == 0) {
         script = make_path(_home, "bin/cyrius-init.sh");

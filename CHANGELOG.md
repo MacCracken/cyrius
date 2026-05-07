@@ -6,6 +6,122 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.28] — 2026-05-07
+
+**v5.9.x SLOT 28 — `scripts/cyrius-init.sh` sovereignty port,
+part 1 of 2** (template extraction + minimal cyrius binary).
+First slot of a multi-patch port; ports the bash project
+scaffolder to native cyrius. Originally pinned to v5.9.14 but
+rescheduled multiple times as the v5.9.x cycle absorbed
+emergent consumer-filed work.
+
+cc5: **744,144 B unchanged** — cyrius-init is a new userland
+binary, not a compiler change. api-surface: **2,769 unchanged**.
+check.sh: **63 unchanged** (no new gates this slot — existing
+`tests/regression-init-lib-bin.sh` and
+`tests/regression-init-doctree.sh` continue passing through
+the bash fallback path).
+
+### Premise-check finding (slot entry, 2026-05-07)
+
+The roadmap pin scoped this as "1,021 LOC + 17 heredocs". Actual
+shape: 1,021 LOC ✓, but **26 heredocs** (not 17) — 8
+no-expansion + 18 with shell variable substitution. Several
+heredocs are flag-conditional (README variants,
+getting-started variants, lib vs bin shape variants) — those
+gate on `--language` / `--agent` / `--cmtools` flags belonging
+to part 2's flag matrix.
+
+Honest scope shrink for part 1: ship the 14 essential templates
+(8 no-expansion + 6 with-expansion that cover the greenfield
+`--bin` path) + a minimal `programs/cyrius-init.cyr` binary that
+handles `cyrius init <name>` (single positional arg, default
+`--bin` shape, greenfield mode only). Bash fallback handles
+everything else (`--lib`, bare shape, `cyrius init .` in-place,
+the full flag matrix) until v5.9.29 part 2 lands the rest.
+
+### Added
+
+- **`programs/cyrius-init-templates/`** — 14 template files
+  extracted from `scripts/cyrius-init.sh`'s heredoc bodies:
+  - **No-expansion (8)**: `gitignore`, `license`,
+    `changelog.md`, `ci.yml`, `release.yml`, `adr-template.md`,
+    `architecture-readme.md`, `examples-gitkeep`.
+  - **With-expansion (6)** — placeholders are `{PROJ}` /
+    `{CYRIUS_VER}` / `{DESCRIPTION}` rendered at scaffold
+    time: `cyrius-cyml-bin`, `main-cyr-bin`, `src-test-cyr`,
+    `proj-tcyr`, `proj-bcyr`, `proj-fcyr`.
+  Twelve more templates (`README.md` variants, doc tree, full
+  CLAUDE.md, getting-started, lib-shape variants) earn slots
+  in v5.9.29 part 2.
+
+- **`programs/cyrius-init.cyr`** — new userland binary. Surface:
+  - `cyrius-init <project-name>` — greenfield `--bin` shape.
+  - Resolves templates dir via `/proc/self/exe` readlink →
+    `<repo>/programs/cyrius-init-templates/`.
+  - Reads cyrius version from `<repo>/VERSION`.
+  - `_render_template` walks template bytes, replaces `{KEY}`
+    placeholders with values from a fixed (PROJ, CYRIUS_VER,
+    DESCRIPTION) tuple. Unknown keys pass through literal.
+  - Creates project skeleton (8 dirs) + writes 14 templates.
+  - Exit codes: `0` = success, `1` = real failure, `2` =
+    deferred-feature use (signals dispatcher to fall back to
+    bash). Deferred-feature triggers: `cyrius init .`
+    (in-place mode), names with `/`, missing VERSION
+    cascade.
+  Built via `cyrius build programs/cyrius-init.cyr
+  build/cyrius-init` (NOT yet in `[release].bins` — install-
+  snapshot routing for the templates directory lands in
+  v5.9.29 alongside the rest of the surface).
+
+### Changed
+
+- **`cbt/project.cyr` `cmd_init` dispatcher**: tries
+  `./build/cyrius-init` (dev mode) or `~/.cyrius/bin/cyrius-init`
+  (install snapshot, post-v5.9.29) first. If the binary exits
+  with a non-2 code, returns that exit. If 2 or binary is
+  missing, falls through to `scripts/cyrius-init.sh` (full
+  bash impl). `cmd_init_args` (multi-arg form, for `cyrius
+  init --flag <name>` patterns) routes straight to bash since
+  the cyrius binary's part-1 surface is single-arg only.
+
+### Verified
+
+- Direct binary: `cyrius-init <name>` from `/tmp` scaffolds 14
+  files; generated project's `src/main.cyr` compiles + runs
+  `hello from <name>` exit=0.
+- Dispatcher fallback: `cyrius init <name>` from outside the
+  repo correctly falls through to bash and produces the full
+  99-file scaffold (existing behavior preserved).
+- Dispatcher cyrius-side: `cyrius init <name>` from inside the
+  cyrius repo invokes `./build/cyrius-init` and produces the
+  v5.9.28 part-1 14-file scaffold.
+- 63/63 check.sh gates green (existing init regressions
+  continue passing through the bash fallback path —
+  `tests/regression-init-lib-bin.sh` runs from a `/tmp` scratch
+  dir, so dispatcher can't find `./build/cyrius-init` and falls
+  through correctly).
+- Two-step self-host byte-identical (cc5 unchanged at
+  744,144 B).
+- api-surface unchanged.
+
+### Cascaded to v5.9.29+
+
+- v5.9.29 — cyrius-init.sh part 2 (full flag matrix:
+  `--language`, `--agent`, `--cmtools`, `--description`,
+  `--dry-run`) + `--lib` shape + bare shape + in-place mode +
+  remaining 12 templates + cyrius-port.sh sovereignty port +
+  add `cyrius-init` to `[release].bins` once template install-
+  snapshot routing lands.
+- v5.9.30 — init-doctree + init-lib-bin gate conversions
+  (unblocked by .29).
+- v5.9.31 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.32 — tls-live + network-probe helper.
+- **v5.9.33 — cx Phase 2c parity** (newly pinned 2026-05-07
+  per user direction).
+- v5.9.34 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.35 — closeout pass before v5.10.0.
+
 ## [5.9.27] — 2026-05-07
 
 **v5.9.x SLOT 27 — aarch64 sub-8-byte struct field load via

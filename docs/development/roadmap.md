@@ -908,13 +908,72 @@ satisfied by earlier slots.
     tool. Same template-externalization shape; landed in the
     same slot since it shares the cyrius-init.sh helper layer.
 
-- **v5.9.30** — **init-doctree + init-lib-bin gate conversions**
+- **v5.9.30** — **`#derive(Serialize)` primitive-type helpers**
+  (agnosys 1.1.12 filing 2026-05-07 at
+  `agnosys/docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`).
+  **Severity: MEDIUM** — the documented `#derive(Serialize)`
+  contract (per vidya `features.cyml derive_str_fields`)
+  doesn't emit functional code. Generated `<struct>_to_json`
+  is either empty (untyped fields) or references undefined
+  helpers (`: i64` → `i64_to_json_sb` not in stdlib → SIGILL
+  at runtime). Reproduces under v5.9.27.
+
+  **Reproducer**:
+  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`.
+  Untyped `struct s { x; y; z; }` produces empty `s_to_json`
+  body; `: i64` typed fields produce a body referencing
+  `i64_to_json_sb(sb, n)` which doesn't exist in stdlib —
+  build warns `undefined function`, binary SIGILLs at exit
+  132.
+
+  **Why this matters**: agnosys 1.1.12's V1.1.12 slot was
+  generating JSON serializers for 6 module status structs
+  (`mac_status` / `audit_status` / `ima_status` /
+  `secureboot_state` / `tpm_caps` / `drm_caps`) so consumers
+  (kavach, sigil, argonaut) could dump agnosys state without
+  per-module formatters. V1.1.12 ships as a deferral until
+  this lands.
+
+  **Scope**:
+  - **`lib/serialize.cyr` (or fold into `lib/json.cyr`)** —
+    primitive-type Serialize helpers:
+    - `i64_to_json_sb(sb, n)`, `i32_to_json_sb`,
+      `i16_to_json_sb`, `i8_to_json_sb` — emit bare JSON
+      numbers via `str_builder_add_int`.
+    - `Str_to_json_sb(sb, s)` — emit JSON-escaped string
+      literal (handles `"`, `\`, control chars).
+    - Inverse `_from_json_sb` helpers for the deserializer
+      side (less critical for v5.9.30; can land in a
+      follow-up if scope tight).
+  - **Codegen path for untyped fields**: either emit inline
+    `i64_to_json_sb` calls (treating untyped as i64 per the
+    doc's "scalar fields → bare JSON numbers" contract) OR
+    surface a clearer `error: untyped field requires
+    type annotation` to push users toward typed structs.
+    Pick at slot entry — agnosys filing prefers the
+    treat-as-i64 path.
+  - **Vidya refresh**: update `features.cyml
+    derive_str_fields` example to include the
+    `lib/serialize.cyr` (or whatever name) include line +
+    document the actual helper-fn names ship.
+  - **Acceptance**: agnosys repro builds cleanly + prints
+    valid JSON for both untyped + `: i64` field shapes; an
+    `_aarch64_serialize_codegen_gate` (pattern-mirror of
+    v5.9.27's `_aarch64_sub_byte_field_load_gate`) locks
+    the fix against future regression.
+
+  **Held within scope**: `Vec<T>` / nested-struct field
+  handling (recursive `_to_json` calls) — punt to a follow-up
+  slot once primitive coverage is solid; no agnosys consumer
+  needs nested today (the 6 V1.1.12 structs are flat).
+
+- **v5.9.31** — **init-doctree + init-lib-bin gate conversions**
   (unblocked by v5.9.28/29 ports). Both `tests/regression-init-*.sh`
   retired into dispatcher gates that exercise the now-cyrius
   `cyrius init` paths. Helper reuse off the v5.9.28/29 testing
   scaffold expected.
 
-- **v5.9.31** — **SSH helper infra batch + macho-exit + pe-exit
+- **v5.9.32** — **SSH helper infra batch + macho-exit + pe-exit
   gate conversions**.
   - `_exec_remote_with_env(target, env_pairs_vec, command)` —
     extends `_ssh_remote_exit` to set env vars on the remote
@@ -929,15 +988,15 @@ satisfied by earlier slots.
     `.sh` files. Cross-host green confirms via cass + ecb
     SSH.
 
-- **v5.9.32** — **tls-live gate conversion + network-probe
+- **v5.9.33** — **tls-live gate conversion + network-probe
   helper**. `_network_probe_check(host, port)` — quick TCP
   connect+disconnect to verify network reachability before
   the TLS round-trip; skip cleanly if unreachable (CI runner
   contexts vary). `_tls_live_gate()` retires the `.sh`. With
   this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.34.
+  — precondition for v5.9.35.
 
-- **v5.9.33** — **cx (cyrius-x bytecode) Phase 2c parity**.
+- **v5.9.34** — **cx (cyrius-x bytecode) Phase 2c parity**.
   Closes the two `ERR_MSG`-guarded cx pending sites that
   v5.9.26 + v5.9.27 narrowed but didn't fix:
   - `parse_fn.cyr:371` — struct return by value
@@ -975,10 +1034,10 @@ satisfied by earlier slots.
   byte-memory-ops shape this slot is centered on. Pin them
   individually if a cx consumer surfaces.
 
-- **v5.9.34** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.32 (arc
+- **v5.9.35** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.33 (arc
   closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.32 dispatcher work
+  accumulated through the v5.9.6 → v5.9.33 dispatcher work
   (`_stderr_match_subcase`, `_count_substr_buf`,
   `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
@@ -995,7 +1054,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.35** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.36** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup
