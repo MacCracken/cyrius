@@ -1,0 +1,59 @@
+# struct_byval.cyr — aarch64 Phase 2b struct-by-value cross-test
+# fixture (v5.9.26). Exercises the X8 indirect-result register
+# convention end-to-end:
+#   - Caller `make_point()` invocation: parse_decl.cyr's asv path
+#     loads X8 = &got via EFLADDR_X8 instead of stack-pushing
+#     retptr (x86 SysV / Win64 convention).
+#   - Callee make_point prologue: ESTOREREGPARM(8, stash_disp)
+#     stashes X8 to [x29, #-8].
+#   - Callee body: assigns p.x/y/z. Local frame disp adjusted via
+#     `_cur_fn_ret_stash` so p doesn't overlap the X8 stash slot.
+#   - Callee return: PARSE_RETURN's aarch64 branch emits the
+#     LDRB/STRB byte-copy loop from &p (x9) to *X8 (x10);
+#     reloads x0 from stash for the AAPCS-x0-return convention.
+#
+# Exit code: 0 = all green; 1/2/3 = field mismatch; 4/5/6 =
+# branch-body shape mismatch (shifted_point with param).
+
+include "lib/syscalls.cyr"
+
+struct Point {
+    x: i64;
+    y: i64;
+    z: i64;
+}
+
+fn make_point(): Point {
+    var p: Point;
+    p.x = 11;
+    p.y = 22;
+    p.z = 33;
+    return p;
+}
+
+fn shifted_point(off): Point {
+    var q: Point;
+    var bump = 100;
+    if (off > 0) { bump = bump + off; }
+    q.x = 1 + bump;
+    q.y = 2 + bump;
+    q.z = 3 + bump;
+    return q;
+}
+
+fn main() {
+    var got: Point = make_point();
+    if (got.x != 11) { syscall(60, 1); }
+    if (got.y != 22) { syscall(60, 2); }
+    if (got.z != 33) { syscall(60, 3); }
+
+    var got2: Point = shifted_point(5);
+    if (got2.x != 106) { syscall(60, 4); }
+    if (got2.y != 107) { syscall(60, 5); }
+    if (got2.z != 108) { syscall(60, 6); }
+
+    syscall(60, 0);
+}
+
+var ec = main();
+syscall(60, ec);

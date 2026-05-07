@@ -3368,6 +3368,108 @@ fn _aarch64_syscalls_gate() {
     return 1;
 }
 
+# Bespoke gate (v5.9.26): aarch64 Phase 2b struct-by-value
+# round-trip cross-test. Cross-builds
+# `tests/fixtures/aarch64_cluster/struct_byval.cyr` with
+# cc5_aarch64, scp's it to the configured SSH target, runs it.
+# Exit-code map (from the fixture's `syscall(60, N)` calls):
+#   0       — all field round-trips pass
+#   1/2/3   — make_point().{x,y,z} mismatch
+#   4/5/6   — shifted_point(5).{x,y,z} mismatch
+# Locks the X8 indirect-result ABI + LDRB/STRB byte-copy + frame-
+# disp ret_stash adjustment in `src/backend/aarch64/emit.cyr` against
+# silent regression.
+fn _aarch64_struct_byval_gate() {
+    var label = "aarch64 struct-by-value round-trip (Phase 2b X8 / LDRB-STRB; via ssh pi)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_cluster/struct_byval.cyr");
+    var bin = _tmp_path("audit_aarch64_byval_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyr_aarch64_byval";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": Point{11,22,33} + shifted_point(5)={106,107,108} round-trip on ");
+        println(target);
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": struct-by-value round-trip exit=");
+    print_num(ec);
+    if (ec == 1) { _p(" — make_point().x != 11"); }
+    if (ec == 2) { _p(" — make_point().y != 22"); }
+    if (ec == 3) { _p(" — make_point().z != 33"); }
+    if (ec == 4) { _p(" — shifted_point(5).x != 106"); }
+    if (ec == 5) { _p(" — shifted_point(5).y != 107"); }
+    if (ec == 6) { _p(" — shifted_point(5).z != 108"); }
+    if (ec == 139) { _p(" — SIGSEGV (frame-disp adjustment broken?)"); }
+    println("");
+    _check(label, 1);
+    return 1;
+}
+
 # Bespoke gate: native aarch64 cc5 self-hosts byte-identical on
 # Pi (v5.6.32). Pipeline:
 #   1. Cross-build aarch64-host cc5 from src/main_aarch64_native.cyr
@@ -6535,6 +6637,10 @@ fn _run_regression_gates() {
 
     _section("aarch64 native self-host");
     _aarch64_native_selfhost_gate();
+    println("");
+
+    _section("aarch64 struct-by-value (Phase 2b; v5.9.26)");
+    _aarch64_struct_byval_gate();
     println("");
 
     _section("Mach-O arm64 runtime");

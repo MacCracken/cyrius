@@ -62,6 +62,13 @@ var _last_movca_popr_cp = 0 - 1;
 # aarch64 emit primitives without the x86 build emitting an
 # "undefined function" warning. Dead on x86 at runtime.
 fn EW(S, w) { return 0; }
+# v5.9.26 — Phase 2b-aarch64 struct-copy in PARSE_RETURN
+# references _EFP_ADDR_X9 from the aarch64 backend. Stub here for
+# the same dead-on-x86 reason as EW above.
+fn _EFP_ADDR_X9(S, disp) { return 0; }
+# v5.9.26 — caller-side aarch64 retptr load via X8. Stub on x86
+# (the x86 caller path uses EFLADDR + EPUSHR + ECALLPOPS instead).
+fn EFLADDR_X8(S, lli) { return 0; }
 
 fn EB(S, b) {
     var cp = GCP(S);

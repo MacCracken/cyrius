@@ -347,17 +347,63 @@ fn PARSE_RETURN(S) {
         if (_cur_fn_ret_stash > 0) { srn_src_disp = srn_src_disp - _cur_fn_ret_stash; }
         # Retptr stash disp: [rbp - regalloc*8 - 8]
         var srn_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
-        # v5.5.40 closeout — GUARD: the struct-return byte-copy is
-        # x86-only today. Emitting these EB() bytes on an aarch64
-        # build would splice x86 opcodes into ARM code and explode
-        # at runtime (v5.4.19's EW alignment assert would catch
-        # it, but we should fail loud at compile time). The aarch64
-        # analog (LDRB/STRB loop with X0..X2 scratch) ships with
-        # Phase 2b-aarch64 as a separate patch.
-        if (_AARCH64_BACKEND == 1 || _TARGET_CX == 1) {
-            # v5.7.12: broaden — cx bytecode has no struct-return
-            # opcode in this slot. Emits below are raw x86 rep movsb.
-            ERR_MSG(S, "struct return by value is x86-only for v5.5.36; aarch64 + cx pending", 70);
+        # v5.9.26 Phase 2b-aarch64 (LDRB/STRB byte-copy loop):
+        # cx bytecode still has no struct-return opcode → ERR_MSG;
+        # aarch64 emits the LDRB/STRB analog of x86's `rep movsb`.
+        # Encoding plan (3-instr loop body + setup + tail):
+        #   movz/sub  x9, x29, #|src_disp|         ; via _EFP_ADDR_X9
+        #   ldur      x10, [x29, #stash_disp]      ; retptr
+        #   movz      x11, #aligned_byte_count
+        # loop:
+        #   ldrb      w12, [x9], #1                ; post-inc source
+        #   strb      w12, [x10], #1               ; post-inc dest
+        #   subs      x11, x11, #1
+        #   b.ne      loop                         ; -3 instructions back
+        #   ldur      x0, [x29, #stash_disp]       ; reload retptr
+        # Constraints:
+        #   - aligned size must fit MOVZ imm16 (< 65536). Cyrius
+        #     struct sizes are bounded well below this in practice;
+        #     guard error fires for the implausible large case.
+        #   - stash_disp = -(regalloc*8 + 8). With regalloc cap of
+        #     5, stash_disp in [-48,-8] always fits LDUR's signed
+        #     9-bit immediate (-256..+255). Defensive guard checks.
+        if (_TARGET_CX == 1) {
+            ERR_MSG(S, "struct return by value: cx backend pending Phase 2c", 52);
+        }
+        if (_AARCH64_BACKEND == 1) {
+            if (srn_aligned > 65535) {
+                ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 76);
+            }
+            if (srn_stash_disp < 0 - 256) {
+                ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 95);
+            }
+            _IR_REC0(S, IR_RAW_EMIT);
+            # x9 = source pointer = x29 + src_disp.
+            _EFP_ADDR_X9(S, srn_src_disp);
+            var srn_off9 = srn_stash_disp & 0x1FF;
+            # ldur x10, [x29, #stash_disp]   (Rn=29, Rt=10)
+            EW(S, 0xF84003AA | (srn_off9 << 12));
+            # movz x11, #aligned_byte_count   (Rd=11, hw=0)
+            EW(S, 0xD280000B | ((srn_aligned & 0xFFFF) << 5));
+            # ldrb w12, [x9], #1   (Rn=9, Rt=12, imm9=1, post-index)
+            EW(S, 0x3840152C);
+            # strb w12, [x10], #1  (Rn=10, Rt=12, imm9=1, post-index)
+            EW(S, 0x3800154C);
+            # subs x11, x11, #1    (Rd=11, Rn=11, imm12=1, sh=0)
+            EW(S, 0xF100056B);
+            # b.ne -3              (cond=NE=0001, imm19=-3)
+            EW(S, 0x54FFFFA1);
+            # ldur x0, [x29, #stash_disp]   (Rn=29, Rt=0) — x10 was
+            # post-incremented past the dest; reload retptr for the
+            # ABI-mandated x0 return.
+            EW(S, 0xF84003A0 | (srn_off9 << 12));
+            # jmp to epilogue (regular return-patch path)
+            var srn_rp_a = EJMP0(S);
+            var srn_rpc_a = GRPC(S);
+            if (srn_rpc_a >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+            S64(S + 0x18DA20 + srn_rpc_a * 8, srn_rp_a);
+            SRPC(S, srn_rpc_a + 1);
+            return 0;
         }
         # Under Win64, RSI and RDI are NONVOLATILE (caller preserves
         # them across calls). `rep movsb` forces us to use both, so
@@ -915,12 +961,20 @@ fn PARSE_FN_DEF(S) {
         if (_cur_fn_regalloc >= 4) { E3(S, 0x75894C); EB(S, 0xE0); }  # mov [rbp-32], r14
         if (_cur_fn_regalloc >= 5) { E3(S, 0x7D894C); EB(S, 0xD8); }  # mov [rbp-40], r15
     }
-    # v5.5.36 Phase 2b — stash the hidden retptr (SysV: RDI, Win64:
-    # RCX) into the reserved slot immediately after regalloc saves.
-    # ESTOREREGPARM(S, 0, disp) emits the ABI-correct opcode.
+    # v5.5.36 Phase 2b — stash the hidden retptr into the reserved
+    # slot immediately after regalloc saves. ABI register varies:
+    #   x86 SysV → RDI (pidx=0); x86 Win64 → RCX (pidx=0 with the
+    #   Win64 ESTOREREGPARM dispatch picking RCX); aarch64 SysV →
+    #   X8 (dedicated indirect-result register, NOT a regular
+    #   arg reg — v5.9.26 fix). cx bytecode rejects struct-return
+    #   at PARSE_RETURN earlier so doesn't reach here.
     if (_cur_fn_ret_stash > 0) {
         var _rs_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
-        ESTOREREGPARM(S, 0, _rs_stash_disp);
+        if (_AARCH64_BACKEND == 1) {
+            ESTOREREGPARM(S, 8, _rs_stash_disp);   # stur x8, [x29, #disp]
+        } else {
+            ESTOREREGPARM(S, 0, _rs_stash_disp);
+        }
     }
     var fn_start = GCP(S);
     # Parse params
@@ -976,11 +1030,17 @@ fn PARSE_FN_DEF(S) {
             SLDEP(S, li, 0);
             if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
             # Only emit register params now (0-5). v5.5.36 Phase 2b:
-            # struct-returning fns reserve arg-reg 0 (RDI on SysV, RCX
-            # on Win64) for the hidden retptr, so user param 0 arrives
-            # in the SECOND arg reg — shift pidx +1 when storing.
+            # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,
+            # RCX on Win64) for the hidden retptr, so user param 0
+            # arrives in the SECOND arg reg — shift pidx +1. v5.9.26:
+            # aarch64 SysV puts the retptr in X8 (dedicated, outside
+            # the regular X0..X7 arg-reg sequence), so user params on
+            # aarch64 stay at X0..X7 unshifted regardless of
+            # struct-return status.
             var _pp_shift = 0;
-            if (_cur_fn_ret_stash > 0) { _pp_shift = 1; }
+            if (_cur_fn_ret_stash > 0) {
+                if (_AARCH64_BACKEND == 0) { _pp_shift = 1; }
+            }
             if (pc + _pp_shift < 6) {
                 ESTOREPARM(S, pc + _pp_shift, li, 0);
             }

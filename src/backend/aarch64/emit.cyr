@@ -776,6 +776,31 @@ fn ECALLCLEAN(S, n) {
 # Helper: not needed on aarch64 but must exist for parse.cyr
 fn EDISP32(S, disp) { return 0; }
 
+# v5.9.26 Phase 2b-aarch64 — load &local into X8 (the dedicated
+# indirect-result register on aarch64 SysV / AAPCS64 §6.9). Used at
+# caller-side of a struct-returning call to set the hidden retptr
+# arg directly, BEFORE the regular ECALLPOPS into X0..X5. Differs
+# from x86's EFLADDR (which puts &local into RAX and then pushes to
+# stack to be popped into RDI) because aarch64 reserves X8 outside
+# the regular arg-reg sequence.
+#   add x8, x29, #abs_disp     ; or sub if negative
+fn EFLADDR_X8(S, lli) {
+    var disp = 0 - ((lli + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    var abs = 0 - disp;
+    # SUB Xd, Xn, #imm12: 0xD1000000 base. Rd=8, Rn=29.
+    # bits[28:24]=10001, bits[31]=1 (sf=64-bit), bits[30:29]=10 (op=SUB).
+    # Encoding: 0xD1_00_00_00 | (sh=0) | (imm12<<10) | (Rn<<5) | Rd
+    if (abs <= 4095) {
+        EW(S, 0xD10003A8 | (abs << 10));   # sub x8, x29, #abs
+        return 0;
+    }
+    # Fallback for large frames — movz x9 + sub x8, x29, x9.
+    EW(S, 0xD2800009 | ((abs & 0xFFFF) << 5));   # movz x9, #abs
+    EW(S, 0xCB0903A8);                            # sub x8, x29, x9
+    return 0;
+}
+
 # Compute x9 = x29 + disp for local access when disp is outside the
 # LDUR/STUR signed 9-bit immediate range (-256..+255). Called only with
 # disp <= -256 (locals at idx >= 32). Assumes |disp| fits in 16 bits —
@@ -824,6 +849,7 @@ fn ESTORESTACKPARM(S, pidx, disp, pc) {
 
 fn ESTOREPARM(S, pidx, lidx, pc) {
     var disp = 0 - ((lidx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (pidx < 6) {
         ESTOREREGPARM(S, pidx, disp);
     } else {
@@ -833,8 +859,11 @@ fn ESTOREPARM(S, pidx, lidx, pc) {
 }
 
 # Local variable load: ldur x0, [x29, #-offset]
+# v5.9.26: account for `_cur_fn_ret_stash` so locals in
+# struct-returning fns don't overlap the X8 retptr stash slot.
 fn EFLLOAD(S, idx) {
     var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
         EW(S, 0xF84003A0 | (off9 << 12));  # ldur x0, [x29, #disp]
@@ -846,8 +875,10 @@ fn EFLLOAD(S, idx) {
 }
 
 # Local variable store: stur x0, [x29, #-offset]
+# v5.9.26: account for `_cur_fn_ret_stash` (see EFLLOAD note).
 fn EFLSTORE(S, idx) {
     var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
         EW(S, 0xF80003A0 | (off9 << 12));  # stur x0, [x29, #disp]
@@ -889,6 +920,7 @@ fn EFLSTORE(S, idx) {
 # locals.
 fn EFLADDR(S, lli) {
     var disp = (lli + 1) * 8;     # positive magnitude — locals below x29
+    if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
     if (disp <= 4095) {
         # sub x0, x29, #disp (imm12, no shift)
         EW(S, 0xD10003A0 | (disp << 10));
@@ -905,6 +937,7 @@ fn EFLADDR(S, lli) {
 
 fn EFLADDR_X1(S, lli) {
     var disp = (lli + 1) * 8;
+    if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
     if (disp <= 4095) {
         # sub x1, x29, #disp (imm12, no shift)
         EW(S, 0xD10003A1 | (disp << 10));
@@ -921,6 +954,7 @@ fn _IS_OBJ(S) { return L64(S + 0x18FCA0) == 3; }
 # Width-aware local load: ldurb/ldurh/ldur w0/ldur x0 from [x29, #-offset]
 fn EFLLOAD_W(S, idx, width) {
     var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
         if (width == 1) { EW(S, 0x384003A0 | (off9 << 12)); return 0; }
@@ -940,6 +974,7 @@ fn EFLLOAD_W(S, idx, width) {
 # Width-aware local store: sturb/sturh/stur w0/stur x0 to [x29, #-offset]
 fn EFLSTORE_W(S, idx, width) {
     var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
         if (width == 1) { EW(S, 0x380003A0 | (off9 << 12)); return 0; }

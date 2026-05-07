@@ -6,6 +6,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.26] — 2026-05-07
+
+**v5.9.x SLOT 26 — Phase 2b-aarch64 struct return by value**.
+Closes the deferred-from-v5.5.36 cross-arch gap. x86 SysV / Win64
+Phase 2b shipped at v5.5.36 via `rep movsb`; the matching aarch64
+path was guarded with an `ERR_MSG("aarch64 + cx pending")` until
+this slot. Net effect: cyrius programs can now return structs by
+value uniformly on x86_64 + aarch64.
+
+cc5: **742,816 → 743,976 B** (+1,160 / +0.16%) — aarch64 emit
+adds for the struct-copy loop + EFLADDR_X8 helper + 7 frame-disp
+adjustments in local helpers. api-surface: **2,769 unchanged** —
+all changes are internal compiler emit. check.sh: **61 → 62**
+(new `_aarch64_struct_byval_gate` cross-test).
+
+### Premise-check finding (slot entry, 2026-05-07)
+
+The roadmap pin scoped this as "LDRB/STRB byte-copy loop." First-
+attempt impl shipped just the byte-copy in PARSE_RETURN's aarch64
+branch — produced SIGSEGV on pi. Disassembly + strace
+(`SEGV_MAPERR si_addr=0x21`) showed the callee's local struct `p`
+was being written THROUGH the X8 retptr stash slot (`p.z = 33`
+overwrote the stash, then ldur loaded `33` into x10 and strb
+faulted at addr 33).
+
+Root cause was scope-broader than the pin: the **whole aarch64
+struct-by-value ABI plumbing was missing**, not just the byte
+copy. Specifically:
+
+1. **AAPCS64 §6.9 dedicates X8 for the indirect-result register**,
+   separate from the X0..X7 user-arg sequence. x86 SysV uses RDI
+   (a regular arg reg) for the same role, so cyrius's existing
+   plumbing piggybacked retptr on the arg-reg sequence with a
+   pidx +1 shift. That model is wrong for aarch64.
+2. The aarch64 backend's local helpers
+   (EFLLOAD/EFLSTORE/EFLADDR/EFLADDR_X1/EFLLOAD_W/EFLSTORE_W/
+   ESTOREPARM) didn't apply the `_cur_fn_ret_stash` adjustment
+   that x86 does. With my new prologue stash at `[x29, #-8]`,
+   user locals collided into the same slot.
+
+Both of these had been silently latent because v5.5.36's
+ERR_MSG guard prevented any aarch64 struct-return code from
+ever reaching emit. Honest scope grew slot-internally to cover
+the full ABI plumbing rather than ship a half-fix.
+
+### Added
+
+- **`src/backend/aarch64/emit.cyr` — `EFLADDR_X8(S, lli)`**:
+  load `&local` into X8 directly. Caller-side helper for
+  struct-returning calls (parses asv path in
+  `parse_decl.cyr`). `sub x8, x29, #abs` for disps fitting
+  imm12; movz/sub fallback for larger frames.
+- **`tests/fixtures/aarch64_cluster/struct_byval.cyr`**:
+  cross-test fixture — `struct Point { x; y; z; }` +
+  `make_point(): Point` returning bare struct +
+  `shifted_point(off): Point` exercising param + branch +
+  bump-add. main exercises both paths and emits exit codes
+  1/2/3 (make_point field mismatch) or 4/5/6 (shifted_point
+  field mismatch); 0 = round-trip green.
+- **`programs/check.cyr` — `_aarch64_struct_byval_gate()`**:
+  cross-builds the fixture via cc5_aarch64, scp's to pi,
+  runs, decodes exit code with field-specific FAIL messages.
+  Same shape as `_aarch64_syscalls_gate`.
+
+### Changed
+
+- **`src/frontend/parse_fn.cyr` PARSE_RETURN**: aarch64 branch
+  emits the LDRB/STRB byte-copy loop (3-instr loop body +
+  setup + tail). Encodings:
+  - `_EFP_ADDR_X9(S, src_disp)` — x9 = source struct base.
+  - `ldur x10, [x29, #stash_disp]` — x10 = retptr from stash.
+  - `movz x11, #aligned_byte_count` — counter.
+  - Loop: `ldrb w12, [x9], #1; strb w12, [x10], #1; subs x11,
+    x11, #1; b.ne -3` (encodes as
+    `0x3840152C / 0x3800154C / 0xF100056B / 0x54FFFFA1`).
+  - `ldur x0, [x29, #stash_disp]` — reload retptr for AAPCS
+    x0-return convention.
+  - Bounds: aligned size <= 65535 (MOVZ imm16); stash_disp >=
+    -256 (LDUR signed 9-bit). Defensive ERR_MSG fires for the
+    implausible large-frame cases.
+- **`src/frontend/parse_fn.cyr` prologue retptr stash**: branch
+  on `_AARCH64_BACKEND` — store X8 (`ESTOREREGPARM(S, 8, ...)`)
+  on aarch64; X0 (RDI/RCX) on x86 (existing).
+- **`src/frontend/parse_fn.cyr` param-storage shift**: x86 still
+  shifts pidx +1 when struct-returning (RDI-taken-by-retptr);
+  aarch64 doesn't shift (X8 is dedicated, X0..X7 free for user
+  params).
+- **`src/frontend/parse_decl.cyr` asv (struct-valued assignment)
+  caller path**: branches on `_AARCH64_BACKEND`. x86 keeps the
+  push-retptr-first convention. aarch64 skips the stack push and
+  loads X8 via `EFLADDR_X8(asv_named)` AFTER `ECALLPOPS` so the
+  cross-call register state is `[X0=arg0, ..., X8=retptr]`.
+- **`src/backend/aarch64/emit.cyr` local-helper frame-disp
+  adjustment**: 7 fns updated to subtract `_cur_fn_ret_stash`
+  from the computed disp when non-zero — EFLLOAD, EFLSTORE,
+  EFLADDR, EFLADDR_X1, EFLLOAD_W, EFLSTORE_W, ESTOREPARM. This
+  is the **SIGSEGV root cause fix**: without it, locals at
+  `[x29, #-8]` (slot 0) collide with the X8 stash. The
+  pre-existing comment at lines 902-915 explicitly flagged
+  this asymmetry as a coupled-set future hazard; v5.9.26 paid
+  the bill.
+- **`src/backend/x86/emit.cyr` — stub `EFLADDR_X8`**: dead-on-
+  x86 placeholder so cross-arch parse compile doesn't emit
+  "undefined function" warnings. Same pattern as the existing
+  `EW` and `_EFP_ADDR_X9` x86 stubs.
+
+### Verified
+
+- 62/62 check.sh gates green (count +1 for the new
+  `_aarch64_struct_byval_gate`).
+- Two-step self-host byte-identical (cc5 → cc5b → cc5c).
+- aarch64 cross-test on pi: new
+  `_aarch64_struct_byval_gate` PASS — `Point{11,22,33}` and
+  `shifted_point(5)={106,107,108}` round-trip cleanly. Plus
+  `_aarch64_native_selfhost_gate` + `_aarch64_syscalls_gate`
+  remain PASS (no regression in the 9-sub-test cluster or
+  byte-identical native self-host).
+- Cross-build (`src/main_aarch64.cyr | build/cc5`) clean
+  (no new warnings).
+
+### Cascaded to v5.9.27+
+
+- v5.9.27/28 — cyrius-init.sh + cyrius-port.sh sovereignty
+  port (multi-slot).
+- v5.9.29 — init-doctree + init-lib-bin gates.
+- v5.9.30 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.31 — tls-live + network-probe helper.
+- v5.9.32 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.33 — closeout pass before v5.10.0.
+
 ## [5.9.25] — 2026-05-07
 
 **v5.9.x SLOT 25 — tcyr-relay-vs-testsuite-gate redundancy

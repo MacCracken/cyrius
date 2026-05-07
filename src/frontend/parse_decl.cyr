@@ -926,11 +926,22 @@ fn PARSE_VAR(S) {
             ERR_MSG(S, "fn return struct-id differs from declared var type", 51);
         }
         STI(S, GTI(S) + 1);                         # consume '('
-        # Push &got as the hidden first arg (consumed by ECALLPOPS /
-        # EPOPARG into RDI/RCX via reverse-pop). argc includes it.
-        EFLADDR(S, asv_named);
-        EPUSHR(S);
-        var asv_argc = 1;
+        # Push hidden retptr as first arg on x86 (SysV: RDI, Win64:
+        # RCX) — ECALLPOPS / EPOPARG reverse-pops the stack into
+        # arg regs in user-arg order, with retptr counted as arg 0.
+        # On aarch64 (v5.9.26), the retptr lives in X8 (dedicated
+        # indirect-result register, AAPCS64 §6.9), separate from the
+        # X0..X7 user-arg sequence. Skip the stack push here; load
+        # X8 directly via EFLADDR_X8 AFTER the regular args are
+        # popped into X0..X5, so the cross-call register state is:
+        #   x86:     [RDI=retptr, RSI=arg0, RDX=arg1, ...]
+        #   aarch64: [X0=arg0, X1=arg1, ..., X8=retptr]
+        var asv_argc = 0;
+        if (_AARCH64_BACKEND == 0) {
+            EFLADDR(S, asv_named);
+            EPUSHR(S);
+            asv_argc = 1;
+        }
         if (PEEKT(S) != 11) {
             var asv_go = 1;
             while (asv_go == 1) {
@@ -944,6 +955,9 @@ fn PARSE_VAR(S) {
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
         STI(S, GTI(S) + 1);                         # consume ')'
         ECALLPOPS(S, asv_argc);
+        if (_AARCH64_BACKEND == 1) {
+            EFLADDR_X8(S, asv_named);
+        }
         var asv_fn_target = L64(S + 0x1292000 + asv_fi * 8);
         if (asv_fn_target >= 0) { ECALLTO(S, asv_fn_target); }
         else { ECALLFIX(S, asv_fi); }
