@@ -238,9 +238,14 @@ during v5.8.x that may surface in v5.9.x or later.
   cyim consumer hits it concretely. (Note: a regex-lib
   scaffold may already exist user-side; defer until cyim
   surfaces specific use case.)
-- **`ESTORESTACKPARM` cx >6 args** (audit §4) — pin when a cx
-  consumer surfaces a 7+-arg fn. cx backend stub returns 0
-  with `# TODO: >6 args` comment at `src/backend/cx/emit.cyr:385`.
+- **`ESTORESTACKPARM` cx >6 args** (audit §4) — **folded into
+  v5.9.33 cx Phase 2c parity slot** (2026-05-07; pin moved
+  from "surfaces-on-ask" to active-cycle scheduling).
+  Originally: pin when a cx consumer surfaces a 7+-arg fn.
+  cx backend stub returns 0 with `# TODO: >6 args` comment at
+  `src/backend/cx/emit.cyr:385`. Now landing alongside cx
+  struct-by-value + sub-byte field-load parity since all three
+  share the byte-memory-ops + stack-arg shuffling shape.
 - **`float.cyr:41` peephole pattern** (audit §4) — pin when
   measured to matter. 5-instruction sequence `push rax;
   movabs rax, 0x7FFF...; mov rcx, rax; pop rax; and rax, rcx`
@@ -930,9 +935,47 @@ satisfied by earlier slots.
   the TLS round-trip; skip cleanly if unreachable (CI runner
   contexts vary). `_tls_live_gate()` retires the `.sh`. With
   this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.33.
+  — precondition for v5.9.34.
 
-- **v5.9.33** — **`lib/regression.cyr` testing-stdlib
+- **v5.9.33** — **cx (cyrius-x bytecode) Phase 2c parity**.
+  Closes the two `ERR_MSG`-guarded cx pending sites that
+  v5.9.26 + v5.9.27 narrowed but didn't fix:
+  - `parse_fn.cyr:371` — struct return by value
+    (`"cx backend pending Phase 2c"`). v5.9.26 shipped the
+    aarch64 LDRB/STRB byte-copy + X8 retptr ABI; the cx
+    equivalent needs cxvm opcodes for byte-level memory
+    copy + indirect-result reg semantics.
+  - `parse_decl.cyr:252` — sub-8-byte struct field load
+    (`"cx backend pending"`). v5.9.27 shipped aarch64
+    `ldrb`/`ldrh`/`ldr w0` for widths 1/2/4. cx
+    `EVLOAD_W`/`EFLLOAD_W` (lines 397-398 of
+    `src/backend/cx/emit.cyr`) currently treat all widths as
+    64-bit — the per-size load opcodes need to land in
+    cxvm + the wrappers updated to dispatch on width.
+  Plus the related held-item:
+  - `ESTORESTACKPARM` cx >6-args stub (held since v5.8.x;
+    `src/backend/cx/emit.cyr:385` returns 0 with a TODO).
+    Folded into this slot since stack-arg shuffling will
+    have shape overlap with the struct-copy work above.
+
+  Acceptance: a cx-bytecode binary produced from a cyrius
+  source that exercises (i) struct-by-value return, (ii) i8/
+  i16 struct-field loads via dot syntax, (iii) a 7+-arg fn
+  call, all round-trips through the cxvm interpreter
+  cleanly. Existing `_cx_build_gate` + `_cx_roundtrip_gate`
+  + `_cx_syscall_literal_gate` regressions stay green; new
+  `_cx_struct_byval_gate` + `_cx_sub_byte_field_load_gate`
+  + `_cx_seven_args_gate` mirror the aarch64 cluster's
+  cross-test pattern.
+
+  Out of scope (intentionally held): the 4 silent no-op cx
+  guards in `parse_expr.cyr` (line 349 `&fn_name`, 399
+  `&local`, 871 closure fn-addr, 929 f64 cmp). Those existed
+  pre-v5.9.x without consumer pressure and don't share the
+  byte-memory-ops shape this slot is centered on. Pin them
+  individually if a cx consumer surfaces.
+
+- **v5.9.34** — **`lib/regression.cyr` testing-stdlib
   carve-out**. Helper inventory stabilized post-v5.9.32 (arc
   closed). ~200-300 LOC migration of the reusable primitives
   accumulated through the v5.9.6 → v5.9.32 dispatcher work
@@ -952,7 +995,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.34** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.35** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup
