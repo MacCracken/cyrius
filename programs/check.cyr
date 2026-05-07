@@ -3023,6 +3023,124 @@ fn _ssh_remote_exit(target, command) {
     return 0 - 1;
 }
 
+# Tar-pipe a tree to a remote host over ssh stdin. Equivalent to:
+#   tar cf - -C <src_root> <member1> <member2> ... | \
+#       ssh <target> 'rm -rf <remote_dir> && mkdir -p <remote_dir>
+#                     && cd <remote_dir> && tar xf -'
+# `members` is a single space-separated cstring of dir/file names
+# relative to `src_root` (e.g. "src lib"). Returns 0 on success,
+# non-zero on tar failure (-1) / ssh non-zero (remote rc) / fork
+# failure (-2).
+#
+# Used by the v5.9.15 aarch64-native-selfhost gate to ship the
+# repo's src/ + lib/ trees to the Pi runner before invoking
+# `./cc5_native` on the remote.
+fn _tar_pipe_ssh(target, src_root, members, remote_dir) {
+    # Build the remote shell command:
+    #   "rm -rf <remote_dir> && mkdir -p <remote_dir>
+    #    && cd <remote_dir> && tar xf -"
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "rm -rf ");
+    str_builder_add_cstr(cmd_sb, remote_dir);
+    str_builder_add_cstr(cmd_sb, " && mkdir -p ");
+    str_builder_add_cstr(cmd_sb, remote_dir);
+    str_builder_add_cstr(cmd_sb, " && cd ");
+    str_builder_add_cstr(cmd_sb, remote_dir);
+    str_builder_add_cstr(cmd_sb, " && tar xf -");
+    var remote_cmd = str_data(str_builder_build(cmd_sb));
+
+    # Pipe between tar (parent of members in src_root) and ssh.
+    var fds[16];
+    var pipe_rc = sys_pipe(&fds);
+    if (pipe_rc < 0) { return 0 - 2; }
+    var rfd = load32(&fds);
+    var wfd = load32(&fds + 4);
+
+    # tar producer
+    var tar_pid = sys_fork();
+    if (tar_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
+    if (tar_pid == 0) {
+        sys_dup2(wfd, 1);
+        sys_close(rfd);
+        sys_close(wfd);
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        # Exec: tar cf - -C <src_root> <member1> <member2> ...
+        # `members` is space-separated; explode to argv. Cap at
+        # 32 members which is plenty for src + lib + extras.
+        var argv[40];
+        store64(&argv,      "tar");
+        store64(&argv + 8,  "cf");
+        store64(&argv + 16, "-");
+        store64(&argv + 24, "-C");
+        store64(&argv + 32, src_root);
+        # Walk `members` cstring, splitting on space, writing
+        # each token's start pointer + null-terminating each
+        # in a private mutable buffer.
+        var mlen = strlen(members);
+        var buf = alloc(mlen + 1);
+        var b = 0;
+        while (b < mlen) { store8(buf + b, load8(members + b)); b = b + 1; }
+        store8(buf + mlen, 0);
+        var idx = 5;   # next argv slot
+        var s = 0;
+        var i = 0;
+        while (i <= mlen) {
+            var c = load8(buf + i);
+            if (c == 32) {
+                store8(buf + i, 0);
+                if (i > s) { store64(&argv + idx * 8, buf + s); idx = idx + 1; }
+                s = i + 1;
+            }
+            if (c == 0) {
+                if (i > s) { store64(&argv + idx * 8, buf + s); idx = idx + 1; }
+            }
+            i = i + 1;
+        }
+        store64(&argv + idx * 8, 0);
+        sys_execve("/usr/bin/tar", &argv, ENVP_ARR);
+        sys_execve("/bin/tar",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+
+    # ssh consumer
+    var ssh_pid = sys_fork();
+    if (ssh_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
+    if (ssh_pid == 0) {
+        sys_dup2(rfd, 0);
+        sys_close(rfd);
+        sys_close(wfd);
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[4];
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  target);
+        store64(&argv + 16, remote_cmd);
+        store64(&argv + 24, 0);
+        sys_execve("/usr/bin/ssh", &argv, ENVP_ARR);
+        sys_execve("/bin/ssh",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+
+    # Parent closes both ends and waits.
+    sys_close(rfd);
+    sys_close(wfd);
+    var s1[1];
+    var s2[1];
+    sys_waitpid(tar_pid, &s1, 0);
+    sys_waitpid(ssh_pid, &s2, 0);
+    var st1 = load32(&s1);
+    var st2 = load32(&s2);
+    if (WIFEXITED(st1) != 1) { return 0 - 1; }
+    if (WIFEXITED(st2) != 1) { return 0 - 1; }
+    if (WEXITSTATUS(st1) != 0) { return 0 - 1; }
+    return WEXITSTATUS(st2);
+}
+
 # Resolve the SSH target for a given env-var (e.g. "SSH_TARGET",
 # "SSH_TARGET_MACOS", "SSH_TARGET_WIN") with a default fallback.
 # Returns a cstring pointer.
@@ -3046,6 +3164,248 @@ fn _ssh_target(env_name, default_name) {
         i = i + 1;
     }
     return default_name;
+}
+
+# Bespoke gate: aarch64 syscall stdlib + thread/atomic/
+# thread_local/flags acceptance cluster (v5.4.11 .. v5.5.33;
+# yukti + majra surfaced). Cross-builds the consolidated
+# `tests/fixtures/aarch64_cluster/syscalls_combined.cyr`
+# fixture with cc5_aarch64, scp's it to the configured SSH
+# target (default `pi`), runs it, decodes the exit code:
+#   99 — all 9 sub-tests PASS
+#   <id*10 + sub> — sub-test `id` (1..9) failed at step `sub`
+fn _aarch64_syscalls_gate() {
+    var label = "aarch64 syscall stdlib + post-clone trampoline (via ssh pi)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_cluster/syscalls_combined.cyr");
+    var bin = _tmp_path("audit_aarch64_syscalls_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyr_aarch64_cluster_smoke";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " /tmp/cyrius_regr_fs_probe.txt; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": aarch64 syscall stdlib + thread/atomic/thread_local/flags green on ");
+        _p(target);
+        println(" (9/9 sub-tests; v5.4.11 .. v5.5.33)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": aarch64 cluster sub-test failed (exit=");
+    print_num(ec);
+    if (ec == 11) { _p(" — t1 sys_open failed"); }
+    if (ec == 12) { _p(" — t1 sys_read returned 0"); }
+    if (ec == 21) { _p(" — t2 thread_create returned 0"); }
+    if (ec == 22) { _p(" — t2 thread_join non-zero"); }
+    if (ec == 31) { _p(" — t3 alloc returned 0 inside loop"); }
+    if (ec == 32) { _p(" — t3 alloc tail mismatch"); }
+    if (ec >= 41) { if (ec <= 45) { _p(" — t4 fs roundtrip failed"); } }
+    if (ec == 51) { _p(" — t5 mt thread_create returned 0"); }
+    if (ec == 52) { _p(" — t5 mt thread_join non-zero"); }
+    if (ec >= 61) { if (ec <= 65) { _p(" — t6 thread_local TPIDR_EL0 path"); } }
+    if (ec >= 71) { if (ec <= 77) { _p(" — t7 atomic LL-SC sequence"); } }
+    if (ec >= 81) { if (ec <= 82) { _p(" — t8 mutex+hashmap contention"); } }
+    if (ec >= 91) { if (ec <= 96) { _p(" — t9 lib/flags.cyr parse"); } }
+    println(")");
+    _check(label, 1);
+    return 1;
+}
+
+# Bespoke gate: native aarch64 cc5 self-hosts byte-identical on
+# Pi (v5.6.32). Pipeline:
+#   1. Cross-build aarch64-host cc5 from src/main_aarch64_native.cyr
+#      via the existing cc5_aarch64 cross-compiler.
+#   2. scp the native binary to the configured SSH target.
+#   3. tar-pipe `src lib` to /tmp/cyr_selfhost_tree on the remote.
+#   4. On the remote, two-step compile:
+#        cat src/main_aarch64_native.cyr | cc5_native > cc5_b
+#        cat src/main_aarch64_native.cyr | cc5_b      > cc5_c
+#   5. Assert `cmp cc5_b cc5_c` returns 0 (byte-identical).
+fn _aarch64_native_selfhost_gate() {
+    var label = "native cc5 self-hosts byte-identical on Pi (pin v5.6.32)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh (no aarch64 runner available)");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Step 1: cross-build aarch64-native cc5 via the existing
+    # cc5_aarch64 cross-compiler. (We can't reuse build/cc5_aarch64
+    # directly — that's an x86 binary that runs the aarch64
+    # backend; we need a binary that is itself aarch64 ELF and
+    # ALSO emits aarch64 code.)
+    var arch_cc_x86 = _root_path("build/cc5_aarch64");
+    if (file_exists(arch_cc_x86) != 1) {
+        _p("  skip: ");
+        _p(arch_cc_x86);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var native_src = _root_path("src/main_aarch64_native.cyr");
+    var cc_native = _tmp_path("audit_cc_native_");
+    var rc1 = _self_host_pipe(native_src, arch_cc_x86, cc_native);
+    if (rc1 != 0) {
+        sys_unlink(cc_native);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5_native cross-build failed (rc=");
+        print_num(rc1);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Step 2: ship cc5_native to remote.
+    var remote_cc = "/tmp/cyr_selfhost_cc5";
+    var scp_rc = _scp_to(target, cc_native, remote_cc);
+    sys_unlink(cc_native);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp cc5_native to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Step 3: tar-pipe src + lib to remote.
+    var remote_tree = "/tmp/cyr_selfhost_tree";
+    var tar_rc = _tar_pipe_ssh(target, ROOT_PATH, "src lib", remote_tree);
+    if (tar_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": tar-pipe src+lib to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(tar_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Step 4: two-step compile on remote, then cmp.
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote_cc);
+    str_builder_add_cstr(cmd_sb, " && cd ");
+    str_builder_add_cstr(cmd_sb, remote_tree);
+    str_builder_add_cstr(cmd_sb, " && cat src/main_aarch64_native.cyr | ");
+    str_builder_add_cstr(cmd_sb, remote_cc);
+    str_builder_add_cstr(cmd_sb, " > cc5_b 2>/dev/null && chmod +x cc5_b && ");
+    str_builder_add_cstr(cmd_sb, "cat src/main_aarch64_native.cyr | ./cc5_b > cc5_c 2>/dev/null && ");
+    str_builder_add_cstr(cmd_sb, "cmp cc5_b cc5_c >/dev/null; rc=$?; ");
+    str_builder_add_cstr(cmd_sb, "rm -rf ");
+    str_builder_add_cstr(cmd_sb, remote_cc);
+    str_builder_add_cstr(cmd_sb, " ");
+    str_builder_add_cstr(cmd_sb, remote_tree);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": native aarch64 cc5 self-hosts byte-identical on ");
+        _p(target);
+        println(" (v5.6.32)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": native self-host failed on ");
+    _p(target);
+    _p(" (rc=");
+    print_num(ec);
+    println(") — compile error or cc5_b != cc5_c");
+    _check(label, 1);
+    return 1;
 }
 
 # Bespoke gate: aarch64 f64 basic-op correctness (v5.7.30).
@@ -4184,7 +4544,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("aarch64 syscalls + threads");
-    _gate("aarch64 syscall stdlib + post-clone trampoline (via ssh pi)", "tests/regression-aarch64-syscalls.sh");
+    _aarch64_syscalls_gate();
     println("");
 
     _section("Mach-O aarch64 cross-build");
@@ -4228,7 +4588,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("aarch64 native self-host");
-    _gate("native cc5 self-hosts byte-identical on Pi (pin v5.6.32)", "tests/regression-aarch64-native-selfhost.sh");
+    _aarch64_native_selfhost_gate();
     println("");
 
     _section("Mach-O arm64 runtime");

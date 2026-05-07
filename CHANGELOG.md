@@ -6,6 +6,121 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.15] — 2026-05-06
+
+**v5.9.x SLOT 15 — SSH-cluster sovereignty pass:
+`_tar_pipe_ssh` helper + aarch64 cluster + native-selfhost
+gates land cyrius-side**. Cascaded from v5.9.13 + v5.9.14
+under the v5.9.15 pin "SSH cluster + tar-pipe-to-ssh helper".
+
+cc5: **741,048 B unchanged** — `programs/check.cyr` adds two
+helpers + two bespoke gates; new fixture
+`tests/fixtures/aarch64_cluster/syscalls_combined.cyr`
+(~250 LOC) consolidates the .sh's 9 sub-tests into a single
+fork-and-decode-exit-code shape; no compiler-source change.
+
+Single-theme slot scope: only the two .sh that need
+remote-aarch64 execution land here. macho-exit / pe-exit /
+sit-status / tls-live each have a different shape (codesign,
+.bat fixture, local non-SSH consumer, network probe) and stay
+pinned for v5.9.16+.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Both .sh use the same primitives (cross-compile via
+cc5_aarch64, scp binary, ssh-run, decode exit code) — already
+covered by the v5.7.30 `_aarch64_f64_basic_gate` shape. The
+gap was tar-pipe (`tar cf - -C ROOT src lib | ssh TARGET 'tar
+xf -'`) for `aarch64-native-selfhost.sh` step 3 — required to
+ship the entire src/ + lib/ trees to the Pi runner before
+invoking the native compiler against itself. No existing
+helper covered the bidirectional tar-stream-over-ssh-stdin
+shape; v5.9.15 adds it.
+
+The aarch64-syscalls fixture wanted 9 sub-tests but the
+existing 1-fixture-per-gate shape would mean 9 cross-builds
++ 9 scps + 9 ssh-runs. Consolidated into ONE fixture file
+that runs each sub-test and exits with `(test_id * 10 +
+sub_failure)` on first fail or 99 on full pass, matching the
+existing `_aarch64_f64_basic_gate` exit-code-decode contract.
+
+### Added
+
+- **`programs/check.cyr` — `_tar_pipe_ssh(target, src_root,
+  members, remote_dir)`**: pipe a `tar cf - -C <src_root>
+  <member1> <member2> ...` stream to `ssh <target> 'rm -rf
+  <remote_dir> && mkdir -p <remote_dir> && cd <remote_dir>
+  && tar xf -'`. `members` is a single space-separated cstring
+  that gets split + null-terminated into argv slots (cap 32
+  members). Returns 0 on success; -1 on tar/ssh fault; -2 on
+  fork/pipe fault; remote rc otherwise. The helper covers the
+  one ssh shape that `_scp_to` + `_ssh_remote_exit` couldn't
+  express (streaming archive bytes through ssh stdin while
+  also propagating the remote tar's exit code).
+- **`programs/check.cyr` — `_aarch64_syscalls_gate()`**:
+  cross-builds the consolidated fixture
+  `tests/fixtures/aarch64_cluster/syscalls_combined.cyr`,
+  scp's it to the configured SSH target (default `pi`),
+  runs it remotely, decodes the exit code:
+  - 99 → all 9 sub-tests pass
+  - `<id*10 + sub>` → sub-test `id` failed at step `sub`
+    (e.g. 12 = sys_read returned 0; 72 = atomic_load mismatch
+    after CAS sanity step)
+  Per-sub-test diagnostic strings printed on failure so the
+  log identifies which lib path broke (sys_open / thread_join
+  / atomic LL-SC / mutex+hashmap / lib/flags parse).
+- **`programs/check.cyr` — `_aarch64_native_selfhost_gate()`**:
+  cross-builds aarch64-native cc5 from
+  `src/main_aarch64_native.cyr` via the existing cc5_aarch64
+  cross-compiler, scp's it to `pi`, tar-pipes `src lib` via
+  `_tar_pipe_ssh`, runs the two-step compile (cc5_native
+  emits cc5_b; cc5_b emits cc5_c) on the remote, asserts
+  `cmp cc5_b cc5_c` returns 0. v5.6.32 pin (the slot that
+  unblocked native self-host by adding the missing
+  `include "src/common/ir.cyr"` to main_aarch64_native.cyr).
+- **`tests/fixtures/aarch64_cluster/syscalls_combined.cyr`**
+  (~250 LOC): consolidates the .sh's 9 sub-tests into one
+  fixture. Each test is a `_tN_*` fn that returns 0 on pass
+  or a per-step failure code; `main()` runs them in order
+  and `syscall(SYS_EXIT, …)` with the first non-zero or 99.
+  Exit-code mapping preserved from the .sh so older
+  diagnostic recipes still translate.
+
+### Changed
+
+- **`programs/check.cyr` — dispatcher**: replaced
+  `_gate("...aarch64 syscall stdlib...", "tests/regression-
+  aarch64-syscalls.sh")` with `_aarch64_syscalls_gate()`;
+  same for the native-selfhost line. Both now cyrius-side.
+
+### Removed
+
+- **`tests/regression-aarch64-syscalls.sh`** (538 LOC) —
+  9 cross-build/scp/ssh-run sub-tests folded into the
+  consolidated fixture + `_aarch64_syscalls_gate()`.
+- **`tests/regression-aarch64-native-selfhost.sh`** (86 LOC)
+  — folded into `_aarch64_native_selfhost_gate()` +
+  `_tar_pipe_ssh` helper.
+
+### Audit
+
+- 66/66 audit gates green; both new aarch64-side gates PASS
+  on `pi` (aarch64 Linux runner). cc5==cc5 byte-identical
+  at 741,048 B.
+- `.sh` count: 19 → 17.
+
+### Cascaded to v5.9.16+
+
+- macho-exit (codesign / `CYRIUS_MACHO_ARM=1` env-var exec
+  on cass).
+- pe-exit (.bat fixture handling + `cmd /c` stdout-parse on
+  ecb).
+- sit-status (local `../sit` consumer; no SSH; v5.9.16
+  pin already includes it in the small-utilities batch).
+- tls-live (network probe to 1.1.1.1:443; different shape
+  again — needs `_ssh_skip_check` analogue for "is the
+  internet reachable").
+
 ## [5.9.14] — 2026-05-06
 
 **v5.9.x SLOT 14 — release-tarball `cyrius_api_surface` gap fix +
