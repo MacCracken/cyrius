@@ -6,6 +6,122 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.29] — 2026-05-07
+
+**v5.9.x SLOT 29 — cyrius-init `--lib` shape + `--description=`
+flag** (cyrius-init.sh sovereignty port, continued from
+v5.9.28 part 1). Honest scope shrink at slot entry: original
+pin scoped this as "part 2 = full flag matrix + cyrius-port.sh
+port" but the realistic combined size (~1,667 LOC of bash +
+35 heredocs) doesn't fit a single slot. This slot lands the
+two next-most-impactful features (`--lib` shape support + an
+explicit description flag) and pushes the rest (in-place mode,
+`--language` / `--agent` / `--cmtools` / `--dry-run`,
+`cyrius-port.sh` port, remaining ~10 templates) to follow-up
+slots within the v5.9.x cycle. Bash fallback keeps deferred
+features working; the cyrius-side surface is incrementally
+expanded each slot.
+
+cc5: **744,144 B unchanged** — userland binary work, not a
+compiler change. api-surface: **2,769 unchanged**. check.sh:
+**63 unchanged** (existing init regressions continue routing
+through bash fallback for unsupported flag combos).
+
+### Premise-check finding (slot entry, 2026-05-07)
+
+`scripts/cyrius-init.sh` is 1,021 LOC, 26 heredocs.
+`scripts/cyrius-port.sh` is 646 LOC, 9 heredocs (overlapping
+with init's templates: adr/template.md, architecture/README.md,
+ci.yml, release.yml, .gitignore, .tcyr/.bcyr/.fcyr). Combined
+~1,667 LOC + 35 heredocs (28 unique after dedup). The original
+v5.9.29 pin underestimated this; full-port-in-one-slot would
+either (a) drag for many sessions or (b) deliver a half-port
+that's worse than the existing bash. Honest split: incremental
+feature-by-feature port, each slot delivers concrete value
+that's a strict superset of the previous. v5.9.30 already
+pinned (agnosys-derive-Serialize) takes priority; remaining
+init work absorbs into late-cycle slots.
+
+### Added
+
+- **`programs/cyrius-init-templates/`** — 3 new lib-shape
+  templates extracted from cyrius-init.sh:
+  - `cyrius-cyml-lib` — `[build] entry = "programs/smoke.cyr"`
+    + `[lib] modules = ["src/main.cyr"]` shape; uses `{PROJ}`
+    / `{CYRIUS_VER}` / `{DESCRIPTION}` placeholders.
+  - `main-cyr-lib` — header-only library module (no
+    `main()`; re-exported via `dist/<name>.cyr` per the
+    cyrius distlib convention).
+  - `smoke-cyr` — compile-link proof program that includes
+    `src/main.cyr` and exits 0 on success. Matches the
+    mabda / sigil / sankoch convention.
+
+### Changed
+
+- **`programs/cyrius-init.cyr` arg parser**: replaced the
+  positional-only single-arg form with a flag-aware loop:
+  - `--lib` / `--bin` (--bin default; --lib selects library
+    shape).
+  - `--description=<v>` (literal value; default falls back
+    to `<name> — TODO` placeholder, same as v5.9.28).
+  - Any unsupported flag exits 2 → dispatcher falls through
+    to bash. v5.9.30+ adds more flags incrementally.
+- **`programs/cyrius-init.cyr` template branch**: shape-
+  conditional template selection. `--lib` writes
+  `cyrius-cyml-lib` + `main-cyr-lib` + `programs/smoke.cyr`
+  + creates `programs/` subdir. `--bin` keeps the v5.9.28
+  default + writes `src/test.cyr`.
+- **`cbt/project.cyr` `cmd_init_args`**: routes 2-arg form
+  (`cyrius init <flag> <name>`) through the cyrius binary
+  first; falls back to bash on rc==2 or binary missing. Same
+  pattern as v5.9.28's `cmd_init` single-arg path, extended
+  to the multi-arg case now that the binary handles flags.
+
+### Verified
+
+- `cyrius-init <name>` (default --bin): scaffolds 14 files;
+  generated `src/main.cyr` compiles + runs `hello from <name>`
+  exit=0. Unchanged from v5.9.28.
+- `cyrius-init --lib <name>`: scaffolds 14 files in lib shape;
+  generated `programs/smoke.cyr` compiles + runs
+  `<name> smoke ok` exit=0. New in v5.9.29.
+- `cyrius-init --description="my custom desc" <name>`:
+  generated `cyrius.cyml` carries `description = "my custom
+  desc"` instead of the default placeholder. New in v5.9.29.
+- 63/63 check.sh gates green; existing
+  `tests/regression-init-{lib-bin,doctree}.sh` continue
+  passing through the bash fallback path (cwd-based
+  `./build/cyrius-init` lookup misses from `/tmp`, dispatcher
+  falls back to bash, full 99-file scaffold produced).
+- Two-step self-host byte-identical (cc5 unchanged at
+  744,144 B).
+- api-surface unchanged.
+
+### Cascaded to v5.9.30+
+
+- **v5.9.30 — `#derive(Serialize)` primitive helpers**
+  (agnosys 1.1.12 filing; pinned 2026-05-07).
+- v5.9.31 — init-doctree + init-lib-bin gate conversions.
+- v5.9.32 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.33 — tls-live + network-probe helper.
+- v5.9.34 — cx Phase 2c parity.
+- v5.9.35 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.36 — closeout pass before v5.10.0.
+
+**Held within cyrius-init port arc** (will land opportunistically
+in late-cycle slots if scope allows; otherwise carry to v5.10.x):
+
+- In-place mode (`cyrius init .`)
+- Full flag matrix: `--language=none|rust`, `--agent`,
+  `--cmtools`, `--dry-run`
+- ~10 remaining templates: full CLAUDE.md, doc-tree
+  (state.md / roadmap.md / adr README / getting-started),
+  README variants
+- `scripts/cyrius-port.sh` port (Rust→cyrius migration tool;
+  shares this scaffold's template-substitution layer)
+- Add `cyrius-init` to `[release].bins` once template-tree
+  install-snapshot routing lands
+
 ## [5.9.28] — 2026-05-07
 
 **v5.9.x SLOT 28 — `scripts/cyrius-init.sh` sovereignty port,

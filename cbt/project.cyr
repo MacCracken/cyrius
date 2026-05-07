@@ -22,12 +22,19 @@ fn cmd_init(name) {
 }
 
 fn cmd_init_args(arg1, arg2) {
-    # Two-arg form covers `cyrius init --flag <name>` patterns —
-    # the cyrius-init binary's part-1 surface only handles
-    # single-arg `cyrius init <name>`, so any 2-arg invocation
-    # routes straight to the bash fallback (which knows the full
-    # flag matrix). v5.9.29 lifts this once part 2 lands the
-    # flag parser.
+    # Two-arg form covers `cyrius init <flag> <name>` patterns.
+    # v5.9.29: cyrius-init binary handles `--lib` and
+    # `--description=<v>`. Anything else (--language /
+    # --agent / --cmtools / --dry-run / in-place / 3+ args)
+    # exits 2 → fall back to bash. The binary's own arg parser
+    # is the source of truth for what's supported; this layer
+    # just forwards both args.
+    var bin = "./build/cyrius-init";
+    if (file_exists(bin) == 0) { bin = make_path(_home, "bin/cyrius-init"); }
+    if (file_exists(bin) == 1) {
+        var rc = run_tool(bin, arg1, arg2, 0);
+        if (rc != 2) { return rc; }
+    }
     var script = make_path(_scripts_dir, "cyrius-init.sh");
     if (file_exists(script) == 0) {
         script = make_path(_home, "bin/cyrius-init.sh");

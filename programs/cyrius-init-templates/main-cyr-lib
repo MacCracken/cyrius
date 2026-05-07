@@ -1,0 +1,3 @@
+# {PROJ} — library module. Re-exported via dist/{PROJ}.cyr (cyrius distlib).
+# Add domain modules below or in sibling files; programs/smoke.cyr proves
+# the include chain compiles end-to-end.

@@ -1,0 +1,17 @@
+[package]
+name = "{PROJ}"
+version = "0.1.0"
+description = "{DESCRIPTION}"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "{CYRIUS_VER}"
+
+[build]
+entry = "programs/smoke.cyr"
+output = "build/{PROJ}-smoke"
+
+[lib]
+modules = ["src/main.cyr"]
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]

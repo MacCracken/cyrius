@@ -1,22 +1,24 @@
-# cyrius-init.cyr — cyrius project scaffolder (v5.9.28 part 1).
+# cyrius-init.cyr — cyrius project scaffolder.
 #
 # Sovereignty port of scripts/cyrius-init.sh, originally pinned
 # to v5.9.14 but rescheduled to v5.9.28 after the v5.9.x cycle's
-# emergent consumer-filed work consumed earlier slots. This is
-# part 1 of 2: greenfield `--bin` path with 14 essential
+# emergent consumer-filed work consumed earlier slots.
+#
+# v5.9.28 (part 1): greenfield `--bin` path; 14 essential
 # templates externalized to programs/cyrius-init-templates/.
-# Part 2 (v5.9.29) adds:
-#   - `--lib` and bare-shape detection
+# v5.9.29 (this slot): `--lib` shape + `--description=` flag.
+#
+# Still deferred to follow-ups:
 #   - In-place mode (`cyrius init .`)
 #   - Full flag matrix (--language / --agent / --cmtools /
-#     --description / --dry-run)
-#   - Remaining ~12 templates (CI workflow, doc tree, CLAUDE.md,
-#     README variants, getting-started)
+#     --dry-run)
+#   - Remaining ~10 templates (doc tree, CLAUDE.md, README
+#     variants, getting-started)
 #   - cyrius-port.sh sovereignty port (shares this scaffold's
 #     template-substitution layer)
 #
-# Until part 2 lands, the cbt/cyrius.cyr dispatcher routes
-# unsupported flag combos to scripts/cyrius-init.sh as fallback.
+# The cbt/cyrius.cyr dispatcher routes unsupported flag combos
+# to scripts/cyrius-init.sh as fallback (signalled by exit 2).
 #
 # Template substitution: data files under
 # `programs/cyrius-init-templates/` carry `{KEY}` placeholders
@@ -260,29 +262,64 @@ fn main() {
 
     var argc_n = argc();
     if (argc_n < 2) {
-        syscall(SYS_WRITE, 2, "Usage: cyrius-init <project-name>\n", 34);
-        syscall(SYS_WRITE, 2, "  (v5.9.28 part 1: only greenfield --bin shape; --lib / bare / flags route to scripts/cyrius-init.sh)\n", 102);
+        syscall(SYS_WRITE, 2, "Usage: cyrius-init [--lib] [--description=<desc>] <project-name>\n", 65);
+        syscall(SYS_WRITE, 2, "  (in-place mode, --language/--agent/--cmtools/--dry-run still route to scripts/cyrius-init.sh)\n", 95);
         syscall(SYS_EXIT, 1);
     }
 
-    var name = argv(1);
+    # Parse args: positional NAME + --lib/--bin + --description=<v>.
+    # v5.9.29: any unsupported flag exits 2 → dispatcher falls
+    # through to bash. Flag-matrix expansion (--language / --agent
+    # / --cmtools / --dry-run) lives in the bash side until a
+    # follow-up slot ports it.
+    var name = 0;
+    var shape_lib = 0;
+    var description = 0;
+    var ai = 1;
+    while (ai < argc_n) {
+        var a = argv(ai);
+        var alen = strlen(a);
+        if (alen >= 2 && load8(a) == 45) {
+            # Flag.
+            if (memeq(a, "--lib", 5) == 1 && alen == 5) {
+                shape_lib = 1;
+            } else { if (memeq(a, "--bin", 5) == 1 && alen == 5) {
+                shape_lib = 0;
+            } else { if (memeq(a, "--description=", 14) == 1 && alen > 14) {
+                description = a + 14;
+            } else {
+                syscall(SYS_WRITE, 2, "cyrius-init: unsupported flag — falling through to bash\n", 56);
+                syscall(SYS_EXIT, 2);
+            } } }
+        } else {
+            if (name != 0) {
+                syscall(SYS_WRITE, 2, "cyrius-init: multiple positional args — falling through to bash\n", 64);
+                syscall(SYS_EXIT, 2);
+            }
+            name = a;
+        }
+        ai = ai + 1;
+    }
+    if (name == 0) {
+        syscall(SYS_WRITE, 2, "cyrius-init: no project name given\n", 35);
+        syscall(SYS_EXIT, 1);
+    }
 
-    # In-place mode (`cyrius init .`) deferred to v5.9.29 part 2.
-    # Fail fast so caller knows to use the bash fallback.
+    # In-place mode (`cyrius init .`) deferred. Fail fast so
+    # caller knows to use the bash fallback.
     if (strlen(name) == 1) {
         if (load8(name) == 46) {
-            syscall(SYS_WRITE, 2, "cyrius-init: in-place mode (`.`) deferred to v5.9.29 — falling through to bash\n", 79);
+            syscall(SYS_WRITE, 2, "cyrius-init: in-place mode (`.`) deferred — falling through to bash\n", 69);
             syscall(SYS_EXIT, 2);
         }
     }
 
-    # Reject names with `/` (subdirs). Must be a simple project
-    # name in v5.9.28 part 1.
+    # Reject names with `/` (subdirs).
     var ni = 0;
     var nlen = strlen(name);
     while (ni < nlen) {
         if (load8(name + ni) == 47) {
-            syscall(SYS_WRITE, 2, "cyrius-init: project name with `/` deferred to v5.9.29 — falling through to bash\n", 81);
+            syscall(SYS_WRITE, 2, "cyrius-init: project name with `/` not supported — falling through to bash\n", 76);
             syscall(SYS_EXIT, 2);
         }
         ni = ni + 1;
@@ -312,19 +349,22 @@ fn main() {
         syscall(SYS_EXIT, 2);
     }
 
-    # Description: default placeholder for v5.9.28; --description
-    # flag handled in v5.9.29.
-    var desc_sb = str_builder_new();
-    str_builder_add_cstr(desc_sb, name);
-    str_builder_add_cstr(desc_sb, " — TODO");
-    var description = str_data(str_builder_build(desc_sb));
+    # Description: --description=<v> from arg parse; default
+    # placeholder if absent.
+    if (description == 0) {
+        var desc_sb = str_builder_new();
+        str_builder_add_cstr(desc_sb, name);
+        str_builder_add_cstr(desc_sb, " — TODO");
+        description = str_data(str_builder_build(desc_sb));
+    }
 
-    # Create project skeleton. v5.9.28: --bin shape only (5
-    # subdirs + 14 templates).
+    # Create project skeleton. Common dirs for both shapes; lib
+    # adds programs/ for the smoke entry.
     sys_mkdir(name, 493);
     sys_mkdir(_join(name, "src"), 493);
     sys_mkdir(_join(name, "tests"), 493);
     sys_mkdir(_join(name, "docs"), 493);
+    if (shape_lib == 1) { sys_mkdir(_join(name, "programs"), 493); }
     sys_mkdir(_join(name, "docs/adr"), 493);
     sys_mkdir(_join(name, "docs/architecture"), 493);
     sys_mkdir(_join(name, "docs/examples"), 493);
@@ -345,9 +385,19 @@ fn main() {
     if (_render_and_write(templates_dir, "examples-gitkeep",     name, "docs/examples/.gitkeep",           name, cyrius_ver, description) != 0) { fail = fail + 1; }
 
     # 6 with-expansion templates ({PROJ}, {CYRIUS_VER}, {DESCRIPTION}).
-    if (_render_and_write(templates_dir, "cyrius-cyml-bin",      name, "cyrius.cyml",                      name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "main-cyr-bin",         name, "src/main.cyr",                     name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "src-test-cyr",         name, "src/test.cyr",                     name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    # Shape-conditional: --lib swaps cyrius.cyml + src/main.cyr +
+    # adds programs/smoke.cyr (compile-link proof, mabda/sigil
+    # convention); --bin keeps the v5.9.28 default + writes
+    # src/test.cyr.
+    if (shape_lib == 1) {
+        if (_render_and_write(templates_dir, "cyrius-cyml-lib", name, "cyrius.cyml",          name, cyrius_ver, description) != 0) { fail = fail + 1; }
+        if (_render_and_write(templates_dir, "main-cyr-lib",    name, "src/main.cyr",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
+        if (_render_and_write(templates_dir, "smoke-cyr",       name, "programs/smoke.cyr",   name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    } else {
+        if (_render_and_write(templates_dir, "cyrius-cyml-bin", name, "cyrius.cyml",          name, cyrius_ver, description) != 0) { fail = fail + 1; }
+        if (_render_and_write(templates_dir, "main-cyr-bin",    name, "src/main.cyr",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
+        if (_render_and_write(templates_dir, "src-test-cyr",    name, "src/test.cyr",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    }
     # tests/<name>.tcyr / .bcyr / .fcyr — basename varies. Build
     # paths inline.
     var tcyr_sb = str_builder_new();
@@ -376,12 +426,16 @@ fn main() {
     }
 
     # Success message — mirrors the bash version's tail.
+    var shape_label = "--bin shape";
+    if (shape_lib == 1) { shape_label = "--lib shape"; }
     var ok_sb = str_builder_new();
     str_builder_add_cstr(ok_sb, "Created ");
     str_builder_add_cstr(ok_sb, name);
     str_builder_add_cstr(ok_sb, "/ (cyrius ");
     str_builder_add_cstr(ok_sb, cyrius_ver);
-    str_builder_add_cstr(ok_sb, ", --bin shape; v5.9.28 part 1 — flag matrix + --lib / bare / in-place pending v5.9.29)\n");
+    str_builder_add_cstr(ok_sb, ", ");
+    str_builder_add_cstr(ok_sb, shape_label);
+    str_builder_add_cstr(ok_sb, "; v5.9.29 — in-place / --language / --agent / --cmtools / --dry-run still via bash fallback)\n");
     var ok = str_data(str_builder_build(ok_sb));
     sys_write(1, ok, strlen(ok));
 
