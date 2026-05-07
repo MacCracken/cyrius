@@ -6,6 +6,103 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.33] — 2026-05-07
+
+**v5.9.x SLOT 33 — PARSE_VAR struct-init lookahead guard
+(agnosys 1.1.12 follow-up; aarch64 narrow `status` repro)**.
+Closes the remaining narrow aarch64 case in the `#derive(Serialize)`
+fix arc (v5.9.30 + v5.9.31). The bug was upstream of the derive
+codegen — a parser over-eagerness in PARSE_VAR's struct-literal
+detection that surfaced only when:
+1. A struct name was registered AND a fn parameter shared that
+   name (made possible by `LEXID`'s identifier dedup — both
+   occurrences point to the same `tok_names` offset).
+2. The fn's body referenced the param name in a scalar
+   expression (`var sig = status & 0x7F;`), and
+3. The fn was actually parsed (not DCE-stubbed) — which on
+   x86 happens only for offsets ≥ 64 KB (the DCE bitmap
+   window), but on aarch64 happens routinely because
+   `lib/syscalls_aarch64_linux.cyr` (677 LOC) is bigger than
+   the x86 sibling (630 LOC), pushing offsets past the cap.
+
+Pre-fix: `error:N: expected '{', got unknown`. Post-fix: parses
+cleanly + emits scalar codegen. The agnosys filing's 13-name
+sweep flagged only `status` because that was the unique
+collision with a syscalls-fold fn-param twin in the v5.9.32
+include set; any other ident-named struct sharing a fn-param
+in the included tree would have repro'd just the same.
+
+cc5: **744,936 → 745,208 B** (+272 / +0.04%) — three small
+lookahead guards. api-surface: **2,769 unchanged** (compiler-
+internal change, no public symbols added/removed). check.sh:
+**64 unchanged** (regression added as tcyr, not a new gate).
+cyrius test: **128 → 129** (+1 — `struct_name_param_collision`).
+
+### Root cause (`src/frontend/parse_decl.cyr`)
+
+Three parser sites all skipped a critical lookahead before
+committing to the struct-init path:
+
+1. **`PARSE_VAR` (~line 998)** — local `var X = ...;` inside a
+   fn body.
+2. **`EMIT_GVAR_INITS` (~line 615)** — global `var X = ...;`
+   replay during init code emission.
+3. **`PARSE_GVAR_REG` (~line 540)** — pass-1 sizing decision
+   for a global var (allocates `STRUCTSZ` bytes vs scalar 8).
+
+All three checked `if (sid > 0)` from `FINDSTRUCT(...)` and
+unconditionally entered `PARSE_STRUCT_INIT`. The struct-init
+parse then consumed the ident and demanded `{`; if anything
+else followed (`&`, `+`, `*`, `(`, `,`, ...), it errored.
+
+### Fix
+
+Each of the three sites now requires `TOKTYP(S, GTI(S) + 1) == 13`
+(the next-next token is `{`) before committing to struct-init.
+Bare ident references (`var sig = status & 0x7F`) fall through
+to the scalar expression branch (`PCMPE`) where they belong.
+
+### Added
+
+- **`tests/tcyr/struct_name_param_collision.tcyr`** — 13
+  assertions covering: fn-param-as-struct-name with `&`, `+`,
+  `*`, `>>`, `0 -` operators; named-struct round-trip
+  (init + dot-field reads); a non-`#derive` struct/fn pair to
+  prove the fix is at the parser layer, not the
+  PP-derive emitter.
+
+### Verified
+
+- **agnosys 1.1.12 verbatim repro** — pre-fix `cat repro.cyr |
+  build/cc5_aarch64` reports `error:533: expected '{', got
+  unknown`; post-fix builds cleanly.
+- **`tests/tcyr/struct_name_param_collision.tcyr`** — 13/13
+  assertions pass on x86 native AND aarch64 (qemu-aarch64
+  + real pi hardware via SSH).
+- **Cross-host SSH cluster** (per
+  `feedback_cross_arch_propagation_mandatory`):
+  - `pi` (Linux aarch64, real hardware) — 13/13 PASS.
+  - `ecb` (macOS arm64, Mach-O ARM64) — 13/13 PASS.
+  - `cass` (Windows 11, PE32+ x86_64) — 13/13 PASS.
+- 64/64 check.sh gates green.
+- Two-step self-host byte-identical (cc5 → cc5b → cc5c
+  all `c39d6c0c...`).
+- 129/129 cyrius test green on x86; aarch64 cyrius test
+  count unchanged at the new test (17 pre-existing aarch64
+  backend failures unrelated to this fix — argc/argv
+  assertions, dl_setjmp/longjmp, file-locks; tracked
+  separately).
+
+### Cascaded to v5.9.34+
+
+- v5.9.34 — tls-live + network-probe helper. Last `.sh` to
+  retire; after this slot the `.sh-conversion arc closes
+  (0 remaining).
+- v5.9.35 — cx Phase 2c parity (struct-by-value + sub-byte
+  field load + ESTORESTACKPARM >6 args).
+- v5.9.36 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.37 — closeout pass before v5.10.0.
+
 ## [5.9.32] — 2026-05-07
 
 **v5.9.x SLOT 32 — SSH helper infra + macho-exit + pe-exit

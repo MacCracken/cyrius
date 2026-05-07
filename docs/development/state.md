@@ -5,6 +5,41 @@
 
 ## Version
 
+**5.9.33** (shipped 2026-05-07 — **v5.9.x SLOT 33 —
+PARSE_VAR struct-init lookahead guard** (agnosys 1.1.12
+narrow-aarch64 close)). Closes the v5.9.30/31
+`#derive(Serialize)` fix arc by addressing the *actual* root
+cause: parser over-eagerness, not derive codegen.
+`PARSE_VAR` / `EMIT_GVAR_INITS` / `PARSE_GVAR_REG` (in
+`src/frontend/parse_decl.cyr`) checked
+`FINDSTRUCT(ident) > 0` and unconditionally entered
+`PARSE_STRUCT_INIT`; if the next token wasn't `{`, the
+struct-init parse errored `"expected '{', got <next>"`.
+
+Surfaced only on aarch64 because the larger
+`lib/syscalls_aarch64_linux.cyr` (677 vs x86's 630 LOC)
+pushes WIFSIGNALED's `tok_names` offset past the 64 KB
+DCE bitmap window — DCE skips (conservative-keep), body
+parses, parser trips. Fix: each of the three sites now
+requires `TOKTYP(S, GTI(S) + 1) == 13` (next-next token is
+`{`) before committing to struct-init; bare ident references
+fall through to scalar expression parsing.
+
+cc5: **744,936 → 745,208 B** (+272 / +0.04%). api-surface:
+**2,769 unchanged**. cyrius test: **128 → 129** (+1 —
+`tests/tcyr/struct_name_param_collision.tcyr`). 64/64
+check.sh green. Two-step self-host byte-identical
+(`c39d6c0c…`). Cross-host SSH cluster verified — **pi**
+(Linux aarch64), **ecb** (macOS arm64 Mach-O), **cass**
+(Windows 11 PE32+) — 13/13 each.
+
+**Next**: v5.9.34 — `tls-live` gate conversion +
+`_network_probe_check` (closes the .sh-conversion arc at 0
+remaining). v5.9.35 — cx Phase 2c parity (struct-by-value +
+sub-byte field load + ESTORESTACKPARM >6 args). v5.9.36 —
+`lib/regression.cyr` testing-stdlib carve-out. v5.9.37 —
+closeout pass before v5.10.0.
+
 **5.9.13** (shipped 2026-05-06 — **v5.9.x SLOT 13 —
 bidirectional-IPC helper + `regression-lsp-definition.sh`
 cyrius-side gate + `api-surface --snapshot=PATH` dispatcher

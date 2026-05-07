@@ -1001,76 +1001,63 @@ satisfied by earlier slots.
     Linux/macOS/Windows-PowerShell) so cass actually
     registers as reachable.
 
-- **v5.9.33** — **`#derive(Serialize)` aarch64 narrow break for
-  struct names used as fn params earlier in source** (agnosys
-  1.1.12 follow-up; pinned 2026-05-07 mid-v5.9.32). MEDIUM
-  severity continuation of the v5.9.30/31 derive-Serialize fix
-  arc. v5.9.30 fixed the typed-i64 codegen path; v5.9.31 fixed
-  the API rename (`_to_json_sb` → `_to_json` to match vidya's
-  documented 2-arg shape + dropped the foot-gun 1-arg
-  wrapper); this slot closes the remaining narrow aarch64 case.
+- **v5.9.33** ✅ — **PARSE_VAR struct-init lookahead guard
+  shipped 2026-05-07** (agnosys 1.1.12 narrow-aarch64 close).
+  Closes the remaining case in the v5.9.30/31 `#derive(Serialize)`
+  fix arc. The earlier "narrow aarch64 type-ID slot" hypothesis
+  was wrong — the bug was an over-eager parser path, not a
+  derive-codegen issue.
 
-  **Reproducer**:
-  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
-  (verbatim, no edits). Build via `cat repro.cyr |
-  build/cc5_aarch64`. Acceptance: cross-build succeeds + run
-  on pi prints `[{"x":1,"y":42,"z":7}]`.
+  **Actual root cause** (`src/frontend/parse_decl.cyr`): three
+  parser sites — `PARSE_VAR` (~line 998 — local
+  `var X = ...;`), `EMIT_GVAR_INITS` (~line 615 — global init
+  replay), `PARSE_GVAR_REG` (~line 540 — pass-1 sizing) — all
+  checked `FINDSTRUCT(ident) > 0` and unconditionally entered
+  `PARSE_STRUCT_INIT`. The struct-init parse then consumed the
+  ident and demanded `{`; if anything else followed (`&`, `+`,
+  `*`, `(`, `,`, …) it errored.
 
-  **Failure shape (verified 2026-05-07 against v5.9.32)**:
-  `error:2396: expected '{', got unknown` at line ~2396 of
-  the post-PP expanded source. Line 2396 is `fn
-  WIFSIGNALED(status) { ... }` from
-  `lib/syscalls_aarch64_linux.cyr` — a syscall-arc fn that
-  uses the literal `status` as its param name. The user's
-  source includes `lib/syscalls.cyr` (transitively pulling in
-  WIFEXITED / WEXITSTATUS / WIFSIGNALED / WTERMSIG, all with
-  `status` params) AND declares `#derive(Serialize) struct
-  status { ... }` later. x86 build of the same source
-  succeeds.
+  The collision shape: cyrius's `LEXID` dedups identifier
+  storage, so a fn parameter named `status` and a struct
+  named `status` share the same `tok_names` offset.
+  `var sig = status & 0x7F;` inside `fn WIFSIGNALED(status)
+  { ... }` fed FINDSTRUCT a hit on the ident, the parser
+  committed to struct-init, and `&` (token 27) tripped the
+  "expected '{', got unknown" path.
 
-  **Trigger condition narrowed** (bisected):
-  - `fn WIFEXITED(status) { ... }` BEFORE `#derive struct
-    status { ... }` → FAILS on aarch64
-  - `#derive struct status { ... }` BEFORE `fn
-    WIFEXITED(status) { ... }` → OK
-  - Same source content, just rearranged. So the bug is
-    interaction between pass-1 struct registration of `status`
-    and pass-2 re-parse of an earlier `fn ...(status) { ... }`
-    with `status` as the param name.
+  **Why aarch64-only surfaced**: `lib/syscalls_aarch64_linux.cyr`
+  (677 LOC) is bigger than `lib/syscalls_x86_64_linux.cyr`
+  (630 LOC). The DCE bitmap window covers tok_names offsets
+  `[0, 65536)`; on x86, WIFSIGNALED's name offset lands inside
+  the window AND nothing references it, so it's stubbed
+  (`xor eax, eax; ret`) before parse — masking the bug. On
+  aarch64 the same fn's offset lands ≥ 65536, the DCE check
+  is skipped (conservative-keep), and the body gets parsed.
+  The 13-name sweep in the agnosys filing only flagged
+  `status` because that was the unique collision with a
+  syscalls-fold fn-param twin in the v5.9.32 include set; any
+  other ident-named struct sharing a fn-param in the included
+  tree would have repro'd just the same.
 
-  **Root cause hypothesis** (not yet pinned to a line):
-  pass 1 (PARSE_STRUCT_DEF) registers `status` in
-  `struct_names[]` at `S+0x18E630`. Pass 2 re-tokenizes +
-  re-parses fn bodies in source order. When pass 2 hits `fn
-  WIFEXITED(status) { ... }` at expanded-source line ~533,
-  the param-parse loop tokenizes `status` — but the token
-  type emitted is OUTSIDE the standard set
-  (`TOKNAME(typ)` returns `"unknown"`, per
-  `src/common/util.cyr:289`). Parser then expects `{` (fn body
-  open), sees the unknown-type token, errors. Specific to
-  aarch64 because the x86 backend's lex-pp interaction
-  apparently doesn't trip the same path — possibly a
-  type-ID slot or a derive-table side effect that x86's
-  parse-pass-2 doesn't consult.
+  **Fix**: each of the three sites now requires
+  `TOKTYP(S, GTI(S) + 1) == 13` (next-next token is `{`)
+  before committing to struct-init. Bare ident references
+  fall through to scalar expression parsing where they
+  belong.
 
-  **Investigation status (2026-05-07)**:
-  - Confirmed verbatim repro fails after `cyrius pulsar`
-    rebuild of cc5_aarch64.
-  - PP_PARSE_STRUCT_DEF correctly extracts `"status"` into
-    `S+0x197020` (raw bytes verified `s t a t u s \0`).
-  - Pass-2 re-tokenization of the affected fn header
-    (`fn WIFEXITED(status)`) is where the unknown-type token
-    appears — exact tokenizer/parser interaction not
-    pinpointed.
-  - Instrumentation attempts triggered self-induced SIGILL
-    on both x86 + aarch64 cc5 builds (formatter arithmetic
-    `48 + (n / 100)` had a separate codegen interaction
-    worth its own bug report — not the agnosys filing's
-    bug).
+  cc5: **744,936 → 745,208 B** (+272 / +0.04%). api-surface:
+  **2,769 unchanged**. cyrius test: **128 → 129** (+1 —
+  `tests/tcyr/struct_name_param_collision.tcyr`). Two-step
+  self-host byte-identical. 64/64 check.sh green. Cross-host
+  SSH cluster all PASS — `pi` (Linux aarch64), `ecb` (macOS
+  arm64 Mach-O), `cass` (Windows 11 PE32+), 13/13 each.
 
   **Out of scope** (tracked separately): the `48 + (n /
-  100)` formatter SIGILL surfaced during instrumentation —
-  pin if it surfaces in a real consumer.
+  100)` formatter SIGILL surfaced during early
+  instrumentation attempts — pin if it surfaces in a real
+  consumer (still unreproduced post-fix; the bug was
+  upstream of any need for the formatter so that path may
+  not actually be defective).
 
 - **v5.9.34** — **tls-live gate conversion + network-probe
   helper**. `_network_probe_check(host, port)` — quick TCP
