@@ -393,13 +393,15 @@ fn cmd_lint(file) {
 # §4 — exclude lib/ entries from the scan so downstream
 # consumers don't pick up cyrius stdlib that churns across
 # releases). Pre-v5.9.12 this dispatcher dropped the flag.
-fn cmd_api_surface(update_flag, scope_project) {
+# v5.9.13: `snapshot_arg` (`--snapshot=PATH`) forward — same
+# shape; pinned as follow-up at v5.9.12 ship.
+fn cmd_api_surface(update_flag, scope_project, snapshot_arg) {
     var tool = make_path(_tools_dir, "cyrius_api_surface");
     var u = 0;
     var s = 0;
     if (update_flag != 0)   { u = "--update"; }
     if (scope_project != 0) { s = "--scope=project"; }
-    return run_tool(tool, u, s, 0);
+    return run_tool(tool, u, s, snapshot_arg);
 }
 
 fn cmd_doc(arg1, arg2) {

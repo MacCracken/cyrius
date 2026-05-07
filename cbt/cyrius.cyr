@@ -476,17 +476,23 @@ fn main() {
     # the v5.7.33 dispatcher only parsed `--update`, so the scope
     # flag was dropped before reaching `cyrius_api_surface`.
     # Reported by user 2026-05-06: "5.9.11 --scope= NO OPS".
+    # v5.9.13: forward `--snapshot=PATH` too (same shape; pinned as
+    # follow-up at v5.9.12 ship).
     if (streq(cmd, "api-surface") == 1) {
         var update_flag = 0;
         var scope_project = 0;
+        var snapshot_arg = 0;
         var ai = 2;
         while (ai < argc()) {
             var fa = argv(ai);
             if (streq(fa, "--update") == 1) { update_flag = 1; }
             if (streq(fa, "--scope=project") == 1) { scope_project = 1; }
+            if (strlen(fa) > 11) {
+                if (memeq(fa, "--snapshot=", 11) == 1) { snapshot_arg = fa; }
+            }
             ai = ai + 1;
         }
-        return cmd_api_surface(update_flag, scope_project);
+        return cmd_api_surface(update_flag, scope_project, snapshot_arg);
     }
 
     if (streq(cmd, "audit") == 1) {

@@ -6,6 +6,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.13] — 2026-05-06
+
+**v5.9.x SLOT 13 — bidirectional-IPC helper +
+`regression-lsp-definition.sh` cyrius-side gate +
+`api-surface --snapshot=PATH` dispatcher pass-through**. The
+v5.9.10 LSP feature work + v5.9.12 dispatcher fix's deferred
+follow-ups land here. Scaffolder conversions (cyrius-init.sh +
+cyrius-port.sh) cascaded to v5.9.14 — slot scope kept tight
+on the IPC + LSP gate + dispatcher polish single theme.
+
+cc5: **741,048 B unchanged** — `cbt/` + `programs/check.cyr` +
+new fixtures only; no compiler-source change.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Three deliverables clean-land in v5.9.13:
+1. `--snapshot=PATH` dispatcher pass-through (v5.9.12
+   follow-up; one-line shape).
+2. Bidirectional-IPC helper `_ipc_session` + lsp-definition.sh
+   cyrius-side gate.
+3. (Deferred) scaffolder conversions, SSH cluster gates.
+
+Mid-slot the LSP gate's phase 2 (cross-file include
+resolution) failed cryptically — turned out the LSP's
+`handle_did_open_or_save` early-returns on paths not ending
+in `.cyr`, and my dynamic temp file (`_tmp_path("audit_lsp_
+includer_")`) didn't carry the extension. Manual probe with a
+`.cyr`-suffixed tempfile worked; without the suffix the
+didOpen silently no-op'd and the subsequent definition request
+returned `null`. Fixed by appending `.cyr` to the temp path
+before write.
+
+### Added
+
+- **`programs/check.cyr` — `_ipc_session(bin_path, req_buf,
+  req_len, out_buf, out_cap)`**: spawns `bin_path`, writes
+  `req_buf[0..req_len]` to its stdin, reads child stdout into
+  `out_buf[0..out_cap]`, waits, returns bytes captured.
+  stderr → /dev/null. Closes stdin's write end after all
+  bytes written, signaling EOF — child binaries that loop on
+  stdin reads (LSP server, REPL, etc.) exit cleanly. Pipe
+  buffer caveat documented inline: total request bytes must
+  fit in the kernel pipe buffer (~64 KB on Linux) since the
+  child may not start reading until after parent finishes
+  writing. For LSP-test traffic (5-15 small JSON-RPC messages,
+  ~5-10 KB total) this is fine.
+
+- **`programs/check.cyr` — `_lsp_frame(sb, json_body)`**:
+  builds one LSP-framed request (`Content-Length: N\r\n\r\n
+  <json>`) and appends to `sb`. Used by `_lsp_definition_gate`
+  for each request in each phase.
+
+- **`programs/check.cyr` — `_lsp_check_substr(out_buf, n,
+  needle, fail_msg)`**: substring-presence check over the
+  captured stdout buffer. Returns 0 on PASS, 1 on FAIL with a
+  per-case diagnostic. Mirrors the `.sh`'s `grep -q` style.
+
+- **`programs/check.cyr` — `_lsp_definition_gate()`**: bespoke
+  conversion of `tests/regression-lsp-definition.sh` (v5.7.39
+  + v5.9.10 extensions). Three LSP sessions over `_ipc_session`
+  (each spawns a fresh `build/cyrius-lsp`); 8 sub-cases mirror
+  the .sh's tests 1-8:
+  - Phase 1 (decl-only fixture, 5 requests): tests 1, 1b
+    (definitionProvider + documentSymbolProvider in init), 2
+    (definition URI), 3 (line:0 char:3), 4, 4b (documentSymbol
+    name + kind:12).
+  - Phase 2 (cross-file include, 4 requests, dynamic
+    includer.cyr at `/tmp/.../includer.cyr`): tests 5, 5b
+    (cross-file URI + position).
+  - Phase 3 (decl + use fixture, 5 requests): tests 6, 6b, 6c
+    (referencesProvider + semanticTokensProvider + legend),
+    7 (/references location count == 2), 8 (/semanticTokens
+    leading data tuple `0,0,2,5,0`).
+
+- **`tests/fixtures/lsp/{decl_only,decl_and_use,included}.cyr`**
+  — three small fixture files for the three LSP gate phases.
+  decl_only.cyr is `fn foo_bar() { return 42; }`;
+  decl_and_use.cyr adds `fn caller() { return foo_bar(); }`;
+  included.cyr is `fn lib_helper() { return 7; }`. The phase 2
+  includer.cyr is generated dynamically per gate run because
+  it embeds the absolute path to included.cyr (varies per
+  machine).
+
+### Changed
+
+- **`cbt/cyrius.cyr` — `api-surface` dispatch path**: now
+  forwards `--snapshot=PATH` (in addition to `--update` +
+  `--scope=project` from v5.9.12). Same shape as the previous
+  flag; one-line addition while the dispatcher is open.
+
+- **`cbt/commands.cyr` — `cmd_api_surface(update_flag,
+  scope_project, snapshot_arg)`**: signature extended for the
+  third forwarded flag. Verified via dispatcher invocation:
+  `cyrius api-surface --update --snapshot=/tmp/x.snap
+  --scope=project` writes 721 entries to `/tmp/x.snap` (vs
+  default `docs/api-surface.snapshot`).
+
+### Removed
+
+- **`tests/regression-lsp-definition.sh`** retired alongside
+  `_lsp_definition_gate`. Total: 60 → 50 → 38 → 37 → 28 → 23
+  → 22 → 21 across v5.9.2 + v5.9.3 + v5.9.6 + v5.9.7 + v5.9.8
+  + v5.9.10 (extension) + v5.9.11 + v5.9.13.
+
+### Verification
+
+- Self-host: cc5 → cc5 byte-identical (741,048 B unchanged; no
+  compiler-source change).
+- check.sh: 66/66 gates green, exit 0.
+- LSP gate: 8/8 sub-cases PASS via `_ipc_session` over fresh
+  `build/cyrius-lsp` spawns per phase.
+- `--snapshot=PATH` dispatcher pass-through: agnosys-side
+  smoke confirms the path is honored.
+
+### Roadmap pin (NOT fixed this slot)
+
+- **Scaffolder conversions** (cyrius-init.sh + cyrius-port.sh)
+  cascaded to v5.9.14 — slot scope kept single-theme.
+  cyriusly stays bash per the v5.9.12 KEEP-as-bash decision.
+- **SSH cluster gates** (aarch64-syscalls,
+  aarch64-native-selfhost, macho-exit, pe-exit) cascaded to
+  v5.9.15 — each needs its own helper-design step
+  (tar-pipe-to-ssh, env-var exec, .bat fixture / Windows
+  cmd /c stdout-parse).
+- **`run_tool` 4-arg extension** — the dispatcher's
+  `cmd_api_surface` is now at the 3-positional-arg ceiling
+  (update + scope + snapshot). Adding a 4th flag will require
+  bumping `run_tool` to support more positional args. Pin a
+  follow-up if a 4th flag is added.
+
 ## [5.9.12] — 2026-05-06
 
 **v5.9.x SLOT 12 — `cyrius api-surface --scope=project`

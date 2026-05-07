@@ -534,47 +534,49 @@ at cycle entry):
   Slot was originally pinned for scaffolder conversions but
   pivoted mid-slot per user direction. cc5 unchanged at
   741,048 B; 66/66 check.sh green.
-- **v5.9.13** — **scaffolder conversions + bootstrap-chicken-egg
-  design + bidirectional-IPC helper + LSP gate conversion +
-  tar-pipe-to-ssh helper + SSH cluster**. Cascaded from
-  v5.9.12 (scaffolders) and v5.9.13 (IPC + SSH cluster).
-  - **cyriusly bootstrap-chicken-egg DECIDED 2026-05-06 (option
-    a, per user direction)**: cyriusly stays bash.
-    `scripts/cyriusly` is the canonical entrypoint; no
-    `programs/cyriusly.cyr` ever lands. Sovereignty pass
-    explicitly excludes cyriusly from the bash → cyrius
-    conversion arc — `cyriusly setup` is the verb that
-    bootstraps cc5 from a fresh source checkout, so it must
-    work before any cyrius binary exists. Documented as a
-    KEEP-as-bash entry in the sovereignty inventory below
-    (sibling of `bootstrap/bootstrap.sh` and
-    `scripts/install.sh`).
-  - **cyrius-init.sh + cyrius-port.sh** can land independently
-    of the cyriusly decision — they have no bootstrap
-    dependency. cyrius-init.sh's 17 heredocs become data files
-    in `programs/cyrius-init-templates/`; cyrius-port.sh's
-    Rust→cyrius migration becomes a cyrius port with the same
-    move-old-source-to-`<lang>-old/` shape.
-  - `--snapshot=PATH` dispatcher pass-through (same shape as
-    the v5.9.12 `--scope=project` fix; still dropped post-
-    v5.9.12). One-line addition while the dispatcher is open.
-  - `_lsp_session(bin, requests_buf, requests_len, out_buf,
-    out_cap)`: parent-writes-stdin + parent-reads-stdout
-    simultaneously. Sibling of the v5.9.6 capture helpers but
-    full duplex.
-  - `tests/regression-lsp-definition.sh` → cyrius-side
-    bespoke gate using the new IPC helper. Tests 1-8 from the
-    extended .sh roll into the bespoke shape.
-  - `_tar_pipe_ssh(target, src_dir, remote_dir)` helper: stream
-    a tar archive over ssh stdin so `aarch64-native-selfhost`
-    can ship src + lib to pi.
+- **v5.9.13** ✅ — **bidirectional-IPC helper + LSP gate
+  conversion + `--snapshot=PATH` dispatcher pass-through
+  shipped 2026-05-06**. `_ipc_session(bin, req_buf, req_len,
+  out_buf, out_cap)` ~50 LOC bidirectional helper (parent
+  writes child stdin to EOF, reads stdout to EOF, waitpid).
+  `_lsp_definition_gate` 3-phase 8-sub-case bespoke conversion
+  of `tests/regression-lsp-definition.sh` over fresh
+  `build/cyrius-lsp` spawns per phase. Mid-slot finding: LSP's
+  `handle_did_open_or_save` early-returns on paths not ending
+  `.cyr`; dynamic temp files now `_tmp_path() + ".cyr"`.
+  Plus `--snapshot=PATH` dispatcher pass-through (v5.9.12
+  follow-up). Three fixture files in `tests/fixtures/lsp/`.
+  cc5 unchanged at 741,048 B; 66/66 check.sh green; cc5
+  self-host byte-identical. 21 .sh remaining. Scaffolder
+  conversions + SSH cluster cascaded.
+- **v5.9.14** — **scaffolder conversions** (cyrius-init.sh +
+  cyrius-port.sh; cyriusly KEEP-as-bash per v5.9.12).
+  Cascaded from v5.9.13 (slot kept single-theme on IPC+LSP).
+  - **cyrius-init.sh** (1,021 LOC, 17 heredocs) — heredocs
+    become data files in `programs/cyrius-init-templates/` (or
+    string literals in the cyrius source if size allows);
+    cyrius port handles `--language=none|rust`, `--lib|--bin`,
+    `--agent`, `--cmtools`, `--description=`, `--dry-run`
+    flags.
+  - **cyrius-port.sh** (646 LOC) — Rust→cyrius migration
+    tool. Cyrius port handles the move-old-source-to-
+    `<lang>-old/` rename + cyrius scaffold layering.
+  - **Opportunistic deferred gates**: capacity probe,
+    init-lib-bin, init-doctree — all share the
+    `cyrius init`/`cyrius capacity` invocation shape that
+    scaffolder conversion may surface helpers for.
+- **v5.9.15** — **SSH cluster + tar-pipe-to-ssh helper**.
+  Cascaded from v5.9.13.
+  - `_tar_pipe_ssh(target, src_dir, remote_dir)` helper:
+    stream a tar archive over ssh stdin so
+    `aarch64-native-selfhost` can ship src + lib to pi.
   - aarch64-syscalls + aarch64-native-selfhost conversions
     using the new tar-pipe helper.
   - macho-exit + pe-exit (cross-host run-fixture pattern).
     macho-exit needs env-var exec for `CYRIUS_MACHO_ARM=1` +
     codesign on the remote; pe-exit needs .bat fixture
     handling + `cmd /c` stdout-parse.
-- **v5.9.14** — sovereignty pass: small utilities batch
+- **v5.9.16** — sovereignty pass: small utilities batch
   (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
   `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
   `benches/bench_capacity_overhead.sh`).
@@ -585,11 +587,11 @@ at cycle entry):
     distlib-large-module, deps-transitive, syscall-surface-v5735,
     install-shim-symlink, cyrfmt-write, inline-asm-discard,
     api-surface).
-- **v5.9.15** — TS corpus + shared-library cleanup. Earned its
+- **v5.9.17** — TS corpus + shared-library cleanup. Earned its
   own slot because both items are blocked on a corpus-walker
   helper (ts-parse / ts-parse-tsx) or a lib/dynlib.cyr consumer
   fixture redesign (regression-shared.sh) — neither pairs
-  cleanly with v5.9.12-14 themes. Scope:
+  cleanly with v5.9.14-16 themes. Scope:
   - **`ts-parse` + `ts-parse-tsx`**: walk external
     `~/Repos/secureyeoman` corpus with a recursive walker that
     respects `node_modules` / `dist` / `build` / `.next` /
@@ -600,7 +602,7 @@ at cycle entry):
     a cyrius-side dlopen-test fixture using `lib/dynlib.cyr` or
     `lib/fdlopen.cyr` (the v5.6.37 fdlopen path is the more
     sovereign choice). Sovereignty pin per memory.
-- **v5.9.16+** — `cyrius audit` fix slot (once user picks
+- **v5.9.18+** — `cyrius audit` fix slot (once user picks
   semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
   redundancy cleanup (per v5.9.6 pin) + **`lib/regression.cyr`
   testing-stdlib carve-out** (pinned at v5.9.7 ship per user

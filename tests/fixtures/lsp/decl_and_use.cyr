@@ -1,0 +1,7 @@
+fn foo_bar() {
+    return 42;
+}
+
+fn caller() {
+    return foo_bar();
+}

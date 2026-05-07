@@ -5,6 +5,61 @@
 
 ## Version
 
+**5.9.13** (shipped 2026-05-06 — **v5.9.x SLOT 13 —
+bidirectional-IPC helper + `regression-lsp-definition.sh`
+cyrius-side gate + `api-surface --snapshot=PATH` dispatcher
+pass-through**. The v5.9.10 LSP feature work + v5.9.12
+dispatcher fix's deferred follow-ups land here. cc5 unchanged
+at **741,048 B** — `cbt/` + `programs/check.cyr` + new
+fixtures only; no compiler-source change.
+
+**Premise-check at slot entry**: 3 deliverables clean-land in
+this slot (--snapshot=PATH pass-through, IPC helper, LSP gate
+conversion). Mid-slot the LSP gate's phase 2 (cross-file
+include resolution) failed cryptically — turned out the
+LSP's `handle_did_open_or_save` early-returns on paths not
+ending in `.cyr`, and my dynamic temp file (`_tmp_path("audit_lsp_
+includer_")`) didn't carry the extension. Manual probe with a
+`.cyr`-suffixed tempfile worked; without the suffix the
+didOpen silently no-op'd and the subsequent definition
+request returned `null`. Fixed by appending `.cyr` to the
+temp path before write. Honest scope: slot was originally
+pinned for scaffolders + IPC + LSP + SSH cluster; pivoted to
+just IPC + LSP + dispatcher polish (single theme); scaffolders
+cascade to v5.9.14, SSH cluster to v5.9.15.
+
+**What shipped**: `_ipc_session(bin, req_buf, req_len,
+out_buf, out_cap)` (~50 LOC; spawns + bidirectional pipes +
+write-then-EOF + read-until-EOF + waitpid); `_lsp_frame`
+(LSP message framing); `_lsp_check_substr` (substring-presence
+check over captured stdout); `_lsp_definition_gate` (3-phase
+gate over fresh build/cyrius-lsp spawns; 8 sub-cases mirror
+the .sh's tests 1-8). Plus three fixture files in
+`tests/fixtures/lsp/`. Plus `--snapshot=PATH` dispatcher
+forward (`cbt/cyrius.cyr` + `cbt/commands.cyr`'s
+`cmd_api_surface(update, scope, snapshot)` signature
+extension).
+
+**Verification**: 66/66 check.sh green; cc5 self-host
+byte-identical; LSP gate 8/8 sub-cases PASS;
+`--snapshot=/tmp/x.snap` writes 721 entries to that path on
+agnosys (vs default `docs/api-surface.snapshot`). 21 .sh
+remaining (was 22).
+
+**Roadmap pin (NOT fixed this slot)**: scaffolder conversions
+(cyrius-init.sh + cyrius-port.sh; cyriusly stays bash per
+v5.9.12 decision) → v5.9.14. SSH cluster gates
+(aarch64-syscalls, aarch64-native-selfhost, macho-exit,
+pe-exit) → v5.9.15 each needs its own helper-design step.
+`run_tool` 4-arg ceiling — `cmd_api_surface` is at 3
+positional args (update + scope + snapshot); adding a 4th
+flag requires bumping `run_tool`.
+
+**Next**: v5.9.14 — scaffolder conversions. v5.9.15 — SSH
+cluster + tar-pipe-to-ssh helper. v5.9.16+ inherits per the
+v5.9.11 cascade (small utilities → TS corpus / shared-library
+→ closeout / audit fix / regression-stdlib carve).)
+
 **5.9.12** (shipped 2026-05-06 — **v5.9.x SLOT 12 — `cyrius
 api-surface --scope=project` dispatcher pass-through fix**
 (user-reported v5.9.11 no-op, 2026-05-06). The v5.9.11 binary

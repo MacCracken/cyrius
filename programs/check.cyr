@@ -2327,6 +2327,282 @@ fn _cx_build_gate() {
     return 0;
 }
 
+# ── Bidirectional IPC (v5.9.13) ────────────────────────────────
+# Spawns `bin_path`, writes `req_buf[0..req_len]` to its stdin,
+# reads child stdout to `out_buf[0..out_cap]`, waits, returns
+# bytes captured. stderr → /dev/null. Closes stdin write end
+# AFTER all bytes written, signaling EOF — child binaries that
+# loop on stdin reads (LSP server, REPL, etc.) exit cleanly.
+#
+# Pipe-buffer sizing: total request bytes must fit in the
+# pipe's kernel buffer (default 64 KB on Linux) since the child
+# may not start reading until after parent finishes writing.
+# For LSP-test traffic (5-15 small JSON-RPC messages, ~5-10 KB
+# total) this is fine. For larger volumes, the helper would
+# need a writer thread or a select-driven pump — out of scope.
+fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap) {
+    var p2c[16];
+    var c2p[16];
+    var pr1 = sys_pipe(&p2c);
+    if (pr1 < 0) { return 0; }
+    var pr2 = sys_pipe(&c2p);
+    if (pr2 < 0) { return 0; }
+    var p2c_r = load32(&p2c);
+    var p2c_w = load32(&p2c + 4);
+    var c2p_r = load32(&c2p);
+    var c2p_w = load32(&c2p + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(p2c_r); sys_close(p2c_w);
+        sys_close(c2p_r); sys_close(c2p_w);
+        return 0;
+    }
+    if (pid == 0) {
+        sys_close(p2c_w);
+        sys_close(c2p_r);
+        sys_dup2(p2c_r, 0);
+        sys_close(p2c_r);
+        sys_dup2(c2p_w, 1);
+        sys_close(c2p_w);
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 2); sys_close(dn); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(bin_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(p2c_r);
+    sys_close(c2p_w);
+
+    var written = 0;
+    while (written < req_len) {
+        var w = sys_write(p2c_w, req_buf + written, req_len - written);
+        if (w <= 0) { written = req_len; }
+        else { written = written + w; }
+    }
+    sys_close(p2c_w);
+
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(c2p_r, out_buf + total, out_cap - total);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= out_cap) { rgo = 0; }
+        }
+    }
+    sys_close(c2p_r);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    return total;
+}
+
+# Build one LSP-framed request — `Content-Length: N\r\n\r\n<json>` —
+# and append to `sb`.
+fn _lsp_frame(sb, json_body) {
+    var jlen = strlen(json_body);
+    str_builder_add_cstr(sb, "Content-Length: ");
+    str_builder_add_int(sb, jlen);
+    str_builder_add_cstr(sb, "\r\n\r\n");
+    str_builder_add_cstr(sb, json_body);
+    return 0;
+}
+
+# Bespoke gate: cyrius-lsp definitionProvider + documentSymbolProvider
+# + referencesProvider + semanticTokensProvider/full + cross-file
+# indexing (v5.7.39 + v5.9.10). Replaces
+# `tests/regression-lsp-definition.sh` end-to-end. Three LSP
+# sessions over `_ipc_session` (each spawns a fresh
+# build/cyrius-lsp); 8 sub-cases mirror the .sh's tests 1-8.
+fn _lsp_definition_gate() {
+    var label = "cyrius-lsp definitionProvider + documentSymbol + cross-file indexing (v5.7.39)";
+    var lsp_path = _root_path("build/cyrius-lsp");
+    if (file_exists(lsp_path) != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(lsp_path);
+        println(" not built");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+    var out_cap = 65536;
+
+    # ─ Phase 1: decl-only fixture; initialize+didOpen+definition+
+    #   documentSymbol+shutdown. Tests 1-4.
+    var decl_path = _root_path("tests/fixtures/lsp/decl_only.cyr");
+    var sb = str_builder_new();
+    _lsp_frame(sb, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+    var open1_sb = str_builder_new();
+    str_builder_add_cstr(open1_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(open1_sb, decl_path);
+    str_builder_add_cstr(open1_sb, "\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb, str_data(str_builder_build(open1_sb)));
+    var def1_sb = str_builder_new();
+    str_builder_add_cstr(def1_sb, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(def1_sb, decl_path);
+    str_builder_add_cstr(def1_sb, "\"},\"position\":{\"line\":0,\"character\":5}}}");
+    _lsp_frame(sb, str_data(str_builder_build(def1_sb)));
+    var sym1_sb = str_builder_new();
+    str_builder_add_cstr(sym1_sb, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(sym1_sb, decl_path);
+    str_builder_add_cstr(sym1_sb, "\"}}}");
+    _lsp_frame(sb, str_data(str_builder_build(sym1_sb)));
+    _lsp_frame(sb, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}");
+    var reqs1 = str_builder_build(sb);
+    var out1 = alloc(out_cap);
+    var n1 = _ipc_session(lsp_path, str_data(reqs1), str_len(reqs1), out1, out_cap);
+
+    fail = fail + _lsp_check_substr(out1, n1, "\"definitionProvider\":true",
+        "test1: initialize did not advertise definitionProvider");
+    fail = fail + _lsp_check_substr(out1, n1, "\"documentSymbolProvider\":true",
+        "test1b: initialize did not advertise documentSymbolProvider");
+    var uri1_sb = str_builder_new();
+    str_builder_add_cstr(uri1_sb, "\"uri\":\"file://");
+    str_builder_add_cstr(uri1_sb, decl_path);
+    fail = fail + _lsp_check_substr(out1, n1, str_data(str_builder_build(uri1_sb)),
+        "test2: definition response missing fixture URI");
+    fail = fail + _lsp_check_substr(out1, n1, "\"line\":0,\"character\":3",
+        "test3: definition response missing expected position (line 0, char 3)");
+    fail = fail + _lsp_check_substr(out1, n1, "\"name\":\"foo_bar\"",
+        "test4: documentSymbol missing 'foo_bar' name");
+    fail = fail + _lsp_check_substr(out1, n1, "\"kind\":12",
+        "test4b: documentSymbol kind != 12 (Function)");
+
+    # ─ Phase 2: cross-file include. Generate includer.cyr at
+    #   /tmp with absolute path to fixtures/lsp/included.cyr;
+    #   initialize+didOpen(includer)+definition(call site)+shutdown.
+    #   Tests 5-5b.
+    var inc_path = _root_path("tests/fixtures/lsp/included.cyr");
+    # NOTE: the LSP's handle_did_open_or_save early-returns on
+    # paths that don't end in `.cyr`. The temp filename must
+    # carry the extension or didOpen silently no-ops and the
+    # subsequent definition request returns null.
+    var use_path_base = _tmp_path("audit_lsp_includer_");
+    var use_path_sb = str_builder_new();
+    str_builder_add_cstr(use_path_sb, use_path_base);
+    str_builder_add_cstr(use_path_sb, ".cyr");
+    var use_path = str_data(str_builder_build(use_path_sb));
+    var use_sb = str_builder_new();
+    str_builder_add_cstr(use_sb, "include \"");
+    str_builder_add_cstr(use_sb, inc_path);
+    str_builder_add_cstr(use_sb, "\"\nfn caller() {\n    return lib_helper();\n}\n");
+    var use_text = str_builder_build(use_sb);
+    var ufd = sys_open(use_path, 577, 420);
+    sys_write(ufd, str_data(use_text), str_len(use_text));
+    sys_close(ufd);
+
+    var sb2 = str_builder_new();
+    _lsp_frame(sb2, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+    var open2_sb = str_builder_new();
+    str_builder_add_cstr(open2_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(open2_sb, use_path);
+    str_builder_add_cstr(open2_sb, "\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb2, str_data(str_builder_build(open2_sb)));
+    var def2_sb = str_builder_new();
+    str_builder_add_cstr(def2_sb, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(def2_sb, use_path);
+    str_builder_add_cstr(def2_sb, "\"},\"position\":{\"line\":2,\"character\":11}}}");
+    _lsp_frame(sb2, str_data(str_builder_build(def2_sb)));
+    _lsp_frame(sb2, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"shutdown\"}");
+    var reqs2 = str_builder_build(sb2);
+    var out2 = alloc(out_cap);
+    var n2 = _ipc_session(lsp_path, str_data(reqs2), str_len(reqs2), out2, out_cap);
+    sys_unlink(use_path);
+
+    var inc_uri_sb = str_builder_new();
+    str_builder_add_cstr(inc_uri_sb, "\"uri\":\"file://");
+    str_builder_add_cstr(inc_uri_sb, inc_path);
+    fail = fail + _lsp_check_substr(out2, n2, str_data(str_builder_build(inc_uri_sb)),
+        "test5: cross-file definition didn't resolve to included.cyr");
+    fail = fail + _lsp_check_substr(out2, n2, "\"line\":0,\"character\":3",
+        "test5b: cross-file definition position wrong (expected line 0 char 3)");
+
+    # ─ Phase 3: v5.9.10 new providers. decl_and_use.cyr;
+    #   initialize+didOpen+references+semanticTokens+shutdown.
+    #   Tests 6-8.
+    var newp_path = _root_path("tests/fixtures/lsp/decl_and_use.cyr");
+    var sb3 = str_builder_new();
+    _lsp_frame(sb3, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+    var open3_sb = str_builder_new();
+    str_builder_add_cstr(open3_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(open3_sb, newp_path);
+    str_builder_add_cstr(open3_sb, "\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb3, str_data(str_builder_build(open3_sb)));
+    var ref3_sb = str_builder_new();
+    str_builder_add_cstr(ref3_sb, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(ref3_sb, newp_path);
+    str_builder_add_cstr(ref3_sb, "\"},\"position\":{\"line\":0,\"character\":5},\"context\":{\"includeDeclaration\":true}}}");
+    _lsp_frame(sb3, str_data(str_builder_build(ref3_sb)));
+    var st3_sb = str_builder_new();
+    str_builder_add_cstr(st3_sb, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/semanticTokens/full\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(st3_sb, newp_path);
+    str_builder_add_cstr(st3_sb, "\"}}}");
+    _lsp_frame(sb3, str_data(str_builder_build(st3_sb)));
+    _lsp_frame(sb3, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}");
+    var reqs3 = str_builder_build(sb3);
+    var out3 = alloc(out_cap);
+    var n3 = _ipc_session(lsp_path, str_data(reqs3), str_len(reqs3), out3, out_cap);
+
+    fail = fail + _lsp_check_substr(out3, n3, "\"referencesProvider\":true",
+        "test6: initialize did not advertise referencesProvider");
+    fail = fail + _lsp_check_substr(out3, n3, "\"semanticTokensProvider\":",
+        "test6b: initialize did not advertise semanticTokensProvider");
+    fail = fail + _lsp_check_substr(out3, n3,
+        "\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\"]",
+        "test6c: semanticTokensProvider legend missing or in wrong shape");
+    var ref_uri_sb = str_builder_new();
+    str_builder_add_cstr(ref_uri_sb, "\"uri\":\"file://");
+    str_builder_add_cstr(ref_uri_sb, newp_path);
+    var ref_uri_marker = str_data(str_builder_build(ref_uri_sb));
+    var ref_count = _count_substr_buf(out3, n3, ref_uri_marker);
+    if (ref_count < 2) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test7: /references returned ");
+        print_num(ref_count);
+        println(" Locations (expected 2)");
+        fail = fail + 1;
+    }
+    fail = fail + _lsp_check_substr(out3, n3, "\"data\":[0,0,2,5,0",
+        "test8: /semanticTokens data did not start with 'fn' keyword token tuple");
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius-lsp definitionProvider + documentSymbolProvider + referencesProvider + semanticTokensProvider/full + cross-file indexing (v5.7.39 + v5.9.10)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Helper for `_lsp_definition_gate`: substring-presence check
+# over a captured stdout buffer. Returns 0 on PASS (substring
+# found), 1 on FAIL (with a per-case diagnostic).
+fn _lsp_check_substr(out_buf, n, needle, fail_msg) {
+    if (_count_substr_buf(out_buf, n, needle) >= 1) { return 0; }
+    _p("    ");
+    _p(ANSI_RED);
+    _p("case-FAIL");
+    _p(ANSI_RESET);
+    _p(": ");
+    println(fail_msg);
+    return 1;
+}
+
 # ── Cross-host SSH primitives (v5.9.8) ─────────────────────────
 # Three small fork+exec wrappers used by the aarch64 / Mach-O /
 # PE / sit / TLS gates that scp a binary to a verification host
@@ -3785,7 +4061,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("lsp definition");
-    _gate("cyrius-lsp definitionProvider + documentSymbol + cross-file indexing (v5.7.39)", "tests/regression-lsp-definition.sh");
+    _lsp_definition_gate();
     println("");
 
     _section("json pretty");
