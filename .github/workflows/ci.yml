@@ -271,7 +271,33 @@ jobs:
             echo "skip: build/cyrld not present"
           fi
       - name: Regression — shared object (.so + dlopen)
-        run: sh tests/regression-shared.sh
+        run: |
+          # v5.9.17 retired tests/regression-shared.sh into
+          # programs/check.cyr's `_shared_dlopen_gate`; CI
+          # equivalent inlines the same fixture pair —
+          # tests/fixtures/shared/{lib.cyr,dlopen_runner.cyr}
+          # — so failure points back to the same artifacts the
+          # local audit uses. Sovereign (no `cc` dependency); the
+          # runner uses dynlib_open + dynlib_init + dynlib_sym
+          # + fncall0/2 internally. Exit-code mapping in
+          # dlopen_runner.cyr's header: 99 = green; 10..36 =
+          # specific sub-test failure.
+          cat tests/fixtures/shared/lib.cyr | ./build/cc5 \
+              > /tmp/cyrius_audit_shared.so
+          chmod +x /tmp/cyrius_audit_shared.so
+          cat tests/fixtures/shared/dlopen_runner.cyr | ./build/cc5 \
+              > /tmp/cyrius_audit_dlopen_runner
+          chmod +x /tmp/cyrius_audit_dlopen_runner
+          set +e
+          /tmp/cyrius_audit_dlopen_runner
+          rc=$?
+          set -e
+          rm -f /tmp/cyrius_audit_shared.so /tmp/cyrius_audit_dlopen_runner
+          if [ "$rc" -ne 99 ]; then
+              echo "FAIL: dlopen runner exit=$rc (expected 99 = all green)"
+              exit 1
+          fi
+          echo "PASS: shared; .so loadable via dynlib_open + 4 exports"
       - name: Regression — cyrius capacity meter
         run: sh tests/regression-capacity.sh
 
