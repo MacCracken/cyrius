@@ -3454,6 +3454,12 @@ fn _ssh_skip_check(target) {
         if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
         var dn2 = sys_open("/dev/null", 1, 0);
         if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        # v5.9.32: switched probe command from `true` to
+        # `echo alive` for portability — `true` is a Unix
+        # builtin missing on Windows PowerShell remotes (cass).
+        # `echo` works on Linux/macOS/Windows-PowerShell.
+        # Matches the bash regression-pe-exit.sh's reachability
+        # check shape.
         var argv[8];
         store64(&argv,      "ssh");
         store64(&argv + 8,  "-o");
@@ -3461,7 +3467,7 @@ fn _ssh_skip_check(target) {
         store64(&argv + 24, "-o");
         store64(&argv + 32, "ConnectTimeout=2");
         store64(&argv + 40, target);
-        store64(&argv + 48, "true");
+        store64(&argv + 48, "echo alive");
         store64(&argv + 56, 0);
         sys_execve("/usr/bin/ssh", &argv, ENVP_ARR);
         sys_execve("/bin/ssh",     &argv, ENVP_ARR);
@@ -3535,6 +3541,114 @@ fn _ssh_remote_exit(target, command) {
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;
+}
+
+# v5.9.32: stdout-capturing sibling of _ssh_remote_exit. Same
+# argv shape but stdout → out_path file (stderr stays /dev/null).
+# Used by gates that need to grep stdout for `exit=N` patterns
+# from a remote .bat invocation, or to validate a `hello` write
+# from a Mach-O test fixture.
+fn _ssh_remote_exec_capture(target, command, out_path) {
+    var out_fd = 0 - 1;
+    if (out_path != 0) { out_fd = sys_open(out_path, 577, 420); }
+    var pid = sys_fork();
+    if (pid < 0) { if (out_fd >= 0) { sys_close(out_fd); } return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (out_fd >= 0) { sys_dup2(out_fd, 1); sys_close(out_fd); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[4];
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  target);
+        store64(&argv + 16, command);
+        store64(&argv + 24, 0);
+        sys_execve("/usr/bin/ssh", &argv, ENVP_ARR);
+        sys_execve("/bin/ssh",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    if (out_fd >= 0) { sys_close(out_fd); }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# v5.9.32: codesign helper for Mach-O test binaries on the remote
+# macOS host. Equivalent to `chmod +x <path> && codesign -s -
+# <path> 2>/dev/null` over ssh. Returns the chained exit code (the
+# `2>/dev/null` swallows codesign's "not yet signed" pre-warning).
+fn _codesign_remote(target, remote_path) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "chmod +x ");
+    str_builder_add_cstr(sb, remote_path);
+    str_builder_add_cstr(sb, " && codesign -s - ");
+    str_builder_add_cstr(sb, remote_path);
+    str_builder_add_cstr(sb, " 2>/dev/null");
+    var cmd = str_data(str_builder_build(sb));
+    return _ssh_remote_exit(target, cmd);
+}
+
+# v5.9.32: pipe a source file through `compiler_path` with one
+# `KEY=VALUE` env var injected. Mirrors `_self_host_pipe` (line
+# ~896) but with envp = parent's ENVP_ARR + the extra entry.
+# Used for Mach-O cross-builds (`CYRIUS_MACHO_ARM=1` triggers
+# the aarch64 backend's Mach-O emit at compile time).
+fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv) {
+    var src_cap = 2000000;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n <= 0) { return 0 - 1; }
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0 - 2; }
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 3; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+    # Augmented envp: parent's ENVP_ARR + env_kv + null.
+    var aug_envp = alloc((ENVP_COUNT + 2) * 8);
+    var ei = 0;
+    while (ei < ENVP_COUNT) {
+        store64(aug_envp + ei * 8, load64(ENVP_ARR + ei * 8));
+        ei = ei + 1;
+    }
+    store64(aug_envp + ENVP_COUNT * 8, env_kv);
+    store64(aug_envp + (ENVP_COUNT + 1) * 8, 0);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
+        return 0 - 4;
+    }
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0);
+        sys_close(read_fd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var argv[3];
+        store64(&argv,     compiler_path);
+        store64(&argv + 8, 0);
+        sys_execve(compiler_path, &argv, aug_envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(write_fd);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return load32(&status_buf);
 }
 
 # Tar-pipe a tree to a remote host over ssh stdin. Equivalent to:
@@ -3999,6 +4113,412 @@ fn _aarch64_sub_byte_field_load_gate() {
     println("");
     _check(label, 1);
     return 1;
+}
+
+# Bespoke gate (v5.9.32): macOS arm64 Mach-O runtime gate. Cross-
+# builds 3 fixtures via cc5_aarch64 with `CYRIUS_MACHO_ARM=1`
+# env var injected (triggers the aarch64 backend's Mach-O emit
+# path), scp's each to ecb (macOS arm64), codesigns + runs,
+# verifies exit code (and stdout for the write fixture).
+#   T1 — bare top-level `syscall(60, 42)` exits 42 via __got[0].
+#   T2 — `syscall(1, 1, "hello\n", 6); syscall(60, 42)` writes
+#        "hello" + exits 42 via __got[1] (write) + __got[0].
+#   T3 — user fn + arithmetic — bl/ret + peephole on Mach-O.
+fn _macho_exit_gate() {
+    var label = "Mach-O arm64 syscall(60,42) → exit 42 on ecb (pin v5.6.33)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET_MACOS", "ecb");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable (no macOS arm64 runner available)");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+    var env_kv = "CYRIUS_MACHO_ARM=1";
+
+    # ---- T1: bare exit(42) ----
+    var src1 = _tmp_path("audit_macho_t1_src_");
+    var bin1 = _tmp_path("audit_macho_t1_bin_");
+    _write_file(src1, "syscall(60, 42);\n");
+    var rc1 = _self_host_pipe_env(src1, CC_AARCH64_PATH, bin1, env_kv);
+    sys_unlink(src1);
+    if (rc1 != 0) {
+        sys_unlink(bin1);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": T1 cross-build rc=");
+        print_num(rc1);
+        println("");
+        fail = fail + 1;
+    } else {
+        var rem1 = "/tmp/cyr_macho_exit";
+        if (_scp_to(target, bin1, rem1) != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T1 scp failed");
+            fail = fail + 1;
+        } else {
+            _codesign_remote(target, rem1);
+            var ec = _ssh_remote_exit(target, rem1);
+            if (ec != 42) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                _p(": T1 (exit42 via __got[0]) got rc=");
+                print_num(ec);
+                println(" (expected 42)");
+                fail = fail + 1;
+            }
+            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_exit");
+        }
+        sys_unlink(bin1);
+    }
+
+    # ---- T2: write "hello\n" then exit(42) ----
+    var src2 = _tmp_path("audit_macho_t2_src_");
+    var bin2 = _tmp_path("audit_macho_t2_bin_");
+    _write_file(src2, "syscall(1, 1, \"hello\\n\", 6);\nsyscall(60, 42);\n");
+    var rc2 = _self_host_pipe_env(src2, CC_AARCH64_PATH, bin2, env_kv);
+    sys_unlink(src2);
+    if (rc2 != 0) {
+        sys_unlink(bin2);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": T2 cross-build rc=");
+        print_num(rc2);
+        println("");
+        fail = fail + 1;
+    } else {
+        var rem2 = "/tmp/cyr_macho_write";
+        if (_scp_to(target, bin2, rem2) != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T2 scp failed");
+            fail = fail + 1;
+        } else {
+            _codesign_remote(target, rem2);
+            var out2 = _tmp_path("audit_macho_t2_out_");
+            var ec = _ssh_remote_exec_capture(target, rem2, out2);
+            if (ec != 42) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                _p(": T2 (write+exit) rc=");
+                print_num(ec);
+                println(" (expected 42)");
+                fail = fail + 1;
+            }
+            if (_file_contains_substr(out2, "hello") != 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": T2 stdout missing 'hello'");
+                fail = fail + 1;
+            }
+            sys_unlink(out2);
+            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_write");
+        }
+        sys_unlink(bin2);
+    }
+
+    # ---- T3: user fn + arithmetic + peephole ----
+    var src3 = _tmp_path("audit_macho_t3_src_");
+    var bin3 = _tmp_path("audit_macho_t3_bin_");
+    _write_file(src3, "fn add3(a, b, c) { return a + b + c; }\nsyscall(60, add3(10, 20, 12));\n");
+    var rc3 = _self_host_pipe_env(src3, CC_AARCH64_PATH, bin3, env_kv);
+    sys_unlink(src3);
+    if (rc3 != 0) {
+        sys_unlink(bin3);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": T3 cross-build rc=");
+        print_num(rc3);
+        println("");
+        fail = fail + 1;
+    } else {
+        var rem3 = "/tmp/cyr_macho_peep";
+        if (_scp_to(target, bin3, rem3) != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T3 scp failed");
+            fail = fail + 1;
+        } else {
+            _codesign_remote(target, rem3);
+            var ec = _ssh_remote_exit(target, rem3);
+            if (ec != 42) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                _p(": T3 (peephole add3) rc=");
+                print_num(ec);
+                println(" (expected 42)");
+                fail = fail + 1;
+            }
+            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_peep");
+        }
+        sys_unlink(bin3);
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": Mach-O arm64 runtime (exit + write + peephole) on ");
+        println(target);
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Bespoke gate (v5.9.32): Windows 11 PE32+ runtime gate. Cross-
+# builds 3 fixtures via build/cc5_win_cross (the Linux-host
+# cyrius compiler that emits PE — built on demand from
+# src/main_win.cyr if absent), scp's each + a .bat wrapper to
+# cass (Windows 11), runs via `cmd /c`, parses `exit=N` from
+# stdout (Windows ERRORLEVEL doesn't propagate cleanly through
+# ssh, so the .bat echoes it for us to grep).
+#   T1 — bare top-level `syscall(60, 42)` exits 42 via
+#        kernel32!ExitProcess.
+#   T2 — `syscall(1, 1, "hello\n", 6); syscall(60, 42)` writes
+#        "hello" via kernel32!WriteFile + exits 42.
+#   T3 — user fn + arithmetic + peephole.
+fn _pe_exit_gate() {
+    var label = "PE syscall(60,42) → exit 42 on cass (pin v5.6.36)";
+    var cc_pe = _root_path("build/cc5_win_cross");
+    if (file_exists(cc_pe) != 1) {
+        # Build on demand from src/main_win.cyr.
+        var main_win = _root_path("src/main_win.cyr");
+        if (file_exists(main_win) == 1) {
+            if (file_exists(CC_PATH) == 1) {
+                _self_host_pipe(main_win, CC_PATH, cc_pe);
+                sys_chmod(cc_pe, 493);
+            }
+        }
+    }
+    if (file_exists(cc_pe) != 1) {
+        _p("  skip: ");
+        _p(cc_pe);
+        println(" not present (Linux→PE cross-compiler not built)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET_WIN", "cass");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable (no Windows runner available)");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+
+    # ---- T1: bare exit(42) ----
+    var src1 = _tmp_path("audit_pe_t1_src_");
+    var bin1 = _tmp_path("audit_pe_t1_bin_");
+    _write_file(src1, "syscall(60, 42);\n");
+    var rc1 = _self_host_pipe(src1, cc_pe, bin1);
+    sys_unlink(src1);
+    if (rc1 != 0) {
+        sys_unlink(bin1);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": T1 cross-build rc=");
+        print_num(rc1);
+        println("");
+        fail = fail + 1;
+    } else {
+        # scp .exe + .bat. .bat echoes "exit=%ERRORLEVEL%" for
+        # us to grep over ssh stdout (the bash version does the
+        # same — Windows ERRORLEVEL doesn't propagate via ssh).
+        var bat1 = _tmp_path("audit_pe_t1_bat_");
+        _write_file(bat1, "@echo off\ncyr_pe_exit.exe\necho exit=%ERRORLEVEL%\n");
+        var scp_a = _scp_to(target, bin1, "cyr_pe_exit.exe");
+        var scp_b = _scp_to(target, bat1, "cyr_pe_runexit.bat");
+        sys_unlink(bat1);
+        if (scp_a != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T1 .exe scp failed");
+            fail = fail + 1;
+        } else { if (scp_b != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T1 .bat scp failed");
+            fail = fail + 1;
+        } else {
+            var out1 = _tmp_path("audit_pe_t1_out_");
+            _ssh_remote_exec_capture(target, "cmd /c cyr_pe_runexit.bat", out1);
+            if (_file_contains_substr(out1, "exit=42") != 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": T1 (exit42 via kernel32 IAT) stdout missing 'exit=42'");
+                fail = fail + 1;
+            }
+            sys_unlink(out1);
+        } }
+        sys_unlink(bin1);
+        _ssh_remote_exit(target, "del /f /q cyr_pe_exit.exe cyr_pe_runexit.bat 2>NUL");
+    }
+
+    # ---- T2: write "hello\n" then exit(42) ----
+    var src2 = _tmp_path("audit_pe_t2_src_");
+    var bin2 = _tmp_path("audit_pe_t2_bin_");
+    _write_file(src2, "syscall(1, 1, \"hello\\n\", 6);\nsyscall(60, 42);\n");
+    var rc2 = _self_host_pipe(src2, cc_pe, bin2);
+    sys_unlink(src2);
+    if (rc2 != 0) {
+        sys_unlink(bin2);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": T2 cross-build rc=");
+        print_num(rc2);
+        println("");
+        fail = fail + 1;
+    } else {
+        var bat2 = _tmp_path("audit_pe_t2_bat_");
+        _write_file(bat2, "@echo off\ncyr_pe_write.exe\necho exit=%ERRORLEVEL%\n");
+        var scp_a = _scp_to(target, bin2, "cyr_pe_write.exe");
+        var scp_b = _scp_to(target, bat2, "cyr_pe_runwrite.bat");
+        sys_unlink(bat2);
+        if (scp_a == 0) { if (scp_b == 0) {
+            var out2 = _tmp_path("audit_pe_t2_out_");
+            _ssh_remote_exec_capture(target, "cmd /c cyr_pe_runwrite.bat", out2);
+            if (_file_contains_substr(out2, "exit=42") != 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": T2 (write+exit) missing 'exit=42'");
+                fail = fail + 1;
+            }
+            if (_file_contains_substr(out2, "hello") != 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": T2 stdout missing 'hello'");
+                fail = fail + 1;
+            }
+            sys_unlink(out2);
+        } else {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T2 .bat scp failed");
+            fail = fail + 1;
+        } } else {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T2 .exe scp failed");
+            fail = fail + 1;
+        }
+        sys_unlink(bin2);
+        _ssh_remote_exit(target, "del /f /q cyr_pe_write.exe cyr_pe_runwrite.bat 2>NUL");
+    }
+
+    # ---- T3: user fn + arithmetic + peephole ----
+    var src3 = _tmp_path("audit_pe_t3_src_");
+    var bin3 = _tmp_path("audit_pe_t3_bin_");
+    _write_file(src3, "fn add3(a, b, c) { return a + b + c; }\nsyscall(60, add3(10, 20, 12));\n");
+    var rc3 = _self_host_pipe(src3, cc_pe, bin3);
+    sys_unlink(src3);
+    if (rc3 != 0) {
+        sys_unlink(bin3);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": T3 cross-build rc=");
+        print_num(rc3);
+        println("");
+        fail = fail + 1;
+    } else {
+        var bat3 = _tmp_path("audit_pe_t3_bat_");
+        _write_file(bat3, "@echo off\ncyr_pe_peep.exe\necho exit=%ERRORLEVEL%\n");
+        var scp_a = _scp_to(target, bin3, "cyr_pe_peep.exe");
+        var scp_b = _scp_to(target, bat3, "cyr_pe_runpeep.bat");
+        sys_unlink(bat3);
+        if (scp_a == 0) { if (scp_b == 0) {
+            var out3 = _tmp_path("audit_pe_t3_out_");
+            _ssh_remote_exec_capture(target, "cmd /c cyr_pe_runpeep.bat", out3);
+            if (_file_contains_substr(out3, "exit=42") != 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": T3 (peephole add3) missing 'exit=42'");
+                fail = fail + 1;
+            }
+            sys_unlink(out3);
+        } else {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T3 .bat scp failed");
+            fail = fail + 1;
+        } } else {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": T3 .exe scp failed");
+            fail = fail + 1;
+        }
+        sys_unlink(bin3);
+        _ssh_remote_exit(target, "del /f /q cyr_pe_peep.exe cyr_pe_runpeep.bat 2>NUL");
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": PE32+ Windows runtime (exit + write + peephole) on ");
+        println(target);
+    }
+    _check(label, fail);
+    return fail;
 }
 
 # Bespoke gate: native aarch64 cc5 self-hosts byte-identical on
@@ -7289,11 +7809,11 @@ fn _run_regression_gates() {
     println("");
 
     _section("Mach-O arm64 runtime");
-    _gate("Mach-O arm64 syscall(60,42) → exit 42 on ecb (pin v5.6.33)", "tests/regression-macho-exit.sh");
+    _macho_exit_gate();
     println("");
 
     _section("PE32+ Windows runtime");
-    _gate("PE syscall(60,42) → exit 42 on cass (pin v5.6.36)", "tests/regression-pe-exit.sh");
+    _pe_exit_gate();
     println("");
 
     _section("sit 100-commit fixture");

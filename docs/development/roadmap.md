@@ -973,20 +973,33 @@ satisfied by earlier slots.
   `cyrius init` paths. Helper reuse off the v5.9.28/29 testing
   scaffold expected.
 
-- **v5.9.32** — **SSH helper infra batch + macho-exit + pe-exit
-  gate conversions**.
-  - `_exec_remote_with_env(target, env_pairs_vec, command)` —
-    extends `_ssh_remote_exit` to set env vars on the remote
-    side (needed for `CYRIUS_MACHO_ARM=1` on cass + Windows
-    `PATH`/`USERPROFILE` on ecb).
-  - `_codesign_remote(target, path)` — runs `codesign -s -`
-    on cass post-scp for ad-hoc signing of Mach-O test
-    binaries.
-  - `_remote_bat_run(target, bat_path)` — `cmd /c <bat>`
-    invocation + stdout capture for ecb pe-exit fixtures.
-  - `_macho_exit_gate()` + `_pe_exit_gate()` retire the two
-    `.sh` files. Cross-host green confirms via cass + ecb
-    SSH.
+- **v5.9.32** ✅ — **SSH helper infra batch + macho-exit +
+  pe-exit gate conversions** (shipped 2026-05-07). Pin text
+  below corrected from prior swap (cass = Windows, ecb =
+  macOS — bash regression scripts and `~/.ssh/config` are the
+  source of truth):
+  - `_self_host_pipe_env(src, cc, out, env_kv)` — pipe + envp
+    augmentation for the local cross-build (the
+    `CYRIUS_MACHO_ARM=1` env var triggers the aarch64
+    backend's Mach-O emit).
+  - `_ssh_remote_exec_capture(target, command, out_path)` —
+    stdout-capturing sibling of `_ssh_remote_exit`. Needed
+    for parsing `exit=N` from a remote `.bat` invocation
+    on cass (Windows ERRORLEVEL doesn't propagate cleanly
+    over ssh; the .bat echoes it for grep) and the
+    "hello" stdout assertion in the macho write fixture.
+  - `_codesign_remote(target, path)` — `chmod +x && codesign
+    -s -` over ssh for ad-hoc signing of Mach-O test
+    binaries on ecb.
+  - `_macho_exit_gate()` (3 sub-cases on ecb / macOS arm64)
+    + `_pe_exit_gate()` (3 sub-cases on cass / Windows 11)
+    retired the two `.sh` files. Builds Linux-host
+    `cc5_win_cross` from `src/main_win.cyr` on demand if
+    absent.
+  - `_ssh_skip_check` reachability probe switched from
+    `true` (Unix-only) to `echo alive` (portable across
+    Linux/macOS/Windows-PowerShell) so cass actually
+    registers as reachable.
 
 - **v5.9.33** — **tls-live gate conversion + network-probe
   helper**. `_network_probe_check(host, port)` — quick TCP

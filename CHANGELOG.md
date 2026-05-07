@@ -6,6 +6,113 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.32] — 2026-05-07
+
+**v5.9.x SLOT 32 — SSH helper infra + macho-exit + pe-exit
+gate conversions**. Closes the cross-host SSH cluster's two
+remaining `.sh` regressions; both gates now run end-to-end via
+the `programs/check.cyr` dispatcher with cross-host green
+confirmed against ecb (macOS arm64, Sequoia 26.4.1) and cass
+(Windows 11 Pro 24H2).
+
+cc5: **744,936 B unchanged** — userland dispatcher work, not a
+compiler change. api-surface: **2,769 unchanged**. check.sh:
+**64 unchanged** (1:1 dispatcher conversion of the two `.sh`
+files; gate count preserved). 3 → 1 `tests/regression-*.sh`
+remaining (only `tls-live` left).
+
+### Premise-check finding (slot entry, 2026-05-07)
+
+Verified via direct `ssh cass` / `ssh ecb` probes:
+- **cass** = Windows 11 Pro 26200 (PowerShell shell). HostName
+  `cassiopeia.local`. The bash `regression-pe-exit.sh` uses
+  `SSH_TARGET_WIN=cass` — that's the source of truth.
+- **ecb** = macOS arm64 (zsh, sw_vers 26.4.1). HostName
+  `ecbatana.local`. The bash `regression-macho-exit.sh` uses
+  `SSH_TARGET_MACOS=ecb`.
+- Roadmap pin text earlier had cass / ecb swapped (a stale-
+  pin shape per `feedback_premise_check_at_slot_entry`);
+  corrected at slot ship.
+
+### Added
+
+- **`programs/check.cyr` — `_self_host_pipe_env(src_path,
+  compiler_path, out_path, env_kv)`**: pipe-plus-envp
+  augmentation. Mirrors `_self_host_pipe` (line ~896) but
+  the child's envp is parent's `ENVP_ARR` + the supplied
+  `KEY=VALUE` cstring + null. Used to inject
+  `CYRIUS_MACHO_ARM=1` into the cc5_aarch64 cross-build (the
+  env var triggers the aarch64 backend's Mach-O emit path).
+- **`programs/check.cyr` — `_ssh_remote_exec_capture(target,
+  command, out_path)`**: stdout-capturing sibling of
+  `_ssh_remote_exit`. Needed for the "hello" stdout
+  assertion in the Mach-O write fixture (ssh into ecb, run
+  the binary, capture stdout to file, grep for `hello`) and
+  for parsing `exit=N` from `cmd /c` invocations on cass
+  (Windows `ERRORLEVEL` doesn't propagate cleanly through
+  ssh — the `.bat` wrapper `echo`s it for the gate to grep).
+- **`programs/check.cyr` — `_codesign_remote(target,
+  remote_path)`**: `chmod +x <path> && codesign -s - <path>
+  2>/dev/null` over ssh. Required for Mach-O test binaries
+  on macOS (Sequoia rejects unsigned PIE arm64 binaries).
+- **`programs/check.cyr` — `_macho_exit_gate()`** (3 sub-
+  cases): cross-builds via cc5_aarch64 with
+  `CYRIUS_MACHO_ARM=1`, scp's to ecb, codesigns + runs.
+  T1: bare `syscall(60, 42)` → exit 42 via `__got[0]=_exit`.
+  T2: `syscall(1, 1, "hello\n", 6)` + exit → "hello" stdout
+  + exit 42 via `__got[1]=_write`. T3: user `add3` fn +
+  arithmetic → exit 42 (peephole on Mach-O). Same fixture
+  shapes as the retired `regression-macho-exit.sh`.
+- **`programs/check.cyr` — `_pe_exit_gate()`** (3 sub-cases):
+  builds the Linux-host PE cross-compiler
+  (`build/cc5_win_cross` from `src/main_win.cyr`) on demand
+  if absent, cross-builds the fixture, scp's `.exe` + a
+  `@echo off / cyr_pe_X.exe / echo exit=%ERRORLEVEL%` `.bat`
+  wrapper to cass, runs `cmd /c <bat>`, parses `exit=N` from
+  stdout. Same 3-test shape as macho-exit. Same fixture
+  shapes as the retired `regression-pe-exit.sh`.
+
+### Changed
+
+- **`programs/check.cyr` `_ssh_skip_check`**: reachability
+  probe command switched from `true` (Unix-only — fails on
+  Windows PowerShell with `not recognized as the name of a
+  cmdlet`) to `echo alive` (works on Linux / macOS / Windows-
+  PowerShell). Matches the bash `regression-pe-exit.sh`'s
+  reachability check shape. Without this fix, every PE
+  gate would silently skip "cass unreachable" even when
+  the host is fine.
+
+### Removed
+
+- **`tests/regression-macho-exit.sh`** (100 LOC).
+- **`tests/regression-pe-exit.sh`** (134 LOC).
+
+### Verified
+
+- `_macho_exit_gate` on ecb: T1 exit 42, T2 "hello" + exit
+  42, T3 peephole add3 → exit 42. PASS.
+- `_pe_exit_gate` on cass: T1 `exit=42`, T2 `hello` + `exit=42`,
+  T3 peephole `exit=42`. PASS.
+- 64/64 check.sh gates green (count unchanged — dispatcher
+  conversion preserves gate count).
+- Two-step self-host byte-identical.
+- Existing aarch64 cross-test gates remain PASS
+  (`_aarch64_native_selfhost_gate`, `_aarch64_syscalls_gate`,
+  `_aarch64_struct_byval_gate`, `_aarch64_sub_byte_field_load_gate`,
+  `_aarch64_f64_*_gate`).
+
+### Cascaded to v5.9.33+
+
+- v5.9.33 — tls-live + network-probe helper. Last `.sh` to
+  retire; `_network_probe_check(host, port)` for skip-on-
+  unreachable. After this slot the `.sh-conversion arc
+  closes (0 remaining).
+- v5.9.34 — cx Phase 2c parity (struct-by-value + sub-byte
+  field load + ESTORESTACKPARM >6 args).
+- v5.9.35 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.36 — closeout pass before v5.10.0.
+
 ## [5.9.31] — 2026-05-07
 
 **v5.9.x SLOT 31 — `#derive(Serialize)` API rename hotfix +
