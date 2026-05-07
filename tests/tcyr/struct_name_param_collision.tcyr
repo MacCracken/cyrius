@@ -1,0 +1,93 @@
+# struct_name_param_collision.tcyr — v5.9.33 regression for the
+# parse_decl.cyr struct-init detection over-eagerness.
+#
+# Bug history: pre-v5.9.33, PARSE_VAR's struct-literal detection
+# fired on any `var X = ident ...;` where `ident` matched a known
+# struct name, dispatching unconditionally into PARSE_STRUCT_INIT
+# which then errored "expected '{', got <next>" if the next token
+# was anything but `{` (e.g. `&`, `+`, `-`, `(`, `*`, `,`).
+#
+# This collided with cyrius's no-namespacing rule: a struct named
+# `status` and a fn parameter named `status` (e.g.
+# `fn WIFEXITED(status) { ... }` in lib/syscalls_*_linux.cyr) share
+# the lex'd identifier offset via tok_names dedup. When pass 2
+# parsed the WIFEXITED body's `var sig = status & 0x7F;`, FINDSTRUCT
+# returned a hit on `status` (the struct), PARSE_STRUCT_INIT was
+# called, and the next token `&` produced "expected '{', got
+# unknown".
+#
+# Surfaced on aarch64 (agnosys 1.1.12 V1.1.12 evaluation, filed
+# 2026-05-07) because the larger lib/syscalls_aarch64_linux.cyr
+# (677 LOC vs x86's 630 LOC) pushes WIFEXITED's name offset past
+# the 64 KB DCE bitmap window, so its body is fully parsed even
+# when unreferenced. On x86 the same fn DCE'd, masking the bug.
+#
+# Fix: parse_decl.cyr PARSE_VAR / EMIT_GVAR_INITS / PARSE_GVAR_REG
+# require the next-next token after a struct-named ident to be `{`
+# before committing to the struct-init path. Bare ident references
+# fall through to scalar expression parsing.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+# Define a fn with a parameter whose name matches a struct defined
+# later in the source. This is the exact agnosys-1.1.12 shape: an
+# include that declares `fn ...(status) { ... }` followed by user
+# code that defines `struct status { ... }`. We inline the fn here
+# rather than relying on lib/syscalls so the test isolates the
+# parser's struct-init lookahead, not the syscalls-file size.
+fn _consume_status(status) {
+    var sig = status & 0x7F;
+    if (sig > 0) { if (sig != 0x7F) { return 1; } }
+    return 0;
+}
+
+fn _add_status(status) { return status + 1; }
+fn _mul_status(status) { return status * 2; }
+fn _shift_status(status) { return status >> 8; }
+fn _negate_status(status) { return 0 - status; }
+
+#derive(Serialize)
+struct status {
+    x: i64;
+    y: i64;
+    z: i64;
+}
+
+# Same shape, no derive, to confirm the fix is at the parser layer
+# (not the PP-derive emitter): a plain struct named `mask` plus
+# fns that take `mask` as a parameter and use it in scalar exprs.
+fn _and_mask(mask) { return mask & 0xFF; }
+fn _or_mask(mask) { return mask | 0x10; }
+
+struct mask {
+    a: i64;
+    b: i64;
+}
+
+# Round-trip the struct to make sure struct-init still works after
+# the lookahead guard.
+var s = status { 1, 42, 7 };
+assert_eq(s.x, 1, "struct field x");
+assert_eq(s.y, 42, "struct field y");
+assert_eq(s.z, 7, "struct field z");
+
+var m = mask { 100, 200 };
+assert_eq(m.a, 100, "mask field a");
+assert_eq(m.b, 200, "mask field b");
+
+# Exercise each fn so post-fix codegen agrees with pre-bug
+# expectations (the param `status` is a scalar local, NOT a
+# struct, despite the struct of the same name being in scope).
+assert_eq(_consume_status(0), 0, "WIFEXITED(0) → 0 (status & 0x7F == 0)");
+assert_eq(_consume_status(11), 1, "WIFEXITED(11) → 1 (signal != 0x7F)");
+assert_eq(_add_status(5), 6, "scalar status + 1");
+assert_eq(_mul_status(3), 6, "scalar status * 2");
+assert_eq(_shift_status(0x7F00), 0x7F, "scalar status >> 8");
+assert_eq(_negate_status(7), 0 - 7, "scalar 0 - status");
+assert_eq(_and_mask(0xABCD), 0xCD, "scalar mask & 0xFF");
+assert_eq(_or_mask(0x01), 0x11, "scalar mask | 0x10");
+
+var r = assert_summary();

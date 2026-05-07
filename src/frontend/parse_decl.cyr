@@ -542,7 +542,12 @@ fn PARSE_GVAR_REG(S) {
         if (PEEKT(S) == 2) {
             var sn = PEEKV(S);
             ssid = FINDSTRUCT(S, sn);
-            if (ssid > 0) { is_struct = 1; }
+            # v5.9.33: only treat this as a struct-typed gvar if the
+            # next-next token is `{` — i.e. the RHS is a real struct
+            # literal `var p = Point { ... };`. A bare ident reference
+            # like `var x = MASK & 0xF;` (where MASK is also a struct
+            # name) must allocate a scalar slot, not STRUCTSZ bytes.
+            if (ssid > 0 && TOKTYP(S, GTI(S) + 1) == 13) { is_struct = 1; }
         }
     }
     STI(S, save_peek);  # restore
@@ -610,12 +615,16 @@ fn EMIT_GVAR_INITS(S) {
         }
         STI(S, GTI(S) + 1);  # consume =
         # Check for struct init: StructName { ... }
+        # v5.9.33: same lookahead guard as PARSE_VAR — require `{` after
+        # the struct-named ident to commit to struct-init; otherwise fall
+        # through to scalar expr (e.g. `var x = MASK & 0xF;` where MASK
+        # is also a struct name).
         var idx = FINDVAR(S, noff);
         var did_struct = 0;
         if (PEEKT(S) == 2) {
             var sn = PEEKV(S);
             var sid = FINDSTRUCT(S, sn);
-            if (sid > 0) {
+            if (sid > 0 && TOKTYP(S, GTI(S) + 1) == 13) {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
                 STI(S, GTI(S) + 1);
@@ -996,12 +1005,23 @@ fn PARSE_VAR(S) {
     }
     STI(S, GTI(S) + 1);
     # Check for struct init: var p = StructName { expr, expr, ... };
+    # v5.9.33 (agnosys 1.1.12 follow-up): require the next-next token to be
+    # `{` before committing to the struct-init path. A bare ident reference
+    # like `var sig = status & 0x7F;` (where `status` is also defined as a
+    # struct name elsewhere in the file) must fall through to the scalar
+    # expression branch — NOT enter PARSE_STRUCT_INIT and error on the
+    # missing `{`. Surfaced on aarch64 because aarch64's larger syscalls
+    # file pushes WIFSIGNALED's name offset past the 64 KB DCE bitmap
+    # window so the fn body is parsed even when unreferenced; on x86 the
+    # same fn DCE's away and masks the bug.
     if (PEEKT(S) == 2) {
         var sn = PEEKV(S);
         var sid = FINDSTRUCT(S, sn);
         if (sid > 0) {
-            PARSE_STRUCT_INIT(S, noff, sid);
-            return 0;
+            if (TOKTYP(S, GTI(S) + 1) == 13) {
+                PARSE_STRUCT_INIT(S, noff, sid);
+                return 0;
+            }
         }
     }
     # parse expression (scalar) — use PCMPE for comparisons and &&/||
