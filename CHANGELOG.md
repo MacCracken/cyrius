@@ -6,6 +6,103 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.27] — 2026-05-07
+
+**v5.9.x SLOT 27 — aarch64 sub-8-byte struct field load via
+dot syntax** (agnosys 1.1.9 filing 2026-05-07 at
+`agnosys/docs/development/issues/2026-05-07-cyrius-aarch64-sub-8-byte-struct-load.md`).
+MEDIUM severity. Closes the v5.6.0-era `error:1610: sub-8-byte
+struct field load is x86-only for v5.6.0; aarch64 + cx pending`
+guard at `src/frontend/parse_decl.cyr` `PARSE_FIELD_LOAD`. Stores
+of i8/i16 struct fields already worked on aarch64; only the LOAD
+codegen was missing.
+
+cc5: **743,976 → 744,144 B** (+168 / +0.02%) — minimal: three
+single-instruction emits at the field-load site. api-surface:
+**2,769 unchanged**. check.sh: **62 → 63** (new
+`_aarch64_sub_byte_field_load_gate` cross-test).
+
+### Root cause
+
+`parse_decl.cyr:241-251` emitted x86 `movzx rax, byte/word [rcx]`
+/ `mov eax, [rcx]` raw bytes for sub-8-byte field widths via
+`EB(...)`. The aarch64 backend was guarded with `ERR_MSG` — a
+deliberate fail-loud at v5.6.0 ship to avoid silently splicing
+x86 bytes into aarch64 codebuf. The aarch64 width-aware load
+encodings (`ldrb w0, [x1]` = `0x39400020`, `ldrh w0, [x1]` =
+`0x79400020`, `ldr w0, [x1]` = `0xB9400020`) ALREADY existed in
+`src/backend/aarch64/emit.cyr` `EVLOAD_W` (line 962-964) for
+global-var loads; this slot just routes the field-load site
+through the same encodings with the struct base in x1 +
+field-offset already added.
+
+### Why this matters (consumer impact)
+
+agnosys 1.1.8 migrated four kernel-ABI structs to typed-`struct`
++ pointer-to-struct dot syntax — three carry i16 fields
+(`sockaddr_nl.nl_family`, `nlmsghdr.nlmsg_type/_flags`,
+`bpf_insn.code`). `audit.cyr fn audit_recv_raw` reads
+`hdr.nlmsg_type` (i16). agnosys's local x86_64-only audit shipped
+clean; the CI aarch64 cross-build hit `error:1610` and failed.
+agnosys 1.1.9 reverted the migration AND extended its local audit
+to include `cyrius build --aarch64` so this regression class
+catches earlier. The migration re-opens once consumers pick up
+v5.9.27.
+
+### Added
+
+- **`tests/fixtures/aarch64_cluster/sub_byte_field_load.cyr`**:
+  cross-test fixture mirroring agnosys's repro shape +
+  extending it with a mixed_widths struct (i8 + i16 + i32 in
+  one body). 10 sub-cases covering all sub-8-byte widths
+  through the dot-syntax field-load path. Exit-code map
+  decodes per-field failures (1/2/3/4 = nlmsghdr;
+  5..10 = mixed_widths.{flag,pad8,word_a,word_b,long_x,long_y}).
+- **`programs/check.cyr` — `_aarch64_sub_byte_field_load_gate()`**:
+  cross-builds the fixture via cc5_aarch64, scp's to pi, runs,
+  decodes exit code with field-specific FAIL messages. Same
+  shape as `_aarch64_struct_byval_gate` (v5.9.26) and
+  `_aarch64_syscalls_gate`.
+
+### Changed
+
+- **`src/frontend/parse_decl.cyr` PARSE_FIELD_LOAD (line ~240)**:
+  the v5.6.0-era ERR_MSG guard for `_AARCH64_BACKEND == 1` is
+  replaced with width-1/2/4 emit dispatch:
+  - `fld_sz == 1` → `EW(0x39400020)` (`ldrb w0, [x1]`)
+  - `fld_sz == 2` → `EW(0x79400020)` (`ldrh w0, [x1]`)
+  - `fld_sz == 4` → `EW(0xB9400020)` (`ldr w0, [x1]`)
+  - `fld_sz == 8` → existing `ELODC(S)` (cross-arch already
+    works; emits `ldr x0, [x1]` on aarch64 / `mov rax, [rcx]`
+    on x86).
+  cx backend stays guarded with a narrowed ERR_MSG (`cx
+  backend pending`); cxvm needs its own per-size load opcode.
+
+### Verified
+
+- 63/63 check.sh gates green (count +1 for the new gate).
+- Two-step self-host byte-identical (cc5 → cc5b → cc5c).
+- aarch64 cross-test on pi: agnosys-supplied
+  `/tmp/cyrius-aarch64-sub-8-byte-struct-load/minimal_repro.cyr`
+  builds + runs to print `100\n7` (was: pre-fix
+  `error:1610` at compile). New `_aarch64_sub_byte_field_load_gate`
+  PASS — all 10 sub-cases (i8/i16/i32 across two struct
+  shapes) round-trip cleanly. Plus existing aarch64 cross-test
+  gates (`_aarch64_struct_byval_gate`,
+  `_aarch64_native_selfhost_gate`, `_aarch64_syscalls_gate`)
+  remain PASS.
+- cross-build (`src/main_aarch64.cyr | build/cc5`) clean.
+
+### Cascaded to v5.9.28+
+
+- v5.9.28/29 — cyrius-init.sh + cyrius-port.sh sovereignty
+  port (multi-slot).
+- v5.9.30 — init-doctree + init-lib-bin gates.
+- v5.9.31 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.32 — tls-live + network-probe helper.
+- v5.9.33 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.34 — closeout pass before v5.10.0.
+
 ## [5.9.26] — 2026-05-07
 
 **v5.9.x SLOT 26 — Phase 2b-aarch64 struct return by value**.

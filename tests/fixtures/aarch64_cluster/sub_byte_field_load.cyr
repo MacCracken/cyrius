@@ -1,0 +1,78 @@
+# sub_byte_field_load.cyr — aarch64 sub-8-byte struct field
+# load cross-test fixture (v5.9.27; agnosys 1.1.9 filing).
+# Mirrors the agnosys-supplied minimal_repro shape (kernel-ABI
+# struct with i32 + i16 fields) and exercises the LDRB / LDRH /
+# LDR-W width-aware field load path.
+#
+# Pre-v5.9.27 the i16 field load emitted `error:1610: sub-8-byte
+# struct field load is x86-only for v5.6.0; aarch64 + cx pending`
+# at compile time. Post-fix the cross-build emits ldrh w0, [x1]
+# at the field site and the value round-trips correctly through
+# the struct-pointer dot syntax.
+#
+# Exit code: 0 = all field-loads correct; non-zero = field
+# mismatch (decoded by the dispatcher gate).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+
+struct nlmsghdr {
+    nlmsg_len: i32;
+    nlmsg_type: i16;
+    nlmsg_flags: i16;
+    nlmsg_seq: i32;
+    nlmsg_pid: i32;
+}
+
+struct mixed_widths {
+    flag: i8;
+    pad8: i8;
+    word_a: i16;
+    word_b: i16;
+    pad16: i16;
+    long_x: i32;
+    long_y: i32;
+}
+
+fn main() {
+    alloc_init();
+    var buf = alloc(16);
+    memset(buf, 0, 16);
+    store32(buf,     100);   # nlmsg_len
+    store16(buf + 4,   7);   # nlmsg_type
+    store16(buf + 6,  42);   # nlmsg_flags
+    store32(buf + 8, 999);   # nlmsg_seq
+    store32(buf + 12, 0 - 1);# nlmsg_pid (signed-ish)
+
+    var hdr: nlmsghdr = buf;
+    if (hdr.nlmsg_len   != 100)    { syscall(60, 1); }   # i32 load
+    if (hdr.nlmsg_type  != 7)      { syscall(60, 2); }   # i16 load (the v5.9.27 fix)
+    if (hdr.nlmsg_flags != 42)     { syscall(60, 3); }   # i16 load (offset > 0)
+    if (hdr.nlmsg_seq   != 999)    { syscall(60, 4); }   # i32 load (offset > 0)
+
+    # Mixed-width struct — i8 + i16 + i32 covering all
+    # sub-8-byte widths through the dot-syntax field load path.
+    var buf2 = alloc(16);
+    memset(buf2, 0, 16);
+    store8(buf2,           0xAB);   # flag (i8)
+    store8(buf2 + 1,       0xCD);   # pad8 (i8)
+    store16(buf2 + 2,      111);    # word_a (i16)
+    store16(buf2 + 4,      222);    # word_b (i16)
+    store16(buf2 + 6,      0);      # pad16
+    store32(buf2 + 8,      54321);  # long_x (i32)
+    store32(buf2 + 12,     1);      # long_y
+
+    var mw: mixed_widths = buf2;
+    if (mw.flag    != 0xAB)  { syscall(60, 5); }    # i8 load (the v5.9.27 fix)
+    if (mw.pad8    != 0xCD)  { syscall(60, 6); }    # i8 load (offset 1)
+    if (mw.word_a  != 111)   { syscall(60, 7); }
+    if (mw.word_b  != 222)   { syscall(60, 8); }
+    if (mw.long_x  != 54321) { syscall(60, 9); }
+    if (mw.long_y  != 1)     { syscall(60, 10); }
+
+    syscall(60, 0);
+}
+
+var ec = main();
+syscall(60, ec);

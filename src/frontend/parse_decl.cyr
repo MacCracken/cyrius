@@ -239,15 +239,23 @@ fn PARSE_FIELD_LOAD(S, noff) {
     if (off > 0) { EADDIMM_X1(S, off); }
     var fld_sz = FIELDSZ(S, ft);
     if (fld_sz < 8) {
-        # v5.6.0: sub-8-byte struct field load emits raw x86 movzx/mov
-        # (`48 0F B6 01` etc.). aarch64 needs LDRB/LDRH/LDR (W0) — not
-        # yet implemented. Hard-error instead of silently splicing x86
-        # bytes into aarch64 codebuf (the silent-corruption class).
-        if (_AARCH64_BACKEND == 1 || _TARGET_CX == 1) {
-            # v5.7.12: aarch64 was already gated; broadened to cx too
-            # (parse_*.cyr emits x86 movzx bytes below; bytecode needs
-            # its own per-size load opcode in cxvm — not in v5.7.12).
-            ERR_MSG(S, "sub-8-byte struct field load is x86-only for v5.6.0; aarch64 + cx pending", 76);
+        # v5.9.27 (agnosys 1.1.9 filing): aarch64 width-aware field
+        # load emission. Stores already worked on aarch64 — only
+        # this LOAD path was guarded with the v5.6.0-era ERR_MSG.
+        # The aarch64 EVLOAD_W path already encodes the matching
+        # `ldrb/ldrh/ldr w0, [x1]` opcodes for width 1/2/4 against
+        # globals; reuse those encodings here for the field-load
+        # site (struct base in x1, field-offset already added).
+        if (_TARGET_CX == 1) {
+            # cx bytecode still needs its own per-size load opcode
+            # in cxvm — pending Phase 2c.
+            ERR_MSG(S, "sub-8-byte struct field load: cx backend pending", 49);
+        }
+        if (_AARCH64_BACKEND == 1) {
+            _IR_REC0(S, IR_RAW_EMIT);
+            if (fld_sz == 1) { EW(S, 0x39400020); return 0; }   # ldrb w0, [x1]
+            if (fld_sz == 2) { EW(S, 0x79400020); return 0; }   # ldrh w0, [x1]
+            if (fld_sz == 4) { EW(S, 0xB9400020); return 0; }   # ldr  w0, [x1]
         }
     }
     # v5.6.12: sub-byte field load — x86 movzx/mov byte sequences.

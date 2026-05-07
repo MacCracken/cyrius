@@ -3470,6 +3470,119 @@ fn _aarch64_struct_byval_gate() {
     return 1;
 }
 
+# Bespoke gate (v5.9.27): aarch64 sub-byte struct field load
+# cross-test (agnosys 1.1.9 filing). Cross-builds
+# `tests/fixtures/aarch64_cluster/sub_byte_field_load.cyr`
+# with cc5_aarch64 and runs on pi via SSH. Exercises ldrb /
+# ldrh / ldr-w through pointer-to-struct dot syntax over a
+# kernel-ABI-shape struct (i32 + i16 fields) and a
+# mixed-widths struct (i8 + i16 + i32 in one body).
+#
+# Exit-code map:
+#   0       — all 10 field-load round-trips pass
+#   1/2/3/4 — nlmsghdr {len, type, flags, seq} mismatch
+#   5..10   — mixed_widths {flag, pad8, word_a, word_b,
+#              long_x, long_y} mismatch
+#
+# Locks the aarch64 EW(0x39400020) / EW(0x79400020) / EW(0xB9400020)
+# emit at parse_decl.cyr's PARSE_FIELD_LOAD against silent
+# regression. Field STORE codegen for sub-8-byte widths was
+# already wired pre-v5.9.27 (per the agnosys filing — only LOAD
+# was missing); this gate is load-only by design.
+fn _aarch64_sub_byte_field_load_gate() {
+    var label = "aarch64 sub-byte struct field load via dot syntax (v5.9.27; agnosys 1.1.9; via ssh pi)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_cluster/sub_byte_field_load.cyr");
+    var bin = _tmp_path("audit_aarch64_subbyte_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(") — pre-v5.9.27 error:1610 regression?");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyr_aarch64_subbyte";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": 10 sub-cases (i8 / i16 / i32 field loads via dot syntax) on ");
+        println(target);
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": sub-byte field load round-trip exit=");
+    print_num(ec);
+    if (ec == 1)  { _p(" — nlmsghdr.nlmsg_len (i32) mismatch"); }
+    if (ec == 2)  { _p(" — nlmsghdr.nlmsg_type (i16) mismatch"); }
+    if (ec == 3)  { _p(" — nlmsghdr.nlmsg_flags (i16, offset>0) mismatch"); }
+    if (ec == 4)  { _p(" — nlmsghdr.nlmsg_seq (i32, offset>0) mismatch"); }
+    if (ec == 5)  { _p(" — mixed_widths.flag (i8) mismatch"); }
+    if (ec == 6)  { _p(" — mixed_widths.pad8 (i8, offset 1) mismatch"); }
+    if (ec == 7)  { _p(" — mixed_widths.word_a (i16) mismatch"); }
+    if (ec == 8)  { _p(" — mixed_widths.word_b (i16) mismatch"); }
+    if (ec == 9)  { _p(" — mixed_widths.long_x (i32) mismatch"); }
+    if (ec == 10) { _p(" — mixed_widths.long_y (i32) mismatch"); }
+    println("");
+    _check(label, 1);
+    return 1;
+}
+
 # Bespoke gate: native aarch64 cc5 self-hosts byte-identical on
 # Pi (v5.6.32). Pipeline:
 #   1. Cross-build aarch64-host cc5 from src/main_aarch64_native.cyr
@@ -6641,6 +6754,10 @@ fn _run_regression_gates() {
 
     _section("aarch64 struct-by-value (Phase 2b; v5.9.26)");
     _aarch64_struct_byval_gate();
+    println("");
+
+    _section("aarch64 sub-byte field load (v5.9.27)");
+    _aarch64_sub_byte_field_load_gate();
     println("");
 
     _section("Mach-O arm64 runtime");
