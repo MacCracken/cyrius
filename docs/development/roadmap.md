@@ -838,7 +838,53 @@ satisfied by earlier slots.
   parity. Earns slot now because v5.9.x's mid-cycle SSH-pi
   green re-confirms aarch64 path is the only remaining gap.
 
-- **v5.9.27** — **`scripts/cyrius-init.sh` sovereignty port,
+- **v5.9.27** — **aarch64 sub-8-byte struct field load**
+  (agnosys 1.1.9 filing 2026-05-07 at
+  `agnosys/docs/development/issues/2026-05-07-cyrius-aarch64-sub-8-byte-struct-load.md`).
+  **Severity: MEDIUM** — gates V1.1.8-shape multi-width struct
+  field migrations for any project that cross-compiles to
+  aarch64. Stores work; only LOAD codegen is missing for `i8`
+  / `i16` field reads through pointer-to-struct dot syntax.
+  Reproduces under v5.9.25 + v5.9.26.
+
+  **Failure mode**: `error:1610: sub-8-byte struct field load
+  is x86-only for v5.6.0; aarch64 + cx pending` — the error
+  message itself documents the gap. The x86_64 path emits
+  `movzx rax, byte/word [addr]`; aarch64 needs the matching
+  `ldrb w0, [x1]` (1B) / `ldrh w0, [x1]` (2B) — the
+  width-4/width-8 ldur/ldr paths already exist in
+  `src/backend/aarch64/emit.cyr` (v5.9.26 EFLLOAD_W reads
+  width=1/2/4/8 against locals; the missing site is field-load
+  through a struct pointer, not local-load). Same shape needed
+  for the cx bytecode backend.
+
+  **Reproducer**:
+  `/tmp/cyrius-aarch64-sub-8-byte-struct-load/minimal_repro.cyr`
+  defines `struct nlmsghdr { nlmsg_len: i32; nlmsg_type: i16; ... }`
+  + `var hdr: nlmsghdr = buf; print_num(hdr.nlmsg_type);`. x86
+  build runs (prints `100\n7`); aarch64 cross-build emits the
+  guard error.
+
+  **Why this matters**: agnosys 1.1.8 migrated four kernel-ABI
+  structs to typed-`struct` + dot-syntax. Three carry `i16`
+  fields (`sockaddr_nl.nl_family`, `nlmsghdr.nlmsg_type/_flags`,
+  `bpf_insn.code`). agnosys's `audit.cyr` reads `hdr.nlmsg_type`
+  → CI aarch64 cross-build fails. agnosys 1.1.9 reverted V1.1.8
+  back to explicit `store16` / `load32` calls AND extended the
+  local audit to add an `--aarch64` cross-build gate. The V1.1.8
+  migration re-opens once this slot lands.
+
+  **Suggested upstream investigation** (per agnosys filing):
+  fix mirrors the existing aarch64 width-aware local-load
+  primitives. The error site is the field-LOAD codegen path
+  (parse.cyr or parse_decl.cyr) emitting `error:1610`; route
+  that path through `EFLLOAD_W`-like emission for widths 1+2,
+  with the existing `_EFP_ADDR_X9` fallback for far-disp cases.
+  Pair the cx backend stub at the same site. Acceptance: the
+  repro builds + runs to print `100\n7` on pi (cross-test
+  via existing SSH gate pattern).
+
+- **v5.9.28** — **`scripts/cyrius-init.sh` sovereignty port,
   part 1 of 2** (was originally pinned to v5.9.14 but the slot
   got repurposed for the release-tarball gap fix). 1,021 LOC
   bash → cyrius. Part 1 scope:
@@ -849,7 +895,7 @@ satisfied by earlier slots.
   - New `programs/cyrius-init.cyr` entry; `cyriusly` shim and
     `cbt/cyrius.cyr` dispatcher updated to invoke it.
 
-- **v5.9.28** — **`scripts/cyrius-init.sh` part 2 + `cyrius-port.sh`
+- **v5.9.29** — **`scripts/cyrius-init.sh` part 2 + `cyrius-port.sh`
   port**.
   - Part 2: flag matrix completion — `--language=none|rust`,
     `--agent`, `--cmtools`, `--description=`, `--dry-run`.
@@ -857,13 +903,13 @@ satisfied by earlier slots.
     tool. Same template-externalization shape; landed in the
     same slot since it shares the cyrius-init.sh helper layer.
 
-- **v5.9.29** — **init-doctree + init-lib-bin gate conversions**
-  (unblocked by v5.9.27/28 ports). Both `tests/regression-init-*.sh`
+- **v5.9.30** — **init-doctree + init-lib-bin gate conversions**
+  (unblocked by v5.9.28/29 ports). Both `tests/regression-init-*.sh`
   retired into dispatcher gates that exercise the now-cyrius
-  `cyrius init` paths. Helper reuse off the v5.9.27/28 testing
+  `cyrius init` paths. Helper reuse off the v5.9.28/29 testing
   scaffold expected.
 
-- **v5.9.30** — **SSH helper infra batch + macho-exit + pe-exit
+- **v5.9.31** — **SSH helper infra batch + macho-exit + pe-exit
   gate conversions**.
   - `_exec_remote_with_env(target, env_pairs_vec, command)` —
     extends `_ssh_remote_exit` to set env vars on the remote
@@ -878,18 +924,18 @@ satisfied by earlier slots.
     `.sh` files. Cross-host green confirms via cass + ecb
     SSH.
 
-- **v5.9.31** — **tls-live gate conversion + network-probe
+- **v5.9.32** — **tls-live gate conversion + network-probe
   helper**. `_network_probe_check(host, port)` — quick TCP
   connect+disconnect to verify network reachability before
   the TLS round-trip; skip cleanly if unreachable (CI runner
   contexts vary). `_tls_live_gate()` retires the `.sh`. With
   this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.32.
+  — precondition for v5.9.33.
 
-- **v5.9.32** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.31 (arc
+- **v5.9.33** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.32 (arc
   closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.31 dispatcher work
+  accumulated through the v5.9.6 → v5.9.32 dispatcher work
   (`_stderr_match_subcase`, `_count_substr_buf`,
   `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
@@ -906,7 +952,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.33** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.34** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup
