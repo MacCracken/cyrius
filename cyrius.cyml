@@ -52,8 +52,9 @@ stdlib = [
     "unicode/normalize", "unicode/_normalize_data",
 ]
 # v5.8.65 stdlib foldin (sandhi-pattern, per the v5.7.0 precedent):
-# sakshi 2.2.3, patra 1.9.3, sigil 3.0.1, vani 0.9.2, yukti 2.2.2,
-# sankoch 2.2.4 are vendored byte-identical into `lib/<name>.cyr`
+# sakshi 2.2.3, patra 1.9.3, sigil 3.1.0 (refolded v5.9.20 from sigil's
+# version-label correction of the 3.0.2 ct_eq removal), vani 0.9.2,
+# yukti 2.2.2, sankoch 2.2.4 are vendored byte-identical into `lib/<name>.cyr`
 # from their patched dist files at the tags listed above. They are
 # **NOT** added to the [deps].stdlib auto-prepend list — consumers
 # pull them via explicit `include "lib/<name>.cyr"` (the sandhi
@@ -69,7 +70,7 @@ stdlib = [
 
 # v5.8.65 stdlib foldin: sakshi / patra / sigil / vani / yukti /
 # sankoch were folded byte-identical into lib/ at their patched
-# tags (2.2.3 / 1.9.3 / 3.0.1 / 0.9.2 / 2.2.2 / 2.2.4 respectively)
+# tags (2.2.3 / 1.9.3 / 3.1.0 / 0.9.2 / 2.2.2 / 2.2.4 respectively)
 # and removed from [deps]. The dist files are now permanent stdlib
 # entries via [deps].stdlib auto-prepend. Future dep updates fold
 # at the next patched tag rather than git-resolve at consume time
