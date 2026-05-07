@@ -6,6 +6,128 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.14] — 2026-05-06
+
+**v5.9.x SLOT 14 — release-tarball `cyrius_api_surface` gap fix +
+deferred bespoke-gate batch (distlib-large-module +
+smoke-discovery)**. User report at slot entry: the v5.9.13 release
+tarball at
+`https://github.com/MacCracken/cyrius/releases/download/5.9.13/cyrius-5.9.13-x86_64-linux.tar.gz`
+ships 18 binaries — `cyrius_api_surface` is missing. Root cause is
+a source-name mismatch: `cyrius.cyml [release].bins` lists
+`cyrius_api_surface`, but the source lived at
+`programs/api_surface.cyr`. Both `release.yml` (line 59) and
+`scripts/install.sh --refresh-only` (line 160) look up
+`programs/${bin}.cyr`, so the build loop silently skipped on miss
+and the cp loop silently skipped a missing `build/cyrius_api_surface`.
+Local installs masked this because `build/cyrius_api_surface` was
+already on disk from an earlier manual build; the GHA runner has no
+such fallback. Fix: rename source to match release-bin name. From
+v5.9.14 forward fresh `programs/${bin}.cyr` lookups resolve, the
+release runner builds the binary, and the cp loop ships it.
+
+cc5: **741,048 B unchanged** — `programs/cyrius_api_surface.cyr`
+contents unchanged (file move only); `programs/check.cyr` gains
+two helpers and two bespoke gates; no compiler-source change.
+
+Pivot from pinned scope: this slot was originally pinned for
+scaffolder conversions (cyrius-init.sh + cyrius-port.sh). User
+ship-blocker (release tarball gap) preempted; the deferred
+bespoke-gate batch — distlib-large-module + smoke-discovery —
+that had been waiting on the `_exec_in_dir` helper landed
+alongside, single-theme ("cleanup the gaps that 5.9.13 left").
+Scaffolder conversions cascade to v5.9.15+.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+User filed the gap mid-slot (pre-pivot was scaffolder design).
+Bisected to: `cyrius.cyml [release].bins` ↔ `programs/<bin>.cyr`
+mapping is implicit (string-keyed source-file lookup). Local
+build had `build/cyrius_api_surface` from a manual one-liner
+months ago and the `--refresh-only` `_rebuild_stale` helper
+returns 0 cleanly when source is missing (`[ -f "$source" ] ||
+return 0`), so the existing binary stuck. The release runner
+fresh-checks-out and builds from scratch; nothing to "stick".
+Failure mode is silent — no warning anywhere that
+`cyrius_api_surface ↔ api_surface.cyr` mapped via missing
+source. Pin: any future bin with mismatched source name will
+silently disappear from the tarball the same way.
+
+### Added
+
+- **`programs/check.cyr` — `_exec_in_dir(work_dir, bin_path, arg,
+  out_path)`**: chdir-then-exec helper. Forks, `chdir(work_dir)`,
+  redirects stdin from `/dev/null`, redirects stdout AND stderr
+  (via `dup2` to the same fd — mirrors shell `2>&1`) to
+  `out_path` if non-zero else `/dev/null`, execs
+  `bin_path arg` with the audit's `ENVP_ARR`, waits, returns
+  exit status. The stdout+stderr fold is required for gates
+  that grep diagnostic strings printed to stderr by the tool
+  under test (e.g. `cyrius smoke`'s "smoke aborted").
+- **`programs/check.cyr` — `_write_file(path, text)`**:
+  `sys_open` (O_CREAT | O_TRUNC | O_WRONLY, mode 0644) +
+  `sys_write` convenience for the synthetic-fixture-on-disk
+  pattern (cyrius.cyml + .cyr files in /tmp scratch dirs).
+- **`programs/check.cyr` — `_distlib_large_module_gate()`**:
+  bespoke port of `tests/regression-distlib-large-module.sh`
+  (mabda-surfaced; v5.7.36 pin). Synthesizes a 78,929-byte
+  `big.cyr` (large enough to overflow a 64 KB region) plus a
+  minimal `cyrius.cyml` manifest into a /tmp scratch dir,
+  runs `cyrius distlib` via `_exec_in_dir`, then verifies
+  `dist/distlib_capgate.cyr` contains the
+  `DISTLIB_LARGE_MODULE_SENTINEL` byte string.
+- **`programs/check.cyr` — `_smoke_discovery_gate()`**: bespoke
+  port of `tests/regression-smoke-discovery.sh` (v5.7.38 pin).
+  Three sub-cases: (1) `cyrius smoke` on the live cyrius repo
+  → exit 0 + output mentions `compile_minimal.smcyr`; (2) empty
+  scratch dir → exit 0 + "No smoke harnesses found"; (3)
+  synthetic `/tmp/<scratch>/tests/smcyr/fails.smcyr`
+  containing `syscall(60, 1)` → exit non-zero + output
+  mentions both "fails.smcyr" and "smoke aborted".
+
+### Changed
+
+- **`programs/api_surface.cyr` → `programs/cyrius_api_surface.cyr`**:
+  source-file rename to match `cyrius.cyml [release].bins`
+  entry. Contents unchanged (`git mv`, history preserved).
+  Live-code references updated:
+  - `programs/check.cyr` (auto-build hook in
+    `_build_api_surface_if_missing`).
+  - `cbt/commands.cyr` (comment block above `cmd_api_surface`,
+    plus an explanatory paragraph on the v5.9.14 rename so
+    future-claude can see WHY the source moved).
+  - `tests/regression-api-surface.sh` (the legacy .sh shell
+    gate's header comment — still in tree alongside the
+    cyrius-side gate; both share the renamed source).
+  Historical doc references in `CHANGELOG.md` /
+  `docs/development/state.md` left as-is — they are frozen
+  pre-v5.9.14 narrative and renaming them would rewrite
+  history.
+
+### Removed
+
+- **`tests/regression-distlib-large-module.sh`**: replaced by
+  `_distlib_large_module_gate()`. .sh count: 21 → 20.
+- **`tests/regression-smoke-discovery.sh`**: replaced by
+  `_smoke_discovery_gate()`. .sh count: 20 → 19.
+
+### Audit
+
+- 66/66 audit gates green (cc5==cc5 byte-identical + all gates
+  pass including the renamed-source api-surface gate). Two new
+  cyrius-side gates listed (distlib-large-module +
+  smoke-discovery); both legacy .sh files removed.
+
+### Cascaded to v5.9.15+
+
+- Scaffolder conversions (`cyrius-init.sh` 1021 LOC, 17
+  heredocs; `cyrius-port.sh` 646 LOC, 14 heredocs) — both need
+  heredoc-as-data-file design, separate slot each.
+- SSH cluster + tar-pipe-to-ssh helper (still pinned for v5.9.15).
+- Remaining .sh batch (19 left): non-bespoke conversions where
+  the new `_exec_in_dir` + `_write_file` helpers compose
+  cleanly.
+
 ## [5.9.13] — 2026-05-06
 
 **v5.9.x SLOT 13 — bidirectional-IPC helper +

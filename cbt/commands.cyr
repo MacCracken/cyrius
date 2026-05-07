@@ -388,7 +388,14 @@ fn cmd_lint(file) {
 
 # v5.7.33: snapshot-based public API surface diff. Pattern from
 # agnosys/scripts/check-api-surface.sh; cyrius-native impl in
-# programs/api_surface.cyr ($_tools_dir/cyrius_api_surface).
+# programs/cyrius_api_surface.cyr ($_tools_dir/cyrius_api_surface).
+# v5.9.14: source renamed from `api_surface.cyr` after the release
+# tarball at 5.9.13 shipped without `cyrius_api_surface` — both
+# `release.yml` and `install.sh --refresh-only` look up
+# `programs/${bin}.cyr` keyed off cyrius.cyml [release].bins, and
+# the old name silently failed the lookup. Local installs masked
+# this because `build/cyrius_api_surface` was already present from
+# manual builds; the CI runner has no such fallback.
 # v5.9.12: `scope_project` flag forward (v5.9.11 agnosys filing
 # §4 — exclude lib/ entries from the scan so downstream
 # consumers don't pick up cyrius stdlib that churns across

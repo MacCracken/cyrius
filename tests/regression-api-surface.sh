@@ -3,7 +3,7 @@
 #
 # Pinned to v5.7.33. Pattern adapted from agnosys/scripts/check-api-
 # surface.sh; cyrius-native pure-cyrius impl in
-# programs/api_surface.cyr per sovereign-toolchain stance.
+# programs/cyrius_api_surface.cyr per sovereign-toolchain stance.
 #
 # Three test cases:
 #   1. snapshot of cyrius repo matches the committed
