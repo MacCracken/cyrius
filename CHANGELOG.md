@@ -6,6 +6,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.21] — 2026-05-06
+
+**v5.9.x SLOT 21 — sovereignty pass batch (3 cyrius-CLI gates) +
+cross-arch stat enum extension**. Three `tests/regression-*.sh`
+scripts retired in favor of cyrius-side dispatcher gates; one
+small stdlib add (`STAT_MTIME` / `STAT_MTIME_NSEC` enum constants)
+unblocks the cyrfmt-write mtime-idempotency sub-case without
+needing a `sys_utimensat` wrapper. Plus v5.9.20 CHANGELOG sigil
+narrative drift fixed (3.0.2 → 3.1.0 references after the
+post-ship version-label correction).
+
+cc5: **741,048 B unchanged** — stdlib enum-constant adds and
+dispatcher-only changes don't touch compiler emit.
+api-surface: **2,765 unchanged** (enum constants don't enter the
+public-fn count). 10 → 7 `tests/regression-*.sh` remaining.
+
+### Added
+
+- **`programs/check.cyr`**:
+  - `_syscall_surface_v5735_gate()` — inline-source compile +
+    rc-switch shape (each kernel-side failure mode encodes as a
+    unique exit code; Test 3 wiring-only via unreachable branch
+    so getdents64/landlock_* don't actually fire under CI seccomp).
+    Reuses `_compile_run_get_exit` + `_write_file`; no new helpers.
+  - `_sit_status_gate()` — 100-commit fixture against
+    `../sit/build/sit`; verifies `sit fsck` reports "0 bad" + `sit
+    status` exits 0 (v5.6.35 sankoch deflate roundtrip pin).
+  - `_cyrfmt_write_gate()` — 7 sub-cases against an ugly fixture
+    and its canonical formatted twin: `--check` / `--write` /
+    `-w` short-form / mtime idempotency on already-clean file /
+    default-mode-stays-stdout. Mtime check uses STAT_MTIME +
+    STAT_MTIME_NSEC for nanosecond resolution (no sleep needed).
+  - `_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path)`
+    — multi-arg sibling of `_exec_in_dir`; up to 3 trailing argv
+    entries (NULL-truncated). Needed for `sit add f.txt` (2-arg)
+    and `sit commit -m c0` (3-arg) call shapes.
+
+- **`lib/syscalls_x86_64_linux.cyr` + `lib/syscalls_aarch64_linux.cyr`**
+  (cross-arch propagation, mandatory per memory pin):
+  - `Stat` enum gains `STAT_MTIME = 88` (st_mtim.tv_sec offset)
+    and `STAT_MTIME_NSEC = 96` (st_mtim.tv_nsec offset). Same
+    offsets on both arches because Linux struct stat aligns the
+    timespec fields identically (the divergence is in the
+    leading mode/nlink/uid/gid block, not the trailing time
+    block). Consumer reach example: cyrfmt-write gate's
+    mtime-idempotency check (test 6).
+
+### Changed
+
+- **`v5.9.20` CHANGELOG entry** — narrative drift fix. Six
+  references to "sigil 3.0.2" updated to "sigil 3.1.0" after
+  the post-ship version-label correction (public-symbol
+  removal of `ct_eq` / `ct_eq_32` is a SemVer minor bump,
+  not a patch). Added a one-paragraph note in the v5.9.20
+  preamble explaining the relabel.
+
+### Removed
+
+- **`tests/regression-syscall-surface-v5735.sh`** (176 LOC).
+- **`tests/regression-sit-status.sh`** (68 LOC).
+- **`tests/regression-cyrfmt-write.sh`** (122 LOC).
+
+### Verified
+
+- 66/66 check.sh gates green (count unchanged — conversions
+  preserve gate count, replace `_gate(...)` shell-fork dispatch
+  with cyrius-side fns).
+- Two-step self-host byte-identical (cc5 → cc5b → cc5c).
+- api-surface snapshot match exact (no surface delta).
+
+### Cascaded to v5.9.22+
+
+- `cyrius audit` semantics review (still pending user input).
+- 7 remaining `tests/regression-*.sh`: capacity, init-doctree,
+  init-lib-bin, install-shim-symlink (3 init/scaffolder
+  shapes); macho-exit, pe-exit, tls-live (cross-host SSH +
+  network-probe shapes — need helper infrastructure).
+- `lib/regression.cyr` testing-stdlib carve-out (held until
+  the `.sh`-conversion arc closes; helper inventory still
+  growing).
+
 ## [5.9.20] — 2026-05-06
 
 **v5.9.x SLOT 20 — sigil-paired `ct_eq` consolidation**. The
