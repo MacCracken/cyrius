@@ -4501,6 +4501,250 @@ fn _build_api_surface_if_missing() {
     return 0;
 }
 
+# Bespoke gate: inline-asm SSE m128 operand alignment regression
+# (v5.5.21). Two fixture shapes — both must succeed:
+#   A. with leading global   (sigil 2.9.0 workaround shape)
+#   B. no leading global     (the shape that SIGSEGV'd pre-v5.5.21
+#                             from PXOR xmm,m128 on a 8-aligned-
+#                             not-16-aligned `var rk[240]`)
+# Each fixture compiles with cc5, runs, and writes 16 bytes to
+# stdout. If either writes != 16 bytes, fixup.cyr's
+# 16-alignment-for-large-arrays prefix-sum pass regressed.
+fn _inline_asm_discard_gate() {
+    var label = "120B asm fn + standalone sys_write (sigil AES-NI shape)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+    var i = 0;
+    while (i < 2) {
+        var fix_path = 0;
+        var shape_label = 0;
+        if (i == 0) {
+            fix_path = _root_path("tests/fixtures/inline_asm_discard/with_leading_global.cyr");
+            shape_label = "shape A (with leading global)";
+        }
+        if (i == 1) {
+            fix_path = _root_path("tests/fixtures/inline_asm_discard/no_leading_global.cyr");
+            shape_label = "shape B (no leading global; pre-v5.5.21 SIGSEGV)";
+        }
+        var bin = _tmp_path("audit_inline_asm_");
+        var rc = _self_host_pipe(fix_path, CC_PATH, bin);
+        if (rc != 0) {
+            sys_unlink(bin);
+            _p("    ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": ");
+            _p(shape_label);
+            _p(" cc5 compile rc=");
+            print_num(rc);
+            println("");
+            fail = fail + 1;
+            i = i + 1;
+            continue;
+        }
+        sys_chmod(bin, 493);
+
+        var cap = 64;
+        var buf = alloc(cap);
+        var n = _exec_capture_clean(bin, buf, cap);
+        sys_unlink(bin);
+        if (n != 16) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": ");
+            _p(shape_label);
+            _p(" wrote ");
+            print_num(n);
+            println(" bytes (expected 16) — fixup.cyr 16-alignment regressed?");
+            fail = fail + 1;
+        }
+        i = i + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": both shapes write 16 B (sigil 2.9.0 workaround + originally-SIGSEGV path; v5.5.21)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Bespoke gate: cyrius api-surface snapshot diff (v5.7.33; auto-
+# build at v5.8.44). Three sub-cases:
+#   1. Run with --snapshot=docs/api-surface.snapshot — committed
+#      surface matches current; rc must be 0.
+#   2. Synthetic snapshot copy with `zzz_synth::synthetic_fn/0`
+#      appended (sorts after every real entry, preserving the
+#      tool's lockstep merge invariant) — must report BREAKING
+#      (rc=1) and the synthetic name must appear in stdout.
+#   3. Synthetic snapshot copy with the FIRST line dropped — the
+#      missing entry is now an "addition" in current; rc must be
+#      0 and stdout must contain "1 added since snapshot".
+fn _api_surface_gate() {
+    var label = "cyrius api-surface diff: snapshot match + add/remove detection (v5.7.33; auto-build at v5.8.44)";
+    var tool = _root_path("build/cyrius_api_surface");
+    var snapshot = _root_path("docs/api-surface.snapshot");
+    if (file_exists(tool) != 1) {
+        _p("  skip: ");
+        _p(tool);
+        println(" not built");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists(snapshot) != 1) {
+        _p("  skip: ");
+        _p(snapshot);
+        println(" missing — run 'cyrius api-surface --update' first");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+
+    # Test 1: committed snapshot matches current.
+    var sb1 = str_builder_new();
+    str_builder_add_cstr(sb1, "--snapshot=");
+    str_builder_add_cstr(sb1, snapshot);
+    var arg1 = str_data(str_builder_build(sb1));
+    var out1 = _tmp_path("audit_api1_");
+    var ec1 = _exec_in_dir(ROOT_PATH, tool, arg1, out1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test1 committed snapshot drift detected (rc=");
+        print_num(ec1);
+        println(")");
+        fail = fail + 1;
+    }
+    sys_unlink(out1);
+
+    # Test 2: snapshot + extra synthetic entry → BREAKING.
+    var snap2 = _tmp_path("audit_api_snap2_");
+    var snap_sz = _file_size(snapshot);
+    if (snap_sz <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": snapshot file_size <= 0");
+        fail = fail + 1;
+    } else {
+        var snap_buf = alloc(snap_sz + 64);
+        var got = file_read_all(snapshot, snap_buf, snap_sz);
+        # Append synthetic entry (sorts after `yukti::*`).
+        var extra = "zzz_synth::synthetic_fn/0\n";
+        var elen = strlen(extra);
+        var ej = 0;
+        while (ej < elen) { store8(snap_buf + got + ej, load8(extra + ej)); ej = ej + 1; }
+        file_write_all(snap2, snap_buf, got + elen);
+
+        var sb2 = str_builder_new();
+        str_builder_add_cstr(sb2, "--snapshot=");
+        str_builder_add_cstr(sb2, snap2);
+        var arg2 = str_data(str_builder_build(sb2));
+        var out2 = _tmp_path("audit_api2_");
+        var ec2 = _exec_in_dir(ROOT_PATH, tool, arg2, out2);
+        if (ec2 != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": test2 synthetic removal not flagged (rc=");
+            print_num(ec2);
+            println(", expected 1)");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(out2, "zzz_synth::synthetic_fn") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test2 synthetic name not in BREAKING report");
+            fail = fail + 1;
+        }
+        sys_unlink(out2);
+        sys_unlink(snap2);
+    }
+
+    # Test 3: snapshot with first line dropped → +1 addition.
+    var snap3 = _tmp_path("audit_api_snap3_");
+    if (snap_sz > 0) {
+        var sb3_buf = alloc(snap_sz + 4);
+        var got3 = file_read_all(snapshot, sb3_buf, snap_sz);
+        # Locate the first \n; write everything after it.
+        var nl = 0;
+        while (nl < got3) {
+            if (load8(sb3_buf + nl) == 10) { break; }
+            nl = nl + 1;
+        }
+        if (nl < got3) {
+            file_write_all(snap3, sb3_buf + nl + 1, got3 - nl - 1);
+        }
+
+        var sb3 = str_builder_new();
+        str_builder_add_cstr(sb3, "--snapshot=");
+        str_builder_add_cstr(sb3, snap3);
+        var arg3 = str_data(str_builder_build(sb3));
+        var out3 = _tmp_path("audit_api3_");
+        var ec3 = _exec_in_dir(ROOT_PATH, tool, arg3, out3);
+        if (ec3 != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": test3 synthetic addition flagged as breaking (rc=");
+            print_num(ec3);
+            println(", expected 0)");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(out3, "1 added since snapshot") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test3 addition count not reported as 1");
+            fail = fail + 1;
+        }
+        sys_unlink(out3);
+        sys_unlink(snap3);
+    }
+
+    if (fail == 0) {
+        var n_entries = 0;
+        var c_buf = alloc(snap_sz + 1);
+        var c_got = file_read_all(snapshot, c_buf, snap_sz);
+        var ci = 0;
+        while (ci < c_got) {
+            if (load8(c_buf + ci) == 10) { n_entries = n_entries + 1; }
+            ci = ci + 1;
+        }
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": cyrius api-surface diff (snapshot ");
+        print_num(n_entries);
+        println(" entries; +1 added detected; -1 removed detected) (v5.7.33)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # ── Main dispatch ──
 # ROOT = absolute path to repo root. Resolved via getcwd; the shim
 # in scripts/check.sh sets cwd to repo root before exec'ing.
@@ -4552,7 +4796,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("Inline-asm discard-result");
-    _gate("120B asm fn + standalone sys_write (sigil AES-NI shape)", "tests/regression-inline-asm-discard.sh");
+    _inline_asm_discard_gate();
     println("");
 
     _section("cyrfmt --write");
@@ -4717,7 +4961,7 @@ fn _run_regression_gates() {
 
     _build_api_surface_if_missing();
     _section("cyrius api-surface");
-    _gate("cyrius api-surface diff: snapshot match + add/remove detection (v5.7.33; auto-build at v5.8.44)", "tests/regression-api-surface.sh");
+    _api_surface_gate();
     println("");
 
     _section("aarch64 codebuf cap");

@@ -6,6 +6,115 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.16] — 2026-05-06
+
+**v5.9.x SLOT 16 — opportunistic deferred-gates batch:
+inline-asm-discard + api-surface land cyrius-side**.
+Continues the v5.9.14 pivoted-batch theme ("convert deferred
+gates that already-built helpers cover"). Both shapes
+exercise existing helpers cleanly:
+`_self_host_pipe + _exec_capture_clean` for inline-asm-discard
+(compile-and-run-fixture), `_exec_in_dir + _file_contains_substr`
+for api-surface (snapshot-mutation + grep-stdout).
+
+cc5: **741,048 B unchanged** — `programs/check.cyr` adds two
+bespoke gates; new fixtures
+`tests/fixtures/inline_asm_discard/{with_leading_global,no_leading_global}.cyr`
+(both standalone, ~50 LOC each, compile+exit-with-byte-count
+shape). No compiler-source change.
+
+Single-theme: pivoted off the roadmap's "small utilities batch"
+pin (version-bump.sh / cyrius-repl.sh / etc.) which would have
+needed scaffolder-style heredoc-template design; opportunistic
+deferred-gates were faster to land in one slot. Small-utilities
+batch + remaining sovereignty .sh stay pinned for v5.9.17+.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Both gates wanted the same primitives that v5.9.14 added:
+`_exec_in_dir(work_dir, bin, arg, out_path)` for
+exec-and-capture-stdout, plus `_file_contains_substr` for
+grep-style assertions. The api-surface gate also needs a
+file-mutation primitive — but reading the snapshot file
+into memory (~80 KB), tweaking, and writing back via
+`file_read_all` + `file_write_all` is straightforward; no
+new helper required.
+
+api-surface synthetic-removal subtest changed semantics
+slightly: the .sh appended `_TEST_REMOVED::synthetic_fn/0`
+and re-sorted the snapshot. The cyrius-side version uses
+`zzz_synth::synthetic_fn/0` which sorts AFTER every real
+entry (the snapshot's last line is `yukti::sys_stat/2`),
+so a plain append preserves the tool's lockstep-merge
+sort invariant — no in-cyrius sort step needed.
+
+### Added
+
+- **`programs/check.cyr` — `_inline_asm_discard_gate()`**:
+  v5.5.21 SSE m128 alignment regression. Loops over both
+  fixture shapes (with/without leading global), compiles each
+  with cc5, runs via `_exec_capture_clean`, asserts each
+  writes exactly 16 bytes to stdout. Failure messages
+  identify which shape regressed (sigil 2.9.0 workaround
+  shape vs. originally-SIGSEGV path) so the diagnostic
+  points back to `src/backend/x86/fixup.cyr`'s 16-alignment
+  prefix-sum pass.
+- **`programs/check.cyr` — `_api_surface_gate()`**: v5.7.33
+  snapshot diff. Three sub-cases: (1) committed snapshot
+  matches current → exit 0; (2) snapshot + synthetic
+  `zzz_synth::synthetic_fn/0` appended → exit 1, BREAKING
+  report mentions the synthetic name; (3) snapshot with
+  first line dropped → exit 0 + stdout contains "1 added
+  since snapshot". Uses `file_read_all` + `file_write_all`
+  for snapshot-mutation; uses `_exec_in_dir` for
+  stdout capture in `ROOT_PATH` cwd.
+- **`tests/fixtures/inline_asm_discard/{with_leading_global,no_leading_global}.cyr`**
+  (~50 LOC each): standalone fixtures. Both contain the
+  shared 120-byte AES-NI-shape asm body (`_big_asm_fn`)
+  + `main()` that builds 240 B `rk` array + 16 B `pt` /
+  `ct` arrays, runs the asm (PXOR xmm,m128 + 13 AESENCs +
+  AESENCLAST), and writes `ct` to stdout. The "with leading
+  global" shape adds `var _regression_marker = 0;` between
+  includes and `_big_asm_fn`; the "no leading global" shape
+  has no top-level globals. Pre-v5.5.21 the second shape
+  SIGSEGV'd because `var rk[240]` landed at an 8-aligned-
+  not-16-aligned address.
+
+### Changed
+
+- **`programs/check.cyr` — dispatcher**: replaced
+  `_gate("...sigil AES-NI shape", "tests/regression-inline-
+  asm-discard.sh")` with `_inline_asm_discard_gate()`; same
+  for the api-surface line. Both now cyrius-side.
+
+### Removed
+
+- **`tests/regression-inline-asm-discard.sh`** (126 LOC) —
+  folded into `_inline_asm_discard_gate()` + the two new
+  fixtures.
+- **`tests/regression-api-surface.sh`** (90 LOC) — folded
+  into `_api_surface_gate()`.
+
+### Audit
+
+- 66/66 audit gates green; both new gates PASS. cc5==cc5
+  byte-identical at 741,048 B.
+- `.sh` count: 17 → 15.
+
+### Cascaded to v5.9.17+
+
+- Remaining cyrius-CLI-subcommand gates that fit
+  `_exec_in_dir` (deps-transitive, fuzz-deps-prepend,
+  install-shim-symlink, cyrfmt-write, syscall-surface-v5735).
+- sit-status (local `../sit` consumer; no SSH; needs a
+  100-iteration sit add+commit loop in cyrius).
+- Small-utilities batch (version-bump.sh / cyrius-repl.sh /
+  cyrius-watch.sh / bench-history.sh / release-lib.sh /
+  tests/heapmap.sh / benches/bench_capacity_overhead.sh) —
+  these are non-test scripts that need scaffolder-style
+  design.
+- macho-exit + pe-exit (different shape: codesign/.bat/cmd).
+
 ## [5.9.15] — 2026-05-06
 
 **v5.9.x SLOT 15 — SSH-cluster sovereignty pass:
