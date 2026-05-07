@@ -49,6 +49,22 @@ assert_eq(ct_eq_bytes(ea, eb, 16), 0, "diff at byte 0 + byte 15 → 0");
 test_group("ct_eq_bytes empty buffers");
 assert_eq(ct_eq_bytes(ea, eb, 0), 1, "n=0 is trivially equal");
 
+test_group("ct_eq_bytes_lens equal lengths + equal bytes");
+var pa = alloc(8);
+var pb = alloc(8);
+var pi = 0;
+while (pi < 8) { store8(pa + pi, pi); store8(pb + pi, pi); pi = pi + 1; }
+assert_eq(ct_eq_bytes_lens(pa, 8, pb, 8), 1, "lens=8 equal");
+
+test_group("ct_eq_bytes_lens length mismatch");
+assert_eq(ct_eq_bytes_lens(pa, 8, pb, 7), 0, "alen=8, blen=7 → 0");
+assert_eq(ct_eq_bytes_lens(pa, 0, pb, 1), 0, "alen=0, blen=1 → 0");
+assert_eq(ct_eq_bytes_lens(pa, 5, pb, 5), 1, "matching short lens still equal");
+
+test_group("ct_eq_bytes_lens equal lens + content mismatch");
+store8(pb + 4, 0xFF);
+assert_eq(ct_eq_bytes_lens(pa, 8, pb, 8), 0, "content diff at byte 4");
+
 test_group("ct_eq_bytes 32-byte digest shape (SHA-256)");
 var d1 = alloc(32);
 var d2 = alloc(32);

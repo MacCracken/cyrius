@@ -769,6 +769,7 @@ csv::csv_escape/1
 csv::csv_parse_line/1
 csv::csv_write_line/1
 ct::ct_eq_bytes/3
+ct::ct_eq_bytes_lens/4
 ct::ct_select/3
 cyml::cyml_doc_entries/1
 cyml::cyml_doc_entry/2
@@ -2021,8 +2022,6 @@ sigil::crl_new/2
 sigil::crl_next_update/1
 sigil::crl_set_next_update/2
 sigil::crl_version/1
-sigil::ct_eq/4
-sigil::ct_eq_32/2
 sigil::ed25519_generate_keypair/2
 sigil::ed25519_init/0
 sigil::ed25519_keypair/3

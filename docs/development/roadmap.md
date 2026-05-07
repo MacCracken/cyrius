@@ -616,13 +616,10 @@ at cycle entry):
   `ct_select`). api-surface snapshot adds 1 entry; cc5
   unchanged (pure stdlib add).
 
-  Out of scope (deferred to a paired sigil-bump slot):
-  lifting sigil's dual-length `ct_eq(a, a_len, b, b_len)` +
-  `ct_eq_32(a, b)` (`lib/sigil.cyr:1316,1332`) into
-  `lib/ct.cyr`. Both have name collisions with sigil's
-  hand-rolls — would emit "duplicate fn" warnings the moment
-  sigil includes the new `lib/ct.cyr`. Naming + sigil-side
-  delete must be coordinated.
+  Out of scope: see the dedicated **stdlib-dep coordination
+  slot** entry below (was deferred at v5.9.18 ship as "paired
+  sigil-bump slot"; first attempt at v5.9.20 broke 4+ downstream
+  consumers — full incident retro and binding spec follow).
 
   Vidya pin: `vidya/content/cyrius/language/features.cyml`
   `secret_var_compound_ops` entry already half-promises
@@ -630,8 +627,168 @@ at cycle entry):
   `ct_eq_bytes` as the canonical stdlib helper, and clarify
   that scalar `ct_eq` was vidya-aspirational not shipped.
 
-- **v5.9.19+** — `cyrius audit` fix slot (once user picks
-  semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
+- **STDLIB-DEP COORDINATION SLOT — sigil `ct_eq` consolidation**
+  (status: **RESET after broken first attempt 2026-05-06; do
+  not repeat the failure pattern below**)
+
+  ⚠️ **READ THIS WHOLE BLOCK BEFORE TOUCHING ANY FILE.** This
+  is not a cyrius slot with downstream cleanup. This IS a
+  stdlib-dep coordination slot where sigil's public-surface
+  change is the primary work; the cyrius `ct_eq_bytes_lens`
+  add is the supporting helper. Treat sigil exactly like
+  `lib/string.cyr` — full pre-change ecosystem audit, ecosystem
+  grep, semver discipline, downstream coordination. **If you
+  catch yourself thinking "I'll just delete sigil's
+  `src/ct.cyr` and migrate the call sites" — STOP. That is
+  the framing that broke v5.9.20's first attempt.**
+
+  **What "stdlib-dep" means here**: sigil ships
+  `dist/sigil.cyr` which gets vendored into cyrius
+  `lib/sigil.cyr` AND into 11+ downstream consumers'
+  `lib/sigil.cyr` via `cyrius deps`. Removing a public symbol
+  from sigil's bundle is a breaking change across the
+  ecosystem, equivalent to removing a fn from
+  `lib/string.cyr`. See vidya
+  `cyrius/field_notes/compiler/methodology.cyml::stdlib_dep_care_not_application_care`
+  for the full discipline.
+
+  **First-attempt failure modes (2026-05-06; do NOT repeat):**
+
+  1. **Half-grep claim**: `ct_eq_32` was claimed "zero callers"
+     based on `grep` of `sigil/src/*.cyr` only. Actual callers:
+     `sigil/programs/smoke.cyr:21`, `sigil/tests/bcyr/sigil.bcyr:346`.
+     Both produced runtime SIGILL when the symbol disappeared.
+  2. **Public-surface removal labeled as patch**: deleted
+     `sigil/src/ct.cyr` (`fn ct_eq` + `fn ct_eq_32`) and
+     bumped sigil 3.0.1 → 3.0.2 calling it "internal refactor."
+     Direct downstream callers grep'd post-hoc:
+     `kavach/src/util.cyr:12`, `hoosh/src/lib/auth.cyr:26`,
+     `hoosh/tests/hoosh.tcyr:1928–1939`,
+     `libro/src/hasher.cyr:51`, `libro/src/main.cyr:139–142`,
+     `libro/dist/libro.cyr:116`,
+     `majra/src/signed_envelope.cyr:125`,
+     `majra/dist/majra-{signed,backends}.cyr:375`. None
+     surveyed at slot entry. All would break when their
+     sigil pin bumps.
+  3. **17 sigil test/fuzz files included the deleted file**;
+     **9 tcyr files called bare `ct_eq` directly**. None
+     migrated in the deletion slot.
+  4. **Stale CI pin**: `sigil/.github/workflows/ci.yml`
+     `CYRIUS_VERSION=5.7.48`. Even with the lift correct,
+     CI couldn't find `ct_eq_bytes_lens` against the old
+     stdlib.
+  5. **Side-effect framing**: the slot was scoped as a cyrius
+     slot ("cyrius v5.9.20: lift ct_eq into stdlib + sigil
+     cleanup as part of the same change"). The sigil work
+     should have been the headline; cyrius's add was the
+     supporting helper.
+
+  **Binding spec — pre-condition checklist (must complete
+  BEFORE editing any file):**
+
+  - [ ] **Ecosystem grep**:
+    ```sh
+    grep -rn "\bct_eq\b\|\bct_eq_32\b" /home/macro/Repos/ \
+      | grep -v "/.git/\|/build/\|api-surface.snapshot"
+    ```
+    Enumerate every direct caller of sigil's `ct_eq` and
+    `ct_eq_32` across all repos. Each is a downstream
+    migration target.
+  - [ ] **Vendored-copy enumeration**:
+    ```sh
+    find /home/macro/Repos -name sigil.cyr -path "*/lib/*"
+    ```
+    Each consumer with a frozen `lib/sigil.cyr` is a future
+    bump cost — the sigil change ripples when they bump.
+  - [ ] **Sigil's own surface audit**: every file under
+    `sigil/{src,programs,tests,fuzz}/` that includes
+    `src/ct.cyr` or calls `ct_eq` / `ct_eq_32`. Use
+    `grep -rln "ct_eq\b\|ct_eq_32\b\|src/ct\.cyr"
+    /home/macro/Repos/sigil/`.
+  - [ ] **CI version pin survey**: `sigil/.github/workflows/`
+    + every consumer's CI workflow files. Bump
+    `CYRIUS_VERSION` everywhere the lifted symbol is needed.
+
+  **Path A — preserve sigil public surface (recommended)**:
+  Add `ct_eq_bytes_lens(a, a_len, b, b_len)` to
+  cyrius `lib/ct.cyr` as additive stdlib (sigil 3.0.x can
+  optionally adopt it, no rush). Sigil's `src/ct.cyr` stays
+  intact. Sigil's `fn ct_eq` and `fn ct_eq_32` remain public.
+  Downstream untouched. NOT a coordination slot at all —
+  just a tiny additive stdlib slot in cyrius. This is the
+  simplest, least-risky path.
+
+  **Path B — sigil compat shim, minor sigil bump**:
+  Cyrius adds `ct_eq_bytes_lens` to `lib/ct.cyr`. Sigil's
+  `src/ct.cyr` rewrites the two fns as ~6-line shims:
+  `fn ct_eq(a, al, b, bl) { return ct_eq_bytes_lens(a, al, b, bl); }`
+  `fn ct_eq_32(a, b) { return ct_eq_bytes(a, b, 32); }`
+  Sigil bumps to 3.1.0 (minor — surface preserved).
+  Downstream sees identical API. No major bump because
+  the public symbol set is unchanged. Sigil's CI pin
+  bumps to the cyrius version that has `ct_eq_bytes_lens`.
+  All 17 sigil test/fuzz files keep their includes.
+
+  **Path C — major sigil bump with deprecation cycle**:
+  Sigil 4.0.0 removes `ct_eq` and `ct_eq_32` after a
+  3.x deprecation cycle that prints `# DEPRECATED` warnings
+  on `cyrius lint` of consumer code. Each downstream
+  consumer (kavach, hoosh, libro, majra) gets its own
+  paired migration slot to update calls + bump sigil pin.
+  Most thorough; most work; only worth it if the
+  deduplication value exceeds the migration cost. NOT
+  the right call for ct_eq alone — the duplication is one
+  fn body, ~10 lines.
+
+  **Decision tree**:
+  - If the goal is "agnosys 1.1.2 unblocked" → already done at
+    v5.9.18 (`ct_eq_bytes` is in stdlib). No further work
+    needed. Skip the consolidation entirely.
+  - If the goal is "deduplicate the canonical XOR-accumulate"
+    → Path A (additive `ct_eq_bytes_lens`, no sigil work,
+    accept minor duplication for surface stability).
+  - If the goal is "sigil source uses upstream stdlib helpers"
+    → Path B (compat shim; sigil sources call
+    `ct_eq_bytes_lens` internally; public symbols preserved).
+  - **Never** Path-A-with-sigil-deletion. That is literally
+    what broke 2026-05-06.
+
+  **At slot entry, the agent MUST**:
+  1. Read this entire block + the
+     `feedback_stdlib_dep_discipline.md`,
+     `feedback_no_unauthorized_version_bumps.md`,
+     `feedback_roadmap_entries_are_self_instructions.md`
+     memory pins.
+  2. Run the four pre-condition checklist greps. Paste the
+     results into the slot's working notes.
+  3. Confirm with user which Path (A / B / C) before any
+     edit. The Path choice is the user's call, not the
+     agent's.
+  4. Treat any sigil edit as primary work, not a side
+     effect of cyrius work. Any commit touching
+     `sigil/dist/sigil.cyr`, `sigil/src/`, or sigil's
+     `cyrius.cyml` is a sigil release commit; it gets
+     sigil-CHANGELOG narrative, sigil VERSION discussion
+     (with the user), and sigil semver analysis.
+
+  **Recovery from 2026-05-06 broken state**: sigil 3.0.2
+  was pushed with the broken delete-and-migrate. Working
+  trees as of incident:
+  - `/home/macro/Repos/cyrius/` v5.9.20 changes uncommitted
+    (lib/ct.cyr +`ct_eq_bytes_lens`, lib/sigil.cyr refolded,
+    api-surface 2766 → 2765, tests/tcyr/ct.tcyr extended).
+  - `/home/macro/Repos/sigil/` 3.0.2 pushed (commit
+    `dcba6de "src/ct.cyr removed"`). Hotfix-attempt commits
+    on top: `6de999b "fixing work to release"` — added
+    CI version bump + tcyr/bcyr/fcyr include drops + bare
+    `ct_eq` migrations. Plus uncommitted working-tree edits
+    to `programs/smoke.cyr` + `tests/bcyr/sigil.bcyr`
+    migrating `ct_eq_32` → `ct_eq_bytes`.
+  - The recovery decision is the user's. Most likely
+    Path A or B per the decision tree above.
+
+- **v5.9.19+ / next** — `cyrius audit` fix slot (once user
+  picks semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
   redundancy cleanup (per v5.9.6 pin) + **`lib/regression.cyr`
   testing-stdlib carve-out** (pinned at v5.9.7 ship per user
   ask) + release-valve + closeout per CLAUDE.md 11-step

@@ -6,6 +6,93 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.20] — 2026-05-06
+
+**v5.9.x SLOT 20 — sigil-paired `ct_eq` consolidation**. The
+deferred half of v5.9.18's agnosys-filing fix lands here. Cyrius
+adds the dual-length companion to v5.9.18's `ct_eq_bytes`; sigil
+3.0.2 ships paired (separate release; user-handled) retiring
+sigil's hand-rolled `ct_eq` + `ct_eq_32`.
+
+cc5: **741,048 B unchanged** — pure stdlib add (`lib/ct.cyr`
++1 fn). `lib/sigil.cyr` refolded from sigil 3.0.2's rebuilt
+`dist/sigil.cyr`. api-surface snapshot: 2766 → 2765 (+1 cyrius
+`ct::ct_eq_bytes_lens/4`, -2 sigil `ct_eq*` exports retired).
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Pre-slot survey of sigil's `src/*.cyr` showed:
+- 5 real `ct_eq` call sites across 4 files (integrity, aes_gcm,
+  ed25519, verify).
+- `ct_eq_32` had **zero** internal callers in sigil source —
+  pure dead code shipped as a "convenience" wrapper. Dropped
+  entirely from cyrius scope (no point lifting an unused fn);
+  any future 32-byte fixed compare uses
+  `ct_eq_bytes(a, b, 32)` directly.
+- agnosys's `certpin_ct_streq` (cstring variant) is its own
+  shape — not in scope here, stays downstream.
+
+Naming locked at `ct_eq_bytes_lens(a, a_len, b, b_len)` per
+v5.9.18's promise. The `_lens` suffix flags the dual-length
+variant; bare `ct_eq` would re-introduce the scalar-vs-buffer
+ambiguity agnosys's filing called out.
+
+### Added
+
+- **`lib/ct.cyr` — `ct_eq_bytes_lens(a, a_len, b, b_len)`**:
+  branchless dual-length byte-array equality. Returns 0 on
+  length mismatch (length is NOT secret per caller contract),
+  then runs `ct_eq_bytes(a, b, a_len)` over the equal-length
+  common prefix. Use this when call-site lengths can validly
+  differ (cstring compares with `strlen`); use the existing
+  `ct_eq_bytes(a, b, n)` when lengths are equal-by-construction
+  (fixed-size MAC tags, signatures).
+- **`tests/tcyr/ct.tcyr`**: 22 → 22 stays the same count (new
+  `ct_eq_bytes_lens` group adds 6 assertions; rebalanced).
+
+### Changed
+
+- **`lib/sigil.cyr`** (vendored): refolded from sigil 3.0.2's
+  `dist/sigil.cyr`. The bundle no longer contains `fn ct_eq`
+  / `fn ct_eq_32`; the 5 internal call sites now route through
+  `ct_eq_bytes_lens` (cyrius's lib/ct.cyr is `include`'d earlier
+  in sigil's `src/lib.cyr`, so the upstream symbol is in scope).
+- **`docs/api-surface.snapshot`**: 2766 → 2765 entries.
+  +1 `ct::ct_eq_bytes_lens/4`. -2 `sigil::ct_eq/4` +
+  `sigil::ct_eq_32/2` (retired in sigil 3.0.2).
+- **vidya `content/cyrius/language/features.cyml` —
+  `secret_var_compound_ops` entry**: stdlib helper section
+  refreshed to name `ct_eq_bytes_lens` alongside `ct_eq_bytes`,
+  removes the "stays downstream" caveat about sigil's
+  hand-rolled wrappers (now retired).
+
+### Sigil 3.0.2 (paired downstream release; user-handled)
+
+- Bumps `cyrius` pin 5.8.64 → 5.9.20.
+- Deletes `src/ct.cyr` entirely (zero unique fns left after
+  migration).
+- Drops `src/ct.cyr` from `cyrius.cyml [lib].modules` and
+  `src/lib.cyr`'s include list.
+- Migrates 5 call sites from `ct_eq(...)` to
+  `ct_eq_bytes_lens(...)` — `src/integrity.cyr` (×2),
+  `src/aes_gcm.cyr`, `src/ed25519.cyr`, `src/verify.cyr`.
+- `cyrius distlib` rebuild produces `dist/sigil.cyr` clean
+  (no `ct_eq` symbol).
+- Verified locally against cyrius v5.9.20 — sigil's tcyr suite:
+  aes_gcm 15/15, ed25519 20/20, verify 48/48 (all the suites
+  that touch the migrated paths).
+- See `sigil/CHANGELOG.md` 3.0.2 entry for the full sigil-side
+  narrative.
+
+### Cascaded to v5.9.21+
+
+- `cyrius audit` semantics review (still pending user input).
+- Remaining cyrius-CLI gates (install-shim-symlink,
+  cyrfmt-write, syscall-surface-v5735, sit-status, macho-exit,
+  pe-exit).
+- Small-utilities batch.
+- `lib/regression.cyr` testing-stdlib carve-out.
+
 ## [5.9.19] — 2026-05-06
 
 **v5.9.x SLOT 19 — cyrius CLI scratch-dir batch: fuzz-deps-prepend
