@@ -4938,6 +4938,399 @@ fn _api_surface_gate() {
     return fail;
 }
 
+# Helper: mkdir -p semantics. Creates parent dirs if needed; tolerates
+# already-existing dirs. Used by gates that synthesize multi-level scratch
+# layouts (e.g. case2 of deps-transitive needs A/dist + B/dist + C/dist
+# + D/dist under the same scratch root).
+fn _mkdir_p(path) {
+    var plen = strlen(path);
+    var buf = alloc(plen + 1);
+    var i = 0;
+    while (i < plen) { store8(buf + i, load8(path + i)); i = i + 1; }
+    store8(buf + plen, 0);
+    var pos = 1;
+    while (pos <= plen) {
+        if (pos == plen) {
+            sys_mkdir(buf, 493);
+        } else { if (load8(buf + pos) == 47) {
+                store8(buf + pos, 0);
+                sys_mkdir(buf, 493);
+                store8(buf + pos, 47);
+            } }
+        pos = pos + 1;
+    }
+    return 0;
+}
+
+# Bespoke gate: `cyrius fuzz` runs the manifest-deps auto-prepend
+# codepath (parity with cmd_test / cmd_bench / cmd_build). Pinned
+# v5.7.21. Two cases:
+#   1. cyrius.cyml [deps] stdlib + fuzz/X.fcyr uses strlen → cyrius
+#      fuzz exits 0 + stdout summarizes "1 passed, 0 failed".
+#   2. No cyrius.cyml at all + fuzz/X.fcyr uses syscalls only →
+#      cyrius fuzz exits 0 (no auto-prepend; no breakage).
+fn _fuzz_deps_prepend_gate() {
+    var label = "cyrius fuzz manifest-deps auto-prepend parity with test/bench (v5.7.21)";
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var fail = 0;
+
+    # Case 1: manifest declares stdlib deps; .fcyr uses strlen.
+    var sc1 = _tmp_path("audit_fuzz_deps1_");
+    _mkdir_p(sc1);
+    var sb_fuzz_dir1 = str_builder_new();
+    str_builder_add_cstr(sb_fuzz_dir1, sc1);
+    str_builder_add_cstr(sb_fuzz_dir1, "/fuzz");
+    var fuzz_dir1 = str_data(str_builder_build(sb_fuzz_dir1));
+    sys_mkdir(fuzz_dir1, 493);
+    var sb_cyml1 = str_builder_new();
+    str_builder_add_cstr(sb_cyml1, sc1);
+    str_builder_add_cstr(sb_cyml1, "/cyrius.cyml");
+    _write_file(str_data(str_builder_build(sb_cyml1)),
+        "[package]\nname = \"fz1\"\nversion = \"0.1.0\"\nlicense = \"GPL-3.0-only\"\nlanguage = \"cyrius\"\n\n[deps]\nstdlib = [\"string\", \"syscalls\"]\n");
+    var sb_fcyr1 = str_builder_new();
+    str_builder_add_cstr(sb_fcyr1, fuzz_dir1);
+    str_builder_add_cstr(sb_fcyr1, "/uses_stdlib.fcyr");
+    _write_file(str_data(str_builder_build(sb_fcyr1)),
+        "fn fuzz_main(data, n) {\n    if (n == 0) { return 0; }\n    if (strlen(\"hello\") != 5) { return 1; }\n    return 0;\n}\nfn main() {\n    if (fuzz_main(\"dummy\", 5) != 0) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n");
+    var out1 = _tmp_path("audit_fuzz_out1_");
+    var ec1 = _exec_in_dir(sc1, cyrius_bin, "fuzz", out1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case1 cyrius fuzz exited ");
+        print_num(ec1);
+        println(" (auto-prepend not working)");
+        fail = fail + 1;
+    } else { if (_file_contains_substr(out1, "1 passed, 0 failed") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 fuzz ran but did not summarize '1 passed, 0 failed'");
+            fail = fail + 1;
+        } }
+    sys_unlink(out1);
+
+    # Case 2: no manifest; .fcyr self-contained.
+    var sc2 = _tmp_path("audit_fuzz_deps2_");
+    _mkdir_p(sc2);
+    var sb_fuzz_dir2 = str_builder_new();
+    str_builder_add_cstr(sb_fuzz_dir2, sc2);
+    str_builder_add_cstr(sb_fuzz_dir2, "/fuzz");
+    var fuzz_dir2 = str_data(str_builder_build(sb_fuzz_dir2));
+    sys_mkdir(fuzz_dir2, 493);
+    var sb_fcyr2 = str_builder_new();
+    str_builder_add_cstr(sb_fcyr2, fuzz_dir2);
+    str_builder_add_cstr(sb_fcyr2, "/standalone.fcyr");
+    _write_file(str_data(str_builder_build(sb_fcyr2)),
+        "fn fuzz_main(data, n) {\n    if (n == 0) { return 0; }\n    return 0;\n}\nfn main() {\n    if (fuzz_main(\"x\", 1) != 0) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n");
+    var out2 = _tmp_path("audit_fuzz_out2_");
+    var ec2 = _exec_in_dir(sc2, cyrius_bin, "fuzz", out2);
+    if (ec2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case2 cyrius fuzz exited ");
+        print_num(ec2);
+        println(" (no-manifest path broken)");
+        fail = fail + 1;
+    }
+    sys_unlink(out2);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius fuzz auto-prepend parity (2/2 cases)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Bespoke gate: `cyrius deps` walks [deps.X] sections transitively,
+# dedupes diamonds, breaks cycles. Pinned v5.7.14. Four cases:
+#   1. 3-level chain A→B→C → A's lib/ has B.cyr + C.cyr.
+#   2. Diamond A→{B,C}→D → A's lib/ contains D.cyr exactly once;
+#      stdout reports "3 deps resolved".
+#   3. Cycle A→B→A → must terminate cleanly (exit 0); pre-v5.7.14
+#      this would infinite-loop and tripe a `timeout` kill.
+#   4. Transitive `path = "..."` resolved against the transitive
+#      dep's directory (relative-path resolution semantic).
+fn _deps_transitive_gate() {
+    var label = "cyrius deps walks [deps.X] transitively (3-level + diamond + cycle + rel-path; v5.7.14)";
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var fail = 0;
+
+    # ── Case 1: 3-level chain A→B→C ──
+    var sc1 = _tmp_path("audit_deps_chain_");
+    var dirs1[7];
+    store64(&dirs1,      sc1);
+    var p1 = str_builder_new();
+    str_builder_add_cstr(p1, sc1);
+    str_builder_add_cstr(p1, "/A");
+    var a1 = str_data(str_builder_build(p1));
+    var p1b = str_builder_new();
+    str_builder_add_cstr(p1b, sc1);
+    str_builder_add_cstr(p1b, "/B/dist");
+    var b1d = str_data(str_builder_build(p1b));
+    var p1c = str_builder_new();
+    str_builder_add_cstr(p1c, sc1);
+    str_builder_add_cstr(p1c, "/C/dist");
+    var c1d = str_data(str_builder_build(p1c));
+    _mkdir_p(a1);
+    _mkdir_p(b1d);
+    _mkdir_p(c1d);
+
+    var sbBcyr = str_builder_new();
+    str_builder_add_cstr(sbBcyr, sc1);
+    str_builder_add_cstr(sbBcyr, "/B/dist/B.cyr");
+    _write_file(str_data(str_builder_build(sbBcyr)), "# B\n");
+    var sbCcyr = str_builder_new();
+    str_builder_add_cstr(sbCcyr, sc1);
+    str_builder_add_cstr(sbCcyr, "/C/dist/C.cyr");
+    _write_file(str_data(str_builder_build(sbCcyr)), "# C\n");
+
+    var sbCyml_C = str_builder_new();
+    str_builder_add_cstr(sbCyml_C, sc1);
+    str_builder_add_cstr(sbCyml_C, "/C/cyrius.cyml");
+    _write_file(str_data(str_builder_build(sbCyml_C)),
+        "[package]\nname = \"C\"\n[lib]\nmodules = [\"dist/C.cyr\"]\n");
+
+    var sbCyml_B = str_builder_new();
+    str_builder_add_cstr(sbCyml_B, sc1);
+    str_builder_add_cstr(sbCyml_B, "/B/cyrius.cyml");
+    var sbCB = str_builder_new();
+    str_builder_add_cstr(sbCB, "[package]\nname = \"B\"\n[deps.C]\npath = \"");
+    str_builder_add_cstr(sbCB, sc1);
+    str_builder_add_cstr(sbCB, "/C\"\nmodules = [\"dist/C.cyr\"]\n");
+    _write_file(str_data(str_builder_build(sbCyml_B)),
+        str_data(str_builder_build(sbCB)));
+
+    var sbCyml_A = str_builder_new();
+    str_builder_add_cstr(sbCyml_A, sc1);
+    str_builder_add_cstr(sbCyml_A, "/A/cyrius.cyml");
+    var sbCA = str_builder_new();
+    str_builder_add_cstr(sbCA, "[package]\nname = \"A\"\n[deps.B]\npath = \"");
+    str_builder_add_cstr(sbCA, sc1);
+    str_builder_add_cstr(sbCA, "/B\"\nmodules = [\"dist/B.cyr\"]\n");
+    _write_file(str_data(str_builder_build(sbCyml_A)),
+        str_data(str_builder_build(sbCA)));
+
+    var out1 = _tmp_path("audit_deps_chain_out_");
+    var ec1 = _exec_in_dir(a1, cyrius_bin, "deps", out1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case1 (3-level chain) cyrius deps exited ");
+        print_num(ec1);
+        println("");
+        fail = fail + 1;
+    } else {
+        # Both B.cyr and C.cyr should appear under A/lib/
+        var sbAB = str_builder_new();
+        str_builder_add_cstr(sbAB, a1);
+        str_builder_add_cstr(sbAB, "/lib/B.cyr");
+        var sbAC = str_builder_new();
+        str_builder_add_cstr(sbAC, a1);
+        str_builder_add_cstr(sbAC, "/lib/C.cyr");
+        if (file_exists(str_data(str_builder_build(sbAB))) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 — A/lib/B.cyr missing");
+            fail = fail + 1;
+        }
+        if (file_exists(str_data(str_builder_build(sbAC))) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 — A/lib/C.cyr missing (transitive not resolved)");
+            fail = fail + 1;
+        }
+    }
+    sys_unlink(out1);
+
+    # ── Case 2: diamond A→{B,C}→D, dedup ──
+    var sc2 = _tmp_path("audit_deps_diam_");
+    var p2a = str_builder_new();
+    str_builder_add_cstr(p2a, sc2);
+    str_builder_add_cstr(p2a, "/A");
+    var a2 = str_data(str_builder_build(p2a));
+    _mkdir_p(a2);
+    var p2bd = str_builder_new();
+    str_builder_add_cstr(p2bd, sc2);
+    str_builder_add_cstr(p2bd, "/B/dist");
+    _mkdir_p(str_data(str_builder_build(p2bd)));
+    var p2cd = str_builder_new();
+    str_builder_add_cstr(p2cd, sc2);
+    str_builder_add_cstr(p2cd, "/C/dist");
+    _mkdir_p(str_data(str_builder_build(p2cd)));
+    var p2dd = str_builder_new();
+    str_builder_add_cstr(p2dd, sc2);
+    str_builder_add_cstr(p2dd, "/D/dist");
+    _mkdir_p(str_data(str_builder_build(p2dd)));
+
+    var pBcyr = str_builder_new();
+    str_builder_add_cstr(pBcyr, sc2);
+    str_builder_add_cstr(pBcyr, "/B/dist/B.cyr");
+    _write_file(str_data(str_builder_build(pBcyr)), "# B\n");
+    var pCcyr = str_builder_new();
+    str_builder_add_cstr(pCcyr, sc2);
+    str_builder_add_cstr(pCcyr, "/C/dist/C.cyr");
+    _write_file(str_data(str_builder_build(pCcyr)), "# C\n");
+    var pDcyr = str_builder_new();
+    str_builder_add_cstr(pDcyr, sc2);
+    str_builder_add_cstr(pDcyr, "/D/dist/D.cyr");
+    _write_file(str_data(str_builder_build(pDcyr)), "# D\n");
+
+    var pDyml = str_builder_new();
+    str_builder_add_cstr(pDyml, sc2);
+    str_builder_add_cstr(pDyml, "/D/cyrius.cyml");
+    _write_file(str_data(str_builder_build(pDyml)),
+        "[package]\nname = \"D\"\n[lib]\nmodules = [\"dist/D.cyr\"]\n");
+
+    var pByml = str_builder_new();
+    str_builder_add_cstr(pByml, sc2);
+    str_builder_add_cstr(pByml, "/B/cyrius.cyml");
+    var pByml_body = str_builder_new();
+    str_builder_add_cstr(pByml_body, "[package]\nname = \"B\"\n[deps.D]\npath = \"");
+    str_builder_add_cstr(pByml_body, sc2);
+    str_builder_add_cstr(pByml_body, "/D\"\nmodules = [\"dist/D.cyr\"]\n");
+    _write_file(str_data(str_builder_build(pByml)),
+        str_data(str_builder_build(pByml_body)));
+
+    var pCyml = str_builder_new();
+    str_builder_add_cstr(pCyml, sc2);
+    str_builder_add_cstr(pCyml, "/C/cyrius.cyml");
+    var pCyml_body = str_builder_new();
+    str_builder_add_cstr(pCyml_body, "[package]\nname = \"C\"\n[deps.D]\npath = \"");
+    str_builder_add_cstr(pCyml_body, sc2);
+    str_builder_add_cstr(pCyml_body, "/D\"\nmodules = [\"dist/D.cyr\"]\n");
+    _write_file(str_data(str_builder_build(pCyml)),
+        str_data(str_builder_build(pCyml_body)));
+
+    var pAyml = str_builder_new();
+    str_builder_add_cstr(pAyml, sc2);
+    str_builder_add_cstr(pAyml, "/A/cyrius.cyml");
+    var pAyml_body = str_builder_new();
+    str_builder_add_cstr(pAyml_body, "[package]\nname = \"A\"\n[deps.B]\npath = \"");
+    str_builder_add_cstr(pAyml_body, sc2);
+    str_builder_add_cstr(pAyml_body, "/B\"\nmodules = [\"dist/B.cyr\"]\n[deps.C]\npath = \"");
+    str_builder_add_cstr(pAyml_body, sc2);
+    str_builder_add_cstr(pAyml_body, "/C\"\nmodules = [\"dist/C.cyr\"]\n");
+    _write_file(str_data(str_builder_build(pAyml)),
+        str_data(str_builder_build(pAyml_body)));
+
+    var out2 = _tmp_path("audit_deps_diam_out_");
+    var ec2 = _exec_in_dir(a2, cyrius_bin, "deps", out2);
+    if (ec2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case2 (diamond) cyrius deps exited ");
+        print_num(ec2);
+        println("");
+        fail = fail + 1;
+    } else { if (_file_contains_substr(out2, "3 deps resolved") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case2 (diamond) — '3 deps resolved' not in stdout (D not dedup'd?)");
+            fail = fail + 1;
+        } }
+    sys_unlink(out2);
+
+    # ── Case 3: cycle A→B→A — must terminate, exit 0 ──
+    var sc3 = _tmp_path("audit_deps_cyc_");
+    var p3a = str_builder_new();
+    str_builder_add_cstr(p3a, sc3);
+    str_builder_add_cstr(p3a, "/A/dist");
+    _mkdir_p(str_data(str_builder_build(p3a)));
+    var p3b = str_builder_new();
+    str_builder_add_cstr(p3b, sc3);
+    str_builder_add_cstr(p3b, "/B/dist");
+    _mkdir_p(str_data(str_builder_build(p3b)));
+
+    var p3Acyr = str_builder_new();
+    str_builder_add_cstr(p3Acyr, sc3);
+    str_builder_add_cstr(p3Acyr, "/A/dist/A.cyr");
+    _write_file(str_data(str_builder_build(p3Acyr)), "# A\n");
+    var p3Bcyr = str_builder_new();
+    str_builder_add_cstr(p3Bcyr, sc3);
+    str_builder_add_cstr(p3Bcyr, "/B/dist/B.cyr");
+    _write_file(str_data(str_builder_build(p3Bcyr)), "# B\n");
+
+    var p3Ayml = str_builder_new();
+    str_builder_add_cstr(p3Ayml, sc3);
+    str_builder_add_cstr(p3Ayml, "/A/cyrius.cyml");
+    var p3A_body = str_builder_new();
+    str_builder_add_cstr(p3A_body, "[package]\nname = \"A\"\n[deps.B]\npath = \"");
+    str_builder_add_cstr(p3A_body, sc3);
+    str_builder_add_cstr(p3A_body, "/B\"\nmodules = [\"dist/B.cyr\"]\n");
+    _write_file(str_data(str_builder_build(p3Ayml)),
+        str_data(str_builder_build(p3A_body)));
+
+    var p3Byml = str_builder_new();
+    str_builder_add_cstr(p3Byml, sc3);
+    str_builder_add_cstr(p3Byml, "/B/cyrius.cyml");
+    var p3B_body = str_builder_new();
+    str_builder_add_cstr(p3B_body, "[package]\nname = \"B\"\n[deps.A]\npath = \"");
+    str_builder_add_cstr(p3B_body, sc3);
+    str_builder_add_cstr(p3B_body, "/A\"\nmodules = [\"dist/A.cyr\"]\n");
+    _write_file(str_data(str_builder_build(p3Byml)),
+        str_data(str_builder_build(p3B_body)));
+
+    var sb3a = str_builder_new();
+    str_builder_add_cstr(sb3a, sc3);
+    str_builder_add_cstr(sb3a, "/A");
+    var a3 = str_data(str_builder_build(sb3a));
+    var out3 = _tmp_path("audit_deps_cyc_out_");
+    var ec3 = _exec_in_dir(a3, cyrius_bin, "deps", out3);
+    if (ec3 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case3 (cycle) — expected exit 0, got ");
+        print_num(ec3);
+        println(" (likely infinite-loop pre-v5.7.14)");
+        fail = fail + 1;
+    }
+    sys_unlink(out3);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius deps transitive walk + dedup + cycle-break (3/3 cases; v5.7.14)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # ── Main dispatch ──
 # ROOT = absolute path to repo root. Resolved via getcwd; the shim
 # in scripts/check.sh sets cwd to repo root before exec'ing.
@@ -5081,7 +5474,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("cyrius deps transitive");
-    _gate("cyrius deps walks [deps.X] transitively (3-level + diamond + cycle + rel-path; v5.7.14)", "tests/regression-deps-transitive.sh");
+    _deps_transitive_gate();
     println("");
 
     _section("cyrius init --lib/--bin");
@@ -5105,7 +5498,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("cyrius fuzz auto-prepend");
-    _gate("cyrius fuzz manifest-deps auto-prepend parity with test/bench (v5.7.21)", "tests/regression-fuzz-deps-prepend.sh");
+    _fuzz_deps_prepend_gate();
     println("");
 
     _section("cyrfmt comment/string brace skip");

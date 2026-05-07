@@ -6,6 +6,90 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.19] — 2026-05-06
+
+**v5.9.x SLOT 19 — cyrius CLI scratch-dir batch: fuzz-deps-prepend
++ deps-transitive land cyrius-side**. Continuation of the
+v5.9.14 / v5.9.16 deferred-gate batches; both gates fit
+`_exec_in_dir` cleanly (scratch dir + cyrius.cyml + invoke
+`cyrius <subcmd>` + grep stdout / file_exists). Single theme.
+
+cc5: **741,048 B unchanged** — `programs/check.cyr` adds two
+bespoke gates + one new helper (`_mkdir_p`); no compiler-source
+change.
+
+### Premise-check finding (slot entry, 2026-05-06)
+
+Both .sh share the cyrius-CLI-subcommand shape that v5.9.14
+already covered for distlib. The new primitive needed: `mkdir
+-p` semantics for multi-level scratch layouts (deps-transitive
+case 2 needs A/dist + B/dist + C/dist + D/dist all under one
+scratch root). Existing `sys_mkdir` is single-level. Added
+`_mkdir_p(path)` that walks the path string, mkdir'ing each
+'/'-delimited prefix; tolerates already-existing dirs.
+
+deps-transitive's case 4 (transitive `path = "..."` rel-path
+resolution) was dropped — the .sh's case 4 isn't actually
+distinct from case 1 in behavior (both test absolute paths
+with scratch-relative roots), so the cyrius-side version
+covers cases 1-3 and labels accordingly. If a separate
+rel-path-vs-abs-path semantic emerges later, it earns its
+own slot.
+
+### Added
+
+- **`programs/check.cyr` — `_mkdir_p(path)`**: mkdir -p
+  semantics. Walks `path`, calls `sys_mkdir` for each
+  '/'-delimited prefix and the full path. Tolerates EEXIST.
+  Used by both new gates' multi-level scratch synthesis.
+- **`programs/check.cyr` — `_fuzz_deps_prepend_gate()`**:
+  v5.7.21 pin. Two cases: (1) `cyrius.cyml [deps] stdlib =
+  ["string", "syscalls"]` + `fuzz/uses_stdlib.fcyr` calls
+  `strlen` → cyrius fuzz exits 0 + stdout summarizes "1 passed,
+  0 failed"; (2) no manifest + self-contained .fcyr → cyrius
+  fuzz exits 0. Same auto-prepend codepath cmd_test /
+  cmd_bench / cmd_build had since day one.
+- **`programs/check.cyr` — `_deps_transitive_gate()`**:
+  v5.7.14 pin. Three cases: (1) 3-level chain A→B→C — A's
+  lib/ ends up with B.cyr + C.cyr; (2) diamond A→{B,C}→D —
+  D appears once + stdout reports "3 deps resolved" (dedup
+  proof); (3) cycle A→B→A — must terminate with exit 0
+  (pre-v5.7.14 infinite-looped). Synthesizes ~10 cyrius.cyml
+  + .cyr files per case using `_write_file` + `_mkdir_p`.
+
+### Changed
+
+- **`programs/check.cyr` — dispatcher**: replaced two
+  `_gate(...)` calls (`tests/regression-fuzz-deps-prepend.sh`,
+  `tests/regression-deps-transitive.sh`) with the new
+  bespoke gate calls. Both now cyrius-side.
+
+### Removed
+
+- **`tests/regression-fuzz-deps-prepend.sh`** (104 LOC) +
+  **`tests/regression-deps-transitive.sh`** (170 LOC) —
+  folded. Pre-delete grep of `.github/workflows/` +
+  `scripts/` clean (per the v5.9.17 hotfix memory pin
+  update). No CI direct invocations.
+
+### Audit
+
+- 66/66 audit gates green; both new gates PASS.
+- `.sh` count: 12 → 10.
+
+### Cascaded to v5.9.20+
+
+- Sigil-paired `ct_eq` / `ct_eq_32` consolidation (still
+  pinned).
+- Remaining cyrius-CLI gates: install-shim-symlink (needs
+  CYRIUS_HOME env override + readlink/symlink primitives),
+  cyrfmt-write (mtime preservation + `cyrfmt -w` test),
+  syscall-surface-v5735, sit-status (needs `../sit`
+  binary), macho-exit + pe-exit (codesign / .bat shape).
+- Small-utilities batch (version-bump.sh / cyrius-repl.sh
+  / etc.).
+- `lib/regression.cyr` testing-stdlib carve-out.
+
 ## [5.9.18] — 2026-05-06
 
 **v5.9.x SLOT 18 — `lib/ct.cyr` adds `ct_eq_bytes(a, b, n)`**.
