@@ -870,6 +870,65 @@ the previously unpinned/long-term sections:
   from v5.8.53 install-pipeline slot): likely benign lint,
   confirm or fix during a v5.9.x patch cycle.
 
+- **`match` exhaustiveness check fires inconsistently across
+  fn names** (agnosys 1.1.5 filing 2026-05-06):
+  `agnosys/docs/development/issues/2026-05-06-cyrius-match-coverage-fn-name-dependent.md`.
+  **Severity: MEDIUM** — the documented `non-exhaustive match`
+  warning (vidya `language/features.cyml exhaustive_match_v58x`)
+  fires for some fn identifiers but not others against the same
+  enum + same arm body + same call-graph reachability. Roughly
+  even split across a 27-name sweep; pattern is **not**
+  length-based, **not** stdlib-overlap-based, **not**
+  character-class-based — most likely a hash-table collision in
+  the coverage check's internal bookkeeping. Reproduced under
+  v5.9.20 + v5.9.21.
+
+  **Self-contained reproducer**:
+  `/tmp/cyrius-match-coverage-dce-gated/sweep.sh` — runs ~27 fn-
+  name variations, expected `1` on every row, observed mixed
+  `0`s and `1`s. Lucky-bucket names (`n`, `x`, `f`, `g`, `hi`,
+  `map_to`, `dispatch_e1`, `enum_to_str`, `load_x`, `x_y`)
+  trigger the warning; unlucky-bucket names (`name`, `named`,
+  `func`, `hello`, `world`, `abc`, `check`, `describe`,
+  `handle`, `process`) silently bypass it.
+
+  **Why this matters**: agnosys 1.1.5 added a CI gate
+  (`scripts/audit.sh` step 4) that fails the build on any
+  `non-exhaustive` warning. The gate is correct as written —
+  but its effective coverage of agnosys's source surface
+  depends on which fn names happen to be in cyrius's "lucky"
+  hash buckets. Library authors writing match blocks cannot
+  trust the check to enforce coverage on every fn they write.
+  Structural hole in the quality-gate story, not an acute
+  correctness bug.
+
+  **Suggested upstream investigation** (per agnosys filing):
+  internal-table indexing bug in the coverage pass. The check's
+  bookkeeping (per vidya `tagged_unions_v58x`:
+  `var_enum_id[8192]`, `enum_count[8]`, `enum_variant_count[1024]`,
+  `enum_name[1024]`) is keyed on something that interacts with
+  fn-name hashing. Likely first probe: log which arm idents the
+  check *sees* for each row of the sweep — if some fn-name
+  buckets cause arm idents to never register against the matched
+  enum, the `at least one arm references a variant of an enum`
+  short-circuit fires too eagerly and skips coverage analysis.
+  Acceptance: every row of `sweep.sh` produces `1`.
+
+  **Side observation (separate, low-priority)**: `cyrius
+  --version` emits a stray `\xb3` byte before the newline in the
+  agnosys reporter's environment under v5.9.21
+  (`cyrius 5.9.21\xb3\n`). Locally NOT reproduced under v5.9.22
+  (`cyrius --version | xxd` shows clean `0a` terminator) — so
+  either fixed silently between v5.9.21 and v5.9.22 or
+  environment-state-dependent (likely a stale `~/.cyrius/current`
+  with a non-newline trailing byte that `read_file_str`'s
+  trim — chars 10/13/32 only — doesn't strip). Worth a
+  defensive read_file_str hardening if the reproducer's
+  environment can be inspected: extend the trim to drop any
+  byte ≥ 0x80 trailing the version string. Held until the
+  reporter's `~/.cyrius/current` xxd is available — fixing
+  blind risks masking a different upstream cause.
+
 ### v5.9.x — Held forward (no slot consumed; surfaces-on-ask)
 
 These remain unpinned long-term; promote to slot when a consumer
