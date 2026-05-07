@@ -1001,15 +1001,86 @@ satisfied by earlier slots.
     Linux/macOS/Windows-PowerShell) so cass actually
     registers as reachable.
 
-- **v5.9.33** — **tls-live gate conversion + network-probe
+- **v5.9.33** — **`#derive(Serialize)` aarch64 narrow break for
+  struct names used as fn params earlier in source** (agnosys
+  1.1.12 follow-up; pinned 2026-05-07 mid-v5.9.32). MEDIUM
+  severity continuation of the v5.9.30/31 derive-Serialize fix
+  arc. v5.9.30 fixed the typed-i64 codegen path; v5.9.31 fixed
+  the API rename (`_to_json_sb` → `_to_json` to match vidya's
+  documented 2-arg shape + dropped the foot-gun 1-arg
+  wrapper); this slot closes the remaining narrow aarch64 case.
+
+  **Reproducer**:
+  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
+  (verbatim, no edits). Build via `cat repro.cyr |
+  build/cc5_aarch64`. Acceptance: cross-build succeeds + run
+  on pi prints `[{"x":1,"y":42,"z":7}]`.
+
+  **Failure shape (verified 2026-05-07 against v5.9.32)**:
+  `error:2396: expected '{', got unknown` at line ~2396 of
+  the post-PP expanded source. Line 2396 is `fn
+  WIFSIGNALED(status) { ... }` from
+  `lib/syscalls_aarch64_linux.cyr` — a syscall-arc fn that
+  uses the literal `status` as its param name. The user's
+  source includes `lib/syscalls.cyr` (transitively pulling in
+  WIFEXITED / WEXITSTATUS / WIFSIGNALED / WTERMSIG, all with
+  `status` params) AND declares `#derive(Serialize) struct
+  status { ... }` later. x86 build of the same source
+  succeeds.
+
+  **Trigger condition narrowed** (bisected):
+  - `fn WIFEXITED(status) { ... }` BEFORE `#derive struct
+    status { ... }` → FAILS on aarch64
+  - `#derive struct status { ... }` BEFORE `fn
+    WIFEXITED(status) { ... }` → OK
+  - Same source content, just rearranged. So the bug is
+    interaction between pass-1 struct registration of `status`
+    and pass-2 re-parse of an earlier `fn ...(status) { ... }`
+    with `status` as the param name.
+
+  **Root cause hypothesis** (not yet pinned to a line):
+  pass 1 (PARSE_STRUCT_DEF) registers `status` in
+  `struct_names[]` at `S+0x18E630`. Pass 2 re-tokenizes +
+  re-parses fn bodies in source order. When pass 2 hits `fn
+  WIFEXITED(status) { ... }` at expanded-source line ~533,
+  the param-parse loop tokenizes `status` — but the token
+  type emitted is OUTSIDE the standard set
+  (`TOKNAME(typ)` returns `"unknown"`, per
+  `src/common/util.cyr:289`). Parser then expects `{` (fn body
+  open), sees the unknown-type token, errors. Specific to
+  aarch64 because the x86 backend's lex-pp interaction
+  apparently doesn't trip the same path — possibly a
+  type-ID slot or a derive-table side effect that x86's
+  parse-pass-2 doesn't consult.
+
+  **Investigation status (2026-05-07)**:
+  - Confirmed verbatim repro fails after `cyrius pulsar`
+    rebuild of cc5_aarch64.
+  - PP_PARSE_STRUCT_DEF correctly extracts `"status"` into
+    `S+0x197020` (raw bytes verified `s t a t u s \0`).
+  - Pass-2 re-tokenization of the affected fn header
+    (`fn WIFEXITED(status)`) is where the unknown-type token
+    appears — exact tokenizer/parser interaction not
+    pinpointed.
+  - Instrumentation attempts triggered self-induced SIGILL
+    on both x86 + aarch64 cc5 builds (formatter arithmetic
+    `48 + (n / 100)` had a separate codegen interaction
+    worth its own bug report — not the agnosys filing's
+    bug).
+
+  **Out of scope** (tracked separately): the `48 + (n /
+  100)` formatter SIGILL surfaced during instrumentation —
+  pin if it surfaces in a real consumer.
+
+- **v5.9.34** — **tls-live gate conversion + network-probe
   helper**. `_network_probe_check(host, port)` — quick TCP
   connect+disconnect to verify network reachability before
   the TLS round-trip; skip cleanly if unreachable (CI runner
   contexts vary). `_tls_live_gate()` retires the `.sh`. With
   this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.35.
+  — precondition for v5.9.36.
 
-- **v5.9.34** — **cx (cyrius-x bytecode) Phase 2c parity**.
+- **v5.9.35** — **cx (cyrius-x bytecode) Phase 2c parity**.
   Closes the two `ERR_MSG`-guarded cx pending sites that
   v5.9.26 + v5.9.27 narrowed but didn't fix:
   - `parse_fn.cyr:371` — struct return by value
@@ -1047,10 +1118,10 @@ satisfied by earlier slots.
   byte-memory-ops shape this slot is centered on. Pin them
   individually if a cx consumer surfaces.
 
-- **v5.9.35** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.33 (arc
+- **v5.9.36** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.34 (arc
   closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.33 dispatcher work
+  accumulated through the v5.9.6 → v5.9.34 dispatcher work
   (`_stderr_match_subcase`, `_count_substr_buf`,
   `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
@@ -1067,7 +1138,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.36** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.37** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup
