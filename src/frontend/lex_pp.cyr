@@ -524,7 +524,14 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
         store8(out + op, 58); op = op + 1;
         op = op + PP_EMIT_STR(out, op, "\");\n");
         if (load8(S + 0x197260 + fi * 32) != 0) {
-            # Check if type is Str — emit as quoted JSON string
+            # Type-aware emission. Three branches:
+            #   Str         → quoted JSON string literal
+            #   i8/16/32/64 → bare JSON number via str_builder_add_int
+            #                 + width-correct load (v5.9.30; agnosys
+            #                 1.1.12 filing — pre-fix this branch
+            #                 emitted `<type>_to_json_sb(...)` which
+            #                 doesn't exist for primitives → SIGILL).
+            #   other       → nested struct (recursive _to_json_sb)
             var is_str = 0;
             if (load8(S + 0x197260 + fi * 32) == 83) {
                 if (load8(S + 0x197260 + fi * 32 + 1) == 116) {
@@ -535,6 +542,32 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                     }
                 }
             }
+            # v5.9.30: detect primitive integer types by name match.
+            # Field-type entries are 32-byte cstring slots; first byte
+            # = 'i' (0x69) flags the family.
+            var prim_load = 0;          # 0 = not primitive; 8/16/32/64 = width
+            if (load8(S + 0x197260 + fi * 32) == 105) {
+                # i8\0
+                if (load8(S + 0x197260 + fi * 32 + 1) == 56) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 0) { prim_load = 8; }
+                }
+                # i16\0
+                if (load8(S + 0x197260 + fi * 32 + 1) == 49) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 54) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 16; }
+                    }
+                    # i32\0
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 50) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 32; }
+                    }
+                }
+                # i64\0
+                if (load8(S + 0x197260 + fi * 32 + 1) == 54) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 52) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 64; }
+                    }
+                }
+            }
             if (is_str == 1) {
                 # Str field: emit as "value"
                 op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"\\\"\""); op = op + PP_EMIT_STR(out, op, ");\n");
@@ -542,13 +575,24 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ")));\n");
                 op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"\\\"\""); op = op + PP_EMIT_STR(out, op, ");\n");
+            } else { if (prim_load > 0) {
+                # Primitive integer field: bare JSON number via
+                # str_builder_add_int + width-correct load. Mirrors
+                # the untyped-scalar branch below (which uses load64
+                # for raw 8-byte slots) but width-aware for narrow
+                # types.
+                op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load");
+                op = op + PP_EMIT_INT(out, op, prim_load);
+                op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, "));\n");
             } else {
                 # Nested struct: use composable 2-arg form
                 op = op + PP_EMIT_STR(out, op, S + 0x197260 + fi * 32);
                 op = op + PP_EMIT_STR(out, op, "_to_json_sb(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ", sb);\n");
-            }
+            } }
         } else {
             # Scalar field: emit as bare integer (valid JSON number)
             op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load64(ptr + ");

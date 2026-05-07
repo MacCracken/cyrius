@@ -4707,6 +4707,116 @@ fn _match_coverage_dce_gate() {
     return fail;
 }
 
+# Bespoke gate (v5.9.30; agnosys 1.1.12 filing): #derive(Serialize)
+# emits a working serializer for i64 typed fields. Compiles a
+# minimal probe that defines `struct point { x: i64; y: i64; z: i64; }`
+# under `#derive(Serialize)`, builds + runs, asserts stdout starts
+# with the expected JSON byte sequence (`{"x":11,"y":22,"z":33}`).
+# Pre-fix the typed-field codegen path emitted
+# `<type>_to_json_sb(...)` for any non-Str type — `i64_to_json_sb`
+# isn't a real fn → SIGILL at runtime. Post-fix the codegen detects
+# i8/i16/i32/i64 type names and emits the inline
+# `str_builder_add_int(sb, load_W(...))` shape (mirrors the
+# untyped-scalar branch).
+fn _derive_serialize_primitive_gate() {
+    var label = "#derive(Serialize) emits working JSON for i64-typed struct fields (v5.9.30; agnosys 1.1.12)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "include \"lib/string.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/fmt.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/vec.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/str.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/syscalls.cyr\"\n");
+    str_builder_add_cstr(sb, "#derive(Serialize)\n");
+    str_builder_add_cstr(sb, "struct point { x: i64; y: i64; z: i64; }\n");
+    str_builder_add_cstr(sb, "fn main() {\n");
+    str_builder_add_cstr(sb, "    alloc_init();\n");
+    str_builder_add_cstr(sb, "    var p = point { 11, 22, 33 };\n");
+    str_builder_add_cstr(sb, "    var sb = str_builder_new();\n");
+    str_builder_add_cstr(sb, "    point_to_json_sb(&p, sb);\n");
+    str_builder_add_cstr(sb, "    var out = str_builder_build(sb);\n");
+    str_builder_add_cstr(sb, "    sys_write(1, str_data(out), str_len(out));\n");
+    str_builder_add_cstr(sb, "    return 0;\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "var ec = main(); syscall(60, ec);\n");
+
+    var src_path = _tmp_path("audit_derive_ser_src_");
+    if (_write_file(src_path, str_data(str_builder_build(sb))) <= 0) {
+        sys_unlink(src_path);
+        _check(label, 1);
+        return 1;
+    }
+
+    var bin = _tmp_path("audit_derive_ser_bin_");
+    var rc = _self_host_pipe(src_path, CC_PATH, bin);
+    sys_unlink(src_path);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5 compile rc=");
+        print_num(rc);
+        println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin, 493);
+
+    var cap = 256;
+    var out_buf = alloc(cap);
+    var n = _exec_capture_clean(bin, out_buf, cap);
+    sys_unlink(bin);
+
+    var expected = "{\"x\":11,\"y\":22,\"z\":33}";
+    var elen = strlen(expected);
+    if (n < elen) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": output ");
+        print_num(n);
+        _p(" bytes < expected ");
+        print_num(elen);
+        println(" bytes (pre-v5.9.30 emitted empty body or SIGILL?)");
+        _check(label, 1);
+        return 1;
+    }
+    var i = 0;
+    while (i < elen) {
+        if (load8(out_buf + i) != load8(expected + i)) {
+            _p("  ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": output mismatch at byte ");
+            print_num(i);
+            println("");
+            _check(label, 1);
+            return 1;
+        }
+        i = i + 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    println(": point_to_json_sb emits {\"x\":11,\"y\":22,\"z\":33} for #derive(Serialize)");
+    _check(label, 0);
+    return 0;
+}
+
 # Returns 1 if the two files have identical content, 0 otherwise.
 # cmp -s equivalent.
 fn _files_identical(path_a, path_b) {
@@ -6814,6 +6924,10 @@ fn _run_regression_gates() {
 
     _section("match coverage check (DCE-dead fn determinism; v5.9.24)");
     _match_coverage_dce_gate();
+    println("");
+
+    _section("#derive(Serialize) primitive-field codegen (v5.9.30; agnosys 1.1.12)");
+    _derive_serialize_primitive_gate();
     println("");
 
     _section("cyrius deps transitive");
