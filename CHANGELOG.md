@@ -6,6 +6,113 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.24] — 2026-05-07
+
+**v5.9.x SLOT 24 — `match` exhaustiveness check fires
+deterministically across fn names** (agnosys 1.1.5 filing
+2026-05-06; full diagnostic at
+`agnosys/docs/development/issues/2026-05-06-cyrius-match-coverage-fn-name-dependent.md`).
+MEDIUM severity quality-gate fix. Pre-fix the documented
+`non-exhaustive match` warning fired non-deterministically based
+on fn name; the agnosys-supplied 27-name sweep showed roughly
+half the rows triggering the check and half silently bypassing
+it. Library authors couldn't trust their match-block coverage
+gates to enforce coverage on every fn they wrote.
+
+cc5: **741,048 → 742,816 B** (+1,768 / +0.24%) — the body-scan
+look-ahead at the DCE-decision site is the only emit growth.
+api-surface unchanged. check.sh: **66 → 67 gates** (new
+`_match_coverage_dce_gate` regression-floors the fix).
+
+### Root cause
+
+The DCE bitmap (`pass-2 `dce_bm` at `S+0x1DA000`) keys on
+`tok_names` byte-offset (`noff`); each ident's bit is set if
+the name appears in any token NOT preceded by `fn`. For user
+`fn n(x)`, stdlib's `lib/string.cyr` happens to use `n` as a
+local variable name (e.g. `var n: i64 = 0` in `strlen` and
+adjacent fns), so the `n` noff bit is set → DCE marks user's
+`fn n` reachable → PARSE_FN_DEF runs → match warning fires.
+For user `fn name(x)`, no stdlib code uses an identifier
+spelled `name`, so its bitmap bit stays 0 → DCE-stub path
+fires → PARSE_FN_DEF skipped → match warning NEVER reaches the
+emit path. The "lucky" / "unlucky" pattern in the agnosys sweep
+is just whether the user's fn name happens to collide with a
+stdlib local-variable name.
+
+The deeper bug is conceptual: **semantic checks (warnings /
+errors) should not be gated on codegen-DCE**. DCE is a codegen
+optimization (don't emit code for dead fns); diagnostics are a
+parse-time concern (always run). Conflating the two means
+warnings flip on/off based on noff-bitmap aliasing — visible
+behavior tied to invisible internal indexing.
+
+### Fix
+
+`src/main.cyr` DCE-decision site: when `dce_reachable == 0`,
+peek-scan ahead through the about-to-be-skipped fn body
+looking for token 75 (`match`). If any match keyword is
+present, force `dce_reachable = 1` so PARSE_FN_DEF runs the
+coverage check. Brace-depth tracking matches the existing
+inline-asm pre-scan shape (line 762-787 of `parse_fn.cyr`);
+TI is restored to the entry position before dispatch so the
+real PARSE_FN_DEF / DCE-stub paths see the same token stream
+they would have. Targeted at `match` rather than
+all-checks-always-run because:
+
+1. The agnosys-filing acceptance is "every row of `sweep.sh`
+   produces 1" — match-only is sufficient.
+2. Re-enabling parse for ALL DCE-dead fns (including stdlib
+   internals never called from main) would re-emit ~22 KB of
+   bodies on a typical self-host. Targeted look-ahead
+   preserves the optimization.
+3. Other PARSE-time diagnostics that might similarly skip
+   (e.g., `#must_use` mismatch) can earn their own targeted
+   look-ahead in follow-up slots if a consumer surfaces.
+
+### Added
+
+- **`programs/check.cyr` — `_match_coverage_dce_gate()`**: 4
+  representative dead-fn probes from the agnosys sweep
+  (`name`, `func`, `describe`, `handle` — all originally in
+  the "unlucky" bucket). Each compiles a minimal source with
+  `enum E { A1; B1; C1; }` + `fn <name>(x) { match x { A1 =>
+  ... B1 => ... } return 0; }` + `fn main() { return 0; }`,
+  captures cc5 stderr via `_compile_capture_stderr`, asserts
+  the `non-exhaustive match over enum` substring is present.
+  Catches any future regression of the v5.9.24 fix.
+
+### Changed
+
+- **`src/main.cyr` DCE-decision site (line ~989-1009)**: the
+  pre-skip body peek-scan described above. ~30 lines added.
+  Token-skip arithmetic mirrors the existing inline-asm
+  look-ahead in `parse_fn.cyr`.
+
+### Verified
+
+- 67/67 check.sh gates green.
+- Two-step self-host byte-identical (cc5 → cc5b → cc5c).
+- Full 27-name sweep against `/tmp/cuyrius-match-coverage-dce-gated/sweep.sh`:
+  every row produces `1` (was: roughly half `0`s pre-fix).
+- aarch64 cross-test on pi: `_aarch64_native_selfhost_gate`
+  PASS (proves the body-scan look-ahead doesn't break native
+  self-host on the at-family-syscalls arch).
+
+### Cascaded to v5.9.25+
+
+- v5.9.25 — aarch64/fixup.cyr:19 + tcyr-relay redundancy
+  cleanup batch.
+- v5.9.26 — Phase 2b-aarch64 struct copy.
+- v5.9.27/28 — cyrius-init.sh + cyrius-port.sh sovereignty
+  port (multi-slot).
+- v5.9.29 — init-doctree + init-lib-bin gates (unblocked by
+  v5.9.27/28).
+- v5.9.30 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.31 — tls-live + network-probe helper.
+- v5.9.32 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.33 — closeout pass before v5.10.0.
+
 ## [5.9.23] — 2026-05-07
 
 **v5.9.x SLOT 23 — install-shim-symlink gate conversion + env-var

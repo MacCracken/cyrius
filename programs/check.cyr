@@ -4420,6 +4420,78 @@ fn _string_escape_rejects_gate() {
     return fail;
 }
 
+# Bespoke gate (v5.9.24; agnosys 1.1.5 filing): exhaustive-match
+# coverage warning fires deterministically across fn names, even
+# for DCE-dead fns. Pre-fix the warning fired only when the fn
+# name's noff bitmap-bucket happened to collide with a stdlib
+# identifier reference (e.g. `lib/string.cyr fn strlen` uses `n`
+# as a local — bitmap[n_noff]=1 → user `fn n` reachable; user
+# `fn name` not in stdlib → bitmap[name_noff]=0 → DCE-dead → body
+# parse skipped → no warning). Probes 4 representative names from
+# the agnosys sweep that previously fell into the "unlucky"
+# bucket; each must emit `non-exhaustive` to its stderr.
+fn _match_coverage_dce_gate() {
+    var label = "match exhaustiveness check fires for DCE-dead fns regardless of fn name (v5.9.24; agnosys 1.1.5)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+    var probe_names_buf[64];
+    store64(&probe_names_buf,        "name");
+    store64(&probe_names_buf + 8,    "func");
+    store64(&probe_names_buf + 16,   "describe");
+    store64(&probe_names_buf + 24,   "handle");
+
+    var i = 0;
+    while (i < 4) {
+        var fn_nm = load64(&probe_names_buf + i * 8);
+
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "include \"lib/string.cyr\"\n");
+        str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
+        str_builder_add_cstr(sb, "include \"lib/syscalls.cyr\"\n");
+        str_builder_add_cstr(sb, "enum E { A1 = 1; B1 = 2; C1 = 3; }\n");
+        str_builder_add_cstr(sb, "fn ");
+        str_builder_add_cstr(sb, fn_nm);
+        str_builder_add_cstr(sb, "(x) { match x { A1 => { return 1; } B1 => { return 2; } } return 0; }\n");
+        str_builder_add_cstr(sb, "fn main() { return 0; }\nvar ec = main(); syscall(60, ec);\n");
+
+        var src_path = _tmp_path("audit_match_dce_src_");
+        var err_path = _tmp_path("audit_match_dce_err_");
+        _write_file(src_path, str_data(str_builder_build(sb)));
+
+        _compile_capture_stderr(src_path, CC_PATH, err_path);
+        if (_file_contains_substr(err_path, "non-exhaustive match over enum") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": fn '");
+            _p(fn_nm);
+            println("' did not emit 'non-exhaustive match' diagnostic");
+            fail = fail + 1;
+        }
+        sys_unlink(src_path);
+        sys_unlink(err_path);
+        i = i + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": warning fires for 4/4 dead fns (name / func / describe / handle)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Returns 1 if the two files have identical content, 0 otherwise.
 # cmp -s equivalent.
 fn _files_identical(path_a, path_b) {
@@ -6530,6 +6602,10 @@ fn _run_regression_gates() {
 
     _section("String-escape rejects");
     _string_escape_rejects_gate();
+    println("");
+
+    _section("match coverage check (DCE-dead fn determinism; v5.9.24)");
+    _match_coverage_dce_gate();
     println("");
 
     _section("cyrius deps transitive");

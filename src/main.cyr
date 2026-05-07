@@ -986,6 +986,53 @@ while (topgo == 1) {
                                                     }
                                                 }
                                             } }
+                                        # v5.9.24 (agnosys 1.1.5 filing): semantic checks
+                                        # emitted during body parse (e.g. `match` exhaustiveness
+                                        # warning at PARSE_MATCH:488) must NOT be gated on
+                                        # DCE-reachability. The DCE bitmap is keyed on noff
+                                        # presence in the token stream; stdlib's `lib/string.cyr`
+                                        # uses `n` as a local variable name, so user `fn n(x)`
+                                        # collides into the "reachable" bucket while user
+                                        # `fn name(x)` (no stdlib reference) lands in the
+                                        # "unreachable" bucket — the warning fires
+                                        # non-deterministically across fn names. Fix: peek
+                                        # ahead through the body for token 75 (match); if any
+                                        # match block is present, force dce_reachable=1 so
+                                        # PARSE_FN_DEF runs the coverage check. Token-skip
+                                        # bookkeeping is restored before dispatch.
+                                        if (dce_reachable == 0) {
+                                            var _mp_save_ti = GTI(S);
+                                            STI(S, GTI(S) + 1);  # past `fn`
+                                            STI(S, GTI(S) + 1);  # past name
+                                            if (PEEKT(S) == 19) {
+                                                while (PEEKT(S) != 20) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); }
+                                                if (PEEKT(S) == 20) { STI(S, GTI(S) + 1); }
+                                            }
+                                            if (PEEKT(S) == 10) {
+                                                STI(S, GTI(S) + 1);
+                                                var _mp_pd = 1;
+                                                while (_mp_pd > 0 && PEEKT(S) != 12) {
+                                                    if (PEEKT(S) == 10) { _mp_pd = _mp_pd + 1; }
+                                                    elif (PEEKT(S) == 11) { _mp_pd = _mp_pd - 1; }
+                                                    STI(S, GTI(S) + 1);
+                                                }
+                                            }
+                                            if (PEEKT(S) == 49) {
+                                                STI(S, GTI(S) + 1);
+                                                if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
+                                            }
+                                            if (PEEKT(S) == 13) {
+                                                STI(S, GTI(S) + 1);
+                                                var _mp_bd = 1;
+                                                while (_mp_bd > 0 && PEEKT(S) != 12) {
+                                                    if (PEEKT(S) == 13) { _mp_bd = _mp_bd + 1; }
+                                                    elif (PEEKT(S) == 14) { _mp_bd = _mp_bd - 1; }
+                                                    elif (PEEKT(S) == 75) { dce_reachable = 1; }
+                                                    STI(S, GTI(S) + 1);
+                                                }
+                                            }
+                                            STI(S, _mp_save_ti);
+                                        }
                                         if (dce_reachable == 1) {
                                             PARSE_FN_DEF(S);
                                         } else {
