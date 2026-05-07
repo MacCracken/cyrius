@@ -52,6 +52,8 @@ enum SysNr {
     SYS_FSTAT = 80;         # bare fstat exists; takes fd
     SYS_MKDIRAT = 34;       # → sys_mkdir (AT_FDCWD)
     SYS_UNLINKAT = 35;      # → sys_rmdir (AT_REMOVEDIR) and sys_unlink
+    SYS_SYMLINKAT = 36;     # → sys_symlink (AT_FDCWD)
+    SYS_READLINKAT = 78;    # → sys_readlink (AT_FDCWD)
     SYS_FCHMODAT = 53;      # → sys_chmod (AT_FDCWD)
     SYS_FACCESSAT = 48;     # → sys_access (AT_FDCWD)
     SYS_PIPE2 = 59;         # → sys_pipe (flags=0)
@@ -375,6 +377,22 @@ fn sys_rmdir(path) {
 # Translates to unlinkat(AT_FDCWD, path, 0).
 fn sys_unlink(path) {
     return syscall(SYS_UNLINKAT, AT_FDCWD, path, 0);
+}
+
+# Create a symbolic link at `linkpath` pointing to `target`.
+# Translates to symlinkat(target, AT_FDCWD, linkpath).
+# Returns 0 on success, negative errno on failure.
+fn sys_symlink(target, linkpath) {
+    return syscall(SYS_SYMLINKAT, target, AT_FDCWD, linkpath);
+}
+
+# Read the target of a symbolic link into `buf` (cap `bufsize`).
+# Translates to readlinkat(AT_FDCWD, path, buf, bufsize).
+# Returns the number of bytes placed in buf (no null terminator),
+# or negative errno on failure. Buf is NOT null-terminated by the
+# kernel — caller must store0 if used as a cstring.
+fn sys_readlink(path, buf, bufsize) {
+    return syscall(SYS_READLINKAT, AT_FDCWD, path, buf, bufsize);
 }
 
 # Change file permissions.

@@ -45,6 +45,8 @@ enum SysNr {
     SYS_MKDIR = 83;
     SYS_RMDIR = 84;
     SYS_UNLINK = 87;
+    SYS_SYMLINK = 88;
+    SYS_READLINK = 89;
     SYS_CHMOD = 90;
     SYS_GETUID = 102;
     SYS_GETGID = 104;
@@ -335,6 +337,20 @@ fn sys_rmdir(path) {
 # Delete a file.
 fn sys_unlink(path) {
     return syscall(SYS_UNLINK, path);
+}
+
+# Create a symbolic link at `linkpath` pointing to `target`.
+# Returns 0 on success, negative errno on failure.
+fn sys_symlink(target, linkpath) {
+    return syscall(SYS_SYMLINK, target, linkpath);
+}
+
+# Read the target of a symbolic link into `buf` (cap `bufsize`).
+# Returns the number of bytes placed in buf (no null terminator),
+# or negative errno on failure. Buf is NOT null-terminated by the
+# kernel — caller must store0 if used as a cstring.
+fn sys_readlink(path, buf, bufsize) {
+    return syscall(SYS_READLINK, path, buf, bufsize);
 }
 
 # Change file permissions.

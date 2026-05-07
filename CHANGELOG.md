@@ -6,6 +6,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.23] — 2026-05-07
+
+**v5.9.x SLOT 23 — install-shim-symlink gate conversion + env-var
+exec helper + cross-arch sys_symlink/sys_readlink stdlib adds**.
+First slot of the v5.9.x wrapup pin sequence (committed
+2026-05-07). Last cyrius-CLI conversion not blocked on cross-host
+SSH or scaffolder ports.
+
+cc5: **741,048 B unchanged** — stdlib syscall-wrapper adds and
+dispatcher-only changes don't touch compiler emit. api-surface:
+**2,765 → 2,769** (+4: `sys_symlink/2` + `sys_readlink/3` per
+arch — same fn names cross-arch, distinct enum-constant
+backings). 6 → 5 `tests/regression-*.sh` remaining.
+
+### Added
+
+- **`lib/syscalls_x86_64_linux.cyr` + `lib/syscalls_aarch64_linux.cyr`**
+  (cross-arch propagation, mandatory per memory pin):
+  - `sys_symlink(target, linkpath)` — direct on x86_64
+    (`SYS_SYMLINK = 88`); routed through `symlinkat(target,
+    AT_FDCWD, linkpath)` on aarch64 (`SYS_SYMLINKAT = 36`).
+    Returns 0 on success, negative errno on failure.
+  - `sys_readlink(path, buf, bufsize)` — direct on x86_64
+    (`SYS_READLINK = 89`); routed through `readlinkat(AT_FDCWD,
+    path, buf, bufsize)` on aarch64 (`SYS_READLINKAT = 78`).
+    Returns bytes placed in buf (no null terminator), negative
+    errno on failure. Caller stores 0 if used as cstring.
+  - Verified on pi via cross-arch probe — symlink → readlink
+    round-trip exit=0 against `/tmp/symlink_probe_target`.
+
+- **`programs/check.cyr`**:
+  - `_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3,
+    env_extras_vec, out_path)` — augmented-envp sibling of
+    `_exec_in_dir3`. Builds child's envp = parent's `ENVP_ARR`
+    + entries from `env_extras_vec` (each a `"KEY=VALUE"`
+    cstring). Used for `CYRIUS_HOME=fake` injection without
+    polluting the dispatcher's own env.
+  - `_install_shim_symlink_gate()` — builds two fake "version"
+    snapshots under a TMPDIR-isolated CYRIUS_HOME (real `~/.cyrius`
+    untouched), points the bin/lib symlinks at the OLD version
+    via `sys_symlink`, runs `install.sh --refresh-only` via
+    `_exec_in_dir3_env` with `CYRIUS_HOME=fake`, asserts the
+    symlinks repoint at the current `$VERSION`'s snapshot via
+    `sys_readlink` + `streq` against the expected paths. Bin
+    + lib both verified.
+
+### Removed
+
+- **`tests/regression-install-shim-symlink.sh`** (90 LOC).
+  Not referenced by `.github/workflows/ci.yml` (CI didn't have
+  a granular step for this regression — it relied on a
+  `scripts/check.sh` aggregate, which still runs the new
+  dispatcher gate).
+
+### Verified
+
+- 66/66 check.sh gates green (count unchanged — dispatcher
+  conversion preserves gate count).
+- Two-step self-host byte-identical (cc5 → cc5b).
+- api-surface snapshot regenerated 2,765 → 2,769; matches.
+- aarch64 cross-test on pi: `_aarch64_native_selfhost_gate`
+  PASS (proves symlink/readlink wrappers don't break native
+  self-host). Plus explicit symlink → readlink round-trip
+  probe on pi: exit=0 — confirms aarch64 routing through
+  symlinkat/readlinkat with AT_FDCWD.
+
+### Cascaded to v5.9.24+
+
+- **v5.9.24** — `match` exhaustiveness check fn-name-dependent
+  fix (agnosys 1.1.5 filing).
+- v5.9.25 — aarch64/fixup.cyr:19 + tcyr-relay redundancy
+  cleanup batch.
+- v5.9.26 — Phase 2b-aarch64 struct copy.
+- v5.9.27/28 — cyrius-init.sh + cyrius-port.sh sovereignty
+  port (multi-slot).
+- v5.9.29 — init-doctree + init-lib-bin gates.
+- v5.9.30 — SSH helper infra + macho-exit + pe-exit.
+- v5.9.31 — tls-live + network-probe helper.
+- v5.9.32 — lib/regression.cyr testing-stdlib carve-out.
+- v5.9.33 — closeout pass before v5.10.0.
+
 ## [5.9.22] — 2026-05-06
 
 **v5.9.x SLOT 22 — capacity gate sovereignty conversion + CI inline

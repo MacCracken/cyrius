@@ -2439,6 +2439,7 @@ syscalls_aarch64_linux::sys_open/3
 syscalls_aarch64_linux::sys_pause/0
 syscalls_aarch64_linux::sys_pipe/1
 syscalls_aarch64_linux::sys_read/3
+syscalls_aarch64_linux::sys_readlink/3
 syscalls_aarch64_linux::sys_reboot/1
 syscalls_aarch64_linux::sys_rmdir/1
 syscalls_aarch64_linux::sys_setgid/1
@@ -2448,6 +2449,7 @@ syscalls_aarch64_linux::sys_setuid/1
 syscalls_aarch64_linux::sys_signalfd/3
 syscalls_aarch64_linux::sys_sigprocmask/3
 syscalls_aarch64_linux::sys_stat/2
+syscalls_aarch64_linux::sys_symlink/2
 syscalls_aarch64_linux::sys_sync/0
 syscalls_aarch64_linux::sys_timerfd_create/2
 syscalls_aarch64_linux::sys_timerfd_settime/4
@@ -2508,6 +2510,7 @@ syscalls_x86_64_linux::sys_open/3
 syscalls_x86_64_linux::sys_pause/0
 syscalls_x86_64_linux::sys_pipe/1
 syscalls_x86_64_linux::sys_read/3
+syscalls_x86_64_linux::sys_readlink/3
 syscalls_x86_64_linux::sys_reboot/1
 syscalls_x86_64_linux::sys_rmdir/1
 syscalls_x86_64_linux::sys_setgid/1
@@ -2517,6 +2520,7 @@ syscalls_x86_64_linux::sys_setuid/1
 syscalls_x86_64_linux::sys_signalfd/3
 syscalls_x86_64_linux::sys_sigprocmask/3
 syscalls_x86_64_linux::sys_stat/2
+syscalls_x86_64_linux::sys_symlink/2
 syscalls_x86_64_linux::sys_sync/0
 syscalls_x86_64_linux::sys_timerfd_create/2
 syscalls_x86_64_linux::sys_timerfd_settime/4

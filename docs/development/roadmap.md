@@ -787,37 +787,152 @@ at cycle entry):
   - The recovery decision is the user's. Most likely
     Path A or B per the decision tree above.
 
-- **v5.9.19+ / next** — `cyrius audit` fix slot (once user
-  picks semantics per v5.9.4 pin) + tcyr-relay-vs-testsuite-gate
-  redundancy cleanup (per v5.9.6 pin) + **`lib/regression.cyr`
-  testing-stdlib carve-out** (pinned at v5.9.7 ship per user
-  ask) + release-valve + closeout per CLAUDE.md 11-step
-  protocol.
+### v5.9.x wrapup pin sequence (committed 2026-05-07)
 
-  **Testing-stdlib carve-out (pinned, design TBD)**: the v5.9.6
-  + v5.9.7 + v5.9.8 dispatcher gates accumulated a layer of
-  reusable primitives (`_stderr_match_subcase`,
-  `_count_substr_buf`, `_exec_with_arg_capture` + `_capture_both`,
+Concrete slot assignments for everything remaining in v5.9.x.
+Replaces the prior open-ended "v5.9.19+ / next" placeholder.
+Order is dependency-respecting: each slot's preconditions are
+satisfied by earlier slots.
+
+- **v5.9.23** — **install-shim-symlink gate conversion +
+  env-var-passing exec helper**. Last cyrius-CLI conversion not
+  blocked on cross-host SSH or scaffolder ports.
+  - New helper `_exec_in_dir3_env(work_dir, bin_path, arg1,
+    arg2, arg3, env_extras_vec, out_path)` — extends
+    `_exec_in_dir3` with a vec of `"KEY=VALUE"` strings appended
+    to `ENVP_ARR`. Needed for `CYRIUS_HOME=fake` invocation of
+    `install.sh --refresh-only` against a TMPDIR-isolated fake
+    versions tree.
+  - `_install_shim_symlink_gate()` — builds two fake version
+    snapshots, runs install.sh --refresh-only, asserts
+    `~/.cyrius/bin` + `~/.cyrius/lib` symlinks repoint at the
+    current `$VERSION`'s snapshot.
+  - Delete `tests/regression-install-shim-symlink.sh`. CI step
+    inlined per the v5.9.22 capacity template.
+
+- **v5.9.24** — **`match` exhaustiveness check fn-name-dependent
+  fix** (agnosys 1.1.5 filing 2026-05-06; full diagnostic in
+  *§Other pin candidates*). Hash-collision in the coverage
+  pass's internal bookkeeping. Investigation plan per the
+  filing: log which arm idents the check sees per fn-name in
+  the 27-name sweep; locate the bucket short-circuit that
+  skips coverage analysis. Acceptance: every row of
+  `/tmp/cyrius-match-coverage-dce-gated/sweep.sh` produces `1`.
+  MEDIUM severity — agnosys 1.1.5 audit gate effectiveness
+  depends on this firing reliably; library-author quality-gate
+  story compromised today.
+
+- **v5.9.25** — **two-item cleanup batch**:
+  (a) `aarch64/fixup.cyr:19` syscall arity warning
+  confirm-or-fix (deferred from v5.8.53 install-pipeline slot;
+  likely benign lint, ~30-line slot once the offending arity
+  table site is read).
+  (b) `tcyr-relay-vs-testsuite-gate` redundancy cleanup (per
+  v5.9.6 pin — three v5.9.6 gates ended up double-covering the
+  same compile-tcyr-and-grep-`0 failed` shape; collapse the
+  redundant pair).
+
+- **v5.9.26** — **Phase 2b-aarch64 struct copy** (LDRB/STRB
+  loop). x86 path shipped v5.5.36; aarch64 path pending.
+  Single-platform unblock for cross-arch struct-by-value
+  parity. Earns slot now because v5.9.x's mid-cycle SSH-pi
+  green re-confirms aarch64 path is the only remaining gap.
+
+- **v5.9.27** — **`scripts/cyrius-init.sh` sovereignty port,
+  part 1 of 2** (was originally pinned to v5.9.14 but the slot
+  got repurposed for the release-tarball gap fix). 1,021 LOC
+  bash → cyrius. Part 1 scope:
+  - Core init flow + `--lib` / `--bin` / bare shape detection.
+  - Heredoc templates (17 in original .sh) externalized to
+    `programs/cyrius-init-templates/{lib,bin,bare}/` data
+    files; cyrius source consumes via `read_file_str` walks.
+  - New `programs/cyrius-init.cyr` entry; `cyriusly` shim and
+    `cbt/cyrius.cyr` dispatcher updated to invoke it.
+
+- **v5.9.28** — **`scripts/cyrius-init.sh` part 2 + `cyrius-port.sh`
+  port**.
+  - Part 2: flag matrix completion — `--language=none|rust`,
+    `--agent`, `--cmtools`, `--description=`, `--dry-run`.
+  - `cyrius-port.sh` (646 LOC) port — Rust→cyrius migration
+    tool. Same template-externalization shape; landed in the
+    same slot since it shares the cyrius-init.sh helper layer.
+
+- **v5.9.29** — **init-doctree + init-lib-bin gate conversions**
+  (unblocked by v5.9.27/28 ports). Both `tests/regression-init-*.sh`
+  retired into dispatcher gates that exercise the now-cyrius
+  `cyrius init` paths. Helper reuse off the v5.9.27/28 testing
+  scaffold expected.
+
+- **v5.9.30** — **SSH helper infra batch + macho-exit + pe-exit
+  gate conversions**.
+  - `_exec_remote_with_env(target, env_pairs_vec, command)` —
+    extends `_ssh_remote_exit` to set env vars on the remote
+    side (needed for `CYRIUS_MACHO_ARM=1` on cass + Windows
+    `PATH`/`USERPROFILE` on ecb).
+  - `_codesign_remote(target, path)` — runs `codesign -s -`
+    on cass post-scp for ad-hoc signing of Mach-O test
+    binaries.
+  - `_remote_bat_run(target, bat_path)` — `cmd /c <bat>`
+    invocation + stdout capture for ecb pe-exit fixtures.
+  - `_macho_exit_gate()` + `_pe_exit_gate()` retire the two
+    `.sh` files. Cross-host green confirms via cass + ecb
+    SSH.
+
+- **v5.9.31** — **tls-live gate conversion + network-probe
+  helper**. `_network_probe_check(host, port)` — quick TCP
+  connect+disconnect to verify network reachability before
+  the TLS round-trip; skip cleanly if unreachable (CI runner
+  contexts vary). `_tls_live_gate()` retires the `.sh`. With
+  this slot the `.sh-conversion arc closes (0 .sh remaining)
+  — precondition for v5.9.32.
+
+- **v5.9.32** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.31 (arc
+  closed). ~200-300 LOC migration of the reusable primitives
+  accumulated through the v5.9.6 → v5.9.31 dispatcher work
+  (`_stderr_match_subcase`, `_count_substr_buf`,
+  `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
   `_ts_mode_run`, `_cyrlint_count_marker`,
   `_compile_capture_stderr`, `_exec_capture_clean`,
   `_exec_run_clean`, `_expected_output_gate`, `_tcyr_relay_gate`,
-  `_pipe_file_to_bin` + `_capture`, `_ssh_skip_check`, `_scp_to`,
-  `_ssh_remote_exit`, `_ssh_target`) that other consumers —
-  yantra, downstream test suites in cyim / agnosys / mabda,
-  future test runners — could profitably share. Carve them up
-  into `lib/regression.cyr` so the dispatcher's bespoke gates
-  become thin wrappers and downstream consumers can reach for
-  the same shapes via a regular `include "lib/regression.cyr"`.
-  ~200-300 LOC migration (helper count grew through v5.9.8);
-  stdlib module count 78 → 79; api-surface adds ~18-22 entries.
-  Tradeoff: new public surface to maintain vs. the dispatcher
-  becoming a single-purpose orchestrator that stops growing
-  primitives. Slot earns when v5.9.x .sh-conversion arc closes
-  out and the helper inventory has stabilized — do not carve
-  mid-arc, the API will keep churning until the dispatcher has
-  its full helper set. Now positioned at v5.9.19+ after the
-  v5.9.18 `ct_eq_bytes` insert (agnosys 1.1.2 filing).
+  `_pipe_file_to_bin` + `_capture`, `_ssh_skip_check`,
+  `_scp_to`, `_ssh_remote_exit`, `_ssh_target`,
+  `_exec_in_dir3`, `_exec_in_dir3_env`, `_exec_remote_with_env`,
+  `_codesign_remote`, `_remote_bat_run`, `_network_probe_check`).
+  Stdlib module count 78 → 79. api-surface adds ~22-26
+  entries. Dispatcher gates collapse to thin wrappers; downstream
+  consumers (yantra, cyim/agnosys/mabda test suites, future test
+  runners) can reach for the same shapes via
+  `include "lib/regression.cyr"`.
+
+- **v5.9.33** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+  11-step protocol. Mechanical: self-host verify, bootstrap
+  closure, full check.sh. Judgment-call: heap-map audit,
+  dead-code audit, refactor pass, code review pass, cleanup
+  sweep. Compliance: security re-scan, downstream check. Docs:
+  CHANGELOG/roadmap/vidya sync. Tags v5.10.0 cut after green.
+
+**Held / deferred from v5.9.x (no slot)**:
+- **`cyrius audit` outside-repo semantics** (v5.9.4 pin) —
+  pending user design call (clean error vs polymorphic
+  project-level audit; defensive `file_exists(script)` check
+  in `run_script`). Held until user picks. The defensive
+  `file_exists` guard is one-line and could land
+  opportunistically inside any v5.9.x slot that touches
+  `cbt/build.cyr`.
+- **`cyrius --version` stray `\xb3` byte** (agnosys 1.1.5
+  filing side-observation) — locally NOT reproduced under
+  v5.9.22. Held until reporter env xxd of `~/.cyrius/current`
+  is captured.
+- **Stdlib data-domain distlib carve-out** — was pinned at
+  v5.9.0 cycle entry; never landed because the cycle filled
+  with sovereignty pass + emergent consumer-filed work.
+  Re-pinned to v5.10.x bug-arc late-cycle OR v5.11.x
+  kernel-prep — whichever scheduling lines up first. ~13
+  modules (`json`, `toml`, `cyml`, `csv`, `base64`, `regex`,
+  `math`, `matrix`, `linalg`, `bigint`, `u128`); sandhi-pattern
+  fold-out into `cyrius-data` sibling distlib.
 
 **KEEP-as-bash (intrinsic; sovereignty-allowed):**
 - `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`
@@ -844,34 +959,29 @@ memory pin.
 
 ### v5.9.x — Other pin candidates (folded in from prior unpinned)
 
-These items have triggers that fire in v5.9.x — moved here from
-the previously unpinned/long-term sections:
+Items previously listed here have all been pinned to specific
+v5.9.x slots — see *§v5.9.x wrapup pin sequence* above for the
+ordered slot assignments. This section retained as an audit
+trail of when each item was promoted from "candidate" to "pinned":
 
-- **Stdlib data-domain distlib carve-out** (long-term review at
-  v5.8.65 close): trigger was "post-v5.8.41 closeout, once
-  language-vocabulary migration has rippled through stdlib."
-  That precondition holds. v5.9.x is the natural fit because
-  the AGNOS bare-metal target at v5.11.x will want a clean
-  primitives-only stdlib (no data-domain modules pulled in).
-  Whether a separate v5.9.x slot or carried into v5.11.x kernel
-  prep: **pin at v5.9.0 cycle entry** with empirical sizing.
-  Carve-out targets: `json`, `toml`, `cyml`, `csv`, `base64`,
-  `regex`, `math`, `matrix`, `linalg`, `bigint`, `u128` (~13
-  modules). Sandhi-pattern fold-out into a `cyrius-data` sibling
-  distlib (single repo, multi-module dist).
+- **Stdlib data-domain distlib carve-out** — was originally
+  pinned at v5.9.0 cycle entry but the cycle filled with
+  sovereignty pass + emergent consumer-filed work. **Deferred
+  out of v5.9.x** (see *Held / deferred* in the wrapup section
+  above) — re-targets v5.10.x late-cycle or v5.11.x kernel-prep.
 
-- **Phase 2b-aarch64 struct copy** (`LDRB`/`STRB` loop): x86
-  path shipped v5.5.36; aarch64 path pending. **Pin to a
-  v5.9.x patch slot** — single-purpose unblock; surfaces
-  whenever a consumer cross-builds struct-by-value calls for
-  aarch64.
+- **Phase 2b-aarch64 struct copy** (`LDRB`/`STRB` loop):
+  **pinned to v5.9.26** — single-purpose backend unblock;
+  surfaces whenever a consumer cross-builds struct-by-value
+  calls for aarch64.
 
-- **`aarch64/fixup.cyr:19` syscall arity warning** (deferred
-  from v5.8.53 install-pipeline slot): likely benign lint,
-  confirm or fix during a v5.9.x patch cycle.
+- **`aarch64/fixup.cyr:19` syscall arity warning**: **pinned
+  to v5.9.25** (paired with tcyr-relay redundancy cleanup —
+  both small mechanical items in one batch).
 
 - **`match` exhaustiveness check fires inconsistently across
-  fn names** (agnosys 1.1.5 filing 2026-05-06):
+  fn names** (agnosys 1.1.5 filing 2026-05-06): **pinned to
+  v5.9.24**.
   `agnosys/docs/development/issues/2026-05-06-cyrius-match-coverage-fn-name-dependent.md`.
   **Severity: MEDIUM** — the documented `non-exhaustive match`
   warning (vidya `language/features.cyml exhaustive_match_v58x`)

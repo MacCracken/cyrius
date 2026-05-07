@@ -2381,6 +2381,63 @@ fn _exec_in_dir(work_dir, bin_path, arg, out_path) {
     return 0 - 1;
 }
 
+# Augmented-envp sibling of _exec_in_dir3 (v5.9.23). Same fork +
+# chdir + dup2 + waitpid scaffolding, but the child's envp is
+# parent's ENVP_ARR contents PLUS the entries in `env_extras_vec`
+# (each a `"KEY=VALUE"` cstring). Pass an empty vec for parent's
+# env unchanged. Used by gates that need to set process-scoped
+# env vars without leaking them into the dispatcher's own env
+# (e.g., `CYRIUS_HOME=fake` for install-shim isolation).
+fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path) {
+    var n_extras = vec_len(env_extras_vec);
+    var aug_envp = alloc((ENVP_COUNT + n_extras + 1) * 8);
+    var ei = 0;
+    while (ei < ENVP_COUNT) {
+        store64(aug_envp + ei * 8, load64(ENVP_ARR + ei * 8));
+        ei = ei + 1;
+    }
+    var xj = 0;
+    while (xj < n_extras) {
+        store64(aug_envp + (ENVP_COUNT + xj) * 8, vec_get(env_extras_vec, xj));
+        xj = xj + 1;
+    }
+    store64(aug_envp + (ENVP_COUNT + n_extras) * 8, 0);
+
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var cd_rc = syscall(SYS_CHDIR, work_dir);
+        if (cd_rc < 0) { sys_exit(126); }
+        var out_fd = 0 - 1;
+        if (out_path == 0) {
+            out_fd = sys_open("/dev/null", 1, 0);
+        } else {
+            out_fd = sys_open(out_path, 577, 420);
+        }
+        if (out_fd >= 0) {
+            sys_dup2(out_fd, 1);
+            sys_dup2(out_fd, 2);
+            sys_close(out_fd);
+        }
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var argv[5];
+        store64(&argv, bin_path);
+        var off = 8;
+        if (arg1 != 0) { store64(&argv + off, arg1); off = off + 8; }
+        if (arg1 != 0) { if (arg2 != 0) { store64(&argv + off, arg2); off = off + 8; } }
+        if (arg1 != 0) { if (arg2 != 0) { if (arg3 != 0) { store64(&argv + off, arg3); off = off + 8; } } }
+        store64(&argv + off, 0);
+        sys_execve(bin_path, &argv, aug_envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
 # Multi-arg sibling of _exec_in_dir. Up to 3 trailing argv entries;
 # pass 0 for unused slots (argv truncated at first NULL slot).
 # Same dup2 + chdir + waitpid scaffolding as _exec_in_dir.
@@ -5308,6 +5365,241 @@ fn _cyrfmt_write_gate() {
     return fail;
 }
 
+# Bespoke gate: `install.sh --refresh-only` re-links
+# ~/.cyrius/bin → versions/$VERSION/bin (v5.7.22 H3 fix).
+# Builds two fake "version" snapshots under a TMPDIR-isolated
+# CYRIUS_HOME, points the bin/lib symlinks at the OLD version,
+# runs install.sh --refresh-only (against the current repo's
+# VERSION), and asserts the symlinks repoint at the new
+# version's snapshot. Uses _exec_in_dir3_env to inject
+# CYRIUS_HOME=fake without polluting the dispatcher's env.
+fn _install_shim_symlink_gate() {
+    var label = "install.sh --refresh-only re-links ~/.cyrius/bin to current version (v5.7.22; H3)";
+    var install_sh = _root_path("scripts/install.sh");
+    if (file_exists(install_sh) != 1) {
+        _p("  skip: ");
+        _p(install_sh);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var version_path = _root_path("VERSION");
+    if (file_exists(version_path) != 1) {
+        _p("  skip: VERSION missing (refresh-only needs a repo context)");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Read current VERSION (trim trailing whitespace).
+    var ver_buf = alloc(64);
+    var ver_n = file_read_all(version_path, ver_buf, 63);
+    if (ver_n <= 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot read VERSION");
+        _check(label, 1);
+        return 1;
+    }
+    while (ver_n > 0) {
+        var c = load8(ver_buf + ver_n - 1);
+        if (c == 10) { ver_n = ver_n - 1; }
+        else { if (c == 13) { ver_n = ver_n - 1; }
+            else { if (c == 32) { ver_n = ver_n - 1; }
+                else { c = 0 - 1; ver_n = ver_n + 1; ver_n = ver_n - 1; break; } } }
+    }
+    store8(ver_buf + ver_n, 0);
+    var current_ver = ver_buf;
+
+    var fake_home = _tmp_path("audit_install_shim_");
+    if (sys_mkdir(fake_home, 493) < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot create fake CYRIUS_HOME");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+
+    # Build $FAKE/versions and the OLD-version snapshot.
+    var versions_sb = str_builder_new();
+    str_builder_add_cstr(versions_sb, fake_home);
+    str_builder_add_cstr(versions_sb, "/versions");
+    sys_mkdir(str_data(str_builder_build(versions_sb)), 493);
+
+    var old_version = "0.0.1-test";
+    var old_dir_sb = str_builder_new();
+    str_builder_add_cstr(old_dir_sb, fake_home);
+    str_builder_add_cstr(old_dir_sb, "/versions/");
+    str_builder_add_cstr(old_dir_sb, old_version);
+    var old_dir = str_data(str_builder_build(old_dir_sb));
+    sys_mkdir(old_dir, 493);
+
+    var old_bin_sb = str_builder_new();
+    str_builder_add_cstr(old_bin_sb, old_dir);
+    str_builder_add_cstr(old_bin_sb, "/bin");
+    var old_bin = str_data(str_builder_build(old_bin_sb));
+    sys_mkdir(old_bin, 493);
+
+    var old_lib_sb = str_builder_new();
+    str_builder_add_cstr(old_lib_sb, old_dir);
+    str_builder_add_cstr(old_lib_sb, "/lib");
+    var old_lib = str_data(str_builder_build(old_lib_sb));
+    sys_mkdir(old_lib, 493);
+
+    # Stale shell-script "cyrius" inside the OLD bin/.
+    var old_cyrius_sb = str_builder_new();
+    str_builder_add_cstr(old_cyrius_sb, old_bin);
+    str_builder_add_cstr(old_cyrius_sb, "/cyrius");
+    var old_cyrius = str_data(str_builder_build(old_cyrius_sb));
+    _write_file(old_cyrius, "#!/bin/sh\necho stale-cyrius\n");
+    sys_chmod(old_cyrius, 493);
+
+    # ~/.cyrius/current and per-version VERSION files.
+    var current_file_sb = str_builder_new();
+    str_builder_add_cstr(current_file_sb, fake_home);
+    str_builder_add_cstr(current_file_sb, "/current");
+    _write_file(str_data(str_builder_build(current_file_sb)), old_version);
+
+    var old_version_file_sb = str_builder_new();
+    str_builder_add_cstr(old_version_file_sb, old_dir);
+    str_builder_add_cstr(old_version_file_sb, "/VERSION");
+    _write_file(str_data(str_builder_build(old_version_file_sb)), old_version);
+
+    # Point $FAKE/bin → OLD/bin and $FAKE/lib → OLD/lib (stale state).
+    var fake_bin_sb = str_builder_new();
+    str_builder_add_cstr(fake_bin_sb, fake_home);
+    str_builder_add_cstr(fake_bin_sb, "/bin");
+    var fake_bin = str_data(str_builder_build(fake_bin_sb));
+
+    var fake_lib_sb = str_builder_new();
+    str_builder_add_cstr(fake_lib_sb, fake_home);
+    str_builder_add_cstr(fake_lib_sb, "/lib");
+    var fake_lib = str_data(str_builder_build(fake_lib_sb));
+
+    sys_symlink(old_bin, fake_bin);
+    sys_symlink(old_lib, fake_lib);
+
+    # Sanity: fake_bin should resolve to old_bin pre-refresh.
+    var rl_buf = alloc(4096);
+    var rl_n = sys_readlink(fake_bin, rl_buf, 4095);
+    if (rl_n > 0) { store8(rl_buf + rl_n, 0); }
+    if (rl_n <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": pre-state setup — fake_bin not a symlink");
+        fail = fail + 1;
+    }
+
+    # Run install.sh --refresh-only with CYRIUS_HOME=fake_home.
+    # CWD = repo root (install.sh reads ./VERSION + ./build/* etc).
+    var env_extras = vec_new();
+    var env_pair_sb = str_builder_new();
+    str_builder_add_cstr(env_pair_sb, "CYRIUS_HOME=");
+    str_builder_add_cstr(env_pair_sb, fake_home);
+    vec_push(env_extras, str_data(str_builder_build(env_pair_sb)));
+
+    var refresh_out = _tmp_path("audit_install_shim_out_");
+    var ec_refresh = _exec_in_dir3_env(ROOT_PATH, "/bin/sh", install_sh, "--refresh-only", 0, env_extras, refresh_out);
+    if (ec_refresh != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": install.sh --refresh-only exit ");
+        print_num(ec_refresh);
+        println("");
+        fail = fail + 1;
+    }
+    sys_unlink(refresh_out);
+
+    # Post-refresh: fake_bin must point at versions/$current_ver/bin.
+    var expected_bin_sb = str_builder_new();
+    str_builder_add_cstr(expected_bin_sb, fake_home);
+    str_builder_add_cstr(expected_bin_sb, "/versions/");
+    str_builder_add_cstr(expected_bin_sb, current_ver);
+    str_builder_add_cstr(expected_bin_sb, "/bin");
+    var expected_bin = str_data(str_builder_build(expected_bin_sb));
+
+    var actual_bin_buf = alloc(4096);
+    var ab_n = sys_readlink(fake_bin, actual_bin_buf, 4095);
+    if (ab_n <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": fake_bin readlink failed post-refresh");
+        fail = fail + 1;
+    } else {
+        store8(actual_bin_buf + ab_n, 0);
+        if (streq(actual_bin_buf, expected_bin) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": fake_bin not re-linked. expected ");
+            _p(expected_bin);
+            _p(" actual ");
+            _p(actual_bin_buf);
+            println("");
+            fail = fail + 1;
+        }
+    }
+
+    # Same for lib/.
+    var expected_lib_sb = str_builder_new();
+    str_builder_add_cstr(expected_lib_sb, fake_home);
+    str_builder_add_cstr(expected_lib_sb, "/versions/");
+    str_builder_add_cstr(expected_lib_sb, current_ver);
+    str_builder_add_cstr(expected_lib_sb, "/lib");
+    var expected_lib = str_data(str_builder_build(expected_lib_sb));
+
+    var actual_lib_buf = alloc(4096);
+    var al_n = sys_readlink(fake_lib, actual_lib_buf, 4095);
+    if (al_n <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": fake_lib readlink failed post-refresh");
+        fail = fail + 1;
+    } else {
+        store8(actual_lib_buf + al_n, 0);
+        if (streq(actual_lib_buf, expected_lib) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": fake_lib not re-linked. expected ");
+            _p(expected_lib);
+            _p(" actual ");
+            _p(actual_lib_buf);
+            println("");
+            fail = fail + 1;
+        }
+    }
+
+    # Cleanup.
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", fake_home, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": refresh-only re-links bin + lib symlinks at $CYRIUS_HOME (TMPDIR-isolated)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Bespoke gate: `cyrius capacity` subcommand (4.8.3 series; v5.7.38
 # Python3-removed). 7 sub-cases over the `cyrius` shim wrapper:
 # default-stats output keys; --check on small (rc=0 + "ok" message);
@@ -6273,7 +6565,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("install --refresh-only shim");
-    _gate("install.sh --refresh-only re-links ~/.cyrius/bin to current version (v5.7.22; H3)", "tests/regression-install-shim-symlink.sh");
+    _install_shim_symlink_gate();
     println("");
 
     _section("cx syscall literal propagation");
