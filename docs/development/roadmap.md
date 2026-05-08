@@ -1059,99 +1059,63 @@ satisfied by earlier slots.
   upstream of any need for the formatter so that path may
   not actually be defective).
 
-- **v5.9.34** — **vyakarana 1.0.2 include-graph regression fix**
-  (`vyakarana/docs/development/issues/2026-05-07-cyrius-include-graph-regression.md`,
-  filed 2026-05-07 during pin bump 5.6.0 → 5.9.32). HIGH severity
-  — vyakarana 1.0.0 cut blocked; downstream consumers (owl,
-  cyim, agnoshi, vidya) can't pick up new vyakarana tags
-  until either the language fixes the regression or vyakarana
-  flattens its include graph (consumer-side workaround they're
-  reluctant to take because the canonical "modules declare
-  their own deps" pattern is widely used by sandhi, agnosys,
-  yukti, kavach).
+- **v5.9.34** ✅ — **PP comment-aware state machine shipped
+  2026-05-07** (vyakarana 1.0.2 include-graph regression close).
+  Filed at `vyakarana/docs/development/issues/2026-05-07-cyrius-
+  include-graph-regression.md`. Picked fix candidate (1) +
+  (3) combined: comment-aware tracking + reset on newline.
 
-  **Failure shape (verified 2026-05-07 against v5.9.33)**:
-  `cyrius build src/main.cyr build/vyk` →
-  `error:src/tokenize.cyr:16: expected '=', got string` at
-  the `include "src/token.cyr"` line. The parser consumed
-  `include` as an identifier — meaning the directive escaped
-  the preprocessor and got to the lexer untouched.
-
-  **Root cause (pinpointed via instrumentation, 2026-05-07)**:
-  `PP_IFDEF_PASS`'s `in_string` state machine (added v5.8.40 to
-  prevent `"include "..."` inside string literals from being
-  mistaken for directives) over-tracks. It treats EVERY `"`
-  byte as a string boundary — including `"` characters inside
-  comments. vyakarana's `src/grammar.cyr` has a comment
-  documenting JSON parser escape syntax:
+  **Root cause (confirmed via instrumentation)**: v5.8.40's
+  `in_string` state machine in `PP_PASS` and `PP_IFDEF_PASS`
+  treated EVERY unescaped `"` byte as a string boundary —
+  including `"` inside line comments. vyakarana's
+  `src/grammar.cyr` has a comment documenting JSON escape
+  syntax:
 
   ```cyr
   # references inside strings: `\\`, `\"`,
-  # `\n`, `\t`. ...
   ```
 
-  The bytes `` `\"` `` (4 bytes: `` ` ``, `\`, `"`, `` ` ``)
-  trip the state machine: outside a string, `\` does nothing,
-  then `"` toggles `in_string=1`. There's no closing `"` on
-  this comment line (or any subsequent line until much later),
-  so `in_string` stays 1 through the rest of the buffer —
-  every subsequent `include` directive inside an included file
-  fails the `bol == 1 && in_string == 0` gate at PP_IFDEF_PASS
-  line 1603 and is left as a raw byte sequence in the output.
+  The bytes `` `\"` `` (backtick+backslash+quote+backtick)
+  tripped: outside a string, `\` was a no-op, the next `"`
+  toggled `in_string=1`, no closing `"` on that or any
+  subsequent line until much later, so `in_string` stayed 1
+  through every later `include` directive in included files.
+  Each include then failed the `bol==1 && in_string==0` gate
+  at `PP_IFDEF_PASS:1603` and was passed through to lex as
+  raw text — the parser errored `expected '=', got string`
+  on the include line because `include` was tokenized as an
+  identifier.
 
-  **Why `cat repro.cyr | cc5` minimal repros didn't trigger**
-  (per the filing's "ruled-out hypotheses"): the grammar.cyr
-  comment with `` `\"` `` is the actual trigger; structural
-  shape (sibling-transitive includes) is incidental — any
-  include graph would break IF the included content has a
-  `\"`-bearing comment somewhere upstream of an include
-  directive. The bisect's "probe 5 fails, probe 4 ok" pattern
-  is just whether `grammar.cyr` (with the comment) is parsed
-  before tokenize.cyr's includes.
+  The filing's "sibling-transitive structural shape" was
+  incidental. Any include graph would break IF the included
+  content has a `\"`-bearing comment somewhere upstream of
+  an include directive.
 
-  **Fix candidates** (slot picks one; design-call live):
-  1. **Comment-aware state machine**: track `#` to next
-     newline, suppress `in_string` toggling inside comments.
-     Mirrors cyrius's actual lexer (which treats `#` as
-     line-comment start). Lowest blast radius.
-  2. **Char-literal aware**: also suppress for `'X'` patterns.
-     Pairs with (1) since the same comment-with-stray-quote
-     issue affects char literals.
-  3. **Reset `in_string=0` on newline**: assumes single-line
-     strings (true in cyrius's hand-rolled stdlib but not
-     enforced at the lexer level — multi-line strings would
-     break). Cheaper but riskier.
-  4. **Roll back v5.8.40** and use a different mechanism to
-     suppress `"include "..."`-in-literals false positives
-     (e.g. require column-0 strict for directives — but
-     cyrfmt indents `#ifdef` inside fn bodies, so this would
-     re-break `#ifdef` detection).
+  **Fix** (`src/frontend/lex_pp.cyr` PP_PASS ~l.1430 +
+  PP_IFDEF_PASS ~l.1770):
+  1. New `in_comment` state alongside `in_string` /
+     `escape_next`.
+  2. `#` outside a string sets `in_comment = 1`.
+  3. Inside a comment, `"` does NOT toggle `in_string` —
+     state machine routes through a simpler path that just
+     tracks the newline.
+  4. Newline resets `in_string = 0`, `escape_next = 0`,
+     `in_comment = 0` as a safety net (cyrius source uses
+     single-line strings only; per-line reset is safe and
+     bounds future state corruption to one line).
 
-  **Acceptance**:
-  - `cd /home/macro/Repos/vyakarana && cyrius build src/main.cyr
-    build/vyk` succeeds.
-  - vyakarana's existing test suite (`smoke.sh`) green
-    against the fixed compiler.
-  - New `tests/tcyr/include_with_quote_comment.tcyr` —
-    minimal repro inlined: an included file with a comment
-    containing `` `\"` `` followed by a sibling that
-    includes the same leaf. Pre-fix `error: ... expected
-    '='`. Post-fix builds + asserts pass.
-  - 64/64 check.sh green; two-step self-host byte-identical;
-    cross-host SSH cluster (pi/ecb/cass) all PASS.
+  cc5: **745,208 → 745,640 B** (+432 / +0.06%). api-surface:
+  **2,769 unchanged**. cyrius test: **129 → 130** (+1 —
+  `tests/tcyr/include_quote_comment.tcyr`). check.sh:
+  **64 unchanged**. Two-step self-host byte-identical. Cross-
+  host SSH cluster verified — pi (Linux aarch64), ecb
+  (macOS arm64 Mach-O), cass (Windows 11 PE32+) — 3/3 each.
+  vyakarana 1.0.2 builds clean + `scripts/smoke.sh` green.
 
-  Diagnostic improvement (folded in): when the parser sees
-  `include` as identifier in PARSE_VAR / PARSE_GVAR_REG,
-  emit a hint about preprocessor failures (`include directive
-  not expanded — possible PP state corruption upstream;
-  check for unmatched "" or " inside comments`). Helps
-  consumers diagnose without bisecting.
-
-  **Out of scope** (held forward): the agnosys 1.1.12 re-file
-  (`agnosys/docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`)
-  pins to v5.9.35 — see below. Distinct issue; the agnosys
-  re-file is `Str`-vs-cstring API misuse + `i64_from_json`
-  missing helper, NOT a derive codegen failure.
+  **Out of scope** (cascaded): the agnosys 1.1.12 re-file
+  (`agnosys/docs/development/issues/2026-05-07-cyrius-derive-
+  serialize-incomplete.md`) — pinned to v5.9.35.
 
 - **v5.9.35** — **agnosys 1.1.12 re-file
   resolution: `i64_from_json` stdlib gap + `Str`/cstring API

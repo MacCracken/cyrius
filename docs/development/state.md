@@ -5,47 +5,61 @@
 
 ## Version
 
-**5.9.33** (shipped 2026-05-07 — **v5.9.x SLOT 33 —
-PARSE_VAR struct-init lookahead guard** (agnosys 1.1.12
-narrow-aarch64 close)). Closes the v5.9.30/31
-`#derive(Serialize)` fix arc by addressing the *actual* root
-cause: parser over-eagerness, not derive codegen.
-`PARSE_VAR` / `EMIT_GVAR_INITS` / `PARSE_GVAR_REG` (in
-`src/frontend/parse_decl.cyr`) checked
-`FINDSTRUCT(ident) > 0` and unconditionally entered
-`PARSE_STRUCT_INIT`; if the next token wasn't `{`, the
-struct-init parse errored `"expected '{', got <next>"`.
+**5.9.34** (shipped 2026-05-07 — **v5.9.x SLOT 34 —
+PP comment-aware state machine** (vyakarana 1.0.2 include-graph
+regression close)). Filed at
+`vyakarana/docs/development/issues/2026-05-07-cyrius-include-graph-regression.md`.
+HIGH severity unblocked: vyakarana 1.0.0 cut + every
+downstream pin bump (owl, cyim, agnoshi, vidya).
 
-Surfaced only on aarch64 because the larger
-`lib/syscalls_aarch64_linux.cyr` (677 vs x86's 630 LOC)
-pushes WIFSIGNALED's `tok_names` offset past the 64 KB
-DCE bitmap window — DCE skips (conservative-keep), body
-parses, parser trips. Fix: each of the three sites now
-requires `TOKTYP(S, GTI(S) + 1) == 13` (next-next token is
-`{`) before committing to struct-init; bare ident references
-fall through to scalar expression parsing.
+Root cause: v5.8.40's `in_string` state machine in
+`PP_PASS` / `PP_IFDEF_PASS` treated EVERY unescaped `"` as
+a string boundary — including `"` characters inside line
+comments. vyakarana's `src/grammar.cyr` had a comment
+documenting JSON escape syntax with `` `\"` ``; the
+backslash was a no-op outside a string, the `"` toggled
+`in_string=1`, no closing `"` on that or subsequent lines
+until much later, so every later `include` directive failed
+the `bol==1 && in_string==0` gate at `PP_IFDEF_PASS:1603`
+and was passed through as raw text — lex tokenized
+`include` as an identifier and parser errored
+`expected '=', got string`.
 
-cc5: **744,936 → 745,208 B** (+272 / +0.04%). api-surface:
-**2,769 unchanged**. cyrius test: **128 → 129** (+1 —
-`tests/tcyr/struct_name_param_collision.tcyr`). 64/64
-check.sh green. Two-step self-host byte-identical
-(`c39d6c0c…`). Cross-host SSH cluster verified — **pi**
-(Linux aarch64), **ecb** (macOS arm64 Mach-O), **cass**
-(Windows 11 PE32+) — 13/13 each.
+The filing's "sibling-transitive structural shape" was
+incidental — any include graph would break IF included
+content has a `\"`-bearing comment upstream of an include
+directive.
 
-**Next**: v5.9.34 — vyakarana 1.0.2 include-graph regression
-(filed 2026-05-07; root cause pinpointed: `in_string` state
-machine in `PP_IFDEF_PASS` trips on `"` inside comments,
-masking subsequent include directives — HIGH severity blocks
-vyakarana 1.0.0 cut and every downstream pin bump).
-v5.9.35 — agnosys 1.1.12 re-file resolution (add
-`i64_from_json` stdlib helper or rename codegen reference;
-vidya `derive_str_fields` doc refresh covering required-
-include set and `Str`-vs-cstring `println` distinction).
-v5.9.36 — cx Phase 2c parity. v5.9.37 — tls-live +
-network-probe helper (cascaded down; closes the .sh-conversion
-arc). v5.9.38 — `lib/regression.cyr` testing-stdlib carve-out.
-v5.9.39 — closeout pass before v5.10.0.
+Fix: `src/frontend/lex_pp.cyr` PP_PASS (~l.1430) and
+PP_IFDEF_PASS (~l.1770) made comment-aware. `#` outside a
+string sets `in_comment=1`; inside a comment `"` does NOT
+toggle `in_string`. Newline resets `in_string=0`,
+`escape_next=0`, `in_comment=0` as a safety net (cyrius
+source uses single-line strings; per-line reset bounds any
+future state corruption to one line).
+
+cc5: **745,208 → 745,640 B** (+432 / +0.06%). api-surface:
+**2,769 unchanged**. cyrius test: **129 → 130** (+1 —
+`tests/tcyr/include_quote_comment.tcyr`). 64/64 check.sh
+green. Two-step self-host byte-identical (`c9f68455…`).
+Cross-host SSH cluster verified — **pi** (Linux aarch64),
+**ecb** (macOS arm64 Mach-O), **cass** (Windows 11 PE32+)
+— 3/3 each. vyakarana 1.0.2 builds clean +
+`scripts/smoke.sh` reports `M0 + M1 + M2 + M3 gates passing`.
+
+**Next**: v5.9.35 — agnosys 1.1.12 re-file resolution.
+Codegen IS correct; filing's "garbage output" is
+consumer-side `println(out)` on a `Str` (16-byte heap
+header) — `str_print(out)` produces correct JSON on both
+arches (verified mid-v5.9.34 session). Slot scope: ship
+missing `i64_from_json` stdlib helper (`lib/json.cyr` has
+`json_get_int` instead) + vidya `derive_str_fields` doc
+refresh covering required-include set + `Str`-vs-cstring
+`println` distinction. v5.9.36 — cx Phase 2c parity.
+v5.9.37 — tls-live + network-probe helper (closes the
+.sh-conversion arc). v5.9.38 — `lib/regression.cyr`
+testing-stdlib carve-out. v5.9.39 — closeout pass before
+v5.10.0.
 
 **5.9.13** (shipped 2026-05-06 — **v5.9.x SLOT 13 —
 bidirectional-IPC helper + `regression-lsp-definition.sh`

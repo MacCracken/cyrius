@@ -6,6 +6,127 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.34] — 2026-05-07
+
+**v5.9.x SLOT 34 — PP comment-aware state machine (vyakarana
+1.0.2 include-graph regression fix)**. Closes the
+`PP_IFDEF_PASS` `in_string` over-tracking that surfaced when
+vyakarana 1.0.2 bumped its cyrius pin from 5.6.0 → 5.9.32 and
+hit `error:src/tokenize.cyr:16: expected '=', got string` on
+the include directive itself. Filed at
+`vyakarana/docs/development/issues/2026-05-07-cyrius-include-
+graph-regression.md`. HIGH severity — vyakarana 1.0.0 cut +
+every downstream pin bump (owl, cyim, agnoshi, vidya) was
+blocked.
+
+cc5: **745,208 → 745,640 B** (+432 / +0.06%) — three new state
+checks (`in_comment` declaration + comment branch + newline
+reset). api-surface: **2,769 unchanged** (compiler-internal
+change). cyrius test: **129 → 130** (+1 —
+`tests/tcyr/include_quote_comment.tcyr`). check.sh:
+**64 unchanged**.
+
+### Root cause
+
+The v5.8.40 `in_string` state machine in `PP_PASS` and
+`PP_IFDEF_PASS` (added to suppress directive false-positives
+inside string literals like `var s = "include \"foo\"";`) was
+under-specified. It treated EVERY unescaped `"` byte as a
+string boundary — including `"` characters inside line
+comments.
+
+vyakarana's `src/grammar.cyr` had a comment documenting JSON
+parser escape syntax with backtick-quoted markdown:
+
+```cyr
+# references inside strings: `\\`, `\"`,
+# `\n`, `\t`. ...
+```
+
+The literal bytes `` `\"` `` (backtick + backslash + quote +
+backtick) tripped the state machine: outside a string, `\` was
+a no-op, the next `"` toggled `in_string=1`, and there was no
+closing `"` on that or any subsequent line until much later in
+the buffer. `in_string` stayed 1 through every later `include`
+directive in included files. Each include then failed the
+`bol == 1 && in_string == 0` gate at `PP_IFDEF_PASS:1603` and
+was passed through to lex as raw text — where `include`
+became an identifier token and the parser errored at the next
+`=` expectation.
+
+The "sibling-transitive structural shape" the filing's bisect
+isolated was incidental. Any include graph would break IF the
+included content has a `\"`-bearing comment somewhere upstream
+of an include directive — which is why the filing's structural
+minimal-repros didn't trigger (the trigger was the comment, not
+the graph shape).
+
+### Fix
+
+`src/frontend/lex_pp.cyr` PP_PASS (~line 1430) and
+PP_IFDEF_PASS (~line 1770) state machines made comment-aware:
+
+1. New `in_comment` state declared alongside `in_string` /
+   `escape_next`.
+2. `#` outside a string (and outside a comment already) sets
+   `in_comment = 1`.
+3. Inside a comment, `"` does NOT toggle `in_string` — the
+   state machine routes through a simpler path that just
+   tracks the newline.
+4. Newline resets `in_string = 0`, `escape_next = 0`,
+   `in_comment = 0` as a safety net. cyrius source uses
+   single-line strings only (`\n` escape, never literal
+   multi-line), so per-line state reset is safe and bounds
+   any future state-corruption to one line.
+
+### Added
+
+- **`tests/tcyr/include_quote_comment.tcyr`** — 3 assertions
+  exercising the bug shape: a leaf with a `\"`-bearing
+  comment + two siblings that both re-include the leaf. Pre-
+  fix: `expected '=', got string` at the include directive.
+  Post-fix: `_leaf_value()` + `_sibling_a_call()` +
+  `_sibling_b_call()` resolve to 7 / 107 / 207.
+- **`tests/fixtures/include_quote_comment/`** — 3 fixture
+  files (`leaf.cyr`, `sibling_a.cyr`, `sibling_b.cyr`) that
+  the regression includes.
+
+### Verified
+
+- **vyakarana 1.0.2 verbatim repro**: `cd ~/Repos/vyakarana &&
+  cyrius build src/main.cyr build/vyk` → OK (was: `error:src/
+  tokenize.cyr:16: expected '=', got string`).
+- **vyakarana smoke**: `sh scripts/smoke.sh` →
+  `smoke: OK (vyk 1.0.2) — M0 + M1 + M2 + M3 gates passing`.
+- **`tests/tcyr/include_quote_comment.tcyr`** pre-fix
+  reproduces the bug with the same `expected '=', got
+  string` shape; post-fix 3/3 assertions pass.
+- **Cross-host SSH cluster**: pi (Linux aarch64), ecb
+  (macOS arm64 Mach-O), cass (Windows 11 PE32+) — 3/3 each.
+- 64/64 check.sh gates green.
+- Two-step self-host byte-identical
+  (cc5 → cc5b → cc5c all `c9f68455…`).
+- 130/130 cyrius test x86; 113/130 cyrius test aarch64
+  (17 pre-existing aarch64 backend failures unchanged —
+  argc/argv, longjmp, file-locks; tracked separately).
+
+### Cascaded to v5.9.35+
+
+- v5.9.35 — agnosys 1.1.12 re-file resolution: ship missing
+  `i64_from_json` stdlib helper (`lib/json.cyr` has
+  `json_get_int` instead) + vidya `derive_str_fields` doc
+  refresh covering required-include set + `Str`-vs-cstring
+  `println` distinction. Codegen IS correct; filing's
+  "garbage output" is consumer-side `println(out)` on a
+  `Str` (16-byte heap header) — `str_print(out)` produces
+  the right JSON on both arches (verified mid-this-session).
+- v5.9.36 — cx Phase 2c parity (struct-by-value + sub-byte
+  field load + ESTORESTACKPARM >6 args).
+- v5.9.37 — tls-live + network-probe helper (closes
+  `.sh-conversion arc).
+- v5.9.38 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.39 — closeout pass before v5.10.0.
+
 ## [5.9.33] — 2026-05-07
 
 **v5.9.x SLOT 33 — PARSE_VAR struct-init lookahead guard
