@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.9.41** (in-flight 2026-05-08 — **v5.9.x SLOT 41 —
+**5.9.41** (shipped 2026-05-08 — **v5.9.x SLOT 41 —
 tls-live gate conversion + network-probe helper**). The
 `.sh-conversion arc is now **CLOSED** — 0
 `tests/regression-*.sh` files remaining (precondition for the
