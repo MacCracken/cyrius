@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.9.42** (in-flight 2026-05-08 — **v5.9.x SLOT 42 —
+**5.9.42** (shipped 2026-05-08 — **v5.9.x SLOT 42 —
 `lib/regression.cyr` testing-stdlib carve-out**). Closes the
 post-v5.9.41 helper-inventory stabilization arc by moving 14
 reusable primitives into a new stdlib module that downstream
