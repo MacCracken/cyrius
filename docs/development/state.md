@@ -5,6 +5,62 @@
 
 ## Version
 
+**5.9.35** (shipped 2026-05-07 — **v5.9.x SLOT 35 —
+`#derive(Serialize)` deserializer i64 primitive-field path +
+vidya doc refresh** (agnosys 1.1.12 re-file resolution)).
+Closes the actual root cause of the `i64_from_json` undefined
+warning: PP_DERIVE_SERIALIZE `_from_json` / `_from_json_str`
+took the nested-struct path for every typed-non-`Str` field,
+emitting `<typename>_from_json(...)` for primitives — none
+of which exist in stdlib.
+
+Re-file accuracy verified mid-session: only one of the
+filing's five symptoms was a real codegen bug
+(`i64_from_json` undefined). The "5 bytes garbage" symptom
+was consumer-side `println(out)` on a `Str` (16-byte heap
+header `{ptr,len}`) — the documented fix is `str_print(out)`.
+"fncall4 undefined" was misread (actually `dead: fncall4`,
+DCE'd). "aarch64 SIGILLs" didn't reproduce on qemu or real
+pi.
+
+Fix: `src/frontend/lex_pp.cyr` — i64 detection added in
+`_from_json` and `_from_json_str` mirroring v5.9.30's
+`_to_json prim_load` block. i64 fields take
+`str_to_int(v) + store64(ptr+offset, ...)`. Narrow widths
+(i8/i16/i32) deferred to v5.9.36 — they have a compounding
+parser-side struct-size bug (FIELDSZ width-aware sums to
+12 for `point_i32` but literal initializer writes 8 bytes
+per field, overflowing).
+
+Vidya `derive_str_fields` entry refreshed: required-include
+set documented (5 modules serializer-only, +3 deserializer
+round-trip); `str_print` vs `println` convention named at
+the example site; narrow-width + Mach-O deferral pins linked.
+
+cc5: **745,640 → 746,608 B** (+968 / +0.13%). api-surface:
+**2,769 unchanged**. cyrius test: **130 → 131** (+1 —
+`tests/tcyr/derive_serialize_roundtrip.tcyr`). 64/64
+check.sh; two-step self-host byte-identical (`b0cb99ea…`).
+Cross-host: pi (Linux aarch64) + cass (Windows PE32+) 4/4
+each. Mach-O excluded (pre-existing pre-v5.9.35 SIGSEGV on
+`#derive(Serialize)`-generated `_to_json` body — pinned
+separately).
+
+**Next**: v5.9.36 — narrow-int (i8/i16/i32)
+`#derive(Serialize)` support (codegen detection fix + parser
+struct-size width fix as a paired slot). v5.9.37 — cx Phase
+2c parity. v5.9.38 — tls-live + network-probe helper
+(closes the .sh-conversion arc). v5.9.39 —
+`lib/regression.cyr` testing-stdlib carve-out. v5.9.40 —
+closeout pass before v5.10.0.
+
+**Held / pinned separately (no slot scheduled)**:
+- **Mach-O `_to_json` runtime SIGSEGV** — auto-generated
+  `_to_json` body SIGSEGVs on real macOS arm64 (ecb host)
+  for any `#derive(Serialize)` struct. Pre-existing; not
+  caused by v5.9.35. Pin when a Mach-O consumer surfaces
+  it as blocking.
+
 **5.9.34** (shipped 2026-05-07 — **v5.9.x SLOT 34 —
 PP comment-aware state machine** (vyakarana 1.0.2 include-graph
 regression close)). Filed at

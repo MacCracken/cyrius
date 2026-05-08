@@ -552,26 +552,18 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                     }
                 }
             }
-            # v5.9.30: detect primitive integer types by name match.
+            # v5.9.30: detect i64 primitive integer type by name match.
             # Field-type entries are 32-byte cstring slots; first byte
             # = 'i' (0x69) flags the family.
-            var prim_load = 0;          # 0 = not primitive; 8/16/32/64 = width
+            # v5.9.35: narrowed to i64 only. i8/i16/i32 had a buggy
+            # detection (the `(+1) == 49` outer gate also covered i32
+            # but i32's (+1) byte is `3` (0x33), not `1`) AND a
+            # parser-side struct-size mismatch (STRUCTSZ uses width-
+            # aware FIELDSZ summing to 12 for `point_i32` whereas the
+            # literal initializer writes 8 bytes per field, overflowing
+            # the allocation at global scope). Both pinned to v5.9.36.
+            var prim_load = 0;
             if (load8(S + 0x197260 + fi * 32) == 105) {
-                # i8\0
-                if (load8(S + 0x197260 + fi * 32 + 1) == 56) {
-                    if (load8(S + 0x197260 + fi * 32 + 2) == 0) { prim_load = 8; }
-                }
-                # i16\0
-                if (load8(S + 0x197260 + fi * 32 + 1) == 49) {
-                    if (load8(S + 0x197260 + fi * 32 + 2) == 54) {
-                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 16; }
-                    }
-                    # i32\0
-                    if (load8(S + 0x197260 + fi * 32 + 2) == 50) {
-                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 32; }
-                    }
-                }
-                # i64\0
                 if (load8(S + 0x197260 + fi * 32 + 1) == 54) {
                     if (load8(S + 0x197260 + fi * 32 + 2) == 52) {
                         if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 64; }
@@ -636,15 +628,43 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
         op = op + PP_EMIT_STR(out, op, S + 0x197060 + fi * 32);
         op = op + PP_EMIT_STR(out, op, "\"));\n");
         if (load8(S + 0x197260 + fi * 32) != 0) {
-            # Typed field: Str fields stored directly, nested structs recursively
+            # Typed field: Str / primitive integer / nested struct.
             var fj_str = 0;
             if (load8(S + 0x197260 + fi * 32) == 83) { if (load8(S + 0x197260 + fi * 32 + 1) == 116) { if (load8(S + 0x197260 + fi * 32 + 2) == 114) { if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fj_str = 1; } } } }
+            # v5.9.35: primitive integer detection (mirrors the
+            # Serialize-side `prim_load` block at line 558-580).
+            # Pre-fix the deserializer treated every non-Str typed
+            # field as a nested struct and emitted `<type>_from_json(...)`,
+            # producing `i64_from_json` / `i32_from_json` / etc which
+            # don't exist in stdlib — surfaced as `undefined function`
+            # warnings in the agnosys 1.1.12 re-file. Now: i8/i16/i32/i64
+            # take the str_to_int + storeN path with width-correct store.
+            # v5.9.35: i64 detection only. i32/i16/i8 also need the
+            # primitive-int path but the global-var literal init currently
+            # mismatches struct STRUCTSZ (sum of width-aware FIELDSZ) vs
+            # the LITERAL initializer's `boff += 8` per field — narrow
+            # fields overflow their allocation. Pin separately as a
+            # parser-side fix (v5.9.36+); v5.9.35 closes the agnosys
+            # 1.1.12 i64 case, the only one covered by the filing.
+            var fj_prim = 0;
+            if (load8(S + 0x197260 + fi * 32) == 105) {
+                if (load8(S + 0x197260 + fi * 32 + 1) == 54) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 52) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fj_prim = 64; }
+                    }
+                }
+            }
             if (fj_str == 1) {
                 op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ", str_from(v)); }\n");
-            }
-            if (fj_str == 0) {
+            } else { if (fj_prim > 0) {
+                op = op + PP_EMIT_STR(out, op, "if (v != 0) { store");
+                op = op + PP_EMIT_INT(out, op, fj_prim);
+                op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
+            } else {
                 op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
                 op = op + PP_EMIT_STR(out, op, S + 0x197260 + fi * 32);
                 op = op + PP_EMIT_STR(out, op, "_from_json(json_parse(v));\nmemcpy(ptr + ");
@@ -667,7 +687,7 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                 }
                 op = op + PP_EMIT_INT(out, op, tsz);
                 op = op + PP_EMIT_STR(out, op, ");\n}\n");
-            }
+            } }
         } else {
             op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
             op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
@@ -713,11 +733,25 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
         op = op + PP_EMIT_STR(out, op, "\", ");
         op = op + PP_EMIT_INT(out, op, fn_len);
         op = op + PP_EMIT_STR(out, op, ") == 1) {\n");
-        # Parse value based on type
+        # Parse value based on type. v5.9.35: primitive integer
+        # detection — i8/i16/i32/i64 take the inline-decimal-parse
+        # path (mirrors the untyped scalar branch below) with
+        # width-correct storeN. Pre-fix typed primitives fell into
+        # the `else` (nested struct) branch and silently skipped
+        # their value, leaving the field zero.
         if (load8(S + 0x197260 + fi * 32) != 0) {
-            # Check if Str type
             var fjs = 0;
             if (load8(S + 0x197260 + fi * 32) == 83) { if (load8(S + 0x197260 + fi * 32 + 1) == 116) { if (load8(S + 0x197260 + fi * 32 + 2) == 114) { if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fjs = 1; } } } }
+            # v5.9.35: i64 detection only — see PP_DERIVE _from_json
+            # site above for why narrow widths defer.
+            var fjp = 0;
+            if (load8(S + 0x197260 + fi * 32) == 105) {
+                if (load8(S + 0x197260 + fi * 32 + 1) == 54) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 52) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fjp = 64; }
+                    }
+                }
+            }
             if (fjs == 1) {
                 # String value: read until closing quote
                 op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 34) { _p = _p + 1; _vs = _p;\n");
@@ -725,13 +759,23 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                 op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ", str_new(json + _vs, _p - _vs));\n_p = _p + 1; }\n");
+            } else { if (fjp > 0) {
+                # Primitive integer: parse decimal + width-correct store.
+                op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
+                op = op + PP_EMIT_STR(out, op, "_iv = 0;\nwhile (load8(json + _p) >= 48 && load8(json + _p) <= 57) { _iv = _iv * 10 + load8(json + _p) - 48; _p = _p + 1; }\n");
+                op = op + PP_EMIT_STR(out, op, "if (_neg == 1) { _iv = 0 - _iv; }\n");
+                op = op + PP_EMIT_STR(out, op, "store");
+                op = op + PP_EMIT_INT(out, op, fjp);
+                op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ", _iv);\n");
             } else {
                 # Nested struct: skip value (fall through to json_get path)
                 op = op + PP_EMIT_STR(out, op, "# nested struct — skip for single-pass\n");
                 op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; }\n");
-            }
+            } }
         } else {
-            # Integer value: parse decimal
+            # Untyped scalar: parse decimal
             op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
             op = op + PP_EMIT_STR(out, op, "_iv = 0;\nwhile (load8(json + _p) >= 48 && load8(json + _p) <= 57) { _iv = _iv * 10 + load8(json + _p) - 48; _p = _p + 1; }\n");
             op = op + PP_EMIT_STR(out, op, "if (_neg == 1) { _iv = 0 - _iv; }\n");

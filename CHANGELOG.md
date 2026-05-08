@@ -6,6 +6,148 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.35] — 2026-05-07
+
+**v5.9.x SLOT 35 — `#derive(Serialize)` deserializer i64
+primitive-field path + vidya doc refresh** (agnosys 1.1.12
+re-file resolution). Closes the actual root cause of the
+`i64_from_json` undefined warning on every consumer of
+`#derive(Serialize)`: the auto-generated `_from_json` body
+emitted `<typename>_from_json(...)` for every typed
+non-`Str` field, including primitives. cc5 warned + the
+runtime stub crashed if anything called the deserializer.
+
+cc5: **745,640 → 746,608 B** (+968 / +0.13%). api-surface:
+**2,769 unchanged** (compiler-internal codegen change).
+cyrius test: **130 → 131** (+1 —
+`tests/tcyr/derive_serialize_roundtrip.tcyr`). check.sh:
+**64 unchanged**.
+
+### Mid-session findings (re-file accuracy verified)
+
+The agnosys 1.1.12 re-file (filed 2026-05-07) reported five
+symptoms. Direct verification mid-this-session against
+v5.9.34 + the fixed v5.9.35 binary established:
+
+| Filing claim | Verified status |
+|---|---|
+| "Earlier 5.9.31 'works on x86' was wrong" | ✅ corrigendum is right; the codegen path was always identical |
+| "fncall4 undefined warning" | ❌ misread — actually `dead: fncall4` (DCE'd, not undefined) |
+| "5 bytes garbage on x86" | ❌ wrong cause — symptom real but caused by `println(out)` on a `Str` (16-byte `{ptr,len}` heap header); `str_print(out)` produces `{"x":1,"y":42,"z":7}` |
+| "aarch64 SIGILLs at runtime" | ❌ not reproduced — qemu-aarch64 + real pi both produce the same 4-5 byte garbage as x86 (no SIGILL) |
+| "i64_from_json undefined" | ✅ real — fixed this slot |
+
+The "garbage output" symptom is consumer-side `Str`-vs-cstring
+API misuse — the documented fix is `str_print(out); syscall(1, 1,
+"\n", 1);` instead of `println(out)`. Vidya `derive_str_fields`
+entry refreshed to document this distinction at the example site.
+
+### Root cause
+
+`src/frontend/lex_pp.cyr` PP_DERIVE_SERIALIZE emits two
+deserializer fns per `#derive(Serialize)` struct:
+`<Name>_from_json(pairs)` (json_get-based) and
+`<Name>_from_json_str(json)` (single-pass byte scanner).
+Both took the nested-struct path for every typed-non-`Str`
+field, emitting `<typename>_from_json(json_parse(v))` etc.
+For primitive types `i8` / `i16` / `i32` / `i64` this
+generated calls to `i8_from_json` / `i16_from_json` /
+`i32_from_json` / `i64_from_json` — fns that don't exist in
+stdlib. cc5 emitted `warning: undefined function 'i64_from_json'`;
+runtime stub returned 0; user got zeroed fields.
+
+### Fix (i64 only this slot)
+
+`src/frontend/lex_pp.cyr` — PP_DERIVE_SERIALIZE
+`_from_json` and `_from_json_str` gain i64 primitive-integer
+detection mirroring the v5.9.30 `_to_json` `prim_load` block.
+i64 takes the `str_to_int(v)` + `store64(ptr+offset, ...)`
+path; nested-struct branch only fires for actual nested
+struct types (matched against the per-derive name table at
+`S+0x197700`).
+
+Narrow widths (i8 / i16 / i32) deferred to v5.9.36 — they
+have a compounding bug pair: (1) v5.9.30's `prim_load`
+detection had the wrong outer byte gate for i32 (`(+1) == 49`
+matches i16's "i1..." but not i32's "i3..."), AND (2) the
+parser-side `STRUCTSZ` uses width-aware `FIELDSZ` (i32 → 4)
+summing to 12 bytes for `point_i32 { x, y, z }`, but the
+literal initializer (`PARSE_STRUCT_INIT`, `EMIT_GVAR_INITS`)
+writes 8 bytes per field, overflowing the allocation at
+global scope. Both bugs need to land together; folding
+narrow-width detection into v5.9.35 alone would surface the
+struct-size mismatch as a new failure mode.
+
+### Added
+
+- **`tests/tcyr/derive_serialize_roundtrip.tcyr`** — 4
+  assertions exercising the i64 typed-field round-trip
+  (serialize → deserialize → compare via load64).
+  Pre-fix: `warning: undefined function 'i64_from_json'`
+  + 3/3 round-trip asserts fail (got 0, expected 1/42/7).
+  Post-fix: 4/4 pass.
+
+### Vidya doc refresh
+
+`vidya/content/cyrius/language/features.cyml`
+`derive_str_fields` entry rewritten to document:
+- The required-include set (5 modules for serializer-only,
+  +3 for deserializer round-trip).
+- The `Str` vs cstring print convention (use `str_print(out)`,
+  NOT `println(out)`).
+- The i64 typed-field path post-v5.9.35.
+- The narrow-width (i8/i16/i32) deferral pin.
+- The Mach-O serializer SIGSEGV pin (see below).
+
+### Out of scope (deferred to specific slots)
+
+- **v5.9.36** — narrow-int (i8/i16/i32) `#derive(Serialize)`
+  support. Pairs the `_to_json` / `_from_json` codegen
+  detection fix with the parser-side `STRUCTSZ` /
+  initializer-write width mismatch. Requires either
+  width-aware `EMIT_STRUCT_FIELD` + `boff` advancement, or
+  promoting `FIELDSZ` for narrow scalars to 8 bytes (with
+  width still tracked separately for the loadN / storeN
+  emit). Latter is the simpler fix and matches the existing
+  cyrius convention of "every local var slot is 8 bytes."
+- **Mach-O `_to_json` runtime SIGSEGV** — the auto-generated
+  `_to_json` body SIGSEGVs at runtime on real macOS arm64
+  (ecb host) for any `#derive(Serialize)` struct, including
+  the simplest `struct point { x: i64; y: i64; z: i64; }`
+  shape. Same source builds + runs cleanly on x86_64 Linux,
+  qemu-aarch64, real Linux aarch64 (pi), and Windows PE.
+  Pre-existing — NOT caused by v5.9.35; verified pre-fix
+  also SIGSEGVs on ecb. Pinned for a separate Mach-O
+  serializer slot once a consumer surfaces it as blocking.
+
+### Verified
+
+- agnosys 1.1.12 verbatim repro (with the corrected
+  `str_print(out)` print): `{"x":1,"y":42,"z":7}` on x86_64,
+  qemu-aarch64, real pi (Linux aarch64), Windows PE32+.
+  Mach-O excluded (pre-existing pre-v5.9.35 SIGSEGV; see
+  above).
+- `tests/tcyr/derive_serialize_roundtrip.tcyr`: 4/4
+  assertions pass on x86_64, qemu-aarch64, real pi (4/4
+  via SSH), Windows PE (4/4 via cass cmd /c).
+- 64/64 check.sh gates green.
+- Two-step self-host byte-identical (cc5 → cc5b → cc5c
+  all `b0cb99ea…`).
+- 131/131 cyrius test x86 (was 130 — +1 for the new
+  regression).
+
+### Cascaded to v5.9.36+
+
+- v5.9.36 — narrow-int (i8/i16/i32) `#derive(Serialize)`
+  support + the parser-side `STRUCTSZ` / initializer-write
+  width fix.
+- v5.9.37 — cx Phase 2c parity (struct-by-value + sub-byte
+  field load + ESTORESTACKPARM >6 args).
+- v5.9.38 — tls-live + network-probe helper (closes the
+  `.sh-conversion arc).
+- v5.9.39 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.40 — closeout pass before v5.10.0.
+
 ## [5.9.34] — 2026-05-07
 
 **v5.9.x SLOT 34 — PP comment-aware state machine (vyakarana

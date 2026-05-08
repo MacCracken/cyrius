@@ -1,0 +1,59 @@
+# derive_serialize_roundtrip.tcyr — v5.9.35 regression for the
+# `#derive(Serialize)` deserializer's i64 primitive-field path.
+#
+# Bug history (agnosys 1.1.12 re-file 2026-05-07,
+# `agnosys/docs/development/issues/2026-05-07-cyrius-derive-
+# serialize-incomplete.md`): the auto-generated `_from_json`
+# body emitted `<typename>_from_json(...)` for every typed
+# field that wasn't `Str`. i64 fields hit `i64_from_json(...)`
+# — a fn that never existed in stdlib. cc5 emitted `warning:
+# undefined function 'i64_from_json'`; the runtime stub
+# crashed if anything called the deserializer.
+#
+# Fix at v5.9.35 (`src/frontend/lex_pp.cyr`
+# PP_DERIVE_SERIALIZE): `_from_json` and `_from_json_str` both
+# gain i64 primitive-integer detection mirroring the v5.9.30
+# `_to_json` `prim_load` block. i64 takes the `str_to_int(v)`
+# + `store64(ptr+offset, ...)` path; nested-struct branch
+# only fires for actual nested struct types.
+#
+# Out of scope (deferred to v5.9.36): i8/i16/i32 narrow-width
+# fields. Two compounding bugs there: (1) v5.9.30's `prim_load`
+# detection had the wrong outer byte gate for i32 (`(+1) == 49`
+# covers i16 only), AND (2) the parser-side struct-size code
+# uses width-aware FIELDSZ summing to STRUCTSZ < the literal
+# initializer's writes (8 bytes per field), overflowing
+# allocation at global scope. Both pinned together.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/json.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct point {
+    x: i64;
+    y: i64;
+    z: i64;
+}
+
+var p = point { 1, 42, 7 };
+var sb = str_builder_new();
+point_to_json(&p, sb);
+var s = str_builder_build(sb);
+assert_eq(strlen(str_data(s)), 20, "point_to_json emits 20 bytes for typed-i64 trio");
+
+# v5.9.35 fix target: deserializer round-trip via str_to_int.
+# Pre-fix this called undefined `i64_from_json` and produced
+# zeroed fields + compile warning.
+var p2 = point_from_json_str(str_data(s));
+assert_eq(load64(p2 +  0),  1, "point.x i64 round-tripped via str_to_int + store64");
+assert_eq(load64(p2 +  8), 42, "point.y i64 round-tripped via str_to_int + store64");
+assert_eq(load64(p2 + 16),  7, "point.z i64 round-tripped via str_to_int + store64");
+
+var r = assert_summary();

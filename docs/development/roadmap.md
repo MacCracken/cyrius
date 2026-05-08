@@ -1117,79 +1117,99 @@ satisfied by earlier slots.
   (`agnosys/docs/development/issues/2026-05-07-cyrius-derive-
   serialize-incomplete.md`) — pinned to v5.9.35.
 
-- **v5.9.35** — **agnosys 1.1.12 re-file
-  resolution: `i64_from_json` stdlib gap + `Str`/cstring API
-  documentation**. agnosys re-filed v5.9.33 (corrigendum):
-  the earlier "5.9.31 fixes Serialize on x86_64" claim was
-  wrong; runtime serializer was always broken on both arches,
-  but the cause is NOT codegen — it's API misuse + a missing
-  helper.
+- **v5.9.35** ✅ — **`#derive(Serialize)` deserializer i64
+  primitive-field path + vidya doc refresh shipped 2026-05-07**
+  (agnosys 1.1.12 re-file resolution).
 
-  **Verified 2026-05-07 against v5.9.33** (this session):
-  - PP_DERIVE_SERIALIZE codegen IS correct. The emitted
-    `<Name>_to_json(ptr, sb)` body works; `point_to_json(&p,
-    sb)` produces `{"x":1,"y":42,"z":7}` on both x86_64 and
-    aarch64 (qemu + real pi hardware, verified).
-  - The "5 bytes garbage" the filing reports is from the
-    consumer using `println(out)` where `out` is a `Str`
-    (16-byte heap header `{ptr, len}`). `println` is a
-    cstring fn (calls `strlen`); `str_print(out)` is the Str
-    fn. Switching the repro from `println` to
-    `str_print` + `\n` produces the correct JSON. Same on
-    aarch64 — the filing's "qemu-aarch64 SIGILL" claim
-    didn't reproduce in this session (qemu OR real pi both
-    show the same 4-5 byte garbage as x86 — no SIGILL).
-  - The "fncall4 undefined" warning the filing reports is
-    actually `dead: fncall4` (DCE'd because nothing
-    references it once the typed-i64 codegen path is taken).
-    Not undefined — it's eliminated. Filing misread.
-  - The `i64_from_json` undefined warning IS real:
-    `lib/json.cyr` ships `json_get_int`, not `i64_from_json`.
-    The auto-generated `_from_json` body references the
-    wrong name. DCE-eliminated when the consumer is
-    serializer-only (agnosys's V1.1.12 case), but warns.
+  **Re-file accuracy verified mid-session**: the agnosys
+  filing reported five symptoms; only one was a real
+  codegen bug:
+  - "fncall4 undefined warning" — misread (actually
+    `dead: fncall4`, DCE'd not undefined).
+  - "5 bytes garbage on x86" — consumer-side
+    `Str`-vs-cstring print misuse; `println(out)` on a
+    16-byte Str header. Fix is `str_print(out)`.
+  - "aarch64 SIGILLs at runtime" — not reproduced; qemu +
+    real pi produce same 4-5 byte garbage as x86.
+  - "i64_from_json undefined" ✅ real codegen bug.
+  - "earlier 5.9.31 'works on x86' claim was wrong" ✅
+    corrigendum is right; codegen path was always
+    identical.
 
-  **Slot scope**:
-  1. **Add `i64_from_json(s)` to `lib/json.cyr`** (or rename
-     codegen reference to `json_get_int` — pick one). Either
-     way the auto-generated `_from_json` body should bind to
-     a real fn at link time. Same for `i32_from_json`,
-     `i16_from_json`, `i8_from_json`, `Str_from_json` if the
-     deserializer side is meant to round-trip the
-     serializer's typed paths.
-  2. **Vidya doc refresh**:
-     `vidya/content/cyrius/language/features.cyml`
-     `derive_str_fields` entry — name the required include
-     set explicitly (`lib/syscalls.cyr`, `lib/string.cyr`,
-     `lib/str.cyr`, `lib/alloc.cyr`, `lib/fmt.cyr`; +
-     `lib/json.cyr` if deserializer round-trip is needed).
-     Document the `Str` vs cstring distinction at the example
-     site: "to print the result, use `str_print(out)` (Str-
-     typed) — `println` is for cstrings and will print the
-     16-byte Str header as garbage."
-  3. **Optional**: a `_to_cstr_println(s)` convenience or a
-     `Str`-typed `println` overload — but cyrius doesn't do
-     overloading, so this is a naming question. Likely just
-     vidya doc + a `Str_println(s)` alias. Held until consumer
-     surfaces the ergonomic ask.
+  **Root cause**: PP_DERIVE_SERIALIZE `_from_json` /
+  `_from_json_str` took the nested-struct path for every
+  typed-non-`Str` field, emitting
+  `<typename>_from_json(json_parse(v))`. For primitives
+  `i8` / `i16` / `i32` / `i64` this generated calls to
+  fns that don't exist in stdlib. Fix: i64 detection
+  added (mirrors v5.9.30's `_to_json` `prim_load` block).
+  i64 fields take `str_to_int(v)` + `store64(ptr+offset, ...)`.
 
-  **Acceptance**:
-  - agnosys 1.1.12 verbatim repro (the corrected version with
-    `str_print` + `\n`) prints `{"x":1,"y":42,"z":7}` on
-    both x86_64 AND aarch64 (qemu + real pi). Already
-    verified 2026-05-07 — but the slot adds a tcyr that
-    captures this regression target so future PP_DERIVE
-    changes can't silently break it.
-  - `i64_from_json` resolves at link time (no `undefined
-    function` warning when `lib/json.cyr` is included).
-  - Vidya `derive_str_fields` entry includes both the include
-    set and the `Str` vs cstring note.
+  **Vidya `derive_str_fields` refreshed**: required-include
+  set documented (5 modules serializer-only, +3 for
+  deserializer round-trip); `str_print` vs `println`
+  convention named at the example site; narrow-width
+  + Mach-O deferral pins linked.
 
-  **Out of scope** (intentionally held): the `Str_println`
-  ergonomic helper. Pin if a downstream consumer surfaces
-  the ask explicitly.
+  cc5: **745,640 → 746,608 B** (+968 / +0.13%). api-surface:
+  **2,769 unchanged**. cyrius test: **130 → 131** (+1 —
+  `tests/tcyr/derive_serialize_roundtrip.tcyr`). 64/64
+  check.sh; two-step self-host byte-identical (`b0cb99ea…`).
+  Cross-host SSH verified — pi (Linux aarch64), cass
+  (Windows PE32+) — 4/4 each.
 
-- **v5.9.36** — **cx (cyrius-x bytecode) Phase 2c parity**.
+  **Cascaded surface findings (pinned separately)**:
+
+  - **v5.9.36** — narrow-int (i8/i16/i32) `#derive(Serialize)`
+    support. Two compounding bugs need to land together:
+    (1) v5.9.30's `prim_load` outer byte gate has the wrong
+    bytes for i32 (`(+1) == 49` matches i16's "i1..." but
+    not i32's "i3..."), AND (2) parser-side `STRUCTSZ` uses
+    width-aware `FIELDSZ` (i32 → 4) summing to 12 bytes for
+    `point_i32 { x, y, z }`, but the literal initializer
+    (`PARSE_STRUCT_INIT`, `EMIT_GVAR_INITS`) writes 8 bytes
+    per field — overflows allocation at global scope.
+    Folding narrow-width detection alone surfaces the
+    struct-size mismatch as a new failure mode.
+
+  - **Mach-O `_to_json` runtime SIGSEGV** — auto-generated
+    `_to_json` body SIGSEGVs on real macOS arm64 (ecb host)
+    for any `#derive(Serialize)` struct, including
+    `struct { x: i64; y: i64; z: i64; }`. Same source builds
+    + runs cleanly on x86_64 Linux, qemu-aarch64, real
+    Linux aarch64 (pi), and Windows PE. Pre-existing —
+    pre-v5.9.35 also SIGSEGV's on ecb. Pinned for a
+    separate Mach-O serializer slot once a consumer
+    surfaces it as blocking.
+
+- **v5.9.36** — **narrow-int `#derive(Serialize)` support**
+  (i8/i16/i32 typed fields). See v5.9.35 cascade for
+  scope. Slot pairs:
+
+  1. **PP_DERIVE detection fix** — `prim_load` /
+     `_from_json` / `_from_json_str` byte-gate logic
+     re-shaped so i32 ('i','3','2') and i16 ('i','1','6')
+     are distinguishable on byte (+1).
+
+  2. **Parser-side struct-size fix**. Two design options:
+     (a) Promote `FIELDSZ` for narrow scalars to 8 (track
+     width separately for codegen's loadN/storeN emit),
+     or (b) Make `EMIT_STRUCT_FIELD` width-aware (advance
+     boff by field width + emit storeN). Option (a) matches
+     cyrius's existing "every var slot is 8 bytes"
+     convention; (b) is more general but invasive. Pick
+     (a) unless a consumer needs packed layout.
+
+  3. **Regression test** — extend
+     `tests/tcyr/derive_serialize_roundtrip.tcyr` with a
+     `point_i32` round-trip (and `mixed_widths` covering
+     i8/i16/i32/i64 in the same struct).
+
+  Acceptance: `point_i32 { 100, 200, 300 }` round-trips
+  through `_to_json` + `_from_json_str` with correct
+  values on x86_64 + aarch64 (real pi).
+
+- **v5.9.37** — **cx (cyrius-x bytecode) Phase 2c parity**.
   Closes the two `ERR_MSG`-guarded cx pending sites that
   v5.9.26 + v5.9.27 narrowed but didn't fix:
   - `parse_fn.cyr:371` — struct return by value
@@ -1227,20 +1247,19 @@ satisfied by earlier slots.
   byte-memory-ops shape this slot is centered on. Pin them
   individually if a cx consumer surfaces.
 
-- **v5.9.37** — **tls-live gate conversion + network-probe
-  helper** (cascaded down from v5.9.34 after the vyakarana +
-  agnosys re-files claimed the earlier slots).
+- **v5.9.38** — **tls-live gate conversion + network-probe
+  helper** (cascaded down).
   `_network_probe_check(host, port)` — quick TCP
   connect+disconnect to verify network reachability before
   the TLS round-trip; skip cleanly if unreachable (CI runner
   contexts vary). `_tls_live_gate()` retires the `.sh`. With
   this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.38.
+  — precondition for v5.9.39.
 
-- **v5.9.38** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.37 (arc
+- **v5.9.39** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.38 (arc
   closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.37 dispatcher work
+  accumulated through the v5.9.6 → v5.9.38 dispatcher work
   (`_stderr_match_subcase`, `_count_substr_buf`,
   `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
@@ -1257,7 +1276,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.39** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.40** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup
