@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.9.39** (in-flight 2026-05-08 — **v5.9.x SLOT 39 —
+**5.9.39** (shipped 2026-05-08 — **v5.9.x SLOT 39 —
 Mach-O ARM64 fn-pointer ASLR fix (Bug B from v5.9.38) +
 `_macho_derive_serialize_gate`**). Closes the Mach-O
 `#derive(Serialize)` cascade end-to-end alongside v5.9.38's
