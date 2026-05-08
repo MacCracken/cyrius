@@ -555,3 +555,73 @@ the compiler binary doesn't include niyama.
 - **v5.8.63 — refactor pass B: main_*.cyr boilerplate extraction**: `_HEAP_INIT_SCRATCH(S)` helper in src/common/util.cyr; 237 lines of init-block duplication collapsed across 6 mains; cc5 741,128 → 741,048 B (-80 B); cmdline parser extraction deferred (only 2 of 6 mains have it).
 - **v5.8.64 — cycle closeout pass (CLAUDE.md 11-step protocol)**: §1-3 mechanical PASS (self-host + bootstrap closure + check.sh 65/65 + cross-host); §4 heap audit (84 regions, monotonic, 8.4 MB closeable gaps pinned for pre-v6.0); §5 dead-code floor stable at 32 fns / 22,571 B; §6-8 refactor consolidations absorbed; §9 security quick scan clean; §10 6-dep work-list captured (mabda excluded); §11 docs synced, v5.8.0-.63 migrated to completed-phases.md (94 lines, sub-arc grouped). cc5 unchanged at 741,048 B. Reference release tag for the dep-version-patch + foldin work at .65.
 - **v5.8.65 — stdlib foldin (sandhi-pattern) + final cycle close**: Six sibling distfiles vendored into `lib/` byte-identical at the patched tags (sakshi 2.2.3, patra 1.9.3, sigil 3.0.1, vani 0.9.2, yukti 2.2.2, sankoch 2.2.4); `[deps.<name>]` sections removed from cyrius.cyml; mabda + agnosys held (mabda 3.0.0-rc.2 not GA, Class B FFI deferred to v5.9.x). Mid-slot fix-ups absorbed Ubuntu CI fallout (symlink-dangling on `/home/macro/...` paths + audit-walk distlib-bundle marker missing sakshi's `# Bundled distribution of` header style — extended marker across all 4 call sites: scripts/lib/audit-walk.sh + .github/workflows/ci.yml's Format/Lint/Doc-coverage stdlib steps). cc5 unchanged at 741,048 B. **Cycle close at .65 — held-open .66 release-valve retired unused** because the foldin fallout was absorbed in-slot rather than needing its own patch. 65 patches over 5 days, longest minor in cyrius history by patch count.
+
+## Phase 16 — Cleanup + lib improvement (v5.9.x, 2026-05-06 → 2026-05-08)
+
+**Theme**: a cleanup-and-lib-improvement minor. Three work streams: (1) niyama fold-in (cycle opener); (2) sovereignty pass — bash-toolchain → cyrius dispatcher migration (~8,500 LOC across 75 files); (3) consumer-filed bug fixes + lib improvements absorbed as they landed. The unifying principle: existing surface gets cleaner and stdlib gets richer before adding new platform/feature surface.
+
+**Cycle stats**: 44 patches over 2 days. cc5 self-host byte-identical at every patch (final 7a1a8cf8, 751,744 B; +10 KB over v5.8.65's 741,048 B for sovereignty + Mach-O fixes + new helpers). check.sh: 56 → 66 gates (+10). cyrius test stable at 132 .tcyr. api-surface: 2615 → 2792 (+177; v5.9.42 lib/regression.cyr alone added 22). Stdlib module count: 76 → 79 (+`audit_walk` v5.9.1, +`niyama` v5.9.0, +`regression` v5.9.42). `tests/regression-*.sh`: 1 → 0 (.sh-conversion arc CLOSED at v5.9.41).
+
+### Phase 16-A: niyama fold + sovereignty pass kickoff (v5.9.0–v5.9.10)
+
+- **v5.9.0 — niyama 1.0.1 fold-in**: 8th sibling distfile vendored byte-identical (6,664 lines, 5 regex engines: bre / re2 / pcre / fuzzy / vim); niyama ADR 0011 Triggered. cc5 unchanged at 741,048 B; api-surface +35.
+- **v5.9.1 — sovereignty pass kickoff**: `scripts/check.sh` (743 LOC bash → 30-line shim + 700-line `programs/check.cyr`); fmt/lint walk lifted into new stdlib module `lib/audit_walk.cyr` (77 → 78). Premise-check found pin LOC was 3.7× under (200 → 743 actual).
+- **v5.9.2 — sovereignty pass batch 1/3**: 10 `_gate()` calls converted off `tests/regression-*.sh` (60 → 50 remaining). Two helper templates: `_tcyr_relay_gate` (6 conversions) + `_expected_output_gate` (4). Two prereq bugs surfaced + fixed in helper commit (pipe-EOF deadlock from setuid orphan; parse_failed infinite loop).
+- **v5.9.3 — sovereignty pass batch 2/3**: 12 `_gate()` calls converted (50 → 38). 1 shape-cluster helper (`_stderr_match_subcase`) + 12 bespoke gates + 7 small generic helpers. `cyrius audit` outside-repo brokenness surfaced + earmarked for follow-up.
+- **v5.9.4 — CI hotfix + `cyrius audit` review pin**: v5.9.3's batch-2 deletions broke `.github/workflows/ci.yml` Test-ubuntu direct invocations; replaced with inline equivalents using v5.9.3 fixtures. `cyrius audit` outside-repo design questions pinned for user direction.
+- **v5.9.5 — two consumer-filed bug fixes**: cyim BUG-001 (`args_init` 4 KB cap → 16 KB heap-backed); agnosys 1.1.0 derive-32-struct cap.
+- **v5.9.6 — testsuite-gate fix chain + args regression**: 3 lib/fs.cyr + check.cyr bugs (testsuite-gate "0 files" symptom) + args parser regression fix. tcyr-relay-vs-testsuite-gate redundancy pinned for v5.9.25.
+- **v5.9.7 — sovereignty pass batch 3a/3**: 9 conversions. v5.10.x re-framed as bug/optimization arc per user direction (kernel + RISC-V pushed to v5.11.x).
+- **v5.9.8 — sovereignty pass batch 3b/3**: SSH-cluster + remaining batch-3 conversions.
+- **v5.9.9 — `cyrius api-surface` derive-blind fix**: agnosys-filed; `#derive(Serialize)` auto-emitted fns invisible to api-surface walker. Inserted between original v5.9.8 + v5.9.10 plan.
+- **v5.9.10 — LSP feature additions**: `textDocument/references` + `textDocument/semanticTokens/full` + cross-file indexing.
+
+### Phase 16-B: api-surface tooling + project-scope work (v5.9.11–v5.9.18)
+
+- **v5.9.11 — api-surface --scope=project + cx-token-offsets**: Project-scope flag (vs stdlib-only) + cx-token-offsets parity gate.
+- **v5.9.12 — `cyrius api-surface --scope=project` polish**: Ergonomic refinements; `scripts/cyriusly` decided KEEP-as-bash (option a chosen).
+- **v5.9.13 — bidirectional-IPC helper + LSP gate**: New IPC helper for tests; LSP runtime regression gate.
+- **v5.9.14 — release-tarball `cyrius_api_surface` gap fix**: `cyrius api-surface` not in release tarball; `[release].scripts` extension.
+- **v5.9.15 — SSH-cluster sovereignty pass**: SSH-cluster + tar-pipe-to-ssh helper for cross-host gates.
+- **v5.9.16 — opportunistic deferred-gates batch**: small utilities batch.
+- **v5.9.17 — TS corpus + shared-library cleanup**: TS corpus refresh + cleanup pass.
+- **v5.9.18 — `lib/ct.cyr` adds `ct_eq_bytes(a, b, n)`**: Constant-time helper for byte-buffer compare; sigil-paired API expansion.
+
+### Phase 16-C: sigil-paired + capacity + match-coverage cluster (v5.9.19–v5.9.27)
+
+- **v5.9.19 — cyrius CLI scratch-dir batch**: `cyrius fuzz-deps-prepend` + 2 other CLI gates.
+- **v5.9.20 — sigil-paired `ct_eq` consolidation**: sigil 3.0.2 → 3.0.3 paired bump (initially unauthorized; corrected per `feedback_no_unauthorized_version_bumps` pin); `ct_eq` / `ct_eq_32` reinstated as public surface.
+- **v5.9.21 — sovereignty pass batch (3 cyrius-CLI gates)**: 3 more CLI conversions.
+- **v5.9.22 — capacity gate sovereignty conversion + CI inline fix**: capacity gate ported; CI inline fallout absorbed.
+- **v5.9.23 — install-shim-symlink gate conversion + env-var cleanup**: install-shim symlink testing in cyrius.
+- **v5.9.24 — `match` exhaustiveness fn-name-dependent**: agnosys 1.1.5 filing — coverage-pass internal-table indexing bug; some fn-name buckets bypass exhaustive-match warning. Fixed.
+- **v5.9.25 — two-item cleanup batch**: tcyr-relay-vs-testsuite-gate redundancy + `aarch64/fixup.cyr:19` syscall arity warning.
+- **v5.9.26 — Phase 2b-aarch64 struct return by value**: LDRB/STRB byte-copy + X8 retptr ABI for aarch64 struct-by-value returns.
+- **v5.9.27 — aarch64 sub-8-byte struct field load**: agnosys 1.1.9 filing; ldrb/ldrh/ldr w0 by width.
+
+### Phase 16-D: scaffolder + derive-Serialize cluster (v5.9.28–v5.9.32)
+
+- **v5.9.28 — `scripts/cyrius-init.sh` sovereignty port** (part 1).
+- **v5.9.29 — cyrius-init `--lib` shape + `--description=`** (part 2 + cyrius-port.sh start).
+- **v5.9.30 — `#derive(Serialize)` primitive-field codegen**: i64 + str + cstring auto-emit foundation.
+- **v5.9.31 — `#derive(Serialize)` API rename hotfix + init-doctree + init-lib-bin gate conversions**: rename + scaffolder gate work.
+- **v5.9.32 — SSH helper infra + macho-exit + pe-exit gates**: macOS arm64 + Windows PE32+ runtime gates with new SSH helpers.
+
+### Phase 16-E: agnosys 1.1.12 derive(Serialize) cascade (v5.9.33–v5.9.39)
+
+The longest single-filing chain in cyrius history (7 slots; lessons learned shape multiple memory pins on lazy-defer / consumer-repro discipline / cross-arch propagation).
+
+- **v5.9.33 — PARSE_VAR struct-init lookahead guard**: Initial parse-side fix for the agnosys repro.
+- **v5.9.34 — PP comment-aware state machine**: vyakarana include-graph regression closed.
+- **v5.9.35 — `#derive(Serialize)` deserializer i64**: i64-from-json path.
+- **v5.9.36 — narrow-int (i8/i16/i32) `#derive(Serialize)` support**: narrow-int width detection in `_to_json` / `_from_json` / `_from_json_str` plus PP_PARSE_STRUCT_DEF offset cumul.
+- **v5.9.37 — agnosys 1.1.12 verbatim repro: parse + build path closed**: char literals (`'X'`) lexer + `str_builder_putc` + auto-call-main + DCE-exempt-main. Verbatim repro hash locked at slot start (`6425355b6147d5a674078794310ae2c1`).
+- **v5.9.38 — Mach-O `#derive(Serialize)` SIGSEGV: probe + Bug A**: lldb crash log on ecb captured; `lib/fnptr.cyr` fncallN macOS-branch missing — fncallN returned 0 on Mach-O → alloc_via NULL → SIGSEGV at `load64(NULL+8)`. Fix A landed; Bug B split (in retrospect, lazy split per the v5.9.x feedback pins).
+- **v5.9.39 — Mach-O ARM64 fn-pointer ASLR fix (Bug B) + `_macho_derive_serialize_gate`**: aarch64/fixup.cyr ftype==3 ADRP+ADD relative addressing (was static MOVZ-chain that didn't survive PIE/ASLR). Bug A + Bug B + gate landed paired this slot per the user feedback. Cross-host parity verified — Mach-O ARM matches Linux aarch64 byte-for-byte through `point_to_json(&p, sb)`.
+
+### Phase 16-F: cx Phase 2c + tls-live + regression carve-out + closeout (v5.9.40–v5.9.43)
+
+- **v5.9.40 — cx Phase 2c parity**: 3 ERR_MSG-guarded cx pending sites closed (sub-byte struct field load, struct return by value, ESTORESTACKPARM). New cxvm opcodes 0x44/0x45/0x46/0x47 (load16/load32/store16/store32). Per-backend `EFIELD_LOAD_W` + `ESTRUCT_BYVAL_COPY` helpers extracted.
+- **v5.9.41 — tls-live gate conversion + network-probe helper**: native cyrius `_tls_live_gate` + `_network_probe_check` + `_run_with_timeout` helpers. **`.sh-conversion arc CLOSED — 0 `tests/regression-*.sh` files remaining.**
+- **v5.9.42 — `lib/regression.cyr` testing-stdlib carve-out**: 22 public verbs (display / buffer-scan / process / network / SSH-cluster). 14 helpers in `programs/check.cyr` collapsed to thin wrappers (net -364 LOC). Stdlib module count 78 → 79.
+- **v5.9.43 — closeout pass**: CLAUDE.md 11-step protocol executed. Mechanical (self-host + bootstrap + check.sh) green; dead-code floor 34 fns / 22,792 B (TS / Mach-O / cx / IR / aarch64-only — all retained per `feedback_dead_code_audit_scope`); judgment passes clean (one defensive-guard candidate at `parse_fn.cyr:910` for v5.10.x); security quick-scan clean; downstream pin distribution audited (8 at v5.9.x, 8 at v5.8.x, ~20 at v5.7.x or earlier); vidya `language/index.cyml` + `stdlib_modules.cyml` synced.

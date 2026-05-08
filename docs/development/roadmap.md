@@ -4,9 +4,9 @@ For completed work, see [completed-phases.md](completed-phases.md).
 For detailed changes, see [CHANGELOG.md](../../CHANGELOG.md).
 
 
-## v5.3.x / v5.4.x / v5.5.x / v5.6.x / v5.7.x / v5.8.x — shipped
+## v5.3.x / v5.4.x / v5.5.x / v5.6.x / v5.7.x / v5.8.x / v5.9.x — shipped
 
-All v5.3.x–v5.8.x per-patch detail lives in
+All per-patch detail through v5.9.x lives in
 [completed-phases.md](completed-phases.md);
 [CHANGELOG.md](../../CHANGELOG.md) is the source of truth.
 
@@ -21,6 +21,21 @@ asserts), heap-map monotonic reorganization, lib/ + main_*.cyr
 structural refactor, sandhi-pattern stdlib foldin (sakshi / patra /
 sigil / vani / yukti / sankoch). cc5 720,928 → 741,048 B
 (+20,120 B / +2.79%). check.sh 64 → 65 gates. tcyr 108 → 127.
+
+**v5.9.x close** (2026-05-08): 44 patches over 2 days. Cycle
+CLOSED at v5.9.43. Theme: cleanup-and-lib-improvement. Shipped:
+niyama 1.0.1 fold (8th sibling distfile, 5 regex engines), full
+sovereignty pass (`scripts/check.sh` 743 LOC bash → 30-line shim
++ `programs/check.cyr`; `tests/regression-*.sh` 60 → 0;
+`.sh-conversion arc CLOSED at v5.9.41), agnosys 1.1.12
+`#derive(Serialize)` cascade end-to-end including Mach-O ARM64
+fn-pointer ASLR fix (paired Bug A `lib/fnptr.cyr` macOS branches
++ Bug B `aarch64/fixup.cyr` ftype==3 ADRP+ADD), cx Phase 2c
+parity (sub-byte field load + struct-byval return + 7+-arg fn
+calls), `lib/regression.cyr` testing-stdlib carve-out (22 public
+verbs). cc5 741,048 → 751,744 B (+10,696 B / +1.4%). check.sh
+56 → 66 gates. api-surface 2615 → 2792 (+177). Stdlib module
+count 76 → 79 (+`audit_walk`, `niyama`, `regression`).
 
 ---
 
@@ -137,17 +152,18 @@ plan already exists (`ir_copyprop_recon` and `ir_extdse_recon`
 prototypes lived in `src/common/ir.cyr` during v5.6.19 evaluation,
 and the data structures + gate criteria are documented above).
 
-### Stdlib data-domain distlib carve-out — pinned to v5.9.x
+### Stdlib data-domain distlib carve-out — re-pinned to v5.10.x late or v5.11.x
 
-**Pinned 2026-05-05 at v5.8.65 close.** The v5.8.x language-
-vocabulary migration (slices / Result / allocators) has rippled
-through stdlib, so the carve-out trigger fires. Targets: ~13
-data-domain modules (`json`, `toml`, `cyml`, `csv`, `base64`,
-`regex`, `math`, `matrix`, `linalg`, `bigint`, `u128`) fold-out
-into a `cyrius-data` sibling distlib using the v5.7.0
-sandhi-pattern. Bare-metal v5.11.0 benefits from a clean
+**Originally pinned 2026-05-05 at v5.8.65 close** for v5.9.x.
+**Re-pinned at v5.9.43 close**: never landed in v5.9.x because
+the cycle filled with sovereignty pass + emergent consumer-filed
+work. Targets: ~13 data-domain modules (`json`, `toml`, `cyml`,
+`csv`, `base64`, `regex`, `math`, `matrix`, `linalg`, `bigint`,
+`u128`) fold-out into a `cyrius-data` sibling distlib using the
+v5.7.0 sandhi-pattern. Bare-metal v5.11.0 benefits from a clean
 primitives-only stdlib that doesn't drag the data offshoots into
-kernel objects. Full slot scope under the [v5.9.x section](#v59x--niyama-fold--sovereignty-pass-bash--cyrius).
+kernel objects. Earns slot whenever scheduling lines up — late
+v5.10.x bug arc OR v5.11.x kernel-prep.
 
 ### Heap-map full reorganization (pre-v6.0 hardening pin)
 
@@ -230,7 +246,9 @@ enabler audit trail.
 The v5.8.x cycle (CLOSED 2026-05-05; 65 patches) shipped detail
 moved to [completed-phases.md](completed-phases.md) at v5.8.65 close.
 What remains here is forward-looking: items not pinned to a slot
-during v5.8.x that may surface in v5.9.x or later.
+during v5.8.x that may surface in v5.10.x or later (v5.9.x came
+and went; cleanup arc filled with sovereignty pass + emergent
+consumer-filed work — see [completed-phases.md Phase 16](completed-phases.md)).
 
 ### Held items (surfacing-ask only; not pinned, no slot consumed)
 
@@ -262,1587 +280,6 @@ during v5.8.x that may surface in v5.9.x or later.
 
 ---
 
-
-## v5.9.x — Cleanup + lib improvement
-
-**Theme** (re-framed at v5.9.7 ship per user direction): a
-cleanup-and-lib-improvement minor. The slot inventory ended up
-broader than the original "niyama fold + sovereignty pass"
-framing — what actually shipped through v5.9.7 spans niyama
-fold, bash-toolchain → cyrius dispatcher migration, two
-consumer-filed bug fixes (cyim BUG-001 args_init 4 KB cap;
-agnosys 1.1.0 derive 32-struct cap), a chain of three lib/fs.cyr
-+ check.cyr bugs (testsuite-gate "0 files"), CI-deps hotfix,
-and a TS-acceptance helper template. The unifying theme is
-**the existing surface gets cleaner and stdlib gets richer
-before adding new platform/feature surface**, on the principle
-that more surface area to manage costs more in every future
-slot — better to clean what's there first.
-
-Three work streams (one originally-pinned, two emergent):
-
-1. **niyama fold-in** (v5.9.0) — vendor `niyama/dist/niyama.cyr`
-   byte-identical into `lib/niyama.cyr` once niyama hits v1.0
-   fold-ready bar (5 engines: bre / re2 / pcre / fuzzy / vim).
-   Same sandhi-pattern mechanics as v5.7.0 (sandhi) and v5.8.65
-   (sakshi/patra/sigil/vani/yukti/sankoch). Shipped v5.9.0.
-
-2. **Sovereignty pass — bash-toolchain → cyrius conversion**
-   (v5.9.0 → v5.9.x). Forward-pinned 2026-05-04 at v5.8.58
-   release-valve audit. ~8,500 LOC across ~75 files. Sized for
-   a multi-slot cycle.
-
-3. **Consumer-filed bug fixes + lib improvements** (emergent
-   v5.9.5 onward) — args_init heap-backed buffer, derive-emitter
-   heap-layout reshuffle, lib/fs.cyr deep-copy + cstring-vs-Str
-   API contract fixes. The minor absorbs these as they land
-   rather than deferring them.
-
-### Sovereignty pass scope (forward-pinned 2026-05-04)
-
-Inventory (LOC + priority):
-
-| Target | LOC | Effort | Priority |
-|---|---|---|---|
-| `tests/regression-*.sh` (60 scripts) | 6,679 | Large (batch by template) | Med-high — every CI run touches these |
-| `scripts/cyrius-init.sh` | 1,021 | Med-large | Med — project scaffolder; mostly heredoc templates |
-| `scripts/cyriusly` | 349 | Med (stays partial bash) | Med — version manager |
-| `scripts/cyrius-port.sh` | ~400 | Med | Med — Rust→cyrius migration tool |
-| `scripts/check.sh` | 200 | Small-Med | High — central audit dispatcher |
-| `scripts/lib/audit-walk.sh` | ~80 | Small | Med — shared audit helper |
-| `scripts/version-bump.sh` | 80 | Small | Med — runs every release |
-| `scripts/cyrius-repl.sh` | 98 | Small | Low |
-| `tests/heapmap.sh` | ~60 | Small | Med — heap-map auditor |
-| `benches/bench_capacity_overhead.sh` | 75 | Small | Low |
-| `scripts/cyrius-watch.sh` + `bench-history.sh` + `release-lib.sh` + `mac-{diagnose,selfhost}.sh` + `ci.sh` | ~250 | Small | Low |
-
-**Total convertible bash: ~8,500 LOC.** v5.9.x slot map (pinned
-at cycle entry):
-
-- **v5.9.0** ✅ — **niyama fold-in shipped 2026-05-06**. niyama
-  1.0.1 `dist/niyama.cyr` (6,664 lines) vendored byte-identical
-  as `lib/niyama.cyr`. niyama ADR 0011 status: **Triggered:
-  2026-05-06 via cyrius v5.9.0**. cc5 unchanged at 741,048 B
-  (no heap-shape change; foldin is `lib/` content only).
-  api-surface snapshot regenerated (2,725 → 2,760 public fns;
-  +35 non-breaking). 65/65 check.sh; self-host two-step
-  byte-identical. Sovereignty pass kickoff items moved forward
-  to v5.9.1.
-- **v5.9.1** ✅ — **sovereignty pass kickoff shipped 2026-05-06**.
-  `scripts/check.sh` (743 LOC bash → 30-line shim + 700-line
-  cyrius `programs/check.cyr`); fmt/lint walk logic ported into
-  new stdlib module `lib/audit_walk.cyr` (77 → 78). Premise-check
-  finding: roadmap had check.sh at 200 LOC; empirical was 743
-  (3.7× pin). audit-walk.sh stayed bash because it has a second
-  consumer (bash `scripts/cyrius` dispatcher, queued for v5.9.5)
-  — slot scope-corrected to check.sh-only at entry. cc5
-  unchanged (741,048 B); 65/65 check.sh green; api-surface
-  snapshot regenerated 2,760 → 2,763 (+3 non-breaking).
-- **v5.9.2** ✅ — **sovereignty pass batch 1/3 shipped 2026-05-06**.
-  10 `_gate()` calls converted off `tests/regression-*.sh`
-  (60 → 50 remaining). Two helper templates in `programs/check.cyr`:
-  `_tcyr_relay_gate(gate, label, basename)` for the
-  compile-tcyr-and-grep-`0 failed` shape (6 conversions: shadow_pam,
-  fdlopen, thread_local, atomics, thread_safety, flags) and
-  `_expected_output_gate(gate, label, basename)` for the
-  compile-fixture-and-cmp-stdout shape (4 conversions: json_pretty,
-  json_stream, json_pointer, test_lib). 10 retired `.sh` files
-  deleted. Two prereq bugs landed in v5.9.1's helper commit
-  (69603ae) surfaced when this slot ran the dispatcher end-to-end:
-  pipe-based `exec_capture` deadlocked on `unix_chkpwd` orphan
-  reparenting → fixed by new `_exec_capture_clean` (file-based,
-  stdin/stderr → /dev/null), and `_tcyr_parse_failed` infinite-
-  looped on every PASS path → rewrote to mirror clean
-  `_tcyr_parse_passed` shape. Bonus: `scripts/release-lib.sh`
-  packaging fix — walk lib/ recursively so `lib/unicode/*.cyr`
-  reaches the release tarball (cyim-surfaced; mirrors v5.8.49
-  fix in `install.sh`). cc5 unchanged (741,048 B); 65/65 check.sh
-  green pre- and post-deletion.
-- **v5.9.3** ✅ — **sovereignty pass batch 2/3 shipped 2026-05-06**.
-  12 `_gate()` calls converted off `tests/regression-*.sh`
-  (50 → 38 remaining). One shape-cluster helper template
-  (`_stderr_match_subcase` + `_compile_capture_stderr`) covering
-  3 stderr-diagnostic gates (fn-collision, reserved-kw-diag,
-  string-escapes); 12 bespoke gate fns for the rest
-  (aarch64-codebuf-cap source-grep, macho-cross-build ELF-magic,
-  object-init native ELF symbol-table parse, truthy-after-fncall,
-  input-1mb synth-source, stdlib-doc-coverage cyrdoc-walk,
-  linker cyrld-multi-module, cyrfmt-comment-braces, kmode-emit-
-  order). 7 small generic helpers landed alongside (exec-run-
-  clean, compile-run-get-exit, link-objects-invoke, file-
-  contains-substr, find-bytes, doc-parse-undocumented,
-  CYRDOC_PATH resolver). 11 new fixture files in
-  `tests/fixtures/{truthy,linker,cyrfmt_braces}/`. cc5 unchanged
-  (741,048 B); 65/65 check.sh green pre- and post-deletion.
-  Surfaced but NOT fixed this slot: `cyrius audit` broken
-  outside cyrius repo (cmd_audit invokes
-  `~/.cyrius/bin/check.sh` which doesn't exist; check.sh not in
-  `[release].scripts`); two open questions earmarked for
-  follow-up.
-- **v5.9.4** — **CI hotfix + `cyrius audit` review pin**.
-  v5.9.3's batch-2 deletions (regression-object-init.sh +
-  regression-linker.sh) broke `.github/workflows/ci.yml` —
-  the `Test (ubuntu)` job invokes those scripts directly,
-  not through `scripts/check.sh`. Slot scope: replace the two
-  broken steps with inline equivalents (preserving granular
-  CI step visibility); use the new `tests/fixtures/linker/`
-  objects from v5.9.3. **Pinned for separate review (NOT
-  fixed in this slot)**: `cyrius audit` is broken outside the
-  cyrius repo — `cbt/commands.cyr:415` `cmd_audit()` invokes
-  `~/.cyrius/bin/check.sh` which doesn't exist (check.sh not
-  in `cyrius.cyml`'s `[release].scripts`); `cbt/build.cyr:222`
-  `run_tool` only validates the *tool* (`/bin/sh`), never the
-  script arg. Two open design questions waiting on user
-  direction: (a) intended semantics outside the cyrius repo
-  (clean error vs polymorphic project-level audit); (b)
-  defensive `file_exists(script)` check in `run_script`
-  (one-line fix, applies to all script callers). Earned a
-  later v5.9.x slot once the design call lands. Memory-pin
-  update: extend `feedback_archive_dont_delete_docs` from
-  doc-only to test-script-too — grep `.github/workflows/`
-  before deleting any file the dispatcher consolidated.
-- **v5.9.5** ✅ — **two consumer-filed bug fixes shipped 2026-05-06**.
-  (a) **cyim BUG-001 — `lib/args.cyr` 4 KB stack-buffer
-  truncation**: `args_init()` switched from 4096-byte stack
-  buffer to 2 MB heap-backed buffer (`alloc(2097152)` matches
-  Linux ARG_MAX). Threshold pre-fix: argv > 4063 bytes silently
-  truncated; verified 8192-byte arg → `argc() == 2` post-fix.
-  (b) **agnosys 1.1.0 blocker — `#derive(accessors)` 32-struct
-  cap + prefix corruption**: `src/frontend/lex_pp.cyr` derive-
-  state heap layout reshuffled, separating per-struct tables
-  (struct_sizes[64], struct_names[64×32] at 0x197500..0x197F00)
-  from shared parse-state buffer (op, field_count, cumul, sname,
-  field_names, field_types, field_offsets at
-  0x197008..0x1974E0). Cap raised 32 → 64. All ~109 offset
-  references in lex_pp.cyr updated; external callers
-  (src/main.cyr, src/main_win.cyr, src/common/util.cyr) only
-  touch 0x197000 and 0x197F00 — both unchanged. Verified against
-  agnosys repro: N=28..36 threshold probe all 0 warnings (was
-  0,0,0,0,0,1,1,2,2); 37-struct minimal_repro builds clean +
-  runs to exit 0 (was 12+ warnings + SIGILL exit 132). Added
-  `tests/tcyr/derive_cap.tcyr` (36 derive structs, 9 assertions).
-  cc5 unchanged at 741,048 B; two-step self-host byte-identical;
-  65/65 check.sh green; 104/104 cyrius test green.
-- **v5.9.6** ✅ — **testsuite-gate fix chain + args regression
-  harness + 1 conversion shipped 2026-05-06**. The pinned
-  `_testsuite_gate "0 files"` audit unraveled into three
-  stacked bugs (`lib/fs.cyr` `dir_list` borrowed-pointer +
-  `path_has_ext` cstring-vs-Str type leak +
-  `_tcyr_compile_and_run` orphan-pipe deadlock); all three
-  landed. Plus args_init >4 KB regression gate (cyim BUG-001
-  guardrail) — audit total 65 → 66. Plus 1 conversion:
-  struct-cap (v5.7.17 kybernet-class fix). Remaining
-  regression-*.sh: 37 (was 38). cc5 unchanged at 741,048 B.
-- **v5.9.7** ✅ — **sovereignty pass batch 3a/3 shipped 2026-05-06**.
-  9 conversions: TS acceptance cluster (6 scripts share a single
-  `_parse_ts_dir_gate` helper template; 38 .ts fixtures
-  extracted to `tests/fixtures/ts_*/` from inline heredocs) +
-  ts-lex (single-fixture `--lex-ts` one-off,
-  `_ts_lex_gate`) + lint-init-order (4 sub-cases via
-  `_lint_init_order_gate`) + cyrlint-large-file (7008-line
-  synthesized fixture via `_cyrlint_large_file_gate`). Helpers
-  earned: parameterized `_ts_mode_run(fixture, mode_flag)`,
-  `_count_substr_buf`, `_cyrlint_count_marker`,
-  `_exec_with_arg_capture_both` (stdout+stderr capture). 37 →
-  28 .sh remaining. cc5 unchanged at 741,048 B; 66/66 check.sh
-  green; cc5 self-host byte-identical.
-- **v5.9.8** ✅ — **sovereignty pass batch 3b/3 shipped 2026-05-06**.
-  5 conversions: 2 cross-host SSH gates (aarch64-f64,
-  aarch64-f64-polyfill) earning new SSH/scp helpers
-  (`_ssh_skip_check`, `_scp_to`, `_ssh_remote_exit`,
-  `_ssh_target`) + 3 cyrius-x bytecode gates (cx-build,
-  cx-roundtrip, cx-syscall-literal) earning stdin-pipe-to-bin
-  primitives (`_pipe_file_to_bin` / `_capture`). cc5 unchanged
-  at 741,048 B; 66/66 check.sh green pre- and post-deletion.
-  28 → 23 .sh remaining. Honest scope shrink: original v5.9.4
-  pin had 8 SSH scripts; only 2 fit the clean shape this
-  slot's helpers covered. Six SSH gates + cx-token-offsets
-  queued for v5.9.9+.
-- **Remaining `tests/regression-*.sh` (23 scripts)** — picked up
-  opportunistically by v5.9.9+ slots when they fit the slot's
-  primary work. Categories at v5.9.8 close:
-  - **6 cross-host SSH gates** (aarch64-syscalls,
-    aarch64-native-selfhost, macho-exit, pe-exit, sit-status,
-    tls-live) — each needs additional helper infrastructure
-    (tar-pipe-to-ssh, env-var exec, .bat fixtures, local
-    `../sit` consumer, network probe). Helpers earn slot when
-    their target gate is the next consumer-driven blocker.
-  - **2 TS corpus gates** (ts-parse, ts-parse-tsx) — walk
-    external `~/Repos/secureyeoman` corpus with pass-count
-    threshold. Needs a recursive corpus-walker helper that
-    respects `node_modules` / `dist` / `build` prune patterns.
-  - **1 shared-library** (regression-shared.sh) — embeds an
-    inline C harness; sovereignty redesign needed using
-    `lib/dynlib.cyr` / `lib/fdlopen.cyr` consumer fixture.
-  - **1 cx parity check** (cx-token-offsets) — source-grep;
-    needs hex-substring-extract helper (~30-40 LOC).
-  - **~13 bespoke** — cyrfmt-write multi-test, capacity meter
-    probe, deps-transitive, init-lib-bin, init-doctree,
-    lsp-definition, smoke-discovery, distlib-large-module,
-    inline-asm-discard, install-shim-symlink, syscall-surface-
-    v5735, fuzz-deps-prepend, api-surface. Mostly one-off ports.
-- **v5.9.9** ✅ — **`cyrius api-surface` derive-blind fix shipped
-  2026-05-06** (agnosys 1.0.11 filing). `programs/api_surface.cyr`
-  scanner extended via `_scan_derive_struct` + `_push_synthesized`
-  helpers to detect `#derive(accessors)` and `#derive(Serialize)`
-  directives at depth 0 + emit synthesized accessor pairs
-  (`<struct>_<field>/1`, `<struct>_set_<field>/2`,
-  `<struct>_to_json/1`, `<struct>_from_json/1`) in the same
-  `module::name/arity` shape as hand-written fn entries. cc5
-  unchanged at 741,048 B; 66/66 check.sh green; cc5 self-host
-  byte-identical. Cyrius self-snapshot unchanged at 2,763 entries
-  (vendored stdlib bundles ship distlib-expanded fn forms, so
-  cyrius's own source uses no raw `#derive(...)` directives — fix
-  payoff is for downstream consumers). agnosys reproducer
-  end-to-end: 4 derive-emitted accessors now appear in the
-  snapshot. cx-token-offsets co-target deferred to v5.9.10
-  (slot kept single-purpose).
-- **v5.9.10** ✅ — **LSP feature additions shipped 2026-05-06**.
-  Two LSP capabilities promoted from "held forward":
-  `textDocument/references` (~80 LOC; walks every indexed
-  file scanning ident tokens, emits Location[]) +
-  `textDocument/semanticTokens/full` (~150 LOC; LSP 3.16-compliant
-  flat int array; legend = function/variable/struct/enum/
-  enumMember/keyword; coverage limited to symbol-table-resolvable
-  idents + 17 cyrius keywords). `regression-lsp-definition.sh`
-  EXTENDED with 3 tests covering new providers (deferred .sh →
-  cyrius-side gate conversion to v5.9.11; bidirectional-IPC
-  helper earns its own slot). cc5 unchanged at 741,048 B; 66/66
-  check.sh green; cc5 self-host byte-identical. macho-exit +
-  pe-exit opportunistic co-targets deferred (slot kept
-  single-theme).
-- **v5.9.11** ✅ — **api-surface --scope=project + cx-token-offsets
-  shipped 2026-05-06**. Two focused deliverables. (1)
-  `programs/api_surface.cyr` `--scope=project` flag (agnosys
-  1.0.11 follow-up review): default unchanged (scan src/ +
-  lib/); with flag, src/ only — excludes cyrius stdlib that
-  churns across releases. agnosys reproducer default→47 entries
-  / `--scope=project`→6 entries (no stdlib leakage). (2)
-  cx-token-offsets bespoke conversion (deferred from v5.9.9)
-  via new `_extract_hex_in_line_with` source-grep primitive +
-  `_cx_token_offsets_gate` reading lex.cyr / util.cyr /
-  3 backend emit.cyr files and verifying TOKTYP/TOKVAL/STLINE-
-  GTLINE all agree at canonical offsets. cc5 unchanged at
-  741,048 B; 66/66 check.sh green; cc5 self-host byte-identical.
-  22 .sh remaining (was 23). Scaffolders + LSP IPC + SSH cluster
-  cascaded to v5.9.12+.
-- **v5.9.12** ✅ — **`cyrius api-surface --scope=project`
-  dispatcher pass-through fix shipped 2026-05-06**. User-
-  reported v5.9.11 no-op (the binary correctly implements the
-  flag; `cbt/cyrius.cyr` was only parsing `--update` from
-  `argv[2]` and dropping every other flag). Walked
-  `argv[2..argc())` for both `--update` and `--scope=project`
-  in cyrius.cyr; extended `cmd_api_surface(update,
-  scope_project)` signature in commands.cyr. Verified end-to-
-  end on agnosys: 1,113 entries default → 721 with
-  `--scope=project` (matches agnosys awk-walker reference).
-  Slot was originally pinned for scaffolder conversions but
-  pivoted mid-slot per user direction. cc5 unchanged at
-  741,048 B; 66/66 check.sh green.
-- **v5.9.13** ✅ — **bidirectional-IPC helper + LSP gate
-  conversion + `--snapshot=PATH` dispatcher pass-through
-  shipped 2026-05-06**. `_ipc_session(bin, req_buf, req_len,
-  out_buf, out_cap)` ~50 LOC bidirectional helper (parent
-  writes child stdin to EOF, reads stdout to EOF, waitpid).
-  `_lsp_definition_gate` 3-phase 8-sub-case bespoke conversion
-  of `tests/regression-lsp-definition.sh` over fresh
-  `build/cyrius-lsp` spawns per phase. Mid-slot finding: LSP's
-  `handle_did_open_or_save` early-returns on paths not ending
-  `.cyr`; dynamic temp files now `_tmp_path() + ".cyr"`.
-  Plus `--snapshot=PATH` dispatcher pass-through (v5.9.12
-  follow-up). Three fixture files in `tests/fixtures/lsp/`.
-  cc5 unchanged at 741,048 B; 66/66 check.sh green; cc5
-  self-host byte-identical. 21 .sh remaining. Scaffolder
-  conversions + SSH cluster cascaded.
-- **v5.9.14** — **scaffolder conversions** (cyrius-init.sh +
-  cyrius-port.sh; cyriusly KEEP-as-bash per v5.9.12).
-  Cascaded from v5.9.13 (slot kept single-theme on IPC+LSP).
-  - **cyrius-init.sh** (1,021 LOC, 17 heredocs) — heredocs
-    become data files in `programs/cyrius-init-templates/` (or
-    string literals in the cyrius source if size allows);
-    cyrius port handles `--language=none|rust`, `--lib|--bin`,
-    `--agent`, `--cmtools`, `--description=`, `--dry-run`
-    flags.
-  - **cyrius-port.sh** (646 LOC) — Rust→cyrius migration
-    tool. Cyrius port handles the move-old-source-to-
-    `<lang>-old/` rename + cyrius scaffold layering.
-  - **Opportunistic deferred gates**: capacity probe,
-    init-lib-bin, init-doctree — all share the
-    `cyrius init`/`cyrius capacity` invocation shape that
-    scaffolder conversion may surface helpers for.
-- **v5.9.15** — **SSH cluster + tar-pipe-to-ssh helper**.
-  Cascaded from v5.9.13.
-  - `_tar_pipe_ssh(target, src_dir, remote_dir)` helper:
-    stream a tar archive over ssh stdin so
-    `aarch64-native-selfhost` can ship src + lib to pi.
-  - aarch64-syscalls + aarch64-native-selfhost conversions
-    using the new tar-pipe helper.
-  - macho-exit + pe-exit (cross-host run-fixture pattern).
-    macho-exit needs env-var exec for `CYRIUS_MACHO_ARM=1` +
-    codesign on the remote; pe-exit needs .bat fixture
-    handling + `cmd /c` stdout-parse.
-- **v5.9.16** — sovereignty pass: small utilities batch
-  (`version-bump.sh`, `cyrius-repl.sh`, `cyrius-watch.sh`,
-  `bench-history.sh`, `release-lib.sh`, `tests/heapmap.sh`,
-  `benches/bench_capacity_overhead.sh`).
-  - **Opportunistic deferred gates**: `sit-status` (local
-    `../sit` consumer; no SSH) + `tls-live` (network probe) +
-    remaining bespokes that fit `cyrius` CLI subcommand
-    invocation shape (smoke-discovery, fuzz-deps-prepend,
-    distlib-large-module, deps-transitive, syscall-surface-v5735,
-    install-shim-symlink, cyrfmt-write, inline-asm-discard,
-    api-surface).
-- **v5.9.17** — TS corpus + shared-library cleanup. Earned its
-  own slot because both items are blocked on a corpus-walker
-  helper (ts-parse / ts-parse-tsx) or a lib/dynlib.cyr consumer
-  fixture redesign (regression-shared.sh) — neither pairs
-  cleanly with v5.9.14-16 themes. Scope:
-  - **`ts-parse` + `ts-parse-tsx`**: walk external
-    `~/Repos/secureyeoman` corpus with a recursive walker that
-    respects `node_modules` / `dist` / `build` / `.next` /
-    `coverage` prune patterns. Pass-count threshold gate (≥2053
-    .ts; ≥435 .tsx). Helper `_walk_corpus_with_prunes(root_path,
-    ext, prunes_vec)` reusable by future corpus regressions.
-  - **`regression-shared.sh`**: replace the inline C harness with
-    a cyrius-side dlopen-test fixture using `lib/dynlib.cyr` or
-    `lib/fdlopen.cyr` (the v5.6.37 fdlopen path is the more
-    sovereign choice). Sovereignty pin per memory.
-- **v5.9.18** — **`lib/ct.cyr` — add `ct_eq_bytes(a, b, n)`**
-  (agnosys 1.1.2 filing 2026-05-06 at `agnosys/docs/development/
-  issues/2026-05-06-cyrius-ct-eq-bytes-stdlib.md`). User
-  decision 2026-05-06: land between v5.9.17 (TS corpus +
-  shared-library cleanup) and v5.9.19+ (regression-stdlib
-  carve-out).
-
-  Scope minimum-viable: ONE new public fn — `ct_eq_bytes(a,
-  b, n)` matching agnosys's literal ask (canonical XOR-
-  accumulate, single-length, equal-length-by-construction).
-  ~10 lines added to `lib/ct.cyr` (current contents: only
-  `ct_select`). api-surface snapshot adds 1 entry; cc5
-  unchanged (pure stdlib add).
-
-  Out of scope: see the dedicated **stdlib-dep coordination
-  slot** entry below (was deferred at v5.9.18 ship as "paired
-  sigil-bump slot"; first attempt at v5.9.20 broke 4+ downstream
-  consumers — full incident retro and binding spec follow).
-
-  Vidya pin: `vidya/content/cyrius/language/features.cyml`
-  `secret_var_compound_ops` entry already half-promises
-  `ct_eq` as the "intended primitive"; refresh to name
-  `ct_eq_bytes` as the canonical stdlib helper, and clarify
-  that scalar `ct_eq` was vidya-aspirational not shipped.
-
-- **STDLIB-DEP COORDINATION SLOT — sigil `ct_eq` consolidation**
-  (status: **RESET after broken first attempt 2026-05-06; do
-  not repeat the failure pattern below**)
-
-  ⚠️ **READ THIS WHOLE BLOCK BEFORE TOUCHING ANY FILE.** This
-  is not a cyrius slot with downstream cleanup. This IS a
-  stdlib-dep coordination slot where sigil's public-surface
-  change is the primary work; the cyrius `ct_eq_bytes_lens`
-  add is the supporting helper. Treat sigil exactly like
-  `lib/string.cyr` — full pre-change ecosystem audit, ecosystem
-  grep, semver discipline, downstream coordination. **If you
-  catch yourself thinking "I'll just delete sigil's
-  `src/ct.cyr` and migrate the call sites" — STOP. That is
-  the framing that broke v5.9.20's first attempt.**
-
-  **What "stdlib-dep" means here**: sigil ships
-  `dist/sigil.cyr` which gets vendored into cyrius
-  `lib/sigil.cyr` AND into 11+ downstream consumers'
-  `lib/sigil.cyr` via `cyrius deps`. Removing a public symbol
-  from sigil's bundle is a breaking change across the
-  ecosystem, equivalent to removing a fn from
-  `lib/string.cyr`. See vidya
-  `cyrius/field_notes/compiler/methodology.cyml::stdlib_dep_care_not_application_care`
-  for the full discipline.
-
-  **First-attempt failure modes (2026-05-06; do NOT repeat):**
-
-  1. **Half-grep claim**: `ct_eq_32` was claimed "zero callers"
-     based on `grep` of `sigil/src/*.cyr` only. Actual callers:
-     `sigil/programs/smoke.cyr:21`, `sigil/tests/bcyr/sigil.bcyr:346`.
-     Both produced runtime SIGILL when the symbol disappeared.
-  2. **Public-surface removal labeled as patch**: deleted
-     `sigil/src/ct.cyr` (`fn ct_eq` + `fn ct_eq_32`) and
-     bumped sigil 3.0.1 → 3.0.2 calling it "internal refactor."
-     Direct downstream callers grep'd post-hoc:
-     `kavach/src/util.cyr:12`, `hoosh/src/lib/auth.cyr:26`,
-     `hoosh/tests/hoosh.tcyr:1928–1939`,
-     `libro/src/hasher.cyr:51`, `libro/src/main.cyr:139–142`,
-     `libro/dist/libro.cyr:116`,
-     `majra/src/signed_envelope.cyr:125`,
-     `majra/dist/majra-{signed,backends}.cyr:375`. None
-     surveyed at slot entry. All would break when their
-     sigil pin bumps.
-  3. **17 sigil test/fuzz files included the deleted file**;
-     **9 tcyr files called bare `ct_eq` directly**. None
-     migrated in the deletion slot.
-  4. **Stale CI pin**: `sigil/.github/workflows/ci.yml`
-     `CYRIUS_VERSION=5.7.48`. Even with the lift correct,
-     CI couldn't find `ct_eq_bytes_lens` against the old
-     stdlib.
-  5. **Side-effect framing**: the slot was scoped as a cyrius
-     slot ("cyrius v5.9.20: lift ct_eq into stdlib + sigil
-     cleanup as part of the same change"). The sigil work
-     should have been the headline; cyrius's add was the
-     supporting helper.
-
-  **Binding spec — pre-condition checklist (must complete
-  BEFORE editing any file):**
-
-  - [ ] **Ecosystem grep**:
-    ```sh
-    grep -rn "\bct_eq\b\|\bct_eq_32\b" /home/macro/Repos/ \
-      | grep -v "/.git/\|/build/\|api-surface.snapshot"
-    ```
-    Enumerate every direct caller of sigil's `ct_eq` and
-    `ct_eq_32` across all repos. Each is a downstream
-    migration target.
-  - [ ] **Vendored-copy enumeration**:
-    ```sh
-    find /home/macro/Repos -name sigil.cyr -path "*/lib/*"
-    ```
-    Each consumer with a frozen `lib/sigil.cyr` is a future
-    bump cost — the sigil change ripples when they bump.
-  - [ ] **Sigil's own surface audit**: every file under
-    `sigil/{src,programs,tests,fuzz}/` that includes
-    `src/ct.cyr` or calls `ct_eq` / `ct_eq_32`. Use
-    `grep -rln "ct_eq\b\|ct_eq_32\b\|src/ct\.cyr"
-    /home/macro/Repos/sigil/`.
-  - [ ] **CI version pin survey**: `sigil/.github/workflows/`
-    + every consumer's CI workflow files. Bump
-    `CYRIUS_VERSION` everywhere the lifted symbol is needed.
-
-  **Path A — preserve sigil public surface (recommended)**:
-  Add `ct_eq_bytes_lens(a, a_len, b, b_len)` to
-  cyrius `lib/ct.cyr` as additive stdlib (sigil 3.0.x can
-  optionally adopt it, no rush). Sigil's `src/ct.cyr` stays
-  intact. Sigil's `fn ct_eq` and `fn ct_eq_32` remain public.
-  Downstream untouched. NOT a coordination slot at all —
-  just a tiny additive stdlib slot in cyrius. This is the
-  simplest, least-risky path.
-
-  **Path B — sigil compat shim, minor sigil bump**:
-  Cyrius adds `ct_eq_bytes_lens` to `lib/ct.cyr`. Sigil's
-  `src/ct.cyr` rewrites the two fns as ~6-line shims:
-  `fn ct_eq(a, al, b, bl) { return ct_eq_bytes_lens(a, al, b, bl); }`
-  `fn ct_eq_32(a, b) { return ct_eq_bytes(a, b, 32); }`
-  Sigil bumps to 3.1.0 (minor — surface preserved).
-  Downstream sees identical API. No major bump because
-  the public symbol set is unchanged. Sigil's CI pin
-  bumps to the cyrius version that has `ct_eq_bytes_lens`.
-  All 17 sigil test/fuzz files keep their includes.
-
-  **Path C — major sigil bump with deprecation cycle**:
-  Sigil 4.0.0 removes `ct_eq` and `ct_eq_32` after a
-  3.x deprecation cycle that prints `# DEPRECATED` warnings
-  on `cyrius lint` of consumer code. Each downstream
-  consumer (kavach, hoosh, libro, majra) gets its own
-  paired migration slot to update calls + bump sigil pin.
-  Most thorough; most work; only worth it if the
-  deduplication value exceeds the migration cost. NOT
-  the right call for ct_eq alone — the duplication is one
-  fn body, ~10 lines.
-
-  **Decision tree**:
-  - If the goal is "agnosys 1.1.2 unblocked" → already done at
-    v5.9.18 (`ct_eq_bytes` is in stdlib). No further work
-    needed. Skip the consolidation entirely.
-  - If the goal is "deduplicate the canonical XOR-accumulate"
-    → Path A (additive `ct_eq_bytes_lens`, no sigil work,
-    accept minor duplication for surface stability).
-  - If the goal is "sigil source uses upstream stdlib helpers"
-    → Path B (compat shim; sigil sources call
-    `ct_eq_bytes_lens` internally; public symbols preserved).
-  - **Never** Path-A-with-sigil-deletion. That is literally
-    what broke 2026-05-06.
-
-  **At slot entry, the agent MUST**:
-  1. Read this entire block + the
-     `feedback_stdlib_dep_discipline.md`,
-     `feedback_no_unauthorized_version_bumps.md`,
-     `feedback_roadmap_entries_are_self_instructions.md`
-     memory pins.
-  2. Run the four pre-condition checklist greps. Paste the
-     results into the slot's working notes.
-  3. Confirm with user which Path (A / B / C) before any
-     edit. The Path choice is the user's call, not the
-     agent's.
-  4. Treat any sigil edit as primary work, not a side
-     effect of cyrius work. Any commit touching
-     `sigil/dist/sigil.cyr`, `sigil/src/`, or sigil's
-     `cyrius.cyml` is a sigil release commit; it gets
-     sigil-CHANGELOG narrative, sigil VERSION discussion
-     (with the user), and sigil semver analysis.
-
-  **Recovery from 2026-05-06 broken state**: sigil 3.0.2
-  was pushed with the broken delete-and-migrate. Working
-  trees as of incident:
-  - `/home/macro/Repos/cyrius/` v5.9.20 changes uncommitted
-    (lib/ct.cyr +`ct_eq_bytes_lens`, lib/sigil.cyr refolded,
-    api-surface 2766 → 2765, tests/tcyr/ct.tcyr extended).
-  - `/home/macro/Repos/sigil/` 3.0.2 pushed (commit
-    `dcba6de "src/ct.cyr removed"`). Hotfix-attempt commits
-    on top: `6de999b "fixing work to release"` — added
-    CI version bump + tcyr/bcyr/fcyr include drops + bare
-    `ct_eq` migrations. Plus uncommitted working-tree edits
-    to `programs/smoke.cyr` + `tests/bcyr/sigil.bcyr`
-    migrating `ct_eq_32` → `ct_eq_bytes`.
-  - The recovery decision is the user's. Most likely
-    Path A or B per the decision tree above.
-
-### v5.9.x wrapup pin sequence (committed 2026-05-07)
-
-Concrete slot assignments for everything remaining in v5.9.x.
-Replaces the prior open-ended "v5.9.19+ / next" placeholder.
-Order is dependency-respecting: each slot's preconditions are
-satisfied by earlier slots.
-
-- **v5.9.23** — **install-shim-symlink gate conversion +
-  env-var-passing exec helper**. Last cyrius-CLI conversion not
-  blocked on cross-host SSH or scaffolder ports.
-  - New helper `_exec_in_dir3_env(work_dir, bin_path, arg1,
-    arg2, arg3, env_extras_vec, out_path)` — extends
-    `_exec_in_dir3` with a vec of `"KEY=VALUE"` strings appended
-    to `ENVP_ARR`. Needed for `CYRIUS_HOME=fake` invocation of
-    `install.sh --refresh-only` against a TMPDIR-isolated fake
-    versions tree.
-  - `_install_shim_symlink_gate()` — builds two fake version
-    snapshots, runs install.sh --refresh-only, asserts
-    `~/.cyrius/bin` + `~/.cyrius/lib` symlinks repoint at the
-    current `$VERSION`'s snapshot.
-  - Delete `tests/regression-install-shim-symlink.sh`. CI step
-    inlined per the v5.9.22 capacity template.
-
-- **v5.9.24** — **`match` exhaustiveness check fn-name-dependent
-  fix** (agnosys 1.1.5 filing 2026-05-06; full diagnostic in
-  *§Other pin candidates*). Hash-collision in the coverage
-  pass's internal bookkeeping. Investigation plan per the
-  filing: log which arm idents the check sees per fn-name in
-  the 27-name sweep; locate the bucket short-circuit that
-  skips coverage analysis. Acceptance: every row of
-  `/tmp/cyrius-match-coverage-dce-gated/sweep.sh` produces `1`.
-  MEDIUM severity — agnosys 1.1.5 audit gate effectiveness
-  depends on this firing reliably; library-author quality-gate
-  story compromised today.
-
-- **v5.9.25** — **two-item cleanup batch**:
-  (a) `aarch64/fixup.cyr:19` syscall arity warning
-  confirm-or-fix (deferred from v5.8.53 install-pipeline slot;
-  likely benign lint, ~30-line slot once the offending arity
-  table site is read).
-  (b) `tcyr-relay-vs-testsuite-gate` redundancy cleanup (per
-  v5.9.6 pin — three v5.9.6 gates ended up double-covering the
-  same compile-tcyr-and-grep-`0 failed` shape; collapse the
-  redundant pair).
-
-- **v5.9.26** — **Phase 2b-aarch64 struct copy** (LDRB/STRB
-  loop). x86 path shipped v5.5.36; aarch64 path pending.
-  Single-platform unblock for cross-arch struct-by-value
-  parity. Earns slot now because v5.9.x's mid-cycle SSH-pi
-  green re-confirms aarch64 path is the only remaining gap.
-
-- **v5.9.27** — **aarch64 sub-8-byte struct field load**
-  (agnosys 1.1.9 filing 2026-05-07 at
-  `agnosys/docs/development/issues/2026-05-07-cyrius-aarch64-sub-8-byte-struct-load.md`).
-  **Severity: MEDIUM** — gates V1.1.8-shape multi-width struct
-  field migrations for any project that cross-compiles to
-  aarch64. Stores work; only LOAD codegen is missing for `i8`
-  / `i16` field reads through pointer-to-struct dot syntax.
-  Reproduces under v5.9.25 + v5.9.26.
-
-  **Failure mode**: `error:1610: sub-8-byte struct field load
-  is x86-only for v5.6.0; aarch64 + cx pending` — the error
-  message itself documents the gap. The x86_64 path emits
-  `movzx rax, byte/word [addr]`; aarch64 needs the matching
-  `ldrb w0, [x1]` (1B) / `ldrh w0, [x1]` (2B) — the
-  width-4/width-8 ldur/ldr paths already exist in
-  `src/backend/aarch64/emit.cyr` (v5.9.26 EFLLOAD_W reads
-  width=1/2/4/8 against locals; the missing site is field-load
-  through a struct pointer, not local-load). Same shape needed
-  for the cx bytecode backend.
-
-  **Reproducer**:
-  `/tmp/cyrius-aarch64-sub-8-byte-struct-load/minimal_repro.cyr`
-  defines `struct nlmsghdr { nlmsg_len: i32; nlmsg_type: i16; ... }`
-  + `var hdr: nlmsghdr = buf; print_num(hdr.nlmsg_type);`. x86
-  build runs (prints `100\n7`); aarch64 cross-build emits the
-  guard error.
-
-  **Why this matters**: agnosys 1.1.8 migrated four kernel-ABI
-  structs to typed-`struct` + dot-syntax. Three carry `i16`
-  fields (`sockaddr_nl.nl_family`, `nlmsghdr.nlmsg_type/_flags`,
-  `bpf_insn.code`). agnosys's `audit.cyr` reads `hdr.nlmsg_type`
-  → CI aarch64 cross-build fails. agnosys 1.1.9 reverted V1.1.8
-  back to explicit `store16` / `load32` calls AND extended the
-  local audit to add an `--aarch64` cross-build gate. The V1.1.8
-  migration re-opens once this slot lands.
-
-  **Suggested upstream investigation** (per agnosys filing):
-  fix mirrors the existing aarch64 width-aware local-load
-  primitives. The error site is the field-LOAD codegen path
-  (parse.cyr or parse_decl.cyr) emitting `error:1610`; route
-  that path through `EFLLOAD_W`-like emission for widths 1+2,
-  with the existing `_EFP_ADDR_X9` fallback for far-disp cases.
-  Pair the cx backend stub at the same site. Acceptance: the
-  repro builds + runs to print `100\n7` on pi (cross-test
-  via existing SSH gate pattern).
-
-- **v5.9.28** — **`scripts/cyrius-init.sh` sovereignty port,
-  part 1 of 2** (was originally pinned to v5.9.14 but the slot
-  got repurposed for the release-tarball gap fix). 1,021 LOC
-  bash → cyrius. Part 1 scope:
-  - Core init flow + `--lib` / `--bin` / bare shape detection.
-  - Heredoc templates (17 in original .sh) externalized to
-    `programs/cyrius-init-templates/{lib,bin,bare}/` data
-    files; cyrius source consumes via `read_file_str` walks.
-  - New `programs/cyrius-init.cyr` entry; `cyriusly` shim and
-    `cbt/cyrius.cyr` dispatcher updated to invoke it.
-
-- **v5.9.29** — **`scripts/cyrius-init.sh` part 2 + `cyrius-port.sh`
-  port**.
-  - Part 2: flag matrix completion — `--language=none|rust`,
-    `--agent`, `--cmtools`, `--description=`, `--dry-run`.
-  - `cyrius-port.sh` (646 LOC) port — Rust→cyrius migration
-    tool. Same template-externalization shape; landed in the
-    same slot since it shares the cyrius-init.sh helper layer.
-
-- **v5.9.30** — **`#derive(Serialize)` primitive-type helpers**
-  (agnosys 1.1.12 filing 2026-05-07 at
-  `agnosys/docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`).
-  **Severity: MEDIUM** — the documented `#derive(Serialize)`
-  contract (per vidya `features.cyml derive_str_fields`)
-  doesn't emit functional code. Generated `<struct>_to_json`
-  is either empty (untyped fields) or references undefined
-  helpers (`: i64` → `i64_to_json_sb` not in stdlib → SIGILL
-  at runtime). Reproduces under v5.9.27.
-
-  **Reproducer**:
-  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`.
-  Untyped `struct s { x; y; z; }` produces empty `s_to_json`
-  body; `: i64` typed fields produce a body referencing
-  `i64_to_json_sb(sb, n)` which doesn't exist in stdlib —
-  build warns `undefined function`, binary SIGILLs at exit
-  132.
-
-  **Why this matters**: agnosys 1.1.12's V1.1.12 slot was
-  generating JSON serializers for 6 module status structs
-  (`mac_status` / `audit_status` / `ima_status` /
-  `secureboot_state` / `tpm_caps` / `drm_caps`) so consumers
-  (kavach, sigil, argonaut) could dump agnosys state without
-  per-module formatters. V1.1.12 ships as a deferral until
-  this lands.
-
-  **Scope**:
-  - **`lib/serialize.cyr` (or fold into `lib/json.cyr`)** —
-    primitive-type Serialize helpers:
-    - `i64_to_json_sb(sb, n)`, `i32_to_json_sb`,
-      `i16_to_json_sb`, `i8_to_json_sb` — emit bare JSON
-      numbers via `str_builder_add_int`.
-    - `Str_to_json_sb(sb, s)` — emit JSON-escaped string
-      literal (handles `"`, `\`, control chars).
-    - Inverse `_from_json_sb` helpers for the deserializer
-      side (less critical for v5.9.30; can land in a
-      follow-up if scope tight).
-  - **Codegen path for untyped fields**: either emit inline
-    `i64_to_json_sb` calls (treating untyped as i64 per the
-    doc's "scalar fields → bare JSON numbers" contract) OR
-    surface a clearer `error: untyped field requires
-    type annotation` to push users toward typed structs.
-    Pick at slot entry — agnosys filing prefers the
-    treat-as-i64 path.
-  - **Vidya refresh**: update `features.cyml
-    derive_str_fields` example to include the
-    `lib/serialize.cyr` (or whatever name) include line +
-    document the actual helper-fn names ship.
-  - **Acceptance**: agnosys repro builds cleanly + prints
-    valid JSON for both untyped + `: i64` field shapes; an
-    `_aarch64_serialize_codegen_gate` (pattern-mirror of
-    v5.9.27's `_aarch64_sub_byte_field_load_gate`) locks
-    the fix against future regression.
-
-  **Held within scope**: `Vec<T>` / nested-struct field
-  handling (recursive `_to_json` calls) — punt to a follow-up
-  slot once primitive coverage is solid; no agnosys consumer
-  needs nested today (the 6 V1.1.12 structs are flat).
-
-- **v5.9.31** — **init-doctree + init-lib-bin gate conversions**
-  (unblocked by v5.9.28/29 ports). Both `tests/regression-init-*.sh`
-  retired into dispatcher gates that exercise the now-cyrius
-  `cyrius init` paths. Helper reuse off the v5.9.28/29 testing
-  scaffold expected.
-
-- **v5.9.32** ✅ — **SSH helper infra batch + macho-exit +
-  pe-exit gate conversions** (shipped 2026-05-07). Pin text
-  below corrected from prior swap (cass = Windows, ecb =
-  macOS — bash regression scripts and `~/.ssh/config` are the
-  source of truth):
-  - `_self_host_pipe_env(src, cc, out, env_kv)` — pipe + envp
-    augmentation for the local cross-build (the
-    `CYRIUS_MACHO_ARM=1` env var triggers the aarch64
-    backend's Mach-O emit).
-  - `_ssh_remote_exec_capture(target, command, out_path)` —
-    stdout-capturing sibling of `_ssh_remote_exit`. Needed
-    for parsing `exit=N` from a remote `.bat` invocation
-    on cass (Windows ERRORLEVEL doesn't propagate cleanly
-    over ssh; the .bat echoes it for grep) and the
-    "hello" stdout assertion in the macho write fixture.
-  - `_codesign_remote(target, path)` — `chmod +x && codesign
-    -s -` over ssh for ad-hoc signing of Mach-O test
-    binaries on ecb.
-  - `_macho_exit_gate()` (3 sub-cases on ecb / macOS arm64)
-    + `_pe_exit_gate()` (3 sub-cases on cass / Windows 11)
-    retired the two `.sh` files. Builds Linux-host
-    `cc5_win_cross` from `src/main_win.cyr` on demand if
-    absent.
-  - `_ssh_skip_check` reachability probe switched from
-    `true` (Unix-only) to `echo alive` (portable across
-    Linux/macOS/Windows-PowerShell) so cass actually
-    registers as reachable.
-
-- **v5.9.33** ✅ — **PARSE_VAR struct-init lookahead guard
-  shipped 2026-05-07** (agnosys 1.1.12 narrow-aarch64 close).
-  Closes the remaining case in the v5.9.30/31 `#derive(Serialize)`
-  fix arc. The earlier "narrow aarch64 type-ID slot" hypothesis
-  was wrong — the bug was an over-eager parser path, not a
-  derive-codegen issue.
-
-  **Actual root cause** (`src/frontend/parse_decl.cyr`): three
-  parser sites — `PARSE_VAR` (~line 998 — local
-  `var X = ...;`), `EMIT_GVAR_INITS` (~line 615 — global init
-  replay), `PARSE_GVAR_REG` (~line 540 — pass-1 sizing) — all
-  checked `FINDSTRUCT(ident) > 0` and unconditionally entered
-  `PARSE_STRUCT_INIT`. The struct-init parse then consumed the
-  ident and demanded `{`; if anything else followed (`&`, `+`,
-  `*`, `(`, `,`, …) it errored.
-
-  The collision shape: cyrius's `LEXID` dedups identifier
-  storage, so a fn parameter named `status` and a struct
-  named `status` share the same `tok_names` offset.
-  `var sig = status & 0x7F;` inside `fn WIFSIGNALED(status)
-  { ... }` fed FINDSTRUCT a hit on the ident, the parser
-  committed to struct-init, and `&` (token 27) tripped the
-  "expected '{', got unknown" path.
-
-  **Why aarch64-only surfaced**: `lib/syscalls_aarch64_linux.cyr`
-  (677 LOC) is bigger than `lib/syscalls_x86_64_linux.cyr`
-  (630 LOC). The DCE bitmap window covers tok_names offsets
-  `[0, 65536)`; on x86, WIFSIGNALED's name offset lands inside
-  the window AND nothing references it, so it's stubbed
-  (`xor eax, eax; ret`) before parse — masking the bug. On
-  aarch64 the same fn's offset lands ≥ 65536, the DCE check
-  is skipped (conservative-keep), and the body gets parsed.
-  The 13-name sweep in the agnosys filing only flagged
-  `status` because that was the unique collision with a
-  syscalls-fold fn-param twin in the v5.9.32 include set; any
-  other ident-named struct sharing a fn-param in the included
-  tree would have repro'd just the same.
-
-  **Fix**: each of the three sites now requires
-  `TOKTYP(S, GTI(S) + 1) == 13` (next-next token is `{`)
-  before committing to struct-init. Bare ident references
-  fall through to scalar expression parsing where they
-  belong.
-
-  cc5: **744,936 → 745,208 B** (+272 / +0.04%). api-surface:
-  **2,769 unchanged**. cyrius test: **128 → 129** (+1 —
-  `tests/tcyr/struct_name_param_collision.tcyr`). Two-step
-  self-host byte-identical. 64/64 check.sh green. Cross-host
-  SSH cluster all PASS — `pi` (Linux aarch64), `ecb` (macOS
-  arm64 Mach-O), `cass` (Windows 11 PE32+), 13/13 each.
-
-  **Out of scope** (tracked separately): the `48 + (n /
-  100)` formatter SIGILL surfaced during early
-  instrumentation attempts — pin if it surfaces in a real
-  consumer (still unreproduced post-fix; the bug was
-  upstream of any need for the formatter so that path may
-  not actually be defective).
-
-- **v5.9.34** ✅ — **PP comment-aware state machine shipped
-  2026-05-07** (vyakarana 1.0.2 include-graph regression close).
-  Filed at `vyakarana/docs/development/issues/2026-05-07-cyrius-
-  include-graph-regression.md`. Picked fix candidate (1) +
-  (3) combined: comment-aware tracking + reset on newline.
-
-  **Root cause (confirmed via instrumentation)**: v5.8.40's
-  `in_string` state machine in `PP_PASS` and `PP_IFDEF_PASS`
-  treated EVERY unescaped `"` byte as a string boundary —
-  including `"` inside line comments. vyakarana's
-  `src/grammar.cyr` has a comment documenting JSON escape
-  syntax:
-
-  ```cyr
-  # references inside strings: `\\`, `\"`,
-  ```
-
-  The bytes `` `\"` `` (backtick+backslash+quote+backtick)
-  tripped: outside a string, `\` was a no-op, the next `"`
-  toggled `in_string=1`, no closing `"` on that or any
-  subsequent line until much later, so `in_string` stayed 1
-  through every later `include` directive in included files.
-  Each include then failed the `bol==1 && in_string==0` gate
-  at `PP_IFDEF_PASS:1603` and was passed through to lex as
-  raw text — the parser errored `expected '=', got string`
-  on the include line because `include` was tokenized as an
-  identifier.
-
-  The filing's "sibling-transitive structural shape" was
-  incidental. Any include graph would break IF the included
-  content has a `\"`-bearing comment somewhere upstream of
-  an include directive.
-
-  **Fix** (`src/frontend/lex_pp.cyr` PP_PASS ~l.1430 +
-  PP_IFDEF_PASS ~l.1770):
-  1. New `in_comment` state alongside `in_string` /
-     `escape_next`.
-  2. `#` outside a string sets `in_comment = 1`.
-  3. Inside a comment, `"` does NOT toggle `in_string` —
-     state machine routes through a simpler path that just
-     tracks the newline.
-  4. Newline resets `in_string = 0`, `escape_next = 0`,
-     `in_comment = 0` as a safety net (cyrius source uses
-     single-line strings only; per-line reset is safe and
-     bounds future state corruption to one line).
-
-  cc5: **745,208 → 745,640 B** (+432 / +0.06%). api-surface:
-  **2,769 unchanged**. cyrius test: **129 → 130** (+1 —
-  `tests/tcyr/include_quote_comment.tcyr`). check.sh:
-  **64 unchanged**. Two-step self-host byte-identical. Cross-
-  host SSH cluster verified — pi (Linux aarch64), ecb
-  (macOS arm64 Mach-O), cass (Windows 11 PE32+) — 3/3 each.
-  vyakarana 1.0.2 builds clean + `scripts/smoke.sh` green.
-
-  **Out of scope** (cascaded): the agnosys 1.1.12 re-file
-  (`agnosys/docs/development/issues/2026-05-07-cyrius-derive-
-  serialize-incomplete.md`) — pinned to v5.9.35.
-
-- **v5.9.35** ✅ — **`#derive(Serialize)` deserializer i64
-  primitive-field path + vidya doc refresh shipped 2026-05-07**
-  (agnosys 1.1.12 re-file resolution).
-
-  **Re-file accuracy verified mid-session**: the agnosys
-  filing reported five symptoms; only one was a real
-  codegen bug:
-  - "fncall4 undefined warning" — misread (actually
-    `dead: fncall4`, DCE'd not undefined).
-  - "5 bytes garbage on x86" — consumer-side
-    `Str`-vs-cstring print misuse; `println(out)` on a
-    16-byte Str header. Fix is `str_print(out)`.
-  - "aarch64 SIGILLs at runtime" — not reproduced; qemu +
-    real pi produce same 4-5 byte garbage as x86.
-  - "i64_from_json undefined" ✅ real codegen bug.
-  - "earlier 5.9.31 'works on x86' claim was wrong" ✅
-    corrigendum is right; codegen path was always
-    identical.
-
-  **Root cause**: PP_DERIVE_SERIALIZE `_from_json` /
-  `_from_json_str` took the nested-struct path for every
-  typed-non-`Str` field, emitting
-  `<typename>_from_json(json_parse(v))`. For primitives
-  `i8` / `i16` / `i32` / `i64` this generated calls to
-  fns that don't exist in stdlib. Fix: i64 detection
-  added (mirrors v5.9.30's `_to_json` `prim_load` block).
-  i64 fields take `str_to_int(v)` + `store64(ptr+offset, ...)`.
-
-  **Vidya `derive_str_fields` refreshed**: required-include
-  set documented (5 modules serializer-only, +3 for
-  deserializer round-trip); `str_print` vs `println`
-  convention named at the example site; narrow-width
-  + Mach-O deferral pins linked.
-
-  cc5: **745,640 → 746,608 B** (+968 / +0.13%). api-surface:
-  **2,769 unchanged**. cyrius test: **130 → 131** (+1 —
-  `tests/tcyr/derive_serialize_roundtrip.tcyr`). 64/64
-  check.sh; two-step self-host byte-identical (`b0cb99ea…`).
-  Cross-host SSH verified — pi (Linux aarch64), cass
-  (Windows PE32+) — 4/4 each.
-
-  **Cascaded surface findings (pinned separately)**:
-
-  - **v5.9.36** — narrow-int (i8/i16/i32) `#derive(Serialize)`
-    support. Two compounding bugs need to land together:
-    (1) v5.9.30's `prim_load` outer byte gate has the wrong
-    bytes for i32 (`(+1) == 49` matches i16's "i1..." but
-    not i32's "i3..."), AND (2) parser-side `STRUCTSZ` uses
-    width-aware `FIELDSZ` (i32 → 4) summing to 12 bytes for
-    `point_i32 { x, y, z }`, but the literal initializer
-    (`PARSE_STRUCT_INIT`, `EMIT_GVAR_INITS`) writes 8 bytes
-    per field — overflows allocation at global scope.
-    Folding narrow-width detection alone surfaces the
-    struct-size mismatch as a new failure mode.
-
-  - **Mach-O `_to_json` runtime SIGSEGV** — auto-generated
-    `_to_json` body SIGSEGVs on real macOS arm64 (ecb host)
-    for any `#derive(Serialize)` struct, including
-    `struct { x: i64; y: i64; z: i64; }`. Same source builds
-    + runs cleanly on x86_64 Linux, qemu-aarch64, real
-    Linux aarch64 (pi), and Windows PE. Pre-existing —
-    pre-v5.9.35 also SIGSEGV's on ecb. Pinned for a
-    separate Mach-O serializer slot once a consumer
-    surfaces it as blocking.
-
-- **v5.9.36** ✅ — **narrow-int `#derive(Serialize)` support
-  shipped 2026-05-07** (i8/i16/i32 typed fields). Picked
-  design option (b) per the v5.9.35 cascade pin: option (a)
-  promoting `FIELDSZ` to 8 broke `tests/tcyr/structs.tcyr`'s
-  `sizeof(Packet) == 15` (packed-layout assertion) — the
-  STRUCTSZ semantics are part of cyrius's documented type
-  surface. Option (b) keeps STRUCTSZ width-aware and makes
-  the initializer-write side width-correct instead.
-
-  **Two compounding bugs fixed**:
-
-  1. **PP_DERIVE codegen**: v5.9.30's `prim_load` outer-byte
-     gate had the wrong byte for i32 (`(+1) == 49` matches
-     i16 only). i32/i16/i8 fell to nested-struct emit,
-     generating `i32_to_json` / `i32_from_json` etc — fns
-     that don't exist. Fixed by per-width gates
-     (`'8'`/`'1'`/`'3'`/`'6'`) in `_to_json`, `_from_json`,
-     `_from_json_str` AND `PP_PARSE_STRUCT_DEF`'s offset-
-     table cumul (so derive codegen targets the right
-     literal-write byte positions).
-
-  2. **Parser-side struct-literal width mismatch**:
-     `STRUCTSZ` summed width-aware `FIELDSZ` (i32 → 4) to
-     12 bytes for `point_i32 { x, y, z }`, but
-     `PARSE_STRUCT_INIT` (positional) and `EMIT_GVAR_INITS`
-     wrote 8 bytes per field, overflowing by 12 bytes at
-     global scope. Fixed via new `EMIT_STRUCT_FIELD_W(S,
-     vcnt, boff, width)` helper + width-aware `boff +=
-     FIELDSZ(ft)` advance in both initializer paths and
-     in PARSE_STRUCT_INIT named path.
-
-  cc5: **746,608 → 747,624 B** (+1016 / +0.14%). api-surface:
-  **2,769 unchanged**. cyrius test: **131 → 132** (+1 —
-  `tests/tcyr/derive_serialize_widths.tcyr` covers point_i8
-  / point_i16 / point_i32 + a mixed-width struct in 14
-  assertions). 64/64 check.sh; two-step self-host byte-
-  identical (`902b6a16…`). Cross-host SSH cluster: pi
-  (Linux aarch64) 14/14, cass (Windows PE32+) exit=0.
-  Mach-O excluded (pre-existing pre-v5.9.35 SIGSEGV pin
-  remains held).
-
-- **v5.9.37** ✅ — **agnosys 1.1.12 verbatim repro: parse +
-  build path closed shipped 2026-05-08**. Slot pivoted from
-  cx Phase 2c (cascaded to v5.9.39) after user audit at v5.9.36
-  ship caught the previous slots had been false-advertising:
-  v5.9.34/35/36 each rewrote
-  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
-  to fit my fix and called the slot done — actual filed source
-  was still broken across all four prior attempts. Memory pin
-  added: `feedback_no_rewriting_consumer_repros`.
-
-  This slot fixes the BUILD path against the verbatim-locked
-  source (hash `6425355b6147d5a674078794310ae2c1`, untouched
-  start-to-end). Three real defects + one cross-arch miss:
-
-  1. **Char literals** (`src/frontend/lex.cyr`) — `'X'` /
-     `'\n'` / `'['` etc. were never lexed as numeric tokens.
-     Pre-fix aarch64 reported `error:N: unexpected '['` at
-     `str_builder_putc(sb, '[');`. Lexer now emits NUMBER
-     token with the byte value, with escape support
-     (`\n` `\r` `\t` `\0` `\\` `\'` `\"`).
-
-  2. **`str_builder_putc(sb, byte)`** (`lib/str.cyr`) —
-     missing single-byte append helper. The verbatim repro
-     uses `str_builder_putc(sb, '[');`. Added: 7-line wrapper
-     mirroring `str_builder_add_cstr` shape.
-
-  3. **Auto-call `main()`** (`src/main.cyr` +
-     `src/main_aarch64.cyr`) — sources with only `fn main()
-     { ... }` (no trailing `var ec = main(); syscall(60,
-     ec);` wiring) ran the gvar inits and exited with
-     `rax=junk` — main was never invoked. The exit epilogue
-     now walks the fn table for "main\0" and emits ECALLTO
-     after the GLVAR-load, so user-side `syscall(60, ...)`
-     short-circuits naturally and the no-wire case falls back
-     to auto-call.
-
-  4. **DCE exemption for `main`** (`src/main.cyr` only —
-     aarch64 has no DCE pass). Pre-fix DCE stubbed `main` to
-     `xor eax, eax; ret` because nothing referenced its ident
-     — auto-call invoked the stub and exit was always 0
-     regardless of main's body. main-name byte-match added
-     before the bitmap check.
-
-  cc5: 749336 → ~750800 B (delta unchanged from rebuild).
-  api-surface: 2769 → 2770 (+1, `str::str_builder_putc/2`).
-  cyrius test: 132 unchanged. check.sh: 64 unchanged.
-
-  **Repro hash unchanged** (verified pre/post —
-  `6425355b6147d5a674078794310ae2c1`). Per the new
-  `feedback_no_rewriting_consumer_repros` memory pin, that's
-  the audit guarantee — slot did not edit the consumer-filed
-  source.
-
-  **Verified**:
-  - Verbatim repro builds clean on x86 + aarch64 (was: parse
-    error on aarch64).
-  - Verbatim repro RUNS on x86 + real pi (aarch64) — main is
-    invoked, all `str_builder_putc` calls execute,
-    `status_to_json` produces the correct JSON inside `sb`.
-  - `tests/tcyr/derive_serialize_widths.tcyr` 14/14 unchanged.
-  - 64/64 check.sh; two-step self-host byte-identical.
-
-  **NOT fixed this slot** (deliberate; user direction):
-  - `println(out)` where `out` is a `Str` (16-byte heap
-    header) — still prints garbage because cyrius has no
-    type system. `println` always treats its arg as cstring.
-  - `println(strlen(out))` — `strlen` returns int; `println`
-    treats int as cstring address → SIGSEGV.
-
-  Both are pinned to the **v5.10.x type system arc** — see
-  the v5.10.x section. Three quick fixes in v5.9.x were
-  rejected (polymorphic-runtime-detection: sloppy; break
-  `str_builder_build`'s public API: ecosystem damage; partial
-  Option-3: incomplete). Real type system is the right fix
-  and v5.10.x's open-bug-and-optimization arc is the
-  right place to land it.
-
-- **v5.9.40** ✅ — **cx (cyrius-x bytecode) Phase 2c parity
-  shipped 2026-05-08**. All three `ERR_MSG` / TODO sites that
-  v5.9.26 + v5.9.27 narrowed but didn't fix now produce real
-  cxvm-compatible bytecode that round-trips end-to-end.
-
-  **What landed**:
-  - `parse_decl.cyr:252` — sub-8-byte struct field load:
-    refactored to call new per-backend `EFIELD_LOAD_W(S, width)`
-    helper. cx version emits the new cxvm `load16` (op 0x44)
-    and `load32` (op 0x45) opcodes; aarch64 version moved out
-    of the inline `EW(S, 0x39400020)` ladder; x86 version
-    moved out of the inline `movzx rax/eax` ladder. cxvm
-    interpreter learns width-aware loads (composed from
-    cyrius's load8/load64 primitives — the language has no
-    native load16/load32) and matching `store16` (0x46) /
-    `store32` (0x47) for symmetry.
-  - `parse_fn.cyr:371` — struct return by value: refactored
-    to call new per-backend `ESTRUCT_BYVAL_COPY(S, src_disp,
-    stash_disp, aligned)` helper. cx version emits a
-    cxvm-friendly explicit byte-loop (load8/store8 + add
-    +1/+1/-1 + jnz back-jump — cxvm has no rep/post-incr
-    semantics). aarch64 version moved out of the inline
-    LDRB/STRB-with-post-increment block. x86 version moved
-    out of the inline `rep movsb` block.
-  - `src/backend/cx/emit.cyr` ESTORESTACKPARM (line 385)
-    real impl: cxvm has 32 registers so 7+-arg fn calls just
-    pop into r3..r9+ via the existing `ECALLPOPS` loop;
-    `ESTORESTACKPARM` mirrors `ESTOREPARM`'s r-to-frame
-    body shape using the call-site `disp` directly.
-  - `src/backend/cx/emit.cyr` real `EFLADDR` + new
-    `EFLADDR_X1` + new `ESTOREREGPARM` impls: required by
-    the asv (assignment-from-struct-value) caller-side
-    chain — caller pushes `&retbuf` as first arg, callee
-    prologue stashes `r3` into the reserved local-frame
-    stash slot. Pre-v5.9.40 these were stubs and the
-    parse_fn.cyr stash-emit path SIGILL'd at compile-time
-    on any `fn f(): S` declaration on cx.
-  - `parse_fn.cyr:923` comment refresh: the "cx bytecode
-    rejects struct-return at PARSE_RETURN earlier so doesn't
-    reach here" comment retired; cx now reaches the stash
-    block and follows the x86-shape pidx=0 dispatch with the
-    real `ESTOREREGPARM` impl.
-  - cx-side undefined-fn-warning cleanup: stub `EADRP` /
-    `EADD_IMM12` (carry-over from v5.9.39 Mach-O fix), plus
-    `EFLADDR` / `EMULH` / `_read_env` (pre-existing aarch64-
-    only fns referenced from shared frontend dead branches).
-    Folded in here per "don't lazy-defer related fixes"
-    rather than spinning a separate slot.
-
-  **Acceptance bar met**: `_cx_phase2c_gate` (the new
-  programs/check.cyr gate) round-trips three fixtures through
-  cc5_cx → cxvm:
-  - struct-by-value return: `var p: S = mkp(); syscall(60, p.x)`
-    where mkp builds and returns a `Point`-shape struct →
-    cxvm exit=42.
-  - sub-byte field load: i8 + i16 + i32 + i64 fields summed
-    via dot-syntax → cxvm exit=42.
-  - 7-arg fn call: `add7(1,2,3,4,5,6,21)` → cxvm exit=42
-    (exercises ECALLPOPS r3..r9 + ESTOREPARM with pidx=6).
-  All three fail-mode discriminators captured in the gate's
-  case-FAIL messages. Single combined gate (vs the originally-
-  pinned three separate gates) per "lazy deferment is the
-  antipattern" — three sub-checks share build/teardown so
-  splitting into three top-level gates would have triple-counted
-  cc5_cx + cxvm rebuild cost without adding signal.
-
-  **cc5 unchanged**: 9d8a3e23 (self-host byte-identical).
-  cc5_aarch64: 346cf49e (-1848 B from extracting helpers).
-  api-surface: unchanged. cyrius test 132/132. check.sh: 66
-  (was 65; +1 cx Phase 2c gate).
-
-  **Out of scope (intentionally held)**: the 4 silent no-op cx
-  guards in `parse_expr.cyr` (line 349 `&fn_name`, 399
-  `&local`, 871 closure fn-addr, 929 f64 cmp). Those existed
-  pre-v5.9.x without consumer pressure and don't share the
-  byte-memory-ops shape this slot was centered on. Pin them
-  individually if a cx consumer surfaces.
-
-- **v5.9.38** ✅ — **Mach-O `#derive(Serialize)` SIGSEGV: probe
-  + Bug A fixed; Bug B split to v5.9.39 shipped 2026-05-08**.
-  Promoted out of held / "wait for consumer" status per
-  v5.9.36 audit (held since v5.9.34 across 3 slots without
-  action). Two compounding bugs found; one trivial-fix landed,
-  one non-trivial split per the slot's split rule.
-
-  **Probe captured** (lldb DiagnosticReports on ecb):
-  - SIGSEGV / `EXC_BAD_ACCESS` / `KERN_INVALID_ADDRESS at
-    0x0000000000000008`. PC: `LDR x0, [x0]` with x0=8 inside
-    `_sb_grow_a` at `load64(sb + 8)`.
-  - Cause: sb=NULL passed in. Bisect to `str_builder_new`
-    returning 0 — confirmed by direct test on ecb (same ELF
-    aarch64 build returns valid pointer, Mach-O returns 0).
-  - `str_builder_new` calls `alloc_via(default_alloc(), 24)`
-    → `fncall2(alloc_fn, state, size)`.
-
-  **Bug A — `lib/fnptr.cyr` missing macOS branches**.
-  `fncall0` through `fncall8` (9 fns) had `#ifdef
-  CYRIUS_TARGET_LINUX` and `#ifdef CYRIUS_TARGET_WIN`
-  branches but no `#ifdef CYRIUS_TARGET_MACOS`. On Mach-O
-  builds, neither branch fires → asm{} block doesn't
-  execute → `result` stays at the `var result = 0;` init →
-  fncallN always returns 0 → `alloc_via` returns 0 →
-  `str_builder_new` returns NULL → SIGSEGV cascades.
-
-  **Fix A**: added `#ifdef CYRIUS_TARGET_MACOS` blocks for
-  all 9 fncallN, with x86_64 + aarch64 asm copies of the
-  Linux-block content (calling convention is the same SysV
-  on Linux + macOS for both arches). Single-file change in
-  `lib/fnptr.cyr`.
-
-  **Bug B — `src/backend/aarch64/fixup.cyr` ftype==3 fn-addr
-  not ASLR-safe on Mach-O**. `&fn_name` emits a
-  static MOVZ-chain encoding the file VA at link time. Mach-O
-  ARM binaries are PIE-linked by default; dyld slides the
-  whole image at load. The static MOVZ-chain encodes the
-  unslid VA; runtime dispatch jumps to (file_VA) instead of
-  (file_VA + slide), landing in `__data` or `__got` instead
-  of `__text`. Confirmed: `alloc_fn` runtime value
-  `0x100017C00` is past the `__text` end (`0x10000C504`) on
-  the test binary.
-
-  **Bug B fix is non-trivial** (>1 backend file change —
-  fixup.cyr's ftype==3 emit + emit.cyr's `&fn_name` call-
-  site emit, possibly plus EMITMACHO_ARM64.cyr's rebase
-  table emission). Split per the slot's pin rule.
-
-  **Why landing Fix A alone is correct even though it
-  doesn't restore Mach-O `#derive(Serialize)`**: fnptr.cyr's
-  missing macOS branch is a true bug in the stdlib. Future
-  Mach-O code that uses fnptr (any allocator vtable dispatch,
-  any callback registration) needs the asm to actually
-  execute. Pre-fix this was silently-broken; Fix A makes
-  the dispatch work — once Fix B lands, the chain works
-  end-to-end. Without Fix A, Fix B alone wouldn't help.
-
-  **NOT LANDED**: Bug B fix. `_macho_derive_serialize_gate`
-  also deferred to v5.9.39 (would be a perpetual
-  expected-fail until Fix B lands; better to land both
-  together).
-
-  cc5: unchanged — only `lib/fnptr.cyr` touched (compiler
-  binary not rebuilt; rebuild-on-deps brings the new
-  asm into downstream consumer builds).
-
-  api-surface: 2770 unchanged. cyrius test: 132 unchanged.
-  check.sh: 64 unchanged.
-
-  **Verified**:
-  - Pre-Fix-A: ecb `str_builder_new()` returns 0; verbatim
-    repro SIGSEGVs at NULL+8 deref.
-  - Post-Fix-A + pre-Fix-B: fncall2 dispatches; jumps to
-    wrong addr (Bug B); SIGSEGV moved earlier in the chain.
-    Confirms Fix A is firing.
-  - x86 + Linux aarch64 (pi) + Windows PE: unaffected by
-    Fix A (their gates were already present).
-  - 64/64 check.sh; cc5 self-host stable; agnosys verbatim
-    repro hash unchanged (`6425355b…`).
-
-- **v5.9.39** ✅ — **Mach-O ARM64 fn-pointer ASLR fix
-  (Bug B from v5.9.38) + `_macho_derive_serialize_gate`
-  shipped 2026-05-08**. Closes the Mach-O `#derive(Serialize)`
-  cascade end-to-end alongside v5.9.38's Fix A (`lib/fnptr.cyr`
-  macOS branches).
-
-  **Root cause** (confirmed via lldb on ecb):
-  `src/backend/aarch64/fixup.cyr` ftype==3 (the `&fn_name`
-  and closure-literal address fixup) emitted a static MOVZ-
-  chain encoding the unslid file VA. Mach-O ARM is PIE-
-  linked; dyld slides the whole image at load. Runtime
-  indirect call via `blr xN` jumped to (file_VA, no slide)
-  — landed in `__data` / `__got` instead of `__text`.
-  Confirmed at v5.9.38 close: alloc_fn at `0x100017C00`
-  was past `__text` end (`0x10000C504`).
-
-  **Fix shipped**: option (a) — ADRP+ADD relative
-  addressing, mirroring how ftype==1 (string addresses)
-  and ftype==0 (var addresses) already work on Mach-O via
-  `FIXUP_ADRP_ADD`. Three coordinated edits:
-  - `src/backend/aarch64/fixup.cyr` ftype==3: dispatch
-    to `FIXUP_ADRP_ADD(S, coff, ftarget)` on `_TARGET_MACHO == 2`,
-    `FIXUP_MOV` otherwise. Drops the unconditional MOVZ
-    chain.
-  - `src/frontend/parse_expr.cyr` `&fn_name` aarch64
-    emit: emit 2-instruction ADRP+ADD pair (8 B) on
-    Mach-O instead of the 3-instruction MOVZ/MOVK chain
-    (12 B). Matches the FIXUP_ADRP_ADD slot expectation.
-  - `src/frontend/parse_expr.cyr` closure-literal
-    aarch64 emit: same change — same code shape.
-  - `src/backend/x86/emit.cyr`: stub `EADRP` and
-    `EADD_IMM12` so the x86 build's dead-code path
-    through the `_AARCH64_BACKEND == 1` branch in
-    parse_expr.cyr resolves the symbols cleanly. Same
-    pattern as the existing `EW` / `_EFP_ADDR_X9` /
-    `EFLADDR_X8` stubs documented inline.
-
-  **Verified** (paired with v5.9.38 Fix A):
-  - Verbatim agnosys 1.1.12 repro (hash
-    `6425355b6147d5a674078794310ae2c1`, unchanged across
-    the entire v5.9.33-.39 chain) cross-built for Mach-O
-    ARM + run on ecb: now executes substantially through
-    the program before failing at the **same line** Linux
-    aarch64 fails on (the `println(strlen(out))` type-
-    system mismatch where `out` is a `Str` struct, not a
-    `char*`). Both arches return exit=139 with garbled
-    output at the same point — confirms Mach-O is at
-    parity with Linux aarch64. The remaining failure is
-    the type-system bug pinned for v5.10.x; outside this
-    slot's scope.
-  - `_macho_derive_serialize_gate` added to
-    `programs/check.cyr` SSH cluster. Fixture: tiny
-    `#derive(Serialize) struct point { x: i64; y: i64; }`
-    + `point_to_json(&p, sb)` + `syscall(60, len)` (uses
-    the byte-count of JSON written as exit code; avoids
-    the v5.10.x type-system mismatch). Linux aarch64
-    returns 14 for `{"x":7,"y":35}`; Mach-O matches.
-  - 65/65 check.sh (was 64; +1 new gate); cc5 self-host
-    byte-identical; cc5_aarch64 size 449880 (+256 B from
-    the Mach-O branch); 132/132 `cyrius test`.
-
-  **Why landed together (paired with v5.9.38 Fix A)**:
-  Fix A and Fix B are the same Mach-O `#derive(Serialize)`
-  cascade. Fix A alone wouldn't fix the `&fn_name`
-  call sites at `default_alloc().alloc` and the related
-  vtable dispatches; Fix B alone wouldn't fix the
-  `fncallN` macOS-branch gap. Per v5.9.38 close-out
-  feedback ("non-trivial / >1 file is not by itself a
-  split criterion"), the gate also rode in this slot
-  rather than spinning into v5.9.40 — gate tests the
-  whole cascade end-to-end and is meaningless without
-  both fixes anyway.
-
-- **v5.9.41** ✅ — **tls-live gate conversion + network-probe
-  helper shipped 2026-05-08** (cascaded down). The
-  `.sh-conversion arc is now CLOSED — 0 `tests/regression-*.sh`
-  files remaining, precondition for the v5.9.43 closeout met.
-
-  **What landed**:
-  - `_network_probe_check(addr_ipv4, port, timeout_ms)` —
-    native cyrius TCP probe (raw socket/connect/poll syscalls).
-    Non-blocking connect + poll-with-timeout + SO_ERROR
-    readback so the call is bounded (vanilla blocking connect
-    on a blackhole takes ~75 s on Linux). Replaces the bash
-    `/dev/tcp` trick the .sh used.
-  - `_run_with_timeout(bin_path, timeout_ms)` — fork + exec
-    with poll-based wall-clock timeout. Polls
-    `waitpid(WNOHANG)` every 100 ms; on timeout `SIGKILL`s
-    the child + reaps. Replaces the bash `timeout 30 binary`
-    pattern. Returns 0..127 exit code, 128+sig on signal,
-    -1 on fork/exec failure, -2 on timeout.
-  - `_tls_live_gate()` — preserves the v5.6.37 pin behavior
-    exactly. Skip-cleanly cascade: cc5 not built / HOME
-    unset / `~/.cyrius/dlopen-helper` missing / 1.1.1.1:443
-    unreachable. On reachable: writes the libssl probe to
-    a tmp .cyr, compiles via cc5, runs bounded by 30 s,
-    checks the response prefix is "HTTP/1.1 ". Probe exit
-    codes (10/12/13/14/20+i) mapped to specific case-FAIL
-    messages mirroring the .sh's diagnostics. New: -2
-    timeout case mapped to "likely SSL_connect deadlock —
-    v5.6.37 regression?".
-  - `tests/regression-tls-live.sh` deleted. No CI / docs
-    refs broken (verified via grep across .yml / .sh / .cyr
-    / .md / .toml — only historical CHANGELOG entries +
-    one comment in lib/http.cyr remain, all narrative).
-
-  **Verified**:
-  - 66/66 check.sh; TLS gate PASS on the dev box (network
-    available); self-host byte-identical.
-  - 0 `tests/regression-*.sh` files remaining (`ls
-    tests/regression-*.sh` reports "no matches").
-  - cc5 8b27b76a (changed from v5.9.40's 9d8a3e23 since
-    helpers + gate are net-new code).
-  - cyrius test 132/132; .tcyr 14/14.
-
-- **v5.9.42** ✅ — **`lib/regression.cyr` testing-stdlib
-  carve-out shipped 2026-05-08**. Closes the post-v5.9.41
-  helper-inventory stabilization arc.
-
-  **What landed**:
-  - New `lib/regression.cyr` (700 LOC, 22 public verbs) with
-    five surface groups: display (section / check / print +
-    ANSI consts), buffer scan (buf_eq / count_substr /
-    file_contains_substr), process (pipe_to_bin ± capture,
-    run_with_timeout, exec_capture / exec_run / exec_with_arg_*
-    variants, exec_in_dir3 ± env), network (TCP probe with
-    non-blocking connect + poll timeout), SSH cluster
-    (target / skip-check / scp-to / remote-exit /
-    remote-exec-capture / codesign-remote).
-  - `programs/check.cyr` adds `include "lib/regression.cyr"`
-    and collapses 14 helpers to thin wrappers (407 lines
-    deleted, 43 lines added — net -364 LOC). Wrappers pass
-    `ENVP_ARR` for the helpers that inherit parent env; new
-    `EMPTY_ENVP` global for the helpers that originally
-    execve'd with an empty env literal.
-  - `docs/api-surface.snapshot` regenerated: 2770 → 2792 (+22
-    entries, all new `regression_*` verbs).
-  - Stdlib module count 78 → 79.
-
-  **Held back from migration** (each by design):
-  - `_compile_run_get_exit` / `_compile_capture_stderr` —
-    use `_self_host_pipe`'s 2 MB src cap + raw-status return
-    convention. Lib's `regression_pipe_to_bin*` use 1 MB +
-    WEXITSTATUS, right for arbitrary binaries but not cyrius
-    source. Callers that need both shapes compose the lib
-    primitives manually.
-  - `_tcyr_relay_gate` / `_expected_output_gate` — dispatcher
-    gates that depend on audit-internal accounting (`_check`,
-    `ROOT_PATH`, ANSI globals). Generalizing would require
-    parameterizing call shapes that are dispatcher-
-    idiosyncratic.
-  - `_cyrlint_count_marker` — uses `CYRLINT_PATH` global.
-    Stays as a thin wrapper over the lib primitives.
-  - `_ts_mode_run` — uses cc5 `--parse-ts` mode flags.
-    Stays as a thin wrapper.
-  - `_exec_in_dir3` / `_exec_in_dir3_env` — versions in
-    check.cyr have a different env-merge approach than the
-    lib version; left in check.cyr to avoid behavior drift.
-    Lib still ships its own variants for downstream
-    consumers (yantra et al) that don't have check.cyr's
-    `ENVP_ARR` shape.
-  - `_exec_remote_with_env` / `_remote_bat_run` (named in
-    the original v5.9.42 pin) — never landed as separate
-    fns in `programs/check.cyr`; the pin was aspirational.
-    No migration target.
-
-  **Verified**: 66/66 check.sh; 132/132 cyrius test; 14/14
-  .tcyr; cc5 byte-identical self-host (`7a1a8cf8`); cyrlint
-  on lib/regression.cyr clean (0 warnings).
-
-  Downstream consumers (yantra, agnosys / mabda test suites,
-  future test runners) can now reach for the same shapes via
-  `include "lib/regression.cyr"` instead of re-rolling
-  fork/exec/SSH/timeout boilerplate. sandhi's
-  `_sandhi_conn_connect_nb` shares the same shape as
-  `regression_network_probe`; if a future sandhi minor wants
-  to factor its impl down to the stdlib primitive, that's a
-  natural sandhi 1.2.0 candidate.
-
-- **v5.9.43** ✅ — **`cyrius` v5.9.x closeout shipped 2026-05-08**.
-  CLAUDE.md 11-step protocol executed; cycle CLOSED.
-  v5.10.0 cuts after this commit lands.
-
-  **Cycle stats** (43 patches, 2 days):
-  - cc5 self-host byte-identical at every patch.
-  - check.sh: 56 → 66 gates (+10).
-  - cyrius test: stable at 132 .tcyr.
-  - api-surface: 2615 → 2792 (+177; mostly v5.9.42's
-    +22 `regression_*` verbs).
-  - Stdlib module count: 76 → 79 (+`audit_walk` v5.9.1,
-    `niyama` v5.9.0, `regression` v5.9.42).
-  - `tests/regression-*.sh`: 1 → 0 (.sh-conversion arc
-    CLOSED at v5.9.41).
-
-  **Mechanical (Steps 1-3) ✓**:
-  - Self-host BYTE-IDENTICAL (`c7a3ad41`); bootstrap
-    closure cyrc-asm round-trip green; 66/66 check.sh;
-    132/132 cyrius test; 14/14 .tcyr.
-
-  **Judgment-call (Steps 4-8)**:
-  - Heap map audit: no orphans; v5.9.x newly-added
-    regions self-document inline.
-  - Dead-code floor: 34 unreachable fns / 22792 bytes.
-    All retained per memory pin "Dead-code audit scope
-    — cc5 'dead' ≠ removable" (TS / Mach-O / cx / IR /
-    aarch64-only).
-  - Refactor pass: in-cycle consolidations already
-    landed (v5.9.40 `EFIELD_LOAD_W` / `ESTRUCT_BYVAL_COPY`,
-    v5.9.42 `lib/regression.cyr` net -364 LOC,
-    v5.9.39 ftype==3 mirror of ftype==1/0).
-  - Code review pass: spot-check ABI leaks (one
-    defensive-guard candidate in parse_fn.cyr:910 —
-    aarch64 backend with `_TARGET_CX==0` could fire
-    x86 callee-save block; not a leak in practice
-    since aarch64 doesn't auto-enable regalloc, but
-    a v5.10.x cleanup target). Mach-O guards (19) +
-    byte-order spot-check + fixup arithmetic all
-    green.
-  - Cleanup sweep: 0 stale `v5.6.`/`v5.7.` refs in
-    code; 0 orphan `tests/regression-*.sh`; build/
-    tracking matches seed-policy (cc3 + cc5).
-
-  **Compliance (Steps 9-10)**:
-  - Security re-scan: 0 new shell-out paths in `src/`;
-    READFILE sites bounded to legit preprocessor flow;
-    no unchecked store8/64 near region boundaries.
-    Last full audit v5.0.1; next full re-scan due at
-    v6.x.
-  - Downstream: 36 ecosystem repos with `cyrius.cyml`;
-    pin distribution: 8 at v5.9.x (latest 5.9.41 in
-    sandhi), 8 at v5.8.x, ~20 at v5.7.x-or-earlier.
-    Per-repo uplift is consumer-cycle concern.
-
-  **Docs sync (Step 11)**:
-  - CHANGELOG entry written; roadmap (this entry) +
-    state.md head bumped; vidya `language/index.cyml` +
-    `language/stdlib_modules.cyml` (new `regression_module`
-    entry, 16th total).
-
-**Held / deferred from v5.9.x (no slot)**:
-- **`cyrius audit` outside-repo semantics** (v5.9.4 pin) —
-  pending user design call (clean error vs polymorphic
-  project-level audit; defensive `file_exists(script)` check
-  in `run_script`). Held until user picks. The defensive
-  `file_exists` guard is one-line and could land
-  opportunistically inside any v5.9.x slot that touches
-  `cbt/build.cyr`.
-- **`cyrius --version` stray `\xb3` byte** (agnosys 1.1.5
-  filing side-observation) — locally NOT reproduced under
-  v5.9.22. Held until reporter env xxd of `~/.cyrius/current`
-  is captured.
-- **Stdlib data-domain distlib carve-out** — was pinned at
-  v5.9.0 cycle entry; never landed because the cycle filled
-  with sovereignty pass + emergent consumer-filed work.
-  Re-pinned to v5.10.x bug-arc late-cycle OR v5.11.x
-  kernel-prep — whichever scheduling lines up first. ~13
-  modules (`json`, `toml`, `cyml`, `csv`, `base64`, `regex`,
-  `math`, `matrix`, `linalg`, `bigint`, `u128`); sandhi-pattern
-  fold-out into `cyrius-data` sibling distlib.
-
-**KEEP-as-bash (intrinsic; sovereignty-allowed):**
-- `bootstrap/bootstrap.sh` (88 LOC) + `bootstrap/verify.sh`
-  (45 LOC) — runs before cyrius exists.
-- `scripts/install.sh` (575 LOC) — bootstrap-from-zero path;
-  cyrius binary may not yet exist.
-- `scripts/cyrius` shim (30 LOC) — PATH-discovery wrapper.
-- **`scripts/cyriusly` (349 LOC)** — version manager + setup
-  verb. Decided KEEP-as-bash 2026-05-06 (v5.9.12 ship): the
-  `setup` verb bootstraps cc5 from a fresh source checkout
-  via `bootstrap/bootstrap.sh` + `scripts/install.sh`. If
-  cyriusly itself were a cyrius binary, `cyriusly setup`
-  couldn't run before cc5 exists. Three options were on the
-  table (full conversion / precompile-in-tarball / hybrid
-  shim); user picked option (a) to keep cyriusly bash entirely.
-- `programs/dlopen-helper.c` — explicit ABI shim per sovereignty
-  pin (binds host glibc).
-- `editors/neovim.lua` + `editors/vscode/extension.js` —
-  host-IDE-side; can't port (Neovim runs Lua, VS Code runs JS).
-
-**ARCHIVED**: `archive/seed/*.rs` + `archive/stages/*.sh`
-retained in `archive/` per `feedback_archive_dont_delete_docs`
-memory pin.
-
-### v5.9.x — Other pin candidates (folded in from prior unpinned)
-
-Items previously listed here have all been pinned to specific
-v5.9.x slots — see *§v5.9.x wrapup pin sequence* above for the
-ordered slot assignments. This section retained as an audit
-trail of when each item was promoted from "candidate" to "pinned":
-
-- **Stdlib data-domain distlib carve-out** — was originally
-  pinned at v5.9.0 cycle entry but the cycle filled with
-  sovereignty pass + emergent consumer-filed work. **Deferred
-  out of v5.9.x** (see *Held / deferred* in the wrapup section
-  above) — re-targets v5.10.x late-cycle or v5.11.x kernel-prep.
-
-- **Phase 2b-aarch64 struct copy** (`LDRB`/`STRB` loop):
-  **pinned to v5.9.26** — single-purpose backend unblock;
-  surfaces whenever a consumer cross-builds struct-by-value
-  calls for aarch64.
-
-- **`aarch64/fixup.cyr:19` syscall arity warning**: **pinned
-  to v5.9.25** (paired with tcyr-relay redundancy cleanup —
-  both small mechanical items in one batch).
-
-- **`match` exhaustiveness check fires inconsistently across
-  fn names** (agnosys 1.1.5 filing 2026-05-06): **pinned to
-  v5.9.24**.
-  `agnosys/docs/development/issues/2026-05-06-cyrius-match-coverage-fn-name-dependent.md`.
-  **Severity: MEDIUM** — the documented `non-exhaustive match`
-  warning (vidya `language/features.cyml exhaustive_match_v58x`)
-  fires for some fn identifiers but not others against the same
-  enum + same arm body + same call-graph reachability. Roughly
-  even split across a 27-name sweep; pattern is **not**
-  length-based, **not** stdlib-overlap-based, **not**
-  character-class-based — most likely a hash-table collision in
-  the coverage check's internal bookkeeping. Reproduced under
-  v5.9.20 + v5.9.21.
-
-  **Self-contained reproducer**:
-  `/tmp/cyrius-match-coverage-dce-gated/sweep.sh` — runs ~27 fn-
-  name variations, expected `1` on every row, observed mixed
-  `0`s and `1`s. Lucky-bucket names (`n`, `x`, `f`, `g`, `hi`,
-  `map_to`, `dispatch_e1`, `enum_to_str`, `load_x`, `x_y`)
-  trigger the warning; unlucky-bucket names (`name`, `named`,
-  `func`, `hello`, `world`, `abc`, `check`, `describe`,
-  `handle`, `process`) silently bypass it.
-
-  **Why this matters**: agnosys 1.1.5 added a CI gate
-  (`scripts/audit.sh` step 4) that fails the build on any
-  `non-exhaustive` warning. The gate is correct as written —
-  but its effective coverage of agnosys's source surface
-  depends on which fn names happen to be in cyrius's "lucky"
-  hash buckets. Library authors writing match blocks cannot
-  trust the check to enforce coverage on every fn they write.
-  Structural hole in the quality-gate story, not an acute
-  correctness bug.
-
-  **Suggested upstream investigation** (per agnosys filing):
-  internal-table indexing bug in the coverage pass. The check's
-  bookkeeping (per vidya `tagged_unions_v58x`:
-  `var_enum_id[8192]`, `enum_count[8]`, `enum_variant_count[1024]`,
-  `enum_name[1024]`) is keyed on something that interacts with
-  fn-name hashing. Likely first probe: log which arm idents the
-  check *sees* for each row of the sweep — if some fn-name
-  buckets cause arm idents to never register against the matched
-  enum, the `at least one arm references a variant of an enum`
-  short-circuit fires too eagerly and skips coverage analysis.
-  Acceptance: every row of `sweep.sh` produces `1`.
-
-  **Side observation (separate, low-priority)**: `cyrius
-  --version` emits a stray `\xb3` byte before the newline in the
-  agnosys reporter's environment under v5.9.21
-  (`cyrius 5.9.21\xb3\n`). Locally NOT reproduced under v5.9.22
-  (`cyrius --version | xxd` shows clean `0a` terminator) — so
-  either fixed silently between v5.9.21 and v5.9.22 or
-  environment-state-dependent (likely a stale `~/.cyrius/current`
-  with a non-newline trailing byte that `read_file_str`'s
-  trim — chars 10/13/32 only — doesn't strip). Worth a
-  defensive read_file_str hardening if the reproducer's
-  environment can be inspected: extend the trim to drop any
-  byte ≥ 0x80 trailing the version string. Held until the
-  reporter's `~/.cyrius/current` xxd is available — fixing
-  blind risks masking a different upstream cause.
-
-### v5.9.x — Held forward (no slot consumed; surfaces-on-ask)
-
-These remain unpinned long-term; promote to slot when a consumer
-concretely surfaces:
-
-- **TS test harness program** (option E from v5.7.37) — single
-  `programs/ts_test_runner.cyr` consuming both internal-symbol
-  fn dispatch and TS fixture files. v5.7.37 group-level
-  consolidation is sufficient until a downstream consumer
-  surfaces a test pattern that doesn't fit either current
-  shape.
-
-(LSP feature pins promoted to a concrete v5.9.x slot — see
-v5.9.10 entry above. They were `held forward` here pre-v5.9.7;
-re-pinned to v5.9.10 at v5.9.8 ship after the v5.9.9 slot
-inserted for the agnosys-filed `cyrius api-surface` derive-blind
-fix.)
-
----
-
 ## v5.10.x — Open bug / optimization arc
 
 **Theme** (re-framed at v5.9.7 ship per user direction): a
@@ -1853,36 +290,130 @@ through bug-fix work and performance optimization rather than
 adding new platforms or feature surface (which costs more in
 every future slot).
 
-**Original v5.10.x content** — bare-metal/AGNOS kernel + RISC-V
-rv64 — pushed to v5.11.x. Both are parallel work tracks (kernel
-is downstream-driven by AGNOS; RISC-V is just-another-platform
-add); slip is fine, neither is hard-baked. RISC-V has slipped
-multiple minors with no pressure (no consumer surfaced); kernel
-has slipped four (v5.7 → .8 → .9 → .10 → .11) with AGNOS still
-unblocked-but-unrushed at its own pace.
+Original v5.10.x content (bare-metal/AGNOS kernel + RISC-V rv64)
+pushed to v5.11.x. Both are parallel work tracks (kernel is
+downstream-driven by AGNOS; RISC-V just-another-platform); slip
+is fine. RISC-V has no consumer pressure; kernel has slipped
+four minors (v5.7 → .8 → .9 → .10 → .11) with AGNOS unblocked-
+but-unrushed.
 
-### v5.10.x — Slot inventory
+### v5.10.x — Shipped
 
-Categories the arc draws from (each individual slot picks
-work from one or more):
+- **v5.10.0** ✅ — **per-phase compile-time profiling
+  instrumentation shipped 2026-05-08**. Opens the v5.10.x
+  optimization arc with the measurement tool; future slots
+  build on the per-phase data this captures. 7 phase-end
+  timestamp captures gated on `CYRIUS_PROF=1` (pp / lex /
+  gvar / parse / fixup / emit / write). Profile baseline:
+  ```
+  prof: compile 984 ms (pp=84 lex=580 gvar=104 parse=2
+                        fixup=210 emit=2 write=0 ms)
+  ```
+  Lex is the dominant target (59% of compile time). cc5
+  cd48bdb6 (+1280 B for the 7 captures + multi-field epilogue);
+  byte-identical self-host. Two whitespace fast-path attempts
+  measured during this slot — both no-op on total time;
+  reverted. Real lex optimization needs deeper analysis (see
+  v5.10.1 pin).
+
+### v5.10.x — Pinned next
+
+- **v5.10.1 — lex dedup hot-path optimization (compile-time)**.
+  v5.10.0 profile data + intra-lex counters (added during
+  the v5.10.1 measurement pass) showed LEXID's O(N²) linear-
+  scan dedup is the dominant cost: **59,388 LEXID calls ×
+  ~677 average dedup byte-compares = 40 million byte-
+  compares** during cc5 self-compile. That maps to ~500 ms
+  of CPU on the 580 ms lex phase budget.
+
+  **Candidate sub-targets** (preserve the linear-scan model
+  where possible per cyrius's "byte-at-a-time" philosophy
+  for byte-parsing workloads):
+  - **Length-buckets** (~20 LOC, ~5-10× expected on
+    dedup_cmps): bucket idents by length, only scan
+    same-length idents per dedup. Identifier lengths in
+    cyrius source are well-distributed; bucketing
+    collapses search space ~10× without leaving the
+    linear-scan paradigm. **Recommended starting point.**
+  - **Last-K cache** (~15 LOC, ~2-3×): small ring of
+    recently-seen idents; check cache first; fall back
+    to linear scan. Catches repeats (most idents are
+    repeats).
+  - **Sorted + binary search** (~30 LOC, ~10-15×):
+    maintain idents in sorted order, binary-search
+    lookup. Departs from linear-scan model.
+  - **Hand-rolled hash table in cc5** (~100 LOC, 30-40×):
+    full O(1) lookup. Biggest speedup, biggest complexity
+    addition. cc5 can't `include "lib/hashmap.cyr"`
+    (chicken-and-egg in bootstrap chain) so this is
+    bespoke compiler code; reserve for v5.10.2+ if
+    length-buckets isn't enough.
+
+  Acceptance: measurable speedup vs the v5.10.0 baseline +
+  byte-identical self-host + check.sh + cyrius test green.
+
+- **v5.10.2 — SIMD math expansion (stdlib, runtime
+  optimization)**. **JUSTIFIED, not speculative**: hisab
+  documents a measured 30-700× gap vs Rust+glam in
+  `docs/benchmarks-rust-v-cyrius.md`, with "No SIMD" cited
+  as a 2-4× cost factor on vector/matrix ops. Hisab is the
+  **keystone for Wave 4 (37 dependents — impetus, kiran,
+  joshua, aethersafha, tara, badal, hisab-mimamsa,
+  brahmanda)**. Per hisab's own benchmark doc, "SIMD —
+  Cyrius 5.x roadmap; would close gap 2-4×".
+
+  Compiler infrastructure already in place: f64v packed-
+  SSE2 ops have been in production since v1.9.0 (`f64v_add`
+  / `_sub` / `_mul` / `_div` / `_sqrt` / `_abs` / `_fmadd`
+  in `src/backend/x86/float.cyr`); used by `lib/linalg.cyr`
+  + `lib/matrix.cyr`. The slot expands the SIMD primitive
+  set to cover hisab's hot Vec3/Vec4/Mat4 ops (cross
+  product, normalize, slerp, mat4 inverse, ray-sphere
+  intersect — top entries in hisab's gap table).
+
+  **Cross-arch budget** (real, must be planned at slot
+  entry): x86 SSE2 (production); aarch64 NEON equivalent
+  (`fadd.2d` / `fmul.2d` for f64-packed; native on Apple
+  Silicon — cyim / hisab's macOS consumers); cx scalar
+  fallback (cxvm has no SIMD primitives); future RISC-V
+  RVV. v5.10.2 ships x86 + aarch64; cx falls back to
+  scalar; RVV awaits the v5.11.x backend.
+
+  Acceptance: hisab's `bench-history.csv` shows measurable
+  improvement on at least one Wave-4-consumed op (cross /
+  normalize / mat4_mul / mat4_inverse), targeted at closing
+  the 2-4× gap hisab's doc names. Cross-host gate verifies
+  parity on aarch64 (pi or cass). cc5 byte-identical
+  self-host (compiler change is additive — new SIMD
+  primitives don't change existing emit paths).
+
+- **v5.10.3 — fixup phase optimization (compile-time)**.
+  v5.10.0 profile data shows fixup at 210 ms (21%). Second-
+  largest target after lex. `src/backend/x86/fixup.cyr` +
+  `src/backend/aarch64/fixup.cyr` walk a 1M-cap fixup
+  table linearly. Hot loop is per-fixup-type dispatch +
+  address compute. Same methodology as v5.10.1: profile
+  sub-phase, target hot path, ship single measurable fix.
+
+### v5.10.x — Held / pinned bug arc (slot-on-need)
+
+Items earn a slot when consumer pressure surfaces or
+opportunistic touch makes sense:
 
 - **REAL TYPE SYSTEM** (pinned 2026-05-08 at v5.9.36 wrap;
-  user direction). Adds call-site type checking, overload
-  dispatch (cstring vs Str vs int), and type inference
-  through expressions. Cyrius today tracks type *annotations*
-  (struct fields, var slots, fn params via `: Type` or
-  `: Str`) and uses them for width-correct loadN/storeN +
-  pointer-mode dot access — but the parser does NOT
-  enforce types at fn call sites and there's no overload
-  dispatch.
+  user direction; multi-slot effort). Call-site type checking,
+  overload dispatch (cstring vs Str vs int), type inference
+  through expressions. Currently cyrius tracks type
+  *annotations* (struct fields, var slots, fn params via
+  `: Type` or `: Str`) and uses them for width-correct
+  loadN/storeN + pointer-mode dot access — but the parser
+  does NOT enforce types at fn call sites and there's no
+  overload dispatch.
 
-  **Canonical motivating example** — agnosys 1.1.12
-  verbatim repro at
-  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
+  **Canonical motivating example** — agnosys 1.1.12 verbatim
+  repro at `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
   (hash `6425355b6147d5a674078794310ae2c1` at v5.9.37 ship).
-  Builds clean post-v5.9.37 (chars + str_builder_putc +
-  auto-call-main land that slot) but the binary produces
-  garbage + SIGSEGV at runtime because:
+  Builds clean post-v5.9.37 but the binary SIGSEGVs at runtime:
   ```cyr
   var out = str_builder_build(sb);    # out: Str
   println(out);                        # treats Str as cstring -> garbage
@@ -1890,72 +421,88 @@ work from one or more):
   ```
   Both lines are API misuse the type system would catch /
   dispatch correctly. v5.9.x had three options to fix
-  (polymorphic-runtime-detection / break str_builder_build /
-  partial Option-3); user rejected all three as either
-  sloppy or breaking — the right fix is a real type system,
-  scoped to v5.10.x.
+  (polymorphic-runtime-detection / break `str_builder_build` /
+  partial Option-3); user rejected all three as either sloppy
+  or breaking — the right fix is a real type system.
 
-  **Slot scope** (rough; refine at slot entry):
-  1. Surface audit — every fn body in stdlib + cyrius-side
-     code annotated with implicit return-type info (mostly
-     mechanical). Catalog ergonomic shapes consumers
-     actually use.
-  2. Call-site type check — at `PARSE_FNCALL`, compare
-     each arg's tracked type (via SLTYPE / SVTYPE / fn's
-     param mask) against the callee's param annotation.
-     Warn or error on mismatch.
-  3. Overload dispatch — extend `FINDFN` to support
-     multiple impls keyed by arg-type signature. Naming:
-     keep base `println` for cstring; add `println` overloads
-     for Str / int / etc. PP-mangled names (`println_cstr`,
-     `println_str`, `println_int`) at the symbol level;
-     parser routes calls based on arg type.
+  **Multi-slot scope** (rough; refine at first slot entry):
+  1. Surface audit — annotate every fn body in stdlib +
+     cyrius-side code with implicit return-type info.
+  2. Call-site type check — at `PARSE_FNCALL`, compare each
+     arg's tracked type against the callee's param annotation.
+  3. Overload dispatch — extend `FINDFN` to support multiple
+     impls keyed by arg-type signature. PP-mangled names
+     (`println_cstr` / `println_str` / `println_int`) at the
+     symbol level; parser routes by arg type.
   4. Type inference — propagate fn return types through
-     `var x = f(...);` so `x`'s slot tracks the type. Also
-     for binary operators (`x + 1` keeps x's type if int).
+     `var x = f(...);` and binary operators.
   5. Diagnostics — `error: cannot pass Str to fn expecting
-     cstring; use str_data(x) or str_println(x)` style
-     hints at the call site.
+     cstring; use str_data(x) or str_println(x)` hints.
 
-  Estimated multi-slot effort. May also surface `lib/`
-  cleanup (some fns that should be Str-typed but aren't,
-  some helpers that should be deprecated in favor of
-  type-overloaded forms).
+- **`cyrius audit` outside-repo semantics** (held from v5.9.4;
+  pending user design call). `cbt/commands.cyr:415` `cmd_audit`
+  invokes `~/.cyrius/bin/check.sh` which doesn't exist outside
+  the cyrius repo. Two design questions:
+  (a) Intended semantics outside the repo (clean error vs
+      polymorphic project-level audit)?
+  (b) Defensive `file_exists(script)` check in `run_script`
+      (one-line fix, applies to all script callers).
+  The defensive guard is opportunistic — could land inside any
+  v5.10.x slot that touches `cbt/build.cyr`. Full design
+  question is held until user picks (a).
 
-- **Open bug fixes** — items already pinned in
-  `Long-term considerations`, `v5.8.x — Held items`, deferred
-  notes from v5.9.x slot retros, plus consumer-filed issues
-  that surface during the arc. Examples already on the docket:
-  - `aarch64/fixup.cyr:19` syscall arity warning (deferred from
-    v5.8.53; "likely benign lint, confirm or fix").
-  - macOS arm64 struct-by-value calling-convention path
-    (v5.5.36 deferred; surfaces on consumer cross-build).
-  - Any consumer reports landing during the arc (cyim,
-    agnosys, mabda, sigil, sakshi, etc.).
-- **Compile-time optimization** — the cyrius compiler's own
-  cycle time. Profile-driven; identify hot paths in cc5 →
-  trim allocations, inline hot fns, reshuffle heap regions
-  for cache locality, etc. Bench tier-2 (`scripts/bench-
-  history.sh --tier2`) tracks the floor.
-- **Runtime optimization** — code-emit improvements visible
-  in stdlib + downstream consumers. Patches like the v5.6.x
-  combine-shuttle peephole shape — earn slot when
-  microbenchmark or consumer profile surfaces.
-- **Surface review** — periodic cleanup of items that
-  accumulated through v5.9.x (e.g., the
-  tcyr-relay-vs-testsuite-gate redundancy pinned at v5.9.6,
-  the `cyrius audit` outside-repo behavior pinned at v5.9.4,
-  doc/vidya version-ref drift). Each gets a slot when
-  the cleanup makes sense.
-- **`lib/regression.cyr` testing-stdlib carve-out** (pinned
-  at v5.9.7 ship, see v5.9.x §) — earns a slot once the v5.9.x
-  helper inventory has stabilized post-arc-close.
+- **`cyrius --version` stray `\xb3` byte** (held from
+  agnosys 1.1.5 filing side-observation). Locally NOT
+  reproduced under v5.9.22+. Held until reporter's
+  `~/.cyrius/current` xxd is captured. Defensive
+  `read_file_str` hardening (extend trim to drop bytes ≥
+  0x80) is the likely fix once env is reproducible.
+
+- **`aarch64/fixup.cyr:19` syscall arity warning** (deferred
+  from v5.8.53). "Likely benign lint, confirm or fix" —
+  one-slot read.
+
+- **macOS arm64 struct-by-value calling-convention path**
+  (v5.5.36 deferred). Surfaces on consumer cross-build.
+
+- **`parse_fn.cyr:910` defensive `_AARCH64_BACKEND==0`
+  guard** (surfaced at v5.9.43 closeout code-review pass).
+  x86 callee-save block is `if (_TARGET_CX == 0)` only; not
+  a leak in practice (aarch64 doesn't auto-enable regalloc),
+  but a v5.10.x defensive-guard cleanup target. Tiny;
+  bundle into a related slot.
+
+- **Stdlib data-domain distlib carve-out** (re-pinned from
+  v5.9.0). ~13 modules (`json`, `toml`, `cyml`, `csv`,
+  `base64`, `regex`, `math`, `matrix`, `linalg`, `bigint`,
+  `u128`, etc.); sandhi-pattern fold-out into `cyrius-data`
+  sibling distlib. Multi-slot effort; earns slot when
+  scheduling lines up.
+
+- **Class B FFI / wgpu fncall6 ABI** (mabda B1/B2 — held;
+  see *Deferred to v5.11.x or later* above). Could land in
+  v5.10.x bug arc if mabda resurfaces it as blocking.
+
+- **Surface review items** — tcyr-relay-vs-testsuite-gate
+  redundancy (pinned v5.9.6); doc/vidya version-ref drift.
+  Each gets a slot when the cleanup makes sense.
+
+### v5.10.x — Held forward (no slot consumed; surfaces-on-ask)
+
+These remain unpinned long-term; promote to slot when a
+consumer concretely surfaces:
+
+- **TS test harness program** (option E from v5.7.37) —
+  single `programs/ts_test_runner.cyr` consuming both
+  internal-symbol fn dispatch and TS fixture files. v5.7.37
+  group-level consolidation suffices until a downstream
+  consumer surfaces a test pattern that doesn't fit either
+  current shape.
 
 **No hard cap on slot count.** v5.10.x runs as long as the
-work is productive — could be 5 patches, could be 20. Slip is
-fine; the bug/optimization backlog isn't a deadline. When the
-backlog drains or AGNOS / RISC-V work concretely picks up,
-v5.11.0 cuts.
+work is productive — could be 5 patches, could be 20. Cycle
+ends when the bug/optimization backlog drains or v5.11.x
+bare-metal/RISC-V drivers concretely line up.
 
 ### v5.10.x — Acceptance principle (revised at v5.10.0 ship)
 
@@ -2120,15 +667,15 @@ enables adding new targets without touching the frontend.
 ## v5.x — Toolchain Quality
 
 Shipped toolchain rows (api-surface + LSP cross-file go-to-def +
-cyrlint forward-ref scanner) moved to
+cyrlint forward-ref scanner + LSP `textDocument/references`
+landed v5.9.10) moved to
 [completed-phases.md](completed-phases.md). Remaining
 toolchain-quality items are all consumer-trigger-gated and live
-in [v5.9.x §Held forward](#v59x--held-forward-no-slot-consumed-surfaces-on-ask):
+in [v5.10.x §Held forward](#v510x--held-forward-no-slot-consumed-surfaces-on-ask):
 
 | Feature | Effort | Status |
 |---------|--------|--------|
 | LSP `textDocument/semanticTokens/full` | Medium | Held forward — earns slot when an editor's textmate grammar can't satisfy a token-coloring request. ~150 LOC per LSP 3.16 spec. |
-| LSP `textDocument/references` | Low-Medium | Held forward — ~80 LOC on top of v5.7.39's symbol-table infrastructure. Claims slot on downstream ask. |
 | TS test harness program (option E from v5.7.37) | Medium | Held forward — single `programs/ts_test_runner.cyr` consuming internal-symbol fn dispatch + TS fixture files. v5.7.37 group-level consolidation suffices until a consumer surfaces a pattern outside both shapes. |
 
 ---
@@ -2146,7 +693,7 @@ v5.8.65 close):
 
 | Feature | Effort | Surfacing / votes | Disposition |
 |---------|--------|-------------------|-------------|
-| Phase 2b-aarch64 struct copy (LDRB/STRB loop) | Medium | x86 shipped v5.5.36; aarch64 path pending | **Pinned to a v5.9.x patch slot** at v5.8.65 close — see [v5.9.x §Other pin candidates](#v59x--other-pin-candidates-folded-in-from-prior-unpinned). |
+| Phase 2b-aarch64 struct copy (LDRB/STRB loop) | Medium | **✅ Shipped v5.9.26**. See [completed-phases.md](completed-phases.md). |
 | Closures capturing variables | High | gotcha #8 — consumers feel the absence | **Watching.** Promote when a consumer concretely blocks on it (vs. lambda-pattern workaround). v5.8.x ADTs make captured-state encoding cleaner. |
 | Generics / traits | High | 1 vote (kavach) | **Watching.** Wait for kavach to actively reach for it; speculative implementation pre-need is risk. |
 | Hardware 128-bit div-mod | Medium | — | **Stays unpinned.** abaco / sigil currently work around via u128 shifts; not blocking. |
