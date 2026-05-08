@@ -1,0 +1,46 @@
+# v5.10.4 — type inference at var-decl
+# `var out = str_from(...)` infers Str type from str_from's return
+# annotation, then `println(out)` routes via overload dispatch to
+# println_str (the v5.10.3 dispatch picks Str-typed arg locals).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/test.cyr"
+
+fn main() {
+    alloc_init();
+
+    # Direct: var out = str_from(...) — no `: Str` annotation.
+    # Inference picks up str_from's return-struct-id and routes
+    # println(out) to println_str.
+    var out = str_from("inferred Str");
+    assert_eq(str_len(out), 12, "inferred Str len");
+
+    # str_cat returns Str — chain of inference.
+    var a = str_from("a");
+    var b = str_from("b");
+    var c = str_cat(a, b);
+    assert_eq(str_len(c), 2, "inferred Str from str_cat");
+
+    # str_clone returns Str.
+    var d = str_clone(c);
+    assert_eq(str_len(d), 2, "inferred Str from str_clone");
+
+    # Builder build returns Str.
+    var sb = str_builder_new(64);
+    str_builder_add(sb, str_from("xyz"));
+    var built = str_builder_build(sb);
+    assert_eq(str_len(built), 3, "inferred Str from str_builder_build");
+
+    # End-to-end: inferred Str + println overload dispatch.
+    # If type inference + v5.10.3 overload both fire,
+    # `println(out)` lands on `println_str` and prints the
+    # underlying bytes correctly. If inference fails, the
+    # untyped local stays SLTYPE=0, dispatch doesn't fire,
+    # and println emits the raw fat-pointer bytes (garbage).
+    println(out);
+
+    var r = assert_summary();
+}

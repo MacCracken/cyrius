@@ -53,23 +53,23 @@ fn str_new(data, len): Str {
 }
 
 # Get length
-fn str_len(s) {
+fn str_len(s: Str) {
     return load64(s + 8);
 }
 
 # Get data pointer
-fn str_data(s) {
+fn str_data(s: Str) {
     return load64(s);
 }
 
 # Print a Str to stdout
-fn str_print(s) {
+fn str_print(s: Str) {
     syscall(1, 1, load64(s), load64(s + 8));
     return 0;
 }
 
 # Print Str + newline
-fn str_println(s) {
+fn str_println(s: Str) {
     str_print(s);
     syscall(1, 1, "\n", 1);
     return 0;
@@ -118,20 +118,20 @@ fn str_cat(a: Str, b: Str): Str {
 # v5.8.43 — Allocator-as-first-arg variant of str_sub. Allocates
 # only the 16-byte Str header via `a` (data ptr is shared with the
 # parent Str — this is a view, not a copy). Returns 0 on OOM.
-fn str_sub_a(a, s, start, len): Str {
+fn str_sub_a(a, s: Str, start, len): Str {
     return str_new_a(a, load64(s) + start, len);
 }
 
 # Substring (allocates new Str header, shares data with parent).
 # v5.8.43 wrapper — delegates to str_sub_a with default_alloc().
-fn str_sub(s, start, len): Str {
+fn str_sub(s: Str, start, len): Str {
     return str_new(load64(s) + start, len);
 }
 
 # v5.8.35 — Allocator-as-first-arg variant of str_clone. Allocates
 # a fresh `slen + 1` byte buffer (null-terminated) AND the 16-byte
 # Str header via `a`. Returns 0 on OOM.
-fn str_clone_a(a, s): Str {
+fn str_clone_a(a, s: Str): Str {
     var slen = str_len(s);
     var buf = alloc_via(a, slen + 1);
     if (buf == 0) { return 0; }
@@ -141,7 +141,7 @@ fn str_clone_a(a, s): Str {
 }
 
 # Clone a Str (deep copy — new buffer). v5.8.35 wrapper.
-fn str_clone(s): Str {
+fn str_clone(s: Str): Str {
     return str_clone_a(default_alloc(), s);
 }
 
@@ -176,7 +176,7 @@ fn str_ends_with(s: Str, suffix: Str) {
 }
 
 # Find first occurrence of byte in Str, return index or -1
-fn str_index_of(s, ch) {
+fn str_index_of(s: Str, ch) {
     var slen = str_len(s);
     var sd = str_data(s);
     var fi = 0;
@@ -203,7 +203,7 @@ fn str_from_int(n): Str {
 }
 
 # Parse integer from Str (returns 0 on invalid)
-fn str_to_int(s) {
+fn str_to_int(s: Str) {
     var slen = str_len(s);
     var sd = str_data(s);
     var result = 0;
@@ -227,7 +227,7 @@ fn str_to_int(s) {
 
 # v5.8.43 — Allocator-as-first-arg variant of str_trim. Routes the
 # str_sub allocation (Str header) through `a`. Returns 0 on OOM.
-fn str_trim_a(a, s): Str {
+fn str_trim_a(a, s: Str): Str {
     var slen = str_len(s);
     var sd = str_data(s);
     var start = 0;
@@ -247,7 +247,7 @@ fn str_trim_a(a, s): Str {
 
 # Trim leading and trailing whitespace (returns new Str). v5.8.43
 # wrapper.
-fn str_trim(s): Str {
+fn str_trim(s: Str): Str {
     return str_trim_a(default_alloc(), s);
 }
 
@@ -477,7 +477,7 @@ fn str_cstr(s) {
 }
 
 # Substring by start and end index (returns new Str, shares data)
-fn str_substr(s, start, end): Str {
+fn str_substr(s: Str, start, end): Str {
     if (start < 0) { start = 0; }
     if (end > str_len(s)) { end = str_len(s); }
     if (start >= end) { return str_from(""); }

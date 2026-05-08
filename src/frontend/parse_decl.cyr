@@ -1060,6 +1060,30 @@ fn PARSE_VAR(S) {
             }
         }
     }
+    # v5.10.4 — type inference at var-decl. Peek the RHS shape
+    # BEFORE PCMPE evaluates it: if the RHS is a fn call
+    # `IDENT(...)` and the fn has a known return-struct-id
+    # (via GFRS — set by the fn's `: ReturnType` annotation), we
+    # capture the inferred sid here and apply it as SLTYPE later.
+    # Closes the agnosys-shape `var out = str_builder_build(sb);
+    # println(out);` pattern: post-v5.10.4, `out` inherits Str
+    # type from str_builder_build's `: Str` annotation, then the
+    # v5.10.3 overload dispatch routes `println(out)` to
+    # `println_str` correctly. Only fires when no explicit type
+    # annotation is present (pscale == 0 && scalar_type == 0 —
+    # both are SET when `: Type` is parsed earlier in this fn).
+    var _ti_inferred_sid = 0;
+    if (pscale == 0) { if (scalar_type == 0) {
+        if (PEEKT(S) == 2) {
+            if (TOKTYP(S, GTI(S) + 1) == 10) {
+                var _ti_noff = PEEKV(S);
+                var _ti_fi = FINDFN(S, _ti_noff);
+                if (_ti_fi >= 0) {
+                    _ti_inferred_sid = GFRS(S, _ti_fi);
+                }
+            }
+        }
+    } }
     # parse expression (scalar) — use PCMPE for comparisons and &&/||
     PCMPE(S);
     # Type check: warn if pointer/scalar mismatch
@@ -1153,7 +1177,14 @@ fn PARSE_VAR(S) {
                     EFLSTORE(S, li);
                 }
             } else {
-                SLTYPE(S, li, pscale);
+                # v5.10.4 — fold inferred sid (peeked pre-PCMPE) into
+                # the no-annotation branch so `var x = f();` picks
+                # up f's `: ReturnType` annotation as x's SLTYPE.
+                if (_ti_inferred_sid > 0) {
+                    SLTYPE(S, li, 0 - _ti_inferred_sid);
+                } else {
+                    SLTYPE(S, li, pscale);
+                }
                 EFLSTORE(S, li);
             }
             # v5.8.14 §6: per-local slice element width (0 = not a slice).
