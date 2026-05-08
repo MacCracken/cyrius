@@ -1637,12 +1637,65 @@ satisfied by earlier slots.
   to factor its impl down to the stdlib primitive, that's a
   natural sandhi 1.2.0 candidate.
 
-- **v5.9.43** — **`cyrius` v5.9.x closeout** per CLAUDE.md
-  11-step protocol. Mechanical: self-host verify, bootstrap
-  closure, full check.sh. Judgment-call: heap-map audit,
-  dead-code audit, refactor pass, code review pass, cleanup
-  sweep. Compliance: security re-scan, downstream check. Docs:
-  CHANGELOG/roadmap/vidya sync. Tags v5.10.0 cut after green.
+- **v5.9.43** ✅ — **`cyrius` v5.9.x closeout shipped 2026-05-08**.
+  CLAUDE.md 11-step protocol executed; cycle CLOSED.
+  v5.10.0 cuts after this commit lands.
+
+  **Cycle stats** (43 patches, 2 days):
+  - cc5 self-host byte-identical at every patch.
+  - check.sh: 56 → 66 gates (+10).
+  - cyrius test: stable at 132 .tcyr.
+  - api-surface: 2615 → 2792 (+177; mostly v5.9.42's
+    +22 `regression_*` verbs).
+  - Stdlib module count: 76 → 79 (+`audit_walk` v5.9.1,
+    `niyama` v5.9.0, `regression` v5.9.42).
+  - `tests/regression-*.sh`: 1 → 0 (.sh-conversion arc
+    CLOSED at v5.9.41).
+
+  **Mechanical (Steps 1-3) ✓**:
+  - Self-host BYTE-IDENTICAL (`c7a3ad41`); bootstrap
+    closure cyrc-asm round-trip green; 66/66 check.sh;
+    132/132 cyrius test; 14/14 .tcyr.
+
+  **Judgment-call (Steps 4-8)**:
+  - Heap map audit: no orphans; v5.9.x newly-added
+    regions self-document inline.
+  - Dead-code floor: 34 unreachable fns / 22792 bytes.
+    All retained per memory pin "Dead-code audit scope
+    — cc5 'dead' ≠ removable" (TS / Mach-O / cx / IR /
+    aarch64-only).
+  - Refactor pass: in-cycle consolidations already
+    landed (v5.9.40 `EFIELD_LOAD_W` / `ESTRUCT_BYVAL_COPY`,
+    v5.9.42 `lib/regression.cyr` net -364 LOC,
+    v5.9.39 ftype==3 mirror of ftype==1/0).
+  - Code review pass: spot-check ABI leaks (one
+    defensive-guard candidate in parse_fn.cyr:910 —
+    aarch64 backend with `_TARGET_CX==0` could fire
+    x86 callee-save block; not a leak in practice
+    since aarch64 doesn't auto-enable regalloc, but
+    a v5.10.x cleanup target). Mach-O guards (19) +
+    byte-order spot-check + fixup arithmetic all
+    green.
+  - Cleanup sweep: 0 stale `v5.6.`/`v5.7.` refs in
+    code; 0 orphan `tests/regression-*.sh`; build/
+    tracking matches seed-policy (cc3 + cc5).
+
+  **Compliance (Steps 9-10)**:
+  - Security re-scan: 0 new shell-out paths in `src/`;
+    READFILE sites bounded to legit preprocessor flow;
+    no unchecked store8/64 near region boundaries.
+    Last full audit v5.0.1; next full re-scan due at
+    v6.x.
+  - Downstream: 36 ecosystem repos with `cyrius.cyml`;
+    pin distribution: 8 at v5.9.x (latest 5.9.41 in
+    sandhi), 8 at v5.8.x, ~20 at v5.7.x-or-earlier.
+    Per-repo uplift is consumer-cycle concern.
+
+  **Docs sync (Step 11)**:
+  - CHANGELOG entry written; roadmap (this entry) +
+    state.md head bumped; vidya `language/index.cyml` +
+    `language/stdlib_modules.cyml` (new `regression_module`
+    entry, 16th total).
 
 **Held / deferred from v5.9.x (no slot)**:
 - **`cyrius audit` outside-repo semantics** (v5.9.4 pin) —

@@ -5,6 +5,50 @@
 
 ## Version
 
+**5.9.43** (in-flight 2026-05-08 — **v5.9.x SLOT 43 —
+closeout pass; cycle CLOSED**). CLAUDE.md 11-step protocol
+executed end-to-end; v5.10.0 cuts after this commit lands.
+
+**Cycle stats** (43 patches, 2 days, 2026-05-06 → 2026-05-08):
+- cc5 self-host byte-identical at every patch (final
+  `c7a3ad41`, 751744 B).
+- check.sh: 56 → 66 gates (+10).
+- cyrius test: stable at 132 .tcyr.
+- api-surface: 2615 → 2792 (+177).
+- Stdlib module count: 76 → 79 (+`audit_walk` v5.9.1,
+  `niyama` v5.9.0, `regression` v5.9.42).
+- `tests/regression-*.sh`: 1 → 0 (.sh-conversion arc CLOSED
+  at v5.9.41).
+
+**Mechanical** ✓: self-host BYTE-IDENTICAL; bootstrap closure
+cyrc-asm round-trip green; 66/66 check.sh; 132/132 `cyrius
+test`; 14/14 .tcyr.
+
+**Dead-code floor**: 34 unreachable fns / 22792 bytes (v5.9.x
+baseline). All retained per memory pin (TS / Mach-O / cx /
+IR / aarch64-only — reachable via mode flags or other
+`main_*.cyr` entries).
+
+**Code review findings** (none blocking):
+- `parse_fn.cyr:910` x86 callee-save block — wrapped in
+  `if (_TARGET_CX == 0)` but not `_AARCH64_BACKEND == 0`.
+  Not a leak in practice (aarch64 doesn't auto-enable
+  regalloc) but a v5.10.x defensive-guard cleanup target.
+
+**Docs sync**:
+- CHANGELOG `[5.9.43]` entry + roadmap v5.9.43 ✅.
+- vidya updates: `language/index.cyml` (verified-on line
+  bumped to 5.9.42 + v5.9.x cycle highlights summary);
+  `language/stdlib_modules.cyml` (new `regression_module`
+  entry — 16th total — full surface table + sandhi
+  factoring-candidate cross-ref).
+
+**Tag**: v5.10.0 cuts. v5.10.x cycle scoped (per memory
+pins): real type system (rejecting polymorphic-runtime-
+detection per v5.9.36 user direction; long arc), optimization
++ bug-fix arc including the agnosys 1.1.12 type-mismatch
+close pending across the v5.9.33-39 partial-fix chain.
+
 **5.9.42** (shipped 2026-05-08 — **v5.9.x SLOT 42 —
 `lib/regression.cyr` testing-stdlib carve-out**). Closes the
 post-v5.9.41 helper-inventory stabilization arc by moving 14

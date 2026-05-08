@@ -6,6 +6,148 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.43] — 2026-05-08
+
+**v5.9.x SLOT 43 — closeout pass**. CLAUDE.md 11-step
+protocol executed; v5.9.x cycle CLOSED. v5.10.0 cuts after
+this tag.
+
+### v5.9.x cycle stats
+
+- **43 patches** over 2 days (2026-05-06 → 2026-05-08)
+- cc5 self-host byte-identical at every patch
+- check.sh: 56 → 66 gates (+10 in cycle)
+- cyrius test: stable at 132 .tcyr (`cyrius test` count)
+- api-surface: 2615 → 2792 entries (+177 in cycle, mostly
+  the v5.9.42 lib/regression.cyr +22)
+- Stdlib module count: 76 → 79 (+ `lib/audit_walk.cyr`
+  v5.9.1, `lib/niyama.cyr` v5.9.0, `lib/regression.cyr`
+  v5.9.42)
+- `tests/regression-*.sh` files: 1 → 0 (`.sh-conversion arc
+  CLOSED at v5.9.41)
+
+### Mechanical (Steps 1-3) — all green
+
+- **Self-host verify**: cc5 7a1a8cf8 → c7a3ad41 (post-bump
+  src/version_str.cyr regen); two-step BYTE-IDENTICAL.
+  cc5 size 751,744 B; cc5_aarch64 cross 448,032 B.
+- **Bootstrap closure**: seed → cyrc → asm → cyrc passes
+  (`sh bootstrap/bootstrap.sh` reports "cyrc assembled by
+  build/asm matches cyrc assembled by seed").
+- **Full check.sh**: 66/66; cyrius test: 132/132; .tcyr:
+  14/14.
+
+### Judgment-call (Steps 4-8)
+
+- **Heap map audit**: all v5.9.x newly-added heap regions
+  (audit-walk's per-walk state, lib/regression.cyr's tmp
+  paths via `_tmp_path`) document themselves inline; no
+  unused regions surfaced. cc5 emits **34 unreachable fns
+  / 22792 bytes** as the v5.9.x dead-code floor — TS
+  frontend (gated by `--parse-ts`), Mach-O backend (gated
+  by `CYRIUS_MACHO_ARM`), cx backend (gated by
+  `_TARGET_CX==1`), IR opt subsystem (gated by O3a flags),
+  aarch64-only fns (used from main_aarch64.cyr only). Per
+  memory pin "Dead-code audit scope — cc5 'dead' ≠
+  removable", all retained.
+- **Refactor pass**: in-cycle consolidations already
+  landed:
+  - v5.9.40: `EFIELD_LOAD_W` / `ESTRUCT_BYVAL_COPY`
+    helpers extracted from inline emits in
+    parse_decl.cyr / parse_fn.cyr; three backend versions
+    of the byte-copy + width-aware load now live in
+    their respective `*/emit.cyr` files.
+  - v5.9.42: `lib/regression.cyr` collapses 14
+    `programs/check.cyr` helpers to thin wrappers, net
+    -364 LOC.
+  - v5.9.39: ftype==3 Mach-O ARM64 fixup mirrors
+    ftype==1 / ftype==0 dispatch — single `if
+    (_TARGET_MACHO == 2)` branch shape across all three
+    fixup-types.
+- **Code review pass**:
+  - **ABI leak scan**: `parse_fn.cyr:910` x86 callee-save
+    block guarded by `if (_TARGET_CX == 0)` but not
+    `_AARCH64_BACKEND == 0`. Defensive — `_cur_fn_regalloc`
+    is x86-only in practice (aarch64 doesn't auto-enable
+    regalloc per inline comment), so no actual leak. Adding
+    a defensive aarch64 guard is a v5.10.x cleanup; not a
+    correctness bug.
+  - **Mach-O guards**: 19 `_TARGET_MACHO ==` guards across
+    backend + frontend; ratio matches expected dispatch
+    sites. v5.9.39's ftype==3 fix verified live on ecb via
+    `_macho_derive_serialize_gate`.
+  - **Byte-order typo scan**: x86 ModR/M sequences in
+    src/backend/x86/ + parse_fn.cyr regalloc block —
+    spot-check passes (mov [rbp-N], reg byte ordering
+    correct).
+  - **Off-by-one in fixup arithmetic**: aarch64 fixup
+    ftype==3 ADRP+ADD verified end-to-end at v5.9.39 via
+    cross-host parity (Linux aarch64 vs Mach-O ARM both
+    fail at the same line in agnosys repro — confirms
+    the page_diff math is correct).
+- **Cleanup sweep**:
+  - Stale version refs in `src/`: 0 `v5.6.` refs, 0
+    `v5.7.` refs in code (only narrative comments).
+  - Orphaned `tests/regression-*.sh`: 0 (.sh-conversion
+    arc closed at v5.9.41).
+  - `build/` tracked: cc3 (prior-major seed) + cc5
+    (current-major) per the seed-tracking policy. No
+    orphans.
+
+### Compliance / external (Steps 9-10)
+
+- **Security re-scan**:
+  - 0 new `sys_system` / shell-out from user input in
+    `src/`.
+  - `READFILE` call sites (5) all in legitimate
+    preprocessor/include-resolution paths
+    (lex_pp.cyr / bridge.cyr); paths bounded to known
+    `include` directives, not user-arbitrary.
+  - No new unchecked store8/store64 near region
+    boundaries this cycle.
+  - Last full security audit was at v5.0.1; the next
+    full re-scan is due at the v6.x cycle per CLAUDE.md
+    "every 2-3 minors". Quick-scan this slot only;
+    nothing surfaced.
+- **Downstream check**:
+  - 36 ecosystem repos with `cyrius.cyml`. Pin
+    distribution: 8 at v5.9.x (latest: sandhi 5.9.41),
+    8 at v5.8.x, ~20 at v5.7.x or earlier. Many stale
+    pins; uplift is a per-repo concern handled at
+    consumer's release cycle, not forced by closeout.
+  - No `[deps.sandhi]` pins survive in AGNOS — sandhi
+    1.0.0 fold (Cyrius v5.7.0) acceptance bar still
+    holds at v5.9.43.
+
+### Docs sync (Step 11)
+
+- **CHANGELOG**: this entry.
+- **roadmap.md**: v5.9.43 marked ✅; cycle log compressed.
+- **state.md**: head bumped to v5.9.43 + cycle-summary
+  rewrite; v5.9.42 + earlier collapsed.
+- **vidya**:
+  - `content/cyrius/language/index.cyml` — verified-on
+    line bumped to 5.9.42; v5.9.x highlights summarized.
+  - `content/cyrius/language/stdlib_modules.cyml` — new
+    `regression_module` entry (16th module entry); full
+    surface table + sandhi factoring-candidate cross-ref.
+
+### Verified
+
+- 66/66 check.sh (final pass post-doc edits)
+- 132/132 cyrius test; 14/14 .tcyr
+- cc5 + cc5_aarch64 byte-identical self-host
+- Bootstrap closure cyrc-asm round-trip green
+
+### Tag
+
+v5.10.0 cuts after this commit lands. v5.10.x cycle is
+already loosely scoped (memory pins): real type system
+(rejecting polymorphic-runtime-detection per v5.9.36
+user direction; long arc), optimization + bug-fix arc
+including the agnosys 1.1.12 type-mismatch close that's
+been pending across the v5.9.33-39 partial-fix chain.
+
 ## [5.9.42] — 2026-05-08
 
 **v5.9.x SLOT 42 — `lib/regression.cyr` testing-stdlib carve-out**.
