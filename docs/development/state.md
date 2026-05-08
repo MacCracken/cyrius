@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.9.43** (in-flight 2026-05-08 — **v5.9.x SLOT 43 —
+**5.9.43** (shipped 2026-05-08 — **v5.9.x SLOT 43 —
 closeout pass; cycle CLOSED**). CLAUDE.md 11-step protocol
 executed end-to-end; v5.10.0 cuts after this commit lands.
 
