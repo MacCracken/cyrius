@@ -1300,8 +1300,9 @@ satisfied by earlier slots.
   and v5.10.x's open-bug-and-optimization arc is the
   right place to land it.
 
-- **v5.9.39** — **cx (cyrius-x bytecode) Phase 2c parity**
-  (cascaded down from v5.9.37 — original pin retained).
+- **v5.9.40** — **cx (cyrius-x bytecode) Phase 2c parity**
+  (cascaded down: original v5.9.37 pin → v5.9.39 → v5.9.40
+  after the Mach-O probe earned its own slot at v5.9.39).
   Closes the two `ERR_MSG`-guarded cx pending sites that
   v5.9.26 + v5.9.27 narrowed but didn't fix:
   - `parse_fn.cyr:371` — struct return by value
@@ -1339,65 +1340,137 @@ satisfied by earlier slots.
   byte-memory-ops shape this slot is centered on. Pin them
   individually if a cx consumer surfaces.
 
-- **v5.9.38** — **Mach-O `#derive(Serialize)` SIGSEGV — probe
-  + fix**. Promoted out of held / "wait for consumer" status
-  per v5.9.36 audit (held since v5.9.34 across 3 slots
-  without action — that's the slip pattern the user has
-  flagged before, fix it). The auto-generated `_to_json`
-  body SIGSEGVs at runtime on real macOS arm64 (ecb host)
-  for any `#derive(Serialize)` struct, including the
-  simplest `struct point { x: i64; y: i64; z: i64; }` shape.
-  Same source builds + runs cleanly on x86_64 Linux,
-  qemu-aarch64, real Linux aarch64 (pi), and Windows PE32+
-  — the difference is real macOS, not aarch64.
+- **v5.9.38** ✅ — **Mach-O `#derive(Serialize)` SIGSEGV: probe
+  + Bug A fixed; Bug B split to v5.9.39 shipped 2026-05-08**.
+  Promoted out of held / "wait for consumer" status per
+  v5.9.36 audit (held since v5.9.34 across 3 slots without
+  action). Two compounding bugs found; one trivial-fix landed,
+  one non-trivial split per the slot's split rule.
 
-  **Probe-first scope** (this slot ships the diagnosis even
-  if the fix lands later):
-  1. Build `iso_simpler.cyr` (3-field i64 struct, str_print)
-     for Mach-O ARM64 via `CYRIUS_MACHO_ARM=1
-     build/cc5_aarch64`. scp to ecb. codesign + run under
-     lldb to capture backtrace + crashing instruction.
-  2. Compare disassembly of `point_to_json` between Mach-O
-     and ELF aarch64 builds. Mach-O likely diverges at the
-     first call site (str_builder_add_cstr) — candidates:
-     stack alignment (macOS ABI requires 16-byte at every
-     `bl`; ELF tolerates 8 some places), arg-reg shuffling
-     into the auto-gen body, or a calling-convention edge
-     for `&local` first arg.
-  3. Bisect: does the crash happen on the FIRST call inside
-     `_to_json`, or partway through? Does removing
-     `str_builder_add_int` (i64 → str digits via `fmt_int_buf
-     [N];`) eliminate the crash?
-  4. Land the fix once root cause is pinned. If fix is
-     non-trivial (>1 backend file change), split into a
-     follow-up slot and ship the probe + tcyr Mach-O
-     skip-marker this slot.
+  **Probe captured** (lldb DiagnosticReports on ecb):
+  - SIGSEGV / `EXC_BAD_ACCESS` / `KERN_INVALID_ADDRESS at
+    0x0000000000000008`. PC: `LDR x0, [x0]` with x0=8 inside
+    `_sb_grow_a` at `load64(sb + 8)`.
+  - Cause: sb=NULL passed in. Bisect to `str_builder_new`
+    returning 0 — confirmed by direct test on ecb (same ELF
+    aarch64 build returns valid pointer, Mach-O returns 0).
+  - `str_builder_new` calls `alloc_via(default_alloc(), 24)`
+    → `fncall2(alloc_fn, state, size)`.
 
-  **Consumer impact**: any current Mach-O cyrius project
-  that uses `#derive(Serialize)` cannot run on macOS today.
-  Verifies as blocking once mabda's GPU work or any kernel-
-  arc tooling pulls in JSON serialization on Mach-O.
+  **Bug A — `lib/fnptr.cyr` missing macOS branches**.
+  `fncall0` through `fncall8` (9 fns) had `#ifdef
+  CYRIUS_TARGET_LINUX` and `#ifdef CYRIUS_TARGET_WIN`
+  branches but no `#ifdef CYRIUS_TARGET_MACOS`. On Mach-O
+  builds, neither branch fires → asm{} block doesn't
+  execute → `result` stays at the `var result = 0;` init →
+  fncallN always returns 0 → `alloc_via` returns 0 →
+  `str_builder_new` returns NULL → SIGSEGV cascades.
 
-  Acceptance: `tests/tcyr/derive_serialize_roundtrip.tcyr` +
-  `tests/tcyr/derive_serialize_widths.tcyr` build clean on
-  Mach-O ARM64 via `CYRIUS_MACHO_ARM=1` AND run-pass on
-  ecb (4/4 + 14/14, matching pi). Add an
-  `_macho_derive_serialize_gate()` to the SSH cluster in
-  `programs/check.cyr` so future ship doesn't re-rot.
+  **Fix A**: added `#ifdef CYRIUS_TARGET_MACOS` blocks for
+  all 9 fncallN, with x86_64 + aarch64 asm copies of the
+  Linux-block content (calling convention is the same SysV
+  on Linux + macOS for both arches). Single-file change in
+  `lib/fnptr.cyr`.
 
-- **v5.9.40** — **tls-live gate conversion + network-probe
+  **Bug B — `src/backend/aarch64/fixup.cyr` ftype==3 fn-addr
+  not ASLR-safe on Mach-O**. `&fn_name` emits a
+  static MOVZ-chain encoding the file VA at link time. Mach-O
+  ARM binaries are PIE-linked by default; dyld slides the
+  whole image at load. The static MOVZ-chain encodes the
+  unslid VA; runtime dispatch jumps to (file_VA) instead of
+  (file_VA + slide), landing in `__data` or `__got` instead
+  of `__text`. Confirmed: `alloc_fn` runtime value
+  `0x100017C00` is past the `__text` end (`0x10000C504`) on
+  the test binary.
+
+  **Bug B fix is non-trivial** (>1 backend file change —
+  fixup.cyr's ftype==3 emit + emit.cyr's `&fn_name` call-
+  site emit, possibly plus EMITMACHO_ARM64.cyr's rebase
+  table emission). Split per the slot's pin rule.
+
+  **Why landing Fix A alone is correct even though it
+  doesn't restore Mach-O `#derive(Serialize)`**: fnptr.cyr's
+  missing macOS branch is a true bug in the stdlib. Future
+  Mach-O code that uses fnptr (any allocator vtable dispatch,
+  any callback registration) needs the asm to actually
+  execute. Pre-fix this was silently-broken; Fix A makes
+  the dispatch work — once Fix B lands, the chain works
+  end-to-end. Without Fix A, Fix B alone wouldn't help.
+
+  **NOT LANDED**: Bug B fix. `_macho_derive_serialize_gate`
+  also deferred to v5.9.39 (would be a perpetual
+  expected-fail until Fix B lands; better to land both
+  together).
+
+  cc5: unchanged — only `lib/fnptr.cyr` touched (compiler
+  binary not rebuilt; rebuild-on-deps brings the new
+  asm into downstream consumer builds).
+
+  api-surface: 2770 unchanged. cyrius test: 132 unchanged.
+  check.sh: 64 unchanged.
+
+  **Verified**:
+  - Pre-Fix-A: ecb `str_builder_new()` returns 0; verbatim
+    repro SIGSEGVs at NULL+8 deref.
+  - Post-Fix-A + pre-Fix-B: fncall2 dispatches; jumps to
+    wrong addr (Bug B); SIGSEGV moved earlier in the chain.
+    Confirms Fix A is firing.
+  - x86 + Linux aarch64 (pi) + Windows PE: unaffected by
+    Fix A (their gates were already present).
+  - 64/64 check.sh; cc5 self-host stable; agnosys verbatim
+    repro hash unchanged (`6425355b…`).
+
+- **v5.9.39** — **Mach-O ARM64 fn-pointer ASLR fix (Bug B
+  from v5.9.38)**. Pinned 2026-05-08 at v5.9.38 close.
+
+  **Root cause confirmed**: `src/backend/aarch64/fixup.cyr`
+  ftype==3 emits a static MOVZ-chain encoding the unslid
+  file VA. Mach-O ARM is PIE-linked; dyld slides the
+  whole image at load time. Runtime indirect call via
+  `blr xN` jumps to (file_VA, no slide) — lands in
+  __data/__got instead of __text. Either:
+  (a) Switch ftype==3 to ADRP+ADD relative addressing
+      (PC-relative; survives ASLR slide). Mirrors how
+      ftype==1 (string addresses) already works on Mach-O
+      via `FIXUP_ADRP_ADD` (per fixup.cyr line 174).
+  (b) Use Mach-O rebase table / __got for fn pointers,
+      with dyld-applied fixups at load.
+  (c) Disable PIE in the Mach-O emit (Apple discourages;
+      modern macOS may reject).
+
+  **Recommended**: option (a) — ADRP+ADD. Self-contained
+  in `src/backend/aarch64/fixup.cyr` ftype==3; mirrors
+  the working Mach-O string-address path. May also need
+  emit-side change in `src/backend/aarch64/emit.cyr` if
+  the call site assumes MOVZ-chain layout (likely needs
+  to allocate the right number of instruction slots).
+
+  **Acceptance**:
+  - Verbatim agnosys-1.1.12 repro (hash
+    `6425355b6147d5a674078794310ae2c1`) cross-built for
+    Mach-O ARM64 + run on ecb produces non-empty output
+    (the println/strlen issues are still type-system-
+    blocked at v5.10.x, but the binary should at least
+    not crash before any printing).
+  - `_macho_derive_serialize_gate` added to
+    `programs/check.cyr` SSH cluster — gates that
+    `point_to_json(&p, sb)` produces a non-empty Str
+    when run on ecb.
+  - 64/64 check.sh; cc5 self-host stable.
+
+- **v5.9.41** — **tls-live gate conversion + network-probe
   helper** (cascaded down).
   `_network_probe_check(host, port)` — quick TCP
   connect+disconnect to verify network reachability before
   the TLS round-trip; skip cleanly if unreachable (CI runner
   contexts vary). `_tls_live_gate()` retires the `.sh`. With
   this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.42.
+  — precondition for v5.9.43.
 
-- **v5.9.41** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.40 (arc
+- **v5.9.42** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.41 (arc
   closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.40 dispatcher work
+  accumulated through the v5.9.6 → v5.9.41 dispatcher work
   (`_stderr_match_subcase`, `_count_substr_buf`,
   `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
@@ -1414,7 +1487,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.42** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.43** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup

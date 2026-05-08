@@ -6,6 +6,96 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.38] — 2026-05-08
+
+**v5.9.x SLOT 38 — Mach-O `#derive(Serialize)` SIGSEGV: probe
++ Bug A fixed; Bug B split to v5.9.39**. Promoted out of held
+/ "wait for consumer" status (held since v5.9.34 across 3
+slots). Probe-first scope per the original pin; non-trivial
+fix split per the slot's split rule.
+
+cc5: unchanged (only `lib/fnptr.cyr` touched). api-surface:
+2770 unchanged. cyrius test: 132 unchanged. check.sh: 64
+unchanged.
+
+### Probe captured (lldb DiagnosticReports on ecb)
+
+`EXC_BAD_ACCESS / KERN_INVALID_ADDRESS at 0x0000000000000008`
+— PC at `LDR x0, [x0]` with x0=8 inside `_sb_grow_a`'s
+`load64(sb + 8)`. Cause: `sb=NULL` because `str_builder_new()`
+returned 0 on Mach-O ARM (verified directly: same source
+returns valid pointer on Linux aarch64).
+
+Bisect: `str_builder_new()` calls `alloc_via(default_alloc(),
+24)` → `fncall2(alloc_fn, state, size)` — fncall2 returns 0.
+
+### Bug A — `lib/fnptr.cyr` missing macOS branches (FIXED)
+
+All 9 `fncallN` fns (fncall0..fncall8) had
+`#ifdef CYRIUS_TARGET_LINUX` and `#ifdef CYRIUS_TARGET_WIN`
+branches but no `#ifdef CYRIUS_TARGET_MACOS`. On Mach-O
+builds neither asm{} block fires → `result` stays at the
+`var result = 0;` init → fncallN always returns 0. Cascades
+through every allocator-vtable dispatch + callback
+registration on Mach-O.
+
+Fix: added `#ifdef CYRIUS_TARGET_MACOS` blocks for all 9
+fncallN with x86_64 + aarch64 asm copies (calling convention
+is identical SysV on Linux + macOS for both arches). Single-
+file change in `lib/fnptr.cyr`.
+
+### Bug B — `src/backend/aarch64/fixup.cyr` ftype==3 not ASLR-safe (SPLIT to v5.9.39)
+
+`&fn_name` emits a static MOVZ-chain encoding the unslid
+file VA at link time. Mach-O ARM is PIE-linked; dyld slides
+the whole image at load time. Runtime indirect call via
+`blr xN` jumps to (file_VA, no slide) — lands in `__data` /
+`__got` instead of `__text`. Confirmed: runtime alloc_fn
+value `0x100017C00` is past the `__text` end (`0x10000C504`)
+on the test binary.
+
+Bug B fix is non-trivial (>1 backend file change — fixup.cyr
+ftype==3 emit + emit.cyr's `&fn_name` call-site instruction
+slot allocation). Split per the slot's pin rule.
+
+### Why landing Fix A alone is correct
+
+fnptr.cyr's missing macOS branch is a true bug in the stdlib
+regardless of Bug B. Future Mach-O code using fnptr (any
+allocator vtable, any callback) needs the asm to actually
+execute. Pre-fix this was silently-broken; Fix A makes the
+dispatch work — once Fix B lands, the chain works
+end-to-end. Without Fix A, Fix B alone wouldn't help.
+
+The `_macho_derive_serialize_gate` (per the original pin)
+also defers to v5.9.39 — would be a perpetual expected-fail
+until Bug B lands; better to add the gate when it can flip
+green.
+
+### Verified
+
+- Pre-Fix-A: ecb `str_builder_new()` returns 0; verbatim
+  repro SIGSEGVs at NULL+8 deref.
+- Post-Fix-A + pre-Fix-B: fncall2 dispatches; jumps to
+  wrong addr (Bug B); SIGSEGV moves earlier in the chain.
+  Confirms Fix A is firing.
+- x86 + Linux aarch64 (pi) + Windows PE: unaffected by
+  Fix A (those gates already present and identical content).
+- 64/64 check.sh; cc5 self-host stable.
+- agnosys verbatim repro hash unchanged
+  (`6425355b6147d5a674078794310ae2c1`) — slot did not edit
+  the consumer-filed source.
+
+### Cascaded to v5.9.39+
+
+- v5.9.39 — Mach-O ARM64 fn-pointer ASLR fix (Bug B from
+  this slot). ADRP+ADD relative addressing or rebase-table
+  approach.
+- v5.9.40 — cx Phase 2c parity (cascaded down).
+- v5.9.41 — tls-live + network-probe helper.
+- v5.9.42 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.43 — closeout pass before v5.10.0.
+
 ## [5.9.37] — 2026-05-08
 
 **v5.9.x SLOT 37 — agnosys 1.1.12 verbatim repro: parse +
