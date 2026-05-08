@@ -323,17 +323,20 @@ v5.10.x is now ordered bottom-to-top.
 
 1. **agnosys (kernel/baseOS)** — bottom-of-stack — every
    downstream baseOS item depends on it. Type-system arc
-   closes the agnosys 1.1.12 cascade across v5.10.1-.4.
+   closes the agnosys 1.1.12 cascade across v5.10.1-.5
+   (extended one slot at v5.10.2 ship — overload dispatch
+   split out of v5.10.2 to its own v5.10.3 slot per the
+   honest-scope rule).
 2. **stdlib runtime services (TLS / net)** — second priority
    per the bottom-to-top stack — sandhi 1.3.x's TLS arc
    needs `lib/net.cyr` `net_connect_nb` primitive +
-   `lib/tls.cyr` native-transport prep audit. v5.10.5-.6.
+   `lib/tls.cyr` native-transport prep audit. v5.10.6-.7.
 3. **specialized libraries (hisab math)** — third priority —
    typed SIMD math expansion now that overload dispatch
-   from v5.10.2 enables typed `f64v4` primitives. v5.10.7.
+   from v5.10.3 enables typed `f64v4` primitives. v5.10.8.
 4. **compile-time speedups + surface review** — last, since
    they don't unblock any baseOS or runtime-service item.
-   v5.10.8+.
+   v5.10.9+.
 
 Reference: memory pin
 `feedback_priority_bottom_to_top.md` — *"fixing hisab now doesn't
@@ -344,7 +347,7 @@ slots (net_connect_nb factoring + tls.cyr audit) as
 "cyrius-side ask" / "Not sandhi's slot" per ADR 0001 (sandhi
 composes, doesn't reimplement).
 
-#### v5.10.1-.4 — REAL TYPE SYSTEM ARC (agnosys-driven)
+#### v5.10.1-.5 — REAL TYPE SYSTEM ARC (agnosys-driven)
 
 Closes the agnosys 1.1.12 cascade. The verbatim repro
 (`/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`,
@@ -417,43 +420,70 @@ overload dispatch.
   - Diagnostic hints + agnosys verbatim repro CLOSE (v5.10.4).
 
 - **v5.10.2 — Type system pass 2: stdlib `: Str` return
-  annotations + overload dispatch**. Bundled because the
-  two are paired work — annotating `str_builder_build` with
-  `: Str` requires the calling-convention special-case (or
-  the parser tracking it as a type-tag without triggering
-  retptr machinery), and the overload dispatch needs the
-  return type tracked to route `println(str_builder_build(sb))`
-  correctly.
+  annotations + ≤16-byte calling-convention special-case**.
+  **Overload dispatch deferred to v5.10.3** (split per the
+  v5.10.2-entry scope-check — stdlib annotation pass +
+  calling-convention work was already a Big-Heavy-One-Thing
+  slot; bundling overload dispatch on top veered into
+  sleight-of-hand territory). Per
+  `feedback_deferral_requires_roadmap_pinnage`, the deferral
+  is explicit: overload dispatch lands at v5.10.3 with the
+  acceptance bar `var s: Str = str_from("x"); println(s);`
+  routing to `println_str` instead of warning.
 
-  **Scope**:
+  **Scope** (what ships this slot):
   - **Calling-convention special-case** for `: Str` (and
-    other ≤16-byte struct returns): parser sets
-    `_cur_fn_ret_sid` for type-check purposes but skips
-    `_cur_fn_ret_stash = 8` when the struct is small enough
-    to return via rax (or rax+rdx). Existing scalar-pointer
-    return ABI preserved; stdlib callers don't break.
-  - **Stdlib annotation pass**: annotate ~10-15 Str-returning
-    fns in `lib/str.cyr` / `lib/string.cyr` (`str_from`,
-    `str_new`, `str_builder_build`, `str_cat`, `str_split`'s
-    elements, etc.) with `: Str` return type. Verify each
-    callsite continues working byte-identical.
-  - **Overload dispatch** at FINDFN: support multiple impls
-    keyed by arg-type signature. PP-mangled names at the
-    symbol level (`println_cstr` / `println_str` /
-    `println_int`); parser routes calls based on arg type.
+    other ≤16-byte struct returns): rough-scan in
+    `parse_fn.cyr` peeks the return-type's struct id +
+    STRUCTSZ; if ≤16, skip `_cur_fn_ret_stash = 8` so the
+    return flows through scalar rax/rdx (existing stdlib
+    convention preserved). Also gate `PARSE_RETURN`'s
+    struct-byval-copy path on `_cur_fn_ret_stash > 0` so
+    Str returns fall through to scalar return.
+  - **asv-path caller-side gate**: at `parse_decl.cyr`, the
+    asv (assignment-from-struct-value) gate now requires
+    `STRUCTSZ > 16` — Str-returning fns flow through
+    v5.8.17 §9 pointer-mode local path instead of triggering
+    multi-slot retptr machinery on the receiver.
+  - **Stdlib annotation pass on `lib/str.cyr`**: 12 fns
+    annotated with `: Str` return type — `str_from_a` /
+    `str_from` / `str_new_a` / `str_new` / `str_cat_a` /
+    `str_cat` / `str_sub_a` / `str_sub` / `str_clone_a` /
+    `str_clone` / `str_from_int_a` / `str_from_int` /
+    `str_trim_a` / `str_trim` / `str_from_buf` /
+    `str_substr`. Each callsite verified byte-identical
+    self-host.
+  - **Latent bug surfaced + fixed in slot**: param-binding
+    in `parse_fn.cyr` already cleared SLTYPE explicitly
+    (v5.10.1 fix); v5.10.2 doesn't change that — the fix
+    was a v5.10.1 surfaced-during-implementation surprise.
 
   **Acceptance**:
-  - Stdlib annotations: cc5 byte-identical self-host
-    after annotation pass.
-  - Overload: synthetic fixture `var s: Str = str_from("x");
-    println(s);` routes to `println_str` (no warning, no
-    garbage) — but `println(out)` from a non-annotated
-    `var out = str_builder_build(sb)` still doesn't fire
-    correctly until v5.10.3 inference. THAT's deferred.
-  - cyrius test + check.sh green; cross-host (pi/cass/ecb)
-    verifies no codegen drift.
+  - cc5 byte-identical self-host after annotation pass
+    (verified — annotations don't change the COMPILER's
+    output bytes; cc5 doesn't link against lib/str.cyr).
+  - cyrius test 132/132; check.sh 66/66.
+  - Cross-arch: cc5_aarch64 cross-rebuilt with v5.10.2 cc5;
+    Mach-O ARM gate on ecb still green.
 
-- **v5.10.3 — Type system pass 3: type inference**. Propagate
+  **NOT in this slot** (deferred with explicit pinnage
+  below):
+  - Overload dispatch (v5.10.3).
+  - Inference through `var x = f(...)` (v5.10.4).
+  - Diagnostic hints + agnosys CLOSE (v5.10.5).
+
+- **v5.10.3 — Type system pass 3: overload dispatch**.
+  Deferred from v5.10.2's scope-shrink. Extend `FINDFN` to
+  support multiple impls keyed by arg-type signature.
+  PP-mangled names at the symbol level (`println_cstr` /
+  `println_str` / `println_int`); parser routes calls
+  based on arg type. Acceptance: synthetic fixture
+  `var s: Str = str_from("x"); println(s);` routes to
+  `println_str` (no warning, no garbage). Note: `println(out)`
+  from a non-annotated `var out = str_builder_build(sb)`
+  still doesn't fire correctly until v5.10.4 inference.
+
+- **v5.10.4 — Type system pass 4: type inference**. Propagate
   fn return types through `var x = f(...);` so `x`'s slot
   tracks the type. Also for binary operators (`x + 1` keeps
   x's type if int; struct-field reads keep field's type;
@@ -462,7 +492,7 @@ overload dispatch.
   type-inferred `var` slots resolve correctly through
   multi-step expression chains.
 
-- **v5.10.4 — Type system pass 4: diagnostics + agnosys
+- **v5.10.5 — Type system pass 5: diagnostics + agnosys
   1.1.12 verbatim repro CLOSE**. `error: cannot pass Str to
   fn expecting cstring; use str_data(x) or str_println(x)`
   style hints at the call site. Catalog the top-N
@@ -472,10 +502,10 @@ overload dispatch.
   `6425355b6147d5a674078794310ae2c1` runs end-to-end + its
   expected output is correct (println outputs the
   `[{"x":7,"y":35}]` JSON properly + length).** That closes
-  the cascade started at v5.9.33 — 8 slots after the first
+  the cascade started at v5.9.33 — 9 slots after the first
   fix attempt.
 
-#### v5.10.5 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+#### v5.10.6 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap explicitly asks for this as
 a stdlib factoring — the non-blocking-connect + poll(POLLOUT)
@@ -516,7 +546,7 @@ stdlib primitive.
   / fcntl / getsockopt across both); Mach-O ARM uses BSD
   syscall numbers (already wired up).
 
-#### v5.10.6 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+#### v5.10.7 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
 ask under "Not sandhi's slot" — auditing the hook surface
@@ -556,7 +586,7 @@ much-bigger undertaking (multi-slot or multi-minor) that
 needs its own design pass before pinning. v5.10.6 just
 documents the surface so a future swap is guided.
 
-#### v5.10.7 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.8 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -596,7 +626,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.8+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.9+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:

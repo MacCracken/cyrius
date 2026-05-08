@@ -6,6 +6,135 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.2] — 2026-05-08
+
+**v5.10.x SLOT 2 — Type system pass 2: stdlib `: Str` return
+annotations + ≤16-byte calling-convention special-case**.
+Second slot of the agnosys-driven type-system arc. Overload
+dispatch split out to v5.10.3 (per `feedback_deferral_requires_roadmap_pinnage` —
+explicit pinnage at the deferral target).
+
+cc5: 0ac7b70c → 9969590 (size 755112; +0 from v5.10.1 since
+cc5 doesn't link lib/str.cyr — annotations don't change the
+COMPILER's bytes). Self-host byte-identical. cc5_aarch64
+rebuilt (cross-arch propagation). api-surface unchanged.
+cyrius test: 132/132. check.sh: 66/66. .tcyr: 14/14.
+
+### What landed
+
+**(1) ≤16-byte calling-convention special-case**
+(`src/frontend/parse_fn.cyr` rough-scan + PARSE_RETURN gate):
+
+Pre-v5.10.2: ANY `: ReturnType` annotation triggered the
+retptr/X8 calling convention (caller-allocs retbuf, callee
+writes via hidden first arg). That's right for big structs
+but breaks ABI for Str (16 bytes — fits in rax + rdx
+multi-return; existing stdlib fns return Str via the rax+rdx
+convention without annotations).
+
+The fix: rough-scan peeks the return type's struct id +
+`STRUCTSZ`; if ≤16, skip `_cur_fn_ret_stash = 8` so the
+return flows through scalar rax/rdx. PARSE_RETURN's
+struct-byval-copy path now gates on `_cur_fn_ret_stash > 0`
+so Str returns fall through to the existing scalar-return
+path — `return p` where `p` is a local Str pointer just
+emits `EVLOAD(p) + jmp epilogue`, identical to a non-
+annotated fn.
+
+**(2) asv-path caller-side gate** (`src/frontend/parse_decl.cyr`):
+
+The asv (assignment-from-struct-value) gate at
+`var x: Foo = make_foo();` previously activated whenever
+the called fn had a non-zero return-struct-id. v5.10.2
+narrows: only activate for `STRUCTSZ > 16` returns.
+Str-returning fns flow through the existing v5.8.17 §9
+pointer-mode local path instead — `var s: Str = str_from(...)`
+treats `s` as a single slot HOLDING the Str pointer
+returned via rax. No multi-slot retptr machinery on the
+receiver side.
+
+**(3) Stdlib annotation pass on `lib/str.cyr`** (12 fns):
+
+Annotated with `: Str` return type:
+- `str_from_a` / `str_from`
+- `str_new_a` / `str_new`
+- `str_cat_a` / `str_cat`
+- `str_sub_a` / `str_sub`
+- `str_clone_a` / `str_clone`
+- `str_from_int_a` / `str_from_int`
+- `str_trim_a` / `str_trim`
+- `str_from_buf`
+- `str_substr`
+
+Each callsite verified byte-identical self-host
+(annotations are type-tag only; calling convention
+unchanged thanks to (1) + (2)).
+
+### Cross-arch propagation
+
+`build/cc5_aarch64` cross-rebuilt against the new cc5 to
+pick up the rough-scan + asv-gate fixes (without it, the
+aarch64 cross-build of any program using lib/str.cyr trips
+the same `struct-return fn: return must be a bare local
+identifier` error the OLD cc5 fired). Mach-O ARM
+`_macho_derive_serialize_gate` on ecb still PASS (cross-
+host parity preserved).
+
+### Verified
+
+- cc5 byte-identical self-host (`9969590`).
+- cc5_aarch64 rebuilt + Mach-O cross-build still PASS.
+- 66/66 check.sh; 132/132 cyrius test; 14/14 .tcyr.
+- Install snapshot synced (`~/.cyrius/lib/str.cyr` +
+  `~/.cyrius/bin/cc5` updated; symlink target re-pointed
+  v5.10.0 → v5.10.1 during the slot's mid-implementation
+  symlink-fix).
+
+### NOT in this slot (deferred to v5.10.3+ with explicit pinnage)
+
+Per `feedback_deferral_requires_roadmap_pinnage`:
+
+- **Overload dispatch** — `println_cstr` / `println_str` /
+  `println_int` PP-mangled names + FINDFN multi-impl
+  routing → **v5.10.3** (split from v5.10.2 at slot entry;
+  the calling-convention + annotation work was already a
+  Big-Heavy-One-Thing slot).
+- **Type inference through `var x = f(...)`** → v5.10.4
+  (was v5.10.3 pre-renumber).
+- **Diagnostics + agnosys verbatim repro CLOSE** → v5.10.5
+  (was v5.10.4 pre-renumber). Hash `6425355b6147d5a674078794310ae2c1`
+  fires correctly end-to-end.
+- **`CYRIUS_TYPE_CHECK` default-on flip** → v5.10.3 (after
+  overload dispatch removes the false-positive flood from
+  legitimate `str_len(s)`-style calls in stdlib).
+- **`lib/string.cyr` annotation pass** — that file's fns
+  mostly take/return char-buffers, not Str values. Audit
+  + annotate where applicable → bundled with whatever slot
+  next touches lib/string.cyr.
+
+### Implementation surprises
+
+- **Install-snapshot symlink** at `~/.cyrius/lib` was
+  pointing at `versions/5.10.0/lib` even after the v5.10.1
+  bump shipped — the version-bump install-refresh hit a
+  `Text file busy` on `cyrius-lsp` and didn't update the
+  symlink. Re-pointed manually mid-slot. Filed as a side
+  observation; not a blocker.
+- **v5.8.17 §9 pointer-mode local path** already existed
+  for `var s: Str = ...`; v5.10.2's calling-convention fix
+  is the matching CALLER-side piece that was missing —
+  pointer-mode Str returns now work end-to-end.
+
+### Cascaded to v5.10.3+
+
+- v5.10.3 — overload dispatch (the deferral target).
+  `CYRIUS_TYPE_CHECK` flips default-on after this slot.
+- v5.10.4 — type inference through `var x = f(...)`.
+- v5.10.5 — diagnostics + agnosys CLOSE.
+- v5.10.6-.7 — sandhi prereqs (`net_connect_nb` + tls audit).
+- v5.10.8 — SIMD math (hisab; typed via overload dispatch).
+- v5.10.9+ — compile-time wins.
+
 ## [5.10.1] — 2026-05-08
 
 **v5.10.x SLOT 1 — Type system pass 1: call-site type-check

@@ -316,7 +316,14 @@ fn PARSE_RETURN(S) {
     # Only the simple `return IDENT;` form is supported; nested
     # expressions that produce structs (`return make_other();` etc.)
     # land in Phase 2c once call-site rewriting exists.
-    if (_cur_fn_ret_sid > 0) {
+    # v5.10.2: only the BIG-struct path (stash > 0) uses the
+    # byte-copy machinery. ≤16-byte struct returns (Str etc.) get
+    # stash = 0 from the rough-scan up-front check; fall through
+    # to the scalar return path which treats the local as a
+    # pointer value and returns it via rax (matching the existing
+    # stdlib convention: `Str` values are 16-byte heap structs
+    # passed around as pointers, not by-value).
+    if (_cur_fn_ret_sid > 0 && _cur_fn_ret_stash > 0) {
         if (PEEKT(S) != 2) {
             ERR_MSG(S, "struct-return fn: return must be a bare local identifier", 57);
         }
@@ -974,7 +981,34 @@ fn PARSE_FN_DEF(S) {
             if (_rs_tk == 11) { _rs_depth = _rs_depth - 1; }
             STI(S, GTI(S) + 1);
         }
-        if (PEEKT(S) == 49) { _cur_fn_ret_stash = 8; }
+        # v5.10.2: special-case ≤16-byte struct returns (Str etc.).
+        # Pre-v5.10.2 ANY `: ReturnType` annotation triggered the
+        # retptr/X8 calling convention (caller-allocs retbuf, callee
+        # writes via hidden first arg). That's right for big structs
+        # but breaks ABI for Str (16 bytes — fits in rax + rdx
+        # multi-return; existing stdlib fns return Str via the
+        # rax+rdx convention without annotations). Peek the return
+        # type's struct id + size: if STRUCTSZ <= 16, skip the
+        # stash (return via rax/rdx); else set stash = 8 (existing
+        # retptr behavior). Type tracking via `_cur_fn_ret_sid` is
+        # set later in the parse (line ~1024); this rough-scan only
+        # decides the stash question.
+        if (PEEKT(S) == 49) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) == 2) {
+                var _rs_rt_noff = PEEKV(S);
+                var _rs_rt_sid = FINDSTRUCT(S, _rs_rt_noff);
+                if (_rs_rt_sid > 0) {
+                    if (STRUCTSZ(S, _rs_rt_sid - 1) > 16) {
+                        _cur_fn_ret_stash = 8;
+                    }
+                } else {
+                    _cur_fn_ret_stash = 8;
+                }
+            } else {
+                _cur_fn_ret_stash = 8;
+            }
+        }
     }
     STI(S, _rs_save_ti);
     # Set fn offset to current CP

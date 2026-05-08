@@ -5,6 +5,61 @@
 
 ## Version
 
+**5.10.2** (in-flight 2026-05-08 — **v5.10.x SLOT 2 —
+Type system pass 2: stdlib `: Str` return annotations +
+≤16-byte calling-convention special-case**). Second slot
+of the agnosys-driven type-system arc. Overload dispatch
+split out to v5.10.3 per the deferral-pinnage rule (the
+calling-convention + annotation work was already
+Big-Heavy-One-Thing).
+
+**Three coordinated changes**:
+- **Calling-convention special-case**: rough-scan in
+  `parse_fn.cyr` peeks return-type's STRUCTSZ; if ≤16,
+  skip `_cur_fn_ret_stash = 8` so the return flows scalar
+  rax/rdx. PARSE_RETURN gates struct-byval-copy on
+  `_cur_fn_ret_stash > 0` so Str returns fall through to
+  the existing scalar path.
+- **asv-path caller-side gate** (`parse_decl.cyr`):
+  asv (assignment-from-struct-value) only activates for
+  STRUCTSZ > 16. Str returns flow through the v5.8.17 §9
+  pointer-mode local path — `var s: Str = str_from(...)`
+  is single-slot, holds the Str ptr returned via rax.
+- **Stdlib annotation pass** (`lib/str.cyr`): 12 Str-
+  returning fns annotated — `str_from_a` / `str_from` /
+  `str_new_a` / `str_new` / `str_cat_a` / `str_cat` /
+  `str_sub_a` / `str_sub` / `str_clone_a` / `str_clone` /
+  `str_from_int_a` / `str_from_int` / `str_trim_a` /
+  `str_trim` / `str_from_buf` / `str_substr`.
+
+**Arc renumbering**:
+- v5.10.2 = stdlib annotations + calling-conv (this slot)
+- v5.10.3 = overload dispatch (was bundled in v5.10.2;
+  split out per honest-scope rule)
+- v5.10.4 = type inference (was .3)
+- v5.10.5 = diagnostics + agnosys CLOSE (was .4)
+- v5.10.6 = `lib/net.cyr` `net_connect_nb` (sandhi prereq;
+  was .5)
+- v5.10.7 = `lib/tls.cyr` audit (sandhi prereq; was .6)
+- v5.10.8 = SIMD math (hisab; was .7)
+- v5.10.9+ = compile-time wins (was .8+)
+
+cc5 9969590; cc5_aarch64 rebuilt. Self-host byte-identical.
+api-surface unchanged. 66/66 check.sh; 132/132 cyrius test;
+14/14 .tcyr.
+
+**Implementation surprise** — install-snapshot symlink at
+`~/.cyrius/lib` was stuck at `versions/5.10.0/lib` even
+after v5.10.1 ship (version-bump install-refresh hit
+`Text file busy` on cyrius-lsp + didn't update the
+symlink). Re-pointed manually mid-slot. Side observation;
+not a blocker.
+
+**Next**: v5.10.3 — overload dispatch (`println_cstr` /
+`println_str` / `println_int` PP-mangled names + FINDFN
+multi-impl routing). `CYRIUS_TYPE_CHECK` flips default-on
+after this slot.
+
 **5.10.1** (shipped 2026-05-08 — **v5.10.x SLOT 1 —
 Type system pass 1: call-site type-check infrastructure
 (synthetic fixture; CYRIUS_TYPE_CHECK opt-in)**). First

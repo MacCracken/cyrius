@@ -913,7 +913,21 @@ fn PARSE_VAR(S) {
                 var _look_noff = TOKVAL(S, _look_ti);
                 var _look_fi = FINDFN(S, _look_noff);
                 if (_look_fi >= 0) {
-                    if (GFRS(S, _look_fi) > 0) { asv_try = 1; }
+                    var _look_sid = GFRS(S, _look_fi);
+                    # v5.10.2 paired with parse_fn.cyr's
+                    # rough-scan: ≤16-byte struct returns (Str,
+                    # any small struct) flow through scalar
+                    # rax/rdx — NOT retptr. asv path uses
+                    # retptr/multi-slot machinery; gate it on
+                    # STRUCTSZ > 16 so Str-returning fns fall
+                    # through to the v5.8.17 §9 pointer-mode
+                    # local path (single slot HOLDS the Str ptr
+                    # returned via rax).
+                    if (_look_sid > 0) {
+                        if (STRUCTSZ(S, _look_sid - 1) > 16) {
+                            asv_try = 1;
+                        }
+                    }
                 }
             }
         }
