@@ -6,6 +6,124 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.36] — 2026-05-07
+
+**v5.9.x SLOT 36 — narrow-int (i8/i16/i32) `#derive(Serialize)`
+support**. Closes the v5.9.35 cascade pin: paired the
+PP_DERIVE codegen detection fix with the parser-side
+struct-literal initializer width fix. Pre-fix narrow-typed
+fields surfaced two compounding bugs that needed to land in
+the same slot — folding the codegen alone surfaces the
+struct-size mismatch as a fresh failure mode.
+
+cc5: **746,608 → 747,624 B** (+1016 / +0.14%) — three
+sites gain per-width detection logic + one new helper fn
+(`EMIT_STRUCT_FIELD_W`). api-surface: **2,769 unchanged**.
+cyrius test: **131 → 132** (+1 —
+`tests/tcyr/derive_serialize_widths.tcyr`). check.sh:
+**64 unchanged**.
+
+### Two compounding bugs (paired this slot)
+
+**(1) PP_DERIVE codegen detection — i32 byte gate**:
+v5.9.30's `prim_load` byte-gate had the wrong outer byte
+for i32. The check `(+1) == 49` ('1') matches both i16's
+"i1..." (correctly) and... only i16, since i32's
+`(+1)` byte is `'3'` (0x33), not `'1'`. Result: i32 fell
+through to nested-struct emit, generating `i32_to_json`
+/ `i32_from_json` — fns that don't exist. v5.9.35 fixed
+i64 only because narrow widths needed bug (2) to land
+together.
+
+**(2) Parser-side struct-literal width mismatch**:
+`STRUCTSZ` used width-aware `FIELDSZ` (i32 → 4) summing to
+12 bytes for `point_i32 { x, y, z }`. But
+`PARSE_STRUCT_INIT` (positional path) and `EMIT_GVAR_INITS`
+both wrote 8 bytes per field via `boff += 8` + `store64`.
+At GLOBAL scope the literal overflowed the 12-byte
+allocation, clobbering the next gvar's slot. At LOCAL
+scope it happened to work because each local var slot is
+8 bytes regardless of declared type — so the 8-byte
+stride matched the slot stride.
+
+### Fix
+
+`src/frontend/parse_decl.cyr`:
+- New `EMIT_STRUCT_FIELD_W(S, vcnt, boff, width)` —
+  width-correct store via `ESTORE8`/`ESTORE16`/`ESTORE32`/
+  `ESTOC`. Legacy `EMIT_STRUCT_FIELD` is now a wrapper
+  defaulting to `width = 8`.
+- `PARSE_STRUCT_INIT` positional path: advances `boff` by
+  `FIELDSZ(ft)` per field (declared width) and emits the
+  matching narrow store. Untyped fields keep the 8-byte
+  stride. Nested-struct flattening still uses 8-byte slots
+  per inner field (existing semantics preserved).
+- `PARSE_STRUCT_INIT` named path: same width-correct store
+  at `FIELDOFF`-resolved offsets. Pre-fix this used
+  `store64` at width-aware offsets, which silently overlapped
+  fields by 7 bytes per narrow field — happened to work
+  because subsequent stores overwrote the high bytes (so
+  the LAST field's tail was the only structurally-visible
+  overflow, sized by the literal's last expr-width).
+- `EMIT_GVAR_INITS` positional path: same width-aware
+  `boff` advance + width-correct store, mirroring
+  `PARSE_STRUCT_INIT`.
+
+`src/frontend/lex_pp.cyr`:
+- PP_DERIVE_SERIALIZE `_to_json` / `_from_json` /
+  `_from_json_str` `prim_load` / `fj_prim` / `fjp` blocks
+  extended with full per-width outer-byte gates
+  (`'8'`/`'1'`/`'3'`/`'6'`).
+- `PP_PARSE_STRUCT_DEF`'s offset-table cumul advance now
+  detects primitive widths (`fsz` switches between
+  1/2/4/8 by name match) — keeps the derive-emitted
+  `load32`/`store32` etc reading the correct struct-literal
+  byte positions. Pre-fix this used flat `fsz=8` for every
+  typed field, so narrow-typed fields at offsets 4/8 in
+  memory were read by PP_DERIVE codegen at offsets 8/16.
+
+### Added
+
+- **`tests/tcyr/derive_serialize_widths.tcyr`** — 14
+  assertions covering i8/i16/i32/i64 round-trips for
+  homogeneous structs (point_i8, point_i16, point_i32) +
+  a mixed-width struct exercising all four widths in a
+  packed 15-byte layout (1+2+4+8). Pre-fix: `i32_to_json`,
+  `i32_from_json`, `i16_to_json`, `i16_from_json`,
+  `i8_to_json`, `i8_from_json` undefined-fn warnings + 14/14
+  assertions fail. Post-fix: 14/14 pass.
+
+### Verified
+
+- Verbatim agnosys 1.1.12 i64 case (still passes from
+  v5.9.35).
+- New widths regression: 14/14 pass on x86_64, qemu-aarch64,
+  real pi (Linux aarch64), Windows PE32+ via cass.
+- Existing `tests/tcyr/structs.tcyr` `sizeof(Packet)` ==
+  15 (1+2+4+8 packed layout) still asserts correctly —
+  STRUCTSZ semantics unchanged. The fix is at the
+  initializer-write side, not the size-reporting side.
+- 64/64 check.sh.
+- Two-step self-host byte-identical (`902b6a16…`).
+- 132/132 cyrius test x86 (was 131).
+
+### Cascaded to v5.9.37+
+
+- v5.9.37 — cx Phase 2c parity (struct-by-value + sub-byte
+  field load + ESTORESTACKPARM >6 args).
+- v5.9.38 — tls-live + network-probe helper (closes the
+  `.sh-conversion arc).
+- v5.9.39 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.40 — closeout pass before v5.10.0.
+
+### Held / pinned separately
+
+- **Mach-O `_to_json` runtime SIGSEGV** — auto-generated
+  `_to_json` body SIGSEGVs on real macOS arm64 (ecb host)
+  for any `#derive(Serialize)` struct. Pre-existing and
+  not addressed this slot. Pin when a Mach-O consumer
+  surfaces it as blocking.
+
 ## [5.9.35] — 2026-05-07
 
 **v5.9.x SLOT 35 — `#derive(Serialize)` deserializer i64

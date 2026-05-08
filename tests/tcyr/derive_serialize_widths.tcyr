@@ -1,0 +1,99 @@
+# derive_serialize_widths.tcyr — v5.9.36 regression for narrow-int
+# `#derive(Serialize)` round-trip (i8/i16/i32 typed fields).
+#
+# Bug history: v5.9.35 closed the agnosys 1.1.12 i64 case but
+# deferred narrow widths because two compounding bugs needed to
+# land together:
+#   (1) v5.9.30's `prim_load` byte-gate had the wrong outer byte
+#       for i32 (`(+1) == 49` matches i16's "i1..." but not i32's
+#       "i3..." which has `(+1) == 51`).
+#   (2) The parser-side struct-literal initializer wrote 8 bytes
+#       per field via store64 + boff += 8, mismatching STRUCTSZ's
+#       width-aware sum (FIELDSZ for i32 = 4 → STRUCTSZ for
+#       point_i32 = 12 bytes, but the literal wrote 24 →
+#       overflowed allocation at global scope, clobbering the
+#       next gvar).
+#
+# Fix at v5.9.36 (paired in one slot per the v5.9.35 cascade
+# pin):
+#   (a) `src/frontend/parse_decl.cyr` — `EMIT_STRUCT_FIELD_W`
+#       added (width-correct store via ESTORE8/16/32/STOC).
+#       PARSE_STRUCT_INIT positional + named, EMIT_GVAR_INITS
+#       all switched to advance boff by FIELDSZ (declared width)
+#       and emit the matching narrow store.
+#   (b) `src/frontend/lex_pp.cyr` — full i8/i16/i32/i64
+#       detection in PP_DERIVE_SERIALIZE `_to_json`,
+#       `_from_json`, `_from_json_str` (per-width outer-byte
+#       gates '8'/'1'/'3'/'6'). PP_PARSE_STRUCT_DEF's
+#       offset-table cumul advance now uses the same
+#       primitive-width detection so derive codegen reads the
+#       right struct-literal byte positions.
+#
+# Net: typed-narrow `#derive(Serialize)` structs now round-trip
+# byte-for-byte at any scope (global, local, fn-arg).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/json.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct point_i32 { x: i32; y: i32; z: i32; }
+
+#derive(Serialize)
+struct point_i16 { x: i16; y: i16; z: i16; }
+
+#derive(Serialize)
+struct point_i8 { x: i8; y: i8; z: i8; }
+
+#derive(Serialize)
+struct mixed_widths { a: i8; b: i16; c: i32; d: i64; }
+
+# i32 round-trip
+var p32 = point_i32 { 100, 200, 300 };
+var sb1 = str_builder_new();
+point_i32_to_json(&p32, sb1);
+var s32 = str_builder_build(sb1);
+assert_eq(strlen(str_data(s32)), 25, "point_i32 emits 25-byte JSON");
+var r32 = point_i32_from_json_str(str_data(s32));
+assert_eq(load32(r32 + 0), 100, "point_i32.x i32 round-trip");
+assert_eq(load32(r32 + 4), 200, "point_i32.y i32 round-trip");
+assert_eq(load32(r32 + 8), 300, "point_i32.z i32 round-trip");
+
+# i16 round-trip
+var p16 = point_i16 { 10, 20, 30 };
+var sb2 = str_builder_new();
+point_i16_to_json(&p16, sb2);
+var s16 = str_builder_build(sb2);
+var r16 = point_i16_from_json_str(str_data(s16));
+assert_eq(load16(r16 + 0), 10, "point_i16.x i16 round-trip");
+assert_eq(load16(r16 + 2), 20, "point_i16.y i16 round-trip");
+assert_eq(load16(r16 + 4), 30, "point_i16.z i16 round-trip");
+
+# i8 round-trip
+var p8 = point_i8 { 1, 2, 3 };
+var sb3 = str_builder_new();
+point_i8_to_json(&p8, sb3);
+var s8 = str_builder_build(sb3);
+var r8 = point_i8_from_json_str(str_data(s8));
+assert_eq(load8(r8 + 0), 1, "point_i8.x i8 round-trip");
+assert_eq(load8(r8 + 1), 2, "point_i8.y i8 round-trip");
+assert_eq(load8(r8 + 2), 3, "point_i8.z i8 round-trip");
+
+# Mixed-widths struct (1+2+4+8 = 15-byte packed layout)
+var mw = mixed_widths { 5, 1234, 56789, 9876543210 };
+var sb4 = str_builder_new();
+mixed_widths_to_json(&mw, sb4);
+var s4 = str_builder_build(sb4);
+var r4 = mixed_widths_from_json_str(str_data(s4));
+assert_eq(load8(r4 + 0), 5, "mixed.a i8 round-trip");
+assert_eq(load16(r4 + 1), 1234, "mixed.b i16 round-trip");
+assert_eq(load32(r4 + 3), 56789, "mixed.c i32 round-trip");
+assert_eq(load64(r4 + 7), 9876543210, "mixed.d i64 round-trip");
+
+var r = assert_summary();

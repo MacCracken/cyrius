@@ -463,12 +463,35 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op) {
     }
     ip = cp;
     while (ip < bl) { var ch = load8(src_base + ip); store8(out + op, ch); op = op + 1; ip = ip + 1; if (ch == 10) { break; } }
+    # v5.9.36: derive-side offset table must use the same per-field
+    # widths as the parser-side `FIELDSZ` so PP_DERIVE_SERIALIZE's
+    # `load32`/`store32` etc target the actual struct-literal byte
+    # positions. Pre-fix this used a flat `fsz=8` for every typed
+    # field (overridden only when the type-name matched another
+    # `#derive`-registered struct), so narrow-typed fields at
+    # offsets 4/8 in memory were read by PP_DERIVE codegen at
+    # offsets 8/16 — net `point_i32 { 100, 200, 300 }` serialized
+    # as `{"x":100,"y":300,"z":<garbage>}`.
     var cumul = 0;
     var fi = 0;
     while (fi < fc) {
         store64(S + 0x197460 + fi * 8, cumul);
         if (load8(S + 0x197260 + fi * 32) != 0) {
+            # Default 8 bytes for typed fields; refine for known
+            # primitive widths and nested derive structs below.
             var fsz = 8;
+            # Primitive integer detection (mirrors the
+            # PP_DERIVE_SERIALIZE prim_load block — i8/i16/i32/i64
+            # all distinct on (+1) byte: '8'/'1'/'3'/'6').
+            if (load8(S + 0x197260 + fi * 32) == 105) {
+                var pb1 = load8(S + 0x197260 + fi * 32 + 1);
+                if (pb1 == 56) { if (load8(S + 0x197260 + fi * 32 + 2) == 0) { fsz = 1; } }
+                if (pb1 == 49) { if (load8(S + 0x197260 + fi * 32 + 2) == 54) { if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fsz = 2; } } }
+                if (pb1 == 51) { if (load8(S + 0x197260 + fi * 32 + 2) == 50) { if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fsz = 4; } } }
+                if (pb1 == 54) { if (load8(S + 0x197260 + fi * 32 + 2) == 52) { if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fsz = 8; } } }
+            }
+            # Nested-struct override (matched against derive-name
+            # table at S+0x197700; its size lives at S+0x197500).
             var di = 0;
             while (di < _pp_derive_count) {
                 var eq = 1; var ci = 0;
@@ -552,19 +575,38 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                     }
                 }
             }
-            # v5.9.30: detect i64 primitive integer type by name match.
+            # v5.9.30: detect primitive integer types by name match.
             # Field-type entries are 32-byte cstring slots; first byte
             # = 'i' (0x69) flags the family.
-            # v5.9.35: narrowed to i64 only. i8/i16/i32 had a buggy
-            # detection (the `(+1) == 49` outer gate also covered i32
-            # but i32's (+1) byte is `3` (0x33), not `1`) AND a
-            # parser-side struct-size mismatch (STRUCTSZ uses width-
-            # aware FIELDSZ summing to 12 for `point_i32` whereas the
-            # literal initializer writes 8 bytes per field, overflowing
-            # the allocation at global scope). Both pinned to v5.9.36.
+            # v5.9.36: full i8 / i16 / i32 / i64 detection, with
+            # per-width outer-byte gates ('8'/'1'/'3'/'6'). Pre-fix
+            # (v5.9.35) i64 only. The v5.9.30 attempt had the wrong
+            # outer gate for i32 (`(+1) == 49` matches i16's "i1..."
+            # not i32's "i3...") AND landed before the parser-side
+            # struct-size mismatch was identified. Both fixes land
+            # together this slot via FIELDSZ → 8-per-field-layout
+            # split with FIELDWIDTH for codegen access width.
             var prim_load = 0;
             if (load8(S + 0x197260 + fi * 32) == 105) {
-                if (load8(S + 0x197260 + fi * 32 + 1) == 54) {
+                var b1 = load8(S + 0x197260 + fi * 32 + 1);
+                # i8\0
+                if (b1 == 56) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 0) { prim_load = 8; }
+                }
+                # i16\0
+                if (b1 == 49) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 54) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 16; }
+                    }
+                }
+                # i32\0
+                if (b1 == 51) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 50) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 32; }
+                    }
+                }
+                # i64\0
+                if (b1 == 54) {
                     if (load8(S + 0x197260 + fi * 32 + 2) == 52) {
                         if (load8(S + 0x197260 + fi * 32 + 3) == 0) { prim_load = 64; }
                     }
@@ -639,16 +681,26 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
             # don't exist in stdlib — surfaced as `undefined function`
             # warnings in the agnosys 1.1.12 re-file. Now: i8/i16/i32/i64
             # take the str_to_int + storeN path with width-correct store.
-            # v5.9.35: i64 detection only. i32/i16/i8 also need the
-            # primitive-int path but the global-var literal init currently
-            # mismatches struct STRUCTSZ (sum of width-aware FIELDSZ) vs
-            # the LITERAL initializer's `boff += 8` per field — narrow
-            # fields overflow their allocation. Pin separately as a
-            # parser-side fix (v5.9.36+); v5.9.35 closes the agnosys
-            # 1.1.12 i64 case, the only one covered by the filing.
+            # v5.9.36: full i8/i16/i32/i64 detection (was i64 only at
+            # v5.9.35; narrow widths deferred until the parser-side
+            # struct-size mismatch was paired with this codegen fix).
             var fj_prim = 0;
             if (load8(S + 0x197260 + fi * 32) == 105) {
-                if (load8(S + 0x197260 + fi * 32 + 1) == 54) {
+                var fjb1 = load8(S + 0x197260 + fi * 32 + 1);
+                if (fjb1 == 56) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 0) { fj_prim = 8; }
+                }
+                if (fjb1 == 49) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 54) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fj_prim = 16; }
+                    }
+                }
+                if (fjb1 == 51) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 50) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fj_prim = 32; }
+                    }
+                }
+                if (fjb1 == 54) {
                     if (load8(S + 0x197260 + fi * 32 + 2) == 52) {
                         if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fj_prim = 64; }
                     }
@@ -742,11 +794,24 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
         if (load8(S + 0x197260 + fi * 32) != 0) {
             var fjs = 0;
             if (load8(S + 0x197260 + fi * 32) == 83) { if (load8(S + 0x197260 + fi * 32 + 1) == 116) { if (load8(S + 0x197260 + fi * 32 + 2) == 114) { if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fjs = 1; } } } }
-            # v5.9.35: i64 detection only — see PP_DERIVE _from_json
-            # site above for why narrow widths defer.
+            # v5.9.36: full i8/i16/i32/i64 detection.
             var fjp = 0;
             if (load8(S + 0x197260 + fi * 32) == 105) {
-                if (load8(S + 0x197260 + fi * 32 + 1) == 54) {
+                var fjpb1 = load8(S + 0x197260 + fi * 32 + 1);
+                if (fjpb1 == 56) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 0) { fjp = 8; }
+                }
+                if (fjpb1 == 49) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 54) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fjp = 16; }
+                    }
+                }
+                if (fjpb1 == 51) {
+                    if (load8(S + 0x197260 + fi * 32 + 2) == 50) {
+                        if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fjp = 32; }
+                    }
+                }
+                if (fjpb1 == 54) {
                     if (load8(S + 0x197260 + fi * 32 + 2) == 52) {
                         if (load8(S + 0x197260 + fi * 32 + 3) == 0) { fjp = 64; }
                     }

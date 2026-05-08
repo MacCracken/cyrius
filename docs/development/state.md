@@ -5,6 +5,60 @@
 
 ## Version
 
+**5.9.36** (shipped 2026-05-07 — **v5.9.x SLOT 36 —
+narrow-int (i8/i16/i32) `#derive(Serialize)` support**).
+Closes the v5.9.35 cascade pin. Two compounding bugs landed
+in the same slot per the original pin's "pair them or fold
+the codegen alone surfaces the struct-size mismatch as a
+fresh failure mode" call.
+
+Bug 1 (PP_DERIVE codegen): v5.9.30's `prim_load` byte-gate
+had the wrong outer byte for i32 (`(+1) == 49` matches i16
+only). Fixed by per-width outer-byte gates
+('8'/'1'/'3'/'6') in `_to_json`, `_from_json`,
+`_from_json_str` AND `PP_PARSE_STRUCT_DEF`'s offset-table.
+
+Bug 2 (parser-side struct-literal width mismatch):
+`STRUCTSZ` correctly summed width-aware `FIELDSZ` (i32 → 4)
+to 12 bytes for `point_i32 { x, y, z }`, but
+`PARSE_STRUCT_INIT` (positional) and `EMIT_GVAR_INITS`
+wrote 8 bytes per field via `boff += 8` + `store64`,
+overflowing the 12-byte allocation at global scope. Fixed
+via new `EMIT_STRUCT_FIELD_W(S, vcnt, boff, width)` helper
+(picks ESTORE8/16/32/STOC by width) + width-aware
+`boff += FIELDSZ(ft)` advance in both initializer paths.
+The named-init path was also silently buggy (store64 at
+width-aware FIELDOFF positions overlapped fields by 7 bytes
+each — happened to work because subsequent stores
+overwrote the high bytes); same width-correct fix applied.
+
+Design call: picked option (b) "make initializer-write
+width-aware" over option (a) "promote FIELDSZ to 8 + track
+width separately." Option (a) broke `tests/tcyr/structs.tcyr`'s
+`sizeof(Packet) == 15` (packed-layout assertion) which is
+part of cyrius's documented type surface.
+
+cc5: **746,608 → 747,624 B** (+1016 / +0.14%). api-surface:
+**2,769 unchanged**. cyrius test: **131 → 132** (+1 —
+`tests/tcyr/derive_serialize_widths.tcyr` covers point_i8
+/ point_i16 / point_i32 + mixed-width struct in 14
+assertions). 64/64 check.sh; two-step self-host byte-
+identical (`902b6a16…`). Cross-host SSH cluster: pi
+(Linux aarch64) 14/14 PASS, cass (Windows PE32+) exit=0.
+Mach-O excluded (pre-existing pre-v5.9.35 SIGSEGV pin
+remains held).
+
+**Next**: v5.9.37 — cx Phase 2c parity (struct-by-value +
+sub-byte field load + ESTORESTACKPARM >6 args). v5.9.38 —
+tls-live + network-probe helper (closes the .sh-conversion
+arc). v5.9.39 — `lib/regression.cyr` testing-stdlib
+carve-out. v5.9.40 — closeout pass before v5.10.0.
+
+**Held / pinned separately**:
+- **Mach-O `_to_json` runtime SIGSEGV** — pre-existing
+  pre-v5.9.35; pin when a Mach-O consumer surfaces it as
+  blocking.
+
 **5.9.35** (shipped 2026-05-07 — **v5.9.x SLOT 35 —
 `#derive(Serialize)` deserializer i64 primitive-field path +
 vidya doc refresh** (agnosys 1.1.12 re-file resolution)).

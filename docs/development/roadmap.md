@@ -1182,32 +1182,46 @@ satisfied by earlier slots.
     separate Mach-O serializer slot once a consumer
     surfaces it as blocking.
 
-- **v5.9.36** — **narrow-int `#derive(Serialize)` support**
-  (i8/i16/i32 typed fields). See v5.9.35 cascade for
-  scope. Slot pairs:
+- **v5.9.36** ✅ — **narrow-int `#derive(Serialize)` support
+  shipped 2026-05-07** (i8/i16/i32 typed fields). Picked
+  design option (b) per the v5.9.35 cascade pin: option (a)
+  promoting `FIELDSZ` to 8 broke `tests/tcyr/structs.tcyr`'s
+  `sizeof(Packet) == 15` (packed-layout assertion) — the
+  STRUCTSZ semantics are part of cyrius's documented type
+  surface. Option (b) keeps STRUCTSZ width-aware and makes
+  the initializer-write side width-correct instead.
 
-  1. **PP_DERIVE detection fix** — `prim_load` /
-     `_from_json` / `_from_json_str` byte-gate logic
-     re-shaped so i32 ('i','3','2') and i16 ('i','1','6')
-     are distinguishable on byte (+1).
+  **Two compounding bugs fixed**:
 
-  2. **Parser-side struct-size fix**. Two design options:
-     (a) Promote `FIELDSZ` for narrow scalars to 8 (track
-     width separately for codegen's loadN/storeN emit),
-     or (b) Make `EMIT_STRUCT_FIELD` width-aware (advance
-     boff by field width + emit storeN). Option (a) matches
-     cyrius's existing "every var slot is 8 bytes"
-     convention; (b) is more general but invasive. Pick
-     (a) unless a consumer needs packed layout.
+  1. **PP_DERIVE codegen**: v5.9.30's `prim_load` outer-byte
+     gate had the wrong byte for i32 (`(+1) == 49` matches
+     i16 only). i32/i16/i8 fell to nested-struct emit,
+     generating `i32_to_json` / `i32_from_json` etc — fns
+     that don't exist. Fixed by per-width gates
+     (`'8'`/`'1'`/`'3'`/`'6'`) in `_to_json`, `_from_json`,
+     `_from_json_str` AND `PP_PARSE_STRUCT_DEF`'s offset-
+     table cumul (so derive codegen targets the right
+     literal-write byte positions).
 
-  3. **Regression test** — extend
-     `tests/tcyr/derive_serialize_roundtrip.tcyr` with a
-     `point_i32` round-trip (and `mixed_widths` covering
-     i8/i16/i32/i64 in the same struct).
+  2. **Parser-side struct-literal width mismatch**:
+     `STRUCTSZ` summed width-aware `FIELDSZ` (i32 → 4) to
+     12 bytes for `point_i32 { x, y, z }`, but
+     `PARSE_STRUCT_INIT` (positional) and `EMIT_GVAR_INITS`
+     wrote 8 bytes per field, overflowing by 12 bytes at
+     global scope. Fixed via new `EMIT_STRUCT_FIELD_W(S,
+     vcnt, boff, width)` helper + width-aware `boff +=
+     FIELDSZ(ft)` advance in both initializer paths and
+     in PARSE_STRUCT_INIT named path.
 
-  Acceptance: `point_i32 { 100, 200, 300 }` round-trips
-  through `_to_json` + `_from_json_str` with correct
-  values on x86_64 + aarch64 (real pi).
+  cc5: **746,608 → 747,624 B** (+1016 / +0.14%). api-surface:
+  **2,769 unchanged**. cyrius test: **131 → 132** (+1 —
+  `tests/tcyr/derive_serialize_widths.tcyr` covers point_i8
+  / point_i16 / point_i32 + a mixed-width struct in 14
+  assertions). 64/64 check.sh; two-step self-host byte-
+  identical (`902b6a16…`). Cross-host SSH cluster: pi
+  (Linux aarch64) 14/14, cass (Windows PE32+) exit=0.
+  Mach-O excluded (pre-existing pre-v5.9.35 SIGSEGV pin
+  remains held).
 
 - **v5.9.37** — **cx (cyrius-x bytecode) Phase 2c parity**.
   Closes the two `ERR_MSG`-guarded cx pending sites that
