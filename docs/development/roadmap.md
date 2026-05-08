@@ -483,21 +483,52 @@ overload dispatch.
   from a non-annotated `var out = str_builder_build(sb)`
   still doesn't fire correctly until v5.10.4 inference.
 
-- **v5.10.4 — Type system pass 4: type inference**. Propagate
+- **v5.10.4 — Type system pass 4: type inference + stdlib
+  param-side `: Str` annotation pass (bundled)**. Propagate
   fn return types through `var x = f(...);` so `x`'s slot
   tracks the type. Also for binary operators (`x + 1` keeps
   x's type if int; struct-field reads keep field's type;
-  pointer deref tracks pointee). Acceptance: existing
-  patterns continue working byte-identical (no regression);
-  type-inferred `var` slots resolve correctly through
-  multi-step expression chains.
+  pointer deref tracks pointee).
 
-- **v5.10.5 — Type system pass 5: diagnostics + agnosys
-  1.1.12 verbatim repro CLOSE**. `error: cannot pass Str to
-  fn expecting cstring; use str_data(x) or str_println(x)`
-  style hints at the call site. Catalog the top-N
-  most-common type-mismatch shapes consumers will hit and
-  give each a one-line hint pointing at the canonical fix.
+  **Bundled work** (per the v5.10.3 deferral): annotate
+  ~12 stdlib fns in `lib/str.cyr` with `: Str` parameter
+  annotations — `str_len(s)`, `str_data(s)`, `str_print(s)`,
+  `str_index_of(s, ch)`, `str_to_int(s)`, `str_clone_a(a, s)`,
+  `str_clone(s)`, `str_sub_a(a, s, ...)`, `str_sub(s, ...)`,
+  `str_substr(s, ...)`, `str_trim_a(a, s)`, `str_trim(s)`.
+  Bundled because the inference work is the natural trigger
+  to also clean up param annotations, and the param
+  annotations are what unblock v5.10.5's
+  `CYRIUS_TYPE_CHECK` default-on flip.
+
+  **Acceptance**:
+  - Existing patterns continue working byte-identical
+    (no regression on the cc5 self-host or 66-gate audit
+    corpus).
+  - Type-inferred `var` slots resolve correctly through
+    multi-step expression chains.
+  - Synthetic fixture: `var out = str_builder_build(sb);
+    println(out);` (no explicit `: Str` annotation)
+    routes to `println_str` via type inference + the
+    v5.10.3 overload dispatch.
+  - Stdlib param annotations don't fire false positives
+    on legitimate `str_len(s)`-style call sites in the
+    132-tcyr corpus.
+
+- **v5.10.5 — Type system pass 5: diagnostics +
+  `CYRIUS_TYPE_CHECK` default-on + agnosys 1.1.12 verbatim
+  repro CLOSE**. `error: cannot pass Str to fn expecting
+  cstring; use str_data(x) or str_println(x)` style hints
+  at the call site. Catalog the top-N most-common type-
+  mismatch shapes consumers will hit and give each a one-
+  line hint pointing at the canonical fix.
+
+  **`CYRIUS_TYPE_CHECK` default-on flip** (deferred from
+  v5.10.3 — the param-side `: Str` annotation pass at
+  v5.10.4 removes the false-positive flood from legitimate
+  `str_len(s)` calls; v5.10.5 turns the warnings on by
+  default once the corpus is clean).
+
   **Acceptance: agnosys 1.1.12 verbatim repro hash
   `6425355b6147d5a674078794310ae2c1` runs end-to-end + its
   expected output is correct (println outputs the

@@ -2356,6 +2356,7 @@ str::Str_starts_with/2
 str::Str_sub/3
 str::Str_to_int/1
 str::Str_trim/1
+str::println_str/1
 str::str_builder_add/2
 str::str_builder_add_a/3
 str::str_builder_add_byte/2

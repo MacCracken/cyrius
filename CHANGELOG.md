@@ -6,6 +6,124 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.3] — 2026-05-08
+
+**v5.10.x SLOT 3 — Type system pass 3: overload dispatch
+(narrow; println-only)**. Third slot of the agnosys-driven
+type-system arc. Hard-coded `println(Str-typed)` →
+`println_str` routing, plus the `println_str` helper itself.
+Generic suffix-based dispatch deferred to a later slot if
+more overloads emerge — narrow per the v5.10.x acceptance
+principle (Big-Heavy-One-Thing or measurable forward motion;
+`println` is in every consumer's hot path so the win is
+real and immediate).
+
+cc5: 9969590 → ce4cc301 (size 757920; +2808 B for the two
+lazy-cached noff lookups + the dispatch block in
+PARSE_FNCALL). Self-host byte-identical. cc5_aarch64
+rebuilt. api-surface: 2792 → 2793 (+1 for `println_str`).
+cyrius test: 132/132. check.sh: 66/66. .tcyr: 14/14.
+
+### What landed
+
+- **`println_str(s: Str)` helper** (`lib/str.cyr`) — thin
+  alias for `str_println(s)` that gives the overload
+  dispatch a concrete symbol to land on. Body just calls
+  `str_println` to preserve existing semantics.
+- **`_PRINTLN_NOFF(S)` + `_PRINTLN_STR_NOFF(S)` lazy
+  lookups** (`src/frontend/parse_fn.cyr`) — mirror the
+  `_STR_FROM_NOFF` shape from parse_expr.cyr. Cache the
+  tok_names offset for `"println"` and `"println_str"`
+  cstrings on first hit; return -1 on miss (graceful —
+  programs that don't use println get no overhead).
+- **Overload dispatch at PARSE_FNCALL** — after `fi`
+  resolves: if the call name is `println` AND the first
+  arg is an IDENT resolving to a Str-typed local/global
+  (SLTYPE/GVTYPE = `0 - STR_SID`), re-resolve `fi` to
+  `println_str` via FINDFN on the cached
+  `_PRINTLN_STR_NOFF`. Falls through to base `println`
+  on any miss.
+
+### Acceptance bar met
+
+Synthetic fixture: `var s: Str = str_from("hello-overload");
+println(s);` outputs the actual string content (`hello-overload`)
+instead of garbage bytes from the Str header — proves the
+overload routed to `println_str` which calls
+`str_print + newline`. Pre-v5.10.3, this would have printed
+garbage (println treating Str header as cstring).
+
+cstring path verified unchanged: `println("literal")` and
+`var name = "untyped"; println(name);` both still output
+the cstring content via the base `println`.
+
+### NOT in this slot (deferred with explicit pinnage)
+
+Per `feedback_deferral_requires_roadmap_pinnage`:
+
+- **`println_int` overload** — int-typed args routing to
+  a `println_int` formatter. Not landed; consumers pass
+  ints to println today via `print_num` / `fmt_int_buf`
+  + manual write. Promote when an agnosys / hisab consumer
+  surfaces the pattern. → **Held forward** (no slot pin
+  yet; surfaces-on-ask).
+- **Generic suffix-based dispatch mechanism** — instead
+  of hard-coded `println` routing, every fn call checks
+  for `<name>_<typesuffix>` overloads. Adds string-
+  mangling machinery to the parser (~50 LOC). Defer
+  unless a second consumer-driven overload pair emerges
+  in v5.10.4-.5. → **Held forward**.
+- **Stdlib param-side `: Str` annotations** — `str_len(s)`,
+  `str_data(s)`, `str_print(s)`, `str_index_of(s, ch)`,
+  `str_to_int(s)`, `str_clone_a(a, s)`, `str_clone(s)`,
+  `str_sub_a(a, s, ...)`, `str_sub(s, ...)`,
+  `str_substr(s, ...)`, `str_trim_a(a, s)`,
+  `str_trim(s)`. ~12 fns. Bundled with **v5.10.4 type
+  inference** since the inference work is the natural
+  trigger to also clean up param annotations.
+- **`CYRIUS_TYPE_CHECK` default-on flip** — would trip
+  false positives on legitimate `str_len(s_typed_as_Str)`
+  idioms across stdlib + ecosystem until the param-side
+  annotation pass lands. **Defers to v5.10.5** (diagnostics
+  + agnosys CLOSE) where it lands as the "everything's
+  ready, turn it on" final step.
+
+### Implementation surprise
+
+Snapshot ping-pong fired again at slot entry — `cyrius
+test` resolution copied an outdated lib/str.cyr from the
+install snapshot back into the repo (the v5.10.2
+annotations were partially reverted). Mid-slot fix:
+re-pointed `~/.cyrius/lib` symlink to v5.10.2 and copied
+the v5.10.2 snapshot's lib/str.cyr (with annotations) back
+into the repo. Then proceeded with the v5.10.3 changes on
+top. Filed as a note — the version-bump install-refresh
+re-pointing the symlink to v5.10.0 across slots is the
+underlying cause; investigating that script is held until
+it actually blocks something.
+
+### Verified
+
+- cc5 byte-identical self-host (`ce4cc301`).
+- cc5_aarch64 rebuilt; check.sh 66/66 green (api-surface
+  snapshot regenerated for the `println_str` addition).
+- cyrius test 132/132; .tcyr 14/14.
+- Synthetic fixture: `println(Str)` → string content
+  printed; `println(cstring)` → cstring content printed.
+  Both paths exercised.
+
+### Cascaded to v5.10.4+
+
+- v5.10.4 — type inference through `var x = f(...)`
+  (closes the agnosys-shape pattern where `out` inherits
+  Str type from `str_builder_build`'s return without
+  explicit annotation) + bundled stdlib param-side `: Str`
+  annotation pass (str_len / str_data / str_print etc.).
+- v5.10.5 — diagnostics + `CYRIUS_TYPE_CHECK` default-on
+  flip + agnosys 1.1.12 verbatim repro CLOSE.
+- v5.10.6+ — sandhi prereqs, hisab SIMD, compile-time
+  wins.
+
 ## [5.10.2] — 2026-05-08
 
 **v5.10.x SLOT 2 — Type system pass 2: stdlib `: Str` return

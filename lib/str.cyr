@@ -75,6 +75,16 @@ fn str_println(s) {
     return 0;
 }
 
+# v5.10.3 overload-dispatch target: `println(s: Str)` routes
+# here via PARSE_FNCALL's name-mangling lookup. Body is a thin
+# alias for str_println — gives the overload dispatch a
+# concrete symbol to land on without changing str_println's
+# semantics. Consumer-facing: `println(my_str)` Just Works
+# without explicit `str_println(my_str)` boilerplate.
+fn println_str(s: Str) {
+    return str_println(s);
+}
+
 # Compare two Strs
 fn str_eq(a: Str, b: Str) {
     var la = load64(a + 8);

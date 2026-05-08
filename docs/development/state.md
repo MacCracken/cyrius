@@ -5,6 +5,54 @@
 
 ## Version
 
+**5.10.3** (in-flight 2026-05-08 — **v5.10.x SLOT 3 —
+Type system pass 3: overload dispatch (narrow; println-only)**).
+Third slot of the agnosys-driven type-system arc. Hard-coded
+`println(Str-typed)` → `println_str` routing.
+
+**What landed**:
+- `println_str(s: Str)` helper in `lib/str.cyr` — thin alias
+  for `str_println` so the overload dispatch has a concrete
+  symbol to land on.
+- `_PRINTLN_NOFF` + `_PRINTLN_STR_NOFF` lazy-cached lookups
+  in `parse_fn.cyr` (mirror `_STR_FROM_NOFF` shape).
+- Overload dispatch at PARSE_FNCALL: when `fi` resolves to
+  `println` AND first arg is IDENT with SLTYPE/GVTYPE
+  indicating Str, re-resolve `fi` to `println_str`.
+
+**Acceptance bar met**: synthetic fixture
+`var s: Str = str_from("hello-overload"); println(s);`
+outputs the actual content. cstring path unchanged (`println("literal")`
+still uses base `println`). Both verified.
+
+cc5: 9969590 → ce4cc301 (+2808 B for noff lookups + dispatch
+block). Self-host byte-identical. cc5_aarch64 rebuilt.
+api-surface: 2792 → 2793 (+1 for `println_str`). 66/66
+check.sh; 132/132 cyrius test; 14/14 .tcyr.
+
+**NOT in this slot** (deferred with explicit pinnage):
+- `println_int` overload — held forward; surfaces-on-ask.
+- Generic suffix-based dispatch — held forward (current
+  hard-coded `println` routing handles the highest-impact
+  case; promote when a 2nd consumer-driven overload pair
+  emerges).
+- Stdlib param-side `: Str` annotations (str_len / str_data
+  / str_print etc., ~12 fns) — bundled with v5.10.4 type
+  inference.
+- `CYRIUS_TYPE_CHECK` default-on flip — defers to v5.10.5
+  (after param-side annotations remove false positives).
+
+**Implementation surprise**: snapshot ping-pong fired again
+mid-slot — `cyrius test` resolution copied an outdated
+lib/str.cyr from the install snapshot (symlink reset by
+the v5.10.2 version-bump install-refresh). Re-pointed
+manually mid-slot; restored from v5.10.2 snapshot's
+correct content; proceeded.
+
+**Next**: v5.10.4 — type inference through `var x = f(...)`
++ stdlib param-side `: Str` annotation pass (bundled per
+the v5.10.3 deferral).
+
 **5.10.2** (shipped 2026-05-08 — **v5.10.x SLOT 2 —
 Type system pass 2: stdlib `: Str` return annotations +
 ≤16-byte calling-convention special-case**). Second slot

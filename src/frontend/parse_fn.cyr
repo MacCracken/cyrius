@@ -477,12 +477,129 @@ fn _TYPE_CHECK_ENABLED() {
     return _type_check_enabled;
 }
 
+# v5.10.3 — lazy-cached lookup for the `println` and
+# `println_str` cstring noffs in tok_names. Pattern mirrors
+# `_STR_FROM_NOFF` from parse_expr.cyr — search tok_names for
+# the cstring, cache the offset on first hit, return -1 on
+# miss (no overload available). PARSE_FNCALL uses both to
+# detect a `println(Str-typed)` call site and re-resolve to
+# `println_str`.
+var _println_noff_cache = 0 - 1;
+fn _PRINTLN_NOFF(S) {
+    if (_println_noff_cache >= 0) { return _println_noff_cache; }
+    if (_println_noff_cache == 0 - 2) { return 0 - 1; }
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        # "println\0" first 8 bytes — bottom 8 bytes ASCII LE
+        if (load8(S + 0x60000 + i) == 112) {
+            if (load8(S + 0x60000 + i + 1) == 114) {
+                if (load8(S + 0x60000 + i + 2) == 105) {
+                    if (load8(S + 0x60000 + i + 3) == 110) {
+                        if (load8(S + 0x60000 + i + 4) == 116) {
+                            if (load8(S + 0x60000 + i + 5) == 108) {
+                                if (load8(S + 0x60000 + i + 6) == 110) {
+                                    if (load8(S + 0x60000 + i + 7) == 0) {
+                                        _println_noff_cache = i;
+                                        return i;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    _println_noff_cache = 0 - 2;
+    return 0 - 1;
+}
+
+var _println_str_noff_cache = 0 - 1;
+fn _PRINTLN_STR_NOFF(S) {
+    if (_println_str_noff_cache >= 0) { return _println_str_noff_cache; }
+    if (_println_str_noff_cache == 0 - 2) { return 0 - 1; }
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        # "println_str\0" — 11 chars + nul = 12 bytes
+        if (load8(S + 0x60000 + i) == 112) {
+            if (load8(S + 0x60000 + i + 1) == 114) {
+                if (load8(S + 0x60000 + i + 2) == 105) {
+                    if (load8(S + 0x60000 + i + 3) == 110) {
+                        if (load8(S + 0x60000 + i + 4) == 116) {
+                            if (load8(S + 0x60000 + i + 5) == 108) {
+                                if (load8(S + 0x60000 + i + 6) == 110) {
+                                    if (load8(S + 0x60000 + i + 7) == 95) {
+                                        if (load8(S + 0x60000 + i + 8) == 115) {
+                                            if (load8(S + 0x60000 + i + 9) == 116) {
+                                                if (load8(S + 0x60000 + i + 10) == 114) {
+                                                    if (load8(S + 0x60000 + i + 11) == 0) {
+                                                        _println_str_noff_cache = i;
+                                                        return i;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    _println_str_noff_cache = 0 - 2;
+    return 0 - 1;
+}
+
 # Parse fn call args and emit call (as expression)
 fn PARSE_FNCALL(S, noff) {
     STI(S, GTI(S) + 1);  # consume (
     # Check for inline candidate
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
+    # v5.10.3 — narrow overload dispatch: `println(s: Str)`
+    # routes to `println_str`. Hard-coded for the highest-
+    # impact name (println is in every consumer's hot path
+    # for printing Str-typed values). Generic suffix-based
+    # dispatch lands at v5.10.x later if more overloads
+    # emerge — narrow this slot per the v5.10.x acceptance
+    # principle (Big-Heavy-One-Thing or measurable forward
+    # motion; not bookkeeping).
+    var _od_println_noff = _PRINTLN_NOFF(S);
+    if (_od_println_noff >= 0) {
+        if (noff == _od_println_noff) {
+            if (PEEKT(S) == 2) {
+                var _od_arg_noff = PEEKV(S);
+                var _od_arg_typ = 0;
+                if (GINFN(S) == 1) {
+                    var _od_lli = FINDLOCAL(S, _od_arg_noff);
+                    if (_od_lli >= 0) { _od_arg_typ = GLTYPE(S, _od_lli); }
+                }
+                if (_od_arg_typ == 0) {
+                    var _od_vi = FINDVAR(S, _od_arg_noff);
+                    if (_od_vi >= 0) { _od_arg_typ = GVTYPE(S, _od_vi); }
+                }
+                var _od_str_sid = _STR_SID(S);
+                if (_od_str_sid > 0) {
+                    if (_od_arg_typ == 0 - _od_str_sid) {
+                        var _od_ps_noff = _PRINTLN_STR_NOFF(S);
+                        if (_od_ps_noff >= 0) {
+                            var _od_ps_fi = FINDFN(S, _od_ps_noff);
+                            if (_od_ps_fi >= 0) {
+                                fi = _od_ps_fi;
+                                noff = _od_ps_noff;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     # v5.6.4: #deprecated call-site warning. Fires at EVERY call site
     # (unlike #must_use which only fires on statement-level discard —
     # deprecated fns should get the nudge no matter how their result
