@@ -367,9 +367,25 @@ fn PARSE_RETURN(S) {
         #   - stash_disp = -(regalloc*8 + 8). With regalloc cap of
         #     5, stash_disp in [-48,-8] always fits LDUR's signed
         #     9-bit immediate (-256..+255). Defensive guard checks.
-        if (_TARGET_CX == 1) {
-            ERR_MSG(S, "struct return by value: cx backend pending Phase 2c", 52);
-        }
+        # v5.9.40 — struct-by-value return now goes through each
+        # backend's `ESTRUCT_BYVAL_COPY` helper. Closes Phase 2c #1
+        # (cx was the last remaining ERR_MSG path; aarch64 landed
+        # at v5.9.26, x86 has been there since v5.6.12). Each
+        # backend chooses its own copy strategy:
+        #   x86      — push rsi/rdi + lea/mov + `rep movsb` (3 B)
+        #   aarch64  — LDRB/STRB byte-loop with post-increment
+        #   cx       — load8/store8 byte-loop with explicit
+        #              add r9/r10/r11 + jnz back-jump (cxvm has
+        #              no rep/post-incr semantics).
+        # Constraints (apply to all backends in practice; named
+        # at this call site for clarity since they are real
+        # encoding limits, not invariants of the helper):
+        #   - aligned byte count must fit MOVZ imm16 (< 65536) on
+        #     aarch64. Cyrius struct sizes are bounded well below
+        #     this; guard fires for the implausible large case.
+        #   - stash_disp = -(regalloc*8 + 8) on aarch64 must fit
+        #     LDUR's signed 9-bit immediate (-256..+255). With
+        #     regalloc cap of 5, stash_disp is in [-48,-8] — safe.
         if (_AARCH64_BACKEND == 1) {
             if (srn_aligned > 65535) {
                 ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 76);
@@ -377,70 +393,8 @@ fn PARSE_RETURN(S) {
             if (srn_stash_disp < 0 - 256) {
                 ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 95);
             }
-            _IR_REC0(S, IR_RAW_EMIT);
-            # x9 = source pointer = x29 + src_disp.
-            _EFP_ADDR_X9(S, srn_src_disp);
-            var srn_off9 = srn_stash_disp & 0x1FF;
-            # ldur x10, [x29, #stash_disp]   (Rn=29, Rt=10)
-            EW(S, 0xF84003AA | (srn_off9 << 12));
-            # movz x11, #aligned_byte_count   (Rd=11, hw=0)
-            EW(S, 0xD280000B | ((srn_aligned & 0xFFFF) << 5));
-            # ldrb w12, [x9], #1   (Rn=9, Rt=12, imm9=1, post-index)
-            EW(S, 0x3840152C);
-            # strb w12, [x10], #1  (Rn=10, Rt=12, imm9=1, post-index)
-            EW(S, 0x3800154C);
-            # subs x11, x11, #1    (Rd=11, Rn=11, imm12=1, sh=0)
-            EW(S, 0xF100056B);
-            # b.ne -3              (cond=NE=0001, imm19=-3)
-            EW(S, 0x54FFFFA1);
-            # ldur x0, [x29, #stash_disp]   (Rn=29, Rt=0) — x10 was
-            # post-incremented past the dest; reload retptr for the
-            # ABI-mandated x0 return.
-            EW(S, 0xF84003A0 | (srn_off9 << 12));
-            # jmp to epilogue (regular return-patch path)
-            var srn_rp_a = EJMP0(S);
-            var srn_rpc_a = GRPC(S);
-            if (srn_rpc_a >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
-            S64(S + 0x18DA20 + srn_rpc_a * 8, srn_rp_a);
-            SRPC(S, srn_rpc_a + 1);
-            return 0;
         }
-        # Under Win64, RSI and RDI are NONVOLATILE (caller preserves
-        # them across calls). `rep movsb` forces us to use both, so
-        # save and restore them around the copy. SysV has no such
-        # rule (RSI/RDI are arg registers, already volatile), but
-        # saving a few bytes is cheap and keeps the emit uniform.
-        # v5.6.12: the whole struct-return `rep movsb` block is raw
-        # x86 encoding (push/lea/mov/rep/pop chain). One marker.
-        _IR_REC0(S, IR_RAW_EMIT);
-        EB(S, 0x56);                                   # push rsi
-        EB(S, 0x57);                                   # push rdi
-        # lea rsi, [rbp + src_disp]
-        EB(S, 0x48); EB(S, 0x8D); EB(S, 0xB5);
-        var srn_a1 = S + 0x64A000 + GCP(S);
-        S64(srn_a1, (L64(srn_a1) >> 32 << 32) | (srn_src_disp & 0xFFFFFFFF));
-        SCP(S, GCP(S) + 4);
-        # mov rdi, [rbp + stash_disp]   ; retptr
-        EB(S, 0x48); EB(S, 0x8B); EB(S, 0xBD);
-        var srn_a2 = S + 0x64A000 + GCP(S);
-        S64(srn_a2, (L64(srn_a2) >> 32 << 32) | (srn_stash_disp & 0xFFFFFFFF));
-        SCP(S, GCP(S) + 4);
-        # mov ecx, imm32   ; byte count (zero-extends to rcx)
-        EB(S, 0xB9);
-        EB(S, srn_aligned & 0xFF);
-        EB(S, (srn_aligned >> 8) & 0xFF);
-        EB(S, (srn_aligned >> 16) & 0xFF);
-        EB(S, (srn_aligned >> 24) & 0xFF);
-        # rep movsb
-        EB(S, 0xF3); EB(S, 0xA4);
-        EB(S, 0x5F);                                   # pop rdi
-        EB(S, 0x5E);                                   # pop rsi
-        # mov rax, [rbp + stash_disp]   ; return retptr (stash slot
-        # reloaded because rep movsb advanced the rdi copy)
-        EB(S, 0x48); EB(S, 0x8B); EB(S, 0x85);
-        var srn_a3 = S + 0x64A000 + GCP(S);
-        S64(srn_a3, (L64(srn_a3) >> 32 << 32) | (srn_stash_disp & 0xFFFFFFFF));
-        SCP(S, GCP(S) + 4);
+        ESTRUCT_BYVAL_COPY(S, srn_src_disp, srn_stash_disp, srn_aligned);
         # jmp to epilogue (regular return-patch path)
         var srn_rp = EJMP0(S);
         var srn_rpc = GRPC(S);
@@ -966,8 +920,9 @@ fn PARSE_FN_DEF(S) {
     #   x86 SysV → RDI (pidx=0); x86 Win64 → RCX (pidx=0 with the
     #   Win64 ESTOREREGPARM dispatch picking RCX); aarch64 SysV →
     #   X8 (dedicated indirect-result register, NOT a regular
-    #   arg reg — v5.9.26 fix). cx bytecode rejects struct-return
-    #   at PARSE_RETURN earlier so doesn't reach here.
+    #   arg reg — v5.9.26 fix); cx bytecode → r3 (first arg slot;
+    #   v5.9.40 Phase 2c — caller-side asv path pushes retptr as
+    #   first arg, ECALLPOPS lands it in r3).
     if (_cur_fn_ret_stash > 0) {
         var _rs_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
         if (_AARCH64_BACKEND == 1) {

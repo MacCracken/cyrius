@@ -29,6 +29,10 @@
 #   0x41 = load64 ra, [rb]        ra = 64-bit at mem[rb]
 #   0x42 = store8 [ra], rb        mem[ra] = low byte of rb
 #   0x43 = store64 [ra], rb       mem[ra] = rb (64-bit)
+#   0x44 = load16 ra, [rb]        ra = zero-extend halfword at mem[rb] (v5.9.40)
+#   0x45 = load32 ra, [rb]        ra = zero-extend word at mem[rb] (v5.9.40)
+#   0x46 = store16 [ra], rb       mem[ra] = low halfword of rb (v5.9.40)
+#   0x47 = store32 [ra], rb       mem[ra] = low word of rb (v5.9.40)
 #   0x50 = jmp    offset          PC += sign-extend(a:b:c as 24-bit)
 #   0x51 = jz     ra, offset16    if ra == 0: PC += sign-extend(b:c)
 #   0x52 = jnz    ra, offset16    if ra != 0: PC += sign-extend(b:c)
@@ -142,11 +146,40 @@ fn cx_run(code, code_len) {
         elif (op == 50) { if (cx_reg_get(rb) < cx_reg_get(rc)) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }
         elif (op == 51) { if (cx_reg_get(rb) > cx_reg_get(rc)) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }
 
-        # memory: load8, load64, store8, store64
+        # memory: load8/16/32/64, store8/16/32/64
         elif (op == 64) { cx_reg_set(ra, load8(_cx_mem + cx_reg_get(rb))); }
         elif (op == 65) { cx_reg_set(ra, load64(_cx_mem + cx_reg_get(rb))); }
         elif (op == 66) { store8(_cx_mem + cx_reg_get(ra), cx_reg_get(rb) & 0xFF); }
         elif (op == 67) { store64(_cx_mem + cx_reg_get(ra), cx_reg_get(rb)); }
+        # v5.9.40 — sub-8-byte struct field load (parse_decl.cyr)
+        # closes Phase 2c #2: cyrius core has only load8/load64
+        # primitives, so wider loads compose from byte loads.
+        elif (op == 68) {
+            var l16_addr = _cx_mem + cx_reg_get(rb);
+            cx_reg_set(ra, load8(l16_addr) | (load8(l16_addr + 1) << 8));
+        }
+        elif (op == 69) {
+            var l32_addr = _cx_mem + cx_reg_get(rb);
+            cx_reg_set(ra,
+                load8(l32_addr)
+                | (load8(l32_addr + 1) << 8)
+                | (load8(l32_addr + 2) << 16)
+                | (load8(l32_addr + 3) << 24));
+        }
+        elif (op == 70) {
+            var s16_addr = _cx_mem + cx_reg_get(ra);
+            var s16_v = cx_reg_get(rb);
+            store8(s16_addr,     s16_v & 0xFF);
+            store8(s16_addr + 1, (s16_v >> 8) & 0xFF);
+        }
+        elif (op == 71) {
+            var s32_addr = _cx_mem + cx_reg_get(ra);
+            var s32_v = cx_reg_get(rb);
+            store8(s32_addr,     s32_v & 0xFF);
+            store8(s32_addr + 1, (s32_v >> 8) & 0xFF);
+            store8(s32_addr + 2, (s32_v >> 16) & 0xFF);
+            store8(s32_addr + 3, (s32_v >> 24) & 0xFF);
+        }
 
         # jump: jmp, jz, jnz
         elif (op == 80) {

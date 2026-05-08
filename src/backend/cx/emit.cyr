@@ -131,13 +131,18 @@ fn ESHRCL(S) { CX_EMIT(S, 36, 0, 0, 1); return 0; }   # shr r0, r0, r1
 
 # Load/store memory
 fn ELOAD8(S) { CX_EMIT(S, 64, 0, 0, 0); return 0; }   # load8 r0, [r0]
-fn ELOAD16(S) { CX_EMIT(S, 64, 0, 0, 0); return 0; }  # approx: load8 for now
-fn ELOAD32(S) { CX_EMIT(S, 65, 0, 0, 0); return 0; }  # load64 r0, [r0] (approx)
+# v5.9.40: ELOAD16/ELOAD32 had approximations; wire them to the
+# now-real cxvm 0x44/0x45 opcodes added this slot. ELOAD64 and
+# ELODC stay the same.
+fn ELOAD16(S) { CX_EMIT(S, 68, 0, 0, 0); return 0; }  # load16 r0, [r0]
+fn ELOAD32(S) { CX_EMIT(S, 69, 0, 0, 0); return 0; }  # load32 r0, [r0]
 fn ELOAD64(S) { CX_EMIT(S, 65, 0, 0, 0); return 0; }  # load64 r0, [r0]
 fn ELODC(S) { CX_EMIT(S, 65, 0, 1, 0); return 0; }    # load64 r0, [r1]
 fn ESTORE8(S) { CX_EMIT(S, 66, 1, 0, 0); return 0; }  # store8 [r1], r0
-fn ESTORE16(S) { CX_EMIT(S, 66, 1, 0, 0); return 0; }
-fn ESTORE32(S) { CX_EMIT(S, 67, 1, 0, 0); return 0; }
+# v5.9.40: ESTORE16/ESTORE32 also had approximations; wire to real
+# cxvm 0x46/0x47 opcodes. ESTORE64 / ESTOC stay the same.
+fn ESTORE16(S) { CX_EMIT(S, 70, 1, 0, 0); return 0; }
+fn ESTORE32(S) { CX_EMIT(S, 71, 1, 0, 0); return 0; }
 fn ESTORE64(S) { CX_EMIT(S, 67, 1, 0, 0); return 0; }
 fn ESTOC(S) { CX_EMIT(S, 67, 1, 0, 0); return 0; }    # store64 [r1], r0
 
@@ -382,7 +387,22 @@ fn ESTOREPARM(S, pidx, lidx, pc) {
     return 0;
 }
 
-fn ESTORESTACKPARM(S, pidx, disp, pc) { return 0; }  # TODO: >6 args
+# v5.9.40 — Phase 2c #3: 7+-arg stack-param store.
+# cxvm has 32 registers; ECALLPOPS already pops all n args into
+# r3..r(3+n-1) regardless of how many. Native backends store
+# args 7+ from caller stack (Win64 shadow space / SysV stack);
+# cx mirrors ESTOREPARM's r-to-frame pattern but uses the disp
+# directly instead of computing it from a local-var index. The
+# shape matches ESTOREPARM byte-for-byte except for the offset
+# source — kept symmetric so callers see identical semantics.
+fn ESTORESTACKPARM(S, pidx, disp, pc) {
+    var abs_disp = 0 - disp;
+    CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
+    CX_MOVI(S, 15, abs_disp);             # r15 = |disp|
+    CX_EMIT(S, 17, 14, 14, 15);           # sub r14, r14, r15
+    CX_EMIT(S, 67, 14, 3 + pidx, 0);      # store64 [r14], r(3+pidx)
+    return 0;
+}
 fn EPOPARG(S, n) { CX_EMIT(S, 129, 3 + n, 0, 0); return 0; }
 fn EPOPRDI(S) { CX_EMIT(S, 129, 2, 0, 0); return 0; }
 fn EPOPRSI(S) { CX_EMIT(S, 129, 3, 0, 0); return 0; }
@@ -397,6 +417,69 @@ fn EVLOAD_W(S, idx, width) { EVLOAD(S, idx); return 0; }
 fn EVSTORE_W(S, idx, width) { EVSTORE(S, idx); return 0; }
 fn EFLLOAD_W(S, idx, width) { EFLLOAD(S, idx); return 0; }
 fn EFLSTORE_W(S, idx, width) { EFLSTORE(S, idx); return 0; }
+
+# v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).
+# Field-base ptr is in r1; emit width-correct load into r0.
+# Mirrors the aarch64 ldrb/ldrh/ldr w0 dispatch and the x86
+# movzx rax/movzx eax/mov eax dispatch, with cx using the new
+# 0x44/0x45 cxvm opcodes added this slot.
+fn EFIELD_LOAD_W(S, width) {
+    if (width == 1) { CX_EMIT(S, 64, 0, 1, 0); return 0; }
+    if (width == 2) { CX_EMIT(S, 68, 0, 1, 0); return 0; }
+    if (width == 4) { CX_EMIT(S, 69, 0, 1, 0); return 0; }
+    ELODC(S);
+    return 0;
+}
+
+# v5.9.40 — struct-by-value return (parse_fn.cyr:371).
+# Emits a byte-copy loop: src in r9 (= fp + src_disp), dst in
+# r10 (= load64 [fp + stash_disp]), counter in r11. Loop body
+# walks the aligned byte count copying byte-by-byte; tail
+# reloads retptr to r0 for the cyrius return ABI. Mirrors
+# aarch64's LDRB/STRB-with-post-increment loop and x86's
+# `rep movsb` block with an explicit cxvm-friendly shape.
+fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
+    var src_abs = 0 - src_disp;
+    var stash_abs = 0 - stash_disp;
+    # r9 = fp - |src_disp|
+    CX_EMIT(S, 2, 9, 253, 0);             # mov r9, fp
+    CX_MOVI(S, 14, src_abs);              # r14 = |src_disp|
+    CX_EMIT(S, 17, 9, 9, 14);             # sub r9, r9, r14
+    # r14 = fp - |stash_disp|; r10 = load64 [r14] = retptr
+    CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
+    CX_MOVI(S, 15, stash_abs);            # r15 = |stash_disp|
+    CX_EMIT(S, 17, 14, 14, 15);           # sub r14, r14, r15
+    CX_EMIT(S, 65, 10, 14, 0);            # load64 r10, [r14]
+    # r11 = aligned byte count, r15 = 1 (incr/decr step)
+    CX_MOVI(S, 11, aligned);
+    CX_MOVI(S, 15, 1);
+    # Loop body (6 instructions):
+    #   load8  r12, [r9]
+    #   store8 [r10], r12
+    #   add    r9, r9, r15
+    #   add    r10, r10, r15
+    #   sub    r11, r11, r15
+    #   jnz    r11, -5  (back 5 instructions)
+    CX_EMIT(S, 64, 12, 9, 0);             # load8 r12, [r9]
+    CX_EMIT(S, 66, 10, 12, 0);            # store8 [r10], r12
+    CX_EMIT(S, 16, 9, 9, 15);             # add r9, r9, 1
+    CX_EMIT(S, 16, 10, 10, 15);           # add r10, r10, 1
+    CX_EMIT(S, 17, 11, 11, 15);           # sub r11, r11, 1
+    # jnz r11, -5: PC after fetch points past jnz; -5 lands on
+    # the load8 at the top of the body. cxvm decode:
+    # `_cx_pc = _cx_pc - 4 + off * 4` with off = -5 (16-bit).
+    var off = 0 - 5;
+    var off_lo = off & 0xFF;
+    var off_hi = (off >> 8) & 0xFF;
+    CX_EMIT(S, 82, 11, off_lo, off_hi);
+    # Reload retptr to r0 (loop incremented r10 past dest):
+    #   r14 = fp - |stash_disp|; r0 = load64 [r14]
+    CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
+    CX_MOVI(S, 15, stash_abs);            # r15 = |stash_disp|
+    CX_EMIT(S, 17, 14, 14, 15);           # sub r14, r14, r15
+    CX_EMIT(S, 65, 0, 14, 0);             # load64 r0, [r14]
+    return 0;
+}
 
 # String address (fixup type 1)
 fn ESADDR(S, soff) {
@@ -489,3 +572,61 @@ fn EF64SQRT(S) { return 0; }
 fn EF64FLOOR(S) { return 0; }
 fn EF64CEIL(S) { return 0; }
 fn EF64ROUND(S) { return 0; }
+# v5.9.40 — clean up cx-side undefined-fn warnings carried since
+# v5.9.39's Mach-O fix (EADRP/EADD_IMM12 added to aarch64/x86
+# but cx wasn't paired). Stubs for the dead cross-arch branches
+# in shared frontend files. EFLADDR + EMULH + _read_env are
+# pre-existing carry-overs from earlier minors — folded in here
+# rather than spinning a separate slot per the v5.9.38/.39
+# "don't lazy-defer related fixes" feedback.
+fn EADRP(S, reg) { return 0; }
+fn EADD_IMM12(S, reg) { return 0; }
+# v5.9.40 Phase 2c — real EFLADDR / EFLADDR_X1 for cx. Compute
+# &local-slot. Required by parse_decl.cyr's asv (assignment-
+# from-struct-value) caller-side and by PARSE_FIELD_STORE/LOAD
+# when the local var is an inline struct (fs_is_ptr == 0 path,
+# parse_decl.cyr:344).
+#   EFLADDR    → addr in r0 (pushed as fn-arg or paired with EPOPC)
+#   EFLADDR_X1 → addr in r1 (paired with EPOPR + storeN [r1], r0)
+# Sub-8-byte struct field stores route through EFLADDR_X1 when
+# the parent var is inline; without this stub cc5_cx hit SIGILL
+# at parse-time on any struct mixing i8/i16/i32 with i64.
+fn EFLADDR(S, lli) {
+    var disp = (lli + 1) * 8;
+    if (_cur_fn_regalloc > 0) { disp = disp + _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
+    CX_EMIT(S, 2, 0, 253, 0);             # mov r0, fp
+    CX_MOVI(S, 14, disp);                 # r14 = disp
+    CX_EMIT(S, 17, 0, 0, 14);             # sub r0, r0, r14
+    return 0;
+}
+fn EFLADDR_X1(S, lli) {
+    var disp = (lli + 1) * 8;
+    if (_cur_fn_regalloc > 0) { disp = disp + _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
+    CX_EMIT(S, 2, 1, 253, 0);             # mov r1, fp
+    CX_MOVI(S, 14, disp);                 # r14 = disp
+    CX_EMIT(S, 17, 1, 1, 14);             # sub r1, r1, r14
+    return 0;
+}
+
+# v5.9.40 Phase 2c — real ESTOREREGPARM for cx. Stash the param
+# register r(3+pidx) into the local frame at fp+disp (disp is
+# negative). Used by parse_fn.cyr:930 in the struct-return
+# prologue: cx receives retptr as the FIRST arg in r3, then
+# stashes it for later reload by ESTRUCT_BYVAL_COPY's tail.
+# x86 + aarch64 backends have separate ESTOREREGPARM impls that
+# encode their native indirect-result register conventions
+# (RDI/RCX for x86 SysV/Win64, X8 for aarch64 AAPCS); cx mirrors
+# the x86-shape convention since cxvm has no dedicated indirect-
+# result register but plenty of GP regs.
+fn ESTOREREGPARM(S, pidx, disp) {
+    var abs_disp = 0 - disp;
+    CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
+    CX_MOVI(S, 15, abs_disp);             # r15 = |disp|
+    CX_EMIT(S, 17, 14, 14, 15);           # sub r14, r14, r15
+    CX_EMIT(S, 67, 14, 3 + pidx, 0);      # store64 [r14], r(3+pidx)
+    return 0;
+}
+fn EMULH(S) { return 0; }
+fn _read_env(name) { return 0; }

@@ -1009,6 +1009,47 @@ fn EVSTORE_W(S, idx, width) {
     EW(S, 0xF9000020); return 0;
 }
 
+# v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).
+# Field-base ptr is in x1 (already advanced to the field start
+# by callers). Emits ldrb/ldrh/ldr w0/ldr x0 by width. Pulled
+# out of an inline `if (_AARCH64_BACKEND == 1)` block into a
+# named helper so the cx backend can sit alongside as a peer
+# without parse_decl.cyr having to grow another arch arm.
+fn EFIELD_LOAD_W(S, width) {
+    _IR_REC0(S, IR_RAW_EMIT);
+    if (width == 1) { EW(S, 0x39400020); return 0; }   # ldrb w0, [x1]
+    if (width == 2) { EW(S, 0x79400020); return 0; }   # ldrh w0, [x1]
+    if (width == 4) { EW(S, 0xB9400020); return 0; }   # ldr  w0, [x1]
+    EW(S, 0xF9400020); return 0;                       # ldr  x0, [x1]
+}
+
+# v5.9.40 — struct-by-value return aarch64 byte-copy loop
+# (parse_fn.cyr:339). Pulled out of an inline emit block in
+# parse_fn.cyr so the cx backend's `ESTRUCT_BYVAL_COPY` peer
+# fires from the same call site. Encoding plan (8 instructions):
+#   x9  = fp + src_disp                  (via _EFP_ADDR_X9)
+#   x10 = ldur [fp + stash_disp]         (retptr)
+#   x11 = movz aligned_byte_count
+#   loop:
+#     ldrb w12, [x9], #1                 (post-incr src)
+#     strb w12, [x10], #1                (post-incr dst)
+#     subs x11, x11, #1
+#     b.ne loop                          (-3 instructions back)
+#   x0  = ldur [fp + stash_disp]         (reload retptr — x10 is past)
+fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
+    _IR_REC0(S, IR_RAW_EMIT);
+    _EFP_ADDR_X9(S, src_disp);
+    var off9 = stash_disp & 0x1FF;
+    EW(S, 0xF84003AA | (off9 << 12));               # ldur x10, [x29, #stash_disp]
+    EW(S, 0xD280000B | ((aligned & 0xFFFF) << 5));  # movz x11, #aligned
+    EW(S, 0x3840152C);                              # ldrb w12, [x9], #1
+    EW(S, 0x3800154C);                              # strb w12, [x10], #1
+    EW(S, 0xF100056B);                              # subs x11, x11, #1
+    EW(S, 0x54FFFFA1);                              # b.ne -3
+    EW(S, 0xF84003A0 | (off9 << 12));               # ldur x0,  [x29, #stash_disp]
+    return 0;
+}
+
 # Patch frame size: sub sp, sp, #N at the prologue
 fn EPATCHFRAME(S, patch, size) {
     # Read the SUB instruction and patch imm12

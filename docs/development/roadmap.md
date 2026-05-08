@@ -1300,44 +1300,82 @@ satisfied by earlier slots.
   and v5.10.x's open-bug-and-optimization arc is the
   right place to land it.
 
-- **v5.9.40** — **cx (cyrius-x bytecode) Phase 2c parity**
-  (cascaded down: original v5.9.37 pin → v5.9.39 → v5.9.40
-  after the Mach-O probe earned its own slot at v5.9.39).
-  Closes the two `ERR_MSG`-guarded cx pending sites that
-  v5.9.26 + v5.9.27 narrowed but didn't fix:
-  - `parse_fn.cyr:371` — struct return by value
-    (`"cx backend pending Phase 2c"`). v5.9.26 shipped the
-    aarch64 LDRB/STRB byte-copy + X8 retptr ABI; the cx
-    equivalent needs cxvm opcodes for byte-level memory
-    copy + indirect-result reg semantics.
-  - `parse_decl.cyr:252` — sub-8-byte struct field load
-    (`"cx backend pending"`). v5.9.27 shipped aarch64
-    `ldrb`/`ldrh`/`ldr w0` for widths 1/2/4. cx
-    `EVLOAD_W`/`EFLLOAD_W` (lines 397-398 of
-    `src/backend/cx/emit.cyr`) currently treat all widths as
-    64-bit — the per-size load opcodes need to land in
-    cxvm + the wrappers updated to dispatch on width.
-  Plus the related held-item:
-  - `ESTORESTACKPARM` cx >6-args stub (held since v5.8.x;
-    `src/backend/cx/emit.cyr:385` returns 0 with a TODO).
-    Folded into this slot since stack-arg shuffling will
-    have shape overlap with the struct-copy work above.
+- **v5.9.40** ✅ — **cx (cyrius-x bytecode) Phase 2c parity
+  shipped 2026-05-08**. All three `ERR_MSG` / TODO sites that
+  v5.9.26 + v5.9.27 narrowed but didn't fix now produce real
+  cxvm-compatible bytecode that round-trips end-to-end.
 
-  Acceptance: a cx-bytecode binary produced from a cyrius
-  source that exercises (i) struct-by-value return, (ii) i8/
-  i16 struct-field loads via dot syntax, (iii) a 7+-arg fn
-  call, all round-trips through the cxvm interpreter
-  cleanly. Existing `_cx_build_gate` + `_cx_roundtrip_gate`
-  + `_cx_syscall_literal_gate` regressions stay green; new
-  `_cx_struct_byval_gate` + `_cx_sub_byte_field_load_gate`
-  + `_cx_seven_args_gate` mirror the aarch64 cluster's
-  cross-test pattern.
+  **What landed**:
+  - `parse_decl.cyr:252` — sub-8-byte struct field load:
+    refactored to call new per-backend `EFIELD_LOAD_W(S, width)`
+    helper. cx version emits the new cxvm `load16` (op 0x44)
+    and `load32` (op 0x45) opcodes; aarch64 version moved out
+    of the inline `EW(S, 0x39400020)` ladder; x86 version
+    moved out of the inline `movzx rax/eax` ladder. cxvm
+    interpreter learns width-aware loads (composed from
+    cyrius's load8/load64 primitives — the language has no
+    native load16/load32) and matching `store16` (0x46) /
+    `store32` (0x47) for symmetry.
+  - `parse_fn.cyr:371` — struct return by value: refactored
+    to call new per-backend `ESTRUCT_BYVAL_COPY(S, src_disp,
+    stash_disp, aligned)` helper. cx version emits a
+    cxvm-friendly explicit byte-loop (load8/store8 + add
+    +1/+1/-1 + jnz back-jump — cxvm has no rep/post-incr
+    semantics). aarch64 version moved out of the inline
+    LDRB/STRB-with-post-increment block. x86 version moved
+    out of the inline `rep movsb` block.
+  - `src/backend/cx/emit.cyr` ESTORESTACKPARM (line 385)
+    real impl: cxvm has 32 registers so 7+-arg fn calls just
+    pop into r3..r9+ via the existing `ECALLPOPS` loop;
+    `ESTORESTACKPARM` mirrors `ESTOREPARM`'s r-to-frame
+    body shape using the call-site `disp` directly.
+  - `src/backend/cx/emit.cyr` real `EFLADDR` + new
+    `EFLADDR_X1` + new `ESTOREREGPARM` impls: required by
+    the asv (assignment-from-struct-value) caller-side
+    chain — caller pushes `&retbuf` as first arg, callee
+    prologue stashes `r3` into the reserved local-frame
+    stash slot. Pre-v5.9.40 these were stubs and the
+    parse_fn.cyr stash-emit path SIGILL'd at compile-time
+    on any `fn f(): S` declaration on cx.
+  - `parse_fn.cyr:923` comment refresh: the "cx bytecode
+    rejects struct-return at PARSE_RETURN earlier so doesn't
+    reach here" comment retired; cx now reaches the stash
+    block and follows the x86-shape pidx=0 dispatch with the
+    real `ESTOREREGPARM` impl.
+  - cx-side undefined-fn-warning cleanup: stub `EADRP` /
+    `EADD_IMM12` (carry-over from v5.9.39 Mach-O fix), plus
+    `EFLADDR` / `EMULH` / `_read_env` (pre-existing aarch64-
+    only fns referenced from shared frontend dead branches).
+    Folded in here per "don't lazy-defer related fixes"
+    rather than spinning a separate slot.
 
-  Out of scope (intentionally held): the 4 silent no-op cx
+  **Acceptance bar met**: `_cx_phase2c_gate` (the new
+  programs/check.cyr gate) round-trips three fixtures through
+  cc5_cx → cxvm:
+  - struct-by-value return: `var p: S = mkp(); syscall(60, p.x)`
+    where mkp builds and returns a `Point`-shape struct →
+    cxvm exit=42.
+  - sub-byte field load: i8 + i16 + i32 + i64 fields summed
+    via dot-syntax → cxvm exit=42.
+  - 7-arg fn call: `add7(1,2,3,4,5,6,21)` → cxvm exit=42
+    (exercises ECALLPOPS r3..r9 + ESTOREPARM with pidx=6).
+  All three fail-mode discriminators captured in the gate's
+  case-FAIL messages. Single combined gate (vs the originally-
+  pinned three separate gates) per "lazy deferment is the
+  antipattern" — three sub-checks share build/teardown so
+  splitting into three top-level gates would have triple-counted
+  cc5_cx + cxvm rebuild cost without adding signal.
+
+  **cc5 unchanged**: 9d8a3e23 (self-host byte-identical).
+  cc5_aarch64: 346cf49e (-1848 B from extracting helpers).
+  api-surface: unchanged. cyrius test 132/132. check.sh: 66
+  (was 65; +1 cx Phase 2c gate).
+
+  **Out of scope (intentionally held)**: the 4 silent no-op cx
   guards in `parse_expr.cyr` (line 349 `&fn_name`, 399
   `&local`, 871 closure fn-addr, 929 f64 cmp). Those existed
   pre-v5.9.x without consumer pressure and don't share the
-  byte-memory-ops shape this slot is centered on. Pin them
+  byte-memory-ops shape this slot was centered on. Pin them
   individually if a cx consumer surfaces.
 
 - **v5.9.38** ✅ — **Mach-O `#derive(Serialize)` SIGSEGV: probe

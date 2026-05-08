@@ -2495,6 +2495,119 @@ fn _cx_syscall_literal_gate() {
     return fail;
 }
 
+# v5.9.40 Phase 2c gates — three end-to-end fixtures exercising
+# the three cx-pending sites that v5.9.40 closes:
+#   _cx_struct_byval_gate       — `fn mkp(): S { ... return p; }`
+#                                  + `var p: S = mkp(); p.x` round-trip
+#                                  through the cxvm interpreter. Was the
+#                                  parse_fn.cyr:371 `cx pending Phase 2c`
+#                                  ERR_MSG site.
+#   _cx_sub_byte_field_load_gate — i8/i16/i32/i64 mixed struct fields,
+#                                  read each via dot-syntax, sum to known
+#                                  exit code. Closes parse_decl.cyr:252.
+#   _cx_seven_args_gate          — 7-param fn `add7` returning sum;
+#                                  caller passes 7 literal args.
+#                                  Validates cx ECALLPOPS popping into
+#                                  r3..r9 and ESTOREPARM storing param 7
+#                                  via the same r-to-frame shape.
+#
+# All three follow the `_cx_syscall_literal_gate` pattern: build cc5_cx
+# + cxvm via cc5, write fixture src to a tmp path, pipe through cc5_cx,
+# pipe the resulting .cyx through cxvm, exit code is the test signal
+# (42 for byval/sub-byte; 28 for 7-args = 1+2+3+4+5+6+7).
+#
+# Shared helper `_cx_run_fixture` factors out the build/pipe/run shape
+# so each gate body is just write-fixture → run → exit-check.
+fn _cx_run_fixture(cc_cx, cxvm, src_text, src_tag, bc_tag) {
+    var src = _tmp_path(src_tag);
+    _write_file(src, src_text);
+    var bc = _tmp_path(bc_tag);
+    _pipe_file_to_bin_capture(cc_cx, src, bc);
+    sys_unlink(src);
+    var ec = _pipe_file_to_bin(cxvm, bc);
+    sys_unlink(bc);
+    return ec;
+}
+
+fn _cx_phase2c_gate() {
+    var label = "cx Phase 2c parity: struct-byval / sub-byte field load / 7-args (pin v5.9.40)";
+    var cc_cx = _tmp_path("audit_cx2c_cc_");
+    var cxvm  = _tmp_path("audit_cx2c_vm_");
+    var rc1 = _self_host_pipe(_root_path("src/main_cx.cyr"), CC_PATH, cc_cx);
+    var rc2 = _self_host_pipe(_root_path("programs/cxvm.cyr"), CC_PATH, cxvm);
+    if (WIFEXITED(rc1) != 1) { rc1 = 0 - 1; } else { rc1 = WEXITSTATUS(rc1); }
+    if (WIFEXITED(rc2) != 1) { rc2 = 0 - 1; } else { rc2 = WEXITSTATUS(rc2); }
+    if (rc1 != 0 || rc2 != 0) {
+        sys_unlink(cc_cx); sys_unlink(cxvm);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cc5_cx / cxvm build failed");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(cc_cx, 493);
+    sys_chmod(cxvm,  493);
+
+    var fail = 0;
+
+    # --- Sub-check 1: struct-by-value return ---
+    var byval_src = "struct S { x: i64; }\nfn mkp(): S {\n    var p: S;\n    p.x = 42;\n    return p;\n}\nfn main() {\n    var p: S = mkp();\n    syscall(60, p.x);\n}\nmain();\n";
+    var byval_ec = _cx_run_fixture(cc_cx, cxvm, byval_src, "audit_cx2c_byval_src_", "audit_cx2c_byval_bc_");
+    if (byval_ec != 42) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": struct-byval cxvm exit=");
+        print_num(byval_ec);
+        println(" (expected 42 — `var p: S = mkp(); p.x` round-trip)");
+        fail = fail + 1;
+    }
+
+    # --- Sub-check 2: sub-byte struct field load ---
+    var sb_src = "struct Sizes { a: i8; b: i16; c: i32; d: i64; }\nfn main() {\n    var s: Sizes;\n    s.a = 7;\n    s.b = 13;\n    s.c = 1;\n    s.d = 21;\n    var sum = s.a + s.b + s.c + s.d;\n    syscall(60, sum);\n}\nmain();\n";
+    var sb_ec = _cx_run_fixture(cc_cx, cxvm, sb_src, "audit_cx2c_subbyte_src_", "audit_cx2c_subbyte_bc_");
+    if (sb_ec != 42) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": sub-byte field load cxvm exit=");
+        print_num(sb_ec);
+        println(" (expected 42 = 7+13+1+21 across i8/i16/i32/i64 fields)");
+        fail = fail + 1;
+    }
+
+    # --- Sub-check 3: 7-arg fn call ---
+    var sa_src = "fn add7(a, b, c, d, e, f, g) { return a + b + c + d + e + f + g; }\nfn main() {\n    var s = add7(1, 2, 3, 4, 5, 6, 21);\n    syscall(60, s);\n}\nmain();\n";
+    var sa_ec = _cx_run_fixture(cc_cx, cxvm, sa_src, "audit_cx2c_7args_src_", "audit_cx2c_7args_bc_");
+    if (sa_ec != 42) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": 7-args cxvm exit=");
+        print_num(sa_ec);
+        println(" (expected 42 = 1+2+3+4+5+6+21 — exercises ECALLPOPS r3..r9)");
+        fail = fail + 1;
+    }
+
+    sys_unlink(cc_cx);
+    sys_unlink(cxvm);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cx Phase 2c parity (3/3 sub-checks)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Bespoke gate: cc5_cx output is well-formed CYX bytecode with
 # no x86 instruction-byte pollution (v5.7.12 path B). Builds
 # cc5_cx + cxvm via cc5; pipes empty input to cc5_cx and checks
@@ -8008,6 +8121,10 @@ fn _run_regression_gates() {
 
     _section("cx syscall literal propagation");
     _cx_syscall_literal_gate();
+    println("");
+
+    _section("cx Phase 2c parity");
+    _cx_phase2c_gate();
     println("");
 
     _section("TS asserts predicate signatures");

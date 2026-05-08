@@ -6,6 +6,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.40] — 2026-05-08
+
+**v5.9.x SLOT 40 — cx (cyrius-x bytecode) Phase 2c parity**.
+Closes the three Phase 2c sites that v5.9.26 + v5.9.27 narrowed
+but didn't fix. End-to-end: a cyrius source exercising struct-
+by-value return, sub-8-byte struct field loads, and 7+-arg fn
+calls now round-trips cleanly through cc5_cx → .cyx bytecode →
+cxvm interpreter.
+
+cc5: 9d8a3e23 (self-host byte-identical). cc5_aarch64: 346cf49e
+(-1848 B from helper extraction). api-surface: unchanged.
+cyrius test: 132 unchanged. check.sh: 66 (was 65; +1 cx Phase 2c
+gate).
+
+### What landed
+
+**Sub-8-byte struct field load** (`parse_decl.cyr:252`).
+Refactored to call new per-backend `EFIELD_LOAD_W(S, width)`
+helper. cx version emits new cxvm `load16` (0x44) / `load32`
+(0x45) opcodes; aarch64 + x86 versions extracted from inline
+emit blocks. cxvm interpreter gained `load16` / `load32` /
+`store16` (0x46) / `store32` (0x47) — composed from cyrius's
+native load8/load64 primitives since the language has no native
+sub-8/sub-64 multi-byte ops.
+
+**Struct return by value** (`parse_fn.cyr:371`). Refactored to
+call new per-backend `ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp,
+aligned)` helper. cx emits an explicit byte-loop (load8/store8
++ add/sub + jnz — cxvm has no `rep movsb` / post-increment
+semantics). aarch64 + x86 versions extracted from inline LDRB/
+STRB-loop and `rep movsb` blocks. Single call site in
+parse_fn.cyr replaces the three inline backend-specific blocks.
+
+**ESTORESTACKPARM** (`src/backend/cx/emit.cyr:385`). Real impl:
+cxvm has 32 registers so 7+-arg fn calls just pop into r3..r9+
+via the existing `ECALLPOPS` loop; ESTORESTACKPARM mirrors
+ESTOREPARM's r-to-frame body shape using the call-site `disp`.
+
+**Cx ABI completion**. The above three required these cx-side
+additions to make the Phase 2c chain compile + run:
+- Real `EFLADDR(S, lli)` / new `EFLADDR_X1(S, lli)`: addr in
+  r0 / r1 respectively. Pre-v5.9.40 EFLADDR was a stub and
+  EFLADDR_X1 didn't exist; cc5_cx SIGILL'd at compile-time on
+  any sub-byte struct field store.
+- New `ESTOREREGPARM(S, pidx, disp)`: stash r(3+pidx) to local
+  frame at fp+disp. Required by parse_fn.cyr:930's struct-
+  return prologue stash path (pidx=0 for x86-shape; cx mirrors
+  via the same r3 = first-arg = retptr convention).
+
+**parse_fn.cyr:923 comment refresh**: the "cx bytecode rejects
+struct-return at PARSE_RETURN earlier so doesn't reach here"
+comment retired. cx now reaches the stash block.
+
+**Cx undefined-fn-warning cleanup**: stub `EADRP` / `EADD_IMM12`
+(v5.9.39 Mach-O carry-over) + `EFLADDR` (now real, was stub
+returning 0) + `EMULH` / `_read_env` (pre-existing aarch64-only
+references from shared frontend dead branches). Folded in here
+per "don't lazy-defer related fixes" rather than spinning a
+separate slot.
+
+### `_cx_phase2c_gate` (new)
+
+Single combined gate in `programs/check.cyr` after
+`_cx_syscall_literal_gate`. Three sub-checks share cc5_cx +
+cxvm build/teardown:
+- struct-byval: `var p: S = mkp(); syscall(60, p.x)` → exit=42
+- sub-byte field load: i8/i16/i32/i64 fields summed via
+  dot-syntax → exit=42
+- 7-args: `add7(1,2,3,4,5,6,21)` → exit=42 (exercises
+  `ECALLPOPS` r3..r9 + `ESTOREPARM` pidx=6)
+
+Combined-gate framing (vs the originally-pinned three separate
+gates) per "lazy deferment is the antipattern" — three top-
+level gates would have triple-counted cc5_cx + cxvm rebuild
+cost without adding signal.
+
+### Verified
+
+- 66/66 check.sh (was 65; +1 cx Phase 2c gate).
+- 132/132 cyrius test; 14/14 .tcyr.
+- cc5 + cc5_aarch64 byte-identical self-host.
+- Manual round-trip on all three fixtures: `cc_cx < src.cyr |
+  cxvm` exits 42.
+
+### Out of scope (intentionally held)
+
+The 4 silent no-op cx guards in `parse_expr.cyr` (line 349
+`&fn_name`, 399 `&local`, 871 closure fn-addr, 929 f64 cmp).
+Those existed pre-v5.9.x without consumer pressure and don't
+share the byte-memory-ops shape this slot was centered on. Pin
+them individually if a cx consumer surfaces.
+
+### Cascaded to v5.9.41+
+
+- v5.9.41 — tls-live + network-probe helper (closes
+  .sh-conversion arc).
+- v5.9.42 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.43 — closeout pass before v5.10.0.
+
 ## [5.9.39] — 2026-05-08
 
 **v5.9.x SLOT 39 — Mach-O ARM64 fn-pointer ASLR fix (Bug B

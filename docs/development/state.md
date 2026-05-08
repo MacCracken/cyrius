@@ -5,6 +5,61 @@
 
 ## Version
 
+**5.9.40** (in-flight 2026-05-08 — **v5.9.x SLOT 40 —
+cx (cyrius-x bytecode) Phase 2c parity**). Closes the three
+Phase 2c sites that v5.9.26 + v5.9.27 narrowed but didn't fix.
+End-to-end: a cyrius source exercising struct-by-value return,
+sub-8-byte struct field loads, and 7+-arg fn calls now round-
+trips cleanly through cc5_cx → .cyx bytecode → cxvm interpreter.
+
+**Three deliverables** (per the v5.9.40 pin):
+
+- **Sub-8-byte struct field load** (`parse_decl.cyr:252`) —
+  refactored to per-backend `EFIELD_LOAD_W(S, width)` helper.
+  cx emits new cxvm `load16` (0x44) / `load32` (0x45) opcodes;
+  aarch64 + x86 versions extracted from inline emit blocks.
+- **Struct return by value** (`parse_fn.cyr:371`) — refactored
+  to per-backend `ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp,
+  aligned)` helper. cx emits explicit byte-loop (load8/store8 +
+  add/sub + jnz); aarch64 + x86 versions extracted.
+- **ESTORESTACKPARM** (`src/backend/cx/emit.cyr:385`) — real
+  impl mirroring ESTOREPARM's r-to-frame shape; cxvm's 32 regs
+  let 7+-arg fn calls just pop into r3..r9+.
+
+**Cx ABI completion** required to make the chain compile + run:
+- Real `EFLADDR` + new `EFLADDR_X1` (was stub returning 0;
+  cc5_cx SIGILL'd at compile-time on sub-byte struct field
+  stores until this slot)
+- New `ESTOREREGPARM` (real impl; pidx=0 stashes r3 = retptr)
+- cxvm interpreter: load16/load32/store16/store32 opcodes
+  composed from cyrius's load8/load64 primitives (the language
+  has no native sub-8/sub-64 multi-byte load primitives)
+
+**Cx undefined-fn-warning cleanup**: stub `EADRP`/`EADD_IMM12`
+(v5.9.39 Mach-O carry-over), `EMULH`, `_read_env`. Folded into
+this slot per "don't lazy-defer related fixes" feedback.
+
+**`_cx_phase2c_gate`** (new) in `programs/check.cyr`: single
+combined gate with 3 sub-checks (byval / sub-byte / 7-args)
+sharing cc5_cx + cxvm build/teardown. All three exit=42 from
+cxvm.
+
+cc5: 9d8a3e23 byte-identical self-host. cc5_aarch64: 346cf49e
+(-1848 B from helper extraction; helpers consolidate the three
+backend versions of byte-copy + width-aware field load). 66/66
+check.sh (was 65; +1 cx Phase 2c gate). 132/132 `cyrius test`.
+14/14 .tcyr.
+
+**Out of scope (intentionally held)**: the 4 silent no-op cx
+guards in `parse_expr.cyr` (line 349 `&fn_name`, 399 `&local`,
+871 closure fn-addr, 929 f64 cmp). Pre-v5.9.x without consumer
+pressure; don't share the byte-memory-ops shape. Pin
+individually if a cx consumer surfaces.
+
+**Next**: v5.9.41 — tls-live + network-probe helper (closes
+.sh-conversion arc). v5.9.42 — `lib/regression.cyr` testing-
+stdlib carve-out. v5.9.43 — closeout pass before v5.10.0.
+
 **5.9.39** (shipped 2026-05-08 — **v5.9.x SLOT 39 —
 Mach-O ARM64 fn-pointer ASLR fix (Bug B from v5.9.38) +
 `_macho_derive_serialize_gate`**). Closes the Mach-O

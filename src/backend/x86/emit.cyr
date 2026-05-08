@@ -398,6 +398,58 @@ fn EFLSTORE_W(S, idx, width) {
     return 0;
 }
 
+# v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).
+# Field-base ptr is in rcx (already advanced to the field start
+# by callers). Emits movzx rax/movzx eax/mov eax/mov rax by
+# width. Pulled out of an inline emit block in parse_decl.cyr
+# so the aarch64 + cx backends can sit alongside as peers.
+fn EFIELD_LOAD_W(S, width) {
+    if (width == 1 || width == 2 || width == 4) { _IR_REC0(S, IR_RAW_EMIT); }
+    if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); return 0; }   # movzx rax, byte [rcx]
+    if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); return 0; }                # movzx eax, word [rcx]
+    if (width == 4) { EB(S, 0x8B); EB(S, 0x01); return 0; }                              # mov eax, [rcx]
+    ELODC(S);
+    return 0;
+}
+
+# v5.9.40 — struct-by-value return x86 `rep movsb` block
+# (parse_fn.cyr:415). Pulled out of an inline emit block so the
+# aarch64 + cx backends fire from the same parse call site.
+# Caller-saves rsi/rdi (Win64 strict-compliance — both are
+# nonvolatile there; SysV is fine without but we save uniformly
+# for emit symmetry).
+fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0x56);                                    # push rsi
+    EB(S, 0x57);                                    # push rdi
+    # lea rsi, [rbp + src_disp]
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0xB5);
+    var a1 = S + 0x64A000 + GCP(S);
+    S64(a1, (L64(a1) >> 32 << 32) | (src_disp & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # mov rdi, [rbp + stash_disp]
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0xBD);
+    var a2 = S + 0x64A000 + GCP(S);
+    S64(a2, (L64(a2) >> 32 << 32) | (stash_disp & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # mov ecx, imm32   (zero-extends to rcx)
+    EB(S, 0xB9);
+    EB(S, aligned & 0xFF);
+    EB(S, (aligned >> 8) & 0xFF);
+    EB(S, (aligned >> 16) & 0xFF);
+    EB(S, (aligned >> 24) & 0xFF);
+    # rep movsb
+    EB(S, 0xF3); EB(S, 0xA4);
+    EB(S, 0x5F);                                    # pop rdi
+    EB(S, 0x5E);                                    # pop rsi
+    # mov rax, [rbp + stash_disp]   (rep movsb advanced rdi)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x85);
+    var a3 = S + 0x64A000 + GCP(S);
+    S64(a3, (L64(a3) >> 32 << 32) | (stash_disp & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
 # emit var addr: rax = &var (object mode: LEA rax,[rip+disp32], else: MOV rax,imm64)
 fn EVADDR(S, idx) {
     if (_IR_REC1(S, IR_LOAD_ADDR_G, idx) == 1) { return 0; }
