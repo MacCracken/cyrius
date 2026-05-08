@@ -319,18 +319,30 @@ but-unrushed.
 ### v5.10.x — Pinned next (priority: bottom-to-top, agnosys first)
 
 **Priority pivot at v5.10.1 entry (2026-05-08, user direction)**:
-v5.10.x is now ordered bottom-to-top. agnosys (kernel/baseOS) is
-bottom-of-stack — every downstream baseOS item depends on it. So
-the type-system arc that closes the agnosys 1.1.12 cascade gets
-v5.10.1-.4 with no compile-time-warmup detour. SIMD math (hisab,
-Wave-4) lands typed at v5.10.5 after the type system enables
-typed SIMD primitives. Compile-time speedups (lex dedup, fixup
-phase) come last because they don't unblock any baseOS item.
+v5.10.x is now ordered bottom-to-top.
+
+1. **agnosys (kernel/baseOS)** — bottom-of-stack — every
+   downstream baseOS item depends on it. Type-system arc
+   closes the agnosys 1.1.12 cascade across v5.10.1-.4.
+2. **stdlib runtime services (TLS / net)** — second priority
+   per the bottom-to-top stack — sandhi 1.3.x's TLS arc
+   needs `lib/net.cyr` `net_connect_nb` primitive +
+   `lib/tls.cyr` native-transport prep audit. v5.10.5-.6.
+3. **specialized libraries (hisab math)** — third priority —
+   typed SIMD math expansion now that overload dispatch
+   from v5.10.2 enables typed `f64v4` primitives. v5.10.7.
+4. **compile-time speedups + surface review** — last, since
+   they don't unblock any baseOS or runtime-service item.
+   v5.10.8+.
 
 Reference: memory pin
 `feedback_priority_bottom_to_top.md` — *"fixing hisab now doesn't
 help getting a new boot kernel setup... which will always be
-prioritize right.... bottom to top."*
+prioritize right.... bottom to top."* sandhi cross-ref:
+sandhi 1.3.x TLS arc roadmap explicitly pins items #2's two
+slots (net_connect_nb factoring + tls.cyr audit) as
+"cyrius-side ask" / "Not sandhi's slot" per ADR 0001 (sandhi
+composes, doesn't reimplement).
 
 #### v5.10.1-.4 — REAL TYPE SYSTEM ARC (agnosys-driven)
 
@@ -463,7 +475,88 @@ overload dispatch.
   the cascade started at v5.9.33 — 8 slots after the first
   fix attempt.
 
-#### v5.10.5 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.5 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+
+**Driver**: sandhi 1.3.x roadmap explicitly asks for this as
+a stdlib factoring — the non-blocking-connect + poll(POLLOUT)
++ SO_ERROR-readback shape currently duplicated in two places:
+- sandhi's `_sandhi_conn_connect_nb` in `src/http/conn.cyr`
+- cyrius's `regression_network_probe` in `lib/regression.cyr`
+  (shipped v5.9.42)
+
+Both implementations share the exact same syscall sequence
+(socket / fcntl O_NONBLOCK / connect / poll / getsockopt
+SO_ERROR). Factoring up into stdlib gives sandhi the primitive
+its 1.3.x TLS arc needs to compose on, and lets cyrius's own
+`regression_network_probe` switch from raw syscalls to the
+stdlib primitive.
+
+**Scope**:
+- New `fn net_connect_nb(fd, addr, port, timeout_ms)` in
+  `lib/net.cyr`. Returns 0 on connected, `_NET_CONN_NB_TIMEOUT`
+  (-2) on poll timeout, `_NET_CONN_NB_ERR` (-1) on
+  fcntl/connect/SO_ERROR failure. Restores blocking mode on
+  every exit path so subsequent recv/send behave normally.
+- Update `lib/regression.cyr`'s `regression_network_probe`
+  to compose-use the new primitive (delete duplicate
+  syscall machinery).
+- Sandhi files its own 1.3.x patch to switch
+  `_sandhi_conn_connect_nb` to the new primitive — that's
+  sandhi's slot, not cyrius's. cyrius ships the primitive;
+  sandhi adopts on its cycle.
+
+**Acceptance**:
+- New primitive in `lib/net.cyr`; api-surface +1.
+- `regression_network_probe` regression: cyrius's TLS-live
+  gate still PASS on dev box (verifies the primitive's
+  semantics match the inlined version).
+- cc5 byte-identical self-host.
+- Cross-arch: works on Linux x86 + Linux aarch64 (the
+  syscall numbers in lib/syscalls_*.cyr already cover poll
+  / fcntl / getsockopt across both); Mach-O ARM uses BSD
+  syscall numbers (already wired up).
+
+#### v5.10.6 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+
+**Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
+ask under "Not sandhi's slot" — auditing the hook surface
+(`tls_connect`, `tls_connect_with_ctx_hook`, ALPN / SNI / SPKI
+extraction) for fdlopen-leaning assumptions ahead of any
+future native-TLS transition. Per sandhi's ADR 0001 (sandhi
+composes, doesn't reimplement), the hook surface is owned by
+stdlib `lib/tls.cyr`; sandhi keeps calling the contract;
+cyrius is responsible for keeping it byte-identical across
+any transport swap.
+
+**Scope** (audit-only, not a swap):
+- Walk `lib/tls.cyr`'s public surface: every `tls_*` verb,
+  the `tls_connect_with_ctx_hook` callback shape, the SPKI
+  extraction path, ALPN / SNI parameters.
+- Identify each spot where the implementation leans on
+  fdlopen-loaded libssl symbol names, struct layouts, or
+  ABI specifics that wouldn't survive a swap to a native
+  cyrius TLS impl.
+- Document each finding inline (`# v5.10.6 audit:
+  fdlopen-bound — see ADR 000X if/when native-TLS lands`)
+  + collect into `docs/audit/2026-MM-DD-tls-native-transport-prep.md`.
+- No code changes unless the audit surfaces a hook-surface
+  abstraction leak that should be fixed even before any
+  swap (e.g., a callback signature that exposes libssl
+  internals).
+
+**Acceptance**:
+- Audit document at `docs/audit/`.
+- Inline annotations in `lib/tls.cyr`.
+- Hook surface remains byte-identical (no caller-visible
+  change).
+- cc5 byte-identical self-host.
+
+**Native-TLS swap itself is NOT in v5.10.x**. It's a separate,
+much-bigger undertaking (multi-slot or multi-minor) that
+needs its own design pass before pinning. v5.10.6 just
+documents the surface so a future swap is guided.
+
+#### v5.10.7 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -503,7 +596,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.6+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.8+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:
