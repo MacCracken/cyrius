@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.10.1** (in-flight 2026-05-08 — **v5.10.x SLOT 1 —
+**5.10.1** (shipped 2026-05-08 — **v5.10.x SLOT 1 —
 Type system pass 1: call-site type-check infrastructure
 (synthetic fixture; CYRIUS_TYPE_CHECK opt-in)**). First
 slot of the agnosys-driven type-system arc per the
