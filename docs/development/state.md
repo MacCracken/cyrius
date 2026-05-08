@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.9.37** (in-flight 2026-05-08 — **v5.9.x SLOT 37 —
+**5.9.37** (shipped 2026-05-08 — **v5.9.x SLOT 37 —
 agnosys 1.1.12 verbatim repro: parse + build path closed**).
 Slot pivoted from cx Phase 2c (cascaded to v5.9.39) after user
 audit at v5.9.36 ship caught false-advertising — v5.9.34/35/36
