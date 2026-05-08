@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.9.40** (in-flight 2026-05-08 — **v5.9.x SLOT 40 —
+**5.9.40** (shipped 2026-05-08 — **v5.9.x SLOT 40 —
 cx (cyrius-x bytecode) Phase 2c parity**). Closes the three
 Phase 2c sites that v5.9.26 + v5.9.27 narrowed but didn't fix.
 End-to-end: a cyrius source exercising struct-by-value return,
