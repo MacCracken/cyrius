@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.9.38** (in-flight 2026-05-08 — **v5.9.x SLOT 38 —
+**5.9.38** (shipped 2026-05-08 — **v5.9.x SLOT 38 —
 Mach-O `#derive(Serialize)` SIGSEGV: probe + Bug A fixed,
 Bug B split to v5.9.39**). Promoted out of held / "wait for
 consumer" status (held since v5.9.34 across 3 slots).
