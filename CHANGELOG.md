@@ -6,6 +6,115 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.1] — 2026-05-08
+
+**v5.10.x SLOT 1 — Type system pass 1: call-site type-check
+infrastructure (synthetic fixture; CYRIUS_TYPE_CHECK opt-in)**.
+First slot of the agnosys-driven type-system arc. Adds the
+PARSE_FNCALL machinery that compares each IDENT-arg's
+SLTYPE/GVTYPE against the callee's `str_mask` to flag
+Str-typed locals being passed to cstring-typed (non-`: Str`)
+params — the consumer-pain shape the agnosys 1.1.12 cascade
+ends at. Default-off until v5.10.2 stdlib annotation pass
+removes legitimate-call false positives.
+
+cc5: c7a3ad41 → 0ac7b70c (+1808 B from `_STR_SID` lookup +
+`_TYPE_CHECK_ENABLED` env gate + the call-site check inside
+PARSE_FNCALL). Self-host byte-identical. api-surface:
+unchanged. cyrius test: 132/132. check.sh: 66/66. .tcyr: 14/14.
+
+### What landed
+
+- **`_STR_SID(S)` lazy-cached lookup** in `src/frontend/parse_fn.cyr`.
+  Mirrors the `_STR_FROM_NOFF` shape from parse_expr.cyr —
+  scans tok_names for "Str\\0", resolves to a struct id via
+  FINDSTRUCT. Returns 0 if Str isn't defined in this program
+  (graceful — type checks just don't fire). Cached per-compile.
+- **`_TYPE_CHECK_ENABLED()` env gate**. Reads
+  `CYRIUS_TYPE_CHECK=1` once at first call (cached for the
+  rest of the parse). Default off — v5.10.1 ships the
+  infrastructure without flooding stderr on the existing
+  source corpus.
+- **Call-site check at PARSE_FNCALL** (line ~528). For each
+  IDENT-arg: lookup local via FINDLOCAL (then GLTYPE) or
+  global via FINDVAR (then GVTYPE). If type encoding equals
+  `0 - STR_SID` (Str-typed local/global) AND the param's
+  `str_mask` bit at this position is NOT set (cstring
+  expected), emit warning at the call-site line.
+- **Param-binding SLTYPE clear** at parse_fn.cyr:1063. The
+  LTYPE table at S+0x192200 isn't cleared per-fn (only FLC
+  resets), so a fresh param slot inherits stale `0 - sid`
+  values from prior fns. Pre-v5.10.1 this was latent; v5.10.1
+  surfaced it (untyped `alloc` param of `str_cat_a` falsely
+  flagged Str-typed because previous fn left SLTYPE = -STR_SID
+  in slot 0). Fix: `SLTYPE(S, li, 0)` on every param bind
+  before optionally setting `0 - pt_sid`.
+
+### Synthetic fixture
+
+`tests/fixtures/type_check/str_to_cstr.cyr` — Str-typed local
+passed to a cstring-typed fn. Manual verify:
+
+```
+CYRIUS_TYPE_CHECK=1 cat tests/fixtures/type_check/str_to_cstr.cyr \
+  | build/cc5 > /dev/null 2>&1 \
+  | grep "passing Str-typed 's' to 'takes_cstring'"
+```
+
+Expected:
+```
+warning:<source>:10: passing Str-typed 's' to 'takes_cstring'
+    which expects a cstring (use str_data(s) or annotate
+    the param `: Str`)
+```
+
+Formal `programs/check.cyr` gate **deferred to v5.10.2**
+when stdlib annotation pass cleans up legitimate-call false
+positives (currently `str_len(s)` etc. take Str without
+`: Str` param annotation — would flood stderr if warnings
+were default-on).
+
+### NOT in this slot (deferred with explicit roadmap pinnage)
+
+Per the `feedback_deferral_requires_roadmap_pinnage` memory
+pin — every deferred bar is explicitly pinned at its
+target slot:
+
+- **Stdlib `: Str` return annotations + calling-convention
+  special-case for ≤16-byte struct returns** → v5.10.2
+  (bundled with overload dispatch since paired work).
+- **Overload dispatch** (`println_cstr` / `println_str` /
+  `println_int` PP-mangled names; FINDFN multi-impl
+  routing) → v5.10.2.
+- **Type inference through `var x = f(...)`** (closes the
+  agnosys repro shape where `out` inherits Str from
+  `str_builder_build`'s return) → v5.10.3.
+- **Diagnostic hint catalog + agnosys verbatim repro CLOSE**
+  (hash `6425355b6147d5a674078794310ae2c1` runs end-to-end
+  correctly; closes the v5.9.33 cascade) → v5.10.4.
+- **Default-on type checks + formal check.cyr gate** —
+  v5.10.2 (when stdlib annotations remove the false positives).
+
+### Verified
+
+- 66/66 check.sh; 132/132 cyrius test; 14/14 .tcyr.
+- cc5 byte-identical self-host (`0ac7b70c`).
+- Default-off (no env): zero warnings on the cc5 self-compile
+  + 66-gate audit corpus.
+- Opt-in (`CYRIUS_TYPE_CHECK=1`): synthetic fixture fires
+  warning at user-source line 10 (correct line + correct
+  message text + names both arg and callee).
+
+### Cascaded to v5.10.2+
+
+- v5.10.2 — Stdlib annotation pass + overload dispatch +
+  ≤16-byte calling-convention special-case (paired work).
+- v5.10.3 — Type inference through `var x = f(...)`.
+- v5.10.4 — Diagnostics + agnosys verbatim repro CLOSE.
+- v5.10.5 — SIMD math expansion (typed; hisab gap close).
+- v5.10.6+ — Compile-time wins (lex dedup, fixup phase,
+  surface review).
+
 ## [5.10.0] — 2026-05-08
 
 **v5.10.x SLOT 0 — per-phase compile-time profiling

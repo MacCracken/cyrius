@@ -415,6 +415,61 @@ fn PARSE_RETURN(S) {
     return 0;
 }
 
+# v5.10.1 — type-check infrastructure: lazy lookup for the
+# `Str` struct sid so PARSE_FNCALL can flag Str-typed args
+# being passed to cstring-typed (non-`: Str`) params. The
+# search shape mirrors `_STR_FROM_NOFF` in parse_expr.cyr —
+# scan tok_names for the cstring "Str\0" (4 bytes:
+# 0x0072_7453 little-endian), then resolve to a struct id via
+# FINDSTRUCT. Returns 0 if Str isn't defined in this program
+# (graceful — type checks just don't fire).
+var _str_sid_cache = 0 - 1;
+fn _STR_SID(S) {
+    if (_str_sid_cache >= 0) { return _str_sid_cache; }
+    if (_str_sid_cache == 0 - 2) { return 0; }
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        # "Str\0" first 4 bytes — bottom 32 bits = 0x00727453
+        if (load8(S + 0x60000 + i)     == 83) {
+            if (load8(S + 0x60000 + i + 1) == 116) {
+                if (load8(S + 0x60000 + i + 2) == 114) {
+                    if (load8(S + 0x60000 + i + 3) == 0) {
+                        var sid = FINDSTRUCT(S, i);
+                        if (sid > 0) {
+                            _str_sid_cache = sid;
+                            return sid;
+                        }
+                    }
+                }
+            }
+        }
+        # skip to next null terminator
+        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    _str_sid_cache = 0 - 2;
+    return 0;
+}
+
+# v5.10.1 — opt-in gate for the call-site type check.
+# `CYRIUS_TYPE_CHECK=1` enables warnings; default off so
+# v5.10.1 ships the infrastructure without flooding stderr
+# on the existing source corpus (where stdlib helpers like
+# `str_len(s)` take Str-typed args without `: Str` param
+# annotation — legitimate idiom that v5.10.2's stdlib
+# annotation pass cleans up). When v5.10.2 lands, this gate
+# flips to default-on (or removes entirely once the
+# false-positive-free corpus verifies).
+var _type_check_env_resolved = 0;
+var _type_check_enabled = 0;
+fn _TYPE_CHECK_ENABLED() {
+    if (_type_check_env_resolved == 1) { return _type_check_enabled; }
+    var v = _read_env("CYRIUS_TYPE_CHECK");
+    if (v != 0) { if (load8(v) == 49) { _type_check_enabled = 1; } }
+    _type_check_env_resolved = 1;
+    return _type_check_enabled;
+}
+
 # Parse fn call args and emit call (as expression)
 fn PARSE_FNCALL(S, noff) {
     STI(S, GTI(S) + 1);  # consume (
@@ -526,6 +581,47 @@ fn PARSE_FNCALL(S, noff) {
     if (PEEKT(S) != 11) {
         var argo = 1;
         while (argo == 1) {
+            # v5.10.1 — type-check pass 1: warn when a Str-typed
+            # local/global is passed to a param the callee did NOT
+            # annotate `: Str`. Catches `var s: Str = ...; foo(s);`
+            # where foo's first param is cstring — the consumer-
+            # facing pain shape that ends up in agnosys 1.1.12
+            # (which the v5.10.4 close addresses end-to-end via
+            # the type-inference work landing at v5.10.3). Only
+            # checks IDENT args (FINDLOCAL/FINDVAR lookup); complex
+            # expressions skip until v5.10.3's inference lands.
+            # Gated on `CYRIUS_TYPE_CHECK=1` env (default off);
+            # default-on flips at v5.10.2 once stdlib `: Str`
+            # annotations remove the false-positive flood from
+            # legitimate `str_len(s: Str)` idioms etc.
+            if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 2) {
+                if ((smask & (1 << argc)) == 0) {
+                    var _tc_str_sid = _STR_SID(S);
+                    if (_tc_str_sid > 0) {
+                        var _tc_arg_noff = PEEKV(S);
+                        var _tc_typ = 0;
+                        if (GINFN(S) == 1) {
+                            var _tc_lli = FINDLOCAL(S, _tc_arg_noff);
+                            if (_tc_lli >= 0) { _tc_typ = GLTYPE(S, _tc_lli); }
+                        }
+                        if (_tc_typ == 0) {
+                            var _tc_vi = FINDVAR(S, _tc_arg_noff);
+                            if (_tc_vi >= 0) { _tc_typ = GVTYPE(S, _tc_vi); }
+                        }
+                        if (_tc_typ == 0 - _tc_str_sid) {
+                            syscall(SYS_WRITE, 2, "warning:", 8);
+                            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+                            syscall(SYS_WRITE, 2, ": passing Str-typed '", 21);
+                            PRSTR(S + 0x60000 + _tc_arg_noff);
+                            syscall(SYS_WRITE, 2, "' to '", 6);
+                            PRSTR(S + 0x60000 + noff);
+                            syscall(SYS_WRITE, 2, "' which expects a cstring (use str_data(", 40);
+                            PRSTR(S + 0x60000 + _tc_arg_noff);
+                            syscall(SYS_WRITE, 2, ") or annotate the param `: Str`)\n", 33);
+                        }
+                    }
+                }
+            } }
             # Auto-coercion: if this param is : Str and the arg is a string literal,
             # emit str_from(literal) instead of the raw cstr pointer.
             if (smask & (1 << argc)) {
@@ -983,6 +1079,17 @@ fn PARSE_FN_DEF(S) {
             var li = GFLC(S);
             S64(S + 0x191000 + li * 8, pnoff);
             SLDEP(S, li, 0);
+            # v5.10.1: explicit SLTYPE clear for untyped params. The
+            # LTYPE table at S+0x192200 isn't cleared per-fn (only
+            # FLC resets), so a fresh param slot can inherit a stale
+            # `0 - sid` value from a prior fn's local in the same
+            # slot index. Surfaced when v5.10.1 added the call-site
+            # type-check: untyped `alloc` param of `str_cat_a` was
+            # falsely flagged Str-typed because the previous fn
+            # (using slot 0 for a Str-annotated local) left SLTYPE
+            # = -STR_SID. Belt-and-braces: zero first, then set to
+            # `-pt_sid` only if explicitly annotated.
+            SLTYPE(S, li, 0);
             if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
             # Only emit register params now (0-5). v5.5.36 Phase 2b:
             # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,

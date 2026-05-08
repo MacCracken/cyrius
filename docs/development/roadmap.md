@@ -316,84 +316,211 @@ but-unrushed.
   reverted. Real lex optimization needs deeper analysis (see
   v5.10.1 pin).
 
-### v5.10.x — Pinned next
+### v5.10.x — Pinned next (priority: bottom-to-top, agnosys first)
 
-- **v5.10.1 — lex dedup hot-path optimization (compile-time)**.
-  v5.10.0 profile data + intra-lex counters (added during
-  the v5.10.1 measurement pass) showed LEXID's O(N²) linear-
-  scan dedup is the dominant cost: **59,388 LEXID calls ×
-  ~677 average dedup byte-compares = 40 million byte-
-  compares** during cc5 self-compile. That maps to ~500 ms
-  of CPU on the 580 ms lex phase budget.
+**Priority pivot at v5.10.1 entry (2026-05-08, user direction)**:
+v5.10.x is now ordered bottom-to-top. agnosys (kernel/baseOS) is
+bottom-of-stack — every downstream baseOS item depends on it. So
+the type-system arc that closes the agnosys 1.1.12 cascade gets
+v5.10.1-.4 with no compile-time-warmup detour. SIMD math (hisab,
+Wave-4) lands typed at v5.10.5 after the type system enables
+typed SIMD primitives. Compile-time speedups (lex dedup, fixup
+phase) come last because they don't unblock any baseOS item.
 
-  **Candidate sub-targets** (preserve the linear-scan model
-  where possible per cyrius's "byte-at-a-time" philosophy
-  for byte-parsing workloads):
-  - **Length-buckets** (~20 LOC, ~5-10× expected on
-    dedup_cmps): bucket idents by length, only scan
-    same-length idents per dedup. Identifier lengths in
-    cyrius source are well-distributed; bucketing
-    collapses search space ~10× without leaving the
-    linear-scan paradigm. **Recommended starting point.**
-  - **Last-K cache** (~15 LOC, ~2-3×): small ring of
-    recently-seen idents; check cache first; fall back
-    to linear scan. Catches repeats (most idents are
-    repeats).
-  - **Sorted + binary search** (~30 LOC, ~10-15×):
-    maintain idents in sorted order, binary-search
-    lookup. Departs from linear-scan model.
-  - **Hand-rolled hash table in cc5** (~100 LOC, 30-40×):
-    full O(1) lookup. Biggest speedup, biggest complexity
-    addition. cc5 can't `include "lib/hashmap.cyr"`
-    (chicken-and-egg in bootstrap chain) so this is
-    bespoke compiler code; reserve for v5.10.2+ if
-    length-buckets isn't enough.
+Reference: memory pin
+`feedback_priority_bottom_to_top.md` — *"fixing hisab now doesn't
+help getting a new boot kernel setup... which will always be
+prioritize right.... bottom to top."*
 
-  Acceptance: measurable speedup vs the v5.10.0 baseline +
-  byte-identical self-host + check.sh + cyrius test green.
+#### v5.10.1-.4 — REAL TYPE SYSTEM ARC (agnosys-driven)
 
-- **v5.10.2 — SIMD math expansion (stdlib, runtime
-  optimization)**. **JUSTIFIED, not speculative**: hisab
-  documents a measured 30-700× gap vs Rust+glam in
-  `docs/benchmarks-rust-v-cyrius.md`, with "No SIMD" cited
-  as a 2-4× cost factor on vector/matrix ops. Hisab is the
-  **keystone for Wave 4 (37 dependents — impetus, kiran,
-  joshua, aethersafha, tara, badal, hisab-mimamsa,
-  brahmanda)**. Per hisab's own benchmark doc, "SIMD —
-  Cyrius 5.x roadmap; would close gap 2-4×".
+Closes the agnosys 1.1.12 cascade. The verbatim repro
+(`/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`,
+hash `6425355b6147d5a674078794310ae2c1`) ended at:
+```cyr
+var out = str_builder_build(sb);    # out: Str (16-byte struct)
+println(out);                        # treats Str as cstring → garbage
+println(strlen(out));                # treats int as cstring → SIGSEGV
+```
+Both lines are API misuse the type system would catch /
+dispatch correctly. v5.9.x had three options to fix
+(polymorphic-runtime-detection / break str_builder_build /
+partial Option-3); user rejected all three as either sloppy or
+breaking. The right fix is real types.
 
-  Compiler infrastructure already in place: f64v packed-
-  SSE2 ops have been in production since v1.9.0 (`f64v_add`
-  / `_sub` / `_mul` / `_div` / `_sqrt` / `_abs` / `_fmadd`
-  in `src/backend/x86/float.cyr`); used by `lib/linalg.cyr`
-  + `lib/matrix.cyr`. The slot expands the SIMD primitive
-  set to cover hisab's hot Vec3/Vec4/Mat4 ops (cross
-  product, normalize, slerp, mat4 inverse, ray-sphere
-  intersect — top entries in hisab's gap table).
+Cyrius today tracks type *annotations* (struct fields, var
+slots, fn params via `: Type` or `: Str`) and uses them for
+width-correct loadN/storeN + pointer-mode dot access — but the
+parser does NOT enforce types at fn call sites and there's no
+overload dispatch.
 
-  **Cross-arch budget** (real, must be planned at slot
-  entry): x86 SSE2 (production); aarch64 NEON equivalent
-  (`fadd.2d` / `fmul.2d` for f64-packed; native on Apple
-  Silicon — cyim / hisab's macOS consumers); cx scalar
-  fallback (cxvm has no SIMD primitives); future RISC-V
-  RVV. v5.10.2 ships x86 + aarch64; cx falls back to
-  scalar; RVV awaits the v5.11.x backend.
+- **v5.10.1 — Type system pass 1: call-site check on
+  EXISTING `: Str` local-typed args (synthetic fixture)**.
+  Adds the call-site type-check machinery using the
+  v5.8.17 §9 `: Str` annotation infrastructure that already
+  exists for both parameters AND `var x: Str = ...`-style
+  locals. No stdlib calling-convention changes; no new
+  type-tag mechanism — leverage what's already there.
 
-  Acceptance: hisab's `bench-history.csv` shows measurable
-  improvement on at least one Wave-4-consumed op (cross /
-  normalize / mat4_mul / mat4_inverse), targeted at closing
-  the 2-4× gap hisab's doc names. Cross-host gate verifies
-  parity on aarch64 (pi or cass). cc5 byte-identical
-  self-host (compiler change is additive — new SIMD
-  primitives don't change existing emit paths).
+  **Scope** (Path 1 per the scope-check at slot entry):
+  - **Call-site check at PARSE_FNCALL** (`src/frontend/
+    parse_fn.cyr` line ~525): when arg is an IDENT and
+    resolves to a local-var via FINDLOCAL with SLTYPE
+    indicating Str (`-STR_SID`) — OR a global-var via
+    FINDVAR with GVTYPE indicating Str — AND the param's
+    `str_mask` bit (1 << argc) is NOT set (cstring
+    expected), emit a WARNING (not hard error — keeps
+    cycle moving while v5.10.2 overload dispatch lands).
+  - **No stdlib annotation pass this slot** — that's
+    bundled with v5.10.2 overload dispatch (where
+    annotating `str_builder_build` etc. with `: Str`
+    return type pairs naturally with adding `println_str`
+    overloads).
+  - **No calling-convention changes** — Str-returning
+    fns continue using their current scalar-pointer
+    return; the parser doesn't need to special-case
+    ≤16-byte struct returns until v5.10.2 actually adds
+    return annotations.
 
-- **v5.10.3 — fixup phase optimization (compile-time)**.
-  v5.10.0 profile data shows fixup at 210 ms (21%). Second-
-  largest target after lex. `src/backend/x86/fixup.cyr` +
-  `src/backend/aarch64/fixup.cyr` walk a 1M-cap fixup
-  table linearly. Hot loop is per-fixup-type dispatch +
-  address compute. Same methodology as v5.10.1: profile
-  sub-phase, target hot path, ship single measurable fix.
+  **Acceptance**:
+  - Synthetic fixture `tests/tcyr/type_check_str_to_cstr.tcyr`:
+    `var s: Str = str_from("hello"); takes_cstring(s);`
+    where `takes_cstring` is a fn whose first param is
+    NOT `: Str`-annotated — cc5 emits warning at the
+    `takes_cstring(s)` line.
+  - cc5 byte-identical self-host.
+  - cyrius test + check.sh green (no false-positive
+    warnings on the existing source corpus — verified
+    by the 132/132 .tcyr suite + 66/66 check.sh).
+
+  **NOT in this slot** (deferred to v5.10.2 / .3 / .4 with
+  explicit pinnage below):
+  - Stdlib `: Str` return annotations (v5.10.2 — bundled
+    with overload dispatch since the two are paired work).
+  - Calling-convention special-case for ≤16-byte struct
+    returns (v5.10.2 — surfaces when the stdlib audit
+    annotates Str-returning fns).
+  - Overload dispatch (v5.10.2).
+  - Inference through `var x = f(...)` (v5.10.3).
+  - Diagnostic hints + agnosys verbatim repro CLOSE (v5.10.4).
+
+- **v5.10.2 — Type system pass 2: stdlib `: Str` return
+  annotations + overload dispatch**. Bundled because the
+  two are paired work — annotating `str_builder_build` with
+  `: Str` requires the calling-convention special-case (or
+  the parser tracking it as a type-tag without triggering
+  retptr machinery), and the overload dispatch needs the
+  return type tracked to route `println(str_builder_build(sb))`
+  correctly.
+
+  **Scope**:
+  - **Calling-convention special-case** for `: Str` (and
+    other ≤16-byte struct returns): parser sets
+    `_cur_fn_ret_sid` for type-check purposes but skips
+    `_cur_fn_ret_stash = 8` when the struct is small enough
+    to return via rax (or rax+rdx). Existing scalar-pointer
+    return ABI preserved; stdlib callers don't break.
+  - **Stdlib annotation pass**: annotate ~10-15 Str-returning
+    fns in `lib/str.cyr` / `lib/string.cyr` (`str_from`,
+    `str_new`, `str_builder_build`, `str_cat`, `str_split`'s
+    elements, etc.) with `: Str` return type. Verify each
+    callsite continues working byte-identical.
+  - **Overload dispatch** at FINDFN: support multiple impls
+    keyed by arg-type signature. PP-mangled names at the
+    symbol level (`println_cstr` / `println_str` /
+    `println_int`); parser routes calls based on arg type.
+
+  **Acceptance**:
+  - Stdlib annotations: cc5 byte-identical self-host
+    after annotation pass.
+  - Overload: synthetic fixture `var s: Str = str_from("x");
+    println(s);` routes to `println_str` (no warning, no
+    garbage) — but `println(out)` from a non-annotated
+    `var out = str_builder_build(sb)` still doesn't fire
+    correctly until v5.10.3 inference. THAT's deferred.
+  - cyrius test + check.sh green; cross-host (pi/cass/ecb)
+    verifies no codegen drift.
+
+- **v5.10.3 — Type system pass 3: type inference**. Propagate
+  fn return types through `var x = f(...);` so `x`'s slot
+  tracks the type. Also for binary operators (`x + 1` keeps
+  x's type if int; struct-field reads keep field's type;
+  pointer deref tracks pointee). Acceptance: existing
+  patterns continue working byte-identical (no regression);
+  type-inferred `var` slots resolve correctly through
+  multi-step expression chains.
+
+- **v5.10.4 — Type system pass 4: diagnostics + agnosys
+  1.1.12 verbatim repro CLOSE**. `error: cannot pass Str to
+  fn expecting cstring; use str_data(x) or str_println(x)`
+  style hints at the call site. Catalog the top-N
+  most-common type-mismatch shapes consumers will hit and
+  give each a one-line hint pointing at the canonical fix.
+  **Acceptance: agnosys 1.1.12 verbatim repro hash
+  `6425355b6147d5a674078794310ae2c1` runs end-to-end + its
+  expected output is correct (println outputs the
+  `[{"x":7,"y":35}]` JSON properly + length).** That closes
+  the cascade started at v5.9.33 — 8 slots after the first
+  fix attempt.
+
+#### v5.10.5 — SIMD math expansion (typed; hisab gap close)
+
+Sandhi-side cousin of the type-system arc. Now that overload
+dispatch exists (v5.10.2), SIMD primitives can be exposed as
+typed verbs (`f64v4_add(a: f64v4, b: f64v4): f64v4`) instead
+of raw `f64*` API. Width is part of the type; compile-time
+check; overload dispatch picks the right SIMD primitive
+(`f64v2` for 2-wide SSE2 or `f64v4` for 4-wide AVX or paired
+NEON).
+
+**JUSTIFIED, not speculative**: hisab documents a measured
+30-700× gap vs Rust+glam in `docs/benchmarks-rust-v-cyrius.md`,
+with "No SIMD" cited as a 2-4× cost factor on vector/matrix
+ops. Hisab is the **keystone for Wave 4 (37 dependents —
+impetus, kiran, joshua, aethersafha, tara, badal,
+hisab-mimamsa, brahmanda)**. Per hisab's own benchmark doc,
+"SIMD — Cyrius 5.x roadmap; would close gap 2-4×".
+
+Compiler infrastructure already in place: f64v packed-SSE2
+ops have been in production since v1.9.0 (`f64v_add` / `_sub`
+/ `_mul` / `_div` / `_sqrt` / `_abs` / `_fmadd` in
+`src/backend/x86/float.cyr`). The slot expands the SIMD
+primitive set to cover hisab's hot Vec3/Vec4/Mat4 ops (cross
+product, normalize, slerp, mat4 inverse, ray-sphere intersect
+— top entries in hisab's gap table).
+
+**Cross-arch budget**: x86 SSE2 (production); aarch64 NEON
+equivalent (`fadd.2d` / `fmul.2d` for f64-packed; native on
+Apple Silicon — cyim / hisab's macOS consumers); cx scalar
+fallback (cxvm has no SIMD primitives); future RISC-V RVV
+awaits the v5.11.x backend.
+
+Acceptance: hisab's `bench-history.csv` shows measurable
+improvement on at least one Wave-4-consumed op (cross /
+normalize / mat4_mul / mat4_inverse), targeted at closing
+the 2-4× gap. Cross-host gate verifies parity on aarch64.
+Memory pin `project_simd_state.md` lays out the cross-arch
+tax + the "byte-at-a-time is fine" stance applies to byte-
+parsing not math.
+
+#### v5.10.6+ — compile-time wins (lex / fixup), surface review, etc.
+
+Items that don't unblock baseOS but improve developer
+experience for everyone:
+
+- **Lex dedup hot-path optimization**. v5.10.0 profile data
+  shows lex at 580 ms (59% of compile time) and an O(N²)
+  LEXID dedup scan inside it. Length-buckets (~20 LOC,
+  ~5-10× expected on dedup_cmps) is the recommended starting
+  point — preserves the linear-scan model per cyrius's
+  byte-parsing philosophy. Last-K cache (~15 LOC, ~2-3×) and
+  hand-rolled-hash-in-cc5 (~100 LOC, 30-40×) are escalation
+  paths if length-buckets isn't enough.
+- **Fixup phase optimization**. v5.10.0 profile shows fixup
+  at 210 ms (21%). Second-largest target after lex.
+- **Surface review** items: `cyrius audit` outside-repo
+  semantics design call, `parse_fn.cyr:910` defensive
+  guard, doc/vidya version-ref drift cleanup.
 
 ### v5.10.x — Held / pinned bug arc (slot-on-need)
 

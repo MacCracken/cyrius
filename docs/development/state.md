@@ -5,6 +5,48 @@
 
 ## Version
 
+**5.10.1** (in-flight 2026-05-08 — **v5.10.x SLOT 1 —
+Type system pass 1: call-site type-check infrastructure
+(synthetic fixture; CYRIUS_TYPE_CHECK opt-in)**). First
+slot of the agnosys-driven type-system arc per the
+v5.10.x bottom-to-top priority pivot.
+
+**What landed**:
+- `_STR_SID(S)` lazy-cached struct-id lookup (mirrors
+  `_STR_FROM_NOFF` shape).
+- `CYRIUS_TYPE_CHECK=1` env gate via `_TYPE_CHECK_ENABLED()`.
+  Default off (v5.10.2 flips it on after stdlib annotation
+  pass removes legitimate-call false positives).
+- Call-site check at PARSE_FNCALL: for IDENT args,
+  look up SLTYPE/GVTYPE; if `0 - STR_SID` AND param's
+  `str_mask` bit NOT set, emit warning naming both the
+  Str-typed arg and the cstring-expecting callee.
+- **Bug-fix in passing**: `parse_fn.cyr:1063` param-binding
+  now explicitly clears SLTYPE before optionally setting
+  `0 - pt_sid`. Pre-v5.10.1 the LTYPE table at S+0x192200
+  wasn't cleared per-fn so fresh param slots inherited
+  stale `0 - sid` values from prior fns. Latent until
+  v5.10.1's check exposed it.
+
+**Synthetic fixture**: `tests/fixtures/type_check/str_to_cstr.cyr`
+verifies the warning fires at user-source line 10 when
+`CYRIUS_TYPE_CHECK=1` is set; default-off (no env) shows
+zero warnings.
+
+cc5: c7a3ad41 → 0ac7b70c (+1808 B). Self-host byte-identical.
+api-surface unchanged. 66/66 check.sh. 132/132 cyrius test.
+14/14 .tcyr.
+
+**Acceptance bar (synthetic)** met. **agnosys verbatim repro**
+deferred to **v5.10.4** (closes the v5.9.33 cascade once type
+inference v5.10.3 lets `var x = f(...)` propagate the return
+type without explicit annotation).
+
+**Next**: v5.10.2 — stdlib `: Str` return annotations +
+overload dispatch + ≤16-byte calling-convention special-case
+(paired work). Flips `CYRIUS_TYPE_CHECK` default-on after the
+stdlib annotation pass.
+
 **5.10.0** (shipped 2026-05-08 — **v5.10.x SLOT 0 —
 per-phase compile-time profiling instrumentation**). Opens
 the v5.10.x compile-time optimization arc with measurement
