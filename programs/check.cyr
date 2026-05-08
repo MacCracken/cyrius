@@ -4296,6 +4296,104 @@ fn _macho_exit_gate() {
     return fail;
 }
 
+# Bespoke gate (v5.9.39): Mach-O arm64 `#derive(Serialize)` end-
+# to-end on ecb. Pins both halves of the v5.9.38/39 Mach-O bug
+# cascade that surfaced from agnosys 1.1.12:
+#   * v5.9.38 — `lib/fnptr.cyr` was missing `CYRIUS_TARGET_MACOS`
+#     branches in fncall0..fncall8. fncallN returned 0 on Mach-O,
+#     `alloc_via` returned NULL, str_builder_new SIGSEGVed at
+#     load64(NULL+8). Fixed by adding the macOS asm branches.
+#   * v5.9.39 — aarch64 fixup ftype==3 (`&fn_name` and closure-
+#     literal addresses) emitted a static MOVZ/MOVK chain. Apple
+#     Silicon enforces MH_PIE; dyld slides the image at load,
+#     and absolute addresses survive the slide as garbage.
+#     Fixed by branching to FIXUP_ADRP_ADD on Mach-O, mirroring
+#     ftype==1 (string addr) and ftype==0 (var addr).
+#
+# The fixture defines `#derive(Serialize) struct point { x: i64;
+# y: i64; }`, exercises `point_to_json(&p, sb)` (auto-generated
+# JSON emitter — exercises ALL of: struct field load, fn dispatch
+# through allocator vtable, str_builder_putc / str_builder_add /
+# str_builder_add_int chain), and exits with the byte-count of
+# the JSON written into the builder. Linux aarch64 returns 14
+# for `{"x":7,"y":35}` (14 chars); Mach-O must match. Anything
+# else — exit 139 (SIGSEGV from regressed Bug A or Bug B), exit
+# 1 (str_builder_new returned NULL — Bug A regression alone),
+# or exit ≠ 14 (codegen drift) — is a failure.
+fn _macho_derive_serialize_gate() {
+    var label = "Mach-O arm64 #derive(Serialize) end-to-end on ecb (pin v5.9.39)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET_MACOS", "ecb");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable (no macOS arm64 runner available)");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+    var env_kv = "CYRIUS_MACHO_ARM=1";
+    var src = _tmp_path("audit_macho_derive_src_");
+    var bin = _tmp_path("audit_macho_derive_bin_");
+    _write_file(src, "include \"lib/syscalls.cyr\"\ninclude \"lib/string.cyr\"\ninclude \"lib/str.cyr\"\ninclude \"lib/alloc.cyr\"\ninclude \"lib/fmt.cyr\"\n\n#derive(Serialize)\nstruct point { x: i64; y: i64; }\n\nfn main() {\n    var p = point { x: 7, y: 35 };\n    var sb = str_builder_new();\n    if (sb == 0) { syscall(60, 1); }\n    point_to_json(&p, sb);\n    var len = load64(sb + 8);\n    syscall(60, len);\n}\n");
+    var rc = _self_host_pipe_env(src, CC_AARCH64_PATH, bin, env_kv);
+    sys_unlink(src);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": cross-build rc=");
+        print_num(rc);
+        println("");
+        fail = fail + 1;
+    } else {
+        var rem = "/tmp/cyr_macho_derive";
+        if (_scp_to(target, bin, rem) != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": scp failed");
+            fail = fail + 1;
+        } else {
+            _codesign_remote(target, rem);
+            var ec = _ssh_remote_exit(target, rem);
+            if (ec != 14) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                _p(": exit=");
+                print_num(ec);
+                println(" (expected 14 for `{\"x\":7,\"y\":35}` byte-count; 139=SIGSEGV→Bug A/B regression, 1=str_builder_new→NULL→Bug A, other=codegen drift)");
+                fail = fail + 1;
+            }
+            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_derive");
+        }
+        sys_unlink(bin);
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": Mach-O arm64 #derive(Serialize) → exit 14 on ");
+        println(target);
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Bespoke gate (v5.9.32): Windows 11 PE32+ runtime gate. Cross-
 # builds 3 fixtures via build/cc5_win_cross (the Linux-host
 # cyrius compiler that emits PE — built on demand from
@@ -7810,6 +7908,10 @@ fn _run_regression_gates() {
 
     _section("Mach-O arm64 runtime");
     _macho_exit_gate();
+    println("");
+
+    _section("Mach-O arm64 #derive(Serialize)");
+    _macho_derive_serialize_gate();
     println("");
 
     _section("PE32+ Windows runtime");

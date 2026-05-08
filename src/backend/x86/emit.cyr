@@ -69,6 +69,12 @@ fn _EFP_ADDR_X9(S, disp) { return 0; }
 # v5.9.26 — caller-side aarch64 retptr load via X8. Stub on x86
 # (the x86 caller path uses EFLADDR + EPUSHR + ECALLPOPS instead).
 fn EFLADDR_X8(S, lli) { return 0; }
+# v5.9.39 — Mach-O ARM PIE-safe `&fn_name` / closure-literal emit
+# in parse_expr.cyr's `_AARCH64_BACKEND == 1` branch references
+# the aarch64 ADRP+ADD primitives. Stubs here for the same
+# dead-on-x86 reason as EW / _EFP_ADDR_X9 above.
+fn EADRP(S, reg) { return 0; }
+fn EADD_IMM12(S, reg) { return 0; }
 
 fn EB(S, b) {
     var cp = GCP(S);

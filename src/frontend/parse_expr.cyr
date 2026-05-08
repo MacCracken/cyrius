@@ -339,13 +339,25 @@ fn PARSE_FACTOR(S) {
             # with fixup-patched immediate. One marker covers all arches.
             _IR_REC0(S, IR_RAW_EMIT);
             if (_AARCH64_BACKEND == 1) {
-                # aarch64: 3 MOVZ/MOVK instructions (12 bytes) that
-                # FIXUP patches to the resolved function address.
+                # aarch64 Linux: 3 MOVZ/MOVK instructions (12 bytes)
+                # holding the absolute function address — patched by
+                # FIXUP_MOV at link time.
+                # aarch64 Mach-O: 2 ADRP/ADD instructions (8 bytes)
+                # holding a PC-relative reference — patched by
+                # FIXUP_ADRP_ADD. Required for PIE/ASLR; absolute
+                # MOVZ-chain addresses don't survive dyld's image slide
+                # (v5.9.39 Bug B fix; was the root cause behind the
+                # Mach-O `#derive(Serialize)` SIGSEGV cascade tracked
+                # in v5.9.38 Fix A's lib/fnptr.cyr companion).
                 S64(fnaddr, GCP(S));
                 S64(fnaddr + 8, (3 << 56) | fni);
-                EW(S, 0xD2800000);  # movz x0, #0
-                EW(S, 0xF2A00000);  # movk x0, #0, lsl 16
-                EW(S, 0xF2C00000);  # movk x0, #0, lsl 32
+                if (_TARGET_MACHO == 2) {
+                    EADRP(S, 0); EADD_IMM12(S, 0);
+                } else {
+                    EW(S, 0xD2800000);  # movz x0, #0
+                    EW(S, 0xF2A00000);  # movk x0, #0, lsl 16
+                    EW(S, 0xF2C00000);  # movk x0, #0, lsl 32
+                }
             } elif (_TARGET_CX == 1) {
                 # v5.7.12 path B: cx bytecode has no fn-pointer
                 # semantic in this slot. Skip the emit + skip fixup
@@ -860,14 +872,21 @@ fn PARSE_FACTOR(S) {
         # v5.6.12: closure-literal address-emit, mirrors `&fn_name` shape.
         _IR_REC0(S, IR_RAW_EMIT);
         if (_AARCH64_BACKEND == 1) {
-            # aarch64: 3 MOVZ/MOVK instructions (12 bytes) that FIXUP
-            # patches to the resolved closure address.
+            # aarch64 Linux: 3 MOVZ/MOVK instructions (12 bytes) for
+            # the absolute closure address — FIXUP_MOV patches it.
+            # aarch64 Mach-O: 2 ADRP/ADD instructions (8 bytes) for a
+            # PC-relative reference — FIXUP_ADRP_ADD. Required for
+            # PIE/ASLR (v5.9.39 — same Bug B fix as `&fn_name` above).
             S64(clfaddr, GCP(S));
             S64(clfaddr + 8, (3 << 56) | clfi);
             SFCNT(S, clfc + 1);
-            EW(S, 0xD2800000);  # movz x0, #0
-            EW(S, 0xF2A00000);  # movk x0, #0, lsl 16
-            EW(S, 0xF2C00000);  # movk x0, #0, lsl 32
+            if (_TARGET_MACHO == 2) {
+                EADRP(S, 0); EADD_IMM12(S, 0);
+            } else {
+                EW(S, 0xD2800000);  # movz x0, #0
+                EW(S, 0xF2A00000);  # movk x0, #0, lsl 16
+                EW(S, 0xF2C00000);  # movk x0, #0, lsl 32
+            }
         } elif (_TARGET_CX == 1) {
             # v5.7.12 path B: cx bytecode no closure-fn-addr in
             # this slot. Skip emit + fixup. Same shape as the

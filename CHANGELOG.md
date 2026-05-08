@@ -6,6 +6,92 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.39] — 2026-05-08
+
+**v5.9.x SLOT 39 — Mach-O ARM64 fn-pointer ASLR fix (Bug B
+from v5.9.38) + `_macho_derive_serialize_gate`**. Closes the
+Mach-O `#derive(Serialize)` cascade end-to-end alongside
+v5.9.38's Fix A. Cross-host parity: Mach-O ARM now matches
+Linux aarch64 byte-for-byte on the agnosys 1.1.12 verbatim
+repro through the `point_to_json(&p, sb)` chain.
+
+cc5: 14852eda (self-host byte-identical). cc5_aarch64: 5e9b0ae8
+(449880 B, +256 B from Mach-O branch). api-surface: unchanged.
+cyrius test: 132 unchanged. check.sh: 65 (was 64; +1 new gate).
+
+### Bug B — fixup.cyr ftype==3 not ASLR-safe (FIXED)
+
+`src/backend/aarch64/fixup.cyr` ftype==3 (the `&fn_name` and
+closure-literal address fixup) emitted a static MOVZ/MOVK chain
+encoding the unslid file VA. Apple Silicon enforces MH_PIE; dyld
+slides the whole image at load. Runtime `blr xN` indirect-call
+jumped to (file_VA, no slide) — landed in `__data` / `__got`
+instead of `__text`.
+
+### Three coordinated edits
+
+1. `src/backend/aarch64/fixup.cyr` ftype==3 dispatch: branch to
+   `FIXUP_ADRP_ADD(S, coff, ftarget)` on `_TARGET_MACHO == 2`,
+   `FIXUP_MOV` otherwise. Mirrors ftype==1 (string addresses)
+   and ftype==0 (var addresses) which already do this.
+2. `src/frontend/parse_expr.cyr` `&fn_name` aarch64 emit
+   (line ~341): emit 2-instruction ADRP+ADD pair (8 B) on
+   Mach-O instead of the 3-instruction MOVZ chain (12 B). The
+   call-site instruction-slot count must match what
+   `FIXUP_ADRP_ADD` patches.
+3. `src/frontend/parse_expr.cyr` closure-literal aarch64 emit
+   (line ~862): same change as #2.
+4. `src/backend/x86/emit.cyr`: stub `EADRP` and `EADD_IMM12` so
+   the x86 build's dead-code path through `_AARCH64_BACKEND == 1`
+   resolves the symbols cleanly. Same pattern as the existing
+   `EW` / `_EFP_ADDR_X9` / `EFLADDR_X8` stubs.
+
+### Why landed paired with v5.9.38 Fix A
+
+Fix A (lib/fnptr.cyr macOS branches) and Fix B are the same
+Mach-O `#derive(Serialize)` cascade. Fix A made `fncallN`
+dispatch fire on Mach-O at all; Fix B makes the dispatched
+fn-pointer point to the right place after dyld slide. Without
+both, neither path works.
+
+Per the close-out feedback at v5.9.38 ship ("don't lazy-defer
+the proper fix when it's the same cascade"), v5.9.39 closes the
+chapter rather than splitting again. The `_macho_derive_serialize_gate`
+also lands this slot — it tests the whole cascade end-to-end and
+is meaningless without both fixes.
+
+### `_macho_derive_serialize_gate` (new)
+
+In `programs/check.cyr`, registered after `_macho_exit_gate`.
+Fixture is a tiny `#derive(Serialize) struct point { x: i64;
+y: i64; }` with `main` calling `point_to_json(&p, sb)` and
+exiting with the byte-count of JSON written. Avoids the v5.10.x
+type-system mismatch (no `println(Str)` / `strlen(Str)`). Linux
+aarch64 returns exit=14 for `{"x":7,"y":35}`; Mach-O on ecb now
+matches. Failure modes called out in the comment: 139=SIGSEGV
+regression, 1=str_builder_new returned NULL (Bug A regression),
+other=codegen drift.
+
+### Verified
+
+- Verbatim agnosys 1.1.12 repro (hash unchanged
+  `6425355b6147d5a674078794310ae2c1`) cross-built for Mach-O ARM
+  + run on ecb: now executes substantially before failing at
+  the **same line** Linux aarch64 fails on (the `println(strlen(out))`
+  type-system mismatch where `out` is a `Str` struct, not a
+  `char*`). The remaining failure is v5.10.x-pinned type-system
+  work; outside this slot's scope.
+- `_macho_derive_serialize_gate` PASS on ecb (exit 14).
+- 65/65 check.sh; cc5 + cc5_aarch64 byte-identical self-host.
+- 132/132 `cyrius test`; 14/14 `.tcyr`.
+
+### Cascaded to v5.9.40+
+
+- v5.9.40 — cx Phase 2c parity (cascaded down).
+- v5.9.41 — tls-live + network-probe helper.
+- v5.9.42 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.43 — closeout pass before v5.10.0.
+
 ## [5.9.38] — 2026-05-08
 
 **v5.9.x SLOT 38 — Mach-O `#derive(Serialize)` SIGSEGV: probe

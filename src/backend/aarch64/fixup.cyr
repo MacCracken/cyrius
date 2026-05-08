@@ -146,12 +146,21 @@ fn FIXUP(S) {
             }
         }
         else { if (ftype == 3) {
-                # Function address: patch 3 MOVZ/MOVK instructions with the
-                # absolute target (coff of fn body + entry base). Mirrors
-                # FIXUP_MOV's layout; ftype 3 is the function-pointer
-                # counterpart to ftype 0 (var address).
+                # Function address (the `&fn_name` and closure-literal
+                # paths in parse_expr.cyr). ftype 3 is the function-
+                # pointer counterpart to ftype 0 (var address).
+                #   Linux aarch64 → 3-instruction MOVZ/MOVK chain (12 B),
+                #     patched absolute by FIXUP_MOV.
+                #   Mach-O ARM     → 2-instruction ADRP+ADD pair (8 B),
+                #     patched PC-relative by FIXUP_ADRP_ADD. Required
+                #     for PIE/ASLR — Apple Silicon enforces MH_PIE,
+                #     dyld slides the whole image at load and absolute
+                #     addresses (MOVZ-chain) point past `__text` at
+                #     runtime. (v5.9.39 Bug B fix; v5.9.38 shipped the
+                #     `lib/fnptr.cyr` macOS-branch companion as Fix A.)
                 var ftarget = L64(S + 0x1292000 + idx * 8) + entry;
-                FIXUP_MOV(S, coff, ftarget);
+                if (_TARGET_MACHO == 2) { FIXUP_ADRP_ADD(S, coff, ftarget); }
+                else { FIXUP_MOV(S, coff, ftarget); }
             }
             else { if (ftype == 4) {
                     # Tail call: patch B rel26 (not BL — no link register update)

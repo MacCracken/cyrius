@@ -5,6 +5,64 @@
 
 ## Version
 
+**5.9.39** (in-flight 2026-05-08 — **v5.9.x SLOT 39 —
+Mach-O ARM64 fn-pointer ASLR fix (Bug B from v5.9.38) +
+`_macho_derive_serialize_gate`**). Closes the Mach-O
+`#derive(Serialize)` cascade end-to-end alongside v5.9.38's
+Fix A — the same cascade landed in one slot per the v5.9.38
+close-out feedback ("don't lazy-defer the proper fix").
+Cross-host parity confirmed: Mach-O ARM now matches Linux
+aarch64 byte-for-byte on the agnosys 1.1.12 verbatim repro
+through the `point_to_json(&p, sb)` chain.
+
+**Bug B** (`src/backend/aarch64/fixup.cyr` ftype==3 not ASLR-
+safe on Mach-O ARM): static MOVZ-chain encoded the unslid
+file VA. dyld slides the image at load → `blr xN` jumped to
+file_VA+slide_target, landing in `__data` / `__got` instead
+of `__text`.
+
+**Fix shipped**: option (a) — ADRP+ADD relative addressing,
+mirroring how ftype==1 (strings) and ftype==0 (vars) already
+work on Mach-O. Three coordinated edits:
+- `src/backend/aarch64/fixup.cyr` ftype==3: branch to
+  `FIXUP_ADRP_ADD` on `_TARGET_MACHO == 2`, `FIXUP_MOV`
+  otherwise.
+- `src/frontend/parse_expr.cyr` `&fn_name` aarch64 emit:
+  emit 2-instruction ADRP+ADD pair (8 B) on Mach-O instead
+  of the 3-instruction MOVZ chain (12 B).
+- `src/frontend/parse_expr.cyr` closure-literal aarch64
+  emit: same change.
+- `src/backend/x86/emit.cyr`: stub `EADRP` and `EADD_IMM12`
+  for the x86 build's dead-code branch (mirrors the existing
+  `EW` / `_EFP_ADDR_X9` / `EFLADDR_X8` stubs).
+
+**`_macho_derive_serialize_gate`** (the gate originally
+deferred from v5.9.38): added after `_macho_exit_gate` in
+`programs/check.cyr`. Fixture: tiny `#derive(Serialize)
+struct point { x: i64; y: i64; }` + `point_to_json(&p, sb)`
++ `syscall(60, len)` (uses byte-count of JSON written as
+exit code; avoids the v5.10.x type-system mismatch). Linux
+aarch64 returns 14 for `{"x":7,"y":35}`; Mach-O on ecb now
+matches. Gate would have been a perpetual expected-fail at
+v5.9.38 close — landed alongside Bug B fix so it runs green
+from first ship.
+
+cc5 byte-identical self-host (`14852eda`). cc5_aarch64
+449880 B (+256 B from Mach-O branch, `5e9b0ae8`). api-surface
+unchanged. 65/65 check.sh (was 64; +1 new gate). 132/132
+`cyrius test`. 14/14 `.tcyr`.
+
+**Verbatim agnosys repro** hash unchanged
+(`6425355b6147d5a674078794310ae2c1`); now fails on Mach-O at
+the **same line** Linux aarch64 fails on (the `println(strlen(out))`
+where `out` is a `Str` struct, not `char*`). That's the
+v5.10.x type-system bug — outside this slot's scope.
+
+**Next**: v5.9.40 — cx Phase 2c parity (cascaded down).
+v5.9.41 — tls-live + network-probe (closes the .sh-conversion
+arc). v5.9.42 — `lib/regression.cyr` testing-stdlib carve-out.
+v5.9.43 — closeout pass before v5.10.0.
+
 **5.9.38** (shipped 2026-05-08 — **v5.9.x SLOT 38 —
 Mach-O `#derive(Serialize)` SIGSEGV: probe + Bug A fixed,
 Bug B split to v5.9.39**). Promoted out of held / "wait for
