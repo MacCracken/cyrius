@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.10.2** (in-flight 2026-05-08 — **v5.10.x SLOT 2 —
+**5.10.2** (shipped 2026-05-08 — **v5.10.x SLOT 2 —
 Type system pass 2: stdlib `: Str` return annotations +
 ≤16-byte calling-convention special-case**). Second slot
 of the agnosys-driven type-system arc. Overload dispatch
