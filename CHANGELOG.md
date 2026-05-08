@@ -6,6 +6,99 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.4] — 2026-05-08
+
+**v5.10.x SLOT 4 — Type system pass 4: type inference at
+`var x = f(...)` + stdlib param-side `: Str` annotation pass
+(bundled)**. Fourth slot of the agnosys-driven type-system
+arc. Inference closes the `var out = str_builder_build(sb);
+println(out);` shape — `out` picks up `Str` from
+`str_builder_build`'s `: Str` return annotation, then v5.10.3
+overload dispatch routes `println(out)` to `println_str`
+without an explicit annotation on `out`. Bundled with the
+param-side annotation pass so v5.10.5's `CYRIUS_TYPE_CHECK`
+default-on flip won't false-positive on legitimate
+`str_len(s)`-style callsites.
+
+cc5: 757920 → 758888 (+968 B for the pre-PCMPE peek + the
+inferred-sid fold into SLTYPE-set). cc5 v5.10.4 byte-identical
+self-host. cyrius test: 132 → 133 (added `v5104_inference.tcyr`).
+check.sh: 66/66. heapmap clean.
+
+### What landed
+
+- **Pre-PCMPE peek of `IDENT(args)` shape** at
+  `src/frontend/parse_decl.cyr` PARSE_VAR. When no explicit
+  type annotation is present (`pscale == 0 && scalar_type
+  == 0`), the parser peeks one token ahead: if the RHS
+  starts with `IDENT (` and the IDENT resolves to a known
+  fn via `FINDFN`, capture the fn's return-struct-id from
+  `GFRS` into `_ti_inferred_sid`. PCMPE then evaluates the
+  RHS normally; the captured sid folds into the SLTYPE-set
+  branch as `0 - sid` (matching the `: Type` explicit-
+  annotation encoding). Unannotated `var x = f();` now
+  carries f's return type forward.
+- **13 stdlib param-side `: Str` annotations** in
+  `lib/str.cyr` — `str_len(s: Str)`, `str_data(s: Str)`,
+  `str_print(s: Str)`, `str_println(s: Str)`,
+  `str_index_of(s: Str, ch)`, `str_to_int(s: Str)`,
+  `str_clone_a(a, s: Str)`, `str_clone(s: Str)`,
+  `str_sub_a(a, s: Str, start, len)`,
+  `str_sub(s: Str, start, len)`,
+  `str_substr(s: Str, start, end)`,
+  `str_trim_a(a, s: Str)`, `str_trim(s: Str)`. Every
+  callsite verified byte-identical self-host (annotations
+  don't change the COMPILER's emitted bytes; cc5 doesn't
+  link against lib/str.cyr).
+- **New regression test** `tests/tcyr/v5104_inference.tcyr`
+  — 4 inference assertions covering `str_from`, `str_cat`,
+  `str_clone`, `str_builder_build` as inference sources +
+  visual `println(out)` end-to-end check (prints `inferred
+  Str` proving inference + v5.10.3 dispatch combine correctly).
+
+### Acceptance bar met
+
+Synthetic fixture (now `tests/tcyr/v5104_inference.tcyr`):
+
+```
+var out = str_builder_build(sb);
+println(out);
+```
+
+— no explicit `: Str` annotation. Pre-v5.10.4 this would
+warn / not dispatch. Post-v5.10.4: `out`'s SLTYPE picks up
+`0 - STR_SID` from str_builder_build's return annotation,
+v5.10.3 dispatch routes `println(out)` → `println_str`,
+output is the actual string content via `str_print + newline`.
+Tests on real hardware:
+- **x86_64 Linux**: cc5 byte-identical self-host;
+  133/133 cyrius test; 66/66 check.sh; heapmap clean
+- **aarch64 Linux** (pi): synthetic test passes 4/4 +
+  prints `inferred Str` via dispatch
+- **macOS Mach-O ARM64** (ecb): cc5_macho self-hosts
+  byte-identical (round2 == round3, 557492 B)
+- **Windows PE32+**: cc5_win_cross builds with new logic;
+  PE32+ binary emits
+
+### NOT in this slot (deferred with explicit pinnage)
+
+Per `feedback_deferral_requires_roadmap_pinnage`:
+
+- **Inference for binary operators** (`var y = x + 1` keeping
+  x's type if int) and **field-read inference** (`var f =
+  s.field` picking up field's type from struct sid) — not
+  needed by the agnosys `var out = f(); println(out);`
+  shape, and the var-decl-fn-call path covers the high-
+  frequency consumer pattern. → **Held forward**; promote
+  if a consumer surfaces the field-read shape.
+- **`println_int` overload** + **generic suffix-based
+  dispatch** — still held forward from v5.10.3 (no new
+  consumer pin in this slot).
+- **Diagnostic hints + `CYRIUS_TYPE_CHECK` default-on flip
+  + agnosys 1.1.12 verbatim repro CLOSE** — pinned at
+  v5.10.5. The param-side annotations landing at v5.10.4
+  remove the false-positive flood that blocked the flip.
+
 ## [5.10.3] — 2026-05-08
 
 **v5.10.x SLOT 3 — Type system pass 3: overload dispatch

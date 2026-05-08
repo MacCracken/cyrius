@@ -5,6 +5,59 @@
 
 ## Version
 
+**5.10.4** (shipped 2026-05-08 — **v5.10.x SLOT 4 —
+Type system pass 4: type inference at `var x = f(...)` +
+stdlib param-side `: Str` annotation pass (bundled)**).
+Fourth slot of the agnosys-driven type-system arc.
+Inference at PARSE_VAR closes the unannotated
+`var out = str_builder_build(sb); println(out);` shape:
+`out` picks up Str from the fn's return annotation, then
+v5.10.3 dispatch routes `println(out)` → `println_str`.
+
+**What landed**:
+- **Pre-PCMPE peek of `IDENT(args)` shape** at
+  `src/frontend/parse_decl.cyr` PARSE_VAR. When neither
+  `: Type` nor pointer scale annotations are present, peek
+  one token ahead; if RHS is `IDENT (` and IDENT resolves
+  to a known fn via FINDFN, capture `GFRS(fi)` into
+  `_ti_inferred_sid`. PCMPE evaluates RHS normally; the
+  captured sid folds into the SLTYPE-set branch as
+  `0 - sid` (matches explicit-annotation encoding).
+- **13 stdlib param-side `: Str` annotations** in
+  `lib/str.cyr` — `str_len`, `str_data`, `str_print`,
+  `str_println`, `str_index_of`, `str_to_int`,
+  `str_clone_a/_clone`, `str_sub_a/_sub`, `str_substr`,
+  `str_trim_a/_trim`. Removes the false-positive flood
+  that blocked `CYRIUS_TYPE_CHECK` default-on (lined up
+  for v5.10.5).
+- **New regression test** `tests/tcyr/v5104_inference.tcyr`
+  — 4 inference assertions + visual `println(out)` proof.
+
+**Acceptance bar met** on real hardware:
+- x86_64 Linux: cc5 byte-identical self-host;
+  133/133 cyrius test; 66/66 check.sh; heapmap clean.
+- aarch64 Linux (pi): synthetic test passes 4/4 +
+  prints `inferred Str` via dispatch.
+- macOS Mach-O ARM64 (ecb): cc5_macho self-hosts
+  byte-identical (round2 == round3, 557492 B).
+- Windows PE32+: cc5_win_cross builds with new logic.
+
+cc5: 757920 → 758888 (+968 B for the peek + fold).
+
+**NOT in this slot** (deferred with explicit pinnage):
+- Inference for **binary operators** (`var y = x + 1`) and
+  **field-reads** (`var f = s.field`) — held forward;
+  promote on consumer ask. Var-decl-fn-call covers the
+  high-frequency consumer pattern.
+- `println_int` overload + generic suffix-based dispatch
+  — still held forward from v5.10.3.
+- Diagnostic hints + `CYRIUS_TYPE_CHECK` default-on flip
+  + agnosys 1.1.12 verbatim repro CLOSE — pinned at
+  v5.10.5.
+
+**Next**: v5.10.5 — diagnostics + `CYRIUS_TYPE_CHECK`
+default-on + agnosys 1.1.12 verbatim repro CLOSE.
+
 **5.10.3** (shipped 2026-05-08 — **v5.10.x SLOT 3 —
 Type system pass 3: overload dispatch (narrow; println-only)**).
 Third slot of the agnosys-driven type-system arc. Hard-coded
@@ -5113,18 +5166,15 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **741,120 B** at v5.8.57 (unchanged since
-  v5.8.54). Aggregate growth across v5.8.x cycle: 720,928 B at
-  cycle entry (v5.8.0 / inherited from v5.7.48) → 741,040 B at
-  v5.8.46 (token-array cap raise 262144→1048576 + tok_types/
-  values/lines relocation, +20.1 KB) → 741,040 B held steady
-  through .47-.53 (no compiler change in those slots) → 741,120
-  B at v5.8.54 (+80 B for aarch64 EFLADDR + EFLADDR_X1 + 5 PE
-  shim stubs + parse_expr.cyr syscall-arity skip extension) →
-  741,120 B held .54-.57. Total v5.8.x growth: +20.2 KB across
-  47 patches (.0-.57); the .46 token-cap raise + .54 cross-arch
-  propagation are the only compiler-side bumps. `cc5 --version`
-  reports `cc5 5.8.57`.
+- **cc5 (x86_64)**: **758,888 B** at v5.10.4 (was 757,920 at
+  v5.10.3; +968 B for the v5.10.4 type-inference pre-PCMPE peek
+  + sid-fold into SLTYPE-set in `parse_decl.cyr`). Aggregate
+  growth v5.10.x cycle: ~754,752 at v5.10.0 (profiling
+  instrumentation) → 755,112 at v5.10.1 (call-site check) →
+  755,112 at v5.10.2 (calling-conv special-case; stdlib
+  annotations don't change cc5 bytes) → 757,920 at v5.10.3
+  (+2,808 for noff lookups + dispatch block) → 758,888 at
+  v5.10.4. `cc5 --version` reports `cc5 5.10.4`.
 - **cc5_win (cross)**: 526,856 B (unchanged from v5.6.42 — same reason)
 - **cc5_aarch64 native (Pi)**: 463,768 B (was: did not build — v5.6.32 added
   the missing `include "src/common/ir.cyr"` to `main_aarch64_native.cyr` that

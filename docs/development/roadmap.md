@@ -483,8 +483,25 @@ overload dispatch.
   from a non-annotated `var out = str_builder_build(sb)`
   still doesn't fire correctly until v5.10.4 inference.
 
-- **v5.10.4 — Type system pass 4: type inference + stdlib
-  param-side `: Str` annotation pass (bundled)**. Propagate
+- **v5.10.4** ✅ — **Type system pass 4: type inference at
+  `var x = f(...)` + stdlib param-side `: Str` annotation pass
+  (bundled)**. SHIPPED. Inference at PARSE_VAR pre-PCMPE peek
+  picks up the called fn's return-struct-id from `GFRS` and
+  folds it into the SLTYPE-set branch as `0 - sid`. Combined
+  with v5.10.3 dispatch, unannotated `var out =
+  str_builder_build(sb); println(out);` now routes to
+  `println_str` correctly. cc5: 757920 → 758888 (+968 B).
+  Byte-identical self-host on x86_64 Linux + Mach-O ARM64
+  (round2==round3, 557492 B). Cross-tested aarch64 Linux on
+  pi: 4/4 inference assertions pass + prints `inferred Str`
+  via dispatch. Bundled 13 stdlib param annotations
+  (`str_len`, `str_data`, `str_print`, `str_println`,
+  `str_index_of`, `str_to_int`, `str_clone_a/_clone`,
+  `str_sub_a/_sub`, `str_substr`, `str_trim_a/_trim`).
+  Inference for binary operators / field-reads / pointer
+  deref deferred (not blocking; promote on consumer ask).
+
+  **Original scope** (kept here for closeout audit): Propagate
   fn return types through `var x = f(...);` so `x`'s slot
   tracks the type. Also for binary operators (`x + 1` keeps
   x's type if int; struct-field reads keep field's type;
