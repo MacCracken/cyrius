@@ -6,6 +6,139 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.0] — 2026-05-08
+
+**v5.10.x SLOT 0 — per-phase compile-time profiling
+instrumentation**. Opens the v5.10.x compile-time
+optimization arc with measurement tooling, since profile-
+driven optimization needs profile data to justify the
+"profile" half. ONE-thing-per-slot principle revised this
+slot per user direction (see roadmap update).
+
+cc5: c7a3ad41 → cd48bdb6 (+1280 B from 7 phase-end
+timestamp captures + the multi-line `printf` epilogue).
+Self-host byte-identical. api-surface: unchanged. cyrius
+test: 132/132. check.sh: 66/66. .tcyr: 14/14.
+
+### What landed
+
+- `src/main.cyr` adds 7 phase-end timestamp captures gated
+  on `CYRIUS_PROF=1`: `_prof_pp_end` (post-`PREPROCESS`),
+  `_prof_lex_end` (post-`LEX`), `_prof_gvar_end` (post-
+  `EMIT_GVAR_INITS`), `_prof_parse_end` (post-`PARSE_PROG`),
+  `_prof_fixup_end` (post-`FIXUP`), `_prof_emit_end` (post-
+  `EMITELF`), `_prof_write_end` (post stdout-write loop).
+- The prof epilogue (line ~1465) is rewritten from
+  `prof: compile %d ms\n` to `prof: compile %d ms (pp=%d
+  lex=%d gvar=%d parse=%d fixup=%d emit=%d write=%d ms)\n`.
+  Backward-compatible with grep `^prof: compile` patterns;
+  new fields appended in parens.
+- Each capture is ~100 ns on x86_64 (`syscall(228, 4, &ts)`
+  via `_prof_clock_ns`); 7 captures × 100 ns = ~0.7 µs
+  total overhead, undetectable on second-scale phase
+  totals. `CYRIUS_PROF=0` (default) skips every capture
+  via the `_prof_on == 1` guard.
+
+### Profile data captured (cc5 self-compile baseline)
+
+```
+prof: compile 984 ms (pp=84 lex=580 gvar=104 parse=2
+                      fixup=210 emit=2 write=0 ms)
+```
+
+**Phase distribution** (cc5 self-compile, ~1 MB
+expanded source after preprocessor):
+
+| Phase  | ms  | %    |
+|--------|-----|------|
+| lex    | 580 | 59%  |
+| fixup  | 210 | 21%  |
+| gvar   | 104 | 11%  |
+| pp     | 84  | 9%   |
+| parse  | 2   | <1%  |
+| emit   | 2   | <1%  |
+| write  | 0   | <1%  |
+
+**Lex is the dominant target** (59% of compile time).
+That's the v5.10.1+ slot focus.
+
+### Optimization attempts (negative results, documented)
+
+Two whitespace-fast-path attempts within this slot,
+both byte-identical self-host but measurably no-op on
+total time:
+
+- **Direct fast-path** (4 sequential `if (c == 32 / 9 /
+  10 / 13)` checks before `CCLASS`): regressed lex by
+  ~10 ms. Adds 4 cmp+branch for non-whitespace bytes
+  (60-70% of source); savings on whitespace bytes don't
+  cover the cost.
+- **Gated fast-path** (single `c < 33` filter then
+  inner whitespace dispatch): no measurable change vs
+  baseline. The added cmp+branch on the non-whitespace
+  path cancels the saved fn-call on the whitespace path.
+
+Reverted both. Real lex optimization needs deeper analysis
+(LEXID inner loop, ADDTOK per-token overhead, dispatch
+restructuring) — pinned for v5.10.1.
+
+### ONE-thing-per-slot principle — revised at this slot
+
+User direction (2026-05-08): "ONE thing per slot needs
+revision; if it's a Big Heavy One Thing sure... if it's
+a high-profile bug fix one thing yes; I'll accept tooling
+as the start of a cleanup/optimization arc this time.
+Otherwise if it's like I updated this 1 document to draft
+what we do next — HELL NO."
+
+The v5.9.43 v5.10.x writeup pinned "ONE thing per slot"
+as a hard rule. Sharpened to:
+
+**A standalone ONE-thing slot is justified when**:
+- Big Heavy One Thing (real refactor / non-trivial fix
+  that can't reasonably bundle with adjacent work)
+- High-profile bug fix (P0/P1 consumer-filed; user-
+  visible regression; security item)
+- Tooling that opens a multi-slot arc (e.g. v5.10.0
+  profiling instrumentation that future slots build on)
+
+**A standalone slot is NOT justified for**:
+- "Updated 1 document to draft what we do next" — that's
+  planning, fold it into the actual work slot. Roadmap
+  edits ride along with implementation, not as their
+  own version bump.
+- "One minor edit to whitespace" / format-only / lint-
+  satisfying nudges — bundle into the next real slot
+  that touches the same file. Whitespace-only commits
+  belong inside larger edits, not as their own version.
+- Adjacent micro-fixes that share the same cascade —
+  bundle them per the v5.9.38/40/42 lazy-defer feedback.
+- Cleanup/refactor that earns measurable improvement only
+  when paired with the next optimization — bundle.
+
+v5.10.0 itself qualifies under "tooling that opens a
+multi-slot arc": instrumentation only, optimization
+deferred to .1. The forward-looking version of this
+principle reads: *each slot must close a chapter or open
+one with measurable forward motion. No bookkeeping-only
+slots.*
+
+### Verified
+
+- 66/66 check.sh; 132/132 cyrius test; 14/14 .tcyr.
+- cc5 byte-identical self-host (`cd48bdb6`).
+- 5-run profile median: lex 580 ms (range 572-600 ms).
+
+### Cascaded to v5.10.1+
+
+- v5.10.1 — first profile-justified optimization, likely
+  lex-phase target. Methodology: profile baseline →
+  identify intra-lex hot path → ship targeted fix →
+  verify byte-identical + measure delta.
+- v5.10.x is open-ended (5-20+ patches, no hard cap).
+  Cycle ends when the bug/optimization backlog drains
+  or v5.11.x bare-metal/RISC-V drivers mature.
+
 ## [5.9.43] — 2026-05-08
 
 **v5.9.x SLOT 43 — closeout pass**. CLAUDE.md 11-step

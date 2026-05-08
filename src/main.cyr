@@ -637,8 +637,26 @@ if (_ra_auto_cap_env != 0) {
     }
 }
 
+# v5.10.0 — per-phase timing for CYRIUS_PROF=1. Each major phase
+# captures its end timestamp; the prof epilogue at line 1446
+# subtracts adjacent timestamps for the breakdown. Costs ~100 ns
+# per clock read (negligible vs second-scale phase totals); when
+# CYRIUS_PROF=0 the captures are skipped via the guard. Phase
+# boundaries: pp_end (preprocessor), lex_end, gvar_inits_end,
+# parse_end, fixup_end, emit_elf_end, write_end (after stdout
+# loop in the trailer). Foundation for the v5.10.x optimization
+# arc — measure first, then optimize the slow phase.
+var _prof_pp_end = 0;
+var _prof_lex_end = 0;
+var _prof_gvar_end = 0;
+var _prof_parse_end = 0;
+var _prof_fixup_end = 0;
+var _prof_emit_end = 0;
+var _prof_write_end = 0;
+
 # Preprocess includes
 PREPROCESS(S);
+if (_prof_on == 1) { _prof_pp_end = _prof_clock_ns(); }
 
 # Re-init ALL compiler state that the ifdef copy-back may have overwritten.
 # For expanded source >256KB, the copy-back writes past S+0x40000 into every
@@ -677,6 +695,7 @@ FM_BUILD(S);
 
 # Lex
 LEX(S);
+if (_prof_on == 1) { _prof_lex_end = _prof_clock_ns(); }
 
 
 # Emit initial jmp over fn bodies
@@ -1143,6 +1162,7 @@ if (_init_km == 1) {
     EMIT_GVAR_INITS(S);
     STI(S, gvar_save_ti);
 }
+if (_prof_on == 1) { _prof_gvar_end = _prof_clock_ns(); }
 
 # Warn about undefined functions (registered but never defined — offset still -1)
 var wfi = 0;
@@ -1162,6 +1182,7 @@ if (_init_km == 1) {
     # Parse main code (top-level statements)
     PARSE_PROG(S);
 }
+if (_prof_on == 1) { _prof_parse_end = _prof_clock_ns(); }
 
 # Exit epilogue
 var lv = GLVAR(S);
@@ -1359,6 +1380,7 @@ if (IR_ENABLED(S) == 1) {
 
 # Fixup + ELF + write
 FIXUP(S);
+if (_prof_on == 1) { _prof_fixup_end = _prof_clock_ns(); }
 # v4.8.3-alpha1: capacity meter — opt-in via CYRIUS_STATS=1.
 # Bote and other consumer projects hit silent capacity walls (fn
 # table, identifier buffer); this exposes utilization at compile
@@ -1424,6 +1446,7 @@ if (_stats_env == 0) {
     }
 }
 EMITELF(S);
+if (_prof_on == 1) { _prof_emit_end = _prof_clock_ns(); }
 # Write ELF output (loop on partial writes)
 var olen = L64(S + 0x1903F8);
 var written = 0;
@@ -1436,18 +1459,32 @@ while (wgo == 1) {
         if (written >= olen) { wgo = 0; }
     }
 }
+if (_prof_on == 1) { _prof_write_end = _prof_clock_ns(); }
 
-# v5.6.5 O1: if CYRIUS_PROF=1, dump total compile time to stderr
-# before exiting. Captured _prof_t0 just after env predefines (top
-# of file); difference is "preprocess + lex + parse + emit + fixup
-# + write" — the full useful span. Per-phase breakdown is a future
-# refinement; total time is enough baseline to measure O2–O6 gains
-# against.
+# v5.6.5 O1: total compile time to stderr if CYRIUS_PROF=1.
+# v5.10.0: per-phase breakdown via 7 captured timestamps
+# (pp_end / lex_end / gvar_end / parse_end / fixup_end /
+# emit_end / write_end). The breakdown reveals which phase
+# is the optimization target for subsequent v5.10.x slots.
 if (_prof_on == 1) {
     var _prof_t1 = _prof_clock_ns();
     var _prof_ms = (_prof_t1 - _prof_t0) / 1000000;
     syscall(SYS_WRITE, 2, "prof: compile ", 14);
     PRNUM(_prof_ms);
-    syscall(SYS_WRITE, 2, " ms\n", 4);
+    syscall(SYS_WRITE, 2, " ms (pp=", 8);
+    PRNUM((_prof_pp_end - _prof_t0) / 1000000);
+    syscall(SYS_WRITE, 2, " lex=", 5);
+    PRNUM((_prof_lex_end - _prof_pp_end) / 1000000);
+    syscall(SYS_WRITE, 2, " gvar=", 6);
+    PRNUM((_prof_gvar_end - _prof_lex_end) / 1000000);
+    syscall(SYS_WRITE, 2, " parse=", 7);
+    PRNUM((_prof_parse_end - _prof_gvar_end) / 1000000);
+    syscall(SYS_WRITE, 2, " fixup=", 7);
+    PRNUM((_prof_fixup_end - _prof_parse_end) / 1000000);
+    syscall(SYS_WRITE, 2, " emit=", 6);
+    PRNUM((_prof_emit_end - _prof_fixup_end) / 1000000);
+    syscall(SYS_WRITE, 2, " write=", 7);
+    PRNUM((_prof_write_end - _prof_emit_end) / 1000000);
+    syscall(SYS_WRITE, 2, " ms)\n", 5);
 }
 syscall(SYS_EXIT, _had_error);

@@ -1957,12 +1957,47 @@ fine; the bug/optimization backlog isn't a deadline. When the
 backlog drains or AGNOS / RISC-V work concretely picks up,
 v5.11.0 cuts.
 
-### v5.10.x — Acceptance principle
+### v5.10.x — Acceptance principle (revised at v5.10.0 ship)
 
-Each v5.10.x slot ships ONE thing — a single bug fix, one
-optimization, one cleanup. No bundled work; no "while we're
-in here" scope creep. The minor's value comes from each patch
-being independently auditable, not from a grand theme.
+Each v5.10.x slot must close a chapter or open one with
+measurable forward motion. No bookkeeping-only slots.
+
+**A standalone ONE-thing slot is justified when**:
+- **Big Heavy One Thing** — real refactor / non-trivial fix
+  that can't reasonably bundle with adjacent work.
+- **High-profile bug fix** — P0/P1 consumer-filed;
+  user-visible regression; security item.
+- **Tooling that opens a multi-slot arc** — e.g. v5.10.0
+  profiling instrumentation that future optimization
+  slots build on.
+
+**A standalone slot is NOT justified for**:
+- *"Updated 1 document to draft what we do next"* —
+  planning rides along with implementation, not as its
+  own version bump.
+- *"One minor edit to whitespace"* / format-only / lint-
+  satisfying nudges — bundle into the next real slot.
+- Adjacent micro-fixes sharing the same cascade — bundle
+  per the v5.9.38/40/42 lazy-defer feedback.
+- Cleanup/refactor that earns measurable improvement only
+  when paired with the next optimization — bundle.
+
+The previous formulation ("ONE thing per slot, no bundled
+work") was too strict — it would have argued against the
+v5.9.39 Mach-O Bug A + Bug B + gate combined slot, which
+landed correctly bundled because the three pieces were the
+same cascade. Revised principle keeps the discipline
+(don't sleight-of-hand bundle unrelated work) while
+allowing tooling-arcs and same-cascade fixes to ride
+together when the work is genuinely coupled.
+
+User direction (2026-05-08, at v5.10.0 ship): "ONE thing
+per slot needs revision; if it's a Big Heavy One Thing
+sure... if it's a high-profile bug fix one thing yes;
+I'll accept tooling as the start of a cleanup/optimization
+arc this time. Otherwise if it's like I updated this 1
+document to draft what we do next — HELL NO. Or made one
+minor edit to whitespace... meh."
 
 ---
 

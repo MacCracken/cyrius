@@ -5,6 +5,60 @@
 
 ## Version
 
+**5.10.0** (shipped 2026-05-08 — **v5.10.x SLOT 0 —
+per-phase compile-time profiling instrumentation**). Opens
+the v5.10.x compile-time optimization arc with measurement
+tooling. ONE-thing-per-slot principle revised this slot per
+user direction (see roadmap §`v5.10.x — Acceptance
+principle`).
+
+**What landed**: 7 phase-end timestamp captures in
+`src/main.cyr` gated on `CYRIUS_PROF=1` (pp / lex / gvar /
+parse / fixup / emit / write boundaries). Prof epilogue
+extended from `compile %d ms\n` to multi-field breakdown.
+~100 ns per capture × 7 = ~0.7 µs total overhead;
+undetectable on second-scale phase totals. Backward-compat
+with grep `^prof: compile`.
+
+**Profile baseline** (cc5 self-compile, ~1 MB expanded
+source after preprocessor):
+
+```
+prof: compile 984 ms (pp=84 lex=580 gvar=104 parse=2
+                      fixup=210 emit=2 write=0 ms)
+```
+
+| Phase  | ms  | %    |
+|--------|-----|------|
+| lex    | 580 | 59%  |
+| fixup  | 210 | 21%  |
+| gvar   | 104 | 11%  |
+| pp     | 84  | 9%   |
+| parse  | 2   | <1%  |
+
+**Lex is the dominant target — 59% of compile time**.
+Future v5.10.x slots target it specifically.
+
+**Negative results documented**: two whitespace fast-path
+attempts (direct + gated) — both byte-identical self-host
+but no-op on total time. Reverted; pinned for later
+deeper-analysis pass.
+
+cc5: cd48bdb6 (was c7a3ad41 at v5.9.43). +1280 B for the
+instrumentation. self-host byte-identical. api-surface
+unchanged. 66/66 check.sh; 132/132 cyrius test; 14/14
+.tcyr.
+
+**Acceptance principle revised** at this slot — see
+roadmap. tl;dr: standalone ONE-thing slots reserved for
+Big Heavy / high-profile-bug-fix / tooling-arc-kickoff;
+NOT for "edited 1 doc to plan" or "whitespace nudge".
+
+**Next**: v5.10.1 — first profile-justified optimization,
+likely lex-phase target. Methodology: profile baseline →
+identify intra-lex hot path → ship targeted fix → verify
+byte-identical + measure delta.
+
 **5.9.43** (shipped 2026-05-08 — **v5.9.x SLOT 43 —
 closeout pass; cycle CLOSED**). CLAUDE.md 11-step protocol
 executed end-to-end; v5.10.0 cuts after this commit lands.
