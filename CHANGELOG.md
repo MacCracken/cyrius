@@ -6,6 +6,70 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.41] — 2026-05-08
+
+**v5.9.x SLOT 41 — tls-live gate conversion + network-probe
+helper**. The `.sh-conversion arc is now CLOSED. Zero
+`tests/regression-*.sh` files remaining (precondition for the
+v5.9.43 closeout met).
+
+cc5: 8b27b76a (helpers + gate are net-new code; +X B from baseline
+9d8a3e23). cc5_aarch64: unchanged. api-surface: unchanged. cyrius
+test: 132 unchanged. check.sh: 66 (unchanged — converted gate
+replaces the .sh dispatcher, no count delta).
+
+### What landed
+
+- **`_network_probe_check(addr_ipv4, port, timeout_ms)`** in
+  `programs/check.cyr` — native cyrius TCP probe (raw
+  socket/connect/poll syscalls, no lib/net.cyr dependency).
+  Non-blocking connect + poll-with-timeout + SO_ERROR readback
+  so the call is bounded (vanilla blocking connect on a
+  blackhole takes ~75 s on Linux). Replaces the bash `/dev/tcp`
+  trick the .sh used.
+- **`_run_with_timeout(bin_path, timeout_ms)`** — fork + exec
+  with poll-based wall-clock timeout. Polls
+  `waitpid(WNOHANG)` every 100 ms; on timeout `SIGKILL`s
+  the child + reaps. Replaces the bash `timeout 30 binary`
+  pattern. Returns 0..127 exit code, 128+sig on signal,
+  -1 on fork/exec failure, -2 on timeout.
+- **`_tls_live_gate()`** — preserves the v5.6.37 pin
+  behavior exactly. Skip-cleanly cascade: cc5 not built /
+  HOME unset / `~/.cyrius/dlopen-helper` missing / 1.1.1.1:443
+  unreachable. On reachable: writes the libssl probe to a
+  tmp .cyr, compiles via cc5, runs bounded by 30 s, checks
+  the response prefix is "HTTP/1.1 ". Probe exit codes
+  (10/12/13/14/20+i) mapped to specific case-FAIL messages
+  mirroring the .sh's diagnostics. New: -2 timeout case
+  mapped to "likely SSL_connect deadlock — v5.6.37 regression?".
+- **`tests/regression-tls-live.sh` deleted**. No CI / docs
+  refs broken — verified via grep across .yml/.sh/.cyr/.md/
+  .toml: only historical CHANGELOG narrative + one comment
+  in lib/http.cyr remain.
+
+### `.sh-conversion arc — CLOSED
+
+Started at v5.9.1 with the conversion of bash regression
+scripts to native cyrius gates. Shipped at this slot:
+zero `tests/regression-*.sh` files remaining. The
+precondition for v5.9.43's closeout pass (no bash dependency
+in the audit gate suite) is met.
+
+### Verified
+
+- 66/66 check.sh; TLS gate PASS on the dev box.
+- `ls tests/regression-*.sh` → "no matches found".
+- cc5 + cc5_aarch64 byte-identical self-host.
+- 132/132 cyrius test; 14/14 .tcyr.
+
+### Cascaded to v5.9.42+
+
+- v5.9.42 — `lib/regression.cyr` testing-stdlib carve-out.
+  The new helpers `_network_probe_check` and
+  `_run_with_timeout` are good candidates for that
+  migration alongside the existing dispatcher inventory.
+- v5.9.43 — closeout pass before v5.10.0.
+
 ## [5.9.40] — 2026-05-08
 
 **v5.9.x SLOT 40 — cx (cyrius-x bytecode) Phase 2c parity**.

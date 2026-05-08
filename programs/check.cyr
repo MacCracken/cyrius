@@ -2056,6 +2056,103 @@ fn _cyrlint_count_marker(file_path, marker, buf, buflen) {
     return _count_substr_buf(buf, n, marker);
 }
 
+# v5.9.41 — TCP probe for "is this host:port reachable?". Replaces
+# the bash `/dev/tcp` trick previously used in
+# `tests/regression-tls-live.sh`. Non-blocking connect + poll-with-
+# timeout + SO_ERROR readback so the call is bounded (a blackhole
+# blocks vanilla connect() for ~75 s on Linux). Returns 1 on
+# reachable, 0 otherwise.
+#
+# `addr_ipv4` is a network-byte-order packed uint32 (e.g.
+# `1 | (1 << 8) | (1 << 16) | (1 << 24)` for 1.1.1.1; same shape
+# `lib/net.cyr` uses).
+#
+# Raw syscalls (Linux x86_64; programs/check.cyr is host-only):
+#   socket=41, connect=42, getsockopt=55, poll=7, fcntl=72,
+#   close=3, F_GETFL=3, F_SETFL=4, O_NONBLOCK=2048, AF_INET=2,
+#   SOCK_STREAM=1, POLLOUT=4, EINPROGRESS=115, SOL_SOCKET=1,
+#   SO_ERROR=4.
+fn _network_probe_check(addr_ipv4, port, timeout_ms) {
+    var fd = syscall(41, 2, 1, 0);
+    if (fd < 0) { return 0; }
+    var flags = syscall(72, fd, 3, 0);
+    if (flags >= 0) { syscall(72, fd, 4, flags | 2048); }
+    var sa[3];
+    store16(&sa,     2);
+    store16(&sa + 2, ((port & 0xFF) << 8) | ((port >> 8) & 0xFF));
+    store32(&sa + 4, addr_ipv4);
+    store64(&sa + 8, 0);
+    var ok = 0;
+    var cr = syscall(42, fd, &sa, 16);
+    if (cr == 0) {
+        ok = 1;
+    } else { if (cr == 0 - 115) {
+            var pfd[1];
+            store32(&pfd,     fd);
+            store16(&pfd + 4, 4);
+            store16(&pfd + 6, 0);
+            var pr = syscall(7, &pfd, 1, timeout_ms);
+            if (pr > 0) {
+                var sb[1];
+                var slen[1];
+                store32(&sb,   0);
+                store32(&slen, 4);
+                syscall(55, fd, 1, 4, &sb, &slen);
+                if (load32(&sb) == 0) { ok = 1; }
+            }
+        } }
+    sys_close(fd);
+    return ok;
+}
+
+# v5.9.41 — fork + exec a binary with a wall-clock timeout.
+# Same shape as `_ssh_remote_exit` but bounded: polls
+# waitpid(WNOHANG) every 100 ms; on timeout SIGKILLs the child
+# and reaps. Replaces the bash `timeout 30 binary` pattern
+# previously used by `tests/regression-tls-live.sh`.
+#
+# Returns:
+#   0..127     normal exit code
+#   128..192   128 + WTERMSIG (signal-killed by something else)
+#   -1         fork / exec failure
+#   -2         timeout (child SIGKILL'd)
+fn _run_with_timeout(bin_path, timeout_ms) {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        sys_execve(bin_path, &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    var elapsed = 0;
+    var ts[2];
+    store64(&ts,     0);
+    store64(&ts + 8, 100000000);
+    while (elapsed < timeout_ms) {
+        var w = sys_waitpid(pid, &stbuf, 1);
+        if (w == pid) {
+            var status = load32(&stbuf);
+            if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+            if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+            return 0 - 1;
+        }
+        syscall(35, &ts, 0);
+        elapsed = elapsed + 100;
+    }
+    sys_kill(pid, 9);
+    sys_waitpid(pid, &stbuf, 0);
+    return 0 - 2;
+}
+
 # Pipe `src_path`'s bytes to `bin_path`'s stdin, capture stdout
 # to `out_path` (pass 0 for /dev/null), send stderr to /dev/null,
 # return WEXITSTATUS (or 128 + signum on signal). Used by gates
@@ -6539,6 +6636,117 @@ fn _syscall_surface_v5735_gate() {
     return 1;
 }
 
+# v5.9.41 — native cyrius TLS live gate, replaces the
+# `tests/regression-tls-live.sh` bash dispatcher (deleted this
+# slot — closes the .sh-conversion arc, 0 .sh remaining;
+# precondition for v5.9.43 closeout). Behavior is preserved
+# exactly per the v5.6.37 pin: builds an fdlopen-based libssl
+# probe via cc5, runs it bounded by 30 s, asserts the response
+# starts with "HTTP/1.1 ".
+#
+# Skip cleanly if:
+#   - cc5 not built
+#   - ~/.cyrius/dlopen-helper missing (fdlopen needs the
+#     ld.so-bootstrapped real glibc dlopen — see lib/fdlopen.cyr)
+#   - 1.1.1.1:443 unreachable (CI runner contexts vary; better to
+#     skip than fail spuriously on an offline host)
+#
+# Probe exit codes (mapped from the previous .sh):
+#   0   PASS (HTTP/1.1 prefix matched)
+#   10  tls_available() returned 0 (libssl missing)
+#   12  tls_connect returned 0 (handshake failed)
+#   13  tls_write returned negative
+#   14  tls_read returned < 12 bytes
+#   20+ HTTP/1.1 prefix mismatch at byte 20+i
+#   -2  timeout (likely SSL_connect deadlock — would be a
+#       v5.6.37 regression)
+fn _tls_live_gate() {
+    var label = "libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var home = getenv("HOME");
+    if (home == 0) {
+        _p("  skip: HOME unset");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var dlh_sb = str_builder_new();
+    str_builder_add_cstr(dlh_sb, home);
+    str_builder_add_cstr(dlh_sb, "/.cyrius/dlopen-helper");
+    var dlopen_helper = str_data(str_builder_build(dlh_sb));
+    if (file_exists(dlopen_helper) != 1) {
+        _p("  skip: ");
+        _p(dlopen_helper);
+        println(" missing — run scripts/install.sh");
+        _check(label, 0);
+        return 0;
+    }
+    var ip_111 = 1 | (1 << 8) | (1 << 16) | (1 << 24);
+    if (_network_probe_check(ip_111, 443, 3000) != 1) {
+        println("  skip: 1.1.1.1:443 unreachable (no network)");
+        _check(label, 0);
+        return 0;
+    }
+
+    var src = _tmp_path("audit_tls_src_");
+    _write_file(src, "include \"lib/alloc.cyr\"\ninclude \"lib/string.cyr\"\ninclude \"lib/syscalls.cyr\"\ninclude \"lib/mmap.cyr\"\ninclude \"lib/fnptr.cyr\"\ninclude \"lib/dynlib.cyr\"\ninclude \"lib/fdlopen.cyr\"\ninclude \"lib/tagged.cyr\"\ninclude \"lib/net.cyr\"\ninclude \"lib/tls.cyr\"\n\nfn main() {\n    alloc_init();\n    if (tls_available() == 0) { return 10; }\n    var fd = payload(tcp_socket());\n    var ip = 1 | (1 << 8) | (1 << 16) | (1 << 24);\n    sock_connect(fd, ip, 443);\n    var tls = tls_connect(fd, \"one.one.one.one\");\n    if (tls == 0) { return 12; }\n    var req = \"GET / HTTP/1.1\\r\\nHost: 1.1.1.1\\r\\nConnection: close\\r\\n\\r\\n\";\n    var req_len = strlen(req);\n    if (tls_write(tls, req, req_len) < 0) { return 13; }\n    var buf = alloc(4096);\n    var n = tls_read(tls, buf, 4096);\n    if (n < 12) { return 14; }\n    var expect = \"HTTP/1.1 \";\n    var i = 0;\n    while (i < 9) {\n        if (load8(buf + i) != load8(expect + i)) { return 20 + i; }\n        i = i + 1;\n    }\n    tls_close(tls);\n    sock_close(fd);\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n");
+    var bin = _tmp_path("audit_tls_bin_");
+    var rc = _self_host_pipe(src, CC_PATH, bin);
+    sys_unlink(src);
+    if (WIFEXITED(rc) != 1 || WEXITSTATUS(rc) != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cc5 compile of TLS probe failed");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin, 493);
+
+    var ec = _run_with_timeout(bin, 30000);
+    sys_unlink(bin);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": TLS live round-trip (1.1.1.1:443 HTTP/1.1 response)");
+        _check(label, 0);
+        return 0;
+    }
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    if (ec == 10)      { println(": tls_available() returned 0"); }
+    elif (ec == 12)    { println(": tls_connect returned 0 (handshake failed)"); }
+    elif (ec == 13)    { println(": tls_write returned negative"); }
+    elif (ec == 14)    { println(": tls_read returned < 12 bytes"); }
+    elif (ec == 0 - 2) { println(": timeout (30s) — likely hung in SSL_connect (v5.6.37 regression?)"); }
+    else {
+        _p(": rc=");
+        print_num(ec);
+        if (ec >= 20 && ec < 30) {
+            _p(" (HTTP/1.1 prefix mismatch at byte ");
+            print_num(ec - 20);
+            println(")");
+        } else {
+            println(" (unknown)");
+        }
+    }
+    _check(label, 1);
+    return 1;
+}
+
 # Bespoke gate: sit `status` + `fsck` on a 100-commit fixture
 # (v5.6.35 pin — sankoch 2.0.3 deflate roundtrip fix). Skips
 # cleanly if `../sit` isn't checked out or `../sit/build/sit`
@@ -8036,7 +8244,7 @@ fn _run_regression_gates() {
     println("");
 
     _section("TLS live");
-    _gate("libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)", "tests/regression-tls-live.sh");
+    _tls_live_gate();
     println("");
 
     _section("TS lexer (cyrius-ts)");

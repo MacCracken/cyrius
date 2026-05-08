@@ -5,6 +5,38 @@
 
 ## Version
 
+**5.9.41** (in-flight 2026-05-08 — **v5.9.x SLOT 41 —
+tls-live gate conversion + network-probe helper**). The
+`.sh-conversion arc is now **CLOSED** — 0
+`tests/regression-*.sh` files remaining (precondition for the
+v5.9.43 closeout pass met).
+
+**Three pieces shipped**:
+- `_network_probe_check(addr_ipv4, port, timeout_ms)` —
+  native cyrius TCP probe via raw socket/connect/poll
+  syscalls. Non-blocking connect + poll-with-timeout +
+  SO_ERROR readback. Replaces the bash `/dev/tcp` trick.
+- `_run_with_timeout(bin_path, timeout_ms)` — fork + exec
+  with poll-based wall-clock timeout (waitpid WNOHANG +
+  nanosleep 100 ms loop; SIGKILL on timeout). Replaces
+  bash `timeout 30 binary`.
+- `_tls_live_gate()` — preserves v5.6.37 pin behavior
+  exactly: skip-cleanly cascade (cc5 / HOME /
+  `~/.cyrius/dlopen-helper` / 1.1.1.1:443 reachability)
+  → compile probe via cc5 → run bounded by 30 s → check
+  HTTP/1.1 response prefix → map exit codes to diagnostic
+  messages.
+
+`tests/regression-tls-live.sh` **deleted**. cc5 8b27b76a
+(net-new helpers + gate). 66/66 check.sh. 132/132 cyrius
+test. 14/14 .tcyr. cc5 + cc5_aarch64 self-host byte-
+identical.
+
+**Next**: v5.9.42 — `lib/regression.cyr` testing-stdlib
+carve-out (the v5.9.41 helpers are good candidates for
+the migration alongside the existing dispatcher inventory).
+v5.9.43 — closeout pass before v5.10.0.
+
 **5.9.40** (shipped 2026-05-08 — **v5.9.x SLOT 40 —
 cx (cyrius-x bytecode) Phase 2c parity**). Closes the three
 Phase 2c sites that v5.9.26 + v5.9.27 narrowed but didn't fix.

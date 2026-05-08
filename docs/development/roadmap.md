@@ -1531,14 +1531,47 @@ satisfied by earlier slots.
   whole cascade end-to-end and is meaningless without
   both fixes anyway.
 
-- **v5.9.41** — **tls-live gate conversion + network-probe
-  helper** (cascaded down).
-  `_network_probe_check(host, port)` — quick TCP
-  connect+disconnect to verify network reachability before
-  the TLS round-trip; skip cleanly if unreachable (CI runner
-  contexts vary). `_tls_live_gate()` retires the `.sh`. With
-  this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.43.
+- **v5.9.41** ✅ — **tls-live gate conversion + network-probe
+  helper shipped 2026-05-08** (cascaded down). The
+  `.sh-conversion arc is now CLOSED — 0 `tests/regression-*.sh`
+  files remaining, precondition for the v5.9.43 closeout met.
+
+  **What landed**:
+  - `_network_probe_check(addr_ipv4, port, timeout_ms)` —
+    native cyrius TCP probe (raw socket/connect/poll syscalls).
+    Non-blocking connect + poll-with-timeout + SO_ERROR
+    readback so the call is bounded (vanilla blocking connect
+    on a blackhole takes ~75 s on Linux). Replaces the bash
+    `/dev/tcp` trick the .sh used.
+  - `_run_with_timeout(bin_path, timeout_ms)` — fork + exec
+    with poll-based wall-clock timeout. Polls
+    `waitpid(WNOHANG)` every 100 ms; on timeout `SIGKILL`s
+    the child + reaps. Replaces the bash `timeout 30 binary`
+    pattern. Returns 0..127 exit code, 128+sig on signal,
+    -1 on fork/exec failure, -2 on timeout.
+  - `_tls_live_gate()` — preserves the v5.6.37 pin behavior
+    exactly. Skip-cleanly cascade: cc5 not built / HOME
+    unset / `~/.cyrius/dlopen-helper` missing / 1.1.1.1:443
+    unreachable. On reachable: writes the libssl probe to
+    a tmp .cyr, compiles via cc5, runs bounded by 30 s,
+    checks the response prefix is "HTTP/1.1 ". Probe exit
+    codes (10/12/13/14/20+i) mapped to specific case-FAIL
+    messages mirroring the .sh's diagnostics. New: -2
+    timeout case mapped to "likely SSL_connect deadlock —
+    v5.6.37 regression?".
+  - `tests/regression-tls-live.sh` deleted. No CI / docs
+    refs broken (verified via grep across .yml / .sh / .cyr
+    / .md / .toml — only historical CHANGELOG entries +
+    one comment in lib/http.cyr remain, all narrative).
+
+  **Verified**:
+  - 66/66 check.sh; TLS gate PASS on the dev box (network
+    available); self-host byte-identical.
+  - 0 `tests/regression-*.sh` files remaining (`ls
+    tests/regression-*.sh` reports "no matches").
+  - cc5 8b27b76a (changed from v5.9.40's 9d8a3e23 since
+    helpers + gate are net-new code).
+  - cyrius test 132/132; .tcyr 14/14.
 
 - **v5.9.42** — **`lib/regression.cyr` testing-stdlib
   carve-out**. Helper inventory stabilized post-v5.9.41 (arc
