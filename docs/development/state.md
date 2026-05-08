@@ -5,7 +5,7 @@
 
 ## Version
 
-**5.10.3** (in-flight 2026-05-08 — **v5.10.x SLOT 3 —
+**5.10.3** (shipped 2026-05-08 — **v5.10.x SLOT 3 —
 Type system pass 3: overload dispatch (narrow; println-only)**).
 Third slot of the agnosys-driven type-system arc. Hard-coded
 `println(Str-typed)` → `println_str` routing.
