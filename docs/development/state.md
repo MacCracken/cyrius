@@ -5,6 +5,72 @@
 
 ## Version
 
+**5.9.37** (in-flight 2026-05-08 — **v5.9.x SLOT 37 —
+agnosys 1.1.12 verbatim repro: parse + build path closed**).
+Slot pivoted from cx Phase 2c (cascaded to v5.9.39) after user
+audit at v5.9.36 ship caught false-advertising — v5.9.34/35/36
+each rewrote
+`/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
+to fit my fix, then claimed the slot done; verbatim source
+was still broken across all four prior attempts. New memory
+pin: `feedback_no_rewriting_consumer_repros`.
+
+This slot fixes the BUILD path against the verbatim-locked
+source (hash `6425355b6147d5a674078794310ae2c1`, untouched
+start-to-end). Three real defects + one cross-arch miss:
+
+1. **Char literals** (`src/frontend/lex.cyr`) — `'X'` /
+   `'\n'` etc. were never lexed. aarch64 `error:N: unexpected
+   '['` at `str_builder_putc(sb, '[');`. Lexer now emits
+   NUMBER token with byte value, with escape support.
+2. **`str_builder_putc(sb, byte)`** (`lib/str.cyr`) — added
+   single-byte append helper. ~7 LOC.
+3. **Auto-call `main()`** (`src/main.cyr` + `src/main_aarch64.cyr`).
+   Sources with only `fn main() { ... }` (no trailing `var
+   ec = main(); syscall(60, ec);` wiring) ran gvar inits and
+   exited rax=junk. Exit-epilogue now walks fn table for
+   "main\0" + `ECALLTO`. Cross-arch'd to aarch64.
+4. **DCE exemption for `main`** (`src/main.cyr` only — aarch64
+   has no DCE pass). Pre-fix DCE stubbed `main` to
+   `xor eax, eax; ret`; auto-call invoked the stub. main-name
+   byte-match added before bitmap check.
+
+api-surface: 2769 → 2770 (+1, `str::str_builder_putc/2`).
+cyrius test: 132 unchanged. check.sh: 64 unchanged.
+
+**Repro hash unchanged** — that's the audit guarantee per
+the new memory pin.
+
+**Verified**:
+- Verbatim repro builds clean on x86 + aarch64 (was: parse
+  error on aarch64).
+- Verbatim repro runs on x86 + real pi — main is invoked,
+  all `str_builder_putc` calls execute, `status_to_json`
+  produces correct JSON inside `sb`.
+- 64/64 check.sh; two-step self-host byte-identical.
+
+**NOT fixed this slot** (deliberate; user direction):
+- `println(out)` where `out` is `Str` — prints garbage
+  (println treats arg as cstring).
+- `println(strlen(out))` — strlen returns int; println
+  treats int as cstring → SIGSEGV.
+
+Both pinned to the **v5.10.x type system arc**. Three quick
+fixes in v5.9.x rejected by user (polymorphic = sloppy;
+breaking `str_builder_build` API = ecosystem damage; partial
+Option-3 = incomplete). Real type system is the right fix
+and v5.10.x's open-bug-and-optimization arc is where it
+lands. v5.10.x roadmap entry expanded to scope the work
+(call-site type checking, overload dispatch, type
+inference).
+
+**Next**: v5.9.38 — Mach-O `#derive(Serialize)` SIGSEGV probe
++ fix. v5.9.39 — cx Phase 2c parity (cascaded down from
+v5.9.37). v5.9.40 — tls-live + network-probe helper
+(closes the .sh-conversion arc). v5.9.41 — `lib/regression.cyr`
+testing-stdlib carve-out. v5.9.42 — closeout pass before
+v5.10.0.
+
 **5.9.36** (shipped 2026-05-07 — **v5.9.x SLOT 36 —
 narrow-int (i8/i16/i32) `#derive(Serialize)` support**).
 Closes the v5.9.35 cascade pin. Two compounding bugs landed
@@ -50,14 +116,12 @@ remains held).
 
 **Next**: v5.9.37 — cx Phase 2c parity (struct-by-value +
 sub-byte field load + ESTORESTACKPARM >6 args). v5.9.38 —
-tls-live + network-probe helper (closes the .sh-conversion
-arc). v5.9.39 — `lib/regression.cyr` testing-stdlib
-carve-out. v5.9.40 — closeout pass before v5.10.0.
-
-**Held / pinned separately**:
-- **Mach-O `_to_json` runtime SIGSEGV** — pre-existing
-  pre-v5.9.35; pin when a Mach-O consumer surfaces it as
-  blocking.
+**Mach-O `#derive(Serialize)` SIGSEGV** probe + fix
+(promoted out of "held / pin when consumer surfaces" — held
+across 3 slots without action). v5.9.39 — tls-live +
+network-probe helper (closes the .sh-conversion arc).
+v5.9.40 — `lib/regression.cyr` testing-stdlib carve-out.
+v5.9.41 — closeout pass before v5.10.0.
 
 **5.9.35** (shipped 2026-05-07 — **v5.9.x SLOT 35 —
 `#derive(Serialize)` deserializer i64 primitive-field path +

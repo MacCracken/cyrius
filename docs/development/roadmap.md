@@ -1223,7 +1223,85 @@ satisfied by earlier slots.
   Mach-O excluded (pre-existing pre-v5.9.35 SIGSEGV pin
   remains held).
 
-- **v5.9.37** — **cx (cyrius-x bytecode) Phase 2c parity**.
+- **v5.9.37** ✅ — **agnosys 1.1.12 verbatim repro: parse +
+  build path closed shipped 2026-05-08**. Slot pivoted from
+  cx Phase 2c (cascaded to v5.9.39) after user audit at v5.9.36
+  ship caught the previous slots had been false-advertising:
+  v5.9.34/35/36 each rewrote
+  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
+  to fit my fix and called the slot done — actual filed source
+  was still broken across all four prior attempts. Memory pin
+  added: `feedback_no_rewriting_consumer_repros`.
+
+  This slot fixes the BUILD path against the verbatim-locked
+  source (hash `6425355b6147d5a674078794310ae2c1`, untouched
+  start-to-end). Three real defects + one cross-arch miss:
+
+  1. **Char literals** (`src/frontend/lex.cyr`) — `'X'` /
+     `'\n'` / `'['` etc. were never lexed as numeric tokens.
+     Pre-fix aarch64 reported `error:N: unexpected '['` at
+     `str_builder_putc(sb, '[');`. Lexer now emits NUMBER
+     token with the byte value, with escape support
+     (`\n` `\r` `\t` `\0` `\\` `\'` `\"`).
+
+  2. **`str_builder_putc(sb, byte)`** (`lib/str.cyr`) —
+     missing single-byte append helper. The verbatim repro
+     uses `str_builder_putc(sb, '[');`. Added: 7-line wrapper
+     mirroring `str_builder_add_cstr` shape.
+
+  3. **Auto-call `main()`** (`src/main.cyr` +
+     `src/main_aarch64.cyr`) — sources with only `fn main()
+     { ... }` (no trailing `var ec = main(); syscall(60,
+     ec);` wiring) ran the gvar inits and exited with
+     `rax=junk` — main was never invoked. The exit epilogue
+     now walks the fn table for "main\0" and emits ECALLTO
+     after the GLVAR-load, so user-side `syscall(60, ...)`
+     short-circuits naturally and the no-wire case falls back
+     to auto-call.
+
+  4. **DCE exemption for `main`** (`src/main.cyr` only —
+     aarch64 has no DCE pass). Pre-fix DCE stubbed `main` to
+     `xor eax, eax; ret` because nothing referenced its ident
+     — auto-call invoked the stub and exit was always 0
+     regardless of main's body. main-name byte-match added
+     before the bitmap check.
+
+  cc5: 749336 → ~750800 B (delta unchanged from rebuild).
+  api-surface: 2769 → 2770 (+1, `str::str_builder_putc/2`).
+  cyrius test: 132 unchanged. check.sh: 64 unchanged.
+
+  **Repro hash unchanged** (verified pre/post —
+  `6425355b6147d5a674078794310ae2c1`). Per the new
+  `feedback_no_rewriting_consumer_repros` memory pin, that's
+  the audit guarantee — slot did not edit the consumer-filed
+  source.
+
+  **Verified**:
+  - Verbatim repro builds clean on x86 + aarch64 (was: parse
+    error on aarch64).
+  - Verbatim repro RUNS on x86 + real pi (aarch64) — main is
+    invoked, all `str_builder_putc` calls execute,
+    `status_to_json` produces the correct JSON inside `sb`.
+  - `tests/tcyr/derive_serialize_widths.tcyr` 14/14 unchanged.
+  - 64/64 check.sh; two-step self-host byte-identical.
+
+  **NOT fixed this slot** (deliberate; user direction):
+  - `println(out)` where `out` is a `Str` (16-byte heap
+    header) — still prints garbage because cyrius has no
+    type system. `println` always treats its arg as cstring.
+  - `println(strlen(out))` — `strlen` returns int; `println`
+    treats int as cstring address → SIGSEGV.
+
+  Both are pinned to the **v5.10.x type system arc** — see
+  the v5.10.x section. Three quick fixes in v5.9.x were
+  rejected (polymorphic-runtime-detection: sloppy; break
+  `str_builder_build`'s public API: ecosystem damage; partial
+  Option-3: incomplete). Real type system is the right fix
+  and v5.10.x's open-bug-and-optimization arc is the
+  right place to land it.
+
+- **v5.9.39** — **cx (cyrius-x bytecode) Phase 2c parity**
+  (cascaded down from v5.9.37 — original pin retained).
   Closes the two `ERR_MSG`-guarded cx pending sites that
   v5.9.26 + v5.9.27 narrowed but didn't fix:
   - `parse_fn.cyr:371` — struct return by value
@@ -1261,19 +1339,65 @@ satisfied by earlier slots.
   byte-memory-ops shape this slot is centered on. Pin them
   individually if a cx consumer surfaces.
 
-- **v5.9.38** — **tls-live gate conversion + network-probe
+- **v5.9.38** — **Mach-O `#derive(Serialize)` SIGSEGV — probe
+  + fix**. Promoted out of held / "wait for consumer" status
+  per v5.9.36 audit (held since v5.9.34 across 3 slots
+  without action — that's the slip pattern the user has
+  flagged before, fix it). The auto-generated `_to_json`
+  body SIGSEGVs at runtime on real macOS arm64 (ecb host)
+  for any `#derive(Serialize)` struct, including the
+  simplest `struct point { x: i64; y: i64; z: i64; }` shape.
+  Same source builds + runs cleanly on x86_64 Linux,
+  qemu-aarch64, real Linux aarch64 (pi), and Windows PE32+
+  — the difference is real macOS, not aarch64.
+
+  **Probe-first scope** (this slot ships the diagnosis even
+  if the fix lands later):
+  1. Build `iso_simpler.cyr` (3-field i64 struct, str_print)
+     for Mach-O ARM64 via `CYRIUS_MACHO_ARM=1
+     build/cc5_aarch64`. scp to ecb. codesign + run under
+     lldb to capture backtrace + crashing instruction.
+  2. Compare disassembly of `point_to_json` between Mach-O
+     and ELF aarch64 builds. Mach-O likely diverges at the
+     first call site (str_builder_add_cstr) — candidates:
+     stack alignment (macOS ABI requires 16-byte at every
+     `bl`; ELF tolerates 8 some places), arg-reg shuffling
+     into the auto-gen body, or a calling-convention edge
+     for `&local` first arg.
+  3. Bisect: does the crash happen on the FIRST call inside
+     `_to_json`, or partway through? Does removing
+     `str_builder_add_int` (i64 → str digits via `fmt_int_buf
+     [N];`) eliminate the crash?
+  4. Land the fix once root cause is pinned. If fix is
+     non-trivial (>1 backend file change), split into a
+     follow-up slot and ship the probe + tcyr Mach-O
+     skip-marker this slot.
+
+  **Consumer impact**: any current Mach-O cyrius project
+  that uses `#derive(Serialize)` cannot run on macOS today.
+  Verifies as blocking once mabda's GPU work or any kernel-
+  arc tooling pulls in JSON serialization on Mach-O.
+
+  Acceptance: `tests/tcyr/derive_serialize_roundtrip.tcyr` +
+  `tests/tcyr/derive_serialize_widths.tcyr` build clean on
+  Mach-O ARM64 via `CYRIUS_MACHO_ARM=1` AND run-pass on
+  ecb (4/4 + 14/14, matching pi). Add an
+  `_macho_derive_serialize_gate()` to the SSH cluster in
+  `programs/check.cyr` so future ship doesn't re-rot.
+
+- **v5.9.40** — **tls-live gate conversion + network-probe
   helper** (cascaded down).
   `_network_probe_check(host, port)` — quick TCP
   connect+disconnect to verify network reachability before
   the TLS round-trip; skip cleanly if unreachable (CI runner
   contexts vary). `_tls_live_gate()` retires the `.sh`. With
   this slot the `.sh-conversion arc closes (0 .sh remaining)
-  — precondition for v5.9.39.
+  — precondition for v5.9.42.
 
-- **v5.9.39** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.38 (arc
+- **v5.9.41** — **`lib/regression.cyr` testing-stdlib
+  carve-out**. Helper inventory stabilized post-v5.9.40 (arc
   closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.38 dispatcher work
+  accumulated through the v5.9.6 → v5.9.40 dispatcher work
   (`_stderr_match_subcase`, `_count_substr_buf`,
   `_exec_with_arg_capture` + `_capture_both`,
   `_compile_run_get_exit`, `_file_contains_substr`,
@@ -1290,7 +1414,7 @@ satisfied by earlier slots.
   runners) can reach for the same shapes via
   `include "lib/regression.cyr"`.
 
-- **v5.9.40** — **`cyrius` v5.9.x closeout** per CLAUDE.md
+- **v5.9.42** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
   closure, full check.sh. Judgment-call: heap-map audit,
   dead-code audit, refactor pass, code review pass, cleanup
@@ -1465,6 +1589,62 @@ unblocked-but-unrushed at its own pace.
 
 Categories the arc draws from (each individual slot picks
 work from one or more):
+
+- **REAL TYPE SYSTEM** (pinned 2026-05-08 at v5.9.36 wrap;
+  user direction). Adds call-site type checking, overload
+  dispatch (cstring vs Str vs int), and type inference
+  through expressions. Cyrius today tracks type *annotations*
+  (struct fields, var slots, fn params via `: Type` or
+  `: Str`) and uses them for width-correct loadN/storeN +
+  pointer-mode dot access — but the parser does NOT
+  enforce types at fn call sites and there's no overload
+  dispatch.
+
+  **Canonical motivating example** — agnosys 1.1.12
+  verbatim repro at
+  `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
+  (hash `6425355b6147d5a674078794310ae2c1` at v5.9.37 ship).
+  Builds clean post-v5.9.37 (chars + str_builder_putc +
+  auto-call-main land that slot) but the binary produces
+  garbage + SIGSEGV at runtime because:
+  ```cyr
+  var out = str_builder_build(sb);    # out: Str
+  println(out);                        # treats Str as cstring -> garbage
+  println(strlen(out));                # treats int as cstring -> SIGSEGV
+  ```
+  Both lines are API misuse the type system would catch /
+  dispatch correctly. v5.9.x had three options to fix
+  (polymorphic-runtime-detection / break str_builder_build /
+  partial Option-3); user rejected all three as either
+  sloppy or breaking — the right fix is a real type system,
+  scoped to v5.10.x.
+
+  **Slot scope** (rough; refine at slot entry):
+  1. Surface audit — every fn body in stdlib + cyrius-side
+     code annotated with implicit return-type info (mostly
+     mechanical). Catalog ergonomic shapes consumers
+     actually use.
+  2. Call-site type check — at `PARSE_FNCALL`, compare
+     each arg's tracked type (via SLTYPE / SVTYPE / fn's
+     param mask) against the callee's param annotation.
+     Warn or error on mismatch.
+  3. Overload dispatch — extend `FINDFN` to support
+     multiple impls keyed by arg-type signature. Naming:
+     keep base `println` for cstring; add `println` overloads
+     for Str / int / etc. PP-mangled names (`println_cstr`,
+     `println_str`, `println_int`) at the symbol level;
+     parser routes calls based on arg type.
+  4. Type inference — propagate fn return types through
+     `var x = f(...);` so `x`'s slot tracks the type. Also
+     for binary operators (`x + 1` keeps x's type if int).
+  5. Diagnostics — `error: cannot pass Str to fn expecting
+     cstring; use str_data(x) or str_println(x)` style
+     hints at the call site.
+
+  Estimated multi-slot effort. May also surface `lib/`
+  cleanup (some fns that should be Str-typed but aren't,
+  some helpers that should be deprecated in favor of
+  type-overloaded forms).
 
 - **Open bug fixes** — items already pinned in
   `Long-term considerations`, `v5.8.x — Held items`, deferred

@@ -990,6 +990,60 @@ fn LEX(S) {
                                                                                                                     # (already handled < and <= above, need << separately)
                                                                                                                     # >> or >
                                                                                                                     # (already handled > and >= above, need >> separately)
+                                                                                                                    # v5.9.37: char literal — `'X'` or `'\X'`. Emits a
+                                                                                                                    # NUMBER token (type 1) with the byte value.
+                                                                                                                    # Required by agnosys 1.1.12 verbatim repro at
+                                                                                                                    # /tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr
+                                                                                                                    # which uses `str_builder_putc(sb, '[')`.
+                                                                                                                    # Pre-fix the lexer had no char-literal branch; aarch64
+                                                                                                                    # error:N: unexpected '['.
+                                                                                                                    else { if (c == 39) {
+                                                                                                                            p = p + 1;
+                                                                                                                            if (p >= bl) {
+                                                                                                                                syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
+                                                                                                                                syscall(SYS_WRITE, 2, ": unterminated char literal\n", 28);
+                                                                                                                                syscall(SYS_EXIT, 1);
+                                                                                                                            }
+                                                                                                                            var clv = 0;
+                                                                                                                            var c0 = load8(S + 0x44A000 + p);
+                                                                                                                            if (c0 == 92) {
+                                                                                                                                p = p + 1;
+                                                                                                                                if (p >= bl) {
+                                                                                                                                    syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
+                                                                                                                                    syscall(SYS_WRITE, 2, ": unterminated char escape\n", 27);
+                                                                                                                                    syscall(SYS_EXIT, 1);
+                                                                                                                                }
+                                                                                                                                var c1 = load8(S + 0x44A000 + p);
+                                                                                                                                p = p + 1;
+                                                                                                                                if      (c1 == 110) { clv = 10; }       # \n
+                                                                                                                                elif    (c1 == 114) { clv = 13; }       # \r
+                                                                                                                                elif    (c1 == 116) { clv =  9; }       # \t
+                                                                                                                                elif    (c1 == 48)  { clv =  0; }       # \0
+                                                                                                                                elif    (c1 == 92)  { clv = 92; }       # \\
+                                                                                                                                elif    (c1 == 39)  { clv = 39; }       # \'
+                                                                                                                                elif    (c1 == 34)  { clv = 34; }       # \"
+                                                                                                                                else {
+                                                                                                                                    syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
+                                                                                                                                    syscall(SYS_WRITE, 2, ": unknown char escape\n", 22);
+                                                                                                                                    syscall(SYS_EXIT, 1);
+                                                                                                                                }
+                                                                                                                            } else {
+                                                                                                                                clv = c0;
+                                                                                                                                p = p + 1;
+                                                                                                                            }
+                                                                                                                            if (p >= bl) {
+                                                                                                                                syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
+                                                                                                                                syscall(SYS_WRITE, 2, ": unterminated char literal\n", 28);
+                                                                                                                                syscall(SYS_EXIT, 1);
+                                                                                                                            }
+                                                                                                                            if (load8(S + 0x44A000 + p) != 39) {
+                                                                                                                                syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
+                                                                                                                                syscall(SYS_WRITE, 2, ": multi-byte char literal not supported\n", 40);
+                                                                                                                                syscall(SYS_EXIT, 1);
+                                                                                                                            }
+                                                                                                                            p = p + 1;
+                                                                                                                            ADDTOK(S, 1, clv);
+                                                                                                                        }
                                                                                                                     # String literal
                                                                                                                     else { if (c == 34) {
                                                                                                                             p = p + 1;
@@ -1184,7 +1238,7 @@ fn LEX(S) {
                                                                                                                             }
                                                                                                                             p = p + 1;
                                                                                                                         }
-                                                                                                                    } } } } } } } } } }
+                                                                                                                    } } } } } } } } } } }
                                                                                 } } } } } } } } }
                                             } } } } } } } } }
         }

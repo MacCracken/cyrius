@@ -109,20 +109,28 @@ stride matched the slot stride.
 
 ### Cascaded to v5.9.37+
 
-- v5.9.37 — cx Phase 2c parity (struct-by-value + sub-byte
-  field load + ESTORESTACKPARM >6 args).
-- v5.9.38 — tls-live + network-probe helper (closes the
+- v5.9.37 (in-flight) — agnosys 1.1.12 verbatim repro:
+  parse + build path closed (chars + str_builder_putc +
+  auto-call-main + DCE-exempt main). Slot pivoted from cx
+  Phase 2c after v5.9.36 audit caught false-advertising —
+  v5.9.34/35/36 each rewrote the consumer's filed repro to
+  fit the fix and called it done; verbatim source was still
+  broken. Memory pin: `feedback_no_rewriting_consumer_repros`.
+  Runtime `println(out)` and `println(strlen(out))` remain
+  broken pending v5.10.x type system (user direction).
+- v5.9.38 — Mach-O `#derive(Serialize)` SIGSEGV probe + fix.
+- v5.9.39 — cx Phase 2c parity (cascaded down from v5.9.37).
+- v5.9.40 — tls-live + network-probe helper (closes the
   `.sh-conversion arc).
-- v5.9.39 — `lib/regression.cyr` testing-stdlib carve-out.
-- v5.9.40 — closeout pass before v5.10.0.
+- v5.9.41 — `lib/regression.cyr` testing-stdlib carve-out.
+- v5.9.42 — closeout pass before v5.10.0.
 
-### Held / pinned separately
-
-- **Mach-O `_to_json` runtime SIGSEGV** — auto-generated
-  `_to_json` body SIGSEGVs on real macOS arm64 (ecb host)
-  for any `#derive(Serialize)` struct. Pre-existing and
-  not addressed this slot. Pin when a Mach-O consumer
-  surfaces it as blocking.
+**v5.10.x arc pinned** (2026-05-08 user direction): real
+type system as part of the open-bug + optimization arc. The
+agnosys verbatim repro's `println(Str)` + `println(int)`
+gaps are the canonical motivating example — call-site type
+checking, overload dispatch, and type inference. See
+roadmap §v5.10.x.
 
 ## [5.9.35] — 2026-05-07
 
