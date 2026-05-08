@@ -606,6 +606,34 @@ opportunistic touch makes sense:
   sibling distlib. Multi-slot effort; earns slot when
   scheduling lines up.
 
+- **`lib/tls.cyr` hook-surface contract audit** (filed
+  from sandhi 1.1.x roadmap-cleanup pass, 2026-05-08).
+  With pure-Cyrius TLS removed (2026-04-24 decision —
+  `lib/tls.cyr` stays libssl.so.3-bridged) AND sandhi
+  folded into stdlib at v5.7.0, the `lib/tls.cyr` ↔
+  `lib/sandhi.cyr` hook surface (`tls_connect`,
+  `tls_connect_with_ctx_hook`, ALPN advertise, SNI, SPKI
+  extraction) is now load-bearing across two stdlib
+  modules. Sandhi's `tls_policy` layer (cert pinning /
+  mTLS / trust-store override / ALPN advertise) exercises
+  every hook; the contract was de-facto ratified at sandhi
+  1.0.0 fold + 1.1.0 alloc migration end-to-end. Document
+  it formally — per-hook docstring covering parameters,
+  return semantics, error contract, ABI guarantees — so
+  future maintenance (defensive hardening, internal
+  refactors) preserves the byte-identical surface
+  consumers built against. Tiny if surface is already
+  abstraction-clean (likely — stable since v5.6.40 ALPN
+  hook ship); multi-slot if any hardening surfaces. No
+  P0/P1 today; opportunistic cleanup, earns a slot when
+  scheduling lines up (e.g. could pair with the stdlib
+  data-domain carve-out if that ever touches
+  `lib/tls.cyr`, or with any future `lib/tls.cyr` patch).
+  ADR-0001 framing on the sandhi side (sandhi composes,
+  doesn't reimplement) makes this explicitly cyrius's
+  slot, not sandhi's — sandhi can't audit a contract it
+  consumes from outside.
+
 - **Class B FFI / wgpu fncall6 ABI** (mabda B1/B2 — held;
   see *Deferred to v5.11.x or later* above). Could land in
   v5.10.x bug arc if mabda resurfaces it as blocking.
