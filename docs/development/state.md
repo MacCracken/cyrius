@@ -5,6 +5,49 @@
 
 ## Version
 
+**5.9.42** (in-flight 2026-05-08 — **v5.9.x SLOT 42 —
+`lib/regression.cyr` testing-stdlib carve-out**). Closes the
+post-v5.9.41 helper-inventory stabilization arc by moving 14
+reusable primitives into a new stdlib module that downstream
+consumers (yantra, agnosys/mabda test suites, future test
+runners) can reach for via `include "lib/regression.cyr"`.
+
+**Module surface** (22 public verbs across 5 groups):
+- Display (4): `regression_print` / `_section` / `_check` + ANSI
+- Buffer scan (3): `_buf_eq` / `_count_substr` / `_file_contains_substr`
+- Process (8): pipe_to_bin ± capture, run_with_timeout, exec_*
+- Network (1): `_network_probe` (non-blocking connect + poll)
+- SSH cluster (6): target / skip-check / scp / remote-exit /
+  remote-capture / codesign-remote
+
+**Held back from migration** (by design): the compiler-shaped
+helpers (`_compile_run_get_exit` / `_compile_capture_stderr` use
+`_self_host_pipe`'s 2 MB cap + raw-status convention),
+dispatcher gates (`_tcyr_relay_gate` / `_expected_output_gate`
+use audit-internal accounting), tool-specific helpers
+(`_cyrlint_count_marker` / `_ts_mode_run` parametrize-over
+project-globals), `_exec_in_dir3*` (env-merge shapes differ).
+
+**`programs/check.cyr` collapse**: 14 helper bodies replaced
+with thin `return regression_*(...)` delegations passing
+`ENVP_ARR` (parent env) or new `EMPTY_ENVP` global (for the
+helpers that originally execve'd with inline empty envp).
+Net -364 LOC in check.cyr.
+
+cc5: 7a1a8cf8 byte-identical self-host. api-surface: 2770 → 2792
+(+22 entries). Stdlib module count: 78 → 79. 66/66 check.sh.
+132/132 `cyrius test`. 14/14 .tcyr. cyrlint on the new module
+clean (0 warnings).
+
+Sandhi connection: `_sandhi_conn_connect_nb` shares the same
+non-blocking-connect-with-poll-timeout shape as
+`regression_network_probe`; if a future sandhi 1.2.0 wants to
+factor down to the stdlib primitive, that's a natural
+candidate.
+
+**Next**: v5.9.43 — `cyrius` v5.9.x closeout per CLAUDE.md
+11-step protocol. Tags v5.10.0 cut after green.
+
 **5.9.41** (shipped 2026-05-08 — **v5.9.x SLOT 41 —
 tls-live gate conversion + network-probe helper**). The
 `.sh-conversion arc is now **CLOSED** — 0

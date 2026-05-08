@@ -6,6 +6,92 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.9.42] — 2026-05-08
+
+**v5.9.x SLOT 42 — `lib/regression.cyr` testing-stdlib carve-out**.
+Closes the post-v5.9.41 helper-inventory stabilization arc by
+moving 14 reusable primitives (accumulated through the v5.9.6 →
+v5.9.41 dispatcher conversions) into a new stdlib module that
+downstream consumers (yantra, agnosys/mabda test suites, future
+test runners) can reach for via `include "lib/regression.cyr"`.
+
+cc5: 7a1a8cf8 (self-host byte-identical). cc5_aarch64: unchanged.
+api-surface: 2770 → 2792 (+22 new public verbs). Stdlib module
+count: 78 → 79. cyrius test: 132 unchanged. check.sh: 66 unchanged.
+`programs/check.cyr`: net -364 LOC (407 deletions, 43 insertions).
+
+### Module surface (22 public verbs)
+
+`lib/regression.cyr`'s public surface is grouped into 5 sections:
+
+- **Display** (4): `regression_print` / `regression_section` /
+  `regression_check` + `REGRESSION_ANSI_RED` / `_GREEN` / `_RESET`
+  constants.
+- **Buffer scan** (3): `regression_buf_eq` /
+  `regression_count_substr` / `regression_file_contains_substr`.
+- **Process** (8): `regression_pipe_to_bin` ± `_capture`;
+  `regression_run_with_timeout` (poll-based wall-clock timeout
+  with WNOHANG + nanosleep + SIGKILL); `regression_exec_capture`
+  / `_exec_run` / `_exec_with_arg_capture` ± `_both` (combined
+  stdout+stderr); `regression_exec_in_dir3` ± `_env` (cwd +
+  env-extras variants).
+- **Network** (1): `regression_network_probe` — non-blocking
+  connect + poll(POLLOUT) + SO_ERROR readback. Replaces bash
+  `/dev/tcp` trick.
+- **SSH cluster** (6): `regression_ssh_target` (env override +
+  default), `_ssh_skip_check` (uses `echo alive` for Windows
+  PowerShell compat), `_scp_to`, `_ssh_remote_exit`,
+  `_ssh_remote_exec_capture`, `_codesign_remote`.
+
+### Held back from migration (each by design)
+
+- `_compile_run_get_exit` / `_compile_capture_stderr` —
+  use `_self_host_pipe`'s 2 MB src cap + raw-status
+  return convention; lib's `regression_pipe_to_bin*`
+  use 1 MB + WEXITSTATUS (right for arbitrary binaries
+  but not cyrius source). Callers that need both
+  compose the lib primitives manually.
+- `_tcyr_relay_gate` / `_expected_output_gate` —
+  dispatcher gates depending on audit-internal
+  accounting (`_check`, `ROOT_PATH`, ANSI globals).
+  Generalizing would require parameterizing call shapes
+  that are dispatcher-idiosyncratic.
+- `_cyrlint_count_marker` (uses `CYRLINT_PATH` global)
+  / `_ts_mode_run` (uses cc5 `--parse-ts` mode flags) —
+  stay as thin wrappers in `programs/check.cyr` over
+  the lib primitives.
+- `_exec_in_dir3` / `_exec_in_dir3_env` — check.cyr's
+  versions use a different env-merge approach than the
+  lib version; left in `programs/check.cyr` to avoid
+  behavior drift. Lib still ships its own variants for
+  downstream consumers without `ENVP_ARR` shape.
+- `_exec_remote_with_env` / `_remote_bat_run` — named
+  in the original v5.9.42 pin but never landed as
+  separate fns in `programs/check.cyr`. No migration
+  target; pin was aspirational.
+
+### `programs/check.cyr` collapse
+
+14 helper bodies replaced with one-line `return regression_*(...)`
+delegations, passing `ENVP_ARR` for SSH/run helpers and
+`EMPTY_ENVP` (new global, freshly-alloc'd 1-elem null array) for
+the helpers that originally execve'd with an inline `var envp[1];
+store64(&envp, 0)`.
+
+### Verified
+
+- 66/66 check.sh; 132/132 cyrius test; 14/14 .tcyr.
+- cc5 byte-identical self-host (`7a1a8cf8`).
+- `cyrius lint lib/regression.cyr` → 0 warnings.
+- Install snapshot refreshed (`~/.cyrius/versions/5.9.41/lib/`
+  picks up the new module — ping-pong-protection per the CLAUDE.md
+  protocol).
+
+### Cascaded to v5.9.43
+
+- v5.9.43 — `cyrius` v5.9.x closeout per CLAUDE.md
+  11-step protocol.
+
 ## [5.9.41] — 2026-05-08
 
 **v5.9.x SLOT 41 — tls-live gate conversion + network-probe

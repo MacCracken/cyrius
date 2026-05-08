@@ -1573,25 +1573,69 @@ satisfied by earlier slots.
     helpers + gate are net-new code).
   - cyrius test 132/132; .tcyr 14/14.
 
-- **v5.9.42** — **`lib/regression.cyr` testing-stdlib
-  carve-out**. Helper inventory stabilized post-v5.9.41 (arc
-  closed). ~200-300 LOC migration of the reusable primitives
-  accumulated through the v5.9.6 → v5.9.41 dispatcher work
-  (`_stderr_match_subcase`, `_count_substr_buf`,
-  `_exec_with_arg_capture` + `_capture_both`,
-  `_compile_run_get_exit`, `_file_contains_substr`,
-  `_ts_mode_run`, `_cyrlint_count_marker`,
-  `_compile_capture_stderr`, `_exec_capture_clean`,
-  `_exec_run_clean`, `_expected_output_gate`, `_tcyr_relay_gate`,
-  `_pipe_file_to_bin` + `_capture`, `_ssh_skip_check`,
-  `_scp_to`, `_ssh_remote_exit`, `_ssh_target`,
-  `_exec_in_dir3`, `_exec_in_dir3_env`, `_exec_remote_with_env`,
-  `_codesign_remote`, `_remote_bat_run`, `_network_probe_check`).
-  Stdlib module count 78 → 79. api-surface adds ~22-26
-  entries. Dispatcher gates collapse to thin wrappers; downstream
-  consumers (yantra, cyim/agnosys/mabda test suites, future test
-  runners) can reach for the same shapes via
-  `include "lib/regression.cyr"`.
+- **v5.9.42** ✅ — **`lib/regression.cyr` testing-stdlib
+  carve-out shipped 2026-05-08**. Closes the post-v5.9.41
+  helper-inventory stabilization arc.
+
+  **What landed**:
+  - New `lib/regression.cyr` (700 LOC, 22 public verbs) with
+    five surface groups: display (section / check / print +
+    ANSI consts), buffer scan (buf_eq / count_substr /
+    file_contains_substr), process (pipe_to_bin ± capture,
+    run_with_timeout, exec_capture / exec_run / exec_with_arg_*
+    variants, exec_in_dir3 ± env), network (TCP probe with
+    non-blocking connect + poll timeout), SSH cluster
+    (target / skip-check / scp-to / remote-exit /
+    remote-exec-capture / codesign-remote).
+  - `programs/check.cyr` adds `include "lib/regression.cyr"`
+    and collapses 14 helpers to thin wrappers (407 lines
+    deleted, 43 lines added — net -364 LOC). Wrappers pass
+    `ENVP_ARR` for the helpers that inherit parent env; new
+    `EMPTY_ENVP` global for the helpers that originally
+    execve'd with an empty env literal.
+  - `docs/api-surface.snapshot` regenerated: 2770 → 2792 (+22
+    entries, all new `regression_*` verbs).
+  - Stdlib module count 78 → 79.
+
+  **Held back from migration** (each by design):
+  - `_compile_run_get_exit` / `_compile_capture_stderr` —
+    use `_self_host_pipe`'s 2 MB src cap + raw-status return
+    convention. Lib's `regression_pipe_to_bin*` use 1 MB +
+    WEXITSTATUS, right for arbitrary binaries but not cyrius
+    source. Callers that need both shapes compose the lib
+    primitives manually.
+  - `_tcyr_relay_gate` / `_expected_output_gate` — dispatcher
+    gates that depend on audit-internal accounting (`_check`,
+    `ROOT_PATH`, ANSI globals). Generalizing would require
+    parameterizing call shapes that are dispatcher-
+    idiosyncratic.
+  - `_cyrlint_count_marker` — uses `CYRLINT_PATH` global.
+    Stays as a thin wrapper over the lib primitives.
+  - `_ts_mode_run` — uses cc5 `--parse-ts` mode flags.
+    Stays as a thin wrapper.
+  - `_exec_in_dir3` / `_exec_in_dir3_env` — versions in
+    check.cyr have a different env-merge approach than the
+    lib version; left in check.cyr to avoid behavior drift.
+    Lib still ships its own variants for downstream
+    consumers (yantra et al) that don't have check.cyr's
+    `ENVP_ARR` shape.
+  - `_exec_remote_with_env` / `_remote_bat_run` (named in
+    the original v5.9.42 pin) — never landed as separate
+    fns in `programs/check.cyr`; the pin was aspirational.
+    No migration target.
+
+  **Verified**: 66/66 check.sh; 132/132 cyrius test; 14/14
+  .tcyr; cc5 byte-identical self-host (`7a1a8cf8`); cyrlint
+  on lib/regression.cyr clean (0 warnings).
+
+  Downstream consumers (yantra, agnosys / mabda test suites,
+  future test runners) can now reach for the same shapes via
+  `include "lib/regression.cyr"` instead of re-rolling
+  fork/exec/SSH/timeout boilerplate. sandhi's
+  `_sandhi_conn_connect_nb` shares the same shape as
+  `regression_network_probe`; if a future sandhi minor wants
+  to factor its impl down to the stdlib primitive, that's a
+  natural sandhi 1.2.0 candidate.
 
 - **v5.9.43** — **`cyrius` v5.9.x closeout** per CLAUDE.md
   11-step protocol. Mechanical: self-host verify, bootstrap
