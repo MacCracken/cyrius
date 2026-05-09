@@ -260,7 +260,7 @@ fn PARSE_RETURN(S) {
                                 # Jump to function epilogue (same as normal return)
                                 var rp2 = EJMP0(S);
                                 var rpc2 = GRPC(S);
-                                if (rpc2 >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+                                if (rpc2 >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
                                 S64(S + 0x18DA20 + rpc2 * 8, rp2);
                                 SRPC(S, rpc2 + 1);
                             } else {
@@ -299,7 +299,7 @@ fn PARSE_RETURN(S) {
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);  # consume ;
             var rp = EJMP0(S);
             var rpc = GRPC(S);
-            if (rpc >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+            if (rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
             S64(S + 0x18DA20 + rpc * 8, rp);
             SRPC(S, rpc + 1);
             return 0;
@@ -405,7 +405,7 @@ fn PARSE_RETURN(S) {
         # jmp to epilogue (regular return-patch path)
         var srn_rp = EJMP0(S);
         var srn_rpc = GRPC(S);
-        if (srn_rpc >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+        if (srn_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
         S64(S + 0x18DA20 + srn_rpc * 8, srn_rp);
         SRPC(S, srn_rpc + 1);
         return 0;
@@ -416,7 +416,7 @@ fn PARSE_RETURN(S) {
     # Emit jmp to epilogue (record as return patch)
     var rp = EJMP0(S);
     var rpc = GRPC(S);
-    if (rpc >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+    if (rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
     S64(S + 0x18DA20 + rpc * 8, rp);
     SRPC(S, rpc + 1);
     return 0;

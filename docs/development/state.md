@@ -5,6 +5,53 @@
 
 ## Version
 
+**5.10.6** (shipped 2026-05-08 — **v5.10.x SLOT 6 —
+Per-fn return-statement cap raise 64 → 256 (vyakarana
+2.1.0 prereq) + cyrfmt char-literal brace bug fix
+(bundled)**). Two mechanical consumer-prerequisite
+tooling fixes.
+
+**What landed**:
+- **Cap raised 64 → 256** at 7 enforcement sites in
+  `parse.cyr` / `parse_fn.cyr` / `parse_expr.cyr`
+  (Option B from the proposal — do-it-once headroom).
+- **Heap-map relocation**: `ret_patches` 512 B → 2048 B
+  at 0x18DA20; `ret_patch_cnt` relocated 0x18DC20 →
+  0x18E220 (~5.5 KB headroom before next field).
+  `GRPC`/`SRPC` accessors + init in `_zero_compiler_state`
+  + explicit S64 inits in main.cyr / main_win.cyr all
+  updated. Heap-map comments updated across 5 main_*.cyr
+  files (main, _aarch64, _aarch64_macho, _aarch64_native,
+  _win) per the cross-arch propagation pin.
+- **cyrfmt char-literal brace fix**: brace counter at
+  `programs/cyrfmt.cyr` now skips `'...'` char literals
+  (mirrors the v5.7.22 skip for `#` comments + `"..."`
+  strings). Repro `str_builder_putc(sb, '}'); var x = 1;`
+  no longer drops the second statement to column 0.
+- **New regression** `tests/tcyr/return_cap.tcyr` —
+  100-return synthetic dispatcher.
+
+**Acceptance bar met** on real hardware:
+- x86_64 Linux: cc5 byte-identical self-host (size
+  unchanged at 764,552 B — heap-layout reshuffle, no
+  codegen); 66/66 check.sh; 134/134 cyrius test
+  (was 133, +1 for return_cap); heapmap clean.
+- aarch64 Linux (pi): return_cap test passes 4/4
+  cross-arch.
+- macOS Mach-O ARM64 (ecb): cc5_macho self-hosts
+  byte-identical (round2 == round3).
+
+cc5: **764,552 B** unchanged (heap-layout reshuffle).
+
+**NOT in this slot** (deferred with explicit pinnage):
+- Dynamic growable buffer (Option C from the proposal)
+  — pinned at v6.x.x as the structural fix; removes the
+  cap entirely via realloc-shape, lands during the
+  v6.0.0 broader cleanup arc.
+
+**Next**: v5.10.7 — `lib/net.cyr` `net_connect_nb`
+primitive (sandhi 1.3.x prereq).
+
 **5.10.5** (shipped 2026-05-08 — **v5.10.x SLOT 5 —
 Type system pass 5: agnosys 1.1.12 verbatim repro CLOSE
 + extended overload dispatch + diagnostic hint catalog**).
@@ -5219,9 +5266,11 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **764,552 B** at v5.10.5 (was 758,888 at
-  v5.10.4; +5,664 B for the extended dispatch + 3 new lazy
-  noff lookups + scalar return-type parsing). Aggregate
+- **cc5 (x86_64)**: **764,552 B** at v5.10.6 (unchanged from
+  v5.10.5 — heap-layout reshuffle, no codegen change).
+  v5.10.5 was 764,552 (was 758,888 at v5.10.4; +5,664 for
+  the extended dispatch + 3 new lazy noff lookups + scalar
+  return-type parsing). Aggregate
   growth v5.10.x cycle: ~754,752 at v5.10.0 → 755,112 at
   v5.10.1 → 755,112 at v5.10.2 (stdlib annotations don't
   change cc5 bytes) → 757,920 at v5.10.3 (+2,808 for noff

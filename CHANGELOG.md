@@ -6,6 +6,121 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.6] — 2026-05-08
+
+**v5.10.x SLOT 6 — Per-fn return-statement cap raise
+64 → 256 (vyakarana 2.1.0 prereq) + cyrfmt char-literal
+brace bug fix (bundled)**. Two mechanical consumer-
+prerequisite tooling fixes that share a slot per the
+proposal at
+[`docs/development/proposals/2026-05-08-raise-return-cap.md`](docs/development/proposals/2026-05-08-raise-return-cap.md).
+
+cc5: 764,552 B (unchanged — heap-layout reshuffle, no
+codegen change). Byte-identical self-host x86_64 + Mach-O
+ARM64. cyrius test: 134/134 (was 133, +1 for new
+`return_cap.tcyr`). check.sh: 66/66. heapmap clean.
+
+### What landed — Return cap raise
+
+vyakarana 2.1.0 surfaced the cap at 83 returns in
+`detect_language(path)` (PowerShell extension batch);
+shipped a length-bucket helper-split workaround. This
+slot lifts the cap so the dispatcher pattern works at
+scale.
+
+- **Cap raised 64 → 256** (Option B from the proposal —
+  do-it-once headroom; covers 24 months of foreseeable
+  consumer growth without another bump cycle).
+- **Heap-map relocation**: `ret_patches` array grows
+  from 512 B (64 entries) to 2048 B (256 entries) at
+  0x18DA20, ending at 0x18E220. `ret_patch_cnt` (8 B)
+  relocated from 0x18DC20 → 0x18E220. ~5.5 KB headroom
+  before `loop_top` (0x18F838); no other field collides.
+- **Cap-check sites updated** at 7 enforcement points
+  (`>= 64` → `>= 256`, message `max 64` → `max 256`):
+  - `parse.cyr:980` (qsrpc)
+  - `parse_expr.cyr:1054` (rpc), `parse_expr.cyr:1356` (qrpc)
+  - `parse_fn.cyr:263` (rpc2), `parse_fn.cyr:302` (rpc),
+    `parse_fn.cyr:408` (srn_rpc), `parse_fn.cyr:419` (rpc)
+- **Cross-arch heap-map comments** updated in lockstep
+  across 5 main_*.cyr files (main.cyr,
+  main_aarch64.cyr, main_aarch64_macho.cyr,
+  main_aarch64_native.cyr, main_win.cyr) per the
+  `feedback_cross_arch_propagation_mandatory` pin.
+  main_cx.cyr doesn't carry these heap-map comments
+  (different layout shape). Bridge.cyr left at the
+  legacy 64 cap (bridge only compiles cc5 itself, well
+  under the cap; bridge has its own bootstrap-chain
+  offsets and its own smaller cap).
+- **`GRPC` / `SRPC` accessors** in `src/common/util.cyr`
+  updated to the new offset; init in
+  `_zero_compiler_state` updated; explicit `S64(S +
+  0x18E220, 0)` initializers in `main.cyr` and
+  `main_win.cyr` updated.
+- **New regression** `tests/tcyr/return_cap.tcyr` —
+  100-return synthetic dispatcher (well over the old
+  64 cap, well under the new 256). Errored at the 64
+  cap pre-bump; passes 4/4 post-bump (covers first /
+  middle / last / out-of-range branches).
+
+### What landed — cyrfmt char-literal brace fix
+
+cyrfmt's brace-depth counter at `programs/cyrfmt.cyr`
+v5.7.22 added skip for `#` comments + `"..."` string
+literals. v5.10.6 adds the same skip for `'...'` char
+literals. Smallest repro:
+
+```cyr
+fn foo(sb) {
+    str_builder_putc(sb, '}');
+    var x = 1;             // ← pre-fix: lost indent (column 0)
+}
+```
+
+Pre-fix the `}` inside `'}'` decremented the brace
+depth and `var x = 1;` dropped to column 0. Post-fix
+the char-literal scan handles the `}`, depth stays
+right, `var x = 1;` stays at column 4.
+
+Negative test cases verified:
+- `'{'` — no over-indent.
+- `'}'` then `'{'` on consecutive lines — balanced.
+- `'\''` — escaped single-quote handled (backslash skip).
+- `"literal-{ literal-}"` — string skip still works.
+- `"with-\"-and-{-and-\"-and-}"` — escaped quotes
+  inside strings.
+- `if (...) { str_builder_putc(sb, '}'); }` — char
+  literal inside nested braces, all branches balanced.
+
+Existing `cyrfmt --check` corpus stays green (66/66
+gates).
+
+### Acceptance bar met
+
+- 100-return synthetic compiles cleanly + runs 4/4 (was
+  errored at the 64 cap pre-bump).
+- cyrfmt repro formats with second statement at column 4
+  (was column 0 pre-fix).
+- cc5 byte-identical self-host x86_64 + Mach-O ARM64
+  (round2 == round3 on ecb).
+- aarch64 Linux (pi): return_cap test passes 4/4
+  cross-arch.
+- 66/66 check.sh; 134/134 cyrius test; heapmap clean.
+- vyakarana stays on its 2.1.0 helper-split (collapsing
+  back is a stylistic choice for vyakarana; not in this
+  slot's scope).
+
+### NOT in this slot (deferred with explicit pinnage)
+
+- **Dynamic growable buffer** (Option C from the
+  proposal) — pinned at v6.x.x as the structural fix
+  per the v6.0.0 cleanup arc. Removes the cap entirely
+  via realloc-shape. The 256 cap is "do-it-once"
+  headroom until then.
+- **Diagnostic hint with vyakarana worked example**
+  (Option D) — not needed; the cap is high enough
+  now that consumer-side trips should be rare.
+
 ## [5.10.5] — 2026-05-08
 
 **v5.10.x SLOT 5 — Type system pass 5: agnosys 1.1.12

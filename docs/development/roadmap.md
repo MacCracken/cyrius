@@ -589,7 +589,23 @@ overload dispatch.
     `lib.parked-pingpong-source` to fail loudly on
     future regressions).
 
-#### v5.10.6 — Per-fn return-statement cap raise 64 → 256 (vyakarana 2.1.0 prereq)
+#### v5.10.6 ✅ — Per-fn return-statement cap raise 64 → 256 + cyrfmt char-literal brace fix (SHIPPED)
+
+Both deliverables landed. cc5: 764,552 B (heap-layout
+reshuffle, no codegen change — same binary size as
+v5.10.5). 7 cap-check sites bumped 64 → 256;
+`ret_patch_cnt` relocated 0x18DC20 → 0x18E220;
+`GRPC`/`SRPC` accessors + heap-map comments updated
+across 5 main_*.cyr files. cyrfmt's brace counter
+now skips `'...'` char literals (mirrors the v5.7.22
+skip for `#` comments + `"..."` strings). New regression
+`tests/tcyr/return_cap.tcyr` (100-return synthetic);
+6 cyrfmt negative cases verified (`'{'`, escaped quotes,
+mixed strings, nested braces). Byte-identical x86_64 +
+Mach-O ARM64 self-host; pi cross-test passes. 66/66
+check.sh, 134/134 cyrius test, heapmap clean.
+
+#### v5.10.6 — original scope (kept here for closeout audit)
 
 **Driver**: vyakarana 2.1.0 surfaced the cap during the
 PowerShell extension batch (`.ps1` / `.psm1` / `.psd1`) —
@@ -635,6 +651,48 @@ conversion" entry below.
 - **Brk extension**: probably none required — parser state
   sits well within first-MB; existing brks already cover
   far past 0x18F838. Verify per main_*.cyr regardless.
+
+**Bundled side-deliverable — cyrfmt char-literal brace
+bug**: cyrfmt's brace-depth counter doesn't skip char
+literals, so a `}` inside `'}'` decrements it and
+subsequent statements lose their indent. Smallest repro:
+
+```cyr
+fn foo(sb) {
+    str_builder_putc(sb, '}');
+    var x = 1;             // ← cyrfmt drops the indent here
+}
+```
+
+`build/cyrfmt /tmp/repro.cyr` outputs the second line at
+column 0 instead of column 4. Same bug almost certainly
+applies to `'{'` (would over-indent), and likely to `}`/
+`{` inside `"..."` string literals depending on whether
+the lexer-shape used for indent tracking handles strings.
+
+**Fix shape**: cyrfmt's indent walker needs the same
+char-literal / string-literal skip the lexer uses. The
+walk is in `programs/cyrfmt.cyr` (or wherever the indent
+state machine lives). Likely a single conditional that
+says "if cursor is inside `'...'` or `"..."` quotes, skip
+brace counting for these bytes." Mirror handling: `\\` /
+`\'` / `\"` escape sequences should not break the literal.
+
+**Acceptance for the bundled fix**:
+- Repro above formats with the second statement still
+  indented to column 4.
+- `'{'` indent doesn't get over-counted (synthetic test:
+  `str_builder_putc(sb, '{');` followed by another
+  statement should still indent correctly).
+- `"...{...}..."` and `"...\"...\"..."` strings don't
+  trip the counter either.
+- Existing `cyrfmt --check` corpus stays green
+  (currently passing all stdlib + programs/).
+- Bundled into v5.10.6 because both are mechanical,
+  consumer-prerequisite tooling fixes (vyakarana surfaced
+  the cap; cyrfmt char-literal bug is a quality-of-life
+  fix that surfaces on any code generating bracketed
+  output via `str_builder_putc`).
 
 **Acceptance**:
 - New regression `tests/tcyr/return_cap.tcyr` with a

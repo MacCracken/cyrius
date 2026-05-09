@@ -21,7 +21,8 @@
 #   0x18F830  struct_count  [8]
 #   0x18C100  BL,CP,VCNT,TCNT,TI,NPOS    compiler state
 #   0x18DA00  fn_count, in_fn, local_cnt
-#   0x18DA20  ret_patches   [512]         64 return patch offsets
+#   0x18DA20  ret_patches   [2048]        256 return patch offsets (v5.10.6 — was [512]/64)
+#   0x18E220  ret_patch_cnt [8]            (relocated from 0x18DC20 at v5.10.6)
 #   0x18F900  defer_count   [8]           + defer_addrs [192]
 #   0x190500  include_fname [256]
 #   0x191000  fn_local_names

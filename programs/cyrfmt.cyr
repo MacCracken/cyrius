@@ -85,15 +85,20 @@ fn format_file(buf, total) {
             emit("\n", 1);
         } else {
             # Count all braces on this line — but skip any inside `#`
-            # comments and `"..."` string literals so doc lines that
-            # quote inline asm (`# asm { mov cr3, rax; }`) and string
-            # literals containing braces don't fool the indenter.
-            # v5.7.22 fix; closes
-            # agnos/docs/development/issue/2026-04-27-cyrius-fmt-tracks-braces-in-comments.md.
+            # comments, `"..."` string literals, and `'...'` char
+            # literals so doc lines that quote inline asm (`# asm
+            # { mov cr3, rax; }`), string literals, and char
+            # literals like `'}'` don't fool the indenter.
+            # v5.7.22 fix added `#`-comment + `"..."`-string skip;
+            # v5.10.6 added `'...'`-char skip — repro was
+            # `str_builder_putc(sb, '}'); var x = 1;` where the
+            # `}` inside the char literal decremented the brace
+            # depth and the next statement lost its indent.
             var opens = 0;
             var closes = 0;
             var bi = start;
             var in_string = 0;
+            var in_char = 0;
             while (bi < end) {
                 var bc = load8(buf + bi);
                 if (in_string == 1) {
@@ -105,9 +110,25 @@ fn format_file(buf, total) {
                         in_string = 0;
                     }
                 }
+                elif (in_char == 1) {
+                    if (bc == 92) {
+                        # Backslash escape: skip next byte (covers \' \\
+                        # \n \t \xNN \u{...} prefix-byte; the rest of
+                        # the escape body is handled by the same
+                        # byte-at-a-time loop, which won't see a `}` /
+                        # `{` / `'` / `"` inside the escape body
+                        # because those chars are not part of any
+                        # cyrius escape grammar).
+                        bi += 1;
+                    }
+                    elif (bc == 39) {
+                        in_char = 0;
+                    }
+                }
                 else {
                     if (bc == 35) { break; }            # `#` — comment to end of line
                     if (bc == 34) { in_string = 1; }     # opening `"` of a string literal
+                    elif (bc == 39) { in_char = 1; }     # opening `'` of a char literal
                     elif (bc == 123) { opens += 1; }
                     elif (bc == 125) { closes += 1; }
                 }

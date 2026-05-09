@@ -90,8 +90,8 @@ fn GINFN(S) { return L64(S + 0x18DA08); }
 fn SINFN(S, v) { S64(S + 0x18DA08, v); return 0; }
 fn GFLC(S) { return L64(S + 0x18DA10); }
 fn SFLC(S, v) { S64(S + 0x18DA10, v); return 0; }
-fn GRPC(S) { return L64(S + 0x18DC20); }
-fn SRPC(S, v) { S64(S + 0x18DC20, v); return 0; }
+fn GRPC(S) { return L64(S + 0x18E220); }
+fn SRPC(S, v) { S64(S + 0x18E220, v); return 0; }
 # Inline metadata accessors (GFBE getter removed — unused;
 # SFBE is the only direction the inliner needs.)
 fn GFBS(S, fi) { return L64(S + 0x12A2000 + fi * 8); }
@@ -468,7 +468,7 @@ fn _HEAP_INIT_SCRATCH(S) {
     S64(S + 0x18DA00, 0);
     S64(S + 0x18DA08, 0);
     S64(S + 0x18DA10, 0);
-    S64(S + 0x18DC20, 0);
+    S64(S + 0x18E220, 0);
     # IR state (cc5 — gated by CYRIUS_IR=1 env at runtime; init
     # unconditionally so the gate read sees zero, not garbage)
     S64(S + 0x17CA000, 0);    # ir_node_count

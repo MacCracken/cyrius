@@ -1051,7 +1051,7 @@ fn PARSE_SIMD_EXT(S, ptyp) {
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
         var rp = EJMP0(S);
         var rpc = GRPC(S);
-        if (rpc >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+        if (rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
         S64(S + 0x18DA20 + rpc * 8, rp);
         SRPC(S, rpc + 1);
         return 0;
@@ -1353,7 +1353,7 @@ fn PARSE_TERM(S) {
         EVLOAD(S, qidx);
         var qrp = EJMP0(S);
         var qrpc = GRPC(S);
-        if (qrpc >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+        if (qrpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
         S64(S + 0x18DA20 + qrpc * 8, qrp);
         SRPC(S, qrpc + 1);
         # Ok path landing: rax = [result_ptr + 8] (payload)

@@ -977,7 +977,7 @@ fn PARSE_STMT(S) {
                 EVLOAD(S, qsidx);
                 var qsrp = EJMP0(S);
                 var qsrpc = GRPC(S);
-                if (qsrpc >= 64) { ERR_MSG(S, "too many return statements in function (max 64)", 47); }
+                if (qsrpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
                 S64(S + 0x18DA20 + qsrpc * 8, qsrp);
                 SRPC(S, qsrpc + 1);
                 EPATCH(S, qsjcc);

@@ -1,0 +1,120 @@
+# v5.10.6 — return-cap raise 64 → 256 (vyakarana 2.1.0 prereq).
+# Synthetic 100-return fn that errored at the 64 cap pre-bump,
+# compiles cleanly post-bump. Acceptance gate per the slot.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/test.cyr"
+
+fn dispatch_100(n) {
+    if (n == 0) { return 0; }
+    if (n == 1) { return 7; }
+    if (n == 2) { return 14; }
+    if (n == 3) { return 21; }
+    if (n == 4) { return 28; }
+    if (n == 5) { return 35; }
+    if (n == 6) { return 42; }
+    if (n == 7) { return 49; }
+    if (n == 8) { return 56; }
+    if (n == 9) { return 63; }
+    if (n == 10) { return 70; }
+    if (n == 11) { return 77; }
+    if (n == 12) { return 84; }
+    if (n == 13) { return 91; }
+    if (n == 14) { return 98; }
+    if (n == 15) { return 105; }
+    if (n == 16) { return 112; }
+    if (n == 17) { return 119; }
+    if (n == 18) { return 126; }
+    if (n == 19) { return 133; }
+    if (n == 20) { return 140; }
+    if (n == 21) { return 147; }
+    if (n == 22) { return 154; }
+    if (n == 23) { return 161; }
+    if (n == 24) { return 168; }
+    if (n == 25) { return 175; }
+    if (n == 26) { return 182; }
+    if (n == 27) { return 189; }
+    if (n == 28) { return 196; }
+    if (n == 29) { return 203; }
+    if (n == 30) { return 210; }
+    if (n == 31) { return 217; }
+    if (n == 32) { return 224; }
+    if (n == 33) { return 231; }
+    if (n == 34) { return 238; }
+    if (n == 35) { return 245; }
+    if (n == 36) { return 252; }
+    if (n == 37) { return 259; }
+    if (n == 38) { return 266; }
+    if (n == 39) { return 273; }
+    if (n == 40) { return 280; }
+    if (n == 41) { return 287; }
+    if (n == 42) { return 294; }
+    if (n == 43) { return 301; }
+    if (n == 44) { return 308; }
+    if (n == 45) { return 315; }
+    if (n == 46) { return 322; }
+    if (n == 47) { return 329; }
+    if (n == 48) { return 336; }
+    if (n == 49) { return 343; }
+    if (n == 50) { return 350; }
+    if (n == 51) { return 357; }
+    if (n == 52) { return 364; }
+    if (n == 53) { return 371; }
+    if (n == 54) { return 378; }
+    if (n == 55) { return 385; }
+    if (n == 56) { return 392; }
+    if (n == 57) { return 399; }
+    if (n == 58) { return 406; }
+    if (n == 59) { return 413; }
+    if (n == 60) { return 420; }
+    if (n == 61) { return 427; }
+    if (n == 62) { return 434; }
+    if (n == 63) { return 441; }
+    if (n == 64) { return 448; }
+    if (n == 65) { return 455; }
+    if (n == 66) { return 462; }
+    if (n == 67) { return 469; }
+    if (n == 68) { return 476; }
+    if (n == 69) { return 483; }
+    if (n == 70) { return 490; }
+    if (n == 71) { return 497; }
+    if (n == 72) { return 504; }
+    if (n == 73) { return 511; }
+    if (n == 74) { return 518; }
+    if (n == 75) { return 525; }
+    if (n == 76) { return 532; }
+    if (n == 77) { return 539; }
+    if (n == 78) { return 546; }
+    if (n == 79) { return 553; }
+    if (n == 80) { return 560; }
+    if (n == 81) { return 567; }
+    if (n == 82) { return 574; }
+    if (n == 83) { return 581; }
+    if (n == 84) { return 588; }
+    if (n == 85) { return 595; }
+    if (n == 86) { return 602; }
+    if (n == 87) { return 609; }
+    if (n == 88) { return 616; }
+    if (n == 89) { return 623; }
+    if (n == 90) { return 630; }
+    if (n == 91) { return 637; }
+    if (n == 92) { return 644; }
+    if (n == 93) { return 651; }
+    if (n == 94) { return 658; }
+    if (n == 95) { return 665; }
+    if (n == 96) { return 672; }
+    if (n == 97) { return 679; }
+    if (n == 98) { return 686; }
+    if (n == 99) { return 693; }
+    return 0 - 1;
+}
+
+fn main() {
+    alloc_init();
+    assert_eq(dispatch_100(0), 0, "first branch");
+    assert_eq(dispatch_100(50), 50 * 7 % 991, "middle branch");
+    assert_eq(dispatch_100(99), 99 * 7 % 991, "last branch (>64 — pre-v5.10.6 cap)");
+    assert_eq(dispatch_100(100), 0 - 1, "out-of-range fallthrough");
+    var r = assert_summary();
+}
