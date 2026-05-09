@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.18] — 2026-05-09
+
+**v5.10.x SLOT 18 — hotfix: lib/process.cyr O_WRONLY
+undefined-variable for non-io.cyr consumers (agnosys CI
+unblock)**.
+
+Single-line fix in `lib/process.cyr`. agnosys 1.1.x CI
+hit `error: lib/process.cyr:51: undefined variable
+'O_WRONLY' (missing include or enum?)` because their
+`src/audit.cyr` includes `lib/process.cyr` without
+`lib/io.cyr` — and `lib/io.cyr` is the only stdlib file
+that defines `var O_WRONLY = 1;` on Linux/macOS
+(`lib/syscalls_windows.cyr` has it inside a Win-target-
+gated `enum OFlags`). Pre-fix, cyrius's own
+`programs/check.cyr` happened to include `lib/io.cyr`
+BEFORE `lib/process.cyr`, so it parsed clean — the only
+in-tree consumer never tripped the bug.
+
+**The fix** in `lib/process.cyr:51`:
+```
+-        var devnull = sys_open("/dev/null", O_WRONLY, 0);
++        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY
+```
+
+Matches the existing pattern at `lib/fdlopen.cyr:234`
+(`syscall(2, ..., 0, 0); # O_RDONLY`). Keeps
+`lib/process.cyr` self-sufficient — no new dep on
+`lib/io.cyr` for downstream consumers.
+
+cc5: 778,120 → 778,120 (no compiler-side change). Self-
+host byte-identical. 66/66 check.sh, 135/135 cyrius
+test, **pi 11/11** simd cross-arch verify.
+
+### Why pre-existing not new
+
+`lib/process.cyr` shipped in this shape since the
+`subprocess bridge` commit (`d243d6e`); `O_WRONLY` was
+never defined in process.cyr or its docstring deps
+(`Requires: agnosys/syscalls.cyr, string.cyr,
+alloc.cyr, tagged.cyr` — no io.cyr). The bug rode in
+all v5.10.x releases through .17 because the only
+in-tree consumer (cyrius's own `programs/check.cyr`)
+happened to include `lib/io.cyr` first. agnosys 1.1.13
+surfaced it during their V1.1.12 ship — same
+"downstream-only consumer surfaces a stdlib gap" shape
+as the v5.10.16 api-surface filing.
+
+### Downstream consumer note
+
+Any project consuming `lib/process.cyr` should bump
+their cyrius pin to 5.10.18 (or include `lib/io.cyr`
+manually before `include "lib/process.cyr"` if pinned
+to 5.10.17 or earlier).
+
 ## [5.10.17] — 2026-05-09
 
 **v5.10.x SLOT 17 — keystone SIMD primitives for hisab

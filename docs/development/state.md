@@ -5,6 +5,47 @@
 
 ## Version
 
+**5.10.18** (shipped 2026-05-09 — **v5.10.x SLOT 18 —
+hotfix: lib/process.cyr O_WRONLY undefined-variable for
+non-io.cyr consumers (agnosys CI unblock)**).
+
+Single-line fix in `lib/process.cyr:51`. agnosys 1.1.x
+hit `error: lib/process.cyr:51: undefined variable
+'O_WRONLY'` because their `src/audit.cyr` includes
+`lib/process.cyr` without `lib/io.cyr` — and `O_WRONLY`
+on Linux/macOS only lives in `lib/io.cyr` (Windows has
+it inside `enum OFlags` in `lib/syscalls_windows.cyr`).
+Pre-fix, cyrius's own `programs/check.cyr` happened to
+include io.cyr BEFORE process.cyr, so the bug rode
+through all v5.10.x .0–.17 releases.
+
+**The fix**: replaced `O_WRONLY` with the literal `1`
++ comment, matching the `lib/fdlopen.cyr:234` pattern
+(`syscall(2, ..., 0, 0); # O_RDONLY`). Keeps
+`lib/process.cyr` self-sufficient — no new
+include-dep for downstream consumers.
+
+**Acceptance**:
+- 66/66 check.sh, 135/135 cyrius test (no test added
+  — the hotfix is a stdlib edit; in-tree consumer
+  `programs/check.cyr` already exercises process.cyr
+  via the gates).
+- pi 11/11 simd cross-arch (sanity check that the lib
+  edit didn't perturb anything else).
+- cc5 size unchanged: 778,120 B (process.cyr is stdlib,
+  not part of the compiler binary).
+- Byte-identical x86 self-host.
+
+**Downstream**: any project consuming `lib/process.cyr`
+should bump their cyrius pin to 5.10.18 — agnosys
+1.1.13 specifically. `cyrius deps` then refreshes the
+buggy 5.10.17-or-earlier process.cyr to the fixed 5.10.18
+version.
+
+**Next**: v5.10.19 = typed `f64v2`/`f64v4` types
+(overload dispatch surface, was v5.10.18 in roadmap
+pre-hotfix; renumbered for chronology).
+
 **5.10.17** (shipped 2026-05-09 — **v5.10.x SLOT 17 —
 keystone SIMD primitives for hisab gap-close (dot /
 scale / axpy)**).
@@ -5778,12 +5819,15 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **778,120 B** at v5.10.17 (was
-  771,464 at v5.10.16; +6,656 B for new SIMD
-  primitives + parser dispatch).
-- **cc5_aarch64**: **473,688 B** at v5.10.17 (was
-  468,888 at v5.10.16; +4,800 B for new NEON SIMD
-  encodings).
+- **cc5 (x86_64)**: **778,120 B** at v5.10.18 (unchanged
+  from v5.10.17 — hotfix touched lib/process.cyr only,
+  not the compiler binary).
+- **cc5_aarch64**: **473,688 B** at v5.10.18 (unchanged
+  from v5.10.17).
+- **cc5 at v5.10.17**: 778,120 B (was 771,464 at v5.10.16;
+  +6,656 B for new SIMD primitives + parser dispatch).
+- **cc5_aarch64 at v5.10.17**: 473,688 B (was 468,888 at
+  v5.10.16; +4,800 B for new NEON SIMD encodings).
 - **cc5 at v5.10.16**: 771,464 B (was 771,784 at
   v5.10.15; −320 B as helper factoring + disp32-form
   load saved more than the new `_F64V_DISP` helper

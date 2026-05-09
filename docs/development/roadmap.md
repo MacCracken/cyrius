@@ -1090,7 +1090,24 @@ cc5: 771,464 → 778,120 (+6,656 B). cc5_aarch64: 468,888 →
 66/66 check.sh, 135/135 cyrius test (+3 for dot/scale/
 axpy groups). Cross-host verified: pi 11/11, ecb 11/11.
 
-#### v5.10.18+ — typed `f64v2` / `f64v4` types (overload dispatch surface)
+#### v5.10.18 ✅ — Hotfix: lib/process.cyr O_WRONLY (agnosys CI unblock) (SHIPPED)
+
+Single-line fix in `lib/process.cyr:51`. Replaced
+`O_WRONLY` (defined only in `lib/io.cyr` on Linux/macOS;
+absent from process.cyr's docstring deps) with the
+literal `1`, matching the `lib/fdlopen.cyr:234`
+pattern. Pre-existing latent bug — only hit by
+downstream consumers that don't include `lib/io.cyr`
+(agnosys 1.1.13 surfaced via CI failure on their V1.1.12
+ship). cyrius's own `programs/check.cyr` happened to
+include io.cyr first so the bug rode through all
+v5.10.x .0–.17 releases.
+
+cc5 size unchanged (no compiler-side change). 66/66
+check.sh, 135/135 cyrius test, byte-identical x86 self-
+host, pi 11/11 simd cross-arch.
+
+#### v5.10.19+ — typed `f64v2` / `f64v4` types (overload dispatch surface)
 
 The "typed verbs" half of the original v5.10.16 roadmap
 entry, recognized as a separate arc once the cross-arch
