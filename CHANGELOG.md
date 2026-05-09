@@ -8,6 +8,114 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [5.10.16] — 2026-05-09
 
+**v5.10.x SLOT 16 — SIMD cross-arch close + api-surface
+brace-desync fix (paired)**.
+
+Two related lexer-correctness fixes plus a long-latent
+codegen bug, bundled because the api-surface scanner
+issue (filed by agnosys 1.1.13) surfaced same day as
+the SIMD slot was running.
+
+cc5 (x86): 771,784 → 771,464 (-320 B; disp32 form +
+helper factoring net negative).
+cc5_aarch64: 467,016 → 468,888 (+1,872 B for the NEON
+primitives).
+api-surface snapshot: 2798 → 2808 fns (10 newly-
+revealed: 2 cyml::, 8 niyama:: vim_*; previously hidden
+by brace-desync inside JSON string literals).
+Byte-identical x86 self-host. 66/66 check.sh, 135/135
+cyrius test (+1 for the new simd group).
+
+### SIMD primitives — cross-arch close
+
+**Premise check at slot entry**: roadmap claimed
+`f64v_*` was "in production since v1.9.0" — true for
+x86 *if* the calling fn didn't auto-enable callee-save
+register caching, otherwise segfault. Three layers of
+gap surfaced:
+
+- **aarch64**: `EMIT_F64V_LOOP/UNARY/FMADD` in
+  `src/backend/aarch64/emit.cyr` were `return 0;` no-op
+  stubs. A consumer calling `f64v_add` on aarch64 got an
+  empty fn body — dst untouched. Replaced with NEON
+  `.2D` packed-double encodings: `fadd` / `fsub` /
+  `fmul` / `fdiv` / `fsqrt` / `fabs` / `fmla`. Frame
+  addressing routes through `EFLLOAD` so `_cur_fn_ret_
+  stash` adjustments stay correct.
+- **x86 (latent codegen bug)**: `EMIT_F64V_LOOP/UNARY/
+  FMADD` computed slot disps as `-(N+1)*8` while
+  `EFLSTORE` adjusted by an additional
+  `_cur_fn_regalloc * 8 + _cur_fn_ret_stash`. The arg
+  stash and the loop-body load diverged by 40+ bytes for
+  any caller whose fn auto-enabled the regalloc cache.
+  Fixed via new `_F64V_DISP` helper that mirrors
+  EFLSTORE's adjustment + always-disp32 `mov rdx,
+  [rbp+disp32]` form so adjusted disps below -128 don't
+  truncate silently.
+- **cx**: arity-aligned the no-op stubs to match x86 +
+  aarch64 signatures (was `(S, op)` / `(S, op)` / `(S)`,
+  now `(S, op, vbase)` / `(S, op, vbase)` / `(S, vbase)`).
+  cx's whole f64 pipeline is no-op (per the v5.7.11
+  comment in src/backend/cx/emit.cyr); SIMD scalar
+  fallback waits on cx-side f64 support landing.
+
+### Why this rode along for ~3.5 years
+
+`programs/simd_expand_test.cyr` was the only consumer
+across the whole tree and was never wired into
+`check.sh`. v5.10.16 adds `tests/tcyr/simd.tcyr` (8
+asserts covering `f64v_add` size-2 + size-4, `f64v_sub`,
+`f64v_mul`, `f64v_div`, `f64v_sqrt`, `f64v_abs`,
+`f64v_fmadd`) so the gap can't silently re-open. All
+size-2 cases match the SSE2 / NEON 2-double pair width
+directly; size-4 exercises the loop's pair-step.
+
+### api-surface scanner brace-desync fix
+
+`programs/cyrius_api_surface.cyr` walked source files
+counting `{` (123) and `}` (125) bytes raw, so a `{`
+inside a string literal like `"{\"x\":"` (idiomatic
+JSON-emit shape) inflated depth and the scanner
+concluded the enclosing fn body never closed — every
+fn / struct decl after that point in the same module
+silently dropped from the surface. Same bug class as
+the cyrlint char-literal-brace-desync fixed at v5.10.10;
+applied the same skip pattern (string + char literal
++ `#` comment skip) before brace counting.
+
+agnosys 1.1.13 surfaced this filing every hand-rolled
+`_to_json` shim during V1.1.12 migration: 657 fns
+counted vs the expected 730 (73-fn delta = downstream-
+of-`putc(125)` losses). Repro from
+`agnosys/docs/development/issues/2026-05-09-cyrius-api-
+surface-putc-brace-desync.md` now correctly returns
+33 fns instead of 7. Note: agnosys's filing
+hypothesized the bug was about numeric literal `125`
+being read as `}`; the actual cause was `{` inside the
+JSON string literal at the OPENING of the JSON object,
+which the workaround `str_builder_add_cstr(sb, "}")`
+balanced by adding a matching `}` byte. Fix is the
+same either way (skip strings); diagnosis updated in
+this entry.
+
+### Cross-arch verify
+
+x86: tcyr suite passes (the fix delta), byte-identical
+self-host. aarch64 NEON encodings derived from ARMv8-A
+reference; runtime cross-test on pi (aarch64 Linux),
+cass (Apple Silicon Mac), ecb (Windows PE) is the
+acceptance bar — pending in this entry, will be
+verified before tagging.
+
+### Roadmap
+
+v5.10.17 = new SIMD primitives (dot, scale, axpy —
+the keystone three for hisab gap-close). Per slot-
+entry user direction "shadow-lib .15 - SIMD .16,
+new primitive .17". v5.10.16 paid the cross-arch debt
+and the latent x86 codegen bug; v5.10.17 builds new
+primitives on the now-uniform foundation.
+
 ## [5.10.15] — 2026-05-09
 
 **v5.10.x SLOT 15 — shadow-lib compile note (held from

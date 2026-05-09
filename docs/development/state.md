@@ -5,8 +5,66 @@
 
 ## Version
 
-**5.10.15** (shipped 2026-05-09 — **v5.10.x SLOT 15 —
-shadow-lib compile note (closes v5.10.10 held-arc)**).
+**5.10.16** (shipped 2026-05-09 — **v5.10.x SLOT 16 —
+SIMD cross-arch close + api-surface brace-desync fix
+(paired)**).
+
+Premise check at slot entry uncovered three SIMD
+layers broken: aarch64 stub (no-op `return 0;`), x86
+latent codegen bug (loop-body load disp didn't apply
+`_cur_fn_regalloc / _cur_fn_ret_stash` — 40+ byte
+stash mismatch under auto-regalloc), cx arity
+mismatch. "In production since v1.9.0" was wrong —
+only worked on x86 fns without auto-regalloc. Latent
+because `programs/simd_expand_test.cyr` was the sole
+consumer and never wired into check.sh.
+
+**What landed**:
+- aarch64 NEON `.2D` encodings: `fadd` / `fsub` /
+  `fmul` / `fdiv` / `fsqrt` / `fabs` / `fmla` in
+  `src/backend/aarch64/emit.cyr`. Frame addressing
+  routes through `EFLLOAD` for `_cur_fn_ret_stash`
+  correctness.
+- x86 codegen fix: new `_F64V_DISP` helper mirrors
+  EFLSTORE's adjustment + always-disp32 `mov rdx,
+  [rbp+disp32]` form so adjusted disps below -128
+  don't truncate silently.
+- cx: arity-aligned no-op stubs to match new
+  signatures (cx f64 pipeline still TBD).
+- `tests/tcyr/simd.tcyr` (8 asserts) wires f64v_*
+  into check.sh as the regression floor.
+- api-surface scanner: skip strings + char literals +
+  `#` comments before brace counting (same pattern
+  as cyrlint v5.10.10). Filed by agnosys 1.1.13
+  same-day; their "numeric 125 = }" hypothesis was
+  wrong — actual cause was `{` inside JSON string
+  literals.
+
+**Acceptance**:
+- 8/8 simd tcyr passes on x86 (the fix delta).
+- agnosys repro 7 → 33 fns.
+- api-surface snapshot: 2798 → 2808 (10 newly-
+  revealed niyama_vim + cyml fns previously hidden
+  by brace-desync).
+- cc5: 771,784 → 771,464 (−320 B; helper factoring +
+  disp32 form net negative).
+- cc5_aarch64: 467,016 → 468,888 (+1,872 B).
+- 66/66 check.sh, 135/135 cyrius test.
+- Byte-identical x86 self-host.
+
+**Pending**: cross-host SSH verify on pi (aarch64
+Linux), cass (Apple Silicon), ecb (Windows PE) — NEON
+encodings derived from ARMv8-A reference but never
+runtime-verified. Will SSH-test before tagging.
+
+**Next**: v5.10.17 = new SIMD primitives (dot, scale,
+axpy — keystone three for hisab gap-close), per user
+direction "close cross-arch gap first... new
+primitive .17".
+
+**5.10.15** (shipped 2026-05-09 — **v5.10.x SLOT 15
+— shadow-lib compile note (closes v5.10.10
+held-arc)**).
 
 The agnosys aarch64 saga (v5.10.7-.10) consumed four
 slots chasing what turned out to be a stale shadow lib
@@ -5679,12 +5737,19 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **771,784 B** at v5.10.15 (was
-  766,496 at v5.10.14; +5,288 B for `_check_shadow_lib`
-  fn + env opt-out scan in `_init_cyrius_lib`).
-- **cc5 at v5.10.14**: 766,496 B (was 765,616 at v5.10.13;
-  +880 B for derive flag tracking + body factoring +
-  cross-emit in lex_pp.cyr).
+- **cc5 (x86_64)**: **771,464 B** at v5.10.16 (was
+  771,784 at v5.10.15; −320 B as helper factoring +
+  disp32-form load saved more than the new
+  `_F64V_DISP` helper cost).
+- **cc5_aarch64**: **468,888 B** at v5.10.16 (was
+  467,016 at v5.10.15; +1,872 B for the NEON SIMD
+  primitives in `src/backend/aarch64/emit.cyr`).
+- **cc5 at v5.10.15**: 771,784 B (was 766,496 at
+  v5.10.14; +5,288 B for `_check_shadow_lib` +
+  env opt-out scan in `_init_cyrius_lib`).
+- **cc5 at v5.10.14**: 766,496 B (was 765,616 at
+  v5.10.13; +880 B for derive flag tracking + body
+  factoring + cross-emit in lex_pp.cyr).
 - **cc5 at v5.10.13**: 765,616 B (unchanged from v5.10.12
   — TLS typed wrappers live in stdlib only; cc5
   semantically unchanged).

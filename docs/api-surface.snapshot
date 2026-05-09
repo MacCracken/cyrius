@@ -786,6 +786,8 @@ cyml::cyml_entry_new/4
 cyml::cyml_entry_new_a/5
 cyml::cyml_expand_value/1
 cyml::cyml_parse/2
+cyml::cyml_parse_file_r/1
+cyml::cyml_split/6
 dynlib::dynlib_auxv_get/3
 dynlib::dynlib_bootstrap_cpu_features/0
 dynlib::dynlib_bootstrap_environ/1
@@ -1544,6 +1546,14 @@ niyama::niyama_re2_last_error/0
 niyama::niyama_re2_match/2
 niyama::niyama_re2_search/2
 niyama::niyama_re2_search_at/4
+niyama::niyama_vim_compile/1
+niyama::niyama_vim_compile_opts/2
+niyama::niyama_vim_group_end/2
+niyama::niyama_vim_group_start/2
+niyama::niyama_vim_last_error/0
+niyama::niyama_vim_match/2
+niyama::niyama_vim_search/2
+niyama::niyama_vim_search_at/4
 pam::pam_unix_authenticate/2
 pam::pam_unix_authenticate_r/2
 pam::pam_unix_available/0

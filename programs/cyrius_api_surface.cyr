@@ -388,12 +388,45 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                 }
             }
         }
+        # v5.10.16 — skip braces inside string literals, char
+        # literals, and `#` comments (matches the cyrlint v5.10.10
+        # fix). Pre-fix the byte counter saw `{` inside strings
+        # like `"{\"x\":"` as a real opening brace, so depth never
+        # returned to 0 after the first JSON-emitting line — every
+        # fn / struct decl past that point in the same module was
+        # silently dropped from the surface. agnosys 1.1.13 hit
+        # this on every hand-rolled `_to_json` shim and read
+        # 657 fns instead of 730 (filing
+        # 2026-05-09-cyrius-api-surface-putc-brace-desync).
         var bp = line_start;
         while (bp < eol) {
             var bc = load8(filebuf + bp);
-            if (bc == 123) { depth = depth + 1; }
-            if (bc == 125) { depth = depth - 1; }
-            bp = bp + 1;
+            if (bc == 35) {                  # '#' comment to EOL
+                bp = eol;
+            }
+            elif (bc == 34) {                # '"' string literal
+                bp = bp + 1;
+                while (bp < eol) {
+                    if (load8(filebuf + bp) == 92) { bp = bp + 1; }
+                    elif (load8(filebuf + bp) == 34) { break; }
+                    bp = bp + 1;
+                }
+                bp = bp + 1;
+            }
+            elif (bc == 39) {                # '\'' char literal
+                bp = bp + 1;
+                while (bp < eol) {
+                    if (load8(filebuf + bp) == 92) { bp = bp + 1; }
+                    elif (load8(filebuf + bp) == 39) { break; }
+                    bp = bp + 1;
+                }
+                bp = bp + 1;
+            }
+            else {
+                if (bc == 123) { depth = depth + 1; }
+                if (bc == 125) { depth = depth - 1; }
+                bp = bp + 1;
+            }
         }
         pos = eol + 1;
     }

@@ -1017,47 +1017,101 @@ cyrius test. Pairs with v5.10.12's defensive
 `lib/fnptr.cyr` rewrite to close the agnosys-saga
 held-arc completely.
 
-#### v5.10.16 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.16 ✅ — SIMD cross-arch close + api-surface brace-desync (paired) (SHIPPED)
 
-Sandhi-side cousin of the type-system arc. Now that overload
-dispatch exists (v5.10.2), SIMD primitives can be exposed as
-typed verbs (`f64v4_add(a: f64v4, b: f64v4): f64v4`) instead
-of raw `f64*` API. Width is part of the type; compile-time
-check; overload dispatch picks the right SIMD primitive
-(`f64v2` for 2-wide SSE2 or `f64v4` for 4-wide AVX or paired
-NEON).
+Two related lexer-correctness fixes plus a long-latent
+codegen bug, bundled because the api-surface filing landed
+the same day as the SIMD slot was running.
 
-**JUSTIFIED, not speculative**: hisab documents a measured
-30-700× gap vs Rust+glam in `docs/benchmarks-rust-v-cyrius.md`,
-with "No SIMD" cited as a 2-4× cost factor on vector/matrix
-ops. Hisab is the **keystone for Wave 4 (37 dependents —
-impetus, kiran, joshua, aethersafha, tara, badal,
-hisab-mimamsa, brahmanda)**. Per hisab's own benchmark doc,
-"SIMD — Cyrius 5.x roadmap; would close gap 2-4×".
+**Premise check at slot entry** uncovered the SIMD primitives
+were broken on every arch — not "in production since v1.9.0"
+as the prior roadmap entry claimed. Three layers:
 
-Compiler infrastructure already in place: f64v packed-SSE2
-ops have been in production since v1.9.0 (`f64v_add` / `_sub`
-/ `_mul` / `_div` / `_sqrt` / `_abs` / `_fmadd` in
-`src/backend/x86/float.cyr`). The slot expands the SIMD
-primitive set to cover hisab's hot Vec3/Vec4/Mat4 ops (cross
-product, normalize, slerp, mat4 inverse, ray-sphere intersect
-— top entries in hisab's gap table).
+- **aarch64**: `EMIT_F64V_LOOP/UNARY/FMADD` were `return 0;`
+  no-op stubs. Fixed with NEON `.2D` packed-double encodings
+  (`fadd` / `fsub` / `fmul` / `fdiv` / `fsqrt` / `fabs` /
+  `fmla`).
+- **x86 (latent codegen bug)**: loop-body load disp didn't
+  apply the `_cur_fn_regalloc * 8 + _cur_fn_ret_stash`
+  adjustment that EFLSTORE applies — fns with auto-regalloc
+  segfaulted by 40+ bytes off the stash. Fixed via new
+  `_F64V_DISP` helper + always-disp32 mov form.
+- **cx**: arity-aligned no-op stubs to match x86 + aarch64
+  signatures. Real cx f64 support is multi-minor scope.
 
-**Cross-arch budget**: x86 SSE2 (production); aarch64 NEON
-equivalent (`fadd.2d` / `fmul.2d` for f64-packed; native on
-Apple Silicon — cyim / hisab's macOS consumers); cx scalar
-fallback (cxvm has no SIMD primitives); future RISC-V RVV
-awaits the v5.11.x backend.
+Plus the **api-surface scanner brace-desync** fix in
+`programs/cyrius_api_surface.cyr` — string + char + `#`
+comment skip before brace counting, same pattern as
+cyrlint v5.10.10. agnosys 1.1.13 surfaced this; their
+filing's "numeric `125` read as `}`" hypothesis was wrong,
+the actual cause was `{` inside JSON string literals like
+`"{\"x\":"`. Fix is the same.
 
-Acceptance: hisab's `bench-history.csv` shows measurable
-improvement on at least one Wave-4-consumed op (cross /
-normalize / mat4_mul / mat4_inverse), targeted at closing
-the 2-4× gap. Cross-host gate verifies parity on aarch64.
-Memory pin `project_simd_state.md` lays out the cross-arch
-tax + the "byte-at-a-time is fine" stance applies to byte-
-parsing not math.
+Coverage gate: `tests/tcyr/simd.tcyr` (8 asserts) wires
+`f64v_*` into check.sh so the cross-arch gap can't silently
+re-open. `programs/simd_expand_test.cyr` was the only
+prior consumer and was never wired in — that's why both
+the aarch64 stub AND the x86 codegen bug rode along
+unnoticed for ~3.5 years of releases.
 
-#### v5.10.17+ — compile-time wins (lex / fixup), surface review, etc.
+Cross-host SSH verify on pi (aarch64 Linux), cass (Apple
+Silicon), ecb (Windows PE) is part of the acceptance bar
+— pending in this entry.
+
+cc5 (x86): 771,784 → 771,464 (-320 B; helper factoring +
+disp32 form net negative). cc5_aarch64: 467,016 → 468,888
+(+1,872 B for NEON). api-surface snapshot: 2798 → 2808
+(10 newly-revealed niyama_vim + cyml fns previously hidden
+by the brace-desync). Byte-identical x86 self-host.
+66/66 check.sh, 135/135 cyrius test.
+
+#### v5.10.17 — SIMD math primitive expansion (dot, scale, axpy)
+
+The "new primitives" half of the SIMD arc, deferred
+from v5.10.16 per user direction at slot entry
+("close cross-arch gap first... new primitive .17").
+
+Builds on the now-uniform x86 + aarch64 + cx foundation
+to add the keystone three for hisab's gap-close:
+
+- `f64v_dot(a, b, n) -> f64`  — sum-reduce after multiply
+- `f64v_scale(dst, a, scalar, n)` — broadcast multiply
+- `f64v_axpy(y, x, alpha, n)` — y[i] += alpha*x[i]
+
+These three compose enough to express most of hisab's
+Vec3/Vec4 hot-path ops (dot products dominate normalize,
+quat ops, ray intersections; scale + axpy cover slerp's
+linear blend; mat4_mul reduces to repeated dots).
+
+Cross-arch propagation MANDATORY in same slot
+(per the v5.10.16 lesson):
+- x86 SSE2: `mulpd` + `haddpd` for dot; `shufpd` to
+  broadcast scalar for scale; `mulpd` + `addpd` for axpy.
+- aarch64 NEON: `fmul.2d` + `faddp.2d` for dot;
+  `dup.2d` + `fmul.2d` for scale; `fmla.2d` for axpy.
+- cx: arity-aligned stubs (cx f64 still not supported).
+
+Acceptance: tcyr regression for each new primitive +
+hisab consumes them in a vec3_dot benchmark to show
+measurable Rust-gap close (target: 2-4× per the SIMD
+factor in hisab's gap analysis).
+
+#### v5.10.18+ — typed `f64v2` / `f64v4` types (overload dispatch surface)
+
+The "typed verbs" half of the original v5.10.16 roadmap
+entry, recognized as a separate arc once the cross-arch
+work happened first. Adds `f64v2` and `f64v4` as primitive
+types (16-byte and 32-byte packed-f64 respectively),
+overloaded `f64v2_add(a: f64v2, b: f64v2): f64v2` etc.
+exposed in `lib/simd.cyr`. The flat-array primitives
+(`f64v_add`/`_dot`/`_scale`/...) remain the underlying
+codegen — typed wrappers just give consumers a cleaner API.
+
+Type-system change with self-host implications — earned
+its own slot rather than bundling with v5.10.17's
+primitive expansion.
+
+#### v5.10.19+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:
