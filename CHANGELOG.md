@@ -6,6 +6,85 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.15] — 2026-05-09
+
+**v5.10.x SLOT 15 — shadow-lib compile note (held from
+v5.10.10 close)**.
+
+The agnosys aarch64 saga (v5.10.7-.10) consumed four
+slots chasing what turned out to be a stale shadow lib
+in the consumer's project folder — a `./lib/` subdir
+that shadowed the version-pinned
+`$HOME/.cyrius/versions/<MY_VERSION>/lib/` snapshot.
+v5.10.9's version-pinned path fixed the resolution
+when the shadow ISN'T present; v5.10.15 surfaces the
+shadow's presence at compile time so consumers catch
+it before SIGILL.
+
+cc5: 766,496 → 771,784 (+5,288 B for the shadow-lib
+probe + env opt-out logic in `_init_cyrius_lib`).
+Byte-identical x86_64 self-host. 66/66 check.sh,
+134/134 cyrius test (both with the note firing AND
+with the env-var opt-out).
+
+### What landed
+
+- **`_check_shadow_lib()` in `src/frontend/lex.cyr`** —
+  called once at the end of `_init_cyrius_lib`. Probes
+  cwd `lib/` via `sys_open("lib", O_RDONLY|O_DIRECTORY,
+  0)`. If the open succeeds, emits a one-line note to
+  stderr:
+  ```
+  note: cwd ./lib/ shadows version-pinned
+        /home/<user>/.cyrius/versions/<v>/lib/ —
+        delete ./lib/ to use the version-matched
+        snapshot, or set CYRIUS_NO_WARN_SHADOW_LIB=1
+        to silence this note
+  ```
+- **`CYRIUS_NO_WARN_SHADOW_LIB=1` opt-out** for the
+  cyrius-repo dev workflow (where `./lib/` IS the
+  intended source of truth) and for any consumer that
+  knowingly uses a project-local lib. The probe scans
+  `/proc/self/environ` directly (same shape as the
+  existing CYRIUS_HOME / CYRIUS_TARGET_* lookups in
+  `_init_cyrius_lib`).
+
+### Acceptance bar met
+
+```sh
+# Default (note fires when cwd has lib/)
+$ cd /home/macro/Repos/cyrius
+$ echo 'syscall(60, 0);' | build/cc5 > /tmp/x 2>&1 | head -1
+note: cwd ./lib/ shadows version-pinned /home/macro/.cyrius/versions/5.10.15/lib/ — delete ./lib/ to use the version-matched snapshot, or set CYRIUS_NO_WARN_SHADOW_LIB=1 to silence this note
+
+# Opt-out
+$ echo 'syscall(60, 0);' | CYRIUS_NO_WARN_SHADOW_LIB=1 build/cc5 > /tmp/x 2>&1 | head -1
+(no note)
+
+# cwd without lib/ (e.g. /tmp)
+$ cd /tmp
+$ echo 'syscall(60, 0);' | build/cc5 > /tmp/x 2>&1 | head -1
+(no note)
+```
+
+### Why it's a note, not an error
+
+The shadow is sometimes intentional (cyrius-repo dev
+workflow, consumer using a vendored lib snapshot, etc.).
+A hard error would break legitimate dev paths. The note
+is informational + opt-outable; future consumers
+debugging "wait, which lib is this binary using?" hit
+the note immediately.
+
+### Closing the v5.10.10 held-arc pair
+
+This pairs with v5.10.12's defensive `lib/fnptr.cyr`
+rewrite. v5.10.12 made the codegen output safe even
+when shadow-lib content is wrong (gates x86 asm on
+`#ifndef CYRIUS_ARCH_AARCH64`); v5.10.15 makes the
+shadow's presence visible. Together they close the
+agnosys-saga held-arc.
+
 ## [5.10.14] — 2026-05-08
 
 **v5.10.x SLOT 14 — multi-stack `#derive(...)` directives

@@ -276,6 +276,23 @@ fn _init_cyrius_lib() {
                             store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
                             store8(&_cyrius_lib + wi, 0);
                             _cyrius_lib_len = wi;
+                            # v5.10.15 — shadow-lib compile warn.
+                            # Detect if cwd has its own `lib/` that
+                            # would shadow the version-pinned path.
+                            # The agnosys 1.1.12 saga (v5.10.7-.10)
+                            # spent four slots chasing what turned
+                            # out to be a stale shadow lib in the
+                            # consumer project folder. This emits a
+                            # one-line note so future consumers
+                            # catch the resolution choice at compile
+                            # time, not at SIGILL.
+                            #
+                            # Opt-out via CYRIUS_NO_WARN_SHADOW_LIB=1
+                            # for cyrius-repo dev workflow (where
+                            # cwd `lib/` IS the intended source of
+                            # truth) or for any consumer that
+                            # knowingly uses a project-local lib.
+                            _check_shadow_lib();
                             return 1;
                         }
                     }
@@ -286,6 +303,57 @@ fn _init_cyrius_lib() {
         while (ei < elen) { if (load8(&ebuf + ei) == 0) { break; } ei = ei + 1; }
         ei = ei + 1;
     }
+    #endif
+    return 0;
+}
+
+# v5.10.15 — emit a one-line note to stderr if cwd has a `lib/`
+# directory that will shadow the version-pinned path. Called
+# once at the end of `_init_cyrius_lib`. Uses sys_open with
+# O_RDONLY|O_DIRECTORY to probe `lib/`; if open succeeds we
+# know cwd has the shadow.
+fn _check_shadow_lib() {
+    #ifdef CYRIUS_TARGET_LINUX
+    # Opt-out: if CYRIUS_NO_WARN_SHADOW_LIB=1, skip the note.
+    var _shadow_env_buf[4096];
+    var _shadow_efd = syscall(2, "/proc/self/environ", 0, 0);
+    if (_shadow_efd < 0) { return 0; }
+    var _shadow_elen = syscall(0, _shadow_efd, &_shadow_env_buf, 4096);
+    syscall(3, _shadow_efd);
+    var _shadow_ei = 0;
+    while (_shadow_ei < _shadow_elen) {
+        # Look for "CYRIUS_NO_WARN_SHADOW_LIB=1\0" in the env stream.
+        # The name is 25 chars; '=' is at offset 25; '1' at offset 26.
+        # Cheap two-byte gate first ('C','Y'); full-prefix check on hit.
+        if (load8(&_shadow_env_buf + _shadow_ei) == 67) {       # 'C'
+            if (load8(&_shadow_env_buf + _shadow_ei + 1) == 89) {   # 'Y'
+                if (load8(&_shadow_env_buf + _shadow_ei + 25) == 61) {  # '=' at byte 25
+                    if (load8(&_shadow_env_buf + _shadow_ei + 26) == 49) {  # '1' at byte 26
+                        # Confirm the full prefix "CYRIUS_NO_WARN_SHADOW_LIB".
+                        var _check_str = "CYRIUS_NO_WARN_SHADOW_LIB";
+                        var _ck = 0;
+                        var _ck_match = 1;
+                        while (_ck < 25) {
+                            if (load8(&_shadow_env_buf + _shadow_ei + _ck) != load8(_check_str + _ck)) { _ck_match = 0; break; }
+                            _ck = _ck + 1;
+                        }
+                        if (_ck_match == 1) { return 0; }
+                    }
+                }
+            }
+        }
+        # Skip to next null
+        while (_shadow_ei < _shadow_elen) { if (load8(&_shadow_env_buf + _shadow_ei) == 0) { break; } _shadow_ei = _shadow_ei + 1; }
+        _shadow_ei = _shadow_ei + 1;
+    }
+    # Probe cwd `lib/` via O_RDONLY|O_DIRECTORY (0x10000).
+    var _shadow_fd = syscall(2, "lib", 0x10000, 0);
+    if (_shadow_fd < 0) { return 0; }
+    syscall(3, _shadow_fd);
+    # cwd has lib/. Emit the note.
+    syscall(1, 2, "note: cwd ./lib/ shadows version-pinned ", 40);
+    syscall(1, 2, &_cyrius_lib, _cyrius_lib_len);
+    syscall(1, 2, " — delete ./lib/ to use the version-matched snapshot, or set CYRIUS_NO_WARN_SHADOW_LIB=1 to silence this note\n", 112);
     #endif
     return 0;
 }

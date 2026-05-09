@@ -5,6 +5,47 @@
 
 ## Version
 
+**5.10.15** (shipped 2026-05-09 — **v5.10.x SLOT 15 —
+shadow-lib compile note (closes v5.10.10 held-arc)**).
+
+The agnosys aarch64 saga (v5.10.7-.10) consumed four
+slots chasing what turned out to be a stale shadow lib
+in the consumer's project folder. v5.10.9's version-
+pinned path fixed resolution when the shadow ISN'T
+present; v5.10.15 surfaces the shadow's presence at
+compile time so future consumers catch it before SIGILL.
+
+**What landed**:
+- `_check_shadow_lib()` in `src/frontend/lex.cyr` —
+  called once at the end of `_init_cyrius_lib`. Probes
+  cwd `lib/` via `sys_open("lib", O_RDONLY|O_DIRECTORY,
+  0)`. If open succeeds, emits one-line note to stderr.
+- `CYRIUS_NO_WARN_SHADOW_LIB=1` opt-out for cyrius-repo
+  dev workflow + consumers using vendored lib snapshots
+  intentionally. Probe scans `/proc/self/environ`
+  directly.
+
+**Acceptance**:
+- Default (cwd has `./lib/`): note fires once at
+  compile start, suggests delete-or-silence.
+- `CYRIUS_NO_WARN_SHADOW_LIB=1`: note silenced.
+- cwd without `./lib/`: no note (open fails, return
+  early).
+- cc5: 766,496 → 771,784 (+5,288 B). Byte-identical
+  x86_64 self-host. 66/66 check.sh (both with note
+  firing AND with env opt-out), 134/134 cyrius test.
+
+**Pairs with v5.10.12's defensive `lib/fnptr.cyr`
+rewrite** — v5.10.12 made codegen output safe even when
+shadow-lib content is wrong (x86 asm gated on
+`#ifndef CYRIUS_ARCH_AARCH64`); v5.10.15 makes the
+shadow's presence visible. Together they close the
+agnosys-saga held-arc completely.
+
+**Next**: v5.10.16 — SIMD math expansion (typed
+`f64v4_*` primitives; hisab gap close). Held since
+v5.10.13 pivot.
+
 **5.10.14** (shipped 2026-05-08 — **v5.10.x SLOT 14 —
 multi-stack `#derive(...)` directives (agnosys V1.1.12-
 reopen blocker)**).
@@ -5638,9 +5679,12 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **766,496 B** at v5.10.14 (was
-  765,616 at v5.10.13; +880 B for derive flag tracking +
-  body factoring + cross-emit in lex_pp.cyr).
+- **cc5 (x86_64)**: **771,784 B** at v5.10.15 (was
+  766,496 at v5.10.14; +5,288 B for `_check_shadow_lib`
+  fn + env opt-out scan in `_init_cyrius_lib`).
+- **cc5 at v5.10.14**: 766,496 B (was 765,616 at v5.10.13;
+  +880 B for derive flag tracking + body factoring +
+  cross-emit in lex_pp.cyr).
 - **cc5 at v5.10.13**: 765,616 B (unchanged from v5.10.12
   — TLS typed wrappers live in stdlib only; cc5
   semantically unchanged).

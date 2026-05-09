@@ -1002,7 +1002,22 @@ Diagnostic on dropped/unknown directives also held.
 cc5: 765,616 → 766,496 (+880 B). Byte-identical
 self-host. 66/66 check.sh, 134/134 cyrius test.
 
-#### v5.10.15 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.15 ✅ — Shadow-lib compile note (closes v5.10.10 held-arc) (SHIPPED)
+
+cc5 now emits a one-line stderr note when cwd has a
+`./lib/` that shadows the version-pinned
+`$HOME/.cyrius/versions/<MY_VERSION>/lib/`. Probes via
+`sys_open("lib", O_RDONLY|O_DIRECTORY)` at `_init_cyrius_lib`
+end. `CYRIUS_NO_WARN_SHADOW_LIB=1` opt-out for cyrius-
+repo dev workflow + consumers using vendored lib
+snapshots intentionally. cc5: 766,496 → 771,784
+(+5,288 B). Byte-identical self-host. 66/66 check.sh
+(both with note firing AND with env opt-out), 134/134
+cyrius test. Pairs with v5.10.12's defensive
+`lib/fnptr.cyr` rewrite to close the agnosys-saga
+held-arc completely.
+
+#### v5.10.16 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -1042,7 +1057,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.16+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.17+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:
