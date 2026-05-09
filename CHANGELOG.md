@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.11] — 2026-05-08
+
+**v5.10.x SLOT 11 — `lib/net.cyr` `net_connect_nb`
+primitive (sandhi 1.3.x prereq)**.
+
+Sandhi 1.3.x roadmap explicitly asks for this as a stdlib
+factoring — the non-blocking-connect + poll(POLLOUT) +
+SO_ERROR-readback shape was duplicated in two places:
+- sandhi's `_sandhi_conn_connect_nb` in `src/http/conn.cyr`
+- cyrius's `regression_network_probe` in `lib/regression.cyr`
+  (shipped v5.9.42)
+
+Both share the exact same syscall sequence (socket /
+fcntl O_NONBLOCK / connect / poll / getsockopt SO_ERROR).
+Factoring up into stdlib gives sandhi the primitive its
+1.3.x TLS arc needs to compose on, and lets cyrius's own
+`regression_network_probe` switch from raw syscalls to
+the stdlib primitive (sandhi files its own switchover
+patch on its cycle per ADR 0001).
+
+cc5 unchanged in semantic. cyrius test 134/134, check.sh
+66/66. api-surface +1 public fn (`net_connect_nb`).
+
+### What landed
+
+- **`net_connect_nb(fd, addr, port, timeout_ms)`** in
+  `lib/net.cyr`. Returns 0 on connected,
+  `_NET_CONN_NB_TIMEOUT` (-2) on poll timeout,
+  `_NET_CONN_NB_ERR` (-1) on fcntl/connect/getsockopt
+  failure. Restores blocking mode on every exit path so
+  subsequent recv/send behave normally for the caller —
+  the bug-prone part the inlined-twice version always
+  got slightly wrong; centralizing makes it impossible
+  to skip.
+- **`regression_network_probe` refactored** to compose on
+  the new primitive. Same external behavior (returns 1
+  on reachable, 0 otherwise). Drops ~30 LOC of inlined
+  syscall machinery.
+- **`programs/check.cyr` includes lib/net.cyr** so
+  `regression_network_probe` resolves. Same pattern as
+  every other `lib/regression.cyr` consumer.
+
+### Acceptance bar met
+
+- New primitive in `lib/net.cyr`; api-surface 2795 → 2796
+  public fns.
+- `regression_network_probe` regression: cyrius's TLS-live
+  gate still PASSes on dev box (verifies the primitive's
+  semantics match the inlined version).
+- cc5 byte-identical self-host.
+- 66/66 check.sh, 134/134 cyrius test, doc-coverage clean
+  (the new fn carries a leading doc comment).
+
 ## [5.10.10] — 2026-05-08
 
 **v5.10.x SLOT 10 — cyrlint char-literal brace bug fix

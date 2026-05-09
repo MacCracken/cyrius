@@ -846,7 +846,18 @@ cc5 unchanged in semantic. Held forward (see "Held /
 pinned bug arc" below): shadow-lib guard +
 defensive `lib/fnptr.cyr` ifndef rewrite.
 
-#### v5.10.11 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+#### v5.10.11 ✅ — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq) (SHIPPED)
+
+`net_connect_nb(fd, addr, port, timeout_ms)` factored
+into stdlib. Returns 0 / `_NET_CONN_NB_TIMEOUT` (-2) /
+`_NET_CONN_NB_ERR` (-1). Restores blocking mode on
+every exit path. `regression_network_probe` refactored
+to compose on it; sandhi files its own switchover patch
+on its cycle per ADR 0001. api-surface +1
+(2795 → 2796). cc5 unchanged in semantic. 66/66
+check.sh, 134/134 cyrius test, doc-coverage clean.
+
+#### v5.10.11 — original scope (kept here for closeout audit)
 
 **Driver**: sandhi 1.3.x roadmap explicitly asks for this as
 a stdlib factoring — the non-blocking-connect + poll(POLLOUT)

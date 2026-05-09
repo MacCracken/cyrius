@@ -47,6 +47,7 @@ include "lib/result.cyr"
 include "lib/fs.cyr"
 include "lib/process.cyr"
 include "lib/audit_walk.cyr"
+include "lib/net.cyr"
 include "lib/regression.cyr"
 
 # ANSI color escapes — match scripts/check.sh's printf "\033[3Xm".

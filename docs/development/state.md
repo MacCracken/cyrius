@@ -5,6 +5,41 @@
 
 ## Version
 
+**5.10.11** (shipped 2026-05-08 — **v5.10.x SLOT 11 —
+`lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x
+prereq)**).
+
+Sandhi 1.3.x roadmap explicitly asks for this as a stdlib
+factoring — non-blocking-connect + poll(POLLOUT) +
+SO_ERROR-readback shape was duplicated in two places
+(sandhi's `_sandhi_conn_connect_nb` + cyrius's
+`regression_network_probe`). Both now compose on the
+stdlib primitive; sandhi files its own switchover on
+its cycle per ADR 0001.
+
+**What landed**:
+- `net_connect_nb(fd, addr, port, timeout_ms)` in
+  `lib/net.cyr` — returns 0 / `_NET_CONN_NB_TIMEOUT` (-2)
+  / `_NET_CONN_NB_ERR` (-1). Restores blocking mode on
+  every exit path.
+- `regression_network_probe` refactored to compose on
+  the new primitive (drops ~30 LOC of inlined syscall
+  machinery).
+- `programs/check.cyr` adds `include "lib/net.cyr"`.
+- `lib/regression.cyr` docstring updated to declare the
+  new requires.
+
+**Acceptance**:
+- api-surface 2795 → 2796 (`net_connect_nb` added).
+- TLS-live gate PASSes (verifies the primitive's
+  semantics match the inlined version).
+- cc5 byte-identical self-host.
+- 66/66 check.sh, 134/134 cyrius test, doc-coverage clean.
+
+**Next**: v5.10.12 — `lib/tls.cyr` native-transport prep
+audit (sandhi 1.3.x prereq, second of the two-slot
+TLS-arc enabler pair).
+
 **5.10.10** (shipped 2026-05-08 — **v5.10.x SLOT 10 —
 cyrlint char-literal brace fix + agnosys aarch64
 "shadow-lib" diagnosis closeout**).
@@ -5472,7 +5507,9 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **765,616 B** at v5.10.10 (was 765,608
+- **cc5 (x86_64)**: **765,616 B** at v5.10.11 (unchanged
+  from v5.10.10 — `net_connect_nb` is stdlib only; cc5 is
+  semantically unchanged). v5.10.10 was 765,616 (was 765,608
   at v5.10.9; +8 — cyrlint char-literal brace counter
   fix lives in cyrlint binary, cc5 unchanged in semantic
   but version_str.cyr regenerated). v5.10.9 was 765,608
