@@ -85,6 +85,70 @@ fn println_str(s: Str) {
     return str_println(s);
 }
 
+# v5.10.8 — append a Str's contents to a builder as a JSON-
+# quoted string (RFC 8259 §7). Emits the opening `"`, walks
+# the bytes escaping `"` → `\"`, `\` → `\\`, control chars
+# (U+0000..U+001F) as named escapes (`\b \f \n \r \t`) or
+# `\u00XX` for the rest, then emits the closing `"`. Bytes
+# >= 0x20 (other than `"` and `\`) pass through verbatim,
+# which is RFC-compliant for UTF-8 strings (§8.1: JSON text
+# SHALL be encoded in UTF-8 by default).
+#
+# PP_DERIVE Serialize uses this as the canonical Str-field
+# emit target — pre-v5.10.8 the codegen called
+# `str_builder_add_cstr(sb, str_data(load64(...)))` which
+# passes raw bytes through, producing invalid JSON for any
+# string carrying user input or kernel-audit text. Closes
+# the agnosys 1.1.12 follow-up "JSON escaping" item filed
+# at v5.10.7.
+fn str_builder_add_json_str(sb, s: Str) {
+    str_builder_putc(sb, 34);                # opening "
+    var data = str_data(s);
+    var slen = str_len(s);
+    var ji = 0;
+    while (ji < slen) {
+        var bc = load8(data + ji);
+        if (bc == 34) {                      # "  → \"
+            str_builder_putc(sb, 92);
+            str_builder_putc(sb, 34);
+        } else { if (bc == 92) {              # \  → \\
+                str_builder_putc(sb, 92);
+                str_builder_putc(sb, 92);
+            } else { if (bc == 8) {               # \b → \b
+                    str_builder_putc(sb, 92);
+                    str_builder_putc(sb, 98);
+                } else { if (bc == 9) {               # \t → \t
+                        str_builder_putc(sb, 92);
+                        str_builder_putc(sb, 116);
+                    } else { if (bc == 10) {              # \n → \n
+                            str_builder_putc(sb, 92);
+                            str_builder_putc(sb, 110);
+                        } else { if (bc == 12) {              # \f → \f
+                                str_builder_putc(sb, 92);
+                                str_builder_putc(sb, 102);
+                            } else { if (bc == 13) {              # \r → \r
+                                    str_builder_putc(sb, 92);
+                                    str_builder_putc(sb, 114);
+                                } else { if (bc < 32) {               # other ctl → \u00XX
+                                        str_builder_putc(sb, 92);
+                                        str_builder_putc(sb, 117);
+                                        str_builder_putc(sb, 48);
+                                        str_builder_putc(sb, 48);
+                                        var hi = (bc >> 4) & 0xF;
+                                        var lo = bc & 0xF;
+                                        if (hi < 10) { str_builder_putc(sb, 48 + hi); }
+                                        else { str_builder_putc(sb, 87 + hi); }
+                                        if (lo < 10) { str_builder_putc(sb, 48 + lo); }
+                                        else { str_builder_putc(sb, 87 + lo); }
+                                    } else {                              # 0x20..0xFF → verbatim
+                                        str_builder_putc(sb, bc);
+                                    } } } } } } } }
+        ji = ji + 1;
+    }
+    str_builder_putc(sb, 34);                # closing "
+    return 0;
+}
+
 # Compare two Strs
 fn str_eq(a: Str, b: Str) {
     var la = load64(a + 8);

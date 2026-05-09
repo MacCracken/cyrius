@@ -338,15 +338,16 @@ v5.10.x is now ordered bottom-to-top.
 3. **stdlib runtime services (TLS / net)** — third priority
    per the bottom-to-top stack — sandhi 1.3.x's TLS arc
    needs `lib/net.cyr` `net_connect_nb` primitive +
-   `lib/tls.cyr` native-transport prep audit. v5.10.8-.9
-   (pushed back from .7-.8 when v5.10.7 was reserved for
-   the agnosys real close).
+   `lib/tls.cyr` native-transport prep audit. v5.10.9-.10
+   (pushed back from .8-.9 when v5.10.8 was reserved for
+   the agnosys JSON-escaping follow-up; v5.10.7 was the
+   Str-fields close).
 4. **specialized libraries (hisab math)** — fourth priority —
    typed SIMD math expansion now that overload dispatch
-   from v5.10.3 enables typed `f64v4` primitives. v5.10.10.
+   from v5.10.3 enables typed `f64v4` primitives. v5.10.11.
 5. **compile-time speedups + surface review** — last, since
    they don't unblock any baseOS or runtime-service item.
-   v5.10.11+.
+   v5.10.12+.
 
 Reference: memory pin
 `feedback_priority_bottom_to_top.md` — *"fixing hisab now doesn't
@@ -778,7 +779,30 @@ cyrius test.
   field's runtime shape; consumers should annotate
   `: Str` (which now works).
 
-#### v5.10.8 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+#### v5.10.8 ✅ — `#derive(Serialize)` JSON escaping fix (agnosys 1.1.12 follow-up) (SHIPPED)
+
+Agent's v5.10.7 verdict surfaced a new bug: the
+now-working Str-field codegen emits raw bytes without
+escaping `"`, `\`, or control chars — invalid JSON for
+any string carrying user input or kernel-audit text.
+
+Landed: `str_builder_add_json_str(sb, s: Str)` helper in
+`lib/str.cyr` (RFC 8259 §7 compliant — `"`→`\"`,
+`\`→`\\`, named escapes for `\b\f\n\r\t`, `\u00XX` for
+other control chars). PP_DERIVE Str-field branch now
+emits a single helper call instead of 3-call raw cstr
+sequence. cc5: 765,208 → 764,936 (-272 B).
+
+Real Pi cross-test: all 3 shapes (numeric verbatim,
+Str-field plain, Str-with-escapes) pass with valid JSON.
+
+Held forward: untyped-Str-field auto-detection (agent's
+#5, lower priority — annotate `: Str` is the workaround);
+aarch64 cwd-dependent silent miscompile (compiler should
+error on missing includes instead of emitting broken
+aarch64).
+
+#### v5.10.9 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap explicitly asks for this as
 a stdlib factoring — the non-blocking-connect + poll(POLLOUT)
@@ -819,7 +843,7 @@ stdlib primitive.
   / fcntl / getsockopt across both); Mach-O ARM uses BSD
   syscall numbers (already wired up).
 
-#### v5.10.9 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+#### v5.10.10 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
 ask under "Not sandhi's slot" — auditing the hook surface
@@ -839,7 +863,7 @@ any transport swap.
   fdlopen-loaded libssl symbol names, struct layouts, or
   ABI specifics that wouldn't survive a swap to a native
   cyrius TLS impl.
-- Document each finding inline (`# v5.10.9 audit:
+- Document each finding inline (`# v5.10.10 audit:
   fdlopen-bound — see ADR 000X if/when native-TLS lands`)
   + collect into `docs/audit/2026-MM-DD-tls-native-transport-prep.md`.
 - No code changes unless the audit surfaces a hook-surface
@@ -856,10 +880,10 @@ any transport swap.
 
 **Native-TLS swap itself is NOT in v5.10.x**. It's a separate,
 much-bigger undertaking (multi-slot or multi-minor) that
-needs its own design pass before pinning. v5.10.9 just
+needs its own design pass before pinning. v5.10.10 just
 documents the surface so a future swap is guided.
 
-#### v5.10.10 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.11 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -899,7 +923,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.11+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.12+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:

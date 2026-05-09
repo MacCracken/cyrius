@@ -2364,6 +2364,7 @@ str::str_builder_add_cstr/2
 str::str_builder_add_cstr_a/3
 str::str_builder_add_int/2
 str::str_builder_add_int_a/3
+str::str_builder_add_json_str/2
 str::str_builder_add_str/2
 str::str_builder_build/1
 str::str_builder_build_a/2

@@ -6,6 +6,94 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.8] — 2026-05-08
+
+**v5.10.x SLOT 8 — `#derive(Serialize)` JSON escaping fix
+(agnosys 1.1.12 follow-up after the agent's v5.10.7
+verdict)**.
+
+The agent's update to the issue file at v5.10.7 verdict
+flagged a NEW bug surfaced by the now-working Str-field
+codegen: the Str-to-JSON path emits raw bytes from the
+source string without escaping `"`, `\`, or control
+chars. Output is **not valid JSON** for any string
+carrying user input or kernel-audit text. agnosys hits
+this immediately for any audit-message field (kernel
+audit text routinely contains `"` and embedded
+newlines), policy-name fields with backslashes, etc.
+
+cc5: 765,208 → 764,936 (-272 B — codegen now emits a
+single `str_builder_add_json_str(...)` call instead of
+3 separate `str_builder_add_cstr` calls per Str field).
+Byte-identical x86_64 self-host. cyrius test: 134/134.
+check.sh: 66/66. Pi (real aarch64) cross-test: all 3
+shapes pass.
+
+### What landed
+
+- **`str_builder_add_json_str(sb, s: Str)` helper** in
+  `lib/str.cyr` — emits an RFC 8259 §7-compliant
+  quoted JSON string. Walks the bytes escaping
+  `"` → `\"`, `\` → `\\`, control chars
+  (U+0000..U+001F) as named escapes (`\b \f \n \r \t`)
+  or `\u00XX` for the rest. Bytes >= 0x20 (other than
+  `"` and `\`) pass through verbatim per §8.1
+  (UTF-8 default encoding).
+- **PP_DERIVE Serialize emit update** in
+  `src/frontend/lex_pp.cyr` — Str-field branch now
+  emits a single `str_builder_add_json_str(sb,
+  load64(ptr + N));` call instead of the previous
+  3-call sequence (`add_cstr "\""` + `add_cstr
+  str_data(...)` + `add_cstr "\""`). The new helper
+  wraps quoting + escaping atomically.
+
+### Acceptance bar met
+
+```cyr
+struct msg { text: Str; }
+var s = str_from("hello \"world\" \\ tab\there\n");
+var m = msg { s };
+msg_to_json(&m, sb);
+// Pre-v5.10.8: {"text":"hello "world" \ tab<TAB>here<LF>"}
+//   ↑ invalid JSON — quotes/backslash/controls pass through raw
+// Post-v5.10.8: {"text":"hello \"world\" \\ tab\there\n"}
+//   ↑ RFC 8259 §7 compliant
+```
+
+Cross-arch verified on real Pi hardware (Ubuntu
+6.8.0-1053-raspi kernel, aarch64) — same valid JSON
+output for all three shapes (numeric verbatim,
+Str-field, Str-with-escapes).
+
+### NOT in this slot (deferred with explicit pinnage)
+
+- **Untyped Str fields** (per agent's open item #5,
+  marked lower-priority by the agent) — codegen still
+  emits raw pointer integer for unannotated fields
+  holding Str values. Agent's recommendation: annotate
+  `: Str` (which now works correctly with full
+  RFC-compliant escaping). Held forward.
+- **aarch64 cwd-dependent silent miscompile** — when
+  cc5_aarch64 is run from a directory without `lib/`,
+  it silently emits broken aarch64 code instead of
+  erroring on missing includes. Surfaced this slot
+  while debugging the agent's "still SIGILL" report
+  (their test environment likely doesn't have lib/ in
+  cwd; my pi test passes when cwd has lib/). Real bug
+  — the compiler should error, not emit broken
+  binaries. Pin: separate v5.10.x slot.
+
+### Note on agent's "aarch64 still SIGILLs" verdict
+
+The agent's pin is `5.10.6` (per the issue file's
+"agnosys cyrius pin (active)" line) — they've been
+testing against pre-v5.10.7 binaries via their
+installed cyrius tool, not freshly-built v5.10.7/.8
+binaries. When the agent bumps their pin to v5.10.8
+(or builds cyrius from current main), the same shapes
+they tested should pass on aarch64 — verified on real
+pi (kernel 6.8.0-1053-raspi).
+
 ## [5.10.7] — 2026-05-08
 
 **v5.10.x SLOT 7 — agnosys 1.1.12 REAL CLOSE: Str-typed

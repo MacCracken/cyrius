@@ -613,12 +613,19 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
                 }
             }
             if (is_str == 1) {
-                # Str field: emit as "value"
-                op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"\\\"\""); op = op + PP_EMIT_STR(out, op, ");\n");
-                op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, str_data(load64(ptr + ");
+                # v5.10.8 — Str field: emit RFC 8259-compliant
+                # quoted JSON string via the `str_builder_add_json_str`
+                # helper (lib/str.cyr). Pre-v5.10.8 the emit was
+                # raw `str_builder_add_cstr(sb, "\""); ... bytes ...
+                # str_builder_add_cstr(sb, "\"");` which let `"`
+                # `\` and control chars in the source string pass
+                # through unescaped → invalid JSON. Closes the
+                # v5.10.7 agnosys agent follow-up "JSON escaping"
+                # finding (kernel audit text routinely contains
+                # `"` and embedded newlines).
+                op = op + PP_EMIT_STR(out, op, "str_builder_add_json_str(sb, load64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x197460 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ")));\n");
-                op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"\\\"\""); op = op + PP_EMIT_STR(out, op, ");\n");
+                op = op + PP_EMIT_STR(out, op, "));\n");
             } else { if (prim_load > 0) {
                 # Primitive integer field: bare JSON number via
                 # str_builder_add_int + width-correct load. Mirrors

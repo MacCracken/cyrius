@@ -5,6 +5,51 @@
 
 ## Version
 
+**5.10.8** (shipped 2026-05-08 — **v5.10.x SLOT 8 —
+`#derive(Serialize)` JSON escaping fix (agnosys 1.1.12
+follow-up after the agent's v5.10.7 verdict)**).
+
+The agent's v5.10.7 verdict surfaced a NEW bug: the
+now-working Str-field codegen emits raw bytes without
+escaping `"`, `\`, or control chars. Output is invalid
+JSON for any string carrying user input or kernel-audit
+text. agnosys hits this immediately for any audit-message
+field.
+
+**What landed**:
+- `str_builder_add_json_str(sb, s: Str)` helper in
+  `lib/str.cyr` — RFC 8259 §7 compliant.
+- PP_DERIVE Str-field branch emits a single
+  `str_builder_add_json_str(...)` call instead of the
+  3-call raw cstr sequence.
+
+**Acceptance**: `{"text":"hello \"world\" \\ tab\there\n"}`
+(escaped correctly, valid JSON) instead of
+`{"text":"hello "world" \ tab<TAB>here<LF>"}` (invalid).
+Real Pi cross-test: all 3 shapes (numeric verbatim,
+Str-field plain, Str-with-escapes) pass with valid JSON.
+
+cc5: 765,208 → 764,936 (-272 B; codegen now emits 1
+helper call vs 3 separate cstr calls).
+
+**NOT in this slot** (held forward):
+- Untyped Str fields (agent's #5, lower priority —
+  annotation `: Str` is the workaround).
+- aarch64 cwd-dependent silent miscompile — cc5_aarch64
+  emits broken aarch64 when run from a directory without
+  `lib/` instead of erroring on missing includes. Pin:
+  separate v5.10.x slot.
+
+**Note**: the agent's pin in the issue file is `5.10.6` —
+their "still SIGILL on aarch64" verdict is testing
+pre-v5.10.7 binaries via their installed cyrius. v5.10.7
+fixed the aarch64 miscompile + Str-field compile error;
+v5.10.8 fixes the JSON escaping bug. Agent should bump
+their pin to v5.10.8 to verify the full close.
+
+**Next**: v5.10.9 — `lib/net.cyr` `net_connect_nb`
+primitive (sandhi 1.3.x prereq).
+
 **5.10.7** (shipped 2026-05-08 — **v5.10.x SLOT 7 —
 agnosys 1.1.12 REAL CLOSE (Str-typed struct fields +
 real-Pi aarch64)**). Honest correction of the v5.10.5
@@ -5315,9 +5360,12 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **765,208 B** at v5.10.7 (was 764,552
+- **cc5 (x86_64)**: **764,936 B** at v5.10.8 (was 765,208
+  at v5.10.7; -272 for PP_DERIVE Str-field emit
+  consolidation — single `str_builder_add_json_str` call
+  vs 3 raw cstr calls). v5.10.7 was 765,208 (was 764,552
   at v5.10.6; +656 for IS_STR_FIELD helper + Str
-  special-case branches in FIELDSZ + PARSE_STRUCT_INIT).
+  special-case in FIELDSZ + PARSE_STRUCT_INIT).
   v5.10.6 was 764,552 unchanged from v5.10.5 (heap-layout
   reshuffle); v5.10.5 was 764,552 (was 758,888 at v5.10.4;
   +5,664 for the extended dispatch + 3 new lazy noff
