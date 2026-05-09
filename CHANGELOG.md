@@ -6,6 +6,146 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.13] — 2026-05-08
+
+**v5.10.x SLOT 13 — TLS surface tightening: typed `tls_set_alpn`
++ `tls_set_verify` wrappers + opaque-handle hook contract**.
+
+Pivot from the originally-pinned SIMD math (was v5.10.13)
+on user direction "TLS as priority" 2026-05-08. The
+v5.10.12 audit walk surfaced three real abstraction
+leaks in `lib/tls.cyr`'s public surface; this slot
+ships consumer-driven typed wrappers that close the
+two highest-leak shapes.
+
+cc5 unchanged in semantic (stdlib-only slot).
+Byte-identical x86_64 self-host. 66/66 check.sh,
+134/134 cyrius test. api-surface 2796 → 2798
+(+2 typed wrappers).
+
+### What landed
+
+- **`tls_set_alpn(handle, protos, protos_len)`** in
+  `lib/tls.cyr`. Wraps OpenSSL `SSL_CTX_set_alpn_protos`
+  with a typed cyrius signature. `protos` is the
+  wire-format buffer (length-prefixed, e.g.
+  `\x02h2\x07http/1.1`); `len` is total bytes. Returns 0
+  on success, non-zero on failure (matches OpenSSL's
+  inverted convention for this fn). Sandhi's
+  `tls_policy/alpn.cyr` is the named consumer — they
+  currently call `tls_dlsym("SSL_CTX_set_alpn_protos")`
+  + raw `fncall3`; switchover to typed call is sandhi-
+  side per ADR 0001.
+- **`tls_set_verify(handle, mode, callback)`** in
+  `lib/tls.cyr`. Wraps `SSL_CTX_set_verify`. Lets
+  consumers override stdlib's default
+  `SSL_VERIFY_PEER` (e.g. `SSL_VERIFY_NONE` for testing,
+  or chain a custom callback). `callback = 0` for
+  mode-only override.
+- **`_fn_SSL_CTX_set_alpn_protos`** added to the libssl
+  symbol-resolution table at `_tls_init` time so the new
+  wrappers don't need a runtime `tls_dlsym` round-trip.
+- **`tls_connect_with_ctx_hook` contract clarified**:
+  the hook's 2nd arg is now described as an OPAQUE
+  handle. Today it's an `SSL_CTX*` (libssl-backed); a
+  future native-TLS swap keeps the same hook signature
+  and same `tls_set_*(handle, ...)` verbs but the
+  handle's underlying type changes. Consumer source
+  unchanged across the swap.
+- **`tls_dlsym` soft-deprecated** in favour of typed
+  wrappers. Stays available as escape hatch for libssl
+  symbols not yet wrapped, but each direct call ties
+  the consumer to the libssl transport. Doc comment
+  updated to flag the binding cost.
+
+### Acceptance bar met
+
+- 2 new public fns in `lib/tls.cyr`; api-surface
+  2796 → 2798. Doc-coverage clean (each new fn has
+  leading doc comment).
+- TLS-live gate PASSes (verifies the existing TLS
+  handshake path still works after the surface
+  reframing — no runtime regression).
+- cc5 byte-identical x86_64 self-host.
+- 66/66 check.sh, 134/134 cyrius test.
+
+### What's STILL leaky (held forward)
+
+- **`enum TlsConst`** still exposes openssl integer
+  constants directly (`SSL_VERIFY_PEER = 1`,
+  `SSL_CTRL_SET_TLSEXT_HOSTNAME = 55`,
+  `TLSEXT_NAMETYPE_host_name = 0`). Replacing these
+  with cyrius-side names that the implementation maps
+  internally is consumer-pull-driven; sandhi 1.3.x
+  uses `SSL_VERIFY_PEER` directly for now. Pin: future
+  v5.10.x slot when more typed verify modes ship.
+- **`tls_dlsym` escape hatch** stays available (soft-
+  deprecated but not removed). Consumers wanting to
+  resolve libssl symbols not yet wrapped (e.g.
+  `SSL_get0_alpn_selected` for ALPN result readback)
+  still need it. Future slots add typed wrappers as
+  consumer asks land — `tls_get_alpn_selected` is the
+  obvious next.
+
+## [5.10.12] — 2026-05-08
+
+**v5.10.x SLOT 12 — defensive `lib/fnptr.cyr` rewrite
+(direct follow-on to the agnosys aarch64 saga)**.
+
+The agnosys aarch64 SIGILL diagnosis at v5.10.10 showed
+that a stale shadow-lib `lib/fnptr.cyr` in a project
+folder could leak x86 inline asm bytes into a
+cc5_aarch64 invocation: the older `#ifdef CYRIUS_ARCH_X86`
+asm block fired (because the stale lib's predefine
+table was wrong, or env state polluted it), emitting
+x86 mov/call instructions into the aarch64 `.text`
+section. Real codegen disaster: the aarch64 binary
+ships with x86 bytes that SIGILL on hardware.
+
+This slot wraps every `#ifdef CYRIUS_ARCH_X86` block in
+`lib/fnptr.cyr` with a `#ifndef CYRIUS_ARCH_AARCH64`
+gate. cc5_aarch64's `main_aarch64.cyr` predefines
+`CYRIUS_ARCH_AARCH64`; the gate ensures the x86 asm
+block is skipped regardless of any other state. Even
+if a shadow lib OR an env var pollutes
+`CYRIUS_ARCH_X86`, the aarch64 asm wins as long as
+`CYRIUS_ARCH_AARCH64` is defined (which it always is on
+cc5_aarch64).
+
+cc5: 765,616 → 765,616 (no cc5 semantic change; defensive
+gating lives in lib/fnptr.cyr). Byte-identical self-host.
+66/66 check.sh, 134/134 cyrius test.
+
+### What landed
+
+- **18 `#ifdef CYRIUS_ARCH_X86` blocks** in `lib/fnptr.cyr`
+  (across `fncall0`..`fncall8` + Linux/Mach-O/Win
+  variants) wrapped with `#ifndef CYRIUS_ARCH_AARCH64`
+  + matching `#endif`. The X86 asm block now only fires
+  when AARCH64 is NOT defined.
+- AARCH64 asm blocks unchanged — they were already
+  correctly gated and remain authoritative on
+  cc5_aarch64.
+
+### Defense-in-depth posture
+
+Pre-v5.10.12 the gating was naive `ifdef X86` / `ifdef
+AARCH64` parallel checks. If both flags accidentally
+got defined (env pollution, lib version mismatch,
+shadow lib with stale predefines), BOTH asm blocks
+would emit and the binary would have garbage in the
+fn body. Post-v5.10.12 the AARCH64 gate is the
+authoritative test on cc5_aarch64 — even with both
+flags set, only the aarch64 path emits.
+
+### Held forward
+
+- **Shadow-lib compile warn** (held from v5.10.10):
+  `note: cwd lib/ shadowing version-pinned lib/`. v5.10.12
+  defends the codegen output from the contamination class;
+  the compile-warn surfaces the resolution choice loudly.
+  Pin: separate v5.10.x slot.
+
 ## [5.10.11] — 2026-05-08
 
 **v5.10.x SLOT 11 — `lib/net.cyr` `net_connect_nb`

@@ -59,12 +59,19 @@ var _tls_fdl_state[256];
 # succeeds; 0 means tls_dlsym returns 0.
 var _tls_libssl_handle = 0;
 
-# Function pointers resolved from libssl/libcrypto
+# Function pointers resolved from libssl/libcrypto.
+# v5.10.13 audit: 15 libssl ABI symbols hard-coded by name; the
+# private-side `_fn_*` table is implementation detail — public
+# verbs below (`tls_*`) keep their signatures across any future
+# native-TLS swap. v5.10.13 added `_fn_SSL_CTX_set_alpn_protos`
+# so the new typed `tls_set_alpn` wrapper doesn't need to call
+# back into `tls_dlsym`.
 var _fn_TLS_client_method = 0;
 var _fn_SSL_CTX_new = 0;
 var _fn_SSL_CTX_free = 0;
 var _fn_SSL_CTX_set_default_verify_paths = 0;
 var _fn_SSL_CTX_set_verify = 0;
+var _fn_SSL_CTX_set_alpn_protos = 0;
 var _fn_SSL_new = 0;
 var _fn_SSL_free = 0;
 var _fn_SSL_set_fd = 0;
@@ -119,6 +126,7 @@ fn _tls_init() {
     _fn_SSL_CTX_free                     = fncall2(fn_dlsym, h, "SSL_CTX_free");
     _fn_SSL_CTX_set_default_verify_paths = fncall2(fn_dlsym, h, "SSL_CTX_set_default_verify_paths");
     _fn_SSL_CTX_set_verify               = fncall2(fn_dlsym, h, "SSL_CTX_set_verify");
+    _fn_SSL_CTX_set_alpn_protos          = fncall2(fn_dlsym, h, "SSL_CTX_set_alpn_protos");
     _fn_SSL_new                          = fncall2(fn_dlsym, h, "SSL_new");
     _fn_SSL_free                         = fncall2(fn_dlsym, h, "SSL_free");
     _fn_SSL_set_fd                       = fncall2(fn_dlsym, h, "SSL_set_fd");
@@ -149,6 +157,47 @@ fn tls_available() {
     return _tls_ok;
 }
 
+# v5.10.13 — typed ALPN wrapper. Pre-fix sandhi's
+# `tls_policy/alpn.cyr` called `tls_dlsym("SSL_CTX_set_alpn_protos")`
+# + `fncall3(fp, handle, protos, len)` directly, binding the
+# consumer to libssl's symbol name + ABI. Now: stdlib resolves
+# the symbol once at `_tls_init` time and exposes a typed entry
+# point. Consumers call `tls_set_alpn(handle, protos, len)` from
+# within their `tls_connect_with_ctx_hook` callback. Implementation
+# detail (libssl vs native TLS) stays inside lib/tls.cyr.
+#
+# `protos` is the OpenSSL wire-format ALPN buffer: each protocol
+# is length-prefixed, e.g. `\x02h2\x07http/1.1` advertises h2 +
+# http/1.1. `len` is total bytes. Returns 0 on success, non-zero
+# on failure (matches OpenSSL's `SSL_CTX_set_alpn_protos`
+# semantics — note the inverted-from-most-OpenSSL-fns return
+# convention: 0 = success per the SSL_CTX_set_alpn_protos man
+# page).
+fn tls_set_alpn(handle, protos, protos_len) {
+    if (handle == 0) { return 0 - 1; }
+    if (_fn_SSL_CTX_set_alpn_protos == 0) { return 0 - 1; }
+    return fncall3(_fn_SSL_CTX_set_alpn_protos, handle, protos, protos_len);
+}
+
+# v5.10.13 — typed verify-mode wrapper. Override stdlib's
+# default `SSL_VERIFY_PEER` with a custom mode + callback.
+# `mode` is an OpenSSL `SSL_VERIFY_*` flags bitmask (consumers
+# can use the values surfaced via `enum TlsConst`). `callback`
+# is a fn pointer to the verify callback (cyrius signature:
+# `fn vcb(preverify_ok, x509_store_ctx) -> int`). Pass
+# `callback = 0` to disable the callback (mode-only override).
+#
+# Implementation detail (libssl `SSL_CTX_set_verify`) hidden
+# behind this typed verb so consumers don't bind to libssl's
+# symbol name. Returns 0 on success, -1 on missing handle or
+# unresolved symbol.
+fn tls_set_verify(handle, mode, callback) {
+    if (handle == 0) { return 0 - 1; }
+    if (_fn_SSL_CTX_set_verify == 0) { return 0 - 1; }
+    fncall3(_fn_SSL_CTX_set_verify, handle, mode, callback);
+    return 0;
+}
+
 # v5.6.40: resolve a libssl/libcrypto symbol by name via the
 # fdlopen-managed libssl handle. Lets consumers (e.g. sandhi's
 # `tls_policy/alpn.cyr`) call SSL_CTX_set_alpn_protos /
@@ -158,6 +207,14 @@ fn tls_available() {
 # the symbol isn't in libssl/libcrypto (RTLD_GLOBAL means
 # libcrypto symbols ARE visible via the libssl handle's search
 # under v5.6.37's loader setup).
+#
+# v5.10.13: **soft-deprecated** in favour of typed wrappers
+# (`tls_set_alpn`, `tls_set_verify`). New consumers should
+# prefer the typed entry points; this stays available for
+# escape-hatch usage (rarely-needed libssl symbols not yet
+# wrapped). Each direct call is a libssl-ABI binding that
+# won't survive a native-TLS transport swap; typed wrappers
+# do.
 fn tls_dlsym(name) {
     _tls_init();
     if (_tls_ok == 0) { return 0; }
@@ -168,24 +225,34 @@ fn tls_dlsym(name) {
 }
 
 # v5.6.40: wrap an already-connected TCP socket in a TLS session
-# with a caller-supplied SSL_CTX hook. The hook fires AFTER
-# SSL_CTX_new + the standard verify-path defaults, BEFORE SSL_new
-# / SSL_connect. Consumers use this to call any SSL_CTX_set_*
-# customisation: ALPN advertise (`SSL_CTX_set_alpn_protos`),
-# custom verify callback, mTLS cert/key load, alternative trust
-# store, OPENSSL_INIT options, etc.
+# with a caller-supplied configuration hook. The hook fires AFTER
+# stdlib defaults (peer verification, system CAs) and BEFORE the
+# session is created / handshake runs. Consumers customise via
+# typed `tls_set_*(handle, ...)` wrappers (ALPN advertise,
+# custom verify mode + callback, etc.).
 #
-# Hook signature: `hook_fp(hook_ctx, ssl_ctx) -> int` — non-zero
-# return aborts the connection (frees ssl_ctx and returns 0
-# from tls_connect_with_ctx_hook). hook_ctx is opaque consumer
+# Hook signature: `hook_fp(hook_ctx, handle) -> int` — non-zero
+# return aborts the connection (frees the handle and returns 0
+# from tls_connect_with_ctx_hook). `hook_ctx` is opaque consumer
 # state pointer; pass 0 if unused. Pass `hook_fp = 0` to skip
 # the hook entirely (matches the pre-v5.6.40 `tls_connect`
 # behavior; that function is now a 1-line wrapper).
 #
+# v5.10.13 contract clarification — the `handle` arg passed to
+# the hook is OPAQUE to consumers. Today (libssl-backed) it's
+# an `SSL_CTX*`, but consumers MUST call typed `tls_set_*`
+# wrappers instead of touching the handle directly. A future
+# native-TLS transport swap will keep the same hook signature
+# and `tls_set_*` verbs; the handle's underlying type changes
+# but consumers don't see the change. The escape hatch
+# (`tls_dlsym` for unwrapped libssl symbols) is soft-deprecated
+# — direct libssl ABI binding ties consumers to the transport.
+#
 # Filed by sandhi 2026-04-24 in
 # `sandhi/docs/issues/2026-04-24-stdlib-tls-alpn-hook.md`,
 # Option A (function-pointer hook — least invasive, most
-# flexible).
+# flexible). v5.10.13 follow-up: typed wrappers added so the
+# hook can stay generic across transports.
 fn tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx) {
     _tls_init();
     if (_tls_ok == 0) { return 0; }

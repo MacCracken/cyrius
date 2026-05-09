@@ -898,7 +898,29 @@ stdlib primitive.
   / fcntl / getsockopt across both); Mach-O ARM uses BSD
   syscall numbers (already wired up).
 
-#### v5.10.12 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+#### v5.10.12 ✅ — Defensive `lib/fnptr.cyr` rewrite (agnosys aarch64 saga follow-on) (SHIPPED)
+
+The originally-pinned audit-only scope (TLS surface
+walk + inline annotations) was deferment dressed as a
+slot. Pivoted to real code: 18 `#ifdef CYRIUS_ARCH_X86`
+blocks in `lib/fnptr.cyr` wrapped with `#ifndef
+CYRIUS_ARCH_AARCH64`. Defense-in-depth so even if
+shadow-lib or env pollution leaks `CYRIUS_ARCH_X86`
+into a cc5_aarch64 invocation, the AARCH64 gate wins
+and the x86 asm block is skipped. cc5 byte-identical
+self-host (no cc5 semantic change; gating lives in
+stdlib). 66/66 check.sh, 134/134 cyrius test.
+
+The originally-planned `tls.cyr` audit + native-transport
+prep moved forward to v5.10.13 (was SIMD math; user
+direction "TLS as priority" 2026-05-08) — pivoting from
+audit-only to typed-wrapper consumer-pull work. Audit
+walk DID surface real leaks (`tls_dlsym`,
+`tls_connect_with_ctx_hook`'s raw `SSL_CTX*` arg, openssl
+constants in `enum TlsConst`); v5.10.13 picks a
+consumer-driven subset to fix.
+
+#### v5.10.12 — original scope (kept here for closeout audit)
 
 **Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
 ask under "Not sandhi's slot" — auditing the hook surface
@@ -938,7 +960,31 @@ much-bigger undertaking (multi-slot or multi-minor) that
 needs its own design pass before pinning. v5.10.11 just
 documents the surface so a future swap is guided.
 
-#### v5.10.13 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.13 ✅ — TLS surface tightening: typed `tls_set_alpn` + `tls_set_verify` wrappers + opaque-handle hook contract (SHIPPED)
+
+Pivot from SIMD math on user direction "TLS as priority"
+2026-05-08. The v5.10.12 audit walk surfaced abstraction
+leaks; this slot closes the two highest-impact shapes
+with consumer-driven typed wrappers.
+
+`tls_set_alpn(handle, protos, len)` wraps
+`SSL_CTX_set_alpn_protos`. `tls_set_verify(handle, mode,
+callback)` wraps `SSL_CTX_set_verify`. Hook contract
+clarified: the 2nd arg is now an OPAQUE handle (today
+libssl-backed, future native-TLS-backed); consumers use
+typed `tls_set_*` verbs instead of touching the handle.
+`tls_dlsym` soft-deprecated as escape hatch. Sandhi's
+`tls_policy/alpn.cyr` switchover is sandhi-side per
+ADR 0001.
+
+cc5 unchanged in semantic. api-surface 2796 → 2798. 66/66
+check.sh, 134/134 cyrius test, doc-coverage clean.
+
+Held forward: `enum TlsConst` openssl integer constants
+(consumer-pull-driven typed names); `tls_get_alpn_selected`
+typed wrapper for ALPN result readback.
+
+#### v5.10.14 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -978,7 +1024,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.14+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.15+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:

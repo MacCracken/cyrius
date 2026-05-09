@@ -2590,6 +2590,8 @@ tls::tls_connect/2
 tls::tls_connect_with_ctx_hook/4
 tls::tls_dlsym/1
 tls::tls_read/3
+tls::tls_set_alpn/3
+tls::tls_set_verify/3
 tls::tls_write/3
 toml::toml_get/2
 toml::toml_get_sections/2

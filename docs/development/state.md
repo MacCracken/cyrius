@@ -5,6 +5,83 @@
 
 ## Version
 
+**5.10.13** (shipped 2026-05-08 — **v5.10.x SLOT 13 —
+TLS surface tightening: typed `tls_set_alpn` +
+`tls_set_verify` wrappers + opaque-handle hook
+contract**).
+
+Pivot from SIMD math on user direction "TLS as priority"
+2026-05-08. The v5.10.12 audit walk surfaced
+abstraction leaks; this slot closes the two highest-
+impact shapes with consumer-driven typed wrappers.
+
+**What landed**:
+- `tls_set_alpn(handle, protos, len)` — wraps
+  `SSL_CTX_set_alpn_protos`. Sandhi's named consumer
+  (alpn.cyr) switches off direct `tls_dlsym` call.
+- `tls_set_verify(handle, mode, callback)` — wraps
+  `SSL_CTX_set_verify`. Override stdlib's default
+  `SSL_VERIFY_PEER`.
+- `_fn_SSL_CTX_set_alpn_protos` resolved at
+  `_tls_init` time; new wrappers don't need a
+  runtime `tls_dlsym` round-trip.
+- `tls_connect_with_ctx_hook` contract clarified —
+  hook's 2nd arg now described as OPAQUE handle.
+  Today libssl-backed; future native-TLS swap keeps
+  the same hook signature + same `tls_set_*` verbs;
+  consumer source unchanged across the swap.
+- `tls_dlsym` soft-deprecated as escape hatch.
+
+**Acceptance**:
+- api-surface 2796 → 2798.
+- TLS-live gate PASSes.
+- cc5 byte-identical self-host.
+- 66/66 check.sh, 134/134 cyrius test, doc-coverage clean.
+
+**Held forward**:
+- `enum TlsConst` typed names (consumer-pull-driven).
+- `tls_get_alpn_selected` typed wrapper for ALPN
+  readback (next obvious typed-wrapper add).
+
+**Next**: v5.10.14 — pick from queue. New agnosys
+issue (`2026-05-08-cyrius-derive-multi-stacking.md`)
+queued for review; SIMD math (was original v5.10.13);
+shadow-lib compile warn (held from v5.10.10); typed
+TlsConst names. Decision at slot entry per consumer
+pressure.
+
+**5.10.12** (shipped 2026-05-08 — **v5.10.x SLOT 12 —
+defensive `lib/fnptr.cyr` rewrite (agnosys aarch64 saga
+follow-on)**).
+
+The agnosys aarch64 SIGILL diagnosed at v5.10.10 as
+shadow-lib contamination — pre-version-pinning lib/fnptr.cyr
+with stale predefine state leaked x86 inline asm bytes
+into a cc5_aarch64 invocation. v5.10.12 closes the door:
+every `#ifdef CYRIUS_ARCH_X86` block in lib/fnptr.cyr
+now wrapped with `#ifndef CYRIUS_ARCH_AARCH64`. Even if
+both flags somehow get defined (env pollution, shadow
+lib with mixed predefines, future regression), the
+AARCH64 gate wins on cc5_aarch64 and the x86 asm block
+is skipped.
+
+**Originally-planned `tls.cyr` audit-only** scope was
+recognized as deferment-dressed-as-slot mid-implementation
+(user feedback: "doc changes only is deferment"). Pivoted
+to real code. The TLS audit DID surface real leaks
+(`tls_dlsym`, `tls_connect_with_ctx_hook`'s raw `SSL_CTX*`
+arg, openssl constants in `enum TlsConst`) — those land
+in v5.10.13 with consumer-driven typed wrappers (was
+SIMD math; pivoted on user direction "TLS as priority").
+
+cc5: 765,616 unchanged (defensive gating lives in
+stdlib only). Byte-identical x86_64 self-host. 66/66
+check.sh, 134/134 cyrius test.
+
+**Next**: v5.10.13 — TLS surface tightening (typed ALPN
+wrapper, opaque-handle hook signature, or both bundled
+— decision at slot entry).
+
 **5.10.11** (shipped 2026-05-08 — **v5.10.x SLOT 11 —
 `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x
 prereq)**).
@@ -5507,9 +5584,14 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **765,616 B** at v5.10.11 (unchanged
-  from v5.10.10 — `net_connect_nb` is stdlib only; cc5 is
-  semantically unchanged). v5.10.10 was 765,616 (was 765,608
+- **cc5 (x86_64)**: **765,616 B** at v5.10.13 (unchanged
+  from v5.10.12 — TLS typed wrappers live in stdlib
+  only; cc5 semantically unchanged).
+- **cc5 at v5.10.12**: 765,616 B (unchanged from v5.10.11
+  — defensive fnptr.cyr gating lives in stdlib only).
+- **cc5 at v5.10.11**: 765,616 B (unchanged from v5.10.10
+  — `net_connect_nb` is stdlib only; cc5 is semantically
+  unchanged). v5.10.10 was 765,616 (was 765,608
   at v5.10.9; +8 — cyrlint char-literal brace counter
   fix lives in cyrlint binary, cc5 unchanged in semantic
   but version_str.cyr regenerated). v5.10.9 was 765,608

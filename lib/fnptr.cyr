@@ -43,12 +43,14 @@
 fn fncall0(fp) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x45; 0xF8;    # mov rax, [rbp-8]  (fp)
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xF0;    # mov [rbp-16], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -63,12 +65,14 @@ fn fncall0(fp) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x45; 0xF8;    # mov rax, [rbp-8]  (fp)
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xF0;    # mov [rbp-16], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -100,6 +104,7 @@ fn fncall0(fp) {
 fn fncall1(fp, a) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x7D; 0xF0;    # mov rdi, [rbp-16] (a)
@@ -107,6 +112,7 @@ fn fncall1(fp, a) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xE8;    # mov [rbp-24], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -122,6 +128,7 @@ fn fncall1(fp, a) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x7D; 0xF0;    # mov rdi, [rbp-16] (a)
@@ -129,6 +136,7 @@ fn fncall1(fp, a) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xE8;    # mov [rbp-24], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -156,6 +164,7 @@ fn fncall1(fp, a) {
 fn fncall2(fp, a, b) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x75; 0xE8;    # mov rsi, [rbp-24] (b)
@@ -164,6 +173,7 @@ fn fncall2(fp, a, b) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xE0;    # mov [rbp-32], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -180,6 +190,7 @@ fn fncall2(fp, a, b) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x75; 0xE8;    # mov rsi, [rbp-24] (b)
@@ -188,6 +199,7 @@ fn fncall2(fp, a, b) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xE0;    # mov [rbp-32], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -217,6 +229,7 @@ fn fncall2(fp, a, b) {
 fn fncall3(fp, a, b, c) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x55; 0xE0;    # mov rdx, [rbp-32] (c)
@@ -226,6 +239,7 @@ fn fncall3(fp, a, b, c) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xD8;    # mov [rbp-40], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -243,6 +257,7 @@ fn fncall3(fp, a, b, c) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x55; 0xE0;    # mov rdx, [rbp-32] (c)
@@ -252,6 +267,7 @@ fn fncall3(fp, a, b, c) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xD8;    # mov [rbp-40], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -283,6 +299,7 @@ fn fncall3(fp, a, b, c) {
 fn fncall4(fp, a, b, c, d) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x4D; 0xD8;    # mov rcx, [rbp-40] (d)
@@ -293,6 +310,7 @@ fn fncall4(fp, a, b, c, d) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xD0;    # mov [rbp-48], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -311,6 +329,7 @@ fn fncall4(fp, a, b, c, d) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x8B; 0x4D; 0xD8;    # mov rcx, [rbp-40] (d)
@@ -321,6 +340,7 @@ fn fncall4(fp, a, b, c, d) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xD0;    # mov [rbp-48], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -354,6 +374,7 @@ fn fncall4(fp, a, b, c, d) {
 fn fncall5(fp, a, b, c, d, e) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x4C; 0x8B; 0x45; 0xD0;    # mov r8, [rbp-48] (e)
@@ -365,6 +386,7 @@ fn fncall5(fp, a, b, c, d, e) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xC8;    # mov [rbp-56], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -384,6 +406,7 @@ fn fncall5(fp, a, b, c, d, e) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x4C; 0x8B; 0x45; 0xD0;    # mov r8, [rbp-48] (e)
@@ -395,6 +418,7 @@ fn fncall5(fp, a, b, c, d, e) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xC8;    # mov [rbp-56], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -433,6 +457,7 @@ fn fncall5(fp, a, b, c, d, e) {
 fn fncall6(fp, a, b, c, d, e, f) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x4C; 0x8B; 0x4D; 0xC8;    # mov r9,  [rbp-56] (f)
@@ -445,6 +470,7 @@ fn fncall6(fp, a, b, c, d, e, f) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xC0;    # mov [rbp-64], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -465,6 +491,7 @@ fn fncall6(fp, a, b, c, d, e, f) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x4C; 0x8B; 0x4D; 0xC8;    # mov r9,  [rbp-56] (f)
@@ -477,6 +504,7 @@ fn fncall6(fp, a, b, c, d, e, f) {
         0xFF; 0xD0;                # call rax
         0x48; 0x89; 0x45; 0xC0;    # mov [rbp-64], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -534,6 +562,7 @@ fn fncall6(fp, a, b, c, d, e, f) {
 fn fncall7(fp, a, b, c, d, e, f, g) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x83; 0xEC; 0x10;         # sub rsp, 16       (reserve stack-arg slot + padding)
@@ -550,6 +579,7 @@ fn fncall7(fp, a, b, c, d, e, f, g) {
         0x48; 0x83; 0xC4; 0x10;         # add rsp, 16       (restore)
         0x48; 0x89; 0x45; 0xB8;         # mov [rbp-72], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -573,6 +603,7 @@ fn fncall7(fp, a, b, c, d, e, f, g) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x83; 0xEC; 0x10;         # sub rsp, 16       (reserve stack-arg slot + padding)
@@ -589,6 +620,7 @@ fn fncall7(fp, a, b, c, d, e, f, g) {
         0x48; 0x83; 0xC4; 0x10;         # add rsp, 16       (restore)
         0x48; 0x89; 0x45; 0xB8;         # mov [rbp-72], rax (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -638,6 +670,7 @@ fn fncall7(fp, a, b, c, d, e, f, g) {
 fn fncall8(fp, a, b, c, d, e, f, g, h) {
     var result = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x83; 0xEC; 0x10;         # sub rsp, 16         (room for args 7+8)
@@ -656,6 +689,7 @@ fn fncall8(fp, a, b, c, d, e, f, g, h) {
         0x48; 0x83; 0xC4; 0x10;         # add rsp, 16
         0x48; 0x89; 0x45; 0xB0;         # mov [rbp-80], rax   (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
@@ -681,6 +715,7 @@ fn fncall8(fp, a, b, c, d, e, f, g, h) {
     # missing entirely — fncallN returned 0 on Mach-O builds, cascading
     # through alloc_via → str_builder_new → SIGSEGV.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_ARCH_AARCH64
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x48; 0x83; 0xEC; 0x10;         # sub rsp, 16         (room for args 7+8)
@@ -699,6 +734,7 @@ fn fncall8(fp, a, b, c, d, e, f, g, h) {
         0x48; 0x83; 0xC4; 0x10;         # add rsp, 16
         0x48; 0x89; 0x45; 0xB0;         # mov [rbp-80], rax   (result)
     }
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {
