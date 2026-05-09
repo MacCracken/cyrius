@@ -6,6 +6,86 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.10] — 2026-05-08
+
+**v5.10.x SLOT 10 — cyrlint char-literal brace bug fix
+(agnostik 5.10.9 toolchain refresh filing) + closes the
+agnosys 1.1.12 aarch64 arc with a "shadow lib" diagnosis**.
+
+### What landed
+
+**cyrlint char-literal brace bug** — same shape as the
+v5.10.6 cyrfmt fix. `cyrlint`'s brace-depth counter
+didn't skip `'...'` char literals, so any `}` inside
+`'}'` decremented the depth and every subsequent brace
+in the file was flagged as `unmatched closing brace`.
+agnostik's serde paths hit it 8 times (one `'}'` putc
+per `<Struct>_to_json` writer); 5.10.9 lint emitted 694
+false-positive warnings across 6 files. Fixed by adding
+the same string-literal/char-literal skip pattern
+cyrfmt got at v5.10.6 to BOTH cyrlint brace-counting
+sites:
+- `lint()` main loop
+- `lint_globals_init_order()` second-pass walker
+
+cc5: 765,608 → 765,616 (+8 B; cyrlint binary is
+separate). cyrlint binary regenerated. agnostik repro
+now lints clean (0 warnings); negative cases verified
+(`'{'`, escaped quotes inside char/string literals,
+real unbalanced braces all behave correctly).
+
+### Agnosys 1.1.12 aarch64 — shadow lib diagnosis
+
+The "aarch64 still SIGILLs" verdict at v5.10.7/.8/.9
+turned out to be a **shadow lib** in the agnosys repo
+folder, not a cc5_aarch64 codegen bug. cyrius's
+`READFILE` resolves `include "lib/<file>.cyr"` against
+cwd FIRST, only falling through to the version-pinned
+`$HOME/.cyrius/versions/<MY_VERSION>/lib/` when the
+cwd-relative path doesn't exist.
+
+agnosys's project folder had its own `lib/` (likely
+populated by `cyrius deps` symlinking or a prior
+manual install) that shadowed the version-pinned
+snapshot. The shadow lib's `lib/fnptr.cyr` was older
+content where the `#ifdef CYRIUS_ARCH_X86` block fired
+on cc5_aarch64 — emitting x86 inline asm bytes
+(`48 8b 75 e8 ... ff d0`) directly into the aarch64
+`.text` section. Those bytes look fine to the linker
+but trap SIGILL on real aarch64 hardware.
+
+**Diagnosis verified** by sha256-comparing the agent's
+`~/.cyrius/versions/5.10.9/lib/*.cyr` against cyrius's
+local lib — every file matched. Same compiler binary
+(`cc5_aarch64` md5 `4beac885...`). Same source
+(`repro_status.cyr` sha256 `7046d51c...`). Same env (no
+`CYRIUS_*` / `ARCH_*` pollution per agent's diagnostic
+dump). But agent's compile produced an 87,400-byte
+binary vs cyrius's 126,912-byte binary (-39,512 B / 45%
+smaller). The only remaining variable: cwd-relative lib
+shadowing. Confirmed.
+
+The proper consumer-side resolution is to delete the
+shadow `lib/` from project folders and let cyrius's
+version-pinned path handle resolution. `cyrius deps`
+should auto-handle this on subsequent builds.
+
+### NOT in this slot (held forward)
+
+- **Defensive `lib/fnptr.cyr` rewrite** to gate x86 asm
+  on `#ifndef CYRIUS_ARCH_AARCH64` so even shadow-lib
+  contamination can't leak x86 bytes into aarch64
+  binaries. Discussed but deferred — the shadow-lib root
+  cause is a setup issue best solved at the consumer
+  side (clean up stale lib/ dirs); a defensive rewrite
+  is hardening but doesn't fix the underlying
+  resolution-precedence question. Pin: separate
+  v5.10.x slot if shadow-lib contamination resurfaces.
+- **`cyrius` CLI warning when cwd has a `lib/` that
+  shadows the version-pinned path** — surface the
+  resolution choice to the user explicitly so they can
+  catch shadowing early. Pin: separate v5.10.x slot.
+
 ## [5.10.9] — 2026-05-08
 
 **v5.10.x SLOT 9 — Version-pinned lib path (kills the

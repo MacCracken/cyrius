@@ -5,6 +5,70 @@
 
 ## Version
 
+**5.10.10** (shipped 2026-05-08 — **v5.10.x SLOT 10 —
+cyrlint char-literal brace fix + agnosys aarch64
+"shadow-lib" diagnosis closeout**).
+
+**What landed**:
+- **cyrlint char-literal brace fix** (agnostik 5.10.9
+  toolchain refresh filing). Same shape as v5.10.6's
+  cyrfmt fix; cyrlint's brace counter wasn't skipping
+  `'...'` char literals so `}` inside `'}'` decremented
+  depth and flagged every subsequent brace. agnostik
+  was suppressing 694 false positives across 6 files via
+  byte-value workarounds; can swap back to char literal
+  form post-fix. Both cyrlint counter sites (main lint
+  loop + `lint_globals_init_order`) updated.
+- **Agnosys 1.1.12 aarch64 closeout — diagnosed as
+  shadow-lib contamination, not codegen**. The
+  "aarch64 still SIGILLs" verdict across v5.10.7/.8/.9
+  reproduced because the agnosys project folder had a
+  stale `lib/` subdir that shadowed the version-pinned
+  `$HOME/.cyrius/versions/<MY_VERSION>/lib/`. cyrius's
+  `READFILE` resolves cwd-relative paths first; a
+  pre-version-pinning `lib/<file>.cyr` in the consumer
+  folder won the resolution. The shadow `lib/fnptr.cyr`
+  was old enough that `#ifdef CYRIUS_ARCH_X86` fired on
+  cc5_aarch64 invocations, emitting x86 inline asm
+  (`48 8b 75 e8 ...`) into the aarch64 `.text` section.
+  Verified by sha256-comparing every artifact between
+  agent's setup and cyrius-team's setup — all
+  identical (cc5_aarch64 md5, all 8 lib file hashes,
+  source hash, cyrius driver hash). The only divergent
+  variable was cwd-relative shadow lib presence.
+  Consumer-side fix: delete the stale `lib/` from the
+  project folder; `cyrius deps` rebuilds it cleanly
+  on next invocation.
+
+**Cycle bug haul** (v5.10.7-.10): even with the agnosys
+aarch64 piece resolving to a shadow-lib config issue,
+the arc caught a lot of REAL bugs along the way:
+- v5.10.7: `: Str` field codegen compile failure
+  (`unexpected '}'` — FIELDSZ + PARSE_STRUCT_INIT
+  flatten mismatch). NEW fix.
+- v5.10.8: PP_DERIVE Serialize emitted invalid JSON for
+  Str-with-special-chars — no escaping. NEW fix
+  (RFC 8259 §7 compliant `str_builder_add_json_str`).
+- v5.10.9: cc5/lib cross-version contamination via
+  `~/.cyrius/lib` symlink. NEW fix (version-pinned
+  path).
+- v5.10.10: cyrlint char-literal brace counter (twin
+  of v5.10.6 cyrfmt bug). NEW fix.
+
+**NOT in this slot** (held forward to roadmap):
+- Shadow-lib guard at compile time (`note: cwd lib/
+  shadowing version-pinned lib/`).
+- Defensive `lib/fnptr.cyr` rewrite gating x86 asm on
+  `#ifndef CYRIUS_ARCH_AARCH64`.
+
+cc5: 765,608 → 765,616 (+8 B; cyrlint binary lives
+separately so the cc5 delta is negligible).
+
+**Next**: v5.10.11 — `lib/net.cyr` `net_connect_nb`
+primitive (sandhi 1.3.x prereq). Net work has been
+pushed back 4 slots (was originally pinned at v5.10.7);
+ready to ship.
+
 **5.10.9** (shipped 2026-05-08 — **v5.10.x SLOT 9 —
 Version-pinned lib path (kills the cc5/lib version-
 mismatch contamination class)**).
@@ -5408,9 +5472,12 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **765,608 B** at v5.10.9 (was 764,936
-  at v5.10.8; +672 for the version-pinned lib path
-  construction in `_init_cyrius_lib`). v5.10.8 was
+- **cc5 (x86_64)**: **765,616 B** at v5.10.10 (was 765,608
+  at v5.10.9; +8 — cyrlint char-literal brace counter
+  fix lives in cyrlint binary, cc5 unchanged in semantic
+  but version_str.cyr regenerated). v5.10.9 was 765,608
+  (was 764,936 at v5.10.8; +672 for the version-pinned
+  lib path construction in `_init_cyrius_lib`). v5.10.8 was
   764,936 (was 765,208 at v5.10.7; -272 for PP_DERIVE
   Str-field emit consolidation). v5.10.7 was 765,208
   (was 764,552 at v5.10.6; +656 for IS_STR_FIELD helper

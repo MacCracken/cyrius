@@ -829,7 +829,24 @@ resolves cleanly.
 variants (was only main.cyr + main_win.cyr); cross-arch
 propagation per the feedback pin.
 
-#### v5.10.10 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+#### v5.10.10 ✅ — cyrlint char-literal brace fix + agnosys aarch64 closeout (shadow-lib diagnosis) (SHIPPED)
+
+cyrlint had the same brace-counter bug as v5.10.6's
+cyrfmt fix. Both lint sites updated. agnostik 5.10.9
+toolchain refresh closed (694 false positives gone).
+
+agnosys aarch64 SIGILL diagnosed as shadow-lib
+contamination (cwd `lib/` shadowing version-pinned
+`$HOME/.cyrius/versions/<v>/lib/`). Sha256-verified all
+artifacts identical between cyrius-team and agent
+setup; only divergent variable was cwd-relative shadow
+lib. Consumer-side fix: delete stale lib/.
+
+cc5 unchanged in semantic. Held forward (see "Held /
+pinned bug arc" below): shadow-lib guard +
+defensive `lib/fnptr.cyr` ifndef rewrite.
+
+#### v5.10.11 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap explicitly asks for this as
 a stdlib factoring — the non-blocking-connect + poll(POLLOUT)
@@ -870,7 +887,7 @@ stdlib primitive.
   / fcntl / getsockopt across both); Mach-O ARM uses BSD
   syscall numbers (already wired up).
 
-#### v5.10.11 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+#### v5.10.12 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
 ask under "Not sandhi's slot" — auditing the hook surface
@@ -910,7 +927,7 @@ much-bigger undertaking (multi-slot or multi-minor) that
 needs its own design pass before pinning. v5.10.11 just
 documents the surface so a future swap is guided.
 
-#### v5.10.12 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.13 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -950,7 +967,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.13+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.14+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:
@@ -988,6 +1005,35 @@ experience for everyone:
 
 Items earn a slot when consumer pressure surfaces or
 opportunistic touch makes sense:
+
+- **Shadow-lib guard** (pinned 2026-05-08 at v5.10.10 close
+  — agnosys aarch64 SIGILL diagnosis surfaced the gap).
+  cyrius's `READFILE` resolves `include "lib/<file>.cyr"`
+  against cwd FIRST, only falling through to the version-
+  pinned `$HOME/.cyrius/versions/<MY_VERSION>/lib/`. A stale
+  `lib/` in a project folder (often left behind by an old
+  `cyrius deps` run, manual install, or pre-version-pinning
+  setup) silently shadows the version-pinned snapshot. Same
+  cc5 binary + same source produces different output across
+  machines depending on whether the project folder has a
+  shadow lib, and worse — a shadow lib that's an OLDER
+  version of `lib/fnptr.cyr` etc. emits the wrong asm
+  blocks (e.g. x86 inline asm in an aarch64 binary), with
+  no compile-time warning. Two complementary fixes worth
+  considering:
+  - **Compile-time warning** when cwd has a `lib/` that
+    will shadow the version-pinned path. Print one
+    `note: cwd lib/ shadowing version-pinned lib/ — using
+    cwd; delete cwd lib/ to use the version-matched
+    snapshot` so consumers catch the issue immediately.
+  - **Defensive `lib/fnptr.cyr` rewrite** — gate x86 asm on
+    `#ifndef CYRIUS_ARCH_AARCH64` so even if a shadow lib
+    has stale content, the cc5_aarch64 binary's predefine
+    wins and aarch64 asm emits regardless. Cross-arch
+    pollution becomes a silent-correct-output instead of a
+    silent-broken-binary.
+  Lands when consumer pressure resurfaces or when the lib-
+  resolution-precedence design call gets a fresh look.
 
 - **REAL TYPE SYSTEM** (pinned 2026-05-08 at v5.9.36 wrap;
   user direction; multi-slot effort). Call-site type checking,
