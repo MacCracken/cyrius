@@ -1180,6 +1180,19 @@ fn PARSE_VAR(S) {
                 # v5.10.4 — fold inferred sid (peeked pre-PCMPE) into
                 # the no-annotation branch so `var x = f();` picks
                 # up f's `: ReturnType` annotation as x's SLTYPE.
+                # NOTE: scalar return inference (negative GFRS, i.e.
+                # `var n = strlen(s);` where strlen is `: i64`) was
+                # tried at v5.10.5 with SLTYPE = positive width
+                # (8 for i64), but that encoding tripped the
+                # parse_expr.cyr:263 width-aware load path which
+                # SEXW(S, 8) marks expr_width = 8 and downstream
+                # arithmetic emit narrowed incorrectly (`hlen -
+                # nlen` returned -29 instead of 6 in the tcyr
+                # strstr regression). Reverted: scalar-return
+                # inference deferred to the future slot pinned at
+                # `CYRIUS_TYPE_CHECK` default-on flip — same root
+                # cause (need scalar-vs-pointer per-param distinction
+                # before tracking i64-as-i64 vs i64-as-pointer).
                 if (_ti_inferred_sid > 0) {
                     SLTYPE(S, li, 0 - _ti_inferred_sid);
                 } else {

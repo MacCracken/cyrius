@@ -537,26 +537,57 @@ overload dispatch.
     on legitimate `str_len(s)`-style call sites in the
     132-tcyr corpus.
 
-- **v5.10.5 — Type system pass 5: diagnostics +
-  `CYRIUS_TYPE_CHECK` default-on + agnosys 1.1.12 verbatim
-  repro CLOSE**. `error: cannot pass Str to fn expecting
-  cstring; use str_data(x) or str_println(x)` style hints
-  at the call site. Catalog the top-N most-common type-
-  mismatch shapes consumers will hit and give each a one-
-  line hint pointing at the canonical fix.
+- **v5.10.5** ✅ — **Type system pass 5: agnosys 1.1.12
+  verbatim repro CLOSE + extended overload dispatch +
+  diagnostic hint catalog**. SHIPPED. **Closes the cascade
+  started at v5.9.33 — 9 slots after the first attempt.**
+  Hash `6425355b6147d5a674078794310ae2c1` runs end-to-end
+  with output `[{"x":1,"y":42,"z":7}]\n22\n`, exit=0.
 
-  **`CYRIUS_TYPE_CHECK` default-on flip** (deferred from
-  v5.10.3 — the param-side `: Str` annotation pass at
-  v5.10.4 removes the false-positive flood from legitimate
-  `str_len(s)` calls; v5.10.5 turns the warnings on by
-  default once the corpus is clean).
+  Landed: scalar return-type annotations (`: i8/i16/i32/i64`)
+  encoded as negative `fn_ret_sid` values; v5.10.2 rough-scan
+  extended to recognize scalar names so retptr-stash isn't
+  allocated for them; extended overload dispatch handles
+  `IDENT (` fn-call args (looks up GFRS for the called
+  fn's return type); 3 new dispatch routes (`println(Str-
+  fncall)→println_str`, `strlen(Str)→str_len`,
+  `println(i64)→println_int`); `println_int` helper in
+  `lib/string.cyr`; `strlen` annotated `: i64`;
+  `str_builder_build_a/build` and `str_join` annotated
+  `: Str` (v5.10.2 misses); diagnostic hint catalog (Str
+  → cstring with one-line hint pointing at str_data /
+  str_println / annotate `: Str`).
 
-  **Acceptance: agnosys 1.1.12 verbatim repro hash
-  `6425355b6147d5a674078794310ae2c1` runs end-to-end + its
-  expected output is correct (println outputs the
-  `[{"x":7,"y":35}]` JSON properly + length).** That closes
-  the cascade started at v5.9.33 — 9 slots after the first
-  fix attempt.
+  cc5: 758888 → 764552 (+5664 B). Byte-identical self-host
+  on x86_64 Linux + Mach-O ARM64 (round2==round3). Pi
+  (aarch64 Linux) cross-test: same verbatim output. 66/66
+  check.sh, 133/133 cyrius test, heapmap clean.
+
+  **NOT in this slot** (deferred with explicit pinnage):
+  - `CYRIUS_TYPE_CHECK` default-on flip — moved to a future
+    slot pinned in the v5.10.x held-arc section. The
+    flip was tried, surfaced a NEW false-positive shape
+    (Str → generic i64-shaped fns like vec_push_a / alloc
+    where Str-as-i64-pointer is fine semantically), needs
+    per-param scalar-vs-pointer annotation infrastructure
+    that doesn't exist yet.
+  - Scalar return-type INFERENCE for `var n = strlen(s);`
+    (local n carrying SLTYPE-encoded i64) — also tried,
+    reverted because positive-width SLTYPE = 8 tripped
+    parse_expr.cyr's width-aware load path (arithmetic
+    narrowed wrong). Direct fn-call dispatch
+    `println(strlen(s))` still works (uses GFRS at call
+    site). Pinned with the default-on flip.
+
+  **Slot-side fixes**:
+  - `cyriusly install <version>` honored its argument
+    (was always installing "latest" because the env-var
+    pipe was misordered).
+  - `cyrius audit` snapshot ping-pong recovery
+    (`~/.cyrius/lib` had reverted to v5.10.0; re-pointed
+    to v5.10.4 + parked `versions/5.10.0/lib` as
+    `lib.parked-pingpong-source` to fail loudly on
+    future regressions).
 
 #### v5.10.6 — Per-fn return-statement cap raise 64 → 256 (vyakarana 2.1.0 prereq)
 
@@ -775,6 +806,21 @@ experience for everyone:
 - **Surface review** items: `cyrius audit` outside-repo
   semantics design call, `parse_fn.cyr:910` defensive
   guard, doc/vidya version-ref drift cleanup.
+
+- **`CYRIUS_TYPE_CHECK` default-on flip** (deferred from
+  v5.10.5 — see `parse_fn.cyr::_TYPE_CHECK_ENABLED`
+  comment for the rationale). The v5.10.4 stdlib param-
+  annotation pass DID clean up the original false-
+  positive shape (Str-passing into annotated stdlib fns).
+  But a separate false-positive shape surfaced at
+  v5.10.5: Str values passed to GENERIC i64-shaped fns
+  (`vec_push_a`, `alloc`, `map_set`, etc.) trigger the
+  warning even though Str-as-i64-pointer is the legitimate
+  semantic. Distinguishing "untyped i64" from "expects
+  cstring" requires per-param scalar-vs-pointer
+  annotation tracking. Lands when that infrastructure
+  ships. Until then, the gate stays `CYRIUS_TYPE_CHECK=1`
+  opt-in.
 
 ### v5.10.x — Held / pinned bug arc (slot-on-need)
 

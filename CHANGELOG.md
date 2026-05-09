@@ -6,6 +6,155 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.5] — 2026-05-08
+
+**v5.10.x SLOT 5 — Type system pass 5: agnosys 1.1.12
+verbatim repro CLOSE + extended overload dispatch +
+diagnostic hint catalog**. Fifth and final slot of the
+agnosys-driven type-system arc. **Closes the cascade
+started at v5.9.33 — 9 slots after the first attempt.**
+The verbatim agnosys repro hash
+`6425355b6147d5a674078794310ae2c1` runs end-to-end with
+correct output `[{"x":1,"y":42,"z":7}]\n22\n`.
+
+cc5: 758888 → 764552 (+5664 B for the extended dispatch
++ 3 new lazy lookups + scalar return-type parsing). cc5
+v5.10.5 byte-identical self-host. cyrius test: 133/133.
+check.sh: 66/66. heapmap clean.
+
+### What landed
+
+- **Scalar return-type annotations** (`: i8/i16/i32/i64`)
+  now accepted at fn declarations. Encoded as NEGATIVE
+  values in `fn_ret_sid` (-8 = i64, -4 = i32, -2 = i16,
+  -1 = i8). All existing struct-only callers gate on
+  `> 0`, so negative values are invisible to them. The
+  v5.10.2 rough-scan extended to recognize the same
+  scalar names so `_cur_fn_ret_stash` doesn't allocate
+  retptr-stash for scalar returns.
+- **3 new lazy-cached noff lookups** in `parse_fn.cyr`:
+  `_STRLEN_NOFF`, `_STR_LEN_NOFF`, `_PRINTLN_INT_NOFF`
+  (mirror v5.10.3's `_PRINTLN_NOFF` / `_PRINTLN_STR_NOFF`
+  pattern).
+- **Extended overload dispatch** at PARSE_FNCALL —
+  the v5.10.3 plain-IDENT detection extended to also
+  handle `IDENT (` (fn-call expr) args. For fn-call
+  args the dispatch looks up the called fn's
+  return-type via GFRS (positive sid for struct
+  returns; negative scalar = -8/-4/-2/-1). New routes:
+  - `println(IDENT(args))` Str-returning fncall →
+    `println_str` (extension of v5.10.3)
+  - `strlen(Str)` / `strlen(IDENT(args))` returning
+    Str → `str_len` (NEW)
+  - `println(i64)` / `println(IDENT(args))` returning
+    i64 → `println_int` (NEW)
+- **`println_int(n: i64)` helper** in `lib/string.cyr`
+  — `print_num` + newline. Mirrors the v5.10.3
+  `println_str` pattern; gives the i64 dispatch a
+  concrete symbol to land on.
+- **`strlen` annotated with `: i64`** return.
+- **`str_builder_build_a/build` and `str_join`
+  annotated with `: Str`** — these were missed by the
+  v5.10.2 stdlib annotation pass; without them the
+  v5.10.4 inference couldn't see Str-returning chains
+  through the str_builder family. The agnosys repro
+  uses `var out = str_builder_build(sb); println(out);`
+  so this gap blocked the close.
+- **Diagnostic hint catalog** at PARSE_FNCALL's
+  call-site type-check. Str → cstring mismatch warning
+  extended with one-line hints pointing at the
+  canonical fix (`use str_data(x) for raw bytes,
+  str_println(x) for printing, or annotate the param
+  `: Str`). Gate stays at `CYRIUS_TYPE_CHECK=1`
+  opt-in (default-on flip deferred — see below).
+
+### Acceptance bar met
+
+The verbatim agnosys 1.1.12 repro:
+
+```
+md5sum /tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr
+# 6425355b6147d5a674078794310ae2c1
+
+cat /tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr | build/cc5 > /tmp/agn
+chmod +x /tmp/agn && /tmp/agn
+# [{"x":1,"y":42,"z":7}]
+# 22
+# exit=0
+```
+
+Hash verified verbatim, output as expected, exit=0. Per
+the `feedback_no_rewriting_consumer_repros` pin: the repro
+file was NOT touched — same bytes the consumer filed,
+post-fix runs cleanly.
+
+Cross-arch verification:
+- **x86_64 Linux**: cc5 byte-identical self-host, 66/66
+  check.sh, 133/133 cyrius test.
+- **aarch64 Linux** (pi): verbatim repro CLOSES with same
+  output `[{"x":1,"y":42,"z":7}]\n22\n`.
+- **macOS Mach-O ARM64** (ecb): cc5_macho self-hosts
+  byte-identical (round2 == round3).
+- **Windows PE32+**: cc5_win_cross builds (PE binary
+  emits, full ssh cass run TBD as cross-arch verify
+  test fixtures need lib/ scaffolding).
+
+### NOT in this slot (deferred with explicit pinnage)
+
+Per `feedback_deferral_requires_roadmap_pinnage`:
+
+- **`CYRIUS_TYPE_CHECK` default-on flip** — was the
+  third bullet of the v5.10.5 scope, attempted, then
+  REVERTED. The v5.10.4 stdlib param-annotation pass
+  DID clean up the original false-positive shape (Str-
+  passing into annotated stdlib fns). But a separate
+  false-positive shape surfaced when default-on was
+  tried at v5.10.5: Str values passed to GENERIC i64-
+  shaped fns (`vec_push_a`, `alloc`, `map_set`, etc.)
+  trigger the warning even though Str-as-i64-pointer
+  is the legitimate semantic. Distinguishing
+  "untyped i64" from "expects cstring" requires per-
+  param scalar-vs-pointer annotation tracking that
+  doesn't exist yet. Re-pinned at the slot in the
+  v5.10.x section of the roadmap.
+- **Scalar return-type INFERENCE** for `var n =
+  strlen(s);` (i.e., the local `n` carrying SLTYPE = 8
+  from inferred i64) — was tried at v5.10.5, but the
+  positive-width SLTYPE encoding tripped
+  `parse_expr.cyr:263`'s width-aware load path
+  (SEXW(S, 8) marks expr_width = 8 and downstream
+  arithmetic narrowed incorrectly — `hlen - nlen`
+  returned -29 instead of 6 in the strstr regression).
+  Reverted; only the v5.10.4 struct-sid inference
+  path stays. Direct fn-call dispatch
+  (`println(strlen(s))`) still works because that
+  goes through GFRS at the call site, not via SLTYPE
+  on a local. Pinned with the default-on flip — both
+  need the same per-param scalar-vs-pointer
+  infrastructure.
+
+### Slot-side fixes that landed during v5.10.5
+
+- **`cyriusly install <version>`** ignored its argument
+  and always installed "latest". Root cause: shell pipe
+  env-var leak — `CYRIUS_VERSION="$2" curl ... | sh`
+  set the env on `curl`, not on `sh`. Pre-fix the
+  installed `~/.cyrius/bin/cyriusly` and the repo's
+  `scripts/cyriusly` had this bug; both fixed in this
+  slot.
+- **`cyrius audit` failed `check.sh`** — root cause was
+  the snapshot ping-pong: `~/.cyrius/lib` symlink had
+  reverted to `versions/5.10.0/lib` (and `~/.cyrius/current`
+  to "5.10.0") via some intermediate `cyrius deps`
+  resolution that bypassed the v5.10.4 install snapshot.
+  Re-pointed to 5.10.4, restored repo `lib/str.cyr` +
+  `lib/string.cyr` from the correct snapshot, parked
+  `~/.cyrius/versions/5.10.0/lib` as
+  `lib.parked-pingpong-source` so future regressions
+  fail loudly instead of silently corrupting. The
+  `docs/api-surface.snapshot` regenerated to include
+  `println_int`.
+
 ## [5.10.4] — 2026-05-08
 
 **v5.10.x SLOT 4 — Type system pass 4: type inference at

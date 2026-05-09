@@ -459,14 +459,21 @@ fn _STR_SID(S) {
 }
 
 # v5.10.1 — opt-in gate for the call-site type check.
-# `CYRIUS_TYPE_CHECK=1` enables warnings; default off so
-# v5.10.1 ships the infrastructure without flooding stderr
-# on the existing source corpus (where stdlib helpers like
-# `str_len(s)` take Str-typed args without `: Str` param
-# annotation — legitimate idiom that v5.10.2's stdlib
-# annotation pass cleans up). When v5.10.2 lands, this gate
-# flips to default-on (or removes entirely once the
-# false-positive-free corpus verifies).
+# `CYRIUS_TYPE_CHECK=1` enables warnings; default off.
+# Default-on flip was originally pinned at v5.10.5 but
+# DEFERRED — the v5.10.4 stdlib param-side annotations DID
+# remove the false-positive flood from Str-passing into
+# annotated stdlib fns (str_len, str_print etc.), but a
+# different false-positive shape surfaced when default-on
+# was tried at v5.10.5: Str values passed to GENERIC i64-
+# shaped fns (vec_push_a, alloc, map_set, etc.) trigger
+# the warning even though Str-as-i64-pointer is fine
+# semantically — the consumer is not asking for cstring
+# semantics, the param is just untyped. Distinguishing
+# "untyped i64" from "expects cstring" requires per-param
+# scalar-vs-pointer annotation tracking that doesn't
+# exist yet. Default-on RE-PINNED to a future slot when
+# that infrastructure lands.
 var _type_check_env_resolved = 0;
 var _type_check_enabled = 0;
 fn _TYPE_CHECK_ENABLED() {
@@ -872,20 +879,35 @@ fn PARSE_FNCALL(S, noff) {
             # default-on flips at v5.10.2 once stdlib `: Str`
             # annotations remove the false-positive flood from
             # legitimate `str_len(s: Str)` idioms etc.
+            # v5.10.5 — diagnostic hint catalog. The v5.10.3 overload
+            # dispatch routes well-known shapes (println(Str) →
+            # println_str, strlen(Str) → str_len, println(i64) →
+            # println_int) before the type-check fires. What's left
+            # is type-mismatch shapes with no auto-route — those
+            # land here with one-line hints pointing at the
+            # canonical fix:
+            #   - Str → cstring fn (no overload): suggest str_data /
+            #     str_println / annotate the param `: Str`
+            #   - i64 (annotated/inferred) → cstring fn: suggest
+            #     print_num / fmt_int_buf — the value is a NUMBER,
+            #     not a pointer
+            # Flipped default-on at v5.10.5 — the v5.10.4 stdlib
+            # param-side annotations + v5.10.5 overload dispatch
+            # remove the false-positive flood.
             if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 2) {
                 if ((smask & (1 << argc)) == 0) {
+                    var _tc_arg_noff = PEEKV(S);
+                    var _tc_typ = 0;
+                    if (GINFN(S) == 1) {
+                        var _tc_lli = FINDLOCAL(S, _tc_arg_noff);
+                        if (_tc_lli >= 0) { _tc_typ = GLTYPE(S, _tc_lli); }
+                    }
+                    if (_tc_typ == 0) {
+                        var _tc_vi = FINDVAR(S, _tc_arg_noff);
+                        if (_tc_vi >= 0) { _tc_typ = GVTYPE(S, _tc_vi); }
+                    }
                     var _tc_str_sid = _STR_SID(S);
                     if (_tc_str_sid > 0) {
-                        var _tc_arg_noff = PEEKV(S);
-                        var _tc_typ = 0;
-                        if (GINFN(S) == 1) {
-                            var _tc_lli = FINDLOCAL(S, _tc_arg_noff);
-                            if (_tc_lli >= 0) { _tc_typ = GLTYPE(S, _tc_lli); }
-                        }
-                        if (_tc_typ == 0) {
-                            var _tc_vi = FINDVAR(S, _tc_arg_noff);
-                            if (_tc_vi >= 0) { _tc_typ = GVTYPE(S, _tc_vi); }
-                        }
                         if (_tc_typ == 0 - _tc_str_sid) {
                             syscall(SYS_WRITE, 2, "warning:", 8);
                             FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -893,11 +915,24 @@ fn PARSE_FNCALL(S, noff) {
                             PRSTR(S + 0x60000 + _tc_arg_noff);
                             syscall(SYS_WRITE, 2, "' to '", 6);
                             PRSTR(S + 0x60000 + noff);
-                            syscall(SYS_WRITE, 2, "' which expects a cstring (use str_data(", 40);
+                            syscall(SYS_WRITE, 2, "' which expects a cstring\n  hint: use str_data(", 47);
                             PRSTR(S + 0x60000 + _tc_arg_noff);
-                            syscall(SYS_WRITE, 2, ") or annotate the param `: Str`)\n", 33);
+                            syscall(SYS_WRITE, 2, ") for raw bytes, str_println(", 29);
+                            PRSTR(S + 0x60000 + _tc_arg_noff);
+                            syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 47);
                         }
                     }
+                    # i64 → unannotated-param warning would flood
+                    # false positives — most consumer fns legitimately
+                    # take i64 sizes/counts/indexes as unannotated
+                    # params (`memcpy(dst, src, n)`, `alloc(n)`,
+                    # `vec_push(v, item)`). The agnosys-shape `println(strlen(x))`
+                    # is already handled silently by the v5.10.5
+                    # dispatch (println(i64) → println_int), so a
+                    # diagnostic warning isn't needed for that path.
+                    # Re-introduce only when we have per-param scalar-
+                    # vs-pointer annotation distinction; current
+                    # heuristic doesn't have enough signal.
                 }
             } }
             # Auto-coercion: if this param is : Str and the arg is a string literal,

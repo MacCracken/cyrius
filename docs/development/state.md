@@ -5,6 +5,59 @@
 
 ## Version
 
+**5.10.5** (shipped 2026-05-08 — **v5.10.x SLOT 5 —
+Type system pass 5: agnosys 1.1.12 verbatim repro CLOSE
++ extended overload dispatch + diagnostic hint catalog**).
+Fifth and final slot of the agnosys-driven type-system arc.
+**Closes the cascade started at v5.9.33 — 9 slots after
+the first attempt.** Hash `6425355b6147d5a674078794310ae2c1`
+runs end-to-end: `[{"x":1,"y":42,"z":7}]\n22\n`, exit=0.
+
+**What landed**:
+- Scalar return-type annotations (`: i8/i16/i32/i64`)
+  encoded as NEGATIVE `fn_ret_sid` values; v5.10.2 rough-
+  scan extended to recognize scalar names so retptr-stash
+  isn't allocated for them.
+- Extended overload dispatch at PARSE_FNCALL — handles
+  `IDENT (` fn-call args (looks up GFRS for return type).
+  3 new dispatch routes: `println(Str-fncall) →
+  println_str`, `strlen(Str) → str_len`, `println(i64) →
+  println_int`.
+- `println_int(n: i64)` helper in `lib/string.cyr`;
+  `strlen` annotated `: i64`; v5.10.2-missed
+  `str_builder_build_a/build` and `str_join` annotated
+  `: Str` (the gap that blocked the verbatim close).
+- Diagnostic hint catalog: Str → cstring mismatch warning
+  with one-line hint pointing at `str_data(x)` / `str_println(x)` /
+  annotate `: Str`. Gate stays at `CYRIUS_TYPE_CHECK=1`
+  opt-in; default-on flip deferred (false-positive flood
+  from generic i64-shaped fns; needs per-param scalar-vs-
+  pointer annotations).
+
+**Acceptance bar met** on real hardware:
+- x86_64 Linux: cc5 byte-identical self-host; 66/66
+  check.sh; 133/133 cyrius test; heapmap clean.
+- aarch64 Linux (pi): verbatim repro closes with same
+  output.
+- macOS Mach-O ARM64 (ecb): cc5_macho self-hosts byte-
+  identical (round2 == round3).
+- Windows PE32+: cc5_win_cross builds.
+
+cc5: 758888 → 764552 (+5664 B for the dispatch + 3 new
+lazy lookups + scalar return-type parsing).
+
+**Slot-side fixes**:
+- `cyriusly install <version>` was always installing
+  "latest" — env-var pipe ordering bug, fixed.
+- `cyrius audit` recovery from snapshot ping-pong:
+  `~/.cyrius/lib` had reverted to v5.10.0; re-pointed,
+  parked `versions/5.10.0/lib` as
+  `lib.parked-pingpong-source`, regenerated
+  `docs/api-surface.snapshot` with `println_int`.
+
+**Next**: v5.10.6 — return-cap raise 64 → 256 (vyakarana
+2.1.0 prereq).
+
 **5.10.4** (shipped 2026-05-08 — **v5.10.x SLOT 4 —
 Type system pass 4: type inference at `var x = f(...)` +
 stdlib param-side `: Str` annotation pass (bundled)**).
@@ -5166,15 +5219,16 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **758,888 B** at v5.10.4 (was 757,920 at
-  v5.10.3; +968 B for the v5.10.4 type-inference pre-PCMPE peek
-  + sid-fold into SLTYPE-set in `parse_decl.cyr`). Aggregate
-  growth v5.10.x cycle: ~754,752 at v5.10.0 (profiling
-  instrumentation) → 755,112 at v5.10.1 (call-site check) →
-  755,112 at v5.10.2 (calling-conv special-case; stdlib
-  annotations don't change cc5 bytes) → 757,920 at v5.10.3
-  (+2,808 for noff lookups + dispatch block) → 758,888 at
-  v5.10.4. `cc5 --version` reports `cc5 5.10.4`.
+- **cc5 (x86_64)**: **764,552 B** at v5.10.5 (was 758,888 at
+  v5.10.4; +5,664 B for the extended dispatch + 3 new lazy
+  noff lookups + scalar return-type parsing). Aggregate
+  growth v5.10.x cycle: ~754,752 at v5.10.0 → 755,112 at
+  v5.10.1 → 755,112 at v5.10.2 (stdlib annotations don't
+  change cc5 bytes) → 757,920 at v5.10.3 (+2,808 for noff
+  lookups + dispatch) → 758,888 at v5.10.4 (+968 for
+  inference fold) → 764,552 at v5.10.5 (+5,664 for
+  extended dispatch + scalar return-types).
+  `cc5 --version` reports `cc5 5.10.5`.
 - **cc5_win (cross)**: 526,856 B (unchanged from v5.6.42 — same reason)
 - **cc5_aarch64 native (Pi)**: 463,768 B (was: did not build — v5.6.32 added
   the missing `include "src/common/ir.cyr"` to `main_aarch64_native.cyr` that
