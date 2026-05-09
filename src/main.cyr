@@ -665,6 +665,7 @@ var _prof_write_end = 0;
 PREPROCESS(S);
 if (_prof_on == 1) { _prof_pp_end = _prof_clock_ns(); }
 
+
 # Re-init ALL compiler state that the ifdef copy-back may have overwritten.
 # For expanded source >256KB, the copy-back writes past S+0x40000 into every
 # heap region up to S+bl. This mirrors the full initialization at lines 155-196

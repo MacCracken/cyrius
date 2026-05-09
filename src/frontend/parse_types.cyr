@@ -124,10 +124,42 @@ fn STREQTOK(S, a_off, b_off) {
     return 0;
 }
 
+# v5.10.7 — `: Str` field detection. A struct field whose type
+# is the `Str` struct (defined in `lib/str.cyr`) is treated as
+# a SINGLE 8-byte pointer slot rather than a 16-byte by-value
+# inline embedding. Mirrors the v5.10.2 ≤16-byte calling-conv
+# convention: Str values flow as pointers to heap-allocated
+# 16-byte headers, so a Str-typed struct field is also a
+# pointer slot.
+#
+# Pre-v5.10.7 FIELDSZ returned 16 for `: Str` fields (full
+# STRUCTSZ of Str), which made PARSE_STRUCT_INIT positional
+# flatten consume 2 expressions per Str field (data + len) —
+# but PP_DERIVE Serialize codegen + load64-at-offset
+# semantics treated Str as 1 pointer slot. The mismatch
+# surfaced in the agnosys 1.1.12 follow-up: struct init like
+# `var s = named_status { my_str, 42 };` errored
+# `unexpected '}'` because the parser was still expecting a
+# third expression for the i64 field after consuming
+# `my_str`/`42` as data/len.
+fn IS_STR_FIELD(S, ft) {
+    if (ft <= 0) { return 0; }
+    var sname_off = L64(S + 0x18E630 + (ft - 1) * 8);
+    if (load8(S + 0x60000 + sname_off)     != 83)  { return 0; }
+    if (load8(S + 0x60000 + sname_off + 1) != 116) { return 0; }
+    if (load8(S + 0x60000 + sname_off + 2) != 114) { return 0; }
+    if (load8(S + 0x60000 + sname_off + 3) != 0)   { return 0; }
+    return 1;
+}
+
 # Get byte size of a single field from its type encoding
 # >0 = nested struct ID, 0 = untyped (8), <0 = sized scalar (-width)
+# v5.10.7 — Str field special-case: 8 bytes (pointer slot).
 fn FIELDSZ(S, ft) {
-    if (ft > 0) { return STRUCTSZ(S, ft - 1); }
+    if (ft > 0) {
+        if (IS_STR_FIELD(S, ft) == 1) { return 8; }
+        return STRUCTSZ(S, ft - 1);
+    }
     if (ft < 0) { return 0 - ft; }
     return 8;
 }

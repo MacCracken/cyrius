@@ -465,12 +465,25 @@ fn PARSE_STRUCT_INIT(S, noff, sid) {
         while (fi < fc) {
             var ft = GETFTYPE(S, si, fi);
             if (ft > 0) {
-                var ifc = GETFCOUNT(S, ft - 1);
-                var ifi = 0;
-                while (ifi < ifc) {
+                # v5.10.7 — Str field is a single 8-byte pointer slot,
+                # not a flattened 2-field by-value embedding. Mirrors
+                # FIELDSZ's Str special-case + PP_DERIVE Serialize
+                # codegen which uses load64(ptr+offset) to read the
+                # Str pointer. Pre-fix this branch always flattened,
+                # producing `unexpected '}'` on `Outer { my_str, x }`
+                # because the parser was waiting for a second
+                # expression for the Str field's `len`.
+                if (IS_STR_FIELD(S, ft) == 1) {
                     EMIT_STRUCT_FIELD_W(S, vcnt, boff, 8);
                     boff = boff + 8;
-                    ifi = ifi + 1;
+                } else {
+                    var ifc = GETFCOUNT(S, ft - 1);
+                    var ifi = 0;
+                    while (ifi < ifc) {
+                        EMIT_STRUCT_FIELD_W(S, vcnt, boff, 8);
+                        boff = boff + 8;
+                        ifi = ifi + 1;
+                    }
                 }
             } else {
                 var pf_w = FIELDSZ(S, ft);

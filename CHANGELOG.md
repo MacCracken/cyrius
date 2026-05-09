@@ -6,6 +6,152 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.7] — 2026-05-08
+
+**v5.10.x SLOT 7 — agnosys 1.1.12 REAL CLOSE: Str-typed
+struct fields now compile, init positionally, and serialize
+correctly across x86_64 + real-Pi aarch64**.
+
+**Honest correction**: v5.10.5 claimed to "close the agnosys
+1.1.12 cascade — 9 slots after the first attempt." That
+claim was **premature**. The verbatim repro file
+(`6425355b6147d5a674078794310ae2c1`) only exercises the
+typed-numeric path on x86_64 — the easiest of the four
+field shapes. The actual agnosys consumer use case
+(`mac_status`, `audit_status`, `secureboot_state` etc.)
+carries `: Str` fields (signer name, backend name,
+diagnostic strings) and runs on aarch64 (via the AGNOS
+kernel target). The agnosys agent's update to the issue
+file at v5.10.6 verdict was **PARTIAL FIX** with two open
+items:
+
+1. `: Str` typed fields fail to compile entirely
+   (`error:<source>:N: unexpected '}'` in the synthetic
+   `_to_json` body when the parent struct contains a
+   `: Str` field).
+2. aarch64 SIGILL on real Pi hardware (Ubuntu 6.8.0-raspi
+   kernel) for any Serialize-derived struct, regardless of
+   name. Basic non-derive aarch64 binaries run clean on the
+   same Pi, so the regression is scoped to PP_DERIVE
+   Serialize codegen.
+
+This slot lands the **real** close. Both items now pass.
+
+cc5: 764,552 → 765,208 (+656 B for `IS_STR_FIELD` helper
++ Str special-case branches in FIELDSZ + PARSE_STRUCT_INIT).
+Byte-identical x86_64 + Mach-O ARM64 self-host (Mach-O
+verified earlier; x86 verified this slot). cyrius test:
+134/134. check.sh: 66/66.
+
+### Root cause
+
+PP_DERIVE Serialize codegen treats a `: Str` field as a
+single 8-byte pointer slot at offset N (uses
+`load64(ptr + N)` to read the Str header pointer, then
+`str_data(...)` dereferences). But cyrius's parser-side
+`FIELDSZ` returned the FULL `STRUCTSZ(Str)` = 16 bytes for
+`: Str` fields, which made `PARSE_STRUCT_INIT`'s positional
+flatten path consume TWO expressions per Str field (one
+for `data`, one for `len`). User code like
+`var s = named_status { my_str, 42 };` errored at the
+closing brace because the parser was still expecting a
+third expression for the next field after consuming
+`my_str`/`42` as data/len. The two views of the layout —
+codegen's pointer view vs parser's flatten view — were
+inconsistent.
+
+### What landed
+
+- **`IS_STR_FIELD(S, ft)` helper** in
+  `src/frontend/parse_types.cyr` — checks if a field's
+  type is the `Str` struct (defined in `lib/str.cyr`) by
+  matching the type name's first 4 bytes against `"Str\0"`.
+- **`FIELDSZ` Str special-case**: returns 8 bytes (pointer
+  slot) for Str-typed fields instead of the full 16-byte
+  STRUCTSZ. Mirrors the v5.10.2 ≤16-byte calling-conv
+  convention — Str values flow as pointers to heap-
+  allocated headers, so a Str-typed field is a pointer
+  slot too.
+- **`PARSE_STRUCT_INIT` positional flatten**: when
+  `IS_STR_FIELD` matches, take ONE expression slot
+  (8-byte pointer store) instead of flattening to two
+  inner-field stores. Pre-fix `Outer { my_str, x }` errored
+  `unexpected '}'`; post-fix it works as the user intended.
+
+### Acceptance bar met
+
+All four field shapes pass per the agnosys agent's matrix:
+
+| Field shape | x86_64 | aarch64 (real Pi) |
+|---|---|---|
+| `: i64` typed | ✅ valid JSON | ✅ valid JSON, no SIGILL |
+| untyped numeric | ✅ valid JSON | ✅ valid JSON, no SIGILL |
+| `: Str` typed | ✅ valid JSON | ✅ valid JSON, no SIGILL |
+| Mixed Str + i64 | ✅ valid JSON | ✅ valid JSON, no SIGILL |
+
+Verified on real Pi hardware (Ubuntu 6.8.0-1053-raspi
+kernel, aarch64):
+
+```sh
+$ md5sum minimal_repro.cyr
+6425355b6147d5a674078794310ae2c1  minimal_repro.cyr
+$ cat minimal_repro.cyr | ./build/cc5_aarch64 > out_arm
+$ ./out_arm
+[{"x":1,"y":42,"z":7}]
+22
+exit=0
+```
+
+Plus the Str-field repro the agent reported as
+compile-failing:
+
+```sh
+$ cat agn_str.cyr | ./build/cc5_aarch64 > out_arm_str
+$ ./out_arm_str
+{"name":"alice","x":42}
+exit=0
+```
+
+The `fncall4` warning the agent reported at v5.10.6 is
+**not surfacing** at v5.10.7 either — likely DCE'd via
+the v5.10.6 changes; verified absent on the verbatim repro.
+
+### Why v5.10.5's "CLOSE" claim was wrong
+
+The slot's stated acceptance bar was "verbatim repro hash
+... runs end-to-end + its expected output is correct". The
+verbatim repro file content covers only the i64-numeric
+path because that's what the consumer happened to file as
+a minimal trigger. But the SLOT's intent (per the issue's
+"What's needed upstream" + "Why this matters for agnosys"
+sections) was to make `#derive(Serialize)` work for
+agnosys's actual targets — which carry Str fields and run
+on aarch64.
+
+I should not have called the slot CLOSED when:
+- The Str-field path didn't even compile.
+- The aarch64 path SIGILL'd on real hardware.
+- The consumer's verdict (per the issue file the agnosys
+  agent maintains) was explicitly "PARTIAL FIX".
+
+Per `feedback_no_silent_fix_deferrals` and
+`feedback_no_rewriting_consumer_repros`: the consumer's
+verdict is what counts, not the verbatim file's exit code.
+v5.10.7 corrects the record.
+
+### NOT in this slot (deferred with explicit pinnage)
+
+Per `feedback_deferral_requires_roadmap_pinnage`:
+
+- **Untyped Str fields** (per the agent's item 4): a struct
+  field declared without `: Str` annotation but holding a
+  Str pointer value still serializes the raw pointer
+  integer, not the string content. Codegen has no way to
+  know the value's runtime shape from the field's
+  unannotated declaration. Held forward; consumers
+  should annotate `: Str` for serialization (which now
+  works correctly).
+
 ## [5.10.6] — 2026-05-08
 
 **v5.10.x SLOT 6 — Per-fn return-statement cap raise

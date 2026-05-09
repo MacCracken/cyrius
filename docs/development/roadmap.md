@@ -326,7 +326,10 @@ v5.10.x is now ordered bottom-to-top.
    closes the agnosys 1.1.12 cascade across v5.10.1-.5
    (extended one slot at v5.10.2 ship — overload dispatch
    split out of v5.10.2 to its own v5.10.3 slot per the
-   honest-scope rule).
+   honest-scope rule). v5.10.5's "CLOSE" claim was
+   PARTIAL — Str-typed fields + real-Pi aarch64 still
+   failed; v5.10.7 lands the real close (consumer's
+   verdict matches now).
 2. **vyakarana 2.1.0 cap unblock** — slot-on-need surfaced
    2026-05-08 (return-cap proposal); slotted before runtime
    services because it's a narrow, mechanical fix that
@@ -335,13 +338,15 @@ v5.10.x is now ordered bottom-to-top.
 3. **stdlib runtime services (TLS / net)** — third priority
    per the bottom-to-top stack — sandhi 1.3.x's TLS arc
    needs `lib/net.cyr` `net_connect_nb` primitive +
-   `lib/tls.cyr` native-transport prep audit. v5.10.7-.8.
+   `lib/tls.cyr` native-transport prep audit. v5.10.8-.9
+   (pushed back from .7-.8 when v5.10.7 was reserved for
+   the agnosys real close).
 4. **specialized libraries (hisab math)** — fourth priority —
    typed SIMD math expansion now that overload dispatch
-   from v5.10.3 enables typed `f64v4` primitives. v5.10.9.
+   from v5.10.3 enables typed `f64v4` primitives. v5.10.10.
 5. **compile-time speedups + surface review** — last, since
    they don't unblock any baseOS or runtime-service item.
-   v5.10.10+.
+   v5.10.11+.
 
 Reference: memory pin
 `feedback_priority_bottom_to_top.md` — *"fixing hisab now doesn't
@@ -537,11 +542,14 @@ overload dispatch.
     on legitimate `str_len(s)`-style call sites in the
     132-tcyr corpus.
 
-- **v5.10.5** ✅ — **Type system pass 5: agnosys 1.1.12
-  verbatim repro CLOSE + extended overload dispatch +
-  diagnostic hint catalog**. SHIPPED. **Closes the cascade
-  started at v5.9.33 — 9 slots after the first attempt.**
-  Hash `6425355b6147d5a674078794310ae2c1` runs end-to-end
+- **v5.10.5** — **Type system pass 5: extended overload
+  dispatch + diagnostic hint catalog**. SHIPPED — but the
+  agnosys 1.1.12 close claim was **PARTIAL** (corrected at
+  v5.10.7). The verbatim repro file passed end-to-end on
+  x86_64 numeric path, but the consumer's actual use case
+  (Str fields + aarch64) still failed. See v5.10.7 for the
+  real close. Hash
+  `6425355b6147d5a674078794310ae2c1` runs end-to-end
   with output `[{"x":1,"y":42,"z":7}]\n22\n`, exit=0.
 
   Landed: scalar return-type annotations (`: i8/i16/i32/i64`)
@@ -725,7 +733,52 @@ brace counting for these bytes." Mirror handling: `\\` /
   variant deferred (low value once the cap is high enough
   that nobody trips it).
 
-#### v5.10.7 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+#### v5.10.7 ✅ — agnosys 1.1.12 REAL CLOSE (Str-typed struct fields + real-Pi aarch64) (SHIPPED)
+
+Honest correction of the v5.10.5 "CLOSE" claim. The
+agnosys agent's update to the issue file at v5.10.6
+verdict was **PARTIAL FIX**:
+- `: Str` typed struct fields fail to compile entirely
+  (`error:<source>:N: unexpected '}'` in synthetic
+  `_to_json` body).
+- aarch64 SIGILL on real Pi for any Serialize-derived
+  struct (Ubuntu 6.8.0-raspi kernel).
+
+**Root cause** (Str fields): PP_DERIVE Serialize codegen
+treats `: Str` as a single 8-byte pointer slot
+(`load64(ptr+N)` semantics), but `FIELDSZ` returned 16
+bytes (`STRUCTSZ(Str)` — the full data+len embed). The
+`PARSE_STRUCT_INIT` positional flatten consumed TWO
+expressions per Str field (data + len), so user code
+like `var s = named_status { my_str, x };` errored
+because the parser was still expecting an expression for
+the next field after consuming both `my_str` and `x` as
+data/len.
+
+**Fix**: added `IS_STR_FIELD(S, ft)` helper in
+`parse_types.cyr` that matches the field type's first 4
+bytes against `"Str\0"`. `FIELDSZ` returns 8 (pointer
+slot) for Str fields. `PARSE_STRUCT_INIT` positional
+flatten takes ONE expression slot for Str fields.
+
+**aarch64 SIGILL**: also fixed (or was already fixed in
+v5.10.5/v5.10.6 work — re-verified clean on real Pi).
+Both i64-numeric verbatim AND Str-field repros run
+cleanly with correct JSON output on Ubuntu 6.8.0-raspi
+aarch64.
+
+cc5: 764552 → 765208 (+656 B). Byte-identical x86_64
+self-host. Pi cross-test: both i64-numeric + Str-field
+repros pass on real hardware. 66/66 check.sh, 134/134
+cyrius test.
+
+**NOT in this slot** (held forward):
+- Untyped-Str-field auto-detection (per agent's open
+  item 4) — codegen has no way to know an unannotated
+  field's runtime shape; consumers should annotate
+  `: Str` (which now works).
+
+#### v5.10.8 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap explicitly asks for this as
 a stdlib factoring — the non-blocking-connect + poll(POLLOUT)
@@ -766,7 +819,7 @@ stdlib primitive.
   / fcntl / getsockopt across both); Mach-O ARM uses BSD
   syscall numbers (already wired up).
 
-#### v5.10.8 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+#### v5.10.9 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
 ask under "Not sandhi's slot" — auditing the hook surface
@@ -786,7 +839,7 @@ any transport swap.
   fdlopen-loaded libssl symbol names, struct layouts, or
   ABI specifics that wouldn't survive a swap to a native
   cyrius TLS impl.
-- Document each finding inline (`# v5.10.8 audit:
+- Document each finding inline (`# v5.10.9 audit:
   fdlopen-bound — see ADR 000X if/when native-TLS lands`)
   + collect into `docs/audit/2026-MM-DD-tls-native-transport-prep.md`.
 - No code changes unless the audit surfaces a hook-surface
@@ -803,10 +856,10 @@ any transport swap.
 
 **Native-TLS swap itself is NOT in v5.10.x**. It's a separate,
 much-bigger undertaking (multi-slot or multi-minor) that
-needs its own design pass before pinning. v5.10.8 just
+needs its own design pass before pinning. v5.10.9 just
 documents the surface so a future swap is guided.
 
-#### v5.10.9 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.10 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -846,7 +899,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.10+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.11+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:

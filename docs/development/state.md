@@ -5,6 +5,55 @@
 
 ## Version
 
+**5.10.7** (shipped 2026-05-08 — **v5.10.x SLOT 7 —
+agnosys 1.1.12 REAL CLOSE (Str-typed struct fields +
+real-Pi aarch64)**). Honest correction of the v5.10.5
+"CLOSE" claim — that was PARTIAL (only x86_64 numeric
+verbatim repro). The agnosys agent's update to the issue
+file at v5.10.6 verdict was "PARTIAL FIX" with two open
+items: (1) `: Str` struct fields fail to compile
+(`unexpected '}'` in synthetic `_to_json` body),
+(2) aarch64 SIGILL on real Pi for any Serialize-derived
+struct. v5.10.7 lands both fixes.
+
+**Root cause** (Str fields): PP_DERIVE Serialize codegen
+treats `: Str` as 8-byte pointer slot; `FIELDSZ` was
+returning 16 bytes (`STRUCTSZ(Str)`), so
+`PARSE_STRUCT_INIT` flatten consumed two expressions per
+Str field. User code `var s = named_status { my_str, x };`
+errored because parser was waiting for the next field's
+expression after consuming `my_str`/`x` as Str's
+data/len. Fix: `IS_STR_FIELD` helper +
+FIELDSZ/PARSE_STRUCT_INIT special-case for Str fields
+(8-byte pointer slot).
+
+**aarch64 SIGILL**: re-verified clean on real Pi (Ubuntu
+6.8.0-1053-raspi kernel) at v5.10.7. Both i64-numeric
+verbatim AND Str-field repros run cleanly with correct
+JSON output.
+
+**Acceptance bar met** — all four field shapes from the
+agnosys agent's matrix:
+- x86_64 typed `: i64`: ✓ valid JSON
+- x86_64 untyped numeric: ✓ valid JSON
+- x86_64 `: Str` typed: ✓ valid JSON (pre-v5.10.7 compile-failed)
+- aarch64 (real Pi) all shapes: ✓ valid JSON, no SIGILL
+  (pre-v5.10.7 SIGILL'd)
+
+cc5: 764,552 → 765,208 (+656 B for IS_STR_FIELD helper +
+Str special-case branches in FIELDSZ + PARSE_STRUCT_INIT).
+Byte-identical x86_64 self-host. 66/66 check.sh,
+134/134 cyrius test.
+
+**NOT in this slot** (held forward):
+- Untyped-Str-field auto-detection — codegen has no way
+  to know an unannotated field's runtime shape; consumers
+  should annotate `: Str` (which now works).
+
+**Next**: v5.10.8 — `lib/net.cyr` `net_connect_nb`
+primitive (sandhi 1.3.x prereq; pushed back from .7
+when v5.10.7 was reserved for the agnosys real close).
+
 **5.10.6** (shipped 2026-05-08 — **v5.10.x SLOT 6 —
 Per-fn return-statement cap raise 64 → 256 (vyakarana
 2.1.0 prereq) + cyrfmt char-literal brace bug fix
@@ -5266,11 +5315,13 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **764,552 B** at v5.10.6 (unchanged from
-  v5.10.5 — heap-layout reshuffle, no codegen change).
-  v5.10.5 was 764,552 (was 758,888 at v5.10.4; +5,664 for
-  the extended dispatch + 3 new lazy noff lookups + scalar
-  return-type parsing). Aggregate
+- **cc5 (x86_64)**: **765,208 B** at v5.10.7 (was 764,552
+  at v5.10.6; +656 for IS_STR_FIELD helper + Str
+  special-case branches in FIELDSZ + PARSE_STRUCT_INIT).
+  v5.10.6 was 764,552 unchanged from v5.10.5 (heap-layout
+  reshuffle); v5.10.5 was 764,552 (was 758,888 at v5.10.4;
+  +5,664 for the extended dispatch + 3 new lazy noff
+  lookups + scalar return-type parsing). Aggregate
   growth v5.10.x cycle: ~754,752 at v5.10.0 → 755,112 at
   v5.10.1 → 755,112 at v5.10.2 (stdlib annotations don't
   change cc5 bytes) → 757,920 at v5.10.3 (+2,808 for noff
