@@ -418,7 +418,36 @@ fn PP_EMIT_STR(out, op, cstr) {
 # relative to `S` — those regions are well below 0x100000 and always in sync.
 fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op) {
     ip = PP_SKIPLINE(src_base, ip, bl);
-    while (ip < bl) { if (load8(src_base + ip) == 35) { ip = PP_SKIPLINE(src_base, ip, bl); } else { break; } }
+    # v5.10.14 — collect stacked `#derive(...)` flags so the
+    # entry-point handler can run additional codegen passes.
+    # Pre-fix this loop silently swallowed every `#` line
+    # between the entry-point `#derive(...)` and the struct
+    # definition, so stacked `#derive(accessors) +
+    # #derive(Serialize)` only got the FIRST handler's
+    # codegen — the second was dropped with no diagnostic.
+    # agnosys 1.1.12 follow-on filing
+    # (2026-05-08-cyrius-derive-multi-stacking.md).
+    #
+    # S+0x197F08 layout (8 bytes, treated as bitfield):
+    #   bit 0: Serialize stacked
+    #   bit 1: Deserialize stacked
+    #   bit 2: accessors stacked
+    # Reset to 0 at struct-def entry; set per matching skipped
+    # line. Entry-point handler reads it post-PP_PARSE_STRUCT_DEF
+    # to decide whether to also emit other directives' bodies.
+    S64(S + 0x197F08, 0);
+    while (ip < bl) {
+        if (load8(src_base + ip) == 35) {
+            if (ISDERIVE(src_base, ip, bl) == 1) {
+                S64(S + 0x197F08, L64(S + 0x197F08) | 1);
+            } else { if (ISDERIVE_DE(src_base, ip, bl) == 1) {
+                    S64(S + 0x197F08, L64(S + 0x197F08) | 2);
+                } else { if (ISDERIVE_ACC(src_base, ip, bl) == 1) {
+                        S64(S + 0x197F08, L64(S + 0x197F08) | 4);
+                    } } }
+            ip = PP_SKIPLINE(src_base, ip, bl);
+        } else { break; }
+    }
     while (ip < bl) { if (load8(src_base + ip) == 32) { ip = ip + 1; } else { break; } }
     ip = ip + 7;
     var sni = 0;
@@ -518,9 +547,15 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op) {
 # Emit #derive(Serialize) — generates Name_to_json function after struct def
 # ip points to '#' of #derive. out+op is the output position.
 # Returns new ip (past the struct). Updates op via S+0x197008.
-fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
-    ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
-    op = load64(S + 0x197008);
+# v5.10.14 — Serialize body emit, factored out for cross-call
+# from stacked-derive entry points (e.g. accessors-first source
+# order with Serialize stacked above the struct). Reads
+# metadata at S+0x197010 (field count) / S+0x197018 (cumul_off)
+# / S+0x197020 (struct name) / S+0x197060 (field names) /
+# S+0x197260 (field types) / S+0x197460 (offsets). Caller is
+# responsible for having called PP_PARSE_STRUCT_DEF first to
+# populate that metadata.
+fn PP_DERIVE_SERIALIZE_BODY(S, out, op) {
     var field_count = load64(S + 0x197010);
     var cumul_off = load64(S + 0x197018);
     # Aliases: sname=S+0x197020, names=S+0x197060, types=S+0x197260, offsets=S+0x197460
@@ -861,7 +896,20 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
     # Skip unknown fields
     op = op + PP_EMIT_STR(out, op, "else { while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; } }\n");
     op = op + PP_EMIT_STR(out, op, "} else { _p = _p + 1; }\n}\nreturn ptr;\n}\n");
-    # Store output position for caller
+    return op;
+}
+
+# v5.10.14 — Serialize entry point. Parses struct, emits body,
+# then runs additional codegen for any stacked `#derive(...)`
+# directives detected by PP_PARSE_STRUCT_DEF's `#`-skip loop.
+fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
+    ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
+    op = load64(S + 0x197008);
+    op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
+    var _stacked = L64(S + 0x197F08);
+    if ((_stacked & 4) != 0) {
+        op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
+    }
     store64(S + 0x197008, op);
     return ip;
 }
@@ -915,11 +963,13 @@ fn ISDERIVE_ACC(S, pos, bl) {
 # Same struct parsing as PP_DERIVE_SERIALIZE. Generates:
 #   fn Name_field(p) { return load64(p + OFFSET); }
 #   fn Name_set_field(p, v) { store64(p + OFFSET, v); return 0; }
-fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op) {
-    ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
-    op = load64(S + 0x197008);
+# v5.10.14 — accessors body emit, factored out for cross-call
+# from stacked-derive entry points. Reads metadata at S+0x197020
+# (struct name) / S+0x197060 (field names) / S+0x197460 (offsets)
+# / S+0x197010 (field count). Caller is responsible for having
+# called PP_PARSE_STRUCT_DEF first to populate that metadata.
+fn PP_DERIVE_ACCESSORS_BODY(S, out, op) {
     var field_count = load64(S + 0x197010);
-    # Emit getter and setter for each field
     var fi = 0;
     while (fi < field_count) {
         var off = load64(S + 0x197460 + fi * 8);
@@ -938,6 +988,22 @@ fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op) {
         op = op + PP_EMIT_INT(out, op, off);
         op = op + PP_EMIT_STR(out, op, ", v); return 0; }\n");
         fi = fi + 1;
+    }
+    return op;
+}
+
+fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op) {
+    ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
+    op = load64(S + 0x197008);
+    op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
+    # v5.10.14 — multi-stack support. If the source had stacked
+    # `#derive(Serialize)` above this directive, PP_PARSE_STRUCT_DEF's
+    # `#`-skip loop set bit 0 in S+0x197F08. Run Serialize codegen
+    # too so consumers get both fn families. Same metadata; no
+    # struct re-parse.
+    var _stacked = L64(S + 0x197F08);
+    if ((_stacked & 1) != 0) {
+        op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     }
     store64(S + 0x197008, op);
     return ip;

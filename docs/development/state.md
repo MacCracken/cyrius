@@ -5,6 +5,60 @@
 
 ## Version
 
+**5.10.14** (shipped 2026-05-08 — **v5.10.x SLOT 14 —
+multi-stack `#derive(...)` directives (agnosys V1.1.12-
+reopen blocker)**).
+
+agnosys filed `2026-05-08-cyrius-derive-multi-stacking.md`
+documenting that stacked `#derive(accessors) +
+#derive(Serialize)` on the same struct only honored ONE
+directive (whichever matched first), with the second
+silently dropped. Re-blocked V1.1.12 the moment they
+tried to layer Serialize on the existing 37-struct
+accessors-derived API surface.
+
+**Root cause**: `PP_PARSE_STRUCT_DEF`'s `#`-skip loop
+silently consumed every `#`-prefixed line between the
+entry-point directive and the struct definition. Only
+the first directive's codegen ran.
+
+**Fix**:
+- Flag tracking at `S+0x197F08` (8-byte bitfield: bit 0
+  Serialize, bit 1 Deserialize, bit 2 accessors). The
+  `#`-skip loop checks each skipped line via
+  `ISDERIVE`/`ISDERIVE_DE`/`ISDERIVE_ACC` and sets the
+  appropriate bit.
+- `PP_DERIVE_SERIALIZE_BODY` and `PP_DERIVE_ACCESSORS_BODY`
+  factored as standalone helpers that operate on
+  already-parsed metadata.
+- Entry-point handlers (`PP_DERIVE_SERIALIZE` and
+  `PP_DERIVE_ACCESSORS`) check the flag word after their
+  own body emit and call the OTHER directive's `_BODY`
+  helper if its bit is set. Both stacked orderings
+  produce the union of fns.
+
+**Acceptance** — agent's verbatim repro:
+- Pre-fix: `warning: undefined function 'probe_to_json'`,
+  SIGILL exit 132.
+- Post-fix: `{"x":1,"y":42,"z":7}` exit=0. Both
+  orderings (accessors-first AND Serialize-first)
+  verified.
+
+cc5: 765,616 → 766,496 (+880 B). Byte-identical x86_64
+self-host. 66/66 check.sh, 134/134 cyrius test,
+api-surface stable at 2798.
+
+**NOT in this slot** (held forward):
+- Multi-arg form `#derive(accessors, Serialize)` (separate
+  parse path; ISDERIVE predicates match exact strings).
+- Diagnostic on dropped/unknown directives (consumer-
+  pull-driven).
+
+**Next**: pick from queue — SIMD math (held since
+v5.10.13 pivot), shadow-lib compile warn, multi-arg
+derive form, or whatever the next consumer surface
+brings.
+
 **5.10.13** (shipped 2026-05-08 — **v5.10.x SLOT 13 —
 TLS surface tightening: typed `tls_set_alpn` +
 `tls_set_verify` wrappers + opaque-handle hook
@@ -5584,9 +5638,12 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **765,616 B** at v5.10.13 (unchanged
-  from v5.10.12 — TLS typed wrappers live in stdlib
-  only; cc5 semantically unchanged).
+- **cc5 (x86_64)**: **766,496 B** at v5.10.14 (was
+  765,616 at v5.10.13; +880 B for derive flag tracking +
+  body factoring + cross-emit in lex_pp.cyr).
+- **cc5 at v5.10.13**: 765,616 B (unchanged from v5.10.12
+  — TLS typed wrappers live in stdlib only; cc5
+  semantically unchanged).
 - **cc5 at v5.10.12**: 765,616 B (unchanged from v5.10.11
   — defensive fnptr.cyr gating lives in stdlib only).
 - **cc5 at v5.10.11**: 765,616 B (unchanged from v5.10.10

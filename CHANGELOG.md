@@ -6,6 +6,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.14] — 2026-05-08
+
+**v5.10.x SLOT 14 — multi-stack `#derive(...)` directives
+(agnosys 1.1.12 V1.1.12-reopen blocker)**.
+
+agnosys filed `2026-05-08-cyrius-derive-multi-stacking.md`
+documenting that stacking `#derive(accessors)` +
+`#derive(Serialize)` on the same struct only honored ONE
+of them (whichever matched first), with the second
+silently dropped. Re-blocked V1.1.12 the moment they
+tried to layer Serialize on the existing 37-struct
+accessors-derived API surface.
+
+cc5: 765,616 → 766,496 (+880 B for body factoring + flag
+tracking + cross-emit). Byte-identical x86_64 self-host.
+66/66 check.sh, 134/134 cyrius test.
+
+### Root cause
+
+`PP_PARSE_STRUCT_DEF`'s `#`-skip loop at the start of the
+fn (the part that handles whitespace + leading `#`-line
+skip before the actual `struct` keyword) silently
+consumed every `#`-prefixed line between the
+entry-point directive and the struct definition. So:
+
+```cyr
+#derive(accessors)    ← entry point, dispatched by PP_PASS
+#derive(Serialize)    ← swallowed by PP_PARSE_STRUCT_DEF's #-skip loop
+struct probe { ... }
+```
+
+Only the first directive's codegen ran. The second was
+dropped with no diagnostic.
+
+### Fix
+
+1. **`PP_PARSE_STRUCT_DEF` flag tracking** — the `#`-skip
+   loop now checks each skipped line against
+   `ISDERIVE` / `ISDERIVE_DE` / `ISDERIVE_ACC` and sets
+   bits in a flag word at `S+0x197F08`:
+   - bit 0: Serialize stacked
+   - bit 1: Deserialize stacked
+   - bit 2: accessors stacked
+   Reset to 0 at struct-def entry; entry-point handler
+   reads it post-`PP_PARSE_STRUCT_DEF`.
+2. **Body emit factored out** — `PP_DERIVE_SERIALIZE_BODY`
+   and `PP_DERIVE_ACCESSORS_BODY` extracted as standalone
+   helpers that operate on already-parsed metadata
+   (S+0x197010 field count + S+0x197020 name + S+0x197060
+   field names + S+0x197260 types + S+0x197460 offsets).
+   No struct re-parse, no struct re-emit.
+3. **Cross-emit in entry handlers** — `PP_DERIVE_SERIALIZE`
+   and `PP_DERIVE_ACCESSORS` each check the flag word
+   after their own body emit. If the OTHER directive's
+   bit is set, call its `_BODY` helper. Both orderings
+   produce the union of fns.
+
+### Acceptance bar met
+
+The agent's verbatim repro:
+
+```cyr
+#derive(accessors)
+#derive(Serialize)
+struct probe { x; y; z; }
+
+fn main() {
+    var p = alloc(24);
+    probe_set_x(p, 1); probe_set_y(p, 42); probe_set_z(p, 7);
+    var sb = str_builder_new();
+    probe_to_json(p, sb);
+    println(str_builder_build(sb));
+    return 0;
+}
+```
+
+Pre-fix: `warning: undefined function 'probe_to_json'`,
+SIGILL exit 132.
+
+Post-fix: `{"x":1,"y":42,"z":7}` exit=0. Both orderings
+(accessors-first AND Serialize-first) verified.
+
+### NOT in this slot (held forward)
+
+- **Multi-arg form `#derive(accessors, Serialize)`** —
+  agent's table line 4 + 5 (`#derive(A, B)` and
+  `#derive(B, A)`). Currently both miss the
+  ISDERIVE/ISDERIVE_ACC predicates entirely (which
+  match exact strings) and emit no codegen. Multi-arg
+  parsing is a separate fix; stacked-line form (the
+  more common shape) is sufficient for agnosys's
+  V1.1.12 reopen. Pin: future v5.10.x slot.
+- **Diagnostic on dropped/unknown directives** — agent's
+  ask #3. Adding a `warning: unknown #derive(X)
+  directive` requires knowing every directive type to
+  distinguish from random `#`-prefixed lines (which
+  are valid in macro contexts). Pin: future v5.10.x
+  slot tied to multi-arg work.
+
 ## [5.10.13] — 2026-05-08
 
 **v5.10.x SLOT 13 — TLS surface tightening: typed `tls_set_alpn`

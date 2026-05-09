@@ -984,7 +984,25 @@ Held forward: `enum TlsConst` openssl integer constants
 (consumer-pull-driven typed names); `tls_get_alpn_selected`
 typed wrapper for ALPN result readback.
 
-#### v5.10.14 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.14 ✅ — multi-stack `#derive(...)` directives (agnosys V1.1.12-reopen blocker) (SHIPPED)
+
+agnosys filed `2026-05-08-cyrius-derive-multi-stacking.md`
+documenting that stacked `#derive(accessors) +
+#derive(Serialize)` only honored one. Root cause:
+`PP_PARSE_STRUCT_DEF`'s `#`-skip loop silently swallowed
+the second directive. Fix: flag tracking at S+0x197F08 +
+factored `PP_DERIVE_*_BODY` helpers + cross-emit in
+entry-point handlers. Both stacked orderings (accessors-
+first AND Serialize-first) emit the union of fns.
+
+Multi-arg form `#derive(accessors, Serialize)` held
+forward to a separate slot (different parse path).
+Diagnostic on dropped/unknown directives also held.
+
+cc5: 765,616 → 766,496 (+880 B). Byte-identical
+self-host. 66/66 check.sh, 134/134 cyrius test.
+
+#### v5.10.15 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -1024,7 +1042,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.15+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.16+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:
