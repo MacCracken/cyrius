@@ -65,6 +65,7 @@
 # lex.cyr already handles this via `if (SYS_OPEN == 2)` branching.
 enum Sys { SYS_READ = 63; SYS_WRITE = 64; SYS_OPEN = 56; SYS_CLOSE = 57; SYS_BRK = 214; SYS_EXIT = 93; }
 
+include "src/version_str.cyr"
 include "src/common/util.cyr"
 include "src/backend/aarch64/emit.cyr"
 include "src/backend/aarch64/jump.cyr"

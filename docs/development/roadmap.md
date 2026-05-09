@@ -338,16 +338,16 @@ v5.10.x is now ordered bottom-to-top.
 3. **stdlib runtime services (TLS / net)** — third priority
    per the bottom-to-top stack — sandhi 1.3.x's TLS arc
    needs `lib/net.cyr` `net_connect_nb` primitive +
-   `lib/tls.cyr` native-transport prep audit. v5.10.9-.10
-   (pushed back from .8-.9 when v5.10.8 was reserved for
-   the agnosys JSON-escaping follow-up; v5.10.7 was the
-   Str-fields close).
+   `lib/tls.cyr` native-transport prep audit. v5.10.10-.11
+   (pushed back several times: agnosys close at v5.10.7,
+   JSON-escaping at v5.10.8, version-pinned-lib at v5.10.9
+   each took the slot ahead of net/tls).
 4. **specialized libraries (hisab math)** — fourth priority —
    typed SIMD math expansion now that overload dispatch
-   from v5.10.3 enables typed `f64v4` primitives. v5.10.11.
+   from v5.10.3 enables typed `f64v4` primitives. v5.10.12.
 5. **compile-time speedups + surface review** — last, since
    they don't unblock any baseOS or runtime-service item.
-   v5.10.12+.
+   v5.10.13+.
 
 Reference: memory pin
 `feedback_priority_bottom_to_top.md` — *"fixing hisab now doesn't
@@ -802,7 +802,34 @@ aarch64 cwd-dependent silent miscompile (compiler should
 error on missing includes instead of emitting broken
 aarch64).
 
-#### v5.10.9 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+#### v5.10.9 ✅ — Version-pinned lib path (kills cc5/lib version-mismatch contamination class) (SHIPPED)
+
+The agnosys agent's "aarch64 still SIGILL" verdict
+across v5.10.6/.7/.8 wasn't a codegen bug — it was lib
+resolution loading a stale snapshot. Each cc5 binary's
+PP_DERIVE codegen emits calls to helpers that exist in
+ITS OWN VERSION's lib; running it against a
+`~/.cyrius/lib` symlink pointing at an older version
+produces undefined-fn warnings + SIGILL.
+
+Fix: `_init_cyrius_lib` now builds the path
+`$HOME/.cyrius/versions/<MY_VERSION>/lib/` where
+`<MY_VERSION>` comes from `_VERSION_STR_CC5` extracted
+at runtime. Each cc5 binary self-isolates to its own
+matching lib snapshot. The `~/.cyrius/lib` symlink
+stays for backwards-compat but cc5 no longer consults
+it.
+
+cc5: 764,936 → 765,608 (+672 B). Byte-identical
+self-host. Pi (real aarch64) verified with broken
+`~/.cyrius/lib` symlink — version-pinned path
+resolves cleanly.
+
+`src/version_str.cyr` now included across all 6 main_*
+variants (was only main.cyr + main_win.cyr); cross-arch
+propagation per the feedback pin.
+
+#### v5.10.10 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap explicitly asks for this as
 a stdlib factoring — the non-blocking-connect + poll(POLLOUT)
@@ -843,7 +870,7 @@ stdlib primitive.
   / fcntl / getsockopt across both); Mach-O ARM uses BSD
   syscall numbers (already wired up).
 
-#### v5.10.10 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+#### v5.10.11 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
 ask under "Not sandhi's slot" — auditing the hook surface
@@ -863,7 +890,7 @@ any transport swap.
   fdlopen-loaded libssl symbol names, struct layouts, or
   ABI specifics that wouldn't survive a swap to a native
   cyrius TLS impl.
-- Document each finding inline (`# v5.10.10 audit:
+- Document each finding inline (`# v5.10.11 audit:
   fdlopen-bound — see ADR 000X if/when native-TLS lands`)
   + collect into `docs/audit/2026-MM-DD-tls-native-transport-prep.md`.
 - No code changes unless the audit surfaces a hook-surface
@@ -880,10 +907,10 @@ any transport swap.
 
 **Native-TLS swap itself is NOT in v5.10.x**. It's a separate,
 much-bigger undertaking (multi-slot or multi-minor) that
-needs its own design pass before pinning. v5.10.10 just
+needs its own design pass before pinning. v5.10.11 just
 documents the surface so a future swap is guided.
 
-#### v5.10.11 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.12 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -923,7 +950,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.12+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.13+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:

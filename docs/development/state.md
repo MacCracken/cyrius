@@ -5,6 +5,54 @@
 
 ## Version
 
+**5.10.9** (shipped 2026-05-08 — **v5.10.x SLOT 9 —
+Version-pinned lib path (kills the cc5/lib version-
+mismatch contamination class)**).
+
+The agnosys agent's "aarch64 still SIGILL on real Pi"
+verdict across v5.10.6/.7/.8 wasn't a codegen bug — it
+was lib resolution loading a stale snapshot. Each cc5
+binary's PP_DERIVE codegen emits calls to helpers that
+exist in ITS OWN VERSION's lib (e.g.
+`str_builder_add_json_str` at v5.10.8); running it
+against a `~/.cyrius/lib` symlink pointing at an older
+version produces undefined-fn warnings + SIGILL on
+real hardware.
+
+**Fix**: `_init_cyrius_lib` in `src/frontend/lex.cyr`
+now builds the path
+`$HOME/.cyrius/versions/<MY_VERSION>/lib/` where
+`<MY_VERSION>` is extracted at runtime from
+`_VERSION_STR_CC5` ("cc5 X.Y.Z\n" → "X.Y.Z"). Each
+cc5 binary self-isolates to its own matching lib
+snapshot regardless of what `~/.cyrius/lib` points at.
+
+`src/version_str.cyr` now included across all 6 main_*
+variants (was only main.cyr + main_win.cyr); cross-arch
+propagation per the feedback pin.
+
+**Acceptance** on real Pi (Ubuntu 6.8.0-1053-raspi
+kernel) with `~/.cyrius/lib` deliberately broken
+(symlink → `/nowhere/intentionally/missing`):
+- verbatim numeric: `[{"x":1,"y":42,"z":7}] 22` exit=0
+- str field: `{"name":"alice","x":42}` exit=0
+- escaping: `{"text":"hello \"world\" \\ tab\there\n"}` exit=0
+
+cc5: 764,936 → 765,608 (+672 B for path construction).
+Byte-identical x86_64 self-host. 66/66 check.sh,
+134/134 cyrius test.
+
+**NOT in this slot** (held forward):
+- Hard-fail on reachable undefined fn (Option C from
+  the v5.10.8 discussion). v5.10.9's version-pinned
+  lib path defangs the agent's specific contamination
+  class; Option C is still the right architecture for
+  preventing other broken-binary scenarios but no
+  longer urgent.
+
+**Next**: v5.10.10 — `lib/net.cyr` `net_connect_nb`
+primitive (sandhi 1.3.x prereq).
+
 **5.10.8** (shipped 2026-05-08 — **v5.10.x SLOT 8 —
 `#derive(Serialize)` JSON escaping fix (agnosys 1.1.12
 follow-up after the agent's v5.10.7 verdict)**).
@@ -5360,12 +5408,13 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **764,936 B** at v5.10.8 (was 765,208
-  at v5.10.7; -272 for PP_DERIVE Str-field emit
-  consolidation — single `str_builder_add_json_str` call
-  vs 3 raw cstr calls). v5.10.7 was 765,208 (was 764,552
-  at v5.10.6; +656 for IS_STR_FIELD helper + Str
-  special-case in FIELDSZ + PARSE_STRUCT_INIT).
+- **cc5 (x86_64)**: **765,608 B** at v5.10.9 (was 764,936
+  at v5.10.8; +672 for the version-pinned lib path
+  construction in `_init_cyrius_lib`). v5.10.8 was
+  764,936 (was 765,208 at v5.10.7; -272 for PP_DERIVE
+  Str-field emit consolidation). v5.10.7 was 765,208
+  (was 764,552 at v5.10.6; +656 for IS_STR_FIELD helper
+  + Str special-case in FIELDSZ + PARSE_STRUCT_INIT).
   v5.10.6 was 764,552 unchanged from v5.10.5 (heap-layout
   reshuffle); v5.10.5 was 764,552 (was 758,888 at v5.10.4;
   +5,664 for the extended dispatch + 3 new lazy noff

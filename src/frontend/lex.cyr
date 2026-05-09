@@ -195,6 +195,26 @@ fn _init_cyrius_lib() {
     # _cyrius_lib empty — include-resolution falls back to CWD,
     # fine for stdin-fed compilation. GetEnvironmentVariableW-based
     # HOME lookup queued for v5.5.x tail.
+    #
+    # v5.10.9 — version-PINNED lib path. Pre-v5.10.9 the fallback
+    # was `$HOME/.cyrius/lib/` which is a symlink to whichever
+    # version `cyriusly use` last pointed at. That created a
+    # contamination bug: if a user runs cc5 v5.10.8 against a
+    # symlink pointing at v5.10.6 lib, the codegen emits calls to
+    # helpers (str_builder_add_json_str, etc.) that don't exist
+    # in the older lib snapshot → undefined-fn warnings → SIGILL.
+    # The agnosys agent hit exactly this on real Pi hardware
+    # (their pin was 5.10.6; testing 5.10.7+ binaries against
+    # 5.10.6 lib produced the SIGILL pattern documented in the
+    # 1.1.12 issue file).
+    #
+    # Fix: each cc5 binary loads `$HOME/.cyrius/versions/<MY_VERSION>/
+    # lib/` directly, where <MY_VERSION> is extracted from
+    # `_VERSION_STR_CC5` at runtime ("cc5 X.Y.Z\n" → "X.Y.Z").
+    # Each cc5 binary always uses its own version-matched lib;
+    # the `~/.cyrius/lib` symlink is no longer consulted (it stays
+    # for `cyriusly use` to point `~/.cyrius/bin` at the active
+    # version, but lib resolution doesn't go through it).
     #ifdef CYRIUS_TARGET_LINUX
     # Read /proc/self/environ to find HOME=
     var ebuf[4096];
@@ -210,7 +230,7 @@ fn _init_cyrius_lib() {
                 if (load8(&ebuf + ei + 2) == 77) {
                     if (load8(&ebuf + ei + 3) == 69) {
                         if (load8(&ebuf + ei + 4) == 61) {
-                            # Found HOME=, copy value + /.cyrius/lib/
+                            # Found HOME=, copy value + /.cyrius/versions/<VERSION>/lib/
                             var hi = ei + 5;
                             var wi = 0;
                             while (hi < elen) {
@@ -219,20 +239,41 @@ fn _init_cyrius_lib() {
                                 store8(&_cyrius_lib + wi, hc);
                                 wi = wi + 1; hi = hi + 1;
                             }
-                            # Append /.cyrius/lib/
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 46); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 99); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 121); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 114); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 117); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 115); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 108); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 98); wi = wi + 1;
-                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;
+                            # Append /.cyrius/versions/
+                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
+                            store8(&_cyrius_lib + wi, 46); wi = wi + 1;   # .
+                            store8(&_cyrius_lib + wi, 99); wi = wi + 1;   # c
+                            store8(&_cyrius_lib + wi, 121); wi = wi + 1;  # y
+                            store8(&_cyrius_lib + wi, 114); wi = wi + 1;  # r
+                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;  # i
+                            store8(&_cyrius_lib + wi, 117); wi = wi + 1;  # u
+                            store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
+                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
+                            store8(&_cyrius_lib + wi, 118); wi = wi + 1;  # v
+                            store8(&_cyrius_lib + wi, 101); wi = wi + 1;  # e
+                            store8(&_cyrius_lib + wi, 114); wi = wi + 1;  # r
+                            store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
+                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;  # i
+                            store8(&_cyrius_lib + wi, 111); wi = wi + 1;  # o
+                            store8(&_cyrius_lib + wi, 110); wi = wi + 1;  # n
+                            store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
+                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
+                            # Append the version digits from _VERSION_STR_CC5
+                            # ("cc5 X.Y.Z\n" — skip first 4 chars "cc5 ",
+                            # copy until '\n').
+                            var vp = 4;
+                            while (vp < _VERSION_LEN_CC5) {
+                                var vc = load8(_VERSION_STR_CC5 + vp);
+                                if (vc == 10) { break; }
+                                store8(&_cyrius_lib + wi, vc);
+                                wi = wi + 1; vp = vp + 1;
+                            }
+                            # Append /lib/
+                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
+                            store8(&_cyrius_lib + wi, 108); wi = wi + 1;  # l
+                            store8(&_cyrius_lib + wi, 105); wi = wi + 1;  # i
+                            store8(&_cyrius_lib + wi, 98); wi = wi + 1;   # b
+                            store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
                             store8(&_cyrius_lib + wi, 0);
                             _cyrius_lib_len = wi;
                             return 1;

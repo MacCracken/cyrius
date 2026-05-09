@@ -6,6 +6,98 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.9] — 2026-05-08
+
+**v5.10.x SLOT 9 — Version-pinned lib path (kills the
+"v5.10.X cc5 binary loads v5.10.Y lib" contamination
+class)**.
+
+The agnosys agent's "aarch64 still SIGILL on real Pi"
+verdict at v5.10.7/.8 wasn't a codegen bug — it was the
+compiler's lib-resolution loading a STALE snapshot. Each
+cc5 binary's PP_DERIVE codegen emits calls to helpers
+that exist in ITS OWN VERSION's lib (e.g.,
+`str_builder_add_json_str` at v5.10.8). When the binary
+is run against a `~/.cyrius/lib` symlink pointing at an
+older version (the agent's `cyrius pin (active): 5.10.6`
+case), those helpers don't exist in the resolved lib →
+fixup-pass prints "(will crash at runtime)" warnings
+but emits the binary anyway → SIGILL on real hardware.
+
+cc5: 764,936 → 765,608 (+672 B for the
+`$HOME/.cyrius/versions/<MY_VERSION>/lib/` path
+construction in `_init_cyrius_lib`). Byte-identical
+self-host. cyrius test: 134/134. check.sh: 66/66.
+
+### What landed
+
+- **`_init_cyrius_lib` now builds a version-pinned
+  path** in `src/frontend/lex.cyr`. Pre-fix:
+  `$HOME/.cyrius/lib/`. Post-fix:
+  `$HOME/.cyrius/versions/<MY_VERSION>/lib/` where
+  `<MY_VERSION>` is extracted at runtime from
+  `_VERSION_STR_CC5` ("cc5 X.Y.Z\n" → "X.Y.Z"). Each
+  cc5 binary always loads its OWN matching lib snapshot,
+  regardless of what `~/.cyrius/lib` points at.
+- **`src/version_str.cyr` now included by all cc5
+  variants**: previously only main.cyr + main_win.cyr
+  pulled it in (for `cc5 --version` output);
+  main_aarch64.cyr / main_aarch64_macho.cyr /
+  main_aarch64_native.cyr / main_cx.cyr now include it
+  too (so `_VERSION_STR_CC5` is available to the
+  shared `_init_cyrius_lib`).
+- **`~/.cyrius/lib` symlink decoupled** from lib
+  resolution. The symlink stays for backwards-compat
+  with tools that read it directly, but cc5 no longer
+  consults it. `cyriusly use <version>` switches the
+  active binary symlink in `~/.cyrius/bin`; lib
+  resolution follows the binary's own version.
+
+### Acceptance bar met
+
+Pi cross-test on real Pi (Ubuntu 6.8.0-1053-raspi
+kernel) with `~/.cyrius/lib` deliberately broken
+(symlink → `/nowhere/intentionally/missing`):
+
+```
+=== verbatim numeric ===  [{"x":1,"y":42,"z":7}] 22  exit=0
+=== str field ===          {"name":"alice","x":42}    exit=0
+=== escaping ===           {"text":"hello \"world\" \\ tab\there\n"}  exit=0
+```
+
+The version-pinned `~/.cyrius/versions/5.10.9/lib/`
+resolves cleanly even when the symlink is dangling.
+Each cc5 binary is now self-isolating.
+
+### Why this matters
+
+This fixes the entire class of "v5.10.X cc5 binary +
+v5.10.Y lib" contamination bugs. The agnosys agent
+hit it because their `cyrius pin (active)` was 5.10.6
+while they were testing v5.10.7+ binaries — different
+versions disagreeing about which helper symbols exist.
+Post-v5.10.9 there's no way to mismatch: each binary
+loads its own snapshot.
+
+### Cross-arch propagation
+
+All 5 main_*.cyr variants updated in lockstep
+(main, _aarch64, _aarch64_macho, _aarch64_native, _cx,
+_win) per the `feedback_cross_arch_propagation_mandatory`
+pin. main_win.cyr already had the include; the other 4
+got it added.
+
+### NOT in this slot (held forward)
+
+- **Hard-fail on reachable undefined fn** (Option C from
+  the v5.10.8 discussion) — making cc5 exit non-zero
+  when undefined-fn warnings fire on call sites that
+  survive DCE. Still the right architecture, but with
+  v5.10.9's version-pinned lib path the agent's specific
+  contamination class is gone, so the urgency drops.
+  Pin: separate v5.10.x slot when consumer pressure
+  surfaces.
+
 ## [5.10.8] — 2026-05-08
 
 **v5.10.x SLOT 8 — `#derive(Serialize)` JSON escaping fix
