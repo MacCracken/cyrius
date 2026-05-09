@@ -1193,27 +1193,40 @@ Class B FFI / wgpu stays held (see end of file). TS
 test harness moves to v5.11.x. v5.12.0 is now the
 bare-metal AGNOS / RISC-V kickoff (was v5.11.x).
 
-#### v5.10.21 — typed `f64v2` / `f64v4` types (overload dispatch surface)
+#### v5.10.21 ✅ — TLS surface completion: session resumption + 0-RTT (sandhi 1.3.x unblocking) (SHIPPED)
 
-The "typed verbs" half of the original v5.10.16 roadmap
-entry. Was v5.10.20 in the previous numbering; pushed
-back one slot at v5.10.20 P(-1) sweep so the hardening
-phase landed first.
+User flagged 2026-05-09: "when we did TLS did you fucking
+differ the primary pieces? requested... No tls_set_session
+/ tls_get_session / tls_write_early_data /
+tls_read_early_data exist anywhere." v5.10.13 shipped
+`tls_set_alpn` + `tls_set_verify` and silently deferred
+the session-resumption + 0-RTT primitives sandhi 1.3.1/1.3.2
+explicitly requested. v5.10.21 closes the gap: 10 new typed
+wrappers + 2 capability probes covering session resumption
+(`get_session` / `set_session` / `session_free` / 3
+session-cache callback installers / `session_cache_mode`)
+and TLS 1.3 0-RTT (`max_early_data` setter, `write_early_data`,
+`read_early_data`). Plus extended `enum TlsConst` with
+`SSL_READ_EARLY_DATA_*` status + `SSL_SESS_CACHE_*` modes.
 
-Adds `f64v2` and `f64v4` as primitive types (16-byte
-and 32-byte packed-f64 respectively), overloaded
-`f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed in
-`lib/simd.cyr`. The flat-array primitives
-(`f64v_add`/`_dot`/`_scale`/...) remain the underlying
-codegen — typed wrappers just give consumers a cleaner
-API.
-
-Type-system change with self-host implications — earns
-its own slot. Pairs with REAL TYPE SYSTEM at v5.10.22+
-which provides the overload-dispatch infrastructure
-this slot exercises.
+Resolution failure for the new libssl symbols is non-fatal —
+`tls_supports_early_data()` /
+`tls_supports_session_resumption()` let consumers probe.
+api-surface 2,808 → 2,820. Self-host byte-identical x86.
+66/66 check.sh, 135/135 cyrius test.
 
 #### v5.10.22+ — REAL TYPE SYSTEM (multi-slot arc)
+
+**Reordered at v5.10.21 slot-entry premise check**
+(2026-05-09): typed `f64v2`/`f64v4` (originally
+v5.10.21) needs overload dispatch infrastructure that
+this arc provides — so the type system lands FIRST,
+typed simd wrappers go after Phase 4 (overload
+dispatch) ships. **Then re-reordered at v5.10.21 ship**:
+TLS surface completion took the v5.10.21 slot (sandhi
+unblocking partial-fix close), so REAL TYPE SYSTEM
+shifts one slot later: phases 1-5 are now v5.10.22-26.
+Typed simd lands at v5.10.27.
 
 Pinned 2026-05-08 at v5.9.36 wrap; user direction;
 multi-slot effort. Promoted from "held bug arc" to
@@ -1247,7 +1260,14 @@ is a real type system.
 **Multi-slot scope** (refine at first slot entry):
 1. **v5.10.22 — Phase 1: Surface audit** — annotate
    every fn body in stdlib + cyrius-side code with
-   implicit return-type info.
+   implicit return-type info. Builds an audit tool
+   (`programs/cyrius_type_audit.cyr`) that scans
+   `^fn` declarations and classifies by annotation
+   coverage; runs across `lib/` + `src/` + `programs/`;
+   begins systematic annotation of public APIs (Str-
+   returning fns are already 20/4025 done; bulk pass
+   completes the rest). May span 2 slots if the audit
+   surface is bigger than expected.
 2. **v5.10.23 — Phase 2: Call-site type check** — at
    `PARSE_FNCALL`, compare each arg's tracked type
    against the callee's param annotation.
@@ -1273,6 +1293,32 @@ is a real type system.
 Phase numbering is provisional. May span more slots
 if a phase surfaces sub-structure; refine at slot
 entry per `feedback_premise_check_at_slot_entry`.
+
+#### v5.10.26 — typed `f64v2` / `f64v4` types (post-overload-dispatch)
+
+The "typed verbs" half of the original v5.10.16 roadmap
+entry. Was pinned at v5.10.21; pushed at v5.10.21 slot-
+entry premise check because typed wrappers exercise
+overload-dispatch infrastructure that REAL TYPE SYSTEM
+Phase 3 (v5.10.23) provides. Lands AFTER overload
+dispatch ships so `f64v2_add(a: f64v2, b: f64v2): f64v2`
+has the type-system support to actually be checked +
+dispatched correctly.
+
+Adds `f64v2` and `f64v4` as primitive types (16-byte
+and 32-byte packed-f64 respectively), overloaded
+`f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed in
+`lib/simd.cyr`. The flat-array primitives
+(`f64v_add`/`_dot`/`_scale`/...) remain the underlying
+codegen — typed wrappers just give consumers a cleaner
+API.
+
+Premise-check note from v5.10.21 entry: cyrius's
+struct-by-value return ABI is buggy for 16-byte structs
+(`return v` for a struct local doesn't copy fields
+correctly — a 16-byte test returned only the high 8
+bytes). Fix lands as part of this slot OR as a Phase 6
+of the type system arc; refine at slot entry.
 
 #### v5.10.27 — Stdlib data-domain distlib carve-out (multi-slot kickoff)
 

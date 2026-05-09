@@ -6,6 +6,121 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.21] — 2026-05-09
+
+**v5.10.x SLOT 21 — TLS surface completion: session
+resumption + 0-RTT (sandhi 1.3.x unblocking — closes
+v5.10.13 partial-fix gap)**.
+
+User flagged 2026-05-09: "when we did TLS did you fucking
+differ the primary pieces? requested... No tls_set_session
+/ tls_get_session / tls_write_early_data /
+tls_read_early_data exist anywhere." Confirmed — v5.10.13
+shipped `tls_set_alpn` + `tls_set_verify` and silently
+deferred the session-resumption + 0-RTT primitives that
+sandhi 1.3.1/1.3.2 explicitly requested. Per the
+`feedback_no_one_fix_per_slot` memory pin: "Lazy
+deferment is the antipattern". v5.10.21 closes the gap
+with the full sandhi 1.3.x unblocking surface.
+
+cc5 unchanged (stdlib edit, no compiler change). Self-
+host byte-identical x86. **66/66 check.sh, 135/135
+cyrius test, api-surface 2,808 → 2,820 (+12 new public
+fns).** No new test failures.
+
+### What landed in `lib/tls.cyr`
+
+10 new typed wrappers + 2 capability probes — the full
+surface sandhi 1.3.1 (session resumption cache) and 1.3.2
+(TLS 1.3 0-RTT) need:
+
+**Session resumption** (sandhi 1.3.1):
+- `tls_get_session(ctx) → SSL_SESSION*` — refcount-bumping
+  getter; caller owns the returned session and MUST call
+  `tls_session_free`.
+- `tls_set_session(ctx, session) → 1/0` — install a
+  previously-cached session before `tls_connect` to attempt
+  resumption.
+- `tls_session_free(session)` — release a session ref.
+- `tls_ctx_set_session_new_cb(handle, cb_fp)` — fires when
+  handshake produces a new session worth caching.
+- `tls_ctx_set_session_remove_cb(handle, cb_fp)` — fires
+  when libssl invalidates a session.
+- `tls_ctx_set_session_get_cb(handle, cb_fp)` — fires
+  during handshake to fetch a cached session by id.
+- `tls_ctx_set_session_cache_mode(handle, mode)` — enable
+  session caching at the SSL_CTX level. Constants:
+  `SSL_SESS_CACHE_OFF/CLIENT/SERVER/BOTH`.
+
+**0-RTT early data** (sandhi 1.3.2):
+- `tls_ctx_set_max_early_data(handle, max)` — enable 0-RTT
+  receive on the CTX. RFC 8446 recommends 16384 as a
+  starting point.
+- `tls_write_early_data(ctx, buf, len) → bytes/-1` — write
+  0-RTT payload before handshake completes.
+- `tls_read_early_data(ctx, buf, maxlen) → bytes/-2/-1` —
+  server-side 0-RTT read. Returns positive bytes,
+  `-2` on `SSL_READ_EARLY_DATA_FINISH` (caller transitions
+  to normal `tls_read`), `-1` on error.
+
+**Capability probes** (for graceful degradation when
+libssl is older / missing 0-RTT support):
+- `tls_supports_early_data() → 1/0`
+- `tls_supports_session_resumption() → 1/0`
+
+Plus `enum TlsConst` extended with `SSL_READ_EARLY_DATA_*`
+status codes and `SSL_SESS_CACHE_*` mode constants.
+
+### Why this gap was the right kind of "lazy defer"
+
+v5.10.13's CHANGELOG narrated "TLS surface tightening:
+typed `tls_set_alpn` + `tls_set_verify` wrappers" as if it
+were the closing-out of the sandhi TLS-hook ask. In
+reality sandhi's 1.2.0 filing explicitly enumerated FOUR
+hook needs: ALPN advertise, custom verify, **session
+resumption (1.3.1)**, **0-RTT (1.3.2)**. v5.10.13 closed
+2 of 4 + labeled the slot "tightening" without flagging
+the deferral. The two outstanding asks were captured in
+sandhi's own state.md (1.3.1 + 1.3.2 marked **Blocked
+on cyrius**) but not pinned in cyrius's roadmap as
+"v5.10.13 follow-on".
+
+Per `feedback_no_silent_fix_deferrals` memory pin: "Don't
+call an issue fixed if part of it is deferred — verified
+means the user's verbatim repro passes, not a modified
+version that fits the partial fix. State partial-fix
+scope upfront in slot summary, not buried in a deferral
+footer." v5.10.13 violated this. v5.10.21 closes it.
+
+### libssl symbol resolution
+
+Resolution failure in `_tls_init` for the new symbols is
+NOT fatal — older libssl versions may not have all of
+them. `tls_supports_early_data()` /
+`tls_supports_session_resumption()` let consumers probe
+before attempting; missing symbols cause the wrapper
+fns to return -1 / 0 (graceful degrade). Hard-bail
+stays gated on the v5.6.37 minimum-viable handshake
+set (`TLS_client_method`, `SSL_CTX_new`, `SSL_new`,
+`SSL_set_fd`, `SSL_connect`, `SSL_write`, `SSL_read`,
+`SSL_ctrl`).
+
+### Slot reorg
+
+REAL TYPE SYSTEM Phase 1 (was v5.10.21) → v5.10.22.
+`programs/cyrius_type_audit.cyr` (audit tool drafted at
+v5.10.21 slot entry, not shipped due to TLS pivot)
+becomes part of v5.10.22 scope. Subsequent slot numbers
+unchanged — typed `f64v2`/`f64v4` still lands at
+v5.10.26 after overload dispatch ships.
+
+### Downstream
+
+sandhi 1.3.1 (session-resumption cache) and 1.3.2 (TLS
+1.3 0-RTT) can now bump cyrius pin to 5.10.21 and start
+implementing against the real surface. The `Blocked on
+cyrius` markers in sandhi's state.md should clear.
+
 ## [5.10.20] — 2026-05-09
 
 **v5.10.x SLOT 20 — P(-1) project hardening sweep + held-
