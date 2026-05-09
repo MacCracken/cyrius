@@ -1107,7 +1107,35 @@ cc5 size unchanged (no compiler-side change). 66/66
 check.sh, 135/135 cyrius test, byte-identical x86 self-
 host, pi 11/11 simd cross-arch.
 
-#### v5.10.19+ — typed `f64v2` / `f64v4` types (overload dispatch surface)
+#### v5.10.19 ✅ — `cyrius deps` transitive include resolution (agnosys CI unblock #2) (SHIPPED)
+
+Second iteration of the agnosys 1.1.x CI unblock. After
+v5.10.18 fixed `O_WRONLY`, v5.10.19 fixes the next bug
+in the chain: `cyrius deps` only copied directly-named
+stdlib modules, not the per-arch peers they include
+via `#ifdef CYRIUS_TARGET_*` dispatch. Affected
+modules:
+
+- `lib/syscalls.cyr` → needs `_x86_64_linux.cyr`,
+  `_aarch64_linux.cyr`, `_windows.cyr`
+- `lib/alloc.cyr` → needs `_macos.cyr`, `_windows.cyr`
+
+Fix in `cbt/deps.cyr`: scan each copied stdlib file
+for `include "lib/X.cyr"` directives and recursively
+copy. CRITICAL detail caught mid-slot: only the
+top-level (consumer-named) module gets pushed onto
+`_dep_includes` — transitive files MUST NOT, or
+`compile()`'s explicit-include prepend overrides the
+arch-dispatcher `#ifdef`s and parses every peer
+simultaneously (caused 135/135 → 15/120 regression
+during slot iteration; recovered via `is_top` flag).
+
+cyrius CLI: 168,392 → 170,848 (+2,456 B for the
+recursive scanner). cc5 unchanged (fix is in `cbt/`,
+not the compiler). 66/66 check.sh, 135/135 cyrius
+test. Byte-identical x86 self-host.
+
+#### v5.10.20+ — typed `f64v2` / `f64v4` types (overload dispatch surface)
 
 The "typed verbs" half of the original v5.10.16 roadmap
 entry, recognized as a separate arc once the cross-arch
@@ -1122,7 +1150,7 @@ Type-system change with self-host implications — earned
 its own slot rather than bundling with v5.10.17's
 primitive expansion.
 
-#### v5.10.19+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.21+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:

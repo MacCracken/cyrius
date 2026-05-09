@@ -5,6 +5,70 @@
 
 ## Version
 
+**5.10.19** (shipped 2026-05-09 — **v5.10.x SLOT 19 —
+`cyrius deps` transitive include resolution for stdlib
+arch-dispatcher modules (agnosys CI unblock #2)**).
+
+After v5.10.18 fixed `O_WRONLY` in `lib/process.cyr`,
+agnosys CI surfaced the next latent bug:
+`error: undefined variable 'SYS_CLOSE'` at audit.cyr.
+Same shape — stdlib symbol consumer-reachable in
+cyrius dev mode but not via `~/.cyrius/lib` snapshot.
+
+**Root cause**: `lib/syscalls.cyr` is an arch-dispatcher
+that includes `lib/syscalls_x86_64_linux.cyr` /
+`_aarch64_linux.cyr` / `_windows.cyr` via `#ifdef
+CYRIUS_TARGET_*`. `cyrius deps` only copied the
+top-level named module — per-arch peers stayed absent
+in consumer's `lib/`, so `include "lib/syscalls_x86_
+64_linux.cyr"` failed silently (file missing) → SYS_*
+symbols undefined → cascading "undefined variable"
+diagnostics.
+
+**The fix** in `cbt/deps.cyr`:
+- `_dep_copy_stdlib_recursive(stdlib_dir, mod_name,
+  is_top)` scans each copied file for `include
+  "lib/X.cyr"` directives and recursively copies.
+- Visited-set `_dep_stdlib_seen` prevents repeats and
+  cycles.
+- **Critical `is_top` flag**: top-level modules push
+  onto `_dep_includes` (so `compile()` prepends an
+  explicit `include`), transitive modules DO NOT.
+  Caught mid-slot: pre-flag, every transitive file
+  was prepended-as-include, overriding `#ifdef`-based
+  arch dispatch — both arch peers parsed
+  simultaneously, "duplicate fn `sys_open`"
+  cascading, suite fell from 135/135 to 15/120 during
+  slot iteration. Recovered via gating.
+
+**Acceptance**:
+- `cyrius deps` in agnosys correctly fetches all
+  arch peers: 7 syscalls files (was 1), 3 alloc files
+  (was 1).
+- agnosys src/main.cyr compiles clean (no errors,
+  no `duplicate fn`).
+- 66/66 check.sh, 135/135 cyrius test.
+- cyrius CLI: 168,392 → 170,848 (+2,456 B for
+  recursive scanner).
+- cc5: 778,120 unchanged (fix is in `cbt/`, not the
+  compiler binary).
+- Byte-identical x86 self-host.
+
+**Affected stdlib dispatchers**:
+- `lib/syscalls.cyr` (3 peers)
+- `lib/alloc.cyr` (2 peers)
+- All other stdlib modules are leaf files; recursive
+  scan finds zero includes and degrades to the
+  pre-v5.10.19 single-file-copy shape.
+
+**Downstream**: agnosys 1.1.13 bumps cyrius pin
+5.10.18 → 5.10.19; `cyrius deps` re-runs in CI;
+build green.
+
+**Next**: v5.10.20 = typed `f64v2`/`f64v4` types
+(was v5.10.19 in roadmap pre-hotfix-chain;
+renumbered).
+
 **5.10.18** (shipped 2026-05-09 — **v5.10.x SLOT 18 —
 hotfix: lib/process.cyr O_WRONLY undefined-variable for
 non-io.cyr consumers (agnosys CI unblock)**).
@@ -5819,11 +5883,17 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **778,120 B** at v5.10.18 (unchanged
-  from v5.10.17 — hotfix touched lib/process.cyr only,
-  not the compiler binary).
-- **cc5_aarch64**: **473,688 B** at v5.10.18 (unchanged
-  from v5.10.17).
+- **cc5 (x86_64)**: **778,120 B** at v5.10.19 (unchanged
+  from v5.10.18 — hotfix touched cbt/deps.cyr, not the
+  compiler binary).
+- **cc5_aarch64**: **473,688 B** at v5.10.19 (unchanged
+  from v5.10.18).
+- **cyrius CLI**: **170,848 B** at v5.10.19 (was 168,392
+  at v5.10.18; +2,456 B for the recursive stdlib
+  include-chain scanner in `cbt/deps.cyr`).
+- **cc5 at v5.10.18**: 778,120 B (unchanged from v5.10.17).
+- **cc5_aarch64 at v5.10.18**: 473,688 B (unchanged from
+  v5.10.17).
 - **cc5 at v5.10.17**: 778,120 B (was 771,464 at v5.10.16;
   +6,656 B for new SIMD primitives + parser dispatch).
 - **cc5_aarch64 at v5.10.17**: 473,688 B (was 468,888 at

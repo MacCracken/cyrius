@@ -125,6 +125,186 @@ fn _dep_find_stdlib_dir() {
     return 0;
 }
 
+# v5.10.19 — transitive include resolution for stdlib modules.
+#
+# Pre-fix, `cyrius deps` copied only the directly-named stdlib
+# files (`stdlib = ["syscalls", "process", ...]`) and ignored
+# the `include "lib/X.cyr"` directives INSIDE those files. Most
+# stdlib modules are leaf files, so this worked — except for
+# a handful of arch-dispatcher modules:
+#
+#   lib/syscalls.cyr → includes lib/syscalls_x86_64_linux.cyr
+#                              + lib/syscalls_aarch64_linux.cyr
+#                              + lib/syscalls_windows.cyr
+#   lib/alloc.cyr    → includes lib/alloc_macos.cyr
+#                              + lib/alloc_windows.cyr
+#
+# A consumer that listed `"syscalls"` in `[deps] stdlib`
+# received `lib/syscalls.cyr` only; cyrius's source compile
+# then failed at `include "lib/syscalls_x86_64_linux.cyr"` —
+# missing file → SYS_* / O_* / fn names defined in the peer
+# went undefined → cascading "unexpected unknown" /
+# "undefined variable 'SYS_CLOSE'" diagnostics.
+#
+# In-tree consumers (cyrius's own `programs/check.cyr`)
+# dodged because the dev-mode `./lib` path resolves the
+# whole repo lib/ tree at once. agnosys 1.1.13 surfaced the
+# gap on CI which uses the installed `~/.cyrius/lib` snapshot.
+#
+# Fix: scan each copied file for `include "lib/X.cyr"` (or
+# `include "lib/sub/X.cyr"`) and recursively copy referenced
+# files — same path-relative shape, same `_dep_copy_file`
+# call, but breadcrumbed via `_dep_stdlib_seen` so cycles
+# (none today, but the dispatcher pattern courts them) and
+# repeat-copies are skipped. Visited set is per-`cmd_deps`
+# invocation; reset at every call.
+var _dep_stdlib_seen = 0;
+
+fn _dep_stdlib_seen_init() {
+    _dep_stdlib_seen = vec_new();
+    return 0;
+}
+
+fn _dep_stdlib_seen_has(name) {
+    if (_dep_stdlib_seen == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_stdlib_seen)) {
+        var v = vec_get(_dep_stdlib_seen, i);
+        if (strlen(v) == nl) { if (memeq(v, name, nl) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _dep_stdlib_seen_add(name) {
+    var nl = strlen(name);
+    var dup = alloc(nl + 1);
+    memcpy(dup, name, nl);
+    store8(dup + nl, 0);
+    vec_push(_dep_stdlib_seen, dup);
+    return 0;
+}
+
+# Copy stdlib module `mod_name` (e.g. "syscalls" or
+# "syscalls_x86_64_linux"), then scan its content for
+# `include "lib/X.cyr"` directives and recursively copy
+# those too. Uses `_dep_stdlib_seen` to short-circuit
+# repeats.
+#
+# `is_top` flag: 1 for the consumer-named module
+# (gets pushed onto `_dep_includes` so `compile()`
+# prepends an explicit `include "lib/<mod>.cyr"`), 0
+# for transitive includes. Critical: pre-fix, every
+# transitively-copied file was pushed onto
+# `_dep_includes`. `compile()` then prepended each as
+# an explicit `include`, which OVERRIDES the
+# `#ifdef CYRIUS_TARGET_*` arch-dispatcher logic —
+# both `lib/syscalls_x86_64_linux.cyr` AND
+# `lib/syscalls_aarch64_linux.cyr` parsed
+# simultaneously, fns defined twice, "duplicate fn"
+# warnings cascading + binaries running with the
+# wrong arch's syscall numbers. Top-level-only push
+# preserves the dispatcher pattern.
+fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top) {
+    if (_dep_stdlib_seen_has(mod_name) == 1) { return 0; }
+    _dep_stdlib_seen_add(mod_name);
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, stdlib_dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, mod_name);
+    str_builder_add_cstr(sb, ".cyr");
+    var src = str_data(str_builder_build(sb));
+    var dst = make_path("lib", mod_name);
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, dst);
+    str_builder_add_cstr(sb2, ".cyr");
+    var dst_full = str_data(str_builder_build(sb2));
+
+    var cr = _dep_copy_file(src, dst_full);
+    if (cr == 1) { return 1; }
+    if (is_top == 1) { vec_push(_dep_includes, dst_full); }
+
+    # Scan the just-copied source for `include "lib/X.cyr"`
+    # directives. Open the SOURCE (not destination — same
+    # bytes; src guaranteed readable since copy succeeded).
+    var sfd = sys_open(src, O_RDONLY, 0);
+    if (sfd < 0) { return 0; }
+    var sz = _file_size(src);
+    if (sz <= 0) { sys_close(sfd); return 0; }
+    var fbuf = alloc(sz + 1);
+    var nread = syscall(0, sfd, fbuf, sz);
+    sys_close(sfd);
+    if (nread <= 0) { return 0; }
+    store8(fbuf + nread, 0);
+
+    # Walk for `include "lib/`. Tolerate any leading whitespace
+    # but skip lines starting with `#` (commented-out includes
+    # in retro/historical comments shouldn't drag deps in).
+    var pos = 0;
+    while (pos < nread) {
+        var ls = pos;
+        # End-of-line
+        var le = pos;
+        while (le < nread && load8(fbuf + le) != 10) { le = le + 1; }
+        # Trim leading whitespace
+        var lp = ls;
+        while (lp < le) {
+            var lc = load8(fbuf + lp);
+            if (lc != 32 && lc != 9) { break; }
+            lp = lp + 1;
+        }
+        # Comment line — skip
+        if (lp < le && load8(fbuf + lp) != 35) {
+            # Match `include "lib/`
+            if (le - lp >= 13) {
+                if (memeq(fbuf + lp, "include \"lib/", 13) == 1) {
+                    var name_start = lp + 13;
+                    var name_end = name_start;
+                    while (name_end < le && load8(fbuf + name_end) != 34) {
+                        name_end = name_end + 1;
+                    }
+                    if (name_end < le) {
+                        var inc_len = name_end - name_start;
+                        # Strip ".cyr" suffix (4 bytes) if present.
+                        if (inc_len > 4) {
+                            if (memeq(fbuf + name_end - 4, ".cyr", 4) == 1) {
+                                inc_len = inc_len - 4;
+                            }
+                        }
+                        var inc_name = alloc(inc_len + 1);
+                        memcpy(inc_name, fbuf + name_start, inc_len);
+                        store8(inc_name + inc_len, 0);
+                        # Recursive fetch (transitive). Only if the
+                        # source file actually exists in stdlib_dir —
+                        # silently skip non-stdlib includes (consumer
+                        # might `include "src/foo.cyr"` in stdlib if
+                        # someone got creative; not our concern).
+                        var probe_sb = str_builder_new();
+                        str_builder_add_cstr(probe_sb, stdlib_dir);
+                        str_builder_add_cstr(probe_sb, "/");
+                        str_builder_add_cstr(probe_sb, inc_name);
+                        str_builder_add_cstr(probe_sb, ".cyr");
+                        var probe_path = str_data(str_builder_build(probe_sb));
+                        if (file_exists(probe_path) == 1) {
+                            # Transitive — is_top=0 so we copy the
+                            # file but DON'T push to `_dep_includes`.
+                            # The top-level dispatcher (`lib/syscalls.cyr`,
+                            # `lib/alloc.cyr`) follows its own
+                            # `include "lib/X.cyr"` chain at parse time
+                            # gated by `#ifdef`.
+                            _dep_copy_stdlib_recursive(stdlib_dir, inc_name, 0);
+                        }
+                    }
+                }
+            }
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
 # Parse a TOML array of strings: ["a", "b", "c"] starting at buf[pos]
 # Returns a vec of cstrings. Advances pos past the closing ].
 fn _parse_toml_str_array(buf, len, pos) {
@@ -537,36 +717,29 @@ fn cmd_deps() {
                     println("  error: cannot find cyrius stdlib");
                     errors = errors + 1;
                 } else {
+                    # v5.10.19: per-cmd_deps invocation visited-set
+                    # for the include-chain follower below.
+                    _dep_stdlib_seen_init();
                     var mods = _parse_toml_str_array(buf, n, si);
                     var mi = 0;
                     while (mi < vec_len(mods)) {
                         var mod_name = vec_get(mods, mi);
-                        var sb = str_builder_new();
-                        str_builder_add_cstr(sb, stdlib_dir);
-                        str_builder_add_cstr(sb, "/");
-                        str_builder_add_cstr(sb, mod_name);
-                        str_builder_add_cstr(sb, ".cyr");
-                        var src = str_data(str_builder_build(sb));
-                        var dst = make_path("lib", mod_name);
-                        var sb2 = str_builder_new();
-                        str_builder_add_cstr(sb2, dst);
-                        str_builder_add_cstr(sb2, ".cyr");
-                        var dst_full = str_data(str_builder_build(sb2));
-                        var cr = _dep_copy_file(src, dst_full);
-                        if (cr == 0 || cr == 2) {
-                            vec_push(_dep_includes, dst_full);
-                            # v5.7.8 P4: stdlib modules are not "deps" in
-                            # the [deps.NAME] sense — do not count them
-                            # against the "N deps resolved" summary
-                            # (that count drifted cold/warm pre-v5.7.8).
-                            if (cr == 0) {
-                                if (_verbose == 1) {
-                                    sys_write(STDERR_FD, "  stdlib: ", 10);
-                                    sys_write(STDERR_FD, mod_name, strlen(mod_name));
-                                    sys_write(STDERR_FD, "\n", 1);
-                                }
-                            }
-                        } elif (cr == 1) { errors = errors + 1; }
+                        # v5.10.19: replaces the inline copy with the
+                        # recursive fetcher. For 95%+ of stdlib modules
+                        # (leaf files) this is functionally identical
+                        # — the include scan finds zero matches, only
+                        # the top-level file gets copied. For the arch-
+                        # dispatcher modules (syscalls, alloc) it
+                        # follows their `include "lib/X.cyr"` chains.
+                        # is_top=1 — push onto `_dep_includes` so
+                        # `compile()` prepends `include "lib/<mod>.cyr"`.
+                        var rr = _dep_copy_stdlib_recursive(stdlib_dir, mod_name, 1);
+                        if (rr == 1) { errors = errors + 1; }
+                        if (_verbose == 1 && rr == 0) {
+                            sys_write(STDERR_FD, "  stdlib: ", 10);
+                            sys_write(STDERR_FD, mod_name, strlen(mod_name));
+                            sys_write(STDERR_FD, "\n", 1);
+                        }
                         mi = mi + 1;
                     }
                 }

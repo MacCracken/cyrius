@@ -6,6 +6,131 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.19] — 2026-05-09
+
+**v5.10.x SLOT 19 — `cyrius deps` transitive include
+resolution for stdlib arch-dispatcher modules (agnosys CI
+unblock, second iteration)**.
+
+After v5.10.18 fixed the `O_WRONLY` undefined-variable in
+`lib/process.cyr`, agnosys 1.1.x CI surfaced the next
+latent bug in the chain: `error: lib/syscalls.cyr:N:
+undefined variable 'SYS_CLOSE'`. Same shape — a stdlib
+symbol consumer-reachable in cyrius dev mode but not via
+the `~/.cyrius/lib` snapshot that `cyrius deps`
+populates.
+
+**Root cause**: `lib/syscalls.cyr` is an arch-dispatcher
+that includes `lib/syscalls_x86_64_linux.cyr` /
+`lib/syscalls_aarch64_linux.cyr` / `lib/syscalls_windows
+.cyr` based on `#ifdef CYRIUS_TARGET_*`. `cyrius deps`
+copied only the named module (`syscalls`) without
+following the include chain — the per-arch peers stayed
+absent in the consumer's `lib/`. `lib/syscalls.cyr`'s
+`include "lib/syscalls_x86_64_linux.cyr"` then failed
+silently (file missing) → SYS_* constants defined in the
+peer went undefined → cascading "undefined variable"
+diagnostics.
+
+cyrius's own `programs/check.cyr` dodged because the
+dev-mode `./lib` resolver picks up the entire repo lib/
+tree at once, regardless of include order. `agnosys
+1.1.13` CI uses `~/.cyrius/lib` (the `cyrius deps`
+snapshot), surfacing the gap. **Same "in-tree consumer
+dodges via dev-mode include behavior, downstream
+consumers fail via snapshot copy" shape as v5.10.16's
+api-surface filing and v5.10.18's `O_WRONLY` filing.**
+
+### The fix
+
+Three pieces in `cbt/deps.cyr`:
+
+1. **`_dep_copy_stdlib_recursive(stdlib_dir, mod_name,
+   is_top)`** — copy `lib/<mod_name>.cyr`, then scan
+   the just-copied source for `include "lib/X.cyr"`
+   directives and recursively copy referenced files.
+2. **Visited-set `_dep_stdlib_seen`** — per-`cmd_deps`
+   invocation; prevents repeat-copies and any cycles
+   the dispatcher pattern might court.
+3. **`is_top` flag** — top-level (consumer-named) modules
+   get pushed onto `_dep_includes` so `compile()`
+   prepends an explicit `include "lib/<mod>.cyr"`.
+   Transitive (chain-followed) modules DO NOT — they
+   sit in `lib/` to be picked up by the dispatcher's
+   own `#ifdef`-gated `include` directives at parse
+   time. **Critical.** Pre-fix initial-implementation
+   pushed every transitive file onto `_dep_includes`,
+   which made `compile()` prepend explicit includes
+   for ALL arch peers — overriding the `#ifdef
+   CYRIUS_TARGET_*` selection — both
+   `syscalls_x86_64_linux.cyr` AND
+   `syscalls_aarch64_linux.cyr` parsed simultaneously,
+   "duplicate fn `sys_open`" warnings cascading,
+   binaries running with the wrong arch's syscall
+   numbers (e.g. SYS_BRK = 12 on Linux but 12 = chdir
+   on BSD/macOS, so `alloc_init` mmap'd the wrong way
+   and the test suite fell from 135/135 to 15/120
+   during slot iteration).
+
+Caught the regression by running `check.sh` + `cyrius
+test` immediately after rebuilding the `cyrius` CLI;
+fixed by gating the `_dep_includes` push on `is_top`.
+
+### Affected stdlib dispatcher modules
+
+Counting from a pre-`cyrius deps` audit:
+
+- `lib/syscalls.cyr` → 3 peers
+  (`syscalls_x86_64_linux.cyr`, `syscalls_aarch64_linux
+  .cyr`, `syscalls_windows.cyr`)
+- `lib/alloc.cyr` → 2 peers (`alloc_macos.cyr`,
+  `alloc_windows.cyr`)
+- All other stdlib modules currently in `~/.cyrius/lib`
+  are leaf files; the recursive scan finds zero
+  `include "lib/X.cyr"` matches and degrades to the
+  pre-v5.10.19 single-file-copy shape.
+
+### What now works for downstream consumers
+
+```sh
+# cyrius.cyml of any consumer:
+[deps]
+stdlib = ["syscalls", "alloc", "string", ...]
+
+# After `cyrius deps`:
+$ ls lib/
+syscalls.cyr
+syscalls_x86_64_linux.cyr     # NEW — was missing
+syscalls_aarch64_linux.cyr    # NEW — was missing
+syscalls_windows.cyr          # NEW — was missing
+alloc.cyr
+alloc_macos.cyr               # NEW — was missing
+alloc_windows.cyr             # NEW — was missing
+string.cyr alloc.cyr ...      # leaf modules unchanged
+```
+
+agnosys 1.1.x CI bumps cyrius pin to 5.10.19 and
+re-runs; `cyrius deps` correctly fetches the per-arch
+peer files and the build's `include "lib/syscalls.cyr"`
+chain resolves cleanly.
+
+cc5: 778,120 → 778,120 (unchanged — fix is in `cbt/`,
+not the compiler binary). cyrius CLI: 168,392 → 170,848
+(+2,456 B for the recursive scanner). Self-host
+byte-identical (the fix's recursion doesn't run in
+cyrius's own self-host path; that uses dev-mode
+`./lib`).
+
+66/66 check.sh, 135/135 cyrius test, agnosys main.cyr
+compiles clean.
+
+### Memory pin
+
+`feedback_stdlib_self_sufficient_constants.md` (added
+v5.10.18) generalizes: the audit-prompt grep should
+also flag arch-dispatcher modules where transitive
+include resolution is required.
+
 ## [5.10.18] — 2026-05-09
 
 **v5.10.x SLOT 18 — hotfix: lib/process.cyr O_WRONLY
