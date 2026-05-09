@@ -924,6 +924,9 @@ fn PARSE_STMT(S) {
     if (typ == 47) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
     # f64/SIMD builtins as statements
     if (typ >= 62) { if (typ <= 105) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    # v5.10.17: f64v_dot/scale/axpy as statements (out-of-range from
+    # the existing 62-105 SIMD band; share the same PCMPE-then-`;` shape).
+    if (typ >= 128) { if (typ <= 130) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);

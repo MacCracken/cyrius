@@ -126,8 +126,53 @@ fn run_simd_tests() {
     store64(fd + 8, 0);
     f64v_fmadd(fd, fa, fb, fc, 2);
     assert_eq(f64_to(load64(fd)) + f64_to(load64(fd + 8)), 57, "fmadd");
+
+    return 0;
+}
+
+# v5.10.17 — keystone primitives for hisab gap-close.
+# Bundled into one fn for tcyr conciseness; multi-fn split also
+# works post-v5.10.17 (the parse.cyr statement-level dispatch
+# was extended to the 128-130 token band — pre-v5.10.17 only
+# 62-105 was wired, so `f64v_scale(...);` as a bare statement
+# parsed as "unexpected unknown").
+fn run_v17_tests() {
+    test_group("f64v_dot");
+    var dot_a = alloc(32);
+    var dot_b = alloc(32);
+    store64(dot_a, f64_from(1));
+    store64(dot_a + 8, f64_from(2));
+    store64(dot_a + 16, f64_from(3));
+    store64(dot_a + 24, f64_from(4));
+    store64(dot_b, f64_from(5));
+    store64(dot_b + 8, f64_from(6));
+    store64(dot_b + 16, f64_from(7));
+    store64(dot_b + 24, f64_from(8));
+    var dot4 = f64_to(f64v_dot(dot_a, dot_b, 4));
+    assert_eq(dot4, 70, "dot 1..4 dot 5..8 = 5+12+21+32 = 70");
+
+    test_group("f64v_scale");
+    var sc_a = alloc(16);
+    var sc_d = alloc(16);
+    store64(sc_a, f64_from(10));
+    store64(sc_a + 8, f64_from(20));
+    store64(sc_d, 0);
+    store64(sc_d + 8, 0);
+    f64v_scale(sc_d, sc_a, f64_from(3), 2);
+    assert_eq(f64_to(load64(sc_d)) + f64_to(load64(sc_d + 8)), 90, "scale 10,20 by 3 = 30+60");
+
+    test_group("f64v_axpy");
+    var ax_y = alloc(16);
+    var ax_x = alloc(16);
+    store64(ax_y, f64_from(100));
+    store64(ax_y + 8, f64_from(200));
+    store64(ax_x, f64_from(10));
+    store64(ax_x + 8, f64_from(20));
+    f64v_axpy(ax_y, ax_x, f64_from(3), 2);
+    assert_eq(f64_to(load64(ax_y)) + f64_to(load64(ax_y + 8)), 390, "axpy y += 3*x");
     return 0;
 }
 
 run_simd_tests();
+run_v17_tests();
 var r = assert_summary();

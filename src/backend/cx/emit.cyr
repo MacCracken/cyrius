@@ -578,6 +578,12 @@ fn EX87POP(S) { return 0; }
 fn EMIT_F64V_LOOP(S, op, vbase) { return 0; }
 fn EMIT_F64V_UNARY(S, op, vbase) { return 0; }
 fn EMIT_F64V_FMADD(S, vbase) { return 0; }
+
+# v5.10.17 — same shape, new primitives. dot/scale/axpy stubbed
+# pending cx f64 support.
+fn EMIT_F64V_DOT(S, vbase) { return 0; }
+fn EMIT_F64V_SCALE(S, vbase) { return 0; }
+fn EMIT_F64V_AXPY(S, vbase) { return 0; }
 fn EUCOMISD(S) { return 0; }
 fn EXORPD_X1(S) { return 0; }
 fn EMOVAPD_01(S) { return 0; }

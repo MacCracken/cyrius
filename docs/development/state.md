@@ -5,6 +5,47 @@
 
 ## Version
 
+**5.10.17** (shipped 2026-05-09 — **v5.10.x SLOT 17 —
+keystone SIMD primitives for hisab gap-close (dot /
+scale / axpy)**).
+
+The "new primitives" half of the SIMD arc, deferred from
+v5.10.16. Builds on the now-uniform x86 + aarch64 + cx
+foundation (v5.10.16 closed both the aarch64 stub gap and
+the latent x86 codegen bug under auto-regalloc).
+
+**What landed**:
+- `f64v_dot(a, b, n) -> f64` — dot product. x86 uses
+  `xorpd`/`mulpd`/`addpd`/`haddpd` (SSE3); aarch64 uses
+  `eor v2.16b` zero + `fmla v2.2d` per iter + `faddp d0,
+  v2.2d` for reduce.
+- `f64v_scale(dst, a, scalar, n)` — element-wise scale,
+  scalar broadcast across both lanes.
+- `f64v_axpy(y, x, alpha, n)` — y[i] += alpha * x[i],
+  uses `fmla.2d` on aarch64 for fused single-instruction
+  multiply-accumulate.
+- `parse.cyr` statement-level dispatch extended to
+  `typ 128-130` (existing 62-105 didn't cover the new
+  band; bare `f64v_scale(...);` statements gave
+  "unexpected unknown" pre-fix).
+- `tests/tcyr/simd.tcyr` extends the v5.10.16 8-assert
+  floor with 3 more (dot 4-wide, scale 2-wide, axpy
+  2-wide); 11 asserts total.
+
+**Acceptance**:
+- 11/11 simd tcyr passes locally on x86.
+- 11/11 on pi (Linux aarch64) — NEON encodings verified.
+- 11/11 on ecb (macOS Apple Silicon Mach-O).
+- cc5: 771,464 → 778,120 (+6,656 B).
+- cc5_aarch64: 468,888 → 473,688 (+4,800 B).
+- 66/66 check.sh, 135/135 cyrius test.
+- Byte-identical x86 self-host.
+
+**Next**: v5.10.18 = typed `f64v2`/`f64v4` types
+(overload dispatch surface), per the held-arc note in
+v5.10.16 entry. Type-system change with self-host
+implications; earns its own slot.
+
 **5.10.16** (shipped 2026-05-09 — **v5.10.x SLOT 16 —
 SIMD cross-arch close + api-surface brace-desync fix
 (paired)**).
@@ -5737,13 +5778,19 @@ throughput win on hosts with hw support).)
 
 ## Compiler
 
-- **cc5 (x86_64)**: **771,464 B** at v5.10.16 (was
-  771,784 at v5.10.15; −320 B as helper factoring +
-  disp32-form load saved more than the new
-  `_F64V_DISP` helper cost).
-- **cc5_aarch64**: **468,888 B** at v5.10.16 (was
-  467,016 at v5.10.15; +1,872 B for the NEON SIMD
-  primitives in `src/backend/aarch64/emit.cyr`).
+- **cc5 (x86_64)**: **778,120 B** at v5.10.17 (was
+  771,464 at v5.10.16; +6,656 B for new SIMD
+  primitives + parser dispatch).
+- **cc5_aarch64**: **473,688 B** at v5.10.17 (was
+  468,888 at v5.10.16; +4,800 B for new NEON SIMD
+  encodings).
+- **cc5 at v5.10.16**: 771,464 B (was 771,784 at
+  v5.10.15; −320 B as helper factoring + disp32-form
+  load saved more than the new `_F64V_DISP` helper
+  cost).
+- **cc5_aarch64 at v5.10.16**: 468,888 B (was 467,016
+  at v5.10.15; +1,872 B for the NEON SIMD primitives
+  in `src/backend/aarch64/emit.cyr`).
 - **cc5 at v5.10.15**: 771,784 B (was 766,496 at
   v5.10.14; +5,288 B for `_check_shadow_lib` +
   env opt-out scan in `_init_cyrius_lib`).

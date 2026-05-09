@@ -6,6 +6,107 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.17] — 2026-05-09
+
+**v5.10.x SLOT 17 — keystone SIMD primitives for hisab
+gap-close (dot / scale / axpy)**.
+
+The "new primitives" half of the SIMD arc, deferred from
+v5.10.16 per user direction at slot entry ("close cross-
+arch gap first... new primitive .17"). Builds on the now-
+uniform x86 + aarch64 + cx foundation (v5.10.16 closed
+both the aarch64 stub gap AND the latent x86 codegen bug
+under auto-regalloc) to add the three keystone primitives
+that compose enough of hisab's hot Vec3/Vec4/Mat4 ops to
+make the gap-close measurable.
+
+cc5 (x86): 771,464 → 778,120 (+6,656 B for the new
+primitives + parser dispatch).
+cc5_aarch64: 468,888 → 473,688 (+4,800 B).
+Byte-identical x86 self-host. 66/66 check.sh, 135/135
+cyrius test (+3 for the new dot/scale/axpy groups).
+
+**Cross-host verified**: pi (Linux aarch64) 11/11, ecb
+(macOS Apple Silicon Mach-O) 11/11. NEON encodings tested
+on both real hardware paths.
+
+### Three new primitives
+
+- **`f64v_dot(a, b, n) -> f64`** — dot product. Returns
+  the f64 sum of `a[i] * b[i]` for i in [0, n). x86 uses
+  `xorpd` to zero an xmm2 accumulator, `mulpd + addpd` per
+  iteration, `haddpd` (SSE3) for horizontal reduce, then
+  `movq rax, xmm2` to extract the bit pattern. aarch64
+  uses `eor v2.16b` to zero, `fmla v2.2d` per iteration
+  (single-instruction multiply-accumulate), `faddp d0,
+  v2.2d` for pairwise reduce, then `fmov x0, d0`.
+- **`f64v_scale(dst, a, scalar, n)`** — element-wise scale.
+  Pre-loop loads `scalar` (f64 bit pattern at frame slot
+  vbase+2) and broadcasts to both lanes. x86 via `movq
+  xmm2, rdx` + `unpcklpd xmm2, xmm2`; aarch64 via `fmov
+  d3, x0` + `dup v3.2d, v3.d[0]`. Loop body: `mulpd` /
+  `fmul .2d`.
+- **`f64v_axpy(y, x, alpha, n)`** — y[i] += alpha * x[i].
+  Same broadcast setup as scale. Loop body: x86 has no
+  baseline-SSE FMA so it does `mulpd + addpd`; aarch64
+  uses `fmla v0.2d, v1.2d, v3.2d` for fused single-
+  instruction y += x*alpha.
+
+### Token allocation
+
+Reserved ptyp 128/129/130 for f64v_dot/scale/axpy. The
+existing 89-99 SIMD band was full and the 100-127 range
+was already allocated to bitget/bitset/bitclr/u128/defer/
+secret/stack/variadic/wrap-arith tokens. Picked 128+ as a
+fresh band.
+
+### Statement-level dispatch fix
+
+While testing the slot, surfaced that `parse.cyr`'s
+statement-level builtin dispatch covered `typ >= 62 &&
+typ <= 105` only — calling `f64v_scale(...);` as a bare
+expression statement fell off the end and emitted
+"unexpected unknown" diagnostics with misleading line
+numbers. Extended the dispatch with a parallel
+`typ >= 128 && typ <= 130` clause. Pre-fix the SIMD
+primitives only worked as RHS of an assignment (`var x =
+f64v_dot(...)` worked; `f64v_dot(...);` as a statement
+didn't). The existing 89-105 SIMD primitives were
+unaffected — they were always in the dispatched range.
+
+### Cross-arch propagation: mandatory, in-slot
+
+Per the v5.10.16 lesson on "the cross-arch gap is what
+made the codegen-bug rideable for ~3.5 years":
+- x86 SSE2: implemented in `src/backend/x86/float.cyr`
+  using the v5.10.16 `_F64V_DISP` helper for frame
+  addressing under auto-regalloc.
+- aarch64 NEON: implemented in `src/backend/aarch64/
+  emit.cyr` using `EFLLOAD` for frame addressing
+  (preserves `_cur_fn_ret_stash` correctness).
+- cx: arity-aligned no-op stubs (cx f64 pipeline still
+  TBD; same situation as v5.10.16's existing primitives).
+
+### tcyr regression coverage
+
+`tests/tcyr/simd.tcyr` extends the v5.10.16 8-assert
+floor with 3 more (dot 4-wide, scale 2-wide, axpy 2-wide
+broadcast). 11 asserts total wired into check.sh +
+cyrius test.
+
+### What v5.10.17 does NOT include
+
+- **Typed `f64v2` / `f64v4` types**: punted to v5.10.18
+  per the held-arc note in the v5.10.16 roadmap entry.
+  Type-system change with self-host implications; earned
+  its own slot rather than bundling here.
+- **AVX2 4-wide variants**: out of scope. Current
+  primitives are 2-wide SSE2 / NEON `.2D` packed-double.
+- **Hisab consumer wiring**: hisab needs to update its
+  Vec3/Vec4/Mat4 hot ops to call f64v_dot/scale/axpy.
+  Downstream work; cyrius's job is to provide the
+  primitives.
+
 ## [5.10.16] — 2026-05-09
 
 **v5.10.x SLOT 16 — SIMD cross-arch close + api-surface

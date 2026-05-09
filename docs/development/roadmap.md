@@ -1065,36 +1065,30 @@ disp32 form net negative). cc5_aarch64: 467,016 → 468,888
 by the brace-desync). Byte-identical x86 self-host.
 66/66 check.sh, 135/135 cyrius test.
 
-#### v5.10.17 — SIMD math primitive expansion (dot, scale, axpy)
+#### v5.10.17 ✅ — SIMD math primitive expansion (dot, scale, axpy) (SHIPPED)
 
-The "new primitives" half of the SIMD arc, deferred
-from v5.10.16 per user direction at slot entry
-("close cross-arch gap first... new primitive .17").
+The "new primitives" half of the SIMD arc. Three keystone
+primitives (`f64v_dot/scale/axpy`) implemented x86 SSE2 +
+aarch64 NEON in same slot, plus `parse.cyr` statement-
+level dispatch fix discovered while testing.
 
-Builds on the now-uniform x86 + aarch64 + cx foundation
-to add the keystone three for hisab's gap-close:
+**Surfaced + fixed in-slot**: `parse.cyr` statement-
+dispatch only covered `typ 62-105`. `f64v_scale(...);` as
+a bare expression statement gave "unexpected unknown" with
+misleading line numbers. Extended to `typ 128-130`.
 
-- `f64v_dot(a, b, n) -> f64`  — sum-reduce after multiply
-- `f64v_scale(dst, a, scalar, n)` — broadcast multiply
-- `f64v_axpy(y, x, alpha, n)` — y[i] += alpha*x[i]
+**Encodings**:
+- x86: `mulpd + addpd` for dot loop, `haddpd` (SSE3) for
+  reduce. `mulpd + unpcklpd` broadcast for scale/axpy.
+- aarch64: `fmla v2.2d` per iteration for dot, `faddp d0,
+  v2.2d` for reduce. `dup v3.2d, v3.d[0]` broadcast +
+  `fmul.2d` / `fmla.2d` for scale/axpy.
+- cx: arity-aligned no-op stubs (still pending cx f64).
 
-These three compose enough to express most of hisab's
-Vec3/Vec4 hot-path ops (dot products dominate normalize,
-quat ops, ray intersections; scale + axpy cover slerp's
-linear blend; mat4_mul reduces to repeated dots).
-
-Cross-arch propagation MANDATORY in same slot
-(per the v5.10.16 lesson):
-- x86 SSE2: `mulpd` + `haddpd` for dot; `shufpd` to
-  broadcast scalar for scale; `mulpd` + `addpd` for axpy.
-- aarch64 NEON: `fmul.2d` + `faddp.2d` for dot;
-  `dup.2d` + `fmul.2d` for scale; `fmla.2d` for axpy.
-- cx: arity-aligned stubs (cx f64 still not supported).
-
-Acceptance: tcyr regression for each new primitive +
-hisab consumes them in a vec3_dot benchmark to show
-measurable Rust-gap close (target: 2-4× per the SIMD
-factor in hisab's gap analysis).
+cc5: 771,464 → 778,120 (+6,656 B). cc5_aarch64: 468,888 →
+473,688 (+4,800 B). Byte-identical x86 self-host.
+66/66 check.sh, 135/135 cyrius test (+3 for dot/scale/
+axpy groups). Cross-host verified: pi 11/11, ecb 11/11.
 
 #### v5.10.18+ — typed `f64v2` / `f64v4` types (overload dispatch surface)
 

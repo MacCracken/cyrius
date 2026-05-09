@@ -177,6 +177,116 @@ fn EMIT_F64V_UNARY(S, op, vbase) {
     return 0;
 }
 
+# v5.10.17 — keystone primitives for hisab gap-close.
+# Three flat-array verbs that compose enough of the dot/normalize/
+# slerp/mat4_mul hot paths to make hisab benchmarks measurably
+# faster vs Rust+glam. Cross-arch propagation MANDATORY in this
+# slot (per the v5.10.16 lesson on aarch64-stub debt).
+
+# EMIT_F64V_DOT(S, vbase) — sum of a[i] * b[i] for i in [0, n).
+# Returns f64 bit pattern in rax. Slots: vbase=a, vbase+1=b. n in rax.
+# Accumulator strategy: xmm2 holds packed pair of partial sums; loop
+# does mulpd+addpd to accumulate; tail uses haddpd (SSE3) to reduce
+# to a scalar, then movq rax, xmm2 to extract bits.
+fn EMIT_F64V_DOT(S, vbase) {
+    # xorpd xmm2, xmm2 — zero accumulator
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x57); EB(S, 0xD2);
+    # rcx = n
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
+    # rsi = 0
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);          # cmp rsi, rcx
+    EB(S, 0x0F); EB(S, 0x8D);                       # jge done
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    # rdx = a base; movupd xmm0, [rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);
+    # rdx = b base; movupd xmm1, [rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);
+    # mulpd xmm0, xmm1
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC1);
+    # addpd xmm2, xmm0  — accumulator += a*b
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x58); EB(S, 0xD0);
+    # rsi += 2
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x02);
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    # haddpd xmm2, xmm2 — SSE3 horizontal add: xmm2.low = xmm2[0] + xmm2[1]
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x7C); EB(S, 0xD2);
+    # movq rax, xmm2  — extract f64 bit pattern into rax
+    EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x7E); EB(S, 0xD0);
+    return 0;
+}
+
+# EMIT_F64V_SCALE(S, vbase) — dst[i] = a[i] * scalar.
+# Slots: vbase=dst, vbase+1=a, vbase+2=scalar (f64 bit pattern). n in rax.
+# Pre-loop: load scalar into xmm2 and broadcast to both lanes.
+fn EMIT_F64V_SCALE(S, vbase) {
+    # rdx = scalar (i64 bit pattern)
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
+    # movq xmm2, rdx — xmm2.low = scalar bits
+    EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xD2);
+    # unpcklpd xmm2, xmm2 — broadcast: xmm2 = {scalar, scalar}
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x14); EB(S, 0xD2);
+    # rcx = n; rsi = 0
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);
+    EB(S, 0x0F); EB(S, 0x8D);
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    # load a[i..i+1] into xmm0
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);
+    # mulpd xmm0, xmm2  — xmm0 *= broadcast scalar
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC2);
+    # store xmm0 to dst[i..i+1]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x02);
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
+# EMIT_F64V_AXPY(S, vbase) — y[i] += alpha * x[i].
+# Slots: vbase=y, vbase+1=x, vbase+2=alpha. n in rax.
+# SSE2 has no FMA — fused via mulpd + addpd.
+fn EMIT_F64V_AXPY(S, vbase) {
+    # rdx = alpha bits; xmm2 = {alpha, alpha}
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
+    EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xD2);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x14); EB(S, 0xD2);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);
+    EB(S, 0x0F); EB(S, 0x8D);
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    # load x[i..i+1] into xmm0
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);
+    # mulpd xmm0, xmm2 — xmm0 = alpha * x[i..i+1]
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC2);
+    # load y[i..i+1] into xmm1
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);
+    # addpd xmm1, xmm0 — xmm1 += alpha*x
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x58); EB(S, 0xC8);
+    # store xmm1 to y[i..i+1]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x0C); EB(S, 0xF2);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x02);
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
 # EMIT_F64V_FMADD — dst[i] = a[i]*b[i] + c[i] using mulpd + addpd (SSE2)
 # Args at vbase: dst, a, b, c, n(rax)
 fn EMIT_F64V_FMADD(S, vbase) {

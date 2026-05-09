@@ -1366,3 +1366,111 @@ fn EMIT_F64V_FMADD(S, vbase) {
     EPATCH(S, done_patch);
     return 0;
 }
+
+# v5.10.17 — keystone primitives for hisab gap-close.
+# Same ordering as x86: dot returns f64 in x0, scale + axpy take
+# scalar at slot vbase+2.
+
+# EMIT_F64V_DOT(S, vbase) — sum of a[i] * b[i].
+# Slots: vbase=a, vbase+1=b. n in x0.
+# Returns f64 bit pattern in x0.
+# Strategy: v2 holds 2-wide running sum via fmla; tail uses faddp
+# (NEON pairwise add) to reduce to a scalar in d0; fmov x0, d0.
+fn EMIT_F64V_DOT(S, vbase) {
+    EW(S, 0x6E221C42);                # eor v2.16b, v2.16b, v2.16b — zero accumulator
+    EW(S, 0xAA0003EA);                # mov x10, x0   — n
+    EW(S, 0xD280000B);                # movz x11, #0  — index
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    # v0 = a[i..i+1]
+    EFLLOAD(S, vbase);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00180);                # ldr q0, [x12]
+    # v1 = b[i..i+1]
+    EFLLOAD(S, vbase + 1);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00181);                # ldr q1, [x12]
+    # fmla v2.2d, v0.2d, v1.2d  — v2 += v0 * v1
+    EW(S, 0x4E61CC02);
+    EW(S, 0x9100096B);                # add x11, x11, #2
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    # faddp d0, v2.2d  — d0 = v2[0] + v2[1] (horizontal reduce)
+    EW(S, 0x7E70D840);
+    # fmov x0, d0  — extract f64 bit pattern into x0
+    EW(S, 0x9E660000);
+    return 0;
+}
+
+# EMIT_F64V_SCALE(S, vbase) — dst[i] = a[i] * scalar.
+# Slots: vbase=dst, vbase+1=a, vbase+2=scalar (f64 bit pattern). n in x0.
+# Pre-loop: load scalar bits → x0, fmov d3 ← x0, dup v3.2d, v3.d[0]
+# (broadcast across both lanes). Loop: ldr q0, fmul, str q0.
+fn EMIT_F64V_SCALE(S, vbase) {
+    EW(S, 0xAA0003EA);                # mov x10, x0  — n SAVED before clobber
+    # x0 = scalar bits
+    EFLLOAD(S, vbase + 2);
+    EW(S, 0x9E670003);                # fmov d3, x0
+    EW(S, 0x4E080463);                # dup v3.2d, v3.d[0]
+    EW(S, 0xD280000B);                # movz x11, #0
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    # v0 = a[i..i+1]
+    EFLLOAD(S, vbase + 1);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00180);                # ldr q0, [x12]
+    # fmul v0.2d, v0.2d, v3.2d  — v0 *= scalar
+    EW(S, 0x6E63DC00);
+    # store v0 to dst[i..i+1]
+    EFLLOAD(S, vbase);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3D800180);                # str q0, [x12]
+    EW(S, 0x9100096B);                # add x11, x11, #2
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
+# EMIT_F64V_AXPY(S, vbase) — y[i] += alpha * x[i].
+# Slots: vbase=y, vbase+1=x, vbase+2=alpha. n in x0.
+# Uses FMLA — fused multiply-add, single-instruction y += x*alpha.
+fn EMIT_F64V_AXPY(S, vbase) {
+    EW(S, 0xAA0003EA);                # mov x10, x0  — save n
+    EFLLOAD(S, vbase + 2);
+    EW(S, 0x9E670003);                # fmov d3, x0  — alpha bits → d3
+    EW(S, 0x4E080463);                # dup v3.2d, v3.d[0]
+    EW(S, 0xD280000B);                # movz x11, #0
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    # v0 = y[i..i+1]  (FMLA accumulates into v0)
+    EFLLOAD(S, vbase);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00180);                # ldr q0, [x12]
+    # v1 = x[i..i+1]
+    EFLLOAD(S, vbase + 1);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00181);                # ldr q1, [x12]
+    # fmla v0.2d, v1.2d, v3.2d  — v0 = v0 + v1 * v3 = y + x * alpha
+    EW(S, 0x4E63CC20);
+    # store v0 back to y[i..i+1]
+    EFLLOAD(S, vbase);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3D800180);                # str q0, [x12]
+    EW(S, 0x9100096B);                # add x11, x11, #2
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
