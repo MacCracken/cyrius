@@ -417,7 +417,7 @@ fn str_builder_add_int(sb, n) {
 # Allocates the permanent output buffer (`total + 1` bytes,
 # null-terminated) AND the 16-byte Str header via `a`. Returns
 # 0 on OOM.
-fn str_builder_build_a(a, sb) {
+fn str_builder_build_a(a, sb): Str {
     var buf = load64(sb);
     var total = load64(sb + 8);
     if (total == 0) { return str_from_a(a, ""); }
@@ -429,12 +429,12 @@ fn str_builder_build_a(a, sb) {
 }
 
 # Build final Str from the builder's buffer. v5.8.43 wrapper.
-fn str_builder_build(sb) {
+fn str_builder_build(sb): Str {
     return str_builder_build_a(default_alloc(), sb);
 }
 
 # Join a vec of Str with separator
-fn str_join(parts, sep: Str) {
+fn str_join(parts, sep: Str): Str {
     var plen = vec_len(parts);
     if (plen == 0) { return str_from(""); }
     var sb = str_builder_new();

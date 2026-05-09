@@ -2413,6 +2413,7 @@ string::memeq/3
 string::memset/3
 string::print_num/1
 string::println/1
+string::println_int/1
 string::str_lower_cstr/1
 string::str_lower_cstr_inplace/1
 string::str_upper_cstr/1

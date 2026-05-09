@@ -327,16 +327,21 @@ v5.10.x is now ordered bottom-to-top.
    (extended one slot at v5.10.2 ship — overload dispatch
    split out of v5.10.2 to its own v5.10.3 slot per the
    honest-scope rule).
-2. **stdlib runtime services (TLS / net)** — second priority
+2. **vyakarana 2.1.0 cap unblock** — slot-on-need surfaced
+   2026-05-08 (return-cap proposal); slotted before runtime
+   services because it's a narrow, mechanical fix that
+   unblocks the vyakarana grammar-batch flow without
+   blocking sandhi. v5.10.6.
+3. **stdlib runtime services (TLS / net)** — third priority
    per the bottom-to-top stack — sandhi 1.3.x's TLS arc
    needs `lib/net.cyr` `net_connect_nb` primitive +
-   `lib/tls.cyr` native-transport prep audit. v5.10.6-.7.
-3. **specialized libraries (hisab math)** — third priority —
+   `lib/tls.cyr` native-transport prep audit. v5.10.7-.8.
+4. **specialized libraries (hisab math)** — fourth priority —
    typed SIMD math expansion now that overload dispatch
-   from v5.10.3 enables typed `f64v4` primitives. v5.10.8.
-4. **compile-time speedups + surface review** — last, since
+   from v5.10.3 enables typed `f64v4` primitives. v5.10.9.
+5. **compile-time speedups + surface review** — last, since
    they don't unblock any baseOS or runtime-service item.
-   v5.10.9+.
+   v5.10.10+.
 
 Reference: memory pin
 `feedback_priority_bottom_to_top.md` — *"fixing hisab now doesn't
@@ -553,7 +558,85 @@ overload dispatch.
   the cascade started at v5.9.33 — 9 slots after the first
   fix attempt.
 
-#### v5.10.6 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
+#### v5.10.6 — Per-fn return-statement cap raise 64 → 256 (vyakarana 2.1.0 prereq)
+
+**Driver**: vyakarana 2.1.0 surfaced the cap during the
+PowerShell extension batch (`.ps1` / `.psm1` / `.psd1`) —
+`detect_language(path)` hit 83 returns past the 64-entry
+fixed array at `S + 0x18DA20`. vyakarana 2.1.0 shipped a
+length-bucket helper-split workaround; this slot lifts the
+cap so the dispatcher pattern works at scale. Filed proposal:
+[`docs/development/proposals/2026-05-08-raise-return-cap.md`](proposals/2026-05-08-raise-return-cap.md).
+
+**Why 256 not 128**: do-it-once. 128 covers vyakarana's
+foreseeable 2.1.x-2.3.x growth; 256 buys headroom for any
+extension dispatcher (file-format detectors, MIME tables,
+syscall translators) we'd surface in the next 24 months. The
+cost delta is +1024 B per parser-state instance over 128 —
+negligible. Picking 256 vs 128 saves a future bump cycle for
+the same file edits + cross-arch verification.
+
+**Why fixed (not dynamic) at v5.10.6**: a growable buffer
+(Option C in the proposal) is the right long-term fix but
+needs a `realloc`-shaped path inside the parser — invasive
+enough to land at v6.x.x with the broader cleanup arc.
+Pinned: see "v6.x.x — return-patch buffer dynamic
+conversion" entry below.
+
+**Scope**:
+- **Heap-map relocation**: `ret_patches` array grows from
+  512 B (64 entries) to 2048 B (256 entries) at 0x18DA20,
+  ending at 0x18E220. `ret_patch_cnt` (8 B) relocates from
+  0x18DC20 → 0x18E220. Headroom before `loop_top`
+  (0x18F838) is ~5.5 KB after the move; no other field
+  collides.
+- **Cap-check sites**: 8 enforcement points across
+  `src/frontend/parse.cyr`, `parse_fn.cyr`,
+  `parse_expr.cyr` change `>= 64` → `>= 256`.
+- **Cross-arch heap-map comments**: every `main_*.cyr`
+  maintains its own copy of the layout map — update
+  `main.cyr`, `main_aarch64.cyr`, `main_aarch64_macho.cyr`,
+  `main_aarch64_native.cyr`, `main_win.cyr`, `main_cx.cyr`
+  in lockstep. Cross-arch propagation per the
+  `feedback_cross_arch_propagation_mandatory` pin — this
+  is exactly the shape of the v5.8.52 token-fixup x86-only
+  miss; verify all six entry points before commit.
+- **Brk extension**: probably none required — parser state
+  sits well within first-MB; existing brks already cover
+  far past 0x18F838. Verify per main_*.cyr regardless.
+
+**Acceptance**:
+- New regression `tests/tcyr/return_cap.tcyr` with a
+  100-return synthetic that compiles cleanly post-bump and
+  errored at 64 pre-bump (run against the post-bump cc5;
+  pre-bump expectation is asserted via the error message
+  being absent).
+- Diagnostic message for >256 cap stays useful: `error:
+  too many return statements in function (max 256)` — same
+  shape as the 64 message, new number.
+- cc5 byte-identical self-host (heap-layout reshuffle but
+  no codegen change).
+- Cross-arch: cc5_aarch64 byte-identical; cc5_macho
+  byte-identical (round2 == round3 on ecb); cc5_win_cross
+  builds.
+- 66/66 check.sh; 134/134 cyrius test (133 + the new
+  return_cap regression); heapmap clean.
+- vyakarana stays on its 2.1.0 helper-split (collapsing
+  back is a stylistic choice for vyakarana; not in this
+  slot's scope).
+
+**NOT in this slot** (deferred with explicit pinnage):
+- **Dynamic growable buffer** (Option C) — pinned at
+  v6.x.x as the structural fix. Removes the cap entirely
+  via realloc-shape, lands during the v6.0.0 broader
+  cleanup arc.
+- **Diagnostic improvement** (Option D) — folded into the
+  cap raise itself (same message shape, just `256`
+  instead of `64`); standalone hint-with-vyakarana-example
+  variant deferred (low value once the cap is high enough
+  that nobody trips it).
+
+#### v5.10.7 — `lib/net.cyr` `net_connect_nb` primitive (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap explicitly asks for this as
 a stdlib factoring — the non-blocking-connect + poll(POLLOUT)
@@ -594,7 +677,7 @@ stdlib primitive.
   / fcntl / getsockopt across both); Mach-O ARM uses BSD
   syscall numbers (already wired up).
 
-#### v5.10.7 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
+#### v5.10.8 — `lib/tls.cyr` native-transport prep audit (sandhi 1.3.x prereq)
 
 **Driver**: sandhi 1.3.x roadmap pinned this as a cyrius-side
 ask under "Not sandhi's slot" — auditing the hook surface
@@ -614,7 +697,7 @@ any transport swap.
   fdlopen-loaded libssl symbol names, struct layouts, or
   ABI specifics that wouldn't survive a swap to a native
   cyrius TLS impl.
-- Document each finding inline (`# v5.10.6 audit:
+- Document each finding inline (`# v5.10.8 audit:
   fdlopen-bound — see ADR 000X if/when native-TLS lands`)
   + collect into `docs/audit/2026-MM-DD-tls-native-transport-prep.md`.
 - No code changes unless the audit surfaces a hook-surface
@@ -631,10 +714,10 @@ any transport swap.
 
 **Native-TLS swap itself is NOT in v5.10.x**. It's a separate,
 much-bigger undertaking (multi-slot or multi-minor) that
-needs its own design pass before pinning. v5.10.6 just
+needs its own design pass before pinning. v5.10.8 just
 documents the surface so a future swap is guided.
 
-#### v5.10.8 — SIMD math expansion (typed; hisab gap close)
+#### v5.10.9 — SIMD math expansion (typed; hisab gap close)
 
 Sandhi-side cousin of the type-system arc. Now that overload
 dispatch exists (v5.10.2), SIMD primitives can be exposed as
@@ -674,7 +757,7 @@ Memory pin `project_simd_state.md` lays out the cross-arch
 tax + the "byte-at-a-time is fine" stance applies to byte-
 parsing not math.
 
-#### v5.10.9+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.10+ — compile-time wins (lex / fixup), surface review, etc.
 
 Items that don't unblock baseOS but improve developer
 experience for everyone:
@@ -1191,6 +1274,19 @@ patches:
 - **`cyrius build --strict` mode** — escalate `undefined
   function` warnings to hard errors through the build wrapper
   (direct `cc5 --strict` shipped v5.4.19).
+- **Return-patch buffer dynamic conversion** (pinned 2026-05-08
+  at v5.10.6 ship — proposal Option C). The cap raise to 256
+  at v5.10.6 lifts the per-fn return ceiling well beyond any
+  realistic consumer workload, but the underlying fixed array
+  at `S + 0x18DA20` remains a magic-number'd parser-state
+  field. v6.x.x converts it to a `vec_*`-shaped growable
+  buffer (realloc on grow, freed at fn-end), removing the cap
+  entirely. Lands here rather than mid-v5.10.x because the
+  realloc-shaped path inside the parser is invasive enough to
+  belong with the broader v6.0.0 cleanup arc; until then the
+  256 cap is "do it once" headroom. Reference proposal:
+  [`docs/development/proposals/2026-05-08-raise-return-cap.md`](proposals/2026-05-08-raise-return-cap.md)
+  (Option C section).
 
 ### v6.0.0 — closeout
 

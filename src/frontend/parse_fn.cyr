@@ -556,6 +556,114 @@ fn _PRINTLN_STR_NOFF(S) {
     return 0 - 1;
 }
 
+# v5.10.5 — lazy-cached lookups for the additional overload
+# targets that close the agnosys 1.1.12 verbatim repro:
+#   - `strlen` and `str_len` for the `strlen(Str)` →
+#     `str_len(Str)` overload
+#   - `println_int` for the `println(i64)` overload
+# Pattern mirrors `_PRINTLN_NOFF` / `_PRINTLN_STR_NOFF`.
+var _strlen_noff_cache = 0 - 1;
+fn _STRLEN_NOFF(S) {
+    if (_strlen_noff_cache >= 0) { return _strlen_noff_cache; }
+    if (_strlen_noff_cache == 0 - 2) { return 0 - 1; }
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        # "strlen\0" — 6 chars + nul
+        if (load8(S + 0x60000 + i) == 115) {
+            if (load8(S + 0x60000 + i + 1) == 116) {
+                if (load8(S + 0x60000 + i + 2) == 114) {
+                    if (load8(S + 0x60000 + i + 3) == 108) {
+                        if (load8(S + 0x60000 + i + 4) == 101) {
+                            if (load8(S + 0x60000 + i + 5) == 110) {
+                                if (load8(S + 0x60000 + i + 6) == 0) {
+                                    _strlen_noff_cache = i;
+                                    return i;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    _strlen_noff_cache = 0 - 2;
+    return 0 - 1;
+}
+
+var _str_len_noff_cache = 0 - 1;
+fn _STR_LEN_NOFF(S) {
+    if (_str_len_noff_cache >= 0) { return _str_len_noff_cache; }
+    if (_str_len_noff_cache == 0 - 2) { return 0 - 1; }
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        # "str_len\0" — 7 chars + nul
+        if (load8(S + 0x60000 + i) == 115) {
+            if (load8(S + 0x60000 + i + 1) == 116) {
+                if (load8(S + 0x60000 + i + 2) == 114) {
+                    if (load8(S + 0x60000 + i + 3) == 95) {
+                        if (load8(S + 0x60000 + i + 4) == 108) {
+                            if (load8(S + 0x60000 + i + 5) == 101) {
+                                if (load8(S + 0x60000 + i + 6) == 110) {
+                                    if (load8(S + 0x60000 + i + 7) == 0) {
+                                        _str_len_noff_cache = i;
+                                        return i;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    _str_len_noff_cache = 0 - 2;
+    return 0 - 1;
+}
+
+var _println_int_noff_cache = 0 - 1;
+fn _PRINTLN_INT_NOFF(S) {
+    if (_println_int_noff_cache >= 0) { return _println_int_noff_cache; }
+    if (_println_int_noff_cache == 0 - 2) { return 0 - 1; }
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        # "println_int\0" — 11 chars + nul
+        if (load8(S + 0x60000 + i) == 112) {
+            if (load8(S + 0x60000 + i + 1) == 114) {
+                if (load8(S + 0x60000 + i + 2) == 105) {
+                    if (load8(S + 0x60000 + i + 3) == 110) {
+                        if (load8(S + 0x60000 + i + 4) == 116) {
+                            if (load8(S + 0x60000 + i + 5) == 108) {
+                                if (load8(S + 0x60000 + i + 6) == 110) {
+                                    if (load8(S + 0x60000 + i + 7) == 95) {
+                                        if (load8(S + 0x60000 + i + 8) == 105) {
+                                            if (load8(S + 0x60000 + i + 9) == 110) {
+                                                if (load8(S + 0x60000 + i + 10) == 116) {
+                                                    if (load8(S + 0x60000 + i + 11) == 0) {
+                                                        _println_int_noff_cache = i;
+                                                        return i;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    _println_int_noff_cache = 0 - 2;
+    return 0 - 1;
+}
+
 # Parse fn call args and emit call (as expression)
 fn PARSE_FNCALL(S, noff) {
     STI(S, GTI(S) + 1);  # consume (
@@ -570,21 +678,41 @@ fn PARSE_FNCALL(S, noff) {
     # emerge — narrow this slot per the v5.10.x acceptance
     # principle (Big-Heavy-One-Thing or measurable forward
     # motion; not bookkeeping).
-    var _od_println_noff = _PRINTLN_NOFF(S);
-    if (_od_println_noff >= 0) {
-        if (noff == _od_println_noff) {
-            if (PEEKT(S) == 2) {
-                var _od_arg_noff = PEEKV(S);
-                var _od_arg_typ = 0;
-                if (GINFN(S) == 1) {
-                    var _od_lli = FINDLOCAL(S, _od_arg_noff);
-                    if (_od_lli >= 0) { _od_arg_typ = GLTYPE(S, _od_lli); }
-                }
-                if (_od_arg_typ == 0) {
-                    var _od_vi = FINDVAR(S, _od_arg_noff);
-                    if (_od_vi >= 0) { _od_arg_typ = GVTYPE(S, _od_vi); }
-                }
-                var _od_str_sid = _STR_SID(S);
+    # v5.10.5 — extended overload dispatch closing the agnosys
+    # 1.1.12 verbatim repro:
+    #   `println(IDENT)`/`println(IDENT(args))` Str-typed → `println_str`
+    #   `strlen(IDENT)`/`strlen(IDENT(args))` Str-typed → `str_len`
+    #   `println(IDENT)`/`println(IDENT(args))` i64-typed → `println_int`
+    # Arg-shape extends the v5.10.3 plain-IDENT detection to also
+    # accept `IDENT (` (fn call): for fn-call args we look up the
+    # called fn's return-type via GFRS (positive sid for struct
+    # returns; negative scalar = -8/-4/-2/-1 for i64/i32/i16/i8).
+    if (PEEKT(S) == 2) {
+        var _od_arg_noff = PEEKV(S);
+        var _od_arg_typ = 0;
+        var _od_arg_scalar = 0;
+        if (TOKTYP(S, GTI(S) + 1) == 10) {
+            var _od_arg_fi = FINDFN(S, _od_arg_noff);
+            if (_od_arg_fi >= 0) {
+                var _od_ret = GFRS(S, _od_arg_fi);
+                if (_od_ret > 0) { _od_arg_typ = 0 - _od_ret; }
+                else { if (_od_ret < 0) { _od_arg_scalar = 0 - _od_ret; } }
+            }
+        } else {
+            if (GINFN(S) == 1) {
+                var _od_lli = FINDLOCAL(S, _od_arg_noff);
+                if (_od_lli >= 0) { _od_arg_typ = GLTYPE(S, _od_lli); }
+            }
+            if (_od_arg_typ == 0) {
+                var _od_vi = FINDVAR(S, _od_arg_noff);
+                if (_od_vi >= 0) { _od_arg_typ = GVTYPE(S, _od_vi); }
+            }
+        }
+        var _od_str_sid = _STR_SID(S);
+        var _od_println_noff = _PRINTLN_NOFF(S);
+        var _od_strlen_noff = _STRLEN_NOFF(S);
+        if (_od_println_noff >= 0) {
+            if (noff == _od_println_noff) {
                 if (_od_str_sid > 0) {
                     if (_od_arg_typ == 0 - _od_str_sid) {
                         var _od_ps_noff = _PRINTLN_STR_NOFF(S);
@@ -593,6 +721,32 @@ fn PARSE_FNCALL(S, noff) {
                             if (_od_ps_fi >= 0) {
                                 fi = _od_ps_fi;
                                 noff = _od_ps_noff;
+                            }
+                        }
+                    }
+                }
+                if (_od_arg_scalar == 8) {
+                    var _od_pi_noff = _PRINTLN_INT_NOFF(S);
+                    if (_od_pi_noff >= 0) {
+                        var _od_pi_fi = FINDFN(S, _od_pi_noff);
+                        if (_od_pi_fi >= 0) {
+                            fi = _od_pi_fi;
+                            noff = _od_pi_noff;
+                        }
+                    }
+                }
+            }
+        }
+        if (_od_strlen_noff >= 0) {
+            if (noff == _od_strlen_noff) {
+                if (_od_str_sid > 0) {
+                    if (_od_arg_typ == 0 - _od_str_sid) {
+                        var _od_sl_noff = _STR_LEN_NOFF(S);
+                        if (_od_sl_noff >= 0) {
+                            var _od_sl_fi = FINDFN(S, _od_sl_noff);
+                            if (_od_sl_fi >= 0) {
+                                fi = _od_sl_fi;
+                                noff = _od_sl_noff;
                             }
                         }
                     }
@@ -1120,7 +1274,38 @@ fn PARSE_FN_DEF(S) {
                         _cur_fn_ret_stash = 8;
                     }
                 } else {
-                    _cur_fn_ret_stash = 8;
+                    # v5.10.5 — recognize i8/i16/i32/i64 scalar returns
+                    # so the rough-scan doesn't default to retptr-stash
+                    # for them. Mirrors the post-param-list scalar path
+                    # that encodes negative values into fn_ret_sid.
+                    var _rs_b0 = load8(S + 0x60000 + _rs_rt_noff);
+                    var _rs_b1 = load8(S + 0x60000 + _rs_rt_noff + 1);
+                    var _rs_b2 = load8(S + 0x60000 + _rs_rt_noff + 2);
+                    var _rs_b3 = load8(S + 0x60000 + _rs_rt_noff + 3);
+                    var _rs_is_scalar = 0;
+                    if (_rs_b0 == 105) {
+                        if (_rs_b1 == 56) {
+                            if (_rs_b2 == 0) { _rs_is_scalar = 1; }
+                        }
+                        if (_rs_b1 == 49) {
+                            if (_rs_b2 == 54) {
+                                if (_rs_b3 == 0) { _rs_is_scalar = 1; }
+                            }
+                        }
+                        if (_rs_b1 == 51) {
+                            if (_rs_b2 == 50) {
+                                if (_rs_b3 == 0) { _rs_is_scalar = 1; }
+                            }
+                        }
+                        if (_rs_b1 == 54) {
+                            if (_rs_b2 == 52) {
+                                if (_rs_b3 == 0) { _rs_is_scalar = 1; }
+                            }
+                        }
+                    }
+                    if (_rs_is_scalar == 0) {
+                        _cur_fn_ret_stash = 8;
+                    }
                 }
             } else {
                 _cur_fn_ret_stash = 8;
@@ -1277,13 +1462,48 @@ fn PARSE_FN_DEF(S) {
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var rt_noff = PEEKV(S);
         var rt_sid = FINDSTRUCT(S, rt_noff);
-        if (rt_sid <= 0) {
-            ERR_MSG(S, "fn return type must be a struct name", 37);
+        if (rt_sid > 0) {
+            SFRS(S, fi, rt_sid);
+            _cur_fn_ret_sid = rt_sid;
+            STI(S, GTI(S) + 1);
+            SKIP_GENERICS(S);
+        } else {
+            # v5.10.5 — scalar return-type annotation (`: i8/i16/i32/i64`).
+            # Encoded as a NEGATIVE value in fn_ret_sid: -8 = i64,
+            # -4 = i32, -2 = i16, -1 = i8. All existing struct-only
+            # callers gate on `> 0`, so negative values are invisible
+            # to them.
+            var _rt_b0 = load8(S + 0x60000 + rt_noff);
+            var _rt_b1 = load8(S + 0x60000 + rt_noff + 1);
+            var _rt_b2 = load8(S + 0x60000 + rt_noff + 2);
+            var _rt_b3 = load8(S + 0x60000 + rt_noff + 3);
+            var _rt_scalar = 0;
+            if (_rt_b0 == 105) {
+                if (_rt_b1 == 56) {
+                    if (_rt_b2 == 0) { _rt_scalar = 0 - 1; }
+                }
+                if (_rt_b1 == 49) {
+                    if (_rt_b2 == 54) {
+                        if (_rt_b3 == 0) { _rt_scalar = 0 - 2; }
+                    }
+                }
+                if (_rt_b1 == 51) {
+                    if (_rt_b2 == 50) {
+                        if (_rt_b3 == 0) { _rt_scalar = 0 - 4; }
+                    }
+                }
+                if (_rt_b1 == 54) {
+                    if (_rt_b2 == 52) {
+                        if (_rt_b3 == 0) { _rt_scalar = 0 - 8; }
+                    }
+                }
+            }
+            if (_rt_scalar == 0) {
+                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64", 49);
+            }
+            SFRS(S, fi, _rt_scalar);
+            STI(S, GTI(S) + 1);
         }
-        SFRS(S, fi, rt_sid);
-        _cur_fn_ret_sid = rt_sid;
-        STI(S, GTI(S) + 1);                         # consume struct name
-        SKIP_GENERICS(S);
     }
     # Record first param name offset for inlining (stored in fn_inline later)
     # Emit stack param stores (7+) now that we know total pc
