@@ -562,9 +562,22 @@ fn EMOVQ_X1_C(S) { return 0; }
 fn EMOVQ_A_X0(S) { return 0; }
 fn EX87PUSH(S) { return 0; }
 fn EX87POP(S) { return 0; }
-fn EMIT_F64V_LOOP(S, op) { return 0; }
-fn EMIT_F64V_UNARY(S, op) { return 0; }
-fn EMIT_F64V_FMADD(S) { return 0; }
+# v5.10.16 — arity-aligned stubs to match x86/aarch64 signatures.
+# Pre-v5.10.16 these took (S, op) / (S, op) / (S) and the parser
+# called them with (S, op, vbase) / (S, op, vbase) / (S, vbase) —
+# arity mismatch was tolerated (cyrius fn calls don't enforce
+# parameter count, extras silently dropped) but exposes the
+# "f64 ops on cx are stubs" situation more bluntly.
+#
+# These stay no-ops because cx's entire f64 pipeline is no-op
+# (EMIT_F64_BINOP / EI2F / EF2I / EUCOMISD / EF64SQRT all return
+# 0 — see the v5.7.11 comment above). When cx grows f64 support,
+# the SIMD primitives gain a scalar-loop fallback at the same
+# time. Tracked at docs/development/roadmap.md (cx f64 support
+# is a multi-minor arc; not v5.10.x scope).
+fn EMIT_F64V_LOOP(S, op, vbase) { return 0; }
+fn EMIT_F64V_UNARY(S, op, vbase) { return 0; }
+fn EMIT_F64V_FMADD(S, vbase) { return 0; }
 fn EUCOMISD(S) { return 0; }
 fn EXORPD_X1(S) { return 0; }
 fn EMOVAPD_01(S) { return 0; }

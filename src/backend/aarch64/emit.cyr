@@ -1248,6 +1248,121 @@ fn EUNSPILL(S) { EPOPR(S); return 0; }
 var _INLINE_OK = 0;
 var _LOOPVAR_OK = 0;
 
-fn EMIT_F64V_LOOP(S, op, vbase) { return 0; }
-fn EMIT_F64V_UNARY(S, op, vbase) { return 0; }
-fn EMIT_F64V_FMADD(S, vbase) { return 0; }
+# v5.10.16 — NEON SIMD packed-double primitives.
+# Replaces the v1.9.0-era stubs that returned 0 (silent no-op).
+# Pre-v5.10.16: a consumer calling `f64v_add(dst, a, b, n)` on
+# aarch64 got an empty function body — dst was never written, the
+# loop never ran. Cross-arch propagation gap that escaped because
+# no tcyr exercised f64v_*; v5.10.16 adds those.
+#
+# Frame contract mirrors x86/float.cyr's EMIT_F64V_LOOP:
+#   vbase     = dst pointer
+#   vbase + 1 = a pointer
+#   vbase + 2 = b pointer (LOOP/FMADD only)
+#   vbase + 3 = c pointer (FMADD only)
+#   x0        = n (count of f64 elements; entry register)
+# Loop processes 2 doubles per iteration via Q-registers
+# (NEON 128-bit vector regs hold v.2d = 2x f64). Index in x11
+# counts doubles; pair-step is +2 to match x86's `rsi += 2`.
+#
+# Tail behavior: identical to x86 — if n is odd, the last
+# iteration touches one element past the array (16-byte load/
+# store starting at index n-1). Caller contract: over-allocate
+# by one slot or pass even n. Pre-existing footgun preserved
+# for cross-arch parity; documented here, not silently fixed.
+
+fn EMIT_F64V_LOOP(S, op, vbase) {
+    EW(S, 0xAA0003EA);                # mov x10, x0   — n
+    EW(S, 0xD280000B);                # movz x11, #0  — index = 0
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done (patched later)
+    # v0 = a[index..index+1]
+    EFLLOAD(S, vbase + 1);            # x0 = a base
+    EW(S, 0xAA0003EC);                # mov x12, x0
+    EW(S, 0x8B0B0D8C);                # add x12, x12, x11, lsl #3
+    EW(S, 0x3DC00180);                # ldr q0, [x12]
+    # v1 = b[index..index+1]
+    EFLLOAD(S, vbase + 2);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00181);                # ldr q1, [x12]
+    # NEON op: f{add,sub,mul,div} v0.2d, v0.2d, v1.2d
+    if (op == 0) { EW(S, 0x4E61D400); }
+    if (op == 1) { EW(S, 0x4EE1D400); }
+    if (op == 2) { EW(S, 0x6E61DC00); }
+    if (op == 3) { EW(S, 0x6E61FC00); }
+    # dst[index..index+1] = v0
+    EFLLOAD(S, vbase);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3D800180);                # str q0, [x12]
+    EW(S, 0x9100096B);                # add x11, x11, #2
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
+fn EMIT_F64V_UNARY(S, op, vbase) {
+    EW(S, 0xAA0003EA);                # mov x10, x0
+    EW(S, 0xD280000B);                # movz x11, #0
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    # v0 = src[index..index+1]
+    EFLLOAD(S, vbase + 1);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00180);                # ldr q0, [x12]
+    # NEON unary: fsqrt or fabs v0.2d, v0.2d
+    if (op == 0) { EW(S, 0x6EE1F800); }
+    if (op == 1) { EW(S, 0x4EE0F800); }
+    # dst[index..index+1] = v0
+    EFLLOAD(S, vbase);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3D800180);                # str q0, [x12]
+    EW(S, 0x9100096B);                # add x11, x11, #2
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
+fn EMIT_F64V_FMADD(S, vbase) {
+    EW(S, 0xAA0003EA);                # mov x10, x0
+    EW(S, 0xD280000B);                # movz x11, #0
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    # FMLA v0.2d, v1.2d, v2.2d computes v0 = v0 + v1*v2.
+    # We want dst = a*b + c, so load c → v0, a → v1, b → v2.
+    # v0 = c
+    EFLLOAD(S, vbase + 3);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00180);                # ldr q0, [x12]
+    # v1 = a
+    EFLLOAD(S, vbase + 1);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00181);                # ldr q1, [x12]
+    # v2 = b
+    EFLLOAD(S, vbase + 2);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3DC00182);                # ldr q2, [x12]
+    # fmla v0.2d, v1.2d, v2.2d
+    EW(S, 0x4E62CC20);
+    # dst = v0
+    EFLLOAD(S, vbase);
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B0D8C);
+    EW(S, 0x3D800180);                # str q0, [x12]
+    EW(S, 0x9100096B);                # add x11, x11, #2
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}

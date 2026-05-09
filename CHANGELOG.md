@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.16] — 2026-05-09
+
 ## [5.10.15] — 2026-05-09
 
 **v5.10.x SLOT 15 — shadow-lib compile note (held from

@@ -71,14 +71,43 @@ fn EMIT_FLOAT_LIT(S, fval) {
 # ================================================================
 # SIMD — SSE2 packed f64 batch operations
 # ================================================================
-# Emit a vectorized loop: process N f64 elements from two source arrays
-# into a destination array. Args on stack: dst=[rbp-8], a=[rbp-16], b=[rbp-24], n=[rbp-32]
-# op: 0=add(addpd), 1=sub(subpd), 2=mul(mulpd)
+# v5.10.16 — fixes a long-latent x86 codegen bug (likely shipped
+# v1.9.0): the LOOP/UNARY/FMADD emits computed slot-N frame disps
+# as `-(N+1)*8` but EFLSTORE / EFLLOAD adjust by an additional
+# `_cur_fn_regalloc * 8 + _cur_fn_ret_stash` for fns that auto-
+# enabled callee-save register caching or return a struct via the
+# hidden retbuf slot. The arg-stash and the loop-body load
+# diverged by 40+ bytes for any fn that hit auto-regalloc — every
+# call to f64v_add/_sub/_mul/_div/_sqrt/_abs/_fmadd from within
+# such a fn segfaulted reading off the stash. Latent because the
+# only consumers (programs/simd_expand_test.cyr) were never
+# wired into check.sh; tcyr coverage added v5.10.16 forces this
+# never to silently regress again.
+#
+# `_F64V_DISP` mirrors EFLSTORE's adjustment formula. The disp32
+# `mov rdx, [rbp + disp32]` form (`48 8B 95 disp32`) is used
+# unconditionally so adjusted disps below -128 don't truncate
+# silently; the +3 bytes per load is amortized across the loop.
+
+fn _F64V_DISP(idx) {
+    var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    return disp;
+}
+
+fn _EMIT_LOAD_RDX_FROM_LOCAL(S, idx) {
+    # mov rdx, [rbp + disp32]: 48 8B 95 disp32
+    var disp = _F64V_DISP(idx);
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x95);
+    EB(S, disp & 0xFF);
+    EB(S, (disp >> 8) & 0xFF);
+    EB(S, (disp >> 16) & 0xFF);
+    EB(S, (disp >> 24) & 0xFF);
+    return 0;
+}
+
 fn EMIT_F64V_LOOP(S, op, vbase) {
-    # Compute frame offsets: dst=[rbp-(vbase+1)*8], a=[rbp-(vbase+2)*8], b=[rbp-(vbase+3)*8]
-    var off_dst = (0 - (vbase + 1)) * 8;
-    var off_a = (0 - (vbase + 2)) * 8;
-    var off_b = (0 - (vbase + 3)) * 8;
     # rcx = n (already in rax from last arg)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
     # rsi = 0 (loop counter)
@@ -89,13 +118,11 @@ fn EMIT_F64V_LOOP(S, op, vbase) {
     EB(S, 0x0F); EB(S, 0x8D);
     var done_patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    # a = [rbp+off_a] → rdx
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_a & 0xFF);
-    # movupd xmm0, [rdx+rsi*8]
+    # rdx = a base; movupd xmm0, [rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);
-    # b = [rbp+off_b] → rdx
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_b & 0xFF);
-    # movupd xmm1, [rdx+rsi*8]
+    # rdx = b base; movupd xmm1, [rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);
     # Operation: addpd/subpd/mulpd/divpd xmm0, xmm1
     EB(S, 0x66); EB(S, 0x0F);
@@ -104,15 +131,13 @@ fn EMIT_F64V_LOOP(S, op, vbase) {
     if (op == 2) { EB(S, 0x59); }
     if (op == 3) { EB(S, 0x5E); }
     EB(S, 0xC1);
-    # dst = [rbp+off_dst] → rdx
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_dst & 0xFF);
-    # movupd [rdx+rsi*8], xmm0: 66 0F 11 04 F2
+    # rdx = dst base; movupd [rdx+rsi*8], xmm0
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);
     # rsi += 2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x02);
     # jmp loop_top
     EJMP(S, loop_top);
-    # Patch done jump
     EPATCH(S, done_patch);
     return 0;
 }
@@ -120,41 +145,32 @@ fn EMIT_F64V_LOOP(S, op, vbase) {
 # EMIT_F64V_UNARY — packed unary ops: sqrtpd (op=0), abs via andpd (op=1)
 # Args at vbase: dst, src, n(rax)
 fn EMIT_F64V_UNARY(S, op, vbase) {
-    var off_dst = (0 - (vbase + 1)) * 8;
-    var off_src = (0 - (vbase + 2)) * 8;
     # For abs: build sign mask in xmm2 — pcmpeqd xmm2,xmm2; psrlq xmm2,1
     if (op == 1) {
         EB(S, 0x66); EB(S, 0x0F); EB(S, 0x76); EB(S, 0xD2);
         EB(S, 0x66); EB(S, 0x0F); EB(S, 0x73); EB(S, 0xD2); EB(S, 0x01);
     }
-    # rcx = n (already in rax)
+    # rcx = n
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
     # rsi = 0
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
-    # Loop top: cmp rsi, rcx; jge done
     var loop_top = GCP(S);
     EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);
     EB(S, 0x0F); EB(S, 0x8D);
     var done_patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    # src = [rbp+off_src] → rdx
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_src & 0xFF);
-    # movupd xmm0, [rdx+rsi*8]
+    # rdx = src base; movupd xmm0, [rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);
-    # Operation
     if (op == 0) {
-        # sqrtpd xmm0, xmm0: 66 0F 51 C0
         EB(S, 0x66); EB(S, 0x0F); EB(S, 0x51); EB(S, 0xC0);
     }
     if (op == 1) {
-        # andpd xmm0, xmm2: 66 0F 54 C2
         EB(S, 0x66); EB(S, 0x0F); EB(S, 0x54); EB(S, 0xC2);
     }
-    # dst = [rbp+off_dst] → rdx
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_dst & 0xFF);
-    # movupd [rdx+rsi*8], xmm0
+    # rdx = dst base; movupd [rdx+rsi*8], xmm0
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);
-    # rsi += 2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x02);
     EJMP(S, loop_top);
     EPATCH(S, done_patch);
@@ -164,37 +180,29 @@ fn EMIT_F64V_UNARY(S, op, vbase) {
 # EMIT_F64V_FMADD — dst[i] = a[i]*b[i] + c[i] using mulpd + addpd (SSE2)
 # Args at vbase: dst, a, b, c, n(rax)
 fn EMIT_F64V_FMADD(S, vbase) {
-    var off_dst = (0 - (vbase + 1)) * 8;
-    var off_a = (0 - (vbase + 2)) * 8;
-    var off_b = (0 - (vbase + 3)) * 8;
-    var off_c = (0 - (vbase + 4)) * 8;
-    # rcx = n
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
-    # rsi = 0
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
-    # Loop top
     var loop_top = GCP(S);
     EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);
     EB(S, 0x0F); EB(S, 0x8D);
     var done_patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
     # a → xmm0
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_a & 0xFF);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);
     # b → xmm1
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_b & 0xFF);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);
     # mulpd xmm0, xmm1
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC1);
     # c → xmm1
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_c & 0xFF);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 3);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);
     # addpd xmm0, xmm1
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x58); EB(S, 0xC1);
-    # store dst
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x55); EB(S, off_dst & 0xFF);
+    # store to dst
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);
-    # rsi += 2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x02);
     EJMP(S, loop_top);
     EPATCH(S, done_patch);

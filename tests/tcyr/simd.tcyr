@@ -1,0 +1,133 @@
+# Test: SIMD packed-double primitives (f64v_add/sub/mul/div/sqrt/abs/fmadd)
+#
+# v5.10.16 — closes the cross-arch gap and the latent x86 frame-
+# offset bug. Pre-v5.10.16 the f64v_* primitives:
+#   - aarch64: no-op stub (silent — dst untouched)
+#   - cx: no-op stub (cx has no f64 pipeline)
+#   - x86: codegen emitted but used wrong frame disp under
+#          auto-regalloc / struct-return — segfaulted reading off
+#          the stash by 40+ bytes. simd_expand_test.cyr was the
+#          only consumer and never wired into check.sh, so the
+#          x86 bug rode along with the aarch64 stub for ~3.5
+#          years of releases.
+#
+# Each test pre-fills dst with zero that the SIMD op MUST
+# overwrite. Size-2 matches the SSE2 / NEON 2-double pair width
+# directly; size-4 exercises the loop's pair-step.
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+fn run_simd_tests() {
+    test_group("f64v_add");
+    var a = alloc(16);
+    var b = alloc(16);
+    var dst = alloc(16);
+    store64(a, f64_from(10));
+    store64(a + 8, f64_from(20));
+    store64(b, f64_from(32));
+    store64(b + 8, f64_from(22));
+    store64(dst, 0);
+    store64(dst + 8, 0);
+    f64v_add(dst, a, b, 2);
+    assert_eq(f64_to(load64(dst)) + f64_to(load64(dst + 8)), 84, "add 2-wide pair");
+
+    var a4 = alloc(32);
+    var b4 = alloc(32);
+    var d4 = alloc(32);
+    store64(a4, f64_from(1));
+    store64(a4 + 8, f64_from(2));
+    store64(a4 + 16, f64_from(3));
+    store64(a4 + 24, f64_from(4));
+    store64(b4, f64_from(10));
+    store64(b4 + 8, f64_from(10));
+    store64(b4 + 16, f64_from(10));
+    store64(b4 + 24, f64_from(10));
+    store64(d4, 0);
+    store64(d4 + 8, 0);
+    store64(d4 + 16, 0);
+    store64(d4 + 24, 0);
+    f64v_add(d4, a4, b4, 4);
+    var s4 = f64_to(load64(d4)) + f64_to(load64(d4 + 8))
+           + f64_to(load64(d4 + 16)) + f64_to(load64(d4 + 24));
+    assert_eq(s4, 50, "add 4-wide loop");
+
+    test_group("f64v_sub / mul / div");
+    var sa = alloc(16);
+    var sb = alloc(16);
+    var sd = alloc(16);
+    store64(sa, f64_from(50));
+    store64(sa + 8, f64_from(100));
+    store64(sb, f64_from(8));
+    store64(sb + 8, f64_from(58));
+    store64(sd, 0);
+    store64(sd + 8, 0);
+    f64v_sub(sd, sa, sb, 2);
+    assert_eq(f64_to(load64(sd)) + f64_to(load64(sd + 8)), 84, "sub");
+
+    var ma = alloc(16);
+    var mb = alloc(16);
+    var md = alloc(16);
+    store64(ma, f64_from(6));
+    store64(ma + 8, f64_from(7));
+    store64(mb, f64_from(7));
+    store64(mb + 8, f64_from(0));
+    store64(md, 0);
+    store64(md + 8, 0);
+    f64v_mul(md, ma, mb, 2);
+    assert_eq(f64_to(load64(md)) + f64_to(load64(md + 8)), 42, "mul");
+
+    var da = alloc(16);
+    var db = alloc(16);
+    var dd = alloc(16);
+    store64(da, f64_from(84));
+    store64(da + 8, f64_from(100));
+    store64(db, f64_from(2));
+    store64(db + 8, f64_from(100));
+    store64(dd, 0);
+    store64(dd + 8, 0);
+    f64v_div(dd, da, db, 2);
+    assert_eq(f64_to(load64(dd)) + f64_to(load64(dd + 8)), 43, "div");
+
+    test_group("f64v_sqrt / abs");
+    var qs = alloc(16);
+    var qd = alloc(16);
+    store64(qs, f64_from(16));
+    store64(qs + 8, f64_from(81));
+    store64(qd, 0);
+    store64(qd + 8, 0);
+    f64v_sqrt(qd, qs, 2);
+    assert_eq(f64_to(load64(qd)) + f64_to(load64(qd + 8)), 13, "sqrt");
+
+    var bas = alloc(16);
+    var bad = alloc(16);
+    var neg = f64_sub(f64_from(0), f64_from(7));
+    store64(bas, neg);
+    store64(bas + 8, f64_from(42));
+    store64(bad, 0);
+    store64(bad + 8, 0);
+    f64v_abs(bad, bas, 2);
+    assert_eq(f64_to(load64(bad)) + f64_to(load64(bad + 8)), 49, "abs");
+
+    test_group("f64v_fmadd");
+    var fa = alloc(16);
+    var fb = alloc(16);
+    var fc = alloc(16);
+    var fd = alloc(16);
+    store64(fa, f64_from(3));
+    store64(fa + 8, f64_from(5));
+    store64(fb, f64_from(7));
+    store64(fb + 8, f64_from(6));
+    store64(fc, f64_from(4));
+    store64(fc + 8, f64_from(2));
+    store64(fd, 0);
+    store64(fd + 8, 0);
+    f64v_fmadd(fd, fa, fb, fc, 2);
+    assert_eq(f64_to(load64(fd)) + f64_to(load64(fd + 8)), 57, "fmadd");
+    return 0;
+}
+
+run_simd_tests();
+var r = assert_summary();
