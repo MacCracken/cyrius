@@ -5,6 +5,69 @@
 
 ## Version
 
+**5.10.20** (shipped 2026-05-09 — **v5.10.x SLOT 20 —
+P(-1) project hardening sweep + held-items slot pinning
++ v5.11.x/v5.12.0 reorg**).
+
+CLAUDE.md P(-1) refactor-cycle audit. User direction
+2026-05-09: push current remaining back one slot; do
+P(-1) sweep as v5.10.20; pin held items concretely
+(except mabda); TS harness → v5.11.x; v5.12.0 = bare-
+metal/RISC-V (was v5.11.x).
+
+**P(-1) sweep results**:
+1. Cleanliness — check.sh 66/66 (format + lint + vet).
+2. Test sweep — cyrius test 135/135; 2-step self-host
+   byte-identical; heap audit 84 regions / 0 overlaps.
+3. Benchmark baseline — vec/push_10 1µs, push_100 3µs,
+   push_1000 21µs, vec/get 1µs, vec/find_100 1µs.
+4. Audit — 34 unreachable fns (all subsystem-protected);
+   no FIXME/TODO; api-surface clean (2,808); vidya refs
+   consistent; no new attack surface.
+5. Refactor — nothing surfaced. v5.10.x landed clean.
+6. Post-audit benchmarks — no refactor → no comparison.
+7. Documentation — this entry + roadmap reorg.
+
+**Slot pinning** (was "earns slot when surfaces"; now
+concrete):
+- v5.10.21 — typed `f64v2`/`f64v4` (was v5.10.20)
+- v5.10.22-.26 — REAL TYPE SYSTEM 5-phase arc
+- v5.10.27+ — Stdlib data-domain distlib carve-out
+- v5.10.29 — Lex dedup optimization
+- v5.10.30 — Fixup phase optimization
+- v5.10.31 — `lib/tls.cyr` hook-surface contract audit
+- v5.10.32 — macOS arm64 struct-by-value
+- v5.10.33 — Defensive sweep bundle
+
+**Held** (per user direction):
+- Class B FFI / wgpu fncall6 ABI (mabda B1/B2) — stays
+  unpinned; surfaces-on-ask only.
+
+**Cycle reorg**:
+- TS test harness → v5.11.x (was held forward)
+- v5.11.x = cleanup minor (TS harness + v5.10.x
+  leftovers); was bare-metal/RISC-V
+- v5.12.0 = bare-metal AGNOS kickoff (slid 5 minors
+  now: v5.7.0 → ... → v5.12.0)
+- v5.12.x = RISC-V rv64
+- Parser-to-emit named-op refactor (RISC-V prereq) →
+  v5.12.x
+
+**Acceptance**:
+- All gates green (66/66 + 135/135).
+- Byte-identical x86 self-host.
+- Roadmap reorganized; CHANGELOG entry; state.md
+  current state.
+
+**Sizes unchanged** (pure audit + doc work):
+- cc5: 778,120 B
+- cc5_aarch64: 473,688 B
+- cyrius CLI: 170,848 B
+
+**Next**: v5.10.21 = typed `f64v2`/`f64v4` (closes
+the SIMD typed-verbs arc that started with v5.10.16
+cross-arch close + v5.10.17 keystone primitives).
+
 **5.10.19** (shipped 2026-05-09 — **v5.10.x SLOT 19 —
 `cyrius deps` transitive include resolution for stdlib
 arch-dispatcher modules (agnosys CI unblock #2)**).

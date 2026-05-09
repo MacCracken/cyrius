@@ -1135,220 +1135,290 @@ recursive scanner). cc5 unchanged (fix is in `cbt/`,
 not the compiler). 66/66 check.sh, 135/135 cyrius
 test. Byte-identical x86 self-host.
 
-#### v5.10.20+ — typed `f64v2` / `f64v4` types (overload dispatch surface)
+#### v5.10.20 ✅ — P(-1) project hardening sweep (SHIPPED)
+
+Refactor-cycle audit per CLAUDE.md P(-1) phase. Runs the
+seven hardening steps before opening the v5.10.20+ slot
+arc. Performed at the v5.10.19 → .20 boundary by user
+direction 2026-05-09: "push current remaining back by
+one; do a P(-1) hardening sweep on the project as
+5.10.20; held items lets get them slotted and pinned —
+leave mabda issue out to be held."
+
+**Sweep results**:
+1. **Cleanliness** — `check.sh` 66/66 (format + lint +
+   vet gates). PASS.
+2. **Test sweep** — `cyrius test` 135/135. 2-step
+   self-host byte-identical (cc5 → cc5_b → cc5_c).
+   Heap audit `tests/heapmap.sh` clean: 84 regions,
+   0 overlaps. PASS.
+3. **Benchmark baseline** — `cyrius bench` captured:
+   vec/push_10 1µs, push_100 3µs, push_1000 21µs,
+   vec/get 1µs, vec/find_100 1µs (15/15 bench
+   asserts pass).
+4. **Audit** — 34 unreachable fns / 22,792 bytes (all
+   subsystem-prefix-protected per memory pin
+   `feedback_dead_code_audit_scope`: TS_*/macho_*/IR_*
+   are reachable via `--mode` flags or other
+   `main_*.cyr` builds; not safe to remove). No
+   FIXME/TODO/HACK markers in v5.10.x edits. api-
+   surface clean (2,808 fns matches snapshot). Vidya
+   version refs consistent. No new attack surface
+   (READFILE call sites unchanged from pre-v5.10.16).
+5. **Refactor** — nothing surfaced. v5.10.x cycle
+   landed clean: SIMD primitives + cross-arch close
+   + parse-dispatch + stdlib hotfixes + recursive
+   `cyrius deps`. No consolidation opportunities
+   identified.
+6. **Post-audit benchmarks** — no refactor → no
+   comparison needed. Baseline becomes the v5.10.20+
+   reference for the optimization slots later in
+   v5.10.x.
+7. **Documentation** — this entry + slot-and-pin
+   reorg of held items (next entries below). Roadmap
+   re-baselined for the remaining v5.10.x cycle.
+
+cc5 unchanged at 778,120 B. cc5_aarch64 unchanged at
+473,688 B. cyrius CLI unchanged at 170,848 B. No
+codegen changes; pure audit + roadmap restructure.
+
+### v5.10.21+ — Slot pinning for the remainder of v5.10.x
+
+User direction at v5.10.20 P(-1) sweep
+(2026-05-09): "held items lets get them slotted and
+pinned — leave mabda issue out to be held."
+
+The v5.10.x bug arc is now concretely pinned. Mabda
+Class B FFI / wgpu stays held (see end of file). TS
+test harness moves to v5.11.x. v5.12.0 is now the
+bare-metal AGNOS / RISC-V kickoff (was v5.11.x).
+
+#### v5.10.21 — typed `f64v2` / `f64v4` types (overload dispatch surface)
 
 The "typed verbs" half of the original v5.10.16 roadmap
-entry, recognized as a separate arc once the cross-arch
-work happened first. Adds `f64v2` and `f64v4` as primitive
-types (16-byte and 32-byte packed-f64 respectively),
-overloaded `f64v2_add(a: f64v2, b: f64v2): f64v2` etc.
-exposed in `lib/simd.cyr`. The flat-array primitives
+entry. Was v5.10.20 in the previous numbering; pushed
+back one slot at v5.10.20 P(-1) sweep so the hardening
+phase landed first.
+
+Adds `f64v2` and `f64v4` as primitive types (16-byte
+and 32-byte packed-f64 respectively), overloaded
+`f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed in
+`lib/simd.cyr`. The flat-array primitives
 (`f64v_add`/`_dot`/`_scale`/...) remain the underlying
-codegen — typed wrappers just give consumers a cleaner API.
+codegen — typed wrappers just give consumers a cleaner
+API.
 
-Type-system change with self-host implications — earned
-its own slot rather than bundling with v5.10.17's
-primitive expansion.
+Type-system change with self-host implications — earns
+its own slot. Pairs with REAL TYPE SYSTEM at v5.10.22+
+which provides the overload-dispatch infrastructure
+this slot exercises.
 
-#### v5.10.21+ — compile-time wins (lex / fixup), surface review, etc.
+#### v5.10.22+ — REAL TYPE SYSTEM (multi-slot arc)
 
-Items that don't unblock baseOS but improve developer
-experience for everyone:
+Pinned 2026-05-08 at v5.9.36 wrap; user direction;
+multi-slot effort. Promoted from "held bug arc" to
+concrete slot pin at v5.10.20 P(-1) sweep.
 
-- **Lex dedup hot-path optimization**. v5.10.0 profile data
-  shows lex at 580 ms (59% of compile time) and an O(N²)
-  LEXID dedup scan inside it. Length-buckets (~20 LOC,
-  ~5-10× expected on dedup_cmps) is the recommended starting
-  point — preserves the linear-scan model per cyrius's
-  byte-parsing philosophy. Last-K cache (~15 LOC, ~2-3×) and
-  hand-rolled-hash-in-cc5 (~100 LOC, 30-40×) are escalation
-  paths if length-buckets isn't enough.
-- **Fixup phase optimization**. v5.10.0 profile shows fixup
-  at 210 ms (21%). Second-largest target after lex.
-- **Surface review** items: `cyrius audit` outside-repo
-  semantics design call, `parse_fn.cyr:910` defensive
-  guard, doc/vidya version-ref drift cleanup.
+Currently cyrius tracks type *annotations* (struct
+fields, var slots, fn params via `: Type` or `: Str`)
+and uses them for width-correct loadN/storeN +
+pointer-mode dot access — but the parser does NOT
+enforce types at fn call sites and there's no overload
+dispatch.
 
-- **`CYRIUS_TYPE_CHECK` default-on flip** (deferred from
-  v5.10.5 — see `parse_fn.cyr::_TYPE_CHECK_ENABLED`
-  comment for the rationale). The v5.10.4 stdlib param-
-  annotation pass DID clean up the original false-
-  positive shape (Str-passing into annotated stdlib fns).
-  But a separate false-positive shape surfaced at
-  v5.10.5: Str values passed to GENERIC i64-shaped fns
-  (`vec_push_a`, `alloc`, `map_set`, etc.) trigger the
-  warning even though Str-as-i64-pointer is the legitimate
-  semantic. Distinguishing "untyped i64" from "expects
-  cstring" requires per-param scalar-vs-pointer
-  annotation tracking. Lands when that infrastructure
-  ships. Until then, the gate stays `CYRIUS_TYPE_CHECK=1`
-  opt-in.
+**Canonical motivating example** — agnosys 1.1.12
+verbatim repro at
+`/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
+(hash `6425355b6147d5a674078794310ae2c1` at v5.9.37
+ship). Builds clean post-v5.9.37 but the binary
+SIGSEGVs at runtime:
+```cyr
+var out = str_builder_build(sb);    # out: Str
+println(out);                        # treats Str as cstring -> garbage
+println(strlen(out));                # treats int as cstring -> SIGSEGV
+```
+Both lines are API misuse the type system would catch /
+dispatch correctly. v5.9.x had three options to fix
+(polymorphic-runtime-detection / break
+`str_builder_build` / partial Option-3); user rejected
+all three as either sloppy or breaking — the right fix
+is a real type system.
 
-### v5.10.x — Held / pinned bug arc (slot-on-need)
+**Multi-slot scope** (refine at first slot entry):
+1. **v5.10.22 — Phase 1: Surface audit** — annotate
+   every fn body in stdlib + cyrius-side code with
+   implicit return-type info.
+2. **v5.10.23 — Phase 2: Call-site type check** — at
+   `PARSE_FNCALL`, compare each arg's tracked type
+   against the callee's param annotation.
+3. **v5.10.24 — Phase 3: Overload dispatch** — extend
+   `FINDFN` to support multiple impls keyed by
+   arg-type signature. PP-mangled names
+   (`println_cstr` / `println_str` / `println_int`)
+   at the symbol level; parser routes by arg type.
+4. **v5.10.25 — Phase 4: Type inference** — propagate
+   fn return types through `var x = f(...);` and
+   binary operators.
+5. **v5.10.26 — Phase 5: Diagnostics + CYRIUS_TYPE_CHECK
+   default-on flip** — `error: cannot pass Str to fn
+   expecting cstring; use str_data(x) or str_println(x)`
+   hints. With Phases 1-4 landed, the
+   `CYRIUS_TYPE_CHECK` default-on flip becomes safe
+   (deferred from v5.10.5; see
+   `parse_fn.cyr::_TYPE_CHECK_ENABLED` comment for the
+   pre-v5.10.22 false-positive shape that gated the
+   flip on per-param scalar-vs-pointer annotation
+   tracking — exactly what Phase 1 builds).
 
-Items earn a slot when consumer pressure surfaces or
-opportunistic touch makes sense:
+Phase numbering is provisional. May span more slots
+if a phase surfaces sub-structure; refine at slot
+entry per `feedback_premise_check_at_slot_entry`.
 
-- **Shadow-lib guard** (pinned 2026-05-08 at v5.10.10 close
-  — agnosys aarch64 SIGILL diagnosis surfaced the gap).
-  cyrius's `READFILE` resolves `include "lib/<file>.cyr"`
-  against cwd FIRST, only falling through to the version-
-  pinned `$HOME/.cyrius/versions/<MY_VERSION>/lib/`. A stale
-  `lib/` in a project folder (often left behind by an old
-  `cyrius deps` run, manual install, or pre-version-pinning
-  setup) silently shadows the version-pinned snapshot. Same
-  cc5 binary + same source produces different output across
-  machines depending on whether the project folder has a
-  shadow lib, and worse — a shadow lib that's an OLDER
-  version of `lib/fnptr.cyr` etc. emits the wrong asm
-  blocks (e.g. x86 inline asm in an aarch64 binary), with
-  no compile-time warning. Two complementary fixes worth
-  considering:
-  - **Compile-time warning** when cwd has a `lib/` that
-    will shadow the version-pinned path. Print one
-    `note: cwd lib/ shadowing version-pinned lib/ — using
-    cwd; delete cwd lib/ to use the version-matched
-    snapshot` so consumers catch the issue immediately.
-  - **Defensive `lib/fnptr.cyr` rewrite** — gate x86 asm on
-    `#ifndef CYRIUS_ARCH_AARCH64` so even if a shadow lib
-    has stale content, the cc5_aarch64 binary's predefine
-    wins and aarch64 asm emits regardless. Cross-arch
-    pollution becomes a silent-correct-output instead of a
-    silent-broken-binary.
-  Lands when consumer pressure resurfaces or when the lib-
-  resolution-precedence design call gets a fresh look.
+#### v5.10.27 — Stdlib data-domain distlib carve-out (multi-slot kickoff)
 
-- **REAL TYPE SYSTEM** (pinned 2026-05-08 at v5.9.36 wrap;
-  user direction; multi-slot effort). Call-site type checking,
-  overload dispatch (cstring vs Str vs int), type inference
-  through expressions. Currently cyrius tracks type
-  *annotations* (struct fields, var slots, fn params via
-  `: Type` or `: Str`) and uses them for width-correct
-  loadN/storeN + pointer-mode dot access — but the parser
-  does NOT enforce types at fn call sites and there's no
-  overload dispatch.
+Re-pinned from v5.9.0; promoted from held to concrete
+slot at v5.10.20 P(-1) sweep.
 
-  **Canonical motivating example** — agnosys 1.1.12 verbatim
-  repro at `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
-  (hash `6425355b6147d5a674078794310ae2c1` at v5.9.37 ship).
-  Builds clean post-v5.9.37 but the binary SIGSEGVs at runtime:
-  ```cyr
-  var out = str_builder_build(sb);    # out: Str
-  println(out);                        # treats Str as cstring -> garbage
-  println(strlen(out));                # treats int as cstring -> SIGSEGV
-  ```
-  Both lines are API misuse the type system would catch /
-  dispatch correctly. v5.9.x had three options to fix
-  (polymorphic-runtime-detection / break `str_builder_build` /
-  partial Option-3); user rejected all three as either sloppy
-  or breaking — the right fix is a real type system.
+~13 modules (`json`, `toml`, `cyml`, `csv`, `base64`,
+`regex`, `math`, `matrix`, `linalg`, `bigint`, `u128`,
+etc.); sandhi-pattern fold-out into `cyrius-data`
+sibling distlib. Multi-slot effort. Phased shape:
+1. **v5.10.27 — Phase 1: Carve-out kickoff** — create
+   the `cyrius-data` sibling repo, scaffold
+   `cyrius.cyml`, identify the 13-ish module set,
+   land the first 3-4 modules as proof of pattern.
+2. **v5.10.28+ — Phase 2: Migration** — move the
+   remaining modules with downstream consumer pin
+   bumps in lockstep (sandhi-pattern lifecycle).
+3. **v5.10.x — Phase 3: Carve-out close** — once all
+   data-domain modules are in `cyrius-data`, retire
+   the in-tree copies and update the stdlib_modules
+   manifest.
 
-  **Multi-slot scope** (rough; refine at first slot entry):
-  1. Surface audit — annotate every fn body in stdlib +
-     cyrius-side code with implicit return-type info.
-  2. Call-site type check — at `PARSE_FNCALL`, compare each
-     arg's tracked type against the callee's param annotation.
-  3. Overload dispatch — extend `FINDFN` to support multiple
-     impls keyed by arg-type signature. PP-mangled names
-     (`println_cstr` / `println_str` / `println_int`) at the
-     symbol level; parser routes by arg type.
-  4. Type inference — propagate fn return types through
-     `var x = f(...);` and binary operators.
-  5. Diagnostics — `error: cannot pass Str to fn expecting
-     cstring; use str_data(x) or str_println(x)` hints.
+May pair with `lib/tls.cyr` hook-surface audit
+(v5.10.30) if scheduling overlaps and any module
+touches TLS.
 
-- **`cyrius audit` outside-repo semantics** (held from v5.9.4;
-  pending user design call). `cbt/commands.cyr:415` `cmd_audit`
-  invokes `~/.cyrius/bin/check.sh` which doesn't exist outside
-  the cyrius repo. Two design questions:
-  (a) Intended semantics outside the repo (clean error vs
-      polymorphic project-level audit)?
-  (b) Defensive `file_exists(script)` check in `run_script`
-      (one-line fix, applies to all script callers).
-  The defensive guard is opportunistic — could land inside any
-  v5.10.x slot that touches `cbt/build.cyr`. Full design
-  question is held until user picks (a).
+#### v5.10.29 — Lex dedup hot-path optimization
 
-- **`cyrius --version` stray `\xb3` byte** (held from
-  agnosys 1.1.5 filing side-observation). Locally NOT
-  reproduced under v5.9.22+. Held until reporter's
-  `~/.cyrius/current` xxd is captured. Defensive
-  `read_file_str` hardening (extend trim to drop bytes ≥
-  0x80) is the likely fix once env is reproducible.
+Promoted from "compile-time wins" held entry to
+concrete slot at v5.10.20 P(-1) sweep.
 
-- **`aarch64/fixup.cyr:19` syscall arity warning** (deferred
-  from v5.8.53). "Likely benign lint, confirm or fix" —
-  one-slot read.
+v5.10.0 profile data: lex 580 ms = 59% of compile
+time. O(N²) LEXID dedup scan inside it. Length-
+buckets (~20 LOC, ~5-10× expected on dedup_cmps) is
+the recommended starting point — preserves the
+linear-scan model per cyrius's byte-parsing
+philosophy. Last-K cache (~15 LOC, ~2-3×) and
+hand-rolled-hash-in-cc5 (~100 LOC, 30-40×) are
+escalation paths if length-buckets isn't enough.
 
-- **macOS arm64 struct-by-value calling-convention path**
-  (v5.5.36 deferred). Surfaces on consumer cross-build.
+Acceptance: measurable improvement vs the v5.10.20
+P(-1) baseline (vec/push_1000 21µs, vec/find_100
+1µs — these are the published reference points).
+
+#### v5.10.30 — Fixup phase optimization
+
+Promoted from held to concrete slot at v5.10.20
+P(-1) sweep. v5.10.0 profile: fixup 210 ms = 21%
+of compile time. Second-largest target after lex.
+
+#### v5.10.31 — `lib/tls.cyr` hook-surface contract audit
+
+Filed from sandhi 1.1.x roadmap-cleanup pass,
+2026-05-08; promoted from held to concrete slot at
+v5.10.20 P(-1) sweep.
+
+With pure-Cyrius TLS removed (2026-04-24 decision —
+`lib/tls.cyr` stays libssl.so.3-bridged) AND sandhi
+folded into stdlib at v5.7.0, the `lib/tls.cyr` ↔
+`lib/sandhi.cyr` hook surface (`tls_connect`,
+`tls_connect_with_ctx_hook`, ALPN advertise, SNI,
+SPKI extraction) is now load-bearing across two
+stdlib modules. Sandhi's `tls_policy` layer (cert
+pinning / mTLS / trust-store override / ALPN
+advertise) exercises every hook; the contract was
+de-facto ratified at sandhi 1.0.0 fold + 1.1.0
+alloc migration end-to-end. Document it formally —
+per-hook docstring covering parameters, return
+semantics, error contract, ABI guarantees — so
+future maintenance (defensive hardening, internal
+refactors) preserves the byte-identical surface
+consumers built against.
+
+Tiny if surface is already abstraction-clean (likely
+— stable since v5.6.40 ALPN hook ship); multi-slot
+if any hardening surfaces. ADR-0001 framing on the
+sandhi side (sandhi composes, doesn't reimplement)
+makes this explicitly cyrius's slot, not sandhi's.
+
+May pair with stdlib data-domain carve-out
+(v5.10.27) if scheduling overlaps.
+
+#### v5.10.32 — macOS arm64 struct-by-value calling-convention
+
+Promoted from held to concrete slot at v5.10.20 P(-1)
+sweep. v5.5.36 deferred. Surfaces on consumer
+cross-build. Mach-O ABI work, isolated from other
+held items — earns its own slot.
+
+#### v5.10.33 — Defensive sweep (small bundle)
+
+Promoted from held to concrete slot at v5.10.20
+P(-1) sweep. Bundle of small defensive cleanups
+that don't share a cascade but are individually too
+small to justify standalone slots:
 
 - **`parse_fn.cyr:910` defensive `_AARCH64_BACKEND==0`
-  guard** (surfaced at v5.9.43 closeout code-review pass).
-  x86 callee-save block is `if (_TARGET_CX == 0)` only; not
-  a leak in practice (aarch64 doesn't auto-enable regalloc),
-  but a v5.10.x defensive-guard cleanup target. Tiny;
-  bundle into a related slot.
+  guard** (surfaced v5.9.43 closeout). x86 callee-
+  save block is `if (_TARGET_CX == 0)` only; not a
+  leak in practice (aarch64 doesn't auto-enable
+  regalloc), but a defensive cleanup target.
+- **`aarch64/fixup.cyr:19` syscall arity warning**
+  (deferred v5.8.53). "Likely benign lint, confirm
+  or fix" — one-slot read.
+- **`cyrius --version` stray `\xb3` byte** (held
+  from agnosys 1.1.5 filing side-observation).
+  Locally NOT reproduced under v5.9.22+. Defensive
+  `read_file_str` hardening (extend trim to drop
+  bytes ≥ 0x80) is the likely fix. Lands as a
+  defensive-only change even without env repro.
+- **`cyrius audit` outside-repo defensive guard**
+  (held from v5.9.4). `cbt/commands.cyr:415`
+  `cmd_audit` invokes `~/.cyrius/bin/check.sh` which
+  doesn't exist outside the cyrius repo. Defensive
+  `file_exists(script)` check in `run_script`
+  (one-line fix, applies to all script callers).
+  The full design call (clean error vs polymorphic
+  project-level audit) stays held until user picks
+  semantics; the defensive guard ships now.
+- **Surface review** — tcyr-relay-vs-testsuite-gate
+  redundancy (pinned v5.9.6); doc/vidya version-ref
+  drift cleanup. Bundle in if scope permits.
 
-- **Stdlib data-domain distlib carve-out** (re-pinned from
-  v5.9.0). ~13 modules (`json`, `toml`, `cyml`, `csv`,
-  `base64`, `regex`, `math`, `matrix`, `linalg`, `bigint`,
-  `u128`, etc.); sandhi-pattern fold-out into `cyrius-data`
-  sibling distlib. Multi-slot effort; earns slot when
-  scheduling lines up.
+Earns a slot via "Big Heavy One Thing" — 5 items
+add up to a meaningful defensive cleanup. Per the
+v5.10.0 acceptance principle: bundling unrelated
+defensives is OK when each is too small standalone
+AND scheduling lines up.
 
-- **`lib/tls.cyr` hook-surface contract audit** (filed
-  from sandhi 1.1.x roadmap-cleanup pass, 2026-05-08).
-  With pure-Cyrius TLS removed (2026-04-24 decision —
-  `lib/tls.cyr` stays libssl.so.3-bridged) AND sandhi
-  folded into stdlib at v5.7.0, the `lib/tls.cyr` ↔
-  `lib/sandhi.cyr` hook surface (`tls_connect`,
-  `tls_connect_with_ctx_hook`, ALPN advertise, SNI, SPKI
-  extraction) is now load-bearing across two stdlib
-  modules. Sandhi's `tls_policy` layer (cert pinning /
-  mTLS / trust-store override / ALPN advertise) exercises
-  every hook; the contract was de-facto ratified at sandhi
-  1.0.0 fold + 1.1.0 alloc migration end-to-end. Document
-  it formally — per-hook docstring covering parameters,
-  return semantics, error contract, ABI guarantees — so
-  future maintenance (defensive hardening, internal
-  refactors) preserves the byte-identical surface
-  consumers built against. Tiny if surface is already
-  abstraction-clean (likely — stable since v5.6.40 ALPN
-  hook ship); multi-slot if any hardening surfaces. No
-  P0/P1 today; opportunistic cleanup, earns a slot when
-  scheduling lines up (e.g. could pair with the stdlib
-  data-domain carve-out if that ever touches
-  `lib/tls.cyr`, or with any future `lib/tls.cyr` patch).
-  ADR-0001 framing on the sandhi side (sandhi composes,
-  doesn't reimplement) makes this explicitly cyrius's
-  slot, not sandhi's — sandhi can't audit a contract it
-  consumes from outside.
+### v5.10.x — Held (no slot pinned; surfaces-on-ask)
 
-- **Class B FFI / wgpu fncall6 ABI** (mabda B1/B2 — held;
-  see *Deferred to v5.11.x or later* above). Could land in
-  v5.10.x bug arc if mabda resurfaces it as blocking.
+Items that DO NOT get concrete slot numbers — they
+stay held until consumer pressure surfaces them.
 
-- **Surface review items** — tcyr-relay-vs-testsuite-gate
-  redundancy (pinned v5.9.6); doc/vidya version-ref drift.
-  Each gets a slot when the cleanup makes sense.
+- **Class B FFI / wgpu fncall6 ABI** (mabda B1/B2).
+  Held per user direction at v5.10.20 P(-1) sweep:
+  "leave mabda issue out to be held." Lands in
+  v5.10.x or later if mabda resurfaces it as
+  blocking; otherwise rolls into v5.11.x consideration.
 
-### v5.10.x — Held forward (no slot consumed; surfaces-on-ask)
-
-These remain unpinned long-term; promote to slot when a
-consumer concretely surfaces:
-
-- **TS test harness program** (option E from v5.7.37) —
-  single `programs/ts_test_runner.cyr` consuming both
-  internal-symbol fn dispatch and TS fixture files. v5.7.37
-  group-level consolidation suffices until a downstream
-  consumer surfaces a test pattern that doesn't fit either
-  current shape.
-
-**No hard cap on slot count.** v5.10.x runs as long as the
-work is productive — could be 5 patches, could be 20. Cycle
-ends when the bug/optimization backlog drains or v5.11.x
-bare-metal/RISC-V drivers concretely line up.
+**No hard cap on v5.10.x slot count.** Cycle runs
+as long as the pinned slots produce measurable
+forward motion. Cycle ends when the pinned items
+above ship + the bug/optimization backlog drains.
+The next cycle (v5.11.x) absorbs the held-forward
+items below; v5.12.0 is the bare-metal kickoff.
 
 ### v5.10.x — Acceptance principle (revised at v5.10.0 ship)
 
@@ -1409,33 +1479,63 @@ principle of "fewer surface items to manage future slots."
 Two arch-port-style efforts grouped into one minor since both
 land at the "no libc, direct hardware / different ABI" layer.
 
-### v5.11.0 — Bare-metal / AGNOS kernel target
+### v5.11.x — Cleanup minor (TS test harness + held-forward absorber)
 
-Bare-metal output (no libc, no syscalls, direct hardware).
-AGNOS kernel is the concrete consumer. Has slid four minors
-already (v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → **v5.11.0**); no
+**Repurposed at v5.10.20 P(-1) sweep** (2026-05-09): user
+direction "TS test harness will moving into 5.11.x and
+5.12.0 is now baremetel/riscv". v5.11.x is now a short
+cleanup-cycle absorbing items that surface during the
+v5.10.x close, NOT the bare-metal / RISC-V kickoff (which
+moves to v5.12.0).
+
+**Scope**:
+
+- **TS test harness program** (option E from v5.7.37) —
+  single `programs/ts_test_runner.cyr` consuming both
+  internal-symbol fn dispatch and TS fixture files.
+  v5.7.37 group-level consolidation has held since 2026-04
+  through every v5.7.x → v5.10.x cycle; promoting to the
+  v5.11.0 slot at v5.10.20 P(-1) sweep so it lands when a
+  downstream consumer surfaces a test pattern that doesn't
+  fit either current shape. Lands when that surfaces;
+  otherwise stays opportunistic.
+- **Other v5.10.x leftovers** that surface during the cycle
+  close — refine at first slot entry per
+  `feedback_premise_check_at_slot_entry`.
+
+No hard trigger; v5.11.x runs as long as cleanup work is
+productive, ends when v5.12.0 bare-metal/RISC-V drivers
+concretely line up.
+
+### v5.12.0 — Bare-metal / AGNOS kernel target
+
+**Moved from v5.11.0 → v5.12.0 at v5.10.20 P(-1) sweep**
+per user direction. Has slid five minors now (v5.7.0 →
+v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 → **v5.12.0**); no
 hard trigger required — earns slot when AGNOS kernel work
 concretely needs the toolchain capability AND the v5.10.x
-backlog has drained enough to free a minor. Rough scope:
++ v5.11.x backlogs have drained enough to free a minor.
+Rough scope:
 
 - ELF no-libc output format
 - interrupt-handler emit conventions
 - kernel-mode syscall stubs stripped
-- boot pipeline from `scripts/boot.cyr` landed in genesis Phase
-  13B (v5.6.29 gate)
+- boot pipeline from `scripts/boot.cyr` landed in genesis
+  Phase 13B (v5.6.29 gate)
 
 Acceptance: AGNOS kernel can be built end-to-end with the
-v5.11.0 toolchain; no host-libc symbols leak into the kernel
-object.
+v5.12.0 toolchain; no host-libc symbols leak into the
+kernel object.
 
-### v5.11.x — RISC-V rv64 (3-5 sub-patches)
+### v5.12.x — RISC-V rv64 (3-5 sub-patches)
 
-First-class RISC-V 64-bit target. Inherits a frontend-complete
-compiler against a clean toolchain UX with the full v5.7.x →
-v5.8.x prerequisite chain shipped, including the v5.7.30 +
-v5.7.31 aarch64 f64 pair that gives RISC-V a working
-f64-on-non-x87 reference. Just-another-platform work; lands
-when scheduling allows.
+**Moved from v5.11.x → v5.12.x at v5.10.20 P(-1) sweep**.
+First-class RISC-V 64-bit target. Inherits a frontend-
+complete compiler against a clean toolchain UX with the
+full v5.7.x → v5.10.x prerequisite chain shipped,
+including the v5.7.30 + v5.7.31 aarch64 f64 pair that
+gives RISC-V a working f64-on-non-x87 reference. Just-
+another-platform work; lands when scheduling allows.
 
 **RISC-V needs:**
 
@@ -1468,23 +1568,24 @@ when scheduling allows.
 7. `[release]` table in `cyrius.cyml` gets a `cross_bins` entry
    for `cc5_riscv64`.
 
-### v5.11.x — Triggered prereq pin
+### v5.12.x — Triggered prereq pin
 
 - **Parser-to-emit named-op refactor (path A)** — pinned to
-  v5.11.x because RISC-V landing as the 4th backend triggers
+  v5.12.x because RISC-V landing as the 4th backend triggers
   the prior long-term pin's condition #1 ("RISC-V lands and
   adds 4th backend, making path B's `_TARGET_CX == 0 &&
   _TARGET_RISCV == 0` chains unwieldy at every site"). Scope:
   ~10 abstract ops × 4 backends = 40 fn definitions +
   parse_*.cyr rewrites. Multi-session real engineering. Pin at
-  v5.11.0 cycle entry; sequence before RISC-V backend
+  v5.12.0 cycle entry; sequence before RISC-V backend
   implementation if prudent (RISC-V starts with the named-op
   interface from day one — cleanest path). Audit doc:
   [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
 
-Deliberately NOT bundling other items into v5.11.x — bare-metal
-+ RISC-V are plenty of work. Bare-metal (v5.11.0) lands first;
-RISC-V picks up the rest of the v5.11.x range.
+Deliberately NOT bundling other items into v5.12.x —
+bare-metal + RISC-V are plenty of work. Bare-metal
+(v5.12.0) lands first; RISC-V picks up the rest of the
+v5.12.x range.
 
 ---
 
@@ -1504,8 +1605,8 @@ enables adding new targets without touching the frontend.
 | **v5.5.34** | fdlopen foreign-dlopen completion | ELF | **Done** — 40/40 round-trip `dlopen("libc.so.6")+dlsym("getpid")` |
 | **v5.5.35** | Windows PE .reloc + 32-bit ASLR | PE/COFF | **Done** — `DYNAMIC_BASE` + HIGH_ENTROPY_VA enabled v5.6.31 |
 | **v5.5.36** | Windows Win64 ABI completion | PE/COFF | **Done** — struct-return via hidden RCX retptr + __chkstk via R11 + variadic float dup |
-| **v5.10.x** | RISC-V rv64 | ELF | **Moved v5.9.x → v5.10.x at v5.8.x close** — v5.9.x consumed by niyama fold + bash-sovereignty pass; RISC-V keeps its pairing with bare-metal AGNOS scope (both "no libc / new ABI" arch-port work). |
-| **v5.10.0** | Bare-metal | ELF (no-libc) | Queued — AGNOS kernel target. Slid v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 across multiple cycles. |
+| **v5.12.x** | RISC-V rv64 | ELF | **Moved v5.10.x → v5.11.x → v5.12.x at v5.10.20 P(-1) sweep** — v5.11.x repurposed as cleanup minor (TS test harness + v5.10.x leftovers); RISC-V keeps its pairing with bare-metal AGNOS scope. |
+| **v5.12.0** | Bare-metal | ELF (no-libc) | Queued — AGNOS kernel target. Slid v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 → v5.12.0. |
 | ~~**v5.9.0–5.9.5**~~ | ~~Pure-cyrius TLS 1.3~~ | — | **Removed from roadmap 2026-04-24** — pure-Cyrius TLS work outside Cyrius's compiler/stdlib scope per sandhi scope-absorption decision; `lib/tls.cyr` continues using `libssl.so.3` bridge from stdlib's perspective; canonical home for pure-Cyrius TLS implementation TBD. See v5.9.x slot bullet in *What's next* for details. |
 
 ---

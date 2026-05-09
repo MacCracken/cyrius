@@ -6,6 +6,102 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.20] — 2026-05-09
+
+**v5.10.x SLOT 20 — P(-1) project hardening sweep + held-
+items slot pinning + v5.11.x/v5.12.0 reorg**.
+
+CLAUDE.md P(-1) refactor-cycle audit phase before opening
+the v5.10.20+ slot arc. User direction 2026-05-09: "push
+current remaining back by one; do a P(-1) hardening sweep
+on the project as 5.10.20; held items lets get them
+slotted and pinned — leave mabda issue out to be held.
+TS test harness will moving into 5.11.x and 5.12.0 is now
+baremetel/riscv".
+
+cc5 unchanged at 778,120 B. cc5_aarch64 unchanged at
+473,688 B. cyrius CLI unchanged at 170,848 B. Pure audit +
+roadmap restructure; no codegen changes.
+
+### P(-1) sweep results (7 steps per CLAUDE.md)
+
+1. **Cleanliness** — `check.sh` 66/66 (format + lint + vet).
+2. **Test sweep** — `cyrius test` 135/135. 2-step
+   self-host byte-identical (cc5 → cc5_b → cc5_c). Heap
+   audit clean: 84 regions, 0 overlaps.
+3. **Benchmark baseline** — `cyrius bench` captured for
+   the v5.10.20+ optimization slots later in the cycle:
+   vec/push_10 1µs, push_100 3µs, push_1000 21µs,
+   vec/get 1µs, vec/find_100 1µs (15/15 bench asserts).
+4. **Audit** — 34 unreachable fns / 22,792 bytes (all
+   subsystem-prefix-protected per memory pin
+   `feedback_dead_code_audit_scope`: TS_*/macho_*/IR_*
+   reachable via `--mode` flags or other `main_*.cyr`).
+   No FIXME/TODO/HACK markers in v5.10.x edits. api-
+   surface clean (2,808 fns matches snapshot). Vidya
+   version refs consistent. No new attack surface.
+5. **Refactor** — nothing surfaced. v5.10.x cycle landed
+   clean.
+6. **Post-audit benchmarks** — no refactor → no
+   comparison needed. Baseline becomes the v5.10.20+
+   reference.
+7. **Documentation** — this entry + slot-and-pin reorg.
+
+### Slot pinning
+
+Reorganized `docs/development/roadmap.md` to give every
+held v5.10.x item a concrete slot number (was "earns slot
+when consumer pressure surfaces"; now pinned with phase
+breakdowns where applicable):
+
+- **v5.10.21** — typed `f64v2`/`f64v4` types (was
+  v5.10.20; pushed back one slot for this P(-1))
+- **v5.10.22+** — REAL TYPE SYSTEM (5-phase multi-slot
+  arc): surface audit → call-site type check → overload
+  dispatch → type inference → diagnostics +
+  `CYRIUS_TYPE_CHECK` default-on flip
+- **v5.10.27+** — Stdlib data-domain distlib carve-out
+  (multi-slot; ~13 modules into `cyrius-data` sibling
+  distlib)
+- **v5.10.29** — Lex dedup hot-path optimization
+- **v5.10.30** — Fixup phase optimization
+- **v5.10.31** — `lib/tls.cyr` hook-surface contract
+  audit
+- **v5.10.32** — macOS arm64 struct-by-value calling-
+  convention
+- **v5.10.33** — Defensive sweep bundle (parse_fn:910
+  guard + aarch64 fixup arity warning + cyrius --version
+  \xb3 byte + cyrius audit outside-repo defensive guard
+  + surface review tcyr-relay/version-ref drift)
+
+### Held (no slot pinned per user direction)
+
+- **Class B FFI / wgpu fncall6 ABI** (mabda B1/B2) —
+  stays held per "leave mabda issue out to be held".
+  Lands in v5.10.x or later if mabda surfaces it as
+  blocking.
+
+### Cycle reorg
+
+- **TS test harness** moved from "v5.10.x held forward"
+  to v5.11.x cleanup minor (was opportunistic; pinned
+  there per user direction).
+- **v5.11.x** repurposed as cleanup minor (TS harness +
+  v5.10.x leftovers absorber). Was bare-metal/RISC-V.
+- **v5.12.0** is now the bare-metal AGNOS kickoff (was
+  v5.11.0). RISC-V rv64 → v5.12.x (was v5.11.x).
+  Bare-metal has slid five minors total: v5.7.0 →
+  v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 → v5.12.0.
+- Parser-to-emit named-op refactor (RISC-V prereq) →
+  v5.12.x.
+
+### Cycle status snapshot
+
+20 slots shipped in v5.10.x so far (.0–.20). Pinned
+pipeline through .33 (13 more slots). Cycle ends when
+pinned items ship or v5.12.0 bare-metal drivers
+concretely line up.
+
 ## [5.10.19] — 2026-05-09
 
 **v5.10.x SLOT 19 — `cyrius deps` transitive include
