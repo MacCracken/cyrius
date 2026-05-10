@@ -244,8 +244,8 @@ arch-agnostic. v5.10.29 fills in the aarch64 emit helpers.
 | 4     | v5.10.31 pinned | XMM register passing optimization |
 | 5     | v5.10.32 pinned | f64v4 + lib/simd.cyr typed wrappers |
 
-**Next**: v5.10.30 = cx + macho Phase 3 propagation. Cass
-macOS Apple Silicon + ecb Windows SSH verify gates per
+**Next**: v5.10.30 = cx + macho Phase 3 propagation. Ecb
+macOS Apple Silicon + cass Windows SSH verify gates per
 `reference_verification_hosts_ssh` memory pin.
 
 **5.10.28** (shipped 2026-05-10 — **v5.10.x SLOT 28 —
@@ -853,9 +853,9 @@ consumer and never wired into check.sh.
 - Byte-identical x86 self-host.
 
 **Pending**: cross-host SSH verify on pi (aarch64
-Linux), cass (Apple Silicon), ecb (Windows PE) — NEON
-encodings derived from ARMv8-A reference but never
-runtime-verified. Will SSH-test before tagging.
+Linux), ecb (Apple Silicon Mach-O), cass (Windows PE)
+— NEON encodings derived from ARMv8-A reference but
+never runtime-verified. Will SSH-test before tagging.
 
 **Next**: v5.10.17 = new SIMD primitives (dot, scale,
 axpy — keystone three for hisab gap-close), per user

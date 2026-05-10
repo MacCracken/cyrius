@@ -2331,6 +2331,16 @@ sigil::vresult_checks/1
 sigil::vresult_passed/1
 sigil::vresult_set_passed/2
 sigil::zeroize_key/2
+simd::f64v2_add/2
+simd::f64v2_div/2
+simd::f64v2_dot/2
+simd::f64v2_fmadd/3
+simd::f64v2_hi/1
+simd::f64v2_lo/1
+simd::f64v2_make/2
+simd::f64v2_mul/2
+simd::f64v2_scale/2
+simd::f64v2_sub/2
 slice::slice_copy/2
 slice::slice_copy_bytes/2
 slice::slice_eq/2

@@ -1,0 +1,105 @@
+# lib/simd.cyr — typed SIMD wrappers (v5.10.33)
+# ================================================================
+# v5.10.33 closes the typed-simd ABI arc started at v5.10.28
+# (Phase 1 x86 SysV pair → Phase 5 x86 XMM register passing).
+# Exposes the compiler-intrinsic f64v_* flat-array primitives
+# (declared in src/frontend/parse_expr.cyr's PARSE_SIMD_EXT) as
+# typed wrappers consumers can compose with the f64v2 value type.
+#
+# **API shape** (pointer-passing for inputs, value return):
+#   f64v2_add(a_ptr, b_ptr): f64v2
+# Inputs pass as `*f64v2` (raw addresses); the result returns
+# by-value via the v5.10.32 XMM0 SSE-class ABI. Consumer pattern:
+#   var a: f64v2 = f64v2_make(...);
+#   var b: f64v2 = f64v2_make(...);
+#   var r: f64v2 = f64v2_add(&a, &b);
+#
+# Why pointer inputs (and NOT `: f64v2` value params): the
+# v5.10.28-32 typed-simd ABI arc shipped the RETURN side end-to-end
+# (rax/rdx pair → XMM0). The PARAM side is half-implemented —
+# `fn f(v: f64v2)` reads the lo half correctly via `&v + 0`, but
+# `&v + 8` is undefined memory because the parser allocates a single
+# 8-byte slot for the param and the hi half is dropped at the
+# call-site register-to-stack transfer. Fixing this requires
+# allocating 2 slots per f64v2 param + a register-pair → 2-slot
+# store sequence at fn entry — sized as a separate slot, pinned as
+# consumer-driven follow-up.
+#
+# **Known limitation — `f64v_abs` / `f64v_sqrt` codegen bug**:
+# when a 4-arg `f64v_X` intrinsic (add/sub/mul/div/scale) is
+# compiled in the same translation unit BEFORE a 3-arg `f64v_abs`
+# or `f64v_sqrt` call, the latter's emit shifts by 8 bytes —
+# returning a stack address instead of the absed/sqrt'd lo half.
+# This is a PRE-EXISTING bug in PARSE_SIMD_EXT (src/frontend/
+# parse_expr.cyr), NOT a v5.10.33 regression. v5.10.33 surfaces
+# it via the typed-wrapper API. Pinned for diagnosis + fix in a
+# follow-up slot. Until then, `f64v2_abs` and `f64v2_sqrt` are
+# intentionally NOT exposed here — consumers needing absolute
+# value / square root call the raw `f64v_abs` / `f64v_sqrt`
+# intrinsics directly with explicit stack-local allocation.
+
+# Constructor: build an f64v2 from two i64 bit patterns.
+fn f64v2_make(lo_bits, hi_bits): f64v2 {
+    var v: f64v2;
+    store64(&v + 0, lo_bits);
+    store64(&v + 8, hi_bits);
+    return v;
+}
+
+# Extract the low half (first f64) as i64 bits.
+fn f64v2_lo(p): i64 {
+    return load64(p + 0);
+}
+
+# Extract the high half (second f64) as i64 bits.
+fn f64v2_hi(p): i64 {
+    return load64(p + 8);
+}
+
+# Packed-double add: r[0] = a[0] + b[0], r[1] = a[1] + b[1].
+fn f64v2_add(a_ptr, b_ptr): f64v2 {
+    var r: f64v2;
+    f64v_add(&r, a_ptr, b_ptr, 2);
+    return r;
+}
+
+# Packed-double subtract.
+fn f64v2_sub(a_ptr, b_ptr): f64v2 {
+    var r: f64v2;
+    f64v_sub(&r, a_ptr, b_ptr, 2);
+    return r;
+}
+
+# Packed-double multiply.
+fn f64v2_mul(a_ptr, b_ptr): f64v2 {
+    var r: f64v2;
+    f64v_mul(&r, a_ptr, b_ptr, 2);
+    return r;
+}
+
+# Packed-double divide.
+fn f64v2_div(a_ptr, b_ptr): f64v2 {
+    var r: f64v2;
+    f64v_div(&r, a_ptr, b_ptr, 2);
+    return r;
+}
+
+# Packed-double fused multiply-add: r[i] = a[i] * b[i] + c[i].
+fn f64v2_fmadd(a_ptr, b_ptr, c_ptr): f64v2 {
+    var r: f64v2;
+    f64v_fmadd(&r, a_ptr, b_ptr, c_ptr, 2);
+    return r;
+}
+
+# Dot product: sum(a[i] * b[i]) for i in [0, 2). Returns f64 as
+# i64 bits (use `f64_to(...)` to get the f64 value).
+fn f64v2_dot(a_ptr, b_ptr): i64 {
+    return f64v_dot(a_ptr, b_ptr, 2);
+}
+
+# Scalar scale: r[i] = a[i] * s.
+fn f64v2_scale(a_ptr, s): f64v2 {
+    var r: f64v2;
+    f64v_scale(&r, a_ptr, s, 2);
+    return r;
+}

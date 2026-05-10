@@ -27,8 +27,8 @@ fix gets cross-tested in the same slot:
 | Host | Arch / OS | Role |
 |------|-----------|------|
 | `pi` | aarch64 Linux (Pi 4) | Native aarch64 self-host + multi-thread / mutex shakedown. |
-| `cass` | macOS Apple Silicon | Mach-O native verification (broad-scope). |
-| `ecb` | Windows x86_64 | PE/COFF broad-scope on real Win11. |
+| `cass` | Windows x86_64 | PE/COFF broad-scope on real Win11. |
+| `ecb` | macOS Apple Silicon | Mach-O native verification (broad-scope). |
 
 > "NO EXCUSE THAT SHIT [is] BEING FOUND BY PORTS" — user
 > 2026-05-04. SSH-wired hosts mean cross-test is mechanical, not

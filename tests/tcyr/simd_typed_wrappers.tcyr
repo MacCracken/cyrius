@@ -1,0 +1,56 @@
+# v5.10.33 — closes the typed-simd ABI arc.
+# Validates lib/simd.cyr's typed wrappers around the f64v_*
+# compiler intrinsics. Uses pointer-passing inputs (per the
+# v5.10.33 API shape) with by-value f64v2 returns through the
+# v5.10.32 XMM0 SSE-class ABI.
+#
+# NOT tested here: f64v2_abs / f64v2_sqrt — pinned PRE-EXISTING
+# bug in PARSE_SIMD_EXT where 3-arg `f64v_abs`/`f64v_sqrt`
+# emit shifts when preceded by a 4-arg `f64v_X` in the same TU.
+# See `lib/simd.cyr` header for diagnostic pinnage.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/simd.cyr"
+include "lib/test.cyr"
+
+fn _f2(lo_bits, hi_bits): f64v2 {
+    return f64v2_make(lo_bits, hi_bits);
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("f64v2_make + lo/hi extractors");
+    var a: f64v2 = _f2(0xDEADBEEF, 0xCAFEBABE);
+    assert_eq(f64v2_lo(&a), 0xDEADBEEF, "lo extractor");
+    assert_eq(f64v2_hi(&a), 0xCAFEBABE, "hi extractor");
+
+    test_group("f64v2_add packed-double");
+    # 2.0, 3.0 + 4.0, 5.0 = 6.0, 8.0
+    var x: f64v2 = _f2(0x4000000000000000, 0x4008000000000000);
+    var y: f64v2 = _f2(0x4010000000000000, 0x4014000000000000);
+    var sum: f64v2 = f64v2_add(&x, &y);
+    assert_eq(f64v2_lo(&sum), 0x4018000000000000, "2.0 + 4.0 = 6.0");
+    assert_eq(f64v2_hi(&sum), 0x4020000000000000, "3.0 + 5.0 = 8.0");
+
+    test_group("f64v2_sub packed-double");
+    # 6.0, 8.0 - 2.0, 3.0 = 4.0, 5.0
+    var diff: f64v2 = f64v2_sub(&sum, &x);
+    assert_eq(f64v2_lo(&diff), 0x4010000000000000, "6.0 - 2.0 = 4.0");
+    assert_eq(f64v2_hi(&diff), 0x4014000000000000, "8.0 - 3.0 = 5.0");
+
+    test_group("f64v2_mul packed-double");
+    # 2.0, 3.0 * 4.0, 5.0 = 8.0, 15.0
+    var prod: f64v2 = f64v2_mul(&x, &y);
+    assert_eq(f64v2_lo(&prod), 0x4020000000000000, "2.0 * 4.0 = 8.0");
+    assert_eq(f64v2_hi(&prod), 0x402E000000000000, "3.0 * 5.0 = 15.0");
+
+    test_group("f64v2_dot scalar return");
+    # dot([2.0, 3.0], [4.0, 5.0]) = 8.0 + 15.0 = 23.0
+    var dot = f64v2_dot(&x, &y);
+    assert_eq(dot, 0x4037000000000000, "dot product 23.0");
+
+    var r = assert_summary();
+    return r;
+}

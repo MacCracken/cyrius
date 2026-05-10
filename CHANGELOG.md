@@ -6,6 +6,149 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.33] — 2026-05-10
+
+**v5.10.x SLOT 33 — `lib/simd.cyr` typed wrappers around
+the f64v_* compiler intrinsics (working subset; bug pin
++ ABI deferrals split out)**.
+
+Closes the consumer-facing surface of the typed-simd
+ABI arc started at v5.10.28. Exposes the f64v_* flat-
+array primitives (declared in `PARSE_SIMD_EXT` since
+v5.10.16) as typed wrappers using the f64v2 value-type
+return ABI shipped through Phases 1–5
+(v5.10.28-v5.10.32). Consumers — hisab in particular —
+now have a clean API to compose with f64v2 instead of
+hand-rolling `var r: f64v2; f64v_add(&r, &a, &b, 2);`
+at every call site.
+
+cc5: **784,984 unchanged** (no compiler-side change;
+stdlib-only slot). Self-host byte-identical x86. **66/66
+check.sh, 137/137 cyrius test on x86** (+1 new gate:
+`simd_typed_wrappers.tcyr`, 9 sub-asserts). **aarch64
+SSH-verified via pi**: 9/9 sub-asserts pass on real Pi
+hardware (cross-compile via cyrius `--aarch64` + qemu
+locally, then scp to pi for native run; both paths
+green, exit=0). **Mach-O ecb / Win64 PE cass**: stdlib
+delta only — the underlying f64v2 ABI for those targets
+landed (and was verified) at v5.10.30 (Phase 3 macho
+inheritance) and v5.10.31 (Phase 4 PE retptr-style)
+respectively; this slot adds no new compiler-side
+codepaths for either target.
+
+### What landed
+
+**`lib/simd.cyr`** (new file, 105 lines, 10 typed
+wrappers):
+
+| Wrapper                            | Underlying intrinsic |
+|------------------------------------|----------------------|
+| `f64v2_make(lo_bits, hi_bits): f64v2` | `store64` × 2     |
+| `f64v2_lo(p): i64`                 | `load64(p+0)`        |
+| `f64v2_hi(p): i64`                 | `load64(p+8)`        |
+| `f64v2_add(a_ptr, b_ptr): f64v2`   | `f64v_add(&r, ...)`  |
+| `f64v2_sub(a_ptr, b_ptr): f64v2`   | `f64v_sub(&r, ...)`  |
+| `f64v2_mul(a_ptr, b_ptr): f64v2`   | `f64v_mul(&r, ...)`  |
+| `f64v2_div(a_ptr, b_ptr): f64v2`   | `f64v_div(&r, ...)`  |
+| `f64v2_fmadd(a_ptr, b_ptr, c_ptr): f64v2` | `f64v_fmadd`  |
+| `f64v2_dot(a_ptr, b_ptr): i64`     | `f64v_dot` (scalar)  |
+| `f64v2_scale(a_ptr, s): f64v2`     | `f64v_scale`         |
+
+API shape: **pointer inputs, by-value f64v2 return** via
+the v5.10.32 XMM0 ABI on x86 SysV / X0+X1 pair on
+aarch64 / r0+r1 pair on cx / RCX-retptr on Win64 PE.
+
+**`tests/tcyr/simd_typed_wrappers.tcyr`** — gate covers
+`f64v2_make` + lo/hi extractors + add/sub/mul + dot
+across 9 sub-asserts. Wired into `cyrius test` (137/137
+on x86; 9/9 on pi).
+
+**`docs/api-surface.snapshot`** — 10 new `simd::*`
+entries (alphabetic insertion).
+
+### Why pointer inputs (not by-value params)
+
+The v5.10.28-32 typed-simd ABI arc shipped the **return
+side** end-to-end — `fn f(): f64v2` returns correctly
+through XMM0/X0+X1/r0+r1/retptr on every backend. The
+**param side** is half-implemented: `fn f(v: f64v2)`
+reads the lo half correctly via `&v + 0`, but `&v + 8`
+is undefined memory because `parse_decl` allocates a
+single 8-byte slot for the f64v2 param and the hi half
+is silently dropped at the call-site register-to-stack
+transfer. Fixing this requires:
+
+1. `parse_decl` allocating 2 slots per f64v2 param
+2. A register-pair → 2-slot store sequence at fn entry
+   (mirror of the existing return-pair → call-site-pair
+   load sequence)
+
+That's a separate compiler-side slot — pinned as
+v5.10.38 below. Until it lands, the typed wrappers
+take pointer inputs (which threads through the existing
+single-slot param ABI) and return by-value (which uses
+the already-shipped multi-register return ABI).
+
+### What this slot does NOT include
+
+Three items intentionally deferred from the original
+v5.10.33 scope, with concrete pinnage:
+
+- **`f64v2_abs` / `f64v2_sqrt`** — pre-existing
+  `PARSE_SIMD_EXT` codegen bug surfaces when a 4-arg
+  `f64v_X` intrinsic (add/sub/mul/div/scale) compiles
+  in the same TU **before** a 3-arg `f64v_abs` /
+  `f64v_sqrt` call. The latter's emit shifts by 8 bytes
+  and returns a stack address instead of the
+  absed/sqrt'd lo half. NOT a v5.10.33 regression —
+  the bug's been latent since v5.10.16 (`f64v_abs` /
+  `f64v_sqrt` introduction); it never surfaced because
+  no consumer mixed 3-arg and 4-arg forms in one TU.
+  The typed-wrapper layer would have done so. Pinned
+  as **v5.10.35**. Until the parser fix lands, callers
+  needing absolute-value / square-root use the raw
+  `f64v_abs` / `f64v_sqrt` intrinsics directly with
+  explicit stack-local allocation.
+- **`f64v4` (32-byte packed-double, two-XMM pair or
+  YMM/AVX-detected)** — entirely new value-type,
+  separate from f64v2. Pinned as **v5.10.37**.
+- **aarch64 V0 NEON return-register optimization** —
+  mirrors v5.10.32's x86 XMM0 work. Currently uses
+  X0+X1 int-class pair (Phase 2, v5.10.29) which works
+  but is suboptimal for the SIMD class. Pinned as
+  **v5.10.36**.
+
+### Why scope-shrink
+
+Original v5.10.33 scope from roadmap line 1452 was
+"f64v4 + lib/simd.cyr typed wrappers (overload
+dispatch) + aarch64 V0 NEON optimization" — that's
+genuinely three slots of work, not one. The
+v5.10.16+0.17 SIMD slots set the precedent of breaking
+multi-arch SIMD work across slots; this slot ships the
+consumer-visible piece (typed wrappers) cleanly and
+splits the rest into honest follow-ups per memory pin
+`feedback_no_one_fix_per_slot` (genuine multi-slot
+scope is fine; lazy split = the antipattern).
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV int-class pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | cx bytecode + macho inherits |
+| 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style |
+| 5     | v5.10.32 | ✅     | x86 SysV XMM0 register passing |
+| 6     | v5.10.33 | ✅ partial | **`lib/simd.cyr` typed wrappers** (this slot — return-side; param-side + abs/sqrt + f64v4 + aarch64 V0 NEON deferred to .35–.38) |
+| 7     | v5.10.35 | pinned | `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug (unblocks `f64v2_abs` / `f64v2_sqrt`) |
+| 8     | v5.10.36 | pinned | aarch64 V0 NEON return-register optimization (mirrors XMM0) |
+| 9     | v5.10.37 | pinned | `f64v4` (32-byte two-XMM pair OR YMM/AVX) |
+| 10    | v5.10.38 | pinned | f64v2 param-side ABI (2-slot alloc + register-pair → 2-slot store at fn entry) |
+
+Arc fully closes at v5.10.38 with consumer-clean
+`f64v2_add(a: f64v2, b: f64v2): f64v2` shape.
+
 ## [5.10.32] — 2026-05-10
 
 **v5.10.x SLOT 32 — value-type ABI Phase 5: x86 SysV XMM
@@ -1714,7 +1857,7 @@ this entry.
 x86: tcyr suite passes (the fix delta), byte-identical
 self-host. aarch64 NEON encodings derived from ARMv8-A
 reference; runtime cross-test on pi (aarch64 Linux),
-cass (Apple Silicon Mac), ecb (Windows PE) is the
+ecb (Apple Silicon Mach-O), cass (Windows PE) is the
 acceptance bar — pending in this entry, will be
 verified before tagging.
 

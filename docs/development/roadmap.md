@@ -1054,9 +1054,9 @@ prior consumer and was never wired in — that's why both
 the aarch64 stub AND the x86 codegen bug rode along
 unnoticed for ~3.5 years of releases.
 
-Cross-host SSH verify on pi (aarch64 Linux), cass (Apple
-Silicon), ecb (Windows PE) is part of the acceptance bar
-— pending in this entry.
+Cross-host SSH verify on pi (aarch64 Linux), ecb (Apple
+Silicon Mach-O), cass (Windows PE) is part of the
+acceptance bar — pending in this entry.
 
 cc5 (x86): 771,784 → 771,464 (-320 B; helper factoring +
 disp32 form net negative). cc5_aarch64: 467,016 → 468,888
@@ -1449,7 +1449,11 @@ motion.
 | 3     | v5.10.30 | ✅     | cx bytecode (r0+r1 pair); macho aarch64 inherits v5.10.29's emit (macho/emit.cyr binary-format-only). cxvm pipeline runs without crash on f64v2 code. |
 | 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style return (≤16B composite ABI). Codegen wired in PARSE_FN_DEF rough-scan / PARSE_RETURN / parse_decl caller side. Cross-compile produces valid PE32+ binary; runs on cass without crash. **Full runtime verify gated on Win64 stdlib** (println silent + exit-code propagation broken — pre-existing gaps, separate arc). |
 | 5     | v5.10.32 | ✅     | x86 SysV XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` (8 bytes each) replaces v5.10.28's int-class rax/rdx pair (14 bytes each). cc5 SHRINKS by 384 B from the encoding-density gain. Standard SysV PCS for SSE class composites. |
-| 6     | v5.10.33 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM (AVX-detected). `lib/simd.cyr` typed wrappers `f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed via overload dispatch (uses Phase 3 generalize from v5.10.25). Aarch64 V0 NEON optimization (mirrors v5.10.32's XMM0 work). Closes the typed-simd arc. |
+| 6     | v5.10.33 | ✅ partial | `lib/simd.cyr` typed wrappers (10 fns: make/lo/hi/add/sub/mul/div/fmadd/dot/scale) using pointer inputs + by-value f64v2 return. Closes the consumer-visible piece of the arc. **Param-side ABI, abs/sqrt, f64v4, and aarch64 V0 NEON deferred to slots 7–10.** |
+| 7     | v5.10.35 | pinned | `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug fix (unblocks `f64v2_abs` / `f64v2_sqrt`). |
+| 8     | v5.10.36 | pinned | aarch64 V0 NEON return-register optimization (mirrors v5.10.32 XMM0 work; replaces v5.10.29's X0+X1 int-class pair). |
+| 9     | v5.10.37 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM/AVX-detected; aarch64 two-V-register pair. |
+| 10    | v5.10.38 | pinned | f64v2 param-side ABI: 2-slot allocation + register-pair → 2-slot store at fn entry, enables `f64v2_add(a: f64v2, b: f64v2): f64v2` value-param shape via overload dispatch. |
 
 Adds `f64v2` and `f64v4` as primitive types (16-byte
 and 32-byte packed-f64 respectively), overloaded
@@ -1485,10 +1489,224 @@ May pair with `lib/tls.cyr` hook-surface audit
 (v5.10.30) if scheduling overlaps and any module
 touches TLS.
 
-#### v5.10.31 — Lex dedup hot-path optimization
+#### v5.10.34 — `lib/tls.cyr` early-data status accessors (sandhi 1.3.2 unblocker)
+
+Filed by sandhi 2026-05-10
+(`/home/macro/Repos/sandhi/docs/issues/2026-05-10-stdlib-tls-early-data-status.md`)
+after v5.10.31 verification surfaced the gap. Sandhi
+1.3.2 (TLS 1.3 0-RTT, opt-in via
+`sandhi_http_options_allow_0rtt`) is **blocked** on
+this filing — the v5.10.21 0-RTT primitives ship the
+write/read calls but not the post-handshake acceptance
+check or pre-attempt eligibility probe required to do
+0-RTT safely on the client side.
+
+Two thin libssl wrappers + 3 enum constants:
+
+```cyr
+fn tls_get_early_data_status(ctx): i64;
+# wraps SSL_get_early_data_status — returns:
+#   TLS_EARLY_DATA_NOT_SENT  = 0
+#   TLS_EARLY_DATA_REJECTED  = 1  → caller must resend
+#   TLS_EARLY_DATA_ACCEPTED  = 2
+
+fn tls_session_get_max_early_data(session): i64;
+# wraps SSL_SESSION_get_max_early_data — returns max
+# early-data bytes the cached session permits;
+# 0 means session doesn't advertise 0-RTT.
+```
+
+Plus 3 entries appended to `enum TlsConst`. Same
+defensive shape as the existing v5.10.21 wrappers:
+null-check inputs, return safe defaults when the
+libssl symbol is unresolved (so cc5 binaries built
+against older libssl still link cleanly).
+
+**Acceptance bar**:
+1. Both wrappers + 3 enum entries land in
+   `lib/tls.cyr`; api-surface snapshot regenerated.
+2. `tests/tcyr/tls_early_data_status.tcyr` (new gate)
+   exercises the symbol-resolution path on x86 +
+   aarch64 (capability probe — both fns return safe
+   defaults when symbol missing); cross-host SSH
+   verify on pi for the aarch64 path.
+3. Self-host byte-identical x86; 66/66 check.sh;
+   cyrius test +1 gate.
+4. Sandhi 1.3.2 unblocked: confirm via paired sandhi-
+   side build that the new wrappers resolve and the
+   `feedback_consumer_request_full_surface` antipattern
+   is avoided (ship the FULL filing in one slot — both
+   wrappers + the enum, not split).
+
+Why now: per memory pin
+`feedback_consumer_request_full_surface` (v5.10.13
+ALPN+verify-only ship was the antipattern), when a
+downstream files a request the FULL surface lands in
+one slot. v5.10.21 closed the write/read primitives;
+v5.10.27 closed the staged-connect timing window;
+this slot closes the client-side correctness gap so
+sandhi 1.3.2 can ship.
+
+#### v5.10.35 — `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug fix
+
+Pinned 2026-05-10 at v5.10.33 ship as the first SIMD-
+deferral cascade slot.
+
+Pre-existing codegen bug in
+`src/frontend/parse_expr.cyr` `PARSE_SIMD_EXT`: when a
+4-arg `f64v_X` intrinsic (add/sub/mul/div/scale)
+compiles in the same TU **before** a 3-arg `f64v_abs`
+or `f64v_sqrt` call, the 3-arg form's emit shifts by
+8 bytes and returns a stack address instead of the
+absed/sqrt'd lo half.
+
+Latent since v5.10.16 (when `f64v_abs` /
+`f64v_sqrt` were introduced); never surfaced because
+no consumer mixed 3-arg and 4-arg forms in one TU.
+The v5.10.33 typed-wrapper layer would have done so —
+diagnosed during v5.10.33 development; pinned out as
+a separate-slot fix per `feedback_no_one_fix_per_slot`
+(genuine multi-slot scope, not lazy split).
+
+**Acceptance bar**:
+1. Diagnose the 8-byte shift in `PARSE_SIMD_EXT`
+   (likely a stack-offset miscalculation in the 3-arg
+   path that's correct in isolation but wrong when
+   the 4-arg path's slot allocation has run earlier
+   in the TU).
+2. Fix preserves correct emit for **both** 3-arg
+   isolation and 3-arg-after-4-arg interleave.
+3. Add `f64v2_abs` / `f64v2_sqrt` to `lib/simd.cyr`
+   and exercise the interleave in
+   `simd_typed_wrappers.tcyr`.
+4. Cross-arch verify (x86 / aarch64 native pi /
+   cx / macho ecb / Win64 cass) — bug fix is in
+   shared parser, but the emit path differs per
+   backend; check all four.
+5. Self-host byte-identical x86; 66/66 check.sh.
+
+#### v5.10.36 — aarch64 V0 NEON return-register optimization (typed-simd ABI Phase 8)
+
+Pinned 2026-05-10 at v5.10.33 ship.
+
+v5.10.29 (Phase 2) shipped aarch64 f64v2 return as
+**X0+X1 int-class pair** (mirrors v5.10.28's x86
+rax/rdx). v5.10.32 (Phase 5) shipped x86 SSE-class
+optimization (XMM0 register passing, single MOVUPD).
+This slot mirrors that for aarch64: replace X0+X1
+int-class pair with **V0** (NEON 128-bit register)
+using `ldr q0, [&v]` / `str q0, [&x]` (8 bytes each;
+matches AAPCS64 SIMD class).
+
+Mirror of v5.10.32: same shape, same cc5_aarch64
+size-shrink expected from encoding density (8-byte
+LDR Q vs 14-byte X-pair).
+
+**Acceptance bar**:
+1. `EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR` in
+   `src/backend/aarch64/emit.cyr` rewritten to emit
+   `ldr q0, [rbp+disp]` (`A4 0x ... NEON LDR Q`) and
+   `str q0, [rbp+disp]`.
+2. Existing `tests/tcyr/f64v2_byval_return.tcyr` +
+   `simd_typed_wrappers.tcyr` pass cross-arch.
+3. cc5 + cc5_aarch64 byte-identical post-fix on their
+   respective hosts (no x86 emit change — aarch64-
+   only optimization).
+4. Real Pi (pi) + qemu-aarch64 verify: 9/9 sub-asserts
+   on `simd_typed_wrappers.tcyr`; 8/8 on
+   `f64v2_byval_return.tcyr`.
+
+#### v5.10.37 — `f64v4` (32-byte packed-double) value-type (typed-simd ABI Phase 9)
+
+Pinned 2026-05-10 at v5.10.33 ship.
+
+Adds `f64v4` as a 32-byte primitive value type
+(four packed f64s). Three backend strategies:
+
+| Backend | Return ABI | Param ABI |
+|---------|------------|-----------|
+| x86 SSE2 | two-XMM pair (XMM0+XMM1, 32B) | retptr-style (>16B composite) |
+| x86 AVX  | YMM0 single 256-bit register (AVX-detected at fn entry) | YMM0 single |
+| aarch64 NEON | V0+V1 pair (32B) or V0 single (SVE2-detected later) | V0+V1 pair |
+| cx       | r0+r1+r2+r3 (4-register pair; cxvm extension) | retptr |
+| Win64 PE | retptr-style (>16B composite per MS x64 ABI) | retptr |
+
+Builds on v5.10.36's V0 work for aarch64 and v5.10.32's
+XMM0 work for x86. AVX detection at fn-entry uses
+`CPUID.07H:EBX[5]` — gate behind `CYRIUS_SIMD_AVX=1`
+env var initially; auto-detect at fn boundary in a
+follow-up.
+
+**Acceptance bar**:
+1. `f64v4` recognized as primitive type in
+   `parse_fn.cyr` rough-scan + return-type vocabulary
+   (encoding `0 - 21` per the v5.10.28 pattern).
+2. Stack-local allocation: 32-byte slot (4× f64 vs
+   v5.10.28's 16-byte for f64v2).
+3. Backend emit per the table above; per-backend
+   `EFLLOAD_F64V4_*` / `EFLSTORE_F64V4_*` helpers.
+4. `tests/tcyr/f64v4_byval_return.tcyr` (new gate)
+   covers the cross-arch return path.
+5. `lib/simd.cyr` extension: `f64v4_make` / `f64v4_*`
+   wrappers around `f64v_*` intrinsics with arity 4.
+6. Self-host byte-identical x86; 66/66 check.sh;
+   cross-host pi/ecb/cass verify per memory pin.
+
+#### v5.10.38 — f64v2 param-side ABI (typed-simd ABI Phase 10, arc close)
+
+Pinned 2026-05-10 at v5.10.33 ship as the arc-closing
+slot.
+
+The v5.10.28-32 typed-simd ABI work shipped the
+**return side** end-to-end. The **param side** is
+half-implemented — `fn f(v: f64v2)` reads the lo half
+correctly via `&v + 0`, but `&v + 8` is undefined
+memory because `parse_decl` allocates a single 8-byte
+slot for the f64v2 param and the hi half is silently
+dropped at the call-site register-to-stack transfer.
+
+This slot fixes that: **2-slot allocation per f64v2
+param + register-pair → 2-slot store sequence at fn
+entry** (mirror of the existing return-pair → call-
+site-pair load sequence). After this lands,
+`lib/simd.cyr` typed wrappers can shift from
+pointer-input form (`f64v2_add(a_ptr, b_ptr)`) to
+value-input form (`f64v2_add(a: f64v2, b: f64v2)`)
+via overload dispatch — the consumer-clean shape
+originally intended for v5.10.33.
+
+**Acceptance bar**:
+1. `parse_decl` allocates 2 slots for f64v2 params
+   (mirrors return-side multi-slot pattern).
+2. Per-backend register-pair → 2-slot store at fn
+   entry: x86 XMM0 → 2 stack slots, aarch64 V0 (or
+   X0+X1 pre-Phase-8) → 2 slots, cx r0+r1 → 2 slots,
+   Win64 retptr-passed → 2 slots.
+3. `lib/simd.cyr` typed wrappers updated to
+   value-param form: `f64v2_add(a: f64v2, b: f64v2):
+   f64v2`. Pointer-input forms retained as `_ptr`
+   suffixed variants for consumers needing them.
+4. Overload dispatch (Phase 3 generalize from
+   v5.10.25) routes `f64v2_add(&x, &y)` (pointer
+   form) and `f64v2_add(x, y)` (value form)
+   correctly.
+5. `tests/tcyr/f64v2_byval_param.tcyr` (new gate)
+   exercises the param-side ABI on every backend.
+6. Self-host byte-identical x86; 66/66 check.sh; full
+   cross-host pi/ecb/cass verify before tagging.
+
+Arc fully closes at v5.10.38: from no-vector-types at
+v5.10.27 → consumer-clean
+`f64v2_add(a: f64v2, b: f64v2): f64v2` overload-
+dispatched API across x86 SSE / aarch64 NEON / cx /
+macho / Win64 PE.
+
+#### v5.10.39 — Lex dedup hot-path optimization
 
 Promoted from "compile-time wins" held entry to
-concrete slot at v5.10.20 P(-1) sweep.
+concrete slot at v5.10.20 P(-1) sweep; cascaded from
+original .31 pin at v5.10.33 ship (displaced by
+value-type ABI Phases 1-5 + simd-deferral cascade).
 
 v5.10.0 profile data: lex 580 ms = 59% of compile
 time. O(N²) LEXID dedup scan inside it. Length-
@@ -1503,17 +1721,19 @@ Acceptance: measurable improvement vs the v5.10.20
 P(-1) baseline (vec/push_1000 21µs, vec/find_100
 1µs — these are the published reference points).
 
-#### v5.10.32 — Fixup phase optimization
+#### v5.10.40 — Fixup phase optimization
 
-Promoted from held to concrete slot at v5.10.20
-P(-1) sweep. v5.10.0 profile: fixup 210 ms = 21%
-of compile time. Second-largest target after lex.
+Promoted from held to concrete slot at v5.10.20 P(-1)
+sweep; cascaded from original .32 pin at v5.10.33
+ship. v5.10.0 profile: fixup 210 ms = 21% of compile
+time. Second-largest target after lex.
 
-#### v5.10.33 — `lib/tls.cyr` hook-surface contract audit
+#### v5.10.41 — `lib/tls.cyr` hook-surface contract audit
 
 Filed from sandhi 1.1.x roadmap-cleanup pass,
 2026-05-08; promoted from held to concrete slot at
-v5.10.20 P(-1) sweep.
+v5.10.20 P(-1) sweep; cascaded from original .33 pin
+at v5.10.33 ship.
 
 With pure-Cyrius TLS removed (2026-04-24 decision —
 `lib/tls.cyr` stays libssl.so.3-bridged) AND sandhi
@@ -1541,14 +1761,15 @@ makes this explicitly cyrius's slot, not sandhi's.
 May pair with stdlib data-domain carve-out
 (v5.10.27) if scheduling overlaps.
 
-#### v5.10.34 — macOS arm64 struct-by-value calling-convention
+#### v5.10.42 — macOS arm64 struct-by-value calling-convention
 
 Promoted from held to concrete slot at v5.10.20 P(-1)
-sweep. v5.5.36 deferred. Surfaces on consumer
+sweep; cascaded from original .34 pin at v5.10.33
+ship. v5.5.36 deferred. Surfaces on consumer
 cross-build. Mach-O ABI work, isolated from other
 held items — earns its own slot.
 
-#### v5.10.35 — Defensive sweep (small bundle)
+#### v5.10.43 — Defensive sweep (small bundle)
 
 Promoted from held to concrete slot at v5.10.20
 P(-1) sweep. Bundle of small defensive cleanups
@@ -1676,6 +1897,60 @@ moves to v5.12.0).
 
 **Scope**:
 
+- **Stdlib annotation refactor — multi-patch breakout**
+  (pinned 2026-05-10 at v5.10.32 ship). User direction:
+  *"given we have a type system now... it probably would
+  be worth review of the other libs and refactoring where
+  possible... it can be in front of the ts test work of
+  5.11.x items"*.
+
+  REAL TYPE SYSTEM arc closed at v5.10.26 (default-on
+  CYRIUS_TYPE_CHECK + 11 stdlib cstring annotations). The
+  v5.10.32 type-audit shows **75% lib coverage** — 1,010
+  unannotated public fns out of 4,133. The annotations are
+  dormant signal: `var x: Str = f(...)` is correct today but
+  warning-silent if `f` lacks a `: Str` return annotation.
+  Adding annotations across the rest of stdlib lights up the
+  type-check warning surface for downstream consumers — same
+  shape as the v5.10.24 ship (cstring annotations in
+  string.cyr/io.cyr).
+
+  Multi-patch breakout planned phases (refine at slot
+  entry per `feedback_premise_check_at_slot_entry`):
+
+  | Phase  | Modules (gap counts) | Why this order |
+  |--------|----------------------|----------------|
+  | v5.11.1 | Foundational core: alloc (0/26), vec (0/11), fmt (0/14), freelist (0/4), fnptr (0/9), result (0/6), tagged (0/11), assert (0/12) — ~93 fns | Used by every consumer; sets the floor for downstream value. Most are scalar/i64-returning; a few Str/Result/Option-returning that enable downstream inference. |
+  | v5.11.2 | I/O surface: io (1/21), fs (0/11), process (0/10), syscalls_x86_64_linux (0/62), syscalls_aarch64_linux (0/62) — ~166 fns | High cstring-shape exposure (file paths). Strong type-check signal once consumers thread Str through fs ops. |
+  | v5.11.3 | String/format completion: string (9/16), str (52/68), bigint (0/20), chrono (0/16), bench (0/18) — ~71 fns | Closes string-handling surface; bigint/chrono/bench are heavily-called specialized libs. |
+  | v5.11.4 | Collection libraries: hashmap (0/32), json (0/57) — ~89 fns | Mid-sized libs; hashmap underlies many sandhi/agnosys flows; json is the serialization workhorse. |
+  | v5.11.5 | Big consumer libraries: mabda (0/405) | Largest single gap. GPU/rendering surface. Whole slot. |
+  | v5.11.6 | Closeouts: vani (86/105), patra (88/92), agnosys (540/559), sandhi (315/344), pwd (6/12), grp (8/10), shadow (4/6), cyml (14/17), fdlopen (10/19), flags (10/12), net (13/15), u128 (34/35), ws_server (12/13) — ~83 fns | Partial-coverage consumer libs; top off to 100%. |
+  | v5.11.7+ | src/common/ir (24/44), src/frontend/parse_types (0/24), parse_decl/parse_fn cleanup (11/11 each, no gap) | Compiler-side internals — annotations don't expose to consumers but tighten internal reasoning. |
+
+  **Acceptance shape per phase**:
+  - Self-host byte-identical (annotations don't change emit)
+  - 66/66 check.sh + 136+/136+ cyrius test
+  - Downstream consumer regression sweep (per-phase verify):
+    no new false-positive type-check warnings
+  - Coverage delta tracked per slot in CHANGELOG
+
+  **NOT in scope**: API surface changes (renames, signature
+  shifts). This is a pure-annotation arc — `: Str` / `: cstring`
+  / `: Result` / `: Option` / `: Tagged` / `: i64` / `: f64v2`
+  added without altering the existing fn signatures' I/O.
+  Refactoring of fn bodies (DRY-up, abstraction tightening) is
+  a separate concern that may be folded in opportunistically
+  but is not the slot's primary ask.
+
+  **Why now**: at v5.10.32 the typed-simd ABI arc is one slot
+  from close (v5.10.33 ships f64v4 + lib/simd.cyr typed
+  wrappers). After that, the v5.10.x cleanup minor naturally
+  flows into v5.11.x. The stdlib annotation arc fills the
+  v5.11.x cleanup-minor remit (TS test harness was the only
+  pinned item; this becomes the primary v5.11.x narrative).
+  TS test harness stays opportunistic per its original pin.
+
 - **TS test harness program** (option E from v5.7.37) —
   single `programs/ts_test_runner.cyr` consuming both
   internal-symbol fn dispatch and TS fixture files.
@@ -1684,7 +1959,8 @@ moves to v5.12.0).
   v5.11.0 slot at v5.10.20 P(-1) sweep so it lands when a
   downstream consumer surfaces a test pattern that doesn't
   fit either current shape. Lands when that surfaces;
-  otherwise stays opportunistic.
+  otherwise stays opportunistic — the stdlib annotation arc
+  takes the primary v5.11.x slot sequence.
 - **Other v5.10.x leftovers** that surface during the cycle
   close — refine at first slot entry per
   `feedback_premise_check_at_slot_entry`.
