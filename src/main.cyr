@@ -248,7 +248,15 @@
 #   0x114A000 struct_ftypes [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
 #   0x11CA000 struct_fnames [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
 #
-#   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
+#   --- v5.10.24 REAL TYPE SYSTEM Phase 2 — extended param-type masks ---
+#   (Mirror of fn_param_str_mask at 0x12BA000 — bit N set = param N has the
+#   given type annotation. Used by PARSE_FNCALL call-site type check to fire
+#   warnings on type mismatches. Reused the 256 KB v5.5.37-retired gap.)
+#   0x124A000 fn_param_cstring_mask [32768] 4096 cstring-param bitmasks (v5.10.24)
+#   0x1252000 fn_param_result_mask  [32768] 4096 Result-param bitmasks  (v5.10.24)
+#   0x125A000 fn_param_option_mask  [32768] 4096 Option-param bitmasks  (v5.10.24)
+#   0x1262000 fn_param_tagged_mask  [32768] 4096 Tagged-param bitmasks  (v5.10.24)
+#   0x126A000 — 0x128A000 (128 KB gap — reserved for future per-param type masks)
 #
 # --- cc5 IR region (v5.0.0) ---
 #   0x12CA000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes

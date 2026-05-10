@@ -471,18 +471,18 @@ fn sys_waitpid(pid, status_ptr, options): i64 {
 
 # Wait status macros (cross-arch identical — bit layout in `int
 # status` is defined by the kernel's wait4 contract, not arch).
-fn WIFEXITED(status): i64 {
+fn WIFEXITED(status) {
     if ((status & 0x7F) == 0) { return 1; }
     return 0;
 }
 
 # Get exit status from wait status.
-fn WEXITSTATUS(status): i64 {
+fn WEXITSTATUS(status) {
     return (status >> 8) & 0xFF;
 }
 
 # Check if child was killed by signal.
-fn WIFSIGNALED(status): i64 {
+fn WIFSIGNALED(status) {
     var sig = status & 0x7F;
     if (sig > 0) {
         if (sig != 0x7F) { return 1; }
@@ -491,7 +491,7 @@ fn WIFSIGNALED(status): i64 {
 }
 
 # Get signal number from wait status.
-fn WTERMSIG(status): i64 {
+fn WTERMSIG(status) {
     return status & 0x7F;
 }
 

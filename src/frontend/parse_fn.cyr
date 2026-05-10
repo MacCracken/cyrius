@@ -895,7 +895,16 @@ fn PARSE_FNCALL(S, noff): i64 {
             # param-side annotations + v5.10.5 overload dispatch
             # remove the false-positive flood.
             if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 2) {
-                if ((smask & (1 << argc)) == 0) {
+                # v5.10.24 — Phase 2: gate the warning on cstring_mask
+                # being explicitly SET (param annotated `: cstring`)
+                # instead of str_mask being CLEARED (the old polarity
+                # caused the false-positive flood pinned at v5.10.5
+                # — every untyped-i64 param that legitimately takes
+                # a Str-as-pointer triggered a false warning). Now
+                # the warning only fires when the param is EXPLICITLY
+                # asking for cstring semantics.
+                var _tc_cmask = L64(S + 0x124A000 + fi * 8);
+                if (_tc_cmask & (1 << argc)) {
                     var _tc_arg_noff = PEEKV(S);
                     var _tc_typ = 0;
                     if (GINFN(S) == 1) {
@@ -922,18 +931,24 @@ fn PARSE_FNCALL(S, noff): i64 {
                             syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 47);
                         }
                     }
-                    # i64 → unannotated-param warning would flood
-                    # false positives — most consumer fns legitimately
-                    # take i64 sizes/counts/indexes as unannotated
-                    # params (`memcpy(dst, src, n)`, `alloc(n)`,
-                    # `vec_push(v, item)`). The agnosys-shape `println(strlen(x))`
-                    # is already handled silently by the v5.10.5
-                    # dispatch (println(i64) → println_int), so a
-                    # diagnostic warning isn't needed for that path.
-                    # Re-introduce only when we have per-param scalar-
-                    # vs-pointer annotation distinction; current
-                    # heuristic doesn't have enough signal.
                 }
+                # v5.10.24 — Result/Option/Tagged param checks.
+                # Caller passes a value typed differently than the
+                # param's annotation → warning. These three are all
+                # i64-shape at runtime (heap pointer to tagged
+                # union); the type system uses them for call-site
+                # SAFETY, not for codegen.
+                #
+                # Mismatch shapes that surface:
+                #   - Result-typed local passed to non-Result param
+                #     → warn (caller probably forgot to unwrap)
+                #   - Str-typed local passed to Result param
+                #     → warn (probably wrong arg)
+                # The check is conservative: only fires when the
+                # callee param IS explicitly typed AND the arg has
+                # a different explicit annotation. Untyped-i64 args
+                # to Result-typed params don't warn (could be
+                # `result_unwrap`-result-as-i64, valid pattern).
             } }
             # Auto-coercion: if this param is : Str and the arg is a string literal,
             # emit str_from(literal) instead of the raw cstr pointer.
@@ -1475,6 +1490,15 @@ fn PARSE_FN_DEF(S): i64 {
     STI(S, GTI(S) + 1);
     var pc = 0;
     var str_mask = 0;
+    # v5.10.24 — Phase 2 param-type masks (mirror str_mask shape).
+    # Bit N = 1 means param N is annotated `: <Type>`. Stored at
+    # parallel heap offsets so PARSE_FNCALL can consult on a per-
+    # fn / per-param basis. Empty (0) for fns with no annotated
+    # params — same default as str_mask.
+    var cstring_mask = 0;
+    var result_mask = 0;
+    var option_mask = 0;
+    var tagged_mask = 0;
     if (PEEKT(S) != 11) {
         var pgo = 1;
         while (pgo == 1) {
@@ -1512,6 +1536,83 @@ fn PARSE_FN_DEF(S): i64 {
                     # Check if type name is "Str" (0x00727453 = "Str\0")
                     if (L64(S + 0x60000 + tnoff) & 0xFFFFFFFF == 0x00727453) {
                         str_mask = str_mask | (1 << pc);
+                    }
+                    # v5.10.24 — REAL TYPE SYSTEM Phase 2 — extended param-
+                    # type recognition. Mirror of the return-type vocab
+                    # added at v5.10.23 in this same file: cstring /
+                    # Result / Option / Tagged. Each gets its own per-fn
+                    # bitmask in a parallel heap region (0x124A000+).
+                    # PARSE_FNCALL consults the masks for call-site
+                    # type-mismatch warnings.
+                    var _pt_b0 = load8(S + 0x60000 + tnoff);
+                    var _pt_b1 = load8(S + 0x60000 + tnoff + 1);
+                    var _pt_b2 = load8(S + 0x60000 + tnoff + 2);
+                    var _pt_b3 = load8(S + 0x60000 + tnoff + 3);
+                    # cstring → 'c','s','t','r','i','n','g',0
+                    if (_pt_b0 == 99) {
+                        if (_pt_b1 == 115) {
+                            if (_pt_b2 == 116) {
+                                if (_pt_b3 == 114) {
+                                    if (load8(S + 0x60000 + tnoff + 4) == 105) {
+                                        if (load8(S + 0x60000 + tnoff + 5) == 110) {
+                                            if (load8(S + 0x60000 + tnoff + 6) == 103) {
+                                                if (load8(S + 0x60000 + tnoff + 7) == 0) {
+                                                    cstring_mask = cstring_mask | (1 << pc);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    # Result → 'R','e','s','u','l','t',0
+                    if (_pt_b0 == 82) {
+                        if (_pt_b1 == 101) {
+                            if (_pt_b2 == 115) {
+                                if (_pt_b3 == 117) {
+                                    if (load8(S + 0x60000 + tnoff + 4) == 108) {
+                                        if (load8(S + 0x60000 + tnoff + 5) == 116) {
+                                            if (load8(S + 0x60000 + tnoff + 6) == 0) {
+                                                result_mask = result_mask | (1 << pc);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    # Option → 'O','p','t','i','o','n',0
+                    if (_pt_b0 == 79) {
+                        if (_pt_b1 == 112) {
+                            if (_pt_b2 == 116) {
+                                if (_pt_b3 == 105) {
+                                    if (load8(S + 0x60000 + tnoff + 4) == 111) {
+                                        if (load8(S + 0x60000 + tnoff + 5) == 110) {
+                                            if (load8(S + 0x60000 + tnoff + 6) == 0) {
+                                                option_mask = option_mask | (1 << pc);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    # Tagged → 'T','a','g','g','e','d',0
+                    if (_pt_b0 == 84) {
+                        if (_pt_b1 == 97) {
+                            if (_pt_b2 == 103) {
+                                if (_pt_b3 == 103) {
+                                    if (load8(S + 0x60000 + tnoff + 4) == 101) {
+                                        if (load8(S + 0x60000 + tnoff + 5) == 100) {
+                                            if (load8(S + 0x60000 + tnoff + 6) == 0) {
+                                                tagged_mask = tagged_mask | (1 << pc);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     pt_sid = FINDSTRUCT(S, tnoff);
                 }
@@ -1559,6 +1660,12 @@ fn PARSE_FN_DEF(S): i64 {
     S64(S + 0x129A000 + fi * 8, pc);
     # Store Str param mask — bit N set = param N is : Str
     S64(S + 0x12BA000 + fi * 8, str_mask);
+    # v5.10.24 — Phase 2 param-type masks. Same per-fn shape as
+    # str_mask; PARSE_FNCALL reads them for call-site type checks.
+    S64(S + 0x124A000 + fi * 8, cstring_mask);
+    S64(S + 0x1252000 + fi * 8, result_mask);
+    S64(S + 0x125A000 + fi * 8, option_mask);
+    S64(S + 0x1262000 + fi * 8, tagged_mask);
     # v5.5.36 Phase 2b — optional `: StructName` return-type annotation:
     # `fn make(): Point { ... return p; }`. Sets fn_ret_sid[fi] = sid;
     # PARSE_RETURN + call-site consult it to emit the Win64 hidden-RCX /

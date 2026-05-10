@@ -5,6 +5,57 @@
 
 ## Version
 
+**5.10.24** (shipped 2026-05-09 — **v5.10.x SLOT 24 —
+REAL TYPE SYSTEM Phase 2: call-site type check
+(closes v5.10.5 false-positive flood)**).
+
+Phase 2 of the 5-phase type-system arc. Adds 4 new
+per-fn param-type bitmasks for the Phase 1B vocabulary
+(`cstring` / `Result` / `Option` / `Tagged`), inverts
+the v5.10.5 warning polarity from "param NOT
+str-annotated" to "param IS cstring-annotated"
+(eliminates false-positive flood), and annotates
+canonical-motivator stdlib fns with `: cstring` on
+cstring-shaped params.
+
+**Heap map**: 4 new mask regions at 0x124A000-0x126A000
+(reused 256 KB v5.5.37-retired gap):
+- 0x124A000 fn_param_cstring_mask [32 KB]
+- 0x1252000 fn_param_result_mask  [32 KB]
+- 0x125A000 fn_param_option_mask  [32 KB]
+- 0x1262000 fn_param_tagged_mask  [32 KB]
+- 0x126A000+ (128 KB reserved gap)
+
+**Stdlib annotations** added to:
+- `lib/string.cyr`: `println(s: cstring)`,
+  `strlen(s: cstring)`, `streq(a: cstring, b: cstring)`,
+  `strchr` / `atoi` / `strstr` / `str_lower_cstr` /
+  `str_upper_cstr` / `memchr`
+- `lib/io.cyr`: `file_open` / `file_open_r`
+
+**Acceptance**:
+- cc5: 779,760 → 783,408 (+3,648 B for the param-mask
+  recognition + storage + warning gate).
+- Self-host byte-identical x86.
+- 66/66 check.sh + 135/135 cyrius test BOTH with
+  AND without `CYRIUS_TYPE_CHECK=1`.
+- Canonical motivator (`var x: Str = ...; dummy(x)`
+  where dummy expects cstring) fires the warning with
+  hint catalog.
+- Zero false positives on full test suite.
+
+**CYRIUS_TYPE_CHECK default-on** stays pinned at
+Phase 5 (v5.10.26). v5.10.24 establishes that the flip
+is SAFE; Phase 3 (overload dispatch) + Phase 4 (type
+inference) extend the type signal further before the
+user-facing default-on lands.
+
+**Next**: v5.10.25 = Phase 3 — overload dispatch
+generalization. Extends `FINDFN` to support multiple
+impls keyed by arg-type signature; PP-mangled names
+(`println_cstr` / `println_str` / `println_int`) at
+the symbol level.
+
 **5.10.23** (shipped 2026-05-09 — **v5.10.x SLOT 23 —
 REAL TYPE SYSTEM Phase 1B: type vocabulary + annotation
 close (Phase 1 done)**).

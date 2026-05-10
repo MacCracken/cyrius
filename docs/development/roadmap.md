@@ -1253,7 +1253,33 @@ cc5: 778,120 → 779,760. Byte-identical x86 self-host.
 66/66 check.sh, 135/135 cyrius test. Phase 2 entry
 criteria met.
 
-#### v5.10.24+ — REAL TYPE SYSTEM Phase 2-5 (continuation)
+#### v5.10.24 ✅ — REAL TYPE SYSTEM Phase 2: call-site type check (SHIPPED)
+
+Phase 2 closes the v5.10.5 false-positive flood. Added
+4 new per-fn param-type bitmasks (cstring/Result/Option/
+Tagged) at heap region 0x124A000 (reused the 256KB
+v5.5.37-retired gap). PARSE_FN_DEF param parser
+recognizes the 4 new annotations + populates masks.
+PARSE_FNCALL warning polarity inverted: fires only when
+param EXPLICITLY `: cstring` (not when param is
+unannotated, which was the v5.10.5 false-positive
+shape).
+
+Annotated `: cstring` on canonical-motivator stdlib fns
+in `lib/string.cyr` (println/strlen/streq/strchr/atoi/
+strstr/str_lower_cstr/str_upper_cstr/memchr) +
+`lib/io.cyr` (file_open/file_open_r).
+
+cc5: 779,760 → 783,408. Byte-identical x86 self-host.
+66/66 check.sh, 135/135 cyrius test BOTH with and
+without `CYRIUS_TYPE_CHECK=1` — **zero false positives**
+on the full suite. Canonical motivator (`Str → cstring
+mismatch`) warns correctly with hint catalog.
+
+CYRIUS_TYPE_CHECK default-on flip stays pinned at
+Phase 5 (v5.10.26).
+
+#### v5.10.25+ — REAL TYPE SYSTEM Phase 3-5 (continuation)
 
 **Reordered at v5.10.21 slot-entry premise check**
 (2026-05-09): typed `f64v2`/`f64v4` (originally

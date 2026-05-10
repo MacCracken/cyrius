@@ -6,6 +6,124 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.24] — 2026-05-09
+
+**v5.10.x SLOT 24 — REAL TYPE SYSTEM Phase 2: call-site
+type check (closes the v5.10.5 false-positive flood)**.
+
+Phase 2 of the 5-phase type-system arc. Adds per-fn
+param-type bitmasks (mirror of `fn_param_str_mask`) for
+the type vocabulary added at Phase 1B (cstring / Result
+/ Option / Tagged), and inverts the call-site warning
+polarity from "param NOT Str-annotated" (the v5.10.5
+false-positive shape) to "param IS cstring-annotated"
+(explicit signal). Annotated the canonical-motivator
+stdlib fns (`println` / `strlen` / `streq` / `atoi` /
+`strchr` / `strstr` / `str_lower_cstr` / `str_upper_cstr`
+/ `file_open` / `file_open_r` / etc.) with `: cstring`
+on cstring-shaped params.
+
+cc5: 779,760 → 783,408 (+3,648 B). Self-host byte-
+identical x86. **66/66 check.sh, 135/135 cyrius test
+both with AND without CYRIUS_TYPE_CHECK=1** — zero
+false-positive warnings on the full suite.
+
+### What landed
+
+**4 new param-type masks** in `src/main.cyr`'s heap
+map (reusing the 256 KB v5.5.37-retired gap at
+0x124A000):
+
+| Address    | Region                   | Size   |
+|------------|--------------------------|--------|
+| 0x124A000  | fn_param_cstring_mask    | 32 KB  |
+| 0x1252000  | fn_param_result_mask     | 32 KB  |
+| 0x125A000  | fn_param_option_mask     | 32 KB  |
+| 0x1262000  | fn_param_tagged_mask     | 32 KB  |
+| 0x126A000+ | (128 KB reserved gap)    | —      |
+
+Each is a 64-bit-per-fn bitmap — bit N = 1 means param
+N has the given annotation. Same shape as the existing
+`fn_param_str_mask` at 0x12BA000.
+
+**PARSE_FN_DEF param parser extended** in
+`src/frontend/parse_fn.cyr` to recognize 4 new named
+type annotations on params (mirroring the v5.10.23
+return-type vocabulary): when a param's `: Type`
+matches `cstring` / `Result` / `Option` / `Tagged`,
+the corresponding mask bit is set. Stored at fn-decl
+close alongside `str_mask`.
+
+**PARSE_FNCALL warning polarity fix**:
+
+```cyr
+// PRE-v5.10.24 (false-positive shape):
+if ((smask & (1 << argc)) == 0) { /* param NOT : Str */
+    if (arg is Str-typed) warn();
+}
+
+// v5.10.24:
+var cmask = L64(0x124A000 + fi * 8);
+if (cmask & (1 << argc)) { /* param IS : cstring */
+    if (arg is Str-typed) warn();
+}
+```
+
+The old polarity flagged ANY untyped-i64 param
+receiving a Str arg (false positives on `vec_push`,
+`alloc`, `map_set`, etc.). The new polarity fires
+ONLY when the callee EXPLICITLY annotates the param
+`: cstring` — the consumer is asking for cstring
+semantics, not any-pointer.
+
+### Phase 2 acceptance criteria met
+
+- 66/66 check.sh, 135/135 cyrius test (default off).
+- 66/66 check.sh, 135/135 cyrius test (with
+  `CYRIUS_TYPE_CHECK=1`) — **zero Str-warnings on
+  the full test suite**, confirming no false-positive
+  shapes remain in stdlib usage.
+- Canonical motivator fires correctly:
+
+  ```cyr
+  fn dummy(s: cstring): i64 { return 0; }
+  fn main(): i64 {
+      var x: Str = str_from("hi");
+      dummy(x);   // ← v5.10.24 warns
+      return 0;
+  }
+  ```
+  → `warning: passing Str-typed 'x' to 'dummy' which
+       expects a cstring`
+  → `hint: use str_data(x) for raw bytes,
+       str_println(x) for printing, or annotate the
+       param `: Str``
+
+### CYRIUS_TYPE_CHECK still gated (Phase 5 flips)
+
+Default-on remains pinned at v5.10.26 / Phase 5
+(diagnostics + flip). v5.10.24 establishes that the
+flip is SAFE (zero false positives observed on the
+test suite); Phase 3 (overload dispatch) and Phase 4
+(type inference) extend the type signal further before
+the user-facing default-on lands.
+
+### Stdlib annotation pass
+
+Annotated `: cstring` on the canonical-cstring
+parameters of:
+- `lib/string.cyr` — `println(s: cstring)`,
+  `strlen(s: cstring)`, `streq(a: cstring, b: cstring)`,
+  `strchr(s: cstring, c)`, `atoi(s: cstring)`,
+  `strstr(haystack: cstring, needle: cstring)`,
+  `str_lower_cstr(s: cstring)`, `str_upper_cstr(s: cstring)`,
+  `memchr(s: cstring, c, n)`.
+- `lib/io.cyr` — `file_open(path: cstring, ...)`,
+  `file_open_r(path: cstring, ...)`.
+
+Phase 2 acceptance criteria met. Phase 3 (overload
+dispatch generalization) at v5.10.25.
+
 ## [5.10.23] — 2026-05-09
 
 **v5.10.x SLOT 23 — REAL TYPE SYSTEM Phase 1B: type

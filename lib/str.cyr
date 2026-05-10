@@ -53,23 +53,23 @@ fn str_new(data, len): Str {
 }
 
 # Get length
-fn str_len(s: Str) : i64 {
+fn str_len(s: Str): i64 {
     return load64(s + 8);
 }
 
 # Get data pointer
-fn str_data(s: Str) : i64 {
+fn str_data(s: Str): i64 {
     return load64(s);
 }
 
 # Print a Str to stdout
-fn str_print(s: Str) : i64 {
+fn str_print(s: Str): i64 {
     syscall(1, 1, load64(s), load64(s + 8));
     return 0;
 }
 
 # Print Str + newline
-fn str_println(s: Str) : i64 {
+fn str_println(s: Str): i64 {
     str_print(s);
     syscall(1, 1, "\n", 1);
     return 0;
@@ -81,7 +81,7 @@ fn str_println(s: Str) : i64 {
 # concrete symbol to land on without changing str_println's
 # semantics. Consumer-facing: `println(my_str)` Just Works
 # without explicit `str_println(my_str)` boilerplate.
-fn println_str(s: Str) : i64 {
+fn println_str(s: Str): i64 {
     return str_println(s);
 }
 
@@ -101,7 +101,7 @@ fn println_str(s: Str) : i64 {
 # string carrying user input or kernel-audit text. Closes
 # the agnosys 1.1.12 follow-up "JSON escaping" item filed
 # at v5.10.7.
-fn str_builder_add_json_str(sb, s: Str) : i64 {
+fn str_builder_add_json_str(sb, s: Str): i64 {
     str_builder_putc(sb, 34);                # opening "
     var data = str_data(s);
     var slen = str_len(s);
@@ -150,7 +150,7 @@ fn str_builder_add_json_str(sb, s: Str) : i64 {
 }
 
 # Compare two Strs
-fn str_eq(a: Str, b: Str) : i64 {
+fn str_eq(a: Str, b: Str): i64 {
     var la = load64(a + 8);
     var lb = load64(b + 8);
     if (la != lb) { return 0; }
@@ -210,7 +210,7 @@ fn str_clone(s: Str): Str {
 }
 
 # Check if Str contains needle Str
-fn str_contains(s: Str, needle: Str) : i64 {
+fn str_contains(s: Str, needle: Str): i64 {
     var slen = str_len(s);
     var nlen = str_len(needle);
     if (nlen > slen) { return 0; }
@@ -225,14 +225,14 @@ fn str_contains(s: Str, needle: Str) : i64 {
 }
 
 # Check if Str starts with prefix Str
-fn str_starts_with(s: Str, prefix: Str) : i64 {
+fn str_starts_with(s: Str, prefix: Str): i64 {
     var plen = str_len(prefix);
     if (plen > str_len(s)) { return 0; }
     return memeq(str_data(s), str_data(prefix), plen);
 }
 
 # Check if Str ends with suffix Str (both are Str objects)
-fn str_ends_with(s: Str, suffix: Str) : i64 {
+fn str_ends_with(s: Str, suffix: Str): i64 {
     var xlen = str_len(suffix);
     var slen = str_len(s);
     if (xlen > slen) { return 0; }
@@ -240,7 +240,7 @@ fn str_ends_with(s: Str, suffix: Str) : i64 {
 }
 
 # Find first occurrence of byte in Str, return index or -1
-fn str_index_of(s: Str, ch) : i64 {
+fn str_index_of(s: Str, ch): i64 {
     var slen = str_len(s);
     var sd = str_data(s);
     var fi = 0;
@@ -267,7 +267,7 @@ fn str_from_int(n): Str {
 }
 
 # Parse integer from Str (returns 0 on invalid)
-fn str_to_int(s: Str) : i64 {
+fn str_to_int(s: Str): i64 {
     var slen = str_len(s);
     var sd = str_data(s);
     var result = 0;
@@ -318,7 +318,7 @@ fn str_trim(s: Str): Str {
 # v5.8.43 — Allocator-as-first-arg variant of str_split. Routes
 # the result vec, every per-part Str header, AND any vec grow
 # allocations through `a`. Returns 0 on OOM at any step.
-fn str_split_a(a, s: Str, sep: Str) : i64 {
+fn str_split_a(a, s: Str, sep: Str): i64 {
     var parts = vec_new_a(a);
     if (parts == 0) { return 0; }
     var slen = str_len(s);
@@ -344,7 +344,7 @@ fn str_split_a(a, s: Str, sep: Str) : i64 {
 
 # Split Str by byte separator, return vec of Str pointers. v5.8.43
 # wrapper.
-fn str_split(s: Str, sep: Str) : i64 {
+fn str_split(s: Str, sep: Str): i64 {
     return str_split_a(default_alloc(), s, sep);
 }
 
@@ -356,7 +356,7 @@ fn str_split(s: Str, sep: Str) : i64 {
 # Allocates the 24-byte header + 64-byte inline buffer (88 bytes
 # total) via `a`. Returns 0 on OOM. Subsequent grows must use the
 # `_a` add variants to keep the same allocator threaded through.
-fn str_builder_new_a(a) : i64 {
+fn str_builder_new_a(a): i64 {
     var sb = alloc_via(a, 24 + 64);
     if (sb == 0) { return 0; }
     store64(sb, sb + 24);
@@ -368,13 +368,13 @@ fn str_builder_new_a(a) : i64 {
 # Construct a new string builder (24-byte header + 64-byte inline
 # buffer = 88 bytes total). v5.8.43 wrapper — delegates to
 # str_builder_new_a with default_alloc().
-fn str_builder_new() : i64 {
+fn str_builder_new(): i64 {
     return str_builder_new_a(default_alloc());
 }
 
 # v5.8.43 — Allocator-as-first-arg internal grow. Returns 0 on
 # success, -1 on grow OOM.
-fn _sb_grow_a(a, sb, n) : i64 {
+fn _sb_grow_a(a, sb, n): i64 {
     var len = load64(sb + 8);
     var cap = load64(sb + 16);
     if (len + n <= cap) { return 0; }
@@ -389,14 +389,14 @@ fn _sb_grow_a(a, sb, n) : i64 {
 }
 
 # Ensure builder has room for n more bytes
-fn _sb_grow(sb, n) : i64 {
+fn _sb_grow(sb, n): i64 {
     var rc = _sb_grow_a(default_alloc(), sb, n);
     return 0;
 }
 
 # v5.8.43 — Allocator-as-first-arg variant of str_builder_add.
 # Returns -1 on grow OOM (back-compat aborts).
-fn str_builder_add_a(a, sb, s: Str) : i64 {
+fn str_builder_add_a(a, sb, s: Str): i64 {
     var slen = str_len(s);
     if (_sb_grow_a(a, sb, slen) != 0) { return 0 - 1; }
     var buf = load64(sb);
@@ -407,7 +407,7 @@ fn str_builder_add_a(a, sb, s: Str) : i64 {
 }
 
 # Append a Str to the string builder
-fn str_builder_add(sb, s: Str) : i64 {
+fn str_builder_add(sb, s: Str): i64 {
     var slen = str_len(s);
     _sb_grow(sb, slen);
     var buf = load64(sb);
@@ -418,7 +418,7 @@ fn str_builder_add(sb, s: Str) : i64 {
 }
 
 # v5.8.43 — Allocator-as-first-arg variant of str_builder_add_cstr.
-fn str_builder_add_cstr_a(a, sb, cstr) : i64 {
+fn str_builder_add_cstr_a(a, sb, cstr): i64 {
     var slen = strlen(cstr);
     if (_sb_grow_a(a, sb, slen) != 0) { return 0 - 1; }
     var buf = load64(sb);
@@ -429,7 +429,7 @@ fn str_builder_add_cstr_a(a, sb, cstr) : i64 {
 }
 
 # Append a C string to the string builder
-fn str_builder_add_cstr(sb, cstr) : i64 {
+fn str_builder_add_cstr(sb, cstr): i64 {
     var slen = strlen(cstr);
     _sb_grow(sb, slen);
     var buf = load64(sb);
@@ -444,7 +444,7 @@ fn str_builder_add_cstr(sb, cstr) : i64 {
 # can write `str_builder_putc(sb, '[');` instead of needing to
 # stash a one-byte cstring. Required by agnosys 1.1.12 verbatim
 # repro (the original filing's spec uses this shape).
-fn str_builder_putc(sb, ch) : i64 {
+fn str_builder_putc(sb, ch): i64 {
     _sb_grow(sb, 1);
     var buf = load64(sb);
     var len = load64(sb + 8);
@@ -454,7 +454,7 @@ fn str_builder_putc(sb, ch) : i64 {
 }
 
 # v5.8.43 — Allocator-as-first-arg variant of str_builder_add_int.
-fn str_builder_add_int_a(a, sb, n) : i64 {
+fn str_builder_add_int_a(a, sb, n): i64 {
     var tmp[24];
     var tlen = fmt_int_buf(n, &tmp);
     if (_sb_grow_a(a, sb, tlen) != 0) { return 0 - 1; }
@@ -466,7 +466,7 @@ fn str_builder_add_int_a(a, sb, n) : i64 {
 }
 
 # Append an integer (as decimal string) to the string builder
-fn str_builder_add_int(sb, n) : i64 {
+fn str_builder_add_int(sb, n): i64 {
     var tmp[24];
     var tlen = fmt_int_buf(n, &tmp);
     _sb_grow(sb, tlen);
@@ -524,7 +524,7 @@ fn str_from_buf(ptr, len): Str {
 }
 
 # Compare Str to C string
-fn str_eq_cstr(s, cstr) : i64 {
+fn str_eq_cstr(s, cstr): i64 {
     var slen = str_len(s);
     var clen = strlen(cstr);
     if (slen != clen) { return 0; }
@@ -532,7 +532,7 @@ fn str_eq_cstr(s, cstr) : i64 {
 }
 
 # Get null-terminated C string from Str (copies to add null terminator)
-fn str_cstr(s) : i64 {
+fn str_cstr(s): i64 {
     var slen = str_len(s);
     var buf = alloc(slen + 1);
     memcpy(buf, str_data(s), slen);
@@ -549,7 +549,7 @@ fn str_substr(s: Str, start, end): Str {
 }
 
 # Find last occurrence of C string needle in Str
-fn str_last_index_of(s, needle_cstr) : i64 {
+fn str_last_index_of(s, needle_cstr): i64 {
     var slen = str_len(s);
     var nlen = strlen(needle_cstr);
     if (nlen > slen) { return 0 - 1; }
@@ -563,12 +563,12 @@ fn str_last_index_of(s, needle_cstr) : i64 {
 }
 
 # str_builder_add_str — alias for str_builder_add (takes Str)
-fn str_builder_add_str(sb, s) : i64 {
+fn str_builder_add_str(sb, s): i64 {
     return str_builder_add(sb, s);
 }
 
 # str_builder_add_byte — append a single byte
-fn str_builder_add_byte(sb, byte) : i64 {
+fn str_builder_add_byte(sb, byte): i64 {
     _sb_grow(sb, 1);
     var buf = load64(sb);
     var len = load64(sb + 8);
@@ -578,7 +578,7 @@ fn str_builder_add_byte(sb, byte) : i64 {
 }
 
 # str_contains_cstr — check if Str contains a C string needle
-fn str_contains_cstr(s, needle_cstr) : i64 {
+fn str_contains_cstr(s, needle_cstr): i64 {
     var slen = str_len(s);
     var nlen = strlen(needle_cstr);
     if (nlen > slen) { return 0; }
@@ -592,7 +592,7 @@ fn str_contains_cstr(s, needle_cstr) : i64 {
 }
 
 # str_index_of_cstr — find first occurrence of C string in Str
-fn str_index_of_cstr(s, needle_cstr) : i64 {
+fn str_index_of_cstr(s, needle_cstr): i64 {
     var slen = str_len(s);
     var nlen = strlen(needle_cstr);
     if (nlen > slen) { return 0 - 1; }
@@ -606,13 +606,13 @@ fn str_index_of_cstr(s, needle_cstr) : i64 {
 }
 
 # str_split_cstr — split Str by C string separator (single char)
-fn str_split_cstr(s, sep_cstr) : i64 {
+fn str_split_cstr(s, sep_cstr): i64 {
     var sep_byte = load8(sep_cstr);
     return str_split(s, sep_byte);
 }
 
 # str_to_hex — parse hex string to integer
-fn str_to_hex(s) : i64 {
+fn str_to_hex(s): i64 {
     var data = str_data(s);
     var len = str_len(s);
     var val = 0;
