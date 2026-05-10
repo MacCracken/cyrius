@@ -1,0 +1,115 @@
+# v5.10.34 — TLS 1.3 0-RTT acceptance status + per-session max-early-data
+# probe. Sandhi 1.3.2 client-side 0-RTT unblocker (filed
+# /home/macro/Repos/sandhi/docs/issues/2026-05-10-stdlib-tls-early-data-status.md).
+#
+# Tests two new typed wrappers:
+#   tls_get_early_data_status(ctx)       — wraps SSL_get_early_data_status
+#   tls_session_get_max_early_data(sess) — wraps SSL_SESSION_get_max_early_data
+#
+# Plus the extended `tls_supports_early_data()` probe (now requires the
+# v5.10.34 status accessors in addition to the v5.10.21 write/read/setter
+# trio).
+#
+# This test exercises the **null-input + symbol-resolution path** —
+# end-to-end 0-RTT runtime testing requires a TLS 1.3 server willing to
+# accept early data, which is sandhi's integration territory, not stdlib's.
+# Stdlib gate is: defensive defaults work, libssl symbols resolve when
+# the helper is present, supports_early_data probe reflects reality.
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+include "lib/fnptr.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+include "lib/tls.cyr"
+include "lib/test.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # ── Defensive defaults (no libssl needed) ──
+    test_group("v5.10.34 defensive defaults — null inputs");
+
+    # tls_get_early_data_status defaults to TLS_EARLY_DATA_NOT_SENT
+    # (0) when ctx is null. Per the wrapper's contract: "safe for
+    # consumers to treat as non-rejection" — sandhi's retry path
+    # only fires on REJECTED, so NOT_SENT default keeps the normal
+    # tls_write path active.
+    var s_null = tls_get_early_data_status(0);
+    assert_eq(s_null, TLS_EARLY_DATA_NOT_SENT, "status(null ctx) → NOT_SENT");
+    assert_eq(s_null, 0, "NOT_SENT enum value is 0");
+
+    # tls_session_get_max_early_data defaults to 0 when session is
+    # null. Per the wrapper's contract: "this session doesn't
+    # advertise 0-RTT" — sandhi's gate condition `max >= req_len`
+    # naturally skips 0-RTT when max=0.
+    var m_null = tls_session_get_max_early_data(0);
+    assert_eq(m_null, 0, "max_early(null session) → 0");
+
+    # ── Enum value sanity ──
+    test_group("v5.10.34 TLS_EARLY_DATA_* enum values");
+    assert_eq(TLS_EARLY_DATA_NOT_SENT, 0, "NOT_SENT = 0");
+    assert_eq(TLS_EARLY_DATA_REJECTED, 1, "REJECTED = 1");
+    assert_eq(TLS_EARLY_DATA_ACCEPTED, 2, "ACCEPTED = 2");
+
+    # ── Capability probe ──
+    # tls_supports_early_data() requires ALL FIVE 0-RTT symbols
+    # (write_early_data + read_early_data + max_early_data setter
+    # from v5.10.21, PLUS get_early_data_status +
+    # SESSION_get_max_early_data from v5.10.34). Behavior depends
+    # on whether the fdlopen helper is present.
+    #
+    # Existing convention (per `tls_available` docstring): call
+    # `tls_available()` first to trigger fdlopen + libssl bootstrap;
+    # the probe fns then reflect the resolved-symbol surface.
+    test_group("v5.10.34 tls_supports_early_data probe");
+    var helper_ok = fdlopen_helper_available();
+    var avail = tls_available();
+    var supports = tls_supports_early_data();
+    if (helper_ok == 1) {
+        # Helper present → libssl loadable. Modern libssl (>=1.1.1)
+        # ships all 5 symbols. tls_supports_early_data should be 1.
+        assert_eq(avail, 1, "tls_available == 1 (helper present)");
+        assert_eq(supports, 1, "supports_early_data == 1 (helper + modern libssl)");
+    } else {
+        # Helper missing → _tls_init bails before resolving symbols.
+        # All _fn_* fields stay 0 → supports_early_data returns 0.
+        assert_eq(avail, 0, "tls_available == 0 (helper missing)");
+        assert_eq(supports, 0, "supports_early_data == 0 (helper missing)");
+    }
+
+    # ── Direct libssl symbol resolution (for hosts WITH libssl) ──
+    # When libssl is loadable, verify the v5.10.34 symbols actually
+    # exist in the linked libssl. Skip cleanly when libssl isn't
+    # available — this gate isn't a libssl-presence requirement.
+    test_group("v5.10.34 libssl symbol resolution");
+    var hc = dynlib_open("libcrypto.so.3");
+    if (hc != 0) {
+        var hs = dynlib_open("libssl.so.3");
+        if (hs != 0) {
+            var sym_status = dynlib_sym(hs, "SSL_get_early_data_status");
+            assert(sym_status != 0, "SSL_get_early_data_status resolved");
+
+            var sym_max = dynlib_sym(hs, "SSL_SESSION_get_max_early_data");
+            assert(sym_max != 0, "SSL_SESSION_get_max_early_data resolved");
+        }
+    }
+
+    # ── Defaults still safe when library missing the symbol ──
+    # Even with a non-null ctx, if the linked libssl predates
+    # SSL_get_early_data_status (rare — symbol's been in libssl
+    # since 1.1.1, c. 2018), the wrapper falls back to NOT_SENT
+    # rather than dispatching to a null fn pointer. Without a
+    # real ctx to test against, we proxy via the null-ctx case
+    # already covered above; this test_group is the documentation
+    # anchor.
+    test_group("v5.10.34 fallback on missing libssl symbol");
+    # No additional asserts here — the defensive null-ctx path
+    # above proves the same safe-default contract.
+
+    var r = assert_summary();
+    return r;
+}

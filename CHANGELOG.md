@@ -6,6 +6,138 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.34] — 2026-05-10
+
+**v5.10.x SLOT 34 — `lib/tls.cyr` early-data status accessors
+(sandhi 1.3.2 unblocker) + `docs/doc-health.md` scaffold**.
+
+Two-piece slot per the v5.10.33-ship pinning. Sandhi 1.3.2
+(TLS 1.3 0-RTT, opt-in via `sandhi_http_options_allow_0rtt`)
+was **blocked** on the post-handshake acceptance check + the
+pre-attempt eligibility probe — neither of which the v5.10.21
+write/read primitives surfaced. v5.10.34 closes that gap +
+adopts the agnosticos doc-health convention as the cyrius doc
+tree's currency ledger.
+
+cc5: **784,984 unchanged** (stdlib-only — no compiler-side
+codegen). Self-host byte-identical x86. **66/66 check.sh,
+138/138 cyrius test on x86** (+1 new gate:
+`tls_early_data_status.tcyr`, 10 sub-asserts). **Cross-host
+SSH cluster green**:
+- pi (aarch64 Linux): 8/8 sub-asserts (libssl-symbol branch
+  skipped — pi env without libcrypto.so.3 hits the
+  helper-missing path), exit=0
+- ecb (macOS Mach-O arm64): 8/8 sub-asserts, exit=0 (codesigned)
+- cass (Windows PE x86_64): exit=0 (println silent per
+  pre-existing Win64 stdlib gap, pinned as v5.10.44; assert
+  outcome propagates through the exit code)
+
+api-surface 2,833 → **2,835** (+2: `tls::tls_get_early_data_status/1`
++ `tls::tls_session_get_max_early_data/1`).
+
+### Piece A — TLS early-data status accessors (sandhi 1.3.2 unblocker)
+
+Two thin libssl wrappers + 3 enum entries. Filed by sandhi
+2026-05-10
+(`/home/macro/Repos/sandhi/docs/issues/2026-05-10-stdlib-tls-early-data-status.md`)
+after v5.10.31 verification surfaced the gap.
+
+**`lib/tls.cyr`**:
+
+```cyr
+fn tls_get_early_data_status(ctx): i64;
+# Wraps SSL_get_early_data_status. Returns one of:
+#   TLS_EARLY_DATA_NOT_SENT  (0)  → no early data attempted
+#   TLS_EARLY_DATA_REJECTED  (1)  → caller MUST resend over
+#                                   normal stream via tls_write
+#   TLS_EARLY_DATA_ACCEPTED  (2)  → response is on the way
+# Defaults to NOT_SENT on null ctx or unresolved symbol.
+
+fn tls_session_get_max_early_data(session): i64;
+# Wraps SSL_SESSION_get_max_early_data. Returns max early-data
+# bytes the cached session permits; 0 = doesn't advertise 0-RTT.
+# Defaults to 0 on null session or unresolved symbol.
+```
+
+`enum TlsConst` extended with 3 values (`TLS_EARLY_DATA_NOT_SENT`,
+`_REJECTED`, `_ACCEPTED`).
+
+**`tls_supports_early_data()`** extended to require the new
+symbols too — modern libssl (>=1.1.1, c. 2018) ships all 5; the
+tightened probe ensures consumers see "not supported" if any
+piece of the 0-RTT correctness surface is missing, not just the
+v5.10.21 trio.
+
+Sandhi's 1.3.2 client-side 0-RTT pattern (now unblocked):
+
+```cyr
+# Pre-attempt gate
+var max_early = tls_session_get_max_early_data(cached_sess);
+if (max_early >= req_len) {
+    tls_write_early_data(ctx, req_bytes, req_len);
+}
+tls_connect_complete(ctx);
+
+# Post-handshake retry
+if (tls_get_early_data_status(ctx) == TLS_EARLY_DATA_REJECTED) {
+    tls_write(ctx, req_bytes, req_len);  # resend over normal
+}
+```
+
+Per memory pin `feedback_consumer_request_full_surface`: the
+FULL filing landed in this slot — both wrappers + the enum —
+not split across multiple slots.
+
+### Piece B — `docs/doc-health.md` scaffold (convention adoption)
+
+Convention adopted from agnosticos
+(`agnosticos/docs/doc-health.md`, codified in
+`agnosticos/docs/development/planning/first-party-documentation.md`).
+
+`docs/doc-health.md` is a **living ledger** of doc currency
+per tier — fresh / stale / read-through / archived /
+open-question — refreshed when docs are touched, NOT a
+one-time audit.
+
+cyrius's tree is leaner than agnosticos's (~61 markdown files
+vs ~265), so the tier structure is condensed:
+
+| Tier | Scope                                  | Count |
+|------|----------------------------------------|-------|
+| 1    | Structural (root + `/docs` root)       | ~14   |
+| 2    | Architecture (`docs/architecture/`)    | 2     |
+| 3    | Operational (`docs/development/`)      | 9     |
+| 4    | ADRs (`docs/adr/`)                     | 6     |
+| 5    | Audits (`docs/audit/`)                 | 4     |
+| 6    | Issues + Proposals                     | 6 open + 13 archived |
+| 7    | FFI / Reference (`docs/ffi/`)          | 2     |
+| 8    | Archive                                | 18    |
+
+Initial classification done by filename + git-date inspection,
+not full per-doc audit pass — that's the next-cycle work the
+ledger surfaces. ~15 files flagged 🟠 read-through (older
+docs in `dev/*` / `architecture/` / `ffi/` not reviewed
+against v5.10.x reality).
+
+`CLAUDE.md` Key References extended with pointers to
+`docs/development/state.md` (volatile cycle state) and
+`docs/doc-health.md` (the new ledger).
+
+### What this slot does NOT include
+
+- **Pre-`tls_available()` lazy-init in `tls_supports_*` probes** —
+  the existing pattern requires `tls_available()` (or any other
+  stdlib TLS fn) to fire `_tls_init` first. Adding lazy-init to
+  the probe fns would tighten consumer ergonomics but is a
+  behavior-shape change adjacent to this slot's deliverable;
+  not bundled. Test gate documents the existing convention
+  explicitly.
+- **End-to-end runtime 0-RTT acceptance/rejection asserts** —
+  requires a TLS 1.3 server willing to accept early data, which
+  is sandhi's integration territory. Stdlib gate covers
+  defensive defaults (null inputs), enum value sanity, libssl
+  symbol resolution, and the supports_early_data probe surface.
+
 ## [5.10.33] — 2026-05-10
 
 **v5.10.x SLOT 33 — `lib/simd.cyr` typed wrappers around

@@ -1489,7 +1489,7 @@ May pair with `lib/tls.cyr` hook-surface audit
 (v5.10.30) if scheduling overlaps and any module
 touches TLS.
 
-#### v5.10.34 — `lib/tls.cyr` early-data status accessors (sandhi 1.3.2 unblocker) + `docs/doc-health.md` scaffold
+#### v5.10.34 ✅ — `lib/tls.cyr` early-data status accessors (sandhi 1.3.2 unblocker) + `docs/doc-health.md` scaffold (SHIPPED)
 
 Two-piece slot per user direction at v5.10.33 ship:
 the sandhi-blocker TLS work + the doc-health

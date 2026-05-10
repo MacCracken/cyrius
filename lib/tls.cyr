@@ -56,6 +56,16 @@ enum TlsConst {
     SSL_SESS_CACHE_CLIENT = 1;
     SSL_SESS_CACHE_SERVER = 2;
     SSL_SESS_CACHE_BOTH = 3;
+    # v5.10.34 — TLS 1.3 0-RTT acceptance status surfaced by
+    # tls_get_early_data_status (wraps SSL_get_early_data_status).
+    # Mirrors libssl's SSL_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED.
+    # Sandhi 1.3.2 client-side 0-RTT uses these for post-handshake
+    # retry logic: REJECTED → resend over normal stream;
+    # ACCEPTED → response is on the way; NOT_SENT → no early data
+    # was attempted on this connection.
+    TLS_EARLY_DATA_NOT_SENT = 0;
+    TLS_EARLY_DATA_REJECTED = 1;
+    TLS_EARLY_DATA_ACCEPTED = 2;
 }
 
 var _tls_inited = 0;
@@ -111,6 +121,14 @@ var _fn_SSL_CTX_set_session_cache_mode = 0;
 var _fn_SSL_CTX_set_max_early_data = 0;
 var _fn_SSL_write_early_data = 0;
 var _fn_SSL_read_early_data = 0;
+# v5.10.34 — TLS 1.3 0-RTT acceptance + eligibility surface
+# (sandhi 1.3.2 client-side 0-RTT unblock). Pre-v5.10.34 the
+# write/read primitives shipped (v5.10.21) but consumers had no
+# way to (1) check post-handshake whether the server accepted the
+# early data, or (2) check pre-attempt whether the cached session
+# even advertised early-data support.
+var _fn_SSL_get_early_data_status = 0;
+var _fn_SSL_SESSION_get_max_early_data = 0;
 
 # Lazy-init: bootstrap real glibc via fdlopen, then dlopen libssl
 # through it. v5.6.37 rewrite — the prior dynlib_open path loaded
@@ -181,6 +199,10 @@ fn _tls_init(): i64 {
     _fn_SSL_CTX_set_max_early_data       = fncall2(fn_dlsym, h, "SSL_CTX_set_max_early_data");
     _fn_SSL_write_early_data             = fncall2(fn_dlsym, h, "SSL_write_early_data");
     _fn_SSL_read_early_data              = fncall2(fn_dlsym, h, "SSL_read_early_data");
+    # v5.10.34 — early-data acceptance status + per-session
+    # max-early-data probe (sandhi 1.3.2 client-side 0-RTT).
+    _fn_SSL_get_early_data_status        = fncall2(fn_dlsym, h, "SSL_get_early_data_status");
+    _fn_SSL_SESSION_get_max_early_data   = fncall2(fn_dlsym, h, "SSL_SESSION_get_max_early_data");
 
     # Minimum viable set — bail if any critical symbol missing
     if (_fn_TLS_client_method == 0) { return 0; }
@@ -585,14 +607,71 @@ fn tls_read_early_data(ctx, buf, maxlen): i64 {
     return 0 - 1;
 }
 
-# Returns 1 if the linked libssl exposes the 0-RTT symbols
-# (SSL_write_early_data + SSL_read_early_data + max_early_data
-# setter); 0 otherwise. Sandhi's 1.3.2 0-RTT path probes this
-# before attempting early-data send/recv.
+# v5.10.34 — Post-handshake acceptance status check for client-side
+# TLS 1.3 0-RTT. Call AFTER tls_connect_complete to learn whether
+# the server accepted the early data sent via tls_write_early_data:
+#
+#   TLS_EARLY_DATA_NOT_SENT  (0)  — no early data was attempted
+#                                   on this connection (or ctx is
+#                                   null / libssl missing the symbol)
+#   TLS_EARLY_DATA_REJECTED  (1)  — server rejected early data;
+#                                   caller MUST resend the request
+#                                   over the normal stream via
+#                                   tls_write
+#   TLS_EARLY_DATA_ACCEPTED  (2)  — server accepted; the response
+#                                   is on the way via tls_read
+#
+# Sandhi 1.3.2 uses this for the post-handshake retry pattern:
+#
+#   tls_write_early_data(ctx, req, len);
+#   tls_connect_complete(ctx);
+#   if (tls_get_early_data_status(ctx) == TLS_EARLY_DATA_REJECTED) {
+#       tls_write(ctx, req, len);  # resend over normal stream
+#   }
+#
+# Wraps SSL_get_early_data_status. Defaults to TLS_EARLY_DATA_NOT_SENT
+# (0) on null ctx or unresolved symbol — same semantic as "early data
+# was not in play here," safe for consumers to treat as non-rejection.
+fn tls_get_early_data_status(ctx): i64 {
+    if (ctx == 0) { return TLS_EARLY_DATA_NOT_SENT; }
+    if (_fn_SSL_get_early_data_status == 0) { return TLS_EARLY_DATA_NOT_SENT; }
+    var ssl = load64(ctx + 8);
+    return fncall1(_fn_SSL_get_early_data_status, ssl);
+}
+
+# v5.10.34 — Pre-attempt eligibility probe for client-side 0-RTT.
+# Returns the maximum early-data byte budget the cached session's
+# server advertised at issue time; 0 means the session does NOT
+# advertise 0-RTT support (don't attempt). Caller bounds the
+# write size against this before calling tls_write_early_data.
+#
+# Sandhi 1.3.2 uses this for the pre-attempt gate:
+#
+#   var max_early = tls_session_get_max_early_data(cached_sess);
+#   if (max_early >= req_len) {
+#       tls_write_early_data(ctx, req, req_len);
+#   } # else: skip 0-RTT, proceed with normal handshake
+#
+# Wraps SSL_SESSION_get_max_early_data. Defaults to 0 on null
+# session or unresolved symbol — same semantic as "this session
+# doesn't advertise 0-RTT," consumer falls back to normal flow.
+fn tls_session_get_max_early_data(session): i64 {
+    if (session == 0) { return 0; }
+    if (_fn_SSL_SESSION_get_max_early_data == 0) { return 0; }
+    return fncall1(_fn_SSL_SESSION_get_max_early_data, session);
+}
+
+# Returns 1 if the linked libssl exposes the FULL 0-RTT client-
+# correctness surface (write + read + max_early_data setter
+# v5.10.21, plus get_early_data_status + SESSION_get_max_early_data
+# v5.10.34); 0 otherwise. Sandhi's 1.3.2 0-RTT path probes this
+# before attempting early-data send/recv with retry-on-rejection.
 fn tls_supports_early_data(): i64 {
     if (_fn_SSL_write_early_data == 0) { return 0; }
     if (_fn_SSL_read_early_data == 0) { return 0; }
     if (_fn_SSL_CTX_set_max_early_data == 0) { return 0; }
+    if (_fn_SSL_get_early_data_status == 0) { return 0; }
+    if (_fn_SSL_SESSION_get_max_early_data == 0) { return 0; }
     return 1;
 }
 

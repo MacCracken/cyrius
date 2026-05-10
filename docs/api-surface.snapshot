@@ -2617,10 +2617,12 @@ tls::tls_ctx_set_session_get_cb/2
 tls::tls_ctx_set_session_new_cb/2
 tls::tls_ctx_set_session_remove_cb/2
 tls::tls_dlsym/1
+tls::tls_get_early_data_status/1
 tls::tls_get_session/1
 tls::tls_read/3
 tls::tls_read_early_data/3
 tls::tls_session_free/1
+tls::tls_session_get_max_early_data/1
 tls::tls_set_alpn/3
 tls::tls_set_session/2
 tls::tls_set_verify/3
