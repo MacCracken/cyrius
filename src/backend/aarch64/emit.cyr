@@ -858,18 +858,73 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     return 0;
 }
 
-# v5.10.28 — aarch64 stub for f64v2 pair-register return.
-# x86 lands first this slot; aarch64 propagation deferred to
-# v5.10.29 per the planned multi-slot value-type ABI arc. See
-# CHANGELOG v5.10.28 for cross-arch propagation pinnage.
+# v5.10.29 — aarch64 f64v2 pair-register return (Phase 2 of the
+# value-type ABI arc; Phase 1 landed x86 at v5.10.28).
+#
+# aarch64 SysV PCS treats composite types ≤ 16 bytes as int-class:
+# returned in X0 (lo) + X1 (hi). Mirror of x86's rax/rdx pair —
+# same caller/callee shape, different register names.
+#
+# `idx` is the NAMED slot's local index (returned by FINDLOCAL on
+# the f64v2 var name). 2-slot layout matches x86:
+#   slot idx-1 = anonymous filler (hi half = &v + 8)
+#   slot idx   = named (lo half / bottom of struct = &v + 0)
+# Named slot is at the deepest frame offset; field 0 (lo) is at
+# &v+0, field 1 (hi) at &v+8.
+#
+# Disp must fit LDUR/STUR imm9 (-256..+255). With regalloc cap of
+# 5 + ret_stash 8 the maximum negative disp from typical usage
+# stays well within range; defensive guard for the implausible
+# cap-overflow case.
 fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
-    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on aarch64 backend (v5.10.29)\n", 68);
-    syscall(SYS_EXIT, 1);
+    var disp_lo = 0 - ((idx + 1) * 8);
+    var disp_hi = 0 - (idx * 8);
+    if (_cur_fn_ret_stash > 0) {
+        disp_lo = disp_lo - _cur_fn_ret_stash;
+        disp_hi = disp_hi - _cur_fn_ret_stash;
+    }
+    if (disp_lo < 0 - 256) {
+        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_lo out of LDUR imm9 range on aarch64\n", 67);
+        syscall(SYS_EXIT, 1);
+    }
+    if (disp_hi < 0 - 256) {
+        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_hi out of LDUR imm9 range on aarch64\n", 67);
+        syscall(SYS_EXIT, 1);
+    }
+    var off_lo = disp_lo & 0x1FF;
+    var off_hi = disp_hi & 0x1FF;
+    # ldur x0, [x29, #disp_lo] — base 0xF84003A0 (Rt=0, Rn=29, size=64)
+    EW(S, 0xF84003A0 | (off_lo << 12));
+    # ldur x1, [x29, #disp_hi] — Rt=1
+    EW(S, 0xF84003A1 | (off_hi << 12));
     return 0;
 }
+
+# Mirror of EFLLOAD_F64V2_PAIR for caller-side post-call store:
+#   stur x0, [x29, #disp_lo]   (lo half — named slot)
+#   stur x1, [x29, #disp_hi]   (hi half — filler slot)
+# STUR base 0xF80003A0 (same encoding as LDUR but bit 22 = 0 for store).
 fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
-    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on aarch64 backend (v5.10.29)\n", 68);
-    syscall(SYS_EXIT, 1);
+    var disp_lo = 0 - ((idx + 1) * 8);
+    var disp_hi = 0 - (idx * 8);
+    if (_cur_fn_ret_stash > 0) {
+        disp_lo = disp_lo - _cur_fn_ret_stash;
+        disp_hi = disp_hi - _cur_fn_ret_stash;
+    }
+    if (disp_lo < 0 - 256) {
+        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_lo out of STUR imm9 range on aarch64\n", 67);
+        syscall(SYS_EXIT, 1);
+    }
+    if (disp_hi < 0 - 256) {
+        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_hi out of STUR imm9 range on aarch64\n", 67);
+        syscall(SYS_EXIT, 1);
+    }
+    var off_lo = disp_lo & 0x1FF;
+    var off_hi = disp_hi & 0x1FF;
+    # stur x0, [x29, #disp_lo]
+    EW(S, 0xF80003A0 | (off_lo << 12));
+    # stur x1, [x29, #disp_hi] — Rt=1
+    EW(S, 0xF80003A1 | (off_hi << 12));
     return 0;
 }
 

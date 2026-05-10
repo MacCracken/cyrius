@@ -5,6 +5,51 @@
 
 ## Version
 
+**5.10.29** (shipped 2026-05-10 — **v5.10.x SLOT 29 —
+value-type ABI Phase 2: aarch64 propagation of f64v2
+multi-register pair return**).
+
+Phase 2 of the typed-simd ABI arc (Phase 1 landed x86 at
+v5.10.28). Implements `EFLLOAD_F64V2_PAIR` and
+`EFLSTORE_F64V2_PAIR` on aarch64 with X0+X1 pair semantics
+(aarch64 SysV PCS treats composite types ≤ 16 bytes as
+int-class). Mirror of x86's rax/rdx pair.
+
+**`src/backend/aarch64/emit.cyr` additions**:
+- `EFLLOAD_F64V2_PAIR`: `ldur x0, [x29, #disp_lo]; ldur x1,
+  [x29, #disp_hi]`. Encoding `0xF84003A0 | (off9<<12)` for
+  ldur x0 + `0xF84003A1` for ldur x1.
+- `EFLSTORE_F64V2_PAIR`: `stur x0, [x29, #disp_lo]; stur x1,
+  [x29, #disp_hi]`. STUR base `0xF80003A0`.
+- imm9 disp guards (-256..+255) match existing aarch64
+  patterns in the codebase.
+
+**No parser changes** — v5.10.28's parser/dispatch is
+arch-agnostic. v5.10.29 fills in the aarch64 emit helpers.
+
+**Acceptance**:
+- cc5 unchanged at 784,312 B (changes are aarch64
+  cross-compiler-only; x86 host bytes unaffected).
+- Self-host byte-identical x86.
+- 66/66 check.sh + 136/136 cyrius test on x86.
+- **aarch64 SSH-verified via pi**:
+  `tests/tcyr/f64v2_byval_return.tcyr` cross-compiled +
+  scp'd to pi → 8/8 sub-asserts pass.
+
+**Multi-slot ABI arc progress**:
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 ✅ | x86 pair return |
+| 2     | v5.10.29 ✅ | **aarch64 (X0+X1 pair)** (this slot) |
+| 3     | v5.10.30 pinned | cx + macho propagation |
+| 4     | v5.10.31 pinned | XMM register passing optimization |
+| 5     | v5.10.32 pinned | f64v4 + lib/simd.cyr typed wrappers |
+
+**Next**: v5.10.30 = cx + macho Phase 3 propagation. Cass
+macOS Apple Silicon + ecb Windows SSH verify gates per
+`reference_verification_hosts_ssh` memory pin.
+
 **5.10.28** (shipped 2026-05-10 — **v5.10.x SLOT 28 —
 value-type ABI Phase 1: `f64v2` primitive type + 16-byte
 stack-local + multi-register pair return (x86)**).

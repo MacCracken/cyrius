@@ -6,6 +6,78 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.29] — 2026-05-10
+
+**v5.10.x SLOT 29 — value-type ABI Phase 2: aarch64 propagation
+of f64v2 multi-register pair return**.
+
+Phase 2 of the typed-simd ABI arc (Phase 1 landed x86 at
+v5.10.28). Implements aarch64 `EFLLOAD_F64V2_PAIR` and
+`EFLSTORE_F64V2_PAIR` with X0+X1 pair semantics (aarch64 SysV
+PCS treats composite types ≤ 16 bytes as int-class, returned in
+X0 [lo] + X1 [hi]). Mirror of x86's rax/rdx pair — same
+caller/callee shape, different register names.
+
+cc5 unchanged at 784,312 B (changes are in
+`src/backend/aarch64/emit.cyr` — the aarch64 cross-compiler
+binary changes, but the host-arch x86 cc5 bytes don't).
+Self-host byte-identical x86. **66/66 check.sh, 136/136
+cyrius test on x86**. **aarch64 cross-verified via pi SSH**:
+the v5.10.28 `tests/tcyr/f64v2_byval_return.tcyr` gate runs
+8/8 passes on aarch64 Linux (no changes to the test — the
+existing gate validated cross-arch correctness as soon as
+the aarch64 emit landed).
+
+### What landed
+
+**`src/backend/aarch64/emit.cyr`**:
+- `EFLLOAD_F64V2_PAIR(S, idx)` — emits `ldur x0, [x29, #disp_lo];
+  ldur x1, [x29, #disp_hi]`. Mirror of the x86 `mov rax, [rbp+lo];
+  mov rdx, [rbp+hi]`. Encoding: `0xF84003A0 | (off9 << 12)` for
+  ldur x0 + `0xF84003A1` for ldur x1 (Rt field bumped by 1).
+- `EFLSTORE_F64V2_PAIR(S, idx)` — emits `stur x0, [x29, #disp_lo];
+  stur x1, [x29, #disp_hi]`. STUR base `0xF80003A0` (LDUR's
+  store-mode counterpart).
+- Disp guards: both must fit imm9 (-256..+255). With cyrius's
+  regalloc/ret_stash caps the typical disp lands well within
+  range; defensive guard for the implausible cap-overflow case
+  matches the existing aarch64 LDUR pattern in the codebase.
+
+**No parser changes** — all parser/dispatch logic from v5.10.28
+is arch-agnostic. The codegen helpers were the only x86-specific
+piece; v5.10.29 fills in aarch64.
+
+### Cross-arch SSH verification
+
+Per `reference_verification_hosts_ssh` memory pin (pi / cass /
+ecb), aarch64 SSH-verified at slot ship:
+1. Built `cc5_aarch64` via `cat src/main_aarch64.cyr | build/cc5`
+   on x86 host (cross-compiler emits aarch64 binaries).
+2. Cross-compiled `tests/tcyr/f64v2_byval_return.tcyr` through
+   `cc5_aarch64`.
+3. SCP'd to pi (`/tmp/tcyr_aarch`).
+4. Ran on pi → 8/8 sub-asserts pass.
+
+The "rax+rdx" wording in the test's println string is x86-flavored
+but functionally validates X0+X1 round-trip on aarch64. Future
+slot may rename the test message to "low+high half" for arch-
+neutrality.
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | f64v2 + 2-slot local + x86 pair return |
+| 2     | v5.10.29 | ✅     | **aarch64 propagation (X0+X1 pair)** (this slot) |
+| 3     | v5.10.30 | pinned | cx + macho propagation |
+| 4     | v5.10.31 | pinned | XMM register passing optimization |
+| 5     | v5.10.32 | pinned | f64v4 + lib/simd.cyr typed wrappers |
+
+Per `feedback_no_one_fix_per_slot` memory pin: each phase
+delivers measurable forward motion. Phase 2 closes the
+aarch64 gap so AGNOS / agnos kernel work + pi-hosted
+deployments now see the same f64v2 ABI as x86.
+
 ## [5.10.28] — 2026-05-10
 
 **v5.10.x SLOT 28 — value-type ABI Phase 1: `f64v2` primitive

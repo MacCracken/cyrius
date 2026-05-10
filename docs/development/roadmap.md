@@ -1443,12 +1443,12 @@ Pinned 2026-05-10 at v5.10.28 ship per user direction
 not lazy splits). Each phase delivers measurable forward
 motion.
 
-| Phase | Slot     | Description |
-|-------|----------|-------------|
-| 2     | v5.10.29 | aarch64 propagation: X0+X1 pair return + ldur/stur emits in `EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR`. Pi cross-arch verify gate. |
-| 3     | v5.10.30 | cx + macho propagation: cxvm bytecode dispatch + macho-arm64 emit fill. Cass macOS + ecb Windows verify gates. |
-| 4     | v5.10.31 | XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` instead of rax/rdx int-class pair. 2-instruction faster path; better SIMD perf for hisab benchmark workloads. |
-| 5     | v5.10.32 | `f64v4` (32-byte): two-XMM pair OR YMM (AVX-detected). `lib/simd.cyr` typed wrappers `f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed via overload dispatch (uses Phase 3 generalize from v5.10.25). Closes the typed-simd arc. |
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 2     | v5.10.29 | ✅     | aarch64 propagation: X0+X1 pair return + ldur/stur emits in `EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR`. Pi SSH cross-arch verify: 8/8 sub-asserts pass. |
+| 3     | v5.10.30 | pinned | cx + macho propagation: cxvm bytecode dispatch + macho-arm64 emit fill. Cass macOS + ecb Windows verify gates. |
+| 4     | v5.10.31 | pinned | XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` instead of rax/rdx int-class pair. 2-instruction faster path; better SIMD perf for hisab benchmark workloads. |
+| 5     | v5.10.32 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM (AVX-detected). `lib/simd.cyr` typed wrappers `f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed via overload dispatch (uses Phase 3 generalize from v5.10.25). Closes the typed-simd arc. |
 
 Adds `f64v2` and `f64v4` as primitive types (16-byte
 and 32-byte packed-f64 respectively), overloaded
