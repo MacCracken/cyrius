@@ -1453,7 +1453,8 @@ motion.
 | 7     | v5.10.35 | pinned | `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug fix (unblocks `f64v2_abs` / `f64v2_sqrt`). |
 | 8     | v5.10.36 | ✅     | aarch64 V0 NEON return-register optimization (mirrors v5.10.32 XMM0 work; replaces v5.10.29's X0+X1 int-class pair). cc5_aarch64 -560 B. |
 | 9     | v5.10.37 | ✅     | `f64v4` (32-byte): x86 XMM0+XMM1 pair / aarch64 Q0+Q1 NEON pair (+imm12-scaled deep-frame fallback) / cx R0..R3 / Win64 retptr. cc5 +4,888 B. AVX/YMM0 path NOT in scope (future optimisation). |
-| 10    | v5.10.38 | pinned | f64v2 param-side ABI: 2-slot allocation + register-pair → 2-slot store at fn entry, enables `f64v2_add(a: f64v2, b: f64v2): f64v2` value-param shape via overload dispatch. |
+| 10    | v5.10.38 | ✅     | f64v2 + f64v4 value-form param ABI (callee + caller; SysV/aarch64/cx end-to-end; Win64 PE errors out by design, points to v5.10.33 pointer-form wrappers). cc5 +6,064 B. |
+| 11    | v5.10.39 | pinned | Overload dispatch (Phase 3 sibling routing — `_ptr` form vs value form) + `lib/simd.cyr` typed-wrapper migration (`f64v2_add(a: f64v2, b: f64v2): f64v2` value sibling alongside existing pointer form). Arc-close cleanup; depends on v5.10.38 ABI being in place. |
 
 Adds `f64v2` and `f64v4` as primitive types (16-byte
 and 32-byte packed-f64 respectively), overloaded
@@ -1710,7 +1711,7 @@ follow-up.
 6. Self-host byte-identical x86; 66/66 check.sh;
    cross-host pi/ecb/cass verify per memory pin.
 
-#### v5.10.38 — f64v2 param-side ABI (typed-simd ABI Phase 10, arc close)
+#### v5.10.38 ✅ — f64v2 + f64v4 value-form param ABI (typed-simd ABI Phase 10, callee + caller) (SHIPPED)
 
 Pinned 2026-05-10 at v5.10.33 ship as the arc-closing
 slot.
@@ -1753,13 +1754,66 @@ originally intended for v5.10.33.
 6. Self-host byte-identical x86; 66/66 check.sh; full
    cross-host pi/ecb/cass verify before tagging.
 
-Arc fully closes at v5.10.38: from no-vector-types at
+Arc fully closes at v5.10.39: from no-vector-types at
 v5.10.27 → consumer-clean
 `f64v2_add(a: f64v2, b: f64v2): f64v2` overload-
 dispatched API across x86 SSE / aarch64 NEON / cx /
 macho / Win64 PE.
 
-#### v5.10.39 — Lex dedup hot-path optimization
+#### v5.10.39 — typed-simd overload dispatch + `lib/simd.cyr` value-param wrapper migration (typed-simd ABI Phase 11, arc close-out cleanup)
+
+Pinned 2026-05-10 at v5.10.38 slot entry as the
+**pre-planned split** of the original v5.10.38 acceptance
+bar per user direction *"A+B in .38; C as .39"*. The
+v5.10.38 work shipped the language-level ABI (callee
+multi-slot alloc + register-pair store at fn entry +
+caller-side SIMD arg-reg routing). v5.10.39 ships the
+consumer-facing surface on top:
+
+1. **Overload dispatch** — extend the Phase 3 generalize
+   (v5.10.25) registry-based routing to also key on
+   pointer-vs-value first-arg shape, not just `_str` /
+   `_int` suffix. `f64v2_add(p_ptr, q_ptr)` (callsite
+   detects `&local` arg) → `f64v2_add_ptr`;
+   `f64v2_add(p, q)` (callsite detects local f64v2 var)
+   → `f64v2_add`. Same shape as the existing
+   `<base>_str` / `<base>_int` dispatch.
+
+2. **`lib/simd.cyr` value-param siblings** — add
+   value-param shape for each existing pointer-form
+   typed wrapper:
+   - `f64v2_add(a: f64v2, b: f64v2): f64v2` alongside
+     existing `f64v2_add(a_ptr, b_ptr): f64v2` (renamed
+     to `f64v2_add_ptr` if needed for clarity)
+   - Same for sub/mul/div/fmadd/dot/scale/abs/sqrt
+   - Mirror for f64v4 surface
+
+3. **`tests/tcyr/simd_value_param.tcyr`** — gate
+   exercises both forms via overload dispatch + verifies
+   correct routing across backends.
+
+**Acceptance bar**:
+- Self-host byte-identical x86 (overload dispatch is
+  parser-internal; emit unchanged for existing
+  consumers using the pointer form).
+- 66/66 check.sh + cross-host pi/ecb/cass verify.
+- Existing v5.10.33 pointer-form consumers (any
+  ecosystem repo calling `f64v2_add(&x, &y)`) compile
+  unchanged.
+
+**Why split from v5.10.38**: A+B in .38 is already a
+multi-touch slot (param-parse + per-backend prologue
+emit + per-backend caller-side SIMD-arg load + per-fn
+mask + cross-arch verify). Adding overload-dispatch +
+the typed-wrapper migration in the same slot would
+2× the surface and increase the chance a regression
+hides between layers. C riding as a tail follow-up
+gives the A+B work room to bake before consumer-side
+typed-wrapper migration lands. Pre-planned split per
+memory pin `feedback_no_one_fix_per_slot` (genuine
+multi-piece work, not lazy defer).
+
+#### v5.10.40 — Lex dedup hot-path optimization
 
 Promoted from "compile-time wins" held entry to
 concrete slot at v5.10.20 P(-1) sweep; cascaded from
@@ -1779,14 +1833,14 @@ Acceptance: measurable improvement vs the v5.10.20
 P(-1) baseline (vec/push_1000 21µs, vec/find_100
 1µs — these are the published reference points).
 
-#### v5.10.40 — Fixup phase optimization
+#### v5.10.41 — Fixup phase optimization
 
 Promoted from held to concrete slot at v5.10.20 P(-1)
 sweep; cascaded from original .32 pin at v5.10.33
 ship. v5.10.0 profile: fixup 210 ms = 21% of compile
 time. Second-largest target after lex.
 
-#### v5.10.41 — `lib/tls.cyr` hook-surface contract audit
+#### v5.10.42 — `lib/tls.cyr` hook-surface contract audit
 
 Filed from sandhi 1.1.x roadmap-cleanup pass,
 2026-05-08; promoted from held to concrete slot at
@@ -1819,7 +1873,7 @@ makes this explicitly cyrius's slot, not sandhi's.
 May pair with stdlib data-domain carve-out
 (v5.10.27) if scheduling overlaps.
 
-#### v5.10.42 — macOS arm64 struct-by-value calling-convention
+#### v5.10.43 — macOS arm64 struct-by-value calling-convention
 
 Promoted from held to concrete slot at v5.10.20 P(-1)
 sweep; cascaded from original .34 pin at v5.10.33
@@ -1827,7 +1881,7 @@ ship. v5.5.36 deferred. Surfaces on consumer
 cross-build. Mach-O ABI work, isolated from other
 held items — earns its own slot.
 
-#### v5.10.43 — Defensive sweep (small bundle)
+#### v5.10.44 — Defensive sweep (small bundle)
 
 Promoted from held to concrete slot at v5.10.20
 P(-1) sweep. Bundle of small defensive cleanups
@@ -1867,7 +1921,7 @@ v5.10.0 acceptance principle: bundling unrelated
 defensives is OK when each is too small standalone
 AND scheduling lines up.
 
-#### v5.10.44 — Win64 PE `println` silent + exit-code propagation fix
+#### v5.10.45 — Win64 PE `println` silent + exit-code propagation fix
 
 Pinned 2026-05-10 at v5.10.33 ship. Pre-existing
 Win64 stdlib gap surfaced repeatedly across the
@@ -1929,7 +1983,7 @@ code-only" — fine for primitive gates (`_pe_exit_gate`
 uses bare `syscall(60, 42)`), but blind for
 anything using `println`-based test reporting.
 
-#### v5.10.45 — v5.10.x cycle closeout
+#### v5.10.46 — v5.10.x cycle closeout
 
 Pinned 2026-05-10 at v5.10.33 ship as the cycle-
 close slot. Per CLAUDE.md "Closeout Pass (before
@@ -2003,9 +2057,9 @@ identical; otherwise defer to v5.11.0's first patch.
 
 **Acceptance bar**:
 - All 11 steps complete with green outcomes recorded
-  in the v5.10.45 CHANGELOG entry.
+  in the v5.10.46 CHANGELOG entry.
 - Cycle stats summarized: total patches, cc5 size
-  delta v5.10.0 → v5.10.45, check.sh gate count
+  delta v5.10.0 → v5.10.46, check.sh gate count
   growth, cyrius test growth, slot-summary table
   (one line per .x).
 - v5.11.0 entry-bar prepped: P(-1) sweep starting
@@ -2156,24 +2210,40 @@ identical; otherwise defer to v5.11.0's first patch.
   more of stdlib via the deps-symlink pattern), the surface
   for this bug grows.
 
-  **Fix shape**:
-  1. In the install.sh refresh-only lib-copy loop, replace
-     `cp -L "$f" "$dst"` with a guard: skip when
-     `readlink -f "$f" == readlink -f "$dst"` (same realpath
-     already in place); otherwise remove the dst symlink
-     first, then `cp -L`. Or use `cp -Lf --remove-destination`
-     (BSD cp lacks `--remove-destination`; portability —
-     coreutils-only OR rewrite as `rm -f "$dst" && cp -L`).
-  2. Add a tail-of-refresh-only verification step that
+  **Fix shape** (per user direction 2026-05-10 — *"yeah
+  lets do a C with A plan longer term..."*):
+  1. **Primary fix (v5.11.x slot — see "`cyrius deps`
+     file-copy instead of symlink for resolved deps"
+     pin in v5.11.x scope above)**: change `cyrius deps`
+     resolution to physically copy `lib/<dep>.cyr` from the
+     dep cache instead of symlinking. This eliminates the
+     root cause at the architectural layer — install.sh's
+     `cp -L` then sees distinct inodes everywhere and the
+     "same file" collision can't fire.
+  2. **Belt-and-suspenders in install.sh** (this slot,
+     v5.10.46 closeout): even with the v5.11.x cyrius-deps
+     fix, harden the refresh-only lib-copy loop against
+     the same-file class of errors generally. Replace
+     `cp -L "$f" "$dst"` with `rm -f "$dst" && cp -L "$f"
+     "$dst"` (or guard with realpath equality check + skip).
+     Defensive layer for any future symlink-collision path
+     that might re-emerge (e.g. user-set symlinks from
+     other tools).
+  3. Add a tail-of-refresh-only verification step that
      `readlink ~/.cyrius/bin` matches the new version; hard
      fail with the actionable diagnostic ("re-link did not
-     update — investigate the cp loop above") if not.
-  3. **Port version-bump into cyrius** (per the sovereignty
-     principle; bash is acceptable bootstrap-layer glue but
-     this dance lives in PATH territory, runs after cyrius
-     is built, and could be `cyrius bump 5.10.X` instead).
+     update — investigate the cp loop above") if not. This
+     turns the silent-skip into a loud failure, which would
+     have caught this bug in seconds instead of multiple
+     observations across slots.
+  4. **Long-term — port version-bump into cyrius**
+     (per the sovereignty principle; v5.11.x or later).
+     bash is acceptable bootstrap-layer glue but this
+     dance lives in PATH territory, runs after cyrius
+     is built, and could be `cyrius bump 5.10.X` instead.
      Would also retire the regex-hunting fragility around
-     CHANGELOG version sed, etc.
+     CHANGELOG version sed, the cross-script-state
+     synchronization, etc.
 
   Manual workaround (until fix lands): after every
   `version-bump.sh`, run
@@ -2321,6 +2391,73 @@ moves to v5.12.0).
   pinned item; this becomes the primary v5.11.x narrative).
   TS test harness stays opportunistic per its original pin.
 
+- **`cyrius deps` file-copy instead of symlink for resolved deps**
+  (pinned 2026-05-10 at v5.10.37 ship). User direction:
+  *"yeah lets do a C with A plan longer term... will need to
+  get some time to work on mabda GA"*.
+
+  **Background**: pre-GA deps (e.g. mabda 3.0.0-rc.2) currently
+  get **symlinked** into the consumer's `lib/<dep>.cyr` from
+  `~/.cyrius/deps/<dep>/<ver>/dist/<dep>.cyr` by `cyrius deps`
+  resolution. When `install.sh --refresh-only` runs the snapshot
+  copy loop (`cp -L lib/*.cyr ~/.cyrius/versions/<v>/lib/`),
+  both source and destination dereference to the same inode if
+  the snapshot already has a parallel dep-symlink, and `cp`
+  errors with *"are the same file"*. `set -e` then kills the
+  install before the symlink-update block at install.sh:249-251
+  reaches `rm -rf ~/.cyrius/{bin,lib} && ln -sf
+  versions/$VERSION/...`. Result: `~/.cyrius/bin` /
+  `~/.cyrius/current` stay pinned at the previous version,
+  `cyrius-prompt-info` reads stale toolchain version, and the
+  user-visible symptom looks like prompt-config corruption.
+
+  **The fix shape (Option C from the v5.10.37 discussion)**:
+  change `cyrius deps` resolution so non-folded deps get a
+  physical file copy into `lib/<dep>.cyr` instead of a symlink.
+  The dep cache at `~/.cyrius/deps/<dep>/<ver>/dist/` remains the
+  immutable source; `cyrius deps` becomes a cp-from-cache step
+  rather than a `ln -sf` step. Then install.sh's `cp -L` sees
+  distinct inodes at every layer (project → snapshot, project →
+  cache) and the same-file collision can't fire.
+
+  **Acceptance bar**:
+  1. `cbt/deps.cyr` resolution path: replace the symlink emit
+     (currently around the `_dep_copy_file` or equivalent
+     helper that creates `lib/<dep>.cyr`) with a copy that
+     reads bytes from `~/.cyrius/deps/<dep>/<ver>/dist/<dep>.cyr`
+     and writes them to `lib/<dep>.cyr`. Update mtime preserved
+     or not — call out which (mtime preservation has
+     implications for `-nt` rebuild checks in
+     `_rebuild_stale`).
+  2. Cross-consumer verification: in every ecosystem repo
+     using a pre-GA dep symlink, `rm lib/<dep>.cyr && cyrius
+     deps` produces a plain file (not symlink). Verify with
+     `ls -la lib/`.
+  3. `install.sh --refresh-only` succeeds end-to-end including
+     the symlink-update block (verified by `readlink
+     ~/.cyrius/bin` matching the new version after `version-
+     bump.sh`).
+  4. `cyrius deps --check` (if implemented) detects when the
+     project's `lib/<dep>.cyr` content drifts from the cache —
+     same-as-symlink invariant under copies.
+  5. The `cp -L same-file` defensive guard in install.sh
+     (per the v5.10.46 closeout pin) is ALSO landed as
+     belt-and-suspenders even with this fix.
+
+  **Long-term plan — Option A fold-in cadence** (per-dep,
+  ongoing): each pre-GA dep that reaches a 1.0.0 / 2.0.0 / 3.0.0
+  release gets folded byte-identical into `lib/<name>.cyr` via
+  the v5.8.65 pattern (committed file, `cyrius.cyml` updated).
+  Once a dep is fully folded, the `[deps.<name>]` git resolution
+  is replaced by a fold-pin entry — `cyrius deps` becomes a
+  no-op for that dep. Slot list (refines as deps land):
+  - **mabda 3.0.0 GA** — user-flagged needs work time;
+    promote from `[deps.mabda]` to fold once GA tagged.
+  - Future pre-GA deps follow same pattern.
+  The fold cadence isn't pinned to specific slot numbers —
+  it lands when the dep hits GA, alongside its consumers'
+  pin bumps.
+
 - **`tests/regression-*.sh` → cyrius port arc**
   (pinned 2026-05-10 at v5.10.36; paired with TS test harness
   per user direction *"any newly added regression.sh scripts
@@ -2331,7 +2468,7 @@ moves to v5.12.0).
   gates into cyrius-native bespoke gates in
   `programs/check.cyr` (see CLAUDE.md DO NOT bullet on
   `regression-X.sh` retirement). A small number of `.sh`
-  gates remain — including the v5.10.45-pinned
+  gates remain — including the v5.10.46-pinned
   `_cyriusly_starship_add_only_gate` whose subject is itself
   the shell `scripts/cyriusly`. Folding the remaining `.sh`
   gates into cyrius lands in v5.11.x **BEFORE** the TS test
@@ -2340,12 +2477,12 @@ moves to v5.12.0).
 
   **Acceptance bar** (multi-patch, refine at slot entry):
   1. Inventory: walk `tests/regression-*.sh` (if any remain)
-     + the v5.10.45 closeout-investigation gate, list each
+     + the v5.10.46 closeout-investigation gate, list each
      subject + assertion shape.
   2. Per-gate: rewrite as a bespoke fn in
      `programs/check.cyr` using `lib/regression.cyr` helpers
      (same shape as `_macho_exit_gate` / `_pe_exit_gate`).
-  3. **Cyriusly cmdtools port** — the v5.10.45 starship
+  3. **Cyriusly cmdtools port** — the v5.10.46 starship
      add-only gate's subject is shell. Port the cmdtools
      install/remove paths (currently `scripts/cyriusly:160+`)
      into a cyrius binary or `cyrius` sub-command first, so

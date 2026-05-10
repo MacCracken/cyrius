@@ -1,0 +1,92 @@
+# v5.10.38 — typed-simd ABI Phase 10 (arc close). Param-side
+# value-form ABI: `fn f(a: f64v2): f64v2`, `fn f(a: f64v2,
+# b: f64v2): f64v2`, and f64v4 equivalents.
+#
+# Backend register assignment (cyrius-internal SysV-style
+# split-counter):
+#   x86 SysV:    XMM0..XMM7 (SIMD-arg ordinal, independent of RDI/RSI)
+#   aarch64:     V0..V7     (SIMD-arg ordinal, independent of X0..X5)
+#   cx:          stub (cxvm doesn't have a SIMD register file)
+#   Win64 PE:    NOT SUPPORTED — caller-side errors out at compile time;
+#                use the v5.10.33 pointer-form wrappers instead.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/test.cyr"
+
+# Single f64v2 value param, identity return — exercises XMM0
+# store-to-local at fn entry + XMM0 load-from-local at return.
+fn _id_v2(a: f64v2): f64v2 {
+    return a;
+}
+
+# Two f64v2 value params — exercises XMM0+XMM1 stores at entry
+# + caller-side XMM0+XMM1 loads.
+fn _bitor_v2(a: f64v2, b: f64v2): f64v2 {
+    var r: f64v2;
+    store64(&r + 0, load64(&a + 0) | load64(&b + 0));
+    store64(&r + 8, load64(&a + 8) | load64(&b + 8));
+    return r;
+}
+
+# Mixed int + f64v2 (SysV split-counter: int → RDI, f64v2 → XMM0)
+fn _mixed(tag, v: f64v2): f64v2 {
+    var r: f64v2;
+    store64(&r + 0, load64(&v + 0) ^ tag);
+    store64(&r + 8, load64(&v + 8) ^ tag);
+    return r;
+}
+
+# Single f64v4 value param — exercises XMM0+XMM1 stores at entry
+# (f64v4 uses 2 SIMD arg regs).
+fn _id_v4(a: f64v4): f64v4 {
+    return a;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("f64v2 value-form param: identity");
+    var x: f64v2;
+    store64(&x + 0, 0xDEADBEEF);
+    store64(&x + 8, 0xCAFEBABE);
+    var y: f64v2 = _id_v2(x);
+    assert_eq(load64(&y + 0), 0xDEADBEEF, "_id_v2 lo round-trip");
+    assert_eq(load64(&y + 8), 0xCAFEBABE, "_id_v2 hi round-trip");
+
+    test_group("f64v2 value-form param: two args (XMM0+XMM1)");
+    var a: f64v2;
+    var b: f64v2;
+    store64(&a + 0, 0x0F0F0F0F);
+    store64(&a + 8, 0xAAAA0000);
+    store64(&b + 0, 0xF0F00000);
+    store64(&b + 8, 0x0000FFFF);
+    var c: f64v2 = _bitor_v2(a, b);
+    assert_eq(load64(&c + 0), 0xFFFF0F0F, "lo OR");
+    assert_eq(load64(&c + 8), 0xAAAAFFFF, "hi OR");
+
+    test_group("f64v2 mixed int+f64v2 params (SysV split-counter)");
+    var v: f64v2;
+    store64(&v + 0, 0xFF00FF00);
+    store64(&v + 8, 0x00FF00FF);
+    # XOR with 0xFF: lo → 0xFF00FFFF; hi → 0x00FF00 wait XOR with byte 0xFF only flips the low 8 bits.
+    # Actually XOR with the full i64 0xFF (which is just 0xFF in low byte).
+    var m: f64v2 = _mixed(0xFF, v);
+    assert_eq(load64(&m + 0), 0xFF00FFFF, "lo ^ 0xFF");
+    assert_eq(load64(&m + 8), 0x00FF0000, "hi ^ 0xFF");
+
+    test_group("f64v4 value-form param: identity");
+    var q: f64v4;
+    store64(&q + 0, 0x1111);
+    store64(&q + 8, 0x2222);
+    store64(&q + 16, 0x3333);
+    store64(&q + 24, 0x4444);
+    var r: f64v4 = _id_v4(q);
+    assert_eq(load64(&r + 0), 0x1111, "v4 lane0");
+    assert_eq(load64(&r + 8), 0x2222, "v4 lane1");
+    assert_eq(load64(&r + 16), 0x3333, "v4 lane2");
+    assert_eq(load64(&r + 24), 0x4444, "v4 lane3");
+
+    var s = assert_summary();
+    return s;
+}

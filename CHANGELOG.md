@@ -6,6 +6,165 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.38] — 2026-05-10
+
+**v5.10.x SLOT 38 — f64v2 + f64v4 value-form param ABI
+(typed-simd ABI Phase 10, callee + caller end-to-end)**.
+
+Phase 10 of the typed-simd ABI arc. v5.10.28-32 + .36-37 shipped
+the **return-side** end-to-end (f64v2/f64v4 by-value through
+pair-XMM / pair-V0 / pair-quad / retptr per backend). This slot
+ships the **param-side**:
+
+| Backend  | Callee param ABI            | Caller arg routing            |
+|----------|-----------------------------|-------------------------------|
+| x86 SysV | XMM0..XMM7 → 2/4-slot store at fn entry | XMM0..XMM7 loaded from caller's local post-ECALLPOPS |
+| aarch64  | V0..V7 → 2/4-slot store     | V0..V7 loaded post-ECALLPOPS  |
+| macOS Mach-O arm64 | inherits aarch64 NEON | inherits aarch64           |
+| cx       | stubs (cxvm SIMD ABI deferred) | stubs                      |
+| Win64 PE | **NOT supported** — caller errors out at compile time | pointer-form via v5.10.33 wrappers |
+
+Cyrius-internal SysV-style **split-counter** convention: SIMD-class
+args use XMM0..XMM7 / V0..V7 in their own ordinal sequence,
+independent of int-class RDI/RSI/RDX/RCX/R8/R9. f64v2 advances
+the SIMD ordinal by 1; f64v4 by 2.
+
+cc5 (x86): 790,544 → **796,608 (+6,064 B)** for the param-parse
+multi-slot path + caller-side scratch-table + 4 new backend
+emit helpers (ESTOREPARM_F64V2/F64V4 + ELOAD_F64V2_TO_XMM /
+_F64V4_TO_XMM). Self-host x86 byte-identical.
+
+**66/66 check.sh, 140/140 cyrius test** (+1 new gate
+`f64v2_byval_param.tcyr`, 10 sub-asserts).
+
+**Cross-host SSH cluster green**:
+- pi (aarch64 Linux): 10/10, exit=0
+- ecb (macOS Mach-O arm64): 10/10, exit=0 (codesigned)
+- cass (Windows PE x86_64): **N/A by design** — caller fails
+  at compile time with a friendly message pointing to the
+  v5.10.33 pointer-form wrappers. Same partial-PE precedent
+  as v5.10.31 retptr return.
+
+### What landed
+
+**`src/frontend/parse_fn.cyr`** — callee-side param parse:
+
+- Param-type detection extended (line ~1716) to recognize
+  `f64v2` (sets `pt_simd_class = 1`) and `f64v4` (`= 2`) via
+  byte-compare on the type IDENT, mirror of the return-type
+  vocab block.
+- New `simd_mask` per-fn local (2 bits per param, hoisted at
+  the top of the param-parse loop) records each param's
+  SIMD-class for caller-side dispatch.
+- New `simd_pc` (SIMD-class arg-reg ordinal) + `int_pc` (int-
+  class arg-reg ordinal) counters, ADVANCED INDEPENDENTLY.
+  Fns with no SIMD params keep `int_pc == pc` (backward-compat).
+- SIMD param-allocation branch: allocates `N-1` anon filler
+  slots + 1 named slot at the deepest disp (mirror of v5.10.28
+  var-decl pattern). SLTYPE marked `-20` (f64v2) or `-21`
+  (f64v4) on the named slot so `&v` resolves correctly and
+  PARSE_RETURN's pair-load pattern (v5.10.28+) recognizes the
+  var.
+- Emits `ESTOREPARM_F64V2(simd_pc, named_idx)` or
+  `ESTOREPARM_F64V4(simd_pc, named_idx)` at fn entry — stores
+  the incoming XMM/V register into the multi-slot region.
+- Per-fn `simd_mask` saved to new heap region `0x1282000 +
+  fi * 8` (claimed from the 32 KB reserved-for-future-overload
+  gap; documented in `src/main.cyr` heap map).
+- Win64 PE error: emits at param-parse time if `pt_simd_class
+  > 0 && _TARGET_PE == 1`, pointing to the v5.10.33 pointer-form
+  wrappers.
+
+**`src/frontend/parse_fn.cyr`** — caller-side PARSE_FNCALL:
+
+- Reads callee's `simd_mask` from `0x1282000 + fi * 8`.
+- New `_fc_simd_table[24]` scratch (8 args × 3 i64s: named_lli,
+  simd_pc, class) records each SIMD arg's metadata during the
+  first arg-eval pass.
+- SIMD-class arg detection at start of arg loop: arg MUST be a
+  local f64v2/f64v4 IDENT (value-form caller pattern; address-
+  eval + scratch-spill is out of v5.10.38 scope). Verifies
+  IDENT's SLTYPE matches param's class.
+- Records SIMD-arg metadata + advances `_fc_simd_pc_caller`;
+  skips the int-class EPUSHR path so the stack only holds int
+  args.
+- `_fc_int_argc` tracks int-class-only count for ECALLPOPS.
+- After arg loop: ECALLPOPS pops int-class args into RDI/RSI/
+  RDX/RCX/R8/R9. Second pass emits `ELOAD_F64V2_TO_XMM` /
+  `ELOAD_F64V4_TO_XMM` for each recorded SIMD arg — AFTER
+  ECALLPOPS so int-arg PCMPE (which may clobber XMM) doesn't
+  trample SIMD state.
+
+**Backend emit helpers** (`src/backend/x86/emit.cyr` +
+`aarch64/emit.cyr` + `cx/emit.cyr`):
+
+- `ESTOREPARM_F64V2(simd_ord, named_idx)` — fn-entry XMM-store.
+  x86: `movupd [rbp+disp_lo], xmm<N>` (8 bytes). aarch64: STUR
+  Q<N> + LDR Q deep-frame fallback. cx: no-op stub.
+- `ESTOREPARM_F64V4(simd_ord, named_idx)` — fn-entry two
+  XMM-stores (XMM<N> + XMM<N+1>). aarch64: STUR Q<N> + STUR
+  Q<N+1>.
+- `ELOAD_F64V2_TO_XMM(simd_ord, named_idx)` — caller-side
+  MOVUPD-from-local. Mirror of v5.10.36 EFLLOAD_F64V2_PAIR
+  but parametric on Rt.
+- `ELOAD_F64V4_TO_XMM(simd_ord, named_idx)` — caller-side two
+  MOVUPD-from-local.
+- All x86 helpers respect `_cur_fn_regalloc` + `_cur_fn_ret_stash`
+  in disp computation.
+- aarch64 helpers include the v5.10.37-style imm12-scaled
+  deep-frame fallback for disps below LDUR/STUR Q's imm9 range.
+
+**`src/main.cyr`** — heap map adds `0x1282000 fn_param_simd_mask`
+in the previously-reserved 32 KB gap between `fn_overload_cstr`
+(0x127A000) and `fn_names` (0x128A000). 2 bits per param × 32
+params = 64 bits per fn entry × 4096 fns = 32 KB.
+
+**`tests/tcyr/f64v2_byval_param.tcyr`** — new gate, 10 sub-asserts:
+- f64v2 identity (single XMM0 round-trip)
+- f64v2 two-arg (XMM0+XMM1)
+- f64v2 mixed int+f64v2 (SysV split-counter verification: int
+  param → RDI, f64v2 param → XMM0)
+- f64v4 identity (XMM0+XMM1 callee store + caller load)
+
+### Pre-planned split for v5.10.39
+
+Per user direction *"A+B in .38; C as .39"* — v5.10.38 ships
+the language-layer ABI; v5.10.39 ships the consumer surface:
+
+- **Overload dispatch** — extend Phase 3 generalize (v5.10.25)
+  registry-based routing to key on pointer-vs-value first-arg
+  shape, not just `_str` / `_int` suffix.
+- **`lib/simd.cyr` value-param siblings** — add
+  `f64v2_add(a: f64v2, b: f64v2): f64v2` alongside existing
+  `f64v2_add(a_ptr, b_ptr): f64v2` (rename to
+  `f64v2_add_ptr` if needed for clarity). Same for the f64v4
+  surface.
+
+This is a PRE-PLANNED split (per memory pin
+`feedback_no_one_fix_per_slot`): v5.10.38 is already
+multi-touch (param-parse + per-backend prologue emit + caller-
+side SIMD-arg load + per-fn mask + cross-arch verify), and
+the typed-wrapper migration is genuinely additive on top.
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV int-class pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | cx bytecode + macho inherits |
+| 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style return |
+| 5     | v5.10.32 | ✅     | x86 SysV XMM0 register passing |
+| 6     | v5.10.33 | ✅ partial | `lib/simd.cyr` pointer-form typed wrappers |
+| 7     | v5.10.35 | ✅     | `PARSE_SIMD_EXT` locname-staleness fix |
+| 8     | v5.10.36 | ✅     | aarch64 V0 NEON register passing |
+| 9     | v5.10.37 | ✅     | `f64v4` (32-byte) value type |
+| 10    | v5.10.38 | ✅     | **f64v2 + f64v4 value-form param ABI (callee + caller)** (this slot) |
+| 11    | v5.10.39 | pinned | Overload dispatch + `lib/simd.cyr` value-param wrapper migration |
+
+One slot remains for the consumer-facing cleanup at v5.10.39
+to fully close the arc.
+
 ## [5.10.37] — 2026-05-10
 
 **v5.10.x SLOT 37 — `f64v4` (32-byte packed-double) value type
@@ -37,7 +196,7 @@ byte-identical. **66/66 check.sh, 139/139 cyrius test on x86**
 - pi (aarch64 Linux): 25/25 sub-asserts, exit=0
 - ecb (macOS Mach-O arm64): 25/25, exit=0 (codesigned)
 - cass (Windows PE x86_64): exit=0 (retptr-style; println silent
-  per pre-existing v5.10.44 gap)
+  per pre-existing v5.10.45 gap)
 
 api-surface 2,835 → **2,849** (+14: `simd::f64v4_*` typed
 wrappers covering make / lane0-3 / add/sub/mul/div/fmadd/dot/
@@ -138,7 +297,7 @@ a `cyrius deps`-resolved symlink AND the snapshot already has
 the same dep as a symlink, cp errors with "same file" and
 `set -e` exits before the symlink-update block at line
 249-251. Result: `~/.cyrius/bin` and `~/.cyrius/current` stay
-pointing at the previous version. Documented in the v5.10.45
+pointing at the previous version. Documented in the v5.10.46
 closeout pin with the exact root cause + fix shape (skip
 realpath-equal source/dst, or rm-then-cp the destination).
 Manual workaround: re-link after every bump.
@@ -453,7 +612,7 @@ SSH cluster green**:
   helper-missing path), exit=0
 - ecb (macOS Mach-O arm64): 8/8 sub-asserts, exit=0 (codesigned)
 - cass (Windows PE x86_64): exit=0 (println silent per
-  pre-existing Win64 stdlib gap, pinned as v5.10.44; assert
+  pre-existing Win64 stdlib gap, pinned as v5.10.45; assert
   outcome propagates through the exit code)
 
 api-surface 2,833 → **2,835** (+2: `tls::tls_get_early_data_status/1`

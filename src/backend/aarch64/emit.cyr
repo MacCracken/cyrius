@@ -1006,6 +1006,85 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     return 0;
 }
 
+# v5.10.38 — aarch64 f64v2 SIMD-class param store at fn entry.
+# Mirror of x86 ESTOREPARM_F64V2. `simd_ord` is the V-register
+# ordinal (0..7 under AAPCS64); `named_idx` is the named slot
+# of the 2-slot stack-local where the f64v2 value lives.
+# Single STUR Q<simd_ord> stores 16 bytes from the NEON
+# register into the local; deep-frame fallback via X9 + STR Q
+# (imm12-scaled) if disp_lo < -256.
+#
+# Encoding: `stur q<N>, [x29, #imm9]` = 0x3C8003A0 + N | (off9 << 12)
+# Deep-frame: `str q<N>, [x9, #0]` = 0x3D800120 + N
+fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        EW(S, 0x3C8003A0 | (simd_ord & 0x1F) | (off_lo << 12));
+        return 0;
+    }
+    _EFP_ADDR_X9(S, disp_lo);
+    EW(S, 0x3D800120 | (simd_ord & 0x1F));
+    return 0;
+}
+
+# v5.10.38 — aarch64 f64v4 SIMD-class param store at fn entry.
+# Two STUR Q (V<simd_ord>+V<simd_ord+1>) for the 4-slot region.
+fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 16;
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        var off_hi = disp_hi & 0x1FF;
+        # stur q<simd_ord>, [x29, #disp_lo]
+        EW(S, 0x3C8003A0 | (simd_ord & 0x1F) | (off_lo << 12));
+        # stur q<simd_ord+1>, [x29, #disp_hi]
+        EW(S, 0x3C8003A0 | ((simd_ord + 1) & 0x1F) | (off_hi << 12));
+        return 0;
+    }
+    _EFP_ADDR_X9(S, disp_lo);
+    # str q<simd_ord>, [x9, #0]
+    EW(S, 0x3D800120 | (simd_ord & 0x1F));
+    # str q<simd_ord+1>, [x9, #16]
+    EW(S, 0x3D800520 | ((simd_ord + 1) & 0x1F));
+    return 0;
+}
+
+# v5.10.38 — aarch64 caller-side SIMD-arg LOAD into V-register.
+# Mirror of x86 ELOAD_F64V2_TO_XMM. Encoding: ldur q<N> base
+# 0x3CC003A0 + N; deep-frame fallback ldr q<N> base 0x3DC00120 + N.
+fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        EW(S, 0x3CC003A0 | (simd_ord & 0x1F) | (off_lo << 12));
+        return 0;
+    }
+    _EFP_ADDR_X9(S, disp_lo);
+    EW(S, 0x3DC00120 | (simd_ord & 0x1F));
+    return 0;
+}
+
+fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 16;
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        var off_hi = disp_hi & 0x1FF;
+        EW(S, 0x3CC003A0 | (simd_ord & 0x1F) | (off_lo << 12));
+        EW(S, 0x3CC003A0 | ((simd_ord + 1) & 0x1F) | (off_hi << 12));
+        return 0;
+    }
+    _EFP_ADDR_X9(S, disp_lo);
+    EW(S, 0x3DC00120 | (simd_ord & 0x1F));
+    EW(S, 0x3DC00520 | ((simd_ord + 1) & 0x1F));
+    return 0;
+}
+
 # Local variable load: ldur x0, [x29, #-offset]
 # v5.9.26: account for `_cur_fn_ret_stash` so locals in
 # struct-returning fns don't overlap the X8 retptr stash slot.

@@ -421,6 +421,19 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
     return 0;
 }
 
+# v5.10.38 — cx stubs for SIMD-class param store/load. cxvm
+# doesn't have a SIMD register file; f64v2/f64v4 param-side
+# ABI on cx is conceptual only and not required by current
+# cxvm consumers. No-op emits so the parser's per-backend
+# dispatch doesn't fault when these names resolve under
+# CYRIUS_TARGET_CX. If a future cx consumer needs SIMD param
+# passing, mirror the v5.10.37 4-register pair-quad return
+# shape (R0..R3 stores per slot).
+fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 { return 0; }
+fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 { return 0; }
+fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 { return 0; }
+fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 { return 0; }
+
 fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     # [fp - (idx+1)*8] = r0
     CX_EMIT(S, 2, 14, 253, 0);

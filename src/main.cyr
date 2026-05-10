@@ -259,7 +259,13 @@
 #   0x126A000 fn_overload_str       [32768] 4096 fi+1 of <name>_str  overload (v5.10.25)
 #   0x1272000 fn_overload_int       [32768] 4096 fi+1 of <name>_int  overload (v5.10.25)
 #   0x127A000 fn_overload_cstr      [32768] 4096 fi+1 of <name>_cstr overload (v5.10.25)
-#   0x1282000 — 0x128A000 (32 KB gap — reserved for future overload variants)
+#   0x1282000 fn_param_simd_mask    [32768] 4096 per-fn SIMD-param class mask (v5.10.38).
+#                                                  2 bits per param: 00 int-class,
+#                                                  01 f64v2 (1 XMM reg slot),
+#                                                  10 f64v4 (2 XMM reg slots).
+#                                                  PARSE_FNCALL consults this to route
+#                                                  SIMD args into XMM regs rather than
+#                                                  int-class arg regs.
 #
 # --- cc5 IR region (v5.0.0) ---
 #   0x12CA000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes

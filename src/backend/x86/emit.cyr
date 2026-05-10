@@ -1324,6 +1324,90 @@ fn EDISP32(S, disp): i64 {
     return 0;
 }
 
+# v5.10.38 — emit f64v2 SIMD-class param store at fn entry.
+# `simd_ord` is the XMM register ordinal (0..7 under SysV;
+# cyrius-internal convention reuses the same on aarch64 PE
+# but that path isn't enabled in v5.10.38 — PE f64v2 params
+# error out at parse time). `named_idx` is the named slot of
+# the 2-slot stack-local where the f64v2 value lives (lo half
+# at &v+0, hi half at &v+8 via the v5.10.28 named-slot-at-
+# deepest pattern). Emits a single MOVUPD storing 16 bytes
+# from XMM<simd_ord> into the 2-slot region.
+#
+# ModR/M for `movupd [rbp+disp32], xmm<N>`: 0x85 + (N << 3)
+# (mod=10 disp32, reg=N, rm=101 rbp). Opcode: 66 0F 11 (MOVUPD
+# m128, xmm).
+fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var modrm = 0x85 + (simd_ord << 3);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, modrm);
+    var addr = S + 0x64A000 + GCP(S);
+    S64(addr, (L64(addr) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
+# v5.10.38 — emit f64v4 SIMD-class param store at fn entry.
+# Two MOVUPDs: XMM<simd_ord> → [&v+0..15], XMM<simd_ord+1> →
+# [&v+16..31]. Same shape as v5.10.37's EFLLOAD/STORE_F64V4_PAIR
+# for return-side, but reversed direction (store from XMM).
+fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 16;
+    var modrm_lo = 0x85 + (simd_ord << 3);
+    var modrm_hi = 0x85 + ((simd_ord + 1) << 3);
+    # movupd [rbp+disp_lo], xmm<simd_ord>
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, modrm_lo);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # movupd [rbp+disp_hi], xmm<simd_ord+1>
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, modrm_hi);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
+# v5.10.38 — emit caller-side SIMD-arg LOAD (mirror of ESTOREPARM_F64V2).
+# Used by PARSE_FNCALL when a callee param is f64v2: load 16 bytes
+# from the caller's local (at named_idx) into XMM<simd_ord>.
+# Encoding: 66 0F 10 (0x85 + (simd_ord << 3)) disp32.
+fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var modrm = 0x85 + (simd_ord << 3);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, modrm);
+    var addr = S + 0x64A000 + GCP(S);
+    S64(addr, (L64(addr) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
+# v5.10.38 — emit caller-side SIMD-arg LOAD for f64v4.
+fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 16;
+    var modrm_lo = 0x85 + (simd_ord << 3);
+    var modrm_hi = 0x85 + ((simd_ord + 1) << 3);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, modrm_lo);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, modrm_hi);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
 fn ESTOREREGPARM(S, pidx, disp): i64 {
     # Callee-side symmetric flip with EPOPARG. Under _TARGET_PE,
     # incoming args 0..3 arrive in rcx/rdx/r8/r9 (Win64 ABI) not

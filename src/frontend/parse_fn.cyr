@@ -875,9 +875,64 @@ fn PARSE_FNCALL(S, noff): i64 {
     # Auto-coerce string literals to Str for params annotated : Str.
     var argc = 0;
     var smask = L64(S + 0x12BA000 + fi * 8);
+    # v5.10.38 — caller-side SIMD-arg routing. Read the callee's
+    # per-fn SIMD mask (2 bits per param: 00 int, 01 f64v2, 10 f64v4).
+    # When non-zero, value-form SIMD args get loaded into XMM/V regs
+    # AFTER ECALLPOPS so int-arg eval (which may clobber XMM during
+    # PCMPE) doesn't trample SIMD state. Scratch table records each
+    # SIMD arg's (named_lli, simd_pc, class) so the second pass can
+    # emit ELOAD_F64V2_TO_XMM / _F64V4_TO_XMM at the call site.
+    var _fc_simd_mask = L64(S + 0x1282000 + fi * 8);
+    var _fc_simd_table[24];   # 8 args × 3 i64s = 24 slots
+    var _fc_simd_count = 0;
+    var _fc_simd_pc_caller = 0;
+    var _fc_int_argc = 0;
     if (PEEKT(S) != 11) {
         var argo = 1;
         while (argo == 1) {
+            # v5.10.38 — SIMD-class arg routing (must precede the
+            # int-class type-check + push path). When the callee's
+            # mask flags this argc as SIMD, the arg MUST be a local
+            # f64v2/f64v4 IDENT (value-form caller pattern). Record
+            # the IDENT's local idx + this caller-side simd ordinal
+            # for the post-ECALLPOPS emission pass. Skip the int-
+            # class push entirely; argc still advances for mask
+            # alignment but _fc_int_argc does NOT.
+            var _fc_class = (_fc_simd_mask >> (argc * 2)) & 3;
+            if (_fc_class > 0) {
+                if (PEEKT(S) != 2) {
+                    ERR_MSG(S, "value-form SIMD arg must be a local IDENT (caller-side scratch + addr-eval path not in v5.10.38 scope)", 100);
+                }
+                var _fc_arg_noff = PEEKV(S);
+                STI(S, GTI(S) + 1);  # consume IDENT
+                var _fc_arg_lli = FINDLOCAL(S, _fc_arg_noff);
+                if (_fc_arg_lli < 0) {
+                    ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
+                }
+                var _fc_arg_lt = GLTYPE(S, _fc_arg_lli);
+                # Verify the IDENT's SLTYPE matches the param's class.
+                # f64v2 (-20) for class=1; f64v4 (-21) for class=2.
+                if (_fc_class == 1) {
+                    if (_fc_arg_lt != 0 - 20) {
+                        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v2)", 56);
+                    }
+                } else {
+                    if (_fc_arg_lt != 0 - 21) {
+                        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56);
+                    }
+                }
+                # Record in scratch table for second pass.
+                store64(&_fc_simd_table + _fc_simd_count * 24, _fc_arg_lli);
+                store64(&_fc_simd_table + _fc_simd_count * 24 + 8, _fc_simd_pc_caller);
+                store64(&_fc_simd_table + _fc_simd_count * 24 + 16, _fc_class);
+                _fc_simd_count = _fc_simd_count + 1;
+                if (_fc_class == 1) { _fc_simd_pc_caller = _fc_simd_pc_caller + 1; }
+                else { _fc_simd_pc_caller = _fc_simd_pc_caller + 2; }
+                argc = argc + 1;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                else { argo = 0; }
+                continue;
+            }
             # v5.10.1 — type-check pass 1: warn when a Str-typed
             # local/global is passed to a param the callee did NOT
             # annotate `: Str`. Catches `var s: Str = ...; foo(s);`
@@ -979,6 +1034,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     ECALLCLEAN(S, 1);
                     EPUSHR(S);
                     argc = argc + 1;
+                    _fc_int_argc = _fc_int_argc + 1;
                     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                     else { argo = 0; }
                     continue;
@@ -987,20 +1043,40 @@ fn PARSE_FNCALL(S, noff): i64 {
             PCMPE(S);
             EPUSHR(S);
             argc = argc + 1;
+            _fc_int_argc = _fc_int_argc + 1;
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { argo = 0; }
         }
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    ECALLPOPS(S, argc);
+    # v5.10.38 — SysV split-counter: ECALLPOPS only pops the int-class
+    # arg count from the stack into RDI/RSI/RDX/RCX/R8/R9. SIMD args
+    # haven't been pushed (they were recorded for the second pass
+    # below).
+    ECALLPOPS(S, _fc_int_argc);
+    # Second pass: emit XMM/V loads for recorded SIMD args. AFTER
+    # ECALLPOPS so int-arg eval can't clobber XMM state. AT the call
+    # site so XMM holds the values entering the called fn.
+    var _fc_si = 0;
+    while (_fc_si < _fc_simd_count) {
+        var _fc_arg_lli = load64(&_fc_simd_table + _fc_si * 24);
+        var _fc_arg_pc = load64(&_fc_simd_table + _fc_si * 24 + 8);
+        var _fc_arg_cl = load64(&_fc_simd_table + _fc_si * 24 + 16);
+        if (_fc_arg_cl == 1) {
+            ELOAD_F64V2_TO_XMM(S, _fc_arg_pc, _fc_arg_lli);
+        } else {
+            ELOAD_F64V4_TO_XMM(S, _fc_arg_pc, _fc_arg_lli);
+        }
+        _fc_si = _fc_si + 1;
+    }
     var foff = L64(S + 0x1292000 + fi * 8);
     if (foff >= 0) {
         ECALLTO(S, foff);
     } else {
         ECALLFIX(S, fi);
     }
-    ECALLCLEAN(S, argc);
+    ECALLCLEAN(S, _fc_int_argc);
     return 0;
 }
 
@@ -1562,6 +1638,27 @@ fn PARSE_FN_DEF(S): i64 {
     # params — same default as str_mask.
     var cstring_mask = 0;
     var result_mask = 0;
+    # v5.10.38 — typed-simd Phase 10 (arc close). Param-side ABI:
+    # `fn f(a: f64v2)` allocates 2 stack slots for `a` (mirror of
+    # the v5.10.28 return-side multi-slot pattern) and emits a
+    # register-pair store at fn entry from XMM<simd_ord> /
+    # V<simd_ord> / r<2*simd_ord>+r<2*simd_ord+1> into the 2-slot
+    # region. PARSE_FNCALL consults the SIMD mask to route value-
+    # form args into XMM/V registers rather than int-class arg
+    # regs. Pack 2 bits per param into a single 64-bit mask:
+    #   00 = int-class (default)
+    #   01 = f64v2 (uses 1 SIMD-class arg reg)
+    #   10 = f64v4 (uses 2 SIMD-class arg regs)
+    # 32 params per fn (cap matches existing param caps).
+    var simd_mask = 0;
+    # simd_pc tracks the SIMD-class arg-reg ordinal, INDEPENDENT
+    # of the int-class pc. v5.10.38 cyrius-internal SysV-style
+    # split-counter convention (NOT MS x64 single-counter): SIMD
+    # params get XMM0..XMM7 / V0..V7 in their SIMD-arg ordinal
+    # order; int params get RDI/RSI/RDX/RCX/R8/R9 in their
+    # int-arg ordinal order. The two sequences are independent.
+    var simd_pc = 0;
+    var int_pc = 0;
     var option_mask = 0;
     var tagged_mask = 0;
     if (PEEKT(S) != 11) {
@@ -1593,6 +1690,11 @@ fn PARSE_FN_DEF(S): i64 {
             # fall through to the undefined-variable path or read from
             # the slot's literal value.
             var pt_sid = 0;
+            # v5.10.38 — hoist pt_simd_class out of the nested type-
+            # annotation block so the SIMD vs int-class path branch
+            # below can see it. 0 = int-class (default), 1 = f64v2,
+            # 2 = f64v4.
+            var pt_simd_class = 0;
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
                 if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }  # skip * for pointer types
@@ -1679,42 +1781,137 @@ fn PARSE_FN_DEF(S): i64 {
                             }
                         }
                     }
+                    # v5.10.38 — detect f64v2 / f64v4 type annotation
+                    # on this param. Sets pt_simd_class (hoisted at
+                    # outer scope) to 1 (f64v2) or 2 (f64v4);
+                    # subsequent allocation block branches on it to do
+                    # multi-slot alloc + register-pair store at fn
+                    # entry. Byte compares mirror the return-type
+                    # vocab. Must stay inside the `if (PEEKT == 2)`
+                    # block where _pt_b0..3 + tnoff are in scope.
+                    if (_pt_b0 == 102) {  # 'f'
+                        if (_pt_b1 == 54) {  # '6'
+                            if (_pt_b2 == 52) {  # '4'
+                                if (_pt_b3 == 118) {  # 'v'
+                                    if (load8(S + 0x60000 + tnoff + 4) == 50) {  # '2'
+                                        if (load8(S + 0x60000 + tnoff + 5) == 0) {
+                                            pt_simd_class = 1;
+                                        }
+                                    }
+                                    if (load8(S + 0x60000 + tnoff + 4) == 52) {  # '4'
+                                        if (load8(S + 0x60000 + tnoff + 5) == 0) {
+                                            pt_simd_class = 2;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     pt_sid = FINDSTRUCT(S, tnoff);
+                }
+                # Win64 PE doesn't support f64v2/f64v4 value-form
+                # params in v5.10.38 (MS x64 ABI passes >8B aggregates
+                # by pointer; cyrius's PE path keeps v5.10.31's
+                # retptr-style return without matching param-side
+                # work). Consumers on PE use the v5.10.33 pointer-form
+                # wrappers. Error early to avoid silent codegen
+                # divergence; PE param-side is a separate follow-up.
+                if (_TARGET_PE == 1) {
+                    if (pt_simd_class > 0) {
+                        ERR_MSG(S, "f64v2/f64v4 value-form params not yet supported on Win64 PE — use pointer-form wrappers from lib/simd.cyr instead", 110);
+                    }
                 }
                 STI(S, GTI(S) + 1);  # consume type
                 SKIP_GENERICS(S);    # skip <T> if present
             }
-            var li = GFLC(S);
-            S64(S + 0x191000 + li * 8, pnoff);
-            SLDEP(S, li, 0);
-            # v5.10.1: explicit SLTYPE clear for untyped params. The
-            # LTYPE table at S+0x192200 isn't cleared per-fn (only
-            # FLC resets), so a fresh param slot can inherit a stale
-            # `0 - sid` value from a prior fn's local in the same
-            # slot index. Surfaced when v5.10.1 added the call-site
-            # type-check: untyped `alloc` param of `str_cat_a` was
-            # falsely flagged Str-typed because the previous fn
-            # (using slot 0 for a Str-annotated local) left SLTYPE
-            # = -STR_SID. Belt-and-braces: zero first, then set to
-            # `-pt_sid` only if explicitly annotated.
-            SLTYPE(S, li, 0);
-            if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
-            # Only emit register params now (0-5). v5.5.36 Phase 2b:
-            # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,
-            # RCX on Win64) for the hidden retptr, so user param 0
-            # arrives in the SECOND arg reg — shift pidx +1. v5.9.26:
-            # aarch64 SysV puts the retptr in X8 (dedicated, outside
-            # the regular X0..X7 arg-reg sequence), so user params on
-            # aarch64 stay at X0..X7 unshifted regardless of
-            # struct-return status.
-            var _pp_shift = 0;
-            if (_cur_fn_ret_stash > 0) {
-                if (_AARCH64_BACKEND == 0) { _pp_shift = 1; }
+            # v5.10.38 — branch: SIMD param (f64v2/f64v4) needs
+            # multi-slot alloc + register-pair store; int-class param
+            # is the legacy single-slot path. Shared loop-bottom
+            # (pc++ + comma-consume) at the end.
+            if (pt_simd_class > 0) {
+                var simd_slots = 2;     # f64v2
+                var simd_sid = 20;      # SLTYPE encoding
+                if (pt_simd_class == 2) {
+                    simd_slots = 4;     # f64v4
+                    simd_sid = 21;
+                }
+                # Allocate (simd_slots - 1) anon filler slots + 1
+                # named slot (deepest = lo half, where &v points).
+                # Mirror of the v5.10.28 var-decl multi-slot pattern.
+                var simd_j = 0;
+                while (simd_j < simd_slots - 1) {
+                    var simd_fi = GFLC(S);
+                    S64(S + 0x191000 + simd_fi * 8, 0 - 1);  # anon
+                    SLDEP(S, simd_fi, 0);
+                    SLTYPE(S, simd_fi, 0);
+                    SFLC(S, simd_fi + 1);
+                    simd_j = simd_j + 1;
+                }
+                # Named slot (deepest disp; where &v resolves).
+                var simd_named = GFLC(S);
+                S64(S + 0x191000 + simd_named * 8, pnoff);
+                SLDEP(S, simd_named, 0);
+                SLTYPE(S, simd_named, 0 - simd_sid);
+                SFLC(S, simd_named + 1);
+                # Encode in per-fn simd_mask: 2 bits per param at
+                # offset pc*2. PARSE_FNCALL reads this to route value-
+                # form args into XMM/V regs at call sites.
+                simd_mask = simd_mask | (pt_simd_class << (pc * 2));
+                # Bound check: SysV SIMD arg-regs are XMM0..XMM7
+                # (8 regs); f64v2 uses 1, f64v4 uses 2.
+                if (simd_pc + pt_simd_class > 8) {
+                    ERR_MSG(S, "too many f64v2/f64v4 params (SIMD arg-reg budget XMM0..XMM7 exceeded)", 70);
+                }
+                # Emit register-pair store at fn entry. ESTOREPARM_F64V2
+                # / F64V4 takes the SIMD ordinal + named slot's local idx.
+                if (pt_simd_class == 1) {
+                    ESTOREPARM_F64V2(S, simd_pc, simd_named);
+                    simd_pc = simd_pc + 1;
+                } else {
+                    ESTOREPARM_F64V4(S, simd_pc, simd_named);
+                    simd_pc = simd_pc + 2;
+                }
+            } else {
+                # Int-class param — legacy single-slot path.
+                var li = GFLC(S);
+                S64(S + 0x191000 + li * 8, pnoff);
+                SLDEP(S, li, 0);
+                # v5.10.1: explicit SLTYPE clear for untyped params. The
+                # LTYPE table at S+0x192200 isn't cleared per-fn (only
+                # FLC resets), so a fresh param slot can inherit a stale
+                # `0 - sid` value from a prior fn's local in the same
+                # slot index. Surfaced when v5.10.1 added the call-site
+                # type-check: untyped `alloc` param of `str_cat_a` was
+                # falsely flagged Str-typed because the previous fn
+                # (using slot 0 for a Str-annotated local) left SLTYPE
+                # = -STR_SID. Belt-and-braces: zero first, then set to
+                # `-pt_sid` only if explicitly annotated.
+                SLTYPE(S, li, 0);
+                if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
+                # Only emit register params now (0-5). v5.5.36 Phase 2b:
+                # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,
+                # RCX on Win64) for the hidden retptr, so user param 0
+                # arrives in the SECOND arg reg — shift pidx +1. v5.9.26:
+                # aarch64 SysV puts the retptr in X8 (dedicated, outside
+                # the regular X0..X7 arg-reg sequence), so user params on
+                # aarch64 stay at X0..X7 unshifted regardless of
+                # struct-return status.
+                #
+                # v5.10.38: use `int_pc` (int-class-only counter) not
+                # `pc` (any-class). For fns with no SIMD params,
+                # int_pc == pc and behavior is identical. For mixed
+                # fns, SIMD params skip the int-class arg-reg sequence
+                # per SysV's independent-counter convention.
+                var _pp_shift = 0;
+                if (_cur_fn_ret_stash > 0) {
+                    if (_AARCH64_BACKEND == 0) { _pp_shift = 1; }
+                }
+                if (int_pc + _pp_shift < 6) {
+                    ESTOREPARM(S, int_pc + _pp_shift, li, 0);
+                }
+                SFLC(S, li + 1);
+                int_pc = int_pc + 1;
             }
-            if (pc + _pp_shift < 6) {
-                ESTOREPARM(S, pc + _pp_shift, li, 0);
-            }
-            SFLC(S, li + 1);
             pc = pc + 1;
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { pgo = 0; }
@@ -1731,6 +1928,11 @@ fn PARSE_FN_DEF(S): i64 {
     S64(S + 0x1252000 + fi * 8, result_mask);
     S64(S + 0x125A000 + fi * 8, option_mask);
     S64(S + 0x1262000 + fi * 8, tagged_mask);
+    # v5.10.38 — typed-simd Phase 10. Per-fn SIMD-param mask: 2 bits
+    # per param at offset pc*2. Default 0 means no SIMD params (legacy
+    # behavior); non-zero triggers caller-side XMM-routing in
+    # PARSE_FNCALL.
+    S64(S + 0x1282000 + fi * 8, simd_mask);
     # v5.5.36 Phase 2b — optional `: StructName` return-type annotation:
     # `fn make(): Point { ... return p; }`. Sets fn_ret_sid[fi] = sid;
     # PARSE_RETURN + call-site consult it to emit the Win64 hidden-RCX /
