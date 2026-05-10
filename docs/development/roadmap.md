@@ -2011,6 +2011,115 @@ identical; otherwise defer to v5.11.0's first patch.
 - v5.11.0 entry-bar prepped: P(-1) sweep starting
   point, baseline benchmarks captured.
 
+**Additional closeout investigations (surfaced mid-cycle)**:
+
+- **`cyriusly cmdtools install starship` add-only discipline**
+  (filed 2026-05-10 at v5.10.36).
+
+  **Governing principle** (user direction 2026-05-10):
+  cyriusly's prompt-install role is **language-tool addition
+  only** — same shape as how a `rust` / `node` / `python`
+  toolchain integration would add its own per-language block
+  to the user's prompt config. Cyriusly adds the
+  `[custom.cyrius_pkg]` + `[custom.cyrius]` blocks and that's
+  it. User's prompt format / modules / colors are theirs to
+  configure; cyriusly never touches anything outside the
+  cyrius-tagged blocks.
+
+  Quote: *"The install process if starship cmdline tool
+  requested with only add the language items... like rust or
+  others... user can do what they want with that after."*
+
+  **Repro target** (suspected clobber path):
+  `scripts/cyriusly:265-271` —
+  ```sh
+  if grep -qE "custom\.cyrius(_pkg)?" "$_starship_conf" 2>/dev/null; then
+      sed -i '/\[custom\.cyrius_pkg\]/,/^$/d' "$_starship_conf"
+      sed -i '/\[custom\.cyrius\]/,/^$/d' "$_starship_conf"
+  fi
+  echo "" >> "$_starship_conf"
+  echo "$_CYRIUS_STARSHIP" >> "$_starship_conf"
+  ```
+  Hypotheses to test:
+  1. **Open-ended sed range** — `/\[custom\.cyrius\]/,/^$/d`
+     deletes from match to the NEXT blank line; if the user's
+     file ends without a trailing blank, the range extends to
+     EOF and wipes everything after the cyrius block.
+  2. **Adjacent-block bleed** — if user has the cyrius block
+     followed directly by another `[module]` without an
+     intervening blank line, the sed range crosses into the
+     next module and deletes it too.
+  3. **Stale-blank-line cascade** — multiple cyriusly install
+     runs each append `echo ""` + the block; later cleanup
+     seds may have unintended interaction with the
+     accumulated blank lines.
+  4. **`install.sh` elif `cat >` clobber** —
+     `scripts/install.sh:529-541` writes a fresh starship.toml
+     via `cat >` when the file doesn't exist AND starship is
+     on PATH. If the file got removed between
+     `cyriusly cmdtools remove starship` and a subsequent
+     install, this branch could overwrite a fresh user-authored
+     config. **This path should likely be removed entirely** —
+     creating a fresh file with only cyrius blocks is too
+     opinionated. If no config exists, the install should
+     either ask first or just emit a stderr hint that the
+     user should run `starship preset` (or similar) before
+     re-running cyriusly.
+
+  **Fix shape**:
+  1. Switch the per-block delete from sed-range-to-blank-line
+     to a bounded delete (awk block-aware filter, or sed with
+     explicit `[custom.cyrius...]` open + the known fixed
+     number of lines per block + the trailing blank).
+  2. Drop the `install.sh:529` "create fresh starship.toml"
+     elif. Cyriusly is add-only; if there's no config, leave
+     it that way and print a hint.
+  3. Same audit pass on the p10k integration
+     (`scripts/cyriusly:273+`) — confirm it's also add-only
+     for prompt_cyrius and doesn't touch other p10k functions
+     or the user's `POWERLEVEL9K_*_ELEMENTS` arrays.
+
+  **Add a regression gate** (cyrius-native, NOT bash — per
+  the v5.x check.cyr conversion arc; see memory pin
+  `feedback_sovereignty_no_other_languages`): add a
+  bespoke gate fn in `programs/check.cyr` (e.g.
+  `_cyriusly_starship_add_only_gate()`) that exercises in
+  cyrius:
+  - Clean install on a starship.toml with N user blocks → cyrius
+    blocks appended; the N user blocks byte-identical.
+  - Idempotent re-install → cyrius blocks replaced, N user
+    blocks still byte-identical.
+  - Install on a config with no trailing blank line → same
+    result; no bleed.
+  - Install on a config with cyrius block directly adjacent
+    to another `[module]` (no blank separator) → cyrius
+    replaced, adjacent module untouched.
+  - Uninstall → cyrius blocks gone, N user blocks
+    byte-identical.
+
+  Open question for the gate: cyriusly itself is currently
+  shell (`scripts/cyriusly`). The closeout fix may need to
+  port the cmdtools paths into cyrius (a `cyriusly` cyrius
+  binary, or a sub-command on the existing `cyrius` tool)
+  before a cyrius gate can test it end-to-end. If that
+  port is out of closeout scope, the gate uses cyrius to
+  set up fixtures + invoke the shell `cyriusly` + assert
+  on the resulting file bytes — still cyrius-native test
+  code, just exercising a shell script as the subject.
+  The shell→cyrius port itself can be a separate held item
+  in v5.11.x.
+
+  **Acceptance**: any non-cyrius bytes in the user's
+  starship.toml are **byte-identical** before and after every
+  cyriusly install/remove cycle. Cyrius blocks
+  delete/re-add cleanly with no bleed in either direction.
+
+  **User context** (v5.10.36): the immediate fix was a
+  hand-restored `starship.toml` to just the two cyrius
+  blocks (matching what was actually there before, per
+  user confirmation); the install-path fix is closeout
+  work, not slot-emergency work.
+
 ### v5.10.x — Held (no slot pinned; surfaces-on-ask)
 
 Items that DO NOT get concrete slot numbers — they
