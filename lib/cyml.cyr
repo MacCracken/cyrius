@@ -25,7 +25,7 @@ enum CymlError {
 
 # v5.8.36 — Allocator-as-first-arg variant of cyml_entry_new.
 # Allocates the 32-byte entry header via `a`. Returns 0 on OOM.
-fn cyml_entry_new_a(a, hp, hl, bp, bl) {
+fn cyml_entry_new_a(a, hp, hl, bp, bl): i64 {
     var e = alloc_via(a, 32);
     if (e == 0) { return 0; }
     store64(e, hp);
@@ -37,7 +37,7 @@ fn cyml_entry_new_a(a, hp, hl, bp, bl) {
 
 # CymlEntry: { header_ptr, header_len, body_ptr, body_len }
 # 32 bytes per entry. v5.8.36 wrapper.
-fn cyml_entry_new(hp, hl, bp, bl) {
+fn cyml_entry_new(hp, hl, bp, bl): i64 {
     return cyml_entry_new_a(default_alloc(), hp, hl, bp, bl);
 }
 
@@ -52,7 +52,7 @@ fn cyml_entry_body_len(e) { return load64(e + 24); }
 
 # v5.8.36 — Allocator-as-first-arg variant of cyml_doc_new.
 # Allocates the 32-byte doc struct via `a`. Returns 0 on OOM.
-fn cyml_doc_new_a(a) {
+fn cyml_doc_new_a(a): i64 {
     var d = alloc_via(a, 32);
     if (d == 0) { return 0; }
     store64(d, 0);
@@ -64,7 +64,7 @@ fn cyml_doc_new_a(a) {
 
 # CymlDoc: { file_header_ptr, file_header_len, entries_ptr, entry_count }
 # 32 bytes. v5.8.36 wrapper.
-fn cyml_doc_new() {
+fn cyml_doc_new(): i64 {
     return cyml_doc_new_a(default_alloc());
 }
 
@@ -78,12 +78,12 @@ fn cyml_doc_entries(d) { return load64(d + 16); }
 fn cyml_doc_entry_count(d) { return load64(d + 24); }
 
 # Get entry N from a doc (returns CymlEntry pointer)
-fn cyml_doc_entry(d, n) {
+fn cyml_doc_entry(d, n): i64 {
     return load64(load64(d + 16) + n * 8);
 }
 
 # Check if data[pos..] starts with "\n---\n" (or "---\n" at pos==0)
-fn _cyml_is_delim(data, len, pos) {
+fn _cyml_is_delim(data, len, pos): i64 {
     if (pos == 0) {
         if (pos + 4 <= len) {
             if (load8(data) == 45 && load8(data+1) == 45 && load8(data+2) == 45 && load8(data+3) == 10) {
@@ -102,7 +102,7 @@ fn _cyml_is_delim(data, len, pos) {
 }
 
 # Check if data[pos..] starts with "\n[[entries]]\n" (or "[[entries]]\n" at pos==0)
-fn _cyml_is_entries(data, len, pos) {
+fn _cyml_is_entries(data, len, pos): i64 {
     # "[[entries]]" = 11 chars + newline before and after
     if (pos == 0) {
         if (len < 12) { return 0; }
@@ -139,7 +139,7 @@ fn _cyml_is_entries(data, len, pos) {
 
 # Trim leading/trailing whitespace from a (ptr, len) pair.
 # Returns new length (ptr adjusted in-place via out params).
-fn _cyml_trim(ptr, len, out_ptr, out_len) {
+fn _cyml_trim(ptr, len, out_ptr, out_len): i64 {
     var s = 0;
     while (s < len) {
         var c = load8(ptr + s);
@@ -161,7 +161,7 @@ fn _cyml_trim(ptr, len, out_ptr, out_len) {
 
 # Parse a CYML buffer. Returns a CymlDoc pointer.
 # data = pointer to buffer, len = byte length.
-fn cyml_parse(data, len) {
+fn cyml_parse(data, len): i64 {
     var doc = cyml_doc_new();
     # Collect entry positions: up to 256 entries
     var entry_starts[256];  # byte offsets of [[entries]] markers
@@ -279,7 +279,7 @@ fn cyml_parse(data, len) {
 # ${env:HOME}     → reads environment variable HOME
 # Plain strings without ${...} returned as-is.
 
-fn _cyml_read_file_trimmed(path) {
+fn _cyml_read_file_trimmed(path): i64 {
     var buf[4096];
     var fd = syscall(2, path, 0, 0);
     if (fd < 0) { return 0; }
@@ -298,7 +298,7 @@ fn _cyml_read_file_trimmed(path) {
     return out;
 }
 
-fn _cyml_read_env(name, name_len) {
+fn _cyml_read_env(name, name_len): i64 {
     var ebuf[8192];
     var fd = syscall(2, "/proc/self/environ", 0, 0);
     if (fd < 0) { return 0; }

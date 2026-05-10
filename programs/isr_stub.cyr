@@ -8,7 +8,7 @@ kernel;
 # In x86_64, there's no PUSHA — must push each register manually.
 # The inline asm emits the exact bytes needed.
 
-fn isr_save_regs() {
+fn isr_save_regs(): i64 {
     # push all callee-clobbered + scratch registers
     asm { 0x50; }  # push rax
     asm { 0x51; }  # push rcx
@@ -27,7 +27,7 @@ fn isr_save_regs() {
     return 0;
 }
 
-fn isr_restore_regs() {
+fn isr_restore_regs(): i64 {
     asm { 0x41; 0x5F; }  # pop r15
     asm { 0x41; 0x5E; }  # pop r14
     asm { 0x41; 0x5D; }  # pop r13

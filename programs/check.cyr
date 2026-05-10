@@ -81,13 +81,13 @@ var ENVP_COUNT = 0;
 var EMPTY_ENVP = 0;
 
 # Convenience: print null-terminated c-string to stdout (no newline).
-fn _p(cstr) {
+fn _p(cstr): i64 {
     print(cstr, strlen(cstr));
     return 0;
 }
 
 # Print "PASS"/"FAIL" line with name.
-fn _check(name, exit_code) {
+fn _check(name, exit_code): i64 {
     G_TOTAL = G_TOTAL + 1;
     _p("  ");
     if (exit_code == 0) {
@@ -106,7 +106,7 @@ fn _check(name, exit_code) {
     return 0;
 }
 
-fn _section(label) {
+fn _section(label): i64 {
     _p("── ");
     _p(label);
     println(" ──");
@@ -115,7 +115,7 @@ fn _section(label) {
 
 # Build absolute path under ROOT_PATH from a relative tail. Returns
 # a freshly allocated null-terminated c-string.
-fn _root_path(tail) {
+fn _root_path(tail): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, ROOT_PATH);
     str_builder_add_cstr(sb, "/");
@@ -129,7 +129,7 @@ fn _root_path(tail) {
 # We don't probe arbitrary PATH because that requires shell-level
 # `command -v` with the parent's env; the two well-known locations
 # cover both fresh-checkout and installed-toolchain workflows.
-fn _resolve_tool(rel_build_path, name) {
+fn _resolve_tool(rel_build_path, name): i64 {
     var absp = _root_path(rel_build_path);
     if (file_exists(absp) == 1) { return absp; }
     var home = getenv("HOME");
@@ -151,7 +151,7 @@ fn _resolve_tool(rel_build_path, name) {
 # paths and PATH for cyrius-toolchain binary discovery). We
 # rebuild the parent's env into a properly-terminated pointer
 # array and pass it explicitly via execve in _gate_run().
-fn _load_environ() {
+fn _load_environ(): i64 {
     var cap = 65536;
     ENVP_BUF = alloc(cap);
     var fd = file_open("/proc/self/environ", 0, 0);
@@ -193,7 +193,7 @@ fn _load_environ() {
 # child inherits stdin/stdout/stderr from the dispatcher, so any
 # regression-script diagnostic surfaces inline on FAIL — same shape
 # as bash's `cat /tmp/audit_X_$$` post-fail dump.
-fn _gate_run(script_abs) {
+fn _gate_run(script_abs): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 1; }
     if (pid == 0) {
@@ -217,7 +217,7 @@ fn _gate_run(script_abs) {
 # run (we don't re-spawn — the v5.7.29 bash convention only re-cat'd
 # the captured tmp file, but our child shares stderr directly with
 # the dispatcher).
-fn _gate(name, script_rel) {
+fn _gate(name, script_rel): i64 {
     var script_abs = _root_path(script_rel);
     var rc = _gate_run(script_abs);
     _check(name, rc);
@@ -240,7 +240,7 @@ fn _gate(name, script_rel) {
 # Six v5.9.1-converted gates use this: fdlopen, atomics,
 # thread-local, thread-safety, flags, shadow-pam. Slot map:
 # v5.9.2.
-fn _tcyr_relay_gate(gate_name, inner_label, tcyr_basename) {
+fn _tcyr_relay_gate(gate_name, inner_label, tcyr_basename): i64 {
     var tcyr_abs = _root_path("");
     var sb = str_builder_new();
     str_builder_add_cstr(sb, ROOT_PATH);
@@ -295,7 +295,7 @@ fn _tcyr_relay_gate(gate_name, inner_label, tcyr_basename) {
 }
 
 # Find " passed" anchor in buffer; walk back to leading int.
-fn _tcyr_parse_passed(buf, n) {
+fn _tcyr_parse_passed(buf, n): i64 {
     var needle = " passed";
     var nlen = strlen(needle);
     var i = 0;
@@ -326,7 +326,7 @@ fn _tcyr_parse_passed(buf, n) {
 #
 # Four v5.9.2-converted gates use this: json_pretty, json_stream,
 # json_pointer, test_lib.
-fn _expected_output_gate(gate_name, inner_label, fixture_basename) {
+fn _expected_output_gate(gate_name, inner_label, fixture_basename): i64 {
     var sb_src = str_builder_new();
     str_builder_add_cstr(sb_src, ROOT_PATH);
     str_builder_add_cstr(sb_src, "/tests/fixtures/");
@@ -427,14 +427,14 @@ fn _expected_output_gate(gate_name, inner_label, fixture_basename) {
 # may still hold the file fd open; we don't care — we already have the
 # bytes we need.
 # v5.9.42: thin wrapper over lib/regression.cyr.
-fn _exec_capture_clean(bin_path, buf, buflen) {
+fn _exec_capture_clean(bin_path, buf, buflen): i64 {
     return regression_exec_capture(bin_path, buf, buflen, EMPTY_ENVP);
 }
 
 # Returns 1 if the file at path contains the c-string `substr`,
 # 0 otherwise. Generic source-grep canary helper for v5.9.3
 # bespoke gates. v5.9.42: thin wrapper over lib/regression.cyr.
-fn _file_contains_substr(path, substr) {
+fn _file_contains_substr(path, substr): i64 {
     return regression_file_contains_substr(path, substr);
 }
 
@@ -443,13 +443,13 @@ fn _file_contains_substr(path, substr) {
 # signal exit. Used by gates that care about exit code only,
 # not stdout.
 # v5.9.42: thin wrapper over lib/regression.cyr.
-fn _exec_run_clean(bin_path) {
+fn _exec_run_clean(bin_path): i64 {
     return regression_exec_run(bin_path, EMPTY_ENVP);
 }
 
 # Compile fixture .cyr at fixture_path via cc5, run resulting
 # binary, return its exit code (or -1 on compile / fork issue).
-fn _compile_run_get_exit(fixture_path) {
+fn _compile_run_get_exit(fixture_path): i64 {
     var bin = _tmp_path("audit_xrun_");
     var rc = _self_host_pipe(fixture_path, CC_PATH, bin);
     if (rc != 0) {
@@ -468,7 +468,7 @@ fn _compile_run_get_exit(fixture_path) {
 # (comments are stripped at lex without consuming the tok_names
 # 128 KB cap; identifier padding would hit that cap before
 # input_buf), pipes to cc5, runs the binary, asserts exit 0.
-fn _input_1mb_gate() {
+fn _input_1mb_gate(): i64 {
     var src_path = _tmp_path("audit_1mb_src_");
     var fd = sys_open(src_path, 577, 420);
     if (fd < 0) {
@@ -558,7 +558,7 @@ fn _input_1mb_gate() {
 # checks exit code matches the expected sentinel (99 / 77).
 # Pre-v5.6.21 the bare-truthy branch fired on stale flags from
 # inside the callee and mis-branched on every PASS path.
-fn _truthy_after_fncall_gate() {
+fn _truthy_after_fncall_gate(): i64 {
     var fix1 = _root_path("tests/fixtures/truthy/var.cyr");
     var fix2 = _root_path("tests/fixtures/truthy/direct.cyr");
     var rc1 = _compile_run_get_exit(fix1);
@@ -602,7 +602,7 @@ fn _truthy_after_fncall_gate() {
 # parses the resulting ELF object's symbol table directly (no
 # external readelf), looks up `_cyrius_init`, asserts the binding
 # (high nibble of st_info) is 1 = STB_GLOBAL.
-fn _object_init_gate() {
+fn _object_init_gate(): i64 {
     var src_path = _tmp_path("audit_oinit_src_");
     var src_fd = sys_open(src_path, 577, 420);
     if (src_fd < 0) {
@@ -728,7 +728,7 @@ fn _object_init_gate() {
 # scaffold via cc5, verifies output is >100 KB and starts with
 # the ELF magic 7f 45 4c 46. No execution — host-side the binary
 # is a Linux ELF that *emits* Mach-O.
-fn _macho_cross_build_gate() {
+fn _macho_cross_build_gate(): i64 {
     var src = _root_path("src/main_aarch64_macho.cyr");
     var out = _tmp_path("audit_macho_cross_");
     var rc = _self_host_pipe(src, CC_PATH, out);
@@ -784,7 +784,7 @@ fn _macho_cross_build_gate() {
     return 0;
 }
 
-fn _check_macho_magic_fail(b0, b1, b2, b3) {
+fn _check_macho_magic_fail(b0, b1, b2, b3): i64 {
     _p("  ");
     _p(ANSI_RED);
     _p("FAIL");
@@ -806,7 +806,7 @@ fn _check_macho_magic_fail(b0, b1, b2, b3) {
 # Asserts src/backend/aarch64/emit.cyr has the v5.7.27 3 MB cap
 # present AND does NOT have the pre-v5.7.27 512 KB cap (canary
 # against accidental revert). No execution — pure grep.
-fn _aarch64_codebuf_cap_gate() {
+fn _aarch64_codebuf_cap_gate(): i64 {
     var emit_path = _root_path("src/backend/aarch64/emit.cyr");
     if (file_exists(emit_path) != 1) {
         _p("  skip: ");
@@ -852,7 +852,7 @@ fn _aarch64_codebuf_cap_gate() {
 # stdin from the pipe + stdout to out_path, then execve's compiler.
 # Parent writes source bytes to write end, waits, returns child's
 # exit status.
-fn _self_host_pipe(src_path, compiler_path, out_path) {
+fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
     var src_cap = 2000000;
     var src_buf = alloc(src_cap);
     var src_n = file_read_all(src_path, src_buf, src_cap);
@@ -908,7 +908,7 @@ fn _self_host_pipe(src_path, compiler_path, out_path) {
 # stdin, redirects compiler's stdout to /dev/null and stderr to
 # stderr_path. Returns child's wait-status. Used by gates that
 # verify cc5's error/warning diagnostics.
-fn _compile_capture_stderr(src_path, compiler_path, stderr_path) {
+fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
     var src_cap = 2000000;
     var src_buf = alloc(src_cap);
     var src_n = file_read_all(src_path, src_buf, src_cap);
@@ -966,7 +966,7 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path) {
 # want_present == 0: stderr MUST NOT contain expect_substr (no
 # false-positive). Returns 0 on PASS, 1 on FAIL. Per-case label
 # is printed only on FAIL.
-fn _stderr_match_subcase(case_label, src_str, expect_substr, want_present) {
+fn _stderr_match_subcase(case_label, src_str, expect_substr, want_present): i64 {
     var src_path = _tmp_path("audit_smc_src_");
     var fd = sys_open(src_path, 577, 420);
     if (fd < 0) { return 1; }
@@ -1010,7 +1010,7 @@ fn _stderr_match_subcase(case_label, src_str, expect_substr, want_present) {
 
 # Find first occurrence of needle bytes in buf[0..n]. Returns
 # offset, or -1 if not found.
-fn _find_bytes(buf, n, needle, nlen) {
+fn _find_bytes(buf, n, needle, nlen): i64 {
     if (nlen == 0) { return 0; }
     if (nlen > n) { return 0 - 1; }
     var i = 0;
@@ -1031,7 +1031,7 @@ fn _find_bytes(buf, n, needle, nlen) {
 # multiboot loader hands control in 32-bit protected mode, so a
 # 64-bit `mov [rcx], rax` before the boot-shim long-mode
 # transition triple-faulted on real hardware.
-fn _kmode_emit_order_gate() {
+fn _kmode_emit_order_gate(): i64 {
     var src_path = _tmp_path("audit_kmode_src_");
     var fd = sys_open(src_path, 577, 420);
     if (fd < 0) {
@@ -1132,7 +1132,7 @@ fn _kmode_emit_order_gate() {
 # stdout, byte-compare against fixture (idempotency check).
 # Returns 0 on PASS, 1 on FAIL. Per-case label printed only on
 # FAIL, with a brief size diff for diagnostic.
-fn _cyrfmt_idempotent_subcase(case_label, fixture_path) {
+fn _cyrfmt_idempotent_subcase(case_label, fixture_path): i64 {
     var args = vec_new();
     vec_push(args, CYRFMT_PATH);
     vec_push(args, fixture_path);
@@ -1171,7 +1171,7 @@ fn _cyrfmt_idempotent_subcase(case_label, fixture_path) {
 # spurious `cyrfmt --check` NEEDS-FORMAT in agnos kernel CI.
 # Four sub-cases: asm-in-doc-comment, string-with-braces,
 # well-formed (regression coverage), mixed.
-fn _cyrfmt_comment_braces_gate() {
+fn _cyrfmt_comment_braces_gate(): i64 {
     if (CYRFMT_PATH == 0) {
         _p("  skip: cyrfmt not built");
         println("");
@@ -1208,7 +1208,7 @@ fn _cyrfmt_comment_braces_gate() {
 # 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
 # goes to /dev/null; stderr inherited from dispatcher (so a real
 # link error is visible).
-fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec) {
+fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec): i64 {
     var nobjs = vec_len(obj_paths_vec);
     var argv = alloc((nobjs + 4) * 8);
     store64(argv,         cyrld_path);
@@ -1239,7 +1239,7 @@ fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec) {
 }
 
 # Compile fixture .cyr → .o via cc5. Returns 0 on success.
-fn _compile_to_obj(src_path, obj_path) {
+fn _compile_to_obj(src_path, obj_path): i64 {
     return _self_host_pipe(src_path, CC_PATH, obj_path);
 }
 
@@ -1250,7 +1250,7 @@ fn _compile_to_obj(src_path, obj_path) {
 #     defined in d.cyr after two inc_counter() calls; link order
 #     [m, d]; expect exit 44. Also exercises DCE on
 #     `never_called` (must drop without breaking live dispatch).
-fn _linker_gate() {
+fn _linker_gate(): i64 {
     var cyrld = _root_path("build/cyrld");
     if (file_exists(cyrld) != 1) {
         _p("  skip: build/cyrld not present");
@@ -1350,7 +1350,7 @@ fn _linker_gate() {
     return 0;
 }
 
-fn _linker_gate_cleanup(a, b, c, d) {
+fn _linker_gate_cleanup(a, b, c, d): i64 {
     sys_unlink(a);
     sys_unlink(b);
     sys_unlink(c);
@@ -1363,14 +1363,14 @@ fn _linker_gate_cleanup(a, b, c, d) {
 # /dev/null. Used by gates that need to verify behavior under a
 # specific argv shape (e.g. args_init >4 KB cmdline regression).
 # v5.9.42: thin wrapper over lib/regression.cyr.
-fn _exec_with_arg_capture(bin_path, arg, buf, buflen) {
+fn _exec_with_arg_capture(bin_path, arg, buf, buflen): i64 {
     return regression_exec_with_arg_capture(bin_path, arg, buf, buflen, EMPTY_ENVP);
 }
 
 # Synthesize a cyrius source containing N empty `struct SK { x; }`
 # decls plus a trailing `syscall(60, 0);`. Writes to `path`. Used by
 # `_struct_cap_gate` for cap-stress sub-cases.
-fn _gen_struct_decls_source(path, n) {
+fn _gen_struct_decls_source(path, n): i64 {
     var fd = sys_open(path, 577, 420);
     if (fd < 0) { return 0 - 1; }
     var sb = str_builder_new();
@@ -1398,7 +1398,7 @@ fn _gen_struct_decls_source(path, n) {
 #     substrings: "note: 256 structs registered" (header),
 #     "#0 S0" (first dumped struct), "#255 S255" (last dumped),
 #     and "too many struct definitions (max 256)" (final error).
-fn _struct_cap_gate() {
+fn _struct_cap_gate(): i64 {
     var fail = 0;
 
     # Case 1: 80 structs compile + run + exit 0.
@@ -1508,7 +1508,7 @@ fn _struct_cap_gate() {
 # Helper: cstring path join (parent + "/" + child). Mirrors the
 # cyrius-init.cyr `_join` helper since path_join takes Str (not
 # cstring) and most check.cyr ops route through cstrings.
-fn _join(parent, child) {
+fn _join(parent, child): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, parent);
     str_builder_add_cstr(sb, "/");
@@ -1517,7 +1517,7 @@ fn _join(parent, child) {
 }
 
 # Helper: assert file exists at <pdir>/<rel>; bump fail if missing.
-fn _check_file_exists(pdir, rel, fail_label) {
+fn _check_file_exists(pdir, rel, fail_label): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, pdir);
     str_builder_add_cstr(sb, "/");
@@ -1540,7 +1540,7 @@ fn _check_file_exists(pdir, rel, fail_label) {
 # Helper: assert grep -q <substr> <pdir>/<rel>; bump fail if not found.
 # `expect_match` = 1 means substr SHOULD be present; 0 means it
 # SHOULD NOT (the bash inverse-grep cases).
-fn _check_file_grep(pdir, rel, substr, expect_match, fail_label) {
+fn _check_file_grep(pdir, rel, substr, expect_match, fail_label): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, pdir);
     str_builder_add_cstr(sb, "/");
@@ -1567,7 +1567,7 @@ fn _check_file_grep(pdir, rel, substr, expect_match, fail_label) {
 # Helper: scaffold a project via scripts/cyrius-init.sh in scratch
 # dir. Returns proj root path on success, 0 on failure (caller
 # emits its own FAIL).
-fn _scaffold_init(scratch_dir, init_script, flag, name) {
+fn _scaffold_init(scratch_dir, init_script, flag, name): i64 {
     sys_mkdir(scratch_dir, 493);
     var out = _tmp_path("audit_init_out_");
     var ec = _exec_in_dir3(scratch_dir, "/bin/sh", init_script, flag, name, out);
@@ -1586,7 +1586,7 @@ fn _scaffold_init(scratch_dir, init_script, flag, name) {
 # pin) — same 4 cases, same assertions, exec scripts/cyrius-init.sh
 # directly so the test still validates the bash impl until the
 # v5.9.28/29-onward cyrius-init.cyr port grows full coverage.
-fn _init_lib_bin_gate() {
+fn _init_lib_bin_gate(): i64 {
     var label = "cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)";
     var init_script = _root_path("scripts/cyrius-init.sh");
     if (file_exists(init_script) != 1) {
@@ -1783,7 +1783,7 @@ fn _init_lib_bin_gate() {
 # architecture / guides / examples / development) + CLAUDE.md
 # shape checks (no inlined volatile state, shape-aware build
 # hint, state.md carries the toolchain pin).
-fn _init_doctree_gate() {
+fn _init_doctree_gate(): i64 {
     var label = "cyrius init/port emit adr/architecture/guides/examples/development + CLAUDE.md (v5.7.16)";
     var init_script = _root_path("scripts/cyrius-init.sh");
     var port_script = _root_path("scripts/cyrius-port.sh");
@@ -1928,7 +1928,7 @@ fn _init_doctree_gate() {
 # `regression_count_substr`. Local `_buf_eq` callers
 # preserved in this file for back-compat; the lib version uses
 # `regression_buf_eq` internally — same byte logic.
-fn _count_substr_buf(buf, n, needle) {
+fn _count_substr_buf(buf, n, needle): i64 {
     return regression_count_substr(buf, n, needle);
 }
 
@@ -1937,7 +1937,7 @@ fn _count_substr_buf(buf, n, needle) {
 # emits diagnostics to stderr (cyrlint warnings) but the gate
 # wants to scan them.
 # v5.9.42: thin wrapper over lib/regression.cyr.
-fn _exec_with_arg_capture_both(bin_path, arg, buf, buflen) {
+fn _exec_with_arg_capture_both(bin_path, arg, buf, buflen): i64 {
     return regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, EMPTY_ENVP);
 }
 
@@ -1947,7 +1947,7 @@ fn _exec_with_arg_capture_both(bin_path, arg, buf, buflen) {
 # line goes to stdout — both are captured. Used by
 # `_lint_init_order_gate` (and any future cyrlint-output
 # regression). Returns the count.
-fn _cyrlint_count_marker(file_path, marker, buf, buflen) {
+fn _cyrlint_count_marker(file_path, marker, buf, buflen): i64 {
     var n = _exec_with_arg_capture_both(CYRLINT_PATH, file_path, buf, buflen);
     return _count_substr_buf(buf, n, marker);
 }
@@ -1969,7 +1969,7 @@ fn _cyrlint_count_marker(file_path, marker, buf, buflen) {
 #   SOCK_STREAM=1, POLLOUT=4, EINPROGRESS=115, SOL_SOCKET=1,
 #   SO_ERROR=4.
 # v5.9.42: thin wrapper over lib/regression.cyr.
-fn _network_probe_check(addr_ipv4, port, timeout_ms) {
+fn _network_probe_check(addr_ipv4, port, timeout_ms): i64 {
     return regression_network_probe(addr_ipv4, port, timeout_ms);
 }
 
@@ -1985,7 +1985,7 @@ fn _network_probe_check(addr_ipv4, port, timeout_ms) {
 #   -1         fork / exec failure
 #   -2         timeout (child SIGKILL'd)
 # v5.9.42: thin wrapper over lib/regression.cyr.
-fn _run_with_timeout(bin_path, timeout_ms) {
+fn _run_with_timeout(bin_path, timeout_ms): i64 {
     return regression_run_with_timeout(bin_path, timeout_ms, ENVP_ARR);
 }
 
@@ -1996,11 +1996,11 @@ fn _run_with_timeout(bin_path, timeout_ms) {
 # byte-noise check) AND by gates that only care about exit status
 # (cx-build).
 # v5.9.42: thin wrappers over lib/regression.cyr.
-fn _pipe_file_to_bin_capture(bin_path, src_path, out_path) {
+fn _pipe_file_to_bin_capture(bin_path, src_path, out_path): i64 {
     return regression_pipe_to_bin_capture(bin_path, src_path, out_path, EMPTY_ENVP);
 }
 
-fn _pipe_file_to_bin(bin_path, src_path) {
+fn _pipe_file_to_bin(bin_path, src_path): i64 {
     return regression_pipe_to_bin(bin_path, src_path, EMPTY_ENVP);
 }
 
@@ -2009,7 +2009,7 @@ fn _pipe_file_to_bin(bin_path, src_path) {
 # read the FIRST `0x...` hex literal on that line (whether
 # before or after the marker) into a fresh null-terminated
 # cstring. Returns 0 on miss.
-fn _extract_hex_in_line_with(buf, n, marker) {
+fn _extract_hex_in_line_with(buf, n, marker): i64 {
     var mlen = strlen(marker);
     var i = 0;
     while (i + mlen <= n) {
@@ -2064,7 +2064,7 @@ fn _extract_hex_in_line_with(buf, n, marker) {
 # Read a source file into a freshly-alloc'd buffer; return the
 # pointer (with null-terminator). Length is set in *len_out.
 # Returns 0 on read failure.
-fn _read_source_for_grep(path, len_out) {
+fn _read_source_for_grep(path, len_out): i64 {
     var cap = 524288;
     var buf = alloc(cap + 1);
     var n = file_read_all(path, buf, cap);
@@ -2082,7 +2082,7 @@ fn _read_source_for_grep(path, len_out) {
 # any drift = silent miscompile (the v5.7.28 incident:
 # cc5_cx silently broken on every input because src/backend/cx/
 # emit.cyr was skipped during the v5.7.27 heap reshuffle).
-fn _cx_token_offsets_gate() {
+fn _cx_token_offsets_gate(): i64 {
     var label = "lex token writes match every backend's TOKTYP / TOKVAL reads (v5.7.28)";
     var fail = 0;
 
@@ -2164,7 +2164,7 @@ fn _cx_token_offsets_gate() {
 # Helper for `_cx_token_offsets_gate`: extract a backend's
 # TOKTYP + TOKVAL offsets, compare against the canonical lex
 # writes. Returns 0 on PASS, count of mismatches on FAIL.
-fn _check_backend_token_offsets(name, buf, n, lex_typ, lex_val) {
+fn _check_backend_token_offsets(name, buf, n, lex_typ, lex_val): i64 {
     var typ = _extract_hex_in_line_with(buf, n, "fn TOKTYP(");
     var val = _extract_hex_in_line_with(buf, n, "fn TOKVAL(");
     var fails = 0;
@@ -2213,7 +2213,7 @@ fn _check_backend_token_offsets(name, buf, n, lex_typ, lex_val) {
 # to a temp source file, compile with cc5_cx (capturing bytecode
 # to a temp file), feed bytecode to cxvm, return cxvm's exit
 # code. Returns -1 on internal error. Cleans up both temp files.
-fn _cx_syscall_run(cc_cx, cxvm, v) {
+fn _cx_syscall_run(cc_cx, cxvm, v): i64 {
     var src_path = _tmp_path("audit_cxsy_src_");
     var fd = sys_open(src_path, 577, 420);
     if (fd < 0) { return 0 - 1; }
@@ -2241,7 +2241,7 @@ fn _cx_syscall_run(cc_cx, cxvm, v) {
 # `01 00 2a 00` (MOVI r0, 42); runs the bytecode through cxvm
 # and confirms exit 42; loops V in {0, 7, 99, 200} and confirms
 # cxvm exit == V each time.
-fn _cx_syscall_literal_gate() {
+fn _cx_syscall_literal_gate(): i64 {
     var label = "cc5_cx propagates literal syscall args; cxvm exits with user code (v5.7.23)";
     var cc_cx = _tmp_path("audit_cxsy_cc_");
     var cxvm  = _tmp_path("audit_cxsy_vm_");
@@ -2393,7 +2393,7 @@ fn _cx_syscall_literal_gate() {
 #
 # Shared helper `_cx_run_fixture` factors out the build/pipe/run shape
 # so each gate body is just write-fixture → run → exit-check.
-fn _cx_run_fixture(cc_cx, cxvm, src_text, src_tag, bc_tag) {
+fn _cx_run_fixture(cc_cx, cxvm, src_text, src_tag, bc_tag): i64 {
     var src = _tmp_path(src_tag);
     _write_file(src, src_text);
     var bc = _tmp_path(bc_tag);
@@ -2404,7 +2404,7 @@ fn _cx_run_fixture(cc_cx, cxvm, src_text, src_tag, bc_tag) {
     return ec;
 }
 
-fn _cx_phase2c_gate() {
+fn _cx_phase2c_gate(): i64 {
     var label = "cx Phase 2c parity: struct-byval / sub-byte field load / 7-args (pin v5.9.40)";
     var cc_cx = _tmp_path("audit_cx2c_cc_");
     var cxvm  = _tmp_path("audit_cx2c_vm_");
@@ -2491,7 +2491,7 @@ fn _cx_phase2c_gate() {
 # `4c 8b 65 f0` (callee-restore) byte sequences; pipes the
 # bytecode to cxvm and checks it doesn't SIGSEGV and doesn't
 # emit "not a .cyx file".
-fn _cx_roundtrip_gate() {
+fn _cx_roundtrip_gate(): i64 {
     var label = "cc5_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)";
     var src_cx = _root_path("src/main_cx.cyr");
     var src_vm = _root_path("programs/cxvm.cyr");
@@ -2639,7 +2639,7 @@ fn _cx_roundtrip_gate() {
 # (1) `cc5 < src/main_cx.cyr` exits 0 with > 100 KB output.
 # (2) `cc5_cx < /dev/null` doesn't die on signal (exit < 128).
 # (3) `cc5_cx < "syscall(60, 0);"` doesn't die on signal.
-fn _cx_build_gate() {
+fn _cx_build_gate(): i64 {
     var label = "cc5 builds main_cx.cyr; cc5_cx starts clean (v5.7.11; bytecode correctness pinned v5.7.12)";
     var src = _root_path("src/main_cx.cyr");
     var cc_cx = _tmp_path("audit_cc_cx_");
@@ -2750,7 +2750,7 @@ fn _cx_build_gate() {
 # need to invoke `cyrius distlib` / `cyrius smoke` / `cyrius
 # init` etc. in a scratch directory containing a fixture
 # manifest + source layout.
-fn _exec_in_dir(work_dir, bin_path, arg, out_path) {
+fn _exec_in_dir(work_dir, bin_path, arg, out_path): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
@@ -2794,7 +2794,7 @@ fn _exec_in_dir(work_dir, bin_path, arg, out_path) {
 # env unchanged. Used by gates that need to set process-scoped
 # env vars without leaking them into the dispatcher's own env
 # (e.g., `CYRIUS_HOME=fake` for install-shim isolation).
-fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path) {
+fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path): i64 {
     var n_extras = vec_len(env_extras_vec);
     var aug_envp = alloc((ENVP_COUNT + n_extras + 1) * 8);
     var ei = 0;
@@ -2847,7 +2847,7 @@ fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_p
 # Multi-arg sibling of _exec_in_dir. Up to 3 trailing argv entries;
 # pass 0 for unused slots (argv truncated at first NULL slot).
 # Same dup2 + chdir + waitpid scaffolding as _exec_in_dir.
-fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path) {
+fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
@@ -2885,7 +2885,7 @@ fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path) {
 
 # Write `text` (cstring) to `path`, creating/truncating. Returns
 # bytes written on success, -1 on open failure.
-fn _write_file(path, text) {
+fn _write_file(path, text): i64 {
     var fd = sys_open(path, 577, 420);
     if (fd < 0) { return 0 - 1; }
     var n = sys_write(fd, text, strlen(text));
@@ -2901,7 +2901,7 @@ fn _write_file(path, text) {
 # (3) Synthetic /tmp project with a fails.smcyr (`syscall(60, 1)`)
 #     → exit non-zero + output mentions both "fails.smcyr" and
 #     "smoke aborted".
-fn _smoke_discovery_gate() {
+fn _smoke_discovery_gate(): i64 {
     var label = "cyrius smoke discovers .smcyr + fail-fast bailout (v5.7.38)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
@@ -3026,7 +3026,7 @@ fn _smoke_discovery_gate() {
 # `dist/distlib_capgate.cyr` contains the sentinel marker
 # (any truncation at the pre-v5.7.36 64 KB cap drops the tail
 # of the module which contains the sentinel).
-fn _distlib_large_module_gate() {
+fn _distlib_large_module_gate(): i64 {
     var label = "cyrius distlib bundles >64KB modules without truncation (mabda-surfaced; v5.7.36)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
@@ -3158,7 +3158,7 @@ fn _distlib_large_module_gate() {
 # For LSP-test traffic (5-15 small JSON-RPC messages, ~5-10 KB
 # total) this is fine. For larger volumes, the helper would
 # need a writer thread or a select-driven pump — out of scope.
-fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap) {
+fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
     var p2c[16];
     var c2p[16];
     var pr1 = sys_pipe(&p2c);
@@ -3222,7 +3222,7 @@ fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap) {
 
 # Build one LSP-framed request — `Content-Length: N\r\n\r\n<json>` —
 # and append to `sb`.
-fn _lsp_frame(sb, json_body) {
+fn _lsp_frame(sb, json_body): i64 {
     var jlen = strlen(json_body);
     str_builder_add_cstr(sb, "Content-Length: ");
     str_builder_add_int(sb, jlen);
@@ -3237,7 +3237,7 @@ fn _lsp_frame(sb, json_body) {
 # `tests/regression-lsp-definition.sh` end-to-end. Three LSP
 # sessions over `_ipc_session` (each spawns a fresh
 # build/cyrius-lsp); 8 sub-cases mirror the .sh's tests 1-8.
-fn _lsp_definition_gate() {
+fn _lsp_definition_gate(): i64 {
     var label = "cyrius-lsp definitionProvider + documentSymbol + cross-file indexing (v5.7.39)";
     var lsp_path = _root_path("build/cyrius-lsp");
     if (file_exists(lsp_path) != 1) {
@@ -3410,7 +3410,7 @@ fn _lsp_definition_gate() {
 # Helper for `_lsp_definition_gate`: substring-presence check
 # over a captured stdout buffer. Returns 0 on PASS (substring
 # found), 1 on FAIL (with a per-case diagnostic).
-fn _lsp_check_substr(out_buf, n, needle, fail_msg) {
+fn _lsp_check_substr(out_buf, n, needle, fail_msg): i64 {
     if (_count_substr_buf(out_buf, n, needle) >= 1) { return 0; }
     _p("    ");
     _p(ANSI_RED);
@@ -3435,23 +3435,23 @@ fn _lsp_check_substr(out_buf, n, needle, fail_msg) {
 # v5.9.42: thin wrappers over lib/regression.cyr — pass ENVP_ARR
 # so the SSH commands inherit the parent's env (PATH, etc.) like
 # the bash regression scripts they replaced.
-fn _ssh_skip_check(target) {
+fn _ssh_skip_check(target): i64 {
     return regression_ssh_skip_check(target);
 }
 
-fn _scp_to(target, local_path, remote_path) {
+fn _scp_to(target, local_path, remote_path): i64 {
     return regression_scp_to(target, local_path, remote_path, ENVP_ARR);
 }
 
-fn _ssh_remote_exit(target, command) {
+fn _ssh_remote_exit(target, command): i64 {
     return regression_ssh_remote_exit(target, command, ENVP_ARR);
 }
 
-fn _ssh_remote_exec_capture(target, command, out_path) {
+fn _ssh_remote_exec_capture(target, command, out_path): i64 {
     return regression_ssh_remote_exec_capture(target, command, out_path, ENVP_ARR);
 }
 
-fn _codesign_remote(target, remote_path) {
+fn _codesign_remote(target, remote_path): i64 {
     return regression_codesign_remote(target, remote_path, ENVP_ARR);
 }
 
@@ -3460,7 +3460,7 @@ fn _codesign_remote(target, remote_path) {
 # ~896) but with envp = parent's ENVP_ARR + the extra entry.
 # Used for Mach-O cross-builds (`CYRIUS_MACHO_ARM=1` triggers
 # the aarch64 backend's Mach-O emit at compile time).
-fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv) {
+fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
     var src_cap = 2000000;
     var src_buf = alloc(src_cap);
     var src_n = file_read_all(src_path, src_buf, src_cap);
@@ -3527,7 +3527,7 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv) {
 # Used by the v5.9.15 aarch64-native-selfhost gate to ship the
 # repo's src/ + lib/ trees to the Pi runner before invoking
 # `./cc5_native` on the remote.
-fn _tar_pipe_ssh(target, src_root, members, remote_dir) {
+fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
     # Build the remote shell command:
     #   "rm -rf <remote_dir> && mkdir -p <remote_dir>
     #    && cd <remote_dir> && tar xf -"
@@ -3637,7 +3637,7 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir) {
 # "SSH_TARGET_MACOS", "SSH_TARGET_WIN") with a default fallback.
 # Returns a cstring pointer.
 # v5.9.42: thin wrapper over lib/regression.cyr.
-fn _ssh_target(env_name, default_name) {
+fn _ssh_target(env_name, default_name): i64 {
     return regression_ssh_target(env_name, default_name);
 }
 
@@ -3649,7 +3649,7 @@ fn _ssh_target(env_name, default_name) {
 # target (default `pi`), runs it, decodes the exit code:
 #   99 — all 9 sub-tests PASS
 #   <id*10 + sub> — sub-test `id` (1..9) failed at step `sub`
-fn _aarch64_syscalls_gate() {
+fn _aarch64_syscalls_gate(): i64 {
     var label = "aarch64 syscall stdlib + post-clone trampoline (via ssh pi)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
@@ -3758,7 +3758,7 @@ fn _aarch64_syscalls_gate() {
 # Locks the X8 indirect-result ABI + LDRB/STRB byte-copy + frame-
 # disp ret_stash adjustment in `src/backend/aarch64/emit.cyr` against
 # silent regression.
-fn _aarch64_struct_byval_gate() {
+fn _aarch64_struct_byval_gate(): i64 {
     var label = "aarch64 struct-by-value round-trip (Phase 2b X8 / LDRB-STRB; via ssh pi)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
@@ -3868,7 +3868,7 @@ fn _aarch64_struct_byval_gate() {
 # regression. Field STORE codegen for sub-8-byte widths was
 # already wired pre-v5.9.27 (per the agnosys filing — only LOAD
 # was missing); this gate is load-only by design.
-fn _aarch64_sub_byte_field_load_gate() {
+fn _aarch64_sub_byte_field_load_gate(): i64 {
     var label = "aarch64 sub-byte struct field load via dot syntax (v5.9.27; agnosys 1.1.9; via ssh pi)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
@@ -3971,7 +3971,7 @@ fn _aarch64_sub_byte_field_load_gate() {
 #   T2 — `syscall(1, 1, "hello\n", 6); syscall(60, 42)` writes
 #        "hello" + exits 42 via __got[1] (write) + __got[0].
 #   T3 — user fn + arithmetic — bl/ret + peephole on Mach-O.
-fn _macho_exit_gate() {
+fn _macho_exit_gate(): i64 {
     var label = "Mach-O arm64 syscall(60,42) → exit 42 on ecb (pin v5.6.33)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
@@ -4167,7 +4167,7 @@ fn _macho_exit_gate() {
 # else — exit 139 (SIGSEGV from regressed Bug A or Bug B), exit
 # 1 (str_builder_new returned NULL — Bug A regression alone),
 # or exit ≠ 14 (codegen drift) — is a failure.
-fn _macho_derive_serialize_gate() {
+fn _macho_derive_serialize_gate(): i64 {
     var label = "Mach-O arm64 #derive(Serialize) end-to-end on ecb (pin v5.9.39)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
@@ -4253,7 +4253,7 @@ fn _macho_derive_serialize_gate() {
 #   T2 — `syscall(1, 1, "hello\n", 6); syscall(60, 42)` writes
 #        "hello" via kernel32!WriteFile + exits 42.
 #   T3 — user fn + arithmetic + peephole.
-fn _pe_exit_gate() {
+fn _pe_exit_gate(): i64 {
     var label = "PE syscall(60,42) → exit 42 on cass (pin v5.6.36)";
     var cc_pe = _root_path("build/cc5_win_cross");
     if (file_exists(cc_pe) != 1) {
@@ -4476,7 +4476,7 @@ fn _pe_exit_gate() {
 #        cat src/main_aarch64_native.cyr | cc5_native > cc5_b
 #        cat src/main_aarch64_native.cyr | cc5_b      > cc5_c
 #   5. Assert `cmp cc5_b cc5_c` returns 0 (byte-identical).
-fn _aarch64_native_selfhost_gate() {
+fn _aarch64_native_selfhost_gate(): i64 {
     var label = "native cc5 self-hosts byte-identical on Pi (pin v5.6.32)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
@@ -4607,7 +4607,7 @@ fn _aarch64_native_selfhost_gate() {
 # the binary to the configured SSH target (default `pi`),
 # ssh-runs it, decodes the exit code (1-11 = per-op failure,
 # 99 = all PASS).
-fn _aarch64_f64_basic_gate() {
+fn _aarch64_f64_basic_gate(): i64 {
     var label = "aarch64 f64 add/sub/mul/div/sqrt/neg/floor/ceil/round + int↔f64 bit-exact on Pi (v5.7.30)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
@@ -4708,7 +4708,7 @@ fn _aarch64_f64_basic_gate() {
 # `_aarch64_f64_basic_gate` — cross-build via cc5_aarch64, scp,
 # ssh-run, decode exit code (1-10 = per-shape failure within ulp
 # budget; 99 = all PASS).
-fn _aarch64_f64_polyfill_gate() {
+fn _aarch64_f64_polyfill_gate(): i64 {
     var label = "aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate on Pi (v5.7.31 + v5.8.4; phylax-unblock)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
@@ -4811,7 +4811,7 @@ fn _aarch64_f64_polyfill_gate() {
 # braces at end of file" and zero "trailing whitespace"
 # warnings — both are the file-size false-positive shape
 # resolved between v5.7.23 (filing) and v5.8.40 (premise check).
-fn _cyrlint_large_file_gate() {
+fn _cyrlint_large_file_gate(): i64 {
     if (CYRLINT_PATH == 0) {
         _p("  skip: cyrlint not built");
         println("");
@@ -4924,7 +4924,7 @@ fn _cyrlint_large_file_gate() {
 # (4) string_literal_safe.cyr fixture — exactly 0 (v5.7.36 fix:
 #     string-literal contents must NOT match IDENTs against the
 #     forward-decl table).
-fn _lint_init_order_gate() {
+fn _lint_init_order_gate(): i64 {
     if (CYRLINT_PATH == 0) {
         _p("  skip: cyrlint not built");
         println("");
@@ -5011,7 +5011,7 @@ fn _lint_init_order_gate() {
 # `--parse-ts` / `--lex-ts`), return WEXITSTATUS (0 on success,
 # non-zero on reject). stdout + stderr go to /dev/null. Used by
 # `_parse_ts_dir_gate` and `_ts_lex_gate`.
-fn _ts_mode_run(fixture_path, mode_flag) {
+fn _ts_mode_run(fixture_path, mode_flag): i64 {
     var fd = sys_open(fixture_path, 0, 0);
     if (fd < 0) { return 0 - 1; }
     var pid = sys_fork();
@@ -5041,7 +5041,7 @@ fn _ts_mode_run(fixture_path, mode_flag) {
 }
 
 # Backward-compat wrapper.
-fn _parse_ts_run(fixture_path) {
+fn _parse_ts_run(fixture_path): i64 {
     return _ts_mode_run(fixture_path, "--parse-ts");
 }
 
@@ -5051,7 +5051,7 @@ fn _parse_ts_run(fixture_path) {
 # (shebang, JSDoc, identifiers, 30+ keywords, all numeric literal
 # bases with separators, template literals + interpolation,
 # regex/division disambiguation). Acceptance: exit 0.
-fn _ts_lex_gate() {
+fn _ts_lex_gate(): i64 {
     var fix = _root_path("tests/fixtures/ts_lex/sample.ts");
     var rc = _ts_mode_run(fix, "--lex-ts");
     if (rc != 0) {
@@ -5084,7 +5084,7 @@ fn _ts_lex_gate() {
 # Pre-v5.9.17 the .sh used `find ... -not -path */node_modules/* …`;
 # the cyrius-side version uses `find_files_with_prunes` from
 # lib/fs.cyr (added v5.9.17) for the same prune semantics.
-fn _ts_corpus_gate(label, ext, threshold) {
+fn _ts_corpus_gate(label, ext, threshold): i64 {
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
         _p(CC_PATH);
@@ -5174,7 +5174,7 @@ fn _ts_corpus_gate(label, ext, threshold) {
 # fixtures extracted from the v5.7.x bash heredocs. Per-fixture
 # diagnostic on FAIL prints the case filename so a regression
 # in `cc5 --parse-ts` reports which input shape rejected.
-fn _parse_ts_dir_gate(gate_name, inner_label, subdir) {
+fn _parse_ts_dir_gate(gate_name, inner_label, subdir): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, ROOT_PATH);
     str_builder_add_cstr(sb, "/tests/fixtures/");
@@ -5230,7 +5230,7 @@ fn _parse_ts_dir_gate(gate_name, inner_label, subdir) {
 # captured stdout reports `argc() == 2` (program + arg). Pre-fix
 # (4 KB stack buffer in args_init), the >4063-byte cmdline
 # truncated and argc() reported 1 (program only — arg lost).
-fn _args_init_4kb_gate() {
+fn _args_init_4kb_gate(): i64 {
     var fix = _root_path("tests/fixtures/argc_print.cyr");
     var bin = _tmp_path("audit_argc_bin_");
     var rc = _self_host_pipe(fix, CC_PATH, bin);
@@ -5297,7 +5297,7 @@ fn _args_init_4kb_gate() {
 # as audit_lint_walk), runs `cyrdoc --check` on each, sums
 # "<N> undocumented" totals. Asserts total == 0 and tracks the
 # worst offender for diagnostic.
-fn _stdlib_doc_coverage_gate() {
+fn _stdlib_doc_coverage_gate(): i64 {
     if (CYRDOC_PATH == 0) {
         _p("  skip: cyrdoc not built (cat programs/cyrdoc.cyr | build/cc5 > build/cyrdoc)");
         println("");
@@ -5381,7 +5381,7 @@ fn _stdlib_doc_coverage_gate() {
 # Find the LAST " undocumented" needle in buf; walk back to leading
 # integer. Mirrors the bash `tail -1 | grep -oE '[0-9]+ undocumented'`
 # pattern: cyrdoc emits one summary line per file at the bottom.
-fn _doc_parse_undocumented(buf, n) {
+fn _doc_parse_undocumented(buf, n): i64 {
     var needle = " undocumented";
     var nlen = strlen(needle);
     var found = 0 - 1;
@@ -5409,7 +5409,7 @@ fn _doc_parse_undocumented(buf, n) {
 # both "reserved keyword '<kw>'" and "cannot be used as an
 # identifier" hints, AND that a legitimate identifier (`my_var`)
 # does NOT trigger the path.
-fn _reserved_kw_diag_gate() {
+fn _reserved_kw_diag_gate(): i64 {
     var fail = 0;
     fail = fail + _stderr_match_subcase("var match",
         "include \"lib/syscalls.cyr\"\nfn foo() { var match = 1; return match; }\nfoo();\nsyscall(60, 0);\n",
@@ -5444,7 +5444,7 @@ fn _reserved_kw_diag_gate() {
 # (1) same-arity duplicate must warn, (2) different-arity duplicate
 # must warn, (3) forward-decl + later body must NOT warn (false-
 # positive guard for legitimate mutual-recursion idiom).
-fn _fn_collision_gate() {
+fn _fn_collision_gate(): i64 {
     var fail = 0;
     fail = fail + _stderr_match_subcase("same-arity duplicate",
         "fn dup_a(x) { return x + 1; }\nfn dup_a(x) { return x + 2; }\nsyscall(60, 0);\n",
@@ -5472,7 +5472,7 @@ fn _fn_collision_gate() {
 # substring grep on cc5's stderr verifies the right diagnostic
 # fired. Positive coverage lives in tests/tcyr/string_escapes.tcyr
 # (compile-success-only); this gate covers reject paths.
-fn _string_escape_rejects_gate() {
+fn _string_escape_rejects_gate(): i64 {
     var fail = 0;
     fail = fail + _stderr_match_subcase("x: bad-hex-1st-nibble",
         "var s = \"\\xZ0\"; syscall(60, 0);",
@@ -5528,7 +5528,7 @@ fn _string_escape_rejects_gate() {
 # parse skipped → no warning). Probes 4 representative names from
 # the agnosys sweep that previously fell into the "unlucky"
 # bucket; each must emit `non-exhaustive` to its stderr.
-fn _match_coverage_dce_gate() {
+fn _match_coverage_dce_gate(): i64 {
     var label = "match exhaustiveness check fires for DCE-dead fns regardless of fn name (v5.9.24; agnosys 1.1.5)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
@@ -5601,7 +5601,7 @@ fn _match_coverage_dce_gate() {
 # i8/i16/i32/i64 type names and emits the inline
 # `str_builder_add_int(sb, load_W(...))` shape (mirrors the
 # untyped-scalar branch).
-fn _derive_serialize_primitive_gate() {
+fn _derive_serialize_primitive_gate(): i64 {
     var label = "#derive(Serialize) emits working JSON for i64-typed struct fields (v5.9.30; agnosys 1.1.12)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
@@ -5702,7 +5702,7 @@ fn _derive_serialize_primitive_gate() {
 
 # Returns 1 if the two files have identical content, 0 otherwise.
 # cmp -s equivalent.
-fn _files_identical(path_a, path_b) {
+fn _files_identical(path_a, path_b): i64 {
     var cap = 2000000;
     var buf_a = alloc(cap);
     var buf_b = alloc(cap);
@@ -5720,7 +5720,7 @@ fn _files_identical(path_a, path_b) {
 # Returns the file size in bytes via sys_stat (struct stat layout
 # st_size at offset 48 on x86_64 Linux per arch/x86/include/uapi/asm/
 # stat.h). Returns 0 on failure.
-fn _file_size(path) {
+fn _file_size(path): i64 {
     var sbuf = alloc(144);
     var rc = sys_stat(path, sbuf);
     if (rc < 0) { return 0; }
@@ -5728,7 +5728,7 @@ fn _file_size(path) {
 }
 
 # Build a tmp file path "/tmp/<prefix><pid>".
-fn _tmp_path(prefix) {
+fn _tmp_path(prefix): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "/tmp/");
     str_builder_add_cstr(sb, prefix);
@@ -5737,7 +5737,7 @@ fn _tmp_path(prefix) {
     return str_data(s);
 }
 
-fn _self_host_gate() {
+fn _self_host_gate(): i64 {
     _section("Self-Hosting");
     var src = _root_path("src/main.cyr");
     var cc_a = _tmp_path("audit_cc_a_");
@@ -5770,7 +5770,7 @@ fn _self_host_gate() {
 }
 
 # ── Heap-map audit ──
-fn _heapmap_gate() {
+fn _heapmap_gate(): i64 {
     _section("Heap Map");
     _gate("no heap overlaps", "tests/heapmap.sh");
     println("");
@@ -5779,7 +5779,7 @@ fn _heapmap_gate() {
 
 # Returns 1 if the buffer at p starts with the c-string `s` for n
 # bytes; 0 otherwise.
-fn _buf_eq(p, s, n) {
+fn _buf_eq(p, s, n): i64 {
     var i = 0;
     while (i < n) {
         if (load8(p + i) != load8(s + i)) { return 0; }
@@ -5792,7 +5792,7 @@ fn _buf_eq(p, s, n) {
 # return it. Returns 0 if needle not found (no summary line ⇒
 # treat as PASS-by-default; the caller separately considers exit
 # code). Mirrors _tcyr_parse_passed's shape.
-fn _tcyr_parse_failed(buf, n) {
+fn _tcyr_parse_failed(buf, n): i64 {
     var needle = " failed";
     var nlen = strlen(needle);
     var i = 0;
@@ -5817,7 +5817,7 @@ fn _tcyr_parse_failed(buf, n) {
 # binary, parse "X passed, Y failed" from output. Returns:
 #   0 on PASS, positive int = failed count from summary, -1 on
 #   compile failure.
-fn _tcyr_compile_and_run(src_path) {
+fn _tcyr_compile_and_run(src_path): i64 {
     var bin_path = _tmp_path("audit_t_");
     var rc1 = _self_host_pipe(src_path, CC_PATH, bin_path);
     if (rc1 != 0) {
@@ -5844,7 +5844,7 @@ fn _tcyr_compile_and_run(src_path) {
     return _tcyr_parse_failed(out_buf, out_n);
 }
 
-fn _testsuite_gate() {
+fn _testsuite_gate(): i64 {
     _section("Test Suite");
     var dir = _root_path("tests/tcyr");
     var dir_str = str_from(dir);
@@ -5892,7 +5892,7 @@ fn _testsuite_gate() {
 }
 
 # ── Format / Lint sections ──
-fn _format_gate() {
+fn _format_gate(): i64 {
     _section("Format");
     if (CYRFMT_PATH == 0) {
         println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
@@ -5919,7 +5919,7 @@ fn _format_gate() {
     return AW_FMT_FAIL;
 }
 
-fn _lint_gate() {
+fn _lint_gate(): i64 {
     _section("Lint");
     if (CYRLINT_PATH == 0) {
         println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
@@ -5957,7 +5957,7 @@ fn _lint_gate() {
 # Mirrors the v5.8.44 fix: if build/cyrius_api_surface is missing,
 # build it before the api-surface gate runs (otherwise the gate
 # silently skips and the audit reports false-green).
-fn _build_api_surface_if_missing() {
+fn _build_api_surface_if_missing(): i64 {
     var bin = _root_path("build/cyrius_api_surface");
     if (file_exists(bin) == 1) { return 0; }
     var src = _root_path("programs/cyrius_api_surface.cyr");
@@ -5981,7 +5981,7 @@ fn _build_api_surface_if_missing() {
 # inline-C harness. dynlib_open + dynlib_init + dynlib_sym +
 # fncall0/2 covers what `dlopen` + `dlsym` + cast-and-call
 # covered in the .sh, fully sovereign (no `cc` dependency).
-fn _shared_dlopen_gate() {
+fn _shared_dlopen_gate(): i64 {
     var label = "shared; + dlopen round-trip";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
@@ -6079,7 +6079,7 @@ fn _shared_dlopen_gate() {
 # Each fixture compiles with cc5, runs, and writes 16 bytes to
 # stdout. If either writes != 16 bytes, fixup.cyr's
 # 16-alignment-for-large-arrays prefix-sum pass regressed.
-fn _inline_asm_discard_gate() {
+fn _inline_asm_discard_gate(): i64 {
     var label = "120B asm fn + standalone sys_write (sigil AES-NI shape)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
@@ -6161,7 +6161,7 @@ fn _inline_asm_discard_gate() {
 # resolution + arg shape) but the syscalls don't fire (avoids the
 # CI seccomp-kill that retired this from the tcyr loop at v5.7.35
 # ship — see the original .sh header for the long backstory).
-fn _syscall_surface_v5735_gate() {
+fn _syscall_surface_v5735_gate(): i64 {
     var label = "stdlib syscall surface — getrandom + getdents64 + landlock + random_bytes (v5.7.35)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
@@ -6297,7 +6297,7 @@ fn _syscall_surface_v5735_gate() {
 #   20+ HTTP/1.1 prefix mismatch at byte 20+i
 #   -2  timeout (likely SSL_connect deadlock — would be a
 #       v5.6.37 regression)
-fn _tls_live_gate() {
+fn _tls_live_gate(): i64 {
     var label = "libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
@@ -6389,7 +6389,7 @@ fn _tls_live_gate() {
 # cleanly if `../sit` isn't checked out or `../sit/build/sit`
 # isn't built (sit is a downstream consumer of cyrius+sankoch,
 # not always present). Override location with SIT_DIR=...
-fn _sit_status_gate() {
+fn _sit_status_gate(): i64 {
     var label = "sit fsck on 100-commit fixture reports 0 bad (pin v5.6.35; sankoch deflate)";
     var sit_dir = getenv("SIT_DIR");
     if (sit_dir == 0) { sit_dir = _root_path("../sit"); }
@@ -6548,7 +6548,7 @@ fn _sit_status_gate() {
 # Catches regressions where --write's "no-op" path actually
 # rewrites the file (which would advance mtime even on bytewise-
 # equal output).
-fn _cyrfmt_write_gate() {
+fn _cyrfmt_write_gate(): i64 {
     var label = "cyrfmt --write / -w in-place rewrite + idempotent mtime";
     var cyrfmt_bin = _root_path("build/cyrfmt");
     if (file_exists(cyrfmt_bin) != 1) {
@@ -6764,7 +6764,7 @@ fn _cyrfmt_write_gate() {
 # VERSION), and asserts the symlinks repoint at the new
 # version's snapshot. Uses _exec_in_dir3_env to inject
 # CYRIUS_HOME=fake without polluting the dispatcher's env.
-fn _install_shim_symlink_gate() {
+fn _install_shim_symlink_gate(): i64 {
     var label = "install.sh --refresh-only re-links ~/.cyrius/bin to current version (v5.7.22; H3)";
     var install_sh = _root_path("scripts/install.sh");
     if (file_exists(install_sh) != 1) {
@@ -6999,7 +6999,7 @@ fn _install_shim_symlink_gate() {
 # fnc>2048 fix from alpha4); --json shape (fn_table key present);
 # --json on big shows fn_table.pct >= 85; missing-entry-point error
 # path runs from an empty cwd and surfaces "no file given".
-fn _capacity_gate() {
+fn _capacity_gate(): i64 {
     var label = "cyrius capacity (default / --check / --json / fnc>2048)";
     var cyrius_shim = _root_path("scripts/cyrius");
     if (file_exists(cyrius_shim) != 1) {
@@ -7236,7 +7236,7 @@ fn _capacity_gate() {
 #   3. Synthetic snapshot copy with the FIRST line dropped — the
 #      missing entry is now an "addition" in current; rc must be
 #      0 and stdout must contain "1 added since snapshot".
-fn _api_surface_gate() {
+fn _api_surface_gate(): i64 {
     var label = "cyrius api-surface diff: snapshot match + add/remove detection (v5.7.33; auto-build at v5.8.44)";
     var tool = _root_path("build/cyrius_api_surface");
     var snapshot = _root_path("docs/api-surface.snapshot");
@@ -7392,7 +7392,7 @@ fn _api_surface_gate() {
 # already-existing dirs. Used by gates that synthesize multi-level scratch
 # layouts (e.g. case2 of deps-transitive needs A/dist + B/dist + C/dist
 # + D/dist under the same scratch root).
-fn _mkdir_p(path) {
+fn _mkdir_p(path): i64 {
     var plen = strlen(path);
     var buf = alloc(plen + 1);
     var i = 0;
@@ -7419,7 +7419,7 @@ fn _mkdir_p(path) {
 #      fuzz exits 0 + stdout summarizes "1 passed, 0 failed".
 #   2. No cyrius.cyml at all + fuzz/X.fcyr uses syscalls only →
 #      cyrius fuzz exits 0 (no auto-prepend; no breakage).
-fn _fuzz_deps_prepend_gate() {
+fn _fuzz_deps_prepend_gate(): i64 {
     var label = "cyrius fuzz manifest-deps auto-prepend parity with test/bench (v5.7.21)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
@@ -7516,7 +7516,7 @@ fn _fuzz_deps_prepend_gate() {
 #      this would infinite-loop and tripe a `timeout` kill.
 #   4. Transitive `path = "..."` resolved against the transitive
 #      dep's directory (relative-path resolution semantic).
-fn _deps_transitive_gate() {
+fn _deps_transitive_gate(): i64 {
     var label = "cyrius deps walks [deps.X] transitively (3-level + diamond + cycle + rel-path; v5.7.14)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
@@ -7784,7 +7784,7 @@ fn _deps_transitive_gate() {
 # ── Main dispatch ──
 # ROOT = absolute path to repo root. Resolved via getcwd; the shim
 # in scripts/check.sh sets cwd to repo root before exec'ing.
-fn _resolve_root() {
+fn _resolve_root(): i64 {
     var cwd_buf = alloc(4096);
     var n = syscall(79, cwd_buf, 4096);   # SYS_GETCWD on x86_64
     if (n <= 0) {
@@ -7794,7 +7794,7 @@ fn _resolve_root() {
     return cwd_buf;
 }
 
-fn _setup_paths() {
+fn _setup_paths(): i64 {
     ROOT_PATH = _resolve_root();
     CC_PATH = _root_path("build/cc5");
     CYRFMT_PATH = _resolve_tool("build/cyrfmt", "cyrfmt");
@@ -7806,7 +7806,7 @@ fn _setup_paths() {
 
 # Gate registry: each entry is a (label, script_rel) pair we dispatch
 # via _gate(). Matches scripts/check.sh sections 4a–4ba inclusive.
-fn _run_regression_gates() {
+fn _run_regression_gates(): i64 {
     _section("Shared-object");
     _shared_dlopen_gate();
     println("");
@@ -8064,7 +8064,7 @@ fn _run_regression_gates() {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     _load_environ();
     _setup_paths();

@@ -34,13 +34,13 @@ var _CYR_OVERFLOW_EXIT = 57;
 
 # ---- wrapping (reference only; compiler uses bare ops for +%/-%/*%) ----
 
-fn _wrap_add_i64(a, b) { return a + b; }
-fn _wrap_sub_i64(a, b) { return a - b; }
-fn _wrap_mul_i64(a, b) { return a * b; }
+fn _wrap_add_i64(a, b): i64 { return a + b; }
+fn _wrap_sub_i64(a, b): i64 { return a - b; }
+fn _wrap_mul_i64(a, b): i64 { return a * b; }
 
 # ---- saturating ----
 
-fn _sat_add_i64(a, b) {
+fn _sat_add_i64(a, b): i64 {
     var r = a + b;
     if ((a ^ r) & (b ^ r) & _CYR_SIGN_BIT != 0) {
         if (a >= 0) { return _CYR_INT64_MAX; }
@@ -49,7 +49,7 @@ fn _sat_add_i64(a, b) {
     return r;
 }
 
-fn _sat_sub_i64(a, b) {
+fn _sat_sub_i64(a, b): i64 {
     var r = a - b;
     # Overflow iff operands differ in sign AND result sign differs from a.
     if ((a ^ b) & (a ^ r) & _CYR_SIGN_BIT != 0) {
@@ -59,7 +59,7 @@ fn _sat_sub_i64(a, b) {
     return r;
 }
 
-fn _sat_mul_i64(a, b) {
+fn _sat_mul_i64(a, b): i64 {
     if (b == 0) { return 0; }
     var r = a * b;
     # Divide-back check catches every overflow except the pathological
@@ -82,7 +82,7 @@ fn _sat_mul_i64(a, b) {
 
 # ---- checked ----
 
-fn _chk_add_i64(a, b) {
+fn _chk_add_i64(a, b): i64 {
     var r = a + b;
     if ((a ^ r) & (b ^ r) & _CYR_SIGN_BIT != 0) {
         syscall(60, _CYR_OVERFLOW_EXIT);
@@ -90,7 +90,7 @@ fn _chk_add_i64(a, b) {
     return r;
 }
 
-fn _chk_sub_i64(a, b) {
+fn _chk_sub_i64(a, b): i64 {
     var r = a - b;
     if ((a ^ b) & (a ^ r) & _CYR_SIGN_BIT != 0) {
         syscall(60, _CYR_OVERFLOW_EXIT);
@@ -98,7 +98,7 @@ fn _chk_sub_i64(a, b) {
     return r;
 }
 
-fn _chk_mul_i64(a, b) {
+fn _chk_mul_i64(a, b): i64 {
     if (b == 0) { return 0; }
     var r = a * b;
     if (a == _CYR_INT64_MIN) { if (b == 0 - 1) { syscall(60, _CYR_OVERFLOW_EXIT); } }

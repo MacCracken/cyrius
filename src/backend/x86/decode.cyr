@@ -27,7 +27,7 @@
 # prefix flag, return how many BYTES follow ModR/M (SIB + displacement).
 # Caller adds 1 for the ModR/M byte itself.
 # ----------------------------------------------------------------
-fn _MODRM_FOLLOW(modrm) {
+fn _MODRM_FOLLOW(modrm): i64 {
     var mfld = (modrm >> 6) & 3;
     var rm = modrm & 7;
     if (mfld == 3) { return 0; }                # register operand: no extra
@@ -49,7 +49,7 @@ fn _MODRM_FOLLOW(modrm) {
 # Decode the length of the x86-64 instruction at buf+off.
 # Returns 0 when undecodable (caller treats as "stop walking").
 # ----------------------------------------------------------------
-fn DECODE_LEN(buf, off) {
+fn DECODE_LEN(buf, off): i64 {
     var p = off;
     var op_prefix = 0;       # 0x66 operand-size override
     var addr_prefix = 0;     # 0x67 address-size override
@@ -222,7 +222,7 @@ fn DECODE_LEN(buf, off) {
 #   5 unknown / indirect / undecodable
 # Caller pairs this with DECODE_LEN to walk the binary.
 # ----------------------------------------------------------------
-fn CLASSIFY_CF(buf, off) {
+fn CLASSIFY_CF(buf, off): i64 {
     # Skip prefixes + REX so the opcode classification is clean.
     var p = off;
     var pi = 0;
@@ -263,7 +263,7 @@ fn CLASSIFY_CF(buf, off) {
 # Returns -1 for undecodable / indirect.
 # Caller is expected to have already classified via CLASSIFY_CF.
 # ----------------------------------------------------------------
-fn CF_TARGET(buf, off, kind) {
+fn CF_TARGET(buf, off, kind): i64 {
     # Skip prefixes + REX.
     var p = off;
     var pi = 0;

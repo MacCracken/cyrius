@@ -29,7 +29,7 @@
 
 # Entry: { name: Str, description: Str, category: Str, content: Str }
 # Create a new entry
-fn vidya_entry_new(name, desc, cat, content) {
+fn vidya_entry_new(name, desc, cat, content): i64 {
     var e = alloc(32);
     store64(e, name);
     store64(e + 8, desc);
@@ -39,13 +39,13 @@ fn vidya_entry_new(name, desc, cat, content) {
 }
 
 # Get entry name
-fn vidya_entry_name(e) { return load64(e); }
+fn vidya_entry_name(e): i64 { return load64(e); }
 # Get entry description
-fn vidya_entry_desc(e) { return load64(e + 8); }
+fn vidya_entry_desc(e): i64 { return load64(e + 8); }
 # Get entry category
-fn vidya_entry_category(e) { return load64(e + 16); }
+fn vidya_entry_category(e): i64 { return load64(e + 16); }
 # Get entry content
-fn vidya_entry_content(e) { return load64(e + 24); }
+fn vidya_entry_content(e): i64 { return load64(e + 24); }
 
 # Registry: generic indexed collection for any entity type.
 # Stores entries in a vec + indexes by string key via hashmap.
@@ -53,7 +53,7 @@ fn vidya_entry_content(e) { return load64(e + 24); }
 # Works for vidya entries, itihas civilizations, eras, events, etc.
 
 # Create a new named registry
-fn registry_new(name) {
+fn registry_new(name): i64 {
     var r = alloc(24);
     store64(r, vec_new());
     store64(r + 8, map_new());
@@ -62,14 +62,14 @@ fn registry_new(name) {
 }
 
 # Get entries vec from registry
-fn registry_entries(r) { return load64(r); }
+fn registry_entries(r): i64 { return load64(r); }
 # Get index hashmap from registry
-fn registry_index(r) { return load64(r + 8); }
+fn registry_index(r): i64 { return load64(r + 8); }
 # Get registry name
-fn registry_name(r) { return load64(r + 16); }
+fn registry_name(r): i64 { return load64(r + 16); }
 
 # Add an entry with a string key. Entry can be any pointer.
-fn registry_add(r, key, entry) {
+fn registry_add(r, key, entry): i64 {
     vec_push(registry_entries(r), entry);
     if (key != 0) {
         map_set(registry_index(r), str_data(key), entry);
@@ -78,17 +78,17 @@ fn registry_add(r, key, entry) {
 }
 
 # Look up an entry by string key. Returns entry pointer or 0.
-fn registry_get(r, key) {
+fn registry_get(r, key): i64 {
     return map_get(registry_index(r), key);
 }
 
 # Return total number of entries
-fn registry_count(r) {
+fn registry_count(r): i64 {
     return vec_len(registry_entries(r));
 }
 
 # Filter entries: calls predicate(entry) for each, returns vec of matches
-fn registry_filter(r, pred) {
+fn registry_filter(r, pred): i64 {
     var results = vec_new();
     var entries = registry_entries(r);
     var count = vec_len(entries);
@@ -102,33 +102,33 @@ fn registry_filter(r, pred) {
 }
 
 # Convenience: create a vidya-style registry
-fn vidya_registry_new() {
+fn vidya_registry_new(): i64 {
     return registry_new(str_from("vidya"));
 }
 
 # Vidya-specific helpers using generic registry
-fn vidya_entries(r) { return registry_entries(r); }
+fn vidya_entries(r): i64 { return registry_entries(r); }
 # Vidya index accessor
-fn vidya_index(r) { return registry_index(r); }
+fn vidya_index(r): i64 { return registry_index(r); }
 
 # Add a vidya entry to the registry
-fn vidya_register(r, entry) {
+fn vidya_register(r, entry): i64 {
     registry_add(r, vidya_entry_name(entry), entry);
     return 0;
 }
 
 # Look up a vidya entry by name. Returns entry pointer or 0.
-fn vidya_get(r, name) {
+fn vidya_get(r, name): i64 {
     return registry_get(r, name);
 }
 
 # Return total number of vidya entries
-fn vidya_count(r) {
+fn vidya_count(r): i64 {
     return registry_count(r);
 }
 
 # Load a single TOML file with [[entries]] format (cyrius content)
-fn vidya_load_entries(r, path) {
+fn vidya_load_entries(r, path): i64 {
     var sections = toml_parse_file(path);
     var entries = toml_get_sections(sections, str_from("entries"));
     var count = vec_len(entries);
@@ -149,7 +149,7 @@ fn vidya_load_entries(r, path) {
 }
 
 # Load a concept.toml file (topic directory format)
-fn vidya_load_concept(r, path) {
+fn vidya_load_concept(r, path): i64 {
     var sections = toml_parse_file(path);
     if (vec_len(sections) == 0) { return 0; }
     # Top-level section has id, title, topic, description
@@ -168,7 +168,7 @@ fn vidya_load_concept(r, path) {
 # Load all content from a vidya content directory.
 # Scans for: topic/concept.toml and cyrius/*.toml
 # Load all content from a vidya content directory (pass a Str path).
-fn vidya_load_dir(r, content_path) {
+fn vidya_load_dir(r, content_path): i64 {
     var total = 0;
     var dirs = dir_list(content_path);
     var ndirs = vec_len(dirs);
@@ -202,7 +202,7 @@ fn vidya_load_dir(r, content_path) {
 
 # Search: find entries where name, description, or content contains the query.
 # Returns a vec of matching entry pointers.
-fn vidya_search(r, query) {
+fn vidya_search(r, query): i64 {
     var results = vec_new();
     var entries = vidya_entries(r);
     var count = vec_len(entries);
@@ -229,7 +229,7 @@ fn vidya_search(r, query) {
 }
 
 # Print search results
-fn vidya_print_results(results) {
+fn vidya_print_results(results): i64 {
     var count = vec_len(results);
     fmt_int(count);
     syscall(1, 1, " results:\n", 10);

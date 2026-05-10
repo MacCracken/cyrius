@@ -38,25 +38,25 @@
 
 include "lib/syscalls.cyr"
 
-fn w8(buf, off, v) { store8(buf + off, v); return off + 1; }
-fn w16(buf, off, v) {
+fn w8(buf, off, v): i64 { store8(buf + off, v); return off + 1; }
+fn w16(buf, off, v): i64 {
     store8(buf + off, v & 0xFF);
     store8(buf + off + 1, (v >> 8) & 0xFF);
     return off + 2;
 }
-fn w32(buf, off, v) {
+fn w32(buf, off, v): i64 {
     store8(buf + off, v & 0xFF);
     store8(buf + off + 1, (v >> 8) & 0xFF);
     store8(buf + off + 2, (v >> 16) & 0xFF);
     store8(buf + off + 3, (v >> 24) & 0xFF);
     return off + 4;
 }
-fn w64(buf, off, v) {
+fn w64(buf, off, v): i64 {
     off = w32(buf, off, v & 0xFFFFFFFF);
     off = w32(buf, off, (v >> 32) & 0xFFFFFFFF);
     return off;
 }
-fn wstr(buf, off, s) {
+fn wstr(buf, off, s): i64 {
     var i = 0;
     while (load8(s + i) != 0) {
         store8(buf + off + i, load8(s + i));
@@ -65,7 +65,7 @@ fn wstr(buf, off, s) {
     store8(buf + off + i, 0);
     return off + i + 1;
 }
-fn wzero(buf, off, n) {
+fn wzero(buf, off, n): i64 {
     var i = 0;
     while (i < n) { store8(buf + off + i, 0); i = i + 1; }
     return off + n;

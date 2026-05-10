@@ -1,7 +1,7 @@
 # uniq — suppress adjacent duplicate lines
 # Usage: cat file | ./uniq
 
-fn lines_equal(a, alen, b, blen) {
+fn lines_equal(a, alen, b, blen): i64 {
     if (alen != blen) { return 0; }
     var i: i64 = 0;
     while (i < alen) {
@@ -11,7 +11,7 @@ fn lines_equal(a, alen, b, blen) {
     return 1;
 }
 
-fn uniq() {
+fn uniq(): i64 {
     var cur[4096];
     var prev[4096];
     var byte[1];

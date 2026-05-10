@@ -2,7 +2,7 @@
 # Exercises: for loops, &&, buffered I/O, character arithmetic
 # Usage: echo "Hello World" | ./rot13
 
-fn rot13() {
+fn rot13(): i64 {
     var buf[4096];
     var done: i64 = 0;
     while (done == 0) {

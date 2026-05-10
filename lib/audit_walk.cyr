@@ -58,7 +58,7 @@ var _AW_MARKER_BUNDLE  = "# Bundled distribution of ";
 # Returns 1 if the file at `path` starts with either of the two
 # distlib bundle markers within its first 512 bytes (matches the
 # bash `head -n 5 | grep -qE` head-of-file check tightly enough).
-fn _aw_is_distlib_bundle(path) {
+fn _aw_is_distlib_bundle(path): i64 {
     var buf = alloc(512);
     var n = file_read_all(str_data(path), buf, 512);
     if (n <= 0) { return 0; }
@@ -84,7 +84,7 @@ fn _aw_is_distlib_bundle(path) {
 
 # Helper: returns 1 if the first `n` bytes of `buf` begin with the
 # C-string `prefix`.
-fn str_starts_with_buf(buf, n, prefix) {
+fn str_starts_with_buf(buf, n, prefix): i64 {
     var pi = 0;
     while (1 == 1) {
         var pc = load8(prefix + pi);
@@ -100,7 +100,7 @@ fn str_starts_with_buf(buf, n, prefix) {
 # vecs. Names are str_from'd. Skips "." and "..". Cyrius port of the
 # getdents64 loop in lib/fs.cyr's dir_list, but exposes d_type so
 # the walker can skip DT_LNK entries.
-fn _aw_dir_list_typed(path, out_names, out_dtypes) {
+fn _aw_dir_list_typed(path, out_names, out_dtypes): i64 {
     var fd = sys_open(str_data(path), O_RDONLY, 0);
     if (fd < 0) { return 0; }
     var buf = alloc(4096);
@@ -134,7 +134,7 @@ fn _aw_dir_list_typed(path, out_names, out_dtypes) {
 }
 
 # Returns 1 if `name` (Str) ends with ".cyr".
-fn _aw_is_cyr(name) {
+fn _aw_is_cyr(name): i64 {
     var len = str_len(name);
     if (len < 4) { return 0; }
     var s = str_data(name);
@@ -149,7 +149,7 @@ fn _aw_is_cyr(name) {
 # Run cyrfmt on every non-symlink, non-distlib-bundle *.cyr file in
 # each directory of `dirs_vec`. Captures cyrfmt's stdout into a tmp
 # buffer and compares against the file content; mismatch ⇒ FAIL.
-fn audit_fmt_walk(cyrfmt_path, dirs_vec) {
+fn audit_fmt_walk(cyrfmt_path, dirs_vec): i64 {
     AW_FMT_FAIL = 0;
     AW_FMT_SKIPPED = 0;
     AW_FMT_FAIL_FILES = vec_new();
@@ -212,7 +212,7 @@ fn audit_fmt_walk(cyrfmt_path, dirs_vec) {
 # the warning count (first integer at start of last line; matches
 # the bash `tail -1 | grep -o '^[0-9]*'` form). Returns 0 on no
 # match.
-fn _aw_parse_lint_warnings(buf, n) {
+fn _aw_parse_lint_warnings(buf, n): i64 {
     if (n <= 0) { return 0; }
     # Find start of last line.
     var start = n;
@@ -225,7 +225,7 @@ fn _aw_parse_lint_warnings(buf, n) {
     return _aw_parse_leading_int(buf, start);
 }
 
-fn _aw_parse_leading_int(p, len) {
+fn _aw_parse_leading_int(p, len): i64 {
     var v = 0;
     var i = 0;
     var got = 0;
@@ -246,7 +246,7 @@ fn _aw_parse_leading_int(p, len) {
 # Run cyrlint on every non-symlink, non-distlib-bundle *.cyr file in
 # each directory of `dirs_vec`. Sums the leading-integer of cyrlint's
 # trailing summary line into AW_LINT_TOTAL.
-fn audit_lint_walk(cyrlint_path, dirs_vec) {
+fn audit_lint_walk(cyrlint_path, dirs_vec): i64 {
     AW_LINT_TOTAL = 0;
     AW_LINT_SKIPPED = 0;
     var cap = 200000;

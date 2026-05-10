@@ -5,23 +5,23 @@
 include "lib/string.cyr"
 
 # Page Table Entry helpers
-fn pte_build(phys_addr, flags) {
+fn pte_build(phys_addr, flags): i64 {
     return (phys_addr & 0x000FFFFFFFFFF000) | flags;
 }
 
-fn pte_present(pte) { return pte & 1; }
-fn pte_writable(pte) { return (pte >> 1) & 1; }
-fn pte_user(pte) { return (pte >> 2) & 1; }
-fn pte_addr(pte) { return pte & 0x000FFFFFFFFFF000; }
-fn pte_nx(pte) { return (pte >> 63) & 1; }
+fn pte_present(pte): i64 { return pte & 1; }
+fn pte_writable(pte): i64 { return (pte >> 1) & 1; }
+fn pte_user(pte): i64 { return (pte >> 2) & 1; }
+fn pte_addr(pte): i64 { return pte & 0x000FFFFFFFFFF000; }
+fn pte_nx(pte): i64 { return (pte >> 63) & 1; }
 
 # GDT entry helpers (64-bit encoded)
-fn gdt_present(entry) { return (entry >> 47) & 1; }
-fn gdt_dpl(entry) { return (entry >> 45) & 3; }
-fn gdt_long(entry) { return (entry >> 53) & 1; }
+fn gdt_present(entry): i64 { return (entry >> 47) & 1; }
+fn gdt_dpl(entry): i64 { return (entry >> 45) & 3; }
+fn gdt_long(entry): i64 { return (entry >> 53) & 1; }
 
 # IDT entry builder (128 bits = two 64-bit words)
-fn idt_low(handler, selector, type_attr) {
+fn idt_low(handler, selector, type_attr): i64 {
     var lo = handler & 0xFFFF;
     var sel = selector << 16;
     var typ = type_attr << 40;
@@ -29,11 +29,11 @@ fn idt_low(handler, selector, type_attr) {
     return lo | sel | typ | hi16;
 }
 
-fn idt_high(handler) {
+fn idt_high(handler): i64 {
     return (handler >> 32) & 0xFFFFFFFF;
 }
 
-fn run_tests() {
+fn run_tests(): i64 {
     var pass: i64 = 0;
 
     # PTE tests

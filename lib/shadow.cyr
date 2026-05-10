@@ -43,12 +43,12 @@ var _shadow_buf_len = 0;
 
 # Force a re-read of /etc/shadow on the next lookup. Use after
 # password changes (e.g. passwd(1) updates).
-fn shadow_invalidate_cache() {
+fn shadow_invalidate_cache(): i64 {
     _shadow_buf_len = 0;
     return 0;
 }
 
-fn _shadow_load() {
+fn _shadow_load(): i64 {
     if (_shadow_buf_len > 0) { return _shadow_buf; }
     if (_shadow_buf == 0) { _shadow_buf = alloc(SHADOW_BUF_MAX); }
     if (_shadow_buf == 0) { return 0; }
@@ -58,7 +58,7 @@ fn _shadow_load() {
     return _shadow_buf;
 }
 
-fn _shadow_atoi_span(p, end) {
+fn _shadow_atoi_span(p, end): i64 {
     var v = 0;
     var i = 0;
     while (p + i < end) {
@@ -71,7 +71,7 @@ fn _shadow_atoi_span(p, end) {
     return (v << 32) | i;
 }
 
-fn _shadow_stash(p, n, strbuf, soff_ptr, strbufsz) {
+fn _shadow_stash(p, n, strbuf, soff_ptr, strbufsz): i64 {
     var soff = load64(soff_ptr);
     if (soff + n + 1 > strbufsz) { return 0 - 1; }
     var dst = strbuf + soff;
@@ -81,7 +81,7 @@ fn _shadow_stash(p, n, strbuf, soff_ptr, strbufsz) {
     return dst;
 }
 
-fn _shadow_parse_line(line_start, line_end, sprec, strbuf, strbufsz) {
+fn _shadow_parse_line(line_start, line_end, sprec, strbuf, strbufsz): i64 {
     var soff_store[1];
     store64(&soff_store, 0);
 
@@ -122,7 +122,7 @@ fn _shadow_parse_line(line_start, line_end, sprec, strbuf, strbufsz) {
     return 1;
 }
 
-fn _shadow_match_name(sprec, ctx) {
+fn _shadow_match_name(sprec, ctx): i64 {
     var name = load64(sprec);
     var i = 0;
     while (1 == 1) {
@@ -135,7 +135,7 @@ fn _shadow_match_name(sprec, ctx) {
     return 0;
 }
 
-fn _shadow_find(matcher, ctx, sprec, strbuf, strbufsz) {
+fn _shadow_find(matcher, ctx, sprec, strbuf, strbufsz): i64 {
     var buf = _shadow_load();
     if (buf == 0) { return 0 - 1; }
     var end = buf + _shadow_buf_len;
@@ -165,7 +165,7 @@ fn _shadow_find(matcher, ctx, sprec, strbuf, strbufsz) {
 # Look up a shadow record by username. Requires read access to
 # /etc/shadow (typically root only). For non-root authentication,
 # use lib/pam.cyr's pam_unix_authenticate.
-fn shadow_getspnam(name, sprec, strbuf, strbufsz) {
+fn shadow_getspnam(name, sprec, strbuf, strbufsz): i64 {
     return _shadow_find(&_shadow_match_name, name, sprec, strbuf, strbufsz);
 }
 

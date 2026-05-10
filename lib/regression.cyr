@@ -72,14 +72,14 @@ var REGRESSION_ANSI_GREEN = "\x1b[32m";
 var REGRESSION_ANSI_RESET = "\x1b[0m";
 
 # Print with no trailing newline.
-fn regression_print(s) {
+fn regression_print(s): i64 {
     var n = strlen(s);
     syscall(SYS_WRITE, 1, s, n);
     return 0;
 }
 
 # Section header: "── name ──\n".
-fn regression_section(name) {
+fn regression_section(name): i64 {
     regression_print("── ");
     regression_print(name);
     regression_print(" ──");
@@ -90,7 +90,7 @@ fn regression_section(name) {
 # Record + print a PASS/FAIL line for `name` based on `exit_code`
 # (0 = PASS, anything else = FAIL). Returns the exit code so
 # callers can chain `if (regression_check(...) != 0) { ... }`.
-fn regression_check(name, exit_code) {
+fn regression_check(name, exit_code): i64 {
     regression_print("  ");
     if (exit_code == 0) {
         regression_print(REGRESSION_ANSI_GREEN);
@@ -111,7 +111,7 @@ fn regression_check(name, exit_code) {
 # Returns 1 if buffer at `p` starts with cstring `s` for n bytes;
 # 0 otherwise. The byte-level prefix compare every other scan
 # helper composes on top of.
-fn regression_buf_eq(p, s, n) {
+fn regression_buf_eq(p, s, n): i64 {
     var i = 0;
     while (i < n) {
         if (load8(p + i) != load8(s + i)) { return 0; }
@@ -122,7 +122,7 @@ fn regression_buf_eq(p, s, n) {
 
 # Count occurrences of cstring `needle` in `buf[0..n]`. Skips
 # past each match (no overlap counting). Empty needle returns 0.
-fn regression_count_substr(buf, n, needle) {
+fn regression_count_substr(buf, n, needle): i64 {
     var nlen = strlen(needle);
     if (nlen == 0) { return 0; }
     var count = 0;
@@ -143,7 +143,7 @@ fn regression_count_substr(buf, n, needle) {
 # Returns 0 also on read failure (the only file-not-readable
 # distinction the audit shape needs). Uses `strstr` from
 # `lib/string.cyr` for the actual scan.
-fn regression_file_contains_substr(path, substr) {
+fn regression_file_contains_substr(path, substr): i64 {
     var cap = 524288;
     var buf = alloc(cap + 1);
     var n = file_read_all(path, buf, cap);
@@ -160,7 +160,7 @@ fn regression_file_contains_substr(path, substr) {
 # Returns WEXITSTATUS or 128+sig on signal; -1 on syscall
 # failure. Fork+exec with explicit envp (caller supplies; pass
 # `0`-terminated array for empty env).
-fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp) {
+fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     var src_cap = 1048576;
     var src_buf = alloc(src_cap);
     var src_n = file_read_all(src_path, src_buf, src_cap);
@@ -219,7 +219,7 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp) {
 # Pipe `src_path`'s bytes to `bin_path`'s stdin; discard stdout +
 # stderr; return WEXITSTATUS or 128+sig. Thin wrapper over
 # `regression_pipe_to_bin_capture` with /dev/null output.
-fn regression_pipe_to_bin(bin_path, src_path, envp) {
+fn regression_pipe_to_bin(bin_path, src_path, envp): i64 {
     return regression_pipe_to_bin_capture(bin_path, src_path, 0, envp);
 }
 
@@ -234,7 +234,7 @@ fn regression_pipe_to_bin(bin_path, src_path, envp) {
 #   128..192   128 + WTERMSIG (signal-killed)
 #   -1         fork/exec failure
 #   -2         timeout (child SIGKILL'd)
-fn regression_run_with_timeout(bin_path, timeout_ms, envp) {
+fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
@@ -276,7 +276,7 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp) {
 # Run `bin_path` (no args), capture stdout into `buf[0..buflen)`,
 # discard stderr. Returns bytes captured (>= 0) or 0 on
 # fork/open failure. envp threaded through.
-fn regression_exec_capture(bin_path, buf, buflen, envp) {
+fn regression_exec_capture(bin_path, buf, buflen, envp): i64 {
     var out_path = _regression_tmp_path("audit_xc_");
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0; }
@@ -306,7 +306,7 @@ fn regression_exec_capture(bin_path, buf, buflen, envp) {
 
 # Run `bin_path` (no args), discard stdout + stderr. Returns
 # WEXITSTATUS or 128+sig.
-fn regression_exec_run(bin_path, envp) {
+fn regression_exec_run(bin_path, envp): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
@@ -332,7 +332,7 @@ fn regression_exec_run(bin_path, envp) {
 
 # Run `bin_path arg`, capture stdout into `buf[0..buflen)`,
 # discard stderr. Returns bytes captured or 0 on failure.
-fn regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp) {
+fn regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp): i64 {
     var out_path = _regression_tmp_path("audit_xa_");
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0; }
@@ -365,7 +365,7 @@ fn regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp) {
 # BOTH stdout and stderr into the same buffer. Used when the
 # tool emits diagnostics to stderr but the gate wants to scan
 # them (e.g. cyrlint warnings).
-fn regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp) {
+fn regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp): i64 {
     var out_path = _regression_tmp_path("audit_xa_");
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0; }
@@ -410,7 +410,7 @@ fn regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp) {
 # with subtly different blocking-mode restore behavior.
 # Both now compose on the stdlib primitive (sandhi's
 # switchover is sandhi-side per ADR 0001).
-fn regression_network_probe(addr_ipv4, port, timeout_ms) {
+fn regression_network_probe(addr_ipv4, port, timeout_ms): i64 {
     var fd = syscall(41, 2, 1, 0);                          # socket(AF_INET, SOCK_STREAM)
     if (fd < 0) { return 0; }
     var rc = net_connect_nb(fd, addr_ipv4, port, timeout_ms);
@@ -425,7 +425,7 @@ fn regression_network_probe(addr_ipv4, port, timeout_ms) {
 # (`getenv(env_name)` if set), else returns `default_name`.
 # Used for the cyrius cross-host verification cluster (pi /
 # cass / ecb wired in `~/.ssh/config`).
-fn regression_ssh_target(env_name, default_name) {
+fn regression_ssh_target(env_name, default_name): i64 {
     var v = getenv(env_name);
     if (v == 0) { return default_name; }
     return v;
@@ -439,7 +439,7 @@ fn regression_ssh_target(env_name, default_name) {
 # `echo alive` (not `true`) — v5.9.32 portability fix: `true` is
 # a Unix builtin missing on Windows PowerShell remotes (cass);
 # `echo alive` works on Linux + macOS + Windows-PowerShell.
-fn regression_ssh_skip_check(target) {
+fn regression_ssh_skip_check(target): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0; }
     if (pid == 0) {
@@ -477,7 +477,7 @@ fn regression_ssh_skip_check(target) {
 # non-zero on failure. Honors caller-supplied envp (for any
 # proxy-jump / agent-forwarding environment threading).
 # `-q` for quiet (suppresses progress meter on stderr).
-fn regression_scp_to(target, local_path, remote_path, envp) {
+fn regression_scp_to(target, local_path, remote_path, envp): i64 {
     var dest = _regression_join3(target, ":", remote_path);
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
@@ -505,7 +505,7 @@ fn regression_scp_to(target, local_path, remote_path, envp) {
 # `command`'s exit status (or 128+sig on signal, -1 on any
 # failure). Used by SSH-cluster gates that only care about the
 # exit code.
-fn regression_ssh_remote_exit(target, command, envp) {
+fn regression_ssh_remote_exit(target, command, envp): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
@@ -534,7 +534,7 @@ fn regression_ssh_remote_exit(target, command, envp) {
 # `ssh target command > out_path` — capture stdout into the
 # given file (stderr to /dev/null). Returns the command's
 # exit status (or -1 on failure).
-fn regression_ssh_remote_exec_capture(target, command, out_path, envp) {
+fn regression_ssh_remote_exec_capture(target, command, out_path, envp): i64 {
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0 - 1; }
     var pid = sys_fork();
@@ -569,7 +569,7 @@ fn regression_ssh_remote_exec_capture(target, command, out_path, envp) {
 # Apple Silicon, and `scp -p` doesn't always preserve the +x
 # bit). Returns the chained exit code; the `2>/dev/null`
 # swallows codesign's "not yet signed" pre-warning.
-fn regression_codesign_remote(target, remote_path, envp) {
+fn regression_codesign_remote(target, remote_path, envp): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "chmod +x ");
     str_builder_add_cstr(sb, remote_path);
@@ -586,7 +586,7 @@ fn regression_codesign_remote(target, remote_path, envp) {
 # Capture stdout to `out_path` (pass 0 for /dev/null). Trailing
 # `0` args are skipped (so 1-arg / 2-arg invocations don't need
 # distinct fns). Returns exit status.
-fn regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp) {
+fn regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp): i64 {
     var out_fd = 0 - 1;
     if (out_path == 0) {
         out_fd = sys_open("/dev/null", 1, 0);
@@ -627,7 +627,7 @@ fn regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp)
 # a `lib/vec.cyr`-style vector of cstrings; pass 0 for "no
 # extras". Used by gates that need to inject CYRIUS_HOME=… etc.
 # without baking it into the global ENVP.
-fn regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path, envp) {
+fn regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path, envp): i64 {
     if (env_extras_vec == 0) {
         return regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp);
     }
@@ -660,7 +660,7 @@ fn regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_
 # for their scratch files. Same shape as `programs/check.cyr`'s
 # `_tmp_path` so cleanup behavior + collision properties are
 # identical.
-fn _regression_tmp_path(prefix) {
+fn _regression_tmp_path(prefix): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "/tmp/");
     str_builder_add_cstr(sb, prefix);
@@ -671,7 +671,7 @@ fn _regression_tmp_path(prefix) {
 
 # Build "<a><b><c>" as a single cstring. Used by the SSH
 # helpers to produce the "target:remote_path" form scp wants.
-fn _regression_join3(a, b, c) {
+fn _regression_join3(a, b, c): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, a);
     str_builder_add_cstr(sb, b);

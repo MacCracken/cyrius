@@ -2,7 +2,7 @@
 # Exercises: for loops, &&, buffered I/O, max tracking
 # Usage: cat file | ./cols
 
-fn cols() {
+fn cols(): i64 {
     var buf[4096];
     var maxcol: i64 = 0;
     var curcol: i64 = 0;

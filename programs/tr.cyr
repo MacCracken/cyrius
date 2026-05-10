@@ -2,7 +2,7 @@
 # Usage: echo "hello" | ./tr
 # Buffered I/O: reads 4096 bytes at a time
 
-fn tr() {
+fn tr(): i64 {
     var buf[4096];
     var obuf[4096];
     var go: i64 = 1;

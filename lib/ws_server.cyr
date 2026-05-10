@@ -30,7 +30,7 @@ var WS_CLOSED  = 3;
 var WS_MAX_PAYLOAD = 1048576;   # 1 MB cap on incoming frame payloads
 
 # Magic GUID per RFC 6455 § 1.3 — appended to client key before SHA-1.
-fn _wss_magic() { return "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; }
+fn _wss_magic(): i64 { return "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; }
 
 # ================================================================
 # SHA-1 (via lib/sha1.cyr)
@@ -40,7 +40,7 @@ fn _wss_magic() { return "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; }
 # without vendor-copying. `_wss_sha1` stays as a thin delegate for
 # ws_server-internal readability; body calls `sha1(...)`.
 
-fn _wss_sha1(data, len, digest_out) {
+fn _wss_sha1(data, len, digest_out): i64 {
     sha1(data, len, digest_out);
     return 0;
 }
@@ -56,7 +56,7 @@ fn _wss_sha1(data, len, digest_out) {
 # Allocate a new WebSocket server handle wrapping an already-upgraded fd.
 # Normally you get one back from ws_server_handshake; use this directly only
 # if you're driving the upgrade yourself.
-fn ws_server_new(fd) {
+fn ws_server_new(fd): i64 {
     var ws = alloc(24);
     store64(ws, fd);
     store64(ws + 8, WS_OPEN);
@@ -67,7 +67,7 @@ fn ws_server_new(fd) {
 # Accessor: underlying socket file descriptor for a ws handle.
 fn ws_server_fd(ws)    { return load64(ws); }
 # Accessor: current state (WS_OPEN / WS_CLOSING / WS_CLOSED).
-fn ws_server_state(ws) { return load64(ws + 8); }
+fn ws_server_state(ws): i64 { return load64(ws + 8); }
 
 # ================================================================
 # Handshake
@@ -76,7 +76,7 @@ fn ws_server_state(ws) { return load64(ws + 8); }
 # Parse req_buf as a WebSocket upgrade. On success: send 101 Switching
 # Protocols + Sec-WebSocket-Accept, return upgraded ws handle. On failure
 # (not a valid WS upgrade): return 0 — caller should respond 400.
-fn ws_server_handshake(cfd, req_buf, req_len) {
+fn ws_server_handshake(cfd, req_buf, req_len): i64 {
     var upgrade = http_find_header(req_buf, req_len, "Upgrade");
     var conn    = http_find_header(req_buf, req_len, "Connection");
     var version = http_find_header(req_buf, req_len, "Sec-WebSocket-Version");
@@ -125,7 +125,7 @@ fn ws_server_handshake(cfd, req_buf, req_len) {
 # Unmasks the payload in place (server reads MASKED client frames).
 # Writes the opcode to *opcode_out.
 # Returns the payload length, or 0 - 1 on socket error / close.
-fn ws_server_recv_frame(ws, payload_buf, max, opcode_out) {
+fn ws_server_recv_frame(ws, payload_buf, max, opcode_out): i64 {
     var fd = ws_server_fd(ws);
 
     # First two bytes: FIN/opcode + MASK/length
@@ -193,7 +193,7 @@ fn ws_server_recv_frame(ws, payload_buf, max, opcode_out) {
 }
 
 # Send a frame. Server-to-client frames are NOT masked per RFC 6455.
-fn ws_server_send_frame(ws, opcode, data, len) {
+fn ws_server_send_frame(ws, opcode, data, len): i64 {
     var fd = ws_server_fd(ws);
     var hdr[14];
     var pos = 0;
@@ -234,7 +234,7 @@ var _wss_recv_buf = 0;
 # Block until a TEXT or BINARY data frame arrives. Handles ping/pong/close
 # transparently. Returns the payload as an alloc'd cstr (NUL-terminated for
 # text safety) on success, or 0 if the peer closed the connection.
-fn ws_server_recv(ws) {
+fn ws_server_recv(ws): i64 {
     if (_wss_recv_buf == 0) { _wss_recv_buf = alloc(WS_MAX_PAYLOAD + 1); }
     while (1 == 1) {
         var op_slot[8];
@@ -267,28 +267,28 @@ fn ws_server_recv(ws) {
 
 # Send a TEXT frame. msg is a NUL-terminated cstr; the terminator is not
 # included in the frame. Unmasked per RFC 6455 server-to-client rule.
-fn ws_server_send_text(ws, msg) {
+fn ws_server_send_text(ws, msg): i64 {
     return ws_server_send_frame(ws, WS_OP_TEXT, msg, strlen(msg));
 }
 
 # Send a BINARY frame. `data` is `len` bytes of arbitrary payload.
-fn ws_server_send_binary(ws, data, len) {
+fn ws_server_send_binary(ws, data, len): i64 {
     return ws_server_send_frame(ws, WS_OP_BINARY, data, len);
 }
 
 # Send an empty PING frame. Peer is expected to reply with a PONG echoing
 # any (absent here) application data.
-fn ws_server_send_ping(ws) {
+fn ws_server_send_ping(ws): i64 {
     return ws_server_send_frame(ws, WS_OP_PING, "", 0);
 }
 
 # Send a PONG frame. When responding to a peer PING, echo the PING's payload.
-fn ws_server_send_pong(ws, data, len) {
+fn ws_server_send_pong(ws, data, len): i64 {
     return ws_server_send_frame(ws, WS_OP_PONG, data, len);
 }
 
 # Send a Close frame with status code (e.g. 1000 = normal) and optional reason.
-fn ws_server_send_close(ws, code, reason) {
+fn ws_server_send_close(ws, code, reason): i64 {
     var rlen = 0;
     if (reason != 0) { rlen = strlen(reason); }
     var payload_buf = alloc(2 + rlen);
@@ -299,7 +299,7 @@ fn ws_server_send_close(ws, code, reason) {
 }
 
 # Full close handshake + close the underlying socket.
-fn ws_server_close(ws) {
+fn ws_server_close(ws): i64 {
     if (ws_server_state(ws) == WS_OPEN) {
         ws_server_send_close(ws, 1000, "");
     }

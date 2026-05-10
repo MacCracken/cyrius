@@ -97,12 +97,12 @@ enum Sync { SYS_FDATASYNC = 75; }
 # ── Low-level operations ────────────────────
 
 # Seek to byte offset in file
-fn _pt_seek(fd, off) {
+fn _pt_seek(fd, off): i64 {
     return syscall(SYS_LSEEK, fd, off, 0);
 }
 
 # Apply flock operation to fd
-fn _pt_flock(fd, op) {
+fn _pt_flock(fd, op): i64 {
     return syscall(SYS_FLOCK, fd, op);
 }
 
@@ -116,7 +116,7 @@ fn patra_unlock(fd)   { return _pt_flock(fd, LOCK_UN); }
 # ── Header management ────────────────────
 
 # Initialize header buffer with magic and defaults
-fn patra_hdr_init(buf) {
+fn patra_hdr_init(buf): i64 {
     memset(buf, 0, PAGE_SIZE);
     store32(buf + HDR_MAGIC, PATRA_MAGIC);
     store32(buf + HDR_VER, PATRA_VER);
@@ -124,7 +124,7 @@ fn patra_hdr_init(buf) {
 }
 
 # Read header page from file into buffer
-fn patra_hdr_read(fd, buf) {
+fn patra_hdr_read(fd, buf): i64 {
     if (_pt_seek(fd, 0) < 0) { return PATRA_ERR_IO; }
     if (sys_read(fd, buf, PAGE_SIZE) != PAGE_SIZE) { return PATRA_ERR_IO; }
     return PATRA_OK;
@@ -133,14 +133,14 @@ fn patra_hdr_read(fd, buf) {
 # Write header page from buffer to file without fdatasync. Used by the
 # group-commit path (1.8.0) — caller is responsible for syncing later.
 # Write the header page without fdatasync (group-commit path).
-fn patra_hdr_write_nosync(fd, buf) {
+fn patra_hdr_write_nosync(fd, buf): i64 {
     if (_pt_seek(fd, 0) < 0) { return PATRA_ERR_IO; }
     if (sys_write(fd, buf, PAGE_SIZE) != PAGE_SIZE) { return PATRA_ERR_IO; }
     return PATRA_OK;
 }
 
 # Write header page from buffer to file with fdatasync
-fn patra_hdr_write(fd, buf) {
+fn patra_hdr_write(fd, buf): i64 {
     var r = patra_hdr_write_nosync(fd, buf);
     if (r != PATRA_OK) { return r; }
     syscall(SYS_FDATASYNC, fd);
@@ -151,7 +151,7 @@ fn patra_hdr_write(fd, buf) {
 # rejects a malformed header that would let `tbl_find` walk past the 63-entry
 # table directory or let `page_alloc` dereference a bogus free-list head.
 # Verify header magic, version, and internal bounds.
-fn patra_hdr_verify(buf) {
+fn patra_hdr_verify(buf): i64 {
     if (load32(buf + HDR_MAGIC) != PATRA_MAGIC) { return PATRA_ERR_MAGIC; }
     if (load32(buf + HDR_VER) != PATRA_VER) { return PATRA_ERR_MAGIC; }
     var pgc = load64(buf + HDR_PGCOUNT);
@@ -168,7 +168,7 @@ fn patra_hdr_verify(buf) {
 }
 
 # Log error message via sakshi
-fn _pt_err(msg) {
+fn _pt_err(msg): i64 {
     sakshi_error(msg, strlen(msg));
 }
 
@@ -182,7 +182,7 @@ enum OpenFlag { O_NOFOLLOW = 131072; }
 # Create new .patra file (O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW,
 # mode 0644 = 420). O_EXCL already refuses an existing target; O_NOFOLLOW
 # additionally refuses a symlink pointed at the target path.
-fn _pt_file_create(path) {
+fn _pt_file_create(path): i64 {
     var fd = sys_open(path, 194 + O_NOFOLLOW, 420);
     if (fd < 0) { return 0 - 1; }
     var buf = pg_alloc();
@@ -195,7 +195,7 @@ fn _pt_file_create(path) {
 }
 
 # Open existing .patra file (O_RDWR | O_NOFOLLOW). Refuses symlinked targets.
-fn _pt_file_open(path) {
+fn _pt_file_open(path): i64 {
     return sys_open(path, 2 + O_NOFOLLOW, 0);
 }
 
@@ -213,7 +213,7 @@ enum SlabConst { PG_SLAB_MAX = 32; }
 var _pg_slab_stack = 0;
 var _pg_slab_top = 0;
 
-fn _pg_slab_init() {
+fn _pg_slab_init(): i64 {
     if (_pg_slab_stack == 0) {
         _pg_slab_stack = alloc(PG_SLAB_MAX * 8);
     }
@@ -221,7 +221,7 @@ fn _pg_slab_init() {
 }
 
 # Allocate a 4KB buffer from the page slab, falling back to fl_alloc on miss.
-fn pg_alloc() {
+fn pg_alloc(): i64 {
     _pg_slab_init();
     if (_pg_slab_top > 0) {
         _pg_slab_top = _pg_slab_top - 1;
@@ -231,7 +231,7 @@ fn pg_alloc() {
 }
 
 # Return a 4KB buffer to the page slab, or to fl_free if the slab is full.
-fn pg_free(buf) {
+fn pg_free(buf): i64 {
     if (buf == 0) { return 0; }
     _pg_slab_init();
     if (_pg_slab_top < PG_SLAB_MAX) {
@@ -289,7 +289,7 @@ enum WalConst {
 # Draw 16 bytes of randomness into (salt1, salt2). Prefers SYS_GETRANDOM;
 # if unavailable (very old kernel / restricted container), falls back to
 # a time + tx-counter mix — weaker but still unique per transaction.
-fn _wal_gen_salts() {
+fn _wal_gen_salts(): i64 {
     var buf = fl_alloc(16);
     var nr = syscall(SYS_GETRANDOM, buf, 16, 0);
     if (nr == 16) {
@@ -310,7 +310,7 @@ fn _wal_gen_salts() {
 # cross-WAL replay. Does not defeat an attacker who can read .wal and the
 # algorithm simultaneously (same-host read gives them the salts). Any
 # stronger guarantee requires a secret outside the filesystem.
-fn _wal_hash(pg, page_data, salt1, salt2) {
+fn _wal_hash(pg, page_data, salt1, salt2): i64 {
     var h = salt1 * 2654435761 + pg;
     h = h + 5381;
     for (var i = 0; i < PAGE_SIZE; i = i + 1) {
@@ -320,7 +320,7 @@ fn _wal_hash(pg, page_data, salt1, salt2) {
 }
 
 # Begin WAL logging for a transaction
-fn wal_start(db_fd, wal_path) {
+fn wal_start(db_fd, wal_path): i64 {
     _wal_fd = sys_open(wal_path, 578, 420);
     # O_RDWR | O_CREAT | O_TRUNC = 2 + 64 + 512 = 578
     if (_wal_fd < 0) { _wal_fd = 0 - 1; return PATRA_ERR_IO; }
@@ -344,16 +344,16 @@ fn wal_start(db_fd, wal_path) {
 }
 
 # Returns 1 if WAL logging is active
-fn wal_is_active() {
+fn wal_is_active(): i64 {
     if (_wal_fd >= 0) { return 1; }
     return 0;
 }
 
 # Returns 1 if WAL overflowed (more than 64 pages in transaction)
-fn wal_overflowed() { return _wal_overflow; }
+fn wal_overflowed(): i64 { return _wal_overflow; }
 
 # Log before-image of a page (called from page_write)
-fn wal_log_page(page_num) {
+fn wal_log_page(page_num): i64 {
     if (_wal_fd < 0) { return 0; }
     # Check if already logged
     for (var i = 0; i < _wal_nlog; i = i + 1) {
@@ -383,7 +383,7 @@ fn wal_log_page(page_num) {
 # writes were durable. A crash in that window lost committed data. Now we
 # fdatasync the DB fd before unlink, guaranteeing that by the time the WAL
 # disappears, the committed pages have reached disk.
-fn wal_commit(wal_path) {
+fn wal_commit(wal_path): i64 {
     if (_wal_fd >= 0) {
         syscall(SYS_FDATASYNC, _wal_fd);
         sys_close(_wal_fd);
@@ -399,7 +399,7 @@ fn wal_commit(wal_path) {
 
 # Verify WAL header and load its salts into the module globals. Returns
 # PATRA_OK, or PATRA_ERR_MAGIC on bad magic / unsupported version / short read.
-fn _wal_hdr_verify(fd) {
+fn _wal_hdr_verify(fd): i64 {
     if (syscall(SYS_LSEEK, fd, 0, 0) < 0) { return PATRA_ERR_IO; }
     var hdr = fl_alloc(WAL_HDR_SZ);
     var nr = sys_read(fd, hdr, WAL_HDR_SZ);
@@ -415,7 +415,7 @@ fn _wal_hdr_verify(fd) {
 # Rollback: restore before-images from WAL, delete it. Stops replay on a
 # checksum mismatch — earlier records still apply, the record with the bad
 # hash and everything after it is skipped.
-fn wal_rollback(wal_path) {
+fn wal_rollback(wal_path): i64 {
     if (_wal_fd < 0) { return 0; }
     if (_wal_hdr_verify(_wal_fd) != PATRA_OK) {
         sys_close(_wal_fd);
@@ -447,7 +447,7 @@ fn wal_rollback(wal_path) {
 
 # Recover from crash: if WAL file exists, replay it. Returns 1 on replay
 # attempt (even if bad magic — the file is then left for inspection).
-fn wal_recover(db_fd, wal_path) {
+fn wal_recover(db_fd, wal_path): i64 {
     var wfd = sys_open(wal_path, 0, 0);
     if (wfd < 0) { return 0; }
     if (_wal_hdr_verify(wfd) != PATRA_OK) {
@@ -483,14 +483,14 @@ fn wal_recover(db_fd, wal_path) {
 # overflow so callers' `_pt_seek` check catches it. Audit 2026-04-21 §2.4:
 # i64 `num * PAGE_SIZE` wraps for num ≥ 2^51; we cap at num ≤ 2^50 to leave
 # headroom.
-fn page_offset(num) {
+fn page_offset(num): i64 {
     if (num < 0) { return 0 - 1; }
     if (num > 1125899906842624) { return 0 - 1; }
     return PAGE_SIZE + num * PAGE_SIZE;
 }
 
 # Read a page from file into buffer
-fn page_read(fd, num, buf) {
+fn page_read(fd, num, buf): i64 {
     if (_pt_seek(fd, page_offset(num)) < 0) { return PATRA_ERR_IO; }
     if (sys_read(fd, buf, PAGE_SIZE) != PAGE_SIZE) { return PATRA_ERR_IO; }
     return PATRA_OK;
@@ -500,14 +500,14 @@ fn page_read(fd, num, buf) {
 # (past end of file). Used on any page number read from on-disk data —
 # closes the Magellan-class OOB-read vector where a malformed .patra file
 # can point a B-tree child at arbitrary page numbers.
-fn page_read_checked(fd, hdr, num, buf) {
+fn page_read_checked(fd, hdr, num, buf): i64 {
     if (num <= 0) { return PATRA_ERR_PAGE; }
     if (num >= load64(hdr + HDR_PGCOUNT)) { return PATRA_ERR_PAGE; }
     return page_read(fd, num, buf);
 }
 
 # Write a page from buffer to file (WAL-logged)
-fn page_write(fd, num, buf) {
+fn page_write(fd, num, buf): i64 {
     wal_log_page(num);
     if (_pt_seek(fd, page_offset(num)) < 0) { return PATRA_ERR_IO; }
     if (sys_write(fd, buf, PAGE_SIZE) != PAGE_SIZE) { return PATRA_ERR_IO; }
@@ -515,7 +515,7 @@ fn page_write(fd, num, buf) {
 }
 
 # Allocate a new page (from free list or extend file)
-fn page_alloc(fd, hdr) {
+fn page_alloc(fd, hdr): i64 {
     var fh = load64(hdr + HDR_FREEHEAD);
     if (fh != 0) {
         var buf = fl_alloc(PAGE_SIZE);
@@ -536,7 +536,7 @@ fn page_alloc(fd, hdr) {
 }
 
 # Free a page (add to free list)
-fn page_free(fd, hdr, num) {
+fn page_free(fd, hdr, num): i64 {
     var buf = fl_alloc(PAGE_SIZE);
     memset(buf, 0, PAGE_SIZE);
     store64(buf + FP_TYPE, PAGE_FREE);
@@ -547,7 +547,7 @@ fn page_free(fd, hdr, num) {
 }
 
 # Initialize buffer as empty data page
-fn page_init_data(buf) {
+fn page_init_data(buf): i64 {
     memset(buf, 0, PAGE_SIZE);
     store64(buf + DP_TYPE, PAGE_DATA);
 }
@@ -557,7 +557,7 @@ fn page_init_data(buf) {
 # row.cyr — row encoding/decoding (i64 + fixed-length strings)
 
 # Size in bytes for a column type (INT=8, STR=256, BLOB=16)
-fn row_col_size(ctype) {
+fn row_col_size(ctype): i64 {
     if (ctype == COL_INT)  { return COL_INT_SZ; }
     if (ctype == COL_BYTES) { return COL_BYTES_SZ; }
     return COL_STR_SZ;
@@ -565,7 +565,7 @@ fn row_col_size(ctype) {
 
 # Compute total row size from a schema page buffer
 # Total row size from schema page
-fn row_compute_size(schema, ncols) {
+fn row_compute_size(schema, ncols): i64 {
     var sz = 0;
     for (var i = 0; i < ncols; i = i + 1) {
         var ct = load64(schema + SCH_START + i * SCH_ENTRY_SZ + SCH_CTYPE);
@@ -576,7 +576,7 @@ fn row_compute_size(schema, ncols) {
 
 # Byte offset of column col_idx within a row
 # Byte offset of column within a row
-fn row_field_offset(schema, ncols, col) {
+fn row_field_offset(schema, ncols, col): i64 {
     var off = 0;
     for (var i = 0; i < col; i = i + 1) {
         var ct = load64(schema + SCH_START + i * SCH_ENTRY_SZ + SCH_CTYPE);
@@ -586,13 +586,13 @@ fn row_field_offset(schema, ncols, col) {
 }
 
 # Write i64 value to row at offset
-fn row_write_int(row, off, val) {
+fn row_write_int(row, off, val): i64 {
     store64(row + off, val);
 }
 
 # Write string value padded to COL_STR_SZ (256 bytes), null-terminated
 # Write string value to row at offset (padded to 64 bytes)
-fn row_write_str(row, off, ptr, len) {
+fn row_write_str(row, off, ptr, len): i64 {
     memset(row + off, 0, COL_STR_SZ);
     var n = len;
     if (n > COL_STR_SZ - 1) { n = COL_STR_SZ - 1; }
@@ -600,29 +600,29 @@ fn row_write_str(row, off, ptr, len) {
 }
 
 # Read i64 value from row at offset
-fn row_read_int(row, off) {
+fn row_read_int(row, off): i64 {
     return load64(row + off);
 }
 
 # Returns pointer to the 256-byte string field (null-terminated)
 # Read string pointer from row at offset
-fn row_read_str(row, off) {
+fn row_read_str(row, off): i64 {
     return row + off;
 }
 
 # Write blob ref (first_page, length) into the 16-byte BLOB field
-fn row_write_bytes_ref(row, off, first_page, blen) {
+fn row_write_bytes_ref(row, off, first_page, blen): i64 {
     store64(row + off + BR_PAGE, first_page);
     store64(row + off + BR_LEN,  blen);
 }
 
 # Read blob ref first page from row at offset
-fn row_read_bytes_page(row, off) {
+fn row_read_bytes_page(row, off): i64 {
     return load64(row + off + BR_PAGE);
 }
 
 # Read blob ref length from row at offset
-fn row_read_bytes_len(row, off) {
+fn row_read_bytes_len(row, off): i64 {
     return load64(row + off + BR_LEN);
 }
 
@@ -630,7 +630,7 @@ fn row_read_bytes_len(row, off) {
 # the hot inner loop of the INSERT OR IGNORE STR conflict probe; both
 # slots are guaranteed COL_STR_SZ-aligned (256 / 8 = 32 word loads).
 # Returns 1 if equal, 0 otherwise.
-fn _memeq256(a, b) {
+fn _memeq256(a, b): i64 {
     var i = 0;
     while (i < COL_STR_SZ) {
         if (load64(a + i) != load64(b + i)) { return 0; }
@@ -644,7 +644,7 @@ fn _memeq256(a, b) {
 # "alice" (len 5) hashes identically to the 256-byte zero-padded slot
 # row_write_str produced. WHERE-indexed-eq verifies hits with where_eval,
 # so collisions are correctness-neutral; djb2 is enough.
-fn _str_hash64(ptr, len) {
+fn _str_hash64(ptr, len): i64 {
     var h = 5381;
     var n = len;
     if (n > COL_STR_SZ - 1) { n = COL_STR_SZ - 1; }
@@ -662,7 +662,7 @@ fn _str_hash64(ptr, len) {
 
 # Index key for the indexed column `ic` of `row`. INT cols return the
 # raw i64; STR cols return _str_hash64 of the 256-byte slot.
-fn _idx_key_from_row(schema, ncols, ic, row) {
+fn _idx_key_from_row(schema, ncols, ic, row): i64 {
     var ct = load64(schema + SCH_START + ic * SCH_ENTRY_SZ + SCH_CTYPE);
     var off = row_field_offset(schema, ncols, ic);
     if (ct == COL_INT) { return row_read_int(row, off); }
@@ -682,7 +682,7 @@ fn _idx_key_from_row(schema, ncols, ic, row) {
 # Write `len` bytes from `ptr` as a chain of blob pages. Returns the first
 # page number (0 for an empty blob). Allocates bottom-up so the final page
 # is written first, and the returned page is the head of the chain.
-fn _bytes_write_chain(fd, hdr, ptr, len) {
+fn _bytes_write_chain(fd, hdr, ptr, len): i64 {
     if (len <= 0) { return 0; }
     if (ptr == 0) { return 0; }
 
@@ -719,7 +719,7 @@ fn _bytes_write_chain(fd, hdr, ptr, len) {
 
 # Read `len` bytes of blob from the chain starting at `first_page` into
 # `out`. Returns PATRA_OK on success, PATRA_ERR_PAGE on a malformed chain.
-fn _bytes_read_chain(fd, hdr, first_page, len, out) {
+fn _bytes_read_chain(fd, hdr, first_page, len, out): i64 {
     if (len <= 0) { return PATRA_OK; }
     if (first_page == 0) { return PATRA_ERR_PAGE; }
 
@@ -754,7 +754,7 @@ fn _bytes_read_chain(fd, hdr, first_page, len, out) {
 # Free every page in the blob chain starting at `first_page`. Safe on a
 # zero head (no-op). On a malformed chain it stops at the first bad hop
 # and leaks the remainder — matches page_free_all's fail-safe behavior.
-fn _bytes_free_chain(fd, hdr, first_page) {
+fn _bytes_free_chain(fd, hdr, first_page): i64 {
     if (first_page == 0) { return 0; }
 
     var buf = pg_alloc();
@@ -942,49 +942,49 @@ var _sql_toks = 0;
 var _sql_ntoks = 0;
 var _sql_pr = 0;
 
-fn _sql_init() {
+fn _sql_init(): i64 {
     _sql_toks = fl_alloc(MAX_TOKENS * TOK_SZ);
     _sql_pr = fl_alloc(4096);
 }
 
 # ── Token access ────────────────────
 
-fn _tok_set(i, typ, ptr, len) {
+fn _tok_set(i, typ, ptr, len): i64 {
     var base = _sql_toks + i * TOK_SZ;
     store64(base + TOK_TYPE, typ);
     store64(base + TOK_PTR, ptr);
     store64(base + TOK_LEN, len);
 }
 
-fn _tok_type(i) { return load64(_sql_toks + i * TOK_SZ + TOK_TYPE); }
+fn _tok_type(i): i64 { return load64(_sql_toks + i * TOK_SZ + TOK_TYPE); }
 fn _tok_ptr(i)  { return load64(_sql_toks + i * TOK_SZ + TOK_PTR); }
 fn _tok_len(i)  { return load64(_sql_toks + i * TOK_SZ + TOK_LEN); }
 
 # ── Character classification ────────────────────
 
-fn _to_upper(c) {
+fn _to_upper(c): i64 {
     if (c >= 97) { if (c <= 122) { return c - 32; } }
     return c;
 }
 
-fn _is_alpha(c) {
+fn _is_alpha(c): i64 {
     if (c >= 65) { if (c <= 90)  { return 1; } }
     if (c >= 97) { if (c <= 122) { return 1; } }
     if (c == 95) { return 1; }
     return 0;
 }
 
-fn _is_digit(c) {
+fn _is_digit(c): i64 {
     if (c >= 48) { if (c <= 57) { return 1; } }
     return 0;
 }
 
-fn _is_alnum(c) {
+fn _is_alnum(c): i64 {
     if (_is_alpha(c)) { return 1; }
     return _is_digit(c);
 }
 
-fn _is_ws(c) {
+fn _is_ws(c): i64 {
     if (c == 32) { return 1; }
     if (c == 9)  { return 1; }
     if (c == 10) { return 1; }
@@ -994,7 +994,7 @@ fn _is_ws(c) {
 
 # ── Keyword matching ───────────────────────
 
-fn _kw_eq(ptr, len, kw) {
+fn _kw_eq(ptr, len, kw): i64 {
     var kl = strlen(kw);
     if (len != kl) { return 0; }
     for (var i = 0; i < len; i = i + 1) {
@@ -1003,7 +1003,7 @@ fn _kw_eq(ptr, len, kw) {
     return 1;
 }
 
-fn _classify_ident(ptr, len) {
+fn _classify_ident(ptr, len): i64 {
     if (_kw_eq(ptr, len, "CREATE")) { return TK_CREATE; }
     if (_kw_eq(ptr, len, "TABLE"))  { return TK_TABLE; }
     if (_kw_eq(ptr, len, "INSERT")) { return TK_INSERT; }
@@ -1049,7 +1049,7 @@ fn _classify_ident(ptr, len) {
 # ── Tokenizer ────────────────────
 
 # Tokenize SQL string into token array
-fn sql_tokenize(input) {
+fn sql_tokenize(input): i64 {
     var pos = 0;
     var n = 0;
     var slen = strlen(input);
@@ -1164,7 +1164,7 @@ fn sql_tokenize(input) {
 
 # ── Helpers ────────────────────
 
-fn _pt_atoi(ptr, len) {
+fn _pt_atoi(ptr, len): i64 {
     var r = 0;
     for (var i = 0; i < len; i = i + 1) {
         r = r * 10 + (load8(ptr + i) - 48);
@@ -1172,7 +1172,7 @@ fn _pt_atoi(ptr, len) {
     return r;
 }
 
-fn _tok_to_cmpop(pos) {
+fn _tok_to_cmpop(pos): i64 {
     var tt = _tok_type(pos);
     if (tt == TK_EQ)  { return CMP_EQ; }
     if (tt == TK_NEQ) { return CMP_NEQ; }
@@ -1186,7 +1186,7 @@ fn _tok_to_cmpop(pos) {
 
 # ── WHERE parser (shared by SELECT, UPDATE, DELETE) ─────────
 
-fn _parse_where(pos) {
+fn _parse_where(pos): i64 {
     if (_tok_type(pos) != TK_WHERE) { return pos; }
     pos = pos + 1;
 
@@ -1255,7 +1255,7 @@ fn _parse_where(pos) {
 
 # ── Parsers ────────────────────
 
-fn _parse_create() {
+fn _parse_create(): i64 {
     var pos = 0;
     if (_tok_type(pos) != TK_CREATE) { return PATRA_ERR_SYNTAX; }
     pos = pos + 1;
@@ -1299,7 +1299,7 @@ fn _parse_create() {
     return PATRA_OK;
 }
 
-fn _parse_insert() {
+fn _parse_insert(): i64 {
     var pos = 0;
     if (_tok_type(pos) != TK_INSERT) { return PATRA_ERR_SYNTAX; }
     pos = pos + 1;
@@ -1355,7 +1355,7 @@ fn _parse_insert() {
     return PATRA_OK;
 }
 
-fn _parse_select() {
+fn _parse_select(): i64 {
     # SELECT * | agg(col) FROM tbl [WHERE] [ORDER BY] [LIMIT]
     var pos = 0;
     if (_tok_type(pos) != TK_SELECT) { return PATRA_ERR_SYNTAX; }
@@ -1478,7 +1478,7 @@ fn _parse_select() {
     return PATRA_OK;
 }
 
-fn _parse_update() {
+fn _parse_update(): i64 {
     # UPDATE table SET col = val [, ...] [WHERE ...]
     var pos = 0;
     if (_tok_type(pos) != TK_UPDATE) { return PATRA_ERR_SYNTAX; }
@@ -1536,7 +1536,7 @@ fn _parse_update() {
     return PATRA_OK;
 }
 
-fn _parse_delete() {
+fn _parse_delete(): i64 {
     # DELETE FROM table [WHERE ...]
     var pos = 0;
     if (_tok_type(pos) != TK_DELETE) { return PATRA_ERR_SYNTAX; }
@@ -1555,7 +1555,7 @@ fn _parse_delete() {
     return PATRA_OK;
 }
 
-fn _parse_create_index() {
+fn _parse_create_index(): i64 {
     # CREATE INDEX ON table (col)
     var pos = 0;
     if (_tok_type(pos) != TK_CREATE) { return PATRA_ERR_SYNTAX; }
@@ -1580,7 +1580,7 @@ fn _parse_create_index() {
     return PATRA_OK;
 }
 
-fn _parse_drop() {
+fn _parse_drop(): i64 {
     # DROP TABLE name
     var pos = 0;
     if (_tok_type(pos) != TK_DROP) { return PATRA_ERR_SYNTAX; }
@@ -1594,7 +1594,7 @@ fn _parse_drop() {
     return PATRA_OK;
 }
 
-fn _parse_alter() {
+fn _parse_alter(): i64 {
     # ALTER TABLE t ADD COLUMN name INT|STR
     # ALTER TABLE t RENAME TO new_name
     # ALTER TABLE t RENAME COLUMN old TO new
@@ -1670,7 +1670,7 @@ fn _parse_alter() {
     return PATRA_ERR_SYNTAX;
 }
 
-fn _parse_vacuum() {
+fn _parse_vacuum(): i64 {
     # VACUUM tblname — reclaim B-tree tombstones for a table
     var pos = 0;
     if (_tok_type(pos) != TK_VACUUM) { return PATRA_ERR_SYNTAX; }
@@ -1683,7 +1683,7 @@ fn _parse_vacuum() {
 }
 
 # Parse tokenized SQL into parse result
-fn sql_parse() {
+fn sql_parse(): i64 {
     memset(_sql_pr, 0, 4096);
     var tt = _tok_type(0);
     if (tt == TK_CREATE) {
@@ -1705,7 +1705,7 @@ fn sql_parse() {
 # where.cyr — WHERE clause evaluation
 
 # Resolve column name to index in schema. Returns -1 if not found.
-fn _wh_resolve_col(schema, ncols, name, nlen) {
+fn _wh_resolve_col(schema, ncols, name, nlen): i64 {
     for (var i = 0; i < ncols; i = i + 1) {
         var cname = schema + SCH_START + i * SCH_ENTRY_SZ + SCH_CNAME;
         if (strlen(cname) == nlen) {
@@ -1716,7 +1716,7 @@ fn _wh_resolve_col(schema, ncols, name, nlen) {
 }
 
 # Compare two integers with given operator
-fn _cmp_int(a, b, op) {
+fn _cmp_int(a, b, op): i64 {
     if (op == CMP_EQ)  { if (a == b) { return 1; } return 0; }
     if (op == CMP_NEQ) { if (a != b) { return 1; } return 0; }
     if (op == CMP_LT)  { if (a < b)  { return 1; } return 0; }
@@ -1727,13 +1727,13 @@ fn _cmp_int(a, b, op) {
 }
 
 # Compare null-terminated string against ptr+len for equality
-fn _streq_pl(ns, ptr, len) {
+fn _streq_pl(ns, ptr, len): i64 {
     if (strlen(ns) != len) { return 0; }
     return memeq(ns, ptr, len);
 }
 
 # Lexicographic compare: null-terminated vs ptr+len. Returns <0, 0, >0.
-fn _strcmp_pl(ns, ptr, len) {
+fn _strcmp_pl(ns, ptr, len): i64 {
     var slen = strlen(ns);
     var min = slen;
     if (len < min) { min = len; }
@@ -1748,7 +1748,7 @@ fn _strcmp_pl(ns, ptr, len) {
 # SQL LIKE: `%` matches zero or more chars, `_` matches exactly one.
 # Iterative backtracking on the last `%` seen. row_str is null-terminated;
 # pat is ptr+len (from a SQL string literal, not null-terminated).
-fn _like_match(row_str, pat_ptr, pat_len) {
+fn _like_match(row_str, pat_ptr, pat_len): i64 {
     var slen = strlen(row_str);
     var si = 0;
     var pi = 0;
@@ -1805,7 +1805,7 @@ fn _like_match(row_str, pat_ptr, pat_len) {
 }
 
 # Compare string column value against WHERE condition value
-fn _cmp_str(row_str, cmp_ptr, cmp_len, op) {
+fn _cmp_str(row_str, cmp_ptr, cmp_len, op): i64 {
     if (op == CMP_EQ)  { return _streq_pl(row_str, cmp_ptr, cmp_len); }
     if (op == CMP_NEQ) { if (_streq_pl(row_str, cmp_ptr, cmp_len)) { return 0; } return 1; }
     if (op == CMP_LIKE) { return _like_match(row_str, cmp_ptr, cmp_len); }
@@ -1821,7 +1821,7 @@ fn _cmp_str(row_str, cmp_ptr, cmp_len, op) {
 # Returns 1 if row matches, 0 if not.
 # pr = parse result buffer (_sql_pr).
 # Evaluate WHERE conditions against a row (1=match, 0=no)
-fn where_eval(row, schema, ncols, pr) {
+fn where_eval(row, schema, ncols, pr): i64 {
     var wcount = load64(pr + PR_WHERE_N);
     if (wcount == 0) { return 1; }
 
@@ -1908,7 +1908,7 @@ var _bt_pdepth = 0;
 # ── Create ────────────────────
 
 # Create empty B-tree (single leaf root), returns page number
-fn btree_create(fd, hdr) {
+fn btree_create(fd, hdr): i64 {
     var pg = page_alloc(fd, hdr);
     var buf = pg_alloc();
     memset(buf, 0, PAGE_SIZE);
@@ -1921,7 +1921,7 @@ fn btree_create(fd, hdr) {
 
 # ── Find leaf (records path) ────────────────────
 
-fn _bt_find_leaf(fd, hdr, root, key) {
+fn _bt_find_leaf(fd, hdr, root, key): i64 {
     _bt_pdepth = 0;
     var pg = root;
     var buf = pg_alloc();
@@ -1962,7 +1962,7 @@ fn _bt_find_leaf(fd, hdr, root, key) {
 
 # ── Insert into non-full leaf ────────────────────
 
-fn _bt_leaf_ins(buf, key, val) {
+fn _bt_leaf_ins(buf, key, val): i64 {
     var nk = load64(buf + BT_NKEYS);
     var pos = nk;
     var ff = 0;
@@ -1987,7 +1987,7 @@ fn _bt_leaf_ins(buf, key, val) {
 
 # ── Insert into non-full internal ──────────
 
-fn _bt_int_ins(buf, key, rchild) {
+fn _bt_int_ins(buf, key, rchild): i64 {
     var nk = load64(buf + BT_NKEYS);
     var pos = nk;
     var ff = 0;
@@ -2016,7 +2016,7 @@ fn _bt_int_ins(buf, key, rchild) {
 
 # ── Push separator to parent ───────────────
 
-fn _bt_push_up(fd, hdr, root, left_pg, sep, right_pg) {
+fn _bt_push_up(fd, hdr, root, left_pg, sep, right_pg): i64 {
     if (_bt_pdepth <= 1) {
         # left_pg is the root — create new root
         var nr = page_alloc(fd, hdr);
@@ -2124,7 +2124,7 @@ fn _bt_push_up(fd, hdr, root, left_pg, sep, right_pg) {
 # ── Insert ────────────────────
 
 # Insert key-value into B-tree, returns (possibly new) root
-fn btree_insert(fd, hdr, root, key, val) {
+fn btree_insert(fd, hdr, root, key, val): i64 {
     var leaf_pg = _bt_find_leaf(fd, hdr, root, key);
     var buf = pg_alloc();
     page_read(fd, leaf_pg, buf);
@@ -2195,19 +2195,19 @@ fn btree_insert(fd, hdr, root, key, val) {
 # ── Search (all refs for key) ──────────────
 
 # Search for all refs matching key
-fn btree_search(fd, hdr, root, key, out, max) {
+fn btree_search(fd, hdr, root, key, out, max): i64 {
     return _bt_range(fd, hdr, root, key, key, out, max);
 }
 
 # ── Range scan [lo, hi] — collects refs into out ────────────
 
-fn _bt_range(fd, hdr, root, lo, hi, out, max) {
+fn _bt_range(fd, hdr, root, lo, hi, out, max): i64 {
     var cnt = 0;
     _bt_rwalk(fd, hdr, root, lo, hi, out, max, &cnt, 0);
     return cnt;
 }
 
-fn _bt_rwalk(fd, hdr, pg, lo, hi, out, max, cp, depth) {
+fn _bt_rwalk(fd, hdr, pg, lo, hi, out, max, cp, depth): i64 {
     if (depth >= BT_MAX_DEPTH) { return 0; }
     var buf = pg_alloc();
     if (page_read_checked(fd, hdr, pg, buf) != PATRA_OK) {
@@ -2261,7 +2261,7 @@ fn _bt_rwalk(fd, hdr, pg, lo, hi, out, max, cp, depth) {
 # ── Remove ref (lazy delete — set value to 0) ──────────────
 
 # Lazy-delete: invalidate a specific ref for a key
-fn btree_remove_ref(fd, hdr, root, key, ref) {
+fn btree_remove_ref(fd, hdr, root, key, ref): i64 {
     var leaf_pg = _bt_find_leaf(fd, hdr, root, key);
     var buf = pg_alloc();
     page_read(fd, leaf_pg, buf);
@@ -2286,11 +2286,11 @@ fn btree_remove_ref(fd, hdr, root, key, ref) {
 # leaves get freed directly; internal nodes recurse into children before
 # freeing themselves. Prior to 1.5.0 only the root was freed, leaving all
 # internal and leaf pages unreachable on DROP TABLE / ALTER ADD / ALTER DROP.
-fn btree_free_all(fd, hdr, root) {
+fn btree_free_all(fd, hdr, root): i64 {
     return _bt_free_walk(fd, hdr, root, 0);
 }
 
-fn _bt_free_walk(fd, hdr, root, depth) {
+fn _bt_free_walk(fd, hdr, root, depth): i64 {
     if (root == 0) { return 0; }
     if (depth >= BT_MAX_DEPTH) { return 0; }
     var buf = pg_alloc();
@@ -2320,7 +2320,7 @@ fn _bt_free_walk(fd, hdr, root, depth) {
 # Shifts survivors forward, updates BT_NKEYS. Returns reclaimed count.
 # Structural rebalancing (empty-leaf removal) is intentionally out of scope —
 # future inserts into the leaf's key range will refill the slots.
-fn _bt_leaf_compact(fd, pg) {
+fn _bt_leaf_compact(fd, pg): i64 {
     var buf = pg_alloc();
     page_read(fd, pg, buf);
     var nk = load64(buf + BT_NKEYS);
@@ -2346,7 +2346,7 @@ fn _bt_leaf_compact(fd, pg) {
 
 # Depth-first walk: recurse into internal children, compact every leaf.
 # Returns total reclaimed across all leaves.
-fn _bt_compact_walk(fd, hdr, pg, depth) {
+fn _bt_compact_walk(fd, hdr, pg, depth): i64 {
     if (depth >= BT_MAX_DEPTH) { return 0; }
     var buf = pg_alloc();
     if (page_read_checked(fd, hdr, pg, buf) != PATRA_OK) {
@@ -2372,7 +2372,7 @@ fn _bt_compact_walk(fd, hdr, pg, depth) {
 
 # Reclaim all tombstoned (lazy-deleted) entries in the tree. Safe to call
 # concurrently with nothing (caller holds write lock). Returns count reclaimed.
-fn btree_compact(fd, hdr, root) {
+fn btree_compact(fd, hdr, root): i64 {
     return _bt_compact_walk(fd, hdr, root, 0);
 }
 
@@ -2384,11 +2384,11 @@ var _tbl_last_ref = 0;
 var _tbl_lp_idx = 0 - 1;
 var _tbl_lp_page = 0;
 
-fn _tbl_entry(hdr, idx) {
+fn _tbl_entry(hdr, idx): i64 {
     return hdr + HDR_TBLDIR + idx * TBL_ENTRY_SZ;
 }
 
-fn _tbl_name_eq(entry, name, nlen) {
+fn _tbl_name_eq(entry, name, nlen): i64 {
     var elen = strlen(entry + TBL_NAME);
     if (elen != nlen) { return 0; }
     return memeq(entry + TBL_NAME, name, nlen);
@@ -2399,7 +2399,7 @@ fn _tbl_name_eq(entry, name, nlen) {
 # schema has no BLOB columns. Also used during ALTER DROP COLUMN on a
 # BLOB column, where the dropped column's chain must be freed; in that
 # case the caller skips the row-wide sweep and targets the one column.
-fn _tbl_free_row_bytes(fd, hdr, row, schema, ncols) {
+fn _tbl_free_row_bytes(fd, hdr, row, schema, ncols): i64 {
     for (var i = 0; i < ncols; i = i + 1) {
         var ctype = load64(schema + SCH_START + i * SCH_ENTRY_SZ + SCH_CTYPE);
         if (ctype == COL_BYTES) {
@@ -2415,7 +2415,7 @@ fn _tbl_free_row_bytes(fd, hdr, row, schema, ncols) {
 
 # True (1) if the schema has at least one BLOB column. Cheap guard so
 # non-BLOB tables skip the per-row chain scan on DROP/DELETE.
-fn _tbl_has_bytes(schema, ncols) {
+fn _tbl_has_bytes(schema, ncols): i64 {
     for (var i = 0; i < ncols; i = i + 1) {
         var ctype = load64(schema + SCH_START + i * SCH_ENTRY_SZ + SCH_CTYPE);
         if (ctype == COL_BYTES) { return 1; }
@@ -2424,7 +2424,7 @@ fn _tbl_has_bytes(schema, ncols) {
 }
 
 # Find table by name, returns index or -1
-fn tbl_find(hdr, name, nlen) {
+fn tbl_find(hdr, name, nlen): i64 {
     var count = load64(hdr + HDR_TBLCOUNT);
     for (var i = 0; i < count; i = i + 1) {
         if (_tbl_name_eq(_tbl_entry(hdr, i), name, nlen)) {
@@ -2437,7 +2437,7 @@ fn tbl_find(hdr, name, nlen) {
 # col_names: array of (ptr, len) pairs — 16 bytes each
 # col_types: array of i64 — 8 bytes each
 # Create table with schema and data pages
-fn tbl_create(fd, hdr, name, nlen, col_names, col_types, ncols) {
+fn tbl_create(fd, hdr, name, nlen, col_names, col_types, ncols): i64 {
     if (load64(hdr + HDR_TBLCOUNT) >= MAX_TABLES) { return PATRA_ERR_FULL; }
     if (ncols > MAX_COLS) { return PATRA_ERR_COLCOUNT; }
     if (tbl_find(hdr, name, nlen) >= 0) { return PATRA_ERR_EXISTS; }
@@ -2492,7 +2492,7 @@ fn tbl_create(fd, hdr, name, nlen, col_names, col_types, ncols) {
 }
 
 # Drop table: free data pages, schema page, compact directory
-fn tbl_drop(fd, hdr, idx) {
+fn tbl_drop(fd, hdr, idx): i64 {
     _tbl_lp_idx = 0 - 1;
     var entry = _tbl_entry(hdr, idx);
     var spg = load64(entry + TBL_SCHEMA);
@@ -2553,7 +2553,7 @@ fn tbl_drop(fd, hdr, idx) {
 }
 
 # Insert a row into table
-fn tbl_insert(fd, hdr, idx, row_data, row_sz) {
+fn tbl_insert(fd, hdr, idx, row_data, row_sz): i64 {
     var entry = _tbl_entry(hdr, idx);
     var buf = pg_alloc();
 
@@ -2604,7 +2604,7 @@ fn tbl_insert(fd, hdr, idx, row_data, row_sz) {
 
 # Scan all rows (no filter). Returns rows copied.
 # Scan all rows into output buffer, returns count
-fn tbl_scan(fd, hdr, idx, out, row_sz) {
+fn tbl_scan(fd, hdr, idx, out, row_sz): i64 {
     var entry = _tbl_entry(hdr, idx);
     var cur = load64(entry + TBL_ROOT);
     var buf = pg_alloc();
@@ -2625,7 +2625,7 @@ fn tbl_scan(fd, hdr, idx, out, row_sz) {
 
 # Filtered scan — copies matching rows into out. Returns count.
 # Scan rows matching WHERE into output, returns count
-fn tbl_scan_where(fd, hdr, idx, out, row_sz, schema, ncols, pr) {
+fn tbl_scan_where(fd, hdr, idx, out, row_sz, schema, ncols, pr): i64 {
     var entry = _tbl_entry(hdr, idx);
     var cur = load64(entry + TBL_ROOT);
     var buf = pg_alloc();
@@ -2650,7 +2650,7 @@ fn tbl_scan_where(fd, hdr, idx, out, row_sz, schema, ncols, pr) {
 
 # Update matching rows in-place. Returns PATRA_OK or error.
 # Update matching rows in-place
-fn tbl_update(fd, hdr, idx, row_sz, schema, ncols, pr) {
+fn tbl_update(fd, hdr, idx, row_sz, schema, ncols, pr): i64 {
     var entry = _tbl_entry(hdr, idx);
     var cur = load64(entry + TBL_ROOT);
     var buf = pg_alloc();
@@ -2734,7 +2734,7 @@ fn tbl_update(fd, hdr, idx, row_sz, schema, ncols, pr) {
 
 # Delete matching rows with page compaction. Returns PATRA_OK.
 # Delete matching rows with page compaction
-fn tbl_delete(fd, hdr, idx, row_sz, schema, ncols, pr) {
+fn tbl_delete(fd, hdr, idx, row_sz, schema, ncols, pr): i64 {
     _tbl_lp_idx = 0 - 1;
     var entry = _tbl_entry(hdr, idx);
     var cur = load64(entry + TBL_ROOT);
@@ -2806,12 +2806,12 @@ fn tbl_delete(fd, hdr, idx, row_sz, schema, ncols, pr) {
 
 # O_RDWR | O_CREAT | O_APPEND | O_NOFOLLOW = 2 + 64 + 1024 + 131072 = 132162
 # O_NOFOLLOW added in 1.5.2 (audit §2.8).
-fn jsonl_open(path) {
+fn jsonl_open(path): i64 {
     return sys_open(path, 132162, 420);
 }
 
 # Close JSONL file
-fn jsonl_close(fd) {
+fn jsonl_close(fd): i64 {
     sys_close(fd);
     return 0;
 }
@@ -2819,7 +2819,7 @@ fn jsonl_close(fd) {
 # ── Append ────────────────────
 
 # Append raw data + newline with exclusive lock
-fn jsonl_append(fd, data, len) {
+fn jsonl_append(fd, data, len): i64 {
     patra_lock_ex(fd);
     var w = sys_write(fd, data, len);
     if (w < 0) { patra_unlock(fd); return PATRA_ERR_IO; }
@@ -2831,7 +2831,7 @@ fn jsonl_append(fd, data, len) {
 
 # ── JSON string escaping ────────────────────
 
-fn _hex_digit(v) {
+fn _hex_digit(v): i64 {
     if (v < 10) { return 48 + v; }
     return 87 + v;
 }
@@ -2846,7 +2846,7 @@ fn _hex_digit(v) {
 # `simdjson` in strict mode) reject raw control bytes. Pre-1.5.2 Patra could
 # emit invalid JSON whenever a STR column contained a byte outside the five
 # originally-escaped chars.
-fn _json_escape(dst, src, slen) {
+fn _json_escape(dst, src, slen): i64 {
     var w = 0;
     var cap = slen * 6 + 8;
     for (var i = 0; i < slen; i = i + 1) {
@@ -2888,7 +2888,7 @@ fn _json_escape(dst, src, slen) {
 # NUL bytes without being silently truncated by strlen — audit 2026-04-21 §2.6
 # log-forging case. Emits `[NUL]` for any NUL, producing valid JSON in all cases.
 # Pass `vlens = 0` to fall back to strlen on every STR value (legacy behavior).
-fn json_build_lens(buf, max, keys, vals, vlens, types, n) {
+fn json_build_lens(buf, max, keys, vals, vlens, types, n): i64 {
     var pos = 0;
     store8(buf + pos, 123); pos = pos + 1;
 
@@ -2936,14 +2936,14 @@ fn json_build_lens(buf, max, keys, vals, vlens, types, n) {
 # kind of registration. The `patra_*` namespace prefix matches
 # the convention used elsewhere in patra (`patra_open`, `patra_close`,
 # etc.). See cyrius `docs/audit/2026-04-26-stdlib-fn-collisions.md`.
-fn patra_json_build(buf, max, keys, vals, types, n) {
+fn patra_json_build(buf, max, keys, vals, types, n): i64 {
     return json_build_lens(buf, max, keys, vals, 0, types, n);
 }
 
 # Length-aware JSONL append. vlens is an array of explicit lengths for STR
 # values (ignored for INT). Added in 1.5.3 to close the embedded-NUL
 # truncation in `jsonl_append_obj` without breaking existing callers.
-fn jsonl_append_obj_lens(fd, keys, vals, vlens, types, n) {
+fn jsonl_append_obj_lens(fd, keys, vals, vlens, types, n): i64 {
     var buf = fl_alloc(4096);
     var len = json_build_lens(buf, 4096, keys, vals, vlens, types, n);
     jsonl_append(fd, buf, len);
@@ -2952,7 +2952,7 @@ fn jsonl_append_obj_lens(fd, keys, vals, vlens, types, n) {
 }
 
 # Legacy append — strlen-based. Kept for backward compatibility.
-fn jsonl_append_obj(fd, keys, vals, types, n) {
+fn jsonl_append_obj(fd, keys, vals, types, n): i64 {
     return jsonl_append_obj_lens(fd, keys, vals, 0, types, n);
 }
 
@@ -2963,7 +2963,7 @@ fn jsonl_append_obj(fd, keys, vals, types, n) {
 enum JlrOff { JLR_COUNT = 0; JLR_DATA = 8; JLR_LINES = 16; JLR_SZ = 24; }
 
 # Read all lines from JSONL file into indexed result
-fn jsonl_read(fd) {
+fn jsonl_read(fd): i64 {
     patra_lock_sh(fd);
     var size = syscall(SYS_LSEEK, fd, 0, 2);
     syscall(SYS_LSEEK, fd, 0, 0);
@@ -3024,22 +3024,22 @@ fn jsonl_read(fd) {
 }
 
 # Get number of lines in read result
-fn jsonl_lines_count(lr) { return load64(lr + JLR_COUNT); }
+fn jsonl_lines_count(lr): i64 { return load64(lr + JLR_COUNT); }
 
 # Get pointer to line data at index
-fn jsonl_lines_get(lr, idx) {
+fn jsonl_lines_get(lr, idx): i64 {
     var lines = load64(lr + JLR_LINES);
     return load64(lines + idx * 16);
 }
 
 # Get length of line at index
-fn jsonl_lines_len(lr, idx) {
+fn jsonl_lines_len(lr, idx): i64 {
     var lines = load64(lr + JLR_LINES);
     return load64(lines + idx * 16 + 8);
 }
 
 # Free read result and all buffers
-fn jsonl_lines_free(lr) {
+fn jsonl_lines_free(lr): i64 {
     if (lr == 0) { return 0; }
     var d = load64(lr + JLR_DATA);
     var l = load64(lr + JLR_LINES);
@@ -3052,7 +3052,7 @@ fn jsonl_lines_free(lr) {
 # ── Field extraction ────────────────────
 
 # Find "key": in a JSON line. Returns offset past the colon+space, or -1.
-fn _jl_find_key(line, llen, key, klen) {
+fn _jl_find_key(line, llen, key, klen): i64 {
     var i = 0;
     var result = 0 - 1;
     var done = 0;
@@ -3101,7 +3101,7 @@ fn _jl_find_key(line, llen, key, klen) {
 # Get string value for key from JSON line. Returns ptr to content (inside quotes), sets len.
 # out_len: pointer to store length. Returns pointer or 0.
 # Extract string field from JSON line by key
-fn jsonl_get_str(line, llen, key, klen, out_len) {
+fn jsonl_get_str(line, llen, key, klen, out_len): i64 {
     var off = _jl_find_key(line, llen, key, klen);
     if (off < 0) { return 0; }
     if (off >= llen) { return 0; }
@@ -3121,7 +3121,7 @@ fn jsonl_get_str(line, llen, key, klen, out_len) {
 # Get integer value for key from JSON line. Returns the value, 0 if not
 # found, or 0 on i64 overflow. Audit 2026-04-21 §2.7: pre-1.5.2 a 25-digit
 # input silently wrapped to an attacker-chosen i64 — flag it and refuse.
-fn jsonl_get_int(line, llen, key, klen) {
+fn jsonl_get_int(line, llen, key, klen): i64 {
     var off = _jl_find_key(line, llen, key, klen);
     if (off < 0) { return 0; }
     if (off >= llen) { return 0; }
@@ -3151,7 +3151,7 @@ fn jsonl_get_int(line, llen, key, klen) {
 # ── Count lines ────────────────────
 
 # Count lines in JSONL file
-fn jsonl_count(fd) {
+fn jsonl_count(fd): i64 {
     patra_lock_sh(fd);
     syscall(SYS_LSEEK, fd, 0, 0);
     var buf = fl_alloc(4096);
@@ -3214,7 +3214,7 @@ enum RsOff {
 # ── Init ────────────────────
 
 # Initialize patra (call once before use)
-fn patra_init() {
+fn patra_init(): i64 {
     _sql_init();
     sakshi_set_level(SK_WARN);
 }
@@ -3222,7 +3222,7 @@ fn patra_init() {
 # ── Open / Close ────────────────────
 
 # Open or create a .patra database file
-fn patra_open(path) {
+fn patra_open(path): i64 {
     _tbl_lp_idx = 0 - 1;
     var fd = _pt_file_open(path);
     if (fd < 0) {
@@ -3272,7 +3272,7 @@ fn patra_open(path) {
 }
 
 # Close the database, flushing any pending BATCH-mode writes first.
-fn patra_close(db) {
+fn patra_close(db): i64 {
     if (db == 0) { return 0; }
     var fd = load64(db + DB_FD);
     if (load64(db + DB_BATCH_PENDING) != 0) {
@@ -3285,10 +3285,10 @@ fn patra_close(db) {
 }
 
 fn _db_fd(db)  { return load64(db + DB_FD); }
-fn _db_hdr(db) { return load64(db + DB_HDR); }
+fn _db_hdr(db): i64 { return load64(db + DB_HDR); }
 
 # Set group-commit mode (PATRA_SYNC_FULL or PATRA_SYNC_BATCH); flushes first.
-fn patra_set_sync_mode(db, mode) {
+fn patra_set_sync_mode(db, mode): i64 {
     if (load64(db + DB_BATCH_PENDING) != 0) {
         syscall(SYS_FDATASYNC, load64(db + DB_FD));
         store64(db + DB_BATCH_PENDING, 0);
@@ -3298,10 +3298,10 @@ fn patra_set_sync_mode(db, mode) {
 }
 
 # Return the current group-commit mode for this DB handle.
-fn patra_get_sync_mode(db) { return load64(db + DB_SYNC_MODE); }
+fn patra_get_sync_mode(db): i64 { return load64(db + DB_SYNC_MODE); }
 
 # Force durability of any pending BATCH-mode writes. No-op in FULL mode.
-fn patra_flush(db) {
+fn patra_flush(db): i64 {
     if (load64(db + DB_BATCH_PENDING) != 0) {
         syscall(SYS_FDATASYNC, load64(db + DB_FD));
         store64(db + DB_BATCH_PENDING, 0);
@@ -3313,7 +3313,7 @@ fn patra_flush(db) {
 # legacy synchronous header-write-with-fdatasync. BATCH mode writes the
 # header without syncing, increments the pending counter, and triggers
 # an auto-flush every PATRA_BATCH_FLUSH_N writes to bound the crash window.
-fn _db_hdr_commit(db, fd, hdr) {
+fn _db_hdr_commit(db, fd, hdr): i64 {
     if (load64(db + DB_SYNC_MODE) == PATRA_SYNC_BATCH) {
         var r = patra_hdr_write_nosync(fd, hdr);
         if (r != PATRA_OK) { return r; }
@@ -3330,7 +3330,7 @@ fn _db_hdr_commit(db, fd, hdr) {
 
 # ── Exec: CREATE TABLE ────────────────────
 
-fn _exec_create(db) {
+fn _exec_create(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3360,7 +3360,7 @@ fn _exec_create(db) {
 
 # ── Exec: INSERT ────────────────────
 
-fn _exec_insert(db) {
+fn _exec_insert(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3499,7 +3499,7 @@ fn _exec_insert(db) {
 
 # ── Exec: UPDATE ────────────────────
 
-fn _exec_update(db) {
+fn _exec_update(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3535,7 +3535,7 @@ fn _exec_update(db) {
 
 # ── Exec: DELETE ────────────────────
 
-fn _exec_delete(db) {
+fn _exec_delete(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3567,7 +3567,7 @@ fn _exec_delete(db) {
 
 # ── Exec: DROP TABLE ────────────────────
 
-fn _exec_drop(db) {
+fn _exec_drop(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3591,7 +3591,7 @@ fn _exec_drop(db) {
 # ── Exec: ALTER TABLE ────────────────────
 
 # ALTER TABLE t RENAME TO new
-fn _exec_alter_rename_tbl(db) {
+fn _exec_alter_rename_tbl(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3626,7 +3626,7 @@ fn _exec_alter_rename_tbl(db) {
 }
 
 # ALTER TABLE t RENAME COLUMN old TO new
-fn _exec_alter_rename_col(db) {
+fn _exec_alter_rename_col(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3681,7 +3681,7 @@ fn _exec_alter_rename_col(db) {
 # Gathers all rows, frees old data+btree pages, rewrites schema, re-inserts rows
 # with the default value (0 / empty string) in the new trailing column. The B-tree
 # is rebuilt when the table had an index.
-fn _exec_alter_add(db) {
+fn _exec_alter_add(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3812,7 +3812,7 @@ fn _exec_alter_add(db) {
 # torn down. If the dropped column PRECEDES the indexed column in schema
 # order, SCH_IDX_COL shifts left by one. In all surviving-index cases the
 # B-tree is rebuilt because refs change with row rewriting.
-fn _exec_alter_drop_col(db) {
+fn _exec_alter_drop_col(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3961,7 +3961,7 @@ fn _exec_alter_drop_col(db) {
 
 # ── Exec: VACUUM ────────────────────
 
-fn _exec_vacuum(db) {
+fn _exec_vacuum(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -3992,7 +3992,7 @@ fn _exec_vacuum(db) {
 
 # ── Exec: CREATE INDEX ────────────────────
 
-fn _exec_create_index(db) {
+fn _exec_create_index(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -4054,7 +4054,7 @@ fn _exec_create_index(db) {
 # ── Transactions ────────────────────
 
 # Begin an explicit transaction (lock + WAL)
-fn patra_begin(db) {
+fn patra_begin(db): i64 {
     if (load64(db + DB_TX)) { return PATRA_OK; }
     var fd = _db_fd(db);
     var wpath = load64(db + DB_PATH);
@@ -4066,7 +4066,7 @@ fn patra_begin(db) {
 }
 
 # Commit transaction (sync + unlock)
-fn patra_commit(db) {
+fn patra_commit(db): i64 {
     if (load64(db + DB_TX) == 0) { return PATRA_OK; }
     var fd = _db_fd(db);
     var wpath = load64(db + DB_PATH);
@@ -4080,7 +4080,7 @@ fn patra_commit(db) {
 }
 
 # Rollback transaction (restore pages + unlock)
-fn patra_rollback(db) {
+fn patra_rollback(db): i64 {
     if (load64(db + DB_TX) == 0) { return PATRA_OK; }
     var wpath = load64(db + DB_PATH);
     wal_rollback(wpath);
@@ -4093,7 +4093,7 @@ fn patra_rollback(db) {
 # ── patra_exec ────────────────────
 
 # Execute a DDL/DML SQL statement
-fn patra_exec(db, sql) {
+fn patra_exec(db, sql): i64 {
     if (db == 0) { return PATRA_ERR_IO; }
     sql_tokenize(sql);
     var r = sql_parse();
@@ -4116,7 +4116,7 @@ fn patra_exec(db, sql) {
 
 # ── Sorting for ORDER BY ────────────────────
 
-fn _strcmp_nn(a, b) {
+fn _strcmp_nn(a, b): i64 {
     var i = 0;
     while (1) {
         var ca = load8(a + i);
@@ -4128,7 +4128,7 @@ fn _strcmp_nn(a, b) {
     return 0;
 }
 
-fn _rs_field_off(rs, col) {
+fn _rs_field_off(rs, col): i64 {
     var types = load64(rs + RS_TYPES);
     var off = 0;
     for (var i = 0; i < col; i = i + 1) {
@@ -4141,7 +4141,7 @@ fn _rs_field_off(rs, col) {
 }
 
 # Compare two rows on multiple ORDER BY columns. Returns >0 if a should come after b.
-fn _cmp_rows(rs, ra, rb, ob_idxs, ob_types, ob_dirs, obn) {
+fn _cmp_rows(rs, ra, rb, ob_idxs, ob_types, ob_dirs, obn): i64 {
     for (var k = 0; k < obn; k = k + 1) {
         var ci = load64(ob_idxs + k * 8);
         var ct = load64(ob_types + k * 8);
@@ -4162,7 +4162,7 @@ fn _cmp_rows(rs, ra, rb, ob_idxs, ob_types, ob_dirs, obn) {
     return 0;
 }
 
-fn _sort_result_multi(rs, ob_idxs, ob_types, ob_dirs, obn) {
+fn _sort_result_multi(rs, ob_idxs, ob_types, ob_dirs, obn): i64 {
     var data = load64(rs + RS_DATA);
     var rsz = load64(rs + RS_ROWSZ);
     var nrows = load64(rs + RS_NROWS);
@@ -4187,7 +4187,7 @@ fn _sort_result_multi(rs, ob_idxs, ob_types, ob_dirs, obn) {
 # ── patra_query (SELECT with WHERE, ORDER BY, LIMIT) ────────
 
 # Execute a SELECT query, returns result set
-fn patra_query(db, sql) {
+fn patra_query(db, sql): i64 {
     if (db == 0) { return 0; }
     sql_tokenize(sql);
     var r = sql_parse();
@@ -4196,7 +4196,7 @@ fn patra_query(db, sql) {
     return _patra_query_exec(db);
 }
 
-fn _patra_query_exec(db) {
+fn _patra_query_exec(db): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 
@@ -4571,7 +4571,7 @@ enum StmtOff {
 # The handle owns a copy of the SQL string; safe to free the input
 # immediately after this call. Caller must patra_finalize when done.
 # Tokenize + parse SQL once and return an opaque, reusable stmt handle.
-fn patra_prepare(db, sql) {
+fn patra_prepare(db, sql): i64 {
     if (db == 0) { return 0; }
     if (sql == 0) { return 0; }
     var slen = strlen(sql);
@@ -4593,7 +4593,7 @@ fn patra_prepare(db, sql) {
 }
 
 # Free a prepared statement and its owned SQL buffer.
-fn patra_finalize(stmt) {
+fn patra_finalize(stmt): i64 {
     if (stmt == 0) { return 0; }
     var sbuf = load64(stmt + STMT_SQL);
     if (sbuf != 0) { fl_free(sbuf); }
@@ -4606,7 +4606,7 @@ fn patra_finalize(stmt) {
 # tables/values. Single-threaded; the global is overwritten per call.
 # Word-at-a-time copy because stdlib memcpy is byte-by-byte and 4KB
 # per call would eat most of the prepare win.
-fn _stmt_restore(stmt) {
+fn _stmt_restore(stmt): i64 {
     var src = stmt + STMT_PR_BUF;
     var i = 0;
     while (i < 4096) {
@@ -4617,7 +4617,7 @@ fn _stmt_restore(stmt) {
 }
 
 # Execute a prepared DDL/DML statement, skipping tokenize + parse.
-fn patra_exec_prepared(db, stmt) {
+fn patra_exec_prepared(db, stmt): i64 {
     if (db == 0) { return PATRA_ERR_IO; }
     if (stmt == 0) { return PATRA_ERR_SYNTAX; }
     _stmt_restore(stmt);
@@ -4637,7 +4637,7 @@ fn patra_exec_prepared(db, stmt) {
 }
 
 # Execute a prepared SELECT, returning a result set or 0.
-fn patra_query_prepared(db, stmt) {
+fn patra_query_prepared(db, stmt): i64 {
     if (db == 0) { return 0; }
     if (stmt == 0) { return 0; }
     _stmt_restore(stmt);
@@ -4648,19 +4648,19 @@ fn patra_query_prepared(db, stmt) {
 # ── Result set accessors ────────────────────
 
 # Get number of rows in result set
-fn patra_result_count(rs) { return load64(rs + RS_NROWS); }
+fn patra_result_count(rs): i64 { return load64(rs + RS_NROWS); }
 # Get number of columns in result set
 fn patra_result_cols(rs)  { return load64(rs + RS_NCOLS); }
 
 # Get integer value at (row, col)
-fn patra_result_get_int(rs, row, col) {
+fn patra_result_get_int(rs, row, col): i64 {
     var data = load64(rs + RS_DATA);
     var rsz = load64(rs + RS_ROWSZ);
     return load64(data + row * rsz + _rs_field_off(rs, col));
 }
 
 # Get string pointer at (row, col)
-fn patra_result_get_str(rs, row, col) {
+fn patra_result_get_str(rs, row, col): i64 {
     var data = load64(rs + RS_DATA);
     var rsz = load64(rs + RS_ROWSZ);
     return data + row * rsz + _rs_field_off(rs, col);
@@ -4670,7 +4670,7 @@ fn patra_result_get_str(rs, row, col) {
 # stopping at the first NUL or COL_STR_SZ. Returns -1 if the column isn't STR.
 # Mirrors patra_result_get_bytes_len so consumers can drop ad-hoc strnlen.
 # Byte length of a STR value at (row, col), or -1 if the column isn't STR.
-fn patra_result_get_str_len(rs, row, col) {
+fn patra_result_get_str_len(rs, row, col): i64 {
     var types = load64(rs + RS_TYPES);
     if (load64(types + col * 8) != COL_STR) { return 0 - 1; }
     var data = load64(rs + RS_DATA);
@@ -4685,20 +4685,20 @@ fn patra_result_get_str_len(rs, row, col) {
 }
 
 # Get column name at index
-fn patra_result_col_name(rs, col) {
+fn patra_result_col_name(rs, col): i64 {
     var names = load64(rs + RS_NAMES);
     return names + col * SCH_CNAME_MAX;
 }
 
 # Get column type at index (COL_INT or COL_STR)
-fn patra_result_col_type(rs, col) {
+fn patra_result_col_type(rs, col): i64 {
     var types = load64(rs + RS_TYPES);
     return load64(types + col * 8);
 }
 
 # Get column type at index (COL_INT or COL_STR)
 # Length of a BLOB value at (row, col). Returns -1 if the column isn't BLOB.
-fn patra_result_get_bytes_len(rs, row, col) {
+fn patra_result_get_bytes_len(rs, row, col): i64 {
     var types = load64(rs + RS_TYPES);
     if (load64(types + col * 8) != COL_BYTES) { return 0 - 1; }
     var data = load64(rs + RS_DATA);
@@ -4711,7 +4711,7 @@ fn patra_result_get_bytes_len(rs, row, col) {
 # PATRA_ERR_TYPE for non-BLOB columns, or PATRA_ERR_PAGE on a malformed
 # chain. The empty blob (length 0) returns PATRA_OK with no bytes read.
 # Read a BYTES column's payload into a caller-allocated `out` buffer.
-fn patra_result_read_bytes(db, rs, row, col, out) {
+fn patra_result_read_bytes(db, rs, row, col, out): i64 {
     var types = load64(rs + RS_TYPES);
     if (load64(types + col * 8) != COL_BYTES) { return PATRA_ERR_TYPE; }
     var data = load64(rs + RS_DATA);
@@ -4725,7 +4725,7 @@ fn patra_result_read_bytes(db, rs, row, col, out) {
 }
 
 # Free result set and all buffers
-fn patra_result_free(rs) {
+fn patra_result_free(rs): i64 {
     if (rs != 0) { fl_free(rs); }
     return 0;
 }
@@ -4742,7 +4742,7 @@ fn patra_result_free(rs) {
 # Arrays whose slots aren't consulted can be 0 (null). Returns PATRA_OK,
 # PATRA_ERR_NOTFOUND, PATRA_ERR_COLCOUNT, or PATRA_ERR_TYPE.
 # Programmatic row insert; the only path that can write BYTES columns.
-fn patra_insert_row(db, tname, tnlen, ncols, types, ivals, sptrs, slens, bptrs, blens) {
+fn patra_insert_row(db, tname, tnlen, ncols, types, ivals, sptrs, slens, bptrs, blens): i64 {
     var fd = _db_fd(db);
     var hdr = _db_hdr(db);
 

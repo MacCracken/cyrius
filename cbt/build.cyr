@@ -4,7 +4,7 @@
 
 # Compile source.cyr to output using current compiler
 # If _defines vec is set, prepend #define lines to a temp file first.
-fn compile(source, output) {
+fn compile(source, output): i64 {
     var cc = current_cc();
     if (cc == 0) {
         _err("cc5 not found. Install Cyrius or set CYRIUS_HOME.");
@@ -176,7 +176,7 @@ fn compile(source, output) {
 
 # Run a binary — directly for x86, via qemu for aarch64
 # Run a shell command via /bin/sh -c. Returns exit code.
-fn sys_system(cmd) {
+fn sys_system(cmd): i64 {
     var argv[4];
     var pid = sys_fork();
     if (pid == 0) {
@@ -194,7 +194,7 @@ fn sys_system(cmd) {
     return 1;
 }
 
-fn run_binary(path) {
+fn run_binary(path): i64 {
     var argv[4];
     var pid = sys_fork();
     if (pid == 0) {
@@ -219,7 +219,7 @@ fn run_binary(path) {
 }
 
 # Run an external tool by path, passing through args
-fn run_tool(tool, arg1, arg2, arg3) {
+fn run_tool(tool, arg1, arg2, arg3): i64 {
     if (file_exists(tool) == 0) {
         _err_ctx("tool not found", tool);
         return 1;
@@ -244,7 +244,7 @@ fn run_tool(tool, arg1, arg2, arg3) {
 }
 
 # Run a shell script
-fn run_script(script, arg1, arg2) {
+fn run_script(script, arg1, arg2): i64 {
     return run_tool("/bin/sh", script, arg1, arg2);
 }
 

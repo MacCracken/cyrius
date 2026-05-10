@@ -30,12 +30,12 @@
 # Atomic 8-byte load. Aligned i64 loads are atomic on both x86_64
 # and aarch64 — no special instruction needed, but expose as API
 # so callers document intent.
-fn atomic_load(ptr) {
+fn atomic_load(ptr): i64 {
     return load64(ptr);
 }
 
 # Atomic 8-byte store. Same reasoning as atomic_load.
-fn atomic_store(ptr, val) {
+fn atomic_store(ptr, val): i64 {
     store64(ptr, val);
     return 0;
 }
@@ -43,7 +43,7 @@ fn atomic_store(ptr, val) {
 # Compare-and-swap. If *ptr == expected, set *ptr = new and return
 # 1; otherwise leave *ptr unchanged and return 0. Full memory
 # barrier on both arches.
-fn atomic_cas(ptr, expected, new) {
+fn atomic_cas(ptr, expected, new): i64 {
     var ret = 0;
     #ifdef CYRIUS_ARCH_X86
     asm {
@@ -84,7 +84,7 @@ fn atomic_cas(ptr, expected, new) {
 # Atomic fetch-and-add. Returns the OLD value (pre-add); *ptr
 # advances by delta. Matches x86 `lock xadd` + Rust / C11 fetch_add
 # convention (not Go's atomic.AddInt64 which returns new).
-fn atomic_fetch_add(ptr, delta) {
+fn atomic_fetch_add(ptr, delta): i64 {
     var ret = 0;
     #ifdef CYRIUS_ARCH_X86
     asm {
@@ -113,7 +113,7 @@ fn atomic_fetch_add(ptr, delta) {
 
 # Full memory barrier. x86: `mfence`; aarch64: `dmb ish` (full
 # system inner-shareable barrier).
-fn atomic_fence() {
+fn atomic_fence(): i64 {
     #ifdef CYRIUS_ARCH_X86
     asm {
         0x0F; 0xAE; 0xF0;              # mfence

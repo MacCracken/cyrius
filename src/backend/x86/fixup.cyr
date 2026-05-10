@@ -14,7 +14,7 @@ var _env_scratch[256];
 #   doesn't matter (EGETTICKS_PE drops them) but we keep the same
 #   shape as the Linux call so a single codepath works for both.
 # * Non-Linux non-PE (macOS x86, bare-metal): falls through to 0.
-fn _prof_clock_ns() {
+fn _prof_clock_ns(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var _ms = syscall(228, 0, 0);
     return _ms * 1000000;
@@ -30,7 +30,7 @@ fn _prof_clock_ns() {
 # v5.5.9: /proc/self/environ is Linux-only. On Windows, gate the whole
 # body so the fn returns 0 (env var not found). GetEnvironmentVariableW-
 # based lookup queued for v5.5.x tail. Same pattern as _init_cyrius_lib.
-fn _read_env(name) {
+fn _read_env(name): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     var ebuf[8192];
     var efd = syscall(2, "/proc/self/environ", 0, 0);
@@ -71,7 +71,7 @@ fn _read_env(name) {
     return 0;
 }
 
-fn FIXUP(S) {
+fn FIXUP(S): i64 {
     # Align code to 8 (don't write — leave as zeros, matching cyrc)
     var cp = GCP(S);
     cp = (cp + 7) & (0 - 8);
@@ -598,7 +598,7 @@ fn FIXUP(S) {
 # ================================================================
 
 # Kernel ELF: 32-bit ELF for multiboot2 boot, base 0x100000
-fn EMITELF_KERNEL(S) {
+fn EMITELF_KERNEL(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);
@@ -661,7 +661,7 @@ fn EMITELF_KERNEL(S) {
 }
 
 # Emit x86_64 ELF binary. etype: 2=ET_EXEC (default), 3=ET_DYN (shared)
-fn EMITELF_USER(S, etype) {
+fn EMITELF_USER(S, etype): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);
@@ -795,7 +795,7 @@ fn EMITELF_USER(S, etype) {
 # `.gnu.hash` (a Bloom-filter optimization) deferred until any
 # consumer needs faster lookup; not on the v5.6.x roadmap.
 
-fn EMITELF_SHARED(S) {
+fn EMITELF_SHARED(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);
@@ -1013,7 +1013,7 @@ fn EMITELF_SHARED(S) {
 #   type 2 (fn call)     → R_X86_64_PC32 against function symbol (CALL rel32)
 #   type 3 (fn pointer)  → R_X86_64_PC32 against function symbol (LEA rax,[rip+disp32])
 
-fn EMITELF_OBJ(S) {
+fn EMITELF_OBJ(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);
@@ -1403,7 +1403,7 @@ fn EMITELF_OBJ(S) {
     return 0;
 }
 
-fn EMITELF(S) {
+fn EMITELF(S): i64 {
     if (_TARGET_MACHO == 1) { EMITMACHO_EXEC(S); return 0; }
     if (_TARGET_MACHO == 2) {
         # The x86 backend cannot emit arm64 code. Calling EMITMACHO_ARM64

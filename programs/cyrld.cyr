@@ -94,27 +94,27 @@ var FN_REACHED[8192];       # 1 = reachable from some _cyrius_init
 var FN_IS_INIT[8192];       # 1 = this is a module's _cyrius_init (always a root)
 var FN_COUNT = 0;
 
-fn emsg(s) { syscall(SYS_WRITE, 2, s, strlen(s)); return 0; }
-fn prints(s) { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
-fn printn(n) { var b[24]; var l = fmt_int_buf(n, &b); syscall(SYS_WRITE, 1, &b, l); return 0; }
-fn printhex(n) { var b[16]; var l = fmt_hex_buf(n, &b); syscall(SYS_WRITE, 1, &b, l); return 0; }
+fn emsg(s): i64 { syscall(SYS_WRITE, 2, s, strlen(s)); return 0; }
+fn prints(s): i64 { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
+fn printn(n): i64 { var b[24]; var l = fmt_int_buf(n, &b); syscall(SYS_WRITE, 1, &b, l); return 0; }
+fn printhex(n): i64 { var b[16]; var l = fmt_hex_buf(n, &b); syscall(SYS_WRITE, 1, &b, l); return 0; }
 
 # Read little-endian values at buf + off.
-fn read_u16(buf, off) {
+fn read_u16(buf, off): i64 {
     return load8(buf + off) | (load8(buf + off + 1) << 8);
 }
-fn read_u32(buf, off) {
+fn read_u32(buf, off): i64 {
     return load8(buf + off)
     | (load8(buf + off + 1) << 8)
     | (load8(buf + off + 2) << 16)
     | (load8(buf + off + 3) << 24);
 }
-fn read_u64(buf, off) {
+fn read_u64(buf, off): i64 {
     return load64(buf + off);
 }
 
 # Verify the ELF64 header matches what cyrld can link.
-fn verify_elf_header(buf, len, path) {
+fn verify_elf_header(buf, len, path): i64 {
     if (len < 64) { emsg("error: "); emsg(path); emsg(": file too short for ELF header\n"); return 0; }
     if (load8(buf) != 0x7F) { emsg("error: "); emsg(path); emsg(": missing ELF magic\n"); return 0; }
     if (load8(buf + 1) != 69) { emsg("error: "); emsg(path); emsg(": bad ELF magic\n"); return 0; }
@@ -128,7 +128,7 @@ fn verify_elf_header(buf, len, path) {
 }
 
 # Allocate a fresh cstr copy of `src` (NUL-terminated).
-fn cstr_dup(src) {
+fn cstr_dup(src): i64 {
     var len = strlen(src);
     var out = alloc(len + 1);
     memcpy(out, src, len);
@@ -137,7 +137,7 @@ fn cstr_dup(src) {
 }
 
 # Look up (or create) a global symbol entry by name. Returns index.
-fn gsym_find_or_add(name) {
+fn gsym_find_or_add(name): i64 {
     var i = 0;
     while (i < GSYM_COUNT) {
         if (streq(load64(&GSYM_NAMEP + i * 8), name) == 1) { return i; }
@@ -158,7 +158,7 @@ fn gsym_find_or_add(name) {
 }
 
 # Load a single .o file into the module table. Returns module id, or -1 on error.
-fn load_module(path) {
+fn load_module(path): i64 {
     if (MOD_COUNT >= MAX_MODULES) { emsg("error: too many modules (limit 64)\n"); return 0 - 1; }
     var buf = alloc(1048576);
     var n = file_read_all(path, buf, 1048576);
@@ -240,7 +240,7 @@ fn load_module(path) {
 }
 
 # Pass 1: concatenate .text — assign each module a base offset in merged output.
-fn assign_text_layout() {
+fn assign_text_layout(): i64 {
     var base = 0;
     var i = 0;
     while (i < MOD_COUNT) {
@@ -252,11 +252,11 @@ fn assign_text_layout() {
 }
 
 # Round `n` up to a multiple of 8 (ELF-friendly alignment for data).
-fn align8(n) { return (n + 7) & (0 - 8); }
+fn align8(n): i64 { return (n + 7) & (0 - 8); }
 
 # Assign merged bases for .data and .rodata, set their final VAs
 # relative to TEXT_VA + text_size.
-fn assign_data_layout() {
+fn assign_data_layout(): i64 {
     # Data laid out first after text; rodata after data.
     var dbase = 0;
     var i = 0;
@@ -281,7 +281,7 @@ fn assign_data_layout() {
 }
 
 # Allocate + populate merged_data / merged_rodata buffers.
-fn build_merged_data() {
+fn build_merged_data(): i64 {
     if (MERGED_DATA_SIZE > 0) {
         MERGED_DATA = alloc(MERGED_DATA_SIZE);
         var mi = 0;
@@ -321,7 +321,7 @@ fn build_merged_data() {
 # A strong defined symbol (GLOBAL, st_shndx != 0) claims ownership.
 # If a symbol is defined twice strongly, flag as duplicate.
 # If undefined (UND), just ensure a slot exists so we can detect unresolved.
-fn merge_symbols() {
+fn merge_symbols(): i64 {
     var mi = 0;
     while (mi < MOD_COUNT) {
         var buf = load64(&MOD_BUF + mi * 8);
@@ -390,7 +390,7 @@ fn merge_symbols() {
 
 # Report unresolved references + duplicate-strong definitions.
 # Returns number of errors.
-fn verify_resolution() {
+fn verify_resolution(): i64 {
     var errs = 0;
     var i = 0;
     while (i < GSYM_COUNT) {
@@ -415,7 +415,7 @@ fn verify_resolution() {
 }
 
 # Report the merge plan (linker diagnostic).
-fn report_merge(total_text) {
+fn report_merge(total_text): i64 {
     prints("=== cyrld merge plan ===\n");
     prints("  modules: "); printn(MOD_COUNT); prints("\n");
     var i = 0;
@@ -485,7 +485,7 @@ var RODATA_VA = 0;
 
 # Build the merged .text buffer by concatenating each module's .text in
 # the order they were loaded. Returns 1 on success, 0 on failure.
-fn build_merged_text(total_size) {
+fn build_merged_text(total_size): i64 {
     if (total_size <= 0) { return 1; }
     MERGED_TEXT = alloc(total_size);
     MERGED_TEXT_SIZE = total_size;
@@ -506,7 +506,7 @@ fn build_merged_text(total_size) {
 }
 
 # Write a 32-bit signed value in little-endian at merged_text + offset.
-fn write_i32_le(off, value) {
+fn write_i32_le(off, value): i64 {
     store8(MERGED_TEXT + off, value & 0xFF);
     store8(MERGED_TEXT + off + 1, (value >> 8) & 0xFF);
     store8(MERGED_TEXT + off + 2, (value >> 16) & 0xFF);
@@ -519,7 +519,7 @@ fn write_i32_le(off, value) {
 # function table holds up-to-date MERGED_OFF; MOD_TEXT_BASE is no longer
 # meaningful after compaction because a module's fns can be reordered
 # or dropped.
-fn find_fn_by_mod_off(mi, mod_off) {
+fn find_fn_by_mod_off(mi, mod_off): i64 {
     var fi = 0;
     while (fi < FN_COUNT) {
         if (load64(&FN_MODULE + fi * 8) == mi) {
@@ -532,7 +532,7 @@ fn find_fn_by_mod_off(mi, mod_off) {
 
 # Find a fn index by name across all modules. Returns -1 if not found.
 # Used for global/weak function references.
-fn find_fn_by_name(name) {
+fn find_fn_by_name(name): i64 {
     var fi = 0;
     while (fi < FN_COUNT) {
         if (streq(load64(&FN_NAMEP + fi * 8), name) == 1) { return fi; }
@@ -546,7 +546,7 @@ fn find_fn_by_name(name) {
 # Uses the FN table for function symbols (works pre- and post-compaction).
 # Data/rodata section symbols use MOD_*_BASE (layouts don't change in
 # compaction).
-fn resolve_sym_va(mi, sym_idx) {
+fn resolve_sym_va(mi, sym_idx): i64 {
     var buf = load64(&MOD_BUF + mi * 8);
     var symtab_off = load64(&MOD_SYMTAB_OFF + mi * 8);
     var strtab_off = load64(&MOD_STRTAB_OFF + mi * 8);
@@ -590,7 +590,7 @@ fn resolve_sym_va(mi, sym_idx) {
 # fn's FN_MERGED_OFF. Skips relocations whose patch site lives in a
 # dead (unreached) fn — the bytes aren't in the output anyway.
 # Returns number of errors (unresolvable or unsupported-type).
-fn apply_relocations() {
+fn apply_relocations(): i64 {
     var errs = 0;
     var applied = 0;
     var mi = 0;
@@ -702,7 +702,7 @@ fn apply_relocations() {
 # ================================================================
 
 # Read an i32 (signed little-endian) at buf + off.
-fn read_i32(buf, off) {
+fn read_i32(buf, off): i64 {
     var v = load8(buf + off)
     | (load8(buf + off + 1) << 8)
     | (load8(buf + off + 2) << 16)
@@ -713,7 +713,7 @@ fn read_i32(buf, off) {
 
 # Enumerate every defined function across all modules into the FN table.
 # Sorts per-module by st_value afterwards so we can compute end offsets.
-fn collect_functions() {
+fn collect_functions(): i64 {
     var mi = 0;
     while (mi < MOD_COUNT) {
         var buf = load64(&MOD_BUF + mi * 8);
@@ -779,7 +779,7 @@ fn collect_functions() {
 }
 
 # Given a merged-text offset, return the FN index containing it, or -1.
-fn find_fn_at(moff) {
+fn find_fn_at(moff): i64 {
     var fi = 0;
     while (fi < FN_COUNT) {
         var s = load64(&FN_MERGED_OFF + fi * 8);
@@ -795,7 +795,7 @@ var DCE_QUEUE[8192];
 var DCE_HEAD = 0;
 var DCE_TAIL = 0;
 
-fn dce_enqueue(fi) {
+fn dce_enqueue(fi): i64 {
     if (load64(&FN_REACHED + fi * 8) == 1) { return 0; }
     store64(&FN_REACHED + fi * 8, 1);
     store64(&DCE_QUEUE + DCE_TAIL * 8, fi);
@@ -805,7 +805,7 @@ fn dce_enqueue(fi) {
 
 # Scan [start, end) in merged .text for E8/E9 rel32 instructions, mark
 # the target function as reached if the rel32 lands inside a known fn.
-fn dce_scan_fn(src_fi) {
+fn dce_scan_fn(src_fi): i64 {
     var start = load64(&FN_MERGED_OFF + src_fi * 8);
     var end = load64(&FN_MERGED_END + src_fi * 8);
     var p = start;
@@ -827,7 +827,7 @@ fn dce_scan_fn(src_fi) {
 # BFS from every _cyrius_init root; returns (reached_count, dead_bytes).
 # collect_functions() initializes FN_REACHED=1 so apply_relocations works
 # before DCE runs; we reset to 0 here and mark the true reachable set.
-fn run_dce() {
+fn run_dce(): i64 {
     var r = 0;
     while (r < FN_COUNT) { store64(&FN_REACHED + r * 8, 0); r = r + 1; }
     DCE_HEAD = 0;
@@ -867,7 +867,7 @@ fn run_dce() {
 # Look up a named LOCAL function in a specific module via the FN table.
 # Returns its final VA, or -1 if not found. Used for `_cyrius_init` entry
 # lookup per module. FN table is authoritative after compaction.
-fn find_local_sym(mi, name) {
+fn find_local_sym(mi, name): i64 {
     var fi = 0;
     while (fi < FN_COUNT) {
         if (load64(&FN_MODULE + fi * 8) == mi) {
@@ -890,7 +890,7 @@ var FN_NEW_OFF[8192];    # new merged offset per reached fn (-1 if dead)
 # data-ref sites; remap_intra_module_calls walks E8/E9 and fixes
 # intra-module rel32 against the new offsets.
 # Returns the new text size.
-fn compact_text() {
+fn compact_text(): i64 {
     var dead = 0;
     var fi0 = 0;
     while (fi0 < FN_COUNT) {
@@ -978,7 +978,7 @@ fn compact_text() {
 # new layout. Cross-module calls had their bytes reset to 0 by the
 # copy-from-original step in compact_text — apply_relocations will
 # patch them using .rela.text. Data/rodata LEA sites likewise.
-fn remap_intra_module_calls() {
+fn remap_intra_module_calls(): i64 {
     var fi = 0;
     while (fi < FN_COUNT) {
         if (load64(&FN_REACHED + fi * 8) == 1) {
@@ -1041,7 +1041,7 @@ fn remap_intra_module_calls() {
 # merged_data (aligned) + merged_rodata (aligned) + 14 B _start.
 # Single PT_LOAD RWX — beta2 doesn't enforce W^X protection; that's for
 # multi-segment work later.
-fn emit_executable(out_path) {
+fn emit_executable(out_path): i64 {
     # File layout — each segment 8-byte aligned relative to file base.
     # DATA_VA / RODATA_VA were set by assign_data_layout().
     var hdr_size = 120;
@@ -1160,7 +1160,7 @@ fn emit_executable(out_path) {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     args_init();
     if (argc() < 2) {

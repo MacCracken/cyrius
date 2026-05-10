@@ -3,7 +3,7 @@ include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
 
-fn test_div() {
+fn test_div(): i64 {
     var a = alloc(32);
     var b = alloc(32);
     var dst = alloc(32);
@@ -25,7 +25,7 @@ fn test_div() {
     return 0;
 }
 
-fn test_sqrt() {
+fn test_sqrt(): i64 {
     var a = alloc(32);
     var dst = alloc(32);
 
@@ -42,7 +42,7 @@ fn test_sqrt() {
     return 0;
 }
 
-fn test_abs() {
+fn test_abs(): i64 {
     var a = alloc(32);
     var dst = alloc(32);
 
@@ -59,7 +59,7 @@ fn test_abs() {
     return 0;
 }
 
-fn test_fmadd() {
+fn test_fmadd(): i64 {
     var a = alloc(32);
     var b = alloc(32);
     var c = alloc(32);
@@ -86,7 +86,7 @@ fn test_fmadd() {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     test_div();
     test_sqrt();

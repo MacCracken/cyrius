@@ -7,11 +7,11 @@ include "lib/string.cyr"
 var grid[256];
 var next[256];
 
-fn idx(x, y) { return (y & 15) * 16 + (x & 15); }
+fn idx(x, y): i64 { return (y & 15) * 16 + (x & 15); }
 
-fn get(x, y) { return load8(&grid + idx(x, y)); }
+fn get(x, y): i64 { return load8(&grid + idx(x, y)); }
 
-fn count_neighbors(x, y) {
+fn count_neighbors(x, y): i64 {
     var n: i64 = 0;
     n = n + get(x - 1, y - 1);
     n = n + get(x, y - 1);
@@ -24,7 +24,7 @@ fn count_neighbors(x, y) {
     return n;
 }
 
-fn step() {
+fn step(): i64 {
     for (var y = 0; y < 16; y = y + 1) {
         for (var x = 0; x < 16; x = x + 1) {
             var nc = count_neighbors(x, y);
@@ -40,7 +40,7 @@ fn step() {
     return 0;
 }
 
-fn count_live() {
+fn count_live(): i64 {
     var n: i64 = 0;
     for (var i = 0; i < 256; i = i + 1) {
         n = n + load8(&grid + i);

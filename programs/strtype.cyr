@@ -5,7 +5,7 @@ include "lib/string.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
 
-fn run() {
+fn run(): i64 {
     alloc_init();
     var pass: i64 = 0;
 

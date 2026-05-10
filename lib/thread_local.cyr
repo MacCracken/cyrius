@@ -40,7 +40,7 @@ var TLOCAL_MAX_SLOTS = 16;
 # aarch64: msr TPIDR_EL0, tls
 # Returns 0 on success, non-zero on failure (x86 only; aarch64 never
 # fails at EL0).
-fn _tlocal_install(tls) {
+fn _tlocal_install(tls): i64 {
     #ifdef CYRIUS_ARCH_X86
     return syscall(158, 0x1002, tls);
     #endif
@@ -58,7 +58,7 @@ fn _tlocal_install(tls) {
 # thread. Worker threads spawned via `thread_create` get a block
 # installed automatically by CLONE_SETTLS, so they do NOT need to
 # call this. Returns 1 on success, 0 on failure.
-fn thread_local_init() {
+fn thread_local_init(): i64 {
     alloc_init();
     var tls = alloc(TLOCAL_BLOCK_SIZE);
     if (tls == 0) { return 0; }
@@ -73,7 +73,7 @@ fn thread_local_init() {
 }
 
 # Read the i64 value at `slot`. Returns 0 on fresh slots.
-fn thread_local_get(slot) {
+fn thread_local_get(slot): i64 {
     var ret = 0;
     #ifdef CYRIUS_ARCH_X86
     asm {
@@ -97,7 +97,7 @@ fn thread_local_get(slot) {
 }
 
 # Write `val` into `slot`.
-fn thread_local_set(slot, val) {
+fn thread_local_set(slot, val): i64 {
     #ifdef CYRIUS_ARCH_X86
     asm {
         # Frame: [rbp-8]=slot, [rbp-16]=val

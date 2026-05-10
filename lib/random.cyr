@@ -31,7 +31,7 @@ enum GrndFlag {
 # Note: getrandom can return short reads if the request is
 # > 256 bytes. random_bytes loops until the full request is
 # satisfied or a real error surfaces.
-fn random_bytes(buf, len) {
+fn random_bytes(buf, len): i64 {
     var off = 0;
     while (off < len) {
         var n = sys_getrandom(buf + off, len - off, 0);

@@ -7,7 +7,7 @@
 # LOC under ~1500. Included by parse.cyr at the same textual position
 # the original content lived; self-host byte-identical.
 
-fn PARSE_ARRAY(S, noff) {
+fn PARSE_ARRAY(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume [
     if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
     var asz = PEEKV(S);
@@ -38,7 +38,7 @@ fn PARSE_ARRAY(S, noff) {
 # Bote saw the downstream mis-parse as `lib/assert.cyr:3: expected
 # '=', got string` because a post-corruption token noff now pointed
 # at garbled bytes.
-fn BUILD_METHOD_NAME(S, si, mnoff) {
+fn BUILD_METHOD_NAME(S, si, mnoff): i64 {
     NPOS_GUARD(S, 256);
     var scratch = GNPOS(S);
     var wp = scratch;
@@ -70,7 +70,7 @@ fn BUILD_METHOD_NAME(S, si, mnoff) {
 
 # Load a struct field: ident.field → emit load from var_addr + field_offset
 # Or call a method: ident.method(args) → call StructName_method(&ident, args)
-fn PARSE_FIELD_LOAD(S, noff) {
+fn PARSE_FIELD_LOAD(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume DOT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var fnoff = PEEKV(S);
@@ -249,7 +249,7 @@ fn PARSE_FIELD_LOAD(S, noff) {
 }
 
 # Store to a struct field: ident.field = expr; or ident.inner.field = expr;
-fn PARSE_FIELD_STORE(S, noff) {
+fn PARSE_FIELD_STORE(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume DOT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var fnoff = PEEKV(S);
@@ -367,7 +367,7 @@ fn PARSE_FIELD_STORE(S, noff) {
 # `width = 8` keeps the legacy store64 path; the `width = 1/2/4`
 # branches mirror the existing PARSE_FIELD_STORE narrow-store
 # encodings.
-fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width) {
+fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     PCMPE(S);
     EPUSHR(S);
     # Load variable address into x1/rcx via fixup
@@ -387,11 +387,11 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width) {
 # Back-compat: legacy 8-byte EMIT_STRUCT_FIELD wrapper. Existing
 # call sites that don't yet pass a width default to 8 to preserve
 # pre-v5.9.36 behavior.
-fn EMIT_STRUCT_FIELD(S, vcnt, boff) {
+fn EMIT_STRUCT_FIELD(S, vcnt, boff): i64 {
     return EMIT_STRUCT_FIELD_W(S, vcnt, boff, 8);
 }
 
-fn PARSE_STRUCT_INIT(S, noff, sid) {
+fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     var si = sid - 1;
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
@@ -502,7 +502,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid) {
     return 0;
 }
 
-fn PARSE_GVAR_ARR(S, noff) {
+fn PARSE_GVAR_ARR(S, noff): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
     var sz = PEEKV(S) * 8;
@@ -521,7 +521,7 @@ fn PARSE_GVAR_ARR(S, noff) {
 }
 
 # Register a global var in declaration zone (no codegen, deferred init)
-fn PARSE_GVAR_REG(S) {
+fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -625,7 +625,7 @@ fn PARSE_GVAR_REG(S) {
 }
 
 # Emit deferred global var inits (replays saved token positions)
-fn EMIT_GVAR_INITS(S) {
+fn EMIT_GVAR_INITS(S): i64 {
     var gc = L64(S + 0x19A000);
     var gi = 0;
     while (gi < gc) {
@@ -702,7 +702,7 @@ fn EMIT_GVAR_INITS(S) {
 }
 
 # Parse: var IDENT = expr ;
-fn PARSE_VAR(S) {
+fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
     # expect IDENT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }

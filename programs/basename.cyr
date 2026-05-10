@@ -2,7 +2,7 @@
 # Exercises: for loops, load8, string scanning
 # Usage: echo "/usr/bin/test" | ./basename
 
-fn basename() {
+fn basename(): i64 {
     var buf[4096];
     var n = syscall(0, 0, &buf, 4096);
     if (n <= 0) { return 0; }

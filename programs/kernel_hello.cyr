@@ -10,14 +10,14 @@ kernel;
 # Each character = 2 bytes: [ascii, attribute]
 # Attribute 0x0F = white on black
 
-fn vga_putchar(pos, ch) {
+fn vga_putchar(pos, ch): i64 {
     var vga = 0xB8000;
     store8(vga + pos * 2, ch);
     store8(vga + pos * 2 + 1, 0x0F);
     return 0;
 }
 
-fn vga_print(msg, len) {
+fn vga_print(msg, len): i64 {
     for (var i = 0; i < len; i = i + 1) {
         vga_putchar(i, load8(msg + i));
     }

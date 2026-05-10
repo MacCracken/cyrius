@@ -1,7 +1,7 @@
 # ================================================================
 # Native coverage: scan lib/*.cyr functions, check if tested
 # ================================================================
-fn cmd_coverage() {
+fn cmd_coverage(): i64 {
     _status("=== Coverage Report ===");
     println("");
     # Collect all test content into one buffer for searching
@@ -121,7 +121,7 @@ fn cmd_coverage() {
 # ================================================================
 # Native doctest: extract # >>> / # === patterns, compile, run
 # ================================================================
-fn cmd_doctest(arg) {
+fn cmd_doctest(arg): i64 {
     if (arg == 0) {
         println("Usage: cyrius doctest <file.cyr>");
         return 1;
@@ -253,7 +253,7 @@ fn cmd_doctest(arg) {
 # ================================================================
 # Native header: scan pub fn declarations, emit C prototypes
 # ================================================================
-fn cmd_header(arg) {
+fn cmd_header(arg): i64 {
     if (arg == 0) {
         println("Usage: cyrius header <file.cyr>");
         return 1;
@@ -365,7 +365,7 @@ fn cmd_header(arg) {
     return 0;
 }
 
-fn cmd_repl() {
+fn cmd_repl(): i64 {
     var script = make_path(_scripts_dir, "cyrius-repl.sh");
     return run_script(script, _cc, 0);
 }

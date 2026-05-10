@@ -2,7 +2,7 @@
 # Exercises: for loops, arrays, nested loops, load8/store8
 # Exit code = number of primes found
 
-fn sieve() {
+fn sieve(): i64 {
     var buf[256];
     # Init all to 1 (prime candidate)
     for (var a = 0; a < 256; a = a + 1) { store8(&buf + a, 1); }

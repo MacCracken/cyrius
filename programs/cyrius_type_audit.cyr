@@ -1,0 +1,347 @@
+# cyrius_type_audit — surface audit for REAL TYPE SYSTEM Phase 1.
+#
+# Pinned at v5.10.22 ship. Phase 1A of the multi-slot type-system
+# arc (v5.10.22-26). Subsequent phases depend on every public
+# stdlib fn having a return-type annotation so call-site type
+# checking (Phase 2) and overload dispatch (Phase 3) have signal
+# to work with.
+#
+# What it does:
+#   Walks `lib/*.cyr` + `src/*.cyr` + `src/**/*.cyr` + `programs/*.cyr`.
+#   Scans every `fn name(args) { ... }` declaration. Classifies:
+#     - has-return-annotation: `fn foo(a, b): Str { ... }` → 1
+#     - lacks annotation: `fn foo(a, b) { ... }` → 0
+#   Groups by module. Reports counts + the unannotated-fn list.
+#
+# Usage:
+#   cyrius type-audit             # full audit, summary + list to stdout
+#   cyrius type-audit --summary   # counts only (CI-friendly)
+#   cyrius type-audit --module=NAME  # focus on one module
+#
+# Exclusions:
+#   - `_`-prefixed (private convention)
+#   - `fn _NAME(...)` (idiomatic private)
+#
+# Public-only counts are what Phase 2-3 needs; private fns
+# can be annotated opportunistically as later slots touch them.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fs.cyr"
+include "lib/syscalls.cyr"
+include "lib/args.cyr"
+
+var TOTAL_PUBLIC = 0;
+var TOTAL_ANNOTATED = 0;
+var SHOW_LIST = 1;
+var FOCUS_MODULE = 0;
+
+fn _is_idstart(c): i64 {
+    if (c >= 65) { if (c <= 90) { return 1; } }
+    if (c >= 97) { if (c <= 122) { return 1; } }
+    if (c == 95) { return 1; }
+    return 0;
+}
+fn _is_idcont(c): i64 {
+    if (_is_idstart(c) == 1) { return 1; }
+    if (c >= 48) { if (c <= 57) { return 1; } }
+    return 0;
+}
+
+# Read whole file into a freshly alloc'd buffer, return (ptr, len)
+# via store64 to caller-provided len_out. Returns 0 on read failure.
+fn _read_file_all(path, len_out): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    var sz = _file_size_fd(fd);
+    if (sz <= 0) { sys_close(fd); return 0; }
+    var buf = alloc(sz + 1);
+    var total = 0;
+    var go = 1;
+    while (go == 1) {
+        var n = sys_read(fd, buf + total, sz - total);
+        if (n <= 0) { go = 0; }
+        else { total = total + n; if (total >= sz) { go = 0; } }
+    }
+    sys_close(fd);
+    store8(buf + total, 0);
+    store64(len_out, total);
+    return buf;
+}
+
+# Get file size via fstat on the open fd. 0 / negative on failure.
+fn _file_size_fd(fd): i64 {
+    var stat_buf[144];
+    var rr = sys_fstat(fd, &stat_buf);
+    if (rr < 0) { return 0; }
+    return load64(&stat_buf + 48);
+}
+
+# Match `fn NAME(args)`. Returns 1 if line at `bp` opens a fn decl,
+# else 0. On match, writes name_off / name_len / has_ann / private
+# back via the four `_out` store64 addresses. Skips leading whitespace.
+fn _match_fn_decl(buf, bp, eol, name_off_out, name_len_out, has_ann_out, private_out): i64 {
+    var p = bp;
+    while (p < eol) {
+        var c = load8(buf + p);
+        if (c != 32 && c != 9) { break; }
+        p = p + 1;
+    }
+    # `fn ` prefix — must be exactly 3 bytes "f", "n", " " or "\t"
+    if (p + 3 > eol) { return 0; }
+    if (load8(buf + p)     != 102) { return 0; }   # 'f'
+    if (load8(buf + p + 1) != 110) { return 0; }   # 'n'
+    var c3 = load8(buf + p + 2);
+    if (c3 != 32 && c3 != 9) { return 0; }
+    p = p + 3;
+    # Skip more whitespace before name
+    while (p < eol) {
+        var c4 = load8(buf + p);
+        if (c4 != 32 && c4 != 9) { break; }
+        p = p + 1;
+    }
+    if (p >= eol) { return 0; }
+    if (_is_idstart(load8(buf + p)) == 0) { return 0; }
+    var name_start = p;
+    while (p < eol) {
+        if (_is_idcont(load8(buf + p)) == 0) { break; }
+        p = p + 1;
+    }
+    var name_end = p;
+    # `(`
+    if (p >= eol) { return 0; }
+    if (load8(buf + p) != 40) { return 0; }   # '('
+    # Skip past matching `)`. Don't worry about nested parens
+    # in default values etc. — stdlib doesn't use them in
+    # signatures.
+    var depth = 1;
+    p = p + 1;
+    while (p < eol && depth > 0) {
+        var cp = load8(buf + p);
+        if (cp == 40) { depth = depth + 1; }
+        elif (cp == 41) { depth = depth - 1; }
+        p = p + 1;
+    }
+    if (depth != 0) { return 0; }
+    # Skip whitespace then check for `:`
+    while (p < eol) {
+        var c5 = load8(buf + p);
+        if (c5 != 32 && c5 != 9) { break; }
+        p = p + 1;
+    }
+    var has_ann = 0;
+    if (p < eol) { if (load8(buf + p) == 58) { has_ann = 1; } }   # ':'
+    var is_private = 0;
+    if (load8(buf + name_start) == 95) { is_private = 1; }    # '_'
+    store64(name_off_out, buf + name_start);
+    store64(name_len_out, name_end - name_start);
+    store64(has_ann_out, has_ann);
+    store64(private_out, is_private);
+    return 1;
+}
+
+# Audit one file. Writes counts to total_out / annotated_out.
+fn _audit_file(path, mod_name): i64 {
+    var len_holder[1];
+    store64(&len_holder, 0);
+    var buf = _read_file_all(path, &len_holder);
+    if (buf == 0) { return 0; }
+    var len = load64(&len_holder);
+
+    var pos = 0;
+    var module_total = 0;
+    var module_annotated = 0;
+    while (pos < len) {
+        var eol = pos;
+        while (eol < len) {
+            if (load8(buf + eol) == 10) { break; }
+            eol = eol + 1;
+        }
+        var name_off_h[1];
+        var name_len_h[1];
+        var has_ann_h[1];
+        var private_h[1];
+        store64(&name_off_h, 0);
+        store64(&name_len_h, 0);
+        store64(&has_ann_h, 0);
+        store64(&private_h, 0);
+        if (_match_fn_decl(buf, pos, eol, &name_off_h, &name_len_h, &has_ann_h, &private_h) == 1) {
+            var is_priv = load64(&private_h);
+            if (is_priv == 0) {
+                module_total = module_total + 1;
+                var has_ann = load64(&has_ann_h);
+                if (has_ann == 1) { module_annotated = module_annotated + 1; }
+                elif (SHOW_LIST == 1) {
+                    sys_write(1, "  ", 2);
+                    sys_write(1, mod_name, strlen(mod_name));
+                    sys_write(1, "::", 2);
+                    var noff = load64(&name_off_h);
+                    var nlen = load64(&name_len_h);
+                    sys_write(1, noff, nlen);
+                    sys_write(1, "\n", 1);
+                }
+            }
+        }
+        pos = eol + 1;
+    }
+    TOTAL_PUBLIC = TOTAL_PUBLIC + module_total;
+    TOTAL_ANNOTATED = TOTAL_ANNOTATED + module_annotated;
+    if (module_total > 0) {
+        sys_write(2, "  ", 2);
+        sys_write(2, mod_name, strlen(mod_name));
+        sys_write(2, ": ", 2);
+        var ann_buf[24];
+        var ann_len = fmt_int_buf(module_annotated, &ann_buf);
+        sys_write(2, &ann_buf, ann_len);
+        sys_write(2, "/", 1);
+        var tot_buf[24];
+        var tot_len = fmt_int_buf(module_total, &tot_buf);
+        sys_write(2, &tot_buf, tot_len);
+        sys_write(2, " annotated\n", 11);
+    }
+    return 0;
+}
+
+# Strip ".cyr" suffix from a basename. Returns new alloc'd string.
+fn _strip_cyr_suffix(name): i64 {
+    var n = strlen(name);
+    if (n > 4) {
+        if (load8(name + n - 4) == 46) {
+            if (load8(name + n - 3) == 99) {
+                if (load8(name + n - 2) == 121) {
+                    if (load8(name + n - 1) == 114) {
+                        var out = alloc(n - 4 + 1);
+                        memcpy(out, name, n - 4);
+                        store8(out + (n - 4), 0);
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+    var dup = alloc(n + 1);
+    memcpy(dup, name, n);
+    store8(dup + n, 0);
+    return dup;
+}
+
+# Helper: append n bytes from a ptr to a str_builder. lib/str.cyr
+# has str_builder_add_byte (single-byte) but no add-many helper;
+# ad-hoc loop here.
+fn str_builder_add_byte_ptr(sb, ptr, n): i64 {
+    var i = 0;
+    while (i < n) {
+        str_builder_add_byte(sb, load8(ptr + i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Walk a directory of .cyr files, audit each.
+fn _scan_dir(dir): i64 {
+    var entries = dir_list(str_from(dir));
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var name = vec_get(entries, i);
+        var nd = str_data(name);
+        var nl = str_len(name);
+        if (nl > 4) {
+            if (load8(nd + nl - 4) == 46) {
+                if (load8(nd + nl - 3) == 99) {
+                    if (load8(nd + nl - 2) == 121) {
+                        if (load8(nd + nl - 1) == 114) {
+                            var pb = str_builder_new();
+                            str_builder_add_cstr(pb, dir);
+                            str_builder_add_cstr(pb, "/");
+                            str_builder_add_byte_ptr(pb, nd, nl);
+                            var path_str = str_builder_build(pb);
+                            var path = str_data(path_str);
+                            var mname = _strip_cyr_suffix(nd);
+                            if (FOCUS_MODULE == 0) {
+                                _audit_file(path, mname);
+                            } else {
+                                if (streq(mname, FOCUS_MODULE) == 1) {
+                                    _audit_file(path, mname);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    var i = 1;
+    while (i < argc()) {
+        var a = argv(i);
+        if (streq(a, "--summary") == 1) { SHOW_LIST = 0; }
+        elif (strlen(a) > 9) {
+            if (memeq(a, "--module=", 9) == 1) {
+                FOCUS_MODULE = a + 9;
+            }
+        }
+        i = i + 1;
+    }
+
+    sys_write(2, "=== cyrius type-audit (REAL TYPE SYSTEM Phase 1) ===\n", 53);
+
+    if (SHOW_LIST == 1) {
+        sys_write(1, "Unannotated public fns:\n", 24);
+    }
+    sys_write(2, "\nlib/:\n", 7);
+    _scan_dir("lib");
+    sys_write(2, "\nsrc/:\n", 7);
+    _scan_dir("src");
+    sys_write(2, "\nsrc/frontend/:\n", 16);
+    _scan_dir("src/frontend");
+    sys_write(2, "\nsrc/backend/x86/:\n", 19);
+    _scan_dir("src/backend/x86");
+    sys_write(2, "\nsrc/backend/aarch64/:\n", 23);
+    _scan_dir("src/backend/aarch64");
+    sys_write(2, "\nsrc/backend/cx/:\n", 18);
+    _scan_dir("src/backend/cx");
+    sys_write(2, "\nsrc/backend/macho/:\n", 21);
+    _scan_dir("src/backend/macho");
+    sys_write(2, "\nsrc/backend/pe/:\n", 18);
+    _scan_dir("src/backend/pe");
+    sys_write(2, "\nsrc/common/:\n", 14);
+    _scan_dir("src/common");
+    sys_write(2, "\nprograms/:\n", 12);
+    _scan_dir("programs");
+
+    sys_write(2, "\n=== Summary ===\n", 17);
+    sys_write(2, "  total public fns:       ", 26);
+    var tb[24];
+    var tl = fmt_int_buf(TOTAL_PUBLIC, &tb);
+    sys_write(2, &tb, tl);
+    sys_write(2, "\n  with return annotation: ", 27);
+    var ab[24];
+    var al = fmt_int_buf(TOTAL_ANNOTATED, &ab);
+    sys_write(2, &ab, al);
+    sys_write(2, "\n  unannotated:            ", 27);
+    var ub[24];
+    var ul = fmt_int_buf(TOTAL_PUBLIC - TOTAL_ANNOTATED, &ub);
+    sys_write(2, &ub, ul);
+    sys_write(2, "\n", 1);
+
+    if (TOTAL_PUBLIC > 0) {
+        var pct = TOTAL_ANNOTATED * 100 / TOTAL_PUBLIC;
+        sys_write(2, "  coverage:               ", 26);
+        var pb[24];
+        var pl = fmt_int_buf(pct, &pb);
+        sys_write(2, &pb, pl);
+        sys_write(2, "%\n", 2);
+    }
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

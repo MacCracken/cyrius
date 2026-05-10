@@ -14,7 +14,7 @@ var _env_scratch[256];
 #   __got[6]. Returns u64 ns directly in x0. The Linux-shape 3-arg
 #   form (clock_id, &ts-placeholder) keeps the call-site readable.
 # * Non-Linux non-macOS targets fall through to 0.
-fn _prof_clock_ns() {
+fn _prof_clock_ns(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return syscall(228, 4, 0);
     #endif
@@ -27,7 +27,7 @@ fn _prof_clock_ns() {
 
 # Read an env var by name. Returns &_env_scratch (NUL-terminated value) or 0.
 # aarch64 Linux syscalls: openat=56, read=63, close=57.
-fn _read_env(name) {
+fn _read_env(name): i64 {
     var ebuf[8192];
     var efd = 0;
     if (SYS_OPEN == 2) { efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
@@ -68,7 +68,7 @@ fn _read_env(name) {
     return 0;
 }
 
-fn FIXUP(S) {
+fn FIXUP(S): i64 {
     # Check for Mach-O ARM64 output mode
     var _ma_env = _read_env("CYRIUS_MACHO_ARM");
     if (_ma_env != 0) {
@@ -246,7 +246,7 @@ fn FIXUP(S) {
 #   ADD  xN, xN, #lo  (offset +4)  — imm12 holds target address low 12 bits
 # Apple Silicon enforces MH_PIE, so absolute addressing (MOVZ/MOVK) is unsafe.
 # This pair is PC-relative and survives the ASLR slide.
-fn FIXUP_ADRP_ADD(S, coff, addr) {
+fn FIXUP_ADRP_ADD(S, coff, addr): i64 {
     var pc = 0x100004000 + coff;
     var pc_page = pc >> 12;
     var target_page = addr >> 12;
@@ -272,7 +272,7 @@ fn FIXUP_ADRP_ADD(S, coff, addr) {
 # v5.5.14 uses this for non-zero __got slots; slot 0 still reuses
 # FIXUP_ADRP_ADD because its low 12 bits are 0, and 0 in the ADD's
 # imm12 field coincides with 0 in the LDR's imm12 field.
-fn FIXUP_ADRP_LDR(S, coff, addr) {
+fn FIXUP_ADRP_LDR(S, coff, addr): i64 {
     var pc = 0x100004000 + coff;
     var pc_page = pc >> 12;
     var target_page = addr >> 12;
@@ -296,7 +296,7 @@ fn FIXUP_ADRP_LDR(S, coff, addr) {
 #   MOVZ xN, #low16          (offset +0)
 #   MOVK xN, #mid16, LSL 16  (offset +4)
 #   MOVK xN, #hi16, LSL 32   (offset +8)
-fn FIXUP_MOV(S, coff, addr) {
+fn FIXUP_MOV(S, coff, addr): i64 {
     var base = S + 0x64A000 + coff;
     var lo = addr & 0xFFFF;
     var mid = (addr >> 16) & 0xFFFF;
@@ -320,7 +320,7 @@ fn FIXUP_MOV(S, coff, addr) {
 # ELF EMISSION — aarch64 ELF64
 # ================================================================
 
-fn EMITELF(S) {
+fn EMITELF(S): i64 {
     if (_TARGET_MACHO == 2) { EMITMACHO_ARM64(S); return 0; }
     if (L64(S + 0x18FCA0) == 1) { EMITELF_KERNEL(S); return 0; }
     var cp = GCP(S);
@@ -372,7 +372,7 @@ fn EMITELF(S) {
 # Kernel ELF for aarch64: ELF64 at base 0x40000000
 # Bootable by: qemu-system-aarch64 -M virt -cpu cortex-a57 -kernel build/agnos_aarch64
 # No multiboot (ARM uses device tree). Entry at base + 0x78 (after ELF + PH headers).
-fn EMITELF_KERNEL(S) {
+fn EMITELF_KERNEL(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);

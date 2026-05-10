@@ -137,18 +137,18 @@ var _pe_imp_buf_pos        = 0;
 # next offset. PE32+ is little-endian everywhere; store bytes in
 # low-to-high order.
 
-fn _pe_w8(O, off, v) {
+fn _pe_w8(O, off, v): i64 {
     store8(O + off, v & 0xFF);
     return off + 1;
 }
 
-fn _pe_w16(O, off, v) {
+fn _pe_w16(O, off, v): i64 {
     store8(O + off, v & 0xFF);
     store8(O + off + 1, (v >> 8) & 0xFF);
     return off + 2;
 }
 
-fn _pe_w32(O, off, v) {
+fn _pe_w32(O, off, v): i64 {
     store8(O + off, v & 0xFF);
     store8(O + off + 1, (v >> 8) & 0xFF);
     store8(O + off + 2, (v >> 16) & 0xFF);
@@ -156,14 +156,14 @@ fn _pe_w32(O, off, v) {
     return off + 4;
 }
 
-fn _pe_w64(O, off, v) {
+fn _pe_w64(O, off, v): i64 {
     off = _pe_w32(O, off, v & 0xFFFFFFFF);
     off = _pe_w32(O, off, (v >> 32) & 0xFFFFFFFF);
     return off;
 }
 
 # Write a NUL-terminated C string including its terminator.
-fn _pe_wstr(O, off, s) {
+fn _pe_wstr(O, off, s): i64 {
     var i = 0;
     var c = load8(s);
     while (c != 0) {
@@ -177,7 +177,7 @@ fn _pe_wstr(O, off, s) {
 
 # Pad output with zeros up to the next multiple of `align`. Assumes
 # `align` is a power of two. Returns the new (aligned) offset.
-fn _pe_wpad(O, off, align) {
+fn _pe_wpad(O, off, align): i64 {
     var mask = align - 1;
     var target = (off + mask) & (0 - align);
     while (off < target) {
@@ -196,7 +196,7 @@ fn _pe_wpad(O, off, align) {
 # registration from compiler source (either `#pe_import(...)` or
 # auto-discovery from kernel32-wrapper calls).
 
-fn _pe_imp_add(name) {
+fn _pe_imp_add(name): i64 {
     S64(&_pe_imp_name_offs + _pe_imp_count * 8, _pe_imp_buf_pos);
     var i = 0;
     var c = load8(name);
@@ -249,7 +249,7 @@ var _pe_stdio_ready       = 0;
 var _pe_stdio_getstd_idx  = 0;
 var _pe_stdio_writef_idx  = 0;
 
-fn _pe_ensure_stdio(S) {
+fn _pe_ensure_stdio(S): i64 {
     if (_pe_stdio_ready == 1) { return 0; }
     _pe_stdio_getstd_idx = 1 + _pe_pending_imp_count;
     _pe_pending_imp_add(S, "GetStdHandle");
@@ -262,8 +262,8 @@ fn _pe_ensure_stdio(S) {
 # Accessors used by EWRITE_PE in x86/emit.cyr. Globals are visible
 # cross-file but accessing them via helper fns keeps the contract
 # one-way: pe/emit.cyr owns the idx state, x86/emit.cyr reads it.
-fn _pe_stdio_getstd_get() { return _pe_stdio_getstd_idx; }
-fn _pe_stdio_writef_get() { return _pe_stdio_writef_idx; }
+fn _pe_stdio_getstd_get(): i64 { return _pe_stdio_getstd_idx; }
+fn _pe_stdio_writef_get(): i64 { return _pe_stdio_writef_idx; }
 
 # ================================================================
 # v5.5.1 — additional kernel32 auto-imports for the remaining PE
@@ -279,7 +279,7 @@ fn _pe_stdio_writef_get() { return _pe_stdio_writef_idx; }
 
 var _pe_readf_ready       = 0;
 var _pe_readf_idx         = 0;
-fn _pe_ensure_readf(S) {
+fn _pe_ensure_readf(S): i64 {
     if (_pe_readf_ready == 1) { return 0; }
     _pe_ensure_stdio(S);
     _pe_readf_idx = 1 + _pe_pending_imp_count;
@@ -287,51 +287,51 @@ fn _pe_ensure_readf(S) {
     _pe_readf_ready = 1;
     return 0;
 }
-fn _pe_readf_get() { return _pe_readf_idx; }
+fn _pe_readf_get(): i64 { return _pe_readf_idx; }
 
 var _pe_closeh_ready      = 0;
 var _pe_closeh_idx        = 0;
-fn _pe_ensure_closeh(S) {
+fn _pe_ensure_closeh(S): i64 {
     if (_pe_closeh_ready == 1) { return 0; }
     _pe_closeh_idx = 1 + _pe_pending_imp_count;
     _pe_pending_imp_add(S, "CloseHandle");
     _pe_closeh_ready = 1;
     return 0;
 }
-fn _pe_closeh_get() { return _pe_closeh_idx; }
+fn _pe_closeh_get(): i64 { return _pe_closeh_idx; }
 
 var _pe_seekfp_ready      = 0;
 var _pe_seekfp_idx        = 0;
-fn _pe_ensure_seekfp(S) {
+fn _pe_ensure_seekfp(S): i64 {
     if (_pe_seekfp_ready == 1) { return 0; }
     _pe_seekfp_idx = 1 + _pe_pending_imp_count;
     _pe_pending_imp_add(S, "SetFilePointerEx");
     _pe_seekfp_ready = 1;
     return 0;
 }
-fn _pe_seekfp_get() { return _pe_seekfp_idx; }
+fn _pe_seekfp_get(): i64 { return _pe_seekfp_idx; }
 
 var _pe_vallo_ready       = 0;
 var _pe_vallo_idx         = 0;
-fn _pe_ensure_vallo(S) {
+fn _pe_ensure_vallo(S): i64 {
     if (_pe_vallo_ready == 1) { return 0; }
     _pe_vallo_idx = 1 + _pe_pending_imp_count;
     _pe_pending_imp_add(S, "VirtualAlloc");
     _pe_vallo_ready = 1;
     return 0;
 }
-fn _pe_vallo_get() { return _pe_vallo_idx; }
+fn _pe_vallo_get(): i64 { return _pe_vallo_idx; }
 
 var _pe_createf_ready     = 0;
 var _pe_createf_idx       = 0;
-fn _pe_ensure_createf(S) {
+fn _pe_ensure_createf(S): i64 {
     if (_pe_createf_ready == 1) { return 0; }
     _pe_createf_idx = 1 + _pe_pending_imp_count;
     _pe_pending_imp_add(S, "CreateFileW");
     _pe_createf_ready = 1;
     return 0;
 }
-fn _pe_createf_get() { return _pe_createf_idx; }
+fn _pe_createf_get(): i64 { return _pe_createf_idx; }
 
 # v5.6.6: GetTickCount64 auto-import for CYRIUS_PROF profiling.
 # kernel32!GetTickCount64() takes no args, returns u64 ms in rax.
@@ -340,21 +340,21 @@ fn _pe_createf_get() { return _pe_createf_idx; }
 # stdio / readf / createf helpers above.
 var _pe_gettick_ready     = 0;
 var _pe_gettick_idx       = 0;
-fn _pe_ensure_gettick(S) {
+fn _pe_ensure_gettick(S): i64 {
     if (_pe_gettick_ready == 1) { return 0; }
     _pe_gettick_idx = 1 + _pe_pending_imp_count;
     _pe_pending_imp_add(S, "GetTickCount64");
     _pe_gettick_ready = 1;
     return 0;
 }
-fn _pe_gettick_get() { return _pe_gettick_idx; }
+fn _pe_gettick_get(): i64 { return _pe_gettick_idx; }
 
 # Called from `parse.cyr`'s `#pe_import("dll", "symbol")` handler
 # with `name` pointing at the NUL-terminated symbol string inside
 # str_data. Appends the name to the pending buffer; `_pe_layout`
 # iterates the buffer and forwards each entry to `_pe_imp_add`
 # after placing `ExitProcess` at imp_idx=0.
-fn _pe_pending_imp_add(S, name) {
+fn _pe_pending_imp_add(S, name): i64 {
     S64(&_pe_pending_imp_offs + _pe_pending_imp_count * 8,
     _pe_pending_imp_pos);
     var i = 0;
@@ -377,7 +377,7 @@ fn _pe_pending_imp_add(S, name) {
 # ftype=4 entries are patched with
 #   disp32 = IAT_RVA - (text_rva + coff + 4)
 # where IAT_RVA = _pe_idata_rva + _pe_iat_sub_off + imp_idx * 8.
-fn _pe_iat_fixup_add(S, coff, imp_idx) {
+fn _pe_iat_fixup_add(S, coff, imp_idx): i64 {
     var fc = GFCNT(S);
     if (fc >= 262144) {
         syscall(SYS_WRITE, 2,
@@ -398,7 +398,7 @@ fn _pe_iat_fixup_add(S, coff, imp_idx) {
 # computation — writes only to pe/emit.cyr's own globals, nothing
 # to the output buffer. Must be called before EMITPE_EXEC.
 
-fn _pe_layout(S) {
+fn _pe_layout(S): i64 {
     # Reset import registry so _pe_layout is idempotent (callers can
     # re-enter it after a failed compile without stale state).
     _pe_imp_count = 0;
@@ -622,7 +622,7 @@ fn _pe_layout(S) {
 # treats sequential `var x` declarations in the same scope as
 # redeclaration (reassignment is the supported pattern).
 
-fn EMITPE_EXEC(S) {
+fn EMITPE_EXEC(S): i64 {
     var O = S + 0x94A000;
     var o = 0;
     var cp = GCP(S);

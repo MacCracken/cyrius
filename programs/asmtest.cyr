@@ -2,24 +2,24 @@
 # Exercises: asm blocks with mnemonics
 # Compiles functions with kernel-critical instructions
 
-fn test_cli() { asm { cli; } return 0; }
-fn test_sti() { asm { sti; } return 0; }
-fn test_hlt() { asm { hlt; } return 0; }
-fn test_nop() { asm { nop; } return 0; }
-fn test_iretq() { asm { iretq; } return 0; }
-fn test_wrmsr() { asm { wrmsr; } return 0; }
-fn test_rdmsr() { asm { rdmsr; } return 0; }
-fn test_cpuid() { asm { cpuid; } return 0; }
-fn test_pushfq() { asm { pushfq; } return 0; }
-fn test_popfq() { asm { popfq; } return 0; }
-fn test_lgdt() { asm { lgdt [rax]; } return 0; }
-fn test_lidt() { asm { lidt [rax]; } return 0; }
-fn test_mov_cr3() { asm { mov cr3, rax; } return 0; }
-fn test_mov_rax_cr3() { asm { mov rax, cr3; } return 0; }
-fn test_mov_cr0() { asm { mov cr0, rax; } return 0; }
-fn test_int() { asm { int 3; } return 0; }
-fn test_invlpg() { asm { invlpg [rax]; } return 0; }
-fn test_mixed() { asm { cli; } asm { mov cr3, rax; } asm { sti; } return 0; }
+fn test_cli(): i64 { asm { cli; } return 0; }
+fn test_sti(): i64 { asm { sti; } return 0; }
+fn test_hlt(): i64 { asm { hlt; } return 0; }
+fn test_nop(): i64 { asm { nop; } return 0; }
+fn test_iretq(): i64 { asm { iretq; } return 0; }
+fn test_wrmsr(): i64 { asm { wrmsr; } return 0; }
+fn test_rdmsr(): i64 { asm { rdmsr; } return 0; }
+fn test_cpuid(): i64 { asm { cpuid; } return 0; }
+fn test_pushfq(): i64 { asm { pushfq; } return 0; }
+fn test_popfq(): i64 { asm { popfq; } return 0; }
+fn test_lgdt(): i64 { asm { lgdt [rax]; } return 0; }
+fn test_lidt(): i64 { asm { lidt [rax]; } return 0; }
+fn test_mov_cr3(): i64 { asm { mov cr3, rax; } return 0; }
+fn test_mov_rax_cr3(): i64 { asm { mov rax, cr3; } return 0; }
+fn test_mov_cr0(): i64 { asm { mov cr0, rax; } return 0; }
+fn test_int(): i64 { asm { int 3; } return 0; }
+fn test_invlpg(): i64 { asm { invlpg [rax]; } return 0; }
+fn test_mixed(): i64 { asm { cli; } asm { mov cr3, rax; } asm { sti; } return 0; }
 
 # Can't execute privileged instructions in user mode — just verify compilation
 var r = 18;

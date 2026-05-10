@@ -5,7 +5,7 @@
 
 # Emit conditional jump (0F cc 00000000), return patch offset
 # cc5: records IR_JCC node with condition code in flags
-fn EJCC(S, cc) {
+fn EJCC(S, cc): i64 {
     # Note: always emit x86 even in mode 2 — patch offsets needed by parse.cyr
     EB(S, 0x0F);
     EB(S, cc);
@@ -26,7 +26,7 @@ fn EJCC(S, cc) {
 # Emit unconditional jmp to target (E9 rel32)
 # Also records target as a jump target for basic-block analysis.
 # cc5: records IR_JMP_BACK with absolute target offset
-fn EJMP(S, target) {
+fn EJMP(S, target): i64 {
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_JMP_BACK, 0, 0, target); }
     EB(S, 0xE9);
@@ -55,7 +55,7 @@ fn EJMP(S, target) {
 
 # Emit jmp placeholder (E9 00000000), return patch offset
 # cc5: records IR_JMP node (forward, target resolved at EPATCH)
-fn EJMP0(S) {
+fn EJMP0(S): i64 {
     EB(S, 0xE9);
     var patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -74,7 +74,7 @@ fn EJMP0(S) {
 # Patch a previously emitted rel32 at codebuf offset to jump here
 # Also records GCP(S) as a jump target for basic-block analysis.
 # cc5: records IR_NOP as BB boundary marker (landing pad)
-fn EPATCH(S, off) {
+fn EPATCH(S, off): i64 {
     # cc5: record landing pad with the patch offset for edge matching
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_NOP, 0, off, 0); }

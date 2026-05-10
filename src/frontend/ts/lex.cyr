@@ -249,46 +249,46 @@ var TS_TOK_JSX_FRAGMENT_CLOSE     = 312;     # `</>`
 # Helper fns — heap accessors (all relative to ts_base)
 # ================================================================
 
-fn TS_GPOS(ts_base) {
+fn TS_GPOS(ts_base): i64 {
     return load64(ts_base + TS_LEX_STATE_OFF + TS_LS_POS);
 }
 
-fn TS_SPOS(ts_base, p) {
+fn TS_SPOS(ts_base, p): i64 {
     store64(ts_base + TS_LEX_STATE_OFF + TS_LS_POS, p);
     return 0;
 }
 
-fn TS_GLINE(ts_base) {
+fn TS_GLINE(ts_base): i64 {
     return load64(ts_base + TS_LEX_STATE_OFF + TS_LS_LINE);
 }
 
-fn TS_INCLINE(ts_base) {
+fn TS_INCLINE(ts_base): i64 {
     var l = load64(ts_base + TS_LEX_STATE_OFF + TS_LS_LINE);
     store64(ts_base + TS_LEX_STATE_OFF + TS_LS_LINE, l + 1);
     return 0;
 }
 
-fn TS_GTCNT(ts_base) {
+fn TS_GTCNT(ts_base): i64 {
     return load64(ts_base + TS_LEX_STATE_OFF + TS_LS_TOK_COUNT);
 }
 
-fn TS_STCNT(ts_base, n) {
+fn TS_STCNT(ts_base, n): i64 {
     store64(ts_base + TS_LEX_STATE_OFF + TS_LS_TOK_COUNT, n);
     return 0;
 }
 
-fn TS_SETERR(ts_base, code) {
+fn TS_SETERR(ts_base, code): i64 {
     store64(ts_base + TS_LEX_STATE_OFF + TS_LS_ERR_CODE, code);
     return 0;
 }
 
-fn TS_GETERR(ts_base) {
+fn TS_GETERR(ts_base): i64 {
     return load64(ts_base + TS_LEX_STATE_OFF + TS_LS_ERR_CODE);
 }
 
 # Append a token to the parallel arrays. Returns 0 on success,
 # -1 on cap exceeded (sets err code 2).
-fn TS_ADDTOK(ts_base, typ, val) {
+fn TS_ADDTOK(ts_base, typ, val): i64 {
     var tc = TS_GTCNT(ts_base);
     if (tc >= TS_TOK_CAP) {
         TS_SETERR(ts_base, 2);
@@ -302,15 +302,15 @@ fn TS_ADDTOK(ts_base, typ, val) {
 }
 
 # Read accessors (used by tests + parser later).
-fn TS_PEEKT(ts_base, idx) {
+fn TS_PEEKT(ts_base, idx): i64 {
     return load64(ts_base + TS_TOK_TYPES_OFF + idx * 8);
 }
 
-fn TS_PEEKV(ts_base, idx) {
+fn TS_PEEKV(ts_base, idx): i64 {
     return load64(ts_base + TS_TOK_VALUES_OFF + idx * 8);
 }
 
-fn TS_PEEKLINE(ts_base, idx) {
+fn TS_PEEKLINE(ts_base, idx): i64 {
     return load64(ts_base + TS_TOK_LINES_OFF + idx * 8);
 }
 
@@ -319,7 +319,7 @@ fn TS_PEEKLINE(ts_base, idx) {
 # ================================================================
 
 # True for [a-zA-Z_$]
-fn TS_ISIDSTART(c) {
+fn TS_ISIDSTART(c): i64 {
     if (c >= 97) { if (c <= 122) { return 1; } }    # a-z
     if (c >= 65) { if (c <= 90)  { return 1; } }    # A-Z
     if (c == 95) { return 1; }                       # _
@@ -328,31 +328,31 @@ fn TS_ISIDSTART(c) {
 }
 
 # True for [a-zA-Z_$0-9]
-fn TS_ISIDPART(c) {
+fn TS_ISIDPART(c): i64 {
     if (TS_ISIDSTART(c) == 1) { return 1; }
     if (c >= 48) { if (c <= 57) { return 1; } }     # 0-9
     return 0;
 }
 
-fn TS_ISDIGIT(c) {
+fn TS_ISDIGIT(c): i64 {
     if (c >= 48) { if (c <= 57) { return 1; } }
     return 0;
 }
 
-fn TS_ISHEXDIGIT(c) {
+fn TS_ISHEXDIGIT(c): i64 {
     if (TS_ISDIGIT(c) == 1) { return 1; }
     if (c >= 97) { if (c <= 102) { return 1; } }    # a-f
     if (c >= 65) { if (c <= 70)  { return 1; } }    # A-F
     return 0;
 }
 
-fn TS_ISBINDIGIT(c) {
+fn TS_ISBINDIGIT(c): i64 {
     if (c == 48) { return 1; }                       # 0
     if (c == 49) { return 1; }                       # 1
     return 0;
 }
 
-fn TS_ISOCTDIGIT(c) {
+fn TS_ISOCTDIGIT(c): i64 {
     if (c >= 48) { if (c <= 55) { return 1; } }     # 0-7
     return 0;
 }
@@ -375,7 +375,7 @@ fn _ts_memeq(a, b, n) {
 # keywords; linear within each bucket. Returns TS_TOK_KW_* on match,
 # TS_TOK_IDENT on miss.
 
-fn TS_KW_LOOKUP(src, off, len) {
+fn TS_KW_LOOKUP(src, off, len): i64 {
     var name = src + off;
     if (len == 2) {
         if (_ts_memeq(name, "if", 2) == 1) { return TS_TOK_KW_IF; }
@@ -471,7 +471,7 @@ fn TS_KW_LOOKUP(src, off, len) {
 
 # Scan forward to end of identifier. Returns position past last
 # ID-part char. Caller has verified load8(src+start) is ID-start.
-fn TS_SCAN_IDENT(src, src_len, start) {
+fn TS_SCAN_IDENT(src, src_len, start): i64 {
     var p = start;
     while (p < src_len) {
         if (TS_ISIDPART(load8(src + p)) == 0) { return p; }
@@ -483,7 +483,7 @@ fn TS_SCAN_IDENT(src, src_len, start) {
 # Emit identifier or keyword token. Value packs (offset << 24) | length —
 # 24-bit offset supports up to 16 MB source files; 8-bit length caps
 # identifiers at 255 chars. Keywords carry no payload (val = 0).
-fn TS_EMIT_IDENT_FINISH(ts_base, src, start, end) {
+fn TS_EMIT_IDENT_FINISH(ts_base, src, start, end): i64 {
     var name_len = end - start;
     var tok = TS_KW_LOOKUP(src, start, name_len);
     var val = (start * 16777216) + name_len;
@@ -495,7 +495,7 @@ fn TS_EMIT_IDENT_FINISH(ts_base, src, start, end) {
 # Scan a decimal integer (possibly with _ separators). Returns
 # end position after the digits. Caller has already verified
 # load8(src + start) is a digit.
-fn TS_SCAN_DEC(src, src_len, start) {
+fn TS_SCAN_DEC(src, src_len, start): i64 {
     var p = start;
     while (p < src_len) {
         var c = load8(src + p);
@@ -506,7 +506,7 @@ fn TS_SCAN_DEC(src, src_len, start) {
     return p;
 }
 
-fn TS_SCAN_HEX(src, src_len, start) {
+fn TS_SCAN_HEX(src, src_len, start): i64 {
     var p = start;
     while (p < src_len) {
         var c = load8(src + p);
@@ -517,7 +517,7 @@ fn TS_SCAN_HEX(src, src_len, start) {
     return p;
 }
 
-fn TS_SCAN_BIN(src, src_len, start) {
+fn TS_SCAN_BIN(src, src_len, start): i64 {
     var p = start;
     while (p < src_len) {
         var c = load8(src + p);
@@ -528,7 +528,7 @@ fn TS_SCAN_BIN(src, src_len, start) {
     return p;
 }
 
-fn TS_SCAN_OCT(src, src_len, start) {
+fn TS_SCAN_OCT(src, src_len, start): i64 {
     var p = start;
     while (p < src_len) {
         var c = load8(src + p);
@@ -543,7 +543,7 @@ fn TS_SCAN_OCT(src, src_len, start) {
 # Numeric value parsing deferred to typecheck/lower phase
 # (P3/P4); P1.2 just records the source span.
 # Returns: end position after the literal, or -1 on lex error.
-fn TS_EMIT_INT(ts_base, src, src_len, start) {
+fn TS_EMIT_INT(ts_base, src, src_len, start): i64 {
     var p = start;
     var c0 = load8(src + p);
     var end = p;
@@ -608,7 +608,7 @@ fn TS_EMIT_INT(ts_base, src, src_len, start) {
 # quotes but INCLUDES escape sequences (escape decoding happens at
 # typecheck/lower time; P1.2 just records span). Returns end position
 # after the closing quote, or -1 on unterminated.
-fn TS_EMIT_STRING(ts_base, src, src_len, start, quote) {
+fn TS_EMIT_STRING(ts_base, src, src_len, start, quote): i64 {
     var p = start + 1;
     var content_start = p;
     while (p < src_len) {
@@ -658,19 +658,19 @@ fn TS_EMIT_STRING(ts_base, src, src_len, start, quote) {
 # Stack region: TS_TEMPLATE_STACK_OFF, 8 KB / 8 B = 1024 max
 # template-nesting depth (more than realistic).
 
-fn TS_TEMPLATE_DEPTH(ts_base) {
+fn TS_TEMPLATE_DEPTH(ts_base): i64 {
     return load64(ts_base + TS_LEX_STATE_OFF + TS_LS_TEMPLATE_DEPTH);
 }
 
 # Returns the value at the top of the template stack, or -1 if empty.
-fn TS_TEMPLATE_TOP(ts_base) {
+fn TS_TEMPLATE_TOP(ts_base): i64 {
     var d = TS_TEMPLATE_DEPTH(ts_base);
     if (d <= 0) { return 0 - 1; }
     return load64(ts_base + TS_TEMPLATE_STACK_OFF + (d - 1) * 8);
 }
 
 # Push a new slot onto the template stack with the given initial value.
-fn TS_TEMPLATE_PUSH(ts_base, val) {
+fn TS_TEMPLATE_PUSH(ts_base, val): i64 {
     var d = TS_TEMPLATE_DEPTH(ts_base);
     store64(ts_base + TS_TEMPLATE_STACK_OFF + d * 8, val);
     store64(ts_base + TS_LEX_STATE_OFF + TS_LS_TEMPLATE_DEPTH, d + 1);
@@ -678,7 +678,7 @@ fn TS_TEMPLATE_PUSH(ts_base, val) {
 }
 
 # Pop the top slot off the template stack.
-fn TS_TEMPLATE_POP(ts_base) {
+fn TS_TEMPLATE_POP(ts_base): i64 {
     var d = TS_TEMPLATE_DEPTH(ts_base);
     if (d > 0) {
         store64(ts_base + TS_LEX_STATE_OFF + TS_LS_TEMPLATE_DEPTH, d - 1);
@@ -689,7 +689,7 @@ fn TS_TEMPLATE_POP(ts_base) {
 # Mutate the top stack slot's value (used to flip 0 -> 1 when the
 # first `${` is encountered, so subsequent template chunks emit MID
 # instead of HEAD).
-fn TS_TEMPLATE_SET_TOP(ts_base, val) {
+fn TS_TEMPLATE_SET_TOP(ts_base, val): i64 {
     var d = TS_TEMPLATE_DEPTH(ts_base);
     if (d <= 0) { return 0; }
     store64(ts_base + TS_TEMPLATE_STACK_OFF + (d - 1) * 8, val);
@@ -711,7 +711,7 @@ fn TS_TEMPLATE_SET_TOP(ts_base, val) {
 # Value field encodes (content_start << 24) | content_len for the
 # raw chunk bytes (excluding backticks and `${`). Escape decoding
 # defers to typecheck/lower (same convention as TS_EMIT_STRING).
-fn TS_LEX_TEMPLATE_BODY(ts_base, src, src_len, p) {
+fn TS_LEX_TEMPLATE_BODY(ts_base, src, src_len, p): i64 {
     var content_start = p;
     var top = TS_TEMPLATE_TOP(ts_base);
     var done = 0;
@@ -780,14 +780,14 @@ fn TS_LEX_TEMPLATE_BODY(ts_base, src, src_len, p) {
 # falls through to the single-char emit.
 
 # Read byte at p+offset; return 0 if out of bounds.
-fn TS_PEEK_CHAR(src, src_len, p, offset) {
+fn TS_PEEK_CHAR(src, src_len, p, offset): i64 {
     var idx = p + offset;
     if (idx >= src_len) { return 0; }
     return load8(src + idx);
 }
 
 # = -> ==, ===, =>
-fn TS_LEX_OP_EQ(ts_base, src, src_len, p) {
+fn TS_LEX_OP_EQ(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         var c2 = TS_PEEK_CHAR(src, src_len, p, 2);
@@ -807,7 +807,7 @@ fn TS_LEX_OP_EQ(ts_base, src, src_len, p) {
 }
 
 # ! -> !=, !==
-fn TS_LEX_OP_BANG(ts_base, src, src_len, p) {
+fn TS_LEX_OP_BANG(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         var c2 = TS_PEEK_CHAR(src, src_len, p, 2);
@@ -823,7 +823,7 @@ fn TS_LEX_OP_BANG(ts_base, src, src_len, p) {
 }
 
 # < -> <=, <<, <<=
-fn TS_LEX_OP_LT(ts_base, src, src_len, p) {
+fn TS_LEX_OP_LT(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_LT_EQ, 0);
@@ -843,7 +843,7 @@ fn TS_LEX_OP_LT(ts_base, src, src_len, p) {
 }
 
 # > -> >=, >>, >>=, >>>, >>>=
-fn TS_LEX_OP_GT(ts_base, src, src_len, p) {
+fn TS_LEX_OP_GT(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_GT_EQ, 0);
@@ -872,7 +872,7 @@ fn TS_LEX_OP_GT(ts_base, src, src_len, p) {
 }
 
 # + -> +=, ++
-fn TS_LEX_OP_PLUS(ts_base, src, src_len, p) {
+fn TS_LEX_OP_PLUS(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_PLUS_EQ, 0);
@@ -887,7 +887,7 @@ fn TS_LEX_OP_PLUS(ts_base, src, src_len, p) {
 }
 
 # - -> -=, --
-fn TS_LEX_OP_MINUS(ts_base, src, src_len, p) {
+fn TS_LEX_OP_MINUS(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_MINUS_EQ, 0);
@@ -902,7 +902,7 @@ fn TS_LEX_OP_MINUS(ts_base, src, src_len, p) {
 }
 
 # * -> *=, **, **=
-fn TS_LEX_OP_STAR(ts_base, src, src_len, p) {
+fn TS_LEX_OP_STAR(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_STAR_EQ, 0);
@@ -926,7 +926,7 @@ fn TS_LEX_OP_STAR(ts_base, src, src_len, p) {
 # byte after. Scan until LF (newline left in stream — main loop
 # whitespace branch handles the line-counter tick) or EOF.
 # Comments are NOT tokenized — they are whitespace-equivalent.
-fn TS_LEX_LINE_COMMENT(ts_base, src, src_len, p) {
+fn TS_LEX_LINE_COMMENT(ts_base, src, src_len, p): i64 {
     while (p < src_len) {
         if (load8(src + p) == 10) { return p; }
         p = p + 1;
@@ -939,7 +939,7 @@ fn TS_LEX_LINE_COMMENT(ts_base, src, src_len, p) {
 # Scan until closing */ (track line counter for embedded LFs).
 # Returns position past the closing */ on success, -1 on unterminated.
 # Block comments do NOT nest (matches JS/TS spec).
-fn TS_LEX_BLOCK_COMMENT(ts_base, src, src_len, p) {
+fn TS_LEX_BLOCK_COMMENT(ts_base, src, src_len, p): i64 {
     var done = 0;
     while (done == 0) {
         if (p >= src_len) {
@@ -977,7 +977,7 @@ fn TS_LEX_BLOCK_COMMENT(ts_base, src, src_len, p) {
 # Expression context (regex allowed) = everything else: start of file,
 # after operators, after most keywords (return, throw, typeof, etc.),
 # after open-paren/bracket/brace, after comma/semicolon, etc.
-fn TS_IS_PRIMARY_CONTEXT(ts_base) {
+fn TS_IS_PRIMARY_CONTEXT(ts_base): i64 {
     var tc = TS_GTCNT(ts_base);
     if (tc <= 0) { return 0; }
     var i = tc - 1;
@@ -1032,7 +1032,7 @@ fn TS_IS_PRIMARY_CONTEXT(ts_base) {
 }
 
 # Scan trailing regex flags [a-zA-Z]*. Returns position past last flag.
-fn TS_SCAN_REGEX_FLAGS(src, src_len, p) {
+fn TS_SCAN_REGEX_FLAGS(src, src_len, p): i64 {
     while (p < src_len) {
         var c = load8(src + p);
         if (c >= 97) { if (c <= 122) { p = p + 1; } else { return p; } }
@@ -1051,7 +1051,7 @@ fn TS_SCAN_REGEX_FLAGS(src, src_len, p) {
 #   closing /: end of pattern; scan trailing flags
 # Returns p past last flag, or -1 on unterminated.
 # Value field: (start << 24) | total_length (incl. flags).
-fn TS_LEX_REGEX(ts_base, src, src_len, p) {
+fn TS_LEX_REGEX(ts_base, src, src_len, p): i64 {
     var start = p;
     p = p + 1;                              # past opening /
     var in_class = 0;
@@ -1101,7 +1101,7 @@ fn TS_LEX_REGEX(ts_base, src, src_len, p) {
 # / -> //, /*, /=, regex, or bare /
 # Comment dispatch first (// and /*); then context-sensitive regex
 # vs division. /= only fires in primary context (after a value).
-fn TS_LEX_OP_SLASH(ts_base, src, src_len, p) {
+fn TS_LEX_OP_SLASH(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 47) {
         return TS_LEX_LINE_COMMENT(ts_base, src, src_len, p + 2);
@@ -1121,7 +1121,7 @@ fn TS_LEX_OP_SLASH(ts_base, src, src_len, p) {
 }
 
 # % -> %=
-fn TS_LEX_OP_PERCENT(ts_base, src, src_len, p) {
+fn TS_LEX_OP_PERCENT(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_PERCENT_EQ, 0);
@@ -1132,7 +1132,7 @@ fn TS_LEX_OP_PERCENT(ts_base, src, src_len, p) {
 }
 
 # & -> &=, &&, &&=
-fn TS_LEX_OP_AMP(ts_base, src, src_len, p) {
+fn TS_LEX_OP_AMP(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_AMP_EQ, 0);
@@ -1152,7 +1152,7 @@ fn TS_LEX_OP_AMP(ts_base, src, src_len, p) {
 }
 
 # | -> |=, ||, ||=
-fn TS_LEX_OP_PIPE(ts_base, src, src_len, p) {
+fn TS_LEX_OP_PIPE(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_PIPE_EQ, 0);
@@ -1172,7 +1172,7 @@ fn TS_LEX_OP_PIPE(ts_base, src, src_len, p) {
 }
 
 # ^ -> ^=
-fn TS_LEX_OP_CARET(ts_base, src, src_len, p) {
+fn TS_LEX_OP_CARET(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 61) {
         TS_ADDTOK(ts_base, TS_TOK_CARET_EQ, 0);
@@ -1187,7 +1187,7 @@ fn TS_LEX_OP_CARET(ts_base, src, src_len, p) {
 # (e.g., a?.5 must parse as a ? .5 : ... for ASI). For P1.3 simplicity
 # we always emit ?. when we see the bytes; parser-side handling of
 # the digit-ambiguity is a P2 concern.
-fn TS_LEX_OP_QUESTION(ts_base, src, src_len, p) {
+fn TS_LEX_OP_QUESTION(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 63) {
         var c2 = TS_PEEK_CHAR(src, src_len, p, 2);
@@ -1209,7 +1209,7 @@ fn TS_LEX_OP_QUESTION(ts_base, src, src_len, p) {
 # . -> ...
 # (Numeric .5 / 1.5 / 1e3 are P1.x float literals; . is the only
 #  base case here. ... is rest/spread.)
-fn TS_LEX_OP_DOT(ts_base, src, src_len, p) {
+fn TS_LEX_OP_DOT(ts_base, src, src_len, p): i64 {
     var c1 = TS_PEEK_CHAR(src, src_len, p, 1);
     if (c1 == 46) {
         var c2 = TS_PEEK_CHAR(src, src_len, p, 2);
@@ -1273,7 +1273,7 @@ fn TS_LEX_OP_DOT(ts_base, src, src_len, p) {
 # the construct isn't actually JSX (so caller falls through to LT).
 
 # Pack span: (offset << 24) | length. Same packing as elsewhere in TS lex.
-fn TS_PACK_SPAN(off, ln) {
+fn TS_PACK_SPAN(off, ln): i64 {
     return (off * 16777216) + ln;
 }
 
@@ -1281,7 +1281,7 @@ fn TS_PACK_SPAN(off, ln) {
 # ID-start. Tag names admit `.` (member: Foo.Bar), `:` (namespaced:
 # foo:bar), and `-` (HTML attrs: data-x). Returns position past last
 # name char.
-fn TS_LEX_JSX_SCAN_NAME(src, src_len, start) {
+fn TS_LEX_JSX_SCAN_NAME(src, src_len, start): i64 {
     var p = start + 1;
     var done = 0;
     while (done == 0) {
@@ -1317,7 +1317,7 @@ fn TS_LEX_JSX_SCAN_NAME(src, src_len, start) {
 # fool the brace-body's string-delim handling. Caller has confirmed
 # load8(src+start) == `<` and the next char is `/`, `>`, or ID-start.
 # Returns position past the balanced JSX, or `start` on bail.
-fn TS_LEX_JSX_BYTE_SKIP(src, src_len, start) {
+fn TS_LEX_JSX_BYTE_SKIP(src, src_len, start): i64 {
     if (start + 1 >= src_len) { return start; }
     var n = load8(src + start + 1);
     var ok = 0;
@@ -1402,7 +1402,7 @@ fn TS_LEX_JSX_BYTE_SKIP(src, src_len, start) {
     return p;
 }
 
-fn TS_LEX_JSX_BALANCE_BRACES(ts_base, src, src_len, start) {
+fn TS_LEX_JSX_BALANCE_BRACES(ts_base, src, src_len, start): i64 {
     var p = start;
     var bd = 1;
     while (p < src_len && bd > 0) {
@@ -1469,7 +1469,7 @@ fn TS_LEX_JSX_BALANCE_BRACES(ts_base, src, src_len, start) {
 #   <input
 #     // eslint-disable-next-line foo
 #     autoFocus />
-fn TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, start) {
+fn TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, start): i64 {
     var p = start;
     while (p < src_len) {
         var c = load8(src + p);
@@ -1519,7 +1519,7 @@ fn TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, start) {
 # `{`/`}` operators (JSX_EXPR_CLOSE on matching `}`).
 
 # Skip ASCII whitespace (no comment handling — used in raw text scan).
-fn TS_LEX_JSX_TEXT_SKIP_WS_INLINE(ts_base, src, src_len, p) {
+fn TS_LEX_JSX_TEXT_SKIP_WS_INLINE(ts_base, src, src_len, p): i64 {
     while (p < src_len) {
         var c = load8(src + p);
         if (c == 32 || c == 9 || c == 13) { p = p + 1; }
@@ -1533,7 +1533,7 @@ fn TS_LEX_JSX_TEXT_SKIP_WS_INLINE(ts_base, src, src_len, p) {
 # Caller has cursor positioned somewhere inside the open or close tag
 # (after the tag name, between attrs, or just after an attr value).
 # Returns new cursor pos, or -1 on lex error.
-fn TS_LEX_JSX_TAG(ts_base, src, src_len, p) {
+fn TS_LEX_JSX_TAG(ts_base, src, src_len, p): i64 {
     p = TS_LEX_JSX_SKIP_WS(ts_base, src, src_len, p);
     if (p >= src_len) { TS_SETERR(ts_base, 12); return 0 - 1; }
     var c = load8(src + p);
@@ -1610,7 +1610,7 @@ fn TS_LEX_JSX_TAG(ts_base, src, src_len, p) {
 # Mode 5 (JSX_TEXT) — walks text until next `<` or `{`, emits one
 # JSX_TEXT (if non-empty) and processes the boundary token.
 # Returns new cursor pos, or -1 on lex error.
-fn TS_LEX_JSX_TEXT(ts_base, src, src_len, p) {
+fn TS_LEX_JSX_TEXT(ts_base, src, src_len, p): i64 {
     var tx_s = p;
     while (p < src_len) {
         var c = load8(src + p);
@@ -1866,7 +1866,7 @@ fn TS_LEX_JSX_TEXT(ts_base, src, src_len, p) {
 # Performs the generic-arrow disambig + a pre-flight BYTE_SKIP balance
 # check before any emission (mode-driven dispatch cannot easily roll
 # back leaked tokens across multiple mode pushes).
-fn TS_LEX_JSX(ts_base, src, src_len, start) {
+fn TS_LEX_JSX(ts_base, src, src_len, start): i64 {
     if (start + 1 >= src_len) { return start; }
     var n = load8(src + start + 1);
     var ok = 0;
@@ -1898,7 +1898,7 @@ fn TS_LEX_JSX(ts_base, src, src_len, start) {
     return tn_e;
 }
 
-fn TS_LEX(ts_base, src, src_len) {
+fn TS_LEX(ts_base, src, src_len): i64 {
     # Initialize lexer state
     TS_SPOS(ts_base, 0);
     store64(ts_base + TS_LEX_STATE_OFF + TS_LS_LINE, 1);

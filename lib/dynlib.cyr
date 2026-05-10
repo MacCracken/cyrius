@@ -145,7 +145,7 @@ fn _dynlib_strsz(h)    { return load64(h + 56); }
 # ================================================================
 
 # Check ELF magic bytes at base
-fn _elf_check_magic(base) {
+fn _elf_check_magic(base): i64 {
     var magic = load32(base);
     if (magic != ELFMAG) { return 0; }
     # Check class = 64-bit
@@ -196,7 +196,7 @@ fn _phdr_memsz(p) { return load64(p + 40); }
 #   +72: init_array_vaddr +80: init_array_size
 #   +88: needed[8] (up to 8 DT_NEEDED strtab offsets)
 #   +88+0..63: needed offsets   +88+64: needed_count
-fn _parse_dynamic(base, dyn_offset, dyn_size) {
+fn _parse_dynamic(base, dyn_offset, dyn_size): i64 {
     var result = alloc(160);
     var ri = 0;
     while (ri < 160) { store8(result + ri, 0); ri = ri + 1; }
@@ -239,7 +239,7 @@ fn _parse_dynamic(base, dyn_offset, dyn_size) {
 # ================================================================
 
 # GNU hash function
-fn _gnu_hash(name) {
+fn _gnu_hash(name): i64 {
     var h = 5381;
     var i = 0;
     var c = load8(name + i);
@@ -262,7 +262,7 @@ fn _gnu_hash(name) {
 #   +16+bloom_size*8: buckets[nbuckets] (u32 each)
 #   after buckets: chains[] (u32 each, one per symbol starting from symoffset)
 
-fn _gnu_hash_lookup(gnuhash, dynsym, dynstr, strsz, bias, name) {
+fn _gnu_hash_lookup(gnuhash, dynsym, dynstr, strsz, bias, name): i64 {
     var nbuckets    = load32(gnuhash);
     var symoffset   = load32(gnuhash + 4);
     var bloom_size  = load32(gnuhash + 8);
@@ -332,7 +332,7 @@ fn _gnu_hash_lookup(gnuhash, dynsym, dynstr, strsz, bias, name) {
 # Linear symbol search fallback (no GNU hash)
 # ================================================================
 
-fn _linear_sym_lookup(dynsym, dynstr, nsyms, strsz, bias, name) {
+fn _linear_sym_lookup(dynsym, dynstr, nsyms, strsz, bias, name): i64 {
     # Skip symbol 0 (null entry)
     for (var i = 1; i < nsyms; i = i + 1) {
         var sym = dynsym + i * SYM_SIZE;
@@ -371,7 +371,7 @@ fn _linear_sym_lookup(dynsym, dynstr, nsyms, strsz, bias, name) {
 # When no hash table is present, estimate nsyms from section layout.
 # .dynsym immediately precedes .dynstr in most ELF .so files.
 
-fn _estimate_nsyms(symtab_vaddr, strtab_vaddr) {
+fn _estimate_nsyms(symtab_vaddr, strtab_vaddr): i64 {
     if (strtab_vaddr <= symtab_vaddr) { return 256; }  # fallback guess
     var gap = strtab_vaddr - symtab_vaddr;
     var n = gap / SYM_SIZE;
@@ -389,7 +389,7 @@ var _dynlib_registry[256];  # 16 entries × 16 bytes (hash + handle)
 var _dynlib_reg_count = 0;
 
 # Simple hash of a library basename for dedup
-fn _dynlib_namehash(name) {
+fn _dynlib_namehash(name): i64 {
     var h = 5381;
     var i = 0;
     while (load8(name + i) != 0) {
@@ -401,7 +401,7 @@ fn _dynlib_namehash(name) {
 }
 
 # Check if library is already loaded, return handle or 0
-fn _dynlib_find_loaded(name) {
+fn _dynlib_find_loaded(name): i64 {
     var h = _dynlib_namehash(name);
     var i = 0;
     while (i < _dynlib_reg_count) {
@@ -414,7 +414,7 @@ fn _dynlib_find_loaded(name) {
 }
 
 # Register a loaded library
-fn _dynlib_register(name, handle) {
+fn _dynlib_register(name, handle): i64 {
     if (_dynlib_reg_count >= 16) { return 0; }
     var h = _dynlib_namehash(name);
     store64(&_dynlib_registry + _dynlib_reg_count * 16, h);
@@ -424,7 +424,7 @@ fn _dynlib_register(name, handle) {
 }
 
 # Resolve a symbol across ALL loaded libraries
-fn _dynlib_resolve_global(name) {
+fn _dynlib_resolve_global(name): i64 {
     var i = 0;
     while (i < _dynlib_reg_count) {
         var h = load64(&_dynlib_registry + i * 16 + 8);
@@ -437,7 +437,7 @@ fn _dynlib_resolve_global(name) {
 
 # Try to find a .so file on common search paths
 # Writes the full path into buf, returns 1 on success
-fn _dynlib_find_path(name, buf, bufsz) {
+fn _dynlib_find_path(name, buf, bufsz): i64 {
     # Try common library paths (4 pointers × 8 bytes = 32 bytes)
     var paths[32];
     store64(&paths, "/usr/lib/");
@@ -470,7 +470,7 @@ fn _dynlib_find_path(name, buf, bufsz) {
 # Phase 1: RELATIVE (no symbol lookup, just base adjustment)
 # Phase 2: GLOB_DAT, JUMP_SLOT, 64 (symbol lookup)
 # Phase 3: IRELATIVE (calls resolver functions — must run last)
-fn _dynlib_process_rela(handle, bias, rela_addr, rela_size) {
+fn _dynlib_process_rela(handle, bias, rela_addr, rela_size): i64 {
     if (rela_addr == 0 || rela_size == 0) { return 0; }
 
     var dynsym = load64(handle + 16);
@@ -547,7 +547,7 @@ fn _dynlib_process_rela(handle, bias, rela_addr, rela_size) {
 # guards in `_gnu_hash_lookup` and `_linear_sym_lookup` — calling
 # a resolver without a zeroed cpu_features segfaults on the first
 # x86_64 feature-probe inside glibc.
-fn _dynlib_apply_irelative(handle, bias, rela_addr, rela_size) {
+fn _dynlib_apply_irelative(handle, bias, rela_addr, rela_size): i64 {
     if (rela_addr == 0 || rela_size == 0) { return 0; }
     if (_dynlib_ifunc_safe == 0) { return 0; }
     var span = load64(handle + 8);
@@ -582,7 +582,7 @@ fn _dynlib_apply_irelative(handle, bias, rela_addr, rela_size) {
 # corrupted/untrusted dynamic-section entries — every DT_INIT,
 # DT_INIT_ARRAY, and IRELATIVE resolver address should resolve
 # to code inside the library we loaded.
-fn _dynlib_fp_in_span(handle, fp) {
+fn _dynlib_fp_in_span(handle, fp): i64 {
     if (handle == 0 || fp == 0) { return 0; }
     var base = load64(handle);
     var span = load64(handle + 8);
@@ -601,7 +601,7 @@ fn _dynlib_fp_in_span(handle, fp) {
 # Every fptr is bounds-checked against the library's mapped span
 # before being invoked. A corrupted init_array_vaddr or init_vaddr
 # (or a garbage entry in the array) won't jump into random memory.
-fn _dynlib_run_init(handle, bias, init_vaddr, init_array_vaddr, init_array_sz) {
+fn _dynlib_run_init(handle, bias, init_vaddr, init_array_vaddr, init_array_sz): i64 {
     if (init_vaddr != 0) {
         var ifp = bias + init_vaddr;
         if (_dynlib_fp_in_span(handle, ifp) == 1) { fncall0(ifp); }
@@ -627,7 +627,7 @@ fn _dynlib_run_init(handle, bias, init_vaddr, init_array_vaddr, init_array_sz) {
 # Open a shared library (.so file) with full dynamic linking.
 # Loads dependencies recursively, processes relocations, runs init.
 # Returns handle pointer or 0 on failure.
-fn dynlib_open(path) {
+fn dynlib_open(path): i64 {
     # Check if already loaded
     var existing = _dynlib_find_loaded(path);
     if (existing != 0) { return existing; }
@@ -876,7 +876,7 @@ fn dynlib_open(path) {
 #
 # Returns the TLS block pointer (caller can keep it for debugging)
 # or 0 if the syscall failed.
-fn dynlib_bootstrap_tls() {
+fn dynlib_bootstrap_tls(): i64 {
     var tls = alloc(4096);
     if (tls == 0) { return 0; }
     var i = 0;
@@ -897,7 +897,7 @@ fn dynlib_bootstrap_tls() {
 # address if you want the real RSP top.
 #
 # Returns 0 on success, 1 if ld-linux isn't reachable.
-fn dynlib_bootstrap_stack_end(stack_top) {
+fn dynlib_bootstrap_stack_end(stack_top): i64 {
     var hld = dynlib_open("/lib64/ld-linux-x86-64.so.2");
     if (hld == 0) { hld = dynlib_open("ld-linux-x86-64.so.2"); }
     if (hld == 0) { return 1; }
@@ -927,7 +927,7 @@ fn dynlib_bootstrap_stack_end(stack_top) {
 # Calling libc entry points after just this bootstrap still crashes
 # inside functions that touch those — full NSS/PAM requires the
 # follow-on work to populate TLS and stack end too.
-fn dynlib_bootstrap_cpu_features() {
+fn dynlib_bootstrap_cpu_features(): i64 {
     var hld = dynlib_open("/lib64/ld-linux-x86-64.so.2");
     if (hld == 0) { hld = dynlib_open("ld-linux-x86-64.so.2"); }
     if (hld == 0) { return 1; }
@@ -984,7 +984,7 @@ fn dynlib_bootstrap_cpu_features() {
 # LC_ALL_MASK = 0x1FBF on x86_64 glibc (LC_{CTYPE,NUMERIC,TIME,
 # COLLATE,MONETARY,MESSAGES,PAPER,NAME,ADDRESS,TELEPHONE,
 # MEASUREMENT,IDENTIFICATION} = bits 0-12 with LC_ALL excluded).
-fn dynlib_bootstrap_locale(hc) {
+fn dynlib_bootstrap_locale(hc): i64 {
     if (hc == 0) { return 1; }
     var fp_newlocale = dynlib_sym(hc, "newlocale");
     if (fp_newlocale == 0) { return 1; }
@@ -1028,7 +1028,7 @@ fn dynlib_bootstrap_locale(hc) {
 # isn't tractable in a patch release; pinned forward. See
 # docs/development/issues/dynlib-nss-bootstrap.md for the
 # investigation log.
-fn dynlib_bootstrap_environ(hc) {
+fn dynlib_bootstrap_environ(hc): i64 {
     if (hc == 0) { return 1; }
     var fp_env  = dynlib_sym(hc, "__environ");
     var fp_env2 = dynlib_sym(hc, "environ");
@@ -1065,7 +1065,7 @@ fn dynlib_bootstrap_environ(hc) {
 # Caller walks the pairs: for (p = buf; load64(p) != 0; p += 16).
 # Shipping this primitive standalone — useful independent of the
 # NSS dispatch work (v5.5.25 auxv synthesis investigation).
-fn dynlib_read_auxv(buf, maxbytes) {
+fn dynlib_read_auxv(buf, maxbytes): i64 {
     if (buf == 0) { return 0 - 3; }
     if (maxbytes < 16) { return 0 - 3; }
     var path = "/proc/self/auxv";
@@ -1092,7 +1092,7 @@ fn dynlib_read_auxv(buf, maxbytes) {
 #   var page = dynlib_auxv_get(abuf, r, 6);       # AT_PAGESZ
 #   var rnd  = dynlib_auxv_get(abuf, r, 25);      # AT_RANDOM ptr
 #   var vdso = dynlib_auxv_get(abuf, r, 33);      # AT_SYSINFO_EHDR
-fn dynlib_auxv_get(auxv, auxv_bytes, tag) {
+fn dynlib_auxv_get(auxv, auxv_bytes, tag): i64 {
     if (auxv == 0) { return 0; }
     if (auxv_bytes < 16) { return 0; }
     var p = auxv;
@@ -1135,7 +1135,7 @@ fn dynlib_auxv_get(auxv, auxv_bytes, tag) {
 # still crash on uninitialised TLS / `__libc_stack_end`. Tracked for
 # a follow-up patch. Consumers should treat `dynlib_init` + libc as
 # experimental until TLS bootstrap lands.
-fn dynlib_init(handle) {
+fn dynlib_init(handle): i64 {
     if (handle == 0) { return 1; }
     if (_dynlib_ifunc_safe == 0) { return 2; }
     var init_array_sz = load64(handle + 80);
@@ -1157,7 +1157,7 @@ fn dynlib_init(handle) {
 
 # Look up a symbol by name in a loaded library
 # Returns the symbol's absolute address (function pointer) or 0
-fn dynlib_sym(handle, name) {
+fn dynlib_sym(handle, name): i64 {
     if (handle == 0) { return 0; }
 
     var dynsym  = _dynlib_dynsym(handle);
@@ -1175,7 +1175,7 @@ fn dynlib_sym(handle, name) {
 }
 
 # Close a loaded library (unmap)
-fn dynlib_close(handle) {
+fn dynlib_close(handle): i64 {
     if (handle == 0) { return 0; }
     var base = _dynlib_base(handle);
     var size = _dynlib_size(handle);

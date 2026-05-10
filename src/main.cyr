@@ -465,7 +465,7 @@ if (_ts_lex_only_mode == 1) {
 # ─── TS parse-only mode (P2.1 wire-in) ────────────────────────────
 
 # Emit a non-negative i64 as decimal to stderr (fd 2).
-fn _emit_decimal(n) {
+fn _emit_decimal(n): i64 {
     if (n < 0) {
         syscall(SYS_WRITE, 2, "-", 1);
         n = 0 - n;

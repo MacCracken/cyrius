@@ -53,14 +53,14 @@ var _pwd_buf_len = 0;
 # Force a re-read of /etc/passwd on the next call. Caller can
 # invoke this after they know the file changed (useshell edits
 # /etc/passwd, e.g.).
-fn pwd_invalidate_cache() {
+fn pwd_invalidate_cache(): i64 {
     _pwd_buf_len = 0;
     return 0;
 }
 
 # Returns pointer to buffered /etc/passwd content, and writes the
 # byte count to *out_len. Returns 0 on read failure.
-fn _pwd_load() {
+fn _pwd_load(): i64 {
     if (_pwd_buf_len > 0) { return _pwd_buf; }
     if (_pwd_buf == 0) { _pwd_buf = alloc(PWD_BUF_MAX); }
     if (_pwd_buf == 0) { return 0; }
@@ -73,7 +73,7 @@ fn _pwd_load() {
 # Parse a decimal digit run at `p`. Writes parsed integer to
 # *out_val (actually caller reads return). Returns the number of
 # bytes consumed.
-fn _pwd_atoi_span(p, end) {
+fn _pwd_atoi_span(p, end): i64 {
     var v = 0;
     var i = 0;
     while (p + i < end) {
@@ -92,7 +92,7 @@ fn _pwd_atoi_span(p, end) {
 # return the pre-increment offset (pointer into strbuf) or -1 on
 # overflow. Updates soff in place via out-param semantics: caller
 # must read the side-effect via load64(&soff).
-fn _pwd_stash(p, n, strbuf, soff_ptr, strbufsz) {
+fn _pwd_stash(p, n, strbuf, soff_ptr, strbufsz): i64 {
     var soff = load64(soff_ptr);
     if (soff + n + 1 > strbufsz) { return 0 - 1; }
     var dst = strbuf + soff;
@@ -107,7 +107,7 @@ fn _pwd_stash(p, n, strbuf, soff_ptr, strbufsz) {
 # On success, writes the 7 fields into pwrec and the strings into
 # strbuf. Returns 1 on parse success, 0 on malformed line, -2 on
 # strbuf overflow.
-fn _pwd_parse_line(line_start, line_end, pwrec, strbuf, strbufsz) {
+fn _pwd_parse_line(line_start, line_end, pwrec, strbuf, strbufsz): i64 {
     var soff_store[8];
     store64(&soff_store, 0);
     var soff_ptr = &soff_store;
@@ -192,7 +192,7 @@ fn _pwd_parse_line(line_start, line_end, pwrec, strbuf, strbufsz) {
 # miss we reset strbuf's high-water mark by overwriting pwrec on
 # the next iteration. Memory cost = one record's worth of strings
 # at peak, not the whole file.
-fn _pwd_find(matcher, ctx, pwrec, strbuf, strbufsz) {
+fn _pwd_find(matcher, ctx, pwrec, strbuf, strbufsz): i64 {
     var buf = _pwd_load();
     if (buf == 0) { return 0 - 1; }
     var end = buf + _pwd_buf_len;
@@ -221,12 +221,12 @@ fn _pwd_find(matcher, ctx, pwrec, strbuf, strbufsz) {
     return 0;
 }
 
-fn _pwd_match_uid(pwrec, ctx) {
+fn _pwd_match_uid(pwrec, ctx): i64 {
     if (load64(pwrec) == ctx) { return 1; }
     return 0;
 }
 
-fn _pwd_match_name(pwrec, ctx) {
+fn _pwd_match_name(pwrec, ctx): i64 {
     var name = load64(pwrec + 16);
     var i = 0;
     while (1 == 1) {
@@ -240,12 +240,12 @@ fn _pwd_match_name(pwrec, ctx) {
 }
 
 # Look up a record by numeric uid.
-fn pwd_getpwuid(uid, pwrec, strbuf, strbufsz) {
+fn pwd_getpwuid(uid, pwrec, strbuf, strbufsz): i64 {
     return _pwd_find(&_pwd_match_uid, uid, pwrec, strbuf, strbufsz);
 }
 
 # Look up a record by username (null-terminated cstring).
-fn pwd_getpwnam(name, pwrec, strbuf, strbufsz) {
+fn pwd_getpwnam(name, pwrec, strbuf, strbufsz): i64 {
     return _pwd_find(&_pwd_match_name, name, pwrec, strbuf, strbufsz);
 }
 

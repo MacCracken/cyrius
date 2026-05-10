@@ -59,7 +59,7 @@ var _TARGET_CX = 0;
 # `src/backend/pe/emit.cyr`, so the real helper isn't available —
 # this stub is. Harmless: `#pe_import` on aarch64 outputs is a no-op
 # because Windows PE is x86_64 only.
-fn _pe_pending_imp_add(S, name) {
+fn _pe_pending_imp_add(S, name): i64 {
     return 0;
 }
 
@@ -69,7 +69,7 @@ fn _pe_pending_imp_add(S, name) {
 # branch, so the compile-time symbol must resolve when the aarch64
 # backend builds. The branch is statically dead at runtime because
 # `_TARGET_PE` is always 0 on aarch64 targets.
-fn EWRITE_PE(S) {
+fn EWRITE_PE(S): i64 {
     return 0;
 }
 
@@ -77,7 +77,7 @@ fn EWRITE_PE(S) {
 # parse_expr.cyr's `_TARGET_PE == 1 && sc_num == 228` branch. Same
 # rationale as EWRITE_PE above — statically dead on aarch64 but
 # must resolve at link time.
-fn EGETTICKS_PE(S) {
+fn EGETTICKS_PE(S): i64 {
     return 0;
 }
 
@@ -114,7 +114,7 @@ var _AARCH64_BACKEND = 1;
 # Phylax-surfaced when a downstream cross-build with phylax-
 # shape program tripped `error: codebuf overflow (.../524288)`
 # on aarch64 while the same source built fine on x86.
-fn EB(S, b) {
+fn EB(S, b): i64 {
     var cp = GCP(S);
     if (cp >= 3145728) {
         syscall(SYS_WRITE, 2, "error: codebuf overflow (", 25);
@@ -135,7 +135,7 @@ fn EB(S, b) {
 # produce an undecoded instruction stream. Catch it loudly here
 # rather than debugging a SIGILL in the emitted binary. Adds ~7
 # LOC per EW call — negligible against the 4 EB calls that follow.
-fn EW(S, w) {
+fn EW(S, w): i64 {
     var cp = GCP(S);
     if ((cp & 3) != 0) {
         syscall(SYS_WRITE, 2, "error: EW misaligned at cp=", 27);
@@ -151,14 +151,14 @@ fn EW(S, w) {
 }
 
 # Emit 2 bytes (for compatibility with x86 E2 calls)
-fn E2(S, v) {
+fn E2(S, v): i64 {
     EB(S, v & 0xFF);
     EB(S, v >> 8 & 0xFF);
     return 0;
 }
 
 # Emit 8 bytes (for mov imm64 compatibility)
-fn E8(S, v) {
+fn E8(S, v): i64 {
     EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF);
     EB(S, v >> 16 & 0xFF); EB(S, v >> 24 & 0xFF);
     EB(S, v >> 32 & 0xFF); EB(S, v >> 40 & 0xFF);
@@ -166,7 +166,7 @@ fn E8(S, v) {
     return 0;
 }
 
-fn E3(S, v) {
+fn E3(S, v): i64 {
     EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF);
     return 0;
 }
@@ -174,7 +174,7 @@ fn E3(S, v) {
 # === Move immediate to x0 (result register) ===
 # MOVZ x0, #imm16 = 0xD2800000 | (imm16 << 5)
 # For 64-bit immediates: MOVZ + MOVK for each 16-bit chunk
-fn EMOVI(S, v) {
+fn EMOVI(S, v): i64 {
     # MOVZ x0, #(v & 0xFFFF)
     EW(S, 0xD2800000 | ((v & 0xFFFF) << 5));
     # Emit MOVK for each non-zero 16-bit chunk above the low word.
@@ -198,11 +198,11 @@ fn EMOVI(S, v) {
 # === Stack operations ===
 # aarch64 has no push/pop — use STP/LDP with SP
 # push x0: STR x0, [sp, #-16]! (pre-decrement)
-fn EPUSHR(S) { EW(S, 0xF81F0FE0); _last_push_cp = GCP(S); return 0; }   # str x0, [sp, #-16]!
+fn EPUSHR(S): i64 { EW(S, 0xF81F0FE0); _last_push_cp = GCP(S); return 0; }   # str x0, [sp, #-16]!
 # pop x1 (into scratch): LDR x1, [sp], #16 (post-increment)
-fn EPOPC(S) { EW(S, 0xF84107E1); return 0; }     # ldr x1, [sp], #16
+fn EPOPC(S): i64 { EW(S, 0xF84107E1); return 0; }     # ldr x1, [sp], #16
 # pop x0: LDR x0, [sp], #16 (post-indexed)
-fn EPOPR(S) {
+fn EPOPR(S): i64 {
     if (GCP(S) == _last_push_cp) {
         # v5.6.9: adjacent push+pop = no-op. Rewind past the 4-byte push.
         SCP(S, GCP(S) - 4);
@@ -221,7 +221,7 @@ fn EPOPR(S) {
 # === Register moves ===
 # mov x1, x0 (scratch = result)
 # v5.6.11: record CP post-emit for combine-shuttle peephole.
-fn EMOVCA(S) { EW(S, 0xAA0003E1); _last_emovca_cp = GCP(S); return 0; }
+fn EMOVCA(S): i64 { EW(S, 0xAA0003E1); _last_emovca_cp = GCP(S); return 0; }
 
 # v5.6.11: commutative-combine peephole. If current CP matches the
 # GCP recorded when EPOPR/EUNSPILL finished *immediately after*
@@ -230,7 +230,7 @@ fn EMOVCA(S) { EW(S, 0xAA0003E1); _last_emovca_cp = GCP(S); return 0; }
 # op that follows then reads the correct operand from x1. Only safe
 # for commutative ops because the pop-target swap (lhs now in x1,
 # rhs still in x0) is the inverse of the original shuttle.
-fn _TRY_COMBINE_SHUTTLE(S) {
+fn _TRY_COMBINE_SHUTTLE(S): i64 {
     if (GCP(S) == _last_movca_popr_cp) {
         SCP(S, GCP(S) - 8);
         EW(S, 0xF84107E1);   # ldr x1, [sp], #16 (matches EPOPC)
@@ -241,59 +241,59 @@ fn _TRY_COMBINE_SHUTTLE(S) {
 
 # === Arithmetic ===
 # add x0, x0, x1
-fn EADDR(S) { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x8B010000); return 0; }
+fn EADDR(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x8B010000); return 0; }
 # sub x0, x0, x1 — non-commutative, NOT fused (swap inverts subtract).
-fn ESUBR(S) { EW(S, 0xCB010000); return 0; }
+fn ESUBR(S): i64 { EW(S, 0xCB010000); return 0; }
 # mul x0, x0, x1 — commutative.
-fn EIMUL(S) { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x9B017C00); return 0; }
+fn EIMUL(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x9B017C00); return 0; }
 # EMULH: high 64 bits of unsigned x1 * x0 into x0. Used by mulh64(a, b).
-fn EMULH(S) { EW(S, 0x9BC07C20); return 0; }     # umulh x0, x1, x0
+fn EMULH(S): i64 { EW(S, 0x9BC07C20); return 0; }     # umulh x0, x1, x0
 # sdiv x0, x0, x1
 # Division: sdiv x0, x2, x1 (uses saved dividend from ECQO)
-fn EIDIV(S) { EW(S, 0x9AC10C40); return 0; }     # sdiv x0, x2, x1
+fn EIDIV(S): i64 { EW(S, 0x9AC10C40); return 0; }     # sdiv x0, x2, x1
 # Save dividend before division: mov x2, x0
-fn ECQO(S) { EW(S, 0xAA0003E2); return 0; }      # mov x2, x0
+fn ECQO(S): i64 { EW(S, 0xAA0003E2); return 0; }      # mov x2, x0
 # Modulo: msub x0, x0, x1, x2 (x0 = x2 - x0*x1 = remainder)
-fn EMOVDR(S) { EW(S, 0x9B018800); return 0; }    # msub x0, x0, x1, x2
+fn EMOVDR(S): i64 { EW(S, 0x9B018800); return 0; }    # msub x0, x0, x1, x2
 
 # === Compare ===
 # cmp x0, x1 (subs xzr, x0, x1)
-fn ECMPR(S) { EW(S, 0xEB01001F); return 0; }     # cmp x0, x1
-fn ETESTAZ(S) { EW(S, 0xF100001F); return 0; }  # cmp x0, #0 (sets ZF)
-fn EMOVRDXRAX(S) { EW(S, 0xAA0003E2); return 0; }  # mov x2, x0
-fn EMOVRA_RDX(S) { EW(S, 0xAA0203E0); return 0; }  # mov x0, x2 (read second return value — aarch64 multi-return uses x0, x2)
+fn ECMPR(S): i64 { EW(S, 0xEB01001F); return 0; }     # cmp x0, x1
+fn ETESTAZ(S): i64 { EW(S, 0xF100001F); return 0; }  # cmp x0, #0 (sets ZF)
+fn EMOVRDXRAX(S): i64 { EW(S, 0xAA0003E2); return 0; }  # mov x2, x0
+fn EMOVRA_RDX(S): i64 { EW(S, 0xAA0203E0); return 0; }  # mov x0, x2 (read second return value — aarch64 multi-return uses x0, x2)
 
 # === Load/Store through x1 (pointer register) ===
 # ldr x0, [x1]
-fn ELODC(S) { EW(S, 0xF9400020); return 0; }     # ldr x0, [x1]
+fn ELODC(S): i64 { EW(S, 0xF9400020); return 0; }     # ldr x0, [x1]
 # str x0, [x1]
-fn ESTOC(S) { EW(S, 0xF9000020); return 0; }     # str x0, [x1]
+fn ESTOC(S): i64 { EW(S, 0xF9000020); return 0; }     # str x0, [x1]
 
 # === Load through x0 (dereference) ===
-fn ELOAD8(S) { EW(S, 0x39400000); return 0; }    # ldrb w0, [x0]
-fn ELOAD16(S) { EW(S, 0x79400000); return 0; }   # ldrh w0, [x0]
-fn ELOAD32(S) { EW(S, 0xB9400000); return 0; }   # ldr w0, [x0]
-fn ELOAD64(S) { EW(S, 0xF9400000); return 0; }   # ldr x0, [x0]
+fn ELOAD8(S): i64 { EW(S, 0x39400000); return 0; }    # ldrb w0, [x0]
+fn ELOAD16(S): i64 { EW(S, 0x79400000); return 0; }   # ldrh w0, [x0]
+fn ELOAD32(S): i64 { EW(S, 0xB9400000); return 0; }   # ldr w0, [x0]
+fn ELOAD64(S): i64 { EW(S, 0xF9400000); return 0; }   # ldr x0, [x0]
 
 # === Store: [x1] = x0 (various widths) ===
-fn ESTORE8(S) { EW(S, 0x39000020); return 0; }   # strb w0, [x1]
-fn ESTORE16(S) { EW(S, 0x79000020); return 0; }  # strh w0, [x1]
-fn ESTORE32(S) { EW(S, 0xB9000020); return 0; }  # str w0, [x1]
-fn ESTORE64(S) { EW(S, 0xF9000020); return 0; }  # str x0, [x1]
+fn ESTORE8(S): i64 { EW(S, 0x39000020); return 0; }   # strb w0, [x1]
+fn ESTORE16(S): i64 { EW(S, 0x79000020); return 0; }  # strh w0, [x1]
+fn ESTORE32(S): i64 { EW(S, 0xB9000020); return 0; }  # str w0, [x1]
+fn ESTORE64(S): i64 { EW(S, 0xF9000020); return 0; }  # str x0, [x1]
 
 # === Bitwise ===
 # v5.6.11: commutative bitwise ops wired to combine-shuttle peephole.
-fn EANDR(S) { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x8A010000); return 0; }
-fn EORR(S) { _TRY_COMBINE_SHUTTLE(S); EW(S, 0xAA010000); return 0; }
-fn EXORR(S) { _TRY_COMBINE_SHUTTLE(S); EW(S, 0xCA010000); return 0; }
-fn ENOTR(S) { EW(S, 0xAA2003E0); return 0; }     # mvn x0, x0
-fn ESHLCL(S) { EW(S, 0x9AC12000); return 0; }    # lslv x0, x0, x1
-fn ESHRCL(S) { EW(S, 0x9AC12400); return 0; }    # lsrv x0, x0, x1
+fn EANDR(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x8A010000); return 0; }
+fn EORR(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0xAA010000); return 0; }
+fn EXORR(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0xCA010000); return 0; }
+fn ENOTR(S): i64 { EW(S, 0xAA2003E0); return 0; }     # mvn x0, x0
+fn ESHLCL(S): i64 { EW(S, 0x9AC12000); return 0; }    # lslv x0, x0, x1
+fn ESHRCL(S): i64 { EW(S, 0x9AC12400); return 0; }    # lsrv x0, x0, x1
 # v5.6.7 O2: shift x0 by immediate (1..63) using UBFM aliases.
 # LSL Xd, Xn, #n → UBFM Xd, Xn, #((-n) mod 64), #(63-n)
 # LSR Xd, Xn, #n → UBFM Xd, Xn, #n, #63
 # Base UBFM imm sf=1: 0xD3400000 | (immr << 16) | (imms << 10)
-fn ESHLIMM(S, n) {
+fn ESHLIMM(S, n): i64 {
     var immr = (64 - n) & 0x3F;
     var imms = (63 - n) & 0x3F;
     EW(S, 0xD3400000 | (immr << 16) | (imms << 10));
@@ -301,10 +301,10 @@ fn ESHLIMM(S, n) {
 }
 # v5.8.56: ESHRIMM removed in lockstep with x86 — sibling of ESHLIMM
 # (above) that never got a call site.
-fn EXORAA(S) { EW(S, 0xCA000000); return 0; }    # eor x0, x0, x0 (zero)
+fn EXORAA(S): i64 { EW(S, 0xCA000000); return 0; }    # eor x0, x0, x0 (zero)
 
 # === mov rdi, rax (for exit: x0 already has the value) ===
-fn EMOVRDI(S) { return 0; }  # no-op: x0 is already the first arg on aarch64
+fn EMOVRDI(S): i64 { return 0; }  # no-op: x0 is already the first arg on aarch64
 
 # === Syscall ===
 # SVC #0 (Linux) or SVC #0x80 (macOS/BSD). On BSD the error convention
@@ -314,7 +314,7 @@ fn EMOVRDI(S) { return 0; }  # no-op: x0 is already the first arg on aarch64
 # a `csneg x0, x0, x0, cc` after the Mach-O ARM SVC: if carry clear
 # (success) x0 is unchanged; if carry set (error) x0 gets negated so
 # the returned value is -errno, matching Linux.
-fn ESYSCALL(S) {
+fn ESYSCALL(S): i64 {
     if (_TARGET_MACHO == 2) {
         EW(S, 0xD4001001);      # svc #0x80
         EW(S, 0xDA803400);      # csneg x0, x0, x0, cc
@@ -326,30 +326,30 @@ fn ESYSCALL(S) {
 # === Syscall argument pops ===
 # On aarch64, syscall args are x0-x5 (already in the right regs from Cyrius calling convention)
 # Pop from stack into x0-x5 in reverse order
-fn EPOPRDI(S) { EW(S, 0xF8410FE0); return 0; }  # ldr x0, [sp], #16
-fn EPOPRSI(S) { EW(S, 0xF8410FE1); return 0; }  # ldr x1, [sp], #16
-fn EPOPRDX(S) { EW(S, 0xF8410FE2); return 0; }  # ldr x2, [sp], #16
-fn EPOPR10(S) { EW(S, 0xF8410FE3); return 0; }  # ldr x3, [sp], #16 (arg4)
-fn EPOPR8(S) { EW(S, 0xF8410FE4); return 0; }   # ldr x4, [sp], #16 (arg5)
-fn EPOPR9(S) { EW(S, 0xF8410FE5); return 0; }   # ldr x5, [sp], #16
+fn EPOPRDI(S): i64 { EW(S, 0xF8410FE0); return 0; }  # ldr x0, [sp], #16
+fn EPOPRSI(S): i64 { EW(S, 0xF8410FE1); return 0; }  # ldr x1, [sp], #16
+fn EPOPRDX(S): i64 { EW(S, 0xF8410FE2); return 0; }  # ldr x2, [sp], #16
+fn EPOPR10(S): i64 { EW(S, 0xF8410FE3); return 0; }  # ldr x3, [sp], #16 (arg4)
+fn EPOPR8(S): i64 { EW(S, 0xF8410FE4); return 0; }   # ldr x4, [sp], #16 (arg5)
+fn EPOPR9(S): i64 { EW(S, 0xF8410FE5); return 0; }   # ldr x5, [sp], #16
 
 # === PIE-safe PC-relative addressing (Mach-O ARM) ===
 # ADRP xN, #0 — placeholder, page-diff patched by FIXUP_ADRP_ADD.
 # Encoding: 0x90000000 | Rd (bits 4:0). immlo/immhi fields start at 0.
-fn EADRP(S, reg) {
+fn EADRP(S, reg): i64 {
     EW(S, 0x90000000 | (reg & 0x1F));
     return 0;
 }
 
 # ADD xN, xN, #0 — placeholder, imm12 patched by FIXUP_ADRP_ADD.
 # Encoding: 0x91000000 | (Rn << 5) | Rd, with Rn == Rd == reg.
-fn EADD_IMM12(S, reg) {
+fn EADD_IMM12(S, reg): i64 {
     EW(S, 0x91000000 | ((reg & 0x1F) << 5) | (reg & 0x1F));
     return 0;
 }
 
 # === Fixup + variable access ===
-fn RECFIX(S, idx) {
+fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
     if (fc >= 262144) {
         syscall(SYS_WRITE, 2, "error: fixup table full (", 25);
@@ -365,7 +365,7 @@ fn RECFIX(S, idx) {
 }
 
 # Load variable address into x1 (for struct field access)
-fn EVADDR_X1(S, idx) {
+fn EVADDR_X1(S, idx): i64 {
     RECFIX(S, idx);
     if (_TARGET_MACHO == 2) {
         EADRP(S, 1);          # adrp x1, <page>
@@ -379,14 +379,14 @@ fn EVADDR_X1(S, idx) {
 }
 
 # Add immediate to x1
-fn EADDIMM_X1(S, val) {
+fn EADDIMM_X1(S, val): i64 {
     # add x1, x1, #val (imm12)
     EW(S, 0x91000021 | ((val & 0xFFF) << 10));
     return 0;
 }
 
 # Store: mov x1, <addr>; str x0, [x1]
-fn EVSTORE(S, idx) {
+fn EVSTORE(S, idx): i64 {
     # RECFIX before the address sequence so fixup patches the right instructions
     RECFIX(S, idx);
     if (_TARGET_MACHO == 2) {
@@ -402,7 +402,7 @@ fn EVSTORE(S, idx) {
 }
 
 # Load: mov x1, <addr>; ldr x0, [x1]
-fn EVLOAD(S, idx) {
+fn EVLOAD(S, idx): i64 {
     RECFIX(S, idx);
     if (_TARGET_MACHO == 2) {
         EADRP(S, 1); EADD_IMM12(S, 1);
@@ -417,7 +417,7 @@ fn EVLOAD(S, idx) {
 }
 
 # Address: mov x0, <addr>
-fn EVADDR(S, idx) {
+fn EVADDR(S, idx): i64 {
     RECFIX(S, idx);
     if (_TARGET_MACHO == 2) {
         EADRP(S, 0); EADD_IMM12(S, 0);
@@ -430,7 +430,7 @@ fn EVADDR(S, idx) {
 }
 
 # String address
-fn ESADDR(S, soff) {
+fn ESADDR(S, soff): i64 {
     var fc = GFCNT(S);
     if (fc >= 262144) {
         syscall(SYS_WRITE, 2, "error: fixup table full (262144)\n", 33);
@@ -452,7 +452,7 @@ fn ESADDR(S, soff) {
 
 # Pop syscall args then SVC
 # Translate x86 syscall number (in x8) to aarch64 equivalent
-fn ESYSXLAT(S) {
+fn ESYSXLAT(S): i64 {
     # Mach-O ARM (Apple Silicon, BSD syscall convention):
     #   - syscall number goes in x16 (not x8)
     #   - svc #0x80 (not #0)
@@ -516,7 +516,7 @@ fn ESYSXLAT(S) {
 # Pop syscall args (LIFO — last pushed = first popped)
 # Push order: syscall_num, arg1, arg2, ..., argN
 # Pop order: argN first, syscall_num last
-fn ESCPOPS(S, n) {
+fn ESCPOPS(S, n): i64 {
     # LIFO: last pushed (argN) pops first, first pushed (syscall_num) pops last
     # For syscall(num, a1, a2, a3, a4, a5, a6):
     #   Push order: num, a1, a2, a3, a4, a5, a6
@@ -547,7 +547,7 @@ fn ESCPOPS(S, n) {
 }
 
 # Exit: on Linux, movz x8,#93; svc #0.  On macOS/BSD, movz x16,#1; svc #0x80.
-fn EEXIT(S) {
+fn EEXIT(S): i64 {
     # x0 already has the exit value
     if (_TARGET_MACHO == 2) {
         EW(S, 0xD2800030);    # movz x16, #1 (BSD _exit)
@@ -574,7 +574,7 @@ fn EEXIT(S) {
 # imports (v5.5.14+) the fixup will need to encode slot*8 properly scaled
 # for LDR (imm12 = offset/8), at which point this path gets a dedicated
 # FIXUP_ADRP_LDR in aarch64/fixup.cyr.
-fn EMACHO_EXIT_ARM(S) {
+fn EMACHO_EXIT_ARM(S): i64 {
     # EPOPR is the verified post-indexed pop into x0 (encoding 0xF84107E0).
     # The EPOPRDI/SI/DX/R10/R8/R9 family at lines 216-221 uses 0xF8410FE0
     # which is actually PRE-indexed (`[sp, #16]!`) — comments there lie.
@@ -602,7 +602,7 @@ fn EMACHO_EXIT_ARM(S) {
 # adrp/ldr/blr trio that calls through __got[slot]. Returns 0.
 # Non-zero slots are patched by FIXUP_ADRP_LDR (imm12 scaled /8);
 # slot 0 reuses FIXUP_ADRP_ADD.
-fn _EMACHO_BLR_GOT(S, slot) {
+fn _EMACHO_BLR_GOT(S, slot): i64 {
     var fc = GFCNT(S);
     if (fc >= 262144) {
         syscall(SYS_WRITE, 2, "error: fixup table full (262144)\n", 33);
@@ -622,7 +622,7 @@ fn _EMACHO_BLR_GOT(S, slot) {
 # Stack top-down (argc==4): [len][buf][fd][sc_num=1]. AAPCS64 wants x0=fd,
 # x1=buf, x2=len, so pop top→x2, next→x1, next→x0, then discard sc_num.
 # Return value lands in x0 per both AAPCS64 and the syscall convention.
-fn EMACHO_WRITE_ARM(S) {
+fn EMACHO_WRITE_ARM(S): i64 {
     EPOPARG(S, 2);                 # ldr x2, [sp], #16 — len
     EPOPARG(S, 1);                 # ldr x1, [sp], #16 — buf
     EPOPARG(S, 0);                 # ldr x0, [sp], #16 — fd
@@ -633,7 +633,7 @@ fn EMACHO_WRITE_ARM(S) {
 
 # v5.5.14 Mach-O arm64 syscall(0, fd, buf, len) → libSystem._read(fd, buf, len).
 # Same stack layout as EMACHO_WRITE_ARM; dispatches through __got[2] = _read.
-fn EMACHO_READ_ARM(S) {
+fn EMACHO_READ_ARM(S): i64 {
     EPOPARG(S, 2);                 # ldr x2, [sp], #16 — len
     EPOPARG(S, 1);                 # ldr x1, [sp], #16 — buf
     EPOPARG(S, 0);                 # ldr x0, [sp], #16 — fd
@@ -648,7 +648,7 @@ fn EMACHO_READ_ARM(S) {
 # `&timespec` on Linux; macOS returns ns directly in x0 so no
 # buffer is needed). Returns u64 ns in x0.
 # Stack top-down (argc==3): [arg2][arg1=clock_id][sc_num=228].
-fn EMACHO_CLOCK_ARM(S) {
+fn EMACHO_CLOCK_ARM(S): i64 {
     EW(S, 0x910043FF);             # add sp, sp, #16 — drop arg2 (placeholder)
     EPOPARG(S, 0);                 # ldr x0, [sp], #16 — clock_id
     EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
@@ -662,14 +662,14 @@ fn EMACHO_CLOCK_ARM(S) {
 # ================================================================
 
 # Function prologue: stp x29,x30,[sp,#-16]!; mov x29,sp
-fn EFNPRO(S) {
+fn EFNPRO(S): i64 {
     EW(S, 0xA9BF7BFD);  # stp x29, x30, [sp, #-16]!
     EW(S, 0x910003FD);  # mov x29, sp
     return 0;
 }
 
 # Emit sub sp, sp, #imm — returns patch offset
-fn ESUBRSP(S) {
+fn ESUBRSP(S): i64 {
     var patch = GCP(S);
     EW(S, 0xD10003FF);  # sub sp, sp, #0 (placeholder, imm12 in bits [21:10])
     return patch;
@@ -682,7 +682,7 @@ fn ESUBRSP(S) {
 # the x86 versions were called. With both gone, the symmetry holds.
 
 # Function epilogue: mov sp,x29; ldp x29,x30,[sp],#16; ret
-fn EFNEPI(S) {
+fn EFNEPI(S): i64 {
     EW(S, 0x910003BF);  # mov sp, x29
     EW(S, 0xA8C17BFD);  # ldp x29, x30, [sp], #16
     EW(S, 0xD65F03C0);  # ret
@@ -690,7 +690,7 @@ fn EFNEPI(S) {
 }
 
 # Emit BL to known target
-fn ECALLTO(S, target) {
+fn ECALLTO(S, target): i64 {
     var cp = GCP(S);
     var rel = (target - cp) / 4;
     EW(S, 0x94000000 | (rel & 0x3FFFFFF));
@@ -698,7 +698,7 @@ fn ECALLTO(S, target) {
 }
 
 # Emit BL placeholder, record type-2 fixup
-fn ECALLFIX(S, fnidx) {
+fn ECALLFIX(S, fnidx): i64 {
     var poff = GCP(S);
     EW(S, 0x94000000);  # bl +0 (placeholder)
     var fc = GFCNT(S);
@@ -721,7 +721,7 @@ fn ECALLFIX(S, fnidx) {
 # call, but only the N=1 case has the pop's CP == _last_push_cp
 # since EPOPARG(N-1..1) push the emit cursor forward before this).
 # Pre-v5.6.25 cc5_aarch64 carried 2,569 such pairs.
-fn EPOPARG(S, n) {
+fn EPOPARG(S, n): i64 {
     if (n == 0) {
         if (GCP(S) == _last_push_cp) {
             SCP(S, GCP(S) - 4);
@@ -735,7 +735,7 @@ fn EPOPARG(S, n) {
 }
 
 # Pop args into registers for function call
-fn ECALLPOPS(S, n) {
+fn ECALLPOPS(S, n): i64 {
     if (n <= 6) {
         var i = n - 1;
         while (i >= 0) { EPOPARG(S, i); i = i - 1; }
@@ -764,7 +764,7 @@ fn ECALLPOPS(S, n) {
 }
 
 # Stack cleanup after call with >6 args
-fn ECALLCLEAN(S, n) {
+fn ECALLCLEAN(S, n): i64 {
     if (n > 6) {
         # add sp, sp, #(nextra * 16)
         var extra = (n - 6) * 16;
@@ -774,7 +774,7 @@ fn ECALLCLEAN(S, n) {
 }
 
 # Helper: not needed on aarch64 but must exist for parse.cyr
-fn EDISP32(S, disp) { return 0; }
+fn EDISP32(S, disp): i64 { return 0; }
 
 # v5.9.26 Phase 2b-aarch64 — load &local into X8 (the dedicated
 # indirect-result register on aarch64 SysV / AAPCS64 §6.9). Used at
@@ -784,7 +784,7 @@ fn EDISP32(S, disp) { return 0; }
 # stack to be popped into RDI) because aarch64 reserves X8 outside
 # the regular arg-reg sequence.
 #   add x8, x29, #abs_disp     ; or sub if negative
-fn EFLADDR_X8(S, lli) {
+fn EFLADDR_X8(S, lli): i64 {
     var disp = 0 - ((lli + 1) * 8);
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     var abs = 0 - disp;
@@ -805,7 +805,7 @@ fn EFLADDR_X8(S, lli) {
 # LDUR/STUR signed 9-bit immediate range (-256..+255). Called only with
 # disp <= -256 (locals at idx >= 32). Assumes |disp| fits in 16 bits —
 # Cyrius functions with >= 8192 locals are implausible.
-fn _EFP_ADDR_X9(S, disp) {
+fn _EFP_ADDR_X9(S, disp): i64 {
     var abs = 0 - disp;
     EW(S, 0xD2800009 | ((abs & 0xFFFF) << 5));  # movz x9, #abs
     EW(S, 0xCB0903A9);                            # sub x9, x29, x9
@@ -813,7 +813,7 @@ fn _EFP_ADDR_X9(S, disp) {
 }
 
 # Store parameter to frame: str xN, [x29, #-offset]
-fn ESTOREREGPARM(S, pidx, disp) {
+fn ESTOREREGPARM(S, pidx, disp): i64 {
     # STUR Xt, [Xn, #simm9]: 1111 1000 000 simm9 00 Xn Xt
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
@@ -825,7 +825,7 @@ fn ESTOREREGPARM(S, pidx, disp) {
     return 0;
 }
 
-fn ESTORESTACKPARM(S, pidx, disp, pc) {
+fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
     # Load extra arg from caller's stack, store to local frame
     # Caller pushed extras at [sp+0], [sp+16], ... before the call
     # After prologue, they're at [x29+16], [x29+32], ...
@@ -847,7 +847,7 @@ fn ESTORESTACKPARM(S, pidx, disp, pc) {
     return 0;
 }
 
-fn ESTOREPARM(S, pidx, lidx, pc) {
+fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     var disp = 0 - ((lidx + 1) * 8);
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (pidx < 6) {
@@ -861,7 +861,7 @@ fn ESTOREPARM(S, pidx, lidx, pc) {
 # Local variable load: ldur x0, [x29, #-offset]
 # v5.9.26: account for `_cur_fn_ret_stash` so locals in
 # struct-returning fns don't overlap the X8 retptr stash slot.
-fn EFLLOAD(S, idx) {
+fn EFLLOAD(S, idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
@@ -876,7 +876,7 @@ fn EFLLOAD(S, idx) {
 
 # Local variable store: stur x0, [x29, #-offset]
 # v5.9.26: account for `_cur_fn_ret_stash` (see EFLLOAD note).
-fn EFLSTORE(S, idx) {
+fn EFLSTORE(S, idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
@@ -918,7 +918,7 @@ fn EFLSTORE(S, idx) {
 # pair must update in lockstep with EFLLOAD / EFLSTORE — they're a
 # coupled set; fixing one without the others silently corrupts
 # locals.
-fn EFLADDR(S, lli) {
+fn EFLADDR(S, lli): i64 {
     var disp = (lli + 1) * 8;     # positive magnitude — locals below x29
     if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
     if (disp <= 4095) {
@@ -935,7 +935,7 @@ fn EFLADDR(S, lli) {
     return 0;
 }
 
-fn EFLADDR_X1(S, lli) {
+fn EFLADDR_X1(S, lli): i64 {
     var disp = (lli + 1) * 8;
     if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
     if (disp <= 4095) {
@@ -949,10 +949,10 @@ fn EFLADDR_X1(S, lli) {
 }
 
 # Object mode check (shared with x86)
-fn _IS_OBJ(S) { return L64(S + 0x18FCA0) == 3; }
+fn _IS_OBJ(S): i64 { return L64(S + 0x18FCA0) == 3; }
 
 # Width-aware local load: ldurb/ldurh/ldur w0/ldur x0 from [x29, #-offset]
-fn EFLLOAD_W(S, idx, width) {
+fn EFLLOAD_W(S, idx, width): i64 {
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
@@ -972,7 +972,7 @@ fn EFLLOAD_W(S, idx, width) {
 }
 
 # Width-aware local store: sturb/sturh/stur w0/stur x0 to [x29, #-offset]
-fn EFLSTORE_W(S, idx, width) {
+fn EFLSTORE_W(S, idx, width): i64 {
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
@@ -992,7 +992,7 @@ fn EFLSTORE_W(S, idx, width) {
 }
 
 # Width-aware global load: ldr from [x1] with width
-fn EVLOAD_W(S, idx, width) {
+fn EVLOAD_W(S, idx, width): i64 {
     EVADDR_X1(S, idx);
     if (width == 1) { EW(S, 0x39400020); return 0; }
     if (width == 2) { EW(S, 0x79400020); return 0; }
@@ -1001,7 +1001,7 @@ fn EVLOAD_W(S, idx, width) {
 }
 
 # Width-aware global store: str to [x1] with width
-fn EVSTORE_W(S, idx, width) {
+fn EVSTORE_W(S, idx, width): i64 {
     EVADDR_X1(S, idx);
     if (width == 1) { EW(S, 0x39000020); return 0; }
     if (width == 2) { EW(S, 0x79000020); return 0; }
@@ -1015,7 +1015,7 @@ fn EVSTORE_W(S, idx, width) {
 # out of an inline `if (_AARCH64_BACKEND == 1)` block into a
 # named helper so the cx backend can sit alongside as a peer
 # without parse_decl.cyr having to grow another arch arm.
-fn EFIELD_LOAD_W(S, width) {
+fn EFIELD_LOAD_W(S, width): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     if (width == 1) { EW(S, 0x39400020); return 0; }   # ldrb w0, [x1]
     if (width == 2) { EW(S, 0x79400020); return 0; }   # ldrh w0, [x1]
@@ -1036,7 +1036,7 @@ fn EFIELD_LOAD_W(S, width) {
 #     subs x11, x11, #1
 #     b.ne loop                          (-3 instructions back)
 #   x0  = ldur [fp + stash_disp]         (reload retptr — x10 is past)
-fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
+fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     _EFP_ADDR_X9(S, src_disp);
     var off9 = stash_disp & 0x1FF;
@@ -1051,7 +1051,7 @@ fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
 }
 
 # Patch frame size: sub sp, sp, #N at the prologue
-fn EPATCHFRAME(S, patch, size) {
+fn EPATCHFRAME(S, patch, size): i64 {
     # Read the SUB instruction and patch imm12
     var addr = S + 0x64A000 + patch;
     var insn = L64(addr) & 0xFFFFFFFF;
@@ -1062,16 +1062,16 @@ fn EPATCHFRAME(S, patch, size) {
 }
 
 # === Token access (arch-independent, same as x86) ===
-fn TOKTYP(S, i) { return L64(S + 0x368C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576)
-fn TOKVAL(S, i) { return L64(S + 0x3E8C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576)
-fn PEEKT(S) { return TOKTYP(S, GTI(S)); }
-fn PEEKV(S) { return TOKVAL(S, GTI(S)); }
+fn TOKTYP(S, i): i64 { return L64(S + 0x368C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576)
+fn TOKVAL(S, i): i64 { return L64(S + 0x3E8C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576)
+fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
+fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
 
 # ================================================================
 # AARCH64 INLINE ASM MNEMONICS
 # ================================================================
 
-fn ASM_MNEMONIC(S) {
+fn ASM_MNEMONIC(S): i64 {
     var noff = PEEKV(S);
     var mnem = L64(S + 0x60000 + noff);
     STI(S, GTI(S) + 1);
@@ -1094,7 +1094,7 @@ fn ASM_MNEMONIC(S) {
 }
 
 # Tail call: epilogue + branch to function (aarch64)
-fn ETAILJMP(S, fnidx) {
+fn ETAILJMP(S, fnidx): i64 {
     # Restore frame: mov sp, x29; ldp x29, x30, [sp], #16
     EW(S, 0x910003BF);  # mov sp, x29
     EW(S, 0xA8C17BFD);  # ldp x29, x30, [sp], #16
@@ -1118,7 +1118,7 @@ fn ETAILJMP(S, fnidx) {
 # ================================================================
 # cmp x0, x1; cset x0, <cond>
 # op: 17=EQ, 18=NE, 19=LT, 20=GT, 21=LE, 22=GE
-fn ESETCC(S, op) {
+fn ESETCC(S, op): i64 {
     # cmp x0, x1 (EB 00 01 6B = subs xzr, x0, x1... actually CMP is alias)
     EW(S, 0xEB01001F);
     # cset x0, <cond>
@@ -1148,20 +1148,20 @@ fn ESETCC(S, op) {
 # x86 bit-cast / x87-stack-mgmt helpers the aarch64 path doesn't
 # need — fmov d, x and fmov x, d are inlined directly into EMIT_
 # F64_BINOP / EMIT_F64_CMP / etc. The stubs preserve the parser API.
-fn EMOVQ_X0_A(S) { return 0; }
-fn EMOVQ_X1_C(S) { return 0; }
-fn EMOVQ_A_X0(S) { return 0; }
-fn EUCOMISD(S) { return 0; }
-fn EXORPD_X1(S) { return 0; }
-fn EMOVAPD_01(S) { return 0; }
-fn EX87PUSH(S) { return 0; }
-fn EX87POP(S) { return 0; }
+fn EMOVQ_X0_A(S): i64 { return 0; }
+fn EMOVQ_X1_C(S): i64 { return 0; }
+fn EMOVQ_A_X0(S): i64 { return 0; }
+fn EUCOMISD(S): i64 { return 0; }
+fn EXORPD_X1(S): i64 { return 0; }
+fn EMOVAPD_01(S): i64 { return 0; }
+fn EX87PUSH(S): i64 { return 0; }
+fn EX87POP(S): i64 { return 0; }
 
 # v5.7.30: int → f64. Input: x0 = int. Output: x0 = f64 bit pattern.
 # scvtf d0, x0  (signed convert to double)
 # fmov x0, d0   (extract bits)
 # Replaces the previous `return 0;` stub which silently produced 0.
-fn EI2F(S) {
+fn EI2F(S): i64 {
     EW(S, 0x9E620000);   # scvtf d0, x0
     EW(S, 0x9E660000);   # fmov x0, d0
     return 0;
@@ -1170,7 +1170,7 @@ fn EI2F(S) {
 # v5.7.30: f64 → int. Input: x0 = f64 bit pattern. Output: x0 = int.
 # fmov d0, x0   (interpret bits as double)
 # fcvtzs x0, d0 (signed convert, round toward zero)
-fn EF2I(S) {
+fn EF2I(S): i64 {
     EW(S, 0x9E670000);   # fmov d0, x0
     EW(S, 0x9E780000);   # fcvtzs x0, d0
     return 0;
@@ -1178,7 +1178,7 @@ fn EF2I(S) {
 
 # fsqrt d0, d0  (single-source FP op; bits in x0 already → fmov to
 # d0, FSQRT, fmov back).
-fn EF64SQRT(S) {
+fn EF64SQRT(S): i64 {
     EW(S, 0x9E670000);   # fmov d0, x0   — interpret x0 bits as double
     EW(S, 0x1E61C000);   # fsqrt d0, d0
     EW(S, 0x9E660000);   # fmov x0, d0   — extract bit pattern
@@ -1186,7 +1186,7 @@ fn EF64SQRT(S) {
 }
 
 # frintm d0, d0  (round toward -∞)
-fn EF64FLOOR(S) {
+fn EF64FLOOR(S): i64 {
     EW(S, 0x9E670000);   # fmov d0, x0
     EW(S, 0x1E654000);   # frintm d0, d0
     EW(S, 0x9E660000);   # fmov x0, d0
@@ -1194,7 +1194,7 @@ fn EF64FLOOR(S) {
 }
 
 # frintp d0, d0  (round toward +∞)
-fn EF64CEIL(S) {
+fn EF64CEIL(S): i64 {
     EW(S, 0x9E670000);   # fmov d0, x0
     EW(S, 0x1E64C000);   # frintp d0, d0
     EW(S, 0x9E660000);   # fmov x0, d0
@@ -1202,7 +1202,7 @@ fn EF64CEIL(S) {
 }
 
 # frintn d0, d0  (round to nearest, ties to even)
-fn EF64ROUND(S) {
+fn EF64ROUND(S): i64 {
     EW(S, 0x9E670000);   # fmov d0, x0
     EW(S, 0x1E644000);   # frintn d0, d0
     EW(S, 0x9E660000);   # fmov x0, d0
@@ -1213,7 +1213,7 @@ fn EF64ROUND(S) {
 #   in:  stack TOS = first arg bits (a); x0 = second arg bits (b)
 #   out: x0 = (a OP b) bit pattern; stack popped.
 # fop: 0=add, 1=sub, 2=mul, 3=div.
-fn EMIT_F64_BINOP(S, fop) {
+fn EMIT_F64_BINOP(S, fop): i64 {
     EW(S, 0x9E670001);   # fmov d1, x0   — d1 = b (second arg)
     EPOPR(S);            # pop a into x0
     EW(S, 0x9E670000);   # fmov d0, x0   — d0 = a (first arg)
@@ -1230,7 +1230,7 @@ fn EMIT_F64_BINOP(S, fop) {
 # runtime via scvtf + fdiv, matching x86/float.cyr's strategy.
 # Mirrors the EMIT_FLOAT_LIT in x86/float.cyr — same input shape,
 # same output (f64 bit pattern in x0/rax), aarch64 FP instructions.
-fn EMIT_FLOAT_LIT(S, fval) {
+fn EMIT_FLOAT_LIT(S, fval): i64 {
     var numer = fval & 0xFFFFFFFF;
     var denom = (fval >> 32) & 0xFFFFFFFF;
     EMOVI(S, numer);           # x0 = numer
@@ -1242,8 +1242,8 @@ fn EMIT_FLOAT_LIT(S, fval) {
     return 0;
 }
 # Expression spill stubs
-fn ESPILL(S) { EPUSHR(S); return 0; }
-fn EUNSPILL(S) { EPOPR(S); return 0; }
+fn ESPILL(S): i64 { EPUSHR(S); return 0; }
+fn EUNSPILL(S): i64 { EPOPR(S); return 0; }
 # Inline disabled on aarch64
 var _INLINE_OK = 0;
 var _LOOPVAR_OK = 0;
@@ -1271,7 +1271,7 @@ var _LOOPVAR_OK = 0;
 # by one slot or pass even n. Pre-existing footgun preserved
 # for cross-arch parity; documented here, not silently fixed.
 
-fn EMIT_F64V_LOOP(S, op, vbase) {
+fn EMIT_F64V_LOOP(S, op, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0   — n
     EW(S, 0xD280000B);                # movz x11, #0  — index = 0
     var loop_top = GCP(S);
@@ -1304,7 +1304,7 @@ fn EMIT_F64V_LOOP(S, op, vbase) {
     return 0;
 }
 
-fn EMIT_F64V_UNARY(S, op, vbase) {
+fn EMIT_F64V_UNARY(S, op, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0
     EW(S, 0xD280000B);                # movz x11, #0
     var loop_top = GCP(S);
@@ -1330,7 +1330,7 @@ fn EMIT_F64V_UNARY(S, op, vbase) {
     return 0;
 }
 
-fn EMIT_F64V_FMADD(S, vbase) {
+fn EMIT_F64V_FMADD(S, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0
     EW(S, 0xD280000B);                # movz x11, #0
     var loop_top = GCP(S);
@@ -1376,7 +1376,7 @@ fn EMIT_F64V_FMADD(S, vbase) {
 # Returns f64 bit pattern in x0.
 # Strategy: v2 holds 2-wide running sum via fmla; tail uses faddp
 # (NEON pairwise add) to reduce to a scalar in d0; fmov x0, d0.
-fn EMIT_F64V_DOT(S, vbase) {
+fn EMIT_F64V_DOT(S, vbase): i64 {
     EW(S, 0x6E221C42);                # eor v2.16b, v2.16b, v2.16b — zero accumulator
     EW(S, 0xAA0003EA);                # mov x10, x0   — n
     EW(S, 0xD280000B);                # movz x11, #0  — index
@@ -1410,7 +1410,7 @@ fn EMIT_F64V_DOT(S, vbase) {
 # Slots: vbase=dst, vbase+1=a, vbase+2=scalar (f64 bit pattern). n in x0.
 # Pre-loop: load scalar bits → x0, fmov d3 ← x0, dup v3.2d, v3.d[0]
 # (broadcast across both lanes). Loop: ldr q0, fmul, str q0.
-fn EMIT_F64V_SCALE(S, vbase) {
+fn EMIT_F64V_SCALE(S, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0  — n SAVED before clobber
     # x0 = scalar bits
     EFLLOAD(S, vbase + 2);
@@ -1442,7 +1442,7 @@ fn EMIT_F64V_SCALE(S, vbase) {
 # EMIT_F64V_AXPY(S, vbase) — y[i] += alpha * x[i].
 # Slots: vbase=y, vbase+1=x, vbase+2=alpha. n in x0.
 # Uses FMLA — fused multiply-add, single-instruction y += x*alpha.
-fn EMIT_F64V_AXPY(S, vbase) {
+fn EMIT_F64V_AXPY(S, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0  — save n
     EFLLOAD(S, vbase + 2);
     EW(S, 0x9E670003);                # fmov d3, x0  — alpha bits → d3

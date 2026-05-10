@@ -1,7 +1,7 @@
 # rev — reverse each line from stdin
 # Usage: echo "hello" | ./rev
 
-fn print_rev(line, len) {
+fn print_rev(line, len): i64 {
     var k: i64 = len - 1;
     while (k >= 0) {
         syscall(1, 1, line + k, 1);
@@ -11,7 +11,7 @@ fn print_rev(line, len) {
     return 0;
 }
 
-fn rev() {
+fn rev(): i64 {
     var line[4096];
     var byte[1];
     var len: i64 = 0;

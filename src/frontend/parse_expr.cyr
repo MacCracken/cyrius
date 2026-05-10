@@ -7,7 +7,7 @@
 # the original content lived. No logical change from the original
 # inline version; self-host byte-identical by construction.
 
-fn _SC_ARITY(n) {
+fn _SC_ARITY(n): i64 {
     if (n == 0) { return 3; }    # read(fd, buf, count)
     if (n == 1) { return 3; }    # write(fd, buf, count)
     if (n == 2) { return 3; }    # open(path, flags, mode)
@@ -55,7 +55,7 @@ fn _SC_ARITY(n) {
 # Cache for str_from function index (auto-coercion).
 # Lazily resolved on first use — returns the tok_names offset for "str_from".
 var _str_from_cache = 0 - 1;
-fn _STR_FROM_NOFF(S) {
+fn _STR_FROM_NOFF(S): i64 {
     if (_str_from_cache >= 0) { return _str_from_cache; }
     # Search tok_names for "str_from\0" = 0x006D6F72665F727473
     var npos = GNPOS(S);
@@ -73,7 +73,7 @@ fn _STR_FROM_NOFF(S) {
     return 0 - 1;
 }
 
-fn PARSE_FACTOR(S) {
+fn PARSE_FACTOR(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
     SESTYPE(S, 0);
@@ -910,7 +910,7 @@ fn PARSE_FACTOR(S) {
     return 0;
 }
 # f64 binary ops
-fn PF64BIN(S, tok) {
+fn PF64BIN(S, tok): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
     PCMPE(S); EPUSHR(S);
@@ -921,7 +921,7 @@ fn PF64BIN(S, tok) {
     return 0;
 }
 # f64 compare ops
-fn PF64CMP(S, tok) {
+fn PF64CMP(S, tok): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
     PCMPE(S); EPUSHR(S);
@@ -969,7 +969,7 @@ fn PF64CMP(S, tok) {
 
 # Constant folding state (codegen-level, same EMOVI size only)
 # Handle extended SIMD builtins (tokens 93-96) in separate function
-fn PARSE_SIMD_EXT(S, ptyp) {
+fn PARSE_SIMD_EXT(S, ptyp): i64 {
     # f64v_div(dst, a, b, n)
     if (ptyp == 93) {
         STI(S, GTI(S) + 1);
@@ -1211,7 +1211,7 @@ var _cfo = 0;
 # into rax / x0 before the shift.
 # Returns 1 on peephole hit (mul replaced with shl), 0 on miss
 # (caller falls through to the standard PARSE_FACTOR + EIMUL path).
-fn _TRY_MUL_BY_POW2(S) {
+fn _TRY_MUL_BY_POW2(S): i64 {
     if (PEEKT(S) != 1) { return 0; }
     var pv = PEEKV(S);
     if (pv < 2) { return 0; }
@@ -1225,7 +1225,7 @@ fn _TRY_MUL_BY_POW2(S) {
     return 1;
 }
 
-fn PARSE_TERM(S) {
+fn PARSE_TERM(S): i64 {
     _cfo = 0;
     # Extended builtins — checked first
     var ptyp = PEEKT(S);
@@ -1552,7 +1552,7 @@ fn PARSE_TERM(S) {
     return 0;
 }
 
-fn EPTR_SCALE(S, ps) {
+fn EPTR_SCALE(S, ps): i64 {
     # rax has the offset value; multiply by pointer scale
     # mov rcx, rax; mov rax, ps; imul rcx → rax = offset * scale
     if (ps > 1) { EMOVCA(S); EMOVI(S, ps); EIMUL(S); }
@@ -1561,7 +1561,7 @@ fn EPTR_SCALE(S, ps) {
 
 # Build operator function name: StructName_op in tok_names
 # op_name is a short string like "add", "sub", "mul", "div"
-fn BUILD_OP_NAME(S, stype, op_str, op_len) {
+fn BUILD_OP_NAME(S, stype, op_str, op_len): i64 {
     NPOS_GUARD(S, 256);
     var si = stype - 1;
     var snoff = L64(S + 0x18E630 + si * 8);
@@ -1580,7 +1580,7 @@ fn BUILD_OP_NAME(S, stype, op_str, op_len) {
 }
 
 # Emit operator dispatch: push lhs, parse rhs, call StructName_op(lhs, rhs)
-fn EMIT_OP_DISPATCH(S, stype, op_str, op_len) {
+fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
     # For struct vars, push address instead of value
     var svar = GESVAR(S);
     if (svar >= 0) { EVADDR(S, svar); }
@@ -1608,7 +1608,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len) {
 # (ECALLPOPS consumes 2 stack args). If the helper isn't defined at
 # link time the standard "undefined function" diagnostic fires on the
 # generated call — with the v5.6.0 `--strict` flag that's a hard-error.
-fn EMIT_OVF_CALL(S, fname_str) {
+fn EMIT_OVF_CALL(S, fname_str): i64 {
     var flen = 0;
     while (load8(fname_str + flen) != 0) { flen = flen + 1; }
     NPOS_GUARD(S, flen + 1);
@@ -1630,7 +1630,7 @@ fn EMIT_OVF_CALL(S, fname_str) {
     return 0;
 }
 
-fn PEXPR(S) {
+fn PEXPR(S): i64 {
     PARSE_TERM(S);
     var ps = GPSC(S);
     var go = 1;
@@ -1815,7 +1815,7 @@ fn PEXPR(S) {
 # Parse comparison expression: expr [cmp_op expr] [&& || cmp_expr]*
 # Returns value in rax (0 or 1 for comparisons).
 # Supports && (53) and || (54) as expression-level logical operators.
-fn PCMPE(S) {
+fn PCMPE(S): i64 {
     PEXPR(S);
     var op = PEEKT(S);
     if (op >= 17) {

@@ -31,7 +31,7 @@ var ARK_CACHE_DIR = "/var/cache/ark";
 # ================================================================
 
 # Load package database into vec of strings (one per line)
-fn db_load() {
+fn db_load(): i64 {
     var entries = vec_new();
     var buf = alloc(16384);
     var n = file_read_all(ARK_DB_PATH, buf, 16384);
@@ -57,7 +57,7 @@ fn db_load() {
 }
 
 # Check if package is in database
-fn db_has(entries, name) {
+fn db_has(entries, name): i64 {
     var len = vec_len(entries);
     var nlen = strlen(name);
     var di = 0;
@@ -73,7 +73,7 @@ fn db_has(entries, name) {
 }
 
 # Add entry to database file
-fn db_register(name, version, source) {
+fn db_register(name, version, source): i64 {
     # Ensure directory exists
     sys_mkdir("/var/lib/ark", 0x1C0);
     var fd = sys_open(ARK_DB_PATH, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
@@ -91,7 +91,7 @@ fn db_register(name, version, source) {
 }
 
 # Append to transaction log
-fn log_transaction(action, pkg_name) {
+fn log_transaction(action, pkg_name): i64 {
     sys_mkdir("/var/lib/ark", 0x1C0);
     var fd = sys_open(ARK_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
     if (fd < 0) { return 0; }
@@ -107,7 +107,7 @@ fn log_transaction(action, pkg_name) {
 # Commands
 # ================================================================
 
-fn cmd_status() {
+fn cmd_status(): i64 {
     syscall(1, 1, "ark ", 4);
     syscall(1, 1, ARK_VERSION, strlen(ARK_VERSION));
     syscall(1, 1, " (Cyrius)\n", 10);
@@ -132,7 +132,7 @@ fn cmd_status() {
     return 0;
 }
 
-fn cmd_search(query) {
+fn cmd_search(query): i64 {
     var resolver = resolver_new(ARK_MKT_DIR, ARK_CACHE_DIR);
     var results = nous_search(resolver, query);
     var len = vec_len(results);
@@ -153,7 +153,7 @@ fn cmd_search(query) {
     return 0;
 }
 
-fn cmd_info(name) {
+fn cmd_info(name): i64 {
     var resolver = resolver_new(ARK_MKT_DIR, ARK_CACHE_DIR);
     var p = nous_resolve(resolver, name);
     if (p == 0) {
@@ -194,7 +194,7 @@ fn cmd_info(name) {
     return 0;
 }
 
-fn cmd_install(name) {
+fn cmd_install(name): i64 {
     syscall(1, 1, "resolving ", 10);
     syscall(1, 1, name, strlen(name));
     syscall(1, 1, "...\n", 4);
@@ -233,7 +233,7 @@ fn cmd_install(name) {
     return 0;
 }
 
-fn cmd_remove(name) {
+fn cmd_remove(name): i64 {
     var entries = db_load();
     if (db_has(entries, name) == 0) {
         syscall(1, 2, "not installed: ", 15);
@@ -269,7 +269,7 @@ fn cmd_remove(name) {
     return 0;
 }
 
-fn cmd_list() {
+fn cmd_list(): i64 {
     var entries = db_load();
     var len = vec_len(entries);
     if (len == 0) {
@@ -288,7 +288,7 @@ fn cmd_list() {
     return 0;
 }
 
-fn cmd_history() {
+fn cmd_history(): i64 {
     var buf = alloc(8192);
     var n = file_read_all(ARK_LOG_PATH, buf, 8192);
     if (n <= 0) {
@@ -299,7 +299,7 @@ fn cmd_history() {
     return 0;
 }
 
-fn cmd_verify() {
+fn cmd_verify(): i64 {
     println("verifying package database...");
     var entries = db_load();
     var len = vec_len(entries);
@@ -333,7 +333,7 @@ fn cmd_verify() {
     return errors;
 }
 
-fn usage() {
+fn usage(): i64 {
     syscall(1, 1, "ark ", 4);
     syscall(1, 1, ARK_VERSION, strlen(ARK_VERSION));
     syscall(1, 1, " — AGNOS Package Manager (Cyrius)\n\n", 35);
@@ -349,7 +349,7 @@ fn usage() {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     args_init();
 

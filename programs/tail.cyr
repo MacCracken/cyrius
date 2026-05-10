@@ -2,7 +2,7 @@
 # Exercises: for loops, buffered I/O, circular buffer, load8/store8
 # Usage: cat file | ./tail
 
-fn tail() {
+fn tail(): i64 {
     # Circular buffer of line start offsets (last 10 lines)
     var buf[65536];
     var total: i64 = 0;

@@ -18,7 +18,7 @@
 # include "lib/syscalls_macos.cyr" in your source for macOS constants.
 # macOS has no brk — use lib/alloc_macos.cyr (mmap-based) instead.
 
-fn _macho_w32(O, off, v) {
+fn _macho_w32(O, off, v): i64 {
     store8(O + off, v & 0xFF);
     store8(O + off + 1, (v >> 8) & 0xFF);
     store8(O + off + 2, (v >> 16) & 0xFF);
@@ -26,13 +26,13 @@ fn _macho_w32(O, off, v) {
     return off + 4;
 }
 
-fn _macho_w64(O, off, v) {
+fn _macho_w64(O, off, v): i64 {
     off = _macho_w32(O, off, v & 0xFFFFFFFF);
     off = _macho_w32(O, off, (v >> 32) & 0xFFFFFFFF);
     return off;
 }
 
-fn _macho_wname(O, off, s) {
+fn _macho_wname(O, off, s): i64 {
     var i = 0;
     while (load8(s + i) != 0) { store8(O + off + i, load8(s + i)); i = i + 1; }
     while (i < 16) { store8(O + off + i, 0); i = i + 1; }
@@ -42,7 +42,7 @@ fn _macho_wname(O, off, s) {
 # v5.5.14 helper: write a NUL-terminated C string (no padding) at offset
 # and return the new offset. Used for strtab names and bind-opcode names
 # where symbol lengths are variable.
-fn _macho_wcstr(O, off, s) {
+fn _macho_wcstr(O, off, s): i64 {
     var i = 0;
     while (load8(s + i) != 0) { store8(O + off + i, load8(s + i)); i = i + 1; }
     store8(O + off + i, 0);
@@ -53,7 +53,7 @@ fn _macho_wcstr(O, off, s) {
 # All undefs share n_type = 0x01 (N_EXT|N_UNDF), n_sect = 0, desc = 0x0100
 # (lib ordinal 1 = libSystem, stored little-endian as 00 01). Returns new
 # offset (advances by 16).
-fn _macho_wsymundef(O, off, strx) {
+fn _macho_wsymundef(O, off, strx): i64 {
     var o = off;
     o = _macho_w32(O, o, strx);
     store8(O + o, 0x01); store8(O + o + 1, 0x00);
@@ -68,14 +68,14 @@ fn _macho_wsymundef(O, off, strx) {
 # each import gets: SET_SYMBOL_TRAILING_FLAGS_IMM (0x40) + name\0 +
 # DO_BIND (0x90). DO_BIND auto-advances the bind offset by pointer_size
 # (8 B) so sequential calls hit __got[0], __got[1], __got[2], … in order.
-fn _macho_wbindsym(O, off, s) {
+fn _macho_wbindsym(O, off, s): i64 {
     store8(O + off, 0x40);
     var o = _macho_wcstr(O, off + 1, s);
     store8(O + o, 0x90);
     return o + 1;
 }
 
-fn EMITMACHO_EXEC(S) {
+fn EMITMACHO_EXEC(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);
@@ -252,14 +252,14 @@ fn EMITMACHO_EXEC(S) {
 #
 # MH_NOUNDEFS is dropped: _exit is a real undef resolved by dyld.
 
-fn _macho_wstr_pad(O, off, s, width) {
+fn _macho_wstr_pad(O, off, s, width): i64 {
     var i = 0;
     while (load8(s + i) != 0) { store8(O + off + i, load8(s + i)); i = i + 1; }
     while (i < width) { store8(O + off + i, 0); i = i + 1; }
     return off + width;
 }
 
-fn EMITMACHO_ARM64(S) {
+fn EMITMACHO_ARM64(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);

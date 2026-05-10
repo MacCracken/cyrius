@@ -18,7 +18,7 @@ enum SockOpt { SOL_SOCKET = 1; SO_REUSEADDR = 2; }
 
 # sockaddr_in: { family(2), port(2), addr(4), zero(8) } = 16 bytes
 # Build a sockaddr_in struct from address and port
-fn sockaddr_in(addr, port) {
+fn sockaddr_in(addr, port): i64 {
     var sa = alloc(16);
     memset(sa, 0, 16);
     store16(sa, AF_INET);
@@ -50,7 +50,7 @@ fn udp_socket() {
 }
 
 # Set socket option SO_REUSEADDR
-fn sock_reuse(fd) {
+fn sock_reuse(fd): i64 {
     var val = alloc(4);
     store32(val, 1);
     return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, val, 4);
@@ -104,12 +104,12 @@ fn sock_recv(fd, buf, len) {
 }
 
 # Close socket
-fn sock_close(fd) {
+fn sock_close(fd): i64 {
     return sys_close(fd);
 }
 
 # Shutdown socket (0=read, 1=write, 2=both)
-fn sock_shutdown(fd, how) {
+fn sock_shutdown(fd, how): i64 {
     return syscall(SYS_SHUTDOWN, fd, how);
 }
 
@@ -161,7 +161,7 @@ var _NET_CONN_NB_TIMEOUT = 0 - 2;
 # `_NET_CONN_NB_TIMEOUT` (-2) on poll timeout,
 # `_NET_CONN_NB_ERR` (-1) on fcntl/connect/getsockopt failure.
 # Restores blocking mode on every exit path.
-fn net_connect_nb(fd, addr, port, timeout_ms) {
+fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     # Save current flags so we can restore blocking mode on every exit path.
     var saved_flags = syscall(72, fd, 3, 0);                # F_GETFL
     if (saved_flags < 0) { return _NET_CONN_NB_ERR; }

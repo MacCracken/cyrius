@@ -1,7 +1,7 @@
 # sort — bubble sort numbers from stdin, exercises: &&, load64/store64, arrays, nested while
 # Usage: printf "5\n3\n8\n1\n4\n" | ./sort
 
-fn parse_num(line, len) {
+fn parse_num(line, len): i64 {
     var val: i64 = 0;
     var i: i64 = 0;
     while (i < len) {
@@ -14,7 +14,7 @@ fn parse_num(line, len) {
     return val;
 }
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var pbuf[24];
     var i: i64 = 23;
     if (n == 0) { store8(&pbuf + i, 48); i = i - 1; }
@@ -27,7 +27,7 @@ fn print_num(n: i64) {
     return 0;
 }
 
-fn sort() {
+fn sort(): i64 {
     var nums[8192];
     var count: i64 = 0;
     var line[256];

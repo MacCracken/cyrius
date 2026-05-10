@@ -20,7 +20,7 @@
 # Return the argv base pointer that the entry prologue parked in x28.
 # Inline asm — mirrors lib/fnptr.cyr's pattern for stashing a register
 # into a local slot via [x29, #-8].
-fn _macho_argv_base() {
+fn _macho_argv_base(): i64 {
     var result = 0;
     asm {
         0xE0; 0x03; 0x1C; 0xAA;    # mov x0, x28
@@ -32,14 +32,14 @@ fn _macho_argv_base() {
 # On Linux the equivalent fn reads /proc/self/cmdline; on macOS the
 # entry prologue has already done the work, so args_init is a no-op.
 # Kept in the public API so caller code stays portable.
-fn args_init() {
+fn args_init(): i64 {
     return 0;
 }
 
 # argc is the 64-bit value at [x28, #0]. The entry `stp x0, x1, [sp, #-16]!`
 # stored the full 64-bit x0 (argc's low bits plus any zero-extension
 # Darwin guaranteed); the upper bits are zero per C int widening.
-fn argc() {
+fn argc(): i64 {
     var base = _macho_argv_base();
     return load64(base);
 }
@@ -47,7 +47,7 @@ fn argc() {
 # argv(n) returns a pointer to the nth NUL-terminated string argument.
 # argv itself is a `char **` stored at [x28, #8]; dereference it as an
 # 8-byte-per-entry pointer array.
-fn argv(n) {
+fn argv(n): i64 {
     if (n < 0) { return 0; }
     var base = _macho_argv_base();
     var cnt = load64(base);

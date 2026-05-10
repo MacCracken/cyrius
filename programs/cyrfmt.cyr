@@ -24,7 +24,7 @@ var _write_mode: i64 = 0;
 
 # Emit len bytes from ptr. --check / --write both route to the in-memory
 # output buffer; default (to-stdout) path issues a direct syscall(1, …).
-fn emit(ptr, len) {
+fn emit(ptr, len): i64 {
     if (_check_mode == 1) {
         var i = 0;
         while (i < len) {
@@ -45,13 +45,13 @@ fn emit(ptr, len) {
     return 0;
 }
 
-fn emit_spaces(n) {
+fn emit_spaces(n): i64 {
     var si = 0;
     while (si < n) { emit(" ", 1); si += 1; }
     return 0;
 }
 
-fn format_file(buf, total) {
+fn format_file(buf, total): i64 {
     var depth = 0;
     var pos = 0;
 
@@ -164,7 +164,7 @@ fn format_file(buf, total) {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     args_init();
 

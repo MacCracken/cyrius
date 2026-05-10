@@ -27,7 +27,7 @@ var _log_level = 2;
 # LOG_TRACE(0) → SK_TRACE(4), LOG_DEBUG(1) → SK_DEBUG(3),
 # LOG_INFO(2) → SK_INFO(2), LOG_WARN(3) → SK_WARN(1),
 # LOG_ERROR(4) → SK_ERROR(0), LOG_FATAL(5) → SK_ERROR(0)
-fn _log_to_sk(level) {
+fn _log_to_sk(level): i64 {
     if (level == 0) { return 4; }
     if (level == 1) { return 3; }
     if (level == 2) { return 2; }
@@ -36,30 +36,30 @@ fn _log_to_sk(level) {
 }
 
 # Initialize logging with minimum level
-fn log_init(level) {
+fn log_init(level): i64 {
     _log_level = level;
     sakshi_set_level(_log_to_sk(level));
     return 0;
 }
 
 # Get current log level
-fn log_level() { return _log_level; }
+fn log_level(): i64 { return _log_level; }
 
 # Set log level at runtime
-fn log_set_level(level) {
+fn log_set_level(level): i64 {
     _log_level = level;
     sakshi_set_level(_log_to_sk(level));
     return 0;
 }
 
 # Check if a level would be logged
-fn log_enabled(level) {
+fn log_enabled(level): i64 {
     if (level >= _log_level) { return 1; }
     return 0;
 }
 
 # Core log function — delegates to sakshi for output routing
-fn _log_emit(level, msg) {
+fn _log_emit(level, msg): i64 {
     if (level < _log_level) { return 0; }
     var len = strlen(msg);
     if (level >= LOG_ERROR) { sakshi_error(msg, len); }
@@ -71,25 +71,25 @@ fn _log_emit(level, msg) {
 }
 
 # Log at TRACE level
-fn log_trace(msg) { return _log_emit(LOG_TRACE, msg); }
+fn log_trace(msg): i64 { return _log_emit(LOG_TRACE, msg); }
 
 # Log at DEBUG level
-fn log_debug(msg) { return _log_emit(LOG_DEBUG, msg); }
+fn log_debug(msg): i64 { return _log_emit(LOG_DEBUG, msg); }
 
 # Log at INFO level
-fn log_info(msg) { return _log_emit(LOG_INFO, msg); }
+fn log_info(msg): i64 { return _log_emit(LOG_INFO, msg); }
 
 # Log at WARN level
-fn log_warn(msg) { return _log_emit(LOG_WARN, msg); }
+fn log_warn(msg): i64 { return _log_emit(LOG_WARN, msg); }
 
 # Log at ERROR level
-fn log_error(msg) { return _log_emit(LOG_ERROR, msg); }
+fn log_error(msg): i64 { return _log_emit(LOG_ERROR, msg); }
 
 # Log at FATAL level (does NOT exit — caller decides)
-fn log_fatal(msg) { return _log_emit(LOG_FATAL, msg); }
+fn log_fatal(msg): i64 { return _log_emit(LOG_FATAL, msg); }
 
 # Log with key=value context
-fn log_info_kv(msg, key, val) {
+fn log_info_kv(msg, key, val): i64 {
     if (LOG_INFO < _log_level) { return 0; }
     # Build "msg key=val" in scratch buffer
     var buf[512];
@@ -111,7 +111,7 @@ fn log_info_kv(msg, key, val) {
 }
 
 # Log with integer value
-fn log_info_int(msg, key, val) {
+fn log_info_int(msg, key, val): i64 {
     if (LOG_INFO < _log_level) { return 0; }
     var buf[512];
     var off = 0;

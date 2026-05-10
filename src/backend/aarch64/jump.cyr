@@ -7,7 +7,7 @@
 
 # Emit conditional branch (B.cond), return patch offset
 # cc is the condition code: 0=EQ, 1=NE, 10=GE, 11=LT, 12=GT, 13=LE
-fn EJCC(S, cc) {
+fn EJCC(S, cc): i64 {
     # Map x86 condition codes to aarch64:
     # x86 0x84=JE→EQ(0), 0x85=JNE→NE(1), 0x8C=JL→LT(11), 0x8D=JGE→GE(10)
     # 0x8E=JLE→LE(13), 0x8F=JG→GT(12)
@@ -25,7 +25,7 @@ fn EJCC(S, cc) {
 }
 
 # Unconditional branch to target
-fn EJMP(S, target) {
+fn EJMP(S, target): i64 {
     var cp = GCP(S);
     var off = (target - cp) / 4;  # offset in instructions
     # B imm26: 0x14000000 | (off & 0x3FFFFFF)
@@ -34,14 +34,14 @@ fn EJMP(S, target) {
 }
 
 # Unconditional branch placeholder (B with 0 offset)
-fn EJMP0(S) {
+fn EJMP0(S): i64 {
     var patch = GCP(S);
     EW(S, 0x14000000);  # b +0
     return patch;
 }
 
 # Patch a previously emitted branch at codebuf offset
-fn EPATCH(S, off) {
+fn EPATCH(S, off): i64 {
     var cp = GCP(S);
     var delta = (cp - off) / 4;  # offset in instructions
     var addr = S + 0x64A000 + off;

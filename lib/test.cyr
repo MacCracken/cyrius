@@ -52,7 +52,7 @@ include "lib/fnptr.cyr"
 #   vec_push(cases, c0);
 #   # ... more cases ...
 #   test_each(cases, &_check_pointer);
-fn test_each(cases_vec, fp) {
+fn test_each(cases_vec, fp): i64 {
     if (cases_vec == 0) { return 0; }
     if (fp == 0) { return 0; }
     var len = vec_len(cases_vec);

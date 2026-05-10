@@ -44,7 +44,7 @@ var _LOOPVAR_OK = 0;
 var _cx_spill_idx = 16;
 
 # Emit byte to codebuf (same as x86/emit.cyr but for bytecode)
-fn EB(S, b) {
+fn EB(S, b): i64 {
     var cp = GCP(S);
     if (cp >= 524288) {
         syscall(SYS_WRITE, 2, "error: codebuf overflow\n", 24);
@@ -55,7 +55,7 @@ fn EB(S, b) {
     return 0;
 }
 
-fn CX_EMIT(S, op, ra, rb, rc) {
+fn CX_EMIT(S, op, ra, rb, rc): i64 {
     EB(S, op & 0xFF);
     EB(S, ra & 0xFF);
     EB(S, rb & 0xFF);
@@ -64,7 +64,7 @@ fn CX_EMIT(S, op, ra, rb, rc) {
 }
 
 # Emit 16-bit immediate load (movi ra, imm16)
-fn CX_MOVI(S, reg, val) {
+fn CX_MOVI(S, reg, val): i64 {
     CX_EMIT(S, 1, reg, val & 0xFF, (val >> 8) & 0xFF);
     if (val > 0xFFFF) {
         # movhi: ra |= (imm16 << 16)
@@ -85,73 +85,73 @@ fn CX_MOVI(S, reg, val) {
 # EB is defined in the including main file (or we redefine here)
 
 # mov rax, imm64
-fn EMOVI(S, v) {
+fn EMOVI(S, v): i64 {
     CX_MOVI(S, 0, v);
     return 0;
 }
 
 # push rax (spill to virtual register)
-fn EPUSHR(S) {
+fn EPUSHR(S): i64 {
     CX_EMIT(S, 128, 0, 0, 0);
     return 0;
 }
 # pop rax
-fn EPOPR(S) {
+fn EPOPR(S): i64 {
     CX_EMIT(S, 129, 0, 0, 0);
     return 0;
 }
 # pop rcx
-fn EPOPC(S) {
+fn EPOPC(S): i64 {
     CX_EMIT(S, 129, 1, 0, 0);
     return 0;
 }
 
 # Expression spill (same as push/pop for bytecode)
-fn ESPILL(S) { EPUSHR(S); return 0; }
-fn EUNSPILL(S) { EPOPR(S); return 0; }
+fn ESPILL(S): i64 { EPUSHR(S); return 0; }
+fn EUNSPILL(S): i64 { EPOPR(S); return 0; }
 
 # mov rcx, rax
-fn EMOVCA(S) { CX_EMIT(S, 2, 1, 0, 0); return 0; }
+fn EMOVCA(S): i64 { CX_EMIT(S, 2, 1, 0, 0); return 0; }
 
 # Arithmetic: result in r0, operands r0 and r1
-fn EADDR(S) { CX_EMIT(S, 16, 0, 0, 1); return 0; }    # add r0, r0, r1
-fn ESUBR(S) { CX_EMIT(S, 17, 0, 0, 1); return 0; }    # sub r0, r0, r1
-fn EIMUL(S) { CX_EMIT(S, 18, 0, 0, 1); return 0; }    # mul r0, r0, r1
-fn ECQO(S) { return 0; }                                 # no-op (sign extend for div)
-fn EIDIV(S) { CX_EMIT(S, 19, 0, 0, 1); return 0; }    # div r0, r0, r1
-fn EMOVDR(S) { CX_EMIT(S, 20, 0, 0, 1); return 0; }   # mod r0, r0, r1
+fn EADDR(S): i64 { CX_EMIT(S, 16, 0, 0, 1); return 0; }    # add r0, r0, r1
+fn ESUBR(S): i64 { CX_EMIT(S, 17, 0, 0, 1); return 0; }    # sub r0, r0, r1
+fn EIMUL(S): i64 { CX_EMIT(S, 18, 0, 0, 1); return 0; }    # mul r0, r0, r1
+fn ECQO(S): i64 { return 0; }                                 # no-op (sign extend for div)
+fn EIDIV(S): i64 { CX_EMIT(S, 19, 0, 0, 1); return 0; }    # div r0, r0, r1
+fn EMOVDR(S): i64 { CX_EMIT(S, 20, 0, 0, 1); return 0; }   # mod r0, r0, r1
 
 # Bitwise
-fn EANDR(S) { CX_EMIT(S, 32, 0, 0, 1); return 0; }
-fn EORR(S) { CX_EMIT(S, 33, 0, 0, 1); return 0; }
-fn EXORR(S) { CX_EMIT(S, 34, 0, 0, 1); return 0; }
-fn ENOTR(S) { CX_EMIT(S, 34, 0, 0, 31); return 0; }   # xor r0, r0, r31(all-ones) — approx NOT
-fn ESHLCL(S) { CX_EMIT(S, 35, 0, 0, 1); return 0; }   # shl r0, r0, r1
-fn ESHRCL(S) { CX_EMIT(S, 36, 0, 0, 1); return 0; }   # shr r0, r0, r1
+fn EANDR(S): i64 { CX_EMIT(S, 32, 0, 0, 1); return 0; }
+fn EORR(S): i64 { CX_EMIT(S, 33, 0, 0, 1); return 0; }
+fn EXORR(S): i64 { CX_EMIT(S, 34, 0, 0, 1); return 0; }
+fn ENOTR(S): i64 { CX_EMIT(S, 34, 0, 0, 31); return 0; }   # xor r0, r0, r31(all-ones) — approx NOT
+fn ESHLCL(S): i64 { CX_EMIT(S, 35, 0, 0, 1); return 0; }   # shl r0, r0, r1
+fn ESHRCL(S): i64 { CX_EMIT(S, 36, 0, 0, 1); return 0; }   # shr r0, r0, r1
 
 # Load/store memory
-fn ELOAD8(S) { CX_EMIT(S, 64, 0, 0, 0); return 0; }   # load8 r0, [r0]
+fn ELOAD8(S): i64 { CX_EMIT(S, 64, 0, 0, 0); return 0; }   # load8 r0, [r0]
 # v5.9.40: ELOAD16/ELOAD32 had approximations; wire them to the
 # now-real cxvm 0x44/0x45 opcodes added this slot. ELOAD64 and
 # ELODC stay the same.
-fn ELOAD16(S) { CX_EMIT(S, 68, 0, 0, 0); return 0; }  # load16 r0, [r0]
-fn ELOAD32(S) { CX_EMIT(S, 69, 0, 0, 0); return 0; }  # load32 r0, [r0]
-fn ELOAD64(S) { CX_EMIT(S, 65, 0, 0, 0); return 0; }  # load64 r0, [r0]
-fn ELODC(S) { CX_EMIT(S, 65, 0, 1, 0); return 0; }    # load64 r0, [r1]
-fn ESTORE8(S) { CX_EMIT(S, 66, 1, 0, 0); return 0; }  # store8 [r1], r0
+fn ELOAD16(S): i64 { CX_EMIT(S, 68, 0, 0, 0); return 0; }  # load16 r0, [r0]
+fn ELOAD32(S): i64 { CX_EMIT(S, 69, 0, 0, 0); return 0; }  # load32 r0, [r0]
+fn ELOAD64(S): i64 { CX_EMIT(S, 65, 0, 0, 0); return 0; }  # load64 r0, [r0]
+fn ELODC(S): i64 { CX_EMIT(S, 65, 0, 1, 0); return 0; }    # load64 r0, [r1]
+fn ESTORE8(S): i64 { CX_EMIT(S, 66, 1, 0, 0); return 0; }  # store8 [r1], r0
 # v5.9.40: ESTORE16/ESTORE32 also had approximations; wire to real
 # cxvm 0x46/0x47 opcodes. ESTORE64 / ESTOC stay the same.
-fn ESTORE16(S) { CX_EMIT(S, 70, 1, 0, 0); return 0; }
-fn ESTORE32(S) { CX_EMIT(S, 71, 1, 0, 0); return 0; }
-fn ESTORE64(S) { CX_EMIT(S, 67, 1, 0, 0); return 0; }
-fn ESTOC(S) { CX_EMIT(S, 67, 1, 0, 0); return 0; }    # store64 [r1], r0
+fn ESTORE16(S): i64 { CX_EMIT(S, 70, 1, 0, 0); return 0; }
+fn ESTORE32(S): i64 { CX_EMIT(S, 71, 1, 0, 0); return 0; }
+fn ESTORE64(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }
+fn ESTOC(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }    # store64 [r1], r0
 
 # Comparison: setCC pattern → compare and set r0 to 0/1
-fn ECMPR(S) { return 0; }  # no-op, comparison done inline
-fn ETESTAZ(S) { return 0; }  # no-op for bytecode
-fn EMOVRDXRAX(S) { return 0; }  # no-op for bytecode
-fn EMOVRA_RDX(S) { return 0; }  # no-op for bytecode
-fn ESETCC(S, op) {
+fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
+fn ETESTAZ(S): i64 { return 0; }  # no-op for bytecode
+fn EMOVRDXRAX(S): i64 { return 0; }  # no-op for bytecode
+fn EMOVRA_RDX(S): i64 { return 0; }  # no-op for bytecode
+fn ESETCC(S, op): i64 {
     if (op == 17) { CX_EMIT(S, 48, 0, 0, 1); }  # eq
     if (op == 18) { CX_EMIT(S, 49, 0, 0, 1); }  # ne
     if (op == 19) { CX_EMIT(S, 50, 0, 0, 1); }  # lt
@@ -162,13 +162,13 @@ fn ESETCC(S, op) {
 }
 
 # Syscall: pop args from stack into r1-r6, syscall, result in r0
-fn ESYSCALL(S) { CX_EMIT(S, 112, 0, 0, 0); return 0; }
-fn EMOVRDI(S) { CX_EMIT(S, 2, 2, 0, 0); return 0; }  # mov r2, r0 (for exit)
+fn ESYSCALL(S): i64 { CX_EMIT(S, 112, 0, 0, 0); return 0; }
+fn EMOVRDI(S): i64 { CX_EMIT(S, 2, 2, 0, 0); return 0; }  # mov r2, r0 (for exit)
 
 # Syscall arg pop: VM convention is r1=number, r2-r7=args
 # x86 push order: number, arg1, arg2, ... (left to right)
 # Pop order (reverse): last arg first, number last
-fn ESCPOPS(S, n) {
+fn ESCPOPS(S, n): i64 {
     # Pop args into r(n+1) down to r2
     if (n >= 7) { CX_EMIT(S, 129, 7, 0, 0); }
     if (n >= 6) { CX_EMIT(S, 129, 6, 0, 0); }
@@ -183,7 +183,7 @@ fn ESCPOPS(S, n) {
 }
 
 # Function prologue/epilogue
-fn EFNPRO(S) {
+fn EFNPRO(S): i64 {
     # save frame pointer to call stack (not data stack — data stack has expression temps)
     # opcode 0x62 = pushc (push to call stack), 0x63 = popc (pop from call stack)
     CX_EMIT(S, 0x62, 253, 0, 0);  # pushc fp
@@ -191,7 +191,7 @@ fn EFNPRO(S) {
     return 0;
 }
 
-fn ESUBRSP(S) {
+fn ESUBRSP(S): i64 {
     # sub sp, imm — two instructions: movi r15, size; sub r254, r254, r15
     var patch = GCP(S);
     CX_EMIT(S, 1, 15, 0, 0);        # movi r15, 0 (placeholder)
@@ -199,14 +199,14 @@ fn ESUBRSP(S) {
     return patch;
 }
 
-fn EFNEPI(S) {
+fn EFNEPI(S): i64 {
     CX_EMIT(S, 2, 254, 253, 0);   # mov sp, fp
     CX_EMIT(S, 0x63, 253, 0, 0);  # popc fp (from call stack)
     CX_EMIT(S, 97, 0, 0, 0);      # ret
     return 0;
 }
 
-fn EEXIT(S) {
+fn EEXIT(S): i64 {
     CX_EMIT(S, 2, 2, 0, 0);      # mov r2, r0 (exit code → arg1)
     CX_MOVI(S, 1, 60);            # r1 = 60 (SYS_EXIT)
     CX_EMIT(S, 112, 0, 0, 0);    # syscall(r1=60, r2=exit_code)
@@ -214,14 +214,14 @@ fn EEXIT(S) {
 }
 
 # Call: emit call with fixup
-fn ECALLTO(S, target) {
+fn ECALLTO(S, target): i64 {
     var cp = GCP(S);
     var off = (target - cp) / 4;
     CX_EMIT(S, 96, off & 0xFF, (off >> 8) & 0xFF, (off >> 16) & 0xFF);
     return 0;
 }
 
-fn ECALLFIX(S, fnidx) {
+fn ECALLFIX(S, fnidx): i64 {
     # Emit call placeholder, record fixup
     var poff = GCP(S);
     CX_EMIT(S, 96, 0, 0, 0);  # call +0 (placeholder)
@@ -237,7 +237,7 @@ fn ECALLFIX(S, fnidx) {
     return 0;
 }
 
-fn ECALLPOPS(S, n) {
+fn ECALLPOPS(S, n): i64 {
     # Pop args into r3-r8 (argument registers)
     var i = n - 1;
     while (i >= 0) {
@@ -247,10 +247,10 @@ fn ECALLPOPS(S, n) {
     return 0;
 }
 
-fn ECALLCLEAN(S, n) { return 0; }  # no cleanup needed in bytecode
+fn ECALLCLEAN(S, n): i64 { return 0; }  # no cleanup needed in bytecode
 
 # Jump helpers
-fn EJCC(S, cc) {
+fn EJCC(S, cc): i64 {
     # cx has no flags — emit comparison + conditional jump.
     # ECMPR was a no-op; r0=LHS, r1=RHS are still in registers from ECONDCMP.
     # x86 cc codes map to inverted comparisons (jump on FALSE):
@@ -280,20 +280,20 @@ fn EJCC(S, cc) {
     return patch;
 }
 
-fn EJMP(S, target) {
+fn EJMP(S, target): i64 {
     var cp = GCP(S);
     var off = (target - cp) / 4;
     CX_EMIT(S, 80, off & 0xFF, (off >> 8) & 0xFF, (off >> 16) & 0xFF);
     return 0;
 }
 
-fn EJMP0(S) {
+fn EJMP0(S): i64 {
     var patch = GCP(S);
     CX_EMIT(S, 80, 0, 0, 0);  # jmp +0 (placeholder)
     return patch;
 }
 
-fn EPATCH(S, off) {
+fn EPATCH(S, off): i64 {
     var cp = GCP(S);
     var rel = (cp - off) / 4;
     var opcode = load8(S + 0x54A000 + off);
@@ -316,7 +316,7 @@ fn EPATCH(S, off) {
 }
 
 # Variable load/store via fixup
-fn RECFIX(S, idx) {
+fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
     if (fc >= 1048576) {
         syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
@@ -329,7 +329,7 @@ fn RECFIX(S, idx) {
     return 0;
 }
 
-fn EVSTORE(S, idx) {
+fn EVSTORE(S, idx): i64 {
     # Store r0 to global var
     CX_MOVI(S, 1, 0);  # placeholder address
     RECFIX(S, idx);
@@ -337,21 +337,21 @@ fn EVSTORE(S, idx) {
     return 0;
 }
 
-fn EVLOAD(S, idx) {
+fn EVLOAD(S, idx): i64 {
     CX_MOVI(S, 1, 0);  # placeholder address
     RECFIX(S, idx);
     CX_EMIT(S, 65, 0, 1, 0);  # load64 r0, [r1]
     return 0;
 }
 
-fn EVADDR(S, idx) {
+fn EVADDR(S, idx): i64 {
     CX_MOVI(S, 0, 0);  # placeholder address
     RECFIX(S, idx);
     return 0;
 }
 
 # Function local load/store
-fn EFLLOAD(S, idx) {
+fn EFLLOAD(S, idx): i64 {
     # load from [fp - (idx+1)*8]. Use r14/r15 as temps.
     CX_EMIT(S, 2, 14, 253, 0);      # mov r14, fp
     CX_MOVI(S, 15, (idx + 1) * 8);  # r15 = offset
@@ -360,7 +360,7 @@ fn EFLLOAD(S, idx) {
     return 0;
 }
 
-fn EFLSTORE(S, idx) {
+fn EFLSTORE(S, idx): i64 {
     CX_EMIT(S, 2, 14, 253, 0);
     CX_MOVI(S, 15, (idx + 1) * 8);
     CX_EMIT(S, 17, 14, 14, 15);
@@ -368,7 +368,7 @@ fn EFLSTORE(S, idx) {
     return 0;
 }
 
-fn EPATCHFRAME(S, patch, size) {
+fn EPATCHFRAME(S, patch, size): i64 {
     # Patch the movi r15, size placeholder
     store8(S + 0x54A000 + patch, 1);        # movi opcode
     store8(S + 0x54A000 + patch + 1, 15);   # r15
@@ -377,7 +377,7 @@ fn EPATCHFRAME(S, patch, size) {
     return 0;
 }
 
-fn ESTOREPARM(S, pidx, lidx, pc) {
+fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     # Store param register to local slot. Use r14/r15 as temps to avoid
     # clobbering arg registers r3-r8.
     CX_EMIT(S, 2, 14, 253, 0);           # mov r14, fp
@@ -395,7 +395,7 @@ fn ESTOREPARM(S, pidx, lidx, pc) {
 # directly instead of computing it from a local-var index. The
 # shape matches ESTOREPARM byte-for-byte except for the offset
 # source — kept symmetric so callers see identical semantics.
-fn ESTORESTACKPARM(S, pidx, disp, pc) {
+fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
     var abs_disp = 0 - disp;
     CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
     CX_MOVI(S, 15, abs_disp);             # r15 = |disp|
@@ -403,27 +403,27 @@ fn ESTORESTACKPARM(S, pidx, disp, pc) {
     CX_EMIT(S, 67, 14, 3 + pidx, 0);      # store64 [r14], r(3+pidx)
     return 0;
 }
-fn EPOPARG(S, n) { CX_EMIT(S, 129, 3 + n, 0, 0); return 0; }
-fn EPOPRDI(S) { CX_EMIT(S, 129, 2, 0, 0); return 0; }
-fn EPOPRSI(S) { CX_EMIT(S, 129, 3, 0, 0); return 0; }
-fn EPOPRDX(S) { CX_EMIT(S, 129, 4, 0, 0); return 0; }
-fn EPOPR10(S) { CX_EMIT(S, 129, 5, 0, 0); return 0; }
-fn EPOPR8(S) { CX_EMIT(S, 129, 6, 0, 0); return 0; }
-fn EPOPR9(S) { CX_EMIT(S, 129, 7, 0, 0); return 0; }
-fn EXORAA(S) { CX_MOVI(S, 0, 0); return 0; }
+fn EPOPARG(S, n): i64 { CX_EMIT(S, 129, 3 + n, 0, 0); return 0; }
+fn EPOPRDI(S): i64 { CX_EMIT(S, 129, 2, 0, 0); return 0; }
+fn EPOPRSI(S): i64 { CX_EMIT(S, 129, 3, 0, 0); return 0; }
+fn EPOPRDX(S): i64 { CX_EMIT(S, 129, 4, 0, 0); return 0; }
+fn EPOPR10(S): i64 { CX_EMIT(S, 129, 5, 0, 0); return 0; }
+fn EPOPR8(S): i64 { CX_EMIT(S, 129, 6, 0, 0); return 0; }
+fn EPOPR9(S): i64 { CX_EMIT(S, 129, 7, 0, 0); return 0; }
+fn EXORAA(S): i64 { CX_MOVI(S, 0, 0); return 0; }
 
 # Width-aware variants (stub — treat all as 64-bit for now)
-fn EVLOAD_W(S, idx, width) { EVLOAD(S, idx); return 0; }
-fn EVSTORE_W(S, idx, width) { EVSTORE(S, idx); return 0; }
-fn EFLLOAD_W(S, idx, width) { EFLLOAD(S, idx); return 0; }
-fn EFLSTORE_W(S, idx, width) { EFLSTORE(S, idx); return 0; }
+fn EVLOAD_W(S, idx, width): i64 { EVLOAD(S, idx); return 0; }
+fn EVSTORE_W(S, idx, width): i64 { EVSTORE(S, idx); return 0; }
+fn EFLLOAD_W(S, idx, width): i64 { EFLLOAD(S, idx); return 0; }
+fn EFLSTORE_W(S, idx, width): i64 { EFLSTORE(S, idx); return 0; }
 
 # v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).
 # Field-base ptr is in r1; emit width-correct load into r0.
 # Mirrors the aarch64 ldrb/ldrh/ldr w0 dispatch and the x86
 # movzx rax/movzx eax/mov eax dispatch, with cx using the new
 # 0x44/0x45 cxvm opcodes added this slot.
-fn EFIELD_LOAD_W(S, width) {
+fn EFIELD_LOAD_W(S, width): i64 {
     if (width == 1) { CX_EMIT(S, 64, 0, 1, 0); return 0; }
     if (width == 2) { CX_EMIT(S, 68, 0, 1, 0); return 0; }
     if (width == 4) { CX_EMIT(S, 69, 0, 1, 0); return 0; }
@@ -438,7 +438,7 @@ fn EFIELD_LOAD_W(S, width) {
 # reloads retptr to r0 for the cyrius return ABI. Mirrors
 # aarch64's LDRB/STRB-with-post-increment loop and x86's
 # `rep movsb` block with an explicit cxvm-friendly shape.
-fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
+fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned): i64 {
     var src_abs = 0 - src_disp;
     var stash_abs = 0 - stash_disp;
     # r9 = fp - |src_disp|
@@ -482,7 +482,7 @@ fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
 }
 
 # String address (fixup type 1)
-fn ESADDR(S, soff) {
+fn ESADDR(S, soff): i64 {
     CX_MOVI(S, 0, 0);  # placeholder
     var fc = GFCNT(S);
     if (fc >= 1048576) {
@@ -497,21 +497,21 @@ fn ESADDR(S, soff) {
 }
 
 # Var address into r1
-fn EVADDR_X1(S, idx) {
+fn EVADDR_X1(S, idx): i64 {
     CX_MOVI(S, 1, 0);
     RECFIX(S, idx);
     return 0;
 }
 
 # Add immediate to r1
-fn EADDIMM_X1(S, val) {
+fn EADDIMM_X1(S, val): i64 {
     CX_MOVI(S, 2, val);
     CX_EMIT(S, 16, 1, 1, 2);  # add r1, r1, r2
     return 0;
 }
 
 # Tail call (same as regular call for bytecode)
-fn ETAILJMP(S, fnidx) {
+fn ETAILJMP(S, fnidx): i64 {
     # Disable tail call in bytecode — the tail call path in parse.cyr
     # evaluates args then jumps without call/ret, which breaks when
     # args include nested calls (data stack interleaving).
@@ -522,13 +522,13 @@ fn ETAILJMP(S, fnidx) {
 }
 
 # Token access (same as x86 — shared with frontend)
-fn TOKTYP(S, i) { return L64(S + 0x368C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576). Was 0x94A000 (overlap w/ output_buf, capped at 262144). v5.7.28 history: shifted from 0x74A000 → 0x94A000 to track v5.7.27 heap reshuffle.
-fn TOKVAL(S, i) { return L64(S + 0x3E8C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576). Was 0xD4A000 (capped at 262144).
-fn PEEKT(S) { return TOKTYP(S, GTI(S)); }
-fn PEEKV(S) { return TOKVAL(S, GTI(S)); }
+fn TOKTYP(S, i): i64 { return L64(S + 0x368C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576). Was 0x94A000 (overlap w/ output_buf, capped at 262144). v5.7.28 history: shifted from 0x74A000 → 0x94A000 to track v5.7.27 heap reshuffle.
+fn TOKVAL(S, i): i64 { return L64(S + 0x3E8C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576). Was 0xD4A000 (capped at 262144).
+fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
+fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
 
 # Inline asm — not supported in bytecode
-fn ASM_MNEMONIC(S) {
+fn ASM_MNEMONIC(S): i64 {
     ERR_MSG(S, "inline asm not supported in cyrius-x", 36);
     return 0;
 }
@@ -539,16 +539,16 @@ var _LOOPVAR_OK = 0;
 # v5.8.56: ELVRLOAD / ELVRSTORE / ELVRINIT stubs removed in lockstep
 # with x86 + aarch64 removal — the x86 versions were never wired in,
 # and these cx stubs only existed to mirror that backend.
-fn EDISP32(S, disp) { return 0; }
-fn E2(S, v) { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); return 0; }
-fn E3(S, v) { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF); return 0; }
-fn E8(S, v) { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = i + 1; } return 0; }
+fn EDISP32(S, disp): i64 { return 0; }
+fn E2(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); return 0; }
+fn E3(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF); return 0; }
+fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = i + 1; } return 0; }
 
 # Float stubs (not supported in bytecode yet)
-fn EMIT_FLOAT_LIT(S, v) { EMOVI(S, v); return 0; }
-fn EMIT_F64_BINOP(S, op) { return 0; }
-fn EI2F(S) { return 0; }
-fn EF2I(S) { return 0; }
+fn EMIT_FLOAT_LIT(S, v): i64 { EMOVI(S, v); return 0; }
+fn EMIT_F64_BINOP(S, op): i64 { return 0; }
+fn EI2F(S): i64 { return 0; }
+fn EF2I(S): i64 { return 0; }
 # v5.7.11: PF64BIN / PF64CMP now defined in parse_expr.cyr (the
 # shared frontend, since v5.6.x). The cx stubs that lived here
 # collided with the parse_expr versions and lost (last-include
@@ -557,11 +557,11 @@ fn EF2I(S) { return 0; }
 # emits to EMIT_F64_BINOP / EUCOMISD / etc., which cx still stubs
 # to 0 below — so f64 ops on cx remain no-op-but-parse-clean,
 # same as before (just without the silent collision).
-fn EMOVQ_X0_A(S) { return 0; }
-fn EMOVQ_X1_C(S) { return 0; }
-fn EMOVQ_A_X0(S) { return 0; }
-fn EX87PUSH(S) { return 0; }
-fn EX87POP(S) { return 0; }
+fn EMOVQ_X0_A(S): i64 { return 0; }
+fn EMOVQ_X1_C(S): i64 { return 0; }
+fn EMOVQ_A_X0(S): i64 { return 0; }
+fn EX87PUSH(S): i64 { return 0; }
+fn EX87POP(S): i64 { return 0; }
 # v5.10.16 — arity-aligned stubs to match x86/aarch64 signatures.
 # Pre-v5.10.16 these took (S, op) / (S, op) / (S) and the parser
 # called them with (S, op, vbase) / (S, op, vbase) / (S, vbase) —
@@ -575,22 +575,22 @@ fn EX87POP(S) { return 0; }
 # the SIMD primitives gain a scalar-loop fallback at the same
 # time. Tracked at docs/development/roadmap.md (cx f64 support
 # is a multi-minor arc; not v5.10.x scope).
-fn EMIT_F64V_LOOP(S, op, vbase) { return 0; }
-fn EMIT_F64V_UNARY(S, op, vbase) { return 0; }
-fn EMIT_F64V_FMADD(S, vbase) { return 0; }
+fn EMIT_F64V_LOOP(S, op, vbase): i64 { return 0; }
+fn EMIT_F64V_UNARY(S, op, vbase): i64 { return 0; }
+fn EMIT_F64V_FMADD(S, vbase): i64 { return 0; }
 
 # v5.10.17 — same shape, new primitives. dot/scale/axpy stubbed
 # pending cx f64 support.
-fn EMIT_F64V_DOT(S, vbase) { return 0; }
-fn EMIT_F64V_SCALE(S, vbase) { return 0; }
-fn EMIT_F64V_AXPY(S, vbase) { return 0; }
-fn EUCOMISD(S) { return 0; }
-fn EXORPD_X1(S) { return 0; }
-fn EMOVAPD_01(S) { return 0; }
-fn EF64SQRT(S) { return 0; }
-fn EF64FLOOR(S) { return 0; }
-fn EF64CEIL(S) { return 0; }
-fn EF64ROUND(S) { return 0; }
+fn EMIT_F64V_DOT(S, vbase): i64 { return 0; }
+fn EMIT_F64V_SCALE(S, vbase): i64 { return 0; }
+fn EMIT_F64V_AXPY(S, vbase): i64 { return 0; }
+fn EUCOMISD(S): i64 { return 0; }
+fn EXORPD_X1(S): i64 { return 0; }
+fn EMOVAPD_01(S): i64 { return 0; }
+fn EF64SQRT(S): i64 { return 0; }
+fn EF64FLOOR(S): i64 { return 0; }
+fn EF64CEIL(S): i64 { return 0; }
+fn EF64ROUND(S): i64 { return 0; }
 # v5.9.40 — clean up cx-side undefined-fn warnings carried since
 # v5.9.39's Mach-O fix (EADRP/EADD_IMM12 added to aarch64/x86
 # but cx wasn't paired). Stubs for the dead cross-arch branches
@@ -598,8 +598,8 @@ fn EF64ROUND(S) { return 0; }
 # pre-existing carry-overs from earlier minors — folded in here
 # rather than spinning a separate slot per the v5.9.38/.39
 # "don't lazy-defer related fixes" feedback.
-fn EADRP(S, reg) { return 0; }
-fn EADD_IMM12(S, reg) { return 0; }
+fn EADRP(S, reg): i64 { return 0; }
+fn EADD_IMM12(S, reg): i64 { return 0; }
 # v5.9.40 Phase 2c — real EFLADDR / EFLADDR_X1 for cx. Compute
 # &local-slot. Required by parse_decl.cyr's asv (assignment-
 # from-struct-value) caller-side and by PARSE_FIELD_STORE/LOAD
@@ -610,7 +610,7 @@ fn EADD_IMM12(S, reg) { return 0; }
 # Sub-8-byte struct field stores route through EFLADDR_X1 when
 # the parent var is inline; without this stub cc5_cx hit SIGILL
 # at parse-time on any struct mixing i8/i16/i32 with i64.
-fn EFLADDR(S, lli) {
+fn EFLADDR(S, lli): i64 {
     var disp = (lli + 1) * 8;
     if (_cur_fn_regalloc > 0) { disp = disp + _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
@@ -619,7 +619,7 @@ fn EFLADDR(S, lli) {
     CX_EMIT(S, 17, 0, 0, 14);             # sub r0, r0, r14
     return 0;
 }
-fn EFLADDR_X1(S, lli) {
+fn EFLADDR_X1(S, lli): i64 {
     var disp = (lli + 1) * 8;
     if (_cur_fn_regalloc > 0) { disp = disp + _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp + _cur_fn_ret_stash; }
@@ -639,7 +639,7 @@ fn EFLADDR_X1(S, lli) {
 # (RDI/RCX for x86 SysV/Win64, X8 for aarch64 AAPCS); cx mirrors
 # the x86-shape convention since cxvm has no dedicated indirect-
 # result register but plenty of GP regs.
-fn ESTOREREGPARM(S, pidx, disp) {
+fn ESTOREREGPARM(S, pidx, disp): i64 {
     var abs_disp = 0 - disp;
     CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
     CX_MOVI(S, 15, abs_disp);             # r15 = |disp|
@@ -647,5 +647,5 @@ fn ESTOREREGPARM(S, pidx, disp) {
     CX_EMIT(S, 67, 14, 3 + pidx, 0);      # store64 [r14], r(3+pidx)
     return 0;
 }
-fn EMULH(S) { return 0; }
-fn _read_env(name) { return 0; }
+fn EMULH(S): i64 { return 0; }
+fn _read_env(name): i64 { return 0; }

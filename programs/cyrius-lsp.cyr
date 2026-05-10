@@ -19,9 +19,9 @@ include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/syscalls.cyr"
 
-fn prints(s) { syscall(1, 1, s, strlen(s)); return 0; }
+fn prints(s): i64 { syscall(1, 1, s, strlen(s)); return 0; }
 
-fn print_int_str(n) {
+fn print_int_str(n): i64 {
     var buf[24];
     var len = fmt_int_buf(n, &buf);
     syscall(1, 1, &buf, len);
@@ -29,7 +29,7 @@ fn print_int_str(n) {
 }
 
 # stderr logging for debug
-fn log_msg(s) {
+fn log_msg(s): i64 {
     syscall(1, 2, "[cyrius-lsp] ", 13);
     syscall(1, 2, s, strlen(s));
     syscall(1, 2, "\n", 1);
@@ -41,7 +41,7 @@ fn log_msg(s) {
 # ================================================================
 
 # Read a Content-Length header from stdin, return the length
-fn read_header() {
+fn read_header(): i64 {
     var buf[256];
     var pos = 0;
     # Read until \r\n\r\n
@@ -76,7 +76,7 @@ fn read_header() {
 }
 
 # Read exactly n bytes from stdin
-fn read_body(n) {
+fn read_body(n): i64 {
     var buf = alloc(n + 1);
     var total = 0;
     while (total < n) {
@@ -89,7 +89,7 @@ fn read_body(n) {
 }
 
 # Send a JSON-RPC response
-fn send_response(body) {
+fn send_response(body): i64 {
     var blen = strlen(body);
     prints("Content-Length: ");
     print_int_str(blen);
@@ -103,7 +103,7 @@ fn send_response(body) {
 # ================================================================
 
 # Find substring in JSON, return position after match or -1
-fn json_find(json, key) {
+fn json_find(json, key): i64 {
     var jlen = strlen(json);
     var klen = strlen(key);
     var i = 0;
@@ -116,7 +116,7 @@ fn json_find(json, key) {
 
 # Extract string value after "key":" in JSON
 # Handles both compact and spaced JSON (e.g. "uri": "..." or "uri":"...")
-fn json_get_str(json, key) {
+fn json_get_str(json, key): i64 {
     var pos = json_find(json, key);
     if (pos < 0) {
         # Try with space after colon (e.g. key = "\"uri\":" → try "\"uri\": ")
@@ -143,7 +143,7 @@ fn json_get_str(json, key) {
 }
 
 # Extract integer "id" from JSON-RPC message
-fn json_get_id(body) {
+fn json_get_id(body): i64 {
     var id_pos = json_find(body, "\"id\":");
     if (id_pos < 0) { id_pos = json_find(body, "\"id\": "); }
     var id = 0;
@@ -158,7 +158,7 @@ fn json_get_id(body) {
 }
 
 # Convert file:// URI to local path
-fn uri_to_path(uri) {
+fn uri_to_path(uri): i64 {
     var ulen = strlen(uri);
     # Strip file:// prefix (7 chars)
     if (ulen > 7 && memeq(uri, "file://", 7) == 1) {
@@ -232,7 +232,7 @@ var _lsp_indexed_buf = 0;
 var _lsp_indexed_used = 0;
 
 # Alloc the symbol-table backing buffers once at startup.
-fn lsp_index_init() {
+fn lsp_index_init(): i64 {
     _sym_name_off = alloc(_LSP_SYMTAB_CAP * 8);
     _sym_name_len = alloc(_LSP_SYMTAB_CAP * 8);
     _sym_path_off = alloc(_LSP_SYMTAB_CAP * 8);
@@ -254,13 +254,13 @@ fn lsp_index_init() {
 # Identifier-class predicates (parallel to programs/cyrlint.cyr's
 # v5.7.32 _is_id_start / _is_id_cont — kept inline here so cyrius-lsp
 # stays a self-contained program).
-fn _lsp_id_start(c) {
+fn _lsp_id_start(c): i64 {
     if (c >= 65 && c <= 90)  { return 1; }   # A-Z
     if (c >= 97 && c <= 122) { return 1; }   # a-z
     if (c == 95)             { return 1; }   # _
     return 0;
 }
-fn _lsp_id_cont(c) {
+fn _lsp_id_cont(c): i64 {
     if (_lsp_id_start(c) == 1) { return 1; }
     if (c >= 48 && c <= 57)    { return 1; } # 0-9
     return 0;
@@ -268,7 +268,7 @@ fn _lsp_id_cont(c) {
 
 # Scan forward over [off..total) while bytes are id-cont; return the
 # offset just past the IDENT.
-fn _lsp_scan_id_end(buf, off, total) {
+fn _lsp_scan_id_end(buf, off, total): i64 {
     var p = off;
     while (p < total) {
         if (_lsp_id_cont(load8(buf + p)) == 0) { return p; }
@@ -279,7 +279,7 @@ fn _lsp_scan_id_end(buf, off, total) {
 
 # Stash a cstring into a backing buffer; return the offset (or -1 if
 # the buffer would overflow). Inserts a trailing NUL.
-fn _lsp_intern(buf_addr, used_addr, cap, src, len) {
+fn _lsp_intern(buf_addr, used_addr, cap, src, len): i64 {
     var used = load64(used_addr);
     if (used + len + 1 >= cap) { return 0 - 1; }
     var off = used;
@@ -296,7 +296,7 @@ fn _lsp_intern(buf_addr, used_addr, cap, src, len) {
 
 # Has this absolute path already been indexed? Linear scan over the
 # indexed set (cap 256, bounded growth so O(n) is fine).
-fn _lsp_already_indexed(path) {
+fn _lsp_already_indexed(path): i64 {
     var plen = strlen(path);
     var i = 0;
     while (i < _lsp_indexed_count) {
@@ -309,7 +309,7 @@ fn _lsp_already_indexed(path) {
 }
 
 # Record `path` as indexed. Returns 0 if added, -1 if cap full.
-fn _lsp_mark_indexed(path) {
+fn _lsp_mark_indexed(path): i64 {
     if (_lsp_indexed_count >= _LSP_INDEXED_CAP) { return 0 - 1; }
     var plen = strlen(path);
     var off = _lsp_intern(&_lsp_indexed_buf, &_lsp_indexed_used, _LSP_PATHS_BUF_CAP, path, plen);
@@ -322,7 +322,7 @@ fn _lsp_mark_indexed(path) {
 # Append a symbol to the table. `name_src` + `name_len` describe the
 # IDENT bytes; `path` is the absolute cstring path; line/col are
 # 0-based; kind ∈ {1,2,3,4,5}. Returns 0 on success, -1 on cap full.
-fn _lsp_add_symbol(name_src, name_len, path, line, col, kind) {
+fn _lsp_add_symbol(name_src, name_len, path, line, col, kind): i64 {
     if (_sym_count >= _LSP_SYMTAB_CAP) { return 0 - 1; }
     var no = _lsp_intern(&_sym_names_buf, &_sym_names_used, _LSP_NAMES_BUF_CAP, name_src, name_len);
     if (no < 0) { return 0 - 1; }
@@ -341,7 +341,7 @@ fn _lsp_add_symbol(name_src, name_len, path, line, col, kind) {
 
 # Find next end-of-line offset starting at `start`; returns offset of
 # the '\n' (or `total` if not found).
-fn _lsp_find_eol(buf, start, total) {
+fn _lsp_find_eol(buf, start, total): i64 {
     var p = start;
     while (p < total) {
         if (load8(buf + p) == 10) { return p; }
@@ -354,7 +354,7 @@ fn _lsp_find_eol(buf, start, total) {
 # recursively walk `include "..."` directives. Path is the absolute
 # cstring file path. Idempotent — second call on the same path is a
 # no-op via _lsp_already_indexed. Returns 0 on success.
-fn lsp_index_file(path) {
+fn lsp_index_file(path): i64 {
     if (_lsp_already_indexed(path) == 1) { return 0; }
     if (_lsp_mark_indexed(path) < 0) { return 0; }    # cap full → soft-fail
 
@@ -502,7 +502,7 @@ fn lsp_index_file(path) {
 # Look up a symbol name in the table; return the index of the first
 # match (-1 if not found). Linear scan; future polish: hash if
 # _sym_count grows past a few thousand and benchmarks ask.
-fn lsp_lookup_symbol(name, name_len) {
+fn lsp_lookup_symbol(name, name_len): i64 {
     var i = 0;
     while (i < _sym_count) {
         var nlen = load64(_sym_name_len + i * 8);
@@ -521,7 +521,7 @@ fn lsp_lookup_symbol(name, name_len) {
 # content to the IDENT under the cursor. Returns (start_offset_in_buf,
 # end_offset_in_buf) packed: start in low 32 bits, end in high 32. -1
 # if no IDENT under the cursor.
-fn lsp_ident_at_position(buf, total, target_line, target_char) {
+fn lsp_ident_at_position(buf, total, target_line, target_char): i64 {
     var line = 0;
     var pos = 0;
     while (line < target_line && pos < total) {
@@ -546,7 +546,7 @@ fn lsp_ident_at_position(buf, total, target_line, target_char) {
 # Read a file into a freshly-allocated buf; return (buf, total) packed
 # with buf in low 56, total in high 8 bits — wait, total may exceed 8
 # bits. Actually return buf and write total to *total_out.
-fn lsp_read_file(path, total_out) {
+fn lsp_read_file(path, total_out): i64 {
     var fd = sys_open(path, 0, 0);
     if (fd < 0) { store64(total_out, 0); return 0; }
     var buf = alloc(1048576);
@@ -563,7 +563,7 @@ fn lsp_read_file(path, total_out) {
 }
 
 # Find cc5 binary — check common locations
-fn find_cc5() {
+fn find_cc5(): i64 {
     # Try ./build/cc5
     var p1 = "build/cc5";
     var fd = syscall(2, p1, 0, 0);
@@ -610,7 +610,7 @@ fn find_cc5() {
 
 # Run cc5 on a file path, capture stderr for errors.
 # Returns a pointer to the stderr output (null-terminated), or 0 on failure.
-fn compile_and_capture(filepath) {
+fn compile_and_capture(filepath): i64 {
     if (_cc5_path == 0) { return 0; }
 
     # Create pipe for stderr capture
@@ -678,7 +678,7 @@ fn compile_and_capture(filepath) {
 # Parse cc5 stderr output into LSP diagnostics JSON.
 # cc5 format: "error:filename:line: message\n" or "warning:filename:line: message\n"
 # Sends publishDiagnostics notification for the given URI.
-fn parse_and_send_diagnostics(uri, stderr_output) {
+fn parse_and_send_diagnostics(uri, stderr_output): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"");
     str_builder_add_cstr(sb, uri);
@@ -866,7 +866,7 @@ fn handle_initialize(body) {
     return 0;
 }
 
-fn handle_shutdown(body) {
+fn handle_shutdown(body): i64 {
     var id = json_get_id(body);
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"id\":");
@@ -877,7 +877,7 @@ fn handle_shutdown(body) {
     return 0;
 }
 
-fn handle_did_open_or_save(body) {
+fn handle_did_open_or_save(body): i64 {
     var uri = json_get_str(body, "\"uri\":");
     if (uri == 0) { return 0; }
 
@@ -911,7 +911,7 @@ fn handle_did_open_or_save(body) {
 # We re-read the file content from disk (we don't cache document
 # state across messages), find the IDENT at the cursor, and look it
 # up in the symbol table.
-fn handle_definition(body) {
+fn handle_definition(body): i64 {
     var id = json_get_id(body);
     var uri = json_get_str(body, "\"uri\":");
 
@@ -1020,7 +1020,7 @@ fn handle_definition(body) {
 #   3=enum → SymbolKind.Enum (10)
 #   4=struct → SymbolKind.Struct (23)
 #   5=enum-member → SymbolKind.EnumMember (22)
-fn _lsp_kind_to_lsp(k) {
+fn _lsp_kind_to_lsp(k): i64 {
     if (k == 1) { return 12; }
     if (k == 2) { return 13; }
     if (k == 3) { return 10; }
@@ -1033,7 +1033,7 @@ fn _lsp_kind_to_lsp(k) {
 # Returns SymbolInformation[] for the requested file (flat list, not
 # the hierarchical DocumentSymbol[] form — the flat form is well-
 # supported across editor clients and matches our flat index).
-fn handle_document_symbol(body) {
+fn handle_document_symbol(body): i64 {
     var id = json_get_id(body);
     var uri = json_get_str(body, "\"uri\":");
     var path = 0;
@@ -1108,7 +1108,7 @@ fn handle_document_symbol(body) {
 # — acceptable for human-interactive editor traffic. If a
 # downstream consumer surfaces latency pressure, a future slot
 # can build a reverse index keyed by ident hash.
-fn handle_references(body) {
+fn handle_references(body): i64 {
     var id = json_get_id(body);
     var uri = json_get_str(body, "\"uri\":");
 
@@ -1238,7 +1238,7 @@ fn handle_references(body) {
 # Token-type indices in the legend advertised by handle_initialize:
 #   0 = function, 1 = variable, 2 = struct, 3 = enum,
 #   4 = enumMember, 5 = keyword
-fn _lsp_kind_to_semantic_type(k) {
+fn _lsp_kind_to_semantic_type(k): i64 {
     if (k == 1) { return 0; }   # fn → function
     if (k == 2) { return 1; }   # var → variable
     if (k == 4) { return 2; }   # struct → struct
@@ -1248,7 +1248,7 @@ fn _lsp_kind_to_semantic_type(k) {
 }
 
 # Is `<buf+off, len>` a cyrius keyword?
-fn _lsp_is_keyword(buf, off, len) {
+fn _lsp_is_keyword(buf, off, len): i64 {
     if (len == 2) {
         if (load8(buf + off) == 105 && load8(buf + off + 1) == 102) { return 1; }   # "if"
         if (load8(buf + off) == 105 && load8(buf + off + 1) == 110) { return 1; }   # "in"
@@ -1298,7 +1298,7 @@ fn _lsp_is_keyword(buf, off, len) {
 # table OR the keyword list. Locals, fn args, type names, string
 # / number literals, operators, comments — all skipped. Editors
 # fall back to their textmate grammar for those.
-fn handle_semantic_tokens(body) {
+fn handle_semantic_tokens(body): i64 {
     var id = json_get_id(body);
     var uri = json_get_str(body, "\"uri\":");
     var path = 0;
@@ -1408,7 +1408,7 @@ fn handle_semantic_tokens(body) {
 # MAIN LOOP
 # ================================================================
 
-fn main() {
+fn main(): i64 {
     alloc_init();
 
     # v5.7.39: allocate symbol-table backing buffers up front.

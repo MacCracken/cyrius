@@ -1,7 +1,7 @@
 # fib — print first 20 fibonacci numbers
 # Exercises: for loops, print_num, buffered output
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var pbuf[24];
     var i: i64 = 23;
     if (n == 0) { store8(&pbuf + i, 48); i = i - 1; }
@@ -14,7 +14,7 @@ fn print_num(n: i64) {
     return 0;
 }
 
-fn fib(count: i64) {
+fn fib(count: i64): i64 {
     var a: i64 = 0;
     var b: i64 = 1;
     for (var i = 0; i < count; i = i + 1) {

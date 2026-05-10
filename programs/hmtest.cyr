@@ -8,7 +8,7 @@ include "lib/vec.cyr"
 include "lib/hashmap.cyr"
 include "lib/assert.cyr"
 
-fn main() {
+fn main(): i64 {
     alloc_init();
 
     var m = map_new();

@@ -5,7 +5,7 @@
 # LOC under ~1500. Included by parse.cyr at the same textual position
 # the original content lived; self-host byte-identical.
 
-fn ECONDOP(S, op) {
+fn ECONDOP(S, op): i64 {
     if (op == 17) { return EJCC(S, 0x85); }
     if (op == 18) { return EJCC(S, 0x84); }
     if (op == 19) { return EJCC(S, 0x8D); }
@@ -17,7 +17,7 @@ fn ECONDOP(S, op) {
 }
 
 # Emit NON-inverted jcc (for || true-branch)
-fn ECONDOPT(S, op) {
+fn ECONDOPT(S, op): i64 {
     if (op == 17) { return EJCC(S, 0x84); }
     if (op == 18) { return EJCC(S, 0x85); }
     if (op == 19) { return EJCC(S, 0x8C); }
@@ -29,7 +29,7 @@ fn ECONDOPT(S, op) {
 }
 
 # Parse one comparison: expr OP expr — emit cmp, return op token
-fn ECONDCMP(S) {
+fn ECONDCMP(S): i64 {
     PCMPE(S);
     var op = PEEKT(S);
     # If no comparison operator follows, treat value as boolean.
@@ -59,7 +59,7 @@ fn ECONDCMP(S) {
 
 # Parse condition: expr OP expr [&& expr OP expr]* [|| expr OP expr]*
 # Returns patch offset for false branch. Extra patches stored via ADDXP.
-fn ECOND(S) {
+fn ECOND(S): i64 {
     SXPC(S, 0);
     var op = ECONDCMP(S);
     # Check for && or ||
@@ -72,7 +72,7 @@ fn ECOND(S) {
     return ECONDOP(S, op);
 }
 
-fn ECOND_AND(S, op) {
+fn ECOND_AND(S, op): i64 {
     var p1 = ECONDOP(S, op);
     ADDXP(S, p1);
     STI(S, GTI(S) + 1);
@@ -84,7 +84,7 @@ fn ECOND_AND(S, op) {
     return ECONDOP(S, op2);
 }
 
-fn ECOND_OR(S, op) {
+fn ECOND_OR(S, op): i64 {
     var ptrue = ECONDOPT(S, op);
     STI(S, GTI(S) + 1);
     var op2 = ECONDCMP(S);
@@ -99,7 +99,7 @@ fn ECOND_OR(S, op) {
 }
 
 # Patch all extra condition patches (from &&) to current position
-fn PATCHXP(S) {
+fn PATCHXP(S): i64 {
     var xc = GXPC(S);
     var xi = 0;
     while (xi < xc) {
@@ -112,7 +112,7 @@ fn PATCHXP(S) {
 
 # Parse: if (cond) { stmts } [else { stmts }]
 # Parse elif chain as recursive: each elif is essentially else { if (...) { } ... }
-fn PARSE_ELIF(S, cond_patch) {
+fn PARSE_ELIF(S, cond_patch): i64 {
     # Emit jmp-to-end for previous branch
     var skip = EJMP0(S);
     # Patch previous condition-false to land here (+ any && extras)
@@ -153,7 +153,7 @@ fn PARSE_ELIF(S, cond_patch) {
     return 0;
 }
 
-fn PARSE_IF(S) {
+fn PARSE_IF(S): i64 {
     STI(S, GTI(S) + 1);  # consume IF
     var saved_lv = GLVAR(S);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
@@ -195,7 +195,7 @@ fn PARSE_IF(S) {
 }
 
 # Parse: while (cond) { stmts }
-fn PARSE_WHILE(S) {
+fn PARSE_WHILE(S): i64 {
     STI(S, GTI(S) + 1);  # consume WHILE
     var saved_lv = GLVAR(S);
     # Save and set loop context for break/continue
@@ -240,7 +240,7 @@ fn PARSE_WHILE(S) {
     return 0;
 }
 
-fn PARSE_FOR(S) {
+fn PARSE_FOR(S): i64 {
     STI(S, GTI(S) + 1);
     var slv = GLVAR(S);
     SCOPE_PUSH(S);

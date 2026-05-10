@@ -1,27 +1,27 @@
 # ================================================================
 # SSE2 FLOAT EMISSION
 # ================================================================
-fn EMOVQ_X0_A(S) { EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC0); return 0; }
-fn EMOVQ_X1_C(S) { EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC9); return 0; }
-fn EMOVQ_A_X0(S) { EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x7E); EB(S, 0xC0); return 0; }
-fn EF64ADD(S) { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x58); EB(S, 0xC1); return 0; }
-fn EF64SUB(S) { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC1); return 0; }
-fn EF64MUL(S) { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC1); return 0; }
-fn EF64DIV(S) { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5E); EB(S, 0xC1); return 0; }
-fn EI2F(S) { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2A); EB(S, 0xC0); return 0; }
-fn EF2I(S) { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2C); EB(S, 0xC0); return 0; }
-fn EUCOMISD(S) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x2E); EB(S, 0xC1); return 0; }
-fn EXORPD_X1(S) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x57); EB(S, 0xC9); return 0; }
-fn EMOVAPD_01(S) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x28); EB(S, 0xC1); return 0; }
+fn EMOVQ_X0_A(S): i64 { EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC0); return 0; }
+fn EMOVQ_X1_C(S): i64 { EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC9); return 0; }
+fn EMOVQ_A_X0(S): i64 { EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x7E); EB(S, 0xC0); return 0; }
+fn EF64ADD(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x58); EB(S, 0xC1); return 0; }
+fn EF64SUB(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC1); return 0; }
+fn EF64MUL(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC1); return 0; }
+fn EF64DIV(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5E); EB(S, 0xC1); return 0; }
+fn EI2F(S): i64 { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2A); EB(S, 0xC0); return 0; }
+fn EF2I(S): i64 { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2C); EB(S, 0xC0); return 0; }
+fn EUCOMISD(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x2E); EB(S, 0xC1); return 0; }
+fn EXORPD_X1(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x57); EB(S, 0xC9); return 0; }
+fn EMOVAPD_01(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x28); EB(S, 0xC1); return 0; }
 
 # x87 FPU: rax→stack→x87, compute, x87→stack→rax
-fn EX87PUSH(S) {
+fn EX87PUSH(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x10);
     EB(S, 0x48); EB(S, 0x89); EB(S, 0x04); EB(S, 0x24);
     EB(S, 0xDD); EB(S, 0x04); EB(S, 0x24);
     return 0;
 }
-fn EX87POP(S) {
+fn EX87POP(S): i64 {
     EB(S, 0xDD); EB(S, 0x1C); EB(S, 0x24);
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x04); EB(S, 0x24);
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x10);
@@ -29,18 +29,18 @@ fn EX87POP(S) {
 }
 
 # sqrtsd xmm0, xmm0
-fn EF64SQRT(S) { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x51); EB(S, 0xC0); return 0; }
+fn EF64SQRT(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x51); EB(S, 0xC0); return 0; }
 # roundsd xmm0, xmm0, 1 (floor) — SSE4.1
-fn EF64FLOOR(S) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x01); return 0; }
+fn EF64FLOOR(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x01); return 0; }
 # roundsd xmm0, xmm0, 2 (ceil) — SSE4.1
-fn EF64CEIL(S) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x02); return 0; }
+fn EF64CEIL(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x02); return 0; }
 # roundsd xmm0, xmm0, 0 (round to nearest) — SSE4.1
-fn EF64ROUND(S) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x00); return 0; }
+fn EF64ROUND(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x00); return 0; }
 # f64_abs: clear sign bit (bit 63) via integer AND
 # No SSE needed — value is already in rax as bit pattern
 # push rax; movabs rax, 0x7FFF...; mov rcx, rax; pop rax; and rax, rcx
 
-fn EMIT_F64_BINOP(S, fop) {
+fn EMIT_F64_BINOP(S, fop): i64 {
     EPOPC(S);
     EPUSHR(S);
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC8);
@@ -56,7 +56,7 @@ fn EMIT_F64_BINOP(S, fop) {
     return 0;
 }
 
-fn EMIT_FLOAT_LIT(S, fval) {
+fn EMIT_FLOAT_LIT(S, fval): i64 {
     var numer = fval & 0xFFFFFFFF;
     var denom = (fval >> 32) & 0xFFFFFFFF;
     E2(S, 0xB848); E8(S, numer);
@@ -89,14 +89,14 @@ fn EMIT_FLOAT_LIT(S, fval) {
 # unconditionally so adjusted disps below -128 don't truncate
 # silently; the +3 bytes per load is amortized across the loop.
 
-fn _F64V_DISP(idx) {
+fn _F64V_DISP(idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     return disp;
 }
 
-fn _EMIT_LOAD_RDX_FROM_LOCAL(S, idx) {
+fn _EMIT_LOAD_RDX_FROM_LOCAL(S, idx): i64 {
     # mov rdx, [rbp + disp32]: 48 8B 95 disp32
     var disp = _F64V_DISP(idx);
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x95);
@@ -107,7 +107,7 @@ fn _EMIT_LOAD_RDX_FROM_LOCAL(S, idx) {
     return 0;
 }
 
-fn EMIT_F64V_LOOP(S, op, vbase) {
+fn EMIT_F64V_LOOP(S, op, vbase): i64 {
     # rcx = n (already in rax from last arg)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
     # rsi = 0 (loop counter)
@@ -144,7 +144,7 @@ fn EMIT_F64V_LOOP(S, op, vbase) {
 
 # EMIT_F64V_UNARY — packed unary ops: sqrtpd (op=0), abs via andpd (op=1)
 # Args at vbase: dst, src, n(rax)
-fn EMIT_F64V_UNARY(S, op, vbase) {
+fn EMIT_F64V_UNARY(S, op, vbase): i64 {
     # For abs: build sign mask in xmm2 — pcmpeqd xmm2,xmm2; psrlq xmm2,1
     if (op == 1) {
         EB(S, 0x66); EB(S, 0x0F); EB(S, 0x76); EB(S, 0xD2);
@@ -188,7 +188,7 @@ fn EMIT_F64V_UNARY(S, op, vbase) {
 # Accumulator strategy: xmm2 holds packed pair of partial sums; loop
 # does mulpd+addpd to accumulate; tail uses haddpd (SSE3) to reduce
 # to a scalar, then movq rax, xmm2 to extract bits.
-fn EMIT_F64V_DOT(S, vbase) {
+fn EMIT_F64V_DOT(S, vbase): i64 {
     # xorpd xmm2, xmm2 — zero accumulator
     EB(S, 0x66); EB(S, 0x0F); EB(S, 0x57); EB(S, 0xD2);
     # rcx = n
@@ -224,7 +224,7 @@ fn EMIT_F64V_DOT(S, vbase) {
 # EMIT_F64V_SCALE(S, vbase) — dst[i] = a[i] * scalar.
 # Slots: vbase=dst, vbase+1=a, vbase+2=scalar (f64 bit pattern). n in rax.
 # Pre-loop: load scalar into xmm2 and broadcast to both lanes.
-fn EMIT_F64V_SCALE(S, vbase) {
+fn EMIT_F64V_SCALE(S, vbase): i64 {
     # rdx = scalar (i64 bit pattern)
     _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
     # movq xmm2, rdx — xmm2.low = scalar bits
@@ -256,7 +256,7 @@ fn EMIT_F64V_SCALE(S, vbase) {
 # EMIT_F64V_AXPY(S, vbase) — y[i] += alpha * x[i].
 # Slots: vbase=y, vbase+1=x, vbase+2=alpha. n in rax.
 # SSE2 has no FMA — fused via mulpd + addpd.
-fn EMIT_F64V_AXPY(S, vbase) {
+fn EMIT_F64V_AXPY(S, vbase): i64 {
     # rdx = alpha bits; xmm2 = {alpha, alpha}
     _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
     EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xD2);
@@ -289,7 +289,7 @@ fn EMIT_F64V_AXPY(S, vbase) {
 
 # EMIT_F64V_FMADD — dst[i] = a[i]*b[i] + c[i] using mulpd + addpd (SSE2)
 # Args at vbase: dst, a, b, c, n(rax)
-fn EMIT_F64V_FMADD(S, vbase) {
+fn EMIT_F64V_FMADD(S, vbase): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
     var loop_top = GCP(S);

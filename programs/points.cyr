@@ -5,7 +5,7 @@
 struct Vec2 { x; y; }
 struct Seg { start: Vec2; end: Vec2; }
 
-fn dist_sq(seg: i64) {
+fn dist_sq(seg: i64): i64 {
     var p: *i64 = seg;
     var x1 = *p;
     var y1 = *(p + 1);

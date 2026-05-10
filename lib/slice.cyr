@@ -50,36 +50,36 @@ include "lib/syscalls.cyr"
 #   var s: [u8] = 0;  slice_of(&s, &data, 5);   # same as slice_set
 
 # Initialize slice in-place. Returns 0.
-fn slice_set(s, ptr, len) {
+fn slice_set(s, ptr, len): i64 {
     store64(s, ptr);
     store64(s + 8, len);
     return 0;
 }
 
 # Builder alias for slice_set — reads as `slice_of(&s, buf, n)`.
-fn slice_of(s, ptr, len) {
+fn slice_of(s, ptr, len): i64 {
     return slice_set(s, ptr, len);
 }
 
 # Read the ptr field.
-fn slice_ptr(s) {
+fn slice_ptr(s): i64 {
     return load64(s);
 }
 
 # Read the len field.
-fn slice_len(s) {
+fn slice_len(s): i64 {
     return load64(s + 8);
 }
 
 # Zero both fields. Equivalent to slice_set(s, 0, 0).
-fn slice_zero(s) {
+fn slice_zero(s): i64 {
     store64(s, 0);
     store64(s + 8, 0);
     return 0;
 }
 
 # Copy src slice into dst (both pointers to 16-byte slots).
-fn slice_copy(dst, src) {
+fn slice_copy(dst, src): i64 {
     store64(dst, load64(src));
     store64(dst + 8, load64(src + 8));
     return 0;
@@ -88,14 +88,14 @@ fn slice_copy(dst, src) {
 # Two slices equal iff both ptr and len match. Note this is
 # pointer-equality, not content-equality — slice_eq_content is
 # a future addition if a consumer needs it.
-fn slice_eq(a, b) {
+fn slice_eq(a, b): i64 {
     if (load64(a) != load64(b)) { return 0; }
     if (load64(a + 8) != load64(b + 8)) { return 0; }
     return 1;
 }
 
 # True iff the slice has zero length. ptr may still be non-null.
-fn slice_is_empty(s) {
+fn slice_is_empty(s): i64 {
     if (load64(s + 8) == 0) { return 1; }
     return 0;
 }
@@ -103,7 +103,7 @@ fn slice_is_empty(s) {
 # True iff the slice is null-pointer (ptr == 0). Distinct from
 # is_empty: a non-null slice with len=0 is "empty but allocated";
 # a null slice is "no allocation at all".
-fn slice_is_null(s) {
+fn slice_is_null(s): i64 {
     if (load64(s) == 0) { return 1; }
     return 0;
 }
@@ -127,7 +127,7 @@ fn slice_is_null(s) {
 # Initialize stack slice from a C-style null-terminated string.
 # Mirrors `str_from(cstr)` (lib/str.cyr) but writes into the
 # pre-allocated `dst` slot instead of heap-allocing 16 bytes.
-fn slice_from_cstr(dst, cstr) {
+fn slice_from_cstr(dst, cstr): i64 {
     # Inline strlen — avoid pulling lib/string.cyr just for this.
     var n = 0;
     while (load8(cstr + n) != 0) { n = n + 1; }
@@ -140,7 +140,7 @@ fn slice_from_cstr(dst, cstr) {
 # Mirrors `str_new(data, len)` (lib/str.cyr) but writes into the
 # pre-allocated `dst` slot. Equivalent to slice_set; alias kept
 # for symmetry with the str_* family.
-fn slice_from_buf(dst, buf, len) {
+fn slice_from_buf(dst, buf, len): i64 {
     return slice_set(dst, buf, len);
 }
 
@@ -171,7 +171,7 @@ fn slice_from_buf(dst, buf, len) {
 # Result: dst points at the SAME backing array as v; mutations
 # through `vec_push(v, ...)` may invalidate dst's ptr if the
 # backing reallocs. Treat as a snapshot of v's current view.
-fn vec_as_slice(dst, v) {
+fn vec_as_slice(dst, v): i64 {
     store64(dst, load64(v));
     store64(dst + 8, load64(v + 8));
     return 0;
@@ -189,14 +189,14 @@ fn vec_as_slice(dst, v) {
 # `slice_unchecked_get_W` variants skip the bounds check —
 # consumer must guarantee 0 <= idx < s.len. Faster but unsafe.
 
-fn _slice_bounds_trap() {
+fn _slice_bounds_trap(): i64 {
     sys_write(2, "slice bounds violation\n", 23);
     sys_exit(134);
     return 0;
 }
 
 # Width-1: u8 / i8 elements. Returns zero-extended byte value.
-fn _slice_idx_get_1(s_addr, idx) {
+fn _slice_idx_get_1(s_addr, idx): i64 {
     var len = load64(s_addr + 8);
     if (idx < 0) { _slice_bounds_trap(); }
     if (idx >= len) { _slice_bounds_trap(); }
@@ -204,7 +204,7 @@ fn _slice_idx_get_1(s_addr, idx) {
 }
 
 # Width-2: u16 / i16 elements.
-fn _slice_idx_get_2(s_addr, idx) {
+fn _slice_idx_get_2(s_addr, idx): i64 {
     var len = load64(s_addr + 8);
     if (idx < 0) { _slice_bounds_trap(); }
     if (idx >= len) { _slice_bounds_trap(); }
@@ -212,7 +212,7 @@ fn _slice_idx_get_2(s_addr, idx) {
 }
 
 # Width-4: u32 / i32 elements.
-fn _slice_idx_get_4(s_addr, idx) {
+fn _slice_idx_get_4(s_addr, idx): i64 {
     var len = load64(s_addr + 8);
     if (idx < 0) { _slice_bounds_trap(); }
     if (idx >= len) { _slice_bounds_trap(); }
@@ -220,7 +220,7 @@ fn _slice_idx_get_4(s_addr, idx) {
 }
 
 # Width-8: i64 / u64 / pointer elements.
-fn _slice_idx_get_8(s_addr, idx) {
+fn _slice_idx_get_8(s_addr, idx): i64 {
     var len = load64(s_addr + 8);
     if (idx < 0) { _slice_bounds_trap(); }
     if (idx >= len) { _slice_bounds_trap(); }
@@ -230,7 +230,7 @@ fn _slice_idx_get_8(s_addr, idx) {
 # Width-16: u128 / struct-16 elements. Returns POINTER to the
 # 16-byte slot (consumer uses load64 / u128_* ops to read it).
 # u128 can't be returned by-value through cyrius's i64-only ABI.
-fn _slice_idx_get_16(s_addr, idx) {
+fn _slice_idx_get_16(s_addr, idx): i64 {
     var len = load64(s_addr + 8);
     if (idx < 0) { _slice_bounds_trap(); }
     if (idx >= len) { _slice_bounds_trap(); }
@@ -243,27 +243,27 @@ fn _slice_idx_get_16(s_addr, idx) {
 # dominates.
 
 # Width-1 unchecked: u8 / i8 element load. No bounds verification.
-fn slice_unchecked_get_1(s_addr, idx) {
+fn slice_unchecked_get_1(s_addr, idx): i64 {
     return load8(load64(s_addr) + idx);
 }
 
 # Width-2 unchecked: u16 / i16 element load. No bounds verification.
-fn slice_unchecked_get_2(s_addr, idx) {
+fn slice_unchecked_get_2(s_addr, idx): i64 {
     return load16(load64(s_addr) + idx * 2);
 }
 
 # Width-4 unchecked: u32 / i32 element load. No bounds verification.
-fn slice_unchecked_get_4(s_addr, idx) {
+fn slice_unchecked_get_4(s_addr, idx): i64 {
     return load32(load64(s_addr) + idx * 4);
 }
 
 # Width-8 unchecked: i64 / u64 / pointer element load. No bounds verification.
-fn slice_unchecked_get_8(s_addr, idx) {
+fn slice_unchecked_get_8(s_addr, idx): i64 {
     return load64(load64(s_addr) + idx * 8);
 }
 
 # Width-16 unchecked: returns pointer to u128 / struct-16 slot. No bounds verification.
-fn slice_unchecked_get_16(s_addr, idx) {
+fn slice_unchecked_get_16(s_addr, idx): i64 {
     return load64(s_addr) + idx * 16;
 }
 
@@ -298,7 +298,7 @@ fn slice_unchecked_get_16(s_addr, idx) {
 # Read up to s.len bytes from fd into s.data. Returns the
 # byte count read (or negative errno). Convenience wrapper
 # around sys_read for slice-typed buffers.
-fn sys_read_slice(fd, s) {
+fn sys_read_slice(fd, s): i64 {
     return sys_read(fd, load64(s), load64(s + 8));
 }
 
@@ -306,7 +306,7 @@ fn sys_read_slice(fd, s) {
 # Returns the byte count copied. Truncates against the
 # shorter slice rather than overrunning (canonical memcpy(n)
 # can't enforce this — caller has to compute min upfront).
-fn slice_copy_bytes(dst, src) {
+fn slice_copy_bytes(dst, src): i64 {
     var dn = load64(dst + 8);
     var sn = load64(src + 8);
     var n = dn;
@@ -319,7 +319,7 @@ fn slice_copy_bytes(dst, src) {
 # otherwise. Length-mismatched slices are unequal by
 # definition (no prefix-match semantics — use a different
 # helper if that's the intent).
-fn slice_eq_bytes(a, b) {
+fn slice_eq_bytes(a, b): i64 {
     var an = load64(a + 8);
     var bn = load64(b + 8);
     if (an != bn) { return 0; }

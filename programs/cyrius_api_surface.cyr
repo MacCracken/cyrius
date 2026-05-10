@@ -43,14 +43,14 @@ var ENTRIES_LENS = 0;
 var ENTRIES_COUNT = 0;
 var ENTRIES_BUF_USED = 0;
 
-fn _reset_entries() {
+fn _reset_entries(): i64 {
     ENTRIES_COUNT = 0;
     ENTRIES_BUF_USED = 0;
     return 0;
 }
 
 # Append "module::name/arity" to ENTRIES_BUF; record offset+len.
-fn _push_entry(module_off, module_len, name_off, name_len, arity) {
+fn _push_entry(module_off, module_len, name_off, name_len, arity): i64 {
     var off = ENTRIES_BUF_USED;
     var i = 0;
     while (i < module_len) {
@@ -84,7 +84,7 @@ fn _push_entry(module_off, module_len, name_off, name_len, arity) {
     return 0;
 }
 
-fn _cmp_entry(i, j) {
+fn _cmp_entry(i, j): i64 {
     var ai = load64(ENTRIES_OFFS + i * 8);
     var al = load64(ENTRIES_LENS + i * 8);
     var bi = load64(ENTRIES_OFFS + j * 8);
@@ -104,7 +104,7 @@ fn _cmp_entry(i, j) {
     return 0;
 }
 
-fn _sort_entries() {
+fn _sort_entries(): i64 {
     var i = 1;
     while (i < ENTRIES_COUNT) {
         var j = i;
@@ -127,19 +127,19 @@ fn _sort_entries() {
     return 0;
 }
 
-fn _is_idstart(c) {
+fn _is_idstart(c): i64 {
     if (c >= 65) { if (c <= 90) { return 1; } }
     if (c >= 97) { if (c <= 122) { return 1; } }
     if (c == 95) { return 1; }
     return 0;
 }
-fn _is_idcont(c) {
+fn _is_idcont(c): i64 {
     if (_is_idstart(c) == 1) { return 1; }
     if (c >= 48) { if (c <= 57) { return 1; } }
     return 0;
 }
 
-fn _scan_id(buf, pos, total) {
+fn _scan_id(buf, pos, total): i64 {
     var p = pos + 1;
     while (p < total) {
         if (_is_idcont(load8(buf + p)) == 0) { return p; }

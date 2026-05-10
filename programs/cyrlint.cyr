@@ -13,7 +13,7 @@ include "lib/args.cyr"
 var _warnings = 0;
 var _errors = 0;
 
-fn warn(line, msg) {
+fn warn(line, msg): i64 {
     syscall(1, 2, "  warn line ", 12);
     var nb[24];
     var nl = fmt_int_buf(line, &nb);
@@ -25,7 +25,7 @@ fn warn(line, msg) {
     return 0;
 }
 
-fn lint_file(buf, total) {
+fn lint_file(buf, total): i64 {
     var lineno = 1;
     var pos = 0;
     var prev_blank = 0;
@@ -302,13 +302,13 @@ fn lint_file(buf, total) {
 # Capacity: 256 top-level vars × 32-byte names. Sized for stdlib
 # (lib/math.cyr alone has ~25 top-level constants); typical
 # consumer code is well under.
-fn _is_id_start(c) {
+fn _is_id_start(c): i64 {
     if (c >= 65) { if (c <= 90) { return 1; } }    # A-Z
     if (c >= 97) { if (c <= 122) { return 1; } }   # a-z
     if (c == 95) { return 1; }                      # _
     return 0;
 }
-fn _is_id_cont(c) {
+fn _is_id_cont(c): i64 {
     if (_is_id_start(c) == 1) { return 1; }
     if (c >= 48) { if (c <= 57) { return 1; } }    # 0-9
     return 0;
@@ -317,7 +317,7 @@ fn _is_id_cont(c) {
 # Helper: at buf[pos..eol), find a top-level `var IDENT` decl.
 # Returns the offset of IDENT's first byte, or -1 if not a var-
 # decl line. Caller already checked this line is at brace_depth==0.
-fn _find_var_decl_ident(buf, pos, eol) {
+fn _find_var_decl_ident(buf, pos, eol): i64 {
     # Skip leading whitespace
     var p = pos;
     while (p < eol) {
@@ -342,7 +342,7 @@ fn _find_var_decl_ident(buf, pos, eol) {
 
 # Walk buf, find IDENT length starting at off (caller guaranteed
 # is_id_start). Returns end position (one past last id char).
-fn _scan_id_end(buf, off, total) {
+fn _scan_id_end(buf, off, total): i64 {
     var p = off + 1;
     while (p < total) {
         if (_is_id_cont(load8(buf + p)) == 0) { return p; }
@@ -352,7 +352,7 @@ fn _scan_id_end(buf, off, total) {
 }
 
 # Compare buf[off, off+len) to buf[other_off, other_off+other_len).
-fn _eq_substr(buf, off1, len1, off2, len2) {
+fn _eq_substr(buf, off1, len1, off2, len2): i64 {
     if (len1 != len2) { return 0; }
     var i = 0;
     while (i < len1) {
@@ -362,7 +362,7 @@ fn _eq_substr(buf, off1, len1, off2, len2) {
     return 1;
 }
 
-fn _find_eol(buf, start, total) {
+fn _find_eol(buf, start, total): i64 {
     var p = start;
     while (p < total) {
         if (load8(buf + p) == 10) { return p; }
@@ -371,7 +371,7 @@ fn _find_eol(buf, start, total) {
     return total;
 }
 
-fn lint_globals_init_order(buf, total) {
+fn lint_globals_init_order(buf, total): i64 {
     # Parallel arrays: name_off[i], name_len[i], name_line[i]. Cap 256.
     var name_off  = alloc(2048);   # 256 × 8B
     var name_len  = alloc(2048);
@@ -573,7 +573,7 @@ fn lint_globals_init_order(buf, total) {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     args_init();
 

@@ -6,6 +6,116 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.22] — 2026-05-09
+
+**v5.10.x SLOT 22 — REAL TYPE SYSTEM Phase 1: Surface
+audit (multi-slot arc kickoff)**.
+
+Phase 1 of the 5-phase REAL TYPE SYSTEM arc
+(v5.10.22-26). Pinned 2026-05-08; promoted from "held
+bug arc" to concrete slot at v5.10.20 P(-1) sweep. Ships
+the audit tool + bulk annotation pass that Phase 2
+(call-site check) and Phase 3 (overload dispatch) need
+to operate against.
+
+cc5 unchanged at 778,120 B (stdlib + src annotation pass
+only; no compiler changes). Self-host byte-identical
+x86. **66/66 check.sh, 135/135 cyrius test**, api-
+surface unchanged at 2820.
+
+### What landed
+
+**Audit tool** — `programs/cyrius_type_audit.cyr`. Walks
+`lib/*.cyr` + `src/**/*.cyr` + `programs/*.cyr` + `cbt/*.cyr`,
+classifies every public `fn name(args) { ... }` declaration
+by annotation coverage. Reports per-module + total counts.
+Usage: `cyrius_type_audit` (full list) /
+`cyrius_type_audit --summary` (counts only) /
+`cyrius_type_audit --module=NAME` (focused).
+
+**Bulk annotation pass** — went from 20/4124 (0.5%) to
+**3137/4124 (76%)** in this slot. Strategy:
+- **Pure-i64 modules** (no `return Ok(...)`/`Err(...)`/
+  `None`/`Some(...)`/`tagged_*`): bulk-add `: i64` to
+  every unannotated public `fn name(args) {` signature.
+  Covered ~1670 fns across `string` / `alloc` / `fmt` /
+  `vec` / `args` / `fnptr` / `syscalls_*` / `slice` /
+  `math` / `u128` / `bigint` / etc.
+- **Result-mixed modules** (`io` / `process` / `net` /
+  `dynlib` / `json` / `cyml` / `http` / `pwd` / `grp` /
+  `pam`): smart per-fn annotator skips fns whose body
+  contains Result-shape returns; annotates the rest as
+  `: i64`. Covered ~250 more fns, properly leaving
+  Result-returning fns un-annotated (Phase 1B will type
+  those explicitly).
+- **Single-line + uppercase fns** (`fn FOO(x) { return
+  ...; }`, `fn WIFEXITED(s) { return ...; }`): extended
+  pattern catches ~300 more fns including the POSIX
+  `WIFEXITED` / `WEXITSTATUS` / `WIFSIGNALED` /
+  `WTERMSIG` macros.
+- src/ + programs/ + cbt/: smart-annotator pass adds
+  ~600 more.
+
+### What's NOT in this slot (Phase 1B at v5.10.23)
+
+- **987 fns still unannotated** — predominantly
+  `Result`/`Option`/`Tagged`-returning (smart annotator
+  correctly skipped them) plus edge cases like fns with
+  non-standard body shapes (early-return-only, syscall-
+  only without explicit `return`).
+- **`: Result` / `: Option` annotations** — cyrius's
+  type system needs to recognize these as types
+  (currently not). Phase 1B decision: add as primitives
+  (like `Str`/`cstring`) or annotate as struct types.
+- **`cstring` type addition** — needed for canonical
+  SIGSEGV-motivator distinguishing (`println(s:
+  cstring)` vs `println(s: Str)`). Lands in Phase 1B or
+  alongside Phase 3 overload dispatch.
+
+### Why explicit "Phase 1 of 5"
+
+Per `feedback_consumer_request_full_surface` memory pin
+(added v5.10.21 from sandhi flag): "if the slot title
+doesn't explicitly call out 'Phase N of M', you're about
+to ship the silent-defer antipattern." This slot is
+labeled **Phase 1 (76% coverage)**, with Phase 1B and
+the type-system additions concretely pinned (v5.10.23).
+The remaining 987 fns are NOT silent deferrals — they're
+known to need a different annotation strategy than the
+bulk i64 pass, and that strategy lands in v5.10.23/1B.
+
+### Smart-annotator exclusion logic
+
+For each unannotated public `fn`, the per-file annotator
+walks the body line-by-line tracking brace depth. If any
+body line matches `return (Ok|Err|None|Some|tagged_)`
+the fn is left unannotated. Conservatively skips
+Result/Option-returning + Tagged-variant returners + any
+fn delegating to a Result-returning callee. False-
+positive rate: zero observed.
+
+### Acceptance / coverage milestone
+
+- v5.10.22 Phase 1A: **76%** (3137/4124).
+- v5.10.23 Phase 1B target: **>= 95%**.
+- Phase 2 (v5.10.24 — call-site check) can begin once
+  Phase 1B gets coverage to 95%+; current 76% gives
+  Phase 2 enough signal to validate the approach on the
+  hot APIs.
+
+### Sandhi staged-connect filing pinned
+
+Sandhi filed
+`sandhi/docs/issues/2026-05-09-stdlib-tls-staged-connect.md`
+during the v5.10.22 work — v5.10.21 shipped the right
+session-resumption + 0-RTT primitives but the connect-
+flow timing window for client-side resumption is
+missing. Pinned at v5.10.27 per user direction "FOR
+AFTER THE TYPE WORK ARC". Subsequent slots (typed
+f64v2/f64v4, distlib carve-out, lex/fixup opts,
+lib/tls audit, macOS struct-by-value, defensive sweep)
+shifted down one number to .28-.35.
+
 ## [5.10.21] — 2026-05-09
 
 **v5.10.x SLOT 21 — TLS surface completion: session

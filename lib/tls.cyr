@@ -120,7 +120,7 @@ var _fn_SSL_read_early_data = 0;
 # libc makes pthread work correctly (TCB has real __kind fields,
 # DTV, stack_guard, etc.), so SSL_CTX_new no longer deadlocks and
 # SSL_connect completes the handshake.
-fn _tls_init() {
+fn _tls_init(): i64 {
     if (_tls_inited == 1) { return 0; }
     _tls_inited = 1;
 
@@ -197,7 +197,7 @@ fn _tls_init() {
 }
 
 # Returns 1 if TLS support is available on this system
-fn tls_available() {
+fn tls_available(): i64 {
     _tls_init();
     return _tls_ok;
 }
@@ -218,7 +218,7 @@ fn tls_available() {
 # semantics — note the inverted-from-most-OpenSSL-fns return
 # convention: 0 = success per the SSL_CTX_set_alpn_protos man
 # page).
-fn tls_set_alpn(handle, protos, protos_len) {
+fn tls_set_alpn(handle, protos, protos_len): i64 {
     if (handle == 0) { return 0 - 1; }
     if (_fn_SSL_CTX_set_alpn_protos == 0) { return 0 - 1; }
     return fncall3(_fn_SSL_CTX_set_alpn_protos, handle, protos, protos_len);
@@ -236,7 +236,7 @@ fn tls_set_alpn(handle, protos, protos_len) {
 # behind this typed verb so consumers don't bind to libssl's
 # symbol name. Returns 0 on success, -1 on missing handle or
 # unresolved symbol.
-fn tls_set_verify(handle, mode, callback) {
+fn tls_set_verify(handle, mode, callback): i64 {
     if (handle == 0) { return 0 - 1; }
     if (_fn_SSL_CTX_set_verify == 0) { return 0 - 1; }
     fncall3(_fn_SSL_CTX_set_verify, handle, mode, callback);
@@ -260,7 +260,7 @@ fn tls_set_verify(handle, mode, callback) {
 # wrapped). Each direct call is a libssl-ABI binding that
 # won't survive a native-TLS transport swap; typed wrappers
 # do.
-fn tls_dlsym(name) {
+fn tls_dlsym(name): i64 {
     _tls_init();
     if (_tls_ok == 0) { return 0; }
     if (_tls_libssl_handle == 0) { return 0; }
@@ -298,7 +298,7 @@ fn tls_dlsym(name) {
 # Option A (function-pointer hook — least invasive, most
 # flexible). v5.10.13 follow-up: typed wrappers added so the
 # hook can stay generic across transports.
-fn tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx) {
+fn tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx): i64 {
     _tls_init();
     if (_tls_ok == 0) { return 0; }
 
@@ -363,26 +363,26 @@ fn tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx) {
 # v5.6.40: thin wrapper around tls_connect_with_ctx_hook with a
 # null hook (no SSL_CTX customisation). Existing consumers see
 # byte-identical behavior; this signature is preserved.
-fn tls_connect(sock, host) {
+fn tls_connect(sock, host): i64 {
     return tls_connect_with_ctx_hook(sock, host, 0, 0);
 }
 
 # Write through TLS session
-fn tls_write(ctx, buf, len) {
+fn tls_write(ctx, buf, len): i64 {
     if (ctx == 0) { return 0 - 1; }
     var ssl = load64(ctx + 8);
     return fncall3(_fn_SSL_write, ssl, buf, len);
 }
 
 # Read from TLS session
-fn tls_read(ctx, buf, maxlen) {
+fn tls_read(ctx, buf, maxlen): i64 {
     if (ctx == 0) { return 0 - 1; }
     var ssl = load64(ctx + 8);
     return fncall3(_fn_SSL_read, ssl, buf, maxlen);
 }
 
 # Close TLS session and free resources
-fn tls_close(ctx) {
+fn tls_close(ctx): i64 {
     if (ctx == 0) { return 0; }
     var ssl_ctx = load64(ctx);
     var ssl = load64(ctx + 8);
@@ -427,7 +427,7 @@ fn tls_close(ctx) {
 # Get the current session for ctx as an SSL_SESSION* (refcount-bumped).
 # Returns 0 if libssl missing the symbol or no session yet established.
 # Caller MUST free via tls_session_free.
-fn tls_get_session(ctx) {
+fn tls_get_session(ctx): i64 {
     if (ctx == 0) { return 0; }
     if (_fn_SSL_get1_session == 0) { return 0; }
     var ssl = load64(ctx + 8);
@@ -437,7 +437,7 @@ fn tls_get_session(ctx) {
 # Install a previously-saved session before tls_connect attempts
 # resumption. Returns 1 on success, 0 on failure (no-op if libssl
 # missing the symbol — caller falls back to a fresh handshake).
-fn tls_set_session(ctx, session) {
+fn tls_set_session(ctx, session): i64 {
     if (ctx == 0) { return 0; }
     if (session == 0) { return 0; }
     if (_fn_SSL_set_session == 0) { return 0; }
@@ -447,7 +447,7 @@ fn tls_set_session(ctx, session) {
 
 # Release a session reference obtained via tls_get_session.
 # No-op if session is 0 or libssl missing the symbol.
-fn tls_session_free(session) {
+fn tls_session_free(session): i64 {
     if (session == 0) { return 0; }
     if (_fn_SSL_SESSION_free == 0) { return 0; }
     fncall1(_fn_SSL_SESSION_free, session);
@@ -460,7 +460,7 @@ fn tls_session_free(session) {
 # it. cb_fp signature: `int new_cb(SSL *ssl, SSL_SESSION *session)`.
 # Returning 1 transfers session ownership to the consumer (consumer
 # now owns the ref); 0 means libssl retains ownership.
-fn tls_ctx_set_session_new_cb(handle, cb_fp) {
+fn tls_ctx_set_session_new_cb(handle, cb_fp): i64 {
     if (_fn_SSL_CTX_sess_set_new_cb == 0) { return 0; }
     fncall2(_fn_SSL_CTX_sess_set_new_cb, handle, cb_fp);
     return 0;
@@ -469,7 +469,7 @@ fn tls_ctx_set_session_new_cb(handle, cb_fp) {
 # Install a session-remove callback. Fires when libssl invalidates
 # a session; consumer's cache should evict matching entries.
 # cb_fp signature: `void remove_cb(SSL_CTX *ctx, SSL_SESSION *session)`.
-fn tls_ctx_set_session_remove_cb(handle, cb_fp) {
+fn tls_ctx_set_session_remove_cb(handle, cb_fp): i64 {
     if (_fn_SSL_CTX_sess_set_remove_cb == 0) { return 0; }
     fncall2(_fn_SSL_CTX_sess_set_remove_cb, handle, cb_fp);
     return 0;
@@ -480,7 +480,7 @@ fn tls_ctx_set_session_remove_cb(handle, cb_fp) {
 # `SSL_SESSION *get_cb(SSL *ssl, unsigned char *id, int len, int *copy)`.
 # Set *copy = 1 to bump the refcount on the returned session;
 # 0 to transfer ownership.
-fn tls_ctx_set_session_get_cb(handle, cb_fp) {
+fn tls_ctx_set_session_get_cb(handle, cb_fp): i64 {
     if (_fn_SSL_CTX_sess_set_get_cb == 0) { return 0; }
     fncall2(_fn_SSL_CTX_sess_set_get_cb, handle, cb_fp);
     return 0;
@@ -492,7 +492,7 @@ fn tls_ctx_set_session_get_cb(handle, cb_fp) {
 #   SSL_SESS_CACHE_SERVER (2)  — server-side caching enabled
 #   SSL_SESS_CACHE_BOTH (3)    — both client + server
 # Returns the previous mode, or 0 if libssl missing the symbol.
-fn tls_ctx_set_session_cache_mode(handle, mode) {
+fn tls_ctx_set_session_cache_mode(handle, mode): i64 {
     if (_fn_SSL_CTX_set_session_cache_mode == 0) { return 0; }
     return fncall2(_fn_SSL_CTX_set_session_cache_mode, handle, mode);
 }
@@ -501,7 +501,7 @@ fn tls_ctx_set_session_cache_mode(handle, mode) {
 # per session; 0 (default) means 0-RTT disabled. Recommended starting
 # point per RFC 8446: 16384. Caller's session-cache impl should also
 # bound this against replay-attack risk.
-fn tls_ctx_set_max_early_data(handle, max) {
+fn tls_ctx_set_max_early_data(handle, max): i64 {
     if (_fn_SSL_CTX_set_max_early_data == 0) { return 0; }
     return fncall2(_fn_SSL_CTX_set_max_early_data, handle, max);
 }
@@ -511,7 +511,7 @@ fn tls_ctx_set_max_early_data(handle, max) {
 # server advertised acceptable 0-RTT. Returns bytes written, or -1
 # on error (including "library missing the symbol" — caller checks
 # the symbol via tls_supports_early_data() before attempting).
-fn tls_write_early_data(ctx, buf, len) {
+fn tls_write_early_data(ctx, buf, len): i64 {
     if (ctx == 0) { return 0 - 1; }
     if (_fn_SSL_write_early_data == 0) { return 0 - 1; }
     var ssl = load64(ctx + 8);
@@ -529,7 +529,7 @@ fn tls_write_early_data(ctx, buf, len) {
 #               for the regular post-handshake stream (libssl status
 #               SSL_READ_EARLY_DATA_FINISH)
 #   -1        — error or library missing the symbol
-fn tls_read_early_data(ctx, buf, maxlen) {
+fn tls_read_early_data(ctx, buf, maxlen): i64 {
     if (ctx == 0) { return 0 - 1; }
     if (_fn_SSL_read_early_data == 0) { return 0 - 1; }
     var ssl = load64(ctx + 8);
@@ -545,7 +545,7 @@ fn tls_read_early_data(ctx, buf, maxlen) {
 # (SSL_write_early_data + SSL_read_early_data + max_early_data
 # setter); 0 otherwise. Sandhi's 1.3.2 0-RTT path probes this
 # before attempting early-data send/recv.
-fn tls_supports_early_data() {
+fn tls_supports_early_data(): i64 {
     if (_fn_SSL_write_early_data == 0) { return 0; }
     if (_fn_SSL_read_early_data == 0) { return 0; }
     if (_fn_SSL_CTX_set_max_early_data == 0) { return 0; }
@@ -556,7 +556,7 @@ fn tls_supports_early_data() {
 # symbols (get1_session + set_session + SESSION_free + cache mode
 # setter). Sandhi's 1.3.1 cache impl probes this before installing
 # session callbacks.
-fn tls_supports_session_resumption() {
+fn tls_supports_session_resumption(): i64 {
     if (_fn_SSL_get1_session == 0) { return 0; }
     if (_fn_SSL_set_session == 0) { return 0; }
     if (_fn_SSL_SESSION_free == 0) { return 0; }

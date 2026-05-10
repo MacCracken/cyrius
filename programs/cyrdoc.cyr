@@ -18,7 +18,7 @@ var _undocumented = 0;
 var _documented = 0;
 var _total_fns = 0;
 
-fn is_fn_line(line, len) {
+fn is_fn_line(line, len): i64 {
     if (len < 3) { return 0; }
     # Skip leading whitespace
     var si = 0;
@@ -33,7 +33,7 @@ fn is_fn_line(line, len) {
     return 0;
 }
 
-fn is_comment_line(line, len) {
+fn is_comment_line(line, len): i64 {
     var si = 0;
     while (si < len) {
         if (load8(line + si) != 32) { break; }
@@ -45,7 +45,7 @@ fn is_comment_line(line, len) {
     return 0;
 }
 
-fn extract_fn_name(line, len, buf) {
+fn extract_fn_name(line, len, buf): i64 {
     # Find "fn " then extract name until (
     var si = 0;
     while (si < len - 2) {

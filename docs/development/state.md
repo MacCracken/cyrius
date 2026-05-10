@@ -5,6 +5,46 @@
 
 ## Version
 
+**5.10.22** (shipped 2026-05-09 — **v5.10.x SLOT 22 —
+REAL TYPE SYSTEM Phase 1A: Surface audit + bulk
+annotation (multi-slot arc kickoff)**).
+
+Phase 1 of the 5-phase type-system arc (v5.10.22-26).
+Built `programs/cyrius_type_audit.cyr` + ran bulk
+annotation pass: **20/4124 (0.5%) → 3137/4124 (76%)**.
+Smart annotator skips Result/Option-returning fns
+(deferred to Phase 1B for proper typing). 66/66
+check.sh, 135/135 cyrius test, byte-identical x86
+self-host, cc5 unchanged at 778,120 B.
+
+Sandhi filed
+`sandhi/docs/issues/2026-05-09-stdlib-tls-staged-connect.md`
+during this slot — v5.10.21 primitives are correct but
+the connect-flow timing window for client-resumption is
+missing. Pinned at v5.10.27 "FOR AFTER THE TYPE WORK
+ARC". Subsequent slot numbers shifted +1.
+
+**Next**: v5.10.23 = REAL TYPE SYSTEM Phase 1B —
+remaining 987 fns + `Result`/`Option`/`cstring` type
+additions.
+
+**5.10.21** (shipped 2026-05-09 — **v5.10.x SLOT 21 —
+TLS surface completion: session resumption + 0-RTT
+(sandhi 1.3.x unblocking — closes v5.10.13 partial-fix
+gap)**).
+
+10 typed wrappers + 2 capability probes added to
+`lib/tls.cyr`: `tls_get_session` / `tls_set_session` /
+`tls_session_free` / `tls_ctx_set_session_*_cb` /
+`tls_ctx_set_session_cache_mode` /
+`tls_ctx_set_max_early_data` / `tls_write_early_data` /
+`tls_read_early_data` + `tls_supports_*` probes.
+Closes the v5.10.13 partial-fix where sandhi 1.3.1/1.3.2
+were silently deferred under "TLS surface tightening"
+label. Memory pin
+`feedback_consumer_request_full_surface` added so the
+pattern doesn't repeat.
+
 **5.10.20** (shipped 2026-05-09 — **v5.10.x SLOT 20 —
 P(-1) project hardening sweep + held-items slot pinning
 + v5.11.x/v5.12.0 reorg**).

@@ -114,7 +114,7 @@ include "src/frontend/parse_fn.cyr"
 # ASM_MNEMONIC and helpers are in arch-specific emit files:
 # src/backend/x86/emit.cyr and src/backend/aarch64/emit.cyr
 
-fn PARSE_SWITCH(S) {
+fn PARSE_SWITCH(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
@@ -345,7 +345,7 @@ fn PARSE_SWITCH(S) {
 }
 
 # Parse: match expr { val => { stmts } val => { stmts } _ => { stmts } }
-fn PARSE_MATCH(S) {
+fn PARSE_MATCH(S): i64 {
     # v5.8.22 bite #2 — capture match-keyword line for exhaustive-
     # coverage diagnostic before STI consumes it.
     var match_line = GTLINE(S, GTI(S));
@@ -516,7 +516,7 @@ fn PARSE_MATCH(S) {
 
 # Evaluate a single constant atom for #assert: number literal or sizeof(T).
 # Returns the constant value. Advances TI past the consumed tokens.
-fn _EVAL_CONST_ATOM(S) {
+fn _EVAL_CONST_ATOM(S): i64 {
     var t = PEEKT(S);
     if (t == 1) {
         var v = PEEKV(S);
@@ -555,7 +555,7 @@ fn _EVAL_CONST_ATOM(S) {
     return 0;
 }
 
-fn PARSE_STMT(S) {
+fn PARSE_STMT(S): i64 {
     var typ = PEEKT(S);
     # v5.6.3: @unsafe { ... } block. Body parses as a plain block
     # (no scope change). Nested unsafe triggers an advisory warning —
@@ -1116,7 +1116,7 @@ fn PARSE_STMT(S) {
     return 0;
 }
 
-fn PARSE_PROG(S) {
+fn PARSE_PROG(S): i64 {
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);

@@ -2,7 +2,7 @@
 # Subcommands
 # ================================================================
 
-fn cmd_build(source, output) {
+fn cmd_build(source, output): i64 {
     # Ensure output directory exists
     var oi = 0;
     var last_slash = 0 - 1;
@@ -41,7 +41,7 @@ fn cmd_build(source, output) {
     return r;
 }
 
-fn cmd_run(source) {
+fn cmd_run(source): i64 {
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: compile + run ", 23);
         sys_write(STDOUT_FD, source, strlen(source));
@@ -60,7 +60,7 @@ fn cmd_run(source) {
     return exit_code;
 }
 
-fn cmd_test(source) {
+fn cmd_test(source): i64 {
     _total = _total + 1;
     var tmpbin = "/tmp/cyrius_test_bin";
     var r = compile(source, tmpbin);
@@ -82,7 +82,7 @@ fn cmd_test(source) {
     return exit_code;
 }
 
-fn cmd_fuzz() {
+fn cmd_fuzz(): i64 {
     # Discover fuzz/*.fcyr harnesses, compile and run each
     _status("=== cyrius fuzz ===");
     var entries = dir_list(str_from("fuzz"));
@@ -139,7 +139,7 @@ fn cmd_fuzz() {
 
 # Run one .bcyr file: compile, execute, propagate exit code.
 # Returns 0 on success, 1 on compile error, or the binary's exit code.
-fn _bench_run_one(path) {
+fn _bench_run_one(path): i64 {
     var tmpbin = "/tmp/cyrius_bench";
     var r = compile(path, tmpbin);
     if (r != 0) {
@@ -155,7 +155,7 @@ fn _bench_run_one(path) {
 # Walk `dir` for `*.bcyr` files and run each via _bench_run_one.
 # Updates *passcnt / *failcnt / *found via caller-owned i64 storage.
 # Returns the number of benches attempted.
-fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr) {
+fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     if (file_exists(dir) == 0) { return 0; }
     var entries = dir_list(str_from(dir));
     var fi = 0;
@@ -185,7 +185,7 @@ fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr) {
     return n;
 }
 
-fn cmd_bench(source) {
+fn cmd_bench(source): i64 {
     if (source != 0) {
         return _bench_run_one(source);
     }
@@ -220,7 +220,7 @@ fn cmd_bench(source) {
     return 0;
 }
 
-fn cmd_check(source, with_deps) {
+fn cmd_check(source, with_deps): i64 {
     # v5.7.8: default skip_deps=1 (parse the file standalone — syntax-
     # checking should not drag the manifest dep graph into the parse).
     # Pass --with-deps to opt back into the legacy auto-prepend
@@ -290,7 +290,7 @@ fn cmd_check(source, with_deps) {
     return r;
 }
 
-fn cmd_self() {
+fn cmd_self(): i64 {
     # Delegate to inline self-hosting check script
     # (keeps fixup table small — full inline version needs too many relocations)
     _status("=== Self-Hosting Check ===");
@@ -320,7 +320,7 @@ fn cmd_self() {
     return 1;
 }
 
-fn cmd_clean() {
+fn cmd_clean(): i64 {
     # Remove build/ contents except cc5, cyrc, asm
     if (is_dir(str_from("build")) == 0) {
         println("nothing to clean");
@@ -364,7 +364,7 @@ fn cmd_clean() {
 # Quality commands — delegate to companion tools
 # ================================================================
 
-fn cmd_fmt(file, check_mode) {
+fn cmd_fmt(file, check_mode): i64 {
     var cyrfmt = make_path(_tools_dir, "cyrfmt");
     if (check_mode == 1) {
         # v5.8.42: cyrfmt main parses `--check` ONLY at argv(1).
@@ -381,7 +381,7 @@ fn cmd_fmt(file, check_mode) {
     return run_tool(cyrfmt, file, 0, 0);
 }
 
-fn cmd_lint(file) {
+fn cmd_lint(file): i64 {
     var cyrlint = make_path(_tools_dir, "cyrlint");
     return run_tool(cyrlint, file, 0, 0);
 }
@@ -402,7 +402,7 @@ fn cmd_lint(file) {
 # releases). Pre-v5.9.12 this dispatcher dropped the flag.
 # v5.9.13: `snapshot_arg` (`--snapshot=PATH`) forward — same
 # shape; pinned as follow-up at v5.9.12 ship.
-fn cmd_api_surface(update_flag, scope_project, snapshot_arg) {
+fn cmd_api_surface(update_flag, scope_project, snapshot_arg): i64 {
     var tool = make_path(_tools_dir, "cyrius_api_surface");
     var u = 0;
     var s = 0;
@@ -411,22 +411,22 @@ fn cmd_api_surface(update_flag, scope_project, snapshot_arg) {
     return run_tool(tool, u, s, snapshot_arg);
 }
 
-fn cmd_doc(arg1, arg2) {
+fn cmd_doc(arg1, arg2): i64 {
     var cyrdoc = make_path(_tools_dir, "cyrdoc");
     return run_tool(cyrdoc, arg1, arg2, 0);
 }
 
-fn cmd_vet(file) {
+fn cmd_vet(file): i64 {
     var cyrc = make_path(_tools_dir, "cyrc");
     return run_tool(cyrc, "vet", file, 0);
 }
 
-fn cmd_deny(file) {
+fn cmd_deny(file): i64 {
     var cyrc = make_path(_tools_dir, "cyrc");
     return run_tool(cyrc, "deny", file, 0);
 }
 
-fn cmd_audit() {
+fn cmd_audit(): i64 {
     var script = make_path(_scripts_dir, "check.sh");
     return run_script(script, 0, 0);
 }
@@ -438,7 +438,7 @@ fn cmd_audit() {
 # Compiles source under CYRIUS_STATS=1, parses stats from stderr.
 # --check: exit 1 if any table >= 85%. --json: machine-readable output.
 
-fn cmd_capacity(source, check_mode, json_mode) {
+fn cmd_capacity(source, check_mode, json_mode): i64 {
     var cc = current_cc();
     if (cc == 0) { _err("cc5 not found"); return 1; }
     if (source == 0) {
@@ -609,7 +609,7 @@ fn cmd_capacity(source, check_mode, json_mode) {
 # Soak — extended test loop
 # ================================================================
 
-fn cmd_soak(iters) {
+fn cmd_soak(iters): i64 {
     if (iters <= 0) { iters = 100; }
     _status("=== cyrius soak test ===");
     sys_write(STDOUT_FD, "  iterations: ", 14);
@@ -799,7 +799,7 @@ fn cmd_soak(iters) {
 # walker shape as cmd_fuzz; auto-prepend wired in cbt/cyrius.cyr's
 # _auto_deps gate so harnesses can `include "lib/string.cyr"` etc.
 # without manifest churn.
-fn cmd_smoke() {
+fn cmd_smoke(): i64 {
     _status("=== cyrius smoke ===");
     var smoke_pass = 0;
     var smoke_fail = 0;
@@ -884,7 +884,7 @@ fn cmd_smoke() {
 # (output path safety — no "/", no "..", no shell metachars).
 
 # Validate a profile name. Returns 1 if safe, 0 if not.
-fn _distlib_valid_profile(p) {
+fn _distlib_valid_profile(p): i64 {
     if (p == 0) { return 1; }
     var len = strlen(p);
     if (len == 0) { return 0; }
@@ -904,7 +904,7 @@ fn _distlib_valid_profile(p) {
     return 1;
 }
 
-fn cmd_distlib(profile) {
+fn cmd_distlib(profile): i64 {
     if (_distlib_valid_profile(profile) == 0) {
         _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
         return 1;
@@ -1141,7 +1141,7 @@ fn cmd_distlib(profile) {
 # publish — tag, distlib, and create release
 # ================================================================
 
-fn cmd_publish() {
+fn cmd_publish(): i64 {
     var ver = read_file_str("VERSION");
     if (ver == 0) { _err("no VERSION file"); return 1; }
 

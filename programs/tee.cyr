@@ -2,7 +2,7 @@
 # Usage: echo "hello" | ./tee
 # Built by: cat tee.cyr | ./build/cc5 > tee && chmod +x tee
 
-fn tee() {
+fn tee(): i64 {
     var buf[4096];
     var go: i64 = 1;
     while (go == 1) {

@@ -210,7 +210,7 @@ var TS_AST_JSX_NAME             = 708;      # reserved
 
 # Push a new AST node. Returns the node's index, or -1 on cap exceeded.
 # The caller fills payloads via TS_AST_SET_PAYLOAD afterward.
-fn TS_AST_PUSH(ts_base, kind, span) {
+fn TS_AST_PUSH(ts_base, kind, span): i64 {
     var n = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_NODE_COUNT);
     if (n >= TS_AST_NODE_CAP) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 1);
@@ -227,26 +227,26 @@ fn TS_AST_PUSH(ts_base, kind, span) {
     return n;
 }
 
-fn TS_AST_KIND(ts_base, idx) {
+fn TS_AST_KIND(ts_base, idx): i64 {
     return load64(ts_base + TS_AST_NODES_OFF + idx * TS_AST_NODE_SIZE);
 }
 
-fn TS_AST_SPAN(ts_base, idx) {
+fn TS_AST_SPAN(ts_base, idx): i64 {
     return load64(ts_base + TS_AST_NODES_OFF + idx * TS_AST_NODE_SIZE + 8);
 }
 
 # Read payload[slot] (slot in 0..3).
-fn TS_AST_PAYLOAD(ts_base, idx, slot) {
+fn TS_AST_PAYLOAD(ts_base, idx, slot): i64 {
     return load64(ts_base + TS_AST_NODES_OFF + idx * TS_AST_NODE_SIZE + 16 + slot * 8);
 }
 
 # Write payload[slot]. Returns 0.
-fn TS_AST_SET_PAYLOAD(ts_base, idx, slot, val) {
+fn TS_AST_SET_PAYLOAD(ts_base, idx, slot, val): i64 {
     store64(ts_base + TS_AST_NODES_OFF + idx * TS_AST_NODE_SIZE + 16 + slot * 8, val);
     return 0;
 }
 
-fn TS_AST_NODE_COUNT(ts_base) {
+fn TS_AST_NODE_COUNT(ts_base): i64 {
     return load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_NODE_COUNT);
 }
 
@@ -257,7 +257,7 @@ fn TS_AST_NODE_COUNT(ts_base) {
 # `TS_PS_PENDING_ASYNC` is set by callers right before the AST_PUSH
 # for an async fn/arrow/method; the helper below reads + clears it
 # and ORs the bit into the SPAN.
-fn TS_AST_CONSUME_ASYNC(ts_base, idx) {
+fn TS_AST_CONSUME_ASYNC(ts_base, idx): i64 {
     var flag = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC);
     if (flag == 0) { return 0; }
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC, 0);
@@ -268,7 +268,7 @@ fn TS_AST_CONSUME_ASYNC(ts_base, idx) {
 }
 
 # Read the async flag back. Returns 1 if async, 0 otherwise.
-fn TS_AST_IS_ASYNC(ts_base, idx) {
+fn TS_AST_IS_ASYNC(ts_base, idx): i64 {
     var span = TS_AST_SPAN(ts_base, idx);
     if (span >= 0 && (span & 0x1000000000000) != 0) { return 1; }
     return 0;
@@ -280,7 +280,7 @@ fn TS_AST_IS_ASYNC(ts_base, idx) {
 # TS_AST_CHILDREN_APPEND or directly.
 #
 # Returns the start offset (i64-index, not bytes), or -1 on cap.
-fn TS_AST_CHILDREN_RESERVE(ts_base, count) {
+fn TS_AST_CHILDREN_RESERVE(ts_base, count): i64 {
     var used = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED);
     # +1 for the -1 terminator
     if (used + count + 1 > TS_AST_CHILDREN_CAP) {
@@ -291,17 +291,17 @@ fn TS_AST_CHILDREN_RESERVE(ts_base, count) {
 }
 
 # Write child index `child_idx` at children[at]. Returns 0.
-fn TS_AST_CHILDREN_SET(ts_base, at, child_idx) {
+fn TS_AST_CHILDREN_SET(ts_base, at, child_idx): i64 {
     store64(ts_base + TS_AST_CHILDREN_OFF + at * 8, child_idx);
     return 0;
 }
 
-fn TS_AST_CHILDREN_GET(ts_base, at) {
+fn TS_AST_CHILDREN_GET(ts_base, at): i64 {
     return load64(ts_base + TS_AST_CHILDREN_OFF + at * 8);
 }
 
 # Bump children-used to account for `count` newly-written entries.
-fn TS_AST_CHILDREN_COMMIT(ts_base, count) {
+fn TS_AST_CHILDREN_COMMIT(ts_base, count): i64 {
     var used = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED, used + count);
     return 0;
@@ -311,27 +311,27 @@ fn TS_AST_CHILDREN_COMMIT(ts_base, count) {
 # Token-stream helpers (parser walks tokens emitted by TS_LEX)
 # ================================================================
 
-fn TS_PARSE_PEEK(ts_base) {
+fn TS_PARSE_PEEK(ts_base): i64 {
     var i = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     return TS_PEEKT(ts_base, i);
 }
 
-fn TS_PARSE_PEEK_AHEAD(ts_base, n) {
+fn TS_PARSE_PEEK_AHEAD(ts_base, n): i64 {
     var i = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     return TS_PEEKT(ts_base, i + n);
 }
 
-fn TS_PARSE_TOK_VAL(ts_base) {
+fn TS_PARSE_TOK_VAL(ts_base): i64 {
     var i = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     return load64(ts_base + TS_TOK_VALUES_OFF + i * 8);
 }
 
-fn TS_PARSE_TOK_LINE(ts_base) {
+fn TS_PARSE_TOK_LINE(ts_base): i64 {
     var i = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     return load64(ts_base + TS_TOK_LINES_OFF + i * 8);
 }
 
-fn TS_PARSE_CONSUME(ts_base) {
+fn TS_PARSE_CONSUME(ts_base): i64 {
     var i = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX, i + 1);
     return 0;
@@ -339,7 +339,7 @@ fn TS_PARSE_CONSUME(ts_base) {
 
 # Expect a specific token kind at current position. Consumes it on
 # match, sets ERR_CODE 3 + ERR_TOK_IDX on miss. Returns 0 / -1.
-fn TS_PARSE_EXPECT(ts_base, kind) {
+fn TS_PARSE_EXPECT(ts_base, kind): i64 {
     if (TS_PARSE_PEEK(ts_base) != kind) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 3);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
@@ -351,7 +351,7 @@ fn TS_PARSE_EXPECT(ts_base, kind) {
 }
 
 # Optionally consume a token if it matches. Returns 1 if consumed, 0 if not.
-fn TS_PARSE_MATCH(ts_base, kind) {
+fn TS_PARSE_MATCH(ts_base, kind): i64 {
     if (TS_PARSE_PEEK(ts_base) == kind) {
         TS_PARSE_CONSUME(ts_base);
         return 1;
@@ -359,11 +359,11 @@ fn TS_PARSE_MATCH(ts_base, kind) {
     return 0;
 }
 
-fn TS_PARSE_GETERR(ts_base) {
+fn TS_PARSE_GETERR(ts_base): i64 {
     return load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE);
 }
 
-fn TS_PARSE_GETERR_TOK(ts_base) {
+fn TS_PARSE_GETERR_TOK(ts_base): i64 {
     return load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX);
 }
 
@@ -371,7 +371,7 @@ fn TS_PARSE_GETERR_TOK(ts_base) {
 # Parser state init
 # ================================================================
 
-fn TS_PARSE_INIT(ts_base) {
+fn TS_PARSE_INIT(ts_base): i64 {
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_NODE_COUNT, 0);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX, 0);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED, 0);
@@ -413,7 +413,7 @@ fn TS_PARSE_INIT(ts_base) {
 # Each TS_PARSE_* fn returns AST node index on success, -1 on error.
 
 # Returns 1 if op is an assignment (any of =, +=, -=, ...).
-fn TS_IS_ASSIGN_OP(op) {
+fn TS_IS_ASSIGN_OP(op): i64 {
     if (op == TS_TOK_EQ)            { return 1; }
     if (op == TS_TOK_PLUS_EQ)       { return 1; }
     if (op == TS_TOK_MINUS_EQ)      { return 1; }
@@ -435,7 +435,7 @@ fn TS_IS_ASSIGN_OP(op) {
 
 # Returns binary precedence (1-14) or 0 if op is not binary.
 # Used by TS_PARSE_BINARY for precedence climbing.
-fn TS_BINARY_PREC(op) {
+fn TS_BINARY_PREC(op): i64 {
     if (op == TS_TOK_PIPE_PIPE)     { return 4; }
     if (op == TS_TOK_QQ)            { return 4; }
     if (op == TS_TOK_AMP_AMP)       { return 5; }
@@ -474,7 +474,7 @@ fn TS_BINARY_PREC(op) {
 # ts_ast_children, terminated by -1; returns the children-offset
 # (i64-index, not bytes). Caller sets that as a payload of the call/new node.
 # Returns -1 on error.
-fn TS_PARSE_ARGS(ts_base) {
+fn TS_PARSE_ARGS(ts_base): i64 {
     var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);  # initial guess; can grow
     if (off < 0) { return 0 - 1; }
     var i = 0;
@@ -518,7 +518,7 @@ fn TS_PARSE_ARGS(ts_base) {
 
 # Parse array literal: [e1, e2, ...e3]. Caller has consumed [.
 # Returns the array node index.
-fn TS_PARSE_ARRAY_LITERAL(ts_base) {
+fn TS_PARSE_ARRAY_LITERAL(ts_base): i64 {
     var span = TS_PARSE_TOK_VAL(ts_base);
     var node = TS_AST_PUSH(ts_base, TS_AST_EXPR_ARRAY, span);
     if (node < 0) { return 0 - 1; }
@@ -567,7 +567,7 @@ fn TS_PARSE_ARRAY_LITERAL(ts_base) {
 
 # Parse object literal: {k: v, k2: v2, k3, ...spread}. Caller has consumed {.
 # Each property is a PROPERTY_ASSIGN node (k:v) or SHORTHAND_PROP (k) or SPREAD.
-fn TS_PARSE_OBJECT_LITERAL(ts_base) {
+fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
     var span = TS_PARSE_TOK_VAL(ts_base);
     var node = TS_AST_PUSH(ts_base, TS_AST_EXPR_OBJECT, span);
     if (node < 0) { return 0 - 1; }
@@ -714,7 +714,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base) {
 # (single chunk) or TEMPLATE_HEAD (start of an interpolated chain).
 # For NOSUB: consume + emit single TEMPLATE node.
 # For HEAD: emit TEMPLATE node with quasi list + expr list interleaved.
-fn TS_PARSE_TEMPLATE(ts_base) {
+fn TS_PARSE_TEMPLATE(ts_base): i64 {
     var span = TS_PARSE_TOK_VAL(ts_base);
     var node = TS_AST_PUSH(ts_base, TS_AST_EXPR_TEMPLATE, span);
     if (node < 0) { return 0 - 1; }
@@ -791,7 +791,7 @@ fn TS_PARSE_TEMPLATE(ts_base) {
 # Invoked from TS_PARSE_PRIMARY when the current token is
 # JSX_OPEN_START or JSX_FRAGMENT_OPEN. Returns AST node idx, or -1.
 
-fn TS_PARSE_JSX_CHILD(ts_base) {
+fn TS_PARSE_JSX_CHILD(ts_base): i64 {
     var t = TS_PARSE_PEEK(ts_base);
     if (t == TS_TOK_JSX_TEXT) {
         var v = TS_PARSE_TOK_VAL(ts_base);
@@ -822,7 +822,7 @@ fn TS_PARSE_JSX_CHILD(ts_base) {
 
 # Parse children until JSX_CLOSE_START or JSX_FRAGMENT_CLOSE.
 # Returns children-region offset where list starts (sentinel-terminated).
-fn TS_PARSE_JSX_CHILDREN(ts_base) {
+fn TS_PARSE_JSX_CHILDREN(ts_base): i64 {
     var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
     if (off < 0) { return 0 - 1; }
     var i = 0;
@@ -850,7 +850,7 @@ fn TS_PARSE_JSX_CHILDREN(ts_base) {
 
 # Parse attributes between JSX_TAG_NAME and JSX_OPEN_END/JSX_SELF_CLOSE.
 # Accepts JSX_ATTR_NAME (with optional =value) and JSX_EXPR_OPEN (spread).
-fn TS_PARSE_JSX_ATTRS(ts_base) {
+fn TS_PARSE_JSX_ATTRS(ts_base): i64 {
     var off = TS_AST_CHILDREN_RESERVE(ts_base, 8);
     if (off < 0) { return 0 - 1; }
     var i = 0;
@@ -918,7 +918,7 @@ fn TS_PARSE_JSX_ATTRS(ts_base) {
 
 # Parse one JSX element or fragment. Caller has not consumed the
 # JSX_OPEN_START / JSX_FRAGMENT_OPEN. Returns AST node idx.
-fn TS_PARSE_JSX_ELEMENT(ts_base) {
+fn TS_PARSE_JSX_ELEMENT(ts_base): i64 {
     var t = TS_PARSE_PEEK(ts_base);
     if (t == TS_TOK_JSX_FRAGMENT_OPEN) {
         TS_PARSE_CONSUME(ts_base);
@@ -964,7 +964,7 @@ fn TS_PARSE_JSX_ELEMENT(ts_base) {
 # (Arrow functions deferred — need lookahead to disambiguate from
 #  parenthesized expressions; punted to P2.3 with the rest of the
 #  statements/decls work.)
-fn TS_PARSE_PRIMARY(ts_base) {
+fn TS_PARSE_PRIMARY(ts_base): i64 {
     var t = TS_PARSE_PEEK(ts_base);
     var v = TS_PARSE_TOK_VAL(ts_base);
 
@@ -1187,7 +1187,7 @@ fn TS_PARSE_PRIMARY(ts_base) {
 
 # new Target(args) — supports `new new Foo()` chain via recursion.
 # Per spec, `new X` (no args) is also valid.
-fn TS_PARSE_NEW(ts_base) {
+fn TS_PARSE_NEW(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_NEW) {
         TS_PARSE_CONSUME(ts_base);
         var ctor = TS_PARSE_NEW(ts_base);
@@ -1215,7 +1215,7 @@ fn TS_PARSE_NEW(ts_base) {
 # binary less-than. We scan forward through the would-be type-args,
 # tracking nesting; if we find a matching `>` (incl. via the `>>`-
 # split tokens) and the token after is LPAREN, this is a generic call.
-fn TS_LOOKAHEAD_IS_TYPE_ARG_CALL(ts_base) {
+fn TS_LOOKAHEAD_IS_TYPE_ARG_CALL(ts_base): i64 {
     var start = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     var i = start + 1;     # past LT
     var depth = 1;         # outer < depth
@@ -1261,7 +1261,7 @@ fn TS_LOOKAHEAD_IS_TYPE_ARG_CALL(ts_base) {
 }
 
 # (args), ?.( args ), ?.[ idx ].
-fn TS_PARSE_CALL_MEMBER(ts_base) {
+fn TS_PARSE_CALL_MEMBER(ts_base): i64 {
     var expr = TS_PARSE_NEW(ts_base);
     if (expr < 0) { return 0 - 1; }
     var go = 1;
@@ -1413,7 +1413,7 @@ fn TS_PARSE_CALL_MEMBER(ts_base) {
 # Postfix update: ++, --. Non-null `!` is handled inside CALL_MEMBER
 # above so it can interleave with .foo / [idx] / (args). ++/-- are
 # pure postfix and don't chain with member access.
-fn TS_PARSE_POSTFIX(ts_base) {
+fn TS_PARSE_POSTFIX(ts_base): i64 {
     var expr = TS_PARSE_CALL_MEMBER(ts_base);
     if (expr < 0) { return 0 - 1; }
     var t = TS_PARSE_PEEK(ts_base);
@@ -1430,7 +1430,7 @@ fn TS_PARSE_POSTFIX(ts_base) {
 
 # Unary prefix: !, ~, +, -, ++, --, typeof, void, delete, await.
 # Right-assoc (recurses into TS_PARSE_UNARY).
-fn TS_PARSE_UNARY(ts_base) {
+fn TS_PARSE_UNARY(ts_base): i64 {
     var t = TS_PARSE_PEEK(ts_base);
     var is_unary = 0;
     if (t == TS_TOK_BANG)        { is_unary = 1; }
@@ -1486,7 +1486,7 @@ fn TS_PARSE_UNARY(ts_base) {
 # Binary precedence climbing. min_prec gates which binary ops we
 # consume at this level. Left-assoc default; ** is right-assoc and
 # uses min_prec=14 to recurse at the same level.
-fn TS_PARSE_BINARY(ts_base, min_prec) {
+fn TS_PARSE_BINARY(ts_base, min_prec): i64 {
     var lhs = TS_PARSE_UNARY(ts_base);
     if (lhs < 0) { return 0 - 1; }
     var go = 1;
@@ -1513,7 +1513,7 @@ fn TS_PARSE_BINARY(ts_base, min_prec) {
 }
 
 # Ternary: cond ? then : else (right-assoc).
-fn TS_PARSE_TERNARY(ts_base) {
+fn TS_PARSE_TERNARY(ts_base): i64 {
     var cond = TS_PARSE_BINARY(ts_base, 4);
     if (cond < 0) { return 0 - 1; }
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_QUESTION) {
@@ -1534,7 +1534,7 @@ fn TS_PARSE_TERNARY(ts_base) {
 }
 
 # Assignment: =, +=, etc. Right-associative.
-fn TS_PARSE_ASSIGN(ts_base) {
+fn TS_PARSE_ASSIGN(ts_base): i64 {
     var lhs = TS_PARSE_TERNARY(ts_base);
     if (lhs < 0) { return 0 - 1; }
     var op = TS_PARSE_PEEK(ts_base);
@@ -1555,7 +1555,7 @@ fn TS_PARSE_ASSIGN(ts_base) {
 # Top-level expression entry. P2.2 = assignment expr; comma operator
 # (sequence) is deferred since SY rarely uses it and it complicates
 # argument-list parsing.
-fn TS_PARSE_EXPR(ts_base) {
+fn TS_PARSE_EXPR(ts_base): i64 {
     return TS_PARSE_ASSIGN(ts_base);
 }
 
@@ -1573,7 +1573,7 @@ fn TS_PARSE_EXPR(ts_base) {
 # get fooled by `?:` ternary inside type expressions). Stop at `;`,
 # `{`, EOF — those mean we're past the arrow boundary already.
 
-fn TS_LOOKAHEAD_IS_ARROW(ts_base) {
+fn TS_LOOKAHEAD_IS_ARROW(ts_base): i64 {
     var start = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     var i = start + 1;                       # past the LPAREN
     var depth = 1;
@@ -1627,7 +1627,7 @@ fn TS_LOOKAHEAD_IS_ARROW(ts_base) {
 
 # Bare-ident arrow: `x => body`. Caller has confirmed PEEK is IDENT
 # and PEEK_AHEAD(1) is ARROW.
-fn TS_PARSE_ARROW_SINGLE_IDENT(ts_base) {
+fn TS_PARSE_ARROW_SINGLE_IDENT(ts_base): i64 {
     var name_v = TS_PARSE_TOK_VAL(ts_base);
     TS_PARSE_CONSUME(ts_base);              # ident
     TS_PARSE_CONSUME(ts_base);              # =>
@@ -1666,7 +1666,7 @@ fn TS_PARSE_ARROW_SINGLE_IDENT(ts_base) {
 # full call/member chain (incl. `@foo`, `@foo()`,
 # `@foo.bar.baz<T>(args)`, `@(<expr>)`); TS_PARSE_CALL_MEMBER
 # already covers the entire shape via NEW → PRIMARY.
-fn TS_PARSE_DECORATOR_LIST(ts_base) {
+fn TS_PARSE_DECORATOR_LIST(ts_base): i64 {
     while (TS_PARSE_PEEK(ts_base) == TS_TOK_AT) {
         TS_PARSE_CONSUME(ts_base);   # `@`
         var e = TS_PARSE_CALL_MEMBER(ts_base);
@@ -1675,7 +1675,7 @@ fn TS_PARSE_DECORATOR_LIST(ts_base) {
     return 0;
 }
 
-fn TS_PARSE_ARROW_PARAMS(ts_base) {
+fn TS_PARSE_ARROW_PARAMS(ts_base): i64 {
     var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
     if (off < 0) { return 0 - 1; }
     var i = 0;
@@ -1787,7 +1787,7 @@ fn TS_PARSE_ARROW_PARAMS(ts_base) {
 # Lookahead: in TYPE context, scan past LPAREN to its matching RPAREN
 # and check whether the following token is `=>`. If so, this LPAREN
 # starts a function-type parameter list.
-fn TS_TYPE_LOOKAHEAD_IS_FN(ts_base) {
+fn TS_TYPE_LOOKAHEAD_IS_FN(ts_base): i64 {
     var start = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     var i = start + 1;
     var depth = 1;
@@ -1814,7 +1814,7 @@ fn TS_TYPE_LOOKAHEAD_IS_FN(ts_base) {
 # directly, but for GT_GT / GT_GT_GT / GT_EQ / GT_GT_EQ / GT_GT_GT_EQ
 # it rewrites the current token entry in place to "consume" one `>`
 # worth and leave the remainder for the next call.
-fn TS_PARSE_EXPECT_TYPE_GT(ts_base) {
+fn TS_PARSE_EXPECT_TYPE_GT(ts_base): i64 {
     var idx = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
     var t = TS_PEEKT(ts_base, idx);
     if (t == TS_TOK_GT) {
@@ -1848,7 +1848,7 @@ fn TS_PARSE_EXPECT_TYPE_GT(ts_base) {
 }
 
 # Reference: A | A.B | A.B.C  with optional <T, U> type args.
-fn TS_PARSE_TYPE_REF(ts_base) {
+fn TS_PARSE_TYPE_REF(ts_base): i64 {
     var name_v = TS_PARSE_TOK_VAL(ts_base);
     var head_t = TS_PARSE_PEEK(ts_base);
     if (TS_IS_NAME_TOK(head_t) == 0) {
@@ -1905,7 +1905,7 @@ fn TS_PARSE_TYPE_REF(ts_base) {
 }
 
 # Object type: { name: T; [k: K]: V; readonly q: W }
-fn TS_PARSE_TYPE_OBJECT(ts_base) {
+fn TS_PARSE_TYPE_OBJECT(ts_base): i64 {
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LBRACE) < 0) { return 0 - 1; }
     var n = TS_AST_PUSH(ts_base, TS_AST_TYPE_OBJECT, 0);
     if (n < 0) { return 0 - 1; }
@@ -2039,7 +2039,7 @@ fn TS_PARSE_TYPE_OBJECT(ts_base) {
 }
 
 # Tuple type: [T, U, V?, ...W[]]
-fn TS_PARSE_TYPE_TUPLE(ts_base) {
+fn TS_PARSE_TYPE_TUPLE(ts_base): i64 {
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LBRACKET) < 0) { return 0 - 1; }
     var n = TS_AST_PUSH(ts_base, TS_AST_TYPE_TUPLE, 0);
     if (n < 0) { return 0 - 1; }
@@ -2117,7 +2117,7 @@ fn TS_PARSE_TYPE_TUPLE(ts_base) {
 
 # Function type: (a: T, b: T) => U  or  () => U
 # Caller has confirmed peek == LPAREN and TS_TYPE_LOOKAHEAD_IS_FN == 1.
-fn TS_PARSE_TYPE_FN(ts_base) {
+fn TS_PARSE_TYPE_FN(ts_base): i64 {
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LPAREN) < 0) { return 0 - 1; }
     var params_off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
     if (params_off < 0) { return 0 - 1; }
@@ -2167,7 +2167,7 @@ fn TS_PARSE_TYPE_FN(ts_base) {
     return n;
 }
 
-fn TS_PARSE_TYPE_PRIMARY(ts_base) {
+fn TS_PARSE_TYPE_PRIMARY(ts_base): i64 {
     var t = TS_PARSE_PEEK(ts_base);
     var v = TS_PARSE_TOK_VAL(ts_base);
     if (t == TS_TOK_KW_VOID) {
@@ -2417,7 +2417,7 @@ fn TS_PARSE_TYPE_PRIMARY(ts_base) {
 
 # Postfix: T[]  (array)  or  T[K]  (indexed access — folded into ARRAY
 # with payload[1] = K for now; full mapped/conditional types are P2.x+).
-fn TS_PARSE_TYPE_POSTFIX(ts_base) {
+fn TS_PARSE_TYPE_POSTFIX(ts_base): i64 {
     var inner = TS_PARSE_TYPE_PRIMARY(ts_base);
     if (inner < 0) { return 0 - 1; }
     while (TS_PARSE_PEEK(ts_base) == TS_TOK_LBRACKET) {
@@ -2442,7 +2442,7 @@ fn TS_PARSE_TYPE_POSTFIX(ts_base) {
     return inner;
 }
 
-fn TS_PARSE_TYPE_INTERSECTION(ts_base) {
+fn TS_PARSE_TYPE_INTERSECTION(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_AMP) { TS_PARSE_CONSUME(ts_base); }
     var lhs = TS_PARSE_TYPE_POSTFIX(ts_base);
     if (lhs < 0) { return 0 - 1; }
@@ -2467,7 +2467,7 @@ fn TS_PARSE_TYPE_INTERSECTION(ts_base) {
     return n;
 }
 
-fn TS_PARSE_TYPE_UNION(ts_base) {
+fn TS_PARSE_TYPE_UNION(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_PIPE) { TS_PARSE_CONSUME(ts_base); }
     var lhs = TS_PARSE_TYPE_INTERSECTION(ts_base);
     if (lhs < 0) { return 0 - 1; }
@@ -2496,7 +2496,7 @@ fn TS_PARSE_TYPE_UNION(ts_base) {
 # plus conditional types `T extends U ? V : W` at the end.
 # Also tolerates type predicates: `value is T` and `asserts value is T`
 # (return-type position only — we don't validate context, just consume).
-fn TS_PARSE_TYPE(ts_base) {
+fn TS_PARSE_TYPE(ts_base): i64 {
     # v5.7.24: `asserts` predicate prefix — `asserts cond is T` /
     # `asserts cond`. Real consume here (was a comment-only stub
     # pre-v5.7.24 that mishandled `asserts <id> is <T>`). Followed by
@@ -2551,7 +2551,7 @@ fn TS_PARSE_TYPE(ts_base) {
 }
 
 # Parse arrow body: expression OR block.
-fn TS_PARSE_ARROW_BODY(ts_base) {
+fn TS_PARSE_ARROW_BODY(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_LBRACE) {
         return TS_PARSE_BLOCK(ts_base);
     }
@@ -2560,7 +2560,7 @@ fn TS_PARSE_ARROW_BODY(ts_base) {
 
 # Paren arrow: `(params) => body` or `(params): T => body`. Caller
 # has confirmed via lookahead. Consumes the LPAREN here.
-fn TS_PARSE_ARROW_PAREN(ts_base) {
+fn TS_PARSE_ARROW_PAREN(ts_base): i64 {
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LPAREN) < 0) { return 0 - 1; }
     var params_off = TS_PARSE_ARROW_PARAMS(ts_base);
     if (params_off < 0) { return 0 - 1; }
@@ -2591,7 +2591,7 @@ fn TS_PARSE_ARROW_PAREN(ts_base) {
 # ================================================================
 
 # Block: `{ stmt; stmt; }`. Caller has NOT yet consumed the LBRACE.
-fn TS_PARSE_BLOCK(ts_base) {
+fn TS_PARSE_BLOCK(ts_base): i64 {
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LBRACE) < 0) { return 0 - 1; }
     var span = 0;
     var node = TS_AST_PUSH(ts_base, TS_AST_STMT_BLOCK, span);
@@ -2618,7 +2618,7 @@ fn TS_PARSE_BLOCK(ts_base) {
 }
 
 # Optional `;` consumer with loose ASI (allow `}` or EOF as terminator).
-fn TS_PARSE_OPT_SEMI(ts_base) {
+fn TS_PARSE_OPT_SEMI(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_SEMI) {
         TS_PARSE_CONSUME(ts_base);
     }
@@ -2627,7 +2627,7 @@ fn TS_PARSE_OPT_SEMI(ts_base) {
 
 # Single binding pattern: ident, {a, b}, [x, y], or with ...rest.
 # Returns a PATTERN_* AST node index.
-fn TS_PARSE_BINDING_PATTERN(ts_base) {
+fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
     var t = TS_PARSE_PEEK(ts_base);
     if (t == TS_TOK_LBRACE) {
         TS_PARSE_CONSUME(ts_base);
@@ -2802,7 +2802,7 @@ fn TS_PARSE_BINDING_PATTERN(ts_base) {
 }
 
 # Single binding: pattern [: type] [= init]
-fn TS_PARSE_VAR_BINDING(ts_base) {
+fn TS_PARSE_VAR_BINDING(ts_base): i64 {
     var pat = TS_PARSE_BINDING_PATTERN(ts_base);
     if (pat < 0) { return 0 - 1; }
     var n = TS_AST_PUSH(ts_base, TS_AST_DECL_VAR_BINDING, 0);
@@ -2832,7 +2832,7 @@ fn TS_PARSE_VAR_BINDING(ts_base) {
 }
 
 # var/let/const x = init, y = init, z;
-fn TS_PARSE_VAR_DECL(ts_base) {
+fn TS_PARSE_VAR_DECL(ts_base): i64 {
     var kind_tok = TS_PARSE_PEEK(ts_base);
     TS_PARSE_CONSUME(ts_base);                  # consume var/let/const
     var node = TS_AST_PUSH(ts_base, TS_AST_STMT_VAR_DECL, 0);
@@ -2870,7 +2870,7 @@ fn TS_PARSE_VAR_DECL(ts_base) {
 }
 
 # if (cond) stmt [else stmt]
-fn TS_PARSE_IF(ts_base) {
+fn TS_PARSE_IF(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);                  # if
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LPAREN) < 0) { return 0 - 1; }
     var cond = TS_PARSE_EXPR(ts_base);
@@ -2895,7 +2895,7 @@ fn TS_PARSE_IF(ts_base) {
 # for (init; cond; update) body
 # for (decl of expr) body
 # for (decl in expr) body
-fn TS_PARSE_FOR(ts_base) {
+fn TS_PARSE_FOR(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);                  # for
     # Optional `await` modifier: `for await (...)` (async iteration).
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_AWAIT) {
@@ -2986,7 +2986,7 @@ fn TS_PARSE_FOR(ts_base) {
 }
 
 # while (cond) body
-fn TS_PARSE_WHILE(ts_base) {
+fn TS_PARSE_WHILE(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LPAREN) < 0) { return 0 - 1; }
     var cond = TS_PARSE_EXPR(ts_base);
@@ -3002,7 +3002,7 @@ fn TS_PARSE_WHILE(ts_base) {
 }
 
 # do body while (cond);
-fn TS_PARSE_DO_WHILE(ts_base) {
+fn TS_PARSE_DO_WHILE(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);                  # do
     var body = TS_PARSE_STMT(ts_base);
     if (body < 0) { return 0 - 1; }
@@ -3019,7 +3019,7 @@ fn TS_PARSE_DO_WHILE(ts_base) {
     return n;
 }
 
-fn TS_PARSE_RETURN(ts_base) {
+fn TS_PARSE_RETURN(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);
     var n = TS_AST_PUSH(ts_base, TS_AST_STMT_RETURN, 0);
     if (n < 0) { return 0 - 1; }
@@ -3035,7 +3035,7 @@ fn TS_PARSE_RETURN(ts_base) {
     return n;
 }
 
-fn TS_PARSE_THROW(ts_base) {
+fn TS_PARSE_THROW(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);
     var e = TS_PARSE_EXPR(ts_base);
     if (e < 0) { return 0 - 1; }
@@ -3046,7 +3046,7 @@ fn TS_PARSE_THROW(ts_base) {
     return n;
 }
 
-fn TS_PARSE_BREAK(ts_base) {
+fn TS_PARSE_BREAK(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);
     var n = TS_AST_PUSH(ts_base, TS_AST_STMT_BREAK, 0);
     if (n < 0) { return 0 - 1; }
@@ -3058,7 +3058,7 @@ fn TS_PARSE_BREAK(ts_base) {
     return n;
 }
 
-fn TS_PARSE_CONTINUE(ts_base) {
+fn TS_PARSE_CONTINUE(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);
     var n = TS_AST_PUSH(ts_base, TS_AST_STMT_CONTINUE, 0);
     if (n < 0) { return 0 - 1; }
@@ -3070,7 +3070,7 @@ fn TS_PARSE_CONTINUE(ts_base) {
     return n;
 }
 
-fn TS_PARSE_TRY(ts_base) {
+fn TS_PARSE_TRY(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);                  # try
     var try_body = TS_PARSE_BLOCK(ts_base);
     if (try_body < 0) { return 0 - 1; }
@@ -3111,7 +3111,7 @@ fn TS_PARSE_TRY(ts_base) {
     return n;
 }
 
-fn TS_PARSE_SWITCH(ts_base) {
+fn TS_PARSE_SWITCH(ts_base): i64 {
     TS_PARSE_CONSUME(ts_base);                  # switch
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LPAREN) < 0) { return 0 - 1; }
     var disc = TS_PARSE_EXPR(ts_base);
@@ -3190,7 +3190,7 @@ fn TS_PARSE_SWITCH(ts_base) {
 
 # Generic type-param list `<T, U extends C = D>`. Returns the count
 # parsed (0 if no `<` follows). On error returns -1.
-fn TS_PARSE_TYPE_PARAMS(ts_base) {
+fn TS_PARSE_TYPE_PARAMS(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) != TS_TOK_LT) { return 0; }
     TS_PARSE_CONSUME(ts_base);
     var n = 0;
@@ -3241,7 +3241,7 @@ fn TS_PARSE_TYPE_PARAMS(ts_base) {
 
 # Comma-separated type-ref list for extends/implements clauses.
 # Returns children-array offset of the list (terminated by -1).
-fn TS_PARSE_HERITAGE_LIST(ts_base) {
+fn TS_PARSE_HERITAGE_LIST(ts_base): i64 {
     var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
     if (off < 0) { return 0 - 1; }
     var i = 0;
@@ -3271,7 +3271,7 @@ fn TS_PARSE_HERITAGE_LIST(ts_base) {
 # Caller has just consumed the `function` keyword (or, for async fn,
 # `async` then `function`). For function expression caller passes
 # stmt_required=0 (name optional); for declaration stmt_required=1.
-fn TS_PARSE_DECL_FUNCTION(ts_base, name_required) {
+fn TS_PARSE_DECL_FUNCTION(ts_base, name_required): i64 {
     # Generator marker: `function*` / `function* name(...)`
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_STAR) {
         TS_PARSE_CONSUME(ts_base);
@@ -3318,7 +3318,7 @@ fn TS_PARSE_DECL_FUNCTION(ts_base, name_required) {
 }
 
 # `type Name [<T>] = type;`. Caller has consumed `type`.
-fn TS_PARSE_DECL_TYPE_ALIAS(ts_base) {
+fn TS_PARSE_DECL_TYPE_ALIAS(ts_base): i64 {
     var name_v = TS_PARSE_TOK_VAL(ts_base);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_IDENT) < 0) { return 0 - 1; }
     var tp = TS_PARSE_TYPE_PARAMS(ts_base);
@@ -3342,7 +3342,7 @@ fn TS_PARSE_DECL_TYPE_ALIAS(ts_base) {
 #   new (params) : ret ;                    -> construct sig
 #   (params) : ret ;                        -> call sig
 #   [k: K]: V ;                             -> index sig
-fn TS_PARSE_INTERFACE_MEMBER(ts_base) {
+fn TS_PARSE_INTERFACE_MEMBER(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_READONLY) {
         TS_PARSE_CONSUME(ts_base);
     }
@@ -3452,7 +3452,7 @@ fn TS_PARSE_INTERFACE_MEMBER(ts_base) {
 
 # `interface Name [<T>] [extends X, Y] { members }`.
 # Caller has consumed `interface`.
-fn TS_PARSE_DECL_INTERFACE(ts_base) {
+fn TS_PARSE_DECL_INTERFACE(ts_base): i64 {
     var name_v = TS_PARSE_TOK_VAL(ts_base);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_IDENT) < 0) { return 0 - 1; }
     var tp = TS_PARSE_TYPE_PARAMS(ts_base);
@@ -3492,7 +3492,7 @@ fn TS_PARSE_DECL_INTERFACE(ts_base) {
 # Skip class/interface modifier prefixes: public/private/protected/
 # static/readonly/abstract/async/declare/override. Returns 0.
 # (We consume them for syntax acceptance; the typechecker re-parses.)
-fn TS_PARSE_SKIP_MODIFIERS(ts_base) {
+fn TS_PARSE_SKIP_MODIFIERS(ts_base): i64 {
     var done = 0;
     while (done == 0) {
         var t = TS_PARSE_PEEK(ts_base);
@@ -3539,7 +3539,7 @@ fn TS_PARSE_SKIP_MODIFIERS(ts_base) {
 }
 
 # Single class member.
-fn TS_PARSE_CLASS_MEMBER(ts_base) {
+fn TS_PARSE_CLASS_MEMBER(ts_base): i64 {
     # v5.7.26: per-member decorators inside a class body —
     # `class X { @foo method() {} @bar prop: T = 1; }`. Consume
     # before the modifier sweep; `@` precedes any
@@ -3680,7 +3680,7 @@ fn TS_PARSE_CLASS_MEMBER(ts_base) {
 
 # `class Name [<T>] [extends X] [implements Y, Z] { members }`.
 # Caller has consumed `class` (and any leading `abstract` modifier).
-fn TS_PARSE_DECL_CLASS(ts_base) {
+fn TS_PARSE_DECL_CLASS(ts_base): i64 {
     var name_v = 0;
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_IDENT) {
         name_v = TS_PARSE_TOK_VAL(ts_base);
@@ -3770,14 +3770,14 @@ fn TS_PARSE_DECL_CLASS(ts_base) {
 # True if `t` is an identifier OR any keyword-range token (>= 100).
 # Used for qualified names in type-refs and member-access positions
 # where TS contextually permits any keyword as a name.
-fn TS_IS_NAME_TOK(t) {
+fn TS_IS_NAME_TOK(t): i64 {
     if (t == TS_TOK_IDENT) { return 1; }
     if (t >= 100) { return 1; }
     return 0;
 }
 
 # Match a token usable as an import-spec name (IDENT or contextual kw).
-fn TS_IS_IMPORT_NAME_TOK(t) {
+fn TS_IS_IMPORT_NAME_TOK(t): i64 {
     if (t == TS_TOK_IDENT)    { return 1; }
     if (t == TS_TOK_KW_FROM)  { return 1; }
     if (t == TS_TOK_KW_AS)    { return 1; }
@@ -3791,7 +3791,7 @@ fn TS_IS_IMPORT_NAME_TOK(t) {
 
 # Parse `{ a, b as c, type T }`. Caller has consumed the `{`.
 # Returns children-array offset (terminated by -1).
-fn TS_PARSE_IMPORT_NAMED_LIST(ts_base) {
+fn TS_PARSE_IMPORT_NAMED_LIST(ts_base): i64 {
     var off = TS_AST_CHILDREN_RESERVE(ts_base, 32);
     if (off < 0) { return 0 - 1; }
     var i = 0;
@@ -3842,7 +3842,7 @@ fn TS_PARSE_IMPORT_NAMED_LIST(ts_base) {
 }
 
 # `import ...`. Caller has consumed `import`.
-fn TS_PARSE_IMPORT(ts_base) {
+fn TS_PARSE_IMPORT(ts_base): i64 {
     var type_only = 0;
     # `import type ...`
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_TYPE) {
@@ -3982,7 +3982,7 @@ fn TS_PARSE_IMPORT(ts_base) {
 }
 
 # `export ...`. Caller has consumed `export`.
-fn TS_PARSE_EXPORT(ts_base) {
+fn TS_PARSE_EXPORT(ts_base): i64 {
     var type_only = 0;
     # v5.7.26: `export @foo class X {}` — decorators between
     # `export` and the class declaration. The `export default
@@ -4161,7 +4161,7 @@ fn TS_PARSE_EXPORT(ts_base) {
 
 # `enum Foo { A, B = 2, C = "literal" }` — covers regular + const-init
 # members; computed-member-init is rare-enough to defer.
-fn TS_PARSE_DECL_ENUM(ts_base) {
+fn TS_PARSE_DECL_ENUM(ts_base): i64 {
     var name_v = TS_PARSE_TOK_VAL(ts_base);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_IDENT) < 0) { return 0 - 1; }
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LBRACE) < 0) { return 0 - 1; }
@@ -4195,7 +4195,7 @@ fn TS_PARSE_DECL_ENUM(ts_base) {
 # has consumed `namespace` (or contextual `module`). We build a
 # DECL_INTERFACE-shaped node since the typechecker re-walks anyway —
 # this is a parse-acceptance shim.
-fn TS_PARSE_DECL_NAMESPACE(ts_base) {
+fn TS_PARSE_DECL_NAMESPACE(ts_base): i64 {
     var name_v = TS_PARSE_TOK_VAL(ts_base);
     # Accept IDENT or STRING (for `namespace "module-name"`)
     var nt = TS_PARSE_PEEK(ts_base);
@@ -4237,7 +4237,7 @@ fn TS_PARSE_DECL_NAMESPACE(ts_base) {
 # `declare` and recurses into whatever follows. Body-bearing decls
 # (function/class/method) under `declare` may have NO body — handled
 # by the existing abstract-method body-less path.
-fn TS_PARSE_DECL_DECLARE(ts_base) {
+fn TS_PARSE_DECL_DECLARE(ts_base): i64 {
     var t = TS_PARSE_PEEK(ts_base);
     if (t == TS_TOK_KW_VAR || t == TS_TOK_KW_LET || t == TS_TOK_KW_CONST) {
         return TS_PARSE_VAR_DECL(ts_base);
@@ -4340,7 +4340,7 @@ fn TS_PARSE_DECL_DECLARE(ts_base) {
 }
 
 # expression statement: `expr;`
-fn TS_PARSE_EXPR_STMT(ts_base) {
+fn TS_PARSE_EXPR_STMT(ts_base): i64 {
     var e = TS_PARSE_EXPR(ts_base);
     if (e < 0) { return 0 - 1; }
     var n = TS_AST_PUSH(ts_base, TS_AST_STMT_EXPR, 0);
@@ -4351,7 +4351,7 @@ fn TS_PARSE_EXPR_STMT(ts_base) {
 }
 
 # Statement dispatcher.
-fn TS_PARSE_STMT(ts_base) {
+fn TS_PARSE_STMT(ts_base): i64 {
     # v5.7.26: decorators precede class declarations
     # (`@foo class X {}`, `@dec1 @dec2.fac() abstract class Y {}`).
     # Consume the decorator chain up front; subsequent dispatch
@@ -4485,7 +4485,7 @@ fn TS_PARSE_STMT(ts_base) {
 # P2.1 STUB: just allocates a ROOT node and returns. P2.2-P2.6 fill
 # in real parsing. P2.7 acceptance gate runs against SY's TS surface.
 
-fn TS_PARSE(ts_base) {
+fn TS_PARSE(ts_base): i64 {
     TS_PARSE_INIT(ts_base);
     var root = TS_AST_PUSH(ts_base, TS_AST_ROOT, 0);
     if (root < 0) { return 0 - 1; }

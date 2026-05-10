@@ -1,7 +1,7 @@
 # grep — print lines containing "hello" (hardcoded pattern)
 # Usage: cat file | ./grep
 
-fn contains(line, llen, pat, plen) {
+fn contains(line, llen, pat, plen): i64 {
     if (llen < plen) { return 0; }
     var i: i64 = 0;
     while (i <= llen - plen) {
@@ -20,7 +20,7 @@ fn contains(line, llen, pat, plen) {
     return 0;
 }
 
-fn grep() {
+fn grep(): i64 {
     var line[4096];
     var byte[1];
     var len: i64 = 0;

@@ -5,7 +5,7 @@
 # section is missing. Uses the same `_parse_toml_str_array` helper
 # as cbt/deps.cyr uses for [deps.*].modules. Key is a cstr like
 # "bins", "cross_bins", "scripts".
-fn _pulsar_release_array(key) {
+fn _pulsar_release_array(key): i64 {
     var empty = vec_new();
     if (file_exists("cyrius.cyml") == 0) { return empty; }
     var buf = alloc(32768);
@@ -49,7 +49,7 @@ fn _pulsar_release_array(key) {
     return empty;
 }
 
-fn cmd_pulsar() {
+fn cmd_pulsar(): i64 {
     _status("pulsar: rebuilding from source...");
     if (file_exists("src/main.cyr") == 0) {
         _err("not in a cyrius repo (no src/main.cyr)");

@@ -33,9 +33,9 @@ include "lib/dynlib.cyr"
 
 alloc_init();
 
-fn wrs(s) { syscall(SYS_WRITE, 1, s, strlen(s)); }
-fn wrh(n) { var b[32]; fmt_hex_buf(n, &b); syscall(SYS_WRITE, 1, &b, strlen(&b)); }
-fn wri(n) { var b[32]; fmt_int_buf(n, &b); syscall(SYS_WRITE, 1, &b, strlen(&b)); }
+fn wrs(s): i64 { syscall(SYS_WRITE, 1, s, strlen(s)); }
+fn wrh(n): i64 { var b[32]; fmt_hex_buf(n, &b); syscall(SYS_WRITE, 1, &b, strlen(&b)); }
+fn wri(n): i64 { var b[32]; fmt_int_buf(n, &b); syscall(SYS_WRITE, 1, &b, strlen(&b)); }
 
 wrs("=== v5.5.25 NSS probe ===\n");
 

@@ -1,7 +1,7 @@
 # primes — print primes up to 100, exercises: &&, break, nested while, %
 # Usage: ./primes
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var pbuf[24];
     var i: i64 = 23;
     if (n == 0) { store8(&pbuf + i, 48); i = i - 1; }
@@ -14,7 +14,7 @@ fn print_num(n: i64) {
     return 0;
 }
 
-fn is_prime(n: i64) {
+fn is_prime(n: i64): i64 {
     if (n < 2) { return 0; }
     var d: i64 = 2;
     while (d * d <= n) {
@@ -24,7 +24,7 @@ fn is_prime(n: i64) {
     return 1;
 }
 
-fn primes(max: i64) {
+fn primes(max: i64): i64 {
     var n: i64 = 2;
     while (n <= max) {
         if (is_prime(n) == 1) {

@@ -30,7 +30,7 @@
 
 # --- Bit ops on a generic class table -------------------------------
 
-fn _posix_class_set(class_base, ci, c) {
+fn _posix_class_set(class_base, ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = class_base + ci * 32 + (c >> 3);
@@ -38,7 +38,7 @@ fn _posix_class_set(class_base, ci, c) {
     return 0;
 }
 
-fn _posix_class_range(class_base, ci, lo, hi) {
+fn _posix_class_range(class_base, ci, lo, hi): i64 {
     var c = lo;
     while (c <= hi) {
         _posix_class_set(class_base, ci, c);
@@ -49,34 +49,34 @@ fn _posix_class_range(class_base, ci, lo, hi) {
 
 # --- The 12 POSIX bracket classes (ASCII) ---------------------------
 
-fn _posix_fill_alpha(class_base, ci) {
+fn _posix_fill_alpha(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 65, 90);
     _posix_class_range(class_base, ci, 97, 122);
     return 0;
 }
 
-fn _posix_fill_digit(class_base, ci) {
+fn _posix_fill_digit(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 48, 57);
     return 0;
 }
 
-fn _posix_fill_alnum(class_base, ci) {
+fn _posix_fill_alnum(class_base, ci): i64 {
     _posix_fill_alpha(class_base, ci);
     _posix_fill_digit(class_base, ci);
     return 0;
 }
 
-fn _posix_fill_upper(class_base, ci) {
+fn _posix_fill_upper(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 65, 90);
     return 0;
 }
 
-fn _posix_fill_lower(class_base, ci) {
+fn _posix_fill_lower(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 97, 122);
     return 0;
 }
 
-fn _posix_fill_space(class_base, ci) {
+fn _posix_fill_space(class_base, ci): i64 {
     # POSIX [:space:] is HT(9), LF(10), VT(11), FF(12), CR(13), SP(32).
     _posix_class_set(class_base, ci, 9);
     _posix_class_set(class_base, ci, 10);
@@ -87,29 +87,29 @@ fn _posix_fill_space(class_base, ci) {
     return 0;
 }
 
-fn _posix_fill_blank(class_base, ci) {
+fn _posix_fill_blank(class_base, ci): i64 {
     _posix_class_set(class_base, ci, 9);
     _posix_class_set(class_base, ci, 32);
     return 0;
 }
 
-fn _posix_fill_cntrl(class_base, ci) {
+fn _posix_fill_cntrl(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 0, 31);
     _posix_class_set(class_base, ci, 127);
     return 0;
 }
 
-fn _posix_fill_print(class_base, ci) {
+fn _posix_fill_print(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 32, 126);
     return 0;
 }
 
-fn _posix_fill_graph(class_base, ci) {
+fn _posix_fill_graph(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 33, 126);
     return 0;
 }
 
-fn _posix_fill_punct(class_base, ci) {
+fn _posix_fill_punct(class_base, ci): i64 {
     # ASCII punctuation: !"#$%&'()*+,-./ :;<=>?@ [\]^_` {|}~
     _posix_class_range(class_base, ci, 33, 47);
     _posix_class_range(class_base, ci, 58, 64);
@@ -118,7 +118,7 @@ fn _posix_fill_punct(class_base, ci) {
     return 0;
 }
 
-fn _posix_fill_xdigit(class_base, ci) {
+fn _posix_fill_xdigit(class_base, ci): i64 {
     _posix_class_range(class_base, ci, 48, 57);
     _posix_class_range(class_base, ci, 65, 70);
     _posix_class_range(class_base, ci, 97, 102);
@@ -141,7 +141,7 @@ var _posix_match_end_pos = 0;
 # and writes the position immediately after the trailing `:]` to
 # `_posix_match_end_pos`.
 # On no-match returns 0 and leaves `_posix_match_end_pos` unset.
-fn _posix_match_class_name(pat, pos, pat_len) {
+fn _posix_match_class_name(pat, pos, pat_len): i64 {
     var name_start = pos;
     var p = pos;
     var scanning = 1;
@@ -195,7 +195,7 @@ fn _posix_match_class_name(pat, pos, pat_len) {
 # Apply category (1..12) to class `ci` in `class_base`. Caller is
 # responsible for having allocated `ci` already. Unknown category is
 # a no-op (caller's check should have rejected before calling).
-fn _posix_apply_filler(class_base, ci, category) {
+fn _posix_apply_filler(class_base, ci, category): i64 {
     if      (category == 1)  { _posix_fill_alpha(class_base, ci); }
     elif    (category == 2)  { _posix_fill_digit(class_base, ci); }
     elif    (category == 3)  { _posix_fill_space(class_base, ci); }
@@ -261,7 +261,7 @@ var _UPROPS_MASK_C = 0x3E000000;     # Cc Cf Cs Co Cn (cats 25..29)
 
 # Look up the GC bitmask for a 1- or 2-character property name.
 # Returns 0 if name is unrecognized.
-fn _uprops_lookup_name(pat, name_start, name_len) {
+fn _uprops_lookup_name(pat, name_start, name_len): i64 {
     if (name_len == 1) {
         var c = load8(pat + name_start);
         if (c == 76) { return _UPROPS_MASK_L; }   # L
@@ -336,7 +336,7 @@ fn _uprops_lookup_name(pat, name_start, name_len) {
 # leading `\p` or `\P`). Returns a 30-bit GC bitmask on success, 0 on
 # any failure (missing `{`, unknown name, missing `}`). On success
 # sets `_uprops_match_end_pos` to the position immediately after `}`.
-fn _uprops_parse_class(pat, pos, pat_len) {
+fn _uprops_parse_class(pat, pos, pat_len): i64 {
     if (pos >= pat_len)             { return 0; }
     if (load8(pat + pos) != 123)    { return 0; }   # require '{'
     var name_start = pos + 1;
@@ -364,7 +364,7 @@ fn _uprops_parse_class(pat, pos, pat_len) {
 # `mask`. Decodes via stdlib unicode_category(); returns 1 / 0.
 # Negation (`\P{...}`) is the caller's responsibility — invert as
 # needed when the matcher decoded the negated opcode form.
-fn _uprops_test(cp, mask) {
+fn _uprops_test(cp, mask): i64 {
     var cat = unicode_category(cp);
     return (mask >> cat) & 1;
 }
@@ -479,7 +479,7 @@ var _bre_m_lastgen = 0;
 var _bre_m_gen = 0;
 var _bre_q_splits = 0;       # 64 slots × 8 bytes — quantifier unrolling
 
-fn _bre_lazy_init() {
+fn _bre_lazy_init(): i64 {
     if (_bre_m_init == 1) { return 0; }
     _bre_m_cur     = alloc(8 + BRE_MAX_INSTRS * 168);
     _bre_m_next    = alloc(8 + BRE_MAX_INSTRS * 168);
@@ -497,11 +497,11 @@ fn _bre_lazy_init() {
 
 # === Instruction emit / patch helpers ================================
 
-fn _bre_w0(op, small, arg1) {
+fn _bre_w0(op, small, arg1): i64 {
     return op | (small << 8) | (arg1 << 32);
 }
 
-fn _bre_emit_raw(w0, w1) {
+fn _bre_emit_raw(w0, w1): i64 {
     var i = _bre_instr_n;
     if (i >= BRE_MAX_INSTRS) { _bre_err = BRE_E_TOO_LARGE; return i; }
     store64(_bre_instr_base + i * 16, w0);
@@ -512,7 +512,7 @@ fn _bre_emit_raw(w0, w1) {
 
 fn _bre_emit_op(op)        { return _bre_emit_raw(op, 0); }
 fn _bre_emit_char(c)       { return _bre_emit_raw(BRE_OP_CHAR | (c << 8), 0); }
-fn _bre_emit_class(neg, ci) {
+fn _bre_emit_class(neg, ci): i64 {
     var op = BRE_OP_CLASS;
     if (neg == 1) { op = BRE_OP_NCLASS; }
     return _bre_emit_raw(op | (ci << 8), 0);
@@ -521,20 +521,20 @@ fn _bre_emit_save(idx)     { return _bre_emit_raw(BRE_OP_SAVE | (idx << 8), 0); 
 fn _bre_emit_jmp(target)   { return _bre_emit_raw(BRE_OP_JMP | (target << 32), 0); }
 fn _bre_emit_split(a, b)   { return _bre_emit_raw(BRE_OP_SPLIT | (a << 32), b); }
 
-fn _bre_patch_arg1(idx, arg1) {
+fn _bre_patch_arg1(idx, arg1): i64 {
     var off = _bre_instr_base + idx * 16;
     var w0 = load64(off);
     store64(off, (w0 & 0xFFFFFFFF) | (arg1 << 32));
     return 0;
 }
 
-fn _bre_patch_arg2(idx, arg2) {
+fn _bre_patch_arg2(idx, arg2): i64 {
     store64(_bre_instr_base + idx * 16 + 8, arg2);
     return 0;
 }
 
 # Shift instructions [lo, hi) right by 1 slot (overlap-safe backward copy).
-fn _bre_shift_right(lo, hi) {
+fn _bre_shift_right(lo, hi): i64 {
     var k = (hi - lo) * 16 - 1;
     while (k >= 0) {
         var src = _bre_instr_base + lo * 16 + k;
@@ -550,7 +550,7 @@ fn _bre_shift_right(lo, hi) {
 # iter end with the then-current _bre_instr_n == hi); after shift, that
 # position is hi+1, so the target needs the same bump as targets strictly
 # inside.
-fn _bre_shift_targets_one(lo, hi) {
+fn _bre_shift_targets_one(lo, hi): i64 {
     var i = lo + 1;
     var end = hi + 1;
     while (i < end) {
@@ -579,7 +579,7 @@ fn _bre_shift_targets_one(lo, hi) {
 
 # === Class bitmap helpers ============================================
 
-fn _bre_alloc_class() {
+fn _bre_alloc_class(): i64 {
     var ci = _bre_class_n;
     if (ci >= BRE_MAX_CLASSES) { _bre_err = BRE_E_TOO_LARGE; return ci; }
     var z = 0;
@@ -591,7 +591,7 @@ fn _bre_alloc_class() {
     return ci;
 }
 
-fn _bre_class_set(ci, c) {
+fn _bre_class_set(ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = _bre_class_base + ci * 32 + (c >> 3);
@@ -599,7 +599,7 @@ fn _bre_class_set(ci, c) {
     return 0;
 }
 
-fn _bre_class_range(ci, lo, hi) {
+fn _bre_class_range(ci, lo, hi): i64 {
     var c = lo;
     while (c <= hi) {
         _bre_class_set(ci, c);
@@ -616,7 +616,7 @@ fn _bre_class_range(ci, lo, hi) {
 # any other backslashed byte is the literal byte (`\.` -> `.`, `\\` -> `\`,
 # etc.). Numeric backslash (`\1`..`\9`) is REJECTED upstream by
 # _bre_check_backref before this is called.
-fn _bre_lit_byte() {
+fn _bre_lit_byte(): i64 {
     if (_bre_pos >= _bre_pat_len) { _bre_err = BRE_E_SYNTAX; return 0; }
     var c = load8(_bre_pat + _bre_pos);
     _bre_pos = _bre_pos + 1;
@@ -641,7 +641,7 @@ fn _bre_lit_byte() {
 # Scope: ranges (`a-z`), literal characters, `^` for negation as first
 # char, and POSIX bracket character classes `[:alpha:]` etc. (added in
 # v0.7.0 via the shared posix_classes module).
-fn _bre_parse_class() {
+fn _bre_parse_class(): i64 {
     var ci = _bre_alloc_class();
     if (_bre_err != BRE_E_OK) { return ci; }
     var neg = 0;
@@ -705,7 +705,7 @@ fn _bre_parse_class() {
 # Parse a primary (atom body, no quantifier yet). Returns 0 always; sets
 # _bre_err on failure. `at_start` is 1 when this primary is the first
 # atom in the entire pattern (used for ^ anchor placement).
-fn _bre_parse_primary(at_start) {
+fn _bre_parse_primary(at_start): i64 {
     if (_bre_pos >= _bre_pat_len) { _bre_err = BRE_E_SYNTAX; return 0; }
     var c = load8(_bre_pat + _bre_pos);
 
@@ -837,7 +837,7 @@ fn _bre_parse_primary(at_start) {
 
 # Apply `*` to the just-emitted atom at [atom_start, _bre_instr_n).
 # POSIX BRE has no `+`, `?`, lazy quantifiers, or alternation.
-fn _bre_apply_star(atom_start) {
+fn _bre_apply_star(atom_start): i64 {
     var atom_end = _bre_instr_n;
     if (atom_end == atom_start) { _bre_err = BRE_E_SYNTAX; return 0; }
     _bre_pos = _bre_pos + 1;
@@ -856,7 +856,7 @@ fn _bre_apply_star(atom_start) {
 
 # Apply `*` (greedy) to a body at [body_start, _bre_instr_n) — used by
 # {n,} unrolling for the unbounded tail.
-fn _bre_apply_star_inline(body_start) {
+fn _bre_apply_star_inline(body_start): i64 {
     var body_end = _bre_instr_n;
     _bre_shift_right(body_start, body_end);
     _bre_shift_targets_one(body_start, body_end);
@@ -873,7 +873,7 @@ fn _bre_apply_star_inline(body_start) {
 # Apply `\{n,m\}` / `\{n,\}` / `\{n\}` to the atom at [atom_start, _bre_instr_n).
 # `save_primary_start` is the source position before the FIRST primary —
 # used to re-parse for additional copies.
-fn _bre_apply_brace_q(save_primary_start, atom_start) {
+fn _bre_apply_brace_q(save_primary_start, atom_start): i64 {
     if (_bre_instr_n == atom_start) { _bre_err = BRE_E_SYNTAX; return 0; }
     # caller positioned _bre_pos at the `\` of `\{` — consume `\{`.
     _bre_pos = _bre_pos + 2;
@@ -979,7 +979,7 @@ fn _bre_apply_brace_q(save_primary_start, atom_start) {
     return 0;
 }
 
-fn _bre_parse_atom(at_start) {
+fn _bre_parse_atom(at_start): i64 {
     var save_primary_start = _bre_pos;
     var atom_start = _bre_instr_n;
     _bre_parse_primary(at_start);
@@ -998,7 +998,7 @@ fn _bre_parse_atom(at_start) {
 # Parse a concat — a sequence of atoms terminated by end-of-pattern or
 # `\)`. `at_start` is 1 only for the first call (top-level pattern start);
 # nested calls (inside a group) pass 0.
-fn _bre_parse_concat(at_start) {
+fn _bre_parse_concat(at_start): i64 {
     var first = at_start;
     while (_bre_pos < _bre_pat_len) {
         # Stop at `\)` (close-group).
@@ -1017,7 +1017,7 @@ fn _bre_parse_concat(at_start) {
 # Compile a null-terminated POSIX BRE pattern. Returns an opaque NFA
 # pointer (heap-allocated) or 0 on error. Use niyama_bre_last_error()
 # to get the error code.
-fn niyama_bre_compile(pat) {
+fn niyama_bre_compile(pat): i64 {
     _bre_lazy_init();
     var n = strlen(pat);
     var instr_bytes = BRE_MAX_INSTRS * 16;
@@ -1064,13 +1064,13 @@ fn niyama_bre_compile(pat) {
     return nfa;
 }
 
-fn niyama_bre_last_error() {
+fn niyama_bre_last_error(): i64 {
     return _bre_last_err;
 }
 
 # === Pike's NFA matcher (forked from stdlib) =========================
 
-fn _bre_at_word_char(input, input_len, pos) {
+fn _bre_at_word_char(input, input_len, pos): i64 {
     if (pos < 0)         { return 0; }
     if (pos >= input_len){ return 0; }
     var c = load8(input + pos);
@@ -1081,7 +1081,7 @@ fn _bre_at_word_char(input, input_len, pos) {
     return 0;
 }
 
-fn _bre_class_get_at(class_base, ci, c) {
+fn _bre_class_get_at(class_base, ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = class_base + ci * 32 + (c >> 3);
@@ -1090,7 +1090,7 @@ fn _bre_class_get_at(class_base, ci, c) {
     return 0;
 }
 
-fn _bre_add_thread(list_base, pc, input, input_len, pos, saves, instrs) {
+fn _bre_add_thread(list_base, pc, input, input_len, pos, saves, instrs): i64 {
     if (pc < 0)                 { return 0; }
     if (load64(_bre_m_lastgen + pc * 8) == _bre_m_gen) { return 0; }
     store64(_bre_m_lastgen + pc * 8, _bre_m_gen);
@@ -1156,7 +1156,7 @@ fn _bre_add_thread(list_base, pc, input, input_len, pos, saves, instrs) {
     return 0;
 }
 
-fn _bre_pike_run(nfa, input, input_len, start_pos) {
+fn _bre_pike_run(nfa, input, input_len, start_pos): i64 {
     _bre_lazy_init();
     var instrs = nfa + load64(nfa + BRE_OFF_INSTRS_OFF);
     var class_base = nfa + load64(nfa + BRE_OFF_CLASSES_OFF);
@@ -1265,7 +1265,7 @@ fn _bre_pike_run(nfa, input, input_len, start_pos) {
 
 # === Public API ======================================================
 
-fn niyama_bre_match(nfa, s) {
+fn niyama_bre_match(nfa, s): i64 {
     if (nfa == 0) { return 0; }
     var len = strlen(s);
     var r = _bre_pike_run(nfa, s, len, 0);
@@ -1273,13 +1273,13 @@ fn niyama_bre_match(nfa, s) {
     return 0;
 }
 
-fn niyama_bre_search(nfa, s) {
+fn niyama_bre_search(nfa, s): i64 {
     if (nfa == 0) { return 0 - 1; }
     var len = strlen(s);
     return niyama_bre_search_at(nfa, s, len, 0);
 }
 
-fn niyama_bre_search_at(nfa, s, len, from) {
+fn niyama_bre_search_at(nfa, s, len, from): i64 {
     if (nfa == 0) { return 0 - 1; }
     var i = from;
     while (i <= len) {
@@ -1290,13 +1290,13 @@ fn niyama_bre_search_at(nfa, s, len, from) {
     return 0 - 1;
 }
 
-fn niyama_bre_group_start(nfa, n) {
+fn niyama_bre_group_start(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + BRE_OFF_SAVES + n * 16);
 }
 
-fn niyama_bre_group_end(nfa, n) {
+fn niyama_bre_group_end(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + BRE_OFF_SAVES + n * 16 + 8);
@@ -1448,7 +1448,7 @@ var _re2_q_splits = 0;
 # v0.8.0 — scratch slot for stdlib _uc_decode_utf8 codepoint output.
 var _re2_m_cp_slot = 0;
 
-fn _re2_lazy_init() {
+fn _re2_lazy_init(): i64 {
     if (_re2_m_init == 1) { return 0; }
     _re2_m_cur     = alloc(8 + RE2_MAX_INSTRS * 168);
     _re2_m_next    = alloc(8 + RE2_MAX_INSTRS * 168);
@@ -1467,11 +1467,11 @@ fn _re2_lazy_init() {
 
 # === Instruction emit / patch helpers ================================
 
-fn _re2_w0(op, small, arg1) {
+fn _re2_w0(op, small, arg1): i64 {
     return op | (small << 8) | (arg1 << 32);
 }
 
-fn _re2_emit_raw(w0, w1) {
+fn _re2_emit_raw(w0, w1): i64 {
     var i = _re2_instr_n;
     if (i >= RE2_MAX_INSTRS) { _re2_err = RE2_E_TOO_LARGE; return i; }
     store64(_re2_instr_base + i * 16, w0);
@@ -1481,7 +1481,7 @@ fn _re2_emit_raw(w0, w1) {
 }
 
 fn _re2_emit_op(op)        { return _re2_emit_raw(op, 0); }
-fn _re2_emit_char(c) {
+fn _re2_emit_char(c): i64 {
     # v0.7.0 — under (?i) emit CHAR_CI; the matcher does case-fold.
     var op = RE2_OP_CHAR;
     if (_re2_flag_i == 1) { op = RE2_OP_CHAR_CI; }
@@ -1491,7 +1491,7 @@ fn _re2_emit_char(c) {
     if (_re2_flag_i == 1 && c >= 65 && c <= 90) { stored = c + 32; }
     return _re2_emit_raw(op | (stored << 8), 0);
 }
-fn _re2_emit_class(neg, ci) {
+fn _re2_emit_class(neg, ci): i64 {
     var op = RE2_OP_CLASS;
     if (neg == 1) { op = RE2_OP_NCLASS; }
     return _re2_emit_raw(op | (ci << 8), 0);
@@ -1499,31 +1499,31 @@ fn _re2_emit_class(neg, ci) {
 fn _re2_emit_save(idx)     { return _re2_emit_raw(RE2_OP_SAVE | (idx << 8), 0); }
 fn _re2_emit_jmp(target)   { return _re2_emit_raw(RE2_OP_JMP | (target << 32), 0); }
 fn _re2_emit_split(a, b)   { return _re2_emit_raw(RE2_OP_SPLIT | (a << 32), b); }
-fn _re2_emit_uprop(neg, mask) {
+fn _re2_emit_uprop(neg, mask): i64 {
     var op = RE2_OP_UPROP;
     if (neg == 1) { op = RE2_OP_NUPROP; }
     return _re2_emit_raw(op | (mask << 32), 0);
 }
-fn _re2_emit_uchar(cp) {
+fn _re2_emit_uchar(cp): i64 {
     return _re2_emit_raw(RE2_OP_UCHAR | (cp << 32), 0);
 }
-fn _re2_emit_uchar_ci(cp) {
+fn _re2_emit_uchar_ci(cp): i64 {
     return _re2_emit_raw(RE2_OP_UCHAR_CI | (cp << 32), 0);
 }
 
-fn _re2_patch_arg1(idx, arg1) {
+fn _re2_patch_arg1(idx, arg1): i64 {
     var off = _re2_instr_base + idx * 16;
     var w0 = load64(off);
     store64(off, (w0 & 0xFFFFFFFF) | (arg1 << 32));
     return 0;
 }
 
-fn _re2_patch_arg2(idx, arg2) {
+fn _re2_patch_arg2(idx, arg2): i64 {
     store64(_re2_instr_base + idx * 16 + 8, arg2);
     return 0;
 }
 
-fn _re2_shift_right(lo, hi) {
+fn _re2_shift_right(lo, hi): i64 {
     var k = (hi - lo) * 16 - 1;
     while (k >= 0) {
         var src = _re2_instr_base + lo * 16 + k;
@@ -1533,7 +1533,7 @@ fn _re2_shift_right(lo, hi) {
     return 0;
 }
 
-fn _re2_shift_targets_one(lo, hi) {
+fn _re2_shift_targets_one(lo, hi): i64 {
     var i = lo + 1;
     var end = hi + 1;
     while (i < end) {
@@ -1562,7 +1562,7 @@ fn _re2_shift_targets_one(lo, hi) {
 
 # === Class bitmap helpers ============================================
 
-fn _re2_alloc_class() {
+fn _re2_alloc_class(): i64 {
     var ci = _re2_class_n;
     if (ci >= RE2_MAX_CLASSES) { _re2_err = RE2_E_TOO_LARGE; return ci; }
     var z = 0;
@@ -1574,7 +1574,7 @@ fn _re2_alloc_class() {
     return ci;
 }
 
-fn _re2_class_set(ci, c) {
+fn _re2_class_set(ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = _re2_class_base + ci * 32 + (c >> 3);
@@ -1582,7 +1582,7 @@ fn _re2_class_set(ci, c) {
     return 0;
 }
 
-fn _re2_class_range(ci, lo, hi) {
+fn _re2_class_range(ci, lo, hi): i64 {
     var c = lo;
     while (c <= hi) {
         _re2_class_set(ci, c);
@@ -1591,7 +1591,7 @@ fn _re2_class_range(ci, lo, hi) {
     return 0;
 }
 
-fn _re2_class_invert(ci) {
+fn _re2_class_invert(ci): i64 {
     var z = 0;
     while (z < 32) {
         var off = _re2_class_base + ci * 32 + z;
@@ -1601,9 +1601,9 @@ fn _re2_class_invert(ci) {
     return 0;
 }
 
-fn _re2_class_fill_digit(ci) { _re2_class_range(ci, 48, 57); return 0; }
+fn _re2_class_fill_digit(ci): i64 { _re2_class_range(ci, 48, 57); return 0; }
 
-fn _re2_class_fill_word(ci) {
+fn _re2_class_fill_word(ci): i64 {
     _re2_class_range(ci, 48, 57);
     _re2_class_range(ci, 65, 90);
     _re2_class_range(ci, 97, 122);
@@ -1611,7 +1611,7 @@ fn _re2_class_fill_word(ci) {
     return 0;
 }
 
-fn _re2_class_fill_space(ci) {
+fn _re2_class_fill_space(ci): i64 {
     _re2_class_set(ci, 32);
     _re2_class_set(ci, 9);
     _re2_class_set(ci, 10);
@@ -1622,7 +1622,7 @@ fn _re2_class_fill_space(ci) {
 }
 
 # v0.7.0 — set `c` and (under (?i)) also its opposite-case ASCII letter.
-fn _re2_class_set_folded(ci, c) {
+fn _re2_class_set_folded(ci, c): i64 {
     _re2_class_set(ci, c);
     if (_re2_flag_i == 1) {
         if (c >= 65 && c <= 90)   { _re2_class_set(ci, c + 32); }
@@ -1631,7 +1631,7 @@ fn _re2_class_set_folded(ci, c) {
     return 0;
 }
 
-fn _re2_class_range_folded(ci, lo, hi) {
+fn _re2_class_range_folded(ci, lo, hi): i64 {
     var c = lo;
     while (c <= hi) {
         _re2_class_set_folded(ci, c);
@@ -1644,19 +1644,19 @@ fn _re2_class_range_folded(ci, lo, hi) {
 # Mirrors niyama_pcre's scheme — same slot layout, same lookup ABI
 # shape so the cross-engine surface stays uniform.
 
-fn _re2_is_name_first(c) {
+fn _re2_is_name_first(c): i64 {
     if (c >= 65 && c <= 90)  { return 1; }
     if (c >= 97 && c <= 122) { return 1; }
     if (c == 95)             { return 1; }
     return 0;
 }
-fn _re2_is_name_rest(c) {
+fn _re2_is_name_rest(c): i64 {
     if (_re2_is_name_first(c) == 1) { return 1; }
     if (c >= 48 && c <= 57)         { return 1; }
     return 0;
 }
 
-fn _re2_add_name(group_idx, terminator) {
+fn _re2_add_name(group_idx, terminator): i64 {
     if (_re2_pos >= _re2_pat_len) { _re2_err = RE2_E_SYNTAX; return 0 - 1; }
     var first = load8(_re2_pat + _re2_pos);
     if (_re2_is_name_first(first) == 0) { _re2_err = RE2_E_SYNTAX; return 0 - 1; }
@@ -1718,7 +1718,7 @@ fn _re2_add_name(group_idx, terminator) {
 # Returns 1 on success (flags applied + `)` consumed); 0 if the body
 # is not pure-flag (caller should treat as a different (?...) form).
 # Sets _re2_err on syntax error inside a recognized flag run.
-fn _re2_try_inline_flags() {
+fn _re2_try_inline_flags(): i64 {
     var p = _re2_pos;
     # Quick check — first byte must be i/m/s for the entire form to be
     # "(?<flags>)". Caller has already discriminated for `(?<`, `(?=`,
@@ -1743,7 +1743,7 @@ fn _re2_try_inline_flags() {
     return 1;
 }
 
-fn _re2_lit_byte() {
+fn _re2_lit_byte(): i64 {
     if (_re2_pos >= _re2_pat_len) { _re2_err = RE2_E_SYNTAX; return 0; }
     var c = load8(_re2_pat + _re2_pos);
     _re2_pos = _re2_pos + 1;
@@ -1763,7 +1763,7 @@ fn _re2_lit_byte() {
 
 # Parse a `[...]` bracket-expression body. Returns the class index;
 # negation encoded as -(ci+1).
-fn _re2_parse_class() {
+fn _re2_parse_class(): i64 {
     var ci = _re2_alloc_class();
     if (_re2_err != RE2_E_OK) { return ci; }
     var neg = 0;
@@ -1890,7 +1890,7 @@ fn _re2_parse_class() {
 #   `(?R)` -> recursion (REJECT)
 #   `(?...)` (anything else) -> RE2_E_SYNTAX
 
-fn _re2_parse_primary() {
+fn _re2_parse_primary(): i64 {
     if (_re2_pos >= _re2_pat_len) { _re2_err = RE2_E_SYNTAX; return 0; }
     var c = load8(_re2_pat + _re2_pos);
     if (c == 46) {
@@ -2109,7 +2109,7 @@ fn _re2_parse_primary() {
     return 0;
 }
 
-fn _re2_apply_simple_q(atom_start, op_char) {
+fn _re2_apply_simple_q(atom_start, op_char): i64 {
     var atom_end = _re2_instr_n;
     if (atom_end == atom_start) { _re2_err = RE2_E_SYNTAX; return 0; }
     _re2_pos = _re2_pos + 1;
@@ -2164,7 +2164,7 @@ fn _re2_apply_simple_q(atom_start, op_char) {
     return 0;
 }
 
-fn _re2_apply_star_inline(body_start, lazy) {
+fn _re2_apply_star_inline(body_start, lazy): i64 {
     var body_end = _re2_instr_n;
     _re2_shift_right(body_start, body_end);
     _re2_shift_targets_one(body_start, body_end);
@@ -2184,7 +2184,7 @@ fn _re2_apply_star_inline(body_start, lazy) {
     return 0;
 }
 
-fn _re2_apply_brace_q(save_primary_start, atom_start) {
+fn _re2_apply_brace_q(save_primary_start, atom_start): i64 {
     if (_re2_instr_n == atom_start) { _re2_err = RE2_E_SYNTAX; return 0; }
     _re2_pos = _re2_pos + 1;
     var n_min = 0;
@@ -2289,7 +2289,7 @@ fn _re2_apply_brace_q(save_primary_start, atom_start) {
     return 0;
 }
 
-fn _re2_parse_atom() {
+fn _re2_parse_atom(): i64 {
     var save_primary_start = _re2_pos;
     var atom_start = _re2_instr_n;
     _re2_parse_primary();
@@ -2305,7 +2305,7 @@ fn _re2_parse_atom() {
     return 0;
 }
 
-fn _re2_parse_concat() {
+fn _re2_parse_concat(): i64 {
     while (_re2_pos < _re2_pat_len) {
         var c = load8(_re2_pat + _re2_pos);
         if (c == 124 || c == 41) { return 0; }
@@ -2315,7 +2315,7 @@ fn _re2_parse_concat() {
     return 0;
 }
 
-fn _re2_parse_alt() {
+fn _re2_parse_alt(): i64 {
     var left_start = _re2_instr_n;
     _re2_parse_concat();
     if (_re2_err != RE2_E_OK) { return 0; }
@@ -2339,7 +2339,7 @@ fn _re2_parse_alt() {
 
 # === Compiler entry ==================================================
 
-fn niyama_re2_compile(pat) {
+fn niyama_re2_compile(pat): i64 {
     _re2_lazy_init();
     var n = strlen(pat);
     var instr_bytes = RE2_MAX_INSTRS * 16;
@@ -2400,13 +2400,13 @@ fn niyama_re2_compile(pat) {
     return nfa;
 }
 
-fn niyama_re2_last_error() {
+fn niyama_re2_last_error(): i64 {
     return _re2_last_err;
 }
 
 # === Pike NFA matcher ================================================
 
-fn _re2_at_word_char(input, input_len, pos) {
+fn _re2_at_word_char(input, input_len, pos): i64 {
     if (pos < 0)         { return 0; }
     if (pos >= input_len){ return 0; }
     var c = load8(input + pos);
@@ -2417,14 +2417,14 @@ fn _re2_at_word_char(input, input_len, pos) {
     return 0;
 }
 
-fn _re2_is_boundary(input, input_len, pos) {
+fn _re2_is_boundary(input, input_len, pos): i64 {
     var l = _re2_at_word_char(input, input_len, pos - 1);
     var r = _re2_at_word_char(input, input_len, pos);
     if (l != r) { return 1; }
     return 0;
 }
 
-fn _re2_class_get_at(class_base, ci, c) {
+fn _re2_class_get_at(class_base, ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = class_base + ci * 32 + (c >> 3);
@@ -2433,7 +2433,7 @@ fn _re2_class_get_at(class_base, ci, c) {
     return 0;
 }
 
-fn _re2_add_thread(list_base, pc, input, input_len, pos, saves, instrs) {
+fn _re2_add_thread(list_base, pc, input, input_len, pos, saves, instrs): i64 {
     if (pc < 0)                 { return 0; }
     if (load64(_re2_m_lastgen + pc * 8) == _re2_m_gen) { return 0; }
     store64(_re2_m_lastgen + pc * 8, _re2_m_gen);
@@ -2505,7 +2505,7 @@ fn _re2_add_thread(list_base, pc, input, input_len, pos, saves, instrs) {
     return 0;
 }
 
-fn _re2_pike_run(nfa, input, input_len, start_pos) {
+fn _re2_pike_run(nfa, input, input_len, start_pos): i64 {
     _re2_lazy_init();
     var instrs = nfa + load64(nfa + RE2_OFF_INSTRS_OFF);
     var class_base = nfa + load64(nfa + RE2_OFF_CLASSES_OFF);
@@ -2703,7 +2703,7 @@ fn _re2_pike_run(nfa, input, input_len, start_pos) {
 
 # === Public API ======================================================
 
-fn niyama_re2_match(nfa, s) {
+fn niyama_re2_match(nfa, s): i64 {
     if (nfa == 0) { return 0; }
     var len = strlen(s);
     var r = _re2_pike_run(nfa, s, len, 0);
@@ -2711,13 +2711,13 @@ fn niyama_re2_match(nfa, s) {
     return 0;
 }
 
-fn niyama_re2_search(nfa, s) {
+fn niyama_re2_search(nfa, s): i64 {
     if (nfa == 0) { return 0 - 1; }
     var len = strlen(s);
     return niyama_re2_search_at(nfa, s, len, 0);
 }
 
-fn niyama_re2_search_at(nfa, s, len, from) {
+fn niyama_re2_search_at(nfa, s, len, from): i64 {
     if (nfa == 0) { return 0 - 1; }
     var i = from;
     while (i <= len) {
@@ -2728,13 +2728,13 @@ fn niyama_re2_search_at(nfa, s, len, from) {
     return 0 - 1;
 }
 
-fn niyama_re2_group_start(nfa, n) {
+fn niyama_re2_group_start(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + RE2_OFF_SAVES + n * 16);
 }
 
-fn niyama_re2_group_end(nfa, n) {
+fn niyama_re2_group_end(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + RE2_OFF_SAVES + n * 16 + 8);
@@ -2743,7 +2743,7 @@ fn niyama_re2_group_end(nfa, n) {
 # v0.7.0 — look up a named-capture group index by name. Returns -1 if
 # not found. Same shape as niyama_pcre_group_by_name for cross-engine
 # uniformity.
-fn niyama_re2_group_by_name(nfa, name) {
+fn niyama_re2_group_by_name(nfa, name): i64 {
     if (nfa == 0) { return 0 - 1; }
     var name_count = load64(nfa + RE2_OFF_NAME_COUNT);
     var names_base = nfa + load64(nfa + RE2_OFF_NAMES_OFF);
@@ -2997,7 +2997,7 @@ var _pcre_last_callout = 0 - 1;
 # all stack additively; real patterns peak around 50).
 var _pcre_depth_limit = 256;
 
-fn _pcre_lazy_init() {
+fn _pcre_lazy_init(): i64 {
     if (_pcre_init == 1) { return 0; }
     _pcre_q_splits  = alloc(64 * 8);
     _pcre_m_cp_slot = alloc(8);
@@ -3007,11 +3007,11 @@ fn _pcre_lazy_init() {
 
 # === Instruction emit / patch helpers ================================
 
-fn _pcre_w0(op, small, arg1) {
+fn _pcre_w0(op, small, arg1): i64 {
     return op | (small << 8) | (arg1 << 32);
 }
 
-fn _pcre_emit_raw(w0, w1) {
+fn _pcre_emit_raw(w0, w1): i64 {
     var i = _pcre_instr_n;
     if (i >= PCRE_MAX_INSTRS) { _pcre_err = PCRE_E_TOO_LARGE; return i; }
     store64(_pcre_instr_base + i * 16, w0);
@@ -3021,7 +3021,7 @@ fn _pcre_emit_raw(w0, w1) {
 }
 
 fn _pcre_emit_op(op)        { return _pcre_emit_raw(op, 0); }
-fn _pcre_emit_char(c) {
+fn _pcre_emit_char(c): i64 {
     # v0.7.0 — under (?i) emit CHAR_CI; the matcher does case-fold.
     var op = PCRE_OP_CHAR;
     if (_pcre_flag_i == 1) { op = PCRE_OP_CHAR_CI; }
@@ -3029,7 +3029,7 @@ fn _pcre_emit_char(c) {
     if (_pcre_flag_i == 1 && c >= 65 && c <= 90) { stored = c + 32; }
     return _pcre_emit_raw(op | (stored << 8), 0);
 }
-fn _pcre_emit_class(neg, ci) {
+fn _pcre_emit_class(neg, ci): i64 {
     var op = PCRE_OP_CLASS;
     if (neg == 1) { op = PCRE_OP_NCLASS; }
     return _pcre_emit_raw(op | (ci << 8), 0);
@@ -3038,21 +3038,21 @@ fn _pcre_emit_save(idx)     { return _pcre_emit_raw(PCRE_OP_SAVE | (idx << 8), 0
 fn _pcre_emit_jmp(target)   { return _pcre_emit_raw(PCRE_OP_JMP | (target << 32), 0); }
 fn _pcre_emit_split(a, b)   { return _pcre_emit_raw(PCRE_OP_SPLIT | (a << 32), b); }
 fn _pcre_emit_backref(n)    { return _pcre_emit_raw(PCRE_OP_BACKREF | (n << 8), 0); }
-fn _pcre_emit_uprop(neg, mask) {
+fn _pcre_emit_uprop(neg, mask): i64 {
     var op = PCRE_OP_UPROP;
     if (neg == 1) { op = PCRE_OP_NUPROP; }
     return _pcre_emit_raw(op | (mask << 32), 0);
 }
-fn _pcre_emit_uchar_ci(cp) {
+fn _pcre_emit_uchar_ci(cp): i64 {
     return _pcre_emit_raw(PCRE_OP_UCHAR_CI | (cp << 32), 0);
 }
-fn _pcre_emit_lookahead(neg) {
+fn _pcre_emit_lookahead(neg): i64 {
     var op = PCRE_OP_LOOKAHEAD;
     if (neg == 1) { op = PCRE_OP_NLOOKAHEAD; }
     return _pcre_emit_raw(op, 0);
 }
 
-fn _pcre_emit_lookbehind(neg) {
+fn _pcre_emit_lookbehind(neg): i64 {
     var op = PCRE_OP_LOOKBEHIND;
     if (neg == 1) { op = PCRE_OP_NLOOKBEHIND; }
     # arg1 (upper 32 of word0): end_pc, patched after body. arg2 (word1):
@@ -3060,7 +3060,7 @@ fn _pcre_emit_lookbehind(neg) {
     return _pcre_emit_raw(op, 0);
 }
 
-fn _pcre_emit_recurse(group_idx) {
+fn _pcre_emit_recurse(group_idx): i64 {
     return _pcre_emit_raw(PCRE_OP_RECURSE | (group_idx << 8), 0);
 }
 
@@ -3072,7 +3072,7 @@ fn _pcre_emit_recurse(group_idx) {
 # nested zero-width assertion (lookahead inside lookbehind body, etc.).
 # Same fixed-byte-width model as PCRE2 10.43; no codepoint-aware
 # width yet.
-fn _pcre_compute_width(body_start, body_end) {
+fn _pcre_compute_width(body_start, body_end): i64 {
     var width = 0;
     var pc = body_start;
     while (pc < body_end) {
@@ -3098,19 +3098,19 @@ fn _pcre_compute_width(body_start, body_end) {
     return width;
 }
 
-fn _pcre_patch_arg1(idx, arg1) {
+fn _pcre_patch_arg1(idx, arg1): i64 {
     var off = _pcre_instr_base + idx * 16;
     var w0 = load64(off);
     store64(off, (w0 & 0xFFFFFFFF) | (arg1 << 32));
     return 0;
 }
 
-fn _pcre_patch_arg2(idx, arg2) {
+fn _pcre_patch_arg2(idx, arg2): i64 {
     store64(_pcre_instr_base + idx * 16 + 8, arg2);
     return 0;
 }
 
-fn _pcre_shift_right(lo, hi) {
+fn _pcre_shift_right(lo, hi): i64 {
     var k = (hi - lo) * 16 - 1;
     while (k >= 0) {
         var src = _pcre_instr_base + lo * 16 + k;
@@ -3120,7 +3120,7 @@ fn _pcre_shift_right(lo, hi) {
     return 0;
 }
 
-fn _pcre_shift_targets_one(lo, hi) {
+fn _pcre_shift_targets_one(lo, hi): i64 {
     var i = lo + 1;
     var end = hi + 1;
     while (i < end) {
@@ -3164,7 +3164,7 @@ fn _pcre_shift_targets_one(lo, hi) {
 
 # === Class bitmap helpers (mirrors re2) ==============================
 
-fn _pcre_alloc_class() {
+fn _pcre_alloc_class(): i64 {
     var ci = _pcre_class_n;
     if (ci >= PCRE_MAX_CLASSES) { _pcre_err = PCRE_E_TOO_LARGE; return ci; }
     var z = 0;
@@ -3176,7 +3176,7 @@ fn _pcre_alloc_class() {
     return ci;
 }
 
-fn _pcre_class_set(ci, c) {
+fn _pcre_class_set(ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = _pcre_class_base + ci * 32 + (c >> 3);
@@ -3184,7 +3184,7 @@ fn _pcre_class_set(ci, c) {
     return 0;
 }
 
-fn _pcre_class_range(ci, lo, hi) {
+fn _pcre_class_range(ci, lo, hi): i64 {
     var c = lo;
     while (c <= hi) {
         _pcre_class_set(ci, c);
@@ -3193,7 +3193,7 @@ fn _pcre_class_range(ci, lo, hi) {
     return 0;
 }
 
-fn _pcre_class_invert(ci) {
+fn _pcre_class_invert(ci): i64 {
     var z = 0;
     while (z < 32) {
         var off = _pcre_class_base + ci * 32 + z;
@@ -3203,9 +3203,9 @@ fn _pcre_class_invert(ci) {
     return 0;
 }
 
-fn _pcre_class_fill_digit(ci) { _pcre_class_range(ci, 48, 57); return 0; }
+fn _pcre_class_fill_digit(ci): i64 { _pcre_class_range(ci, 48, 57); return 0; }
 
-fn _pcre_class_fill_word(ci) {
+fn _pcre_class_fill_word(ci): i64 {
     _pcre_class_range(ci, 48, 57);
     _pcre_class_range(ci, 65, 90);
     _pcre_class_range(ci, 97, 122);
@@ -3213,7 +3213,7 @@ fn _pcre_class_fill_word(ci) {
     return 0;
 }
 
-fn _pcre_class_fill_space(ci) {
+fn _pcre_class_fill_space(ci): i64 {
     _pcre_class_set(ci, 32);
     _pcre_class_set(ci, 9);
     _pcre_class_set(ci, 10);
@@ -3224,7 +3224,7 @@ fn _pcre_class_fill_space(ci) {
 }
 
 # v0.7.0 — under (?i) also set the opposite-case ASCII letter.
-fn _pcre_class_set_folded(ci, c) {
+fn _pcre_class_set_folded(ci, c): i64 {
     _pcre_class_set(ci, c);
     if (_pcre_flag_i == 1) {
         if (c >= 65 && c <= 90)    { _pcre_class_set(ci, c + 32); }
@@ -3233,7 +3233,7 @@ fn _pcre_class_set_folded(ci, c) {
     return 0;
 }
 
-fn _pcre_class_range_folded(ci, lo, hi) {
+fn _pcre_class_range_folded(ci, lo, hi): i64 {
     var c = lo;
     while (c <= hi) {
         _pcre_class_set_folded(ci, c);
@@ -3247,7 +3247,7 @@ fn _pcre_class_range_folded(ci, lo, hi) {
 # after `(?`. Returns 1 on success (flags set, `)` consumed); 0 if
 # the body is not pure-flag (caller falls through). Sets _pcre_err on
 # malformed flag run.
-fn _pcre_try_inline_flags() {
+fn _pcre_try_inline_flags(): i64 {
     var p = _pcre_pos;
     var first = load8(_pcre_pat + p);
     if (first != 105 && first != 109 && first != 115) { return 0; }
@@ -3272,13 +3272,13 @@ fn _pcre_try_inline_flags() {
 # === Named-capture name table =======================================
 
 # Validate a name char: [A-Za-z0-9_]; first must be [A-Za-z_].
-fn _pcre_is_name_first(c) {
+fn _pcre_is_name_first(c): i64 {
     if (c >= 65 && c <= 90)  { return 1; }
     if (c >= 97 && c <= 122) { return 1; }
     if (c == 95)             { return 1; }
     return 0;
 }
-fn _pcre_is_name_rest(c) {
+fn _pcre_is_name_rest(c): i64 {
     if (_pcre_is_name_first(c) == 1) { return 1; }
     if (c >= 48 && c <= 57)          { return 1; }
     return 0;
@@ -3287,7 +3287,7 @@ fn _pcre_is_name_rest(c) {
 # Add a name → group index mapping. Caller positions _pcre_pos at the
 # start of the name; this consumes the name. Validates duplicates.
 # Returns 0 on success; sets _pcre_err on failure.
-fn _pcre_add_name(group_idx, terminator) {
+fn _pcre_add_name(group_idx, terminator): i64 {
     if (_pcre_pos >= _pcre_pat_len) { _pcre_err = PCRE_E_SYNTAX; return 0 - 1; }
     var first = load8(_pcre_pat + _pcre_pos);
     if (_pcre_is_name_first(first) == 0) { _pcre_err = PCRE_E_SYNTAX; return 0 - 1; }
@@ -3346,7 +3346,7 @@ fn _pcre_add_name(group_idx, terminator) {
 # v0.8.0 — compile-time lookup for (?P>NAME) recursion. Walks the
 # name table and returns the group_idx for `name_buf[0..name_len]`,
 # or -1 if not found.
-fn _pcre_lookup_name(name_buf, name_len) {
+fn _pcre_lookup_name(name_buf, name_len): i64 {
     var i = 0;
     while (i < _pcre_name_n) {
         var slot = _pcre_name_base + i * PCRE_NAME_SLOT_SIZE;
@@ -3374,7 +3374,7 @@ fn _pcre_lookup_name(name_buf, name_len) {
 
 # === Pattern decoder =================================================
 
-fn _pcre_lit_byte() {
+fn _pcre_lit_byte(): i64 {
     if (_pcre_pos >= _pcre_pat_len) { _pcre_err = PCRE_E_SYNTAX; return 0; }
     var c = load8(_pcre_pat + _pcre_pos);
     _pcre_pos = _pcre_pos + 1;
@@ -3392,7 +3392,7 @@ fn _pcre_lit_byte() {
     return e;
 }
 
-fn _pcre_parse_class() {
+fn _pcre_parse_class(): i64 {
     var ci = _pcre_alloc_class();
     if (_pcre_err != PCRE_E_OK) { return ci; }
     var neg = 0;
@@ -3523,7 +3523,7 @@ fn _pcre_parse_class() {
 #   capture_idx == -7: fully-consumed form (inline flag, callout) —
 #                      caller emits nothing, body already eaten.
 # Sets _pcre_err on rejection / syntax / deferred-feature.
-fn _pcre_parse_group_intro() {
+fn _pcre_parse_group_intro(): i64 {
     # _pcre_pos at `?`; advance past `?`
     _pcre_pos = _pcre_pos + 1;
     if (_pcre_pos >= _pcre_pat_len) { _pcre_err = PCRE_E_SYNTAX; return 0; }
@@ -3752,7 +3752,7 @@ fn _pcre_parse_group_intro() {
     return 0;
 }
 
-fn _pcre_parse_primary() {
+fn _pcre_parse_primary(): i64 {
     if (_pcre_pos >= _pcre_pat_len) { _pcre_err = PCRE_E_SYNTAX; return 0; }
     var c = load8(_pcre_pat + _pcre_pos);
     if (c == 46) {
@@ -3963,7 +3963,7 @@ fn _pcre_parse_primary() {
 }
 
 # Wrap [atom_start, _pcre_instr_n) inside an ATOMIC block.
-fn _pcre_wrap_atomic(atom_start) {
+fn _pcre_wrap_atomic(atom_start): i64 {
     var atom_end = _pcre_instr_n;
     _pcre_shift_right(atom_start, atom_end);
     _pcre_shift_targets_one(atom_start, atom_end);
@@ -3975,7 +3975,7 @@ fn _pcre_wrap_atomic(atom_start) {
     return 0;
 }
 
-fn _pcre_apply_simple_q(atom_start, op_char) {
+fn _pcre_apply_simple_q(atom_start, op_char): i64 {
     var atom_end = _pcre_instr_n;
     if (atom_end == atom_start) { _pcre_err = PCRE_E_SYNTAX; return 0; }
     _pcre_pos = _pcre_pos + 1;
@@ -4040,7 +4040,7 @@ fn _pcre_apply_simple_q(atom_start, op_char) {
     return 0;
 }
 
-fn _pcre_apply_star_inline(body_start, lazy) {
+fn _pcre_apply_star_inline(body_start, lazy): i64 {
     var body_end = _pcre_instr_n;
     _pcre_shift_right(body_start, body_end);
     _pcre_shift_targets_one(body_start, body_end);
@@ -4060,7 +4060,7 @@ fn _pcre_apply_star_inline(body_start, lazy) {
     return 0;
 }
 
-fn _pcre_apply_brace_q(save_primary_start, atom_start) {
+fn _pcre_apply_brace_q(save_primary_start, atom_start): i64 {
     if (_pcre_instr_n == atom_start) { _pcre_err = PCRE_E_SYNTAX; return 0; }
     _pcre_pos = _pcre_pos + 1;
     var n_min = 0;
@@ -4170,7 +4170,7 @@ fn _pcre_apply_brace_q(save_primary_start, atom_start) {
     return 0;
 }
 
-fn _pcre_parse_atom() {
+fn _pcre_parse_atom(): i64 {
     var save_primary_start = _pcre_pos;
     var atom_start = _pcre_instr_n;
     _pcre_parse_primary();
@@ -4186,7 +4186,7 @@ fn _pcre_parse_atom() {
     return 0;
 }
 
-fn _pcre_parse_concat() {
+fn _pcre_parse_concat(): i64 {
     while (_pcre_pos < _pcre_pat_len) {
         var c = load8(_pcre_pat + _pcre_pos);
         if (c == 124 || c == 41) { return 0; }
@@ -4196,7 +4196,7 @@ fn _pcre_parse_concat() {
     return 0;
 }
 
-fn _pcre_parse_alt() {
+fn _pcre_parse_alt(): i64 {
     # v0.7.0 — branch-reset (?|...) tracking. When _pcre_branch_reset_base
     # is set (>= 0), each `|` resets _pcre_capture_n back to that base so
     # alternatives reuse group numbers; the post-group max-seen value is
@@ -4234,7 +4234,7 @@ fn _pcre_parse_alt() {
 
 # === Compiler entry ==================================================
 
-fn niyama_pcre_compile(pat) {
+fn niyama_pcre_compile(pat): i64 {
     _pcre_lazy_init();
     var n = strlen(pat);
     var instr_bytes = PCRE_MAX_INSTRS * 16;
@@ -4298,22 +4298,22 @@ fn niyama_pcre_compile(pat) {
     return nfa;
 }
 
-fn niyama_pcre_last_error() {
+fn niyama_pcre_last_error(): i64 {
     return _pcre_last_err;
 }
 
-fn niyama_pcre_set_step_limit(n) {
+fn niyama_pcre_set_step_limit(n): i64 {
     _pcre_step_limit = n;
     return 0;
 }
 
-fn niyama_pcre_last_step_count() {
+fn niyama_pcre_last_step_count(): i64 {
     return _pcre_last_step_count;
 }
 
 # v0.7.0 — last callout number reached during the most recent match.
 # -1 if no callout was hit (or no match was attempted).
-fn niyama_pcre_last_callout() {
+fn niyama_pcre_last_callout(): i64 {
     return _pcre_last_callout;
 }
 
@@ -4337,7 +4337,7 @@ fn niyama_pcre_last_callout() {
 # 1-9 each have a unique open/close pair. Returns 0 on success and
 # stores results in _pcre_grp_open_pc / _pcre_grp_close_pc, -1 on
 # missing-group.
-fn _pcre_find_group_pcs(instrs, instr_count, group_idx) {
+fn _pcre_find_group_pcs(instrs, instr_count, group_idx): i64 {
     var open_save_idx = group_idx * 2;
     var close_save_idx = group_idx * 2 + 1;
     _pcre_grp_open_pc  = 0 - 1;
@@ -4362,7 +4362,7 @@ fn _pcre_find_group_pcs(instrs, instr_count, group_idx) {
     return 0;
 }
 
-fn _pcre_at_word_char(input, input_len, pos) {
+fn _pcre_at_word_char(input, input_len, pos): i64 {
     if (pos < 0)         { return 0; }
     if (pos >= input_len){ return 0; }
     var c = load8(input + pos);
@@ -4373,14 +4373,14 @@ fn _pcre_at_word_char(input, input_len, pos) {
     return 0;
 }
 
-fn _pcre_is_boundary(input, input_len, pos) {
+fn _pcre_is_boundary(input, input_len, pos): i64 {
     var l = _pcre_at_word_char(input, input_len, pos - 1);
     var r = _pcre_at_word_char(input, input_len, pos);
     if (l != r) { return 1; }
     return 0;
 }
 
-fn _pcre_class_get_at(class_base, ci, c) {
+fn _pcre_class_get_at(class_base, ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = class_base + ci * 32 + (c >> 3);
@@ -4390,7 +4390,7 @@ fn _pcre_class_get_at(class_base, ci, c) {
 }
 
 # Save a 20-i64 saves[] snapshot to dst. Used at every backtrack point.
-fn _pcre_saves_snapshot(saves, dst) {
+fn _pcre_saves_snapshot(saves, dst): i64 {
     var k = 0;
     while (k < PCRE_MAX_SAVES) {
         store64(dst + k * 8, load64(saves + k * 8));
@@ -4399,7 +4399,7 @@ fn _pcre_saves_snapshot(saves, dst) {
     return 0;
 }
 
-fn _pcre_saves_restore(saves, src) {
+fn _pcre_saves_restore(saves, src): i64 {
     var k = 0;
     while (k < PCRE_MAX_SAVES) {
         store64(saves + k * 8, load64(src + k * 8));
@@ -4408,7 +4408,7 @@ fn _pcre_saves_restore(saves, src) {
     return 0;
 }
 
-fn _pcre_match_run(instrs, instr_count, class_base, input, input_len, start_pc, start_pos, saves, depth) {
+fn _pcre_match_run(instrs, instr_count, class_base, input, input_len, start_pc, start_pos, saves, depth): i64 {
     if (depth > _pcre_depth_limit) { return 0 - 1; }
     var pc = start_pc;
     var pos = start_pos;
@@ -4715,7 +4715,7 @@ fn _pcre_match_run(instrs, instr_count, class_base, input, input_len, start_pc, 
 
 # === Public API ======================================================
 
-fn _pcre_run_at(nfa, input, input_len, from) {
+fn _pcre_run_at(nfa, input, input_len, from): i64 {
     _pcre_step_count = 0;
     _pcre_last_callout = 0 - 1;
     var instrs = nfa + load64(nfa + PCRE_OFF_INSTRS_OFF);
@@ -4744,7 +4744,7 @@ fn _pcre_run_at(nfa, input, input_len, from) {
     return r;
 }
 
-fn niyama_pcre_match(nfa, s) {
+fn niyama_pcre_match(nfa, s): i64 {
     if (nfa == 0) { return 0; }
     var len = strlen(s);
     var r = _pcre_run_at(nfa, s, len, 0);
@@ -4752,13 +4752,13 @@ fn niyama_pcre_match(nfa, s) {
     return 0;
 }
 
-fn niyama_pcre_search(nfa, s) {
+fn niyama_pcre_search(nfa, s): i64 {
     if (nfa == 0) { return 0 - 1; }
     var len = strlen(s);
     return niyama_pcre_search_at(nfa, s, len, 0);
 }
 
-fn niyama_pcre_search_at(nfa, s, len, from) {
+fn niyama_pcre_search_at(nfa, s, len, from): i64 {
     if (nfa == 0) { return 0 - 1; }
     var i = from;
     while (i <= len) {
@@ -4769,20 +4769,20 @@ fn niyama_pcre_search_at(nfa, s, len, from) {
     return 0 - 1;
 }
 
-fn niyama_pcre_group_start(nfa, n) {
+fn niyama_pcre_group_start(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + PCRE_OFF_SAVES + n * 16);
 }
 
-fn niyama_pcre_group_end(nfa, n) {
+fn niyama_pcre_group_end(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + PCRE_OFF_SAVES + n * 16 + 8);
 }
 
 # Look up a named-capture group index by name. Returns -1 if not found.
-fn niyama_pcre_group_by_name(nfa, name) {
+fn niyama_pcre_group_by_name(nfa, name): i64 {
     if (nfa == 0) { return 0 - 1; }
     var name_count = load64(nfa + PCRE_OFF_NAME_COUNT);
     var names_base = nfa + load64(nfa + PCRE_OFF_NAMES_OFF);
@@ -4886,7 +4886,7 @@ var _fuzzy_row_b = 0;
 var _fuzzy_last_err = 0;
 var _fuzzy_last_dist = 0;
 
-fn _fuzzy_lazy_init() {
+fn _fuzzy_lazy_init(): i64 {
     if (_fuzzy_init == 1) { return 0; }
     _fuzzy_row_a = alloc((FUZZY_MAX_TEXT_LEN + 1) * 8);
     _fuzzy_row_b = alloc((FUZZY_MAX_TEXT_LEN + 1) * 8);
@@ -4896,21 +4896,21 @@ fn _fuzzy_lazy_init() {
 
 # === Helpers =========================================================
 
-fn _fuzzy_min3(a, b, c) {
+fn _fuzzy_min3(a, b, c): i64 {
     var m = a;
     if (b < m) { m = b; }
     if (c < m) { m = c; }
     return m;
 }
 
-fn _fuzzy_fold(c, casefold) {
+fn _fuzzy_fold(c, casefold): i64 {
     if (casefold == 1 && c >= 65 && c <= 90) { return c + 32; }
     return c;
 }
 
 # === Compile entries =================================================
 
-fn niyama_fuzzy_compile_opts(pat, max_edits, flags) {
+fn niyama_fuzzy_compile_opts(pat, max_edits, flags): i64 {
     _fuzzy_lazy_init();
     if (max_edits < 0) {
         _fuzzy_last_err = FUZZY_E_INVALID_THRESHOLD;
@@ -4953,15 +4953,15 @@ fn niyama_fuzzy_compile_opts(pat, max_edits, flags) {
     return h;
 }
 
-fn niyama_fuzzy_compile(pat) {
+fn niyama_fuzzy_compile(pat): i64 {
     return niyama_fuzzy_compile_opts(pat, FUZZY_DEFAULT_K, 0);
 }
 
-fn niyama_fuzzy_last_error() {
+fn niyama_fuzzy_last_error(): i64 {
     return _fuzzy_last_err;
 }
 
-fn niyama_fuzzy_last_distance() {
+fn niyama_fuzzy_last_distance(): i64 {
     return _fuzzy_last_dist;
 }
 
@@ -4971,7 +4971,7 @@ fn niyama_fuzzy_last_distance() {
 # (length slen). Returns the distance.
 #
 # Base case: prev[j] = j (empty pattern → j insertions to match s[0..j]).
-fn _fuzzy_dp_full(pat, plen, s, slen, casefold) {
+fn _fuzzy_dp_full(pat, plen, s, slen, casefold): i64 {
     if (slen > FUZZY_MAX_TEXT_LEN) { slen = FUZZY_MAX_TEXT_LEN; }
     var prev = _fuzzy_row_a;
     var curr = _fuzzy_row_b;
@@ -5010,7 +5010,7 @@ fn _fuzzy_dp_full(pat, plen, s, slen, casefold) {
 #
 # Base case: prev[j] = 0 (empty pattern matches anywhere — no penalty
 # for skipping leading text bytes).
-fn _fuzzy_dp_substring(pat, plen, s, slen, casefold, out_end_pos) {
+fn _fuzzy_dp_substring(pat, plen, s, slen, casefold, out_end_pos): i64 {
     if (slen > FUZZY_MAX_TEXT_LEN) { slen = FUZZY_MAX_TEXT_LEN; }
     var prev = _fuzzy_row_a;
     var curr = _fuzzy_row_b;
@@ -5062,7 +5062,7 @@ fn _fuzzy_dp_substring(pat, plen, s, slen, casefold, out_end_pos) {
 # (input[end_pos-1-k]). The "best end" in the reversed problem equals
 # end_pos - start_pos in the original. Same O(plen × end_pos)
 # complexity as the forward pass; reuses the row scratch buffers.
-fn _fuzzy_recover_start(pat, plen, s, end_pos, casefold) {
+fn _fuzzy_recover_start(pat, plen, s, end_pos, casefold): i64 {
     if (end_pos > FUZZY_MAX_TEXT_LEN) { end_pos = FUZZY_MAX_TEXT_LEN; }
     var prev = _fuzzy_row_a;
     var curr = _fuzzy_row_b;
@@ -5109,7 +5109,7 @@ fn _fuzzy_recover_start(pat, plen, s, end_pos, casefold) {
 
 # Prefix DP: minimum Levenshtein distance between pat and any prefix
 # of s. Same DP as full, but final answer is min over the last row.
-fn _fuzzy_dp_prefix(pat, plen, s, slen, casefold) {
+fn _fuzzy_dp_prefix(pat, plen, s, slen, casefold): i64 {
     if (slen > FUZZY_MAX_TEXT_LEN) { slen = FUZZY_MAX_TEXT_LEN; }
     var prev = _fuzzy_row_a;
     var curr = _fuzzy_row_b;
@@ -5156,7 +5156,7 @@ fn _fuzzy_dp_prefix(pat, plen, s, slen, casefold) {
 var _fuzzy_norm_buf = 0;
 var _fuzzy_norm_len = 0;
 
-fn _fuzzy_maybe_normalize(s, slen, flags) {
+fn _fuzzy_maybe_normalize(s, slen, flags): i64 {
     if ((flags & FUZZY_FLAG_UNICODE_NFD) == 0) {
         _fuzzy_norm_buf = s;
         _fuzzy_norm_len = slen;
@@ -5168,7 +5168,7 @@ fn _fuzzy_maybe_normalize(s, slen, flags) {
     return 0;
 }
 
-fn niyama_fuzzy_distance(h, s) {
+fn niyama_fuzzy_distance(h, s): i64 {
     if (h == 0) { return 0 - 1; }
     var plen = load64(h + FUZZY_OFF_PAT_LEN);
     var flags = load64(h + FUZZY_OFF_FLAGS);
@@ -5181,7 +5181,7 @@ fn niyama_fuzzy_distance(h, s) {
     return d;
 }
 
-fn niyama_fuzzy_match(h, s) {
+fn niyama_fuzzy_match(h, s): i64 {
     if (h == 0) { return 0; }
     var max_edits = load64(h + FUZZY_OFF_MAX_EDITS);
     var d = niyama_fuzzy_distance(h, s);
@@ -5193,7 +5193,7 @@ fn niyama_fuzzy_match(h, s) {
 # ≤ max_edits to pat? Returns approximate start offset on hit, or -1.
 # Start is computed as `end - plen` clamped to [0, slen) — exact start
 # recovery is deferred per ADR 0005.
-fn niyama_fuzzy_search(h, s) {
+fn niyama_fuzzy_search(h, s): i64 {
     if (h == 0) { return 0 - 1; }
     var plen = load64(h + FUZZY_OFF_PAT_LEN);
     var max_edits = load64(h + FUZZY_OFF_MAX_EDITS);
@@ -5220,7 +5220,7 @@ fn niyama_fuzzy_search(h, s) {
 # Prefix fuzzy: is some prefix of s within max_edits of pat? Returns 1
 # or 0. Useful for shell completion (typed input is a typo-tolerant
 # prefix of the candidate).
-fn niyama_fuzzy_search_prefix(h, s) {
+fn niyama_fuzzy_search_prefix(h, s): i64 {
     if (h == 0) { return 0; }
     var plen = load64(h + FUZZY_OFF_PAT_LEN);
     var max_edits = load64(h + FUZZY_OFF_MAX_EDITS);
@@ -5350,7 +5350,7 @@ var _vim_q_splits = 0;
 # v0.8.0 — UTF-8 codepoint scratch slot for UPROP / NUPROP.
 var _vim_m_cp_slot = 0;
 
-fn _vim_lazy_init() {
+fn _vim_lazy_init(): i64 {
     if (_vim_m_init == 1) { return 0; }
     _vim_m_cur     = alloc(8 + VIM_MAX_INSTRS * 168);
     _vim_m_next    = alloc(8 + VIM_MAX_INSTRS * 168);
@@ -5369,11 +5369,11 @@ fn _vim_lazy_init() {
 
 # === Instruction emit / patch helpers (mirrors re2) ==================
 
-fn _vim_w0(op, small, arg1) {
+fn _vim_w0(op, small, arg1): i64 {
     return op | (small << 8) | (arg1 << 32);
 }
 
-fn _vim_emit_raw(w0, w1) {
+fn _vim_emit_raw(w0, w1): i64 {
     var i = _vim_instr_n;
     if (i >= VIM_MAX_INSTRS) { _vim_err = VIM_E_TOO_LARGE; return i; }
     store64(_vim_instr_base + i * 16, w0);
@@ -5384,7 +5384,7 @@ fn _vim_emit_raw(w0, w1) {
 
 fn _vim_emit_op(op)        { return _vim_emit_raw(op, 0); }
 fn _vim_emit_char(c)       { return _vim_emit_raw(VIM_OP_CHAR | (c << 8), 0); }
-fn _vim_emit_class(neg, ci) {
+fn _vim_emit_class(neg, ci): i64 {
     var op = VIM_OP_CLASS;
     if (neg == 1) { op = VIM_OP_NCLASS; }
     return _vim_emit_raw(op | (ci << 8), 0);
@@ -5392,28 +5392,28 @@ fn _vim_emit_class(neg, ci) {
 fn _vim_emit_save(idx)     { return _vim_emit_raw(VIM_OP_SAVE | (idx << 8), 0); }
 fn _vim_emit_jmp(target)   { return _vim_emit_raw(VIM_OP_JMP | (target << 32), 0); }
 fn _vim_emit_split(a, b)   { return _vim_emit_raw(VIM_OP_SPLIT | (a << 32), b); }
-fn _vim_emit_uprop(neg, mask) {
+fn _vim_emit_uprop(neg, mask): i64 {
     var op = VIM_OP_UPROP;
     if (neg == 1) { op = VIM_OP_NUPROP; }
     return _vim_emit_raw(op | (mask << 32), 0);
 }
-fn _vim_emit_uchar(cp) {
+fn _vim_emit_uchar(cp): i64 {
     return _vim_emit_raw(VIM_OP_UCHAR | (cp << 32), 0);
 }
 
-fn _vim_patch_arg1(idx, arg1) {
+fn _vim_patch_arg1(idx, arg1): i64 {
     var off = _vim_instr_base + idx * 16;
     var w0 = load64(off);
     store64(off, (w0 & 0xFFFFFFFF) | (arg1 << 32));
     return 0;
 }
 
-fn _vim_patch_arg2(idx, arg2) {
+fn _vim_patch_arg2(idx, arg2): i64 {
     store64(_vim_instr_base + idx * 16 + 8, arg2);
     return 0;
 }
 
-fn _vim_shift_right(lo, hi) {
+fn _vim_shift_right(lo, hi): i64 {
     var k = (hi - lo) * 16 - 1;
     while (k >= 0) {
         var src = _vim_instr_base + lo * 16 + k;
@@ -5423,7 +5423,7 @@ fn _vim_shift_right(lo, hi) {
     return 0;
 }
 
-fn _vim_shift_targets_one(lo, hi) {
+fn _vim_shift_targets_one(lo, hi): i64 {
     var i = lo + 1;
     var end = hi + 1;
     while (i < end) {
@@ -5452,7 +5452,7 @@ fn _vim_shift_targets_one(lo, hi) {
 
 # === Class bitmap helpers ============================================
 
-fn _vim_alloc_class() {
+fn _vim_alloc_class(): i64 {
     var ci = _vim_class_n;
     if (ci >= VIM_MAX_CLASSES) { _vim_err = VIM_E_TOO_LARGE; return ci; }
     var z = 0;
@@ -5464,7 +5464,7 @@ fn _vim_alloc_class() {
     return ci;
 }
 
-fn _vim_class_set(ci, c) {
+fn _vim_class_set(ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = _vim_class_base + ci * 32 + (c >> 3);
@@ -5472,7 +5472,7 @@ fn _vim_class_set(ci, c) {
     return 0;
 }
 
-fn _vim_class_range(ci, lo, hi) {
+fn _vim_class_range(ci, lo, hi): i64 {
     var c = lo;
     while (c <= hi) {
         _vim_class_set(ci, c);
@@ -5481,7 +5481,7 @@ fn _vim_class_range(ci, lo, hi) {
     return 0;
 }
 
-fn _vim_class_invert(ci) {
+fn _vim_class_invert(ci): i64 {
     var z = 0;
     while (z < 32) {
         var off = _vim_class_base + ci * 32 + z;
@@ -5491,9 +5491,9 @@ fn _vim_class_invert(ci) {
     return 0;
 }
 
-fn _vim_class_fill_digit(ci) { _vim_class_range(ci, 48, 57); return 0; }
+fn _vim_class_fill_digit(ci): i64 { _vim_class_range(ci, 48, 57); return 0; }
 
-fn _vim_class_fill_word(ci) {
+fn _vim_class_fill_word(ci): i64 {
     _vim_class_range(ci, 48, 57);
     _vim_class_range(ci, 65, 90);
     _vim_class_range(ci, 97, 122);
@@ -5501,7 +5501,7 @@ fn _vim_class_fill_word(ci) {
     return 0;
 }
 
-fn _vim_class_fill_space(ci) {
+fn _vim_class_fill_space(ci): i64 {
     _vim_class_set(ci, 32);
     _vim_class_set(ci, 9);
     _vim_class_set(ci, 10);
@@ -5525,7 +5525,7 @@ fn _vim_class_fill_space(ci) {
 # success advances _vim_pos past ":]" and returns the category id
 # (1..12 — same numbering as posix_classes.cyr). On mismatch, returns
 # 0 and leaves _vim_pos unchanged.
-fn _vim_match_posix_class() {
+fn _vim_match_posix_class(): i64 {
     var save_pos = _vim_pos;
     var category = _posix_match_class_name(_vim_pat, _vim_pos, _vim_pat_len);
     if (category == 0) {
@@ -5536,7 +5536,7 @@ fn _vim_match_posix_class() {
     return category;
 }
 
-fn _vim_class_apply_posix(ci, category) {
+fn _vim_class_apply_posix(ci, category): i64 {
     return _posix_apply_filler(_vim_class_base, ci, category);
 }
 
@@ -5550,7 +5550,7 @@ fn _vim_class_apply_posix(ci, category) {
 # bare in m / M (and `*` is literal in M).
 # In V (very-nomagic), `*` is also literal.
 # Returns: 0 (not), 1 (`*` zero-or-more)
-fn _vim_quant_bare(c) {
+fn _vim_quant_bare(c): i64 {
     if (_vim_mode == VIM_MODE_VERY_MAGIC) {
         if (c == 42 || c == 43 || c == 63 || c == 61) { return 1; }
     }
@@ -5563,7 +5563,7 @@ fn _vim_quant_bare(c) {
 # Map a bare quantifier byte to its op-char for _vim_apply_simple_q
 # (* = 42, + = 43, ? = 63; we map = → 63 since vim's \= is a synonym
 # for \?).
-fn _vim_quant_op(c) {
+fn _vim_quant_op(c): i64 {
     if (c == 61) { return 63; }
     return c;
 }
@@ -5572,7 +5572,7 @@ fn _vim_quant_op(c) {
 # `\+`, `\?`, `\=` are quantifiers in m, M, V (always available).
 # `\*` is the quantifier in nomagic / very-nomagic (where bare `*` is
 # literal); in magic / very-magic, `\*` is a literal `*`.
-fn _vim_quant_after_bs(c) {
+fn _vim_quant_after_bs(c): i64 {
     if (c == 43 || c == 63 || c == 61) { return 1; }
     if (c == 42 && (_vim_mode == VIM_MODE_NOMAGIC || _vim_mode == VIM_MODE_VERY_NOMAGIC)) {
         return 1;
@@ -5581,51 +5581,51 @@ fn _vim_quant_after_bs(c) {
 }
 
 # Is `c` a bare alternation? `|` in v; needs `\|` in m, M, V.
-fn _vim_alt_bare(c) {
+fn _vim_alt_bare(c): i64 {
     if (c == 124 && _vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
 # Is `c` a backslash-alternation? `\|` in m, M, V.
-fn _vim_alt_after_bs(c) {
+fn _vim_alt_after_bs(c): i64 {
     if (c == 124 && _vim_mode != VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
 # Is `c` a bare open-paren? `(` in v; literal in m, M, V (which use `\(`).
-fn _vim_open_paren_bare(c) {
+fn _vim_open_paren_bare(c): i64 {
     if (c == 40 && _vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
-fn _vim_open_paren_after_bs(c) {
+fn _vim_open_paren_after_bs(c): i64 {
     if (c == 40 && _vim_mode != VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
-fn _vim_close_paren_bare(c) {
+fn _vim_close_paren_bare(c): i64 {
     if (c == 41 && _vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
-fn _vim_close_paren_after_bs(c) {
+fn _vim_close_paren_after_bs(c): i64 {
     if (c == 41 && _vim_mode != VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
 # Is `c` a bare brace-quantifier opener? `{` in v; needs `\{` elsewhere.
-fn _vim_brace_open_bare(c) {
+fn _vim_brace_open_bare(c): i64 {
     if (c == 123 && _vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
-fn _vim_brace_open_after_bs(c) {
+fn _vim_brace_open_after_bs(c): i64 {
     if (c == 123 && _vim_mode != VIM_MODE_VERY_MAGIC) { return 1; }
     return 0;
 }
 
 # `.` is special in v, m; literal in M, V.
-fn _vim_dot_bare(c) {
+fn _vim_dot_bare(c): i64 {
     if (c != 46) { return 0; }
     if (_vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
     if (_vim_mode == VIM_MODE_MAGIC)      { return 1; }
@@ -5633,7 +5633,7 @@ fn _vim_dot_bare(c) {
 }
 
 # `[` is special in v, m; literal in M, V.
-fn _vim_bracket_open_bare(c) {
+fn _vim_bracket_open_bare(c): i64 {
     if (c != 91) { return 0; }
     if (_vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
     if (_vim_mode == VIM_MODE_MAGIC)      { return 1; }
@@ -5641,7 +5641,7 @@ fn _vim_bracket_open_bare(c) {
 }
 
 # `^` is BOL (at pattern-start) in v, m, M; literal in V (needs `\^`).
-fn _vim_anchor_bol_bare(c, at_start) {
+fn _vim_anchor_bol_bare(c, at_start): i64 {
     if (c != 94) { return 0; }
     if (_vim_mode == VIM_MODE_VERY_NOMAGIC) { return 0; }
     if (_vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
@@ -5651,7 +5651,7 @@ fn _vim_anchor_bol_bare(c, at_start) {
 }
 
 # `$` is EOL (at pattern-end) in v, m, M; literal in V.
-fn _vim_anchor_eol_bare(c, at_end) {
+fn _vim_anchor_eol_bare(c, at_end): i64 {
     if (c != 36) { return 0; }
     if (_vim_mode == VIM_MODE_VERY_NOMAGIC) { return 0; }
     if (_vim_mode == VIM_MODE_VERY_MAGIC) { return 1; }
@@ -5661,7 +5661,7 @@ fn _vim_anchor_eol_bare(c, at_end) {
 
 # === Pattern decoder =================================================
 
-fn _vim_lit_byte() {
+fn _vim_lit_byte(): i64 {
     if (_vim_pos >= _vim_pat_len) { _vim_err = VIM_E_SYNTAX; return 0; }
     var c = load8(_vim_pat + _vim_pos);
     _vim_pos = _vim_pos + 1;
@@ -5681,7 +5681,7 @@ fn _vim_lit_byte() {
 
 # Parse `[...]` body (caller consumed `[`). Returns class index;
 # negation as -(ci+1).
-fn _vim_parse_class() {
+fn _vim_parse_class(): i64 {
     var ci = _vim_alloc_class();
     if (_vim_err != VIM_E_OK) { return ci; }
     var neg = 0;
@@ -5793,7 +5793,7 @@ fn _vim_parse_class() {
 
 # === Recursive-descent vim compiler ==================================
 
-fn _vim_parse_primary(at_start) {
+fn _vim_parse_primary(at_start): i64 {
     if (_vim_pos >= _vim_pat_len) { _vim_err = VIM_E_SYNTAX; return 0; }
     var c = load8(_vim_pat + _vim_pos);
 
@@ -6044,7 +6044,7 @@ fn _vim_parse_primary(at_start) {
     return 0;
 }
 
-fn _vim_apply_simple_q(atom_start, op_char, lazy) {
+fn _vim_apply_simple_q(atom_start, op_char, lazy): i64 {
     var atom_end = _vim_instr_n;
     if (atom_end == atom_start) { _vim_err = VIM_E_SYNTAX; return 0; }
     if (op_char == 42) {
@@ -6090,7 +6090,7 @@ fn _vim_apply_simple_q(atom_start, op_char, lazy) {
     return 0;
 }
 
-fn _vim_apply_star_inline(body_start, lazy) {
+fn _vim_apply_star_inline(body_start, lazy): i64 {
     var body_end = _vim_instr_n;
     _vim_shift_right(body_start, body_end);
     _vim_shift_targets_one(body_start, body_end);
@@ -6113,7 +6113,7 @@ fn _vim_apply_star_inline(body_start, lazy) {
 # Apply brace quantifier: {n} {n,m} {n,} optionally with `-` for lazy.
 # At entry, _vim_pos is just past the opening `{` (whether bare or
 # backslash-prefixed). Caller passed `save_primary_start` to re-parse.
-fn _vim_apply_brace_q(save_primary_start, atom_start, has_bs) {
+fn _vim_apply_brace_q(save_primary_start, atom_start, has_bs): i64 {
     if (_vim_instr_n == atom_start) { _vim_err = VIM_E_SYNTAX; return 0; }
     var lazy = 0;
     if (_vim_pos < _vim_pat_len && load8(_vim_pat + _vim_pos) == 45) {
@@ -6234,7 +6234,7 @@ fn _vim_apply_brace_q(save_primary_start, atom_start, has_bs) {
     return 0;
 }
 
-fn _vim_parse_atom(at_start) {
+fn _vim_parse_atom(at_start): i64 {
     var save_primary_start = _vim_pos;
     var atom_start = _vim_instr_n;
     _vim_parse_primary(at_start);
@@ -6273,7 +6273,7 @@ fn _vim_parse_atom(at_start) {
     return 0;
 }
 
-fn _vim_parse_concat(at_start) {
+fn _vim_parse_concat(at_start): i64 {
     var first = at_start;
     while (_vim_pos < _vim_pat_len) {
         # Stop at alternation or close-paren.
@@ -6292,7 +6292,7 @@ fn _vim_parse_concat(at_start) {
     return 0;
 }
 
-fn _vim_parse_alt() {
+fn _vim_parse_alt(): i64 {
     var left_start = _vim_instr_n;
     _vim_parse_concat(0);
     if (_vim_err != VIM_E_OK) { return 0; }
@@ -6323,7 +6323,7 @@ fn _vim_parse_alt() {
 
 # === Compiler entry ==================================================
 
-fn niyama_vim_compile_opts(pat, mode) {
+fn niyama_vim_compile_opts(pat, mode): i64 {
     _vim_lazy_init();
     if (mode < 0 || mode > 3) {
         _vim_last_err = VIM_E_INVALID_MODE;
@@ -6402,17 +6402,17 @@ fn niyama_vim_compile_opts(pat, mode) {
     return nfa;
 }
 
-fn niyama_vim_compile(pat) {
+fn niyama_vim_compile(pat): i64 {
     return niyama_vim_compile_opts(pat, VIM_MODE_MAGIC);
 }
 
-fn niyama_vim_last_error() {
+fn niyama_vim_last_error(): i64 {
     return _vim_last_err;
 }
 
 # === Pike NFA matcher (mirrors re2.cyr) ==============================
 
-fn _vim_at_word_char(input, input_len, pos) {
+fn _vim_at_word_char(input, input_len, pos): i64 {
     if (pos < 0)         { return 0; }
     if (pos >= input_len){ return 0; }
     var c = load8(input + pos);
@@ -6423,14 +6423,14 @@ fn _vim_at_word_char(input, input_len, pos) {
     return 0;
 }
 
-fn _vim_is_boundary(input, input_len, pos) {
+fn _vim_is_boundary(input, input_len, pos): i64 {
     var l = _vim_at_word_char(input, input_len, pos - 1);
     var r = _vim_at_word_char(input, input_len, pos);
     if (l != r) { return 1; }
     return 0;
 }
 
-fn _vim_class_get_at(class_base, ci, c) {
+fn _vim_class_get_at(class_base, ci, c): i64 {
     if (c < 0)   { return 0; }
     if (c > 255) { return 0; }
     var off = class_base + ci * 32 + (c >> 3);
@@ -6439,7 +6439,7 @@ fn _vim_class_get_at(class_base, ci, c) {
     return 0;
 }
 
-fn _vim_add_thread(list_base, pc, input, input_len, pos, saves, instrs) {
+fn _vim_add_thread(list_base, pc, input, input_len, pos, saves, instrs): i64 {
     if (pc < 0)                 { return 0; }
     if (load64(_vim_m_lastgen + pc * 8) == _vim_m_gen) { return 0; }
     store64(_vim_m_lastgen + pc * 8, _vim_m_gen);
@@ -6501,7 +6501,7 @@ fn _vim_add_thread(list_base, pc, input, input_len, pos, saves, instrs) {
     return 0;
 }
 
-fn _vim_pike_run(nfa, input, input_len, start_pos) {
+fn _vim_pike_run(nfa, input, input_len, start_pos): i64 {
     _vim_lazy_init();
     var instrs = nfa + load64(nfa + VIM_OFF_INSTRS_OFF);
     var class_base = nfa + load64(nfa + VIM_OFF_CLASSES_OFF);
@@ -6652,7 +6652,7 @@ fn _vim_pike_run(nfa, input, input_len, start_pos) {
 
 # === Public API ======================================================
 
-fn niyama_vim_match(nfa, s) {
+fn niyama_vim_match(nfa, s): i64 {
     if (nfa == 0) { return 0; }
     var len = strlen(s);
     var r = _vim_pike_run(nfa, s, len, 0);
@@ -6660,13 +6660,13 @@ fn niyama_vim_match(nfa, s) {
     return 0;
 }
 
-fn niyama_vim_search(nfa, s) {
+fn niyama_vim_search(nfa, s): i64 {
     if (nfa == 0) { return 0 - 1; }
     var len = strlen(s);
     return niyama_vim_search_at(nfa, s, len, 0);
 }
 
-fn niyama_vim_search_at(nfa, s, len, from) {
+fn niyama_vim_search_at(nfa, s, len, from): i64 {
     if (nfa == 0) { return 0 - 1; }
     var i = from;
     while (i <= len) {
@@ -6677,13 +6677,13 @@ fn niyama_vim_search_at(nfa, s, len, from) {
     return 0 - 1;
 }
 
-fn niyama_vim_group_start(nfa, n) {
+fn niyama_vim_group_start(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + VIM_OFF_SAVES + n * 16);
 }
 
-fn niyama_vim_group_end(nfa, n) {
+fn niyama_vim_group_end(nfa, n): i64 {
     if (nfa == 0)        { return 0 - 1; }
     if (n < 0 || n > 9)  { return 0 - 1; }
     return load64(nfa + VIM_OFF_SAVES + n * 16 + 8);

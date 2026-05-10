@@ -9,14 +9,14 @@
 #   +4112  obuf[4096]    output buffer
 #   +8208  opos          output position
 
-fn io_init() {
+fn io_init(): i64 {
     store64(&io_state + 4096, 0);
     store64(&io_state + 4104, 0);
     store64(&io_state + 8208, 0);
     return 0;
 }
 
-fn getc() {
+fn getc(): i64 {
     var ipos: i64 = load64(&io_state + 4104);
     var ilen: i64 = load64(&io_state + 4096);
     if (ipos >= ilen) {
@@ -31,7 +31,7 @@ fn getc() {
     return c;
 }
 
-fn flush() {
+fn flush(): i64 {
     var opos: i64 = load64(&io_state + 8208);
     if (opos > 0) {
         syscall(1, 1, &io_state + 4112, opos);
@@ -40,7 +40,7 @@ fn flush() {
     return 0;
 }
 
-fn putc(c: i64) {
+fn putc(c: i64): i64 {
     var opos: i64 = load64(&io_state + 8208);
     store8(&io_state + 4112 + opos, c);
     opos = opos + 1;
@@ -49,7 +49,7 @@ fn putc(c: i64) {
     return 0;
 }
 
-fn puts(s, n: i64) {
+fn puts(s, n: i64): i64 {
     var i: i64 = 0;
     while (i < n) {
         putc(load8(s + i));
@@ -58,7 +58,7 @@ fn puts(s, n: i64) {
     return 0;
 }
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var pnbuf[24];
     var i: i64 = 23;
     var neg: i64 = 0;

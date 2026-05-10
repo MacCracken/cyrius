@@ -130,19 +130,19 @@ enum IROp {
 }
 
 # Helper: record IR node and return 1 if should skip x86 (mode 2), 0 if should emit
-fn _IR_REC0(S, op) {
+fn _IR_REC0(S, op): i64 {
     var m = IR_ENABLED(S);
     if (m >= 1) { ir_emit0(S, op); }
     if (m == 2) { return 1; }
     return 0;
 }
-fn _IR_REC1(S, op, a1) {
+fn _IR_REC1(S, op, a1): i64 {
     var m = IR_ENABLED(S);
     if (m >= 1) { ir_emit1(S, op, a1); }
     if (m == 2) { return 1; }
     return 0;
 }
-fn _IR_REC(S, op, fl, a1, a2) {
+fn _IR_REC(S, op, fl, a1, a2): i64 {
     var m = IR_ENABLED(S);
     if (m >= 1) { ir_emit(S, op, fl, a1, a2); }
     if (m == 2) { return 1; }
@@ -162,19 +162,19 @@ fn IR_SCURBB(S, v)  { S64(S + 0x16CA010, v); return 0; }
 fn IR_ECNT(S)       { return L64(S + 0x16CA018); }
 fn IR_SECNT(S, v)   { S64(S + 0x16CA018, v); return 0; }
 fn IR_ENABLED(S)    { return L64(S + 0x16CA020); }
-fn IR_SENABLE(S, v) { S64(S + 0x16CA020, v); return 0; }
+fn IR_SENABLE(S, v): i64 { S64(S + 0x16CA020, v); return 0; }
 
 # ================================================================
 # IR node read/write
 # ================================================================
 
 # Pack opcode (16 bit) + flags (16 bit) into one i64 low 32 bits
-fn _ir_pack_op(op, flags) {
+fn _ir_pack_op(op, flags): i64 {
     return (op & 0xFFFF) | ((flags & 0xFFFF) << 16);
 }
 
 # Write an IR node at index ni
-fn _ir_set_node(S, ni, opflags, arg1, arg2) {
+fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
     var base = S + 0x12CA000 + ni * 16;
     store32(base, opflags);
     store32(base + 4, arg1);
@@ -199,7 +199,7 @@ fn IR_NODE_A2(S, ni)   { return load64(S + 0x12CA000 + ni * 16 + 8); }
 #   +16: node_count
 #   +24: succ0 | (succ1 << 32)
 
-fn _ir_set_bb(S, bi, first, count, succ0, succ1) {
+fn _ir_set_bb(S, bi, first, count, succ0, succ1): i64 {
     var base = S + 0x16CA000 + bi * 32;
     store64(base, bi);
     store64(base + 8, first);
@@ -219,7 +219,7 @@ fn IR_BB_SUCC1(S, bi)  { return (load64(S + 0x16CA000 + bi * 32 + 24) >> 32) & 0
 # ================================================================
 
 # Create a new basic block. Returns block index.
-fn ir_bb_new(S) {
+fn ir_bb_new(S): i64 {
     var bi = IR_BCNT(S);
     if (bi >= 32768) {
         syscall(SYS_WRITE, 2, "error: IR block table full\n", 28);
@@ -232,7 +232,7 @@ fn ir_bb_new(S) {
 }
 
 # Set current basic block for subsequent ir_emit calls
-fn ir_set_bb(S, bi) {
+fn ir_set_bb(S, bi): i64 {
     IR_SCURBB(S, bi);
     return 0;
 }
@@ -240,7 +240,7 @@ fn ir_set_bb(S, bi) {
 # Emit an IR node into the current basic block.
 # Also records current CP for post-LASE NOP patching.
 # Returns node index.
-fn ir_emit(S, op, flags, arg1, arg2) {
+fn ir_emit(S, op, flags, arg1, arg2): i64 {
     var ni = IR_NCNT(S);
     if (ni >= 262144) {
         syscall(SYS_WRITE, 2, "error: IR node buffer full\n", 28);
@@ -261,16 +261,16 @@ fn ir_emit(S, op, flags, arg1, arg2) {
 }
 
 # Convenience: emit with just opcode (no args)
-fn ir_emit0(S, op) { return ir_emit(S, op, 0, 0, 0); }
+fn ir_emit0(S, op): i64 { return ir_emit(S, op, 0, 0, 0); }
 
 # Convenience: emit with opcode + arg1
-fn ir_emit1(S, op, arg1) { return ir_emit(S, op, 0, arg1, 0); }
+fn ir_emit1(S, op, arg1): i64 { return ir_emit(S, op, 0, arg1, 0); }
 
 # Convenience: emit with opcode + arg2 (large immediate)
-fn ir_emit2(S, op, arg2) { return ir_emit(S, op, 0, 0, arg2); }
+fn ir_emit2(S, op, arg2): i64 { return ir_emit(S, op, 0, 0, arg2); }
 
 # Set BB successor (unconditional jump)
-fn ir_bb_set_succ(S, bi, target) {
+fn ir_bb_set_succ(S, bi, target): i64 {
     var base = S + 0x16CA000 + bi * 32;
     var cur = load64(base + 24);
     store64(base + 24, (target & 0xFFFFFFFF) | (cur & 0xFFFFFFFF00000000));
@@ -278,14 +278,14 @@ fn ir_bb_set_succ(S, bi, target) {
 }
 
 # Set BB successors (conditional: true_bb, false_bb)
-fn ir_bb_set_cond(S, bi, true_bb, false_bb) {
+fn ir_bb_set_cond(S, bi, true_bb, false_bb): i64 {
     var base = S + 0x16CA000 + bi * 32;
     store64(base + 24, (true_bb & 0xFFFFFFFF) | ((false_bb & 0xFFFFFFFF) << 32));
     return 0;
 }
 
 # Add a CFG edge (for analysis passes)
-fn ir_add_edge(S, from_bb, to_bb) {
+fn ir_add_edge(S, from_bb, to_bb): i64 {
     var ec = IR_ECNT(S);
     if (ec >= 8192) { return 0; }
     var base = S + 0x17CB000 + ec * 8;
@@ -294,11 +294,11 @@ fn ir_add_edge(S, from_bb, to_bb) {
     return 0;
 }
 
-fn IR_EDGE_FROM(S, ei) { return load64(S + 0x17CB000 + ei * 8) & 0xFFFFFFFF; }
+fn IR_EDGE_FROM(S, ei): i64 { return load64(S + 0x17CB000 + ei * 8) & 0xFFFFFFFF; }
 fn IR_EDGE_TO(S, ei)   { return (load64(S + 0x17CB000 + ei * 8) >> 32) & 0xFFFFFFFF; }
 
 # Reset IR state (between functions or at start of compilation)
-fn ir_reset(S) {
+fn ir_reset(S): i64 {
     IR_SNCNT(S, 0);
     IR_SBCNT(S, 0);
     IR_SCURBB(S, 0 - 1);
@@ -314,7 +314,7 @@ fn ir_reset(S) {
 # This function is the bridge: same output as direct emission,
 # but driven from the IR data structure.
 
-fn ir_lower_all(S) {
+fn ir_lower_all(S): i64 {
     var bi = 0;
     var bcnt = IR_BCNT(S);
     while (bi < bcnt) {
@@ -335,7 +335,7 @@ fn ir_lower_all(S) {
 }
 
 # Lower a single IR node to x86 via emit.cyr functions
-fn _ir_lower_node(S, op, fl, a1, a2) {
+fn _ir_lower_node(S, op, fl, a1, a2): i64 {
     if (op == IR_NOP)           { return 0; }
     if (op == IR_LOAD_IMM)      { EMOVI(S, a2); return 0; }
     if (op == IR_LOAD_LOCAL)    { EFLLOAD(S, a1); return 0; }
@@ -420,7 +420,7 @@ fn _ir_lower_node(S, op, fl, a1, a2) {
 # IR dump (CYRIUS_IR=2 verbose mode)
 # ================================================================
 
-fn _ir_opname(op) {
+fn _ir_opname(op): i64 {
     if (op == IR_NOP)          { return "NOP"; }
     if (op == IR_LOAD_IMM)     { return "LOAD_IMM"; }
     if (op == IR_LOAD_LOCAL)   { return "LOAD_L"; }
@@ -486,7 +486,7 @@ fn _ir_opname(op) {
 #
 # Returns: number of loads eliminated.
 
-fn _ir_clobbers_rax(op) {
+fn _ir_clobbers_rax(op): i64 {
     if (op == IR_LOAD_IMM)     { return 1; }
     if (op == IR_LOAD_LOCAL)   { return 1; }
     if (op == IR_LOAD_GLOBAL)  { return 1; }
@@ -522,7 +522,7 @@ fn _ir_clobbers_rax(op) {
     return 0;
 }
 
-fn ir_lase(S) {
+fn ir_lase(S): i64 {
     var eliminated = 0;
     var bcnt = IR_BCNT(S);
     var bi = 0;
@@ -564,7 +564,7 @@ fn ir_lase(S) {
 # Apply LASE: NOP-fill codebuf bytes for eliminated nodes.
 # Must run after ir_lase() and before FIXUP.
 # Returns bytes eliminated.
-fn ir_apply_lase(S) {
+fn ir_apply_lase(S): i64 {
     var ncnt = IR_NCNT(S);
     var bytes = 0;
     var ni = 0;
@@ -610,7 +610,7 @@ fn ir_apply_lase(S) {
 # Foldable ops: ADD/SUB/MUL/AND/OR/XOR/SHL/SHR. DIV/MOD skipped — divide
 # by zero would need a panic path mid-fold.
 
-fn _ir_is_foldable_binop(op) {
+fn _ir_is_foldable_binop(op): i64 {
     if (op == IR_ADD) { return 1; }
     if (op == IR_SUB) { return 1; }
     if (op == IR_MUL) { return 1; }
@@ -622,7 +622,7 @@ fn _ir_is_foldable_binop(op) {
     return 0;
 }
 
-fn _ir_compute_fold(op, a, b) {
+fn _ir_compute_fold(op, a, b): i64 {
     if (op == IR_ADD) { return a + b; }
     if (op == IR_SUB) { return a - b; }
     if (op == IR_MUL) { return a * b; }
@@ -637,7 +637,7 @@ fn _ir_compute_fold(op, a, b) {
 # EMOVI byte-size for a given immediate value. Mirrors EMOVI in
 # src/backend/x86/emit.cyr: 2 bytes for zero, 5 bytes for u31 (0..2^31-1),
 # 10 bytes for everything else.
-fn _ir_emovi_size(v) {
+fn _ir_emovi_size(v): i64 {
     if (v == 0) { return 2; }
     if (v > 0) { if (v < 0x80000000) { return 5; } }
     return 10;
@@ -646,7 +646,7 @@ fn _ir_emovi_size(v) {
 # Write EMOVI(v) into codebuf at absolute offset `off`, then NOP-fill
 # from off+emovi_size up to off+span. Returns bytes saved (span -
 # emovi_size). Caller must ensure span >= emovi_size.
-fn _ir_write_emovi_at(S, off, v, span) {
+fn _ir_write_emovi_at(S, off, v, span): i64 {
     var sz = _ir_emovi_size(v);
     var base = S + 0x64A000 + off;
     if (v == 0) {
@@ -679,7 +679,7 @@ fn _ir_write_emovi_at(S, off, v, span) {
 }
 
 # Constant-fold pass. Returns (folds_count << 32) | bytes_saved.
-fn ir_const_fold(S) {
+fn ir_const_fold(S): i64 {
     var ncnt = IR_NCNT(S);
     var ccnt = GCP(S);
     var folds = 0;
@@ -797,7 +797,7 @@ fn ir_const_fold(S) {
 # is never dead.
 
 # Returns 1 if op writes RAX without side effects, 0 otherwise.
-fn _ir_def_rax_pure(op) {
+fn _ir_def_rax_pure(op): i64 {
     if (op == IR_LOAD_IMM)     { return 1; }
     if (op == IR_LOAD_LOCAL)   { return 1; }
     if (op == IR_LOAD_GLOBAL)  { return 1; }
@@ -810,13 +810,13 @@ fn _ir_def_rax_pure(op) {
 }
 
 # Returns 1 if op writes RCX without side effects.
-fn _ir_def_rcx_pure(op) {
+fn _ir_def_rcx_pure(op): i64 {
     if (op == IR_MOV_CA) { return 1; }
     return 0;
 }
 
 # Returns 1 if op reads RAX (so RAX must be live before this node).
-fn _ir_uses_rax(op) {
+fn _ir_uses_rax(op): i64 {
     if (op == IR_PUSH)         { return 1; }
     if (op == IR_MOV_CA)       { return 1; }
     if (op == IR_STORE_LOCAL)  { return 1; }
@@ -864,7 +864,7 @@ fn _ir_uses_rax(op) {
 # multiplies rax × rcx; idiv divides by rcx; elodc loads from [rcx]).
 # IR_ADD_IMM_X1 reads rcx (rcx += imm). IR_RAW_EMIT is opaque —
 # conservative: treat as RCX reader.
-fn _ir_uses_rcx(op) {
+fn _ir_uses_rcx(op): i64 {
     if (op == IR_ADD)          { return 1; }
     if (op == IR_SUB)          { return 1; }
     if (op == IR_MUL)          { return 1; }
@@ -888,7 +888,7 @@ fn _ir_uses_rcx(op) {
 # Calls / syscalls / call_pops are caller-saves; they clobber RCX.
 # v5.6.17 fix: IR_RAX_CLOBBER (EMULH/EIDIV/ELODC) does NOT write RCX —
 # it only reads it. Removed from this list; added to _ir_uses_rcx.
-fn _ir_def_rcx_any(op) {
+fn _ir_def_rcx_any(op): i64 {
     if (op == IR_MOV_CA)       { return 1; }
     if (op == IR_POP_RCX)      { return 1; }
     if (op == IR_CALL)         { return 1; }
@@ -908,7 +908,7 @@ fn _ir_def_rcx_any(op) {
 #
 # v5.6.17 bisection: `cap` limits how many nodes get killed; pass -1 for
 # uncapped. Used to find the first wrongly-killed node by binary search.
-fn ir_dce_capped(S, cap) {
+fn ir_dce_capped(S, cap): i64 {
     var bcnt = IR_BCNT(S);
     var killed = 0;
     var bi = 0;
@@ -953,7 +953,7 @@ fn ir_dce_capped(S, cap) {
     return killed;
 }
 
-fn ir_dce(S) { return ir_dce_capped(S, 0 - 1); }
+fn ir_dce(S): i64 { return ir_dce_capped(S, 0 - 1); }
 
 # ================================================================
 # v5.6.18 — Dead-store elimination
@@ -972,7 +972,7 @@ fn ir_dce(S) { return ir_dce_capped(S, 0 - 1); }
 #
 # Returns kill count. CYRIUS_DSE_CAP=N caps kills for bisection.
 
-fn ir_dead_store_capped(S, cap) {
+fn ir_dead_store_capped(S, cap): i64 {
     var bcnt = IR_BCNT(S);
     var killed = 0;
     var bi = 0;
@@ -1023,7 +1023,7 @@ fn ir_dead_store_capped(S, cap) {
     return killed;
 }
 
-fn ir_dead_store(S) { return ir_dead_store_capped(S, 0 - 1); }
+fn ir_dead_store(S): i64 { return ir_dead_store_capped(S, 0 - 1); }
 
 # ================================================================
 # BB construction pass
@@ -1032,7 +1032,7 @@ fn ir_dead_store(S) { return ir_dead_store_capped(S, 0 - 1); }
 # BB boundaries at: PROLOG, EPILOG, JMP, JCC, JMP_BACK, NOP (landing pads)
 # Call after compilation, before optimization.
 
-fn ir_build_bbs(S) {
+fn ir_build_bbs(S): i64 {
     var ncnt = IR_NCNT(S);
     if (ncnt == 0) { return 0; }
 
@@ -1104,7 +1104,7 @@ fn ir_build_bbs(S) {
 # Returns number of edges added.
 
 # Find which BB contains the given codebuf offset (binary search)
-fn _ir_find_bb_for_cp(S, target_cp) {
+fn _ir_find_bb_for_cp(S, target_cp): i64 {
     var bcnt = IR_BCNT(S);
     # Linear scan (good enough for <32K BBs)
     var bi = 0;
@@ -1130,7 +1130,7 @@ fn _ir_find_bb_for_cp(S, target_cp) {
 
 # Find the BB that contains a NOP landing pad whose arg1 matches patch_off.
 # Scans all nodes (not just first) because multiple NOPs can land in one BB.
-fn _ir_find_bb_for_patch(S, patch_off) {
+fn _ir_find_bb_for_patch(S, patch_off): i64 {
     var bcnt = IR_BCNT(S);
     var bi = 0;
     while (bi < bcnt) {
@@ -1148,7 +1148,7 @@ fn _ir_find_bb_for_patch(S, patch_off) {
     return 0 - 1;
 }
 
-fn ir_build_edges(S) {
+fn ir_build_edges(S): i64 {
     var bcnt = IR_BCNT(S);
     IR_SECNT(S, 0);
     var edges = 0;
@@ -1224,7 +1224,7 @@ fn ir_build_edges(S) {
 # NOP-fill their codebuf bytes.
 # Returns bytes eliminated.
 
-fn ir_dead_block_elim(S) {
+fn ir_dead_block_elim(S): i64 {
     var bcnt = IR_BCNT(S);
     var ecnt = IR_ECNT(S);
     var bytes = 0;
@@ -1288,7 +1288,7 @@ fn ir_dead_block_elim(S) {
     return bytes;
 }
 
-fn ir_dump(S) {
+fn ir_dump(S): i64 {
     var ncnt = IR_NCNT(S);
     syscall(SYS_WRITE, 2, "=== IR DUMP (", 13);
     PRNUM(ncnt);

@@ -31,12 +31,12 @@ enum SysNrAgnos {
 }
 
 # fsync(2) — flush file to disk.
-fn agnosys_fsync(fd) {
+fn agnosys_fsync(fd): i64 {
     return syscall(AGNOS_SYS_FSYNC, fd);
 }
 
 # rename(2) — atomic rename. Direct syscall on x86_64.
-fn agnosys_rename(old_path, new_path) {
+fn agnosys_rename(old_path, new_path): i64 {
     return syscall(AGNOS_SYS_RENAME, old_path, new_path);
 }
 
@@ -70,14 +70,14 @@ enum SysNrAgnos {
 }
 
 # fsync(2) — flush file to disk.
-fn agnosys_fsync(fd) {
+fn agnosys_fsync(fd): i64 {
     return syscall(AGNOS_SYS_FSYNC, fd);
 }
 
 # rename(2) equivalent — generic-table has no direct `rename`, route
 # via renameat2(AT_FDCWD, old, AT_FDCWD, new, 0). AT_FDCWD comes from
 # lib/syscalls_aarch64_linux.cyr (included transitively by stdlib).
-fn agnosys_rename(old_path, new_path) {
+fn agnosys_rename(old_path, new_path): i64 {
     return syscall(AGNOS_SYS_RENAMEAT2, AT_FDCWD, old_path, AT_FDCWD, new_path, 0);
 }
 
@@ -164,12 +164,12 @@ enum Errno {
 # syserr_kind/errno/message dispatch on the value automatically.
 
 # Pack kind + errno into a single integer (zero allocation)
-fn syserr_pack(kind, errno) {
+fn syserr_pack(kind, errno): i64 {
     return kind << 16 | errno;
 }
 
 # Create a new error with message (heap-allocated, cold path)
-fn syserr_new(kind, errno, message) {
+fn syserr_new(kind, errno, message): i64 {
     var e = alloc(24);
     store64(e, kind);
     store64(e + 8, errno);
@@ -178,19 +178,19 @@ fn syserr_new(kind, errno, message) {
 }
 
 # Get error kind (works for both packed and heap errors)
-fn syserr_kind(e) {
+fn syserr_kind(e): i64 {
     if (e < 0x100000) { return e >> 16; }
     return load64(e);
 }
 
 # Get errno value (works for both packed and heap errors)
-fn syserr_errno(e) {
+fn syserr_errno(e): i64 {
     if (e < 0x100000) { return e & 0xFFFF; }
     return load64(e + 8);
 }
 
 # Get error message pointer (0 for packed errors)
-fn syserr_message(e) {
+fn syserr_message(e): i64 {
     if (e < 0x100000) { return 0; }
     return load64(e + 16);
 }
@@ -255,7 +255,7 @@ fn err_io(errno, message) {
 # Errno-based error creation — packed (zero alloc, hot path)
 # ================================================================
 
-fn err_from_errno(errno) {
+fn err_from_errno(errno): i64 {
     if (errno == EPERM) { return err_permission_denied_nr(EPERM); }
     if (errno == EACCES) { return err_permission_denied_nr(EACCES); }
     if (errno == EAGAIN) { return err_would_block(); }
@@ -264,7 +264,7 @@ fn err_from_errno(errno) {
     return err_syscall_failed_nr(errno);
 }
 
-fn err_from_syscall_ret(ret) {
+fn err_from_syscall_ret(ret): i64 {
     var errno = 0 - ret;
     return err_from_errno(errno);
 }
@@ -273,7 +273,7 @@ fn err_from_syscall_ret(ret) {
 # Error printing
 # ================================================================
 
-fn syserr_print(e) {
+fn syserr_print(e): i64 {
     var kind = syserr_kind(e);
     var msg = syserr_message(e);
     var msglen = 0;
@@ -324,7 +324,7 @@ fn syserr_print(e) {
 
 # Print error from a Result if it's Err, then return the error code.
 # Returns 0 if the Result is Ok.
-fn result_print_err(res) {
+fn result_print_err(res): i64 {
     if (is_ok(res) == 1) { return 0; }
     var e = payload(res);
     syserr_print(e);
@@ -344,7 +344,7 @@ fn result_print_err(res) {
 #   var val = payload(res);
 
 # Check if a syscall return value indicates error (negative = errno)
-fn is_syscall_err(ret) {
+fn is_syscall_err(ret): i64 {
     return ret < 0;
 }
 
@@ -388,27 +388,27 @@ fn agnosys_checked_syscall(ret) {
 # ================================================================
 
 # Get the current process ID.
-fn agnosys_getpid() {
+fn agnosys_getpid(): i64 {
     return syscall(SYS_GETPID);
 }
 
 # Get the current thread ID.
-fn agnosys_gettid() {
+fn agnosys_gettid(): i64 {
     return syscall(SYS_GETTID);
 }
 
 # Get the current user ID.
-fn agnosys_getuid() {
+fn agnosys_getuid(): i64 {
     return syscall(SYS_GETUID);
 }
 
 # Get the current effective user ID.
-fn agnosys_geteuid() {
+fn agnosys_geteuid(): i64 {
     return syscall(SYS_GETEUID);
 }
 
 # Check if the current process has root privileges.
-fn agnosys_is_root() {
+fn agnosys_is_root(): i64 {
     if (agnosys_geteuid() == 0) { return 1; }
     return 0;
 }
@@ -458,13 +458,13 @@ fn query_sysinfo(out) {
 }
 
 # Get uptime in seconds from a sysinfo pointer.
-fn sysinfo_uptime(info) {
+fn sysinfo_uptime(info): i64 {
     return load64(info + SI_UPTIME);
 }
 
 # Get total RAM in bytes from a sysinfo pointer.
 # Uses saturating multiplication to prevent overflow.
-fn sysinfo_total_memory(info) {
+fn sysinfo_total_memory(info): i64 {
     var ram = load64(info + SI_TOTALRAM);
     var unit = load32(info + SI_MEM_UNIT);
     # Saturating multiply: if either is 0 or result would overflow, cap it
@@ -475,7 +475,7 @@ fn sysinfo_total_memory(info) {
 }
 
 # Get free RAM in bytes from a sysinfo pointer.
-fn sysinfo_free_memory(info) {
+fn sysinfo_free_memory(info): i64 {
     var ram = load64(info + SI_FREERAM);
     var unit = load32(info + SI_MEM_UNIT);
     if (unit == 0) { return ram; }
@@ -485,7 +485,7 @@ fn sysinfo_free_memory(info) {
 }
 
 # Get number of running processes from a sysinfo pointer.
-fn sysinfo_procs(info) {
+fn sysinfo_procs(info): i64 {
     return load16(info + SI_PROCS);
 }
 
@@ -550,17 +550,17 @@ fn agnosys_uname(out) {
 }
 
 # Get hostname from a utsname buffer.
-fn uname_hostname(uts) {
+fn uname_hostname(uts): i64 {
     return uts + UTS_NODENAME;
 }
 
 # Get kernel release from a utsname buffer.
-fn uname_release(uts) {
+fn uname_release(uts): i64 {
     return uts + UTS_RELEASE;
 }
 
 # Get machine arch from a utsname buffer.
-fn uname_machine(uts) {
+fn uname_machine(uts): i64 {
     return uts + UTS_MACHINE;
 }
 
@@ -598,7 +598,7 @@ enum LogLevel {
 
 var _log_level_cell = 0;
 
-fn log_init_from_env() {
+fn log_init_from_env(): i64 {
     if (_log_level_cell != 0) { return 0; }
     _log_level_cell = alloc(8);
     store64(_log_level_cell, LOG_INFO + 1);  # default: INFO
@@ -688,12 +688,12 @@ fn log_init_from_env() {
     return 0;
 }
 
-fn log_get_level() {
+fn log_get_level(): i64 {
     log_init_from_env();
     return load64(_log_level_cell) - 1;
 }
 
-fn log_set_level(level) {
+fn log_set_level(level): i64 {
     if (_log_level_cell == 0) {
         _log_level_cell = alloc(8);
     }
@@ -705,7 +705,7 @@ fn log_set_level(level) {
 # Log level prefix strings
 # ================================================================
 
-fn log_level_prefix(level) {
+fn log_level_prefix(level): i64 {
     if (level == LOG_TRACE) { return "[TRACE] "; }
     if (level == LOG_DEBUG) { return "[DEBUG] "; }
     if (level == LOG_INFO)  { return "[INFO]  "; }
@@ -720,7 +720,7 @@ fn log_level_prefix(level) {
 
 # Log a message at the given level to stderr (fd 2).
 # Does nothing if the current level is above the message level.
-fn log_msg(level, message) {
+fn log_msg(level, message): i64 {
     var current = log_get_level();
     if (level < current) { return 0; }
 
@@ -750,7 +750,7 @@ fn log_error(message) { return log_msg(LOG_ERROR, message); }
 
 # Log a message with a key=value context pair.
 # Outputs: [LEVEL] message key=value
-fn log_msg_kv(level, message, key, value) {
+fn log_msg_kv(level, message, key, value): i64 {
     var current = log_get_level();
     if (level < current) { return 0; }
 
@@ -805,7 +805,7 @@ enum FsAccess {
 
 # Filesystem rule: { path_ptr, access }
 # path_ptr is a null-terminated C string pointer
-fn security_fs_rule_new(path, access) {
+fn security_fs_rule_new(path, access): i64 {
     var r = alloc(16);
     store64(r, path);
     store64(r + 8, access);
@@ -916,7 +916,7 @@ enum BpfConst {
 
 # Write a BPF sock_filter instruction (8 bytes) to buf at offset.
 # Layout: u16 code, u8 jt, u8 jf, u32 k (little-endian)
-fn security_bpf_write_insn(buf, offset, code, jt, jf, k) {
+fn security_bpf_write_insn(buf, offset, code, jt, jf, k): i64 {
     store16(buf + offset, code);
     store8(buf + offset + 2, jt);
     store8(buf + offset + 3, jf);
@@ -1060,7 +1060,7 @@ var _syscall_map = 0;
 
 fn security_syscall_map_reset() { _syscall_map = 0; return 0; }
 
-fn _syscall_map_init() {
+fn _syscall_map_init(): i64 {
     if (_syscall_map != 0) { return 0; }
     _syscall_map = map_new();
     map_set(_syscall_map, "read", 0);
@@ -1126,7 +1126,7 @@ fn _syscall_map_init() {
 }
 
 # Map a syscall name to its x86_64 number. Returns -1 if not found.
-fn security_syscall_name_to_nr(name) {
+fn security_syscall_name_to_nr(name): i64 {
     _syscall_map_init();
     if (map_has(_syscall_map, name) == 1) {
         return map_get(_syscall_map, name);
@@ -1232,7 +1232,7 @@ fn mac_write_file(path, data, data_len) {
 # File existence check — returns 1 if file exists, 0 otherwise
 # ================================================================
 
-fn mac_file_exists(path) {
+fn mac_file_exists(path): i64 {
     # F_OK = 0
     return sys_access(path, 0) == 0;
 }
@@ -1243,7 +1243,7 @@ fn mac_file_exists(path) {
 # or MAC_NONE.
 # ================================================================
 
-fn mac_detect_system() {
+fn mac_detect_system(): i64 {
     var res = mac_read_file("/sys/kernel/security/lsm");
     if (is_err_result(res) == 1) {
         # Cannot read LSM file — no MAC detection available
@@ -1308,7 +1308,7 @@ fn mac_get_selinux_mode() {
 # Returns Result: Ok(0) or Err.
 # ================================================================
 
-fn mac_set_selinux_mode(mode) {
+fn mac_set_selinux_mode(mode): i64 {
     var enforce_path = "/sys/fs/selinux/enforce";
 
     if (mac_file_exists(enforce_path) == 0) {
@@ -1359,7 +1359,7 @@ fn mac_get_selinux_context() {
 # Returns Result: Ok(0) or Err.
 # ================================================================
 
-fn mac_set_selinux_context(context, on_exec) {
+fn mac_set_selinux_context(context, on_exec): i64 {
     if (strlen(context) == 0) {
         return err_invalid_argument("SELinux context cannot be empty");
     }
@@ -1437,7 +1437,7 @@ fn mac_get_apparmor_mode() {
 # Returns Result: Ok(0) or Err.
 # ================================================================
 
-fn mac_apparmor_change_profile(profile_name) {
+fn mac_apparmor_change_profile(profile_name): i64 {
     var name_len = strlen(profile_name);
 
     if (name_len == 0) {
@@ -1481,7 +1481,7 @@ fn mac_apparmor_change_profile(profile_name) {
 # Offsets: agent_type=0, selinux_ctx=8, apparmor_profile=16. Size: 24 bytes.
 # ================================================================
 
-fn mac_profile_new(agent_type) {
+fn mac_profile_new(agent_type): i64 {
     var p = alloc(24);
     store64(p, agent_type);
     store64(p + 8, 0);
@@ -1502,7 +1502,7 @@ fn mac_profile_set_apparmor_name(p, name) { store64(p + 16, name); return 0; }
 # agent_type: null-terminated C string (e.g. "user", "service", "system")
 # ================================================================
 
-fn mac_default_profile(agent_type) {
+fn mac_default_profile(agent_type): i64 {
     var p = mac_profile_new(agent_type);
     var tlen = strlen(agent_type);
 
@@ -1708,7 +1708,7 @@ enum AuditRuleType {
 # Offsets: use_netlink=0, use_agnos_proc=8, proc_path=16. Size: 24 bytes.
 # ================================================================
 
-fn audit_config_new() {
+fn audit_config_new(): i64 {
     var c = alloc(24);
     store64(c, 1);   # use_netlink = true
     store64(c + 8, 0);  # use_agnos_proc = false
@@ -1730,7 +1730,7 @@ fn audit_config_set_proc_path(c, path) { store64(c + 16, path); return 0; }
 # Offsets: fd=0, config=8. Size: 16 bytes.
 # ================================================================
 
-fn audit_handle_new(fd, config) {
+fn audit_handle_new(fd, config): i64 {
     var h = alloc(16);
     store64(h, fd);
     store64(h + 8, config);
@@ -1746,7 +1746,7 @@ fn audit_handle_config(h) { return load64(h + 8); }
 # All i64. Offsets: 0, 8, 16, 24, 32, 40. Size: 48 bytes.
 # ================================================================
 
-fn audit_status_new() {
+fn audit_status_new(): i64 {
     var s = alloc(48);
     store64(s, 0);       # enabled = 0
     store64(s + 8, 1);   # failure_action = 1 (printk)
@@ -1770,7 +1770,7 @@ fn audit_status_backlog(s) { return load64(s + 40); }
 # Offsets: rule_type=0, path=8, syscall_nr=16, key=24. Size: 32 bytes.
 # ================================================================
 
-fn audit_rule_new(rule_type, path, syscall_nr, key) {
+fn audit_rule_new(rule_type, path, syscall_nr, key): i64 {
     var r = alloc(32);
     store64(r, rule_type);
     store64(r + 8, path);
@@ -1785,12 +1785,12 @@ fn audit_rule_syscall(r) { return load64(r + 16); }
 fn audit_rule_key(r) { return load64(r + 24); }
 
 # Create a file watch rule
-fn audit_rule_file_watch(path, key) {
+fn audit_rule_file_watch(path, key): i64 {
     return audit_rule_new(AUDIT_RULE_FILE_WATCH, path, 0, key);
 }
 
 # Create a syscall watch rule
-fn audit_rule_syscall_watch(syscall_nr, key) {
+fn audit_rule_syscall_watch(syscall_nr, key): i64 {
     return audit_rule_new(AUDIT_RULE_SYSCALL_WATCH, 0, syscall_nr, key);
 }
 
@@ -1852,7 +1852,7 @@ fn audit_rule_validate(rule) {
 # Total: 12 bytes
 # ================================================================
 
-fn audit_sockaddr_nl(pid) {
+fn audit_sockaddr_nl(pid): i64 {
     var sa = alloc(12);
     memset(sa, 0, 12);
     store16(sa, AF_NETLINK);  # nl_family
@@ -1867,7 +1867,7 @@ fn audit_sockaddr_nl(pid) {
 # nlmsghdr: { u32 len, u16 type, u16 flags, u32 seq, u32 pid }
 # ================================================================
 
-fn audit_build_nlmsg(msg_type, payload_ptr, payload_len) {
+fn audit_build_nlmsg(msg_type, payload_ptr, payload_len): i64 {
     var total_len = NLMSG_HDRLEN + payload_len;
     var buf = alloc(total_len);
     memset(buf, 0, total_len);
@@ -1892,7 +1892,7 @@ fn audit_build_nlmsg(msg_type, payload_ptr, payload_len) {
 }
 
 # Get total length of a built nlmsg (read from the header)
-fn audit_nlmsg_len(buf) {
+fn audit_nlmsg_len(buf): i64 {
     return load32(buf);
 }
 
@@ -1950,7 +1950,7 @@ fn audit_open(config) {
 # Closes the netlink socket if open.
 # ================================================================
 
-fn audit_close(handle) {
+fn audit_close(handle): i64 {
     var fd = audit_handle_fd(handle);
     if (fd >= 0) {
         syscall(SYS_CLOSE, fd);
@@ -2204,7 +2204,7 @@ fn audit_send_rule_msg(handle, rule, msg_type) {
 # Returns Result: Ok(0) or Err.
 # ================================================================
 
-fn audit_add_rule(handle, rule) {
+fn audit_add_rule(handle, rule): i64 {
     var vres = audit_rule_validate(rule);
     if (is_err_result(vres) == 1) { return vres; }
 
@@ -2216,7 +2216,7 @@ fn audit_add_rule(handle, rule) {
 # Returns Result: Ok(0) or Err.
 # ================================================================
 
-fn audit_delete_rule(handle, rule) {
+fn audit_delete_rule(handle, rule): i64 {
     var vres = audit_rule_validate(rule);
     if (is_err_result(vres) == 1) { return vres; }
 
@@ -2349,7 +2349,7 @@ enum PamServiceId {
 
 # Get the config filename for a PAM service ID.
 # Returns a C string pointer.
-fn pam_service_name(svc_id) {
+fn pam_service_name(svc_id): i64 {
     if (svc_id == PAM_SVC_LOGIN) { return "login"; }
     if (svc_id == PAM_SVC_SUDO) { return "sudo"; }
     if (svc_id == PAM_SVC_SSHD) { return "sshd"; }
@@ -2368,7 +2368,7 @@ enum PamRuleTypeId {
     PAM_TYPE_PASSWORD = 3;
 }
 
-fn pam_rule_type_name(t) {
+fn pam_rule_type_name(t): i64 {
     if (t == PAM_TYPE_AUTH) { return "auth"; }
     if (t == PAM_TYPE_ACCOUNT) { return "account"; }
     if (t == PAM_TYPE_SESSION) { return "session"; }
@@ -2377,7 +2377,7 @@ fn pam_rule_type_name(t) {
 }
 
 # Parse rule type from Str. Returns type id or -1 on error.
-fn pam_parse_rule_type(s) {
+fn pam_parse_rule_type(s): i64 {
     if (str_eq(s, str_from("auth")) == 1) { return PAM_TYPE_AUTH; }
     if (str_eq(s, str_from("account")) == 1) { return PAM_TYPE_ACCOUNT; }
     if (str_eq(s, str_from("session")) == 1) { return PAM_TYPE_SESSION; }
@@ -2397,7 +2397,7 @@ enum PamControlId {
     PAM_CTL_INCLUDE = 4;
 }
 
-fn pam_control_name(c) {
+fn pam_control_name(c): i64 {
     if (c == PAM_CTL_REQUIRED) { return "required"; }
     if (c == PAM_CTL_REQUISITE) { return "requisite"; }
     if (c == PAM_CTL_SUFFICIENT) { return "sufficient"; }
@@ -2407,7 +2407,7 @@ fn pam_control_name(c) {
 }
 
 # Parse control flag from Str. Returns control id or -1 on error.
-fn pam_parse_control(s) {
+fn pam_parse_control(s): i64 {
     if (str_eq(s, str_from("required")) == 1) { return PAM_CTL_REQUIRED; }
     if (str_eq(s, str_from("requisite")) == 1) { return PAM_CTL_REQUISITE; }
     if (str_eq(s, str_from("sufficient")) == 1) { return PAM_CTL_SUFFICIENT; }
@@ -2421,7 +2421,7 @@ fn pam_parse_control(s) {
 # Layout: +0 rule_type, +8 control, +16 module, +24 args. Total: 32 bytes.
 # ================================================================
 
-fn pam_rule_new(rule_type, control, module, args) {
+fn pam_rule_new(rule_type, control, module, args): i64 {
     var r = alloc(32);
     store64(r, rule_type);
     store64(r + 8, control);
@@ -2442,13 +2442,13 @@ fn pam_rule_args(r) { return load64(r + 24); }
 #         +32 shell, +40 groups, +48 is_system_user. Total: 56 bytes.
 # ================================================================
 
-fn pam_user_alloc() {
+fn pam_user_alloc(): i64 {
     var u = alloc(56);
     memset(u, 0, 56);
     return u;
 }
 
-fn pam_user_set(u, username, uid, gid, home_dir, shell) {
+fn pam_user_set(u, username, uid, gid, home_dir, shell): i64 {
     store64(u, username);
     store64(u + 8, uid);
     store64(u + 16, gid);
@@ -2457,7 +2457,7 @@ fn pam_user_set(u, username, uid, gid, home_dir, shell) {
     return u;
 }
 
-fn pam_user_set_groups(u, groups, is_system) {
+fn pam_user_set_groups(u, groups, is_system): i64 {
     store64(u + 40, groups);
     store64(u + 48, is_system);
     return u;
@@ -2478,7 +2478,7 @@ fn pam_user_is_system(u) { return load64(u + 48); }
 #         +32 remote_host, +40 pid. Total: 48 bytes.
 # ================================================================
 
-fn pam_session_new(session_id, user, login_time, tty, remote_host, pid) {
+fn pam_session_new(session_id, user, login_time, tty, remote_host, pid): i64 {
     var s = alloc(48);
     store64(s, session_id);
     store64(s + 8, user);
@@ -2592,7 +2592,7 @@ fn pam_parse_passwd_line(line) {
 #   alice    pts/0        2026-03-06 10:30 (192.168.1.5)
 #   bob      tty1         2026-03-06 09:15
 # Returns vec of session info pointers.
-fn pam_parse_who_output(output) {
+fn pam_parse_who_output(output): i64 {
     var sessions = vec_new();
     var lines = str_split(output, 10);  # 10 = '\n'
     var idx = 0;
@@ -2655,7 +2655,7 @@ fn pam_parse_who_output(output) {
 
 # Split a Str by whitespace (space/tab), skipping consecutive whitespace.
 # Returns vec of Str.
-fn pam_split_whitespace(s) {
+fn pam_split_whitespace(s): i64 {
     var parts = vec_new();
     var slen = str_len(s);
     var sd = str_data(s);
@@ -2769,7 +2769,7 @@ fn pam_list_services() {
 # Read /etc/pam.d/<service_name> and parse it.
 # service_name: C string (e.g. "sshd", "sudo").
 # Returns Result: Ok(vec_of_rules) or Err.
-fn pam_read_service_config(service_name) {
+fn pam_read_service_config(service_name): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "/etc/pam.d/");
     str_builder_add_cstr(sb, service_name);
@@ -2878,7 +2878,7 @@ fn pam_list_sessions() {
 # ================================================================
 
 # Render a single PamRule to a config-file line (Str).
-fn pam_render_rule(rule) {
+fn pam_render_rule(rule): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, pam_rule_type_name(pam_rule_type(rule)));
     str_builder_add_cstr(sb, "\t");
@@ -2899,7 +2899,7 @@ fn pam_render_rule(rule) {
 
 # Render a full PAM config from a vec of PamRule pointers.
 # Returns Str.
-fn pam_render_config(rules) {
+fn pam_render_config(rules): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "# Generated by AGNOS PAM manager\n");
 
@@ -3024,7 +3024,7 @@ fn pam_validate_rule(rule) {
 
 # Lookup a user in /etc/passwd by name.
 # Returns Result: Ok(user_info_ptr) or Err.
-fn pam_get_user_info(username) {
+fn pam_get_user_info(username): i64 {
     var res = pam_validate_username(username);
     if (is_err_result(res) == 1) { return res; }
 
@@ -3123,7 +3123,7 @@ enum JournalPriority {
 # Total: 56 bytes.
 # ================================================================
 
-fn journald_entry_new(timestamp, unit, priority, message, pid) {
+fn journald_entry_new(timestamp, unit, priority, message, pid): i64 {
     var e = alloc(56);
     store64(e, timestamp);
     store64(e + 8, unit);
@@ -3144,7 +3144,7 @@ fn journald_entry_field_keys(e) { return load64(e + 40); }
 fn journald_entry_field_vals(e) { return load64(e + 48); }
 
 # Add an extra field (key-value pair) to a journal entry
-fn journald_entry_add_field(e, key, val) {
+fn journald_entry_add_field(e, key, val): i64 {
     vec_push(load64(e + 40), key);
     vec_push(load64(e + 48), val);
     return 0;
@@ -3159,7 +3159,7 @@ fn journald_entry_add_field(e, key, val) {
 #         +32 grep, +40 lines, +48 boot. Total: 56 bytes.
 # ================================================================
 
-fn journald_filter_new() {
+fn journald_filter_new(): i64 {
     var f = alloc(56);
     store64(f, 0);          # unit
     store64(f + 8, 0);      # since
@@ -3197,7 +3197,7 @@ fn journald_filter_boot(f) { return load64(f + 48); }
 # (unit, grep, since, until, boot) are passed verbatim to journalctl as
 # argv[i]; an attacker controlling those values cannot escape into the
 # shell because there is no shell. See audit F-1 (2026-04-26).
-fn _journald_build_argv(filter) {
+fn _journald_build_argv(filter): i64 {
     var args = vec_new();
     vec_push(args, "/usr/bin/journalctl");
     vec_push(args, "--output=json");
@@ -3258,7 +3258,7 @@ fn _journald_build_argv(filter) {
 
 # Build a sockaddr_un pointing to /run/systemd/journal/socket.
 # Returns pointer to the struct (110 bytes).
-fn journald_make_sockaddr() {
+fn journald_make_sockaddr(): i64 {
     var sa = alloc(SOCKADDR_UN_SIZE);
     memset(sa, 0, SOCKADDR_UN_SIZE);
     store16(sa, AF_UNIX);  # sa_family = AF_UNIX
@@ -3410,7 +3410,7 @@ fn journald_send_fields(message, priority, identifier, fields_keys, fields_vals)
 # Minimal JSON field extraction: find a key in a JSON object string
 # and extract the string value. Returns Str or 0 if not found.
 # This is a lightweight parser — handles flat JSON objects only.
-fn journald_json_get_str(json, key) {
+fn journald_json_get_str(json, key): i64 {
     # Search for "key" in the JSON
     var jlen = str_len(json);
     var jd = str_data(json);
@@ -3562,7 +3562,7 @@ fn journald_query(filter) {
 # unit_name: C string (e.g. "sshd.service").
 # lines: number of entries to return.
 # Returns Result: Ok(vec_of_entry_ptrs) or Err.
-fn journald_get_unit_logs(unit_name, lines) {
+fn journald_get_unit_logs(unit_name, lines): i64 {
     if (unit_name == 0) {
         return err_invalid_argument("unit name cannot be null");
     }
@@ -3584,22 +3584,22 @@ fn journald_get_unit_logs(unit_name, lines) {
 # Send an info-level message to the journal.
 # message: C string.
 # Returns Result: Ok(0) or Err.
-fn journald_info(message) {
+fn journald_info(message): i64 {
     return journald_send(message, JOURNAL_INFO, "agnosys");
 }
 
 # Send a warning-level message to the journal.
-fn journald_warning(message) {
+fn journald_warning(message): i64 {
     return journald_send(message, JOURNAL_WARNING, "agnosys");
 }
 
 # Send an error-level message to the journal.
-fn journald_error(message) {
+fn journald_error(message): i64 {
     return journald_send(message, JOURNAL_ERR, "agnosys");
 }
 
 # Send a debug-level message to the journal.
-fn journald_debug(message) {
+fn journald_debug(message): i64 {
     return journald_send(message, JOURNAL_DEBUG, "agnosys");
 }
 
@@ -3652,13 +3652,13 @@ enum LuksConst {
 # Total: 72 bytes
 # ================================================================
 
-fn luks_config_alloc() {
+fn luks_config_alloc(): i64 {
     var c = alloc(72);
     memset(c, 0, 72);
     return c;
 }
 
-fn luks_config_set_core(c, name, backing_path, size_mb, mount_point, filesystem) {
+fn luks_config_set_core(c, name, backing_path, size_mb, mount_point, filesystem): i64 {
     store64(c, name);
     store64(c + 8, backing_path);
     store64(c + 16, size_mb);
@@ -3667,7 +3667,7 @@ fn luks_config_set_core(c, name, backing_path, size_mb, mount_point, filesystem)
     return c;
 }
 
-fn luks_config_set_crypto(c, cipher_algo, cipher_mode, key_size_bits, pbkdf) {
+fn luks_config_set_crypto(c, cipher_algo, cipher_mode, key_size_bits, pbkdf): i64 {
     store64(c + 40, cipher_algo);
     store64(c + 48, cipher_mode);
     store64(c + 56, key_size_bits);
@@ -3686,7 +3686,7 @@ fn luks_config_key_size_bits(c) { return load64(c + 56); }
 fn luks_config_pbkdf(c) { return load64(c + 64); }
 
 # Create a default config with sensible defaults (AES-XTS, 512-bit, Argon2id)
-fn luks_config_default(name, backing_path, mount_point) {
+fn luks_config_default(name, backing_path, mount_point): i64 {
     var c = luks_config_alloc();
     luks_config_set_core(c, name, backing_path, LUKS_DEFAULT_SIZE_MB, mount_point, LUKS_FS_EXT4);
     luks_config_set_crypto(c, "aes", "xts-plain64", LUKS_DEFAULT_KEY_BITS, LUKS_PBKDF_ARGON2ID);
@@ -3697,21 +3697,21 @@ fn luks_config_default(name, backing_path, mount_point) {
 # Filesystem string helpers
 # ================================================================
 
-fn luks_fs_as_str(fs) {
+fn luks_fs_as_str(fs): i64 {
     if (fs == LUKS_FS_EXT4) { return "ext4"; }
     if (fs == LUKS_FS_XFS) { return "xfs"; }
     if (fs == LUKS_FS_BTRFS) { return "btrfs"; }
     return "ext4";
 }
 
-fn luks_fs_mkfs_cmd(fs) {
+fn luks_fs_mkfs_cmd(fs): i64 {
     if (fs == LUKS_FS_EXT4) { return "/usr/sbin/mkfs.ext4"; }
     if (fs == LUKS_FS_XFS) { return "/usr/sbin/mkfs.xfs"; }
     if (fs == LUKS_FS_BTRFS) { return "/usr/sbin/mkfs.btrfs"; }
     return "/usr/sbin/mkfs.ext4";
 }
 
-fn luks_pbkdf_as_str(pbkdf) {
+fn luks_pbkdf_as_str(pbkdf): i64 {
     if (pbkdf == LUKS_PBKDF_ARGON2ID) { return "argon2id"; }
     if (pbkdf == LUKS_PBKDF_PBKDF2) { return "pbkdf2"; }
     return "argon2id";
@@ -3722,7 +3722,7 @@ fn luks_pbkdf_as_str(pbkdf) {
 # ================================================================
 
 # Check if a byte is alphanumeric, dash, or underscore
-fn luks_is_name_char(ch) {
+fn luks_is_name_char(ch): i64 {
     if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
     if (ch >= 65 && ch <= 90) { return 1; }   # A-Z
     if (ch >= 97 && ch <= 122) { return 1; }  # a-z
@@ -3808,7 +3808,7 @@ fn luks_generate_key(size) {
 }
 
 # Zeroize key material in memory
-fn luks_zeroize_key(key_ptr, size) {
+fn luks_zeroize_key(key_ptr, size): i64 {
     memset(key_ptr, 0, size);
     return 0;
 }
@@ -3824,7 +3824,7 @@ fn luks_zeroize_key(key_ptr, size) {
 # rejected. Reject is case-sensitive vs cryptsetup conventions; the redundant
 # "null" substring rejection catches case variants like "Null" / "NULL".
 
-fn _luks_algo_allowed(algo) {
+fn _luks_algo_allowed(algo): i64 {
     if (streq(algo, "aes") == 1) { return 1; }
     if (streq(algo, "serpent") == 1) { return 1; }
     if (streq(algo, "twofish") == 1) { return 1; }
@@ -3832,7 +3832,7 @@ fn _luks_algo_allowed(algo) {
     return 0;
 }
 
-fn _luks_mode_allowed(mode) {
+fn _luks_mode_allowed(mode): i64 {
     if (streq(mode, "xts-plain64") == 1) { return 1; }
     if (streq(mode, "cbc-plain64") == 1) { return 1; }
     if (streq(mode, "xts-essiv:sha256") == 1) { return 1; }
@@ -3842,7 +3842,7 @@ fn _luks_mode_allowed(mode) {
 
 # Case-insensitive substring search for "null" — catches null, Null, NULL,
 # cipher_null, ciphernull, etc. used in v2.8.1-pre cryptsetup attacks.
-fn _luks_contains_null_ci(s) {
+fn _luks_contains_null_ci(s): i64 {
     var slen = strlen(s);
     if (slen < 4) { return 0; }
     var i = 0;
@@ -3888,7 +3888,7 @@ fn luks_validate_cipher(algo, mode) {
 # Build cipher string for cryptsetup (e.g., "aes-xts-plain64")
 # ================================================================
 
-fn luks_cipher_str(config) {
+fn luks_cipher_str(config): i64 {
     var algo = luks_config_cipher_algo(config);
     var mode = luks_config_cipher_mode(config);
     var alen = strlen(algo);
@@ -4185,7 +4185,7 @@ fn luks_close(name) {
 # device: path to device (e.g., /dev/mapper/name)
 # filesystem: LUKS_FS_EXT4 / LUKS_FS_XFS / LUKS_FS_BTRFS
 # Returns Ok(0) or Err.
-fn luks_mkfs(device, filesystem) {
+fn luks_mkfs(device, filesystem): i64 {
     var cmd = luks_fs_mkfs_cmd(filesystem);
 
     var args = vec_new();
@@ -4206,7 +4206,7 @@ fn luks_mkfs(device, filesystem) {
 # mount_point: path to mount directory
 # filesystem: LUKS_FS_* constant
 # Returns Ok(0) or Err.
-fn luks_mount(device, mount_point, filesystem) {
+fn luks_mount(device, mount_point, filesystem): i64 {
     # Create mount point directory
     var mk_args = vec_new();
     vec_push(mk_args, "/usr/bin/mkdir");
@@ -4228,7 +4228,7 @@ fn luks_mount(device, mount_point, filesystem) {
 
 # Unmount a mount point.
 # Returns Ok(0) or Err.
-fn luks_unmount(mount_point) {
+fn luks_unmount(mount_point): i64 {
     var args = vec_new();
     vec_push(args, "/usr/bin/umount");
     vec_push(args, mount_point);
@@ -4268,13 +4268,13 @@ enum VerityConst {
 # Hash algorithm helpers
 # ================================================================
 
-fn dmverity_hash_algo_str(algo) {
+fn dmverity_hash_algo_str(algo): i64 {
     if (algo == VERITY_SHA256) { return "sha256"; }
     if (algo == VERITY_SHA512) { return "sha512"; }
     return "sha256";
 }
 
-fn dmverity_hash_hex_len(algo) {
+fn dmverity_hash_hex_len(algo): i64 {
     if (algo == VERITY_SHA256) { return VERITY_SHA256_HEX_LEN; }
     if (algo == VERITY_SHA512) { return VERITY_SHA512_HEX_LEN; }
     return VERITY_SHA256_HEX_LEN;
@@ -4288,20 +4288,20 @@ fn dmverity_hash_hex_len(algo) {
 # Total: 64 bytes. salt=0 means no salt.
 # ================================================================
 
-fn dmverity_config_alloc() {
+fn dmverity_config_alloc(): i64 {
     var c = alloc(64);
     memset(c, 0, 64);
     return c;
 }
 
-fn dmverity_config_set_devices(c, name, data_device, hash_device) {
+fn dmverity_config_set_devices(c, name, data_device, hash_device): i64 {
     store64(c, name);
     store64(c + 8, data_device);
     store64(c + 16, hash_device);
     return c;
 }
 
-fn dmverity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
+fn dmverity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt): i64 {
     store64(c + 24, data_bs);
     store64(c + 32, hash_bs);
     store64(c + 40, algo);
@@ -4326,7 +4326,7 @@ fn dmverity_config_salt(c) { return load64(c + 56); }
 # Total: 40 bytes
 # ================================================================
 
-fn dmverity_status_new(name, is_active, is_verified, corruption_detected, root_hash) {
+fn dmverity_status_new(name, is_active, is_verified, corruption_detected, root_hash): i64 {
     var s = alloc(40);
     store64(s, name);
     store64(s + 8, is_active);
@@ -4347,7 +4347,7 @@ fn dmverity_status_root_hash(s) { return load64(s + 32); }
 # ================================================================
 
 # Check if a byte is a valid hex character
-fn dmverity_is_hex_char(ch) {
+fn dmverity_is_hex_char(ch): i64 {
     if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
     if (ch >= 65 && ch <= 70) { return 1; }   # A-F
     if (ch >= 97 && ch <= 102) { return 1; }  # a-f
@@ -4368,7 +4368,7 @@ fn dmverity_validate_hex(s, label) {
 }
 
 # Check if a byte is valid for a dm name (alphanum, dash, underscore)
-fn dmverity_is_name_char(ch) {
+fn dmverity_is_name_char(ch): i64 {
     if (ch >= 48 && ch <= 57) { return 1; }
     if (ch >= 65 && ch <= 90) { return 1; }
     if (ch >= 97 && ch <= 122) { return 1; }
@@ -4550,7 +4550,7 @@ fn dmverity_format(data_device, hash_device, algorithm, salt) {
 # Open (activate) a dm-verity volume.
 # Creates a read-only device mapping at /dev/mapper/{name}.
 # Returns Ok(0) or Err.
-fn dmverity_open(config) {
+fn dmverity_open(config): i64 {
     var res = dmverity_config_validate(config);
     if (is_err_result(res) == 1) { return res; }
 
@@ -4576,7 +4576,7 @@ fn dmverity_open(config) {
 # Close (deactivate) a dm-verity volume.
 # name: volume mapping name.
 # Returns Ok(0) or Err.
-fn dmverity_close(name) {
+fn dmverity_close(name): i64 {
     if (strlen(name) == 0) {
         return err_invalid_argument("Verity name cannot be empty");
     }
@@ -4704,7 +4704,7 @@ fn dmverity_verify(data_device, hash_device, root_hash) {
 
 # Check if dm-verity is supported on this system.
 # Returns 1 if supported, 0 if not.
-fn dmverity_supported() {
+fn dmverity_supported(): i64 {
     # Check for kernel module
     if (sys_access("/sys/module/dm_verity", 0) == 0) { return 1; }
 
@@ -4758,7 +4758,7 @@ enum ImaTarget {
 # String representations
 # ================================================================
 
-fn ima_action_str(action) {
+fn ima_action_str(action): i64 {
     if (action == IMA_MEASURE) { return "measure"; }
     if (action == IMA_APPRAISE) { return "appraise"; }
     if (action == IMA_AUDIT) { return "audit"; }
@@ -4768,7 +4768,7 @@ fn ima_action_str(action) {
     return "measure";
 }
 
-fn ima_target_str(target) {
+fn ima_target_str(target): i64 {
     if (target == IMA_FILE_CHECK) { return "FILE_CHECK"; }
     if (target == IMA_BPRM_CHECK) { return "BPRM_CHECK"; }
     if (target == IMA_MMAP_CHECK) { return "MMAP_CHECK"; }
@@ -4786,7 +4786,7 @@ fn ima_target_str(target) {
 # uid/fowner: -1 means not set. fsuuid/obj_type/mask: 0 means not set.
 # ================================================================
 
-fn ima_rule_new(action, target) {
+fn ima_rule_new(action, target): i64 {
     var r = alloc(56);
     store64(r, action);
     store64(r + 8, target);
@@ -4816,7 +4816,7 @@ fn ima_rule_set_mask(r, mask) { store64(r + 48, mask); return r; }
 # ImaPolicyRule validation
 # ================================================================
 
-fn ima_is_hex_char(ch) {
+fn ima_is_hex_char(ch): i64 {
     if (ch >= 48 && ch <= 57) { return 1; }
     if (ch >= 65 && ch <= 70) { return 1; }
     if (ch >= 97 && ch <= 102) { return 1; }
@@ -4952,7 +4952,7 @@ fn ima_rule_to_policy_line(rule) {
 # Total: 24 bytes
 # ================================================================
 
-fn ima_status_new(active, measurement_count, policy_loaded) {
+fn ima_status_new(active, measurement_count, policy_loaded): i64 {
     var s = alloc(24);
     store64(s, active);
     store64(s + 8, measurement_count);
@@ -4971,7 +4971,7 @@ fn ima_status_policy_loaded(s) { return load64(s + 16); }
 # Total: 40 bytes
 # ================================================================
 
-fn ima_measurement_new(pcr, template_hash, template_name, filedata_hash, filename) {
+fn ima_measurement_new(pcr, template_hash, template_name, filedata_hash, filename): i64 {
     var m = alloc(40);
     store64(m, pcr);
     store64(m + 8, template_hash);
@@ -5145,7 +5145,7 @@ fn ima_parse_measurements(content) {
 # Returns Ok(vec_of_measurement_ptrs) or Err.
 # ================================================================
 
-fn ima_read_measurements() {
+fn ima_read_measurements(): i64 {
     var path = "/sys/kernel/security/ima/ascii_runtime_measurements";
     var fd = sys_open(path, O_RDONLY, 0);
     if (fd < 0) {
@@ -5345,7 +5345,7 @@ enum TpmConst {
 # PCR bank helpers
 # ================================================================
 
-fn tpm_bank_str(bank) {
+fn tpm_bank_str(bank): i64 {
     if (bank == TPM_SHA1) { return "sha1"; }
     if (bank == TPM_SHA256) { return "sha256"; }
     if (bank == TPM_SHA384) { return "sha384"; }
@@ -5353,7 +5353,7 @@ fn tpm_bank_str(bank) {
     return "sha256";
 }
 
-fn tpm_bank_hex_len(bank) {
+fn tpm_bank_hex_len(bank): i64 {
     if (bank == TPM_SHA1) { return TPM_SHA1_HEX_LEN; }
     if (bank == TPM_SHA256) { return TPM_SHA256_HEX_LEN; }
     if (bank == TPM_SHA384) { return TPM_SHA384_HEX_LEN; }
@@ -5368,7 +5368,7 @@ fn tpm_bank_hex_len(bank) {
 # Total: 24 bytes
 # ================================================================
 
-fn tpm_pcr_value_new(index, bank, value) {
+fn tpm_pcr_value_new(index, bank, value): i64 {
     var v = alloc(24);
     store64(v, index);
     store64(v + 8, bank);
@@ -5386,7 +5386,7 @@ fn tpm_pcr_value_value(v) { return load64(v + 16); }
 # Total: 16 bytes
 # ================================================================
 
-fn tpm_sealed_new(context_path, pcr_selection) {
+fn tpm_sealed_new(context_path, pcr_selection): i64 {
     var s = alloc(16);
     store64(s, context_path);
     store64(s + 8, pcr_selection);
@@ -5423,7 +5423,7 @@ fn tpm_run_checked(args) {
 # Returns heap-allocated null-terminated string.
 # ================================================================
 
-fn tpm_pcr_selection(bank, indices) {
+fn tpm_pcr_selection(bank, indices): i64 {
     var bank_str = tpm_bank_str(bank);
     var blen = strlen(bank_str);
     var count = vec_len(indices);
@@ -5461,7 +5461,7 @@ fn tpm_pcr_selection(bank, indices) {
 
 # Check if a TPM 2.0 device is available.
 # Returns 1 if available, 0 if not.
-fn tpm_detect() {
+fn tpm_detect(): i64 {
     if (sys_access("/dev/tpmrm0", 0) == 0) { return 1; }
     return sys_access("/dev/tpm0", 0) == 0;
 }
@@ -5592,7 +5592,7 @@ fn tpm_read_pcr(bank, indices) {
 # Returns Ok(0) or Err.
 # ================================================================
 
-fn tpm_extend_pcr(bank, index, hash) {
+fn tpm_extend_pcr(bank, index, hash): i64 {
     if (index > TPM_PCR_MAX) {
         return err_invalid_argument("PCR index out of range (0-23)");
     }
@@ -5739,7 +5739,7 @@ fn tpm_seal(bank, pcr_indices, data_ptr, data_len, output_dir) {
 # Returns Ok(bytes_read) or Err.
 # ================================================================
 
-fn tpm_unseal(sealed, buf, buflen) {
+fn tpm_unseal(sealed, buf, buflen): i64 {
     var ctx = tpm_sealed_context(sealed);
     var pcr_sel = tpm_sealed_pcr_sel(sealed);
 
@@ -5920,7 +5920,7 @@ enum CertPinResult {
 #         backups at +24, backup_count at +32, expires at +40
 # Total: 48 bytes. expires == 0 means no expiry.
 
-fn certpin_entry_new(host, expires) {
+fn certpin_entry_new(host, expires): i64 {
     var e = alloc(48);
     store64(e, host);
     store64(e + 8, 0);   # pins array ptr
@@ -5938,13 +5938,13 @@ fn certpin_entry_backups(e) { return load64(e + 24); }
 fn certpin_entry_backup_count(e) { return load64(e + 32); }
 fn certpin_entry_expires(e) { return load64(e + 40); }
 
-fn certpin_entry_set_pins(e, pins_ptr, count) {
+fn certpin_entry_set_pins(e, pins_ptr, count): i64 {
     store64(e + 8, pins_ptr);
     store64(e + 16, count);
     return 0;
 }
 
-fn certpin_entry_set_backups(e, backups_ptr, count) {
+fn certpin_entry_set_backups(e, backups_ptr, count): i64 {
     store64(e + 24, backups_ptr);
     store64(e + 32, count);
     return 0;
@@ -5954,7 +5954,7 @@ fn certpin_entry_set_backups(e, backups_ptr, count) {
 # Layout: entries at +0, count at +8, enforce at +16
 # Total: 24 bytes.
 
-fn certpin_set_new(enforce) {
+fn certpin_set_new(enforce): i64 {
     var s = alloc(24);
     store64(s, 0);       # entries array ptr
     store64(s + 8, 0);   # entry count
@@ -5966,7 +5966,7 @@ fn certpin_set_entries(s) { return load64(s); }
 fn certpin_set_count(s) { return load64(s + 8); }
 fn certpin_set_enforce(s) { return load64(s + 16); }
 
-fn certpin_set_set_entries(s, entries_ptr, count) {
+fn certpin_set_set_entries(s, entries_ptr, count): i64 {
     store64(s, entries_ptr);
     store64(s + 8, count);
     return 0;
@@ -5979,7 +5979,7 @@ fn certpin_set_set_entries(s, entries_ptr, count) {
 # Validate a base64-encoded SHA-256 pin string.
 # A valid pin is 44 characters of base64 (32 bytes -> 44 chars with padding).
 # Returns 1 if valid, 0 if invalid.
-fn certpin_validate_pin_format(pin) {
+fn certpin_validate_pin_format(pin): i64 {
     var len = strlen(pin);
     # SHA-256 base64: ceil(32/3)*4 = 44 chars
     if (len != 44) { return 0; }
@@ -6007,7 +6007,7 @@ fn certpin_validate_pin_format(pin) {
 
 # Constant-time string comparison to prevent timing side-channels.
 # Returns 1 if equal, 0 otherwise.
-fn certpin_ct_streq(a, b) {
+fn certpin_ct_streq(a, b): i64 {
     var alen = strlen(a);
     var blen = strlen(b);
     if (alen != blen) { return 0; }
@@ -6024,7 +6024,7 @@ fn certpin_ct_streq(a, b) {
 
 # Find the pin entry for a given host in the pin set.
 # Returns entry pointer or 0 if not found.
-fn certpin_find_entry(pin_set, host) {
+fn certpin_find_entry(pin_set, host): i64 {
     var entries = certpin_set_entries(pin_set);
     var count = certpin_set_count(pin_set);
     var i = 0;
@@ -6043,7 +6043,7 @@ fn certpin_find_entry(pin_set, host) {
 # actual_pin: the base64-encoded SPKI SHA-256 hash from the presented cert.
 # current_time: unix timestamp (0 to skip expiry check).
 # Returns a CertPinResult constant.
-fn certpin_verify_pin(host, actual_pin, pin_set, current_time) {
+fn certpin_verify_pin(host, actual_pin, pin_set, current_time): i64 {
     var entry = certpin_find_entry(pin_set, host);
     if (entry == 0) {
         return CERTPIN_NO_PIN_CONFIGURED;
@@ -6195,7 +6195,7 @@ fn certpin_compute_spki_pin(cert_path) {
 # CertInfo struct: { subject, issuer, serial, not_before, not_after, sha256_fp, spki_sha256 }
 # Layout: 7 string pointers, 56 bytes total.
 
-fn certpin_info_new() {
+fn certpin_info_new(): i64 {
     var c = alloc(56);
     memset(c, 0, 56);
     return c;
@@ -6219,7 +6219,7 @@ fn certpin_info_set_spki_sha256(c, v) { store64(c + 48, v); return 0; }
 
 # Check pin expiry against current time.
 # Returns 1 if expired, 0 if not expired or no expiry set.
-fn certpin_check_pin_expiry(entry, current_time) {
+fn certpin_check_pin_expiry(entry, current_time): i64 {
     var expires = certpin_entry_expires(entry);
     if (expires == 0) { return 0; }
     return current_time > expires;
@@ -6299,13 +6299,13 @@ fn secureboot_read_efi_variable(path) {
 }
 
 # Get the payload byte at index (after the 4-byte attributes header).
-fn secureboot_efi_var_payload_byte(data, index) {
+fn secureboot_efi_var_payload_byte(data, index): i64 {
     var buf = load64(data);
     return load8(buf + 4 + index);
 }
 
 # Get total bytes read.
-fn secureboot_efi_var_size(data) {
+fn secureboot_efi_var_size(data): i64 {
     return load64(data + 8);
 }
 
@@ -6391,12 +6391,12 @@ fn secureboot_detect_state() {
 # Helper: check if Secure Boot is enforcing
 # ================================================================
 
-fn secureboot_is_enforcing(state) {
+fn secureboot_is_enforcing(state): i64 {
     return state == SB_ENABLED;
 }
 
 # State to string (returns pointer to static string)
-fn secureboot_state_str(state) {
+fn secureboot_state_str(state): i64 {
     if (state == SB_ENABLED) { return "enabled"; }
     if (state == SB_DISABLED) { return "disabled"; }
     if (state == SB_SETUP_MODE) { return "setup_mode"; }
@@ -6409,7 +6409,7 @@ fn secureboot_state_str(state) {
 # Layout: { subject, issuer, fingerprint, not_before, not_after }
 # 5 fields * 8 = 40 bytes
 
-fn secureboot_enrolled_key_new(subject, issuer, fingerprint, not_before, not_after) {
+fn secureboot_enrolled_key_new(subject, issuer, fingerprint, not_before, not_after): i64 {
     var k = alloc(40);
     store64(k, subject);
     store64(k + 8, issuer);
@@ -6431,7 +6431,7 @@ fn secureboot_key_not_after(k) { return load64(k + 32); }
 
 # Parse mokutil --list-enrolled output into a vec of EnrolledKey structs.
 # Returns vec of key pointers.
-fn secureboot_parse_mokutil_list(output, outlen) {
+fn secureboot_parse_mokutil_list(output, outlen): i64 {
     var keys = vec_new();
     var pos = 0;
 
@@ -6706,7 +6706,7 @@ fn secureboot_sign_module(module_path, private_key, certificate) {
 # Layout: { module_path, has_signature, signer, sig_algorithm }
 # 4 fields * 8 = 32 bytes
 
-fn secureboot_sig_info_new(module_path, has_sig, signer, algo) {
+fn secureboot_sig_info_new(module_path, has_sig, signer, algo): i64 {
     var s = alloc(32);
     store64(s, module_path);
     store64(s + 8, has_sig);
@@ -6787,7 +6787,7 @@ fn secureboot_verify_module(module_path) {
 # Layout: { name, size }
 # 2 fields * 8 = 16 bytes
 
-fn secureboot_efi_var_new(name, size) {
+fn secureboot_efi_var_new(name, size): i64 {
     var v = alloc(16);
     store64(v, name);
     store64(v + 8, size);
@@ -6899,7 +6899,7 @@ enum DeviceSubsystem {
 # Layout: 9 * 8 = 72 bytes
 # prop_keys and prop_vals are arrays of string pointers
 
-fn udev_devinfo_new() {
+fn udev_devinfo_new(): i64 {
     var d = alloc(72);
     memset(d, 0, 72);
     return d;
@@ -6921,7 +6921,7 @@ fn udev_devinfo_set_subsystem(d, v)  { store64(d + 16, v); return 0; }
 fn udev_devinfo_set_devtype(d, v)    { store64(d + 24, v); return 0; }
 fn udev_devinfo_set_driver(d, v)     { store64(d + 32, v); return 0; }
 fn udev_devinfo_set_devnode(d, v)    { store64(d + 40, v); return 0; }
-fn udev_devinfo_set_props(d, keys, vals, count) {
+fn udev_devinfo_set_props(d, keys, vals, count): i64 {
     store64(d + 48, keys);
     store64(d + 56, vals);
     store64(d + 64, count);
@@ -7166,7 +7166,7 @@ fn udev_list_devices(subsystem_filter, result_arr, max_devices) {
 # Get device info for a single device by sysfs path
 # ================================================================
 
-fn udev_get_device_info(syspath) {
+fn udev_get_device_info(syspath): i64 {
     if (syspath == 0) {
         return err_invalid_argument("syspath is null");
     }
@@ -7205,7 +7205,7 @@ fn udev_get_device_info(syspath) {
 # RUN, PROGRAM, IMPORT{program}, IMPORT{builtin}
 
 # Check if a string starts with a given prefix
-fn udev_starts_with(str, prefix) {
+fn udev_starts_with(str, prefix): i64 {
     var slen = strlen(str);
     var plen = strlen(prefix);
     if (slen < plen) { return 0; }
@@ -7244,7 +7244,7 @@ fn udev_validate_rule(action_keys, action_count) {
 }
 
 # Parse a subsystem string into a constant
-fn udev_parse_subsystem(s) {
+fn udev_parse_subsystem(s): i64 {
     if (streq(s, "block") == 1) { return SUBSYS_BLOCK; }
     if (streq(s, "net") == 1) { return SUBSYS_NET; }
     if (streq(s, "input") == 1) { return SUBSYS_INPUT; }
@@ -7380,7 +7380,7 @@ enum DrmVerOff {
 # DrmVersionInfo: { major, minor, patchlevel, name_ptr, date_ptr, desc_ptr }
 # Layout: 48 bytes
 
-fn drm_verinfo_new(major, minor, patch, name, date, desc) {
+fn drm_verinfo_new(major, minor, patch, name, date, desc): i64 {
     var v = alloc(48);
     store64(v, major);
     store64(v + 8, minor);
@@ -7466,7 +7466,7 @@ fn drm_open(path) {
 }
 
 # Close a DRM device fd.
-fn drm_close(fd) {
+fn drm_close(fd): i64 {
     sys_close(fd);
     return 0;
 }
@@ -7597,7 +7597,7 @@ enum FwAction {
 # Layout: { name, agent_ip, host_ip, prefix_len, enable_nat, dns_arr, dns_count }
 # 7 fields * 8 = 56 bytes
 
-fn netns_config_new(name, agent_ip, host_ip, prefix_len, enable_nat) {
+fn netns_config_new(name, agent_ip, host_ip, prefix_len, enable_nat): i64 {
     var c = alloc(56);
     store64(c, name);
     store64(c + 8, agent_ip);
@@ -7615,7 +7615,7 @@ fn netns_config_host_ip(c) { return load64(c + 16); }
 fn netns_config_prefix_len(c) { return load64(c + 24); }
 fn netns_config_enable_nat(c) { return load64(c + 32); }
 
-fn netns_config_set_dns(c, dns_arr, dns_count) {
+fn netns_config_set_dns(c, dns_arr, dns_count): i64 {
     store64(c + 40, dns_arr);
     store64(c + 48, dns_count);
     return 0;
@@ -7628,7 +7628,7 @@ fn netns_config_set_dns(c, dns_arr, dns_count) {
 # Layout: { name, veth_host, veth_agent, netns_path }
 # 4 fields * 8 = 32 bytes
 
-fn netns_handle_new(name, veth_host, veth_agent, netns_path) {
+fn netns_handle_new(name, veth_host, veth_agent, netns_path): i64 {
     var h = alloc(32);
     store64(h, name);
     store64(h + 8, veth_host);
@@ -7649,7 +7649,7 @@ fn netns_handle_netns_path(h) { return load64(h + 24); }
 # Layout: { direction, protocol, port, remote_addr, action, comment }
 # 6 fields * 8 = 48 bytes
 
-fn netns_fw_rule_new(direction, protocol, port, remote_addr, action, comment) {
+fn netns_fw_rule_new(direction, protocol, port, remote_addr, action, comment): i64 {
     var r = alloc(48);
     store64(r, direction);
     store64(r + 8, protocol);
@@ -7674,7 +7674,7 @@ fn netns_fw_rule_comment(r) { return load64(r + 40); }
 # Layout: { default_inbound, default_outbound, rules_arr, rule_count }
 # 4 fields * 8 = 32 bytes
 
-fn netns_fw_policy_new(default_in, default_out) {
+fn netns_fw_policy_new(default_in, default_out): i64 {
     var p = alloc(32);
     store64(p, default_in);
     store64(p + 8, default_out);
@@ -7688,7 +7688,7 @@ fn netns_fw_policy_default_out(p) { return load64(p + 8); }
 fn netns_fw_policy_rules(p) { return load64(p + 16); }
 fn netns_fw_policy_rule_count(p) { return load64(p + 24); }
 
-fn netns_fw_policy_set_rules(p, rules_arr, count) {
+fn netns_fw_policy_set_rules(p, rules_arr, count): i64 {
     store64(p + 16, rules_arr);
     store64(p + 24, count);
     return 0;
@@ -7699,7 +7699,7 @@ fn netns_fw_policy_set_rules(p, rules_arr, count) {
 # ================================================================
 
 # Simple hash function for agent name -> 10.100.x.{1,2}/30
-fn netns_hash_name(name) {
+fn netns_hash_name(name): i64 {
     var h = 5381;
     var i = 0;
     var len = strlen(name);
@@ -7714,7 +7714,7 @@ fn netns_hash_name(name) {
 }
 
 # Generate agent IPs. Returns a struct { host_ip, agent_ip }.
-fn netns_generate_agent_ips(agent_name) {
+fn netns_generate_agent_ips(agent_name): i64 {
     var h = netns_hash_name(agent_name);
     var third = h % 255;
 
@@ -7750,7 +7750,7 @@ fn netns_generate_agent_ips(agent_name) {
 # Create convenience config for an agent
 # ================================================================
 
-fn netns_config_for_agent(name) {
+fn netns_config_for_agent(name): i64 {
     var ips = netns_generate_agent_ips(name);
     var host_ip = load64(ips);
     var agent_ip = load64(ips + 8);
@@ -7785,7 +7785,7 @@ fn netns_validate_config(config) {
 # Truncate veth name to 15 chars (Linux max)
 # ================================================================
 
-fn netns_truncate_veth(base) {
+fn netns_truncate_veth(base): i64 {
     var len = strlen(base);
     if (len <= 15) {
         var out = alloc(len + 1);
@@ -7814,7 +7814,7 @@ fn netns_run_ip(argv) {
 # Build a string by concatenating parts
 # ================================================================
 
-fn netns_concat2(a, b) {
+fn netns_concat2(a, b): i64 {
     var alen = strlen(a);
     var blen = strlen(b);
     var out = alloc(alen + blen + 1);
@@ -7824,7 +7824,7 @@ fn netns_concat2(a, b) {
     return out;
 }
 
-fn netns_concat3(a, b, c) {
+fn netns_concat3(a, b, c): i64 {
     var ab = netns_concat2(a, b);
     return netns_concat2(ab, c);
 }
@@ -7999,7 +7999,7 @@ fn netns_create_agent_netns(config) {
 # Destroy agent network namespace
 # ================================================================
 
-fn netns_destroy_agent_netns(handle) {
+fn netns_destroy_agent_netns(handle): i64 {
     var veth_host = netns_handle_veth_host(handle);
     var ns_name = netns_handle_name(handle);
 
@@ -8026,19 +8026,19 @@ fn netns_destroy_agent_netns(handle) {
 
 # Helper to append a string to a buffer, return new position.
 # Checks bounds against buf_size; if exceeded, returns pos unchanged (truncation).
-fn netns_nft_append(buf, pos, str) {
+fn netns_nft_append(buf, pos, str): i64 {
     var len = strlen(str);
     if (pos + len >= 16384) { return pos; }
     memcpy(buf + pos, str, len);
     return pos + len;
 }
 
-fn netns_nft_action_str(action) {
+fn netns_nft_action_str(action): i64 {
     if (action == FW_ACCEPT) { return "accept"; }
     return "drop";
 }
 
-fn netns_nft_proto_str(proto) {
+fn netns_nft_proto_str(proto): i64 {
     if (proto == PROTO_TCP) { return "tcp"; }
     if (proto == PROTO_UDP) { return "udp"; }
     return 0;
@@ -8046,7 +8046,7 @@ fn netns_nft_proto_str(proto) {
 
 # Render a FirewallPolicy into an nftables ruleset string.
 # Returns a heap-allocated null-terminated string.
-fn netns_render_nftables_ruleset(policy) {
+fn netns_render_nftables_ruleset(policy): i64 {
     var buf_size = 16384;
     var buf = alloc(buf_size);
     var pos = 0;
@@ -8161,7 +8161,7 @@ fn netns_render_nftables_ruleset(policy) {
 # Apply a pre-rendered nftables ruleset inside the namespace.
 # ruleset: null-terminated nftables script string.
 # Returns Result.
-fn netns_apply_nftables_ruleset(handle, ruleset) {
+fn netns_apply_nftables_ruleset(handle, ruleset): i64 {
     var ns_name = netns_handle_name(handle);
 
     # Write ruleset to per-PID temp file
@@ -8248,7 +8248,7 @@ enum BootloaderType {
 # Layout: { id, title, linux_path, initrd_path, options, is_default, version }
 # 7 fields * 8 = 56 bytes
 
-fn bootloader_entry_new() {
+fn bootloader_entry_new(): i64 {
     var e = alloc(56);
     memset(e, 0, 56);
     return e;
@@ -8277,7 +8277,7 @@ fn bootloader_entry_set_version(e, v) { store64(e + 48, v); return 0; }
 # Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr, entry_count }
 # 5 fields * 8 = 40 bytes
 
-fn bootloader_config_new() {
+fn bootloader_config_new(): i64 {
     var c = alloc(40);
     memset(c, 0, 40);
     return c;
@@ -8292,7 +8292,7 @@ fn bootloader_config_entry_count(c) { return load64(c + 32); }
 fn bootloader_config_set_type(c, v) { store64(c, v); return 0; }
 fn bootloader_config_set_timeout(c, v) { store64(c + 8, v); return 0; }
 fn bootloader_config_set_default_id(c, v) { store64(c + 16, v); return 0; }
-fn bootloader_config_set_entries(c, arr, count) {
+fn bootloader_config_set_entries(c, arr, count): i64 {
     store64(c + 24, arr);
     store64(c + 32, count);
     return 0;
@@ -8329,7 +8329,7 @@ fn bootloader_detect() {
 # ================================================================
 
 # Helper: check if line starts with prefix (skipping leading whitespace)
-fn bootloader_line_starts_with(line, linelen, prefix) {
+fn bootloader_line_starts_with(line, linelen, prefix): i64 {
     var plen = strlen(prefix);
     # Skip leading whitespace
     var start = 0;
@@ -8349,7 +8349,7 @@ fn bootloader_line_starts_with(line, linelen, prefix) {
 
 # Extract the value after a key in a line (trim whitespace).
 # Returns heap string pointer.
-fn bootloader_extract_value(line, linelen, key_end_pos) {
+fn bootloader_extract_value(line, linelen, key_end_pos): i64 {
     var start = key_end_pos;
     # Skip whitespace
     while (start < linelen) {
@@ -8367,7 +8367,7 @@ fn bootloader_extract_value(line, linelen, key_end_pos) {
 
 # Parse loader.conf file contents.
 # Returns { timeout, default_id } as a 16-byte struct.
-fn bootloader_parse_loader_conf(text) {
+fn bootloader_parse_loader_conf(text): i64 {
     var result = alloc(16);
     store64(result, 5);  # default timeout: 5 seconds
     store64(result + 8, 0);  # default_id: null
@@ -8556,7 +8556,7 @@ fn bootloader_parse_bootctl_list(text, result_arr, max_entries) {
 # Dangerous command-line tokens that must be rejected.
 # We check for these as substrings (case-insensitive matching via lowercase).
 
-fn bootloader_is_dangerous_token(text, textlen, token) {
+fn bootloader_is_dangerous_token(text, textlen, token): i64 {
     var tlen = strlen(token);
     if (tlen > textlen) { return 0; }
     var i = 0;
@@ -8582,7 +8582,7 @@ var _bootloader_danger_map = 0;
 
 fn bootloader_danger_reset() { _bootloader_danger_map = 0; return 0; }
 
-fn _bootloader_danger_init() {
+fn _bootloader_danger_init(): i64 {
     if (_bootloader_danger_map != 0) { return 0; }
     _bootloader_danger_map = map_new();
     map_set(_bootloader_danger_map, "init=/bin/sh", 1);
@@ -8656,7 +8656,7 @@ fn bootloader_validate_kernel_cmdline(options) {
 }
 
 # Bootloader type to string.
-fn bootloader_type_str(bt) {
+fn bootloader_type_str(bt): i64 {
     if (bt == BOOT_SYSTEMD_BOOT) { return "systemd-boot"; }
     if (bt == BOOT_GRUB2) { return "GRUB2"; }
     return "unknown";
@@ -8838,7 +8838,7 @@ fn update_atomic_copy(src, dst) {
 
 # Parse a version string into { year, month, day }.
 # Returns pointer to 24-byte struct, or 0 on parse failure.
-fn update_parse_version(version) {
+fn update_parse_version(version): i64 {
     if (version == 0) { return 0; }
     var vlen = strlen(version);
     if (vlen == 0) { return 0; }
@@ -8933,7 +8933,7 @@ fn update_validate_version(version) {
 # Compare two CalVer version strings.
 # Returns VER_LESS (-1), VER_EQUAL (0), or VER_GREATER (1).
 # Falls back to byte-by-byte comparison if either string is malformed.
-fn update_compare_versions(a, b) {
+fn update_compare_versions(a, b): i64 {
     var va = update_parse_version(a);
     var vb = update_parse_version(b);
 
@@ -8985,22 +8985,22 @@ fn update_compare_versions(a, b) {
 # Update slot helpers
 # ================================================================
 
-fn update_other_slot(slot) {
+fn update_other_slot(slot): i64 {
     if (slot == SLOT_A) { return SLOT_B; }
     return SLOT_A;
 }
 
-fn update_slot_suffix(slot) {
+fn update_slot_suffix(slot): i64 {
     if (slot == SLOT_A) { return "a"; }
     return "b";
 }
 
-fn update_slot_str(slot) {
+fn update_slot_str(slot): i64 {
     if (slot == SLOT_A) { return "A"; }
     return "B";
 }
 
-fn update_phase_str(phase) {
+fn update_phase_str(phase): i64 {
     if (phase == PHASE_DOWNLOADING) { return "Downloading"; }
     if (phase == PHASE_VERIFYING) { return "Verifying"; }
     if (phase == PHASE_APPLYING) { return "Applying"; }
@@ -9022,7 +9022,7 @@ enum UpdateChannel {
     CHAN_CUSTOM = 4;
 }
 
-fn update_channel_str(channel) {
+fn update_channel_str(channel): i64 {
     if (channel == CHAN_STABLE) { return "stable"; }
     if (channel == CHAN_BETA) { return "beta"; }
     if (channel == CHAN_NIGHTLY) { return "nightly"; }
@@ -9036,7 +9036,7 @@ fn update_channel_str(channel) {
 #            boot_count_since_update }
 # 5 fields * 8 = 40 bytes
 
-fn update_state_new(slot, version) {
+fn update_state_new(slot, version): i64 {
     var s = alloc(40);
     store64(s, slot);
     store64(s + 8, version);
@@ -9064,7 +9064,7 @@ fn update_state_set_boot_count(s, n) { store64(s + 32, n); return 0; }
 #            backup_dir, max_retries, verify_after_apply }
 # 7 fields * 8 = 56 bytes
 
-fn update_config_new() {
+fn update_config_new(): i64 {
     var c = alloc(56);
     store64(c, "https://updates.agnos.org");
     store64(c + 8, "/dev/disk/by-partlabel/rootfs_a");
@@ -9084,7 +9084,7 @@ fn update_config_backup_dir(c) { return load64(c + 32); }
 fn update_config_max_retries(c) { return load64(c + 40); }
 fn update_config_verify(c) { return load64(c + 48); }
 
-fn update_config_device_for_slot(c, slot) {
+fn update_config_device_for_slot(c, slot): i64 {
     if (slot == SLOT_A) { return load64(c + 8); }
     return load64(c + 16);
 }
@@ -9097,7 +9097,7 @@ fn update_config_device_for_slot(c, slot) {
 # Note: sha256_digest verification deferred — requires SHA-256 impl.
 # For now, manifest validation checks structural integrity only.
 
-fn update_manifest_new(version, channel, release_date) {
+fn update_manifest_new(version, channel, release_date): i64 {
     var m = alloc(48);
     store64(m, version);
     store64(m + 8, channel);
@@ -9121,7 +9121,7 @@ fn update_manifest_changelog(m) { return load64(m + 40); }
 # Layout: { path, sha256, size_bytes, delta_from, compressed }
 # 5 fields * 8 = 40 bytes
 
-fn update_file_new(path, sha256, size_bytes) {
+fn update_file_new(path, sha256, size_bytes): i64 {
     var f = alloc(40);
     store64(f, path);
     store64(f + 8, sha256);
@@ -9193,7 +9193,7 @@ fn update_get_current_slot() {
 
 # Save update state to a JSON file.
 # Returns Result: Ok(0) or Err.
-fn update_save_state(state, path) {
+fn update_save_state(state, path): i64 {
     if (state == 0) { return err_invalid_argument("state is null"); }
     if (path == 0) { return err_invalid_argument("path is null"); }
 
@@ -9662,7 +9662,7 @@ fn update_rollback(config) {
 # Mark the current boot as successful.
 # Increments boot counter, clears pending update flag.
 # Returns Result: Ok(0) or Err.
-fn update_mark_boot_successful(config) {
+fn update_mark_boot_successful(config): i64 {
     if (config == 0) { return err_invalid_argument("config is null"); }
 
     var state_file = update_config_state_file(config);
@@ -9682,7 +9682,7 @@ fn update_mark_boot_successful(config) {
 
 # Pure function: returns 1 if boot count exceeds max_attempts
 # and there is a pending update (indicating automatic rollback needed).
-fn update_needs_rollback(state, max_boot_attempts) {
+fn update_needs_rollback(state, max_boot_attempts): i64 {
     if (update_state_pending(state) == 0) { return 0; }
     return update_state_boot_count(state) >= max_boot_attempts;
 }
@@ -9704,7 +9704,7 @@ fn update_needs_rollback(state, max_boot_attempts) {
 # Layout: { device, mountpoint, fstype, options }
 # 4 fields * 8 = 32 bytes
 
-fn fuse_mount_new(device, mountpoint, fstype, options) {
+fn fuse_mount_new(device, mountpoint, fstype, options): i64 {
     var m = alloc(32);
     store64(m, device);
     store64(m + 8, mountpoint);
@@ -9723,7 +9723,7 @@ fn fuse_mount_options(m) { return load64(m + 24); }
 # ================================================================
 
 # Check if a string starts with a prefix.
-fn fuse_starts_with(str, prefix) {
+fn fuse_starts_with(str, prefix): i64 {
     var slen = strlen(str);
     var plen = strlen(prefix);
     if (slen < plen) { return 0; }
@@ -9738,7 +9738,7 @@ fn fuse_starts_with(str, prefix) {
 # Extract a whitespace-delimited field from a line.
 # field_idx: 0-based field index.
 # Returns heap-allocated string or 0.
-fn fuse_extract_field(line, linelen, field_idx) {
+fn fuse_extract_field(line, linelen, field_idx): i64 {
     var pos = 0;
     var field = 0;
 
@@ -9931,7 +9931,7 @@ fn fuse_unmount_lazy(mountpoint) {
 
 # Check whether FUSE is available on this system (/dev/fuse exists).
 # Returns 1 if available, 0 otherwise.
-fn fuse_is_available() {
+fn fuse_is_available(): i64 {
     return sys_access("/dev/fuse", 0) == 0;
 }
 

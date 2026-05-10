@@ -6,7 +6,7 @@ struct Node { val; next; }
 
 var nodes[80];
 
-fn list_build() {
+fn list_build(): i64 {
     # Build 5 nodes: val=1,2,3,4,5
     for (var i = 0; i < 5; i = i + 1) {
         var p: *i64 = &nodes + i * 16;
@@ -20,7 +20,7 @@ fn list_build() {
     return 0;
 }
 
-fn list_sum() {
+fn list_sum(): i64 {
     var total: i64 = 0;
     var p: *i64 = &nodes;
     while (p != 0) {

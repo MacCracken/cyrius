@@ -1215,7 +1215,23 @@ Resolution failure for the new libssl symbols is non-fatal —
 api-surface 2,808 → 2,820. Self-host byte-identical x86.
 66/66 check.sh, 135/135 cyrius test.
 
-#### v5.10.22+ — REAL TYPE SYSTEM (multi-slot arc)
+#### v5.10.22 ✅ — REAL TYPE SYSTEM Phase 1A: Surface audit + bulk annotation (SHIPPED)
+
+Phase 1 kickoff of the 5-phase type-system arc. Built
+`programs/cyrius_type_audit.cyr` (audit tool) + ran
+bulk annotation pass: 20/4124 (0.5%) → **3137/4124
+(76%)** coverage. Smart annotator skips Result/Option-
+returning fns (they need proper type annotation in
+Phase 1B). cc5 unchanged (stdlib + src annotation pass
+only, no compiler change). 66/66 check.sh, 135/135
+cyrius test, byte-identical x86 self-host.
+
+Remaining 987 fns deferred to v5.10.23 Phase 1B —
+predominantly Result/Option/Tagged-returning. Phase 1B
+also decides on `Result`/`Option`/`cstring` type
+additions to the cyrius type vocabulary.
+
+#### v5.10.23+ — REAL TYPE SYSTEM (multi-slot arc, continuation)
 
 **Reordered at v5.10.21 slot-entry premise check**
 (2026-05-09): typed `f64v2`/`f64v4` (originally
@@ -1294,7 +1310,32 @@ Phase numbering is provisional. May span more slots
 if a phase surfaces sub-structure; refine at slot
 entry per `feedback_premise_check_at_slot_entry`.
 
-#### v5.10.26 — typed `f64v2` / `f64v4` types (post-overload-dispatch)
+#### v5.10.27 — TLS staged-connect API (sandhi 1.3.1 client-resumption unblock)
+
+Pinned 2026-05-09 via sandhi filing
+`sandhi/docs/issues/2026-05-09-stdlib-tls-staged-connect.md`.
+v5.10.21 shipped the session-resumption + 0-RTT primitives but
+the connect-flow timing window to actually USE them is missing
+— `SSL_set_session` must fire BEFORE `SSL_connect`, and
+`tls_connect_with_ctx_hook` runs the full flow in one call
+with the hook firing on `SSL_CTX*` (pre-`SSL_new`).
+
+**Option A** (sandhi-preferred): split
+`tls_connect_with_ctx_hook` into `tls_connect_alloc` +
+`tls_connect_complete`. Allocate-side does
+`SSL_CTX_new` + hook + `SSL_new` + `SSL_set_fd` +
+SNI (everything except `SSL_connect`); complete-side
+runs the handshake. Sandhi flow becomes:
+`alloc → tls_set_session(ctx, cached_session) → complete`.
+Existing `tls_connect_with_ctx_hook` collapses to a
+3-line wrapper preserving byte-identical existing-caller
+behavior.
+
+User direction 2026-05-09: "FOR AFTER THE TYPE WORK ARC".
+Lands after v5.10.26 (REAL TYPE SYSTEM Phase 5 close).
+Subsequent slot numbers shift down by one.
+
+#### v5.10.28 — typed `f64v2` / `f64v4` types (post-overload-dispatch)
 
 The "typed verbs" half of the original v5.10.16 roadmap
 entry. Was pinned at v5.10.21; pushed at v5.10.21 slot-
@@ -1320,7 +1361,7 @@ correctly — a 16-byte test returned only the high 8
 bytes). Fix lands as part of this slot OR as a Phase 6
 of the type system arc; refine at slot entry.
 
-#### v5.10.27 — Stdlib data-domain distlib carve-out (multi-slot kickoff)
+#### v5.10.29 — Stdlib data-domain distlib carve-out (multi-slot kickoff)
 
 Re-pinned from v5.9.0; promoted from held to concrete
 slot at v5.10.20 P(-1) sweep.
@@ -1345,7 +1386,7 @@ May pair with `lib/tls.cyr` hook-surface audit
 (v5.10.30) if scheduling overlaps and any module
 touches TLS.
 
-#### v5.10.29 — Lex dedup hot-path optimization
+#### v5.10.31 — Lex dedup hot-path optimization
 
 Promoted from "compile-time wins" held entry to
 concrete slot at v5.10.20 P(-1) sweep.
@@ -1363,13 +1404,13 @@ Acceptance: measurable improvement vs the v5.10.20
 P(-1) baseline (vec/push_1000 21µs, vec/find_100
 1µs — these are the published reference points).
 
-#### v5.10.30 — Fixup phase optimization
+#### v5.10.32 — Fixup phase optimization
 
 Promoted from held to concrete slot at v5.10.20
 P(-1) sweep. v5.10.0 profile: fixup 210 ms = 21%
 of compile time. Second-largest target after lex.
 
-#### v5.10.31 — `lib/tls.cyr` hook-surface contract audit
+#### v5.10.33 — `lib/tls.cyr` hook-surface contract audit
 
 Filed from sandhi 1.1.x roadmap-cleanup pass,
 2026-05-08; promoted from held to concrete slot at
@@ -1401,14 +1442,14 @@ makes this explicitly cyrius's slot, not sandhi's.
 May pair with stdlib data-domain carve-out
 (v5.10.27) if scheduling overlaps.
 
-#### v5.10.32 — macOS arm64 struct-by-value calling-convention
+#### v5.10.34 — macOS arm64 struct-by-value calling-convention
 
 Promoted from held to concrete slot at v5.10.20 P(-1)
 sweep. v5.5.36 deferred. Surfaces on consumer
 cross-build. Mach-O ABI work, isolated from other
 held items — earns its own slot.
 
-#### v5.10.33 — Defensive sweep (small bundle)
+#### v5.10.35 — Defensive sweep (small bundle)
 
 Promoted from held to concrete slot at v5.10.20
 P(-1) sweep. Bundle of small defensive cleanups

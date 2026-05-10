@@ -4,7 +4,7 @@
 
 include "lib/string.cyr"
 
-fn toupper() {
+fn toupper(): i64 {
     var buf[4096];
     var done: i64 = 0;
     while (done == 0) {

@@ -9,7 +9,7 @@
 # Included by lex.cyr at the same textual position the original
 # content lived; self-host byte-identical.
 
-fn ISREF(S, pos, bl) {
+fn ISREF(S, pos, bl): i64 {
     if (pos + 5 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
     if (load8(S + pos + 1) != 114) { return 0; }
@@ -22,7 +22,7 @@ fn ISREF(S, pos, bl) {
 # Emit TOML key-value pairs as var declarations into preprocessor output.
 # Simple: read file, for each line starting with a letter, emit "var LINE;\n".
 
-fn ISINCLUDE(S, pos, bl) {
+fn ISINCLUDE(S, pos, bl): i64 {
     if (pos + 8 >= bl) { return 0; }
     # i=69 n=6E c=63 l=6C u=75 d=64 e=65 space=20
     if (load8(S + pos) != 105) { return 0; }
@@ -39,7 +39,7 @@ fn ISINCLUDE(S, pos, bl) {
 # Preprocess: expand include directives in-place.
 # Uses S+0 as input, S+0x44A000 as expanded output (1MB), copies back to S+0.
 # Check if buffer at pos starts with a directive (returns length or 0)
-fn ISDEFINE(S, pos, bl) {
+fn ISDEFINE(S, pos, bl): i64 {
     # Leading whitespace tolerated (see PP_SKIP_WS). Note that the
     # callers pass `ip + 8` to PP_DEFINE to reach the name — if we
     # skipped whitespace here, that offset would be wrong. ISDEFINE
@@ -63,7 +63,7 @@ fn ISDEFINE(S, pos, bl) {
 # this separate from the plain ISINCLUDE path means `    include = 0;`
 # (a variable named `include` at indentation) stays an expression,
 # not a directive.
-fn PP_SKIP_WS(S, pos, bl) {
+fn PP_SKIP_WS(S, pos, bl): i64 {
     while (pos < bl) {
         var sc = load8(S + pos);
         if (sc != 32) { if (sc != 9) { return pos; } }
@@ -72,7 +72,7 @@ fn PP_SKIP_WS(S, pos, bl) {
     return pos;
 }
 
-fn ISIFDEF(S, pos, bl) {
+fn ISIFDEF(S, pos, bl): i64 {
     if (pos + 7 >= bl) { return 0; }
     # "#ifdef " = 23 69 66 64 65 66 20
     if (load8(S + pos) != 35) { return 0; }
@@ -90,7 +90,7 @@ fn ISIFDEF(S, pos, bl) {
 # (and what every stdlib selector in lib/*.cyr would need to drop a
 # few paired `#ifdef` blocks once `#else` also lands later in this
 # patch).
-fn ISIFNDEF(S, pos, bl) {
+fn ISIFNDEF(S, pos, bl): i64 {
     if (pos + 8 >= bl) { return 0; }
     if (load8(S + pos)     != 35)  { return 0; }
     if (load8(S + pos + 1) != 105) { return 0; }
@@ -106,7 +106,7 @@ fn ISIFNDEF(S, pos, bl) {
 # "#else" = 23 65 6C 73 65 (v5.6.1). No arg. Must not accidentally
 # match "#elseif" or other prefixes — check byte 5 is non-identifier
 # (space, newline, or end of buffer).
-fn ISELSE(S, pos, bl) {
+fn ISELSE(S, pos, bl): i64 {
     if (pos + 5 > bl) { return 0; }
     if (load8(S + pos)     != 35)  { return 0; }
     if (load8(S + pos + 1) != 101) { return 0; }
@@ -124,7 +124,7 @@ fn ISELSE(S, pos, bl) {
 
 # "#elif " = 23 65 6C 69 66 20 (v5.6.1). Arg is a condition expression
 # parsed by the same PP_EVAL_IF used for `#if`.
-fn ISELIF(S, pos, bl) {
+fn ISELIF(S, pos, bl): i64 {
     if (pos + 6 >= bl) { return 0; }
     if (load8(S + pos)     != 35)  { return 0; }
     if (load8(S + pos + 1) != 101) { return 0; }
@@ -136,7 +136,7 @@ fn ISELIF(S, pos, bl) {
 }
 
 # "#if " = 23 69 66 20
-fn ISIF(S, pos, bl) {
+fn ISIF(S, pos, bl): i64 {
     if (pos + 4 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
     if (load8(S + pos + 1) != 105) { return 0; }
@@ -151,7 +151,7 @@ fn ISIF(S, pos, bl) {
 # Supports: ==, !=, <, >, <=, >=
 # Returns 1 (true) or 0 (false)
 # v5.6.42: src_base for source reads (see PP_HASH above).
-fn PP_EVAL_IF(S, src_base, pos) {
+fn PP_EVAL_IF(S, src_base, pos): i64 {
     # Skip whitespace
     while (load8(src_base + pos) == 32) { pos = pos + 1; }
     # Get name value
@@ -194,7 +194,7 @@ fn PP_EVAL_IF(S, src_base, pos) {
     return 0;
 }
 
-fn ISENDIF(S, pos, bl) {
+fn ISENDIF(S, pos, bl): i64 {
     if (pos + 6 >= bl) { return 0; }
     # "#endif" = 23 65 6E 64 69 66
     if (load8(S + pos) != 35) { return 0; }
@@ -211,7 +211,7 @@ fn ISENDIF(S, pos, bl) {
 # through as false (block skipped). `#endplat` is paired with
 # `#ifplat`; semantically identical to `#endif` but visually pairs.
 # "#ifplat " = 23 69 66 70 6C 61 74 20
-fn ISIFPLAT(S, pos, bl) {
+fn ISIFPLAT(S, pos, bl): i64 {
     if (pos + 8 >= bl) { return 0; }
     if (load8(S + pos)     != 35)  { return 0; }
     if (load8(S + pos + 1) != 105) { return 0; }
@@ -225,7 +225,7 @@ fn ISIFPLAT(S, pos, bl) {
 }
 
 # "#endplat" = 23 65 6E 64 70 6C 61 74
-fn ISENDPLAT(S, pos, bl) {
+fn ISENDPLAT(S, pos, bl): i64 {
     if (pos + 8 >= bl) { return 0; }
     if (load8(S + pos)     != 35)  { return 0; }
     if (load8(S + pos + 1) != 101) { return 0; }
@@ -246,7 +246,7 @@ fn ISENDPLAT(S, pos, bl) {
 # >40 already pushed against the wall.
 # S+0x197F00: include count (8 bytes — kept at original location)
 # S+0x1C0000: included filenames[256] (256 * 128 bytes = 32 KB)
-fn PP_ALREADY_INCLUDED(S, fname) {
+fn PP_ALREADY_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
     var i = 0;
     while (i < cnt) {
@@ -266,7 +266,7 @@ fn PP_ALREADY_INCLUDED(S, fname) {
     return 0;
 }
 
-fn PP_MARK_INCLUDED(S, fname) {
+fn PP_MARK_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
     if (cnt >= 256) {
         syscall(SYS_WRITE, 2, "error: include-once table full (256 files) — split compilation unit\n", 67);
@@ -285,7 +285,7 @@ fn PP_MARK_INCLUDED(S, fname) {
 }
 
 # "#derive(Serialize)" = 23 64 65 72 69 76 65 28 53 65 72 69 61 6C 69 7A 65 29
-fn ISDERIVE(S, pos, bl) {
+fn ISDERIVE(S, pos, bl): i64 {
     if (pos + 18 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
     if (load8(S + pos + 1) != 100) { return 0; }
@@ -309,7 +309,7 @@ fn ISDERIVE(S, pos, bl) {
 }
 
 # "#derive(Deserialize)" = 20 bytes
-fn ISDERIVE_DE(S, pos, bl) {
+fn ISDERIVE_DE(S, pos, bl): i64 {
     if (pos + 20 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
     if (load8(S + pos + 1) != 100) { return 0; }
@@ -371,7 +371,7 @@ fn ISDERIVE_DE(S, pos, bl) {
 var _pp_derive_count = 0;
 
 # Helper: write decimal integer to output buffer, return bytes written
-fn PP_EMIT_INT(out, op, val) {
+fn PP_EMIT_INT(out, op, val): i64 {
     var digits[20];
     var dc = 0;
     if (val == 0) { store8(out + op, 48); return 1; }
@@ -391,7 +391,7 @@ fn PP_EMIT_INT(out, op, val) {
 }
 
 # Helper: copy C string bytes to output, return length
-fn PP_EMIT_STR(out, op, cstr) {
+fn PP_EMIT_STR(out, op, cstr): i64 {
     var i = 0;
     while (load8(cstr + i) != 0) {
         store8(out + op + i, load8(cstr + i));
@@ -416,7 +416,7 @@ fn PP_EMIT_STR(out, op, cstr) {
 # writes (S+0x197020 struct names, S+0x197060 field names, S+0x197260 types,
 # S+0x197460 offsets, S+0x197008 op-out, S+0x197010 field count) stay addressed
 # relative to `S` — those regions are well below 0x100000 and always in sync.
-fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op) {
+fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     ip = PP_SKIPLINE(src_base, ip, bl);
     # v5.10.14 — collect stacked `#derive(...)` flags so the
     # entry-point handler can run additional codegen passes.
@@ -555,7 +555,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op) {
 # S+0x197260 (field types) / S+0x197460 (offsets). Caller is
 # responsible for having called PP_PARSE_STRUCT_DEF first to
 # populate that metadata.
-fn PP_DERIVE_SERIALIZE_BODY(S, out, op) {
+fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     var field_count = load64(S + 0x197010);
     var cumul_off = load64(S + 0x197018);
     # Aliases: sname=S+0x197020, names=S+0x197060, types=S+0x197260, offsets=S+0x197460
@@ -902,7 +902,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op) {
 # v5.10.14 — Serialize entry point. Parses struct, emits body,
 # then runs additional codegen for any stacked `#derive(...)`
 # directives detected by PP_PARSE_STRUCT_DEF's `#`-skip loop.
-fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
+fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
     op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
@@ -923,7 +923,7 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op) {
 #       ...
 #       return ptr;
 #   }
-fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op) {
+fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
     # #derive(Deserialize) is a no-op — #derive(Serialize) already emits _from_json.
     # Just skip the directive line + struct definition.
     ip = PP_SKIPLINE(src_base, ip, bl);
@@ -936,7 +936,7 @@ fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op) {
 }
 
 # "#derive(accessors)" = 18 bytes: 35 100 101 114 105 118 101 40 97 99 99 101 115 115 111 114 115 41
-fn ISDERIVE_ACC(S, pos, bl) {
+fn ISDERIVE_ACC(S, pos, bl): i64 {
     if (pos + 18 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
     if (load8(S + pos + 1) != 100) { return 0; }
@@ -968,7 +968,7 @@ fn ISDERIVE_ACC(S, pos, bl) {
 # (struct name) / S+0x197060 (field names) / S+0x197460 (offsets)
 # / S+0x197010 (field count). Caller is responsible for having
 # called PP_PARSE_STRUCT_DEF first to populate that metadata.
-fn PP_DERIVE_ACCESSORS_BODY(S, out, op) {
+fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
     var field_count = load64(S + 0x197010);
     var fi = 0;
     while (fi < field_count) {
@@ -992,7 +992,7 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op) {
     return op;
 }
 
-fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op) {
+fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
     op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
@@ -1021,7 +1021,7 @@ var _pp_macro_count = 0;
 var _pp_macro_text_pos = 0;
 
 # Hash stopping at ( for macro names
-fn PP_HASH_ID(S, pos) {
+fn PP_HASH_ID(S, pos): i64 {
     var h = 0;
     var pi = 0;
     var pc = load8(S + pos + pi);
@@ -1038,7 +1038,7 @@ fn PP_HASH_ID(S, pos) {
 }
 
 # Find macro by name hash at input position, return index or -1
-fn PP_FIND_MACRO(S, ip) {
+fn PP_FIND_MACRO(S, ip): i64 {
     var h = PP_HASH_ID(S, ip);
     var mi = 0;
     while (mi < _pp_macro_count) {
@@ -1051,7 +1051,7 @@ fn PP_FIND_MACRO(S, ip) {
 # Expand macro invocation: NAME(arg1, arg2)
 # Reads args from input at ip, substitutes into body, writes to out+op
 # Returns new ip position (after the closing paren)
-fn PP_EXPAND(S, mi, ip, bl, out, op) {
+fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var def = S + 0x193000 + load64(S + 0x192080 + mi * 8);
     # Skip name in definition to find (
     var dp = 0;
@@ -1162,7 +1162,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op) {
 # that boundary would land in stale heap bytes. Same shape as the
 # v5.6.30 PP_DERIVE_* fix; this closes the rest of the family
 # (PP_DEFINE / PP_DEFINED / PP_GETVAL / PP_EVAL_IF / PP_HASH).
-fn PP_HASH(src_base, pos) {
+fn PP_HASH(src_base, pos): i64 {
     var h = 0;
     var pi = 0;
     var pc = load8(src_base + pos + pi);
@@ -1182,7 +1182,7 @@ fn PP_HASH(src_base, pos) {
 # PP_PREDEFINE to register compiler-builtin defines (e.g. the
 # CYRIUS_ARCH_* marker) from a plain C string instead of a preprocessor
 # source position.
-fn PP_HASH_CSTR(name) {
+fn PP_HASH_CSTR(name): i64 {
     var h = 0;
     var i = 0;
     var c = load8(name + i);
@@ -1201,7 +1201,7 @@ fn PP_HASH_CSTR(name) {
 # compiler's main entry point before PREPROCESS so that lib files can
 # `#ifdef CYRIUS_ARCH_AARCH64` / `#ifdef CYRIUS_ARCH_X86` to gate
 # architecture-specific asm blocks without per-arch lib files.
-fn PP_PREDEFINE(S, name) {
+fn PP_PREDEFINE(S, name): i64 {
     var h = PP_HASH_CSTR(name);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     store64(S + 0x190880 + _pp_flag_count * 8, 0);
@@ -1211,7 +1211,7 @@ fn PP_PREDEFINE(S, name) {
 
 # v5.6.42: src_base separated from S — see PP_HASH above. Source reads
 # come from src_base+pos; flag-table writes stay at S+0x190800/0x190880.
-fn PP_DEFINE(S, src_base, pos) {
+fn PP_DEFINE(S, src_base, pos): i64 {
     var h = PP_HASH(src_base, pos);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     # Check for value: #define NAME VALUE (skip name, find space, parse int)
@@ -1240,7 +1240,7 @@ fn PP_DEFINE(S, src_base, pos) {
 }
 
 # Look up value of a #define'd name (returns 0 if not found)
-fn PP_GETVAL(S, src_base, pos) {
+fn PP_GETVAL(S, src_base, pos): i64 {
     var h = PP_HASH(src_base, pos);
     var di = 0;
     while (di < _pp_flag_count) {
@@ -1252,7 +1252,7 @@ fn PP_GETVAL(S, src_base, pos) {
     return 0;
 }
 
-fn PP_DEFINED(S, src_base, pos) {
+fn PP_DEFINED(S, src_base, pos): i64 {
     var h = PP_HASH(src_base, pos);
     var di = 0;
     while (di < _pp_flag_count) {
@@ -1268,7 +1268,7 @@ fn PP_DEFINED(S, src_base, pos) {
 # 0 (fail-closed: block skipped). Used by the v5.4.19 `#ifplat`
 # directive; the comparison hashes are computed at call time from
 # the same literal strings that compiler bootstrap would register.
-fn PP_IFPLAT_MATCH(S, pos) {
+fn PP_IFPLAT_MATCH(S, pos): i64 {
     # Skip leading whitespace
     while (load8(S + pos) == 32) { pos = pos + 1; }
     var target_hash = 0;
@@ -1299,7 +1299,7 @@ fn PP_IFPLAT_MATCH(S, pos) {
     return 0;
 }
 
-fn PP_SKIPLINE(S, ip, bl) {
+fn PP_SKIPLINE(S, ip, bl): i64 {
     while (ip < bl) {
         if (load8(S + ip) == 10) { return ip + 1; }
         ip = ip + 1;
@@ -1308,7 +1308,7 @@ fn PP_SKIPLINE(S, ip, bl) {
 }
 
 # Builds expanded source into a new buffer, then copies back.
-fn PP_PASS(S) {
+fn PP_PASS(S): i64 {
     var bl = GBL(S);
     var out = S + 0x44A000;
     var op = 0;
@@ -1679,7 +1679,7 @@ fn PP_PASS(S) {
 }
 
 # Separate pass: expand macro invocations after all includes/ifdefs are resolved
-fn PP_MACRO_PASS(S) {
+fn PP_MACRO_PASS(S): i64 {
     if (_pp_macro_count == 0) { return 0; }
     var bl = GBL(S);
     # Copy from 0x44A000 to S+0, save/restore state if large
@@ -1738,7 +1738,7 @@ fn PP_MACRO_PASS(S) {
 #
 # This eliminates the Bug #35 family of copy-back overflows that corrupted
 # compiler state (BL/CP at 0x18C100+) for programs >256KB of expanded source.
-fn PP_IFDEF_PASS(S) {
+fn PP_IFDEF_PASS(S): i64 {
     # Allocate a temp buffer via mmap to hold the source. This avoids copying
     # to S+0 (which overflows into heap state for programs >256KB — Bug #35).
     # The temp buffer is separate memory that the helpers can safely read from.
@@ -2009,7 +2009,7 @@ fn PP_IFDEF_PASS(S) {
 }
 
 # Pre-pass: expand #ref directives in raw input (S+0) into S+0x44A000, copy back
-fn PP_REF_PASS(S) {
+fn PP_REF_PASS(S): i64 {
     var bl = GBL(S);
     var out = S + 0x44A000;
     var op = 0;
@@ -2075,7 +2075,7 @@ fn PP_REF_PASS(S) {
     return 0;
 }
 
-fn PREPROCESS(S) {
+fn PREPROCESS(S): i64 {
     # Pre-pass: expand #ref directives (TOML → var declarations)
     PP_REF_PASS(S);
     PP_PASS(S);

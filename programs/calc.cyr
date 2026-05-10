@@ -2,14 +2,14 @@
 # Exercises: &&, elif, load8, print_num, parsing
 # Usage: echo "10 + 32" | ./calc
 
-fn skip_ws(buf, pos, len) {
+fn skip_ws(buf, pos, len): i64 {
     while (pos < len && load8(buf + pos) == 32) {
         pos = pos + 1;
     }
     return pos;
 }
 
-fn parse_int(buf, pos, len) {
+fn parse_int(buf, pos, len): i64 {
     var val: i64 = 0;
     while (pos < len && load8(buf + pos) >= 48 && load8(buf + pos) <= 57) {
         val = val * 10 + (load8(buf + pos) - 48);
@@ -20,7 +20,7 @@ fn parse_int(buf, pos, len) {
     return val;
 }
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var pbuf[24];
     var i: i64 = 23;
     var neg: i64 = 0;
@@ -36,7 +36,7 @@ fn print_num(n: i64) {
     return 0;
 }
 
-fn calc() {
+fn calc(): i64 {
     var buf[256];
     var n: i64 = syscall(0, 0, &buf, 256);
     if (n <= 0) { return 0; }

@@ -10,14 +10,14 @@ include "lib/args.cyr"
 
 # Pattern built at runtime (preprocessor eats the literal form)
 var _pat[2];
-fn _init_pat() {
+fn _init_pat(): i64 {
     store8(&_pat, 105); store8(&_pat + 1, 110); store8(&_pat + 2, 99);
     store8(&_pat + 3, 108); store8(&_pat + 4, 117); store8(&_pat + 5, 100);
     store8(&_pat + 6, 101); store8(&_pat + 7, 32); store8(&_pat + 8, 34);
     return 0;
 }
 
-fn is_trusted(path) {
+fn is_trusted(path): i64 {
     if (memeq(path, "lib/", 4) == 1) { return 1; }
     if (memeq(path, "src/", 4) == 1) { return 1; }
     if (memeq(path, "programs/", 9) == 1) { return 1; }
@@ -26,7 +26,7 @@ fn is_trusted(path) {
     return 0;
 }
 
-fn scan_includes(fp, inc) {
+fn scan_includes(fp, inc): i64 {
     _init_pat();
     var buf = alloc(16384);
     var n = file_read_all(fp, buf, 16384);
@@ -54,7 +54,7 @@ fn scan_includes(fp, inc) {
     return vec_len(inc);
 }
 
-fn cmd_vet(fp) {
+fn cmd_vet(fp): i64 {
     println("=== cyrc vet ===");
     syscall(1, 1, "scanning: ", 10);
     syscall(1, 1, fp, strlen(fp));
@@ -90,7 +90,7 @@ fn cmd_vet(fp) {
     return 0;
 }
 
-fn cmd_deny(fp) {
+fn cmd_deny(fp): i64 {
     println("=== cyrc deny ===");
     var inc = vec_new();
     scan_includes(fp, inc);
@@ -127,7 +127,7 @@ fn cmd_deny(fp) {
     return violations;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     args_init();
     if (argc() < 3) {

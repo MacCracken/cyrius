@@ -2,14 +2,14 @@
 # Exercises: for loops, store8/load8, functions
 # Exit code = count of bytes matching the fill value
 
-fn mset(dst, val, len) {
+fn mset(dst, val, len): i64 {
     for (var i = 0; i < len; i = i + 1) {
         store8(dst + i, val);
     }
     return 0;
 }
 
-fn mcount(src, val, len) {
+fn mcount(src, val, len): i64 {
     var count: i64 = 0;
     for (var i = 0; i < len; i = i + 1) {
         if (load8(src + i) == val) { count = count + 1; }

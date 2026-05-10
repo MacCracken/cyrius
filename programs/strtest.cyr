@@ -3,7 +3,7 @@
 
 include "lib/string.cyr"
 
-fn run_tests() {
+fn run_tests(): i64 {
     var pass: i64 = 0;
 
     # memcpy + streq via buffers (not string literals)

@@ -6,7 +6,7 @@
 #   [deps.name] path = "../repo" modules = ["src/foo.cyr"] → copy from sibling
 # All deps land in lib/ (created if needed).
 
-fn _file_size(path) {
+fn _file_size(path): i64 {
     var stat_buf[144];
     var r = syscall(4, path, &stat_buf);
     if (r != 0) { return 0 - 1; }
@@ -20,7 +20,7 @@ fn _file_size(path) {
 # to `{proj}/sigil/dist/sigil.cyr` (wrong) instead of `{sibling}/sigil/...`.
 # Fix: make every symlink target absolute. Absolute paths are unambiguous.
 # Returns src unchanged if already absolute, else allocates an absolute copy.
-fn _abs_path(src) {
+fn _abs_path(src): i64 {
     if (load8(src) == 47) { return src; }
     var cwd[4096];
     # syscall 79 = getcwd(buf, size); returns length incl. nul, or -errno.
@@ -50,7 +50,7 @@ fn _abs_path(src) {
     return out;
 }
 
-fn _dep_copy_file(src, dst) {
+fn _dep_copy_file(src, dst): i64 {
     # Skip if destination exists and same size (already resolved)
     var src_sz = _file_size(src);
     var dst_sz = _file_size(dst);
@@ -116,7 +116,7 @@ fn _dep_copy_file(src, dst) {
     return 0;
 }
 
-fn _dep_find_stdlib_dir() {
+fn _dep_find_stdlib_dir(): i64 {
     # Try installed cyrius stdlib first
     var installed = make_path(_home, "lib");
     if (is_dir(str_from(installed)) == 1) { return installed; }
@@ -160,12 +160,12 @@ fn _dep_find_stdlib_dir() {
 # invocation; reset at every call.
 var _dep_stdlib_seen = 0;
 
-fn _dep_stdlib_seen_init() {
+fn _dep_stdlib_seen_init(): i64 {
     _dep_stdlib_seen = vec_new();
     return 0;
 }
 
-fn _dep_stdlib_seen_has(name) {
+fn _dep_stdlib_seen_has(name): i64 {
     if (_dep_stdlib_seen == 0) { return 0; }
     var nl = strlen(name);
     var i = 0;
@@ -177,7 +177,7 @@ fn _dep_stdlib_seen_has(name) {
     return 0;
 }
 
-fn _dep_stdlib_seen_add(name) {
+fn _dep_stdlib_seen_add(name): i64 {
     var nl = strlen(name);
     var dup = alloc(nl + 1);
     memcpy(dup, name, nl);
@@ -206,7 +206,7 @@ fn _dep_stdlib_seen_add(name) {
 # warnings cascading + binaries running with the
 # wrong arch's syscall numbers. Top-level-only push
 # preserves the dispatcher pattern.
-fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top) {
+fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
     if (_dep_stdlib_seen_has(mod_name) == 1) { return 0; }
     _dep_stdlib_seen_add(mod_name);
 
@@ -307,7 +307,7 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top) {
 
 # Parse a TOML array of strings: ["a", "b", "c"] starting at buf[pos]
 # Returns a vec of cstrings. Advances pos past the closing ].
-fn _parse_toml_str_array(buf, len, pos) {
+fn _parse_toml_str_array(buf, len, pos): i64 {
     var result = vec_new();
     # Skip to [
     while (pos < len && load8(buf + pos) != 91) { pos = pos + 1; }
@@ -333,7 +333,7 @@ fn _parse_toml_str_array(buf, len, pos) {
 }
 
 # v5.7.14: returns 1 if `name` is already in _dep_visited, else 0.
-fn _dep_name_visited(name) {
+fn _dep_name_visited(name): i64 {
     if (_dep_visited == 0) { return 0; }
     var i = 0;
     var nl = strlen(name);
@@ -349,7 +349,7 @@ fn _dep_name_visited(name) {
 
 # v5.7.14: join a manifest-relative `path = "..."` to the manifest's
 # directory. Returns `rel` unchanged if absolute.
-fn _dep_join_path(manifest_dir, rel) {
+fn _dep_join_path(manifest_dir, rel): i64 {
     if (load8(rel) == 47) { return rel; }
     var ml = strlen(manifest_dir);
     var rl = strlen(rel);
@@ -367,7 +367,7 @@ fn _dep_join_path(manifest_dir, rel) {
 # Successfully-resolved deps' names go into _dep_visited (closest-
 # wins de-dup), and their resolved dirs go into _dep_queue for the
 # transitive walk in cmd_deps. Returns errors count for this manifest.
-fn _process_named_deps(buf, n, manifest_dir) {
+fn _process_named_deps(buf, n, manifest_dir): i64 {
     var errors = 0;
     var si = 0;
     while (si < n) {
@@ -636,7 +636,7 @@ fn _process_named_deps(buf, n, manifest_dir) {
     return errors;
 }
 
-fn cmd_deps() {
+fn cmd_deps(): i64 {
     if (_dry_run == 1) {
         println("dry-run: would resolve deps from cyrius.cyml into lib/");
         return 0;
@@ -831,7 +831,7 @@ fn cmd_deps() {
 
 # Auto-resolve deps if manifest has [deps] section.
 # Called before build/run/test to ensure lib/ is populated.
-fn _auto_deps() {
+fn _auto_deps(): i64 {
     var _ad_manifest = "cyrius.cyml";
     if (file_exists(_ad_manifest) == 0) { _ad_manifest = "cyrius.toml"; }
     if (file_exists(_ad_manifest) == 0) { return 0; }
@@ -878,7 +878,7 @@ fn _auto_deps() {
     return dr;
 }
 
-fn cmd_package() {
+fn cmd_package(): i64 {
     # Read manifest if present
     var name = "unknown";
     var ver = _version;
@@ -918,7 +918,7 @@ fn cmd_package() {
 # cwd, preserving subdir structure. `rel_prefix == 0` at the root call;
 # recursion appends "<dirname>" / "<rel_prefix>/<dirname>" as we descend.
 # Returns total file count copied.
-fn _update_walk(src_dir, rel_prefix) {
+fn _update_walk(src_dir, rel_prefix): i64 {
     var copied = 0;
     var entries = dir_list(str_from(src_dir));
     var ei = 0;
@@ -967,7 +967,7 @@ fn _update_walk(src_dir, rel_prefix) {
     return copied;
 }
 
-fn cmd_update() {
+fn cmd_update(): i64 {
     _status("=== cyrius update ===");
     # Find installed stdlib
     var cur = read_file_str(make_path(_home, "current"));
@@ -1051,7 +1051,7 @@ fn cmd_update() {
 #   sha256hex  lib/name.cyr
 # Generated by cyrius deps, verified by cyrius deps --verify
 
-fn _sha256sum_file(path) {
+fn _sha256sum_file(path): i64 {
     # Shell out to sha256sum — available on all Linux
     var cmd_sb = str_builder_new();
     str_builder_add_cstr(cmd_sb, "sha256sum ");
@@ -1086,7 +1086,7 @@ fn _sha256sum_file(path) {
     return hash;
 }
 
-fn cmd_deps_lock() {
+fn cmd_deps_lock(): i64 {
     # Generate cyrius.lock from current lib/ dep files
     var lock_fd = sys_open("cyrius.lock", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (lock_fd < 0) { _err("cannot create cyrius.lock"); return 1; }
@@ -1122,7 +1122,7 @@ fn cmd_deps_lock() {
     return 0;
 }
 
-fn cmd_deps_verify() {
+fn cmd_deps_verify(): i64 {
     var buf = alloc(8192);
     var n = file_read_all("cyrius.lock", buf, 8191);
     if (n <= 0) {

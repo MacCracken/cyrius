@@ -21,7 +21,7 @@ include "src/frontend/parse_ctrl.cyr"
 # a slot. Constants are the standard FIPS-spec 64-bit FNV-1a values
 # (offset basis + prime). Cyrius multiplies wrap on 2's-complement so
 # the natural u64 arithmetic this algorithm assumes works directly.
-fn FNV1A_NOFF(S, noff) {
+fn FNV1A_NOFF(S, noff): i64 {
     var h = 0xcbf29ce484222325;
     var i = 0;
     var c = load8(S + 0x60000 + noff + i);
@@ -39,7 +39,7 @@ fn FNV1A_NOFF(S, noff) {
 # heap gives us free initialization). Called from REGFN after the
 # fn_names entry is written. Load factor 0.5 at 4096-fn cap means
 # avg ~1.5 probes to insert.
-fn _REGFN_HASH(S, noff, fi) {
+fn _REGFN_HASH(S, noff, fi): i64 {
     var h = FNV1A_NOFF(S, noff);
     var slot = h & 8191;
     while (load16(S + 0x10C000 + slot * 2) != 0) {
@@ -50,7 +50,7 @@ fn _REGFN_HASH(S, noff, fi) {
 }
 
 # Register new function, return index
-fn REGFN(S, noff) {
+fn REGFN(S, noff): i64 {
     var fc = GFNC(S);
     if (fc >= 4096) {
         syscall(SYS_WRITE, 2, "error: function table full (", 28);
@@ -71,7 +71,7 @@ fn REGFN(S, noff) {
 # probing; stop on empty slot or content match via STREQ. Fall through
 # to the use-alias linear scan only on hash miss — direct fn-name
 # lookups (the >99% hot path) hit the hash and return immediately.
-fn FINDFN(S, noff) {
+fn FINDFN(S, noff): i64 {
     var h = FNV1A_NOFF(S, noff);
     var slot = h & 8191;
     var probes = 0;
@@ -107,7 +107,7 @@ fn FINDFN(S, noff) {
 # PEEKV). Linear scan over GFCNT(S) entries; the str_data names are
 # NUL-terminated, so we match str_len bytes AND verify the trailing
 # NUL to avoid prefix matches. Returns fn index or -1.
-fn _FINDFN_CSTR(S, str_ptr, str_len) {
+fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
     var fc = GFNC(S);
     var fi = 0;
     while (fi < fc) {
@@ -140,7 +140,7 @@ fn _FINDFN_CSTR(S, str_ptr, str_len) {
 #   aarch64: src/backend/aarch64/emit.cyr
 
 # Find fn local variable by name
-fn FINDLOCAL(S, noff) {
+fn FINDLOCAL(S, noff): i64 {
     var lc = GFLC(S);
     var i = lc - 1;
     # Search backward so inner scope shadows outer
@@ -158,7 +158,7 @@ fn FINDLOCAL(S, noff) {
 
 # Parse return expr ;  (uses PCMPE so return a == b; works)
 # Tail call optimization: return fn(args); → epilogue + jmp fn
-fn PARSE_RETURN(S) {
+fn PARSE_RETURN(S): i64 {
     STI(S, GTI(S) + 1);
     # Check for tail call: return IDENT(args);
     # Pattern: next token is IDENT, followed by LPAREN
@@ -431,7 +431,7 @@ fn PARSE_RETURN(S) {
 # FINDSTRUCT. Returns 0 if Str isn't defined in this program
 # (graceful — type checks just don't fire).
 var _str_sid_cache = 0 - 1;
-fn _STR_SID(S) {
+fn _STR_SID(S): i64 {
     if (_str_sid_cache >= 0) { return _str_sid_cache; }
     if (_str_sid_cache == 0 - 2) { return 0; }
     var npos = GNPOS(S);
@@ -476,7 +476,7 @@ fn _STR_SID(S) {
 # that infrastructure lands.
 var _type_check_env_resolved = 0;
 var _type_check_enabled = 0;
-fn _TYPE_CHECK_ENABLED() {
+fn _TYPE_CHECK_ENABLED(): i64 {
     if (_type_check_env_resolved == 1) { return _type_check_enabled; }
     var v = _read_env("CYRIUS_TYPE_CHECK");
     if (v != 0) { if (load8(v) == 49) { _type_check_enabled = 1; } }
@@ -492,7 +492,7 @@ fn _TYPE_CHECK_ENABLED() {
 # detect a `println(Str-typed)` call site and re-resolve to
 # `println_str`.
 var _println_noff_cache = 0 - 1;
-fn _PRINTLN_NOFF(S) {
+fn _PRINTLN_NOFF(S): i64 {
     if (_println_noff_cache >= 0) { return _println_noff_cache; }
     if (_println_noff_cache == 0 - 2) { return 0 - 1; }
     var npos = GNPOS(S);
@@ -524,7 +524,7 @@ fn _PRINTLN_NOFF(S) {
 }
 
 var _println_str_noff_cache = 0 - 1;
-fn _PRINTLN_STR_NOFF(S) {
+fn _PRINTLN_STR_NOFF(S): i64 {
     if (_println_str_noff_cache >= 0) { return _println_str_noff_cache; }
     if (_println_str_noff_cache == 0 - 2) { return 0 - 1; }
     var npos = GNPOS(S);
@@ -570,7 +570,7 @@ fn _PRINTLN_STR_NOFF(S) {
 #   - `println_int` for the `println(i64)` overload
 # Pattern mirrors `_PRINTLN_NOFF` / `_PRINTLN_STR_NOFF`.
 var _strlen_noff_cache = 0 - 1;
-fn _STRLEN_NOFF(S) {
+fn _STRLEN_NOFF(S): i64 {
     if (_strlen_noff_cache >= 0) { return _strlen_noff_cache; }
     if (_strlen_noff_cache == 0 - 2) { return 0 - 1; }
     var npos = GNPOS(S);
@@ -600,7 +600,7 @@ fn _STRLEN_NOFF(S) {
 }
 
 var _str_len_noff_cache = 0 - 1;
-fn _STR_LEN_NOFF(S) {
+fn _STR_LEN_NOFF(S): i64 {
     if (_str_len_noff_cache >= 0) { return _str_len_noff_cache; }
     if (_str_len_noff_cache == 0 - 2) { return 0 - 1; }
     var npos = GNPOS(S);
@@ -632,7 +632,7 @@ fn _STR_LEN_NOFF(S) {
 }
 
 var _println_int_noff_cache = 0 - 1;
-fn _PRINTLN_INT_NOFF(S) {
+fn _PRINTLN_INT_NOFF(S): i64 {
     if (_println_int_noff_cache >= 0) { return _println_int_noff_cache; }
     if (_println_int_noff_cache == 0 - 2) { return 0 - 1; }
     var npos = GNPOS(S);
@@ -672,7 +672,7 @@ fn _PRINTLN_INT_NOFF(S) {
 }
 
 # Parse fn call args and emit call (as expression)
-fn PARSE_FNCALL(S, noff) {
+fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
     # Check for inline candidate
     var fi = FINDFN(S, noff);
@@ -979,7 +979,7 @@ fn PARSE_FNCALL(S, noff) {
 
 # Parse: impl TraitName for TypeName { fn method(self) { } ... }
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
-fn PARSE_IMPL(S) {
+fn PARSE_IMPL(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
     # Parse trait name (skip for now — just used for documentation)
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -1013,7 +1013,7 @@ fn PARSE_IMPL(S) {
 }
 
 # Skip generic parameters <T, U, ...> if present
-fn SKIP_GENERICS(S) {
+fn SKIP_GENERICS(S): i64 {
     if (PEEKT(S) == 19) {
         STI(S, GTI(S) + 1);  # consume <
         var ggo = 1;
@@ -1030,7 +1030,7 @@ fn SKIP_GENERICS(S) {
 # Dead store elimination: scan codebuf for consecutive stores to the same
 # [rbp-N] offset, NOP out the first store when redundant.
 # Pattern: store [rbp-N] (7) + load_imm (2/5/10) + store [rbp-N] (7) → NOP first store.
-fn DSE_PASS(S, fn_start) {
+fn DSE_PASS(S, fn_start): i64 {
     var dse_cp = GCP(S);
     var dse_i = fn_start;
     while (dse_i + 14 < dse_cp) {
@@ -1072,7 +1072,7 @@ fn DSE_PASS(S, fn_start) {
 }
 
 # Check if a codebuf offset is a jump target (recorded by EPATCH)
-fn IS_JUMP_TARGET(S, off) {
+fn IS_JUMP_TARGET(S, off): i64 {
     var jtc = L64(S + 0x19E000);
     var i = 0;
     while (i < jtc) {
@@ -1082,7 +1082,7 @@ fn IS_JUMP_TARGET(S, off) {
     return 0;
 }
 
-fn PARSE_FN_DEF(S) {
+fn PARSE_FN_DEF(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);

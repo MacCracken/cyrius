@@ -2,7 +2,7 @@
 # Exercises: for loops, bitwise ^, buffered I/O
 # Usage: echo "secret" | ./xor | ./xor  (round-trip)
 
-fn xor_buf(buf, len, key) {
+fn xor_buf(buf, len, key): i64 {
     for (var i = 0; i < len; i = i + 1) {
         var c = load8(buf + i);
         store8(buf + i, c ^ key);

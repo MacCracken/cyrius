@@ -62,7 +62,7 @@ var _cx_pc = 0;
 var _CX_MEM_SIZE = 65536;
 var _cx_code = 0;       # set after loading .cyx file
 
-fn cx_init() {
+fn cx_init(): i64 {
     alloc_init();
     _cx_regs = alloc(256);       # 32 registers × 8
     _cx_mem = alloc(65536);      # 64KB memory
@@ -73,32 +73,32 @@ fn cx_init() {
     return 0;
 }
 
-fn cx_reg_get(r) { return load64(_cx_regs + r * 8); }
-fn cx_reg_set(r, v) { store64(_cx_regs + r * 8, v); return 0; }
+fn cx_reg_get(r): i64 { return load64(_cx_regs + r * 8); }
+fn cx_reg_set(r, v): i64 { store64(_cx_regs + r * 8, v); return 0; }
 
 # Data stack (push/pop for expression temps)
-fn cx_push(v) {
+fn cx_push(v): i64 {
     store64(_cx_dstack + _cx_dsp * 8, v);
     _cx_dsp = _cx_dsp + 1;
     return 0;
 }
-fn cx_pop() {
+fn cx_pop(): i64 {
     _cx_dsp = _cx_dsp - 1;
     return load64(_cx_dstack + _cx_dsp * 8);
 }
 
 # Call stack (call/ret for return addresses)
-fn cx_call_push(v) {
+fn cx_call_push(v): i64 {
     store64(_cx_cstack + _cx_csp * 8, v);
     _cx_csp = _cx_csp + 1;
     return 0;
 }
-fn cx_call_pop() {
+fn cx_call_pop(): i64 {
     _cx_csp = _cx_csp - 1;
     return load64(_cx_cstack + _cx_csp * 8);
 }
 
-fn cx_run(code, code_len) {
+fn cx_run(code, code_len): i64 {
     _cx_pc = 0;
     var running = 1;
     while (running == 1) {

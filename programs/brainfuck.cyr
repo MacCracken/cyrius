@@ -2,7 +2,7 @@
 # Exercises: for loops, while, elif, load8/store8, arrays, nested loops
 # Runs a hardcoded "Hello World" BF program
 
-fn bf_fwd(prog, ip, plen) {
+fn bf_fwd(prog, ip, plen): i64 {
     var nest: i64 = 1;
     ip = ip + 1;
     while (nest > 0) {
@@ -13,7 +13,7 @@ fn bf_fwd(prog, ip, plen) {
     return ip;
 }
 
-fn bf_bak(prog, ip) {
+fn bf_bak(prog, ip): i64 {
     var nest: i64 = 1;
     ip = ip - 1;
     while (nest > 0) {
@@ -24,7 +24,7 @@ fn bf_bak(prog, ip) {
     return ip;
 }
 
-fn bf_run(prog, plen) {
+fn bf_run(prog, plen): i64 {
     var mem[256];
     for (var z = 0; z < 256; z = z + 1) { store8(&mem + z, 0); }
     var dp: i64 = 0;

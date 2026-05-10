@@ -55,27 +55,27 @@ var STDOUT = 1;
 var STDERR = 2;
 
 # Open a file with given flags and mode, return fd
-fn file_open(path, flags, mode) {
+fn file_open(path, flags, mode): i64 {
     return sys_open(path, flags, mode);
 }
 
 # Close a file descriptor
-fn file_close(fd) {
+fn file_close(fd): i64 {
     return sys_close(fd);
 }
 
 # Read up to len bytes from fd into buf
-fn file_read(fd, buf, len) {
+fn file_read(fd, buf, len): i64 {
     return sys_read(fd, buf, len);
 }
 
 # Write len bytes from buf to fd
-fn file_write(fd, buf, len) {
+fn file_write(fd, buf, len): i64 {
     return sys_write(fd, buf, len);
 }
 
 # Read entire file into buffer. Returns bytes read.
-fn file_read_all(path, buf, maxlen) {
+fn file_read_all(path, buf, maxlen): i64 {
     var fd = file_open(path, 0, 0);
     if (fd < 0) { return fd; }
     var total: i64 = 0;
@@ -93,7 +93,7 @@ fn file_read_all(path, buf, maxlen) {
 }
 
 # Write buffer to file. Returns bytes written or error.
-fn file_write_all(path, buf, len) {
+fn file_write_all(path, buf, len): i64 {
     var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (fd < 0) { return fd; }
     var written = file_write(fd, buf, len);
@@ -109,28 +109,28 @@ fn file_write_all(path, buf, len) {
 # translation if a real consumer needs file locking on Mach-O.
 #ifdef CYRIUS_TARGET_LINUX
 # Exclusive file lock (blocking). Use for append-only logs, audit chains.
-fn file_lock(fd) {
+fn file_lock(fd): i64 {
     return syscall(73, fd, LOCK_EX);
 }
 
 # Release file lock.
-fn file_unlock(fd) {
+fn file_unlock(fd): i64 {
     return syscall(73, fd, LOCK_UN);
 }
 
 # Non-blocking exclusive lock. Returns 0 on success, -1 if already locked.
-fn file_trylock(fd) {
+fn file_trylock(fd): i64 {
     return syscall(73, fd, LOCK_EX | LOCK_NB);
 }
 
 # Shared (read) lock. Multiple readers, no writers.
-fn file_lock_shared(fd) {
+fn file_lock_shared(fd): i64 {
     return syscall(73, fd, LOCK_SH);
 }
 
 # Append data to a file with exclusive lock (atomic append).
 # Opens with O_APPEND, locks, writes, unlocks, closes.
-fn file_append_locked(path, buf, len) {
+fn file_append_locked(path, buf, len): i64 {
     var fd = file_open(path, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
     if (fd < 0) { return fd; }
     file_lock(fd);
@@ -142,7 +142,7 @@ fn file_append_locked(path, buf, len) {
 #endif
 
 # Check if file exists (try to open read-only)
-fn file_exists(path) {
+fn file_exists(path): i64 {
     var fd = file_open(path, 0, 0);
     if (fd < 0) { return 0; }
     file_close(fd);
@@ -150,13 +150,13 @@ fn file_exists(path) {
 }
 
 # Write string to stdout
-fn print(msg, len) {
+fn print(msg, len): i64 {
     file_write(STDOUT, msg, len);
     return 0;
 }
 
 # Write string to stderr
-fn eprint(msg, len) {
+fn eprint(msg, len): i64 {
     file_write(STDERR, msg, len);
     return 0;
 }
@@ -178,7 +178,7 @@ fn eprint(msg, len) {
 # Map a negative kernel-style return into the closest IoError
 # variant. `errn` is the POSITIVE errno (the caller passes
 # `0 - sys_open_result`).
-fn _io_errno_to_iorr(errn) {
+fn _io_errno_to_iorr(errn): i64 {
     if (errn == 2)  { return IoNotFound; }
     if (errn == 13) { return IoAccessDenied; }
     if (errn == 9)  { return IoBadFd; }
@@ -253,7 +253,7 @@ fn file_write_all_r(path, buf, len) {
 
 # Read environment variable by name. Returns pointer to value or 0 if not found.
 # Reads from /proc/self/environ (null-separated KEY=VALUE pairs).
-fn getenv(name) {
+fn getenv(name): i64 {
     var buf[8192];
     var fd = file_open("/proc/self/environ", 0, 0);
     if (fd < 0) { return 0; }

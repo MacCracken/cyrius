@@ -4,7 +4,7 @@
 include "lib/string.cyr"
 include "lib/alloc.cyr"
 
-fn run() {
+fn run(): i64 {
     alloc_init();
     var a = alloc(64);
     var b = alloc(128);

@@ -61,22 +61,22 @@ var _last_movca_popr_cp = 0 - 1;
 # Stub so parse.cyr's `_AARCH64_BACKEND == 1` branches can reference
 # aarch64 emit primitives without the x86 build emitting an
 # "undefined function" warning. Dead on x86 at runtime.
-fn EW(S, w) { return 0; }
+fn EW(S, w): i64 { return 0; }
 # v5.9.26 — Phase 2b-aarch64 struct-copy in PARSE_RETURN
 # references _EFP_ADDR_X9 from the aarch64 backend. Stub here for
 # the same dead-on-x86 reason as EW above.
-fn _EFP_ADDR_X9(S, disp) { return 0; }
+fn _EFP_ADDR_X9(S, disp): i64 { return 0; }
 # v5.9.26 — caller-side aarch64 retptr load via X8. Stub on x86
 # (the x86 caller path uses EFLADDR + EPUSHR + ECALLPOPS instead).
-fn EFLADDR_X8(S, lli) { return 0; }
+fn EFLADDR_X8(S, lli): i64 { return 0; }
 # v5.9.39 — Mach-O ARM PIE-safe `&fn_name` / closure-literal emit
 # in parse_expr.cyr's `_AARCH64_BACKEND == 1` branch references
 # the aarch64 ADRP+ADD primitives. Stubs here for the same
 # dead-on-x86 reason as EW / _EFP_ADDR_X9 above.
-fn EADRP(S, reg) { return 0; }
-fn EADD_IMM12(S, reg) { return 0; }
+fn EADRP(S, reg): i64 { return 0; }
+fn EADD_IMM12(S, reg): i64 { return 0; }
 
-fn EB(S, b) {
+fn EB(S, b): i64 {
     var cp = GCP(S);
     if (cp >= 3145728) {
         syscall(SYS_WRITE, 2, "error: codebuf overflow (", 25);
@@ -89,13 +89,13 @@ fn EB(S, b) {
     return 0;
 }
 
-fn E2(S, v) {
+fn E2(S, v): i64 {
     EB(S, v & 0xFF);
     EB(S, v >> 8 & 0xFF);
     return 0;
 }
 
-fn E8(S, v) {
+fn E8(S, v): i64 {
     EB(S, v & 0xFF);
     EB(S, v >> 8 & 0xFF);
     EB(S, v >> 16 & 0xFF);
@@ -109,7 +109,7 @@ fn E8(S, v) {
 
 # emit "mov rax, imm64" — 48 B8 <imm64>
 # cc5: records IR_LOAD_IMM when IR is enabled
-fn EMOVI(S, v) {
+fn EMOVI(S, v): i64 {
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_LOAD_IMM, 0, 0, v); if (_ire == 2) { return 0; } }
     if (v == 0) {
@@ -133,7 +133,7 @@ fn EMOVI(S, v) {
 }
 
 # emit 3-byte instruction from packed value
-fn E3(S, v) {
+fn E3(S, v): i64 {
     EB(S, v & 0xFF);
     EB(S, v >> 8 & 0xFF);
     EB(S, v >> 16 & 0xFF);
@@ -142,9 +142,9 @@ fn E3(S, v) {
 
 # Standard codegen emissions (match cyrc exactly)
 # cc5: all record IR nodes when IR_ENABLED(S)==1
-fn EPUSHR(S) { if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
-fn EPOPC(S) { if (_IR_REC0(S, IR_POP_RCX) == 1) { return 0; } EB(S, 0x59); return 0; }
-fn EPOPR(S) {
+fn EPUSHR(S): i64 { if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
+fn EPOPC(S): i64 { if (_IR_REC0(S, IR_POP_RCX) == 1) { return 0; } EB(S, 0x59); return 0; }
+fn EPOPR(S): i64 {
     if (_IR_REC0(S, IR_POP_RAX) == 1) { return 0; }
     if (GCP(S) == _last_push_cp) {
         # v5.6.9: adjacent push+pop = no-op. Rewind past the push.
@@ -165,8 +165,8 @@ fn EPOPR(S) {
 # Expression spill: identical to push/pop
 var _INLINE_OK = 0;
 var _LOOPVAR_OK = 0;  # loop var r12 caching disabled (caused 2x regression + stack corruption)
-fn ESPILL(S) { if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
-fn EUNSPILL(S) {
+fn ESPILL(S): i64 { if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
+fn EUNSPILL(S): i64 {
     if (_IR_REC0(S, IR_POP_RAX) == 1) { return 0; }
     if (GCP(S) == _last_push_cp) {
         # v5.6.9: adjacent push+pop = no-op. Rewind past the push.
@@ -182,7 +182,7 @@ fn EUNSPILL(S) {
     _flags_reflect_rax = 0;
     return 0;
 }
-fn EMOVCA(S) { if (_IR_REC0(S, IR_MOV_CA) == 1) { return 0; } E3(S, 0xC18948); _last_emovca_cp = GCP(S); return 0; }
+fn EMOVCA(S): i64 { if (_IR_REC0(S, IR_MOV_CA) == 1) { return 0; } E3(S, 0xC18948); _last_emovca_cp = GCP(S); return 0; }
 # v5.7.9: deleted the imm8-form `EADDIMM_X1(S, imm)` that lived
 # here. It was a silent name collision with the imm32-form at
 # line ~1390; the imm32-form (later definition) was winning at
@@ -195,7 +195,7 @@ fn EMOVCA(S) { if (_IR_REC0(S, IR_MOV_CA) == 1) { return 0; } E3(S, 0xC18948); _
 # EMOVCA, rewind 4 bytes (past `48 89 C1 58`) and drop in `59`
 # (pop rcx) — the op that follows then reads the correct operand
 # from rcx. Only safe for commutative ops.
-fn _TRY_COMBINE_SHUTTLE(S) {
+fn _TRY_COMBINE_SHUTTLE(S): i64 {
     if (GCP(S) == _last_movca_popr_cp) {
         SCP(S, GCP(S) - 4);
         EB(S, 0x59);
@@ -203,42 +203,42 @@ fn _TRY_COMBINE_SHUTTLE(S) {
     }
     return 0;
 }
-fn EADDR(S) { if (_IR_REC0(S, IR_ADD) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80148); _flags_reflect_rax = 1; return 0; }
-fn ESUBR(S) { if (_IR_REC0(S, IR_SUB) == 1) { return 0; } E3(S, 0xC82948); _flags_reflect_rax = 1; return 0; }
-fn EIMUL(S) { if (_IR_REC0(S, IR_MUL) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xE9F748); _flags_reflect_rax = 0; return 0; }
+fn EADDR(S): i64 { if (_IR_REC0(S, IR_ADD) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80148); _flags_reflect_rax = 1; return 0; }
+fn ESUBR(S): i64 { if (_IR_REC0(S, IR_SUB) == 1) { return 0; } E3(S, 0xC82948); _flags_reflect_rax = 1; return 0; }
+fn EIMUL(S): i64 { if (_IR_REC0(S, IR_MUL) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xE9F748); _flags_reflect_rax = 0; return 0; }
 # EMULH: high 64 bits of unsigned rcx * rax. MUL rcx → rdx:rax; then rax = rdx.
 # Used by the mulh64(a, b) builtin.
 # v5.6.14: record IR_RAX_CLOBBER so LASE sees the rax overwrite.
-fn EMULH(S) { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xE1F748); E3(S, 0xD08948); return 0; }
-fn ECQO(S) { if (IR_ENABLED(S) == 2) { return 0; } E2(S, 0x9948); return 0; }
+fn EMULH(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xE1F748); E3(S, 0xD08948); return 0; }
+fn ECQO(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E2(S, 0x9948); return 0; }
 # v5.6.14: EIDIV writes quotient to rax → record IR_RAX_CLOBBER.
-fn EIDIV(S) { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xF9F748); return 0; }
-fn EMOVDR(S) { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
+fn EIDIV(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xF9F748); return 0; }
+fn EMOVDR(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
 # v5.6.14: ELODC emits `mov rax, [rcx]` → record IR_RAX_CLOBBER.
-fn ELODC(S) { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0x018B48); _flags_reflect_rax = 0; return 0; }
-fn ESTOC(S) { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0x018948); return 0; }
-fn ECMPR(S) { if (_IR_REC0(S, IR_CMP) == 1) { return 0; } E3(S, 0xC83948); _flags_reflect_rax = 0; return 0; }
-fn ETESTAZ(S) { if (_IR_REC0(S, IR_TEST_AZ) == 1) { return 0; } E3(S, 0xC08548); _flags_reflect_rax = 1; return 0; }
-fn EMOVRDXRAX(S) { if (_IR_REC0(S, IR_MOV_RDX_RAX) == 1) { return 0; } E3(S, 0xC28948); return 0; }
-fn EMOVRA_RDX(S) { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
-fn EMOVRDI(S) { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xC78948); return 0; }
-fn ESYSCALL(S) { if (_IR_REC0(S, IR_SYSCALL) == 1) { return 0; } E2(S, 0x050F); _flags_reflect_rax = 0; return 0; }
-fn ELOAD8(S) { if (_IR_REC0(S, IR_LOAD8) == 1) { return 0; } EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
-fn ELOAD16(S) { if (_IR_REC0(S, IR_LOAD16) == 1) { return 0; } EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
-fn ELOAD32(S) { if (_IR_REC0(S, IR_LOAD32) == 1) { return 0; } EB(S, 0x8B); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
-fn ELOAD64(S) { if (_IR_REC0(S, IR_LOAD64) == 1) { return 0; } E3(S, 0x008B48); _flags_reflect_rax = 0; return 0; }
-fn ESTORE8(S) { if (_IR_REC0(S, IR_STORE8) == 1) { return 0; } E2(S, 0x0188); return 0; }
-fn ESTORE16(S) { if (_IR_REC0(S, IR_STORE16) == 1) { return 0; } EB(S, 0x66); E2(S, 0x0189); return 0; }
-fn ESTORE32(S) { if (_IR_REC0(S, IR_STORE32) == 1) { return 0; } E2(S, 0x0189); return 0; }
-fn ESTORE64(S) { if (_IR_REC0(S, IR_STORE64) == 1) { return 0; } E3(S, 0x018948); return 0; }
-fn EXORAA(S) { if (_IR_REC0(S, IR_XOR_AA) == 1) { return 0; } E3(S, 0xC03148); _flags_reflect_rax = 1; return 0; }
+fn ELODC(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0x018B48); _flags_reflect_rax = 0; return 0; }
+fn ESTOC(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0x018948); return 0; }
+fn ECMPR(S): i64 { if (_IR_REC0(S, IR_CMP) == 1) { return 0; } E3(S, 0xC83948); _flags_reflect_rax = 0; return 0; }
+fn ETESTAZ(S): i64 { if (_IR_REC0(S, IR_TEST_AZ) == 1) { return 0; } E3(S, 0xC08548); _flags_reflect_rax = 1; return 0; }
+fn EMOVRDXRAX(S): i64 { if (_IR_REC0(S, IR_MOV_RDX_RAX) == 1) { return 0; } E3(S, 0xC28948); return 0; }
+fn EMOVRA_RDX(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
+fn EMOVRDI(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xC78948); return 0; }
+fn ESYSCALL(S): i64 { if (_IR_REC0(S, IR_SYSCALL) == 1) { return 0; } E2(S, 0x050F); _flags_reflect_rax = 0; return 0; }
+fn ELOAD8(S): i64 { if (_IR_REC0(S, IR_LOAD8) == 1) { return 0; } EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
+fn ELOAD16(S): i64 { if (_IR_REC0(S, IR_LOAD16) == 1) { return 0; } EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
+fn ELOAD32(S): i64 { if (_IR_REC0(S, IR_LOAD32) == 1) { return 0; } EB(S, 0x8B); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
+fn ELOAD64(S): i64 { if (_IR_REC0(S, IR_LOAD64) == 1) { return 0; } E3(S, 0x008B48); _flags_reflect_rax = 0; return 0; }
+fn ESTORE8(S): i64 { if (_IR_REC0(S, IR_STORE8) == 1) { return 0; } E2(S, 0x0188); return 0; }
+fn ESTORE16(S): i64 { if (_IR_REC0(S, IR_STORE16) == 1) { return 0; } EB(S, 0x66); E2(S, 0x0189); return 0; }
+fn ESTORE32(S): i64 { if (_IR_REC0(S, IR_STORE32) == 1) { return 0; } E2(S, 0x0189); return 0; }
+fn ESTORE64(S): i64 { if (_IR_REC0(S, IR_STORE64) == 1) { return 0; } E3(S, 0x018948); return 0; }
+fn EXORAA(S): i64 { if (_IR_REC0(S, IR_XOR_AA) == 1) { return 0; } E3(S, 0xC03148); _flags_reflect_rax = 1; return 0; }
 # Bitwise
-fn EANDR(S) { if (_IR_REC0(S, IR_AND) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC82148); _flags_reflect_rax = 1; return 0; }
-fn EORR(S) { if (_IR_REC0(S, IR_OR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80948); _flags_reflect_rax = 1; return 0; }
-fn EXORR(S) { if (_IR_REC0(S, IR_XOR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC83148); _flags_reflect_rax = 1; return 0; }
-fn ENOTR(S) { if (_IR_REC0(S, IR_NOT) == 1) { return 0; } E3(S, 0xD0F748); return 0; }
-fn ESHLCL(S) { if (_IR_REC0(S, IR_SHL) == 1) { return 0; } E3(S, 0xE0D348); _flags_reflect_rax = 0; return 0; }
-fn ESHRCL(S) { if (_IR_REC0(S, IR_SHR) == 1) { return 0; } E3(S, 0xE8D348); _flags_reflect_rax = 0; return 0; }
+fn EANDR(S): i64 { if (_IR_REC0(S, IR_AND) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC82148); _flags_reflect_rax = 1; return 0; }
+fn EORR(S): i64 { if (_IR_REC0(S, IR_OR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80948); _flags_reflect_rax = 1; return 0; }
+fn EXORR(S): i64 { if (_IR_REC0(S, IR_XOR) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC83148); _flags_reflect_rax = 1; return 0; }
+fn ENOTR(S): i64 { if (_IR_REC0(S, IR_NOT) == 1) { return 0; } E3(S, 0xD0F748); return 0; }
+fn ESHLCL(S): i64 { if (_IR_REC0(S, IR_SHL) == 1) { return 0; } E3(S, 0xE0D348); _flags_reflect_rax = 0; return 0; }
+fn ESHRCL(S): i64 { if (_IR_REC0(S, IR_SHR) == 1) { return 0; } E3(S, 0xE8D348); _flags_reflect_rax = 0; return 0; }
 # v5.6.7 O2: shift rax by immediate (1..63). Encoding: 48 C1 E0 imm8
 # for shl; 48 C1 E8 imm8 for shr. Used by strength-reduction peephole
 # (x * 2^n → shl rax, n and x / 2^n → shr rax, n for unsigned).
@@ -246,20 +246,20 @@ fn ESHRCL(S) { if (_IR_REC0(S, IR_SHR) == 1) { return 0; } E3(S, 0xE8D348); _fla
 # no-op and doesn't modify flags. Callers only pass n>=1, so the
 # "set flag" path is always safe. Still clear defensively so an
 # accidental n==0 caller doesn't leave a stale 1.
-fn ESHLIMM(S, n) { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE0); EB(S, n & 0x3F); if (n > 0) { _flags_reflect_rax = 1; } return 0; }
+fn ESHLIMM(S, n): i64 { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE0); EB(S, n & 0x3F); if (n > 0) { _flags_reflect_rax = 1; } return 0; }
 # v5.8.56: ESHRIMM removed — sibling of ESHLIMM (heavily used at
 # parse_expr.cyr:1141) that never got a call site. Re-add when a
 # parser path actually needs `shr rax, imm`.
 # Syscall pop helpers
-fn EPOPRDI(S) { EB(S, 0x5F); return 0; }
-fn EPOPRSI(S) { EB(S, 0x5E); return 0; }
-fn EPOPRDX(S) { EB(S, 0x5A); return 0; }
-fn EPOPR10(S) { E2(S, 0x5A41); return 0; }
-fn EPOPR8(S) { E2(S, 0x5841); return 0; }
-fn EPOPR9(S) { E2(S, 0x5941); return 0; }
+fn EPOPRDI(S): i64 { EB(S, 0x5F); return 0; }
+fn EPOPRSI(S): i64 { EB(S, 0x5E); return 0; }
+fn EPOPRDX(S): i64 { EB(S, 0x5A); return 0; }
+fn EPOPR10(S): i64 { E2(S, 0x5A41); return 0; }
+fn EPOPR8(S): i64 { E2(S, 0x5841); return 0; }
+fn EPOPR9(S): i64 { E2(S, 0x5941); return 0; }
 
 # Record fixup: (codebuf_offset=CP, var_index) in fixup table
-fn RECFIX(S, idx) {
+fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
     if (fc >= 262144) {
         syscall(SYS_WRITE, 2, "error: fixup table full (262144)\n", 33);
@@ -278,14 +278,14 @@ fn RECFIX(S, idx) {
 # random bias when mapping an ET_DYN — absolute `mov rax, imm64`
 # baked with a fixed VA can't survive either. Use
 # `lea rax, [rip+disp32]` instead.
-fn _IS_OBJ(S) {
+fn _IS_OBJ(S): i64 {
     var km = L64(S + 0x18FCA0);
     if (km == 3 || km == 2) { return 1; }
     return 0;
 }
 
 # Emit rcx = address of variable (object mode: LEA, else: MOV imm64)
-fn _EVRCX(S, idx) {
+fn _EVRCX(S, idx): i64 {
     if (_IS_OBJ(S) == 1) {
         # LEA rcx, [rip+disp32]: 48 8D 0D <rel32>
         EB(S, 0x48); EB(S, 0x8D); EB(S, 0x0D);
@@ -300,7 +300,7 @@ fn _EVRCX(S, idx) {
 }
 
 # emit var_store: rcx = &var; mov [rcx], rax + record fixup
-fn EVSTORE(S, idx) {
+fn EVSTORE(S, idx): i64 {
     if (_IR_REC1(S, IR_STORE_GLOBAL, idx) == 1) { return 0; }
     _EVRCX(S, idx);
     ESTOC(S);
@@ -308,7 +308,7 @@ fn EVSTORE(S, idx) {
 }
 
 # emit var_load: rcx = &var; mov rax, [rcx] + record fixup
-fn EVLOAD(S, idx) {
+fn EVLOAD(S, idx): i64 {
     if (_IR_REC1(S, IR_LOAD_GLOBAL, idx) == 1) { return 0; }
     _EVRCX(S, idx);
     ELODC(S);
@@ -316,7 +316,7 @@ fn EVLOAD(S, idx) {
 }
 
 # Width-aware var load: rcx = &var; load_width [rcx] → rax
-fn EVLOAD_W(S, idx, width) {
+fn EVLOAD_W(S, idx, width): i64 {
     if (_IR_REC(S, IR_LOAD_GLOBAL, width, idx, 0) == 1) { return 0; }
     _EVRCX(S, idx);
     if (width == 1) { ELOAD8(S); return 0; }
@@ -327,7 +327,7 @@ fn EVLOAD_W(S, idx, width) {
 }
 
 # Width-aware var store: rcx = &var; store_width [rcx] ← rax
-fn EVSTORE_W(S, idx, width) {
+fn EVSTORE_W(S, idx, width): i64 {
     if (_IR_REC(S, IR_STORE_GLOBAL, width, idx, 0) == 1) { return 0; }
     _EVRCX(S, idx);
     if (width == 1) { ESTORE8(S); return 0; }
@@ -338,7 +338,7 @@ fn EVSTORE_W(S, idx, width) {
 }
 
 # Width-aware local load: load_width [rbp-off] → rax
-fn EFLLOAD_W(S, idx, width) {
+fn EFLLOAD_W(S, idx, width): i64 {
     if (_IR_REC(S, IR_LOAD_LOCAL, width, idx, 0) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: #regalloc fns reserve [rbp-8] for the saved rbx,
@@ -369,7 +369,7 @@ fn EFLLOAD_W(S, idx, width) {
 }
 
 # Width-aware local store: rax → store_width [rbp-off]
-fn EFLSTORE_W(S, idx, width) {
+fn EFLSTORE_W(S, idx, width): i64 {
     if (_IR_REC(S, IR_STORE_LOCAL, width, idx, 0) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
@@ -403,7 +403,7 @@ fn EFLSTORE_W(S, idx, width) {
 # by callers). Emits movzx rax/movzx eax/mov eax/mov rax by
 # width. Pulled out of an inline emit block in parse_decl.cyr
 # so the aarch64 + cx backends can sit alongside as peers.
-fn EFIELD_LOAD_W(S, width) {
+fn EFIELD_LOAD_W(S, width): i64 {
     if (width == 1 || width == 2 || width == 4) { _IR_REC0(S, IR_RAW_EMIT); }
     if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); return 0; }   # movzx rax, byte [rcx]
     if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); return 0; }                # movzx eax, word [rcx]
@@ -418,7 +418,7 @@ fn EFIELD_LOAD_W(S, width) {
 # Caller-saves rsi/rdi (Win64 strict-compliance — both are
 # nonvolatile there; SysV is fine without but we save uniformly
 # for emit symmetry).
-fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
+fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     EB(S, 0x56);                                    # push rsi
     EB(S, 0x57);                                    # push rdi
@@ -451,7 +451,7 @@ fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned) {
 }
 
 # emit var addr: rax = &var (object mode: LEA rax,[rip+disp32], else: MOV rax,imm64)
-fn EVADDR(S, idx) {
+fn EVADDR(S, idx): i64 {
     if (_IR_REC1(S, IR_LOAD_ADDR_G, idx) == 1) { return 0; }
     if (_IS_OBJ(S) == 1) {
         # LEA rax, [rip+disp32]: 48 8D 05 <rel32>
@@ -467,7 +467,7 @@ fn EVADDR(S, idx) {
 }
 
 # emit string addr: rax = &string (object mode: LEA, else: MOV imm64)
-fn ESADDR(S, soff) {
+fn ESADDR(S, soff): i64 {
     if (_IR_REC1(S, IR_LOAD_STR, soff) == 1) { return 0; }
     var fc = GFCNT(S);
     if (fc >= 262144) {
@@ -494,7 +494,7 @@ fn ESADDR(S, soff) {
 }
 
 # emit syscall pops for N args then syscall
-fn ESCPOPS(S, n) {
+fn ESCPOPS(S, n): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_CALL_POPS, n); }
     if (n >= 7) { EPOPR9(S); }
     if (n >= 6) { EPOPR8(S); }
@@ -525,7 +525,7 @@ var _TARGET_PE = 0;
 var _TARGET_CX = 0;
 
 # emit exit epilogue: mov rdi, rax; mov rax, <exit_nr>; syscall
-fn EEXIT(S) {
+fn EEXIT(S): i64 {
     if (_TARGET_PE == 1) {
         # Win64 ExitProcess call. Exit code is already in rax
         # (expression result). Sequence (13 bytes total):
@@ -556,25 +556,25 @@ fn EEXIT(S) {
 # here. This stub exists purely to resolve the symbol at link time so
 # parse.cyr can be built for both backends. If this ever emits bytes,
 # something routed a Mach-O arm64 build through the x86 backend.
-fn EMACHO_EXIT_ARM(S) {
+fn EMACHO_EXIT_ARM(S): i64 {
     return 0;
 }
 
 # v5.5.14 x86 stubs for EMACHO_WRITE_ARM / EMACHO_READ_ARM. Same story
 # as EMACHO_EXIT_ARM — unreachable on x86 but must link on both backends
 # so shared parse.cyr stays arch-portable.
-fn EMACHO_WRITE_ARM(S) {
+fn EMACHO_WRITE_ARM(S): i64 {
     return 0;
 }
 
-fn EMACHO_READ_ARM(S) {
+fn EMACHO_READ_ARM(S): i64 {
     return 0;
 }
 
 # v5.6.6 x86 stub for EMACHO_CLOCK_ARM. Statically dead on x86 (the
 # _TARGET_MACHO == 2 branch in parse_expr.cyr is arm64-only). Must
 # link to keep shared parse.cyr arch-portable.
-fn EMACHO_CLOCK_ARM(S) {
+fn EMACHO_CLOCK_ARM(S): i64 {
     return 0;
 }
 
@@ -596,7 +596,7 @@ fn EMACHO_CLOCK_ARM(S) {
 # 0x40 bytes keeps RSP 16-aligned at each `call` site (caller's RSP
 # was 8-mod-16 entering this fn because of the implicit return
 # address on the stack — same guarantee EEXIT relies on).
-fn EWRITE_PE(S) {
+fn EWRITE_PE(S): i64 {
     _pe_ensure_stdio(S);
     var gsh_idx = _pe_stdio_getstd_get();
     var wf_idx  = _pe_stdio_writef_get();
@@ -669,7 +669,7 @@ fn EWRITE_PE(S) {
 # Stack on entry (top→bottom): [fd] [sc_nr=3]. Return in rax is
 # the BOOL from CloseHandle (1 = success, 0 = failure) — callers
 # coding to `sys_close` semantics should treat non-zero as success.
-fn ECLOSE_PE(S) {
+fn ECLOSE_PE(S): i64 {
     _pe_ensure_closeh(S);
     var ch_idx = _pe_closeh_get();
 
@@ -691,7 +691,7 @@ fn ECLOSE_PE(S) {
 # entry (top→bottom): [len] [buf] [fd] [sc_nr=0]. Mirrors
 # EWRITE_PE's 0x40 frame layout — the GetStdHandle call clobbers
 # rdx/r8/r9 so we stash `buf` and `len` in the frame first.
-fn EREAD_PE(S) {
+fn EREAD_PE(S): i64 {
     _pe_ensure_readf(S);
     var gsh_idx = _pe_stdio_getstd_get();
     var rf_idx  = _pe_readf_get();
@@ -755,7 +755,7 @@ fn EREAD_PE(S) {
 # in _prof_clock_ns to match the ns convention.
 # Stack on entry (top→bottom): [b] [a] [sc_nr=228] — argc=3.
 # Frame: 0x28 (32 B shadow + 8 B align) at each call site.
-fn EGETTICKS_PE(S) {
+fn EGETTICKS_PE(S): i64 {
     _pe_ensure_gettick(S);
     var gt_idx = _pe_gettick_get();
 
@@ -778,7 +778,7 @@ fn EGETTICKS_PE(S) {
 # [rsp+0x28] + 8 B align pad. Returns the new file position (or -1
 # packed as 0xFFFFFFFF if the API returned 0 for failure — callers
 # should range-check if distinguishing from a valid offset of -1).
-fn ELSEEK_PE(S) {
+fn ELSEEK_PE(S): i64 {
     _pe_ensure_seekfp(S);
     var spe_idx = _pe_seekfp_get();
 
@@ -813,7 +813,7 @@ fn ELSEEK_PE(S) {
 # `prot`/`flags`/`fd`/`offset` from the Linux mmap surface are
 # dropped — v5.5.1 uses fixed RW protection and always reserves +
 # commits. Future patches can derive flProtect from prot if needed.
-fn EMMAP_PE(S) {
+fn EMMAP_PE(S): i64 {
     _pe_ensure_vallo(S);
     var va_idx = _pe_vallo_get();
 
@@ -864,7 +864,7 @@ fn EMMAP_PE(S) {
 #   [rsp+0x030]         hTemplateFile stack arg (8 B, = 0)
 #   [rsp+0x038..0x247]  widened UTF-16 path buffer (528 B ≈ 264 WCHARs)
 #   [rsp+0x248..0x24F]  8 B align pad
-fn EOPEN_PE(S) {
+fn EOPEN_PE(S): i64 {
     _pe_ensure_createf(S);
     var cf_idx = _pe_createf_get();
 
@@ -927,7 +927,7 @@ fn EOPEN_PE(S) {
 
 # emit setCC: cmp rax,rcx; setCC al; movzx rax,al → rax = 0 or 1
 # op: 17=EQ, 18=NEQ, 19=LT, 20=GT, 21=LTE, 22=GTE
-fn ESETCC(S, op) {
+fn ESETCC(S, op): i64 {
     # v5.6.15: IR order must match byte order. Previously IR_SETCC
     # was recorded BEFORE ECMPR, so the IR stream read SETCC→CMP
     # while the actual bytes emitted cmp→setcc. Any IR-walking pass
@@ -956,7 +956,7 @@ fn ESETCC(S, op) {
 # ================================================================
 
 # Emit push rbp; mov rbp, rsp
-fn EFNPRO(S) {
+fn EFNPRO(S): i64 {
     if (_IR_REC0(S, IR_PROLOGUE) == 1) { return 0; }
     EB(S, 0x55);       # push rbp
     E3(S, 0xE58948);   # mov rbp, rsp
@@ -990,7 +990,7 @@ fn EFNPRO(S) {
 #   [23] 48 89 24 24          mov [rsp], rsp   (touches new page top)
 #   [27] EB EE                jmp .probe       (rel8 = -18)
 #   [29] 4C 89 DC             mov rsp, r11     (.done — exact adjust)
-fn ESUBRSP(S) {
+fn ESUBRSP(S): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit0(S, IR_ALLOC_FRAME); }
     if (_TARGET_PE == 1) {
         EB(S, 0xB8);                                   # mov eax, imm32
@@ -1014,14 +1014,14 @@ fn ESUBRSP(S) {
 }
 
 # Emit leave; ret
-fn EFNEPI(S) {
+fn EFNEPI(S): i64 {
     if (_IR_REC0(S, IR_EPILOGUE) == 1) { return 0; }
     E2(S, 0xC3C9);     # leave; ret
     return 0;
 }
 
 # Emit call rel32 to known target
-fn ECALLTO(S, target) {
+fn ECALLTO(S, target): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit(S, IR_CALL_KNOWN, 0, 0, target); }
     EB(S, 0xE8);
     var cp = GCP(S);
@@ -1041,7 +1041,7 @@ fn ECALLTO(S, target) {
 }
 
 # Emit call placeholder, record type-2 fixup
-fn ECALLFIX(S, fnidx) {
+fn ECALLFIX(S, fnidx): i64 {
     if (_IR_REC1(S, IR_CALL, fnidx) == 1) { return 0; }
     EB(S, 0xE8);
     var poff = GCP(S);
@@ -1067,7 +1067,7 @@ fn ECALLFIX(S, fnidx) {
 # queued for v5.5.4). Cyrius-to-cyrius call sites with >=5 args are
 # out of scope for v5.5.3 and will mis-compile under CYRIUS_TARGET_WIN
 # until v5.5.4 lands the shadow-space + stack-arg shuttle.
-fn EPOPARG(S, n) {
+fn EPOPARG(S, n): i64 {
     if (_TARGET_PE == 1) {
         if (n == 0) { EB(S, 0x59); return 0; }     # pop rcx  (arg 0)
         if (n == 1) { EB(S, 0x5A); return 0; }     # pop rdx  (arg 1)
@@ -1089,7 +1089,7 @@ fn EPOPARG(S, n) {
 #   the push order, giving rdi=a1, rsi=a2, etc.
 # For >6: the top (n-6) items are stack args that must stay on the stack.
 #   Pop them to temp (r11), pop 6 register args, push them back.
-fn ECALLPOPS(S, n) {
+fn ECALLPOPS(S, n): i64 {
     if (_IR_REC1(S, IR_CALL_POPS, n) == 1) { return 0; }
     # Win64 path (v5.5.7 strict-compliance): always allocate 32 B
     # shadow home area at cyrius-to-cyrius call sites. v5.5.4
@@ -1259,7 +1259,7 @@ fn ECALLPOPS(S, n) {
 # Win64 (v5.5.7 strict-compliance): every call allocates 32 B
 # shadow; for N>4 we also allocated `(n-4)*8` for stack args
 # (rounded up to 16). ECALLCLEAN adds back the same total.
-fn ECALLCLEAN(S, n) {
+fn ECALLCLEAN(S, n): i64 {
     if (_IR_REC1(S, IR_CALL_CLEAN, n) == 1) { return 0; }
     if (_TARGET_PE == 1) {
         if (n <= 4) {
@@ -1288,7 +1288,7 @@ fn ECALLCLEAN(S, n) {
 }
 
 # Emit tail call: epilogue + jmp (instead of call + epilogue)
-fn ETAILJMP(S, fnidx) {
+fn ETAILJMP(S, fnidx): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_TAIL_JMP, fnidx); }
     # v4.9.1: restore callee-saved registers before tearing down frame.
     # Reverse order of save (parse.cyr prologue).
@@ -1317,14 +1317,14 @@ fn ETAILJMP(S, fnidx) {
 }
 
 # Helper: emit disp32 at current CP
-fn EDISP32(S, disp) {
+fn EDISP32(S, disp): i64 {
     var addr = S + 0x64A000 + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
     SCP(S, GCP(S) + 4);
     return 0;
 }
 
-fn ESTOREREGPARM(S, pidx, disp) {
+fn ESTOREREGPARM(S, pidx, disp): i64 {
     # Callee-side symmetric flip with EPOPARG. Under _TARGET_PE,
     # incoming args 0..3 arrive in rcx/rdx/r8/r9 (Win64 ABI) not
     # rdi/rsi/rdx/rcx (SysV). Spill-to-local encoding changes
@@ -1354,7 +1354,7 @@ fn ESTOREREGPARM(S, pidx, disp) {
     return 0;
 }
 
-fn ESTORESTACKPARM(S, pidx, disp, pc) {
+fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
     # Win64 (v5.5.7 strict-compliance): caller allocated 32 B
     # shadow + stack args at [rsp+32..]. After `call` pushes ret
     # addr and callee's `push rbp`, the first stack arg (a[4])
@@ -1378,7 +1378,7 @@ fn ESTORESTACKPARM(S, pidx, disp, pc) {
     return 0;
 }
 
-fn ESTOREPARM(S, pidx, lidx, pc) {
+fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     if (_IR_REC(S, IR_STORE_PARM, 0, pidx, lidx) == 1) { return 0; }
     var disp = 0 - ((lidx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
@@ -1404,7 +1404,7 @@ fn ESTOREPARM(S, pidx, lidx, pc) {
 }
 
 # Emit fn local load: mov rax, [rbp - offset]
-fn EFLLOAD(S, idx) {
+fn EFLLOAD(S, idx): i64 {
     if (_IR_REC1(S, IR_LOAD_LOCAL, idx) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
@@ -1426,7 +1426,7 @@ fn EFLLOAD(S, idx) {
 }
 
 # Load variable address into rcx (x86: mov rcx, <addr>)
-fn EVADDR_X1(S, idx) {
+fn EVADDR_X1(S, idx): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_LOAD_ADDR_G, idx); }
     E2(S, 0xB948);
     RECFIX(S, idx);
@@ -1439,7 +1439,7 @@ fn EVADDR_X1(S, idx) {
 # this instead of EVADDR_X1 when the struct lives on the stack.
 # Mirrors the EVADDR (EFLADDR's rax variant) offset math: shift past
 # reserved rbx/r12-r15 save slots, then (idx+1)*8 below rbp.
-fn EFLADDR_X1(S, lli) {
+fn EFLADDR_X1(S, lli): i64 {
     var disp = 0 - ((lli + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
@@ -1455,7 +1455,7 @@ fn EFLADDR_X1(S, lli) {
 # caller-side of a struct-returning call to push the retbuf address
 # as the hidden first arg (RDI on SysV, RCX on Win64 — both filled
 # by ECALLPOPS + EPOPARG from the stack).
-fn EFLADDR(S, lli) {
+fn EFLADDR(S, lli): i64 {
     var disp = 0 - ((lli + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
@@ -1468,7 +1468,7 @@ fn EFLADDR(S, lli) {
 }
 
 # Add immediate to rcx (x86: add rcx, imm32)
-fn EADDIMM_X1(S, val) {
+fn EADDIMM_X1(S, val): i64 {
     if (_IR_REC(S, IR_ADD_IMM_X1, 0, 0, val) == 1) { return 0; }
     E3(S, 0xC18148);
     EB(S, val & 0xFF); EB(S, val >> 8 & 0xFF);
@@ -1477,7 +1477,7 @@ fn EADDIMM_X1(S, val) {
 }
 
 # Patch frame size: write imm32 at the sub rsp placeholder
-fn EPATCHFRAME(S, patch, size) {
+fn EPATCHFRAME(S, patch, size): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit(S, IR_PATCH_FRAME, 0, patch, size); }
     var pa = S + 0x64A000 + patch;
     S64(pa, (L64(pa) >> 32 << 32) | (size & 0xFFFFFFFF));
@@ -1485,7 +1485,7 @@ fn EPATCHFRAME(S, patch, size) {
 }
 
 # Emit fn local store: mov [rbp - offset], rax
-fn EFLSTORE(S, idx) {
+fn EFLSTORE(S, idx): i64 {
     if (_IR_REC1(S, IR_STORE_LOCAL, idx) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
@@ -1510,16 +1510,16 @@ fn EFLSTORE(S, idx) {
 # TOKEN ACCESS
 # ================================================================
 
-fn TOKTYP(S, i) { return L64(S + 0x368C000 + i * 8); }   # v5.8.46: relocated from 0x94A000 (overlap w/ output_buf, capped at 262144) to fresh 8 MiB region (cap 1048576)
-fn TOKVAL(S, i) { return L64(S + 0x3E8C000 + i * 8); }   # v5.8.46: relocated from 0xD4A000 (capped at 262144) to fresh 8 MiB region (cap 1048576)
-fn PEEKT(S) { return TOKTYP(S, GTI(S)); }
-fn PEEKV(S) { return TOKVAL(S, GTI(S)); }
+fn TOKTYP(S, i): i64 { return L64(S + 0x368C000 + i * 8); }   # v5.8.46: relocated from 0x94A000 (overlap w/ output_buf, capped at 262144) to fresh 8 MiB region (cap 1048576)
+fn TOKVAL(S, i): i64 { return L64(S + 0x3E8C000 + i * 8); }   # v5.8.46: relocated from 0xD4A000 (capped at 262144) to fresh 8 MiB region (cap 1048576)
+fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
+fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
 
 # ================================================================
 # x86_64 INLINE ASM MNEMONICS
 # ================================================================
 
-fn ASM_MNEMONIC(S) {
+fn ASM_MNEMONIC(S): i64 {
     var noff = PEEKV(S);
     var mnem = L64(S + 0x60000 + noff);
     STI(S, GTI(S) + 1);
@@ -1546,7 +1546,7 @@ fn ASM_MNEMONIC(S) {
     return 0;
 }
 
-fn ASM_LGDT(S) {
+fn ASM_LGDT(S): i64 {
     if (PEEKT(S) != 28) { ERR(S); }
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
     if (PEEKT(S) != 29) { ERR(S); }
@@ -1555,7 +1555,7 @@ fn ASM_LGDT(S) {
     return 0;
 }
 
-fn ASM_LIDT(S) {
+fn ASM_LIDT(S): i64 {
     if (PEEKT(S) != 28) { ERR(S); }
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
     if (PEEKT(S) != 29) { ERR(S); }
@@ -1564,12 +1564,12 @@ fn ASM_LIDT(S) {
     return 0;
 }
 
-fn ASM_CR_MODRM(packed) {
+fn ASM_CR_MODRM(packed): i64 {
     var crn = ((packed >> 16) & 0xFF) - 48;
     return 0xC0 | (crn << 3);
 }
 
-fn ASM_MOV_CR(S) {
+fn ASM_MOV_CR(S): i64 {
     var o1 = L64(S + 0x60000 + PEEKV(S));
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 31) { ERR(S); }
@@ -1582,14 +1582,14 @@ fn ASM_MOV_CR(S) {
     return 0;
 }
 
-fn ASM_INT(S) {
+fn ASM_INT(S): i64 {
     if (PEEKT(S) != 1) { ERR(S); }
     EB(S, 0xCD); EB(S, PEEKV(S) & 0xFF);
     STI(S, GTI(S) + 1);
     return 0;
 }
 
-fn ASM_IN(S) {
+fn ASM_IN(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 31) { ERR(S); }
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
@@ -1597,7 +1597,7 @@ fn ASM_IN(S) {
     return 0;
 }
 
-fn ASM_OUT(S) {
+fn ASM_OUT(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 31) { ERR(S); }
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
@@ -1605,13 +1605,13 @@ fn ASM_OUT(S) {
     return 0;
 }
 
-fn ASM_LTR(S) {
+fn ASM_LTR(S): i64 {
     STI(S, GTI(S) + 1);
     EB(S, 0x0F); EB(S, 0x00); EB(S, 0xD8);
     return 0;
 }
 
-fn ASM_INVLPG(S) {
+fn ASM_INVLPG(S): i64 {
     if (PEEKT(S) != 28) { ERR(S); }
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
     if (PEEKT(S) != 29) { ERR(S); }

@@ -2,12 +2,12 @@
 # 64-BIT MEMORY HELPERS
 # ================================================================
 
-fn S64(a, v) {
+fn S64(a, v): i64 {
     store64(a, v);
     return 0;
 }
 
-fn L64(a) {
+fn L64(a): i64 {
     return load64(a);
 }
 
@@ -15,12 +15,12 @@ fn L64(a) {
 # STATE ACCESSORS
 # ================================================================
 
-fn GBL(S) { return L64(S + 0x18C100); }
-fn SBL(S, v) { S64(S + 0x18C100, v); return 0; }
-fn GCP(S) { return L64(S + 0x18C108); }
-fn SCP(S, v) { S64(S + 0x18C108, v); return 0; }
-fn GVCNT(S) { return L64(S + 0x18C110); }
-fn SVCNT(S, v) {
+fn GBL(S): i64 { return L64(S + 0x18C100); }
+fn SBL(S, v): i64 { S64(S + 0x18C100, v); return 0; }
+fn GCP(S): i64 { return L64(S + 0x18C108); }
+fn SCP(S, v): i64 { S64(S + 0x18C108, v); return 0; }
+fn GVCNT(S): i64 { return L64(S + 0x18C110); }
+fn SVCNT(S, v): i64 {
     if (v >= 8192) {
         syscall(SYS_WRITE, 2, "error: variable table full (8192) — too many globals+enums+arrays\n", 66);
         syscall(SYS_EXIT, 1);
@@ -45,10 +45,10 @@ fn SVCNT(S, v) {
 # enum_name[] moved 0x214808 → 0x216008. var_enum_id[8192] stays
 # at 0x204000 (variant-keyed; the 8192 cap is the variant cap,
 # not the enum cap — different bucket).
-fn GVENUMID(S, vi) { return L64(S + 0x204000 + vi * 8); }
-fn SVENUMID(S, vi, v) { S64(S + 0x204000 + vi * 8, v); return 0; }
-fn GENUMC(S) { return L64(S + 0x214000); }
-fn SENUMC(S, v) {
+fn GVENUMID(S, vi): i64 { return L64(S + 0x204000 + vi * 8); }
+fn SVENUMID(S, vi, v): i64 { S64(S + 0x204000 + vi * 8, v); return 0; }
+fn GENUMC(S): i64 { return L64(S + 0x214000); }
+fn SENUMC(S, v): i64 {
     if (v >= 1024) {
         syscall(SYS_WRITE, 2, "error: enum table full (1024) — too many enum decls\n", 53);
         syscall(SYS_EXIT, 1);
@@ -56,55 +56,55 @@ fn SENUMC(S, v) {
     S64(S + 0x214000, v);
     return 0;
 }
-fn GENUMVCNT(S, eid) { return L64(S + 0x214008 + eid * 8); }
-fn SENUMVCNT(S, eid, v) { S64(S + 0x214008 + eid * 8, v); return 0; }
+fn GENUMVCNT(S, eid): i64 { return L64(S + 0x214008 + eid * 8); }
+fn SENUMVCNT(S, eid, v): i64 { S64(S + 0x214008 + eid * 8, v); return 0; }
 # v5.8.22 bite #2 — per-enum name (offset into S+0x60000 ident
 # pool) for diagnostic messages at exhaustive-match check time.
 # Written by PARSE_ENUM_DEF in pass 1 alongside variant tagging.
 # v5.8.24 — moved 0x214808 → 0x216008 to accommodate
 # enum_variant_count[] growing from 256 to 1024 slots.
-fn GENUMNM(S, eid) { return L64(S + 0x216008 + eid * 8); }
-fn SENUMNM(S, eid, v) { S64(S + 0x216008 + eid * 8, v); return 0; }
-fn GTCNT(S) { return L64(S + 0x18C118); }
-fn STCNT(S, v) { S64(S + 0x18C118, v); return 0; }
-fn GTI(S) { return L64(S + 0x18C120); }
-fn STI(S, v) { S64(S + 0x18C120, v); return 0; }
-fn GNPOS(S) { return L64(S + 0x18C128); }
-fn SNPOS(S, v) { S64(S + 0x18C128, v); return 0; }
+fn GENUMNM(S, eid): i64 { return L64(S + 0x216008 + eid * 8); }
+fn SENUMNM(S, eid, v): i64 { S64(S + 0x216008 + eid * 8, v); return 0; }
+fn GTCNT(S): i64 { return L64(S + 0x18C118); }
+fn STCNT(S, v): i64 { S64(S + 0x18C118, v); return 0; }
+fn GTI(S): i64 { return L64(S + 0x18C120); }
+fn STI(S, v): i64 { S64(S + 0x18C120, v); return 0; }
+fn GNPOS(S): i64 { return L64(S + 0x18C128); }
+fn SNPOS(S, v): i64 { S64(S + 0x18C128, v); return 0; }
 
 # Fixup count (moved to make room for 1024-entry fixup table)
-fn GFCNT(S) { return L64(S + 0x18FCA8); }
-fn SFCNT(S, v) { S64(S + 0x18FCA8, v); return 0; }
+fn GFCNT(S): i64 { return L64(S + 0x18FCA8); }
+fn SFCNT(S, v): i64 { S64(S + 0x18FCA8, v); return 0; }
 # Last var index
-fn GLVAR(S) { return L64(S + 0x18FCB0); }
-fn SLVAR(S, v) { S64(S + 0x18FCB0, v); return 0; }
+fn GLVAR(S): i64 { return L64(S + 0x18FCB0); }
+fn SLVAR(S, v): i64 { S64(S + 0x18FCB0, v); return 0; }
 # String pos — moved to 0x18FCC8 in 4.6.2 (was 0x70000) so tok_names
 # can expand to 128 KB (0x60000–0x80000) without overlap.
-fn GSPOS(S) { return L64(S + 0x18FCC8); }
-fn SSPOS(S, v) { S64(S + 0x18FCC8, v); return 0; }
+fn GSPOS(S): i64 { return L64(S + 0x18FCC8); }
+fn SSPOS(S, v): i64 { S64(S + 0x18FCC8, v); return 0; }
 
 # Function state accessors
-fn GFNC(S) { return L64(S + 0x18DA00); }
-fn SFNC(S, v) { S64(S + 0x18DA00, v); return 0; }
-fn GINFN(S) { return L64(S + 0x18DA08); }
-fn SINFN(S, v) { S64(S + 0x18DA08, v); return 0; }
-fn GFLC(S) { return L64(S + 0x18DA10); }
-fn SFLC(S, v) { S64(S + 0x18DA10, v); return 0; }
-fn GRPC(S) { return L64(S + 0x18E220); }
-fn SRPC(S, v) { S64(S + 0x18E220, v); return 0; }
+fn GFNC(S): i64 { return L64(S + 0x18DA00); }
+fn SFNC(S, v): i64 { S64(S + 0x18DA00, v); return 0; }
+fn GINFN(S): i64 { return L64(S + 0x18DA08); }
+fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
+fn GFLC(S): i64 { return L64(S + 0x18DA10); }
+fn SFLC(S, v): i64 { S64(S + 0x18DA10, v); return 0; }
+fn GRPC(S): i64 { return L64(S + 0x18E220); }
+fn SRPC(S, v): i64 { S64(S + 0x18E220, v); return 0; }
 # Inline metadata accessors (GFBE getter removed — unused;
 # SFBE is the only direction the inliner needs.)
-fn GFBS(S, fi) { return L64(S + 0x12A2000 + fi * 8); }
-fn SFBS(S, fi, v) { S64(S + 0x12A2000 + fi * 8, v); return 0; }
-fn SFBE(S, fi, v) { S64(S + 0x12AA000 + fi * 8, v); return 0; }
-fn GFINL(S, fi) { return L64(S + 0x12B2000 + fi * 8); }
-fn SFINL(S, fi, v) { S64(S + 0x12B2000 + fi * 8, v); return 0; }
+fn GFBS(S, fi): i64 { return L64(S + 0x12A2000 + fi * 8); }
+fn SFBS(S, fi, v): i64 { S64(S + 0x12A2000 + fi * 8, v); return 0; }
+fn SFBE(S, fi, v): i64 { S64(S + 0x12AA000 + fi * 8, v); return 0; }
+fn GFINL(S, fi): i64 { return L64(S + 0x12B2000 + fi * 8); }
+fn SFINL(S, fi, v): i64 { S64(S + 0x12B2000 + fi * 8, v); return 0; }
 # Fn code-end offset (v4.4.0 DCE). Set at end of PARSE_FN_DEF to the GCP
 # where the fn body finishes. Paired with fn code starts at 0x1C4000.
 # 0 means "not recorded" (fn was registered but never defined, or emitted
 # via a path that bypasses the recording site).
-fn GFNE(S, fi) { return L64(S + 0x12C2000 + fi * 8); }
-fn SFNE(S, fi, v) { S64(S + 0x12C2000 + fi * 8, v); return 0; }
+fn GFNE(S, fi): i64 { return L64(S + 0x12C2000 + fi * 8); }
+fn SFNE(S, fi, v): i64 { S64(S + 0x12C2000 + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 2b — per-fn struct return ID. 0 = scalar return,
 # sid = returns StructName. Set by PARSE_FN when signature has
@@ -112,27 +112,27 @@ fn SFNE(S, fi, v) { S64(S + 0x12C2000 + fi * 8, v); return 0; }
 # the by-value copy and at call sites to pre-allocate caller-
 # side struct space + pass &space as hidden first arg in
 # RDI (SysV) or RCX (Win64).
-fn GFRS(S, fi) { return L64(S + 0x1EC000 + fi * 8); }
-fn SFRS(S, fi, v) { S64(S + 0x1EC000 + fi * 8, v); return 0; }
+fn GFRS(S, fi): i64 { return L64(S + 0x1EC000 + fi * 8); }
+fn SFRS(S, fi, v): i64 { S64(S + 0x1EC000 + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 3 — per-fn variadic marker. 0 = fixed-arity;
 # 1 = `fn f(a, ...)` (ellipsis terminator on the param list).
-fn GFVA(S, fi) { return L64(S + 0x1F4000 + fi * 8); }
-fn SFVA(S, fi, v) { S64(S + 0x1F4000 + fi * 8, v); return 0; }
+fn GFVA(S, fi): i64 { return L64(S + 0x1F4000 + fi * 8); }
+fn SFVA(S, fi, v): i64 { S64(S + 0x1F4000 + fi * 8, v); return 0; }
 # Per-fn #regalloc flag (v4.8.4-alpha4). 0 = default ABI, 1 = opt-in
 # to callee-saved hot-local allocation. Set when `#regalloc` precedes
 # a `fn` definition; read by codegen in subsequent alphas.
-fn GFRA(S, fi) { return L64(S + 0x1C8000 + fi * 8); }
-fn SFRA(S, fi, v) { S64(S + 0x1C8000 + fi * 8, v); return 0; }
-fn GIDEP(S) { return L64(S + 0x1903E8); }
-fn SIDEP(S, v) { S64(S + 0x1903E8, v); return 0; }
+fn GFRA(S, fi): i64 { return L64(S + 0x1C8000 + fi * 8); }
+fn SFRA(S, fi, v): i64 { S64(S + 0x1C8000 + fi * 8, v); return 0; }
+fn GIDEP(S): i64 { return L64(S + 0x1903E8); }
+fn SIDEP(S, v): i64 { S64(S + 0x1903E8, v); return 0; }
 # (GLVR/SLVR for r12 loop-var cache removed — the feature was
 # reverted in v3.3.12 after a 2x perf regression; the 0x1903F8 slot is now
 # owned by init_offset / elf_out_len (see src/main.cyr heap map).)
 # Extra condition patches (for && chaining)
-fn GXPC(S) { return L64(S + 0x18F888); }
-fn SXPC(S, v) { S64(S + 0x18F888, v); return 0; }
-fn ADDXP(S, p) {
+fn GXPC(S): i64 { return L64(S + 0x18F888); }
+fn SXPC(S, v): i64 { S64(S + 0x18F888, v); return 0; }
+fn ADDXP(S, p): i64 {
     var c = GXPC(S);
     if (c >= 8) {
         syscall(SYS_WRITE, 2, "error: too many && conditions (max 8)\n", 38);
@@ -144,35 +144,35 @@ fn ADDXP(S, p) {
 }
 
 # Line tracking
-fn GCLINE(S) { return L64(S + 0x18FCB8); }
-fn SCLINE(S, v) { S64(S + 0x18FCB8, v); return 0; }
-fn GTLINE(S, ti) { return L64(S + 0x468C000 + ti * 8); }
-fn STLINE(S, ti, v) { S64(S + 0x468C000 + ti * 8, v); return 0; }
+fn GCLINE(S): i64 { return L64(S + 0x18FCB8); }
+fn SCLINE(S, v): i64 { S64(S + 0x18FCB8, v); return 0; }
+fn GTLINE(S, ti): i64 { return L64(S + 0x468C000 + ti * 8); }
+fn STLINE(S, ti, v): i64 { S64(S + 0x468C000 + ti * 8, v); return 0; }
 
 # Block scoping
-fn GSDEP(S) { return L64(S + 0x18FCC0); }
-fn SSDEP(S, v) { S64(S + 0x18FCC0, v); return 0; }
-fn GLDEP(S, li) { return L64(S + 0x191800 + li * 8); }
-fn SLDEP(S, li, v) { S64(S + 0x191800 + li * 8, v); return 0; }
+fn GSDEP(S): i64 { return L64(S + 0x18FCC0); }
+fn SSDEP(S, v): i64 { S64(S + 0x18FCC0, v); return 0; }
+fn GLDEP(S, li): i64 { return L64(S + 0x191800 + li * 8); }
+fn SLDEP(S, li, v): i64 { S64(S + 0x191800 + li * 8, v); return 0; }
 
 # Expression type tracking
-fn GESTYPE(S) { return L64(S + 0x1903D8); }
-fn SESTYPE(S, v) { S64(S + 0x1903D8, v); return 0; }
+fn GESTYPE(S): i64 { return L64(S + 0x1903D8); }
+fn SESTYPE(S, v): i64 { S64(S + 0x1903D8, v); return 0; }
 # Variable index of last struct expression (for address-based operator dispatch)
-fn GESVAR(S) { return L64(S + 0x1903E0); }
-fn SESVAR(S, v) { S64(S + 0x1903E0, v); return 0; }
+fn GESVAR(S): i64 { return L64(S + 0x1903E0); }
+fn SESVAR(S, v): i64 { S64(S + 0x1903E0, v); return 0; }
 
 # Module system. (GPUB/SPUB were scaffolded for the `pub` visibility check
 # in docs/development/module-manifest-design.md but never wired up in the
 # compiler — removed to stop tracking dead state. The 0x18FED0
 # pub_flags region remains reserved in the heap map.)
-fn GMOD(S) { return L64(S + 0x18FEC8); }
-fn SMOD(S, v) { S64(S + 0x18FEC8, v); return 0; }
-fn GUSEC(S) { return L64(S + 0x1903D0); }
-fn SUSEC(S, v) { S64(S + 0x1903D0, v); return 0; }
+fn GMOD(S): i64 { return L64(S + 0x18FEC8); }
+fn SMOD(S, v): i64 { S64(S + 0x18FEC8, v); return 0; }
+fn GUSEC(S): i64 { return L64(S + 0x1903D0); }
+fn SUSEC(S, v): i64 { S64(S + 0x1903D0, v); return 0; }
 
-fn SCOPE_PUSH(S) { SSDEP(S, GSDEP(S) + 1); return 0; }
-fn SCOPE_POP(S) {
+fn SCOPE_PUSH(S): i64 { SSDEP(S, GSDEP(S) + 1); return 0; }
+fn SCOPE_POP(S): i64 {
     # Mark out-of-scope locals as invisible by clearing their names.
     # Do NOT change GFLC — stack slots are permanent for the function frame.
     var dep = GSDEP(S);
@@ -190,10 +190,10 @@ fn SCOPE_POP(S) {
 }
 
 # Pointer scale tracking (0 = not a pointer, >0 = element size in bytes)
-fn GPSC(S) { return L64(S + 0x18F890); }
-fn SPSC(S, v) { S64(S + 0x18F890, v); return 0; }
-fn GLTYPE(S, li) { return L64(S + 0x192200 + li * 8); }
-fn SLTYPE(S, li, v) { S64(S + 0x192200 + li * 8, v); return 0; }
+fn GPSC(S): i64 { return L64(S + 0x18F890); }
+fn SPSC(S, v): i64 { S64(S + 0x18F890, v); return 0; }
+fn GLTYPE(S, li): i64 { return L64(S + 0x192200 + li * 8); }
+fn SLTYPE(S, li, v): i64 { S64(S + 0x192200 + li * 8, v); return 0; }
 
 # v5.8.14 §6 — TYPE_SLICE element-type tracking.
 # Parallel-array stash for slice-typed locals: 576 entries × 8B,
@@ -202,18 +202,18 @@ fn SLTYPE(S, li, v) { S64(S + 0x192200 + li * 8, v); return 0; }
 # 4=u32, 8=i64/ptr, 16=u128). Read by §7 bounds-aware indexing
 # (`s[i]` lowering picks load*/store* width from this) and §8
 # dot-syntax field access (.ptr returns pointer-to-element type).
-fn GSLICE_W(S, li) { return L64(S + 0x193400 + li * 8); }
-fn SSLICE_W(S, li, w) { S64(S + 0x193400 + li * 8, w); return 0; }
+fn GSLICE_W(S, li): i64 { return L64(S + 0x193400 + li * 8); }
+fn SSLICE_W(S, li, w): i64 { S64(S + 0x193400 + li * 8, w); return 0; }
 
 # (TWIDTH type-width helper removed — every call site now inlines
 # the byte-width decision directly for single-dispatch code paths.)
 
 # Expression width tracking (0=untyped/i64, 1=i8, 2=i16, 4=i32)
-fn GEXW(S) { return L64(S + 0x1903F0); }
-fn SEXW(S, v) { S64(S + 0x1903F0, v); return 0; }
+fn GEXW(S): i64 { return L64(S + 0x1903F0); }
+fn SEXW(S, v): i64 { S64(S + 0x1903F0, v); return 0; }
 
 # Print a number to stderr (decimal)
-fn PRNUM(n) {
+fn PRNUM(n): i64 {
     var buf[24];
     var i = 23;
     var neg = 0;
@@ -230,14 +230,14 @@ fn PRNUM(n) {
 }
 
 # Print a null-terminated string to stderr
-fn PRSTR(s) {
+fn PRSTR(s): i64 {
     var i = 0;
     while (load8(s + i) != 0) { i = i + 1; }
     syscall(SYS_WRITE, 2, s, i);
     return 0;
 }
 
-fn TOKNAME(typ) {
+fn TOKNAME(typ): i64 {
     if (typ == 1) { return "number"; }
     if (typ == 2) { return "identifier"; }
     if (typ == 3) { return "var"; }
@@ -295,7 +295,7 @@ fn TOKNAME(typ) {
 # Pre-v5.8.45 the lexer emitted token 56 unconditionally, which broke
 # any DSP/graphics/AI code using `kernel` as a parameter or local name
 # (vidya audio_dsp 11-lang port, 2026-05-03).
-fn _TOK_IS_KERNEL(S) {
+fn _TOK_IS_KERNEL(S): i64 {
     if (PEEKT(S) != 2) { return 0; }
     var noff = PEEKV(S);
     var p = S + 0x60000 + noff;
@@ -312,7 +312,7 @@ fn _TOK_IS_KERNEL(S) {
 # Is this token type a reserved keyword (that a user might mistakenly
 # try to use as an identifier)? Used by ERR_EXPECT to print a clearer
 # diagnostic when a user writes e.g. `var match = 1;`.
-fn IS_KEYWORD_TOK(typ) {
+fn IS_KEYWORD_TOK(typ): i64 {
     if (typ == 3)  { return 1; }   # var
     if (typ == 15) { return 1; }   # if
     if (typ == 16) { return 1; }   # while
@@ -341,7 +341,7 @@ fn IS_KEYWORD_TOK(typ) {
     return 0;
 }
 
-fn ERRDUPVAR(S) {
+fn ERRDUPVAR(S): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, GTLINE(S, GTI(S)));
     syscall(SYS_WRITE, 2, ": duplicate variable\n", 21);
@@ -349,7 +349,7 @@ fn ERRDUPVAR(S) {
     return 0;
 }
 
-fn WARN(S, msg, len) {
+fn WARN(S, msg, len): i64 {
     syscall(SYS_WRITE, 2, "warning:", 8);
     FM_LOOKUP(S, GTLINE(S, GTI(S)));
     syscall(SYS_WRITE, 2, ": ", 2);
@@ -358,7 +358,7 @@ fn WARN(S, msg, len) {
     return 0;
 }
 
-fn ERR(S) {
+fn ERR(S): i64 {
     var typ = PEEKT(S);
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -378,7 +378,7 @@ fn ERR(S) {
     return 0;
 }
 
-fn ERR_EXPECT(S, expected_type) {
+fn ERR_EXPECT(S, expected_type): i64 {
     var got = PEEKT(S);
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -429,7 +429,7 @@ fn ERR_EXPECT(S, expected_type) {
     return 0;
 }
 
-fn ERR_MSG(S, msg, len) {
+fn ERR_MSG(S, msg, len): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, GTLINE(S, GTI(S)));
     syscall(SYS_WRITE, 2, ": ", 2);
@@ -456,7 +456,7 @@ fn ERR_MSG(S, msg, len) {
 # pipeline) — harmless because zero-init matches the post-brk
 # kernel-zeroed state, and brk extends through 0x4E8C000 in every
 # main so the writes land in mapped memory.
-fn _HEAP_INIT_SCRATCH(S) {
+fn _HEAP_INIT_SCRATCH(S): i64 {
     # Compiler-state scalars (BL, CP, VCNT, TCNT, TI, NPOS)
     S64(S + 0x18C100, 0);
     S64(S + 0x18C108, 0);

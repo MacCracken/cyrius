@@ -2,7 +2,7 @@
 # Exercises: for loops, load8, buffered I/O, hex output
 # Usage: echo "Hello" | ./hexdump
 
-fn print_hex(val: i64) {
+fn print_hex(val: i64): i64 {
     var hbuf[2];
     var hi = val >> 4 & 0xF;
     var lo = val & 0xF;
@@ -14,7 +14,7 @@ fn print_hex(val: i64) {
     return 0;
 }
 
-fn print_addr(addr: i64) {
+fn print_addr(addr: i64): i64 {
     var abuf[8];
     for (var i = 7; i >= 0; i = i - 1) {
         var nib = (addr >> (i * 4)) & 0xF;
@@ -25,7 +25,7 @@ fn print_addr(addr: i64) {
     return 0;
 }
 
-fn hexdump() {
+fn hexdump(): i64 {
     var buf[4096];
     var offset: i64 = 0;
     var done: i64 = 0;

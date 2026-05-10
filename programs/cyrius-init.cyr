@@ -45,7 +45,7 @@ include "lib/syscalls.cyr"
 # install snapshot. v5.9.28: dev-mode only (repo-local). Install-
 # snapshot path lands at v5.9.29 once the install pipeline knows
 # to copy the template tree.
-fn _resolve_templates_dir(argv0) {
+fn _resolve_templates_dir(argv0): i64 {
     var buf = alloc(4096);
     # Try readlink /proc/self/exe.
     var n = sys_readlink("/proc/self/exe", buf, 4095);
@@ -86,7 +86,7 @@ fn _resolve_templates_dir(argv0) {
 
 # Read VERSION file from `<repo>/VERSION` (sibling of bin/build/
 # / scripts/). Returns null-terminated cstring or 0 if missing.
-fn _read_repo_version(templates_dir) {
+fn _read_repo_version(templates_dir): i64 {
     # templates_dir = <repo>/programs/cyrius-init-templates
     # VERSION       = <repo>/VERSION
     var buf = alloc(4096);

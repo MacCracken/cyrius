@@ -2,7 +2,7 @@
 # Usage: echo "hello" | ./cat
 # Built by: cat cat.cyr | ./build/cc5 > cat && chmod +x cat
 
-fn cat() {
+fn cat(): i64 {
     var buf[4096];
     var go: i64 = 1;
     while (go == 1) {

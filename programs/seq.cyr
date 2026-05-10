@@ -1,7 +1,7 @@
 # seq — print numbers 1 to N (N=10 default)
 # Usage: ./seq
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var pbuf[24];
     var i: i64 = 23;
     if (n == 0) { store8(&pbuf + i, 48); i = i - 1; }
@@ -14,7 +14,7 @@ fn print_num(n: i64) {
     return 0;
 }
 
-fn seq(max: i64) {
+fn seq(max: i64): i64 {
     var n: i64 = 1;
     while (n <= max) {
         print_num(n);

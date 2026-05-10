@@ -2,7 +2,7 @@
 # Project commands
 # ================================================================
 
-fn cmd_init(name) {
+fn cmd_init(name): i64 {
     # v5.9.28 part 1: try cyrius-init binary first (greenfield
     # --bin shape only). Bash fallback handles --lib / bare /
     # in-place / flag matrix until v5.9.29 lands the rest.
@@ -21,7 +21,7 @@ fn cmd_init(name) {
     return run_script(script, name, 0);
 }
 
-fn cmd_init_args(arg1, arg2) {
+fn cmd_init_args(arg1, arg2): i64 {
     # Two-arg form covers `cyrius init <flag> <name>` patterns.
     # v5.9.29: cyrius-init binary handles `--lib` and
     # `--description=<v>`. Anything else (--language /
@@ -42,7 +42,7 @@ fn cmd_init_args(arg1, arg2) {
     return run_script(script, arg1, arg2);
 }
 
-fn cmd_port(arg) {
+fn cmd_port(arg): i64 {
     var script = make_path(_scripts_dir, "cyrius-port.sh");
     return run_script(script, arg, 0);
 }

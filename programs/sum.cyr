@@ -1,7 +1,7 @@
 # sum — read numbers from stdin (one per line), print total
 # Usage: seq 10 | ./sum  (outputs 55)
 
-fn parse_line_num(line, len) {
+fn parse_line_num(line, len): i64 {
     var val: i64 = 0;
     var neg: i64 = 0;
     var i: i64 = 0;
@@ -21,7 +21,7 @@ fn parse_line_num(line, len) {
     return val;
 }
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var pbuf[24];
     var i: i64 = 23;
     var neg: i64 = 0;
@@ -37,7 +37,7 @@ fn print_num(n: i64) {
     return 0;
 }
 
-fn sum() {
+fn sum(): i64 {
     var line[256];
     var byte[1];
     var len: i64 = 0;

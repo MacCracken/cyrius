@@ -57,7 +57,7 @@
 # 64-BIT MEMORY HELPERS
 # ================================================================
 
-fn S64(a, v) {
+fn S64(a, v): i64 {
     store8(a, v & 0xFF);
     store8(a + 1, v >> 8 & 0xFF);
     store8(a + 2, v >> 16 & 0xFF);
@@ -69,7 +69,7 @@ fn S64(a, v) {
     return 0;
 }
 
-fn L64(a) {
+fn L64(a): i64 {
     var v = load8(a);
     v = v | (load8(a + 1) << 8);
     v = v | (load8(a + 2) << 16);
@@ -85,42 +85,42 @@ fn L64(a) {
 # STATE ACCESSORS
 # ================================================================
 
-fn GBL(S) { return L64(S + 0x18C100); }
-fn SBL(S, v) { S64(S + 0x18C100, v); return 0; }
-fn GCP(S) { return L64(S + 0x18C108); }
-fn SCP(S, v) { S64(S + 0x18C108, v); return 0; }
-fn GVCNT(S) { return L64(S + 0x18C110); }
-fn SVCNT(S, v) { S64(S + 0x18C110, v); return 0; }
-fn GTCNT(S) { return L64(S + 0x18C118); }
-fn STCNT(S, v) { S64(S + 0x18C118, v); return 0; }
-fn GTI(S) { return L64(S + 0x18C120); }
-fn STI(S, v) { S64(S + 0x18C120, v); return 0; }
-fn GNPOS(S) { return L64(S + 0x18C128); }
-fn SNPOS(S, v) { S64(S + 0x18C128, v); return 0; }
+fn GBL(S): i64 { return L64(S + 0x18C100); }
+fn SBL(S, v): i64 { S64(S + 0x18C100, v); return 0; }
+fn GCP(S): i64 { return L64(S + 0x18C108); }
+fn SCP(S, v): i64 { S64(S + 0x18C108, v); return 0; }
+fn GVCNT(S): i64 { return L64(S + 0x18C110); }
+fn SVCNT(S, v): i64 { S64(S + 0x18C110, v); return 0; }
+fn GTCNT(S): i64 { return L64(S + 0x18C118); }
+fn STCNT(S, v): i64 { S64(S + 0x18C118, v); return 0; }
+fn GTI(S): i64 { return L64(S + 0x18C120); }
+fn STI(S, v): i64 { S64(S + 0x18C120, v); return 0; }
+fn GNPOS(S): i64 { return L64(S + 0x18C128); }
+fn SNPOS(S, v): i64 { S64(S + 0x18C128, v); return 0; }
 
 # Fixup count
-fn GFCNT(S) { return L64(S + 0x18C000); }
-fn SFCNT(S, v) { S64(S + 0x18C000, v); return 0; }
+fn GFCNT(S): i64 { return L64(S + 0x18C000); }
+fn SFCNT(S, v): i64 { S64(S + 0x18C000, v); return 0; }
 # Last var index
-fn GLVAR(S) { return L64(S + 0x18C008); }
-fn SLVAR(S, v) { S64(S + 0x18C008, v); return 0; }
+fn GLVAR(S): i64 { return L64(S + 0x18C008); }
+fn SLVAR(S, v): i64 { S64(S + 0x18C008, v); return 0; }
 # String pos
-fn GSPOS(S) { return L64(S + 0x70000); }
-fn SSPOS(S, v) { S64(S + 0x70000, v); return 0; }
+fn GSPOS(S): i64 { return L64(S + 0x70000); }
+fn SSPOS(S, v): i64 { S64(S + 0x70000, v); return 0; }
 
 # Function state accessors
-fn GFNC(S) { return L64(S + 0x18DA00); }
-fn SFNC(S, v) { S64(S + 0x18DA00, v); return 0; }
-fn GINFN(S) { return L64(S + 0x18DA08); }
-fn SINFN(S, v) { S64(S + 0x18DA08, v); return 0; }
-fn GFLC(S) { return L64(S + 0x18DA10); }
-fn SFLC(S, v) { S64(S + 0x18DA10, v); return 0; }
-fn GSVC(S) { return L64(S + 0x18DA18); }
-fn SSVC(S, v) { S64(S + 0x18DA18, v); return 0; }
-fn GRPC(S) { return L64(S + 0x18DC20); }
-fn SRPC(S, v) { S64(S + 0x18DC20, v); return 0; }
+fn GFNC(S): i64 { return L64(S + 0x18DA00); }
+fn SFNC(S, v): i64 { S64(S + 0x18DA00, v); return 0; }
+fn GINFN(S): i64 { return L64(S + 0x18DA08); }
+fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
+fn GFLC(S): i64 { return L64(S + 0x18DA10); }
+fn SFLC(S, v): i64 { S64(S + 0x18DA10, v); return 0; }
+fn GSVC(S): i64 { return L64(S + 0x18DA18); }
+fn SSVC(S, v): i64 { S64(S + 0x18DA18, v); return 0; }
+fn GRPC(S): i64 { return L64(S + 0x18DC20); }
+fn SRPC(S, v): i64 { S64(S + 0x18DC20, v); return 0; }
 
-fn ERR(S) {
+fn ERR(S): i64 {
 
     syscall(1, 2, "syntax error\n", 13); syscall(60, 1);
     return 0;
@@ -130,20 +130,20 @@ fn ERR(S) {
 # CODE EMISSION (writes to codebuf at S+0x59000+CP)
 # ================================================================
 
-fn EB(S, b) {
+fn EB(S, b): i64 {
     var cp = GCP(S);
     store8(S + 0x20000 + cp, b & 0xFF);
     SCP(S, cp + 1);
     return 0;
 }
 
-fn E2(S, v) {
+fn E2(S, v): i64 {
     EB(S, v & 0xFF);
     EB(S, v >> 8 & 0xFF);
     return 0;
 }
 
-fn E8(S, v) {
+fn E8(S, v): i64 {
     EB(S, v & 0xFF);
     EB(S, v >> 8 & 0xFF);
     EB(S, v >> 16 & 0xFF);
@@ -156,14 +156,14 @@ fn E8(S, v) {
 }
 
 # emit "mov rax, imm64" — 48 B8 <imm64>
-fn EMOVI(S, v) {
+fn EMOVI(S, v): i64 {
     E2(S, 0xB848);
     E8(S, v);
     return 0;
 }
 
 # emit 3-byte instruction from packed value
-fn E3(S, v) {
+fn E3(S, v): i64 {
     EB(S, v & 0xFF);
     EB(S, v >> 8 & 0xFF);
     EB(S, v >> 16 & 0xFF);
@@ -171,50 +171,50 @@ fn E3(S, v) {
 }
 
 # Standard codegen emissions (match cyrc exactly)
-fn EPUSHR(S) { EB(S, 0x50); return 0; }                  # push rax
-fn EPOPC(S) { EB(S, 0x59); return 0; }                   # pop rcx
-fn EPOPR(S) { EB(S, 0x58); return 0; }                   # pop rax
-fn EMOVCA(S) { E3(S, 0xC18948); return 0; }              # mov rcx, rax
-fn EADDR(S) { E3(S, 0xC80148); return 0; }               # add rax, rcx
-fn ESUBR(S) { E3(S, 0xC82948); return 0; }               # sub rax, rcx
-fn EIMUL(S) { E3(S, 0xE9F748); return 0; }               # imul rcx
-fn ECQO(S) { E2(S, 0x9948); return 0; }                  # cqo
-fn EIDIV(S) { E3(S, 0xF9F748); return 0; }               # idiv rcx
-fn EMOVDR(S) { E3(S, 0xD08948); return 0; }              # mov rax, rdx (for mod)
-fn ELODC(S) { E3(S, 0x018B48); return 0; }               # mov rax, [rcx]
-fn ESTOC(S) { E3(S, 0x018948); return 0; }               # mov [rcx], rax
-fn ECMPR(S) { E3(S, 0xC83948); return 0; }               # cmp rax, rcx
-fn ETESTAZ(S) { E3(S, 0xC08548); return 0; }             # test rax, rax
-fn EMOVRDXRAX(S) { E3(S, 0xC28948); return 0; }          # mov rdx, rax
-fn EMOVRA_RDX(S) { E3(S, 0xD08948); return 0; }          # mov rax, rdx
-fn EMOVRDI(S) { E3(S, 0xC78948); return 0; }             # mov rdi, rax
-fn ESYSCALL(S) { E2(S, 0x050F); return 0; }              # syscall
-fn ELOAD8(S) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x00); return 0; }  # movzx rax, byte [rax]
-fn ELOAD16(S) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x00); return 0; }            # movzx eax, word [rax]
-fn ELOAD32(S) { EB(S, 0x8B); EB(S, 0x00); return 0; }                          # mov eax, [rax] (32-bit, zero-extends)
-fn ELOAD64(S) { E3(S, 0x008B48); return 0; }                                    # mov rax, [rax]
-fn ESTORE8(S) { E2(S, 0x0188); return 0; }              # mov byte [rcx], al
-fn ESTORE16(S) { EB(S, 0x66); E2(S, 0x0189); return 0; }                       # mov word [rcx], ax (0x66 prefix)
-fn ESTORE32(S) { E2(S, 0x0189); return 0; }                                     # mov dword [rcx], eax
-fn ESTORE64(S) { E3(S, 0x018948); return 0; }                                   # mov qword [rcx], rax
-fn EXORAA(S) { E3(S, 0xC03148); return 0; }             # xor rax, rax
+fn EPUSHR(S): i64 { EB(S, 0x50); return 0; }                  # push rax
+fn EPOPC(S): i64 { EB(S, 0x59); return 0; }                   # pop rcx
+fn EPOPR(S): i64 { EB(S, 0x58); return 0; }                   # pop rax
+fn EMOVCA(S): i64 { E3(S, 0xC18948); return 0; }              # mov rcx, rax
+fn EADDR(S): i64 { E3(S, 0xC80148); return 0; }               # add rax, rcx
+fn ESUBR(S): i64 { E3(S, 0xC82948); return 0; }               # sub rax, rcx
+fn EIMUL(S): i64 { E3(S, 0xE9F748); return 0; }               # imul rcx
+fn ECQO(S): i64 { E2(S, 0x9948); return 0; }                  # cqo
+fn EIDIV(S): i64 { E3(S, 0xF9F748); return 0; }               # idiv rcx
+fn EMOVDR(S): i64 { E3(S, 0xD08948); return 0; }              # mov rax, rdx (for mod)
+fn ELODC(S): i64 { E3(S, 0x018B48); return 0; }               # mov rax, [rcx]
+fn ESTOC(S): i64 { E3(S, 0x018948); return 0; }               # mov [rcx], rax
+fn ECMPR(S): i64 { E3(S, 0xC83948); return 0; }               # cmp rax, rcx
+fn ETESTAZ(S): i64 { E3(S, 0xC08548); return 0; }             # test rax, rax
+fn EMOVRDXRAX(S): i64 { E3(S, 0xC28948); return 0; }          # mov rdx, rax
+fn EMOVRA_RDX(S): i64 { E3(S, 0xD08948); return 0; }          # mov rax, rdx
+fn EMOVRDI(S): i64 { E3(S, 0xC78948); return 0; }             # mov rdi, rax
+fn ESYSCALL(S): i64 { E2(S, 0x050F); return 0; }              # syscall
+fn ELOAD8(S): i64 { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x00); return 0; }  # movzx rax, byte [rax]
+fn ELOAD16(S): i64 { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x00); return 0; }            # movzx eax, word [rax]
+fn ELOAD32(S): i64 { EB(S, 0x8B); EB(S, 0x00); return 0; }                          # mov eax, [rax] (32-bit, zero-extends)
+fn ELOAD64(S): i64 { E3(S, 0x008B48); return 0; }                                    # mov rax, [rax]
+fn ESTORE8(S): i64 { E2(S, 0x0188); return 0; }              # mov byte [rcx], al
+fn ESTORE16(S): i64 { EB(S, 0x66); E2(S, 0x0189); return 0; }                       # mov word [rcx], ax (0x66 prefix)
+fn ESTORE32(S): i64 { E2(S, 0x0189); return 0; }                                     # mov dword [rcx], eax
+fn ESTORE64(S): i64 { E3(S, 0x018948); return 0; }                                   # mov qword [rcx], rax
+fn EXORAA(S): i64 { E3(S, 0xC03148); return 0; }             # xor rax, rax
 # Bitwise
-fn EANDR(S) { E3(S, 0xC82148); return 0; }              # and rax, rcx
-fn EORR(S) { E3(S, 0xC80948); return 0; }               # or rax, rcx
-fn EXORR(S) { E3(S, 0xC83148); return 0; }              # xor rax, rcx
-fn ENOTR(S) { E3(S, 0xD0F748); return 0; }              # not rax
-fn ESHLCL(S) { E3(S, 0xE0D348); return 0; }             # shl rax, cl
-fn ESHRCL(S) { E3(S, 0xE8D348); return 0; }             # shr rax, cl
+fn EANDR(S): i64 { E3(S, 0xC82148); return 0; }              # and rax, rcx
+fn EORR(S): i64 { E3(S, 0xC80948); return 0; }               # or rax, rcx
+fn EXORR(S): i64 { E3(S, 0xC83148); return 0; }              # xor rax, rcx
+fn ENOTR(S): i64 { E3(S, 0xD0F748); return 0; }              # not rax
+fn ESHLCL(S): i64 { E3(S, 0xE0D348); return 0; }             # shl rax, cl
+fn ESHRCL(S): i64 { E3(S, 0xE8D348); return 0; }             # shr rax, cl
 # Syscall pop helpers
-fn EPOPRDI(S) { EB(S, 0x5F); return 0; }
-fn EPOPRSI(S) { EB(S, 0x5E); return 0; }
-fn EPOPRDX(S) { EB(S, 0x5A); return 0; }
-fn EPOPR10(S) { E2(S, 0x5A41); return 0; }
-fn EPOPR8(S) { E2(S, 0x5841); return 0; }
-fn EPOPR9(S) { E2(S, 0x5941); return 0; }
+fn EPOPRDI(S): i64 { EB(S, 0x5F); return 0; }
+fn EPOPRSI(S): i64 { EB(S, 0x5E); return 0; }
+fn EPOPRDX(S): i64 { EB(S, 0x5A); return 0; }
+fn EPOPR10(S): i64 { E2(S, 0x5A41); return 0; }
+fn EPOPR8(S): i64 { E2(S, 0x5841); return 0; }
+fn EPOPR9(S): i64 { E2(S, 0x5941); return 0; }
 
 # Record fixup: (codebuf_offset=CP, var_index) in fixup table
-fn RECFIX(S, idx) {
+fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
     var addr = S + 0x18A000 + fc * 16;
     S64(addr, GCP(S));
@@ -224,7 +224,7 @@ fn RECFIX(S, idx) {
 }
 
 # emit var_store: mov rcx, <placeholder>; mov [rcx], rax + record fixup
-fn EVSTORE(S, idx) {
+fn EVSTORE(S, idx): i64 {
     E2(S, 0xB948);
     RECFIX(S, idx);
     E8(S, 0);
@@ -233,7 +233,7 @@ fn EVSTORE(S, idx) {
 }
 
 # emit var_load: mov rcx, <placeholder>; mov rax, [rcx] + record fixup
-fn EVLOAD(S, idx) {
+fn EVLOAD(S, idx): i64 {
     E2(S, 0xB948);
     RECFIX(S, idx);
     E8(S, 0);
@@ -242,7 +242,7 @@ fn EVLOAD(S, idx) {
 }
 
 # emit var addr: mov rax, <placeholder> with type-0 fixup
-fn EVADDR(S, idx) {
+fn EVADDR(S, idx): i64 {
     E2(S, 0xB848);
     RECFIX(S, idx);
     E8(S, 0);
@@ -250,7 +250,7 @@ fn EVADDR(S, idx) {
 }
 
 # emit string addr: mov rax, <placeholder> with type-1 fixup
-fn ESADDR(S, soff) {
+fn ESADDR(S, soff): i64 {
     E2(S, 0xB848);
     var fc = GFCNT(S);
     var faddr = S + 0x18A000 + fc * 16;
@@ -262,7 +262,7 @@ fn ESADDR(S, soff) {
 }
 
 # emit syscall pops for N args then syscall
-fn ESCPOPS(S, n) {
+fn ESCPOPS(S, n): i64 {
     if (n >= 7) { EPOPR9(S); }
     if (n >= 6) { EPOPR8(S); }
     if (n >= 5) { EPOPR10(S); }
@@ -275,7 +275,7 @@ fn ESCPOPS(S, n) {
 }
 
 # emit exit epilogue: mov rdi, rax; mov rax, 60; syscall
-fn EEXIT(S) {
+fn EEXIT(S): i64 {
     EMOVRDI(S);
     EMOVI(S, 60);
     ESYSCALL(S);
@@ -286,17 +286,17 @@ fn EEXIT(S) {
 # TOKEN ACCESS
 # ================================================================
 
-fn TOKTYP(S, i) { return L64(S + 0x1A2000 + i * 8); }
-fn TOKVAL(S, i) { return L64(S + 0x1E2000 + i * 8); }
-fn PEEKT(S) { return TOKTYP(S, GTI(S)); }
-fn PEEKV(S) { return TOKVAL(S, GTI(S)); }
+fn TOKTYP(S, i): i64 { return L64(S + 0x1A2000 + i * 8); }
+fn TOKVAL(S, i): i64 { return L64(S + 0x1E2000 + i * 8); }
+fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
+fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
 
 # ================================================================
 # JUMP / PATCH HELPERS
 # ================================================================
 
 # Emit conditional jump (0F cc 00000000), return patch offset
-fn EJCC(S, cc) {
+fn EJCC(S, cc): i64 {
     EB(S, 0x0F);
     EB(S, cc);
     var patch = GCP(S);
@@ -305,7 +305,7 @@ fn EJCC(S, cc) {
 }
 
 # Emit unconditional jmp to target (E9 rel32)
-fn EJMP(S, target) {
+fn EJMP(S, target): i64 {
     EB(S, 0xE9);
     var cp = GCP(S);
     var rel = target - cp - 4;
@@ -317,7 +317,7 @@ fn EJMP(S, target) {
 }
 
 # Emit jmp placeholder (E9 00000000), return patch offset
-fn EJMP0(S) {
+fn EJMP0(S): i64 {
     EB(S, 0xE9);
     var patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -325,7 +325,7 @@ fn EJMP0(S) {
 }
 
 # Patch a previously emitted rel32 at codebuf offset to jump here
-fn EPATCH(S, off) {
+fn EPATCH(S, off): i64 {
     var cp = GCP(S);
     var rel = cp - off - 4;
     var addr = S + 0x20000 + off;
@@ -338,7 +338,7 @@ fn EPATCH(S, off) {
 # ================================================================
 
 # Store a token
-fn ADDTOK(S, typ, val) {
+fn ADDTOK(S, typ, val): i64 {
     var tc = GTCNT(S);
     S64(S + 0x1A2000 + tc * 8, typ);
     S64(S + 0x1E2000 + tc * 8, val);
@@ -347,7 +347,7 @@ fn ADDTOK(S, typ, val) {
 }
 
 # Classify character: 0=other, 1=ws, 2=digit, 3=lower, 4=upper, 5=underscore
-fn CCLASS(c) {
+fn CCLASS(c): i64 {
     if (c == 32) { return 1; }
     if (c == 9) { return 1; }
     if (c == 10) { return 1; }
@@ -359,7 +359,7 @@ fn CCLASS(c) {
     return 0;
 }
 
-fn ISALNUM(c) {
+fn ISALNUM(c): i64 {
     var cl = CCLASS(c);
     if (cl >= 2) { return 1; }
     return 0;
@@ -371,7 +371,7 @@ fn ISALNUM(c) {
 # ================================================================
 
 # Read a file into buffer at dst, return bytes read. Path must be null-terminated.
-fn READFILE(path, dst, maxsz) {
+fn READFILE(path, dst, maxsz): i64 {
     var fd = syscall(2, path, 0, 0);
     if (fd < 0) { return 0; }
     var total = 0;
@@ -389,7 +389,7 @@ fn READFILE(path, dst, maxsz) {
 }
 
 # Check if buffer at pos starts with "include " (8 chars)
-fn ISINCLUDE(S, pos, bl) {
+fn ISINCLUDE(S, pos, bl): i64 {
     if (pos + 8 >= bl) { return 0; }
     # i=69 n=6E c=63 l=6C u=75 d=64 e=65 space=20
     if (load8(S + pos) != 105) { return 0; }
@@ -406,7 +406,7 @@ fn ISINCLUDE(S, pos, bl) {
 # Preprocess: expand include directives in-place.
 # Uses S+0 as input, S+0x190000 as temp (64KB scratch for file reads).
 # Builds expanded source into a new buffer, then copies back.
-fn PREPROCESS(S) {
+fn PREPROCESS(S): i64 {
     var bl = GBL(S);
     # Use 0x190000 as expanded output buffer (reuse part of brk heap)
     var out = S + 0x191000;
@@ -466,7 +466,7 @@ fn PREPROCESS(S) {
     return 0;
 }
 
-fn LEXHEX(S, p) {
+fn LEXHEX(S, p): i64 {
     var val = 0;
     var go = 1;
     while (go == 1) {
@@ -486,7 +486,7 @@ fn LEXHEX(S, p) {
 }
 
 # Lex decimal number
-fn LEXDEC(S, p) {
+fn LEXDEC(S, p): i64 {
     var c = load8(S + p);
     var val = c - 48;
     p = p + 1;
@@ -506,7 +506,7 @@ fn LEXDEC(S, p) {
 }
 
 # Lex a number starting at p, return new p
-fn LEXNUM(S, p) {
+fn LEXNUM(S, p): i64 {
     var c = load8(S + p);
     if (c == 48) {
         if (p + 1 < GBL(S)) {
@@ -519,7 +519,7 @@ fn LEXNUM(S, p) {
 }
 
 # Lex an identifier starting at p, return new p. Stores token.
-fn LEXID(S, p, npos) {
+fn LEXID(S, p, npos): i64 {
     var bl = GBL(S);
     var ws = npos;
     var go = 1;
@@ -586,7 +586,7 @@ fn LEXID(S, p, npos) {
     return p;
 }
 
-fn LEX(S) {
+fn LEX(S): i64 {
     var p = 0;
     var bl = GBL(S);
     STCNT(S, 0);
@@ -748,15 +748,15 @@ fn LEX(S) {
 #   0x18E830  struct_fnames[512]   4096 bytes — field name offsets (32 structs * 16 fields)
 #   0x18F830  struct_count         8 bytes
 
-fn GSTC(S) { return L64(S + 0x18F830); }
-fn SSTC(S, v) { S64(S + 0x18F830, v); return 0; }
+fn GSTC(S): i64 { return L64(S + 0x18F830); }
+fn SSTC(S, v): i64 { S64(S + 0x18F830, v); return 0; }
 
 # Get/set struct_id for global variable at index vi
-fn GVTYPE(S, vi) { return L64(S + 0x18DE30 + vi * 8); }
-fn SVTYPE(S, vi, v) { S64(S + 0x18DE30 + vi * 8, v); return 0; }
+fn GVTYPE(S, vi): i64 { return L64(S + 0x18DE30 + vi * 8); }
+fn SVTYPE(S, vi, v): i64 { S64(S + 0x18DE30 + vi * 8, v); return 0; }
 
 # Register a new struct, return index (1-based, 0 = not a struct)
-fn REGSTRUCT(S, noff) {
+fn REGSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     S64(S + 0x18E630 + sc * 8, noff);
     S64(S + 0x18E830 + sc * 8, 0);
@@ -765,7 +765,7 @@ fn REGSTRUCT(S, noff) {
 }
 
 # Find struct by name, return 1-based index or 0
-fn FINDSTRUCT(S, noff) {
+fn FINDSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     var i = 0;
     while (i < sc) {
@@ -777,7 +777,7 @@ fn FINDSTRUCT(S, noff) {
 }
 
 # Add field to struct (0-based struct index si)
-fn ADDFIELD(S, si, fnoff) {
+fn ADDFIELD(S, si, fnoff): i64 {
     var fc = L64(S + 0x18E830 + si * 8);
     S64(S + 0x18E830 + si * 128 + fc * 8, fnoff);
     S64(S + 0x18E830 + si * 8, fc + 1);
@@ -785,10 +785,10 @@ fn ADDFIELD(S, si, fnoff) {
 }
 
 # Get field count for struct (0-based index)
-fn GETFCOUNT(S, si) { return L64(S + 0x18E830 + si * 8); }
+fn GETFCOUNT(S, si): i64 { return L64(S + 0x18E830 + si * 8); }
 
 # Find field index in struct (0-based struct index), return field index or -1
-fn FINDFIELD(S, si, fnoff) {
+fn FINDFIELD(S, si, fnoff): i64 {
     var fc = GETFCOUNT(S, si);
     var i = 0;
     while (i < fc) {
@@ -800,7 +800,7 @@ fn FINDFIELD(S, si, fnoff) {
 }
 
 # Parse: struct Name { field; field; ... }
-fn PARSE_STRUCT_DEF(S) {
+fn PARSE_STRUCT_DEF(S): i64 {
     STI(S, GTI(S) + 1);  # consume STRUCT
     if (PEEKT(S) != 2) { ERR(S); }
     var noff = PEEKV(S);
@@ -824,7 +824,7 @@ fn PARSE_STRUCT_DEF(S) {
     return 0;
 }
 
-fn STREQ(S, a, b) {
+fn STREQ(S, a, b): i64 {
     var i = 0;
     var go = 1;
     while (go == 1) {
@@ -838,7 +838,7 @@ fn STREQ(S, a, b) {
 }
 
 # Find variable by name offset, return index or -1
-fn FINDVAR(S, noff) {
+fn FINDVAR(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = 0;
     while (vi < vcnt) {
@@ -849,7 +849,7 @@ fn FINDVAR(S, noff) {
     return 0 - 1;
 }
 
-fn PARSE_FACTOR(S) {
+fn PARSE_FACTOR(S): i64 {
     var typ = PEEKT(S);
     if (typ == 1) {
         # NUM — emit mov rax, imm64
@@ -1033,7 +1033,7 @@ fn PARSE_FACTOR(S) {
     return 0;
 }
 
-fn PARSE_TERM(S) {
+fn PARSE_TERM(S): i64 {
     PARSE_FACTOR(S);
     var go = 1;
     while (go == 1) {
@@ -1068,7 +1068,7 @@ fn PARSE_TERM(S) {
     return 0;
 }
 
-fn PARSE_EXPR(S) {
+fn PARSE_EXPR(S): i64 {
     PARSE_TERM(S);
     var go = 1;
     while (go == 1) {
@@ -1098,7 +1098,7 @@ fn PARSE_EXPR(S) {
 }
 
 # Parse array: already past [, parse N]; register global var with aligned size
-fn PARSE_ARRAY(S, noff) {
+fn PARSE_ARRAY(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume [
     if (PEEKT(S) != 1) { ERR(S); }
     var asz = PEEKV(S);
@@ -1116,7 +1116,7 @@ fn PARSE_ARRAY(S, noff) {
 }
 
 # Load a struct field: ident.field → emit load from var_addr + field_offset
-fn PARSE_FIELD_LOAD(S, noff) {
+fn PARSE_FIELD_LOAD(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume DOT
     if (PEEKT(S) != 2) { ERR(S); }
     var fnoff = PEEKV(S);
@@ -1143,7 +1143,7 @@ fn PARSE_FIELD_LOAD(S, noff) {
 }
 
 # Store to a struct field: ident.field = expr;
-fn PARSE_FIELD_STORE(S, noff) {
+fn PARSE_FIELD_STORE(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume DOT
     if (PEEKT(S) != 2) { ERR(S); }
     var fnoff = PEEKV(S);
@@ -1178,7 +1178,7 @@ fn PARSE_FIELD_STORE(S, noff) {
 
 # Parse struct init: var name = StructName { expr, expr, ... };
 # sid is 1-based struct id, noff is var name offset
-fn PARSE_STRUCT_INIT(S, noff, sid) {
+fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     var si = sid - 1;
     STI(S, GTI(S) + 1);  # consume struct name IDENT
     if (PEEKT(S) != 13) { ERR(S); }
@@ -1226,7 +1226,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid) {
 }
 
 # Parse: var IDENT = expr ;
-fn PARSE_VAR(S) {
+fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
     # expect IDENT
     if (PEEKT(S) != 2) { ERR(S); }
@@ -1271,7 +1271,7 @@ fn PARSE_VAR(S) {
 }
 
 # Parse: IDENT = expr ;
-fn PARSE_ASSIGN(S) {
+fn PARSE_ASSIGN(S): i64 {
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 4) { ERR(S); }
@@ -1287,7 +1287,7 @@ fn PARSE_ASSIGN(S) {
 }
 
 # Parse condition: expr OP expr — emit cmp + inverted jcc, return patch offset
-fn ECOND(S) {
+fn ECOND(S): i64 {
     PARSE_EXPR(S);
     EPUSHR(S);
     var op = PEEKT(S);
@@ -1309,7 +1309,7 @@ fn ECOND(S) {
 }
 
 # Parse elif chain
-fn PARSE_ELIF_CHAIN(S, cpatch) {
+fn PARSE_ELIF_CHAIN(S, cpatch): i64 {
     var sk = EJMP0(S);
     EPATCH(S, cpatch);
     if (PEEKT(S) != 10) { ERR(S); }
@@ -1343,7 +1343,7 @@ fn PARSE_ELIF_CHAIN(S, cpatch) {
 }
 
 # Parse: if (cond) { stmts } [elif (cond) { stmts }]* [else { stmts }]
-fn PARSE_IF(S) {
+fn PARSE_IF(S): i64 {
     STI(S, GTI(S) + 1);
     var saved_lv = GLVAR(S);
     if (PEEKT(S) != 10) { ERR(S); }
@@ -1377,7 +1377,7 @@ fn PARSE_IF(S) {
 }
 
 # Parse: while (cond) { stmts }
-fn PARSE_WHILE(S) {
+fn PARSE_WHILE(S): i64 {
     STI(S, GTI(S) + 1);  # consume WHILE
     var saved_lv = GLVAR(S);
     var loop_top = GCP(S);
@@ -1402,7 +1402,7 @@ fn PARSE_WHILE(S) {
 # ================================================================
 
 # Register new function, return index
-fn REGFN(S, noff) {
+fn REGFN(S, noff): i64 {
     var fc = GFNC(S);
     S64(S + 0x18C200 + fc * 8, noff);
     S64(S + 0x18CA00 + fc * 8, 0 - 1);
@@ -1412,7 +1412,7 @@ fn REGFN(S, noff) {
 }
 
 # Find function by name, return index or -1
-fn FINDFN(S, noff) {
+fn FINDFN(S, noff): i64 {
     var fc = GFNC(S);
     var i = 0;
     while (i < fc) {
@@ -1424,14 +1424,14 @@ fn FINDFN(S, noff) {
 }
 
 # Emit push rbp; mov rbp, rsp
-fn EFNPRO(S) {
+fn EFNPRO(S): i64 {
     EB(S, 0x55);
     E3(S, 0xE58948);
     return 0;
 }
 
 # Emit sub rsp, imm32 — returns patch offset for the imm32
-fn ESUBRSP(S) {
+fn ESUBRSP(S): i64 {
     E3(S, 0xEC8148);
     var patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -1439,13 +1439,13 @@ fn ESUBRSP(S) {
 }
 
 # Emit leave; ret
-fn EFNEPI(S) {
+fn EFNEPI(S): i64 {
     E2(S, 0xC3C9);
     return 0;
 }
 
 # Emit call rel32 to known target
-fn ECALLTO(S, target) {
+fn ECALLTO(S, target): i64 {
     EB(S, 0xE8);
     var cp = GCP(S);
     var rel = target - cp - 4;
@@ -1456,7 +1456,7 @@ fn ECALLTO(S, target) {
 }
 
 # Emit call placeholder, record type-2 fixup
-fn ECALLFIX(S, fnidx) {
+fn ECALLFIX(S, fnidx): i64 {
     EB(S, 0xE8);
     var poff = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -1470,7 +1470,7 @@ fn ECALLFIX(S, fnidx) {
 }
 
 # Emit pop into System V register for arg N
-fn EPOPARG(S, n) {
+fn EPOPARG(S, n): i64 {
     if (n == 0) { EB(S, 0x5F); return 0; }
     if (n == 1) { EB(S, 0x5E); return 0; }
     if (n == 2) { EB(S, 0x5A); return 0; }
@@ -1482,7 +1482,7 @@ fn EPOPARG(S, n) {
 
 # Emit fn call pops for N args
 # Args 1-6 go to registers (pop in reverse). Args 7+ stay on stack.
-fn ECALLPOPS(S, n) {
+fn ECALLPOPS(S, n): i64 {
     var regn = n;
     if (regn > 6) { regn = 6; }
     var i = regn - 1;
@@ -1494,7 +1494,7 @@ fn ECALLPOPS(S, n) {
 }
 
 # Emit stack cleanup after call with >6 args
-fn ECALLCLEAN(S, n) {
+fn ECALLCLEAN(S, n): i64 {
     if (n > 6) {
         var extra = (n - 6) * 8;
         # add rsp, imm32: 48 81 C4 <imm32>
@@ -1509,14 +1509,14 @@ fn ECALLCLEAN(S, n) {
 
 # Store parameter register to [rbp - offset]
 # Helper: emit disp32 at current CP
-fn EDISP32(S, disp) {
+fn EDISP32(S, disp): i64 {
     var addr = S + 0x20000 + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
     SCP(S, GCP(S) + 4);
     return 0;
 }
 
-fn ESTOREREGPARM(S, pidx, disp) {
+fn ESTOREREGPARM(S, pidx, disp): i64 {
     if (pidx == 0) { E3(S, 0xBD8948); }
     if (pidx == 1) { E3(S, 0xB58948); }
     if (pidx == 2) { E3(S, 0x958948); }
@@ -1527,7 +1527,7 @@ fn ESTOREREGPARM(S, pidx, disp) {
     return 0;
 }
 
-fn ESTORESTACKPARM(S, pidx, disp, pc) {
+fn ESTORESTACKPARM(S, pidx, disp, pc): i64 {
     # Stack args are in reverse order: last arg at [rbp+16], first stack arg at [rbp+16+(nstack-1)*8]
     var nstack = pc - 6;
     var si = nstack - 1 - (pidx - 6);
@@ -1539,7 +1539,7 @@ fn ESTORESTACKPARM(S, pidx, disp, pc) {
     return 0;
 }
 
-fn ESTOREPARM(S, pidx, lidx, pc) {
+fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     var disp = 0 - ((lidx + 1) * 8);
     if (pidx < 6) {
         ESTOREREGPARM(S, pidx, disp);
@@ -1550,7 +1550,7 @@ fn ESTOREPARM(S, pidx, lidx, pc) {
 }
 
 # Emit fn local load: mov rax, [rbp - offset]
-fn EFLLOAD(S, idx) {
+fn EFLLOAD(S, idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     E3(S, 0x858B48);
     var addr = S + 0x20000 + GCP(S);
@@ -1560,7 +1560,7 @@ fn EFLLOAD(S, idx) {
 }
 
 # Emit fn local store: mov [rbp - offset], rax
-fn EFLSTORE(S, idx) {
+fn EFLSTORE(S, idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     E3(S, 0x858948);
     var addr = S + 0x20000 + GCP(S);
@@ -1570,7 +1570,7 @@ fn EFLSTORE(S, idx) {
 }
 
 # Find fn local variable by name
-fn FINDLOCAL(S, noff) {
+fn FINDLOCAL(S, noff): i64 {
     var lc = GFLC(S);
     var i = 0;
     while (i < lc) {
@@ -1586,7 +1586,7 @@ fn FINDLOCAL(S, noff) {
 # ================================================================
 
 # Parse return expr ;
-fn PARSE_RETURN(S) {
+fn PARSE_RETURN(S): i64 {
     STI(S, GTI(S) + 1);
     PARSE_EXPR(S);
     if (PEEKT(S) != 5) { ERR(S); }
@@ -1600,7 +1600,7 @@ fn PARSE_RETURN(S) {
 }
 
 # Parse fn call args and emit call (as expression)
-fn PARSE_FNCALL(S, noff) {
+fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
     var argc = 0;
     if (PEEKT(S) != 11) {
@@ -1632,7 +1632,7 @@ fn PARSE_FNCALL(S, noff) {
 }
 
 # Parse fn name(params) { body }
-fn PARSE_FN_DEF(S) {
+fn PARSE_FN_DEF(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     if (PEEKT(S) != 2) { ERR(S); }
     var noff = PEEKV(S);
@@ -1711,7 +1711,7 @@ fn PARSE_FN_DEF(S) {
     return 0;
 }
 
-fn PARSE_STMT(S) {
+fn PARSE_STMT(S): i64 {
     var typ = PEEKT(S);
     if (typ == 3) { PARSE_VAR(S); return 0; }
     if (typ == 15) { PARSE_IF(S); return 0; }
@@ -1796,7 +1796,7 @@ fn PARSE_STMT(S) {
     return 0;
 }
 
-fn PARSE_PROG(S) {
+fn PARSE_PROG(S): i64 {
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);
@@ -1811,7 +1811,7 @@ fn PARSE_PROG(S) {
 # FIXUP — patch variable addresses after codegen
 # ================================================================
 
-fn FIXUP(S) {
+fn FIXUP(S): i64 {
     # Align code to 8 (don't write — leave as zeros, matching cyrc)
     var cp = GCP(S);
     cp = (cp + 7) & (0 - 8);
@@ -1868,7 +1868,7 @@ fn FIXUP(S) {
 # ELF EMISSION
 # ================================================================
 
-fn EMITELF(S) {
+fn EMITELF(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x70008);
     var spos = GSPOS(S);

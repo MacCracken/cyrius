@@ -31,7 +31,7 @@ include "cbt/pulsar.cyr"
 # Usage / help
 # ================================================================
 
-fn usage() {
+fn usage(): i64 {
     println("Cyrius Build Tool");
     println("");
     println("");
@@ -86,7 +86,7 @@ fn usage() {
 # Main dispatch
 # ================================================================
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     args_init();
     load_environ();

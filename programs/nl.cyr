@@ -1,7 +1,7 @@
 # nl — number lines from stdin
 # Usage: cat file | ./nl
 
-fn print_num(n: i64) {
+fn print_num(n: i64): i64 {
     var buf[24];
     var i: i64 = 23;
     if (n == 0) { store8(&buf + i, 48); i = i - 1; }
@@ -19,7 +19,7 @@ fn print_num(n: i64) {
     return 0;
 }
 
-fn nl() {
+fn nl(): i64 {
     var byte[1];
     var line: i64 = 1;
     var at_start: i64 = 1;

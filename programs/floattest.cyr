@@ -6,7 +6,7 @@ include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
 
-fn main() {
+fn main(): i64 {
     alloc_init();
 
     # Basic conversion roundtrip

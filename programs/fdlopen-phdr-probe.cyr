@@ -28,7 +28,7 @@ include "lib/fnptr.cyr"
 include "lib/dynlib.cyr"
 include "lib/fdlopen.cyr"
 
-fn _hex2(v, out) {
+fn _hex2(v, out): i64 {
     var hi = v / 16;
     var lo = v - hi * 16;
     var hc = 48; if (hi >= 10) { hc = 87; }  # 0-9 or a-f
@@ -38,7 +38,7 @@ fn _hex2(v, out) {
     return 0;
 }
 
-fn dump_16(label, ptr, off) {
+fn dump_16(label, ptr, off): i64 {
     syscall(SYS_WRITE, 1, label, strlen(label));
     syscall(SYS_WRITE, 1, "[0x", 3);
     var hxbuf[8];
@@ -74,7 +74,7 @@ fn dump_16(label, ptr, off) {
     return 0;
 }
 
-fn main() {
+fn main(): i64 {
     alloc_init();
 
     # Resolve helper path (same logic as fdlopen_helper_available)
