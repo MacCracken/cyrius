@@ -230,7 +230,7 @@ fn http_get(url): i64 {
 # in resp.status. Bad URL → Err(HttpBadUrl); net.cyr Err in
 # tcp_socket / sock_connect → Err(HttpNetErr); 2xx response →
 # Ok(resp); non-2xx → Err(HttpNon2xx).
-fn http_get_r(url) {
+fn http_get_r(url) : Result {
     var parsed = _http_parse_url(url);
     if (parsed == 0) { return Err(HttpBadUrl); }
     var host = load64(parsed);
@@ -325,8 +325,8 @@ fn http_get_a(a, url): i64 {
 }
 
 # Get status code from response
-fn http_status(resp) { return load64(resp); }
+fn http_status(resp) : i64 { return load64(resp); }
 # Get body pointer from response
-fn http_body(resp) { return load64(resp + 8); }
+fn http_body(resp) : i64 { return load64(resp + 8); }
 # Get body length from response
-fn http_body_len(resp) { return load64(resp + 16); }
+fn http_body_len(resp) : i64 { return load64(resp + 16); }

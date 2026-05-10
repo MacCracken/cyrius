@@ -833,7 +833,7 @@ fn parse_and_send_diagnostics(uri, stderr_output): i64 {
 # LSP METHODS
 # ================================================================
 
-fn handle_initialize(body) {
+fn handle_initialize(body) : i64 {
     var id = json_get_id(body);
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"id\":");

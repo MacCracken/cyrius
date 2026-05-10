@@ -5,6 +5,42 @@
 
 ## Version
 
+**5.10.23** (shipped 2026-05-09 — **v5.10.x SLOT 23 —
+REAL TYPE SYSTEM Phase 1B: type vocabulary + annotation
+close (Phase 1 done)**).
+
+Closes Phase 1 of the 5-phase type-system arc. Added
+`Result` / `Option` / `Tagged` / `cstring` to the
+parser's return-type vocabulary in `parse_fn.cyr`
+(encoded -16 / -17 / -18 / -19; all i64-shape at
+runtime). Smart-annotated remaining 735 fns; coverage
+**76% → 93%** (3872/4124).
+
+**Compiler change**: post-param-list type-check + the
+rough-scan at fn-decl entry both extended to recognize
+the 4 new type names. Without rough-scan extension,
+Result-annotated fns silently took retptr/X8 ABI
+(struct-return path) and corrupted is_ok/result_unwrap
+caller semantics — caught mid-slot when
+result_stdlib.tcyr's 15 sub-asserts went red, fixed by
+mirror-extending the whitelist; re-ran clean.
+
+**Acceptance**:
+- 66/66 check.sh, 135/135 cyrius test.
+- Byte-identical x86 self-host.
+- cc5: 778,120 → 779,760 (+1,640 B for extended
+  recognizer).
+- Phase 2 entry criteria met (full type vocabulary +
+  93% annotation coverage).
+
+**Pattern recorded**: future return-type vocabulary
+additions MUST update BOTH the post-param-list parser
+AND the rough-scan at entry in lockstep.
+
+**Next**: v5.10.24 = Phase 2 (call-site type check at
+`PARSE_FNCALL` — compare each arg's tracked type
+against callee's param annotation).
+
 **5.10.22** (shipped 2026-05-09 — **v5.10.x SLOT 22 —
 REAL TYPE SYSTEM Phase 1A: Surface audit + bulk
 annotation (multi-slot arc kickoff)**).

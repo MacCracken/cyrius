@@ -1231,7 +1231,29 @@ predominantly Result/Option/Tagged-returning. Phase 1B
 also decides on `Result`/`Option`/`cstring` type
 additions to the cyrius type vocabulary.
 
-#### v5.10.23+ — REAL TYPE SYSTEM (multi-slot arc, continuation)
+#### v5.10.23 ✅ — REAL TYPE SYSTEM Phase 1B: type vocabulary + annotation close (SHIPPED)
+
+Phase 1B closes Phase 1. Added `Result` / `Option` /
+`Tagged` / `cstring` to the parser's return-type
+vocabulary in `src/frontend/parse_fn.cyr` (encoded
+-16 / -17 / -18 / -19, all i64-shape at runtime). Bulk-
+annotated ~735 more fns with their actual return type
+via the Phase 1B smart annotator. Coverage 76% → 93%
+(3872/4124).
+
+Mid-slot regression caught + fixed: rough-scan at
+fn-decl entry needed mirror-extension to recognize the
+new type names; without it, Result-annotated fns
+silently took retptr/X8 ABI and broke
+`is_ok`/`result_unwrap` caller semantics
+(result_stdlib.tcyr 15 sub-asserts went red, recovered
+after fix).
+
+cc5: 778,120 → 779,760. Byte-identical x86 self-host.
+66/66 check.sh, 135/135 cyrius test. Phase 2 entry
+criteria met.
+
+#### v5.10.24+ — REAL TYPE SYSTEM Phase 2-5 (continuation)
 
 **Reordered at v5.10.21 slot-entry premise check**
 (2026-05-09): typed `f64v2`/`f64v4` (originally

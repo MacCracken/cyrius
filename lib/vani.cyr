@@ -505,13 +505,13 @@ fn audio_close(dev): i64 {
 }
 
 # Get file descriptor from audio device handle
-fn audio_fd(dev) { return load64(dev); }
+fn audio_fd(dev) : i64 { return load64(dev); }
 # Get sample rate from audio device handle
-fn audio_rate(dev) { return load64(dev + 8); }
+fn audio_rate(dev) : i64 { return load64(dev + 8); }
 # Get channel count from audio device handle
-fn audio_channels(dev) { return load64(dev + 16); }
+fn audio_channels(dev) : i64 { return load64(dev + 16); }
 # Get bits per sample from audio device handle
-fn audio_bit_depth(dev) { return load64(dev + 24); }
+fn audio_bit_depth(dev) : i64 { return load64(dev + 24); }
 
 # ================================================================
 # Hardware params — full SNDRV_PCM_IOCTL_HW_PARAMS (v0.2.0)
@@ -858,7 +858,7 @@ fn vani_err(code): i64 {
 }
 
 fn vani_err_code(e)   { return load64(e); }
-fn vani_err_detail(e) { return load64(e + 8); }
+fn vani_err_detail(e) : i64 { return load64(e + 8); }
 
 # ================================================================
 # Sakshi observability wiring (mirrors mabda's pattern)
@@ -870,7 +870,7 @@ var _vani_obs_enabled = 0;
 
 fn vani_observability_enable()     { _vani_obs_enabled = 1; return 0; }
 fn vani_observability_disable()    { _vani_obs_enabled = 0; return 0; }
-fn vani_observability_is_enabled() { return _vani_obs_enabled; }
+fn vani_observability_is_enabled() : i64 { return _vani_obs_enabled; }
 
 fn _sk_emit_err(code): i64 {
     if (_vani_obs_enabled == 0) { return 0; }
@@ -888,16 +888,16 @@ fn _sk_emit_err(code): i64 {
 # Result helpers — wraps tagged.cyr
 # ================================================================
 
-fn vani_ok(value) {
+fn vani_ok(value) : Result {
     return Ok(value);
 }
 
-fn vani_err_result(code) {
+fn vani_err_result(code) : Result {
     _sk_emit_err(code);
     return Err(vani_err(code));
 }
 
-fn vani_err_result_msg(code, msg) {
+fn vani_err_result_msg(code, msg) : Result {
     _sk_emit_err(code);
     return Err(vani_err_new(code, msg));
 }
@@ -1035,7 +1035,7 @@ fn vani_format_cd(): i64 {
 
 fn vani_format_rate(f)      { return load64(f); }
 fn vani_format_channels(f)  { return load64(f + 8); }
-fn vani_format_bit_depth(f) { return load64(f + 16); }
+fn vani_format_bit_depth(f) : i64 { return load64(f + 16); }
 fn vani_format_alsa(f)      { return load64(f + 24); }
 
 # ================================================================
@@ -1331,7 +1331,7 @@ fn vani_close(d): i64 {
 # Accessors
 # ================================================================
 
-fn vani_audio_handle(d) { return load64(d); }
+fn vani_audio_handle(d) : i64 { return load64(d); }
 fn vani_card(d)         { return load64(d + 8); }
 fn vani_device_id(d)    { return load64(d + 16); }
 fn vani_format_get(d)   { return load64(d + 24); }
@@ -1865,7 +1865,7 @@ fn vani_mixer_close(m): i64 {
 }
 
 fn vani_mixer_fd(m)   { return load64(m); }
-fn vani_mixer_card(m) { return load64(m + 8); }
+fn vani_mixer_card(m) : i64 { return load64(m + 8); }
 
 # ================================================================
 # Element info query — internal helper

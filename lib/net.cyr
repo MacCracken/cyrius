@@ -36,14 +36,14 @@ fn INADDR_ANY() { return 0; }
 fn INADDR_LOOPBACK() { return 0x0100007F; }
 
 # Create a TCP socket. Returns Result(fd).
-fn tcp_socket() {
+fn tcp_socket() : Result {
     var fd = syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return Err(0 - fd); }
     return Ok(fd);
 }
 
 # Create a UDP socket. Returns Result(fd).
-fn udp_socket() {
+fn udp_socket() : Result {
     var fd = syscall(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) { return Err(0 - fd); }
     return Ok(fd);
@@ -57,7 +57,7 @@ fn sock_reuse(fd): i64 {
 }
 
 # Bind socket to address:port. Returns Result(0).
-fn sock_bind(fd, addr, port) {
+fn sock_bind(fd, addr, port) : Result {
     var sa = sockaddr_in(addr, port);
     var r = syscall(SYS_BIND, fd, sa, 16);
     if (r < 0) { return Err(0 - r); }
@@ -65,14 +65,14 @@ fn sock_bind(fd, addr, port) {
 }
 
 # Listen on socket. Returns Result(0).
-fn sock_listen(fd, backlog) {
+fn sock_listen(fd, backlog) : Result {
     var r = syscall(SYS_LISTEN, fd, backlog);
     if (r < 0) { return Err(0 - r); }
     return Ok(0);
 }
 
 # Accept a connection. Returns Result(client_fd).
-fn sock_accept(fd) {
+fn sock_accept(fd) : Result {
     var client_addr = alloc(16);
     var addrlen = alloc(4);
     store32(addrlen, 16);
@@ -82,7 +82,7 @@ fn sock_accept(fd) {
 }
 
 # Connect to address:port. Returns Result(0).
-fn sock_connect(fd, addr, port) {
+fn sock_connect(fd, addr, port) : Result {
     var sa = sockaddr_in(addr, port);
     var r = syscall(SYS_CONNECT, fd, sa, 16);
     if (r < 0) { return Err(0 - r); }
@@ -90,14 +90,14 @@ fn sock_connect(fd, addr, port) {
 }
 
 # Send data on socket. Returns Result(bytes_sent).
-fn sock_send(fd, buf, len) {
+fn sock_send(fd, buf, len) : Result {
     var n = sys_write(fd, buf, len);
     if (n < 0) { return Err(0 - n); }
     return Ok(n);
 }
 
 # Receive data from socket. Returns Result(bytes_read).
-fn sock_recv(fd, buf, len) {
+fn sock_recv(fd, buf, len) : Result {
     var n = sys_read(fd, buf, len);
     if (n < 0) { return Err(0 - n); }
     return Ok(n);

@@ -175,7 +175,7 @@ fn shadow_name(sprec)        { return load64(sprec); }
 # or `*` / `!` for locked / no-password accounts).
 fn shadow_hash(sprec)        { return load64(sprec + 8); }
 # Return days-since-1970 the password was last changed; -1 = unset.
-fn shadow_last_change(sprec) { return load64(sprec + 16); }
+fn shadow_last_change(sprec) : i64 { return load64(sprec + 16); }
 
 # v5.8.31 — ShadowError variants (mirrors PwdError shape).
 include "lib/result.cyr"
@@ -192,7 +192,7 @@ enum ShadowError {
 # /etc/shadow" (caller is non-root). For authentication paths
 # that don't need root, see lib/pam.cyr's pam_unix_authenticate
 # (which delegates to a setuid helper).
-fn shadow_getspnam_r(name, sprec, strbuf, strbufsz) {
+fn shadow_getspnam_r(name, sprec, strbuf, strbufsz) : Result {
     var rc = shadow_getspnam(name, sprec, strbuf, strbufsz);
     if (rc == 1)      { return Ok(0); }
     if (rc == 0)      { return Err(ShadowNotFound); }

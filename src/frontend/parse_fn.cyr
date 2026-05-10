@@ -1313,6 +1313,14 @@ fn PARSE_FN_DEF(S): i64 {
                     # so the rough-scan doesn't default to retptr-stash
                     # for them. Mirrors the post-param-list scalar path
                     # that encodes negative values into fn_ret_sid.
+                    # v5.10.23 — extended to recognize Result / Option /
+                    # Tagged / cstring as i64-shape scalars (all return
+                    # raw pointers — heap handle for Result/Option/Tagged,
+                    # null-terminated byte ptr for cstring; rax-via-i64
+                    # ABI not retptr-stash). Without this addition, fns
+                    # annotated with the new types would silently get
+                    # retptr/X8 calling convention and corrupt the
+                    # is_ok/result_unwrap semantics in callers.
                     var _rs_b0 = load8(S + 0x60000 + _rs_rt_noff);
                     var _rs_b1 = load8(S + 0x60000 + _rs_rt_noff + 1);
                     var _rs_b2 = load8(S + 0x60000 + _rs_rt_noff + 2);
@@ -1335,6 +1343,69 @@ fn PARSE_FN_DEF(S): i64 {
                         if (_rs_b1 == 54) {
                             if (_rs_b2 == 52) {
                                 if (_rs_b3 == 0) { _rs_is_scalar = 1; }
+                            }
+                        }
+                    }
+                    # v5.10.23: Result / Option / Tagged / cstring
+                    if (_rs_b0 == 82) {
+                        if (_rs_b1 == 101) {
+                            if (_rs_b2 == 115) {
+                                if (_rs_b3 == 117) {
+                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 108) {
+                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 116) {
+                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 0) {
+                                                _rs_is_scalar = 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (_rs_b0 == 79) {
+                        if (_rs_b1 == 112) {
+                            if (_rs_b2 == 116) {
+                                if (_rs_b3 == 105) {
+                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 111) {
+                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 110) {
+                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 0) {
+                                                _rs_is_scalar = 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (_rs_b0 == 84) {
+                        if (_rs_b1 == 97) {
+                            if (_rs_b2 == 103) {
+                                if (_rs_b3 == 103) {
+                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 101) {
+                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 100) {
+                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 0) {
+                                                _rs_is_scalar = 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (_rs_b0 == 99) {
+                        if (_rs_b1 == 115) {
+                            if (_rs_b2 == 116) {
+                                if (_rs_b3 == 114) {
+                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 105) {
+                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 110) {
+                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 103) {
+                                                if (load8(S + 0x60000 + _rs_rt_noff + 7) == 0) {
+                                                    _rs_is_scalar = 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1533,8 +1604,92 @@ fn PARSE_FN_DEF(S): i64 {
                     }
                 }
             }
+            # v5.10.23 — extended return-type vocabulary for REAL TYPE
+            # SYSTEM Phase 1B. Accepts `Result` / `Option` / `Tagged`
+            # / `cstring` as named return types. Each encodes as a
+            # distinct negative value alongside the i8/i16/i32/i64
+            # scalars (-1/-2/-4/-8). At Phase 1B these are stored but
+            # treated as i64-shape at runtime (Result/Option/Tagged
+            # are tagged-union heap pointers; cstring is a raw null-
+            # terminated byte ptr — all i64 in width). Phase 3 (over-
+            # load dispatch, v5.10.25) consumes the tag via
+            # FRS / GFRS to dispatch by callee signature.
+            #
+            # Encodings:
+            #   -16 = Result   (tagged union, lib/result.cyr)
+            #   -17 = Option   (tagged union, lib/tagged.cyr)
+            #   -18 = Tagged   (raw tagged_new pointer, lib/tagged.cyr)
+            #   -19 = cstring  (null-terminated byte pointer)
             if (_rt_scalar == 0) {
-                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64", 49);
+                # `Result` — bytes 'R','e','s','u','l','t',0
+                if (_rt_b0 == 82) {
+                    if (_rt_b1 == 101) {
+                        if (_rt_b2 == 115) {
+                            if (_rt_b3 == 117) {
+                                if (load8(S + 0x60000 + rt_noff + 4) == 108) {
+                                    if (load8(S + 0x60000 + rt_noff + 5) == 116) {
+                                        if (load8(S + 0x60000 + rt_noff + 6) == 0) {
+                                            _rt_scalar = 0 - 16;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                # `Option` — bytes 'O','p','t','i','o','n',0
+                if (_rt_b0 == 79) {
+                    if (_rt_b1 == 112) {
+                        if (_rt_b2 == 116) {
+                            if (_rt_b3 == 105) {
+                                if (load8(S + 0x60000 + rt_noff + 4) == 111) {
+                                    if (load8(S + 0x60000 + rt_noff + 5) == 110) {
+                                        if (load8(S + 0x60000 + rt_noff + 6) == 0) {
+                                            _rt_scalar = 0 - 17;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                # `Tagged` — bytes 'T','a','g','g','e','d',0
+                if (_rt_b0 == 84) {
+                    if (_rt_b1 == 97) {
+                        if (_rt_b2 == 103) {
+                            if (_rt_b3 == 103) {
+                                if (load8(S + 0x60000 + rt_noff + 4) == 101) {
+                                    if (load8(S + 0x60000 + rt_noff + 5) == 100) {
+                                        if (load8(S + 0x60000 + rt_noff + 6) == 0) {
+                                            _rt_scalar = 0 - 18;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                # `cstring` — bytes 'c','s','t','r','i','n','g',0
+                if (_rt_b0 == 99) {
+                    if (_rt_b1 == 115) {
+                        if (_rt_b2 == 116) {
+                            if (_rt_b3 == 114) {
+                                if (load8(S + 0x60000 + rt_noff + 4) == 105) {
+                                    if (load8(S + 0x60000 + rt_noff + 5) == 110) {
+                                        if (load8(S + 0x60000 + rt_noff + 6) == 103) {
+                                            if (load8(S + 0x60000 + rt_noff + 7) == 0) {
+                                                _rt_scalar = 0 - 19;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (_rt_scalar == 0) {
+                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring", 79);
             }
             SFRS(S, fi, _rt_scalar);
             STI(S, GTI(S) + 1);

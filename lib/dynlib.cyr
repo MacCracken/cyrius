@@ -154,35 +154,35 @@ fn _elf_check_magic(base): i64 {
 }
 
 # e_type at offset 16 (u16)
-fn _elf_type(base) { return load16(base + 16); }
+fn _elf_type(base) : i64 { return load16(base + 16); }
 
 # e_phoff at offset 32 (u64)
-fn _elf_phoff(base) { return load64(base + 32); }
+fn _elf_phoff(base) : i64 { return load64(base + 32); }
 
 # e_phentsize at offset 54 (u16)
-fn _elf_phentsize(base) { return load16(base + 54); }
+fn _elf_phentsize(base) : i64 { return load16(base + 54); }
 
 # e_phnum at offset 56 (u16)
-fn _elf_phnum(base) { return load16(base + 56); }
+fn _elf_phnum(base) : i64 { return load16(base + 56); }
 
 # ================================================================
 # Program header field readers
 # ================================================================
 
 # p_type at +0 (u32)
-fn _phdr_type(p) { return load32(p); }
+fn _phdr_type(p) : i64 { return load32(p); }
 
 # p_offset at +8 (u64)
-fn _phdr_offset(p) { return load64(p + 8); }
+fn _phdr_offset(p) : i64 { return load64(p + 8); }
 
 # p_vaddr at +16 (u64)
-fn _phdr_vaddr(p) { return load64(p + 16); }
+fn _phdr_vaddr(p) : i64 { return load64(p + 16); }
 
 # p_filesz at +32 (u64)
-fn _phdr_filesz(p) { return load64(p + 32); }
+fn _phdr_filesz(p) : i64 { return load64(p + 32); }
 
 # p_memsz at +40 (u64)
-fn _phdr_memsz(p) { return load64(p + 40); }
+fn _phdr_memsz(p) : i64 { return load64(p + 40); }
 
 # ================================================================
 # Dynamic section parsing
@@ -1188,7 +1188,7 @@ fn dynlib_close(handle): i64 {
 # (dynlib_open returns 0 because the file wasn't a valid ELF):
 # Err(DynlibBadElf). The two error modes are distinguished by
 # checking file existence first.
-fn dynlib_open_r(path) {
+fn dynlib_open_r(path) : Result {
     var handle = dynlib_open(path);
     if (handle != 0) { return Ok(handle); }
     # Distinguish "couldn't open the file" from "file opened but
@@ -1204,7 +1204,7 @@ fn dynlib_open_r(path) {
 # v5.8.31 — Result variant of dynlib_sym. On success: Ok(addr);
 # on null handle: Err(DynlibNotFound) (caller never opened);
 # on missing symbol: Err(DynlibSymMissing).
-fn dynlib_sym_r(handle, name) {
+fn dynlib_sym_r(handle, name) : Result {
     if (handle == 0) { return Err(DynlibNotFound); }
     var addr = dynlib_sym(handle, name);
     if (addr == 0) { return Err(DynlibSymMissing); }

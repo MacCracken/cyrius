@@ -266,7 +266,7 @@ enum PwdError {
 }
 
 # v5.8.31 — Result variant of pwd_getpwuid.
-fn pwd_getpwuid_r(uid, pwrec, strbuf, strbufsz) {
+fn pwd_getpwuid_r(uid, pwrec, strbuf, strbufsz) : Result {
     var rc = pwd_getpwuid(uid, pwrec, strbuf, strbufsz);
     if (rc == 1)      { return Ok(0); }
     if (rc == 0)      { return Err(PwdNotFound); }
@@ -276,7 +276,7 @@ fn pwd_getpwuid_r(uid, pwrec, strbuf, strbufsz) {
 }
 
 # v5.8.31 — Result variant of pwd_getpwnam.
-fn pwd_getpwnam_r(name, pwrec, strbuf, strbufsz) {
+fn pwd_getpwnam_r(name, pwrec, strbuf, strbufsz) : Result {
     var rc = pwd_getpwnam(name, pwrec, strbuf, strbufsz);
     if (rc == 1)      { return Ok(0); }
     if (rc == 0)      { return Err(PwdNotFound); }
@@ -296,7 +296,7 @@ fn pwd_gid(pwrec)    { return load64(pwrec + 8); }
 # Return the username cstring (points into strbuf).
 fn pwd_name(pwrec)   { return load64(pwrec + 16); }
 # Return the passwd field (usually "x" on modern shadow systems).
-fn pwd_passwd(pwrec) { return load64(pwrec + 24); }
+fn pwd_passwd(pwrec) : i64 { return load64(pwrec + 24); }
 # Return the GECOS / finger-info cstring.
 fn pwd_gecos(pwrec)  { return load64(pwrec + 32); }
 # Return the home-directory cstring.

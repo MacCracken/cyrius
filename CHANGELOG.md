@@ -6,6 +6,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.23] — 2026-05-09
+
+**v5.10.x SLOT 23 — REAL TYPE SYSTEM Phase 1B: type
+vocabulary expansion + annotation completion (closes
+Phase 1)**.
+
+Continues from v5.10.22's 76% coverage. Phase 1B adds
+`Result` / `Option` / `Tagged` / `cstring` to the
+parser's return-type vocabulary, then bulk-annotates
+the remaining ~735 unannotated fns with their actual
+return type. Coverage now **93%** (3872/4124).
+
+cc5: 778,120 → 779,760 (+1,640 B for extended return-
+type recognizer in `parse_fn.cyr`). Self-host byte-
+identical x86. **66/66 check.sh, 135/135 cyrius test**.
+
+### Compiler change — extended type vocabulary
+
+`src/frontend/parse_fn.cyr` — return-type parser now
+accepts named non-struct types as i64-shape scalars
+with distinct encoding tags:
+
+| Annotation | Encoding | Runtime shape |
+|------------|----------|---------------|
+| `: i8`     | -1       | 1-byte scalar |
+| `: i16`    | -2       | 2-byte scalar |
+| `: i32`    | -4       | 4-byte scalar |
+| `: i64`    | -8       | 8-byte scalar |
+| `: Result` | -16      | i64 (heap ptr to tagged-union) |
+| `: Option` | -17      | i64 (heap ptr to tagged-union) |
+| `: Tagged` | -18      | i64 (raw tagged_new pointer) |
+| `: cstring`| -19      | i64 (null-terminated byte ptr) |
+
+Both the post-param-list type-check AND the rough-scan
+at fn-decl entry recognize the new types. Without the
+rough-scan extension, Result-annotated fns silently got
+retptr/X8 calling convention (struct-return ABI) —
+caught mid-slot when result_stdlib.tcyr's 15 sub-asserts
+went red.
+
+### Annotation pass
+
+Smart annotator (extended from v5.10.22's variant) per
+unannotated fn body:
+- `return Ok(...)` or `return Err(...)` → `: Result`
+- `return None` or `return Some(...)`    → `: Option`
+- `return tagged_*(...)`                  → `: Tagged`
+- mixed return shapes                     → `: i64`
+- else                                    → `: i64`
+
+Net annotation: 76% → **93%**. Remaining 252 fns are
+multi-line-signature + edge cases the regex didn't
+match. Phase 1C cleanup is opportunistic, not a
+separate slot.
+
+### Phase 1 closes; Phase 2 entry criteria met
+
+- Type vocabulary: `Str`, `Result`, `Option`, `Tagged`,
+  `cstring`, `i8/i16/i32/i64`, struct types.
+- Annotated count: 3872/4124 (93%).
+- Self-host byte-identical through both Phase 1 slots.
+
+Phase 2 (call-site type check at PARSE_FNCALL) starts
+at v5.10.24.
+
+### Mid-slot regression caught + closed
+
+Pre-rough-scan-fix, the bulk annotation triggered
+retptr/X8 ABI for Result-annotated fns, breaking
+caller semantics for `is_ok` / `result_unwrap` /
+similar. result_stdlib.tcyr's 15 sub-asserts went red.
+Root-caused via tracing the fn-decl entry path; mirror-
+extended the rough-scan whitelist to include the new
+type names; re-ran clean. Pattern recorded for any
+future return-type vocabulary additions: BOTH the
+post-param-list parser AND the rough-scan at entry
+need updating in lockstep.
+
 ## [5.10.22] — 2026-05-09
 
 **v5.10.x SLOT 22 — REAL TYPE SYSTEM Phase 1: Surface

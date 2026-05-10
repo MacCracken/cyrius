@@ -359,7 +359,7 @@ fn TS_ISOCTDIGIT(c): i64 {
 
 # Local memeq (cc5 has no stdlib memeq; we don't want to drag
 # in lib/string.cyr just for this). Returns 1 if first n bytes match.
-fn _ts_memeq(a, b, n) {
+fn _ts_memeq(a, b, n) : i64 {
     var i = 0;
     while (i < n) {
         if (load8(a + i) != load8(b + i)) { return 0; }

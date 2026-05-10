@@ -187,7 +187,7 @@ enum GrpError {
 }
 
 # v5.8.31 — Result variant of grp_getgrgid.
-fn grp_getgrgid_r(gid, grrec, strbuf, strbufsz) {
+fn grp_getgrgid_r(gid, grrec, strbuf, strbufsz) : Result {
     var rc = grp_getgrgid(gid, grrec, strbuf, strbufsz);
     if (rc == 1)      { return Ok(0); }
     if (rc == 0)      { return Err(GrpNotFound); }
@@ -197,7 +197,7 @@ fn grp_getgrgid_r(gid, grrec, strbuf, strbufsz) {
 }
 
 # v5.8.31 — Result variant of grp_getgrnam.
-fn grp_getgrnam_r(name, grrec, strbuf, strbufsz) {
+fn grp_getgrnam_r(name, grrec, strbuf, strbufsz) : Result {
     var rc = grp_getgrnam(name, grrec, strbuf, strbufsz);
     if (rc == 1)      { return Ok(0); }
     if (rc == 0)      { return Err(GrpNotFound); }
@@ -320,14 +320,14 @@ fn grp_gid(grrec)    { return load64(grrec); }
 # Return the group name cstring (points into strbuf).
 fn grp_name(grrec)   { return load64(grrec + 8); }
 # Return the group passwd field (rarely used; usually "x").
-fn grp_passwd(grrec) { return load64(grrec + 16); }
+fn grp_passwd(grrec) : i64 { return load64(grrec + 16); }
 
 # v5.8.31 — Result variant of grp_getgrouplist.
 # Returns Ok(count) on success; Err on failure. The legacy
 # fn's overflow-as-negative `-(n+2)` encoding collapses to
 # Err(GrpBufTooSmall) here — callers needing the would-have-
 # been count fall back to the int-returning fn.
-fn grp_getgrouplist_r(user, primary_gid, gid_buf, max) {
+fn grp_getgrouplist_r(user, primary_gid, gid_buf, max) : Result {
     var rc = grp_getgrouplist(user, primary_gid, gid_buf, max);
     if (rc >= 0)      { return Ok(rc); }
     if (rc == 0 - 1)  { return Err(GrpLoadFailed); }

@@ -150,7 +150,7 @@ enum PamError {
 # `Ok(0)` = password verified; everything else folds to a typed
 # variant. The `pam_unix_available` boolean stays bool — no
 # Result variant needed.
-fn pam_unix_authenticate_r(user, password) {
+fn pam_unix_authenticate_r(user, password) : Result {
     var rc = pam_unix_authenticate(user, password);
     if (rc == PAM_AUTH_OK)             { return Ok(0); }
     if (rc == PAM_AUTH_FAIL)           { return Err(PamAuthFail); }

@@ -42,13 +42,13 @@ fn cyml_entry_new(hp, hl, bp, bl): i64 {
 }
 
 # Get TOML header pointer from a CymlEntry
-fn cyml_entry_header(e) { return load64(e); }
+fn cyml_entry_header(e) : i64 { return load64(e); }
 # Get TOML header byte length from a CymlEntry
-fn cyml_entry_header_len(e) { return load64(e + 8); }
+fn cyml_entry_header_len(e) : i64 { return load64(e + 8); }
 # Get markdown body pointer from a CymlEntry
-fn cyml_entry_body(e) { return load64(e + 16); }
+fn cyml_entry_body(e) : i64 { return load64(e + 16); }
 # Get markdown body byte length from a CymlEntry
-fn cyml_entry_body_len(e) { return load64(e + 24); }
+fn cyml_entry_body_len(e) : i64 { return load64(e + 24); }
 
 # v5.8.36 — Allocator-as-first-arg variant of cyml_doc_new.
 # Allocates the 32-byte doc struct via `a`. Returns 0 on OOM.
@@ -69,13 +69,13 @@ fn cyml_doc_new(): i64 {
 }
 
 # Get file-level TOML header pointer from a CymlDoc
-fn cyml_doc_header(d) { return load64(d); }
+fn cyml_doc_header(d) : i64 { return load64(d); }
 # Get file-level TOML header byte length from a CymlDoc
-fn cyml_doc_header_len(d) { return load64(d + 8); }
+fn cyml_doc_header_len(d) : i64 { return load64(d + 8); }
 # Get entries array pointer from a CymlDoc
-fn cyml_doc_entries(d) { return load64(d + 16); }
+fn cyml_doc_entries(d) : i64 { return load64(d + 16); }
 # Get number of entries in a CymlDoc
-fn cyml_doc_entry_count(d) { return load64(d + 24); }
+fn cyml_doc_entry_count(d) : i64 { return load64(d + 24); }
 
 # Get entry N from a doc (returns CymlEntry pointer)
 fn cyml_doc_entry(d, n): i64 {
