@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-05-10 (initial scaffold at v5.10.34; threat-model + fncall-abi spot-review at v5.10.35) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-10 (account-switch wrap-up at v5.10.39 — state.md Version + Compiler + In-flight sections refreshed; vidya retro/v510x.cyml + gotchas +3 + features +3; threat-model + fncall-abi spot-reviewed at v5.10.35; initial scaffold at v5.10.34) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`cyrius`) — the entire `docs/` tree plus root-level files (README, CHANGELOG, CLAUDE.md, VERSION). Per-stdlib-dep docs live in their own repos and are not audited here. Cross-repo cycle / pin / sweep state lives in [`development/state.md`](development/state.md), not here.
 >
 > **Convention adopted from agnosticos** (2026-05-10): pattern from `agnosticos/docs/doc-health.md`. Per `first-party-documentation.md` codification, smaller repos can adopt the same shape. Cyrius's tree is ~61 markdown files (vs agnosticos's ~265) so the tier structure here is leaner.
@@ -39,9 +39,9 @@ Numbers approximate; rolls up from the per-tier tables below.
 | File | Last touched | Status | Action |
 |---|---|---|---|
 | `README.md` | varies | ✅ Fresh | Top-level project README; refreshed across the v5.10.x cycle. |
-| `CHANGELOG.md` | 2026-05-10 | ✅ Fresh | **Source of truth per CLAUDE.md.** New v5.10.33 entry just landed (typed-simd ABI Phase 6 partial). Refreshed every release. |
+| `CHANGELOG.md` | 2026-05-10 | ✅ Fresh | **Source of truth per CLAUDE.md.** Through v5.10.39 (typed-simd ABI arc CLOSED at Phase 11 + overload dispatch). Refreshed every release. |
 | `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Process + procedures + project-identity. Volatile state delegated to state.md per its own principle. |
-| `VERSION` | 2026-05-10 | ✅ Fresh | Single source of truth for version (`5.10.33` at last edit). Bumped via `scripts/version-bump.sh`. |
+| `VERSION` | 2026-05-10 | ✅ Fresh | Single source of truth for version (`5.10.39` at last edit). Bumped via `scripts/version-bump.sh`. |
 | `docs/cyrius-guide.md` | 2026-05-03 | ✅ Fresh | Complete language reference. Last touched in the early-v5.10.x doc-audit pass; spot-check at next minor closeout. |
 | `docs/tutorial.md` | 2026-05-03 | ✅ Fresh | User-facing onboarding. Same provenance as cyrius-guide. |
 | `docs/faq.md` | 2026-05-05 | ✅ Fresh | Refreshed during v5.10.x cycle. |
@@ -70,8 +70,8 @@ Numbers approximate; rolls up from the per-tier tables below.
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `state.md` | 2026-05-10 | ✅ Fresh | **Rotates every release.** v5.10.x cycle state. Just refreshed at v5.10.33 ship. |
-| `roadmap.md` | 2026-05-10 | ✅ Fresh | **Rotates every release.** Slot pinning + cascade tracking. Just restructured at v5.10.33 ship: .34–.38 SIMD-deferral pins + .34 TLS early-data + cascaded .39–.45. |
+| `state.md` | 2026-05-10 | ✅ Fresh | **Rotates every release.** v5.10.x cycle state. Refreshed at v5.10.39 account-switch wrap-up — Version + Compiler + In-flight sections current. Pre-v5.10.33 slot blocks still accumulated (debt — future closeout pass to consolidate). |
+| `roadmap.md` | 2026-05-10 | ✅ Fresh | **Rotates every release.** Slot pinning + cascade tracking. Through v5.10.39 ship: typed-simd ABI arc CLOSED; .40–.46 pins active. |
 | `completed-phases.md` | 2026-05-08 | ✅ Fresh | Historical release narrative. Per CLAUDE.md, this is where shipped-cycle summaries land at minor closeout. |
 | `benchmarks.md` | 2026-04-25 | 🟠 Read-through | Per-release benchmark history. v5.10.x rows pending — refresh at minor closeout (typically lands as the "Post-audit benchmarks" P(-1) step). |
 | `process-notes.md` | 2026-04-12 | 🟠 Read-through | Process discipline / agent feedback log. ~4 weeks old; spot-check for stale references. |
