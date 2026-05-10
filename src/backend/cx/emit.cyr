@@ -350,6 +350,20 @@ fn EVADDR(S, idx): i64 {
     return 0;
 }
 
+# v5.10.28 — cx stub for f64v2 pair-register return.
+# x86 lands first this slot; cx propagation deferred to v5.10.30
+# per the planned multi-slot value-type ABI arc.
+fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
+    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on cx backend (v5.10.30)\n", 63);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
+    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on cx backend (v5.10.30)\n", 63);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Function local load/store
 fn EFLLOAD(S, idx): i64 {
     # load from [fp - (idx+1)*8]. Use r14/r15 as temps.

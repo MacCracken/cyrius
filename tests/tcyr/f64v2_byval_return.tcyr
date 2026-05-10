@@ -1,0 +1,48 @@
+# v5.10.28 — f64v2 multi-register pair return ABI (x86 SysV).
+# Verifies the round-trip:
+#   callee: `var v: f64v2; ...; return v;` emits rax=lo, rdx=hi
+#   caller: `var x: f64v2 = f();` allocates 16-byte stack-local
+#           and receives rax→&x+0, rdx→&x+8
+# Pre-v5.10.28 the 16-byte struct-by-value return ABI was broken
+# — the high half was lost. This gate exercises the full pair
+# round-trip via raw load64/store64 against &v.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/test.cyr"
+
+fn make_pair(lo, hi): f64v2 {
+    var v: f64v2;
+    store64(&v + 0, lo);
+    store64(&v + 8, hi);
+    return v;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("f64v2 pair-return round-trip");
+    var x: f64v2 = make_pair(0xDEADBEEF, 0xCAFEBABE);
+    assert_eq(load64(&x + 0), 0xDEADBEEF, "lo half via rax");
+    assert_eq(load64(&x + 8), 0xCAFEBABE, "hi half via rdx");
+
+    test_group("f64v2 zero pair");
+    var z: f64v2 = make_pair(0, 0);
+    assert_eq(load64(&z + 0), 0, "lo half zero");
+    assert_eq(load64(&z + 8), 0, "hi half zero");
+
+    test_group("f64v2 max pair");
+    var m: f64v2 = make_pair(0 - 1, 0 - 1);
+    assert_eq(load64(&m + 0), 0 - 1, "lo half all-bits-set");
+    assert_eq(load64(&m + 8), 0 - 1, "hi half all-bits-set");
+
+    test_group("f64v2 stack-local without init");
+    var u: f64v2;
+    store64(&u + 0, 42);
+    store64(&u + 8, 84);
+    assert_eq(load64(&u + 0), 42, "uninit-then-store lo");
+    assert_eq(load64(&u + 8), 84, "uninit-then-store hi");
+
+    var r = assert_summary();
+    return r;
+}

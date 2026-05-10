@@ -6,6 +6,122 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.28] — 2026-05-10
+
+**v5.10.x SLOT 28 — value-type ABI Phase 1: `f64v2` primitive
+type + 16-byte stack-local + multi-register pair return (x86)**.
+
+Foundational ABI work for the typed-simd arc (user direction
+2026-05-10: "Real register-passing ABI" — 3-5 slots). Phase 1
+introduces `f64v2` as a recognized primitive value type with
+2-slot stack allocation and x86 SysV multi-register pair return
+(rax = lo, rdx = hi). Closes the v5.10.21 roadmap pin's
+"struct-by-value return ABI is buggy for 16-byte structs"
+note for the f64v2 case. Phase 2 (aarch64) lands at v5.10.29;
+Phase 3 (cx + macho) at v5.10.30; Phase 4 (XMM register passing
+optimization) and Phase 5 (`f64v4` + `lib/simd.cyr` typed
+wrappers) follow.
+
+cc5: 780,336 → 784,312 (**+3,976 B** — parser type vocab in
+3 places + 2-slot allocation extension + x86 pair-return emit
+helpers). Self-host byte-identical x86 (no current cyrius
+source uses f64v2). **66/66 check.sh, 136/136 cyrius test**
+(+1 new gate: `tests/tcyr/f64v2_byval_return.tcyr`).
+
+### What landed
+
+**Parser type vocabulary** (`src/frontend/parse_fn.cyr`):
+- Rough-scan recognizer at fn-decl entry: `f64v2` accepted
+  alongside `i8`/`i16`/`i32`/`i64`/`Result`/`Option`/`Tagged`/
+  `cstring` so the rough-scan does NOT default to retptr-stash
+  for f64v2-returning fns.
+- Post-param-list scalar return parser: `f64v2` encoded as
+  `_rt_scalar = -20` (alongside -1/-2/-4/-8 for i8/i16/i32/i64
+  and -16/-17/-18/-19 for Result/Option/Tagged/cstring).
+- `_cur_fn_ret_scalar` state var (new in `parse.cyr`) tracks
+  the negative scalar tag through PARSE_FN_DEF → PARSE_RETURN
+  so the latter can dispatch f64v2 pair-return without
+  re-scanning the fn table.
+
+**Var-decl type annotation** (`src/frontend/parse_decl.cyr`):
+- `var v: f64v2;` — `f64v2` recognized at var-decl
+  type-annotation parser (sentinel `pscale = -20`). Routes
+  through the existing v5.5.36 Phase 2 stack-local struct
+  branch with hardcoded `sv_sz = 16` (no STRUCTSZ lookup
+  since f64v2 is a primitive, not a registered struct).
+  Allocates 2-slot stack-local: anonymous filler slot (hi
+  half = `&v + 8`) + named slot (lo half = `&v + 0`,
+  SLTYPE = -20).
+- `var x: f64v2 = f();` — caller-side path. Allocates the
+  2-slot local up front, compiles RHS via PCMPE, then emits
+  `EFLSTORE_F64V2_PAIR` to receive rax → named (lo) and
+  rdx → filler (hi). Detected via `pscale == -20 && RHS
+  is IDENT(...) && callee GFRS == -20`.
+
+**Return codegen** (`src/frontend/parse_fn.cyr` PARSE_RETURN):
+- `return v;` for f64v2-typed local emits the pair load via
+  `EFLLOAD_F64V2_PAIR(S, lli)`. Falls through to the standard
+  scalar PCMPE path for non-IDENT f64v2 returns (e.g. fn-call
+  returning f64v2) — those land on a follow-up slot.
+
+**x86 emit helpers** (`src/backend/x86/emit.cyr`):
+- `EFLLOAD_F64V2_PAIR(S, idx)` — `mov rax, [rbp + lo_disp];
+  mov rdx, [rbp + hi_disp]`. Disp adjusts for `_cur_fn_regalloc`
+  and `_cur_fn_ret_stash` like the existing EFLLOAD.
+- `EFLSTORE_F64V2_PAIR(S, idx)` — mirror: `mov [rbp + lo_disp],
+  rax; mov [rbp + hi_disp], rdx`.
+
+**aarch64 + cx stubs**: `EFLLOAD_F64V2_PAIR` and
+`EFLSTORE_F64V2_PAIR` defined with `ERR_MSG` fallback so the
+self-host parser link succeeds; consumers that try to use
+f64v2 on aarch64/cx get a clear "f64v2 ABI not yet on this
+backend (v5.10.29 / v5.10.30)" error. Cross-arch propagation
+pinned in roadmap; honest multi-slot architecture, not a
+half-fix sleight-of-hand.
+
+### Acceptance probe (canonical)
+
+```cyr
+fn make_pair(lo, hi): f64v2 {
+    var v: f64v2;
+    store64(&v + 0, lo);
+    store64(&v + 8, hi);
+    return v;            # rax = lo, rdx = hi
+}
+
+fn main(): i64 {
+    alloc_init();
+    var x: f64v2 = make_pair(0xDEADBEEF, 0xCAFEBABE);
+    # x's 2-slot local: &x+0 = lo (rax), &x+8 = hi (rdx)
+    if (load64(&x + 0) != 0xDEADBEEF) { return 1; }
+    if (load64(&x + 8) != 0xCAFEBABE) { return 2; }
+    return 0;
+}
+```
+
+Pre-v5.10.28 the high half was lost (the standard scalar return
+path emitted only `mov rax, [&v]` — 8 bytes — and the caller
+side stored only rax to a single 8-byte slot). The roadmap pin
+explicitly flagged this; v5.10.28 closes it for f64v2.
+
+### Multi-slot ABI arc roadmap
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | f64v2 + 2-slot local + x86 pair return (this slot) |
+| 2     | v5.10.29 | pinned | aarch64 propagation (X0+X1 pair, ldur/stur emits) |
+| 3     | v5.10.30 | pinned | cx + macho propagation |
+| 4     | v5.10.31 | pinned | XMM register passing (opt: `movupd xmm0, [&v]`) |
+| 5     | v5.10.32 | pinned | f64v4 (32-byte; YMM or XMM-pair) + lib/simd.cyr typed wrappers |
+
+User direction 2026-05-10 picked "Real register-passing ABI
+(3-5 slots)" — this arc fits the upper bound. Per
+`feedback_no_one_fix_per_slot` memory pin: genuine multi-slot
+work, not lazy splits. Each slot delivers measurable forward
+motion (Phase 1: closes the 16-byte by-value return bug for
+f64v2 end-to-end on x86; consumer paths now compile and
+execute correctly).
+
 ## [5.10.27] — 2026-05-09
 
 **v5.10.x SLOT 27 — TLS staged-connect API: split

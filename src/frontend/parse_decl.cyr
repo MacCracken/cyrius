@@ -846,6 +846,19 @@ fn PARSE_VAR(S): i64 {
                 elif (ltname & 0xFFFFFF == 0x363169) { scalar_type = 2; }
                 elif (ltname & 0xFFFFFF == 0x323369) { scalar_type = 4; }
                 elif (ltname & 0xFFFFFF == 0x343669) { scalar_type = 8; }
+                # v5.10.28 — `f64v2` value type (16-byte). Detected
+                # here at var-decl parsing so `var v: f64v2;` triggers
+                # the 2-slot stack-local allocation path below. Encoded
+                # as pscale = -20 (sentinel below STRUCT sid range —
+                # struct sids start at 1 so -20 is safe). The branch
+                # at line ~873 (`pscale < 0 && PEEKT == 5`) routes
+                # uninitialized f64v2 locals through the 2-slot
+                # filler+named allocation; the named slot's SLTYPE
+                # gets -20 (via `0 - sv_sid` where sv_sid = 20).
+                # bytes for "f64v2\0" — 5 chars + nul, packed in 6 bytes
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003276343666) {
+                    pscale = 0 - 20;
+                }
                 else {
                     var lsid = FINDSTRUCT(S, lann);
                     if (lsid > 0) { pscale = 0 - lsid; }
@@ -875,7 +888,13 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 60);
         }
         var sv_sid = 0 - pscale;
-        var sv_sz = STRUCTSZ(S, sv_sid - 1);
+        var sv_sz = 0;
+        # v5.10.28 — `f64v2` sentinel pscale = -20 takes a fixed 16-byte
+        # size without consulting STRUCTSZ (no struct registered for it).
+        # The named slot's SLTYPE = -20 below; PARSE_RETURN's pair-load
+        # path keys on this. Future f64v4 lands at -21 with size 32.
+        if (sv_sid == 20) { sv_sz = 16; }
+        else { sv_sz = STRUCTSZ(S, sv_sid - 1); }
         if (sv_sz < 8) { sv_sz = 8; }
         var sv_aligned = (sv_sz + 7) & (0 - 8);
         var sv_nslots = sv_aligned / 8;
@@ -918,6 +937,55 @@ fn PARSE_VAR(S): i64 {
     # `var a: Num = 20;` (where Num is a wrapper struct and the
     # init expression is a plain scalar) falls through to PCMPE-
     # as-usual instead of being rejected here.
+    # v5.10.28 — `var x: f64v2 = f();` caller-side path.
+    # f64v2 returns split rax+rdx (pair-register). Caller must:
+    #  (a) allocate 2-slot stack-local (16 bytes) for x
+    #  (b) compile RHS (the fn call) — result lands in rax (lo) + rdx (hi)
+    #  (c) store rax → x's named slot (lo, &x+0)
+    #      store rdx → x's filler slot (hi, &x+8)
+    # Detected via pscale == -20 (f64v2 sentinel from the type
+    # annotation parser) AND RHS is `IDENT(...)` whose target fn
+    # was annotated `: f64v2` (GFRS == -20).
+    if ((pscale == 0 - 20) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
+        var _f2c_look_ti = GTI(S) + 1;
+        if (TOKTYP(S, _f2c_look_ti) == 2) {
+            if (TOKTYP(S, _f2c_look_ti + 1) == 10) {
+                var _f2c_look_noff = TOKVAL(S, _f2c_look_ti);
+                var _f2c_look_fi = FINDFN(S, _f2c_look_noff);
+                if (_f2c_look_fi >= 0) {
+                    if (GFRS(S, _f2c_look_fi) == 0 - 20) {
+                        # Allocate 2-slot stack-local (filler + named, like
+                        # the v5.5.36 Phase 2 struct-local pattern).
+                        var _f2c_existing = FINDLOCAL(S, noff);
+                        if (_f2c_existing >= 0) {
+                            if (GLDEP(S, _f2c_existing) == GSDEP(S)) { ERRDUPVAR(S); }
+                        }
+                        # Filler slot (hi half = &x+8)
+                        var _f2c_fill = GFLC(S);
+                        S64(S + 0x191000 + _f2c_fill * 8, 0 - 1);
+                        SLDEP(S, _f2c_fill, GSDEP(S));
+                        SLTYPE(S, _f2c_fill, 0);
+                        SFLC(S, _f2c_fill + 1);
+                        # Named slot (lo half = &x+0)
+                        var _f2c_named = GFLC(S);
+                        S64(S + 0x191000 + _f2c_named * 8, noff);
+                        SLDEP(S, _f2c_named, GSDEP(S));
+                        SLTYPE(S, _f2c_named, 0 - 20);
+                        SFLC(S, _f2c_named + 1);
+                        # Compile `= f(args)` — PCMPE handles the call;
+                        # rax + rdx hold the returned pair.
+                        STI(S, GTI(S) + 1);  # consume '='
+                        PCMPE(S);
+                        # Store rax → named (lo), rdx → filler (hi)
+                        EFLSTORE_F64V2_PAIR(S, _f2c_named);
+                        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+                        STI(S, GTI(S) + 1);   # consume ';'
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
     var asv_try = 0;
     if ((pscale < 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _look_ti = GTI(S) + 1;

@@ -858,6 +858,21 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     return 0;
 }
 
+# v5.10.28 — aarch64 stub for f64v2 pair-register return.
+# x86 lands first this slot; aarch64 propagation deferred to
+# v5.10.29 per the planned multi-slot value-type ABI arc. See
+# CHANGELOG v5.10.28 for cross-arch propagation pinnage.
+fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
+    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on aarch64 backend (v5.10.29)\n", 68);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
+    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on aarch64 backend (v5.10.29)\n", 68);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Local variable load: ldur x0, [x29, #-offset]
 # v5.9.26: account for `_cur_fn_ret_stash` so locals in
 # struct-returning fns don't overlap the X8 retptr stash slot.

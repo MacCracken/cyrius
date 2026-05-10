@@ -531,6 +531,38 @@ fn PARSE_RETURN(S): i64 {
         SRPC(S, srn_rpc + 1);
         return 0;
     }
+    # v5.10.28 — f64v2 multi-register pair return ABI.
+    # When the current fn is annotated `: f64v2` (encoding -20 in
+    # _cur_fn_ret_scalar) AND the return form is `return IDENT;`
+    # where IDENT is a 2-slot stack-local f64v2 var, emit the pair
+    # load: rax = lo (named slot, &v+0), rdx = hi (filler slot,
+    # &v+8). This is x86 SysV's 16-byte int-class struct return
+    # ABI. Falls through to the scalar PCMPE path for non-IDENT
+    # f64v2 returns (e.g. fn-call returning f64v2) — those land
+    # on a follow-up slot. aarch64 + cx backends ERR_MSG via the
+    # backend stubs.
+    if (_cur_fn_ret_scalar == 0 - 20) {
+        if (PEEKT(S) == 2) {
+            if (TOKTYP(S, GTI(S) + 1) == 5) {
+                var _f2_noff = PEEKV(S);
+                var _f2_lli = FINDLOCAL(S, _f2_noff);
+                if (_f2_lli >= 0) {
+                    var _f2_lt = GLTYPE(S, _f2_lli);
+                    if (_f2_lt == 0 - 20) {
+                        STI(S, GTI(S) + 1);  # consume IDENT
+                        STI(S, GTI(S) + 1);  # consume ';'
+                        EFLLOAD_F64V2_PAIR(S, _f2_lli);
+                        var _f2_rp = EJMP0(S);
+                        var _f2_rpc = GRPC(S);
+                        if (_f2_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
+                        S64(S + 0x18DA20 + _f2_rpc * 8, _f2_rp);
+                        SRPC(S, _f2_rpc + 1);
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
     PCMPE(S);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
@@ -1213,6 +1245,7 @@ fn PARSE_FN_DEF(S): i64 {
     # (future-proof; current cyrius fn params are name-only or
     # `name: Type`).
     _cur_fn_ret_stash = 0;
+    _cur_fn_ret_scalar = 0;
     var _rs_save_ti = GTI(S);
     if (PEEKT(S) == 10) {
         STI(S, GTI(S) + 1);
@@ -1339,6 +1372,32 @@ fn PARSE_FN_DEF(S): i64 {
                                                     _rs_is_scalar = 1;
                                                 }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    # v5.10.28 — `f64v2` recognized as a primitive value
+                    # type returning via multi-register pair (rax+rdx on
+                    # x86 SysV). Encoding -20 reserved here so the
+                    # rough-scan does NOT default to retptr-stash for
+                    # f64v2-returning fns (their bytes flow through the
+                    # post-param-list scalar return path with the
+                    # multi-register return codegen). NO _rs_is_scalar
+                    # flip here — f64v2 is NOT i64-shape; it needs the
+                    # PAIR return path. We just suppress the retptr
+                    # stash by setting _rs_is_scalar = 1 (treats it as
+                    # "scalar-ish" for stash decision; actual return
+                    # codegen below detects rt_scalar == -20 and emits
+                    # pair-return).
+                    if (_rs_b0 == 102) {
+                        if (_rs_b1 == 54) {
+                            if (_rs_b2 == 52) {
+                                if (_rs_b3 == 118) {
+                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 50) {
+                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 0) {
+                                            _rs_is_scalar = 1;
                                         }
                                     }
                                 }
@@ -1715,11 +1774,28 @@ fn PARSE_FN_DEF(S): i64 {
                         }
                     }
                 }
+                # v5.10.28 — `f64v2` value type, encoding -20.
+                # Multi-register pair return ABI (rax+rdx on x86 SysV).
+                # bytes 'f','6','4','v','2',0 (5 chars + nul)
+                if (_rt_b0 == 102) {
+                    if (_rt_b1 == 54) {
+                        if (_rt_b2 == 52) {
+                            if (_rt_b3 == 118) {
+                                if (load8(S + 0x60000 + rt_noff + 4) == 50) {
+                                    if (load8(S + 0x60000 + rt_noff + 5) == 0) {
+                                        _rt_scalar = 0 - 20;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if (_rt_scalar == 0) {
-                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring", 79);
+                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64v2", 87);
             }
             SFRS(S, fi, _rt_scalar);
+            _cur_fn_ret_scalar = _rt_scalar;
             STI(S, GTI(S) + 1);
         }
     }

@@ -1403,6 +1403,61 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     return 0;
 }
 
+# v5.10.28 — emit f64v2 pair-register return load:
+#   mov rax, [rbp - (idx+1)*8]   (lo half — bottom-of-struct, named slot)
+#   mov rdx, [rbp - idx*8]       (hi half — anonymous filler slot above)
+# `idx` is the NAMED slot's local index (returned by FINDLOCAL on
+# the f64v2 var name). For a 2-slot stack-local f64v2:
+#   slot idx-1 = anonymous filler (hi half)
+#   slot idx   = named (lo half / bottom of struct)
+# The named slot lives at the deeper frame offset; struct-relative
+# field 0 (lo) is at &v+0 = the named slot, field 1 (hi) at &v+8 =
+# the filler slot above. x86 SysV ABI: 16-byte int-class struct
+# returns split rax (lo) + rdx (hi).
+fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    var disp_hi = 0 - (idx * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; disp_hi = disp_hi - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; disp_hi = disp_hi - _cur_fn_ret_stash; }
+    # mov rax, [rbp + disp_lo] — REX.W=1, 0x8B mov r64,r/m64, ModRM=0x85 (rax / [rbp+disp32])
+    E3(S, 0x858B48);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # mov rdx, [rbp + disp_hi] — same prefix, ModRM=0x95 (rdx / [rbp+disp32])
+    E3(S, 0x958B48);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
+# v5.10.28 — emit f64v2 pair-register STORE post-call:
+#   mov [rbp - (idx+1)*8], rax     (lo half — named slot)
+#   mov [rbp - idx*8], rdx         (hi half — filler slot)
+# Used by caller side after `var x: f64v2 = f();` to receive the
+# pair-register return into x's 2-slot stack-local. Mirror of
+# EFLLOAD_F64V2_PAIR — same disp computation, 0x89 (mov r/m64, r64)
+# instead of 0x8B (mov r64, r/m64).
+fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    var disp_hi = 0 - (idx * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; disp_hi = disp_hi - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; disp_hi = disp_hi - _cur_fn_ret_stash; }
+    # mov [rbp + disp_lo], rax — REX.W=1, 0x89 mov r/m64,r64, ModRM=0x85 (rax / [rbp+disp32])
+    E3(S, 0x858948);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # mov [rbp + disp_hi], rdx — same prefix, ModRM=0x95 (rdx / [rbp+disp32])
+    E3(S, 0x958948);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
 # Emit fn local load: mov rax, [rbp - offset]
 fn EFLLOAD(S, idx): i64 {
     if (_IR_REC1(S, IR_LOAD_LOCAL, idx) == 1) { return 0; }

@@ -5,6 +5,64 @@
 
 ## Version
 
+**5.10.28** (shipped 2026-05-10 — **v5.10.x SLOT 28 —
+value-type ABI Phase 1: `f64v2` primitive type + 16-byte
+stack-local + multi-register pair return (x86)**).
+
+Foundational ABI work for the typed-simd arc (user direction
+2026-05-10: "Real register-passing ABI" — 3-5 slots).
+Closes the v5.10.21 roadmap pin's "16-byte struct-by-value
+return broken" note for the f64v2 case end-to-end on x86.
+
+**Parser additions** (`src/frontend/parse_fn.cyr`,
+`src/frontend/parse_decl.cyr`):
+- `f64v2` recognized in 3 places (rough-scan, post-param-list
+  scalar return, var-decl type annotation). Sentinel
+  encoding `-20` in `_rt_scalar` / `pscale`.
+- `_cur_fn_ret_scalar` state var (`parse.cyr`) tracks the
+  negative scalar tag through PARSE_FN_DEF → PARSE_RETURN.
+- `var v: f64v2;` allocates 2-slot stack-local (filler +
+  named) with hardcoded `sv_sz = 16` (no STRUCTSZ lookup).
+- `var x: f64v2 = f();` caller-side: allocate 2-slot →
+  PCMPE → `EFLSTORE_F64V2_PAIR` (rax → lo, rdx → hi).
+
+**Codegen helpers** (`src/backend/x86/emit.cyr`):
+- `EFLLOAD_F64V2_PAIR(S, idx)` — `mov rax, [rbp+lo_disp];
+  mov rdx, [rbp+hi_disp]`.
+- `EFLSTORE_F64V2_PAIR(S, idx)` — mirror.
+
+**Cross-arch stubs** (aarch64 + cx): both helpers defined
+with `ERR_MSG` fallback so self-host links; consumers using
+f64v2 on those backends get a clear "not yet on this backend
+(v5.10.29 / v5.10.30)" error. Honest multi-slot architecture.
+
+**Acceptance**:
+- cc5: 780,336 → **784,312** (+3,976 B).
+- Self-host byte-identical x86 (no current cyrius source
+  uses f64v2).
+- 66/66 check.sh + **136/136 cyrius test** (+1 new gate:
+  `tests/tcyr/f64v2_byval_return.tcyr` — round-trip via
+  `make_pair(0xDEADBEEF, 0xCAFEBABE)` reads both halves
+  correctly).
+
+**Multi-slot ABI arc roadmap**:
+
+| Phase | Slot     | Description |
+|-------|----------|-------------|
+| 1     | v5.10.28 ✅ | f64v2 + 2-slot local + x86 pair return |
+| 2     | v5.10.29 pinned | aarch64 propagation (X0+X1 pair) |
+| 3     | v5.10.30 pinned | cx + macho propagation |
+| 4     | v5.10.31 pinned | XMM register passing optimization |
+| 5     | v5.10.32 pinned | f64v4 + lib/simd.cyr typed wrappers |
+
+User direction picked the upper bound (5 slots). Hisab
+benchmark gap (30-700× vs Rust+glam) closes 2-4× once
+Phase 4 XMM register passing lands.
+
+**Next**: v5.10.29 = aarch64 Phase 2 propagation. Pi
+cross-arch SSH verify gate per memory pin
+`reference_verification_hosts_ssh`.
+
 **5.10.27** (shipped 2026-05-09 — **v5.10.x SLOT 27 —
 TLS staged-connect API: split `tls_connect_with_ctx_hook`
 into `tls_connect_alloc` + `tls_connect_complete` (sandhi

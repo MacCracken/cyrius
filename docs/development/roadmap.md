@@ -1404,16 +1404,51 @@ Filed 2026-05-09 via
 Per `feedback_consumer_request_full_surface` — full
 surface shipped this slot, no Phase B deferral.
 
-#### v5.10.28 — typed `f64v2` / `f64v4` types (post-overload-dispatch)
+#### v5.10.28 ✅ — value-type ABI Phase 1: f64v2 + 16-byte stack-local + x86 pair return (SHIPPED)
 
-The "typed verbs" half of the original v5.10.16 roadmap
-entry. Was pinned at v5.10.21; pushed at v5.10.21 slot-
-entry premise check because typed wrappers exercise
-overload-dispatch infrastructure that REAL TYPE SYSTEM
-Phase 3 (v5.10.23) provides. Lands AFTER overload
-dispatch ships so `f64v2_add(a: f64v2, b: f64v2): f64v2`
-has the type-system support to actually be checked +
-dispatched correctly.
+**Premise-check correction at slot entry** (2026-05-10):
+empirical testing confirmed the v5.10.21 roadmap pin —
+16-byte struct-by-value return ABI broken (high half lost).
+Cyrius's existing struct types (Str etc.) are pointer-typed
+(heap-allocated, accessed via load64), NOT register-passed
+value types. The roadmap pin assumed typed-simd would compose
+with overload dispatch but didn't account for missing
+value-type ABI.
+
+**User direction at slot entry**: "Real register-passing ABI"
+(3-5 slots). f64v2/f64v4 typed simd extends across multiple
+slots, starting with the foundational value-type ABI work.
+
+**v5.10.28 shipped Phase 1**: f64v2 as a primitive value type
+recognized by parser (rough-scan + post-param-list scalar
+return + var-decl type annotation, sentinel encoding -20).
+2-slot stack allocation reusing the v5.5.36 Phase 2 struct-
+local pattern with hardcoded sv_sz = 16. x86 SysV multi-
+register pair return (rax = lo, rdx = hi) via new emit
+helpers `EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR`. PARSE_
+RETURN dispatches f64v2 returns; parse_decl handles
+caller-side `var x: f64v2 = f();` allocate-call-store-pair.
+
+cc5: 780,336 → 784,312 (+3,976 B). Self-host byte-identical
+x86 (no current cyrius source uses f64v2). 66/66 check.sh,
+136/136 cyrius test (+1 new gate). aarch64 + cx backends
+stub the f64v2 helpers with ERR_MSG fallback for cross-arch
+propagation in Phase 2/3.
+
+#### v5.10.29+ — value-type ABI Phases 2-5 (multi-slot)
+
+Pinned 2026-05-10 at v5.10.28 ship per user direction
+"Real register-passing ABI (3-5 slots)" + memory pin
+`feedback_no_one_fix_per_slot` (genuine multi-slot work,
+not lazy splits). Each phase delivers measurable forward
+motion.
+
+| Phase | Slot     | Description |
+|-------|----------|-------------|
+| 2     | v5.10.29 | aarch64 propagation: X0+X1 pair return + ldur/stur emits in `EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR`. Pi cross-arch verify gate. |
+| 3     | v5.10.30 | cx + macho propagation: cxvm bytecode dispatch + macho-arm64 emit fill. Cass macOS + ecb Windows verify gates. |
+| 4     | v5.10.31 | XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` instead of rax/rdx int-class pair. 2-instruction faster path; better SIMD perf for hisab benchmark workloads. |
+| 5     | v5.10.32 | `f64v4` (32-byte): two-XMM pair OR YMM (AVX-detected). `lib/simd.cyr` typed wrappers `f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed via overload dispatch (uses Phase 3 generalize from v5.10.25). Closes the typed-simd arc. |
 
 Adds `f64v2` and `f64v4` as primitive types (16-byte
 and 32-byte packed-f64 respectively), overloaded
@@ -1421,14 +1456,8 @@ and 32-byte packed-f64 respectively), overloaded
 `lib/simd.cyr`. The flat-array primitives
 (`f64v_add`/`_dot`/`_scale`/...) remain the underlying
 codegen — typed wrappers just give consumers a cleaner
-API.
-
-Premise-check note from v5.10.21 entry: cyrius's
-struct-by-value return ABI is buggy for 16-byte structs
-(`return v` for a struct local doesn't copy fields
-correctly — a 16-byte test returned only the high 8
-bytes). Fix lands as part of this slot OR as a Phase 6
-of the type system arc; refine at slot entry.
+API. Hisab benchmark gap (30-700× vs Rust+glam) closes 2-4×
+once Phase 4 XMM register passing lands.
 
 #### v5.10.29 — Stdlib data-domain distlib carve-out (multi-slot kickoff)
 
