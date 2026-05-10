@@ -6,6 +6,103 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.36] — 2026-05-10
+
+**v5.10.x SLOT 36 — aarch64 V0 NEON register-class return for
+f64v2 (typed-simd ABI Phase 8)**.
+
+Phase 8 of the typed-simd ABI arc. Mirror of v5.10.32's x86 XMM0
+SSE-class optimisation: replaces the v5.10.29 int-class X0+X1
+pair (8 bytes / load + 8 bytes / store) with a single 128-bit
+NEON LDUR Q0 / STUR Q0 (4 bytes each). AAPCS64 classifies
+16-byte composites of FP fields as SIMD-class, returned in V0 —
+same shape as x86 SysV SSE class returning in XMM0.
+
+cc5 (x86): **785,656 unchanged** (no x86 emit change).
+cc5_aarch64: 481,600 → **481,040 (-560 B)** from encoding-density
+gain. Self-host x86 byte-identical. **66/66 check.sh,
+138/138 cyrius test on x86**.
+
+**Cross-host SSH cluster green**:
+- pi (aarch64 Linux): `simd_typed_wrappers.tcyr` 13/13 +
+  `f64v2_byval_return.tcyr` 8/8, exit=0 each
+- ecb (macOS Mach-O arm64): 13/13, exit=0 (codesigned)
+- cass (Windows PE x86_64): exit=0 (Win64 PE retptr-style ABI
+  unchanged — this slot only touches aarch64 SysV)
+
+### What landed
+
+**`src/backend/aarch64/emit.cyr`** — both helpers rewritten:
+
+- `EFLLOAD_F64V2_PAIR(S, idx)` — single `ldur q0, [x29, #disp_lo]`
+  (4 bytes: `3C C0 03 A0 | (off9 << 12)`). Disp computed as
+  `-(idx+1)*8` (named slot, bottom of struct). V0 receives the
+  16-byte packed-double value: V0[63:0] = lo half, V0[127:64] =
+  hi half — matches the in-memory layout (lo @ &v+0,
+  hi @ &v+8).
+- `EFLSTORE_F64V2_PAIR(S, idx)` — single
+  `stur q0, [x29, #disp_lo]` (4 bytes: `3C 80 03 A0 | (off9 << 12)`).
+  Mirror of LOAD for caller-side post-call store.
+
+LDUR / STUR (SIMD&FP) imm9 range: -256..+255. Same defensive
+range-guard as the v5.10.29 X-pair (with regalloc cap 5 +
+ret_stash 8, typical disps stay well inside).
+
+The single 16-byte NEON load/store replaces what was **two**
+LDUR / STUR X-form instructions (one per half). Same memory
+layout (lo @ &v+0, hi @ &v+8 in little-endian) — existing
+`tests/tcyr/f64v2_byval_return.tcyr` gate passes unchanged
+(8/8 sub-asserts on aarch64 cross-arch).
+
+### Why this matters
+
+AAPCS64 PCS classifies 16-byte composites with FP fields as
+**SIMD class** — meaning the proper ABI return register IS V0
+(not the X0+X1 int-class pair). v5.10.29 shipped X-pair as a
+working-but-suboptimal implementation. v5.10.36 closes the gap
+to standard AAPCS64 for `__m128d`-style packed doubles.
+
+Performance impact: matches the x86 v5.10.32 shape. For hisab's
+benchmark workload (the keystone consumer of f64v2 — see hisab
+benchmark gap docs):
+
+1. One 128-bit SIMD load/store instead of two 64-bit GP
+   loads/stores at every call boundary.
+2. V0 stays in NEON register across consecutive f64v2 ops — no
+   intermediate stack round-trip if the consumer immediately uses
+   the result with another SIMD op (e.g. `f64v_add`).
+
+### What this does NOT change
+
+- x86 SysV: still uses XMM0 (v5.10.32). Untouched.
+- cx bytecode: still uses r0+r1 int-class pair (v5.10.30).
+  cxvm has no SIMD register support; pair is fine.
+- Win64 PE: still uses retptr-style (v5.10.31). MS x64 ABI for
+  vector types DOES return in XMM0 (similar to SysV), but
+  cyrius's Win64 retptr path works correctly. Switching Win64
+  to XMM0 is a separate optimization not blocking the arc close.
+- macOS Mach-O aarch64: inherits the new aarch64 emit
+  automatically (macho/emit.cyr is binary-format-only; the
+  EFLLOAD/EFLSTORE_F64V2_PAIR live in aarch64/emit.cyr).
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV int-class pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | cx bytecode + macho inherits |
+| 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style |
+| 5     | v5.10.32 | ✅     | x86 SysV XMM0 register passing |
+| 6     | v5.10.33 | ✅ partial | `lib/simd.cyr` typed wrappers (return-side) |
+| 7     | v5.10.35 | ✅     | `PARSE_SIMD_EXT` locname-staleness fix |
+| 8     | v5.10.36 | ✅     | **aarch64 V0 NEON register passing** (this slot) |
+| 9     | v5.10.37 | pinned | `f64v4` (32-byte two-XMM pair OR YMM/AVX) |
+| 10    | v5.10.38 | pinned | f64v2 param-side ABI (arc close) |
+
+Two slots remain before the typed-simd ABI arc fully closes
+at v5.10.38.
+
 ## [5.10.35] — 2026-05-10
 
 **v5.10.x SLOT 35 — `PARSE_SIMD_EXT` locname-staleness codegen fix

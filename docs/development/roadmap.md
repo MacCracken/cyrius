@@ -1451,7 +1451,7 @@ motion.
 | 5     | v5.10.32 | ✅     | x86 SysV XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` (8 bytes each) replaces v5.10.28's int-class rax/rdx pair (14 bytes each). cc5 SHRINKS by 384 B from the encoding-density gain. Standard SysV PCS for SSE class composites. |
 | 6     | v5.10.33 | ✅ partial | `lib/simd.cyr` typed wrappers (10 fns: make/lo/hi/add/sub/mul/div/fmadd/dot/scale) using pointer inputs + by-value f64v2 return. Closes the consumer-visible piece of the arc. **Param-side ABI, abs/sqrt, f64v4, and aarch64 V0 NEON deferred to slots 7–10.** |
 | 7     | v5.10.35 | pinned | `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug fix (unblocks `f64v2_abs` / `f64v2_sqrt`). |
-| 8     | v5.10.36 | pinned | aarch64 V0 NEON return-register optimization (mirrors v5.10.32 XMM0 work; replaces v5.10.29's X0+X1 int-class pair). |
+| 8     | v5.10.36 | ✅     | aarch64 V0 NEON return-register optimization (mirrors v5.10.32 XMM0 work; replaces v5.10.29's X0+X1 int-class pair). cc5_aarch64 -560 B. |
 | 9     | v5.10.37 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM/AVX-detected; aarch64 two-V-register pair. |
 | 10    | v5.10.38 | pinned | f64v2 param-side ABI: 2-slot allocation + register-pair → 2-slot store at fn entry, enables `f64v2_add(a: f64v2, b: f64v2): f64v2` value-param shape via overload dispatch. |
 
@@ -1643,7 +1643,7 @@ a separate-slot fix per `feedback_no_one_fix_per_slot`
    backend; check all four.
 5. Self-host byte-identical x86; 66/66 check.sh.
 
-#### v5.10.36 — aarch64 V0 NEON return-register optimization (typed-simd ABI Phase 8)
+#### v5.10.36 ✅ — aarch64 V0 NEON return-register optimization (typed-simd ABI Phase 8) (SHIPPED)
 
 Pinned 2026-05-10 at v5.10.33 ship.
 

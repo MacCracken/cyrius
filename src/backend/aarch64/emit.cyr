@@ -858,73 +858,81 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     return 0;
 }
 
-# v5.10.29 — aarch64 f64v2 pair-register return (Phase 2 of the
-# value-type ABI arc; Phase 1 landed x86 at v5.10.28).
+# v5.10.36 — aarch64 V0 NEON register-class return for f64v2
+# (Phase 8 of the value-type ABI arc; mirror of v5.10.32's x86
+# XMM0 SSE-class optimisation).
 #
-# aarch64 SysV PCS treats composite types ≤ 16 bytes as int-class:
-# returned in X0 (lo) + X1 (hi). Mirror of x86's rax/rdx pair —
-# same caller/callee shape, different register names.
+# Pre-v5.10.36 (v5.10.29 Phase 2): aarch64 returned f64v2 as an
+# int-class pair (X0 = lo, X1 = hi), 8 bytes of emit per
+# load/store (two LDUR / STUR X-form instructions). That's
+# correct under AAPCS64's general-purpose composite rules but
+# leaves performance on the floor: AAPCS64 classifies 16-byte
+# composites composed of FP fields as **SIMD class**, returned
+# in V0 — same shape as x86 SysV SSE class returning in XMM0.
+#
+# v5.10.36 switches to V0: a single 128-bit NEON load/store
+# (`ldur q0` / `stur q0`, 4 bytes each) replaces the v5.10.29
+# X-pair (8 bytes each). cc5_aarch64 shrinks by the
+# encoding-density gain (same shape as v5.10.32's -384 B on x86).
 #
 # `idx` is the NAMED slot's local index (returned by FINDLOCAL on
 # the f64v2 var name). 2-slot layout matches x86:
 #   slot idx-1 = anonymous filler (hi half = &v + 8)
 #   slot idx   = named (lo half / bottom of struct = &v + 0)
 # Named slot is at the deepest frame offset; field 0 (lo) is at
-# &v+0, field 1 (hi) at &v+8.
+# &v+0, field 1 (hi) at &v+8. The single LDUR Q0 loads 16 bytes
+# starting at &v (= disp_lo), packed as V0[63:0] = lo,
+# V0[127:64] = hi — exact in-memory layout.
 #
-# Disp must fit LDUR/STUR imm9 (-256..+255). With regalloc cap of
-# 5 + ret_stash 8 the maximum negative disp from typical usage
-# stays well within range; defensive guard for the implausible
-# cap-overflow case.
+# Disp must fit LDUR/STUR (SIMD) imm9 (-256..+255). For typical
+# regalloc cap 5 + named-slot idx ≤ ~64, disp stays well within
+# range; defensive guard for the implausible cap-overflow case.
+#
+# Encoding (LDUR Q0, [X29, #imm9]):
+#   bits 31..30 = 00 (size=00 for 128-bit unscaled SIMD/FP)
+#   bits 29..24 = 111100
+#   bits 23..22 = 11 (opc=11 = 128-bit load)
+#   bit 21      = 0
+#   bits 20..12 = imm9 (signed)
+#   bits 11..10 = 00 (LDUR unscaled offset)
+#   bits 9..5   = 11101 (Rn = X29 / FP)
+#   bits 4..0   = 00000 (Rt = Q0)
+# Base (imm9=0): 0x3CC003A0.
+#
+# Encoding (STUR Q0, [X29, #imm9]):
+#   Same as LDUR but opc = 10 (128-bit store). Base: 0x3C8003A0.
 fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
     var disp_lo = 0 - ((idx + 1) * 8);
-    var disp_hi = 0 - (idx * 8);
     if (_cur_fn_ret_stash > 0) {
         disp_lo = disp_lo - _cur_fn_ret_stash;
-        disp_hi = disp_hi - _cur_fn_ret_stash;
     }
     if (disp_lo < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_lo out of LDUR imm9 range on aarch64\n", 67);
-        syscall(SYS_EXIT, 1);
-    }
-    if (disp_hi < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_hi out of LDUR imm9 range on aarch64\n", 67);
+        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of LDUR Q imm9 range on aarch64\n", 67);
         syscall(SYS_EXIT, 1);
     }
     var off_lo = disp_lo & 0x1FF;
-    var off_hi = disp_hi & 0x1FF;
-    # ldur x0, [x29, #disp_lo] — base 0xF84003A0 (Rt=0, Rn=29, size=64)
-    EW(S, 0xF84003A0 | (off_lo << 12));
-    # ldur x1, [x29, #disp_hi] — Rt=1
-    EW(S, 0xF84003A1 | (off_hi << 12));
+    # ldur q0, [x29, #disp_lo] — single 128-bit SIMD load.
+    EW(S, 0x3CC003A0 | (off_lo << 12));
     return 0;
 }
 
 # Mirror of EFLLOAD_F64V2_PAIR for caller-side post-call store:
-#   stur x0, [x29, #disp_lo]   (lo half — named slot)
-#   stur x1, [x29, #disp_hi]   (hi half — filler slot)
-# STUR base 0xF80003A0 (same encoding as LDUR but bit 22 = 0 for store).
+#   stur q0, [x29, #disp_lo]   (16 bytes at &v)
+# Single STUR Q0 lays the returned V0 into caller's 16-byte
+# stack-local (named slot at disp_lo = lo half, filler at
+# disp_lo+8 = hi half). Same layout as v5.10.32's x86 XMM0.
 fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
     var disp_lo = 0 - ((idx + 1) * 8);
-    var disp_hi = 0 - (idx * 8);
     if (_cur_fn_ret_stash > 0) {
         disp_lo = disp_lo - _cur_fn_ret_stash;
-        disp_hi = disp_hi - _cur_fn_ret_stash;
     }
     if (disp_lo < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_lo out of STUR imm9 range on aarch64\n", 67);
-        syscall(SYS_EXIT, 1);
-    }
-    if (disp_hi < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 pair-return disp_hi out of STUR imm9 range on aarch64\n", 67);
+        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of STUR Q imm9 range on aarch64\n", 67);
         syscall(SYS_EXIT, 1);
     }
     var off_lo = disp_lo & 0x1FF;
-    var off_hi = disp_hi & 0x1FF;
-    # stur x0, [x29, #disp_lo]
-    EW(S, 0xF80003A0 | (off_lo << 12));
-    # stur x1, [x29, #disp_hi] — Rt=1
-    EW(S, 0xF80003A1 | (off_hi << 12));
+    # stur q0, [x29, #disp_lo] — single 128-bit SIMD store.
+    EW(S, 0x3C8003A0 | (off_lo << 12));
     return 0;
 }
 
