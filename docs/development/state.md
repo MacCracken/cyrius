@@ -5,6 +5,70 @@
 
 ## Version
 
+**5.10.30** (shipped 2026-05-10 — **v5.10.x SLOT 30 —
+value-type ABI Phase 3: cx bytecode propagation of f64v2
+multi-register pair return + macho aarch64 inheritance
+verified**).
+
+Phase 3 of the typed-simd ABI arc (Phase 1 x86 v5.10.28,
+Phase 2 aarch64 v5.10.29). Implements `EFLLOAD_F64V2_PAIR`
+and `EFLSTORE_F64V2_PAIR` on cx bytecode with r0+r1 pair
+semantics. Mirror of x86 rax/rdx and aarch64 X0/X1.
+
+**`src/backend/cx/emit.cyr` additions**:
+- `EFLLOAD_F64V2_PAIR`: cxvm bytecode for `r0 = [fp -
+  (idx+1)*8]; r1 = [fp - idx*8]`. Uses r14/r15 scratch
+  following the existing EFLLOAD pattern.
+- `EFLSTORE_F64V2_PAIR`: mirror with store64 opcodes (0x43).
+
+**macho aarch64 — no new code needed**:
+`src/backend/macho/emit.cyr` is binary-format-only (Mach-O
+headers/sections/dylink metadata; no codegen overrides).
+macOS aarch64 builds inherit v5.10.29's aarch64 emit
+unchanged — Linux AAPCS64 and Darwin AAPCS64 share the
+X0+X1 pair return convention for ≤16B int-class composites.
+
+**Acceptance**:
+- cc5 unchanged at 784,312 B (cx-only change; x86 host
+  bytes unaffected).
+- Self-host byte-identical x86.
+- 66/66 check.sh + 136/136 cyrius test.
+- cxvm pipeline runs without crash on f64v2 code (13.5 KB
+  bytecode produced for the f64v2 probe).
+
+**Cross-arch SSH verify status**:
+
+| Backend | Host | Status |
+|---------|------|--------|
+| x86 SysV | local | ✅ |
+| aarch64 Linux | pi | ✅ v5.10.29 8/8 |
+| cx bytecode | local cxvm | ✅ pipeline runs clean |
+| aarch64 macOS | ecb | inherited from v5.10.29 (macho binary-format-only) |
+| Win64 PE | cass | deferred to v5.10.31 (different ABI) |
+
+**Scope correction at slot entry**: empirical premise
+check found Win64 PE ABI for ≤16B composites uses
+retptr-style (caller-allocated buffer in RCX), NOT
+rax/rdx pair. Honest split — Win64 gets its own slot
+v5.10.31 instead of bundling into v5.10.30. Per
+`feedback_consumer_request_full_surface`: better to
+acknowledge proper scope than ship a half-fix.
+
+**Multi-slot ABI arc progress** (now 6 phases):
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 ✅ | x86 SysV pair return |
+| 2     | v5.10.29 ✅ | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 ✅ | **cx + macho inherits** (this slot) |
+| 4     | v5.10.31 pinned | Win64 PE ABI (retptr-style) |
+| 5     | v5.10.32 pinned | XMM register passing optimization |
+| 6     | v5.10.33 pinned | f64v4 + lib/simd.cyr typed wrappers |
+
+**Next**: v5.10.31 = Win64 PE Phase 4. Win64 ABI for
+≤16B composite returns. Cass SSH verify gate per
+`reference_verification_hosts_ssh` memory pin.
+
 **5.10.29** (shipped 2026-05-10 — **v5.10.x SLOT 29 —
 value-type ABI Phase 2: aarch64 propagation of f64v2
 multi-register pair return**).

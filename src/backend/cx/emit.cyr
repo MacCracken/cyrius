@@ -350,17 +350,42 @@ fn EVADDR(S, idx): i64 {
     return 0;
 }
 
-# v5.10.28 — cx stub for f64v2 pair-register return.
-# x86 lands first this slot; cx propagation deferred to v5.10.30
-# per the planned multi-slot value-type ABI arc.
+# v5.10.30 — cx f64v2 pair-register return (Phase 3 of the
+# value-type ABI arc; Phase 1 x86 v5.10.28, Phase 2 aarch64
+# v5.10.29). cx PCS for f64v2: r0 = lo, r1 = hi. Mirror of
+# x86's rax/rdx and aarch64's X0/X1 — same caller/callee
+# shape, different register names.
+#
+# `idx` is the NAMED slot's local index; 2-slot layout:
+#   slot idx-1 = anonymous filler (hi half = &v + 8)
+#   slot idx   = named (lo half / bottom of struct = &v + 0)
+# Frame computation matches existing EFLLOAD pattern: use
+# r14 as scratch (mov r14, fp; sub r14, r14, r15; load64).
 fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
-    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on cx backend (v5.10.30)\n", 63);
-    syscall(SYS_EXIT, 1);
+    # lo: r0 = [fp - (idx+1)*8]  (named slot)
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, (idx + 1) * 8);      # r15 = offset_lo
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 65, 0, 14, 0);           # load64 r0, [r14]
+    # hi: r1 = [fp - idx*8]  (filler slot)
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, idx * 8);            # r15 = offset_hi
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 65, 1, 14, 0);           # load64 r1, [r14]
     return 0;
 }
+
 fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
-    syscall(SYS_WRITE, 2, "error: f64v2 pair-return ABI not yet on cx backend (v5.10.30)\n", 63);
-    syscall(SYS_EXIT, 1);
+    # lo: [fp - (idx+1)*8] = r0  (named slot)
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, (idx + 1) * 8);      # r15 = offset_lo
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 67, 14, 0, 0);           # store64 [r14], r0
+    # hi: [fp - idx*8] = r1  (filler slot)
+    CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
+    CX_MOVI(S, 15, idx * 8);            # r15 = offset_hi
+    CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
+    CX_EMIT(S, 67, 14, 1, 0);           # store64 [r14], r1
     return 0;
 }
 

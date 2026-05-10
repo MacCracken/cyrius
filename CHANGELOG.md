@@ -6,6 +6,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.30] — 2026-05-10
+
+**v5.10.x SLOT 30 — value-type ABI Phase 3: cx bytecode
+propagation of f64v2 multi-register pair return + macho
+aarch64 inheritance verified**.
+
+Phase 3 of the typed-simd ABI arc (Phase 1 x86 v5.10.28,
+Phase 2 aarch64 v5.10.29). Implements cx
+`EFLLOAD_F64V2_PAIR` and `EFLSTORE_F64V2_PAIR` with r0+r1
+pair semantics (cx PCS: r0 = lo, r1 = hi). Mirror of x86's
+rax/rdx and aarch64's X0/X1 patterns.
+
+cc5 unchanged at 784,312 B (cx-only change in
+`src/backend/cx/emit.cyr`; x86 host bytes unaffected).
+Self-host byte-identical x86. **66/66 check.sh, 136/136
+cyrius test on x86**. cxvm pipeline runs without crash on
+f64v2 code (13.5 KB bytecode produced for the f64v2 probe
+vs 32 B for a no-op program).
+
+### What landed
+
+**`src/backend/cx/emit.cyr`**:
+- `EFLLOAD_F64V2_PAIR(S, idx)` — emits cxvm bytecode for
+  `r0 = [fp - (idx+1)*8]; r1 = [fp - idx*8]`. Uses r14/r15
+  scratch following the existing `EFLLOAD` pattern: `mov
+  r14, fp; movi r15, offset; sub r14, r14, r15; load64`.
+- `EFLSTORE_F64V2_PAIR(S, idx)` — mirror with `store64`
+  opcodes (0x43).
+- cxvm has 32 registers, so r0+r1 pair return is naturally
+  expressible. The cxvm `load64` (opcode 0x41) and
+  `store64` (opcode 0x43) handle 64-bit transfers.
+
+### macho aarch64 inheritance — no new code needed
+
+`src/backend/macho/emit.cyr` is **binary-format-only** —
+Mach-O headers, sections, symbol tables, dynamic linking
+metadata. NO instruction codegen overrides. macOS aarch64
+builds (via `src/main_aarch64_macho.cyr` which includes
+both `src/backend/aarch64/emit.cyr` AND
+`src/backend/macho/emit.cyr`) inherit v5.10.29's
+`EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR` for free. The
+aarch64 PCS is shared between Linux AAPCS64 and Darwin
+AAPCS64 (X0+X1 pair for ≤16B int-class composites), so the
+v5.10.29 implementation is correct on macOS aarch64
+unchanged.
+
+### Cross-arch SSH verify status
+
+| Backend | Host | Status |
+|---------|------|--------|
+| x86 SysV (Linux) | local | ✅ self-host byte-identical, 136/136 tests |
+| aarch64 (Linux) | pi | ✅ v5.10.29 8/8 sub-asserts via SCP+run |
+| cx bytecode | local cxvm | ✅ pipeline runs without crash on f64v2 code |
+| aarch64 (macOS) | ecb | inherited from v5.10.29 (macho/emit.cyr binary-format-only by source inspection) |
+| Win64 PE | cass | **deferred to v5.10.31** (different calling convention; Win64 ABI for ≤16B composites uses retptr-style, not pair register) |
+
+The Win64 ABI difference surfaced during slot scoping —
+v5.10.30 originally pinned "cx + macho" but Win64 PE was
+inadvertently in scope via x86 backend share. Premise
+check at scope confirmed Win64 needs separate ABI work
+(retptr for >8B composites instead of rax/rdx pair).
+Honest split: Win64 to v5.10.31.
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | **cx bytecode (r0+r1 pair); macho inherits** (this slot) |
+| 4     | v5.10.31 | re-pinned | Win64 PE ABI (retptr-style) |
+| 5     | v5.10.32 | re-pinned | XMM register passing optimization |
+| 6     | v5.10.33 | re-pinned | f64v4 + lib/simd.cyr typed wrappers |
+
+Arc is now 6 phases (was 5 in initial pinning) — Win64 ABI
+genuinely needed its own slot once the calling convention
+difference was empirically verified. Per
+`feedback_consumer_request_full_surface` memory pin: better
+to acknowledge the proper scope upfront than ship a
+half-fix that pretends Win64 is "the same as Linux".
+
 ## [5.10.29] — 2026-05-10
 
 **v5.10.x SLOT 29 — value-type ABI Phase 2: aarch64 propagation
