@@ -5,6 +5,74 @@
 
 ## Version
 
+**5.10.31** (shipped 2026-05-10 — **v5.10.x SLOT 31 —
+value-type ABI Phase 4: Win64 PE retptr-style return for
+f64v2 (≤16B composite ABI per Microsoft x64 calling
+convention)**).
+
+Phase 4 of the typed-simd ABI arc. Win64 PE has a different
+ABI than SysV for ≤16B composite returns: caller pre-allocates
+the receiver buffer and passes its address as a hidden first
+arg in RCX; callee writes through the retptr and returns it
+in RAX. NOT the SysV rax/rdx pair pattern.
+
+**Parser/codegen changes** (`src/frontend/parse_fn.cyr`,
+`src/frontend/parse_decl.cyr`):
+- Rough-scan: `: f64v2` recognition gates `_rs_is_scalar = 1`
+  flip on `_TARGET_PE == 0`. Win64 falls through to default
+  `_cur_fn_ret_stash = 8`.
+- PARSE_RETURN: f64v2 path branches on `_cur_fn_ret_stash` —
+  Win64 emits ESTRUCT_BYVAL_COPY (size 16) into retptr stash,
+  SysV/aarch64/cx emit pair-load via EFLLOAD_F64V2_PAIR.
+- parse_decl caller: `var x: f64v2 = f();` on Win64 pushes
+  &named as hidden first arg + uses retptr-style call. SysV/
+  aarch64/cx use existing PCMPE + EFLSTORE_F64V2_PAIR.
+
+**Acceptance**:
+- cc5: 784,312 → **785,368** (+1,056 B for Win64 branches).
+- Self-host byte-identical x86.
+- 66/66 check.sh + 136/136 cyrius test.
+- Win64 PE cross-compile sanity: cc5_win builds f64v2 probe
+  to valid PE32+ x86-64 binary; runs on cass without crash.
+
+**Win64 verification gap (honest disclosure)**:
+End-to-end f64v2 assertion on cass is blocked by pre-existing
+Win64 stdlib gaps — `lib/string.cyr::println` uses Linux
+syscall ABI (silent on Windows), and main's return doesn't
+propagate through `_start` (always exit 0). These limit ALL
+Linux-style cyrius programs on Windows, not just f64v2.
+v5.10.31 verifies what's verifiable: codegen wires correctly,
+PE binary builds, runs without crash. Full runtime assertion
+gate lands when Win64 stdlib catches up (separate arc).
+
+Per `feedback_no_silent_fix_deferrals`: this slot is marked
+"✅ partial" — codegen wired, runtime gated on stdlib.
+
+**Cross-arch SSH verify status**:
+
+| Backend | Host | Status |
+|---------|------|--------|
+| x86 SysV | local | ✅ |
+| aarch64 Linux | pi | ✅ v5.10.29 8/8 |
+| cx bytecode | local cxvm | ✅ pipeline runs clean |
+| aarch64 macOS | ecb | inherited from v5.10.29 |
+| Win64 PE | cass | ✅ partial (codegen + binary builds + no crash) |
+
+**Multi-slot ABI arc progress**:
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 ✅ | x86 SysV pair return |
+| 2     | v5.10.29 ✅ | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 ✅ | cx + macho inherits |
+| 4     | v5.10.31 ✅ partial | **Win64 PE retptr-style** (this slot) |
+| 5     | v5.10.32 pinned | XMM register passing optimization |
+| 6     | v5.10.33 pinned | f64v4 + lib/simd.cyr typed wrappers |
+
+**Next**: v5.10.32 = XMM register passing Phase 5 — closes
+the actual SIMD perf gap hisab benchmarks measure (30-700×
+vs Rust+glam → 7-200× post-XMM).
+
 **5.10.30** (shipped 2026-05-10 — **v5.10.x SLOT 30 —
 value-type ABI Phase 3: cx bytecode propagation of f64v2
 multi-register pair return + macho aarch64 inheritance

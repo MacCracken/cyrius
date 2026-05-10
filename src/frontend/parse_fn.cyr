@@ -539,8 +539,14 @@ fn PARSE_RETURN(S): i64 {
     # &v+8). This is x86 SysV's 16-byte int-class struct return
     # ABI. Falls through to the scalar PCMPE path for non-IDENT
     # f64v2 returns (e.g. fn-call returning f64v2) — those land
-    # on a follow-up slot. aarch64 + cx backends ERR_MSG via the
-    # backend stubs.
+    # on a follow-up slot.
+    #
+    # v5.10.31 — Win64 PE branch (`_cur_fn_ret_stash > 0` for
+    # f64v2 set by the rough-scan when _TARGET_PE == 1): emit
+    # byte-copy from &v into the retptr stash (size 16, aligned).
+    # Win64 PCS for ≤16B composite returns uses retptr-style
+    # (caller passes hidden buffer ptr in RCX), NOT pair register.
+    # Mirror of the existing big-struct retptr return at line ~447.
     if (_cur_fn_ret_scalar == 0 - 20) {
         if (PEEKT(S) == 2) {
             if (TOKTYP(S, GTI(S) + 1) == 5) {
@@ -551,7 +557,24 @@ fn PARSE_RETURN(S): i64 {
                     if (_f2_lt == 0 - 20) {
                         STI(S, GTI(S) + 1);  # consume IDENT
                         STI(S, GTI(S) + 1);  # consume ';'
-                        EFLLOAD_F64V2_PAIR(S, _f2_lli);
+                        if (_cur_fn_ret_stash > 0) {
+                            # Win64 PE retptr-style return — byte-copy
+                            # from &v (size 16) into the retptr stash
+                            # at [rbp - regalloc*8 - 8]. ESTRUCT_BYVAL_COPY
+                            # handles the rep movsb on x86 / LDRB/STRB
+                            # loop on aarch64. Aarch64 stash isn't used
+                            # by Win64 (Win64 is x86-only), but the
+                            # helper is arch-agnostic and works through
+                            # the same ABI helper either way.
+                            var _f2w_src_disp = 0 - ((_f2_lli + 1) * 8);
+                            if (_cur_fn_regalloc > 0) { _f2w_src_disp = _f2w_src_disp - _cur_fn_regalloc * 8; }
+                            if (_cur_fn_ret_stash > 0) { _f2w_src_disp = _f2w_src_disp - _cur_fn_ret_stash; }
+                            var _f2w_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
+                            ESTRUCT_BYVAL_COPY(S, _f2w_src_disp, _f2w_stash_disp, 16);
+                        } else {
+                            # SysV/aarch64/cx pair-register return.
+                            EFLLOAD_F64V2_PAIR(S, _f2_lli);
+                        }
                         var _f2_rp = EJMP0(S);
                         var _f2_rpc = GRPC(S);
                         if (_f2_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
@@ -1384,20 +1407,29 @@ fn PARSE_FN_DEF(S): i64 {
                     # rough-scan does NOT default to retptr-stash for
                     # f64v2-returning fns (their bytes flow through the
                     # post-param-list scalar return path with the
-                    # multi-register return codegen). NO _rs_is_scalar
-                    # flip here — f64v2 is NOT i64-shape; it needs the
-                    # PAIR return path. We just suppress the retptr
-                    # stash by setting _rs_is_scalar = 1 (treats it as
-                    # "scalar-ish" for stash decision; actual return
-                    # codegen below detects rt_scalar == -20 and emits
-                    # pair-return).
+                    # multi-register return codegen). On SysV/aarch64/cx,
+                    # set _rs_is_scalar = 1 (treats it as "scalar-ish"
+                    # for stash decision; actual return codegen below
+                    # detects rt_scalar == -20 and emits pair-return).
+                    #
+                    # v5.10.31 — Win64 PE ABI: ≤16-byte composite returns
+                    # use retptr-style (caller-allocated buffer pointer
+                    # in RCX), NOT rax/rdx pair. So on _TARGET_PE == 1,
+                    # leave _rs_is_scalar at 0 — the rough-scan falls
+                    # through to the default `_cur_fn_ret_stash = 8`,
+                    # routing f64v2-returning fns through the existing
+                    # retptr machinery. PARSE_RETURN's f64v2 branch
+                    # detects stash > 0 and emits byte-copy via
+                    # ESTRUCT_BYVAL_COPY-like helper.
                     if (_rs_b0 == 102) {
                         if (_rs_b1 == 54) {
                             if (_rs_b2 == 52) {
                                 if (_rs_b3 == 118) {
                                     if (load8(S + 0x60000 + _rs_rt_noff + 4) == 50) {
                                         if (load8(S + 0x60000 + _rs_rt_noff + 5) == 0) {
-                                            _rs_is_scalar = 1;
+                                            if (_TARGET_PE == 0) {
+                                                _rs_is_scalar = 1;
+                                            }
                                         }
                                     }
                                 }

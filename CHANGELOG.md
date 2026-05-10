@@ -6,6 +6,110 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.31] — 2026-05-10
+
+**v5.10.x SLOT 31 — value-type ABI Phase 4: Win64 PE
+retptr-style return for f64v2 (≤16B composite ABI
+per Microsoft x64 calling convention)**.
+
+Phase 4 of the typed-simd ABI arc (Phase 1 x86 v5.10.28,
+Phase 2 aarch64 v5.10.29, Phase 3 cx + macho v5.10.30).
+Win64 PE has a different ABI for ≤16B composite returns:
+caller pre-allocates the receiver buffer and passes its
+address as a hidden first arg in RCX; callee writes
+through the retptr and returns it in RAX. NOT the SysV
+rax/rdx pair pattern.
+
+cc5: 784,312 → **785,368 (+1,056 B)** for the Win64 ABI
+branches in PARSE_FN_DEF rough-scan, PARSE_RETURN, and
+parse_decl caller side. Self-host byte-identical x86.
+**66/66 check.sh, 136/136 cyrius test on x86**. Win64 PE
+cross-compile sanity: cc5_win builds the f64v2 probe to
+a valid PE32+ x86-64 binary; the binary runs on cass
+without crash.
+
+### What landed
+
+**Rough-scan** (`src/frontend/parse_fn.cyr`):
+- `: f64v2` recognition gates the `_rs_is_scalar = 1`
+  flip on `_TARGET_PE == 0`. On Win64 (`_TARGET_PE == 1`),
+  the flag stays at 0 so the rough-scan defaults to
+  `_cur_fn_ret_stash = 8`, routing f64v2 fns through the
+  existing retptr machinery (matching big-struct returns).
+
+**PARSE_RETURN** (`src/frontend/parse_fn.cyr`):
+- New branch in the f64v2 return path: when
+  `_cur_fn_ret_scalar == -20 AND _cur_fn_ret_stash > 0`
+  (Win64 case), emit `ESTRUCT_BYVAL_COPY` from `&v` to
+  the retptr stash with size 16 (mirror of big-struct
+  retptr-style return at line ~447). Falls through to
+  `EFLLOAD_F64V2_PAIR` when stash == 0 (SysV pair-register
+  return path from v5.10.28-30).
+
+**Caller-side** (`src/frontend/parse_decl.cyr`):
+- The v5.10.28 f64v2 caller path now dispatches on
+  `_TARGET_PE`. On Win64: allocate 2-slot local, push
+  `&named` as hidden first arg, parse user args, ECALLPOPS
+  / ECALLTO / ECALLCLEAN. NO post-call store needed —
+  callee wrote directly via retptr. On SysV/aarch64/cx:
+  existing PCMPE + EFLSTORE_F64V2_PAIR pair-register path.
+
+### Cross-arch SSH verify status
+
+| Backend | Host | Status |
+|---------|------|--------|
+| x86 SysV (Linux) | local | ✅ self-host + 136/136 + agnosys probe |
+| aarch64 (Linux) | pi | ✅ v5.10.29 8/8 sub-asserts |
+| cx bytecode | local cxvm | ✅ pipeline runs clean |
+| aarch64 (macOS) | ecb | inherited from v5.10.29 (macho/emit.cyr binary-format-only) |
+| Win64 PE | cass | **partial** — codegen wired, PE32+ binary builds + runs without crash |
+
+### Win64 verification gap (honest disclosure)
+
+End-to-end f64v2 assertion verify on cass is **blocked by
+pre-existing Win64 stdlib limitations**, NOT v5.10.31
+work:
+- `lib/string.cyr::println` uses `syscall(SYS_WRITE, 1, ...)`
+  — Linux syscall ABI; silent on Windows.
+- Main's return value doesn't propagate through `_start`
+  → `cmd /c probe.exe & echo %ERRORLEVEL%` always shows 0
+  regardless of `return 42` from main.
+
+These are general Win64 runtime gaps in cyrius's stdlib —
+the existing `programs/pe_probe_hello.cyr` works around
+them by directly calling `kernel32.dll` `WriteFile` /
+`ExitProcess` instead of using lib/string.cyr.
+
+What v5.10.31 DOES verify on Win64:
+1. Cross-compile produces valid PE32+ binary (28-30 KB).
+2. Binary runs on cass without crash (cmd echoes
+   "before" → exe runs → "after0" with no segfault).
+3. Source-level inspection: codegen path is correct
+   (mirror of big-struct retptr at line ~447 + caller
+   asv path at line ~1063, both x86 SysV and Win64 dispatch
+   already proven-correct in existing tests).
+
+Full Win64 runtime assertion gate lands when cyrius
+gets a Win64 stdlib (kernel32.dll-backed println / proper
+exit-code propagation through _start). That's a separate
+arc — out of scope for the typed-simd ABI work.
+
+Per `feedback_no_silent_fix_deferrals` memory pin: this
+slot does NOT claim "Win64 fully verified". It claims the
+codegen is wired correctly and the PE binary runs without
+crash; remaining verification is gated on stdlib work.
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | cx bytecode + macho inherits |
+| 4     | v5.10.31 | ✅ partial | **Win64 PE retptr-style** (this slot — codegen wired, full runtime verify gated on Win64 stdlib) |
+| 5     | v5.10.32 | pinned | XMM register passing optimization |
+| 6     | v5.10.33 | pinned | f64v4 + lib/simd.cyr typed wrappers |
+
 ## [5.10.30] — 2026-05-10
 
 **v5.10.x SLOT 30 — value-type ABI Phase 3: cx bytecode

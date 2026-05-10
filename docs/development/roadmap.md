@@ -1447,7 +1447,7 @@ motion.
 |-------|----------|--------|-------------|
 | 2     | v5.10.29 | ✅     | aarch64 propagation: X0+X1 pair return + ldur/stur emits in `EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR`. Pi SSH cross-arch verify: 8/8 sub-asserts pass. |
 | 3     | v5.10.30 | ✅     | cx bytecode (r0+r1 pair); macho aarch64 inherits v5.10.29's emit (macho/emit.cyr binary-format-only). cxvm pipeline runs without crash on f64v2 code. |
-| 4     | v5.10.31 | pinned | **Win64 PE ABI** — split from v5.10.30 once empirical scope check confirmed Win64 ≤16B composite return uses retptr-style (caller-allocated buffer pointer in RCX), not rax/rdx pair. Cass SSH verify gate. |
+| 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style return (≤16B composite ABI). Codegen wired in PARSE_FN_DEF rough-scan / PARSE_RETURN / parse_decl caller side. Cross-compile produces valid PE32+ binary; runs on cass without crash. **Full runtime verify gated on Win64 stdlib** (println silent + exit-code propagation broken — pre-existing gaps, separate arc). |
 | 5     | v5.10.32 | pinned | XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` instead of rax/rdx int-class pair. 2-instruction faster path; better SIMD perf for hisab benchmark workloads. |
 | 6     | v5.10.33 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM (AVX-detected). `lib/simd.cyr` typed wrappers `f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed via overload dispatch (uses Phase 3 generalize from v5.10.25). Closes the typed-simd arc. |
 
