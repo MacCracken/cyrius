@@ -1454,7 +1454,7 @@ motion.
 | 8     | v5.10.36 | ✅     | aarch64 V0 NEON return-register optimization (mirrors v5.10.32 XMM0 work; replaces v5.10.29's X0+X1 int-class pair). cc5_aarch64 -560 B. |
 | 9     | v5.10.37 | ✅     | `f64v4` (32-byte): x86 XMM0+XMM1 pair / aarch64 Q0+Q1 NEON pair (+imm12-scaled deep-frame fallback) / cx R0..R3 / Win64 retptr. cc5 +4,888 B. AVX/YMM0 path NOT in scope (future optimisation). |
 | 10    | v5.10.38 | ✅     | f64v2 + f64v4 value-form param ABI (callee + caller; SysV/aarch64/cx end-to-end; Win64 PE errors out by design, points to v5.10.33 pointer-form wrappers). cc5 +6,064 B. |
-| 11    | v5.10.39 | pinned | Overload dispatch (Phase 3 sibling routing — `_ptr` form vs value form) + `lib/simd.cyr` typed-wrapper migration (`f64v2_add(a: f64v2, b: f64v2): f64v2` value sibling alongside existing pointer form). Arc-close cleanup; depends on v5.10.38 ABI being in place. |
+| 11    | v5.10.39 | ✅     | Overload dispatch (`&IDENT → _ptr` routing via name-mangling + _FINDFN_CSTR; no new heap region) + `lib/simd.cyr` value-form wrapper migration (50 fns total: pointer-form universal + value-form gated on CYRIUS_HAS_VAL_SIMD_PARAMS for non-PE) + companion locname-staleness fix at ptyp 89-91 (companion to v5.10.35). cc5 +6,920 B. Arc fully closed. |
 
 Adds `f64v2` and `f64v4` as primitive types (16-byte
 and 32-byte packed-f64 respectively), overloaded
@@ -1760,7 +1760,7 @@ v5.10.27 → consumer-clean
 dispatched API across x86 SSE / aarch64 NEON / cx /
 macho / Win64 PE.
 
-#### v5.10.39 — typed-simd overload dispatch + `lib/simd.cyr` value-param wrapper migration (typed-simd ABI Phase 11, arc close-out cleanup)
+#### v5.10.39 ✅ — typed-simd overload dispatch + `lib/simd.cyr` value-param wrapper migration (typed-simd ABI Phase 11, arc close) (SHIPPED)
 
 Pinned 2026-05-10 at v5.10.38 slot entry as the
 **pre-planned split** of the original v5.10.38 acceptance

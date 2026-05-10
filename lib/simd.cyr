@@ -1,43 +1,37 @@
-# lib/simd.cyr — typed SIMD wrappers (v5.10.33)
+# lib/simd.cyr — typed SIMD wrappers
 # ================================================================
-# v5.10.33 closes the typed-simd ABI arc started at v5.10.28
-# (Phase 1 x86 SysV pair → Phase 5 x86 XMM register passing).
-# Exposes the compiler-intrinsic f64v_* flat-array primitives
-# (declared in src/frontend/parse_expr.cyr's PARSE_SIMD_EXT) as
-# typed wrappers consumers can compose with the f64v2 value type.
+# v5.10.39 — typed-simd ABI Phase 11 (arc close). Each math op
+# exists in TWO forms with the same base name, selected by the
+# parser's pointer-vs-value overload dispatch:
 #
-# **API shape** (pointer-passing for inputs, value return):
-#   f64v2_add(a_ptr, b_ptr): f64v2
-# Inputs pass as `*f64v2` (raw addresses); the result returns
-# by-value via the v5.10.32 XMM0 SSE-class ABI. Consumer pattern:
-#   var a: f64v2 = f64v2_make(...);
-#   var b: f64v2 = f64v2_make(...);
-#   var r: f64v2 = f64v2_add(&a, &b);
+#   f64v2_add(a: f64v2, b: f64v2): f64v2       — value form
+#     consumer pattern: `var r: f64v2 = f64v2_add(x, y);`
 #
-# Why pointer inputs (and NOT `: f64v2` value params): the
-# v5.10.28-32 typed-simd ABI arc shipped the RETURN side end-to-end
-# (rax/rdx pair → XMM0). The PARAM side is half-implemented —
-# `fn f(v: f64v2)` reads the lo half correctly via `&v + 0`, but
-# `&v + 8` is undefined memory because the parser allocates a single
-# 8-byte slot for the param and the hi half is dropped at the
-# call-site register-to-stack transfer. Fixing this requires
-# allocating 2 slots per f64v2 param + a register-pair → 2-slot
-# store sequence at fn entry — sized as a separate slot, pinned as
-# consumer-driven follow-up.
+#   f64v2_add_ptr(a_ptr, b_ptr): f64v2          — pointer form
+#     consumer pattern: `var r: f64v2 = f64v2_add(&x, &y);`
+#     (parser auto-routes `&IDENT` call sites to the `_ptr` sibling)
 #
-# **v5.10.35 — `f64v2_abs` / `f64v2_sqrt` now exposed**: the
-# pre-existing PARSE_SIMD_EXT staleness bug (3-arg intrinsics
-# returning stack addresses when the enclosing fn returns f64v2)
-# is fixed at v5.10.35. Root cause: stash slots from
-# PARSE_SIMD_EXT's EFLSTORE did not clear locname entries, and a
-# stale "r" name from a prior fn's parse at the same slot index
-# caused FINDLOCAL("r") in `return r;` to pick up the stash slot
-# (containing the &r pointer-VALUE) instead of the real `var r`
-# slot. The v5.10.33 typed-wrapper API surfaced this via 3-arg
-# f64v_abs / f64v_sqrt wrappers. Fix anonymises stash slots
-# (sets locname[idx] = -1) at every EFLSTORE in PARSE_SIMD_EXT.
+# Value-form uses the v5.10.38 param-side ABI: f64v2 args arrive
+# in XMM0/XMM1 (SysV) / V0/V1 (aarch64), f64v4 args in XMM0+XMM1
+# pair / V0+V1 pair. Return uses XMM0 / V0 / pair-quad per the
+# v5.10.32 + v5.10.36 + v5.10.37 work. Cyrius-internal split-
+# counter convention; consumers are all cyrius-compiled.
+#
+# Pointer-form retained for callsites that have raw f64v2 pointers
+# (e.g. dynamically-allocated f64v2 arrays) AND as the sole shape
+# on Win64 PE — value-form fns are gated on
+# CYRIUS_HAS_VAL_SIMD_PARAMS (defined by every non-PE main_*.cyr).
+# On PE the overload dispatch still works: `f64v2_add(&x, &y)`
+# routes to `f64v2_add_ptr` transparently.
+#
+# Historical: v5.10.33 shipped pointer-form ONLY. v5.10.35
+# unblocked abs/sqrt. v5.10.38 shipped the param-side ABI.
+# v5.10.39 (this slot) closes the arc with value-form wrappers
+# + parser-side `&IDENT → _ptr` overload routing.
 
-# Constructor: build an f64v2 from two i64 bit patterns.
+# --- f64v2 constructor ---
+
+# Build an f64v2 from two i64 bit patterns.
 fn f64v2_make(lo_bits, hi_bits): f64v2 {
     var v: f64v2;
     store64(&v + 0, lo_bits);
@@ -45,92 +39,82 @@ fn f64v2_make(lo_bits, hi_bits): f64v2 {
     return v;
 }
 
-# Extract the low half (first f64) as i64 bits.
-fn f64v2_lo(p): i64 {
+# --- f64v2 pointer-form (universal — all targets) ---
+
+# Extract lo half (pointer form). Parser routes `f64v2_lo(&x)` here.
+fn f64v2_lo_ptr(p): i64 {
     return load64(p + 0);
 }
 
-# Extract the high half (second f64) as i64 bits.
-fn f64v2_hi(p): i64 {
+# Extract hi half (pointer form).
+fn f64v2_hi_ptr(p): i64 {
     return load64(p + 8);
 }
 
-# Packed-double add: r[0] = a[0] + b[0], r[1] = a[1] + b[1].
-fn f64v2_add(a_ptr, b_ptr): f64v2 {
+# Pointer form of f64v2_add — used when caller passes addresses.
+fn f64v2_add_ptr(a_ptr, b_ptr): f64v2 {
     var r: f64v2;
     f64v_add(&r, a_ptr, b_ptr, 2);
     return r;
 }
 
-# Packed-double subtract.
-fn f64v2_sub(a_ptr, b_ptr): f64v2 {
+# Pointer form of f64v2_sub.
+fn f64v2_sub_ptr(a_ptr, b_ptr): f64v2 {
     var r: f64v2;
     f64v_sub(&r, a_ptr, b_ptr, 2);
     return r;
 }
 
-# Packed-double multiply.
-fn f64v2_mul(a_ptr, b_ptr): f64v2 {
+# Pointer form of f64v2_mul.
+fn f64v2_mul_ptr(a_ptr, b_ptr): f64v2 {
     var r: f64v2;
     f64v_mul(&r, a_ptr, b_ptr, 2);
     return r;
 }
 
-# Packed-double divide.
-fn f64v2_div(a_ptr, b_ptr): f64v2 {
+# Pointer form of f64v2_div.
+fn f64v2_div_ptr(a_ptr, b_ptr): f64v2 {
     var r: f64v2;
     f64v_div(&r, a_ptr, b_ptr, 2);
     return r;
 }
 
-# Packed-double fused multiply-add: r[i] = a[i] * b[i] + c[i].
-fn f64v2_fmadd(a_ptr, b_ptr, c_ptr): f64v2 {
+# Pointer form of f64v2_fmadd.
+fn f64v2_fmadd_ptr(a_ptr, b_ptr, c_ptr): f64v2 {
     var r: f64v2;
     f64v_fmadd(&r, a_ptr, b_ptr, c_ptr, 2);
     return r;
 }
 
-# Dot product: sum(a[i] * b[i]) for i in [0, 2). Returns f64 as
-# i64 bits (use `f64_to(...)` to get the f64 value).
-fn f64v2_dot(a_ptr, b_ptr): i64 {
+# Pointer form of f64v2_dot.
+fn f64v2_dot_ptr(a_ptr, b_ptr): i64 {
     return f64v_dot(a_ptr, b_ptr, 2);
 }
 
-# Scalar scale: r[i] = a[i] * s.
-fn f64v2_scale(a_ptr, s): f64v2 {
+# Pointer form of f64v2_scale.
+fn f64v2_scale_ptr(a_ptr, s): f64v2 {
     var r: f64v2;
     f64v_scale(&r, a_ptr, s, 2);
     return r;
 }
 
-# v5.10.35 — Packed-double absolute value: r[i] = |a[i]|. Clears
-# the sign bit on each lane (SSE2 andpd with mask).
-fn f64v2_abs(a_ptr): f64v2 {
+# Pointer form of f64v2_abs.
+fn f64v2_abs_ptr(a_ptr): f64v2 {
     var r: f64v2;
     f64v_abs(&r, a_ptr, 2);
     return r;
 }
 
-# v5.10.35 — Packed-double square root: r[i] = sqrt(a[i]). SSE2
-# sqrtpd. Caller is responsible for ensuring lanes are >= 0 — sqrt
-# of a negative double produces NaN (no trap unless FPE is masked
-# in).
-fn f64v2_sqrt(a_ptr): f64v2 {
+# Pointer form of f64v2_sqrt.
+fn f64v2_sqrt_ptr(a_ptr): f64v2 {
     var r: f64v2;
     f64v_sqrt(&r, a_ptr, 2);
     return r;
 }
 
-# v5.10.37 — `f64v4` typed wrappers (32-byte packed-double, 4
-# lanes). Same API shape as `f64v2_*`: pointer inputs, by-value
-# f64v4 return via the pair-quad register ABI (XMM0+XMM1 on
-# x86 SysV / Q0+Q1 on aarch64 NEON / R0..R3 on cx; Win64 PE
-# uses retptr-style). Underlying compiler intrinsics
-# (`f64v_add`/`_sub`/`_mul`/`_div`/`_fmadd`/`_dot`/`_scale`/
-# `_axpy`/`_abs`/`_sqrt`) take an arity arg; the wrappers
-# pass 4 for f64v4 lane count (vs 2 for f64v2).
+# --- f64v4 constructor ---
 
-# Constructor: build an f64v4 from four i64 bit patterns.
+# Build an f64v4 from four i64 bit patterns.
 fn f64v4_make(b0, b1, b2, b3): f64v4 {
     var v: f64v4;
     store64(&v + 0, b0);
@@ -140,74 +124,230 @@ fn f64v4_make(b0, b1, b2, b3): f64v4 {
     return v;
 }
 
-# Lane 0 (bytes 0..7) as i64 bits.
-fn f64v4_lane0(p): i64 { return load64(p + 0); }
-# Lane 1 (bytes 8..15) as i64 bits.
-fn f64v4_lane1(p): i64 { return load64(p + 8); }
-# Lane 2 (bytes 16..23) as i64 bits.
-fn f64v4_lane2(p): i64 { return load64(p + 16); }
-# Lane 3 (bytes 24..31) as i64 bits.
-fn f64v4_lane3(p): i64 { return load64(p + 24); }
+# --- f64v4 pointer-form (universal — all targets) ---
 
-# Packed-double 4-lane add: r[i] = a[i] + b[i].
-fn f64v4_add(a_ptr, b_ptr): f64v4 {
+# Lane 0 extractor (pointer form).
+fn f64v4_lane0_ptr(p): i64 { return load64(p + 0); }
+# Lane 1 extractor (pointer form).
+fn f64v4_lane1_ptr(p): i64 { return load64(p + 8); }
+# Lane 2 extractor (pointer form).
+fn f64v4_lane2_ptr(p): i64 { return load64(p + 16); }
+# Lane 3 extractor (pointer form).
+fn f64v4_lane3_ptr(p): i64 { return load64(p + 24); }
+
+# Pointer form of f64v4_add.
+fn f64v4_add_ptr(a_ptr, b_ptr): f64v4 {
     var r: f64v4;
     f64v_add(&r, a_ptr, b_ptr, 4);
     return r;
 }
 
-# Packed-double 4-lane subtract.
-fn f64v4_sub(a_ptr, b_ptr): f64v4 {
+# Pointer form of f64v4_sub.
+fn f64v4_sub_ptr(a_ptr, b_ptr): f64v4 {
     var r: f64v4;
     f64v_sub(&r, a_ptr, b_ptr, 4);
     return r;
 }
 
-# Packed-double 4-lane multiply.
-fn f64v4_mul(a_ptr, b_ptr): f64v4 {
+# Pointer form of f64v4_mul.
+fn f64v4_mul_ptr(a_ptr, b_ptr): f64v4 {
     var r: f64v4;
     f64v_mul(&r, a_ptr, b_ptr, 4);
     return r;
 }
 
-# Packed-double 4-lane divide.
-fn f64v4_div(a_ptr, b_ptr): f64v4 {
+# Pointer form of f64v4_div.
+fn f64v4_div_ptr(a_ptr, b_ptr): f64v4 {
     var r: f64v4;
     f64v_div(&r, a_ptr, b_ptr, 4);
     return r;
 }
 
-# Packed-double 4-lane fused multiply-add: r[i] = a[i] * b[i] + c[i].
-fn f64v4_fmadd(a_ptr, b_ptr, c_ptr): f64v4 {
+# Pointer form of f64v4_fmadd.
+fn f64v4_fmadd_ptr(a_ptr, b_ptr, c_ptr): f64v4 {
     var r: f64v4;
     f64v_fmadd(&r, a_ptr, b_ptr, c_ptr, 4);
     return r;
 }
 
-# Dot of two 4-wide vectors. Returns the scalar sum's f64 bit
-# pattern.
-fn f64v4_dot(a_ptr, b_ptr): i64 {
+# Pointer form of f64v4_dot.
+fn f64v4_dot_ptr(a_ptr, b_ptr): i64 {
     return f64v_dot(a_ptr, b_ptr, 4);
 }
 
-# Scalar scale: r[i] = a[i] * s for i in 0..3.
-fn f64v4_scale(a_ptr, s): f64v4 {
+# Pointer form of f64v4_scale.
+fn f64v4_scale_ptr(a_ptr, s): f64v4 {
     var r: f64v4;
     f64v_scale(&r, a_ptr, s, 4);
     return r;
 }
 
-# Packed-double absolute value across 4 lanes: r[i] = |a[i]|.
-fn f64v4_abs(a_ptr): f64v4 {
+# Pointer form of f64v4_abs.
+fn f64v4_abs_ptr(a_ptr): f64v4 {
     var r: f64v4;
     f64v_abs(&r, a_ptr, 4);
     return r;
 }
 
-# Packed-double square root across 4 lanes: r[i] = sqrt(a[i]).
-# Caller is responsible for ensuring lanes are >= 0.
-fn f64v4_sqrt(a_ptr): f64v4 {
+# Pointer form of f64v4_sqrt.
+fn f64v4_sqrt_ptr(a_ptr): f64v4 {
     var r: f64v4;
     f64v_sqrt(&r, a_ptr, 4);
     return r;
 }
+
+# --- Value-form typed wrappers (non-PE targets only) ---
+# Gated on CYRIUS_HAS_VAL_SIMD_PARAMS, predefined by every main_*.cyr
+# except main_win.cyr. On Win64 PE these fns are absent; the parser's
+# `&IDENT → _ptr` overload dispatch keeps `f64v2_add(&x, &y)` working
+# unchanged across all targets (it routes to the pointer-form sibling).
+
+#ifdef CYRIUS_HAS_VAL_SIMD_PARAMS
+
+# Extract lo half (value form). Receives v via SIMD-class arg reg
+# (XMM0/V0); v5.10.38 prologue stored it at the &v+0 slot. Body
+# reads via load64.
+fn f64v2_lo(v: f64v2): i64 {
+    return load64(&v + 0);
+}
+
+# Extract hi half (value form).
+fn f64v2_hi(v: f64v2): i64 {
+    return load64(&v + 8);
+}
+
+# Packed-double add (value form): r[i] = a[i] + b[i].
+fn f64v2_add(a: f64v2, b: f64v2): f64v2 {
+    var r: f64v2;
+    f64v_add(&r, &a, &b, 2);
+    return r;
+}
+
+# Packed-double subtract (value form).
+fn f64v2_sub(a: f64v2, b: f64v2): f64v2 {
+    var r: f64v2;
+    f64v_sub(&r, &a, &b, 2);
+    return r;
+}
+
+# Packed-double multiply (value form).
+fn f64v2_mul(a: f64v2, b: f64v2): f64v2 {
+    var r: f64v2;
+    f64v_mul(&r, &a, &b, 2);
+    return r;
+}
+
+# Packed-double divide (value form).
+fn f64v2_div(a: f64v2, b: f64v2): f64v2 {
+    var r: f64v2;
+    f64v_div(&r, &a, &b, 2);
+    return r;
+}
+
+# Packed-double fused multiply-add (value form):
+# r[i] = a[i] * b[i] + c[i].
+fn f64v2_fmadd(a: f64v2, b: f64v2, c: f64v2): f64v2 {
+    var r: f64v2;
+    f64v_fmadd(&r, &a, &b, &c, 2);
+    return r;
+}
+
+# Dot product (value form): sum(a[i] * b[i]). Returns f64 bit
+# pattern in i64.
+fn f64v2_dot(a: f64v2, b: f64v2): i64 {
+    return f64v_dot(&a, &b, 2);
+}
+
+# Scalar scale (value form): r[i] = a[i] * s.
+fn f64v2_scale(a: f64v2, s): f64v2 {
+    var r: f64v2;
+    f64v_scale(&r, &a, s, 2);
+    return r;
+}
+
+# Packed-double absolute value (value form): r[i] = |a[i]|.
+fn f64v2_abs(a: f64v2): f64v2 {
+    var r: f64v2;
+    f64v_abs(&r, &a, 2);
+    return r;
+}
+
+# Packed-double square root (value form): r[i] = sqrt(a[i]).
+# Caller responsible for non-negative lanes.
+fn f64v2_sqrt(a: f64v2): f64v2 {
+    var r: f64v2;
+    f64v_sqrt(&r, &a, 2);
+    return r;
+}
+
+# Lane 0 extractor (value form).
+fn f64v4_lane0(v: f64v4): i64 { return load64(&v + 0); }
+# Lane 1 extractor (value form).
+fn f64v4_lane1(v: f64v4): i64 { return load64(&v + 8); }
+# Lane 2 extractor (value form).
+fn f64v4_lane2(v: f64v4): i64 { return load64(&v + 16); }
+# Lane 3 extractor (value form).
+fn f64v4_lane3(v: f64v4): i64 { return load64(&v + 24); }
+
+# 4-lane packed-double add (value form): r[i] = a[i] + b[i].
+fn f64v4_add(a: f64v4, b: f64v4): f64v4 {
+    var r: f64v4;
+    f64v_add(&r, &a, &b, 4);
+    return r;
+}
+
+# 4-lane packed-double subtract (value form).
+fn f64v4_sub(a: f64v4, b: f64v4): f64v4 {
+    var r: f64v4;
+    f64v_sub(&r, &a, &b, 4);
+    return r;
+}
+
+# 4-lane packed-double multiply (value form).
+fn f64v4_mul(a: f64v4, b: f64v4): f64v4 {
+    var r: f64v4;
+    f64v_mul(&r, &a, &b, 4);
+    return r;
+}
+
+# 4-lane packed-double divide (value form).
+fn f64v4_div(a: f64v4, b: f64v4): f64v4 {
+    var r: f64v4;
+    f64v_div(&r, &a, &b, 4);
+    return r;
+}
+
+# 4-lane FMA (value form): r[i] = a[i] * b[i] + c[i].
+fn f64v4_fmadd(a: f64v4, b: f64v4, c: f64v4): f64v4 {
+    var r: f64v4;
+    f64v_fmadd(&r, &a, &b, &c, 4);
+    return r;
+}
+
+# 4-lane dot product (value form). Returns f64 bit pattern in i64.
+fn f64v4_dot(a: f64v4, b: f64v4): i64 {
+    return f64v_dot(&a, &b, 4);
+}
+
+# 4-lane scalar scale (value form): r[i] = a[i] * s.
+fn f64v4_scale(a: f64v4, s): f64v4 {
+    var r: f64v4;
+    f64v_scale(&r, &a, s, 4);
+    return r;
+}
+
+# 4-lane absolute value (value form): r[i] = abs(a[i]).
+fn f64v4_abs(a: f64v4): f64v4 {
+    var r: f64v4;
+    f64v_abs(&r, &a, 4);
+    return r;
+}
+
+# 4-lane square root (value form): r[i] = sqrt(a[i]).
+fn f64v4_sqrt(a: f64v4): f64v4 {
+    var r: f64v4;
+    f64v_sqrt(&r, &a, 4);
+    return r;
+}
+
+#endif

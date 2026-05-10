@@ -1,0 +1,52 @@
+# v5.10.39 — typed-simd overload dispatch arc-close gate.
+# Verifies that the parser auto-routes `f64v2_op(&x, &y)` → `f64v2_op_ptr`
+# while `f64v2_op(x, y)` → `f64v2_op` (the value-form base), and that
+# both forms produce the same result on the same inputs.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/simd.cyr"
+include "lib/test.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("v5.10.39 — pointer form (auto-routes to f64v2_add_ptr)");
+    var a: f64v2 = f64v2_make(0x4000000000000000, 0x4008000000000000);
+    var b: f64v2 = f64v2_make(0x4010000000000000, 0x4014000000000000);
+    var p_sum: f64v2 = f64v2_add(&a, &b);
+    assert_eq(load64(&p_sum + 0), 0x4018000000000000, "ptr-form: 2+4=6");
+    assert_eq(load64(&p_sum + 8), 0x4020000000000000, "ptr-form: 3+5=8");
+
+    # Value-form sub-tests gated on non-PE targets. Win64 PE skips
+    # value-form ABI per the lib/simd.cyr CYRIUS_HAS_VAL_SIMD_PARAMS
+    # gating; PE consumers use the pointer form (overload-routed
+    # above). On PE these test groups don't run and won't be counted.
+    #ifdef CYRIUS_HAS_VAL_SIMD_PARAMS
+
+    test_group("v5.10.39 — value form (calls f64v2_add value-base directly)");
+    var v_sum: f64v2 = f64v2_add(a, b);
+    assert_eq(load64(&v_sum + 0), 0x4018000000000000, "val-form: 2+4=6");
+    assert_eq(load64(&v_sum + 8), 0x4020000000000000, "val-form: 3+5=8");
+
+    test_group("v5.10.39 — pointer vs value forms agree (mul + sub)");
+    var p_mul: f64v2 = f64v2_mul(&a, &b);
+    var v_mul: f64v2 = f64v2_mul(a, b);
+    assert_eq(load64(&p_mul + 0), load64(&v_mul + 0), "mul: ptr lo == val lo");
+    assert_eq(load64(&p_mul + 8), load64(&v_mul + 8), "mul: ptr hi == val hi");
+    var p_sub: f64v2 = f64v2_sub(&b, &a);
+    var v_sub: f64v2 = f64v2_sub(b, a);
+    assert_eq(load64(&p_sub + 0), load64(&v_sub + 0), "sub: ptr lo == val lo");
+    assert_eq(load64(&p_sub + 8), load64(&v_sub + 8), "sub: ptr hi == val hi");
+
+    test_group("v5.10.39 — value-form abs (single SIMD arg)");
+    var neg: f64v2 = f64v2_make(0xC000000000000000, 0xC008000000000000);
+    var abs_v: f64v2 = f64v2_abs(neg);
+    assert_eq(load64(&abs_v + 0), 0x4000000000000000, "abs val: |-2| = 2");
+    assert_eq(load64(&abs_v + 8), 0x4008000000000000, "abs val: |-3| = 3");
+
+    #endif
+
+    var r = assert_summary();
+    return r;
+}

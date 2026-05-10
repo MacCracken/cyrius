@@ -773,6 +773,48 @@ fn PARSE_FNCALL(S, noff): i64 {
             }
         }
     }
+    # v5.10.39 — pointer-vs-value overload dispatch extension.
+    # When the first arg is `&IDENT` (typ 27 = address-of), look up
+    # `<base_name>_ptr` sibling by name. If found, route to it.
+    # Enables consumers to call `f64v2_add(&x, &y)` and have the
+    # parser auto-route to `f64v2_add_ptr` (v5.10.33 pointer-form),
+    # while `f64v2_add(x, y)` (value-form, IDENT args) stays routed
+    # to the base name via v5.10.38's caller-side SIMD-arg dispatch.
+    #
+    # Uses stack-local scratch + _FINDFN_CSTR — no tok_names bloat
+    # (unlike the v5.10.25 forward/reverse registration which uses
+    # the per-fn overload tables). Compile-time cost: O(N) name
+    # compare over registered fns per pointer-form call site.
+    if (PEEKT(S) == 27) {
+        var _po_base_p = S + 0x60000 + noff;
+        var _po_base_len = 0;
+        while (load8(_po_base_p + _po_base_len) != 0) { _po_base_len = _po_base_len + 1; }
+        # 128-byte scratch — must hold base_len + len("_ptr") + null.
+        # The 120-char base-length guard below leaves headroom.
+        # Pre-bumped from 16 bytes — was overflow-prone for any base
+        # name >11 chars (e.g. `f64v2_add_ptr` direct call constructed
+        # `f64v2_add_ptr_ptr` = 18 bytes; the overflow corrupted
+        # adjacent stack data and returned wrong values from any fn
+        # call that hit this dispatch path).
+        if (_po_base_len < 120) {
+            var _po_scratch[128];
+            var _po_i = 0;
+            while (_po_i < _po_base_len) {
+                store8(&_po_scratch + _po_i, load8(_po_base_p + _po_i));
+                _po_i = _po_i + 1;
+            }
+            store8(&_po_scratch + _po_base_len + 0, 95);   # '_'
+            store8(&_po_scratch + _po_base_len + 1, 112);  # 'p'
+            store8(&_po_scratch + _po_base_len + 2, 116);  # 't'
+            store8(&_po_scratch + _po_base_len + 3, 114);  # 'r'
+            store8(&_po_scratch + _po_base_len + 4, 0);
+            var _po_fi = _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
+            if (_po_fi >= 0) {
+                fi = _po_fi;
+                noff = L64(S + 0x128A000 + fi * 8);
+            }
+        }
+    }
     # v5.6.4: #deprecated call-site warning. Fires at EVERY call site
     # (unlike #must_use which only fires on statement-level discard —
     # deprecated fns should get the nudge no matter how their result

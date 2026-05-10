@@ -6,6 +6,167 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.39] — 2026-05-10
+
+**v5.10.x SLOT 39 — typed-simd overload dispatch + `lib/simd.cyr`
+value-form wrapper migration (typed-simd ABI Phase 11, arc close)**.
+
+Phase 11 / final phase of the typed-simd ABI arc. v5.10.38 shipped
+the language-layer ABI; v5.10.39 ships the consumer-facing surface
+on top:
+
+1. **Parser-side `&IDENT → _ptr` overload dispatch** in
+   `PARSE_FNCALL` — when the first arg is `&IDENT` (typ 27 =
+   address-of), look up `<base_name>_ptr` sibling via _FINDFN_CSTR
+   on a stack-local scratch and reroute fi if found. Uses no new
+   heap region (per-fn overload tables at 0x126A000+ are reserved
+   for the v5.10.25 `_str`/`_int`/`_cstr` patterns); name-mangling
+   at call site is O(N) over fn count, acceptable at compile time.
+
+2. **`lib/simd.cyr` rewrite** — each math op now exists in two
+   forms with the same base name:
+   - **Value form**: `f64v2_add(a: f64v2, b: f64v2): f64v2` — uses
+     the v5.10.38 param-side ABI (args arrive in XMM0+XMM1 / V0+V1).
+   - **Pointer form**: `f64v2_add_ptr(a_ptr, b_ptr): f64v2` —
+     retained for raw-pointer call sites and as the sole shape on
+     Win64 PE.
+   - Same shape for f64v2_sub/mul/div/fmadd/dot/scale/abs/sqrt
+     (17 value-form + 17 pointer-form) and the full f64v4 surface
+     (8 value-form + 8 pointer-form).
+   - Lane extractors (`f64v2_lo` / `_hi` / `f64v4_lane0..3`) get
+     both forms.
+
+3. **Consumer API**: callers write the same code as v5.10.33:
+   - `f64v2_add(&x, &y)` — parser auto-routes to `_ptr` sibling
+     (works on all targets, including PE).
+   - `f64v2_add(x, y)` — direct call to value-form base (non-PE).
+   - No consumer-side refactoring needed for existing pointer-form
+     callsites; new consumers can pick whichever shape fits.
+
+cc5 (x86): 790,544 → **797,464 (+6,920 B)** for the overload-dispatch
+helper + the doubled lib/simd.cyr fn count. Self-host byte-identical.
+**66/66 check.sh, 141/141 cyrius test on x86** (+1 new gate:
+`simd_overload_dispatch.tcyr`).
+
+**Cross-host SSH cluster green**:
+- pi (aarch64 Linux): 10/10 sub-asserts, exit=0
+- ecb (macOS Mach-O arm64): 10/10, exit=0 (codesigned)
+- cass (Windows PE x86_64): exit=0 (value-form sub-tests
+  ifdef-skipped via `CYRIUS_HAS_VAL_SIMD_PARAMS`; pointer-form
+  via overload routing exercised)
+
+api-surface 2,849 → **2,873** (+24 fns: lib/simd.cyr value-form
+siblings added, gated to non-PE; existing pointer-form renamed
+with `_ptr` suffix where the value-form takes the base name).
+
+### Bug surfaced + fixed in-slot — `f64v_add/sub/mul` locname staleness
+
+The v5.10.35 fix that anonymised stash slots in PARSE_SIMD_EXT
+**missed** the separate f64v_add/sub/mul dispatch at ptyp 89-91
+(located outside PARSE_SIMD_EXT in `parse_expr.cyr`). That path
+still used bare `EFLSTORE` instead of `_SIMD_STASH`. The bug was
+latent — relied on prior-fn locname slots NOT happening to land
+on "r" at the stash positions. Adding the value-form siblings to
+lib/simd.cyr (earlier fn declarations, more locname churn) made
+the stale-collision reliable: `f64v2_add_ptr` started returning
+stack addresses instead of computed sums.
+
+Diagnosis: bisection showed reverting lib/simd.cyr (back to
+pointer-form-only) made the test pass with v5.10.39 dispatch in
+place, isolating the issue to the lib/simd.cyr changes. Direct
+`f64v2_add_ptr(&x, &y)` also failed — pointing at the body, not
+the overload routing. Same staleness pattern as v5.10.35 fixed,
+but in a different parse path.
+
+Fix: route ptyp 89-91's stash writes through `_SIMD_STASH` (same
+shape as the v5.10.35 fix). 3-line change in parse_expr.cyr.
+
+### Win64 PE gating
+
+Value-form fn definitions trigger v5.10.38's PE error
+(`f64v2/f64v4 value-form params not yet supported on Win64 PE`).
+To let lib/simd.cyr compile on PE, value-form fns are wrapped in
+`#ifdef CYRIUS_HAS_VAL_SIMD_PARAMS` — predefined by every non-PE
+`main_*.cyr` (main.cyr / main_aarch64.cyr both branches /
+main_aarch64_native.cyr / main_aarch64_macho.cyr), absent from
+main_win.cyr. PE builds skip the value-form block entirely.
+
+The overload dispatch makes this transparent: PE consumers writing
+`f64v2_add(&x, &y)` route to `f64v2_add_ptr` (which exists on PE)
+just like non-PE consumers do. The base name `f64v2_add` is
+undefined on PE — but the parser never tries to call it directly
+(the overload routing fires first).
+
+Full Win64 PE value-form support (with byte-copy-from-pointer
+prologue) is a deferred follow-up; documented as a known
+limitation in lib/simd.cyr header.
+
+### Scratch-buffer overflow fixed
+
+The overload-dispatch first cut had `var _po_scratch[16]` — a
+16-byte stack scratch for constructing `<name>_ptr` lookup strings.
+For base names ≥12 chars (e.g. `f64v2_add_ptr` direct call →
+constructs `f64v2_add_ptr_ptr` = 17 chars + null = 18 bytes), the
+write overflowed and corrupted adjacent stack data (including
+`fi` / `noff` locals), producing wrong codegen at the call site.
+Bumped scratch to 128 bytes; the 120-char base-length guard
+keeps writes within bounds.
+
+### What landed
+
+**`src/frontend/parse_fn.cyr`**:
+- Pointer-form overload dispatch in PARSE_FNCALL (~30 lines)
+  after the v5.10.25 `_str`/`_int`/`_cstr` block, before the
+  inline-fn path.
+- Uses `_FINDFN_CSTR` with a stack-local 128-byte scratch
+  (post-overflow-fix).
+
+**`src/frontend/parse_expr.cyr`**:
+- ptyp 89-91 (f64v_add/sub/mul) stash writes routed through
+  `_SIMD_STASH` (locname-staleness fix companion to v5.10.35).
+
+**`src/main.cyr`** + **`src/main_aarch64.cyr`** +
+**`src/main_aarch64_native.cyr`** + **`src/main_aarch64_macho.cyr`**:
+- Predefine `CYRIUS_HAS_VAL_SIMD_PARAMS` so lib/simd.cyr can gate
+  value-form fns on non-PE targets. `main_win.cyr` explicitly does
+  NOT predefine; PE skips value-form.
+
+**`lib/simd.cyr`** — full rewrite:
+- Header rewritten to document the two-form shape.
+- Pointer-form fns (`f64v2_*_ptr`, `f64v4_*_ptr`) compile on all
+  targets. Universal API across PE / SysV / aarch64 / cx.
+- Value-form fns gated on `CYRIUS_HAS_VAL_SIMD_PARAMS`. Non-PE
+  targets only.
+- All 50 public fns have per-fn doc comments (cyrdoc-clean).
+
+**`tests/tcyr/simd_overload_dispatch.tcyr`** — new gate:
+- 10 sub-asserts on x86 / aarch64 / macho-arm (value-form
+  exercised).
+- 2 sub-asserts on Win64 PE (only pointer-form via overload
+  routing — value-form groups ifdef-skipped).
+
+### Typed-simd ABI arc — fully closed
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV int-class pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | cx bytecode + macho inherits |
+| 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style return |
+| 5     | v5.10.32 | ✅     | x86 SysV XMM0 register passing |
+| 6     | v5.10.33 | ✅ partial | `lib/simd.cyr` pointer-form typed wrappers |
+| 7     | v5.10.35 | ✅     | `PARSE_SIMD_EXT` locname-staleness fix |
+| 8     | v5.10.36 | ✅     | aarch64 V0 NEON register passing |
+| 9     | v5.10.37 | ✅     | `f64v4` (32-byte) value type |
+| 10    | v5.10.38 | ✅     | f64v2 + f64v4 value-form param ABI (callee + caller) |
+| 11    | v5.10.39 | ✅     | **Overload dispatch + value-form wrapper migration (arc close)** (this slot) |
+
+**11 phases, 12 slots, arc fully closed.** From no-vector-types
+at v5.10.27 → consumer-clean
+`var r: f64v2 = f64v2_add(x, y);` overload-dispatched API across
+x86 SSE / aarch64 NEON / cx / macho / Win64 PE (PE via pointer-
+form sibling routing).
+
 ## [5.10.38] — 2026-05-10
 
 **v5.10.x SLOT 38 — f64v2 + f64v4 value-form param ABI

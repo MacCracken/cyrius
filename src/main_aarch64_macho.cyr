@@ -136,6 +136,8 @@ SBL(S, bl);
 # Preprocess includes
 _init_cyrius_lib();
 PP_PREDEFINE(S, "CYRIUS_ARCH_AARCH64");
+# v5.10.39 — non-PE targets support f64v2/f64v4 value-form param ABI.
+PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 PREPROCESS(S);
 
 # Lex

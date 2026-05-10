@@ -595,6 +595,11 @@ if (_is_pe_build == 1) {
         PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
     } else {
         PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
+# v5.10.39 — non-PE targets support the f64v2/f64v4 value-form
+# param ABI (Phase 10 from v5.10.38). lib/simd.cyr gates value-form
+# typed wrappers on this flag so PE builds skip them and the
+# pointer-form `_ptr` siblings remain the supported PE path.
+PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
     } }
 
 # v5.6.5 O1: total compile-time instrumentation. Gated by the
