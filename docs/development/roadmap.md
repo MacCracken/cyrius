@@ -1448,8 +1448,8 @@ motion.
 | 2     | v5.10.29 | ✅     | aarch64 propagation: X0+X1 pair return + ldur/stur emits in `EFLLOAD_F64V2_PAIR` / `EFLSTORE_F64V2_PAIR`. Pi SSH cross-arch verify: 8/8 sub-asserts pass. |
 | 3     | v5.10.30 | ✅     | cx bytecode (r0+r1 pair); macho aarch64 inherits v5.10.29's emit (macho/emit.cyr binary-format-only). cxvm pipeline runs without crash on f64v2 code. |
 | 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style return (≤16B composite ABI). Codegen wired in PARSE_FN_DEF rough-scan / PARSE_RETURN / parse_decl caller side. Cross-compile produces valid PE32+ binary; runs on cass without crash. **Full runtime verify gated on Win64 stdlib** (println silent + exit-code propagation broken — pre-existing gaps, separate arc). |
-| 5     | v5.10.32 | pinned | XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` instead of rax/rdx int-class pair. 2-instruction faster path; better SIMD perf for hisab benchmark workloads. |
-| 6     | v5.10.33 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM (AVX-detected). `lib/simd.cyr` typed wrappers `f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed via overload dispatch (uses Phase 3 generalize from v5.10.25). Closes the typed-simd arc. |
+| 5     | v5.10.32 | ✅     | x86 SysV XMM register passing optimization: `movupd xmm0, [&v]` + `movupd [&x], xmm0` (8 bytes each) replaces v5.10.28's int-class rax/rdx pair (14 bytes each). cc5 SHRINKS by 384 B from the encoding-density gain. Standard SysV PCS for SSE class composites. |
+| 6     | v5.10.33 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM (AVX-detected). `lib/simd.cyr` typed wrappers `f64v2_add(a: f64v2, b: f64v2): f64v2` etc. exposed via overload dispatch (uses Phase 3 generalize from v5.10.25). Aarch64 V0 NEON optimization (mirrors v5.10.32's XMM0 work). Closes the typed-simd arc. |
 
 Adds `f64v2` and `f64v4` as primitive types (16-byte
 and 32-byte packed-f64 respectively), overloaded

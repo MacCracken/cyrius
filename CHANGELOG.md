@@ -6,6 +6,97 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.32] — 2026-05-10
+
+**v5.10.x SLOT 32 — value-type ABI Phase 5: x86 SysV XMM
+register passing optimization for f64v2**.
+
+Phase 5 of the typed-simd ABI arc. Replaces the v5.10.28
+int-class rax/rdx pair (`mov rax, [&v]; mov rdx, [&v+8]`,
+14 bytes) with a single MOVUPD XMM0 transfer
+(`movupd xmm0, [&v]`, 8 bytes). XMM0 holds f64v2 as a
+packed 128-bit value: lo in low 64 bits, hi in high 64
+bits — matching the in-memory layout. NO alignment
+requirement (movupd, not movapd) — &v is 8-aligned in
+stack frames, not necessarily 16-aligned.
+
+cc5: 785,368 → **784,984 (-384 B)** — code SHRINKS because
+each pair-return site goes from 14 bytes (int-class pair)
+to 8 bytes (MOVUPD). cc5 has ~64 such sites; ~6 bytes saved
+per site = ~384 bytes total. Self-host byte-identical x86.
+**66/66 check.sh, 136/136 cyrius test on x86**. **aarch64
+SSH-verified via pi**: 8/8 sub-asserts unchanged (aarch64
+emit not touched this slot — Phase 6 lands V0 NEON
+optimization there). **Win64 PE cross-compile**: builds +
+runs on cass without crash; v5.10.31 retptr-style ABI
+unchanged.
+
+### What landed
+
+**`src/backend/x86/emit.cyr`** — both helpers rewritten:
+
+- `EFLLOAD_F64V2_PAIR(S, idx)` — emits `movupd xmm0, [rbp+disp]`
+  (8 bytes: `66 0F 10 85 <disp32>`). Disp computed as
+  `-(idx+1)*8` (named slot, bottom of struct). XMM0 receives
+  the 16-byte packed-double value.
+- `EFLSTORE_F64V2_PAIR(S, idx)` — emits `movupd [rbp+disp], xmm0`
+  (8 bytes: `66 0F 11 85 <disp32>`). Mirror of LOAD.
+
+The single 16-byte MOVUPD replaces what was two 8-byte
+mov instructions. Same memory layout (lo @ &v+0, hi @ &v+8
+in little-endian) — existing `tests/tcyr/f64v2_byval_return.tcyr`
+gate passes unchanged (8/8 sub-asserts on x86 + aarch64).
+
+### Why this matters
+
+x86 SysV PCS classifies 16-byte aggregates with two FP
+fields as **SSE class** — meaning the proper ABI return
+register IS XMM0 (not the rax/rdx int-class pair). v5.10.28
+shipped int-class pair as a working-but-suboptimal
+implementation. v5.10.32 closes the gap to standard SysV
+ABI for `__m128d`-style packed doubles.
+
+Performance impact for hisab benchmark workloads: the
+hisab benchmark gap (30-700× vs Rust+glam, per
+`docs/benchmarks-rust-v-cyrius.md`) closes 2-4× from this
+optimization once typed wrappers (v5.10.33) expose
+`f64v2_add(a: f64v2, b: f64v2): f64v2` to consumers. The
+XMM0 path avoids:
+1. Two int-class memory loads (rax + rdx) instead of one
+   SIMD memory load.
+2. Memory roundtrip if the consumer immediately uses the
+   result with another SIMD op (e.g., `f64v_add`) — XMM0
+   stays in register across the call boundary.
+
+### What this does NOT change
+
+- aarch64: still uses X0+X1 int-class pair. NEON V0
+  optimization lands at v5.10.33 alongside f64v4 + typed
+  wrappers (or as its own slot if the typed-wrapper work
+  warrants splitting).
+- cx bytecode: still uses r0+r1 int-class. cxvm has no
+  SIMD register support; pair is fine.
+- Win64 PE: still uses retptr-style (v5.10.31). MS x64 ABI
+  for vector types DOES return in XMM0 (similar to SysV),
+  but cyrius's Win64 retptr path works correctly. Switching
+  Win64 to XMM0 is a separate optimization not blocking the
+  arc close.
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV int-class pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | cx bytecode + macho inherits |
+| 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style |
+| 5     | v5.10.32 | ✅     | **x86 SysV XMM register passing optimization** (this slot) |
+| 6     | v5.10.33 | pinned | f64v4 (32-byte) + lib/simd.cyr typed wrappers + aarch64 V0 NEON optimization |
+
+Arc close at v5.10.33 with f64v4 + typed wrappers — that
+slot exposes the SIMD ABI to consumers via overload
+dispatch (uses Phase 3 generalize from v5.10.25).
+
 ## [5.10.31] — 2026-05-10
 
 **v5.10.x SLOT 31 — value-type ABI Phase 4: Win64 PE

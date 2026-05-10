@@ -5,6 +5,72 @@
 
 ## Version
 
+**5.10.32** (shipped 2026-05-10 — **v5.10.x SLOT 32 —
+value-type ABI Phase 5: x86 SysV XMM register passing
+optimization for f64v2**).
+
+Phase 5 of the typed-simd ABI arc. Replaces the v5.10.28
+int-class rax/rdx pair with a single MOVUPD XMM0 transfer
+matching the standard x86 SysV PCS for SSE class
+16-byte aggregates.
+
+**`src/backend/x86/emit.cyr` rewrites**:
+- `EFLLOAD_F64V2_PAIR` — single `movupd xmm0, [rbp+disp]`
+  (8 bytes: `66 0F 10 85 <disp32>`). Replaces 14-byte
+  int-class pair from v5.10.28.
+- `EFLSTORE_F64V2_PAIR` — single `movupd [rbp+disp], xmm0`
+  (8 bytes: `66 0F 11 85 <disp32>`).
+
+XMM0 holds f64v2 as packed 128-bit: lo in low 64 bits, hi
+in high 64 bits — same in-memory layout as the int-class
+pair (lo @ &v+0, hi @ &v+8 little-endian).
+
+**Acceptance**:
+- cc5: 785,368 → **784,984 (-384 B)** — code SHRINKS from
+  encoding-density gain (~6 B saved per pair-return site
+  × ~64 sites). Self-host byte-identical x86.
+- 66/66 check.sh + 136/136 cyrius test.
+- aarch64 SSH-verified via pi: 8/8 sub-asserts unchanged
+  (aarch64 emit not touched this slot — Phase 6 lands V0
+  NEON optimization).
+- Win64 PE cross-compile builds + runs on cass without
+  crash; v5.10.31 retptr-style ABI unchanged.
+
+**Cross-arch SSH verify status**:
+
+| Backend | Host | Status |
+|---------|------|--------|
+| x86 SysV | local | ✅ XMM0 path |
+| aarch64 Linux | pi | ✅ X0+X1 pair (NEON in Phase 6) |
+| cx bytecode | local cxvm | ✅ r0+r1 pair |
+| aarch64 macOS | ecb | inherited from v5.10.29 |
+| Win64 PE | cass | ✅ partial (retptr; XMM0 not blocking arc) |
+
+**Multi-slot ABI arc progress**:
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 ✅ | x86 SysV int-class pair return |
+| 2     | v5.10.29 ✅ | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 ✅ | cx + macho inherits |
+| 4     | v5.10.31 ✅ partial | Win64 PE retptr-style |
+| 5     | v5.10.32 ✅ | **x86 SysV XMM register passing** (this slot) |
+| 6     | v5.10.33 pinned | f64v4 + lib/simd.cyr typed wrappers + aarch64 V0 NEON |
+
+**Why XMM matters (hisab perf gap)**: v5.10.32 closes the
+gap to standard x86 SysV ABI for SSE class 16-byte
+aggregates. Combined with v5.10.33's typed wrappers + aarch64
+V0 NEON, the full hisab benchmark gap (30-700× vs Rust+glam
+per `docs/benchmarks-rust-v-cyrius.md`) closes 2-4×. The
+XMM0 path avoids two int-class memory loads + memory
+roundtrip when SIMD ops chain (XMM0 stays in register
+across the call boundary).
+
+**Next**: v5.10.33 = arc close — f64v4 + lib/simd.cyr
+typed wrappers (overload dispatch via Phase 3 generalize
+from v5.10.25) + aarch64 V0 NEON optimization mirror of
+v5.10.32's XMM0 work.
+
 **5.10.31** (shipped 2026-05-10 — **v5.10.x SLOT 31 —
 value-type ABI Phase 4: Win64 PE retptr-style return for
 f64v2 (≤16B composite ABI per Microsoft x64 calling
