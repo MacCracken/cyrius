@@ -2598,6 +2598,8 @@ thread_local::thread_local_set/2
 tls::tls_available/0
 tls::tls_close/1
 tls::tls_connect/2
+tls::tls_connect_alloc/4
+tls::tls_connect_complete/1
 tls::tls_connect_with_ctx_hook/4
 tls::tls_ctx_set_max_early_data/2
 tls::tls_ctx_set_session_cache_mode/2

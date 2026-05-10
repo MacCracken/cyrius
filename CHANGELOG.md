@@ -6,6 +6,96 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.27] — 2026-05-09
+
+**v5.10.x SLOT 27 — TLS staged-connect API: split
+`tls_connect_with_ctx_hook` into `tls_connect_alloc` +
+`tls_connect_complete` (sandhi 1.3.1 client-resumption unblock)**.
+
+Closes the v5.10.21 partial-fix gap. v5.10.21 shipped 12 fns
++ 2 capability probes for session resumption + 0-RTT primitives,
+but the connect-flow timing window between `SSL_new` and
+`SSL_connect` (where `SSL_set_session(ssl, session)` must fire
+to actually USE a cached session) wasn't exposed. v5.10.27
+splits the connect flow so consumers can inject the cached
+session in the timing window.
+
+cc5 unchanged at 780,336 B (lib-only change). Self-host byte-
+identical x86. **66/66 check.sh, 135/135 cyrius test**.
+api-surface: +2 fns (`tls::tls_connect_alloc/4`,
+`tls::tls_connect_complete/1`).
+
+### What landed
+
+**`lib/tls.cyr` — `tls_connect_alloc(sock, host, hook_fp, hook_ctx): i64`**
+— Phase 1 of the staged connect. Allocates `SSL_CTX` +
+`SSL` handle + binds fd + sets SNI + runs the consumer hook
+pre-`SSL_new`, but DOES NOT run `SSL_connect`. Returns the
+ctx struct in pre-handshake state (24-byte struct, same
+layout as post-handshake). Returns 0 on any
+allocation/binding/hook failure (resources released in the
+error path).
+
+**`lib/tls.cyr` — `tls_connect_complete(ctx): i64`** — Phase 2.
+Runs `SSL_connect` on a ctx returned by `tls_connect_alloc`.
+Returns 1 on handshake success, 0 on failure. Caller MUST
+`tls_close(ctx)` to release on failure (this fn does NOT
+free on failure — caller may want to inspect SSL_get_error
+before freeing).
+
+**`lib/tls.cyr` — `tls_connect_with_ctx_hook` collapsed to
+3-line wrapper** — composed from staged-connect Phase 1 +
+Phase 2 + tls_close-on-fail. Existing v5.6.40 callers see
+byte-identical behavior. `tls_connect(sock, host)` (the 1-line
+hook-less wrapper) similarly unchanged.
+
+### Sandhi 1.3.1 flow
+
+```cyr
+var ctx = tls_connect_alloc(sock, host, hook_fp, hook_ctx);
+if (ctx == 0) { return 0; }
+
+var cached = sandhi_session_cache_lookup(host, port, alpn);
+if (cached != 0) { tls_set_session(ctx, cached); }
+
+if (tls_connect_complete(ctx) != 1) {
+    tls_close(ctx);
+    return 0;
+}
+# ctx is now usable for tls_read/write/get_session;
+# resumption either took or didn't, sandhi caches a fresh
+# session via tls_get_session for next time.
+```
+
+The `tls_set_session(ctx, cached)` call sits in the timing
+window OpenSSL requires (post-`SSL_new`, pre-`SSL_connect`).
+
+### Why this matters
+
+Pre-v5.10.27: sandhi 1.3.1 could capture sessions out of
+successful handshakes via `_new_cb` with
+`SSL_SESS_CACHE_CLIENT` mode in the hook, but had no way to
+inject a cached session pre-`SSL_connect` — every connect ran
+a full handshake regardless of cache state. "Half a feature":
+cache fills but never pays off. 1.3.2 (0-RTT) was also
+affected since 0-RTT requires a session installed
+pre-handshake.
+
+Post-v5.10.27: full client-side resumption + 0-RTT flow
+unblocked. Sandhi 1.3.1 can implement client-side session
+resumption, ship, and 1.3.2 0-RTT follows naturally.
+
+### Filing reference
+
+Filed by sandhi 2026-05-09:
+`sandhi/docs/issues/2026-05-09-stdlib-tls-staged-connect.md`
+(Option A — staged-connect API, sandhi-preferred).
+
+Per `feedback_consumer_request_full_surface` memory pin —
+ship the FULL surface from a consumer filing, not the easy
+half. Option A landed end-to-end in this slot; no Phase B
+deferral.
+
 ## [5.10.26] — 2026-05-09
 
 **v5.10.x SLOT 26 — REAL TYPE SYSTEM Phase 5: CYRIUS_TYPE_CHECK

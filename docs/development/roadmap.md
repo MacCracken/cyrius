@@ -1380,30 +1380,29 @@ flip lights up the type system for ALL consumers without
 per-build env-knob — every cyrius compile now fires
 Str→cstring warnings with hint catalog by default.
 
-#### v5.10.27 — TLS staged-connect API (sandhi 1.3.1 client-resumption unblock)
+#### v5.10.27 ✅ — TLS staged-connect API (sandhi 1.3.1 client-resumption unblock — SHIPPED)
 
-Pinned 2026-05-09 via sandhi filing
+Closed via Option A (sandhi-preferred). Split
+`tls_connect_with_ctx_hook` into:
+- `tls_connect_alloc(sock, host, hook_fp, hook_ctx)` —
+  Phase 1: SSL_CTX + SSL handle + fd binding + SNI + hook,
+  stops before SSL_connect.
+- `tls_connect_complete(ctx)` — Phase 2: runs SSL_connect,
+  returns 1 on success / 0 on failure.
+
+Existing `tls_connect_with_ctx_hook` collapsed to a 3-line
+wrapper (alloc + complete + tls_close-on-fail). Existing
+v5.6.40 callers see byte-identical behavior. api-surface
++2 fns. cc5 unchanged at 780,336 B (lib-only change).
+
+Sandhi 1.3.1 can now do
+`alloc → tls_set_session(ctx, cached_session) → complete`
+to inject a cached session in the timing window.
+
+Filed 2026-05-09 via
 `sandhi/docs/issues/2026-05-09-stdlib-tls-staged-connect.md`.
-v5.10.21 shipped the session-resumption + 0-RTT primitives but
-the connect-flow timing window to actually USE them is missing
-— `SSL_set_session` must fire BEFORE `SSL_connect`, and
-`tls_connect_with_ctx_hook` runs the full flow in one call
-with the hook firing on `SSL_CTX*` (pre-`SSL_new`).
-
-**Option A** (sandhi-preferred): split
-`tls_connect_with_ctx_hook` into `tls_connect_alloc` +
-`tls_connect_complete`. Allocate-side does
-`SSL_CTX_new` + hook + `SSL_new` + `SSL_set_fd` +
-SNI (everything except `SSL_connect`); complete-side
-runs the handshake. Sandhi flow becomes:
-`alloc → tls_set_session(ctx, cached_session) → complete`.
-Existing `tls_connect_with_ctx_hook` collapses to a
-3-line wrapper preserving byte-identical existing-caller
-behavior.
-
-User direction 2026-05-09: "FOR AFTER THE TYPE WORK ARC".
-Lands after v5.10.26 (REAL TYPE SYSTEM Phase 5 close).
-Subsequent slot numbers shift down by one.
+Per `feedback_consumer_request_full_surface` — full
+surface shipped this slot, no Phase B deferral.
 
 #### v5.10.28 — typed `f64v2` / `f64v4` types (post-overload-dispatch)
 

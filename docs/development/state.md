@@ -5,6 +5,55 @@
 
 ## Version
 
+**5.10.27** (shipped 2026-05-09 — **v5.10.x SLOT 27 —
+TLS staged-connect API: split `tls_connect_with_ctx_hook`
+into `tls_connect_alloc` + `tls_connect_complete` (sandhi
+1.3.1 client-resumption unblock)**).
+
+Closes the v5.10.21 partial-fix gap. v5.10.21 shipped the
+session-resumption + 0-RTT primitives but the connect-flow
+timing window between `SSL_new` and `SSL_connect` (where
+`SSL_set_session(ssl, session)` must fire to actually USE
+a cached session) wasn't exposed. v5.10.27 splits the
+connect flow.
+
+**`lib/tls.cyr` API additions**:
+- `tls_connect_alloc(sock, host, hook_fp, hook_ctx): i64` —
+  Phase 1. Allocates SSL_CTX + SSL handle + binds fd + sets
+  SNI + runs hook pre-SSL_new. Returns ctx in pre-handshake
+  state (24-byte struct, same layout as post-handshake).
+  0 on any failure (resources released).
+- `tls_connect_complete(ctx): i64` — Phase 2. Runs
+  SSL_connect on a ctx returned by `tls_connect_alloc`.
+  Returns 1 on success, 0 on failure (caller MUST tls_close
+  to release on failure).
+- `tls_connect_with_ctx_hook` collapsed to 3-line wrapper:
+  alloc + complete + tls_close-on-fail. Existing v5.6.40
+  callers see byte-identical behavior.
+
+**Acceptance**:
+- cc5 unchanged at 780,336 B (lib-only change).
+- Self-host byte-identical x86.
+- 66/66 check.sh + 135/135 cyrius test.
+- api-surface: +2 fns (`tls::tls_connect_alloc/4`,
+  `tls::tls_connect_complete/1`).
+
+**Sandhi 1.3.1 unblock flow**:
+```cyr
+var ctx = tls_connect_alloc(sock, host, hook_fp, hook_ctx);
+if (ctx == 0) { return 0; }
+var cached = sandhi_session_cache_lookup(host, port, alpn);
+if (cached != 0) { tls_set_session(ctx, cached); }
+if (tls_connect_complete(ctx) != 1) { tls_close(ctx); return 0; }
+```
+
+The `tls_set_session(ctx, cached)` call sits in the
+OpenSSL-required timing window (post-SSL_new,
+pre-SSL_connect).
+
+**Next**: v5.10.28 = typed simd (`f64v2` / `f64v4`).
+v5.10.29+ = stdlib data-domain distlib carve-out kickoff.
+
 **5.10.26** (shipped 2026-05-09 — **v5.10.x SLOT 26 —
 REAL TYPE SYSTEM Phase 5: CYRIUS_TYPE_CHECK default-on
 flip + v5.10.25 silent-regression repair (closes the
