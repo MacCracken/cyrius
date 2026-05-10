@@ -2418,6 +2418,7 @@ str::str_to_hex/1
 str::str_to_int/1
 str::str_trim/1
 str::str_trim_a/2
+str::strlen_str/1
 string::atoi/1
 string::memchr/3
 string::memcpy/3

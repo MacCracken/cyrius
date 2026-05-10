@@ -5,6 +5,64 @@
 
 ## Version
 
+**5.10.25** (shipped 2026-05-09 — **v5.10.x SLOT 25 —
+REAL TYPE SYSTEM Phase 3 generalize: registry-based
+overload dispatch (retires hardcoded {println, strlen}
+dispatch)**).
+
+Replaced the v5.10.3-5 hardcoded byte-by-byte name
+lookups for the 5 dispatch helper fns
+(`_PRINTLN_NOFF` / `_PRINTLN_STR_NOFF` /
+`_PRINTLN_INT_NOFF` / `_STRLEN_NOFF` / `_STR_LEN_NOFF`,
+~190 LOC) with a per-fn registry populated automatically
+at `REGFN` time. Any `<base>` + `<base>_str` /
+`<base>_int` / `<base>_cstr` sibling pair is auto-routed
+without compiler changes.
+
+**Heap map** — 3 new overload-registry regions at
+`0x126A000+` (extending v5.10.24-reserved 128 KB gap):
+- 0x126A000 fn_overload_str  [32 KB] — fi+1 of `_str` overload
+- 0x1272000 fn_overload_int  [32 KB] — fi+1 of `_int` overload
+- 0x127A000 fn_overload_cstr [32 KB] — fi+1 of `_cstr` overload
+- 0x1282000+ (32 KB reserved gap)
+
+**Bidirectional REGFN auto-registration** (forward when
+suffix-fn registers, reverse when base registers) — so
+`lib/str.cyr`'s `println_str` defined BEFORE
+`lib/string.cyr`'s `println` (the actual stdlib include
+order) gets registered correctly.
+
+**Stdlib addition**: `lib/str.cyr` adds
+`strlen_str(s: Str): i64` to fit the `<base>_<suffix>`
+naming convention (`strlen` → `str_len` was the only
+v5.10.5 hardcoded mapping where the target name didn't
+match `<base>_str` shape).
+
+**Acceptance**:
+- cc5: 783,408 → **780,288** (**−3,120 B** — net
+  shrinkage; registry helper smaller than 5 hand-rolled
+  name-ladder fns it replaced).
+- Self-host byte-identical x86.
+- 66/66 check.sh + 135/135 cyrius test.
+- 0 type-check warnings on cyrius / agnosys / hisab /
+  kavach with `CYRIUS_TYPE_CHECK=1`.
+- Agnosys 1.1.12 verbatim repro prints `hello\n5\n`
+  clean (registry catches the same shapes the hardcoded
+  dispatch did, plus user-defined sibling pairs).
+
+**Premise check at slot entry** — empirical testing
+showed Phase 4 (type inference) had ALREADY shipped at
+v5.10.3-5 alongside the original narrow dispatch.
+v5.10.25 shipped Phase 3 GENERALIZE (registry replacing
+hardcoded dispatch) instead of inference work that was
+already done. Phase 4 numbering retired; Phase 5 (flip)
+moves up one slot to v5.10.26.
+
+**Next**: v5.10.26 = Phase 5 — `CYRIUS_TYPE_CHECK`
+default-on flip. Empirically clean across all verified
+surfaces; flip lights up the type system for all
+consumers without per-build env knob.
+
 **5.10.24** (shipped 2026-05-09 — **v5.10.x SLOT 24 —
 REAL TYPE SYSTEM Phase 2: call-site type check
 (closes v5.10.5 false-positive flood)**).

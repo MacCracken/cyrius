@@ -39,7 +39,7 @@ var _WIN_HEAP_SIZE = 0x1000000;
 # no-op by the PE reroute (Windows can't grow a committed
 # region in-place). `alloc()` below detects overflow and
 # returns 0 rather than silently corrupting.
-fn alloc_init(): i64 {
+fn alloc_init() {
     # Pass the desired size as the addr arg; PE reroute
     # recognises the first-call shape and issues a
     # VirtualAlloc(NULL, size, MEM_COMMIT|MEM_RESERVE, PAGE_RW).
@@ -56,7 +56,7 @@ var ALLOC_MAX = 0x10000000;
 
 # Allocate size bytes, 8-byte aligned. Returns 0 on overflow /
 # out-of-region.
-fn alloc(size): i64 {
+fn alloc(size) {
     # v5.8.37 — lazy-init the heap if alloc_init() was never called.
     # Mirrors the Linux + macOS branches; alloc_init() is now
     # optional. See lib/alloc.cyr header for the full migration note.
@@ -76,12 +76,12 @@ fn alloc(size): i64 {
 
 # Reset the bump pointer back to base. All previously-allocated
 # memory is invalidated (same contract as Linux peer).
-fn alloc_reset(): i64 {
+fn alloc_reset() {
     _heap_ptr = _heap_base;
     return 0;
 }
 
 # Bytes used from the heap.
-fn alloc_used(): i64 {
+fn alloc_used() {
     return _heap_ptr - _heap_base;
 }

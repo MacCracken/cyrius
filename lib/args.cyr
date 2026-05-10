@@ -34,7 +34,7 @@ var _args_len = 0;
 # threshold bisected 4063 / 4064 byte boundary). 2 MB matches the
 # kernel's hard cap; alloc() lazy-inits the heap via the v5.8.37
 # auto-bootstrap so calling args_init() first-thing still works.
-fn args_init(): i64 {
+fn args_init() {
     var cap = 2097152;            # ARG_MAX on Linux
     var buf = alloc(cap);
     if (buf == 0) { return 0; }
@@ -50,7 +50,7 @@ fn args_init(): i64 {
 # Return the number of command-line arguments.
 # /proc/self/cmdline is exactly n bytes, each arg terminated by \0
 # (including empty args, which are a bare \0). Count = \0 bytes in [0,n).
-fn argc(): i64 {
+fn argc() {
     var base = _args_base;
     if (base == 0) { return 0; }
     var n = _args_len;
@@ -64,7 +64,7 @@ fn argc(): i64 {
 }
 
 # Return pointer to the nth command-line argument string
-fn argv(n): i64 {
+fn argv(n) {
     # Return pointer to nth null-terminated string
     var base = _args_base;
     if (base == 0) { return 0; }

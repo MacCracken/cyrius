@@ -57,6 +57,16 @@ fn str_len(s: Str): i64 {
     return load64(s + 8);
 }
 
+# v5.10.25 — Phase 3 generalize: `strlen_str` is the canonical
+# Str-overload of `strlen`. Auto-registered as `strlen`'s _str
+# variant by REGFN; PARSE_FNCALL routes `strlen(Str-typed)` →
+# `strlen_str` → `str_len`. Replaces the v5.10.3-5 hardcoded
+# strlen → str_len name lookup. `str_len` stays as the direct
+# Str-len primitive.
+fn strlen_str(s: Str): i64 {
+    return load64(s + 8);
+}
+
 # Get data pointer
 fn str_data(s: Str): i64 {
     return load64(s);

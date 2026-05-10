@@ -6,6 +6,162 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.25] — 2026-05-09
+
+**v5.10.x SLOT 25 — REAL TYPE SYSTEM Phase 3 generalize:
+registry-based overload dispatch (retires the v5.10.3-5
+hardcoded {println, strlen} dispatch)**.
+
+Phase 3 generalization of the 5-phase type-system arc. The
+v5.10.3-5 hardcoded byte-by-byte name lookups for
+`{_PRINTLN_NOFF, _PRINTLN_STR_NOFF, _PRINTLN_INT_NOFF,
+_STRLEN_NOFF, _STR_LEN_NOFF}` (~190 LOC of hand-rolled
+ASCII-comparison ladders) are replaced by a per-fn
+overload registry populated automatically at REGFN time:
+when a fn name ending with `_str` / `_int` / `_cstr` is
+registered AND a base fn (name minus suffix) exists, the
+registry stores the suffix-fn as the base's auto-routing
+target. PARSE_FNCALL reads the registry to route
+`base(arg)` → `base_<typesuffix>(arg)` based on first
+arg's type. **User-defined overloads work the same way
+without any compiler change.**
+
+cc5: 783,408 → 780,288 (**−3,120 B** — net SHRINKAGE
+because the registry helper is smaller than 5 hand-rolled
+name-ladder fns it replaces). Self-host byte-identical
+x86. **66/66 check.sh, 135/135 cyrius test, 0 type-check
+warnings on cyrius / agnosys / hisab / kavach** with
+`CYRIUS_TYPE_CHECK=1`. Agnosys 1.1.12 verbatim repro
+(`var out = str_builder_build(sb); println(out);
+println(strlen(out));`) prints `hello\n5\n` exactly as
+before — registry catches the same shapes the hardcoded
+dispatch did, plus any user-defined `_str`/`_int`/`_cstr`
+sibling pairs.
+
+### What landed
+
+**3 new overload-registry heap regions** in `src/main.cyr`'s
+heap map (extending the v5.10.24-reserved 128 KB gap at
+`0x126A000+`):
+- `0x126A000 fn_overload_str  [32768]` — 4096 fi+1 of
+  `<base>_str`-named overload (sentinel 0 = none)
+- `0x1272000 fn_overload_int  [32768]` — 4096 fi+1 of
+  `<base>_int`-named overload
+- `0x127A000 fn_overload_cstr [32768]` — 4096 fi+1 of
+  `<base>_cstr`-named overload (forward-facing; no
+  current stdlib consumers)
+
+**`_OVERLOAD_SUFFIX` helper** in `parse_fn.cyr` —
+classifies a fn name as ending with `_str` (kind 1),
+`_int` (kind 2), `_cstr` (kind 3), or no recognized
+suffix (kind 0). 4-char and 5-char suffix matchers.
+
+**`REGFN` bidirectional auto-registration** — when a new
+fn is registered, the registry populates BOTH directions
+so include-order doesn't matter:
+- FORWARD: if the new fn name has a `_str`/`_int`/`_cstr`
+  suffix AND a base fn (name minus suffix) is already
+  registered, store the new fn's fi+1 in the appropriate
+  `fn_overload_*` slot keyed by the base fi.
+- REVERSE: if the new fn is a base (no recognized suffix),
+  scan already-registered fns for any matching
+  `<this_name>_str` / `_int` / `_cstr` and register them
+  as overload targets keyed by the new fn's fi.
+
+Without bidirection, `lib/str.cyr`'s `println_str` defined
+BEFORE `lib/string.cyr`'s `println` (the actual stdlib
+include order in most consumer codebases) would never get
+auto-registered. The reverse scan is `O(fc)` per `REGFN`
+call; total cost `O(fc²)` across full compilation, ~30 ms
+for a 4096-fn build, negligible vs other passes.
+
+**`PARSE_FNCALL` dispatch generalized** — replaces the
+hardcoded if-chain
+```
+if (noff == _od_println_noff) {
+    if (Str-typed) -> route to _PRINTLN_STR_NOFF
+    if (i64-scalar) -> route to _PRINTLN_INT_NOFF
+}
+if (noff == _od_strlen_noff) {
+    if (Str-typed) -> route to _STR_LEN_NOFF
+}
+```
+with a registry lookup keyed by the call-site `fi`:
+```
+if (Str-typed) {
+    var t = L64(S + 0x126A000 + fi * 8);
+    if (t > 0) { fi = t - 1; noff = ...; }
+}
+if (i64-scalar) {
+    var t = L64(S + 0x1272000 + fi * 8);
+    if (t > 0) { fi = t - 1; noff = ...; }
+}
+```
+Three suffix variants, one branch each. Cstring overload
+slot is wired through but no stdlib consumer currently
+uses `_cstr` suffix; reserved for future shapes.
+
+**`lib/str.cyr` — added `strlen_str(s: Str): i64`** —
+canonical `_str` overload of `strlen`, delegates to
+`str_len`. The `strlen` → `str_len` mapping was the only
+v5.10.5 hardcoded dispatch where the target name didn't
+fit the `<base>_<suffix>` convention (`str_len` instead
+of `strlen_str`). Adding the wrapper unifies the naming
+and lets the registry pick it up. `str_len` stays as the
+direct Str-len primitive.
+
+**Removed hardcoded helper fns** — `_PRINTLN_NOFF`,
+`_PRINTLN_STR_NOFF`, `_PRINTLN_INT_NOFF`, `_STRLEN_NOFF`,
+`_STR_LEN_NOFF` and their cache vars. ~190 LOC of dead
+code retired.
+
+### Why this matters
+
+Before v5.10.25, only the 5 hardcoded shapes worked. After
+v5.10.25, ANY user-defined `<base>` + `<base>_str` /
+`<base>_int` / `<base>_cstr` sibling pair is auto-routed
+without any compiler edit. Consumers can define their own
+overloaded API like:
+```cyr
+fn log(msg: cstring) { ... }
+fn log_str(msg: Str)  { str_print(msg); }
+fn log_int(n: i64)    { print_num(n); }
+
+# Caller:
+var s: Str = ...;
+log(s);          # routes to log_str
+log(42);         # routes to log_int
+log("literal");  # stays on log (cstring base)
+```
+
+Premise check (per `feedback_premise_check_at_slot_entry`)
+at slot entry confirmed Phase 4 (type inference) was
+already shipped at v5.10.3 — `var x = f();` correctly
+infers x's type from f's return signature, and the
+agnosys 1.1.12 verbatim repro printed `hello\n5\n`
+clean even before this slot. v5.10.25 makes the dispatch
+mechanism that handled the canonical motivator
+**generalizable** so future consumer overloads come for
+free.
+
+### Roadmap correction
+
+Phases 3 (overload dispatch) and 4 (type inference) of the
+REAL TYPE SYSTEM arc both shipped earlier than the
+v5.10.22-pinned roadmap suggested:
+- v5.10.3 — narrow `println(Str)` → `println_str` dispatch
+- v5.10.5 — extended dispatch + Phase 4 inference for `var
+  x = f();` and call-arg shapes
+- v5.10.22-24 — Phase 1 + 1B + 2 (annotator + vocabulary +
+  call-site mask infrastructure)
+- **v5.10.25 — Phase 3 generalize (this slot)** — registry
+  replaces hardcoded dispatch
+- v5.10.26 — Phase 5: `CYRIUS_TYPE_CHECK` default-on flip
+  (empirically verified clean across cyrius / agnosys /
+  hisab / kavach surfaces)
+- v5.10.27+ — TLS staged-connect, typed simd, etc.
+  (subsequent pinned slots shift to absorb the arc-close)
+
 ## [5.10.24] — 2026-05-09
 
 **v5.10.x SLOT 24 — REAL TYPE SYSTEM Phase 2: call-site

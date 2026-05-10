@@ -256,7 +256,10 @@
 #   0x1252000 fn_param_result_mask  [32768] 4096 Result-param bitmasks  (v5.10.24)
 #   0x125A000 fn_param_option_mask  [32768] 4096 Option-param bitmasks  (v5.10.24)
 #   0x1262000 fn_param_tagged_mask  [32768] 4096 Tagged-param bitmasks  (v5.10.24)
-#   0x126A000 — 0x128A000 (128 KB gap — reserved for future per-param type masks)
+#   0x126A000 fn_overload_str       [32768] 4096 fi+1 of <name>_str  overload (v5.10.25)
+#   0x1272000 fn_overload_int       [32768] 4096 fi+1 of <name>_int  overload (v5.10.25)
+#   0x127A000 fn_overload_cstr      [32768] 4096 fi+1 of <name>_cstr overload (v5.10.25)
+#   0x1282000 — 0x128A000 (32 KB gap — reserved for future overload variants)
 #
 # --- cc5 IR region (v5.0.0) ---
 #   0x12CA000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes

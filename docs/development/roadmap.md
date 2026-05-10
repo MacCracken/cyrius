@@ -1279,7 +1279,33 @@ mismatch`) warns correctly with hint catalog.
 CYRIUS_TYPE_CHECK default-on flip stays pinned at
 Phase 5 (v5.10.26).
 
-#### v5.10.25+ — REAL TYPE SYSTEM Phase 3-5 (continuation)
+#### v5.10.25 ✅ — REAL TYPE SYSTEM Phase 3 generalize: registry-based overload dispatch (SHIPPED)
+
+Replaced the v5.10.3-5 hardcoded byte-by-byte name
+lookups (`_PRINTLN_NOFF` / `_PRINTLN_STR_NOFF` /
+`_PRINTLN_INT_NOFF` / `_STRLEN_NOFF` / `_STR_LEN_NOFF`,
+~190 LOC) with a per-fn overload registry populated
+automatically at `REGFN` time. `<base>(arg)` →
+`<base>_str(arg)` / `<base>_int(arg)` /
+`<base>_cstr(arg)` routing for ANY user-defined sibling
+pair, no compiler edit needed.
+
+3 new heap regions at `0x126A000+`
+(`fn_overload_str` / `fn_overload_int` /
+`fn_overload_cstr`) populated bidirectionally at REGFN
+(forward when suffix-fn registers, reverse when base
+registers). cc5: 783,408 → 780,288 (**−3,120 B** —
+registry helper smaller than 5 hand-rolled name-ladder
+fns it replaces). `lib/str.cyr` adds `strlen_str(s: Str)`
+to fit the suffix convention (`strlen` → `str_len`
+mapping was the only non-conforming hardcoded name).
+
+Self-host byte-identical x86. **66/66 check.sh, 135/135
+cyrius test, 0 type-check warnings on cyrius / agnosys
+/ hisab / kavach** with `CYRIUS_TYPE_CHECK=1`. Agnosys
+1.1.12 verbatim repro prints `hello\n5\n` clean.
+
+#### v5.10.22-25 — REAL TYPE SYSTEM phase summary (continuation)
 
 **Reordered at v5.10.21 slot-entry premise check**
 (2026-05-09): typed `f64v2`/`f64v4` (originally
@@ -1289,74 +1315,63 @@ typed simd wrappers go after Phase 4 (overload
 dispatch) ships. **Then re-reordered at v5.10.21 ship**:
 TLS surface completion took the v5.10.21 slot (sandhi
 unblocking partial-fix close), so REAL TYPE SYSTEM
-shifts one slot later: phases 1-5 are now v5.10.22-26.
-Typed simd lands at v5.10.27.
+shifts one slot later: phases 1-5 originally pinned at
+v5.10.22-26.
 
 Pinned 2026-05-08 at v5.9.36 wrap; user direction;
 multi-slot effort. Promoted from "held bug arc" to
 concrete slot pin at v5.10.20 P(-1) sweep.
 
-Currently cyrius tracks type *annotations* (struct
-fields, var slots, fn params via `: Type` or `: Str`)
-and uses them for width-correct loadN/storeN +
-pointer-mode dot access — but the parser does NOT
-enforce types at fn call sites and there's no overload
-dispatch.
+**Premise-check correction at v5.10.25 slot entry**
+(2026-05-09): empirical testing showed Phase 4 (type
+inference for `var x = f();` and call-arg shapes) had
+ALREADY shipped at v5.10.3-5 alongside the original
+narrow dispatch, and Phase 3 (narrow hardcoded
+dispatch) was also live for the canonical motivator.
+The agnosys 1.1.12 verbatim repro printed
+`hello\n5\n` clean BEFORE this slot opened. v5.10.25
+shipped Phase 3 GENERALIZE (registry replacing
+hardcoded dispatch) instead of inference work that was
+already done. Phase 4 numbering retired; Phase 5 (flip)
+moves up one slot to v5.10.26.
 
 **Canonical motivating example** — agnosys 1.1.12
 verbatim repro at
 `/tmp/cyrius-derive-serialize-incomplete/minimal_repro.cyr`
 (hash `6425355b6147d5a674078794310ae2c1` at v5.9.37
-ship). Builds clean post-v5.9.37 but the binary
-SIGSEGVs at runtime:
+ship). Pre-v5.10.3 SIGSEGV'd at runtime:
 ```cyr
 var out = str_builder_build(sb);    # out: Str
 println(out);                        # treats Str as cstring -> garbage
 println(strlen(out));                # treats int as cstring -> SIGSEGV
 ```
-Both lines are API misuse the type system would catch /
-dispatch correctly. v5.9.x had three options to fix
-(polymorphic-runtime-detection / break
-`str_builder_build` / partial Option-3); user rejected
-all three as either sloppy or breaking — the right fix
-is a real type system.
+v5.10.3-5 narrow dispatch + inference closed it; v5.10.25
+generalized the dispatch so it works for any user-defined
+overload pair, not just the 3 hardcoded shapes.
 
-**Multi-slot scope** (refine at first slot entry):
-1. **v5.10.22 — Phase 1: Surface audit** — annotate
-   every fn body in stdlib + cyrius-side code with
-   implicit return-type info. Builds an audit tool
-   (`programs/cyrius_type_audit.cyr`) that scans
-   `^fn` declarations and classifies by annotation
-   coverage; runs across `lib/` + `src/` + `programs/`;
-   begins systematic annotation of public APIs (Str-
-   returning fns are already 20/4025 done; bulk pass
-   completes the rest). May span 2 slots if the audit
-   surface is bigger than expected.
-2. **v5.10.23 — Phase 2: Call-site type check** — at
-   `PARSE_FNCALL`, compare each arg's tracked type
-   against the callee's param annotation.
-3. **v5.10.24 — Phase 3: Overload dispatch** — extend
-   `FINDFN` to support multiple impls keyed by
-   arg-type signature. PP-mangled names
-   (`println_cstr` / `println_str` / `println_int`)
-   at the symbol level; parser routes by arg type.
-4. **v5.10.25 — Phase 4: Type inference** — propagate
-   fn return types through `var x = f(...);` and
-   binary operators.
-5. **v5.10.26 — Phase 5: Diagnostics + CYRIUS_TYPE_CHECK
-   default-on flip** — `error: cannot pass Str to fn
-   expecting cstring; use str_data(x) or str_println(x)`
-   hints. With Phases 1-4 landed, the
-   `CYRIUS_TYPE_CHECK` default-on flip becomes safe
-   (deferred from v5.10.5; see
-   `parse_fn.cyr::_TYPE_CHECK_ENABLED` comment for the
-   pre-v5.10.22 false-positive shape that gated the
-   flip on per-param scalar-vs-pointer annotation
-   tracking — exactly what Phase 1 builds).
-
-Phase numbering is provisional. May span more slots
-if a phase surfaces sub-structure; refine at slot
-entry per `feedback_premise_check_at_slot_entry`.
+**Phases shipped:**
+1. **v5.10.22 — Phase 1: Surface audit** ✅ —
+   `programs/cyrius_type_audit.cyr` + bulk annotation
+   (76% coverage).
+2. **v5.10.23 — Phase 1B: Type vocabulary close** ✅ —
+   added `Result` / `Option` / `Tagged` / `cstring` to
+   the parser's return-type vocabulary; coverage 93%.
+3. **v5.10.24 — Phase 2: Call-site type check** ✅ —
+   per-fn `cstring_mask` / `result_mask` / `option_mask`
+   / `tagged_mask` bitmasks; PARSE_FNCALL warning
+   polarity inverted to fire only on explicit `: cstring`
+   annotations.
+4. **v5.10.25 — Phase 3 generalize: registry-based
+   dispatch** ✅ (this slot).
+5. **v5.10.26 — Phase 5: CYRIUS_TYPE_CHECK default-on
+   flip** — flip the env-default from off to on.
+   Empirically clean across cyrius / agnosys / hisab /
+   kavach with `CYRIUS_TYPE_CHECK=1`; the flip lights
+   up the type system for all consumers without a
+   per-build env knob. May also expand cstring
+   annotations across more stdlib fns (current 11 fns is
+   the minimum to validate the warning surface; full
+   coverage is a Phase 5 sub-task).
 
 #### v5.10.27 — TLS staged-connect API (sandhi 1.3.1 client-resumption unblock)
 

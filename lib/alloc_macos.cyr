@@ -20,7 +20,7 @@ var _heap_end = 0;
 var ALLOC_MAX = 0x10000000;
 
 # Initialize the heap allocator (must call before any alloc)
-fn alloc_init(): i64 {
+fn alloc_init() {
     # mmap(addr=0, len=1MB, prot=RW, flags=MAP_PRIVATE|MAP_ANON, fd=-1, offset=0)
     _heap_base = syscall(9, 0, 0x100000, 3, 0x1002, 0 - 1, 0);
     if (_heap_base < 0) {
@@ -33,7 +33,7 @@ fn alloc_init(): i64 {
 }
 
 # Allocate size bytes from the heap, 8-byte aligned
-fn alloc(size): i64 {
+fn alloc(size) {
     # v5.8.37 — lazy-init the heap if alloc_init() was never called.
     # Mirrors the Linux branch in lib/alloc.cyr; alloc_init() is now
     # optional. See lib/alloc.cyr header for the full migration note.
@@ -74,13 +74,13 @@ fn alloc(size): i64 {
 }
 
 # Reset the heap, freeing all allocations at once
-fn alloc_reset(): i64 {
+fn alloc_reset() {
     _heap_ptr = _heap_base;
     return 0;
 }
 
 # Return the number of heap bytes currently in use
-fn alloc_used(): i64 {
+fn alloc_used() {
     return _heap_ptr - _heap_base;
 }
 
@@ -89,7 +89,7 @@ fn alloc_used(): i64 {
 # ================================================================
 
 # Create a new arena with the given capacity (bytes)
-fn arena_new(capacity): i64 {
+fn arena_new(capacity) {
     var a = alloc(24);
     var base = alloc(capacity);
     store64(a, base);
@@ -99,7 +99,7 @@ fn arena_new(capacity): i64 {
 }
 
 # Allocate size bytes from the arena, 8-byte aligned. Returns 0 on overflow.
-fn arena_alloc(a, size): i64 {
+fn arena_alloc(a, size) {
     if (size <= 0) { return 0; }
     size = (size + 7) & (0 - 8);
     var ptr = load64(a + 8);
@@ -111,17 +111,17 @@ fn arena_alloc(a, size): i64 {
 }
 
 # Reset the arena — all allocations from this arena are freed
-fn arena_reset(a): i64 {
+fn arena_reset(a) {
     store64(a + 8, load64(a));
     return 0;
 }
 
 # Return bytes used in the arena
-fn arena_used(a): i64 {
+fn arena_used(a) {
     return load64(a + 8) - load64(a);
 }
 
 # Return bytes remaining in the arena
-fn arena_remaining(a): i64 {
+fn arena_remaining(a) {
     return load64(a + 16) - load64(a + 8);
 }

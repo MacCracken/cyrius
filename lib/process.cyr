@@ -13,7 +13,7 @@
 # `# O_RDONLY`).
 
 # Build argv array and execve. Called in child after fork. Does not return.
-fn _exec3(cmd, arg1, arg2): i64 {
+fn _exec3(cmd, arg1, arg2) {
     var argv[4];
     store64(&argv, cmd);
     var ai = 1;
@@ -114,7 +114,7 @@ fn getppid() { return sys_getppid(); }
 #        vec_push(args, "-la"); var rc = exec_vec(args);
 # Usage: var args = vec_new(); vec_push(args, "/usr/bin/ls"); vec_push(args, "-la");
 #        var rc = exec_vec(args);
-fn exec_vec(args): i64 {
+fn exec_vec(args) {
     var argc = vec_len(args);
     if (argc < 1) { return 0 - 1; }
     var cmd = vec_get(args, 0);
@@ -143,7 +143,7 @@ fn exec_vec(args): i64 {
 
 # Run command with args vec and capture stdout. Returns bytes read.
 # buf must be pre-allocated.
-fn exec_capture(args, buf, buflen): i64 {
+fn exec_capture(args, buf, buflen) {
     var argc = vec_len(args);
     if (argc < 1) { return 0 - 1; }
     var cmd = vec_get(args, 0);
@@ -185,7 +185,7 @@ fn exec_capture(args, buf, buflen): i64 {
 
 # Run command with args vec and environment vec.
 # env is a vec of "KEY=VALUE" strings.
-fn exec_env(args, env): i64 {
+fn exec_env(args, env) {
     var argc = vec_len(args);
     if (argc < 1) { return 0 - 1; }
     var cmd = vec_get(args, 0);
@@ -219,7 +219,7 @@ fn exec_env(args, env): i64 {
 
 # Helper: build args vec from command string (split by spaces)
 # For simple cases like exec_cmd("/usr/bin/ls -la /tmp")
-fn exec_cmd(cmdline): i64 {
+fn exec_cmd(cmdline) {
     var args = vec_new();
     var parts = str_split(str_from(cmdline), " ");
     var pi = 0;

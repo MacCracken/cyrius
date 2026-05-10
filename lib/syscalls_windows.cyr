@@ -75,14 +75,14 @@ enum OFlags {
 # kernel32!WriteFile via the PE IAT at emit time (v5.4.7 reroute).
 # For fd 1/2 the PE backend inserts a GetStdHandle(-11/-12) call
 # first so the WriteFile `hFile` arg is a real Windows handle.
-fn sys_write(fd, buf, count): i64 {
+fn sys_write(fd, buf, count) {
     return syscall(SYS_WRITE, fd, buf, count);
 }
 
 # Read up to `count` bytes from `fd` into `buf`. Rerouted to
 # kernel32!ReadFile by the PE backend. GetStdHandle(-10) is
 # inserted for fd 0 (stdin). Returns bytes read or -1 on error.
-fn sys_read(fd, buf, count): i64 {
+fn sys_read(fd, buf, count) {
     return syscall(SYS_READ, fd, buf, count);
 }
 
@@ -92,26 +92,26 @@ fn sys_read(fd, buf, count): i64 {
 # reroute. `mode` is passed as the security-attributes hint
 # (usually 0). Returns a handle usable by sys_read/write/close or
 # -1 on failure.
-fn sys_open(path, flags, mode): i64 {
+fn sys_open(path, flags, mode) {
     return syscall(SYS_OPEN, path, flags, mode);
 }
 
 # Close the descriptor `fd`. Rerouted to kernel32!CloseHandle.
 # Returns 0 on success, -1 on failure.
-fn sys_close(fd): i64 {
+fn sys_close(fd) {
     return syscall(SYS_CLOSE, fd);
 }
 
 # Seek within `fd`. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
 # Rerouted to kernel32!SetFilePointerEx (the 64-bit-capable form).
 # Returns the new offset or -1 on failure.
-fn sys_lseek(fd, offset, whence): i64 {
+fn sys_lseek(fd, offset, whence) {
     return syscall(SYS_LSEEK, fd, offset, whence);
 }
 
 # Terminate the process with exit code `code`. Rerouted to
 # kernel32!ExitProcess (v5.4.4 reroute). Never returns.
-fn sys_exit(code): i64 {
+fn sys_exit(code) {
     syscall(SYS_EXIT, code);
     return 0;   # unreachable
 }
@@ -119,7 +119,7 @@ fn sys_exit(code): i64 {
 # VirtualAlloc-backed allocation. The PE reroute intercepts
 # syscall(SYS_MMAP, ...) and emits a VirtualAlloc call with
 # MEM_COMMIT | MEM_RESERVE + PAGE_READWRITE.
-fn sys_mmap(addr, length, prot, flags, fd, offset): i64 {
+fn sys_mmap(addr, length, prot, flags, fd, offset) {
     return syscall(SYS_MMAP, addr, length, prot, flags, fd, offset);
 }
 
@@ -127,7 +127,7 @@ fn sys_mmap(addr, length, prot, flags, fd, offset): i64 {
 # with MEM_RELEASE. `length` is ignored for MEM_RELEASE per Win32
 # semantics (the whole reservation is released), but the Linux-
 # compat surface keeps it for source-level portability.
-fn sys_munmap(addr, length): i64 {
+fn sys_munmap(addr, length) {
     return syscall(SYS_MUNMAP, addr, length);
 }
 
@@ -135,6 +135,6 @@ fn sys_munmap(addr, length): i64 {
 # growable region so lib/alloc.cyr's bump logic works unchanged.
 # See lib/alloc_windows.cyr for the Windows-specific alloc_init
 # that bootstraps the heap.
-fn sys_brk(addr): i64 {
+fn sys_brk(addr) {
     return syscall(SYS_BRK, addr);
 }

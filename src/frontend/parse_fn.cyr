@@ -49,6 +49,46 @@ fn _REGFN_HASH(S, noff, fi): i64 {
     return 0;
 }
 
+# v5.10.25 — Phase 3 generalize: detect _str/_int/_cstr suffix on
+# the fn name at noff. Used by REGFN to auto-register an overload
+# entry in fn_overload_{str,int,cstr} when the base name is also
+# defined. Returns:
+#   1 = _str  suffix (4 chars)
+#   2 = _int  suffix (4 chars)
+#   3 = _cstr suffix (5 chars)
+#   0 = no recognized suffix
+fn _OVERLOAD_SUFFIX(S, noff): i64 {
+    var p = S + 0x60000 + noff;
+    var len = 0;
+    while (load8(p + len) != 0) { len = len + 1; }
+    if (len > 4) {
+        if (load8(p + len - 4) == 95) {
+            if (load8(p + len - 3) == 115) {
+                if (load8(p + len - 2) == 116) {
+                    if (load8(p + len - 1) == 114) { return 1; }
+                }
+            }
+            if (load8(p + len - 3) == 105) {
+                if (load8(p + len - 2) == 110) {
+                    if (load8(p + len - 1) == 116) { return 2; }
+                }
+            }
+        }
+    }
+    if (len > 5) {
+        if (load8(p + len - 5) == 95) {
+            if (load8(p + len - 4) == 99) {
+                if (load8(p + len - 3) == 115) {
+                    if (load8(p + len - 2) == 116) {
+                        if (load8(p + len - 1) == 114) { return 3; }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 # Register new function, return index
 fn REGFN(S, noff): i64 {
     var fc = GFNC(S);
@@ -63,6 +103,87 @@ fn REGFN(S, noff): i64 {
     S64(S + 0x129A000 + fc * 8, 0);
     SFNC(S, fc + 1);
     _REGFN_HASH(S, noff, fc);
+    # v5.10.25 — auto-register overload mapping in BOTH directions
+    # so include-order doesn't matter:
+    #   FORWARD: this fn ends with `_str`/`_int`/`_cstr` AND base
+    #            fn already registered → register fc as that base's
+    #            overload target.
+    #   REVERSE: this fn is a base AND a sibling already-registered
+    #            fn matches `<this_name>_str`/`_int`/`_cstr` → register
+    #            that sibling as fc's overload target.
+    # Without bidirection, lib/str.cyr's `println_str` defined BEFORE
+    # lib/string.cyr's `println` would never get registered.
+    var _ov_p = S + 0x60000 + noff;
+    var _ov_my_len = 0;
+    while (load8(_ov_p + _ov_my_len) != 0) { _ov_my_len = _ov_my_len + 1; }
+    # FORWARD direction
+    var _ov_kind = _OVERLOAD_SUFFIX(S, noff);
+    if (_ov_kind > 0) {
+        var _ov_suffix_len = 4;
+        if (_ov_kind == 3) { _ov_suffix_len = 5; }
+        var _ov_base_len = _ov_my_len - _ov_suffix_len;
+        var _ov_base_fi = _FINDFN_CSTR(S, _ov_p, _ov_base_len);
+        if (_ov_base_fi >= 0) {
+            var _ov_region = 0x126A000;
+            if (_ov_kind == 2) { _ov_region = 0x1272000; }
+            if (_ov_kind == 3) { _ov_region = 0x127A000; }
+            S64(S + _ov_region + _ov_base_fi * 8, fc + 1);
+        }
+    }
+    # REVERSE direction — scan already-registered fns for any
+    # matching `<my_name>_<suffix>`. Skips when this fn IS itself a
+    # suffix variant (no point looking for variants of a variant).
+    if (_ov_kind == 0) {
+        var _rv_efi = 0;
+        while (_rv_efi < fc) {
+            var _rv_en = L64(S + 0x128A000 + _rv_efi * 8);
+            var _rv_ep = S + 0x60000 + _rv_en;
+            var _rv_elen = 0;
+            while (load8(_rv_ep + _rv_elen) != 0) { _rv_elen = _rv_elen + 1; }
+            var _rv_match_prefix = 0;
+            if (_rv_elen > _ov_my_len) {
+                _rv_match_prefix = 1;
+                var _rv_i = 0;
+                while (_rv_i < _ov_my_len) {
+                    if (load8(_rv_ep + _rv_i) != load8(_ov_p + _rv_i)) { _rv_match_prefix = 0; }
+                    _rv_i = _rv_i + 1;
+                }
+            }
+            if (_rv_match_prefix == 1) {
+                if (load8(_rv_ep + _ov_my_len) == 95) {
+                    var _rv_after = _rv_elen - _ov_my_len - 1;
+                    if (_rv_after == 3) {
+                        if (load8(_rv_ep + _ov_my_len + 1) == 115) {
+                            if (load8(_rv_ep + _ov_my_len + 2) == 116) {
+                                if (load8(_rv_ep + _ov_my_len + 3) == 114) {
+                                    S64(S + 0x126A000 + fc * 8, _rv_efi + 1);
+                                }
+                            }
+                        }
+                        if (load8(_rv_ep + _ov_my_len + 1) == 105) {
+                            if (load8(_rv_ep + _ov_my_len + 2) == 110) {
+                                if (load8(_rv_ep + _ov_my_len + 3) == 116) {
+                                    S64(S + 0x1272000 + fc * 8, _rv_efi + 1);
+                                }
+                            }
+                        }
+                    }
+                    if (_rv_after == 4) {
+                        if (load8(_rv_ep + _ov_my_len + 1) == 99) {
+                            if (load8(_rv_ep + _ov_my_len + 2) == 115) {
+                                if (load8(_rv_ep + _ov_my_len + 3) == 116) {
+                                    if (load8(_rv_ep + _ov_my_len + 4) == 114) {
+                                        S64(S + 0x127A000 + fc * 8, _rv_efi + 1);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _rv_efi = _rv_efi + 1;
+        }
+    }
     return fc;
 }
 
@@ -484,192 +605,12 @@ fn _TYPE_CHECK_ENABLED(): i64 {
     return _type_check_enabled;
 }
 
-# v5.10.3 — lazy-cached lookup for the `println` and
-# `println_str` cstring noffs in tok_names. Pattern mirrors
-# `_STR_FROM_NOFF` from parse_expr.cyr — search tok_names for
-# the cstring, cache the offset on first hit, return -1 on
-# miss (no overload available). PARSE_FNCALL uses both to
-# detect a `println(Str-typed)` call site and re-resolve to
-# `println_str`.
-var _println_noff_cache = 0 - 1;
-fn _PRINTLN_NOFF(S): i64 {
-    if (_println_noff_cache >= 0) { return _println_noff_cache; }
-    if (_println_noff_cache == 0 - 2) { return 0 - 1; }
-    var npos = GNPOS(S);
-    var i = 0;
-    while (i < npos) {
-        # "println\0" first 8 bytes — bottom 8 bytes ASCII LE
-        if (load8(S + 0x60000 + i) == 112) {
-            if (load8(S + 0x60000 + i + 1) == 114) {
-                if (load8(S + 0x60000 + i + 2) == 105) {
-                    if (load8(S + 0x60000 + i + 3) == 110) {
-                        if (load8(S + 0x60000 + i + 4) == 116) {
-                            if (load8(S + 0x60000 + i + 5) == 108) {
-                                if (load8(S + 0x60000 + i + 6) == 110) {
-                                    if (load8(S + 0x60000 + i + 7) == 0) {
-                                        _println_noff_cache = i;
-                                        return i;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
-    }
-    _println_noff_cache = 0 - 2;
-    return 0 - 1;
-}
-
-var _println_str_noff_cache = 0 - 1;
-fn _PRINTLN_STR_NOFF(S): i64 {
-    if (_println_str_noff_cache >= 0) { return _println_str_noff_cache; }
-    if (_println_str_noff_cache == 0 - 2) { return 0 - 1; }
-    var npos = GNPOS(S);
-    var i = 0;
-    while (i < npos) {
-        # "println_str\0" — 11 chars + nul = 12 bytes
-        if (load8(S + 0x60000 + i) == 112) {
-            if (load8(S + 0x60000 + i + 1) == 114) {
-                if (load8(S + 0x60000 + i + 2) == 105) {
-                    if (load8(S + 0x60000 + i + 3) == 110) {
-                        if (load8(S + 0x60000 + i + 4) == 116) {
-                            if (load8(S + 0x60000 + i + 5) == 108) {
-                                if (load8(S + 0x60000 + i + 6) == 110) {
-                                    if (load8(S + 0x60000 + i + 7) == 95) {
-                                        if (load8(S + 0x60000 + i + 8) == 115) {
-                                            if (load8(S + 0x60000 + i + 9) == 116) {
-                                                if (load8(S + 0x60000 + i + 10) == 114) {
-                                                    if (load8(S + 0x60000 + i + 11) == 0) {
-                                                        _println_str_noff_cache = i;
-                                                        return i;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
-    }
-    _println_str_noff_cache = 0 - 2;
-    return 0 - 1;
-}
-
-# v5.10.5 — lazy-cached lookups for the additional overload
-# targets that close the agnosys 1.1.12 verbatim repro:
-#   - `strlen` and `str_len` for the `strlen(Str)` →
-#     `str_len(Str)` overload
-#   - `println_int` for the `println(i64)` overload
-# Pattern mirrors `_PRINTLN_NOFF` / `_PRINTLN_STR_NOFF`.
-var _strlen_noff_cache = 0 - 1;
-fn _STRLEN_NOFF(S): i64 {
-    if (_strlen_noff_cache >= 0) { return _strlen_noff_cache; }
-    if (_strlen_noff_cache == 0 - 2) { return 0 - 1; }
-    var npos = GNPOS(S);
-    var i = 0;
-    while (i < npos) {
-        # "strlen\0" — 6 chars + nul
-        if (load8(S + 0x60000 + i) == 115) {
-            if (load8(S + 0x60000 + i + 1) == 116) {
-                if (load8(S + 0x60000 + i + 2) == 114) {
-                    if (load8(S + 0x60000 + i + 3) == 108) {
-                        if (load8(S + 0x60000 + i + 4) == 101) {
-                            if (load8(S + 0x60000 + i + 5) == 110) {
-                                if (load8(S + 0x60000 + i + 6) == 0) {
-                                    _strlen_noff_cache = i;
-                                    return i;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
-    }
-    _strlen_noff_cache = 0 - 2;
-    return 0 - 1;
-}
-
-var _str_len_noff_cache = 0 - 1;
-fn _STR_LEN_NOFF(S): i64 {
-    if (_str_len_noff_cache >= 0) { return _str_len_noff_cache; }
-    if (_str_len_noff_cache == 0 - 2) { return 0 - 1; }
-    var npos = GNPOS(S);
-    var i = 0;
-    while (i < npos) {
-        # "str_len\0" — 7 chars + nul
-        if (load8(S + 0x60000 + i) == 115) {
-            if (load8(S + 0x60000 + i + 1) == 116) {
-                if (load8(S + 0x60000 + i + 2) == 114) {
-                    if (load8(S + 0x60000 + i + 3) == 95) {
-                        if (load8(S + 0x60000 + i + 4) == 108) {
-                            if (load8(S + 0x60000 + i + 5) == 101) {
-                                if (load8(S + 0x60000 + i + 6) == 110) {
-                                    if (load8(S + 0x60000 + i + 7) == 0) {
-                                        _str_len_noff_cache = i;
-                                        return i;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
-    }
-    _str_len_noff_cache = 0 - 2;
-    return 0 - 1;
-}
-
-var _println_int_noff_cache = 0 - 1;
-fn _PRINTLN_INT_NOFF(S): i64 {
-    if (_println_int_noff_cache >= 0) { return _println_int_noff_cache; }
-    if (_println_int_noff_cache == 0 - 2) { return 0 - 1; }
-    var npos = GNPOS(S);
-    var i = 0;
-    while (i < npos) {
-        # "println_int\0" — 11 chars + nul
-        if (load8(S + 0x60000 + i) == 112) {
-            if (load8(S + 0x60000 + i + 1) == 114) {
-                if (load8(S + 0x60000 + i + 2) == 105) {
-                    if (load8(S + 0x60000 + i + 3) == 110) {
-                        if (load8(S + 0x60000 + i + 4) == 116) {
-                            if (load8(S + 0x60000 + i + 5) == 108) {
-                                if (load8(S + 0x60000 + i + 6) == 110) {
-                                    if (load8(S + 0x60000 + i + 7) == 95) {
-                                        if (load8(S + 0x60000 + i + 8) == 105) {
-                                            if (load8(S + 0x60000 + i + 9) == 110) {
-                                                if (load8(S + 0x60000 + i + 10) == 116) {
-                                                    if (load8(S + 0x60000 + i + 11) == 0) {
-                                                        _println_int_noff_cache = i;
-                                                        return i;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
-    }
-    _println_int_noff_cache = 0 - 2;
-    return 0 - 1;
-}
+# v5.10.25 — Phase 3 generalize retired the hardcoded
+# {_PRINTLN_NOFF, _PRINTLN_STR_NOFF, _PRINTLN_INT_NOFF,
+# _STRLEN_NOFF, _STR_LEN_NOFF} byte-by-byte name lookups.
+# Replaced by registry-based dispatch populated at REGFN time
+# from `_str` / `_int` / `_cstr` suffixes on sibling fns.
+# See `_OVERLOAD_SUFFIX` + REGFN's auto-register block.
 
 # Parse fn call args and emit call (as expression)
 fn PARSE_FNCALL(S, noff): i64 {
@@ -677,23 +618,22 @@ fn PARSE_FNCALL(S, noff): i64 {
     # Check for inline candidate
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
-    # v5.10.3 — narrow overload dispatch: `println(s: Str)`
-    # routes to `println_str`. Hard-coded for the highest-
-    # impact name (println is in every consumer's hot path
-    # for printing Str-typed values). Generic suffix-based
-    # dispatch lands at v5.10.x later if more overloads
-    # emerge — narrow this slot per the v5.10.x acceptance
-    # principle (Big-Heavy-One-Thing or measurable forward
-    # motion; not bookkeeping).
-    # v5.10.5 — extended overload dispatch closing the agnosys
-    # 1.1.12 verbatim repro:
+    # v5.10.25 — Phase 3 generalize: registry-based overload
+    # dispatch. Replaces the v5.10.3-5 hardcoded {println, strlen}
+    # name lookups with a lookup table populated at REGFN time.
+    # For any fn `<base>` with a sibling `<base>_str` / `<base>_int`
+    # / `<base>_cstr` defined, the parser auto-routes
+    # `base(arg)` → `base_<suffix>(arg)` when arg's type matches.
+    # User-defined overloads work the same way without any compiler
+    # change. The original v5.10.5 agnosys-close shapes still work:
     #   `println(IDENT)`/`println(IDENT(args))` Str-typed → `println_str`
     #   `strlen(IDENT)`/`strlen(IDENT(args))` Str-typed → `str_len`
+    #     (registered via the `str_len` → `strlen` base mapping)
     #   `println(IDENT)`/`println(IDENT(args))` i64-typed → `println_int`
-    # Arg-shape extends the v5.10.3 plain-IDENT detection to also
-    # accept `IDENT (` (fn call): for fn-call args we look up the
-    # called fn's return-type via GFRS (positive sid for struct
-    # returns; negative scalar = -8/-4/-2/-1 for i64/i32/i16/i8).
+    # Arg-shape detection covers plain IDENT and `IDENT (` (fn call):
+    # for fn-call args we look up the called fn's return-type via
+    # GFRS (positive sid for struct returns; negative scalar =
+    # -8/-4/-2/-1 for i64/i32/i16/i8).
     if (PEEKT(S) == 2) {
         var _od_arg_noff = PEEKV(S);
         var _od_arg_typ = 0;
@@ -716,48 +656,20 @@ fn PARSE_FNCALL(S, noff): i64 {
             }
         }
         var _od_str_sid = _STR_SID(S);
-        var _od_println_noff = _PRINTLN_NOFF(S);
-        var _od_strlen_noff = _STRLEN_NOFF(S);
-        if (_od_println_noff >= 0) {
-            if (noff == _od_println_noff) {
-                if (_od_str_sid > 0) {
-                    if (_od_arg_typ == 0 - _od_str_sid) {
-                        var _od_ps_noff = _PRINTLN_STR_NOFF(S);
-                        if (_od_ps_noff >= 0) {
-                            var _od_ps_fi = FINDFN(S, _od_ps_noff);
-                            if (_od_ps_fi >= 0) {
-                                fi = _od_ps_fi;
-                                noff = _od_ps_noff;
-                            }
-                        }
-                    }
-                }
-                if (_od_arg_scalar == 8) {
-                    var _od_pi_noff = _PRINTLN_INT_NOFF(S);
-                    if (_od_pi_noff >= 0) {
-                        var _od_pi_fi = FINDFN(S, _od_pi_noff);
-                        if (_od_pi_fi >= 0) {
-                            fi = _od_pi_fi;
-                            noff = _od_pi_noff;
-                        }
-                    }
+        if (_od_str_sid > 0) {
+            if (_od_arg_typ == 0 - _od_str_sid) {
+                var _od_str_target = L64(S + 0x126A000 + fi * 8);
+                if (_od_str_target > 0) {
+                    fi = _od_str_target - 1;
+                    noff = L64(S + 0x128A000 + fi * 8);
                 }
             }
         }
-        if (_od_strlen_noff >= 0) {
-            if (noff == _od_strlen_noff) {
-                if (_od_str_sid > 0) {
-                    if (_od_arg_typ == 0 - _od_str_sid) {
-                        var _od_sl_noff = _STR_LEN_NOFF(S);
-                        if (_od_sl_noff >= 0) {
-                            var _od_sl_fi = FINDFN(S, _od_sl_noff);
-                            if (_od_sl_fi >= 0) {
-                                fi = _od_sl_fi;
-                                noff = _od_sl_noff;
-                            }
-                        }
-                    }
-                }
+        if (_od_arg_scalar == 8) {
+            var _od_int_target = L64(S + 0x1272000 + fi * 8);
+            if (_od_int_target > 0) {
+                fi = _od_int_target - 1;
+                noff = L64(S + 0x128A000 + fi * 8);
             }
         }
     }
