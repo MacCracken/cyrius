@@ -1,0 +1,101 @@
+# v5.10.37 — f64v4 (32-byte packed-double) value-type ABI.
+# Phase 9 of the typed-simd ABI arc. Mirror of v5.10.28's
+# f64v2 pair-return gate but 4 lanes / 32-byte composite.
+#
+# Backend ABIs exercised:
+#   x86 SysV: XMM0+XMM1 pair-quad (two MOVUPDs)
+#   aarch64 NEON: Q0+Q1 pair-quad (two LDUR/STUR Q)
+#   cx: R0..R3 four-register pair-quad
+#   Win64 PE: retptr-style 32-byte composite (caller allocs)
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/simd.cyr"
+include "lib/test.cyr"
+
+# Pair-quad return via `var r: f64v4; ...; return r;`
+fn _build(b0, b1, b2, b3): f64v4 {
+    var r: f64v4;
+    store64(&r + 0, b0);
+    store64(&r + 8, b1);
+    store64(&r + 16, b2);
+    store64(&r + 24, b3);
+    return r;
+}
+
+fn _zeros(): f64v4 {
+    var r: f64v4;
+    store64(&r + 0, 0);
+    store64(&r + 8, 0);
+    store64(&r + 16, 0);
+    store64(&r + 24, 0);
+    return r;
+}
+
+fn _maxes(): f64v4 {
+    var r: f64v4;
+    store64(&r + 0, 0x7FEFFFFFFFFFFFFF);
+    store64(&r + 8, 0x7FEFFFFFFFFFFFFF);
+    store64(&r + 16, 0x7FEFFFFFFFFFFFFF);
+    store64(&r + 24, 0x7FEFFFFFFFFFFFFF);
+    return r;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("f64v4 pair-quad return round-trip");
+    # 2.0, 3.0, 4.0, 5.0
+    var v: f64v4 = _build(0x4000000000000000, 0x4008000000000000, 0x4010000000000000, 0x4014000000000000);
+    assert_eq(load64(&v + 0), 0x4000000000000000, "lane0 = 2.0");
+    assert_eq(load64(&v + 8), 0x4008000000000000, "lane1 = 3.0");
+    assert_eq(load64(&v + 16), 0x4010000000000000, "lane2 = 4.0");
+    assert_eq(load64(&v + 24), 0x4014000000000000, "lane3 = 5.0");
+
+    test_group("f64v4 zero quad");
+    var z: f64v4 = _zeros();
+    assert_eq(load64(&z + 0), 0, "lane0 = 0");
+    assert_eq(load64(&z + 8), 0, "lane1 = 0");
+    assert_eq(load64(&z + 16), 0, "lane2 = 0");
+    assert_eq(load64(&z + 24), 0, "lane3 = 0");
+
+    test_group("f64v4 max-double quad");
+    var m: f64v4 = _maxes();
+    assert_eq(load64(&m + 0), 0x7FEFFFFFFFFFFFFF, "lane0 = max f64");
+    assert_eq(load64(&m + 8), 0x7FEFFFFFFFFFFFFF, "lane1 = max f64");
+    assert_eq(load64(&m + 16), 0x7FEFFFFFFFFFFFFF, "lane2 = max f64");
+    assert_eq(load64(&m + 24), 0x7FEFFFFFFFFFFFFF, "lane3 = max f64");
+
+    test_group("f64v4_make + lane extractors (typed wrappers)");
+    var w: f64v4 = f64v4_make(0xDEADBEEF, 0xCAFEBABE, 0xFEEDFACE, 0xBADC0DE);
+    assert_eq(f64v4_lane0(&w), 0xDEADBEEF, "lane0 extractor");
+    assert_eq(f64v4_lane1(&w), 0xCAFEBABE, "lane1 extractor");
+    assert_eq(f64v4_lane2(&w), 0xFEEDFACE, "lane2 extractor");
+    assert_eq(f64v4_lane3(&w), 0xBADC0DE, "lane3 extractor");
+
+    test_group("f64v4_add packed-double 4-lane");
+    # [2,3,4,5] + [10,20,30,40] = [12,23,34,45]
+    var a: f64v4 = f64v4_make(0x4000000000000000, 0x4008000000000000, 0x4010000000000000, 0x4014000000000000);
+    var b: f64v4 = f64v4_make(0x4024000000000000, 0x4034000000000000, 0x403E000000000000, 0x4044000000000000);
+    var sum: f64v4 = f64v4_add(&a, &b);
+    assert_eq(f64v4_lane0(&sum), 0x4028000000000000, "2+10 = 12");
+    assert_eq(f64v4_lane1(&sum), 0x4037000000000000, "3+20 = 23");
+    assert_eq(f64v4_lane2(&sum), 0x4041000000000000, "4+30 = 34");
+    assert_eq(f64v4_lane3(&sum), 0x4046800000000000, "5+40 = 45");
+
+    test_group("f64v4_dot scalar return");
+    # dot([2,3,4,5], [10,20,30,40]) = 20+60+120+200 = 400
+    var dot = f64v4_dot(&a, &b);
+    assert_eq(dot, 0x4079000000000000, "dot product = 400.0");
+
+    test_group("f64v4_abs packed-double 4-lane");
+    var neg: f64v4 = f64v4_make(0xC000000000000000, 0xC008000000000000, 0xC010000000000000, 0xC014000000000000);
+    var abs_r: f64v4 = f64v4_abs(&neg);
+    assert_eq(f64v4_lane0(&abs_r), 0x4000000000000000, "|-2| = 2");
+    assert_eq(f64v4_lane1(&abs_r), 0x4008000000000000, "|-3| = 3");
+    assert_eq(f64v4_lane2(&abs_r), 0x4010000000000000, "|-4| = 4");
+    assert_eq(f64v4_lane3(&abs_r), 0x4014000000000000, "|-5| = 5");
+
+    var r = assert_summary();
+    return r;
+}

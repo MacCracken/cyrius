@@ -1464,6 +1464,62 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
     return 0;
 }
 
+# v5.10.37 — emit f64v4 pair-quad return LOAD (callee-side).
+# Two MOVUPDs: xmm0 = [&v + 0..15], xmm1 = [&v + 16..31].
+# `idx` is the NAMED slot's local index — 4-slot layout:
+#   slot idx-3 = filler (top of struct, &v + 24..31)
+#   slot idx-2 = filler (&v + 16..23)
+#   slot idx-1 = filler (&v + 8..15)
+#   slot idx   = named (bottom of struct, &v + 0..7)
+# Named slot is at the deepest frame offset; xmm0 covers the
+# lower 16 bytes (named + first filler), xmm1 covers the upper
+# 16 bytes (next two fillers). Cyrius-internal calling
+# convention — not strictly SysV-compliant for 32B composites
+# (SysV requires retptr-style for >16B); valid because all
+# f64v4 consumers are cyrius-compiled. Win64 PE uses retptr
+# via _cur_fn_ret_stash + ESTRUCT_BYVAL_COPY (size 32) in
+# PARSE_RETURN — this fn isn't called on _TARGET_PE.
+# 16-byte encoding: two `66 0F 10 85 [disp32]` = 8 bytes each.
+fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 16;
+    # movupd xmm0, [rbp + disp_lo]: 66 0F 10 85 disp32
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x85);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # movupd xmm1, [rbp + disp_hi]: 66 0F 10 8D disp32
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x8D);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
+# v5.10.37 — emit f64v4 pair-quad STORE post-call (caller-side).
+# Mirror of EFLLOAD_F64V4_PAIR. 16-byte encoding: two
+# `66 0F 11 85 [disp32]` (opcode 0x11 = MOVUPD m128, xmm).
+fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 16;
+    # movupd [rbp + disp_lo], xmm0
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x85);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # movupd [rbp + disp_hi], xmm1
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x8D);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
 # Emit fn local load: mov rax, [rbp - offset]
 fn EFLLOAD(S, idx): i64 {
     if (_IR_REC1(S, IR_LOAD_LOCAL, idx) == 1) { return 0; }

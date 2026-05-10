@@ -6,6 +6,161 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.37] — 2026-05-10
+
+**v5.10.x SLOT 37 — `f64v4` (32-byte packed-double) value type
+(typed-simd ABI Phase 9)**.
+
+Phase 9 of the typed-simd ABI arc. Introduces `f64v4` as a
+primitive 32-byte value type (four packed doubles), mirroring
+the v5.10.28 f64v2 work but 2× wider. All five backends wire
+up the pair-quad return ABI:
+
+| Backend | Return | Param  |
+|---------|--------|--------|
+| x86 SysV | XMM0+XMM1 pair-quad (two MOVUPDs) | retptr-style |
+| aarch64 NEON | Q0+Q1 pair-quad (two LDR/STR Q) | retptr-style |
+| cx bytecode | R0..R3 four-register pair-quad | retptr-style |
+| macOS Mach-O aarch64 | inherits aarch64 NEON | inherits aarch64 |
+| Win64 PE | retptr-style 32B composite | retptr-style |
+
+Param-side ABI deferred to v5.10.38 (the arc-close slot, paired
+with f64v2's param-side fix).
+
+cc5 (x86): 785,656 → **790,544 (+4,888 B)** for the f64v4
+parser/codegen wiring. cc5_aarch64: **485,696** (size includes
+the LDR/STR Q imm9 + imm12-scaled fallback paths). Self-host x86
+byte-identical. **66/66 check.sh, 139/139 cyrius test on x86**
+(+1 new gate: `f64v4_byval_return.tcyr`, 25 sub-asserts).
+
+**Cross-host SSH cluster green**:
+- pi (aarch64 Linux): 25/25 sub-asserts, exit=0
+- ecb (macOS Mach-O arm64): 25/25, exit=0 (codesigned)
+- cass (Windows PE x86_64): exit=0 (retptr-style; println silent
+  per pre-existing v5.10.44 gap)
+
+api-surface 2,835 → **2,849** (+14: `simd::f64v4_*` typed
+wrappers covering make / lane0-3 / add/sub/mul/div/fmadd/dot/
+scale/abs/sqrt).
+
+### What landed
+
+**Parser** (`src/frontend/parse_decl.cyr` + `parse_fn.cyr`):
+
+- `var v: f64v4;` recognized at var-decl parsing —
+  `parse_decl.cyr:859` byte-compare against `f64v4\0`
+  (encoding -21, mirror of -20 for f64v2). Allocates a 32-byte
+  stack-local: **4 slots** (3 anonymous fillers + 1 named at
+  the deepest disp, where `&v` resolves and the LO half lives).
+- `fn f(): f64v4 { ... return v; }` recognized via:
+  - Rough-scan in `parse_fn.cyr` rough-scan block — same
+    `_rs_is_scalar = 1` treatment as f64v2 on SysV/aarch64/cx
+    (no retptr-stash); Win64 PE keeps the default
+    `_cur_fn_ret_stash = 8` (retptr-style for any >16B
+    composite per MS x64 ABI).
+  - Return-type vocab block — byte-compare against `f64v4\0`,
+    sets `_rt_scalar = -21`. The error message vocab expanded
+    to include `/f64v4`.
+  - `PARSE_RETURN` block — when `_cur_fn_ret_scalar == -21`
+    and the return form is `return IDENT;` where IDENT is a
+    4-slot f64v4 var, emit `EFLLOAD_F64V4_PAIR(idx)` (SysV /
+    aarch64 / cx) or `ESTRUCT_BYVAL_COPY(src_disp, stash_disp, 32)`
+    (Win64 PE).
+- `var x: f64v4 = f();` caller-side path
+  (`parse_decl.cyr` new block) — allocates 4-slot
+  stack-local, calls `EFLSTORE_F64V4_PAIR` after the call to
+  land XMM0+XMM1 / Q0+Q1 / r0..r3 into x's 32 bytes. Win64
+  branch passes `&named` as RCX retptr (mirror of v5.10.31
+  f64v2 Win64 caller path).
+
+**Backends**:
+
+- `src/backend/x86/emit.cyr` — `EFLLOAD_F64V4_PAIR(S, idx)`
+  emits `movupd xmm0, [rbp + disp_lo]` + `movupd xmm1, [rbp +
+  disp_lo + 16]` (two 8-byte MOVUPDs). Mirror for
+  `EFLSTORE_F64V4_PAIR` (opcode 0x11 instead of 0x10). Cyrius-
+  internal ABI optimization — SysV strictly requires retptr
+  for >16B composites, but all f64v4 consumers are cyrius-
+  compiled so the pair-XMM path is safe and faster.
+- `src/backend/aarch64/emit.cyr` — `EFLLOAD_F64V4_PAIR(S, idx)`
+  emits two LDUR Q (4-byte encodings: `3C C0 03 A0` + `3C C0
+  03 A1` for Q0/Q1) for the fast path within imm9 range
+  (-256..255). **Deep-frame fallback** (when `disp_lo < -256`)
+  computes `x9 = x29 + disp_lo` via `_EFP_ADDR_X9`, then uses
+  LDR Q (imm12-scaled) — `LDR Q0, [X9, #0]` (`0x3DC00120`)
+  and `LDR Q1, [X9, #16]` (`0x3DC00521`, imm12=1 → 16-byte
+  offset). Mirror for STR Q (`0x3D8003A0` / `0x3D800120` /
+  `0x3D800521`).
+- `src/backend/cx/emit.cyr` — `EFLLOAD/EFLSTORE_F64V4_PAIR`
+  emit cxvm 4-register pair-quad (R0..R3) via `mov r14, fp`
+  + `sub r14, r14, r15` + load/store64 per slot. R14/R15
+  scratch.
+- macOS Mach-O aarch64 inherits via `aarch64/emit.cyr`
+  (macho/emit.cyr is binary-format-only).
+- Win64 PE retptr path reuses existing `ESTRUCT_BYVAL_COPY`
+  with size 32; same shape as v5.10.31 f64v2 PE.
+
+**`lib/simd.cyr`** — 14 new typed wrappers (`f64v4_make`,
+`f64v4_lane0`..`lane3`, `f64v4_add`/`sub`/`mul`/`div`/`fmadd`/
+`dot`/`scale`/`abs`/`sqrt`). Same API shape as the v5.10.33
+f64v2 wrappers: pointer inputs, by-value f64v4 return through
+the pair-quad ABI.
+
+**`tests/tcyr/f64v4_byval_return.tcyr`** — new gate with 25
+sub-asserts covering: pair-quad round-trip (lanes 0-3), zero
+quad, max-double quad, typed-wrapper extractors, 4-lane
+add/dot/abs end-to-end.
+
+### Deep-frame disp fallback
+
+The 25-sub-assert test gate exercised a `main` with enough
+f64v4 locals to push the f64v4 named-slot disp past aarch64
+LDUR/STUR Q's imm9 range (-256..255). Initial v5.10.37 code
+hit this and aborted with the defensive error message.
+
+Fix shape (now landed in `EFLLOAD/EFLSTORE_F64V4_PAIR` on
+aarch64): when `disp_lo < -256`, compute the base address into
+X9 via `_EFP_ADDR_X9` (existing helper used by EFLLOAD's deep-
+frame fallback at line 942), then use LDR Q / STR Q with
+imm12-scaled offsets (imm=0 for Q0 at +0, imm=1 for Q1 at
++16). Adds 4 instructions per LOAD/STORE in the deep-frame
+case (~16 bytes) vs 2 instructions in the fast path (~8 bytes).
+Detection is per-call-site at parse time, so shallow-frame
+consumers stay on the fast path.
+
+### Closeout investigation
+
+A version-bump symlink bug surfaced during this slot (user
+observed cyrius prompt segments rendering with stale
+versions). Root cause confirmed: `install.sh:224-235` uses
+`cp -L lib/*.cyr` into the snapshot; when `lib/<dep>.cyr` is
+a `cyrius deps`-resolved symlink AND the snapshot already has
+the same dep as a symlink, cp errors with "same file" and
+`set -e` exits before the symlink-update block at line
+249-251. Result: `~/.cyrius/bin` and `~/.cyrius/current` stay
+pointing at the previous version. Documented in the v5.10.45
+closeout pin with the exact root cause + fix shape (skip
+realpath-equal source/dst, or rm-then-cp the destination).
+Manual workaround: re-link after every bump.
+
+### Multi-slot ABI arc progress
+
+| Phase | Slot     | Status | Description |
+|-------|----------|--------|-------------|
+| 1     | v5.10.28 | ✅     | x86 SysV int-class pair return |
+| 2     | v5.10.29 | ✅     | aarch64 (X0+X1 pair) |
+| 3     | v5.10.30 | ✅     | cx bytecode + macho inherits |
+| 4     | v5.10.31 | ✅ partial | Win64 PE retptr-style (f64v2) |
+| 5     | v5.10.32 | ✅     | x86 SysV XMM0 register passing |
+| 6     | v5.10.33 | ✅ partial | `lib/simd.cyr` typed wrappers (return-side) |
+| 7     | v5.10.35 | ✅     | `PARSE_SIMD_EXT` locname-staleness fix |
+| 8     | v5.10.36 | ✅     | aarch64 V0 NEON register passing (f64v2) |
+| 9     | v5.10.37 | ✅     | **`f64v4` (32-byte) value type** (this slot) |
+| 10    | v5.10.38 | pinned | f64v2 + f64v4 param-side ABI (arc close) |
+
+One slot remains before the typed-simd ABI arc fully closes
+at v5.10.38.
+
 ## [5.10.36] — 2026-05-10
 
 **v5.10.x SLOT 36 — aarch64 V0 NEON register-class return for

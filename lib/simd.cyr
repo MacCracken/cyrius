@@ -120,3 +120,94 @@ fn f64v2_sqrt(a_ptr): f64v2 {
     f64v_sqrt(&r, a_ptr, 2);
     return r;
 }
+
+# v5.10.37 — `f64v4` typed wrappers (32-byte packed-double, 4
+# lanes). Same API shape as `f64v2_*`: pointer inputs, by-value
+# f64v4 return via the pair-quad register ABI (XMM0+XMM1 on
+# x86 SysV / Q0+Q1 on aarch64 NEON / R0..R3 on cx; Win64 PE
+# uses retptr-style). Underlying compiler intrinsics
+# (`f64v_add`/`_sub`/`_mul`/`_div`/`_fmadd`/`_dot`/`_scale`/
+# `_axpy`/`_abs`/`_sqrt`) take an arity arg; the wrappers
+# pass 4 for f64v4 lane count (vs 2 for f64v2).
+
+# Constructor: build an f64v4 from four i64 bit patterns.
+fn f64v4_make(b0, b1, b2, b3): f64v4 {
+    var v: f64v4;
+    store64(&v + 0, b0);
+    store64(&v + 8, b1);
+    store64(&v + 16, b2);
+    store64(&v + 24, b3);
+    return v;
+}
+
+# Lane 0 (bytes 0..7) as i64 bits.
+fn f64v4_lane0(p): i64 { return load64(p + 0); }
+# Lane 1 (bytes 8..15) as i64 bits.
+fn f64v4_lane1(p): i64 { return load64(p + 8); }
+# Lane 2 (bytes 16..23) as i64 bits.
+fn f64v4_lane2(p): i64 { return load64(p + 16); }
+# Lane 3 (bytes 24..31) as i64 bits.
+fn f64v4_lane3(p): i64 { return load64(p + 24); }
+
+# Packed-double 4-lane add: r[i] = a[i] + b[i].
+fn f64v4_add(a_ptr, b_ptr): f64v4 {
+    var r: f64v4;
+    f64v_add(&r, a_ptr, b_ptr, 4);
+    return r;
+}
+
+# Packed-double 4-lane subtract.
+fn f64v4_sub(a_ptr, b_ptr): f64v4 {
+    var r: f64v4;
+    f64v_sub(&r, a_ptr, b_ptr, 4);
+    return r;
+}
+
+# Packed-double 4-lane multiply.
+fn f64v4_mul(a_ptr, b_ptr): f64v4 {
+    var r: f64v4;
+    f64v_mul(&r, a_ptr, b_ptr, 4);
+    return r;
+}
+
+# Packed-double 4-lane divide.
+fn f64v4_div(a_ptr, b_ptr): f64v4 {
+    var r: f64v4;
+    f64v_div(&r, a_ptr, b_ptr, 4);
+    return r;
+}
+
+# Packed-double 4-lane fused multiply-add: r[i] = a[i] * b[i] + c[i].
+fn f64v4_fmadd(a_ptr, b_ptr, c_ptr): f64v4 {
+    var r: f64v4;
+    f64v_fmadd(&r, a_ptr, b_ptr, c_ptr, 4);
+    return r;
+}
+
+# Dot of two 4-wide vectors. Returns the scalar sum's f64 bit
+# pattern.
+fn f64v4_dot(a_ptr, b_ptr): i64 {
+    return f64v_dot(a_ptr, b_ptr, 4);
+}
+
+# Scalar scale: r[i] = a[i] * s for i in 0..3.
+fn f64v4_scale(a_ptr, s): f64v4 {
+    var r: f64v4;
+    f64v_scale(&r, a_ptr, s, 4);
+    return r;
+}
+
+# Packed-double absolute value across 4 lanes: r[i] = |a[i]|.
+fn f64v4_abs(a_ptr): f64v4 {
+    var r: f64v4;
+    f64v_abs(&r, a_ptr, 4);
+    return r;
+}
+
+# Packed-double square root across 4 lanes: r[i] = sqrt(a[i]).
+# Caller is responsible for ensuring lanes are >= 0.
+fn f64v4_sqrt(a_ptr): f64v4 {
+    var r: f64v4;
+    f64v_sqrt(&r, a_ptr, 4);
+    return r;
+}

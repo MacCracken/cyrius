@@ -1452,7 +1452,7 @@ motion.
 | 6     | v5.10.33 | ✅ partial | `lib/simd.cyr` typed wrappers (10 fns: make/lo/hi/add/sub/mul/div/fmadd/dot/scale) using pointer inputs + by-value f64v2 return. Closes the consumer-visible piece of the arc. **Param-side ABI, abs/sqrt, f64v4, and aarch64 V0 NEON deferred to slots 7–10.** |
 | 7     | v5.10.35 | pinned | `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug fix (unblocks `f64v2_abs` / `f64v2_sqrt`). |
 | 8     | v5.10.36 | ✅     | aarch64 V0 NEON return-register optimization (mirrors v5.10.32 XMM0 work; replaces v5.10.29's X0+X1 int-class pair). cc5_aarch64 -560 B. |
-| 9     | v5.10.37 | pinned | `f64v4` (32-byte): two-XMM pair OR YMM/AVX-detected; aarch64 two-V-register pair. |
+| 9     | v5.10.37 | ✅     | `f64v4` (32-byte): x86 XMM0+XMM1 pair / aarch64 Q0+Q1 NEON pair (+imm12-scaled deep-frame fallback) / cx R0..R3 / Win64 retptr. cc5 +4,888 B. AVX/YMM0 path NOT in scope (future optimisation). |
 | 10    | v5.10.38 | pinned | f64v2 param-side ABI: 2-slot allocation + register-pair → 2-slot store at fn entry, enables `f64v2_add(a: f64v2, b: f64v2): f64v2` value-param shape via overload dispatch. |
 
 Adds `f64v2` and `f64v4` as primitive types (16-byte
@@ -1674,7 +1674,7 @@ LDR Q vs 14-byte X-pair).
    on `simd_typed_wrappers.tcyr`; 8/8 on
    `f64v2_byval_return.tcyr`.
 
-#### v5.10.37 — `f64v4` (32-byte packed-double) value-type (typed-simd ABI Phase 9)
+#### v5.10.37 ✅ — `f64v4` (32-byte packed-double) value-type (typed-simd ABI Phase 9) (SHIPPED)
 
 Pinned 2026-05-10 at v5.10.33 ship.
 
@@ -2120,6 +2120,65 @@ identical; otherwise defer to v5.11.0's first patch.
   user confirmation); the install-path fix is closeout
   work, not slot-emergency work.
 
+  **v5.10.37 follow-up — version-bump symlink-update gap
+  (root cause confirmed)**. Surfaced 2026-05-10 during
+  v5.10.37 mid-slot. User observed cyrius prompt segments
+  rendering with stale versions after a `version-bump.sh`
+  invocation. Across multiple version bumps (5.10.36 → .37),
+  `~/.cyrius/bin` remained symlinked to `versions/5.10.34/bin`
+  and `~/.cyrius/current` still read `5.10.34`.
+
+  **Root cause (confirmed by manual repro 2026-05-10)**:
+  `install.sh:224-235` uses `cp -L "$f" "$dst"` to copy
+  `lib/*.cyr` into `~/.cyrius/versions/$VERSION/lib/`. When
+  `lib/mabda.cyr` (project-side resolved by `cyrius deps`) is
+  a symlink into `~/.cyrius/deps/mabda/<ver>/dist/mabda.cyr`,
+  AND `~/.cyrius/versions/$VERSION/lib/mabda.cyr` is ALSO a
+  symlink to the same real file, then `cp -L` dereferences
+  both symlinks, sees source and destination resolve to the
+  same inode, and exits with:
+  ```
+  cp: 'lib/mabda.cyr' and '/home/macro/.cyrius/versions/$VERSION/lib/mabda.cyr' are the same file
+  ```
+  install.sh's top-level `set -e` makes this fatal. Execution
+  exits **before** reaching the symlink-update block at
+  `install.sh:249-251` — so `~/.cyrius/bin`,
+  `~/.cyrius/lib`, and `~/.cyrius/current` all stay pointing
+  at the previous version. `cyrius-prompt-info` reads through
+  `~/.cyrius/bin/cc5` for the toolchain version segment; a
+  stale symlink renders stale numbers, which looks like
+  "starship.toml corruption" from the user side even though
+  the .toml content is intact.
+
+  Aggravating factor: any `lib/*.cyr` that's a dep-resolved
+  symlink whose realpath collides with the snapshot copy
+  triggers this. As more deps fold in (`cyrius deps` ships
+  more of stdlib via the deps-symlink pattern), the surface
+  for this bug grows.
+
+  **Fix shape**:
+  1. In the install.sh refresh-only lib-copy loop, replace
+     `cp -L "$f" "$dst"` with a guard: skip when
+     `readlink -f "$f" == readlink -f "$dst"` (same realpath
+     already in place); otherwise remove the dst symlink
+     first, then `cp -L`. Or use `cp -Lf --remove-destination`
+     (BSD cp lacks `--remove-destination`; portability —
+     coreutils-only OR rewrite as `rm -f "$dst" && cp -L`).
+  2. Add a tail-of-refresh-only verification step that
+     `readlink ~/.cyrius/bin` matches the new version; hard
+     fail with the actionable diagnostic ("re-link did not
+     update — investigate the cp loop above") if not.
+  3. **Port version-bump into cyrius** (per the sovereignty
+     principle; bash is acceptable bootstrap-layer glue but
+     this dance lives in PATH territory, runs after cyrius
+     is built, and could be `cyrius bump 5.10.X` instead).
+     Would also retire the regex-hunting fragility around
+     CHANGELOG version sed, etc.
+
+  Manual workaround (until fix lands): after every
+  `version-bump.sh`, run
+  `rm -rf ~/.cyrius/{bin,lib} && ln -sf ~/.cyrius/versions/$(cat VERSION)/{bin,lib} ~/.cyrius/ && echo $(cat VERSION) > ~/.cyrius/current`.
+
 ### v5.10.x — Held (no slot pinned; surfaces-on-ask)
 
 Items that DO NOT get concrete slot numbers — they
@@ -2262,6 +2321,43 @@ moves to v5.12.0).
   pinned item; this becomes the primary v5.11.x narrative).
   TS test harness stays opportunistic per its original pin.
 
+- **`tests/regression-*.sh` → cyrius port arc**
+  (pinned 2026-05-10 at v5.10.36; paired with TS test harness
+  per user direction *"any newly added regression.sh scripts
+  will be apart of 5.11.x before TS test work since they seem
+  good to go together later in the cycle"*).
+
+  v5.x has been progressively converting bash regression
+  gates into cyrius-native bespoke gates in
+  `programs/check.cyr` (see CLAUDE.md DO NOT bullet on
+  `regression-X.sh` retirement). A small number of `.sh`
+  gates remain — including the v5.10.45-pinned
+  `_cyriusly_starship_add_only_gate` whose subject is itself
+  the shell `scripts/cyriusly`. Folding the remaining `.sh`
+  gates into cyrius lands in v5.11.x **BEFORE** the TS test
+  harness because the harness work benefits from a
+  fully-cyrius gate surface to consume.
+
+  **Acceptance bar** (multi-patch, refine at slot entry):
+  1. Inventory: walk `tests/regression-*.sh` (if any remain)
+     + the v5.10.45 closeout-investigation gate, list each
+     subject + assertion shape.
+  2. Per-gate: rewrite as a bespoke fn in
+     `programs/check.cyr` using `lib/regression.cyr` helpers
+     (same shape as `_macho_exit_gate` / `_pe_exit_gate`).
+  3. **Cyriusly cmdtools port** — the v5.10.45 starship
+     add-only gate's subject is shell. Port the cmdtools
+     install/remove paths (currently `scripts/cyriusly:160+`)
+     into a cyrius binary or `cyrius` sub-command first, so
+     the gate's subject is itself cyrius. This is the bigger
+     scope of the two paired items.
+  4. Once gates + cyriusly are cyrius-native, the
+     `scripts/cyriusly` shell file shrinks to whatever can't
+     yet be cyrius (or retires entirely).
+  5. Self-host byte-identical x86 + cross-host SSH cluster
+     green per memory pin
+     `reference_verification_hosts_ssh`.
+
 - **TS test harness program** (option E from v5.7.37) —
   single `programs/ts_test_runner.cyr` consuming both
   internal-symbol fn dispatch and TS fixture files.
@@ -2269,9 +2365,12 @@ moves to v5.12.0).
   through every v5.7.x → v5.10.x cycle; promoting to the
   v5.11.0 slot at v5.10.20 P(-1) sweep so it lands when a
   downstream consumer surfaces a test pattern that doesn't
-  fit either current shape. Lands when that surfaces;
-  otherwise stays opportunistic — the stdlib annotation arc
-  takes the primary v5.11.x slot sequence.
+  fit either current shape. Lands AFTER the
+  `tests/regression-*.sh` → cyrius port arc (user pairing
+  direction above) so the harness has a fully cyrius-native
+  gate surface to integrate with. Otherwise stays
+  opportunistic — the stdlib annotation arc takes the
+  primary v5.11.x slot sequence.
 - **Other v5.10.x leftovers** that surface during the cycle
   close — refine at first slot entry per
   `feedback_premise_check_at_slot_entry`.

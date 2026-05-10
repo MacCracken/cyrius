@@ -936,6 +936,76 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
     return 0;
 }
 
+# v5.10.37 — emit f64v4 pair-quad return LOAD (callee-side).
+# Two LDUR Q's: Q0 from [&v + 0..15], Q1 from [&v + 16..31].
+# Mirror of x86's EFLLOAD_F64V4_PAIR. AAPCS64's SIMD&FP class
+# allows 256-bit composites in V0+V1 (mirror of SysV's
+# xmm0+xmm1 for 32B). Encoding bases per the v5.10.36 LDUR Q
+# decode: 0x3CC003A0 + offset shift + Rt LSB.
+#   LDUR Q0 = 0x3CC003A0
+#   LDUR Q1 = 0x3CC003A1
+# Win64 PE uses retptr-style; this fn isn't called when
+# _cur_fn_ret_stash > 0 (PARSE_RETURN routes to
+# ESTRUCT_BYVAL_COPY instead).
+fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) {
+        disp_lo = disp_lo - _cur_fn_ret_stash;
+    }
+    var disp_hi = disp_lo + 16;
+    # v5.10.37 — fast path: both halves fit LDUR Q imm9 (-256..255).
+    # Fallback when out of range: compute x9 = x29 + disp_lo via
+    # _EFP_ADDR_X9, then LDR Q0,[x9] + LDR Q1,[x9,#16] (imm12*16 scaled
+    # range, fits both halves). Mirrors the EFLLOAD/ESTOREREGPARM
+    # fast/slow pattern at lines 816-825.
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        var off_hi = disp_hi & 0x1FF;
+        # ldur q0, [x29, #disp_lo]
+        EW(S, 0x3CC003A0 | (off_lo << 12));
+        # ldur q1, [x29, #disp_hi]
+        EW(S, 0x3CC003A1 | (off_hi << 12));
+        return 0;
+    }
+    # Slow path: deep-frame fallback via X9 base.
+    _EFP_ADDR_X9(S, disp_lo);
+    # ldr q0, [x9, #0] — 128-bit LDR (imm12-scaled, imm=0)
+    EW(S, 0x3DC00120);
+    # ldr q1, [x9, #16] — 128-bit LDR (imm12=1 → byte offset 16)
+    EW(S, 0x3DC00521);
+    return 0;
+}
+
+# v5.10.37 — emit f64v4 pair-quad STORE post-call (caller-side).
+# Mirror of EFLLOAD_F64V4_PAIR. STUR Q encoding: 0x3C8003A0 + Rt.
+#   STUR Q0 = 0x3C8003A0
+#   STUR Q1 = 0x3C8003A1
+# Fallback STR Q (imm12-scaled) bases:
+#   STR Q0, [x9, #0]  = 0x3D800120
+#   STR Q1, [x9, #16] = 0x3D800521
+fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) {
+        disp_lo = disp_lo - _cur_fn_ret_stash;
+    }
+    var disp_hi = disp_lo + 16;
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        var off_hi = disp_hi & 0x1FF;
+        # stur q0, [x29, #disp_lo]
+        EW(S, 0x3C8003A0 | (off_lo << 12));
+        # stur q1, [x29, #disp_hi]
+        EW(S, 0x3C8003A1 | (off_hi << 12));
+        return 0;
+    }
+    _EFP_ADDR_X9(S, disp_lo);
+    # str q0, [x9, #0]
+    EW(S, 0x3D800120);
+    # str q1, [x9, #16]
+    EW(S, 0x3D800521);
+    return 0;
+}
+
 # Local variable load: ldur x0, [x29, #-offset]
 # v5.9.26: account for `_cur_fn_ret_stash` so locals in
 # struct-returning fns don't overlap the X8 retptr stash slot.

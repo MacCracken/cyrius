@@ -586,6 +586,42 @@ fn PARSE_RETURN(S): i64 {
             }
         }
     }
+    # v5.10.37 — f64v4 pair-quad return ABI. Mirror of v5.10.28's
+    # f64v2 pair-return path, but 32-byte composite + 4-slot stack-
+    # local. SysV/aarch64/cx: pair-quad register return (two
+    # MOVUPDs on x86 / two LDR Q on aarch64 / four R-regs on cx
+    # via EFLLOAD_F64V4_PAIR). Win64 PE: retptr-style with size 32.
+    if (_cur_fn_ret_scalar == 0 - 21) {
+        if (PEEKT(S) == 2) {
+            if (TOKTYP(S, GTI(S) + 1) == 5) {
+                var _f4_noff = PEEKV(S);
+                var _f4_lli = FINDLOCAL(S, _f4_noff);
+                if (_f4_lli >= 0) {
+                    var _f4_lt = GLTYPE(S, _f4_lli);
+                    if (_f4_lt == 0 - 21) {
+                        STI(S, GTI(S) + 1);  # consume IDENT
+                        STI(S, GTI(S) + 1);  # consume ';'
+                        if (_cur_fn_ret_stash > 0) {
+                            # Win64 PE retptr-style — byte-copy size 32.
+                            var _f4w_src_disp = 0 - ((_f4_lli + 1) * 8);
+                            if (_cur_fn_regalloc > 0) { _f4w_src_disp = _f4w_src_disp - _cur_fn_regalloc * 8; }
+                            if (_cur_fn_ret_stash > 0) { _f4w_src_disp = _f4w_src_disp - _cur_fn_ret_stash; }
+                            var _f4w_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
+                            ESTRUCT_BYVAL_COPY(S, _f4w_src_disp, _f4w_stash_disp, 32);
+                        } else {
+                            EFLLOAD_F64V4_PAIR(S, _f4_lli);
+                        }
+                        var _f4_rp = EJMP0(S);
+                        var _f4_rpc = GRPC(S);
+                        if (_f4_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
+                        S64(S + 0x18DA20 + _f4_rpc * 8, _f4_rp);
+                        SRPC(S, _f4_rpc + 1);
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
     PCMPE(S);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
@@ -1432,6 +1468,23 @@ fn PARSE_FN_DEF(S): i64 {
                                             }
                                         }
                                     }
+                                    # v5.10.37 — `f64v4` (32-byte). Same
+                                    # SysV/aarch64/cx treatment as f64v2:
+                                    # `_rs_is_scalar = 1` skips retptr-
+                                    # stash; PARSE_RETURN dispatches via
+                                    # rt_scalar == -21 to the pair-quad
+                                    # codegen (two MOVUPDs on x86 / two
+                                    # LDR Q on aarch64). Win64 PE keeps
+                                    # the retptr-stash path (32B > 16B
+                                    # composite cap per MS x64 ABI, just
+                                    # like f64v2 on PE).
+                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 52) {
+                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 0) {
+                                            if (_TARGET_PE == 0) {
+                                                _rs_is_scalar = 1;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1809,6 +1862,10 @@ fn PARSE_FN_DEF(S): i64 {
                 # v5.10.28 — `f64v2` value type, encoding -20.
                 # Multi-register pair return ABI (rax+rdx on x86 SysV).
                 # bytes 'f','6','4','v','2',0 (5 chars + nul)
+                # v5.10.37 — `f64v4` value type, encoding -21.
+                # 32-byte composite; pair-quad return ABI
+                # (xmm0+xmm1 on x86 / q0+q1 on aarch64 / r0..r3 on cx).
+                # bytes 'f','6','4','v','4',0 (5 chars + nul)
                 if (_rt_b0 == 102) {
                     if (_rt_b1 == 54) {
                         if (_rt_b2 == 52) {
@@ -1818,13 +1875,18 @@ fn PARSE_FN_DEF(S): i64 {
                                         _rt_scalar = 0 - 20;
                                     }
                                 }
+                                if (load8(S + 0x60000 + rt_noff + 4) == 52) {
+                                    if (load8(S + 0x60000 + rt_noff + 5) == 0) {
+                                        _rt_scalar = 0 - 21;
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             if (_rt_scalar == 0) {
-                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64v2", 87);
+                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64v2/f64v4", 93);
             }
             SFRS(S, fi, _rt_scalar);
             _cur_fn_ret_scalar = _rt_scalar;
