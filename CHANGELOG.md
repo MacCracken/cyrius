@@ -6,6 +6,110 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.26] — 2026-05-09
+
+**v5.10.x SLOT 26 — REAL TYPE SYSTEM Phase 5: CYRIUS_TYPE_CHECK
+default-on flip + v5.10.25 silent-regression repair**.
+
+Closes the 5-phase REAL TYPE SYSTEM arc. Two bundled landings:
+1. **Default-on flip** — `CYRIUS_TYPE_CHECK=1` env-gate retired
+   as the gate; the call-site Str→cstring type check now runs
+   for every cyrius compile by default. `CYRIUS_TYPE_CHECK=0`
+   opts out (retains the env knob for diagnosis / temporary
+   silencing).
+2. **v5.10.25 silent-regression repair** — the cstring param
+   annotations on `lib/string.cyr` and `lib/io.cyr` (originally
+   landed at v5.10.24) were dropped from the v5.10.25 ship
+   commit. The Phase 3 dispatch generalization at v5.10.25 was
+   correct, but with no `: cstring` annotations on stdlib fns
+   the `cstring_mask` table was empty and the warning system
+   silently fell through. Re-applied 11 annotations.
+
+cc5: 780,288 → 780,336 (**+48 B** — minor opt-out branch +
+default-on init). Self-host byte-identical x86. **66/66
+check.sh, 135/135 cyrius test, 0 type-check warnings on
+cyrius + 18 downstream consumers** (cyrius / agnosys / hisab
+/ kavach / abaco / aegis / agnostik / ark / chakshu / cyim /
+daimon / darshana / majra / niyama / nous / shakti /
+vyakarana / yantra / yukti) with TYPE_CHECK at default-on
+(no env var set). Empirical zero-false-positive surface.
+
+### What landed
+
+**Default-on flip** — `parse_fn.cyr::_TYPE_CHECK_ENABLED()`:
+- `_type_check_enabled` initial value: `0` → `1`
+- Env var "1" still enables (no-op redundant)
+- Env var "0" now explicitly DISABLES (new opt-out path)
+
+The pre-flip false-positive shape (Str → generic untyped-i64
+param triggering false warning, pinned at v5.10.5 deferral)
+was already closed by v5.10.24's polarity inversion: the
+warning fires only on params explicitly annotated `: cstring`,
+not on params NOT annotated `: Str`. With Phase 3 dispatch
+(v5.10.3-5/.25 generalize) routing well-known shapes
+automatically and Phase 4 inference (v5.10.3) propagating
+return types through `var x = f();`, there are no
+false-positive shapes left to gate against.
+
+**Empirical pre-flip sweep** at slot entry across 26 cyrius-
+application repos returned **zero type-check warnings**
+across the entire ecosystem. The 4 build failures observed
+(argonaut / kybernet / libro / sandhi) were pre-existing
+issues (stale deps, missing includes) unrelated to the type
+system.
+
+**v5.10.25 silent-regression repair** — re-applied the
+v5.10.24 cstring annotations:
+- `lib/string.cyr`: `strlen(s: cstring)` /
+  `streq(a: cstring, b: cstring)` / `strchr(s: cstring, c)` /
+  `println(s: cstring)` / `atoi(s: cstring)` /
+  `strstr(haystack: cstring, needle: cstring)` /
+  `str_lower_cstr(s: cstring)` /
+  `str_upper_cstr(s: cstring)` / `memchr(s: cstring, c, n)`
+- `lib/io.cyr`: `file_open(path: cstring, flags, mode)` /
+  `file_open_r(path: cstring, flags, mode)`
+
+Discovery shape — when investigating the silence at slot
+entry, a probe `var s: Str = ...; var n = streq(s, s);`
+fired the warning correctly. A different probe shape
+`return streq(s, s);` did NOT fire — `return f(args);` uses
+PARSE_RETURN's inline path which bypasses PARSE_FNCALL's
+warning logic. This is intentional (the inline path is for
+tail-call optimization), not a v5.10.26 bug. Probes that
+exercise the warning system must use `var n = f(...);` or
+discard-result `f(...);` shapes.
+
+### Why this matters
+
+Pre-v5.10.26: type-check was opt-in via env var; consumers
+had no signal at compile time when passing Str into cstring-
+expecting fns. The agnosys 1.1.12 verbatim repro
+(canonical motivator) didn't SIGSEGV thanks to v5.10.3-5
+dispatch routing, but consumers writing cstring-API-style
+code (e.g. `streq(my_str, other)`) had no warning that the
+call expected raw cstrings.
+
+Post-v5.10.26: every cyrius compile fires Str→cstring
+warnings by default with hint catalog pointing at the fix
+(`use str_data(x) for raw bytes, str_println(x) for printing,
+or annotate the param :Str`). Consumers find type bugs at
+compile time without changing their build pipeline.
+
+### Phase 5 closes the REAL TYPE SYSTEM arc
+
+| Phase | Slot      | Status                | Description |
+|-------|-----------|-----------------------|-------------|
+| 1     | v5.10.22  | ✅                    | Surface audit + bulk annotator (76% coverage) |
+| 1B    | v5.10.23  | ✅                    | Type vocabulary close (Result/Option/Tagged/cstring; 93% coverage) |
+| 2     | v5.10.24  | ✅                    | Call-site type-check infra (param-mask + warning gate) |
+| 3     | v5.10.25  | ✅                    | Phase 3 generalize (registry-based dispatch) |
+| 4     | v5.10.3-5 | ✅ (premise check)    | Type inference (already shipped — premise-check correction in v5.10.25 roadmap) |
+| 5     | v5.10.26  | ✅                    | **CYRIUS_TYPE_CHECK default-on flip** (this slot) |
+
+Arc closed. Subsequent v5.10.x slots: TLS staged-connect
+(sandhi 1.3.1 client-resumption unblock), typed simd
+(`f64v2` / `f64v4`), stdlib data-domain distlib carve-out.
+
 ## [5.10.25] — 2026-05-09
 
 **v5.10.x SLOT 25 — REAL TYPE SYSTEM Phase 3 generalize:

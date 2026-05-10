@@ -580,27 +580,36 @@ fn _STR_SID(S): i64 {
 }
 
 # v5.10.1 — opt-in gate for the call-site type check.
-# `CYRIUS_TYPE_CHECK=1` enables warnings; default off.
-# Default-on flip was originally pinned at v5.10.5 but
-# DEFERRED — the v5.10.4 stdlib param-side annotations DID
-# remove the false-positive flood from Str-passing into
-# annotated stdlib fns (str_len, str_print etc.), but a
-# different false-positive shape surfaced when default-on
-# was tried at v5.10.5: Str values passed to GENERIC i64-
-# shaped fns (vec_push_a, alloc, map_set, etc.) trigger
-# the warning even though Str-as-i64-pointer is fine
-# semantically — the consumer is not asking for cstring
-# semantics, the param is just untyped. Distinguishing
-# "untyped i64" from "expects cstring" requires per-param
-# scalar-vs-pointer annotation tracking that doesn't
-# exist yet. Default-on RE-PINNED to a future slot when
-# that infrastructure lands.
+# `CYRIUS_TYPE_CHECK=1` enabled warnings; default was off.
+#
+# v5.10.26 — DEFAULT FLIPPED ON. The v5.10.5 false-positive
+# shape (Str → generic i64 param triggering false warning)
+# was closed by v5.10.24's polarity inversion: the warning
+# now fires only on params explicitly annotated `: cstring`
+# instead of params NOT annotated `: Str`. Empirical sweep
+# at v5.10.26 slot entry across 26 cyrius-application repos
+# (cyrius / agnosys / hisab / kavach / abaco / aegis /
+# agnostik / agnova / argonaut / ark / chakshu / cyim /
+# cyim-lsp / cyrius-doom / daimon / darshana / kybernet /
+# libro / majra / niyama / nous / owl / phylax / samvada /
+# sandhi / shakti / sit / vyakarana / yantra / yukti)
+# confirmed ZERO type-check warnings with TYPE_CHECK=1 —
+# the surface is clean and the flip is safe.
+#
+# Set `CYRIUS_TYPE_CHECK=0` to opt OUT. Any other value
+# (or env unset) keeps the check ON. The check is cheap
+# (~O(args) per call site), wire-compatible across the
+# v5.10.x line, and produces actionable warnings only on
+# Str → cstring shape mismatches with hint catalog.
 var _type_check_env_resolved = 0;
-var _type_check_enabled = 0;
+var _type_check_enabled = 1;
 fn _TYPE_CHECK_ENABLED(): i64 {
     if (_type_check_env_resolved == 1) { return _type_check_enabled; }
     var v = _read_env("CYRIUS_TYPE_CHECK");
-    if (v != 0) { if (load8(v) == 49) { _type_check_enabled = 1; } }
+    if (v != 0) {
+        if (load8(v) == 48) { _type_check_enabled = 0; }
+        if (load8(v) == 49) { _type_check_enabled = 1; }
+    }
     _type_check_env_resolved = 1;
     return _type_check_enabled;
 }

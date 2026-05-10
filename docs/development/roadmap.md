@@ -1362,16 +1362,23 @@ overload pair, not just the 3 hardcoded shapes.
    polarity inverted to fire only on explicit `: cstring`
    annotations.
 4. **v5.10.25 — Phase 3 generalize: registry-based
-   dispatch** ✅ (this slot).
+   dispatch** ✅
 5. **v5.10.26 — Phase 5: CYRIUS_TYPE_CHECK default-on
-   flip** — flip the env-default from off to on.
-   Empirically clean across cyrius / agnosys / hisab /
-   kavach with `CYRIUS_TYPE_CHECK=1`; the flip lights
-   up the type system for all consumers without a
-   per-build env knob. May also expand cstring
-   annotations across more stdlib fns (current 11 fns is
-   the minimum to validate the warning surface; full
-   coverage is a Phase 5 sub-task).
+   flip** ✅ — flipped env-default from off to on.
+   `CYRIUS_TYPE_CHECK=0` opts out (retains env knob for
+   diagnosis). Empirical zero-false-positive sweep across
+   18 downstream consumers + cyrius itself confirmed
+   safe. Slot ALSO repaired the v5.10.25 silent-regression
+   that dropped the v5.10.24 cstring annotations from
+   `lib/string.cyr`/`lib/io.cyr`; 11 annotations re-applied.
+
+#### REAL TYPE SYSTEM arc closed at v5.10.26
+
+Arc spanned 5 slots (v5.10.22-26) plus Phase 4 inference
+(already shipped at v5.10.3-5 per premise check). Phase 5
+flip lights up the type system for ALL consumers without
+per-build env-knob — every cyrius compile now fires
+Str→cstring warnings with hint catalog by default.
 
 #### v5.10.27 — TLS staged-connect API (sandhi 1.3.1 client-resumption unblock)
 

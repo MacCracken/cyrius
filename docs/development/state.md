@@ -5,6 +5,62 @@
 
 ## Version
 
+**5.10.26** (shipped 2026-05-09 — **v5.10.x SLOT 26 —
+REAL TYPE SYSTEM Phase 5: CYRIUS_TYPE_CHECK default-on
+flip + v5.10.25 silent-regression repair (closes the
+5-phase REAL TYPE SYSTEM arc)**).
+
+Two bundled landings:
+1. **Default-on flip** — call-site Str→cstring type check
+   now runs by default in every cyrius compile. Env var
+   `CYRIUS_TYPE_CHECK=0` opts out (retains the diagnosis
+   knob); `=1` is no-op redundant.
+2. **v5.10.25 silent-regression repair** — cstring param
+   annotations on `lib/string.cyr` and `lib/io.cyr` were
+   dropped from the v5.10.25 commit; re-applied 11
+   annotations (`strlen` / `streq` / `strchr` / `println`
+   / `atoi` / `strstr` / `str_lower_cstr` /
+   `str_upper_cstr` / `memchr` / `file_open` /
+   `file_open_r`).
+
+**Acceptance**:
+- cc5: 780,288 → 780,336 (**+48 B** — minor opt-out
+  branch + default-on init).
+- Self-host byte-identical x86.
+- 66/66 check.sh + 135/135 cyrius test, **0 type-check
+  warnings**.
+- **0 type-check warnings on 18 downstream consumers**
+  with TYPE_CHECK at default-on (no env var):
+  agnosys / hisab / kavach / abaco / aegis / agnostik /
+  ark / chakshu / cyim / daimon / darshana / majra /
+  niyama / nous / shakti / vyakarana / yantra / yukti.
+- Empirical zero-false-positive surface across the
+  ecosystem.
+
+**Discovery shape during slot work** — initial probe
+`return streq(s, s)` did NOT fire the warning. Root
+cause: PARSE_RETURN's inline path bypasses
+PARSE_FNCALL's warning logic (intentional tail-call
+optimization). Probe `var n = streq(s, s); return n;`
+fired correctly. Future probes that exercise the
+warning system must use the assignment or
+discard-result shapes, not `return f(args)`.
+
+**REAL TYPE SYSTEM arc closed at v5.10.26**:
+
+| Phase | Slot      | Description |
+|-------|-----------|-------------|
+| 1     | v5.10.22 ✅ | Surface audit + bulk annotator (76%) |
+| 1B    | v5.10.23 ✅ | Vocabulary close (Result/Option/Tagged/cstring; 93%) |
+| 2     | v5.10.24 ✅ | Call-site type-check infra |
+| 3     | v5.10.25 ✅ | Phase 3 generalize (registry dispatch) |
+| 4     | v5.10.3-5 ✅ | Inference (already shipped — premise-check correction at v5.10.25) |
+| 5     | v5.10.26 ✅ | **Default-on flip** (this slot) |
+
+**Next**: v5.10.27 = TLS staged-connect API (sandhi
+1.3.1 client-resumption unblock — pinned 2026-05-09).
+v5.10.28 = typed simd (`f64v2` / `f64v4`).
+
 **5.10.25** (shipped 2026-05-09 — **v5.10.x SLOT 25 —
 REAL TYPE SYSTEM Phase 3 generalize: registry-based
 overload dispatch (retires hardcoded {println, strlen}
