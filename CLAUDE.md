@@ -172,6 +172,8 @@ docs/                Architecture, roadmap, benchmarks, language guide
 
 - `docs/cyrius-guide.md` — Complete language reference
 - `docs/development/roadmap.md` — Development plan + bug tracker
+- `docs/development/state.md` — Volatile cycle / pin / sweep state (refreshed every release)
+- `docs/doc-health.md` — Living doc-currency ledger (per-tier fresh / stale / archived; refreshed when docs are touched)
 - `CHANGELOG.md` — Source of truth for all changes
 - `../vidya/content/compiler_bootstrapping/cyrius_*.toml` — 90+ vidya entries
 

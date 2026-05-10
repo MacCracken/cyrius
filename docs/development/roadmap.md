@@ -1489,7 +1489,20 @@ May pair with `lib/tls.cyr` hook-surface audit
 (v5.10.30) if scheduling overlaps and any module
 touches TLS.
 
-#### v5.10.34 — `lib/tls.cyr` early-data status accessors (sandhi 1.3.2 unblocker)
+#### v5.10.34 — `lib/tls.cyr` early-data status accessors (sandhi 1.3.2 unblocker) + `docs/doc-health.md` scaffold
+
+Two-piece slot per user direction at v5.10.33 ship:
+the sandhi-blocker TLS work + the doc-health
+convention adoption (initial scaffold from
+agnosticos's pattern). Both ride the same slot
+because (1) sandhi 1.3.2 is the consumer-driven
+forcing function, (2) doc-health is a lightweight
+ledger landing — no compiler-side change — and (3)
+the two-piece shape avoids a bookkeeping-only
+"one document drafted" slot per the v5.10.0 ship
+acceptance principle (`feedback_one_thing_slot_revised`).
+
+##### Piece A — TLS early-data status accessors (sandhi 1.3.2 unblocker)
 
 Filed by sandhi 2026-05-10
 (`/home/macro/Repos/sandhi/docs/issues/2026-05-10-stdlib-tls-early-data-status.md`)
@@ -1546,6 +1559,50 @@ one slot. v5.10.21 closed the write/read primitives;
 v5.10.27 closed the staged-connect timing window;
 this slot closes the client-side correctness gap so
 sandhi 1.3.2 can ship.
+
+##### Piece B — `docs/doc-health.md` scaffold (convention adoption from agnosticos)
+
+Initial scaffold of `docs/doc-health.md` — a living
+ledger of doc currency per tier (fresh / stale /
+read-through / archived / open-question). Convention
+filed in agnosticos at
+`agnosticos/docs/doc-health.md` and codified for
+adoption in
+`agnosticos/docs/development/planning/first-party-documentation.md`.
+v5.10.34 is cyrius's adoption.
+
+cyrius's doc tree is ~61 markdown files (vs
+agnosticos's ~265) so the tier structure is leaner:
+
+- Tier 1 — Structural (root + `/docs` root)
+- Tier 2 — Architecture
+- Tier 3 — Operational / Development
+- Tier 4 — ADRs
+- Tier 5 — Audits
+- Tier 6 — Issues + Proposals
+- Tier 7 — FFI / Reference
+- Tier 8 — Archive
+
+**Acceptance bar**:
+1. `docs/doc-health.md` lands at the repo's `/docs`
+   root (matches agnosticos's location post-relocation
+   — whole-tree scope reflected in path).
+2. Tier tables populated by inspection (filename +
+   git-date spot-check), NOT a full per-doc audit pass
+   — that's the next-cycle work the ledger surfaces.
+3. Cross-refs to `state.md`, `roadmap.md`, CLAUDE.md
+   "Closeout Pass" + "Security Audit Process" from
+   the Forward-doc-policy-commitments table.
+4. `CONTRIBUTING.md` (or equivalent index doc — verify
+   at slot entry) gets a row pointing at doc-health.md
+   per the agnosticos `first-party-documentation.md`
+   pattern.
+
+NOT in scope for this slot: doing the full per-doc
+audit pass. The point of the ledger is to *surface*
+which tiers need read-through (currently ~15 files
+flagged 🟠). That work happens opportunistically in
+follow-up slots (or rolls into v5.11.x cleanup).
 
 #### v5.10.35 — `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug fix
 
@@ -1808,6 +1865,150 @@ add up to a meaningful defensive cleanup. Per the
 v5.10.0 acceptance principle: bundling unrelated
 defensives is OK when each is too small standalone
 AND scheduling lines up.
+
+#### v5.10.44 — Win64 PE `println` silent + exit-code propagation fix
+
+Pinned 2026-05-10 at v5.10.33 ship. Pre-existing
+Win64 stdlib gap surfaced repeatedly across the
+v5.10.x cycle:
+
+- **v5.10.31** (Phase 4 PE retptr-style): "Full
+  runtime verify gated on Win64 stdlib (println
+  silent + exit-code propagation broken — pre-
+  existing gaps, separate arc)."
+- **v5.10.33** (typed-simd typed wrappers, this
+  ship): cross-host cass verify shows `exit=0` (test
+  passes) but **no stdout** — `println` calls
+  silently drop because the Win64 console-output
+  path doesn't route `syscall(1, ...)` through
+  `WriteFile` on `STD_OUTPUT_HANDLE`.
+
+**Two-piece scope** (genuine multi-piece per
+`feedback_no_one_fix_per_slot` — both pieces share
+the same Win64 runtime cascade):
+
+1. **`println` console output** — route
+   `syscall(1, fd, buf, len)` on `_TARGET_PE == 1`
+   through `kernel32!WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),
+   buf, len, &written, NULL)`. Currently the Win64
+   syscall router (warning text:
+   `"syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes
+   n=0,1,2,3,8,9,60 today"` claims n=1 is routed —
+   verify whether it's truly wired or just stubbed.
+2. **Exit-code propagation** — `syscall(60, code)`
+   on Win64 PE must propagate `code` as the process
+   exit code (currently observed `exit=0` even when
+   the `.tcyr` returned non-zero from
+   `assert_summary()`). Likely `kernel32!ExitProcess(code)`
+   path.
+
+**Acceptance bar**:
+1. `tests/tcyr/simd_typed_wrappers.tcyr` on cass
+   prints all 5 `===` group headers + the
+   `9 passed, 0 failed` summary line, exit=0.
+2. A deliberately-failing variant (assert with
+   wrong expected value) returns `exit=1` on cass
+   (proves exit-code propagation works in the
+   non-zero case, not just by accident).
+3. Existing `_pe_exit_gate` regression in
+   `programs/check.cyr` continues to pass (T1
+   exit=42, T2 hello+exit=42, T3 peephole). This
+   slot tightens stdlib console-output / exit-code
+   path; the bare-syscall path remains.
+4. Self-host byte-identical x86 (no x86 codegen
+   change); cross-host cass verify after fix shows
+   correct stdout + exit codes for the SIMD typed-
+   wrapper test and any other `.tcyr` cross-built
+   for PE.
+
+Why now: surfaced repeatedly, blocks meaningful
+runtime verify on cass for stdlib-using `.tcyr`
+fixtures. Before this fix, cass verify is "exit-
+code-only" — fine for primitive gates (`_pe_exit_gate`
+uses bare `syscall(60, 42)`), but blind for
+anything using `println`-based test reporting.
+
+#### v5.10.45 — v5.10.x cycle closeout
+
+Pinned 2026-05-10 at v5.10.33 ship as the cycle-
+close slot. Per CLAUDE.md "Closeout Pass (before
+every minor/major bump)": ships as the LAST patch
+of the v5.10.x cycle before tagging v5.11.0.
+
+**Scope** (per CLAUDE.md §"Closeout Pass" 11-step
+order):
+
+**Mechanical (automated, fail-fast)**:
+1. Self-host verify — cc5 byte-identical
+2. Bootstrap closure — seed → cyrc → asm → cyrc
+   byte-identical
+3. Full check.sh — all gates green; record count
+
+**Judgment-call passes**:
+4. Heap map audit — newly-added regions, unused/
+   stale, cap pressure, consolidation opportunities
+   (the v5.10.x cycle added: nothing major to the
+   primary heap map; verify against current
+   `main.cyr` HEAP MAP block)
+5. Dead code audit — unreachable fns floor recorded
+   in CHANGELOG (per the existing N-unreachable
+   note pattern)
+6. **Refactor pass** — review v5.10.x diffs for
+   consolidation. Likely candidates: f64v2 ABI
+   dispatch across x86 / aarch64 / cx / macho /
+   PE — 5 backends with similar shape; check if a
+   common emitter helper makes sense (or if the
+   per-backend asymmetry is genuine and should
+   stay)
+7. **Code review pass** — walk the v5.10.x diffs
+   end-to-end. Specifically watch for: ABI leaks
+   (unguarded x86 encodings on non-x86 paths,
+   SysV leaks on Win64 paths), missed `_TARGET_PE`
+   guards, byte-order typos in PE encoding hex
+   literals, silently-ignored errors, off-by-one
+   in fixup arithmetic
+8. Cleanup sweep — stale comments (old version
+   refs, outdated TODOs, references to renamed
+   fns), dead `#ifdef` branches, unused includes,
+   orphaned files in `build/` / `tests/`
+
+**Compliance / external**:
+9. Security re-scan — quick grep for new
+   `sys_system`, `READFILE`, unchecked writes
+   added during v5.10.x. Full audit pinned
+   separately in `doc-health.md` Forward
+   Commitments table (cycle audit due before
+   v5.11.0)
+10. Downstream check — all `cyrius.cyml` `cyrius`
+    fields across ecosystem repos point to the
+    released tag (sandhi 1.3.2, hisab, agnosys,
+    mabda, etc.)
+
+**Docs (silent-rot prevention)**:
+11. CHANGELOG / roadmap / vidya sync per CLAUDE.md
+    closeout-step-11. Vidya files manually refreshed
+    (version-bump.sh doesn't touch them):
+    `vidya/content/cyrius/language.cyml`,
+    `field_notes/{compiler,language}.cyml`,
+    `implementation.cyml`, `types.cyml`,
+    `dependencies.cyml`, `ecosystem.cyml`. Doc-health
+    ledger refreshed (per-tier "Last touched" dates
+    bumped where the cycle touched them).
+
+**Order matters**: mechanical first (fail-fast); judgment
+passes uncover scope for follow-ups; doc sync last.
+Refactor that lands during closeout MUST stay byte-
+identical; otherwise defer to v5.11.0's first patch.
+
+**Acceptance bar**:
+- All 11 steps complete with green outcomes recorded
+  in the v5.10.45 CHANGELOG entry.
+- Cycle stats summarized: total patches, cc5 size
+  delta v5.10.0 → v5.10.45, check.sh gate count
+  growth, cyrius test growth, slot-summary table
+  (one line per .x).
+- v5.11.0 entry-bar prepped: P(-1) sweep starting
+  point, baseline benchmarks captured.
 
 ### v5.10.x — Held (no slot pinned; surfaces-on-ask)
 
