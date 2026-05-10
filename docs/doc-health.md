@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-05-10 (initial scaffold at v5.10.34) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-10 (initial scaffold at v5.10.34; threat-model + fncall-abi spot-review at v5.10.35) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`cyrius`) — the entire `docs/` tree plus root-level files (README, CHANGELOG, CLAUDE.md, VERSION). Per-stdlib-dep docs live in their own repos and are not audited here. Cross-repo cycle / pin / sweep state lives in [`development/state.md`](development/state.md), not here.
 >
 > **Convention adopted from agnosticos** (2026-05-10): pattern from `agnosticos/docs/doc-health.md`. Per `first-party-documentation.md` codification, smaller repos can adopt the same shape. Cyrius's tree is ~61 markdown files (vs agnosticos's ~265) so the tier structure here is leaner.
@@ -21,9 +21,9 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change.
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh / touched in current cycle** | ~25 | Touched within the v5.10.x cycle (2026-04 to 2026-05); state.md / roadmap.md / CHANGELOG / completed-phases / cyrius-guide / tutorial / faq / stdlib-reference / benchmarks / ecosystem / editor-integration / platform-status / 6 ADRs / 4 audits / open-issues + proposals / a few dev/* docs |
+| ✅ **Fresh / touched in current cycle** | ~27 | Touched within the v5.10.x cycle (2026-04 to 2026-05); state.md / roadmap.md / CHANGELOG / completed-phases / cyrius-guide / tutorial / faq / stdlib-reference / benchmarks / ecosystem / editor-integration / platform-status / 6 ADRs / 4 audits / open-issues + proposals / a few dev/* docs / **threat-model (v5.10.35 refresh)** / **fncall-abi (v5.10.35 verified)** |
 | 🟡 **Stale — refresh in place** | 0 | Cleared during scaffold — no known wrong content. (Drift candidates flagged 🟠 below.) |
-| 🟠 **Read-through outstanding** | ~15 | Older dev/* docs (process-notes, threat-model, module-manifest-design, migration-strategy, crash-localization), older architecture docs (package-format), older FFI docs (struct-packing) — all dated 2026-04-08 to 2026-04-25; not known to be wrong, but unreviewed against v5.10.x reality. |
+| 🟠 **Read-through outstanding** | ~13 | Older dev/* docs (process-notes, module-manifest-design, migration-strategy, crash-localization), older architecture docs (package-format), older FFI docs (struct-packing) — all dated 2026-04-08 to 2026-04-30; not known to be wrong, but unreviewed against v5.10.x reality. |
 | 🔵 **Probably evergreen** | ~3 | ADR-002/-003/-004 (everything-is-i64, fixed-heap-layout, convention-based-dispatch) — load-bearing principles; re-read pass quarterly, not weekly. |
 | 📦 **Archive — frozen by design** | ~18 | `docs/development/archive/` (6) + `docs/development/issues/archived/` (~13). Verified — frozen by design. |
 | ❓ **Open strategic question** | 0 | None at scaffold time. |
@@ -75,7 +75,7 @@ Numbers approximate; rolls up from the per-tier tables below.
 | `completed-phases.md` | 2026-05-08 | ✅ Fresh | Historical release narrative. Per CLAUDE.md, this is where shipped-cycle summaries land at minor closeout. |
 | `benchmarks.md` | 2026-04-25 | 🟠 Read-through | Per-release benchmark history. v5.10.x rows pending — refresh at minor closeout (typically lands as the "Post-audit benchmarks" P(-1) step). |
 | `process-notes.md` | 2026-04-12 | 🟠 Read-through | Process discipline / agent feedback log. ~4 weeks old; spot-check for stale references. |
-| `threat-model.md` | 2026-04-23 | 🟠 Read-through | Security threat model. Last refreshed pre-v5.7.0 sandhi-fold. Verify TLS section reflects v5.10.21 + .27 surface (and v5.10.34 early-data status). |
+| `threat-model.md` | 2026-05-10 | ✅ Fresh | **Refreshed 2026-05-10 (v5.10.35)**: added fdlopen-helper + libssl trust boundaries; CVE-02 path-traversal mitigation note; stdlib TLS surface table (v5.6.37 / v5.10.21 / v5.10.27 / v5.10.34 + security caveats for 0-RTT replay + verify-callback override); "Zero external dependencies" → "Zero external **language** dependencies" (stdlib bridges to libssl/libc via fdlopen). |
 | `module-manifest-design.md` | 2026-04-08 | 🟠 Read-through | `[deps]` + `[deps.stdlib]` design. Stable; verify at v5.10.x close. |
 | `migration-strategy.md` | 2026-04-30 | 🟠 Read-through | Migration playbook for stdlib changes. Recently touched but pre-v5.10.21 TLS work. |
 | `crash-localization.md` | 2026-04-13 | 🟠 Read-through | Crash-debugging playbook. Spot-check for v5.9.x / v5.10.x heap-map references. |
@@ -144,7 +144,7 @@ Open issues are tracked artifacts (filed by consumers or internal observation). 
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `fncall-abi.md` | 2026-04-25 | 🟠 Read-through | FFI calling convention. Verify aarch64 + macho + Win64 sections reflect v5.10.28-32 typed-simd ABI work (XMM0 / X0+X1 / V0 / retptr-style). |
+| `fncall-abi.md` | 2026-04-25 | ✅ Fresh (verified 2026-05-10) | Spot-verified at v5.10.35 — content scoped to `fncallN` (int-class scalar calls); the v5.10.28-32 typed-simd ABI (`fn f(): f64v2`) is a separate codegen path not invoked via `fncallN`, so no update needed here. (Future: a sibling `docs/ffi/typed-simd-abi.md` may earn its own slot if consumers need a reference.) |
 | `struct-packing.md` | 2026-04-19 | 🟠 Read-through | Struct layout. Older; verify against current `parse_decl` struct emit. |
 
 ---

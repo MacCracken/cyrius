@@ -969,17 +969,48 @@ fn PF64CMP(S, tok): i64 {
 
 # Constant folding state (codegen-level, same EMOVI size only)
 # Handle extended SIMD builtins (tokens 93-96) in separate function
+# v5.10.35 — stash arg value at slot AND mark locname[idx] = -1
+# (anonymous), so subsequent FINDLOCAL("r") inside the enclosing
+# fn doesn't pick up this stash slot as a named local.
+#
+# Pre-v5.10.35 bug: cyrius's locname table at S+0x191000 is shared
+# across all fn body parses (FLC resets to 0 at fn entry, but stale
+# locname entries from PRIOR fns persist at higher indices). Plain
+# EFLSTORE writes the value but not the name slot. So if a prior fn
+# had a local named "r" at idx N, AND the current fn's f64v_abs
+# (or any other PARSE_SIMD_EXT intrinsic) places its arg-stash at
+# idx N, then FINDLOCAL("r") AFTER the intrinsic call returns N (the
+# stash slot with stale "r" name) instead of the real `var r` slot
+# at a lower idx. Consequence: `return r;` post-call reads from the
+# stash (which contained the stored &r pointer-VALUE at the time of
+# the call), so the caller gets a stack address back instead of the
+# absed/sqrt'd bytes.
+#
+# The bug surfaced through the v5.10.33 typed-wrapper layer (sandhi
+# / hisab consumers using `fn f64v2_abs(p): f64v2 { var r; f64v_abs(&r,p,2);
+# return r; }`). 4-arg intrinsics (add/sub/mul/div/scale/axpy/fmadd)
+# happened to dodge it because their stash slot range usually didn't
+# overlap stale "r" entries in real consumer code; 3-arg
+# (abs/sqrt/dot) hit the +1 offset that did.
+#
+# Fix is independent of arity: every stash store anonymises the slot.
+fn _SIMD_STASH(S, idx): i64 {
+    EFLSTORE(S, idx);
+    S64(S + 0x191000 + idx * 8, 0 - 1);
+    return 0;
+}
+
 fn PARSE_SIMD_EXT(S, ptyp): i64 {
     # f64v_div(dst, a, b, n)
     if (ptyp == 93) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
-        PCMPE(S); EFLSTORE(S, vbase);
+        PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 1);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 2);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
         SFLC(S, vbase + 3);
@@ -992,9 +1023,9 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
-        PCMPE(S); EFLSTORE(S, vbase);
+        PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 1);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
         SFLC(S, vbase + 2);
@@ -1007,9 +1038,9 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
-        PCMPE(S); EFLSTORE(S, vbase);
+        PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 1);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
         SFLC(S, vbase + 2);
@@ -1022,13 +1053,13 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
-        PCMPE(S); EFLSTORE(S, vbase);
+        PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 1);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 2);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 3);
+        PCMPE(S); _SIMD_STASH(S, vbase + 3);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
         SFLC(S, vbase + 4);
@@ -1041,9 +1072,9 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
-        PCMPE(S); EFLSTORE(S, vbase);
+        PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 1);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
         SFLC(S, vbase + 2);
@@ -1056,11 +1087,11 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
-        PCMPE(S); EFLSTORE(S, vbase);
+        PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 1);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 2);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
         SFLC(S, vbase + 3);
@@ -1073,11 +1104,11 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
-        PCMPE(S); EFLSTORE(S, vbase);
+        PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 1);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-        PCMPE(S); EFLSTORE(S, vbase + 2);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
         SFLC(S, vbase + 3);
@@ -1145,6 +1176,15 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var bsb = GFLC(S);
         SFLC(S, bsb + 5);
+        # v5.10.35 — anonymise stash slots up front (s4 = mask filled
+        # below) so stale locname entries from prior fn-body parses
+        # can't be picked up by post-call FINDLOCal lookups. Same fix
+        # shape as _SIMD_STASH used by f64v_* intrinsics.
+        S64(S + 0x191000 + bsb * 8, 0 - 1);
+        S64(S + 0x191000 + (bsb + 1) * 8, 0 - 1);
+        S64(S + 0x191000 + (bsb + 2) * 8, 0 - 1);
+        S64(S + 0x191000 + (bsb + 3) * 8, 0 - 1);
+        S64(S + 0x191000 + (bsb + 4) * 8, 0 - 1);
         PCMPE(S); EFLSTORE(S, bsb);              # s0 = val
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); EFLSTORE(S, bsb + 1);          # s1 = offset
@@ -1179,6 +1219,10 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var bcb = GFLC(S);
         SFLC(S, bcb + 3);
+        # v5.10.35 — anonymise stash slots (see bitset comment above).
+        S64(S + 0x191000 + bcb * 8, 0 - 1);
+        S64(S + 0x191000 + (bcb + 1) * 8, 0 - 1);
+        S64(S + 0x191000 + (bcb + 2) * 8, 0 - 1);
         PCMPE(S); EFLSTORE(S, bcb);              # s0 = val
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); EFLSTORE(S, bcb + 1);          # s1 = offset

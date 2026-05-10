@@ -25,18 +25,17 @@
 # store sequence at fn entry — sized as a separate slot, pinned as
 # consumer-driven follow-up.
 #
-# **Known limitation — `f64v_abs` / `f64v_sqrt` codegen bug**:
-# when a 4-arg `f64v_X` intrinsic (add/sub/mul/div/scale) is
-# compiled in the same translation unit BEFORE a 3-arg `f64v_abs`
-# or `f64v_sqrt` call, the latter's emit shifts by 8 bytes —
-# returning a stack address instead of the absed/sqrt'd lo half.
-# This is a PRE-EXISTING bug in PARSE_SIMD_EXT (src/frontend/
-# parse_expr.cyr), NOT a v5.10.33 regression. v5.10.33 surfaces
-# it via the typed-wrapper API. Pinned for diagnosis + fix in a
-# follow-up slot. Until then, `f64v2_abs` and `f64v2_sqrt` are
-# intentionally NOT exposed here — consumers needing absolute
-# value / square root call the raw `f64v_abs` / `f64v_sqrt`
-# intrinsics directly with explicit stack-local allocation.
+# **v5.10.35 — `f64v2_abs` / `f64v2_sqrt` now exposed**: the
+# pre-existing PARSE_SIMD_EXT staleness bug (3-arg intrinsics
+# returning stack addresses when the enclosing fn returns f64v2)
+# is fixed at v5.10.35. Root cause: stash slots from
+# PARSE_SIMD_EXT's EFLSTORE did not clear locname entries, and a
+# stale "r" name from a prior fn's parse at the same slot index
+# caused FINDLOCAL("r") in `return r;` to pick up the stash slot
+# (containing the &r pointer-VALUE) instead of the real `var r`
+# slot. The v5.10.33 typed-wrapper API surfaced this via 3-arg
+# f64v_abs / f64v_sqrt wrappers. Fix anonymises stash slots
+# (sets locname[idx] = -1) at every EFLSTORE in PARSE_SIMD_EXT.
 
 # Constructor: build an f64v2 from two i64 bit patterns.
 fn f64v2_make(lo_bits, hi_bits): f64v2 {
@@ -101,5 +100,23 @@ fn f64v2_dot(a_ptr, b_ptr): i64 {
 fn f64v2_scale(a_ptr, s): f64v2 {
     var r: f64v2;
     f64v_scale(&r, a_ptr, s, 2);
+    return r;
+}
+
+# v5.10.35 — Packed-double absolute value: r[i] = |a[i]|. Clears
+# the sign bit on each lane (SSE2 andpd with mask).
+fn f64v2_abs(a_ptr): f64v2 {
+    var r: f64v2;
+    f64v_abs(&r, a_ptr, 2);
+    return r;
+}
+
+# v5.10.35 — Packed-double square root: r[i] = sqrt(a[i]). SSE2
+# sqrtpd. Caller is responsible for ensuring lanes are >= 0 — sqrt
+# of a negative double produces NaN (no trap unless FPE is masked
+# in).
+fn f64v2_sqrt(a_ptr): f64v2 {
+    var r: f64v2;
+    f64v_sqrt(&r, a_ptr, 2);
     return r;
 }

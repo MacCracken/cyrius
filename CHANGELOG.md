@@ -6,6 +6,178 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.35] — 2026-05-10
+
+**v5.10.x SLOT 35 — `PARSE_SIMD_EXT` locname-staleness codegen fix
+(unblocks `f64v2_abs` / `f64v2_sqrt`) + sandhi 1.3.3 stdlib fold
++ threat-model TLS-surface refresh**.
+
+Fixes the pre-existing latent bug surfaced by v5.10.33's typed-
+wrapper API: 3-arg SIMD intrinsics (`f64v_abs` / `f64v_sqrt` /
+`f64v_dot`) returning **stack addresses** instead of computed
+results when called inside an `fn f(): f64v2` wrapper. Root cause
+is **not** an emit-side disp shift (initial v5.10.33 hypothesis);
+it's stale locname-table entries. Diagnosed + fixed at v5.10.35.
+
+cc5: 784,984 → **785,656 (+672 B)** for the `_SIMD_STASH` helper +
+the 7 PARSE_SIMD_EXT call-site refactors + 2 bitset/bitclr
+anonymise blocks. Self-host byte-identical x86. **66/66 check.sh,
+138/138 cyrius test on x86** (`simd_typed_wrappers.tcyr` extended
+9 → 13 sub-asserts adding `f64v2_abs` + `f64v2_sqrt`). **Cross-host
+SSH cluster green**:
+- pi (aarch64 Linux): 13/13 sub-asserts, exit=0
+- ecb (macOS Mach-O arm64): 13/13 sub-asserts, exit=0 (codesigned)
+- cass (Windows PE x86_64): exit=0
+
+api-surface 2,835 → **2,835** (net: +2 SIMD wrappers +2 from
+v5.10.34 inherited; -4 from sandhi 1.3.3's public-surface
+narrowing — see "Sandhi 1.3.3 stdlib fold" section below).
+
+### Root cause
+
+Cyrius's per-fn local-name table at `S+0x191000` is **shared
+across all fn-body parses**. `SFLC(S, 0)` at fn entry resets the
+FLC counter but does NOT clear locname entries past the new FLC.
+Stale name entries from PRIOR fn parses persist at higher
+indices.
+
+Plain `EFLSTORE(S, idx)` writes a stack slot's runtime VALUE but
+does NOT touch `locname[idx]`. So when PARSE_SIMD_EXT stashes
+arg-1 (`&r`) at `vbase = GFLC`, the slot's runtime value is `&r`
+but `locname[vbase]` retains whatever stale name a prior fn put
+there.
+
+After the SIMD call's parse, `FLC = vbase + (N-1)` (one slot per
+stashed arg). `FINDLOCAL(name)` searches backward from `FLC - 1`
+to 0 looking for a matching name. If `locname[vbase]` happens to
+equal `"r"` (the enclosing fn's f64v2 local), FINDLOCAL returns
+the **stash slot** instead of the real `var r` slot below it.
+
+`return r;` then emits `EFLLOAD_F64V2_PAIR(stash_idx)` which
+loads 16 bytes starting at the stash slot — bytes whose first 8
+are the stored `&r` pointer-VALUE, not the absed/sqrt'd
+computation.
+
+The 4-arg paths (add/sub/mul/div/scale/axpy/fmadd) tended to
+dodge this in real consumer code because their wider stash range
+typically didn't overlap stale "r" entries at the exact offset.
+The 3-arg paths (abs/sqrt/dot) hit it because their narrower
+stash range (vbase, vbase+1) collided.
+
+### Fix
+
+Anonymise stash slots at the moment of EFLSTORE. New helper
+`_SIMD_STASH(S, idx)` at the top of `src/frontend/parse_expr.cyr`
+wraps `EFLSTORE(S, idx) + S64(S + 0x191000 + idx * 8, -1)`.
+
+All 7 PARSE_SIMD_EXT variants (f64v_div / sqrt / abs / fmadd /
+dot / scale / axpy) route their stash writes through
+`_SIMD_STASH`. The bitset (ptyp 103) and bitclr (ptyp 104) sites
+get an upfront block clear of their stash range (same pattern,
+inlined because their stash range is allocated up-front via
+`SFLC(S, bsb + 5)` before any PCMPE).
+
+Fix is **arity-independent**: every PARSE_SIMD_EXT stash slot is
+now correctly anonymised, regardless of whether 3-, 4-, or 5-arg
+form. 4-arg paths weren't visibly broken in tests but had the
+same latent fragility.
+
+### What landed
+
+**`src/frontend/parse_expr.cyr`**:
+- New `_SIMD_STASH(S, idx)` helper at line ~972.
+- All 14 `EFLSTORE(S, vbase + N)` call-sites in PARSE_SIMD_EXT
+  (across ptyp 93, 94, 95, 96, 128, 129, 130) routed through
+  `_SIMD_STASH`.
+- Upfront stash-range anonymise blocks for ptyp 103 (bitset, 5
+  slots) and ptyp 104 (bitclr, 3 slots).
+
+**`lib/simd.cyr`**:
+- New typed wrappers: `f64v2_abs(a_ptr): f64v2`,
+  `f64v2_sqrt(a_ptr): f64v2`.
+- Header bug-pin block reframed from "known limitation" to
+  "v5.10.35 fix shipped" — describes the staleness pattern for
+  future maintainers.
+
+**`tests/tcyr/simd_typed_wrappers.tcyr`**: +2 test groups
+(`f64v2_abs (v5.10.35)`, `f64v2_sqrt (v5.10.35)`), +4 sub-asserts.
+
+**`docs/api-surface.snapshot`**: +2 entries (alphabetic insertion).
+
+### Docs touched (per `doc-health.md` scope)
+
+- **`docs/development/threat-model.md`** — refreshed (was flagged
+  🟠 read-through). Added: fdlopen-helper + libssl trust
+  boundaries; CVE-02 path-traversal mitigation note; stdlib TLS
+  surface table (v5.6.37 / v5.10.21 / v5.10.27 / v5.10.34 + 0-RTT
+  replay / verify-callback security caveats); reframed "zero
+  external dependencies" to "zero external **language**
+  dependencies" (stdlib bridges libssl/libc via fdlopen helper).
+- **`docs/ffi/fncall-abi.md`** — spot-verified at v5.10.35
+  (no edit needed; doc scoped to `fncallN` int-class calls;
+  typed-simd ABI is a separate codegen path).
+- **`docs/doc-health.md`** — bumped Last Refresh + moved two
+  rows 🟠 → ✅.
+
+### Sandhi 1.3.3 stdlib fold (paired ship)
+
+**`lib/sandhi.cyr`** vendored bytes refreshed from
+`sandhi/dist/sandhi.cyr` at tag `1.3.3` (1.1.0 → 1.3.3 jump —
+v5.10.34's TLS early-data accessors unblocked sandhi 1.3.2's
+0-RTT path and 1.3.3 layered cred-strip-aware session-cache
+keying on top). Line count: 10,535 → 11,729 (+1,194).
+
+Public-surface net change: **−2 fns** (27 added, 29 removed).
+The "narrowing" is intentional API discipline:
+
+| Category                  | Delta | Notes |
+|---------------------------|-------|-------|
+| `*_auto` / `*_retry` → `*_a` | −15 / +7 | 7 HTTP verbs consolidated: per-verb retry knobs collapsed into a single `_a`-suffixed atomic-options entry point. |
+| `*_h2_*` (h2 internals)   | −4    | Private-ised — consumers use `sandhi_http_request_auto_a` which transparently negotiates h2. |
+| `_pool_*`                 | −3    | Conn-pool internals private-ised; pool lifecycle managed via dispatch entry. |
+| `_retry_*` config         | −3    | Folded into `*_opts_a` arg shape. |
+| `sandhi_http_options_*`   | +3    | New consumer surface for 0-RTT toggle + getter (per 1.3.2's `allow_0rtt` flag pattern); paired with `sandhi_conn_0rtt_status` query. |
+| `sandhi_prof_*`           | +8    | New optional profiling/instrumentation surface (caller opts-in via `sandhi_prof_enable(1)`). |
+
+The 1.3.1 → 1.3.3 progression for the TLS side specifically:
+- **1.3.1** — session-cache primitives + h2 reuse (lookup/store
+  keyed on `(sni_host, hook_fp)`).
+- **1.3.2** — TLS 1.3 0-RTT opt-in (`allow_0rtt`) using the
+  v5.10.21 + v5.10.27 stdlib surface; unblocked end-to-end by
+  the v5.10.34 acceptance-status + max-early-data accessors.
+- **1.3.3** — cred-strip-aware key (third component:
+  `cred_digest` = FNV-1a of `Authorization` / `Cookie` /
+  `Proxy-Authorization` header values, marker-prefixed). Cache
+  misses when auth context rotates → fresh handshake. Default
+  zero-digest preserves the AGNOS service-to-service common
+  path.
+
+**Cyrius-side impact**: zero compiler change. The fold updates
+`lib/sandhi.cyr` and the api-surface snapshot; consumer behavior
+matches sandhi's 1.3.3 CHANGELOG. Sandhi pins `cyrius = "5.10.34"`
+in its `cyrius.cyml`, satisfied by v5.10.35.
+
+Snapshot ping-pong protection (per CLAUDE.md): synced
+`lib/sandhi.cyr` immediately to
+`~/.cyrius/versions/5.10.35/lib/sandhi.cyr` +
+`~/.cyrius/lib/sandhi.cyr`.
+
+### Why this was a multi-day mystery
+
+The bug masqueraded as an emit-side off-by-8-bytes shift (per the
+v5.10.33 ship-note hypothesis). The disassembly at the abs call
+site appeared CORRECT: `lea [rbp-0x40]` for `&r`, `mov [rbp-0x48],
+rax` for the stash, `movupd [rdx], xmm0` for the store with rdx
+loaded from the stash. The emit math was right.
+
+The bug was at the LOOKUP layer: `return r;` resolved `r` to the
+WRONG slot index because of stale locname[idx] from a prior fn's
+parse leaking into the enclosing fn's namespace. Disassembling
+the `return r;` epilogue showed `movupd xmm0, [rbp-0x50]` (the
+stash slot) instead of `[rbp-0x48]` (r's actual named slot). The
++8 byte difference looked like an emit-shift but was actually a
+table-entry mismatch.
+
 ## [5.10.34] — 2026-05-10
 
 **v5.10.x SLOT 34 — `lib/tls.cyr` early-data status accessors

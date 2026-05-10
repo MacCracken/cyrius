@@ -1604,10 +1604,11 @@ which tiers need read-through (currently ~15 files
 flagged 🟠). That work happens opportunistically in
 follow-up slots (or rolls into v5.11.x cleanup).
 
-#### v5.10.35 — `PARSE_SIMD_EXT` 3-arg/4-arg same-TU codegen bug fix
+#### v5.10.35 ✅ — `PARSE_SIMD_EXT` locname-staleness codegen fix (`f64v2_abs` / `f64v2_sqrt` unblock) + sandhi 1.3.3 stdlib fold + threat-model TLS refresh (SHIPPED)
 
 Pinned 2026-05-10 at v5.10.33 ship as the first SIMD-
-deferral cascade slot.
+deferral cascade slot; sandhi 1.3.3 fold + threat-model
+refresh added per user direction during the slot.
 
 Pre-existing codegen bug in
 `src/frontend/parse_expr.cyr` `PARSE_SIMD_EXT`: when a

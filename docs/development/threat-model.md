@@ -1,8 +1,13 @@
 # Cyrius Threat Model
 
 > **Scope**: Cyrius is a systems language compiler and toolchain.
-> It generates native ELF binaries from source code.
-> Zero external dependencies. Zero unsafe code (by construction — assembly up).
+> It generates native binaries (ELF / Mach-O / PE) from source code.
+> Zero external **language** dependencies. Zero unsafe code in
+> compiler/stdlib by construction (assembly up). Stdlib **may**
+> bridge to system libraries (libssl, libc) via the v5.6.37
+> fdlopen-bootstrapped helper — see Trust Boundaries below.
+>
+> **Last reviewed**: 2026-05-10 (v5.10.35).
 
 ## Trust Boundaries
 
@@ -13,6 +18,8 @@
 | User input (compiled programs) | Untrusted — may contain arbitrary code |
 | Syscall interface (Linux kernel) | Trusted — OS provides memory isolation |
 | Generated binaries | Untrusted until verified — self-hosting proves compiler correctness |
+| `~/.cyrius/dlopen-helper` (v5.6.37+) | Trusted — built by `install.sh` from cyrius source; used by `fdlopen.cyr` to bootstrap real glibc for libssl bridge. Missing helper = TLS / libssl features disabled at runtime, not a security risk. |
+| Linked `libssl.so.3` / `libcrypto.so.3` (when `tls_available() == 1`) | System-trusted — the host's OpenSSL. Stdlib `lib/tls.cyr` is a thin bridge; OpenSSL CVEs apply transitively when used. |
 
 ## Attack Surface
 
@@ -20,7 +27,7 @@
 |------|------|------------|
 | **Buffer overflow in compiler** | Malicious input overflows tok_names, codebuf, or fixup table | Bounds checks on ADDTOK (65536), LEXID (65000), fixup (1024) |
 | **Heap layout corruption** | Adjacent buffers overflow silently | Guard checks, documented HEAP MAP, P-1 hardening |
-| **Preprocessor path traversal** | `include "../../../etc/passwd"` reads arbitrary files | Include only processes files relative to CWD; no symlink resolution |
+| **Preprocessor path traversal** | `include "../../../etc/passwd"` reads arbitrary files | `READFILE` in `lib/lex.cyr` rejects `..` path components by default; `CYRIUS_ALLOW_PARENT_INCLUDES=1` env override exists for sibling-dep projects (bote pattern) and is auto-set by `cyrius build` when resolving relative-path deps. CVE-02 hardening, shipped v5.x. |
 | **Integer overflow in alloc** | Large allocation wraps to small size | brk return value checked; returns 0 on failure |
 | **Code injection via inline asm** | `asm { ... }` emits arbitrary bytes | By design — asm is a power tool, not a vulnerability |
 | **Denial of service** | Extremely large source files | Input buffer capped at 131KB; token array at 65536 |
@@ -55,9 +62,35 @@ Security issues: security@agnos.dev
 Response SLA: 48 hours
 Disclosure: 90-day coordinated
 
+## Stdlib TLS surface (v5.7.0+)
+
+`lib/tls.cyr` brokers TLS 1.2/1.3 via OpenSSL's `libssl.so.3`,
+bootstrapped through fdlopen for correct pthread TCB layout
+(pre-v5.6.37 in-tree dynlib_open caused `SSL_CTX_new` to
+deadlock on its first futex). Capabilities surfaced through
+`tls_supports_*()` probes; consumers (sandhi 1.x) fall back
+to a non-TLS path on unsupported hosts.
+
+| Wave | Slot | Surface |
+|------|------|---------|
+| Core | v5.6.37 / v5.6.40 | `tls_connect` / `tls_connect_with_ctx_hook` / `tls_set_alpn` / `tls_set_verify` |
+| Session resumption + 0-RTT primitives | v5.10.21 | `tls_get_session` / `tls_set_session` / `tls_session_free` / 3 session-cache callbacks / `tls_ctx_set_max_early_data` / `tls_write_early_data` / `tls_read_early_data` |
+| Client-side staged connect | v5.10.27 | `tls_connect_alloc` + `tls_connect_complete` (closes the timing-window gap for session-resumption) |
+| Client-side 0-RTT acceptance + eligibility | v5.10.34 | `tls_get_early_data_status` + `tls_session_get_max_early_data` (sandhi 1.3.2 unblock per `sandhi/docs/issues/2026-05-10-stdlib-tls-early-data-status.md`) |
+
+**Security caveats for TLS users**:
+- Replay-attack mitigation for 0-RTT is the **consumer's**
+  responsibility (sandhi's session-cache impl bounds early-data
+  budget per cache entry). Stdlib enforces no replay window.
+- `tls_set_verify(handle, mode, callback)` — passing a permissive
+  callback (always returns 1) disables peer verification.
+  Consumers are expected to call default-path setup
+  (`SSL_CTX_set_default_verify_paths` via `tls_connect`'s
+  internals) and only override the callback for mTLS / pinning.
+
 ## Design Principles
 
-- Zero external dependencies — no supply chain to compromise
+- Zero external language dependencies — no crates.io supply chain
 - Self-hosting verification after every compiler change
 - Byte-exact reproducibility — same source always produces same binary
 - Fixed heap layout is documented and auditable
