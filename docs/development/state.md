@@ -5,6 +5,15 @@
 
 ## Version
 
+**5.11.12** (shipped 2026-05-11 — **daimon P2: lib/async.cyr aarch64
+portability fix**). Three bare `syscall(SYS_X, ...)` calls in async.cyr
+replaced with arch-dispatching wrappers: `sys_epoll_wait` (lines 117 +
+145), `sys_pipe` (line 126), `sys_fork` (line 129). daimon's filing
+flagged SYS_EPOLL_WAIT; aarch64 cross-build surfaced the other two.
+Cross-host smoke: pi runtime exit=0 ✓. cc5 byte-identical at 804,472 B;
+check.sh 66/66; cyrius test 146/146. Closes
+[`docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md`](issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md).
+
 **5.11.11** (shipped 2026-05-11 — **TS test harness program**). New
 `programs/ts_test_runner.cyr` — standalone CLI harness walking
 .ts/.tsx fixtures via `cc5 --parse-ts` / `--lex-ts`. Added to

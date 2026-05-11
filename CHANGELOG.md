@@ -6,6 +6,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.12] — 2026-05-11
+
+**daimon P2: `lib/async.cyr` aarch64 portability fix** (closes
+[`docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md`](docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md)).
+
+### Root cause
+
+`lib/async.cyr` made three `syscall(SYS_*, ...)` calls using x86-only
+syscall numbers, breaking the aarch64 cross-build:
+
+| Call site | Symbol | x86 nr | aarch64 reality |
+|-----------|--------|-------:|-----------------|
+| line 117  | `SYS_EPOLL_WAIT` | 232 | aarch64 has no plain `epoll_wait`; uses `epoll_pwait` (22) with NULL sigmask |
+| line 145  | `SYS_EPOLL_WAIT` | 232 | same |
+| line 126  | `SYS_PIPE`       |  22 | aarch64 has no plain `pipe`; uses `pipe2` (59) with flags=0 |
+| line 129  | `SYS_FORK`       |  57 | aarch64 has no plain `fork`; uses `clone(SIGCHLD,...)` (220) |
+
+daimon's issue filing only flagged `SYS_EPOLL_WAIT`; the empirical
+aarch64 cross-build via `cc5_aarch64` surfaced two more arch-divergent
+calls that the same shape blocked.
+
+### Fix
+
+Replace each bare `syscall(SYS_X, ...)` with the arch-dispatching
+wrapper from the per-arch syscalls peer (both already shipped):
+
+```cyr
+- syscall(SYS_EPOLL_WAIT, epfd, &revents, 1, 0 - 1);
++ sys_epoll_wait(epfd, &revents, 1, 0 - 1);
+- var nr = syscall(SYS_EPOLL_WAIT, epfd, &revents, 1, ms);
++ var nr = sys_epoll_wait(epfd, &revents, 1, ms);
+- syscall(SYS_PIPE, &pipefd);
++ sys_pipe(&pipefd);
+- var pid = syscall(SYS_FORK);
++ var pid = sys_fork();
+```
+
+x86 peer keeps `syscall(SYS_FORK)` / `syscall(SYS_PIPE)` /
+`syscall(SYS_EPOLL_WAIT, ...)`; aarch64 peer translates to
+`clone(SIGCHLD,...)` / `pipe2(fds, 0)` / `epoll_pwait(epfd, evs, n, t, 0, 8)`.
+async.cyr no longer cares which arch.
+
+### Acceptance
+
+- x86_64: minimal test (`include "lib/async.cyr"`) compiles clean
+  (was already compiling).
+- aarch64 cross-build (`cat test.cyr | build/cc5_aarch64`): compiles
+  clean (was failing with `error: undefined variable 'SYS_EPOLL_WAIT'`,
+  then `SYS_PIPE`, then `SYS_FORK` — sequential surface as each gets
+  fixed). Final binary: `ELF 64-bit LSB executable, ARM aarch64`.
+- Cross-host runtime: pi runtime exit=0 ✓ (per
+  `feedback_cross_arch_propagation_mandatory` — pi smoke is the
+  load-bearing verify for aarch64 stdlib changes).
+- cc5 byte-identical at 804,472 B (async.cyr not in cc5's include chain).
+- check.sh 66/66 + cyrius test 146/146.
+
+### Lib-wide audit note
+
+The same bare-syscall pattern may exist in other stdlib files
+(grep for `syscall(SYS_FORK\|SYS_PIPE\|SYS_EPOLL_WAIT)` across lib/).
+For this slot the scope was bounded to async.cyr per the daimon
+filing; broader stdlib audit pinnable as a future slot if a consumer
+surfaces the same shape elsewhere.
+
+### Next slot
+
+v5.11.13 — bote `lib/net.cyr` `recv_timeout` + getaddrinfo (P2).
+
 ## [5.11.11] — 2026-05-11
 
 **TS test harness program** (option E from v5.7.37, promoted at

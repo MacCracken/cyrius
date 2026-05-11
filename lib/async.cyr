@@ -114,7 +114,7 @@ fn async_await_readable(fd): i64 {
     store64(&ev + 4, fd);
     syscall(SYS_EPOLL_CTL, epfd, 1, fd, &ev);
     var revents[16];
-    syscall(SYS_EPOLL_WAIT, epfd, &revents, 1, 0 - 1);
+    sys_epoll_wait(epfd, &revents, 1, 0 - 1);
     syscall(SYS_CLOSE, epfd);
     return 0;
 }
@@ -123,10 +123,10 @@ fn async_await_readable(fd): i64 {
 # Uses fork: child runs fn, parent waits with timeout.
 fn async_timeout(fp, arg, ms): i64 {
     var pipefd[16];
-    syscall(SYS_PIPE, &pipefd);
+    sys_pipe(&pipefd);
     var rfd = load32(&pipefd);
     var wfd = load32(&pipefd + 4);
-    var pid = syscall(SYS_FORK);
+    var pid = sys_fork();
     if (pid == 0) {
         syscall(SYS_CLOSE, rfd);
         var result = fncall1(fp, arg);
@@ -142,7 +142,7 @@ fn async_timeout(fp, arg, ms): i64 {
     store64(&ev + 4, rfd);
     syscall(SYS_EPOLL_CTL, epfd, 1, rfd, &ev);
     var revents[16];
-    var nr = syscall(SYS_EPOLL_WAIT, epfd, &revents, 1, ms);
+    var nr = sys_epoll_wait(epfd, &revents, 1, ms);
     syscall(SYS_CLOSE, epfd);
     if (nr > 0) {
         # Child finished in time
