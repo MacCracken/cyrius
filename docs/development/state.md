@@ -5,6 +5,16 @@
 
 ## Version
 
+**5.11.4** (shipped 2026-05-11 — **Stdlib annotation arc Phase 4:
+collection libraries**). 127 public fns across 2 modules
+(hashmap 41, json 86) — heavier than the roadmap's ~89 estimate.
+All `: i64` (map ptrs / counts / tagged json values). cc5
+byte-identical at 804,472 B. **check.sh 66/66**;
+**cyrius test 146/146**. Arc total: 374 → **501** annotated
+(~50 % — halfway). **v5.11.20 pinned**: kybernet
+`fn_table`+`identifier buffer` cap raise (filed 2026-05-11; lands
+first slot in buffer band after annotation arc).
+
 **5.11.3** (shipped 2026-05-11 — **Stdlib annotation arc Phase 3:
 string/format completion**). 85 public fns added across 5 modules
 (string +7, str +16, bigint +24, chrono +19, bench +19) closing

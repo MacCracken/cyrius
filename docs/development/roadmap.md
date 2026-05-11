@@ -484,7 +484,8 @@ right after).
 | v5.11.15-17 | bote streaming dispatch + thread async primitives (P2; 3-slot) |
 | v5.11.18 | bote WS handshake key validation (Low; ride-along after bote stack) |
 | v5.11.19 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
-| v5.11.20-38 | OPEN — emergent bugs / consumer-filed / items surface during cycle (19-slot buffer; user 2026-05-11) |
+| v5.11.20 | **kybernet `fn_table` + `identifier buffer` cap raise** (P2; pinned 2026-05-11 at v5.11.4 entry; see below) |
+| v5.11.21-38 | OPEN — emergent bugs / consumer-filed / items surface during cycle (18-slot buffer; user 2026-05-11) |
 | v5.11.39 | Defensive sweep (parser `assert_eq` string-literal quirk bundled) |
 | v5.11.40 | Cycle closeout |
 
@@ -542,6 +543,54 @@ place. The two fixes are complementary, not redundant.
 **Reference**: in-tree memory pin
 `project_cyriusly_version_switching.md` carries the symptom + the
 recovery procedure used during v5.11.3.
+
+#### v5.11.20 — kybernet `fn_table` + `identifier buffer` cap raise
+
+**Pinned 2026-05-11 at v5.11.4 entry per user direction** (kybernet
+filed
+[`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md);
+pin lands AFTER the stdlib annotation arc completes).
+
+**Background**: kybernet 1.1.0 (AGNOS PID-1 init system) assembled
+the full AGNOS surface (stdlib + agnosys-full + agnostik + libro +
+patra + argonaut + sigil + sakshi) and hit:
+- `fn_table at 92% (3779 / 4096)` — warn threshold (90%)
+- `identifier buffer at 85% (112094 / 131072 bytes)` — warn threshold
+
+kybernet 1.1.1 worked around the cliff by switching `[deps.agnosys]`
+from `dist/agnosys.cyr` (350 fns) → `dist/agnosys-core.cyr` (56 fns).
+That's a one-shot lever — 1.2.0 edge-boot work brings
+`agnosys-storage` + `agnosys-trust` profiles back into scope, and
+the next minor tips past the hard cap (non-recoverable error).
+
+**The fix (per the issue's "Concrete ask")**:
+1. `fn_table` 4096 → **8192** (2×). Single source-line edit in cc5;
+   raises the cap and the warn threshold proportionally.
+2. `identifier buffer` 131072 → **262144 bytes** (2×). Edit in
+   `lex.cyr` (the existing error message even names the location:
+   *"raise LEXID cap in lex.cyr"*).
+3. No algorithmic change. No on-disk format change. No
+   consumer-visible API change.
+
+**Acceptance bar**:
+- cc5 self-host byte-identical (cap raise is parse-only).
+- check.sh 66/66 green.
+- cyrius test 146/146 green.
+- kybernet 1.1.0 build (full agnosys-full surface) compiles without
+  the warn-threshold notes.
+- Cross-host smoke green on all 4 hosts (local x86, pi, ecb, cass).
+
+**Why this slot and not earlier**: per user direction, "after stdlib
+annotation arc". The arc runs v5.11.1-v5.11.7+; the post-arc queue
+(.8-.19) is already pinned to infrastructure / consumer-blocking
+P2 work. v5.11.20 is the first buffer-band slot — kybernet is P2
+non-blocking (workaround in place at 1.1.1) but cliff-narrow for
+the next 1-2 minors.
+
+**P2 rationale** (from the issue): not P1 (kybernet 1.1.1 ships
+clean under existing caps); not P3 (headroom is narrow enough that
+1.2.0 edge-boot plausibly tips the warn threshold). Low-risk fix
+makes the P2 rate the right speed.
 
 Held-forward items (no slot pinned; surface-on-ask): Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,

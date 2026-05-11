@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.4] — 2026-05-11
+
+**Stdlib annotation arc — Phase 4: collection libraries**.
+
+Phase 4 covers the two mid-sized collection workhorses: `hashmap`
+(underpins sandhi / agnosys / kybernet hash-table flows) and `json`
+(the canonical serialization surface — argonaut / agnosys / sakshi
+all serialize-through it).
+
+### Modules annotated (127 fns total — heavier than roadmap's ~89 estimate)
+
+| Module          | Fns | Notes |
+|-----------------|----:|-------|
+| `lib/hashmap.cyr`  |  41 | Two map families: cstr-key (`map_*`) + u64-key (`map_u64_*`). All `: i64`. |
+| `lib/json.cyr`     |  86 | `json_v_*` tagged-value API (Null/Bool/Int/Float/Str/Arr/Obj), parser, builder, streaming, JSON Pointer. All `: i64`. |
+
+### Acceptance bar
+
+- **cc5 byte-identical**: 804,472 B, fixpoint b == c. ✓
+- **check.sh 66/66**: green. ✓
+- **cyrius test 146/146**: green. ✓
+
+### Coverage delta
+
+- Phase-4 modules: 0/127 → **127/127** annotated public fns.
+- Arc total: 374 → **501** annotated.
+- Stdlib gap: ~743 → **~616** unannotated (~50 % arc progress — halfway).
+
+### Roadmap update
+
+**Pinned v5.11.20**: kybernet `fn_table` 4096→8192 + `identifier
+buffer` 131072→262144 cap raise (P2, filed
+[`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md)).
+Lands after the annotation arc per user direction; first slot in the
+buffer band. Single source-line edits in cc5 + lex.cyr; no API change.
+Buffer band shrinks from .20-.38 (19 slots) to .21-.38 (18 slots).
+
+### Next slot
+
+v5.11.5 — **Phase 5: big consumer library** (mabda; ~405 fns).
+Largest single gap. GPU/rendering surface. Whole slot.
+
 ## [5.11.3] — 2026-05-11
 
 **Stdlib annotation arc — Phase 3: string/format completion**.
