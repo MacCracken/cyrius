@@ -5,6 +5,21 @@
 
 ## Version
 
+**5.11.7** (shipped 2026-05-11 — **Phase 7: compiler-side internals
++ ARC CLOSE**). 44 fns annotated across `src/common/ir.cyr` (44→64)
+and `src/frontend/parse_types.cyr` (0→24). parse_decl + parse_fn
+were already at 100%. cc5 byte-identical at 804,472 B; check.sh
+66/66; cyrius test 146/146; api-surface unchanged at 3030 (compiler
+internals don't expose publicly).
+
+**Annotation arc TOTAL** (v5.11.1 → v5.11.7): **~1,306 in-tree
+fns annotated across 7 slots**. Phase 5 mabda (747 fns) handled
+out-of-band on mabda v3 branch awaiting 3.0.0 GA. stdlib +
+compiler-internals coverage at effective 100% on in-tree modules.
+api-surface delta across arc: 2,876 → **3,030** (+154 public fns).
+
+**Arc CLOSED**. v5.11.8 picks up `cyrius deps` symlink→file-copy fix.
+
 **5.11.6** (shipped 2026-05-11 — **Cross-binary ship: cc5_win
 (PLATFORM BLOCKER unblock)**). Added `cc5_win` to
 `cyrius.cyml [release].cross_bins` — Linux x86_64 ELF cross-compiler

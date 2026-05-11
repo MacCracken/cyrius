@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.7] — 2026-05-11
+
+**Stdlib annotation arc — Phase 7: compiler-side internals + ARC CLOSE**.
+
+Final phase of the v5.11.x stdlib annotation arc. Compiler-side
+internal fns annotated for tighter internal reasoning — these don't
+expose to consumers (no api-surface delta) but close the arc's
+in-tree coverage at 100%.
+
+### Modules annotated (44 fns added)
+
+| Module | Before | After |
+|--------|-------:|------:|
+| `src/common/ir.cyr` | 44/64 | 64/64 |
+| `src/frontend/parse_types.cyr` | 0/24 | 24/24 |
+| `src/frontend/parse_decl.cyr` | 11/11 | 11/11 (pre-existing) |
+| `src/frontend/parse_fn.cyr` | 16/16 | 16/16 (pre-existing) |
+
+### Acceptance bar
+
+- **cc5 byte-identical**: 804,472 B, fixpoint b == c (annotations
+  are parse-only on internal fns too). ✓
+- **check.sh 66/66**: green. ✓
+- **cyrius test 146/146**: green. ✓
+- **api-surface unchanged at 3030 fns** — compiler internals aren't
+  part of the public consumer API; annotations tighten internal
+  type-check signal without exposing new surface.
+
+### Annotation arc — final summary (v5.11.1 → v5.11.7)
+
+| Phase | Slot | Modules | Fns added |
+|-------|------|---------|----------:|
+| 1 | v5.11.1 | Foundational core (alloc/vec/fmt/freelist/fnptr/result/tagged/assert) | 107 |
+| 2 | v5.11.2 | I/O surface (io/fs/process + syscalls peers) | 182 |
+| 3 | v5.11.3 | String/format (string/str/bigint/chrono/bench) | 85 |
+| 4 | v5.11.4 | Collection libs (hashmap/json) | 127 |
+| ~~5~~ | ~~mabda~~ | Out-of-band on mabda v3 branch (release-blocked until 3.0.0 GA); 747 fns staged | — |
+| 6 | v5.11.5 | Partial-coverage closeouts (13 modules incl. sandhi refold) + 9-sibling fold-in | ~761 |
+| 7 | v5.11.7 | Compiler-side internals (ir + parse_types + parse_decl + parse_fn) | 44 |
+
+**Arc total in-tree: ~1,306 fns annotated across 7 slots** (plus
+747 fns staged in mabda v3 awaiting 3.0.0 GA fold-in). stdlib +
+compiler-internals coverage now at effective 100% on in-tree
+modules. api-surface 2,876 → **3,030** (+154 public fns surfaced
+across the arc).
+
+### Arc CLOSED — what's next in v5.11.x
+
+v5.11.8 onward picks up the post-arc queue:
+- v5.11.8 — `cyrius deps` symlink → file-copy fix
+- v5.11.9-10 — regression.sh → cyrius port + Cyriusly cmdtools
+- v5.11.11 — TS test harness program
+- v5.11.12-18 — daimon / bote consumer-filed items
+- v5.11.19 — Per-repo cyrius version isolation
+- v5.11.20 — kybernet bundle (cap raise + socket-syscall wrappers)
+- v5.11.21-35 — Buffer band (15 slots; emergent bugs / items)
+- v5.11.36-38 — Cross-bin tail (cc5_aarch64_macho / aarch64_native / cx)
+- v5.11.39 — Defensive sweep
+- v5.11.40 — Cycle closeout
+
 ## [5.11.6] — 2026-05-11
 
 **Cross-binary ship: cc5_win (PLATFORM BLOCKER unblock)**.

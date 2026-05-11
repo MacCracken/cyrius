@@ -153,15 +153,15 @@ fn _IR_REC(S, op, fl, a1, a2): i64 {
 # IR state accessors
 # ================================================================
 
-fn IR_NCNT(S)       { return L64(S + 0x17CA000); }
-fn IR_SNCNT(S, v)   { S64(S + 0x17CA000, v); return 0; }
-fn IR_BCNT(S)       { return L64(S + 0x16CA008); }
-fn IR_SBCNT(S, v)   { S64(S + 0x16CA008, v); return 0; }
-fn IR_CURBB(S)      { return L64(S + 0x16CA010); }
-fn IR_SCURBB(S, v)  { S64(S + 0x16CA010, v); return 0; }
-fn IR_ECNT(S)       { return L64(S + 0x16CA018); }
-fn IR_SECNT(S, v)   { S64(S + 0x16CA018, v); return 0; }
-fn IR_ENABLED(S)    { return L64(S + 0x16CA020); }
+fn IR_NCNT(S): i64 { return L64(S + 0x17CA000); }
+fn IR_SNCNT(S, v): i64 { S64(S + 0x17CA000, v); return 0; }
+fn IR_BCNT(S): i64 { return L64(S + 0x16CA008); }
+fn IR_SBCNT(S, v): i64 { S64(S + 0x16CA008, v); return 0; }
+fn IR_CURBB(S): i64 { return L64(S + 0x16CA010); }
+fn IR_SCURBB(S, v): i64 { S64(S + 0x16CA010, v); return 0; }
+fn IR_ECNT(S): i64 { return L64(S + 0x16CA018); }
+fn IR_SECNT(S, v): i64 { S64(S + 0x16CA018, v); return 0; }
+fn IR_ENABLED(S): i64 { return L64(S + 0x16CA020); }
 fn IR_SENABLE(S, v): i64 { S64(S + 0x16CA020, v); return 0; }
 
 # ================================================================
@@ -183,11 +183,11 @@ fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
 }
 
 # Read IR node fields
-fn IR_NODE_CP(S, ni)   { return load32(S + 0x180B000 + ni * 4); }
-fn IR_NODE_OP(S, ni)   { return load16(S + 0x12CA000 + ni * 16); }
-fn IR_NODE_FL(S, ni)   { return load16(S + 0x12CA000 + ni * 16 + 2); }
-fn IR_NODE_A1(S, ni)   { return load32(S + 0x12CA000 + ni * 16 + 4); }
-fn IR_NODE_A2(S, ni)   { return load64(S + 0x12CA000 + ni * 16 + 8); }
+fn IR_NODE_CP(S, ni): i64 { return load32(S + 0x180B000 + ni * 4); }
+fn IR_NODE_OP(S, ni): i64 { return load16(S + 0x12CA000 + ni * 16); }
+fn IR_NODE_FL(S, ni): i64 { return load16(S + 0x12CA000 + ni * 16 + 2); }
+fn IR_NODE_A1(S, ni): i64 { return load32(S + 0x12CA000 + ni * 16 + 4); }
+fn IR_NODE_A2(S, ni): i64 { return load64(S + 0x12CA000 + ni * 16 + 8); }
 
 # ================================================================
 # Basic block read/write
@@ -208,11 +208,11 @@ fn _ir_set_bb(S, bi, first, count, succ0, succ1): i64 {
     return 0;
 }
 
-fn IR_BB_ID(S, bi)     { return load64(S + 0x16CA000 + bi * 32); }
-fn IR_BB_FIRST(S, bi)  { return load64(S + 0x16CA000 + bi * 32 + 8); }
-fn IR_BB_COUNT(S, bi)  { return load64(S + 0x16CA000 + bi * 32 + 16); }
-fn IR_BB_SUCC0(S, bi)  { return load64(S + 0x16CA000 + bi * 32 + 24) & 0xFFFFFFFF; }
-fn IR_BB_SUCC1(S, bi)  { return (load64(S + 0x16CA000 + bi * 32 + 24) >> 32) & 0xFFFFFFFF; }
+fn IR_BB_ID(S, bi): i64 { return load64(S + 0x16CA000 + bi * 32); }
+fn IR_BB_FIRST(S, bi): i64 { return load64(S + 0x16CA000 + bi * 32 + 8); }
+fn IR_BB_COUNT(S, bi): i64 { return load64(S + 0x16CA000 + bi * 32 + 16); }
+fn IR_BB_SUCC0(S, bi): i64 { return load64(S + 0x16CA000 + bi * 32 + 24) & 0xFFFFFFFF; }
+fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0x16CA000 + bi * 32 + 24) >> 32) & 0xFFFFFFFF; }
 
 # ================================================================
 # IR builder — Phase 2 API
@@ -295,7 +295,7 @@ fn ir_add_edge(S, from_bb, to_bb): i64 {
 }
 
 fn IR_EDGE_FROM(S, ei): i64 { return load64(S + 0x17CB000 + ei * 8) & 0xFFFFFFFF; }
-fn IR_EDGE_TO(S, ei)   { return (load64(S + 0x17CB000 + ei * 8) >> 32) & 0xFFFFFFFF; }
+fn IR_EDGE_TO(S, ei): i64 { return (load64(S + 0x17CB000 + ei * 8) >> 32) & 0xFFFFFFFF; }
 
 # Reset IR state (between functions or at start of compilation)
 fn ir_reset(S): i64 {

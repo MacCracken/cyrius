@@ -19,12 +19,12 @@
 #   0x18F830  struct_count         8 bytes
 #   0x1D8000  enum_const_val[8192] 8192 bytes — 1024 × 8 B enum-fold table (v5.5.2)
 
-fn GSTC(S) { return L64(S + 0x18F830); }
-fn SSTC(S, v) { S64(S + 0x18F830, v); return 0; }
+fn GSTC(S): i64 { return L64(S + 0x18F830); }
+fn SSTC(S, v): i64 { S64(S + 0x18F830, v); return 0; }
 
 # Get/set struct_id for global variable at index vi
-fn GVTYPE(S, vi) { return L64(S + 0x13A000 + vi * 8); }
-fn SVTYPE(S, vi, v) { S64(S + 0x13A000 + vi * 8, v); return 0; }
+fn GVTYPE(S, vi): i64 { return L64(S + 0x13A000 + vi * 8); }
+fn SVTYPE(S, vi, v): i64 { S64(S + 0x13A000 + vi * 8, v); return 0; }
 
 # v5.7.17: dump every registered struct name to stderr. Called from
 # REGSTRUCT before the cap-overflow ERR_MSG so the user sees WHICH
@@ -32,7 +32,7 @@ fn SVTYPE(S, vi, v) { S64(S + 0x13A000 + vi * 8, v); return 0; }
 # diagnostic pointed at the first user-code struct line — even when
 # the overflow came from auto-prepended dep dist bundles, which
 # blamed the user instead of the deps. kybernet 2026-04-27 surfacing).
-fn DUMP_STRUCTS(S) {
+fn DUMP_STRUCTS(S): i64 {
     var sc = GSTC(S);
     syscall(SYS_WRITE, 2, "note: ", 6);
     PRNUM(sc);
@@ -53,7 +53,7 @@ fn DUMP_STRUCTS(S) {
 }
 
 # Register a new struct, return index (1-based, 0 = not a struct)
-fn REGSTRUCT(S, noff) {
+fn REGSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     if (sc >= 256) {
         DUMP_STRUCTS(S);
@@ -66,7 +66,7 @@ fn REGSTRUCT(S, noff) {
 }
 
 # Find struct by name, return 1-based index or 0
-fn FINDSTRUCT(S, noff) {
+fn FINDSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     var i = 0;
     while (i < sc) {
@@ -78,7 +78,7 @@ fn FINDSTRUCT(S, noff) {
 }
 
 # Add field to struct (0-based struct index si), ftype = struct_id or 0 for scalar
-fn ADDFIELD(S, si, fnoff) {
+fn ADDFIELD(S, si, fnoff): i64 {
     var fc = L64(S + 0x18EE30 + si * 8);
     if (fc >= 32) { ERR_MSG(S, "too many struct fields (max 32)", 31); }
     S64(S + 0x11CA000 + si * 256 + fc * 8, fnoff);
@@ -87,7 +87,7 @@ fn ADDFIELD(S, si, fnoff) {
     return 0;
 }
 
-fn ADDFIELDTYPED(S, si, fnoff, ftype) {
+fn ADDFIELDTYPED(S, si, fnoff, ftype): i64 {
     var fc = L64(S + 0x18EE30 + si * 8);
     if (fc >= 32) { ERR_MSG(S, "too many struct fields (max 32)", 31); }
     S64(S + 0x11CA000 + si * 256 + fc * 8, fnoff);
@@ -96,14 +96,14 @@ fn ADDFIELDTYPED(S, si, fnoff, ftype) {
     return 0;
 }
 
-fn GETFTYPE(S, si, fi) {
+fn GETFTYPE(S, si, fi): i64 {
     return L64(S + 0x114A000 + si * 256 + fi * 8);
 }
 
 # Get field name offset (into tok_names at S+0x60000) for struct si, field fi.
 # Returns the same offset that was recorded by ADDFIELD, so direct equality
 # with a parsed IDENT's PEEKV works (idents are interned by the lexer).
-fn GETFNAME(S, si, fi) {
+fn GETFNAME(S, si, fi): i64 {
     return L64(S + 0x11CA000 + si * 256 + fi * 8);
 }
 
@@ -111,7 +111,7 @@ fn GETFNAME(S, si, fi) {
 # Needed because named-field init uses the identifier buffer (S+0x60000)
 # where two different source occurrences of the same name share an offset
 # (dedup), but defensive equality handles the rare non-interned case too.
-fn STREQTOK(S, a_off, b_off) {
+fn STREQTOK(S, a_off, b_off): i64 {
     if (a_off == b_off) { return 1; }
     var i = 0;
     while (1 == 1) {
@@ -142,7 +142,7 @@ fn STREQTOK(S, a_off, b_off) {
 # `unexpected '}'` because the parser was still expecting a
 # third expression for the i64 field after consuming
 # `my_str`/`42` as data/len.
-fn IS_STR_FIELD(S, ft) {
+fn IS_STR_FIELD(S, ft): i64 {
     if (ft <= 0) { return 0; }
     var sname_off = L64(S + 0x18E630 + (ft - 1) * 8);
     if (load8(S + 0x60000 + sname_off)     != 83)  { return 0; }
@@ -155,7 +155,7 @@ fn IS_STR_FIELD(S, ft) {
 # Get byte size of a single field from its type encoding
 # >0 = nested struct ID, 0 = untyped (8), <0 = sized scalar (-width)
 # v5.10.7 — Str field special-case: 8 bytes (pointer slot).
-fn FIELDSZ(S, ft) {
+fn FIELDSZ(S, ft): i64 {
     if (ft > 0) {
         if (IS_STR_FIELD(S, ft) == 1) { return 8; }
         return STRUCTSZ(S, ft - 1);
@@ -165,7 +165,7 @@ fn FIELDSZ(S, ft) {
 }
 
 # Get total size of a struct/union in bytes
-fn STRUCTSZ(S, si) {
+fn STRUCTSZ(S, si): i64 {
     var fc = GETFCOUNT(S, si);
     var is_u = ISUNION(S, si);
     var sz = 0;
@@ -183,7 +183,7 @@ fn STRUCTSZ(S, si) {
 }
 
 # Get byte offset of field fi within struct/union si
-fn FIELDOFF(S, si, fi) {
+fn FIELDOFF(S, si, fi): i64 {
     if (ISUNION(S, si) == 1) { return 0; }
     var off = 0;
     var i = 0;
@@ -198,7 +198,7 @@ fn FIELDOFF(S, si, fi) {
 # Called from BOTH pass 1 (register vars) and pass 2 (emit init code).
 # Pass 1: just register var names + sizes (no code)
 # Pass 2: emit mov rax, val; evstore for each variant
-fn PARSE_ENUM_DEF(S, emit_code) {
+fn PARSE_ENUM_DEF(S, emit_code): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var enoff = PEEKV(S);
@@ -375,11 +375,11 @@ fn PARSE_ENUM_DEF(S, emit_code) {
 }
 
 # Get field count for struct (0-based index). High bit = union flag.
-fn GETFCOUNT(S, si) { return L64(S + 0x18EE30 + si * 8) & 0x7FFFFFFFFFFFFFFF; }
-fn ISUNION(S, si) { return L64(S + 0x18EE30 + si * 8) >> 63; }
+fn GETFCOUNT(S, si): i64 { return L64(S + 0x18EE30 + si * 8) & 0x7FFFFFFFFFFFFFFF; }
+fn ISUNION(S, si): i64 { return L64(S + 0x18EE30 + si * 8) >> 63; }
 
 # Find field index in struct (0-based struct index), return field index or -1
-fn FINDFIELD(S, si, fnoff) {
+fn FINDFIELD(S, si, fnoff): i64 {
     var fc = GETFCOUNT(S, si);
     var i = 0;
     while (i < fc) {
@@ -391,7 +391,7 @@ fn FINDFIELD(S, si, fnoff) {
 }
 
 # Parse: struct Name<T> { field; field; ... }
-fn PARSE_STRUCT_DEF(S) {
+fn PARSE_STRUCT_DEF(S): i64 {
     STI(S, GTI(S) + 1);  # consume STRUCT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
@@ -441,7 +441,7 @@ fn PARSE_STRUCT_DEF(S) {
 }
 
 # Parse union — same as struct but sets high bit in fcount to mark as union
-fn PARSE_UNION_DEF(S) {
+fn PARSE_UNION_DEF(S): i64 {
     STI(S, GTI(S) + 1);  # consume UNION
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
@@ -488,7 +488,7 @@ fn PARSE_UNION_DEF(S) {
     return 0;
 }
 
-fn STREQ(S, a, b) {
+fn STREQ(S, a, b): i64 {
     var i = 0;
     var go = 1;
     while (go == 1) {
@@ -503,7 +503,7 @@ fn STREQ(S, a, b) {
 
 # Find variable by name offset, return LAST match index or -1.
 # Last-match semantics ensure each function's `var buf[N]` shadows earlier ones.
-fn FINDVAR(S, noff) {
+fn FINDVAR(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = vcnt - 1;
     while (vi >= 0) {
