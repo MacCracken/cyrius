@@ -5,6 +5,16 @@
 
 ## Version
 
+**5.11.14** (shipped 2026-05-11 — **bote P2: arena_free lifecycle
+terminator + per-frame reuse pattern docs**). New `fn arena_free(a)`
+in `lib/alloc.cyr` invalidates the arena handle. Audit clarified
+that `arena_reset` (the load-bearing per-frame reuse primitive bote
+needed) already shipped at v5.5.x; the issue's "fl_free" title was a
+misframe of the existing surface + missing lifecycle terminator.
+Docstring refreshed with the bote WS / SSE per-frame reuse pattern.
+api-surface 3031 → **3032**. cc5 byte-identical at 804,472 B;
+check.sh 66/66; cyrius test 146/146. Issue archived.
+
 **5.11.13** (shipped 2026-05-11 — **bote P2 Part A: sock_set_recv_timeout**).
 New `fn sock_set_recv_timeout(fd, secs, usecs): i64` in `lib/net.cyr`
 sets `SO_RCVTIMEO` via setsockopt — Slowloris defense. Closes bote

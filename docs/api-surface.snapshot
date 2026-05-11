@@ -609,6 +609,7 @@ alloc::allocator_reset_fn/1
 alloc::allocator_state/1
 alloc::arena_alloc/2
 alloc::arena_allocator/1
+alloc::arena_free/1
 alloc::arena_new/1
 alloc::arena_remaining/1
 alloc::arena_reset/1

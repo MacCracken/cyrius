@@ -6,6 +6,91 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.14] — 2026-05-11
+
+**bote P2: arena lifecycle terminator + per-frame reuse pattern**
+— closes [archived issue](issues/archived/2026-05-10-bote-fl-free-for-arena-reuse.md).
+
+### Premise check first
+
+The issue title called for "fl_free" but the actual primitive bote
+needs for WS / SSE per-frame reuse is `arena_reset` — and that
+**already exists** in `lib/alloc.cyr` since v5.5.x (lines 132-138).
+The audit clarified that:
+- `arena_new(cap)` ✓ shipped v5.5.x
+- `arena_alloc(a, size)` ✓ shipped v5.5.x
+- `arena_reset(a)` ✓ shipped v5.5.x — **the load-bearing call for
+  bote's WS frame loop**
+- `arena_used`, `arena_remaining` ✓ shipped v5.5.x
+- `arena_allocator()` (Allocator-vtable variant) ✓ shipped v5.8.33
+- `arena_free(a)` ← THIS slot, lifecycle terminator
+
+Per `feedback_consumer_request_full_surface` — when the consumer
+issue maps to existing primitives + a small lifecycle gap, ship the
+gap closure AND make the existing surface discoverable in docs.
+
+### Shipped
+
+1. **New `fn arena_free(a): i64`** in `lib/alloc.cyr`. Zeros the
+   arena header (`base = ptr = end = 0`) so subsequent `arena_alloc`
+   on the freed handle returns 0 instead of leaking writes into
+   stale memory. Double-free safe (`if (a == 0) return 0`). The
+   backing buffer is NOT returned to the global heap — bump
+   allocator can't individually free; reclamation waits for
+   process exit / `alloc_reset()`. Future variant could be
+   mmap-backed for true OS-level reclamation; out of scope here.
+
+2. **Refreshed docstring** at the arena section explaining the
+   per-frame / per-emission reuse pattern bote needs:
+
+   ```cyr
+   var a = arena_new(65536);           # one-time per connection
+   while (more_frames) {
+       arena_reset(a);                  # zero-cost: bump back to base
+       var buf = arena_alloc(a, frame_sz);
+       handle_frame(buf, ...);
+   }
+   arena_free(a);                       # end of connection
+   ```
+
+   Plus an explicit list of consumers the pattern fits: bote WS,
+   bote SSE, daimon agent supervision, mneme long-running.
+
+### Why this is the right shape
+
+bote's issue speculated `arena_free` returns memory to the global
+heap. The honest cyrius semantics is "invalidate the handle". The
+load-bearing reclamation is `arena_reset` — which bote can call
+between frames in a tight loop with zero allocator pressure. The
+RSS growth bote was worried about doesn't happen if `arena_reset`
+runs per-frame; the global bump only grows once (when `arena_new`
+allocates the backing region).
+
+For the WS chatty-client repro (100k 1-byte frames):
+- Pre-fix shape (no arena, direct bump): RSS grows ~1 byte * 100k = ~100 KB
+- Per-frame `arena_reset`: RSS grows by ONE arena-cap (e.g. 64 KB), then flat
+
+### Acceptance
+
+- Functional test: arena_new(1024) → arena_alloc → arena_reset →
+  arena_alloc (still works) → arena_free → arena_alloc (returns 0,
+  invalidated correctly) → arena_free (double-free safe). Exit 42.
+- cc5 byte-identical at 804,472 B.
+- check.sh 66/66 + cyrius test 146/146.
+- api-surface 3031 → **3032** (+1: arena_free).
+
+### Issue closed + archived
+
+`docs/development/issues/2026-05-10-bote-fl-free-for-arena-reuse.md`
+→ `docs/development/issues/archived/`.
+
+### Next slot
+
+v5.11.15-17 — bote streaming dispatch + thread async primitives (P2;
+3-slot scope per roadmap). Multi-piece: concurrency primitives are a
+non-trivial stdlib surface. Pairs with the streaming-dispatch
+filing.
+
 ## [5.11.13] — 2026-05-11
 
 **bote P2 part A: `sock_set_recv_timeout` (Slowloris fix)** — closes
