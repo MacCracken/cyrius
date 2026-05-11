@@ -485,14 +485,14 @@ right after).
 | v5.11.13 | bote `lib/net.cyr` `recv_timeout` + getaddrinfo (P2) |
 | v5.11.14 | bote arena allocator `fl_free` (P2) |
 | v5.11.15 | bote streaming dispatch primitives — **closed in 1 slot** (chan_try_recv + cancel_token_*; chan_* MPSC already shipped v5.5.31, atomics v5.5.31, arena pattern v5.11.14). Original 3-slot scope was over-budget. |
-| v5.11.16-17 | OPEN — emergent bugs / consumer-filed / items surface during cycle (2 slots freed from bote streaming arc; user 2026-05-11) |
-| v5.11.18 | bote WS handshake key validation (Low; ride-along after bote stack) |
-| v5.11.19 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
-| v5.11.20 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
-| v5.11.21 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
-| v5.11.22 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
-| v5.11.23 | **cc5_win PE exit-code crash fix** (HIGH; ai-hwaccel 2.2.2 filed 2026-05-11; PE binaries crash before reaching ExitProcess, exit=0x40001000 instead of 42; WriteFile stdout never lands; blocks every Win64 ship target. Pinned in gap per user direction.) |
-| v5.11.24-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (12-slot buffer; user 2026-05-11) |
+| v5.11.16 | bote WS handshake key validation (Low; RFC 6455 §4.1 — Sec-WebSocket-Key must be 24-char base64; consolidated from .18 at v5.11.15 close per user direction "close up open gap, so we have additional runway later") |
+| v5.11.17 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
+| v5.11.18 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
+| v5.11.19 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
+| v5.11.20 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
+| v5.11.21 | **cc5_win PE exit-code crash fix** (HIGH; ai-hwaccel 2.2.2 filed 2026-05-11; PE binaries crash before reaching ExitProcess, exit=0x40001000 instead of 42; WriteFile stdout never lands; blocks every Win64 ship target. Pinned in gap per user direction.) |
+| v5.11.22 | **`#derive(accessors)` >16-field silent miscompile fix** (Medium; agnos 1.28.3 filed 2026-05-11; `src/frontend/lex_pp.cyr` per-struct `field_names`/`field_types`/`offsets` tables hard-sized at 16 entries — 17th field overflows into field_types[0], offsets diverge silently. agnos 22-field `struct Process` corrupted CR3 → kernel page-fault on first context switch. Raise cap + add hard-cap diagnostic.) |
+| v5.11.23-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (13-slot buffer; user 2026-05-11) |
 | v5.11.36 | **cc5_aarch64_macho cross-bin ship** (deferred from v5.11.6 — host-runtime mmap fix + ecb smoke; user 2026-05-11: "fine for back of the current line") |
 | v5.11.37 | **cc5_aarch64_native cross-bin ship** (deferred from v5.11.6 — build + pi smoke) |
 | v5.11.38 | **cc5_cx cross-bin ship** (deferred from v5.11.6 — bytecode emit + VM smoke target) |
@@ -558,7 +558,7 @@ currently depend on running `cc5` x86 cross under Rosetta).
 
 **Why now (vs slot in buffer band)**: PLATFORM BLOCKER class —
 ai-hwaccel can't start DXGI work without cc5_win shipping. Pushing
-to .19 (version isolation) or .20 (kybernet caps) defers a downstream
+to .17 (version isolation) or .18 (kybernet caps) defers a downstream
 agent's entire arc by 13+ slots. cc5_win is built and tested locally;
 the slot is mostly ceremony (cyml edit + install.sh rule verify +
 cross-host smoke), not new code.
@@ -568,7 +568,7 @@ rebuild pattern; could split into 2 slots if a target needs custom
 build infrastructure (e.g., Mach-O codesigning shim). Refine at slot
 entry per `feedback_premise_check_at_slot_entry`.
 
-#### v5.11.19 — Per-repo `cyrius` version isolation
+#### v5.11.17 — Per-repo `cyrius` version isolation
 
 **Pinned 2026-05-11 during v5.11.3 ship after a snapshot-ping-pong
 wipe destroyed in-flight Phase 3 edits.**
@@ -623,7 +623,7 @@ place. The two fixes are complementary, not redundant.
 `project_cyriusly_version_switching.md` carries the symptom + the
 recovery procedure used during v5.11.3.
 
-#### v5.11.20 — kybernet bundle: cap raise + socket-syscall wrappers
+#### v5.11.18 — kybernet bundle: cap raise + socket-syscall wrappers
 
 **Original pin 2026-05-11 at v5.11.4 entry** (cap raise from
 [`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md)).
@@ -665,7 +665,7 @@ the next minor tips past the hard cap (non-recoverable error).
 **Why this slot and not earlier**: per user direction, "after stdlib
 annotation arc". The arc runs v5.11.1-v5.11.7+; the post-arc queue
 (.8-.19) is already pinned to infrastructure / consumer-blocking
-P2 work. v5.11.20 is the first buffer-band slot — kybernet is P2
+P2 work. v5.11.18 is the first buffer-band slot — kybernet is P2
 non-blocking (workaround in place at 1.1.1) but cliff-narrow for
 the next 1-2 minors.
 
@@ -711,7 +711,7 @@ pattern across both x86_64 + aarch64 peers):
   and replaced with direct `sys_socket()` / `sys_bind()` /
   `sys_recvfrom()` calls in a follow-up kybernet patch.
 
-**Why bundle into v5.11.20**: both kybernet asks ship from the same
+**Why bundle into v5.11.18**: both kybernet asks ship from the same
 consumer at the same audit window (1.1.5 P(-1)); both are pure stdlib
 additions with no API change; both are low-risk (cap raise + new fns,
 no removals). Combined slot is still well-bounded — one parser-cap
@@ -724,7 +724,7 @@ misroute, invisible on x86 CI) is exactly what stdlib wrappers
 exist to prevent. Every new consumer needing a socket re-rolls the
 per-arch dispatch and re-introduces the bug.
 
-#### v5.11.21 — Syscall-wrapper DRY consolidation
+#### v5.11.19 — Syscall-wrapper DRY consolidation
 
 **Pinned 2026-05-11 at v5.11.7 close from a lib refactor audit.**
 
@@ -758,11 +758,11 @@ arity / shape differs across arches).
   (selector still picks the right arch peer + new common file).
 - Saves ~50-80 lines, ~20 fn dups.
 
-**Risk**: medium — touches stdlib syscall layer. v5.11.21 places
+**Risk**: medium — touches stdlib syscall layer. v5.11.19 places
 this at start of the buffer band so emergent bugs can ride later
 slots if needed.
 
-#### v5.11.22 — 0-call public stdlib fn downstream survey
+#### v5.11.20 — 0-call public stdlib fn downstream survey
 
 **Pinned 2026-05-11 at v5.11.7 close from a lib refactor audit.**
 
@@ -794,7 +794,7 @@ so 0-call-in-grep is not safe-to-remove.
   - **Has consumer caller** → keep, document the consumer in the
     fn's docstring.
   - **No caller anywhere** → flag in CHANGELOG, mark deprecated
-    in v5.11.22, drop in v5.12.x (or v6.0.0 closeout — fits the
+    in v5.11.20, drop in v5.12.x (or v6.0.0 closeout — fits the
     "dead-code sweep" item already pinned there).
   - **Speculative scaffolding for active work** (per `feedback_dead_code_audit_scope`)
     → keep, add roadmap pointer in the docstring.
@@ -805,7 +805,7 @@ so 0-call-in-grep is not safe-to-remove.
 consumer is blocked on these fns. Survey-and-decide doesn't ship
 behavioral changes, just clarity + a deprecation plan if needed.
 
-#### v5.11.23 — cc5_win PE exit-code crash + WriteFile stdout fix
+#### v5.11.21 — cc5_win PE exit-code crash + WriteFile stdout fix
 
 **HIGH-severity blocker** filed 2026-05-11 by ai-hwaccel 2.2.2.
 Pinned to the gap per user direction at v5.11.10 close. Full repro
@@ -876,10 +876,95 @@ shape, IAT layout, relocation tables); a fix may need to touch
 byte-identical is required (PE backend changes shouldn't affect
 x86 Linux ELF emit), plus cross-host smoke green on all 4 hosts.
 
-**Why pinned at .23 and not earlier**: user direction at v5.11.10
-close — "plan it in the gap" preserved the existing pins at .21
-(syscall DRY) and .22 (0-call survey). .23 is the first OPEN slot
-in the buffer band.
+**Why pinned at .21 and not earlier**: user direction at v5.11.10
+close — "plan it in the gap" preserved the existing pins at .19
+(syscall DRY) and .20 (0-call survey). At consolidation (v5.11.15
+close) the whole pinned block shifted back 2 to close the .16-17 gap;
+this slot rode along. The next emergent fixup (`#derive(accessors)`
+16-field cap, agnos 1.28.3, 2026-05-11) pinned at .22.
+
+#### v5.11.22 — `#derive(accessors)` >16-field silent miscompile fix
+
+**Pinned 2026-05-11 at v5.11.15 close alongside the WS handshake
+slot.** Filed by agnos 1.28.3 during a kernel `struct Process`
+(22 fields) refactor; full repro + analysis in
+[`docs/development/issues/2026-05-11-derive-accessors-16-field-cap.md`](issues/2026-05-11-derive-accessors-16-field-cap.md).
+
+**Symptom**: `#derive(accessors)` on a struct with > 16 fields
+compiles without diagnostic but emits accessor fns at wrong byte
+offsets. Stores land in the wrong slot; loads return stale /
+corrupted values. Manifests in agnos as `CR3=0x2` page-fault on
+first context switch (proc_get_cr3 reading a clobbered field).
+
+**Root cause**: `src/frontend/lex_pp.cyr`'s `PP_PARSE_STRUCT_DEF`
+walks the struct body and writes per-field metadata into three
+hard-sized-at-16 tables:
+
+```
+S+0x197060: field_names[16][32]   (512 B)
+S+0x197260: field_types[16][32]   (512 B)
+S+0x197460: offsets[16]           (128 B)
+```
+
+No bounds check. The 17th field's name (`fc = 16`) writes to
+`S + 0x197060 + 16*32` = `S + 0x197260` — **clobbering
+field_types[0]**. Subsequent fields cascade the overflow into the
+adjacent `offsets` region; `PP_DERIVE_ACCESSORS_BODY` reads
+corrupted "type indicator" bytes and emits accessors with offsets
+that don't match the actual struct layout.
+
+**Fix shape** (per the issue's "Suggested fix" section):
+
+1. Raise the per-struct field cap from **16 → 32** (or 64 if
+   downstream caller patterns warrant — 32 covers agnos's worst
+   case at 22 fields with 10-slot headroom). Three regions resize:
+   `field_names[N][32]`, `field_types[N][32]`, `offsets[N]`.
+2. Downstream layout boundary `S+0x197500` moves up by
+   `(N - 16) * 72` bytes. Update the heap-map and every per-struct
+   table base that follows.
+3. Add a hard-cap diagnostic in `PP_PARSE_STRUCT_DEF`:
+   ```
+   if (fc >= FIELD_CAP) {
+       PP_ERROR("too many fields in struct (max ", FIELD_CAP, ")");
+       return ip;
+   }
+   ```
+   An explicit error beats silent miscompilation — the 17th-field
+   overflow cost agnos days of kernel-debugging before the
+   metadata-clobber theory landed.
+
+**Acceptance bar**:
+1. agnos's `struct Process` (22 fields) ports cleanly with
+   `#derive(accessors)` and the kernel boots through first
+   context switch without `CR3=0x2`.
+2. New regression test (`tests/tcyr/derive_accessors_large.tcyr`)
+   exercising a 17-field struct: `S_set_f16(p, 0xCAFE)` then
+   `load64(p + 128) == 0xCAFE`. Without the fix this asserts
+   to a wrong offset; with the fix it passes.
+3. Hard-cap diagnostic test (`fuzz/fcyr` or equivalent
+   compile-fail fixture): struct with `FIELD_CAP + 1` fields
+   produces the new diagnostic, not a silent miscompile.
+4. cc5 self-host byte-identical (the struct-metadata tables
+   exist in the compiler itself — none of cc5's own structs
+   exceed 16 fields today, but the heap-map shift moves
+   downstream regions; verify the resize doesn't cascade).
+5. Cross-host smoke green on all 4 hosts.
+
+**Risk**: medium. Touches lex_pp.cyr's per-struct metadata layout
++ heap-map. Adjacent regions cascade. Self-host byte-identical is
+load-bearing — the cap raise shifts every per-struct table base
+that lives above `S+0x197500`.
+
+**Why pinned at .22**: emergent consumer-filed fixup; rides the
+band that opened up after consolidation closed .16-17. Bundle
+with the PE exit-code fix at .21 as the second compiler-side bug
+fix in the cluster.
+
+**Agnos-side status**: workaround in place at 1.28.3 (reverted
+`#derive(accessors)` on `Process`, kept raw `load64`/`store64`
++ documented byte offsets in the struct comment). Re-port to
+`#derive(accessors)` becomes an agnos-side follow-up once this
+slot ships.
 
 Held-forward items (no slot pinned; surface-on-ask): Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,

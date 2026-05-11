@@ -5,6 +5,22 @@
 
 ## Version
 
+**5.11.16** (shipped 2026-05-11 — **bote WS handshake key validation
++ slot map consolidation**). RFC 6455 §4.1 enforcement in
+`lib/ws_server.cyr`: `Sec-WebSocket-Key` must be exactly 24 chars
+(base64 of 16 bytes); reject any other length before the SHA-1
+Accept derivation. Single conditional, fail-closed (returns 0;
+caller responds 400). **Plus** consolidation of the v5.11.x slot
+map per user direction *"close up open gap, so we have additional
+runway later"*: pinned slots .18-.23 shifted back 2 (closing the
+.16-17 OPEN gap freed by v5.11.15's bote streaming arc collapse).
+**New emergent pin**: `#derive(accessors)` >16-field silent
+miscompile (agnos 1.28.3, filed 2026-05-11) at v5.11.22 — root
+cause in `src/frontend/lex_pp.cyr` per-struct metadata tables
+hard-sized at 16; 17th+ field clobbers adjacent regions. cc5
+byte-identical at 804,472 B; check.sh 66/66; cyrius test 146/146.
+Issue archived.
+
 **5.11.15** (shipped 2026-05-11 — **bote P2: streaming dispatch
 primitives, 3-slot arc collapsed to 1**). Premise check found cyrius
 already shipped the heavy primitives — `chan_new` / `chan_send` /

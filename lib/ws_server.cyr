@@ -90,8 +90,12 @@ fn ws_server_handshake(cfd, req_buf, req_len): i64 {
         return 0;
     }
 
-    # Compute Sec-WebSocket-Accept = base64(sha1(key + magic))
+    # RFC 6455 §4.1: Sec-WebSocket-Key is the base64 of a 16-byte value
+    # — exactly 24 chars including the trailing `=` padding. Reject any
+    # other length so we don't derive an Accept from malformed input.
+    # See CHANGELOG [5.11.16].
     var klen = strlen(key);
+    if (klen != 24) { return 0; }
     var magic = _wss_magic();
     var mlen = strlen(magic);
     var concat_len = klen + mlen;

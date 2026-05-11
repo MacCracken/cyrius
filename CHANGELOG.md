@@ -6,6 +6,122 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.16] — 2026-05-11
+
+**bote WS handshake key validation (RFC 6455 §4.1)** — closes
+[archived issue](issues/archived/2026-05-10-bote-ws-server-handshake-key-validation.md).
+**Plus**: v5.11.x slot map consolidated to close the .16-17 OPEN
+gap freed by v5.11.15's 3-slot bote streaming arc collapse —
+every pinned slot in .18-.23 shifted back 2 (per-repo version
+isolation .19 → .17, kybernet bundle .20 → .18, syscall DRY .21 →
+.19, 0-call survey .22 → .20, PE exit-code crash .23 → .21).
+**New emergent pin**: `#derive(accessors)` >16-field silent
+miscompile (agnos 1.28.3, filed 2026-05-11) at v5.11.22.
+
+### Fix shape (`lib/ws_server.cyr`)
+
+`ws_server_handshake` extracts `Sec-WebSocket-Key` via
+`http_find_header`, then derives `Sec-WebSocket-Accept` =
+`base64(sha1(key + magic))`. Pre-fix, it accepted any non-empty
+key value. RFC 6455 §4.1 requires the field be the base64
+encoding of a 16-byte value — **exactly 24 chars including the
+trailing `=` padding**.
+
+```cyr
+var klen = strlen(key);
+if (klen != 24) { return 0; }      # ← new: reject malformed length
+var magic = _wss_magic();
+```
+
+Single conditional. Returns 0 (the function's pre-existing
+"not a valid WS upgrade" sentinel); per the fn's docstring, the
+caller responds 400 Bad Request. No new error path, no new
+helper required.
+
+### Why this matters
+
+A malformed key derived through SHA-1 + base64 still produces a
+syntactically-valid `Sec-WebSocket-Accept` header — the client
+accepts the upgrade, the connection promotes to WebSocket, and
+subsequent frames proceed. The handshake silently accepted
+clients that are NOT spec-compliant; bote's filing flagged this
+during a conformance audit. Per `feedback_premise_check_at_slot_entry`,
+the fix is one conditional — no surrounding refactor.
+
+### Roadmap consolidation (per user direction)
+
+User 2026-05-11 at v5.11.15 ship: *"lets consolidate the 5.11.x
+arc to close up open gap, so we have additional runway later"*.
+The v5.11.16-17 OPEN gap (freed when v5.11.15 collapsed the
+3-slot bote streaming arc into 1) was wasted runway sitting in
+the front of the cycle. Better to use it now and grow the
+back-of-cycle buffer band.
+
+**Before** (v5.11.15 ship):
+- .16-17: OPEN (2 slots)
+- .18: bote WS handshake | .19: version isolation | .20: kybernet
+- .21: syscall DRY | .22: 0-call survey | .23: PE exit-code HIGH
+- .24-35: OPEN (12 slots)
+
+**After** (this slot):
+- .16: bote WS handshake (this) | .17: version isolation
+- .18: kybernet bundle | .19: syscall DRY | .20: 0-call survey
+- .21: PE exit-code HIGH | .22: `#derive(accessors)` cap raise (new)
+- .23-35: OPEN (13 slots — gained 2 from gap closure, spent 1 on new pin)
+
+Cross-bin tail (.36-.38) and closeout (.39-.40) unchanged per
+user direction at v5.11.6 ship ("fine for back of the current line").
+
+### New pin: `#derive(accessors)` >16-field silent miscompile (v5.11.22)
+
+Filed 2026-05-11 by agnos 1.28.3 during kernel `struct Process`
+(22 fields) refactor. `src/frontend/lex_pp.cyr`'s per-struct
+metadata tables (`field_names[16][32]`, `field_types[16][32]`,
+`offsets[16]`) are hard-sized at 16 with no bounds check; field
+17+ overflows into adjacent metadata, producing accessor fns at
+wrong byte offsets. Symptom in agnos: `proc_get_cr3()` returned
+2 instead of `0x1000`, scheduler wrote 2 to CR3, next instruction
+fetch faulted `CR2=<RIP>, CR3=0x2`. Full repro in
+`docs/development/issues/2026-05-11-derive-accessors-16-field-cap.md`.
+
+Fix shape: raise field cap to 32 (or 64), shift downstream
+heap-map regions, add hard-cap diagnostic. Roadmap detail block
+at v5.11.22.
+
+### Functional verification
+
+```cyr
+# Inline check — well-formed key (24 chars) succeeds:
+var key = "dGhlIHNhbXBsZSBub25jZQ==";   # RFC 6455 example
+strlen(key);                              # 24 ✓ (passes new check)
+
+# Malformed lengths rejected (handshake returns 0; caller sends 400):
+strlen("short");                          # 5    → return 0
+strlen("dGhlIHNhbXBsZSBub25jZQ==XXX");   # 27   → return 0
+strlen("");                               # 0    → existing key==0 check
+```
+
+Existing bote/sandhi integration tests pass; cc5 self-host
+byte-identical.
+
+### Files
+
+- `lib/ws_server.cyr` — +5 lines (4 lines RFC comment +
+  1 conditional).
+- `docs/development/roadmap.md` — slot table consolidation
+  (.16-.23 shifted, .22 derive-accessors pin added);
+  cross-references updated.
+- `docs/development/issues/2026-05-10-bote-ws-server-handshake-key-validation.md` →
+  `docs/development/issues/archived/`.
+
+### Verification
+
+- `cyrius check` 66/66 green.
+- `cyrius test` 146/146 green.
+- cc5 self-host: byte-identical fixpoint.
+- Cross-host SSH smoke: pi (aarch64), ecb (Apple Silicon),
+  cass (Windows) — all green.
+
 ## [5.11.15] — 2026-05-11
 
 **bote P2: streaming dispatch primitives** — closes
