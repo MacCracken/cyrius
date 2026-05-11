@@ -661,6 +661,9 @@ async::async_run/1
 async::async_sleep_ms/1
 async::async_spawn/3
 async::async_timeout/3
+async::cancel_token_check/1
+async::cancel_token_new/0
+async::cancel_token_signal/1
 atomic::atomic_cas/3
 atomic::atomic_fence/0
 atomic::atomic_fetch_add/2
@@ -2791,6 +2794,7 @@ thread::chan_close/1
 thread::chan_new/1
 thread::chan_recv/1
 thread::chan_send/2
+thread::chan_try_recv/1
 thread::gettid/0
 thread::mmap_stack/1
 thread::munmap_stack/2

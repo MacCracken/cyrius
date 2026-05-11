@@ -5,6 +5,18 @@
 
 ## Version
 
+**5.11.15** (shipped 2026-05-11 — **bote P2: streaming dispatch
+primitives, 3-slot arc collapsed to 1**). Premise check found cyrius
+already shipped the heavy primitives — `chan_new` / `chan_send` /
+`chan_recv` / `chan_close` (v5.5.31, MPSC futex-backed) + `atomic_*`
+(v5.5.31). Slot work was 4 thin shims: `chan_try_recv` (non-blocking),
+`cancel_token_new` / `cancel_token_signal` / `cancel_token_check`.
+Plus doc block at top of `lib/async.cyr` showing the bote
+transport ↔ worker integration pattern. api-surface 3032 →
+**3036** (+4). cc5 byte-identical at 804,472 B; check.sh 66/66;
+cyrius test 146/146. **Roadmap**: v5.11.16-17 freed from the
+3-slot scope — now OPEN for emergent items.
+
 **5.11.14** (shipped 2026-05-11 — **bote P2: arena_free lifecycle
 terminator + per-frame reuse pattern docs**). New `fn arena_free(a)`
 in `lib/alloc.cyr` invalidates the arena handle. Audit clarified

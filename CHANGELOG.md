@@ -6,6 +6,132 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.15] — 2026-05-11
+
+**bote P2: streaming dispatch primitives** — closes
+[archived issue](issues/archived/2026-05-10-bote-streaming-dispatch-thread-async-primitives.md).
+**3-slot pinned scope collapsed to 1 slot** after premise check
+showed cyrius already had the heavy primitives.
+
+### Premise check
+
+bote's filing speculated 3 missing primitives:
+1. `lib/thread.cyr` MPSC channel — **already shipped v5.5.31** as
+   `chan_new` / `chan_send` / `chan_recv` / `chan_close` (futex +
+   mutex backed, full close semantics, lines 297-374).
+2. `lib/async.cyr` cancellation polling — atomics were shipping in
+   `lib/atomic.cyr` (`atomic_load` / `atomic_store` / `atomic_cas` /
+   `atomic_fetch_add` / `atomic_fence` since v5.5.31). The token
+   wrapper itself was the only thing missing.
+3. Per-thread buffers via arena — **already shipped** at v5.5.x as
+   `arena_new` / `arena_alloc` / `arena_reset` / (v5.11.14)
+   `arena_free`.
+
+Per `feedback_consumer_request_full_surface` — when a filing maps
+to existing-primitives + thin shims, ship the shims AND make the
+existing surface discoverable. That's what this slot does.
+
+### Shipped (4 new fns)
+
+1. **`chan_try_recv(ch)`** in `lib/thread.cyr` — non-blocking
+   receive. Returns value > 0 if dequeued, 0 if empty
+   (callers using 0-as-sentinel should avoid sending 0). Wakes one
+   sender after dequeue (in case it was blocked on a full buffer).
+   Matches bote's `thread_channel_try_recv` spec.
+
+2. **`cancel_token_new()`** in `lib/async.cyr` — allocates an
+   8-byte heap slot, initializes to 0.
+
+3. **`cancel_token_signal(tok)`** — `atomic_store(tok, 1)`.
+   Idempotent.
+
+4. **`cancel_token_check(tok)`** — returns `atomic_load(tok)`
+   (0 not cancelled, 1 cancelled). Worker calls between progress
+   emissions; no busy-wait.
+
+Plus a doc block at the top of `lib/async.cyr` documenting the
+intended bote streaming pattern (transport thread signals;
+worker polls between work chunks).
+
+### Functional verification
+
+```cyr
+var tok = cancel_token_new();
+cancel_token_check(tok);    # 0
+cancel_token_signal(tok);
+cancel_token_check(tok);    # 1
+cancel_token_signal(tok);   # idempotent
+cancel_token_check(tok);    # 1
+
+var ch = chan_new(4);
+chan_try_recv(ch);          # 0 (empty)
+chan_send(ch, 100);
+chan_send(ch, 200);
+chan_try_recv(ch);          # 100
+chan_try_recv(ch);          # 200
+chan_try_recv(ch);          # 0 (drained)
+```
+
+All 9 checkpoints pass. Exit 42 sentinel.
+
+### bote integration recipe
+
+Now unblocked: bote's `dispatcher_dispatch_streaming` flow can use:
+
+```cyr
+# Transport thread side:
+var progress_ch = chan_new(16);
+var cancel_tok = cancel_token_new();
+thread_create(&streaming_handler, pack_args(progress_ch, cancel_tok, ...));
+
+# Drain progress + watch for cancel:
+while (handler_alive) {
+    var msg = chan_try_recv(progress_ch);
+    if (msg != 0) { emit_jsonrpc_notification(msg); }
+    if (client_sent_cancel) { cancel_token_signal(cancel_tok); }
+    yield();
+}
+
+# Worker thread side:
+fn streaming_handler(args): i64 {
+    var prog = unpack_chan(args);
+    var tok = unpack_tok(args);
+    while (more_work) {
+        if (cancel_token_check(tok) == 1) { cleanup(); return -1; }
+        chan_send(prog, next_progress_event(...));
+        do_work_chunk();
+    }
+    return 0;
+}
+```
+
+Per-thread buffers handled via `arena_new` + `arena_reset`
+(documented at v5.11.14).
+
+### Roadmap shift
+
+- v5.11.15: 3-slot scope closed in 1.
+- v5.11.16-17: **OPEN** (freed up; absorbs emergent bugs /
+  consumer-filed items mid-cycle).
+- Buffer band effectively grows from 12 to 14 OPEN slots.
+
+### Acceptance
+
+- cc5 byte-identical at 804,472 B.
+- check.sh 66/66 + cyrius test 146/146.
+- api-surface 3032 → **3036** (+4 fns).
+- Functional smoke: 9-checkpoint test exits 42.
+
+### Issue closed + archived
+
+`docs/development/issues/2026-05-10-bote-streaming-dispatch-thread-async-primitives.md`
+→ `docs/development/issues/archived/`.
+
+### Next slot
+
+v5.11.18 — bote WS handshake key validation (Low; RFC 6455 §4.1
+conformance; one-line validation add). The bote stack closes here.
+
 ## [5.11.14] — 2026-05-11
 
 **bote P2: arena lifecycle terminator + per-frame reuse pattern**

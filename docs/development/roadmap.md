@@ -484,7 +484,8 @@ right after).
 | v5.11.12 | daimon aarch64 `sys_epoll_wait` (P2) |
 | v5.11.13 | bote `lib/net.cyr` `recv_timeout` + getaddrinfo (P2) |
 | v5.11.14 | bote arena allocator `fl_free` (P2) |
-| v5.11.15-17 | bote streaming dispatch + thread async primitives (P2; 3-slot) |
+| v5.11.15 | bote streaming dispatch primitives — **closed in 1 slot** (chan_try_recv + cancel_token_*; chan_* MPSC already shipped v5.5.31, atomics v5.5.31, arena pattern v5.11.14). Original 3-slot scope was over-budget. |
+| v5.11.16-17 | OPEN — emergent bugs / consumer-filed / items surface during cycle (2 slots freed from bote streaming arc; user 2026-05-11) |
 | v5.11.18 | bote WS handshake key validation (Low; ride-along after bote stack) |
 | v5.11.19 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
 | v5.11.20 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
