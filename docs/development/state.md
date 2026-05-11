@@ -5,6 +5,16 @@
 
 ## Version
 
+**5.11.13** (shipped 2026-05-11 — **bote P2 Part A: sock_set_recv_timeout**).
+New `fn sock_set_recv_timeout(fd, secs, usecs): i64` in `lib/net.cyr`
+sets `SO_RCVTIMEO` via setsockopt — Slowloris defense. Closes bote
+1.9.5 audit H5. Functional test: 1-second timeout fires in 1.056s,
+recv returns -EAGAIN. api-surface 3030 → **3031**. Part B
+(getaddrinfo equivalent) pinned forward — larger DNS-resolver
+surface, multi-slot scope. cc5 byte-identical at 804,472 B;
+check.sh 66/66; cyrius test 146/146. Issue archived to
+`issues/archived/`.
+
 **5.11.12** (shipped 2026-05-11 — **daimon P2: lib/async.cyr aarch64
 portability fix**). Three bare `syscall(SYS_X, ...)` calls in async.cyr
 replaced with arch-dispatching wrappers: `sys_epoll_wait` (lines 117 +

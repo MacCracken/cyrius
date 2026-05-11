@@ -6,6 +6,95 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.13] — 2026-05-11
+
+**bote P2 part A: `sock_set_recv_timeout` (Slowloris fix)** — closes
+half of [archived issue](issues/archived/2026-05-10-bote-net-stdlib-recv-timeout-and-getaddrinfo.md).
+`getaddrinfo` equivalent (Part B, larger DNS-resolver surface)
+pinned forward for a future buffer-band slot.
+
+### Shipped
+
+New `fn sock_set_recv_timeout(fd, secs, usecs): i64` in `lib/net.cyr`.
+Sets `SO_RCVTIMEO` on the socket via `setsockopt`; blocking `recv()`
+on this fd returns `EWOULDBLOCK` after the configured timeout rather
+than hanging indefinitely. Closes bote 1.9.5 audit H5 (Slowloris
+recv timeout).
+
+```cyr
+# lib/net.cyr:64
+fn sock_set_recv_timeout(fd, secs, usecs): i64 {
+    var tv = alloc(16);
+    store64(tv,     secs);
+    store64(tv + 8, usecs);
+    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, tv, 16);
+}
+```
+
+`SO_RCVTIMEO = 20` added to the existing `SockOpt` enum (file-local
+in net.cyr, alongside `SOL_SOCKET = 1` + `SO_REUSEADDR = 2`).
+`SYS_SETSOCKOPT = 54` was already declared inline (line 11) — no
+new syscall wiring needed.
+
+### Functional verification (real socket + real timeout)
+
+```
+fn main(): i64 {
+    alloc_init();
+    var fd = result_unwrap(udp_socket());
+    sock_set_recv_timeout(fd, 1, 0);          # 1-second deadline
+    var buf[16];
+    var n = syscall(45, fd, &buf, 16, 0, 0, 0);  # recvfrom on unconnected UDP
+    syscall(3, fd);
+    if (n == 0 - 11) { return 42; }            # EAGAIN sentinel
+    return 3;
+}
+```
+
+Result: `time ./recv_test` → `0.00s user 0.00s system 0% cpu 1.056 total`,
+`exit=42`. The 1-second timeout fired exactly when expected; recv
+returned `-EAGAIN`; sentinel propagated.
+
+### Part B deferred (getaddrinfo)
+
+The DNS-resolver / `getaddrinfo_hosts(name, family)` surface bote
+needs for SSRF classifier coverage is **substantially heavier**:
+needs to parse `/etc/resolv.conf` (or use `res_init`), build a DNS
+query, send UDP to the nameserver, parse the response wire format,
+return a vec of IP-literal cstrs. Either a multi-slot pure-Cyrius
+implementation or a `fdlopen`-backed libc shim (bote's documented
+mitigation — pair with network-policy egress filter — covers the
+gap meanwhile). **Pinned forward for v5.11.x buffer band** (slot
+TBD when scheduled).
+
+### Acceptance
+
+- `cc5` byte-identical at 804,472 B (net.cyr not in cc5's include chain).
+- check.sh 66/66 + cyrius test 146/146.
+- api-surface 3030 → **3031** (+1 fn: `sock_set_recv_timeout`).
+- Functional test: 1-second timeout fires in 1.056s; recv returns
+  -EAGAIN; sentinel correct.
+- snapshot-ping-pong wipe surfaced + recovered mid-slot (agnosys
+  agent flipped `~/.cyrius/current` to 5.10.44 again; restored to
+  5.11.12; re-applied condensations from earlier slots). Reinforces
+  pin for v5.11.19 (per-repo cyrius version isolation).
+
+### Issue closed + archived
+
+`docs/development/issues/2026-05-10-bote-net-stdlib-recv-timeout-and-getaddrinfo.md`
+→ `docs/development/issues/archived/` (per
+`feedback_close_to_archive_issues` memory pin from this slot).
+Part B (getaddrinfo) pinned forward — if it re-surfaces from
+bote as blocking, the file can be `git mv`'d back from archived/
+and slotted earlier.
+
+### Next slot
+
+v5.11.14 — bote arena allocator `fl_free` (P2). `lib/alloc.cyr`
+bump allocator has no free-list reclaim; long-running bote
+WS/streaming workers leak. Likely shape: free-list-on-arena
+variant alongside the existing bump allocator.
+
 ## [5.11.12] — 2026-05-11
 
 **daimon P2: `lib/async.cyr` aarch64 portability fix** (closes

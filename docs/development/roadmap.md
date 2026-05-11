@@ -1443,6 +1443,51 @@ Pass") plus:
   not just the version line. Use the closeout's vidya checklist
   as the audit list.
 
+### v6.1.x — PIE (Position-Independent Executable) codegen
+
+Slot — not pinned. Triggered when a consumer's address-space-
+randomization need surfaces. AGNOS full-binary KASLR (Option A
+in [`agnos/docs/development/proposals/2026-05-11-kaslr-scope.md`](https://github.com/MacCracken/agnos/blob/main/docs/development/proposals/2026-05-11-kaslr-scope.md))
+is the first such consumer; AGNOS v1.28.0 ships data-only KASLR
+which doesn't need PIE, so the pressure here is "when AGNOS
+wants full binary relocation," which is genuinely uncertain
+timing (could be v1.29.x, could be v1.30.x+, could be never if
+data-only is sufficient).
+
+**Scope (Option A — kernel-mode PIE only, recommended first
+cut):** add `--pie` build flag emitting RIP-relative codegen
+(`lea rax, [rip + rel32]` instead of `mov rax, imm64` for
+absolute-address loads; `adrp`+`add` on aarch64). Userland
+binaries and stdlib distfiles continue to use the non-PIE path
+unchanged. AGNOS is the only known consumer at slot time.
+
+**Why v6.x and not v5.x:**
+- Cross-cutting backend change. Every code-emit site producing
+  an absolute address needs audit + conversion — same shape as
+  the v6.0.0 `_TARGET_*` consolidation.
+- ABI implication. PIE-vs-non-PIE linking compatibility is the
+  kind of question that deserves a major-bump signal to
+  downstreams.
+- v5.x is mid-arc on stdlib annotation + foldin; perturbing the
+  ABI mid-cycle compounds risk.
+
+**Why v6.1.x and not v6.0.0:** v6.0.0 is the rename + cleanup
+ceremony. Adding a substantive new codegen mode in the same cut
+multiplies downstream risk. PIE lands as its own focused minor.
+
+**Work surface estimate:** ~200-400 LOC across
+`src/backend/x86/emit.cyr` + `fixup.cyr`, plus `parse_expr.cyr`
+fns handling `&fn_name` / `&global_var` in PIE mode. Single
+session for x86_64; aarch64 follows in a v6.1.1 sub-patch.
+
+**Option B (universal PIE — stdlib + userland)** is a v6.2.x or
+later follow-up if a real consumer materializes. AGNOS alone
+doesn't justify it. Could stay open indefinitely.
+
+Reference proposal:
+[`docs/development/proposals/2026-05-11-pie-support.md`](proposals/2026-05-11-pie-support.md)
+(8-step work breakdown, open questions, decision checkboxes).
+
 ## Public Release (~v7.0) — "Cyrius ONE"
 
 * **Cyrius ONE** — first book, written from Vidya + documentation, published
