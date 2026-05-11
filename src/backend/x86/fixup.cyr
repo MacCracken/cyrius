@@ -378,6 +378,36 @@ fn FIXUP(S): i64 {
     # Pass B (propagate): worklist until fixpoint.
     #   For each E8 call with a live host, mark the target live.
     var b_base = S + 0x64A000;
+    # v5.10.41: build fn_start → fi+1 hash table at 0x110000 ONCE before
+    # the DCE byte-scan passes. Replaces the two O(N²) linear scans in
+    # seed (line ~412) and propagate (line ~465) — each previously walked
+    # fnc per E8/E9 match. Layout: 8192 slots × 2B (fi+1, 0 = empty);
+    # 16 KB total in the 232 KB free gap between fn_name_hash + struct_ftypes.
+    # Hash: golden-ratio multiply, shift down, mask. Knuth multiplicative
+    # constant 0x9E3779B97F4A7C15 = floor(2^64 / phi). Load factor 0.5 at
+    # 4096-fn cap → avg <2 probes. Zero-init heap gives empty-slot semantics
+    # for free; an explicit per-slot reset is still required because the
+    # region wasn't zeroed by _HEAP_INIT_SCRATCH (TS frontend overlap doc'd
+    # in main.cyr does NOT cover this gap; pre-fixup state could be dirty
+    # only if a future caller writes here, but defensive reset is cheap).
+    var sh_clr = 0;
+    while (sh_clr < 8192) {
+        store16(S + 0x110000 + sh_clr * 2, 0);
+        sh_clr = sh_clr + 1;
+    }
+    var sh_i = 0;
+    while (sh_i < fnc) {
+        var sh_start = L64(S + 0x1292000 + sh_i * 8);
+        if (sh_start >= 0) {
+            var sh_h = (sh_start * 0x9E3779B97F4A7C15) >> 16;
+            var sh_slot = sh_h & 8191;
+            while (load16(S + 0x110000 + sh_slot * 2) != 0) {
+                sh_slot = (sh_slot + 1) & 8191;
+            }
+            store16(S + 0x110000 + sh_slot * 2, sh_i + 1);
+        }
+        sh_i = sh_i + 1;
+    }
     # Type-3 address-of fixups are still roots.
     var t3i = 0;
     while (t3i < fcnt_pre) {
@@ -408,12 +438,25 @@ fn FIXUP(S): i64 {
                 if (rel >= 0x80000000) { rel = rel - 0x100000000; }
                 var tgt = scn + 5 + rel;
                 if (tgt >= 0 && tgt < acp) {
-                    # Look up fn_idx by fn_start == tgt
+                    # v5.10.41: hash lookup fn_start → fi via 0x110000.
+                    # Replaces an O(fnc) linear scan that ran per E8/E9 match.
                     var fnhit = 0 - 1;
-                    var fi3 = 0;
-                    while (fi3 < fnc) {
-                        if (L64(S + 0x1292000 + fi3 * 8) == tgt) { fnhit = fi3; fi3 = fnc; }
-                        else { fi3 = fi3 + 1; }
+                    var th_h = (tgt * 0x9E3779B97F4A7C15) >> 16;
+                    var th_slot = th_h & 8191;
+                    var th_probes = 0;
+                    while (th_probes < 8192) {
+                        var th_stored = load16(S + 0x110000 + th_slot * 2);
+                        if (th_stored == 0) { th_probes = 8192; }
+                        else {
+                            var th_fi = th_stored - 1;
+                            if (L64(S + 0x1292000 + th_fi * 8) == tgt) {
+                                fnhit = th_fi;
+                                th_probes = 8192;
+                            } else {
+                                th_slot = (th_slot + 1) & 8191;
+                                th_probes = th_probes + 1;
+                            }
+                        }
                     }
                     if (fnhit >= 0) {
                         # Host = fn containing scn. If none, entry = ROOT.
@@ -461,11 +504,26 @@ fn FIXUP(S): i64 {
                                 if (prel >= 0x80000000) { prel = prel - 0x100000000; }
                                 var ptgt = pscn + 5 + prel;
                                 if (ptgt >= 0 && ptgt < acp) {
+                                    # v5.10.41: hash lookup fn_start → fi via 0x110000.
+                                    # Replaces an O(fnc) scan running per E8/E9 inside
+                                    # the propagate fixpoint loop (up to 512 iterations).
                                     var phit = 0 - 1;
-                                    var pi4 = 0;
-                                    while (pi4 < fnc) {
-                                        if (L64(S + 0x1292000 + pi4 * 8) == ptgt) { phit = pi4; pi4 = fnc; }
-                                        else { pi4 = pi4 + 1; }
+                                    var ph_h = (ptgt * 0x9E3779B97F4A7C15) >> 16;
+                                    var ph_slot = ph_h & 8191;
+                                    var ph_probes = 0;
+                                    while (ph_probes < 8192) {
+                                        var ph_stored = load16(S + 0x110000 + ph_slot * 2);
+                                        if (ph_stored == 0) { ph_probes = 8192; }
+                                        else {
+                                            var ph_fi = ph_stored - 1;
+                                            if (L64(S + 0x1292000 + ph_fi * 8) == ptgt) {
+                                                phit = ph_fi;
+                                                ph_probes = 8192;
+                                            } else {
+                                                ph_slot = (ph_slot + 1) & 8191;
+                                                ph_probes = ph_probes + 1;
+                                            }
+                                        }
                                     }
                                     if (phit >= 0) {
                                         var prev_live = load8(&live + (phit >> 3)) & (1 << (phit & 7));

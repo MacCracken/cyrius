@@ -1840,12 +1840,31 @@ parked.
 See CHANGELOG [5.10.40] for the full numbers table,
 heap layout, and overflow handling.
 
-#### v5.10.41 — Fixup phase optimization
+#### v5.10.41 — Fixup phase optimization — **SHIPPED 2026-05-11**
 
-Promoted from held to concrete slot at v5.10.20 P(-1)
-sweep; cascaded from original .32 pin at v5.10.33
-ship. v5.10.0 profile: fixup 210 ms = 21% of compile
-time. Second-largest target after lex.
+`fn_start_hash` open-addressing table at `0x110000`
+(8192 slots × 2 B; Knuth golden-ratio multiplicative
+hash). Built once at fixup() entry; replaces two
+O(fnc²) DCE byte-scan inner linear scans (seed pass
++ propagate fixpoint) with ~2-probe hash lookups.
+
+Result vs v5.10.40 baseline (CYRIUS_PROF=1, best-of-5
+median):
+
+- **fixup phase 213 ms → 76 ms (−64 %, ~2.8×)**
+- **total compile 510 ms → 387 ms (−24 %, ~1.32×)**
+
+Combined with v5.10.40: pre-.40 → .41 total is
+1037 → 387 ms (~2.7×). cc5 +928 B; 3-step fixpoint
+clean; 66/66 check.sh PASS; cass smoke green.
+
+aarch64 fixup has no DCE pass — no equivalent change
+needed there (cross-arch propagation per
+`feedback_cross_arch_propagation_mandatory`: read-and-
+confirmed).
+
+See CHANGELOG [5.10.41] for the full numbers table
+and heap layout.
 
 #### v5.10.42 — `lib/tls.cyr` hook-surface contract audit
 

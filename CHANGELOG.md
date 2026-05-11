@@ -6,6 +6,110 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.41] — 2026-05-11
+
+**v5.10.x SLOT 41 — Fixup phase optimization (fn_start hash table)**.
+
+Second consecutive compile-time-perf slot. v5.10.40 cut lex 10×; this
+slot targets the next dominant phase. Post-.40 profile (`cc5 <
+src/main.cyr`, CYRIUS_PROF=1): fixup ~213 ms = 41 % of compile (was
+21 % at v5.10.0; share grew because lex shrank). Pinned at v5.10.20
+P(-1) sweep, cascaded from original .32 pin.
+
+### The hot path
+
+Inside `FIXUP()` (`src/backend/x86/fixup.cyr:74`), the DCE pass does
+two byte-scan loops over `acp` (~600 KB of codebuf):
+
+1. **Seed pass** (line ~402): walk every byte; for each E8/E9
+   opcode, linear-scan `fn_offsets[0..fnc]` to find the fn that
+   starts at the target rel32.
+2. **Propagate fixpoint** (line ~443): worklist iterations (up to
+   512), each doing the same byte scan inside every live fn body,
+   with the same linear lookup per E8/E9.
+
+Both inner lookups are O(fnc) ≈ 5000. Each pass touches ~tens of
+thousands of E8/E9 candidates × 5000 fn comparisons = O(N²)
+quadratic in fns. Standard hot-helper shape: a tight inner loop
+multiplied by an outer byte scan.
+
+### The fix
+
+`fn_start_hash` open-addressing table at `0x110000` (8192 slots ×
+2 B = 16 KB), reusing the 232 KB free gap between `fn_name_hash`
+(ends at 0x110000) and `struct_ftypes` (0x114A000). **No brk
+extension needed.** Same shape as the v5.6.5 `fn_name_hash` for
+FINDFN, just keyed on the integer fn_start value instead of a
+name string.
+
+Hash: Knuth multiplicative — `(start * 0x9E3779B97F4A7C15) >> 16
+& 8191`. Golden-ratio constant = floor(2^64 / phi); high bits
+after multiply distribute well even for clustered keys.
+
+Built ONCE at the top of the DCE block (`FIXUP()` body), before
+seed pass runs. Explicit per-slot zero reset (the gap isn't
+covered by `_HEAP_INIT_SCRATCH`). Both fnhit linear scans replaced
+with `~2 probes` hash lookups.
+
+Bridge.cyr's fixup unchanged (bootstrap binary; not on hot path).
+aarch64 fixup (`src/backend/aarch64/fixup.cyr`) unchanged because
+it has no DCE pass — no byte-scan, no fnhit search; the
+optimization is x86-fixup-specific. Cross-arch propagation per
+`feedback_cross_arch_propagation_mandatory`: confirmed by reading
+the aarch64 path; the inner-scan shape simply doesn't exist there.
+
+### Numbers (CYRIUS_PROF=1, `cc5 < src/main.cyr`, best-of-5 median)
+
+| Phase     | v5.10.40  | v5.10.41 | Δ                              |
+|-----------|-----------|----------|--------------------------------|
+| pp        |    85 ms  |    87 ms | +2 ms (noise)                  |
+| lex       |    59 ms  |    62 ms | +3 ms (noise)                  |
+| gvar      |   152 ms  |   157 ms | +5 ms (noise)                  |
+| parse     |     2 ms  |     2 ms | flat                           |
+| **fixup** | **213 ms**| **76 ms**| **−137 ms (−64 %, ~2.8×)**     |
+| emit      |     2 ms  |     2 ms | flat                           |
+| **total** | **510 ms**|**387 ms**| **−123 ms (−24 %, ~1.32×)**    |
+
+Combined with v5.10.40, total compile-time gain since pre-.40
+baseline: **1037 → 387 ms (~2.7×)**.
+
+cc5 (x86): 797,984 → **798,912 B (+928 B)** for the hash build +
+two inline lookup blocks + zero-reset prologue. Self-host
+byte-identical at 3-step fixpoint.
+
+**66/66 check.sh PASS, all .tcyr gates green.**
+
+### DCE behavior identical
+
+The fixup-side DCE pass still identifies the same 34 unreachable
+fns / 22,792 bytes on cc5 self-compile (cross-checked against the
+v5.10.40 post-build trace — same set of names, same byte count).
+The optimization replaces O(N²) bookkeeping with O(N) without
+changing the algorithm's input set or reachability semantics.
+
+### Cross-host verification
+
+Cross-arch propagation: the change touches `src/backend/x86/fixup.cyr`,
+so the binaries that include it are `cc5` (x86 Linux) and `cc5_win`
+(PE; PE backend lives under x86). Hosts emitting through the
+aarch64 fixup (cc5_aarch64_native, cc5_macho_arm) are byte-identical
+to v5.10.40 cross-build output — confirmed via `ls -la` byte-count
+parity (582,088 / 590,260 B respectively).
+
+| Host | Compiler | Compile | Runtime |
+|------|----------|---------|---------|
+| local x86_64 | `build/cc5` (798,912 B) | exit=0 | self-host fixpoint b == c |
+| cass (Win64 PE) | `cc5_win` (696,832 B; +1,024 B vs v5.10.40) | exit=0 | exit=0 (pre-existing .45 PE exit-code propagation gap) |
+| pi (aarch64 Linux) | unchanged — aarch64 fixup has no DCE pass | n/a | n/a |
+| ecb (Mach-O arm64) | unchanged — aarch64 fixup has no DCE pass | n/a | n/a |
+
+### What landed
+
+- `src/backend/x86/fixup.cyr` — hash-build prologue inside `FIXUP()`
+  before DCE seed pass; two fnhit linear scans (~5 LOC each)
+  replaced with inline hash-lookup blocks (~14 LOC each).
+- `src/main.cyr` — HEAP MAP entry for `fn_start_hash` at 0x110000.
+
 ## [5.10.40] — 2026-05-11
 
 **v5.10.x SLOT 40 — Lex dedup hot-path optimization (length-bucketed

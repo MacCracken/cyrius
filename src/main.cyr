@@ -202,6 +202,19 @@
 #                                        hot path from O(N) linear scan to
 #                                        O(1) expected. Use-alias fallback
 #                                        remains linear in FINDFN. v5.6.5.
+#   0x110000 fn_start_hash [16384]       8192 slots × 2B — golden-ratio
+#                                        Knuth-multiplicative hash of
+#                                        fn_offsets[fi] → (fi+1). 0 = empty.
+#                                        Built once at fixup() entry with
+#                                        explicit per-slot reset (the
+#                                        intervening 232 KB gap up to
+#                                        0x114A000 is not zeroed by
+#                                        _HEAP_INIT_SCRATCH). Hash:
+#                                        (start * 0x9E3779B97F4A7C15) >> 16,
+#                                        mask 8191; linear probe. Replaces
+#                                        two O(N²) DCE byte-scan linear
+#                                        scans (seed pass + propagate
+#                                        fixpoint loop). v5.10.41.
 #
 # --- Variable tables ---
 #   0x11A000 var_noffs     [65536]       8192 variable name offsets
