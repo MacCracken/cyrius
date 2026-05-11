@@ -1,0 +1,92 @@
+# Test: lib/str.cyr str_split runtime byte/Str dispatch (v5.10.43)
+# Closes `docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+# ---- BYTE path (sep < 256) — pre-v5.10.43 behavior preserved ----
+
+test_group("str_split byte path — single-byte sep");
+var b1 = str_split(str_from("a,b,c"), 44);   # 44 = ','
+assert_eq(vec_len(b1), 3, "byte ',' split count");
+assert_eq(str_eq(vec_get(b1, 0), str_from("a")), 1, "byte sep part 0");
+assert_eq(str_eq(vec_get(b1, 1), str_from("b")), 1, "byte sep part 1");
+assert_eq(str_eq(vec_get(b1, 2), str_from("c")), 1, "byte sep part 2");
+
+test_group("str_split byte path — newline");
+var b2 = str_split(str_from("line1\nline2\nline3"), 10);   # '\n'
+assert_eq(vec_len(b2), 3, "byte '\\n' split count");
+assert_eq(str_eq(vec_get(b2, 0), str_from("line1")), 1, "newline part 0");
+assert_eq(str_eq(vec_get(b2, 2), str_from("line3")), 1, "newline part 2");
+
+# ---- STR path (sep >= 256) — NEW v5.10.43 ----
+
+test_group("str_split Str path — single-byte sep");
+var s1 = str_split(str_from("a,b,c"), str_from(","));
+assert_eq(vec_len(s1), 3, "Str ',' split count");
+assert_eq(str_eq(vec_get(s1, 0), str_from("a")), 1, "Str sep part 0");
+assert_eq(str_eq(vec_get(s1, 1), str_from("b")), 1, "Str sep part 1");
+assert_eq(str_eq(vec_get(s1, 2), str_from("c")), 1, "Str sep part 2");
+
+test_group("str_split Str path — multi-byte sep");
+var s2 = str_split(str_from("foo--bar--baz"), str_from("--"));
+assert_eq(vec_len(s2), 3, "Str '--' split count");
+assert_eq(str_eq(vec_get(s2, 0), str_from("foo")), 1, "multibyte part 0");
+assert_eq(str_eq(vec_get(s2, 1), str_from("bar")), 1, "multibyte part 1");
+assert_eq(str_eq(vec_get(s2, 2), str_from("baz")), 1, "multibyte part 2");
+
+test_group("str_split Str path — 3-byte sep");
+var s3 = str_split(str_from("aXYZbXYZcXYZd"), str_from("XYZ"));
+assert_eq(vec_len(s3), 4, "3-byte sep count");
+assert_eq(str_eq(vec_get(s3, 0), str_from("a")), 1, "3-byte part 0");
+assert_eq(str_eq(vec_get(s3, 3), str_from("d")), 1, "3-byte part 3");
+
+# ---- Edge cases ----
+
+test_group("str_split — leading sep");
+var e1 = str_split(str_from(",a,b"), str_from(","));
+assert_eq(vec_len(e1), 3, "leading sep count");
+assert_eq(str_len(vec_get(e1, 0)), 0, "leading empty part");
+
+test_group("str_split — trailing sep");
+var e2 = str_split(str_from("a,b,"), str_from(","));
+assert_eq(vec_len(e2), 3, "trailing sep count");
+assert_eq(str_len(vec_get(e2, 2)), 0, "trailing empty part");
+
+test_group("str_split — consecutive seps");
+var e3 = str_split(str_from("a,,b"), str_from(","));
+assert_eq(vec_len(e3), 3, "consecutive sep count");
+assert_eq(str_len(vec_get(e3, 1)), 0, "middle empty part");
+
+test_group("str_split — no sep in input");
+var e4 = str_split(str_from("abc"), str_from(","));
+assert_eq(vec_len(e4), 1, "no-sep count");
+assert_eq(str_eq(vec_get(e4, 0), str_from("abc")), 1, "no-sep whole input");
+
+test_group("str_split — empty input");
+var e5 = str_split(str_from(""), str_from(","));
+assert_eq(vec_len(e5), 1, "empty input count");
+assert_eq(str_len(vec_get(e5, 0)), 0, "empty input single empty part");
+
+test_group("str_split — empty Str sep (no-op)");
+var e6 = str_split(str_from("abc"), str_from(""));
+assert_eq(vec_len(e6), 1, "empty Str sep count");
+assert_eq(str_eq(vec_get(e6, 0), str_from("abc")), 1, "empty Str sep returns whole");
+
+# ---- str_split_a (allocator-routed) ----
+
+test_group("str_split_a — Str sep through arena_allocator");
+var ar = arena_allocator(4096);
+var ap = str_split_a(ar, str_from("alpha,beta,gamma"), str_from(","));
+assert(ap != 0, "str_split_a returned non-zero");
+assert_eq(vec_len(ap), 3, "arena Str-sep split count");
+assert_eq(str_eq(vec_get(ap, 0), str_from("alpha")), 1, "arena part 0");
+assert_eq(str_eq(vec_get(ap, 1), str_from("beta")), 1, "arena part 1");
+assert_eq(str_eq(vec_get(ap, 2), str_from("gamma")), 1, "arena part 2");
+
+var r = assert_summary();

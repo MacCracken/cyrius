@@ -219,9 +219,13 @@ fn exec_env(args, env) {
 
 # Helper: build args vec from command string (split by spaces)
 # For simple cases like exec_cmd("/usr/bin/ls -la /tmp")
+# v5.10.43: sep changed from " " (cstr — silently broken under
+# the pre-v5.10.43 byte-or-pointer impl, would crash under the
+# new STR-path dispatch) to 32 (byte literal for space). Hits the
+# byte path of str_split's v5.10.43 runtime dispatch.
 fn exec_cmd(cmdline) {
     var args = vec_new();
-    var parts = str_split(str_from(cmdline), " ");
+    var parts = str_split(str_from(cmdline), 32);
     var pi = 0;
     while (pi < vec_len(parts)) {
         var part = vec_get(parts, pi);

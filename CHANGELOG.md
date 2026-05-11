@@ -6,6 +6,147 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.43] — 2026-05-11
+
+**v5.10.x SLOT 43 — `lib/str.cyr` `str_split` separator-byte-comparison
+fix (runtime byte/Str dispatch)**.
+
+First fix from the v5.10.42-ship roadmap-extension audit of open
+issues. Closes
+[`docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`](docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md).
+
+### The bug
+
+`str_split(s: Str, sep: Str)` had a signature mismatch with its
+implementation. The body compared each input byte to `sep` directly
+(`if (load8(sd + si) == sep) { ... }`) — which worked correctly when
+the caller passed an INT byte literal (e.g. `str_split(s, 44)` for
+comma) but always returned a single-element vec when the caller
+passed an actual Str fat-pointer (every heap-allocated Str address
+is >> 255, so the byte-compare never matched).
+
+Both calling conventions were in production simultaneously:
+- **Byte int**: lib/agnosys.cyr (9 sites), lib/yukti.cyr (11 sites),
+  tests/tcyr/str_ext.tcyr — all silently working, hit the byte path.
+- **Str fat-pointer**: argonaut (consumer), tests/tcyr/alloc_str_
+  extras.tcyr (test that explicitly documented the bug at v5.8.43) —
+  silently returning a 1-part vec for every input.
+- **cstr (raw byte pointer)**: lib/process.cyr:224 (`exec_cmd` cmdline
+  splitter using `" "` cstr sep) — silently broken AND would have
+  crashed under a naive Str-only fix.
+
+### The fix
+
+Runtime dispatch in `str_split_a` (`lib/str.cyr:331-353`) — the
+allocator-routed core that `str_split` wraps:
+
+```cyrius
+fn str_split_a(a, s: Str, sep): i64 {
+    ...
+    if (sep < 256) {
+        # BYTE path — pre-v5.10.43 behavior preserved.
+        ...
+    }
+    # STR path. sep is a Str fat-pointer.
+    var seplen = str_len(sep);
+    var sepd = str_data(sep);
+    ...
+}
+```
+
+Byte path = byte-identical to the pre-v5.10.43 implementation;
+every existing byte-int caller continues to work without source
+changes. Str path supports arbitrary-length separator via inner
+memcmp loop. Empty Str sep returns the whole input as one part
+(no-op, documented in the docstring).
+
+Sep type annotation dropped (`sep: Str` → `sep`) since the parameter
+now accepts both shapes; annotating either way would lie to half
+the call sites. Comprehensive docstring on `str_split_a` documents
+the dispatch + explicitly notes cstr separators are NOT supported
+(would land in the STR path and read garbage past the byte payload).
+
+### lib/process.cyr `exec_cmd` repair
+
+`lib/process.cyr:224` had been calling `str_split(str_from(cmdline),
+" ")` — cstr sep that was silently broken under the byte-impl (cstr
+ptr >> 255, byte-compare never matched, exec_cmd always returned
+1 unsplit arg) AND would have crashed under a naive Str-only fix.
+Switched to byte int `32` (space) in the same slot — explicit byte
+path, no ambiguity. Matches the convention in lib/agnosys.cyr and
+lib/yukti.cyr.
+
+### Cross-arch propagation
+
+Stdlib-only change. cc5 doesn't include `lib/str.cyr` (compiler has
+its own internal string ops). **cc5 byte-identical at 798,912 B
+across v5.10.42 → v5.10.43.** No cross-host rebuild needed.
+
+3-step fixpoint clean. 66/66 check.sh PASS.
+
+### Tests
+
+- New `tests/tcyr/str_split.tcyr` — 12 test groups / 35 sub-asserts
+  covering: byte-path single-byte (`,`), byte-path newline (`\n`),
+  Str-path single-byte sep, Str-path 2-byte sep (`"--"`), Str-path
+  3-byte sep (`"XYZ"`), edge cases (leading sep / trailing sep /
+  consecutive seps / no sep in input / empty input / empty Str
+  sep), `str_split_a` Str-sep through arena_allocator. All 35
+  pass.
+- `tests/tcyr/alloc_str_extras.tcyr` lines 63-78 + 156-163 —
+  flipped from "asserts pre-v5.8.43 broken behavior" to "asserts
+  v5.10.43 Str-sep dispatch works". Stale `assert_eq(vec_len(parts),
+  1)` → `assert_eq(vec_len(parts), 3)`; surrounding comment
+  updated. Both back-compat blocks (the arena-routed one + the
+  default-alloc one) now exercise the fix.
+- `tests/tcyr/str_ext.tcyr` line 59 unchanged — its `str_split(s, 44)`
+  test exercises the byte path and stays byte-identical.
+
+### Internal callers
+
+The 21+ byte-int call sites in lib/agnosys.cyr / lib/yukti.cyr /
+lib/process.cyr (other than the cstr-sep bug above) all hit the
+byte path and stay byte-identical. No source-side migration needed;
+the runtime dispatch is the entire fix.
+
+### Snapshot-ping-pong guard
+
+Per the CLAUDE.md lib/-edit rule: `lib/str.cyr` + `lib/process.cyr`
+mirrored into `~/.cyrius/versions/5.10.42/lib/` + `~/.cyrius/lib/`
+immediately after the edit, then `cyrius deps` / `cyrius test`
+exercised the new file before `version-bump.sh` regenerated the
+5.10.43 snapshot.
+
+### What landed
+
+- `lib/str.cyr` — `str_split_a` rewritten with runtime byte/Str
+  dispatch (~30 LOC). Docstring expanded with dispatch + caveat
+  notes. `str_split` wrapper signature retyped (`sep: Str` → `sep`).
+- `lib/process.cyr:224` — `" "` cstr → `32` byte int.
+- `tests/tcyr/str_split.tcyr` — new comprehensive gate (~75 LOC).
+- `tests/tcyr/alloc_str_extras.tcyr` — two back-compat assertions
+  flipped to expect the fixed behavior.
+- `docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`
+  — to be moved to `archived/` at slot ship.
+
+### Roadmap-extension audit ride-along
+
+This slot also lands the v5.10.42-ship roadmap-extension audit:
+
+- `docs/development/issues/2026-05-03-kernel-reserved-word-misleading-diagnostic.md`
+  moved to `archived/` (resolved at v5.8.45 per `lex.cyr:687`;
+  empirical repro at v5.10.42 compiles clean).
+- v5.10.x roadmap extended with v5.10.43 (this slot) + v5.10.44
+  (`exec_*` Str/cstr ambiguity); existing slots shifted:
+  macOS arm64 struct-by-value (.43→.45), defensive sweep (.44→.46;
+  scope expanded with the two parser-cosmetic-limit items), PE
+  println/exit-code (.45→.47), cycle closeout (.46→.48).
+- `docs/development/state.md` closeout-pin range refreshed.
+- Historical CHANGELOG references to `v5.10.45 PE gap` /
+  `v5.10.46 closeout` in shipped entries left as-is per
+  `feedback_doc_canonical_no_redundancy` (CHANGELOG = source of
+  truth for history; renumber doesn't backdate).
+
 ## [5.10.42] — 2026-05-11
 
 **v5.10.x SLOT 42 — `lib/tls.cyr` hook-surface contract audit**.

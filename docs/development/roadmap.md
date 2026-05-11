@@ -1890,7 +1890,7 @@ guard applied per `~/.cyrius/lib/` mirror.
 See CHANGELOG [5.10.42] for the section breakdown
 and doc-canonical-source separation rationale.
 
-#### v5.10.43 — `lib/str.cyr` `str_split` separator-byte-comparison fix
+#### v5.10.43 — `lib/str.cyr` `str_split` separator-byte-comparison fix — **SHIPPED 2026-05-11**
 
 Pinned 2026-05-11 from v5.10.42-ship roadmap-extension
 sweep across `docs/development/issues/`. Issue file:
@@ -1921,20 +1921,31 @@ codegen unchanged across x86 / aarch64 / cx / macho /
 PE. cc5 byte-identical expected (lib file edit, not
 compiler).
 
-**Acceptance:**
-1. `str_split(str_from("a,b,c"), str_from(","))`
-   returns a 3-part vec.
-2. `str_split(str_from("foo--bar--baz"),
-   str_from("--"))` returns a 3-part vec (multi-byte
-   sep).
-3. Existing `str_split` consumers (sandhi config
-   parsing, argonaut cmdline parsing, mabda
-   include-walker, etc.) compile + run unchanged.
-4. cc5 self-host byte-identical (verify; this is a
-   pure stdlib change, no compiler-side effect).
-5. Snapshot-ping-pong guard applied (mirror
-   `lib/str.cyr` into `~/.cyrius/lib/` immediately
-   after the edit).
+**Acceptance — ALL MET:**
+1. ✓ `str_split(str_from("a,b,c"), str_from(","))`
+   returns a 3-part vec (`str_split.tcyr` group
+   "Str path — single-byte sep").
+2. ✓ `str_split(str_from("foo--bar--baz"),
+   str_from("--"))` returns a 3-part vec
+   (`str_split.tcyr` group "Str path — multi-byte sep").
+3. ✓ Existing 21+ stdlib byte-int callers (agnosys,
+   yukti, process) hit the byte path unchanged.
+4. ✓ cc5 byte-identical at 798,912 B across .42→.43
+   (cc5 has no `lib/str.cyr` include).
+5. ✓ Snapshot-ping-pong guard applied.
+
+Realized scope (vs pinned scope): chose runtime
+byte/Str dispatch on `sep < 256` instead of a
+signature change, to preserve the 21+ byte-int
+stdlib callers byte-identical. Lands the
+v5.10.42-ship roadmap-extension audit
+(`feedback_premise_check_at_slot_entry`-driven
+empirical check confirmed `kernel`-reserved-word
+issue already-fixed → archived) in the same slot.
+
+See CHANGELOG [5.10.43] for the bug-history, fix
+shape, test coverage, and snapshot-ping-pong guard
+note.
 
 #### v5.10.44 — `lib/process.cyr` `exec_*` Str/cstr ambiguity fix
 

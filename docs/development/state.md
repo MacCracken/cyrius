@@ -5,12 +5,24 @@
 
 ## Version
 
-**5.10.42** (shipped 2026-05-11 — **v5.10.x SLOT 42 — `lib/tls.cyr`
-hook-surface contract audit**). Doc slot following the .40/.41
-compile-time-perf miniarc; cycle in-flight at 42 slots shipped.
-cc5 self-host **byte-identical to v5.10.41 at 798,912 B** (was
-753,768 B at v5.10.0; +45,144 B across the cycle — flat through
-.41 → .42 because the .42 work is doc-only).
+**5.10.43** (shipped 2026-05-11 — **v5.10.x SLOT 43 — `lib/str.cyr`
+`str_split` separator-byte-comparison fix (runtime byte/Str
+dispatch)**). First fix from the v5.10.42-ship roadmap-extension
+audit of open issues; cycle in-flight at 43 slots shipped. cc5
+self-host **byte-identical to v5.10.42 at 798,912 B** — lib-only
+change, cc5 doesn't include `lib/str.cyr`. Cycle delta: 753,768 B
+at v5.10.0 → **798,912 B at v5.10.43** (+45,144 B; flat across
+.41→.42→.43).
+
+`str_split_a` now dispatches at runtime: `sep < 256` → byte path
+(pre-v5.10.43 behavior preserved for 21+ stdlib byte-int callers);
+`sep >= 256` → Str fat-pointer path (multi-byte sep supported).
+Closes
+`docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`
+(moved to archived/). `lib/process.cyr:224` cstr-sep bug fixed in
+same slot (was silently broken). 12 test groups / 35 sub-asserts
+in new `tests/tcyr/str_split.tcyr`; alloc_str_extras.tcyr back-
+compat blocks flipped to expect the fix.
 
 **Headline numbers** (CYRIUS_PROF=1, `cc5 < src/main.cyr`,
 best-of-5 median, end-to-end v5.10.x perf-arc gain pre-.40 → .41):
@@ -36,7 +48,7 @@ Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
 exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
 v5.10.40 (no aarch64 backend change).
 
-**Slots .33 - .42 one-liner sweep**:
+**Slots .33 - .43 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -81,6 +93,13 @@ v5.10.40 (no aarch64 backend change).
   points to the doc. cc5 byte-identical (doc-only). No vidya
   entry (API surface, not gotcha). Snapshot-ping-pong guard
   applied via `~/.cyrius/lib/` mirror.
+- **v5.10.43** — `lib/str.cyr` `str_split` separator-byte-comparison
+  fix. Runtime dispatch on `sep < 256` (byte path) vs `>= 256` (Str
+  fat-pointer path); multi-byte Str sep supported. Closes the
+  long-standing
+  `2026-05-03-str-split-sep-treated-as-pointer.md` issue (live the
+  entire v5.x cycle). `lib/process.cyr:224` cstr-sep bug fixed in
+  same slot. cc5 byte-identical (lib-only; no compiler include).
 
 Per CLAUDE.md, slot-by-slot detail lives in `CHANGELOG.md` (source
 of truth); closed cycles roll into `completed-phases.md` at each
@@ -89,18 +108,21 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **798,912 B** at v5.10.42 (unchanged
-  from v5.10.41; doc-only slot). Cycle delta: 797,464
-  B at v5.10.39 → 798,912 B at v5.10.42 (+1,448 B
-  across the .40/.41 perf miniarc).
-- **cc5_aarch64**: **491,832 B** at v5.10.42 (unchanged
-  from v5.10.40 — aarch64 fixup has no DCE pass).
+- **cc5 (x86_64)**: **798,912 B** at v5.10.43 (unchanged
+  from v5.10.42; lib-only slot, cc5 has no
+  `lib/str.cyr` include). Cycle delta: 797,464 B at
+  v5.10.39 → 798,912 B at v5.10.43 (+1,448 B all from
+  the .40/.41 perf miniarc; .42 / .43 flat).
+- **cc5_aarch64**: **491,832 B** at v5.10.43 (unchanged
+  from v5.10.40 — aarch64 fixup has no DCE pass and
+  the .43 lib change doesn't reach this binary).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
   cycle — `cyrius` doesn't run LEXID itself).
-- **cc5_win (cross)**: **696,832 B** at v5.10.42 (unchanged
-  from v5.10.41 — doc-only slot doesn't reach compiler
-  binaries). PE mmap at 0x5000000 has 1.5 MB slack past
-  the v5.10.40 brk extension to `0x4EAD000`, no resize.
+- **cc5_win (cross)**: **696,832 B** at v5.10.43 (unchanged
+  from v5.10.41 — .42 doc + .43 lib slots don't reach
+  compiler binaries). PE mmap at 0x5000000 has 1.5 MB
+  slack past the v5.10.40 brk extension to `0x4EAD000`,
+  no resize.
 - **cc5_macho_arm (cross)**: ~590 KB at v5.10.40; mmap
   size bumped 0x4E8C000 → 0x4EAD000 to absorb the new
   LEXID region.
@@ -136,7 +158,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.42. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.43. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -163,9 +185,9 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 42 slots shipped through v5.10.42 (2026-05-11).**
-Two completed arcs plus a two-slot compile-time-perf miniarc plus
-the TLS contract pin anchor the cycle:
+**v5.10.x cycle — 43 slots shipped through v5.10.43 (2026-05-11).**
+Two completed arcs plus a compile-time-perf miniarc plus the TLS
+contract pin plus the open-issues sweep anchor the cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -190,9 +212,17 @@ the TLS contract pin anchor the cycle:
 4. **v5.10.42 TLS hook-surface contract** — new
    `docs/development/lib-tls-contract.md` pins the
    invariant layer for the `lib/tls.cyr` ↔ `lib/sandhi.cyr`
-   surface that stabilised across .40/.13/.21/.27/.34. Next
-   pinned: v5.10.43 (macOS arm64 struct-by-value calling-
-   convention — Mach-O ABI work, isolated).
+   surface that stabilised across .40/.13/.21/.27/.34.
+
+5. **v5.10.43 open-issues sweep — str_split fix** —
+   v5.10.42-ship roadmap-extension audit promoted 4
+   open issues into v5.10.x slots; v5.10.43 closes the
+   first: `str_split`'s sep-treated-as-pointer bug
+   (live entire v5.x cycle). Runtime dispatch on
+   `sep < 256` preserves all 21+ stdlib byte-int
+   callers byte-identical AND fixes Str-sep semantics.
+   Next pinned: v5.10.44 (`exec_*` Str/cstr ambiguity
+   — argonaut-blocking).
 
 Additional in-cycle work: TLS early-data surface completion at
 v5.10.34 (TLS_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED + accessors);
@@ -201,11 +231,12 @@ ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **798,912 B at v5.10.42** (+45,144 B)
-- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.42** (flat .40→.42)
+- cc5: 753,768 B at v5.10.0 → **798,912 B at v5.10.43** (+45,144 B)
+- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.43** (flat .40→.43)
 - api-surface: 2792 → ~2873 entries
 - New `lib/simd.cyr` (50 public fns)
 - New `docs/development/lib-tls-contract.md` (v5.10.42)
+- New `tests/tcyr/str_split.tcyr` (v5.10.43, 35 sub-asserts)
 - **Compile time 1037 → 387 ms (2.7×) across .40 + .41 miniarc**
 - 3 locname-staleness surfacings (v5.10.35 fixed ptyp 93-130; v5.10.39
   fixed the duplicate at ptyp 89-91 missed by .35); install.sh
@@ -218,8 +249,14 @@ the remaining v5.10.x work. Full v5.10.x retro at
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.42 TLS contract):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.43 str_split fix):
 
+- **v5.10.43** — `lib/str.cyr` `str_split` separator-byte-comparison
+  fix (runtime byte/Str dispatch). Closes the long-standing issue
+  filed at `docs/development/issues/2026-05-03-str-split-sep-
+  treated-as-pointer.md`. `sep < 256` → byte path; `sep >= 256` →
+  Str fat-pointer path with multi-byte sep support. cc5 byte-
+  identical (lib-only). 12 test groups / 35 sub-asserts.
 - **v5.10.42** — `lib/tls.cyr` hook-surface contract audit. New
   `docs/development/lib-tls-contract.md` (~230 LOC) formalises 24
   public verbs (availability / connect-fused / connect-staged /

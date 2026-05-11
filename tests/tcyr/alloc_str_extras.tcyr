@@ -60,22 +60,21 @@ assert(s_trim != 0, "str_trim_a returned non-zero");
 assert_eq(str_len(s_trim), 5, "trim len = 5");
 assert_eq(load8(str_data(s_trim)), 104, "trim byte 0 = 'h' (104)");
 
-test_group("str_split_a — arena_allocator (matches pre-v5.8.43 broken behavior)");
-# Pre-existing bug: str_split's `sep` arg is treated as a byte
-# value at the comparison site but the API takes a Str/cstr, so
-# load8(sd+si) == sep never matches (sep is a pointer >255).
-# Result: always 1 part = the whole input. v5.8.43 _a variant
-# preserves this behavior end-to-end (a true fix is a separate
-# slot — out of scope for this absorber). Verify allocator
-# routing via the part vec landing in the arena.
+test_group("str_split_a — arena_allocator routes Str-sep dispatch (v5.10.43)");
+# v5.10.43 fixed the long-standing bug where `sep` was treated as
+# a byte value despite the Str type annotation. Now: runtime
+# dispatch — sep < 256 hits byte path, sep >= 256 hits Str path.
+# This test exercises the Str path through arena_allocator routing.
+# Comprehensive coverage of all dispatch paths lives in
+# tests/tcyr/str_split.tcyr (v5.10.43).
 var ar = arena_allocator(4096);
 var s_csv = str_from("alpha,beta,gamma");
 var parts = str_split_a(ar, s_csv, str_from(","));
 assert(parts != 0, "str_split_a returned non-zero (vec allocated in arena)");
-assert_eq(vec_len(parts), 1, "1 part (pre-existing str_split bug; sep ignored)");
-# Verify the single part contains the whole input
-assert_eq(str_len(vec_get(parts, 0)), str_len(s_csv),
-    "single part = whole input");
+assert_eq(vec_len(parts), 3, "3 parts (v5.10.43 Str-sep dispatch works)");
+assert_eq(str_eq(vec_get(parts, 0), str_from("alpha")), 1, "part 0 = 'alpha'");
+assert_eq(str_eq(vec_get(parts, 1), str_from("beta")),  1, "part 1 = 'beta'");
+assert_eq(str_eq(vec_get(parts, 2), str_from("gamma")), 1, "part 2 = 'gamma'");
 
 # ---- str_builder_* chain through arena ----
 
@@ -159,9 +158,10 @@ var s_back = str_from("  back-compat  ");
 var s_back_trim = str_trim(s_back);
 assert_eq(str_len(s_back_trim), 11, "back-compat str_trim len = 11");
 var s_back_csv = str_split(str_from("a,b,c,d"), str_from(","));
-# Pre-existing bug — back-compat preserves the same broken
-# behavior as the _a variant. See CHANGELOG note.
-assert_eq(vec_len(s_back_csv), 1, "back-compat str_split — 1 part (pre-existing bug)");
+# v5.10.43: str_split's Str-path dispatch fixed the long-standing
+# bug where the Str sep was treated as a pointer. This back-compat
+# block tracks the fix — was `1 part` pre-v5.10.43.
+assert_eq(vec_len(s_back_csv), 4, "back-compat str_split — 4 parts (v5.10.43 Str-sep dispatch)");
 
 test_group("back-compat — str_builder unchanged");
 var sb_back = str_builder_new();
