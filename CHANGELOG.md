@@ -6,6 +6,137 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.49] — 2026-05-11
+
+**v5.10.x SLOT 49 — Win64 PE `println` silent + exit-code
+propagation: premise-debunk (no fix needed)**.
+
+Per `feedback_premise_check_at_slot_entry`: empirical re-test at
+slot entry shows **both pinned pieces are working today**. The
+"broken" claims that propagated through CHANGELOG entries
+[5.10.33] / [5.10.34] / [5.10.39] / [5.10.40] / [5.10.41] /
+[5.10.44] / [5.10.47] traced back to a **shell-wrapper bug** in
+the cross-host smoke pattern, NOT to actual PE-runtime defects.
+
+### Empirical verification (this slot)
+
+Cross-built two minimal PE binaries on x86, scp'd to cass, ran
+with **correct delayed-expansion test wrapper** (`cmd /v /c
+"prog.exe & echo exit=!errorlevel!"`):
+
+```cyrius
+// exit42.cyr
+syscall(60, 42);
+```
+→ `cass: exit=42` ✓
+
+```cyrius
+// hello_pe.cyr
+syscall(1, 1, "hello\n", 6);
+syscall(60, 0);
+```
+→ `cass: stdout="hello"; exit=0` ✓
+
+```cyrius
+// struct-byval Phase 3 repro (the v5.10.47-shipped test)
+struct Point { x: i64; y: i64; }
+fn make(): Point { var p: Point; p.x = 7; p.y = 35; return p; }
+fn run(): i64 { var got: Point = make(); return got.x + got.y; }
+syscall(60, run());
+```
+→ `cass: exit=42` ✓ — Phase 3 of the struct-byval arc, **also
+verified runtime-green on PE**.
+
+### The wrapper bug (root cause of the false-negative)
+
+`cmd /c "prog.exe & echo exit=%errorlevel%"` expands
+`%errorlevel%` at **parse time** (before any chained command
+runs) → falsely reports `exit=0` regardless of what prog.exe
+returned. Every "cass exit=0" line in earlier cross-host smoke
+CHANGELOG entries used this pattern.
+
+**Working shapes** (per `feedback_windows_errorlevel_test_wrapper`
+memory pin saved this slot):
+1. `cmd /v /c "prog.exe & echo exit=!errorlevel!"` (delayed
+   expansion enabled by `/v`, `!var!` syntax expands at exec time)
+2. `.bat` indirection — write `prog.exe\necho exit=%ERRORLEVEL%`
+   to a `.bat` file; newlines split parse passes so the second
+   line reads the updated errorlevel. This is what
+   `programs/check.cyr`'s `_pe_exit_gate` (line ~4308) already
+   uses — the cyrius-side gate was always correct, only the
+   chat-side smoke wrapper was wrong.
+
+### Why the cyrius-internal gate (`_pe_exit_gate`) passed despite the false-negative chain
+
+`programs/check.cyr` lines 4256+ uses shape (2) — `.bat`
+indirection. Its T1 (`syscall(60, 42)` → exit=42) and T2
+(`syscall(1, 1, "hello\n", 6); syscall(60, 42)` → stdout
+"hello" + exit=42) tests have been passing throughout the v5.10.x
+cycle. The disconnect was that **chat-side ad-hoc smoke wrappers
+diverged from the proper `.bat` indirection** and silently
+underreported success.
+
+### Implications for the v5.10.47 struct-byval Phase 3 caveat
+
+The v5.10.47 CHANGELOG entry says:
+> "cass (Win64 PE): `cc5_win` (701,440 B) — compile clean, exit=0
+> (pre-existing v5.10.49 PE exit-code propagation gap)."
+
+Retroactively: **the cass runtime was always green** (exit=42)
+when tested with the correct wrapper. The "gated on .49"
+qualifier was based on the bad-wrapper false-negative. The
+struct-byval ABI arc's Phase 3 cross-host verification is
+**fully complete across all 4 targets** (x86 / pi / ecb / cass),
+not just 3.
+
+Per `feedback_doc_canonical_no_redundancy` (CHANGELOG = source
+of truth for history; don't backdate): the .47 entry stays as
+written. This entry is the durable record that future readers
+should consult for the corrected status.
+
+### Win64 ABI deviation note (carried forward unchanged)
+
+The v5.10.47 note about cyrius using rax+rdx pair-return on PE
+(deviation from MS x64's strict hidden-RCX retptr requirement
+for ≥9B composites) stands. Cyrius-internal-ABI works because
+all callers + callees agree on the rax+rdx convention; foreign-C
+interop with value-typed struct returns would need a separate
+PE-retptr-mode emit path (out of scope for v5.10.x).
+
+### Memory pin saved (for future agents)
+
+`feedback_windows_errorlevel_test_wrapper` — documents the bad
+wrapper + the two working shapes + this slot's debunk as the
+case-in-point.
+
+### Numbers
+
+cc5 (x86): **804,472 B — byte-identical to v5.10.48** (no code
+change this slot). 3-step fixpoint clean. 66/66 check.sh PASS.
+
+### What landed
+
+- `CHANGELOG.md` — this entry (the premise-debunk + empirical
+  re-verification + retroactive Phase 3 closure).
+- `docs/development/roadmap.md` — v5.10.49 marked **SHIPPED**
+  with the no-code-change debunk note.
+- `docs/development/state.md` — refreshed; struct-byval Phase 3
+  status note updated to "fully green on all 4 targets".
+- Memory pin: `feedback_windows_errorlevel_test_wrapper` (saved
+  to `~/.claude/projects/.../memory/`).
+- **No code change** — `EEXIT` and `EWRITE_PE` already correctly
+  emit `ExitProcess` and `WriteFile` via the kernel32 IAT slots.
+
+### Why this is forward motion, not bookkeeping
+
+Per `feedback_one_thing_slot_revised` ("no bookkeeping-only
+slots"): this slot closes a 15-slot phantom item from the
+roadmap, retroactively un-gates the struct-byval Phase 3 cass
+verification (Phase 3 was 4/4, not 3/4), saves a permanent
+memory pin against the same agent-side error, and removes a
+multi-week-old false claim from the cycle's open issues. The
+fact that NO code change was needed is itself the deliverable.
+
 ## [5.10.48] — 2026-05-11
 
 **v5.10.x SLOT 48 — Defensive sweep + parser cosmetic limits**.

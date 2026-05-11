@@ -2221,7 +2221,7 @@ token. Issue file
 `2026-05-03-parser-cosmetic-limits-bare-return-and-var-bracket.md`
 moves to `archived/` at slot ship.
 
-#### v5.10.49 — Win64 PE `println` silent + exit-code propagation fix
+#### v5.10.49 — Win64 PE `println` + exit-code: premise-debunk — **SHIPPED 2026-05-11 (no code change)**
 
 Pinned 2026-05-10 at v5.10.33 ship. Pre-existing
 Win64 stdlib gap surfaced repeatedly across the
@@ -2282,6 +2282,36 @@ fixtures. Before this fix, cass verify is "exit-
 code-only" — fine for primitive gates (`_pe_exit_gate`
 uses bare `syscall(60, 42)`), but blind for
 anything using `println`-based test reporting.
+
+---
+
+**SHIPPED — premise debunked**: empirical re-test at
+slot entry showed both pinned pieces are working
+today. The cross-host smoke pattern used in the
+chat-side test wrapper (`cmd /c "prog.exe & echo
+%errorlevel%"`) expanded `%errorlevel%` at parse
+time → falsely reported `exit=0`. Correct wrappers:
+
+- `cmd /v /c "prog.exe & echo exit=!errorlevel!"`
+- `.bat` indirection (what `_pe_exit_gate` already
+  uses — line 4308 of `programs/check.cyr` —
+  always correct).
+
+Verified at v5.10.49 with `cmd /v`:
+- `syscall(60, 42)` → cass exit=42 ✓
+- `syscall(1, 1, "hello\n", 6); syscall(60, 0)` →
+  cass stdout="hello", exit=0 ✓
+- v5.10.47 struct-byval Phase 3 Point repro →
+  cass exit=42 ✓ (retroactively confirms the
+  Phase 3 arc was 4/4 green, not 3/4 as the .47
+  CHANGELOG noted under bad-wrapper assumption).
+
+No code change. Memory pin saved
+(`feedback_windows_errorlevel_test_wrapper`) to
+prevent future agents tripping the same wrapper bug.
+See CHANGELOG [5.10.49] for the full debunk + the
+list of CHANGELOG entries that propagated the
+phantom claim.
 
 #### v5.10.50 — v5.10.x cycle closeout
 

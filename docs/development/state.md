@@ -5,14 +5,33 @@
 
 ## Version
 
-**5.10.48** (shipped 2026-05-11 — **v5.10.x SLOT 48 — Defensive
-sweep + parser cosmetic limits**). 7-item bundle closes the last
-roadmap-extension-audit open issue (parser cosmetics) + 2 small
-defensives. Cycle in-flight at 48 slots shipped. cc5 self-host
-**804,472 B at v5.10.48** (+1,384 B vs v5.10.47's 803,088 B for
-the bare-return synthesis branch + array-size enum-ident path in
-both PARSE_ARRAY and PARSE_GVAR_ARR + defensive guards). Cycle
-delta: 753,768 B at v5.10.0 → **804,472 B at v5.10.48** (+50,704 B).
+**5.10.49** (shipped 2026-05-11 — **v5.10.x SLOT 49 — Win64 PE
+`println` + exit-code: premise-debunk, no code change**). 15-slot
+phantom item closed; empirical re-verification shows both pinned
+pieces (PE `syscall(60, code)` exit-code propagation +
+`syscall(1, ...)` console output) work today. Cycle in-flight at
+49 slots shipped. cc5 self-host **804,472 B at v5.10.49 — byte-
+identical to v5.10.48** (no codegen change this slot). Cycle
+delta: 753,768 B at v5.10.0 → **804,472 B at v5.10.49**
+(+50,704 B; .48 was the last codegen-change slot).
+
+Premise debunk: chat-side cross-host smoke wrappers used `cmd /c
+"prog.exe & echo %errorlevel%"` which expands at parse time →
+false-negative `exit=0`. Correct shapes (memory pin
+`feedback_windows_errorlevel_test_wrapper` saved this slot):
+`cmd /v /c "... !errorlevel!"` or `.bat` indirection
+(`programs/check.cyr`'s `_pe_exit_gate` always used the correct
+shape; chat-side wrappers diverged). Phantom claim propagated
+through CHANGELOG entries [5.10.33] / .34 / .39 / .40 / .41 /
+.44 / .47; this entry is the durable correction.
+
+**Retroactive Phase 3 status update**: v5.10.47 struct-byval
+Phase 3 cass runtime is **actually green** (Point repro
+`syscall(60, run())` → cass exit=42 verified with `cmd /v`).
+The arc was 4/4 across x86/pi/ecb/cass, not 3/4 as the .47
+entry noted under bad-wrapper assumption. Per
+`feedback_doc_canonical_no_redundancy`: .47 entry stays as
+shipped; this .49 entry is the corrected record.
 
 **Arc COMPLETE** (planned at v5.10.45 entry; see CHANGELOG [5.10.45]
 "Arc shape" for the empirical premise-check that drove the
@@ -72,7 +91,7 @@ Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
 exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
 v5.10.40 (no aarch64 backend change).
 
-**Slots .33 - .48 one-liner sweep**:
+**Slots .33 - .49 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -155,12 +174,12 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **804,472 B** at v5.10.48 (was
-  803,088 B at v5.10.47; +1,384 B for the .48 parser
-  cosmetics + defensive guards). Cycle delta:
-  797,464 B at v5.10.39 → 804,472 B at v5.10.48
-  (+7,008 B: .40/.41 perf miniarc +1,448 B; .42/.43/
-  .44 flat; .45 +4,176 B; .46/.47 flat; .48 +1,384 B).
+- **cc5 (x86_64)**: **804,472 B** at v5.10.49 (unchanged
+  from v5.10.48; .49 is no-code-change premise debunk).
+  Cycle delta: 797,464 B at v5.10.39 → 804,472 B at
+  v5.10.49 (+7,008 B: .40/.41 perf miniarc +1,448 B;
+  .42/.43/.44 flat; .45 +4,176 B; .46/.47 flat; .48
+  +1,384 B; .49 flat).
 - **cc5_aarch64_native (cross-built)**: **587,048 B** at
   v5.10.47 (stable through Phase 2/3).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
@@ -213,7 +232,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.48. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.49. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -240,12 +259,13 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 48 slots shipped through v5.10.48 (2026-05-11).**
-THREE completed arcs (typed-simd ABI, REAL TYPE SYSTEM,
-struct-byval ABI) plus a compile-time-perf miniarc plus the TLS
-contract pin plus the roadmap-extension open-issues sweep
-(.43/.44/.48 close all 4 issues from the v5.10.42 audit) anchor
-the cycle:
+**v5.10.x cycle — 49 slots shipped through v5.10.49 (2026-05-11).**
+ONE patch away from closeout. THREE completed arcs (typed-simd
+ABI, REAL TYPE SYSTEM, struct-byval ABI) plus a compile-time-perf
+miniarc plus the TLS contract pin plus the roadmap-extension
+open-issues sweep (.43/.44/.48 close all 4 issues from the
+v5.10.42 audit) plus the v5.10.49 PE premise-debunk anchor the
+cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -313,7 +333,7 @@ ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **804,472 B at v5.10.48** (+50,704 B)
+- cc5: 753,768 B at v5.10.0 → **804,472 B at v5.10.49** (+50,704 B)
 - cc5_aarch64_native: ~470 KB at v5.10.0 → **587,048 B at v5.10.47**
 - cc5_macho_arm: ~510 KB at v5.10.0 → **606,644 B at v5.10.47**
 - cc5_win: ~530 KB at v5.10.0 → **701,440 B at v5.10.47**
@@ -335,8 +355,15 @@ the remaining v5.10.x work. Full v5.10.x retro at
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.48 defensive sweep + parser cosmetics):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.49 PE premise debunk):
 
+- **v5.10.49** — Win64 PE `println` + exit-code premise-debunk
+  (no code change). Empirical re-test shows both pinned pieces
+  work today; the "broken" claims were a 15-slot chat-side
+  test-wrapper bug (`cmd /c "& echo %errorlevel%"` parse-time
+  expansion). Memory pin saved. v5.10.47 struct-byval Phase 3
+  cass retroactively confirmed exit=42 (arc 4/4, not 3/4).
+  cc5 byte-identical to v5.10.48.
 - **v5.10.48** — Defensive sweep + parser cosmetic limits (7-item
   bundle). Bare `return;` synthesizes `return 0;`; enum-ident
   array sizes accepted in BOTH PARSE_ARRAY + PARSE_GVAR_ARR;
