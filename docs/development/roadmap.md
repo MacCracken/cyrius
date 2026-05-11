@@ -1890,20 +1890,133 @@ guard applied per `~/.cyrius/lib/` mirror.
 See CHANGELOG [5.10.42] for the section breakdown
 and doc-canonical-source separation rationale.
 
-#### v5.10.43 — macOS arm64 struct-by-value calling-convention
+#### v5.10.43 — `lib/str.cyr` `str_split` separator-byte-comparison fix
+
+Pinned 2026-05-11 from v5.10.42-ship roadmap-extension
+sweep across `docs/development/issues/`. Issue file:
+[`2026-05-03-str-split-sep-treated-as-pointer.md`](issues/2026-05-03-str-split-sep-treated-as-pointer.md).
+
+**Severity:** Medium — silent miscompile of a stdlib
+API. `str_split` and `str_split_a` walk the input
+byte-by-byte, but the inner test compares each byte
+to the `sep: Str` pointer directly instead of
+dereferencing the separator's data. Live for the
+entire v5.x cycle; surfaces as "split returns one
+part" whenever a caller passes a `Str` separator
+(the natural cyrius idiom).
+
+**Fix shape:** `lib/str.cyr:331-353` — replace
+`if (load8(sd + si) == sep) { ... }` with a per-call
+comparison that extracts `sep`'s data + len at the
+top of `str_split_a` (single-byte-sep fast path is
+fine; multi-byte sep handled via `memeq` over
+`(sd + si, sep_data, sep_len)`). Define semantics
+explicitly in the docstring so the
+`str_split_cstr` sibling stays consistent. Add a
+2-shape tcyr gate (single-byte + multi-byte sep)
+under `tests/tcyr/`.
+
+**Cross-arch propagation:** stdlib-only change; lex/
+codegen unchanged across x86 / aarch64 / cx / macho /
+PE. cc5 byte-identical expected (lib file edit, not
+compiler).
+
+**Acceptance:**
+1. `str_split(str_from("a,b,c"), str_from(","))`
+   returns a 3-part vec.
+2. `str_split(str_from("foo--bar--baz"),
+   str_from("--"))` returns a 3-part vec (multi-byte
+   sep).
+3. Existing `str_split` consumers (sandhi config
+   parsing, argonaut cmdline parsing, mabda
+   include-walker, etc.) compile + run unchanged.
+4. cc5 self-host byte-identical (verify; this is a
+   pure stdlib change, no compiler-side effect).
+5. Snapshot-ping-pong guard applied (mirror
+   `lib/str.cyr` into `~/.cyrius/lib/` immediately
+   after the edit).
+
+#### v5.10.44 — `lib/process.cyr` `exec_*` Str/cstr ambiguity fix
+
+Pinned 2026-05-11 from v5.10.42-ship roadmap-extension
+sweep. Issue file:
+[`2026-05-10-process-exec-str-cstr-ambiguity.md`](issues/2026-05-10-process-exec-str-cstr-ambiguity.md).
+
+**Severity:** Medium — silent exec failure. `exec_vec`
+/ `exec_env` / `exec_capture` store each vec element
+verbatim into `execve(2)`'s argv array. When the caller
+pushes a `Str` (the natural cyrius idiom — `vec_push(
+args, str_from("/bin/foo"))`) the child reads the 8-
+byte `{data, len}` struct as a cstr → garbage path →
+rc=127 (path not found) or rc=-1 (path too long).
+The `exec_cmd` sibling already `str_data`s on the way
+in; the family is internally inconsistent.
+
+**Consumer status:** argonaut blocked on this for
+end-to-end fork-exec testing — `tests/tcyr/
+audit_findings.tcyr:201` carries the explicit
+deferral comment.
+
+**Fix shape (consumer-side filing recommends two
+options):** evaluate at slot entry:
+
+- **Option 1 (preferred):** make `exec_*` Str-friendly
+  via a `coerce_to_cstr(p)` helper inside the argv-
+  copy loop. Drops the API mismatch at a small
+  per-arg cost. Risk: distinguishing Str pointers
+  from cstr pointers heuristically. Cleaner if
+  consumer-side rule is "always push via a typed
+  helper" (`vec_push_cstr` / `vec_push_str`).
+- **Option 2:** new `exec_vec_str(args: vec of Str)`
+  family that always `str_data`s on the way in;
+  keep `exec_vec` as cstr-only, document explicitly.
+
+Per `feedback_consumer_request_full_surface`: ship
+whatever Option (1 or 2) is picked at slot entry as
+the FULL surface — including docstring updates AND
+the parallel updates to `exec_env` / `exec_capture`
+so the family stays consistent. Don't half-fix one
+function while leaving the others stale.
+
+**Cross-arch propagation:** stdlib-only change; no
+compiler-side effect. cc5 byte-identical expected.
+
+**Acceptance:**
+1. `vec_push(a, str_from("/bin/true"))` + `exec_vec(a)`
+   returns the exec'd binary's exit code (0 for
+   `/bin/true`), not 127.
+2. The existing cstr-literal path (`vec_push(a,
+   "/bin/true")`) still works (no regression).
+3. `exec_env` and `exec_capture` get the same
+   treatment in the same slot.
+4. Docstrings on all three explicitly state the new
+   contract.
+5. argonaut's `tests/tcyr/health_exec.tcyr` strict
+   assertions reinstated; `audit_findings.tcyr:201`
+   deferral comment removed.
+6. cc5 self-host byte-identical (stdlib-only).
+
+#### v5.10.45 — macOS arm64 struct-by-value calling-convention
 
 Promoted from held to concrete slot at v5.10.20 P(-1)
 sweep; cascaded from original .34 pin at v5.10.33
-ship. v5.5.36 deferred. Surfaces on consumer
-cross-build. Mach-O ABI work, isolated from other
-held items — earns its own slot.
+ship; shifted .43 → .45 at v5.10.42 ship when
+str_split + exec_* issues were promoted ahead.
+v5.5.36 deferred. Surfaces on consumer cross-build.
+Mach-O ABI work, isolated from other held items —
+earns its own slot.
 
-#### v5.10.44 — Defensive sweep (small bundle)
+#### v5.10.46 — Defensive sweep (small bundle) + parser cosmetic limits
 
 Promoted from held to concrete slot at v5.10.20
-P(-1) sweep. Bundle of small defensive cleanups
-that don't share a cascade but are individually too
-small to justify standalone slots:
+P(-1) sweep; shifted .44 → .46 at v5.10.42 ship.
+Scope expanded at v5.10.42 to absorb the two
+parser-cosmetic-limit items from
+[`2026-05-03-parser-cosmetic-limits-bare-return-and-var-bracket.md`](issues/2026-05-03-parser-cosmetic-limits-bare-return-and-var-bracket.md).
+
+Bundle of small defensive cleanups that don't share
+a cascade but are individually too small to justify
+standalone slots:
 
 - **`parse_fn.cyr:910` defensive `_AARCH64_BACKEND==0`
   guard** (surfaced v5.9.43 closeout). x86 callee-
@@ -1928,17 +2041,41 @@ small to justify standalone slots:
   The full design call (clean error vs polymorphic
   project-level audit) stays held until user picks
   semantics; the defensive guard ships now.
+- **Parser cosmetic: `bare_return_in_if_block_rejected`**
+  — accept `return;` in fn body (synthesize as
+  `return 0;` per cyrius's int-only return
+  convention). Vidya entry
+  `parser_syntax.cyml:bare_return_in_if_block_rejected`
+  flips to ✅ FIXED in the same slot.
+- **Parser cosmetic: `var_bracket_size_must_be_literal`**
+  — accept ident in `var name[N]` if it resolves to
+  a top-level `var NAME = LITERAL;` (compile-time-
+  known). Vidya entry `parser_syntax.cyml:var_bracket
+  _size_must_be_literal` flips to ✅ FIXED.
 - **Surface review** — tcyr-relay-vs-testsuite-gate
   redundancy (pinned v5.9.6); doc/vidya version-ref
   drift cleanup. Bundle in if scope permits.
 
-Earns a slot via "Big Heavy One Thing" — 5 items
+Earns a slot via "Big Heavy One Thing" — 7 items
 add up to a meaningful defensive cleanup. Per the
 v5.10.0 acceptance principle: bundling unrelated
 defensives is OK when each is too small standalone
-AND scheduling lines up.
+AND scheduling lines up. The two parser cosmetics
+share the same "parser-stage rejection with confusing
+diagnostic line" root cause (per the issue file's
+joint-tracking framing), which keeps them coherent
+within the bundle even though they're independent
+parser paths.
 
-#### v5.10.45 — Win64 PE `println` silent + exit-code propagation fix
+**Acceptance for parser cosmetics specifically:**
+two-line tcyr each (`bare_return_in_if.tcyr`,
+`var_bracket_ident_size.tcyr`); both compile cleanly
+OR error with a specific diagnostic at the offending
+token. Issue file
+`2026-05-03-parser-cosmetic-limits-bare-return-and-var-bracket.md`
+moves to `archived/` at slot ship.
+
+#### v5.10.47 — Win64 PE `println` silent + exit-code propagation fix
 
 Pinned 2026-05-10 at v5.10.33 ship. Pre-existing
 Win64 stdlib gap surfaced repeatedly across the
@@ -2000,7 +2137,7 @@ code-only" — fine for primitive gates (`_pe_exit_gate`
 uses bare `syscall(60, 42)`), but blind for
 anything using `println`-based test reporting.
 
-#### v5.10.46 — v5.10.x cycle closeout
+#### v5.10.48 — v5.10.x cycle closeout
 
 Pinned 2026-05-10 at v5.10.33 ship as the cycle-
 close slot. Per CLAUDE.md "Closeout Pass (before
@@ -2074,9 +2211,9 @@ identical; otherwise defer to v5.11.0's first patch.
 
 **Acceptance bar**:
 - All 11 steps complete with green outcomes recorded
-  in the v5.10.46 CHANGELOG entry.
+  in the v5.10.48 CHANGELOG entry.
 - Cycle stats summarized: total patches, cc5 size
-  delta v5.10.0 → v5.10.46, check.sh gate count
+  delta v5.10.0 → v5.10.48, check.sh gate count
   growth, cyrius test growth, slot-summary table
   (one line per .x).
 - v5.11.0 entry-bar prepped: P(-1) sweep starting
@@ -2238,7 +2375,7 @@ identical; otherwise defer to v5.11.0's first patch.
      `cp -L` then sees distinct inodes everywhere and the
      "same file" collision can't fire.
   2. **Belt-and-suspenders in install.sh** (this slot,
-     v5.10.46 closeout): even with the v5.11.x cyrius-deps
+     v5.10.48 closeout): even with the v5.11.x cyrius-deps
      fix, harden the refresh-only lib-copy loop against
      the same-file class of errors generally. Replace
      `cp -L "$f" "$dst"` with `rm -f "$dst" && cp -L "$f"
@@ -2458,7 +2595,7 @@ moves to v5.12.0).
      project's `lib/<dep>.cyr` content drifts from the cache —
      same-as-symlink invariant under copies.
   5. The `cp -L same-file` defensive guard in install.sh
-     (per the v5.10.46 closeout pin) is ALSO landed as
+     (per the v5.10.48 closeout pin) is ALSO landed as
      belt-and-suspenders even with this fix.
 
   **Long-term plan — Option A fold-in cadence** (per-dep,
@@ -2485,7 +2622,7 @@ moves to v5.12.0).
   gates into cyrius-native bespoke gates in
   `programs/check.cyr` (see CLAUDE.md DO NOT bullet on
   `regression-X.sh` retirement). A small number of `.sh`
-  gates remain — including the v5.10.46-pinned
+  gates remain — including the v5.10.48-pinned
   `_cyriusly_starship_add_only_gate` whose subject is itself
   the shell `scripts/cyriusly`. Folding the remaining `.sh`
   gates into cyrius lands in v5.11.x **BEFORE** the TS test
@@ -2494,12 +2631,12 @@ moves to v5.12.0).
 
   **Acceptance bar** (multi-patch, refine at slot entry):
   1. Inventory: walk `tests/regression-*.sh` (if any remain)
-     + the v5.10.46 closeout-investigation gate, list each
+     + the v5.10.48 closeout-investigation gate, list each
      subject + assertion shape.
   2. Per-gate: rewrite as a bespoke fn in
      `programs/check.cyr` using `lib/regression.cyr` helpers
      (same shape as `_macho_exit_gate` / `_pe_exit_gate`).
-  3. **Cyriusly cmdtools port** — the v5.10.46 starship
+  3. **Cyriusly cmdtools port** — the v5.10.48 starship
      add-only gate's subject is shell. Port the cmdtools
      install/remove paths (currently `scripts/cyriusly:160+`)
      into a cyrius binary or `cyrius` sub-command first, so

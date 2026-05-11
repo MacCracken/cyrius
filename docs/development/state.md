@@ -210,9 +210,9 @@ v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 - 3 locname-staleness surfacings (v5.10.35 fixed ptyp 93-130; v5.10.39
   fixed the duplicate at ptyp 89-91 missed by .35); install.sh
   `cp -L` same-file collision discovered (workaround manual; fix
-  pinned for v5.10.46 closeout)
+  pinned for v5.10.48 closeout)
 
-**Closeout pinning**: roadmap has v5.10.43 - v5.10.46 slotted for
+**Closeout pinning**: roadmap has v5.10.43 - v5.10.48 slotted for
 the remaining v5.10.x work. Full v5.10.x retro at
 `../../../vidya/content/cyrius/field_notes/compiler/retros/v510x.cyml`.
 

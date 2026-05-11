@@ -1,4 +1,12 @@
-# Issue: `kernel` reserved word breaks parser at unrelated downstream line
+# Issue: `kernel` reserved word breaks parser at unrelated downstream line — RESOLVED v5.8.45
+
+**Resolved:** v5.8.45 (2026-04-30). The lexer demoted `kernel` from
+reserved token 56 to a plain identifier; top-level `kernel;` (AGNOS
+kernel-mode switch) is now detected via `_TOK_IS_KERNEL(S)` at the
+dispatch site in `main.cyr` / `main_*.cyr` instead of through a
+reserved keyword. The repro below compiles clean at v5.10.42
+(empirical verify during the v5.10.x roadmap-extension audit).
+See `src/frontend/lex.cyr:687` and the v5.8.45 CHANGELOG entry.
 
 **Discovered:** 2026-05-03 (vidya audio_dsp 11-lang port)
 **Component:** `cyrius` compiler — parser / lexer
