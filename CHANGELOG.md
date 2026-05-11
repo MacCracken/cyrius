@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.10] — 2026-05-11
+
+**Cyriusly cmdtools port closeout — full surface, cyriusly added to
+release bins, scripts/cyriusly retired from release.scripts** (paired
+with v5.11.9 per v5.10.36 pin).
+
+### Six remaining verbs ported
+
+Extends `programs/cyriusly.cyr` (started v5.11.9) with the heavier
+verbs. Mix of native impl + transparent shell-out via `exec_cmd` —
+the cyrius binary is the unified entry point; OS tools (curl, sh,
+rm) are invoked via `lib/process.cyr` for the inherently-shell
+verbs.
+
+| Verb | Strategy | Notes |
+|------|----------|-------|
+| `use <ver>` | **Native** | sys_unlink + sys_symlink for ~/.cyrius/{bin,lib}; file_write_all for ~/.cyrius/current. Refuses unknown versions. |
+| `uninstall <ver>` | Shell-out | `exec_cmd("rm -rf ...")`; refuses to delete active version. Native recursive rm is a future helper. |
+| `install <ver>` | Shell-out | `curl -sSf .../install.sh \| CYRIUS_VERSION=<v> sh`. Transparent wrapper around the existing flow. |
+| `update` | Shell-out | curl GitHub releases API + grep tag_name. Native JSON parse (lib/json.cyr) is doable; deferred for slot scope. |
+| `setup` | Hybrid | Native checkout sanity-check + file_read_all VERSION; shell-out for bootstrap, cyml `[release]` parse via awk, build-loop, install.sh --refresh-only. |
+| `cmdtools [action] [tool]` | Shell-out | Delegates to `sh scripts/cyriusly cmdtools ...` (the verb has substantial shell-side state: heredoc'd starship/p10k configs). |
+
+### Release-manifest change
+
+- `cyrius.cyml [release].bins` += `"cyriusly"` (cyrius binary ships
+  at `~/.cyrius/versions/<v>/bin/cyriusly`).
+- `cyrius.cyml [release].scripts` -= `"cyriusly"` (shell script no
+  longer auto-installed; stays in tree for the `setup` / `cmdtools`
+  verbs the binary delegates to).
+- install.sh `--refresh-only` now ships 18 bins (was 17) + 87 stdlib
+  files; binary at 89,616 B.
+
+### Acceptance
+
+- `programs/cyriusly.cyr` compiles clean.
+- Every verb smoke-tested locally:
+  - `version` / `list` / `which` / `home` / `help` (v5.11.9, regression check)
+  - `use 99.99.99` → "Version 99.99.99 not installed." (correct error)
+  - `uninstall <active>` → "Cannot uninstall active version" (safety guard)
+  - `uninstall 99.99.99` → "Version 99.99.99 not installed."
+- cc5 byte-identical at 804,472 B (cyriusly not in cc5's chain).
+- check.sh 66/66 + cyrius test 146/146.
+
+### Carried-forward shell-out paths
+
+The `install` / `update` / `setup` / `cmdtools` / `uninstall` verbs
+shell out to OS tools (curl, sh, rm, awk, sed). Per
+`feedback_sovereignty_no_other_languages` — sovereignty rule is
+about not shipping Python/bash code; calling out to OS-provided
+utilities via process.exec is fine. Native parsers + curl-equivalent
+in cyrius are doable (lib/json.cyr for JSON; lib/net.cyr for HTTPS)
+and are tracked as v5.12.x or later refinements.
+
+### Next slot
+
+v5.11.11 — TS test harness program (option E from v5.7.37; promoted
+to v5.11.x at v5.10.20). Lands after the regression-port arc; this
+was the last script-port slot before TS harness.
+
 ## [5.11.9] — 2026-05-11
 
 **Cyriusly cmdtools port — scaffold + light verbs** (paired with

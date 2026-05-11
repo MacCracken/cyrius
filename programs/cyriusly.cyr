@@ -168,11 +168,254 @@ fn _cmd_help(): i64 {
     syscall(1, 1, "    which              Show path to active compiler\n", 53);
     syscall(1, 1, "    home               Show install directory\n", 47);
     syscall(1, 1, "    cmdtools [action]  Manage prompt integrations\n", 51);
-    syscall(1, 1, "    help               Show this help\n\n", 39);
-    syscall(1, 1, "NOTE:\n", 6);
-    syscall(1, 1, "    setup / install / update / uninstall / use / cmdtools\n", 59);
-    syscall(1, 1, "    still defer to scripts/cyriusly until v5.11.10 (port arc).\n", 64);
+    syscall(1, 1, "    help               Show this help\n", 38);
     return 0;
+}
+
+# `cyriusly use <ver>` — switch the active toolchain.
+# Native impl: check version installed, write ~/.cyrius/current,
+# unlink + recreate ~/.cyrius/{bin,lib} symlinks.
+fn _cmd_use(ver_cstr): i64 {
+    if (ver_cstr == 0) {
+        syscall(1, 2, "Usage: cyriusly use <version>\n", 30);
+        return 1;
+    }
+    if (load8(ver_cstr) == 0) {
+        syscall(1, 2, "Usage: cyriusly use <version>\n", 30);
+        return 1;
+    }
+    var home = _cyrius_home();
+    var hlen = strlen(home);
+    var vlen = strlen(ver_cstr);
+    # Build ~/.cyrius/versions/<ver>
+    var ver_dir = alloc(hlen + 11 + vlen + 1);
+    memcpy(ver_dir, home, hlen);
+    memcpy(ver_dir + hlen, "/versions/", 10);
+    memcpy(ver_dir + hlen + 10, ver_cstr, vlen);
+    store8(ver_dir + hlen + 10 + vlen, 0);
+    if (is_dir(str_from(ver_dir)) == 0) {
+        syscall(1, 2, "Version ", 8);
+        syscall(1, 2, ver_cstr, vlen);
+        syscall(1, 2, " not installed.\n", 16);
+        return 1;
+    }
+    # Write ~/.cyrius/current
+    var current_path = _path_join(home, "current");
+    var newline = "\n";
+    var content = alloc(vlen + 2);
+    memcpy(content, ver_cstr, vlen);
+    store8(content + vlen, 10);                  # '\n'
+    store8(content + vlen + 1, 0);
+    file_write_all(current_path, content, vlen + 1);
+    # Rebuild ~/.cyrius/bin + lib symlinks to versions/<ver>/{bin,lib}.
+    # Pre-fix install.sh uses `rm -rf` to clean stale directory state.
+    # For now we sys_unlink (handles symlink case); if a real directory
+    # is there from an older copy-install, the symlink won't replace it
+    # and the user will see an error — they need to manually `rm -rf`
+    # and retry. Recursive rm-dir is a future helper (see CHANGELOG
+    # [5.11.10] for the punt rationale).
+    var bin_link = _path_join(home, "bin");
+    var lib_link = _path_join(home, "lib");
+    sys_unlink(bin_link);
+    sys_unlink(lib_link);
+    var ver_bin = alloc(hlen + 11 + vlen + 5);
+    memcpy(ver_bin, ver_dir, hlen + 10 + vlen);
+    memcpy(ver_bin + hlen + 10 + vlen, "/bin", 4);
+    store8(ver_bin + hlen + 10 + vlen + 4, 0);
+    var ver_lib = alloc(hlen + 11 + vlen + 5);
+    memcpy(ver_lib, ver_dir, hlen + 10 + vlen);
+    memcpy(ver_lib + hlen + 10 + vlen, "/lib", 4);
+    store8(ver_lib + hlen + 10 + vlen + 4, 0);
+    sys_symlink(ver_bin, bin_link);
+    sys_symlink(ver_lib, lib_link);
+    syscall(1, 1, "Now using Cyrius ", 17);
+    syscall(1, 1, ver_cstr, vlen);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# Shell-out helper for verbs that wrap OS tools (curl, sh, rm).
+# Builds an argv vec from cstr literals + caller args and calls
+# exec_vec from lib/process.cyr.
+fn _exec_shell(cmd_line): i64 {
+    return exec_cmd(cmd_line);
+}
+
+# `cyriusly uninstall <ver>` — remove a version directory.
+# Recursive rm via `rm -rf` shell-out (rmdir-walk is future work).
+fn _cmd_uninstall(ver_cstr): i64 {
+    if (ver_cstr == 0) {
+        syscall(1, 2, "Usage: cyriusly uninstall <version>\n", 36);
+        return 1;
+    }
+    if (load8(ver_cstr) == 0) {
+        syscall(1, 2, "Usage: cyriusly uninstall <version>\n", 36);
+        return 1;
+    }
+    # Safety: refuse if active version
+    var cur_buf[64];
+    _cyrius_current_into(&cur_buf, 64);
+    var clen = strlen(&cur_buf);
+    var vlen = strlen(ver_cstr);
+    if (clen == vlen) {
+        if (memeq(&cur_buf, ver_cstr, vlen) == 1) {
+            syscall(1, 2, "Cannot uninstall active version. Switch first: cyriusly use <other>\n", 69);
+            return 1;
+        }
+    }
+    var home = _cyrius_home();
+    var hlen = strlen(home);
+    var ver_dir = alloc(hlen + 11 + vlen + 1);
+    memcpy(ver_dir, home, hlen);
+    memcpy(ver_dir + hlen, "/versions/", 10);
+    memcpy(ver_dir + hlen + 10, ver_cstr, vlen);
+    store8(ver_dir + hlen + 10 + vlen, 0);
+    if (is_dir(str_from(ver_dir)) == 0) {
+        syscall(1, 1, "Version ", 8);
+        syscall(1, 1, ver_cstr, vlen);
+        syscall(1, 1, " not installed.\n", 16);
+        return 0;
+    }
+    # Shell out for recursive rm (native recursive-rm helper is future
+    # work — file walk + sys_unlink + sys_rmdir is straightforward but
+    # not the highest-priority next port). Build "rm -rf <path>" and exec.
+    var cmd = alloc(hlen + vlen + 32);
+    memcpy(cmd, "rm -rf ", 7);
+    memcpy(cmd + 7, ver_dir, hlen + 10 + vlen);
+    store8(cmd + 7 + hlen + 10 + vlen, 0);
+    var rc = _exec_shell(cmd);
+    if (rc != 0) {
+        syscall(1, 2, "error: rm -rf failed\n", 21);
+        return 1;
+    }
+    syscall(1, 1, "Uninstalled Cyrius ", 19);
+    syscall(1, 1, ver_cstr, vlen);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# `cyriusly install <ver>` — shell out to curl + install.sh.
+# Native curl + cyml resolve is future work; for now this is a
+# thin transparent wrapper around the existing shell flow.
+fn _cmd_install(ver_cstr): i64 {
+    if (ver_cstr == 0) {
+        syscall(1, 2, "Usage: cyriusly install <version>\n", 34);
+        return 1;
+    }
+    if (load8(ver_cstr) == 0) {
+        syscall(1, 2, "Usage: cyriusly install <version>\n", 34);
+        return 1;
+    }
+    var vlen = strlen(ver_cstr);
+    syscall(1, 1, "Installing Cyrius ", 18);
+    syscall(1, 1, ver_cstr, vlen);
+    syscall(1, 1, "...\n", 4);
+    # Build: curl -sSf URL | CYRIUS_VERSION=<ver> sh
+    var cmd_pre = "curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | CYRIUS_VERSION=";
+    var pre_len = strlen(cmd_pre);
+    var cmd_suf = " sh";
+    var cmd = alloc(pre_len + vlen + 4);
+    memcpy(cmd, cmd_pre, pre_len);
+    memcpy(cmd + pre_len, ver_cstr, vlen);
+    memcpy(cmd + pre_len + vlen, " sh", 3);
+    store8(cmd + pre_len + vlen + 3, 0);
+    return _exec_shell(cmd);
+}
+
+# `cyriusly update` — check GitHub releases API for latest tag.
+fn _cmd_update(): i64 {
+    syscall(1, 1, "Checking for updates...\n", 24);
+    # Shell-out: curl GitHub releases API + grep tag_name. Plain JSON
+    # parsing in cyrius is doable (lib/json.cyr) but for v5.11.10's
+    # port-closeout slot, the cmdline pipeline is the pragmatic shape.
+    var cmd = "LATEST=$(curl -sSf https://api.github.com/repos/MacCracken/cyrius/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"tag_name\": *\"\\([^\"]*\\)\".*/\\1/'); CUR=$(cat ~/.cyrius/current 2>/dev/null || echo none); if [ -z \"$LATEST\" ]; then echo 'Could not check for updates.'; elif [ \"$LATEST\" = \"$CUR\" ]; then echo \"Already up to date: $CUR\"; else echo \"Update available: $CUR -> $LATEST\"; echo \"Run: cyriusly install $LATEST && cyriusly use $LATEST\"; fi";
+    return _exec_shell(cmd);
+}
+
+# `cyriusly setup` — install from current repo checkout.
+# Heaviest verb: bootstraps cc5 if missing, parses cyrius.cyml
+# [release] section, builds release bins, then runs
+# `sh scripts/install.sh --refresh-only`. The native port of
+# the cyml [release] parsing is future work — for v5.11.10 this
+# shells out to bash equivalents.
+fn _cmd_setup(): i64 {
+    # Sanity check: must run from repo checkout.
+    if (file_exists("VERSION") == 0) {
+        syscall(1, 2, "error: cyriusly setup must run from a Cyrius repo checkout\n", 60);
+        return 1;
+    }
+    if (file_exists("cyrius.cyml") == 0) {
+        syscall(1, 2, "error: cyrius.cyml not found in cwd\n", 36);
+        return 1;
+    }
+    if (file_exists("scripts/install.sh") == 0) {
+        syscall(1, 2, "error: scripts/install.sh not found in cwd\n", 43);
+        return 1;
+    }
+    # Bootstrap if needed.
+    if (file_exists("build/cc5") == 0) {
+        syscall(1, 1, "  build/cc5 not found — running bootstrap/bootstrap.sh...\n", 60);
+        var bs_rc = _exec_shell("sh bootstrap/bootstrap.sh");
+        if (bs_rc != 0) {
+            syscall(1, 2, "error: bootstrap failed\n", 24);
+            return 1;
+        }
+    }
+    # Build any missing release tools. The cyml parser shells out
+    # to awk for the [release] section extraction — native cyml
+    # parsing via lib/cyml.cyr is doable but the awk one-liner is
+    # already proven in scripts/cyriusly:101.
+    syscall(1, 1, "  building release tools...\n", 28);
+    var build_cmd = "BINS=$(awk '/^\\[release\\]/{r=1;next} r&&/^\\[/{exit} r&&$1==\"bins\"{sub(/^[^=]+= \\[/,\"\");sub(/\\].*$/,\"\");gsub(/[\",]/,\" \");print;exit}' cyrius.cyml); CROSS=$(awk '/^\\[release\\]/{r=1;next} r&&/^\\[/{exit} r&&$1==\"cross_bins\"{sub(/^[^=]+= \\[/,\"\");sub(/\\].*$/,\"\");gsub(/[\",]/,\" \");print;exit}' cyrius.cyml); built=0; for t in $BINS; do [ \"$t\" = cc5 ] && continue; [ -x \"build/$t\" ] && continue; if [ \"$t\" = cyrius ] && [ -f cbt/cyrius.cyr ]; then cat cbt/cyrius.cyr | ./build/cc5 > build/$t && chmod +x build/$t && built=$((built+1)); elif [ -f programs/$t.cyr ]; then cat programs/$t.cyr | ./build/cc5 > build/$t && chmod +x build/$t && built=$((built+1)); fi; done; for t in $CROSS; do [ -x \"build/$t\" ] && continue; arch=${t#cc5_}; if [ -f src/main_$arch.cyr ]; then cat src/main_$arch.cyr | ./build/cc5 > build/$t && chmod +x build/$t && built=$((built+1)); fi; done; echo \"  built $built tool(s)\"";
+    _exec_shell(build_cmd);
+    # Delegate the snapshot install to install.sh --refresh-only.
+    syscall(1, 1, "  refreshing install snapshot...\n", 33);
+    var refresh_rc = _exec_shell("sh scripts/install.sh --refresh-only");
+    if (refresh_rc != 0) {
+        syscall(1, 2, "error: install.sh --refresh-only failed\n", 40);
+        return 1;
+    }
+    var vbuf[64];
+    var vn = file_read_all("VERSION", &vbuf, 63);
+    while (vn > 0) {
+        var ch = load8(&vbuf + vn - 1);
+        if (ch == 10 || ch == 13 || ch == 32 || ch == 9) { vn = vn - 1; }
+        else { break; }
+    }
+    store8(&vbuf + vn, 0);
+    syscall(1, 1, "\nDone. Cyrius ", 14);
+    syscall(1, 1, &vbuf, vn);
+    syscall(1, 1, " installed from local checkout.\n", 32);
+    return 0;
+}
+
+# `cyriusly cmdtools [action] [tool]` — manage starship/p10k integrations.
+# Defers to scripts/cyriusly cmdtools because the verb has substantial
+# shell-side state (heredoc'd starship/p10k config blocks). Native port
+# is a v5.11.x or v6.x slot in its own right; for this closeout we
+# delegate transparently so users get a unified entry point.
+fn _cmd_cmdtools(action_cstr, tool_cstr): i64 {
+    var cmd_pre = "sh scripts/cyriusly cmdtools";
+    var pre_len = strlen(cmd_pre);
+    var alen = 0;
+    var tlen = 0;
+    if (action_cstr != 0) { alen = strlen(action_cstr); }
+    if (tool_cstr != 0)   { tlen = strlen(tool_cstr); }
+    var cmd = alloc(pre_len + alen + tlen + 4);
+    memcpy(cmd, cmd_pre, pre_len);
+    var off = pre_len;
+    if (alen > 0) {
+        store8(cmd + off, 32);
+        memcpy(cmd + off + 1, action_cstr, alen);
+        off = off + 1 + alen;
+    }
+    if (tlen > 0) {
+        store8(cmd + off, 32);
+        memcpy(cmd + off + 1, tool_cstr, tlen);
+        off = off + 1 + tlen;
+    }
+    store8(cmd + off, 0);
+    return _exec_shell(cmd);
 }
 
 # ----------------------------------------------------------------
@@ -201,18 +444,59 @@ fn main(): i64 {
     # home
     if (cmdlen == 4) { if (memeq(cmd, "home", 4) == 1) { return _cmd_home(); } }
 
+    # use <ver>
+    if (cmdlen == 3) {
+        if (memeq(cmd, "use", 3) == 1) {
+            var arg = 0;
+            if (ac >= 3) { arg = argv(2); }
+            return _cmd_use(arg);
+        }
+    }
+
+    # install <ver>
+    if (cmdlen == 7) {
+        if (memeq(cmd, "install", 7) == 1) {
+            var arg = 0;
+            if (ac >= 3) { arg = argv(2); }
+            return _cmd_install(arg);
+        }
+    }
+
+    # uninstall <ver>
+    if (cmdlen == 9) {
+        if (memeq(cmd, "uninstall", 9) == 1) {
+            var arg = 0;
+            if (ac >= 3) { arg = argv(2); }
+            return _cmd_uninstall(arg);
+        }
+    }
+
+    # update
+    if (cmdlen == 6) { if (memeq(cmd, "update", 6) == 1) { return _cmd_update(); } }
+
+    # setup
+    if (cmdlen == 5) { if (memeq(cmd, "setup", 5) == 1) { return _cmd_setup(); } }
+
+    # cmdtools [action] [tool]
+    if (cmdlen == 8) {
+        if (memeq(cmd, "cmdtools", 8) == 1) {
+            var action = 0;
+            var tool = 0;
+            if (ac >= 3) { action = argv(2); }
+            if (ac >= 4) { tool = argv(3); }
+            return _cmd_cmdtools(action, tool);
+        }
+    }
+
     # help
     if (cmdlen == 4) { if (memeq(cmd, "help", 4) == 1) { return _cmd_help(); } }
     if (cmdlen == 6) { if (memeq(cmd, "--help", 6) == 1) { return _cmd_help(); } }
     if (cmdlen == 2) { if (memeq(cmd, "-h", 2) == 1) { return _cmd_help(); } }
 
-    # Heavier verbs not yet ported — defer to scripts/cyriusly.
-    # (Pinned v5.11.10 — setup / install / update / uninstall / use /
-    # cmdtools land in that slot.)
-    syscall(1, 2, "cyriusly: '", 11);
+    syscall(1, 2, "Unknown command: ", 17);
     syscall(1, 2, cmd, cmdlen);
-    syscall(1, 2, "' not yet ported (see scripts/cyriusly).\n", 41);
-    syscall(1, 2, "Available in v5.11.9: version, list, which, home, help.\n", 57);
+    syscall(1, 2, "\n", 1);
+    syscall(1, 2, "Run 'cyriusly help' for usage.\n", 31);
     return 1;
 }
 

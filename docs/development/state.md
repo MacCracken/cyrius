@@ -5,6 +5,17 @@
 
 ## Version
 
+**5.11.10** (shipped 2026-05-11 — **Cyriusly cmdtools port closeout**).
+All 11 cyriusly verbs handled by `programs/cyriusly.cyr` (cyrius
+binary 89,616 B). Native impls: `version` / `list` / `ls` / `which` /
+`home` / `help` / `use`. Shell-out via `exec_cmd`: `uninstall` /
+`install` / `update` / `setup` / `cmdtools`. `cyriusly` added to
+`[release].bins`; removed from `[release].scripts` (binary replaces
+shell script in install). scripts/cyriusly stays in tree as the
+backend for the `setup` / `cmdtools` shell-out paths. install.sh
+ships 18 bins (was 17). cc5 byte-identical at 804,472 B; check.sh
+66/66; cyrius test 146/146.
+
 **5.11.9** (shipped 2026-05-11 — **Cyriusly cmdtools port — scaffold +
 light verbs**). New `programs/cyriusly.cyr` ports the lighter
 sub-commands (`version` / `list` / `which` / `home` / `help`).

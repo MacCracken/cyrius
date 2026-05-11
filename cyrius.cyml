@@ -17,9 +17,15 @@ output = "build/cc5"
 # hardcoded lists was never updated. Now: add a binary here, every
 # consumer picks it up automatically.
 [release]
-bins = ["cc5", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cyrc", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp"]
+bins = ["cc5", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cyrc", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly"]
 cross_bins = ["cc5_aarch64", "cc5_win"]
-scripts = ["cyriusly", "cyrius-init.sh", "cyrius-port.sh", "cyrius-repl.sh", "cyrius-watch.sh", "cyrius-prompt-info"]
+# v5.11.10: scripts/cyriusly retired from release.scripts — replaced by
+# programs/cyriusly.cyr in bins (cyrius binary handles all verbs; heavy
+# verbs shell-out to OS tools via process.exec). scripts/cyriusly stays
+# in tree as `sh scripts/cyriusly` backend for the `setup` / `cmdtools`
+# verbs that still call into it transparently; v5.12.x or later may
+# fully native-port those paths.
+scripts = ["cyrius-init.sh", "cyrius-port.sh", "cyrius-repl.sh", "cyrius-watch.sh", "cyrius-prompt-info"]
 
 # v5.7.50: stdlib auto-prepend list. Required so cyrius's own `cyrius
 # bench` / `cyrius test` / `cyrius build` runs include the stdlib
