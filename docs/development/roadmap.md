@@ -481,11 +481,11 @@ right after).
 | v5.11.12 | daimon aarch64 `sys_epoll_wait` (P2) |
 | v5.11.13 | bote `lib/net.cyr` `recv_timeout` + getaddrinfo (P2) |
 | v5.11.14 | bote arena allocator `fl_free` (P2) |
-| v5.11.15+ | bote streaming dispatch + thread async primitives (P2; multi-slot likely) |
-| v5.11.x | bote WS handshake key validation (Low; ride-along) |
-| v5.11.x | parser `assert_eq` string-literal quirk (Low; defensive bundle) |
-| v5.11.x | Defensive sweep (small bundle if anything surfaces during cycle) |
-| v5.11.x final | Cycle closeout |
+| v5.11.15-17 | bote streaming dispatch + thread async primitives (P2; 3-slot) |
+| v5.11.18 | bote WS handshake key validation (Low; ride-along after bote stack) |
+| v5.11.19-38 | OPEN — emergent bugs / consumer-filed / items surface during cycle (20-slot buffer; user 2026-05-11) |
+| v5.11.39 | Defensive sweep (parser `assert_eq` string-literal quirk bundled) |
+| v5.11.40 | Cycle closeout |
 
 Held-forward items (no slot pinned; surface-on-ask): Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,
@@ -692,10 +692,18 @@ ship the full filed surface, not the easy half.
 - **`float.cyr:41` peephole pattern** (audit §4). Perf opt;
   preflight with bench delta before pinning.
 
-No hard trigger; v5.11.x runs as long as cleanup work is
-productive, ends when v5.12.0 bare-metal/RISC-V drivers
-concretely line up. Slot ordering decided per slot by the
-project leader.
+**Cycle close pinned at v5.11.40** (user direction 2026-05-11) —
+the .19-.38 band is an explicit 20-slot buffer for bugs, items,
+and small optimizations that surface mid-cycle. **The cap is
+tight on purpose.** v5.12.0 bare-metal/RISC-V has slipped five
+minors already (v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 →
+v5.12.0); keeping v5.11.x close pinned at .40 prevents another
+punt. If the buffer fills mid-cycle, surface that pressure to
+the project leader rather than silently expanding — the user
+will explicitly open slots if it's worth doing, but the
+default is to ride the cap and protect v5.12.0's kickoff.
+Slot ordering inside the buffer band is decided per slot by
+the project leader as items surface.
 
 ### v5.12.0 — Bare-metal / AGNOS kernel target
 
