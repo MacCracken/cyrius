@@ -5,21 +5,33 @@
 
 ## Version
 
-**5.10.39** (shipped 2026-05-10 — **v5.10.x SLOT 39 — typed-simd
-overload dispatch + `lib/simd.cyr` value-form wrapper migration —
-typed-simd ABI arc CLOSED at Phase 11**). Account-switch cleanup
-point — 39 slots shipped in the v5.10.x cycle so far (cycle
-in-flight). cc5 self-host byte-identical at **797,464 B** (was
-753,768 B at v5.10.0; +43,696 B across the cycle).
+**5.10.40** (shipped 2026-05-11 — **v5.10.x SLOT 40 — Lex dedup
+hot-path optimization (length-bucketed linked-list)**). First
+compile-time-perf slot of the v5.10.x cycle; cycle in-flight at
+40 slots shipped. cc5 self-host byte-identical at **797,984 B**
+(was 753,768 B at v5.10.0; +44,216 B across the cycle).
 
-Vidya cleanup pass paired with this ship (`field_notes/compiler/
-retros/v510x.cyml` created; gotchas +3 entries for the v5.10.x
-bug-class surfacings; `language/features.cyml` +3 entries for
-REAL TYPE SYSTEM / value-type ABI / overload dispatch). See
-that retro file for the full cycle narrative; CHANGELOG entries
-[5.10.33] through [5.10.39] for slot-by-slot detail.
+**Headline numbers** (CYRIUS_PROF=1, `cc5 < src/main.cyr`,
+best-of-5 median):
+- lex phase: **603 ms → 59 ms (−90 %, ~10.2×)**
+- total compile: **1037 ms → 510 ms (−51 %, ~2.0×)**
 
-**Slots .33 - .39 one-liner sweep**:
+Approach: length-bucketed linked-list dedup at heap region
+`0x4E8C000..0x4EAD000` (132 KB brk extension; PE mmap had slack).
+Per-length head into a 16384-entry chain table; each entry packs
+`(canonical offset | next idx+1)` in 8 B. First-occurrence-wins
+preserves byte-identical self-host. Replaces the v0.x O(N²)
+walk-from-zero dedup loop in LEXID. See CHANGELOG [5.10.40] for
+the full numbers table, heap layout, overflow handling, and
+cross-host verify matrix.
+
+Cross-host verified: pi (aarch64 Linux) native self-host fixpoint
+b == c byte-identical at 567,672 B; ecb (macOS Mach-O arm64)
+compile+run exit=42; cass (Windows PE) compile exit=0 (PE
+runtime exit-code propagation gap is the pre-existing v5.10.45
+slot, unrelated).
+
+**Slots .33 - .40 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -47,6 +59,11 @@ that retro file for the full cycle narrative; CHANGELOG entries
   routes to `f64v2_add_ptr`; `f64v2_add(x, y)` calls value-form
   base) + lib/simd.cyr full rewrite (50 public fns, value-form
   gated by CYRIUS_HAS_VAL_SIMD_PARAMS for non-PE targets).
+- **v5.10.40** — Lex dedup hot-path optimization. Length-bucketed
+  linked-list at `0x4E8C000..0x4EAD000` (132 KB brk extension);
+  16384-entry table with per-length head chains; first-occurrence-
+  wins canonical offset. lex 603→59 ms (10.2×), total 1037→510 ms
+  (2×). Cross-host verified on pi/ecb/cass.
 
 Per CLAUDE.md, slot-by-slot detail lives in `CHANGELOG.md` (source
 of truth); closed cycles roll into `completed-phases.md` at each
@@ -55,20 +72,27 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **797,464 B** at v5.10.39 (was
-  778,120 B at v5.10.19; +19,344 B across slots .20-.39
-  for the REAL TYPE SYSTEM completion + typed-simd ABI
-  arc Phases 1-11 + parser-side overload dispatch).
-- **cc5_aarch64**: **491,320 B** at v5.10.39 (was 473,688 B
-  at v5.10.19; +17,632 B for aarch64 NEON encodings + V0
-  register-class return + f64v4 imm12-scaled deep-frame
-  fallback + value-form param ABI).
-- **cyrius CLI**: **170,896 B** at v5.10.39 (was 170,848 B
-  at v5.10.19; +48 B — flat across the cycle).
-- **cc5_win (cross)**: ~530 KB at v5.10.39 (retptr-style f64v2/f64v4
-  ABI; no value-form params per CYRIUS_HAS_VAL_SIMD_PARAMS gating).
-- **cc5_aarch64 native (Pi)**: built from `main_aarch64_native.cyr`
-  on the pi host; size mirrors cc5_aarch64 cross within ~1 KB.
+- **cc5 (x86_64)**: **797,984 B** at v5.10.40 (was
+  797,464 B at v5.10.39; +520 B for the length-bucketed
+  LEXID dedup chain + insertion + overflow guard).
+- **cc5_aarch64**: **491,832 B** at v5.10.40 (was 491,320 B
+  at v5.10.39; +512 B for the same LEXID change shared
+  via `src/frontend/lex.cyr`).
+- **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
+  cycle — `cyrius` doesn't run LEXID itself).
+- **cc5_win (cross)**: ~696 KB at v5.10.40; PE mmap had
+  1.5 MB slack past `0x4E8C000`, so the v5.10.40 brk
+  extension to `0x4EAD000` fits without resizing the
+  80 MB mmap allocation.
+- **cc5_macho_arm (cross)**: ~590 KB at v5.10.40; mmap
+  size bumped 0x4E8C000 → 0x4EAD000 to absorb the new
+  LEXID region.
+- **cc5_aarch64 native (Pi)**: **567,672 B** at v5.10.40
+  (native self-host fixpoint b == c verified on pi
+  2026-05-11). Cross-built variant from the x86 host is
+  582,088 B; the cross/native byte delta is the standard
+  "first-bootstrap differs from native rebuild" shape, b
+  == c on the native side is the authoritative check.
 
 > Per-slot byte-delta history is in `CHANGELOG.md` (source of truth)
 > and `completed-phases.md` (closed cycles). This section tracks
@@ -95,7 +119,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.39. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.40. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -122,8 +146,8 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 39 slots shipped, account-switch wrap-up at v5.10.39
-(2026-05-10).** Two completed arcs anchor the cycle:
+**v5.10.x cycle — 40 slots shipped through v5.10.40 (2026-05-11).**
+Two completed arcs plus the first compile-time-perf slot anchor the cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -137,30 +161,44 @@ narrative in `completed-phases.md`.
    Closed with parser-side `&IDENT → _ptr` overload dispatch and
    the full `lib/simd.cyr` value-form/pointer-form surface (50 fns).
 
+3. **v5.10.40 lex hot-path optimization** — length-bucketed
+   linked-list dedup at `0x4E8C000..0x4EAD000` (132 KB brk
+   extension). cuts lex 603→59 ms (10.2×) / total 1037→510 ms
+   (2.0×) on cc5 self-compile. First compile-time-perf slot of
+   the cycle; the v5.10.0 profile-guided "compile-time wins"
+   held entry now realised. v5.10.41 (fixup) is the next
+   pinned target.
+
 Additional in-cycle work: TLS early-data surface completion at
 v5.10.34 (TLS_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED + accessors);
 sandhi 1.1.0 → 1.3.3 refresh fold at v5.10.34; doc-health.md
 ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
-this slot (retro file + 3 gotcha entries + 3 feature entries).
+v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **797,464 B at v5.10.39** (+43,696 B)
-- cc5_aarch64: ~470 KB at v5.10.0 → **491,320 B at v5.10.39**
+- cc5: 753,768 B at v5.10.0 → **797,984 B at v5.10.40** (+44,216 B)
+- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.40**
 - api-surface: 2792 → ~2873 entries
 - New `lib/simd.cyr` (50 public fns)
+- **Lex 10.2× / total 2.0× compile-time win at v5.10.40**
 - 3 locname-staleness surfacings (v5.10.35 fixed ptyp 93-130; v5.10.39
   fixed the duplicate at ptyp 89-91 missed by .35); install.sh
   `cp -L` same-file collision discovered (workaround manual; fix
   pinned for v5.10.46 closeout)
 
-**Closeout pinning**: roadmap has v5.10.40 - v5.10.46 slotted for
+**Closeout pinning**: roadmap has v5.10.41 - v5.10.46 slotted for
 the remaining v5.10.x work. Full v5.10.x retro at
 `../../../vidya/content/cyrius/field_notes/compiler/retros/v510x.cyml`.
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-10 (account-switch wrap-up at v5.10.39):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.40 lex hot-path):
 
+- **v5.10.40** — Lex dedup hot-path optimization. Length-bucketed
+  linked-list at `0x4E8C000..0x4EAD000` (132 KB brk extension);
+  16384-entry table; first-occurrence-wins canonical offset. lex
+  603→59 ms (10.2×), total 1037→510 ms (2.0×). Cross-host verified
+  on pi (native fixpoint b == c at 567,672 B) / ecb / cass.
 - **v5.10.39** — typed-simd overload dispatch (`f64v2_add(&x, &y)`
   routes to `_ptr` sibling) + `lib/simd.cyr` value-form/pointer-form
   surface (50 fns). Typed-simd ABI arc CLOSED at Phase 11.

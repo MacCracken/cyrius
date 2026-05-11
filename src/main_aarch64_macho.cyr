@@ -65,7 +65,16 @@
 #   0x11CA000 struct_fnames [65536]       256 structs × 32 fields (cap 256, v5.7.17)
 #   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
 #   0x12CA000 (fn tables end here — IR region not used by aarch64 compiler)
-#   0x4E8C000 brk                         ~78.5 MB total heap (v5.8.61 monotonic;
+#
+# --- LEXID dedup index (v5.10.40) ---
+#   0x4E8C000  lexid_count   [8]
+#   0x4E8C100  lexid_heads   [2048]
+#   0x4E8C900  lexid_entries [131072]
+#   (Full doc in src/main.cyr §LEXID_DEDUP)
+#
+#   0x4EAD000 brk-equivalent              ~78.6 MB total heap (v5.10.40 grew this
+#                                        from 0x4E8C000 by the 132 KB LEXID dedup
+#                                        index; was 0x4E8C000 at v5.8.61 monotonic;
 #                                        was 0x508C000 at .59-.60; synced with main.cyr)
 
 
@@ -101,8 +110,9 @@ include "src/backend/aarch64/fixup.cyr"
 # gets translated to BSD 197 (_mmap) by ESYSXLAT at emit time; the flag
 # value 0x1002 (MAP_PRIVATE | MAP_ANON on macOS) is baked in as an
 # immediate, so it reaches the kernel unchanged at runtime.
-# Size 0x4E8C000 (~78.5 MB) matches main.cyr's brk through tok_lines.
-var S = syscall(9, 0, 0x4E8C000, 3, 0x1002, 0 - 1, 0);
+# Size 0x4EAD000 (~78.6 MB) matches main.cyr's brk through the v5.10.40
+# LEXID dedup index. Was 0x4E8C000 (~78.5 MB) pre-v5.10.40.
+var S = syscall(9, 0, 0x4EAD000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(SYS_WRITE, 2, "cc5_macho: mmap heap init failed\n", 33);
     syscall(SYS_EXIT, 1);

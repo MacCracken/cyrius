@@ -1813,25 +1813,32 @@ typed-wrapper migration lands. Pre-planned split per
 memory pin `feedback_no_one_fix_per_slot` (genuine
 multi-piece work, not lazy defer).
 
-#### v5.10.40 — Lex dedup hot-path optimization
+#### v5.10.40 — Lex dedup hot-path optimization — **SHIPPED 2026-05-11**
 
-Promoted from "compile-time wins" held entry to
-concrete slot at v5.10.20 P(-1) sweep; cascaded from
-original .31 pin at v5.10.33 ship (displaced by
-value-type ABI Phases 1-5 + simd-deferral cascade).
+Length-bucketed linked-list dedup at heap region
+`0x4E8C000..0x4EAD000` (132 KB brk extension; PE
+mmap had 1.5 MB slack, no resize). Per-length head
+chain into a 16384-entry linked-list table; each
+entry packs `(canonical offset | next idx+1)` in
+8 bytes. First-occurrence-wins preserves byte-
+identical self-host.
 
-v5.10.0 profile data: lex 580 ms = 59% of compile
-time. O(N²) LEXID dedup scan inside it. Length-
-buckets (~20 LOC, ~5-10× expected on dedup_cmps) is
-the recommended starting point — preserves the
-linear-scan model per cyrius's byte-parsing
-philosophy. Last-K cache (~15 LOC, ~2-3×) and
-hand-rolled-hash-in-cc5 (~100 LOC, 30-40×) are
-escalation paths if length-buckets isn't enough.
+Result vs v5.10.39 baseline (CYRIUS_PROF=1,
+`cc5 < src/main.cyr`, best-of-5 median):
 
-Acceptance: measurable improvement vs the v5.10.20
-P(-1) baseline (vec/push_1000 21µs, vec/find_100
-1µs — these are the published reference points).
+- **lex phase 603 ms → 59 ms (−90 %, ~10.2×)**
+- **total compile 1037 ms → 510 ms (−51 %, ~2.0×)**
+
+cc5 +520 B (797,464 → 797,984). 3-step fixpoint
+clean. 66/66 check.sh PASS. Roadmap estimate band
+was "~5-10×"; observed at the top of the band.
+Length-bucket approach picked over last-K cache and
+hand-rolled hash; the simpler shape hit the upper-
+bound predicted gain, so the escalation paths stay
+parked.
+
+See CHANGELOG [5.10.40] for the full numbers table,
+heap layout, and overflow handling.
 
 #### v5.10.41 — Fixup phase optimization
 

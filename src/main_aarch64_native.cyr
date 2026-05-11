@@ -53,7 +53,16 @@
 #   0x11CA000 struct_fnames [16384]
 #   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
 #   0x12CA000 (fn tables end here — IR region not used by aarch64 compiler)
-#   0x4E8C000 brk                         ~78.5 MB total heap (v5.8.61 monotonic;
+#
+# --- LEXID dedup index (v5.10.40) ---
+#   0x4E8C000  lexid_count   [8]
+#   0x4E8C100  lexid_heads   [2048]
+#   0x4E8C900  lexid_entries [131072]
+#   (Full doc in src/main.cyr §LEXID_DEDUP)
+#
+#   0x4EAD000 brk                         ~78.6 MB total heap (v5.10.40 grew this
+#                                        from 0x4E8C000 by the 132 KB LEXID dedup
+#                                        index; was 0x4E8C000 at v5.8.61 monotonic;
 #                                        was 0x508C000 at .59-.60; synced with main.cyr)
 
 
@@ -88,7 +97,7 @@ include "src/backend/aarch64/fixup.cyr"
 # aarch64 syscall numbers (no translation layer — native numbers)
 var S = syscall(SYS_BRK, 0);
 # brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
-syscall(SYS_BRK, S + 0x4E8C000);
+syscall(SYS_BRK, S + 0x4EAD000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

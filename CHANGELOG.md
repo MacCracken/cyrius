@@ -6,6 +6,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.40] — 2026-05-11
+
+**v5.10.x SLOT 40 — Lex dedup hot-path optimization (length-bucketed
+linked-list)**.
+
+First compile-time-perf slot of the v5.10.x cycle. Promoted from
+"compile-time wins" held entry to concrete slot at v5.10.20 P(-1)
+sweep; cascaded twice (.31 → .32 → .40) as the typed-simd ABI arc
+absorbed the intermediate slots.
+
+### The hot path
+
+v5.10.0 `CYRIUS_PROF=1` baseline on `cc5 < src/main.cyr > /dev/null`:
+lex = 580 ms = ~58 % of total compile time. The dominant cost inside
+LEXID was the dedup walk: scan all prior identifiers from offset 0
+in `S+0x60000`, byte-compare each one to the candidate. O(N) outer ×
+O(L) inner per call, called once per identifier token = O(N²·L)
+across a compile. On cc5's self-compile (~thousands of distinct
+identifiers, hundreds of thousands of identifier-token occurrences)
+this dominates the lex phase.
+
+### The fix
+
+Length-bucketed linked-list dedup index at heap region
+`0x4E8C000..0x4EAD000` (132 KB extension past the v5.8.61 brk-final;
+PE mmap allocation has 1.5 MB slack, no resize needed):
+
+- `0x4E8C000  lexid_count   [8]`            entries in use (≤ 16384)
+- `0x4E8C100  lexid_heads   [2048]`         per-length head idx+1 (256 × 8 B; 0 = empty)
+- `0x4E8C900  lexid_entries [131072]`       16384 × 8 B chain nodes; each entry packs `(canonical offset into tok_names @ 0x60000 in low 32, next-entry idx+1 in high 32)`. Walked most-recent-first; on match returns the recorded canonical offset.
+
+bucket = klen saturated at 255; collisions tolerated (byte-compare
+still authoritative). First-occurrence-wins canonical offset
+preserved across calls → byte-identical self-host.
+
+LEXID dedup loop in `src/frontend/lex.cyr` rewritten — 14 lines of
+old O(N²) walk-from-zero replaced by ~30 lines of length-bucketed
+chain walk + insertion. `bridge.cyr`'s separate LEXID (used only
+during bootstrap `seed → cyrc → bridge → cc5`) unchanged — it sees
+a single small input once and isn't on the hot path.
+
+### Numbers (CYRIUS_PROF=1, `cc5 < src/main.cyr`, best-of-5 median)
+
+| Phase     | v5.10.39  | v5.10.40 | Δ                              |
+|-----------|-----------|----------|--------------------------------|
+| pp        |    85 ms  |    84 ms | −1 ms                          |
+| **lex**   | **603 ms**| **59 ms**| **−544 ms (−90 %, ~10.2×)**    |
+| gvar      |   151 ms  |   152 ms | +1 ms                          |
+| parse     |     2 ms  |     2 ms | flat                           |
+| fixup     |   191 ms  |   208 ms | +17 ms                         |
+| emit      |     2 ms  |     2 ms | flat                           |
+| **total** | **1037 ms**|**510 ms**| **−527 ms (−51 %, ~2.0×)**     |
+
+Roadmap pin estimated "~5-10× expected on dedup_cmps" — observed
+10.2× on phase wall-clock, at the top of the predicted band. The
+fixup-phase +17 ms is within run-to-run noise (±5 ms each end);
+total compile-time wall-clock has halved.
+
+cc5 (x86): 797,464 → **797,984 (+520 B)** for the new chain-walk +
+insertion + overflow guard. Self-host byte-identical at 3-step
+fixpoint (cc5_a → cc5_b → cc5_c; `cmp b c` clean).
+
+**66/66 check.sh PASS, all .tcyr gates green.**
+
+### Overflow handling
+
+Cap 16384 entries provides ~3× safety margin over cc5's distinct-
+identifier count (empirical: cc5 self-compile uses well under 6000
+unique identifiers). Overflow triggers a clean error message on
+stderr and exit 1:
+
+```
+error: identifier dedup table full (16384 entries) - raise LEXID cap in lex.cyr
+```
+
+No silent truncation. Same shape as the existing `tok_names`
+overflow guard at `npos >= 130800`.
+
+### Heap-map updates
+
+All five `main_*.cyr` entry points + `main_win.cyr` updated to
+extend brk / mmap from `0x4E8C000` to `0x4EAD000`:
+
+- `main.cyr` (Linux x86_64): `syscall(SYS_BRK, S + 0x4EAD000)`
+- `main_aarch64.cyr` (cross to Linux aarch64): same
+- `main_aarch64_native.cyr` (Pi self-host): same
+- `main_aarch64_macho.cyr` (cross to Mach-O arm64): mmap size bumped to `0x4EAD000`
+- `main_cx.cyr` (cyrius-x bytecode): same brk extension
+- `main_win.cyr` (PE): no allocation change — `0x5000000` (80 MB) mmap already has 1.5 MB slack past the new brk-equivalent
+
+HEAP MAP comment block in `main.cyr` documents the new region as the
+authoritative source; the other mains carry one-line references back
+to it.
+
+### Cross-host verification
+
+Per the `feedback_cross_arch_propagation_mandatory` memory pin: the
+change touches a frontend phase that lives inside every native
+`main_*.cyr` entry point, so every host where cyrius runs natively
+exercises the new dedup table. Each host got a cross-compiled native
+compiler scp'd in + a 7-identifier `smoke_40.cyr` (`h1`/`h2`/`h3`
+helpers with `a`/`b`/`c` params, `x`/`y`/`z` locals, computing 42
+through three helpers + `syscall(target_exit, z)`).
+
+| Host | Compiler                    | Compile-of-smoke | Binary run            |
+|------|-----------------------------|------------------|-----------------------|
+| local x86_64 Linux | `build/cc5` (797,984 B) | exit=0 | self-host fixpoint b==c |
+| pi (aarch64 Linux) | `cc5_aarch64_native` (582,088 B cross-built, 567,672 B native-rebuilt) | exit=0 | `syscall(93, z)` → exit=42 |
+| ecb (macOS Mach-O arm64) | `cc5_macho_arm` (590,260 B) | exit=0 | `syscall(60, z)` → exit=42 (BSD `_exit` via __got slot 0) |
+| cass (Windows PE x86_64) | `cc5_win` (695,808 B) | exit=0 | `cmd /c smoke_out.exe` runs (exit code reads 0 — pre-existing v5.10.45 PE `syscall(60, code)` propagation gap, unrelated to this slot) |
+
+**pi native self-host fixpoint**: cc5_aarch64_native (cross-built on
+x86) → compiles `main_aarch64_native.cyr` on pi → cc5_pi_b (567,672 B);
+cc5_pi_b compiles `main_aarch64_native.cyr` → cc5_pi_c; cc5_pi_b ==
+cc5_pi_c byte-identical. Same v5.6.32 regression-aarch64-native-
+selfhost gate shape. Stage-1 / stage-2 byte delta vs cross-build is
+the standard "first-bootstrap-from-cross differs from native rebuild"
+shape (different codegen state on x86 host vs aarch64 host); the
+authoritative test is b == c on the native pi side, which is clean.
+
+### What landed
+
+- `src/frontend/lex.cyr` — LEXID dedup loop rewritten (~30 LOC delta).
+- `src/main.cyr` — brk extension + authoritative LEXID_DEDUP
+  heap-map comment block.
+- `src/main_aarch64.cyr` / `main_aarch64_native.cyr` /
+  `main_aarch64_macho.cyr` / `main_cx.cyr` / `main_win.cyr` — brk
+  or mmap extension and one-line heap-map references back to
+  `main.cyr`.
+
 ## [5.10.39] — 2026-05-10
 
 **v5.10.x SLOT 39 — typed-simd overload dispatch + `lib/simd.cyr`

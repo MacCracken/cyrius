@@ -23,11 +23,13 @@ var S = syscall(SYS_BRK, 0);
 # tok_types region at S+0x94A000 — main_cx.cyr SIGSEGVd at LEX
 # the moment a non-empty input landed any token. Match
 # main_aarch64.cyr's brk extent.
-# brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
-# cx skips the TS frontend, so the ~13.5 MiB pad between
-# fixup_tbl-end (0x290B000) and tok-block-start (0x368C000) is
-# unused on this path; kept for offset parity with main.cyr.
-syscall(SYS_BRK, S + 0x4E8C000);
+# brk extends through tok_lines + LEXID dedup index (~78.6 MB) —
+# synced with main.cyr. cx skips the TS frontend, so the ~13.5 MiB
+# pad between fixup_tbl-end (0x290B000) and tok-block-start
+# (0x368C000) is unused on this path; kept for offset parity with
+# main.cyr. v5.10.40 grew brk from 0x4E8C000 by 132 KB for the
+# LEXID bucket index (see src/main.cyr §LEXID_DEDUP).
+syscall(SYS_BRK, S + 0x4EAD000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

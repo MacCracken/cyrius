@@ -612,23 +612,48 @@ fn LEXID(S, p, npos): i64 {
         }
     }
     store8(S + 0x60000 + npos, 0);
-    # Dedup: reuse existing identical identifier
+    # Dedup via length-bucketed chain (v5.10.40). Replaces the prior
+    # O(N²) walk-from-zero scan (lex was 58% of compile time per v5.10.0
+    # profile, dedup_cmps the inner hot spot). Layout — at offsets past
+    # the v5.10.39 brk extension (heap-map in main.cyr §LEXID_DEDUP):
+    #   0x4E8C000  lexid_count   [8]            entries in use
+    #   0x4E8C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B; 0 = empty)
+    #   0x4E8C900  lexid_entries [131072]       16384 × 8B; low32 = canonical offset
+    #                                            into tok_names @ 0x60000, high32 =
+    #                                            next-entry idx+1 (0 = chain tail).
+    # First-occurrence wins (canonical offset preserved across calls →
+    # byte-identical) because we only insert when no match found, and
+    # subsequent lookups for the same string return the recorded offset
+    # regardless of chain order.
     bl = ws;
-    go = 0;
-    while (go < bl) {
+    var klen = npos - bl;
+    var bucket = klen;
+    if (bucket > 255) { bucket = 255; }
+    var hi = L64(S + 0x4E8C100 + bucket * 8);
+    while (hi > 0) {
+        var idx = hi - 1;
+        var ent = L64(S + 0x4E8C900 + idx * 8);
+        var eoff = ent & 0xFFFFFFFF;
         var dc = 0;
         c = 1;
-        while (c == 1) {
-            if (load8(S + 0x60000 + go + dc) != load8(S + 0x60000 + bl + dc)) { c = 0; }
-            if (load8(S + 0x60000 + go + dc) == 0) { break; }
+        while (dc < klen) {
+            if (load8(S + 0x60000 + eoff + dc) != load8(S + 0x60000 + bl + dc)) { c = 0; break; }
             dc = dc + 1;
         }
-        if (c == 1) { ws = go; break; }
-        while (load8(S + 0x60000 + go) != 0) { go = go + 1; }
-        go = go + 1;
+        if (c == 1) { ws = eoff; break; }
+        hi = ent >> 32;
     }
-    # klen must be computed BEFORE dedup changes ws
-    var klen = npos - bl;
+    if (ws == bl) {
+        var ec = L64(S + 0x4E8C000);
+        if (ec >= 16384) {
+            syscall(SYS_WRITE, 2, "error: identifier dedup table full (16384 entries) - raise LEXID cap in lex.cyr\n", 80);
+            syscall(SYS_EXIT, 1);
+        }
+        var prev_head = L64(S + 0x4E8C100 + bucket * 8);
+        S64(S + 0x4E8C900 + ec * 8, bl | (prev_head << 32));
+        S64(S + 0x4E8C100 + bucket * 8, ec + 1);
+        S64(S + 0x4E8C000, ec + 1);
+    }
     if (ws == bl) { npos = npos + 1; SNPOS(S, npos); }
     else { SNPOS(S, bl); }
     # Check keywords
