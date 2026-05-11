@@ -5,33 +5,37 @@
 
 ## Version
 
-**5.10.40** (shipped 2026-05-11 — **v5.10.x SLOT 40 — Lex dedup
-hot-path optimization (length-bucketed linked-list)**). First
-compile-time-perf slot of the v5.10.x cycle; cycle in-flight at
-40 slots shipped. cc5 self-host byte-identical at **797,984 B**
-(was 753,768 B at v5.10.0; +44,216 B across the cycle).
+**5.10.41** (shipped 2026-05-11 — **v5.10.x SLOT 41 — Fixup phase
+optimization (fn_start hash table)**). Second consecutive compile-
+time-perf slot of the v5.10.x cycle; cycle in-flight at 41 slots
+shipped. cc5 self-host byte-identical at **798,912 B** (was
+753,768 B at v5.10.0; +45,144 B across the cycle).
 
 **Headline numbers** (CYRIUS_PROF=1, `cc5 < src/main.cyr`,
-best-of-5 median):
-- lex phase: **603 ms → 59 ms (−90 %, ~10.2×)**
-- total compile: **1037 ms → 510 ms (−51 %, ~2.0×)**
+best-of-5 median, end-to-end v5.10.x perf-arc gain pre-.40 → .41):
+- lex phase: **603 ms → 62 ms (−90 %, ~9.7×)** [.40]
+- fixup phase: **213 ms → 76 ms (−64 %, ~2.8×)** [.41]
+- total compile: **1037 ms → 387 ms (−63 %, ~2.7×)** [.40+.41 combined]
 
-Approach: length-bucketed linked-list dedup at heap region
+v5.10.40 approach: length-bucketed linked-list dedup at heap region
 `0x4E8C000..0x4EAD000` (132 KB brk extension; PE mmap had slack).
-Per-length head into a 16384-entry chain table; each entry packs
-`(canonical offset | next idx+1)` in 8 B. First-occurrence-wins
-preserves byte-identical self-host. Replaces the v0.x O(N²)
-walk-from-zero dedup loop in LEXID. See CHANGELOG [5.10.40] for
-the full numbers table, heap layout, overflow handling, and
-cross-host verify matrix.
+Per-length head into a 16384-entry chain table.
 
-Cross-host verified: pi (aarch64 Linux) native self-host fixpoint
-b == c byte-identical at 567,672 B; ecb (macOS Mach-O arm64)
-compile+run exit=42; cass (Windows PE) compile exit=0 (PE
-runtime exit-code propagation gap is the pre-existing v5.10.45
-slot, unrelated).
+v5.10.41 approach: `fn_start_hash` open-addressing table at
+`0x110000` (8192 slots × 2 B = 16 KB) reusing the 232 KB free gap
+between `fn_name_hash` and `struct_ftypes` — no brk extension. Knuth
+golden-ratio multiplicative hash; replaces two O(N²) DCE byte-scan
+linear scans with ~2-probe lookups. aarch64 fixup has no DCE pass,
+so x86-specific change (cross-arch propagation verified by reading
+aarch64 fixup.cyr).
 
-**Slots .33 - .40 one-liner sweep**:
+Cross-host verified at v5.10.40: pi (aarch64 Linux) native
+self-host fixpoint b == c byte-identical at 567,672 B; ecb (macOS
+Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
+exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
+v5.10.40 (no aarch64 backend change).
+
+**Slots .33 - .41 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -64,6 +68,11 @@ slot, unrelated).
   16384-entry table with per-length head chains; first-occurrence-
   wins canonical offset. lex 603→59 ms (10.2×), total 1037→510 ms
   (2×). Cross-host verified on pi/ecb/cass.
+- **v5.10.41** — Fixup phase optimization. `fn_start_hash` at
+  `0x110000` (8192 slots × 2 B; Knuth golden-ratio hash) reusing
+  free 232 KB gap. Replaces two O(N²) DCE byte-scan inner linear
+  scans (seed + propagate). fixup 213→76 ms (2.8×), total 510→
+  387 ms (1.32×). aarch64 fixup has no DCE — x86-specific.
 
 Per CLAUDE.md, slot-by-slot detail lives in `CHANGELOG.md` (source
 of truth); closed cycles roll into `completed-phases.md` at each
@@ -72,18 +81,20 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **797,984 B** at v5.10.40 (was
-  797,464 B at v5.10.39; +520 B for the length-bucketed
-  LEXID dedup chain + insertion + overflow guard).
-- **cc5_aarch64**: **491,832 B** at v5.10.40 (was 491,320 B
-  at v5.10.39; +512 B for the same LEXID change shared
-  via `src/frontend/lex.cyr`).
+- **cc5 (x86_64)**: **798,912 B** at v5.10.41 (was
+  797,984 B at v5.10.40; +928 B for the fn_start_hash
+  build + the two inline lookup blocks in DCE seed +
+  propagate; was 797,464 B at v5.10.39).
+- **cc5_aarch64**: **491,832 B** at v5.10.41 (unchanged
+  from v5.10.40; aarch64 fixup has no DCE pass so the
+  .41 change doesn't reach this binary).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
   cycle — `cyrius` doesn't run LEXID itself).
-- **cc5_win (cross)**: ~696 KB at v5.10.40; PE mmap had
-  1.5 MB slack past `0x4E8C000`, so the v5.10.40 brk
-  extension to `0x4EAD000` fits without resizing the
-  80 MB mmap allocation.
+- **cc5_win (cross)**: **696,832 B** at v5.10.41 (was
+  695,808 B at v5.10.40; +1,024 B for the .41 fn_start_hash
+  pass — PE backend lives under x86, so the change reaches
+  cc5_win too). PE mmap at 0x5000000 has 1.5 MB slack past
+  the v5.10.40 brk extension to `0x4EAD000`, no resize.
 - **cc5_macho_arm (cross)**: ~590 KB at v5.10.40; mmap
   size bumped 0x4E8C000 → 0x4EAD000 to absorb the new
   LEXID region.
@@ -119,7 +130,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.40. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.41. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -146,8 +157,8 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 40 slots shipped through v5.10.40 (2026-05-11).**
-Two completed arcs plus the first compile-time-perf slot anchor the cycle:
+**v5.10.x cycle — 41 slots shipped through v5.10.41 (2026-05-11).**
+Two completed arcs plus a two-slot compile-time-perf miniarc anchor the cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -161,13 +172,14 @@ Two completed arcs plus the first compile-time-perf slot anchor the cycle:
    Closed with parser-side `&IDENT → _ptr` overload dispatch and
    the full `lib/simd.cyr` value-form/pointer-form surface (50 fns).
 
-3. **v5.10.40 lex hot-path optimization** — length-bucketed
-   linked-list dedup at `0x4E8C000..0x4EAD000` (132 KB brk
-   extension). cuts lex 603→59 ms (10.2×) / total 1037→510 ms
-   (2.0×) on cc5 self-compile. First compile-time-perf slot of
-   the cycle; the v5.10.0 profile-guided "compile-time wins"
-   held entry now realised. v5.10.41 (fixup) is the next
-   pinned target.
+3. **v5.10.40 + v5.10.41 compile-time-perf miniarc** —
+   length-bucketed LEXID dedup at v5.10.40 cut lex 603→59 ms
+   (10.2×); fn_start_hash in fixup DCE at v5.10.41 cut fixup
+   213→76 ms (2.8×). End-to-end gain: total compile-time
+   **1037 → 387 ms (2.7×)** on cc5 self-compile. v5.10.0
+   profile-guided "compile-time wins" held entry now realised
+   across both phases. Next pinned: v5.10.42 (`lib/tls.cyr`
+   hook-surface contract audit; not a perf slot).
 
 Additional in-cycle work: TLS early-data surface completion at
 v5.10.34 (TLS_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED + accessors);
@@ -176,24 +188,29 @@ ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **797,984 B at v5.10.40** (+44,216 B)
-- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.40**
+- cc5: 753,768 B at v5.10.0 → **798,912 B at v5.10.41** (+45,144 B)
+- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.41** (flat .40→.41)
 - api-surface: 2792 → ~2873 entries
 - New `lib/simd.cyr` (50 public fns)
-- **Lex 10.2× / total 2.0× compile-time win at v5.10.40**
+- **Compile time 1037 → 387 ms (2.7×) across .40 + .41 miniarc**
 - 3 locname-staleness surfacings (v5.10.35 fixed ptyp 93-130; v5.10.39
   fixed the duplicate at ptyp 89-91 missed by .35); install.sh
   `cp -L` same-file collision discovered (workaround manual; fix
   pinned for v5.10.46 closeout)
 
-**Closeout pinning**: roadmap has v5.10.41 - v5.10.46 slotted for
+**Closeout pinning**: roadmap has v5.10.42 - v5.10.46 slotted for
 the remaining v5.10.x work. Full v5.10.x retro at
 `../../../vidya/content/cyrius/field_notes/compiler/retros/v510x.cyml`.
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.40 lex hot-path):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.41 fixup hash):
 
+- **v5.10.41** — Fixup phase optimization. `fn_start_hash` at
+  `0x110000` (8192 slots × 2 B; Knuth golden-ratio multiplicative
+  hash) reusing free 232 KB gap; replaces two O(N²) DCE byte-scan
+  linear scans. fixup 213→76 ms (2.8×), total 510→387 ms (1.32×).
+  aarch64 fixup has no DCE — x86-specific (PE backend reached too).
 - **v5.10.40** — Lex dedup hot-path optimization. Length-bucketed
   linked-list at `0x4E8C000..0x4EAD000` (132 KB brk extension);
   16384-entry table; first-occurrence-wins canonical offset. lex
