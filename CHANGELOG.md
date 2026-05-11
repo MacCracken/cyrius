@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.9] — 2026-05-11
+
+**Cyriusly cmdtools port — scaffold + light verbs** (paired with
+v5.11.10 for the heavy verbs; pinned 2026-05-10 at v5.10.36).
+`tests/regression-*.sh` arc audit: **confirmed complete** at
+v5.9.41 (no remaining scripts to port).
+
+### Cyriusly port — first piece
+
+New `programs/cyriusly.cyr` (sovereignty port of
+`scripts/cyriusly`). v5.11.9 ships the lighter verbs that don't
+shell out:
+
+- `cyriusly version` / `--version` / `-v` — print active version
+- `cyriusly list` / `ls` — enumerate installed versions, mark active
+- `cyriusly which` — path to active `cc5`
+- `cyriusly home` — install directory
+- `cyriusly help` / `--help` / `-h` — usage text
+
+**Deferred to v5.11.10**: `setup` / `install` / `update` / `uninstall`
+/ `use` / `cmdtools` — these shell out to curl / install.sh / require
+manifest parsing. Heavier port; lands next slot.
+
+The binary is committed at `programs/cyriusly.cyr` but **not added to
+`[release].bins`** in this slot — shell `scripts/cyriusly` stays
+load-bearing for unported verbs. v5.11.10 will swap the binary into
+release after the full port is wired up. Until then, users still get
+`scripts/cyriusly` for the full surface; the cyrius binary can be
+built ad-hoc via `cyrius build programs/cyriusly.cyr build/cyriusly`.
+
+### Acceptance
+
+- `programs/cyriusly.cyr` compiles clean to ELF 64-bit, 67,611 B.
+- `build/cyriusly version` → `cyriusly 5.11.8`
+- `build/cyriusly list` → enumerates all 187 installed versions
+  with the active one marked `* X (active)`.
+- `build/cyriusly which` → `/home/macro/.cyrius/bin/cc5`
+- `build/cyriusly home` → `/home/macro/.cyrius`
+- `build/cyriusly help` → usage text.
+- Unknown verbs / deferred verbs → friendly error pointing at
+  `scripts/cyriusly` until v5.11.10.
+- `cc5` byte-identical (programs/cyriusly.cyr isn't in cc5's
+  include chain).
+- check.sh 66/66; cyrius test 146/146.
+
+### Code-pattern wins for the port
+
+- Used `lib/fs.cyr`'s `dir_list` + `lib/vec.cyr`'s `vec_get`/`vec_len`
+  for directory enumeration (vs shell `for d in ".../*"`).
+- Used `lib/io.cyr`'s `getenv` for `CYRIUS_HOME` override.
+- Used `lib/io.cyr`'s `file_read_all` for `~/.cyrius/current`.
+- Avoided str_builder where simple `alloc` + `memcpy` suffices.
+- Found cyrius keyword conflict: `match` is reserved (sum-type
+  match expressions from v5.8.x); used `is_match` for local
+  bool var instead.
+
+### Next slot
+
+v5.11.10 — Cyriusly cmdtools port closeout: `setup` / `install` /
+`update` / `uninstall` / `use` / `cmdtools` verbs + add `cyriusly`
+to `[release].bins`. Retire `scripts/cyriusly` once parity reached.
+
 ## [5.11.8] — 2026-05-11
 
 **`cyrius deps` symlink → file-copy** (pinned 2026-05-10 at v5.10.37

@@ -1,0 +1,220 @@
+# cyriusly.cyr — Cyrius version manager (sovereignty port of scripts/cyriusly).
+#
+# Yare (adj): quick, agile, responsive — the ship answers the helm.
+# Like rustup, pyenv, rbenv: manages installed Cyrius versions.
+#
+# Sovereignty port pinned at v5.10.36; lands across v5.11.9 + v5.11.10
+# per the paired-slot direction. This file is v5.11.9's first
+# deliverable — the lighter subcommands (version, list, which, home,
+# help). v5.11.10 absorbs `setup` / `install` / `update` (the heavier
+# verbs that shell-out via curl / install.sh).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/args.cyr"
+include "lib/process.cyr"
+
+# ----------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------
+
+# CYRIUS_HOME default: $HOME/.cyrius. The shell version honors
+# the override env var; the cyrius port does the same.
+fn _cyrius_home(): i64 {
+    var h = getenv("CYRIUS_HOME");
+    if (h != 0 && load8(h) != 0) { return h; }
+    var u = getenv("HOME");
+    if (u == 0) { return "/root/.cyrius"; }
+    # Allocate the joined path "$HOME/.cyrius" + NUL.
+    var ulen = strlen(u);
+    var out = alloc(ulen + 16);
+    memcpy(out, u, ulen);
+    store8(out + ulen, 47);                 # '/'
+    store8(out + ulen + 1, 46);              # '.'
+    memcpy(out + ulen + 2, "cyrius", 6);
+    store8(out + ulen + 8, 0);
+    return out;
+}
+
+# Read $CYRIUS_HOME/current; print "none" if missing.
+fn _cyrius_current_into(buf, bufsz): i64 {
+    var home = _cyrius_home();
+    var pathlen = strlen(home);
+    var path = alloc(pathlen + 16);
+    memcpy(path, home, pathlen);
+    memcpy(path + pathlen, "/current", 8);
+    store8(path + pathlen + 8, 0);
+    var n = file_read_all(path, buf, bufsz - 1);
+    if (n <= 0) {
+        memcpy(buf, "none", 4);
+        store8(buf + 4, 0);
+        return 4;
+    }
+    # Strip trailing newline / whitespace.
+    while (n > 0) {
+        var c = load8(buf + n - 1);
+        if (c == 10 || c == 13 || c == 32 || c == 9) { n = n - 1; }
+        else { break; }
+    }
+    store8(buf + n, 0);
+    return n;
+}
+
+# Path join: "${home}/${suffix}" → fresh alloc, NUL-terminated.
+fn _path_join(prefix, suffix): i64 {
+    var plen = strlen(prefix);
+    var slen = strlen(suffix);
+    var out = alloc(plen + slen + 2);
+    memcpy(out, prefix, plen);
+    store8(out + plen, 47);                 # '/'
+    memcpy(out + plen + 1, suffix, slen);
+    store8(out + plen + 1 + slen, 0);
+    return out;
+}
+
+# ----------------------------------------------------------------
+# Subcommands
+# ----------------------------------------------------------------
+
+# `cyriusly version` — print "cyriusly <current>".
+fn _cmd_version(): i64 {
+    var buf[64];
+    _cyrius_current_into(&buf, 64);
+    syscall(1, 1, "cyriusly ", 9);
+    syscall(1, 1, &buf, strlen(&buf));
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# `cyriusly list` — list installed versions, mark active with "* ".
+fn _cmd_list(): i64 {
+    var home = _cyrius_home();
+    var versions_dir = _path_join(home, "versions");
+    syscall(1, 1, "Installed versions:\n", 20);
+    var cur_buf[64];
+    _cyrius_current_into(&cur_buf, 64);
+    if (is_dir(str_from(versions_dir)) == 0) {
+        syscall(1, 1, "  (none — install with `cyriusly install <ver>`)\n", 51);
+        return 0;
+    }
+    var entries = dir_list(str_from(versions_dir));
+    var ec = vec_len(entries);
+    if (ec == 0) {
+        syscall(1, 1, "  (none — install with `cyriusly install <ver>`)\n", 51);
+        return 0;
+    }
+    var i = 0;
+    while (i < ec) {
+        var entry = vec_get(entries, i);
+        var ed = str_data(entry);
+        var el = str_len(entry);
+        # Compare entry against cur_buf; if match, prepend "  * "
+        # else prepend "    ".
+        var clen = strlen(&cur_buf);
+        var is_match = 0;
+        if (clen == el) {
+            is_match = memeq(ed, &cur_buf, el);
+        }
+        if (is_match == 1) {
+            syscall(1, 1, "  * ", 4);
+            syscall(1, 1, ed, el);
+            syscall(1, 1, " (active)\n", 10);
+        } else {
+            syscall(1, 1, "    ", 4);
+            syscall(1, 1, ed, el);
+            syscall(1, 1, "\n", 1);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# `cyriusly which` — print path to active compiler.
+fn _cmd_which(): i64 {
+    var home = _cyrius_home();
+    var binpath = _path_join(home, "bin/cc5");
+    syscall(1, 1, binpath, strlen(binpath));
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# `cyriusly home` — print install directory.
+fn _cmd_home(): i64 {
+    var home = _cyrius_home();
+    syscall(1, 1, home, strlen(home));
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# `cyriusly help` — usage text.
+fn _cmd_help(): i64 {
+    syscall(1, 1, "cyriusly — Cyrius version manager\n\n", 36);
+    syscall(1, 1, "USAGE:\n", 7);
+    syscall(1, 1, "    cyriusly <command> [args]\n\n", 31);
+    syscall(1, 1, "COMMANDS:\n", 10);
+    syscall(1, 1, "    version            Show active version\n", 44);
+    syscall(1, 1, "    list               List installed versions\n", 48);
+    syscall(1, 1, "    use <version>      Switch to a version\n", 44);
+    syscall(1, 1, "    install <version>  Download and install\n", 45);
+    syscall(1, 1, "    setup              Install from current repo checkout\n", 59);
+    syscall(1, 1, "    uninstall <ver>    Remove a version\n", 41);
+    syscall(1, 1, "    update             Check for new versions\n", 47);
+    syscall(1, 1, "    which              Show path to active compiler\n", 53);
+    syscall(1, 1, "    home               Show install directory\n", 47);
+    syscall(1, 1, "    cmdtools [action]  Manage prompt integrations\n", 51);
+    syscall(1, 1, "    help               Show this help\n\n", 39);
+    syscall(1, 1, "NOTE:\n", 6);
+    syscall(1, 1, "    setup / install / update / uninstall / use / cmdtools\n", 59);
+    syscall(1, 1, "    still defer to scripts/cyriusly until v5.11.10 (port arc).\n", 64);
+    return 0;
+}
+
+# ----------------------------------------------------------------
+# Dispatcher — argv[1] selects the subcommand.
+# ----------------------------------------------------------------
+
+fn main(): i64 {
+    args_init();
+    var ac = argc();
+    if (ac < 2) { return _cmd_help(); }
+    var cmd = argv(1);
+    var cmdlen = strlen(cmd);
+
+    # version / --version / -v
+    if (cmdlen == 7) { if (memeq(cmd, "version", 7) == 1) { return _cmd_version(); } }
+    if (cmdlen == 9) { if (memeq(cmd, "--version", 9) == 1) { return _cmd_version(); } }
+    if (cmdlen == 2) { if (memeq(cmd, "-v", 2) == 1) { return _cmd_version(); } }
+
+    # list / ls
+    if (cmdlen == 4) { if (memeq(cmd, "list", 4) == 1) { return _cmd_list(); } }
+    if (cmdlen == 2) { if (memeq(cmd, "ls", 2) == 1) { return _cmd_list(); } }
+
+    # which
+    if (cmdlen == 5) { if (memeq(cmd, "which", 5) == 1) { return _cmd_which(); } }
+
+    # home
+    if (cmdlen == 4) { if (memeq(cmd, "home", 4) == 1) { return _cmd_home(); } }
+
+    # help
+    if (cmdlen == 4) { if (memeq(cmd, "help", 4) == 1) { return _cmd_help(); } }
+    if (cmdlen == 6) { if (memeq(cmd, "--help", 6) == 1) { return _cmd_help(); } }
+    if (cmdlen == 2) { if (memeq(cmd, "-h", 2) == 1) { return _cmd_help(); } }
+
+    # Heavier verbs not yet ported — defer to scripts/cyriusly.
+    # (Pinned v5.11.10 — setup / install / update / uninstall / use /
+    # cmdtools land in that slot.)
+    syscall(1, 2, "cyriusly: '", 11);
+    syscall(1, 2, cmd, cmdlen);
+    syscall(1, 2, "' not yet ported (see scripts/cyriusly).\n", 41);
+    syscall(1, 2, "Available in v5.11.9: version, list, which, home, help.\n", 57);
+    return 1;
+}
+
+var rc = main();
+syscall(60, rc);

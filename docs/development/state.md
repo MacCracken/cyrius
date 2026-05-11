@@ -5,6 +5,18 @@
 
 ## Version
 
+**5.11.9** (shipped 2026-05-11 — **Cyriusly cmdtools port — scaffold +
+light verbs**). New `programs/cyriusly.cyr` ports the lighter
+sub-commands (`version` / `list` / `which` / `home` / `help`).
+Heavier verbs (`setup` / `install` / `update` / `uninstall` / `use` /
+`cmdtools`) defer to `scripts/cyriusly` until v5.11.10 closes the
+arc. Binary committed at `programs/`; NOT in `[release].bins` yet
+(scripts/cyriusly still load-bearing for unported verbs). cc5
+byte-identical at 804,472 B. check.sh 66/66; cyrius test 146/146.
+`tests/regression-*.sh` arc audit confirmed COMPLETE at v5.9.41 —
+zero remaining scripts to port (the .9 pin half resolved as no-op,
+pivoted to start the cyriusly port early).
+
 **5.11.8** (shipped 2026-05-11 — **`cyrius deps` symlink → file-copy**).
 `cbt/deps.cyr:603` no longer emits `syscall(88, ...)` symlink; always
 calls `_dep_copy_file`. Eliminates the install.sh `cp -L` same-file
