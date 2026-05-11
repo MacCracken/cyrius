@@ -2313,7 +2313,7 @@ See CHANGELOG [5.10.49] for the full debunk + the
 list of CHANGELOG entries that propagated the
 phantom claim.
 
-#### v5.10.50 — v5.10.x cycle closeout
+#### v5.10.50 — v5.10.x cycle closeout — **SHIPPED 2026-05-11 (cycle CLOSED)**
 
 Pinned 2026-05-10 at v5.10.33 ship as the cycle-
 close slot. Per CLAUDE.md "Closeout Pass (before

@@ -6,6 +6,236 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.50] — 2026-05-11
+
+**v5.10.x SLOT 50 — v5.10.x cycle closeout** (final patch;
+v5.11.0 minor opens with the next codegen-feature slot).
+
+Per CLAUDE.md §"Closeout Pass": mechanical fail-fast checks
+first, then judgment passes (heap-map / dead-code / refactor /
+code-review / cleanup), then compliance (security / downstream),
+then doc sync.
+
+### Mechanical (all GREEN)
+
+| Check | Result |
+|-------|--------|
+| 3-step self-host fixpoint (cc5_a → cc5_b → cc5_c; b == c) | **clean** at 804,472 B |
+| Bootstrap closure (`sh bootstrap/bootstrap.sh`: seed → cyrc → asm → cyrc byte-identical) | **clean**; cyrc 12,344 B, asm 29,016 B |
+| Root-of-trust verify (`sh bootstrap/verify.sh`: Rust seed → cyrc → asm; SHA256 match) | **clean** after path fix (`stage1/` → `bootstrap/`; pre-existing stale path corrected this slot) |
+| `sh scripts/check.sh` | **66/66 PASS** |
+| `sh tests/heapmap.sh` | **96 regions, 0 overlaps, 0 warnings** |
+
+### Heap-map audit
+
+v5.10.x cycle additions to the heap map (all documented in
+`src/main.cyr` HEAP MAP comment block):
+- `0x110000` `fn_start_hash` [16 KB] — v5.10.41 (Knuth golden-
+  ratio multiplicative; reused the 232 KB free gap between
+  fn_name_hash and struct_ftypes; **no brk extension**)
+- `0x124A000` `fn_param_cstring_mask` etc. — v5.10.24 (REAL
+  TYPE SYSTEM Phase 2 param-type masks; 5 regions, 32 KB each)
+- `0x126A000`-`0x127A000` `fn_overload_str` / `_int` / `_cstr`
+  — v5.10.25 (Phase 3 generalize overloads)
+- `0x1282000` `fn_param_simd_mask` — v5.10.38 (typed-simd ABI
+  Phase 10 caller-side XMM routing)
+- `0x4E8C000` `lexid_count` + `0x4E8C100` `lexid_heads` +
+  `0x4E8C900` `lexid_entries` — v5.10.40 (LEXID dedup chain;
+  132 KB brk extension to 0x4EAD000)
+
+No cap pressure in cycle-added regions. No consolidation
+candidates identified (each region serves a distinct
+sub-system at non-adjacent offsets). All v5.10.x heap shape
+documented in the HEAP MAP block AND retro
+(`vidya/content/cyrius/field_notes/compiler/retros/v510x.cyml`
+entry `v510x_cycle_close_40_through_50` §Closeout).
+
+### Dead-code floor
+
+`note: 34 unreachable fns (22,792 bytes)`. Floor unchanged
+from v5.10.49. All 34 are env-gated reachable:
+- 11 TS_* fns — active only in `--lex-ts` / `--parse-ts` modes
+- 6 IR_* opcode handlers — active when CYRIUS_IR=3
+- 5 ir_* pass fns — active when CYRIUS_LASE/DSE etc set
+- 1 EMITMACHO_ARM64 — cross-arch Mach-O build
+- ~10 others gated similarly
+
+No NEW dead fns in the cycle. The 22,792 B floor reflects
+v5.10.x's intentional gated-feature architecture (TS frontend
+exclusively in --lex-ts mode; IR pipeline in CYRIUS_IR=3).
+
+### Refactor pass
+
+v5.10.x added the `_TARGET_PE` / `_AARCH64_BACKEND` /
+`_TARGET_MACHO` per-backend branches in several emit helpers
+(typed-simd ABI, struct-byval ABI). The v5.10.45-.47
+struct-byval arc Phases 1+2+3 ended with PER-BACKEND
+`EFLLOAD/STORE_STRUCT_INT_PAIR` helpers in
+`src/backend/x86/emit.cyr` and `src/backend/aarch64/emit.cyr`
+that mirror the existing `EFLLOAD/STORE_F64V2_PAIR` and
+`_F64V4_PAIR` shapes — natural consolidation already in place.
+No 2-3 obvious additional consolidations spotted; the per-
+backend split is the right granularity. cx stays ERR_MSG on
+the int-class pair-return path (documented non-supported).
+
+### Code review pass
+
+v5.10.x diffs walked for: ABI leaks (unguarded x86 encodings
+on non-x86 paths), missed `_TARGET_PE` guards, byte-order typos
+in PE/macho hex literals, silently-ignored errors, off-by-one
+in fixup arithmetic.
+
+Findings:
+- Pre-existing unguarded x86 hex sites in `parse_expr.cyr`
+  (`lea rax, [rip+disp32]` at lines 371, 895; `add rsp, 8`
+  inside PE-guarded `syscall(60)` branch at lines 555-556;
+  `cmp rax, rcx` + `setcc` family at lines 956-965). All are
+  inside paths that fall through to x86-only emit or are
+  PE-branch-guarded; none are new v5.10.x additions. None
+  flagged for action.
+- v5.10.45-.47 struct-byval arc consistently routes via
+  per-backend helpers. No x86 leaks onto aarch64.
+- v5.10.41 fn_start_hash builder + 2 lookup sites use the
+  same Knuth multiplicative constant (`0x9E3779B97F4A7C15`)
+  and same `>> 16 & 8191` mask. Consistent.
+- v5.10.40 LEXID dedup encodings preserve canonical-first-
+  occurrence semantics (byte-identical self-host required).
+- No silently-ignored error returns added.
+- No off-by-one in fixup arithmetic.
+
+### Cleanup sweep
+
+- `bootstrap/verify.sh` — stale `stage1/cyrc.cyr` +
+  `stage1/asm.cyr` paths corrected to `bootstrap/cyrc.cyr` +
+  `bootstrap/asm.cyr` (the bootstrap reorg moved these files
+  but verify.sh wasn't updated). Verified clean rebuild +
+  closure after fix.
+- No orphan files in `build/` (only tracked `cc3` + `cc5`
+  per CLAUDE.md DO NOT section; all other binaries
+  gitignored).
+- No stale `TODO v5.10.X` / `gated on v5.10.X` comments in
+  `src/` or `lib/`.
+
+### Security re-scan
+
+No new `sys_system` / `sys_execve` call sites added during
+v5.10.x. Existing call sites in `lib/callback.cyr`,
+`lib/pam.cyr`, `lib/regression.cyr` unchanged. No new
+unchecked `store8` writes near heap-region boundaries.
+
+Full security audit cadence: last full pass at v5.0.1; next
+pinned in `doc-health.md` Forward Commitments table at
+v5.11.0 closeout per the "every 2-3 minors" CLAUDE.md rule.
+
+### Downstream check
+
+40+ ecosystem repos checked at `/home/macro/Repos/<name>/cyrius.cyml`.
+All pin to **released** cyrius tags (none point to
+unreleased). Pin distribution:
+- 13 repos at v5.10.34 (Wave 4 baseline)
+- argonaut at v5.10.44 (current with v5.10.44 exec_*_str
+  migration; carry-forward landed at argonaut 1.6.1)
+- agnosys / sandhi / libro / etc. at v5.10.34
+- Older base: ark (v5.1.10), yukti (v5.8.64), kybernet
+  (v5.7.12), etc. — downstream consumers bump on
+  feature-need cadence, not per-patch.
+
+No downstream blocked on v5.10.x cycle work. Downstream
+consumers can opt in to v5.10.50 features (compile-time
+perf, struct-byval ABI, str_split/exec_*_str disambiguation,
+parser cosmetics) by bumping their `cyrius.cyml` pin.
+
+### Doc sync (vidya)
+
+- **`vidya/content/cyrius/field_notes/compiler/retros/v510x.cyml`**:
+  new `v510x_cycle_close_40_through_50` entry adds the
+  back-half cycle narrative (slots .40-.50) — compile-time
+  perf miniarc, TLS contract, issue sweep, struct-byval arc,
+  PE premise debunk. Companion to the existing
+  `v510x_cycle_retro_through_39` entry from v5.10.39 vidya
+  pass.
+- **`vidya/content/cyrius/language/features.cyml`**: +3
+  feature entries —
+  - `struct_byval_int_pair_return_abi` (v5.10.45-.47 arc)
+  - `bare_return_in_fn` (v5.10.48 parser cosmetic 5)
+  - `enum_ident_array_size` (v5.10.48 parser cosmetic 6)
+- No `gotchas.cyml` updates — the Windows-`%ERRORLEVEL%`
+  bad-wrapper finding was saved as agent-side memory pin
+  (`feedback_windows_errorlevel_test_wrapper`), not a
+  cyrius-language gotcha. Per
+  `feedback_doc_canonical_no_redundancy`: agent-discipline
+  pins stay in memory/; cyrius-side gotchas stay in vidya.
+- No `dependencies.cyml` / `ecosystem.cyml` updates this
+  closeout — no dep bumps during v5.10.x back-half.
+
+### Numbers (cycle close)
+
+cc5 (x86): **804,472 B** at v5.10.50 (byte-identical to
+v5.10.49; no codegen change this slot — closeout is verify
++ docs + cleanup). Cycle delta: **753,768 B at v5.10.0 →
+804,472 B at v5.10.50 (+50,704 B / +6.7%)**.
+
+Other binaries at cycle close:
+- cc5_aarch64_native: 582,088 → 587,048 B (+4,960 B)
+- cc5_macho_arm: 590,260 → 606,644 B (+16,384 B)
+- cc5_win: 696,832 → 701,440 B (+4,608 B)
+
+check.sh: stable at 66 gates throughout the cycle.
+
+api-surface: 2,769 → **2,876** entries (+107 public fns
+across v5.10.x; +3 from v5.10.44 exec_*_str family).
+
+### Cycle stats (v5.10.50 close)
+
+- **50 patches** in 5 days (2026-05-06 → 2026-05-11)
+- **THREE completed arcs**: typed-simd ABI (11 phases),
+  REAL TYPE SYSTEM (5 phases), struct-byval ABI (3 phases)
+- **ONE compile-time-perf miniarc** (.40 + .41 — **2.7×
+  total compile speedup**)
+- **ONE TLS contract pin** (.42)
+- **4 open issues closed** (str_split, exec_*, parser
+  cosmetics, kernel-reserved-word ride-along)
+- **ONE PE premise debunk** (.49 — 15-slot phantom closed)
+- **9+ in-cycle pin re-scopings** (premise-check driven)
+- check.sh: 66 gates (stable)
+- cyrius test count: 132 → ~146 (+14 gates including
+  struct_byval_return, parser_cosmetics, str_split,
+  process_exec_str, simd_overload_dispatch, etc.)
+
+### What landed this slot
+
+- `bootstrap/verify.sh` — `stage1/` path fix (cleanup sweep
+  finding)
+- `CHANGELOG.md` — this entry (cycle close)
+- `docs/development/roadmap.md` — v5.10.50 marked SHIPPED;
+  cycle close noted
+- `docs/development/state.md` — refreshed for cycle close
+- `vidya/content/cyrius/field_notes/compiler/retros/v510x.cyml`
+  — back-half retro entry
+- `vidya/content/cyrius/language/features.cyml` — +3
+  language-feature entries
+- **No source-code change** — cc5 byte-identical to v5.10.49
+
+### Cycle CLOSED — v5.11.0 opens next
+
+Per CLAUDE.md "Closeout Pass ships as the LAST patch of the
+current minor": v5.10.50 ships, then v5.11.0 opens the next
+minor with whatever the next codegen-feature arc lands. No
+pin held into v5.11.x at the time of close — the v5.10.x
+back-half cleared all 4 audit-found issues + the
+struct-byval cross-backend gap + the PE premise debunk.
+
+The v5.10.x cycle's meta-lesson, restated for v5.11.x:
+**empirical premise-check at slot entry is non-negotiable**.
+v5.10.45 (struct-byval scope re-cast) and v5.10.49 (PE pin
+debunked entirely) both saved 1-3 slots of mis-aimed work
+by 15-minute empirical re-tests. The memory pins encoding
+this discipline (`feedback_premise_check_at_slot_entry`,
+`feedback_no_silent_fix_deferrals`,
+`feedback_consumer_request_full_surface`,
+`feedback_windows_errorlevel_test_wrapper`) paid for
+themselves multiple times across v5.10.x.
+
 ## [5.10.49] — 2026-05-11
 
 **v5.10.x SLOT 49 — Win64 PE `println` silent + exit-code

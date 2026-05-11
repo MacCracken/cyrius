@@ -34,12 +34,12 @@ SEED="$SEED_DIR/target/release/cyrius-seed"
 
 # Step 2: Seed assembles cyrc
 echo "Seed -> cyrc..."
-"$SEED" "$ROOT/stage1/cyrc.cyr" "$TMPDIR/cyrc"
+"$SEED" "$DIR/cyrc.cyr" "$TMPDIR/cyrc"
 chmod +x "$TMPDIR/cyrc"
 
 # Step 3: cyrc compiles asm.cyr
 echo "cyrc -> asm..."
-cat "$ROOT/stage1/asm.cyr" | "$TMPDIR/cyrc" > "$TMPDIR/asm"
+cat "$DIR/asm.cyr" | "$TMPDIR/cyrc" > "$TMPDIR/asm"
 chmod +x "$TMPDIR/asm"
 
 # Step 4: Compare against committed binary
@@ -58,7 +58,7 @@ fi
 # Step 5: Verify bootstrap closure
 echo ""
 echo "Verifying bootstrap closure..."
-cat "$ROOT/stage1/cyrc.cyr" | "$TMPDIR/asm" > "$TMPDIR/cyrc_v2"
+cat "$DIR/cyrc.cyr" | "$TMPDIR/asm" > "$TMPDIR/cyrc_v2"
 if cmp -s "$TMPDIR/cyrc" "$TMPDIR/cyrc_v2"; then
     echo "  PASS: asm -> cyrc_v2 matches seed -> cyrc"
 else

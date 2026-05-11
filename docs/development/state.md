@@ -5,15 +5,24 @@
 
 ## Version
 
-**5.10.49** (shipped 2026-05-11 — **v5.10.x SLOT 49 — Win64 PE
-`println` + exit-code: premise-debunk, no code change**). 15-slot
-phantom item closed; empirical re-verification shows both pinned
-pieces (PE `syscall(60, code)` exit-code propagation +
-`syscall(1, ...)` console output) work today. Cycle in-flight at
-49 slots shipped. cc5 self-host **804,472 B at v5.10.49 — byte-
-identical to v5.10.48** (no codegen change this slot). Cycle
-delta: 753,768 B at v5.10.0 → **804,472 B at v5.10.49**
-(+50,704 B; .48 was the last codegen-change slot).
+**5.10.50** (shipped 2026-05-11 — **v5.10.x SLOT 50 — v5.10.x
+cycle closeout**, final patch; v5.11.0 minor opens with the
+next codegen-feature slot). **Cycle CLOSED at 50 patches over
+5 days** (2026-05-06 → 2026-05-11). cc5 self-host **804,472 B
+at v5.10.50 — byte-identical to v5.10.48/.49**. Cycle delta:
+**753,768 B at v5.10.0 → 804,472 B at v5.10.50 (+50,704 B /
++6.7%)**.
+
+Per CLAUDE.md §"Closeout Pass" — all 11 steps green:
+mechanical (3-step fixpoint + bootstrap closure + check.sh
+66/66 + heapmap.sh 96/0/0), judgment passes (heap-map audit
+clean; 34 dead-fn floor unchanged; refactor pass — per-backend
+helpers natural; code review — no x86 leaks; cleanup —
+`bootstrap/verify.sh` `stage1/` path fixed), compliance
+(security — no new sys_system; downstream — 40+ repos all
+pin to released tags), doc sync (vidya retro back-half entry
++ 3 features.cyml entries: struct-byval ABI, bare-return,
+enum-ident array size).
 
 Premise debunk: chat-side cross-host smoke wrappers used `cmd /c
 "prog.exe & echo %errorlevel%"` which expands at parse time →
@@ -91,7 +100,7 @@ Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
 exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
 v5.10.40 (no aarch64 backend change).
 
-**Slots .33 - .49 one-liner sweep**:
+**Slots .33 - .50 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -174,12 +183,13 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **804,472 B** at v5.10.49 (unchanged
-  from v5.10.48; .49 is no-code-change premise debunk).
-  Cycle delta: 797,464 B at v5.10.39 → 804,472 B at
-  v5.10.49 (+7,008 B: .40/.41 perf miniarc +1,448 B;
+- **cc5 (x86_64)**: **804,472 B** at v5.10.50 (unchanged
+  from v5.10.48/.49; .50 is closeout — verify + docs +
+  cleanup only). Full cycle delta: 753,768 B at v5.10.0 →
+  804,472 B at v5.10.50 (+50,704 B / +6.7%); back-half delta
+  (.39→.50): +7,008 B (.40/.41 perf miniarc +1,448 B;
   .42/.43/.44 flat; .45 +4,176 B; .46/.47 flat; .48
-  +1,384 B; .49 flat).
+  +1,384 B; .49/.50 flat).
 - **cc5_aarch64_native (cross-built)**: **587,048 B** at
   v5.10.47 (stable through Phase 2/3).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
@@ -232,7 +242,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.49. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.50 (cycle CLOSED). Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -259,13 +269,14 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 49 slots shipped through v5.10.49 (2026-05-11).**
-ONE patch away from closeout. THREE completed arcs (typed-simd
-ABI, REAL TYPE SYSTEM, struct-byval ABI) plus a compile-time-perf
-miniarc plus the TLS contract pin plus the roadmap-extension
-open-issues sweep (.43/.44/.48 close all 4 issues from the
-v5.10.42 audit) plus the v5.10.49 PE premise-debunk anchor the
-cycle:
+**v5.10.x cycle CLOSED at 50 slots (2026-05-11).** THREE
+completed arcs (typed-simd ABI 11 phases, REAL TYPE SYSTEM 5
+phases, struct-byval ABI 3 phases) plus a compile-time-perf
+miniarc (.40+.41, 2.7× total compile speedup) plus the TLS
+contract pin (.42) plus the roadmap-extension open-issues sweep
+(.43/.44/.48 close all 4 v5.10.42-audit issues) plus the
+v5.10.49 PE premise-debunk (15-slot phantom closed) plus the
+v5.10.50 closeout pass anchor the cycle. **v5.11.0 opens next.**
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -332,8 +343,8 @@ sandhi 1.1.0 → 1.3.3 refresh fold at v5.10.34; doc-health.md
 ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
-**Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **804,472 B at v5.10.49** (+50,704 B)
+**Cycle stats (final, v5.10.50 close)**:
+- cc5: 753,768 B at v5.10.0 → **804,472 B at v5.10.50** (+50,704 B, +6.7%)
 - cc5_aarch64_native: ~470 KB at v5.10.0 → **587,048 B at v5.10.47**
 - cc5_macho_arm: ~510 KB at v5.10.0 → **606,644 B at v5.10.47**
 - cc5_win: ~530 KB at v5.10.0 → **701,440 B at v5.10.47**
@@ -355,8 +366,16 @@ the remaining v5.10.x work. Full v5.10.x retro at
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.49 PE premise debunk):
+v5.10.x cycle through 2026-05-11 (CLOSED at v5.10.50):
 
+- **v5.10.50** — cycle closeout. 11-step CLAUDE.md closeout pass
+  all green: mechanical (3-step + bootstrap + check.sh 66/66 +
+  heapmap 96/0/0), judgment (heap-map clean, 34 dead-fn floor
+  unchanged, no x86 leaks, refactor noted), compliance (security
+  + downstream all pinned to released tags), doc sync (vidya
+  retro back-half + 3 features.cyml entries). One cleanup
+  finding: `bootstrap/verify.sh` `stage1/` path fixed. cc5
+  byte-identical. v5.11.0 opens next.
 - **v5.10.49** — Win64 PE `println` + exit-code premise-debunk
   (no code change). Empirical re-test shows both pinned pieces
   work today; the "broken" claims were a 15-slot chat-side
