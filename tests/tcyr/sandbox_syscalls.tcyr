@@ -1,0 +1,61 @@
+# Test: kavach P1 sandbox-relevant syscall wrappers (v5.11.0)
+# Closes `docs/development/issues/2026-05-10-kavach-sandbox-syscall-wrappers.md`.
+#
+# Six wrappers (x86_64 + aarch64 mirrored):
+#   sys_fchmod, sys_setresuid, sys_setresgid, sys_prctl,
+#   sys_seccomp, sys_execveat
+#
+# Strategy:
+#   - Compile-time verify all 6 wrappers are callable (the gate
+#     fails at parse time if any wrapper is missing).
+#   - Runtime exercise the SAFE ones (sys_fchmod on a tmp file,
+#     sys_prctl with PR_GET_DUMPABLE side-effect-free probe).
+#   - DO NOT runtime-invoke sys_setresuid / sys_setresgid (would
+#     drop privs irreversibly), sys_seccomp (would install a
+#     filter that locks the test process), or sys_execveat
+#     (would replace the process image). Compile-time reference
+#     via &fn confirms definedness.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fs.cyr"
+include "lib/assert.cyr"
+
+# PR_GET_DUMPABLE = 3. Side-effect-free; returns current dumpable
+# state (typically 1). Exercises the 5-arg sys_prctl wrapper.
+var PR_GET_DUMPABLE = 3;
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("sys_fchmod — fd-based chmod");
+    var tmp_path = "/tmp/cyrius_v511_sandbox_fchmod_test";
+    var fd = sys_open(tmp_path, 65, 384);    # O_WRONLY|O_CREAT, 0o600
+    assert(fd >= 0, "open temp file at 0o600");
+    var rc = sys_fchmod(fd, 420);            # 0o644
+    assert_eq(rc, 0, "sys_fchmod fd 0o644 returns 0");
+    sys_close(fd);
+    sys_unlink(tmp_path);
+
+    test_group("sys_prctl — 5-arg wrapper (PR_GET_DUMPABLE probe)");
+    var dump = sys_prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    assert(dump == 0 || dump == 1 || dump == 2, "prctl PR_GET_DUMPABLE returns 0/1/2");
+
+    test_group("compile-time callability of remaining wrappers");
+    # Linker / fixup catches missing fns. We don't INVOKE these —
+    # they would drop privs / install a filter / replace process.
+    var fp_setresuid = &sys_setresuid;
+    var fp_setresgid = &sys_setresgid;
+    var fp_seccomp = &sys_seccomp;
+    var fp_execveat = &sys_execveat;
+    assert(fp_setresuid != 0, "sys_setresuid defined");
+    assert(fp_setresgid != 0, "sys_setresgid defined");
+    assert(fp_seccomp != 0, "sys_seccomp defined");
+    assert(fp_execveat != 0, "sys_execveat defined");
+
+    var r = assert_summary();
+    return r;
+}
+
+var rc = main();
+syscall(60, rc);

@@ -5,24 +5,47 @@
 
 ## Version
 
-**5.10.50** (shipped 2026-05-11 — **v5.10.x SLOT 50 — v5.10.x
-cycle closeout**, final patch; v5.11.0 minor opens with the
-next codegen-feature slot). **Cycle CLOSED at 50 patches over
-5 days** (2026-05-06 → 2026-05-11). cc5 self-host **804,472 B
-at v5.10.50 — byte-identical to v5.10.48/.49**. Cycle delta:
-**753,768 B at v5.10.0 → 804,472 B at v5.10.50 (+50,704 B /
-+6.7%)**.
+**5.11.0** (shipped 2026-05-11 — **v5.11.x cycle OPEN — kavach P1
+sandbox syscall wrappers + roadmap restructure**). v5.10.x closed
+at .50; v5.11.0 opens the next minor with the highest-priority
+pending work landed (kavach P1 — the only P1 in the consumer-
+filed issue backlog) plus roadmap restructure mapping the v5.11.x
+arc. cc5 self-host **804,472 B at v5.11.0 — byte-identical to
+v5.10.50** (stdlib-only change; cc5 doesn't include
+`lib/syscalls_*_linux.cyr`). api-surface 2,876 → **2,888**
+(+12 fns).
 
-Per CLAUDE.md §"Closeout Pass" — all 11 steps green:
-mechanical (3-step fixpoint + bootstrap closure + check.sh
-66/66 + heapmap.sh 96/0/0), judgment passes (heap-map audit
-clean; 34 dead-fn floor unchanged; refactor pass — per-backend
-helpers natural; code review — no x86 leaks; cleanup —
-`bootstrap/verify.sh` `stage1/` path fixed), compliance
-(security — no new sys_system; downstream — 40+ repos all
-pin to released tags), doc sync (vidya retro back-half entry
-+ 3 features.cyml entries: struct-byval ABI, bare-return,
-enum-ident array size).
+**Six new wrappers (x86_64 + aarch64 mirrored)**: `sys_fchmod`,
+`sys_setresuid`, `sys_setresgid`, `sys_prctl`, `sys_seccomp`,
+`sys_execveat`. All async-signal-safe (no heap, no mutex, no
+logging) for post-fork / pre-execve sandbox transition windows.
+Closes `docs/development/issues/2026-05-10-kavach-sandbox-syscall-
+wrappers.md`. 7 sub-asserts in new
+`tests/tcyr/sandbox_syscalls.tcyr` (safe wrappers runtime-
+exercised; dangerous wrappers compile-time-referenced via `&fn`).
+
+**v5.11.x mandate**:
+1. **Stdlib annotation arc** (7-phase, pinned v5.10.32):
+   1,010 unannotated public fns across 75 % stdlib coverage.
+2. **7 consumer-filed issues** from 2026-05-10 wave (bote /
+   daimon / kavach) — 1 P1, 4 P2, 2 Low.
+3. **Held-forward from v5.10.x** — Class B FFI/wgpu, cyim
+   regex, float.cyr peephole.
+4. **Infrastructure** — `cyrius deps` symlink → copy fix
+   (v5.10.37 pin), regression.sh → cyrius port +
+   Cyriusly cmdtools port (v5.10.36 pin paired), TS test
+   harness program (v5.7.37 → v5.10.20).
+
+Slot ordering at slot entry per
+`feedback_priority_bottom_to_top` + `feedback_premise_check_at_slot_entry`:
+P1 first → annotation foundations (v5.11.1) → cross-arch
+fixes → consumer-blocking P2 → infrastructure rotation →
+annotation completion → TS test harness → defensive sweep
++ closeout.
+
+See [`docs/development/roadmap.md`](roadmap.md) `## v5.11.x —
+Cleanup / annotation-completion minor` section for the full
+arc map.
 
 Premise debunk: chat-side cross-host smoke wrappers used `cmd /c
 "prog.exe & echo %errorlevel%"` which expands at parse time →
@@ -242,7 +265,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.50 (cycle CLOSED). Cross-host gates wire through `~/.ssh/config`
+Current at v5.11.0 (v5.11.x cycle OPEN). Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 

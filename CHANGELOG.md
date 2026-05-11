@@ -6,6 +6,178 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.0] — 2026-05-11
+
+**v5.11.x cycle OPEN — kavach P1 sandbox syscall wrappers +
+roadmap restructure**.
+
+v5.10.x closed at .50 with 50 patches and three completed arcs.
+v5.11.0 opens the next minor with the **highest-priority pending
+work landed** (kavach P1, the only P1 in the consumer-filed
+issue backlog) plus roadmap restructure mapping the v5.11.x arc.
+
+### Cycle theme
+
+v5.10.x left three carry-forward classes:
+1. **Stdlib annotation arc** (pinned 2026-05-10): 1,010 unannotated
+   public fns across 75 % stdlib coverage. 7-phase breakout
+   covering foundational core / I/O / strings / collections /
+   big consumers / closeout phases / compiler internals.
+2. **7 consumer-filed issues from 2026-05-10 wave** (bote /
+   daimon / kavach):
+   - **P1**: kavach sandbox-relevant syscall wrappers
+   - **P2 × 4**: daimon aarch64 epoll_wait, bote net
+     recv_timeout + getaddrinfo, bote arena fl_free, bote
+     streaming/async primitives
+   - **Low × 2**: bote ws_server RFC 6455 key validation,
+     parser assert/string-literal quirk
+3. **Held-forward items** (Class B FFI/wgpu fncall6, cyim
+   regex, float.cyr peephole) — surface-on-ask.
+
+Plus infrastructure work pinned at v5.10.x ships:
+- `cyrius deps` symlink → file-copy (v5.10.37 pin)
+- `tests/regression-*.sh` → cyrius port + Cyriusly cmdtools
+  port (v5.10.36 pin, paired)
+- TS test harness program (v5.7.37 → v5.10.20 promotion;
+  lands after regression port)
+
+### What landed this slot — kavach P1 sandbox syscall wrappers
+
+Closes
+[`docs/development/issues/2026-05-10-kavach-sandbox-syscall-wrappers.md`](docs/development/issues/2026-05-10-kavach-sandbox-syscall-wrappers.md).
+Six post-fork-relevant Linux syscalls had no stdlib wrapper at
+v5.10.x; kavach v3.1.1 raw-syscall'd `SYS_FCHMOD` as a workaround,
+and v3.2 work was gated on the rest. **Each wrapper is async-
+signal-safe** (no heap, no mutex, no logging) so it can run in
+the post-fork seccomp / setres* / execve transition window.
+
+- **`sys_fchmod(fd, mode)`** — folds the kavach 3.1.1
+  raw-syscall workaround back into stdlib. Closes the
+  chmod-by-path TOCTOU window (rename swap between
+  `sys_close` + `sys_chmod`).
+- **`sys_setresuid(ruid, euid, suid)` + `sys_setresgid(rgid,
+  egid, sgid)`** — Firecracker jailer pattern. Atomic
+  three-uid / three-gid drop pre-execve.
+- **`sys_prctl(option, arg2, arg3, arg4, arg5)`** — 5-arg
+  wrapper for `PR_SET_NO_NEW_PRIVS` (required for
+  unprivileged seccomp install) and other prctl operations.
+- **`sys_seccomp(op, flags, args_ptr)`** — BPF seccomp
+  filter install. Caller builds the BPF program (cyrius
+  stdlib stays out of the BPF-builder business; kavach
+  builds per-profile in-tree).
+- **`sys_execveat(dirfd, pathname, argv_ptr, envp_ptr,
+  flags)`** — exec from a held fd. Closes the path-resolution
+  TOCTOU class (ADR-005 §H4 in kavach).
+
+**Both backends** wired:
+- `lib/syscalls_x86_64_linux.cyr` — 6 new enum entries
+  (`SYS_FCHMOD = 91`, `SYS_SETRESUID = 117`, `SYS_SETRESGID
+  = 119`, `SYS_PRCTL = 157`, `SYS_SECCOMP = 317`,
+  `SYS_EXECVEAT = 322`) + 6 fn wrappers.
+- `lib/syscalls_aarch64_linux.cyr` — same surface, aarch64
+  numbers (`SYS_FCHMOD = 52`, `SYS_SETRESUID = 147`,
+  `SYS_SETRESGID = 149`, `SYS_PRCTL = 167`, `SYS_SECCOMP =
+  277`, `SYS_EXECVEAT = 281`).
+
+Placement: wrappers grouped semantically with their kin
+(`sys_fchmod` next to `sys_chmod`; `sys_setresuid` /
+`sys_setresgid` in the Identity block next to `sys_setuid` /
+`sys_setgid`; `sys_prctl` / `sys_seccomp` / `sys_execveat` in a
+dedicated "Sandbox primitives" section between Identity and
+Mount). Each carries an async-signal-safe note in its
+docstring so consumers don't re-prove the invariant.
+
+### Tests
+
+New `tests/tcyr/sandbox_syscalls.tcyr` — 7 sub-asserts:
+- `sys_fchmod` on an actual tmp file (open at 0o600 → fchmod
+  to 0o644 → verify rc=0)
+- `sys_prctl(PR_GET_DUMPABLE, ...)` — side-effect-free probe
+  exercising the 5-arg wrapper end-to-end
+- Compile-time `&fn` reference for `sys_setresuid`,
+  `sys_setresgid`, `sys_seccomp`, `sys_execveat` — the
+  linker / fixup catches missing definitions without
+  invoking the dangerous syscalls. We can't safely runtime-
+  exercise these in a test harness (would drop privs / lock
+  the process / replace its image).
+
+### Also landed — roadmap restructure (no separate slot needed)
+
+- **`docs/development/roadmap.md`** — v5.10.x section
+  compacted (~2,360 → ~95 lines, -96 %). Detail lives in
+  CHANGELOG `[5.10.0]`-`[5.10.50]` + vidya retro per
+  `feedback_doc_canonical_no_redundancy`. v5.11.x section
+  restructured with all carry-forwards mapped (7 open
+  issues from 2026-05-10 wave + held-forward items + the
+  stdlib annotation 7-phase arc + infrastructure work).
+- **Cycle discipline section** (durable across cycles):
+  acceptance principle (v5.10.0 revision), bottom-to-top
+  priority, premise-check at slot entry, Windows
+  %ERRORLEVEL% test-wrapper discipline (v5.10.49 lesson).
+- **state.md** — cycle status flipped from "CLOSED at
+  v5.10.50" → "v5.11.x cycle OPEN".
+- **`docs/api-surface.snapshot`** — regenerated (+12 fns;
+  6 are the new kavach wrappers, the other 6 from the
+  v5.11.x prep state).
+
+### Slot ordering heuristic (chosen at slot entry, not pre-pinned)
+
+1. **P1 first** — kavach syscall wrappers (the only P1).
+2. **Annotation foundations** — v5.11.x phase 1 (alloc / vec /
+   fmt / freelist / fnptr / result / tagged / assert ~93 fns)
+   sets the floor for inferred types downstream.
+3. **Cross-arch fixes that unblock cross-host smoke** — daimon
+   aarch64 epoll_wait (small, defensible early).
+4. **Consumer-blocking P2** — bote recv_timeout, fl_free,
+   streaming primitives (streaming may earn its own multi-slot
+   arc).
+5. **Infrastructure rotation** — `cyrius deps` copy fix +
+   regression.sh port + Cyriusly cmdtools port.
+6. **Annotation completion phases** interleave.
+7. **TS test harness** after regression port.
+8. **Defensive sweep + closeout** at cycle's final patches.
+
+### Cycle discipline carried forward
+
+- **Slot acceptance principle** (revised v5.10.0): no
+  bookkeeping-only slots; "updated 1 doc to plan next steps"
+  is HELL NO.
+- **Bottom-to-top priority** (v5.10.1): walk the stack
+  agnosys → stdlib runtime → specialized libs → applications.
+- **Premise-check at slot entry**: pins go stale, empirically
+  test before committing scope (v5.10.45 + v5.10.49 paid
+  for themselves twice).
+- **Cross-host smoke wrapper discipline** (v5.10.49 lesson):
+  `cmd /v /c "... !errorlevel!"` or `.bat` indirection, NOT
+  `cmd /c "& echo %errorlevel%"` (parse-time false-negative).
+
+### Numbers
+
+cc5 (x86): **804,472 B — byte-identical to v5.10.50** (stdlib-
+only change; cc5 doesn't include `lib/syscalls_*_linux.cyr`).
+3-step fixpoint clean. 66/66 check.sh PASS. api-surface
+2,876 → **2,888** (+12 public fns).
+
+### What's NOT in this slot (carried to v5.11.x next slots)
+
+- **Stdlib annotation arc Phase 1** (alloc/vec/fmt/freelist/
+  fnptr/result/tagged/assert) — lands at v5.11.1.
+- **Other consumer-filed issues** (daimon aarch64 epoll_wait,
+  bote fl_free, bote net recv_timeout, bote streaming
+  primitives, bote ws_server RFC key validation, parser
+  assert quirk) — interleave through v5.11.x per slot-
+  ordering heuristic in roadmap.
+- **Infrastructure work** (cyrius deps copy fix,
+  regression.sh → cyrius port, Cyriusly cmdtools port) —
+  later in v5.11.x.
+
+Per `feedback_one_thing_slot_revised` AND
+`feedback_release_needs_code_not_just_docs` (saved this
+slot after a roadmap-only attempt was rightly rejected):
+v5.11.0 is a minor-OPEN slot WITH real code. The chapter-
+open + arc mapping + kavach P1 wrappers together = the
+measurable forward motion. NOT a bookkeeping-only slot.
+
 ## [5.10.50] — 2026-05-11
 
 **v5.10.x SLOT 50 — v5.10.x cycle closeout** (final patch;
