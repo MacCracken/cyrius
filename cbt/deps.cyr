@@ -597,15 +597,15 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         str_builder_add_cstr(sb3, base);
                     }
                     var dst = str_data(str_builder_build(sb3));
-                    var sym_src = _abs_path(src);
-                    var cr2 = 2;
+                    # v5.11.8: file-copy instead of symlink (was
+                    # syscall(88, sym_src, dst) symlink-then-fallback-
+                    # to-copy). Symlinks fired install.sh's `cp -L`
+                    # same-file collision and let snapshot-ping-pong
+                    # silently overwrite project lib/ files. Always
+                    # copy → distinct inodes at every layer. See
+                    # CHANGELOG [5.11.8], roadmap v5.10.37/v5.11.8 pin.
                     sys_unlink(dst);
-                    var srv = syscall(88, sym_src, dst);
-                    if (srv < 0) {
-                        cr2 = _dep_copy_file(src, dst);
-                    } else {
-                        cr2 = 0;
-                    }
+                    var cr2 = _dep_copy_file(src, dst);
                     if (cr2 == 0 || cr2 == 2) {
                         vec_push(_dep_includes, dst);
                         dep_had_success = 1;

@@ -5,6 +5,17 @@
 
 ## Version
 
+**5.11.8** (shipped 2026-05-11 — **`cyrius deps` symlink → file-copy**).
+`cbt/deps.cyr:603` no longer emits `syscall(88, ...)` symlink; always
+calls `_dep_copy_file`. Eliminates the install.sh `cp -L` same-file
+collision + snapshot-ping-pong silent-wipe trigger (which bit us at
+v5.11.3 mid-Phase 3). Pairs with v5.11.19 per-repo version isolation.
+Plus post-v5.11.7 lib comment condensation (8 native files,
+~80 lines history → CHANGELOG pointers; memory pin
+`feedback_comments_primary_info_plus_changelog_pointer`). cc5
+byte-identical (deps.cyr not in main.cyr chain); build/cyrius CLI
+rebuilt to 175,240 B; check.sh 66/66; cyrius test 146/146.
+
 **5.11.7** (shipped 2026-05-11 — **Phase 7: compiler-side internals
 + ARC CLOSE**). 44 fns annotated across `src/common/ir.cyr` (44→64)
 and `src/frontend/parse_types.cyr` (0→24). parse_decl + parse_fn

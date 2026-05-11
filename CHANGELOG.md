@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.8] — 2026-05-11
+
+**`cyrius deps` symlink → file-copy** (pinned 2026-05-10 at v5.10.37
+discussion as Option C; lands now as v5.11.8). Plus post-v5.11.7 lib
+comment condensation (~80 lines history → CHANGELOG pointers).
+
+### `cyrius deps` resolution: always copy, never symlink
+
+**Root cause**: pre-v5.11.8, `cbt/deps.cyr:603` resolved git deps by
+emitting a symlink (`syscall(88, abs_src, dst)`) into `lib/<dep>.cyr`
+pointing at `~/.cyrius/deps/<dep>/<ver>/dist/<dep>.cyr`. install.sh's
+`cp -L` then dereferenced both source and destination to the same
+inode in the snapshot directory, hitting *"cp: 'X' and 'Y' are the
+same file"* — `set -e` killed the install before the symlink-update
+block updated `~/.cyrius/bin` / `~/.cyrius/lib` / `~/.cyrius/current`.
+Snapshot-ping-pong then copied stale lib files back into the
+project, silently wiping in-flight work (bit us at v5.11.3 mid-Phase
+3; recovery cost a slot's worth of investigation).
+
+**Fix**: replace the symlink emit with `_dep_copy_file` (which was
+already the fallback path). All deps are now regular files at distinct
+inodes — install.sh's `cp -L` can't collide; snapshot-ping-pong loses
+the file-identity trigger.
+
+**Pairs with v5.11.19** (per-repo cyrius version isolation): once
+both ship, snapshot-ping-pong stops being possible AND per-repo
+isolation prevents the cross-agent flip that triggered it.
+
+### Lib comment condensation (post-v5.11.7 cleanup)
+
+8 native lib files (alloc, alloc_macos, args, io, syscalls, keccak,
+dynlib, json) — ~80 lines of historical narrative replaced with
+`# See CHANGELOG [X.Y.Z]` pointers. Pattern: keep WHY-invariant in
+source, point to CHANGELOG for the trail. Memory pin
+`feedback_comments_primary_info_plus_changelog_pointer` captures
+the rule for future passes.
+
+### Acceptance
+
+- `lib/mabda.cyr` (only git dep) resolves as regular file (verified
+  `ls -la` no `lrwxrwxrwx` flag; md5 byte-identical to cache source).
+- `cyrius deps` runs clean: "1 deps resolved".
+- `check.sh` 66/66 green.
+- `cyrius test` 146/146 green.
+- cc5 byte-identical (deps.cyr isn't in main.cyr include chain;
+  refactor lives in cbt/cyrius CLI only).
+- build/cyrius rebuilt to 175,240 B.
+
+### Next slot
+
+v5.11.9 — `tests/regression-*.sh` → cyrius port arc (paired with
+v5.11.10 Cyriusly cmdtools port per the v5.10.36 pin).
+
 ## [5.11.7] — 2026-05-11
 
 **Stdlib annotation arc — Phase 7: compiler-side internals + ARC CLOSE**.
