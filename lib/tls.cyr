@@ -3,6 +3,12 @@
 # Requires: alloc.cyr, syscalls.cyr, net.cyr, mmap.cyr, fnptr.cyr,
 #           string.cyr, dynlib.cyr, FDLOPEN.CYR (load-bearing as of v5.6.37)
 #
+# Formal contract: `docs/development/lib-tls-contract.md` (v5.10.42).
+# That doc is the invariant layer — verb return semantics, lifecycle
+# ordering, and ABI guarantees. Changes to the per-fn docstrings below
+# MUST preserve those guarantees unless the contract is amended in
+# the same patch.
+#
 # **IMPORTANT (v5.6.37+):** callers MUST `include "lib/fdlopen.cyr"`
 # before `include "lib/tls.cyr"` so this file's references to
 # `fdlopen_init_full` / `fdlopen_dlopen` / `fdlopen_dlsym` resolve.

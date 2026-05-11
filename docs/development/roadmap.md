@@ -1866,38 +1866,29 @@ confirmed).
 See CHANGELOG [5.10.41] for the full numbers table
 and heap layout.
 
-#### v5.10.42 — `lib/tls.cyr` hook-surface contract audit
+#### v5.10.42 — `lib/tls.cyr` hook-surface contract audit — **SHIPPED 2026-05-11**
 
-Filed from sandhi 1.1.x roadmap-cleanup pass,
-2026-05-08; promoted from held to concrete slot at
-v5.10.20 P(-1) sweep; cascaded from original .33 pin
-at v5.10.33 ship.
+Premise check confirmed the surface was already
+abstraction-clean per-fn (stable across 5 prior
+slots). Slot deliverable:
 
-With pure-Cyrius TLS removed (2026-04-24 decision —
-`lib/tls.cyr` stays libssl.so.3-bridged) AND sandhi
-folded into stdlib at v5.7.0, the `lib/tls.cyr` ↔
-`lib/sandhi.cyr` hook surface (`tls_connect`,
-`tls_connect_with_ctx_hook`, ALPN advertise, SNI,
-SPKI extraction) is now load-bearing across two
-stdlib modules. Sandhi's `tls_policy` layer (cert
-pinning / mTLS / trust-store override / ALPN
-advertise) exercises every hook; the contract was
-de-facto ratified at sandhi 1.0.0 fold + 1.1.0
-alloc migration end-to-end. Document it formally —
-per-hook docstring covering parameters, return
-semantics, error contract, ABI guarantees — so
-future maintenance (defensive hardening, internal
-refactors) preserves the byte-identical surface
-consumers built against.
+- `docs/development/lib-tls-contract.md` (new, ~230
+  LOC) — formal contract spec with verb-inventory
+  tables for availability / connect-fused /
+  connect-staged / I/O / hook-time config / session
+  resumption / session cache cbs / 0-RTT / escape
+  hatch, plus lifecycle invariants diagram and
+  failure / partial-state contract.
+- `lib/tls.cyr` header — pointer to the contract doc.
 
-Tiny if surface is already abstraction-clean (likely
-— stable since v5.6.40 ALPN hook ship); multi-slot
-if any hardening surfaces. ADR-0001 framing on the
-sandhi side (sandhi composes, doesn't reimplement)
-makes this explicitly cyrius's slot, not sandhi's.
+cc5 byte-identical to v5.10.41 (doc-only / comment-only;
+**unchanged at 798,912 B**); 3-step fixpoint clean;
+66/66 check.sh. No cross-host rebuild needed (no
+compile-side semantics changed). Snapshot-ping-pong
+guard applied per `~/.cyrius/lib/` mirror.
 
-May pair with stdlib data-domain carve-out
-(v5.10.27) if scheduling overlaps.
+See CHANGELOG [5.10.42] for the section breakdown
+and doc-canonical-source separation rationale.
 
 #### v5.10.43 — macOS arm64 struct-by-value calling-convention
 

@@ -5,11 +5,12 @@
 
 ## Version
 
-**5.10.41** (shipped 2026-05-11 — **v5.10.x SLOT 41 — Fixup phase
-optimization (fn_start hash table)**). Second consecutive compile-
-time-perf slot of the v5.10.x cycle; cycle in-flight at 41 slots
-shipped. cc5 self-host byte-identical at **798,912 B** (was
-753,768 B at v5.10.0; +45,144 B across the cycle).
+**5.10.42** (shipped 2026-05-11 — **v5.10.x SLOT 42 — `lib/tls.cyr`
+hook-surface contract audit**). Doc slot following the .40/.41
+compile-time-perf miniarc; cycle in-flight at 42 slots shipped.
+cc5 self-host **byte-identical to v5.10.41 at 798,912 B** (was
+753,768 B at v5.10.0; +45,144 B across the cycle — flat through
+.41 → .42 because the .42 work is doc-only).
 
 **Headline numbers** (CYRIUS_PROF=1, `cc5 < src/main.cyr`,
 best-of-5 median, end-to-end v5.10.x perf-arc gain pre-.40 → .41):
@@ -35,7 +36,7 @@ Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
 exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
 v5.10.40 (no aarch64 backend change).
 
-**Slots .33 - .41 one-liner sweep**:
+**Slots .33 - .42 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -73,6 +74,13 @@ v5.10.40 (no aarch64 backend change).
   free 232 KB gap. Replaces two O(N²) DCE byte-scan inner linear
   scans (seed + propagate). fixup 213→76 ms (2.8×), total 510→
   387 ms (1.32×). aarch64 fixup has no DCE — x86-specific.
+- **v5.10.42** — `lib/tls.cyr` hook-surface contract audit. New
+  `docs/development/lib-tls-contract.md` (~230 LOC) formalises
+  the verb inventory + lifecycle invariants + failure / partial-
+  state contract across 24 public verbs. `lib/tls.cyr` header
+  points to the doc. cc5 byte-identical (doc-only). No vidya
+  entry (API surface, not gotcha). Snapshot-ping-pong guard
+  applied via `~/.cyrius/lib/` mirror.
 
 Per CLAUDE.md, slot-by-slot detail lives in `CHANGELOG.md` (source
 of truth); closed cycles roll into `completed-phases.md` at each
@@ -81,19 +89,17 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **798,912 B** at v5.10.41 (was
-  797,984 B at v5.10.40; +928 B for the fn_start_hash
-  build + the two inline lookup blocks in DCE seed +
-  propagate; was 797,464 B at v5.10.39).
-- **cc5_aarch64**: **491,832 B** at v5.10.41 (unchanged
-  from v5.10.40; aarch64 fixup has no DCE pass so the
-  .41 change doesn't reach this binary).
+- **cc5 (x86_64)**: **798,912 B** at v5.10.42 (unchanged
+  from v5.10.41; doc-only slot). Cycle delta: 797,464
+  B at v5.10.39 → 798,912 B at v5.10.42 (+1,448 B
+  across the .40/.41 perf miniarc).
+- **cc5_aarch64**: **491,832 B** at v5.10.42 (unchanged
+  from v5.10.40 — aarch64 fixup has no DCE pass).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
   cycle — `cyrius` doesn't run LEXID itself).
-- **cc5_win (cross)**: **696,832 B** at v5.10.41 (was
-  695,808 B at v5.10.40; +1,024 B for the .41 fn_start_hash
-  pass — PE backend lives under x86, so the change reaches
-  cc5_win too). PE mmap at 0x5000000 has 1.5 MB slack past
+- **cc5_win (cross)**: **696,832 B** at v5.10.42 (unchanged
+  from v5.10.41 — doc-only slot doesn't reach compiler
+  binaries). PE mmap at 0x5000000 has 1.5 MB slack past
   the v5.10.40 brk extension to `0x4EAD000`, no resize.
 - **cc5_macho_arm (cross)**: ~590 KB at v5.10.40; mmap
   size bumped 0x4E8C000 → 0x4EAD000 to absorb the new
@@ -130,7 +136,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.41. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.42. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -157,8 +163,9 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 41 slots shipped through v5.10.41 (2026-05-11).**
-Two completed arcs plus a two-slot compile-time-perf miniarc anchor the cycle:
+**v5.10.x cycle — 42 slots shipped through v5.10.42 (2026-05-11).**
+Two completed arcs plus a two-slot compile-time-perf miniarc plus
+the TLS contract pin anchor the cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -178,8 +185,14 @@ Two completed arcs plus a two-slot compile-time-perf miniarc anchor the cycle:
    213→76 ms (2.8×). End-to-end gain: total compile-time
    **1037 → 387 ms (2.7×)** on cc5 self-compile. v5.10.0
    profile-guided "compile-time wins" held entry now realised
-   across both phases. Next pinned: v5.10.42 (`lib/tls.cyr`
-   hook-surface contract audit; not a perf slot).
+   across both phases.
+
+4. **v5.10.42 TLS hook-surface contract** — new
+   `docs/development/lib-tls-contract.md` pins the
+   invariant layer for the `lib/tls.cyr` ↔ `lib/sandhi.cyr`
+   surface that stabilised across .40/.13/.21/.27/.34. Next
+   pinned: v5.10.43 (macOS arm64 struct-by-value calling-
+   convention — Mach-O ABI work, isolated).
 
 Additional in-cycle work: TLS early-data surface completion at
 v5.10.34 (TLS_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED + accessors);
@@ -188,24 +201,31 @@ ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **798,912 B at v5.10.41** (+45,144 B)
-- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.41** (flat .40→.41)
+- cc5: 753,768 B at v5.10.0 → **798,912 B at v5.10.42** (+45,144 B)
+- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.42** (flat .40→.42)
 - api-surface: 2792 → ~2873 entries
 - New `lib/simd.cyr` (50 public fns)
+- New `docs/development/lib-tls-contract.md` (v5.10.42)
 - **Compile time 1037 → 387 ms (2.7×) across .40 + .41 miniarc**
 - 3 locname-staleness surfacings (v5.10.35 fixed ptyp 93-130; v5.10.39
   fixed the duplicate at ptyp 89-91 missed by .35); install.sh
   `cp -L` same-file collision discovered (workaround manual; fix
   pinned for v5.10.46 closeout)
 
-**Closeout pinning**: roadmap has v5.10.42 - v5.10.46 slotted for
+**Closeout pinning**: roadmap has v5.10.43 - v5.10.46 slotted for
 the remaining v5.10.x work. Full v5.10.x retro at
 `../../../vidya/content/cyrius/field_notes/compiler/retros/v510x.cyml`.
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.41 fixup hash):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.42 TLS contract):
 
+- **v5.10.42** — `lib/tls.cyr` hook-surface contract audit. New
+  `docs/development/lib-tls-contract.md` (~230 LOC) formalises 24
+  public verbs (availability / connect-fused / connect-staged /
+  I/O / hook-time config / session resumption / session cache cbs /
+  0-RTT / soft-deprecated `tls_dlsym` escape hatch). cc5 byte-
+  identical (doc-only); 3-step fixpoint clean.
 - **v5.10.41** — Fixup phase optimization. `fn_start_hash` at
   `0x110000` (8192 slots × 2 B; Knuth golden-ratio multiplicative
   hash) reusing free 232 KB gap; replaces two O(N²) DCE byte-scan

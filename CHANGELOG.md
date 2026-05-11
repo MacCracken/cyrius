@@ -6,6 +6,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.42] — 2026-05-11
+
+**v5.10.x SLOT 42 — `lib/tls.cyr` hook-surface contract audit**.
+
+Doc slot. The TLS hook surface has stabilised across four prior slots
+(v5.6.40 ALPN hook, v5.10.13 typed wrappers, v5.10.21 session +
+0-RTT, v5.10.27 staged connect, v5.10.34 early-data eligibility +
+acceptance probes) and is now load-bearing across `lib/tls.cyr` ↔
+`lib/sandhi.cyr`. v5.10.42 formalises the contract that the surface
+provides so future defensive hardening / internal refactors preserve
+the byte-identical surface consumers built against.
+
+### Premise check
+
+Per `feedback_premise_check_at_slot_entry`: every public verb in
+`lib/tls.cyr` already has a per-fn docstring covering params, return
+semantics, error contract, and ABI-stability notes. The roadmap pin
+predicted "tiny if surface is already abstraction-clean (likely)" —
+confirmed by reading the 688-line file end to end. Slot scope: lift
+the per-fn docs into a single invariant doc that survives source-file
+edits.
+
+### What landed
+
+- **`docs/development/lib-tls-contract.md`** (new, ~230 lines) —
+  formal contract spec. Sections:
+  - Provenance + transport model (libssl today, opaque-to-consumer
+    handles).
+  - Verb inventory tables for every public surface: availability
+    probes (3), connect-fused (2), connect-staged (2), I/O (3),
+    hook-time config (2), session resumption (3), session cache
+    callbacks (4), 0-RTT (5), escape hatch (`tls_dlsym`,
+    soft-deprecated).
+  - Lifecycle invariants diagram (alloc → set_session? →
+    complete → write/read → get_session? → close).
+  - Failure / partial-state contract (which calls own resources
+    when, what `tls_close` is safe on, what defensive no-ops are
+    documented).
+  - Stability guarantee tied to CLAUDE.md's byte-identical-self-
+    host rule.
+  - Cross-reference back to `lib/tls.cyr` + `lib/sandhi.cyr` + the
+    filing trail.
+- **`lib/tls.cyr`** header — 5-line pointer block under the existing
+  `Usage`/`Requires` lines, naming `docs/development/lib-tls-contract.md`
+  as the invariant layer.
+
+### Doc-canonical-source separation
+
+Per `feedback_doc_canonical_no_redundancy`:
+- CHANGELOG = slot history (this entry).
+- `lib/tls.cyr` per-fn docstrings = code-adjacent, may evolve as code
+  evolves.
+- `docs/development/lib-tls-contract.md` = invariant layer, changes
+  only as a contract amendment (and ships as its own slot).
+- state.md = current-cycle volatile only; no TLS narrative there.
+
+No vidya entry was added — the contract is API surface, not "future
+agent gotcha". If a future agent hits an unexpected libssl-side
+behavior, that becomes a vidya field-notes entry; the contract doc
+itself is reference-grade.
+
+### Cross-arch propagation
+
+Per `feedback_cross_arch_propagation_mandatory`: the change is a doc
++ header-comment-only edit; no code semantics affected. cc5
+self-host **byte-identical to v5.10.41 at 798,912 B**. No cross-host
+binary rebuild needed because no compiler-side or stdlib-runtime
+behavior changed.
+
+3-step fixpoint clean. 66/66 check.sh PASS.
+
+### Snapshot-ping-pong guard
+
+Per the lib/-edit warning in CLAUDE.md: `lib/tls.cyr` header edit
+applied, then immediately mirrored into
+`~/.cyrius/versions/5.10.41/lib/tls.cyr` + `~/.cyrius/lib/tls.cyr`
+to prevent the v5.10.41 snapshot from overwriting the edit via the
+next `cyrius deps` resolution. version-bump.sh's
+`install.sh --refresh-only` step then re-populates
+`~/.cyrius/versions/5.10.42/lib/` from the now-canonical repo state.
+
 ## [5.10.41] — 2026-05-11
 
 **v5.10.x SLOT 41 — Fixup phase optimization (fn_start hash table)**.
