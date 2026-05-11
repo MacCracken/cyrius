@@ -6,6 +6,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.1] — 2026-05-11
+
+**Stdlib annotation arc — Phase 1: foundational core**.
+
+Pinned at v5.10.32 ship; opens the 7-phase annotation arc set
+up at v5.10.x close. Phase 1 covers the foundational-core stdlib
+modules: every consumer transitively pulls these in, so
+annotating them sets the type-check signal floor for downstream
+consumers. Same shape as the v5.10.24 `cstring` annotation pass
+on `string.cyr` / `io.cyr`.
+
+### Modules annotated (107 fns total)
+
+| Module          | Fns | Notes |
+|-----------------|----:|-------|
+| `lib/alloc.cyr`    | 37 | bump / arena / vtable / test / default allocator |
+| `lib/vec.cyr`      | 11 | dynamic array — `_a` allocator-threaded variants |
+| `lib/fmt.cyr`      | 14 | int / hex / float / bool / byte / sprintf / printf |
+| `lib/freelist.cyr` |  7 | segregated-list allocator with individual free |
+| `lib/fnptr.cyr`    |  9 | indirect-call helpers `fncall0` .. `fncall8` |
+| `lib/result.cyr`   |  6 | `Result<T,E>` introspection + helpers |
+| `lib/tagged.cyr`   | 11 | Option / Either / tagged-union base ops |
+| `lib/assert.cyr`   | 12 | test assertions + `fail_after_n_allocs` harness |
+
+All annotations are `: i64` return-type — the bulk of these
+modules return scalar values (counts, pointers, status, tag
+discriminants) where i64 is the precise type. Param-level
+annotations and richer return types (`Result`, `Tagged`, `Str`)
+are out of scope for Phase 1; later phases pick those up where
+they're more useful for type-check signal.
+
+### Acceptance bar (per the v5.11.x phase-1 pin)
+
+- **cc5 byte-identical**: 804,472 B, fixpoint b == c (annotations
+  are parse-only; no codegen change). ✓
+- **check.sh 66/66**: green. ✓
+- **cyrius test 144 / 146**: unchanged from v5.11.0 (one pre-
+  existing `parser_cosmetics.tcyr` compile-error failure is
+  NOT introduced by this slot — empirically verified by running
+  `cyrius test` on the v5.11.0 tree pre-annotation; same 144/146
+  count). Pre-existing failure carries forward into the v5.11.39
+  defensive sweep band per the roadmap. ✓
+- **Downstream consumer regression sweep**: not run this slot —
+  annotations only tighten the warning surface, they don't
+  change runtime behavior. Will run as Phase 2/3 phases land
+  and the type-check signal grows.
+
+### Coverage delta
+
+- Phase-1 modules: **0/107 → 107/107** annotated public fns
+  (100 % coverage across the foundational-core band).
+- Stdlib total: 0/1010 → 107/1010 unannotated → annotated
+  (10.6 % cycle progress; ~903 fns remaining across Phases 2-7).
+
+### Next slot
+
+v5.11.2 — **Phase 2: I/O surface** (io, fs, process,
+syscalls_x86_64_linux, syscalls_aarch64_linux; ~166 fns).
+High `cstring`-shape exposure (file paths). Strong type-check
+signal once consumers thread `Str` through fs ops.
+
 ## [5.11.0] — 2026-05-11
 
 **v5.11.x cycle OPEN — kavach P1 sandbox syscall wrappers +

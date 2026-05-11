@@ -5,7 +5,23 @@
 
 ## Version
 
-**5.11.0** (shipped 2026-05-11 — **v5.11.x cycle OPEN — kavach P1
+**5.11.1** (shipped 2026-05-11 — **Stdlib annotation arc Phase 1:
+foundational core**). 107 public fns across 8 modules
+(alloc / vec / fmt / freelist / fnptr / result / tagged / assert)
+now carry `: i64` return-type annotations. Same shape as v5.10.24's
+`cstring` annotation pass on `string.cyr` / `io.cyr` — parse-only,
+zero codegen impact. cc5 self-host **804,472 B at v5.11.1 — byte-
+identical to v5.11.0** (annotations don't change emit). check.sh
+66/66; cyrius test 144/146 unchanged from v5.11.0 (one pre-existing
+`parser_cosmetics.tcyr` failure carries forward into v5.11.39
+defensive sweep band per roadmap).
+
+**Phase 1 modules + counts**: alloc 37, vec 11, fmt 14, freelist 7,
+fnptr 9, result 6, tagged 11, assert 12. **Coverage delta**:
+0/107 → 107/107 in foundational-core band; total stdlib gap
+1010 → 903 unannotated public fns (~10.6 % arc progress).
+
+**v5.11.0** (shipped 2026-05-11 — **v5.11.x cycle OPEN — kavach P1
 sandbox syscall wrappers + roadmap restructure**). v5.10.x closed
 at .50; v5.11.0 opens the next minor with the highest-priority
 pending work landed (kavach P1 — the only P1 in the consumer-
