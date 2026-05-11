@@ -5,6 +5,24 @@
 
 ## Version
 
+**5.11.3** (shipped 2026-05-11 — **Stdlib annotation arc Phase 3:
+string/format completion**). 85 public fns added across 5 modules
+(string +7, str +16, bigint +24, chrono +19, bench +19) closing
+the string-handling band. cc5 byte-identical at 804,472 B.
+**check.sh 66/66**; **cyrius test 146/146**.
+
+**Phase 3 modules + counts**: string 16/16, str 70/70, bigint 24/24,
+chrono 19/19, bench 19/19. **Coverage delta**: 289 → **374**
+annotated; stdlib gap → **~743** unannotated (~37 % arc progress).
+
+**Mid-slot recovery**: snapshot-ping-pong wipe triggered when
+`cyrius test` ran against a stale `~/.cyrius/lib` symlink (agnosys
+agent had switched to v5.10.44 for its tests). v5.11.2 snapshot
+intact; restored + re-applied Phase 3. **Pinned v5.11.19**: per-repo
+version isolation via `cyrius.cyml`'s `cyrius` field (resolve from
+project instead of global `~/.cyrius/current`; error if version
+not installed). User direction.
+
 **5.11.2** (shipped 2026-05-11 — **Stdlib annotation arc Phase 2:
 I/O surface**). 182 public fns across 5 modules (io / fs / process
 + syscalls_x86_64_linux + syscalls_aarch64_linux). Mix of `: i64`
@@ -15,11 +33,6 @@ include str.cyr first; Phase 6 closeout will add the include and
 re-promote). cc5 byte-identical at 804,472 B. **check.sh 66/66**;
 **cyrius test 146/146** — parser_cosmetics now passes (v5.11.1
 snapshot refresh fixed the include chain).
-
-**Phase 2 modules + counts**: io 22 (1 pre-existing + 21 new),
-fs 11, process 14, syscalls_x86_64_linux 68, syscalls_aarch64_linux 68.
-**Coverage delta**: 107 → **289** annotated (Phase 1 + Phase 2);
-stdlib gap 1010 → **~828** unannotated (~28.6 % arc progress).
 
 **5.11.1** (shipped 2026-05-11 — **Stdlib annotation arc Phase 1:
 foundational core**). 107 public fns across 8 modules

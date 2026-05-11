@@ -483,9 +483,65 @@ right after).
 | v5.11.14 | bote arena allocator `fl_free` (P2) |
 | v5.11.15-17 | bote streaming dispatch + thread async primitives (P2; 3-slot) |
 | v5.11.18 | bote WS handshake key validation (Low; ride-along after bote stack) |
-| v5.11.19-38 | OPEN — emergent bugs / consumer-filed / items surface during cycle (20-slot buffer; user 2026-05-11) |
+| v5.11.19 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
+| v5.11.20-38 | OPEN — emergent bugs / consumer-filed / items surface during cycle (19-slot buffer; user 2026-05-11) |
 | v5.11.39 | Defensive sweep (parser `assert_eq` string-literal quirk bundled) |
 | v5.11.40 | Cycle closeout |
+
+#### v5.11.19 — Per-repo `cyrius` version isolation
+
+**Pinned 2026-05-11 during v5.11.3 ship after a snapshot-ping-pong
+wipe destroyed in-flight Phase 3 edits.**
+
+**Root cause**: `~/.cyrius/current`, `~/.cyrius/bin`, and
+`~/.cyrius/lib` are single global pointers. When sibling agents on
+the same dev box (agnosys, mabda, etc.) run `cyriusly use <version>`
+to test against their pinned toolchain, they mutate the global
+pointers. Any other repo concurrently doing `cyrius deps` resolution
+reads the wrong snapshot — and the v5.10.37-discussed snapshot-ping-
+pong loop copies those stale files BACK INTO the active repo's
+`lib/`, silently wiping work in progress.
+
+**User direction (2026-05-11)**:
+- *"if version is installed it should just use the cyrius.cyml's
+  noted version if not complain its not installed"*.
+- *"agnosys agent cyriusly use 5.10.44 for tests; switch it
+  fucking back bro"* — confirms agnosys's behavior is intentional,
+  but cyrius's repo shouldn't be affected by it.
+- *"or they slide the version to latest without asking or telling
+  me"* — surfaces a second failure mode: agents auto-update.
+
+**Acceptance shape**:
+1. `cyrius` CLI (and `cc5` / `cyrfmt` / `cyrlint` / `ark` / etc.)
+   resolves the toolchain version in this priority:
+   - `cyrius.cyml`'s top-level `cyrius` field (if present in cwd
+     or any parent up to repo root).
+   - `~/.cyrius/current` (existing global default).
+   - `latest` installed (fallback if neither pin is set).
+2. If the resolved version is NOT installed at
+   `~/.cyrius/versions/<v>/`: error out clearly. *"version X.Y.Z
+   pinned in `cyrius.cyml` is not installed — run `cyrius install
+   X.Y.Z`"*. Never silently slide to `latest`.
+3. `cyrius deps` resolution reads from
+   `~/.cyrius/versions/<resolved>/lib/` directly — NOT from
+   `~/.cyrius/lib` (which is the global-default symlink) — so
+   per-repo resolution isolates from concurrent agent activity.
+4. `cyriusly use <v>` (and any other version-switch verbs) gain
+   a `--global` flag to be explicit when they DO want to set the
+   global default. Default `cyriusly use` becomes per-repo
+   (writes `cyrius.cyml`'s field) rather than mutating the
+   global state.
+5. Cross-host smoke: all 4 hosts (local x86, pi, ecb, cass) still
+   green via SSH.
+
+**Pairs with v5.11.8** (`cyrius deps` symlink → file-copy fix):
+once both ship, snapshot-ping-pong stops being a destructive
+surprise AND per-repo isolation prevents the trigger in the first
+place. The two fixes are complementary, not redundant.
+
+**Reference**: in-tree memory pin
+`project_cyriusly_version_switching.md` carries the symptom + the
+recovery procedure used during v5.11.3.
 
 Held-forward items (no slot pinned; surface-on-ask): Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,

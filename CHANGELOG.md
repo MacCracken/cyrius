@@ -6,6 +6,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.3] — 2026-05-11
+
+**Stdlib annotation arc — Phase 3: string/format completion**.
+
+Phase 3 closes the string-handling surface — completes string.cyr
++ str.cyr (the `Str_*` method-style wrappers that were the last
+unannotated cluster), plus bigint / chrono / bench full passes.
+
+### Modules annotated (85 fns added)
+
+| Module          | Added | Total | Notes |
+|-----------------|------:|------:|-------|
+| `lib/string.cyr`   |   7  |  16/16 | memeq/memcpy/memset/print_num/println_int + str_*_inplace |
+| `lib/str.cyr`      |  16  |  70/70 | `Str_*` method wrappers — full mix of `: i64` + `: Str` returns |
+| `lib/bigint.cyr`   |  24  |  24/24 | u256 ops — all `: i64` (ptrs + counts + booleans) |
+| `lib/chrono.cyr`   |  19  |  19/19 | clock / duration / ISO-8601 — all `: i64` |
+| `lib/bench.cyr`    |  19  |  19/19 | bench_run + reporting — all `: i64` |
+
+### Recovery footnote (snapshot-ping-pong wipe)
+
+Mid-slot `cyrius test` triggered a `cyrius deps` resolution that
+copied stale `lib/` files (from `~/.cyrius/lib`, symlinked to an
+older version's snapshot) back into the repo, wiping Phase 2 and
+Phase 3 edits in-flight. Root cause: agnosys agent had switched
+`~/.cyrius/current` and the bin/lib symlinks to v5.10.44 for its
+own tests, and this repo's `cyrius deps` saw the stale snapshot.
+Recovery: re-pointed `~/.cyrius/current` + bin/lib symlinks back
+to v5.11.2, restored Phase 2 from the v5.11.2 snapshot (which
+was intact), re-applied Phase 3. The systemic version-conflict
+fix is pinned at v5.11.19 in the buffer band (see roadmap).
+
+### Acceptance bar
+
+- **cc5 byte-identical**: 804,472 B, fixpoint b == c. ✓
+- **check.sh 66/66**: green. ✓
+- **cyrius test 146/146**: green. ✓
+
+### Coverage delta
+
+- Phase-3 modules: 63/148 → **148/148** annotated public fns
+  (string + str had pre-existing annotations from v5.10.24).
+- Arc total: 289 → **374** annotated.
+- Stdlib gap: 828 → **~743** unannotated (~37 % arc progress).
+
+### Next slot
+
+v5.11.4 — **Phase 4: collection libraries** (hashmap, json;
+~89 fns). Mid-sized libs; hashmap underlies many sandhi/agnosys
+flows; json is the serialization workhorse.
+
 ## [5.11.2] — 2026-05-11
 
 **Stdlib annotation arc — Phase 2: I/O surface**.
