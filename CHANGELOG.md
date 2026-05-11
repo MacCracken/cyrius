@@ -6,6 +6,137 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.17] — 2026-05-11
+
+**Per-repo isolation Part 1: `cyrius deps` stdlib_dir fix** —
+closes the snapshot-ping-pong wipe wedge that hit twice during
+the v5.11.x cycle (v5.11.3, v5.11.13). The original 5-item
+acceptance bar split into 3 slots at v5.11.16 close per user
+direction ("Reframe — split into 3 slots"): Part 1 = this slot
+(the wipe wedge); Parts 2-3 pinned at v5.11.23 + v5.11.24
+(CLI dispatcher + cyriusly `use --global`).
+
+### Root cause
+
+`cbt/deps.cyr::_dep_find_stdlib_dir()` resolved stdlib source
+from `~/.cyrius/lib` first — a mutable global symlink that
+sibling agents (agnosys, mabda, etc.) flip when running
+`cyriusly use <other-version>`. Concurrent `cyrius deps`
+resolution in the cyrius repo read the wrong snapshot's
+`lib/*.cyr` and COPIED THEM BACK over in-tree edits, silently
+wiping work in progress.
+
+### Fix shape
+
+New resolution order in `_dep_find_stdlib_dir()`:
+
+```cyr
+fn _dep_find_stdlib_dir(): i64 {
+    # (a) cyrius source-repo dev mode — closes the cyrius-repo
+    # ping-pong by reading from in-tree ./lib instead of the
+    # global symlink
+    if (file_exists("src/main.cyr") == 1) {
+        if (is_dir(str_from("./lib")) == 1) { return "./lib"; }
+    }
+
+    # (b) cyrius.cyml-pinned version — per-repo isolation for
+    # downstream consumers
+    var pin = _dep_read_cyml_cyrius_field();
+    if (pin != 0) {
+        var pinned_lib = make ~/.cyrius/versions/<pin>/lib
+        if (is_dir(pinned_lib) == 1) { return pinned_lib; }
+        # Pinned-but-not-installed → hard error, never silent slide
+        sys_exit(1);
+    }
+
+    # (c) legacy fallback — ~/.cyrius/lib (unchanged for
+    # repos without a cyrius pin)
+    ...
+}
+```
+
+Plus new helper `_dep_read_cyml_cyrius_field()` (~50 LOC) —
+parses `[package].cyrius = "X.Y.Z"` from cwd's `cyrius.cyml`.
+Returns NUL-terminated cstr or 0. Convention seen across
+downstream repos (sigil, sakshi, mabda, kybernet) is the field
+inside `[package]` at line 8.
+
+### Why `src/main.cyr` is the cyrius-repo signal
+
+Cyrius's own `cyrius.cyml` has no `cyrius` field (cyrius IS itself).
+Downstream repos with that field always live in non-cyrius dirs.
+`src/main.cyr` is unique to the cyrius source tree — every
+downstream repo lacks it. Single-file existence check, no
+boundary cases.
+
+Same-file copy safety: `_dep_copy_file()` already short-circuits
+when src and dst have identical size (line 57: "Skip if
+destination exists and same size") — so when cyrius repo reads
+from `./lib/foo.cyr` and writes to `lib/foo.cyr` (same file),
+the size match fires before the destructive `O_TRUNC` open.
+
+### Functional verification
+
+**Regression test** (acceptance bar item #2): edit `lib/syscalls.cyr`,
+run `cyrius deps`, hash both sides.
+
+```
+$ sha256sum lib/syscalls.cyr (before edit) → f3db9ced...
+$ echo "# REGRESSION-MARKER" >> lib/syscalls.cyr
+$ sha256sum lib/syscalls.cyr (after edit)  → f3db9ced... (different)
+$ cyrius deps
+1 deps resolved
+$ sha256sum lib/syscalls.cyr (post-deps)   → f3db9ced... (SAME as edit)
+PASS: marker survived (no wipe)
+```
+
+**Hard-error path** (acceptance bar item #1c): consumer with
+`cyrius = "9.99.99"` in cyrius.cyml runs `cyrius deps`:
+
+```
+error: cyrius.cyml pins version 9.99.99 but it is not installed at /home/macro/.cyrius/versions/9.99.99/lib
+  run: cyrius install 9.99.99
+exit=1
+```
+
+Never silently slides to `latest`. Matches user direction *"if
+version is installed it should just use the cyrius.cyml's noted
+version if not complain its not installed"*.
+
+### Roadmap split (Parts 2 + 3 pinned with acceptance bars)
+
+Per `feedback_deferral_requires_roadmap_pinnage`, the deferred
+acceptance items have explicit pinnage with their own acceptance
+bars in the SAME edit as the split decision:
+
+- **v5.11.23**: `cyrius` CLI version-resolved dispatcher.
+  Walks cyrius.cyml → re-execs `~/.cyrius/versions/<v>/bin/cyrius`.
+  Loop guard via `CYRIUS_RESOLVED=1`. Multi-slot architectural
+  change; touches every CLI entry point.
+- **v5.11.24**: `cyriusly use --global` flag + per-repo default.
+  `cyriusly use 5.11.X` writes cyrius.cyml's field by default;
+  `--global` keeps the legacy `~/.cyrius/current` write. Sibling
+  agents must pass `--global` for explicit global flips.
+
+### Files
+
+- `cbt/deps.cyr` — `_dep_find_stdlib_dir()` rewritten (~30 LOC)
+  + new helper `_dep_read_cyml_cyrius_field()` (~50 LOC).
+- `docs/development/roadmap.md` — v5.11.17 detail block updated
+  to Part-1-only scope; v5.11.23 + v5.11.24 detail blocks added
+  with acceptance bars.
+- `programs/cyrius.cyr` / `build/cyrius` rebuilt with new
+  resolution logic.
+
+### Verification
+
+- `cyrius check` 66/66 green.
+- `cyrius test` 146/146 green.
+- cc5 self-host byte-identical at 804,472 B (deps.cyr is
+  dispatcher-only; cc5 is unchanged).
+- `cyrius deps` regression test (in-tree edit survives) — PASS.
+- Cross-host smoke pending (pi / ecb / cass).
+
 ## [5.11.16] — 2026-05-11
 
 **bote WS handshake key validation (RFC 6455 §4.1)** — closes

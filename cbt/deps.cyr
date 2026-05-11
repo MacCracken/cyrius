@@ -116,11 +116,118 @@ fn _dep_copy_file(src, dst): i64 {
     return 0;
 }
 
+# Read `[package].cyrius = "X.Y.Z"` from cwd's cyrius.cyml.
+# Returns a NUL-terminated cstr of the version, or 0 if the field
+# is absent (the field is optional — only set in downstream repos
+# that pin a specific toolchain version).
+#
+# Parser is intentionally minimal: scan to `[package]`, then walk
+# lines until either `cyrius = "..."` is found or the next section
+# header. Mirrors the pattern in cbt/pulsar.cyr::_pulsar_release_array
+# for arrays; this variant returns a scalar string. See CHANGELOG
+# [5.11.17].
+fn _dep_read_cyml_cyrius_field(): i64 {
+    if (file_exists("cyrius.cyml") == 0) { return 0; }
+    var buf = alloc(32768);
+    var n = file_read_all("cyrius.cyml", buf, 32767);
+    if (n <= 0) { return 0; }
+    # Locate [package] header
+    var pos = 0;
+    while (pos < n) {
+        if (memeq(buf + pos, "[package]", 9) == 1) { break; }
+        pos = pos + 1;
+    }
+    if (pos >= n) { return 0; }
+    pos = pos + 9;
+    # Walk lines until next section header
+    while (pos < n) {
+        while (pos < n && (load8(buf + pos) == 10 || load8(buf + pos) == 32 || load8(buf + pos) == 9)) {
+            pos = pos + 1;
+        }
+        if (pos >= n) { return 0; }
+        if (load8(buf + pos) == 91) { return 0; }  # `[` → next section
+        if (memeq(buf + pos, "cyrius", 6) == 1) {
+            var after = pos + 6;
+            while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                after = after + 1;
+            }
+            if (after < n && load8(buf + after) == 61) {
+                after = after + 1;
+                while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                    after = after + 1;
+                }
+                if (after < n && load8(buf + after) == 34) {
+                    after = after + 1;
+                    var start = after;
+                    while (after < n && load8(buf + after) != 34) { after = after + 1; }
+                    var vlen = after - start;
+                    var out = alloc(vlen + 1);
+                    var i = 0;
+                    while (i < vlen) { store8(out + i, load8(buf + start + i)); i = i + 1; }
+                    store8(out + vlen, 0);
+                    return out;
+                }
+            }
+        }
+        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+    }
+    return 0;
+}
+
+# v5.11.17 — stdlib_dir resolution order (Part 1 of per-repo
+# isolation arc; Parts 2-3 at v5.11.23/24). Closes the snapshot-
+# ping-pong wipe wedge that landed multiple times in the v5.11.x
+# cycle (notably v5.11.3, v5.11.13). See CHANGELOG [5.11.17].
+#
+# Resolution priority:
+#   (a) `./lib` when running inside the cyrius source repo
+#       (signal: src/main.cyr present). Closes the cyrius-repo
+#       ping-pong — the repo reads its own in-tree stdlib instead
+#       of the mutable `~/.cyrius/lib` global symlink, so a
+#       sibling agent's `cyriusly use <other>` can't wipe edits.
+#   (b) `~/.cyrius/versions/<cyml-cyrius-field>/lib/` when the
+#       consumer's cyrius.cyml pins `[package].cyrius = "X.Y.Z"`
+#       AND that version is installed. Isolates downstream repos
+#       from the global pointer.
+#   (c) `~/.cyrius/lib` legacy fallback for consumers without a
+#       cyrius pin (existing behavior, unchanged).
+# Hard-error (not silent fallback) when cyml pins a version that
+# is NOT installed.
 fn _dep_find_stdlib_dir(): i64 {
-    # Try installed cyrius stdlib first
+    # (a) cyrius source-repo dev mode: `./lib` if we're in the
+    # cyrius repo itself (signaled by src/main.cyr existing). The
+    # `./lib` check has to come AFTER the src/main.cyr check —
+    # downstream repos sometimes have a `./lib` directory of
+    # resolved deps but no src/main.cyr.
+    if (file_exists("src/main.cyr") == 1) {
+        if (is_dir(str_from("./lib")) == 1) { return "./lib"; }
+    }
+
+    # (b) cyrius.cyml-pinned version → per-repo isolation
+    var pin = _dep_read_cyml_cyrius_field();
+    if (pin != 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, _home);
+        str_builder_add_cstr(sb, "/versions/");
+        str_builder_add_cstr(sb, pin);
+        str_builder_add_cstr(sb, "/lib");
+        var pinned_lib = str_data(str_builder_build(sb));
+        if (is_dir(str_from(pinned_lib)) == 1) { return pinned_lib; }
+        # Pinned version not installed → hard error per acceptance bar
+        sys_write(STDERR_FD, "error: cyrius.cyml pins version ", 32);
+        sys_write(STDERR_FD, pin, strlen(pin));
+        sys_write(STDERR_FD, " but it is not installed at ", 28);
+        sys_write(STDERR_FD, pinned_lib, strlen(pinned_lib));
+        sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
+        sys_write(STDERR_FD, pin, strlen(pin));
+        sys_write(STDERR_FD, "\n", 1);
+        sys_exit(1);
+    }
+
+    # (c) legacy fallback — `~/.cyrius/lib` global symlink
     var installed = make_path(_home, "lib");
     if (is_dir(str_from(installed)) == 1) { return installed; }
-    # Dev mode: ./lib in the compiler repo
+    # Dev mode without a cyrius repo signal (rare): `./lib`
     if (is_dir(str_from("./lib")) == 1) { return "./lib"; }
     return 0;
 }

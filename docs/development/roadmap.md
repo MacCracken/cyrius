@@ -486,13 +486,15 @@ right after).
 | v5.11.14 | bote arena allocator `fl_free` (P2) |
 | v5.11.15 | bote streaming dispatch primitives — **closed in 1 slot** (chan_try_recv + cancel_token_*; chan_* MPSC already shipped v5.5.31, atomics v5.5.31, arena pattern v5.11.14). Original 3-slot scope was over-budget. |
 | v5.11.16 | bote WS handshake key validation (Low; RFC 6455 §4.1 — Sec-WebSocket-Key must be 24-char base64; consolidated from .18 at v5.11.15 close per user direction "close up open gap, so we have additional runway later") |
-| v5.11.17 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
+| v5.11.17 | **Per-repo isolation Part 1: `cyrius deps` stdlib_dir fix** (pinned 2026-05-11 v5.11.3 wipe; 5-item acceptance split into 3 slots at v5.11.16 close per user direction "Reframe — split into 3 slots"; Part 1 = the actual ping-pong wedge in `cbt/deps.cyr::_dep_find_stdlib_dir`) |
 | v5.11.18 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
 | v5.11.19 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
 | v5.11.20 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
 | v5.11.21 | **cc5_win PE exit-code crash fix** (HIGH; ai-hwaccel 2.2.2 filed 2026-05-11; PE binaries crash before reaching ExitProcess, exit=0x40001000 instead of 42; WriteFile stdout never lands; blocks every Win64 ship target. Pinned in gap per user direction.) |
 | v5.11.22 | **`#derive(accessors)` >16-field silent miscompile fix** (Medium; agnos 1.28.3 filed 2026-05-11; `src/frontend/lex_pp.cyr` per-struct `field_names`/`field_types`/`offsets` tables hard-sized at 16 entries — 17th field overflows into field_types[0], offsets diverge silently. agnos 22-field `struct Process` corrupted CR3 → kernel page-fault on first context switch. Raise cap + add hard-cap diagnostic.) |
-| v5.11.23-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (13-slot buffer; user 2026-05-11) |
+| v5.11.23 | **Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher** (pinned 2026-05-11 at v5.11.16 close; binary reads `cyrius.cyml`'s `cyrius` top-level field → re-exec `~/.cyrius/versions/<v>/bin/cyrius`; error if not installed; touches every cyrius CLI entry point; multi-slot scope) |
+| v5.11.24 | **Per-repo isolation Part 3: `cyriusly use --global` flag + per-repo default** (pinned 2026-05-11 at v5.11.16 close; `programs/cyriusly.cyr`'s `use` verb defaults to writing `cyrius.cyml`'s `cyrius` field instead of `~/.cyrius/current`; `--global` keeps the legacy write; sibling agents `cyriusly use 5.10.44 --global` becomes the explicit form) |
+| v5.11.25-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (11-slot buffer; was 13 pre-split; user 2026-05-11) |
 | v5.11.36 | **cc5_aarch64_macho cross-bin ship** (deferred from v5.11.6 — host-runtime mmap fix + ecb smoke; user 2026-05-11: "fine for back of the current line") |
 | v5.11.37 | **cc5_aarch64_native cross-bin ship** (deferred from v5.11.6 — build + pi smoke) |
 | v5.11.38 | **cc5_cx cross-bin ship** (deferred from v5.11.6 — bytecode emit + VM smoke target) |
@@ -568,10 +570,12 @@ rebuild pattern; could split into 2 slots if a target needs custom
 build infrastructure (e.g., Mach-O codesigning shim). Refine at slot
 entry per `feedback_premise_check_at_slot_entry`.
 
-#### v5.11.17 — Per-repo `cyrius` version isolation
+#### v5.11.17 — Per-repo isolation Part 1: `cyrius deps` stdlib_dir fix
 
-**Pinned 2026-05-11 during v5.11.3 ship after a snapshot-ping-pong
-wipe destroyed in-flight Phase 3 edits.**
+**Pinned 2026-05-11 during v5.11.3 ship; original 5-item acceptance
+bar split into 3 slots at v5.11.16 close per user direction
+("Reframe — split into 3 slots"). This slot lands the actual
+ping-pong wedge. Parts 2 and 3 pinned at v5.11.23 and v5.11.24.**
 
 **Root cause**: `~/.cyrius/current`, `~/.cyrius/bin`, and
 `~/.cyrius/lib` are single global pointers. When sibling agents on
@@ -582,41 +586,53 @@ reads the wrong snapshot — and the v5.10.37-discussed snapshot-ping-
 pong loop copies those stale files BACK INTO the active repo's
 `lib/`, silently wiping work in progress.
 
+**Why this part first**: `cbt/deps.cyr::_dep_find_stdlib_dir()` is
+the single wedge where the wipe happens. Closing it stops the
+destructive failure mode immediately, regardless of when (or
+whether) Parts 2-3 land. Parts 2-3 add the broader per-repo
+discipline; Part 1 is the actual bleed-fix.
+
 **User direction (2026-05-11)**:
 - *"if version is installed it should just use the cyrius.cyml's
-  noted version if not complain its not installed"*.
+  noted version if not complain its not installed"* — drives
+  Part 2 (CLI dispatcher).
 - *"agnosys agent cyriusly use 5.10.44 for tests; switch it
-  fucking back bro"* — confirms agnosys's behavior is intentional,
-  but cyrius's repo shouldn't be affected by it.
+  fucking back bro"* — confirms sibling-agent behavior is
+  intentional, but cyrius's repo shouldn't be affected.
 - *"or they slide the version to latest without asking or telling
-  me"* — surfaces a second failure mode: agents auto-update.
+  me"* — second failure mode (auto-update), addressed by Part 2.
 
-**Acceptance shape**:
-1. `cyrius` CLI (and `cc5` / `cyrfmt` / `cyrlint` / `ark` / etc.)
-   resolves the toolchain version in this priority:
-   - `cyrius.cyml`'s top-level `cyrius` field (if present in cwd
-     or any parent up to repo root).
-   - `~/.cyrius/current` (existing global default).
-   - `latest` installed (fallback if neither pin is set).
-2. If the resolved version is NOT installed at
-   `~/.cyrius/versions/<v>/`: error out clearly. *"version X.Y.Z
-   pinned in `cyrius.cyml` is not installed — run `cyrius install
-   X.Y.Z`"*. Never silently slide to `latest`.
-3. `cyrius deps` resolution reads from
-   `~/.cyrius/versions/<resolved>/lib/` directly — NOT from
-   `~/.cyrius/lib` (which is the global-default symlink) — so
-   per-repo resolution isolates from concurrent agent activity.
-4. `cyriusly use <v>` (and any other version-switch verbs) gain
-   a `--global` flag to be explicit when they DO want to set the
-   global default. Default `cyriusly use` becomes per-repo
-   (writes `cyrius.cyml`'s field) rather than mutating the
-   global state.
-5. Cross-host smoke: all 4 hosts (local x86, pi, ecb, cass) still
-   green via SSH.
+**Acceptance bar (this slot)**:
+1. `cbt/deps.cyr::_dep_find_stdlib_dir()` resolution order:
+   - **(a) `./lib`** (dev mode) — preferred when running from cyrius
+     source repo. Closes the cyrius-repo ping-pong since the repo
+     reads from its own in-tree files instead of the global snapshot.
+   - **(b) `~/.cyrius/versions/<cyml-cyrius-field>/lib/`** —
+     when `cyrius.cyml` (or any parent up to repo root) has a
+     top-level `cyrius = "X.Y.Z"` field, AND that version is installed.
+   - **(c) `~/.cyrius/lib`** — legacy fallback (kept for repos
+     without a cyrius pin; behavior unchanged for them).
+   - **Hard error** (not silent fallback) when the cyrius.cyml pin
+     references a NON-installed version — error message names the
+     pinned version + suggests `cyrius install X.Y.Z`.
+2. cyrius repo's own `lib/*.cyr` edits survive a `cyrius deps` run
+   regression test (write an edit, run `cyrius deps`, verify the
+   edit is preserved).
+3. cc5 self-host byte-identical (deps.cyr is dispatcher-only; no
+   compiler change).
+4. check.sh 66/66 + cyrius test 146/146 green.
+5. Cross-host smoke: pi (aarch64), ecb (Apple Silicon), cass
+   (Windows) — `cyrius deps` resolves without regression.
+
+**Out of scope** (pinned forward):
+- Part 2 (v5.11.23): `cyrius` CLI itself version-resolved
+  dispatcher — multi-slot architectural change.
+- Part 3 (v5.11.24): `cyriusly use --global` flag + per-repo
+  default — ~80 LOC in `programs/cyriusly.cyr`.
 
 **Pairs with v5.11.8** (`cyrius deps` symlink → file-copy fix):
 once both ship, snapshot-ping-pong stops being a destructive
-surprise AND per-repo isolation prevents the trigger in the first
+surprise AND per-repo resolution prevents the trigger in the first
 place. The two fixes are complementary, not redundant.
 
 **Reference**: in-tree memory pin
@@ -966,7 +982,112 @@ fix in the cluster.
 `#derive(accessors)` becomes an agnos-side follow-up once this
 slot ships.
 
-Held-forward items (no slot pinned; surface-on-ask): Class B
+#### v5.11.23 — Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher
+
+**Pinned 2026-05-11 at v5.11.16 close from the 3-slot reframe
+of the original v5.11.17 acceptance bar (user direction:
+"Reframe — split into 3 slots").**
+
+**Scope**: the `cyrius` binary (`programs/cyrius.cyr` /
+`cbt/cyrius.cyr`) becomes version-resolved at every command
+entry. Before dispatching to any subcommand, it:
+1. Walks `cwd` and parents looking for `cyrius.cyml`.
+2. If found, parses the top-level `cyrius = "X.Y.Z"` field.
+3. If the field's version != current binary's version: re-execs
+   `~/.cyrius/versions/<v>/bin/cyrius` with the same argv.
+4. If the field's version is NOT installed at
+   `~/.cyrius/versions/<v>/`: errors out clearly with the
+   pinned version + `cyrius install X.Y.Z` suggestion.
+   **Never silently slides to `latest`.**
+5. If no `cyrius.cyml` is found (or no `cyrius` field), falls
+   back to current global-default behavior.
+
+**Why pinned at .23 and not earlier**: multi-slot architectural
+change — every cyrius CLI entry point needs the re-exec wrapper,
+and the re-exec needs to be idempotent (the re-execed binary must
+NOT re-walk and re-exec into a third process). Loop guard via
+`CYRIUS_RESOLVED=1` env var or similar. Touches dispatch, but
+NOT compiler internals — cc5 should remain byte-identical.
+
+**Acceptance bar**:
+1. From a repo with `cyrius = "5.11.X"` in `cyrius.cyml`:
+   running `cyrius <any-cmd>` from a globally-different
+   toolchain version dispatches to the pinned version's
+   binary; output identical to running it directly.
+2. Pinning to a NON-installed version produces a clear error,
+   not a silent slide to `latest`.
+3. Loop protection: `CYRIUS_RESOLVED=1` (or equivalent) set on
+   re-exec; second-pass binary skips the resolution walk.
+4. Companion tools (`cc5` invoked via cyrius, `cyrfmt`, `cyrlint`,
+   `ark`) inherit the resolved version's binary layer when
+   spawned by `cyrius`.
+5. cc5 self-host byte-identical.
+6. check.sh 66/66 + cyrius test 146/146 green.
+7. Cross-host smoke green on all 4 hosts.
+
+**Risk**: medium-high. CLI dispatcher is consumed by every cyrius
+user; loop bugs would lock out the CLI. Acceptance-bar item #3
+(loop protection) is load-bearing.
+
+**Pairs with v5.11.17** (deps stdlib_dir fix) — Part 1 closed the
+actual wipe wedge; Part 2 makes the version-pinning intentional
++ visible. Without Part 2, a repo whose `cyrius.cyml` pins
+`5.10.44` still runs whatever's at `~/.cyrius/current` for CLI
+dispatch — Part 2 makes the pin authoritative.
+
+#### v5.11.24 — Per-repo isolation Part 3: `cyriusly use --global` flag
+
+**Pinned 2026-05-11 at v5.11.16 close from the 3-slot reframe
+of the original v5.11.17 acceptance bar.**
+
+**Scope**: `programs/cyriusly.cyr`'s `use` verb (today at line
+176-202, writes `~/.cyrius/current`) gets the following shape:
+
+```
+cyriusly use 5.11.X            # NEW DEFAULT — writes cyrius.cyml's
+                               # top-level cyrius field in cwd
+cyriusly use 5.11.X --global   # legacy behavior — writes
+                               # ~/.cyrius/current
+```
+
+Sibling agents (agnosys, mabda, ai-hwaccel) that want to flip the
+GLOBAL toolchain for their tests must now pass `--global`
+explicitly. Quiet, in-repo workflow (the common case) stops
+mutating global state.
+
+**Why pinned at .24 and not earlier**: depends on Part 2's
+cyrius.cyml resolution to actually take effect. Shipping Part 3
+before Part 2 would write the cyml field but cyrius CLI wouldn't
+honor it — confusing half-state.
+
+**Acceptance bar**:
+1. `cyriusly use 5.11.X` (no flag) from a repo with `cyrius.cyml`:
+   updates the file's `cyrius` field to "5.11.X"; leaves
+   `~/.cyrius/current` untouched.
+2. `cyriusly use 5.11.X --global`: writes `~/.cyrius/current`
+   (legacy behavior; cyrius.cyml not touched).
+3. `cyriusly use 5.11.X` from a directory WITHOUT a `cyrius.cyml`
+   anywhere up the tree: error message instructs user to either
+   `cd` to a project or pass `--global`. **Don't silently fall
+   back to `--global`.**
+4. `cyriusly use` (no version arg): print the resolved version
+   (per Part 2's priority: cyml → current → latest) + the
+   source (`cyrius.cyml at /path/`, `~/.cyrius/current`, or
+   `latest fallback`).
+5. cc5 self-host byte-identical.
+6. check.sh 66/66 + cyrius test 146/146 green.
+7. Cross-host smoke green.
+
+**Risk**: low. Localized to `programs/cyriusly.cyr` (binary in
+`[release].bins` since v5.11.10). Behavior change is opt-out
+(`--global`), so existing sibling-agent invocations need a one-line
+patch to add the flag.
+
+**Sibling-agent migration**: agnosys / mabda / ai-hwaccel
+`cyriusly use <v>` lines need to add `--global`. Communicate
+during the v5.11.24 ship.
+
+**Held-forward items (no slot pinned; surface-on-ask)**: Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,
 `float.cyr:41` peephole.
 

@@ -5,6 +5,23 @@
 
 ## Version
 
+**5.11.17** (shipped 2026-05-11 — **per-repo isolation Part 1: deps
+stdlib_dir fix**). `cbt/deps.cyr::_dep_find_stdlib_dir()` rewritten:
+new priority is `./lib` if in cyrius source repo (signaled by
+`src/main.cyr`) → `~/.cyrius/versions/<cyml-cyrius-field>/lib/` if
+the consumer's `cyrius.cyml` pins `[package].cyrius` → legacy
+`~/.cyrius/lib` fallback. Pinned-but-not-installed = HARD ERROR
+(never silent slide). New helper `_dep_read_cyml_cyrius_field()`
+parses the field from cyml's `[package]` section. Closes the
+snapshot-ping-pong wipe wedge (hit v5.11.3 + v5.11.13). Regression
+test: in-tree `lib/syscalls.cyr` edit + `cyrius deps` run → hash
+unchanged. Original v5.11.17 5-item acceptance bar split into 3
+slots at v5.11.16 close per user direction; Parts 2-3 pinned at
+v5.11.23 (`cyrius` CLI version-resolved dispatcher) and v5.11.24
+(`cyriusly use --global` flag + per-repo default). cc5 byte-
+identical at 804,472 B (deps.cyr is dispatcher-only); check.sh
+66/66; cyrius test 146/146.
+
 **5.11.16** (shipped 2026-05-11 — **bote WS handshake key validation
 + slot map consolidation**). RFC 6455 §4.1 enforcement in
 `lib/ws_server.cyr`: `Sec-WebSocket-Key` must be exactly 24 chars
