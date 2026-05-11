@@ -1,0 +1,83 @@
+# Test: lib/process.cyr exec_* Str-shape variants (v5.10.44)
+# Closes `docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md`.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+# Skip when /bin/true is missing (BSD-style without coreutils,
+# minimal containers, etc.). The exec_* contract is the artifact
+# under test; the binary is just convenient infrastructure.
+fn _bin_true_present(): i64 {
+    var fd = sys_open("/bin/true", 0, 0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return 1;
+}
+
+# ---- cstr family back-compat ----
+
+test_group("exec_vec — cstr argv (pre-v5.10.44 contract)");
+if (_bin_true_present() == 1) {
+    var args_cstr = vec_new();
+    vec_push(args_cstr, "/bin/true");
+    assert_eq(exec_vec(args_cstr), 0, "cstr /bin/true returns 0");
+} else {
+    println("  skip: /bin/true not present on this host");
+}
+
+# ---- NEW Str family (v5.10.44) ----
+
+test_group("exec_vec_str — Str argv (v5.10.44)");
+if (_bin_true_present() == 1) {
+    var args_str = vec_new();
+    vec_push(args_str, str_from("/bin/true"));
+    assert_eq(exec_vec_str(args_str), 0,
+        "Str /bin/true via exec_vec_str returns 0 (was 127 pre-v5.10.44)");
+} else {
+    println("  skip: /bin/true not present on this host");
+}
+
+test_group("exec_vec_str — multi-arg Str argv");
+if (_bin_true_present() == 1) {
+    # /bin/true ignores args; verify we can build a multi-Str argv
+    # and the call still succeeds (i.e. argv[0..N] all get
+    # str_data-extracted correctly).
+    var multi = vec_new();
+    vec_push(multi, str_from("/bin/true"));
+    vec_push(multi, str_from("--ignored-arg-1"));
+    vec_push(multi, str_from("--ignored-arg-2"));
+    assert_eq(exec_vec_str(multi), 0,
+        "multi-Str argv all str_data-extracted (rc=0)");
+}
+
+test_group("exec_capture_str — Str argv capture (v5.10.44)");
+var echo_fd = sys_open("/bin/echo", 0, 0);
+if (echo_fd >= 0) {
+    sys_close(echo_fd);
+    var echo_args = vec_new();
+    vec_push(echo_args, str_from("/bin/echo"));
+    vec_push(echo_args, str_from("hello-from-tcyr"));
+    var buf[16];                                # 128 bytes scratch
+    var n = exec_capture_str(echo_args, &buf, 128);
+    assert(n >= 15, "captured at least 15 bytes (echo output + newline)");
+    # /bin/echo writes "hello-from-tcyr\n" = 16 bytes. First byte
+    # should be 'h' (104).
+    assert_eq(load8(&buf), 104, "captured first byte = 'h'");
+} else {
+    println("  skip: /bin/echo not present on this host");
+}
+
+test_group("exec_vec_str — empty vec returns -1");
+var empty = vec_new();
+assert_eq(exec_vec_str(empty), 0 - 1, "empty Str argv returns -1");
+
+var r = assert_summary();

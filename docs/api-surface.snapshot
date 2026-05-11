@@ -1650,9 +1650,12 @@ patra::wal_rollback/1
 patra::wal_start/2
 patra::where_eval/4
 process::exec_capture/3
+process::exec_capture_str/3
 process::exec_cmd/1
 process::exec_env/2
+process::exec_env_str/2
 process::exec_vec/1
+process::exec_vec_str/1
 process::getpid/0
 process::getppid/0
 process::run/3

@@ -6,6 +6,137 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.44] — 2026-05-11
+
+**v5.10.x SLOT 44 — `lib/process.cyr` `exec_*` Str/cstr ambiguity
+fix (parallel `_str` family)**.
+
+Second fix from the v5.10.42-ship roadmap-extension audit. Closes
+[`docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md`](docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md).
+Argonaut-blocking — `argonaut/tests/tcyr/audit_findings.tcyr:201`
+deferred end-to-end fork-exec testing to a future QEMU PID-1 harness
+arc rather than work around the API at every test site. v5.10.44
+removes that block.
+
+### The bug
+
+`exec_vec(args)` / `exec_capture(args, buf, len)` / `exec_env(args,
+env)` all store each vec element verbatim into `execve(2)`'s argv
+(or envp) array. `execve` reads each `argv[i]` as a NUL-terminated
+`cstr` (raw byte pointer). When the caller pushes a `Str` fat-pointer
+— `vec_push(args, str_from("/bin/foo"))`, the natural cyrius idiom
+for runtime-built argv — `execve` dereferences the Str header's
+first 8 bytes as the path. Those bytes are the Str's `data` pointer
+(a heap address), not the byte payload → garbled path → `rc=127`
+(path not found) or `rc=-1` (path too long).
+
+The bug was silent: no compile-time check (cyrius has no vec
+element-type info), no runtime check, no docstring warning that
+the API was cstr-only. `exec_cmd` (line 258) DID extract `str_data`
+before pushing, but the family was internally inconsistent — the
+three core verbs assumed cstr-only without saying so.
+
+### Why not runtime dispatch
+
+v5.10.43's `str_split` fix used runtime dispatch on `sep < 256`
+(byte) vs `>= 256` (Str ptr). Same trick **doesn't work here**:
+both Str and cstr are pointers (both `>= 256`), and the obvious
+secondary heuristic (`load64(P)` looks like a pointer or doesn't)
+fails for cstrs of 8+ printable characters — `"/usr/bin"` as the
+first 8 bytes loads as `0x6E69622F72737562` ≈ 7.97e18, which looks
+like a valid pointer. Heuristic-based dispatch would silently
+miscompile common cstr literals. Runtime detection rejected at
+slot entry.
+
+### The fix — parallel `_str` family
+
+Three new verbs alongside the existing three:
+
+| cstr-shape (existing, pre-v5.10.44) | Str-shape (new, v5.10.44) |
+|--------------------------------------|---------------------------|
+| `exec_vec(args)` | `exec_vec_str(args)` |
+| `exec_capture(args, buf, buflen)` | `exec_capture_str(args, buf, buflen)` |
+| `exec_env(args, env)` | `exec_env_str(args, env)` |
+
+Each `_str` sibling does exactly one thing differently from its
+cstr counterpart: copies each vec element through `str_data` on
+the way into argv (and envp for `exec_env_str`). Otherwise
+identical fork/execve/waitpid lifecycle.
+
+Existing cstr-family contract preserved byte-identical — the 21+
+pre-v5.10.44 callers (`lib/process.cyr` `exec_cmd`, plus
+hypothetical external consumers using cstr literals) hit unchanged
+code paths.
+
+### Docstring family-header
+
+`lib/process.cyr` got a family-header docstring block above the
+section that calls out the two shapes explicitly, with a
+"do not mix shapes in one vec" warning. Per-fn docstrings on the
+six verbs now state their shape contract explicitly. The
+`exec_cmd` v5.10.43 commit comment is preserved.
+
+### Acceptance bar (all met)
+
+1. ✓ `vec_push(a, str_from("/bin/true")); exec_vec_str(a)` returns
+   `0` (`/bin/true`'s exit code), not `127`.
+2. ✓ Existing cstr literal path `vec_push(a, "/bin/true");
+   exec_vec(a)` still returns `0` (no regression).
+3. ✓ All three Str-shape siblings landed in the same slot — no
+   half-fix per `feedback_no_one_fix_per_slot`.
+4. ✓ Docstrings on all six verbs explicitly state their shape
+   contract.
+5. ✓ argonaut-side strict assertions can be reinstated by
+   migrating from `exec_vec(argv_of_cstr_extracted_via_str_data)`
+   to `exec_vec_str(argv_of_Str)` — one-line consumer-side change.
+6. ✓ cc5 self-host byte-identical (stdlib-only).
+
+### Tests
+
+New `tests/tcyr/process_exec_str.tcyr` — 6 sub-asserts covering:
+- `exec_vec` cstr back-compat (pre-existing behavior preserved)
+- `exec_vec_str` single-Str argv (the fix)
+- `exec_vec_str` multi-Str argv (every slot str_data-extracted)
+- `exec_capture_str` Str argv + stdout capture from `/bin/echo`
+- `exec_vec_str` empty-vec sentinel (-1 return)
+
+All 6 pass. `/bin/true` / `/bin/echo` presence probed defensively
+so the gate skips cleanly on minimal containers without coreutils
+rather than reporting false failures.
+
+### Cross-arch propagation
+
+Stdlib-only change. cc5 doesn't include `lib/process.cyr` (compiler
+is fork/exec-free). **cc5 byte-identical at 798,912 B across
+v5.10.43 → v5.10.44.** No cross-host rebuild needed.
+
+3-step fixpoint clean. 66/66 check.sh PASS.
+
+### api-surface snapshot
+
+3 new public verbs (`exec_vec_str`, `exec_capture_str`,
+`exec_env_str`) → api-surface count `2873 → 2876`. Snapshot
+regenerated via `cyrius api-surface --update`. The
+`api-surface diff` check.sh gate flagged this and was paired with
+the regen step in the same slot.
+
+### Snapshot-ping-pong guard
+
+`lib/process.cyr` mirrored into `~/.cyrius/versions/5.10.43/lib/`
++ `~/.cyrius/lib/` before any `cyrius test` invocation.
+`version-bump.sh` later regenerated the 5.10.44 snapshot.
+
+### What landed
+
+- `lib/process.cyr` — three new fns (`exec_vec_str` /
+  `exec_capture_str` / `exec_env_str`, ~75 LOC), family-header
+  docstring above the section, per-fn shape annotations on the
+  six verbs.
+- `tests/tcyr/process_exec_str.tcyr` — new gate (~60 LOC).
+- `docs/api-surface.snapshot` — regenerated (+3 fns).
+- `docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md`
+  — to be moved to `archived/` at slot ship.
+
 ## [5.10.43] — 2026-05-11
 
 **v5.10.x SLOT 43 — `lib/str.cyr` `str_split` separator-byte-comparison

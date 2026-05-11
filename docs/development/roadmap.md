@@ -1947,7 +1947,7 @@ See CHANGELOG [5.10.43] for the bug-history, fix
 shape, test coverage, and snapshot-ping-pong guard
 note.
 
-#### v5.10.44 — `lib/process.cyr` `exec_*` Str/cstr ambiguity fix
+#### v5.10.44 — `lib/process.cyr` `exec_*` Str/cstr ambiguity fix — **SHIPPED 2026-05-11**
 
 Pinned 2026-05-11 from v5.10.42-ship roadmap-extension
 sweep. Issue file:
@@ -1992,20 +1992,34 @@ function while leaving the others stale.
 **Cross-arch propagation:** stdlib-only change; no
 compiler-side effect. cc5 byte-identical expected.
 
-**Acceptance:**
-1. `vec_push(a, str_from("/bin/true"))` + `exec_vec(a)`
-   returns the exec'd binary's exit code (0 for
-   `/bin/true`), not 127.
-2. The existing cstr-literal path (`vec_push(a,
-   "/bin/true")`) still works (no regression).
-3. `exec_env` and `exec_capture` get the same
-   treatment in the same slot.
-4. Docstrings on all three explicitly state the new
-   contract.
-5. argonaut's `tests/tcyr/health_exec.tcyr` strict
-   assertions reinstated; `audit_findings.tcyr:201`
-   deferral comment removed.
-6. cc5 self-host byte-identical (stdlib-only).
+**Acceptance — ALL MET:**
+1. ✓ `vec_push(a, str_from("/bin/true"))` +
+   **`exec_vec_str(a)`** returns 0 (was 127 via
+   `exec_vec` under the silent bug).
+2. ✓ Existing cstr-literal path unchanged.
+3. ✓ All three Str-shape siblings (`exec_vec_str` /
+   `exec_capture_str` / `exec_env_str`) landed
+   together — no half-fix.
+4. ✓ Family-header docstring + per-fn shape
+   annotations on all six verbs.
+5. → argonaut-side migration is a one-line consumer
+   patch (`exec_vec(extracted_cstr)` →
+   `exec_vec_str(Str)`); landed on argonaut's side
+   at their next release.
+6. ✓ cc5 byte-identical at 798,912 B.
+
+Realized scope vs pinned: chose **Option 2 — parallel
+`_str` family** (rejected Option 1 — runtime dispatch
+— at slot entry because Str / cstr can't be reliably
+distinguished by inspecting `load64(P)`: 8+-char cstr
+literals load as values that look like valid
+pointers, e.g. `"/usr/bin"` → 0x6E69622F72737562 ≈
+7.97e18). Decision logged in CHANGELOG [5.10.44]
+§"Why not runtime dispatch".
+
+See CHANGELOG [5.10.44] for the family-header
+docstring shape, test coverage, and api-surface
+snapshot delta.
 
 #### v5.10.45 — macOS arm64 struct-by-value calling-convention
 

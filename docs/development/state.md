@@ -5,24 +5,28 @@
 
 ## Version
 
-**5.10.43** (shipped 2026-05-11 — **v5.10.x SLOT 43 — `lib/str.cyr`
-`str_split` separator-byte-comparison fix (runtime byte/Str
-dispatch)**). First fix from the v5.10.42-ship roadmap-extension
-audit of open issues; cycle in-flight at 43 slots shipped. cc5
-self-host **byte-identical to v5.10.42 at 798,912 B** — lib-only
-change, cc5 doesn't include `lib/str.cyr`. Cycle delta: 753,768 B
-at v5.10.0 → **798,912 B at v5.10.43** (+45,144 B; flat across
-.41→.42→.43).
+**5.10.44** (shipped 2026-05-11 — **v5.10.x SLOT 44 —
+`lib/process.cyr` `exec_*` Str/cstr ambiguity fix (parallel `_str`
+family)**). Second fix from the v5.10.42-ship roadmap-extension
+audit; cycle in-flight at 44 slots shipped. cc5 self-host
+**byte-identical to v5.10.43 at 798,912 B** — lib-only change.
+Cycle delta: 753,768 B at v5.10.0 → **798,912 B at v5.10.44**
+(+45,144 B; flat across .41→.42→.43→.44).
 
-`str_split_a` now dispatches at runtime: `sep < 256` → byte path
-(pre-v5.10.43 behavior preserved for 21+ stdlib byte-int callers);
-`sep >= 256` → Str fat-pointer path (multi-byte sep supported).
-Closes
-`docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`
-(moved to archived/). `lib/process.cyr:224` cstr-sep bug fixed in
-same slot (was silently broken). 12 test groups / 35 sub-asserts
-in new `tests/tcyr/str_split.tcyr`; alloc_str_extras.tcyr back-
-compat blocks flipped to expect the fix.
+Three new public verbs (`exec_vec_str` / `exec_capture_str` /
+`exec_env_str`) parallel the cstr-shape `exec_vec` / `exec_capture`
+/ `exec_env`. Each `_str` sibling extracts `str_data` on the way
+into execve's argv (and envp for the env variant), so callers
+using the natural cyrius idiom (`vec_push(args, str_from("/bin/
+foo"))`) get a working verb. Runtime byte/Str dispatch was rejected
+at slot entry — both shapes are pointers in cyrius's heap layout,
+and the `load64(P)`-looks-like-a-pointer heuristic fails for 8+-
+char cstrs (`"/usr/bin"` loads as 7.97e18). Argonaut-blocking
+issue closed; consumers migrate via one-line patch
+(`exec_vec(cstr)` → `exec_vec_str(Str)`). 6 sub-asserts in new
+`tests/tcyr/process_exec_str.tcyr` all pass.
+
+api-surface bumped 2873 → **2876** (+3 fns for the `_str` family).
 
 **Headline numbers** (CYRIUS_PROF=1, `cc5 < src/main.cyr`,
 best-of-5 median, end-to-end v5.10.x perf-arc gain pre-.40 → .41):
@@ -48,7 +52,7 @@ Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
 exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
 v5.10.40 (no aarch64 backend change).
 
-**Slots .33 - .43 one-liner sweep**:
+**Slots .33 - .44 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -100,6 +104,14 @@ v5.10.40 (no aarch64 backend change).
   `2026-05-03-str-split-sep-treated-as-pointer.md` issue (live the
   entire v5.x cycle). `lib/process.cyr:224` cstr-sep bug fixed in
   same slot. cc5 byte-identical (lib-only; no compiler include).
+- **v5.10.44** — `lib/process.cyr` `exec_*` Str/cstr ambiguity fix.
+  Parallel `_str` family (`exec_vec_str` / `exec_capture_str` /
+  `exec_env_str`) — each extracts `str_data` on the way into
+  execve's argv. Runtime dispatch rejected at slot entry (cstr 8+-
+  char literals fail the pointer heuristic). Closes the argonaut-
+  blocking
+  `2026-05-10-process-exec-str-cstr-ambiguity.md`. api-surface
+  2873 → 2876 (+3). cc5 byte-identical (lib-only).
 
 Per CLAUDE.md, slot-by-slot detail lives in `CHANGELOG.md` (source
 of truth); closed cycles roll into `completed-phases.md` at each
@@ -108,21 +120,22 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **798,912 B** at v5.10.43 (unchanged
-  from v5.10.42; lib-only slot, cc5 has no
-  `lib/str.cyr` include). Cycle delta: 797,464 B at
-  v5.10.39 → 798,912 B at v5.10.43 (+1,448 B all from
-  the .40/.41 perf miniarc; .42 / .43 flat).
-- **cc5_aarch64**: **491,832 B** at v5.10.43 (unchanged
-  from v5.10.40 — aarch64 fixup has no DCE pass and
-  the .43 lib change doesn't reach this binary).
+- **cc5 (x86_64)**: **798,912 B** at v5.10.44 (unchanged
+  from v5.10.42; lib-only slots through .43/.44, cc5
+  has no lib/str.cyr or lib/process.cyr include).
+  Cycle delta: 797,464 B at v5.10.39 → 798,912 B at
+  v5.10.44 (+1,448 B all from the .40/.41 perf
+  miniarc; .42 / .43 / .44 flat).
+- **cc5_aarch64**: **491,832 B** at v5.10.44 (unchanged
+  from v5.10.40 — .43 / .44 are lib-only and don't
+  reach this binary).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
   cycle — `cyrius` doesn't run LEXID itself).
-- **cc5_win (cross)**: **696,832 B** at v5.10.43 (unchanged
-  from v5.10.41 — .42 doc + .43 lib slots don't reach
-  compiler binaries). PE mmap at 0x5000000 has 1.5 MB
-  slack past the v5.10.40 brk extension to `0x4EAD000`,
-  no resize.
+- **cc5_win (cross)**: **696,832 B** at v5.10.44 (unchanged
+  from v5.10.41 — .42 doc + .43 / .44 lib slots don't
+  reach compiler binaries). PE mmap at 0x5000000 has
+  1.5 MB slack past the v5.10.40 brk extension to
+  `0x4EAD000`, no resize.
 - **cc5_macho_arm (cross)**: ~590 KB at v5.10.40; mmap
   size bumped 0x4E8C000 → 0x4EAD000 to absorb the new
   LEXID region.
@@ -158,7 +171,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.43. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.44. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -185,9 +198,10 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 43 slots shipped through v5.10.43 (2026-05-11).**
+**v5.10.x cycle — 44 slots shipped through v5.10.44 (2026-05-11).**
 Two completed arcs plus a compile-time-perf miniarc plus the TLS
-contract pin plus the open-issues sweep anchor the cycle:
+contract pin plus the open-issues sweep (.43 + .44 paired —
+str_split fix + exec_* Str family) anchor the cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -214,15 +228,24 @@ contract pin plus the open-issues sweep anchor the cycle:
    invariant layer for the `lib/tls.cyr` ↔ `lib/sandhi.cyr`
    surface that stabilised across .40/.13/.21/.27/.34.
 
-5. **v5.10.43 open-issues sweep — str_split fix** —
-   v5.10.42-ship roadmap-extension audit promoted 4
-   open issues into v5.10.x slots; v5.10.43 closes the
-   first: `str_split`'s sep-treated-as-pointer bug
-   (live entire v5.x cycle). Runtime dispatch on
-   `sep < 256` preserves all 21+ stdlib byte-int
-   callers byte-identical AND fixes Str-sep semantics.
-   Next pinned: v5.10.44 (`exec_*` Str/cstr ambiguity
-   — argonaut-blocking).
+5. **v5.10.43 + v5.10.44 open-issues sweep — stdlib
+   Str/cstr disambiguation** — v5.10.42-ship roadmap-
+   extension audit promoted 4 open issues into v5.10.x
+   slots; .43 + .44 close the two Medium-severity bugs:
+   - v5.10.43: `str_split` sep-treated-as-pointer (live
+     entire v5.x cycle). Runtime dispatch on `sep < 256`
+     preserves all 21+ stdlib byte-int callers byte-
+     identical AND fixes Str-sep semantics.
+   - v5.10.44: `exec_*` family was cstr-only with no
+     docstring contract; argonaut-blocking on Str pushes.
+     Parallel `_str` family added (`exec_vec_str` /
+     `exec_capture_str` / `exec_env_str`); runtime
+     dispatch rejected because both Str/cstr are
+     pointers and 8+-char cstrs fail the heuristic.
+
+   Next pinned: v5.10.45 (macOS arm64 struct-by-value
+   calling-convention — Mach-O ABI work; first non-
+   stdlib slot since .41).
 
 Additional in-cycle work: TLS early-data surface completion at
 v5.10.34 (TLS_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED + accessors);
@@ -231,12 +254,13 @@ ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **798,912 B at v5.10.43** (+45,144 B)
-- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.43** (flat .40→.43)
-- api-surface: 2792 → ~2873 entries
+- cc5: 753,768 B at v5.10.0 → **798,912 B at v5.10.44** (+45,144 B)
+- cc5_aarch64: ~470 KB at v5.10.0 → **491,832 B at v5.10.44** (flat .40→.44)
+- api-surface: 2792 → **2876 entries** (+3 v5.10.44 `_str` fns)
 - New `lib/simd.cyr` (50 public fns)
 - New `docs/development/lib-tls-contract.md` (v5.10.42)
 - New `tests/tcyr/str_split.tcyr` (v5.10.43, 35 sub-asserts)
+- New `tests/tcyr/process_exec_str.tcyr` (v5.10.44, 6 sub-asserts)
 - **Compile time 1037 → 387 ms (2.7×) across .40 + .41 miniarc**
 - 3 locname-staleness surfacings (v5.10.35 fixed ptyp 93-130; v5.10.39
   fixed the duplicate at ptyp 89-91 missed by .35); install.sh
@@ -249,8 +273,15 @@ the remaining v5.10.x work. Full v5.10.x retro at
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.43 str_split fix):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.44 exec_* Str family):
 
+- **v5.10.44** — `lib/process.cyr` `exec_*` Str/cstr ambiguity fix
+  (parallel `_str` family). Three new public verbs (`exec_vec_str`
+  / `exec_capture_str` / `exec_env_str`); each extracts `str_data`
+  on the way into execve's argv. Runtime dispatch rejected (cstr
+  8+-char literals fail the pointer heuristic). Closes argonaut-
+  blocking `2026-05-10-process-exec-str-cstr-ambiguity.md`. 6
+  sub-asserts. api-surface 2873 → 2876.
 - **v5.10.43** — `lib/str.cyr` `str_split` separator-byte-comparison
   fix (runtime byte/Str dispatch). Closes the long-standing issue
   filed at `docs/development/issues/2026-05-03-str-split-sep-
