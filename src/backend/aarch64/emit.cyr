@@ -1006,18 +1006,56 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     return 0;
 }
 
-# v5.10.45 Phase 1 stub — int-class 16B struct pair-return.
-# aarch64 AAPCS64 uses X0/X1 for ≤16B int-class composite returns
-# (different from x86's rax/rdx but same shape). Phase 2 (v5.10.46)
-# wires the actual encoding; for now error so any consumer using
-# the new struct-byval ABI on aarch64 fails loudly rather than
-# silently miscompiling.
+# v5.10.46 Phase 2 of struct-byval ABI arc — aarch64 AAPCS64
+# int-class 16B struct pair-return. AAPCS64 §6.9 specifies X0+X1
+# for ≤16B int-class composite returns (lo in X0, hi in X1).
+# Linux aarch64 and macOS arm64 share AAPCS64 → this same encoding
+# covers both `_TARGET_MACHO` ∈ {0, 2}; the macho branches in this
+# file are for relocation / branch encoding, NOT for the value-
+# return ABI. Phase 3 (v5.10.47) cross-host verifies on pi + ecb.
+#
+# Encoding (LDUR Xt, [X29, #simm9]):
+#   1111 1000 010 simm9 00 Xn Xt
+#   Base for X0 [X29]: 0xF84003A0; for X1: 0xF84003A1.
+#   imm9 range: -256..+255.
+# Deep-frame fallback (disp_lo < -256): compute X9 = X29 + disp_lo
+# via _EFP_ADDR_X9, then LDR (imm12-scaled).
 fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
-    ERR_MSG(S, "aarch64: int-class 16B struct pair-return ABI pending v5.10.46 Phase 2", 70);
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 8;
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        var off_hi = disp_hi & 0x1FF;
+        EW(S, 0xF84003A0 | (off_lo << 12));   # ldur x0, [x29, #disp_lo]
+        EW(S, 0xF84003A1 | (off_hi << 12));   # ldur x1, [x29, #disp_hi]
+        return 0;
+    }
+    # Deep-frame fallback: ldr x0, [x9, #0] + ldr x1, [x9, #8] via
+    # imm12-scaled (byte_offset = imm12 * 8, range 0..32760).
+    _EFP_ADDR_X9(S, disp_lo);
+    EW(S, 0xF9400120);   # ldr x0, [x9, #0]  (imm12=0)
+    EW(S, 0xF9400521);   # ldr x1, [x9, #8]  (imm12=1 → byte 8)
     return 0;
 }
+
+# Mirror: STUR Xt encoding: 0xF80003A0 (X0) / 0xF80003A1 (X1).
+# Receives X0+X1 into the caller's 2-slot stack-local after the
+# callee returns.
 fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
-    ERR_MSG(S, "aarch64: int-class 16B struct pair-return ABI pending v5.10.46 Phase 2", 70);
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 8;
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        var off_hi = disp_hi & 0x1FF;
+        EW(S, 0xF80003A0 | (off_lo << 12));   # stur x0, [x29, #disp_lo]
+        EW(S, 0xF80003A1 | (off_hi << 12));   # stur x1, [x29, #disp_hi]
+        return 0;
+    }
+    _EFP_ADDR_X9(S, disp_lo);
+    EW(S, 0xF9000120);   # str x0, [x9, #0]
+    EW(S, 0xF9000521);   # str x1, [x9, #8]
     return 0;
 }
 

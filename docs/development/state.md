@@ -5,20 +5,22 @@
 
 ## Version
 
-**5.10.45** (shipped 2026-05-11 — **v5.10.x SLOT 45 — struct-by-
-value ABI arc Phase 1: x86 SysV int-class pair-return**). First
-phase of a 3-phase ABI completion arc; cycle in-flight at 45 slots
-shipped. cc5 self-host **803,088 B** at v5.10.45 (+4,176 B vs
-v5.10.44's 798,912 B for the new pair-return emit helpers + parser
-branches). Cycle delta: 753,768 B at v5.10.0 → **803,088 B at
-v5.10.45** (+49,320 B).
+**5.10.46** (shipped 2026-05-11 — **v5.10.x SLOT 46 — struct-by-
+value ABI arc Phase 2: aarch64 AAPCS64 X0+X1 pair-return**).
+Second phase of a 3-phase ABI completion arc; cycle in-flight at
+46 slots shipped. cc5 self-host **803,088 B — byte-identical to
+v5.10.45** (this slot touches only the aarch64 backend; x86
+codegen unchanged). cc5_aarch64_native cross-build at **587,048 B**.
+Cycle delta: 753,768 B at v5.10.0 → **803,088 B at v5.10.46**
+(+49,320 B; .45 was the codegen-change slot, .46 is the
+aarch64-only phase so x86 cc5 stays flat).
 
 **Arc shape** (planned at v5.10.45 entry; see CHANGELOG [5.10.45]
 "Arc shape" for the empirical premise-check that drove the
 re-scoping):
-- Phase 1 (v5.10.45, shipped) — x86 SysV via rax+rdx pair.
-- Phase 2 (v5.10.46, pinned) — aarch64 AAPCS64 via X0+X1 pair
-  (Linux + Mach-O share ABI).
+- Phase 1 (v5.10.45, **shipped**) — x86 SysV via rax+rdx pair.
+- Phase 2 (v5.10.46, **shipped**) — aarch64 AAPCS64 via X0+X1
+  pair (Linux + Mach-O share ABI). pi runtime exit=42 ✓.
 - Phase 3 (v5.10.47, pinned) — Cross-host smoke on pi/ecb/cass
   + PE retptr verify.
 
@@ -70,7 +72,7 @@ Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
 exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
 v5.10.40 (no aarch64 backend change).
 
-**Slots .33 - .45 one-liner sweep**:
+**Slots .33 - .46 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -136,7 +138,15 @@ v5.10.40 (no aarch64 backend change).
   caller-side `asv_pair` path mirroring asv_try. `_STR_SID(S)`
   carve-out preserves Str's 16B handle-shape unchanged. cc5
   +4,176 B. 14 sub-asserts in new `tests/tcyr/struct_byval_return.tcyr`.
-  Phase 2 (.46 aarch64) + Phase 3 (.47 cross-host) pinned next.
+- **v5.10.46** — struct-by-value ABI arc Phase 2: aarch64 AAPCS64
+  X0+X1 pair-return. v5.10.45 ERR_MSG stubs in
+  `src/backend/aarch64/emit.cyr` replaced with LDUR/STUR X0,X1
+  fast path + LDR/STR via X9 deep-frame fallback. Single change
+  covers both Linux aarch64 + macOS arm64 (shared AAPCS64). pi
+  runtime: minimal `struct Point` repro → exit=42 ✓ (was 7).
+  cc5 byte-identical to v5.10.45 at 803,088 B (aarch64-only
+  change). Phase 3 (.47 cross-host smoke + PE retptr verify)
+  pinned next.
 
 Per CLAUDE.md, slot-by-slot detail lives in `CHANGELOG.md` (source
 of truth); closed cycles roll into `completed-phases.md` at each
@@ -145,19 +155,24 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **803,088 B** at v5.10.45 (was
-  798,912 B at v5.10.44; +4,176 B for the struct-byval
-  Phase 1 emit helpers + parser branches). Cycle delta:
-  797,464 B at v5.10.39 → 803,088 B at v5.10.45
-  (+5,624 B: .40/.41 perf miniarc +1,448 B; .42/.43/.44
-  flat; .45 +4,176 B).
-- **cc5_aarch64**: **~492 KB** at v5.10.45 (cross-build
-  includes the new ERR_MSG stub helpers; aarch64 backend
-  not yet wired for struct-byval pair-return — Phase 2
-  pinned at v5.10.46).
+- **cc5 (x86_64)**: **803,088 B** at v5.10.46 (unchanged
+  from v5.10.45; .46 touches only the aarch64 backend,
+  x86 codegen flat). Cycle delta: 797,464 B at v5.10.39
+  → 803,088 B at v5.10.46 (+5,624 B: .40/.41 perf
+  miniarc +1,448 B; .42/.43/.44 flat; .45 +4,176 B;
+  .46 flat).
+- **cc5_aarch64_native (cross-built)**: **587,048 B** at
+  v5.10.46 (was 582,088 B at v5.10.42 cross-build;
+  +4,960 B for v5.10.45 ABI stubs being replaced by
+  v5.10.46 real encoding + accumulated drift through
+  .43/.44).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
   cycle — `cyrius` doesn't run LEXID itself).
-- **cc5_win (cross)**: **~700 KB** at v5.10.45 (PE
+- **cc5_macho_arm (cross-built)**: **606,644 B** at
+  v5.10.46 (was 590,260 B at v5.10.42 cross-build;
+  +16,384 B for accumulated drift + Phase 1/2 emit
+  helpers). End-to-end run on ecb pending Phase 3.
+- **cc5_win (cross)**: **~700 KB** at v5.10.46 (PE
   backend lives under x86, so the .45 emit helpers
   reach this binary — int-class pair-return ABI now
   available cross-compiled). PE retptr semantics for
@@ -199,7 +214,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.45. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.46. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -226,11 +241,11 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 45 slots shipped through v5.10.45 (2026-05-11).**
+**v5.10.x cycle — 46 slots shipped through v5.10.46 (2026-05-11).**
 Two completed arcs plus a compile-time-perf miniarc plus the TLS
 contract pin plus the open-issues sweep (.43/.44) plus the
-struct-byval ABI arc (Phase 1/3 at .45; Phases 2/3 pinned at
-.46/.47) anchor the cycle:
+struct-byval ABI arc (Phase 1+2 shipped at .45/.46; Phase 3
+pinned at .47) anchor the cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -272,18 +287,20 @@ struct-byval ABI arc (Phase 1/3 at .45; Phases 2/3 pinned at
      dispatch rejected because both Str/cstr are
      pointers and 8+-char cstrs fail the heuristic.
 
-6. **v5.10.45 struct-by-value ABI arc Phase 1** — pin
-   re-scoped at v5.10.44 ship after empirical premise
+6. **v5.10.45 + v5.10.46 struct-by-value ABI arc Phases 1-2**
+   — pin re-scoped at v5.10.44 ship after empirical premise
    check showed the original "macOS arm64 struct-byval"
    pin was mis-framed: the underlying bug (16B int-class
    struct returns lose the high half) was live across ALL
    backends, not just Mach-O. User authorized expansion
-   into a 3-phase arc. Phase 1 (this slot) wires x86 SysV
-   via rax+rdx pair-return with `_STR_SID(S)` carve-out
-   preserving Str's legacy handle-shape. Phase 2 (.46)
-   wires aarch64 AAPCS64 X0+X1 pair (covers Linux + Mach-O
-   ABI parity). Phase 3 (.47) cross-host smoke + PE retptr
-   verify.
+   into a 3-phase arc.
+   - **.45**: x86 SysV via rax+rdx pair, `_STR_SID(S)`
+     carve-out preserving Str's legacy handle-shape.
+   - **.46**: aarch64 AAPCS64 X0+X1 pair (covers Linux
+     + Mach-O via shared ABI). Verified on pi: minimal
+     Point repro returns 42 (was 7).
+   - **.47** (pinned): cross-host smoke (pi + ecb + cass)
+     + PE retptr verify under the new tcyr gate.
 
 Additional in-cycle work: TLS early-data surface completion at
 v5.10.34 (TLS_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED + accessors);
@@ -292,8 +309,8 @@ ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **803,088 B at v5.10.45** (+49,320 B)
-- cc5_aarch64: ~470 KB at v5.10.0 → **~492 KB at v5.10.45**
+- cc5: 753,768 B at v5.10.0 → **803,088 B at v5.10.46** (+49,320 B)
+- cc5_aarch64_native: ~470 KB at v5.10.0 → **587,048 B at v5.10.46**
 - api-surface: 2792 → **2876 entries** (+3 v5.10.44 `_str` fns)
 - New `lib/simd.cyr` (50 public fns)
 - New `docs/development/lib-tls-contract.md` (v5.10.42)
@@ -312,8 +329,14 @@ the remaining v5.10.x work. Full v5.10.x retro at
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.45 struct-byval Phase 1):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.46 struct-byval Phase 2):
 
+- **v5.10.46** — struct-by-value ABI arc Phase 2: aarch64 AAPCS64
+  X0+X1 pair-return. v5.10.45 ERR_MSG stubs replaced with real
+  LDUR/STUR X0,X1 encodings + LDR/STR X9 deep-frame fallback.
+  Linux aarch64 + macOS arm64 covered (shared ABI). pi runtime
+  verify: struct Point 7+35 repro → exit=42 ✓. cc5 byte-identical
+  to v5.10.45 (aarch64-only change). cc5_aarch64_native +4,960 B.
 - **v5.10.45** — struct-by-value ABI arc Phase 1: x86 SysV
   int-class pair-return. `_cur_fn_ret_pair` flag set by rough-scan
   when fn returns 9-16B non-Str struct; PARSE_RETURN emits

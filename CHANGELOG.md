@@ -6,6 +6,104 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.46] — 2026-05-11
+
+**v5.10.x SLOT 46 — struct-by-value ABI arc Phase 2: aarch64
+AAPCS64 X0+X1 pair-return**.
+
+Phase 2 of the 3-phase struct-byval ABI completion arc opened at
+v5.10.45. v5.10.45 wired the x86 SysV side (rax+rdx pair); this
+slot wires the aarch64 side. Linux aarch64 and macOS arm64 share
+AAPCS64 §6.9 for ≤16B int-class composite returns (lo in X0, hi
+in X1) — so this single change covers **both** `_TARGET_MACHO ∈
+{0, 2}` on the aarch64 backend.
+
+### The fix
+
+Replaced the v5.10.45 ERR_MSG stubs in
+`src/backend/aarch64/emit.cyr` with real encoding for both
+`EFLLOAD_STRUCT_INT_PAIR` and `EFLSTORE_STRUCT_INT_PAIR`.
+
+**Encoding** (LDUR Xt / STUR Xt, [X29, #simm9]):
+- LDUR base for X29 → X0: `0xF84003A0`; for X1: `0xF84003A1`
+- STUR base for X29 → X0: `0xF80003A0`; for X1: `0xF80003A1`
+- imm9 range: -256..+255 (signed 9-bit byte displacement)
+
+**Deep-frame fallback** (disp_lo < -256): same shape as the
+v5.10.37 EFLLOAD_F64V4_PAIR fallback — compute X9 = X29 +
+disp_lo via `_EFP_ADDR_X9`, then LDR / STR with imm12-scaled
+(byte_offset = imm12 × 8, range 0..32760). Encodings:
+- LDR X0 [x9, #0]: `0xF9400120`; X1 [x9, #8]: `0xF9400521`
+- STR X0 [x9, #0]: `0xF9000120`; X1 [x9, #8]: `0xF9000521`
+
+No regalloc-disp shift — aarch64 doesn't use the x86-style
+regalloc-save area shift (the existing f64v2 + f64v4 pair-emit
+helpers omit it for the same reason). Cross-arch parity with the
+x86 EFL*_STRUCT_INT_PAIR via the same `_cur_fn_ret_stash` shift
+when retptr-stash is active.
+
+### Empirical verification
+
+**On pi (aarch64 Linux native)**, the minimal struct-byval repro:
+```cyrius
+struct Point { x: i64; y: i64; }
+fn make(): Point { var p: Point; p.x = 7; p.y = 35; return p; }
+fn run(): i64 { var got: Point = make(); return got.x + got.y; }
+syscall(93, run());
+```
+compiled by `cc5_aarch64_native` (cross-built on x86 from
+`src/main_aarch64_native.cyr`, scp'd to pi, run natively).
+**Exit code: 42** ✓ — was lost (high half dropped → exit=7)
+at v5.10.44.
+
+**cc5_macho_arm cross-build**: compiles clean at 606,644 B (was
+590,260 B at v5.10.42 cross-build). End-to-end run on ecb is
+**Phase 3** work (v5.10.47).
+
+### Numbers
+
+cc5 (x86): **803,088 B — byte-identical to v5.10.45** (this slot
+changes only the aarch64 backend; x86 codegen unchanged). 3-step
+self-host fixpoint clean. 66/66 check.sh PASS.
+
+cc5_aarch64_native (cross-built x86 → aarch64 ELF): **587,048 B**
+at v5.10.46 (was 582,088 B at v5.10.42 cross-build; +4,960 B for
+the v5.10.45 stubs being replaced by real encoding + accumulated
+drift through .43/.44).
+
+cc5_macho_arm (cross-built x86 → Mach-O arm64): **606,644 B** at
+v5.10.46.
+
+### Cross-arch propagation status
+
+Phase 2 closes the aarch64 wiring. Per
+`feedback_cross_arch_propagation_mandatory`:
+- x86 SysV: ✓ wired at .45
+- aarch64 Linux AAPCS64: ✓ wired this slot (.46), runtime verified on pi
+- macOS arm64 AAPCS64: ✓ same backend code — cross-build compiles, runtime verify pending Phase 3 (ecb)
+- cx bytecode: ✗ stays ERR_MSG (cx has no pair-return ABI; documented as a non-supported target for this surface)
+- Win64 PE: ✗ uses RCX retptr (not pair-return) per v5.5.36; Phase 3 verifies whether the v5.5.36 retptr claim holds for general 16B int-class structs OR if PE needs its own fix
+
+### Snapshot-ping-pong guard
+
+No `lib/*.cyr` edits this slot — compiler-side only. Standard
+`version-bump.sh` install-snapshot refresh handles
+`~/.cyrius/versions/5.10.46/`.
+
+### What landed
+
+- `src/backend/aarch64/emit.cyr` — `EFLLOAD_STRUCT_INT_PAIR` +
+  `EFLSTORE_STRUCT_INT_PAIR` replaced their ERR_MSG stubs with
+  real LDUR/STUR X0,X1 encodings + deep-frame LDR/STR fallback.
+- Roadmap updated: Phase 2 marked SHIPPED; Phase 3 (.47) still
+  pinned for cross-host smoke + PE retptr verify.
+
+### Phase 3 preview (v5.10.47)
+
+- pi (aarch64 Linux): native self-host fixpoint on cc5_aarch64_native b == c with the new pair-return code paths exercised by `tests/tcyr/struct_byval_return.tcyr` (which the cyrius test harness would need accessible on pi via stdlib snapshot — see Phase 3 plan).
+- ecb (macOS Mach-O arm64): cross-built cc5_macho_arm scp + codesign + run the same struct-byval repro.
+- cass (Win64 PE): cross-built cc5_win runs the repro; verify whether v5.5.36's hidden-RCX retptr handles 16B int-class returns OR needs a PE-specific fix (similar shape to v5.10.31's f64v2 PE retptr-style branch).
+
 ## [5.10.45] — 2026-05-11
 
 **v5.10.x SLOT 45 — struct-by-value ABI arc Phase 1: x86 SysV

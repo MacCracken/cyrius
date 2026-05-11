@@ -2075,23 +2075,40 @@ Acceptance for the arc:
    boundary (compiler change → expect cc5 +∆B; gate
    the delta in CHANGELOG).
 
-#### v5.10.46 — struct-by-value ABI arc Phase 2: aarch64 AAPCS64 retptr
+#### v5.10.46 — struct-by-value ABI arc Phase 2: aarch64 AAPCS64 X0+X1 pair-return — **SHIPPED 2026-05-11**
 
 Phase 2 of the struct-byval arc opened at v5.10.45.
-AAPCS64's X8 retptr ABI covers both Linux aarch64
-and macOS arm64 (same standard; the `_TARGET_MACHO == 2`
-branches inside `src/backend/aarch64/emit.cyr` are for
-relocation / branch encoding differences, NOT for ABI
-shape). Patch the X8 retptr wiring at `EFLADDR_X8`
-(caller side, v5.9.26) + `ESTRUCT_BYVAL_COPY` (callee
-return-store, v5.9.40) so both sides round-trip the
-full struct payload — `tests/tcyr/struct_byval_return.tcyr`
-(landed at .45) flips from x86-only PASS to also
-PASS on cross-built aarch64 binaries.
+Replaced the v5.10.45 ERR_MSG stubs in
+`src/backend/aarch64/emit.cyr` with real AAPCS64 §6.9
+X0+X1 pair-return encoding (LDUR/STUR X0,X1 fast path
++ LDR/STR via X9 deep-frame fallback). Linux aarch64
+and macOS arm64 share AAPCS64 → single change covers
+both `_TARGET_MACHO ∈ {0, 2}`.
 
-Acceptance: gate from .45 passes on the cc5_aarch64
-cross-compiler emit + (Phase 3 verifies on real pi /
-ecb).
+**Acceptance MET**:
+1. ✓ `struct Point {x: i64; y: i64;}` 7+35 repro runs
+   correctly on pi (aarch64 Linux native): **exit=42**
+   (was 7 at v5.10.44 — high half lost).
+2. ✓ cc5_aarch64_native cross-build at 587,048 B
+   (+4,960 B vs v5.10.42 baseline for the replaced
+   stubs + Phase 1/2 emit helpers).
+3. ✓ cc5_macho_arm cross-build at 606,644 B; runtime
+   verify on ecb is Phase 3.
+4. ✓ cc5 (x86) byte-identical to v5.10.45 at 803,088 B
+   (this slot touches only the aarch64 backend).
+5. ✓ 66/66 check.sh PASS.
+
+Note on the original pin wording (X8 retptr): that
+shape applies for >16B structs (already shipped at
+v5.9.26). The 9-16B int-class gap is the X0+X1 pair
+shape (AAPCS64 §6.9 single-register pair, not retptr).
+The pin text was carried forward from the original
+mis-scoped v5.5.36-deferred entry; the actual fix
+this slot ships is the pair-register path that Phase 1
+established the shape for on x86.
+
+See CHANGELOG [5.10.46] for encoding tables, deep-
+frame fallback, and the Phase 3 preview.
 
 #### v5.10.47 — struct-by-value ABI arc Phase 3: cross-host smoke + PE retptr verify
 
