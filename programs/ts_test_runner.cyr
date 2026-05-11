@@ -1,0 +1,254 @@
+# ts_test_runner.cyr — standalone TS frontend harness.
+#
+# Walks a directory of .ts / .tsx files, runs `cc5 --parse-ts`
+# (or `--lex-ts`) on each, reports pass/fail. The CLI version of
+# `_ts_corpus_gate` from programs/check.cyr — useful for ad-hoc
+# walks without invoking the full check.sh suite.
+#
+# Pinned at v5.10.20 P(-1) sweep (option E from v5.7.37), landed
+# v5.11.11 once the secureyeoman corpus surfaced a real use case
+# (2053 .ts + 435 .tsx files) and the regression-port arc closed
+# at v5.11.10. See CHANGELOG [5.11.11].
+#
+# Usage:
+#   ts_test_runner [--mode=parse|lex] [--ext=.ts|.tsx] [--show-fails] <path>
+#
+# Defaults:
+#   --mode=parse  (uses `cc5 --parse-ts`)
+#   --ext=.ts     (only .ts; use --ext=.tsx for tsx-only)
+#   no --show-fails (just summary)
+#
+# Exit code: 0 if all parse clean; otherwise = fail count (capped 255).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/args.cyr"
+include "lib/process.cyr"
+
+# ----------------------------------------------------------------
+# Run `cc5 <mode_flag>` with fixture as stdin, return WEXITSTATUS.
+# Same shape as programs/check.cyr's `_ts_mode_run`.
+# ----------------------------------------------------------------
+fn _run_mode(cc_path, fixture_path, mode_flag): i64 {
+    var fd = sys_open(fixture_path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(fd); return 0 - 1; }
+    if (pid == 0) {
+        sys_dup2(fd, 0);
+        sys_close(fd);
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[3];
+        store64(&argv,      cc_path);
+        store64(&argv + 8,  mode_flag);
+        store64(&argv + 16, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(cc_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# ----------------------------------------------------------------
+# CLI arg parsing — handwritten because we only need 3 flags +
+# 1 positional. Returns 0 on success, non-zero on usage error.
+#
+# Outputs into the global state vars below.
+# ----------------------------------------------------------------
+var _mode_flag = 0;
+var _ext_str = 0;
+var _show_fails = 0;
+var _walk_path = 0;
+
+fn _parse_args(): i64 {
+    args_init();
+    var ac = argc();
+    # Defaults
+    _mode_flag = "--parse-ts";
+    _ext_str = ".ts";
+    _show_fails = 0;
+    _walk_path = 0;
+
+    var i = 1;
+    while (i < ac) {
+        var a = argv(i);
+        var alen = strlen(a);
+        # --mode=parse | --mode=lex
+        if (alen == 12) {
+            if (memeq(a, "--mode=parse", 12) == 1) {
+                _mode_flag = "--parse-ts";
+                i = i + 1;
+                continue;
+            }
+        }
+        if (alen == 10) {
+            if (memeq(a, "--mode=lex", 10) == 1) {
+                _mode_flag = "--lex-ts";
+                i = i + 1;
+                continue;
+            }
+        }
+        # --ext=.ts | --ext=.tsx
+        if (alen == 9) {
+            if (memeq(a, "--ext=.ts", 9) == 1) {
+                _ext_str = ".ts";
+                i = i + 1;
+                continue;
+            }
+        }
+        if (alen == 10) {
+            if (memeq(a, "--ext=.tsx", 10) == 1) {
+                _ext_str = ".tsx";
+                i = i + 1;
+                continue;
+            }
+        }
+        # --show-fails
+        if (alen == 12) {
+            if (memeq(a, "--show-fails", 12) == 1) {
+                _show_fails = 1;
+                i = i + 1;
+                continue;
+            }
+        }
+        # --help / -h
+        if (alen == 6 && memeq(a, "--help", 6) == 1) { return 2; }
+        if (alen == 2 && memeq(a, "-h", 2) == 1)     { return 2; }
+        # Positional: walk path
+        if (load8(a) != 45) {       # not starting with '-'
+            _walk_path = a;
+            i = i + 1;
+            continue;
+        }
+        syscall(1, 2, "ts_test_runner: unknown flag '", 30);
+        syscall(1, 2, a, alen);
+        syscall(1, 2, "'\n", 2);
+        return 1;
+    }
+    if (_walk_path == 0) {
+        syscall(1, 2, "ts_test_runner: missing <path>\n", 31);
+        return 1;
+    }
+    return 0;
+}
+
+fn _usage(): i64 {
+    syscall(1, 1, "ts_test_runner — standalone TS frontend harness.\n\n", 51);
+    syscall(1, 1, "USAGE:\n", 7);
+    syscall(1, 1, "    ts_test_runner [opts] <path>\n\n", 34);
+    syscall(1, 1, "OPTS:\n", 6);
+    syscall(1, 1, "    --mode=parse    use `cc5 --parse-ts` (default)\n", 51);
+    syscall(1, 1, "    --mode=lex      use `cc5 --lex-ts`\n", 39);
+    syscall(1, 1, "    --ext=.ts       walk .ts files (default)\n", 46);
+    syscall(1, 1, "    --ext=.tsx      walk .tsx files instead\n", 45);
+    syscall(1, 1, "    --show-fails    print path of each failing fixture\n", 57);
+    syscall(1, 1, "    --help / -h     this help\n\n", 31);
+    syscall(1, 1, "EXIT:\n", 6);
+    syscall(1, 1, "    0 if all parse clean; else min(fail_count, 255).\n", 53);
+    return 0;
+}
+
+# ----------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------
+fn main(): i64 {
+    alloc_init();
+    var pa_rc = _parse_args();
+    if (pa_rc == 2) { return _usage(); }
+    if (pa_rc != 0) { return pa_rc; }
+
+    # Find cc5 — search ~/.cyrius/bin then PATH lookup is harder
+    # without exec; default to ~/.cyrius/bin/cc5.
+    var home_env = getenv("HOME");
+    if (home_env == 0) { home_env = "/root"; }
+    var hlen = strlen(home_env);
+    var cc_path = alloc(hlen + 32);
+    memcpy(cc_path, home_env, hlen);
+    memcpy(cc_path + hlen, "/.cyrius/bin/cc5", 16);
+    store8(cc_path + hlen + 16, 0);
+    if (file_exists(cc_path) != 1) {
+        syscall(1, 2, "error: cc5 not found at ", 24);
+        syscall(1, 2, cc_path, strlen(cc_path));
+        syscall(1, 2, "\n", 1);
+        return 1;
+    }
+
+    # Default prune set (mirrors check.cyr _ts_corpus_gate).
+    var prunes = vec_new();
+    vec_push(prunes, str_from("node_modules"));
+    vec_push(prunes, str_from("dist"));
+    vec_push(prunes, str_from("build"));
+    vec_push(prunes, str_from(".next"));
+    vec_push(prunes, str_from("coverage"));
+
+    # Walk + parse
+    syscall(1, 1, "Walking ", 8);
+    syscall(1, 1, _walk_path, strlen(_walk_path));
+    syscall(1, 1, " for ", 5);
+    syscall(1, 1, _ext_str, strlen(_ext_str));
+    syscall(1, 1, " files...\n", 10);
+
+    var files = find_files_with_prunes(str_from(_walk_path),
+                                       str_from(_ext_str), prunes);
+    var total = vec_len(files);
+    if (total == 0) {
+        syscall(1, 1, "no fixtures found.\n", 19);
+        return 0;
+    }
+
+    # Note: path_has_ext(".ts") matches "foo.ts" but NOT "foo.tsx"
+    # (suffix comparison; ".ts" != ".sx" tail). So --ext=.ts is
+    # naturally .tsx-exclusive.
+
+    var pass = 0;
+    var fail = 0;
+    var fi = 0;
+    while (fi < total) {
+        var fp = vec_get(files, fi);
+        var rc = _run_mode(cc_path, str_data(fp), _mode_flag);
+        if (rc == 0) {
+            pass = pass + 1;
+        } else {
+            fail = fail + 1;
+            if (_show_fails == 1) {
+                syscall(1, 1, "  FAIL: ", 8);
+                syscall(1, 1, str_data(fp), str_len(fp));
+                syscall(1, 1, "\n", 1);
+            }
+        }
+        fi = fi + 1;
+    }
+
+    syscall(1, 1, "\n", 1);
+    print_num(pass);
+    syscall(1, 1, "/", 1);
+    print_num(total);
+    syscall(1, 1, " passed", 7);
+    if (fail > 0) {
+        syscall(1, 1, " (", 2);
+        print_num(fail);
+        syscall(1, 1, " failed)", 8);
+    }
+    syscall(1, 1, "\n", 1);
+
+    if (fail > 255) { return 255; }
+    return fail;
+}
+
+var rc = main();
+syscall(60, rc);

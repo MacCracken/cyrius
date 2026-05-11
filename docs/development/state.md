@@ -5,6 +5,14 @@
 
 ## Version
 
+**5.11.11** (shipped 2026-05-11 — **TS test harness program**). New
+`programs/ts_test_runner.cyr` — standalone CLI harness walking
+.ts/.tsx fixtures via `cc5 --parse-ts` / `--lex-ts`. Added to
+`[release].bins` (80,248 B). Real-corpus smoke against secureyeoman:
+**2053/2053 .ts + 435/435 .tsx passed** at `--mode=parse`. cc5
+byte-identical at 804,472 B; check.sh 66/66; cyrius test 146/146.
+install.sh ships 19 bins (was 18).
+
 **5.11.10** (shipped 2026-05-11 — **Cyriusly cmdtools port closeout**).
 All 11 cyriusly verbs handled by `programs/cyriusly.cyr` (cyrius
 binary 89,616 B). Native impls: `version` / `list` / `ls` / `which` /

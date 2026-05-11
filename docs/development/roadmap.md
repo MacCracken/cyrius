@@ -490,7 +490,8 @@ right after).
 | v5.11.20 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
 | v5.11.21 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
 | v5.11.22 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
-| v5.11.23-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (13-slot buffer; user 2026-05-11) |
+| v5.11.23 | **cc5_win PE exit-code crash fix** (HIGH; ai-hwaccel 2.2.2 filed 2026-05-11; PE binaries crash before reaching ExitProcess, exit=0x40001000 instead of 42; WriteFile stdout never lands; blocks every Win64 ship target. Pinned in gap per user direction.) |
+| v5.11.24-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (12-slot buffer; user 2026-05-11) |
 | v5.11.36 | **cc5_aarch64_macho cross-bin ship** (deferred from v5.11.6 — host-runtime mmap fix + ecb smoke; user 2026-05-11: "fine for back of the current line") |
 | v5.11.37 | **cc5_aarch64_native cross-bin ship** (deferred from v5.11.6 — build + pi smoke) |
 | v5.11.38 | **cc5_cx cross-bin ship** (deferred from v5.11.6 — bytecode emit + VM smoke target) |
@@ -802,6 +803,82 @@ so 0-call-in-grep is not safe-to-remove.
 **Why this slot and not earlier**: low-priority cleanup work; no
 consumer is blocked on these fns. Survey-and-decide doesn't ship
 behavioral changes, just clarity + a deprecation plan if needed.
+
+#### v5.11.23 — cc5_win PE exit-code crash + WriteFile stdout fix
+
+**HIGH-severity blocker** filed 2026-05-11 by ai-hwaccel 2.2.2.
+Pinned to the gap per user direction at v5.11.10 close. Full repro
++ analysis in
+[`docs/development/issues/2026-05-11-ai-hwaccel-cc5-win-pe-exit-propagation.md`](issues/2026-05-11-ai-hwaccel-cc5-win-pe-exit-propagation.md).
+
+**Symptom**: minimal `syscall(60, 42);` compiled with `cc5_win`
+produces a PE32+ that **loads and starts** on Windows but **crashes
+before reaching `ExitProcess(42)`**. Exit code is `0x40001000`
+(1,073,745,920) instead of `42`. Hello-world (`syscall(1, 1, ...);
+syscall(60, ...)`) — WriteFile stdout NEVER lands, same crash.
+
+**Reproduces across**: v5.11.5 install bundle's cc5_win, v5.10.37
+`cc5_win_cross` source build (byte-identical PEs), with both
+`cmd /v /c "exe & echo !errorlevel!"` and `.bat` indirection.
+Known-good `cmd /c "exit 42"` propagates cleanly — so the Windows
+loader / cmd exit-code plumbing is fine; bug is in the PE itself.
+
+**Status code analysis**: `0x40001000` has the high byte `0x40`
+(informational, not error) but doesn't match any well-known
+`STATUS_*` constant (not `STATUS_BREAKPOINT`, `DBG_CONTROL_C`,
+`DBG_PRINTEXCEPTION_C`, or `STATUS_ACCESS_VIOLATION`). PE header
+looks structurally fine on `xxd` inspection (MZ + PE at +0x40,
+machine 0x8664, valid SizeOfHeaders, IAT references kernel32.dll
++ ExitProcess).
+
+**Hypothesis** (from the issue file): malformed entry-point or IAT
+setup — loader runs the image, user code never executes, Windows
+synthesizes some default informational exit before the syscall
+reroute fires.
+
+**Bisect candidates** flagged by the reporter:
+- 5.10.47 — first PE+struct-byval Phase 3 test on cass passing.
+- 5.10.49 — premise-debunk slot, "cass: exit=42 ✓" claimed.
+- 5.11.5 — `cc5_win` added to release tree.
+- 5.11.6 — install.sh refresh — slot entry mentioned "CRLF quirk
+  surfaced — separate item". The reporter notes that "separate
+  item" was likely never tracked; this filing fills the gap.
+
+**Internal load-bearing check**: `programs/check.cyr`'s
+`_pe_exit_gate` uses .bat indirection and runs as part of check.sh.
+Currently passing — so either:
+(a) the gate's test fixture is built with a NEWER (post-v5.11.6)
+    cc5_win that emits a different shape than the install bundle, or
+(b) the regression is between the gate's last successful run and
+    the v5.11.5 cc5_win shipped to ai-hwaccel.
+
+Slot work has to disambiguate. Start by running the issue's exact
+repro against current `build/cc5_win_cross` AND
+`~/.cyrius/versions/5.11.10/bin/cc5_win` — confirm whether the bug
+reproduces in-house before changing anything.
+
+**Acceptance bar**:
+1. `echo 'syscall(60, 42);' > /tmp/exit42.cyr && cc5_win < /tmp/exit42.cyr > /tmp/exit42.exe`
+   produces a PE32+ that runs on cass with `exit=42` (not 0x40001000).
+2. Hello-world fixture (`syscall(1, 1, "hello\n", 6); syscall(60, 42);`)
+   produces a PE that writes "hello\n" to stdout AND exits 42.
+3. `programs/check.cyr`'s `_pe_exit_gate` continues to pass.
+4. Cross-host smoke: cass runtime green on the minimal +
+   hello-world fixtures.
+5. ai-hwaccel-side: their `tests/regression-pe-exit.sh`
+   cross-host validation can be re-enabled and passes.
+
+**Risk**: medium-high. PE backend bugs are subtle (entry-point
+shape, IAT layout, relocation tables); a fix may need to touch
+`src/backend/x86/emit.cyr`'s PE-specific paths AND
+`src/backend/x86/fixup.cyr`'s PE fixup walker. Self-host
+byte-identical is required (PE backend changes shouldn't affect
+x86 Linux ELF emit), plus cross-host smoke green on all 4 hosts.
+
+**Why pinned at .23 and not earlier**: user direction at v5.11.10
+close — "plan it in the gap" preserved the existing pins at .21
+(syscall DRY) and .22 (0-call survey). .23 is the first OPEN slot
+in the buffer band.
 
 Held-forward items (no slot pinned; surface-on-ask): Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,

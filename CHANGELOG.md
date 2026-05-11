@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.11] — 2026-05-11
+
+**TS test harness program** (option E from v5.7.37, promoted at
+v5.10.20 P(-1) sweep, landed v5.11.11 once a real consumer use
+case surfaced — secureyeoman corpus, 2053 .ts + 435 .tsx files
+locally available for cross-testing).
+
+### Shipped
+
+- New `programs/ts_test_runner.cyr` — standalone CLI harness that
+  walks a directory of .ts/.tsx fixtures, runs `cc5 --parse-ts`
+  (or `--lex-ts`) on each via fork+exec, reports pass/fail.
+  Same shape as `programs/check.cyr`'s `_ts_corpus_gate` (line
+  5087) but standalone — no need to invoke the full check.sh
+  suite for ad-hoc TS frontend walks.
+- Flags: `--mode=parse|lex`, `--ext=.ts|.tsx`, `--show-fails`,
+  `--help`. Default: `--mode=parse --ext=.ts`. Exit code =
+  `min(fail_count, 255)`; 0 if all pass.
+- Added to `cyrius.cyml [release].bins` — installs at
+  `~/.cyrius/versions/<v>/bin/ts_test_runner` (80,248 B).
+
+### Real-corpus smoke (secureyeoman, locally available)
+
+| Corpus | Files | Result |
+|--------|------:|--------|
+| .ts (`--mode=parse`) | 2053 | **2053/2053 passed** |
+| .tsx (`--mode=parse`) | 435 | **435/435 passed** |
+
+Confirms the TS frontend (`--parse-ts` mode shipped v5.7.x P3.x) is
+healthy across the real-world TS corpus.
+
+### Why this slot
+
+The pinned-since-v5.7.37 harness was held opportunistic because the
+two existing TS test shapes (tcyr files + check.cyr bespoke gates)
+covered every in-tree consumer. v5.11.11 lands now because:
+1. The regression-port arc closed at v5.11.10 (harness pin gated on
+   that per v5.10.36 pair-direction).
+2. User confirmed secureyeoman is locally available for cross-testing
+   the TS frontend — surfacing a real ad-hoc walk pattern that fits
+   option E better than either existing shape.
+
+### Acceptance
+
+- compile: clean, 80,248 B ELF.
+- smoke (in-tree fixtures): tests/fixtures/ts_lex (1/1 lex),
+  tests/fixtures/ts_asserts (6/6 parse).
+- smoke (real corpus, secureyeoman):
+  - `--ext=.ts --mode=parse`: 2053/2053 ✓
+  - `--ext=.tsx --mode=parse`: 435/435 ✓
+- error path: bogus directory → "no fixtures found." exit 0.
+- cc5 byte-identical at 804,472 B (ts_test_runner not in cc5's chain).
+- check.sh 66/66 + cyrius test 146/146.
+- install.sh refresh: 19 bins/scripts (was 18 at v5.11.10; +1 for
+  ts_test_runner).
+
+### Next slot
+
+v5.11.12 — daimon aarch64 `sys_epoll_wait` (P2). Lib gap surfaced
+by daimon 2026-05-10 (issue
+[`docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md`](docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md)).
+
 ## [5.11.10] — 2026-05-11
 
 **Cyriusly cmdtools port closeout — full surface, cyriusly added to
