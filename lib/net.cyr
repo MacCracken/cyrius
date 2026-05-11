@@ -31,9 +31,9 @@ fn sockaddr_in(addr, port): i64 {
 }
 
 # Common addresses
-fn INADDR_ANY() { return 0; }
+fn INADDR_ANY(): i64 { return 0; }
 # Loopback address 127.0.0.1 in network byte order
-fn INADDR_LOOPBACK() { return 0x0100007F; }
+fn INADDR_LOOPBACK(): i64 { return 0x0100007F; }
 
 # Create a TCP socket. Returns Result(fd).
 fn tcp_socket() : Result {

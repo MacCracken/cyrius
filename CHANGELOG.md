@@ -6,6 +6,118 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.5] — 2026-05-11
+
+**Stdlib annotation arc — Phase 6: partial-coverage closeouts +
+9-sibling release fold-in** (Phase 5 mabda handled out-of-band on
+mabda v3 branch — not a cyrius release slot per user direction,
+since mabda is blocked from any release until 3.0.0 GA).
+
+### Sibling release fold-in (9 distlibs, byte-identical)
+
+All 9 sibling stdlib repos released with the annotation pass +
+`cyrius` pin bump (5.x.x → 5.11.4) + `version = "${file:VERSION}"`
+template + CI/release workflow fixes (version-pinned install layout +
+template-aware version-check guards). dist files folded byte-identical
+into `cyrius/lib/<name>.cyr` per the v5.8.65 sandhi pattern:
+
+| Sibling   | Old → New | dist lines | Notes |
+|-----------|-----------|-----------:|-------|
+| vani      | 0.9.2 → 0.9.3 | 2101 | + vani-core 791 |
+| patra     | 1.9.3 → 1.9.4 | 4823 | — |
+| agnosys   | 1.2.5 → 1.2.6 | 10182 | + 5 profile bundles regen (core/security/storage/system/trust) |
+| sandhi    | 1.3.3 → 1.3.4 | 11729 | 15 multi-line fn sigs hand-fixed |
+| sakshi    | 2.2.3 → 2.2.4 | 1133 | dist via scripts/bundle.sh; .cyrius-toolchain retired |
+| sigil     | 3.1.0 → 3.1.1 | 8973 | env-var CYRIUS_VERSION bumped; .cyrius-toolchain retired |
+| yukti     | 2.2.2 → 2.2.3 | 6151 | 1 multi-line fn fixed; + yukti-core 458 |
+| sankoch   | 2.2.4 → 2.2.5 | 4871 | + sankoch-core 300 |
+| niyama    | 1.0.1 → 1.0.2 | 6690 | — |
+
+Plus across-board CI/release workflow updates: install layout switched
+to `~/.cyrius/versions/$CYRIUS_VERSION/{bin,lib}/` + symlink + current
+pointer (replacing legacy `~/.cyrius/{bin,lib}/` direct install which
+broke v5.11.x's version-pinned stdlib resolution); version-check
+guards updated to handle `${file:VERSION}` template (single source of
+truth = VERSION file); 3 siblings (sandhi/sigil/niyama) had stale
+`lib/*.cyr` stdlib files committed to git (183 files total) — now
+gitignored properly + untracked. `.cyrius-toolchain` file retired
+across all 9; CI now reads `cyrius =` from cyrius.cyml directly.
+
+api-surface jumped **2876 → 3030 (+154 public fns)** as the
+annotation pass surfaced previously-invisible fn shapes through the
+type-check signal.
+
+Phase 6 closes the 13 partial-coverage stdlib modules: top
+each off to 100% so the annotation surface is solid before the
+arc-closing compiler-internals pass at v5.11.6. Real-world gap
+came in **~10× heavier** than the roadmap estimated (~83 fns
+projected, **~750 fns actual**) — sandhi alone is 703 fns since
+the v5.10.34 refresh fold (1.1.0 → 1.3.3, +1,194 lines).
+
+### Modules annotated (13 modules, ~750 fns total)
+
+| Module          | Before | After | Gap closed |
+|-----------------|-------:|------:|-----------:|
+| `lib/vani.cyr`     | 108/128 | 128/128 |  20 |
+| `lib/patra.cyr`    | 166/176 | 176/176 |  10 |
+| `lib/agnosys.cyr`  | 546/565 | 565/565 |  19 |
+| `lib/sandhi.cyr`   |   0/703 | 703/703 | **703** (roadmap stale; refold from v5.10.34 reset the count) |
+| `lib/pwd.cyr`      |  13/19  |  19/19  |   6 |
+| `lib/grp.cyr`      |  16/18  |  18/18  |   2 |
+| `lib/shadow.cyr`   |  10/12  |  12/12  |   2 |
+| `lib/cyml.cyr`     |  19/22  |  22/22  |   3 |
+| `lib/fdlopen.cyr`  |  16/26  |  26/26  |  10 |
+| `lib/flags.cyr`    |  18/20  |  20/20  |   2 |
+| `lib/net.cyr`      |  13/15  |  15/15  |   2 |
+| `lib/u128.cyr`     |  37/38  |  38/38  |   1 |
+| `lib/ws_server.cyr`|  14/15  |  15/15  |   1 |
+
+All annotations `: i64` (mechanical sed pass; verified
+byte-identical against v5.11.4 build/cc5).
+
+### Mabda annotation work (out-of-band)
+
+User direction: mabda is release-blocked until 3.0.0 GA — but the
+annotation work happens NOW (this slot) on the `v3` branch in
+`/home/macro/Repos/mabda/` so when the user resumes the mabda
+agent for rc.3, it focuses purely on soak testing. **747 fns
+annotated** in mabda: 673 across `src/*.cyr` + 74 across
+`programs/*.cyr`. mabda's cyml `cyrius = "5.7.48"` pin unchanged
+— the mabda agent bumps it at rc.3/GA cut. Not committed,
+not pushed (user handles git). Smoke build green against
+cyrius 5.11.4. Memory pin `project_mabda_annotation_done_v3`
+carries the durable record.
+
+### Acceptance bar
+
+- **cc5 byte-identical**: 804,472 B, fixpoint b == c. ✓
+- **check.sh 66/66**: green. ✓
+- **cyrius test 146/146**: green. ✓
+
+### Coverage delta
+
+- Phase-6 modules: 976/1737 → **1737/1737** (~761 added).
+- Arc total (in-tree, cyrius): 501 → **~1262** annotated.
+- Plus 747 mabda fns (out-of-tree).
+- Stdlib gap → ~70 fns remaining (compiler-side internals at v5.11.6).
+
+### Roadmap shift
+
+- v5.11.5 (was: mabda) → Phase 6 closeouts (this slot).
+- v5.11.6 (was: closeouts) → Phase 7 compiler-side internals.
+- v5.11.7+ removed — arc CLOSES at v5.11.6.
+
+### Next slot
+
+v5.11.6 — **Cross-binary ship** (PLATFORM BLOCKER, inserted
+2026-05-11 after ai-hwaccel agent flagged the v5.10.37 cc5_win
+gap). Add `cc5_win` (Win64 PE) + `cc5_aarch64_macho` (macOS Apple
+Silicon) — plus `cc5_aarch64_native` / `cc5_cx` as bandwidth allows —
+to `cyrius.cyml [release].cross_bins`. Verify install.sh rebuild
+rules + cross-host smoke (cass for PE, ecb for Mach-O, pi for
+aarch64 native). Phase 7 compiler-internals annotation arc
+cascades to **v5.11.7** — arc CLOSES there.
+
 ## [5.11.4] — 2026-05-11
 
 **Stdlib annotation arc — Phase 4: collection libraries**.

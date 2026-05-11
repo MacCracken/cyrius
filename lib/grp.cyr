@@ -316,9 +316,9 @@ fn grp_getgrouplist(user, primary_gid, gid_buf, max): i64 {
 }
 
 # Return the numeric gid from a parsed grrec.
-fn grp_gid(grrec)    { return load64(grrec); }
+fn grp_gid(grrec): i64 { return load64(grrec); }
 # Return the group name cstring (points into strbuf).
-fn grp_name(grrec)   { return load64(grrec + 8); }
+fn grp_name(grrec): i64 { return load64(grrec + 8); }
 # Return the group passwd field (rarely used; usually "x").
 fn grp_passwd(grrec) : i64 { return load64(grrec + 16); }
 

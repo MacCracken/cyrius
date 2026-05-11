@@ -65,7 +65,7 @@ fn ws_server_new(fd): i64 {
 }
 
 # Accessor: underlying socket file descriptor for a ws handle.
-fn ws_server_fd(ws)    { return load64(ws); }
+fn ws_server_fd(ws): i64 { return load64(ws); }
 # Accessor: current state (WS_OPEN / WS_CLOSING / WS_CLOSED).
 fn ws_server_state(ws): i64 { return load64(ws + 8); }
 

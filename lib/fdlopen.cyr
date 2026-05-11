@@ -751,27 +751,27 @@ fn fdlopen_slot(state, off): i64 {
 }
 
 # Returns fn pointer to real glibc `dlopen`, or 0 if state uninit.
-fn fdlopen_dlopen(state)       { return fdlopen_slot(state, 128); }
+fn fdlopen_dlopen(state): i64 { return fdlopen_slot(state, 128); }
 # Returns fn pointer to real glibc `dlsym`, or 0 if state uninit.
-fn fdlopen_dlsym(state)        { return fdlopen_slot(state, 136); }
+fn fdlopen_dlsym(state): i64 { return fdlopen_slot(state, 136); }
 # Returns fn pointer to real glibc `dlclose`, or 0 if state uninit.
-fn fdlopen_dlclose(state)      { return fdlopen_slot(state, 144); }
+fn fdlopen_dlclose(state): i64 { return fdlopen_slot(state, 144); }
 # Returns fn pointer to real glibc `dlerror`, or 0 if state uninit.
-fn fdlopen_dlerror(state)      { return fdlopen_slot(state, 152); }
+fn fdlopen_dlerror(state): i64 { return fdlopen_slot(state, 152); }
 # Returns fn pointer to real glibc `getaddrinfo`, or 0 if state uninit.
-fn fdlopen_getaddrinfo(state)  { return fdlopen_slot(state, 160); }
+fn fdlopen_getaddrinfo(state): i64 { return fdlopen_slot(state, 160); }
 # Returns fn pointer to real glibc `freeaddrinfo`, or 0 if state uninit.
 fn fdlopen_freeaddrinfo(state): i64 { return fdlopen_slot(state, 168); }
 # Returns fn pointer to real glibc `gai_strerror`, or 0 if state uninit.
 fn fdlopen_gai_strerror(state): i64 { return fdlopen_slot(state, 176); }
 # Returns fn pointer to real glibc `strerror`, or 0 if state uninit.
-fn fdlopen_strerror(state)     { return fdlopen_slot(state, 184); }
+fn fdlopen_strerror(state): i64 { return fdlopen_slot(state, 184); }
 # Returns fn pointer to real glibc `setlocale`, or 0 if state uninit.
-fn fdlopen_setlocale(state)    { return fdlopen_slot(state, 192); }
+fn fdlopen_setlocale(state): i64 { return fdlopen_slot(state, 192); }
 # Returns fn pointer to real glibc `setenv`, or 0 if state uninit.
-fn fdlopen_setenv(state)       { return fdlopen_slot(state, 200); }
+fn fdlopen_setenv(state): i64 { return fdlopen_slot(state, 200); }
 # Returns fn pointer to real glibc `unsetenv`, or 0 if state uninit.
-fn fdlopen_unsetenv(state)     { return fdlopen_slot(state, 208); }
+fn fdlopen_unsetenv(state): i64 { return fdlopen_slot(state, 208); }
 
 # Report the status code in a state buffer (0 = uninit, 1 = init OK,
 # negative = FdlopenErr code from the last init attempt).

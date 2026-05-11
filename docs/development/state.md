@@ -5,6 +5,30 @@
 
 ## Version
 
+**5.11.5** (shipped 2026-05-11 — **Stdlib annotation arc Phase 6:
+partial-coverage closeouts** + **mabda annotation out-of-band on v3
+branch**). 13 modules topped to 100%: vani, patra, agnosys, sandhi
+(703 fns — refold reset), pwd, grp, shadow, cyml, fdlopen, flags,
+net, u128, ws_server. ~761 fns added in-tree. Plus 747 mabda fns
+on v3 branch (not committed; awaiting 3.0.0 GA release). Arc total
+in-tree: 501 → **~1262**. cc5 byte-identical 804,472 B.
+**check.sh 66/66**; **cyrius test 146/146**. Mabda is **release-
+blocked until 3.0.0 GA** per user; annotation prep done so the
+mabda agent's rc.3 work is purely soak testing.
+
+**Roadmap shift**: Phase 6 promoted v5.11.6 → v5.11.5 (mabda
+removed from cyrius slot list). **v5.11.6 inserted as PLATFORM
+BLOCKER** — ship `cc5_win` + `cc5_aarch64_macho` (+ aarch64_native /
+cx as bandwidth allows) in `[release].cross_bins`. Pinned 2026-05-11
+after ai-hwaccel agent re-flagged the v5.10.37 cc5_win gap. Phase 7
+compiler-internals cascades to v5.11.7 — **arc CLOSES at v5.11.7**.
+
+**9-sibling fold-in (byte-identical)**: dist files from vani 0.9.3,
+patra 1.9.4, agnosys 1.2.6, sandhi 1.3.4, sakshi 2.2.4, sigil 3.1.1,
+yukti 2.2.3, sankoch 2.2.5, niyama 1.0.2 all folded into
+`cyrius/lib/<name>.cyr` per v5.8.65 sandhi pattern. cc5 byte-identical
+at 804,472 B. **api-surface 2876 → 3030 (+154 fns)**.
+
 **5.11.4** (shipped 2026-05-11 — **Stdlib annotation arc Phase 4:
 collection libraries**). 127 public fns across 2 modules
 (hashmap 41, json 86) — heavier than the roadmap's ~89 estimate.

@@ -170,10 +170,10 @@ fn shadow_getspnam(name, sprec, strbuf, strbufsz): i64 {
 }
 
 # Return the username cstring from a parsed sprec.
-fn shadow_name(sprec)        { return load64(sprec); }
+fn shadow_name(sprec): i64 { return load64(sprec); }
 # Return the password-hash cstring (`$6$salt$hash` crypt(3) format,
 # or `*` / `!` for locked / no-password accounts).
-fn shadow_hash(sprec)        { return load64(sprec + 8); }
+fn shadow_hash(sprec): i64 { return load64(sprec + 8); }
 # Return days-since-1970 the password was last changed; -1 = unset.
 fn shadow_last_change(sprec) : i64 { return load64(sprec + 16); }
 

@@ -336,7 +336,7 @@ fn _cyml_read_env(name, name_len): i64 {
 
 # Expand ${file:PATH} and ${env:NAME} in a value string.
 # Returns expanded cstring (allocated). Returns input unchanged if no expansion.
-fn cyml_expand_value(val) {
+fn cyml_expand_value(val): i64 {
     if (val == 0) { return 0; }
     var len = strlen(val);
     if (len < 4) { return val; }
@@ -376,7 +376,7 @@ fn cyml_expand_value(val) {
 
 # Convenience: split a single-entry CYML buffer into header + body.
 # Returns 1 on success, 0 if no delimiter found.
-fn cyml_split(data, len, out_hdr, out_hdr_len, out_body, out_body_len) {
+fn cyml_split(data, len, out_hdr, out_hdr_len, out_body, out_body_len): i64 {
     var i = 0;
     while (i < len) {
         if (_cyml_is_delim(data, len, i) == 1) {
@@ -395,7 +395,7 @@ fn cyml_split(data, len, out_hdr, out_hdr_len, out_body, out_body_len) {
 # via file_open_r / file_read_r, wraps any IoError as Err(CymlIoErr).
 # Buffer cap matches the conservative 256KB used elsewhere; vidya's
 # largest current .cyml entries fit comfortably.
-fn cyml_parse_file_r(path) {
+fn cyml_parse_file_r(path): i64 {
     var fd_r = file_open_r(path, 0, 0);
     if (is_err_result(fd_r) == 1) { return Err(CymlIoErr); }
     var fd = load64(fd_r + 8);

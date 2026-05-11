@@ -264,7 +264,7 @@ fn u128_shreq(dst, n): i64 { return u128_shr(dst, dst, n); }
 # `dst &= src`.
 fn u128_andeq(dst, src): i64 { return u128_and(dst, dst, src); }
 # `dst |= src`.
-fn u128_oreq(dst, src)  { return u128_or(dst, dst, src); }
+fn u128_oreq(dst, src): i64 { return u128_or(dst, dst, src); }
 # `dst ^= src`.
 fn u128_xoreq(dst, src): i64 { return u128_xor(dst, dst, src); }
 

@@ -435,10 +435,11 @@ annotation arc completes.
   | v5.11.1 | Foundational core: alloc (0/26), vec (0/11), fmt (0/14), freelist (0/4), fnptr (0/9), result (0/6), tagged (0/11), assert (0/12) — ~93 fns | Used by every consumer; sets the floor for downstream value. Most are scalar/i64-returning; a few Str/Result/Option-returning that enable downstream inference. |
   | v5.11.2 | I/O surface: io (1/21), fs (0/11), process (0/10), syscalls_x86_64_linux (0/62), syscalls_aarch64_linux (0/62) — ~166 fns | High cstring-shape exposure (file paths). Strong type-check signal once consumers thread Str through fs ops. |
   | v5.11.3 | String/format completion: string (9/16), str (52/68), bigint (0/20), chrono (0/16), bench (0/18) — ~71 fns | Closes string-handling surface; bigint/chrono/bench are heavily-called specialized libs. |
-  | v5.11.4 | Collection libraries: hashmap (0/32), json (0/57) — ~89 fns | Mid-sized libs; hashmap underlies many sandhi/agnosys flows; json is the serialization workhorse. |
-  | v5.11.5 | Big consumer libraries: mabda (0/405) | Largest single gap. GPU/rendering surface. Whole slot. |
-  | v5.11.6 | Closeouts: vani (86/105), patra (88/92), agnosys (540/559), sandhi (315/344), pwd (6/12), grp (8/10), shadow (4/6), cyml (14/17), fdlopen (10/19), flags (10/12), net (13/15), u128 (34/35), ws_server (12/13) — ~83 fns | Partial-coverage consumer libs; top off to 100%. |
-  | v5.11.7+ | src/common/ir (24/44), src/frontend/parse_types (0/24), parse_decl/parse_fn cleanup (11/11 each, no gap) | Compiler-side internals — annotations don't expose to consumers but tighten internal reasoning. |
+  | v5.11.4 | Collection libraries: hashmap (0/41), json (0/86) — 127 fns | Mid-sized libs; hashmap underlies many sandhi/agnosys flows; json is the serialization workhorse. |
+  | ~~v5.11.5~~ | ~~Big consumer libraries: mabda (0/405)~~ — **NOT a cyrius release slot** (user 2026-05-11). mabda is **blocked from any release until 3.0.0 GA**; annotation work happens in `/home/macro/Repos/mabda/` on the `v3` branch as prep for the eventual GA, with no version bump there. Re-pulls into cyrius when mabda 3.0 GA folds in (per v5.8.65 sandhi pattern). |
+  | v5.11.5 | Closeouts: vani (86/105), patra (88/92), agnosys (540/559), sandhi (315/344), pwd (6/12), grp (8/10), shadow (4/6), cyml (14/17), fdlopen (10/19), flags (10/12), net (13/15), u128 (34/35), ws_server (12/13) — ~83 fns | Partial-coverage consumer libs; top off to 100%. **Promoted from v5.11.6 → v5.11.5 after mabda removal.** |
+  | v5.11.6 | **Cross-binary ship: cc5_win + cc5_aarch64_macho (+ cc5_aarch64_native / cc5_cx as bandwidth allows)** | **PLATFORM BLOCKER inserted 2026-05-11** — ai-hwaccel agent flagged at v5.10.37: `cc5_win` exists in `build/cc5_win_cross` but isn't in `[release].cross_bins`, so consumers can't get a Windows cyrius from the release tarball. Same gap for macOS Apple Silicon (`cc5_aarch64_macho` exists in src but not shipped). Phase 7 compiler internals cascades to v5.11.7. See below for full slot spec. |
+  | v5.11.7 | src/common/ir (24/44), src/frontend/parse_types (0/24), parse_decl/parse_fn cleanup (11/11 each, no gap) | Compiler-side internals — annotations don't expose to consumers but tighten internal reasoning. **Arc CLOSES here.** Cascaded from v5.11.6 → v5.11.7 to make room for the platform unblock at .6. |
 
   **Acceptance shape per phase**:
   - Self-host byte-identical (annotations don't change emit)
@@ -473,7 +474,9 @@ right after).
 | Slot | Item |
 |------|------|
 | v5.11.0 ✅ | kavach P1 sandbox syscall wrappers (shipped) |
-| v5.11.1-v5.11.7+ | Stdlib annotation arc (see phase table in annotation bullet above) |
+| v5.11.1-v5.11.5 | Stdlib annotation arc (Phases 1-4 + 6; mabda annotation handled out-of-band on mabda v3 branch — not a cyrius release slot) |
+| v5.11.6 | **Cross-binary ship — cc5_win + cc5_aarch64_macho (+ aarch64_native / cx as bandwidth allows)** — PLATFORM BLOCKER (inserted 2026-05-11; ai-hwaccel agent flagged at v5.10.37) |
+| v5.11.7 | Phase 7 — compiler-side internals annotation pass — **arc CLOSES here** (cascaded from v5.11.6) |
 | v5.11.8 | `cyrius deps` symlink → file-copy |
 | v5.11.9 | `tests/regression-*.sh` → cyrius port |
 | v5.11.10 | Cyriusly cmdtools port (paired with .9 per user direction) |
@@ -488,6 +491,75 @@ right after).
 | v5.11.21-38 | OPEN — emergent bugs / consumer-filed / items surface during cycle (18-slot buffer; user 2026-05-11) |
 | v5.11.39 | Defensive sweep (parser `assert_eq` string-literal quirk bundled) |
 | v5.11.40 | Cycle closeout |
+
+#### v5.11.6 — Cross-binary ship (Win64 PE + macOS Apple Silicon + bonus targets)
+
+**Pinned 2026-05-11 per user direction as a PLATFORM BLOCKER** after
+ai-hwaccel agent re-surfaced their v5.10.37 note:
+
+> *"Windows DXGI backend — `cc5_win` exists at v5.10.37 (built in
+> `/home/macro/Repos/cyrius/build/cc5_win_cross`) but isn't installed
+> in the standard toolchain. COM/DXGI surface is multi-slot scope.
+> Re-evaluate when cc5_win ships in the default install."*
+
+State at v5.11.5: still unshipped. `build/cc5_win_cross` exists
+locally (598 KB, 2026-05-10 build) but `cyrius.cyml [release].cross_bins`
+contains only `["cc5_aarch64"]`. Consumers downloading the release
+tarball get no Windows cyrius. Same shape applies to macOS Apple
+Silicon — `src/main_aarch64_macho.cyr` exists but `cc5_aarch64_macho`
+isn't in cross_bins either.
+
+This slot **cascades Phase 7 compiler-internals annotation to v5.11.7**
+(previously the arc-closing slot at .6). Annotation arc and the
+.7 cushion both shift down by one to make room — the platform unblock
+takes priority because it gates downstream consumer work
+(ai-hwaccel DXGI; future macOS native Apple Silicon flows that
+currently depend on running `cc5` x86 cross under Rosetta).
+
+**Targets to add to `[release].cross_bins`**:
+
+| Cross-bin | Entry source | Target | Smoke host |
+|---|---|---|---|
+| `cc5_win` | `src/main_win.cyr` | Win64 PE x86_64 | cass |
+| `cc5_aarch64_macho` | `src/main_aarch64_macho.cyr` | macOS Apple Silicon Mach-O | ecb |
+| `cc5_aarch64_native` | `src/main_aarch64_native.cyr` | aarch64 Linux self-build | pi |
+| `cc5_cx` | `src/main_cx.cyr` | cyrius-x bytecode | n/a (in-tree) |
+
+**Acceptance bar**:
+1. `cyrius.cyml [release].cross_bins` updated to list the four entries
+   (or whatever subset bandwidth allows; cc5_win + cc5_aarch64_macho
+   are the platform-blocker minimum).
+2. `scripts/install.sh --refresh-only` rebuild rules already follow the
+   generic `cc5_<name>` → `src/main_<name>.cyr` pattern (line 115); verify
+   no per-target carve-outs needed. If a target needs a custom rebuild
+   path (e.g., Mach-O linker invocation), add it under the
+   `_rebuild_stale` arm.
+3. Each binary reproducibly rebuilds from current `build/cc5` (i.e., the
+   x86_64 host compiler cross-compiles all 4 targets without external
+   toolchain dependency).
+4. **Cross-host smoke matrix**:
+   - `cc5_win` — copy to cass, compile a minimal program, run, verify exit code.
+   - `cc5_aarch64_macho` — copy to ecb, compile a minimal program, run, verify exit code.
+   - `cc5_aarch64_native` — copy to pi, run native self-host fixpoint (b == c).
+   - `cc5_cx` — in-tree test (no remote host).
+5. Release tarball at next v5.11.x ship includes all 4 binaries; `cyrius
+   install` (or the equivalent CI install path) places each at
+   `~/.cyrius/versions/<v>/bin/cc5_<name>`.
+6. Downstream consumer regression: ai-hwaccel DXGI work unblocked
+   (signal: ai-hwaccel agent can begin COM/DXGI surface implementation
+    without the gating note).
+
+**Why now (vs slot in buffer band)**: PLATFORM BLOCKER class —
+ai-hwaccel can't start DXGI work without cc5_win shipping. Pushing
+to .19 (version isolation) or .20 (kybernet caps) defers a downstream
+agent's entire arc by 13+ slots. cc5_win is built and tested locally;
+the slot is mostly ceremony (cyml edit + install.sh rule verify +
+cross-host smoke), not new code.
+
+**Estimated scope**: 1 slot if all 4 targets follow the generic
+rebuild pattern; could split into 2 slots if a target needs custom
+build infrastructure (e.g., Mach-O codesigning shim). Refine at slot
+entry per `feedback_premise_check_at_slot_entry`.
 
 #### v5.11.19 — Per-repo `cyrius` version isolation
 
