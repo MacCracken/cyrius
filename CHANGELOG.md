@@ -6,6 +6,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.2] — 2026-05-11
+
+**Stdlib annotation arc — Phase 2: I/O surface**.
+
+Phase 2 covers the I/O surface — file open/close/read/write, fs
+path / dir / find helpers, process exec / spawn / wait, and the
+two arch-specific syscall peers. Highest `cstring`-shape exposure
+in the stdlib (file paths thread through every fs op + exec arg).
+
+### Modules annotated (182 fns total)
+
+| Module                            | Fns | Notes |
+|-----------------------------------|----:|-------|
+| `lib/io.cyr`                      |  21 | 15 `: i64` + 6 `: Result` (`_r` variants from v5.8.30) |
+| `lib/fs.cyr`                      |  11 | Path / dir / find helpers; all `: i64` (Str-shape downgrade documented below) |
+| `lib/process.cyr`                 |  14 | 10 `: i64` + 4 `: Result` (run / run_capture / spawn / wait_pid) |
+| `lib/syscalls_x86_64_linux.cyr`   |  68 | All raw syscall wrappers — kernel returns are `: i64` |
+| `lib/syscalls_aarch64_linux.cyr`  |  68 | Same surface, mirrored per `feedback_cross_arch_propagation_mandatory` |
+
+### fs.cyr Str-shape annotation downgrade
+
+`path_join` / `path_basename` / `path_dirname` were annotated
+`: Str` mid-slot (their genuine return shape), then reverted to
+`: i64` after `tests/tcyr/sandbox_syscalls.tcyr` broke at parse
+time: it `include`s `lib/fs.cyr` directly without `lib/str.cyr`
+first, so `struct Str` isn't defined when fs.cyr's annotation
+parses. Two future-Phase fixes apply (TBD at Phase 6 closeout):
+1. Add `include "lib/str.cyr"` at top of fs.cyr to make it
+   self-sufficient on its type vocabulary (per
+   `feedback_stdlib_self_sufficient_constants` pattern).
+2. Then re-promote the three `: i64` back to `: Str`.
+
+For Phase 2 ship: `: i64` is a true-but-imprecise annotation
+(Str is a 16-byte struct passed as a pointer; consumer-side
+type-check signal is lost but no false-positives).
+
+### Acceptance bar
+
+- **cc5 byte-identical**: 804,472 B, fixpoint b == c. ✓
+- **check.sh 66/66**: green. ✓
+- **cyrius test**: **146 / 146** (improved from v5.11.1's 144/146;
+  parser_cosmetics now passes thanks to v5.11.1's snapshot
+  refresh fixing the include chain). ✓
+
+### Coverage delta
+
+- Phase-2 modules: **1/182 → 182/182** annotated public fns (the
+  one pre-existing was `file_open: i64` from v5.10.24).
+- Arc total: 107 → **289** annotated (Phase 1 + Phase 2).
+- Stdlib gap: 1010 → **~828** unannotated (~28.6 % arc progress).
+
+### Next slot
+
+v5.11.3 — **Phase 3: string/format completion** (string, str,
+bigint, chrono, bench; ~71 fns). Closes the string-handling
+surface.
+
 ## [5.11.1] — 2026-05-11
 
 **Stdlib annotation arc — Phase 1: foundational core**.

@@ -5,6 +5,22 @@
 
 ## Version
 
+**5.11.2** (shipped 2026-05-11 — **Stdlib annotation arc Phase 2:
+I/O surface**). 182 public fns across 5 modules (io / fs / process
++ syscalls_x86_64_linux + syscalls_aarch64_linux). Mix of `: i64`
+(raw syscall returns), `: Result` (10 fns — io `_r` family + process
+run/run_capture/spawn/wait_pid), with three fs.cyr path fns kept
+`: i64` (Str-shape downgrade — fs.cyr's consumers don't all
+include str.cyr first; Phase 6 closeout will add the include and
+re-promote). cc5 byte-identical at 804,472 B. **check.sh 66/66**;
+**cyrius test 146/146** — parser_cosmetics now passes (v5.11.1
+snapshot refresh fixed the include chain).
+
+**Phase 2 modules + counts**: io 22 (1 pre-existing + 21 new),
+fs 11, process 14, syscalls_x86_64_linux 68, syscalls_aarch64_linux 68.
+**Coverage delta**: 107 → **289** annotated (Phase 1 + Phase 2);
+stdlib gap 1010 → **~828** unannotated (~28.6 % arc progress).
+
 **5.11.1** (shipped 2026-05-11 — **Stdlib annotation arc Phase 1:
 foundational core**). 107 public fns across 8 modules
 (alloc / vec / fmt / freelist / fnptr / result / tagged / assert)
@@ -12,14 +28,8 @@ now carry `: i64` return-type annotations. Same shape as v5.10.24's
 `cstring` annotation pass on `string.cyr` / `io.cyr` — parse-only,
 zero codegen impact. cc5 self-host **804,472 B at v5.11.1 — byte-
 identical to v5.11.0** (annotations don't change emit). check.sh
-66/66; cyrius test 144/146 unchanged from v5.11.0 (one pre-existing
-`parser_cosmetics.tcyr` failure carries forward into v5.11.39
-defensive sweep band per roadmap).
-
-**Phase 1 modules + counts**: alloc 37, vec 11, fmt 14, freelist 7,
-fnptr 9, result 6, tagged 11, assert 12. **Coverage delta**:
-0/107 → 107/107 in foundational-core band; total stdlib gap
-1010 → 903 unannotated public fns (~10.6 % arc progress).
+66/66; cyrius test 144/146 (1 pre-existing parser_cosmetics fail
+absorbed into v5.11.2's snapshot refresh).
 
 **v5.11.0** (shipped 2026-05-11 — **v5.11.x cycle OPEN — kavach P1
 sandbox syscall wrappers + roadmap restructure**). v5.10.x closed
