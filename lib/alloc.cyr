@@ -13,14 +13,9 @@
 # alloc(size) returns aligned pointer or 0 on failure.
 # alloc_reset() frees everything (batch).
 #
-# v5.5.0 split the implementation: Linux + aarch64 use the brk-
-# based path below; Windows (CYRIUS_TARGET_WIN) delegates to
-# lib/alloc_windows.cyr which uses VirtualAlloc. v5.5.16 adds the
-# macOS (CYRIUS_TARGET_MACOS) delegation to lib/alloc_macos.cyr
-# (mmap-based — Darwin has no brk, and BSD syscall 12 is chdir,
-# so the Linux branch silently corrupts _heap_base when it runs
-# on Mach-O). arena_* helpers are OS-agnostic and shipped inline
-# after the selector.
+# Linux/aarch64 → brk path (below); Windows → alloc_windows.cyr
+# (VirtualAlloc); macOS → alloc_macos.cyr (mmap; Darwin has no brk).
+# arena_* helpers are OS-agnostic. See CHANGELOG [5.5.0], [5.5.16].
 
 #ifdef CYRIUS_TARGET_WIN
 include "lib/alloc_windows.cyr"
@@ -72,12 +67,8 @@ fn alloc(size): i64 {
     if (new_ptr < ptr) { return 0; }
     _heap_ptr = new_ptr;
     if (_heap_ptr > _heap_end) {
-        # Grow to cover _heap_ptr, rounded up to the next 1MB boundary.
-        # v5.6.34: previously stepped by exactly 0x100000 regardless of
-        # how far past _heap_end the new_ptr was, so any alloc(>1MB) near
-        # the grow point returned a pointer past the brk — SIGSEGV on
-        # first tail-write. Rounding up to a 1MB grain keeps the
-        # brk-per-alloc churn low while always mapping enough space.
+        # Grow to cover _heap_ptr, round up to next 1MB grain
+        # (low brk-churn + correct for alloc(>1MB); see CHANGELOG [5.6.34]).
         var new_end = (_heap_ptr + 0xFFFFF) & (0 - 0x100000);
         var result = syscall(12, new_end);
         if (result < new_end) {

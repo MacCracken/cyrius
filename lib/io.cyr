@@ -2,17 +2,11 @@
 # Usage: include "lib/io.cyr"
 # Wraps Linux syscalls for file operations.
 #
-# v5.5.18: routes through lib/syscalls.cyr's per-arch sys_* wrappers
-# (sys_open/sys_close/sys_read/sys_write) rather than literal Linux
-# x86_64 syscall numbers 0/1/2/3. On aarch64 those numbers mean
-# io_setup/io_destroy/io_submit/io_cancel — this file's prior file_*
-# helpers would fire the wrong syscall on arm64 hosts (reproduced on
-# real Pi during the v5.5.18 stdlib shakedown — file_open returned
-# an error immediately). Same root-cause pattern as the v5.4.11
-# yukti fix; io.cyr was missed during that split.
+# Routes through lib/syscalls.cyr's per-arch sys_* wrappers, NOT
+# literal x86_64 syscall numbers (0/1/2/3 mean io_setup/io_destroy
+# on aarch64 — silent misroute). See CHANGELOG [5.5.18].
 include "lib/syscalls.cyr"
-# v5.8.30: Result-returning *_r variants (added below) construct
-# Result via lib/result.cyr's compiler-generated `Ok` / `Err`.
+# Result-returning *_r variants below; see CHANGELOG [5.8.30].
 include "lib/result.cyr"
 
 # v5.8.30 — IoError variants. Bare-variant enum so each name folds
@@ -101,12 +95,8 @@ fn file_write_all(path, buf, len): i64 {
     return written;
 }
 
-# v5.5.16: flock helpers gated to CYRIUS_TARGET_LINUX. syscall(73) is
-# flock on Linux but a different BSD number on macOS (131), and the
-# ESYSXLAT chain doesn't currently translate it. Rather than emit
-# warnings on every Mach-O cross-build for dead-code the tools don't
-# call, skip the block entirely on non-Linux. v5.5.17 can add a BSD
-# translation if a real consumer needs file locking on Mach-O.
+# flock gated to Linux: syscall 73 is flock on Linux, different BSD
+# number on macOS; ESYSXLAT doesn't translate. See CHANGELOG [5.5.16].
 #ifdef CYRIUS_TARGET_LINUX
 # Exclusive file lock (blocking). Use for append-only logs, audit chains.
 fn file_lock(fd): i64 {

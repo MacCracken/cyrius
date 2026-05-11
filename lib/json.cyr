@@ -947,15 +947,10 @@ fn _jb_emit_indent(sb, indent, level): i64 {
     return 0;
 }
 
-# v5.7.47 refactor: unified compact + pretty walker. Pre-v5.7.47
-# this was two near-identical fns (_jb_walk + _jb_walk_pretty)
-# differing only in newline emission and key separator. The
-# `indent` param drives the mode: 0 = compact (no newlines, ":"
-# separator), >0 = pretty (newlines, ": " separator). The
-# empty-container check (`if n > 0`) handles both modes correctly:
-# compact with n=0 emits "[]"/"{}" naturally because the loop
-# doesn't run; pretty needs the same guard to avoid emitting a
-# trailing newline+indent before the closing bracket.
+# Unified compact + pretty walker. `indent` param drives mode:
+# 0 = compact (":" separator), >0 = pretty (newlines, ": ").
+# `if n > 0` guards empty-container case for both modes.
+# See CHANGELOG [5.7.47].
 fn _jb_walk(sb, v, indent, level): i64 {
     if (v == 0) { str_builder_add_cstr(sb, "null"); return 0; }
     var t = load64(v);

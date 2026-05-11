@@ -488,7 +488,9 @@ right after).
 | v5.11.18 | bote WS handshake key validation (Low; ride-along after bote stack) |
 | v5.11.19 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
 | v5.11.20 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
-| v5.11.21-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (15-slot buffer; user 2026-05-11) |
+| v5.11.21 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
+| v5.11.22 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
+| v5.11.23-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (13-slot buffer; user 2026-05-11) |
 | v5.11.36 | **cc5_aarch64_macho cross-bin ship** (deferred from v5.11.6 — host-runtime mmap fix + ecb smoke; user 2026-05-11: "fine for back of the current line") |
 | v5.11.37 | **cc5_aarch64_native cross-bin ship** (deferred from v5.11.6 — build + pi smoke) |
 | v5.11.38 | **cc5_cx cross-bin ship** (deferred from v5.11.6 — bytecode emit + VM smoke target) |
@@ -719,6 +721,87 @@ place, no active break, but the footgun class (silent aarch64
 misroute, invisible on x86 CI) is exactly what stdlib wrappers
 exist to prevent. Every new consumer needing a socket re-rolls the
 per-arch dispatch and re-introduces the bug.
+
+#### v5.11.21 — Syscall-wrapper DRY consolidation
+
+**Pinned 2026-05-11 at v5.11.7 close from a lib refactor audit.**
+
+`lib/syscalls_x86_64_linux.cyr` + `lib/syscalls_aarch64_linux.cyr`
+peers have ~10+ wrapper fns with body-identical impls — the
+divergence is only the `SYS_*` enum constant resolved per arch:
+
+```
+# Both peers identical at the wrapper layer:
+fn sys_close(fd): i64 { return syscall(SYS_CLOSE, fd); }
+fn sys_read(fd, buf, count): i64 { return syscall(SYS_READ, fd, buf, count); }
+fn sys_write(fd, buf, count): i64 { return syscall(SYS_WRITE, fd, buf, count); }
+# ...
+```
+
+**Refactor shape**: move the body-identical wrappers into a new
+`lib/syscalls_linux_common.cyr` that includes both arch peers (for
+the `SYS_*` enum values) and defines the wrappers once. The arch
+peers shrink to just enum + arch-specific wrappers (anything where
+arity / shape differs across arches).
+
+**Identified candidates** (~10-12 fns, more under audit):
+- `sys_close`, `sys_read`, `sys_write`, `sys_fstat`, `sys_fchmod`,
+  `sys_exit`, `sys_execve`, `sys_getpid`, `sys_getppid`, `sys_kill`
+
+**Acceptance bar**:
+- Self-host byte-identical (refactor is shape-only).
+- check.sh 66/66 + cyrius test 146/146 green.
+- Pi cross-arch smoke green (aarch64 runtime — the diff target).
+- Each consumer that includes `lib/syscalls.cyr` keeps working
+  (selector still picks the right arch peer + new common file).
+- Saves ~50-80 lines, ~20 fn dups.
+
+**Risk**: medium — touches stdlib syscall layer. v5.11.21 places
+this at start of the buffer band so emergent bugs can ride later
+slots if needed.
+
+#### v5.11.22 — 0-call public stdlib fn downstream survey
+
+**Pinned 2026-05-11 at v5.11.7 close from a lib refactor audit.**
+
+The audit found 10 PUBLIC stdlib fns with 0 callers across the
+cyrius repo (`grep -rE` across all .cyr / .tcyr / .bcyr / .scyr).
+Stdlib is consumed by downstream repos (kybernet, mabda, agnosys,
+kavach, hadara, ai-hwaccel, libro, argonaut, bote, sigil, etc.),
+so 0-call-in-grep is not safe-to-remove.
+
+**The 10 candidates**:
+
+| Module       | Fn                            | Likely purpose |
+|--------------|-------------------------------|----------------|
+| `async`      | `async_new`                   | bote / future async consumers |
+| `callback`   | `for_each`                    | iterator-style consumer ergonomics |
+| `grp`        | `grp_invalidate_cache`        | cache-flush ops (kavach? kybernet?) |
+| `log`        | `log_init`                    | structured-log consumer entry point |
+| `niyama`     | `niyama_bre_compile`          | one of 5 regex engines in niyama 1.0.1 fold |
+| `pwd`        | `pwd_invalidate_cache`        | cache-flush ops |
+| `sakshi`     | `sakshi_clock_recalibrate`    | long-running consumer recalibration |
+| `sandhi`     | `sandhi_err_kind_name`        | diagnostic / pretty-print |
+| `shadow`     | `shadow_invalidate_cache`     | cache-flush ops |
+| `sigil`      | `sig_alg_name`                | pretty-print / introspection |
+
+**Acceptance bar**:
+- Survey each downstream repo (`grep -rn '<fn>(' ~/Repos/<dep>/`)
+  for each of the 10 fns.
+- Per-fn decision tree:
+  - **Has consumer caller** → keep, document the consumer in the
+    fn's docstring.
+  - **No caller anywhere** → flag in CHANGELOG, mark deprecated
+    in v5.11.22, drop in v5.12.x (or v6.0.0 closeout — fits the
+    "dead-code sweep" item already pinned there).
+  - **Speculative scaffolding for active work** (per `feedback_dead_code_audit_scope`)
+    → keep, add roadmap pointer in the docstring.
+- Output: a `docs/audit/2026-XX-XX-zero-call-stdlib.md` listing
+  the decision per fn + rationale.
+
+**Why this slot and not earlier**: low-priority cleanup work; no
+consumer is blocked on these fns. Survey-and-decide doesn't ship
+behavioral changes, just clarity + a deprecation plan if needed.
 
 Held-forward items (no slot pinned; surface-on-ask): Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,
@@ -1217,7 +1300,22 @@ patches:
   `ir_lower_all`, `ir_apply_lase`, `ir_dead_block_elim`,
   `_macho_wstr_pad`, `SYSV_HASH` (if v5.6.28 doesn't re-wire it).
   Audit which are speculative scaffolding for future work vs
-  genuinely dead, and delete the latter.
+  genuinely dead, and delete the latter. Per
+  `feedback_dead_code_audit_scope`: scaffold is **alive by default**
+  unless actual work behind it is debunked.
+- **`scripts/build-cyc.sh`** (pinned 2026-05-11 at v5.11.7 close).
+  Wrap the byte-identical fixpoint check that's the canonical
+  cyc/cc-rename verifier:
+  ```sh
+  cat src/main.cyr | build/cyc > /tmp/cyc_a && chmod +x /tmp/cyc_a
+  cat src/main.cyr | /tmp/cyc_a > /tmp/cyc_b && chmod +x /tmp/cyc_b
+  cmp /tmp/cyc_a /tmp/cyc_b && echo "FIXPOINT OK"
+  cmp /tmp/cyc_a build/cyc && echo "byte-identical to build/cyc"
+  ```
+  Currently this runs as ad-hoc one-liners in chat (see v5.11.x
+  retro transcript). At v6.0.0 the binary rename `cc5` → `cyc`
+  warrants a permanent script so the verifier survives the cut-over.
+  Mirror the `bootstrap/verify.sh` pattern.
 - **`_TARGET_*` flag consolidation.** `_TARGET_MACHO`,
   `_TARGET_PE`, `CYRIUS_TARGET_LINUX/WIN/MACOS`,
   `_AARCH64_BACKEND`, plus per-arch `#ifdef CYRIUS_ARCH_{X86,

@@ -1021,13 +1021,10 @@ fn dynlib_bootstrap_locale(hc): i64 {
 #   dynlib_bootstrap_locale(hc);
 #   dynlib_bootstrap_environ(hc);      // ← this fn
 #
-# v5.5.24 — intermediate step toward NSS/PAM. After this, getenv
-# and simple env-query surfaces work, but NSS-dispatching calls
-# (getpwuid / getgrouplist / pam_authenticate / __nss_configure_lookup)
-# and strerror still SIGSEGV. Those require deeper libc init that
-# isn't tractable in a patch release; pinned forward. See
-# docs/development/issues/dynlib-nss-bootstrap.md for the
-# investigation log.
+# Intermediate step: getenv + simple env-query work post-call, but
+# NSS-dispatching (getpwuid / getgrouplist / pam_authenticate / etc.)
+# + strerror still SIGSEGV — needs deeper libc init, pinned forward.
+# See CHANGELOG [5.5.24] + docs/development/issues/dynlib-nss-bootstrap.md.
 fn dynlib_bootstrap_environ(hc): i64 {
     if (hc == 0) { return 1; }
     var fp_env  = dynlib_sym(hc, "__environ");
