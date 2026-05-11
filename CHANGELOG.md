@@ -6,6 +6,157 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.48] — 2026-05-11
+
+**v5.10.x SLOT 48 — Defensive sweep + parser cosmetic limits**.
+
+Bundle of 7 items: 2 parser cosmetic fixes (the previously-filed
+issue, closed at this slot) + 2 defensive guards + 3
+already-resolved / out-of-scope items premise-checked and
+documented.
+
+### Premise check (slot entry)
+
+Per `feedback_premise_check_at_slot_entry`, each item verified
+empirically before scoping:
+
+| Item | Status | Action |
+|------|--------|--------|
+| 1. `parse_fn.cyr` x86 callee-save block missing AARCH64 guard | ACTIVE (2 sites: lines ~1720 + ~2322) | Fix |
+| 2. `aarch64/fixup.cyr:19` syscall arity warn | Pre-existing LSP false-positive (the syscall is inside an `#ifdef CYRIUS_TARGET_MACOS` block; macho needs 3-arg form, but LSP scans without preprocessor) | Documented; no code change |
+| 3. `cyrius --version` stray `\xb3` byte | **NOT REPRODUCING** at v5.10.47 (`xxd` shows clean `cc5 5.10.47\n` exactly 12 bytes ending `0a`) | Mark resolved |
+| 4. `cyrius audit` outside-repo guard | ACTIVE — `cmd_audit` calls `run_script(check.sh)` which silently exits 2 if missing | Fix in `run_script` |
+| 5. bare `return;` in if-block rejected | ACTIVE — `error:<source>:2: unexpected ';'` | Fix |
+| 6. `var name[IDENT]` size rejected | ACTIVE — `error: expected number, got identifier` | Fix (enum-const-fold path) |
+| 7. tcyr-relay-vs-testsuite-gate redundancy | Out of scope (surface review held until consumer demand surfaces) | Deferred |
+
+### Parser cosmetic 5 — bare `return;`
+
+`src/frontend/parse_fn.cyr` `PARSE_RETURN`: added a peek for `;`
+BEFORE calling PCMPE. Empty expressions previously fell through
+to PCMPE which errored. New branch synthesizes `mov rax, 0` +
+jump-to-epilogue, byte-for-byte equivalent to `return 0;` at
+that position.
+
+```cyrius
+if (PEEKT(S) == 5) {
+    EMOVI(S, 0);
+    STI(S, GTI(S) + 1);
+    var br_rp = EJMP0(S);
+    var br_rpc = GRPC(S);
+    if (br_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
+    S64(S + 0x18DA20 + br_rpc * 8, br_rp);
+    SRPC(S, br_rpc + 1);
+    return 0;
+}
+PCMPE(S);
+```
+
+### Parser cosmetic 6 — `var name[IDENT]` size
+
+`src/frontend/parse_decl.cyr` — BOTH `PARSE_ARRAY` (in-fn) and
+`PARSE_GVAR_ARR` (top-level) extended to accept an IDENT that
+resolves to a compile-time-known enum constant via
+`enum_const_val[idx]` (the existing v5.5.2 fold marker at
+`S+0x1D8000`, high bit set = compile-time literal).
+
+Plain `var NAME = LITERAL;` named constants stay unsupported —
+cyrius has no named-constant infrastructure outside enums, and
+the issue file's `var SIZE = 16; var buf[SIZE];` pattern requires
+that. The idiomatic alternative is now:
+
+```cyrius
+enum Sz { BUF = 16; }
+var buf[BUF];      # both top-level + in-fn work post-v5.10.48
+```
+
+Bad-shape ident triggers a specific diagnostic pointing at the
+enum-const idiom instead of the generic "expected number, got
+identifier" message.
+
+### Defensive 1 — parse_fn.cyr AARCH64 guard
+
+Two `if (_TARGET_CX == 0) { ... raw x86 encoding ... }` blocks in
+the regalloc save + restore paths (prologue + epilogue) get a
+paired `_AARCH64_BACKEND == 0` guard. Not a leak in practice
+(aarch64 doesn't auto-enable regalloc → the inner `_cur_fn_
+regalloc >= 1` checks never fire on aarch64), but defensive
+against future scheduling changes.
+
+### Defensive 4 — cyrius audit outside-repo
+
+`cbt/build.cyr` `run_script` now checks `file_exists(script) == 0`
+and emits `_err_ctx("script not found", script)` returning 127
+(standard Unix "command not found" exit) instead of silently
+invoking `/bin/sh <missing>` which exits 2 with no context.
+Applies to all `run_script` callers (cyrius audit, cyrius
+capacity --script, etc.). One-line guard.
+
+The full design call (clean error vs polymorphic project-level
+audit semantics — when `cyrius audit` is invoked outside the
+cyrius repo, should it look for a project-local `check.sh`,
+fall back to a generic audit, or just error?) stays HELD until
+user picks semantics; the defensive guard ships now.
+
+### Documented (no code) — items 2, 3, 7
+
+- **Item 2** (`aarch64/fixup.cyr:19` syscall arity): pre-existing
+  LSP false-positive. `syscall(228, 4, 0)` at line 19 sits inside
+  `#ifdef CYRIUS_TARGET_MACOS` for the Mach-O `clock_gettime_nsec_np`
+  3-arg form; non-Mach-O paths use 2-arg `syscall(113, 1, &ts)`.
+  The LSP scans without preprocessing → flags the macho form as
+  arity-mismatched. Marked resolved; the LSP-vs-preprocessor
+  issue is a meta-tooling concern, not a code defect.
+- **Item 3** (`--version \xb3` stray byte): empirical re-check
+  at v5.10.47 shows clean output (`xxd` confirms 12 bytes
+  `cc5 5.10.47\n` ending `0a`). Marked resolved; no longer
+  reproduces under v5.9.22+ per the original held entry.
+- **Item 7** (tcyr-relay vs testsuite-gate redundancy): surface
+  review held; no active consumer pain. Re-pin if/when surfacing.
+
+### Numbers
+
+cc5: 803,088 → **804,472 B (+1,384 B)** for the new parser
+branches (bare-return synthesis + array-size IDENT path × 2 sites)
++ defensive guards. 3-step fixpoint clean. **66/66 check.sh PASS.**
+
+### Tests
+
+New `tests/tcyr/parser_cosmetics.tcyr` — 5 sub-asserts:
+- `taken_branch(1)` → 0 (bare return synthesizes return 0)
+- `not_taken_branch(-1)` → 42 (fall-through past bare return)
+- `fn_local_buf()` → 828 (write 100..107 to in-fn `var local_b[SMALL]`, sum back)
+- `small_buf` top-level slot 0 + slot 7 write/read round-trip
+  (verifies PARSE_GVAR_ARR enum-named path)
+
+### Issue file archive
+
+`docs/development/issues/2026-05-03-parser-cosmetic-limits-bare-
+return-and-var-bracket.md` → `archived/`. Both `bare_return_in_
+if_block_rejected` and `var_bracket_size_must_be_literal`
+checkpoints flip to ✅ FIXED.
+
+Vidya `parser_syntax.cyml` field-notes update deferred to the
+v5.10.50 closeout vidya-sync step (per CLAUDE.md closeout #11
+discipline; not in this slot's scope).
+
+### Snapshot-ping-pong guard
+
+No `lib/*.cyr` edits this slot. Standard `version-bump.sh`
+install-snapshot refresh handles `~/.cyrius/versions/5.10.48/`.
+
+### What landed
+
+- `src/frontend/parse_fn.cyr` — bare-return synthesis branch in
+  PARSE_RETURN; AARCH64 guard added to two `_TARGET_CX == 0`
+  blocks.
+- `src/frontend/parse_decl.cyr` — PARSE_ARRAY + PARSE_GVAR_ARR
+  enum-const-ident size paths.
+- `cbt/build.cyr` — `run_script` `file_exists` defensive guard.
+- `tests/tcyr/parser_cosmetics.tcyr` — new gate.
+- `docs/development/issues/2026-05-03-parser-cosmetic-limits-...md`
+  → `archived/`.
+
 ## [5.10.47] — 2026-05-11
 
 **v5.10.x SLOT 47 — struct-by-value ABI arc Phase 3: cross-host

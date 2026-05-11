@@ -2150,7 +2150,7 @@ exit-code fix unblocks strict cass verify).
 See CHANGELOG [5.10.47] for the full arc summary
 table and cross-host verification matrix.
 
-#### v5.10.48 — Defensive sweep (small bundle) + parser cosmetic limits
+#### v5.10.48 — Defensive sweep (small bundle) + parser cosmetic limits — **SHIPPED 2026-05-11**
 
 Promoted from held to concrete slot at v5.10.20
 P(-1) sweep; shifted .44 → .46 at v5.10.42 ship;

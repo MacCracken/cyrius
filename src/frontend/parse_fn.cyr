@@ -659,6 +659,25 @@ fn PARSE_RETURN(S): i64 {
             }
         }
     }
+    # v5.10.48: bare `return;` synthesizes `return 0;` per cyrius's
+    # int-only return convention. Closes
+    # `docs/development/issues/2026-05-03-parser-cosmetic-limits-...`
+    # `bare_return_in_if_block_rejected`. Pre-fix `if (...) { return;
+    # }` errored with "unexpected ';'" because PCMPE was called
+    # unconditionally and rejected an empty expression. Now: peek for
+    # `;` BEFORE calling PCMPE; if present, emit `mov rax, 0` + jump
+    # to epilogue (matches `return 0;` codegen byte-for-byte at this
+    # position).
+    if (PEEKT(S) == 5) {
+        EMOVI(S, 0);
+        STI(S, GTI(S) + 1);                             # consume ';'
+        var br_rp = EJMP0(S);
+        var br_rpc = GRPC(S);
+        if (br_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
+        S64(S + 0x18DA20 + br_rpc * 8, br_rp);
+        SRPC(S, br_rpc + 1);
+        return 0;
+    }
     PCMPE(S);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
@@ -1698,7 +1717,16 @@ fn PARSE_FN_DEF(S): i64 {
     # The `_cur_fn_regalloc > 0` check on cx is academic — cx
     # never auto-enables regalloc (different scheduling) — but
     # explicit guard hardens against future changes.
-    if (_TARGET_CX == 0) {
+    # v5.10.48 defensive: paired `_AARCH64_BACKEND == 0` guard
+    # (surfaced v5.9.43 closeout, deferred from the original
+    # v5.10.44 defensive bundle into .48). Currently x86-only via
+    # `_TARGET_CX == 0`, but `_TARGET_CX` is false on aarch64
+    # too — without the AARCH64 guard, raw x86 encoding would
+    # leak into aarch64 emit if any future change wires cx==0 on
+    # aarch64. Not a leak in practice (aarch64 doesn't auto-
+    # enable regalloc → `_cur_fn_regalloc >= 1` never fires) but
+    # defensive against future scheduling changes.
+    if (_TARGET_CX == 0 && _AARCH64_BACKEND == 0) {
         if (_cur_fn_regalloc >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
         if (_cur_fn_regalloc >= 1) { E3(S, 0x5D8948); EB(S, 0xF8); }  # mov [rbp-8], rbx
         if (_cur_fn_regalloc >= 2) { E3(S, 0x65894C); EB(S, 0xF0); }  # mov [rbp-16], r12
@@ -2291,7 +2319,9 @@ fn PARSE_FN_DEF(S): i64 {
     # v5.6.12: regalloc callee-saved restore block is raw x86 encoding.
     if (_cur_fn_regalloc >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
     # v5.7.12 path B: regalloc restore — same shape as save.
-    if (_TARGET_CX == 0) {
+    # v5.10.48 defensive: paired `_AARCH64_BACKEND == 0` guard — see
+    # the matching save block at the prologue (~line 1720).
+    if (_TARGET_CX == 0 && _AARCH64_BACKEND == 0) {
         if (_cur_fn_regalloc >= 5) { E3(S, 0x7D8B4C); EB(S, 0xD8); }  # mov r15, [rbp-40]
         if (_cur_fn_regalloc >= 4) { E3(S, 0x758B4C); EB(S, 0xE0); }  # mov r14, [rbp-32]
         if (_cur_fn_regalloc >= 3) { E3(S, 0x6D8B4C); EB(S, 0xE8); }  # mov r13, [rbp-24]

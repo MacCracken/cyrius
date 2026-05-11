@@ -9,9 +9,37 @@
 
 fn PARSE_ARRAY(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume [
-    if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
-    var asz = PEEKV(S);
-    STI(S, GTI(S) + 1);
+    # v5.10.48: accept either NUM literal OR an IDENT that resolves
+    # to a compile-time-known enum constant (via enum_const_val at
+    # 0x1D8000, marker bit 63 set per v5.5.2 fold registration).
+    # Closes `docs/development/issues/2026-05-03-parser-cosmetic-
+    # limits-...` `var_bracket_size_must_be_literal`. Plain `var
+    # NAME = LITERAL;` named constants stay unsupported here —
+    # cyrius has no named-constant infrastructure outside enums;
+    # the idiomatic pattern is `enum Sz { BUF = 16; } var buf[BUF];`.
+    var asz = 0;
+    if (PEEKT(S) == 1) {
+        asz = PEEKV(S);
+        STI(S, GTI(S) + 1);
+    } else {
+        if (PEEKT(S) == 2) {
+            var as_noff = PEEKV(S);
+            var as_idx = FINDVAR(S, as_noff);
+            if (as_idx >= 0 && as_idx < 1024) {
+                var as_ecv = L64(S + 0x1D8000 + as_idx * 8);
+                if (as_ecv < 0) {
+                    asz = as_ecv & 0x7FFFFFFFFFFFFFFF;
+                    STI(S, GTI(S) + 1);
+                } else {
+                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+                }
+            } else {
+                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+            }
+        } else {
+            ERR_EXPECT(S, 1);
+        }
+    }
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);  # consume ]
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -504,10 +532,36 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
 
 fn PARSE_GVAR_ARR(S, noff): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
-    var sz = PEEKV(S) * 8;
+    # v5.10.48: top-level array-size NUM-or-enum-const-ident — same
+    # rule as the in-fn PARSE_ARRAY above. Closes the var-bracket
+    # parser-cosmetic-limit at top-level too. Without this mirror
+    # fix, `enum Sz { N = 16; } var buf[N];` at top level still
+    # errored even after the in-fn fix landed.
+    var sz_raw = 0;
+    if (PEEKT(S) == 1) {
+        sz_raw = PEEKV(S);
+        STI(S, GTI(S) + 1);
+    } else {
+        if (PEEKT(S) == 2) {
+            var gas_noff = PEEKV(S);
+            var gas_idx = FINDVAR(S, gas_noff);
+            if (gas_idx >= 0 && gas_idx < 1024) {
+                var gas_ecv = L64(S + 0x1D8000 + gas_idx * 8);
+                if (gas_ecv < 0) {
+                    sz_raw = gas_ecv & 0x7FFFFFFFFFFFFFFF;
+                    STI(S, GTI(S) + 1);
+                } else {
+                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+                }
+            } else {
+                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+            }
+        } else {
+            ERR_EXPECT(S, 1);
+        }
+    }
+    var sz = sz_raw * 8;
     if (sz < 8) { sz = 8; }
-    STI(S, GTI(S) + 1);
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
