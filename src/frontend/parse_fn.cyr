@@ -531,6 +531,43 @@ fn PARSE_RETURN(S): i64 {
         SRPC(S, srn_rpc + 1);
         return 0;
     }
+    # v5.10.45 Phase 1 — int-class 16B struct pair-return.
+    # Fires when the current fn is annotated `: StructName` with
+    # STRUCTSZ in [9,16] AND the struct sid != Str's sid AND the
+    # return form is `return IDENT;` where IDENT is a 2-slot typed
+    # local matching the declared return type. Emits the int-class
+    # pair load `mov rax, [&v+0]; mov rdx, [&v+8]` via
+    # `EFLLOAD_STRUCT_INT_PAIR` then jumps to the epilogue.
+    # Falls through to scalar PCMPE for non-IDENT shapes (those
+    # land on a follow-up slot — same staging as f64v2's v5.10.28
+    # Phase 1 left non-IDENT to a follow-up).
+    if (_cur_fn_ret_pair == 1) {
+        if (PEEKT(S) == 2) {
+            if (TOKTYP(S, GTI(S) + 1) == 5) {
+                var _ip_noff = PEEKV(S);
+                var _ip_lli = FINDLOCAL(S, _ip_noff);
+                if (_ip_lli >= 0) {
+                    var _ip_lt = GLTYPE(S, _ip_lli);
+                    # Multi-slot typed local: lt < 0 AND -lt == ret_sid.
+                    # Single-slot heap-handle pattern (e.g. `var s = alloc(...)`
+                    # in a fn returning : Str) falls through to scalar PCMPE.
+                    if (_ip_lt < 0) {
+                        if ((0 - _ip_lt) == _cur_fn_ret_sid) {
+                            STI(S, GTI(S) + 1);     # consume IDENT
+                            STI(S, GTI(S) + 1);     # consume ';'
+                            EFLLOAD_STRUCT_INT_PAIR(S, _ip_lli);
+                            var _ip_rp = EJMP0(S);
+                            var _ip_rpc = GRPC(S);
+                            if (_ip_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
+                            S64(S + 0x18DA20 + _ip_rpc * 8, _ip_rp);
+                            SRPC(S, _ip_rpc + 1);
+                            return 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
     # v5.10.28 — f64v2 multi-register pair return ABI.
     # When the current fn is annotated `: f64v2` (encoding -20 in
     # _cur_fn_ret_scalar) AND the return form is `return IDENT;`
@@ -1423,6 +1460,7 @@ fn PARSE_FN_DEF(S): i64 {
     # `name: Type`).
     _cur_fn_ret_stash = 0;
     _cur_fn_ret_scalar = 0;
+    _cur_fn_ret_pair = 0;
     var _rs_save_ti = GTI(S);
     if (PEEKT(S) == 10) {
         STI(S, GTI(S) + 1);
@@ -1451,8 +1489,25 @@ fn PARSE_FN_DEF(S): i64 {
                 var _rs_rt_noff = PEEKV(S);
                 var _rs_rt_sid = FINDSTRUCT(S, _rs_rt_noff);
                 if (_rs_rt_sid > 0) {
-                    if (STRUCTSZ(S, _rs_rt_sid - 1) > 16) {
+                    var _rs_rt_sz = STRUCTSZ(S, _rs_rt_sid - 1);
+                    if (_rs_rt_sz > 16) {
                         _cur_fn_ret_stash = 8;
+                    } else {
+                        # v5.10.45 Phase 1: 9-16B int-class value-type
+                        # struct → pair-return rax/rdx. Str (also 16B) is
+                        # special-cased to keep its existing scalar-rax
+                        # heap-handle semantics — `fn str_from(c): Str`
+                        # returns `rax = heap_ptr`, not a value-typed
+                        # struct copy. Pre-v5.10.45 ALL ≤16B structs
+                        # fell through to scalar-rax; for non-Str 16B
+                        # value structs (e.g. `struct Point {x: i64;
+                        # y: i64;}`), this lost the high half. Filed
+                        # at v5.10.44 ship (premise-check finding).
+                        if (_rs_rt_sz > 8) {
+                            if (_rs_rt_sid != _STR_SID(S)) {
+                                _cur_fn_ret_pair = 1;
+                            }
+                        }
                     }
                 } else {
                     # v5.10.5 — recognize i8/i16/i32/i64 scalar returns
@@ -2835,6 +2890,8 @@ fn PARSE_FN_DEF(S): i64 {
     # v5.5.36 Phase 2b — same for the ret-stash flag + sid mirror.
     _cur_fn_ret_stash = 0;
     _cur_fn_ret_sid = 0;
+    # v5.10.45 Phase 1 — clear pair-return flag.
+    _cur_fn_ret_pair = 0;
     # v5.8.20 — same for the #pure mirror.
     _cur_fn_is_pure = 0;
     return 0;

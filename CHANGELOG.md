@@ -6,6 +6,140 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.45] — 2026-05-11
+
+**v5.10.x SLOT 45 — struct-by-value ABI arc Phase 1: x86 SysV
+int-class pair-return**.
+
+First phase of the 3-phase struct-by-value ABI completion arc
+opened at v5.10.44 ship after empirical premise-check found the
+originally-pinned "macOS arm64 struct-by-value" slot was
+mis-scoped: the underlying bug was broader. The v5.5.36 claim
+("hidden-RCX struct-retptr (>8B) native on SysV (RDI) + Win64
+(RCX)") and the v5.9.26 claim ("Phase 2b-aarch64 struct return by
+value") shipped infrastructure but the end-to-end retptr wiring
+**never closed for user-defined structs in the 9-16B range**.
+v5.10.28's fix was f64v2-specific (SSE-class pair, XMM0). General
+int-class 16B struct returns (e.g. `struct Point {x: i64; y:
+i64;}`) fell through to scalar-rax and silently lost the high
+half across the entire v5.x cycle.
+
+### Empirical confirmation (slot entry, 2026-05-11)
+
+Three-backend test program:
+```cyrius
+struct Point { x: i64; y: i64; }
+fn make(): Point { var p: Point; p.x = 7; p.y = 35; return p; }
+fn run(): i64 { var got: Point = make(); return got.x + got.y; }
+syscall(60, run());      # expect exit=42
+```
+
+| Backend (v5.10.44) | got.y | Status |
+|--------------------|-------|--------|
+| x86_64 Linux       | 0 (lost) | Bug confirmed |
+| aarch64 Linux (pi) | 0 (lost) | Bug confirmed — same shape |
+| Mach-O arm64 (ecb) | not tested at slot entry — same code path as aarch64 | Inherits |
+
+### Arc shape (3 phases, planned before execution)
+
+- **Phase 1 (v5.10.45 — this slot)**: x86 SysV via rax+rdx pair.
+- **Phase 2 (v5.10.46)**: aarch64 AAPCS64 via X0+X1 pair (Linux + Mach-O share ABI).
+- **Phase 3 (v5.10.47)**: Cross-host smoke on pi/ecb/cass + PE retptr verify.
+
+### Phase 1 implementation (x86 SysV)
+
+**Distinguisher**: Str's 16B handle-shape must keep its existing
+scalar-rax pointer-mode semantics (every stdlib Str-returning fn
+relies on it). Special-cased via `_STR_SID(S)` lookup — any 9-16B
+struct whose sid != Str's sid takes the new pair-return path; Str
+stays on the legacy scalar path. Cyrius has no value-vs-handle
+type annotation, so this ad-hoc carve-out is the localised fix
+that doesn't require a language change.
+
+**New global `_cur_fn_ret_pair`** (`src/frontend/parse.cyr`):
+nonzero when the current fn returns a 9-16B int-class non-Str
+struct. Mutually exclusive with `_cur_fn_ret_stash > 0` (which
+fires for >16B retptr). Set in PARSE_FN_DEF's rough-scan
+alongside `_cur_fn_ret_stash` / `_cur_fn_ret_scalar`; reset at fn
+end.
+
+**Callee-side PARSE_RETURN branch** (`src/frontend/parse_fn.cyr`):
+new branch between the existing retptr branch and the f64v2 pair
+branch. When `_cur_fn_ret_pair == 1` and the returned IDENT is a
+multi-slot typed local matching the fn's declared return sid,
+emits `EFLLOAD_STRUCT_INT_PAIR` (load rax+rdx from the named/
+filler slot pair) + jump-to-epilogue. Falls through to scalar
+PCMPE for non-IDENT shapes (e.g. `return make_other();` nested
+calls — same staging as v5.10.28's f64v2 Phase 1).
+
+**Caller-side asv_pair path** (`src/frontend/parse_decl.cyr`):
+sibling of the existing asv_try retptr path. Gate detects
+`var got: Point = make();` shape when STRUCTSZ in [9,16] AND sid
+!= Str. Allocates multi-slot (named-last + filler-above
+sentinel — matches the v5.8.17 §9 dot-access layout). After the
+call (no hidden retptr arg), emits `EFLSTORE_STRUCT_INT_PAIR` to
+receive rax+rdx into the 2-slot local.
+
+**New x86 emit helpers** (`src/backend/x86/emit.cyr`):
+- `EFLLOAD_STRUCT_INT_PAIR(S, idx)` — `mov rax, [&v+0]; mov rdx, [&v+8]` (14 bytes total, 7 per mov)
+- `EFLSTORE_STRUCT_INT_PAIR(S, idx)` — mirror for caller-side post-call store
+
+Distinct from `EFLLOAD/STORE_F64V2_PAIR` (v5.10.28 → v5.10.32:
+`movupd xmm0, [m128]` 8-byte SSE-class encoding) because
+int-class composites use rax/rdx, not XMM registers.
+
+**aarch64 + cx stubs**: both backends ship the new helper names
+with `ERR_MSG` bodies so cross-builds fail loudly if any consumer
+uses the new ABI on a target where Phase 2/3 hasn't yet wired
+the codegen. Per `feedback_cross_arch_propagation_mandatory`:
+**this is a planned multi-phase decomposition, NOT a half-fix**.
+Aarch64 wiring lands at v5.10.46 (Phase 2 of the arc).
+
+### Numbers
+
+cc5 (x86): 798,912 → **803,088 B (+4,176 B)** for the new emit
+helpers + parse branches + global var + PARSE_RETURN branch.
+3-step self-host fixpoint clean. 66/66 check.sh PASS.
+
+### Tests
+
+New `tests/tcyr/struct_byval_return.tcyr` — 14 sub-asserts /
+6 test groups:
+- Point 2×i64 round-trip (lo via rax + hi via rdx)
+- Computed-field shifted_point (param threads through)
+- Multiple call sites in same fn (state correctly reset)
+- Pair {4×i32} 16B struct (i32-field composite)
+- Inline 16B field access baseline (verifies non-cross-fn struct semantics unchanged)
+
+Str-handle path verified unchanged via existing
+`tests/tcyr/str_dot_syntax.tcyr` (5 `var s: Str = str_from(...)`
+test groups all still PASS — the `_STR_SID(S)` special-case
+preserves the legacy single-slot heap-handle semantics).
+
+### Cross-arch propagation
+
+x86 Phase 1 only this slot. cc5_aarch64 / cc5_macho_arm /
+cc5_win cross-builds compile clean (the new helpers stub with
+ERR_MSG bodies that never fire unless someone writes value-
+typed Point-style returns; that's exactly the Phase 2/3 gate).
+**No cross-host smoke this slot** — Phase 3 is the host run.
+
+### Snapshot-ping-pong guard
+
+No `lib/*.cyr` edits this slot — pure compiler-side change.
+Standard `version-bump.sh` snapshot regen handles the
+~/.cyrius/versions/5.10.45/ install.
+
+### What landed
+
+- `src/frontend/parse.cyr` — new `_cur_fn_ret_pair` global (with comment block).
+- `src/frontend/parse_fn.cyr` — rough-scan sets `_cur_fn_ret_pair = 1` for 9-16B non-Str; new PARSE_RETURN pair-emit branch; teardown resets.
+- `src/frontend/parse_decl.cyr` — new `asv_pair` detection + execution path mirroring asv_try retptr path.
+- `src/backend/x86/emit.cyr` — `EFLLOAD_STRUCT_INT_PAIR` / `EFLSTORE_STRUCT_INT_PAIR`.
+- `src/backend/aarch64/emit.cyr` — stub helpers with `ERR_MSG` (Phase 2 wires).
+- `src/backend/cx/emit.cyr` — stub helpers with `ERR_MSG`.
+- `tests/tcyr/struct_byval_return.tcyr` — new regression gate (14 sub-asserts).
+
 ## [5.10.44] — 2026-05-11
 
 **v5.10.x SLOT 44 — `lib/process.cyr` `exec_*` Str/cstr ambiguity

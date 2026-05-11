@@ -2021,20 +2021,101 @@ See CHANGELOG [5.10.44] for the family-header
 docstring shape, test coverage, and api-surface
 snapshot delta.
 
-#### v5.10.45 — macOS arm64 struct-by-value calling-convention
+#### v5.10.45 — struct-by-value ABI arc Phase 1: x86 SysV pair-return fix — **SHIPPED 2026-05-11**
 
-Promoted from held to concrete slot at v5.10.20 P(-1)
-sweep; cascaded from original .34 pin at v5.10.33
-ship; shifted .43 → .45 at v5.10.42 ship when
-str_split + exec_* issues were promoted ahead.
-v5.5.36 deferred. Surfaces on consumer cross-build.
-Mach-O ABI work, isolated from other held items —
-earns its own slot.
+**Pin re-scoped 2026-05-11 at v5.10.44 ship** —
+empirical premise check showed the original pin
+("macOS arm64 struct-by-value calling-convention,
+isolated Mach-O ABI work") was mis-framed. Test
+program `struct Point {x: i64; y: i64};
+fn make(): Point { ... return p; }; var got =
+make();` returns **got.y = 0** on BOTH x86_64
+Linux AND aarch64 Linux at v5.10.44 — the high
+half is lost across both backends. v5.5.36's claim
+("native on SysV (RDI)") and v5.9.26's claim
+("Phase 2b-aarch64 struct return by value")
+shipped infrastructure but the end-to-end retptr
+wiring never closed for user-defined structs >8B.
+v5.10.28 fixed it only for `f64v2` (pair-return
+`rax=lo, rdx=hi` path; not the retptr path).
 
-#### v5.10.46 — Defensive sweep (small bundle) + parser cosmetic limits
+**Arc shape** (3 phases per `feedback_no_one_fix_per_slot`
+— genuine multi-piece work, planned before
+execution per CLAUDE.md "Splits are planned
+decisions made before starting"):
+
+- **Phase 1 (v5.10.45 — this slot)**: x86 SysV
+  general struct retptr ABI. Trace where the
+  caller-side RDI wiring or callee-side retptr-use
+  breaks; patch parse_fn.cyr + backend/x86/emit.cyr.
+  Self-host + 66/66 check.sh + new
+  `tests/tcyr/struct_byval_return.tcyr` regression
+  gate covering 16B / single-field / nested struct
+  shapes.
+- **Phase 2 (v5.10.46)**: aarch64 AAPCS64 retptr
+  (X8). Linux aarch64 + macOS arm64 share AAPCS64,
+  so this phase covers both `_TARGET_MACHO` ∈ {0, 2}
+  on the aarch64 backend.
+- **Phase 3 (v5.10.47)**: Cross-host smoke on pi
+  (aarch64 Linux native) + ecb (macOS arm64) + cass
+  (Win64 PE — verify the v5.5.36 PE RCX retptr
+  claim under the same regression gate).
+
+Acceptance for the arc:
+1. The Point repro above returns 42 (7 + 35) on all
+   four targets (x86_64 Linux, aarch64 Linux, macOS
+   arm64, Win64 PE).
+2. New `tests/tcyr/struct_byval_return.tcyr` lands at
+   Phase 1 (x86 gate active immediately; aarch64 +
+   PE pass after Phases 2 + 3).
+3. Cross-host fixpoint clean on pi (native
+   self-host b == c with the new struct-byval
+   logic in cc5_aarch64_native).
+4. cc5 self-host byte-identical at each phase
+   boundary (compiler change → expect cc5 +∆B; gate
+   the delta in CHANGELOG).
+
+#### v5.10.46 — struct-by-value ABI arc Phase 2: aarch64 AAPCS64 retptr
+
+Phase 2 of the struct-byval arc opened at v5.10.45.
+AAPCS64's X8 retptr ABI covers both Linux aarch64
+and macOS arm64 (same standard; the `_TARGET_MACHO == 2`
+branches inside `src/backend/aarch64/emit.cyr` are for
+relocation / branch encoding differences, NOT for ABI
+shape). Patch the X8 retptr wiring at `EFLADDR_X8`
+(caller side, v5.9.26) + `ESTRUCT_BYVAL_COPY` (callee
+return-store, v5.9.40) so both sides round-trip the
+full struct payload — `tests/tcyr/struct_byval_return.tcyr`
+(landed at .45) flips from x86-only PASS to also
+PASS on cross-built aarch64 binaries.
+
+Acceptance: gate from .45 passes on the cc5_aarch64
+cross-compiler emit + (Phase 3 verifies on real pi /
+ecb).
+
+#### v5.10.47 — struct-by-value ABI arc Phase 3: cross-host smoke + PE retptr verify
+
+Phase 3 of the struct-byval arc. Cross-host smoke
+runs Phase 2's aarch64 + Mach-O binaries on pi + ecb;
+PE side verifies the v5.5.36 hidden-RCX retptr claim
+under the same `struct_byval_return.tcyr` gate on
+cass. Fixes any remaining backend-specific gaps
+discovered during Phase 1 + 2 (e.g. an x86 fix that
+didn't generalise to PE because the v5.5.36 RCX
+path is independent of the SysV RDI path; or a
+Mach-O code-signing requirement that affects retptr
+test programs).
+
+Acceptance: gate from .45 passes on all 4 targets
+(local x86 + pi aarch64 + ecb Mach-O arm64 + cass
+PE32+); cross-host fixpoint clean on pi; arc CLOSED.
+
+#### v5.10.48 — Defensive sweep (small bundle) + parser cosmetic limits
 
 Promoted from held to concrete slot at v5.10.20
-P(-1) sweep; shifted .44 → .46 at v5.10.42 ship.
+P(-1) sweep; shifted .44 → .46 at v5.10.42 ship;
+shifted .46 → .48 at v5.10.44 ship when the
+struct-byval arc expanded into .45/.46/.47.
 Scope expanded at v5.10.42 to absorb the two
 parser-cosmetic-limit items from
 [`2026-05-03-parser-cosmetic-limits-bare-return-and-var-bracket.md`](issues/2026-05-03-parser-cosmetic-limits-bare-return-and-var-bracket.md).
@@ -2100,7 +2181,7 @@ token. Issue file
 `2026-05-03-parser-cosmetic-limits-bare-return-and-var-bracket.md`
 moves to `archived/` at slot ship.
 
-#### v5.10.47 — Win64 PE `println` silent + exit-code propagation fix
+#### v5.10.49 — Win64 PE `println` silent + exit-code propagation fix
 
 Pinned 2026-05-10 at v5.10.33 ship. Pre-existing
 Win64 stdlib gap surfaced repeatedly across the
@@ -2162,7 +2243,7 @@ code-only" — fine for primitive gates (`_pe_exit_gate`
 uses bare `syscall(60, 42)`), but blind for
 anything using `println`-based test reporting.
 
-#### v5.10.48 — v5.10.x cycle closeout
+#### v5.10.50 — v5.10.x cycle closeout
 
 Pinned 2026-05-10 at v5.10.33 ship as the cycle-
 close slot. Per CLAUDE.md "Closeout Pass (before
@@ -2236,9 +2317,9 @@ identical; otherwise defer to v5.11.0's first patch.
 
 **Acceptance bar**:
 - All 11 steps complete with green outcomes recorded
-  in the v5.10.48 CHANGELOG entry.
+  in the v5.10.50 CHANGELOG entry.
 - Cycle stats summarized: total patches, cc5 size
-  delta v5.10.0 → v5.10.48, check.sh gate count
+  delta v5.10.0 → v5.10.50, check.sh gate count
   growth, cyrius test growth, slot-summary table
   (one line per .x).
 - v5.11.0 entry-bar prepped: P(-1) sweep starting
@@ -2400,7 +2481,7 @@ identical; otherwise defer to v5.11.0's first patch.
      `cp -L` then sees distinct inodes everywhere and the
      "same file" collision can't fire.
   2. **Belt-and-suspenders in install.sh** (this slot,
-     v5.10.48 closeout): even with the v5.11.x cyrius-deps
+     v5.10.50 closeout): even with the v5.11.x cyrius-deps
      fix, harden the refresh-only lib-copy loop against
      the same-file class of errors generally. Replace
      `cp -L "$f" "$dst"` with `rm -f "$dst" && cp -L "$f"
@@ -2620,7 +2701,7 @@ moves to v5.12.0).
      project's `lib/<dep>.cyr` content drifts from the cache —
      same-as-symlink invariant under copies.
   5. The `cp -L same-file` defensive guard in install.sh
-     (per the v5.10.48 closeout pin) is ALSO landed as
+     (per the v5.10.50 closeout pin) is ALSO landed as
      belt-and-suspenders even with this fix.
 
   **Long-term plan — Option A fold-in cadence** (per-dep,
@@ -2647,7 +2728,7 @@ moves to v5.12.0).
   gates into cyrius-native bespoke gates in
   `programs/check.cyr` (see CLAUDE.md DO NOT bullet on
   `regression-X.sh` retirement). A small number of `.sh`
-  gates remain — including the v5.10.48-pinned
+  gates remain — including the v5.10.50-pinned
   `_cyriusly_starship_add_only_gate` whose subject is itself
   the shell `scripts/cyriusly`. Folding the remaining `.sh`
   gates into cyrius lands in v5.11.x **BEFORE** the TS test
@@ -2656,12 +2737,12 @@ moves to v5.12.0).
 
   **Acceptance bar** (multi-patch, refine at slot entry):
   1. Inventory: walk `tests/regression-*.sh` (if any remain)
-     + the v5.10.48 closeout-investigation gate, list each
+     + the v5.10.50 closeout-investigation gate, list each
      subject + assertion shape.
   2. Per-gate: rewrite as a bespoke fn in
      `programs/check.cyr` using `lib/regression.cyr` helpers
      (same shape as `_macho_exit_gate` / `_pe_exit_gate`).
-  3. **Cyriusly cmdtools port** — the v5.10.48 starship
+  3. **Cyriusly cmdtools port** — the v5.10.50 starship
      add-only gate's subject is shell. Port the cmdtools
      install/remove paths (currently `scripts/cyriusly:160+`)
      into a cyrius binary or `cyrius` sub-command first, so

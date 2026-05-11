@@ -65,6 +65,16 @@ var _cur_fn_ret_stash = 0;
 # scalar return. Set/reset in parallel with _cur_fn_ret_stash.
 var _cur_fn_ret_sid = 0;
 
+# v5.10.45 Phase 1 of struct-byval ABI arc — nonzero when the
+# current fn returns a 9-16B int-class value-type struct (Str's
+# 16B handle-shape is special-cased out via `_STR_SID(S)` check).
+# Triggers PARSE_RETURN's pair-emit path (rax = lo, rdx = hi)
+# instead of the scalar PCMPE path. Mutually exclusive with
+# `_cur_fn_ret_stash > 0` (the >16B retptr path). Set/reset in
+# parallel with `_cur_fn_ret_stash` and `_cur_fn_ret_sid` in the
+# fn rough-scan + PARSE_FN_DEF teardown.
+var _cur_fn_ret_pair = 0;
+
 # v5.10.28 — current fn's return-type scalar tag (negative encodings
 # from `_rt_scalar`: -1=i8, -2=i16, -4=i32, -8=i64, -16=Result,
 # -17=Option, -18=Tagged, -19=cstring, -20=f64v2). PARSE_RETURN

@@ -1,0 +1,87 @@
+# Test: struct-by-value return ABI for 9-16B int-class user
+# structs (v5.10.45 Phase 1 of the struct-byval ABI completion arc).
+# Closes the long-standing premise-check finding at v5.10.44 ship —
+# v5.5.36 claimed "native on SysV (RDI)" but 16B int-class struct
+# returns lost the high half across the entire v5.x cycle.
+#
+# Phase 1 covers x86 SysV via rax+rdx pair-register convention.
+# Phases 2/3 (v5.10.46 / .47) cover aarch64 AAPCS64 + cross-host
+# verify + PE retptr.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+# 16B int-class struct (2 i64 fields).
+struct Point { x: i64; y: i64; }
+
+# 16B struct with non-i64 fields (still int-class composite).
+struct Pair { a: i32; b: i32; c: i32; d: i32; }
+
+fn make_point(): Point {
+    var p: Point;
+    p.x = 7;
+    p.y = 35;
+    return p;
+}
+
+fn make_shifted(base): Point {
+    var q: Point;
+    q.x = base + 1;
+    q.y = base + 2;
+    return q;
+}
+
+fn make_pair_struct(): Pair {
+    var pr: Pair;
+    pr.a = 11;
+    pr.b = 22;
+    pr.c = 33;
+    pr.d = 44;
+    return pr;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("Point 2×i64 round-trip via pair-return");
+    var got: Point = make_point();
+    assert_eq(got.x, 7,  "Point.x via rax (lo half)");
+    assert_eq(got.y, 35, "Point.y via rdx (hi half)");
+    assert_eq(got.x + got.y, 42, "Point.x + .y combined");
+
+    test_group("Point with computed fields (param passes through)");
+    var s: Point = make_shifted(100);
+    assert_eq(s.x, 101, "shifted.x = base+1");
+    assert_eq(s.y, 102, "shifted.y = base+2");
+
+    test_group("Multiple call sites in same fn");
+    var a: Point = make_point();
+    var b: Point = make_shifted(0);
+    assert_eq(a.x, 7,  "second-pair a.x = 7");
+    assert_eq(a.y, 35, "second-pair a.y = 35");
+    assert_eq(b.x, 1,  "second-pair b.x = 1");
+    assert_eq(b.y, 2,  "second-pair b.y = 2");
+
+    test_group("16B int-class struct with i32 fields");
+    var pr: Pair = make_pair_struct();
+    assert_eq(pr.a, 11, "Pair.a i32");
+    assert_eq(pr.b, 22, "Pair.b i32");
+    assert_eq(pr.c, 33, "Pair.c i32");
+    assert_eq(pr.d, 44, "Pair.d i32");
+
+    test_group("Direct field access after assignment (no return)");
+    # Sanity baseline — verifies that 16B local struct semantics
+    # themselves work; the bug was specifically in cross-fn
+    # boundary, not in local struct field semantics.
+    var inline: Point;
+    inline.x = 100;
+    inline.y = 200;
+    assert_eq(inline.x + inline.y, 300, "inline 16B struct field access");
+
+    var r = assert_summary();
+    return r;
+}
+
+var rc = main();
+syscall(60, rc);

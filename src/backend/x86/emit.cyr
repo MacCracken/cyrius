@@ -1604,6 +1604,63 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     return 0;
 }
 
+# v5.10.45 Phase 1 — int-class 16B struct pair-return LOAD (callee).
+# Used in PARSE_RETURN when `_cur_fn_ret_pair == 1` (9-16B non-Str
+# value-type struct return on x86 SysV). Layout matches f64v2's
+# pair convention (filler above named):
+#   slot idx-1 = filler (hi half, &v + 8..15)
+#   slot idx   = named  (lo half / bottom, &v + 0..7)
+# Emits:
+#   mov rax, [rbp + disp_lo]   ; 48 8B 85 disp32 (named, lo half)
+#   mov rdx, [rbp + disp_hi]   ; 48 8B 95 disp32 (filler, hi half)
+# x86 SysV ABI: 16-byte int-class composite returns split rax/rdx
+# (rax = lo, rdx = hi). For SSE-class composites (f64v2), v5.10.32
+# optimized to a single `movupd xmm0, [m128]` via EFLLOAD_F64V2_PAIR
+# — INT-class structs can't use XMM, hence this separate helper.
+# 14-byte encoding total (7 bytes per mov).
+fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 8;
+    # mov rax, [rbp + disp_lo]: 48 8B 85 disp32
+    E3(S, 0x858B48);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # mov rdx, [rbp + disp_hi]: 48 8B 95 disp32 (ModRM 0x95 = mod=10 reg=010 rm=101)
+    E3(S, 0x958B48);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
+# v5.10.45 Phase 1 — int-class 16B struct pair-return STORE (caller).
+# Mirror of EFLLOAD_STRUCT_INT_PAIR — receives rax/rdx into the
+# caller's 2-slot stack-local. Emits:
+#   mov [rbp + disp_lo], rax   ; 48 89 85 disp32
+#   mov [rbp + disp_hi], rdx   ; 48 89 95 disp32
+# 14-byte encoding (7 bytes per mov).
+fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
+    var disp_lo = 0 - ((idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    var disp_hi = disp_lo + 8;
+    # mov [rbp + disp_lo], rax: 48 89 85 disp32
+    E3(S, 0x858948);
+    var addr_lo = S + 0x64A000 + GCP(S);
+    S64(addr_lo, (L64(addr_lo) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    # mov [rbp + disp_hi], rdx: 48 89 95 disp32
+    E3(S, 0x958948);
+    var addr_hi = S + 0x64A000 + GCP(S);
+    S64(addr_hi, (L64(addr_hi) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
 # Emit fn local load: mov rax, [rbp - offset]
 fn EFLLOAD(S, idx): i64 {
     if (_IR_REC1(S, IR_LOAD_LOCAL, idx) == 1) { return 0; }
