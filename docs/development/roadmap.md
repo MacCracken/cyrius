@@ -487,8 +487,11 @@ right after).
 | v5.11.15-17 | bote streaming dispatch + thread async primitives (P2; 3-slot) |
 | v5.11.18 | bote WS handshake key validation (Low; ride-along after bote stack) |
 | v5.11.19 | **Per-repo cyrius version isolation** (pinned 2026-05-11 v5.11.3 wipe; see below) |
-| v5.11.20 | **kybernet `fn_table` + `identifier buffer` cap raise** (P2; pinned 2026-05-11 at v5.11.4 entry; see below) |
-| v5.11.21-38 | OPEN — emergent bugs / consumer-filed / items surface during cycle (18-slot buffer; user 2026-05-11) |
+| v5.11.20 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
+| v5.11.21-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (15-slot buffer; user 2026-05-11) |
+| v5.11.36 | **cc5_aarch64_macho cross-bin ship** (deferred from v5.11.6 — host-runtime mmap fix + ecb smoke; user 2026-05-11: "fine for back of the current line") |
+| v5.11.37 | **cc5_aarch64_native cross-bin ship** (deferred from v5.11.6 — build + pi smoke) |
+| v5.11.38 | **cc5_cx cross-bin ship** (deferred from v5.11.6 — bytecode emit + VM smoke target) |
 | v5.11.39 | Defensive sweep (parser `assert_eq` string-literal quirk bundled) |
 | v5.11.40 | Cycle closeout |
 
@@ -518,12 +521,12 @@ currently depend on running `cc5` x86 cross under Rosetta).
 
 **Targets to add to `[release].cross_bins`**:
 
-| Cross-bin | Entry source | Target | Smoke host |
+| Cross-bin | Entry source | Target | Status |
 |---|---|---|---|
-| `cc5_win` | `src/main_win.cyr` | Win64 PE x86_64 | cass |
-| `cc5_aarch64_macho` | `src/main_aarch64_macho.cyr` | macOS Apple Silicon Mach-O | ecb |
-| `cc5_aarch64_native` | `src/main_aarch64_native.cyr` | aarch64 Linux self-build | pi |
-| `cc5_cx` | `src/main_cx.cyr` | cyrius-x bytecode | n/a (in-tree) |
+| `cc5_win` | `src/main_win.cyr` | Win64 PE x86_64 cross | ✅ shipped at v5.11.6 — verified runs on Linux, emits valid PE32+, deploys + runs on cass |
+| `cc5_aarch64_macho` | `src/main_aarch64_macho.cyr` | macOS Apple Silicon Mach-O cross | ⏸ **Pinned v5.11.36** — main_aarch64_macho.cyr uses macOS mmap for its OWN heap init at startup, so the Linux-host cross-compiler binary fails with "cc5_macho: mmap heap init failed". Needs source fix (use Linux syscalls for host runtime, mach-o emit for output) + ecb smoke. |
+| `cc5_aarch64_native` | `src/main_aarch64_native.cyr` | aarch64 Linux self-build | ⏸ **Pinned v5.11.37** — not built/verified this slot; needs build + pi smoke + cross_bins add. |
+| `cc5_cx` | `src/main_cx.cyr` | cyrius-x bytecode | ⏸ **Pinned v5.11.38** — bytecode emit works locally but no runtime smoke target; needs cyrius-x VM verification + cross_bins add. |
 
 **Acceptance bar**:
 1. `cyrius.cyml [release].cross_bins` updated to list the four entries
@@ -616,12 +619,15 @@ place. The two fixes are complementary, not redundant.
 `project_cyriusly_version_switching.md` carries the symptom + the
 recovery procedure used during v5.11.3.
 
-#### v5.11.20 — kybernet `fn_table` + `identifier buffer` cap raise
+#### v5.11.20 — kybernet bundle: cap raise + socket-syscall wrappers
 
-**Pinned 2026-05-11 at v5.11.4 entry per user direction** (kybernet
-filed
-[`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md);
-pin lands AFTER the stdlib annotation arc completes).
+**Original pin 2026-05-11 at v5.11.4 entry** (cap raise from
+[`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md)).
+**Expanded 2026-05-11 at v5.11.5 ship per user direction** to bundle
+kybernet's 1.1.5 socket-syscall wrapper filing
+([`docs/development/issues/2026-05-11-kybernet-socket-syscall-wrappers.md`](issues/2026-05-11-kybernet-socket-syscall-wrappers.md))
+into the same slot — both kybernet P2 stdlib asks, both low-risk,
+both pinned AFTER the stdlib annotation arc completes.
 
 **Background**: kybernet 1.1.0 (AGNOS PID-1 init system) assembled
 the full AGNOS surface (stdlib + agnosys-full + agnostik + libro +
@@ -663,6 +669,56 @@ the next 1-2 minors.
 clean under existing caps); not P3 (headroom is narrow enough that
 1.2.0 edge-boot plausibly tips the warn threshold). Low-risk fix
 makes the P2 rate the right speed.
+
+##### Part B (added v5.11.5 ship) — socket-syscall wrappers
+
+kybernet 1.1.5 P(-1) audit caught three sites in `src/lib/notify.cyr`
+where x86_64 syscall numbers were hardcoded and silently routed to
+the wrong aarch64 syscalls (41 → `pipe2`, 49 → `setsockopt`, 45 →
+`getsockopt`). Workaround landed at the kybernet layer (per-arch
+`#ifdef` enum); upstream gap is missing socket-family stdlib wrappers.
+
+**Wrappers to add** (mirror the v5.11.0 kavach sandbox-syscall
+pattern across both x86_64 + aarch64 peers):
+
+| Wrapper | Arity | x86_64 | aarch64 | Use |
+|---------|------:|-------:|--------:|-----|
+| `sys_socket(domain, type, protocol)` | 3 | 41 | 198 | sd_notify dgram, supervisor IPC |
+| `sys_bind(fd, sockaddr, addrlen)` | 3 | 49 | 200 | sd_notify socket bind |
+| `sys_recvfrom(fd, buf, len, flags, srcaddr, srcaddrlen)` | 6 | 45 | 207 | sd_notify message read |
+| `sys_listen(fd, backlog)` | 2 | 50 | 201 | supervisor control-socket accept loop (kybernet 1.2.x) |
+| `sys_accept4(fd, srcaddr, srcaddrlen, flags)` | 4 | 288 | 242 | same accept loop |
+| `sys_connect(fd, sockaddr, addrlen)` | 3 | 42 | 203 | service-side sd_notify client (argonaut) |
+| `sys_recvmsg(fd, msghdr, flags)` *(adjacent)* | 3 | 47 | 212 | SCM_CREDENTIALS peer-cred capture (argonaut 1.6.2 already uses) |
+
+**Acceptance bar (Part B)**:
+- All 7 wrappers added to `lib/syscalls_x86_64_linux.cyr` AND
+  `lib/syscalls_aarch64_linux.cyr` with the matching syscall numbers
+  (per `feedback_cross_arch_propagation_mandatory` — same-slot
+  propagation mandatory).
+- Each wrapper annotated `: i64` (matches v5.11.x annotation arc).
+- New test in `tests/tcyr/socket_syscalls.tcyr` mirroring the v5.11.0
+  `sandbox_syscalls.tcyr` shape: compile-time `&fn` reference for
+  callability + runtime exercise where side-effect-safe (e.g.,
+  `sys_socket(AF_UNIX, SOCK_DGRAM, 0)` + immediate close).
+- Cross-host smoke: pi (aarch64 Linux) runtime green; the original
+  bug class is silent-misroute on aarch64, so pi verify is load-bearing.
+- kybernet 1.1.5's `#ifdef SockSysNr` block can be deleted upstream
+  and replaced with direct `sys_socket()` / `sys_bind()` /
+  `sys_recvfrom()` calls in a follow-up kybernet patch.
+
+**Why bundle into v5.11.20**: both kybernet asks ship from the same
+consumer at the same audit window (1.1.5 P(-1)); both are pure stdlib
+additions with no API change; both are low-risk (cap raise + new fns,
+no removals). Combined slot is still well-bounded — one parser-cap
+edit + 14 fn additions (7 × 2 arches) + 1 test file. User direction
+2026-05-11: pin alongside the existing kybernet request.
+
+**P2 rationale (Part B)**: same as Part A — local workaround in
+place, no active break, but the footgun class (silent aarch64
+misroute, invisible on x86 CI) is exactly what stdlib wrappers
+exist to prevent. Every new consumer needing a socket re-rolls the
+per-arch dispatch and re-introduces the bug.
 
 Held-forward items (no slot pinned; surface-on-ask): Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,

@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.6] — 2026-05-11
+
+**Cross-binary ship: cc5_win (PLATFORM BLOCKER unblock)**.
+
+Pinned 2026-05-11 at v5.11.5 ship as a platform unblock for the
+ai-hwaccel agent's DXGI work — they flagged at v5.10.37 that
+`cc5_win` existed in `build/cc5_win_cross` but wasn't in
+`[release].cross_bins`, so release-tarball consumers couldn't
+get a Windows cyrius. v5.11.6 closes that gap.
+
+### Shipped
+
+- **`cc5_win`** added to `cyrius.cyml [release].cross_bins`
+  (Linux x86_64 ELF cross-compiler emitting Win64 PE32+).
+  install.sh's generic `cc5_<arch>` rebuild rule (line 165-170)
+  picks it up automatically — no install.sh edit needed.
+- Release snapshot at `~/.cyrius/versions/5.11.5/bin/cc5_win`
+  (612 KB Linux ELF; emits PE32+ verified locally).
+- Cross-host smoke: cc5_win deployed to cass, emits valid
+  PE32+ executable that runs on Windows ✓ (compile-path quirk
+  with CRLF input handling logged separately — not a binary
+  defect).
+
+### Deferred to back of v5.11.x buffer band
+
+Three additional cross-targets were attempted this slot but
+need source-side fixes / extra smoke infrastructure. Pinned per
+user direction (*"fine for back of the current line"*):
+
+- **`cc5_aarch64_macho` → v5.11.36**. `src/main_aarch64_macho.cyr`
+  uses macOS mmap for its OWN host heap init, so the Linux-host
+  cross-compiler binary errors at startup with
+  *"cc5_macho: mmap heap init failed"*. Real fix: split host
+  runtime syscalls (Linux) from emit-target syscalls (mach-o).
+  Plus ecb cross-host smoke.
+- **`cc5_aarch64_native` → v5.11.37**. Native aarch64 Linux
+  self-build path; needs build + pi cross-host smoke +
+  cross_bins add.
+- **`cc5_cx` → v5.11.38**. Cyrius-x bytecode emit works locally
+  but no VM smoke target wired up; needs cyrius-x VM
+  verification + cross_bins add.
+
+Buffer band shrinks from 18 slots (v5.11.21-38) to 15 slots
+(v5.11.21-35); .36/.37/.38 now pinned for the cross-bin tail.
+
+### Acceptance bar
+
+- **cc5 byte-identical**: 804,472 B, fixpoint b == c. ✓
+- **check.sh 66/66**: green. ✓
+- **install.sh refresh**: 18 bins/scripts (was 17 at v5.11.5;
+  +1 for cc5_win). ✓
+- **cc5_win PE emit**: local Linux → valid PE32+ ✓
+- **cc5_win deploy + run on cass**: binary loads, `--version`
+  doesn't error-out on incompatible-Windows; minimal source
+  compile attempted (CRLF quirk surfaced — separate item).
+
+### Next slot
+
+v5.11.7 — **Phase 7: compiler-side internals annotation pass**
+(`src/common/ir`, `src/frontend/parse_types`, parse_decl/parse_fn
+cleanup; ~70 fns). **Arc CLOSES at v5.11.7.**
+
 ## [5.11.5] — 2026-05-11
 
 **Stdlib annotation arc — Phase 6: partial-coverage closeouts +

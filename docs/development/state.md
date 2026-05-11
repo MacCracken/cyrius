@@ -5,6 +5,20 @@
 
 ## Version
 
+**5.11.6** (shipped 2026-05-11 — **Cross-binary ship: cc5_win
+(PLATFORM BLOCKER unblock)**). Added `cc5_win` to
+`cyrius.cyml [release].cross_bins` — Linux x86_64 ELF cross-compiler
+emitting Win64 PE32+. Unblocks ai-hwaccel agent's DXGI work
+(re-flagged at v5.10.37 / v5.11.5 ship). install.sh generic rebuild
+rule picks up automatically; release snapshot now ships 18
+bins/scripts (was 17). Cross-host smoke: cc5_win runs on cass,
+emits valid PE. Three deferred cross-targets pinned to back of
+buffer band per user direction:
+**cc5_aarch64_macho → v5.11.36** (host-runtime mmap fix needed),
+**cc5_aarch64_native → v5.11.37** (build + pi smoke),
+**cc5_cx → v5.11.38** (VM smoke target). Buffer band tightens
+from 18 to 15 slots (v5.11.21-35 OPEN).
+
 **5.11.5** (shipped 2026-05-11 — **Stdlib annotation arc Phase 6:
 partial-coverage closeouts** + **mabda annotation out-of-band on v3
 branch**). 13 modules topped to 100%: vani, patra, agnosys, sandhi
@@ -28,6 +42,14 @@ patra 1.9.4, agnosys 1.2.6, sandhi 1.3.4, sakshi 2.2.4, sigil 3.1.1,
 yukti 2.2.3, sankoch 2.2.5, niyama 1.0.2 all folded into
 `cyrius/lib/<name>.cyr` per v5.8.65 sandhi pattern. cc5 byte-identical
 at 804,472 B. **api-surface 2876 → 3030 (+154 fns)**.
+
+**v5.11.20 pin expanded 2026-05-11** to bundle kybernet's second
+filing (socket-syscall wrappers — `sys_socket` / `sys_bind` /
+`sys_recvfrom` / `sys_listen` / `sys_accept4` / `sys_connect` +
+`sys_recvmsg`, mirrored across x86_64 + aarch64 peers). Same
+release as the existing cap-raise; both kybernet P2 stdlib asks.
+Filing:
+[`docs/development/issues/2026-05-11-kybernet-socket-syscall-wrappers.md`](issues/2026-05-11-kybernet-socket-syscall-wrappers.md).
 
 **5.11.4** (shipped 2026-05-11 — **Stdlib annotation arc Phase 4:
 collection libraries**). 127 public fns across 2 modules
