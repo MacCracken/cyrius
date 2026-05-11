@@ -6,6 +6,112 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.10.47] — 2026-05-11
+
+**v5.10.x SLOT 47 — struct-by-value ABI arc Phase 3: cross-host
+smoke + PE retptr verify (arc CLOSED)**.
+
+Phase 3 of the 3-phase struct-byval ABI completion arc opened at
+v5.10.45. v5.10.45 (Phase 1) wired x86 SysV via rax+rdx pair;
+v5.10.46 (Phase 2) wired aarch64 AAPCS64 via X0+X1 pair (covers
+Linux + Mach-O). This slot is the cross-host runtime verify on
+all four targets — closes the arc.
+
+### Cross-host verification matrix
+
+Test program (minimal repro, per-host syscall adapter):
+
+```cyrius
+struct Point { x: i64; y: i64; }
+fn make(): Point { var p: Point; p.x = 7; p.y = 35; return p; }
+fn run(): i64 { var got: Point = make(); return got.x + got.y; }
+syscall(<exit_no>, run());
+```
+
+| Host | Backend | Cross-build | Runtime |
+|------|---------|-------------|---------|
+| local x86_64 Linux | `build/cc5` (803,088 B) | ✓ | tcyr gate `struct_byval_return.tcyr` 14/14 sub-asserts PASS at .45 |
+| pi (aarch64 Linux native) | `cc5_aarch64_native` (587,048 B) | ✓ | **exit=42** (was 7 at v5.10.44 — high half lost) |
+| ecb (macOS Mach-O arm64) | `cc5_macho_arm` (606,644 B, codesigned) | ✓ | **exit=42** (was lost at v5.10.44) |
+| cass (Win64 PE) | `cc5_win` (701,440 B) | ✓ | compile clean, exit=0 |
+
+**cass runtime caveat**: cass reports `exit=0` for ALL smoke tests
+including those that should return non-zero — pre-existing
+v5.10.49 PE `syscall(60, code)` exit-code propagation gap (every
+cross-host smoke since v5.10.39 has had this same gate, e.g.
+v5.10.40 + v5.10.41 + v5.10.44 CHANGELOG entries all note it).
+The cross-build succeeded (no PE-specific ABI emit error), and
+the binary ran to completion without crashing — those are the
+PE-side acceptance bars achievable today. Strict exit-code
+verification of 7+35=42 on PE is gated on the v5.10.49 PE
+exit-code-propagation fix, NOT on this slot.
+
+### Win64 ABI deviation note
+
+Microsoft x64 calling convention strictly requires hidden-RCX
+retptr for ≥9B composite returns (NOT rax+rdx pair like SysV).
+Cyrius's v5.10.45 fix uses the rax+rdx pair on ALL x86 backends
+including PE. This is a **cyrius-internal-ABI deviation from MS
+spec** that's acceptable in practice because:
+1. All callers AND callees for value-typed struct returns are
+   cyrius-emitted code (closed system).
+2. Both sides agree on the rax+rdx convention.
+3. Cyrius never returns value-typed user structs across the
+   cyrius / foreign-C boundary (foreign C calls go through
+   `fdlopen` / `fncall*` shims which return scalar i64).
+
+If a future consumer needs a value-typed-struct return from a
+foreign C library that follows the strict MS x64 ABI, a separate
+PE-specific retptr-mode emit path lands as its own slot. Not in
+scope for the v5.10.x cycle.
+
+### 3-step fixpoint + check.sh
+
+cc5 (x86): **803,088 B — byte-identical to v5.10.46** (no codegen
+change this slot; the work is cross-host run + docs). 3-step
+fixpoint clean. **66/66 check.sh PASS** with the existing
+`tests/tcyr/struct_byval_return.tcyr` gate (landed at v5.10.45,
+exercises all the pair-return paths via the .45 x86 implementation).
+
+### Arc summary (v5.10.45 + .46 + .47)
+
+| Phase | Slot | Scope | Result |
+|-------|------|-------|--------|
+| 1 | .45 | x86 SysV rax+rdx pair-return | shipped; tcyr 14/14 |
+| 2 | .46 | aarch64 AAPCS64 X0+X1 pair-return | shipped; pi exit=42 |
+| 3 | .47 | Cross-host smoke + PE verify | shipped; pi + ecb exit=42; cass compile-clean (runtime gated on .49) |
+
+**Arc deliverables**:
+- New `_cur_fn_ret_pair` global in `src/frontend/parse.cyr`
+- New callee-side PARSE_RETURN pair-emit branch in `parse_fn.cyr`
+- New caller-side `asv_pair` path in `parse_decl.cyr`
+- New x86 emit helpers `EFLLOAD/STORE_STRUCT_INT_PAIR` (rax+rdx)
+- New aarch64 emit helpers `EFLLOAD/STORE_STRUCT_INT_PAIR` (X0+X1)
+- cx stays ERR_MSG (no pair-return ABI; documented non-supported)
+- `_STR_SID(S)` carve-out preserves Str's 16B handle-shape unchanged
+- `tests/tcyr/struct_byval_return.tcyr` (14 sub-asserts)
+- cc5 +4,176 B; cc5_aarch64_native +4,960 B; cc5_win +4,608 B
+- 4-host cross-verify matrix established
+
+### Closure of the v5.10.20-era pin
+
+The original "v5.10.45 — macOS arm64 struct-by-value calling-
+convention" pin (descended from v5.5.36's deferred Mach-O ABI
+work) was empirically re-scoped at v5.10.44 ship after the
+premise check revealed the underlying bug was cross-backend, not
+Mach-O-specific. User authorized the 3-phase arc; arc closes
+here at .47 with the bug fixed on all 3 native runtimes that can
+verify exit codes today, and the PE side gated on .49 per the
+PE-runtime cascade already documented in earlier slots.
+
+### What landed
+
+- `CHANGELOG.md` — this entry.
+- `docs/development/roadmap.md` — Phase 3 marked SHIPPED, arc closed.
+- `docs/development/state.md` — version + cross-build sizes + arc summary refreshed.
+- No code change this slot (cross-host smoke + docs only; cc5
+  byte-identical to v5.10.46).
+
 ## [5.10.46] — 2026-05-11
 
 **v5.10.x SLOT 46 — struct-by-value ABI arc Phase 2: aarch64

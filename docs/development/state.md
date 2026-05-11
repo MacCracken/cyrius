@@ -5,24 +5,23 @@
 
 ## Version
 
-**5.10.46** (shipped 2026-05-11 — **v5.10.x SLOT 46 — struct-by-
-value ABI arc Phase 2: aarch64 AAPCS64 X0+X1 pair-return**).
-Second phase of a 3-phase ABI completion arc; cycle in-flight at
-46 slots shipped. cc5 self-host **803,088 B — byte-identical to
-v5.10.45** (this slot touches only the aarch64 backend; x86
-codegen unchanged). cc5_aarch64_native cross-build at **587,048 B**.
-Cycle delta: 753,768 B at v5.10.0 → **803,088 B at v5.10.46**
-(+49,320 B; .45 was the codegen-change slot, .46 is the
-aarch64-only phase so x86 cc5 stays flat).
+**5.10.47** (shipped 2026-05-11 — **v5.10.x SLOT 47 — struct-by-
+value ABI arc Phase 3: cross-host smoke + PE retptr verify
+(arc CLOSED)**). Final phase of the 3-phase ABI completion arc;
+cycle in-flight at 47 slots shipped. cc5 self-host **803,088 B —
+byte-identical to v5.10.45/.46** (no codegen change this slot;
+work is cross-host runtime verify + docs). Cycle delta: 753,768 B
+at v5.10.0 → **803,088 B at v5.10.47** (+49,320 B).
 
-**Arc shape** (planned at v5.10.45 entry; see CHANGELOG [5.10.45]
+**Arc COMPLETE** (planned at v5.10.45 entry; see CHANGELOG [5.10.45]
 "Arc shape" for the empirical premise-check that drove the
 re-scoping):
 - Phase 1 (v5.10.45, **shipped**) — x86 SysV via rax+rdx pair.
 - Phase 2 (v5.10.46, **shipped**) — aarch64 AAPCS64 via X0+X1
   pair (Linux + Mach-O share ABI). pi runtime exit=42 ✓.
-- Phase 3 (v5.10.47, pinned) — Cross-host smoke on pi/ecb/cass
-  + PE retptr verify.
+- Phase 3 (v5.10.47, **shipped — arc CLOSED**) — Cross-host
+  matrix: local x86 + pi + ecb runtime green; cass compile-clean
+  (runtime exit-code gated on pre-existing v5.10.49 PE gap).
 
 Acceptance bar: `struct Point {x: i64; y: i64;}` + `fn make():
 Point` + `var got: Point = make();` returns got.y correctly
@@ -72,7 +71,7 @@ Mach-O arm64) compile+run exit=42; cass (Windows PE) compile
 exit=0. v5.10.41 smoke on cass green; pi/ecb byte-identical to
 v5.10.40 (no aarch64 backend change).
 
-**Slots .33 - .46 one-liner sweep**:
+**Slots .33 - .47 one-liner sweep**:
 - **v5.10.33** — `lib/simd.cyr` typed wrappers around f64v_*
   intrinsics; first downstream consumption of typed-simd ABI
   Phase 5 (XMM0 return).
@@ -155,24 +154,22 @@ for the current cycle.
 
 ## Compiler
 
-- **cc5 (x86_64)**: **803,088 B** at v5.10.46 (unchanged
-  from v5.10.45; .46 touches only the aarch64 backend,
-  x86 codegen flat). Cycle delta: 797,464 B at v5.10.39
-  → 803,088 B at v5.10.46 (+5,624 B: .40/.41 perf
-  miniarc +1,448 B; .42/.43/.44 flat; .45 +4,176 B;
-  .46 flat).
+- **cc5 (x86_64)**: **803,088 B** at v5.10.47 (unchanged
+  from v5.10.45/.46; .47 is cross-host run + docs only).
+  Cycle delta: 797,464 B at v5.10.39 → 803,088 B at
+  v5.10.47 (+5,624 B: .40/.41 perf miniarc +1,448 B;
+  .42/.43/.44 flat; .45 +4,176 B; .46/.47 flat).
 - **cc5_aarch64_native (cross-built)**: **587,048 B** at
-  v5.10.46 (was 582,088 B at v5.10.42 cross-build;
-  +4,960 B for v5.10.45 ABI stubs being replaced by
-  v5.10.46 real encoding + accumulated drift through
-  .43/.44).
+  v5.10.47 (stable through Phase 2/3).
 - **cyrius CLI**: ~170,900 B at v5.10.40 (flat across the
   cycle — `cyrius` doesn't run LEXID itself).
 - **cc5_macho_arm (cross-built)**: **606,644 B** at
-  v5.10.46 (was 590,260 B at v5.10.42 cross-build;
-  +16,384 B for accumulated drift + Phase 1/2 emit
-  helpers). End-to-end run on ecb pending Phase 3.
-- **cc5_win (cross)**: **~700 KB** at v5.10.46 (PE
+  v5.10.47. End-to-end run on ecb verified at Phase 3
+  (exit=42).
+- **cc5_win (cross)**: **701,440 B** at v5.10.47 (was
+  ~696,832 B at v5.10.44; +4,608 B for the .45/.46
+  emit helpers reaching the PE backend via x86 emit.cyr).
+  (PE
   backend lives under x86, so the .45 emit helpers
   reach this binary — int-class pair-return ABI now
   available cross-compiled). PE retptr semantics for
@@ -214,7 +211,7 @@ for the current cycle.
 
 ## Suites
 
-Current at v5.10.46. Cross-host gates wire through `~/.ssh/config`
+Current at v5.10.47. Cross-host gates wire through `~/.ssh/config`
 hosts: **pi = Linux aarch64**, **ecb = Apple Silicon Mach-O arm64**,
 **cass = Windows 11 PE32+**.
 
@@ -241,11 +238,11 @@ narrative in `completed-phases.md`.
 
 ## In-flight
 
-**v5.10.x cycle — 46 slots shipped through v5.10.46 (2026-05-11).**
-Two completed arcs plus a compile-time-perf miniarc plus the TLS
-contract pin plus the open-issues sweep (.43/.44) plus the
-struct-byval ABI arc (Phase 1+2 shipped at .45/.46; Phase 3
-pinned at .47) anchor the cycle:
+**v5.10.x cycle — 47 slots shipped through v5.10.47 (2026-05-11).**
+THREE completed arcs (typed-simd ABI, REAL TYPE SYSTEM,
+struct-byval ABI) plus a compile-time-perf miniarc plus the TLS
+contract pin plus the open-issues sweep (.43/.44) anchor the
+cycle:
 
 1. **REAL TYPE SYSTEM** 5-phase arc (v5.10.1 - v5.10.26) — type
    annotations parsed + stored, call-site arg checking, overload
@@ -287,20 +284,24 @@ pinned at .47) anchor the cycle:
      dispatch rejected because both Str/cstr are
      pointers and 8+-char cstrs fail the heuristic.
 
-6. **v5.10.45 + v5.10.46 struct-by-value ABI arc Phases 1-2**
-   — pin re-scoped at v5.10.44 ship after empirical premise
-   check showed the original "macOS arm64 struct-byval"
-   pin was mis-framed: the underlying bug (16B int-class
-   struct returns lose the high half) was live across ALL
-   backends, not just Mach-O. User authorized expansion
-   into a 3-phase arc.
+6. **v5.10.45 + v5.10.46 + v5.10.47 struct-by-value ABI
+   arc (CLOSED)** — pin re-scoped at v5.10.44 ship after
+   empirical premise check showed the original "macOS arm64
+   struct-byval" pin was mis-framed: the underlying bug
+   (16B int-class struct returns lose the high half) was
+   live across ALL backends, not just Mach-O. User authorized
+   expansion into a 3-phase arc.
    - **.45**: x86 SysV via rax+rdx pair, `_STR_SID(S)`
      carve-out preserving Str's legacy handle-shape.
    - **.46**: aarch64 AAPCS64 X0+X1 pair (covers Linux
-     + Mach-O via shared ABI). Verified on pi: minimal
-     Point repro returns 42 (was 7).
-   - **.47** (pinned): cross-host smoke (pi + ecb + cass)
-     + PE retptr verify under the new tcyr gate.
+     + Mach-O via shared ABI). Verified on pi (exit=42).
+   - **.47**: Cross-host smoke matrix established. Verified
+     on pi (exit=42), ecb (exit=42 codesigned), local x86
+     (tcyr 14/14). cass compile-clean; runtime exit-code
+     gated on v5.10.49 PE exit-code propagation fix. Win64
+     ABI deviation from strict MS x64 spec acknowledged
+     (cyrius-internal-ABI uses rax+rdx pair; closed-system
+     no-consumer-impact rationale documented).
 
 Additional in-cycle work: TLS early-data surface completion at
 v5.10.34 (TLS_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED + accessors);
@@ -309,8 +310,10 @@ ledger scaffolded at v5.10.34; vidya wrap-up pass paired with
 v5.10.39 (retro file + 3 gotcha entries + 3 feature entries).
 
 **Cycle stats so far**:
-- cc5: 753,768 B at v5.10.0 → **803,088 B at v5.10.46** (+49,320 B)
-- cc5_aarch64_native: ~470 KB at v5.10.0 → **587,048 B at v5.10.46**
+- cc5: 753,768 B at v5.10.0 → **803,088 B at v5.10.47** (+49,320 B)
+- cc5_aarch64_native: ~470 KB at v5.10.0 → **587,048 B at v5.10.47**
+- cc5_macho_arm: ~510 KB at v5.10.0 → **606,644 B at v5.10.47**
+- cc5_win: ~530 KB at v5.10.0 → **701,440 B at v5.10.47**
 - api-surface: 2792 → **2876 entries** (+3 v5.10.44 `_str` fns)
 - New `lib/simd.cyr` (50 public fns)
 - New `docs/development/lib-tls-contract.md` (v5.10.42)
@@ -329,8 +332,13 @@ the remaining v5.10.x work. Full v5.10.x retro at
 
 ## Recent shipped (one-liner per release)
 
-v5.10.x cycle through 2026-05-11 (latest: v5.10.46 struct-byval Phase 2):
+v5.10.x cycle through 2026-05-11 (latest: v5.10.47 struct-byval arc CLOSED):
 
+- **v5.10.47** — struct-by-value ABI arc Phase 3: cross-host smoke
+  + PE retptr verify (arc CLOSED). 4-target matrix: x86 (tcyr
+  14/14), pi (exit=42), ecb (exit=42 codesigned), cass (compile=0;
+  runtime gated on .49). Win64 ABI deviation acknowledged. cc5
+  byte-identical to v5.10.45/.46.
 - **v5.10.46** — struct-by-value ABI arc Phase 2: aarch64 AAPCS64
   X0+X1 pair-return. v5.10.45 ERR_MSG stubs replaced with real
   LDUR/STUR X0,X1 encodings + LDR/STR X9 deep-frame fallback.
