@@ -101,42 +101,6 @@ New `tests/tcyr/sandbox_syscalls.tcyr` — 7 sub-asserts:
   exercise these in a test harness (would drop privs / lock
   the process / replace its image).
 
-### Also landed — roadmap restructure (no separate slot needed)
-
-- **`docs/development/roadmap.md`** — v5.10.x section
-  compacted (~2,360 → ~95 lines, -96 %). Detail lives in
-  CHANGELOG `[5.10.0]`-`[5.10.50]` + vidya retro per
-  `feedback_doc_canonical_no_redundancy`. v5.11.x section
-  restructured with all carry-forwards mapped (7 open
-  issues from 2026-05-10 wave + held-forward items + the
-  stdlib annotation 7-phase arc + infrastructure work).
-- **Cycle discipline section** (durable across cycles):
-  acceptance principle (v5.10.0 revision), bottom-to-top
-  priority, premise-check at slot entry, Windows
-  %ERRORLEVEL% test-wrapper discipline (v5.10.49 lesson).
-- **state.md** — cycle status flipped from "CLOSED at
-  v5.10.50" → "v5.11.x cycle OPEN".
-- **`docs/api-surface.snapshot`** — regenerated (+12 fns;
-  6 are the new kavach wrappers, the other 6 from the
-  v5.11.x prep state).
-
-### Slot ordering heuristic (chosen at slot entry, not pre-pinned)
-
-1. **P1 first** — kavach syscall wrappers (the only P1).
-2. **Annotation foundations** — v5.11.x phase 1 (alloc / vec /
-   fmt / freelist / fnptr / result / tagged / assert ~93 fns)
-   sets the floor for inferred types downstream.
-3. **Cross-arch fixes that unblock cross-host smoke** — daimon
-   aarch64 epoll_wait (small, defensible early).
-4. **Consumer-blocking P2** — bote recv_timeout, fl_free,
-   streaming primitives (streaming may earn its own multi-slot
-   arc).
-5. **Infrastructure rotation** — `cyrius deps` copy fix +
-   regression.sh port + Cyriusly cmdtools port.
-6. **Annotation completion phases** interleave.
-7. **TS test harness** after regression port.
-8. **Defensive sweep + closeout** at cycle's final patches.
-
 ### Cycle discipline carried forward
 
 - **Slot acceptance principle** (revised v5.10.0): no

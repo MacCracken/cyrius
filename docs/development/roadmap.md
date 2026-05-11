@@ -377,37 +377,37 @@ at **parse time** and falsely reports `exit=0`. Use either:
 
 Memory pin: `feedback_windows_errorlevel_test_wrapper`.
 
-## v5.11.x — Cleanup / annotation-completion minor
+## v5.11.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64
 
-**Repurposed at v5.10.20 P(-1) sweep** (2026-05-09): user direction
-"TS test harness will moving into 5.11.x and 5.12.0 is now
-baremetel/riscv". Bare-metal/AGNOS-kernel + RISC-V rv64 moved to
-v5.12.0. v5.11.x's mandate: drain the v5.10.x carry-forwards +
-the consumer-filed issue backlog + finish the stdlib annotation
-arc the type system enables.
+**Pushed from v5.10.x at v5.9.7 ship** per user direction:
+"kernel work is a parallel task and not hard baked... more the
+RISCV work has slipped but its fine as another platform is
+just another item to keep up to date." Both tracks are
+parallel/long-running and don't need a hard trigger; they land
+when their respective drivers (AGNOS kernel readiness,
+RISC-V consumer ask) line up with cycle availability. Slip is
+fine — the v5.10.x cleanup minor takes precedence on the
+principle of "fewer surface items to manage future slots."
 
-**Mapped 2026-05-11 at v5.10.50 ship** — restructured around six
-parallel threads, each tracked as its own arc with refinement
-at slot entry per `feedback_premise_check_at_slot_entry`:
+Two arch-port-style efforts grouped into one minor since both
+land at the "no libc, direct hardware / different ABI" layer.
 
-1. **Stdlib annotation arc** (~7 phases) — the primary v5.11.x
-   narrative (`v5.11.1`-`.7`)
-2. **Consumer-filed P1/P2 issues** (7 issues from
-   `docs/development/issues/` filed 2026-05-10)
-3. **Held-forward items from v5.10.x** (Class B FFI/wgpu, cyim
-   regex, float.cyr peephole)
-4. **Infrastructure / tooling** (`cyrius deps` symlink → copy,
-   `regression-*.sh` → cyrius port, Cyriusly cmdtools port)
-5. **TS test harness program** (opportunistic; lands after
-   regression port)
-6. **Cycle closeout**
+### v5.11.x — Cleanup minor (TS test harness + held-forward absorber)
 
-Interleave order picks itself at slot entry — driver is consumer
-pressure (P1 first per `feedback_priority_bottom_to_top`),
-followed by annotation foundations (every other slot's
-downstream value depends on them).
+**Repurposed at v5.10.20 P(-1) sweep** (2026-05-09): user
+direction "TS test harness will moving into 5.11.x and
+5.12.0 is now baremetel/riscv". v5.11.x is now a short
+cleanup-cycle absorbing items that surface during the
+v5.10.x close, NOT the bare-metal / RISC-V kickoff (which
+moves to v5.12.0).
 
-**Scope (mapped, refine at slot entry)**:
+**PRIORITY (user direction 2026-05-11):** stdlib annotation arc
+FIRST. Everything else in the Scope below — `cyrius deps`
+copy, regression-*.sh → cyrius port, TS test harness,
+Consumer-filed issues, Held-forward items — queues AFTER the
+annotation arc completes.
+
+**Scope**:
 
 - **Stdlib annotation refactor — multi-patch breakout**
   (pinned 2026-05-10 at v5.10.32 ship). User direction:
@@ -462,6 +462,36 @@ downstream value depends on them).
   v5.11.x cleanup-minor remit (TS test harness was the only
   pinned item; this becomes the primary v5.11.x narrative).
   TS test harness stays opportunistic per its original pin.
+
+#### After the annotation arc completes
+
+Every item below runs AFTER the stdlib annotation arc
+finishes. No interleaving. Slot numbers are starting points
+(annotation arc fills v5.11.1-v5.11.7+; this list picks up
+right after).
+
+| Slot | Item |
+|------|------|
+| v5.11.0 ✅ | kavach P1 sandbox syscall wrappers (shipped) |
+| v5.11.1-v5.11.7+ | Stdlib annotation arc (see phase table in annotation bullet above) |
+| v5.11.8 | `cyrius deps` symlink → file-copy |
+| v5.11.9 | `tests/regression-*.sh` → cyrius port |
+| v5.11.10 | Cyriusly cmdtools port (paired with .9 per user direction) |
+| v5.11.11 | TS test harness program |
+| v5.11.12 | daimon aarch64 `sys_epoll_wait` (P2) |
+| v5.11.13 | bote `lib/net.cyr` `recv_timeout` + getaddrinfo (P2) |
+| v5.11.14 | bote arena allocator `fl_free` (P2) |
+| v5.11.15+ | bote streaming dispatch + thread async primitives (P2; multi-slot likely) |
+| v5.11.x | bote WS handshake key validation (Low; ride-along) |
+| v5.11.x | parser `assert_eq` string-literal quirk (Low; defensive bundle) |
+| v5.11.x | Defensive sweep (small bundle if anything surfaces during cycle) |
+| v5.11.x final | Cycle closeout |
+
+Held-forward items (no slot pinned; surface-on-ask): Class B
+FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,
+`float.cyr:41` peephole.
+
+Item details below.
 
 - **`cyrius deps` file-copy instead of symlink for resolved deps**
   (pinned 2026-05-10 at v5.10.37 ship). User direction:
@@ -662,34 +692,10 @@ ship the full filed surface, not the easy half.
 - **`float.cyr:41` peephole pattern** (audit §4). Perf opt;
   preflight with bench delta before pinning.
 
-#### Slot ordering heuristic (not pinned numbers)
-
-The arc map above gives WHAT lands in v5.11.x; the order is
-chosen at each slot entry per `feedback_priority_bottom_to_top`:
-1. **P1 first** — kavach syscall wrappers (the only P1).
-2. **Stdlib annotation foundations** — `v5.11.1` (alloc/vec/
-   fmt/freelist/fnptr/result/tagged/assert) sets the floor;
-   every downstream phase benefits from inferred types.
-3. **Cross-arch fixes that unblock cross-host smoke** —
-   daimon aarch64 epoll_wait (small, defensible early).
-4. **Bote / consumer-blocking P2** — recv_timeout, fl_free,
-   streaming primitives. Likely 2-3 slots; the streaming
-   primitives item may earn its own multi-slot arc.
-5. **Infrastructure rotation** — `cyrius deps` copy fix +
-   regression.sh port + Cyriusly cmdtools port (paired
-   per user direction).
-6. **Annotation completion phases** v5.11.2 through .7
-   interleave between the above.
-7. **TS test harness** lands after regression.sh port.
-8. **Defensive sweep + closeout** at v5.11.x final.
-
-Cycle ends when the pinned items above ship + held-forward
-items either land or stay deferred to v5.12.x; closeout per
-CLAUDE.md §"Closeout Pass" (11 steps).
-
 No hard trigger; v5.11.x runs as long as cleanup work is
 productive, ends when v5.12.0 bare-metal/RISC-V drivers
-concretely line up.
+concretely line up. Slot ordering decided per slot by the
+project leader.
 
 ### v5.12.0 — Bare-metal / AGNOS kernel target
 
