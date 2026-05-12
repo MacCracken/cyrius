@@ -377,20 +377,31 @@ at **parse time** and falsely reports `exit=0`. Use either:
 
 Memory pin: `feedback_windows_errorlevel_test_wrapper`.
 
-## v5.11.x — Bare-metal arc (AGNOS kernel) + RISC-V rv64
+## v5.11.x — Cleanup minor + bare-metal arc planning (planning detail moved to v5.12.x)
 
-**Pushed from v5.10.x at v5.9.7 ship** per user direction:
-"kernel work is a parallel task and not hard baked... more the
-RISCV work has slipped but its fine as another platform is
-just another item to keep up to date." Both tracks are
-parallel/long-running and don't need a hard trigger; they land
-when their respective drivers (AGNOS kernel readiness,
-RISC-V consumer ask) line up with cycle availability. Slip is
-fine — the v5.10.x cleanup minor takes precedence on the
-principle of "fewer surface items to manage future slots."
+**Heading updated 2026-05-12** to reflect the v5.10.20 P(-1) sweep
+repurposing. This section's body originally documented the
+bare-metal + RISC-V arc when it was pinned to v5.11.x; that
+content is still load-bearing planning material but the arc
+itself moved to **v5.12.x** (see the [v5.12.x section
+below](#v512x--bare-metal-formalization--risc-v-rv64-arc) for
+the current pin + acceptance criteria). v5.11.x became a
+cleanup minor (stdlib annotation arc + consumer-issue
+closeout) — see the `### v5.11.x — Cleanup minor` subsection
+immediately following this header.
+
+**Historical pin path**: pushed from v5.10.x at v5.9.7 ship
+per user direction ("kernel work is a parallel task and not
+hard baked... more the RISCV work has slipped but its fine as
+another platform is just another item to keep up to date").
+Then repurposed at v5.10.20 P(-1) sweep — bare-metal + RISC-V
+moved out to v5.12.x, leaving v5.11.x as a cleanup minor.
 
 Two arch-port-style efforts grouped into one minor since both
 land at the "no libc, direct hardware / different ABI" layer.
+The planning detail below remains valid for v5.12.x execution;
+no copy was made — this section is the reference doc for the
+v5.12.x scope.
 
 ### v5.11.x — Cleanup minor (TS test harness + held-forward absorber)
 
@@ -1546,25 +1557,43 @@ default is to ride the cap and protect v5.12.0's kickoff.
 Slot ordering inside the buffer band is decided per slot by
 the project leader as items surface.
 
-### v5.12.0 — Bare-metal / AGNOS kernel target
+## v5.12.x — Bare-metal formalization + RISC-V rv64 arc
 
-**Moved from v5.11.0 → v5.12.0 at v5.10.20 P(-1) sweep**
-per user direction. Has slid five minors now (v5.7.0 →
-v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 → **v5.12.0**); no
-hard trigger required — earns slot when AGNOS kernel work
-concretely needs the toolchain capability AND the v5.10.x
-+ v5.11.x backlogs have drained enough to free a minor.
-Rough scope:
+**Cycle theme**: codify two existing-but-informal capabilities into first-class toolchain targets — (1) **bare-metal compilation mode** that agnos already uses ad-hoc, (2) **RISC-V rv64 backend** as the fourth platform peer. Both have been pinned-and-slipped across five+ minors; v5.12.x is where they finally land together because their substrate prerequisites (v5.10.x typed-simd ABI + REAL TYPE SYSTEM + struct-byval ABI + v5.11.x stdlib annotation arc) are now complete.
 
-- ELF no-libc output format
-- interrupt-handler emit conventions
-- kernel-mode syscall stubs stripped
-- boot pipeline from `scripts/boot.cyr` landed in genesis
-  Phase 13B (v5.6.29 gate)
+**Important framing — bare-metal is formalization, not enablement**: the agnos kernel **already builds and boots** as a multiboot1 ELF i386 binary against the current toolchain (5.10.44 pin verified working 2026-05-11; kernel reaches userland exec + "Launching kybernet" in QEMU). What v5.12.0 delivers is the *language-side codification* of the ad-hoc bare-metal mode agnos has been using since first boot — clean acceptance criteria, documented conventions, a formal target triple, reusable by future bare-metal projects (firmware, alternative kernels, embedded). It does NOT gate AGNOS kernel work; per the [agnosticos MVP scope](https://github.com/MacCracken/agnosticos/blob/main/docs/development/roadmap.md#phase-13a--boot-to-shell-mvp--os-independence-beta-blocker), closed-beta ship is independent of this cycle landing.
 
-Acceptance: AGNOS kernel can be built end-to-end with the
-v5.12.0 toolchain; no host-libc symbols leak into the
-kernel object.
+### v5.12.0 — Bare-metal / AGNOS kernel target (formalization)
+
+**Moved from v5.11.0 → v5.12.0 at v5.10.20 P(-1) sweep** per user direction. Has slid five minors now (v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 → **v5.12.0**) — but the slips reflect substrate-first sequencing (v5.7.x sandhi-fold, v5.8.x foldins, v5.9.x O5/O6 close, v5.10.x three-arc substrate, v5.11.x stdlib annotation), not the bare-metal work being hard. The kernel proves out the capability in production *during* the slips, so formalization arrives with empirical receipts.
+
+**Scope (six deliverables):**
+
+1. **Formal target triple** — `[target] = "bare-metal-x86_64-elf"` (and aarch64 peer) in `cyrius.cyml` `[build]` section. Recognized by `cyrius build` as a first-class target, not a `cflags`-hack invocation. Same for cross-compiles: `cyrius build --target bare-metal-x86_64-elf …`.
+
+2. **ELF no-libc output format** — no `INTERP` segment (no `/lib64/ld-linux-x86-64.so.2`), no implicit `_start` from libc, no dynamic-link metadata. Static-only ELF with the user's `_start` (or multiboot entry) as the actual entry point. Reproducibility-test: rebuilding the agnos kernel with this target produces a byte-identical artifact to the current ad-hoc-mode build.
+
+3. **Interrupt-handler emit conventions** — `naked_fn` attribute (or equivalent) for ISRs: no prologue, no epilogue, explicit control over which registers are pushed/popped. Calling convention compatible with x86_64 / aarch64 interrupt entry. Allows agnos's existing hand-rolled handlers in `kernel/arch/x86_64/` and `kernel/arch/aarch64/` to migrate from inline-asm-only to Cyrius-with-attribute where possible.
+
+4. **Kernel-mode stdlib subset** — a documented contract for which `lib/*.cyr` modules are safe in bare-metal context (`string`, `alloc` with custom allocator, `vec` with custom allocator, basic `fmt` without floating-point if no FPU enabled, etc.) and which are explicitly forbidden (anything touching `lib/syscalls_*_linux.cyr`, `lib/fs.cyr`, `lib/process.cyr` — these assume a Linux host kernel underneath). `cyrius build --target bare-metal-*-elf` errors loudly if forbidden modules are pulled.
+
+5. **Linker-script / section-placement control** — declarative section placement in `cyrius.cyml` (`[sections]`) for `.multiboot`, `.text`, `.data`, `.bss`, `.rodata` ordering. Today agnos accomplishes this via a manual linker script; v5.12.0 makes it expressible in the manifest. Sub-feature: BSS sizing declaration so kernels don't have to hand-compute the zero-init footprint.
+
+6. **Inline assembly primitives for kernel work** — first-class language support (not stdlib functions, since stdlib isn't available pre-PMM-init) for: `cli` / `sti` / `hlt`; port I/O (`in` / `out` byte/word/dword); memory barriers (`mfence` / `lfence` / `sfence` / `dmb ish` on aarch64); `cpuid`. Same primitive set on aarch64 (`msr DAIFSet`, `wfi`, `dsb sy`, etc.). Today agnos uses ad-hoc inline-asm bursts; v5.12.0 makes them documented language primitives.
+
+**Acceptance gates:**
+
+1. `cyrius build --target bare-metal-x86_64-elf agnos/src/main.cyr build/agnos` produces a byte-identical binary to the current ad-hoc-mode build.
+2. The forbidden-module check errors with a clear diagnostic when bare-metal code tries to pull `lib/fs.cyr` (or similar host-OS module).
+3. `cyrius lint --target bare-metal-*` understands the kernel-mode stdlib subset and doesn't warn about legitimate omissions (no host-OS modules = expected, not a finding).
+4. A minimal `examples/firmware-hello.cyr` (separate from agnos) builds, links, and runs in QEMU under bare-metal mode — demonstrates the target outside of agnos and proves it's reusable.
+5. agnos kernel boots in QEMU rebuilt against v5.12.0 toolchain with no regressions in the boot log against the current 1.29.0 baseline.
+6. Documentation: `docs/targets/bare-metal.md` in cyrius repo lays out the contract, the stdlib subset, the linker-script controls, and links to agnos as the canonical existing consumer.
+
+**Cross-references (monolithic-by-design):**
+
+- agnos kernel already works without this target — see [agnosticos roadmap Phase 13A](https://github.com/MacCracken/agnosticos/blob/main/docs/development/roadmap.md). v5.12.0 does NOT gate agnos's closed-beta MVP. Language and kernel ship on independent cadences; v5.12.0 is a *quality-of-life* improvement for future kernel work, not an enabler.
+- Other future bare-metal Cyrius consumers expected to benefit: firmware projects, alternative microkernels, embedded controllers, the genesis-repo `scripts/boot.cyr` chain (which currently builds Linux-host-targeted but will eventually want bare-metal-target capability for self-bootstrapping ISO assembly).
 
 ### v5.12.x — RISC-V rv64 (3-5 sub-patches)
 
