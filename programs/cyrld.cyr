@@ -1038,9 +1038,18 @@ fn remap_intra_module_calls(): i64 {
 # module and exits with rax as status. Stub needed because _cyrius_init
 # ends with `leave; ret` — returning to argc would SIGSEGV.
 # Layout: 64 B ELF header + 56 B program header + merged_text (aligned) +
-# merged_data (aligned) + merged_rodata (aligned) + 14 B _start.
+# merged_data (aligned) + merged_rodata (aligned) + 14 B _start, then
+# .shstrtab + section header table appended past the loaded segment.
 # Single PT_LOAD RWX — beta2 doesn't enforce W^X protection; that's for
 # multi-segment work later.
+#
+# v5.11.31: emit minimal section header table (mirrors the in-compiler
+# kernel-emitter fixes in 5.11.29 / 5.11.30). User binaries from cyrld
+# are normally loaded by `execve` — which ignores section headers — so
+# this is not an MVP-blocker like the GRUB-multiboot path was for the
+# x86 kernel. But it matters for any tool that walks sections
+# (objdump -d, gdb, ltrace, lld --dump-section, …) and for symmetry
+# with the in-tree backends now that cyrld is a peer linker.
 fn emit_executable(out_path): i64 {
     # File layout — each segment 8-byte aligned relative to file base.
     # DATA_VA / RODATA_VA were set by assign_data_layout().
@@ -1057,26 +1066,36 @@ fn emit_executable(out_path): i64 {
     var stub_size = 5 * MOD_COUNT + 9;
     var total = stub_off + stub_size;
     total = align8(total);
-    var O = alloc(total);
+
+    # ---- Section header layout (appended past PT_LOAD; metadata only) ----
+    # .shstrtab content: "\0.text\0.data\0.rodata\0.shstrtab\0" = 31 bytes
+    #   name offsets: .text=1, .data=7, .rodata=13, .shstrtab=21
+    var shstrtab_size = 31;
+    var shstrtab_off = total;
+    var shdr_off = shstrtab_off + shstrtab_size;
+    shdr_off = align8(shdr_off);
+    var total_with_shdrs = shdr_off + 5 * 64;
+
+    var O = alloc(total_with_shdrs);
     # Entry = stub's VA (VA layout mirrors file layout since p_offset=0).
     var entry = 0x400000 + stub_off;
     # Zero fill (for padding)
     var zi = 0;
-    while (zi < total) { store8(O + zi, 0); zi = zi + 1; }
+    while (zi < total_with_shdrs) { store8(O + zi, 0); zi = zi + 1; }
     # ---- ELF64 header (64 bytes) ----
     store64(O + 0, 0x00010102464C457F);   # magic, class=ELF64, data=LSB, version=1, pad
     # e_type=ET_EXEC(2), e_machine=x86_64(0x3E), e_version=1
     store64(O + 16, 0x00000001003E0002);
     store64(O + 24, entry);                # e_entry
     store64(O + 32, 0x40);                 # e_phoff = 64 (right after ELF header)
-    store64(O + 40, 0);                    # e_shoff = 0 (no section headers)
+    store64(O + 40, shdr_off);             # e_shoff (was 0 pre-5.11.31)
     store8(O + 48, 0); store8(O + 49, 0); store8(O + 50, 0); store8(O + 51, 0); # e_flags
     store8(O + 52, 64); store8(O + 53, 0); # e_ehsize
     store8(O + 54, 56); store8(O + 55, 0); # e_phentsize
     store8(O + 56, 1); store8(O + 57, 0);  # e_phnum
-    store8(O + 58, 0); store8(O + 59, 0);  # e_shentsize
-    store8(O + 60, 0); store8(O + 61, 0);  # e_shnum
-    store8(O + 62, 0); store8(O + 63, 0);  # e_shstrndx
+    store8(O + 58, 64); store8(O + 59, 0); # e_shentsize = 64 (Elf64_Shdr)
+    store8(O + 60, 5); store8(O + 61, 0);  # e_shnum
+    store8(O + 62, 4); store8(O + 63, 0);  # e_shstrndx (.shstrtab)
     # ---- Program header (56 bytes, PT_LOAD RWX) ----
     store8(O + 64, 1); store8(O + 65, 0); store8(O + 66, 0); store8(O + 67, 0);  # p_type = PT_LOAD
     store8(O + 68, 7); store8(O + 69, 0); store8(O + 70, 0); store8(O + 71, 0);  # p_flags = R|W|X
@@ -1140,6 +1159,74 @@ fn emit_executable(out_path): i64 {
     store8(O + cur_off + 6, 0x00);
     store8(O + cur_off + 7, 0x0F);
     store8(O + cur_off + 8, 0x05);
+
+    # ---- .shstrtab (31 bytes) — "\0.text\0.data\0.rodata\0.shstrtab\0" ----
+    var so = shstrtab_off;
+    store8(O + so, 0); so = so + 1;
+    store8(O + so,     0x2E); store8(O + so + 1, 0x74); store8(O + so + 2, 0x65);
+    store8(O + so + 3, 0x78); store8(O + so + 4, 0x74); store8(O + so + 5, 0);
+    so = so + 6;
+    store8(O + so,     0x2E); store8(O + so + 1, 0x64); store8(O + so + 2, 0x61);
+    store8(O + so + 3, 0x74); store8(O + so + 4, 0x61); store8(O + so + 5, 0);
+    so = so + 6;
+    store8(O + so,     0x2E); store8(O + so + 1, 0x72); store8(O + so + 2, 0x6F);
+    store8(O + so + 3, 0x64); store8(O + so + 4, 0x61); store8(O + so + 5, 0x74);
+    store8(O + so + 6, 0x61); store8(O + so + 7, 0);
+    so = so + 8;
+    store8(O + so,     0x2E); store8(O + so + 1, 0x73); store8(O + so + 2, 0x68);
+    store8(O + so + 3, 0x73); store8(O + so + 4, 0x74); store8(O + so + 5, 0x72);
+    store8(O + so + 6, 0x74); store8(O + so + 7, 0x61); store8(O + so + 8, 0x62);
+    store8(O + so + 9, 0);
+
+    # ---- Section headers (5 × 64 bytes) at shdr_off ----
+    # Elf64_Shdr layout (each 64 bytes):
+    #   u32 sh_name; u32 sh_type; u64 sh_flags; u64 sh_addr;
+    #   u64 sh_offset; u64 sh_size; u32 sh_link; u32 sh_info;
+    #   u64 sh_addralign; u64 sh_entsize;
+    # Helper-style: name and (type,flags) inline below.
+    var sh = shdr_off;
+    # [0] SHT_NULL — all zeros (already zero-filled at alloc)
+    sh = sh + 64;
+    # [1] .text — SHT_PROGBITS, ALLOC|EXECINSTR
+    store64(O + sh + 0, (1 << 32) | 1);             # sh_name=1, sh_type=1
+    store64(O + sh + 8,6);                          # sh_flags
+    store64(O + sh + 16,0x400000 + text_off);        # sh_addr
+    store64(O + sh + 24,text_off);                   # sh_offset
+    store64(O + sh + 32,MERGED_TEXT_SIZE);           # sh_size
+    store64(O + sh + 40,0);                          # sh_link, sh_info
+    store64(O + sh + 48,16);                         # sh_addralign
+    store64(O + sh + 56,0);                          # sh_entsize
+    sh = sh + 64;
+    # [2] .data — SHT_PROGBITS, ALLOC|WRITE (initialized data, lives in file)
+    store64(O + sh + 0, (1 << 32) | 7);             # sh_name=7, sh_type=1
+    store64(O + sh + 8,3);                          # sh_flags = WRITE|ALLOC
+    store64(O + sh + 16,0x400000 + data_off);
+    store64(O + sh + 24,data_off);
+    store64(O + sh + 32,MERGED_DATA_SIZE);
+    store64(O + sh + 40,0);
+    store64(O + sh + 48,8);
+    store64(O + sh + 56,0);
+    sh = sh + 64;
+    # [3] .rodata — SHT_PROGBITS, ALLOC
+    store64(O + sh + 0, (1 << 32) | 13);            # sh_name=13, sh_type=1
+    store64(O + sh + 8,2);                          # sh_flags = ALLOC
+    store64(O + sh + 16,0x400000 + rodata_off);
+    store64(O + sh + 24,rodata_off);
+    store64(O + sh + 32,MERGED_RODATA_SIZE);
+    store64(O + sh + 40,0);
+    store64(O + sh + 48,1);
+    store64(O + sh + 56,0);
+    sh = sh + 64;
+    # [4] .shstrtab — SHT_STRTAB
+    store64(O + sh + 0, (3 << 32) | 21);            # sh_name=21, sh_type=3
+    store64(O + sh + 8,0);
+    store64(O + sh + 16,0);                          # not allocated
+    store64(O + sh + 24,shstrtab_off);
+    store64(O + sh + 32,shstrtab_size);
+    store64(O + sh + 40,0);
+    store64(O + sh + 48,1);
+    store64(O + sh + 56,0);
+
     # Write to disk.
     var fd = syscall(SYS_OPEN, out_path, 0x241, 0x1ED);  # O_WRONLY|O_CREAT|O_TRUNC, 0755
     if (fd < 0) {
@@ -1147,15 +1234,15 @@ fn emit_executable(out_path): i64 {
         return 1;
     }
     var written = 0;
-    while (written < total) {
-        var w = syscall(SYS_WRITE, fd, O + written, total - written);
+    while (written < total_with_shdrs) {
+        var w = syscall(SYS_WRITE, fd, O + written, total_with_shdrs - written);
         if (w <= 0) { syscall(SYS_CLOSE, fd); emsg("error: write failed\n"); return 1; }
         written = written + w;
     }
     syscall(SYS_CLOSE, fd);
     # chmod +x (best effort)
     syscall(90, out_path, 0x1ED);
-    prints("  wrote "); printn(total); prints(" bytes to "); prints(out_path); prints("\n");
+    prints("  wrote "); printn(total_with_shdrs); prints(" bytes to "); prints(out_path); prints("\n");
     prints("  entry: 0x"); printhex(entry); prints("\n");
     return 0;
 }

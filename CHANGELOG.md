@@ -6,6 +6,80 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.31] — 2026-05-12
+
+**`cyrld` ELF64 user-binary linker: same section-header fix as
+5.11.29 (x86 kernel) / 5.11.30 (aarch64 kernel), now for
+`emit_executable` in `programs/cyrld.cyr`.**
+
+Closes the third of three identical `e_shoff = 0` sites identified
+in the 2026-05-12 GRUB-rejection postmortem. cyrld is the peer
+ELF64 linker that merges multiple object modules into a single
+ET_EXEC. The binaries it produces are normally loaded by `execve`
+— which ignores section headers, so this is NOT an MVP-blocker
+like the x86 kernel path was for GRUB — but section headers
+matter to every other consumer: `objdump -d`, `gdb`, `ltrace`,
+`readelf -S`, IDE symbol indexers, and any future linker
+relinking pass.
+
+### Fix
+
+`emit_executable` now appends a 5-entry section header table and
+a `.shstrtab` past the loaded segment. Same pattern as 5.11.30
+(ELF64, 64-byte `Elf64_Shdr`, 8-byte aligned), but with `.data`
+instead of `.bss` since cyrld merges initialized data from input
+modules:
+
+| # | Section     | Type     | Flags        | Notes                  |
+|---|-------------|----------|--------------|------------------------|
+| 0 | (SHT_NULL)  | SHT_NULL | —            | mandatory first entry  |
+| 1 | `.text`     | PROGBITS | ALLOC, EXEC  | merged module .text    |
+| 2 | `.data`     | PROGBITS | ALLOC, WRITE | merged initialized data |
+| 3 | `.rodata`   | PROGBITS | ALLOC        | merged rodata          |
+| 4 | `.shstrtab` | STRTAB   | —            | section name strings   |
+
+`.shstrtab` content: `\0.text\0.data\0.rodata\0.shstrtab\0`
+(31 bytes; name offsets 1 / 7 / 13 / 21).
+
+The 14-byte `_start` stub at `stub_off` is intentionally outside
+any section — it's still inside PT_LOAD (executable, the entry
+point lands there) but isn't part of `.text` because the file
+layout puts merged `.data` / `.rodata` between merged `.text`
+and the stub. Section coverage isn't required to be exhaustive.
+
+PT_LOAD `p_filesz` / `p_memsz` stay at the original `total`;
+section headers and shstrtab live in `[total, total_with_shdrs)`
+as non-allocated metadata past the loaded image.
+
+### Verification
+
+- `readelf -S` on `cyrld -o /tmp/linked …` lists all 5 sections cleanly
+- Linked binary executes identically (same `rc=44` from the
+  inc_counter chain fixture in `tests/fixtures/linker/`)
+- Output size grows exactly 352 bytes (31 + 1 pad + 5×64) for
+  any linked binary, regardless of input module count
+- `tests/fixtures/linker/` 4-module link: 616 → 968 bytes
+
+### Bug caught in patch development
+
+First pass wrote `store64(sh + 0, …)` for shdr field stores —
+forgetting that `sh` is a file offset, not a base pointer; the
+correct form is `store64(O + sh + 0, …)` (and same for the seven
+other field offsets). Without the `O +` prefix, cyrld wrote to
+absolute addresses ≈ shdr_off + n and SIGSEGV'd. Worth noting
+because the same trap would catch anyone else mirroring this
+pattern into a new linker pass — the file-buffer base `O` must
+prefix every store target.
+
+### Series complete
+
+With 5.11.29 (x86 kernel) + 5.11.30 (aarch64 kernel) + 5.11.31
+(cyrld), all three ELF emit paths identified in the
+2026-05-12 audit now carry section header tables. The two
+in-compiler **user-binary** emitters (`EMITELF_USER` x86,
+`EMITELF` aarch64) still have `e_shoff=0`; queued for the
+upcoming 5.11.x roadmap restructure.
+
 ## [5.11.30] — 2026-05-12
 
 **aarch64 kernel ELF emitter: same section-header fix as 5.11.29
