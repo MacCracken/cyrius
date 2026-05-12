@@ -16,6 +16,10 @@ var _repo_root = 0;
 var _version = 0;
 var _home = 0;
 var _envp = 0;
+# v5.11.25: per-repo isolation Part 2. Set to 1 if CYRIUS_RESOLVED=1
+# is in the environment (= we already re-exec'd into the pinned
+# toolchain; loop guard for `_try_redirect_to_pinned`).
+var _cyrius_resolved = 0;
 var _verbose = 0;
 var _quiet = 0;
 var _dry_run = 0;
@@ -173,6 +177,9 @@ fn find_tools(): i64 {
             }
             if (memeq(env_buf + ei, "CYRIUS_HOME=", 12) == 1) {
                 cyrius_home = env_buf + ei + 12;
+            }
+            if (memeq(env_buf + ei, "CYRIUS_RESOLVED=", 16) == 1) {
+                if (load8(env_buf + ei + 16) == 49) { _cyrius_resolved = 1; }
             }
             # Skip to next null
             while (ei < env_n) {

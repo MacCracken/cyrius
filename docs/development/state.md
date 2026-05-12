@@ -5,6 +5,28 @@
 
 ## Version
 
+**5.11.25** (shipped 2026-05-11 — **Per-repo isolation Part 2:
+`cyrius` CLI version-resolved dispatcher**). Picks up where
+v5.11.17's deps stdlib_dir fix (Part 1) left off. Every
+`cyrius <cmd>` now does a version-resolution walk: reads
+`cyrius.cyml`'s `[package].cyrius` field, compares with the
+binary's compile-time-embedded `_VERSION_TOOLCHAIN`, and if
+they differ → `sys_execve` re-exec to `~/.cyrius/versions/<pin>/
+bin/cyrius` with `CYRIUS_RESOLVED=1` env loop guard. Loop guard
+detected on re-entry by `find_tools()` → sets `_cyrius_resolved`
+→ skips the redirect (no infinite loop). Hard error (NEVER
+silent slide to `latest`) when pinned binary isn't installed —
+matches v5.11.17 deps policy. Skipped for cyrius source repo
+(`src/main.cyr` present). **NEW** `_VERSION_TOOLCHAIN` literal
+in `src/version_str.cyr` (version-bump.sh regen block writes it
+going forward). 5-case test matrix verified: same-version /
+no-cyml / source-repo → no re-exec; uninstalled pin → exit=1
+with clear message; installed-different-pin → re-exec confirmed;
+CYRIUS_RESOLVED=1 → loop guard skips. cc5 byte-identical at
+**809,240 B**; check.sh 67/67; cyrius test 148/148. Part 3
+(`cyriusly use --global`) stays pinned at v5.11.26 to close
+the arc.
+
 **5.11.24** (shipped 2026-05-11 — **`#derive(accessors)` >16-field
 silent miscompile fix**). agnos 1.28.3 `struct Process` (22
 fields) hit a no-bounds-check overflow in `src/frontend/lex_pp.cyr`

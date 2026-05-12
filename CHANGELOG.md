@@ -6,6 +6,132 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.25] — 2026-05-11
+
+**Per-repo isolation Part 2: `cyrius` CLI version-resolved
+dispatcher**. Picks up where v5.11.17 (Part 1: `cyrius deps`
+stdlib_dir fix) left off. Part 3 (`cyriusly use --global` flag)
+pinned at v5.11.26.
+
+### What this does
+
+Every `cyrius <cmd>` invocation now does a version-resolution
+walk BEFORE dispatching the command:
+
+1. If `CYRIUS_RESOLVED=1` is set → skip (loop guard).
+2. If running from the cyrius source repo (`src/main.cyr`
+   present) → skip (in-repo development).
+3. Read `cyrius.cyml`'s top-level `[package].cyrius = "X.Y.Z"`
+   field via the v5.11.17 helper `_dep_read_cyml_cyrius_field`.
+   If absent → skip.
+4. If the pinned version == this binary's version → skip.
+5. If the pinned binary is NOT installed at
+   `~/.cyrius/versions/<pin>/bin/cyrius` → hard error with
+   `cyrius install X.Y.Z` suggestion (NEVER silently slides
+   to `latest`, matching v5.11.17 deps policy).
+6. Otherwise: `sys_execve` the pinned binary with the same
+   argv + the parent envp + `CYRIUS_RESOLVED=1`. The re-execed
+   binary's `find_tools()` detects the env var and sets
+   `_cyrius_resolved = 1`, so its dispatch loop sees the
+   guard and skips the redirect (no infinite loop).
+
+### Why this matters
+
+Sibling agents on shared dev boxes (agnosys, mabda, phylax,
+ai-hwaccel, etc.) routinely run `cyriusly use <other>` to
+test against their pinned toolchain — which flips the global
+`~/.cyrius/current` pointer. Pre-v5.11.25, any concurrent
+`cyrius build` / `cyrius test` etc. in a different repo would
+get whatever toolchain version `current` pointed at, even if
+that repo's `cyrius.cyml` explicitly pinned a different one.
+
+Post-v5.11.25: each repo gets the toolchain version its
+`cyrius.cyml` names, regardless of the global pointer. Agents
+flipping `current` to their pinned version no longer affect
+other repos.
+
+### Implementation
+
+- **NEW** `_VERSION_TOOLCHAIN = "5.11.25"` in `src/version_str.cyr`.
+  Bare version string (no "cc5 " prefix, no trailing newline)
+  for comparing against cyrius.cyml's `cyrius` field.
+  `scripts/version-bump.sh` regen block updated to emit this
+  going forward.
+- `cbt/cyrius.cyr`: `include "src/version_str.cyr"` added.
+  New `_try_redirect_to_pinned()` (~70 LOC) called near the
+  top of `main()`, after `find_tools()` (which loads `_envp`
+  + `_home` + detects `CYRIUS_RESOLVED`).
+- `cbt/core.cyr`: new global `_cyrius_resolved = 0`.
+  `find_tools()` extended to detect `CYRIUS_RESOLVED=1` in
+  /proc/self/environ alongside HOME / CYRIUS_HOME.
+
+### Verification
+
+5-case test matrix on a fresh build/cyrius:
+
+| Test | cyml pin | env | Expected | Got |
+|---|---|---|---|---|
+| 1 | same as binary | clean | no re-exec | ✓ no re-exec |
+| 2 | none | clean | no re-exec | ✓ no re-exec |
+| 3 | any (cyrius source repo) | clean | no re-exec | ✓ no re-exec |
+| 4 | `9.99.99` (not installed) | clean | hard error, exit 1 | ✓ `error: cyrius.cyml pins version 9.99.99 but cyrius binary is not installed at /home/macro/.cyrius/versions/9.99.99/bin/cyrius\n  run: cyrius install 9.99.99` |
+| 5 | `5.11.18` (installed) | clean | re-exec to 5.11.18 binary | ✓ (strace + temp debug print confirmed `execve` to 5.11.18/bin/cyrius) |
+| 6 | `5.11.18` | `CYRIUS_RESOLVED=1` | no re-exec (loop guard) | ✓ no re-exec |
+
+- cc5 self-host byte-identical at **809,240 B** (+40 from new
+  version_str line; cbt changes don't affect cc5's output).
+- `cyrius check` 67/67 green.
+- `cyrius test` 148/148 green.
+
+### Pairs with v5.11.17 + v5.11.26
+
+- **v5.11.17** (deps stdlib_dir fix): `cyrius deps` reads stdlib
+  from `~/.cyrius/versions/<cyml-pin>/lib/` instead of the
+  mutable `~/.cyrius/lib` symlink. Closes the snapshot-ping-pong
+  wipe wedge.
+- **v5.11.25** (this slot, CLI dispatcher): `cyrius` itself
+  honors the cyml pin via re-exec.
+- **v5.11.26** (pinned, Part 3): `cyriusly use <v>` defaults
+  to writing the cyml field (per-repo); `--global` flag is the
+  explicit form for the legacy `~/.cyrius/current` write.
+
+After v5.11.26 ships, the per-repo isolation arc is complete.
+Sibling agents must pass `cyriusly use 5.10.44 --global` to
+do what they used to do implicitly with `cyriusly use 5.10.44`.
+
+### Limitations / known gotcha
+
+`cyrius version` (and `--version`) still reports the GLOBAL
+`~/.cyrius/current` content (e.g. "cyrius 5.11.24") regardless
+of which binary is running. The re-exec'd 5.11.18 binary
+prints "5.11.24" because it reads the same global file. This
+is cosmetic — the binary actually running IS the pinned one
+(verified via re-exec evidence in test 5); only the `version`
+command's reported string is the global pointer.
+
+Fixing this requires teaching `cmd_version` to also show the
+binary's own `_VERSION_TOOLCHAIN`. Naturally lands in v5.11.26
+alongside the `cyriusly use --global` work since both touch
+the same "which version are we" mental model.
+
+### Roadmap
+
+v5.11.25 closes Part 2 of the 3-part per-repo isolation arc
+(split at v5.11.17 close per user direction "Reframe — split
+into 3 slots"). Per `feedback_deferral_requires_roadmap_pinnage`,
+Part 3 (cyriusly use --global) stays pinned at v5.11.26 with
+its own acceptance bar.
+
+### Files
+
+- `src/version_str.cyr` — +1 line (`_VERSION_TOOLCHAIN`).
+- `scripts/version-bump.sh` — regen block emits the new var
+  going forward.
+- `cbt/cyrius.cyr` — `include "src/version_str.cyr"` +
+  `_try_redirect_to_pinned()` fn + main() call.
+- `cbt/core.cyr` — `_cyrius_resolved` global +
+  `CYRIUS_RESOLVED=1` env detection in `find_tools()`.
+
 ## [5.11.24] — 2026-05-11
 
 **`#derive(accessors)` >16-field silent miscompile fix** —

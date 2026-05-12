@@ -44,6 +44,12 @@ var _VERSION_STR_CC5_WIN     = "cc5_win $NEW\n";
 var _VERSION_LEN_CC5_WIN     = $LEN_CC5_WIN;
 var _VERSION_STR_CC5_AARCH64 = "cc5_aarch64 $NEW\n";
 var _VERSION_LEN_CC5_AARCH64 = $LEN_CC5_AARCH64;
+
+# v5.11.25: bare-version string for cbt/cyrius.cyr's version-resolved
+# dispatcher. Compared against cyrius.cyml's \`[package].cyrius\` field
+# at every \`cyrius\` invocation; if pinned !=  this, re-exec the pinned
+# binary. See \`_try_redirect_to_pinned()\` in cbt/cyrius.cyr.
+var _VERSION_TOOLCHAIN       = "$NEW";
 EOF
 fi
 

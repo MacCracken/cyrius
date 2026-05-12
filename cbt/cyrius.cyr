@@ -19,6 +19,8 @@ include "lib/tagged.cyr"
 include "lib/process.cyr"
 include "lib/syscalls.cyr"
 
+include "src/version_str.cyr"
+
 include "cbt/core.cyr"
 include "cbt/build.cyr"
 include "cbt/commands.cyr"
@@ -83,6 +85,87 @@ fn usage(): i64 {
 }
 
 # ================================================================
+# Per-repo version-resolved dispatch (v5.11.25 — Part 2 of the
+# per-repo isolation arc; Part 1 shipped at v5.11.17 in cbt/deps.cyr).
+# ================================================================
+#
+# Runs BEFORE the command dispatch. If `cyrius.cyml`'s
+# `[package].cyrius = "X.Y.Z"` field pins a different version than
+# this binary represents, re-exec the pinned binary so the consumer
+# always gets the toolchain version their cyml field names.
+#
+# Loop guard: `CYRIUS_RESOLVED=1` env var. Set by us before execve;
+# detected on re-entry by `find_tools()` (sets `_cyrius_resolved`).
+# Second-pass binary skips this fn and runs the command directly.
+#
+# Hard error if the pinned version isn't installed at
+# `~/.cyrius/versions/<v>/bin/cyrius`. Never silently slides to
+# `latest` — matches v5.11.17 deps stdlib_dir policy.
+fn _try_redirect_to_pinned(): i64 {
+    if (_cyrius_resolved == 1) { return 0; }
+
+    # cyrius repo signal: if src/main.cyr exists, this is the cyrius
+    # source repo itself. cyrius.cyml has no `cyrius` field (cyrius
+    # IS itself); the deps stdlib_dir Part 1 (v5.11.17) already gates
+    # on this signal — match for consistency.
+    if (file_exists("src/main.cyr") == 1) { return 0; }
+
+    var pin = _dep_read_cyml_cyrius_field();
+    if (pin == 0) { return 0; }
+
+    # Compare with self version (compile-time embed via version_str.cyr).
+    if (streq(pin, _VERSION_TOOLCHAIN) == 1) { return 0; }
+
+    # Build pinned binary path: ~/.cyrius/versions/<pin>/bin/cyrius.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _home);
+    str_builder_add_cstr(sb, "/versions/");
+    str_builder_add_cstr(sb, pin);
+    str_builder_add_cstr(sb, "/bin/cyrius");
+    var pinned_bin = str_data(str_builder_build(sb));
+
+    if (file_exists(pinned_bin) == 0) {
+        sys_write(STDERR_FD, "error: cyrius.cyml pins version ", 32);
+        sys_write(STDERR_FD, pin, strlen(pin));
+        sys_write(STDERR_FD, " but cyrius binary is not installed at ", 39);
+        sys_write(STDERR_FD, pinned_bin, strlen(pinned_bin));
+        sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
+        sys_write(STDERR_FD, pin, strlen(pin));
+        sys_write(STDERR_FD, "\n", 1);
+        sys_exit(1);
+    }
+
+    # Build new argv: [pinned_bin, original argv[1..]].
+    var ac = argc();
+    var nargv = alloc((ac + 1) * 8);
+    store64(nargv, pinned_bin);
+    var i = 1;
+    while (i < ac) {
+        store64(nargv + i * 8, argv(i));
+        i = i + 1;
+    }
+    store64(nargv + ac * 8, 0);
+
+    # Build new envp: existing _envp + "CYRIUS_RESOLVED=1" + NUL.
+    var ev_count = 0;
+    while (load64(_envp + ev_count * 8) != 0) { ev_count = ev_count + 1; }
+    var nenvp = alloc((ev_count + 2) * 8);
+    var ej = 0;
+    while (ej < ev_count) {
+        store64(nenvp + ej * 8, load64(_envp + ej * 8));
+        ej = ej + 1;
+    }
+    store64(nenvp + ev_count * 8, "CYRIUS_RESOLVED=1");
+    store64(nenvp + (ev_count + 1) * 8, 0);
+
+    sys_execve(pinned_bin, nargv, nenvp);
+    # execve only returns on failure.
+    sys_write(STDERR_FD, "error: cyrius execve to pinned version failed\n", 47);
+    sys_exit(1);
+    return 0;
+}
+
+# ================================================================
 # Main dispatch
 # ================================================================
 
@@ -92,6 +175,12 @@ fn main(): i64 {
     load_environ();
     find_tools();
     set_arch(ARCH_X86);
+
+    # v5.11.25: per-repo isolation Part 2.
+    # If cyrius.cyml pins a different version, re-exec the pinned
+    # binary. Skipped when CYRIUS_RESOLVED=1 (already re-exec'd) or
+    # when running from the cyrius source repo (src/main.cyr present).
+    _try_redirect_to_pinned();
 
     if (argc() < 2) {
         usage();
