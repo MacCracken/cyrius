@@ -652,17 +652,16 @@ fn main(): i64 {
                 return 0;
             }
         }
-        # cyrius version → toolchain version
-        var _tc_ver = 0;
-        if (_home != 0) {
-            _tc_ver = read_file_str(make_path(_home, "current"));
-        }
-        if (_tc_ver == 0) {
-            # Fallback: use project VERSION (dev mode — running from source)
-            _tc_ver = _version;
-        }
+        # cyrius version → THIS binary's compile-time version
+        # (v5.11.26 fix: pre-fix this read ~/.cyrius/current, which is
+        # the global default — not the binary's own version. With the
+        # v5.11.25 per-repo dispatcher re-execing into pinned binaries,
+        # reporting the global was misleading: a re-exec'd 5.11.18
+        # binary would still print 5.11.24 because that's what
+        # `current` said. _VERSION_TOOLCHAIN is the compile-time
+        # embedded version of THIS binary specifically.)
         sys_write(STDOUT_FD, "cyrius ", 7);
-        sys_write(STDOUT_FD, _tc_ver, strlen(_tc_ver));
+        sys_write(STDOUT_FD, _VERSION_TOOLCHAIN, strlen(_VERSION_TOOLCHAIN));
         sys_write(STDOUT_FD, "\n", 1);
         return 0;
     }

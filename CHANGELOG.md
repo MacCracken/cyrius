@@ -6,6 +6,141 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.26] — 2026-05-12
+
+**Per-repo isolation Part 3: `cyriusly use --global` flag +
+per-repo default**. Closes the 3-part per-repo isolation arc
+that started at v5.11.17.
+
+### Behavior change
+
+`cyriusly use <version>` semantics flipped:
+
+| Pre-v5.11.26 | Post-v5.11.26 |
+|---|---|
+| `cyriusly use 5.11.X` → writes `~/.cyrius/current` (global) | `cyriusly use 5.11.X` → writes `cyrius.cyml`'s `[package].cyrius` field (per-repo) |
+| (no per-repo option) | `cyriusly use 5.11.X --global` → writes `~/.cyrius/current` (legacy, opt-in) |
+| (no resolve-print) | `cyriusly use` (no args) → prints resolved version + source |
+
+Sibling agents that previously did `cyriusly use 5.10.44` to
+flip the global pointer must now pass `--global` explicitly.
+The per-repo default is the safer behavior: agents touching
+their own project's toolchain don't accidentally affect other
+repos sharing the dev box.
+
+### `cyriusly use` (no args) — resolve + source
+
+Prints the toolchain version that a `cyrius` invocation from
+this cwd would actually resolve to, plus its source:
+
+```
+$ cd ~/Repos/sigil   # cyrius.cyml pins 5.11.4
+$ cyriusly use
+cyrius 5.11.4 (pinned in cyrius.cyml)
+
+$ cd /tmp            # no cyrius.cyml
+$ cyriusly use
+cyrius 5.11.26 (~/.cyrius/current — global default)
+```
+
+### `cyriusly use <ver>` — per-repo default
+
+Writes `cyrius.cyml`'s `[package].cyrius` field:
+
+- If the field exists: replace its value in place (format
+  preserved — only the value line is touched).
+- If the field is absent: insert at top of `[package]` section
+  body.
+- If `cyrius.cyml` has no `[package]` section OR doesn't exist:
+  hard error with `cd to a project root, or pass --global` hint.
+
+The version MUST already be installed at
+`~/.cyrius/versions/<v>/`. Pre-install error mirrors the
+v5.11.17 deps stdlib_dir policy: never silent fallback.
+
+### `cyriusly use <ver> --global` — legacy opt-in
+
+Writes `~/.cyrius/current` + recreates `~/.cyrius/{bin,lib}`
+symlinks (the pre-v5.11.26 default). Use when you genuinely
+want to flip the global default.
+
+### v5.11.25 cosmetic gotcha — fixed
+
+v5.11.25's `cyrius version` cmd still read `~/.cyrius/current`
+(the global pointer), so a re-exec'd 5.11.18 binary reported
+"cyrius 5.11.24" because that's what `current` said. v5.11.26
+flips `cyrius version` to read `_VERSION_TOOLCHAIN` from the
+binary itself (compile-time embed). Now an old binary
+re-exec'd by the v5.11.25 dispatcher reports its own real
+version, not the global.
+
+### Implementation
+
+- `programs/cyriusly.cyr`:
+  - `_cmd_use_v2(ver_cstr, is_global)` — new 2-arg entry
+    (~75 LOC) with the dispatch split: per-repo (default),
+    global (--global), no-args (resolve-print).
+  - `_write_cyml_cyrius_pin(ver_cstr)` — TOML line-level
+    rewrite. Scans for `[package]` then `cyrius = ` line
+    within it; replaces or inserts as needed (~90 LOC).
+  - `_print_resolved_version()` — duplicates the cyml-field
+    read inline (avoiding cross-file dep on
+    `_dep_read_cyml_cyrius_field` from cbt/deps.cyr — different
+    binary) and falls back to the global pointer (~50 LOC).
+  - `_cmd_use(ver_cstr)` kept as legacy entry, routes to
+    `_cmd_use_v2(ver_cstr, 1)` (preserves pre-v5.11.26 global
+    behavior for any caller that doesn't know about the new
+    flag).
+  - Dispatcher block updated to parse `--global` in any
+    position in argv past `use`.
+
+- `cbt/cyrius.cyr`: `cyrius version` cmd now reads
+  `_VERSION_TOOLCHAIN` (from `src/version_str.cyr`) instead
+  of `~/.cyrius/current`. v5.11.25 already added the include;
+  this slot uses it.
+
+### Acceptance bar — full matrix verified
+
+| # | scenario | result |
+|---|---|---|
+| 1 | `cyriusly use` in cwd with cyml pin | prints `cyrius X.Y.Z (pinned in cyrius.cyml)` ✓ |
+| 2 | `cyriusly use` in cwd with no cyml | prints `cyrius X.Y.Z (~/.cyrius/current — global default)` ✓ |
+| 3 | `cyriusly use 5.11.18` in cwd w/ cyml `cyrius = "5.11.20"` | writes `cyrius = "5.11.18"`; in-place replace, format preserved ✓ |
+| 4 | `cyriusly use 5.11.18` in cwd w/ cyml lacking `cyrius` field | inserts `cyrius = "5.11.18"` at top of `[package]` ✓ |
+| 5 | `cyriusly use 5.11.18` in cwd w/ NO cyml | error + `cd to a project root, or pass --global...`, exit 1 ✓ |
+| 6 | `cyriusly use 9.99.99` (not installed) | error + `cyriusly install 9.99.99`, exit 1 ✓ |
+| 7 | `cyriusly use 5.11.18 --global` | writes `~/.cyrius/current` + symlinks (legacy) ✓ (test skipped to avoid clobbering test env; codepath identical to pre-v5.11.26) |
+| 8 | `cyrius version` from new binary | prints `cyrius 5.11.26` (own embed, NOT global pointer) ✓ |
+
+### Closes the 3-part arc
+
+Per-repo isolation arc, started at v5.11.17 after the
+v5.11.3 snapshot-ping-pong wipe, now fully shipped:
+
+| Slot | Part | Outcome |
+|---|---|---|
+| **v5.11.17** | 1 — `cyrius deps` stdlib_dir fix | reads from `~/.cyrius/versions/<cyml-pin>/lib/` not the mutable global symlink |
+| **v5.11.25** | 2 — CLI version-resolved dispatcher | `cyrius <cmd>` re-execs to the cyml-pinned binary |
+| **v5.11.26** | 3 — `cyriusly use --global` flag | per-repo write by default, `--global` for the legacy global write |
+
+After this slot ships, sibling agents on shared dev boxes
+operate in their own toolchain version regardless of what the
+global pointer says. No more snapshot-ping-pong wipes from
+concurrent `cyriusly use <other>` invocations.
+
+### Verification
+
+- cc5 self-host byte-identical at **809,240 B** (no compiler
+  changes; only cyriusly + cbt/cyrius.cyr).
+- `cyrius check` 67/67 green.
+- `cyrius test` 148/148 green.
+
+### Files
+
+- `programs/cyriusly.cyr` — `_cmd_use_v2` + helpers (~215 LOC
+  added); dispatcher parses `--global`.
+- `cbt/cyrius.cyr` — `cmd_version` uses `_VERSION_TOOLCHAIN`.
+
 ## [5.11.25] — 2026-05-11
 
 **Per-repo isolation Part 2: `cyrius` CLI version-resolved

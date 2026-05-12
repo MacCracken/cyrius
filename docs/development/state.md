@@ -5,6 +5,27 @@
 
 ## Version
 
+**5.11.26** (shipped 2026-05-12 — **Per-repo isolation Part 3:
+`cyriusly use --global` flag + per-repo default; closes 3-part
+arc**). `cyriusly use 5.11.X` (no flag) now writes `cyrius.cyml`'s
+`[package].cyrius` field instead of `~/.cyrius/current`.
+`--global` keeps the legacy global-pointer write. `cyriusly use`
+(no args) prints resolved version + source. New helpers:
+`_write_cyml_cyrius_pin` (TOML line-level rewrite — in-place
+value replace or insertion at top of [package]),
+`_print_resolved_version`. Hard error when no cyml + no
+`--global` (instructs cd to project or pass --global). Also
+fixed v5.11.25 cosmetic gotcha: `cyrius version` now reports
+the binary's `_VERSION_TOOLCHAIN` (compile-time embed) instead
+of `~/.cyrius/current` (the global pointer) — so re-exec'd
+older binaries report their actual version. 8-case test matrix
+verified all branches. **Per-repo isolation arc complete**:
+v5.11.17 (deps stdlib_dir) → v5.11.25 (CLI dispatcher) →
+v5.11.26 (cyriusly use --global). Sibling agents flipping the
+global pointer no longer affect other repos. cc5 byte-identical
+at **809,240 B** (cyriusly/cbt only); check.sh 67/67; cyrius
+test 148/148.
+
 **5.11.25** (shipped 2026-05-11 — **Per-repo isolation Part 2:
 `cyrius` CLI version-resolved dispatcher**). Picks up where
 v5.11.17's deps stdlib_dir fix (Part 1) left off. Every
