@@ -92,6 +92,7 @@ fn sys_waitpid(pid, status_ptr, options): i64 {
 # Wait-status decoding macros — same shape across both arches
 # (POSIX wstatus format).
 
+# Returns 1 if the child exited normally (via exit() or main return).
 fn WIFEXITED(status): i64 {
     if ((status & 0x7F) == 0) { return 1; }
     return 0;
@@ -120,14 +121,26 @@ fn WTERMSIG(status): i64 {
 # Credentials (one-liners — identical surface across both arches)
 # ================================================================
 
+# Get the calling process's real user ID.
 fn sys_getuid(): i64 { return syscall(SYS_GETUID); }
+# Get the calling process's real group ID.
 fn sys_getgid(): i64 { return syscall(SYS_GETGID); }
+# Get the calling process's effective user ID.
 fn sys_geteuid(): i64 { return syscall(SYS_GETEUID); }
+# Get the calling process's effective group ID.
 fn sys_getegid(): i64 { return syscall(SYS_GETEGID); }
+# Set the calling process's real user ID. Requires CAP_SETUID.
 fn sys_setuid(uid): i64 { return syscall(SYS_SETUID, uid); }
+# Set the calling process's real group ID. Requires CAP_SETGID.
 fn sys_setgid(gid): i64 { return syscall(SYS_SETGID, gid); }
+# Set the calling process's supplementary group list.
 fn sys_setgroups(size, list): i64 { return syscall(SYS_SETGROUPS, size, list); }
+# Drop real / effective / saved UID atomically. Firecracker
+# jailer pattern: pre-execve, per-VM UID drop. Pairs with
+# sys_setresgid (gid first per Linux order-of-ops). Async-signal-safe.
 fn sys_setresuid(ruid, euid, suid): i64 { return syscall(SYS_SETRESUID, ruid, euid, suid); }
+# Drop real / effective / saved GID atomically. Pairs with
+# sys_setresuid. Async-signal-safe.
 fn sys_setresgid(rgid, egid, sgid): i64 { return syscall(SYS_SETRESGID, rgid, egid, sgid); }
 
 # ================================================================
