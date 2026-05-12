@@ -5,6 +5,37 @@
 
 ## Version
 
+**5.11.28** (shipped 2026-05-12 — **bote parser quirk slot
+closed: no-repro confirmed + diagnostic improvement +
+regression test**). Premise-check at slot entry per pin:
+reverted bote's `cap0/cap1` var-stage workaround to
+recreate the filing's inline `assert(streq(vec_get(caps_v,
+N), "lit") == 1, "msg")` shape, compiled at both v5.11.27
+(current) AND v5.10.34 (filing version, intact at
+`~/.cyrius/versions/5.10.34/bin/cc5`) — clean parse both
+times. Synthetic fuzz 0/28 across 9 preceding-line counts ×
+both versions and 10 ident-counts at filing version
+(spanning the filing's ~8700 boundary speculation). Likely
+closed silently by v5.11.18's identifier buffer doubling
+(`f3e98a3e`, 131072 → 262144 bytes) — fits the filing's
+Speculation 2 hash-collision / scan-window boundary
+hypothesis. **Ships:**
+(1) `tests/tcyr/parse_nested_call_assert.tcyr` (13 asserts)
+locks the nested-call shape — bote's exact trigger, 3-deep
+nested variant, and the same shape preceded by a 7-assert
+SSRF-URL + JSON literal stress block.
+(2) `src/common/util.cyr:425-432` adds a hint to `ERR_EXPECT`
+when `expected ')'` or `','` AND got-token is string: the
+exact symptom signature gets a `hint: a string literal where
+')' is expected often means a nested call inside a fn
+argument confused the parser; stage the inner call into a
+\`var\` first.` line between the diagnostic and capacity
+dump. Saves consumers the misleading-fix rabbit hole.
+Issue file `git mv`'d to `archived/`. cc5 byte-identical at
+**810,024 B** (+496 B from 5.11.27's 809,528 — diagnostic
+strings + 4 syscall branches in `ERR_EXPECT`); check.sh
+67/67; cyrius test 149/149 (was 148; +1 regression test).
+
 **5.11.27** (shipped 2026-05-12 — **aarch64-native build
 repair; 2 stale-fork bugs latent since v5.5.16**). Pre-empted
 the v5.11.27=bote-parser-quirk slot mid-flight after `ssh pi to

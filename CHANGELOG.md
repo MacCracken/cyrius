@@ -6,6 +6,89 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.28] — 2026-05-12
+
+**bote parser quirk slot — closed as no-repro + diagnostic
+improvement + regression test**. The bote 2.7.1 filing
+(`docs/development/issues/2026-05-10-parser-assert-call-string-literal-quirk.md`)
+reported an intermittent `expected ')', got string` on the shape
+`assert(streq(call(args, n), "lit") == 1, "msg")` (2-arg inner
+call inside another fn-call inside `assert`), at cyrius 5.10.34.
+The filing itself noted "After full chunk-by-chunk re-add, the
+error stopped reproducing" — i.e. bote couldn't reliably trigger
+it even at filing-time.
+
+### Premise-check at slot entry (per pin)
+
+Reverted bote's `cap0/cap1` var-stage workaround in
+`tests/bote_host.tcyr:180-183` (cap0/cap1 inline → nested `assert(streq(vec_get(caps_v, N), "lit") == 1, "msg")`) and ran:
+
+1. v5.11.27 cc5 (current host): clean parse, no error.
+2. v5.10.34 cc5 (filing version, intact at
+   `~/.cyrius/versions/5.10.34/bin/cc5`): also clean parse.
+3. Synthetic fuzz — 9 preceding-line counts × 50→240 SSRF-URL
+   asserts at v5.10.34 and v5.11.27: 0/18 triggers.
+4. Synthetic fuzz — 10 ident counts (100→10000 filler fns spanning
+   the filing's "~8700" speculation boundary) at v5.10.34:
+   0/10 triggers.
+
+Bote restored to its shipped var-stage form afterward — the
+inlined version never landed in bote's git (only ever existed
+mid-bisect in their working tree), so no actual revert needed.
+
+### Likely culprit fix
+
+Commit `f3e98a3e` (first in **v5.11.18**) doubled the identifier
+buffer 131072 → 262144 bytes. Lines up with the filing's
+Speculation 2 (`hash collision or scan-window boundary at ~8700
+idents`) — capacity doubling shifts hash-bucket distribution.
+Not proof-grade (no repro to verify against), but the timing fits.
+
+### What ships
+
+#### (1) Regression test
+
+`tests/tcyr/parse_nested_call_assert.tcyr` (13 asserts) locks the
+nested-call shape in three forms — bote's exact trigger, deeper
+3-level nesting, and the same shape preceded by a stress block
+of 7 string-literal-heavy asserts (SSRF URLs + escaped-quote
+JSON) approximating bote's ~180-line preceding context.
+
+Future parser refactors that reintroduce the path-dependent
+state leak will be caught by this file.
+
+#### (2) Improved diagnostic in `src/common/util.cyr:425-432`
+
+`ERR_EXPECT` now emits a hint line when the surfaced shape is
+`expected ')'` or `','` AND the got-token is a string literal —
+the exact symptom signature in the bote filing:
+
+```
+error:<source>:N: expected ')', got string
+  hint: a string literal where ')' is expected often means a
+        nested call inside a fn argument confused the parser;
+        stage the inner call into a `var` first.
+```
+
+The hint sits between the diagnostic line and the existing
+capacity dump, so consumers see "stage to var" before they
+start re-balancing quotes or escapes — the misleading-fix
+rabbit hole the filing explicitly called out.
+
+### Issue closed
+
+`docs/development/issues/2026-05-10-parser-assert-call-string-literal-quirk.md`
+moved to `archived/` per the close-to-archive pin.
+
+### Verify
+
+- x86_64 host: `cc5 == cc5b` byte-identical (810024 B; +496 B
+  for the diagnostic strings + branch).
+- `sh scripts/check.sh`: 67/67 PASS.
+- `cyrius test`: 149/149 PASS (was 148; +1 regression test).
+- Synthetic malformed call (`foo(1 "bar")`) emits the new hint
+  cleanly — verified by hand on `/tmp/diag_check.cyr`.
+
 ## [5.11.27] — 2026-05-12
 
 **aarch64-native build repair**. Two stale-fork bugs latent since

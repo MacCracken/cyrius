@@ -416,6 +416,19 @@ fn ERR_EXPECT(S, expected_type): i64 {
         PRNUM(PEEKV(S));
     }
     syscall(SYS_WRITE, 2, "\n", 1);
+    # v5.11.28: when fn-arg parsing surfaces "expected ')' / ',', got string"
+    # the underlying cause is often a nested 2-arg call inside another fn-call
+    # confusing the parser's arg-list state machine. Stage the inner call
+    # into a `var` first as a workaround. See CHANGELOG [5.11.28] + bote
+    # 2.7.1 filing.
+    if (got == 30) {
+        if (expected_type == 11) {
+            syscall(SYS_WRITE, 2, "  hint: a string literal where ')' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
+        }
+        if (expected_type == 31) {
+            syscall(SYS_WRITE, 2, "  hint: a string literal where ',' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
+        }
+    }
     # v4.8.4-alpha3: dump capacity at error site so consumers can
     # see if the error is correlated with a near-cap table — same
     # diagnostic as CYRIUS_STATS=1 but fired on parse failures so
