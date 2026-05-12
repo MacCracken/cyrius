@@ -19,6 +19,10 @@ enum SignatureAlgorithm {
     SIG_ALG_HYBRID = 2;
 }
 
+# Return a human-readable name for a SIG_ALG_* code, used by
+# log/diagnostic output. Consumers: libro (src/proof.cyr,
+# src/signing.cyr); sigil's own src/types.cyr (folded-distfile
+# internal — sigil was vendored byte-identical at v5.8.65).
 fn sig_alg_name(alg): i64 {
     if (alg == SIG_ALG_ED25519) { return "Ed25519"; }
     if (alg == SIG_ALG_ML_DSA_65) { return "ML-DSA-65"; }

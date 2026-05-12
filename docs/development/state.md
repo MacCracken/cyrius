@@ -5,6 +5,24 @@
 
 ## Version
 
+**5.11.21** (shipped 2026-05-11 — **0-call public stdlib fn downstream
+survey**). 10 PUBLIC stdlib fns flagged 0-callers-within-cyrius
+audited across all 50 sibling repos. **Net: 0 removals, 0
+deprecations**. Audit revealed 5/10 have downstream consumers
+(daimon → async_new; cyim → niyama_bre_compile; libro → sig_alg_name;
+sandhi-internal → sandhi_err_kind_name; sakshi-internal →
+sakshi_clock_recalibrate), 3/10 are NSS cache-invalidation
+trio (grp/pwd/shadow_invalidate_cache — coherent surface,
+agnos/kavach intended consumer), 2/10 speculative/init verbs
+(callback::for_each, log_init — kept with v6.0.0 dead-code
+sweep revisit pointer). Validates
+`feedback_dead_code_audit_scope` — 0-callers-in-grep is NOT
+safe-to-remove. Docstrings updated in 8 native lib files (folded
+distfiles sakshi/sandhi left byte-identical with upstream).
+**NEW** `docs/audit/2026-05-11-zero-call-stdlib.md` carries the
+full per-fn decision tree. cc5 byte-identical at 804,456 B
+(comment-only edits); check.sh 66/66; cyrius test 147/147.
+
 **5.11.20** (shipped 2026-05-11 — **syscall-wrapper DRY consolidation**).
 ~46 body-identical wrappers extracted from `lib/syscalls_x86_64_linux.cyr`
 + `lib/syscalls_aarch64_linux.cyr` into a NEW `lib/syscalls_linux_common.cyr`

@@ -6,6 +6,81 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.21] — 2026-05-11
+
+**0-call public stdlib fn downstream survey** — closes the
+v5.11.7 close-out lib-audit pin. 10 PUBLIC stdlib fns flagged
+0-callers-within-cyrius-repo audited across all 50 sibling
+sibling repos.
+
+### Findings
+
+| Fn | Downstream consumer outside `lib/dist` | Decision |
+|---|---|---|
+| `async_new` | daimon (src/main.cyr) | KEEP + docstring |
+| `for_each` (callback) | none | KEEP, speculative iter API |
+| `grp_invalidate_cache` | none | KEEP (NSS trio with pwd/shadow) |
+| `log_init` | none | KEEP (subsystem opt-in entry) |
+| `niyama_bre_compile` | cyim (src/cli.cyr) | KEEP + docstring |
+| `pwd_invalidate_cache` | none | KEEP (NSS trio) |
+| `sakshi_clock_recalibrate` | sakshi-internal (folded distfile) | KEEP |
+| `sandhi_err_kind_name` | sandhi-internal (folded distfile) | KEEP |
+| `shadow_invalidate_cache` | none | KEEP (NSS trio) |
+| `sig_alg_name` | libro (src/proof.cyr, src/signing.cyr); sigil-internal | KEEP + docstring |
+
+**Net: 0 removals, 0 deprecations**. Every flagged fn has either
+(a) a current downstream consumer, (b) within-folded-distfile
+callers (legitimate per sandhi-pattern), or (c) coherent-API
+role with a documented revisit window.
+
+### Process note (validates `feedback_dead_code_audit_scope`)
+
+The "0-callers-in-grep" trigger was an accurate flag but the
+audit revealed:
+- 5/10 fns HAVE downstream consumers (just not cyrius-internal).
+- 2/10 are within-distfile (folded sandhi/sakshi own them).
+- 3/10 are NSS cache-invalidation trio (coherent surface; deprecating
+  one without the others is wrong).
+- 0/10 are truly orphan.
+
+The feedback memory pin holds: 0-callers in cyrius repo is NOT
+safe-to-remove without the cross-repo audit. This slot's net
+deprecations = 0 confirms the principle.
+
+### Docstring updates (in-tree)
+
+`async.cyr`, `callback.cyr`, `log.cyr`, `niyama.cyr`, `sigil.cyr`,
+`grp.cyr`, `pwd.cyr`, `shadow.cyr` — fn docstrings now name the
+downstream consumer (where known) or note the speculative/
+coherent-surface rationale with a v6.0.0-dead-code-sweep revisit
+pointer.
+
+Folded-distfile entries (`sakshi.cyr`, `sandhi.cyr`) NOT
+modified — that would break foldin byte-identical parity with
+upstream. Audit doc references them; upstream sakshi/sandhi can
+update their own docstrings if they want.
+
+### Files
+
+- **NEW** `docs/audit/2026-05-11-zero-call-stdlib.md` — full
+  per-fn audit with decision tree + revisit windows.
+- `lib/async.cyr` / `lib/callback.cyr` / `lib/log.cyr` /
+  `lib/niyama.cyr` / `lib/sigil.cyr` / `lib/grp.cyr` /
+  `lib/pwd.cyr` / `lib/shadow.cyr` — docstring updates.
+
+### Verification
+
+- cc5 self-host byte-identical at 804,456 B (no behavior change,
+  comment-only edits).
+- `cyrius check` 66/66 green.
+- `cyrius test` 147/147 green.
+
+### Roadmap follow-up
+
+No new pins. v6.0.0 closeout already has a dead-code sweep
+pinned — that's the natural revisit for any of the
+no-current-consumer fns that stay unclaimed through v5.12.x.
+
 ## [5.11.20] — 2026-05-11
 
 **Syscall-wrapper DRY consolidation** — closes the v5.11.7

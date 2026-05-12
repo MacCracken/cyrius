@@ -35,7 +35,12 @@ fn _log_to_sk(level): i64 {
     return 0;
 }
 
-# Initialize logging with minimum level
+# Initialize logging with minimum level. Opt-in entry for the
+# structured-log subsystem; pre-init reads default to stderr at
+# all levels (free, no setup needed). No current downstream
+# caller (audited v5.11.21); revisit at v6.0.0 dead-code sweep
+# if structured-log surface stays unclaimed. See
+# docs/audit/2026-05-11-zero-call-stdlib.md.
 fn log_init(level): i64 {
     _log_level = level;
     sakshi_set_level(_log_to_sk(level));

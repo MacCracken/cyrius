@@ -1017,6 +1017,8 @@ fn _bre_parse_concat(at_start): i64 {
 # Compile a null-terminated POSIX BRE pattern. Returns an opaque NFA
 # pointer (heap-allocated) or 0 on error. Use niyama_bre_last_error()
 # to get the error code.
+# Consumer: cyim (src/cli.cyr). niyama's own src/bre.cyr is the
+# reference implementation that got folded byte-identical at v5.9.0.
 fn niyama_bre_compile(pat): i64 {
     _bre_lazy_init();
     var n = strlen(pat);

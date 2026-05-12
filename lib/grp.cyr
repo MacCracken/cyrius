@@ -38,6 +38,11 @@ var _grp_buf_len = 0;
 
 # Force a re-read of /etc/group on the next lookup. Use after
 # editing the file (e.g. `groupadd` from cyrius tooling).
+# No current downstream caller (audited v5.11.21); part of the
+# NSS cache-invalidation trio (pwd / grp / shadow) — intended
+# consumer is agnos / kavach user-management primitives. Trio
+# stays as a coherent surface; revisit at v6.0.0 dead-code sweep
+# if no claimant. See docs/audit/2026-05-11-zero-call-stdlib.md.
 fn grp_invalidate_cache(): i64 {
     _grp_buf_len = 0;
     return 0;

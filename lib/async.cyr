@@ -32,7 +32,10 @@ var TASK_SIZE = 32;
 # Runtime struct: { epfd, tasks, task_count, active } = 32 bytes
 var RT_SIZE = 32;
 
-# Create a new async runtime with epoll
+# Create a new async runtime with epoll. Consumer: daimon
+# (src/main.cyr) — the cooperative multitasking event loop is
+# the runtime kybernet sd_notify + bote streaming dispatch both
+# delegate to.
 fn async_new(): i64 {
     alloc_init();
     var rt = alloc(RT_SIZE);

@@ -52,7 +52,8 @@ var _pwd_buf_len = 0;
 
 # Force a re-read of /etc/passwd on the next call. Caller can
 # invoke this after they know the file changed (useshell edits
-# /etc/passwd, e.g.).
+# /etc/passwd, e.g.). NSS cache-invalidation trio — see
+# grp_invalidate_cache for full rationale + revisit window.
 fn pwd_invalidate_cache(): i64 {
     _pwd_buf_len = 0;
     return 0;

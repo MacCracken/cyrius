@@ -42,7 +42,8 @@ var _shadow_buf = 0;
 var _shadow_buf_len = 0;
 
 # Force a re-read of /etc/shadow on the next lookup. Use after
-# password changes (e.g. passwd(1) updates).
+# password changes (e.g. passwd(1) updates). NSS cache-invalidation
+# trio — see grp_invalidate_cache for full rationale + revisit window.
 fn shadow_invalidate_cache(): i64 {
     _shadow_buf_len = 0;
     return 0;
