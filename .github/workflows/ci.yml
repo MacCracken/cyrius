@@ -313,7 +313,11 @@ jobs:
           cp "$PWD/build/cc5" "$HOME/.cyrius/bin/cc5"
           T=$(mktemp -d); trap "rm -rf $T" EXIT
           echo 'fn main() { return 42; }' > "$T/small.cyr"
-          ( echo 'object;'; i=0; while [ "$i" -lt 3500 ]; do printf 'fn f%d() { return %d; }\n' "$i" "$i"; i=$((i+1)); done ) > "$T/big.cyr"
+          # v5.11.19 bumped 3500 → 7000 because fn_table cap doubled
+          # 4096 → 8192; 7000/8192 = 85.4% trips the threshold
+          # (3500/8192 = 42.7% does not). Keep in sync with
+          # programs/check.cyr::_capacity_gate.
+          ( echo 'object;'; i=0; while [ "$i" -lt 7000 ]; do printf 'fn f%d() { return %d; }\n' "$i" "$i"; i=$((i+1)); done ) > "$T/big.cyr"
           # T1: default mode emits 6 stat keys.
           "$CYR" capacity "$T/small.cyr" > "$T/o1" 2>"$T/e1"
           for k in fn_table identifiers var_table fixup_table string_data code_size; do
@@ -327,10 +331,10 @@ jobs:
           set +e; "$CYR" capacity --check "$T/big.cyr" > "$T/o3" 2>&1; rc=$?; set -e
           [ "$rc" -eq 1 ] || { echo "FAIL T3: rc=$rc (expected 1)"; cat "$T/o3"; exit 1; }
           grep -q "table(s) at >=85%" "$T/o3" || { echo "FAIL T3: '>=85%' missing"; exit 1; }
-          # T4: 3500-fn source compiles via cc5 + binary sane size.
+          # T4: 7000-fn source compiles via cc5 + binary sane size.
           set +e; cat "$T/big.cyr" | ./build/cc5 > "$T/big.o" 2>/dev/null; rc=$?; set -e
           [ "$rc" -eq 0 ] || { echo "FAIL T4: cc5 exit=$rc"; exit 1; }
-          [ "$(wc -c < "$T/big.o")" -ge 100000 ] || { echo "FAIL T4: 3500-fn .o suspiciously small"; exit 1; }
+          [ "$(wc -c < "$T/big.o")" -ge 100000 ] || { echo "FAIL T4: 7000-fn .o suspiciously small"; exit 1; }
           # T5/T6: --json on small + big has fn_table key.
           "$CYR" capacity --json "$T/small.cyr" > "$T/o5" 2>/dev/null
           grep -q '"fn_table":' "$T/o5" || { echo "FAIL T5: fn_table key missing"; exit 1; }
