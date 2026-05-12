@@ -6,6 +6,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.29] — 2026-05-12
+
+**Kernel ELF emitter: minimal section header table for GRUB
+multiboot compatibility.** Before this patch, `EMITELF_KERNEL`
+in `src/backend/x86/fixup.cyr` emitted ELF32 binaries with
+`e_shoff=0`, `e_shnum=0`, `e_shentsize=0` — program headers only.
+That's valid ELF (Linux `execve` only consumes program headers)
+but GRUB's `grub_elf32_get_shnum` (kern/elfxx.c:227) rejects the
+binary outright with `invalid section header table offset in
+e_shoff`, so the multiboot loader never reaches the kernel.
+
+Symptom on hardware (AGNOS USB boot, 2026-05-12):
+
+```
+error: kern/elfxx.c:grub_elf32_get_shnum:227: invalid section
+       header table offset in e_shoff.
+error: loader/multiboot.c:grub_cmd_module:387:
+       you need to load the kernel
+error: commands/boot.c:grub_loader_boot:196:
+       you need to load the kernel first.
+```
+
+### Fix
+
+`EMITELF_KERNEL` now appends a 5-entry section header table after
+the kernel's loaded segment:
+
+| # | Section     | Type        | Flags        | Notes                  |
+|---|-------------|-------------|--------------|------------------------|
+| 0 | (SHT_NULL)  | SHT_NULL    | —            | mandatory first entry  |
+| 1 | `.text`     | PROGBITS    | ALLOC, EXEC  | includes multiboot1 hdr |
+| 2 | `.rodata`   | PROGBITS    | ALLOC        | string-table region    |
+| 3 | `.bss`      | NOBITS      | ALLOC, WRITE | zero-init var region   |
+| 4 | `.shstrtab` | STRTAB      | —            | section name strings   |
+
+Layout overhead: ~232 bytes per kernel binary (30-byte shstrtab
++ 200 bytes of section headers + alignment padding). The PT_LOAD
+segment is unchanged — section headers and shstrtab sit after
+`filesz` as non-allocated metadata, exactly where GRUB expects.
+
+### Verification
+
+- `grub-file --is-x86-multiboot build/agnos` → exit 0 (was rejected before)
+- `readelf -S` lists 5 sections cleanly
+- AGNOS kernel boots to scheduler under `qemu-system-x86_64 -kernel`
+  with no behavioral regression (full init: GDT/IDT/PIC/APIC/timer,
+  page tables, PMM/VMM, ACPI, PCI, VFS, SYSCALL/SYSRET, syscall
+  test, scheduler tick test, initrd read — all pass)
+- Kernel binary grows 250704 → 250936 bytes (+232 / +0.09%)
+
+### Companion releases (queued)
+
+- **5.11.30**: same fix for `src/backend/aarch64/fixup.cyr:344`
+  (aarch64 kernel emitter has the identical `e_shoff = 0` pattern)
+- **5.11.31**: same fix for `programs/cyrld.cyr:1072` (ELF64
+  user-binary linker — less urgent since `execve` ignores section
+  headers, but matters for `objdump` / `gdb` / `ltrace` introspection)
+
+Split across three patch releases per AGNOS founder direction
+(2026-05-12) so each platform's change is bisectable and 5.11.x
+patch-number runway is used rather than bundling.
+
+### Downstream
+
+- `agnos/cyrius.cyml` bumps pin from 5.10.44 → 5.11.29 to
+  consume the fix. Required to unblock USB boot of the AGNOS MVP
+  on iron (closed beta target early June 2026).
+
 ## [5.11.28] — 2026-05-12
 
 **bote parser quirk slot — closed as no-repro + diagnostic

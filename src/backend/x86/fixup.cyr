@@ -655,7 +655,12 @@ fn FIXUP(S): i64 {
 # ELF EMISSION
 # ================================================================
 
-# Kernel ELF: 32-bit ELF for multiboot2 boot, base 0x100000
+# Kernel ELF: 32-bit ELF for multiboot1 boot, base 0x100000
+# v5.11.29: emit minimal section header table (.text/.rodata/.bss/
+# .shstrtab) so GRUB's multiboot ELF loader accepts the binary.
+# Without this, grub_elf32_get_shnum rejects e_shoff=0 binaries with
+# "invalid section header table offset in e_shoff" and the kernel
+# never loads.
 fn EMITELF_KERNEL(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
@@ -668,51 +673,151 @@ fn EMITELF_KERNEL(S): i64 {
     var memsz = filesz + 65536;
     # Entry = base + headers + pad + multiboot header
     var entry = 0x100000 + hdrsz + mb_sz;
+
+    # Section header table layout (loaded segment is unchanged):
+    #   .text     file 84       addr 0x100054   size = 12 + cp (incl mb1)
+    #   .bss      file 96+cp    addr 0x100000+96+cp   size = totvar  (NOBITS)
+    #   .rodata   file 96+cp+totvar             size = spos
+    #   .shstrtab follows PT_LOAD (non-allocated metadata)
+    var text_foff = hdrsz;
+    var text_addr = 0x100000 + hdrsz;
+    var text_size = mb_sz + cp;
+    var bss_foff = hdrsz + mb_sz + cp;
+    var bss_addr = 0x100000 + bss_foff;
+    var bss_size = totvar;
+    var rod_foff = bss_foff + totvar;
+    var rod_addr = 0x100000 + rod_foff;
+    var rod_size = spos;
+    # .shstrtab contents: "\0.text\0.rodata\0.bss\0.shstrtab\0" = 30 bytes
+    #   names at offsets 1, 7, 15, 20 (must match sh_name fields below)
+    var shstrtab_size = 30;
+    var shstrtab_foff = filesz;
+    var shdr_off = (shstrtab_foff + shstrtab_size + 3) & (0 - 4);
+    var shnum = 5;
+    var shentsize = 40;
+    var shstrndx = 4;
+
     var O = S + 0x94A000;
     var op = 0;
-    # ELF32 header (52 bytes)
-    S64(O + op, 0x0000010101464C457F & 0xFFFFFFFFFFFFFFFF);
+
+    # ---- ELF32 header (52 bytes) ----
+    # e_ident: 7F 45 4C 46  01 01 01 00  (ELFCLASS32, ELFDATA2LSB, EV_CURRENT, OSABI=SYSV)
     store8(O + op, 0x7F); store8(O + op + 1, 0x45); store8(O + op + 2, 0x4C); store8(O + op + 3, 0x46);
     store8(O + op + 4, 1); store8(O + op + 5, 1); store8(O + op + 6, 1); store8(O + op + 7, 0);
     op = op + 8;
-    S64(O + op, 0x0000000000000000); op = op + 8;
-    # e_type(2) + e_machine(3) + e_version(1)
-    store8(O + op, 2); store8(O + op + 1, 0);
-    store8(O + op + 2, 3); store8(O + op + 3, 0);
-    store8(O + op + 4, 1); store8(O + op + 5, 0); store8(O + op + 6, 0); store8(O + op + 7, 0);
-    op = op + 8;
-    # e_entry (4 bytes) + e_phoff (4 bytes) = 52
-    S64(O + op, (52 << 32) | (entry & 0xFFFFFFFF)); op = op + 8;
-    # e_shoff(0) + e_flags(0)
     S64(O + op, 0); op = op + 8;
-    # e_ehsize(52) + e_phentsize(32) + e_phnum(1) + e_shentsize(0)
-    S64(O + op, (1 << 32) | (32 << 16) | 52); op = op + 8;
-    # e_shnum(0) + e_shstrndx(0) — pad to 52 bytes total
-    # We're at 48 bytes. Need 4 more.
-    store8(O + op, 0); store8(O + op + 1, 0); store8(O + op + 2, 0); store8(O + op + 3, 0);
-    op = op + 4;
-    # Program header 32-bit (32 bytes)
-    # p_type=1, p_offset=0
-    S64(O + op, 0x0000000000000001); op = op + 8;
-    # p_vaddr=0x100000, p_paddr=0x100000
-    S64(O + op, 0x0010000000100000); op = op + 8;
-    # p_filesz, p_memsz
-    S64(O + op, ((memsz & 0xFFFFFFFF) << 32) | (filesz & 0xFFFFFFFF)); op = op + 8;
-    # p_flags=7 (RWX), p_align=0x1000
-    S64(O + op, 0x0000100000000007); op = op + 8;
-    # Multiboot1 header (12 bytes) — simpler, better GRUB support
-    # magic=0x1BADB002, flags=0x03 (page-align + meminfo), checksum
-    S64(O + op, 0x000000031BADB002); op = op + 8;
-    S64(O + op, 0x00000000E4524FFB); op = op + 4;
-    # Code
+    # e_type=ET_EXEC(2), e_machine=EM_386(3), e_version=1
+    store16(O + op, 2); op = op + 2;
+    store16(O + op, 3); op = op + 2;
+    store32(O + op, 1); op = op + 4;
+    # e_entry, e_phoff
+    store32(O + op, entry); op = op + 4;
+    store32(O + op, 52); op = op + 4;
+    # e_shoff, e_flags
+    store32(O + op, shdr_off); op = op + 4;
+    store32(O + op, 0); op = op + 4;
+    # e_ehsize, e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx
+    store16(O + op, 52); op = op + 2;
+    store16(O + op, 32); op = op + 2;
+    store16(O + op, 1); op = op + 2;
+    store16(O + op, shentsize); op = op + 2;
+    store16(O + op, shnum); op = op + 2;
+    store16(O + op, shstrndx); op = op + 2;
+
+    # ---- Program header (32 bytes) ----
+    store32(O + op, 1); op = op + 4;             # p_type = PT_LOAD
+    store32(O + op, 0); op = op + 4;             # p_offset
+    store32(O + op, 0x100000); op = op + 4;      # p_vaddr
+    store32(O + op, 0x100000); op = op + 4;      # p_paddr
+    store32(O + op, filesz); op = op + 4;        # p_filesz
+    store32(O + op, memsz); op = op + 4;         # p_memsz
+    store32(O + op, 7); op = op + 4;             # p_flags = RWX
+    store32(O + op, 0x1000); op = op + 4;        # p_align
+
+    # ---- Multiboot1 header (12 bytes) — at file offset 84 ----
+    store32(O + op, 0x1BADB002); op = op + 4;    # magic
+    store32(O + op, 0x00000003); op = op + 4;    # flags: page-align + meminfo
+    store32(O + op, 0xE4524FFB); op = op + 4;    # checksum = -(magic + flags)
+
+    # ---- Code ----
     var i = 0;
     while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
-    # Variable data
+    # ---- Variable (bss) zeros ----
     i = 0;
     while (i < totvar) { store8(O + op, 0); op = op + 1; i = i + 1; }
-    # String data
+    # ---- String (rodata) data ----
     i = 0;
     while (i < spos) { store8(O + op, load8(S + 0x21A000 + i)); op = op + 1; i = i + 1; }
+    while ((op & 3) != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- .shstrtab (30 bytes) — "\0.text\0.rodata\0.bss\0.shstrtab\0" ----
+    store8(O + op, 0); op = op + 1;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x74); store8(O + op + 2, 0x65);
+    store8(O + op + 3, 0x78); store8(O + op + 4, 0x74); store8(O + op + 5, 0);
+    op = op + 6;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x72); store8(O + op + 2, 0x6F);
+    store8(O + op + 3, 0x64); store8(O + op + 4, 0x61); store8(O + op + 5, 0x74);
+    store8(O + op + 6, 0x61); store8(O + op + 7, 0);
+    op = op + 8;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x62); store8(O + op + 2, 0x73);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0);
+    op = op + 5;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x73); store8(O + op + 2, 0x68);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0x74); store8(O + op + 5, 0x72);
+    store8(O + op + 6, 0x74); store8(O + op + 7, 0x61); store8(O + op + 8, 0x62);
+    store8(O + op + 9, 0);
+    op = op + 10;
+    while ((op & 3) != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- Section headers (5 × 40 bytes) ----
+    # [0] SHT_NULL
+    i = 0;
+    while (i < 40) { store8(O + op, 0); op = op + 1; i = i + 1; }
+    # [1] .text — SHT_PROGBITS, ALLOC|EXECINSTR
+    store32(O + op, 1);          op = op + 4;   # sh_name
+    store32(O + op, 1);          op = op + 4;   # sh_type = SHT_PROGBITS
+    store32(O + op, 6);          op = op + 4;   # sh_flags = ALLOC|EXECINSTR
+    store32(O + op, text_addr);  op = op + 4;
+    store32(O + op, text_foff);  op = op + 4;
+    store32(O + op, text_size);  op = op + 4;
+    store32(O + op, 0);          op = op + 4;   # sh_link
+    store32(O + op, 0);          op = op + 4;   # sh_info
+    store32(O + op, 4);          op = op + 4;   # sh_addralign
+    store32(O + op, 0);          op = op + 4;   # sh_entsize
+    # [2] .rodata — SHT_PROGBITS, ALLOC
+    store32(O + op, 7);          op = op + 4;
+    store32(O + op, 1);          op = op + 4;
+    store32(O + op, 2);          op = op + 4;
+    store32(O + op, rod_addr);   op = op + 4;
+    store32(O + op, rod_foff);   op = op + 4;
+    store32(O + op, rod_size);   op = op + 4;
+    store32(O + op, 0);          op = op + 4;
+    store32(O + op, 0);          op = op + 4;
+    store32(O + op, 1);          op = op + 4;
+    store32(O + op, 0);          op = op + 4;
+    # [3] .bss — SHT_NOBITS, ALLOC|WRITE
+    store32(O + op, 15);         op = op + 4;
+    store32(O + op, 8);          op = op + 4;   # sh_type = SHT_NOBITS
+    store32(O + op, 3);          op = op + 4;   # sh_flags = WRITE|ALLOC
+    store32(O + op, bss_addr);   op = op + 4;
+    store32(O + op, bss_foff);   op = op + 4;
+    store32(O + op, bss_size);   op = op + 4;
+    store32(O + op, 0);          op = op + 4;
+    store32(O + op, 0);          op = op + 4;
+    store32(O + op, 1);          op = op + 4;
+    store32(O + op, 0);          op = op + 4;
+    # [4] .shstrtab — SHT_STRTAB
+    store32(O + op, 20);             op = op + 4;
+    store32(O + op, 3);              op = op + 4;   # sh_type = SHT_STRTAB
+    store32(O + op, 0);              op = op + 4;
+    store32(O + op, 0);              op = op + 4;
+    store32(O + op, shstrtab_foff);  op = op + 4;
+    store32(O + op, shstrtab_size);  op = op + 4;
+    store32(O + op, 0);              op = op + 4;
+    store32(O + op, 0);              op = op + 4;
+    store32(O + op, 1);              op = op + 4;
+    store32(O + op, 0);              op = op + 4;
+
     while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
     S64(S + 0x1903F8, op);
     return 0;
