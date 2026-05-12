@@ -372,6 +372,11 @@ fn EMITELF(S): i64 {
 # Kernel ELF for aarch64: ELF64 at base 0x40000000
 # Bootable by: qemu-system-aarch64 -M virt -cpu cortex-a57 -kernel build/agnos_aarch64
 # No multiboot (ARM uses device tree). Entry at base + 0x78 (after ELF + PH headers).
+# v5.11.30: emit minimal section header table (mirrors the x86 fix in
+# 5.11.29) so tools that walk section headers — and any aarch64
+# bootloader equivalent to GRUB's `grub_elf64_get_shnum` — accept
+# the binary. The PT_LOAD segment is unchanged; section headers
+# and .shstrtab sit after `filesz` as non-allocated metadata.
 fn EMITELF_KERNEL(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
@@ -382,6 +387,27 @@ fn EMITELF_KERNEL(S): i64 {
     var memsz = filesz + 65536;
     var base = 0x40000000;
     var entry = base + 120;
+
+    # Section layout (loaded segment unchanged):
+    #   .text     file 120                  addr base+120  size = preamble + cp
+    #             (SP-setup MOVZ/MOVK chain is executable code so it lives in .text)
+    #   .bss      file 120+preamble+cp      addr base+...  size = totvar  (NOBITS)
+    #   .rodata   file 120+preamble+cp+totvar              size = spos
+    var text_foff = 120;
+    var text_addr = base + 120;
+    var text_size = preamble_sz + cp;
+    var bss_foff = 120 + preamble_sz + cp;
+    var bss_addr = base + bss_foff;
+    var bss_size = totvar;
+    var rod_foff = bss_foff + totvar;
+    var rod_addr = base + rod_foff;
+    var rod_size = spos;
+    # .shstrtab: "\0.text\0.rodata\0.bss\0.shstrtab\0" = 30 bytes
+    var shstrtab_size = 30;
+    var shstrtab_foff = filesz;
+    # ELF64 shdrs are 64 bytes each; align table to 8 bytes
+    var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
+
     var O = S + 0x94A000;
     var op = 0;
     # ELF64 header (64 bytes)
@@ -390,9 +416,11 @@ fn EMITELF_KERNEL(S): i64 {
     S64(O + op, 0x0000000100B70002); op = op + 8;
     S64(O + op, entry); op = op + 8;
     S64(O + op, 0x0000000000000040); op = op + 8;
-    S64(O + op, 0x0000000000000000); op = op + 8;
+    S64(O + op, shdr_off); op = op + 8;
     S64(O + op, 0x0038004000000000); op = op + 8;
-    S64(O + op, 0x0000000000400001); op = op + 8;
+    # e_phnum=1, e_shentsize=64, e_shnum=5, e_shstrndx=4
+    # LE byte layout 56..63: 01 00 40 00 05 00 04 00
+    S64(O + op, 0x0004000500400001); op = op + 8;
     # Program header (56 bytes)
     S64(O + op, 0x0000000700000001); op = op + 8;
     S64(O + op, 0x0000000000000000); op = op + 8;
@@ -434,6 +462,78 @@ fn EMITELF_KERNEL(S): i64 {
     # String data
     i = 0;
     while (i < spos) { store8(O + op, load8(S + 0x21A000 + i)); op = op + 1; i = i + 1; }
+    while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- .shstrtab (30 bytes) — "\0.text\0.rodata\0.bss\0.shstrtab\0" ----
+    store8(O + op, 0); op = op + 1;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x74); store8(O + op + 2, 0x65);
+    store8(O + op + 3, 0x78); store8(O + op + 4, 0x74); store8(O + op + 5, 0);
+    op = op + 6;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x72); store8(O + op + 2, 0x6F);
+    store8(O + op + 3, 0x64); store8(O + op + 4, 0x61); store8(O + op + 5, 0x74);
+    store8(O + op + 6, 0x61); store8(O + op + 7, 0);
+    op = op + 8;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x62); store8(O + op + 2, 0x73);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0);
+    op = op + 5;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x73); store8(O + op + 2, 0x68);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0x74); store8(O + op + 5, 0x72);
+    store8(O + op + 6, 0x74); store8(O + op + 7, 0x61); store8(O + op + 8, 0x62);
+    store8(O + op + 9, 0);
+    op = op + 10;
+    while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- Section headers (5 × 64 bytes) ----
+    # ELF64 Shdr layout (each 64 bytes):
+    #   u32 sh_name; u32 sh_type; u64 sh_flags; u64 sh_addr;
+    #   u64 sh_offset; u64 sh_size; u32 sh_link; u32 sh_info;
+    #   u64 sh_addralign; u64 sh_entsize;
+    # We pack (name|type) and (link|info) into single 8-byte stores.
+
+    # [0] SHT_NULL — 64 zero bytes
+    i = 0;
+    while (i < 64) { store8(O + op, 0); op = op + 1; i = i + 1; }
+
+    # [1] .text — SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR
+    S64(O + op, (1 << 32) | 1);   op = op + 8;
+    S64(O + op, 6);               op = op + 8;
+    S64(O + op, text_addr);       op = op + 8;
+    S64(O + op, text_foff);       op = op + 8;
+    S64(O + op, text_size);       op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 4);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
+    # [2] .rodata — SHT_PROGBITS, SHF_ALLOC
+    S64(O + op, (1 << 32) | 7);   op = op + 8;
+    S64(O + op, 2);               op = op + 8;
+    S64(O + op, rod_addr);        op = op + 8;
+    S64(O + op, rod_foff);        op = op + 8;
+    S64(O + op, rod_size);        op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
+    # [3] .bss — SHT_NOBITS, SHF_WRITE|SHF_ALLOC
+    S64(O + op, (8 << 32) | 15);  op = op + 8;
+    S64(O + op, 3);               op = op + 8;
+    S64(O + op, bss_addr);        op = op + 8;
+    S64(O + op, bss_foff);        op = op + 8;
+    S64(O + op, bss_size);        op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
+    # [4] .shstrtab — SHT_STRTAB
+    S64(O + op, (3 << 32) | 20);  op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, shstrtab_foff);   op = op + 8;
+    S64(O + op, shstrtab_size);   op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
     while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
     S64(S + 0x1903F8, op);
     return 0;

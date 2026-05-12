@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.30] — 2026-05-12
+
+**aarch64 kernel ELF emitter: same section-header fix as 5.11.29
+(x86), now for `EMITELF_KERNEL` in `src/backend/aarch64/fixup.cyr`.**
+The aarch64 kernel ELF had the identical `e_shoff = 0` pattern,
+which would have blocked any aarch64 bootloader that walks section
+headers (the symmetric counterpart to GRUB's `grub_elf32_get_shnum`
+on x86). MVP is x86-only but the aarch64 kernel binary now ships
+with proper section metadata so future ARM-host bringup (Pi 4,
+Apple Silicon dev) won't trip the same wire.
+
+### Fix
+
+`EMITELF_KERNEL` now emits the same 5-entry section header table
+as the x86 path, adapted to ELF64 (`Elf64_Shdr` is 64 bytes each):
+
+| # | Section     | Type     | Flags        | Notes                       |
+|---|-------------|----------|--------------|-----------------------------|
+| 0 | (SHT_NULL)  | SHT_NULL | —            | mandatory first entry       |
+| 1 | `.text`     | PROGBITS | ALLOC, EXEC  | includes SP-setup preamble  |
+| 2 | `.rodata`   | PROGBITS | ALLOC        | string-table region         |
+| 3 | `.bss`      | NOBITS   | ALLOC, WRITE | zero-init var region        |
+| 4 | `.shstrtab` | STRTAB   | —            | section name strings        |
+
+ELF64 specifics: shdr table is 8-byte aligned (vs 4 in ELF32),
+each entry is 64 bytes (vs 40), and `e_shentsize=64`. The PT_LOAD
+segment is unchanged; section headers and shstrtab live past
+`filesz` as non-allocated metadata.
+
+`.text` deliberately covers the 16-byte SP-setup preamble (MOVZ /
+MOVK / MOVK / MOV SP, x9 at file offsets 120–135) so the entire
+executable region is in one section — entry point `base + 120`
+is the start of `.text`.
+
+### Verification
+
+- `readelf -S build/agnos-aarch64` lists 5 sections cleanly
+- Kernel binary grows 93288 → 93640 bytes (+352 / +0.38%)
+- aarch64 QEMU boot deferred to CI (no `qemu-system-aarch64`
+  locally on the dev host)
+
+### Companion
+
+- **5.11.29**: x86 kernel emitter (shipped)
+- **5.11.31** (next): `programs/cyrld.cyr` ELF64 user-binary linker
+
+### Known gaps (post-5.11.31)
+
+The compiler's in-tree user-binary emitters still have `e_shoff=0`:
+`EMITELF` in `src/backend/aarch64/fixup.cyr:323` and `EMITELF_USER`
+in `src/backend/x86/fixup.cyr:722`. Lower priority since user
+binaries are loaded by `execve` (which ignores section headers)
+not GRUB, but matters for `objdump` / `gdb` / `ltrace`
+introspection. Candidate for a later 5.11.x or 5.12.x cleanup.
+
 ## [5.11.29] — 2026-05-12
 
 **Kernel ELF emitter: minimal section header table for GRUB
