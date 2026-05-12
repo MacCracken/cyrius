@@ -5,6 +5,28 @@
 
 ## Version
 
+**5.11.23** (shipped 2026-05-11 — **PE32+ kernel32 path-API
+alignment fix**). Closes the pre-existing bug v5.11.22 surfaced:
+EOPEN_PE / ECREATEDIR_PE / EDELETEF_PE used frame size 0x250
+which left RSP misaligned by 8 at the kernel32 CALL (Win64 ABI
+requires 16-aligned RSP). Wine 11.8 tolerated; Win11 26200's
+ntdll detects via TEB/SEH-frame validation at `+0x41912` and
+access-violates. **Single-byte fix**: 0x250 → 0x258 (frame mod
+16 = 0 → 8, cancels cyrius's +8 entry-state). Real call bodies
+shipped for ECREATEDIR_PE + EDELETEF_PE (replacing v5.11.22
+-ENOSYS placeholders). NEW `_pe_path_apis_gate` in
+programs/check.cyr exercises CreateFileW + mkdir + unlink on
+cass with filesystem-effect verification — **the FIRST PE
+path-API smoke that's been green on real Windows in cyrius's
+history**. check.sh count 66 → **67**. The bug had been silent
+for 6+ minors because `_pe_exit_gate` only tested exit42 +
+hello-world; never any kernel32 path API. Audit-driven
+discovery via ai-hwaccel's filing (v5.11.22 debunk →
+unrouted-syscall finding → routes → alignment fault → bisect →
+fix). cc5 byte-identical at **809,032 B** (+2,928 from real
+bodies replacing placeholders); check.sh 67/67; cyrius test
+147/147.
+
 **5.11.22** (shipped 2026-05-11 — **ai-hwaccel cc5_win debunk +
 mkdir/unlink PE plumbing**). Per user direction "review the
 ai-hwaccel repo and usage" — empirical audit on cass found the

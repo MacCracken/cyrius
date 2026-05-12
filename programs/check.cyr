@@ -4466,6 +4466,136 @@ fn _pe_exit_gate(): i64 {
     return fail;
 }
 
+# Bespoke gate: PE32+ kernel32 path APIs (CreateFileW + mkdir +
+# unlink) work on cass — v5.11.23 alignment-fix regression
+# guard. Catches the bug class that v5.11.22 surfaced: EOPEN_PE
+# (and the new mkdir/unlink routes) used frame 0x250 which left
+# RSP misaligned by 8 at the kernel32 CALL. Wine 11.8 tolerates
+# the misalignment; Win11 26200's ntdll detects it (at
+# +0x41912) and access-violates. _pe_exit_gate only exercises
+# exit42 + hello-world (whose frame sizes happened to align by
+# coincidence given their syscall arities); never exercised a
+# path API, masking the bug. THIS gate exercises all 3 path
+# APIs in one compile and checks both exit code AND filesystem
+# side-effects.
+fn _pe_path_apis_gate(): i64 {
+    var label = "PE kernel32 path APIs on cass (CreateFileW + mkdir + unlink; v5.11.23)";
+    var cc_pe = _root_path("build/cc5_win_cross");
+    if (file_exists(cc_pe) != 1) {
+        var main_win = _root_path("src/main_win.cyr");
+        if (file_exists(main_win) == 1) {
+            if (file_exists(CC_PATH) == 1) {
+                _self_host_pipe(main_win, CC_PATH, cc_pe);
+                sys_chmod(cc_pe, 493);
+            }
+        }
+    }
+    if (file_exists(cc_pe) != 1) {
+        _p("  skip: ");
+        _p(cc_pe);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET_WIN", "cass");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable (no Windows runner available)");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+
+    # Build a test that exercises all 3 path APIs.
+    var src = _tmp_path("audit_pe_paths_src_");
+    var bin = _tmp_path("audit_pe_paths_bin_");
+    _write_file(src, "var fd = syscall(2, \"C:\\\\cyr_pe_paths_test.tmp\", 65, 384);\nsyscall(3, fd);\nsyscall(83, \"C:\\\\cyr_pe_paths_test_dir\", 493);\nsyscall(87, \"C:\\\\cyr_pe_paths_test.tmp\");\nsyscall(60, 99);\n");
+    var rc_b = _self_host_pipe(src, cc_pe, bin);
+    sys_unlink(src);
+    if (rc_b != 0) {
+        sys_unlink(bin);
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": cross-build rc=");
+        print_num(rc_b);
+        println("");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Build a .bat that runs the binary + checks filesystem effects.
+    # Cleans up beforehand so prior runs don't muddle the verdict.
+    var bat = _tmp_path("audit_pe_paths_bat_");
+    _write_file(bat, "@echo off\ndel /f /q C:\\cyr_pe_paths_test.tmp 2>nul\nrmdir /S /Q C:\\cyr_pe_paths_test_dir 2>nul\ncyr_pe_paths.exe\necho exit=%ERRORLEVEL%\nif exist C:\\cyr_pe_paths_test_dir (echo dir=YES) else (echo dir=NO)\nif exist C:\\cyr_pe_paths_test.tmp (echo file=YES) else (echo file=NO)\nrmdir /S /Q C:\\cyr_pe_paths_test_dir 2>nul\n");
+
+    var scp_a = _scp_to(target, bin, "cyr_pe_paths.exe");
+    var scp_b = _scp_to(target, bat, "cyr_pe_paths.bat");
+    sys_unlink(bat);
+
+    if (scp_a == 0) { if (scp_b == 0) {
+        var out = _tmp_path("audit_pe_paths_out_");
+        _ssh_remote_exec_capture(target, "cmd /c cyr_pe_paths.bat", out);
+
+        if (_file_contains_substr(out, "exit=99") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": missing 'exit=99' — binary crashed before reaching ExitProcess (alignment regression?)");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(out, "dir=YES") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": CreateDirectoryW did not create C:\\cyr_pe_paths_test_dir");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(out, "file=NO") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": DeleteFileW did not remove C:\\cyr_pe_paths_test.tmp");
+            fail = fail + 1;
+        }
+        sys_unlink(out);
+    } else {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": .bat scp failed");
+        fail = fail + 1;
+    } } else {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": .exe scp failed");
+        fail = fail + 1;
+    }
+
+    sys_unlink(bin);
+    _ssh_remote_exit(target, "del /f /q cyr_pe_paths.exe cyr_pe_paths.bat 2>NUL");
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": PE kernel32 path APIs (CreateFileW + CreateDirectoryW + DeleteFileW) on ");
+        println(target);
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Bespoke gate: native aarch64 cc5 self-hosts byte-identical on
 # Pi (v5.6.32). Pipeline:
 #   1. Cross-build aarch64-host cc5 from src/main_aarch64_native.cyr
@@ -7878,6 +8008,10 @@ fn _run_regression_gates(): i64 {
 
     _section("PE32+ Windows runtime");
     _pe_exit_gate();
+    println("");
+
+    _section("PE32+ kernel32 path APIs (v5.11.23)");
+    _pe_path_apis_gate();
     println("");
 
     _section("sit 100-commit fixture");

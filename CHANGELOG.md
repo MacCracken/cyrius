@@ -6,6 +6,166 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.23] — 2026-05-11
+
+**PE32+ kernel32 path-API alignment fix** — closes the
+pre-existing bug surfaced during v5.11.22's audit. Affects
+`EOPEN_PE` (CreateFileW, existing) + `ECREATEDIR_PE` (mkdir,
+v5.11.22 placeholder) + `EDELETEF_PE` (unlink, v5.11.22
+placeholder). Single-byte-pair fix: frame size **0x250 →
+0x258** in all three routes.
+
+### Root cause (4-step empirical bisect)
+
+Per `feedback_premise_check_at_slot_entry` — empirical test
+before scope commit. Bisect across cc5_win versions on cass
+(Win11 26200) using `syscall(2, path, ...)`:
+
+| cc5_win version | Behavior |
+|---|---|
+| v5.11.5 install bundle | AV in ntdll!+0x41912 |
+| v5.11.10 | AV (same) |
+| v5.11.15 | AV (same) |
+| v5.11.18 | AV (same) |
+| v5.11.21 | AV (same) |
+
+Same fault offset across all releases → bug not regression,
+pre-existing. Then 4 micro-experiments narrowed the cause:
+
+| Probe | Frame | Path source | Result |
+|---|---:|---|---|
+| 1 — hardcoded UTF-16 path, 0x250 frame | 0x250 | stack | **AV** |
+| 2 — hardcoded path, 0x40 frame | 0x40 | stack | **AV** |
+| 3 — `CreateDirectoryW(NULL, NULL)`, 0x28 frame | 0x28 | NULL args | **success (FALSE return)** |
+| 4 — hardcoded path, 0x28 frame, path at [rsp+0x20] | 0x28 | stack | **success (dir created)** |
+
+Probe 3 → IAT setup + call convention are fine.
+Probe 4 vs Probe 2 → frame size matters; 0x28 works, 0x40 fails.
+
+**Diagnosis: RSP alignment**. Win64 ABI requires RSP 16-aligned
+at the moment of CALL. cyrius's pre-syscall-push RSP at the
+binary entry is `16k+8` (loader's CALL pushes 8-byte return
+addr). For an N-arg syscall:
+
+- N pushes shift RSP by `8*N`
+- `EXX_PE` pops + drops cancel the pushes, leaving RSP at `16k+8`
+- `sub rsp, FRAME` lands RSP at `16k+8 - FRAME`
+- For 16-alignment at the kernel32 CALL: `FRAME mod 16 == 8`
+
+`EOPEN_PE`'s `0x250` (mod 16 = 0) preserved the +8 misalignment.
+Wine 11.8 tolerated this. Win11 26200's ntdll detects it via
+TEB / SEH-frame validation in path APIs (RtlGetFullPathName_U
+or sibling at `+0x41912`) and access-violates.
+
+`0x258` (mod 16 = 8) cancels the +8 → RSP 16-aligned at CALL.
+
+### Why this was silently broken for so long
+
+`_pe_exit_gate` (the existing PE gate in `programs/check.cyr`)
+only tests:
+- T1: `syscall(60, 42)` — EEXIT, no kernel32 path API
+- T2: `syscall(1, 1, "hello\n", 6); syscall(60, 42)` — EWRITE_PE
+  (frame 0x40, **happens to land** 16-aligned given write's
+  4-arg syscall + the prior 2-arg syscall consuming the
+  misalignment another way)
+- T3: arithmetic + exit
+- (no test exercises CreateFileW / CreateDirectoryW / DeleteFileW)
+
+So `EOPEN_PE`'s broken frame has been silently broken since v5.5.1
+(first PE write target shipped). The gate coverage gap is the
+real meta-bug — single instruction byte fix once you SEE it;
+**finding it required a downstream consumer trying to actually use
+the path APIs** (ai-hwaccel 2.2.2).
+
+### Shipped
+
+1. **`EOPEN_PE` frame**: `0x250 → 0x258` (CreateFileW route).
+2. **`ECREATEDIR_PE` real body**: replaces v5.11.22 -ENOSYS
+   placeholder; UTF-16 widening + CreateDirectoryW call with
+   `0x258` frame; BOOL→Linux rc conversion.
+3. **`EDELETEF_PE` real body**: same shape (DeleteFileW + path
+   widening at `0x258` frame).
+4. **`_pe_path_apis_gate`** (NEW gate in `programs/check.cyr`):
+   compiles a 5-line test program exercising CreateFileW +
+   CreateDirectoryW + DeleteFileW, scp's to cass, runs via
+   `.bat` wrapper, checks BOTH exit code AND filesystem
+   side-effects (`if exist` for the created dir + removed
+   file). Wired into the runner. **check.sh count 66 → 67**.
+
+### Cass verify
+
+```
+$ cat /tmp/full_test.cyr      # 5 syscalls: write+open+close+mkdir+unlink+write+exit
+$ cyrius_win < full_test.cyr > full_test.exe
+$ scp + ssh cass cmd /v /c "full_test.exe & echo exit=!errorlevel! & ..."
+step1: open
+step2: close
+step3: mkdir
+step4: rmdir
+step5: unlink test.tmp
+done
+exit=42
+dir1: YES                     # CreateDirectoryW worked
+dir2: YES                     # CreateDirectoryW worked again
+file: NO                      # CreateFileW created + DeleteFileW removed
+```
+
+`_pe_path_apis_gate` runs as part of check.sh; 67/67 green.
+
+### Roadmap impact
+
+v5.11.23 closes the open PE path-API bug class. Subsequent pins
+unchanged (.24 derive-accessors cap, .25-.26 per-repo isolation
+Parts 2+3). v5.11.27-35 buffer band intact.
+
+The v5.11.22 placeholder → v5.11.23 real-body split was an
+honest 2-slot scope (placeholders shipped first so consumer's
+`if (rc < 0)` failure paths fire cleanly; full bodies land in
+this slot). Per `feedback_deferral_requires_roadmap_pinnage` —
+the deferred work was pinned at v5.11.22 close and fulfilled
+this slot.
+
+### Files
+
+- `src/backend/x86/emit.cyr` — `EOPEN_PE` frame fix (0x250 →
+  0x258), `ECREATEDIR_PE` + `EDELETEF_PE` real bodies (~30
+  LOC each, replacing v5.11.22 placeholders).
+- `programs/check.cyr` — `_pe_path_apis_gate` (~110 LOC) +
+  runner wiring.
+
+### Verification
+
+- cc5 self-host byte-identical at **809,032 B** (+2,928 from
+  the new ECREATEDIR/EDELETEF bodies replacing placeholders).
+- `cyrius check` **67/67** green (was 66; +1 = `_pe_path_apis_gate`).
+- `cyrius test` 147/147 green.
+- Cass cross-host: CreateFileW round-trip works, mkdir creates
+  directories, unlink removes files. **First PE path-API
+  smoke that's actually been green on real Windows in cyrius's
+  history.**
+
+### Process lesson
+
+The bug was a single instruction byte (0x50 → 0x58 in `sub
+rsp, imm32`). It cost 1+ hour of investigation. The investigation
+was only viable BECAUSE:
+- ai-hwaccel filed a consumer report (even though the original
+  framing was debunked — see v5.11.22).
+- User direction "review the ai-hwaccel repo and usage" pushed
+  the audit past the misleading filing into the actual gap.
+- Wine 11.8 was available locally for fast comparison.
+- ssh + Event Viewer on cass gave the precise fault offset.
+- Win64 ABI documents the alignment requirement; the math is
+  decidable once you know to suspect alignment.
+
+The meta-lesson per `feedback_consumer_request_full_surface`:
+even when a consumer's specific filing is empirically false,
+their *attempt to use the feature* is the genuine signal. The
+audit-driven path (filing → ai-hwaccel review → unrouted
+syscall discovery → routes implementation → alignment fault
+on the routes → bisect → fix) all-told closed a 6+-minor
+silent bug. Worth the cycle slot.
+
 ## [5.11.22] — 2026-05-11
 
 **ai-hwaccel cc5_win debunk + mkdir/unlink PE plumbing** — closes

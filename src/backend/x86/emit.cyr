@@ -838,43 +838,114 @@ fn EMMAP_PE(S): i64 {
     return 0;
 }
 
-# v5.11.22: emit Win64 mkdir: `syscall(83, path, mode)` →
-# CreateDirectoryW(lpPathName, lpSecurityAttributes).
+# v5.11.23: emit Win64 mkdir: `syscall(83, path, mode)` →
+# CreateDirectoryW(lpPathName, lpSecurityAttributes). Drops `mode`
+# (Windows uses ACLs, not POSIX mode bits). Returns 0 on success,
+# -1 on failure (Linux mkdir convention).
+#
 # Stack on entry (top→bottom): [mode] [path] [sc_nr=83].
 #
-# *** PLACEHOLDER (v5.11.22) ***
-# Returns -ENOSYS (-38) cleanly. The full CreateDirectoryW call
-# is held back until v5.11.23 fixes the UTF-16-widening fault
-# that affects EOPEN_PE on Win11 26200+ (cass; ntdll!+0x41912
-# AV — pre-existing pattern bug, masked by `_pe_exit_gate`
-# coverage gap that tests only `exit42` + `hello-world`, never
-# kernel32 path APIs). Consumer's `if (rc < 0)` failure path
-# fires cleanly instead of STATUS_ACCESS_VIOLATION.
-# Auto-imports stay registered so the IAT layout is ready when
-# v5.11.23 wires the real call.
+# FRAME 0x258 (NOT 0x250 like the original placeholder draft —
+# v5.11.22 bisect found the alignment bug). Win64 ABI requires
+# RSP 16-aligned at CALL. cyrius's pre-syscall RSP is 16k+8
+# (loader's CALL into _start pushed 8 bytes); 3-arg syscall
+# pushes 24 then ECREATEDIR_PE pops 16 + drops 8 = back to 16k+8.
+# `sub rsp, 0x258` lands RSP at 16(k-37) = 16-aligned. The
+# original 0x250 left RSP at 16(k-37)+8 — misaligned by 8.
+# Wine tolerates this; real Windows kernel32 path APIs detect
+# the misalignment in ntdll!+0x41912 and access-violate. The
+# `_pe_exit_gate` only exercised exit42 + hello-world (frames
+# 0x28 and 0x40 respectively + matching pre-states — incidentally
+# aligned), masking this for the entire EOPEN_PE pattern.
+# See CHANGELOG [5.11.23].
 fn ECREATEDIR_PE(S): i64 {
     _pe_ensure_createdir(S);
+    var cd_idx = _pe_createdir_get();
 
     EB(S, 0x58);                                        # pop rax (mode, ignored)
-    EB(S, 0x58);                                        # pop rax (path, ignored)
+    EB(S, 0x58);                                        # pop rax (path ptr)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    # mov rax, -38 (-ENOSYS).  REX.W + C7 /0 + imm32 (sign-extended).
-    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);
-    EB(S, 0xDA); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF);
+
+    # Frame 0x258 — aligns RSP at call; UTF-16 buffer at +0x38.
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);
+    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x38); # lea rdi, [rsp+0x38]
+    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
+
+    # widen_loop (ASCII-only round-trip; non-ASCII WIP).
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
+    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov word [rdi+rcx*2], ax
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    EB(S, 0x74); EB(S, 0x0C);                           # jz widen_done
+    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
+    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
+    EB(S, 0x73); EB(S, 0x02);                           # jae widen_done
+    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_loop (-24)
+    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # force NUL
+
+    # CreateDirectoryW(rsp+0x38, NULL).
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xD2);                           # xor rdx, rdx
+
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateDirectoryW]
+    _pe_iat_fixup_add(S, GCP(S), cd_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
+    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+
+    # BOOL → Linux mkdir rc: 0 success, -1 failure.
+    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
+    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63
     return 0;
 }
 
-# v5.11.22: emit Win64 unlink: `syscall(87, path)` →
+# v5.11.23: emit Win64 unlink: `syscall(87, path)` →
 # DeleteFileW(lpFileName). Stack on entry: [path] [sc_nr=87].
+# Same widening + alignment story as ECREATEDIR_PE.
 #
-# *** PLACEHOLDER (v5.11.22) — see ECREATEDIR_PE for rationale. ***
+# 2-arg syscall: 2 pushes (24 → wait no — sc_nr+path = 2 pushes = 16),
+# 1 pop + drop = 16 bytes consumed. Pre-sub RSP back to 16k+8.
+# Frame 0x258 aligns the call same as ECREATEDIR_PE.
 fn EDELETEF_PE(S): i64 {
     _pe_ensure_deletef(S);
+    var df_idx = _pe_deletef_get();
 
-    EB(S, 0x58);                                        # pop rax (path, ignored)
+    EB(S, 0x58);                                        # pop rax (path ptr)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);
-    EB(S, 0xDA); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF); # mov rax, -38
+
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x258
+    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x38); # lea rdi, [rsp+0x38]
+    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
+
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E);
+    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F);
+    EB(S, 0x85); EB(S, 0xC0);
+    EB(S, 0x74); EB(S, 0x0C);
+    EB(S, 0xFF); EB(S, 0xC1);
+    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x73); EB(S, 0x02);
+    EB(S, 0xEB); EB(S, 0xE8);
+    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # NUL
+
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
+
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+DeleteFileW]
+    _pe_iat_fixup_add(S, GCP(S), df_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
+    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+
+    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
+    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63
     return 0;
 }
 
@@ -897,13 +968,25 @@ fn EDELETEF_PE(S): i64 {
 #     / O_EXCL refinements are deferred — most downstream code
 #     opens existing or open-or-create, covered by this pair.
 #
-# Frame layout (0x250 = 592 B):
+# Frame layout (0x258 = 600 B; v5.11.23 alignment fix from 0x250):
 #   [rsp+0x000..0x01F]  shadow space (32 B, Win64 ABI)
 #   [rsp+0x020]         dwCreationDisposition stack arg (8 B)
 #   [rsp+0x028]         dwFlagsAndAttributes stack arg (8 B)
 #   [rsp+0x030]         hTemplateFile stack arg (8 B, = 0)
 #   [rsp+0x038..0x247]  widened UTF-16 path buffer (528 B ≈ 264 WCHARs)
-#   [rsp+0x248..0x24F]  8 B align pad
+#   [rsp+0x248..0x257]  16 B align pad (was 8 B at 0x250 pre-v5.11.23)
+#
+# v5.11.23 alignment fix: original 0x250 left RSP misaligned by 8
+# at the CALL. Win64 ABI requires 16-aligned RSP at CALL; cyrius's
+# 4-arg syscall (sc_nr+path+flags+mode) leaves pre-sub RSP at 16k+8,
+# and 0x250 mod 16 = 0 preserves the +8 misalignment. kernel32 path
+# APIs detect this in ntdll!+0x41912 and access-violate.
+# 0x258 mod 16 = 8 → cancels the +8 → RSP 16-aligned at CALL.
+# Wine 11.8 tolerated 0x250; cass (Win11 26200) does not.
+# The `_pe_exit_gate` only tested exit42 + hello-world (frames
+# happened to align by coincidence given their syscall arities);
+# never exercised a path API, masking this for an unknown number
+# of minors. v5.11.23 adds `_pe_path_apis_gate` to lock the fix.
 fn EOPEN_PE(S): i64 {
     _pe_ensure_createf(S);
     var cf_idx = _pe_createf_get();
@@ -919,9 +1002,9 @@ fn EOPEN_PE(S): i64 {
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
-    # Allocate frame (0x250 keeps RSP 16-aligned at the call).
+    # Allocate frame 0x258 (16-aligns RSP at the call — v5.11.23 fix).
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);
-    EB(S, 0x50); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
 
     # rsi = r11 (source UTF-8); rdi = rsp+0x38 (dest UTF-16).
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
@@ -955,8 +1038,8 @@ fn EOPEN_PE(S): i64 {
     _pe_iat_fixup_add(S, GCP(S), cf_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x250
-    EB(S, 0x50); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
+    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
     return 0;
 }
 
