@@ -2643,9 +2643,12 @@ syscalls_aarch64_linux::is_err/1
 syscalls_aarch64_linux::sigset_add/2
 syscalls_aarch64_linux::sigset_has/2
 syscalls_aarch64_linux::sigset_new/0
+syscalls_aarch64_linux::sys_accept4/4
 syscalls_aarch64_linux::sys_access/2
+syscalls_aarch64_linux::sys_bind/3
 syscalls_aarch64_linux::sys_chmod/2
 syscalls_aarch64_linux::sys_close/1
+syscalls_aarch64_linux::sys_connect/3
 syscalls_aarch64_linux::sys_dup2/2
 syscalls_aarch64_linux::sys_epoll_create/0
 syscalls_aarch64_linux::sys_epoll_ctl/4
@@ -2671,6 +2674,7 @@ syscalls_aarch64_linux::sys_kill/2
 syscalls_aarch64_linux::sys_landlock_add_rule/4
 syscalls_aarch64_linux::sys_landlock_create_ruleset/3
 syscalls_aarch64_linux::sys_landlock_restrict_self/2
+syscalls_aarch64_linux::sys_listen/2
 syscalls_aarch64_linux::sys_mkdir/2
 syscalls_aarch64_linux::sys_mount/5
 syscalls_aarch64_linux::sys_open/3
@@ -2680,6 +2684,8 @@ syscalls_aarch64_linux::sys_prctl/5
 syscalls_aarch64_linux::sys_read/3
 syscalls_aarch64_linux::sys_readlink/3
 syscalls_aarch64_linux::sys_reboot/1
+syscalls_aarch64_linux::sys_recvfrom/6
+syscalls_aarch64_linux::sys_recvmsg/3
 syscalls_aarch64_linux::sys_rmdir/1
 syscalls_aarch64_linux::sys_seccomp/3
 syscalls_aarch64_linux::sys_setgid/1
@@ -2690,6 +2696,7 @@ syscalls_aarch64_linux::sys_setsid/0
 syscalls_aarch64_linux::sys_setuid/1
 syscalls_aarch64_linux::sys_signalfd/3
 syscalls_aarch64_linux::sys_sigprocmask/3
+syscalls_aarch64_linux::sys_socket/3
 syscalls_aarch64_linux::sys_stat/2
 syscalls_aarch64_linux::sys_symlink/2
 syscalls_aarch64_linux::sys_sync/0
@@ -2720,9 +2727,12 @@ syscalls_x86_64_linux::is_err/1
 syscalls_x86_64_linux::sigset_add/2
 syscalls_x86_64_linux::sigset_has/2
 syscalls_x86_64_linux::sigset_new/0
+syscalls_x86_64_linux::sys_accept4/4
 syscalls_x86_64_linux::sys_access/2
+syscalls_x86_64_linux::sys_bind/3
 syscalls_x86_64_linux::sys_chmod/2
 syscalls_x86_64_linux::sys_close/1
+syscalls_x86_64_linux::sys_connect/3
 syscalls_x86_64_linux::sys_dup2/2
 syscalls_x86_64_linux::sys_epoll_create/0
 syscalls_x86_64_linux::sys_epoll_ctl/4
@@ -2748,6 +2758,7 @@ syscalls_x86_64_linux::sys_kill/2
 syscalls_x86_64_linux::sys_landlock_add_rule/4
 syscalls_x86_64_linux::sys_landlock_create_ruleset/3
 syscalls_x86_64_linux::sys_landlock_restrict_self/2
+syscalls_x86_64_linux::sys_listen/2
 syscalls_x86_64_linux::sys_mkdir/2
 syscalls_x86_64_linux::sys_mount/5
 syscalls_x86_64_linux::sys_open/3
@@ -2757,6 +2768,8 @@ syscalls_x86_64_linux::sys_prctl/5
 syscalls_x86_64_linux::sys_read/3
 syscalls_x86_64_linux::sys_readlink/3
 syscalls_x86_64_linux::sys_reboot/1
+syscalls_x86_64_linux::sys_recvfrom/6
+syscalls_x86_64_linux::sys_recvmsg/3
 syscalls_x86_64_linux::sys_rmdir/1
 syscalls_x86_64_linux::sys_seccomp/3
 syscalls_x86_64_linux::sys_setgid/1
@@ -2767,6 +2780,7 @@ syscalls_x86_64_linux::sys_setsid/0
 syscalls_x86_64_linux::sys_setuid/1
 syscalls_x86_64_linux::sys_signalfd/3
 syscalls_x86_64_linux::sys_sigprocmask/3
+syscalls_x86_64_linux::sys_socket/3
 syscalls_x86_64_linux::sys_stat/2
 syscalls_x86_64_linux::sys_symlink/2
 syscalls_x86_64_linux::sys_sync/0

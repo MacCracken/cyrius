@@ -6,6 +6,132 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.18] — 2026-05-11
+
+**kybernet bundle Part A.i + Part B: identifier buffer 2× +
+socket-syscall wrappers** — closes
+[kybernet socket-syscall wrappers](issues/archived/2026-05-11-kybernet-socket-syscall-wrappers.md);
+partial-closes
+[kybernet fn_table + identifier buffer caps](issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md)
+(identifier buffer half this slot; fn_table 4096 → 8192 split to
+v5.11.19). Audit at slot entry revealed the reporter's "single
+source-line edit" framing was wrong for fn_table; honest scope
+shrink per user direction "Split honestly — ship .18 partial".
+
+### Part A.i: identifier buffer 131072 → 262144 bytes (2×)
+
+Buffer grows from 0x60000-0x80000 (128 KB) to 0x60000-0xA0000
+(256 KB). Uses the existing 0xA0000-0x18C100 heap-map gap; no
+shift needed.
+
+**Edits**:
+- `src/frontend/lex.cyr`: NPOS_GUARD threshold 130800 → 261872
+  (kept 272-byte slack for inner write loop); LEXID threshold +
+  error-message bytes-count 131072 → 262144.
+- `src/main.cyr` + `src/main_win.cyr`: stats output "/ 131072"
+  → "/ 262144"; warning thresholds `GNPOS(S) * 100 / 131072`
+  → `/ 262144`.
+- `src/common/util.cyr`: parse-failure dump "/131072 var=" →
+  "/262144 var=" (both lines 402 + 425).
+- Heap-map comments updated across all main_*.cyr (5 files).
+
+**Why doubled, not just bumped**: kybernet 1.1.0 hit 85% at
+112094 / 131072 bytes; 1.2.0's edge-boot work adds ~30-40 long-
+named identifiers (`luks_format_with_passphrase`,
+`verity_hash_tree_create`, etc.) totaling ~1.5-2 KB. 2× headroom
+buys two minors of comfortable runway.
+
+### Part B: 7 socket-syscall wrappers (x86_64 + aarch64 peers)
+
+Closes the silent-aarch64-misroute footgun. kybernet 1.1.5's
+P(-1) audit caught three sites hardcoding x86_64 syscall numbers
+(41 → socket, 49 → bind, 45 → recvfrom) that silently routed to
+the wrong aarch64 syscalls (pipe2 / setsockopt / getsockopt).
+
+**14 fns added (7 × 2 arches)**:
+
+| Wrapper | x86_64 | aarch64 |
+|---|---:|---:|
+| `sys_socket(domain, type, protocol)` | 41 | 198 |
+| `sys_connect(fd, sockaddr, addrlen)` | 42 | 203 |
+| `sys_recvfrom(fd, buf, len, flags, srcaddr, srcaddrlen)` | 45 | 207 |
+| `sys_recvmsg(fd, msghdr, flags)` | 47 | 212 |
+| `sys_bind(fd, sockaddr, addrlen)` | 49 | 200 |
+| `sys_listen(fd, backlog)` | 50 | 201 |
+| `sys_accept4(fd, srcaddr, srcaddrlen, flags)` | 288 | 242 |
+
+All annotated `: i64` (matches v5.11.x annotation arc). SYS_*
+enum constants added to each peer's SysNr block.
+
+**New test**: `tests/tcyr/socket_syscalls.tcyr`. Runtime exercise
+of `sys_socket(AF_UNIX, SOCK_DGRAM|SOCK_CLOEXEC, 0)` (load-bearing
+aarch64 verify — caller-confused arch dispatch would silently
+return pipe2 fd); compile-time `&fn` reference for the 6 wrappers
+that have socket-state side effects.
+
+### Part A.ii split-off — v5.11.19 pinned
+
+The audit revealed `fn_table` 4096 → 8192 is a heap-map refactor,
+not a literal bump: 15+ fn_* tables across both contiguous blocks
+(16 tables) and scattered locations (7 tables, each adjacent to
+non-fn_* regions that collide at 2× size). Estimated ~300-500
+hex-literal edits across 7 src/ files. Split off to its own slot
+with full acceptance bar in roadmap.
+
+### Roadmap shift
+
+v5.11.19 now = kybernet Part A.ii (fn_table heap-map refactor).
+All subsequent slots shifted forward by 1:
+- v5.11.20 syscall DRY (was .19)
+- v5.11.21 0-call survey (was .20)
+- v5.11.22 cc5_win PE exit-code (was .21)
+- v5.11.23 derive-accessors cap (was .22)
+- v5.11.24 per-repo Part 2 CLI dispatcher (was .23)
+- v5.11.25 per-repo Part 3 cyriusly use --global (was .24)
+- v5.11.26-35 OPEN (was .25-35; 10-slot buffer, was 11)
+
+### Functional verification
+
+**Identifier buffer**: cc5 self-host (cyrius's largest single-pass
+compilation unit) parsed correctly with the new threshold.
+Warnings only fire at 85% of 262144 (was 131072) — no spurious
+warns on existing cc5 source.
+
+**Socket wrappers**:
+```
+$ cat tests/tcyr/socket_syscalls.tcyr | cc5 > /tmp/socket_test
+$ /tmp/socket_test
+=== sys_socket — AF_UNIX/SOCK_DGRAM round-trip ===
+=== compile-time callability of remaining wrappers ===
+7 passed, 0 failed (7 total)
+exit=0
+```
+
+### Files
+
+- `src/frontend/lex.cyr` — NPOS_GUARD + LEXID threshold + cap.
+- `src/main.cyr` / `src/main_win.cyr` — stats + warnings.
+- `src/main_aarch64.cyr` / `src/main_aarch64_macho.cyr` /
+  `src/main_aarch64_native.cyr` — heap-map comment.
+- `src/common/util.cyr` — parse-failure dump.
+- `lib/syscalls_x86_64_linux.cyr` + `lib/syscalls_aarch64_linux.cyr`
+  — 7 SYS_* enum constants + 7 wrapper fns each (14 total).
+- `tests/tcyr/socket_syscalls.tcyr` — new test.
+- `docs/api-surface.snapshot` — regenerated (+14 fns).
+- `docs/development/roadmap.md` — v5.11.18 detail block updated
+  for honest scope shrink; v5.11.19 detail block added with full
+  acceptance bar for Part A.ii.
+- `docs/development/issues/2026-05-11-kybernet-socket-syscall-wrappers.md`
+  → archived.
+
+### Verification
+
+- `cyrius check` 66/66 green.
+- `cyrius test` 147/147 green (+1 from socket_syscalls.tcyr).
+- cc5 self-host byte-identical fixpoint at 804,464 B.
+- Cross-host pi smoke pending (load-bearing for socket wrappers;
+  the original bug class is silent aarch64 misroute).
+
 ## [5.11.17] — 2026-05-11
 
 **Per-repo isolation Part 1: `cyrius deps` stdlib_dir fix** —

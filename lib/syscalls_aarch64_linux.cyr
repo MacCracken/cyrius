@@ -130,6 +130,16 @@ enum SysNr {
     SYS_LANDLOCK_CREATE_RULESET = 444;
     SYS_LANDLOCK_ADD_RULE = 445;
     SYS_LANDLOCK_RESTRICT_SELF = 446;
+    # v5.11.18 (kybernet 1.1.5-surfaced — sd_notify dgram + supervisor IPC).
+    # Wrappers exist to prevent silent aarch64 syscall-number misroute when
+    # consumers hardcode x86_64 numbers. See CHANGELOG [5.11.18].
+    SYS_SOCKET = 198;
+    SYS_BIND = 200;
+    SYS_LISTEN = 201;
+    SYS_CONNECT = 203;
+    SYS_RECVFROM = 207;
+    SYS_RECVMSG = 212;
+    SYS_ACCEPT4 = 242;
 }
 
 # AT_FDCWD = special "current working directory" fd for at-family
@@ -720,4 +730,51 @@ fn sys_landlock_add_rule(ruleset_fd, rule_type, rule_attr, flags): i64 {
 # Landlock — apply ruleset to calling thread; see x86_64 peer.
 fn sys_landlock_restrict_self(ruleset_fd, flags): i64 {
     return syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, flags);
+}
+
+# v5.11.18 (kybernet 1.1.5-surfaced) — socket-family wrappers.
+# Same bodies as the x86_64 peer; the arch-specific SYS_* enum
+# constants above route to the right kernel entry. Each consumer
+# that previously hand-rolled `syscall(41, ...)` etc. with x86_64
+# numbers silently misrouted on aarch64 (41 → pipe2). See CHANGELOG
+# [5.11.18]. Acceptance test: tests/tcyr/socket_syscalls.tcyr.
+
+# Create a socket. `domain` = AF_UNIX | AF_INET | AF_INET6;
+# `type` = SOCK_DGRAM | SOCK_STREAM (optionally | SOCK_CLOEXEC).
+# Returns fd or -errno.
+fn sys_socket(domain, type, protocol): i64 {
+    return syscall(SYS_SOCKET, domain, type, protocol);
+}
+
+# Bind a socket to a local address. See x86_64 peer.
+fn sys_bind(fd, sockaddr, addrlen): i64 {
+    return syscall(SYS_BIND, fd, sockaddr, addrlen);
+}
+
+# Mark a socket as accepting connections. See x86_64 peer.
+fn sys_listen(fd, backlog): i64 {
+    return syscall(SYS_LISTEN, fd, backlog);
+}
+
+# Connect a socket to a remote address. See x86_64 peer.
+fn sys_connect(fd, sockaddr, addrlen): i64 {
+    return syscall(SYS_CONNECT, fd, sockaddr, addrlen);
+}
+
+# Receive on a socket, capturing source address (recvfrom is the
+# load-bearing call for sd_notify dgram). See x86_64 peer.
+fn sys_recvfrom(fd, buf, len, flags, srcaddr, srcaddrlen): i64 {
+    return syscall(SYS_RECVFROM, fd, buf, len, flags, srcaddr, srcaddrlen);
+}
+
+# Accept a connection on a listening socket; `flags` accepts
+# SOCK_CLOEXEC | SOCK_NONBLOCK. See x86_64 peer.
+fn sys_accept4(fd, srcaddr, srcaddrlen, flags): i64 {
+    return syscall(SYS_ACCEPT4, fd, srcaddr, srcaddrlen, flags);
+}
+
+# Receive with ancillary data (SCM_CREDENTIALS, SCM_RIGHTS). See
+# x86_64 peer. argonaut 1.6.2 already uses this for peer-cred capture.
+fn sys_recvmsg(fd, msghdr, flags): i64 {
+    return syscall(SYS_RECVMSG, fd, msghdr, flags);
 }

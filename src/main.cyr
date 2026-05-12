@@ -26,7 +26,7 @@
 #                                         tok_names is REBUILT by LEX after preprocessing —
 #                                         the overlap is tolerated because preprocessing reads
 #                                         from 0x44A000, not S+0.
-#   0x60000  tok_names     [131072]      128KB packed identifier strings (nested in input_buf — rebuilt by LEX, v4.6.2 was 64KB)
+#   0x60000  tok_names     [262144]      256KB packed identifier strings (nested in input_buf — rebuilt by LEX, v4.6.2 was 64KB, v5.11.18 doubled 128KB → 256KB; grows 0x60000-0xA0000 into the 0xA0000-0x18C100 gap)
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
 #   0x18E630  struct_names  [2048]        256 struct name offsets (cap 256, v5.7.17)
@@ -1456,7 +1456,7 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
         syscall(SYS_WRITE, 2, " / 4096\n",        8);
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
-        syscall(SYS_WRITE, 2, " / 131072\n",     10);
+        syscall(SYS_WRITE, 2, " / 262144\n",     10);
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));
         syscall(SYS_WRITE, 2, " / 8192\n",        8);
         syscall(SYS_WRITE, 2, "  fixup_table: ", 15); PRNUM(GFCNT(S));
@@ -1478,11 +1478,11 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
         syscall(SYS_WRITE, 2, "/4096) — split into compilation units soon\n", 44);
     }
-    if (GNPOS(S) * 100 / 131072 >= 85) {
+    if (GNPOS(S) * 100 / 262144 >= 85) {
         syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
-        PRNUM(GNPOS(S) * 100 / 131072);
+        PRNUM(GNPOS(S) * 100 / 262144);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GNPOS(S));
-        syscall(SYS_WRITE, 2, "/131072 bytes) — reduce includes or split soon\n", 47);
+        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce includes or split soon\n", 47);
     }
     if (GVCNT(S) * 100 / 8192 >= 85) {
         syscall(SYS_WRITE, 2, "warning: var_table at ", 22);

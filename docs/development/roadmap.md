@@ -487,14 +487,15 @@ right after).
 | v5.11.15 | bote streaming dispatch primitives — **closed in 1 slot** (chan_try_recv + cancel_token_*; chan_* MPSC already shipped v5.5.31, atomics v5.5.31, arena pattern v5.11.14). Original 3-slot scope was over-budget. |
 | v5.11.16 | bote WS handshake key validation (Low; RFC 6455 §4.1 — Sec-WebSocket-Key must be 24-char base64; consolidated from .18 at v5.11.15 close per user direction "close up open gap, so we have additional runway later") |
 | v5.11.17 | **Per-repo isolation Part 1: `cyrius deps` stdlib_dir fix** (pinned 2026-05-11 v5.11.3 wipe; 5-item acceptance split into 3 slots at v5.11.16 close per user direction "Reframe — split into 3 slots"; Part 1 = the actual ping-pong wedge in `cbt/deps.cyr::_dep_find_stdlib_dir`) |
-| v5.11.18 | **kybernet bundle: cap raise + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4 entry, expanded 2026-05-11 at v5.11.5 ship; see below) |
-| v5.11.19 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
-| v5.11.20 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
-| v5.11.21 | **cc5_win PE exit-code crash fix** (HIGH; ai-hwaccel 2.2.2 filed 2026-05-11; PE binaries crash before reaching ExitProcess, exit=0x40001000 instead of 42; WriteFile stdout never lands; blocks every Win64 ship target. Pinned in gap per user direction.) |
-| v5.11.22 | **`#derive(accessors)` >16-field silent miscompile fix** (Medium; agnos 1.28.3 filed 2026-05-11; `src/frontend/lex_pp.cyr` per-struct `field_names`/`field_types`/`offsets` tables hard-sized at 16 entries — 17th field overflows into field_types[0], offsets diverge silently. agnos 22-field `struct Process` corrupted CR3 → kernel page-fault on first context switch. Raise cap + add hard-cap diagnostic.) |
-| v5.11.23 | **Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher** (pinned 2026-05-11 at v5.11.16 close; binary reads `cyrius.cyml`'s `cyrius` top-level field → re-exec `~/.cyrius/versions/<v>/bin/cyrius`; error if not installed; touches every cyrius CLI entry point; multi-slot scope) |
-| v5.11.24 | **Per-repo isolation Part 3: `cyriusly use --global` flag + per-repo default** (pinned 2026-05-11 at v5.11.16 close; `programs/cyriusly.cyr`'s `use` verb defaults to writing `cyrius.cyml`'s `cyrius` field instead of `~/.cyrius/current`; `--global` keeps the legacy write; sibling agents `cyriusly use 5.10.44 --global` becomes the explicit form) |
-| v5.11.25-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (11-slot buffer; was 13 pre-split; user 2026-05-11) |
+| v5.11.18 | **kybernet bundle Part A.i + Part B: identifier buffer 2× + socket-syscall wrappers** (P2; pinned 2026-05-11 at v5.11.4/.5; Part A.ii fn_table 4096→8192 split off to v5.11.19 at v5.11.18 audit per user direction "Split honestly — ship .18 partial" after audit revealed ~15 fn_* tables across scattered locations require relocate-and-shift instead of "single source-line edit") |
+| v5.11.19 | **kybernet Part A.ii: fn_table 4096 → 8192 (heap-map refactor)** (pinned 2026-05-11 at v5.11.18 audit; ~300-500 hex-literal edits across 7 src/ files; relocate 7 scattered fn_* tables + double 16 contiguous tables + shift IR/fixup regions; standalone slot per honest scope shrink) |
+| v5.11.20 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
+| v5.11.21 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
+| v5.11.22 | **cc5_win PE exit-code crash fix** (HIGH; ai-hwaccel 2.2.2 filed 2026-05-11; PE binaries crash before reaching ExitProcess, exit=0x40001000 instead of 42; WriteFile stdout never lands; blocks every Win64 ship target. Pinned in gap per user direction.) |
+| v5.11.23 | **`#derive(accessors)` >16-field silent miscompile fix** (Medium; agnos 1.28.3 filed 2026-05-11; `src/frontend/lex_pp.cyr` per-struct `field_names`/`field_types`/`offsets` tables hard-sized at 16 entries — 17th field overflows into field_types[0], offsets diverge silently. agnos 22-field `struct Process` corrupted CR3 → kernel page-fault on first context switch. Raise cap + add hard-cap diagnostic.) |
+| v5.11.24 | **Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher** (pinned 2026-05-11 at v5.11.16 close; binary reads `cyrius.cyml`'s `cyrius` top-level field → re-exec `~/.cyrius/versions/<v>/bin/cyrius`; error if not installed; touches every cyrius CLI entry point; multi-slot scope) |
+| v5.11.25 | **Per-repo isolation Part 3: `cyriusly use --global` flag + per-repo default** (pinned 2026-05-11 at v5.11.16 close; `programs/cyriusly.cyr`'s `use` verb defaults to writing `cyrius.cyml`'s `cyrius` field instead of `~/.cyrius/current`; `--global` keeps the legacy write; sibling agents `cyriusly use 5.10.44 --global` becomes the explicit form) |
+| v5.11.26-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (10-slot buffer; was 11 pre-split; user 2026-05-11) |
 | v5.11.36 | **cc5_aarch64_macho cross-bin ship** (deferred from v5.11.6 — host-runtime mmap fix + ecb smoke; user 2026-05-11: "fine for back of the current line") |
 | v5.11.37 | **cc5_aarch64_native cross-bin ship** (deferred from v5.11.6 — build + pi smoke) |
 | v5.11.38 | **cc5_cx cross-bin ship** (deferred from v5.11.6 — bytecode emit + VM smoke target) |
@@ -575,7 +576,7 @@ entry per `feedback_premise_check_at_slot_entry`.
 **Pinned 2026-05-11 during v5.11.3 ship; original 5-item acceptance
 bar split into 3 slots at v5.11.16 close per user direction
 ("Reframe — split into 3 slots"). This slot lands the actual
-ping-pong wedge. Parts 2 and 3 pinned at v5.11.23 and v5.11.24.**
+ping-pong wedge. Parts 2 and 3 pinned at v5.11.24 and v5.11.25.**
 
 **Root cause**: `~/.cyrius/current`, `~/.cyrius/bin`, and
 `~/.cyrius/lib` are single global pointers. When sibling agents on
@@ -661,22 +662,46 @@ That's a one-shot lever — 1.2.0 edge-boot work brings
 `agnosys-storage` + `agnosys-trust` profiles back into scope, and
 the next minor tips past the hard cap (non-recoverable error).
 
-**The fix (per the issue's "Concrete ask")**:
-1. `fn_table` 4096 → **8192** (2×). Single source-line edit in cc5;
-   raises the cap and the warn threshold proportionally.
-2. `identifier buffer` 131072 → **262144 bytes** (2×). Edit in
-   `lex.cyr` (the existing error message even names the location:
-   *"raise LEXID cap in lex.cyr"*).
-3. No algorithmic change. No on-disk format change. No
-   consumer-visible API change.
+**Audit at v5.11.18 entry (2026-05-11)** revealed the reporter's
+"single source-line edit" framing was wrong for fn_table. The
+identifier buffer raise IS mechanical (uses the existing 0xA0000-
+0x18C100 heap-map gap; ~10 literal updates in lex.cyr +
+main*.cyr + util.cyr). The fn_table piece, however, requires
+relocating 7 scattered fn_* tables (fn_deprecated_msg /
+fn_name_hash / fn_start_hash / fn_regalloc / fn_ret_sid /
+fn_variadic / fn_flags — each adjacent to non-fn_* regions that
+collide at 2× size) AND doubling 16 contiguous fn_* tables (8
+extended + 8 primary) AND shifting ir_nodes / blocks / state /
+edges / cp / fixup_tbl by 0x80000. ~300-500 hex-literal edits
+across 7 src/ files.
 
-**Acceptance bar**:
-- cc5 self-host byte-identical (cap raise is parse-only).
+**Slot scope (post-audit split)**:
+
+1. **Part A.i**: `identifier buffer` 131072 → **262144 bytes** (2×).
+   Buffer grows 0x60000-0xA0000 (was 0x60000-0x80000). Uses
+   existing gap; no heap-map shift. lex.cyr NPOS_GUARD/LEXID
+   threshold + main.cyr/main_win.cyr warning thresholds +
+   util.cyr parse-failure dump + heap-map comments across all
+   main_*.cyr.
+2. **Part B**: 7 socket-syscall wrappers in both
+   `lib/syscalls_x86_64_linux.cyr` + `lib/syscalls_aarch64_linux.cyr`
+   peers. See "Part B" section below.
+3. **Part A.ii** (`fn_table` 4096 → 8192 with full heap-map
+   refactor) **split off to v5.11.19** per user direction at audit
+   ("Split honestly — ship .18 partial"). Honest scope shrink
+   based on audit data, NOT lazy defer — the reporter's "single
+   source-line edit" framing didn't survive contact with the
+   actual heap-map.
+
+**Acceptance bar (this slot, Part A.i + Part B)**:
+- cc5 self-host byte-identical (Part A.i: comment + literal
+  updates only; Part B: additive stdlib).
 - check.sh 66/66 green.
 - cyrius test 146/146 green.
-- kybernet 1.1.0 build (full agnosys-full surface) compiles without
-  the warn-threshold notes.
-- Cross-host smoke green on all 4 hosts (local x86, pi, ecb, cass).
+- kybernet 1.1.0 build no longer hits the *identifier buffer*
+  warn threshold (the fn_table warning will persist until v5.11.19).
+- Part B: pi (aarch64) cross-host smoke green for `sys_socket` +
+  `sys_bind` (load-bearing — the bug class is silent aarch64 misroute).
 
 **Why this slot and not earlier**: per user direction, "after stdlib
 annotation arc". The arc runs v5.11.1-v5.11.7+; the post-arc queue
@@ -740,7 +765,96 @@ misroute, invisible on x86 CI) is exactly what stdlib wrappers
 exist to prevent. Every new consumer needing a socket re-rolls the
 per-arch dispatch and re-introduces the bug.
 
-#### v5.11.19 — Syscall-wrapper DRY consolidation
+#### v5.11.19 — kybernet Part A.ii: `fn_table` 4096 → 8192 (heap-map refactor)
+
+**Pinned 2026-05-11 at v5.11.18 audit per user direction**
+"Split honestly — ship .18 partial" after the audit revealed
+this is a heap-map refactor, not a single-line edit. Source
+issue is kybernet 1.1.0 hitting *fn_table at 92% (3779/4096)*
+in
+[`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md).
+
+**Why this is heap-map work, not a literal bump**: cyrius's fn_*
+metadata lives in 15+ tables across both contiguous blocks and
+scattered locations:
+
+```
+Contiguous extended block (0x124A000-0x128A000, 256KB / 8 tables × 32KB):
+  fn_param_cstring_mask / _result_mask / _option_mask / _tagged_mask
+  fn_overload_str / _int / _cstr
+  fn_param_simd_mask
+
+Contiguous primary block (0x128A000-0x12CA000, 256KB / 8 tables × 32KB):
+  fn_names / fn_offsets / fn_params / fn_body_start / fn_body_end
+  fn_inline / fn_param_str_mask / fn_code_end
+
+Scattered (each 32KB, adjacent to non-fn_* regions):
+  0x104000 fn_deprecated_msg     (next: fn_name_hash at 0x10C000)
+  0x10C000 fn_name_hash          (next: fn_start_hash at 0x110000)
+  0x110000 fn_start_hash         (next: var_noffs at 0x11A000)
+  0x1C8000 fn_regalloc           (next: enum_const_val at 0x1D8000)
+  0x1EC000 fn_ret_sid            (next: fn_variadic at 0x1F4000)
+  0x1F4000 fn_variadic           (next: fn_flags at 0x1FC000)
+  0x1FC000 fn_flags              (next: var_enum_id at 0x204000)
+```
+
+Doubling cap to 8192 means each table needs 64KB stride (was
+32KB). Every scattered table collides with its neighbor at 2×
+size — they have to be RELOCATED, not just grown. The contiguous
+blocks need stride doubled + everything after primary block
+(ir_nodes / blocks / state / edges / cp / fixup_tbl) shifted by
+0x80000.
+
+**Refactor shape (estimated)**:
+
+1. **Relocate 7 scattered fn_* tables** to a new contiguous block
+   in the 0xA0000-0x18C100 gap freed up after v5.11.18's
+   identifier-buffer raise to 256KB (still ~944 KB of headroom
+   there). Each table at 64KB stride; new block ~448 KB.
+2. **Double extended fn_* block** stride 0x8000 → 0x10000 (8
+   tables, ~80 hex-literal edits).
+3. **Shift primary fn_* block** forward to make room for doubled
+   extended block, double its stride too (8 tables, ~80 edits).
+4. **Shift IR + fixup regions** forward by 0x80000 (ir_nodes /
+   blocks / state / edges / cp / fixup_tbl / brk-fixup-end).
+5. **Update REGFN cap check** (`parse_fn.cyr:95`: 4096 → 8192) +
+   warning thresholds (`main.cyr:1475-1479`, `main_win.cyr:761-765`,
+   `util.cyr:401, 423`).
+6. **Update heap-map comments** across `main.cyr` /
+   `main_aarch64.cyr` / `main_aarch64_macho.cyr` /
+   `main_aarch64_native.cyr` / `main_win.cyr` (~30 comment-line
+   updates per file; the heap-map ASCII art is the source of
+   truth for region offsets).
+7. **Update fn_name_hash + fn_start_hash sizing** (currently 8192
+   slots × 2B; doubled cap means 16384 slots × 2B = 32KB each to
+   maintain the v5.10.41 load-factor target).
+
+Estimated **~300-500 hex-literal edits** across `main.cyr` +
+`main_aarch64*.cyr` (3 files) + `main_win.cyr` + `parse_fn.cyr` +
+`backend/x86/fixup.cyr` + `backend/aarch64/fixup.cyr` +
+`common/util.cyr`.
+
+**Acceptance bar**:
+1. cc5 self-host byte-identical fixpoint at the post-refactor
+   size (cap raise IS a size change — every fn_* offset moves).
+2. check.sh 66/66 + cyrius test 146/146 green.
+3. kybernet 1.1.0 (full agnosys-full surface) compiles WITHOUT
+   the `fn_table at 92%` warning.
+4. Cross-host smoke green on all 4 hosts (this is the highest-risk
+   slot of v5.11.x — heap-map refactor on a self-hosting compiler).
+
+**Risk**: high. Self-host byte-identical is load-bearing — any
+missed offset reference produces silent miscompile. Phased
+internally with cc5 fixpoint check after each phase (relocate
+scattered → double extended → shift+double primary → shift IR/
+fixup → cap + warnings).
+
+**Why pinned at .19 and not later**: kybernet 1.1.0 still hits
+the warn threshold post-.18 (Part A.i only raised identifier
+buffer; fn_table cap unchanged). Want this to land in the
+buffer band, not at cycle close.
+
+#### v5.11.20 — Syscall-wrapper DRY consolidation
 
 **Pinned 2026-05-11 at v5.11.7 close from a lib refactor audit.**
 
@@ -774,11 +888,11 @@ arity / shape differs across arches).
   (selector still picks the right arch peer + new common file).
 - Saves ~50-80 lines, ~20 fn dups.
 
-**Risk**: medium — touches stdlib syscall layer. v5.11.19 places
+**Risk**: medium — touches stdlib syscall layer. v5.11.20 places
 this at start of the buffer band so emergent bugs can ride later
 slots if needed.
 
-#### v5.11.20 — 0-call public stdlib fn downstream survey
+#### v5.11.21 — 0-call public stdlib fn downstream survey
 
 **Pinned 2026-05-11 at v5.11.7 close from a lib refactor audit.**
 
@@ -810,7 +924,7 @@ so 0-call-in-grep is not safe-to-remove.
   - **Has consumer caller** → keep, document the consumer in the
     fn's docstring.
   - **No caller anywhere** → flag in CHANGELOG, mark deprecated
-    in v5.11.20, drop in v5.12.x (or v6.0.0 closeout — fits the
+    in v5.11.21, drop in v5.12.x (or v6.0.0 closeout — fits the
     "dead-code sweep" item already pinned there).
   - **Speculative scaffolding for active work** (per `feedback_dead_code_audit_scope`)
     → keep, add roadmap pointer in the docstring.
@@ -821,7 +935,7 @@ so 0-call-in-grep is not safe-to-remove.
 consumer is blocked on these fns. Survey-and-decide doesn't ship
 behavioral changes, just clarity + a deprecation plan if needed.
 
-#### v5.11.21 — cc5_win PE exit-code crash + WriteFile stdout fix
+#### v5.11.22 — cc5_win PE exit-code crash + WriteFile stdout fix
 
 **HIGH-severity blocker** filed 2026-05-11 by ai-hwaccel 2.2.2.
 Pinned to the gap per user direction at v5.11.10 close. Full repro
@@ -892,14 +1006,16 @@ shape, IAT layout, relocation tables); a fix may need to touch
 byte-identical is required (PE backend changes shouldn't affect
 x86 Linux ELF emit), plus cross-host smoke green on all 4 hosts.
 
-**Why pinned at .21 and not earlier**: user direction at v5.11.10
-close — "plan it in the gap" preserved the existing pins at .19
-(syscall DRY) and .20 (0-call survey). At consolidation (v5.11.15
+**Why pinned at .22 and not earlier**: user direction at v5.11.10
+close — "plan it in the gap" preserved the existing pins at .20
+(syscall DRY) and .21 (0-call survey). At consolidation (v5.11.15
 close) the whole pinned block shifted back 2 to close the .16-17 gap;
 this slot rode along. The next emergent fixup (`#derive(accessors)`
-16-field cap, agnos 1.28.3, 2026-05-11) pinned at .22.
+16-field cap, agnos 1.28.3, 2026-05-11) pinned at .23. The v5.11.18
+audit split off kybernet Part A.ii to its own slot (v5.11.19),
+shifting every subsequent pin forward by 1 (this slot .21 → .22).
 
-#### v5.11.22 — `#derive(accessors)` >16-field silent miscompile fix
+#### v5.11.23 — `#derive(accessors)` >16-field silent miscompile fix
 
 **Pinned 2026-05-11 at v5.11.15 close alongside the WS handshake
 slot.** Filed by agnos 1.28.3 during a kernel `struct Process`
@@ -971,10 +1087,11 @@ that don't match the actual struct layout.
 load-bearing — the cap raise shifts every per-struct table base
 that lives above `S+0x197500`.
 
-**Why pinned at .22**: emergent consumer-filed fixup; rides the
+**Why pinned at .23**: emergent consumer-filed fixup; rides the
 band that opened up after consolidation closed .16-17. Bundle
-with the PE exit-code fix at .21 as the second compiler-side bug
-fix in the cluster.
+with the PE exit-code fix at .22 as the second compiler-side bug
+fix in the cluster. Shifted from .22 → .23 at v5.11.18 audit when
+kybernet Part A.ii split off to .19.
 
 **Agnos-side status**: workaround in place at 1.28.3 (reverted
 `#derive(accessors)` on `Process`, kept raw `load64`/`store64`
@@ -982,7 +1099,7 @@ fix in the cluster.
 `#derive(accessors)` becomes an agnos-side follow-up once this
 slot ships.
 
-#### v5.11.23 — Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher
+#### v5.11.24 — Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher
 
 **Pinned 2026-05-11 at v5.11.16 close from the 3-slot reframe
 of the original v5.11.17 acceptance bar (user direction:
@@ -1002,7 +1119,7 @@ entry. Before dispatching to any subcommand, it:
 5. If no `cyrius.cyml` is found (or no `cyrius` field), falls
    back to current global-default behavior.
 
-**Why pinned at .23 and not earlier**: multi-slot architectural
+**Why pinned at .24 and not earlier**: multi-slot architectural
 change — every cyrius CLI entry point needs the re-exec wrapper,
 and the re-exec needs to be idempotent (the re-execed binary must
 NOT re-walk and re-exec into a third process). Loop guard via
@@ -1035,7 +1152,7 @@ actual wipe wedge; Part 2 makes the version-pinning intentional
 `5.10.44` still runs whatever's at `~/.cyrius/current` for CLI
 dispatch — Part 2 makes the pin authoritative.
 
-#### v5.11.24 — Per-repo isolation Part 3: `cyriusly use --global` flag
+#### v5.11.25 — Per-repo isolation Part 3: `cyriusly use --global` flag
 
 **Pinned 2026-05-11 at v5.11.16 close from the 3-slot reframe
 of the original v5.11.17 acceptance bar.**
@@ -1055,7 +1172,7 @@ GLOBAL toolchain for their tests must now pass `--global`
 explicitly. Quiet, in-repo workflow (the common case) stops
 mutating global state.
 
-**Why pinned at .24 and not earlier**: depends on Part 2's
+**Why pinned at .25 and not earlier**: depends on Part 2's
 cyrius.cyml resolution to actually take effect. Shipping Part 3
 before Part 2 would write the cyml field but cyrius CLI wouldn't
 honor it — confusing half-state.
@@ -1085,7 +1202,7 @@ patch to add the flag.
 
 **Sibling-agent migration**: agnosys / mabda / ai-hwaccel
 `cyriusly use <v>` lines need to add `--global`. Communicate
-during the v5.11.24 ship.
+during the v5.11.25 ship.
 
 **Held-forward items (no slot pinned; surface-on-ask)**: Class B
 FFI/wgpu fncall6 ABI (mabda B1/B2), `cyim` regex parse error,

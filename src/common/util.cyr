@@ -399,7 +399,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
             syscall(SYS_WRITE, 2, "\n", 1);
             syscall(SYS_WRITE, 2, "  at fail: fn=", 14); PRNUM(L64(S + 0x18DA00));
             syscall(SYS_WRITE, 2, "/4096 ident=", 12); PRNUM(L64(S + 0x18C128));
-            syscall(SYS_WRITE, 2, "/131072 var=", 12); PRNUM(L64(S + 0x18C110));
+            syscall(SYS_WRITE, 2, "/262144 var=", 12); PRNUM(L64(S + 0x18C110));
             syscall(SYS_WRITE, 2, "/8192 fixup=", 12); PRNUM(L64(S + 0x18FCA8));
             syscall(SYS_WRITE, 2, "/32768\n", 7);
             syscall(SYS_EXIT, 1);
@@ -422,7 +422,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
     # users don't need to re-run with the env flag to get context.
     syscall(SYS_WRITE, 2, "  at fail: fn=", 14); PRNUM(L64(S + 0x18DA00));
     syscall(SYS_WRITE, 2, "/4096 ident=", 12); PRNUM(L64(S + 0x18C128));
-    syscall(SYS_WRITE, 2, "/131072 var=", 12); PRNUM(L64(S + 0x18C110));
+    syscall(SYS_WRITE, 2, "/262144 var=", 12); PRNUM(L64(S + 0x18C110));
     syscall(SYS_WRITE, 2, "/8192 fixup=", 12); PRNUM(L64(S + 0x18FCA8));
     syscall(SYS_WRITE, 2, "/32768\n", 7);
     syscall(SYS_EXIT, 1);

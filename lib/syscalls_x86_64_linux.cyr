@@ -87,6 +87,15 @@ enum SysNr {
     SYS_LANDLOCK_CREATE_RULESET = 444;
     SYS_LANDLOCK_ADD_RULE = 445;
     SYS_LANDLOCK_RESTRICT_SELF = 446;
+    # v5.11.18 (kybernet 1.1.5-surfaced — sd_notify dgram + supervisor IPC).
+    # See aarch64 peer + CHANGELOG [5.11.18].
+    SYS_SOCKET = 41;
+    SYS_CONNECT = 42;
+    SYS_RECVFROM = 45;
+    SYS_RECVMSG = 47;
+    SYS_BIND = 49;
+    SYS_LISTEN = 50;
+    SYS_ACCEPT4 = 288;
 }
 
 # ================================================================
@@ -686,4 +695,68 @@ fn sys_landlock_add_rule(ruleset_fd, rule_type, rule_attr, flags): i64 {
 # relaxed by the same thread. Returns 0 or -errno.
 fn sys_landlock_restrict_self(ruleset_fd, flags): i64 {
     return syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, flags);
+}
+
+# v5.11.18 (kybernet 1.1.5-surfaced) — socket-family wrappers.
+# kybernet 1.1.5's P(-1) audit caught three sites where x86_64
+# syscall numbers (41 → socket, 49 → bind, 45 → recvfrom) were
+# hardcoded and silently routed to the wrong aarch64 syscalls
+# (pipe2 / setsockopt / getsockopt). These stdlib wrappers
+# centralize the dispatch so consumers don't re-roll per-arch
+# #ifdef enums. See CHANGELOG [5.11.18]. Acceptance test:
+# tests/tcyr/socket_syscalls.tcyr.
+
+# Create a socket. `domain` = AF_UNIX (1) | AF_INET (2) | AF_INET6 (10);
+# `type` = SOCK_DGRAM (2) | SOCK_STREAM (1) (optionally |
+# SOCK_CLOEXEC (0o2000000) | SOCK_NONBLOCK (0o4000)). Returns fd or
+# -errno. Load-bearing for kybernet sd_notify dgram + argonaut
+# supervisor IPC.
+fn sys_socket(domain, type, protocol): i64 {
+    return syscall(SYS_SOCKET, domain, type, protocol);
+}
+
+# Connect a socket to a remote address. `sockaddr` is a pointer
+# to AF_*-shaped sockaddr struct; `addrlen` is its size in bytes.
+# Returns 0 or -errno.
+fn sys_connect(fd, sockaddr, addrlen): i64 {
+    return syscall(SYS_CONNECT, fd, sockaddr, addrlen);
+}
+
+# Receive on a socket, capturing the source address (essential
+# for dgram sockets where each recv may come from a different
+# peer). `srcaddrlen` is in/out — caller sets to buffer size,
+# kernel writes actual address length. Returns bytes received,
+# 0 on orderly shutdown, or -errno.
+fn sys_recvfrom(fd, buf, len, flags, srcaddr, srcaddrlen): i64 {
+    return syscall(SYS_RECVFROM, fd, buf, len, flags, srcaddr, srcaddrlen);
+}
+
+# Receive with ancillary data (SCM_CREDENTIALS for peer-cred
+# capture, SCM_RIGHTS for fd-passing). `msghdr` is a struct
+# msghdr* per recvmsg(2). argonaut 1.6.2 already uses this for
+# peer-cred capture. Returns bytes received, 0 on shutdown, or
+# -errno.
+fn sys_recvmsg(fd, msghdr, flags): i64 {
+    return syscall(SYS_RECVMSG, fd, msghdr, flags);
+}
+
+# Bind a socket to a local address. `sockaddr` + `addrlen` per
+# sys_connect. Returns 0 or -errno.
+fn sys_bind(fd, sockaddr, addrlen): i64 {
+    return syscall(SYS_BIND, fd, sockaddr, addrlen);
+}
+
+# Mark a socket as accepting connections; `backlog` is the
+# pending-connection queue depth. Required after bind() before
+# accept4() for SOCK_STREAM. Returns 0 or -errno.
+fn sys_listen(fd, backlog): i64 {
+    return syscall(SYS_LISTEN, fd, backlog);
+}
+
+# Accept a connection on a listening socket. `srcaddr` /
+# `srcaddrlen` per recvfrom (NULL/NULL is valid to discard).
+# `flags` accepts SOCK_CLOEXEC | SOCK_NONBLOCK to set them
+# atomically on the new fd. Returns new fd or -errno.
+fn sys_accept4(fd, srcaddr, srcaddrlen, flags): i64 {
+    return syscall(SYS_ACCEPT4, fd, srcaddr, srcaddrlen, flags);
 }

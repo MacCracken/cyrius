@@ -5,6 +5,26 @@
 
 ## Version
 
+**5.11.18** (shipped 2026-05-11 — **kybernet Part A.i + Part B:
+identifier buffer 2× + socket-syscall wrappers**). Identifier
+buffer 131072 → **262144 bytes** (grows 0x60000-0xA0000 into
+existing gap; lex.cyr NPOS_GUARD/LEXID threshold + main*.cyr
+warnings + util.cyr parse-failure dump). Part B: 7 socket-family
+wrappers added to `lib/syscalls_x86_64_linux.cyr` + `lib/
+syscalls_aarch64_linux.cyr` (sys_socket/bind/connect/listen/
+recvfrom/recvmsg/accept4 — 14 fns total). Closes silent aarch64
+misroute footgun (x86 41→pipe2 etc.). New test
+`tests/tcyr/socket_syscalls.tcyr` runtime-exercises sys_socket
+AF_UNIX/SOCK_DGRAM. **Audit-driven scope shrink**: reporter's
+"single source-line edit" framing for fn_table 4096→8192 was
+wrong — 15+ fn_* tables across scattered locations need
+relocate-and-shift; split off to v5.11.19 as standalone heavy
+slot. All subsequent pinned slots shifted forward by 1.
+api-surface 3036 → **3050** (+14). cc5 byte-identical at
+804,464 B; check.sh 66/66; cyrius test 147/147 (+1).
+kybernet-socket-syscall-wrappers issue archived; fn_table
+caps issue remains active until v5.11.19.
+
 **5.11.17** (shipped 2026-05-11 — **per-repo isolation Part 1: deps
 stdlib_dir fix**). `cbt/deps.cyr::_dep_find_stdlib_dir()` rewritten:
 new priority is `./lib` if in cyrius source repo (signaled by

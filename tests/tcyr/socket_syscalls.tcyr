@@ -1,0 +1,62 @@
+# Test: kybernet 1.1.5 socket-syscall wrappers (v5.11.18 Part B)
+# Closes `docs/development/issues/2026-05-11-kybernet-socket-syscall-wrappers.md`.
+#
+# Seven wrappers (x86_64 + aarch64 mirrored):
+#   sys_socket, sys_bind, sys_listen, sys_connect,
+#   sys_recvfrom, sys_recvmsg, sys_accept4
+#
+# Strategy:
+#   - Runtime exercise sys_socket on AF_UNIX/SOCK_DGRAM + immediate close.
+#     This is the load-bearing aarch64 verify: kybernet 1.1.5's filing
+#     was about silent misroute (x86 41 → aarch64 pipe2). If the
+#     wrapper dispatches the wrong number on aarch64, sys_socket
+#     would return -1 (or a pipe2 fd!).
+#   - Compile-time verify the other 6 wrappers are callable via &fn —
+#     bind/listen/connect/recvfrom/recvmsg/accept4 each have
+#     side-effects (bind reserves a path, listen modifies fd state,
+#     etc.) that complicate a hermetic test runner.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+# AF_UNIX = 1, SOCK_DGRAM = 2, SOCK_CLOEXEC = 0o2000000 = 524288
+var AF_UNIX = 1;
+var SOCK_DGRAM = 2;
+var SOCK_CLOEXEC = 524288;
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("sys_socket — AF_UNIX/SOCK_DGRAM round-trip");
+    # AF_UNIX + SOCK_DGRAM + SOCK_CLOEXEC, protocol 0 (default).
+    # Returns a valid fd >= 0, or -errno. On aarch64 with a
+    # misrouted dispatch, this would silently return a pipe2 fd
+    # (or fail if pipe2 doesn't accept the same arg shape).
+    var fd = sys_socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    assert(fd >= 0, "sys_socket(AF_UNIX, SOCK_DGRAM|SOCK_CLOEXEC, 0) returns fd >= 0");
+    sys_close(fd);
+
+    test_group("compile-time callability of remaining wrappers");
+    # &fn reference — linker / fixup catches missing fns. Not
+    # invoked because each has socket-state side effects that
+    # complicate a hermetic test.
+    var fp_bind = &sys_bind;
+    var fp_listen = &sys_listen;
+    var fp_connect = &sys_connect;
+    var fp_recvfrom = &sys_recvfrom;
+    var fp_recvmsg = &sys_recvmsg;
+    var fp_accept4 = &sys_accept4;
+    assert(fp_bind != 0, "sys_bind defined");
+    assert(fp_listen != 0, "sys_listen defined");
+    assert(fp_connect != 0, "sys_connect defined");
+    assert(fp_recvfrom != 0, "sys_recvfrom defined");
+    assert(fp_recvmsg != 0, "sys_recvmsg defined");
+    assert(fp_accept4 != 0, "sys_accept4 defined");
+
+    var r = assert_summary();
+    return r;
+}
+
+var rc = main();
+syscall(60, rc);
