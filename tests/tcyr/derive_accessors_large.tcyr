@@ -11,6 +11,11 @@
 #
 # Closes docs/development/issues/2026-05-11-derive-accessors-16-field-cap.md.
 
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
 #derive(accessors)
 struct S {
     f0; f1; f2; f3;
@@ -23,26 +28,23 @@ struct S {
 var slot[200];
 
 fn main(): i64 {
+    alloc_init();
+
+    test_group("derive(accessors) >16-field — v5.11.24 cap raise");
+
     var p = &slot;
+
     # Field 17 (0-indexed: f16). With cap=32 + correct table sizing,
     # the generated `S_set_f16(p, 0xCAFE)` writes to byte offset
     # 16 * 8 = 128 (16 prior fields each 8 bytes).
     S_set_f16(p, 0xCAFE);
+    assert_eq(load64(p + 128), 0xCAFE, "S_set_f16 writes at offset 128 (16th field × 8 bytes)");
 
-    if (load64(p + 128) != 0xCAFE) {
-        # Pre-fix this returned a garbage offset, so f16 wrote to
-        # some other field's slot. Exit-code !=0 surfaces it.
-        return 1;
-    }
+    # Field 0 sentinel — should be untouched by the write at offset 128.
+    assert_eq(load64(p), 0, "field 0 untouched by f16 write");
 
-    # Also verify field 0 (start-of-struct sentinel — should be
-    # untouched by the write at offset 128).
-    if (load64(p) != 0) {
-        return 2;
-    }
-
-    return 0;
+    return assert_summary();
 }
 
-var rc = main();
-syscall(60, rc);
+var exit_code = main();
+syscall(60, exit_code);
