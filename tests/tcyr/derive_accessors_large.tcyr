@@ -1,0 +1,48 @@
+# v5.11.24: `#derive(accessors)` 17-field struct regression.
+# Pre-fix, the 17th field's name silently clobbered field_types[0]
+# at S+0x197260 (per-struct tables hard-sized at 16 entries with
+# no bounds check). agnos 1.28.3's `struct Process` (22 fields)
+# hit this and produced wrong byte offsets — CR3=0x2 page-fault
+# on first kernel context switch.
+#
+# This test exercises field 17 (one past the old cap) and
+# verifies the generated accessor produces the documented byte
+# offset 16 * 8 = 128.
+#
+# Closes docs/development/issues/2026-05-11-derive-accessors-16-field-cap.md.
+
+#derive(accessors)
+struct S {
+    f0; f1; f2; f3;
+    f4; f5; f6; f7;
+    f8; f9; f10; f11;
+    f12; f13; f14; f15;
+    f16;
+}
+
+var slot[200];
+
+fn main(): i64 {
+    var p = &slot;
+    # Field 17 (0-indexed: f16). With cap=32 + correct table sizing,
+    # the generated `S_set_f16(p, 0xCAFE)` writes to byte offset
+    # 16 * 8 = 128 (16 prior fields each 8 bytes).
+    S_set_f16(p, 0xCAFE);
+
+    if (load64(p + 128) != 0xCAFE) {
+        # Pre-fix this returned a garbage offset, so f16 wrote to
+        # some other field's slot. Exit-code !=0 surfaces it.
+        return 1;
+    }
+
+    # Also verify field 0 (start-of-struct sentinel — should be
+    # untouched by the write at offset 128).
+    if (load64(p) != 0) {
+        return 2;
+    }
+
+    return 0;
+}
+
+var rc = main();
+syscall(60, rc);

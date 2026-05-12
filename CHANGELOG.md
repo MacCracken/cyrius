@@ -6,6 +6,115 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.24] — 2026-05-11
+
+**`#derive(accessors)` >16-field silent miscompile fix** —
+closes [archived issue](issues/archived/2026-05-11-derive-accessors-16-field-cap.md).
+agnos 1.28.3 surfaced this during kernel `struct Process`
+refactor (22 fields). Pre-fix the per-struct field tables in
+`src/frontend/lex_pp.cyr` had **no bounds check**; 17th field's
+name silently clobbered `field_types[0]`. Manifested in agnos as
+`proc_get_cr3()` returning 2 instead of `0x1000` → CR3=0x2
+page-fault on first kernel context switch (`#PF (CR2=<RIP>,
+CR3=0x2)`).
+
+### Root cause
+
+`PP_PARSE_STRUCT_DEF` writes per-struct field metadata into
+three hard-sized-at-16 tables:
+
+```
+S+0x197060: field_names[16][32]   (512 B; one 32-char name slot per field)
+S+0x197260: field_types[16][32]   (512 B; type-annotation slot)
+S+0x197460: field_offsets[16][8]  (128 B)
+```
+
+`while (fp < bl) { ...; store8(S + 0x197060 + fc * 32 + fni, xc); ... }`
+with no `fc >= CAP` guard. 17th field (`fc = 16`) writes to
+`S + 0x197060 + 16*32` = `S + 0x197260` — overflowing into
+field_types[0]. 18th overflows into field_types[1]. Cascade
+continues into field_offsets at fc=32+ and beyond.
+
+`PP_DERIVE_ACCESSORS_BODY` then reads the corrupted bytes
+when emitting accessor offsets — net effect: accessor fns
+compile cleanly but write/read at wrong byte positions in
+the struct.
+
+### Fix
+
+1. **Relocate per-struct tables** from 0x197060 (1152 B
+   capacity, 16 fields) to 0x194600 (within the 10.5 KB free
+   band at 0x194600-0x197000 — verified empty between
+   `local_slice_widths` end at 0x194600 and `derive struct
+   count` start at 0x197000).
+
+2. **Raise cap** 16 → 32. New layout:
+   - `S+0x194600`: field_names[**32**][32]  (1024 B)
+   - `S+0x194A00`: field_types[**32**][32]  (1024 B)
+   - `S+0x194E00`: field_offsets[**32**][8] (256 B; ends 0x194F00)
+
+   Total: 2304 B. Fits in the 10752 B gap with 8448 B headroom.
+
+3. **Hard-cap diagnostic** in `PP_PARSE_STRUCT_DEF`:
+   ```
+   if (fc >= 32) {
+       syscall(SYS_WRITE, 2,
+           "error: #derive struct field cap exceeded "
+           "(max 32 — raise in lex_pp.cyr / S+0x194600 region)\n", 91);
+       syscall(SYS_EXIT, 1);
+   }
+   ```
+   Past cap, fail loud. No more silent miscompile.
+
+### Why 32 (not 64)
+
+agnos's worst-case struct in the wild was 22 fields (`Process`).
+32 covers it with 45% headroom for v1.28.x growth. 64 would
+cost 4608 B (still fits the 10752 B free band), but YAGNI
+until a consumer files a >32-field need. v6.0.0 closeout's
+dead-code sweep is the natural revisit window.
+
+### No `0x197060` references remain in src/
+
+80 references in `src/frontend/lex_pp.cyr` (all originating
+from this file — the offsets are file-local; no cross-file
+callers). sed-translated cleanly.
+
+### Verification
+
+- cc5 self-host byte-identical at **809,200 B** (+168 from
+  the hard-cap check + larger comment block; tables aren't
+  in cc5's struct path so the bigger field-table arena
+  doesn't bloat cc5 itself).
+- `cyrius check` 67/67 green.
+- `cyrius test` **148/148** green (+1 from new
+  `tests/tcyr/derive_accessors_large.tcyr` — exercises the
+  17-field case directly: `S_set_f16(p, 0xCAFE)` then
+  `load64(p + 128) == 0xCAFE` ✓).
+- **Hard-cap diagnostic** verified — `struct B { f0..f32; }`
+  (33 fields) compiles to `exit=1` with clear error message,
+  not silent miscompile.
+
+### Files
+
+- `src/frontend/lex_pp.cyr` — 80 hex-literal updates
+  (0x197060/0x197260/0x197460 → 0x194600/0x194A00/0x194E00),
+  +9-line hard-cap check in `PP_PARSE_STRUCT_DEF`, heap-map
+  comment refreshed with v5.11.24 rationale.
+- **NEW** `tests/tcyr/derive_accessors_large.tcyr` —
+  regression test exercising the 17-field case.
+- `docs/development/issues/2026-05-11-derive-accessors-16-field-cap.md`
+  → archived.
+
+### Agnos-side follow-up
+
+agnos's `kernel/core/proc.cyr` carries a cross-reference to this
+issue + a workaround (reverted `#derive(accessors)` on
+`Process`; using hand-rolled byte-offset code). Per the
+issue file: "When this cap is raised in cyrius, the accessor
+port can land in an agnos-side follow-up patch." That patch
+is now unblocked.
+
 ## [5.11.23] — 2026-05-11
 
 **PE32+ kernel32 path-API alignment fix** — closes the

@@ -5,6 +5,24 @@
 
 ## Version
 
+**5.11.24** (shipped 2026-05-11 — **`#derive(accessors)` >16-field
+silent miscompile fix**). agnos 1.28.3 `struct Process` (22
+fields) hit a no-bounds-check overflow in `src/frontend/lex_pp.cyr`
+per-struct field tables — silently clobbered field_types,
+produced wrong accessor offsets, manifested as `CR3=0x2`
+page-fault on first kernel context switch. **Fix**: relocate
+per-struct field tables from 0x197060 (1152 B / 16-field cap)
+to 0x194600 (within the 10.5 KB free band at 0x194600-0x197000),
+raise cap **16 → 32**, add hard-cap diagnostic past 32. New
+`tests/tcyr/derive_accessors_large.tcyr` exercises the 17-field
+case directly. 80 hex-literal updates + 9 LOC for the
+diagnostic (all in lex_pp.cyr; no cross-file callers). cc5
+byte-identical at 809,200 B; check.sh 67/67; cyrius test
+**148/148** (+1 new tcyr). 33-field test verified the
+diagnostic fires loud (exit=1 with clear error) — no more
+silent miscompile. agnos's `Process` `#derive(accessors)` port
+now unblocked.
+
 **5.11.23** (shipped 2026-05-11 — **PE32+ kernel32 path-API
 alignment fix**). Closes the pre-existing bug v5.11.22 surfaced:
 EOPEN_PE / ECREATEDIR_PE / EDELETEF_PE used frame size 0x250
