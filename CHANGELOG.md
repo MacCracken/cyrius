@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.32] — 2026-05-12
+
+**x86_64 user-binary ELF emitter: same section-header fix as
+5.11.29 (x86 kernel) / 5.11.30 (aarch64 kernel) / 5.11.31 (cyrld),
+now for `EMITELF_USER` in `src/backend/x86/fixup.cyr`.** Closes
+the first of two in-compiler user-binary emitter gaps flagged at
+5.11.30 ship. Every Cyrius x86_64 ET_EXEC produced by `cc5` now
+carries a proper 5-entry section header table — `objdump -d`,
+`gdb`, `ltrace`, `readelf -S` and IDE symbol indexers all see
+real section info on user binaries (not just kernel + linker
+output). Not MVP-blocking on Linux (`execve` ignores section
+headers, so before this patch user binaries ran fine but
+introspected as opaque blobs).
+
+### Fix
+
+`EMITELF_USER` now appends a 5-entry section header table and a
+30-byte `.shstrtab` past the loaded segment, matching the .30
+aarch64-kernel pattern (ELF64, 64-byte `Elf64_Shdr`, 8-byte
+aligned shdr table):
+
+| # | Section     | Type     | Flags        | Notes                  |
+|---|-------------|----------|--------------|------------------------|
+| 0 | (SHT_NULL)  | SHT_NULL | —            | mandatory first entry  |
+| 1 | `.text`     | PROGBITS | ALLOC, EXEC  | code at `0x400078`     |
+| 2 | `.rodata`   | PROGBITS | ALLOC        | string-table region    |
+| 3 | `.bss`      | NOBITS   | ALLOC, WRITE | zero-init var region   |
+| 4 | `.shstrtab` | STRTAB   | —            | section name strings   |
+
+`.shstrtab` content: `\0.text\0.rodata\0.bss\0.shstrtab\0`
+(30 bytes; name offsets 1 / 7 / 15 / 20). PT_LOAD `p_filesz` /
+`p_memsz` are unchanged — section headers and shstrtab live in
+`[filesz, filesz + 352)` as non-allocated metadata past the
+loaded image. Overhead per emitted user binary: ~352 bytes
+(30-byte shstrtab + ≤2-byte pad + 5×64-byte shdrs).
+
+Three ELF64 header fields previously written as zero now carry
+real values: `e_shoff = shdr_off`, `e_shnum = 5`,
+`e_shstrndx = 4`. `e_shentsize = 64` was already correct.
+
+### Verification
+
+- `readelf -h /tmp/sectest` reports
+  `Start of section headers: <nonzero>` / `Number of section headers: 5` / `Section header string table index: 4`
+- `readelf -S /tmp/sectest` lists all 5 sections cleanly
+- `objdump -d /tmp/sectest` now shows
+  `Disassembly of section .text:` with the assembly (was: opaque)
+- Self-host two-step bootstrap: `cc5 → cc5_b → cc5_c`,
+  `cmp cc5_b cc5_c` byte-identical
+- Small user binary `var x: i64 = 42; return x;` compiled +
+  executed under the new emitter: `exit=42`
+- `check.sh` 67/67; `cyrius test` 149/149
+
+### Series complete (compiler in-tree user emitters)
+
+With 5.11.32 (`EMITELF_USER` x86) and 5.11.33 (`EMITELF`
+aarch64, queued next), both in-compiler user-binary emit paths
+will carry section header tables. Combined with 5.11.29
+(x86 kernel) + 5.11.30 (aarch64 kernel) + 5.11.31 (cyrld),
+every ELF emit path in the toolchain emits proper section
+metadata.
+
+### Companion
+
+- **5.11.33** (next): `EMITELF` in `src/backend/aarch64/fixup.cyr:323`
+  — same fix for the aarch64 user-binary emit path
+
 ## [5.11.31] — 2026-05-12
 
 **`cyrld` ELF64 user-binary linker: same section-header fix as

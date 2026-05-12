@@ -897,6 +897,25 @@ fn EMITELF_USER(S, etype): i64 {
         syscall(SYS_WRITE, 2, " bytes) — consider alloc() for buffers >4KB\n", 44);
     }
     var memsz = filesz + 4096;
+
+    # Section header table — non-loaded metadata past PT_LOAD. Same
+    # 5-section pattern as 5.11.29 (x86 kernel) / 5.11.30 (aarch64 kernel)
+    # / 5.11.31 (cyrld). PT_LOAD's p_filesz/p_memsz are unchanged.
+    var text_foff = 120;
+    var text_addr = 0x400000 + 120;
+    var text_size = cp;
+    var bss_foff = 120 + cp;
+    var bss_addr = 0x400000 + bss_foff;
+    var bss_size = totvar;
+    var rod_foff = bss_foff + totvar;
+    var rod_addr = 0x400000 + rod_foff;
+    var rod_size = spos;
+    # .shstrtab: "\0.text\0.rodata\0.bss\0.shstrtab\0" = 30 bytes
+    var shstrtab_size = 30;
+    var shstrtab_foff = filesz;
+    # ELF64 shdrs are 64 bytes each; align table to 8 bytes
+    var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
+
     var O = S + 0x94A000;
     var op = 0;
     # ELF header (64 bytes) — e_type from parameter
@@ -906,9 +925,11 @@ fn EMITELF_USER(S, etype): i64 {
     S64(O + op, 0x00000001003E0000 | etype); op = op + 8;
     S64(O + op, 0x0000000000400078); op = op + 8;
     S64(O + op, 0x0000000000000040); op = op + 8;
-    S64(O + op, 0x0000000000000000); op = op + 8;
+    S64(O + op, shdr_off); op = op + 8;
     S64(O + op, 0x0038004000000000); op = op + 8;
-    S64(O + op, 0x0000000000400001); op = op + 8;
+    # e_phnum=1, e_shentsize=64, e_shnum=5, e_shstrndx=4
+    # LE byte layout 56..63: 01 00 40 00 05 00 04 00
+    S64(O + op, 0x0004000500400001); op = op + 8;
     # Program header (56 bytes): p_type=1, p_flags=7 (RWX)
     S64(O + op, 0x0000000700000001); op = op + 8;
     S64(O + op, 0x0000000000000000); op = op + 8;
@@ -926,6 +947,78 @@ fn EMITELF_USER(S, etype): i64 {
     # String data
     i = 0;
     while (i < spos) { store8(O + op, load8(S + 0x21A000 + i)); op = op + 1; i = i + 1; }
+    while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- .shstrtab (30 bytes) — "\0.text\0.rodata\0.bss\0.shstrtab\0" ----
+    store8(O + op, 0); op = op + 1;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x74); store8(O + op + 2, 0x65);
+    store8(O + op + 3, 0x78); store8(O + op + 4, 0x74); store8(O + op + 5, 0);
+    op = op + 6;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x72); store8(O + op + 2, 0x6F);
+    store8(O + op + 3, 0x64); store8(O + op + 4, 0x61); store8(O + op + 5, 0x74);
+    store8(O + op + 6, 0x61); store8(O + op + 7, 0);
+    op = op + 8;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x62); store8(O + op + 2, 0x73);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0);
+    op = op + 5;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x73); store8(O + op + 2, 0x68);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0x74); store8(O + op + 5, 0x72);
+    store8(O + op + 6, 0x74); store8(O + op + 7, 0x61); store8(O + op + 8, 0x62);
+    store8(O + op + 9, 0);
+    op = op + 10;
+    while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- Section headers (5 × 64 bytes) ----
+    # ELF64 Shdr layout (each 64 bytes):
+    #   u32 sh_name; u32 sh_type; u64 sh_flags; u64 sh_addr;
+    #   u64 sh_offset; u64 sh_size; u32 sh_link; u32 sh_info;
+    #   u64 sh_addralign; u64 sh_entsize;
+    # We pack (name|type) into a single 8-byte store.
+
+    # [0] SHT_NULL — 64 zero bytes
+    i = 0;
+    while (i < 64) { store8(O + op, 0); op = op + 1; i = i + 1; }
+
+    # [1] .text — SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR
+    S64(O + op, (1 << 32) | 1);   op = op + 8;
+    S64(O + op, 6);               op = op + 8;
+    S64(O + op, text_addr);       op = op + 8;
+    S64(O + op, text_foff);       op = op + 8;
+    S64(O + op, text_size);       op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 4);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
+    # [2] .rodata — SHT_PROGBITS, SHF_ALLOC
+    S64(O + op, (1 << 32) | 7);   op = op + 8;
+    S64(O + op, 2);               op = op + 8;
+    S64(O + op, rod_addr);        op = op + 8;
+    S64(O + op, rod_foff);        op = op + 8;
+    S64(O + op, rod_size);        op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
+    # [3] .bss — SHT_NOBITS, SHF_WRITE|SHF_ALLOC
+    S64(O + op, (8 << 32) | 15);  op = op + 8;
+    S64(O + op, 3);               op = op + 8;
+    S64(O + op, bss_addr);        op = op + 8;
+    S64(O + op, bss_foff);        op = op + 8;
+    S64(O + op, bss_size);        op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
+    # [4] .shstrtab — SHT_STRTAB
+    S64(O + op, (3 << 32) | 20);  op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, shstrtab_foff);   op = op + 8;
+    S64(O + op, shstrtab_size);   op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
     while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
     S64(S + 0x1903F8, op);
     return 0;

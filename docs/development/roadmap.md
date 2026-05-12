@@ -39,23 +39,32 @@ count 76 → 79 (+`audit_walk`, `niyama`, `regression`).
 
 ---
 
-## Long-term considerations (no version pin yet)
+## Long-term considerations (slot pins resolved 2026-05-12)
 
 Items still without a slot pin after the v5.8.65 audit. Items
 that earned a v5.9.x / v5.10.x / v5.11.x pin during the audit
-have moved to those sections (the bare-metal + RISC-V cycle
-re-pinned v5.10.x → v5.11.x at v5.9.7 ship per
-"cleanup-before-platform-add" reframe); what remains here is
-genuinely waiting on a trigger condition.
+have moved to those sections. The **2026-05-12 tight-close
+decision** resolved several additional pins; the entries below
+are kept for their detailed scope + recon data, with new
+"**Pinned**" markers at the head of each entry pointing to the
+slot where the work now lives. Sections without a pin marker
+are genuinely waiting on a trigger condition.
 
 ### `.gnu.hash` for shared-object emission
 
-**Status**: deferred 2026-04-24 at v5.6.38 (during the slot's
-verify-premise check). `.so` emission works correctly today
-with the SysV `.hash` table (nbucket=1; chain walk does pure
-strcmp per glibc `dl-lookup.c`). `.gnu.hash` is an optimization
-that uses a Bloom filter pre-check to skip strcmp on misses;
-modern linkers prefer it.
+**Pinned v6.1.x** (2026-05-12 tight-close) — lands paired with
+PIE codegen in v6.1.x. PIE binaries that go through
+`dlopen`/symbol resolution will see the measurable difference
+from the Bloom filter pre-check, satisfying the original
+"any cyrius consumer pins on `.so` output and reports a
+measurable lookup-time cost" trigger condition.
+
+**Status (original deferral)**: deferred 2026-04-24 at v5.6.38
+(during the slot's verify-premise check). `.so` emission works
+correctly today with the SysV `.hash` table (nbucket=1; chain
+walk does pure strcmp per glibc `dl-lookup.c`). `.gnu.hash` is
+an optimization that uses a Bloom filter pre-check to skip
+strcmp on misses; modern linkers prefer it.
 
 **Why deferred**: cyrius has zero current `.so` consumers
 (sigil / mabda / yukti / kybernet all ship as static libraries
@@ -78,7 +87,13 @@ single-precedent definition for the format).
 
 ### Copy propagation
 
-**Status**: deferred 2026-04-23 after v5.6.18 + v5.6.19 recons.
+**Pinned v6.4.x** (2026-05-12 tight-close) — lands paired with
+cross-BB regalloc in v6.4.x. The "after regalloc lands" trigger
+condition is met by v6.4.x's regalloc work; copy-prop earns
+its slot alongside.
+
+**Status (original deferral)**: deferred 2026-04-23 after
+v5.6.18 + v5.6.19 recons.
 
 **Why deferred**: cyrius's stack-machine IR has no abundant virtual
 registers to fold copies through. Every binary op shuttles values
@@ -102,20 +117,27 @@ chains can span BBs and the cascade math changes — copy-prop
 might earn its keep alongside register-renaming opportunities
 the regalloc surfaces.
 
-### Parser-to-emit named-op refactor (path A) — pinned to v5.11.x
+### Parser-to-emit named-op refactor (path A) — pinned v5.11.x close
 
 **Pinned 2026-05-05 at v5.8.65 close; re-pinned v5.10.x →
-v5.11.x at v5.9.7 ship** (the bare-metal/RISC-V cycle moved to
-v5.11.x). RISC-V landing as the 4th backend in v5.11.x triggers
-the path-A precondition #1 (`_TARGET_CX == 0 &&
-_TARGET_RISCV == 0` chains become unwieldy). Full scope and
-per-backend impact lives in the
-[v5.11.x section](#v511x--bare-metal-arc-agnos-kernel--risc-v-rv64).
-Reference: [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
+v5.11.x at v5.9.7 ship; re-pinned v5.11.x → v5.12.x at v5.10.20
+P(-1) sweep; re-pinned v5.12.x → v5.11.x close at 2026-05-12
+tight-close** — the original "RISC-V 4th-backend forces it"
+trigger is gone (RISC-V moved to v6.x), but the refactor still
+earns its slot in v5.11.x close for compiler hygiene. ~10
+abstract ops × 3 backends (x86 / aarch64 / cx) = ~30 fn
+definitions + parse_*.cyr rewrites. cx benefits immediately;
+v6.x's RISC-V backend lands on the named-op interface from day
+one. Reference: [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
 
 ### Extended dead-store elimination (cross-BB)
 
-**Status**: deferred 2026-04-23 after v5.6.19 recon.
+**Pinned v6.4.x** (2026-05-12 tight-close) — lands paired with
+cross-BB regalloc in v6.4.x. Same trigger as copy-prop above;
+both gate on the liveness-out data regalloc builds.
+
+**Status (original deferral)**: deferred 2026-04-23 after
+v5.6.19 recon.
 
 **Why deferred**: v5.6.18 ships the per-BB "STORE_LOCAL(x), [no
 read], STORE_LOCAL(x)" pattern (15 kills). The natural extension
@@ -152,7 +174,11 @@ plan already exists (`ir_copyprop_recon` and `ir_extdse_recon`
 prototypes lived in `src/common/ir.cyr` during v5.6.19 evaluation,
 and the data structures + gate criteria are documented above).
 
-### Stdlib data-domain distlib carve-out — re-pinned to v5.10.x late or v5.11.x
+### Stdlib data-domain distlib carve-out — pinned v5.11.x close
+
+**Re-pinned v5.10.x-late/v5.11.x → v5.11.x close** at 2026-05-12
+tight-close. Lands as a mid-v5.11.x slot per the [Remaining slots toward close](#remaining-slots-toward-close-v51132--v51169)
+plan. Original scope text below preserved for reference.
 
 **Originally pinned 2026-05-05 at v5.8.65 close** for v5.9.x.
 **Re-pinned at v5.9.43 close**: never landed in v5.9.x because
@@ -165,7 +191,16 @@ primitives-only stdlib that doesn't drag the data offshoots into
 kernel objects. Earns slot whenever scheduling lines up — late
 v5.10.x bug arc OR v5.11.x kernel-prep.
 
-### Heap-map full reorganization (pre-v6.0 hardening pin)
+### Heap-map full reorganization — pinned v5.11.68 (true closeout slot)
+
+**Re-pinned to v5.11.68** at 2026-05-12 tight-close as the
+true closeout slot of v5.11.x. The patch number is **.68 (not
+.69)** because v5.11.69 is reserved as the fold-applied tag for
+any dep foldins that earn their slot during the window (mabda
+3.0 GA conditional). If no fold lands, .68 is the final v5.x
+patch and .69 stays unused; if a fold lands, .69 = .68 +
+fold-applied. Original "last-minor-before-v6.0 effort" semantic
+preserved. Scope text below preserved for reference.
 
 **Status**: pinned 2026-05-05 at v5.8.61 ship as a
 **last-minor-before-v6.0** effort. v5.8.61 took the minimum-
@@ -377,31 +412,78 @@ at **parse time** and falsely reports `exit=0`. Use either:
 
 Memory pin: `feedback_windows_errorlevel_test_wrapper`.
 
-## v5.11.x — Cleanup minor + bare-metal arc planning (planning detail moved to v5.12.x)
+### Cycle-close shape (durable pattern across recent minors)
 
-**Heading updated 2026-05-12** to reflect the v5.10.20 P(-1) sweep
-repurposing. This section's body originally documented the
-bare-metal + RISC-V arc when it was pinned to v5.11.x; that
-content is still load-bearing planning material but the arc
-itself moved to **v5.12.x** (see the [v5.12.x section
-below](#v512x--bare-metal-formalization--risc-v-rv64-arc) for
-the current pin + acceptance criteria). v5.11.x became a
-cleanup minor (stdlib annotation arc + consumer-issue
-closeout) — see the `### v5.11.x — Cleanup minor` subsection
-immediately following this header.
+Every recent minor cycle has closed in the same three-step
+shape, with the **last patch reserved for dep updates**:
 
-**Historical pin path**: pushed from v5.10.x at v5.9.7 ship
-per user direction ("kernel work is a parallel task and not
-hard baked... more the RISCV work has slipped but its fine as
-another platform is just another item to keep up to date").
-Then repurposed at v5.10.20 P(-1) sweep — bare-metal + RISC-V
-moved out to v5.12.x, leaving v5.11.x as a cleanup minor.
+1. **End cycle** — the substantive engineering work lands at
+   `vN.M.K`. This is the "Big Heavy One Thing" closeout slot
+   per the [Slot acceptance principle](#slot-acceptance-principle-revised-at-v5100).
+2. **Update deps** — fold any deps that GA'd during the cycle
+   window via the v5.7.0 sandhi pattern (vendor source
+   byte-identical into `lib/<name>.cyr`, drop the `[deps.*]`
+   entry, regen).
+3. **Last release with updated deps** at `vN.M.K+1` — the
+   "fold-applied tag." If no deps fold during the window,
+   `vN.M.K` is the final patch and `vN.M.K+1` stays unused.
+   Engineering work does NOT land in the fold-applied tag —
+   that's exclusively for the sandhi vendor + drop ceremony.
 
-Two arch-port-style efforts grouped into one minor since both
-land at the "no libc, direct hardware / different ABI" layer.
-The planning detail below remains valid for v5.12.x execution;
-no copy was made — this section is the reference doc for the
-v5.12.x scope.
+Then the new minor opens at `vN.(M+1).0`.
+
+**Examples in recent history**: the v5.8.x close at v5.8.65
+absorbed the six-distlib sandhi foldin (sakshi 2.2.3 / patra
+1.9.3 / sigil 3.1.0 / vani 0.9.2 / yukti 2.2.2 / sankoch 2.2.4).
+v5.9.x close at v5.9.43 absorbed niyama 1.0.1. v5.10.x close at
+v5.10.50 absorbed the wrap-up + .49 PE debunk. v5.11.x is
+following the same shape: heap-map full reorg at v5.11.68
+(engineering), conditional mabda 3.0 fold at v5.11.69 (or .69
+stays unused).
+
+**Exceptions are explicit, not accidental**. The v5.11.1–.7
+stdlib annotation arc landed at the **start** of v5.11.x, not
+the end — that was a user-directed priority flip (annotation
+arc first, everything else after), called out in the v5.11.x
+intro at slot entry. Future deviations from the close-shape
+should be similarly explicit at cycle entry rather than
+discovered mid-cycle.
+
+Memory pin: [[feedback-cycle-close-shape]].
+
+## v5.11.x — **Final 5.x minor** (close-out arc)
+
+**Heading updated 2026-05-12** (tight-close decision). v5.11.x
+is now the last minor of the v5.x line. All work that closes
+the v5.x arc — user-binary ELF cleanup, stdlib data-domain
+carve-out, parser-to-emit named-op refactor, sovereignty/polish
+remainders, and the pre-v6.0 heap-map full reorganization —
+lands here, sealing the cycle at the **v5.11.68 / v5.11.69 close
+pair** — heap-map full reorganization at .68 (the true
+closeout engineering work), with .69 reserved for any dep
+foldins that earn their slot during the window (mabda 3.0 GA
+conditional; if no fold lands, .68 is the final v5.x patch).
+
+Anything that would expand the language's *capabilities* (new
+platforms, new language features, new linker modes) moves to
+v6.x. The v5.x → v6.x boundary is now: **v5.x = "what the
+language IS"; v6.x = "new platforms + advanced features the
+language gains."** See the [v6.x section](#v6x--platform-expansion--advanced-features)
+for what was formerly v5.12.x scope (bare-metal formalization +
+RISC-V rv64) plus the broader 6.x capability expansion.
+
+**Historical pin path** (preserved for reference): the v5.11.x
+slot has hosted three distinct cycle themes as priorities
+shifted. (1) Originally pinned as **bare-metal + RISC-V arc**
+at v5.9.7 ship; (2) repurposed at v5.10.20 P(-1) sweep into
+a **cleanup minor** (stdlib annotation arc + consumer-issue
+closeout) when bare-metal/RISC-V moved to v5.12.x; (3) now
+the **final 5.x minor** at the 2026-05-12 tight-close
+decision, with v5.12.x retired and its scope absorbed into
+v6.x. The detailed slot-by-slot record for shipped slots
+.0 → .31 follows below; remaining slots .32 → .69 are spelled
+out in the [Remaining slots toward close](#remaining-slots-toward-close-v51132--v51169)
+subsection further down this section.
 
 ### v5.11.x — Cleanup minor (TS test harness + held-forward absorber)
 
@@ -1549,20 +1631,224 @@ ship the full filed surface, not the easy half.
 - **`float.cyr:41` peephole pattern** (audit §4). Perf opt;
   preflight with bench delta before pinning.
 
-**Cycle close pinned at v5.11.40** (user direction 2026-05-11) —
-the .19-.38 band is an explicit 20-slot buffer for bugs, items,
-and small optimizations that surface mid-cycle. **The cap is
-tight on purpose.** v5.12.0 bare-metal/RISC-V has slipped five
-minors already (v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 →
-v5.12.0); keeping v5.11.x close pinned at .40 prevents another
-punt. If the buffer fills mid-cycle, surface that pressure to
-the project leader rather than silently expanding — the user
-will explicitly open slots if it's worth doing, but the
-default is to ride the cap and protect v5.12.0's kickoff.
-Slot ordering inside the buffer band is decided per slot by
-the project leader as items surface.
+**Cycle close re-pinned at v5.11.68 / v5.11.69 pair** (user
+direction 2026-05-12) — v5.11.x is now the **FINAL 5.x minor**.
+The .68 slot does the true closeout engineering (heap-map full
+reorg); .69 is reserved as the fold-applied tag for any dep
+foldins that arrive during the window (mabda 3.0 GA conditional).
+If no fold lands, .68 is the final v5.x patch. The original .40 cap
+was set to protect v5.12.0's bare-metal/RISC-V kickoff; with
+that arc moving to v6.x (tight-close decision, see [v6.x section](#v6x--platform-expansion--advanced-features)),
+v5.11.x absorbs the remaining 5.x-flavored work that previously
+lived in long-term considerations or v5.12.x scope:
 
-## v5.12.x — Bare-metal formalization + RISC-V rv64 arc
+### Remaining slots toward close (v5.11.32 → v5.11.69)
+
+**v5.11.32 / v5.11.33 — User-binary ELF cleanup (next slots)**
+
+Mirror the v5.11.29 / v5.11.30 / v5.11.31 kernel-emitter +
+linker section-header fixes into the in-compiler user-binary
+emitters. Both still have `e_shoff = 0`:
+
+- v5.11.32: `EMITELF_USER` at `src/backend/x86/fixup.cyr:722` (ELF64)
+- v5.11.33: `EMITELF` at `src/backend/aarch64/fixup.cyr:323` (ELF64)
+
+Same 5-section pattern as 5.11.29/.30 (SHT_NULL + .text +
+.rodata + .bss + .shstrtab; ELF64 shdr = 64 bytes; 8-byte
+alignment for shdr table). Closes the section-header arc
+cleanly — `objdump -d` / `gdb` / `ltrace` / `readelf -S` /
+IDE symbol indexers all see real section info on every
+Cyrius user binary.
+
+Not MVP-blocking (`execve` ignores section headers) but worth
+the two slots for consistency with the kernel/linker fixes
+already shipped, and for downstream tooling that introspects
+ELF sections.
+
+**v5.11.x mid — Stdlib data-domain distlib carve-out**
+
+Originally pinned 2026-05-05 at v5.8.65 close as "re-pin to
+v5.10.x late or v5.11.x"; slipped through v5.9.x (filled with
+sovereignty pass) and v5.10.x (filled with three-arc substrate).
+Lands here.
+
+Scope: ~13 data-domain modules (`json`, `toml`, `cyml`, `csv`,
+`base64`, `regex`, `math`, `matrix`, `linalg`, `bigint`, `u128`,
+plus their friends) fold out into a `cyrius-data` sibling
+distlib using the v5.7.0 sandhi-pattern (sakshi / patra / sigil
+precedent). Stdlib stays primitives-only after the carve;
+bare-metal consumers in v6.x's RISC-V / firmware work won't
+drag the data offshoots into kernel objects.
+
+**v5.11.x mid — Parser-to-emit named-op refactor (path A)**
+
+Originally pinned to v5.11.x → v5.12.x at v5.9.7 ship per the
+RISC-V "4th backend trigger" condition. With RISC-V moving to
+v6.x, the strict trigger lifts — but the refactor still earns
+its slot in 5.x close for compiler hygiene: ~10 abstract ops ×
+3 backends (x86 / aarch64 / cx) = ~30 fn definitions plus
+parse_*.cyr rewrites. cx benefits immediately; v6.x's RISC-V
+backend lands on the named-op interface from day one instead
+of plumbing through `_TARGET_*` chains.
+
+Audit doc: [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](../audit/2026-04-27-cx-direct-emit-inventory.md).
+
+**v5.11.x late — Sovereignty / polish / consumer-filed**
+
+Whatever surfaces from consumer-filed bugs, doc-health audit,
+TS-frontend held-forward items, peephole patterns deferred
+(`float.cyr:41` if bench delta justifies it), `cyim` regex if
+it surfaces, agnosys post-release polish. Bundle per
+cycle-discipline; resist single-item slots (see [Slot acceptance principle](#slot-acceptance-principle-revised-at-v5100)).
+
+**v5.11.x — mabda 3.0 GA fold (CONDITIONAL, watching window)**
+
+Watching this 2026-05-12 → ~mid-cycle: **if mabda 3.0 GA cuts
+during the v5.11.x window**, fold mabda into stdlib using the
+v5.7.0 sandhi pattern (sakshi 2.2.3 / patra 1.9.3 / sigil 3.1.0
+/ vani 0.9.2 / yukti 2.2.2 / sankoch 2.2.4 precedent in v5.8.x;
+niyama 1.0.1 in v5.9.x). Sister fold: agnosys (transitive via
+mabda).
+
+**Soak gate**: mabda 3.0.0-rc.2 is currently running its
+**24-hour passing soak** (project-leader-set standard for GA
+promotion). 2-hour window observed clean at 2026-05-12 session;
+remaining 22 hours decide whether GA cuts inside the v5.11.x
+window.
+
+**Backstory worth remembering** (per project-leader 2026-05-12):
+mabda was the last "old" stdlib dep still pinned at a pre-fold
+tag (`[deps.mabda] tag = "2.5.0"`) — a lock-in that prevented
+cyrius from bumping to consume newer mabda RCs without the
+fold/bump ceremony. Didn't block mabda's RC publishing on its
+own cadence, but it did concentrate dep-update pressure into
+the GA cut. **Pattern to avoid in future fold cycles**: don't
+let stdlib `[deps.*]` pins drift past the consumer's last
+working tag without a planned unlock; the sandhi fold IS the
+unlock, so schedule the fold close to the dep's next GA rather
+than letting the gap widen.
+
+**Why this fits 5.x close** (despite the language-feature
+exclusion rule): the fold itself is **stdlib hygiene, not a
+language capability addition** — it vendors source byte-identical
+into `lib/mabda.cyr` and removes the git-dep resolution. No new
+ABI, no new language syntax, no new backend. Same shape as the
+six v5.8.x sandhi folds that shipped without anyone treating
+them as new capabilities.
+
+**Decoupled from Class B FFI / wgpu fncall6 ABI**: that's the
+*language-level* ABI work (held-forward through v5.9.x →
+v5.11.x); stays in v6.4.x as a capability addition regardless
+of whether the fold lands earlier. The mabda 3.0 GA fold can
+proceed in v5.11.x **only if mabda 3.0 GA shipped without
+needing the Class B FFI fix to be functional** (e.g., the
+consumer routed around the ABI bug or the GA surface doesn't
+hit fncall6). If mabda 3.0 GA gates on the ABI work, both
+fold + ABI move together to v6.4.x.
+
+**Slot-entry check**: at the moment mabda 3.0 GA cuts, re-verify
+the Class B FFI gate per `feedback_premise_check_at_slot_entry`.
+If GA works clean: fold here. If GA still leans on Class B FFI:
+both move to v6.4.x. No mid-window auto-promotion.
+
+**v5.11.68 — Heap-map full reorganization (true closeout)**
+
+Originally pinned 2026-05-05 at v5.8.61 ship as the documented
+"last-minor-before-v6.0 effort." Lands as the **true closeout
+slot** of v5.11.x — the last substantive engineering work
+before v6.0.0 opens.
+
+**Why .68 and not .69**: v5.11.69 is reserved as the
+**fold-applied tag** for any dep foldins that earn their slot
+during the window (mabda 3.0 GA being the live candidate, see
+the [conditional slot above](#v511x--mabda-30-ga-fold-conditional-watching-window)).
+If no fold lands in the window, .68 is the final v5.x patch
+and .69 is unused. If a fold lands, .69 = .68 + fold-applied
+(byte-identical sandhi-pattern vendor of source, drop the
+`[deps.*]` entry, regen). The .68/.69 split keeps the heavy
+heap-map engineering and the conditional fold cleanly
+bisectable.
+
+The remaining gaps post v5.8.61's minimum-blast-radius reorg
+(~22 MB of unused heap reserved as documented headroom):
+
+- `0x41A000..0x44A000` (192 KB) — pad before preprocess_out
+- `0xB4A000..0x114A000` (6 MB) — output_buf → struct_ftypes gap
+- `0x115A000..0x11CA000` (450 KB) — struct_ftypes → struct_fnames
+- `0x11DA000..0x128A000` (700 KB) — struct_fnames → fn_names
+- `0x290B000..0x368C000` (13.5 MB) — **TS frontend functional
+  reservation; DO NOT CLOSE** unless TS frontend is retired
+
+Closeable: 8.4 MB across 4 gaps. ~200 references to shift
+across struct_*/fn_*/ir/fixup/tok region offsets + ~750
+references to relocate scratch state at `0x18C100..0x1A6018`.
+
+Done as its own slot (not bundled) per cycle-discipline ("Big
+Heavy One Thing"). Substantial enough that bundling would
+obscure the bisect target if anything regresses; the v5.8.61
+minimum-blast pass already proved the safer per-region approach
+is viable.
+
+### Buffer between named slots
+
+The band between named slots (.34 → .68, roughly 35 slots) is
+the explicit absorber for items that surface during the cycle:
+emergent consumer bugs, doc-health follow-ups, the items still
+in [Long-term considerations](#long-term-considerations-no-version-pin-yet)
+that earn a slot as their trigger condition materializes, plus
+the in-progress and yet-to-arrive sub-patches of the named
+arcs above. Same default-bias as before — ride the cap rather
+than silently expanding; if the buffer truly fills, surface
+the pressure rather than punting.
+
+### Why v5.11.x and not v5.12.x
+
+Tight-close decision 2026-05-12: v5.x stays a "feature-complete
+self-hosting sovereign language." No new language features
+land in v5.x. Anything that would have been v5.12.x is either:
+
+- absorbed into v5.11.x close (data-domain carve-out, parser-to-emit
+  refactor, user-binary ELF cleanup, heap-map reorg), OR
+- moved to v6.x (bare-metal formalization, RISC-V rv64, PIE,
+  closures, generic instantiation, language-level async syntax,
+  Class B FFI fold, cross-BB regalloc + dependent passes).
+
+The boundary is clean: v5.x = "what the language IS." v6.x =
+"new platforms + advanced features the language gains."
+
+## v5.12.x — **retired** (scope moved to v6.x at 2026-05-12 tight-close)
+
+The v5.12.x slot previously held the bare-metal formalization +
+RISC-V rv64 arc. At the 2026-05-12 tight-close decision v5.12.x
+was retired entirely — v5.11.x absorbs the remaining 5.x-shaped
+work (closing the v5.x line at v5.11.69), and the platform
+expansion (bare-metal formalization + RISC-V rv64) plus
+parser-to-emit refactor's "4th backend" trigger condition all
+move into the [v6.x section](#v6x--platform-expansion--advanced-features)
+below.
+
+The original v5.12.x scope detail — six bare-metal deliverables,
+RISC-V acceptance gates, parser-to-emit refactor as triggered
+prereq — is preserved verbatim under v6.2.x and v6.3.x with
+"originally pinned v5.12.x" provenance lines on each sub-pin.
+
+**Why retired and not just renamed**: keeping v5.12.x as the
+home would have implied a v5.12.x exists. Under the tight-close
+framing, **v5.x ends at v5.11.69 and v6.0.0 is the next minor.**
+There is no v5.12.x.
+
+---
+
+## v5.12.x-original-spec — archived reference (DO NOT REVIVE)
+
+Below is the original v5.12.x cycle spec as it stood prior to
+the 2026-05-12 retirement. Preserved in-line for reference
+while the v6.x sub-pins are still being written up; once v6.2.x
+and v6.3.x scopes are fully migrated, this archived block
+collapses into a single pointer to git history. Do not pin
+new work to v5.12.x.
+
+### Original v5.12.x — Bare-metal formalization + RISC-V rv64 arc
 
 **Cycle theme**: codify two existing-but-informal capabilities into first-class toolchain targets — (1) **bare-metal compilation mode** that agnos already uses ad-hoc, (2) **RISC-V rv64 backend** as the fourth platform peer. Both have been pinned-and-slipped across five+ minors; v5.12.x is where they finally land together because their substrate prerequisites (v5.10.x typed-simd ABI + REAL TYPE SYSTEM + struct-byval ABI + v5.11.x stdlib annotation arc) are now complete.
 
@@ -1678,8 +1964,8 @@ enables adding new targets without touching the frontend.
 | **v5.5.34** | fdlopen foreign-dlopen completion | ELF | **Done** — 40/40 round-trip `dlopen("libc.so.6")+dlsym("getpid")` |
 | **v5.5.35** | Windows PE .reloc + 32-bit ASLR | PE/COFF | **Done** — `DYNAMIC_BASE` + HIGH_ENTROPY_VA enabled v5.6.31 |
 | **v5.5.36** | Windows Win64 ABI completion | PE/COFF | **Done** — struct-return via hidden RCX retptr + __chkstk via R11 + variadic float dup |
-| **v5.12.x** | RISC-V rv64 | ELF | **Moved v5.10.x → v5.11.x → v5.12.x at v5.10.20 P(-1) sweep** — v5.11.x repurposed as cleanup minor (TS test harness + v5.10.x leftovers); RISC-V keeps its pairing with bare-metal AGNOS scope. |
-| **v5.12.0** | Bare-metal | ELF (no-libc) | Queued — AGNOS kernel target. Slid v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 → v5.12.0. |
+| **v6.2.x** | RISC-V rv64 | ELF | **Moved v5.10.x → v5.11.x → v5.12.x → v6.2.x at 2026-05-12 tight-close**. The "4th backend forces parser-to-emit refactor" trigger condition is resolved by landing the refactor in v5.11.x close instead, so v6.2.x's RISC-V backend lands on the named-op interface from day one. |
+| **v6.2.0** | Bare-metal | ELF (no-libc) | **Formalization, not enablement** — agnos kernel already boots without this target. Moved v5.7.0 → v5.8.0 → v5.9.0 → v5.10.0 → v5.11.0 → v5.12.0 → v6.2.0. Pairs with the v6.2.x RISC-V minor since both are platform/target work. |
 | ~~**v5.9.0–5.9.5**~~ | ~~Pure-cyrius TLS 1.3~~ | — | **Removed from roadmap 2026-04-24** — pure-Cyrius TLS work outside Cyrius's compiler/stdlib scope per sandhi scope-absorption decision; `lib/tls.cyr` continues using `libssl.so.3` bridge from stdlib's perspective; canonical home for pure-Cyrius TLS implementation TBD. See v5.9.x slot bullet in *What's next* for details. |
 
 ---
@@ -1714,8 +2000,9 @@ v5.8.65 close):
 | Feature | Effort | Surfacing / votes | Disposition |
 |---------|--------|-------------------|-------------|
 | Phase 2b-aarch64 struct copy (LDRB/STRB loop) | Medium | **✅ Shipped v5.9.26**. See [completed-phases.md](completed-phases.md). |
-| Closures capturing variables | High | gotcha #8 — consumers feel the absence | **Watching.** Promote when a consumer concretely blocks on it (vs. lambda-pattern workaround). v5.8.x ADTs make captured-state encoding cleaner. |
-| Generics / traits | High | 1 vote (kavach) | **Watching.** Wait for kavach to actively reach for it; speculative implementation pre-need is risk. |
+| Closures capturing variables | High | gotcha #8 — consumers feel the absence | **Pinned v6.3.x** at 2026-05-12 tight-close. Held out of v5.x as a language-feature add; lands in v6.3.x alongside generic instantiation + async syntax. v5.8.x ADTs make captured-state encoding cleaner. |
+| Real generic instantiation | High | 1 vote (kavach) | **Pinned v6.3.x** at 2026-05-12 tight-close. Today's erasure becomes monomorphization. Re-verify kavach pressure at slot entry (`feedback_premise_check_at_slot_entry`); speculative implementation pre-need is still risk. |
+| Language-level async/await syntax | Medium | — | **Pinned v6.3.x** at 2026-05-12 tight-close. Today's callback-based `lib/async.cyr` epoll runtime (v5.11.15) gets a sugary surface — `async fn` / `await` CPS-transforms to the existing runtime. |
 | Hardware 128-bit div-mod | Medium | — | **Stays unpinned.** abaco / sigil currently work around via u128 shifts; not blocking. |
 | Phase 3-full varargs (va_arg for structs-by-value + nested) | Medium | Phase 3-min shipped v5.5.36 | **Stays unpinned.** Niche — most consumers use array-of-args pattern instead. |
 | cc5 per-block scoping | Medium | — | **Stays unpinned.** Function-scope works for current consumer base; promote when a real refactor surfaces the pain. |
@@ -1766,12 +2053,35 @@ lands or a new repo joins.
 
 ---
 
-## Future 6.0
+## v6.x — Platform expansion + advanced features
 
-v6.0.0 is the major-version bump after the v5.x platform-targets
-arc closes. Scope is **refactoring and cleanup** that's been
-accumulating debt across the v5.x line and that's risky or
-disruptive to land mid-minor (rename, dead-code removal,
+v6.0.0 is the major-version bump after v5.x closes at v5.11.69
+(tight-close decision, 2026-05-12). Section title was previously
+"Future 6.0" and scoped to refactoring + cleanup only; expanded
+2026-05-12 to absorb the retired v5.12.x scope (bare-metal
+formalization + RISC-V rv64) plus the language-feature pins that
+the tight-close decision pushed out of v5.x.
+
+**Theme**: v5.x froze "what the language IS." v6.x is **what the
+language gains** — new platforms, position-independent codegen,
+language features (closures, generic instantiation, async
+syntax), Class B FFI fold, cross-BB regalloc + the deferred
+optimization passes that gate on it.
+
+**Cycle shape** (each `vN.x.y` is a real release; minor numbers
+are pinned, patch counts are estimates):
+
+| Minor | Theme | Status |
+|-------|-------|--------|
+| **v6.0.x** | Rename ceremony (`cc5` → `cyc`) + dead-code sweep + `_TARGET_*` consolidation + bridge-compiler retirement assessment | Detailed below |
+| **v6.1.x** | PIE (position-independent executable) codegen + `.gnu.hash` migration | Detailed below |
+| **v6.2.x** | Bare-metal formalization + RISC-V rv64 backend | Migrated from v5.12.x — see [v6.2.x](#v62x--bare-metal-formalization--risc-v-rv64-was-v512x) |
+| **v6.3.x** | Language refinements: closures (lexical capture), real generic instantiation, language-level async/await syntax | New pin — see [v6.3.x](#v63x--language-refinements) |
+| **v6.4.x** | Class B FFI fold (mabda 3.0.0 GA fold) + cross-BB regalloc + deferred passes (copy-propagation, extended dead-store elimination) | New pin — see [v6.4.x](#v64x--class-b-ffi-fold--perf-arc) |
+
+**Why a major bump for v6.0**: scope is **refactoring and cleanup**
+that's been accumulating debt across the v5.x line and that's
+risky or disruptive to land mid-minor (rename, dead-code removal,
 consolidation of `_TARGET_*` shim layers). Major bump gives
 downstreams an explicit signal to re-pin and re-verify rather
 than discovering breakage at random patch boundaries.
@@ -1969,6 +2279,168 @@ doesn't justify it. Could stay open indefinitely.
 Reference proposal:
 [`docs/development/proposals/2026-05-11-pie-support.md`](proposals/2026-05-11-pie-support.md)
 (8-step work breakdown, open questions, decision checkboxes).
+
+**Pair with `.gnu.hash` migration**: long-term `.gnu.hash` pin
+deferred at v5.6.38 (no consumer pressure) earns its slot here
+— modern dynamic loaders prefer `.gnu.hash`'s Bloom filter
+pre-check over the SysV `.hash` chain walk, and PIE binaries
+that go through `dlopen`/symbol resolution will see the
+measurable difference. Land as part of the v6.1.x dynamic-link
+work; drop SysV `.hash` once `.gnu.hash` is in place.
+
+### v6.2.x — Bare-metal formalization + RISC-V rv64 (was v5.12.x)
+
+**Originally pinned to v5.12.x; moved to v6.2.x at the
+2026-05-12 tight-close decision.** Detailed scope in the
+[archived v5.12.x spec block](#original-v512x--bare-metal-formalization--risc-v-rv64-arc)
+above; summary here.
+
+**v6.2.0 — Bare-metal target formalization**
+
+Codify the ad-hoc bare-metal mode that agnos has been using
+since first boot into a first-class `--target bare-metal-x86_64-elf`
+(and aarch64 peer) triple. Six deliverables: formal target triple,
+ELF no-libc output format, interrupt-handler emit conventions
+(`naked_fn` attribute), kernel-mode stdlib subset, linker-script /
+section-placement control via `[sections]` in `cyrius.cyml`,
+and inline assembly primitives for kernel work (`cli`/`sti`/`hlt`,
+port I/O, memory barriers, `cpuid`).
+
+Acceptance: rebuilding the agnos kernel with `--target bare-metal-x86_64-elf`
+produces a byte-identical artifact to the current ad-hoc build;
+forbidden-module check errors clearly when bare-metal code pulls
+host-OS modules; `examples/firmware-hello.cyr` demonstrates the
+target outside of agnos.
+
+**Important framing**: bare-metal is **formalization, not
+enablement**. The agnos kernel already builds and boots without
+this target; v6.2.0 is a quality-of-life feature for future
+bare-metal Cyrius consumers (firmware, alt-kernels, embedded).
+It does NOT gate AGNOS closed-beta MVP. Per the [agnosticos roadmap](https://github.com/MacCracken/agnosticos/blob/main/docs/development/roadmap.md),
+language and kernel ship on independent cadences.
+
+**v6.2.x — RISC-V rv64 backend**
+
+First-class RISC-V 64-bit target. The 4th platform peer after
+x86_64 / aarch64 / PE-x86_64. Substrate prerequisites
+(typed-simd ABI, REAL TYPE SYSTEM, struct-byval ABI, parser-to-emit
+named-op refactor from v5.11.x) all land before this slot opens.
+
+Scope: new backend (`src/backend/riscv64/`), new stdlib syscall
+peer (`lib/syscalls_riscv64_linux.cyr`), new cross-entry
+(`src/main_riscv64.cyr`), new test runner (QEMU + HiFive Unmatched
+or equivalent), new CI matrix arm.
+
+Acceptance gates:
+1. Cross-compiler `build/cyc_riscv64` (note: post-`cyc` rename)
+   emits valid rv64 ELF that `file(1)` identifies.
+2. Single-syscall "exit 42" probe runs under `qemu-riscv64-static`.
+3. Hello-world via `sys_write` + `sys_exit` runs under QEMU.
+4. Self-host byte-identical on real rv64 hardware (hardware-gated
+   like the aarch64 ssh-pi check).
+5. `[release].cross_bins` gets a `cyc_riscv64` entry.
+
+### v6.3.x — Language refinements
+
+Three language features the user community has been requesting
+through the v5.x cycle but that the tight-close decision (2026-05-12)
+explicitly held out of v5.x. All three are real syntactic/semantic
+additions that benefit from a major-bump signal.
+
+**Closures with lexical capture**
+
+Today: function pointers + lambda-pattern workarounds (see
+`lib/fnptr.cyr`). Gotcha #8 noted in v5.x Language Refinements
+table — consumers feel the absence. v5.8.x ADTs (sum types +
+exhaustive match + Result + ?) make captured-state encoding
+cleaner than it would have been pre-v5.8.
+
+Scope: closure literals + lexical capture analysis +
+closure-environment lowering (allocate-on-construct, deallocate
+when the closure pointer goes out of scope; vtable-shaped
+indirect call). Pairs with the existing trait/vtable
+infrastructure (`lib/trait.cyr`).
+
+**Real generic instantiation**
+
+Today: generics parse (type params accepted at `SKIP_GENERICS`
+in `src/frontend/parse_decl.cyr`) but erase at compile time —
+no monomorphization, type-check semantics are weakest-applicable.
+Test floor: `tests/tcyr/enum_generics.tcyr` (v5.8.21 syntax-
+acceptance only).
+
+Scope: type checker recognizes type parameters as concrete-at-
+instantiation; emit-time substitution generates per-monomorph
+code. Kavach was the original 1-vote consumer (per v5.x
+Language Refinements table); reach out at v6.3.x slot entry
+to verify consumer pressure is still real.
+
+**Language-level async/await syntax**
+
+Today: callback-based async on epoll runtime (`lib/async.cyr`,
+v5.11.15). Works but is verbose at consumer sites.
+
+Scope: `async fn` / `await` syntax compiles to CPS-transformed
+state machines over the existing epoll runtime. Same runtime
+semantics, sugarier surface. Pairs with closures (capture state
+across await points).
+
+### v6.4.x — Class B FFI + perf arc
+
+**Class B FFI / wgpu fncall6 ABI work**
+
+Held-forward through v5.9.x / v5.10.x / v5.11.x. The
+*language-level* ABI work: fix Cyrius's `fncall6` vs SysV
+AMD64 calling convention bug that mabda's wgpu integration
+needs. Lands here regardless of where the mabda 3.0 GA fold
+itself lands.
+
+**mabda 3.0 fold provenance** (see [v5.11.x mabda CONDITIONAL slot](#v511x--mabda-30-ga-fold-conditional-watching-window)):
+
+- **If mabda 3.0 GA shipped clean and folded in v5.11.x**:
+  v6.4.x is just the Class B FFI ABI fix; no fold work here.
+  Other mabda-consumer downstreams may need a re-pull when the
+  ABI fix lands, but no stdlib-side fold action.
+- **If mabda 3.0 GA gates on the ABI fix**: fold + ABI work
+  land together in v6.4.x using the v5.7.0 sandhi pattern.
+  Sister fold: agnosys (transitive via mabda).
+
+**Cross-BB regalloc + deferred passes**
+
+Linear-scan register allocator with cross-BB liveness data.
+Unlocks three deferred passes that all share the same gate:
+
+- **Copy propagation**: deferred 2026-04-23 after v5.6.18/.19
+  recon. Stack-machine IR had no virtual registers for the
+  classical wins; regalloc surfaces them.
+- **Extended dead-store elimination** (cross-BB): deferred
+  same date, same gate. Per-BB DSE shipped v5.6.18; cross-BB
+  variant needs the liveness-out set per BB that regalloc
+  builds.
+- **Float peephole** (`float.cyr:41`, 5-instruction → 3-byte
+  reduction): worth landing here if bench delta justifies.
+
+Both deferred-pass recons (`ir_copyprop_recon`,
+`ir_extdse_recon`) lived in `src/common/ir.cyr` during the
+v5.6.19 evaluation and can be revived against the new liveness
+data.
+
+### v6.x — items lifted from long-term considerations
+
+The following long-term-considerations entries (in this file
+above) had their trigger conditions materialize via the v6.x
+re-pinning:
+
+- `.gnu.hash` for shared-object emission → **v6.1.x** (with PIE)
+- Parser-to-emit named-op refactor (path A) → **v5.11.x** (close)
+- Stdlib data-domain distlib carve-out → **v5.11.x** (close)
+- Heap-map full reorganization → **v5.11.68** (true closeout); v5.11.69 reserved as fold-applied tag
+- Copy propagation → **v6.4.x** (with regalloc)
+- Extended dead-store elimination (cross-BB) → **v6.4.x** (with regalloc)
+
+Their detailed scope + recon data stays in the long-term-
+considerations block as the implementation reference; only the
+"when to revisit" answer is now resolved.
 
 ## Public Release (~v7.0) — "Cyrius ONE"
 
