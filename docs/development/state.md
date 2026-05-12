@@ -5,6 +5,32 @@
 
 ## Version
 
+**5.11.22** (shipped 2026-05-11 — **ai-hwaccel cc5_win debunk +
+mkdir/unlink PE plumbing**). Per user direction "review the
+ai-hwaccel repo and usage" — empirical audit on cass found the
+minimal `syscall(60, 42)` PE binary EXIT-CODE filing is a
+**second premise-debunk** (works on cass with correct wrappers;
+follows v5.10.49's pattern but with the right test shape this
+time). Real ai-hwaccel.exe crash is `STATUS_ILLEGAL_INSTRUCTION`
+(0xC000001D) from 3 unrouted syscalls in cache.cyr +
+detect/platform.cyr (mkdir 83, unlink 87, readlink 89).
+**Shipped**: PE auto-imports for CreateDirectoryW + DeleteFileW
+(`_pe_ensure_createdir` / `_pe_ensure_deletef` in pe/emit.cyr);
+parser dispatch for syscall(83) + syscall(87) routing to
+ECREATEDIR_PE / EDELETEF_PE; placeholder emit bodies that pop
+args and return -ENOSYS (-38) — consumers' `if (rc < 0)` path
+fires cleanly. Updated warning text to mention STATUS_ILLEGAL_INSTRUCTION
+(0xC000001D) and the full set of routed numbers. **Pre-existing
+PE bug surfaced**: EOPEN_PE (CreateFileW, existing route)
+faults at `ntdll!+0x41912` on Win11 26200 same as new
+ECREATEDIR_PE would — shared UTF-16 widening pattern bug,
+masked because `_pe_exit_gate` only tests exit42 + hello-world,
+never kernel32 path APIs. Held back real call bodies; pinned
+v5.11.23 = full widening fix + IAT layout + cass-gate. ai-hwaccel
+issue archived with debunk evidence. cc5 byte-identical at
+806,104 B (+1,648 from emit/dispatch); check.sh 66/66;
+cyrius test 147/147.
+
 **5.11.21** (shipped 2026-05-11 — **0-call public stdlib fn downstream
 survey**). 10 PUBLIC stdlib fns flagged 0-callers-within-cyrius
 audited across all 50 sibling repos. **Net: 0 removals, 0

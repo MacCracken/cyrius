@@ -491,11 +491,12 @@ right after).
 | v5.11.19 | **kybernet Part A.ii: fn_table 4096 → 8192 (heap-map refactor)** (pinned 2026-05-11 at v5.11.18 audit; ~300-500 hex-literal edits across 7 src/ files; relocate 7 scattered fn_* tables + double 16 contiguous tables + shift IR/fixup regions; standalone slot per honest scope shrink) |
 | v5.11.20 | **Syscall-wrapper DRY consolidation** (Linux x86_64 + aarch64 wrapper-body dedup; pinned 2026-05-11 from v5.11.7 close-out lib audit) |
 | v5.11.21 | **0-call public stdlib fn downstream survey** (10 fns: async_new, callback::for_each, *_invalidate_cache trio, log_init, niyama_bre_compile, sakshi_clock_recalibrate, sandhi_err_kind_name, sig_alg_name) — pinned 2026-05-11 |
-| v5.11.22 | **cc5_win PE exit-code crash fix** (HIGH; ai-hwaccel 2.2.2 filed 2026-05-11; PE binaries crash before reaching ExitProcess, exit=0x40001000 instead of 42; WriteFile stdout never lands; blocks every Win64 ship target. Pinned in gap per user direction.) |
-| v5.11.23 | **`#derive(accessors)` >16-field silent miscompile fix** (Medium; agnos 1.28.3 filed 2026-05-11; `src/frontend/lex_pp.cyr` per-struct `field_names`/`field_types`/`offsets` tables hard-sized at 16 entries — 17th field overflows into field_types[0], offsets diverge silently. agnos 22-field `struct Process` corrupted CR3 → kernel page-fault on first context switch. Raise cap + add hard-cap diagnostic.) |
-| v5.11.24 | **Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher** (pinned 2026-05-11 at v5.11.16 close; binary reads `cyrius.cyml`'s `cyrius` top-level field → re-exec `~/.cyrius/versions/<v>/bin/cyrius`; error if not installed; touches every cyrius CLI entry point; multi-slot scope) |
-| v5.11.25 | **Per-repo isolation Part 3: `cyriusly use --global` flag + per-repo default** (pinned 2026-05-11 at v5.11.16 close; `programs/cyriusly.cyr`'s `use` verb defaults to writing `cyrius.cyml`'s `cyrius` field instead of `~/.cyrius/current`; `--global` keeps the legacy write; sibling agents `cyriusly use 5.10.44 --global` becomes the explicit form) |
-| v5.11.26-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (10-slot buffer; was 11 pre-split; user 2026-05-11) |
+| v5.11.22 | **ai-hwaccel cc5_win debunk + mkdir/unlink PE plumbing** (pinned 2026-05-11 at v5.11.21 close; minimal `syscall(60,42)` premise debunk — works on cass; real ai-hwaccel gap is unrouted syscalls 83/87/89 → cyrius adds CreateDirectoryW/DeleteFileW auto-import + parser dispatch with -ENOSYS placeholder bodies; updated warning text; pre-existing `EOPEN_PE` UTF-16-widening fault on Win11 26200 surfaced — pinned v5.11.23) |
+| v5.11.23 | **EOPEN_PE + ECREATEDIR/EDELETEF UTF-16 widening fix** (pinned 2026-05-11 at v5.11.22 audit; pre-existing PE-emit bug — `_pe_exit_gate` only tests `exit42`+`hello-world`, never path-API kernel32 calls; fault is in `ntdll!+0x41912` (path-validation routine) on Win11 26200 (cass); wine accepts both. Slot: bisect widening pattern vs Windows path validation, fix the shared shape, wire the real CreateDirectoryW/DeleteFileW call bodies in src/backend/x86/emit.cyr, add PE-mode gate to programs/check.cyr that exercises CreateFileW + CreateDirectoryW on cass) |
+| v5.11.24 | **`#derive(accessors)` >16-field silent miscompile fix** (Medium; agnos 1.28.3 filed 2026-05-11; `src/frontend/lex_pp.cyr` per-struct `field_names`/`field_types`/`offsets` tables hard-sized at 16 entries — 17th field overflows into field_types[0], offsets diverge silently. agnos 22-field `struct Process` corrupted CR3 → kernel page-fault on first context switch. Raise cap + add hard-cap diagnostic.) |
+| v5.11.25 | **Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher** (pinned 2026-05-11 at v5.11.16 close; binary reads `cyrius.cyml`'s `cyrius` top-level field → re-exec `~/.cyrius/versions/<v>/bin/cyrius`; error if not installed; touches every cyrius CLI entry point; multi-slot scope) |
+| v5.11.26 | **Per-repo isolation Part 3: `cyriusly use --global` flag + per-repo default** (pinned 2026-05-11 at v5.11.16 close; `programs/cyriusly.cyr`'s `use` verb defaults to writing `cyrius.cyml`'s `cyrius` field instead of `~/.cyrius/current`; `--global` keeps the legacy write; sibling agents `cyriusly use 5.10.44 --global` becomes the explicit form) |
+| v5.11.27-35 | OPEN — emergent bugs / consumer-filed / items surface during cycle (9-slot buffer; was 10 pre-split; user 2026-05-11) |
 | v5.11.36 | **cc5_aarch64_macho cross-bin ship** (deferred from v5.11.6 — host-runtime mmap fix + ecb smoke; user 2026-05-11: "fine for back of the current line") |
 | v5.11.37 | **cc5_aarch64_native cross-bin ship** (deferred from v5.11.6 — build + pi smoke) |
 | v5.11.38 | **cc5_cx cross-bin ship** (deferred from v5.11.6 — bytecode emit + VM smoke target) |
@@ -935,7 +936,130 @@ so 0-call-in-grep is not safe-to-remove.
 consumer is blocked on these fns. Survey-and-decide doesn't ship
 behavioral changes, just clarity + a deprecation plan if needed.
 
-#### v5.11.22 — cc5_win PE exit-code crash + WriteFile stdout fix
+#### v5.11.23 — EOPEN_PE + ECREATEDIR/EDELETEF UTF-16 widening fix
+
+**Pinned 2026-05-11 at v5.11.22 audit.** v5.11.22's debunk
+investigation surfaced a pre-existing PE-emit bug: the UTF-16
+widening + kernel32 path-API call pattern faults in
+`ntdll!+0x41912` on Win11 26200 (cass). Affects EOPEN_PE
+(CreateFileW, existing) and ECREATEDIR_PE / EDELETEF_PE
+(CreateDirectoryW / DeleteFileW, new placeholders at v5.11.22).
+
+**Diagnostic evidence (from v5.11.22)**:
+- `_pe_exit_gate` (programs/check.cyr) tests `exit42` +
+  `hello-world` only — never exercises any kernel32 path API.
+  EOPEN_PE has been silently broken for an unknown number of
+  minors.
+- Wine 11.8 accepts the same binary; real Win11 26200 faults.
+- `syscall(2, "C:\\test.tmp", 65, 384)` built with old cc5_win
+  (5.11.18) AND new cc5_win (5.11.22) → both crash with
+  STATUS_ACCESS_VIOLATION (0xC0000005) at ntdll offset 0x41912.
+- Working PE routes that DON'T use widening: EWRITE_PE (1),
+  EREAD_PE (0), ECLOSE_PE (3), EMMAP_PE (9), EEXIT (60),
+  ELSEEK_PE (8), EGETTICKS_PE (228).
+- Failing PE routes that DO use widening + kernel32 path API:
+  EOPEN_PE (2), ECREATEDIR_PE (83, placeholder at .22),
+  EDELETEF_PE (87, placeholder at .22).
+
+**Acceptance bar**:
+1. Bisect the widening + call pattern: hand-write a known-good
+   PE that calls CreateDirectoryW with a hardcoded UTF-16
+   string baked into .rdata (no runtime widening). If that
+   works, the bug is in the widening loop. If it fails, the
+   bug is in IAT setup / call convention / Windows path
+   validation.
+2. Fix the shared pattern in src/backend/x86/emit.cyr (and
+   src/backend/pe/emit.cyr if IAT side needs adjustment).
+3. Wire the real call bodies into ECREATEDIR_PE + EDELETEF_PE
+   (replacing v5.11.22's -ENOSYS placeholders).
+4. Add a new gate to programs/check.cyr::_pe_exit_gate (or a
+   new sibling gate) that compiles `syscall(2, path, ...) +
+   syscall(83, path, mode) + syscall(87, path)`, deploys to
+   cass, runs, verifies success exit codes + filesystem
+   side-effects. This keeps the bug class from regressing
+   silently again.
+5. cc5 self-host byte-identical.
+6. check.sh 66+ green (new gate is +1).
+7. cyrius test 147/147 green.
+8. Cross-host smoke green (the new gate ARE the cross-host
+   smoke for kernel32 path APIs).
+
+**Risk**: medium. Touches PE emit + check.sh gates. Phased
+internally: (a) reproduce on cass with hand-written PE to
+isolate the widening, (b) fix, (c) wire bodies, (d) gate.
+Per `feedback_premise_check_at_slot_entry` — empirical
+bisect first, then commit to fix.
+
+**Related**: v5.10.49 debunked a 15-slot "PE exit-code broken"
+phantom caused by the cmd /v wrapper bug. THIS slot is the
+inverse — a real PE bug that's been hidden because the
+existing gate doesn't exercise it. The pattern: gate coverage
+gaps mask real bugs that masquerade as wrapper issues when
+consumers hit them.
+
+#### v5.11.22 — ai-hwaccel cc5_win debunk + mkdir/unlink PE plumbing
+
+**Pinned + shipped 2026-05-11.** ai-hwaccel 2.2.2 filed a
+PE-exit-code-crash issue. Empirical audit on cass found:
+
+- The minimal `syscall(60, 42)` repro WORKS on cass — exit=42
+  via `cmd /v /c "...!errorlevel!"` AND `.bat` indirection.
+  Hello-world (`syscall(1, 1, "hello\n", 6); syscall(60, 42)`)
+  prints "hello" AND exits 42.
+- Same cass: Win11 Pro 26200 (matches reporter's environment).
+- Same binary bytes (1536 B, byte-identical between 5.11.5
+  install bundle + 5.10.37 cross per the reporter's cmp).
+
+This is the **second premise-debunk** in the v5.10-v5.11 cycle
+(memory pin `feedback_windows_errorlevel_test_wrapper` records
+v5.10.49's 15-slot fictional claim).
+
+**Real gap surfaced by ai-hwaccel review**: ai-hwaccel.exe
+crashes with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) — not
+the minimal-exit42 path, but the FULL binary. Three call sites
+use unrouted Linux syscall numbers:
+
+- `src/cache.cyr:174` — `syscall(83, ...)` (mkdir): not routed
+- `src/cache.cyr:195` — `syscall(87, ...)` (unlink): not routed
+- `src/detect/platform.cyr:41` — `syscall(89, ...)` (readlink): not routed
+
+cyrius's compile-time warning IS firing for these, but the
+text was stale: said "routes n=0,1,2,3,8,9,60" (missing 228).
+No mention of the actual crash code (0xC000001D) consumers see.
+
+**Shipped (this slot)**:
+
+1. PE auto-import helpers `_pe_ensure_createdir` +
+   `_pe_ensure_deletef` in `src/backend/pe/emit.cyr`.
+2. Parser dispatch for `syscall(83, path, mode)` and
+   `syscall(87, path)` in `src/frontend/parse_expr.cyr` →
+   ECREATEDIR_PE / EDELETEF_PE.
+3. Placeholder bodies: pop args, return -ENOSYS (-38).
+   Held back from real CreateDirectoryW/DeleteFileW calls
+   until v5.11.23 fixes the shared UTF-16-widening fault
+   (see v5.11.23 detail above).
+4. Updated warning text: now says
+   `"routes n=0,1,2,3,8,9,60,83,87,228 today; others crash
+   with STATUS_ILLEGAL_INSTRUCTION (0xC000001D)"`. Names the
+   actual crash code so consumers can grep for it.
+5. ai-hwaccel issue archived with debunk evidence +
+   `#ifdef CYRIUS_TARGET_WIN` guidance for their readlink call
+   (no clean Windows equivalent; Windows symlinks need
+   DeviceIoControl + FSCTL_GET_REPARSE_POINT — multi-slot scope).
+
+**NOT shipped (pinned v5.11.23)**: the actual CreateDirectoryW
+/ DeleteFileW call bodies. Hardcoded -ENOSYS in placeholders
+until the widening-pattern bug is fixed.
+
+**Cass verify (this slot's placeholder)**:
+- `var rc = syscall(83, "C:\\x", 493); syscall(60, 0 - rc);`
+  → exit=38 (= -(-38)) — consumer's `if (rc < 0)` path fires
+  CLEANLY instead of STATUS_ACCESS_VIOLATION.
+- No more access violations on cass for these syscalls.
+- cc5 byte-identical at 806,104 B (+1,648 B from auto-imports
+  + parser dispatch + placeholder bodies).
+
+#### v5.11.22-RETIRED — cc5_win PE exit-code crash + WriteFile stdout fix
 
 **HIGH-severity blocker** filed 2026-05-11 by ai-hwaccel 2.2.2.
 Pinned to the gap per user direction at v5.11.10 close. Full repro
@@ -1015,7 +1139,7 @@ this slot rode along. The next emergent fixup (`#derive(accessors)`
 audit split off kybernet Part A.ii to its own slot (v5.11.19),
 shifting every subsequent pin forward by 1 (this slot .21 → .22).
 
-#### v5.11.23 — `#derive(accessors)` >16-field silent miscompile fix
+#### v5.11.24 — `#derive(accessors)` >16-field silent miscompile fix
 
 **Pinned 2026-05-11 at v5.11.15 close alongside the WS handshake
 slot.** Filed by agnos 1.28.3 during a kernel `struct Process`
@@ -1099,7 +1223,7 @@ kybernet Part A.ii split off to .19.
 `#derive(accessors)` becomes an agnos-side follow-up once this
 slot ships.
 
-#### v5.11.24 — Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher
+#### v5.11.25 — Per-repo isolation Part 2: `cyrius` CLI version-resolved dispatcher
 
 **Pinned 2026-05-11 at v5.11.16 close from the 3-slot reframe
 of the original v5.11.17 acceptance bar (user direction:
@@ -1152,7 +1276,7 @@ actual wipe wedge; Part 2 makes the version-pinning intentional
 `5.10.44` still runs whatever's at `~/.cyrius/current` for CLI
 dispatch — Part 2 makes the pin authoritative.
 
-#### v5.11.25 — Per-repo isolation Part 3: `cyriusly use --global` flag
+#### v5.11.26 — Per-repo isolation Part 3: `cyriusly use --global` flag
 
 **Pinned 2026-05-11 at v5.11.16 close from the 3-slot reframe
 of the original v5.11.17 acceptance bar.**

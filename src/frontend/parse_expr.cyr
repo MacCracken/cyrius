@@ -622,13 +622,35 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v5.11.22: SYS_MKDIR (83) → CreateDirectoryW;
+            # SYS_UNLINK (87) → DeleteFileW. ai-hwaccel 2.2.2
+            # surfaced both via cache.cyr.
+            if (sc_num == 83) {
+                if (argc == 3) {
+                    ECREATEDIR_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 87) {
+                if (argc == 2) {
+                    EDELETEF_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # Non-mapped syscalls: emitting the generic ESCPOPS path
-            # below would produce an `0F 05` syscall that crashes on
-            # Windows. Warn now; hard-error once the full
-            # syscalls_windows.cyr stdlib lands in v5.5.x.
+            # below would produce an `0F 05` syscall that faults
+            # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
+            # (0xC000001D). Routed numbers (v5.11.22):
+            # 0=read, 1=write, 2=open, 3=close, 8=lseek, 9=mmap,
+            # 60=exit, 83=mkdir, 87=unlink, 228=clock_gettime.
+            # Others crash; gate with `#ifdef CYRIUS_TARGET_WIN`
+            # at the call site, or file an upstream issue for a
+            # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60 today; others will crash on Windows.\n",
-            109);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            150);
         }
         ESCPOPS(S, argc);
         _cfo = 0;

@@ -838,6 +838,46 @@ fn EMMAP_PE(S): i64 {
     return 0;
 }
 
+# v5.11.22: emit Win64 mkdir: `syscall(83, path, mode)` →
+# CreateDirectoryW(lpPathName, lpSecurityAttributes).
+# Stack on entry (top→bottom): [mode] [path] [sc_nr=83].
+#
+# *** PLACEHOLDER (v5.11.22) ***
+# Returns -ENOSYS (-38) cleanly. The full CreateDirectoryW call
+# is held back until v5.11.23 fixes the UTF-16-widening fault
+# that affects EOPEN_PE on Win11 26200+ (cass; ntdll!+0x41912
+# AV — pre-existing pattern bug, masked by `_pe_exit_gate`
+# coverage gap that tests only `exit42` + `hello-world`, never
+# kernel32 path APIs). Consumer's `if (rc < 0)` failure path
+# fires cleanly instead of STATUS_ACCESS_VIOLATION.
+# Auto-imports stay registered so the IAT layout is ready when
+# v5.11.23 wires the real call.
+fn ECREATEDIR_PE(S): i64 {
+    _pe_ensure_createdir(S);
+
+    EB(S, 0x58);                                        # pop rax (mode, ignored)
+    EB(S, 0x58);                                        # pop rax (path, ignored)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    # mov rax, -38 (-ENOSYS).  REX.W + C7 /0 + imm32 (sign-extended).
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);
+    EB(S, 0xDA); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF);
+    return 0;
+}
+
+# v5.11.22: emit Win64 unlink: `syscall(87, path)` →
+# DeleteFileW(lpFileName). Stack on entry: [path] [sc_nr=87].
+#
+# *** PLACEHOLDER (v5.11.22) — see ECREATEDIR_PE for rationale. ***
+fn EDELETEF_PE(S): i64 {
+    _pe_ensure_deletef(S);
+
+    EB(S, 0x58);                                        # pop rax (path, ignored)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);
+    EB(S, 0xDA); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF); # mov rax, -38
+    return 0;
+}
+
 # emit Win64 open: `syscall(2, path, flags, mode)` →
 # CreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
 #             lpSecurityAttributes, dwCreationDisposition,

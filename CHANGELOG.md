@@ -6,6 +6,164 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.22] — 2026-05-11
+
+**ai-hwaccel cc5_win debunk + mkdir/unlink PE plumbing** — closes
+[archived ai-hwaccel issue](issues/archived/2026-05-11-ai-hwaccel-cc5-win-pe-exit-propagation.md).
+Surfaced + pinned a **second pre-existing PE bug** (UTF-16
+widening + kernel32 path API) at v5.11.23.
+
+### Premise debunk (the original filing)
+
+ai-hwaccel claimed `syscall(60, 42)` built with cc5_win
+crashes with exit 0x40001000 on Win11 26200. Empirical test
+on cass (same Win11 build):
+
+```
+$ echo 'syscall(60, 42);' | cc5_win > /tmp/exit42.exe
+$ scp /tmp/exit42.exe cass:exit42.exe
+$ ssh cass 'cmd /v /c ".\exit42.exe & echo exit=!errorlevel!"'
+exit=42  ✓
+```
+
+Identical bytes (1536 B) between v5.10.37 cross + v5.11.5 install
+bundle + current build. ALL four sub-cases of the filing
+(`cmd /v` + `.bat` × `exit42` + `hello-world`) → all pass.
+`programs/check.cyr::_pe_exit_gate` corroborates (currently
+passing in check.sh).
+
+This is the **second premise-debunk** in the v5.10-v5.11 cycle.
+Memory pin `feedback_windows_errorlevel_test_wrapper` records
+v5.10.49's 15-slot fictional claim caused by `cmd /c "...%errorlevel%"`
+parse-time expansion. THIS filing used the correct wrapper
+shape — empirical evidence still says the bug doesn't reproduce.
+
+### Real gap surfaced by ai-hwaccel review
+
+Per user direction "review the ai-hwaccel repo and usage" —
+building ai-hwaccel/src/main.cyr for Windows and running on
+cass:
+
+```
+$ ai-hwaccel.exe --help  → exit=-1073741795 = 0xC000001D
+                            (STATUS_ILLEGAL_INSTRUCTION)
+```
+
+The crash is from 3 unrouted syscall numbers:
+
+| Site | Syscall | Linux meaning | Cyrius PE route |
+|---|---:|---|---|
+| `src/cache.cyr:174` | 83 | mkdir | not routed → `0F 05` fault |
+| `src/cache.cyr:195` | 87 | unlink | not routed → fault |
+| `src/detect/platform.cyr:41` | 89 | readlink | not routed (no clean Win equiv) |
+
+Cyrius's compile-time warning DID fire, but the text was
+stale: said `"routes n=0,1,2,3,8,9,60"` (missing 228) and
+gave no hint about the actual crash code (0xC000001D)
+consumers would see.
+
+### Shipped
+
+1. **PE auto-import helpers** in `src/backend/pe/emit.cyr`:
+   - `_pe_ensure_createdir` (kernel32!CreateDirectoryW)
+   - `_pe_ensure_deletef` (kernel32!DeleteFileW)
+   Lazy-register pattern matching the existing
+   `_pe_ensure_createf` / `_pe_ensure_seekfp` /
+   `_pe_ensure_gettick` siblings.
+
+2. **Parser dispatch** in `src/frontend/parse_expr.cyr`:
+   - `syscall(83, path, mode)` → ECREATEDIR_PE (mkdir)
+   - `syscall(87, path)` → EDELETEF_PE (unlink)
+
+3. **Placeholder emit bodies** in `src/backend/x86/emit.cyr`:
+   ECREATEDIR_PE + EDELETEF_PE pop the cyrius-stacked args,
+   drop sc_nr, return -ENOSYS (-38). Auto-imports stay
+   registered so the IAT layout is ready when v5.11.23 wires
+   the real CreateDirectoryW/DeleteFileW call bodies.
+
+4. **Updated warning text**:
+   ```
+   warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes
+     n=0,1,2,3,8,9,60,83,87,228 today; others crash with
+     STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.
+   ```
+   Names the crash code so consumers can grep for it.
+
+### Pre-existing PE-emit bug surfaced (pinned v5.11.23)
+
+During cass verify of the new ECREATEDIR_PE, hit:
+`exit=-1073741819 = 0xC0000005` (STATUS_ACCESS_VIOLATION) at
+`ntdll!+0x41912` (Event Viewer). Trying the EXISTING
+`syscall(2, "C:\\test.tmp", 65, 384)` route → SAME fault,
+both with old cc5_win AND new cc5_win.
+
+So `EOPEN_PE` (CreateFileW, existing) has been broken on real
+Windows for at least v5.11.5 (probably longer). The
+`_pe_exit_gate` only tests exit42 + hello-world; it has
+never exercised a kernel32 path API.
+
+My new ECREATEDIR_PE/EDELETEF_PE were modeled on EOPEN_PE's
+UTF-16 widening + kernel32 call pattern → inherit the same
+fault.
+
+**v5.11.22 decision** (per user direction "pin EOPEN_PE bug,
+ship plumbing only"): land auto-imports + dispatch + warning
+text, but stub the call bodies as -ENOSYS placeholders until
+v5.11.23 fixes the shared pattern. Per
+`feedback_deferral_requires_roadmap_pinnage`, the deferred
+work is pinned at v5.11.23 with full acceptance bar in the
+SAME edit as this CHANGELOG entry.
+
+### Cass verify (placeholder behavior)
+
+```cyrius
+var rc = syscall(83, "C:\\x", 493);    # placeholder returns -38
+syscall(60, 0 - rc);                    # propagate -rc as exit
+```
+
+```
+$ ssh cass 'cmd /v /c "mkdir_rc.exe & echo exit=!errorlevel!"'
+exit=38                  # = -(-38), consumer's if (rc < 0) fires cleanly
+```
+
+No more STATUS_ACCESS_VIOLATION for `syscall(83)` / `syscall(87)`
+callers. ai-hwaccel still hits `STATUS_ILLEGAL_INSTRUCTION`
+on their `syscall(89)` (readlink) — consumer-side
+`#ifdef CYRIUS_TARGET_WIN` gate is the right fix for that
+(readlink has no clean Windows equivalent).
+
+### Roadmap shifts
+
+Each subsequent pin shifts forward by 1:
+- v5.11.23 → NEW: EOPEN_PE + ECREATEDIR/EDELETEF widening fix
+- v5.11.24: `#derive(accessors)` cap (was .23)
+- v5.11.25: per-repo Part 2 CLI dispatcher (was .24)
+- v5.11.26: per-repo Part 3 `cyriusly use --global` (was .25)
+- v5.11.27-35: OPEN (9 slots; was 10 pre-shift)
+
+### Files
+
+- `src/backend/pe/emit.cyr` — `_pe_ensure_createdir` +
+  `_pe_ensure_deletef` (~25 LOC).
+- `src/frontend/parse_expr.cyr` — sc_num 83 + 87 dispatch +
+  updated warning text (~25 LOC + comment).
+- `src/backend/x86/emit.cyr` — `ECREATEDIR_PE` + `EDELETEF_PE`
+  placeholder bodies (~25 LOC each).
+- `docs/development/roadmap.md` — slot map shift +
+  v5.11.22 detail block + new v5.11.23 detail with full
+  acceptance bar.
+- `docs/development/issues/2026-05-11-ai-hwaccel-cc5-win-pe-exit-propagation.md`
+  → archived.
+
+### Verification
+
+- cc5 self-host byte-identical at **806,104 B** (+1,648 B
+  from emit code + dispatch + warning text).
+- `cyrius check` 66/66 green.
+- `cyrius test` 147/147 green.
+- Cass cross-host smoke: placeholder returns -ENOSYS cleanly;
+  no AV.
+
 ## [5.11.21] — 2026-05-11
 
 **0-call public stdlib fn downstream survey** — closes the
