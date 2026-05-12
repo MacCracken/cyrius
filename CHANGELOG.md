@@ -6,6 +6,82 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.27] — 2026-05-12
+
+**aarch64-native build repair**. Two stale-fork bugs latent since
+the v5.5.16 target-predefine split blocked the entire native
+aarch64 toolchain path. Surfaced when v5.11.27 entered as the
+bote parser quirk slot and the `ssh pi to verify aarch64 native`
+premise-check on a fresh `cc5-native-aarch64` SIGILLed at first
+`alloc()` call. Roadmap re-pinned mid-slot — original parser
+quirk slipped to v5.11.28.
+
+### (1) Missing target predefine in `main_aarch64_native.cyr`
+
+`src/main_aarch64.cyr:148-159` (cross-compiler, x86 host emitting
+aarch64) has shipped a `CYRIUS_MACHO_ARM` env-driven
+`PP_PREDEFINE(CYRIUS_TARGET_LINUX|MACOS)` block since v5.5.16.
+The native variant (`src/main_aarch64_native.cyr`, aarch64 host
+emitting aarch64) only predefined `CYRIUS_ARCH_AARCH64` +
+`CYRIUS_HAS_VAL_SIMD_PARAMS` — the LINUX/MACOS dispatch never
+made it across. Effect: every `#ifdef CYRIUS_TARGET_LINUX` block
+in `lib/` (alloc, syscalls, vec, …) was dead under a
+native-aarch64 build, so `alloc`/`alloc_init`/`vec_*` were
+undefined and any non-trivial program SIGILL'd at first call.
+
+Fix: ported the dispatch block verbatim into
+`src/main_aarch64_native.cyr:127-141`.
+
+### (2) `_init_cyrius_lib` + `_check_shadow_lib` bare `syscall(2, …)` on aarch64
+
+`src/frontend/lex.cyr:221, :325, :356` used literal `syscall(2,
+path, 0, 0)` to open `/proc/self/environ` (and probe cwd `lib/`)
+during `_init_cyrius_lib`. The aarch64 backend
+(`src/backend/aarch64/emit.cyr:495-496`) translates syscall
+number 2 → 56 (openat), but does not reshuffle args; openat
+wants `(dfd, path, flags)` with `AT_FDCWD = -100` as dfd, so the
+string pointer ended up in dfd and NULL in path → EFAULT.
+
+Visible via strace on pi:
+
+```
+openat(4775887, NULL, O_RDONLY) = -1 EFAULT (Bad address)
+```
+
+With `efd < 0`, `_init_cyrius_lib` bailed silently before reading
+HOME, leaving `_cyrius_lib_len == 0`, so READFILE's
+version-pinned-lib fallback (`$HOME/.cyrius/versions/<v>/lib/`)
+was dead — any include not satisfied by cwd `lib/` failed.
+
+Fix: matched READFILE's existing `if (SYS_OPEN == 2) { … } else
+{ syscall(SYS_OPEN, 0 - 100, …); }` branch pattern at the three
+bare-syscall sites in `lex.cyr`.
+
+### Verify
+
+- x86_64 host: `cc5 == cc5b` byte-identical fixpoint (809528 B).
+- pi (aarch64 generic Linux): rebuilt
+  `cc5-native-aarch64` (590976 B), shipped, compiled +
+  ran an `alloc + vec_push + vec_get + assert + assert_summary`
+  program from both a cwd-with-lib and a cwd-without-lib (proving
+  the version-pinned-lib fallback now fires) — both `exit=0`,
+  output `1 passed, 0 failed`.
+- `sh scripts/check.sh`: 67/67 PASS.
+- `cyrius test`: 148/148 PASS.
+
+### Latency note
+
+The bug had been latent since v5.5.16 (six minors, ~150 patches).
+`build/cc5_aarch64` (the cross-compiler) shipped fine because
+its main entry runs on x86 host where syscall number 2 IS open
+and lib dispatch was correctly carried in `main_aarch64.cyr`.
+`build/cc5-native-aarch64` is only relevant for true aarch64
+self-host workflows on aarch64 hardware, which neither check.sh
+nor cyrius test exercise — so the gate gap is the same kind that
+hid the v5.11.23 Win64 RSP alignment bug for six minors.
+v5.11.37 (`cc5_aarch64_native cross-bin ship`) will close this
+gate gap with a pi-side smoke job in CI.
+
 ## [5.11.26] — 2026-05-12
 
 **Per-repo isolation Part 3: `cyriusly use --global` flag +

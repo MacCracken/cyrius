@@ -126,6 +126,23 @@ SBL(S, bl);
 # Preprocess includes
 _init_cyrius_lib();
 PP_PREDEFINE(S, "CYRIUS_ARCH_AARCH64");
+# v5.11.27 — port the env-driven CYRIUS_MACHO_ARM dispatch block that
+# main_aarch64.cyr:148-159 has carried since v5.5.16. Without it
+# lib/alloc.cyr's `#ifdef CYRIUS_TARGET_LINUX` branch is dead → alloc
+# undefined → every aarch64-native binary SIGILLs at first alloc().
+# See CHANGELOG [5.11.27].
+var _macho_arm_env_early = _read_env("CYRIUS_MACHO_ARM");
+var _is_macho_arm_build = 0;
+if (_macho_arm_env_early != 0) {
+    if (load8(_macho_arm_env_early) == 49 && load8(_macho_arm_env_early + 1) == 0) {
+        _is_macho_arm_build = 1;
+    }
+}
+if (_is_macho_arm_build == 1) {
+    PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
+} else {
+    PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
+}
 # v5.10.39 — non-PE targets support f64v2/f64v4 value-form param ABI.
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 PREPROCESS(S);

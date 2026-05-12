@@ -5,6 +5,33 @@
 
 ## Version
 
+**5.11.27** (shipped 2026-05-12 — **aarch64-native build
+repair; 2 stale-fork bugs latent since v5.5.16**). Pre-empted
+the v5.11.27=bote-parser-quirk slot mid-flight after `ssh pi to
+verify aarch64 native` premise-check on a freshly built
+`/tmp/cc5-native-aarch64` SIGILL'd at first `alloc()` call.
+(1) `src/main_aarch64_native.cyr` was missing the
+`CYRIUS_TARGET_LINUX`/`CYRIUS_TARGET_MACOS` predefine block
+that `main_aarch64.cyr:148-159` shipped at v5.5.16 — so every
+`#ifdef CYRIUS_TARGET_LINUX` in `lib/` was dead and
+`alloc`/`vec_*` undefined under native-aarch64 build.
+(2) `_init_cyrius_lib` + `_check_shadow_lib` (lex.cyr:221, :325,
+:356) used bare `syscall(2, path, …)`; aarch64's xlat changed
+2→56 but didn't reshuffle args, so path landed in dfd slot →
+EFAULT → `_cyrius_lib_len` stayed 0 → version-pinned-lib fallback
+dead → any include not in cwd `lib/` failed. Roadmap re-pinned
+mid-slot: parser quirk slipped to v5.11.28; 4-slot OPEN buffer
+remains (.32-.35). Pi e2e: compiled+ran an
+alloc+vec_push+vec_get+assert program from cwd-without-lib
+(version-pinned-lib fallback now fires), `exit=0`,
+`1 passed, 0 failed`. cc5 byte-identical at **809,528 B**
+(+288 B from 5.11.26's 809,240 — the new predefine block
++ 3 syscall-branch sites); check.sh 67/67; cyrius test
+148/148. Latency 6 minors, ~150 patches — same kind of
+gate-gap as v5.11.23's Win64 RSP alignment; v5.11.37
+(cc5_aarch64_native cross-bin ship) will add the pi-side
+CI smoke that closes the gap.
+
 **5.11.26** (shipped 2026-05-12 — **Per-repo isolation Part 3:
 `cyriusly use --global` flag + per-repo default; closes 3-part
 arc**). `cyriusly use 5.11.X` (no flag) now writes `cyrius.cyml`'s

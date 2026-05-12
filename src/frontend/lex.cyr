@@ -218,7 +218,13 @@ fn _init_cyrius_lib(): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     # Read /proc/self/environ to find HOME=
     var ebuf[4096];
-    var efd = syscall(2, "/proc/self/environ", 0, 0);
+    # v5.11.27: aarch64 has only openat (syscall 56); literal syscall(2,...)
+    # gets xlat'd 2→56 but cyrius doesn't reshuffle args, so path lands in
+    # dfd slot and dfd=0 in path → EFAULT. Match READFILE's branch — when
+    # SYS_OPEN != 2 we're on openat and must pass AT_FDCWD=-100 first.
+    var efd = 0;
+    if (SYS_OPEN == 2) { efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
+    else { efd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
     if (efd < 0) { return 0; }
     var elen = syscall(0, efd, &ebuf, 4096);
     syscall(3, efd);
@@ -316,7 +322,10 @@ fn _check_shadow_lib(): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     # Opt-out: if CYRIUS_NO_WARN_SHADOW_LIB=1, skip the note.
     var _shadow_env_buf[4096];
-    var _shadow_efd = syscall(2, "/proc/self/environ", 0, 0);
+    # v5.11.27: aarch64 openat ABI — see _init_cyrius_lib above.
+    var _shadow_efd = 0;
+    if (SYS_OPEN == 2) { _shadow_efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
+    else { _shadow_efd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
     if (_shadow_efd < 0) { return 0; }
     var _shadow_elen = syscall(0, _shadow_efd, &_shadow_env_buf, 4096);
     syscall(3, _shadow_efd);
@@ -347,7 +356,10 @@ fn _check_shadow_lib(): i64 {
         _shadow_ei = _shadow_ei + 1;
     }
     # Probe cwd `lib/` via O_RDONLY|O_DIRECTORY (0x10000).
-    var _shadow_fd = syscall(2, "lib", 0x10000, 0);
+    # v5.11.27: aarch64 openat ABI — see _init_cyrius_lib above.
+    var _shadow_fd = 0;
+    if (SYS_OPEN == 2) { _shadow_fd = syscall(SYS_OPEN, "lib", 0x10000, 0); }
+    else { _shadow_fd = syscall(SYS_OPEN, 0 - 100, "lib", 0x10000, 0); }
     if (_shadow_fd < 0) { return 0; }
     syscall(3, _shadow_fd);
     # cwd has lib/. Emit the note.
