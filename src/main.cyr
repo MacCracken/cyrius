@@ -86,21 +86,21 @@
 #   0x193400  local_slice_widths          v5.8.14 §6 — slice element widths (576 × 8B → ends 0x194600)
 #
 # --- Function tables (relocated v4.7.1 — caps raised 2048 → 4096) ---
-#   0x128A000 fn_names      [32768]       4096 function name offsets
-#   0x1292000 fn_offsets    [32768]       4096 function code offsets
-#   0x129A000 fn_params     [32768]       4096 function param counts
-#   0x12A2000 fn_body_start [32768]       4096 inline body start
-#   0x12AA000 fn_body_end   [32768]       4096 inline body end
-#   0x12B2000 fn_inline     [32768]       4096 inline flags
-#   0x12BA000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
-#   0x12C2000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
+#   0x12CA000 fn_names      [32768]       4096 function name offsets
+#   0x12DA000 fn_offsets    [32768]       4096 function code offsets
+#   0x12EA000 fn_params     [32768]       4096 function param counts
+#   0x12FA000 fn_body_start [32768]       4096 inline body start
+#   0x130A000 fn_body_end   [32768]       4096 inline body end
+#   0x131A000 fn_inline     [32768]       4096 inline flags
+#   0x132A000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
+#   0x133A000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
 # Function tables live back-to-back in the 256 KB band ending at
 # 0x11CA000 (the IR region's start). Sized for 4096 fns × 8 bytes per
 # field × 8 fields.
 #
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
-#   0x1C8000  fn_regalloc   [32768]       4096 per-fn #regalloc flags (v4.8.4-alpha4)
+#   0x14A000  fn_regalloc   [65536]       8192 per-fn #regalloc flags (v4.8.4-alpha4; v5.11.19 doubled + relocated 0x1C8000 → 0x14A000)
 #   0x1D8000  enum_const_val[8192]        1024 slots × 8 B — PARSE_ENUM_DEF
 #                                        stores (1<<63)|val per variant; read
 #                                        by PARSE_FACTOR to const-fold enum
@@ -121,13 +121,13 @@
 #                                        relocation collection (DIR64 sites),
 #                                        populated by _pe_layout + read by
 #                                        EMITPE_EXEC's .reloc writer (v5.5.35)
-#   0x1EC000  fn_ret_sid    [32768]       4096 × 8B — per-fn struct return id
+#   0x15A000  fn_ret_sid    [65536]       8192 × 8B — per-fn struct return id (v5.11.19 doubled + relocated 0x1EC000 → 0x15A000)
 #                                        (0 = scalar return, sid = struct;
 #                                        set by PARSE_FN `: StructName` annot,
 #                                        read by PARSE_RETURN + call-site to
 #                                        emit Win64 hidden-RCX / SysV-RDI
 #                                        retptr convention (v5.5.36 Phase 2b)
-#   0x1F4000  fn_variadic   [32768]       4096 × 8B — per-fn variadic flag
+#   0x16A000  fn_variadic   [65536]       8192 × 8B — per-fn variadic flag (v5.11.19 doubled + relocated 0x1F4000 → 0x16A000)
 #                                        (0 = fixed-arity, 1 = `fn f(a, ...)`
 #                                        took an ellipsis tail); set by
 #                                        PARSE_FN's param loop on seeing
@@ -136,7 +136,7 @@
 #                                        float-dup when an arg is f64;
 #                                        callee-side save-area prologue +
 #                                        va_arg stdlib is Phase 3-full.
-#   0x1FC000  fn_flags      [32768]       4096 × 8B — per-fn attribute bits
+#   0x17A000  fn_flags      [65536]       8192 × 8B — per-fn attribute bits (v5.11.19 doubled + relocated 0x1FC000 → 0x17A000)
 #                                        (v5.6.3). bit0 = #must_use (warn
 #                                        when return is dropped at
 #                                        expression-statement level); bit1
@@ -185,14 +185,14 @@
 #                                        tagging. v5.8.24 moved 0x214808
 #                                        → 0x216008 + grew 256→1024 with
 #                                        the cap bump.
-#   0x104000 fn_deprecated_msg [32768]   4096 × 8B — per-fn deprecation
+#   0x100000 fn_deprecated_msg [65536]   8192 × 8B — per-fn deprecation (v5.11.19 doubled + relocated 0x104000 → 0x100000)
 #                                        message token value (v5.6.4). 0 =
 #                                        no message; nonzero = (offset<<16)
 #                                        | length into str_data at 0x21A000
 #                                        (same encoding as string-literal
 #                                        token values). Parallel to
 #                                        fn_flags bit 2.
-#   0x10C000 fn_name_hash  [16384]       8192 slots × 2B — FNV-1a open-
+#   0x110000 fn_name_hash  [16384]       8192 slots × 2B — FNV-1a open- (v5.11.19 relocated 0x10C000 → 0x110000; size unchanged to preserve mask 8191 and fit available gap)
 #                                        addressing hash of fn-name strings
 #                                        at S+0x60000+noff → (fi+1). 0 =
 #                                        empty slot (zero-init heap makes
@@ -202,7 +202,7 @@
 #                                        hot path from O(N) linear scan to
 #                                        O(1) expected. Use-alias fallback
 #                                        remains linear in FINDFN. v5.6.5.
-#   0x110000 fn_start_hash [16384]       8192 slots × 2B — golden-ratio
+#   0x114000 fn_start_hash [16384]       8192 slots × 2B — golden-ratio (v5.11.19 relocated 0x110000 → 0x114000; size unchanged to preserve mask 8191 and fit available gap)
 #                                        Knuth-multiplicative hash of
 #                                        fn_offsets[fi] → (fi+1). 0 = empty.
 #                                        Built once at fixup() entry with
@@ -262,17 +262,17 @@
 #   0x11CA000 struct_fnames [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
 #
 #   --- v5.10.24 REAL TYPE SYSTEM Phase 2 — extended param-type masks ---
-#   (Mirror of fn_param_str_mask at 0x12BA000 — bit N set = param N has the
+#   (Mirror of fn_param_str_mask at 0x132A000 — bit N set = param N has the
 #   given type annotation. Used by PARSE_FNCALL call-site type check to fire
 #   warnings on type mismatches. Reused the 256 KB v5.5.37-retired gap.)
 #   0x124A000 fn_param_cstring_mask [32768] 4096 cstring-param bitmasks (v5.10.24)
-#   0x1252000 fn_param_result_mask  [32768] 4096 Result-param bitmasks  (v5.10.24)
-#   0x125A000 fn_param_option_mask  [32768] 4096 Option-param bitmasks  (v5.10.24)
-#   0x1262000 fn_param_tagged_mask  [32768] 4096 Tagged-param bitmasks  (v5.10.24)
-#   0x126A000 fn_overload_str       [32768] 4096 fi+1 of <name>_str  overload (v5.10.25)
-#   0x1272000 fn_overload_int       [32768] 4096 fi+1 of <name>_int  overload (v5.10.25)
-#   0x127A000 fn_overload_cstr      [32768] 4096 fi+1 of <name>_cstr overload (v5.10.25)
-#   0x1282000 fn_param_simd_mask    [32768] 4096 per-fn SIMD-param class mask (v5.10.38).
+#   0x125A000 fn_param_result_mask  [32768] 4096 Result-param bitmasks  (v5.10.24)
+#   0x126A000 fn_param_option_mask  [32768] 4096 Option-param bitmasks  (v5.10.24)
+#   0x127A000 fn_param_tagged_mask  [32768] 4096 Tagged-param bitmasks  (v5.10.24)
+#   0x128A000 fn_overload_str       [32768] 4096 fi+1 of <name>_str  overload (v5.10.25)
+#   0x129A000 fn_overload_int       [32768] 4096 fi+1 of <name>_int  overload (v5.10.25)
+#   0x12AA000 fn_overload_cstr      [32768] 4096 fi+1 of <name>_cstr overload (v5.10.25)
+#   0x12BA000 fn_param_simd_mask    [32768] 4096 per-fn SIMD-param class mask (v5.10.38).
 #                                                  2 bits per param: 00 int-class,
 #                                                  01 f64v2 (1 XMM reg slot),
 #                                                  10 f64v4 (2 XMM reg slots).
@@ -281,14 +281,14 @@
 #                                                  int-class arg regs.
 #
 # --- cc5 IR region (v5.0.0) ---
-#   0x12CA000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
-#   0x16CA000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
-#   0x17CA000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0x17CB000 ir_edges     [262144]      32768 CFG edges × 8 bytes
-#   0x180B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
+#   0x134A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
+#   0x174A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
+#   0x184A000 ir_state     [4096]        IR builder state (counters, current BB)
+#   0x184B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
+#   0x188B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
 #
 # --- Fixup table — NEW slot (v5.5.37) ---
-#   0x190B000 fixup_tbl    [16777216]    1048576 entries × 16 bytes
+#   0x198B000 fixup_tbl    [16777216]    1048576 entries × 16 bytes
 #                                        (cap raised 32768 → 262144 in
 #                                        v5.7.1, then 262144 → 1048576
 #                                        in v5.7.7 — sandhi consumers
@@ -296,7 +296,7 @@
 #                                        codegen burn fixups faster
 #                                        than the 262K ceiling allows).
 #
-#   0x290B000 brk-fixup-end               39 MB at end of fixup_tbl
+#   0x298B000 brk-fixup-end               39 MB at end of fixup_tbl
 #                                        (was 0x1D0B000, +12 MB for
 #                                        v5.7.7 fixup-cap 4× bump)
 #   0x368C000 brk-with-ts-frontend        ~52.5 MB — TS frontend heap
@@ -493,9 +493,9 @@ SBL(S, bl);
 # detect a .ts source and verify it lexes cleanly via cc5 directly,
 # without forcing every consumer to go through a separate test driver.
 if (_ts_lex_only_mode == 1) {
-    var _ts_n = TS_LEX(S + 0x290B000, S, bl);
+    var _ts_n = TS_LEX(S + 0x298B000, S, bl);
     if (_ts_n < 0) {
-        var _ts_err = TS_GETERR(S + 0x290B000);
+        var _ts_err = TS_GETERR(S + 0x298B000);
         syscall(SYS_WRITE, 2, "ts lex error: code ", 19);
         var _eb[3];
         if (_ts_err >= 10) {
@@ -544,20 +544,20 @@ fn _emit_decimal(n): i64 {
 }
 
 if (_ts_parse_only_mode == 1) {
-    var _tp_lex_n = TS_LEX(S + 0x290B000, S, bl);
+    var _tp_lex_n = TS_LEX(S + 0x298B000, S, bl);
     if (_tp_lex_n < 0) {
         syscall(SYS_WRITE, 2, "ts lex error before parse\n", 26);
         syscall(SYS_EXIT, 1);
     }
-    var _tp_parse_n = TS_PARSE(S + 0x290B000);
+    var _tp_parse_n = TS_PARSE(S + 0x298B000);
     if (_tp_parse_n < 0) {
-        var _tp_err = TS_PARSE_GETERR(S + 0x290B000);
-        var _tp_etok = TS_PARSE_GETERR_TOK(S + 0x290B000);
+        var _tp_err = TS_PARSE_GETERR(S + 0x298B000);
+        var _tp_etok = TS_PARSE_GETERR_TOK(S + 0x298B000);
         # current parser TOK_IDX — most accurate since not all err
         # sites set ERR_TOK_IDX. Emit both for triage.
-        var _tp_cur = load64(S + 0x290B000 + 0xD80000 + 8);   # TS_PS_TOK_IDX = 8
-        var _tp_line = load64(S + 0x290B000 + 0x100000 + _tp_cur * 8);
-        var _tp_type = load64(S + 0x290B000 + 0x000000 + _tp_cur * 8);
+        var _tp_cur = load64(S + 0x298B000 + 0xD80000 + 8);   # TS_PS_TOK_IDX = 8
+        var _tp_line = load64(S + 0x298B000 + 0x100000 + _tp_cur * 8);
+        var _tp_type = load64(S + 0x298B000 + 0x000000 + _tp_cur * 8);
         syscall(SYS_WRITE, 2, "ts parse error: code=", 21);
         _emit_decimal(_tp_err);
         syscall(SYS_WRITE, 2, " line=", 6);
@@ -1152,7 +1152,7 @@ while (topgo == 1) {
                                             # callee-saved-reg state to. Leaving the flag armed would
                                             # leak it to whichever fn lands next.
                                             if (_regalloc_pending == 1) { _regalloc_pending = 0; }
-                                            S64(S + 0x1292000 + stub_fi * 8, GCP(S));
+                                            S64(S + 0x12DA000 + stub_fi * 8, GCP(S));
                                             # Emit stub: xor eax, eax; ret (3 bytes)
                                             EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
                                             # Skip function body tokens
@@ -1232,9 +1232,9 @@ if (_prof_on == 1) { _prof_gvar_end = _prof_clock_ns(); }
 var wfi = 0;
 var wfc = GFNC(S);
 while (wfi < wfc) {
-    if (L64(S + 0x1292000 + wfi * 8) < 0) {
+    if (L64(S + 0x12DA000 + wfi * 8) < 0) {
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(S + 0x128A000 + wfi * 8));
+        PRSTR(S + 0x60000 + L64(S + 0x12CA000 + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -1275,7 +1275,7 @@ if (_epi_km_pre == 0) {
     var _main_fi = 0;
     var _main_found = 0 - 1;
     while (_main_fi < _main_fc) {
-        var _main_noff = L64(S + 0x128A000 + _main_fi * 8);
+        var _main_noff = L64(S + 0x12CA000 + _main_fi * 8);
         if (load8(S + 0x60000 + _main_noff)     == 109) {  # 'm'
             if (load8(S + 0x60000 + _main_noff + 1) == 97) {   # 'a'
                 if (load8(S + 0x60000 + _main_noff + 2) == 105) {  # 'i'
@@ -1291,7 +1291,7 @@ if (_epi_km_pre == 0) {
         _main_fi = _main_fi + 1;
     }
     if (_main_found >= 0) {
-        var _main_off = L64(S + 0x1292000 + _main_found * 8);
+        var _main_off = L64(S + 0x12DA000 + _main_found * 8);
         if (_main_off >= 0) {
             ECALLTO(S, _main_off);
         }
@@ -1454,7 +1454,7 @@ if (_stats_env != 0) {
     if (load8(_stats_env) == 49 && load8(_stats_env + 1) == 0) {
         syscall(SYS_WRITE, 2, "cyrius stats:\n", 14);
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, " / 4096\n",        8);
+        syscall(SYS_WRITE, 2, " / 8192\n",        8);
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
         syscall(SYS_WRITE, 2, " / 262144\n",     10);
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));
@@ -1472,11 +1472,11 @@ if (_stats_env != 0) {
 # Suppressed under CYRIUS_STATS=1 (already shown above) and under
 # `--version` short-circuit (handled before this point).
 if (_stats_env == 0) {
-    if (GFNC(S) * 100 / 4096 >= 85) {
+    if (GFNC(S) * 100 / 8192 >= 85) {
         syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
-        PRNUM(GFNC(S) * 100 / 4096);
+        PRNUM(GFNC(S) * 100 / 8192);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, "/4096) — split into compilation units soon\n", 44);
+        syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 44);
     }
     if (GNPOS(S) * 100 / 262144 >= 85) {
         syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);

@@ -265,7 +265,7 @@ fn RECFIX(S, idx): i64 {
         syscall(SYS_WRITE, 2, "error: fixup table full (262144)\n", 33);
         syscall(SYS_EXIT, 1);
     }
-    var addr = S + 0x190B000 + fc * 16;
+    var addr = S + 0x198B000 + fc * 16;
     S64(addr, GCP(S));
     S64(addr + 8, idx);
     SFCNT(S, fc + 1);
@@ -477,7 +477,7 @@ fn ESADDR(S, soff): i64 {
     if (_IS_OBJ(S) == 1) {
         # LEA rax, [rip+disp32]: 48 8D 05 <rel32>
         EB(S, 0x48); EB(S, 0x8D); EB(S, 0x05);
-        var faddr = S + 0x190B000 + fc * 16;
+        var faddr = S + 0x198B000 + fc * 16;
         S64(faddr, GCP(S));
         S64(faddr + 8, (1 << 56) | soff);
         SFCNT(S, fc + 1);
@@ -485,7 +485,7 @@ fn ESADDR(S, soff): i64 {
         return 0;
     }
     E2(S, 0xB848);
-    var faddr = S + 0x190B000 + fc * 16;
+    var faddr = S + 0x198B000 + fc * 16;
     S64(faddr, GCP(S));
     S64(faddr + 8, (1 << 56) | soff);
     SFCNT(S, fc + 1);
@@ -1051,7 +1051,7 @@ fn ECALLFIX(S, fnidx): i64 {
         syscall(SYS_WRITE, 2, "error: fixup table full (262144)\n", 33);
         syscall(SYS_EXIT, 1);
     }
-    var faddr = S + 0x190B000 + fc * 16;
+    var faddr = S + 0x198B000 + fc * 16;
     S64(faddr, poff);
     S64(faddr + 8, (2 << 56) | fnidx);
     SFCNT(S, fc + 1);
@@ -1309,7 +1309,7 @@ fn ETAILJMP(S, fnidx): i64 {
         syscall(SYS_WRITE, 2, "error: fixup table full (262144)\n", 33);
         syscall(SYS_EXIT, 1);
     }
-    var faddr = S + 0x190B000 + fc * 16;
+    var faddr = S + 0x198B000 + fc * 16;
     S64(faddr, poff);
     S64(faddr + 8, (2 << 56) | fnidx);
     SFCNT(S, fc + 1);

@@ -384,7 +384,7 @@ fn _pe_iat_fixup_add(S, coff, imp_idx): i64 {
         "error: fixup table full (262144)\n", 33);
         syscall(SYS_EXIT, 1);
     }
-    var faddr = S + 0x190B000 + fc * 16;
+    var faddr = S + 0x198B000 + fc * 16;
     SFCNT(S, fc + 1);
     S64(faddr, coff);
     S64(faddr + 8, (4 << 56) | imp_idx);
@@ -527,10 +527,10 @@ fn _pe_layout(S): i64 {
     var rl_prev = 0;
     var rl_shift = 0;
     while (rl_fi < rl_fcnt) {
-        rl_raw = L64(S + 0x190B000 + rl_fi * 16 + 8);
+        rl_raw = L64(S + 0x198B000 + rl_fi * 16 + 8);
         rl_ft = rl_raw >> 56;
         if (rl_ft == 0 || rl_ft == 1 || rl_ft == 3) {
-            rl_coff = L64(S + 0x190B000 + rl_fi * 16);
+            rl_coff = L64(S + 0x198B000 + rl_fi * 16);
             # Find insertion index (first slot where stored > rl_coff)
             rl_k = _pe_reloc_count;
             var rl_j = 0;

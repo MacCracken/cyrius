@@ -34,7 +34,7 @@ fn FNV1A_NOFF(S, noff): i64 {
     return h;
 }
 
-# v5.6.5 O1: insert (noff → fi) into fn_name_hash at 0x10C000 via
+# v5.6.5 O1: insert (noff → fi) into fn_name_hash at 0x110000 via
 # linear probing. Stored value is fi+1 so 0 marks empty (zero-init
 # heap gives us free initialization). Called from REGFN after the
 # fn_names entry is written. Load factor 0.5 at 4096-fn cap means
@@ -42,10 +42,10 @@ fn FNV1A_NOFF(S, noff): i64 {
 fn _REGFN_HASH(S, noff, fi): i64 {
     var h = FNV1A_NOFF(S, noff);
     var slot = h & 8191;
-    while (load16(S + 0x10C000 + slot * 2) != 0) {
+    while (load16(S + 0x110000 + slot * 2) != 0) {
         slot = (slot + 1) & 8191;
     }
-    store16(S + 0x10C000 + slot * 2, fi + 1);
+    store16(S + 0x110000 + slot * 2, fi + 1);
     return 0;
 }
 
@@ -92,15 +92,15 @@ fn _OVERLOAD_SUFFIX(S, noff): i64 {
 # Register new function, return index
 fn REGFN(S, noff): i64 {
     var fc = GFNC(S);
-    if (fc >= 4096) {
+    if (fc >= 8192) {
         syscall(SYS_WRITE, 2, "error: function table full (", 28);
         PRNUM(fc);
-        syscall(SYS_WRITE, 2, "/4096) — split into separate compilation units\n", 48);
+        syscall(SYS_WRITE, 2, "/8192) — split into separate compilation units\n", 48);
         syscall(SYS_EXIT, 1);
     }
-    S64(S + 0x128A000 + fc * 8, noff);
-    S64(S + 0x1292000 + fc * 8, 0 - 1);
-    S64(S + 0x129A000 + fc * 8, 0);
+    S64(S + 0x12CA000 + fc * 8, noff);
+    S64(S + 0x12DA000 + fc * 8, 0 - 1);
+    S64(S + 0x12EA000 + fc * 8, 0);
     SFNC(S, fc + 1);
     _REGFN_HASH(S, noff, fc);
     # v5.10.25 — auto-register overload mapping in BOTH directions
@@ -124,9 +124,9 @@ fn REGFN(S, noff): i64 {
         var _ov_base_len = _ov_my_len - _ov_suffix_len;
         var _ov_base_fi = _FINDFN_CSTR(S, _ov_p, _ov_base_len);
         if (_ov_base_fi >= 0) {
-            var _ov_region = 0x126A000;
-            if (_ov_kind == 2) { _ov_region = 0x1272000; }
-            if (_ov_kind == 3) { _ov_region = 0x127A000; }
+            var _ov_region = 0x128A000;
+            if (_ov_kind == 2) { _ov_region = 0x129A000; }
+            if (_ov_kind == 3) { _ov_region = 0x12AA000; }
             S64(S + _ov_region + _ov_base_fi * 8, fc + 1);
         }
     }
@@ -136,7 +136,7 @@ fn REGFN(S, noff): i64 {
     if (_ov_kind == 0) {
         var _rv_efi = 0;
         while (_rv_efi < fc) {
-            var _rv_en = L64(S + 0x128A000 + _rv_efi * 8);
+            var _rv_en = L64(S + 0x12CA000 + _rv_efi * 8);
             var _rv_ep = S + 0x60000 + _rv_en;
             var _rv_elen = 0;
             while (load8(_rv_ep + _rv_elen) != 0) { _rv_elen = _rv_elen + 1; }
@@ -156,14 +156,14 @@ fn REGFN(S, noff): i64 {
                         if (load8(_rv_ep + _ov_my_len + 1) == 115) {
                             if (load8(_rv_ep + _ov_my_len + 2) == 116) {
                                 if (load8(_rv_ep + _ov_my_len + 3) == 114) {
-                                    S64(S + 0x126A000 + fc * 8, _rv_efi + 1);
+                                    S64(S + 0x128A000 + fc * 8, _rv_efi + 1);
                                 }
                             }
                         }
                         if (load8(_rv_ep + _ov_my_len + 1) == 105) {
                             if (load8(_rv_ep + _ov_my_len + 2) == 110) {
                                 if (load8(_rv_ep + _ov_my_len + 3) == 116) {
-                                    S64(S + 0x1272000 + fc * 8, _rv_efi + 1);
+                                    S64(S + 0x129A000 + fc * 8, _rv_efi + 1);
                                 }
                             }
                         }
@@ -173,7 +173,7 @@ fn REGFN(S, noff): i64 {
                             if (load8(_rv_ep + _ov_my_len + 2) == 115) {
                                 if (load8(_rv_ep + _ov_my_len + 3) == 116) {
                                     if (load8(_rv_ep + _ov_my_len + 4) == 114) {
-                                        S64(S + 0x127A000 + fc * 8, _rv_efi + 1);
+                                        S64(S + 0x12AA000 + fc * 8, _rv_efi + 1);
                                     }
                                 }
                             }
@@ -188,7 +188,7 @@ fn REGFN(S, noff): i64 {
 }
 
 # Find function by name, return index or -1. v5.6.5 O1: hash-table
-# fast path first (FNV-1a at 0x10C000). Open-addressing with linear
+# fast path first (FNV-1a at 0x110000). Open-addressing with linear
 # probing; stop on empty slot or content match via STREQ. Fall through
 # to the use-alias linear scan only on hash miss — direct fn-name
 # lookups (the >99% hot path) hit the hash and return immediately.
@@ -197,11 +197,11 @@ fn FINDFN(S, noff): i64 {
     var slot = h & 8191;
     var probes = 0;
     while (probes < 8192) {
-        var stored = load16(S + 0x10C000 + slot * 2);
+        var stored = load16(S + 0x110000 + slot * 2);
         if (stored == 0) { probes = 8192; }
         else {
             var fi = stored - 1;
-            var sn = L64(S + 0x128A000 + fi * 8);
+            var sn = L64(S + 0x12CA000 + fi * 8);
             if (STREQ(S, sn, noff) == 1) { return fi; }
             slot = (slot + 1) & 8191;
             probes = probes + 1;
@@ -232,7 +232,7 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
     var fc = GFNC(S);
     var fi = 0;
     while (fi < fc) {
-        var sn = L64(S + 0x128A000 + fi * 8);
+        var sn = L64(S + 0x12CA000 + fi * 8);
         var i = 0;
         var eq = 1;
         while (i < str_len) {
@@ -356,7 +356,7 @@ fn PARSE_RETURN(S): i64 {
                             # `return helper(args);` bypasses PARSE_FNCALL but
                             # still needs the #io / #alloc check.
                             if (_cur_fn_is_pure == 1) {
-                                var _tcf = L64(S + 0x1FC000 + tcfi * 8);
+                                var _tcf = L64(S + 0x17A000 + tcfi * 8);
                                 if (_tcf & 16 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                     FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -374,7 +374,7 @@ fn PARSE_RETURN(S): i64 {
                             }
                             if (tcargc > 6) {
                                 # >6 args: normal call (stack args clobbered by tail call epilogue)
-                                var foff2 = L64(S + 0x1292000 + tcfi * 8);
+                                var foff2 = L64(S + 0x12DA000 + tcfi * 8);
                                 if (foff2 >= 0) { ECALLTO(S, foff2); }
                                 else { ECALLFIX(S, tcfi); }
                                 ECALLCLEAN(S, tcargc);
@@ -814,18 +814,18 @@ fn PARSE_FNCALL(S, noff): i64 {
         var _od_str_sid = _STR_SID(S);
         if (_od_str_sid > 0) {
             if (_od_arg_typ == 0 - _od_str_sid) {
-                var _od_str_target = L64(S + 0x126A000 + fi * 8);
+                var _od_str_target = L64(S + 0x128A000 + fi * 8);
                 if (_od_str_target > 0) {
                     fi = _od_str_target - 1;
-                    noff = L64(S + 0x128A000 + fi * 8);
+                    noff = L64(S + 0x12CA000 + fi * 8);
                 }
             }
         }
         if (_od_arg_scalar == 8) {
-            var _od_int_target = L64(S + 0x1272000 + fi * 8);
+            var _od_int_target = L64(S + 0x129A000 + fi * 8);
             if (_od_int_target > 0) {
                 fi = _od_int_target - 1;
-                noff = L64(S + 0x128A000 + fi * 8);
+                noff = L64(S + 0x12CA000 + fi * 8);
             }
         }
     }
@@ -867,7 +867,7 @@ fn PARSE_FNCALL(S, noff): i64 {
             var _po_fi = _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
             if (_po_fi >= 0) {
                 fi = _po_fi;
-                noff = L64(S + 0x128A000 + fi * 8);
+                noff = L64(S + 0x12CA000 + fi * 8);
             }
         }
     }
@@ -877,14 +877,14 @@ fn PARSE_FNCALL(S, noff): i64 {
     # is used). Line number is the paren-open we just consumed, which
     # matches the call-site. Message body lives in fn_deprecated_msg
     # as a string-literal token value (offset<<16 | length).
-    var _dep_flags = L64(S + 0x1FC000 + fi * 8);
+    var _dep_flags = L64(S + 0x17A000 + fi * 8);
     if (_dep_flags & 4 != 0) {
         syscall(SYS_WRITE, 2, "warning:", 8);
         FM_LOOKUP(S, GTLINE(S, GTI(S)));
         syscall(SYS_WRITE, 2, ": '", 3);
         PRSTR(S + 0x60000 + noff);
         syscall(SYS_WRITE, 2, "' is deprecated", 15);
-        var _dep_msg = L64(S + 0x104000 + fi * 8);
+        var _dep_msg = L64(S + 0x100000 + fi * 8);
         if (_dep_msg != 0) {
             var _dep_off = _dep_msg >> 16;
             var _dep_len = _dep_msg & 0xFFFF;
@@ -915,7 +915,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     }
     if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) {
                 # INLINE PATH: replay function body tokens at call site
-                var pc = L64(S + 0x129A000 + fi * 8);
+                var pc = L64(S + 0x12EA000 + fi * 8);
                 var saved_flc = GFLC(S);
                 # Allocate fresh frame slots for callee params
                 var p0_slot = saved_flc;
@@ -972,7 +972,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # ESTORESTACKPARM compensates for the reversed register assignment.
     # Auto-coerce string literals to Str for params annotated : Str.
     var argc = 0;
-    var smask = L64(S + 0x12BA000 + fi * 8);
+    var smask = L64(S + 0x132A000 + fi * 8);
     # v5.10.38 — caller-side SIMD-arg routing. Read the callee's
     # per-fn SIMD mask (2 bits per param: 00 int, 01 f64v2, 10 f64v4).
     # When non-zero, value-form SIMD args get loaded into XMM/V regs
@@ -980,7 +980,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # PCMPE) doesn't trample SIMD state. Scratch table records each
     # SIMD arg's (named_lli, simd_pc, class) so the second pass can
     # emit ELOAD_F64V2_TO_XMM / _F64V4_TO_XMM at the call site.
-    var _fc_simd_mask = L64(S + 0x1282000 + fi * 8);
+    var _fc_simd_mask = L64(S + 0x12BA000 + fi * 8);
     var _fc_simd_table[24];   # 8 args × 3 i64s = 24 slots
     var _fc_simd_count = 0;
     var _fc_simd_pc_caller = 0;
@@ -1125,7 +1125,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     EPUSHR(S);
                     ECALLPOPS(S, 1);
                     if (sf_fi >= 0) {
-                        var sfoff = L64(S + 0x1292000 + sf_fi * 8);
+                        var sfoff = L64(S + 0x12DA000 + sf_fi * 8);
                         if (sfoff >= 0) { ECALLTO(S, sfoff); }
                         else { ECALLFIX(S, sf_fi); }
                     }
@@ -1168,7 +1168,7 @@ fn PARSE_FNCALL(S, noff): i64 {
         }
         _fc_si = _fc_si + 1;
     }
-    var foff = L64(S + 0x1292000 + fi * 8);
+    var foff = L64(S + 0x12DA000 + fi * 8);
     if (foff >= 0) {
         ECALLTO(S, foff);
     } else {
@@ -1321,7 +1321,7 @@ fn PARSE_FN_DEF(S): i64 {
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
     else {
-        var _dup_off = L64(S + 0x1292000 + fi * 8);
+        var _dup_off = L64(S + 0x12DA000 + fi * 8);
         if (_dup_off >= 0) {
             syscall(SYS_WRITE, 2, "warning:", 8);
             FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -1431,16 +1431,16 @@ fn PARSE_FN_DEF(S): i64 {
     # v5.6.3: transfer any pending `#must_use` onto fn_flags[fi] bit 0.
     # Clear unconditionally (same stale-flag argument as #regalloc).
     if (_must_use_pending == 1) {
-        var _prev = L64(S + 0x1FC000 + fi * 8);
-        S64(S + 0x1FC000 + fi * 8, _prev | 1);
+        var _prev = L64(S + 0x17A000 + fi * 8);
+        S64(S + 0x17A000 + fi * 8, _prev | 1);
         _must_use_pending = 0;
     }
     # v5.6.4: transfer any pending `#deprecated("msg")` onto fn_flags
     # bit 2 + fn_deprecated_msg[fi]. Same stale-flag discipline.
     if (_deprecated_pending == 1) {
-        var _prev_d = L64(S + 0x1FC000 + fi * 8);
-        S64(S + 0x1FC000 + fi * 8, _prev_d | 4);
-        S64(S + 0x104000 + fi * 8, _deprecated_msg_pending);
+        var _prev_d = L64(S + 0x17A000 + fi * 8);
+        S64(S + 0x17A000 + fi * 8, _prev_d | 4);
+        S64(S + 0x100000 + fi * 8, _deprecated_msg_pending);
         _deprecated_pending = 0;
         _deprecated_msg_pending = 0;
     }
@@ -1449,21 +1449,21 @@ fn PARSE_FN_DEF(S): i64 {
     # bit 3 so PARSE_FNCALL can check it without re-loading fn_flags
     # for every call site (set here, reset at fn end below).
     if (_pure_pending == 1) {
-        var _prev_p = L64(S + 0x1FC000 + fi * 8);
-        S64(S + 0x1FC000 + fi * 8, _prev_p | 8);
+        var _prev_p = L64(S + 0x17A000 + fi * 8);
+        S64(S + 0x17A000 + fi * 8, _prev_p | 8);
         _pure_pending = 0;
     }
     if (_io_pending == 1) {
-        var _prev_i = L64(S + 0x1FC000 + fi * 8);
-        S64(S + 0x1FC000 + fi * 8, _prev_i | 16);
+        var _prev_i = L64(S + 0x17A000 + fi * 8);
+        S64(S + 0x17A000 + fi * 8, _prev_i | 16);
         _io_pending = 0;
     }
     if (_alloc_pending == 1) {
-        var _prev_a = L64(S + 0x1FC000 + fi * 8);
-        S64(S + 0x1FC000 + fi * 8, _prev_a | 32);
+        var _prev_a = L64(S + 0x17A000 + fi * 8);
+        S64(S + 0x17A000 + fi * 8, _prev_a | 32);
         _alloc_pending = 0;
     }
-    _cur_fn_is_pure = (L64(S + 0x1FC000 + fi * 8) >> 3) & 1;
+    _cur_fn_is_pure = (L64(S + 0x17A000 + fi * 8) >> 3) & 1;
     # v4.8.4-alpha5: mirror fn_regalloc[fi] into _cur_fn_regalloc so
     # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
     # the end of PARSE_FN_DEF.
@@ -1692,7 +1692,7 @@ fn PARSE_FN_DEF(S): i64 {
     }
     STI(S, _rs_save_ti);
     # Set fn offset to current CP
-    S64(S + 0x1292000 + fi * 8, GCP(S));
+    S64(S + 0x12DA000 + fi * 8, GCP(S));
     # Save compiler state
     var saved_lv = GLVAR(S);
     SINFN(S, 1);
@@ -2044,24 +2044,24 @@ fn PARSE_FN_DEF(S): i64 {
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    S64(S + 0x129A000 + fi * 8, pc);
+    S64(S + 0x12EA000 + fi * 8, pc);
     # Store Str param mask — bit N set = param N is : Str
-    S64(S + 0x12BA000 + fi * 8, str_mask);
+    S64(S + 0x132A000 + fi * 8, str_mask);
     # v5.10.24 — Phase 2 param-type masks. Same per-fn shape as
     # str_mask; PARSE_FNCALL reads them for call-site type checks.
     S64(S + 0x124A000 + fi * 8, cstring_mask);
-    S64(S + 0x1252000 + fi * 8, result_mask);
-    S64(S + 0x125A000 + fi * 8, option_mask);
-    S64(S + 0x1262000 + fi * 8, tagged_mask);
+    S64(S + 0x125A000 + fi * 8, result_mask);
+    S64(S + 0x126A000 + fi * 8, option_mask);
+    S64(S + 0x127A000 + fi * 8, tagged_mask);
     # v5.10.38 — typed-simd Phase 10. Per-fn SIMD-param mask: 2 bits
     # per param at offset pc*2. Default 0 means no SIMD params (legacy
     # behavior); non-zero triggers caller-side XMM-routing in
     # PARSE_FNCALL.
-    S64(S + 0x1282000 + fi * 8, simd_mask);
+    S64(S + 0x12BA000 + fi * 8, simd_mask);
     # v5.5.36 Phase 2b — optional `: StructName` return-type annotation:
     # `fn make(): Point { ... return p; }`. Sets fn_ret_sid[fi] = sid;
     # PARSE_RETURN + call-site consult it to emit the Win64 hidden-RCX /
-    # SysV-RDI retptr convention (see main.cyr heap map 0x1EC000).
+    # SysV-RDI retptr convention (see main.cyr heap map 0x15A000).
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);                         # consume ':'
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -2811,7 +2811,7 @@ fn PARSE_FN_DEF(S): i64 {
                     var _fcn = GFCNT(S);
                     var _fi = _fc0;
                     while (_fi < _fcn) {
-                        var _fa = S + 0x190B000 + _fi * 16;
+                        var _fa = S + 0x198B000 + _fi * 16;
                         var _fcp = L64(_fa);
                         var _fsh = 0;
                         var _ni2 = 0;

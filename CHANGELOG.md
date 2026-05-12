@@ -6,6 +6,145 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.19] — 2026-05-11
+
+**kybernet Part A.ii: fn_table 4096 → 8192 (heap-map refactor)** —
+closes [kybernet fn_table + identifier buffer caps](issues/archived/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md).
+The half deferred from v5.11.18 after audit revealed it's a heap-
+map refactor, not a literal bump. Highest-risk slot of v5.11.x cycle
+— self-hosting compiler heap layout shifts. Phased internally with
+cc5 byte-identical fixpoint check after each phase.
+
+### Refactor execution (4 phases, all byte-identical)
+
+**Phase 1: Relocate 7 scattered fn_* tables.** Each was adjacent to
+non-fn_* regions that collide at 2× size. New homes carved from the
+0x100000-0x118000 + 0x14A000-0x18A000 free gaps:
+
+| Table | Old offset | New offset | Size |
+|---|---:|---:|---:|
+| fn_deprecated_msg | 0x104000 | 0x100000 | 64KB (was 32KB) |
+| fn_name_hash | 0x10C000 | 0x110000 | 16KB (unchanged — preserves mask 8191) |
+| fn_start_hash | 0x110000 | 0x114000 | 16KB (unchanged) |
+| fn_regalloc | 0x1C8000 | 0x14A000 | 64KB (was 32KB) |
+| fn_ret_sid | 0x1EC000 | 0x15A000 | 64KB (was 32KB) |
+| fn_variadic | 0x1F4000 | 0x16A000 | 64KB (was 32KB) |
+| fn_flags | 0x1FC000 | 0x17A000 | 64KB (was 32KB) |
+
+Initial Phase 1 attempt put tables at 0xA0000-0xF0000 INSIDE the
+input_buf (0x0-0x100000) — the first compile worked (old cc5
+unaware) but the resulting binary HUNG on self-compile because
+input writes corrupted the relocated fn_* tables. Caught at fixpoint
+check, recovered without ship; second placement uses real gaps.
+
+**Phase 2 (IR + fixup shift +0x80000)**: ir_nodes / blocks / state /
+edges / cp / fixup_tbl / brk-fixup-end all shifted forward by
+0x80000 to free 0x12CA000-0x134A000 for primary block migration.
+
+| Region | Old offset | New offset |
+|---|---:|---:|
+| ir_nodes | 0x12CA000 | 0x134A000 |
+| ir_blocks (+ state slots) | 0x16CA000 | 0x174A000 |
+| ir_state | 0x17CA000 | 0x184A000 |
+| ir_edges | 0x17CB000 | 0x184B000 |
+| ir_cp | 0x180B000 | 0x188B000 |
+| fixup_tbl | 0x190B000 | 0x198B000 |
+| brk-fixup-end | 0x290B000 | 0x298B000 |
+
+**Phase 3 (primary block shift + double stride)**: 8 fn_* primary
+tables moved from 0x128A000 to 0x12CA000, stride 0x8000 → 0x10000.
+
+| Table | Old offset | New offset |
+|---|---:|---:|
+| fn_names | 0x128A000 | 0x12CA000 |
+| fn_offsets | 0x1292000 | 0x12DA000 |
+| fn_params | 0x129A000 | 0x12EA000 |
+| fn_body_start | 0x12A2000 | 0x12FA000 |
+| fn_body_end | 0x12AA000 | 0x130A000 |
+| fn_inline | 0x12B2000 | 0x131A000 |
+| fn_param_str_mask | 0x12BA000 | 0x132A000 |
+| fn_code_end | 0x12C2000 | 0x133A000 |
+
+**Phase 4 (extended block stride double)**: 8 fn_* extended tables
+stay rooted at 0x124A000 but stride doubles 0x8000 → 0x10000.
+Reverse-order sed pass to avoid replacement-collision between
+adjacent tables (table N's old offset = table N-1's new offset).
+
+| Table | Old offset | New offset |
+|---|---:|---:|
+| fn_param_cstring_mask | 0x124A000 | 0x124A000 (unchanged) |
+| fn_param_result_mask | 0x1252000 | 0x125A000 |
+| fn_param_option_mask | 0x125A000 | 0x126A000 |
+| fn_param_tagged_mask | 0x1262000 | 0x127A000 |
+| fn_overload_str | 0x126A000 | 0x128A000 |
+| fn_overload_int | 0x1272000 | 0x129A000 |
+| fn_overload_cstr | 0x127A000 | 0x12AA000 |
+| fn_param_simd_mask | 0x1282000 | 0x12BA000 |
+
+**Phase 5 (cap raise)**: REGFN cap check `4096 → 8192` +
+warning thresholds + error message literals in `parse_fn.cyr` +
+`main.cyr` + `main_win.cyr` + `util.cyr`.
+
+### Hash-table size decision
+
+`fn_name_hash` + `fn_start_hash` kept at 8192 slots × 2B (16KB
+each, mask 8191) — NOT doubled to 16384 slots. The available gap
+(369 KB across both sub-bands) couldn't fit 7 doubled tables PLUS
+doubled hash tables (384 KB needed). Trade-off: load factor
+degrades to 1.0 at the 8192-fn cap extreme (was 0.5 at 4096-fn
+cap), but kybernet's worst-case 3779 fns puts load factor at
+0.46 — well below probe-cliff territory. Most consumers won't hit
+>5000 fns; degradation only matters for the extreme edge.
+
+### Verification
+
+- **cc5 self-host byte-identical fixpoint at 804,456 B** (was
+  804,464 B pre-refactor; -8 bytes from string-literal length
+  delta). Byte-identical confirmed after each of the 5 phases —
+  zero broken intermediate states.
+- `cyrius check` 66/66 green.
+- `cyrius test` 147/147 green.
+- `CYRIUS_STATS=1` on cc5 self-compile shows `fn_table: 660 / 8192`
+  (was `/ 4096`) — new cap live.
+- api-surface snapshot exact match (3050 fns; no symbol changes).
+
+### Files (~85 hex-literal edits across 15 src/ files)
+
+- `src/main.cyr` / `src/main_win.cyr` — heap-map comments, cap-
+  check stats, warning thresholds.
+- `src/main_aarch64.cyr` / `src/main_aarch64_macho.cyr` /
+  `src/main_aarch64_native.cyr` — heap-map comments (stale aarch64
+  comments untouched — those reflect a pre-v4.7.1 layout that's
+  cosmetic, not load-bearing).
+- `src/frontend/parse_fn.cyr` — REGFN cap check + fn_name_hash refs.
+- `src/frontend/parse.cyr` — fn_flags + fn_regalloc refs.
+- `src/frontend/parse_expr.cyr` — IR refs.
+- `src/common/util.cyr` — GFRS/SFRS/GFVA/SFVA/GFRA/SFRA fn_*
+  accessors + parse-fail dump + heap-init scratch IR offsets.
+- `src/common/ir.cyr` — IR region refs (32 refs, largest file
+  surface).
+- `src/backend/x86/emit.cyr` — IR + fixup refs.
+- `src/backend/x86/fixup.cyr` — fn_start_hash + fixup_tbl refs.
+- `src/backend/aarch64/emit.cyr` + `src/backend/aarch64/fixup.cyr`
+  — IR + fixup refs.
+- `src/backend/pe/emit.cyr` — fixup_tbl refs.
+- `src/main_cx.cyr` — incidental IR comment.
+
+### Acceptance bar — kybernet 1.1.0
+
+The Part A.ii goal: kybernet 1.1.0 (full agnosys-full surface)
+compiles WITHOUT the `fn_table at 92%` warn-threshold note. With
+new cap 8192, the 85%-threshold warning fires at fn_count >= 6963.
+kybernet 1.1.0 measured 3779 fns = 46% of new cap. Well below.
+
+Combined with v5.11.18's identifier buffer raise (131072 → 262144,
+2× headroom), kybernet 1.1.0 should clear both warnings.
+
+### Roadmap state post-slot
+
+The kybernet bundle issue (both Part A halves now shipped) archives.
+v5.11.x continues with v5.11.20 syscall DRY consolidation next.
+
 ## [5.11.18] — 2026-05-11
 
 **kybernet bundle Part A.i + Part B: identifier buffer 2× +

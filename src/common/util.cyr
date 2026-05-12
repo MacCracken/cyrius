@@ -35,7 +35,7 @@ fn SVCNT(S, v): i64 {
 # at parse time. enum_variant_count[eid] tracks variants per
 # enum so PARSE_MATCH can verify all variants are covered.
 # Layout chosen 2026-05-03 — extends the metadata band past
-# fn_flags (0x1FC000+0x8000 = 0x204000); brk reaches 0x368C000.
+# fn_flags (0xF0000+0x10000 = 0x100000); brk reaches 0x368C000+0x80000 (v5.11.19 fn_table doubled).
 # v5.8.24 — enum cap bumped 256 → 1024. Audit data (2026-05-03):
 # stdlib alone has 299 enum decls; downstream vani/yukti/sigil/
 # patra/mabda compose to >250 in realistic multi-dep programs;
@@ -94,17 +94,17 @@ fn GRPC(S): i64 { return L64(S + 0x18E220); }
 fn SRPC(S, v): i64 { S64(S + 0x18E220, v); return 0; }
 # Inline metadata accessors (GFBE getter removed — unused;
 # SFBE is the only direction the inliner needs.)
-fn GFBS(S, fi): i64 { return L64(S + 0x12A2000 + fi * 8); }
-fn SFBS(S, fi, v): i64 { S64(S + 0x12A2000 + fi * 8, v); return 0; }
-fn SFBE(S, fi, v): i64 { S64(S + 0x12AA000 + fi * 8, v); return 0; }
-fn GFINL(S, fi): i64 { return L64(S + 0x12B2000 + fi * 8); }
-fn SFINL(S, fi, v): i64 { S64(S + 0x12B2000 + fi * 8, v); return 0; }
+fn GFBS(S, fi): i64 { return L64(S + 0x12FA000 + fi * 8); }
+fn SFBS(S, fi, v): i64 { S64(S + 0x12FA000 + fi * 8, v); return 0; }
+fn SFBE(S, fi, v): i64 { S64(S + 0x130A000 + fi * 8, v); return 0; }
+fn GFINL(S, fi): i64 { return L64(S + 0x131A000 + fi * 8); }
+fn SFINL(S, fi, v): i64 { S64(S + 0x131A000 + fi * 8, v); return 0; }
 # Fn code-end offset (v4.4.0 DCE). Set at end of PARSE_FN_DEF to the GCP
 # where the fn body finishes. Paired with fn code starts at 0x1C4000.
 # 0 means "not recorded" (fn was registered but never defined, or emitted
 # via a path that bypasses the recording site).
-fn GFNE(S, fi): i64 { return L64(S + 0x12C2000 + fi * 8); }
-fn SFNE(S, fi, v): i64 { S64(S + 0x12C2000 + fi * 8, v); return 0; }
+fn GFNE(S, fi): i64 { return L64(S + 0x133A000 + fi * 8); }
+fn SFNE(S, fi, v): i64 { S64(S + 0x133A000 + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 2b — per-fn struct return ID. 0 = scalar return,
 # sid = returns StructName. Set by PARSE_FN when signature has
@@ -112,18 +112,18 @@ fn SFNE(S, fi, v): i64 { S64(S + 0x12C2000 + fi * 8, v); return 0; }
 # the by-value copy and at call sites to pre-allocate caller-
 # side struct space + pass &space as hidden first arg in
 # RDI (SysV) or RCX (Win64).
-fn GFRS(S, fi): i64 { return L64(S + 0x1EC000 + fi * 8); }
-fn SFRS(S, fi, v): i64 { S64(S + 0x1EC000 + fi * 8, v); return 0; }
+fn GFRS(S, fi): i64 { return L64(S + 0x15A000 + fi * 8); }
+fn SFRS(S, fi, v): i64 { S64(S + 0x15A000 + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 3 — per-fn variadic marker. 0 = fixed-arity;
 # 1 = `fn f(a, ...)` (ellipsis terminator on the param list).
-fn GFVA(S, fi): i64 { return L64(S + 0x1F4000 + fi * 8); }
-fn SFVA(S, fi, v): i64 { S64(S + 0x1F4000 + fi * 8, v); return 0; }
+fn GFVA(S, fi): i64 { return L64(S + 0x16A000 + fi * 8); }
+fn SFVA(S, fi, v): i64 { S64(S + 0x16A000 + fi * 8, v); return 0; }
 # Per-fn #regalloc flag (v4.8.4-alpha4). 0 = default ABI, 1 = opt-in
 # to callee-saved hot-local allocation. Set when `#regalloc` precedes
 # a `fn` definition; read by codegen in subsequent alphas.
-fn GFRA(S, fi): i64 { return L64(S + 0x1C8000 + fi * 8); }
-fn SFRA(S, fi, v): i64 { S64(S + 0x1C8000 + fi * 8, v); return 0; }
+fn GFRA(S, fi): i64 { return L64(S + 0x14A000 + fi * 8); }
+fn SFRA(S, fi, v): i64 { S64(S + 0x14A000 + fi * 8, v); return 0; }
 fn GIDEP(S): i64 { return L64(S + 0x1903E8); }
 fn SIDEP(S, v): i64 { S64(S + 0x1903E8, v); return 0; }
 # (GLVR/SLVR for r12 loop-var cache removed — the feature was
@@ -398,7 +398,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
             syscall(SYS_WRITE, 2, "' (cannot be used as an identifier; rename the variable/field/fn)", 65);
             syscall(SYS_WRITE, 2, "\n", 1);
             syscall(SYS_WRITE, 2, "  at fail: fn=", 14); PRNUM(L64(S + 0x18DA00));
-            syscall(SYS_WRITE, 2, "/4096 ident=", 12); PRNUM(L64(S + 0x18C128));
+            syscall(SYS_WRITE, 2, "/8192 ident=", 12); PRNUM(L64(S + 0x18C128));
             syscall(SYS_WRITE, 2, "/262144 var=", 12); PRNUM(L64(S + 0x18C110));
             syscall(SYS_WRITE, 2, "/8192 fixup=", 12); PRNUM(L64(S + 0x18FCA8));
             syscall(SYS_WRITE, 2, "/32768\n", 7);
@@ -421,7 +421,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
     # diagnostic as CYRIUS_STATS=1 but fired on parse failures so
     # users don't need to re-run with the env flag to get context.
     syscall(SYS_WRITE, 2, "  at fail: fn=", 14); PRNUM(L64(S + 0x18DA00));
-    syscall(SYS_WRITE, 2, "/4096 ident=", 12); PRNUM(L64(S + 0x18C128));
+    syscall(SYS_WRITE, 2, "/8192 ident=", 12); PRNUM(L64(S + 0x18C128));
     syscall(SYS_WRITE, 2, "/262144 var=", 12); PRNUM(L64(S + 0x18C110));
     syscall(SYS_WRITE, 2, "/8192 fixup=", 12); PRNUM(L64(S + 0x18FCA8));
     syscall(SYS_WRITE, 2, "/32768\n", 7);
@@ -441,7 +441,7 @@ fn ERR_MSG(S, msg, len): i64 {
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
-# IR state at S+0x16CA008..S+0x17CA000 + global-var-init slots) to
+# IR state at S+0x174A008..S+0x184A000 + global-var-init slots) to
 # zero, with two sentinel-value exceptions:
 #   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
 #   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
@@ -471,11 +471,11 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18E220, 0);
     # IR state (cc5 — gated by CYRIUS_IR=1 env at runtime; init
     # unconditionally so the gate read sees zero, not garbage)
-    S64(S + 0x17CA000, 0);    # ir_node_count
-    S64(S + 0x16CA008, 0);    # ir_block_count
-    S64(S + 0x16CA010, 0);    # ir_cur_block (current BB index)
-    S64(S + 0x16CA018, 0);    # ir_edge_count
-    S64(S + 0x16CA020, 0);    # ir_enabled (0=off, 1=on)
+    S64(S + 0x184A000, 0);    # ir_node_count
+    S64(S + 0x174A008, 0);    # ir_block_count
+    S64(S + 0x174A010, 0);    # ir_cur_block (current BB index)
+    S64(S + 0x174A018, 0);    # ir_edge_count
+    S64(S + 0x174A020, 0);    # ir_enabled (0=off, 1=on)
     # Struct state
     S64(S + 0x18F830, 0);
     # Condition patch state

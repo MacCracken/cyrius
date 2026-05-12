@@ -4,14 +4,14 @@
 # v4.8.4-alpha4: pending-flag for `#regalloc` → next `fn` definition.
 # Token 109 sets this; PARSE_FN_DEF (and the DCE-stub path in main.cyr)
 # consume it when they resolve `fi`, storing the flag into fn_regalloc
-# at 0x1C8000. Codegen attachment (callee-saved spill/restore driven by
+# at 0x14A000. Codegen attachment (callee-saved spill/restore driven by
 # hot-local counting) lands in subsequent alphas — alpha4 only wires
 # the metadata so the attribute survives into fn-level state.
 var _regalloc_pending = 0;
 
 # v5.6.3: pending-flag for `#must_use` → next `fn` definition. Lexer
 # token 122 sets this; PARSE_FN_DEF consumes it when resolving `fi`,
-# storing bit 0 into fn_flags at 0x1FC000. Call-site discard detection
+# storing bit 0 into fn_flags at 0x17A000. Call-site discard detection
 # lives at PARSE_STMT's expression-statement path: it tracks the
 # outermost call's fi in `_stmt_topcall_fi` and warns if that fn's
 # must_use bit is set when the statement terminates without the
@@ -955,7 +955,7 @@ fn PARSE_STMT(S): i64 {
             # line number matches the call site, not the trailing ';'.
             var _mu_fi = FINDFN(S, noff);
             if (_mu_fi >= 0) {
-                var _mu_flags = L64(S + 0x1FC000 + _mu_fi * 8);
+                var _mu_flags = L64(S + 0x17A000 + _mu_fi * 8);
                 if (_mu_flags & 1 != 0) {
                     syscall(SYS_WRITE, 2, "warning:", 8);
                     FM_LOOKUP(S, GTLINE(S, GTI(S)));

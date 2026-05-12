@@ -64,7 +64,7 @@
 #   0x114A000 struct_ftypes [65536]       256 structs × 32 fields (cap 256, v5.7.17)
 #   0x11CA000 struct_fnames [65536]       256 structs × 32 fields (cap 256, v5.7.17)
 #   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
-#   0x12CA000 (fn tables end here — IR region not used by aarch64 compiler)
+#   0x134A000 (fn tables end here — IR region not used by aarch64 compiler)
 #
 # --- LEXID dedup index (v5.10.40) ---
 #   0x4E8C000  lexid_count   [8]

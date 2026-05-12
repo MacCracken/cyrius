@@ -5,6 +5,34 @@
 
 ## Version
 
+**5.11.19** (shipped 2026-05-11 — **kybernet Part A.ii: fn_table
+4096 → 8192 heap-map refactor**). Highest-risk slot of v5.11.x —
+self-hosting compiler heap layout shift. **5-phase byte-identical
+execution**: (1) relocated 7 scattered fn_* tables (fn_deprecated_msg
+0x104000→0x100000, fn_name_hash 0x10C000→0x110000, fn_start_hash
+0x110000→0x114000, fn_regalloc 0x1C8000→0x14A000, fn_ret_sid
+0x1EC000→0x15A000, fn_variadic 0x1F4000→0x16A000, fn_flags
+0x1FC000→0x17A000) into the 0x100000-0x118000 + 0x14A000-0x18A000
+gaps; (2) shifted IR + fixup regions forward by 0x80000 to free
+0x12CA000-0x134A000; (3) moved primary fn_* block 0x128A000 →
+0x12CA000 + doubled stride 0x8000→0x10000; (4) doubled extended
+fn_* block stride 0x8000→0x10000 (reverse-order sed to avoid
+collision); (5) REGFN cap check 4096 → 8192 + warning thresholds.
+Hash tables kept at 8192 slots × 2B (mask 8191 preserved) — the
+0.5 load factor degrades to 1.0 at extreme caps but kybernet's
+3779-fn worst case stays at 0.46. `CYRIUS_STATS=1` on cc5
+self-compile now shows `fn_table: 660 / 8192`. ~85 hex-literal
+edits across 15 src/ files. **cc5 self-host byte-identical at
+804,456 B** (was 804,464; -8 from string-literal length deltas).
+Phase 1 had an initial misplacement at 0xA0000-0xF0000 inside
+input_buf — first compile worked but resulting binary hung on
+self-compile; caught at fixpoint check, no ship damage. Redo at
+real-gap offsets clean. check.sh 66/66; cyrius test 147/147; api-
+surface 3050 exact match. kybernet 1.1.0 (3779 fns) now reads as
+46% — well below 85% warn threshold; combined with v5.11.18
+identifier buffer raise, kybernet 1.1.0 should compile clean.
+kybernet-fn-table issue archived.
+
 **5.11.18** (shipped 2026-05-11 — **kybernet Part A.i + Part B:
 identifier buffer 2× + socket-syscall wrappers**). Identifier
 buffer 131072 → **262144 bytes** (grows 0x60000-0xA0000 into

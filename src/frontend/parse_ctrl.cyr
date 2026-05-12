@@ -288,7 +288,7 @@ fn PARSE_FOR(S): i64 {
                 SNPOS(S, vlnp + 8);
                 vlfi = FINDFN(S, vlnp);
                 if (vlfi < 0) { vlfi = REGFN(S, vlnp); }
-                var vloff = L64(S + 0x1292000 + vlfi * 8);
+                var vloff = L64(S + 0x12DA000 + vlfi * 8);
                 if (vloff >= 0) { ECALLTO(S, vloff); } else { ECALLFIX(S, vlfi); }
                 ECALLCLEAN(S, 1);
                 # Store length in hidden var
@@ -352,7 +352,7 @@ fn PARSE_FOR(S): i64 {
                 SNPOS(S, vgnp + 8);
                 vgfi = FINDFN(S, vgnp);
                 if (vgfi < 0) { vgfi = REGFN(S, vgnp); }
-                var vgoff = L64(S + 0x1292000 + vgfi * 8);
+                var vgoff = L64(S + 0x12DA000 + vgfi * 8);
                 if (vgoff >= 0) { ECALLTO(S, vgoff); } else { ECALLFIX(S, vgfi); }
                 ECALLCLEAN(S, 2);
                 EFLSTORE(S, fiitem);

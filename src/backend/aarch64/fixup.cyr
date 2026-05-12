@@ -99,21 +99,21 @@ fn FIXUP(S): i64 {
     var fcnt_pre = GFCNT(S);
     var ufi = 0;
     while (ufi < fcnt_pre) {
-        var ufaddr = S + 0x190B000 + ufi * 16;
+        var ufaddr = S + 0x198B000 + ufi * 16;
         var uraw = L64(ufaddr + 8);
         var uftype = uraw >> 56;
         var uidx = uraw & 0x00FFFFFFFFFFFFFF;
         if (uftype == 2 || uftype == 3) {
-            var utarget = L64(S + 0x1292000 + uidx * 8);
+            var utarget = L64(S + 0x12DA000 + uidx * 8);
             if (utarget == 0 - 1) {
-                var ufnoff = L64(S + 0x128A000 + uidx * 8);
+                var ufnoff = L64(S + 0x12CA000 + uidx * 8);
                 syscall(SYS_WRITE, 2, "error: undefined function '", 27);
                 var unptr = S + 0x60000 + ufnoff;
                 var unlen = 0;
                 while (load8(unptr + unlen) != 0) { unlen = unlen + 1; }
                 syscall(SYS_WRITE, 2, unptr, unlen);
                 syscall(SYS_WRITE, 2, "' (will crash at runtime)\n", 26);
-                S64(S + 0x1292000 + uidx * 8, 0 - 2);
+                S64(S + 0x12DA000 + uidx * 8, 0 - 2);
                 undef_count = undef_count + 1;
             }
         }
@@ -123,14 +123,14 @@ fn FIXUP(S): i64 {
     var fcnt = GFCNT(S);
     var fi = 0;
     while (fi < fcnt) {
-        var faddr = S + 0x190B000 + fi * 16;
+        var faddr = S + 0x198B000 + fi * 16;
         var coff = L64(faddr);
         var raw = L64(faddr + 8);
         var ftype = raw >> 56;
         var idx = raw & 0x00FFFFFFFFFFFFFF;
         if (ftype == 2) {
             # Function call: patch BL rel26
-            var target = L64(S + 0x1292000 + idx * 8);
+            var target = L64(S + 0x12DA000 + idx * 8);
             # v5.6.29-1: undef-fn sentinel — see x86 fixup.cyr:217 for the
             # full rationale (sandhi M2 silent-loop incident). aarch64 form:
             # replace the 4-byte BL with `UDF #0` (0x00000000), which is
@@ -158,13 +158,13 @@ fn FIXUP(S): i64 {
                 #     addresses (MOVZ-chain) point past `__text` at
                 #     runtime. (v5.9.39 Bug B fix; v5.9.38 shipped the
                 #     `lib/fnptr.cyr` macOS-branch companion as Fix A.)
-                var ftarget = L64(S + 0x1292000 + idx * 8) + entry;
+                var ftarget = L64(S + 0x12DA000 + idx * 8) + entry;
                 if (_TARGET_MACHO == 2) { FIXUP_ADRP_ADD(S, coff, ftarget); }
                 else { FIXUP_MOV(S, coff, ftarget); }
             }
             else { if (ftype == 4) {
                     # Tail call: patch B rel26 (not BL — no link register update)
-                    var target = L64(S + 0x1292000 + idx * 8);
+                    var target = L64(S + 0x12DA000 + idx * 8);
                     # v5.6.29-1: undef sentinel → UDF #0 (see ftype==2 above).
                     if (target < 0) {
                         var pu4 = S + 0x64A000 + coff;

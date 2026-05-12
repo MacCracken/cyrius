@@ -71,21 +71,21 @@
 #
 # --- Function tables (relocated v4.7.1 — caps raised 2048 → 4096) ---
 #   0x1A0000  jump_src + nop_run + fn_start_fcnt (v5.6.27)
-#   0x128A000 fn_names      [32768]       4096 function name offsets
-#   0x1292000 fn_offsets    [32768]       4096 function code offsets
-#   0x129A000 fn_params     [32768]       4096 function param counts
-#   0x12A2000 fn_body_start [32768]       4096 inline body start
-#   0x12AA000 fn_body_end   [32768]       4096 inline body end
-#   0x12B2000 fn_inline     [32768]       4096 inline flags
-#   0x12BA000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
-#   0x12C2000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
-# Tables relocated past the runtime fixup_tbl (at 0x190B000 × 16 B × 262144 = 4 MiB,
+#   0x12CA000 fn_names      [32768]       4096 function name offsets
+#   0x12DA000 fn_offsets    [32768]       4096 function code offsets
+#   0x12EA000 fn_params     [32768]       4096 function param counts
+#   0x12FA000 fn_body_start [32768]       4096 inline body start
+#   0x130A000 fn_body_end   [32768]       4096 inline body end
+#   0x131A000 fn_inline     [32768]       4096 inline flags
+#   0x132A000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
+#   0x133A000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
+# Tables relocated past the runtime fixup_tbl (at 0x198B000 × 16 B × 262144 = 4 MiB,
 # old comment about 16384 obsolete (v5.7.1 bumped to 262144) Fits exactly in the 256 KB between that
-# end and brk's top at 0x12CA000.
+# end and brk's top at 0x134A000.
 #
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
-#   0x1C8000  fn_regalloc   [32768]       4096 per-fn #regalloc flags (v4.8.4-alpha4)
+#   0x14A000  fn_regalloc   [65536]       8192 per-fn #regalloc flags (v4.8.4-alpha4; v5.11.19 doubled + relocated)
 #   0x1D8000  enum_const_val[8192]        1024 slots × 8 B — PARSE_ENUM_DEF
 #                                        stores (1<<63)|val per variant; read
 #                                        by PARSE_FACTOR to const-fold enum
@@ -118,14 +118,14 @@
 #   0x114A000 struct_ftypes [16384]       64 structs × 32 fields × 8 bytes
 #   0x11CA000 struct_fnames [16384]       64 structs × 32 fields × 8 bytes
 #
-#   0x124A000 (fixup table: 16384 entries × 16 bytes ends at 0x128A000)
+#   0x124A000 (fixup table: 16384 entries × 16 bytes ends at 0x12CA000)
 #
 # --- cc5 IR region (v5.0.0) ---
-#   0x12CA000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
-#   0x16CA000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
-#   0x17CA000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0x17CB000 ir_edges     [262144]      32768 CFG edges × 8 bytes
-#   0x180B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
+#   0x134A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
+#   0x174A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
+#   0x184A000 ir_state     [4096]        IR builder state (counters, current BB)
+#   0x184B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
+#   0x188B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
 #
 #
 # --- LEXID dedup index (v5.10.40) ---
@@ -138,7 +138,7 @@
 #                                        from 0x4E8C000 by 132 KB for the LEXID
 #                                        dedup index; was 0x4E8C000 at v5.8.61
 #                                        monotonic; was 0x5100000 at .59-.60 /
-#                                        0x5000000 / 0x290B000)
+#                                        0x5000000 / 0x298B000)
 #
 # Token types:
 #   1=NUM 2=IDENT 3=VAR 4=EQ 5=SEMI 6=PLUS 7=MINUS 8=STAR 9=SLASH
@@ -608,7 +608,7 @@ while (topgo == 1) {
                                             # callee-saved-reg state to. Leaving the flag armed would
                                             # leak it to whichever fn lands next.
                                             if (_regalloc_pending == 1) { _regalloc_pending = 0; }
-                                            S64(S + 0x1292000 + stub_fi * 8, GCP(S));
+                                            S64(S + 0x12DA000 + stub_fi * 8, GCP(S));
                                             # Emit stub: xor eax, eax; ret (3 bytes)
                                             EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
                                             # Skip function body tokens
@@ -671,9 +671,9 @@ STI(S, gvar_save_ti);
 var wfi = 0;
 var wfc = GFNC(S);
 while (wfi < wfc) {
-    if (L64(S + 0x1292000 + wfi * 8) < 0) {
+    if (L64(S + 0x12DA000 + wfi * 8) < 0) {
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(S + 0x128A000 + wfi * 8));
+        PRSTR(S + 0x60000 + L64(S + 0x12CA000 + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -740,7 +740,7 @@ if (_stats_env != 0) {
     if (load8(_stats_env) == 49 && load8(_stats_env + 1) == 0) {
         syscall(SYS_WRITE, 2, "cyrius stats:\n", 14);
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, " / 4096\n",        8);
+        syscall(SYS_WRITE, 2, " / 8192\n",        8);
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
         syscall(SYS_WRITE, 2, " / 262144\n",     10);
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));
@@ -758,11 +758,11 @@ if (_stats_env != 0) {
 # Suppressed under CYRIUS_STATS=1 (already shown above) and under
 # `--version` short-circuit (handled before this point).
 if (_stats_env == 0) {
-    if (GFNC(S) * 100 / 4096 >= 85) {
+    if (GFNC(S) * 100 / 8192 >= 85) {
         syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
-        PRNUM(GFNC(S) * 100 / 4096);
+        PRNUM(GFNC(S) * 100 / 8192);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, "/4096) — split into compilation units soon\n", 44);
+        syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 44);
     }
     if (GNPOS(S) * 100 / 262144 >= 85) {
         syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);

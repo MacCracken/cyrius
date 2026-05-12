@@ -60,7 +60,7 @@
 #   0x114A000 struct_ftypes [65536]       256 structs × 32 fields (cap 256, v5.7.17)
 #   0x11CA000 struct_fnames [65536]       256 structs × 32 fields (cap 256, v5.7.17)
 #   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
-#   0x12CA000 (fn tables end here — IR region not used by aarch64 compiler)
+#   0x134A000 (fn tables end here — IR region not used by aarch64 compiler)
 #
 # --- LEXID dedup index (v5.10.40) ---
 #   0x4E8C000  lexid_count   [8]
@@ -105,7 +105,7 @@ include "src/backend/aarch64/fixup.cyr"
 var S = syscall(SYS_BRK, 0);
 # brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
 # aarch64 skips the TS frontend, so the ~13.5 MiB pad between
-# fixup_tbl-end (0x290B000) and tok-block-start (0x368C000) is
+# fixup_tbl-end (0x298B000) and tok-block-start (0x368C000) is
 # unused on this path; kept for offset parity with main.cyr.
 syscall(SYS_BRK, S + 0x4EAD000);
 
@@ -368,7 +368,7 @@ if (_epi_km_pre == 0) {
     var _main_fi = 0;
     var _main_found = 0 - 1;
     while (_main_fi < _main_fc) {
-        var _main_noff = L64(S + 0x128A000 + _main_fi * 8);
+        var _main_noff = L64(S + 0x12CA000 + _main_fi * 8);
         if (load8(S + 0x60000 + _main_noff)     == 109) {
             if (load8(S + 0x60000 + _main_noff + 1) == 97) {
                 if (load8(S + 0x60000 + _main_noff + 2) == 105) {
@@ -384,7 +384,7 @@ if (_epi_km_pre == 0) {
         _main_fi = _main_fi + 1;
     }
     if (_main_found >= 0) {
-        var _main_off = L64(S + 0x1292000 + _main_found * 8);
+        var _main_off = L64(S + 0x12DA000 + _main_found * 8);
         if (_main_off >= 0) {
             ECALLTO(S, _main_off);
         }

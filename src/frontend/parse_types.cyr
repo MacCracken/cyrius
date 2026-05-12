@@ -274,8 +274,8 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                     SNPOS(S, cwp2);
                     var cfi = FINDFN(S, cnoff2);
                     if (cfi >= 0) {
-                        S64(S + 0x1292000 + cfi * 8, GCP(S));
-                        S64(S + 0x129A000 + cfi * 8, 1);
+                        S64(S + 0x12DA000 + cfi * 8, GCP(S));
+                        S64(S + 0x12EA000 + cfi * 8, 1);
                         EFNPRO(S);
                         var ctor_frame = ESUBRSP(S);
                         # v5.8.21 bite: store each incoming param into its
@@ -298,7 +298,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                         SNPOS(S, awnp + 6);
                         var afi = FINDFN(S, awnp);
                         if (afi < 0) { afi = REGFN(S, awnp); }
-                        var afoff = L64(S + 0x1292000 + afi * 8);
+                        var afoff = L64(S + 0x12DA000 + afi * 8);
                         if (afoff >= 0) { ECALLTO(S, afoff); } else { ECALLFIX(S, afi); }
                         ECALLCLEAN(S, 1);
                         # v5.8.21 bite: alloc-ptr lives in slot `arity`

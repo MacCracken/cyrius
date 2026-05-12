@@ -333,7 +333,7 @@ fn PARSE_FACTOR(S): i64 {
             }
             # Register the function-address fixup (common to both
             # backends — only the placeholder bytes differ).
-            var fnaddr = S + 0x190B000 + fc * 16;
+            var fnaddr = S + 0x198B000 + fc * 16;
             SFCNT(S, fc + 1);
             # v5.6.12: `&fn_name` address-emit — per-arch raw encoding
             # with fixup-patched immediate. One marker covers all arches.
@@ -813,7 +813,7 @@ fn PARSE_FACTOR(S): i64 {
         SSDEP(S, 0);
         # Emit function prologue
         var cl_jmp = EJMP0(S);
-        S64(S + 0x1292000 + clfi * 8, GCP(S));
+        S64(S + 0x12DA000 + clfi * 8, GCP(S));
         EFNPRO(S);
         # Parse params until |
         var clpc = 0;
@@ -833,7 +833,7 @@ fn PARSE_FACTOR(S): i64 {
                 else { cpgo = 0; }
             }
         }
-        S64(S + 0x129A000 + clfi * 8, clpc);
+        S64(S + 0x12EA000 + clfi * 8, clpc);
         if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
         STI(S, GTI(S) + 1);  # consume closing |
         ESUBRSP(S, GFLC(S));
@@ -868,7 +868,7 @@ fn PARSE_FACTOR(S): i64 {
             syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
             syscall(SYS_EXIT, 1);
         }
-        var clfaddr = S + 0x190B000 + clfc * 16;
+        var clfaddr = S + 0x198B000 + clfc * 16;
         # v5.6.12: closure-literal address-emit, mirrors `&fn_name` shape.
         _IR_REC0(S, IR_RAW_EMIT);
         if (_AARCH64_BACKEND == 1) {
@@ -1647,7 +1647,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
     ECALLPOPS(S, 2);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
-    var ofoff = L64(S + 0x1292000 + ofi * 8);
+    var ofoff = L64(S + 0x12DA000 + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, 2);
@@ -1676,7 +1676,7 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     var fi = FINDFN(S, np);
     if (fi < 0) { fi = REGFN(S, np); }
     ECALLPOPS(S, 2);
-    var foff = L64(S + 0x1292000 + fi * 8);
+    var foff = L64(S + 0x12DA000 + fi * 8);
     if (foff >= 0) { ECALLTO(S, foff); }
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, 2);
