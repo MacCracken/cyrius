@@ -5,6 +5,28 @@
 
 ## Version
 
+**5.11.20** (shipped 2026-05-11 — **syscall-wrapper DRY consolidation**).
+~46 body-identical wrappers extracted from `lib/syscalls_x86_64_linux.cyr`
++ `lib/syscalls_aarch64_linux.cyr` into a NEW `lib/syscalls_linux_common.cyr`
+that both peers `include` after their own SysNr enum is defined.
+Audit found **4× more duplication** than the v5.11.7 close-out
+estimate (10-12 fns → 46 actual). Groups extracted: file I/O,
+process lifecycle, wait-status macros, 9 credentials, kavach
+sandbox trio, mount/fs, signal, epoll, timer, getdents64/random,
+Landlock trio, 7 sockets. Kept in peers: at-family dispatch
+(sys_open/stat/mkdir/etc.), arch-divergent (sys_fork → clone+SIGCHLD,
+sys_pipe → pipe2, sys_pause → ppoll-NULL, sys_epoll_wait →
+epoll_pwait, sys_inotify_*). **Gotcha caught at slot entry**:
+`#io` annotation in common file broke aarch64 cross-build —
+`error:913: unexpected enum` because `src/main_aarch64.cyr`'s
+pass-1 scanner lacks the v5.8.21 `#io` token-126 handler that
+`src/main.cyr` has. Dropped `#io` from common file; main_aarch64.cyr
+fix is follow-up. **Line savings**: 1542 → 1354 LOC (-188, ~12%
+of original). cc5 byte-identical at 804,456 B (no change — wrappers
+were already body-identical). check.sh 66/66; cyrius test 147/147.
+api-surface 3050 → 3000 (-50 from the dedup; net consumer-visible
+count unchanged).
+
 **5.11.19** (shipped 2026-05-11 — **kybernet Part A.ii: fn_table
 4096 → 8192 heap-map refactor**). Highest-risk slot of v5.11.x —
 self-hosting compiler heap layout shift. **5-phase byte-identical

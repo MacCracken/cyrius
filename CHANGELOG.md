@@ -6,6 +6,99 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.20] — 2026-05-11
+
+**Syscall-wrapper DRY consolidation** — closes the v5.11.7
+close-out lib-audit pin. ~46 body-identical wrappers extracted
+from the two Linux syscall peer files into a new shared
+`lib/syscalls_linux_common.cyr`. Both peers now `include` it
+after their own SysNr enum is defined; wrappers resolve SYS_*
+to the per-arch enum value.
+
+### Audit (premise check)
+
+Roadmap estimate was "~10-12 fns". Empirical audit by line-by-
+line body diff showed **46 wrappers** with truly identical
+bodies between peers (only divergence is the SYS_* enum constant,
+resolved per-arch). 4× the original estimate.
+
+Identical-body wrappers extracted: file I/O (sys_close, read,
+write, fstat, fchmod), process lifecycle (exit, execve, getpid,
+getppid, kill, setsid, waitpid), wait-status macros (WIFEXITED,
+WEXITSTATUS, WIFSIGNALED, WTERMSIG), 9 credential wrappers
+(getuid/gid/euid/egid/setuid/gid/groups/resuid/resgid), kavach
+sandbox (prctl, seccomp, execveat), mount/fs (mount, umount2,
+sync, reboot), signal (sigprocmask, signalfd), epoll
+(epoll_create, epoll_ctl), timer (timerfd_create/settime), misc
+(getdents64, getrandom), Landlock trio, and the 7 socket-family
+wrappers added at v5.11.18.
+
+Kept in per-arch peers (genuinely divergent — at-family dispatch,
+arch-specific syscall numbers, pre-clone setup):
+- sys_open/stat/dup2/mkdir/rmdir/unlink/symlink/readlink/chmod/
+  access (x86 bare; aarch64 routes via at-family)
+- sys_fork (x86 SYS_FORK; aarch64 SYS_CLONE+SIGCHLD)
+- sys_pipe (x86 SYS_PIPE; aarch64 SYS_PIPE2 with 0)
+- sys_pause (x86 SYS_PAUSE; aarch64 SYS_PPOLL with NULL)
+- sys_epoll_wait (x86 SYS_EPOLL_WAIT; aarch64 SYS_EPOLL_PWAIT
+  with NULL sigmask + size 0)
+- sys_inotify_init/add_watch/rm_watch (x86 hardcoded numbers
+  294/254/255; aarch64 uses SYS_INOTIFY_INIT1/ADD_WATCH/RM_WATCH)
+
+### Gotcha caught: `#io` annotation in common file
+
+Initial draft kept `#io` annotations on sys_close/read/write
+(present in x86 peer pre-DRY). Aarch64 cross-build broke with
+`error:913: unexpected enum`. Root cause:
+`src/main_aarch64.cyr`'s pass-1 scanner does NOT handle the
+`#io` token (token 126) — only `src/main.cyr` got the v5.8.21
+fix for stdlib-start `#io` parsing. Removed `#io` from the
+common file to restore aarch64 cross-build.
+
+**Trade-off**: 4 `#io` annotations dropped on x86 (was a v5.8.20
+purity-inference feature; pre-v5.8.20 didn't have them either).
+Acceptable for this slot. Fixing `src/main_aarch64.cyr`'s pass-1
+scanner is follow-up work — not in scope.
+
+### Verification
+
+- cc5 self-host byte-identical at **804,456 B** (no change from
+  v5.11.19 — the wrappers were already body-identical, so emitted
+  code is identical too).
+- `cyrius check` 66/66 green.
+- `cyrius test` 147/147 green.
+- aarch64 cross-build green (verified locally; build/cc5_aarch64
+  reads the new peer + common file).
+- api-surface snapshot regenerated 3050 → 3000 (-50). The
+  reduction is correct: the snapshot counts per-file, so
+  pre-DRY identical wrappers appeared TWICE (once per peer).
+  Post-DRY they appear once in common. Net fn count visible to
+  consumers is unchanged.
+
+### Line savings
+
+- Pre-DRY: 1542 total (762 x86 + 780 aarch64)
+- Post-DRY: 1354 total (483 x86 + 545 aarch64 + 326 common)
+- **Net saved: 188 LOC** (~12% of original 2-peer surface)
+
+Beats the v5.11.7 close-out estimate of "~50-80 lines saved" —
+the empirical audit found 4× more duplication than the sampling
+estimate.
+
+### Files
+
+- **NEW**: `lib/syscalls_linux_common.cyr` (326 lines)
+- `lib/syscalls_x86_64_linux.cyr` (762 → 483 lines)
+- `lib/syscalls_aarch64_linux.cyr` (780 → 545 lines)
+- `docs/api-surface.snapshot` — regenerated
+
+### Cross-host smoke
+
+Pi cross-host verify (load-bearing per
+`feedback_cross_arch_propagation_mandatory` for the
+aarch64-side coverage of the common-file wrappers) — rides this
+slot or the next cycle-close sweep.
+
 ## [5.11.19] — 2026-05-11
 
 **kybernet Part A.ii: fn_table 4096 → 8192 (heap-map refactor)** —
