@@ -171,7 +171,9 @@ docs/                Architecture, roadmap, benchmarks, language guide
 ## Key References
 
 - `docs/cyrius-guide.md` — Complete language reference
-- `docs/development/roadmap.md` — Development plan + bug tracker
+- `docs/development/roadmap.md` — Current-cycle remaining work only (lean, refreshed at cycle close)
+- `docs/development/roadmap-old.md` — Prior roadmap held verbatim for cleanout; source for v6.x items to pull forward at v5.x close
+- `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape)
 - `docs/development/state.md` — Volatile cycle / pin / sweep state (refreshed every release)
 - `docs/doc-health.md` — Living doc-currency ledger (per-tier fresh / stale / archived; refreshed when docs are touched)
 - `CHANGELOG.md` — Source of truth for all changes
