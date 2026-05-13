@@ -6,6 +6,81 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.34] — 2026-05-12
+
+**aarch64 user-binary ELF emitter: same section-header fix as
+5.11.32 (x86 user) / 5.11.30 (aarch64 kernel), now for `EMITELF`
+in `src/backend/aarch64/fixup.cyr`.** Closes the second of two
+in-compiler user-binary emitter gaps flagged at 5.11.30 ship; with
+5.11.32 (x86 user) already shipped, every ELF emit path in the
+toolchain — kernel (.29 x86 / .30 aarch64), linker (.31 cyrld), user
+(.32 x86 / .34 aarch64) — now carries section header tables. Not
+MVP-blocking on Linux (`execve` ignores section headers) but matters
+for every downstream tool that introspects ELF sections:
+`objdump -d`, `gdb`, `ltrace`, `readelf -S`, IDE symbol indexers.
+
+### Fix
+
+`EMITELF` (the aarch64 user-binary path) now appends a 5-entry
+section header table and 30-byte `.shstrtab` past the loaded
+segment, matching the 5.11.30 aarch64-kernel template (ELF64,
+64-byte `Elf64_Shdr`, 8-byte aligned shdr table). User-binary
+specifics: base `0x400000`, `p_align 0x10000`, no SP-setup preamble
+(kernel sets up SP via execve).
+
+| # | Section     | Type     | Flags        | Notes                  |
+|---|-------------|----------|--------------|------------------------|
+| 0 | (SHT_NULL)  | SHT_NULL | —            | mandatory first entry  |
+| 1 | `.text`     | PROGBITS | ALLOC, EXEC  | code at `0x400078`     |
+| 2 | `.rodata`   | PROGBITS | ALLOC        | string-table region    |
+| 3 | `.bss`      | NOBITS   | ALLOC, WRITE | zero-init var region   |
+| 4 | `.shstrtab` | STRTAB   | —            | section name strings   |
+
+`.shstrtab` content: `\0.text\0.rodata\0.bss\0.shstrtab\0` (30
+bytes; name offsets 1 / 7 / 15 / 20). PT_LOAD `p_filesz` / `p_memsz`
+unchanged — section headers + shstrtab live as non-loaded metadata
+past the loaded image (~352-byte overhead per emitted user binary).
+
+Three ELF64 header fields previously written as zero now carry real
+values: `e_shoff = shdr_off`, `e_shnum = 5`, `e_shstrndx = 4`.
+`e_shentsize = 64` was already correct.
+
+### Verification
+
+- Cross-compile of tiny user program (`fn main(): i64 { return 42; }`)
+  via cc5_aarch64 (cross-built from `main_aarch64.cyr`):
+  - `readelf -h /tmp/aarch64-test` reports
+    `Start of section headers: 208` / `Number of section headers: 5`
+  - `readelf -S` lists all 5 sections cleanly
+  - `objdump -h` shows `.text / .rodata / .bss` with proper flags
+- **Pi cross-host verify** (per `reference_verification_hosts_ssh`):
+  `scp /tmp/aarch64-test pi:/tmp/` + `ssh pi /tmp/aarch64-test` →
+  `exit=42`; readelf -S on pi confirms the 5-section table after
+  transfer.
+- x86 self-host: byte-identical (818,344 B at 5.11.34); proves
+  aarch64/fixup.cyr edits don't ride into the x86 path
+  (`main.cyr` doesn't include the aarch64 backend).
+- `check.sh` 67/67; `cyrius test` 149/149.
+- cc5_aarch64 cross-compiler grew 502,440 → 506,216 B (+3,776 B —
+  the new section-emit code added to `main_aarch64.cyr`'s
+  compilation; ~352 B of that lands in every aarch64 binary the
+  cross-compiler produces).
+
+### Series complete
+
+With 5.11.34 shipped, all five ELF emit paths in the toolchain
+emit proper section metadata:
+
+- 5.11.29 — `EMITELF_KERNEL` x86 (ELF32, GRUB-unblock)
+- 5.11.30 — `EMITELF_KERNEL` aarch64 (ELF64)
+- 5.11.31 — `cyrld emit_executable` (ELF64 linker)
+- 5.11.32 — `EMITELF_USER` x86 (ELF64 user)
+- **5.11.34** — `EMITELF` aarch64 (ELF64 user) [this patch]
+
+The section-header arc that opened with the 2026-05-12 AGNOS USB-boot
+GRUB-rejection postmortem now closes cleanly across every emit
+surface.
+
 ## [5.11.33] — 2026-05-12
 
 **`PP_IFDEF_PASS` 2 MB cap raised to 8 MB; `preprocess_out` buffer

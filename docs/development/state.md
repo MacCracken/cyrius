@@ -5,6 +5,31 @@
 
 ## Version
 
+**5.11.34** (shipped 2026-05-12 — **aarch64 user-binary ELF
+section-header cleanup; closes the 5-emit-path arc**). Mirror of
+v5.11.32 (x86 user-binary) into `EMITELF` at
+`src/backend/aarch64/fixup.cyr:323`. Every Cyrius aarch64 ET_EXEC
+the cross-compiler emits now carries a 5-entry section header
+table (SHT_NULL + `.text` + `.rodata` + `.bss` + `.shstrtab`).
+Same ELF64 5-section template as .30 adapted to user-binary base
+`0x400000` and 4 KB `p_align`; section table + shstrtab sit past
+`PT_LOAD` as non-loaded metadata (overhead 352 B per emit). Three
+previously-zero ELF64 header fields now carry real values:
+`e_shoff`, `e_shnum = 5`, `e_shstrndx = 4`. **Cross-host
+verify** (per `reference_verification_hosts_ssh`): tiny aarch64
+binary cross-compiled on x86, `scp`'d to pi, executes (`exit=42`);
+`readelf -S` on pi confirms 5-section table after transfer.
+x86 cc5 self-host byte-identical at **818,344 B** (aarch64
+backend isn't in the x86 main.cyr include chain — change rides
+only into aarch64 outputs); cc5_aarch64 cross-compiler grew
+502,440 → 506,216 B (+3,776 B — emit code for the new sections).
+check.sh 67/67; cyrius test 149/149. **Series complete**: with
+.34 shipped, all five ELF emit paths in the toolchain (.29 x86
+kernel / .30 aarch64 kernel / .31 cyrld linker / .32 x86 user /
+**.34 aarch64 user**) carry section metadata. The arc that
+opened with the 2026-05-12 AGNOS USB-boot GRUB-rejection
+postmortem closes cleanly across every emit surface.
+
 **5.11.33** (shipped 2026-05-12 — **`PP_IFDEF_PASS` 2 MB cap
 raised to 8 MB; `preprocess_out` relocated to high-address
 band**). Pinned cascade-in per sit v0.7.6 → v0.8.x filing
