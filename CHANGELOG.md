@@ -6,6 +6,145 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.46] — 2026-05-13
+
+**ELF64 kernel entry-arithmetic agreement — FIXUP ↔ EMITELF64_KERNEL.**
+Cyrius-side investigation + fix of the agnos UEFI x86_64 boot
+regression filed at
+[`docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md`](docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md).
+The filing reported the symptom; the *technical content* of the
+agnos-side diagnosis is **not** the load-bearing piece of this
+slot (an unauthorized cross-repo edit attempting the fix was
+reverted at v5.11.45 entry per
+`feedback_no_unauthorized_cross_repo_edits`). This slot is the
+cyrius-side premise check, the fix on cyrius's own terms, and
+the regression-prevention gate.
+
+check.sh **69 → 70** gates; cc5 self-host
+**821,984 → 822,080 B** (+96 from the `_TARGET_ELF64_KERNEL`
+branch + comment); cyrius test **149/149**.
+
+### Empirical premise check (pre-fix)
+
+Compiled `programs/kernel_hello.cyr` with the v5.11.45 `build/cc5`
+and `CYRIUS_KERNEL=1 CYRIUS_ELF64_KERNEL=1`. Direct ELF inspection:
+
+- **ELF64 `e_entry`** (file offset 24): `0x1000A8` ✓ — written by
+  `EMITELF64_KERNEL` (correct).
+- **String `"Hello from Cyrius!"`** at file offset `0x220` → true
+  VA `0x100000 + 0x220 = 0x100220`.
+- **Baked address inside `.text` at file offset `0x1FE`**: `0x1001D8`
+  — exactly `0x100220 - 0x48`. **0x48 = 72-byte mismatch.**
+
+Mismatch shape: `EMITELF64_KERNEL` places the kernel entry at file
+offset `120 + 48 = 168` (ELF64 header 64 + PH64 56 + multiboot2 48)
+→ `e_entry = 0x1000A8`. `FIXUP()` in `src/backend/x86/fixup.cyr`
+computed absolute addresses for `kmode == 1` using
+`entry = 0x100060` (the ELF32 + multiboot1 layout:
+`0x100000 + 84 + 12`). Every absolute fixup therefore baked a VA
+72 B earlier than the actual symbol location. `mov rcx,
+0x1001D8` lands inside the multiboot2 header bytes instead of
+`"Hello from Cyrius!"` in `.rodata`. After GRUB-EFI handoff the
+kernel reads garbage as the string pointer → garbled serial
+output. **Reported symptom reproduced from clean checkout.**
+
+### Fix
+
+`src/backend/x86/fixup.cyr` — `FIXUP()` `kmode == 1` branch
+extended with a `_TARGET_ELF64_KERNEL` gate:
+
+```cyrius
+if (kmode == 1) {
+    entry = 0x100000 + 84 + 12;
+    if (_TARGET_ELF64_KERNEL == 1) { entry = 0x100000 + 120 + 48; }
+}
+```
+
+Expanded form (vs the prior literal `0x100060`) keeps the
+arithmetic visibly tied to the same layout numbers EMITELF_KERNEL
+and EMITELF64_KERNEL use internally, so future drift between the
+three sites is grep-detectable. Comment block makes the
+agreement contract explicit and points to the failure mode.
+
+Post-fix end-to-end on `kernel_hello.cyr`:
+
+- `e_entry`: `0x1000A8` ✓ (unchanged).
+- All three `.text` references to `"Hello from Cyrius!"` (at file
+  offsets `0x1FE`, `0x2E8`, `0x328`): `0x100220` ✓.
+- OLD-entry-shifted VA `0x1001D8`: **not present anywhere** in
+  the binary.
+
+### Cross-arch propagation
+
+Per `feedback_cross_arch_propagation_mandatory` — this bug is
+**x86-only by construction**:
+
+- `_TARGET_ELF64_KERNEL` is declared on all three backends
+  (x86/aarch64/cx) as a parser-resolution stub, but the only
+  flag-flip site is `src/main.cyr:1003` and it is only consumed
+  by the x86 `EMITELF64_KERNEL` dispatch at `fixup.cyr:1884`.
+- aarch64's `kmode == 1` path (`src/backend/aarch64/fixup.cyr:86`)
+  uses its own entry `0x40000078 + preamble`, unrelated to the
+  x86 multiboot2 layout. No ELF64+multiboot2 kernel emitter
+  exists on aarch64.
+- cx backend has no ELF emission (bytecode target).
+- macho and PE paths are gated by `_TARGET_MACHO` / `_TARGET_PE`
+  and not by `kmode`.
+
+x86 fix is the complete fix. **Not** a half-fix sleight-of-hand.
+
+### Regression-prevention gate
+
+`programs/check.cyr` — new `_elf64_kernel_entry_gate()` registered
+in the bespoke-gate dispatch section. Sibling helper
+`_self_host_pipe_elf64k()` mirrors `_self_host_pipe` but populates
+envp with `CYRIUS_KERNEL=1` + `CYRIUS_ELF64_KERNEL=1`. New small
+helper `_find_u64_le(buf, n, val)` scans for the 8-byte LE
+encoding of a target value.
+
+Gate logic:
+
+1. Compile `programs/kernel_hello.cyr` through cc5 with the
+   kernel + ELF64-kernel env vars set.
+2. Validate ELF64 magic + class + endian (rejects malformed
+   output before trusting downstream offsets).
+3. `e_entry` at file offset 24 must equal `0x1000A8`.
+4. Locate `"Hello from Cyrius!"` in the binary; compute its true
+   VA from `p_vaddr + file_offset`.
+5. The 8-byte LE pattern of `true_va - 0x48` (the OLD-entry
+   signature) must **not** appear anywhere in the binary.
+6. The true-VA pattern must appear at least once (positive
+   sanity — otherwise the test vehicle didn't exercise a fixup
+   and the negative check is vacuous).
+
+Negative-test verified during slot work: temporarily swapped
+v5.11.45's `build/cc5` (`d19dfbd4:build/cc5`) over the post-fix
+binary; gate reported `FAIL: FIXUP regressed — OLD-entry-shifted
+address 1049048 (true_va - 72) at file offset 510; true VA
+1049120` — exactly the manual-analysis numbers (0x1001D8 at
+0x1FE, true VA 0x100220).
+
+check.sh: **69 → 70**.
+
+### Issue archive
+
+`docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md`
+→ `docs/development/issues/archived/` per
+`feedback_close_to_archive_issues`. The filing's process-violation
+record stays intact in archived form; the technical content is
+superseded by this CHANGELOG entry.
+
+### Memory pins referenced
+
+- `feedback_no_unauthorized_cross_repo_edits` (drove the filing
+  shape; agnos-side diagnosis recorded as hint, not adopted).
+- `feedback_premise_check_at_slot_entry` (empirical reproduction
+  on `kernel_hello.cyr` before fix design).
+- `feedback_cross_arch_propagation_mandatory` (explicit
+  x86-only rationale documented above, not deferred).
+- `feedback_close_to_archive_issues` (issue archive at slot
+  close).
+
 ## [5.11.45] — 2026-05-13
 
 **P(-1) hardening sweep — four-item bundle.** Mechanical-gate

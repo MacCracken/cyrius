@@ -1301,6 +1301,204 @@ fn _cc5_contamination_gate(): i64 {
     return hits;
 }
 
+# Sibling of _self_host_pipe with CYRIUS_KERNEL=1 + CYRIUS_ELF64_KERNEL=1 in
+# envp. Used by _elf64_kernel_entry_gate to compile a kernel source through
+# the EMITELF64_KERNEL path. Returns the child's wait-status (load32-shape).
+fn _self_host_pipe_elf64k(src_path, compiler_path, out_path): i64 {
+    var src_cap = 2000000;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n <= 0) { return 0 - 1; }
+
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0 - 2; }
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 3; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd);
+        sys_close(write_fd);
+        sys_close(out_fd);
+        return 0 - 4;
+    }
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0);
+        sys_close(read_fd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var argv[3];
+        store64(&argv,     compiler_path);
+        store64(&argv + 8, 0);
+        var envp[4];
+        store64(&envp,      "CYRIUS_KERNEL=1");
+        store64(&envp + 8,  "CYRIUS_ELF64_KERNEL=1");
+        store64(&envp + 16, 0);
+        sys_execve(compiler_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(write_fd);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return load32(&status_buf);
+}
+
+# Locate the 8-byte little-endian encoding of `val` in [buf, buf+n).
+# Returns the file offset on first match, or -1 if absent. Used by
+# _elf64_kernel_entry_gate to detect baked absolute addresses.
+fn _find_u64_le(buf, n, val): i64 {
+    var i = 0;
+    var limit = n - 8;
+    while (i <= limit) {
+        if (load64(buf + i) == val) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Gate: with CYRIUS_ELF64_KERNEL=1, FIXUP's `entry` value must match
+# EMITELF64_KERNEL's header layout (0x100000 + 120 + 48 = 0x1000A8),
+# not the legacy ELF32 + multiboot1 entry (0x100000 + 84 + 12 = 0x100060).
+# If they disagree, every absolute fixup shifts by 0x48 = 72 bytes and
+# string / global loads target the wrong VA — manifests as garbled
+# serial output post GRUB-EFI handoff (the v5.11.43 → v5.11.45 agnos
+# UEFI boot regression). See CHANGELOG [5.11.46].
+#
+# Test vehicle: programs/kernel_hello.cyr — a kernel sample with a
+# known string literal ("Hello from Cyrius!"). After compile:
+#   - header e_entry (file offset 24) must be 0x1000A8.
+#   - the string lives at p_vaddr + file_offset; its true VA is the
+#     8-byte LE value that should appear baked into the code section.
+#   - the OLD-entry-shifted VA (true_va - 0x48) must NOT appear; that
+#     value is the bug-signature of FIXUP using the wrong entry.
+fn _elf64_kernel_entry_gate(): i64 {
+    var label = "kmode==1 + CYRIUS_ELF64_KERNEL=1: FIXUP entry agrees with EMITELF64_KERNEL header (v5.11.46; agnos UEFI boot)";
+    var src_path = _root_path("programs/kernel_hello.cyr");
+    var bin_path = _tmp_path("audit_elf64k_bin_");
+    var rc = _self_host_pipe_elf64k(src_path, CC_PATH, bin_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": elf64-kernel compile (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cap = 524288;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _check(label, 1);
+        return 1;
+    }
+
+    # ELF64 magic + class + endian sanity. Identifies a malformed
+    # output before we trust e_entry / p_vaddr.
+    if (load64(buf) != 0x00010102464C457F) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": elf64-kernel output is not a valid ELF64 LSB binary");
+        _check(label, 1);
+        return 1;
+    }
+
+    var e_entry = load64(buf + 24);
+    if (e_entry != 0x1000A8) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ELF64 e_entry = ");
+        print_num(e_entry);
+        println(" (expected 1048744 = 0x1000A8 = 0x100000 + 120 + 48)");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Locate "Hello from Cyrius!" — kernel_hello.cyr's vga_print() arg.
+    var sneedle = "Hello from Cyrius!";
+    var s_off = _find_bytes(buf, n, sneedle, 18);
+    if (s_off < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": kernel_hello marker string not present in compiled binary");
+        _check(label, 1);
+        return 1;
+    }
+
+    var true_va = 0x100000 + s_off;
+    var old_va  = true_va - 0x48;
+    var bad_at  = _find_u64_le(buf, n, old_va);
+    if (bad_at >= 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": FIXUP regressed — OLD-entry-shifted address ");
+        print_num(old_va);
+        _p(" (true_va - 72) at file offset ");
+        print_num(bad_at);
+        _p("; true VA ");
+        print_num(true_va);
+        println("");
+        println("    This is the v5.11.43 → v5.11.45 agnos UEFI boot bug. FIXUP's");
+        println("    kmode==1 entry must gate on _TARGET_ELF64_KERNEL — see CHANGELOG [5.11.46].");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Positive sanity — the true-VA pattern must appear at least once
+    # (otherwise the test vehicle didn't actually exercise a string
+    # fixup and the negative check above is vacuous).
+    var good_at = _find_u64_le(buf, n, true_va);
+    if (good_at < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": no fixup baked the string's true VA ");
+        print_num(true_va);
+        println(" (test vehicle didn't exercise a fixup — gate is vacuous)");
+        _check(label, 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": ELF64 kernel entry agreement — e_entry=0x1000A8, fixup baked true VA ");
+    print_num(true_va);
+    println("");
+    _check(label, 0);
+    return 0;
+}
+
 # Fork+exec cyrld with output path + N input .o paths. Returns
 # 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
 # goes to /dev/null; stderr inherited from dispatcher (so a real
@@ -8203,6 +8401,10 @@ fn _run_regression_gates(): i64 {
 
     _section("build/cc5 contamination gate");
     _cc5_contamination_gate();
+    println("");
+
+    _section("ELF64 kernel entry agreement (FIXUP ↔ EMITELF64_KERNEL)");
+    _elf64_kernel_entry_gate();
     println("");
 
     _section("install --refresh-only shim");

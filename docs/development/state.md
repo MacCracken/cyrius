@@ -5,47 +5,84 @@
 
 ## Version
 
-**5.11.45** (shipped 2026-05-13 — **P(-1) hardening sweep —
-four-item bundle**). Mechanical audit at slot entry surfaced
-4 hygiene targets; all land together.
-1. **state.md compression** — 1451 → 583 lines (-868, -60%).
-   44 v5.11.x patch blocks (all duplicated in CHANGELOG)
-   collapsed to one-liners; only the current ship keeps
-   detailed-block treatment. Matches the v5.10.x "Recent
-   shipped" pattern at the bottom of state.md.
-2. **build/cc5 contamination gate** — new
-   `_cc5_contamination_gate` in `programs/check.cyr` greps
-   `build/cc5` for `mabda: gpu` / `wgpuDevice` /
-   `compute_pipeline` substrings (the v5.11.43-style slip
-   signature); check.sh **68 → 69**. Negative test verified:
-   tainting `build/cc5` makes the gate FAIL; restoring → PASS.
-3. **cyrius vet — restored**. `build/cyrc` had been replaced
-   with the 12 KB bootstrap compiler binary (no vet/deny
-   dispatch); install.sh `_rebuild_stale` skipped rebuild
-   because the bad binary's mtime was newer than the source —
-   same shape of slip as build/cc5's mabda contamination.
-   Fixed `programs/cyrc.cyr`: added explicit `syscall(60, r);`
-   exit (vet was running twice — module-init + runtime fall-
-   through), raised scan-buffer cap 16 KB → 256 KB (was
-   truncating reads on `src/main.cyr`'s 86 KB and falsely
-   reporting "no dependencies"). cyrc 12,344 B (bootstrap) →
-   **44,672 B** (real audit tool). End-to-end: `cyrius vet
-   src/main.cyr` lists 14 includes, exit 0; `cyrius deny`
-   lists 0 violations.
-4. **Dead-fn report verbose-mode gating** — per-fn name list
-   in cc5's `note: N unreachable fns ...` now gated behind
-   **`CYRIUS_DCE_VERBOSE=1`**; default-off. 37 of the 37 listed
-   fns were mode/arch-dispatched false positives (TS_*,
-   _macho_*, ir_*, aarch64-only) per
-   `feedback_dead_code_audit_scope` — not safe to remove.
-   Stderr drops 38 lines → 1 line per compile in default mode;
-   verbose mode opt-in for actual cleanup work. Pre-existing
-   byte-count bug fixed (was off-by-2, dropped the `)\n`).
-   cc5 **821,712 → 821,984 B** (+272 from env-read + gate).
-   Only x86 has the DCE pass — no cross-arch propagation.
+**5.11.46** (shipped 2026-05-13 — **ELF64 kernel entry-arithmetic
+agreement — FIXUP ↔ EMITELF64_KERNEL**). Cyrius-side
+investigation + fix of the agnos UEFI x86_64 boot regression
+filed at v5.11.45 entry. The filing's process-violation context
+(unauthorized cross-repo edit reverted at v5.11.45) is the
+load-bearing reason; the technical content of the agnos-side
+diagnosis was recorded as a hint and verified empirically here,
+**not** adopted as the fix.
 
-Self-host byte-identical (cc5 == cc5_a == cc5_b at 821,984 B);
-`check.sh` **69/69**; `cyrius test` **149/149**.
+**Premise check (pre-fix)**. Compiled `programs/kernel_hello.cyr`
+with `build/cc5` at v5.11.45 + `CYRIUS_KERNEL=1
+CYRIUS_ELF64_KERNEL=1`:
+- ELF64 `e_entry` (offset 24): **0x1000A8** ✓ (EMITELF64_KERNEL
+  side correct).
+- `"Hello from Cyrius!"` string at file offset `0x220`
+  → true VA `0x100220`.
+- Baked address inside `.text` at file offset `0x1FE`:
+  **`0x1001D8`** = `0x100220 - 0x48`.
+
+72-byte mismatch confirmed. EMITELF64_KERNEL placed the entry at
+file offset `120 + 48 = 168` (ELF64 hdr 64 + PH64 56 + multiboot2
+48), but FIXUP's `kmode == 1` branch hard-coded
+`entry = 0x100060` (the legacy ELF32+multiboot1 layout
+`0x100000 + 84 + 12`). Every absolute fixup baked a VA 72 B
+earlier than the actual symbol; `mov rcx, 0x1001D8` lands inside
+the multiboot2 header instead of `.rodata`. After GRUB-EFI
+handoff the kernel reads garbage → garbled serial output.
+**Reported symptom reproduced on a clean checkout.**
+
+**Fix**. `src/backend/x86/fixup.cyr` FIXUP `kmode == 1` branch:
+```cyrius
+if (kmode == 1) {
+    entry = 0x100000 + 84 + 12;
+    if (_TARGET_ELF64_KERNEL == 1) { entry = 0x100000 + 120 + 48; }
+}
+```
+Expanded form (was literal `0x100060`) keeps the arithmetic
+visibly tied to the same layout numbers EMITELF_KERNEL +
+EMITELF64_KERNEL use internally, so future drift between the
+three sites is grep-detectable.
+
+Post-fix on `kernel_hello.cyr`: all three `.text` references to
+`"Hello from Cyrius!"` (offsets `0x1FE`, `0x2E8`, `0x328`)
+contain `0x100220` ✓; OLD-entry-shifted VA `0x1001D8` absent.
+
+**Cross-arch propagation** — x86-only by construction.
+`_TARGET_ELF64_KERNEL` is stubbed in aarch64/cx as parser-
+resolution placeholders but only flag-flipped on x86. aarch64
+kmode==1 uses its own entry `0x40000078 + preamble` (different
+layout, no multiboot2). cx has no ELF emission. macho/PE branch
+on their own `_TARGET_*` flags, not kmode. **Not a half-fix.**
+
+**Regression gate**. New `_elf64_kernel_entry_gate()` in
+`programs/check.cyr` registered alongside the v5.11.45 cc5
+contamination gate. Sibling helper `_self_host_pipe_elf64k()`
+mirrors `_self_host_pipe` but sets envp `CYRIUS_KERNEL=1` +
+`CYRIUS_ELF64_KERNEL=1`. Helper `_find_u64_le()` scans for the
+8-byte LE encoding of a target value. Gate compiles
+`kernel_hello.cyr`, validates ELF64 magic, asserts `e_entry ==
+0x1000A8`, locates the string, computes its true VA, asserts the
+OLD-entry-shifted pattern (`true_va - 0x48`) is **absent**
+anywhere in the binary, and asserts the true-VA pattern is
+present at least once (positive sanity). Negative-test verified
+in-slot: temporarily swapping the v5.11.45 cc5 in produces
+`FAIL: FIXUP regressed — OLD-entry-shifted address 1049048 ...
+at file offset 510; true VA 1049120` (exactly the manual-analysis
+numbers `0x1001D8 @ 0x1FE`, true VA `0x100220`). check.sh
+**69 → 70**.
+
+**Issue archive**.
+`docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md`
+→ `docs/development/issues/archived/` per
+`feedback_close_to_archive_issues`. Filing's process-violation
+record stays intact; technical content superseded by CHANGELOG.
+
+Self-host byte-identical (3-step cc5 → cc5_stage2 ==
+cc5_stage3 at 822,080 B); `check.sh` **70/70**; `cyrius test`
+**149/149**.
 
 **5.11.44** (shipped 2026-05-13 — **P0 `build/cc5`
 contamination restoration + cyrius-lsp `argv[0]`
@@ -100,6 +137,8 @@ cc5 byte-identical at **821,712 B** (this is the canonical
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.45** — P(-1) hardening sweep (4-item bundle): state.md compression 1451→583, `build/cc5` contamination gate, `cyrius vet` restored, dead-fn report behind `CYRIUS_DCE_VERBOSE=1`. check.sh 68→69.
+- **v5.11.44** — `build/cc5` mabda-contamination restoration + cyrius-lsp `argv[0]` self-resolution + doc-cleanup bundle.
 - **v5.11.43** — ELF64 kernel emit + multiboot2 + EFI64-entry tag — Path A for AGNOS UEFI x86_64 boot.
 - **v5.11.42** — LSP `textDocument/semanticTokens/full` legend extension — locals + parameters colored. Roadmap doc-cleanup: -1258 lines (-51%).
 - **v5.11.41** — CVE-08 security hardening (`cld` before `rep movsb`) + doc-cleanup: `completed-phases.md` phase-out trim + roadmap held-items reconciliation.

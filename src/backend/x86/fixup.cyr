@@ -92,7 +92,16 @@ fn FIXUP(S): i64 {
     var acp = cp;
     var kmode = L64(S + 0x18FCA0);
     var entry = 0x400078;
-    if (kmode == 1) { entry = 0x100060; }
+    # Kernel mode (kmode == 1) dispatches to either EMITELF_KERNEL (ELF32 +
+    # multiboot1, hdrsz=84 + mb_sz=12 → entry 0x100060) or EMITELF64_KERNEL
+    # (ELF64 + multiboot2, hdrsz=120 + mb_sz=48 → entry 0x1000A8). FIXUP's
+    # `entry` must agree with the eventual layout or every absolute fixup
+    # shifts by `hdrsz_delta + mb_sz_delta` bytes and loads land inside
+    # .text instead of .rodata (manifests as garbled output post-boot).
+    if (kmode == 1) {
+        entry = 0x100000 + 84 + 12;
+        if (_TARGET_ELF64_KERNEL == 1) { entry = 0x100000 + 120 + 48; }
+    }
     # Shared objects: p_vaddr=0, code starts right after 3 PHs (hdr=232).
     # All data/string refs must be RIP-relative for load-bias safety.
     if (kmode == 2) { entry = 232; }
