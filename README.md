@@ -2,9 +2,9 @@
 
 **Sovereign, self-hosting systems language. Assembly up.**
 
-A self-hosting compiler toolchain that bootstraps from a 29KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, and its own build tool.
+A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~741KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode. 78 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; +`lib/audit_walk.cyr` at v5.9.1). 127 test suites + 1 soak + 1 smoke harness, 5 fuzz harnesses, 15 benchmarks.
+~823 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 79 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 149 .tcyr + 1 soak + 1 smoke + 5 fuzz + 14 bench, 72 check.sh gates.
 
 ## Install
 
@@ -91,13 +91,59 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler | **~741KB** x86_64 (v5.9.1; unchanged since v5.8.65), **~430KB** aarch64 cross |
-| Seed binary | **29KB** |
-| External dependencies | **0** |
-| Tests | 127 .tcyr (TS suite consolidated 24→4 at v5.7.37; v5.8.x added slices sub-arc + sum types + Result+? + allocators + Unicode 17.0.0 conformance harness with 320,547 NormalizationTest.txt asserts at NFC/NFD/NFKC/NFKD), 5 .fcyr fuzz, 15 .bcyr bench, 1 .scyr soak, 1 .smcyr smoke |
-| Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, cyrius-x bytecode |
-| Caps | ident buffer 128KB, fn table 4096, fixup table 1M (v5.7.7), input_buf 1MB (v5.7.10), str_data 2MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 256KB (v5.7.36), aarch64 codebuf 3MB (v5.7.34) |
+| Compiler (`cc5`) | **823,112 B** (~820 KB) x86_64 at v5.11.49 |
+| Cross compilers | `cc5_aarch64` 506,216 B, `cc5_win` 630,272 B (cross-built) |
+| Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
+| Bridge compiler (`cyrc`) | **12,344 B** |
+| LSP server (`cyrius-lsp`) | **94,440 B** |
+| Linker (`cyrld`) | **902,776 B** |
+| External dependencies | **0** at the compiler level (1 git dep at stdlib level: mabda) |
+| Tests | **149** .tcyr + **5** .fcyr fuzz + **14** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Gates (`scripts/check.sh`) | **72** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49) |
+| Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit, cyrius-x bytecode |
+| Stdlib modules | **79** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
+| Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
 | Heap layout | 84 regions, monotonic post-v5.8.61 reorg (str_data at 0x21A000), brk-final at 0x4E8C000 (~78.5 MB) |
+
+### Toolchain size comparison
+
+Full Cyrius release toolchain (`~/.cyrius/bin/`) totals **3.72 MB** across the compiler, cross-compilers, linker, LSP, formatter, linter, doc tool, init scaffolder, port utility, and `cyrius` CLI dispatcher.
+
+For order-of-magnitude context (approximate, per typical Linux distribution package sizes):
+
+| Toolchain | Approximate size | Notes |
+|-----------|------------------|-------|
+| **Cyrius** (full release toolchain) | **~3.7 MB** | Compiler + linker + LSP + fmt + lint + doc + cross-compilers + CLI |
+| TCC (Tiny C Compiler, self-hosting) | ~500 KB | C compiler binary only; no LSP / linker / fmt |
+| `gcc` | ~150-200 MB | Compiler + dependencies; libc not included |
+| `rustc` | ~150 MB (binary) | + ~850 MB stdlib metadata |
+| `clang` + LLVM | ~1-2 GB | |
+| `go` (gc compiler) | ~80-100 MB | Includes stdlib |
+| `zig` | ~60-150 MB | Version-dependent |
+
+Per-binary sizes for the Cyrius single-pipeline compile path:
+
+| Stage | Binary | Size |
+|-------|--------|------|
+| 1. Root of trust (committed) | `bootstrap/asm` | 29 KB |
+| 2. Bridge | `cyrc` | 12 KB |
+| 3. Full compiler | `cc5` | 823 KB |
+| 4. Linker | `cyrld` | 903 KB |
+
+### Language surface
+
+| Category | Reserved-token count | Examples |
+|----------|----------------------|----------|
+| Core syntactic (control flow, decl, modules) | **~28** | `if` `fn` `var` `for` `else` `elif` `while` `break` `continue` `match` `case` `default` `return` `enum` `struct` `union` `impl` `mod` `pub` `use` `asm` `syscall` `shared` `object` `defer` `stack` `secret` `in` |
+| Memory + bit + return ops | **~14** | `load8/16/32/64` `store8/16/32/64` `bitget` `bitset` `bitclr` `ret2` `rethi` `u128` |
+| f64 / SIMD math intrinsics | **~32** | `f64_add/sub/mul/div/neg/abs` `f64_sin/cos/exp/ln/sqrt/atan` `f64_to/from` `f64_eq/lt/gt` `f64_ceil/floor/round` `f64_log2/exp2` `f64v_add/sub/mul/div/abs/sqrt/dot/axpy/fmadd/scale` |
+| Preprocessor directives (`#`-prefix) | **~5** | `#assert` `#regalloc` `#derive` `#pe_import` `#ifdef` (+ `#else` / `#elif` / `#ifndef` / `#ifplat`) |
+
+**~74 total** lexer-reserved tokens. C23 has 59 keywords for comparison. The math intrinsics (~32) are exposed as keywords because they emit specific instruction sequences and dispatch per-backend (x86 SSE, aarch64 NEON V0, cx bytecode); in C those would be `__builtin_*` or library calls.
+
+### Caps + heap
+
+ident buffer 256 KB (v5.11.18; was 128 KB), fn table 8192 (v5.11.19; was 4096), fixup table 1M (v5.7.7), input_buf 1 MB (v5.7.10), str_data 2 MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 256 KB (v5.7.36), aarch64 codebuf 3 MB (v5.7.34), preprocess buf 8 MB (v5.11.33).
 
 ## Build Tool (cyrius)
 
@@ -123,7 +169,7 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (78 modules + 1 git dep)
+## Standard Library (79 modules + 1 git dep)
 
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
@@ -200,10 +246,10 @@ src/
 ### Bootstrap Chain
 
 ```
-bootstrap/asm (29KB committed binary -- root of trust)
-  -> cyrc (12KB compiler)
+bootstrap/asm (29,016 B committed binary -- root of trust)
+  -> cyrc (12,344 B compiler)
     -> bridge.cyr (bridge compiler)
-      -> cc5 (modular compiler + IR, ~741KB at v5.8.65)
+      -> cc5 (modular compiler + IR, 823,112 B at v5.11.49)
         -> cc5_aarch64, cc5_win_cross, cc5_macho_cross, cc5_cx (cross-compilers)
 ```
 

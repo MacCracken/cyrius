@@ -5,74 +5,86 @@
 
 ## Version
 
-**5.11.48** (shipped 2026-05-13 — **EFI Application probe +
-structural gate; gnoboot arc P2**). Second of 3-slot arc; OVMF
-runtime smoke lands at .49.
+**5.11.49** (shipped 2026-05-13 — **OVMF runtime smoke + arc
+closeout; gnoboot MVP unblocker GA, arc KO**). Third and final
+slot of the 3-slot UEFI Application emit arc. cyrius-compiled
+`programs/efi_probe.cyr` boots end-to-end under qemu+OVMF and
+prints `"hello, uefi"` to firmware's ConOut serial.
 
-**Compiler nudge**. `src/backend/pe/emit.cyr:776` — v5.6.31's
-`_dllc = 0x0160 when reloc present` logic left zero-fixup EFI
-binaries (no globals = no DIR64 entries = no `.reloc`) with
-`DllCharacteristics = 0x0000`. UEFI 2.0+ requires NX_COMPAT
-(0x0100). Added branch: when `_TARGET_EFI_APPLICATION == 1 &&
-_pe_reloc_vsize == 0`, force `_dllc = 0x0100` (NX_COMPAT only;
-DYNAMIC_BASE stays off since the image is non-relocatable and
-firmware honors ImageBase 0x140000000 directly).
+**Runtime bringup discovery**. Manual OVMF boot of v5.11.48
+output produced `BdsDxe: failed to load ... Not Found`. Walk-
+through: DOS+PE+Subsystem+DllChar+DataDirs all correct; **COFF
+Characteristics = 0x0023 includes RELOCS_STRIPPED (0x0001)**.
+UEFI firmware treats RELOCS_STRIPPED as "load me at exactly
+ImageBase=0x140000000 or fail" — and OVMF's runtime services
+occupy nearby pages so allocation fails silently → "Not Found".
+Standard UEFI Application binaries (rEFInd, systemd-boot,
+GRUB-EFI) NEVER set RELOCS_STRIPPED for exactly this reason.
 
-**Premise discovery**. cyrius's PE entry prologue is
-`e9 00 00 00 00` (5-byte `jmp +0`) — touches no GPRs, so
-firmware-supplied RCX/RDX survive into the first user byte.
-Verified by compiling a probe with a 4-NOP marker as first user
-asm and finding it at `.text + 0x05`. This makes "inline-asm-
-first" the right shape for capturing UEFI entry args — fn calls
-would clobber RCX/RDX with their own arg-setup `mov`s before any
-user code sees them.
+**Fix**. `src/backend/pe/emit.cyr:714` COFF Characteristics
+branch:
+```cyrius
+var _chars = 0x0023;
+if (_pe_reloc_vsize != 0) { _chars = 0x0022; }
+if (_TARGET_EFI_APPLICATION == 1) { _chars = 0x0022; }
+```
+EFI mode now clears RELOCS_STRIPPED unconditionally — firmware
+can place at any free address; probe doesn't care (all addressing
+is runtime register-indirect, no imm64 references); gnoboot will
+care correctly once it has globals (covered by `.reloc`).
 
-**programs/efi_probe.cyr** (new). 64 LoC. Single `asm { ... }`
-block at top-level under `kernel;` mode. Walks `SystemTable →
-ConOut → OutputString` through pure runtime register-indirect
-addressing — no globals, no fixups. Byte-level entry layout
-(offsets in .text after the 5-byte cyrius prologue):
-0x05 `mov rcx, [rdx+0x40]` (ConOut), 0x09 `mov rax, [rcx+0x08]`
-(OutputString fn ptr), 0x0D `lea rdx, [rip+0x0E]` (msg in .text),
-0x14 `sub rsp, 0x28`, 0x18 `call rax`, 0x1A `add rsp, 0x28`,
-0x1E `xor eax, eax` (EFI_SUCCESS), 0x20 `ret`, 0x21 nop pad,
-0x22 UTF-16LE `"hello, uefi\r\n\0"` (28 bytes).
+**Post-fix boot trace**:
+```
+BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK QM00001 " ...
+hello, uefi
+BdsDxe: loading Boot0000 "BootManagerMenuApp" ...
+```
+Firmware loaded BOOTX64.EFI, jumped to AddressOfEntryPoint, our
+inline-asm executed `SystemTable→ConOut→OutputString(L"hello,
+uefi\r\n")`, returned EFI_SUCCESS, firmware unwound back to boot
+manager menu. **End-to-end working.**
 
-UEFI ABI: MS x64 (RCX/RDX = first 2 args; 0x20 shadow space +
-16-byte stack alignment). SystemTable per UEFI spec § 4.3
-(`ConOut*` @ 0x40); SIMPLE_TEXT_OUTPUT_PROTOCOL per § 12.4
-(`OutputString` @ 0x08). CHAR16 strings UTF-16LE, NUL-terminated,
-2-byte aligned.
+**_efi_ovmf_smoke_gate()** (new). `programs/check.cyr` registers
+the runtime-floor gate right after `_efi_emit_gate`. Compiles
+`efi_probe.cyr` via `_self_host_pipe_efi`; orchestrates a GPT-
+disk-with-ESP build (parted + mtools + mcopy); runs the disk
+under qemu+OVMF with `-serial stdio` capture; greps for
+`"hello, uefi"`. Orchestration is a `/bin/sh -c '<one-liner>'
+-- $efi_path` shell-out (test glue, not a separate
+scripts/ovmf-smoke.sh deliverable). Graceful SKIP path if
+qemu/parted/mtools/OVMF firmware missing — gate is opt-in via
+test-environment presence. Negative-test verified: v5.11.48 cc5
+(RELOCS_STRIPPED set) → gate FAILs `(sh rc=1)`; post-fix → PASS.
 
-**_efi_emit_gate()** (new). `programs/check.cyr`. Sibling helper
-`_self_host_pipe_efi` (mirrors `_self_host_pipe_elf64k` with
-`CYRIUS_TARGET_EFI=1` in envp). Two LE-explicit helpers
-`_read_u16_le` + `_read_u32_le` for PE-spec offset readback.
-Gate compiles `programs/efi_probe.cyr` and asserts (1) MZ DOS
-header + PE signature, (2) Optional Magic = `0x020B`, (3)
-Subsystem = `0x000A`, (4) DllCharacteristics has NX_COMPAT
-(`0x0100`), (5) Data Dir [1] Import zeroed, (6) Data Dir [12]
-IAT zeroed, (7) `.text` contains at least one `0xC3` (EEXIT EFI
-variant in use).
+**Issue archive**:
+`docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md`
+→ `docs/development/issues/archived/`.
 
-Negative-test verified in-slot: swapping v5.11.46 cc5 (commit
-`9cebb7fa:build/cc5`) over the post-fix binary makes the gate
-FAIL with `efi_probe output missing MZ DOS header` (pre-.47 cc5
-didn't know `CYRIUS_TARGET_EFI`, so the env-var flip never
-fired). Restoring → PASS.
+**gnoboot consumer status**: AGNOS Path C / gnoboot can pin
+`cyrius = "5.11.49"` and start writing the sovereign UEFI
+bootloader. Path A (ELF64 multiboot2 via GRUB) dead-on-iron;
+Path C is the live MVP boot path.
+
+**Arc summary (v5.11.47 → v5.11.49)**:
+- cc5: 821,984 → **823,112 B** (+1,128 B total across 3 slots)
+- check.sh: 70 → **72** (+2 gates: structural + runtime)
+- 1 new cyrius source program: `programs/efi_probe.cyr` (64 LoC,
+  inline-asm-only — no fixups, no globals)
+- 1 filing closed (gnoboot UEFI emit issue, archived)
+- Compile→runtime turnaround: same-day (filing in the morning →
+  arc shipped + runtime-verified in the afternoon)
 
 Self-host byte-identical (3-step cc5 → stage2 == stage3 at
-**823,064 B** / +128 from v5.11.47); `check.sh` **70 → 71**;
-`cyrius test` **149/149**. Default-off path byte-identical to
-v5.11.47 output for existing Windows-CUI consumers.
+**823,112 B**); `check.sh` **72/72**; `cyrius test` **149/149**.
+Default-off path byte-identical to v5.11.48.
 
-**Next in arc**: `.49` — OVMF runtime smoke. Stage
-`efi_probe.efi` on FAT ESP at `/EFI/BOOT/BOOTX64.EFI`; boot
-`qemu-system-x86_64 + OVMF_CODE.4m.fd + OVMF_VARS.4m.fd -serial
-stdio`; verify `"hello, uefi"` on serial. Arc closeout CHANGELOG.
+**Next**: gnoboot consumer agent picks up the unblocked toolchain.
+Cyrius cycle returns to v5.11.x absorber buffer (.50 → .67 open;
+.68 = heap-map full reorg, .69 = conditional mabda fold).
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.48** — EFI Application probe + structural gate (gnoboot arc P2): `programs/efi_probe.cyr` (64 LoC, inline-asm-only); `_efi_emit_gate()` structural check (Subsystem=0xA, NX_COMPAT, Data Dirs zeroed, .text has ret); DllCharacteristics NX_COMPAT forced in EFI mode even without `.reloc`. check.sh 70→71.
 - **v5.11.47** — UEFI Application PE emit mode + `_pe_ensure_*` refactor (gnoboot arc P1): `_TARGET_EFI_APPLICATION` flag, Subsystem byte 3→10 branch, EEXIT EFI variant (single `ret`), ExitProcess import skip + kernel32 fail-fast guard, Data Dirs [1]/[12] zeroed. 9 `_pe_ensure_<X>(S)` fns consolidated to single `_pe_register_kernel32` helper.
 - **v5.11.46** — ELF64 kernel entry-arithmetic agreement (FIXUP ↔ EMITELF64_KERNEL) — agnos UEFI x86_64 boot regression fix; `_elf64_kernel_entry_gate()` added (check.sh 69→70).
 - **v5.11.45** — P(-1) hardening sweep (4-item bundle): state.md compression 1451→583, `build/cc5` contamination gate, `cyrius vet` restored, dead-fn report behind `CYRIUS_DCE_VERBOSE=1`. check.sh 68→69.

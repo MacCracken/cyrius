@@ -1780,6 +1780,112 @@ fn _efi_emit_gate(): i64 {
     return 0;
 }
 
+# Gate: UEFI Application boots end-to-end under qemu + OVMF and writes
+# "hello, uefi" to firmware's ConOut (v5.11.49, gnoboot arc KO).
+#
+# This is a RUNTIME smoke — it actually boots the cyrius-compiled EFI
+# binary under qemu-system-x86_64 with OVMF firmware, captures serial
+# output, and asserts the probe's "hello, uefi" message appears. Catches
+# bugs that structural checks miss (entry-point convention regressions,
+# COFF Characteristics misalignment, PE loader rejection, etc.).
+#
+# Tooling required (graceful SKIP if any missing): qemu-system-x86_64,
+# parted, mformat/mcopy (mtools), OVMF_CODE.4m.fd + OVMF_VARS.4m.fd.
+# On Arch Linux these come from `qemu-base`, `parted`, `mtools`, and
+# `edk2-ovmf` packages.
+#
+# Negative-test verified in slot: with v5.11.48 cc5 (RELOCS_STRIPPED
+# still set on zero-fixup EFI binaries), OVMF BdsDxe reports
+# "Not Found" and "hello, uefi" never appears. v5.11.49 cc5 clears
+# RELOCS_STRIPPED in EFI mode; boot succeeds.
+fn _efi_ovmf_smoke_gate(): i64 {
+    var label = "EFI Application boots under qemu+OVMF + writes hello via ConOut (v5.11.49; gnoboot arc KO)";
+
+    # Probe for required tooling. Any missing → SKIP gracefully (don't
+    # fail check.sh; the gate is opt-in via presence of the test
+    # environment, same pattern as the macho cross-build gate which
+    # skips when codesign is absent).
+    if (file_exists("/usr/bin/qemu-system-x86_64") != 1) {
+        _p("  "); _p(ANSI_RESET); _p("SKIP"); _p(ANSI_RESET);
+        println(": qemu-system-x86_64 not installed — runtime smoke skipped");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/bin/parted") != 1) {
+        _p("  SKIP: parted not installed — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/bin/mformat") != 1) {
+        _p("  SKIP: mtools (mformat) not installed — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd") != 1) {
+        _p("  SKIP: OVMF_CODE.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd") != 1) {
+        _p("  SKIP: OVMF_VARS.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Compile programs/efi_probe.cyr under CYRIUS_TARGET_EFI=1.
+    var src_path = _root_path("programs/efi_probe.cyr");
+    var efi_bin = _tmp_path("efi_smoke_probe_");
+    var rc = _self_host_pipe_efi(src_path, CC_PATH, efi_bin);
+    if (rc != 0) {
+        sys_unlink(efi_bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": efi_probe compile failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Runtime smoke pipeline. The orchestration is a /bin/sh -c
+    # one-liner — test glue, not a separate shell-script deliverable
+    # (cyrius owns the gate; sh is just stdlib-tool composition for
+    # parted/mtools/qemu invocation, same shape as how cross-host
+    # smoke uses ssh). The .efi path comes through as $1.
+    var script = "set -e; D=$(mktemp -d -t efi-smoke.XXXXXX); trap 'rm -rf \"$D\"' EXIT; cd \"$D\"; dd if=/dev/zero of=disk.img bs=1M count=64 status=none; parted -s disk.img mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1; mformat -i disk.img@@1048576 -F; mmd -i disk.img@@1048576 ::EFI; mmd -i disk.img@@1048576 ::EFI/BOOT; mcopy -i disk.img@@1048576 \"$1\" ::EFI/BOOT/BOOTX64.EFI; cp /usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd vars.fd; chmod +w vars.fd; timeout 12 qemu-system-x86_64 -machine q35 -m 256M -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=vars.fd -drive file=disk.img,format=raw -serial stdio -display none -no-reboot 2>/dev/null | grep -q 'hello, uefi'";
+
+    var args = vec_new();
+    vec_push(args, str_from("/bin/sh"));
+    vec_push(args, str_from("-c"));
+    vec_push(args, str_from(script));
+    vec_push(args, str_from("--"));
+    vec_push(args, str_from(efi_bin));
+    var rc2 = exec_vec_str(args);
+    sys_unlink(efi_bin);
+
+    if (rc2 == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": OVMF firmware loaded BOOTX64.EFI; \"hello, uefi\" captured on serial");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": OVMF runtime smoke did not produce \"hello, uefi\" (sh rc=");
+    print_num(rc2);
+    println(")");
+    _check(label, 1);
+    return 1;
+}
+
 # Fork+exec cyrld with output path + N input .o paths. Returns
 # 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
 # goes to /dev/null; stderr inherited from dispatcher (so a real
@@ -8690,6 +8796,10 @@ fn _run_regression_gates(): i64 {
 
     _section("EFI Application PE emit (gnoboot MVP unblocker)");
     _efi_emit_gate();
+    println("");
+
+    _section("EFI Application OVMF runtime smoke (gnoboot arc KO)");
+    _efi_ovmf_smoke_gate();
     println("");
 
     _section("install --refresh-only shim");

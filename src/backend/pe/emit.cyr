@@ -726,6 +726,16 @@ fn EMITPE_EXEC(S): i64 {
     # ASLR). v5.5.35.
     var _chars = 0x0023;
     if (_pe_reloc_vsize != 0) { _chars = 0x0022; }
+    # v5.11.49: UEFI Application mode MUST NOT claim RELOCS_STRIPPED
+    # even with zero actual fixups. UEFI firmware (OVMF BdsDxe confirmed
+    # 2026-05-13) treats RELOCS_STRIPPED as "you MUST load me at exactly
+    # ImageBase or fail." If ImageBase 0x140000000 isn't free in firmware
+    # memory map, BdsDxe reports "Not Found" and skips the image. Clearing
+    # the bit lets firmware place the image anywhere; absolute imm64
+    # references in user code would need .reloc to survive that, but the
+    # MVP probe (programs/efi_probe.cyr) is all runtime register-indirect
+    # so it works at any address.
+    if (_TARGET_EFI_APPLICATION == 1) { _chars = 0x0022; }
     o = _pe_w16(O, o, _chars);
 
     # ============================================================
