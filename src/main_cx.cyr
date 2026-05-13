@@ -29,7 +29,7 @@ var S = syscall(SYS_BRK, 0);
 # (0x368C000) is unused on this path; kept for offset parity with
 # main.cyr. v5.10.40 grew brk from 0x4E8C000 by 132 KB for the
 # LEXID bucket index (see src/main.cyr §LEXID_DEDUP).
-syscall(SYS_BRK, S + 0x4EAD000);
+syscall(SYS_BRK, S + 0x56AD000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

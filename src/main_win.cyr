@@ -17,7 +17,7 @@
 #                                         NOTE: input_buf extends past 0x60000 (tok_names).
 #                                         tok_names is REBUILT by LEX after preprocessing —
 #                                         the overlap is tolerated because preprocessing reads
-#                                         from 0x44A000, not S+0.
+#                                         from 0x4EAD000, not S+0.
 #   0x60000  tok_names     [262144]      256KB packed identifier strings (nested in input_buf — rebuilt by LEX, v4.6.2 was 64KB, v5.11.18 doubled 128KB → 256KB)
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
@@ -102,7 +102,10 @@
 #   0x21A000 str_data      [2097152]     2MB string literal bytes (v5.8.61 monotonic — see main.cyr)
 #
 # --- Large buffers ---
-#   0x44A000 preprocess_out[2097152]     2MB expanded source buffer
+#   0x44A000..0x64A000 (2 MB FREED GAP)   Was preprocess_out [2097152] through
+#                                        v5.11.32. Relocated to 0x4EAD000 +
+#                                        cap raised 2 MB → 8 MB at v5.11.33;
+#                                        absorbed by v5.11.68's full reorg.
 #   0x64A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
 #   0x94A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43) (v3.5.2)
 #   (tok arrays RETIRED here v5.8.46 — see main.cyr for canonical layout;
@@ -134,11 +137,17 @@
 #   0x4E8C900  lexid_entries [131072]
 #   (Full doc in src/main.cyr §LEXID_DEDUP)
 #
-#   0x4EAD000 brk-equivalent              ~78.6 MB MMAP region (v5.10.40 grew this
-#                                        from 0x4E8C000 by 132 KB for the LEXID
-#                                        dedup index; was 0x4E8C000 at v5.8.61
-#                                        monotonic; was 0x5100000 at .59-.60 /
-#                                        0x5000000 / 0x298B000)
+#   0x4EAD000 preprocess_out [8388608]   8 MB expanded source buffer.
+#                                        Relocated here from 0x44A000 at v5.11.33
+#                                        + cap raised 2 MB → 8 MB. See
+#                                        CHANGELOG [5.11.33].
+#   0x56AD000 brk-equivalent              ~86.6 MB. v5.11.33 grew this from
+#                                        0x4EAD000 / 78.6 MB at v5.10.40 by the
+#                                        8 MB preprocess_out relocation;
+#                                        v5.10.40 grew from 0x4E8C000 / 78.5 MB
+#                                        at v5.8.61 by 132 KB LEXID dedup; was
+#                                        0x5100000 at .59-.60 / 0x5000000 /
+#                                        0x298B000.
 #
 # Token types:
 #   1=NUM 2=IDENT 3=VAR 4=EQ 5=SEMI 6=PLUS 7=MINUS 8=STAR 9=SLASH
@@ -243,16 +252,14 @@ if (_vn > 0) {
 #     VirtualAlloc(0, 32MB, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
 #     The prot/flags/fd/offset are ignored by EMMAP_PE.
 # 32 MB covers the 21 MB heap with margin + page-alignment.
-# MMAP region sized at 0x5000000 (80 MB) — covers the cyrius heap
-# layout through tok_lines + the v5.10.40 LEXID dedup index
-# (~78.6 MB) plus page-alignment slack. Synced with main.cyr
-# (brk-equivalent at 0x4EAD000 inside this region; was 0x4E8C000
-# pre-v5.10.40 before the LEXID bucket region — see src/main.cyr
-# §LEXID_DEDUP). 0x5000000 is the same value used by Linux/aarch64
-# brk patterns; PE EMMAP routes it via VirtualAlloc with the
-# prot/flags ignored. The 80 MB cap has 1.4 MB slack past brk-
-# equivalent so the LEXID extension fits without bumping mmap size.
-var S = syscall(SYS_MMAP, 0, 0x5000000, 3, 0x22, 0 - 1, 0);
+# MMAP region sized at 0x5800000 (88 MB) — covers the cyrius heap
+# layout through the v5.11.33 preprocess_out relocation
+# (brk-equivalent at 0x56AD000 / ~86.6 MB) plus 1.4 MB
+# page-alignment slack. Synced with main.cyr's brk extension.
+# v5.11.33 grew from 0x5000000 / 80 MB by 8 MB to absorb the
+# preprocess_out cap raise (2 MB → 8 MB). PE EMMAP routes via
+# VirtualAlloc with prot/flags ignored.
+var S = syscall(SYS_MMAP, 0, 0x5800000, 3, 0x22, 0 - 1, 0);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

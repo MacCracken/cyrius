@@ -25,7 +25,7 @@
 #                                         NOTE: input_buf extends past 0x60000 (tok_names).
 #                                         tok_names is REBUILT by LEX after preprocessing —
 #                                         the overlap is tolerated because preprocessing reads
-#                                         from 0x44A000, not S+0.
+#                                         from 0x4EAD000, not S+0.
 #   0x60000  tok_names     [262144]      256KB packed identifier strings (nested in input_buf — rebuilt by LEX, v4.6.2 was 64KB, v5.11.18 doubled 128KB → 256KB; grows 0x60000-0xA0000 into the 0xA0000-0x18C100 gap)
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
@@ -236,12 +236,14 @@
 #                                        documented headroom for str_data growth.
 #
 # --- Large buffers ---
-#   0x44A000 preprocess_out[2097152]     2MB expanded source buffer
-#                                        (was 1 MB pre-v5.6.40; doubled
-#                                        when patra 1.8.3 + the full
-#                                        stdlib include set crossed
-#                                        the 1 MB ceiling on
-#                                        large_input.tcyr by ~280 B)
+#   0x44A000..0x64A000 (2 MB FREED GAP)   Was preprocess_out [2097152]
+#                                        through v5.11.32. Relocated to
+#                                        0x4EAD000 at v5.11.33 + cap
+#                                        raised 2 MB → 8 MB. The 2 MB
+#                                        hole is intentional documented
+#                                        headroom; absorbed by v5.11.68's
+#                                        full heap-map reorg (closeout).
+#                                        See CHANGELOG [5.11.33].
 #   0x64A000 codebuf       [3145728]     3MB generated machine code (v5.7.27 — was 1MB pre-v5.7.27; bumped to absorb cyrius-ts test-compile pressure (94% on ts_parse_p52-54 across v5.7.24-v5.7.26)) (v3.5.2)
 #   0x94A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43) (v3.5.2).
 #                                        Pre-v5.8.46 tok_types ALSO lived here (overlap recycled
@@ -330,12 +332,39 @@
 #                                            cap 16384 → ~3× safety margin over
 #                                            cc5 self-compile's distinct-id count.
 #
-#   0x4EAD000 brk-final                   ~78.6 MB — heap end. v5.10.40 grew this
-#                                        from 0x4E8C000 (~78.5 MB at v5.8.61) by
-#                                        the 132 KB LEXID dedup index above.
-#                                        v5.8.61 shrunk this from 0x508C000
-#                                        (~80.5 MB at v5.8.59) when str_data folded
-#                                        back to 0x21A000; layout is monotonic
+#
+# --- Relocated large buffer (v5.11.33) ---
+#   0x4EAD000 preprocess_out [8388608]   8 MB expanded source buffer.
+#                                        Relocated here from 0x44A000 at
+#                                        v5.11.33 + cap raised 2 MB → 8 MB
+#                                        after sit v0.7.6 hit 2,099,593
+#                                        bytes (2,441 over the prior cap)
+#                                        on a stock sandhi-folded
+#                                        [deps].stdlib. Sized for
+#                                        headroom into v6.x (sandhi TLS
+#                                        rewrite + one more major).
+#                                        Lineage: 1 MB at 0x44A000 (v3.x)
+#                                        → 2 MB at 0x44A000 (v5.6.40,
+#                                        patra 1.8.3 + stdlib crossed
+#                                        1 MB) → 8 MB at 0x4EAD000
+#                                        (v5.11.33, sit-filed cap raise
+#                                        on sandhi-folded stdlib growth).
+#                                        Old 0x44A000..0x64A000 (2 MB) is
+#                                        a documented freed gap; absorbed
+#                                        by v5.11.68's full heap-map reorg.
+#                                        See CHANGELOG [5.11.33].
+#
+#   0x56AD000 brk-final                   ~86.6 MB — heap end. v5.11.33
+#                                        grew this from 0x4EAD000
+#                                        (~78.6 MB at v5.10.40) by the
+#                                        8 MB preprocess_out relocation
+#                                        above. Lineage: v5.10.40 grew
+#                                        brk from 0x4E8C000 (~78.5 MB at
+#                                        v5.8.61) by the 132 KB LEXID
+#                                        dedup; v5.8.61 shrunk from
+#                                        0x508C000 (~80.5 MB at v5.8.59)
+#                                        when str_data folded back to
+#                                        0x21A000; layout is monotonic
 #                                        from 0x00000 to brk.
 #
 # Token types:
@@ -456,7 +485,7 @@ var S = syscall(SYS_BRK, 0);
 # + 0xD81000 size, per src/frontend/ts/{lex,parse}.cyr design after
 # v5.7.2 P2.1). TS region is only TOUCHED in --lex-ts / --parse-ts
 # modes; the +13.5 MB brk extension is paid unconditionally.
-syscall(SYS_BRK, S + 0x4EAD000);
+syscall(SYS_BRK, S + 0x56AD000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

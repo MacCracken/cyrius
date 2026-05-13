@@ -37,7 +37,7 @@ fn ISINCLUDE(S, pos, bl): i64 {
 }
 
 # Preprocess: expand include directives in-place.
-# Uses S+0 as input, S+0x44A000 as expanded output (1MB), copies back to S+0.
+# Uses S+0 as input, S+0x4EAD000 as expanded output (1MB), copies back to S+0.
 # Check if buffer at pos starts with a directive (returns length or 0)
 fn ISDEFINE(S, pos, bl): i64 {
     # Leading whitespace tolerated (see PP_SKIP_WS). Note that the
@@ -1328,7 +1328,7 @@ fn PP_SKIPLINE(S, ip, bl): i64 {
 # Builds expanded source into a new buffer, then copies back.
 fn PP_PASS(S): i64 {
     var bl = GBL(S);
-    var out = S + 0x44A000;
+    var out = S + 0x4EAD000;
     var op = 0;
     var ip = 0;
     var bol = 1;
@@ -1595,7 +1595,7 @@ fn PP_PASS(S): i64 {
                                 }
                                 store8(out + op, 34); op = op + 1;
                                 store8(out + op, 10); op = op + 1;
-                                var nr = READFILE(fname, out + op, 2097152 - op);
+                                var nr = READFILE(fname, out + op, 8388608 - op);
                                 op = op + nr;
                                 had_include = 1;
                             }
@@ -1683,15 +1683,17 @@ fn PP_PASS(S): i64 {
             }
         }
     }
-    # Check preprocess output size. Buffer is 2MB at 0x44A000 (v5.6.40).
-    if (op > 2097152) {
-        syscall(SYS_WRITE, 2, "error: expanded source exceeds 2MB (", 36);
+    # Check preprocess output size. Buffer is 8MB at 0x4EAD000
+    # (v5.11.33 — was 2MB at 0x44A000 pre-relocation; raised to absorb
+    # sandhi-folded stdlib growth + headroom into v6.x).
+    if (op > 8388608) {
+        syscall(SYS_WRITE, 2, "error: expanded source exceeds 8MB (", 36);
         PRNUM(op);
         syscall(SYS_WRITE, 2, " bytes)\n", 8);
         syscall(SYS_EXIT, 1);
     }
-    # No copy-back — data stays at S+0x44A000.
-    # PP_IFDEF_PASS reads from 0x44A000, writes to S+0.
+    # No copy-back — data stays at S+0x4EAD000.
+    # PP_IFDEF_PASS reads from 0x4EAD000, writes to S+0.
     SBL(S, op);
     return had_include;
 }
@@ -1700,8 +1702,8 @@ fn PP_PASS(S): i64 {
 fn PP_MACRO_PASS(S): i64 {
     if (_pp_macro_count == 0) { return 0; }
     var bl = GBL(S);
-    # Copy from 0x44A000 to S+0, save/restore state if large
-    var out = S + 0x44A000;
+    # Copy from 0x4EAD000 to S+0, save/restore state if large
+    var out = S + 0x4EAD000;
     var op = 0;
     var ip = 0;
     while (ip < bl) {
@@ -1735,7 +1737,7 @@ fn PP_MACRO_PASS(S): i64 {
             ip = ip + 1;
         }
     }
-    # No copy-back — output stays at S+0x44A000. LEX reads from there.
+    # No copy-back — output stays at S+0x4EAD000. LEX reads from there.
     SBL(S, op);
     return 0;
 }
@@ -1743,15 +1745,15 @@ fn PP_MACRO_PASS(S): i64 {
 # Second pass: evaluate #ifdef/#define/#endif only (no includes).
 # Processes conditional blocks in already-included content.
 #
-# v3.6.5: reads source from the preprocess buffer (S+0x44A000) directly via
+# v3.6.5: reads source from the preprocess buffer (S+0x4EAD000) directly via
 # `src` pointer. Only the first 256KB is copied to S+0 for helper functions
 # (ISDEFINE, PP_DEFINE, PP_SKIPLINE, etc.) which read via S+pos and also
 # access heap state at S+0x190800. Directives only appear in the first few KB
 # of source (stdlib headers), so the 256KB copy always covers them.
 #
-# Output writes go to S+0x44A000 (in-place: op <= ip always, safe because
+# Output writes go to S+0x4EAD000 (in-place: op <= ip always, safe because
 # ifdef filtering only removes lines). NO copy-back to S+0 at the end —
-# LEX reads from S+0x44A000, and PP_MACRO_PASS short-circuits for programs
+# LEX reads from S+0x4EAD000, and PP_MACRO_PASS short-circuits for programs
 # without macros.
 #
 # This eliminates the Bug #35 family of copy-back overflows that corrupted
@@ -1768,9 +1770,11 @@ fn PP_IFDEF_PASS(S): i64 {
     # macOS flags if the kernel rejects them (EINVAL on macOS — BSD raw
     # SVC returns -errno now that ESYSCALL emits `csneg x0, x0, x0, cc`).
     var prot = 3;     # PROT_READ | PROT_WRITE
-    var tmp = syscall(9, 0, 2097152, prot, 34, 0 - 1, 0);
+    # v5.11.33: tmp buffer sized to match the new 8 MB preprocess_out
+    # cap (was 2 MB at 0x44A000 before the relocation).
+    var tmp = syscall(9, 0, 8388608, prot, 34, 0 - 1, 0);
     if (tmp < 0) {
-        tmp = syscall(9, 0, 2097152, prot, 0x1002, 0 - 1, 0);
+        tmp = syscall(9, 0, 8388608, prot, 0x1002, 0 - 1, 0);
     }
     # v4.8.4-alpha3: fixpoint loop so nested includes in files expanded
     # during this pass (e.g. registry.cyr → hashmap.cyr → fnptr.cyr)
@@ -1790,7 +1794,7 @@ fn PP_IFDEF_PASS(S): i64 {
         var bl = GBL(S);
         # Copy the preprocessed source to the temp buffer
         var ci = 0;
-        while (ci < bl) { store8(tmp + ci, load8(S + 0x44A000 + ci)); ci = ci + 1; }
+        while (ci < bl) { store8(tmp + ci, load8(S + 0x4EAD000 + ci)); ci = ci + 1; }
         # Redirect S-based reads to the temp buffer by copying back to S+0
         # for helpers (PP_DEFINE, PP_DEFINED, PP_EVAL_IF, PP_DERIVE_*,
         # PP_SKIPLINE) that take `S` as a base pointer and touch other
@@ -1807,7 +1811,7 @@ fn PP_IFDEF_PASS(S): i64 {
         if (cap > 1048576) { cap = 1048576; }
         ci = 0;
         while (ci < cap) { store8(S + ci, load8(tmp + ci)); ci = ci + 1; }
-        var out = S + 0x44A000;
+        var out = S + 0x4EAD000;
         var op = 0;
         var ip = 0;
         var bol = 1;
@@ -1955,7 +1959,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                     }
                                     store8(out + op, 34); op = op + 1;
                                     store8(out + op, 10); op = op + 1;
-                                    var nr = READFILE(fname, out + op, 2097152 - op);
+                                    var nr = READFILE(fname, out + op, 8388608 - op);
                                     op = op + nr;
                                     had_new_include = 1;
                                 }
@@ -1998,19 +2002,17 @@ fn PP_IFDEF_PASS(S): i64 {
                 }
             }
         }
-        # v4.8.4 post-GA fix (reported by bote 2.5.0 in
-        # docs/bugs/cyrius-4.8.4-ci-binary-skew.md): size guard on the
-        # fixpoint output. The buffer at S+0x44A000 (1 MB pre-v5.6.40,
-        # 2 MB after) was silently overrun on ~990 KB compile units
-        # without this check, corrupting downstream passes and
-        # surfacing as `lib/assert.cyr:3: expected '=', got string`
-        # (the "preprocessor didn't expand a nested include" pattern).
-        # v5.6.40 doubled the buffer because patra 1.8.3 + the full
-        # stdlib include set crossed the 1 MB ceiling on
-        # `tests/tcyr/large_input.tcyr` by ~280 bytes; the test was
-        # already at 768 KB above its >256 KB stated goal.
-        if (op > 2097152) {
-            syscall(SYS_WRITE, 2, "error: expanded source exceeds 2MB (", 36);
+        # Size guard on the fixpoint output. v4.8.4 added the original
+        # 1 MB cap after bote reported silent overrun → downstream
+        # corruption (`lib/assert.cyr:3: expected '=', got string`).
+        # v5.6.40 doubled to 2 MB when patra 1.8.3 + stdlib crossed
+        # 1 MB. v5.11.33 raised to 8 MB after sit v0.7.6 hit 2,099,593
+        # bytes (2,441 over the 2 MB cap) on a stock sandhi-folded
+        # [deps].stdlib — the cap was sized pre-sandhi-fold and didn't
+        # grow with the canonical service-boundary consumer shape.
+        # See CHANGELOG [5.11.33].
+        if (op > 8388608) {
+            syscall(SYS_WRITE, 2, "error: expanded source exceeds 8MB (", 36);
             PRNUM(op);
             syscall(SYS_WRITE, 2, " bytes) in PP_IFDEF_PASS iter=", 30);
             PRNUM(iter);
@@ -2020,16 +2022,16 @@ fn PP_IFDEF_PASS(S): i64 {
         SBL(S, op);
         iter = iter + 1;
     }
-    # No copy-back. Output stays at S+0x44A000. LEX reads from there.
+    # No copy-back. Output stays at S+0x4EAD000. LEX reads from there.
     # Free the temp buffer.
-    syscall(11, tmp, 2097152);
+    syscall(11, tmp, 8388608);
     return 0;
 }
 
-# Pre-pass: expand #ref directives in raw input (S+0) into S+0x44A000, copy back
+# Pre-pass: expand #ref directives in raw input (S+0) into S+0x4EAD000, copy back
 fn PP_REF_PASS(S): i64 {
     var bl = GBL(S);
-    var out = S + 0x44A000;
+    var out = S + 0x4EAD000;
     var op = 0;
     var ip = 0;
     var found = 0;

@@ -5,6 +5,44 @@
 
 ## Version
 
+**5.11.33** (shipped 2026-05-12 — **`PP_IFDEF_PASS` 2 MB cap
+raised to 8 MB; `preprocess_out` relocated to high-address
+band**). Pinned cascade-in per sit v0.7.6 → v0.8.x filing
+([archived](issues/archived/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md));
+sit's stock sandhi-folded `[deps].stdlib` expansion measures
+2,099,593 bytes — 2,441 over the prior 2 MB cap (last sized
+v5.6.40, pre-sandhi-fold). Single-slot Plan A relocation
+(project-leader approved 2026-05-12): `preprocess_out` moved from
+`S + 0x44A000` (2 MB region between str_data and codebuf) to
+`S + 0x4EAD000` (8 MB region appended past LEXID dedup); brk
+extension grew from `S + 0x4EAD000` (78.6 MB heap end) to
+`S + 0x56AD000` (86.6 MB). Old 0x44A000..0x64A000 (2 MB)
+documented as freed gap absorbed by v5.11.68's full reorg.
+Sized for headroom into v6.x — sandhi's in-flight TLS rewrite +
+one more major before the next raise becomes plausible.
+**Touch points**: `src/frontend/lex_pp.cyr` cap checks +
+mmap/munmap + READFILE bounds (8 sites, 2097152 → 8388608);
+`src/frontend/lex.cyr` 122 hex-form refs via sed + one
+decimal-form site at `LEXHEX:450` (4497408 → 0x4EAD000) the
+sed missed; heap-map comment blocks rewritten across main.cyr +
+main_aarch64.cyr + main_aarch64_native.cyr +
+main_aarch64_macho.cyr + main_win.cyr + main_cx.cyr; main_win.cyr
+MMAP grew 80 MB → 88 MB to fit. **Field note** (vidya-worthy):
+the decimal-form `4497408` site at lex.cyr:450 surfaced as a
+self-host failure at `error:src/common/util.cyr:18: expected
+')', got number 18` because LEXHEX dispatched into a stale
+buffer base — `0x0101010101010101` in `lib/string.cyr:15`
+re-lexed as decimal `101010101010101`. v5.11.68's full reorg
+must grep both hex and decimal forms of every relocating
+constant. cc5 byte-identical at **818,344 B** (same size as
+.32 — constants moved without changing emit byte count);
+check.sh 67/67; cyrius test 149/149. Consumer verify: sit
+v0.7.6 build through cyrius 5.11.33 compiles past the prior
+cap-error site cleanly (sit pin bump is sit's release call,
+tracked separately). Issue file `mv`'d to `archived/`.
+**Companion** (next): v5.11.34 = `EMITELF` aarch64 user-binary
+(cascaded from prior .33 slot).
+
 **5.11.32** (shipped 2026-05-12 — **`EMITELF_USER` x86_64
 user-binary ELF section-header cleanup**). Mirrors the .29
 (x86 kernel) / .30 (aarch64 kernel) / .31 (cyrld) section-header

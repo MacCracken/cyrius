@@ -1644,24 +1644,56 @@ lived in long-term considerations or v5.12.x scope:
 
 ### Remaining slots toward close (v5.11.32 → v5.11.69)
 
-**v5.11.32 / v5.11.33 — User-binary ELF cleanup (next slots)**
+**v5.11.32 — User-binary ELF cleanup (x86 user emitter)** [SHIPPED]
 
-Mirror the v5.11.29 / v5.11.30 / v5.11.31 kernel-emitter +
-linker section-header fixes into the in-compiler user-binary
-emitters. Both still have `e_shoff = 0`:
+`EMITELF_USER` at `src/backend/x86/fixup.cyr:827` now emits the
+same 5-section ELF64 table as the .29/.30/.31 kernel + linker
+emitters. See CHANGELOG `[5.11.32]`.
 
-- v5.11.32: `EMITELF_USER` at `src/backend/x86/fixup.cyr:722` (ELF64)
-- v5.11.33: `EMITELF` at `src/backend/aarch64/fixup.cyr:323` (ELF64)
+**v5.11.33 — `PP_IFDEF_PASS` 2 MB cap raise (cascade-in)**
 
-Same 5-section pattern as 5.11.29/.30 (SHT_NULL + .text +
-.rodata + .bss + .shstrtab; ELF64 shdr = 64 bytes; 8-byte
-alignment for shdr table). Closes the section-header arc
-cleanly — `objdump -d` / `gdb` / `ltrace` / `readelf -S` /
-IDE symbol indexers all see real section info on every
-Cyrius user binary.
+Pinned 2026-05-12 per sit v0.7.6 → v0.8.x filing
+[`docs/development/issues/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md`](issues/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md).
+Cascaded in ahead of the aarch64 user-emitter; the EMITELF
+aarch64 cleanup moves to v5.11.34. Backstop pins (.68/.69)
+unchanged.
+
+Sit's expansion of `[deps].stdlib` listing `sandhi` measures
+2,099,593 bytes — 2,441 over the 2 MB `PP_IFDEF_PASS` cap.
+sandhi accreted TLS 1.3 0-RTT (v1.3.2), session-cache cred-strip
+(v1.3.3), and annotation pass (v1.3.4) silently across .10.x →
+.11.x; the cap was last sized in v5.6.40 (1 MB → 2 MB) before
+sandhi folded. Blocks every AGNOS consumer that lists `sandhi`
+in `[deps].stdlib` (canonical service-boundary shape; sit /
+hoosh / ifran / daimon / mela / yantra / ark all path through
+this).
+
+Scope: raise the cap + buffer pair (currently 2 MB at
+`0x44A000`) to 4 MB per issue's primary recommendation, OR a
+smaller bump (2.5–3 MB) if the heap-map move is best deferred
+to v5.11.68's full reorg. **Heap implications**: `preprocess_out`
+sits between `str_data` (0x21A000) and `codebuf` (0x64A000)
+exactly 2 MB wide — in-place growth requires shifting `codebuf`
++ `output_buf` + everything downstream, OR moving
+`preprocess_out` into the 6 MB gap at `0xB4A000..0x114A000`
+documented in v5.8.61's minimum-blast-radius pass. Touch points:
+`src/frontend/lex_pp.cyr` (cap checks + tmp mmap size at lines
+1687, 2012, 2025); heap-map headers in `src/main.cyr` +
+`src/main_aarch64*.cyr` + `src/main_win.cyr`. Two-step bootstrap
+required (heap change).
+
+**v5.11.34 — User-binary ELF cleanup (aarch64 user emitter)**
+
+Cascaded from .33 at 2026-05-12 cap-repair re-pin.
+
+Mirror v5.11.32 into `EMITELF` at
+`src/backend/aarch64/fixup.cyr:323` (ELF64). Same 5-section
+pattern. Closes the section-header arc cleanly — `objdump -d` /
+`gdb` / `ltrace` / `readelf -S` / IDE symbol indexers all see
+real section info on every Cyrius user binary.
 
 Not MVP-blocking (`execve` ignores section headers) but worth
-the two slots for consistency with the kernel/linker fixes
+the slot for consistency with the kernel/linker/user-x86 fixes
 already shipped, and for downstream tooling that introspects
 ELF sections.
 

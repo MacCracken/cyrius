@@ -6,6 +6,82 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.33] — 2026-05-12
+
+**`PP_IFDEF_PASS` 2 MB cap raised to 8 MB; `preprocess_out` buffer
+relocated.** Pinned cascade-in at 2026-05-12 per sit v0.7.6 → v0.8.x
+filing
+[`docs/development/issues/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md`](docs/development/issues/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md).
+Sit's expansion of `[deps].stdlib` listing `sandhi` measures
+2,099,593 bytes — 2,441 over the prior 2 MB cap. sandhi accreted TLS
+1.3 0-RTT (v1.3.2), session-cache cred-strip (v1.3.3), annotation pass
+(v1.3.4) silently across .10.x → .11.x; the cap was last sized in
+v5.6.40 (1 MB → 2 MB) before sandhi folded into stdlib at v5.7.0.
+
+### Fix
+
+`preprocess_out` relocated from `S + 0x44A000` (2 MB region between
+`str_data` and `codebuf`) to `S + 0x4EAD000` (8 MB region appended
+past the LEXID dedup index). brk extension grew from
+`S + 0x4EAD000` (~78.6 MB total heap) to `S + 0x56AD000` (~86.6 MB
+total). Single-slot relocation — Plan A from the project-leader
+2026-05-12 plan-approval: clean append, no in-place codebuf/output_buf
+shuffling. The old 0x44A000..0x64A000 (2 MB) becomes a documented
+freed gap absorbed by v5.11.68's full heap-map reorg (closeout
+backstop). Sized for headroom into v6.x: 8 MB covers sandhi's
+in-flight TLS rewrite + one more sandhi major before the next raise
+becomes plausible.
+
+### Touch points
+
+- `src/frontend/lex_pp.cyr` — cap checks `2097152 → 8388608` at lines
+  1687 + 2012 (PP_PASS + PP_IFDEF_PASS), tmp mmap size at 1771 + 1773,
+  munmap at 2025, and the two `READFILE` bound expressions at 1598 +
+  1962 that limit per-include reads to remaining buffer space. Error
+  message strings updated `"exceeds 2MB"` → `"exceeds 8MB"`.
+- `src/frontend/lex.cyr` — sed-replaced `0x44A000` → `0x4EAD000` plus
+  one decimal-form site at LEXHEX line 450 (`4497408` → `0x4EAD000`)
+  that the hex-literal sed missed. Caught at two-step bootstrap:
+  cc5-stage1 lexed `0x0101010101010101` in `lib/string.cyr:15` as
+  decimal because LEXHEX read from the OLD preprocess_out base, never
+  saw the `0x` prefix.
+- `src/main.cyr` + `src/main_aarch64.cyr` + `src/main_aarch64_native.cyr`
+  + `src/main_aarch64_macho.cyr` + `src/main_win.cyr` +
+  `src/main_cx.cyr` — heap-map comment blocks rewritten to show new
+  layout, brk extension constants `0x4EAD000 → 0x56AD000`.
+- `src/main_win.cyr` MMAP region grew `0x5000000 → 0x5800000` (80 MB
+  → 88 MB) to fit the new heap-end at 0x56AD000 with the same 1.4 MB
+  slack the prior layout maintained.
+
+### Field note for future heap-map work
+
+The sed-based blanket replace of `0x44A000 → 0x4EAD000` missed
+**one decimal-form site** in `LEXHEX` at `lex.cyr:450` written as
+the literal `4497408` (decimal of 0x44A000). Self-host two-step
+initially failed with
+`error:src/common/util.cyr:18: expected ')', got number 18`
+because cc5-stage1's lexer reached the preprocess buffer's `0x` prefix,
+dispatched to LEXHEX, but LEXHEX read from the OLD buffer base — so
+`0x0101010101010101` got re-lexed as decimal `101010101010101` once
+control returned to PARSE_NUM. v5.11.68's full heap-map reorg should
+grep for **both** hex and decimal forms of every relocating constant
+before touching code.
+
+### Verification
+
+- Two-step bootstrap: `cc5 → cc5_b → cc5_c`, `cmp cc5_b cc5_c`
+  byte-identical (818,344 B at 5.11.33; same size as 5.11.32 —
+  constants moved without changing emit byte count)
+- `check.sh` 67/67; `cyrius test` 149/149
+- sit v0.7.6 build through new cc5 compiles past the prior cap-error
+  site cleanly (consumer pin bump tracked separately)
+
+### Companion (next)
+
+- **5.11.34** (cascaded from prior .33 pin): `EMITELF` in
+  `src/backend/aarch64/fixup.cyr:323` — section-header fix for the
+  aarch64 user-binary emit path (mirror of v5.11.32 EMITELF_USER).
+
 ## [5.11.32] — 2026-05-12
 
 **x86_64 user-binary ELF emitter: same section-header fix as

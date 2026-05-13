@@ -46,7 +46,10 @@
 #   0x14A000 (free band — was str_data pre-v5.8.59; see main.cyr for full lineage)
 #   0x21A000 str_data      [2097152]     2MB string literal bytes (v5.8.61 monotonic
 #                                        position; see main.cyr for full lineage)
-#   0x44A000 preprocess_out[2097152]     2MB expanded source buffer
+#   0x44A000..0x64A000 (2 MB FREED GAP)   Was preprocess_out [2097152] through
+#                                        v5.11.32. Relocated to 0x4EAD000 +
+#                                        cap raised 2 MB → 8 MB at v5.11.33;
+#                                        absorbed by v5.11.68's full reorg.
 #   0x64A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
 #   0x94A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43)
 #   (tok arrays RETIRED here v5.8.46 — relocated to high block at 0x368C000;
@@ -68,11 +71,20 @@
 #   0x4E8C900  lexid_entries [131072]       16384 × 8B chain nodes
 #   (Full doc in src/main.cyr §LEXID_DEDUP)
 #
-#   0x4EAD000 brk                         ~78.6 MB total heap (v5.10.40 grew this
-#                                        from 0x4E8C000 by the 132 KB LEXID dedup
-#                                        index; was 0x4E8C000 / 78.5 MB at v5.8.61
-#                                        monotonic; was 0x508C000 / 80.5 MB at
-#                                        v5.8.59-.60; synced with main.cyr)
+#   0x4EAD000 preprocess_out [8388608]   8 MB expanded source buffer.
+#                                        Relocated here from 0x44A000 at v5.11.33
+#                                        + cap raised 2 MB → 8 MB after sit
+#                                        v0.7.6 hit 2,099,593 bytes (2,441 over
+#                                        the 2 MB cap) on stock sandhi-folded
+#                                        [deps].stdlib. See CHANGELOG [5.11.33].
+#   0x56AD000 brk                         ~86.6 MB total heap. v5.11.33 grew this
+#                                        from 0x4EAD000 / 78.6 MB at v5.10.40
+#                                        by the 8 MB preprocess_out relocation
+#                                        above. Lineage: v5.10.40 grew brk from
+#                                        0x4E8C000 / 78.5 MB at v5.8.61 by 132 KB
+#                                        LEXID dedup index; v5.8.61 shrunk from
+#                                        0x508C000 / 80.5 MB at v5.8.59-.60;
+#                                        synced with main.cyr.
 
 
 # ================================================================
@@ -107,7 +119,7 @@ var S = syscall(SYS_BRK, 0);
 # aarch64 skips the TS frontend, so the ~13.5 MiB pad between
 # fixup_tbl-end (0x298B000) and tok-block-start (0x368C000) is
 # unused on this path; kept for offset parity with main.cyr.
-syscall(SYS_BRK, S + 0x4EAD000);
+syscall(SYS_BRK, S + 0x56AD000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
