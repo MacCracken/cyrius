@@ -45,6 +45,41 @@ Per-patch detail for v5.11.0 → current ships lives in
 [CHANGELOG.md](../../CHANGELOG.md); current-state snapshot lives
 in [state.md](state.md).
 
+### v5.11.51 / v5.11.52 — gnoboot ergonomic-improvement filings (post-arc consumer feedback)
+
+Two enhancement filings landed 2026-05-13 from the gnoboot
+consumer agent during Step 4 (`HandleProtocol(LoadedImage)`
+work, the first cyrius-fn-driven gnoboot code post the pure-asm
+banner). Both are ergonomic, not bugs — gnoboot v0.1.0 can ship
+without them, the consumer-side workarounds work today. Pinned
+as separate slots per honest scope-split (different surfaces,
+clean bisect windows).
+
+- **v5.11.51 — byte-array literal `var foo[N] = { 0x.., ... };`**
+  Filing: `docs/development/issues/2026-05-13-gnoboot-byte-array-literal.md`.
+  Surface: `src/frontend/parse_decl.cyr` `PARSE_GVAR_ARR`
+  extension + gvar-init codegen to emit bytes into `.rdata` at
+  compile time. Length-mismatch error path. Optional `u16`-typed
+  variant for UTF-16LE friendliness. Estimate: ~80-150 LoC
+  parser + codegen wiring. Verification: 1-2 new tcyr; all
+  existing tests stay byte-identical. Acceptance: gnoboot's
+  ~150 lines of `store8(&msg_pre + N, 0x..)` collapse to ~10
+  lines of brace-list initializer.
+- **v5.11.52 — `fn efi_main(handle, st)` entry convention +
+  lib/fnptr.cyr MS-x64 branch**.
+  Filing: `docs/development/issues/2026-05-13-gnoboot-efi-main-convention.md`.
+  Surface: entry-point emit under `_TARGET_EFI_APPLICATION == 1`
+  (parser detect of `fn efi_main` + special trampoline emit) +
+  `lib/fnptr.cyr` `#ifdef CYRIUS_TARGET_EFI` branch for MS-x64
+  ABI. Existing `kernel;` + top-level-asm shape stays supported
+  (opt-in via fn presence). Estimate: ~100-200 LoC compiler
+  + ~30 LoC stdlib. Verification: efi_probe still boots under
+  OVMF (existing .49 gate); gnoboot rebuilds + OVMF smoke;
+  cross-arch propagation review of lib/fnptr.cyr touchpoints.
+  Acceptance: gnoboot's `main.cyr` trampoline (~50 lines of
+  store8 + asm + var fp + asm) collapses to a `fn efi_main(handle,
+  st)` body and cyrius handles the firmware ABI translation.
+
 ### v5.11.47 → v5.11.49 — UEFI Application PE emit mode (gnoboot MVP unblocker)
 
 3-slot arc authorised 2026-05-13 to unblock the AGNOS sovereign
