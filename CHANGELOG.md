@@ -6,6 +6,149 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.51] — 2026-05-13
+
+**Byte-array literal `var foo[N] = { 0x.., 0x.., ... };` — gnoboot
+ergonomic fix #1 of 2.** First of the v5.11.51 / v5.11.52 split for
+the two gnoboot-agent enhancement filings. Closes
+[`2026-05-13-gnoboot-byte-array-literal.md`](docs/development/issues/archived/2026-05-13-gnoboot-byte-array-literal.md);
+ergonomic, not a bug. Companion `fn efi_main(handle, st)` convention
+lands at v5.11.52.
+
+check.sh **74/74**; cc5 self-host **823,112 → 825,760 B**
+(+2,648 from the EADDRA_IMM named op on 3 backends + PARSE_GVAR_ARR
+extension + EMIT_GVAR_INITS deferred-replay path); cyrius test
+**149 + 1 new tcyr = 150/150**.
+
+### Syntax + semantics
+
+```cyrius
+var foo[N] = { 0x.., 0x.., 0x.., 0x.. };
+```
+
+- `[N]` allocates `N*8` bytes (existing cyrius semantic — array
+  declarations count 8-byte slots, not bytes). Brace-list bytes
+  initialize the first `k+1` bytes; remaining `(N*8) - (k+1)` stay
+  zero (cyrius's gvar storage zero-init default).
+- Each byte literal must be a NUM in `[0, 255]`. Both hex (`0x41`)
+  and decimal (`66`) accepted. Trailing comma before `}` is OK.
+- Length check: `k+1 > N*8` is a hard error at parse time.
+- Bytes are initialised by emitted `store8(&var + i, B)` sequences
+  during top-level entry (same code shape the consumer would write
+  by hand with `store8` calls). Cost: ~21 bytes of `.text` per
+  byte. Future v6.x may compact via peephole or direct `.rdata`
+  placement.
+
+The filing's `~150 lines of store8(&msg_pre + N, ...)` shrinks to
+~10 lines of brace-list initializer in gnoboot's UTF-16LE +
+EFI_GUID construction at Step 4.
+
+### Implementation
+
+Three-part change spanning parser + 3 backends + deferred-emit
+replay:
+
+1. **`EADDRA_IMM(S, n)` named op per backend** (3 files, ~10 LoC
+   each, per the v5.11.35-39 named-op refactor pattern):
+   - **x86** (`src/backend/x86/emit.cyr:208`): `48 05 imm32`
+     (sign-extended; 6 bytes).
+   - **aarch64** (`src/backend/aarch64/emit.cyr:258`):
+     `ADD x0, x0, #imm12` for `imm <= 4095` (4 bytes via
+     `0x91000000 | (imm << 10)`).
+   - **cx** (`src/backend/cx/emit.cyr:124`): composed via
+     `CX_MOVI` to scratch r1 + `CX_EMIT(16, 0, 0, 1)` add-reg —
+     cx bytecode has no single-instr add-imm form.
+
+2. **`PARSE_GVAR_ARR` extension** (`src/frontend/parse_decl.cyr:533`):
+   accepts `sti` parameter (start-of-statement TI from PARSE_GVAR_REG)
+   so deferred-init replay can find the var's decl. After `]`,
+   optionally consumes `= { byte-list };` — validates byte values
+   in `[0, 255]` and capacity `bi < sz` inline (parse-time errors
+   for bad input), but does **not** emit codegen during pass 1
+   (pass-1 emits land in dead code, skipped by the entry-jmp
+   patch). Instead, saves `sti` to `gvar_toks` so the pass-2
+   replay can find and emit.
+
+3. **`EMIT_GVAR_INITS` extension** (`src/frontend/parse_decl.cyr:735`):
+   at replay time, detects array-decl shape (`[` after IDENT)
+   and emits per-byte `store8(&var + i, B)` sequences using the
+   new `EADDRA_IMM` helper. Sequence per byte:
+   ```
+   EVADDR(S, vidx)         ; rax = &var
+   EADDRA_IMM(S, i)        ; rax += i  (skipped when i == 0)
+   EPUSHR(S)               ; push rax
+   EMOVI(S, byte_value)    ; rax = byte_value
+   EPOPC(S)                ; pop into rcx
+   ESTORE8(S)              ; mov [rcx], al
+   EXORAA(S)               ; zero rax (clean up)
+   ```
+
+The pass-1 vs pass-2 split mirrors how scalar gvar inits already
+work (`var x = 5;` → pass 1 records sti, pass 2 replays + emits).
+
+### Token-ID discovery (slot bringup)
+
+Token IDs in cyrius:
+- `4` = `=`, `5` = `;`, `13` = `{`, `14` = `}`, `19` = `<`,
+  `20` = `>`, `28` = `[`, `29` = `]`, `31` = `,`
+
+Initial implementation mis-mapped `{` to token 19 (which is `<`).
+Manifested as `error: expected '<', got '{'` — exactly the
+diagnostic shape this slot makes explicit in the implementation
+comment for future-self.
+
+### Test coverage
+
+`tests/tcyr/byte_array_literal.tcyr` — 26 sub-asserts across 5
+categories:
+1. **Basic ordering** — 4 bytes declared, each byte readable in
+   declaration order.
+2. **Untouched bytes are zero** — bytes 4-7 of an `[1]`
+   (8-byte-capacity) array stay zero after a 4-byte init.
+3. **UTF-16LE interleave** — `"hi\\0"` as 6 bytes `0x68, 0x00,
+   0x69, 0x00, 0x00, 0x00` reads back byte-correct.
+4. **Boundary bytes** — `0` and `255` both accepted (full u8
+   range).
+5. **Mixed hex/decimal + trailing comma** — `0x41, 66, 0x43, 68,`
+   accepted; trailing comma doesn't add a zero byte.
+
+Negative-test path (length-mismatch + bad byte value) is in the
+parser as hard errors; tcyr coverage of error paths typically
+follows the `_expected_output_gate` shape if needed in a future
+slot.
+
+### Issue archive
+
+`docs/development/issues/2026-05-13-gnoboot-byte-array-literal.md`
+→ `docs/development/issues/archived/` per
+`feedback_close_to_archive_issues`.
+
+### Cross-arch
+
+Per `feedback_cross_arch_propagation_mandatory`: all three
+backends (x86, aarch64, cx) ship `EADDRA_IMM` in this slot. The
+deferred-emit replay in `EMIT_GVAR_INITS` is parser-side
+(backend-agnostic) — it calls into the named ops which dispatch
+per-backend. Not a half-fix.
+
+### Memory pins referenced
+
+- `feedback_premise_check_at_slot_entry` (token-ID research at
+  slot entry caught the `{` vs `<` confusion via the actual
+  emit error before the gate verifier saw it)
+- `feedback_cross_arch_propagation_mandatory` (EADDRA_IMM
+  shipped on all 3 backends)
+- `feedback_close_to_archive_issues` (gnoboot byte-array filing
+  archived)
+- `project_agnos_path_c_gnoboot` (pinned this as .51 of the
+  .51/.52 split)
+
+### Next in arc
+
+- **v5.11.52** — `fn efi_main(handle, st)` entry convention +
+  `lib/fnptr.cyr` MS-x64 branch. The other gnoboot ergonomic
+  filing.
+
 ## [5.11.50] — 2026-05-13
 
 **Cap-drift detector + doc-size currency gates + fresh-tier doc

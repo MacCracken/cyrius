@@ -120,6 +120,14 @@ fn EMOVCA(S): i64 { CX_EMIT(S, 2, 1, 0, 0); return 0; }
 
 # Arithmetic: result in r0, operands r0 and r1
 fn EADDR(S): i64 { CX_EMIT(S, 16, 0, 0, 1); return 0; }    # add r0, r0, r1
+# v5.11.51: r0 += imm. Compose via CX_MOVI to scratch r1 + add — the
+# cx bytecode doesn't have a single add-imm form. Used by byte-array
+# literal `var foo[N] = { 0x.., ... };` to compute &var + i.
+fn EADDRA_IMM(S, n): i64 {
+    CX_MOVI(S, 1, n);
+    CX_EMIT(S, 16, 0, 0, 1);   # add r0, r0, r1
+    return 0;
+}
 fn ESUBR(S): i64 { CX_EMIT(S, 17, 0, 0, 1); return 0; }    # sub r0, r0, r1
 fn EIMUL(S): i64 { CX_EMIT(S, 18, 0, 0, 1); return 0; }    # mul r0, r0, r1
 fn ECQO(S): i64 { return 0; }                                 # no-op (sign extend for div)

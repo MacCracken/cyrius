@@ -5,6 +5,64 @@
 
 ## Version
 
+**5.11.51** (shipped 2026-05-13 — **Byte-array literal
+`var foo[N] = { 0x.., 0x.., ... };` — gnoboot ergonomic fix #1
+of 2**). Closes `2026-05-13-gnoboot-byte-array-literal.md`.
+Companion `fn efi_main` convention lands at .52.
+
+**Syntax/semantics**:
+- `[N]` allocates `N*8` bytes (existing cyrius semantic; arrays
+  are 8-byte slots).
+- Brace-list bytes initialise the first `k+1` bytes (zero rest);
+  each must be NUM in `[0, 255]`. Hex/decimal/trailing-comma all OK.
+- Capacity check `k+1 > N*8` is a hard parse error.
+- Bytes are initialised by emitted `store8(&var + i, B)` sequences
+  at top-level entry — same shape the consumer would write by
+  hand; ~21 bytes of `.text` per byte. Future v6.x peephole/`.rdata`
+  compaction possible.
+
+**Implementation** (3-part):
+1. **`EADDRA_IMM(S, n)`** named op per backend (`src/backend/{x86,
+   aarch64,cx}/emit.cyr`) — `rax += imm`. x86: `48 05 imm32` (6 B);
+   aarch64: `ADD x0,x0,#imm12` (`0x91000000 | (imm<<10)`, 4 B);
+   cx: composed via `CX_MOVI` to scratch + add-reg.
+2. **`PARSE_GVAR_ARR`** (`src/frontend/parse_decl.cyr:533`) — extended
+   to accept `sti` param + optional `= { byte-list };` tail.
+   Validates inline (parse-time errors on bad bytes / capacity)
+   but **defers codegen** — saves `sti` to `gvar_toks` so pass-2
+   replay can emit. Pass-1 emits land in dead code (skipped by
+   entry-jmp patch).
+3. **`EMIT_GVAR_INITS`** (`src/frontend/parse_decl.cyr:735`) — at
+   replay, detects array-decl shape (`[` after IDENT) and emits
+   per-byte: `EVADDR + EADDRA_IMM + EPUSHR + EMOVI + EPOPC +
+   ESTORE8 + EXORAA`.
+
+**Token-ID gotcha** (caught at slot bringup): `{` is token **13**,
+`{` is **NOT** token 19 (which is `<`). Initial mis-map produced
+`error: expected '<', got '{'` — the kind of confused-diagnostic
+that consumers would file. Comment now names token IDs explicitly.
+
+**Test coverage**: `tests/tcyr/byte_array_literal.tcyr` — 26
+sub-asserts across 5 categories (ordering / zero-fill /
+UTF-16LE interleave / boundary u8 / mixed-hex-decimal +
+trailing-comma).
+
+**Issue archive**:
+`docs/development/issues/2026-05-13-gnoboot-byte-array-literal.md`
+→ `archived/`.
+
+**Cross-arch**: all 3 backends ship `EADDRA_IMM` in this slot.
+Deferred-emit is parser-side (backend-agnostic via named ops).
+Not a half-fix.
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**825,760 B** / +2,648 from v5.11.50); `check.sh` **74/74**;
+`cyrius test` **150/150** (+1 new tcyr).
+
+**Next**: v5.11.52 — `fn efi_main(handle, st)` convention +
+`lib/fnptr.cyr` MS-x64 branch. The other gnoboot ergonomic
+filing.
+
 **5.11.50** (shipped 2026-05-13 — **Cap-drift detector + doc-size
 currency gates + fresh-tier doc refresh**). Two new programmatic
 gates in `programs/check.cyr` close recurring drift surfaces.
@@ -132,6 +190,7 @@ Cyrius cycle returns to v5.11.x absorber buffer (.50 → .67 open;
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.50** — Cap-drift detector + doc-size currency gates + fresh-tier doc refresh: `_cap_drift_gate()` cross-checks heap-map comments vs inline literal caps; `_doc_size_currency_gate()` scans fresh-tier docs for cc5 size refs (decimal KB ±50 KB tolerance); 4 docs refreshed v5.8.x → v5.11.50. check.sh 72→74.
 - **v5.11.49** — OVMF runtime smoke + gnoboot arc closeout: RELOCS_STRIPPED cleared in EFI mode (UEFI firmware needs latitude to place anywhere); new `_efi_ovmf_smoke_gate()` boots efi_probe.efi under qemu+OVMF and asserts "hello, uefi" on serial. Arc filing → ship same-day. check.sh 71→72.
 - **v5.11.48** — EFI Application probe + structural gate (gnoboot arc P2): `programs/efi_probe.cyr` (64 LoC, inline-asm-only); `_efi_emit_gate()` structural check (Subsystem=0xA, NX_COMPAT, Data Dirs zeroed, .text has ret); DllCharacteristics NX_COMPAT forced in EFI mode even without `.reloc`. check.sh 70→71.
 - **v5.11.47** — UEFI Application PE emit mode + `_pe_ensure_*` refactor (gnoboot arc P1): `_TARGET_EFI_APPLICATION` flag, Subsystem byte 3→10 branch, EEXIT EFI variant (single `ret`), ExitProcess import skip + kernel32 fail-fast guard, Data Dirs [1]/[12] zeroed. 9 `_pe_ensure_<X>(S)` fns consolidated to single `_pe_register_kernel32` helper.

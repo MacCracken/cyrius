@@ -204,6 +204,19 @@ fn _TRY_COMBINE_SHUTTLE(S): i64 {
     return 0;
 }
 fn EADDR(S): i64 { if (_IR_REC0(S, IR_ADD) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xC80148); _flags_reflect_rax = 1; return 0; }
+# v5.11.51: rax += imm32 (sign-extended to 64). Used by the byte-array
+# literal `var foo[N] = { 0x.., ... };` parser path to compute &var + i
+# without going through a full expression evaluation. Encoding:
+# `48 05 imm32` (6 bytes); imm32 is the 4-byte little-endian offset.
+fn EADDRA_IMM(S, n): i64 {
+    EB(S, 0x48); EB(S, 0x05);
+    EB(S, n & 0xFF);
+    EB(S, (n >> 8) & 0xFF);
+    EB(S, (n >> 16) & 0xFF);
+    EB(S, (n >> 24) & 0xFF);
+    _flags_reflect_rax = 1;
+    return 0;
+}
 fn ESUBR(S): i64 { if (_IR_REC0(S, IR_SUB) == 1) { return 0; } E3(S, 0xC82948); _flags_reflect_rax = 1; return 0; }
 fn EIMUL(S): i64 { if (_IR_REC0(S, IR_MUL) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xE9F748); _flags_reflect_rax = 0; return 0; }
 # EMULH: high 64 bits of unsigned rcx * rax. MUL rcx → rdx:rax; then rax = rdx.

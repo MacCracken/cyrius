@@ -254,6 +254,15 @@ fn _TRY_COMBINE_SHUTTLE(S): i64 {
 # === Arithmetic ===
 # add x0, x0, x1
 fn EADDR(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x8B010000); return 0; }
+# v5.11.51: x0 += imm12 (zero-extended). Used by byte-array literal
+# `var foo[N] = { 0x.., ... };` to compute &var + i. Encoding:
+# `ADD x0, x0, #imm`: 0x91000000 base | (imm << 10). imm fits 0..4095;
+# byte-array literal callers stay within this range by construction
+# (byte offsets in a single array).
+fn EADDRA_IMM(S, n): i64 {
+    EW(S, 0x91000000 | ((n & 0xFFF) << 10));
+    return 0;
+}
 # sub x0, x0, x1 — non-commutative, NOT fused (swap inverts subtract).
 fn ESUBR(S): i64 { EW(S, 0xCB010000); return 0; }
 # mul x0, x0, x1 — commutative.

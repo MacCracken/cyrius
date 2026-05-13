@@ -1,0 +1,78 @@
+# v5.11.51 — byte-array literal `var foo[N] = { 0x.., 0x.., ... };`
+# Filing: docs/development/issues/archived/2026-05-13-gnoboot-byte-array-literal.md
+# (filed during gnoboot Step 4; ergonomic shrink of the UTF-16LE +
+# EFI_GUID construction pattern).
+#
+# Verifies:
+# (1) Basic byte-array literal stores bytes in declaration order.
+# (2) Bytes after the brace-list count stay zero (sz - k+1 of them).
+# (3) UTF-16LE-style interleave pattern reads back byte-correct
+#     (the canonical gnoboot use case).
+# (4) Boundary bytes 0 and 255 are accepted (full u8 range).
+# (5) Mixing hex (0xNN) and decimal byte literals works.
+# (6) Trailing comma before `}` is accepted.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+# (1) Basic: 4 bytes, declared explicitly. [1] = 8 bytes allocated;
+# we use only 4 of them. Bytes 4-7 must remain zero.
+var foo[1] = { 0x12, 0x34, 0x56, 0x78 };
+
+# (3) UTF-16LE "hi" + NUL terminator. [1] = 8 bytes; "hi\0" needs 6
+# bytes (3 CHAR16). Bytes 6-7 zero.
+var u16msg[1] = { 0x68, 0x00, 0x69, 0x00, 0x00, 0x00 };
+
+# (4) Boundary bytes — 0 and 255.
+var boundary[1] = { 0x00, 0xFF, 0x00, 0xFF };
+
+# (5) Mixed hex + decimal. 0x41 = 65 = 'A'; decimal 66 = 'B'.
+var mixed[1] = { 0x41, 66, 0x43, 68 };
+
+# (6) Trailing comma.
+var trail[1] = { 0xAA, 0xBB, 0xCC, };
+
+alloc_init();
+
+# (1) basic ordering
+assert_eq(load8(&foo + 0), 0x12, "foo[0] = 0x12");
+assert_eq(load8(&foo + 1), 0x34, "foo[1] = 0x34");
+assert_eq(load8(&foo + 2), 0x56, "foo[2] = 0x56");
+assert_eq(load8(&foo + 3), 0x78, "foo[3] = 0x78");
+
+# (2) untouched bytes are zero
+assert_eq(load8(&foo + 4), 0, "foo[4] = 0 (untouched)");
+assert_eq(load8(&foo + 5), 0, "foo[5] = 0 (untouched)");
+assert_eq(load8(&foo + 6), 0, "foo[6] = 0 (untouched)");
+assert_eq(load8(&foo + 7), 0, "foo[7] = 0 (untouched)");
+
+# (3) UTF-16LE interleave
+assert_eq(load8(&u16msg + 0), 0x68, "u16msg[0] = 'h' low");
+assert_eq(load8(&u16msg + 1), 0x00, "u16msg[1] = 'h' high");
+assert_eq(load8(&u16msg + 2), 0x69, "u16msg[2] = 'i' low");
+assert_eq(load8(&u16msg + 3), 0x00, "u16msg[3] = 'i' high");
+assert_eq(load8(&u16msg + 4), 0x00, "u16msg[4] = '\\0' low");
+assert_eq(load8(&u16msg + 5), 0x00, "u16msg[5] = '\\0' high");
+
+# (4) full u8 range
+assert_eq(load8(&boundary + 0), 0,   "boundary[0] = 0");
+assert_eq(load8(&boundary + 1), 255, "boundary[1] = 255");
+assert_eq(load8(&boundary + 2), 0,   "boundary[2] = 0");
+assert_eq(load8(&boundary + 3), 255, "boundary[3] = 255");
+
+# (5) mixed hex+decimal
+assert_eq(load8(&mixed + 0), 0x41, "mixed[0] = 'A' (hex 0x41)");
+assert_eq(load8(&mixed + 1), 66,   "mixed[1] = 'B' (decimal 66)");
+assert_eq(load8(&mixed + 2), 0x43, "mixed[2] = 'C' (hex 0x43)");
+assert_eq(load8(&mixed + 3), 68,   "mixed[3] = 'D' (decimal 68)");
+
+# (6) trailing comma
+assert_eq(load8(&trail + 0), 0xAA, "trail[0] = 0xAA");
+assert_eq(load8(&trail + 1), 0xBB, "trail[1] = 0xBB");
+assert_eq(load8(&trail + 2), 0xCC, "trail[2] = 0xCC");
+assert_eq(load8(&trail + 3), 0,    "trail[3] = 0 (untouched after trailing comma)");
+
+var _exit_code = assert_summary();
+syscall(60, _exit_code);
