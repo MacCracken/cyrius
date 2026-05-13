@@ -62,23 +62,29 @@
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius v5.8.31 compiler itself (cc5) is **739,672 B**
-on Linux ELF. It compiles itself byte-identically. At v5.5.10 it also
-compiles itself byte-identically on Windows (cc5_win.exe native →
-out.exe matches Linux cross-build md5). That's the whole
-self-hosting compiler — TLS / atomics / dynlib / NSS quartet /
-sum types + match / `?` propagation / Result-shaped stdlib — in
-less disk than Rust's stripped debug exit42.
+For perspective, the Cyrius compiler itself (cc5) is **823,112 B**
+(~823 KB) on Linux ELF at v5.11.50. It compiles itself byte-identically.
+At v5.5.10 it also compiles itself byte-identically on Windows
+(cc5_win.exe native → out.exe matches Linux cross-build md5).
+That's the whole self-hosting compiler — TLS / atomics / dynlib /
+NSS quartet / sum types + match / `?` propagation / Result-shaped
+stdlib / UEFI Application emit (v5.11.49) / ELF64 + multiboot2
+kernel emit (v5.11.43) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cc5 (Linux ELF): 739,672 B (v5.8.31)
-- cc5_aarch64 (Linux aarch64 cross): 437,592 B (v5.8.31)
-- cc5_win_cross (Windows PE cross): 534,888 B (v5.8.31; PE format
-  overhead + v5.5.35 .reloc + v5.6.31 HIGH_ENTROPY_VA)
+- Cyrius cc5 (Linux ELF): **823,112 B** (v5.11.50)
+- cc5_aarch64 (Linux aarch64 cross): **506,216 B** (v5.11.x)
+- cc5_win (Windows PE cross): **630,272 B** (v5.11.x; PE format
+  overhead + v5.5.35 .reloc + v5.6.31 DllChar 0x0160 + v5.11.47-.49
+  EFI Application emit deltas)
 - cc5 compiles itself in milliseconds (no cache, no incremental build —
   just `cat src/main.cyr | cc5 > cc5_new`).
+- Full release toolchain (`~/.cyrius/bin/`): **~3.7 MB** across compiler
+  + cross-compilers + linker (cyrld) + LSP (cyrius-lsp) + formatter
+  (cyrfmt) + linter (cyrlint) + doc tool (cyrdoc) + CLI (cyrius)
+  + init (cyrius-init) + manager (cyriusly) + utilities.
 
-Growth since v5.6.43 (2026-04-25 → 2026-05-03):
-+207,784 B / +39% across 1 minor + 31 patches. Drivers: O7 IR pass
+Growth since v5.6.43 (2026-04-25 → 2026-05-13):
++291,224 B / +55% across 5 minors + ~50 patches. Drivers: O7 IR pass
 + JSX / TS lex chains (v5.7.x), tagged unions + exhaustive `match`
 infrastructure (v5.8.21–v5.8.27), `?` propagation operator
 (v5.8.29 + v5.8.31 PARSE_STMT extension). The compiler is still

@@ -6,6 +6,104 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.50] — 2026-05-13
+
+**Cap-drift detector + doc-size currency gates + fresh-tier doc
+refresh.** Two new programmatic gates in `programs/check.cyr` close
+recurring documentation-drift surfaces (caps drift across v3.4.20
+→ v5.11.x; doc-size claims stale by 4-5 minors in 3 fresh-tier
+docs). Plus immediate fix-forward of the stale doc claims. Resolves
+the v5.11.49-filed `2026-05-13-cap-drift-detector-gate.md` issue
+in one slot.
+
+check.sh **72 → 74** gates; cc5 self-host **823,112 B** (unchanged
+— gates are tooling-only, no compiler change); cyrius test
+**149/149**.
+
+### Cap-drift detector
+
+`_cap_drift_gate()` cross-checks the heap-map comment block at
+`src/main.cyr:24+` against the inline literal cap checks scattered
+across `src/frontend/lex.cyr`. Three known cap surfaces are
+verified each compile:
+
+| Region | Heap-map | Human label | Inline check |
+|---|---|---|---|
+| `input_buf` | `[1048576]` | `1MB` | `if (tc >= 1048576)` at lex.cyr:94 |
+| `tok_names` (ident buffer) | `[262144]` | `256KB` | `if (np + need >= 261872)` at lex.cyr:591 / `if (npos >= 261872)` at lex.cyr:607 (261872 = 262144 − 272 LEXID slack) |
+| `str_data` | (no heap-map entry yet) | `2MB` | `if (spos >= 2097152)` at lex.cyr:1216 + :1375 |
+
+Anchored on the unique `0xADDR  region_name` combo (e.g.
+`0x60000  tok_names`) to skip cross-references like the
+`tok_names is REBUILT by LEX` NOTE that appears earlier in the
+`input_buf` paragraph. When a cap raise lands (e.g. v5.11.18's
+identifier buffer doubling 131072 → 262144), the next compile
+fails fast unless all three sites (heap-map byte literal +
+human-readable label + inline check) update together.
+
+Helper fn `_find_str_from(buf, n, from, needle, nlen)` — bounded
+substring search returning absolute offset on hit or −1 on miss.
+Used by both new gates.
+
+### Doc-size currency gate
+
+`_doc_size_currency_gate()` scans four fresh-tier docs
+(`docs/size-comparisons.md`, `docs/platform-status.md`,
+`docs/faq.md`, `README.md`) for cc5 size references in the
+approximate form `cc5 ~NNN KB`. Each found claim is compared
+against the actual `build/cc5` size in decimal KB (823,112 B →
+823 KB, the prose convention) with ±50 KB tolerance (~5%). Lines
+that explicitly version-tag a reference with `(v5.X.Y)` are
+exempt — historical comparison refs stay valid; current-state
+claims without a current version tag must match.
+
+The gate's display unit is decimal KB to match doc prose
+(`bytes / 1000`, not `bytes / 1024`). The ±50 KB tolerance covers
+within-cycle compile-time-perf churn without re-flagging every
+doc on each slot.
+
+### Fresh-tier doc refresh
+
+Three docs carried stale cc5-size claims tagged to old minors;
+the gate's version-tag exemption let them pass historically but
+the prose was misleading consumers. Fixed forward:
+
+- **`docs/size-comparisons.md`** — `cc5 739,672 B (v5.8.31)` →
+  `823,112 B at v5.11.50`. Updated cross-compiler sizes (cc5_aarch64
+  437,592 → 506,216 B; cc5_win_cross 534,888 → 630,272 B).
+  Self-host context bumped to v5.11.50; added UEFI Application
+  emit + ELF64 multiboot2 kernel emit to the "compiler does this
+  in 823 KB" feature list. Added full release toolchain entry
+  (~3.7 MB).
+- **`docs/platform-status.md`** — Linux x86_64 row: `cc5 ~741 KB
+  (v5.8.65); two-step bootstrap` → `cc5 ~823 KB (v5.11.50);
+  3-step bootstrap` (3-step has been canonical since v5.6.16).
+- **`docs/faq.md`** — "Is it fast?" answer: self-compile time
+  `~280ms (cc5 ~741KB at v5.8.65)` → `~387 ms (cc5 ~823 KB at
+  v5.11.50)`. Added the v5.10.40+v5.10.41 compile-time-perf
+  miniarc result (1037 ms → 387 ms, 2.7×).
+- **`docs/doc-health.md`** — ledger header refreshed; v5.11.50
+  gate-currency tooling noted.
+
+### Issue archive
+
+`docs/development/issues/2026-05-13-cap-drift-detector-gate.md`
+→ `docs/development/issues/archived/`. Filed during the v5.11.49
+vidya cleanup sweep; resolved at .50 ship per
+`feedback_close_to_archive_issues`.
+
+### Memory pins referenced
+
+- `feedback_premise_check_at_slot_entry` (manual scan of
+  src/main.cyr heap-map + docs/ size refs at slot entry before
+  designing the gate)
+- `feedback_release_needs_code_not_just_docs` (gates are real
+  code deliverable; doc refresh rides along)
+- `feedback_close_to_archive_issues` (cap-drift issue archived)
+- `feedback_doc_canonical_no_redundancy` (state.md current-cycle
+  compresses .49 to one-liner; CHANGELOG carries the canonical
+  slot history)
+
 ## [5.11.49] — 2026-05-13
 
 **OVMF runtime smoke + arc closeout — gnoboot MVP unblocker GA

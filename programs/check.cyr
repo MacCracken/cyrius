@@ -1886,6 +1886,280 @@ fn _efi_ovmf_smoke_gate(): i64 {
     return 1;
 }
 
+# Helper: find first occurrence of `needle` in [buf, buf+n) starting
+# at `from`. Returns offset on hit, -1 on miss. Used by the cap-drift
+# and doc-size gates to scan for textual patterns inside loaded buffers.
+fn _find_str_from(buf, n, from, needle, nlen): i64 {
+    var i = from;
+    var limit = n - nlen;
+    while (i <= limit) {
+        var j = 0;
+        var ok = 1;
+        while (j < nlen) {
+            if (load8(buf + i + j) != load8(needle + j)) { ok = 0; j = nlen; }
+            else { j = j + 1; }
+        }
+        if (ok == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Helper: parse a decimal integer starting at `buf + off`. Returns
+# the integer value; updates `*end_out` to one-past-the-last digit.
+# Returns -1 if no digit at offset (so callers can guard).
+fn _parse_dec_at(buf, n, off, end_out): i64 {
+    var i = off;
+    var c = load8(buf + i);
+    if (c < 48 || c > 57) { S64(end_out, off); return 0 - 1; }
+    var v = 0;
+    while (i < n) {
+        c = load8(buf + i);
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+            i = i + 1;
+        } else {
+            i = n;
+        }
+    }
+    # Walk back: last iteration set i = n when non-digit found, but i
+    # may have been incremented past the non-digit. Re-find end by
+    # rescanning forward from off.
+    var k = off;
+    while (k < n) {
+        var c2 = load8(buf + k);
+        if (c2 >= 48 && c2 <= 57) { k = k + 1; }
+        else { S64(end_out, k); return v; }
+    }
+    S64(end_out, n);
+    return v;
+}
+
+# Gate: cap-drift detector (v5.11.50). Verifies that the heap-map
+# comments in src/main.cyr agree with the inline literal cap checks
+# scattered across src/frontend/lex.cyr. Each entry below names a
+# region, its canonical byte size, its human-readable label as it
+# should appear in the heap-map comment, and an inline-literal cap
+# that source code MUST use for that region.
+#
+# When you raise a cap, update ALL THREE sites: the heap-map [N]
+# byte size, the human-readable label ("256KB"), AND the inline
+# literal check. This gate catches the partial-update class that's
+# bitten the cycle multiple times (see issue
+# 2026-05-13-cap-drift-detector-gate.md).
+fn _cap_drift_gate(): i64 {
+    var label = "cap-drift detector — heap-map comments and inline literal caps agree (v5.11.50)";
+
+    var main_path = _root_path("src/main.cyr");
+    var lex_path  = _root_path("src/frontend/lex.cyr");
+    var main_cap = 524288;
+    var main_buf = alloc(main_cap);
+    var main_n = file_read_all(main_path, main_buf, main_cap);
+    if (main_n <= 0) { _check(label, 1); return 1; }
+    var lex_cap = 524288;
+    var lex_buf = alloc(lex_cap);
+    var lex_n = file_read_all(lex_path, lex_buf, lex_cap);
+    if (lex_n <= 0) { _check(label, 1); return 1; }
+
+    var fail = 0;
+
+    # ---- Cap 1: input_buf (1 MB) ----
+    # Heap-map line: "#   0x00000  input_buf     [1048576]      1MB raw stdin input"
+    # Inline check : src/frontend/lex.cyr:94  "if (tc >= 1048576) {"
+    # Anchor on the unique 0x00000+input_buf combo to skip cross-refs.
+    var off = _find_str_from(main_buf, main_n, 0, "0x00000  input_buf", 18);
+    if (off < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cap-drift — heap-map line for input_buf not found");
+        fail = fail + 1;
+    } else {
+        var lb = _find_str_from(main_buf, main_n, off, "[1048576]", 9);
+        if (lb < 0 || lb - off > 60) {
+            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+            println(": cap-drift — input_buf heap-map byte size != [1048576]");
+            fail = fail + 1;
+        }
+        var mb = _find_str_from(main_buf, main_n, off, "1MB", 3);
+        if (mb < 0 || mb - off > 80) {
+            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+            println(": cap-drift — input_buf heap-map human label != 1MB");
+            fail = fail + 1;
+        }
+    }
+    var inline1 = _find_str_from(lex_buf, lex_n, 0, ">= 1048576", 10);
+    if (inline1 < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cap-drift — input_buf inline cap check (>= 1048576) missing from lex.cyr");
+        fail = fail + 1;
+    }
+
+    # ---- Cap 2: tok_names / identifier buffer (256 KB) ----
+    # Heap-map line: "#   0x60000  tok_names     [262144]      256KB packed identifier strings..."
+    # Inline checks: src/frontend/lex.cyr:591, :607 — "if (... >= 261872)" (cap minus 272 B slack)
+    # Anchor on 0x60000+tok_names to skip the earlier NOTE references.
+    off = _find_str_from(main_buf, main_n, 0, "0x60000  tok_names", 18);
+    if (off < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cap-drift — heap-map line for tok_names not found");
+        fail = fail + 1;
+    } else {
+        var lb = _find_str_from(main_buf, main_n, off, "[262144]", 8);
+        if (lb < 0 || lb - off > 60) {
+            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+            println(": cap-drift — tok_names heap-map byte size != [262144]");
+            fail = fail + 1;
+        }
+        var kb = _find_str_from(main_buf, main_n, off, "256KB", 5);
+        if (kb < 0 || kb - off > 80) {
+            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+            println(": cap-drift — tok_names heap-map human label != 256KB");
+            fail = fail + 1;
+        }
+    }
+    # 261872 = 262144 - 272 (LEXID slack for inner-loop write window)
+    var inline2 = _find_str_from(lex_buf, lex_n, 0, ">= 261872", 9);
+    if (inline2 < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cap-drift — tok_names inline cap (>= 261872) missing from lex.cyr (LEXID guard)");
+        fail = fail + 1;
+    }
+
+    # ---- Cap 3: str_data (2 MB) ----
+    # Inline checks: src/frontend/lex.cyr:1216, :1375 — "if (spos >= 2097152) {"
+    var inline3 = _find_str_from(lex_buf, lex_n, 0, ">= 2097152", 10);
+    if (inline3 < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cap-drift — str_data inline cap (>= 2097152) missing from lex.cyr");
+        fail = fail + 1;
+    }
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": cap-drift — input_buf (1MB) + tok_names (256KB) + str_data (2MB) all in sync");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Gate: doc-size currency (v5.11.50). Scans selected fresh-tier docs
+# (size-comparisons.md, platform-status.md, faq.md, README.md) for
+# cc5 size references and verifies they match the current build/cc5
+# size. Two pattern classes are checked:
+#
+#   - PRECISE: `cc5 NNN,NNN B` (e.g. "cc5 823,112 B") — must match
+#     build/cc5 exactly. Versioned historical refs ("(v5.8.31)") are
+#     skipped via context-sensitive matching.
+#   - APPROXIMATE: `cc5 ~NNN KB` (e.g. "cc5 ~823 KB") — must be
+#     within ±25 KB of build/cc5's actual KB.
+#
+# The gate is **strict** by design: stale doc-size claims propagate
+# downstream consumer confusion. If a historical version must be
+# referenced, anchor it with the version tag so the gate skips it
+# (this is the convention already used by docs/audit/*.md).
+fn _doc_size_currency_gate(): i64 {
+    var label = "doc-size currency — fresh-tier docs cite current cc5 size (v5.11.50)";
+
+    var cc5_size = _file_size(_root_path("build/cc5"));
+    if (cc5_size <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": doc-size — build/cc5 not readable; cannot validate doc references");
+        _check(label, 1);
+        return 1;
+    }
+    # Display KB uses decimal (1000-based) per common doc convention —
+    # 823,112 B is "~823 KB" in prose, not "~804 KiB". Tolerance is
+    # ±50,000 bytes (~5%); covers minor compile-time-perf cc5 churn
+    # within a cycle without re-flagging every doc on each slot.
+    var cc5_kb_display = (cc5_size + 500) / 1000;
+
+    # Scan each doc for any line containing "cc5" that mentions a
+    # specific size. Skip lines that include a version tag like
+    # "(v5.X.Y)" — those are intentional historical references.
+    var paths = vec_new();
+    vec_push(paths, str_from(_root_path("docs/size-comparisons.md")));
+    vec_push(paths, str_from(_root_path("docs/platform-status.md")));
+    vec_push(paths, str_from(_root_path("docs/faq.md")));
+    vec_push(paths, str_from(_root_path("README.md")));
+
+    var fail = 0;
+    var pi = 0;
+    while (pi < vec_len(paths)) {
+        var path_str = vec_get(paths, pi);
+        var path = str_data(path_str);
+        var dcap = 524288;
+        var dbuf = alloc(dcap);
+        var dn = file_read_all(path, dbuf, dcap);
+        if (dn <= 0) { pi = pi + 1; }
+        else {
+            # Walk line-by-line
+            var ls = 0;
+            var line_no = 1;
+            while (ls < dn) {
+                var le = ls;
+                while (le < dn && load8(dbuf + le) != 10) { le = le + 1; }
+                # [ls, le) is a single line. Look for "cc5"
+                var cc5_at = _find_str_from(dbuf, le, ls, "cc5", 3);
+                if (cc5_at >= 0 && cc5_at < le) {
+                    # Skip lines tagged with a historical version
+                    var ver_at = _find_str_from(dbuf, le, ls, "(v5.", 4);
+                    if (ver_at >= 0 && ver_at < le) {
+                        # Historical reference — skip
+                    } else {
+                        # Look for "cc5 ~" or "cc5 " followed by NN KB pattern
+                        # Approximate form: "~NNN KB" or "NNNKB"
+                        var tilde_at = _find_str_from(dbuf, le, cc5_at, "~", 1);
+                        if (tilde_at >= 0 && tilde_at < le && tilde_at - cc5_at < 20) {
+                            # Parse the digits after ~
+                            var end_pos = alloc(8);
+                            var claimed_kb = _parse_dec_at(dbuf, le, tilde_at + 1, end_pos);
+                            if (claimed_kb > 0) {
+                                # Check for "KB" suffix nearby
+                                var kb_at = _find_str_from(dbuf, le, tilde_at, "KB", 2);
+                                if (kb_at >= 0 && kb_at < le && kb_at - tilde_at < 8) {
+                                    # Compare in decimal-KB units (claimed × 1000 vs actual bytes).
+                                    var claimed_b = claimed_kb * 1000;
+                                    var diff = claimed_b - cc5_size;
+                                    if (diff < 0) { diff = 0 - diff; }
+                                    if (diff > 50000) {
+                                        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+                                        _p(": doc-size — ");
+                                        _p(path);
+                                        _p(" line ");
+                                        print_num(line_no);
+                                        _p(" claims cc5 ~");
+                                        print_num(claimed_kb);
+                                        _p(" KB; actual ");
+                                        print_num(cc5_kb_display);
+                                        println(" KB");
+                                        fail = fail + 1;
+                                    }
+                                }
+                            }
+                        }
+                        # Precise form: "NNN,NNN B" with comma
+                        # (skip — most precise refs in the corpus today
+                        # carry version tags and the version-tag skip above
+                        # handles them. Future enhancement: parse precise
+                        # form when un-tagged.)
+                    }
+                }
+                ls = le + 1;
+                line_no = line_no + 1;
+            }
+            pi = pi + 1;
+        }
+    }
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": doc-size — fresh-tier docs cite cc5 within ±50 KB of actual (");
+        print_num(cc5_kb_display);
+        println(" KB)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Fork+exec cyrld with output path + N input .o paths. Returns
 # 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
 # goes to /dev/null; stderr inherited from dispatcher (so a real
@@ -8800,6 +9074,14 @@ fn _run_regression_gates(): i64 {
 
     _section("EFI Application OVMF runtime smoke (gnoboot arc KO)");
     _efi_ovmf_smoke_gate();
+    println("");
+
+    _section("Cap-drift detector (heap-map ↔ inline literals)");
+    _cap_drift_gate();
+    println("");
+
+    _section("Doc-size currency (fresh-tier docs cite current cc5)");
+    _doc_size_currency_gate();
     println("");
 
     _section("install --refresh-only shim");

@@ -5,6 +5,54 @@
 
 ## Version
 
+**5.11.50** (shipped 2026-05-13 — **Cap-drift detector + doc-size
+currency gates + fresh-tier doc refresh**). Two new programmatic
+gates in `programs/check.cyr` close recurring drift surfaces.
+Plus immediate fix-forward of the stale cc5-size claims in
+size-comparisons.md / platform-status.md / faq.md. Resolves the
+v5.11.49-filed `2026-05-13-cap-drift-detector-gate.md` issue
+same-day.
+
+**Cap-drift gate** — `_cap_drift_gate()` cross-checks heap-map
+comments at `src/main.cyr:24+` against inline literal caps in
+`src/frontend/lex.cyr`. Three known surfaces verified:
+`input_buf` (1 MB / 1048576), `tok_names` (256 KB / 262144 with
+261872 inline guard accounting for 272 B LEXID slack), `str_data`
+(2 MB / 2097152). Anchored on `0xADDR region_name` combos to
+skip cross-reference NOTEs.
+
+**Doc-size gate** — `_doc_size_currency_gate()` scans
+size-comparisons.md / platform-status.md / faq.md / README.md
+for `cc5 ~NNN KB` claims, verifies within ±50 KB of actual
+build/cc5 (decimal KB). Lines with `(v5.X.Y)` historical tag
+are exempt.
+
+**Fresh-tier doc refresh** — size-comparisons.md cc5 739,672 B
+(v5.8.31) → 823,112 B (v5.11.50); platform-status.md cc5 ~741 KB
+(v5.8.65) → ~823 KB (v5.11.50); faq.md self-compile time 280 ms
+→ 387 ms (post v5.10.40-.41 perf miniarc), cc5 size bumped to
+~823 KB. Cross-compiler sizes refreshed (cc5_aarch64 506,216 B;
+cc5_win 630,272 B). doc-health.md ledger header bumped.
+
+**Helper fn** `_find_str_from(buf, n, from, needle, nlen)` —
+bounded substring search returning absolute offset on hit or −1
+on miss. Used by both new gates.
+
+**Issue archive** —
+`docs/development/issues/2026-05-13-cap-drift-detector-gate.md`
+→ `archived/`. Filed during the v5.11.49 vidya cleanup; resolved
+at .50 ship.
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**823,112 B** — unchanged from v5.11.49; gates are tooling, no
+compiler change); `check.sh` **72 → 74**; `cyrius test`
+**149/149**.
+
+**Next**: two new gnoboot ergonomic-improvement issues filed
+2026-05-13 by gnoboot agent (byte-array literal + efi_main
+calling convention). User-pinned for .51/.52 (or .51 bundle
+if scope fits).
+
 **5.11.49** (shipped 2026-05-13 — **OVMF runtime smoke + arc
 closeout; gnoboot MVP unblocker GA, arc KO**). Third and final
 slot of the 3-slot UEFI Application emit arc. cyrius-compiled
@@ -84,6 +132,7 @@ Cyrius cycle returns to v5.11.x absorber buffer (.50 → .67 open;
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.49** — OVMF runtime smoke + gnoboot arc closeout: RELOCS_STRIPPED cleared in EFI mode (UEFI firmware needs latitude to place anywhere); new `_efi_ovmf_smoke_gate()` boots efi_probe.efi under qemu+OVMF and asserts "hello, uefi" on serial. Arc filing → ship same-day. check.sh 71→72.
 - **v5.11.48** — EFI Application probe + structural gate (gnoboot arc P2): `programs/efi_probe.cyr` (64 LoC, inline-asm-only); `_efi_emit_gate()` structural check (Subsystem=0xA, NX_COMPAT, Data Dirs zeroed, .text has ret); DllCharacteristics NX_COMPAT forced in EFI mode even without `.reloc`. check.sh 70→71.
 - **v5.11.47** — UEFI Application PE emit mode + `_pe_ensure_*` refactor (gnoboot arc P1): `_TARGET_EFI_APPLICATION` flag, Subsystem byte 3→10 branch, EEXIT EFI variant (single `ret`), ExitProcess import skip + kernel32 fail-fast guard, Data Dirs [1]/[12] zeroed. 9 `_pe_ensure_<X>(S)` fns consolidated to single `_pe_register_kernel32` helper.
 - **v5.11.46** — ELF64 kernel entry-arithmetic agreement (FIXUP ↔ EMITELF64_KERNEL) — agnos UEFI x86_64 boot regression fix; `_elf64_kernel_entry_gate()` added (check.sh 69→70).
