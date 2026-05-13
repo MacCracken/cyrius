@@ -6,6 +6,228 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.43] — 2026-05-13
+
+**ELF64 kernel emit + multiboot2 + EFI64-entry tag — Path A for
+AGNOS UEFI x86_64 boot.** New `EMITELF64_KERNEL` in the x86 backend
++ `_TARGET_ELF64_KERNEL` target flag (env: `CYRIUS_ELF64_KERNEL=1`).
+Source language unchanged — the `kernel;` directive emits ELF32
+multiboot1 by default (latent-capability path for hypothetical
+future legacy iron) or ELF64 multiboot2 when the target flag is on
+(AGNOS kernel build for the NUC AMD iron-boot campaign).
+
+### Why this exists
+
+Iron-boot Attempt 4 (2026-05-13) confirmed by GRUB source review
+(`grub-core/lib/i386/relocator64.S:95-164`) that GRUB-EFI on x86_64
+performs **no long-mode-exit sequence** before handoff: no `cli`,
+no `lgdt`, no CR0.PG clear, no CR4.PAE clear, no EFER.LME clear
+via `wrmsr`. The relocator's stub at `grub_relocator64_efi_start`
+does a 64-bit indirect near jump (`jmp *jump_addr(%rip)`) with the
+CPU still in long mode — UEFI's GDT intact, paging on, CS = 64-bit
+code segment. An ELF32 / EM_386 multiboot1 kernel (cyrius 5.11.29
+through 5.11.42's `EMITELF_KERNEL` output) triple-faults on the
+first instruction because 32-bit opcodes are decoded as 64-bit in
+long mode. CPU resets.
+
+Path A (this release) switches the AGNOS boot kernel to ELF64
+multiboot2 with the
+`MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64` tag, inheriting UEFI's
+long-mode state cleanly. Diagnosis and the architecture decision
+are captured in
+`agnosticos/docs/development/iron-boot-testing-log.md` § Diagnosis —
+2026-05-13 GRUB source review and the plan doc
+`agnosticos/docs/development/path-a-elf64-multiboot2.md`. Path B
+(long-mode-exit prologue keeping ELF32) was rejected; Path C
+(sovereign UEFI bootloader, no GRUB) is long-term per the
+`[[project-agnos-bootloader-roadmap]]` memory.
+
+### Added
+
+**`EMITELF64_KERNEL`** in `src/backend/x86/fixup.cyr` — sibling of
+`EMITELF_KERNEL` (ELF32 multiboot1). Emits:
+
+- ELF64 header (64 bytes; `EI_CLASS=2`, `e_machine=62` / EM_X86_64)
+- Program header (56 bytes; PT_LOAD RWX at 0x100000)
+- Multiboot2 header (48 bytes; magic `0xE85250D6` + arch 0 +
+  length 48 + checksum `0x17ADAEFA` + EFI64-entry tag (type 9)
+  + MODULE_ALIGN tag (type 6) + END tag (type 0))
+- Section table — 5 entries × 64 bytes (NULL + .text + .rodata +
+  .bss SHT_NOBITS + .shstrtab). Satisfies GRUB's
+  `grub_elf64_get_shnum` (the same gate `EMITELF_KERNEL` was fixed
+  for in 5.11.29 on the ELF32 side).
+
+Entry is `0x100000 + 168 = 0x1000A8` (file offset 168 = ELF64
+header 64 + PH64 56 + multiboot2 header 48). Kernel inherits long
+mode from GRUB-EFI: paging on, UEFI's GDT, 64-bit CS,
+`RAX = 0x36d76289` (multiboot2 magic), `RBX = MBI physical
+address`, interrupts disabled. See plan doc § *Kernel entry-state
+contract*.
+
+**`_TARGET_ELF64_KERNEL`** target flag in `src/backend/x86/emit.cyr`
+(with always-zero shims in `src/backend/aarch64/emit.cyr` and
+`src/backend/cx/emit.cyr` for shared-codepath symbol resolution,
+per the existing `_TARGET_MACHO` / `_TARGET_PE` pattern). Set from
+`CYRIUS_ELF64_KERNEL=1` environment variable, parsed in
+`src/main.cyr` after the `CYRIUS_TARGET_WIN` block.
+
+### Changed
+
+`EMITELF` dispatch in `src/backend/x86/fixup.cyr` — when source
+sets kernel mode (`L64(S + 0x18FCA0) == 1`), the dispatch now
+checks `_TARGET_ELF64_KERNEL`:
+
+```diff
+- if (L64(S + 0x18FCA0) == 1) { EMITELF_KERNEL(S); return 0; }
++ if (L64(S + 0x18FCA0) == 1) {
++     if (_TARGET_ELF64_KERNEL == 1) { EMITELF64_KERNEL(S); }
++     else { EMITELF_KERNEL(S); }
++     return 0;
++ }
+```
+
+Default (`_TARGET_ELF64_KERNEL == 0`) behavior is unchanged — all
+existing `kernel;` source builds continue to emit ELF32 multiboot1
+bit-identically. The flag is opt-in per build via env var; source
+files do not signal ELF class.
+
+### Design notes
+
+- **No new lexer keyword, no new token type, no new parser
+  dispatch.** Adding a `kernel64;` directive was the initial draft
+  approach but was rejected as over-invasive for what is a
+  build-target concern, not a per-source-file concern. The
+  language surface stays unchanged. Lesson captured in
+  `[[feedback-language-extension-invasiveness]]` memory.
+- **ELF32 emit path stays as latent capability.** Per
+  `[[project-agnos-kernel-growth-rules]]`, the kernel grows for
+  *native workloads*. Today's native workload is Zen-class UEFI
+  (64-bit); the 32-bit path is preserved for hypothetical future
+  legacy-iron support but is not on any current roadmap.
+- **Aarch64 unaffected.** Aarch64 kernel emit
+  (`aarch64/fixup.cyr` `EMITELF_KERNEL`) is already ELF64 by
+  architecture definition; the new flag is a no-op shim there.
+
+### Verified
+
+`scripts/check.sh`: 68 passed, 0 failed (same suite as 5.11.42
+baseline). Build artifact `build/cc5` (5.11.43) rebuilt cleanly
+from the modified `src/`. Iron exercise (Attempt 5) pending the
+agnos-side shim rewrite + scripts/install-usb.sh grub.cfg update
+(multiboot → multiboot2).
+
+## [5.11.42] — 2026-05-12
+
+**LSP `textDocument/semanticTokens/full` legend extension —
+locals + parameters colored. Roadmap doc-cleanup: -1258 lines
+(-51%).** Paired code + docs per
+[[feedback_release_needs_code_not_just_docs]] and the
+2026-05-12 roadmap-sweep directive ("This roadmap is a mess; no
+markoff for completed items… probably the MOST DIRTIES DOC in
+the whole repo").
+
+### LSP semantic-tokens legend extension
+
+The v5.9.10 baseline `handle_semantic_tokens` shipped a narrow
+legend (6 token types: function / variable / struct / enum /
+enumMember / keyword) — locals (`var X` declarations) and fn
+parameters (`fn(a: T, b: T)`) were deliberately uncolored,
+with the design comment "editors fall back to their grammar
+for those." v5.11.42 closes that gap.
+
+**Legend** (advertised in `handle_initialize`):
+
+```diff
+- "tokenTypes":["function","variable","struct","enum","enumMember","keyword"]
++ "tokenTypes":["function","variable","struct","enum","enumMember","keyword","parameter"]
+```
+
+**Pre-walk collector** (`_lsp_collect_locals`) — single-pass
+state machine over the file (after string/comment skip):
+
+- `var IDENT` → register IDENT as `variable` (kind 1)
+- `fn IDENT(p1, p2, …)` → register each parameter ident before
+  `:` as `parameter` (kind 6)
+- Type annotations (`x: i64`, `: Result`) fall through to the
+  existing symbol-table lookup — user-defined struct/enum types
+  keep their colors; built-in primitive types stay uncolored
+  (editors handle via textmate grammar)
+
+**Lookup order** in `handle_semantic_tokens` (post-collect):
+keyword → local-table → cross-file symbol-table. Locals shadow
+globals of the same name, consistent with cyrius scoping rules.
+
+**Scope simplification**: the collector deliberately does NOT
+clear locals on fn-body exit. A `var x` in one fn and a
+different `var x` in another both get colored as `variable` —
+the visual outcome is identical. Skipping scope tracking saves
+significant complexity at no observable cost.
+
+**Storage**: three parallel `i64` arrays (`_lsp_local_off`,
+`_lsp_local_len`, `_lsp_local_kind`) allocated once in
+`lsp_index_init`, capped at 4096 entries, count reset per
+request. Total ~96 KB resident.
+
+### Verification
+
+- `cyrius-lsp` rebuilt: 90,888 → **93,752 B** (+2,864 B —
+  collector + lookup helpers + extended legend string).
+- cc5 self-host byte-identical to v5.11.41 (cyrius-lsp isn't
+  in cc5's compile chain).
+- `check.sh` 68/68; `cyrius test` 149/149. Updated test6c in
+  `programs/check.cyr` to expect the 7-element legend.
+- **End-to-end LSP test** with a 4-param + 3-local sample
+  file: `initialize` response advertises `parameter` in
+  legend; `textDocument/semanticTokens/full` returns
+  17 5-tuples correctly typing every `var X` / fn-param as
+  variable/parameter at both declaration and use sites.
+- LSP 3.16 5-tuple delta encoding preserved (deltaLine,
+  deltaStartChar, length, tokenType, tokenModifiers).
+
+### Roadmap sweep — full cleanup pass
+
+User direction 2026-05-12: roadmap accumulated stale
+shipped-slot specs, duplicated held-item lists, and
+reductive cycle summaries that CHANGELOG + vidya already
+cover. Trimmed in two passes (.41 + .42):
+
+| Section | Before | After |
+|---------|--------|-------|
+| v5.3.x → v5.9.x cycle summaries | 28 lines of narrative | 2-line pointer |
+| 12 shipped-slot spec blocks (.6 → .26) | ~900 lines | "Shipped slots — see CHANGELOG.md" |
+| "After annotation arc completes" slot table | 44 lines with wrong slot numbers | folded into pointer |
+| Consumer-filed issues wave (all archived) | 67 lines | folded into pointer |
+| v5.8.x Held items + deferred | 31 lines (duplicated below) | DELETED |
+| v5.10.x CLOSED reductive narrative | 43 lines | DELETED — CHANGELOG + vidya retro v510x cover it |
+| Sigil 3.0 enablers — remaining | 11 lines audit trail | DELETED — Sigil 3.0 shipped 2026-05-01 |
+| Toolchain Quality stale held rows | 2 rows (TS harness shipped .11; LSP semantic tokens shipped .9.10 + extended .42) | restructured as completed list |
+
+Plus completed-phases.md trim at v5.11.41 (627 → 95 lines).
+
+**Roadmap stats**: 2469 → **1211 lines** = **-1258 / -51%**.
+What remains: live forward-looking pinned slots, durable
+cycle-discipline rules, the v5.11.x section intro, Remaining
+slots toward close, v5.12.x archived spec, v6.x scope, and
+Principles.
+
+### Stale-row-find tally (kept surfacing during sweep)
+
+Five "Held forward" items in roadmap.md turned out to be
+already shipped — all cleaned up during the v5.11.41-.42
+sweep:
+
+1. `float.cyr:41` peephole — shipped v5.11.40
+2. TS test harness program — shipped v5.11.11
+3. `ESTORESTACKPARM` cx >6 args — folded v5.9.33
+4. CVE-09 jump-target overflow — shipped (warn at jtc==1024)
+5. LSP `semanticTokens/full` — shipped v5.9.10 baseline +
+   extended this slot
+
+The doc-canonical pin
+([[feedback_doc_canonical_no_redundancy]]) is the durable
+fix: per-version detail in CHANGELOG.md is the source of
+truth; roadmap.md carries forward-looking work only.
+
 ## [5.11.41] — 2026-05-12
 
 **CVE-08 security hardening (`cld` before `rep movsb`) +

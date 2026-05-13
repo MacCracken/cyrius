@@ -722,15 +722,18 @@ enables adding new targets without touching the frontend.
 
 ## v5.x — Toolchain Quality
 
-Shipped toolchain rows (api-surface, LSP cross-file go-to-def,
-cyrlint forward-ref scanner, LSP `textDocument/references` at
-v5.9.10, `ts_test_runner` at v5.11.11) — per-slot detail in
-[CHANGELOG.md](../../CHANGELOG.md). Remaining toolchain-quality
-items are consumer-trigger-gated:
+All v5.x toolchain-quality work has shipped — per-slot detail in
+[CHANGELOG.md](../../CHANGELOG.md):
 
-| Feature | Effort | Status |
-|---------|--------|--------|
-| LSP `textDocument/semanticTokens/full` | Medium | Held forward — earns slot when an editor's textmate grammar can't satisfy a token-coloring request. ~150 LOC per LSP 3.16 spec. |
+- `cyrius_api_surface` — public-fn inventory tool
+- LSP cross-file go-to-def + textDocument/references (v5.9.10)
+- LSP textDocument/semanticTokens/full (v5.9.10 baseline; legend
+  extended at v5.11.42 to cover `var X` locals + `fn(args)` params)
+- cyrlint forward-ref scanner
+- `ts_test_runner` (v5.11.11)
+
+No remaining toolchain-quality items. New asks land via consumer
+filings to `docs/development/issues/`.
 
 ---
 

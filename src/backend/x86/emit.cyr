@@ -521,6 +521,17 @@ var _TARGET_MACHO = 0;
 # emitter (fncall*, &fn, direct-EB) and at final emit dispatch
 # which routes to EMITPE_EXEC in src/backend/pe/emit.cyr.
 var _TARGET_PE = 0;
+
+# ELF64 kernel output target: 0=off (kernel; emits ELF32 multiboot1 —
+# legacy/latent path), 1=on (kernel; emits ELF64 multiboot2 with
+# MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64 for UEFI x86_64 boot via
+# GRUB-EFI's long-mode handoff). Set from CYRIUS_ELF64_KERNEL=1 in
+# main.cyr. Read at EMITELF dispatch in fixup.cyr — when kernel mode
+# (L64(S+0x18FCA0)==1) AND this flag, route to EMITELF64_KERNEL
+# instead of EMITELF_KERNEL. Source language unchanged — the directive
+# is `kernel;` in both cases; the build target decides the ELF class.
+# See agnosticos/docs/development/path-a-elf64-multiboot2.md.
+var _TARGET_ELF64_KERNEL = 0;
 # v5.7.12: cx (cyrius-x bytecode) backend marker. parse_*.cyr
 # uses this to gate direct x86-byte emits in shared codepaths
 # that would otherwise pollute the CYX bytecode stream. Always

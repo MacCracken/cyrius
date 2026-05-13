@@ -823,6 +823,192 @@ fn EMITELF_KERNEL(S): i64 {
     return 0;
 }
 
+# ELF64 kernel emission for UEFI x86_64 boot. Differs from EMITELF_KERNEL
+# (ELF32) in: (a) 64-bit ELF + program-header layout (64B ELF hdr, 56B
+# PH64, 64B shdrs); (b) multiboot2 header replaces multiboot1; (c) the
+# MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64 tag tells GRUB-EFI to hand off
+# in long mode at the kernel entry. GRUB-EFI on x86_64 does NOT perform
+# a long-mode-exit sequence (lib/i386/relocator64.S:95-164 — no cli, no
+# lgdt, no CR0.PG clear, no CR4.PAE clear, no EFER.LME clear via wrmsr),
+# so the kernel MUST be 64-bit code expecting long-mode entry with paging
+# already on, UEFI's GDT inherited, and RAX = 0x36d76289 / RBX = MBI ptr.
+# See agnosticos/docs/development/path-a-elf64-multiboot2.md for the full
+# entry-state contract and build plan.
+#
+# File layout:
+#   0x00   ELF64 header     (64 bytes)
+#   0x40   Program header   (56 bytes; PT_LOAD RWX at 0x100000)
+#   0x78   Multiboot2 hdr   (48 bytes; magic+arch+len+sum + EFI64 entry
+#                            tag + MODULE_ALIGN tag + END tag)
+#   0xA8   .text (entry)    (cp bytes)  ← kernel entry point
+#   ...    .bss zeros       (totvar bytes — included in p_filesz)
+#   ...    .rodata          (spos bytes)
+#   ...    .shstrtab        (30 bytes; non-allocated)
+#   ...    Section headers  (5 × 64 bytes — NULL, .text, .rodata, .bss,
+#                            .shstrtab — satisfies GRUB's
+#                            grub_elf64_get_shnum, the same gate that
+#                            cyrius 5.11.29 fixed for ELF32)
+#
+# Multiboot2 checksum derivation (constant for our fixed 48-byte header):
+#   magic    = 0xE85250D6
+#   arch     = 0x00000000  (i386; multiboot2 spec covers x86_64 too)
+#   length   = 0x00000030  (48)
+#   checksum = -(magic + arch + length) (u32) = 0x17ADAEFA
+#   verify:  (0xE85250D6 + 0 + 0x30 + 0x17ADAEFA) & 0xFFFFFFFF == 0
+fn EMITELF64_KERNEL(S): i64 {
+    var cp = GCP(S);
+    var totvar = L64(S + 0x18FCD0);
+    var spos = GSPOS(S);
+    var mb_sz = 48;
+    # ELF64 header = 64, PH64 = 56, total = 120, + multiboot2 = 168
+    var hdrsz = 120;
+    var filesz = hdrsz + mb_sz + cp + totvar + spos;
+    filesz = (filesz + 7) & (0 - 8);
+    var memsz = filesz + 65536;
+    # Entry = base + headers + multiboot2 (kernel's first 64-bit instruction)
+    var entry = 0x100000 + hdrsz + mb_sz;
+
+    var text_foff = hdrsz + mb_sz;
+    var text_addr = 0x100000 + text_foff;
+    var text_size = cp;
+    var bss_foff = hdrsz + mb_sz + cp;
+    var bss_addr = 0x100000 + bss_foff;
+    var bss_size = totvar;
+    var rod_foff = bss_foff + totvar;
+    var rod_addr = 0x100000 + rod_foff;
+    var rod_size = spos;
+    var shstrtab_size = 30;
+    var shstrtab_foff = filesz;
+    var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
+
+    var O = S + 0x94A000;
+    var op = 0;
+
+    # ---- ELF64 header (64 bytes) ----
+    # e_ident: 7F 45 4C 46  02 01 01 00 (ELFCLASS64, ELFDATA2LSB, EV_CURRENT, OSABI=SYSV)
+    S64(O + op, 0x00010102464C457F); op = op + 8;
+    S64(O + op, 0x0000000000000000); op = op + 8;
+    # e_type=ET_EXEC(2), e_machine=EM_X86_64(0x3E), e_version=1
+    S64(O + op, 0x00000001003E0002); op = op + 8;
+    # e_entry (u64)
+    S64(O + op, entry); op = op + 8;
+    # e_phoff = 64 (PH64 right after ELF header)
+    S64(O + op, 64); op = op + 8;
+    # e_shoff
+    S64(O + op, shdr_off); op = op + 8;
+    # e_flags(u32)=0, e_ehsize(u16)=64, e_phentsize(u16)=56
+    # LE byte layout 48..55: 00 00 00 00 40 00 38 00
+    S64(O + op, 0x0038004000000000); op = op + 8;
+    # e_phnum(u16)=1, e_shentsize(u16)=64, e_shnum(u16)=5, e_shstrndx(u16)=4
+    # LE byte layout 56..63: 01 00 40 00 05 00 04 00
+    S64(O + op, 0x0004000500400001); op = op + 8;
+
+    # ---- Program header (56 bytes) ----
+    # p_type=PT_LOAD(1), p_flags=RWX(7)
+    S64(O + op, 0x0000000700000001); op = op + 8;
+    S64(O + op, 0); op = op + 8;             # p_offset
+    S64(O + op, 0x100000); op = op + 8;      # p_vaddr
+    S64(O + op, 0x100000); op = op + 8;      # p_paddr
+    S64(O + op, filesz); op = op + 8;        # p_filesz
+    S64(O + op, memsz); op = op + 8;         # p_memsz
+    S64(O + op, 0x1000); op = op + 8;        # p_align
+
+    # ---- Multiboot2 header (48 bytes) — at file offset 120 ----
+    store32(O + op, 0xE85250D6); op = op + 4;   # magic
+    store32(O + op, 0x00000000); op = op + 4;   # arch (i386 — covers x86_64)
+    store32(O + op, 0x00000030); op = op + 4;   # header_length = 48
+    store32(O + op, 0x17ADAEFA); op = op + 4;   # checksum
+    # Tag: MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64 (type=9, size=12)
+    store16(O + op, 9); op = op + 2;
+    store16(O + op, 0); op = op + 2;
+    store32(O + op, 12); op = op + 4;
+    store32(O + op, entry); op = op + 4;
+    store32(O + op, 0); op = op + 4;            # pad to 8-byte align
+    # Tag: MULTIBOOT_HEADER_TAG_MODULE_ALIGN (type=6, size=8)
+    store16(O + op, 6); op = op + 2;
+    store16(O + op, 0); op = op + 2;
+    store32(O + op, 8); op = op + 4;
+    # Tag: MULTIBOOT_HEADER_TAG_END (type=0, size=8)
+    store16(O + op, 0); op = op + 2;
+    store16(O + op, 0); op = op + 2;
+    store32(O + op, 8); op = op + 4;
+
+    # ---- Code ----
+    var i = 0;
+    while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
+    # ---- Variable (.bss) zeros — included in p_filesz, marked SHT_NOBITS ----
+    i = 0;
+    while (i < totvar) { store8(O + op, 0); op = op + 1; i = i + 1; }
+    # ---- String (.rodata) data ----
+    i = 0;
+    while (i < spos) { store8(O + op, load8(S + 0x21A000 + i)); op = op + 1; i = i + 1; }
+    while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- .shstrtab (30 bytes) — "\0.text\0.rodata\0.bss\0.shstrtab\0" ----
+    store8(O + op, 0); op = op + 1;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x74); store8(O + op + 2, 0x65);
+    store8(O + op + 3, 0x78); store8(O + op + 4, 0x74); store8(O + op + 5, 0);
+    op = op + 6;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x72); store8(O + op + 2, 0x6F);
+    store8(O + op + 3, 0x64); store8(O + op + 4, 0x61); store8(O + op + 5, 0x74);
+    store8(O + op + 6, 0x61); store8(O + op + 7, 0);
+    op = op + 8;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x62); store8(O + op + 2, 0x73);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0);
+    op = op + 5;
+    store8(O + op,     0x2E); store8(O + op + 1, 0x73); store8(O + op + 2, 0x68);
+    store8(O + op + 3, 0x73); store8(O + op + 4, 0x74); store8(O + op + 5, 0x72);
+    store8(O + op + 6, 0x74); store8(O + op + 7, 0x61); store8(O + op + 8, 0x62);
+    store8(O + op + 9, 0);
+    op = op + 10;
+    while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
+
+    # ---- Section headers (5 × 64 bytes — ELF64 layout) ----
+    # [0] SHT_NULL
+    i = 0;
+    while (i < 64) { store8(O + op, 0); op = op + 1; i = i + 1; }
+    # [1] .text — SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR
+    S64(O + op, (1 << 32) | 1);   op = op + 8;
+    S64(O + op, 6);               op = op + 8;
+    S64(O + op, text_addr);       op = op + 8;
+    S64(O + op, text_foff);       op = op + 8;
+    S64(O + op, text_size);       op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 4);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    # [2] .rodata — SHT_PROGBITS, SHF_ALLOC
+    S64(O + op, (1 << 32) | 7);   op = op + 8;
+    S64(O + op, 2);               op = op + 8;
+    S64(O + op, rod_addr);        op = op + 8;
+    S64(O + op, rod_foff);        op = op + 8;
+    S64(O + op, rod_size);        op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    # [3] .bss — SHT_NOBITS, SHF_WRITE|SHF_ALLOC
+    S64(O + op, (8 << 32) | 15);  op = op + 8;
+    S64(O + op, 3);               op = op + 8;
+    S64(O + op, bss_addr);        op = op + 8;
+    S64(O + op, bss_foff);        op = op + 8;
+    S64(O + op, bss_size);        op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    # [4] .shstrtab — SHT_STRTAB
+    S64(O + op, (3 << 32) | 20);  op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, shstrtab_foff);   op = op + 8;
+    S64(O + op, shstrtab_size);   op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+    S64(O + op, 1);               op = op + 8;
+    S64(O + op, 0);               op = op + 8;
+
+    while (op % 8 != 0) { store8(O + op, 0); op = op + 1; }
+    S64(S + 0x1903F8, op);
+    return 0;
+}
+
 # Emit x86_64 ELF binary. etype: 2=ET_EXEC (default), 3=ET_DYN (shared)
 fn EMITELF_USER(S, etype): i64 {
     var cp = GCP(S);
@@ -1679,7 +1865,11 @@ fn EMITELF(S): i64 {
         EMITPE_EXEC(S);
         return 0;
     }
-    if (L64(S + 0x18FCA0) == 1) { EMITELF_KERNEL(S); return 0; }
+    if (L64(S + 0x18FCA0) == 1) {
+        if (_TARGET_ELF64_KERNEL == 1) { EMITELF64_KERNEL(S); }
+        else { EMITELF_KERNEL(S); }
+        return 0;
+    }
     if (L64(S + 0x18FCA0) == 2) { EMITELF_SHARED(S); return 0; }
     if (L64(S + 0x18FCA0) == 3) { EMITELF_OBJ(S); return 0; }
     EMITELF_USER(S, 2);

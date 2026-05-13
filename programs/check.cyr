@@ -3437,8 +3437,10 @@ fn _lsp_definition_gate(): i64 {
         "test6: initialize did not advertise referencesProvider");
     fail = fail + _lsp_check_substr(out3, n3, "\"semanticTokensProvider\":",
         "test6b: initialize did not advertise semanticTokensProvider");
+    # v5.11.42: legend extended with `parameter` (index 6) so
+    # locals + fn args get coverage. Test bumped to match.
     fail = fail + _lsp_check_substr(out3, n3,
-        "\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\"]",
+        "\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\",\"parameter\"]",
         "test6c: semanticTokensProvider legend missing or in wrong shape");
     var ref_uri_sb = str_builder_new();
     str_builder_add_cstr(ref_uri_sb, "\"uri\":\"file://");

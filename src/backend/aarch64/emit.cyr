@@ -47,6 +47,13 @@ var _TARGET_MACHO = 0;
 # the two backends. The `if (_TARGET_PE == 1)` branches in parse.cyr
 # are statically dead on aarch64 targets — Windows PE is x86_64 only.
 var _TARGET_PE = 0;
+# ELF64 kernel target — x86-only concern (AGNOS kernel build for
+# UEFI x86_64 boot). Declared here as always-zero shim so any future
+# shared parser/codegen reference to _TARGET_ELF64_KERNEL resolves
+# when compiling the aarch64-backed entry points. Statically dead on
+# aarch64 — aarch64 kernel emit (aarch64/fixup.cyr EMITELF_KERNEL) is
+# already ELF64 by definition of the target architecture.
+var _TARGET_ELF64_KERNEL = 0;
 # v5.7.12: cx (cyrius-x bytecode) backend marker. =0 on aarch64
 # emit (this file); =1 only on backend/cx/emit.cyr. See path B
 # notes in docs/audit/2026-04-27-cx-direct-emit-inventory.md.

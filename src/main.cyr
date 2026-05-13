@@ -990,6 +990,20 @@ if (_pe_env != 0) {
     }
 }
 
+# ELF64 kernel output via CYRIUS_ELF64_KERNEL=1. Same `kernel;` source
+# directive — flag decides ELF class. Routes the kernel-mode (==1)
+# branch in EMITELF (fixup.cyr) to EMITELF64_KERNEL instead of
+# EMITELF_KERNEL. Used by the AGNOS kernel build for UEFI x86_64 boot
+# (multiboot2 + EFI64-entry tag; GRUB-EFI hands off in long mode
+# without long-mode-exit — see iron-boot-testing-log.md § Diagnosis
+# 2026-05-13).
+var _elf64k_env = _read_env("CYRIUS_ELF64_KERNEL");
+if (_elf64k_env != 0) {
+    if (load8(_elf64k_env) == 49 && load8(_elf64k_env + 1) == 0) {
+        _TARGET_ELF64_KERNEL = 1;
+    }
+}
+
 # cc5: opt-in IR recording via CYRIUS_IR=1|2
 var _ir_env = _read_env("CYRIUS_IR");
 if (_ir_env != 0) {

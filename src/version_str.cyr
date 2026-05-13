@@ -13,15 +13,15 @@
 # version-bump.sh writes ONE file every time and the sources just
 # reference these vars. No regex hunting; no drift.
 
-var _VERSION_STR_CC5         = "cc5 5.11.41\n";
+var _VERSION_STR_CC5         = "cc5 5.11.43\n";
 var _VERSION_LEN_CC5         = 12;
-var _VERSION_STR_CC5_WIN     = "cc5_win 5.11.41\n";
+var _VERSION_STR_CC5_WIN     = "cc5_win 5.11.43\n";
 var _VERSION_LEN_CC5_WIN     = 16;
-var _VERSION_STR_CC5_AARCH64 = "cc5_aarch64 5.11.41\n";
+var _VERSION_STR_CC5_AARCH64 = "cc5_aarch64 5.11.43\n";
 var _VERSION_LEN_CC5_AARCH64 = 20;
 
 # v5.11.25: bare-version string for cbt/cyrius.cyr's version-resolved
 # dispatcher. Compared against cyrius.cyml's `[package].cyrius` field
 # at every `cyrius` invocation; if pinned !=  this, re-exec the pinned
 # binary. See `_try_redirect_to_pinned()` in cbt/cyrius.cyr.
-var _VERSION_TOOLCHAIN       = "5.11.41";
+var _VERSION_TOOLCHAIN       = "5.11.43";

@@ -231,6 +231,20 @@ var _lsp_indexed_count = 0;
 var _lsp_indexed_buf = 0;
 var _lsp_indexed_used = 0;
 
+# v5.11.42: per-request local-name table for semanticTokens/full.
+# Three parallel arrays sized at _LSP_LOCAL_CAP entries; allocated
+# once at startup, cleared (count=0) per request. Stores (offset,
+# length, kind) where offset/length point into the file buffer and
+# kind is the semantic-token-type index (1=variable, 6=parameter).
+# v5.9.10's narrow legend only colored symbol-table-resolved idents
+# + keywords; this extension adds locals (`var X`) + fn parameters
+# so editors with weak textmate fallback show coherent coloring.
+var _LSP_LOCAL_CAP = 4096;
+var _lsp_local_off = 0;
+var _lsp_local_len = 0;
+var _lsp_local_kind = 0;
+var _lsp_local_count = 0;
+
 # Alloc the symbol-table backing buffers once at startup.
 fn lsp_index_init(): i64 {
     _sym_name_off = alloc(_LSP_SYMTAB_CAP * 8);
@@ -248,6 +262,11 @@ fn lsp_index_init(): i64 {
     _lsp_indexed_count = 0;
     _lsp_indexed_buf = alloc(_LSP_PATHS_BUF_CAP);
     _lsp_indexed_used = 0;
+    # v5.11.42 locals table — allocated once, reused per request.
+    _lsp_local_off  = alloc(_LSP_LOCAL_CAP * 8);
+    _lsp_local_len  = alloc(_LSP_LOCAL_CAP * 8);
+    _lsp_local_kind = alloc(_LSP_LOCAL_CAP * 8);
+    _lsp_local_count = 0;
     return 0;
 }
 
@@ -850,15 +869,18 @@ fn handle_initialize(body) : i64 {
     # v5.9.10: textDocument/references (find-all-uses) on top of the
     # v5.7.39 cross-file symbol-table infrastructure.
     str_builder_add_cstr(sb, "\"referencesProvider\":true,");
-    # v5.9.10: textDocument/semanticTokens/full. Legend is the
-    # narrow set this LSP recognizes — tokens emitted only for
-    # idents resolvable via the v5.7.39 symbol table or the
-    # built-in keyword set; unrecognized idents (locals, fn args,
-    # parameter idents) and non-ident tokens (strings, numbers,
-    # operators, comments) are deliberately uncolored. Editors
-    # can fall back to their grammar for those.
+    # v5.9.10: textDocument/semanticTokens/full. v5.11.42: legend
+    # extended with `parameter` (index 6); coverage extended to
+    # color `var X` locals as `variable` and `fn(args)` params as
+    # `parameter` via a per-request pre-walk collector (see
+    # `_lsp_collect_locals` + `_lsp_lookup_local`). Type idents in
+    # signatures (`x: i64`, `: Result`) still fall through to
+    # symbol-table lookup — user-defined struct/enum types get
+    # their existing colors; built-in primitive types stay
+    # uncolored. Editors fall back to textmate grammar for the
+    # remaining uncolored bytes (literals, operators, comments).
     str_builder_add_cstr(sb, "\"semanticTokensProvider\":{");
-    str_builder_add_cstr(sb, "\"legend\":{\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\"],\"tokenModifiers\":[]},");
+    str_builder_add_cstr(sb, "\"legend\":{\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\",\"parameter\"],\"tokenModifiers\":[]},");
     str_builder_add_cstr(sb, "\"full\":true}");
     str_builder_add_cstr(sb, "}}}");
     send_response(str_data(str_builder_build(sb)));
@@ -1234,10 +1256,11 @@ fn handle_references(body): i64 {
 }
 
 # v5.9.10 helpers for textDocument/semanticTokens/full.
+# v5.11.42: legend extended with `parameter` (index 6).
 #
 # Token-type indices in the legend advertised by handle_initialize:
 #   0 = function, 1 = variable, 2 = struct, 3 = enum,
-#   4 = enumMember, 5 = keyword
+#   4 = enumMember, 5 = keyword, 6 = parameter (v5.11.42)
 fn _lsp_kind_to_semantic_type(k): i64 {
     if (k == 1) { return 0; }   # fn → function
     if (k == 2) { return 1; }   # var → variable
@@ -1283,7 +1306,131 @@ fn _lsp_is_keyword(buf, off, len): i64 {
     return 0;
 }
 
+# v5.11.42 helpers: pre-walk collector + name lookup for the
+# per-request locals table. The collector runs a simple state
+# machine over the file:
+#   default → on `var` keyword: next ident is local
+#           → on `fn` keyword: next ident is fn name (skip);
+#                              then `(` opens param mode
+#   param-name → register ident as parameter; expect `:`/`,`/`)`
+#   param-after-name → on `:` → type-annotation mode (no register)
+#                    → on `,` → back to param-name
+#                    → on `)` → exit signature
+#   type-annotation → on `,` → param-name; on `)` → exit
+# Scope is intentionally NOT tracked: a `var x` in one fn and a
+# different `var x` in another both get colored as `variable` —
+# the visual outcome is identical so the simplification is free.
+fn _lsp_collect_locals(fb, ftotal): i64 {
+    _lsp_local_count = 0;
+    var p = 0;
+    var sig_state = 0;     # 0=outside, 1=after fn, 2=after fn-name,
+                           # 3=expect param name, 4=after param name,
+                           # 5=type annotation
+    var var_pending = 0;   # 1 = just saw `var`, next ident is local
+    while (p < ftotal) {
+        var c = load8(fb + p);
+        if (c == 10) { p = p + 1; }
+        elif (c == 35) {
+            # `# comment` — skip to EOL
+            while (p < ftotal && load8(fb + p) != 10) { p = p + 1; }
+        }
+        elif (c == 34) {
+            # string literal — skip to closing `"` (with `\\` escape)
+            p = p + 1;
+            while (p < ftotal) {
+                var sc = load8(fb + p);
+                if (sc == 92) { p = p + 2; }
+                else {
+                    if (sc == 34) { p = p + 1; break; }
+                    if (sc == 10) { break; }
+                    p = p + 1;
+                }
+            }
+        }
+        elif (_lsp_id_start(c) == 1) {
+            var id_start = p;
+            var id_end = _lsp_scan_id_end(fb, p, ftotal);
+            var id_len = id_end - id_start;
+            var is_var_kw = 0;
+            var is_fn_kw  = 0;
+            if (id_len == 3) {
+                if (memeq(fb + id_start, "var", 3) == 1) { is_var_kw = 1; }
+            }
+            if (id_len == 2) {
+                if (memeq(fb + id_start, "fn", 2)  == 1) { is_fn_kw  = 1; }
+            }
+            if (is_var_kw == 1) {
+                var_pending = 1;
+            } elif (is_fn_kw == 1) {
+                sig_state = 1;
+                var_pending = 0;
+            } else {
+                if (var_pending == 1) {
+                    if (_lsp_local_count < _LSP_LOCAL_CAP) {
+                        store64(_lsp_local_off  + _lsp_local_count * 8, id_start);
+                        store64(_lsp_local_len  + _lsp_local_count * 8, id_len);
+                        store64(_lsp_local_kind + _lsp_local_count * 8, 1);  # variable
+                        _lsp_local_count = _lsp_local_count + 1;
+                    }
+                    var_pending = 0;
+                } elif (sig_state == 1) {
+                    # This ident is the fn name — skip.
+                    sig_state = 2;
+                } elif (sig_state == 3) {
+                    if (_lsp_local_count < _LSP_LOCAL_CAP) {
+                        store64(_lsp_local_off  + _lsp_local_count * 8, id_start);
+                        store64(_lsp_local_len  + _lsp_local_count * 8, id_len);
+                        store64(_lsp_local_kind + _lsp_local_count * 8, 6);  # parameter
+                        _lsp_local_count = _lsp_local_count + 1;
+                    }
+                    sig_state = 4;
+                }
+                # sig_state 4/5: ident is type or unrelated; no register.
+            }
+            p = id_end;
+        }
+        else {
+            if (c == 40) {                            # `(`
+                if (sig_state == 2) { sig_state = 3; }
+            } elif (c == 41) {                        # `)`
+                if (sig_state >= 3) { sig_state = 0; }
+            } elif (c == 58) {                        # `:`
+                if (sig_state == 4) { sig_state = 5; }
+            } elif (c == 44) {                        # `,`
+                if (sig_state >= 3) { sig_state = 3; }
+            } elif (c == 123) {                       # `{`
+                # Defensive: a `{` outside the signature ends any
+                # stale signature state (covers `fn name() { ... }`
+                # boundary without sig_state being explicitly reset
+                # on every `)`).
+                sig_state = 0;
+            }
+            p = p + 1;
+        }
+    }
+    return _lsp_local_count;
+}
+
+# Lookup `<fb+off, len>` in the per-request locals table.
+# Returns the semantic-token-type index (1 or 6) on hit, -1 on miss.
+fn _lsp_lookup_local(fb, off, len): i64 {
+    var i = 0;
+    while (i < _lsp_local_count) {
+        var entry_len = load64(_lsp_local_len + i * 8);
+        if (entry_len == len) {
+            var entry_off = load64(_lsp_local_off + i * 8);
+            if (memeq(fb + entry_off, fb + off, len) == 1) {
+                return load64(_lsp_local_kind + i * 8);
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 # v5.9.10: textDocument/semanticTokens/full.
+# v5.11.42: added locals + fn-parameter coverage via two-pass walk
+# (pre-collect + emit). Legend extended with `parameter` (index 6).
 # Request:  { ..., params: { textDocument: { uri } } }
 # Response: { ..., result: { data: int[] } | null }
 #
@@ -1294,10 +1441,13 @@ fn _lsp_is_keyword(buf, off, len): i64 {
 # to the previous token (or start-of-file for the first). When
 # the line advances, deltaStartChar resets to absolute.
 #
-# Coverage: only tokens we can resolve via the v5.7.39 symbol
-# table OR the keyword list. Locals, fn args, type names, string
-# / number literals, operators, comments — all skipped. Editors
-# fall back to their textmate grammar for those.
+# Coverage (v5.11.42): keywords + v5.7.39 cross-file symbol-table
+# idents (fn / global var / struct / enum / enum-member) + locals
+# (`var X`) + fn parameters (`fn(arg, arg2)`). Skipped: type names
+# in signatures (built-in primitives like `i64`; user-defined
+# struct/enum types already get their existing color via symbol
+# table), string / number literals, operators, comments. Editors
+# fall back to textmate grammar for the rest.
 fn handle_semantic_tokens(body): i64 {
     var id = json_get_id(body);
     var uri = json_get_str(body, "\"uri\":");
@@ -1318,6 +1468,11 @@ fn handle_semantic_tokens(body): i64 {
         var fb = lsp_read_file(path, &total_out);
         var ftotal = load64(&total_out);
         if (fb != 0 && ftotal > 0) {
+            # v5.11.42: pre-walk to collect locals + fn parameters
+            # into _lsp_local_off/_len/_kind. The emit walk below
+            # then checks each ident against this table BEFORE
+            # falling through to keyword / symbol-table lookup.
+            _lsp_collect_locals(fb, ftotal);
             var p = 0;
             var line_no = 0;
             var line_start = 0;
@@ -1354,10 +1509,17 @@ fn handle_semantic_tokens(body): i64 {
                                 if (_lsp_is_keyword(fb, id_start, id_len) == 1) {
                                     ttype = 5;
                                 } else {
-                                    var idx = lsp_lookup_symbol(fb + id_start, id_len);
-                                    if (idx >= 0) {
-                                        var k = load64(_sym_kind + idx * 8);
-                                        ttype = _lsp_kind_to_semantic_type(k);
+                                    # v5.11.42: local-table lookup
+                                    # wins over symbol-table — locals
+                                    # shadow globals of the same name
+                                    # (consistent with cyrius scoping).
+                                    ttype = _lsp_lookup_local(fb, id_start, id_len);
+                                    if (ttype < 0) {
+                                        var idx = lsp_lookup_symbol(fb + id_start, id_len);
+                                        if (idx >= 0) {
+                                            var k = load64(_sym_kind + idx * 8);
+                                            ttype = _lsp_kind_to_semantic_type(k);
+                                        }
                                     }
                                 }
                                 if (ttype >= 0) {

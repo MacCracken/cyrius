@@ -5,6 +5,34 @@
 
 ## Version
 
+**5.11.42** (shipped 2026-05-12 — **LSP semantic-tokens
+legend extension + roadmap sweep finale**). Paired code + docs
+per `feedback_release_needs_code_not_just_docs` and the
+2026-05-12 sweep directive. **LSP code change**: v5.9.10
+`textDocument/semanticTokens/full` legend extended with
+`parameter` (index 6); `_lsp_collect_locals` pre-walks the file
+to register `var X` locals (kind 1) + `fn(args)` params
+(kind 6) into 3 parallel i64 arrays
+(`_lsp_local_off/_len/_kind`, cap 4096). Lookup order in
+`handle_semantic_tokens`: keyword → local-table → cross-file
+symbol-table. Scope intentionally NOT tracked — locals stay
+globalized across fns since visual outcome is identical. cyrius-
+lsp grew 90,888 → 93,752 B (+2,864 — collector + lookup +
+legend string). **End-to-end LSP test** confirms `a`/`b` params
+colored as parameter at declarations + uses; `sum`/`x`/`y`
+locals colored as variable at decls + uses; full 5-tuple delta
+encoding preserved. `programs/check.cyr` test6c updated to
+match the 7-element legend. **Roadmap doc-sweep**:
+2469 → **1211 lines** (-1258 / -51%) across .41-.42; removed
+12 shipped-slot spec blocks, stale "After annotation arc"
+table with wrong slot numbers, all-archived consumer-filed
+wave, duplicated held-item lists, v5.10.x reductive narrative,
+Sigil 3.0 audit trail, 5 stale Held-forward rows that turned
+out to be already shipped. completed-phases.md also trimmed
+627 → 95 at .41 (per the doc-canonical phase-out pin). cc5
+self-host byte-identical at **814,992 B** (cyrius-lsp isn't
+in cc5's compile chain); check.sh 68/68; cyrius test 149/149.
+
 **5.11.41** (shipped 2026-05-12 — **CVE-08 security hardening
 (`cld` before `rep movsb`) + doc-cleanup**). Code + docs
 paired per `feedback_release_needs_code_not_just_docs` ("I DON'T
