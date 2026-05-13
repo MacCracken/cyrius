@@ -1726,14 +1726,8 @@ fn PARSE_FN_DEF(S): i64 {
     # aarch64. Not a leak in practice (aarch64 doesn't auto-
     # enable regalloc → `_cur_fn_regalloc >= 1` never fires) but
     # defensive against future scheduling changes.
-    if (_TARGET_CX == 0 && _AARCH64_BACKEND == 0) {
-        if (_cur_fn_regalloc >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
-        if (_cur_fn_regalloc >= 1) { E3(S, 0x5D8948); EB(S, 0xF8); }  # mov [rbp-8], rbx
-        if (_cur_fn_regalloc >= 2) { E3(S, 0x65894C); EB(S, 0xF0); }  # mov [rbp-16], r12
-        if (_cur_fn_regalloc >= 3) { E3(S, 0x6D894C); EB(S, 0xE8); }  # mov [rbp-24], r13
-        if (_cur_fn_regalloc >= 4) { E3(S, 0x75894C); EB(S, 0xE0); }  # mov [rbp-32], r14
-        if (_cur_fn_regalloc >= 5) { E3(S, 0x7D894C); EB(S, 0xD8); }  # mov [rbp-40], r15
-    }
+    # v5.11.35 path-A: dispatch lives in <backend>/emit.cyr.
+    EREGALLOC_SAVE(S, _cur_fn_regalloc);
     # v5.5.36 Phase 2b — stash the hidden retptr into the reserved
     # slot immediately after regalloc saves. ABI register varies:
     #   x86 SysV → RDI (pidx=0); x86 Win64 → RCX (pidx=0 with the
@@ -2316,18 +2310,8 @@ fn PARSE_FN_DEF(S): i64 {
         EPOPR(S);  # restore return value
     }
     # v4.9.1: restore callee-saved registers (reverse order of save).
-    # v5.6.12: regalloc callee-saved restore block is raw x86 encoding.
-    if (_cur_fn_regalloc >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
-    # v5.7.12 path B: regalloc restore — same shape as save.
-    # v5.10.48 defensive: paired `_AARCH64_BACKEND == 0` guard — see
-    # the matching save block at the prologue (~line 1720).
-    if (_TARGET_CX == 0 && _AARCH64_BACKEND == 0) {
-        if (_cur_fn_regalloc >= 5) { E3(S, 0x7D8B4C); EB(S, 0xD8); }  # mov r15, [rbp-40]
-        if (_cur_fn_regalloc >= 4) { E3(S, 0x758B4C); EB(S, 0xE0); }  # mov r14, [rbp-32]
-        if (_cur_fn_regalloc >= 3) { E3(S, 0x6D8B4C); EB(S, 0xE8); }  # mov r13, [rbp-24]
-        if (_cur_fn_regalloc >= 2) { E3(S, 0x658B4C); EB(S, 0xF0); }  # mov r12, [rbp-16]
-        if (_cur_fn_regalloc >= 1) { E3(S, 0x5D8B48); EB(S, 0xF8); }  # mov rbx, [rbp-8]
-    }
+    # v5.11.35 path-A: dispatch lives in <backend>/emit.cyr.
+    EREGALLOC_RESTORE(S, _cur_fn_regalloc);
     # Emit epilogue
     EFNEPI(S);
     DSE_PASS(S, fn_start);

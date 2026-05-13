@@ -689,6 +689,31 @@ fn EFNEPI(S): i64 {
     return 0;
 }
 
+# v5.11.35 path-A named ops — Class D refactor. aarch64 stubs
+# preserve the IR record (matches current behavior — IR record
+# fires when regalloc >= 1 regardless of arch) but skip emits
+# because regalloc-save/restore is x86-callee-save-list specific.
+# aarch64 never auto-enables `_cur_fn_regalloc >= 1` today, so
+# these stubs are dead paths in practice. See x86/emit.cyr for
+# the active implementations + docs/audit/2026-04-27-cx-direct-emit-inventory.md.
+fn EREGALLOC_SAVE(S, n): i64 {
+    if (n >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
+    return 0;
+}
+
+fn EREGALLOC_RESTORE(S, n): i64 {
+    if (n >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
+    return 0;
+}
+
+# EDROPI64 — PE-only path; aarch64 doesn't enter the calling
+# code (parse_expr.cyr PE syscall stubs are gated by _TARGET_PE).
+# Stub provided for completeness; never reached at compile time.
+fn EDROPI64(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
 # Emit BL to known target
 fn ECALLTO(S, target): i64 {
     var cp = GCP(S);

@@ -206,6 +206,31 @@ fn EFNEPI(S): i64 {
     return 0;
 }
 
+# v5.11.35 path-A named ops — Class D refactor. cx stubs preserve
+# the IR record but skip emits because cx bytecode doesn't have an
+# x86-style callee-saved register set (CYX has 256 virtual regs,
+# no caller/callee-save split that needs prologue spills). The
+# regalloc save/restore are conceptual no-ops for cx; preserved
+# stubs let parse_*.cyr call them unconditionally. See
+# x86/emit.cyr for the active implementations +
+# docs/audit/2026-04-27-cx-direct-emit-inventory.md.
+fn EREGALLOC_SAVE(S, n): i64 {
+    if (n >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
+    return 0;
+}
+
+fn EREGALLOC_RESTORE(S, n): i64 {
+    if (n >= 1) { _IR_REC0(S, IR_RAW_EMIT); }
+    return 0;
+}
+
+# EDROPI64 — PE-only path; cx doesn't enter the calling code
+# (parse_expr.cyr PE syscall stubs are gated by _TARGET_PE).
+fn EDROPI64(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
 fn EEXIT(S): i64 {
     CX_EMIT(S, 2, 2, 0, 0);      # mov r2, r0 (exit code → arg1)
     CX_MOVI(S, 1, 60);            # r1 = 60 (SYS_EXIT)

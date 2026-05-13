@@ -550,10 +550,8 @@ fn PARSE_FACTOR(S): i64 {
                 if (argc == 2) {
                     # Stack top-down: [exit_code] [syscall_nr=60]
                     EPOPR(S);                    # pop rax = exit code
-                    # v5.6.12: add rsp, 8 (4 raw bytes) — discard syscall_nr
-                    _IR_REC0(S, IR_RAW_EMIT);
-                    EB(S, 0x48); EB(S, 0x83);
-                    EB(S, 0xC4); EB(S, 0x08);
+                    # v5.11.35 path-A: discard syscall_nr via named op.
+                    EDROPI64(S);
                     EEXIT(S);                    # emits Win64 ExitProcess call
                     _cfo = 0;
                     return 0;

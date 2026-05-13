@@ -6,6 +6,78 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.35] — 2026-05-12
+
+**Parser-to-emit named-op refactor — Class D (v5.7.12 audit doc).**
+First slot of the path-A arc pinned for v5.11.x close per the
+2026-05-12 tight-close decision. Replaces 3 sites worth of
+unconditional x86 byte emits in `parse_*.cyr` (currently gated by
+`_TARGET_CX == 0 && _AARCH64_BACKEND == 0` per-call guards) with
+3 named ops that each backend's `emit.cyr` implements. parse_*.cyr
+drops its arch guards; dispatch lives in the backend layer.
+
+### Why
+
+Per [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](docs/audit/2026-04-27-cx-direct-emit-inventory.md):
+the v5.7.12 cx-drift fix used path B (per-call `_TARGET_CX == 0`
+guards) for time-to-ship. Path A — named-op abstraction in each
+backend — was deferred as the long-term architecture. Re-pinned to
+v5.11.x close at 2026-05-12 tight-close (RISC-V 4th-backend trigger
+moved to v6.x, but the refactor still earns its slot for compiler
+hygiene + v6.x RISC-V's day-one backend interface).
+
+This slot ships **Class D** — the 3 unconditional-x86 sites that
+all backends share. Classes B (PIC-vs-direct address loads) and
+C (f64 + struct-return) cascade into v5.11.36 + .37.
+
+### Named ops added
+
+Each defined in `src/backend/x86/emit.cyr`,
+`src/backend/aarch64/emit.cyr`, `src/backend/cx/emit.cyr`:
+
+| Op | x86 emit | aarch64 / cx |
+|----|----------|--------------|
+| `EREGALLOC_SAVE(S, n)` | 5× `mov [rbp-8*i], <reg>` chain (rbx, r12-r15) conditional on `n >= i` | stub: IR record only, no emits |
+| `EREGALLOC_RESTORE(S, n)` | mirror of save in reverse order | stub: IR record only |
+| `EDROPI64(S)` | `add rsp, 8` (4 bytes) | stub: no-op (PE-only path) |
+
+aarch64 + cx stubs preserve the IR record so cross-backend IR
+shape stays consistent — the only thing that differs is the
+emitted byte sequence.
+
+### parse_*.cyr sites refactored
+
+- `parse_fn.cyr:1729-1736` (regalloc prologue save) — 8 lines → 2-line named-op call
+- `parse_fn.cyr:2320-2330` (regalloc epilogue restore) — 11 lines → 3-line named-op call
+- `parse_expr.cyr:553-557` (PE syscall stub stack-discard) — 5 lines → 2-line named-op call
+
+Total: 24 inline lines (including `_IR_REC0` calls + `_TARGET_CX
+&& _AARCH64_BACKEND` guards) replaced by 7 lines of named-op
+calls. Direct-emit count in parse_*.cyr drops 58 → 36 (-22).
+
+### Verification
+
+- Self-host **byte-identical first-pass** at 818,360 B (+16 B
+  from .34's 818,344 — fn-def overhead in x86/emit.cyr for the
+  three new named ops; output bytes identical so no two-step
+  bootstrap required, a heap change would have required it).
+- `check.sh` 67/67; `cyrius test` 149/149.
+- aarch64 cross-compile + pi e2e: `exit=42`; section table intact
+  (v5.11.34 carry-over).
+
+### Audit doc reference
+
+`docs/audit/2026-04-27-cx-direct-emit-inventory.md` enumerated 10
+fix sites across 4 classes (A: aarch64-conditional, no fix; B: PIC
+splits; C: x86-only erroring on aarch64; D: unconditional shared).
+This slot closes Class D. Classes B + C remain for .36 + .37.
+
+### Companion (next)
+
+- **5.11.36**: Class B — PIC-vs-direct address loads (`load_fn_addr`,
+  `load_gvar_addr`, `load_local_addr` — sites in parse_expr.cyr that
+  split between `_IS_OBJ` PIC-style and direct movabs).
+
 ## [5.11.34] — 2026-05-12
 
 **aarch64 user-binary ELF emitter: same section-header fix as

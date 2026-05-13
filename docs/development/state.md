@@ -5,6 +5,30 @@
 
 ## Version
 
+**5.11.35** (shipped 2026-05-12 — **Parser-to-emit named-op
+refactor — Class D**). First slot of the path-A arc pinned for
+v5.11.x close per the 2026-05-12 tight-close decision; replaces 3
+sites of unconditional x86 byte emits in `parse_*.cyr` (previously
+gated by `_TARGET_CX == 0 && _AARCH64_BACKEND == 0` per-call
+guards) with **3 named ops** dispatched per backend: `EREGALLOC_SAVE`,
+`EREGALLOC_RESTORE`, `EDROPI64`. x86/emit.cyr holds the active
+implementations; aarch64/cx stubs preserve the IR record (matches
+prior behavior — IR record fired across all backends, emits only
+on x86) so cross-backend IR shape stays consistent.
+**Sites refactored**: `parse_fn.cyr:1729-1736` (regalloc prologue
+save), `parse_fn.cyr:2320-2330` (regalloc epilogue restore),
+`parse_expr.cyr:553-557` (PE syscall stub stack-discard). 24
+inline lines → 7 lines of named-op calls. Direct-emit count in
+parse_*.cyr drops 58 → 36 (-22). cc5 byte-identical
+**first-pass** at **818,360 B** (+16 from .34's 818,344 — fn-def
+overhead for the 3 new ops; no heap change so no two-step
+required); check.sh 67/67; cyrius test 149/149; aarch64 cross +
+pi e2e clean. **Audit reference**:
+[`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](audit/2026-04-27-cx-direct-emit-inventory.md)
+enumerated 10 fix sites across 4 classes (A/B/C/D); this slot
+closes Class D. **Companion** (next): v5.11.36 = Class B PIC-vs-direct
+address loads (load_fn_addr, load_gvar_addr, load_local_addr).
+
 **5.11.34** (shipped 2026-05-12 — **aarch64 user-binary ELF
 section-header cleanup; closes the 5-emit-path arc**). Mirror of
 v5.11.32 (x86 user-binary) into `EMITELF` at
