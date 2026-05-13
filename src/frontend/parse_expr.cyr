@@ -852,38 +852,8 @@ fn PF64CMP(S, tok): i64 {
     # At this point x1 = a, stack = [b], x0 (/ rax on x86) = b.
     # v5.6.12: f64 compare — per-arch raw FCMP/UCOMISD + SETcc chain.
     _IR_REC0(S, IR_RAW_EMIT);
-    if (_AARCH64_BACKEND == 1) {
-        # aarch64 f64 compare: move both operands into FP registers,
-        # FCMP, then CSET on the ordered condition (MI rather than LT
-        # for lt so unordered/NaN yields 0 rather than 1).
-        EW(S, 0x9E670020);  # fmov d0, x1   — d0 = a
-        EPOPR(S);           # pop b back to x0 (stack now empty)
-        EW(S, 0x9E670001);  # fmov d1, x0   — d1 = b
-        EW(S, 0x1E612000);  # fcmp d0, d1
-        if (tok == 68) { EW(S, 0x9A9F17E0); }  # cset x0, eq
-        if (tok == 69) { EW(S, 0x9A9F57E0); }  # cset x0, mi  (ordered less)
-        if (tok == 70) { EW(S, 0x9A9FD7E0); }  # cset x0, gt  (ordered greater)
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-        return 0;
-    }
-    if (_TARGET_CX == 1) {
-        # v5.7.12 path B: cx bytecode has no f64 cmp opcode in this
-        # slot. No-op fall-through (consume the closing paren so the
-        # parser stays in sync). EPOPR to pop the stack-pushed b.
-        EPOPR(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-        return 0;
-    }
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC8);
-    EMOVQ_X0_A(S); EPOPR(S);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
-    EMOVQ_X1_C(S); EUCOMISD(S);
-    # mov eax, 0 (B8 00000000) — clear without clobbering flags
-    EB(S, 0xB8); EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    if (tok == 68) { EB(S, 0x0F); EB(S, 0x94); EB(S, 0xC0); }
-    if (tok == 69) { EB(S, 0x0F); EB(S, 0x92); EB(S, 0xC0); }
-    if (tok == 70) { EB(S, 0x0F); EB(S, 0x97); EB(S, 0xC0); }
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);
+    # v5.11.38 path-A: f64 cmp dispatch lives in <backend>/emit.cyr.
+    EF64_CMP(S, tok);
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
     return 0;
 }

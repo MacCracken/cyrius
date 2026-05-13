@@ -1321,6 +1321,28 @@ fn EF64_ATAN(S): i64 {
     return 0;
 }
 
+# EF64_CMP — f64 comparison (`==`, `<`, `>`). Class B missed-site
+# closed at v5.11.38. Stack on entry: top = a, second = b (pushed
+# earlier). Result in rax: 1 if cmp holds, 0 otherwise.
+# tok: 68=eq, 69=lt, 70=gt. x86 uses UCOMISD + SETcc; the
+# `mov rax, rcx` and `mov rcx, rax` shuffles handle the SSE-vs-
+# integer-register move pair.
+fn EF64_CMP(S, tok): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC8);  # mov rax, rcx
+    EMOVQ_X0_A(S);
+    EPOPR(S);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);  # mov rcx, rax
+    EMOVQ_X1_C(S);
+    EUCOMISD(S);
+    EB(S, 0xB8); EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);  # mov eax, 0
+    if (tok == 68) { EB(S, 0x0F); EB(S, 0x94); EB(S, 0xC0); }  # sete al
+    if (tok == 69) { EB(S, 0x0F); EB(S, 0x92); EB(S, 0xC0); }  # setb al  (ordered <)
+    if (tok == 70) { EB(S, 0x0F); EB(S, 0x97); EB(S, 0xC0); }  # seta al  (ordered >)
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);  # movzx eax, al
+    return 0;
+}
+
 # Emit call rel32 to known target
 fn ECALLTO(S, target): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit(S, IR_CALL_KNOWN, 0, 0, target); }

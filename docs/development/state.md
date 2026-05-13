@@ -5,6 +5,44 @@
 
 ## Version
 
+**5.11.38** (shipped 2026-05-12 — **Parser-to-emit named-op
+refactor — Class B missed-site + drift-prevention gate; ARC
+CLOSED**). Fourth and final slot of the path-A arc (.35-.38).
+Closes the f64 cmp x86 SETcc chain (Class B site missed in .36):
+**`EF64_CMP(S, tok)` named op** consolidates the aarch64 arm
+(fmov/fcmp/cset, 6 EW) and the unconditional x86 trailer
+(13-byte mov/movq/ucomisd/setXX/movzx chain) into a single
+backend-dispatched call. Plus the **drift-prevention
+static-analysis gate** `_parse_emit_drift_gate` in
+programs/check.cyr scans the 5 audited parse_*.cyr leaves
+(parse_ctrl/parse_decl/parse_expr/parse_fn/parse_types) for
+`E[BWS238]\(S, 0x` patterns and fails on any hit — baseline 0
+hits, watchdog for the v5.7.11 drift lesson. `check.sh` count
+rises **67 → 68**. cc5 byte-identical **first-pass** at
+**814,400 B** (-560 from .37's 814,960). `cyrius test` 149/149;
+aarch64 cross + pi e2e: `exit=42`. **parse.cyr (dispatcher)
+has a separate switch jump-table direct-emit block** at
+lines ~220-243 not in the original audit's scope; intentionally
+excluded from the gate, pending a follow-up `ESWITCH_TABLE`
+refactor.
+
+### Arc closeout — cumulative impact
+
+| Slot | Focus | cc5 size | Δ |
+|------|-------|----------|---|
+| .34 baseline | (pre-arc) | 818,344 | — |
+| .35 | Class D — unconditional shared | 818,360 | +16 |
+| .36 | Class B — PIC-vs-direct address loads | 817,000 | -1,360 |
+| .37 | Class C — f64 unary ops | 814,960 | -2,040 |
+| **.38** | **Class B missed-site + drift gate** | **814,400** | **-560** |
+| **Net across 4 slots** | | | **-3,944 B / -0.48%** |
+
+Direct-emit count in audited parse_*.cyr files:
+**~67 (v5.11.34) → 0 (v5.11.38)**.
+**Audit doc** [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](audit/2026-04-27-cx-direct-emit-inventory.md)
+opened 2026-04-27 at v5.7.11; path A landed 31 patches later at
+v5.11.38. ✅ Class D / B / C / drift-gate all shipped.
+
 **5.11.37** (shipped 2026-05-12 — **Parser-to-emit named-op
 refactor — Class C (f64 unary ops)**). Third slot of the path-A
 arc. 8 ptyps (71/83/84/85/86/87/88/99) each get their own named

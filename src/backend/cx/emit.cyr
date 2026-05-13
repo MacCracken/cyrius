@@ -264,6 +264,14 @@ fn EF64_LOG2(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
 fn EF64_EXP2(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
 fn EF64_ATAN(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
 
+# EF64_CMP — cx no-op + EPOPR to keep stack in sync with the
+# preceding push that the x86/aarch64 backends consume.
+fn EF64_CMP(S, tok): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EPOPR(S);
+    return 0;
+}
+
 fn EEXIT(S): i64 {
     CX_EMIT(S, 2, 2, 0, 0);      # mov r2, r0 (exit code → arg1)
     CX_MOVI(S, 1, 60);            # r1 = 60 (SYS_EXIT)

@@ -6,6 +6,96 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.38] — 2026-05-12
+
+**Parser-to-emit named-op refactor — Class B missed-site +
+drift-prevention gate; ARC CLOSED.** Fourth and final slot of the
+path-A arc (.35-.38). Closes a Class B site the .36 slot
+missed — the f64 cmp x86 SETcc chain — and adds the
+static-analysis gate that prevents future drift.
+
+### `EF64_CMP(S, tok)` — Class B missed-site
+
+The f64 comparison emit in `parse_expr.cyr:855-887` had an
+aarch64 arm (lines 855-868, `if (_AARCH64_BACKEND == 1)`) and an
+unconditional x86 trailer (lines 877-887) — 13 EB direct emits
+interleaved with `EMOVQ_X0_A` / `EPOPR` / `EMOVQ_X1_C` /
+`EUCOMISD` named-op calls. Both arms collapse into a single
+`EF64_CMP(S, tok)` call per backend:
+
+| Backend | Emit |
+|---------|------|
+| x86 | `mov rax, rcx; movq xmm0, rax; pop rax→x0; mov rcx, rax; movq xmm1, rcx; ucomisd; mov eax, 0; setXX al; movzx eax, al` |
+| aarch64 | `fmov d0, x1; pop x0; fmov d1, x0; fcmp d0, d1; cset x0, <cond>` |
+| cx | IR record + `EPOPR` (stack-sync only) |
+
+This was a site I planned to handle in .36 but missed; closing it
+here as part of .38's arc-close.
+
+### Drift-prevention static-analysis gate
+
+`_parse_emit_drift_gate` in `programs/check.cyr` scans the 5
+audited parse_*.cyr leaf files for the patterns `EB(S, 0x` /
+`E2(S, 0x` / `E3(S, 0x` / `EW(S, 0x` / `E8(S, 0x` and fails on
+any hit. Files scanned:
+
+- `src/frontend/parse_ctrl.cyr`
+- `src/frontend/parse_decl.cyr`
+- `src/frontend/parse_expr.cyr`
+- `src/frontend/parse_fn.cyr`
+- `src/frontend/parse_types.cyr`
+
+Baseline post-.38: **0 hits across all 5 files**. Any future
+patch that re-introduces a direct emit fails the gate at CI/PR
+review — the v5.7.11 drift lesson now has a watchdog.
+
+`check.sh` count rises **67 → 68**.
+
+### parse.cyr (dispatcher) — pending follow-up
+
+`src/frontend/parse.cyr` itself (the 1199-line dispatcher) has a
+separate direct-emit block at lines ~220-243 — the switch
+jump-table emit (`lea rcx, [rip+disp]; movsxd; add rax, rcx; jmp
+rax` + table). aarch64 takes a different code path (linear
+comparison fallback), so this is functionally x86-only but isn't
+inside an `_AARCH64_BACKEND == 1` block — it's gated by
+`use_table = 0` set on the aarch64 branch above. The drift gate
+intentionally excludes parse.cyr from its scope to match the
+v5.7.11 audit's leaf-file focus. A follow-up `ESWITCH_TABLE`
+refactor would let parse.cyr join the gate; tracked in a future
+slot.
+
+### Verification
+
+- Self-host **byte-identical first-pass** at 814,400 B (-560 B
+  from .37's 814,960 — Class B missed-site consolidation).
+- `check.sh` **68/68** (gate added: +1 vs .37's 67/67).
+- `cyrius test` 149/149.
+- aarch64 cross + pi e2e: `exit=42`.
+
+### Arc closeout — cumulative impact
+
+| Slot | Focus | cc5 size | Δ |
+|------|-------|----------|---|
+| .34 (baseline) | (pre-arc) | 818,344 | — |
+| .35 | Class D — unconditional shared | 818,360 | +16 |
+| .36 | Class B — PIC-vs-direct address loads | 817,000 | -1,360 |
+| .37 | Class C — f64 unary ops | 814,960 | -2,040 |
+| **.38** | **Class B missed-site + drift gate** | **814,400** | **-560** |
+| **Net** | | | **-3,944 B (-0.48%)** |
+
+Direct-emit count in audited parse_*.cyr files:
+**~67 (v5.11.34) → 0 (v5.11.38)**. Path A is the long-term
+architecture the v5.7.12 path-B guards were always going to be
+replaced by; v5.11.x close is where that replacement landed.
+
+### Audit doc reference
+
+`docs/audit/2026-04-27-cx-direct-emit-inventory.md` § "Drift-
+prevention follow-up" pinned this gate as a v5.7.13-or-later
+follow-up. Landed at v5.11.38 — 31 minor patches after the audit
+opened.
+
 ## [5.11.37] — 2026-05-12
 
 **Parser-to-emit named-op refactor — Class C (f64 unary ops).**

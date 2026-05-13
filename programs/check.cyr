@@ -1204,6 +1204,70 @@ fn _cyrfmt_comment_braces_gate(): i64 {
     return fail;
 }
 
+# v5.11.38 — drift-prevention static-analysis gate for the path-A
+# parser-to-emit named-op refactor (.35-.37). After v5.11.37 ship
+# the baseline is **zero direct emits in parse_*.cyr** — every
+# `EB(S, 0x..)` / `E2(...)` / `E3(...)` / `EW(...)` / `E8(...)` was
+# replaced with a named-op call. This gate scans the 6 parse_*.cyr
+# files for those patterns and fails on any hit, preventing future
+# drift (the v5.7.11 lesson: drift accumulates silently when no
+# gate watches for it). Heuristic-only; relies on the simple
+# observation that the patterns are unambiguous when present —
+# they don't appear in comments / strings / identifiers anywhere
+# in the current parse_*.cyr files. Reference:
+# `docs/audit/2026-04-27-cx-direct-emit-inventory.md` § "Drift-
+# prevention follow-up".
+
+# Scan a single parse_*.cyr file for direct-emit patterns. Returns
+# the hit count (0 = pass for that file).
+fn _parse_drift_scan(path, buf, cap): i64 {
+    var n = file_read_all(path, buf, cap);
+    if (n < 0) { return 0; }     # missing file — not a failure
+    var hits = 0;
+    hits = hits + _count_substr_buf(buf, n, "EB(S, 0x");
+    hits = hits + _count_substr_buf(buf, n, "E2(S, 0x");
+    hits = hits + _count_substr_buf(buf, n, "E3(S, 0x");
+    hits = hits + _count_substr_buf(buf, n, "EW(S, 0x");
+    hits = hits + _count_substr_buf(buf, n, "E8(S, 0x");
+    if (hits > 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(path);
+        _p(" — direct-emit site(s) found (should be 0 after path-A v5.11.35-.37)\n");
+    }
+    return hits;
+}
+
+fn _parse_emit_drift_gate(): i64 {
+    var cap = 262144;     # 256 KB — fits any parse_*.cyr
+    var buf = alloc(cap);
+    var fail = 0;
+    # Scope: the 5 leaf parse files audited at v5.7.11
+    # (docs/audit/2026-04-27-cx-direct-emit-inventory.md raw-counts
+    # table). v5.11.35-.38 path-A drove this set to zero. `parse.cyr`
+    # itself (the dispatcher) holds a separate switch-jump-table
+    # direct-emit block at line ~220-243 that wasn't in the audit's
+    # scope; pending a follow-up `ESWITCH_TABLE` refactor before it
+    # joins the gate.
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_ctrl.cyr"),  buf, cap);
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_decl.cyr"),  buf, cap);
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_expr.cyr"),  buf, cap);
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_fn.cyr"),    buf, cap);
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_types.cyr"), buf, cap);
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": no direct emits in 5 audited parse_*.cyr leaves (path-A baseline at v5.11.37)\n");
+    }
+    _check("path-A drift gate: parse_*.cyr direct-emit zero baseline (v5.11.38)", fail);
+    return fail;
+}
+
 # Fork+exec cyrld with output path + N input .o paths. Returns
 # 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
 # goes to /dev/null; stderr inherited from dispatcher (so a real
@@ -8096,6 +8160,10 @@ fn _run_regression_gates(): i64 {
 
     _section("cyrfmt comment/string brace skip");
     _cyrfmt_comment_braces_gate();
+    println("");
+
+    _section("path-A drift gate (parse_*.cyr direct emits)");
+    _parse_emit_drift_gate();
     println("");
 
     _section("install --refresh-only shim");

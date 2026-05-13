@@ -837,6 +837,22 @@ fn EF64_LOG2(S): i64 {
     return 0;
 }
 
+# EF64_CMP — aarch64 f64 compare. Stack on entry: a in x1 (pushed
+# earlier as the second operand), b in x0 (current). Uses FCMP +
+# CSET with the ordered condition codes (MI for lt so unordered/
+# NaN yields 0).
+fn EF64_CMP(S, tok): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EW(S, 0x9E670020);  # fmov d0, x1   — d0 = a
+    EPOPR(S);            # pop b back to x0 (stack now empty)
+    EW(S, 0x9E670001);  # fmov d1, x0   — d1 = b
+    EW(S, 0x1E612000);  # fcmp d0, d1
+    if (tok == 68) { EW(S, 0x9A9F17E0); }  # cset x0, eq
+    if (tok == 69) { EW(S, 0x9A9F57E0); }  # cset x0, mi  (ordered <)
+    if (tok == 70) { EW(S, 0x9A9FD7E0); }  # cset x0, gt  (ordered >)
+    return 0;
+}
+
 # Emit BL to known target
 fn ECALLTO(S, target): i64 {
     var cp = GCP(S);
