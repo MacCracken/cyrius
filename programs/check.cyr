@@ -1266,6 +1266,41 @@ fn _parse_emit_drift_gate(): i64 {
     return fail;
 }
 
+# v5.11.45: build/cc5 contamination gate. Scans the committed
+# build/cc5 binary for mabda/wgpu strings — symptoms of the slip
+# at v5.11.28/.29 (silently fixed .30) and v5.11.43 (fixed .44)
+# where some other binary got cp'd over build/cc5 before commit.
+# A legitimate cc5 (compiled from src/) NEVER contains these
+# strings; any hit = contamination. Fail-fast guard.
+fn _cc5_contamination_gate(): i64 {
+    var path = _root_path("build/cc5");
+    var cap = 2097152;    # 2 MB — fits cc5 (~821 KB) with headroom
+    var buf = alloc(cap);
+    var n = file_read_all(path, buf, cap);
+    if (n < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": build/cc5 not readable\n");
+        _check("build/cc5 contamination gate (v5.11.45)", 1);
+        return 1;
+    }
+    var hits = 0;
+    hits = hits + _count_substr_buf(buf, n, "mabda: gpu");
+    hits = hits + _count_substr_buf(buf, n, "wgpuDevice");
+    hits = hits + _count_substr_buf(buf, n, "compute_pipeline");
+    if (hits > 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": build/cc5 contains mabda/wgpu strings — likely contaminated (see CHANGELOG [5.11.44] postmortem)\n");
+    }
+    _check("build/cc5 contamination gate (v5.11.45; no mabda/wgpu strings)", hits);
+    return hits;
+}
+
 # Fork+exec cyrld with output path + N input .o paths. Returns
 # 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
 # goes to /dev/null; stderr inherited from dispatcher (so a real
@@ -8164,6 +8199,10 @@ fn _run_regression_gates(): i64 {
 
     _section("path-A drift gate (parse_*.cyr direct emits)");
     _parse_emit_drift_gate();
+    println("");
+
+    _section("build/cc5 contamination gate");
+    _cc5_contamination_gate();
     println("");
 
     _section("install --refresh-only shim");

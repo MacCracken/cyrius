@@ -6,6 +6,111 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.45] — 2026-05-13
+
+**P(-1) hardening sweep — four-item bundle.** Mechanical-gate
+audit at v5.11.45 entry surfaced four hygiene targets; all land
+together. check.sh **68 → 69** gates; cc5 self-host
+**821,712 → 821,984 B** (+272 from `CYRIUS_DCE_VERBOSE` env-read
++ gate); cyrius test **149/149**.
+
+### state.md compression
+
+State.md grew to 1451 lines / 44 v5.11.x patch blocks accreted
+in the Version section — all duplicated in CHANGELOG. Per
+`feedback_doc_canonical_no_redundancy`, CHANGELOG is canonical
+for slot history; state.md is current-cycle-volatile. Detail
+kept for the **current ship (.44)** only; .0 through .43
+compressed into one-line entries under a new "Prior v5.11.x
+ships" subsection. Pattern matches the v5.10.x "Recent shipped"
+one-liner block already at the bottom of state.md.
+
+**Net**: **1451 → 583 lines (-868, -60%)**.
+
+### build/cc5 contamination grep gate
+
+Per the v5.11.44 postmortem pin: future bumps should grep
+`build/cc5` for mabda/wgpu strings as a fail-fast check. New
+**`_cc5_contamination_gate`** in `programs/check.cyr` scans
+`build/cc5` (2 MB buffer) for `mabda: gpu` / `wgpuDevice` /
+`compute_pipeline` substrings; FAIL if any hits. Prevents the
+v5.11.28/.29/.43-style slip (some other binary `cp`'d over
+build/cc5 before commit) from recurring. check.sh count rises
+**68 → 69**. Negative test verified: tainting `build/cc5` with
+`echo "mabda: gpu context created" >>` makes the gate FAIL;
+restoring → PASS.
+
+### cyrius vet — restored
+
+`cyrius vet src/main.cyr` was emitting ELF binary garbage to
+stdout. Root cause: `build/cyrc` had been replaced with the
+12 KB bootstrap compiler binary (no `vet`/`deny` dispatch);
+`install.sh --refresh-only`'s `_rebuild_stale` skipped rebuild
+because the contaminated binary's mtime was newer than
+`programs/cyrc.cyr`'s. Same shape of slip as build/cc5's
+v5.11.43 mabda contamination — just a smaller binary on the
+wrong side of a cp.
+
+**Fixes** (all in `programs/cyrc.cyr`):
+
+- **Missing explicit exit**: `var r = main();` at module scope
+  fell through to runtime cleanup which re-entered main, causing
+  vet/deny to run twice. Added `syscall(60, r);` after — matches
+  the pattern in `cyrius-init.cyr`, `cyriusly.cyr`,
+  `cyrius-lsp.cyr`. cyrc 12,344 B (bootstrap) → **44,672 B**
+  (real audit tool).
+- **16 KB scan cap raised → 256 KB**: `src/main.cyr` is 86 KB;
+  the 16 KB cap truncated reads before any `include` line,
+  falsely returning "no dependencies". Sized to match
+  `_parse_drift_scan` (256 KB) in `programs/check.cyr`.
+
+Install snapshots refreshed: `~/.cyrius/bin/cyrc` +
+`~/.cyrius/versions/5.11.44/bin/cyrc` both now the real 44 KB
+audit tool. **End-to-end**: `cyrius vet src/main.cyr` lists 14
+includes, 0 untrusted, 0 missing. `cyrius deny src/main.cyr`
+lists 0 violations.
+
+### Dead-fn report — verbose-mode gating
+
+cc5's `note: N unreachable fns` followed by `dead: <name>` per
+fn produced ~38 lines of stderr noise per compile, where most
+of the listed fns were mode/arch-dispatched false positives
+(TS_*, _macho_*, ir_*, aarch64-only ops) per
+`feedback_dead_code_audit_scope` — not safe to remove.
+
+**Fix** in `src/backend/x86/fixup.cyr`:
+
+- Per-fn name list now gated behind **`CYRIUS_DCE_VERBOSE=1`**;
+  default-off.
+- Summary line updated: `bytes — set CYRIUS_DCE=1 to eliminate,
+  CYRIUS_DCE_VERBOSE=1 to list)`.
+- Pre-existing byte-count bug fixed (40 → 42 for the original
+  trailing newline; new line at 72 bytes counted correctly so
+  the `\n` actually emits).
+
+**Output deltas**:
+- Default mode: stderr drops from 38 lines → 1 line per compile.
+- `CYRIUS_DCE_VERBOSE=1`: same 38-line output as before, opt-in
+  for actual cleanup work.
+
+Only x86 has the DCE pass + dead-fn report; aarch64 / cx /
+macho backends have no equivalent (state.md previously noted:
+"aarch64 fixup has no DCE — x86-specific"). No cross-arch
+propagation needed.
+
+### Verified
+
+- Self-host: **cc5 == cc5_a == cc5_b** byte-identical at
+  **821,984 B**.
+- `scripts/check.sh`: **69/69** (was 68; +1 for the contamination
+  gate).
+- `cyrius test`: **149/149**.
+- `cyrius vet src/main.cyr`: lists 14 includes, exit 0.
+- `cyrius deny src/main.cyr`: 0 violations, exit 0.
+- LSP smoke from `/tmp/cyrlsp-test/` with `env -i HOME=$HOME`
+  shows `[cyrius-lsp] found cc5: /tmp/cyrlsp-test/cc5` (v5.11.44
+  regression check).
+
 ## [5.11.44] — 2026-05-13
 
 **P0 cc5 binary restoration + cyrius-lsp `argv[0]` self-resolution +

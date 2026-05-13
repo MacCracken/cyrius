@@ -65,6 +65,7 @@ modules = ["../../.ssh/authorized_keys"]
 **Impact:** Silent data corruption, unpredictable codegen, potential code execution.
 **Fix:** Add overflow checks at write boundaries for critical regions (str_data, tok_names, codebuf). Long-term: mmap separate regions with guard pages.
 **Priority:** P1 — the Heisenbug may be a manifestation.
+**Pinned v5.11.68** (2026-05-13) — batched with the heap-map full reorganization closeout slot since CVE-05's mitigation is fundamentally a heap-layout concern (boundary guards + mmap-with-guard-pages split). The .68 slot's existing scope (closing unused gaps across struct_*/fn_*/ir/fixup/tok regions) is the natural place to land the per-region bounds-check shape alongside the relocation work. See [`docs/development/roadmap.md`](../development/roadmap.md) `v5.11.68` entry.
 
 ### CVE-06: String data region overflow
 
@@ -159,8 +160,8 @@ modules = ["../../.ssh/authorized_keys"]
 - [ ] CVE-09: Jump target table overflow warning
 
 ### v4.3.x
-- [ ] CVE-05: Critical region overflow checks (str_data, tok_names)
-- [ ] CVE-07: PIE binary generation (tracked under PIC codegen)
+- [ ] CVE-05: Critical region overflow checks (str_data, tok_names) — **pinned v5.11.68 closeout** (heap-map full reorg)
+- [ ] CVE-07: PIE binary generation (tracked under PIC codegen) — **pinned v6.1.x** via `proposals/2026-05-11-pie-support.md`
 - [ ] CVE-11: Stack canaries (post-CFG)
 - [ ] CVE-12: Bootstrap attestation command
 - [ ] CVE-13: Release signing

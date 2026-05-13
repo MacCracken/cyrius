@@ -344,6 +344,16 @@ fn FIXUP(S): i64 {
     if (dce_env != 0) {
         if (load8(dce_env) == 49 && load8(dce_env + 1) == 0) { dce_enabled = 1; }
     }
+    # v5.11.45: per-fn dead-name list is OFF by default. The list is
+    # noisy (typically ~37 fns) and most are mode/arch-dispatched
+    # false positives (TS_*, _macho_*, ir_*, aarch64-only ops) per
+    # feedback_dead_code_audit_scope. Set CYRIUS_DCE_VERBOSE=1 to
+    # see the per-fn list for actual cleanup work.
+    var dce_verbose = 0;
+    var dce_verbose_env = _read_env("CYRIUS_DCE_VERBOSE");
+    if (dce_verbose_env != 0) {
+        if (load8(dce_verbose_env) == 49 && load8(dce_verbose_env + 1) == 0) { dce_verbose = 1; }
+    }
     # live[i] = 1 iff fn i is reachable from entry.
     # 512 bytes × 8 bits = 4096 fn cap (matches REGFN ceiling raised
     # in 4.7.1; was 256 / 2048 — segfaulted on units > 2048 fns).
@@ -629,21 +639,26 @@ fn FIXUP(S): i64 {
         if (dce_enabled == 1) {
             syscall(SYS_WRITE, 2, " bytes NOPed)\n", 14);
         } else {
-            syscall(SYS_WRITE, 2, " bytes — set CYRIUS_DCE=1 to eliminate)\n", 40);
+            syscall(SYS_WRITE, 2, " bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n", 72);
         }
-        # Print individual dead function names
-        var dni = 0;
-        while (dni < fnc) {
-            var dnoff = L64(S + 0x12DA000 + dni * 8);
-            if (dnoff >= 0) {
-                var dn_live = load8(&live + (dni >> 3)) & (1 << (dni & 7));
-                if (dn_live == 0) {
-                    syscall(SYS_WRITE, 2, "  dead: ", 8);
-                    PRSTR(S + 0x60000 + L64(S + 0x12CA000 + dni * 8));
-                    syscall(SYS_WRITE, 2, "\n", 1);
+        # v5.11.45: per-fn name list now gated behind CYRIUS_DCE_VERBOSE=1.
+        # Default-off because the list is dominated by mode-dispatched
+        # false positives (TS_*, _macho_*, ir_*, aarch64-only) per
+        # feedback_dead_code_audit_scope — not safe to remove.
+        if (dce_verbose == 1) {
+            var dni = 0;
+            while (dni < fnc) {
+                var dnoff = L64(S + 0x12DA000 + dni * 8);
+                if (dnoff >= 0) {
+                    var dn_live = load8(&live + (dni >> 3)) & (1 << (dni & 7));
+                    if (dn_live == 0) {
+                        syscall(SYS_WRITE, 2, "  dead: ", 8);
+                        PRSTR(S + 0x60000 + L64(S + 0x12CA000 + dni * 8));
+                        syscall(SYS_WRITE, 2, "\n", 1);
+                    }
                 }
+                dni = dni + 1;
             }
-            dni = dni + 1;
         }
     }
     # Store data_size

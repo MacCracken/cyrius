@@ -116,12 +116,18 @@ both move to v6.4.x. No mid-window auto-promotion.
 
 Memory pin: `project_mabda_rc3_at_closeout`.
 
-### v5.11.68 — Heap-map full reorganization (true closeout)
+### v5.11.68 — Heap-map full reorganization + CVE-05 (true closeout)
 
 The last substantive engineering work before v6.0.0 opens.
 Originally pinned 2026-05-05 at v5.8.61 ship as the documented
 "last-minor-before-v6.0 effort"; re-pinned to v5.11.68 at the
-2026-05-12 tight-close.
+2026-05-12 tight-close. **CVE-05 batched in at 2026-05-13** —
+per-region overflow checks at str_data / tok_names / codebuf write
+boundaries (P1, from
+[`docs/audit/2026-04-13-security-audit.md`](../audit/2026-04-13-security-audit.md))
+land alongside the reorg since both are heap-layout concerns and
+the .68 surface already touches the same region-boundary
+arithmetic.
 
 **Why .68 and not .69**: v5.11.69 is reserved as the
 **fold-applied tag** for any dep foldins that earn their slot
