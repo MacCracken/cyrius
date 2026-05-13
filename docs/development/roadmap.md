@@ -45,6 +45,66 @@ Per-patch detail for v5.11.0 → current ships lives in
 [CHANGELOG.md](../../CHANGELOG.md); current-state snapshot lives
 in [state.md](state.md).
 
+### v5.11.47 → v5.11.49 — UEFI Application PE emit mode (gnoboot MVP unblocker)
+
+3-slot arc authorised 2026-05-13 to unblock the AGNOS sovereign
+UEFI bootloader (`gnoboot`) MVP boot path. Path A (ELF64 +
+multiboot2 via GRUB) is dead-on-iron due to GRUB's
+`grub_relocator64_efi_boot` writing register state into its own
+RO `.text` under modern UEFI's Memory Attributes Protocol; Path C
+= sovereign Cyrius UEFI bootloader, ~2000 LoC, closed-beta target
+early June 2026. Filing:
+[`docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md`](issues/2026-05-13-gnoboot-uefi-application-emit.md).
+
+Premise audit at slot entry surfaced that the filing's speculation
+was partially stale: `.reloc` directory + DllCharacteristics
+(NX_COMPAT + DYNAMIC_BASE + HIGH_ENTROPY_VA = 0x0160) already
+shipped at v5.5.35 / v5.6.31. Actual compiler-side deltas are
+smaller than the filing estimated.
+
+- **v5.11.47 — Compiler enablement + `_pe_ensure_*` refactor.**
+  Refactor first (consolidate 9 near-identical
+  `_pe_ensure_<X>` / `_pe_<X>_get` pairs in `src/backend/pe/emit.cyr`
+  — stdio_getstd, stdio_writef, readf, closeh, seekfp, vallo,
+  createf, createdir, deletef, gettick — into a single generic
+  helper; byte-identical proof). Then layer
+  `_TARGET_EFI_APPLICATION` flag + `CYRIUS_TARGET_EFI=1` env var
+  in `src/main.cyr` + `src/main_win.cyr`. Subsystem branch at
+  `src/backend/pe/emit.cyr:746` (3 → 0xA). EEXIT EFI variant in
+  `src/backend/x86/emit.cyr:545` (single `ret` byte 0xC3 — firmware
+  reads rax as EFI_STATUS). Skip `_pe_imp_add("ExitProcess")` at
+  `_pe_layout:439`; consolidated `_pe_ensure` helper errors out if
+  any kernel32 reroute fires in EFI mode (compile-error, not silent
+  miscompile). `.reloc` + DllCharacteristics audit-confirmed
+  EFI-correct, no code change there. ~150 LoC of compiler change.
+- **v5.11.48 — `programs/efi_probe.cyr` + structural gate.**
+  Minimal "hello, uefi" probe: capture RCX (ImageHandle) + RDX
+  (SystemTable) via inline asm as first top-level statements,
+  call `SystemTable->ConOut->OutputString(L"hello, uefi\\r\\n")` via
+  function-pointer indirection, return EFI_SUCCESS (0). New
+  `_efi_emit_gate()` in `programs/check.cyr` compiles efi_probe
+  with `CYRIUS_TARGET_EFI=1`, asserts Subsystem byte = 0x0A at the
+  optional-header offset, `.reloc` directory non-zero, no
+  kernel32!ExitProcess in `.idata`. check.sh **70 → 71**.
+- **v5.11.49 — OVMF smoke + arc closeout.**
+  `qemu-system-x86_64 -drive if=pflash,...OVMF_CODE.4m.fd
+  -drive ...OVMF_VARS.4m.fd -drive ...esp.img -serial stdio
+  -display none` boot of efi_probe.efi staged at
+  `/EFI/BOOT/BOOTX64.EFI` on a FAT ESP image; verify "hello, uefi"
+  appears on serial. Any runtime fix that surfaces (entry-point
+  shape, ABI corner, `.reloc` blocks under EFI relocation, missed
+  data-directory entry) lands as part of .49. Arc-closeout
+  CHANGELOG cross-links the three slots; issue
+  `2026-05-13-gnoboot-uefi-application-emit.md` archived. Memory
+  pin `project_agnos_path_c_gnoboot` updated with final shape.
+
+Cap is **.49**. If .47 ships clean and .48 probe boots first-try
+under OVMF, .49 compresses to verification + closeout doc only.
+Acceptance bar = AGNOS unblocked to start writing `gnoboot`
+proper against `cyrius = "5.11.49"`.
+
+Memory pin: `project_agnos_path_c_gnoboot`.
+
 ### Stdlib data-domain distlib carve-out (bayan + ganita)
 
 Two sandhi-fold siblings carved out of stdlib using the v5.7.0

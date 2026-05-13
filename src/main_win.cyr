@@ -517,6 +517,20 @@ if (_pe_env != 0) {
     }
 }
 
+# UEFI Application output via CYRIUS_TARGET_EFI=1 (v5.11.47). Same
+# PE32+ container, MS x64 ABI, and .reloc as the Windows path —
+# Subsystem byte flips 3 → 0xA (IMAGE_SUBSYSTEM_EFI_APPLICATION), no
+# kernel32 imports, EEXIT emits `ret` instead of ExitProcess IAT
+# call. Unblocks gnoboot (AGNOS sovereign UEFI bootloader) — see
+# docs/development/issues/archived/2026-05-13-gnoboot-uefi-application-emit.md.
+var _efi_env = _read_env("CYRIUS_TARGET_EFI");
+if (_efi_env != 0) {
+    if (load8(_efi_env) == 49 && load8(_efi_env + 1) == 0) {
+        _TARGET_PE = 1;
+        _TARGET_EFI_APPLICATION = 1;
+    }
+}
+
 # cc5: opt-in IR recording via CYRIUS_IR=1|2
 var _ir_env = _read_env("CYRIUS_IR");
 if (_ir_env != 0) {

@@ -5,84 +5,69 @@
 
 ## Version
 
-**5.11.46** (shipped 2026-05-13 — **ELF64 kernel entry-arithmetic
-agreement — FIXUP ↔ EMITELF64_KERNEL**). Cyrius-side
-investigation + fix of the agnos UEFI x86_64 boot regression
-filed at v5.11.45 entry. The filing's process-violation context
-(unauthorized cross-repo edit reverted at v5.11.45) is the
-load-bearing reason; the technical content of the agnos-side
-diagnosis was recorded as a hint and verified empirically here,
-**not** adopted as the fix.
+**5.11.47** (shipped 2026-05-13 — **UEFI Application PE emit mode
++ `_pe_ensure_*` refactor consolidation; gnoboot arc P1**). First
+of a 3-slot arc unblocking the AGNOS sovereign UEFI bootloader
+(gnoboot); cap at .49. Compiler-side enablement only — probe (.48)
++ OVMF smoke (.49) land subsequent slots.
 
-**Premise check (pre-fix)**. Compiled `programs/kernel_hello.cyr`
-with `build/cc5` at v5.11.45 + `CYRIUS_KERNEL=1
-CYRIUS_ELF64_KERNEL=1`:
-- ELF64 `e_entry` (offset 24): **0x1000A8** ✓ (EMITELF64_KERNEL
-  side correct).
-- `"Hello from Cyrius!"` string at file offset `0x220`
-  → true VA `0x100220`.
-- Baked address inside `.text` at file offset `0x1FE`:
-  **`0x1001D8`** = `0x100220 - 0x48`.
+**Premise audit found filing speculation was partially stale.**
+`.reloc` (v5.5.35) + DllCharacteristics 0x0160 = NX_COMPAT +
+DYNAMIC_BASE + HIGH_ENTROPY_VA (v5.6.31 probe) + COFF
+Characteristics 0x0022 (EXECUTABLE + LARGE_ADDR, no
+RELOCS_STRIPPED, v5.5.35) — **all already shipped**, audit-clean
+for UEFI. Actual compiler deltas were narrow.
 
-72-byte mismatch confirmed. EMITELF64_KERNEL placed the entry at
-file offset `120 + 48 = 168` (ELF64 hdr 64 + PH64 56 + multiboot2
-48), but FIXUP's `kmode == 1` branch hard-coded
-`entry = 0x100060` (the legacy ELF32+multiboot1 layout
-`0x100000 + 84 + 12`). Every absolute fixup baked a VA 72 B
-earlier than the actual symbol; `mov rcx, 0x1001D8` lands inside
-the multiboot2 header instead of `.rodata`. After GRUB-EFI
-handoff the kernel reads garbage → garbled serial output.
-**Reported symptom reproduced on a clean checkout.**
+**Refactor (squeeze-in)**. 9 `_pe_ensure_<X>(S)` / `_pe_<X>_get()`
+pairs (stdio_getstd, stdio_writef, readf, closeh, seekfp, vallo,
+createf, createdir, deletef, gettick — 10 kernel32 syms across 9
+ensure-fns) consolidated to a single `_pe_register_kernel32(S,
+idx_addr, name)` helper. ~10 LoC saved + single source-of-truth
+for the import-time EFI guard.
 
-**Fix**. `src/backend/x86/fixup.cyr` FIXUP `kmode == 1` branch:
-```cyrius
-if (kmode == 1) {
-    entry = 0x100000 + 84 + 12;
-    if (_TARGET_ELF64_KERNEL == 1) { entry = 0x100000 + 120 + 48; }
-}
-```
-Expanded form (was literal `0x100060`) keeps the arithmetic
-visibly tied to the same layout numbers EMITELF_KERNEL +
-EMITELF64_KERNEL use internally, so future drift between the
-three sites is grep-detectable.
+**Flag + plumbing**. New `var _TARGET_EFI_APPLICATION = 0;` in all
+three backend `emit.cyr` files (x86 real / aarch64+cx stubs). Env
+var `CYRIUS_TARGET_EFI=1` in `src/main.cyr:1007` +
+`src/main_win.cyr:520` flips both `_TARGET_PE = 1` (EFI implies
+the PE container) and `_TARGET_EFI_APPLICATION = 1`.
 
-Post-fix on `kernel_hello.cyr`: all three `.text` references to
-`"Hello from Cyrius!"` (offsets `0x1FE`, `0x2E8`, `0x328`)
-contain `0x100220` ✓; OLD-entry-shifted VA `0x1001D8` absent.
+**Behavior branches**:
+1. `src/backend/pe/emit.cyr:746` — Subsystem byte `3 → 10`
+   (WINDOWS_CUI → EFI_APPLICATION).
+2. `src/backend/x86/emit.cyr:545` — EEXIT EFI variant: single
+   `0xC3` (ret); firmware reads rax as EFI_STATUS.
+3. `_pe_layout:439` — skip `_pe_imp_add("ExitProcess")` when EFI.
+4. `_pe_register_kernel32` — fail-fast (stderr + exit 1) on any
+   kernel32 reroute under EFI mode.
+5. Data Directories [1] Import + [12] IAT zeroed when EFI; the
+   `.idata` section bytes still emit (~70 B benign region with
+   phantom `kernel32.dll` string) but the PE loader skips import
+   resolution entirely.
 
-**Cross-arch propagation** — x86-only by construction.
-`_TARGET_ELF64_KERNEL` is stubbed in aarch64/cx as parser-
-resolution placeholders but only flag-flipped on x86. aarch64
-kmode==1 uses its own entry `0x40000078 + preamble` (different
-layout, no multiboot2). cx has no ELF emission. macho/PE branch
-on their own `_TARGET_*` flags, not kmode. **Not a half-fix.**
+**End-to-end verification** on `var result = 0;` compiled with
+`CYRIUS_TARGET_EFI=1`:
+- PE32+ `Magic=0x020B`, Subsystem=`0x000A`, DllCharacteristics=
+  `0x0160`, COFF Characteristics=`0x0022` ✓
+- Data Dirs [1]/[12]: `RVA=0, Size=0` ✓
+- Data Dir [5] BaseReloc: `RVA=0x4000, Size=0xC` ✓
+- `.reloc` block at `VA=0x1000` with 2 × `DIR64` entries at .text
+  offsets `0x9` / `0x16` (covering `mov rcx, imm64` gvar loads) ✓
+- `.text` epilogue: `c3` (ret) at offset `0x21` ✓
 
-**Regression gate**. New `_elf64_kernel_entry_gate()` in
-`programs/check.cyr` registered alongside the v5.11.45 cc5
-contamination gate. Sibling helper `_self_host_pipe_elf64k()`
-mirrors `_self_host_pipe` but sets envp `CYRIUS_KERNEL=1` +
-`CYRIUS_ELF64_KERNEL=1`. Helper `_find_u64_le()` scans for the
-8-byte LE encoding of a target value. Gate compiles
-`kernel_hello.cyr`, validates ELF64 magic, asserts `e_entry ==
-0x1000A8`, locates the string, computes its true VA, asserts the
-OLD-entry-shifted pattern (`true_va - 0x48`) is **absent**
-anywhere in the binary, and asserts the true-VA pattern is
-present at least once (positive sanity). Negative-test verified
-in-slot: temporarily swapping the v5.11.45 cc5 in produces
-`FAIL: FIXUP regressed — OLD-entry-shifted address 1049048 ...
-at file offset 510; true VA 1049120` (exactly the manual-analysis
-numbers `0x1001D8 @ 0x1FE`, true VA `0x100220`). check.sh
-**69 → 70**.
+**Cross-arch**: x86-only by construction. cx has no PE emission;
+aarch64 has no PE emission. Stubs in aarch64/cx exist solely for
+parser-resolution. Not a half-fix.
 
-**Issue archive**.
-`docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md`
-→ `docs/development/issues/archived/` per
-`feedback_close_to_archive_issues`. Filing's process-violation
-record stays intact; technical content superseded by CHANGELOG.
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**822,936 B** / +952 from v5.11.46); `check.sh` **70/70** (no new
+gate this slot — structural gate lands .48); `cyrius test`
+**149/149**. Default-off path byte-identical to v5.11.46 output
+for existing Windows-CUI consumers.
 
-Self-host byte-identical (3-step cc5 → cc5_stage2 ==
-cc5_stage3 at 822,080 B); `check.sh` **70/70**; `cyrius test`
-**149/149**.
+**Next in arc**: `.48` adds `programs/efi_probe.cyr` (minimal
+SystemTable→ConOut "hello, uefi") + `_efi_emit_gate()`
+structural check (check.sh 70 → 71); `.49` is OVMF runtime smoke
++ arc closeout.
 
 **5.11.44** (shipped 2026-05-13 — **P0 `build/cc5`
 contamination restoration + cyrius-lsp `argv[0]`
@@ -137,6 +122,7 @@ cc5 byte-identical at **821,712 B** (this is the canonical
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.46** — ELF64 kernel entry-arithmetic agreement (FIXUP ↔ EMITELF64_KERNEL) — agnos UEFI x86_64 boot regression fix; `_elf64_kernel_entry_gate()` added (check.sh 69→70).
 - **v5.11.45** — P(-1) hardening sweep (4-item bundle): state.md compression 1451→583, `build/cc5` contamination gate, `cyrius vet` restored, dead-fn report behind `CYRIUS_DCE_VERBOSE=1`. check.sh 68→69.
 - **v5.11.44** — `build/cc5` mabda-contamination restoration + cyrius-lsp `argv[0]` self-resolution + doc-cleanup bundle.
 - **v5.11.43** — ELF64 kernel emit + multiboot2 + EFI64-entry tag — Path A for AGNOS UEFI x86_64 boot.

@@ -6,6 +6,166 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.47] — 2026-05-13
+
+**UEFI Application PE emit mode — `_TARGET_EFI_APPLICATION` flag +
+`_pe_ensure_*` refactor (gnoboot arc P1).** First slot of the
+3-slot arc unblocking the AGNOS sovereign UEFI bootloader
+(`gnoboot`); cap at .49. Filing:
+[`docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md`](docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md).
+Compiler-side enablement only — probe (.48) + OVMF smoke (.49)
+land subsequent slots.
+
+check.sh **70/70** (no new gate this slot — structural gate lands
+.48); cc5 self-host **821,984 → 822,936 B** (+952 from refactor +
+EFI flag plumbing + Subsystem branch + EEXIT EFI variant +
+data-dir conditionals); cyrius test **149/149**. Default-off path
+(no `CYRIUS_TARGET_EFI` env var) byte-identical to v5.11.46 output
+for existing Windows-CUI consumers.
+
+### Premise audit (filing speculation vs reality)
+
+Filing assumed cyrius needed new `.reloc` emission + DllCharacteristics
+work. **Both already shipped:**
+
+- `.reloc` section + `IMAGE_REL_BASED_DIR64` (type 10) per-page
+  blocks — landed v5.5.35 (`src/backend/pe/emit.cyr:1068+`).
+- DllCharacteristics = `0x0160` (NX_COMPAT 0x0100 + DYNAMIC_BASE
+  0x0040 + HIGH_ENTROPY_VA 0x0020) when `.reloc` present — landed
+  v5.6.31 probe. The v5.5.35 Win11-stdin failure does not apply
+  to UEFI (firmware does not consume stdin), so the bit is safe
+  for EFI.
+- COFF Characteristics = `0x0022` (EXECUTABLE_IMAGE +
+  LARGE_ADDRESS_AWARE, RELOCS_STRIPPED cleared) — also v5.5.35.
+
+Actual compiler-side deltas were therefore smaller than the
+filing estimated. Audit-only confirmation; no code change in
+`.reloc` / DllCharacteristics paths.
+
+### `_pe_ensure_*` family refactor (squeeze-in)
+
+`src/backend/pe/emit.cyr` — 9 near-identical `_pe_ensure_<X>(S)`
+/ `_pe_<X>_get()` pairs (stdio_getstd, stdio_writef, readf,
+closeh, seekfp, vallo, createf, createdir, deletef, gettick;
+totalling 10 kernel32 symbols across 9 ensure-fns) all followed
+the same shape: ready-flag check → idx capture before
+`_pe_pending_imp_add` → set ready-flag. Consolidated to a single
+generic helper:
+
+```cyrius
+fn _pe_register_kernel32(S, idx_addr, name): i64 {
+    if (_TARGET_EFI_APPLICATION == 1) { ... fail-fast ... }
+    S64(idx_addr, 1 + _pe_pending_imp_count);
+    _pe_pending_imp_add(S, name);
+    return 0;
+}
+```
+
+Each `_pe_ensure_<X>(S)` body becomes ~5 lines (was 6); the
+two-symbol `_pe_ensure_stdio` becomes 5 lines (was 6) by calling
+the helper twice. Net ~10 LoC saved across the family + a single
+source-of-truth for the import-time EFI guard (see below).
+
+### `_TARGET_EFI_APPLICATION` flag + env-var plumbing
+
+`src/backend/x86/emit.cyr:547` — new `var _TARGET_EFI_APPLICATION
+= 0;` declaration with rationale comment. Parser-resolution stubs
+mirrored in `src/backend/aarch64/emit.cyr:60` and
+`src/backend/cx/emit.cyr:25` (always-zero shims; only x86 has PE
+emission).
+
+`src/main.cyr:1007` + `src/main_win.cyr:520` — env-var read for
+`CYRIUS_TARGET_EFI=1`. Sets both `_TARGET_PE = 1` (the EFI flag
+implies the PE container) and `_TARGET_EFI_APPLICATION = 1`. Same
+shape as the existing `CYRIUS_TARGET_WIN` block.
+
+### Behavior branches
+
+1. **Subsystem byte** — `src/backend/pe/emit.cyr:746` was hardcoded
+   `o = _pe_w16(O, o, 3);` (WINDOWS_CUI). Branches on
+   `_TARGET_EFI_APPLICATION`: `10 = IMAGE_SUBSYSTEM_EFI_APPLICATION`
+   when EFI, else `3`. Per MS PE/COFF spec § 5.2.
+
+2. **EEXIT EFI variant** — `src/backend/x86/emit.cyr:545` PE branch
+   gets an EFI early-return that emits a single `0xC3` (ret).
+   UEFI firmware calls AddressOfEntryPoint as a regular MS x64 fn
+   with `RCX=ImageHandle, RDX=SystemTable`; user code returns to
+   firmware via plain `ret` with rax holding the EFI_STATUS code
+   (expression result is already there from the normal cyrius
+   value-in-rax convention). No `ExitProcess` / IAT lookup —
+   UEFI has no kernel32.
+
+3. **Skip `ExitProcess` import** — `_pe_layout:439` wraps the
+   hardcoded `_pe_imp_add("ExitProcess")` in
+   `if (_TARGET_EFI_APPLICATION == 0)`. The slot at `imp_idx=0`
+   (which EEXIT's IAT fixup hardcodes) is no longer needed when
+   EEXIT just emits `ret`.
+
+4. **kernel32 fail-fast** — `_pe_register_kernel32` errors out
+   via `syscall(SYS_WRITE, 2, ...)` + `syscall(SYS_EXIT, 1)` if
+   any kernel32 reroute fires under EFI mode. UEFI firmware has
+   no kernel32; silently emitting an unresolvable IAT-reference
+   fixup is worse than a compile-time error. User code that
+   wants `println` / `read` / `file` / etc. under EFI must call
+   `SystemTable->ConOut` / `BootServices` / `RuntimeServices`
+   directly (gnoboot does this).
+
+5. **Data Directories [1] Import + [12] IAT** — zeroed when EFI
+   so the PE loader skips import resolution entirely. The
+   `.idata` section bytes still emit (small wart, ~70 B of
+   benign data including a phantom `kernel32.dll` string) — they
+   are never referenced when the data-dir entries are 0/0. A
+   future slot could drop the section outright; for the MVP,
+   zeroed data-dirs are sufficient for firmware acceptance.
+
+### End-to-end verification
+
+Compiled `var result = 0;` with `CYRIUS_TARGET_EFI=1`. Direct PE
+inspection:
+
+- PE32+ ✓ (`Magic = 0x020B`)
+- `Subsystem = 0x000A (EFI_APPLICATION)` ✓
+- `DllCharacteristics = 0x0160` ✓
+- Data Dir [1] Import: `RVA=0, Size=0` ✓
+- Data Dir [12] IAT: `RVA=0, Size=0` ✓
+- Data Dir [5] BaseRelocationTable: `RVA=0x4000, Size=0xC` ✓
+- COFF `Characteristics = 0x0022` (EXECUTABLE + LARGE_ADDR; no
+  RELOCS_STRIPPED) ✓
+- `.reloc` block at `VA=0x1000`, 2 × `DIR64` entries at .text
+  offsets `0x9` and `0x16` (covering the `mov rcx, 0x140003000`
+  immediates for the gvar storage) ✓
+- `.text` epilogue: `c3` (ret) at offset `0x21` ✓ — single-byte
+  EEXIT confirmed (vs 13-byte ExitProcess sequence in
+  Windows-CUI mode)
+
+### Cross-arch propagation
+
+Per `feedback_cross_arch_propagation_mandatory`: `_TARGET_PE` is
+declared on all backends but only ever flag-flipped on x86. EFI
+emit follows the same shape (declared in aarch64/cx as parser-
+resolution stubs, only flipped in x86 via main.cyr/main_win.cyr).
+cx has no PE emission. macho/aarch64/PE branches in the codegen
+are mutually exclusive. **x86-only fix is the complete fix.**
+
+### Memory pins referenced
+
+- `project_agnos_path_c_gnoboot` (slot pinning + arc shape).
+- `feedback_no_unauthorized_cross_repo_edits` (filing came
+  through proper channel; cyrius implements on its own slot
+  lifecycle).
+- `feedback_cross_arch_propagation_mandatory` (explicit
+  x86-only rationale).
+- `feedback_premise_check_at_slot_entry` (audit found filing
+  speculation about `.reloc` / DllCharacteristics was already
+  shipped; saved unnecessary work).
+
+### Next in arc
+
+- **.48** — `programs/efi_probe.cyr` (minimal SystemTable→ConOut
+  "hello, uefi") + `_efi_emit_gate()` in `programs/check.cyr`
+  (check.sh 70 → 71).
+- **.49** — OVMF smoke (`qemu-system-x86_64 + OVMF`); arc closeout.
+
 ## [5.11.46] — 2026-05-13
 
 **ELF64 kernel entry-arithmetic agreement — FIXUP ↔ EMITELF64_KERNEL.**

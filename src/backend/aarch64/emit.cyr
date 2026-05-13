@@ -54,6 +54,11 @@ var _TARGET_PE = 0;
 # aarch64 — aarch64 kernel emit (aarch64/fixup.cyr EMITELF_KERNEL) is
 # already ELF64 by definition of the target architecture.
 var _TARGET_ELF64_KERNEL = 0;
+# v5.11.47: UEFI Application PE emit marker. x86-only by construction
+# (only the x86 PE backend has _TARGET_PE wired). Declared here as
+# always-zero shim so shared parser/codegen references resolve when
+# compiling the aarch64-backed entry points.
+var _TARGET_EFI_APPLICATION = 0;
 # v5.7.12: cx (cyrius-x bytecode) backend marker. =0 on aarch64
 # emit (this file); =1 only on backend/cx/emit.cyr. See path B
 # notes in docs/audit/2026-04-27-cx-direct-emit-inventory.md.

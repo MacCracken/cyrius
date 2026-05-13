@@ -1004,6 +1004,23 @@ if (_elf64k_env != 0) {
     }
 }
 
+# UEFI Application output via CYRIUS_TARGET_EFI=1. Sibling of
+# CYRIUS_TARGET_WIN — implies _TARGET_PE=1 (PE32+ container + MS x64
+# ABI + .reloc) and additionally flips the Subsystem byte to 0xA
+# (IMAGE_SUBSYSTEM_EFI_APPLICATION), suppresses the kernel32
+# ExitProcess import + IAT call (EEXIT emits a bare `ret` — firmware
+# reads rax as EFI_STATUS), and errors out at compile time on any
+# kernel32-rerouted syscall (UEFI has no kernel32; silent miscompile
+# avoided). Unblocks the gnoboot sovereign UEFI bootloader (AGNOS MVP
+# boot path; see issue 2026-05-13-gnoboot-uefi-application-emit.md).
+var _efi_env = _read_env("CYRIUS_TARGET_EFI");
+if (_efi_env != 0) {
+    if (load8(_efi_env) == 49 && load8(_efi_env + 1) == 0) {
+        _TARGET_PE = 1;
+        _TARGET_EFI_APPLICATION = 1;
+    }
+}
+
 # cc5: opt-in IR recording via CYRIUS_IR=1|2
 var _ir_env = _read_env("CYRIUS_IR");
 if (_ir_env != 0) {

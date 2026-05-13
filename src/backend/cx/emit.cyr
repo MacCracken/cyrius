@@ -21,6 +21,10 @@ var _AARCH64_BACKEND = 0;
 var _TARGET_MACHO = 0;
 var _TARGET_PE = 0;
 var _TARGET_ELF64_KERNEL = 0;
+# v5.11.47: UEFI Application PE emit marker. cx (bytecode) has no PE
+# emission; this is a parser-resolution stub kept consistent with the
+# x86/aarch64 emit headers.
+var _TARGET_EFI_APPLICATION = 0;
 # v5.7.12: this is the cyrius-x bytecode backend. =1 here so
 # parse_*.cyr can gate direct x86-byte emits via
 # `if (_TARGET_CX == 0)` (path B from

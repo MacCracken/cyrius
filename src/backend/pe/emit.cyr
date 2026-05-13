@@ -245,16 +245,35 @@ var _pe_pending_imp_pos   = 0;
 # IAT-reference fixup (`ftype=4`) as it emits the call bytes.
 # ================================================================
 
+# Generic kernel32 auto-import registration helper (v5.11.47 refactor).
+# Captures the future imp_idx before forwarding to _pe_pending_imp_add;
+# all 9 _pe_ensure_<X>(S) fns below funnel through here. Single point
+# for the EFI-mode guard: under `_TARGET_EFI_APPLICATION == 1` UEFI
+# firmware has no kernel32 — any kernel32-rerouted syscall in user
+# source is a compile-time error rather than a silent miscompile that
+# emits an unresolvable IAT reference.
+fn _pe_register_kernel32(S, idx_addr, name): i64 {
+    if (_TARGET_EFI_APPLICATION == 1) {
+        syscall(SYS_WRITE, 2, "error: kernel32 import '", 24);
+        var nlen = 0;
+        while (load8(name + nlen) != 0) { nlen = nlen + 1; }
+        syscall(SYS_WRITE, 2, name, nlen);
+        syscall(SYS_WRITE, 2, "' not available in EFI mode (CYRIUS_TARGET_EFI=1)\n", 50);
+        syscall(SYS_EXIT, 1);
+    }
+    S64(idx_addr, 1 + _pe_pending_imp_count);
+    _pe_pending_imp_add(S, name);
+    return 0;
+}
+
 var _pe_stdio_ready       = 0;
 var _pe_stdio_getstd_idx  = 0;
 var _pe_stdio_writef_idx  = 0;
 
 fn _pe_ensure_stdio(S): i64 {
     if (_pe_stdio_ready == 1) { return 0; }
-    _pe_stdio_getstd_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "GetStdHandle");
-    _pe_stdio_writef_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "WriteFile");
+    _pe_register_kernel32(S, &_pe_stdio_getstd_idx, "GetStdHandle");
+    _pe_register_kernel32(S, &_pe_stdio_writef_idx, "WriteFile");
     _pe_stdio_ready = 1;
     return 0;
 }
@@ -275,6 +294,8 @@ fn _pe_stdio_writef_get(): i64 { return _pe_stdio_writef_idx; }
 # every reroute goes through this pending path — ExitProcess sits
 # at imp_idx=0 (hardcoded by EEXIT) and user `#pe_import` symbols
 # are interleaved in registration order.
+# v5.11.47: all _pe_ensure_<X>(S) bodies funnel through
+# `_pe_register_kernel32` so the EFI-mode guard lives in one place.
 # ================================================================
 
 var _pe_readf_ready       = 0;
@@ -282,8 +303,7 @@ var _pe_readf_idx         = 0;
 fn _pe_ensure_readf(S): i64 {
     if (_pe_readf_ready == 1) { return 0; }
     _pe_ensure_stdio(S);
-    _pe_readf_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "ReadFile");
+    _pe_register_kernel32(S, &_pe_readf_idx, "ReadFile");
     _pe_readf_ready = 1;
     return 0;
 }
@@ -293,8 +313,7 @@ var _pe_closeh_ready      = 0;
 var _pe_closeh_idx        = 0;
 fn _pe_ensure_closeh(S): i64 {
     if (_pe_closeh_ready == 1) { return 0; }
-    _pe_closeh_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "CloseHandle");
+    _pe_register_kernel32(S, &_pe_closeh_idx, "CloseHandle");
     _pe_closeh_ready = 1;
     return 0;
 }
@@ -304,8 +323,7 @@ var _pe_seekfp_ready      = 0;
 var _pe_seekfp_idx        = 0;
 fn _pe_ensure_seekfp(S): i64 {
     if (_pe_seekfp_ready == 1) { return 0; }
-    _pe_seekfp_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "SetFilePointerEx");
+    _pe_register_kernel32(S, &_pe_seekfp_idx, "SetFilePointerEx");
     _pe_seekfp_ready = 1;
     return 0;
 }
@@ -315,8 +333,7 @@ var _pe_vallo_ready       = 0;
 var _pe_vallo_idx         = 0;
 fn _pe_ensure_vallo(S): i64 {
     if (_pe_vallo_ready == 1) { return 0; }
-    _pe_vallo_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "VirtualAlloc");
+    _pe_register_kernel32(S, &_pe_vallo_idx, "VirtualAlloc");
     _pe_vallo_ready = 1;
     return 0;
 }
@@ -326,8 +343,7 @@ var _pe_createf_ready     = 0;
 var _pe_createf_idx       = 0;
 fn _pe_ensure_createf(S): i64 {
     if (_pe_createf_ready == 1) { return 0; }
-    _pe_createf_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "CreateFileW");
+    _pe_register_kernel32(S, &_pe_createf_idx, "CreateFileW");
     _pe_createf_ready = 1;
     return 0;
 }
@@ -335,18 +351,16 @@ fn _pe_createf_get(): i64 { return _pe_createf_idx; }
 
 # v5.11.22: CreateDirectoryW / DeleteFileW auto-imports for the
 # `syscall(83, path, mode)` (mkdir) + `syscall(87, path)` (unlink)
-# PE reroute. Same lazy-register shape as the createf/stdio/readf
-# helpers. ai-hwaccel 2.2.2 surfaced the need: their cache.cyr uses
-# mkdir + unlink via raw syscall numbers; without these reroutes,
-# cc5_win emitted the generic `0F 05` SYSCALL instruction which
-# fault with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.
+# PE reroute. ai-hwaccel 2.2.2 surfaced the need: their cache.cyr
+# uses mkdir + unlink via raw syscall numbers; without these
+# reroutes, cc5_win emitted the generic `0F 05` SYSCALL instruction
+# which fault with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.
 
 var _pe_createdir_ready   = 0;
 var _pe_createdir_idx     = 0;
 fn _pe_ensure_createdir(S): i64 {
     if (_pe_createdir_ready == 1) { return 0; }
-    _pe_createdir_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "CreateDirectoryW");
+    _pe_register_kernel32(S, &_pe_createdir_idx, "CreateDirectoryW");
     _pe_createdir_ready = 1;
     return 0;
 }
@@ -356,8 +370,7 @@ var _pe_deletef_ready     = 0;
 var _pe_deletef_idx       = 0;
 fn _pe_ensure_deletef(S): i64 {
     if (_pe_deletef_ready == 1) { return 0; }
-    _pe_deletef_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "DeleteFileW");
+    _pe_register_kernel32(S, &_pe_deletef_idx, "DeleteFileW");
     _pe_deletef_ready = 1;
     return 0;
 }
@@ -366,14 +379,12 @@ fn _pe_deletef_get(): i64 { return _pe_deletef_idx; }
 # v5.6.6: GetTickCount64 auto-import for CYRIUS_PROF profiling.
 # kernel32!GetTickCount64() takes no args, returns u64 ms in rax.
 # Lazily registered on the first `syscall(228, ...)` the parser sees
-# under `_TARGET_PE == 1`. Same idempotent-register shape as the
-# stdio / readf / createf helpers above.
+# under `_TARGET_PE == 1`.
 var _pe_gettick_ready     = 0;
 var _pe_gettick_idx       = 0;
 fn _pe_ensure_gettick(S): i64 {
     if (_pe_gettick_ready == 1) { return 0; }
-    _pe_gettick_idx = 1 + _pe_pending_imp_count;
-    _pe_pending_imp_add(S, "GetTickCount64");
+    _pe_register_kernel32(S, &_pe_gettick_idx, "GetTickCount64");
     _pe_gettick_ready = 1;
     return 0;
 }
@@ -434,9 +445,11 @@ fn _pe_layout(S): i64 {
     _pe_imp_count = 0;
     _pe_imp_buf_pos = 0;
 
-    # v5.4.2 hardcodes kernel32!ExitProcess. Future releases wire
-    # registration to compiler source.
-    _pe_imp_add("ExitProcess");
+    # v5.4.2 hardcodes kernel32!ExitProcess at imp_idx=0 (EEXIT's
+    # IAT-reference fixup is hardcoded against that slot). v5.11.47:
+    # UEFI Application mode skips this entirely — UEFI has no
+    # kernel32 and EEXIT emits a bare `ret`, not an IAT call.
+    if (_TARGET_EFI_APPLICATION == 0) { _pe_imp_add("ExitProcess"); }
 
     # Consume `#pe_import` declarations collected at parse time.
     # ExitProcess stays at imp_idx=0 (EEXIT hardcodes that slot);
@@ -743,7 +756,11 @@ fn EMITPE_EXEC(S): i64 {
     o = _pe_w32(O, o, _pe_image_size);        # SizeOfImage (virtual)
     o = _pe_w32(O, o, _pe_hdr_aligned_size);  # SizeOfHeaders
     o = _pe_w32(O, o, 0);               # CheckSum (0 OK for user-mode)
-    o = _pe_w16(O, o, 3);               # Subsystem = WINDOWS_CUI
+    # Subsystem: 3 = WINDOWS_CUI (default); 10 = EFI_APPLICATION
+    # (v5.11.47, CYRIUS_TARGET_EFI=1). Per MS PE/COFF spec § 5.2.
+    var _subsys = 3;
+    if (_TARGET_EFI_APPLICATION == 1) { _subsys = 10; }
+    o = _pe_w16(O, o, _subsys);         # Subsystem
     # DllCharacteristics — 0 when RELOCS_STRIPPED. With .reloc shipped
     # (v5.5.35), set DYNAMIC_BASE (0x0040) + NX_COMPAT (0x0100)
     # = 0x0140. HIGH_ENTROPY_VA (0x0020) is DELIBERATELY OMITTED.
@@ -771,9 +788,19 @@ fn EMITPE_EXEC(S): i64 {
     # [0] Export
     o = _pe_w32(O, o, 0);
     o = _pe_w32(O, o, 0);
-    # [1] Import
-    o = _pe_w32(O, o, _pe_idata_rva + _pe_imp_dir_sub_off);
-    o = _pe_w32(O, o, _pe_imp_dir_size);
+    # [1] Import. v5.11.47: UEFI Application mode zeros this so the
+    # UEFI PE loader skips import resolution entirely (UEFI has no
+    # kernel32). The .idata section bytes still emit as a benign
+    # region — they're never referenced when Data Directory [1].size
+    # == 0. A future slot could drop the section outright; for the
+    # MVP, zeroed data-dirs are enough to make firmware happy.
+    if (_TARGET_EFI_APPLICATION == 1) {
+        o = _pe_w32(O, o, 0);
+        o = _pe_w32(O, o, 0);
+    } else {
+        o = _pe_w32(O, o, _pe_idata_rva + _pe_imp_dir_sub_off);
+        o = _pe_w32(O, o, _pe_imp_dir_size);
+    }
     # [2..11] = zero, except [5] BaseRelocationTable when .reloc present (v5.5.35)
     dd_idx = 2;
     while (dd_idx < 12) {
@@ -791,9 +818,15 @@ fn EMITPE_EXEC(S): i64 {
         }
         dd_idx = dd_idx + 1;
     }
-    # [12] IAT
-    o = _pe_w32(O, o, _pe_idata_rva + _pe_iat_sub_off);
-    o = _pe_w32(O, o, _pe_iat_size);
+    # [12] IAT. v5.11.47: zero in EFI mode (same rationale as [1]
+    # Import above).
+    if (_TARGET_EFI_APPLICATION == 1) {
+        o = _pe_w32(O, o, 0);
+        o = _pe_w32(O, o, 0);
+    } else {
+        o = _pe_w32(O, o, _pe_idata_rva + _pe_iat_sub_off);
+        o = _pe_w32(O, o, _pe_iat_size);
+    }
     # [13..15] = zero
     dd_idx = 13;
     while (dd_idx < 16) {

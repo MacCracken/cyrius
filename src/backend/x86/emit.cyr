@@ -532,6 +532,19 @@ var _TARGET_PE = 0;
 # is `kernel;` in both cases; the build target decides the ELF class.
 # See agnosticos/docs/development/path-a-elf64-multiboot2.md.
 var _TARGET_ELF64_KERNEL = 0;
+# v5.11.47: UEFI Application PE emit mode marker. 0=off (default —
+# `_TARGET_PE == 1` emits Windows-CUI PE32+ with Subsystem=3 and
+# kernel32!ExitProcess IAT call); 1=on (PE32+ with Subsystem=0xA
+# IMAGE_SUBSYSTEM_EFI_APPLICATION, no kernel32 imports, EEXIT emits
+# a single `ret` since rax holds EFI_STATUS at firmware-return).
+# Set from CYRIUS_TARGET_EFI=1 env var in src/main_win.cyr (alongside
+# CYRIUS_TARGET_WIN=1; the EFI flag implies the PE flag). Read by
+# pe/emit.cyr (Subsystem byte + import-table guard) and EEXIT
+# (below). Source language unchanged — same `kernel;`-style cyrius
+# code targets either Windows or UEFI by environment flag at compile
+# time. Unblocks the gnoboot sovereign UEFI bootloader (AGNOS MVP
+# boot path; see issue 2026-05-13-gnoboot-uefi-application-emit.md).
+var _TARGET_EFI_APPLICATION = 0;
 # v5.7.12: cx (cyrius-x bytecode) backend marker. parse_*.cyr
 # uses this to gate direct x86-byte emits in shared codepaths
 # that would otherwise pollute the CYX bytecode stream. Always
@@ -543,6 +556,17 @@ var _TARGET_CX = 0;
 # emit exit epilogue: mov rdi, rax; mov rax, <exit_nr>; syscall
 fn EEXIT(S): i64 {
     if (_TARGET_PE == 1) {
+        if (_TARGET_EFI_APPLICATION == 1) {
+            # v5.11.47: UEFI Application exit. UEFI firmware calls
+            # AddressOfEntryPoint as a regular MS x64 fn — the entry
+            # returns to firmware via plain `ret`, with rax holding
+            # the EFI_STATUS code (expression result is already there).
+            # No ExitProcess / kernel32 / IAT lookup — UEFI has no
+            # kernel32. Single 0xC3 byte; firmware unwinds the stack
+            # frame it set up before calling our entry.
+            EB(S, 0xC3);
+            return 0;
+        }
         # Win64 ExitProcess call. Exit code is already in rax
         # (expression result). Sequence (13 bytes total):
         #   89 C1                 mov ecx, eax              arg1 = exit code
