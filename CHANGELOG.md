@@ -6,6 +6,130 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.44] — 2026-05-13
+
+**P0 cc5 binary restoration + cyrius-lsp `argv[0]` self-resolution +
+doc cleanup bundle.** Lead item is the cc5 postmortem; the LSP fix
+and the doc/proposal carves ride along as paired non-conflicting work
+(per `feedback_release_needs_code_not_just_docs`).
+
+### P0 — `build/cc5` contamination restoration
+
+The committed `build/cc5` at v5.11.43 (commit `aad19f6a` EMIT64KERNEL)
+was **not cc5** — it was a wrong binary (1,389,776 B) containing
+mabda/wgpu/compute-pipeline strings instead of the cyrius compiler.
+Same contamination shape occurred at v5.11.28/.29 (silently fixed at
+.30); recurred at .43. Anyone bootstrapping from `build/cc5` at .43
+got a broken toolchain.
+
+**Diagnosis** (this slot):
+
+- `git diff aad19f6a -- src/ lib/` is empty — the source tree at
+  v5.11.43 IS what should produce the canonical .43 cc5.
+- Current `src/` self-hosts byte-identical at **821,712 B**
+  (stage1 == stage2 verified — `cat src/main.cyr | build/cc5` against
+  v5.11.41's cc5 produces the same 821,712 B; current 1,389,776 B
+  `build/cc5` produces the same 821,712 B when fed `src/main.cyr`).
+- `strings build/cc5 | grep -iE "mabda|wgpu|compute_pipeline"` hits
+  on .28, .29, and .43; misses on .30 through .42 (clean cc5).
+- Likely cause: a build-script or workflow slip cp's another binary
+  (mabda smoke / hisab / similar) over `build/cc5` before commit.
+  Same shape twice in one cycle suggests the cp-source is in someone's
+  release dance.
+
+**Fix**:
+
+- `build/cc5` replaced with the canonical 821,712 B self-build from
+  current `src/`. Two-step bootstrap verified byte-identical
+  (cc5 → cc5_a → cc5_b at 821,712 B).
+- `build/cyrius-lsp` rebuilt against the canonical cc5.
+- Install snapshots refreshed: `~/.cyrius/bin/cc5` and
+  `~/.cyrius/versions/5.11.43/bin/cc5` (both were 1,389,776 B mabda
+  carryovers from the `install.sh --refresh-only` ride of the bad
+  .43 binary) → 821,712 B.
+
+**Process note**: future bumps should grep the about-to-commit
+`build/cc5` for `mabda|wgpu|compute_pipeline|gpu context` as a
+fail-fast check. The shape of the slip is consistent (a benchmark /
+test binary winds up at `build/cc5`); a one-line stage gate would have
+caught both occurrences. Pin candidate for the v5.11.x → v6.0.0
+closeout sweep.
+
+### cyrius-lsp `argv[0]` self-resolution
+
+Lands the long-standing proposal at
+`docs/development/proposals/archived/cyrius-lsp-argv0-self-resolution.md`
+(filed 2026-05-02). Previously the LSP resolved `cc5` only via the
+inherited `PATH` + `/proc/self/environ` `CYRIUS_HOME`; editors with
+minimal-env LSP launchers (Claude Code, others) silently disabled
+diagnostics with `[cyrius-lsp] warning: cc5 not found`. Per-machine
+workaround was a hand-edited `env.PATH` block in the plugin's
+`.lsp.json`.
+
+**Fix**: new `_resolve_install_dir()` in `programs/cyrius-lsp.cyr` —
+reads `/proc/self/exe` (same pattern as
+`programs/cyrius-init.cyr:_resolve_templates_dir`), strips the
+basename, returns the install directory. `find_cc5()` now tries
+`<install-dir>/cc5` **first** before the existing `build/cc5` /
+`/usr/local/lib/cyrius/cc5` / `CYRIUS_HOME/cc5` fallbacks. Startup
+log now reports the resolved path (`[cyrius-lsp] found cc5: <path>`)
+per proposal step 5.
+
+**Smoke verified**: `cp build/cyrius-lsp /tmp/cyrlsp-test/ &&
+cp build/cc5 /tmp/cyrlsp-test/` → run with `env -i HOME=$HOME` from
+`/tmp/cyrlsp-test` → stderr shows
+`[cyrius-lsp] found cc5: /tmp/cyrlsp-test/cc5`. Pre-fix that same
+setup falls through all 3 existing fallbacks and silently disables
+diagnostics.
+
+**Sister case unchanged**: the repo-dev case
+(`build/cyrius-lsp` launched from cyrius repo cwd) still resolves
+to `build/cc5` via the second fallback — `/proc/self/exe` derives
+the LSP's own location, finds no cc5 there, falls through cleanly.
+
+cyrius-lsp binary size 93,752 → 94,440 B (+688 B — sys_readlink path
++ str_builder for the dir + the resolved-path log line).
+
+### Doc carves bundled (caught during the .42 sweep)
+
+Three already-shipped proposals had been sitting in
+`docs/development/proposals/` as "open" because no one ran the
+close-to-archive `git mv` (CHANGELOG was source of truth but the
+proposals tree drifted):
+
+- `2026-05-08-raise-return-cap.md` — shipped v5.10.6 as 64 → 256
+  (asked 64 → 128; Option B do-it-once).
+- `2026-05-10-raise-compile-source-cap.md` — shipped v5.11.33 as
+  2 MB → 8 MB (asked 2 MB → 4 MB; sized for sandhi headroom).
+- `relax-uninitialized-var-or-improve-error.md` — shipped v5.8.42
+  half (b) (mabda C1; improve-error path; relax-parser path
+  intentionally not taken).
+
+All three `git mv`'d to `docs/development/proposals/archived/` (new
+subdir mirroring `issues/archived/`). `docs/doc-health.md` refreshed:
+header date 2026-05-13, at-a-glance counts, Tier 1/3/5/6/8 rows,
+ADR-008 forward question (v5.12.x retired), Tier 5 audit footer
+(v5.10.x close-out audit didn't ship standalone — CVE-08 went at .41
+instead; next full-audit pin re-targeted to before v6.0.0). Caught
+2 untracked proposals (`pie-support`, `raise-compile-source-cap`),
+1 untracked doc (`lib-tls-contract.md`), 1 new audit
+(`2026-05-11-zero-call-stdlib.md`), +19 archived issues, repros/
+subdir. Cycle-discipline section also carved out of `roadmap.md` into
+its own `docs/development/cycle-discipline.md` as evergreen surface;
+`roadmap.md` itself rewritten lean (current-cycle remaining only)
+with prior 1214-line content preserved at `roadmap-old.md` pending
+v6.x pull-forward.
+
+### Verified
+
+- Self-host: cc5 == cc5_a == cc5_b byte-identical at **821,712 B**.
+- `scripts/check.sh`: **68/68** pass.
+- `cyrius test`: **149/149** pass.
+- LSP smoke: minimal-env launch from non-PATH dir resolves cc5
+  correctly via `/proc/self/exe`.
+- Install snapshots refreshed (~/.cyrius/bin/cc5 +
+  ~/.cyrius/versions/5.11.43/bin/cc5 both now 821,712 B canonical).
+
 ## [5.11.43] — 2026-05-13
 
 **ELF64 kernel emit + multiboot2 + EFI64-entry tag — Path A for

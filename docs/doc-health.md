@@ -25,7 +25,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change.
 | 🟡 **Stale — refresh in place** | 0 | None flagged. (Drift candidates flagged 🟠 below.) |
 | 🟠 **Read-through outstanding** | ~10 | Older dev/* docs (process-notes, module-manifest-design, migration-strategy, crash-localization), older architecture docs (package-format), older FFI docs (struct-packing) — all dated 2026-04-08 to 2026-04-30; not known to be wrong, but unreviewed against v5.11.x reality. |
 | 🔵 **Probably evergreen** | ~4 | ADR-002/-003/-004 (everything-is-i64, fixed-heap-layout, convention-based-dispatch) + **cycle-discipline.md (new 2026-05-13)** — load-bearing principles; re-read pass quarterly, not weekly. |
-| 📦 **Archive — frozen by design** | ~38 | `docs/development/archive/` (6) + `docs/development/issues/archived/` (32 — grew from 13 during v5.11.x consumer-filed wave + ELF/CVE/PP-cap cleanup). Verified — frozen by design. |
+| 📦 **Archive — frozen by design** | ~41 | `docs/development/archive/` (6) + `docs/development/issues/archived/` (32 — grew from 13 during v5.11.x consumer-filed wave + ELF/CVE/PP-cap cleanup) + `docs/development/proposals/archived/` (3 — new subdir 2026-05-13). Verified — frozen by design. |
 | ❓ **Open strategic question** | 0 | None at scaffold time. |
 
 Numbers approximate; rolls up from the per-tier tables below.
@@ -136,11 +136,14 @@ Open issues are tracked artifacts (filed by consumers or internal observation). 
 ### Open proposals
 | File | Last touched | Status |
 |---|---|---|
-| `proposals/2026-05-08-raise-return-cap.md` | 2026-05-08 | 🔴 Open (relates to v5.10.6 ✅ shipped raise — verify framing) |
-| `proposals/2026-05-10-raise-compile-source-cap.md` | 2026-05-10 | 🔴 Open (added 2026-05-13 sweep; companion to v5.11.33 PP_IFDEF_PASS cap raise) |
-| `proposals/2026-05-11-pie-support.md` | 2026-05-11 | 🔴 Open (added 2026-05-13 sweep; relates to v6.1.x PIE codegen pin in roadmap-old.md) |
-| `proposals/cyrius-lsp-argv0-self-resolution.md` | varies | 🔴 Open |
-| `proposals/relax-uninitialized-var-or-improve-error.md` | varies | 🔴 Open |
+| `proposals/2026-05-11-pie-support.md` | 2026-05-11 | 🔴 Open — pinned v6.1.x PIE codegen (in proposal body + roadmap-old.md v6.1.x section) |
+| `proposals/cyrius-lsp-argv0-self-resolution.md` | 2026-05-02 | 🔴 Open — unpinned |
+
+### Archived proposals
+3 files in `proposals/archived/` (new subdir 2026-05-13 — caught during the same sweep; mirrors the `issues/archived/` close-to-archive pattern). All three were "shipped beyond what was asked":
+- `2026-05-08-raise-return-cap.md` — shipped **v5.10.6** as 64 → 256 (proposal asked 64 → 128; Option B do-it-once).
+- `2026-05-10-raise-compile-source-cap.md` — shipped **v5.11.33** as 2 MB → 8 MB (proposal asked 2 MB → 4 MB; sized for sandhi headroom into v6.x).
+- `relax-uninitialized-var-or-improve-error.md` — shipped **v5.8.42** half (b) (mabda C1; improve-error option from the proposal; relax-parser option deliberately not taken).
 
 ### Archived issues
 32 files in `issues/archived/` (+19 since scaffold). Verified frozen by design — each archived alongside its resolution (CHANGELOG entry that closed it). Growth driver: v5.11.x consumer-filed wave (bote/daimon/kavach/kybernet/mabda) + ELF user-bin cleanup at .32/.34 + CVE-08 hardening at .41 + PP cap raise at .33. Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` back, not a re-file.
@@ -162,6 +165,7 @@ Open issues are tracked artifacts (filed by consumers or internal observation). 
 |---|---|---|
 | `docs/development/archive/` | 6 | 📦 Frozen — historical (cyml-format, handoff doc, v5.3.0 emitter, 2026-04 benchmarks/aarch64 stdlib, lsp-claude consolidation) |
 | `docs/development/issues/archived/` | 32 | 📦 Frozen — resolved bugs (+19 since scaffold during v5.11.x consumer-filed wave + ELF/CVE/PP-cap cleanup) |
+| `docs/development/proposals/archived/` | 3 | 📦 Frozen — shipped proposals (new dir 2026-05-13; raise-return-cap v5.10.6, raise-compile-source-cap v5.11.33, uninitialized-var error v5.8.42) |
 
 Leave alone unless they need re-classification (e.g., something archived prematurely surfaces again).
 
@@ -205,4 +209,4 @@ Items that are *scheduled* doc decisions, not stale state. Surfaced here so they
 
 ---
 
-*Initial scaffold: 2026-05-10 (v5.10.34). First full stale sweep: 2026-05-13 (v5.11.42 — caught 13 patches of drift, 3 archived issues miscategorized as open, 2 untracked proposals, 1 untracked doc, 1 new audit, +19 archived issues, retired v5.12.x ADR-008 reference, v6.0.0 audit re-pin). Refresh in place when docs are touched.*
+*Initial scaffold: 2026-05-10 (v5.10.34). First full stale sweep: 2026-05-13 (v5.11.42 — caught 13 patches of drift, 3 archived issues miscategorized as open, 2 untracked proposals, 1 untracked doc, 1 new audit, +19 archived issues, retired v5.12.x ADR-008 reference, v6.0.0 audit re-pin) + proposals-archive pass (caught 3 already-shipped proposals miscategorized as open: raise-return-cap v5.10.6, raise-compile-source-cap v5.11.33, uninitialized-var-error v5.8.42; created `proposals/archived/` subdir mirroring `issues/archived/`). Refresh in place when docs are touched.*

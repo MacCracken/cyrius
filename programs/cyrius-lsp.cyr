@@ -582,7 +582,42 @@ fn lsp_read_file(path, total_out): i64 {
 }
 
 # Find cc5 binary — check common locations
+# v5.11.44: Resolve the LSP binary's install directory via
+# /proc/self/exe — same pattern as
+# programs/cyrius-init.cyr:_resolve_templates_dir. Lets find_cc5
+# locate a co-installed cc5 even when the LSP launcher
+# (Claude Code, other editors with a minimal inherited env) wipes
+# PATH and CYRIUS_HOME. Returns a pointer to the dir cstring or 0.
+# See: docs/development/proposals/archived/cyrius-lsp-argv0-self-resolution.md
+fn _resolve_install_dir(): i64 {
+    var buf = alloc(4096);
+    var n = sys_readlink("/proc/self/exe", buf, 4095);
+    if (n <= 0) { return 0; }
+    store8(buf + n, 0);
+    var i = n - 1;
+    while (i >= 0) {
+        if (load8(buf + i) == 47) { break; }
+        i = i - 1;
+    }
+    if (i <= 0) { return 0; }
+    store8(buf + i, 0);
+    return buf;
+}
+
 fn find_cc5(): i64 {
+    # v5.11.44: Self-resolve via /proc/self/exe FIRST. Handles
+    # the editor-LSP-launcher case where PATH + CYRIUS_HOME are
+    # both absent from the inherited env.
+    var install_dir = _resolve_install_dir();
+    if (install_dir != 0) {
+        var sb_self = str_builder_new();
+        str_builder_add_cstr(sb_self, install_dir);
+        str_builder_add_cstr(sb_self, "/cc5");
+        var p_self = str_data(str_builder_build(sb_self));
+        var fd_self = syscall(2, p_self, 0, 0);
+        if (fd_self >= 0) { syscall(3, fd_self); return p_self; }
+    }
+
     # Try ./build/cc5
     var p1 = "build/cc5";
     var fd = syscall(2, p1, 0, 0);
@@ -1581,7 +1616,10 @@ fn main(): i64 {
     if (_cc5_path == 0) {
         log_msg("warning: cc5 not found — diagnostics disabled");
     } else {
-        log_msg("found cc5");
+        var log_sb = str_builder_new();
+        str_builder_add_cstr(log_sb, "found cc5: ");
+        str_builder_add_cstr(log_sb, _cc5_path);
+        log_msg(str_data(str_builder_build(log_sb)));
     }
 
     # Main loop: read JSON-RPC messages

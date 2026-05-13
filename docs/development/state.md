@@ -5,6 +5,74 @@
 
 ## Version
 
+**5.11.44** (shipped 2026-05-13 — **P0 `build/cc5`
+contamination restoration + cyrius-lsp `argv[0]`
+self-resolution + doc cleanup bundle**). Lead is the cc5
+postmortem; LSP fix + doc carves ride along.
+**cc5 postmortem**: committed `build/cc5` at v5.11.43
+(commit `aad19f6a` EMIT64KERNEL) was a wrong binary
+(1,389,776 B containing mabda/wgpu/compute-pipeline
+strings — not the cyrius compiler). `git diff aad19f6a --
+src/ lib/` is empty; current src self-hosts byte-identical
+at **821,712 B** (stage1 == stage2 verified;
+v5.11.41's cc5 fed current `src/main.cyr` also produces
+821,712 B). Same shape contamination at v5.11.28/.29
+(silently fixed .30) recurred at .43 — likely a build-
+script slip cp'ing another binary over `build/cc5` before
+commit. Fix: `build/cc5` restored to canonical 821,712 B;
+`build/cyrius-lsp` rebuilt; install snapshots
+`~/.cyrius/bin/cc5` + `~/.cyrius/versions/5.11.43/bin/cc5`
+refreshed (both were 1,389,776 B mabda carryovers from
+`install.sh --refresh-only` at .43 ship). **Process pin**:
+future bumps should `strings build/cc5 | grep -E
+"mabda|wgpu|compute_pipeline"` as a fail-fast gate; v6.0.0
+closeout sweep candidate. **cyrius-lsp argv[0] fix**:
+closes the long-standing proposal at
+`docs/development/proposals/archived/cyrius-lsp-argv0-self-resolution.md`
+(filed 2026-05-02). New `_resolve_install_dir()` uses
+`/proc/self/exe` (same pattern as
+`programs/cyrius-init.cyr:_resolve_templates_dir`);
+`find_cc5()` tries `<install-dir>/cc5` FIRST before the
+existing 3 fallbacks; startup log now reports the resolved
+path. Editors with minimal-env LSP launchers (Claude Code
++ others) no longer silently disable diagnostics. cyrius-
+lsp 93,752 → **94,440 B** (+688 — sys_readlink path + str
+builder + log line). Smoke verified: `env -i HOME=$HOME`
+launch from `/tmp/cyrlsp-test/` shows
+`[cyrius-lsp] found cc5: /tmp/cyrlsp-test/cc5`.
+**Doc carves** (caught during .42 sweep, landed here):
+three already-shipped proposals (return-cap v5.10.6,
+compile-source-cap v5.11.33, uninitialized-var v5.8.42)
+`git mv`'d to `docs/development/proposals/archived/` (new
+subdir mirroring `issues/archived/`). `roadmap.md`
+carved into lean current-cycle-only view + prior 1214-line
+content preserved at `roadmap-old.md` for v6.x pull-forward.
+Cycle-discipline extracted to its own
+`docs/development/cycle-discipline.md` (evergreen). doc-
+health.md refreshed (13-patch lag closed). v5.11.43's
+state.md catch-up rolled in here since version-bump.sh
+doesn't touch state.md and .43 shipped without a refresh.
+cc5 byte-identical at **821,712 B** (this is the canonical
+.43 cc5 retroactively + the .44 ship); check.sh
+**68/68**; cyrius test **149/149**.
+
+**5.11.43** (shipped 2026-05-13 — **`EMITELF64_KERNEL` +
+multiboot2 + EFI64-entry tag — Path A for AGNOS UEFI x86_64
+boot**). New `EMITELF64_KERNEL` in x86 backend +
+`_TARGET_ELF64_KERNEL` flag (env: `CYRIUS_ELF64_KERNEL=1`);
+ELF32 multiboot1 default preserved as latent capability,
+ELF64 multiboot2 opt-in for AGNOS NUC iron boot. Iron-boot
+Attempt 4 (2026-05-13) confirmed by GRUB source review that
+GRUB-EFI x86_64 performs **no long-mode-exit sequence** —
+ELF32 EM_386 kernels triple-fault on first instruction.
+Section table emits 5 entries (NULL + .text + .rodata +
+.bss SHT_NOBITS + .shstrtab) to satisfy
+`grub_elf64_get_shnum` (same gate `EMITELF_KERNEL` was fixed
+for at .29 on the ELF32 side). cc5 self-host byte-identical
+at **821,712 B** (canonical; the 1,389,776 B binary that
+shipped in `build/cc5` was wrong — see .44 postmortem
+above); check.sh 68/68; cyrius test 149/149.
+
 **5.11.42** (shipped 2026-05-12 — **LSP semantic-tokens
 legend extension + roadmap sweep finale**). Paired code + docs
 per `feedback_release_needs_code_not_just_docs` and the
