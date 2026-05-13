@@ -1,0 +1,78 @@
+# efi_probe — minimal cyrius UEFI Application that writes
+# "hello, uefi\r\n" to firmware's ConOut and returns EFI_SUCCESS.
+#
+# Build:    CYRIUS_TARGET_EFI=1 build/cc5 < programs/efi_probe.cyr > /tmp/efi_probe.efi
+# Verify:   _efi_emit_gate() in programs/check.cyr (structural; v5.11.48)
+# Smoke:    qemu-system-x86_64 + OVMF (runtime; v5.11.49)
+#
+# Filed by AGNOS Path C as the gnoboot MVP unblocker. The whole
+# probe lives in one inline-asm block so no cyrius globals (and
+# therefore no DIR64 fixups) are needed — UEFI firmware enters
+# us at AddressOfEntryPoint with RCX = ImageHandle, RDX =
+# SystemTable, and we walk SystemTable → ConOut → OutputString
+# entirely through runtime register-indirect addressing.
+#
+# Cyrius emits a 5-byte `e9 00 00 00 00` (jmp +0) prologue at the
+# start of .text. That instruction touches no GPRs, so RCX/RDX
+# from firmware survive into our first user byte.
+#
+# Byte-level entry layout (offsets relative to .text start):
+#   0x00   e9 00 00 00 00         cyrius prologue (jmp +0)
+#   0x05   48 8b 4a 40             mov rcx, [rdx + 0x40]        ConOut = SystemTable->ConOut
+#   0x09   48 8b 41 08             mov rax, [rcx + 0x08]        OutputString fn ptr
+#   0x0d   48 8d 15 0e 00 00 00    lea rdx, [rip + 0x0e]        rdx = &msg (next-after-LEA + 14)
+#   0x14   48 83 ec 28             sub rsp, 0x28                shadow space + 8 align
+#   0x18   ff d0                   call rax                     OutputString(ConOut, msg)
+#   0x1a   48 83 c4 28             add rsp, 0x28
+#   0x1e   31 c0                   xor eax, eax                 EFI_SUCCESS
+#   0x20   c3                      ret                          return to firmware
+#   0x21   90                      nop (pad msg to 2-byte align)
+#   0x22   msg ("hello, uefi\r\n\0" UTF-16LE, 28 bytes)
+#
+# UEFI ABI used (MS x64): RCX/RDX = first 2 args; caller reserves
+# 0x20 shadow space + maintains 16-byte stack alignment at the
+# call. SystemTable layout (UEFI spec § 4.3): Hdr(24) +
+# FirmwareVendor*(8) + FirmwareRevision(4) + pad(4) +
+# ConsoleInHandle(8) + ConIn*(8) + ConsoleOutHandle(8) + ConOut*(8)
+# → ConOut* lives at offset 0x40. SIMPLE_TEXT_OUTPUT_PROTOCOL
+# (UEFI spec § 12.4): Reset(8) + OutputString(8) + ...
+# → OutputString fn ptr at offset 0x08. CHAR16 strings are
+# UTF-16LE, NUL-terminated, 2-byte aligned.
+
+kernel;
+
+asm {
+    # mov rcx, [rdx + 0x40]   ; ConOut = SystemTable->ConOut
+    0x48; 0x8B; 0x4A; 0x40;
+    # mov rax, [rcx + 0x08]   ; OutputString fn ptr
+    0x48; 0x8B; 0x41; 0x08;
+    # lea rdx, [rip + 0x0E]   ; rdx = address of msg (14 bytes past end-of-LEA)
+    0x48; 0x8D; 0x15; 0x0E; 0x00; 0x00; 0x00;
+    # sub rsp, 0x28           ; MS x64 shadow space + alignment
+    0x48; 0x83; 0xEC; 0x28;
+    # call rax                ; OutputString(rcx=ConOut, rdx=msg)
+    0xFF; 0xD0;
+    # add rsp, 0x28
+    0x48; 0x83; 0xC4; 0x28;
+    # xor eax, eax            ; EFI_SUCCESS = 0
+    0x31; 0xC0;
+    # ret                     ; firmware reads rax as EFI_STATUS
+    0xC3;
+    # nop (align msg to 2 bytes for CHAR16)
+    0x90;
+    # msg: UTF-16LE "hello, uefi\r\n\0" (28 bytes, 14 CHAR16 units)
+    0x68; 0x00;   # 'h'
+    0x65; 0x00;   # 'e'
+    0x6C; 0x00;   # 'l'
+    0x6C; 0x00;   # 'l'
+    0x6F; 0x00;   # 'o'
+    0x2C; 0x00;   # ','
+    0x20; 0x00;   # ' '
+    0x75; 0x00;   # 'u'
+    0x65; 0x00;   # 'e'
+    0x66; 0x00;   # 'f'
+    0x69; 0x00;   # 'i'
+    0x0D; 0x00;   # '\r'
+    0x0A; 0x00;   # '\n'
+    0x00; 0x00;   # '\0' terminator
+}

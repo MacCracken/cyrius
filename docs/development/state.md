@@ -5,123 +5,75 @@
 
 ## Version
 
-**5.11.47** (shipped 2026-05-13 — **UEFI Application PE emit mode
-+ `_pe_ensure_*` refactor consolidation; gnoboot arc P1**). First
-of a 3-slot arc unblocking the AGNOS sovereign UEFI bootloader
-(gnoboot); cap at .49. Compiler-side enablement only — probe (.48)
-+ OVMF smoke (.49) land subsequent slots.
+**5.11.48** (shipped 2026-05-13 — **EFI Application probe +
+structural gate; gnoboot arc P2**). Second of 3-slot arc; OVMF
+runtime smoke lands at .49.
 
-**Premise audit found filing speculation was partially stale.**
-`.reloc` (v5.5.35) + DllCharacteristics 0x0160 = NX_COMPAT +
-DYNAMIC_BASE + HIGH_ENTROPY_VA (v5.6.31 probe) + COFF
-Characteristics 0x0022 (EXECUTABLE + LARGE_ADDR, no
-RELOCS_STRIPPED, v5.5.35) — **all already shipped**, audit-clean
-for UEFI. Actual compiler deltas were narrow.
+**Compiler nudge**. `src/backend/pe/emit.cyr:776` — v5.6.31's
+`_dllc = 0x0160 when reloc present` logic left zero-fixup EFI
+binaries (no globals = no DIR64 entries = no `.reloc`) with
+`DllCharacteristics = 0x0000`. UEFI 2.0+ requires NX_COMPAT
+(0x0100). Added branch: when `_TARGET_EFI_APPLICATION == 1 &&
+_pe_reloc_vsize == 0`, force `_dllc = 0x0100` (NX_COMPAT only;
+DYNAMIC_BASE stays off since the image is non-relocatable and
+firmware honors ImageBase 0x140000000 directly).
 
-**Refactor (squeeze-in)**. 9 `_pe_ensure_<X>(S)` / `_pe_<X>_get()`
-pairs (stdio_getstd, stdio_writef, readf, closeh, seekfp, vallo,
-createf, createdir, deletef, gettick — 10 kernel32 syms across 9
-ensure-fns) consolidated to a single `_pe_register_kernel32(S,
-idx_addr, name)` helper. ~10 LoC saved + single source-of-truth
-for the import-time EFI guard.
+**Premise discovery**. cyrius's PE entry prologue is
+`e9 00 00 00 00` (5-byte `jmp +0`) — touches no GPRs, so
+firmware-supplied RCX/RDX survive into the first user byte.
+Verified by compiling a probe with a 4-NOP marker as first user
+asm and finding it at `.text + 0x05`. This makes "inline-asm-
+first" the right shape for capturing UEFI entry args — fn calls
+would clobber RCX/RDX with their own arg-setup `mov`s before any
+user code sees them.
 
-**Flag + plumbing**. New `var _TARGET_EFI_APPLICATION = 0;` in all
-three backend `emit.cyr` files (x86 real / aarch64+cx stubs). Env
-var `CYRIUS_TARGET_EFI=1` in `src/main.cyr:1007` +
-`src/main_win.cyr:520` flips both `_TARGET_PE = 1` (EFI implies
-the PE container) and `_TARGET_EFI_APPLICATION = 1`.
+**programs/efi_probe.cyr** (new). 64 LoC. Single `asm { ... }`
+block at top-level under `kernel;` mode. Walks `SystemTable →
+ConOut → OutputString` through pure runtime register-indirect
+addressing — no globals, no fixups. Byte-level entry layout
+(offsets in .text after the 5-byte cyrius prologue):
+0x05 `mov rcx, [rdx+0x40]` (ConOut), 0x09 `mov rax, [rcx+0x08]`
+(OutputString fn ptr), 0x0D `lea rdx, [rip+0x0E]` (msg in .text),
+0x14 `sub rsp, 0x28`, 0x18 `call rax`, 0x1A `add rsp, 0x28`,
+0x1E `xor eax, eax` (EFI_SUCCESS), 0x20 `ret`, 0x21 nop pad,
+0x22 UTF-16LE `"hello, uefi\r\n\0"` (28 bytes).
 
-**Behavior branches**:
-1. `src/backend/pe/emit.cyr:746` — Subsystem byte `3 → 10`
-   (WINDOWS_CUI → EFI_APPLICATION).
-2. `src/backend/x86/emit.cyr:545` — EEXIT EFI variant: single
-   `0xC3` (ret); firmware reads rax as EFI_STATUS.
-3. `_pe_layout:439` — skip `_pe_imp_add("ExitProcess")` when EFI.
-4. `_pe_register_kernel32` — fail-fast (stderr + exit 1) on any
-   kernel32 reroute under EFI mode.
-5. Data Directories [1] Import + [12] IAT zeroed when EFI; the
-   `.idata` section bytes still emit (~70 B benign region with
-   phantom `kernel32.dll` string) but the PE loader skips import
-   resolution entirely.
+UEFI ABI: MS x64 (RCX/RDX = first 2 args; 0x20 shadow space +
+16-byte stack alignment). SystemTable per UEFI spec § 4.3
+(`ConOut*` @ 0x40); SIMPLE_TEXT_OUTPUT_PROTOCOL per § 12.4
+(`OutputString` @ 0x08). CHAR16 strings UTF-16LE, NUL-terminated,
+2-byte aligned.
 
-**End-to-end verification** on `var result = 0;` compiled with
-`CYRIUS_TARGET_EFI=1`:
-- PE32+ `Magic=0x020B`, Subsystem=`0x000A`, DllCharacteristics=
-  `0x0160`, COFF Characteristics=`0x0022` ✓
-- Data Dirs [1]/[12]: `RVA=0, Size=0` ✓
-- Data Dir [5] BaseReloc: `RVA=0x4000, Size=0xC` ✓
-- `.reloc` block at `VA=0x1000` with 2 × `DIR64` entries at .text
-  offsets `0x9` / `0x16` (covering `mov rcx, imm64` gvar loads) ✓
-- `.text` epilogue: `c3` (ret) at offset `0x21` ✓
+**_efi_emit_gate()** (new). `programs/check.cyr`. Sibling helper
+`_self_host_pipe_efi` (mirrors `_self_host_pipe_elf64k` with
+`CYRIUS_TARGET_EFI=1` in envp). Two LE-explicit helpers
+`_read_u16_le` + `_read_u32_le` for PE-spec offset readback.
+Gate compiles `programs/efi_probe.cyr` and asserts (1) MZ DOS
+header + PE signature, (2) Optional Magic = `0x020B`, (3)
+Subsystem = `0x000A`, (4) DllCharacteristics has NX_COMPAT
+(`0x0100`), (5) Data Dir [1] Import zeroed, (6) Data Dir [12]
+IAT zeroed, (7) `.text` contains at least one `0xC3` (EEXIT EFI
+variant in use).
 
-**Cross-arch**: x86-only by construction. cx has no PE emission;
-aarch64 has no PE emission. Stubs in aarch64/cx exist solely for
-parser-resolution. Not a half-fix.
+Negative-test verified in-slot: swapping v5.11.46 cc5 (commit
+`9cebb7fa:build/cc5`) over the post-fix binary makes the gate
+FAIL with `efi_probe output missing MZ DOS header` (pre-.47 cc5
+didn't know `CYRIUS_TARGET_EFI`, so the env-var flip never
+fired). Restoring → PASS.
 
 Self-host byte-identical (3-step cc5 → stage2 == stage3 at
-**822,936 B** / +952 from v5.11.46); `check.sh` **70/70** (no new
-gate this slot — structural gate lands .48); `cyrius test`
-**149/149**. Default-off path byte-identical to v5.11.46 output
-for existing Windows-CUI consumers.
+**823,064 B** / +128 from v5.11.47); `check.sh` **70 → 71**;
+`cyrius test` **149/149**. Default-off path byte-identical to
+v5.11.47 output for existing Windows-CUI consumers.
 
-**Next in arc**: `.48` adds `programs/efi_probe.cyr` (minimal
-SystemTable→ConOut "hello, uefi") + `_efi_emit_gate()`
-structural check (check.sh 70 → 71); `.49` is OVMF runtime smoke
-+ arc closeout.
-
-**5.11.44** (shipped 2026-05-13 — **P0 `build/cc5`
-contamination restoration + cyrius-lsp `argv[0]`
-self-resolution + doc cleanup bundle**). Lead is the cc5
-postmortem; LSP fix + doc carves ride along.
-**cc5 postmortem**: committed `build/cc5` at v5.11.43
-(commit `aad19f6a` EMIT64KERNEL) was a wrong binary
-(1,389,776 B containing mabda/wgpu/compute-pipeline
-strings — not the cyrius compiler). `git diff aad19f6a --
-src/ lib/` is empty; current src self-hosts byte-identical
-at **821,712 B** (stage1 == stage2 verified;
-v5.11.41's cc5 fed current `src/main.cyr` also produces
-821,712 B). Same shape contamination at v5.11.28/.29
-(silently fixed .30) recurred at .43 — likely a build-
-script slip cp'ing another binary over `build/cc5` before
-commit. Fix: `build/cc5` restored to canonical 821,712 B;
-`build/cyrius-lsp` rebuilt; install snapshots
-`~/.cyrius/bin/cc5` + `~/.cyrius/versions/5.11.43/bin/cc5`
-refreshed (both were 1,389,776 B mabda carryovers from
-`install.sh --refresh-only` at .43 ship). **Process pin**:
-future bumps should `strings build/cc5 | grep -E
-"mabda|wgpu|compute_pipeline"` as a fail-fast gate; v6.0.0
-closeout sweep candidate. **cyrius-lsp argv[0] fix**:
-closes the long-standing proposal at
-`docs/development/proposals/archived/cyrius-lsp-argv0-self-resolution.md`
-(filed 2026-05-02). New `_resolve_install_dir()` uses
-`/proc/self/exe` (same pattern as
-`programs/cyrius-init.cyr:_resolve_templates_dir`);
-`find_cc5()` tries `<install-dir>/cc5` FIRST before the
-existing 3 fallbacks; startup log now reports the resolved
-path. Editors with minimal-env LSP launchers (Claude Code
-+ others) no longer silently disable diagnostics. cyrius-
-lsp 93,752 → **94,440 B** (+688 — sys_readlink path + str
-builder + log line). Smoke verified: `env -i HOME=$HOME`
-launch from `/tmp/cyrlsp-test/` shows
-`[cyrius-lsp] found cc5: /tmp/cyrlsp-test/cc5`.
-**Doc carves** (caught during .42 sweep, landed here):
-three already-shipped proposals (return-cap v5.10.6,
-compile-source-cap v5.11.33, uninitialized-var v5.8.42)
-`git mv`'d to `docs/development/proposals/archived/` (new
-subdir mirroring `issues/archived/`). `roadmap.md`
-carved into lean current-cycle-only view + prior 1214-line
-content preserved at `roadmap-old.md` for v6.x pull-forward.
-Cycle-discipline extracted to its own
-`docs/development/cycle-discipline.md` (evergreen). doc-
-health.md refreshed (13-patch lag closed). v5.11.43's
-state.md catch-up rolled in here since version-bump.sh
-doesn't touch state.md and .43 shipped without a refresh.
-cc5 byte-identical at **821,712 B** (this is the canonical
-.43 cc5 retroactively + the .44 ship); check.sh
-**68/68**; cyrius test **149/149**.
+**Next in arc**: `.49` — OVMF runtime smoke. Stage
+`efi_probe.efi` on FAT ESP at `/EFI/BOOT/BOOTX64.EFI`; boot
+`qemu-system-x86_64 + OVMF_CODE.4m.fd + OVMF_VARS.4m.fd -serial
+stdio`; verify `"hello, uefi"` on serial. Arc closeout CHANGELOG.
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.47** — UEFI Application PE emit mode + `_pe_ensure_*` refactor (gnoboot arc P1): `_TARGET_EFI_APPLICATION` flag, Subsystem byte 3→10 branch, EEXIT EFI variant (single `ret`), ExitProcess import skip + kernel32 fail-fast guard, Data Dirs [1]/[12] zeroed. 9 `_pe_ensure_<X>(S)` fns consolidated to single `_pe_register_kernel32` helper.
 - **v5.11.46** — ELF64 kernel entry-arithmetic agreement (FIXUP ↔ EMITELF64_KERNEL) — agnos UEFI x86_64 boot regression fix; `_elf64_kernel_entry_gate()` added (check.sh 69→70).
 - **v5.11.45** — P(-1) hardening sweep (4-item bundle): state.md compression 1451→583, `build/cc5` contamination gate, `cyrius vet` restored, dead-fn report behind `CYRIUS_DCE_VERBOSE=1`. check.sh 68→69.
 - **v5.11.44** — `build/cc5` mabda-contamination restoration + cyrius-lsp `argv[0]` self-resolution + doc-cleanup bundle.

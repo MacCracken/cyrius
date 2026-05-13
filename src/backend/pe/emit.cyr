@@ -775,6 +775,13 @@ fn EMITPE_EXEC(S): i64 {
     # follow-up investigation.
     var _dllc = 0;
     if (_pe_reloc_vsize != 0) { _dllc = 0x0160; }  # v5.6.31 probe: +HIGH_ENTROPY_VA
+    # v5.11.48: UEFI Application mode ALWAYS sets NX_COMPAT (0x0100),
+    # even when no fixups → no .reloc. UEFI 2.0+ honors NX on code pages
+    # for memory protection (Memory Attributes Protocol); firmware
+    # implementations may refuse to invoke an image without this bit.
+    # DYNAMIC_BASE only flips when .reloc is present (image relocatable);
+    # otherwise firmware honors ImageBase = 0x140000000 directly.
+    if (_TARGET_EFI_APPLICATION == 1 && _pe_reloc_vsize == 0) { _dllc = 0x0100; }
     o = _pe_w16(O, o, _dllc);
     o = _pe_w64(O, o, 0x100000);        # SizeOfStackReserve (1 MB)
     o = _pe_w64(O, o, 0x1000);          # SizeOfStackCommit  (4 KB)

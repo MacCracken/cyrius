@@ -6,6 +6,135 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.48] — 2026-05-13
+
+**EFI Application probe + structural gate (gnoboot arc P2).**
+Second slot of the 3-slot arc unblocking AGNOS gnoboot;
+[`programs/efi_probe.cyr`](programs/efi_probe.cyr) is the minimal
+hello-world UEFI app + `_efi_emit_gate()` in
+[`programs/check.cyr`](programs/check.cyr) is the regression
+floor for any future EFI emit work. One small compiler nudge
+folded in (DllCharacteristics NX_COMPAT in EFI mode regardless
+of `.reloc` presence). OVMF runtime smoke lands at .49.
+
+check.sh **70 → 71** gates; cc5 self-host **822,936 → 823,064 B**
+(+128 from the DllCharacteristics branch + check.cyr helper
+re-export); cyrius test **149/149**. Default-off path (no
+`CYRIUS_TARGET_EFI` env var) byte-identical to v5.11.47 output.
+
+### Compiler nudge: DllCharacteristics NX_COMPAT in EFI mode
+
+`src/backend/pe/emit.cyr:776` — the prior v5.6.31 logic set
+`DllCharacteristics = 0x0160` (NX_COMPAT + DYNAMIC_BASE +
+HIGH_ENTROPY_VA) **only when `.reloc` was present**. Side-effect:
+a zero-fixup EFI program (no globals, fully inline-asm — like
+`efi_probe.cyr`) emitted `DllCharacteristics = 0x0000`. UEFI 2.0+
+firmware honors NX on code pages via the Memory Attributes
+Protocol; without NX_COMPAT some firmware implementations refuse
+to invoke the image.
+
+Added branch: when `_TARGET_EFI_APPLICATION == 1 && _pe_reloc_vsize
+== 0`, force `_dllc = 0x0100` (NX_COMPAT only — DYNAMIC_BASE stays
+off since the image is non-relocatable; firmware honors ImageBase
+0x140000000 directly). EFI programs with at least one global fixup
+keep getting the full 0x0160 from the existing branch.
+
+### programs/efi_probe.cyr — minimal "hello, uefi"
+
+64-line cyrius source. Single `asm { ... }` block at top-level
+under `kernel;` mode. Walks SystemTable → ConOut → OutputString
+entirely through runtime register-indirect addressing — no globals,
+no fixups, no need for cyrius's inline-asm fixup machinery (which
+doesn't exist).
+
+Byte-level entry layout (offsets in `.text`):
+
+| Offset | Bytes                     | Instruction                  | Purpose                                    |
+|--------|---------------------------|------------------------------|--------------------------------------------|
+| 0x00   | `e9 00 00 00 00`          | `jmp +0`                     | cyrius prologue (5-byte nop; no GPR touch) |
+| 0x05   | `48 8b 4a 40`             | `mov rcx, [rdx+0x40]`        | ConOut = SystemTable->ConOut               |
+| 0x09   | `48 8b 41 08`             | `mov rax, [rcx+0x08]`        | OutputString fn ptr (offset 0x08)          |
+| 0x0d   | `48 8d 15 0e 00 00 00`    | `lea rdx, [rip+0x0e]`        | rdx = &msg (14 bytes past end-of-LEA)      |
+| 0x14   | `48 83 ec 28`             | `sub rsp, 0x28`              | shadow space + 8-byte align (MS x64)       |
+| 0x18   | `ff d0`                   | `call rax`                   | OutputString(ConOut, msg)                  |
+| 0x1a   | `48 83 c4 28`             | `add rsp, 0x28`              |                                            |
+| 0x1e   | `31 c0`                   | `xor eax, eax`               | EFI_SUCCESS = 0                            |
+| 0x20   | `c3`                      | `ret`                        | firmware reads rax as EFI_STATUS           |
+| 0x21   | `90`                      | `nop`                        | pad msg to 2-byte alignment for CHAR16     |
+| 0x22+  | (28 bytes)                | UTF-16LE `"hello, uefi\r\n\0"` | string in .text (UEFI reads RO+X data fine) |
+
+Premise discovery: cyrius's PE entry prologue is `e9 00 00 00 00`
+(5-byte `jmp +0`). That instruction touches no general-purpose
+registers, so firmware-supplied RCX (ImageHandle) and RDX
+(SystemTable) survive into the first user byte. Verified by
+compiling a probe with a 4-NOP marker as the first user asm and
+finding it at `.text + 0x05` (post-prologue).
+
+Why inline-asm-only and not a fn call: cyrius's normal fn-call
+emit clobbers RCX/RDX with the call's own arg setup (`mov rcx,
+arg1; mov rdx, arg2; call f`), which would destroy the firmware-
+supplied values before any user code sees them. Pure inline asm
+runs immediately after the 5-byte prologue, before any cyrius
+emit-side stack-frame setup.
+
+UEFI ABI used: MS x64 (RCX/RDX = first 2 args; 0x20 shadow space
++ 16-byte stack alignment at the call). SystemTable layout per
+UEFI spec § 4.3: `ConOut*` at offset `0x40`. SIMPLE_TEXT_OUTPUT_PROTOCOL
+per UEFI spec § 12.4: `OutputString` fn ptr at offset `0x08`.
+CHAR16 strings are UTF-16LE, NUL-terminated, 2-byte aligned.
+
+### _efi_emit_gate() — structural regression floor
+
+`programs/check.cyr` — new gate registered in the bespoke-gate
+dispatch section right after `_elf64_kernel_entry_gate`. Sibling
+helper `_self_host_pipe_efi(src_path, compiler_path, out_path)`
+mirrors `_self_host_pipe_elf64k` from v5.11.46 but populates envp
+with `CYRIUS_TARGET_EFI=1`. Two new small helpers
+`_read_u16_le(buf, off)` + `_read_u32_le(buf, off)` for explicit
+LE byte unpacking (cyrius's `load16` / `load32` follow host
+endianness; LE-explicit helpers make the PE-spec offsets
+self-documenting).
+
+Gate compiles `programs/efi_probe.cyr` and asserts:
+
+1. DOS header `MZ` magic + PE signature at `e_lfanew`.
+2. Optional Header Magic = `0x020B` (PE32+).
+3. Subsystem = `0x000A` (`IMAGE_SUBSYSTEM_EFI_APPLICATION`).
+4. DllCharacteristics has bit `0x0100` (NX_COMPAT) — required by
+   UEFI 2.0+.
+5. Data Directory [1] Import = `(0, 0)` — no kernel32 in UEFI.
+6. Data Directory [12] IAT = `(0, 0)`.
+7. `.text` section present + contains at least one `0xC3` (ret)
+   — confirms EEXIT EFI variant is in use (vs the 13-byte
+   `ExitProcess` IAT call in Windows-CUI mode).
+
+Negative-test verified in-slot: temporarily swapping the v5.11.46
+`build/cc5` (commit `9cebb7fa:build/cc5`) over the post-fix
+binary makes the gate FAIL with `efi_probe output missing MZ
+DOS header` — v5.11.46 cc5 didn't know about `CYRIUS_TARGET_EFI`
+so the env-var flip never fired, `_TARGET_PE` stayed 0, and the
+compile emitted ELF instead of PE32+. Restoring → PASS.
+
+check.sh: **70 → 71**.
+
+### Memory pins referenced
+
+- `project_agnos_path_c_gnoboot` (slot pinning; .48 closes the
+  structural-correctness milestone; .49 = OVMF runtime smoke +
+  arc closeout).
+- `feedback_premise_check_at_slot_entry` (cyrius PE entry
+  prologue investigation before designing the probe).
+- `feedback_cross_arch_propagation_mandatory` (EFI emit remains
+  x86-only by construction — cx/aarch64 have no PE backend).
+
+### Next in arc
+
+- **.49** — OVMF runtime smoke: stage `programs/efi_probe.cyr`
+  → `efi_probe.efi` on a FAT ESP image at `/EFI/BOOT/BOOTX64.EFI`;
+  boot via `qemu-system-x86_64 + OVMF_CODE.4m.fd +
+  OVMF_VARS.4m.fd -serial stdio`; verify `"hello, uefi"` on
+  serial. Any runtime fix-up. Arc closeout CHANGELOG cross-link.
+
 ## [5.11.47] — 2026-05-13
 
 **UEFI Application PE emit mode — `_TARGET_EFI_APPLICATION` flag +

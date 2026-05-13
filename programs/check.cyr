@@ -1499,6 +1499,287 @@ fn _elf64_kernel_entry_gate(): i64 {
     return 0;
 }
 
+# Sibling of _self_host_pipe with CYRIUS_TARGET_EFI=1 in envp. Used
+# by _efi_emit_gate to compile programs/efi_probe.cyr through the
+# PE32+ EFI Application emit path. Returns the child's wait-status.
+fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
+    var src_cap = 2000000;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n <= 0) { return 0 - 1; }
+
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0 - 2; }
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 3; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd);
+        sys_close(write_fd);
+        sys_close(out_fd);
+        return 0 - 4;
+    }
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0);
+        sys_close(read_fd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var argv[3];
+        store64(&argv,     compiler_path);
+        store64(&argv + 8, 0);
+        var envp[3];
+        store64(&envp,     "CYRIUS_TARGET_EFI=1");
+        store64(&envp + 8, 0);
+        sys_execve(compiler_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(write_fd);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return load32(&status_buf);
+}
+
+# Read u16 little-endian from buf+off. Used by _efi_emit_gate to
+# pull Subsystem / DllCharacteristics / COFF Characteristics out
+# of the PE optional header.
+fn _read_u16_le(buf, off): i64 {
+    var lo = load8(buf + off);
+    var hi = load8(buf + off + 1);
+    return lo | (hi << 8);
+}
+
+# Read u32 little-endian from buf+off.
+fn _read_u32_le(buf, off): i64 {
+    var b0 = load8(buf + off);
+    var b1 = load8(buf + off + 1);
+    var b2 = load8(buf + off + 2);
+    var b3 = load8(buf + off + 3);
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+# Gate: UEFI Application PE emit produces a structurally correct
+# PE32+ image (v5.11.48, gnoboot arc P2).
+#
+# Compiles programs/efi_probe.cyr with CYRIUS_TARGET_EFI=1 and asserts:
+#   - DOS header MZ magic + PE signature
+#   - Optional header Magic = 0x020B (PE32+)
+#   - Subsystem = 0x000A (IMAGE_SUBSYSTEM_EFI_APPLICATION)
+#   - DllCharacteristics has NX_COMPAT (0x0100) — required by UEFI 2.0+
+#   - Data Directory [1] Import zeroed — no kernel32 in UEFI
+#   - Data Directory [12] IAT zeroed
+#   - .text contains 0xC3 (ret) — EEXIT EFI variant in use
+#
+# Negative-test verified in slot: pre-fix cc5 emits Subsystem=3
+# (WINDOWS_CUI) → gate FAILs. Post-fix → gate PASSes.
+fn _efi_emit_gate(): i64 {
+    var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
+    var src_path = _root_path("programs/efi_probe.cyr");
+    var bin_path = _tmp_path("audit_efi_probe_");
+    var rc = _self_host_pipe_efi(src_path, CC_PATH, bin_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": efi_probe compile failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _check(label, 1);
+        return 1;
+    }
+
+    # DOS header: MZ at offset 0
+    if (load8(buf) != 0x4D || load8(buf + 1) != 0x5A) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": efi_probe output missing MZ DOS header");
+        _check(label, 1);
+        return 1;
+    }
+
+    # PE signature offset at byte 60; signature = "PE\0\0"
+    var pe_off = _read_u32_le(buf, 60);
+    if (load8(buf + pe_off) != 0x50 || load8(buf + pe_off + 1) != 0x45) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": efi_probe PE signature not found at e_lfanew");
+        _check(label, 1);
+        return 1;
+    }
+
+    var opt_off = pe_off + 4 + 20;
+
+    # Optional Header Magic must be PE32+ (0x020B)
+    var magic = _read_u16_le(buf, opt_off);
+    if (magic != 0x020B) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Optional Header Magic ");
+        print_num(magic);
+        println(" != 0x020B (PE32+)");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Subsystem at OptionalHeader + 68
+    var subsys = _read_u16_le(buf, opt_off + 68);
+    if (subsys != 10) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Subsystem ");
+        print_num(subsys);
+        println(" != 10 (IMAGE_SUBSYSTEM_EFI_APPLICATION)");
+        _check(label, 1);
+        return 1;
+    }
+
+    # DllCharacteristics at OptionalHeader + 70; require NX_COMPAT (0x0100)
+    var dllc = _read_u16_le(buf, opt_off + 70);
+    if ((dllc & 0x0100) == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": DllCharacteristics ");
+        print_num(dllc);
+        println(" missing NX_COMPAT (0x0100) — UEFI 2.0+ requires it");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Data directories at OptionalHeader + 112 (PE32+). Each entry = 8 bytes.
+    var dd_base = opt_off + 112;
+
+    # [1] Import directory — must be zeroed (no kernel32 in UEFI)
+    var imp_rva  = _read_u32_le(buf, dd_base + 8);
+    var imp_size = _read_u32_le(buf, dd_base + 12);
+    if (imp_rva != 0 || imp_size != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Data Dir [1] Import not zeroed (RVA=");
+        print_num(imp_rva);
+        _p(", Size=");
+        print_num(imp_size);
+        println(") — EFI mode should suppress kernel32 imports");
+        _check(label, 1);
+        return 1;
+    }
+
+    # [12] IAT — must be zeroed
+    var iat_rva  = _read_u32_le(buf, dd_base + 96);
+    var iat_size = _read_u32_le(buf, dd_base + 100);
+    if (iat_rva != 0 || iat_size != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Data Dir [12] IAT not zeroed (RVA=");
+        print_num(iat_rva);
+        _p(", Size=");
+        print_num(iat_size);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Locate .text section to verify the EEXIT EFI variant (ret = 0xC3)
+    # actually emitted. Section table starts at OptionalHeader + 240.
+    var st_off = opt_off + 240;
+    var found_text = 0;
+    var ret_found = 0;
+    var si = 0;
+    while (si < 6) {
+        var so = st_off + si * 40;
+        # Name compare: ".text\0\0\0"
+        if (load8(buf + so) == 0x2E
+            && load8(buf + so + 1) == 0x74
+            && load8(buf + so + 2) == 0x65
+            && load8(buf + so + 3) == 0x78
+            && load8(buf + so + 4) == 0x74
+            && load8(buf + so + 5) == 0x00) {
+            found_text = 1;
+            var foff = _read_u32_le(buf, so + 20);
+            var vsz  = _read_u32_le(buf, so + 8);
+            # Scan .text for 0xC3 (ret) — EEXIT EFI variant
+            var ti = 0;
+            while (ti < vsz) {
+                if (load8(buf + foff + ti) == 0xC3) {
+                    ret_found = 1;
+                    ti = vsz;
+                } else {
+                    ti = ti + 1;
+                }
+            }
+            si = 6;
+        } else {
+            si = si + 1;
+        }
+    }
+    if (found_text == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": .text section not found in efi_probe output");
+        _check(label, 1);
+        return 1;
+    }
+    if (ret_found == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": 0xC3 (ret) not found in .text — EEXIT EFI variant not emitting");
+        _check(label, 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": EFI Application emit — Subsystem=0xA, DllChar NX_COMPAT, Data Dirs [1]/[12] zeroed, .text has ret");
+    println("");
+    _check(label, 0);
+    return 0;
+}
+
 # Fork+exec cyrld with output path + N input .o paths. Returns
 # 0 on success (cyrld exit 0), non-zero otherwise. cyrld's stdout
 # goes to /dev/null; stderr inherited from dispatcher (so a real
@@ -8405,6 +8686,10 @@ fn _run_regression_gates(): i64 {
 
     _section("ELF64 kernel entry agreement (FIXUP ↔ EMITELF64_KERNEL)");
     _elf64_kernel_entry_gate();
+    println("");
+
+    _section("EFI Application PE emit (gnoboot MVP unblocker)");
+    _efi_emit_gate();
     println("");
 
     _section("install --refresh-only shim");
