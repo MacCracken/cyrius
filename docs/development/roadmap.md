@@ -4,38 +4,10 @@ For completed work, see [completed-phases.md](completed-phases.md).
 For detailed changes, see [CHANGELOG.md](../../CHANGELOG.md).
 
 
-## v5.3.x / v5.4.x / v5.5.x / v5.6.x / v5.7.x / v5.8.x / v5.9.x — shipped
+## 5.x major patch history
 
-All per-patch detail through v5.9.x lives in
-[completed-phases.md](completed-phases.md);
-[CHANGELOG.md](../../CHANGELOG.md) is the source of truth.
-
-**v5.8.x close** (2026-05-05): 65 patches over 5 days — longest minor
-in cyrius history by patch count. Cycle CLOSED at v5.8.65 with the
-held-open .66 release-valve retired unused (foldin fallout absorbed
-in .65 itself via mid-slot fix-ups). Shipped: slices (6-arc
-completion), effect annotations, sum types + exhaustive match,
-`Result<T,E>` + `?` operator, allocator vtable, Unicode 17.0.0 (NFC
-+ NFD + NFKC + NFKD + categories + casefold; 320,547 conformance
-asserts), heap-map monotonic reorganization, lib/ + main_*.cyr
-structural refactor, sandhi-pattern stdlib foldin (sakshi / patra /
-sigil / vani / yukti / sankoch). cc5 720,928 → 741,048 B
-(+20,120 B / +2.79%). check.sh 64 → 65 gates. tcyr 108 → 127.
-
-**v5.9.x close** (2026-05-08): 44 patches over 2 days. Cycle
-CLOSED at v5.9.43. Theme: cleanup-and-lib-improvement. Shipped:
-niyama 1.0.1 fold (8th sibling distfile, 5 regex engines), full
-sovereignty pass (`scripts/check.sh` 743 LOC bash → 30-line shim
-+ `programs/check.cyr`; `tests/regression-*.sh` 60 → 0;
-`.sh-conversion arc CLOSED at v5.9.41), agnosys 1.1.12
-`#derive(Serialize)` cascade end-to-end including Mach-O ARM64
-fn-pointer ASLR fix (paired Bug A `lib/fnptr.cyr` macOS branches
-+ Bug B `aarch64/fixup.cyr` ftype==3 ADRP+ADD), cx Phase 2c
-parity (sub-byte field load + struct-byval return + 7+-arg fn
-calls), `lib/regression.cyr` testing-stdlib carve-out (22 public
-verbs). cc5 741,048 → 751,744 B (+10,696 B / +1.4%). check.sh
-56 → 66 gates. api-surface 2615 → 2792 (+177). Stdlib module
-count 76 → 79 (+`audit_walk`, `niyama`, `regression`).
+All per-patch detail through v5.x lives in
+[CHANGELOG.md](../../CHANGELOG.md) — the source of truth.
 
 ---
 
