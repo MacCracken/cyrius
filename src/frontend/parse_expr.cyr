@@ -1057,9 +1057,8 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         SRPC(S, rpc + 1);
         return 0;
     }
-    # f64_atan(x) — x87: fld x, fld1, fpatan
-    # v5.6.0: x87 fpatan is x86-only; aarch64 needs a polyfill.
-    if (ptyp == 99) { if (_AARCH64_BACKEND == 1) { ERR_MSG(S, "f64_atan is x86-only for v5.6.0; aarch64 has no native fpatan — needs polyfill", 78); } STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EX87PUSH(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xD9); EB(S, 0xF3); EX87POP(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
+    if (ptyp == 99) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ATAN(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # rethi() — read rdx from last function call (mov rax, rdx)
     if (ptyp == 98) {
         STI(S, GTI(S) + 1);
@@ -1198,101 +1197,16 @@ fn PARSE_TERM(S): i64 {
     if (ptyp >= 100) { if (ptyp <= 104) { return PARSE_SIMD_EXT(S, ptyp); } }
     # v5.10.17 — f64v_dot/scale/axpy
     if (ptyp >= 128) { if (ptyp <= 130) { return PARSE_SIMD_EXT(S, ptyp); } }
-    # v5.6.0: f64_neg / f64_sin / f64_cos / f64_exp / f64_ln / f64_log2 /
-    # f64_exp2 emit raw x86 SSE+x87 bytes (`F2 0F 5C C8`, `D9 FE`, `D9 FF`,
-    # the multi-instruction fyl2x sequence, etc.) intermixed with
-    # aarch64-stubbed helpers (EX87PUSH/EX87POP/EMOVQ_X0_A no-op on
-    # aarch64). Without this guard the stubs emit nothing while the raw
-    # bytes splice into ARM code — silent corruption.
-    if (_AARCH64_BACKEND == 1) {
-        # v5.7.30: aarch64 f64_neg native (FNEG d0, d0). Replaces the
-        # pre-v5.7.30 ERR_MSG. Single fp instruction; consume args
-        # then emit fmov-d-x / fneg-d / fmov-x-d sequence (3 words).
-        if (ptyp == 71) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S);
-            _IR_REC0(S, IR_RAW_EMIT);
-            EW(S, 0x9E670000);   # fmov d0, x0
-            EW(S, 0x1E614000);   # fneg d0, d0
-            EW(S, 0x9E660000);   # fmov x0, d0
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-            STI(S, GTI(S) + 1);
-            return 0;
-        }
-        if (ptyp == 83) { ERR_MSG(S, "f64_sin is x86-only for v5.6.0; aarch64 has no native trig — needs polyfill", 75); }
-        if (ptyp == 84) { ERR_MSG(S, "f64_cos is x86-only for v5.6.0; aarch64 has no native trig — needs polyfill", 75); }
-        # v5.7.31: f64_exp / f64_ln on aarch64 — dispatch to stdlib
-        # polyfills (`_f64_exp_polyfill` / `_f64_ln_polyfill` defined
-        # in lib/math.cyr using v5.7.30 basic ops). The keyword still
-        # tokenizes as ptyp 85/86; the parser just emits a fncall
-        # instead of x87 byte sequences. Polyfill must be in the fn
-        # table — typically via `cyrius build`'s auto-include of
-        # lib/math.cyr; standalone cc5 invocations need explicit
-        # `include "lib/math.cyr"`.
-        if (ptyp == 85) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-            STI(S, GTI(S) + 1);
-            var pf85 = _FINDFN_CSTR(S, "_f64_exp_polyfill", 17);
-            if (pf85 < 0) {
-                ERR_MSG(S, "f64_exp on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp_polyfill)", 78);
-            }
-            EPUSHR(S);
-            ECALLPOPS(S, 1);
-            ECALLFIX(S, pf85);
-            return 0;
-        }
-        if (ptyp == 86) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-            STI(S, GTI(S) + 1);
-            var pf86 = _FINDFN_CSTR(S, "_f64_ln_polyfill", 16);
-            if (pf86 < 0) {
-                ERR_MSG(S, "f64_ln on aarch64 requires include \"lib/math.cyr\" (provides _f64_ln_polyfill)", 76);
-            }
-            EPUSHR(S);
-            ECALLPOPS(S, 1);
-            ECALLFIX(S, pf86);
-            return 0;
-        }
-        # v5.8.4: f64_log2 on aarch64 — dispatch to stdlib polyfill
-        # (`_f64_log2_polyfill` defined in lib/math.cyr; uses
-        # _f64_ln_polyfill * F64_LOG2E). Mirrors the v5.7.31
-        # f64_exp / f64_ln pattern. Closes phylax #1 (Shannon
-        # entropy was the load-bearing consumer; previously blocked
-        # aarch64 cross-build via this hard-reject).
-        if (ptyp == 87) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
-            STI(S, GTI(S) + 1);
-            PCMPE(S);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-            STI(S, GTI(S) + 1);
-            var pf87 = _FINDFN_CSTR(S, "_f64_log2_polyfill", 18);
-            if (pf87 < 0) {
-                ERR_MSG(S, "f64_log2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_log2_polyfill)", 80);
-            }
-            EPUSHR(S);
-            ECALLPOPS(S, 1);
-            ECALLFIX(S, pf87);
-            return 0;
-        }
-        if (ptyp == 88) { ERR_MSG(S, "f64_exp2 is x86-only for v5.6.0; aarch64 has no native exp2 — needs polyfill", 76); }
-    }
-    # f64 builtins — check before PARSE_FACTOR dispatches
+    # f64 builtins — check before PARSE_FACTOR dispatches.
+    # v5.11.37 path-A: each ptyp dispatches to its named op in
+    # <backend>/emit.cyr — x86 emits SSE2/x87, aarch64 emits FNEG /
+    # polyfill-call / hard-error, cx is no-op. parse_expr.cyr is
+    # arch-agnostic for these ops.
     if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 0; } }
     if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EI2F(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF2I(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 0; } }
-    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EXORPD_X1(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC8); EMOVAPD_01(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
     if (ptyp == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64_abs(x) — clear sign bit via integer AND
@@ -1303,18 +1217,12 @@ fn PARSE_TERM(S): i64 {
     if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64_round(x) — roundsd xmm0, xmm0, 0 (round to nearest)
     if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    # f64_sin(x) — x87 fsin (D9 FE)
-    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EX87PUSH(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xD9); EB(S, 0xFE); EX87POP(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    # f64_cos(x) — x87 fcos (D9 FF)
-    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EX87PUSH(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xD9); EB(S, 0xFF); EX87POP(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    # f64_exp(x) — x87: fldl2e; fmulp; fld st0; frndint; fsub st1,st0; fxch; f2xm1; fld1; faddp; fscale; fstp st1
-    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EX87PUSH(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xD9); EB(S, 0xEA); EB(S, 0xDE); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xC0); EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9); EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xDE); EB(S, 0xC1); EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9); EX87POP(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    # f64_ln(x) — x87: fldln2; fxch; fyl2x
-    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EX87PUSH(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xD9); EB(S, 0xED); EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF1); EX87POP(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    # f64_log2(x) — x87: fld1; fxch; fyl2x
-    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EX87PUSH(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF1); EX87POP(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    # f64_exp2(x) — x87: fld st0; frndint; fsub st1,st0; fxch; f2xm1; fld1; faddp; fscale; fstp st1
-    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EX87PUSH(S); _IR_REC0(S, IR_RAW_EMIT); EB(S, 0xD9); EB(S, 0xC0); EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9); EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xDE); EB(S, 0xC1); EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9); EX87POP(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LN(S);   if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LOG2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64v_add/sub/mul(dst, a, b, n) — SSE2 packed f64 batch operations.
     # v5.10.39 — route through _SIMD_STASH (was bare EFLSTORE pre-fix).
     # The v5.10.35 locname-staleness fix covered f64v_div/sqrt/abs/

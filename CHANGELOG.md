@@ -6,6 +6,86 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.37] — 2026-05-12
+
+**Parser-to-emit named-op refactor — Class C (f64 unary ops).**
+Third slot of the path-A arc. 8 ptyps (71/83/84/85/86/87/88/99)
+each get their own named op in `<backend>/emit.cyr`; parse_expr.cyr
+drops the entire `if (_AARCH64_BACKEND == 1) { … aarch64-specific
+arms … }` block plus the post-block x86 direct-emit lines, both
+collapsing into a single per-ptyp call.
+
+### Named ops added
+
+8 ops, each defined in `src/backend/{x86,aarch64,cx}/emit.cyr`:
+
+| Op | x86 | aarch64 | cx |
+|----|-----|---------|-----|
+| `EF64_NEG(S)` | EMOVQ_X0_A + EXORPD_X1 + subsd xmm1, xmm0 + EMOVAPD_01 + EMOVQ_A_X0 | fmov d0, x0 + fneg d0, d0 + fmov x0, d0 | IR record stub |
+| `EF64_SIN(S)` | x87 fsin (D9 FE) inside EX87PUSH/POP | ERR_MSG (no native trig) | IR record stub |
+| `EF64_COS(S)` | x87 fcos (D9 FF) | ERR_MSG | IR record stub |
+| `EF64_EXP(S)` | 22-byte x87 fldl2e/fmulp/… chain | polyfill: `_FINDFN_CSTR("_f64_exp_polyfill")` + EPUSHR + ECALLPOPS + ECALLFIX | IR record stub |
+| `EF64_LN(S)` | x87 fldln2; fxch; fyl2x (6 B) | polyfill `_f64_ln_polyfill` | IR record stub |
+| `EF64_LOG2(S)` | x87 fld1; fxch; fyl2x (6 B) | polyfill `_f64_log2_polyfill` | IR record stub |
+| `EF64_EXP2(S)` | 18-byte x87 chain | ERR_MSG | IR record stub |
+| `EF64_ATAN(S)` | x87 fld1; fpatan (4 B) | ERR_MSG | IR record stub |
+
+### `_FINDFN_CSTR` relocated to util.cyr
+
+The aarch64 polyfill-dispatch ops (EF64_EXP/LN/LOG2) call
+`_FINDFN_CSTR` to look up `_f64_*_polyfill` by name. Pre-refactor
+`_FINDFN_CSTR` lived in `src/frontend/parse_fn.cyr` — included
+AFTER `src/backend/aarch64/emit.cyr` in main.cyr's include chain,
+which would have made the lookup a forward reference. Moved to
+`src/common/util.cyr` (included before emit.cyr); implementation
+unchanged. The function is a generic string→fn-index lookup; it
+was never parse-specific — the location was historical.
+
+### parse_expr.cyr consolidation
+
+- Pre-refactor: 86-line `if (_AARCH64_BACKEND == 1) { … }` block
+  (lines ~1206-1289) with arm-specific arch-dispatch logic for
+  ptyps 71/83/84/85/86/87/88 + a separate 8-line x87 block per
+  ptyp at lines ~1295-1317 + the single-line ptyp 99 atan check
+  at line 1062.
+- Post-refactor: 8 single-line ptyp checks calling the named op
+  directly. The aarch64 dispatch block is entirely removed.
+- Direct-emit count in parse_*.cyr drops 24 → 13 (-11).
+
+### Verification
+
+- Self-host **byte-identical first-pass** at 814,960 B (-2,040 B
+  from .36's 817,000 — refactor consolidation continues; ~85
+  lines of dispatch logic moved out of parse_expr.cyr into the
+  centralized named ops).
+- `check.sh` 67/67; `cyrius test` 149/149.
+- aarch64 cross-compile + pi e2e: `exit=42`.
+- **aarch64 polyfill dispatch verified**: synthetic
+  `include "lib/math.cyr"; fn main(): i64 { var x = f64_exp(0); return 0; }`
+  cross-compiled to aarch64, ran clean on pi (`exit=0`) — confirms
+  the polyfill-call path (`_FINDFN_CSTR` + `ECALLFIX`) produces
+  working binaries when invoked from emit.cyr.
+
+### Arc progress
+
+- ✅ **.35 — Class D** (unconditional shared) — shipped
+- ✅ **.36 — Class B** (PIC-vs-direct address loads) — shipped
+- ✅ **.37 — Class C** (f64 unary ops) — this slot
+- **.38 — drift-prevention static-analysis gate** + check.sh
+  wire-up — next; closes the arc
+
+### Cumulative cc5 size delta across the arc
+
+| Slot | cc5 size | Δ vs prev |
+|------|----------|-----------|
+| .34 | 818,344 | (baseline) |
+| .35 | 818,360 | +16 (new fn defs) |
+| .36 | 817,000 | -1,360 (Class B consolidation) |
+| **.37** | **814,960** | **-2,040 (Class C consolidation)** |
+| **Net since .34** | | **-3,384 B (-0.41%)** |
+
+The refactor is paying off in measurable code-surface reduction.
+
 ## [5.11.36] — 2026-05-12
 
 **Parser-to-emit named-op refactor — Class B (PIC-vs-direct

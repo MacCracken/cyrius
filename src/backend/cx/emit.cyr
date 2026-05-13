@@ -251,6 +251,19 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
     return 0;
 }
 
+# v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
+# cx has no f64 opcodes in this slot. All 8 ops are IR-record
+# stubs; real CYX f64 op coverage (coordinated with cxvm) is
+# future work tracked in docs/audit/2026-04-27-cx-direct-emit-inventory.md.
+fn EF64_NEG(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_SIN(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_COS(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_EXP(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_LN(S): i64   { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_LOG2(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_EXP2(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_ATAN(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+
 fn EEXIT(S): i64 {
     CX_EMIT(S, 2, 2, 0, 0);      # mov r2, r0 (exit code → arg1)
     CX_MOVI(S, 1, 60);            # r1 = 60 (SYS_EXIT)

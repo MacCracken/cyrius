@@ -761,6 +761,82 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
     return 0;
 }
 
+# v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
+# aarch64 has native FNEG for f64_neg; the transcendentals split
+# into hard-errors (sin/cos/exp2/atan — no native, no polyfill yet)
+# and polyfill-dispatch (exp/ln/log2 — dispatch to lib/math.cyr's
+# `_f64_<op>_polyfill` fns via _FINDFN_CSTR + ECALLFIX).
+
+# EF64_NEG — fmov d0, x0; fneg d0, d0; fmov x0, d0.
+fn EF64_NEG(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EW(S, 0x9E670000);   # fmov d0, x0
+    EW(S, 0x1E614000);   # fneg d0, d0
+    EW(S, 0x9E660000);   # fmov x0, d0
+    return 0;
+}
+
+# Hard-error ops (no native, no polyfill in lib/math.cyr yet).
+fn EF64_SIN(S): i64 {
+    ERR_MSG(S, "f64_sin is x86-only for v5.6.0; aarch64 has no native trig — needs polyfill", 75);
+    return 0;
+}
+
+fn EF64_COS(S): i64 {
+    ERR_MSG(S, "f64_cos is x86-only for v5.6.0; aarch64 has no native trig — needs polyfill", 75);
+    return 0;
+}
+
+fn EF64_EXP2(S): i64 {
+    ERR_MSG(S, "f64_exp2 is x86-only for v5.6.0; aarch64 has no native exp2 — needs polyfill", 76);
+    return 0;
+}
+
+fn EF64_ATAN(S): i64 {
+    ERR_MSG(S, "f64_atan is x86-only for v5.6.0; aarch64 has no native fpatan — needs polyfill", 78);
+    return 0;
+}
+
+# Polyfill-dispatch ops — find the lib/math.cyr _f64_*_polyfill fn
+# by name and emit a tail-call into it. Each pushes rax onto the
+# stack, sets up the 1-arg fncall stack-state via ECALLPOPS, then
+# ECALLFIX emits the call+fixup. Closes phylax #1 (v5.8.4 Shannon
+# entropy) lineage. _FINDFN_CSTR was relocated to util.cyr at
+# v5.11.37 so emit.cyr can resolve polyfill fn indices.
+
+fn EF64_EXP(S): i64 {
+    var pf = _FINDFN_CSTR(S, "_f64_exp_polyfill", 17);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_exp on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp_polyfill)", 78);
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
+    return 0;
+}
+
+fn EF64_LN(S): i64 {
+    var pf = _FINDFN_CSTR(S, "_f64_ln_polyfill", 16);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_ln on aarch64 requires include \"lib/math.cyr\" (provides _f64_ln_polyfill)", 76);
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
+    return 0;
+}
+
+fn EF64_LOG2(S): i64 {
+    var pf = _FINDFN_CSTR(S, "_f64_log2_polyfill", 18);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_log2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_log2_polyfill)", 80);
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
+    return 0;
+}
+
 # Emit BL to known target
 fn ECALLTO(S, target): i64 {
     var cp = GCP(S);

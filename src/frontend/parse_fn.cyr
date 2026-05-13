@@ -228,30 +228,9 @@ fn FINDFN(S, noff): i64 {
 # PEEKV). Linear scan over GFCNT(S) entries; the str_data names are
 # NUL-terminated, so we match str_len bytes AND verify the trailing
 # NUL to avoid prefix matches. Returns fn index or -1.
-fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
-    var fc = GFNC(S);
-    var fi = 0;
-    while (fi < fc) {
-        var sn = L64(S + 0x12CA000 + fi * 8);
-        var i = 0;
-        var eq = 1;
-        while (i < str_len) {
-            if (load8(S + 0x60000 + sn + i) != load8(str_ptr + i)) {
-                eq = 0;
-                i = str_len;
-            } else {
-                i = i + 1;
-            }
-        }
-        if (eq == 1) {
-            if (load8(S + 0x60000 + sn + str_len) == 0) {
-                return fi;
-            }
-        }
-        fi = fi + 1;
-    }
-    return 0 - 1;
-}
+# v5.11.37: _FINDFN_CSTR relocated to src/common/util.cyr so backend
+# emit.cyr files can resolve polyfill fn indices without forward refs.
+# See util.cyr for the definition.
 
 # NOTE: Arch-specific function emit functions (EFNPRO, ESUBRSP, EFNEPI,
 # ECALLTO, ECALLFIX, EPOPARG, ECALLPOPS, ECALLCLEAN, EDISP32,

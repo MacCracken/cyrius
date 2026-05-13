@@ -86,6 +86,38 @@ fn SSPOS(S, v): i64 { S64(S + 0x18FCC8, v); return 0; }
 # Function state accessors
 fn GFNC(S): i64 { return L64(S + 0x18DA00); }
 fn SFNC(S, v): i64 { S64(S + 0x18DA00, v); return 0; }
+
+# v5.11.37: relocated from parse_fn.cyr to util.cyr so that
+# backend emit.cyr files (included before parse_*.cyr in
+# main_*.cyr) can resolve C-string-named functions — e.g.
+# aarch64 emit.cyr's polyfill-dispatch named ops (EF64_EXP,
+# EF64_LN, EF64_LOG2) need to look up `_f64_*_polyfill` fn
+# indices at parse time. The implementation is unchanged from
+# parse_fn.cyr's version.
+fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
+    var fc = GFNC(S);
+    var fi = 0;
+    while (fi < fc) {
+        var sn = L64(S + 0x12CA000 + fi * 8);
+        var i = 0;
+        var eq = 1;
+        while (i < str_len) {
+            if (load8(S + 0x60000 + sn + i) != load8(str_ptr + i)) {
+                eq = 0;
+                i = str_len;
+            } else {
+                i = i + 1;
+            }
+        }
+        if (eq == 1) {
+            if (load8(S + 0x60000 + sn + str_len) == 0) {
+                return fi;
+            }
+        }
+        fi = fi + 1;
+    }
+    return 0 - 1;
+}
 fn GINFN(S): i64 { return L64(S + 0x18DA08); }
 fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
 fn GFLC(S): i64 { return L64(S + 0x18DA10); }

@@ -1232,6 +1232,95 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
     return 0;
 }
 
+# v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
+# x86 uses SSE2 (subsd) for f64_neg and x87 (fsin/fcos/fyl2x/etc.)
+# for transcendentals. aarch64 has native fneg but errors / dispatches
+# to lib/math.cyr polyfills for transcendentals. cx has no f64
+# opcodes in this slot (real CYX f64 ops = future work). Closes
+# Class C of docs/audit/2026-04-27-cx-direct-emit-inventory.md.
+
+# EF64_NEG — `-x` for f64. x86 SSE: subsd xmm1, xmm0 with
+# xmm1 zeroed (XORPD), result moves back through xmm0 → rax.
+fn EF64_NEG(S): i64 {
+    EMOVQ_X0_A(S);
+    EXORPD_X1(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC8);  # subsd xmm1, xmm0
+    EMOVAPD_01(S);
+    EMOVQ_A_X0(S);
+    return 0;
+}
+
+# EF64_SIN — x87 fsin (D9 FE).
+fn EF64_SIN(S): i64 {
+    EX87PUSH(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xD9); EB(S, 0xFE);
+    EX87POP(S);
+    return 0;
+}
+
+# EF64_COS — x87 fcos (D9 FF).
+fn EF64_COS(S): i64 {
+    EX87PUSH(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xD9); EB(S, 0xFF);
+    EX87POP(S);
+    return 0;
+}
+
+# EF64_EXP — x87 fldl2e; fmulp; fld st0; frndint; fsub st1,st0;
+# fxch; f2xm1; fld1; faddp; fscale; fstp st1 (22 bytes).
+fn EF64_EXP(S): i64 {
+    EX87PUSH(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xD9); EB(S, 0xEA); EB(S, 0xDE); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xC0);
+    EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9); EB(S, 0xD9); EB(S, 0xC9);
+    EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xDE); EB(S, 0xC1);
+    EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
+    EX87POP(S);
+    return 0;
+}
+
+# EF64_LN — x87 fldln2; fxch; fyl2x (6 bytes).
+fn EF64_LN(S): i64 {
+    EX87PUSH(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xD9); EB(S, 0xED); EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF1);
+    EX87POP(S);
+    return 0;
+}
+
+# EF64_LOG2 — x87 fld1; fxch; fyl2x (6 bytes).
+fn EF64_LOG2(S): i64 {
+    EX87PUSH(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF1);
+    EX87POP(S);
+    return 0;
+}
+
+# EF64_EXP2 — x87 fld st0; frndint; fsub st1,st0; fxch;
+# f2xm1; fld1; faddp; fscale; fstp st1 (18 bytes).
+fn EF64_EXP2(S): i64 {
+    EX87PUSH(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xD9); EB(S, 0xC0); EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9);
+    EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8);
+    EB(S, 0xDE); EB(S, 0xC1); EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
+    EX87POP(S);
+    return 0;
+}
+
+# EF64_ATAN — x87 fld1; fpatan (4 bytes).
+fn EF64_ATAN(S): i64 {
+    EX87PUSH(S);
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xD9); EB(S, 0xF3);
+    EX87POP(S);
+    return 0;
+}
+
 # Emit call rel32 to known target
 fn ECALLTO(S, target): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit(S, IR_CALL_KNOWN, 0, 0, target); }

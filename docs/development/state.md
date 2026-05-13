@@ -5,6 +5,34 @@
 
 ## Version
 
+**5.11.37** (shipped 2026-05-12 — **Parser-to-emit named-op
+refactor — Class C (f64 unary ops)**). Third slot of the path-A
+arc. 8 ptyps (71/83/84/85/86/87/88/99) each get their own named
+op in `<backend>/emit.cyr`; parse_expr.cyr drops the entire
+86-line `if (_AARCH64_BACKEND == 1) { … }` aarch64-dispatch block
+plus 7 post-block x86 direct-emit lines, all collapsing into 8
+per-ptyp named-op calls. Per-backend dispatch: x86 emits SSE2
+(subsd for f64_neg) and x87 (fsin/fcos/fyl2x chains for transcendentals);
+aarch64 has native FNEG for f64_neg, ERR_MSG for trig/exp2/atan
+(no native + no polyfill yet), and polyfill-dispatch via
+`_FINDFN_CSTR` + `ECALLFIX` for exp/ln/log2 (call into
+`lib/math.cyr`'s `_f64_*_polyfill` fns); cx is IR-record stubs
+(no f64 in cx yet). **`_FINDFN_CSTR` relocated** from parse_fn.cyr
+to util.cyr so emit.cyr can resolve polyfill fn indices without
+forward refs — generic string→fn-index lookup, never parse-specific.
+Direct-emit count in parse_*.cyr drops **24 → 13** (-11). cc5
+byte-identical **first-pass** at **814,960 B** (-2,040 from
+.36's 817,000 — ~85 lines of dispatch logic moved out of
+parse_expr.cyr); check.sh 67/67; cyrius test 149/149; aarch64
+cross + pi e2e: `exit=42`; **aarch64 polyfill dispatch verified
+on pi** via synthetic `include "lib/math.cyr"; fn main(): i64 {
+var x = f64_exp(0); return 0; }` → `exit=0`. **Cumulative cc5
+size delta across the arc**: .34 = 818,344 → .35 = 818,360
+(+16) → .36 = 817,000 (-1,360) → **.37 = 814,960 (-2,040)** —
+net -3,384 B (-0.41%) across 3 slots. **Arc progress**: ✅ Class
+D (.35) + ✅ Class B (.36) + ✅ Class C (.37); drift-prevention
+static-analysis gate at .38 closes the arc.
+
 **5.11.36** (shipped 2026-05-12 — **Parser-to-emit named-op
 refactor — Class B (PIC-vs-direct address loads)**). Second slot
 of the path-A arc. Replaces 3 multi-arm direct-emit blocks in
