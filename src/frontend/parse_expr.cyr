@@ -1179,8 +1179,12 @@ fn PARSE_TERM(S): i64 {
     if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
     if (ptyp == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    # f64_abs(x) — clear sign bit via integer AND
-    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EPUSHR(S); EMOVI(S, 0x7FFFFFFFFFFFFFFF); EMOVCA(S); EPOPR(S); EANDR(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    # f64_abs(x) — v5.11.40 path-A peephole. Dispatch lives in
+    # <backend>/emit.cyr::EF64_ABS: x86 movabs+and (saves 5 B vs
+    # the prior 5-instr push/movabs/movca/pop/and = 18 B); aarch64
+    # native fabs via fmov/fabs/fmov (saves 20 B vs the prior
+    # MOVK-chain + shuttle); cx no-op stub. See CHANGELOG [5.11.40].
+    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64_floor(x) — roundsd xmm0, xmm0, 1 (SSE4.1)
     if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64_ceil(x) — roundsd xmm0, xmm0, 2 (SSE4.1)

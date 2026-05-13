@@ -1312,6 +1312,23 @@ fn EF64_EXP2(S): i64 {
     return 0;
 }
 
+# EF64_ABS — `|x|` for f64. Peephole over the previous 5-instr
+# sequence (`push rax ; movabs rax, mask ; mov rcx, rax ; pop rax ;
+# and rax, rcx` = 18 bytes). New: `movabs rcx, 0x7FFFFFFFFFFFFFFF ;
+# and rax, rcx` = 13 bytes — save 5 bytes per call site. Pinned
+# in `docs/audit/2026-05-01-pre-5.8.0-audit.md` § Optimization
+# Opportunities; landed at v5.11.40 after the path-A arc.
+fn EF64_ABS(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    # movabs rcx, 0x7FFFFFFFFFFFFFFF (REX.W=48, opcode B9+rcx, 8-byte LE imm)
+    EB(S, 0x48); EB(S, 0xB9);
+    EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF);
+    EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0x7F);
+    # and rax, rcx (48 21 C8)
+    EB(S, 0x48); EB(S, 0x21); EB(S, 0xC8);
+    return 0;
+}
+
 # EF64_ATAN — x87 fld1; fpatan (4 bytes).
 fn EF64_ATAN(S): i64 {
     EX87PUSH(S);

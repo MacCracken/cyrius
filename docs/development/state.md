@@ -5,6 +5,33 @@
 
 ## Version
 
+**5.11.40** (shipped 2026-05-12 — **`f64_abs(x)` peephole —
+long-pinned optimization landed**). Closes the audit-pinned
+peephole opportunity at
+`docs/audit/2026-05-01-pre-5.8.0-audit.md` § Optimization
+Opportunities (item #17 / audit §4) pending since v5.7.x.
+**x86 reduction**: 5-instruction `push rax/movabs rax/mov rcx,rax/
+pop rax/and rax,rcx` (18 B) → 2-instruction `movabs rcx,
+0x7FFFFFFFFFFFFFFF/and rax,rcx` (13 B) — save 5 B per call site.
+**aarch64 bonus**: previous generic path (MOVK chain + shuttle,
+~32 B) → native FABS via FP-register shuttle (`fmov d0,x0 ; fabs
+d0,d0 ; fmov x0,d0` = 12 B) — save 20 B per call site. cx is
+IR-record stub (no f64 yet). Implemented as **`EF64_ABS(S)`
+named op** — same path-A pattern as the .37 EF64_* family.
+**Bench delta**: 50M-iter hot loop pre = 0.058 s → post =
+0.053 s = **-8.6%** (≈0.1 ns / 4-5 cycles per call); bench
+program binary size 680 → 672 B (-8 B incl. alignment).
+**Correctness**: `f64_abs(-1.0) → +1.0` on x86 and aarch64
+(synthetic test cross-compiled, pi e2e: `exit=42`). cc5
+byte-identical **first-pass** at **814,960 B** (+288 from
+.39's 814,672 — fn-def overhead; cc5 itself doesn't call
+f64_abs so no per-site savings land in cc5). check.sh 68/68;
+cyrius test 149/149. **Audit pin** dated 2026-05-01 sat
+unaddressed for 39 patches; landed now per the v5.11.x
+polish band ahead of the bayan + ganita carves. Pattern
+(audit-pin → bench-preflight → ship if delta justifies)
+applies to remaining audit-pinned perf opts.
+
 **5.11.39** (shipped 2026-05-12 — **`ESWITCH_DISPATCH_*` named
 ops; drift gate covers all 6 parse_*.cyr**). Closes the
 parse.cyr exclusion left after v5.11.38. parse.cyr's switch

@@ -837,6 +837,17 @@ fn EF64_LOG2(S): i64 {
     return 0;
 }
 
+# EF64_ABS — native FABS via FP register shuttle. Replaces a
+# 32-byte sequence (4× MOVK chain into x0 + push/EMOVCA-mov/pop/AND)
+# with 12 bytes — save 20 bytes per call site on aarch64.
+fn EF64_ABS(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EW(S, 0x9E670000);   # fmov d0, x0
+    EW(S, 0x1E60C000);   # fabs d0, d0
+    EW(S, 0x9E660000);   # fmov x0, d0
+    return 0;
+}
+
 # v5.11.39 path-A stubs — switch-table dispatch. aarch64 takes
 # the chain path (parse.cyr sets `use_table = 0` for
 # _AARCH64_BACKEND == 1); these ops are defined for include-time

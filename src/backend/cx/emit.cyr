@@ -256,6 +256,7 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 # stubs; real CYX f64 op coverage (coordinated with cxvm) is
 # future work tracked in docs/audit/2026-04-27-cx-direct-emit-inventory.md.
 fn EF64_NEG(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+fn EF64_ABS(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
 fn EF64_SIN(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
 fn EF64_COS(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
 fn EF64_EXP(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }

@@ -6,6 +6,86 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.40] — 2026-05-12
+
+**`f64_abs(x)` peephole — long-pinned optimization landed.**
+Closes the audit-pinned peephole opportunity at
+`docs/audit/2026-05-01-pre-5.8.0-audit.md` § Optimization
+Opportunities ("`src/backend/x86/float.cyr:41` … may still be
+reducible … pin candidate, measure first"). Pending since v5.7.x;
+landed now in the v5.11.x polish band per project-leader
+direction 2026-05-12 ("sovereignty / polish items before the
+carve arc").
+
+### Optimization
+
+Previous 5-instruction sequence emitted by `parse_expr.cyr` ptyp 80:
+
+```
+push rax               ; 50            (1 B)
+movabs rax, 0x7FFF...  ; 48 B8 + imm64 (10 B)
+mov rcx, rax           ; 48 89 C1      (3 B)
+pop rax                ; 58            (1 B)
+and rax, rcx           ; 48 21 C8      (3 B)
+                                       = 18 B total
+```
+
+Reduced to 2-instruction sequence via `EF64_ABS(S)` named op:
+
+```
+movabs rcx, 0x7FFF...  ; 48 B9 + imm64 (10 B)
+and rax, rcx           ; 48 21 C8      (3 B)
+                                       = 13 B total
+```
+
+**Save 5 bytes per `f64_abs(x)` call site on x86_64.**
+
+### Bonus: aarch64 native FABS
+
+The aarch64 backend previously took the same generic path
+(MOVK chain into x0 + push/EMOVCA-mov/pop/AND, ~32 bytes).
+Replaced with native FABS via FP-register shuttle:
+
+```
+fmov d0, x0     ; 9E670000  (move integer→FP-register bit pattern)
+fabs d0, d0     ; 1E60C000  (clear sign bit)
+fmov x0, d0     ; 9E660000  (move FP→integer)
+                            = 12 B total
+```
+
+**Save 20 bytes per `f64_abs(x)` call site on aarch64.**
+
+### Named op symmetry
+
+| Backend | Implementation |
+|---------|----------------|
+| x86 | `movabs rcx, 0x7FFFFFFFFFFFFFFF ; and rax, rcx` (13 B) |
+| aarch64 | `fmov d0, x0 ; fabs d0, d0 ; fmov x0, d0` (12 B) |
+| cx | IR record stub (CYX has no f64 yet) |
+
+### Verification
+
+- Self-host **byte-identical first-pass** at 814,960 B (+288 B
+  from .39's 814,672 — the new x86 named op adds fn-def overhead;
+  cc5 itself doesn't call f64_abs in its source, so no per-site
+  savings land in cc5).
+- `check.sh` 68/68; `cyrius test` 149/149.
+- **Correctness**: `f64_abs(-1.0)` returns `+1.0` on both x86 and
+  aarch64 (synthetic test cross-compiled, pi e2e: `exit=42`).
+- **Bench delta**: 50M-iter hot loop calling `f64_abs(x)`:
+  pre = 0.058 s → post = 0.053 s = **-8.6%** (≈0.1 ns / 4-5 cycles
+  per call). Bench-program binary size: 680 → 672 B (-8 B
+  including structural alignment).
+
+### Audit-doc reference
+
+The pin sat in
+[`docs/audit/2026-05-01-pre-5.8.0-audit.md`](docs/audit/2026-05-01-pre-5.8.0-audit.md)
+since 2026-05-01 (item #17 in § Optimization Opportunities,
+audit §4). 39 patches later it lands as a self-contained slot.
+Other audit-pinned perf opts (when they earn their bench-delta
+preflight) can ride the same shape.
+
 ## [5.11.39] — 2026-05-12
 
 **`ESWITCH_DISPATCH_*` named ops; drift gate extends to all 6
