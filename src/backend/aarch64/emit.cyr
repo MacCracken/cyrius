@@ -714,6 +714,53 @@ fn EDROPI64(S): i64 {
     return 0;
 }
 
+# v5.11.36 path-A named ops — Class B refactor (PIC-vs-direct
+# address loads). aarch64 has two emit shapes depending on
+# `_TARGET_MACHO`: ELF uses MOVZ+MOVK chain (12 bytes, FIXUP_MOV
+# patched at link time); Mach-O uses ADRP+ADD (8 bytes,
+# FIXUP_ADRP_ADD — PC-relative, required for PIE/ASLR per
+# v5.9.39 Bug B fix). Records fixup-type-3 entry at `fnaddr`.
+
+# ELOAD_FN_ADDR — load fn-address into x0. See x86/emit.cyr
+# for full semantics; aarch64 differs only in emit shape.
+fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    S64(fnaddr, GCP(S));
+    S64(fnaddr + 8, (3 << 56) | fni);
+    SFCNT(S, fc + 1);
+    if (_TARGET_MACHO == 2) {
+        EADRP(S, 0); EADD_IMM12(S, 0);
+    } else {
+        EW(S, 0xD2800000);  # movz x0, #0
+        EW(S, 0xF2A00000);  # movk x0, #0, lsl 16
+        EW(S, 0xF2C00000);  # movk x0, #0, lsl 32
+    }
+    return 0;
+}
+
+# ELOAD_LOCAL_ADDR — load address of local at fp-relative
+# `adisp` (negative) into x0. aarch64: SUB X0, X29, #imm12 when
+# |adisp| <= 4095; otherwise MOVZ/MOVK chain into x0 + SUB x0,
+# x29, x0. x86 emitted 7 raw bytes (3 + 4 disp32) here which was
+# 3 mod 4 and corrupted aarch64 instruction alignment — the
+# arch-specific encoding is mandatory not optional.
+fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    var disp_abs = 0 - adisp;
+    if (disp_abs <= 4095) {
+        # SUB X0, X29, #imm12: 0xD10003A0 | (imm12 << 10)
+        EW(S, 0xD10003A0 | ((disp_abs & 0xFFF) << 10));
+    } else {
+        # MOVZ X0, #lo16; (MOVK X0, #hi16, LSL 16); SUB X0, X29, X0
+        EW(S, 0xD2800000 | ((disp_abs & 0xFFFF) << 5));
+        if (((disp_abs >> 16) & 0xFFFF) != 0) {
+            EW(S, 0xF2A00000 | (((disp_abs >> 16) & 0xFFFF) << 5));
+        }
+        EW(S, 0xCB0003A0);  # sub x0, x29, x0
+    }
+    return 0;
+}
+
 # Emit BL to known target
 fn ECALLTO(S, target): i64 {
     var cp = GCP(S);

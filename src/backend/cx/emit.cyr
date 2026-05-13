@@ -231,6 +231,26 @@ fn EDROPI64(S): i64 {
     return 0;
 }
 
+# v5.11.36 path-A named ops — Class B refactor. cx bytecode has
+# no fn-pointer or local-address semantic in this slot; both ops
+# are no-ops with just the IR record. Real CYX `LOAD_FN_ADDR` /
+# `LOAD_LOCAL_ADDR` opcodes coordinated with cxvm are deferred.
+# Critically: cx does NOT bump SFCNT — the fixup table isn't used
+# by cxvm, and bumping fc without recording a real fixup would
+# leave empty slots in the table. (This is a slight behavior
+# improvement over the pre-refactor fn-addr site, which bumped
+# SFCNT for cx outside the arch dispatch; closure-fn-addr already
+# skipped SFCNT on cx, so this aligns the two sites.)
+fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
+fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
 fn EEXIT(S): i64 {
     CX_EMIT(S, 2, 2, 0, 0);      # mov r2, r0 (exit code → arg1)
     CX_MOVI(S, 1, 60);            # r1 = 60 (SYS_EXIT)

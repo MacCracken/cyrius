@@ -1189,6 +1189,49 @@ fn EDROPI64(S): i64 {
     return 0;
 }
 
+# v5.11.36 path-A named ops — Class B refactor (PIC-vs-direct
+# address loads). x86 splits between PIC (`_IS_OBJ` mode →
+# `lea rax, [rip+disp32]`) and direct exec (`movabs rax, imm64`).
+# Records a fixup-type-3 entry at `fnaddr` so the linker patches
+# the placeholder when the target fn's address is known.
+
+# ELOAD_FN_ADDR — load fn-address into rax (x86) / x0 (aarch64).
+# Used by `&fn_name` and closure-fn literal sites in parse_expr.cyr.
+# `fnaddr` = pre-allocated fixup-table slot at `S+0x198B000+fc*16`;
+# `fc` = current fixup-table index (named op bumps SFCNT internally);
+# `fni` = fn index recorded in the fixup metadata word.
+fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    if (_IS_OBJ(S) == 1) {
+        # LEA rax, [rip+disp32]: 48 8D 05 <rel32> (PIC-safe)
+        EB(S, 0x48); EB(S, 0x8D); EB(S, 0x05);
+        S64(fnaddr, GCP(S));
+        S64(fnaddr + 8, (3 << 56) | fni);
+        SFCNT(S, fc + 1);
+        EDISP32(S, 0);
+    } else {
+        # MOVABS rax, imm64: 48 B8 <imm64>
+        E2(S, 0xB848);
+        S64(fnaddr, GCP(S));
+        S64(fnaddr + 8, (3 << 56) | fni);
+        SFCNT(S, fc + 1);
+        E8(S, 0);
+    }
+    return 0;
+}
+
+# ELOAD_LOCAL_ADDR — load address of local at rbp-relative
+# `adisp` (negative) into rax. x86: `lea rax, [rbp+disp32]`
+# (7 bytes; disp32 patched in-place via direct buffer write).
+fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    E3(S, 0x858D48);
+    var aaddr = S + 0x64A000 + GCP(S);
+    S64(aaddr, (L64(aaddr) >> 32 << 32) | (adisp & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+
 # Emit call rel32 to known target
 fn ECALLTO(S, target): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit(S, IR_CALL_KNOWN, 0, 0, target); }

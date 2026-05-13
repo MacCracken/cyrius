@@ -5,6 +5,32 @@
 
 ## Version
 
+**5.11.36** (shipped 2026-05-12 — **Parser-to-emit named-op
+refactor — Class B (PIC-vs-direct address loads)**). Second slot
+of the path-A arc. Replaces 3 multi-arm direct-emit blocks in
+`parse_expr.cyr` (each with aarch64 + cx + x86 PIC + x86 direct
+sub-arms) with **2 named ops**: `ELOAD_FN_ADDR(S, fnaddr, fc, fni)`
+(used by both `&fn_name` and closure-fn literal — identical emit
+shape) and `ELOAD_LOCAL_ADDR(S, adisp)`. Each backend's emit.cyr
+holds the active implementation; cx stubs are no-op + IR record.
+**parse_expr.cyr drops its 4-level arch dispatch** at 3 sites —
+~110 lines of dispatch logic collapsed into 3 named-op calls.
+Direct-emit count in parse_*.cyr drops 36 → 24 (-12).
+**Behavior alignment**: pre-refactor, fn-addr bumped SFCNT
+unconditionally while closure-fn-addr skipped SFCNT on cx;
+post-refactor both route through `ELOAD_FN_ADDR` whose cx arm
+skips SFCNT — aligning the two sites and avoiding empty
+fixup-table slots in cx output. cx output bytes unchanged (cxvm
+doesn't consume the fixup table); cc5 self-host byte-identical
+because cc5 isn't compiled via cx. cc5 byte-identical
+**first-pass** at **817,000 B** (-1,360 from .35's 818,360 —
+refactor consolidation moves emit logic out of parse_expr.cyr
+into centralized named ops, shrinking the compiler's own code
+surface); check.sh 67/67; cyrius test 149/149; aarch64 cross +
+pi e2e: `exit=42`. **Arc progress**: ✅ Class D (.35) + ✅ Class B
+(.36); Class C f64/struct-return queued at .37; drift-prevention
+gate at .38.
+
 **5.11.35** (shipped 2026-05-12 — **Parser-to-emit named-op
 refactor — Class D**). First slot of the path-A arc pinned for
 v5.11.x close per the 2026-05-12 tight-close decision; replaces 3

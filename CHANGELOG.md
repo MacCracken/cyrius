@@ -6,6 +6,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.36] — 2026-05-12
+
+**Parser-to-emit named-op refactor — Class B (PIC-vs-direct
+address loads).** Second slot of the path-A arc. Replaces 3
+multi-arm direct-emit blocks in `parse_expr.cyr` (each with
+aarch64 + cx + x86 PIC + x86 direct sub-arms) with 2 named ops
+that each backend's `emit.cyr` implements. parse_expr.cyr drops
+its 4-level arch dispatch; named ops handle backend specifics
+internally including the fixup-table records.
+
+### Named ops added
+
+| Op | x86 | aarch64 | cx |
+|----|-----|---------|-----|
+| `ELOAD_FN_ADDR(S, fnaddr, fc, fni)` | LEA rip-rel32 (PIC) or MOVABS imm64 (direct) + fixup type-3 + SFCNT | MOVZ+MOVK chain (ELF) or ADRP+ADD (Mach-O) + fixup + SFCNT | no-op + IR record |
+| `ELOAD_LOCAL_ADDR(S, adisp)` | LEA rax, [rbp+disp32] | SUB X0, X29, #imm12 (or MOVZ/MOVK + SUB chain when disp > 4 KB) | no-op + IR record |
+
+`ELOAD_FN_ADDR` covers both `&fn_name` (line ~336 pre-refactor)
+and closure-fn-literals (line ~891 pre-refactor) — identical
+emit shape, same fixup type, same SFCNT semantics. The two
+sites unify under one named op.
+
+### parse_expr.cyr sites refactored
+
+- `&fn_name` site (~336-380): 5 arch-arm `if/elif/elif/else` dispatch + inline SFCNT → 1-line `ELOAD_FN_ADDR` call
+- `&local` site (~390-419): 3 arch-arm dispatch → 1-line `ELOAD_LOCAL_ADDR` call
+- Closure-fn literal (~891-925): 5 arch-arm dispatch (mirror of fn-addr) → 1-line `ELOAD_FN_ADDR` call
+
+Total: ~110 lines of dispatch logic collapsed into 3 named-op
+calls. Direct-emit count in parse_*.cyr drops 36 → 24 (-12).
+
+### Behavior note (cx fixup-counter alignment)
+
+Pre-refactor: the `&fn_name` site bumped SFCNT unconditionally
+(outside the arch dispatch), while the closure-fn site bumped
+SFCNT only inside the x86/aarch64 arms (cx skipped). Post-refactor,
+both sites route through `ELOAD_FN_ADDR` whose cx arm does NOT
+bump SFCNT — aligning the two sites and avoiding empty fixup-table
+slots in cx output. cx output bytes are unchanged (no fixup table
+is consumed by cxvm); cc5 self-host is byte-identical because cc5
+isn't compiled via cx.
+
+### Verification
+
+- Self-host **byte-identical first-pass** at 817,000 B (-1,360 B
+  from .35's 818,360 — refactor consolidation moves ~110 lines
+  of emit logic out of parse_expr.cyr into the centralized
+  named ops, shrinking the compiler's own code surface).
+- `check.sh` 67/67; `cyrius test` 149/149.
+- aarch64 cross-compile + pi e2e: `exit=42` (validates the
+  named-op aarch64 emit path produces a working binary).
+
+### Arc progress
+
+- ✅ **.35 — Class D** (unconditional shared) — shipped
+- ✅ **.36 — Class B** (PIC-vs-direct address loads) — this slot
+- **.37 — Class C** (f64 ops + struct-return — x86-only sites
+  that error on aarch64) — next
+- **.38 — drift-prevention static-analysis gate** + check.sh
+  wire-up
+
 ## [5.11.35] — 2026-05-12
 
 **Parser-to-emit named-op refactor — Class D (v5.7.12 audit doc).**

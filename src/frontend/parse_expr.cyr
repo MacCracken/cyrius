@@ -334,50 +334,10 @@ fn PARSE_FACTOR(S): i64 {
             # Register the function-address fixup (common to both
             # backends — only the placeholder bytes differ).
             var fnaddr = S + 0x198B000 + fc * 16;
-            SFCNT(S, fc + 1);
-            # v5.6.12: `&fn_name` address-emit — per-arch raw encoding
-            # with fixup-patched immediate. One marker covers all arches.
-            _IR_REC0(S, IR_RAW_EMIT);
-            if (_AARCH64_BACKEND == 1) {
-                # aarch64 Linux: 3 MOVZ/MOVK instructions (12 bytes)
-                # holding the absolute function address — patched by
-                # FIXUP_MOV at link time.
-                # aarch64 Mach-O: 2 ADRP/ADD instructions (8 bytes)
-                # holding a PC-relative reference — patched by
-                # FIXUP_ADRP_ADD. Required for PIE/ASLR; absolute
-                # MOVZ-chain addresses don't survive dyld's image slide
-                # (v5.9.39 Bug B fix; was the root cause behind the
-                # Mach-O `#derive(Serialize)` SIGSEGV cascade tracked
-                # in v5.9.38 Fix A's lib/fnptr.cyr companion).
-                S64(fnaddr, GCP(S));
-                S64(fnaddr + 8, (3 << 56) | fni);
-                if (_TARGET_MACHO == 2) {
-                    EADRP(S, 0); EADD_IMM12(S, 0);
-                } else {
-                    EW(S, 0xD2800000);  # movz x0, #0
-                    EW(S, 0xF2A00000);  # movk x0, #0, lsl 16
-                    EW(S, 0xF2C00000);  # movk x0, #0, lsl 32
-                }
-            } elif (_TARGET_CX == 1) {
-                # v5.7.12 path B: cx bytecode has no fn-pointer
-                # semantic in this slot. Skip the emit + skip fixup
-                # registration (cx output uses bytecode opcodes, not
-                # the x86/aarch64 fixup table). Simple programs in
-                # the v5.7.12 acceptance gate do not exercise &fn,
-                # so this no-op is safe. Real CYX fn-addr opcode is
-                # path A future work.
-            } elif (_IS_OBJ(S) == 1) {
-                # LEA rax, [rip+disp32]: 48 8D 05 <rel32> (PIC-safe)
-                EB(S, 0x48); EB(S, 0x8D); EB(S, 0x05);
-                S64(fnaddr, GCP(S));
-                S64(fnaddr + 8, (3 << 56) | fni);
-                EDISP32(S, 0);
-            } else {
-                E2(S, 0xB848);
-                S64(fnaddr, GCP(S));
-                S64(fnaddr + 8, (3 << 56) | fni);
-                E8(S, 0);
-            }
+            # v5.11.36 path-A: parser-to-emit named-op refactor.
+            # Dispatch + fixup record + SFCNT all live in
+            # <backend>/emit.cyr::ELOAD_FN_ADDR.
+            ELOAD_FN_ADDR(S, fnaddr, fc, fni);
             return 0;
         }
         if (GINFN(S) == 1) {
@@ -387,36 +347,9 @@ fn PARSE_FACTOR(S): i64 {
                 # v4.9.1: shift past all reserved callee-saved slots
                 if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }
                 if (_cur_fn_ret_stash > 0) { adisp = adisp - _cur_fn_ret_stash; }
-                # v5.6.12: `&local` address-emit (x86 LEA vs aarch64
-                # SUB X0, X29, #imm) — raw multi-byte encoding.
-                _IR_REC0(S, IR_RAW_EMIT);
-                if (_AARCH64_BACKEND == 1) {
-                    # aarch64: SUB X0, X29, #|adisp|. adisp is negative.
-                    # x86 emitted `LEA rax, [rbp+disp32]` here as 7 raw
-                    # bytes (3 + 4) — that's 3 mod 4 and corrupted code
-                    # alignment downstream (every &local mis-shifted the
-                    # codebuf, accumulating SIGILLs by ELF entry time).
-                    var disp_abs = 0 - adisp;
-                    if (disp_abs <= 4095) {
-                        # SUB X0, X29, #imm12: 0xD10003A0 | (imm12 << 10)
-                        EW(S, 0xD10003A0 | ((disp_abs & 0xFFF) << 10));
-                    } else {
-                        # MOVZ X0, #lo16; (MOVK X0, #hi16, LSL 16); SUB X0, X29, X0
-                        EW(S, 0xD2800000 | ((disp_abs & 0xFFFF) << 5));
-                        if (((disp_abs >> 16) & 0xFFFF) != 0) {
-                            EW(S, 0xF2A00000 | (((disp_abs >> 16) & 0xFFFF) << 5));
-                        }
-                        EW(S, 0xCB0003A0);  # sub x0, x29, x0
-                    }
-                } elif (_TARGET_CX == 1) {
-                    # v5.7.12 path B: cx no &local opcode in this slot.
-                    # No-op. Real CYX LOAD_LOCAL_ADDR = path A.
-                } else {
-                    E3(S, 0x858D48);
-                    var aaddr = S + 0x64A000 + GCP(S);
-                    S64(aaddr, (L64(aaddr) >> 32 << 32) | (adisp & 0xFFFFFFFF));
-                    SCP(S, GCP(S) + 4);
-                }
+                # v5.11.36 path-A: dispatch lives in
+                # <backend>/emit.cyr::ELOAD_LOCAL_ADDR.
+                ELOAD_LOCAL_ADDR(S, adisp);
                 return 0;
             }
         }
@@ -889,41 +822,9 @@ fn PARSE_FACTOR(S): i64 {
             syscall(SYS_EXIT, 1);
         }
         var clfaddr = S + 0x198B000 + clfc * 16;
-        # v5.6.12: closure-literal address-emit, mirrors `&fn_name` shape.
-        _IR_REC0(S, IR_RAW_EMIT);
-        if (_AARCH64_BACKEND == 1) {
-            # aarch64 Linux: 3 MOVZ/MOVK instructions (12 bytes) for
-            # the absolute closure address — FIXUP_MOV patches it.
-            # aarch64 Mach-O: 2 ADRP/ADD instructions (8 bytes) for a
-            # PC-relative reference — FIXUP_ADRP_ADD. Required for
-            # PIE/ASLR (v5.9.39 — same Bug B fix as `&fn_name` above).
-            S64(clfaddr, GCP(S));
-            S64(clfaddr + 8, (3 << 56) | clfi);
-            SFCNT(S, clfc + 1);
-            if (_TARGET_MACHO == 2) {
-                EADRP(S, 0); EADD_IMM12(S, 0);
-            } else {
-                EW(S, 0xD2800000);  # movz x0, #0
-                EW(S, 0xF2A00000);  # movk x0, #0, lsl 16
-                EW(S, 0xF2C00000);  # movk x0, #0, lsl 32
-            }
-        } elif (_TARGET_CX == 1) {
-            # v5.7.12 path B: cx bytecode no closure-fn-addr in
-            # this slot. Skip emit + fixup. Same shape as the
-            # &fn_name cx arm above. Real CYX opcode = path A.
-        } elif (_IS_OBJ(S) == 1) {
-            EB(S, 0x48); EB(S, 0x8D); EB(S, 0x05);
-            S64(clfaddr, GCP(S));
-            S64(clfaddr + 8, (3 << 56) | clfi);
-            SFCNT(S, clfc + 1);
-            EDISP32(S, 0);
-        } else {
-            E2(S, 0xB848);
-            S64(clfaddr, GCP(S));
-            S64(clfaddr + 8, (3 << 56) | clfi);
-            SFCNT(S, clfc + 1);
-            E8(S, 0);
-        }
+        # v5.11.36 path-A: closure-fn-addr uses the same named op
+        # as `&fn_name` — identical emit shape, same fixup type.
+        ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
         return 0;
     }
     ERR(S);
