@@ -272,6 +272,20 @@ fn EF64_CMP(S, tok): i64 {
     return 0;
 }
 
+# v5.11.39 path-A stubs — switch-table dispatch. cx takes the
+# chain path (parse.cyr now sets `use_table = 0` for _TARGET_CX
+# == 1, paired guard at the existing aarch64 one). Stubs for
+# include-time symmetry.
+fn ESWITCH_DISPATCH_PRE(S, case_min, range): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
+fn ESWITCH_DISPATCH_TABLE(S, range): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
 fn EEXIT(S): i64 {
     CX_EMIT(S, 2, 2, 0, 0);      # mov r2, r0 (exit code → arg1)
     CX_MOVI(S, 1, 60);            # r1 = 60 (SYS_EXIT)

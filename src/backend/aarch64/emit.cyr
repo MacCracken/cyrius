@@ -837,6 +837,20 @@ fn EF64_LOG2(S): i64 {
     return 0;
 }
 
+# v5.11.39 path-A stubs — switch-table dispatch. aarch64 takes
+# the chain path (parse.cyr sets `use_table = 0` for
+# _AARCH64_BACKEND == 1); these ops are defined for include-time
+# symmetry but never invoked at compile time.
+fn ESWITCH_DISPATCH_PRE(S, case_min, range): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
+fn ESWITCH_DISPATCH_TABLE(S, range): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    return 0;
+}
+
 # EF64_CMP — aarch64 f64 compare. Stack on entry: a in x1 (pushed
 # earlier as the second operand), b in x0 (current). Uses FCMP +
 # CSET with the ordered condition codes (MI for lt so unordered/

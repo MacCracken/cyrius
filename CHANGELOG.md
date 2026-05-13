@@ -6,6 +6,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.39] — 2026-05-12
+
+**`ESWITCH_DISPATCH_*` named ops; drift gate extends to all 6
+parse_*.cyr files.** Closes the parse.cyr exclusion left after
+v5.11.38. The switch jump-table dispatch — previously emitted
+inline at `parse.cyr:217-243` as 6 direct `E2/E3/EB` hex literals
+— moves into 2 named ops in each backend's `emit.cyr`. Also adds
+the matching `_TARGET_CX == 1` use_table guard that was missing
+alongside the existing `_AARCH64_BACKEND == 1` one (cx previously
+would have fallen through to the x86-only emit path; latent
+bug fixed alongside the refactor).
+
+### Named ops added
+
+| Op | x86 emit | aarch64 / cx |
+|----|----------|--------------|
+| `ESWITCH_DISPATCH_PRE(S, case_min, range)` | `sub rax, case_min ; cmp rax, range` (via EMOVI→EMOVCA shuttle through rcx) | IR record stub |
+| `ESWITCH_DISPATCH_TABLE(S, range) → table_cp` | `lea rcx, [rip+disp32] ; movsxd rax, [rcx+rax*4] ; add rax, rcx ; jmp rax ; <(range+1) × 4 zeroes>` + patches the lea disp32 in-place to point at the reserved table | IR record stub, returns 0 |
+
+The `lea_patch` arithmetic is fully encapsulated inside
+`ESWITCH_DISPATCH_TABLE` — the parser never sees it. EJCC stays
+inline at the call site because it returns `default_patch` (used
+much later when the `default:` case body is parsed); splitting
+into 2 named ops with EJCC between is the cleanest fit for the
+single-return-value pattern.
+
+### parse.cyr refactor
+
+- Lines 217-243 (27 lines): inline sub/cmp/ja/lea/movsxd/add/jmp
+  emit + table-zero loop + lea_patch arithmetic.
+- → 3 named-op calls (PRE + EJCC + TABLE) + `var ti = 0;` to
+  preserve the later gap-fill loop's loop variable.
+- Direct emits in parse.cyr: **6 → 0**.
+
+### cx guard added (latent-bug fix)
+
+Pre-refactor: `if (_AARCH64_BACKEND == 1) { use_table = 0; }` was
+the only arch guard. cx with `_TARGET_CX == 1` would have hit the
+x86-emit path. Post-refactor: `_TARGET_CX == 1` paired guard
+added — cx takes the chain (linear comparison) path which has
+no x86 byte emit.
+
+### Drift gate extended
+
+`_parse_emit_drift_gate` now scans all 6 parse_*.cyr files
+(adds `parse.cyr` to the prior 5 leaves). Baseline 0 hits across
+the full set. The path-A drift-prevention surface is now
+complete.
+
+### Verification
+
+- Self-host **byte-identical first-pass** at 814,672 B (+272 B
+  from .38's 814,400 — 2 new x86 named ops; inline emit that
+  moved out is offset by the slight overhead of fn-call setup
+  at the parser site).
+- `check.sh` 68/68; `cyrius test` 149/149.
+- Synthetic switch dispatch test (5-case sparse switch + default)
+  cross-compiled to x86 and aarch64, both `exit=7`
+  (1799 mod 256 — verifies all 5 case bodies + the default arm
+  fire correctly across both backends).
+
+### Path-A arc fully closed
+
+With .39 shipped, all 6 parse_*.cyr files have zero direct emits
++ the drift gate watches all of them. The Class A through D arc
+(.35-.38) covered the audit's leaf-file scope; .39 extends to
+the parse.cyr dispatcher. Cumulative cc5 size delta:
+
+| Slot | Focus | cc5 size | Δ |
+|------|-------|----------|---|
+| .34 baseline | (pre-arc) | 818,344 | — |
+| .35 | Class D | 818,360 | +16 |
+| .36 | Class B | 817,000 | -1,360 |
+| .37 | Class C | 814,960 | -2,040 |
+| .38 | Class B missed + drift gate | 814,400 | -560 |
+| **.39** | **ESWITCH + parse.cyr drift-clean** | **814,672** | **+272** |
+| **Net** | | | **-3,672 B / -0.45%** |
+
 ## [5.11.38] — 2026-05-12
 
 **Parser-to-emit named-op refactor — Class B missed-site +

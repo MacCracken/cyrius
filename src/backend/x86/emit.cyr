@@ -1321,6 +1321,56 @@ fn EF64_ATAN(S): i64 {
     return 0;
 }
 
+# v5.11.39 path-A named ops — switch-table dispatch (closes
+# parse.cyr's pre-arc direct-emit block at lines ~217-243). x86
+# emits a `sub/cmp/ja-default/lea/movsxd/add/jmp/<zero-table>`
+# sequence; aarch64/cx never enter this path because parse.cyr
+# gates `use_table = 0` for both before reaching the dispatch.
+# Closes the parse.cyr exclusion in `_parse_emit_drift_gate`.
+
+# ESWITCH_DISPATCH_PRE — emit the rax-range-check prelude:
+#   sub rax, case_min ; cmp rax, range
+# Both use the EMOVI→EMOVCA shuttle via rcx (which is why the
+# named-op wraps EPUSHR/EPOPR pairs around each immediate setup).
+# Parser follows this with `EJCC(S, 0x87)` for `ja default`.
+fn ESWITCH_DISPATCH_PRE(S, case_min, range): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EPUSHR(S); EMOVI(S, case_min); EMOVCA(S); EPOPR(S);
+    E3(S, 0xC82948);     # sub rax, rcx
+    EPUSHR(S); EMOVI(S, range); EMOVCA(S); EPOPR(S);
+    E3(S, 0xC83948);     # cmp rax, rcx
+    return 0;
+}
+
+# ESWITCH_DISPATCH_TABLE — emit the rip-relative table dispatch +
+# reserve (range+1) × 4 bytes of zero-init table. Returns
+# `table_cp` (the codebuf offset of the table base) so the
+# parser can patch entry N via
+# `S + 0x64A000 + table_cp + (val - case_min) * 4`.
+# Sequence: lea rcx, [rip+placeholder] ; movsxd rax, [rcx+rax*4] ;
+#           add rax, rcx ; jmp rax ; <(range+1) × 4 zeroes>.
+# The lea's disp32 placeholder is patched in-place to point at
+# `table_cp` (= GCP after the jmp emit) before the zero table is
+# written — keeps the patch arithmetic local to the named op.
+fn ESWITCH_DISPATCH_TABLE(S, range): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    E3(S, 0x0D8D48);     # lea rcx, [rip+disp32]
+    var lea_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);  # disp32 placeholder
+    EB(S, 0x48); EB(S, 0x63); EB(S, 0x04); EB(S, 0x81);  # movsxd rax, [rcx+rax*4]
+    E3(S, 0xC80148);     # add rax, rcx
+    E2(S, 0xE0FF);       # jmp rax
+    var table_cp = GCP(S);
+    var lea_disp = table_cp - lea_patch - 4;
+    var la = S + 0x64A000 + lea_patch;
+    S64(la, (L64(la) >> 32 << 32) | (lea_disp & 0xFFFFFFFF));
+    # Table data — not code. Mark raw so DBE/LASE ignore the range.
+    _IR_REC0(S, IR_RAW_EMIT);
+    var ti = 0;
+    while (ti <= range) { EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0); ti = ti + 1; }
+    return table_cp;
+}
+
 # EF64_CMP — f64 comparison (`==`, `<`, `>`). Class B missed-site
 # closed at v5.11.38. Stack on entry: top = a, second = b (pushed
 # earlier). Result in rax: 1 if cmp holds, 0 otherwise.

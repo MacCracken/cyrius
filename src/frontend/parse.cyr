@@ -198,12 +198,18 @@ fn PARSE_SWITCH(S): i64 {
             if (range < 1024) { use_table = 1; }
         }
     }
-    # v5.6.0: jump-table path emits raw x86 (`lea rip-rel`, `movsxd`,
-    # `add`, `jmp rax`, raw 4-byte table). aarch64 falls through to the
-    # linear-comparison path below until an aarch64 jump-table emitter
-    # lands. Without this gate, every aarch64 switch with >=4 cases and
-    # range <1024 corrupts the codebuf.
+    # v5.6.0 + v5.11.39: jump-table path is x86-only. aarch64 and cx
+    # take the chain path (linear comparison) — aarch64 has no jump-
+    # table emitter today, and cx bytecode has no analog of rip-
+    # relative LEA + indirect JMP via a packed-i32 table. Without
+    # these guards the named-op layer would still no-op out for both
+    # (the stubs in <arch>/emit.cyr are pure IR-record), but the
+    # parser would still emit the `EJCC` jump pre-table that has no
+    # corresponding back-patch on the no-op path — leaving a stranded
+    # `ja default` in cx output. Setting use_table = 0 here keeps the
+    # parser on the correctness-preserving chain path.
     if (_AARCH64_BACKEND == 1) { use_table = 0; }
+    if (_TARGET_CX == 1) { use_table = 0; }
     # Allocate hidden global to hold switch value
     var swidx = GVCNT(S);
     S64(S + 0x11A000 + swidx * 8, 0);
@@ -212,35 +218,15 @@ fn PARSE_SWITCH(S): i64 {
     EVSTORE(S, swidx);
     if (use_table == 1) {
         # === JUMP TABLE PATH ===
-        # v5.6.12: mark the entire x86 jump-table dispatch block as raw
-        # so DBE/LASE don't try to touch its range.
-        _IR_REC0(S, IR_RAW_EMIT);
-        # Emit: sub rax, min
-        EPUSHR(S); EMOVI(S, case_min); EMOVCA(S); EPOPR(S);
-        E3(S, 0xC82948);
-        # Emit: cmp rax, range (unsigned)
-        EPUSHR(S); EMOVI(S, range); EMOVCA(S); EPOPR(S);
-        E3(S, 0xC83948);
-        # Emit: ja default (0F 87 rel32)
-        var default_patch = EJCC(S, 0x87);
-        # Emit: lea rcx, [rip+0] (48 8D 0D 00000000) — patched to table
-        E3(S, 0x0D8D48); var lea_patch = GCP(S); EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-        # Emit: movsxd rax, [rcx+rax*4] (48 63 04 81)
-        EB(S, 0x48); EB(S, 0x63); EB(S, 0x04); EB(S, 0x81);
-        # Emit: add rax, rcx (48 01 C8)
-        E3(S, 0xC80148);
-        # Emit: jmp rax (FF E0)
-        E2(S, 0xE0FF);
-        # Patch lea disp32: table starts right here
-        var table_cp = GCP(S);
-        var lea_disp = table_cp - lea_patch - 4;
-        var la = S + 0x64A000 + lea_patch;
-        S64(la, (L64(la) >> 32 << 32) | (lea_disp & 0xFFFFFFFF));
-        # Emit table: (range+1) entries * 4 bytes, all zeros initially
-        # v5.6.12: table data — not code. Mark raw so DBE ignores range.
-        _IR_REC0(S, IR_RAW_EMIT);
+        # v5.11.39 path-A: dispatch sequence + reserved zero table
+        # live in <backend>/emit.cyr. Parser keeps the `EJCC` call
+        # between the two named ops since EJCC returns the
+        # default-jump patch position (back-patched when the
+        # `default:` case body is parsed).
+        ESWITCH_DISPATCH_PRE(S, case_min, range);
+        var default_patch = EJCC(S, 0x87);   # ja default
+        var table_cp = ESWITCH_DISPATCH_TABLE(S, range);
         var ti = 0;
-        while (ti <= range) { EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0); ti = ti + 1; }
         # Parse case bodies, patching table entries
         var ends[256];
         var ec = 0;

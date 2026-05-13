@@ -1245,13 +1245,11 @@ fn _parse_emit_drift_gate(): i64 {
     var cap = 262144;     # 256 KB — fits any parse_*.cyr
     var buf = alloc(cap);
     var fail = 0;
-    # Scope: the 5 leaf parse files audited at v5.7.11
-    # (docs/audit/2026-04-27-cx-direct-emit-inventory.md raw-counts
-    # table). v5.11.35-.38 path-A drove this set to zero. `parse.cyr`
-    # itself (the dispatcher) holds a separate switch-jump-table
-    # direct-emit block at line ~220-243 that wasn't in the audit's
-    # scope; pending a follow-up `ESWITCH_TABLE` refactor before it
-    # joins the gate.
+    # Scope: all 6 parse files. v5.11.38 covered the 5 audited
+    # leaves; v5.11.39 added `ESWITCH_DISPATCH_PRE` +
+    # `ESWITCH_DISPATCH_TABLE` named ops that closed parse.cyr's
+    # switch-jump-table direct emits. parse.cyr now joins the gate.
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse.cyr"),       buf, cap);
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_ctrl.cyr"),  buf, cap);
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_decl.cyr"),  buf, cap);
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_expr.cyr"),  buf, cap);
@@ -1262,9 +1260,9 @@ fn _parse_emit_drift_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        _p(": no direct emits in 5 audited parse_*.cyr leaves (path-A baseline at v5.11.37)\n");
+        _p(": no direct emits in all 6 parse_*.cyr files (path-A baseline at v5.11.39)\n");
     }
-    _check("path-A drift gate: parse_*.cyr direct-emit zero baseline (v5.11.38)", fail);
+    _check("path-A drift gate: parse_*.cyr direct-emit zero baseline (v5.11.39)", fail);
     return fail;
 }
 
