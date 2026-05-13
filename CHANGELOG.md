@@ -6,6 +6,82 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.41] — 2026-05-12
+
+**CVE-08 security hardening (`cld` before `rep movsb`) +
+doc-cleanup: `completed-phases.md` phase-out trim + roadmap
+held-items reconciliation.** Code + docs paired per
+[[feedback_release_needs_code_not_just_docs]] ("I DON'T SHIP
+AIR" — user 2026-05-12). The doc cleanup was the original
+2026-05-12 sweep direction; the CVE-08 fix was found during the
+sweep of pending audit items.
+
+### CVE-08 — direction-flag hardening before rep movsb
+
+`docs/audit/2026-04-13-security-audit.md` § CVE-08 flagged that
+`rep movsb` / `rep stosb` depend on the direction flag (DF)
+being clear. SysV ABI requires DF=0 at fn entry, but a signal
+handler or foreign inline asm could set DF=1 — `rep movsb` with
+DF=1 copies backward and silently corrupts memory.
+
+**Fix**: prepend `cld` (opcode `0xFC`, 1 byte) before the
+`rep movsb` (`F3 A4`) in `ESTRUCT_BYVAL_COPY` at
+`src/backend/x86/emit.cyr:442`. This is the only `rep` emit
+in the toolchain — `lib/string.cyr`'s historical `rep movsb` /
+`rep stosb` inline asm got removed pre-v5.0 in favor of
+pure-Cyrius byte loops; only the compiler-emitted struct-by-
+value-return path still uses `rep movsb`.
+
+**Audit closure**: CVE-08 was originally pinned for v4.3.x.
+38 minor patches later it lands as a self-contained 1-byte
+fix at v5.11.41. Other audit P2/P3 items (CVE-07 PIE,
+CVE-09 jump-table overflow, CVE-10 temp-file race, CVE-11 stack
+canaries, CVE-12 seed trust, CVE-13 release signing) remain —
+file as future-slot candidates as conditions surface.
+
+### completed-phases.md trim — 627 → 95 lines
+
+Per the doc-canonical pin "completed-phases.md sits between
+with no unique role and is on phase-out track." v5.11.41 acts
+on that track. The per-version v0.9.x → v5.9.x narrative
+(572 lines) duplicated CHANGELOG entries + vidya retros +
+state.md current-cycle blocks. **Preserved**: Phase 0–11
+retrospective (lines 1–55) — the only single-glance summary
+of cyrius's pre-cycle foundation arcs. Pointer block added
+listing vidya retros + CHANGELOG + state.md so readers know
+where the missing detail moved.
+
+### Roadmap held-items reconciliation
+
+`docs/development/roadmap.md` carried stale "Held items" entries
+for shipped work:
+
+| Item | Status | Cleared |
+|------|--------|---------|
+| `float.cyr:41` peephole pattern | ✅ Shipped v5.11.40 (`EF64_ABS(S)`) | both held-item lists |
+| `ESTORESTACKPARM` cx >6 args | ✅ Folded into v5.9.33 cx Phase 2c parity | "Held items (surfacing-ask)" |
+| TS test harness program | ✅ Shipped v5.11.11 (`ts_test_runner`) | user-directed survey |
+
+Remaining held: **Class B FFI / wgpu fncall6 ABI** (mabda B1/B2)
+and **`cyim` regex pattern parse error** (mabda C6) — both
+still gated on consumer-surface trigger conditions.
+
+### Verification
+
+- Self-host **byte-identical first-pass** at 814,992 B (+32 B
+  from .40 — the `cld` byte in `ESTRUCT_BYVAL_COPY` ripples
+  into cc5's own emit when its struct-returning fns compile).
+- `check.sh` 68/68; `cyrius test` 149/149.
+- **Struct-by-value-return correctness** post-`cld`: synthetic
+  4-field struct `make_p() → P` returns `10+20+30+40 = 100`
+  (exit=100).
+
+### Follow-up
+
+- **v5.11.42** — full roadmap sweep for stray-not-pinned
+  items; bring code-actionable strays into cycle as new slot
+  pins.
+
 ## [5.11.40] — 2026-05-12
 
 **`f64_abs(x)` peephole — long-pinned optimization landed.**

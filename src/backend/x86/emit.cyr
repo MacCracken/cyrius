@@ -438,8 +438,13 @@ fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned): i64 {
     EB(S, (aligned >> 8) & 0xFF);
     EB(S, (aligned >> 16) & 0xFF);
     EB(S, (aligned >> 24) & 0xFF);
-    # rep movsb
-    EB(S, 0xF3); EB(S, 0xA4);
+    # v5.11.41 CVE-08 hardening: cld clears DF=0 before rep movsb.
+    # SysV ABI requires DF=0 at fn entry, but a signal handler or
+    # foreign inline asm could set DF=1; rep movsb with DF=1 copies
+    # backward and corrupts memory. Single-byte fix per
+    # docs/audit/2026-04-13-security-audit.md § CVE-08.
+    EB(S, 0xFC);                # cld
+    EB(S, 0xF3); EB(S, 0xA4);   # rep movsb
     EB(S, 0x5F);                                    # pop rdi
     EB(S, 0x5E);                                    # pop rsi
     # mov rax, [rbp + stash_disp]   (rep movsb advanced rdi)

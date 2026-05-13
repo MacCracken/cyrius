@@ -5,6 +5,37 @@
 
 ## Version
 
+**5.11.41** (shipped 2026-05-12 — **CVE-08 security hardening
+(`cld` before `rep movsb`) + doc-cleanup**). Code + docs
+paired per `feedback_release_needs_code_not_just_docs` ("I DON'T
+SHIP AIR" — user 2026-05-12 after I attempted a doc-only bump).
+**CVE-08 fix**: prepend `cld` (opcode `0xFC`, 1 byte) before
+the `rep movsb` (`F3 A4`) in `ESTRUCT_BYVAL_COPY` at
+`src/backend/x86/emit.cyr:442` — SysV ABI requires DF=0 at fn
+entry but a signal handler / foreign inline asm could set DF=1;
+`rep movsb` with DF=1 copies backward and silently corrupts
+memory. `lib/string.cyr`'s historical `rep movsb` / `rep stosb`
+inline asm was removed pre-v5.0 in favor of pure-Cyrius byte
+loops; only the compiler-emitted struct-by-value-return path
+still uses `rep movsb`. Audit pin from `docs/audit/2026-04-13-
+security-audit.md` § CVE-08 (P2; originally targeted v4.3.x,
+38 minor patches later). **completed-phases.md trim**: 627 → 95
+lines per the doc-canonical phase-out track. Phase 0–11
+retrospective preserved (single-glance summary of pre-cycle
+foundation arcs); v0.9.x → v5.9.x per-version narrative (572
+lines) dropped — duplicated CHANGELOG + vidya retros + state.md.
+**Roadmap held-items reconciliation**: cleared float.cyr:41
+peephole (shipped .40), ESTORESTACKPARM cx >6 args (folded
+v5.9.33), TS test harness (shipped .11) from "Held" lists.
+Remaining held: Class B FFI / wgpu fncall6 ABI + cyim regex —
+both still consumer-surface-trigger gated. cc5 byte-identical
+**first-pass** at **814,992 B** (+32 from .40's 814,960 — `cld`
+byte in `ESTRUCT_BYVAL_COPY` ripples into cc5's own emit when
+its struct-returning fns compile); check.sh 68/68; cyrius test
+149/149; struct-by-value-return correctness post-`cld` verified.
+**Follow-up**: v5.11.42 = full roadmap sweep for stray-not-
+pinned items.
+
 **5.11.40** (shipped 2026-05-12 — **`f64_abs(x)` peephole —
 long-pinned optimization landed**). Closes the audit-pinned
 peephole opportunity at

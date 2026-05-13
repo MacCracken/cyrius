@@ -291,18 +291,14 @@ consumer-filed work — see [completed-phases.md Phase 16](completed-phases.md))
   cyim consumer hits it concretely. (Note: a regex-lib
   scaffold may already exist user-side; defer until cyim
   surfaces specific use case.)
-- **`ESTORESTACKPARM` cx >6 args** (audit §4) — **folded into
-  v5.9.33 cx Phase 2c parity slot** (2026-05-07; pin moved
-  from "surfaces-on-ask" to active-cycle scheduling).
-  Originally: pin when a cx consumer surfaces a 7+-arg fn.
-  cx backend stub returns 0 with `# TODO: >6 args` comment at
-  `src/backend/cx/emit.cyr:385`. Now landing alongside cx
-  struct-by-value + sub-byte field-load parity since all three
-  share the byte-memory-ops + stack-arg shuffling shape.
-- **`float.cyr:41` peephole pattern** (audit §4) — pin when
-  measured to matter. 5-instruction sequence `push rax;
-  movabs rax, 0x7FFF...; mov rcx, rax; pop rax; and rax, rcx`
-  may reduce to 3 bytes; preflight with bench delta.
+
+#### Cleared at v5.11.41 sweep (now-shipped)
+
+- ~~**`ESTORESTACKPARM` cx >6 args** (audit §4)~~ — folded into
+  v5.9.33 cx Phase 2c parity slot (2026-05-07).
+- ~~**`float.cyr:41` peephole pattern** (audit §4)~~ — shipped
+  at v5.11.40 as `EF64_ABS(S)` named op (path-A family);
+  bench showed -8.6% on a 50M-iter f64_abs hot loop.
 
 ### Deferred to v5.11.x or later
 
@@ -352,9 +348,13 @@ Slot-by-slot detail in [`CHANGELOG.md`](../../CHANGELOG.md) entries
   held"). Lands in v5.11.x or later if mabda resurfaces it as
   blocking; otherwise stays held-forward until consumer pressure.
 - **`cyim` regex pattern parse error** (mabda C6). Surface-on-ask;
-  cyim consumer hasn't surfaced a concrete repro.
-- **`float.cyr:41` peephole pattern** (audit §4). Perf opt;
-  preflight with bench delta before pinning.
+  cyim consumer hasn't surfaced a concrete repro. User
+  2026-05-12: deferred until they update the cyim repo and
+  re-test against current cyrius.
+
+#### Cleared at v5.11.41 sweep (now-shipped)
+
+- ~~**`float.cyr:41` peephole pattern**~~ — shipped at v5.11.40.
 
 ---
 
