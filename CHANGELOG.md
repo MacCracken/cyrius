@@ -6,6 +6,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.53] — 2026-05-13
+
+**Hotfix: `fn efi_main` trampoline entry-save REX prefix
+(0x4C → 0x49).** Closes the P1 filing
+[`2026-05-13-efi-main-trampoline-save-rex-wrong.md`](docs/development/issues/archived/2026-05-13-efi-main-trampoline-save-rex-wrong.md)
+filed against v5.11.52 hours after ship. Gnoboot agent caught the
+bug on first rebuild against `cyrius = "5.11.52"`.
+
+check.sh **74 → 75** (new `_efi_trampoline_rex_gate` locks the
+encoding); cc5 **827,976 B** (unchanged from v5.11.52 — only 2
+byte values changed in the emitted save sequence, no instruction
+count delta); cyrius test **150/150**.
+
+### The bug
+
+v5.11.52's entry-save emitted REX prefix `0x4C` (W+R) where the
+correct prefix is `0x49` (W+B). Decoded:
+
+| Emitted bytes | Decodes as | Should have been |
+|---|---|---|
+| `4C 89 CE` | `mov rsi, r9` | `mov r14, rcx` (`49 89 CE`) |
+| `4C 89 D7` | `mov rdi, r10` | `mov r15, rdx` (`49 89 D7`) |
+
+The MR-form `mov r/m64, r64` encoding (opcode `89 /r`) puts the
+destination in the r/m field and the source in the reg field.
+Extending the destination to r14/r15 requires REX.B (low bit of
+the REX prefix); extending the source requires REX.R. v5.11.52
+set REX.R when it needed REX.B.
+
+The restore at the trampoline tail (`4C 89 F1` = `mov rcx, r14`)
+was correct *by accident*: when r14/r15 are the source (reg
+field), the same `0x4C` prefix correctly sets REX.R. So save was
+wrong, restore was right — the symmetry held only in one
+direction.
+
+### Why the .52 manual smoke missed it
+
+The slot-bringup smoke at v5.11.52 used a bare
+`fn efi_main(handle, st): i64 { return 0; }` test. With no body
+code that derefs `handle` or `st`, the bug never manifested —
+efi_main just returned `0` and firmware unwound cleanly. The
+gnoboot agent's rebuild used the actual gnoboot test source
+(`var con_out = load64(st + 0x40); ...`) which DOES deref `st`,
+and that's where the NULL-deref surfaced (CR2=0; `st` had
+uninitialised R15 value).
+
+The lesson: a "trampoline works" smoke must verify the captured
+args actually flow into the user's fn body, not just that
+efi_main runs and returns. Gate added below closes this gap.
+
+### The fix
+
+`src/main.cyr:1273` — change two byte literals in the save emit:
+
+```cyrius
+# v5.11.52 (wrong):
+EB(S, 0x4C); EB(S, 0x89); EB(S, 0xCE);
+EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD7);
+
+# v5.11.53 (correct):
+EB(S, 0x49); EB(S, 0x89); EB(S, 0xCE);
+EB(S, 0x49); EB(S, 0x89); EB(S, 0xD7);
+```
+
+That's it — 2-byte fix. The restore at line ~1396 stays at
+`0x4C 0x89 0xF1` / `0x4C 0x89 0xFA` because the restore direction
+genuinely needs REX.R=1 (r14/r15 in the reg field as source).
+
+### Encoding regression gate
+
+`_efi_trampoline_rex_gate()` in `programs/check.cyr` (new at .53)
+compiles a minimal `kernel; fn efi_main(h, s): i64 { return 0; }`
+source with `CYRIUS_TARGET_EFI=1` and asserts in the output:
+
+1. The save pattern `49 89 CE 49 89 D7` is present.
+2. The wrong-REX pattern `4C 89 CE 4C 89 D7` is **absent** (the
+   v5.11.52 regression signature).
+3. The restore pattern `4C 89 F1 4C 89 FA` is present.
+
+Negative-test verified at slot work: swapping the v5.11.52 cc5
+(commit's `build/cc5`) over the post-fix binary produces:
+
+```
+FAIL: entry save bytes (49 89 CE 49 89 D7 = mov r14,rcx / mov r15,rdx) NOT found in output
+FAIL: v5.11.52 wrong-REX bytes (4C 89 CE 4C 89 D7 = mov rsi,r9 / mov rdi,r10) regressed at file offset 621
+```
+
+— exactly the byte signature the filing called out. Restoring →
+PASS. check.sh: **74 → 75**.
+
+### OVMF re-smoke
+
+Compiled the filing's exact repro (`efi_print(st, &msg)` through
+`fncall2(out_str, con_out, m)` reading SystemTable→ConOut chain):
+
+- v5.11.52 cc5: `#PF`, `CR2 = 0x0` (NULL deref because RCX/RDX
+  came from uninitialised R14/R15 = OVMF's `0xAF` pattern).
+- v5.11.53 cc5: `hi` appears on serial; firmware unwinds to
+  BootManagerMenu. **Trampoline now works end-to-end through
+  user code dereferencing the captured args.**
+
+### Issue archive
+
+`docs/development/issues/2026-05-13-efi-main-trampoline-save-rex-wrong.md`
+→ `docs/development/issues/archived/` per
+`feedback_close_to_archive_issues`.
+
+### Memory pins referenced
+
+- `feedback_premise_check_at_slot_entry` (filing's byte-by-byte
+  decoding was the right level of consumer-side investigation;
+  let cyrius-side fix be a 2-byte change)
+- `feedback_close_to_archive_issues` (REX-fix issue archived
+  at .53 ship)
+- `project_agnos_path_c_gnoboot` (gnoboot consumer canary caught
+  this within hours of .52 ship)
+
+### Process pin (mid-cycle)
+
+The v5.11.52 manual smoke verified the trampoline as a
+"control-flow harness" (entry → save → restore → call efi_main →
+return → firmware) without verifying that the saved registers
+actually held the firmware values when efi_main read them. A
+bare `return 0;` test can't catch register-content bugs because
+it doesn't TOUCH the captured registers. **Future inline-asm
+emit work: any test must dereference / inspect the captured
+state, not just structural control flow.** Gate added at .53 is
+a byte-pattern check — also doesn't deref but locks the
+encoding which is the right structural floor for this class.
+
 ## [5.11.52] — 2026-05-13
 
 **`fn efi_main(handle, st)` entry convention + CYRIUS_TARGET_EFI

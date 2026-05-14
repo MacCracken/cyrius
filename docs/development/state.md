@@ -5,6 +5,65 @@
 
 ## Version
 
+**5.11.53** (shipped 2026-05-13 — **Hotfix: efi_main trampoline
+entry-save REX prefix `0x4C → 0x49`**). P1 filing from gnoboot
+agent caught hours after v5.11.52 ship. 2-byte literal change in
+`src/main.cyr:1273` save emit; restore stays correct as-is.
+
+**The bug**: MR-form `mov r/m64, r64` (opcode `89 /r`) puts dst
+in r/m field, src in reg field. To extend dst to r14/r15 needs
+REX.B; v5.11.52 set REX.R instead.
+- Wrong: `4C 89 CE` decodes as `mov rsi, r9` (not `mov r14, rcx`)
+- Wrong: `4C 89 D7` decodes as `mov rdi, r10` (not `mov r15, rdx`)
+- Right: `49 89 CE` / `49 89 D7`
+
+Restore at trampoline tail (`4C 89 F1` etc.) was correct *by
+accident* — r14/r15 as source (reg field) genuinely needs REX.R.
+Save and restore use the same `0x4C` only when the symmetry
+holds; for save direction it doesn't.
+
+**Why slot-bringup smoke missed it**: v5.11.52 used a bare
+`fn efi_main(h,s): i64 { return 0; }` test. With no body code
+that dereferences `handle` or `st`, the bug never manifested —
+efi_main just returned 0 and firmware unwound. **Trampoline
+control-flow worked; register-content bug stayed latent.** The
+gnoboot agent's rebuild against `cyrius = "5.11.52"` used a real
+test (`var con_out = load64(st + 0x40);`) which dereferences
+SystemTable → NULL deref → CR2=0 → caught.
+
+**Encoding regression gate** (new): `_efi_trampoline_rex_gate()`
+in `programs/check.cyr` compiles a minimal efi_main source, asserts
+the save pattern `49 89 CE 49 89 D7` is present AND the wrong-REX
+pattern `4C 89 CE 4C 89 D7` is absent AND the restore pattern
+`4C 89 F1 4C 89 FA` is present. Negative-tested: v5.11.52 cc5
+swap → gate FAILs with exact byte signatures from the filing
+(offset 621). check.sh **74 → 75**.
+
+**OVMF re-smoke** with the filing's exact repro (`fn efi_print`
+walks SystemTable→ConOut→OutputString and `fncall2`s it):
+- v5.11.52 cc5: `#PF`, `CR2=0x0` (NULL deref).
+- v5.11.53 cc5: `hi` prints on serial; firmware unwinds to
+  BootManagerMenu. **Trampoline now works end-to-end through
+  user code dereferencing the captured args.**
+
+**Process pin (mid-cycle)**: future inline-asm emit work must
+verify captured state via test sources that *use* the captured
+values, not just structural control-flow harnesses. Bare
+`return 0;` tests pass control-flow audits but can't catch
+register-content bugs.
+
+**Issue archive**:
+`docs/development/issues/2026-05-13-efi-main-trampoline-save-rex-wrong.md`
+→ `archived/`.
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**827,976 B** — same as v5.11.52, only byte values changed in
+the trampoline emit; no instruction-count delta); `check.sh`
+**74 → 75**; `cyrius test` **150/150**.
+
+**Next**: cycle returns to absorber buffer (.53 → .67) with
+pinned .68 (heap-map full reorg) and .69 (conditional mabda fold).
+
 **5.11.52** (shipped 2026-05-13 — **`fn efi_main(handle, st)`
 entry convention + `CYRIUS_TARGET_EFI` predefine — gnoboot
 ergonomic fix #2 of 2**). Closes the second gnoboot-agent
@@ -260,6 +319,7 @@ Cyrius cycle returns to v5.11.x absorber buffer (.50 → .67 open;
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.52** — `fn efi_main(handle, st)` entry convention + `CYRIUS_TARGET_EFI` predefine — gnoboot ergonomic fix #2 of 2. Closes second gnoboot-agent filing. Both filings closed same-day. (v5.11.53 hotfix landed for the REX prefix bug shipped with this slot.)
 - **v5.11.51** — Byte-array literal `var foo[N] = { 0x.., 0x.., ... };` — gnoboot ergonomic fix #1 of 2 (the other lands at .52). New `EADDRA_IMM` named op on 3 backends; PARSE_GVAR_ARR extension + EMIT_GVAR_INITS replay path. Token-ID gotcha caught at bringup (`{` is 13, not 19). 26-assert tcyr.
 - **v5.11.50** — Cap-drift detector + doc-size currency gates + fresh-tier doc refresh: `_cap_drift_gate()` cross-checks heap-map comments vs inline literal caps; `_doc_size_currency_gate()` scans fresh-tier docs for cc5 size refs (decimal KB ±50 KB tolerance); 4 docs refreshed v5.8.x → v5.11.50. check.sh 72→74.
 - **v5.11.49** — OVMF runtime smoke + gnoboot arc closeout: RELOCS_STRIPPED cleared in EFI mode (UEFI firmware needs latitude to place anywhere); new `_efi_ovmf_smoke_gate()` boots efi_probe.efi under qemu+OVMF and asserts "hello, uefi" on serial. Arc filing → ship same-day. check.sh 71→72.

@@ -1267,10 +1267,22 @@ EPATCH(S, jmp_patch);
 # in both SysV and MS x64 — cyrius's emit machinery preserves them
 # across all per-byte and per-call sequences, so they survive
 # everything up to the efi_main call below.
-# Bytes: 4C 89 CE  (mov r14, rcx) ; 4C 89 D7  (mov r15, rdx)
+#
+# v5.11.53: REX prefix was wrong at v5.11.52 ship. MR-form `mov r/m, r`
+# encodes dst in the r/m field; to extend dst to r14/r15 needs REX.B,
+# not REX.R. v5.11.52 emitted REX `0x4C` (W+R) which is correct for
+# the RESTORE direction below (r14/r15 as source → reg field → REX.R)
+# but WRONG for the SAVE here (r14/r15 as destination → r/m field →
+# REX.B). Decoded, `4C 89 CE` was `mov rsi, r9` not `mov r14, rcx`.
+# Correct prefix is `0x49` (W+B). Filed at
+# docs/development/issues/archived/2026-05-13-efi-main-trampoline-save-rex-wrong.md;
+# gnoboot's first call inside efi_main NULL-deref'd CR2=0 because
+# RCX/RDX restored from uninitialized R14/R15 (which had the
+# AF-pattern OVMF uses for unallocated memory).
+# Bytes: 49 89 CE  (mov r14, rcx) ; 49 89 D7  (mov r15, rdx)
 if (_TARGET_EFI_APPLICATION == 1) {
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xCE);
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD7);
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xCE);
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xD7);
 }
 
 # In object mode AND shared mode, wrap top-level code as a callable

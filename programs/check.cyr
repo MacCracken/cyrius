@@ -1886,6 +1886,106 @@ fn _efi_ovmf_smoke_gate(): i64 {
     return 1;
 }
 
+# Gate: efi_main trampoline byte encoding (v5.11.53).
+# Locks the REX prefix on the entry save against the v5.11.52
+# 0x4C-vs-0x49 regression that landed and shipped briefly:
+# - SAVE direction (r14/r15 as DESTINATION → r/m field): needs
+#   REX.B=1 → REX byte 0x49 → `49 89 CE` for mov r14, rcx.
+# - RESTORE direction (r14/r15 as SOURCE → reg field): needs
+#   REX.R=1 → REX byte 0x4C → `4C 89 F1` for mov rcx, r14.
+# v5.11.52 ship had 0x4C in BOTH directions; restore happened to be
+# correct (r14/r15 as source ARE reg-field-extended) but save was
+# wrong (4C 89 CE decodes to `mov rsi, r9`, not `mov r14, rcx`).
+# Filed: docs/development/issues/archived/2026-05-13-efi-main-trampoline-save-rex-wrong.md.
+#
+# The gate compiles a minimal `kernel; fn efi_main(h,s): i64 { return 0; }`
+# source with CYRIUS_TARGET_EFI=1, looks for the save and restore
+# byte patterns in the output, asserts both are present AND the wrong
+# `4C 89 CE 4C 89 D7` pattern is absent.
+fn _efi_trampoline_rex_gate(): i64 {
+    var label = "efi_main trampoline REX prefix encoding (v5.11.53; save=49, restore=4C)";
+
+    if (file_exists("/usr/bin/qemu-system-x86_64") != 1) {
+        _p("  SKIP: qemu tooling not present (gate is paired with OVMF smoke ecosystem)\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Compile minimal efi_main source via CYRIUS_TARGET_EFI=1 pipe.
+    var src_path = _tmp_path("audit_efi_tramp_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) { _check(label, 1); return 1; }
+    var src = "kernel;\n\nfn efi_main(handle, st): i64 {\n    return 0;\n}\n";
+    sys_write(fd, src, strlen(src));
+    sys_close(fd);
+
+    var bin_path = _tmp_path("audit_efi_tramp_bin_");
+    var rc = _self_host_pipe_efi(src_path, CC_PATH, bin_path);
+    sys_unlink(src_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": efi_main minimal source compile failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) { _check(label, 1); return 1; }
+
+    # Build needles via store8 (string literals can't carry 0x49 / 0x4C
+    # reliably and the bytes here are explicitly chosen for the test).
+    var save_good[1];
+    store8(&save_good + 0, 0x49); store8(&save_good + 1, 0x89); store8(&save_good + 2, 0xCE);
+    store8(&save_good + 3, 0x49); store8(&save_good + 4, 0x89); store8(&save_good + 5, 0xD7);
+
+    var save_bad[1];
+    store8(&save_bad + 0, 0x4C); store8(&save_bad + 1, 0x89); store8(&save_bad + 2, 0xCE);
+    store8(&save_bad + 3, 0x4C); store8(&save_bad + 4, 0x89); store8(&save_bad + 5, 0xD7);
+
+    var restore_good[1];
+    store8(&restore_good + 0, 0x4C); store8(&restore_good + 1, 0x89); store8(&restore_good + 2, 0xF1);
+    store8(&restore_good + 3, 0x4C); store8(&restore_good + 4, 0x89); store8(&restore_good + 5, 0xFA);
+
+    var save_at    = _find_bytes(buf, n, &save_good, 6);
+    var save_bad_at = _find_bytes(buf, n, &save_bad, 6);
+    var restore_at = _find_bytes(buf, n, &restore_good, 6);
+
+    var fail = 0;
+    if (save_at < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": entry save bytes (49 89 CE 49 89 D7 = mov r14,rcx / mov r15,rdx) NOT found in output");
+        fail = fail + 1;
+    }
+    if (save_bad_at >= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": v5.11.52 wrong-REX bytes (4C 89 CE 4C 89 D7 = mov rsi,r9 / mov rdi,r10) regressed at file offset ");
+        print_num(save_bad_at);
+        println("");
+        fail = fail + 1;
+    }
+    if (restore_at < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": restore bytes (4C 89 F1 4C 89 FA = mov rcx,r14 / mov rdx,r15) NOT found in output");
+        fail = fail + 1;
+    }
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": efi_main trampoline encoding — save=49/89/CE+49/89/D7; restore=4C/89/F1+4C/89/FA");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Helper: find first occurrence of `needle` in [buf, buf+n) starting
 # at `from`. Returns offset on hit, -1 on miss. Used by the cap-drift
 # and doc-size gates to scan for textual patterns inside loaded buffers.
@@ -9074,6 +9174,10 @@ fn _run_regression_gates(): i64 {
 
     _section("EFI Application OVMF runtime smoke (gnoboot arc KO)");
     _efi_ovmf_smoke_gate();
+    println("");
+
+    _section("EFI trampoline REX encoding (efi_main convention)");
+    _efi_trampoline_rex_gate();
     println("");
 
     _section("Cap-drift detector (heap-map ↔ inline literals)");
