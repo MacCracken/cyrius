@@ -6,6 +6,118 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.54] — 2026-05-13
+
+**LSP papercut close + refactor sweep (REX named ops +
+`_find_fn_by_name` helper).** Closes
+[`2026-05-13-gnoboot-lsp-byte-array-literal.md`](docs/development/issues/archived/2026-05-13-gnoboot-lsp-byte-array-literal.md)
++ two refactor items folded in (items #1 and #3 from the
+2026-05-13 v5.11.43-.53 refactor survey).
+
+check.sh **75/75**; cc5 self-host **827,976 → 827,296 B**
+(**−680 B** — the 9-deep `efi_main` nested-if byte-match
+collapsed to a 5-instruction loop body); cyrius test **150/150**.
+First v5.11.x slot where cc5 **shrunk** instead of grew —
+refactor pays for itself in binary size.
+
+### LSP papercut fix
+
+`programs/cyrius-lsp.cyr::find_cc5()` — added a new FIRST
+fallback: read `HOME=` from `/proc/self/environ`, try
+`$HOME/.cyrius/bin/cc5` (the symlink → `~/.cyrius/current` →
+latest installed cyrius). Falls back to the v5.11.44
+`/proc/self/exe`-based co-installed cc5 lookup if `$HOME` is
+absent (minimal-env LSP launchers like Claude Code).
+
+**Why**: when a consumer's `cyrius.cyml` pins an older version
+(gnoboot pinned at `5.11.49` while editing v5.11.51+ byte-array-
+literal source), cyrius CLI's per-repo isolation resolves to the
+pinned version, and `cyrius-lsp` in that version's `bin/`
+launches that version's `cc5` — which doesn't know the new
+syntax → spammy "expected ';'" diagnostic on every save.
+Diagnostics are advisory and should reflect the latest parser's
+view; `cyrius build` still respects the cyrius.cyml pin for the
+actual binary output. Filer's mental model ("the LSP has its own
+parser, rebuild it") was wrong — cyrius-lsp forks cc5; only the
+cc5 path needed adjustment.
+
+### Refactor #1 — REX named ops for MS-x64 reg moves + RSP adjusts
+
+`src/backend/x86/emit.cyr` — six new named ops covering the
+trampoline encoding:
+
+| Op | Bytes | Meaning |
+|----|-------|---------|
+| `EMOV_R14_RCX(S)` | `49 89 CE` | save firmware ImageHandle into r14 |
+| `EMOV_R15_RDX(S)` | `49 89 D7` | save firmware SystemTable into r15 |
+| `EMOV_RCX_R14(S)` | `4C 89 F1` | restore ImageHandle for efi_main call |
+| `EMOV_RDX_R15(S)` | `4C 89 FA` | restore SystemTable for efi_main call |
+| `ESUB_RSP_IMM8(S, n)` | `48 83 EC nn` | MS-x64 shadow space allocate |
+| `EADD_RSP_IMM8(S, n)` | `48 83 C4 nn` | MS-x64 shadow space release |
+
+Op names spell the intent; the REX bit is locked in the code.
+v5.11.52's silent encoding bug (where `EB(S, 0x4C)` decoded as
+`mov rsi, r9` not `mov r14, rcx`) is structurally prevented:
+wrong op name now surfaces at compile-time review instead of
+slipping past as a numeric REX-prefix typo.
+
+`src/main.cyr` — 8 `EB(S, 0xNN)` raw-byte calls in the EFI
+trampoline emit replaced with named-op calls. Same emitted
+bytes (gate-verified); higher review legibility.
+
+Pattern matches the v5.11.35-39 named-op refactor arc (drift
+gate locks parser-side direct emits). Adding a sibling drift
+gate for `main.cyr` MS-x64 byte literals could earn its own
+slot if more REX emit sites appear; deferred for now.
+
+### Refactor #3 — `_find_fn_by_name` helper
+
+`src/common/util.cyr` — new helper `_find_fn_by_name(S, name_cstr,
+name_len)` returns the fn-table index on hit, `-1` on miss.
+Open-coded nested-if byte comparisons at two call sites
+(`main.cyr:1338` for `main` auto-call, `:1369` for `efi_main`
+trampoline lookup) collapsed:
+
+- `main` lookup: 5-deep nested ifs → 1 helper call (~20 LoC →
+  3 LoC at call site).
+- `efi_main` lookup: 9-deep nested ifs → 1 helper call (~30
+  LoC → 3 LoC at call site).
+
+Suffix-NUL guard included in the helper — searching for
+`"main"` won't match `"mainframe"`.
+
+Net binary impact: cc5 shrunk **−680 B** in this slot. First
+v5.11.x ship where the compiler got smaller instead of bigger.
+
+### Issue archive
+
+`docs/development/issues/2026-05-13-gnoboot-lsp-byte-array-literal.md`
+→ `docs/development/issues/archived/` per
+`feedback_close_to_archive_issues`.
+
+### Memory pins referenced
+
+- `feedback_premise_check_at_slot_entry` (LSP filing's mental
+  model was wrong — cyrius-lsp doesn't have its own parser;
+  premise audit caught this before designing the fix)
+- `feedback_release_needs_code_not_just_docs` (LSP fix is real
+  code; refactor items are real LoC delta, not bookkeeping)
+
+### Next
+
+User pre-authorized .55 to "wrap anything else we can" except
+closeout-reserved items (per CLAUDE.md closeout pass item #6,
+ELF section-header DRY stays for v5.11.68). Concrete .55
+candidates from the refactor survey:
+
+- **#2** — cap-drift gate hardcoded entries (.50 slot) →
+  table-driven (~20 LoC saved).
+- **#4** — 4 EFI-related gates share boilerplate → extract
+  `_efi_compile_minimal(src)` helper (~30 LoC saved).
+- **#5** — byte-array literal peephole (~21 B/byte → ~4 B/byte
+  via `mov byte [rcx+disp8], imm8`; 5× compression). Heavier;
+  cross-arch (aarch64 + cx). ~80 LoC.
+
 ## [5.11.53] — 2026-05-13
 
 **Hotfix: `fn efi_main` trampoline entry-save REX prefix

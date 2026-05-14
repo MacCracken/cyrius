@@ -5,6 +5,60 @@
 
 ## Version
 
+**5.11.54** (shipped 2026-05-13 — **LSP papercut close + refactor
+sweep (REX named ops + `_find_fn_by_name` helper)**). Closes
+`2026-05-13-gnoboot-lsp-byte-array-literal.md` + 2 refactor items
+from the .53-end survey (items #1 + #3).
+
+**LSP fix**: `programs/cyrius-lsp.cyr::find_cc5()` — added a new
+FIRST fallback that reads `HOME=` from `/proc/self/environ` and
+tries `$HOME/.cyrius/bin/cc5` (the symlink → current installed
+version, i.e. the LATEST parser). Falls back to the v5.11.44
+co-installed lookup if `$HOME` is absent (minimal-env LSP
+launchers). When a consumer pins an older `cyrius.cyml` (gnoboot
+at 5.11.49 editing 5.11.51+ syntax), LSP diagnostics now use the
+LATEST parser's view — `cyrius build` still respects the pin for
+actual binary output. Filer's mental model ("the LSP has its own
+parser, rebuild it") was wrong — cyrius-lsp forks cc5.
+
+**Refactor #1 — REX named ops** (`src/backend/x86/emit.cyr`):
+six new named ops cover the EFI trampoline encoding:
+`EMOV_R14_RCX` (49 89 CE) / `EMOV_R15_RDX` (49 89 D7) /
+`EMOV_RCX_R14` (4C 89 F1) / `EMOV_RDX_R15` (4C 89 FA) /
+`ESUB_RSP_IMM8(n)` / `EADD_RSP_IMM8(n)`. Op names spell the intent;
+REX bit locked in code. v5.11.52's silent encoding bug (raw
+`EB(S, 0x4C)` decoded as `mov rsi, r9` not `mov r14, rcx`) is
+structurally prevented — wrong op name surfaces at compile-time
+review. 8 raw-byte calls in `src/main.cyr` collapse to named-op
+calls; emitted bytes identical (encoding-gate verified).
+
+**Refactor #3 — `_find_fn_by_name` helper** (`src/common/util.cyr`):
+two open-coded nested-if byte comparisons (main at main.cyr:1338,
+efi_main at :1369; 5-deep + 9-deep respectively) collapsed to one
+helper + 2 short call sites. Suffix-NUL guard prevents
+`"main"`-matching-`"mainframe"`-style false positives. Used at
+pass-2 emit for fn auto-call dispatch.
+
+**Net cc5 size**: 827,976 → **827,296 B** (**−680 B**) — first
+v5.11.x slot where cc5 SHRUNK. The efi_main lookup alone went
+from 9 nested ifs to 5 instruction-body lines.
+
+**Issue archive**:
+`docs/development/issues/2026-05-13-gnoboot-lsp-byte-array-literal.md`
+→ `archived/`.
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**827,296 B**); `check.sh` **75/75**; `cyrius test` **150/150**;
+EFI trampoline REX gate green (named-op emits produce same bytes
+as the v5.11.53 raw-byte fix).
+
+**Next (.55)**: user pre-authorized "anything else we can wrap"
+except closeout items. Candidates from the survey: #2 (cap-drift
+gate table refactor ~20 LoC), #4 (EFI gate compile helper ~30 LoC),
+#5 (byte-array literal peephole 5× compression ~80 LoC + cross-
+arch). #6 (ELF section-header DRY) reserved for .68 closeout per
+CLAUDE.md item #6.
+
 **5.11.53** (shipped 2026-05-13 — **Hotfix: efi_main trampoline
 entry-save REX prefix `0x4C → 0x49`**). P1 filing from gnoboot
 agent caught hours after v5.11.52 ship. 2-byte literal change in
@@ -319,6 +373,7 @@ Cyrius cycle returns to v5.11.x absorber buffer (.50 → .67 open;
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.53** — Hotfix: efi_main trampoline entry-save REX prefix `0x4C → 0x49` (was MR-form REX.R when r14/r15-as-dst needs REX.B). gnoboot caught within hours of .52 ship. New `_efi_trampoline_rex_gate` locks the encoding. check.sh 74→75.
 - **v5.11.52** — `fn efi_main(handle, st)` entry convention + `CYRIUS_TARGET_EFI` predefine — gnoboot ergonomic fix #2 of 2. Closes second gnoboot-agent filing. Both filings closed same-day. (v5.11.53 hotfix landed for the REX prefix bug shipped with this slot.)
 - **v5.11.51** — Byte-array literal `var foo[N] = { 0x.., 0x.., ... };` — gnoboot ergonomic fix #1 of 2 (the other lands at .52). New `EADDRA_IMM` named op on 3 backends; PARSE_GVAR_ARR extension + EMIT_GVAR_INITS replay path. Token-ID gotcha caught at bringup (`{` is 13, not 19). 26-assert tcyr.
 - **v5.11.50** — Cap-drift detector + doc-size currency gates + fresh-tier doc refresh: `_cap_drift_gate()` cross-checks heap-map comments vs inline literal caps; `_doc_size_currency_gate()` scans fresh-tier docs for cc5 size refs (decimal KB ±50 KB tolerance); 4 docs refreshed v5.8.x → v5.11.50. check.sh 72→74.

@@ -217,6 +217,67 @@ fn EADDRA_IMM(S, n): i64 {
     _flags_reflect_rax = 1;
     return 0;
 }
+# v5.11.54: MS-x64 reg-move + RSP-adjust named ops, used by the EFI
+# Application entry trampoline (src/main.cyr) under
+# CYRIUS_TARGET_EFI=1. The 5.11.52 ship had hand-coded `EB(S, 0x4C)`
+# saves that decoded as wrong instructions (`4C 89 CE` = `mov rsi,
+# r9` not `mov r14, rcx`) because MR-form `mov r/m, r` uses REX.B
+# for destination-extension and REX.R for source-extension —
+# v5.11.52 set REX.R when it needed REX.B. The 5.11.53 hotfix
+# changed the byte literals; 5.11.54 changes the call sites to
+# these named ops so the encoding is locked in code (op name spells
+# the intent, REX bit can't drift). Filed as
+# 2026-05-13-efi-main-trampoline-save-rex-wrong.md.
+#
+# **MR-form encoding cheat sheet** (opcode 89 /r — mov r/m64, r64):
+#   REX.W = 1 always (64-bit operand)
+#   REX.B = 1 → r/m field extends to r8..r15 (DESTINATION-extension)
+#   REX.R = 1 → reg field extends to r8..r15 (SOURCE-extension)
+#   ModR/M: mod=11 (reg-direct), reg=<src low 3 bits>, rm=<dst low 3 bits>
+#
+# r14/r15 as DESTINATION → REX.B=1 → REX byte 0x49
+# r14/r15 as SOURCE      → REX.R=1 → REX byte 0x4C
+#
+# These ops aren't IR-recorded (they're only emitted at the very
+# end of the entry trampoline, outside any user fn body — the IR
+# pipeline doesn't reach them).
+#
+# Cross-arch: x86-only by construction. CYRIUS_TARGET_EFI is gated
+# to x86_64 UEFI (UEFI aarch64 isn't a cyrius target yet) and these
+# ops are only called when _TARGET_EFI_APPLICATION == 1.
+
+# mov r14, rcx  →  49 89 CE  (save firmware ImageHandle into callee-saved r14)
+fn EMOV_R14_RCX(S): i64 {
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xCE);
+    return 0;
+}
+# mov r15, rdx  →  49 89 D7  (save firmware SystemTable into callee-saved r15)
+fn EMOV_R15_RDX(S): i64 {
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xD7);
+    return 0;
+}
+# mov rcx, r14  →  4C 89 F1  (restore ImageHandle for the efi_main call)
+fn EMOV_RCX_R14(S): i64 {
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xF1);
+    return 0;
+}
+# mov rdx, r15  →  4C 89 FA  (restore SystemTable for the efi_main call)
+fn EMOV_RDX_R15(S): i64 {
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xFA);
+    return 0;
+}
+# sub rsp, imm8  →  48 83 EC nn  (MS-x64 shadow space + alignment).
+# Reserved for the trampoline's pre-call setup; imm8 is the standard
+# 0x28 = 32B shadow + 8B align under EFI's entry-from-firmware shape.
+fn ESUB_RSP_IMM8(S, n): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, n & 0xFF);
+    return 0;
+}
+# add rsp, imm8  →  48 83 C4 nn  (matching cleanup after the call).
+fn EADD_RSP_IMM8(S, n): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, n & 0xFF);
+    return 0;
+}
 fn ESUBR(S): i64 { if (_IR_REC0(S, IR_SUB) == 1) { return 0; } E3(S, 0xC82948); _flags_reflect_rax = 1; return 0; }
 fn EIMUL(S): i64 { if (_IR_REC0(S, IR_MUL) == 1) { return 0; } _TRY_COMBINE_SHUTTLE(S); E3(S, 0xE9F748); _flags_reflect_rax = 0; return 0; }
 # EMULH: high 64 bits of unsigned rcx * rax. MUL rcx → rdx:rax; then rax = rdx.

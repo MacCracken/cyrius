@@ -605,9 +605,54 @@ fn _resolve_install_dir(): i64 {
 }
 
 fn find_cc5(): i64 {
-    # v5.11.44: Self-resolve via /proc/self/exe FIRST. Handles
-    # the editor-LSP-launcher case where PATH + CYRIUS_HOME are
-    # both absent from the inherited env.
+    # v5.11.54: Try $HOME/.cyrius/bin/cc5 FIRST — that's the symlink
+    # to whatever ~/.cyrius/current points at (the LATEST installed
+    # cyrius). Diagnostics should reflect the latest parser's view of
+    # the source: a user editing a v5.11.51+ byte-array-literal file
+    # in a project that pins `cyrius = "5.11.49"` in cyrius.cyml
+    # should NOT see "expected ';'" errors from the .49 parser —
+    # `cyrius build` still respects the pin for the actual binary
+    # output, but the LSP showing OLDER-parser errors is a misleading
+    # papercut (filed 2026-05-13 as gnoboot-lsp-byte-array-literal).
+    # Falls back to v5.11.44's /proc/self/exe resolution if $HOME is
+    # absent (editors with minimal-env LSP launchers — Claude Code
+    # and similar — sometimes don't set HOME).
+    var envfd = syscall(2, "/proc/self/environ", 0, 0);
+    if (envfd >= 0) {
+        var hbuf = alloc(32768);
+        var htotal = 0;
+        var hchunk = 1;
+        while (hchunk > 0) {
+            hchunk = syscall(0, envfd, hbuf + htotal, 32768 - htotal);
+            if (hchunk > 0) { htotal += hchunk; }
+        }
+        syscall(3, envfd);
+        var hpos = 0;
+        while (hpos < htotal) {
+            var hend = hpos;
+            while (hend < htotal && load8(hbuf + hend) != 0) { hend += 1; }
+            if (hend - hpos > 5 && memeq(hbuf + hpos, "HOME=", 5) == 1) {
+                var hvstart = hpos + 5;
+                var hvlen = hend - hvstart;
+                var hsb = str_builder_new();
+                var hval = alloc(hvlen + 1);
+                memcpy(hval, hbuf + hvstart, hvlen);
+                store8(hval + hvlen, 0);
+                str_builder_add_cstr(hsb, hval);
+                str_builder_add_cstr(hsb, "/.cyrius/bin/cc5");
+                var p_latest = str_data(str_builder_build(hsb));
+                var fd_latest = syscall(2, p_latest, 0, 0);
+                if (fd_latest >= 0) { syscall(3, fd_latest); return p_latest; }
+            }
+            hpos = hend + 1;
+        }
+    }
+
+    # v5.11.44: Self-resolve via /proc/self/exe. Handles the
+    # editor-LSP-launcher case where PATH + CYRIUS_HOME + HOME are
+    # all absent from the inherited env. Co-installed cc5 in the
+    # SAME version-snapshot as the LSP binary — used when the latest
+    # symlink above is unreachable.
     var install_dir = _resolve_install_dir();
     if (install_dir != 0) {
         var sb_self = str_builder_new();
@@ -629,16 +674,16 @@ fn find_cc5(): i64 {
     if (fd >= 0) { syscall(3, fd); return p2; }
 
     # Try CYRIUS_HOME/cc5 via /proc/self/environ
-    var envfd = syscall(2, "/proc/self/environ", 0, 0);
-    if (envfd >= 0) {
+    var envfd2 = syscall(2, "/proc/self/environ", 0, 0);
+    if (envfd2 >= 0) {
         var ebuf = alloc(32768);
         var etotal = 0;
         var echunk = 1;
         while (echunk > 0) {
-            echunk = syscall(0, envfd, ebuf + etotal, 32768 - etotal);
+            echunk = syscall(0, envfd2, ebuf + etotal, 32768 - etotal);
             if (echunk > 0) { etotal += echunk; }
         }
-        syscall(3, envfd);
+        syscall(3, envfd2);
         var pos = 0;
         while (pos < etotal) {
             var end = pos;

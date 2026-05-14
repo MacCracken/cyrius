@@ -1281,8 +1281,14 @@ EPATCH(S, jmp_patch);
 # AF-pattern OVMF uses for unallocated memory).
 # Bytes: 49 89 CE  (mov r14, rcx) ; 49 89 D7  (mov r15, rdx)
 if (_TARGET_EFI_APPLICATION == 1) {
-    EB(S, 0x49); EB(S, 0x89); EB(S, 0xCE);
-    EB(S, 0x49); EB(S, 0x89); EB(S, 0xD7);
+    # v5.11.54: byte-literal save replaced with named ops. The
+    # v5.11.52 ship had `EB(S, 0x4C)` here which silently encoded
+    # `mov rsi, r9` instead of `mov r14, rcx` — see CHANGELOG
+    # [5.11.53] postmortem. Named ops put the REX bit in the op
+    # name, so future encoding bugs surface at compile-time review
+    # (wrong op name) instead of slipping past as numeric typos.
+    EMOV_R14_RCX(S);
+    EMOV_R15_RDX(S);
 }
 
 # In object mode AND shared mode, wrap top-level code as a callable
@@ -1376,43 +1382,20 @@ if (lv >= 0) { EVLOAD(S, lv); }
 # Closes the second of the two 2026-05-13 gnoboot ergonomic filings;
 # see archived/2026-05-13-gnoboot-efi-main-convention.md.
 if (_TARGET_EFI_APPLICATION == 1) {
-    var _efm_fc = GFNC(S);
-    var _efm_fi = 0;
-    var _efm_found = 0 - 1;
-    while (_efm_fi < _efm_fc) {
-        var _efm_noff = L64(S + 0x12CA000 + _efm_fi * 8);
-        if (load8(S + 0x60000 + _efm_noff)     == 101) {  # 'e'
-            if (load8(S + 0x60000 + _efm_noff + 1) == 102) {   # 'f'
-                if (load8(S + 0x60000 + _efm_noff + 2) == 105) {  # 'i'
-                    if (load8(S + 0x60000 + _efm_noff + 3) == 95) {   # '_'
-                        if (load8(S + 0x60000 + _efm_noff + 4) == 109) {  # 'm'
-                            if (load8(S + 0x60000 + _efm_noff + 5) == 97) {   # 'a'
-                                if (load8(S + 0x60000 + _efm_noff + 6) == 105) {  # 'i'
-                                    if (load8(S + 0x60000 + _efm_noff + 7) == 110) {  # 'n'
-                                        if (load8(S + 0x60000 + _efm_noff + 8) == 0) {
-                                            _efm_found = _efm_fi;
-                                            _efm_fi = _efm_fc;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        _efm_fi = _efm_fi + 1;
-    }
+    # v5.11.54: open-coded 9-deep byte match replaced with
+    # _find_fn_by_name helper. Same shape as the `main` lookup
+    # above; v5.11.52 shipped the open-coded version.
+    var _efm_found = _find_fn_by_name(S, "efi_main", 8);
     if (_efm_found >= 0) {
         var _efm_off = L64(S + 0x12DA000 + _efm_found * 8);
         if (_efm_off >= 0) {
-            # Restore firmware args from callee-saved R14/R15
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0xF1);   # mov rcx, r14
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0xFA);   # mov rdx, r15
-            # MS x64 shadow space + 8-byte alignment.
-            EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28);   # sub rsp, 0x28
+            # v5.11.54: byte-literal restore + RSP-adjust replaced
+            # with named ops (parallel to the save above).
+            EMOV_RCX_R14(S);                # restore ImageHandle
+            EMOV_RDX_R15(S);                # restore SystemTable
+            ESUB_RSP_IMM8(S, 0x28);          # MS-x64 shadow space + align
             ECALLTO(S, _efm_off);
-            EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28);   # add rsp, 0x28
+            EADD_RSP_IMM8(S, 0x28);
             # EEXIT below emits `ret` under EFI mode — firmware reads
             # rax as EFI_STATUS (the value efi_main returned).
         }
@@ -1438,25 +1421,10 @@ if (_TARGET_EFI_APPLICATION == 1) {
 # clobbers main's rax return.
 var _epi_km_pre = L64(S + 0x18FCA0);
 if (_epi_km_pre == 0) {
-    var _main_fc = GFNC(S);
-    var _main_fi = 0;
-    var _main_found = 0 - 1;
-    while (_main_fi < _main_fc) {
-        var _main_noff = L64(S + 0x12CA000 + _main_fi * 8);
-        if (load8(S + 0x60000 + _main_noff)     == 109) {  # 'm'
-            if (load8(S + 0x60000 + _main_noff + 1) == 97) {   # 'a'
-                if (load8(S + 0x60000 + _main_noff + 2) == 105) {  # 'i'
-                    if (load8(S + 0x60000 + _main_noff + 3) == 110) {  # 'n'
-                        if (load8(S + 0x60000 + _main_noff + 4) == 0) {
-                            _main_found = _main_fi;
-                            _main_fi = _main_fc;
-                        }
-                    }
-                }
-            }
-        }
-        _main_fi = _main_fi + 1;
-    }
+    # v5.11.54: open-coded nested-if byte match replaced with
+    # _find_fn_by_name helper (src/common/util.cyr). Same shape
+    # as the efi_main lookup below; both collapse to one helper.
+    var _main_found = _find_fn_by_name(S, "main", 4);
     if (_main_found >= 0) {
         var _main_off = L64(S + 0x12DA000 + _main_found * 8);
         if (_main_off >= 0) {

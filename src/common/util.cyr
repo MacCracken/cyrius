@@ -410,6 +410,46 @@ fn ERR(S): i64 {
     return 0;
 }
 
+# v5.11.54: locate a registered fn by exact byte-match on its name.
+# Returns the fn-table index on hit, -1 on miss.
+#
+# Pre-v5.11.54 the `main` lookup (main.cyr:1338 for fn auto-call)
+# and the `efi_main` lookup (main.cyr:1369 for the EFI trampoline)
+# were each open-coded as 5-9-deep nested-if byte comparisons —
+# same shape, different name. This helper collapses both call
+# sites and pre-empts the next "scan fn_names for a magic name"
+# pattern.
+#
+# Used at pass-2 emit time only — the fn-table at S+0x12CA000
+# (name offsets into tok_names @ S+0x60000) and S+0x12DA000 (fn
+# code offsets) are populated by REGFN during pass 1.
+fn _find_fn_by_name(S, name_cstr, name_len): i64 {
+    var fc = GFNC(S);
+    var fi = 0;
+    while (fi < fc) {
+        var noff = L64(S + 0x12CA000 + fi * 8);
+        var eq = 1;
+        var ci = 0;
+        while (ci < name_len) {
+            if (load8(S + 0x60000 + noff + ci) != load8(name_cstr + ci)) {
+                eq = 0;
+                ci = name_len;
+            } else {
+                ci = ci + 1;
+            }
+        }
+        # Require the next byte to be NUL — guards against names
+        # like "mainframe" matching when searching for "main".
+        if (eq == 1) {
+            if (load8(S + 0x60000 + noff + name_len) == 0) {
+                return fi;
+            }
+        }
+        fi = fi + 1;
+    }
+    return 0 - 1;
+}
+
 fn ERR_EXPECT(S, expected_type): i64 {
     var got = PEEKT(S);
     syscall(SYS_WRITE, 2, "error:", 6);
