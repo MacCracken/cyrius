@@ -5,6 +5,37 @@
 
 ## Version
 
+**5.11.55** (shipped 2026-05-13 — **Refactor sweep — cap-drift gate
+`_verify_*` helpers + `_efi_compile_to_buf` consolidation (items
+#2 + #4)**). Pure housekeeping; no new gates, no behavior change.
+
+**#2 cap-drift gate helpers**: v5.11.50's 3 hardcoded 20-LoC cap
+blocks replaced with two ≤6-arg helpers (`_verify_heap_map`,
+`_verify_inline`). Each cap-check is now 2 short lines.
+
+**#4 EFI gate compile boilerplate**: `_efi_compile_to_buf(src_path,
+buf, cap, fail_label)` consolidates `_self_host_pipe_efi` +
+unlink-on-fail + file_read_all + unlink-bin from `_efi_emit_gate`
+and `_efi_trampoline_rex_gate`. Both gates' prologues shrunk
+~20→5 LoC.
+
+**Bringup gotcha (pinned)**: first refactor attempt used a 13-arg
+single helper. Args 7+ (cstr literals) appeared as 0 in body —
+cyrius's stack-arg ABI has alignment/value-corruption issues
+beyond the 6-register convention. Restructured to two ≤6-arg
+helpers, worked first try. New memory pin
+`feedback_fn_arg_count_6`: keep cyrius helper fns ≤6 args.
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**827,296 B** — unchanged from v5.11.54, refactors only touched
+`programs/check.cyr`); `check.sh` **75/75**; `cyrius test`
+**150/150**.
+
+**Next absorber band**: .56 → .67 open buffer. Pinned: .68
+(heap-map full reorg) + .69 (conditional mabda fold). Refactor
+items #5 (byte-array peephole 5× compression) + #6 (ELF
+section-header DRY at .68) remain.
+
 **5.11.54** (shipped 2026-05-13 — **LSP papercut close + refactor
 sweep (REX named ops + `_find_fn_by_name` helper)**). Closes
 `2026-05-13-gnoboot-lsp-byte-array-literal.md` + 2 refactor items
@@ -373,6 +404,7 @@ Cyrius cycle returns to v5.11.x absorber buffer (.50 → .67 open;
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.54** — LSP papercut close + REX named ops + `_find_fn_by_name` helper. cyrius-lsp now prefers `$HOME/.cyrius/bin/cc5` for diagnostics so latest parser is used regardless of `cyrius.cyml` pin. 6 new MS-x64 named ops lock the REX bit in code. 5-deep+9-deep fn-lookup nested-ifs collapse to single helper. cc5 SHRANK 827,976 → 827,296 B (−680 B; first shrink in v5.11.x).
 - **v5.11.53** — Hotfix: efi_main trampoline entry-save REX prefix `0x4C → 0x49` (was MR-form REX.R when r14/r15-as-dst needs REX.B). gnoboot caught within hours of .52 ship. New `_efi_trampoline_rex_gate` locks the encoding. check.sh 74→75.
 - **v5.11.52** — `fn efi_main(handle, st)` entry convention + `CYRIUS_TARGET_EFI` predefine — gnoboot ergonomic fix #2 of 2. Closes second gnoboot-agent filing. Both filings closed same-day. (v5.11.53 hotfix landed for the REX prefix bug shipped with this slot.)
 - **v5.11.51** — Byte-array literal `var foo[N] = { 0x.., 0x.., ... };` — gnoboot ergonomic fix #1 of 2 (the other lands at .52). New `EADDRA_IMM` named op on 3 backends; PARSE_GVAR_ARR extension + EMIT_GVAR_INITS replay path. Token-ID gotcha caught at bringup (`{` is 13, not 19). 26-assert tcyr.

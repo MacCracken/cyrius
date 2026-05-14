@@ -1573,6 +1573,35 @@ fn _read_u32_le(buf, off): i64 {
     return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
 }
 
+# v5.11.55 refactor: shared "compile a .cyr source through cc5 under
+# CYRIUS_TARGET_EFI=1 and read the output bytes into buf" helper.
+# Consolidates the boilerplate that _efi_emit_gate (.48) and
+# _efi_trampoline_rex_gate (.53) each open-coded.
+#
+# Args: src_path cstr, out_buf, out_buf_cap, fail_label cstr.
+# Returns bytes-read on success, -1 on failure (after printing the
+# FAIL diagnostic). Callers check `<= 0` to wire the gate-level fail
+# count.
+fn _efi_compile_to_buf(src_path, out_buf, out_buf_cap, fail_label): i64 {
+    var bin_path = _tmp_path("audit_efi_compile_bin_");
+    var rc = _self_host_pipe_efi(src_path, CC_PATH, bin_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(fail_label); _p(" compile failed (rc=");
+        print_num(rc); println(")");
+        return 0 - 1;
+    }
+    var n = file_read_all(bin_path, out_buf, out_buf_cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(fail_label); println(" — compiled but output unreadable");
+        return 0 - 1;
+    }
+    return n;
+}
+
 # Gate: UEFI Application PE emit produces a structurally correct
 # PE32+ image (v5.11.48, gnoboot arc P2).
 #
@@ -1589,30 +1618,10 @@ fn _read_u32_le(buf, off): i64 {
 # (WINDOWS_CUI) → gate FAILs. Post-fix → gate PASSes.
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
-    var src_path = _root_path("programs/efi_probe.cyr");
-    var bin_path = _tmp_path("audit_efi_probe_");
-    var rc = _self_host_pipe_efi(src_path, CC_PATH, bin_path);
-    if (rc != 0) {
-        sys_unlink(bin_path);
-        _p("  ");
-        _p(ANSI_RED);
-        _p("FAIL");
-        _p(ANSI_RESET);
-        _p(": efi_probe compile failed (rc=");
-        print_num(rc);
-        println(")");
-        _check(label, 1);
-        return 1;
-    }
-
     var cap = 262144;
     var buf = alloc(cap);
-    var n = file_read_all(bin_path, buf, cap);
-    sys_unlink(bin_path);
-    if (n <= 0) {
-        _check(label, 1);
-        return 1;
-    }
+    var n = _efi_compile_to_buf(_root_path("programs/efi_probe.cyr"), buf, cap, "efi_probe");
+    if (n <= 0) { _check(label, 1); return 1; }
 
     # DOS header: MZ at offset 0
     if (load8(buf) != 0x4D || load8(buf + 1) != 0x5A) {
@@ -1919,26 +1928,10 @@ fn _efi_trampoline_rex_gate(): i64 {
     sys_write(fd, src, strlen(src));
     sys_close(fd);
 
-    var bin_path = _tmp_path("audit_efi_tramp_bin_");
-    var rc = _self_host_pipe_efi(src_path, CC_PATH, bin_path);
-    sys_unlink(src_path);
-    if (rc != 0) {
-        sys_unlink(bin_path);
-        _p("  ");
-        _p(ANSI_RED);
-        _p("FAIL");
-        _p(ANSI_RESET);
-        _p(": efi_main minimal source compile failed (rc=");
-        print_num(rc);
-        println(")");
-        _check(label, 1);
-        return 1;
-    }
-
     var cap = 262144;
     var buf = alloc(cap);
-    var n = file_read_all(bin_path, buf, cap);
-    sys_unlink(bin_path);
+    var n = _efi_compile_to_buf(src_path, buf, cap, "efi_main minimal source");
+    sys_unlink(src_path);
     if (n <= 0) { _check(label, 1); return 1; }
 
     # Build needles via store8 (string literals can't carry 0x49 / 0x4C
@@ -2047,91 +2040,84 @@ fn _parse_dec_at(buf, n, off, end_out): i64 {
 # literal check. This gate catches the partial-update class that's
 # bitten the cycle multiple times (see issue
 # 2026-05-13-cap-drift-detector-gate.md).
+# Cap-drift gate helpers (v5.11.55 refactor of the v5.11.50 hardcoded
+# blocks). Two ≤6-arg helpers — adding the next cap is two short calls
+# from `_cap_drift_gate` instead of a 20-LoC copy-paste.
+
+# Verify a heap-map line's byte-literal + human-size-label.
+# Args: buf, n, anchor cstr (e.g. "0x60000  tok_names"), expected
+# byte literal (e.g. "[262144]"), expected human label (e.g. "256KB"),
+# region name (diagnostic). Returns fail count (0 on success).
+fn _verify_heap_map(buf, n, anchor, byte_lit, human, region): i64 {
+    var fail = 0;
+    var off = _find_str_from(buf, n, 0, anchor, strlen(anchor));
+    if (off < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — heap-map line for "); _p(region); println(" not found");
+        return 1;
+    }
+    var lb = _find_str_from(buf, n, off, byte_lit, strlen(byte_lit));
+    if (lb < 0 || lb - off > 60) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — "); _p(region); _p(" heap-map byte size != "); _p(byte_lit); println("");
+        fail = fail + 1;
+    }
+    var hb = _find_str_from(buf, n, off, human, strlen(human));
+    if (hb < 0 || hb - off > 80) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — "); _p(region); _p(" heap-map human label != "); _p(human); println("");
+        fail = fail + 1;
+    }
+    return fail;
+}
+
+# Verify a source file has an inline cap-check pattern.
+# Args: buf, n, expected pattern (e.g. ">= 262144"), region name.
+# Returns 0 on hit, 1 on miss.
+fn _verify_inline(buf, n, pattern, region): i64 {
+    var at = _find_str_from(buf, n, 0, pattern, strlen(pattern));
+    if (at < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — "); _p(region); _p(" inline cap (");
+        _p(pattern); println(") missing from lex.cyr");
+        return 1;
+    }
+    return 0;
+}
+
+# Cap-drift gate (v5.11.50; refactored to use _verify_* helpers at
+# v5.11.55). Cross-checks heap-map comments at src/main.cyr:24+
+# against inline literal caps in src/frontend/lex.cyr. Each cap is
+# two short helper calls (one for heap-map agreement, one for inline
+# match); adding the next cap is two more calls.
 fn _cap_drift_gate(): i64 {
     var label = "cap-drift detector — heap-map comments and inline literal caps agree (v5.11.50)";
 
-    var main_path = _root_path("src/main.cyr");
-    var lex_path  = _root_path("src/frontend/lex.cyr");
     var main_cap = 524288;
     var main_buf = alloc(main_cap);
-    var main_n = file_read_all(main_path, main_buf, main_cap);
+    var main_n = file_read_all(_root_path("src/main.cyr"), main_buf, main_cap);
     if (main_n <= 0) { _check(label, 1); return 1; }
     var lex_cap = 524288;
     var lex_buf = alloc(lex_cap);
-    var lex_n = file_read_all(lex_path, lex_buf, lex_cap);
+    var lex_n = file_read_all(_root_path("src/frontend/lex.cyr"), lex_buf, lex_cap);
     if (lex_n <= 0) { _check(label, 1); return 1; }
 
     var fail = 0;
 
-    # ---- Cap 1: input_buf (1 MB) ----
-    # Heap-map line: "#   0x00000  input_buf     [1048576]      1MB raw stdin input"
-    # Inline check : src/frontend/lex.cyr:94  "if (tc >= 1048576) {"
-    # Anchor on the unique 0x00000+input_buf combo to skip cross-refs.
-    var off = _find_str_from(main_buf, main_n, 0, "0x00000  input_buf", 18);
-    if (off < 0) {
-        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": cap-drift — heap-map line for input_buf not found");
-        fail = fail + 1;
-    } else {
-        var lb = _find_str_from(main_buf, main_n, off, "[1048576]", 9);
-        if (lb < 0 || lb - off > 60) {
-            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-            println(": cap-drift — input_buf heap-map byte size != [1048576]");
-            fail = fail + 1;
-        }
-        var mb = _find_str_from(main_buf, main_n, off, "1MB", 3);
-        if (mb < 0 || mb - off > 80) {
-            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-            println(": cap-drift — input_buf heap-map human label != 1MB");
-            fail = fail + 1;
-        }
-    }
-    var inline1 = _find_str_from(lex_buf, lex_n, 0, ">= 1048576", 10);
-    if (inline1 < 0) {
-        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": cap-drift — input_buf inline cap check (>= 1048576) missing from lex.cyr");
-        fail = fail + 1;
-    }
+    # Cap 1: input_buf (1 MB).
+    fail = fail + _verify_heap_map(main_buf, main_n, "0x00000  input_buf", "[1048576]", "1MB", "input_buf");
+    fail = fail + _verify_inline(lex_buf, lex_n, ">= 1048576", "input_buf");
 
-    # ---- Cap 2: tok_names / identifier buffer (256 KB) ----
-    # Heap-map line: "#   0x60000  tok_names     [262144]      256KB packed identifier strings..."
-    # Inline checks: src/frontend/lex.cyr:591, :607 — "if (... >= 261872)" (cap minus 272 B slack)
-    # Anchor on 0x60000+tok_names to skip the earlier NOTE references.
-    off = _find_str_from(main_buf, main_n, 0, "0x60000  tok_names", 18);
-    if (off < 0) {
-        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": cap-drift — heap-map line for tok_names not found");
-        fail = fail + 1;
-    } else {
-        var lb = _find_str_from(main_buf, main_n, off, "[262144]", 8);
-        if (lb < 0 || lb - off > 60) {
-            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-            println(": cap-drift — tok_names heap-map byte size != [262144]");
-            fail = fail + 1;
-        }
-        var kb = _find_str_from(main_buf, main_n, off, "256KB", 5);
-        if (kb < 0 || kb - off > 80) {
-            _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-            println(": cap-drift — tok_names heap-map human label != 256KB");
-            fail = fail + 1;
-        }
-    }
-    # 261872 = 262144 - 272 (LEXID slack for inner-loop write window)
-    var inline2 = _find_str_from(lex_buf, lex_n, 0, ">= 261872", 9);
-    if (inline2 < 0) {
-        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": cap-drift — tok_names inline cap (>= 261872) missing from lex.cyr (LEXID guard)");
-        fail = fail + 1;
-    }
+    # Cap 2: tok_names / identifier buffer (256 KB). Inline check uses
+    # 261872 = 262144 - 272 (LEXID slack for the inner-loop write
+    # window — see lex.cyr's NPOS_GUARD).
+    fail = fail + _verify_heap_map(main_buf, main_n, "0x60000  tok_names", "[262144]", "256KB", "tok_names");
+    fail = fail + _verify_inline(lex_buf, lex_n, ">= 261872", "tok_names");
 
-    # ---- Cap 3: str_data (2 MB) ----
-    # Inline checks: src/frontend/lex.cyr:1216, :1375 — "if (spos >= 2097152) {"
-    var inline3 = _find_str_from(lex_buf, lex_n, 0, ">= 2097152", 10);
-    if (inline3 < 0) {
-        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": cap-drift — str_data inline cap (>= 2097152) missing from lex.cyr");
-        fail = fail + 1;
-    }
+    # Cap 3: str_data (2 MB). Inline-only check — str_data's heap-map
+    # line is structured differently; a _verify_heap_map call can be
+    # added if a future refactor makes that line uniform.
+    fail = fail + _verify_inline(lex_buf, lex_n, ">= 2097152", "str_data");
 
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);

@@ -6,6 +6,76 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.55] — 2026-05-13
+
+**Refactor sweep — cap-drift gate table-style helpers +
+`_efi_compile_to_buf` consolidation (items #2 + #4 from the .53-end
+survey).** No new check.sh gates, no behavior change; the
+encoded gates produce the same diagnostics and pass on the same
+sources. Pure housekeeping fold-in.
+
+check.sh **75/75**; cc5 self-host **827,296 B** (unchanged from
+v5.11.54 — refactors only touched `programs/check.cyr`); cyrius
+test **150/150**.
+
+### Refactor #2 — cap-drift gate `_verify_*` helpers
+
+`programs/check.cyr` — the v5.11.50 hardcoded 3-cap blocks (each
+~20 LoC of `_find_str_from` + bound-check + diagnostic emit) were
+replaced with two ≤6-arg helpers:
+
+- `_verify_heap_map(buf, n, anchor, byte_lit, human, region)` —
+  asserts the `anchor` substring is in `buf` AND `byte_lit` +
+  `human` are within proximity bounds of the anchor.
+- `_verify_inline(buf, n, pattern, region)` — asserts `pattern`
+  appears in `buf`.
+
+Each cap-check in `_cap_drift_gate` is now two short lines
+(`_verify_heap_map(...)` + `_verify_inline(...)`); adding the
+next cap is two more calls.
+
+**Caught at slot bringup**: the first refactor attempt used a
+single 13-arg helper. Args 7+ (cstr literals) appeared as 0 in
+the helper body — cyrius's stack-arg ABI has alignment issues
+beyond the 6-register convention. Restructured to two ≤6-arg
+helpers and it worked first try. **Pinned as
+`feedback_fn_arg_count_6` memory entry** for future-self: target
+≤6 params when extracting cyrius helpers.
+
+### Refactor #4 — `_efi_compile_to_buf` consolidates EFI gate boilerplate
+
+The v5.11.48 `_efi_emit_gate` and v5.11.53 `_efi_trampoline_rex_gate`
+each open-coded the same shape: `_self_host_pipe_efi` compile +
+unlink-on-fail + `file_read_all` into buf + unlink-bin. Extracted
+to a single helper `_efi_compile_to_buf(src_path, buf, cap,
+fail_label)` returning bytes-read or -1. Both gates' compile
+prologues shrunk from ~20 LoC to ~5 LoC. Diagnostic boilerplate
+on compile failure now lives in one place; future EFI gates
+inherit the same shape.
+
+### Memory pin
+
+- **`feedback_fn_arg_count_6`** (new at .55) — keep cyrius
+  helper fns ≤6 args. Stack-arg path (args 7+) has shown
+  alignment/value-corruption in practice. Worth respecting even
+  though `lib/fnptr.cyr` doc says it should work.
+
+### Memory pins referenced
+
+- `feedback_release_needs_code_not_just_docs` (the cc5 size is
+  flat but the check.cyr LoC delta is real — ~50 LoC saved, two
+  helpers documented).
+- `feedback_premise_check_at_slot_entry` (initial 13-arg helper
+  attempt surfaced the arg-count limit empirically before the
+  refactor shipped).
+
+### Out-of-scope for .55 (deferred to absorber band or .68)
+
+- **#5** byte-array literal peephole (5× emit compression). Heavier
+  + cross-arch; absorber-band candidate when a slot has runway.
+- **#6** ELF section-header DRY across 5 emitters. Reserved for
+  v5.11.68 closeout per CLAUDE.md closeout pass item #6.
+
 ## [5.11.54] — 2026-05-13
 
 **LSP papercut close + refactor sweep (REX named ops +
