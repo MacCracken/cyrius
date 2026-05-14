@@ -5,6 +5,76 @@
 
 ## Version
 
+**5.11.52** (shipped 2026-05-13 — **`fn efi_main(handle, st)`
+entry convention + `CYRIUS_TARGET_EFI` predefine — gnoboot
+ergonomic fix #2 of 2**). Closes the second gnoboot-agent
+enhancement filing; companion byte-array literal landed at
+v5.11.51. Ergonomic, not a bug; both gnoboot ergonomic filings
+now closed in two slots same-day as user-pinned split.
+
+**Convention**:
+```cyrius
+kernel;
+fn efi_main(handle, st): i64 {
+    # RCX = ImageHandle, RDX = SystemTable
+    return 0;   # EFI_SUCCESS
+}
+```
+
+When `CYRIUS_TARGET_EFI=1` AND fn `efi_main` is registered,
+cyrius emits an entry trampoline: save R14/R15 ← RCX/RDX right
+after entry jmp; let EMIT_GVAR_INITS + PARSE_PROG run (they
+clobber RAX/RCX/RDX, R14/R15 callee-saved); restore RCX/RDX
+← R14/R15 before efi_main call; allocate 0x28 stack (MS x64
+shadow + align); ECALLTO efi_main; restore stack; EEXIT under
+EFI emits `ret` → firmware reads RAX as EFI_STATUS.
+
+**Implementation** (3 sites in `src/main.cyr`):
+1. **Env-var read** (`src/main.cyr:625`): `CYRIUS_TARGET_EFI=1`
+   sets both `_is_pe_build=1` AND `_is_efi_build=1`.
+2. **PP_PREDEFINE** (`src/main.cyr:670`): EFI build predefines
+   BOTH `CYRIUS_TARGET_WIN` (so `lib/fnptr.cyr`'s MS-x64 fncallN
+   branches fire) AND `CYRIUS_TARGET_EFI` (consumer
+   discriminator). Mirror in `src/main_win.cyr:303`.
+3. **Entry save + trampoline emit** (`src/main.cyr:1266` save,
+   `:1346` trampoline). Save: `4C 89 CE` (mov r14, rcx) + `4C 89
+   D7` (mov r15, rdx). Trampoline: fn-table scan for `efi_main\0`
+   (same shape as existing main auto-call); on found, emit
+   restore + sub rsp + ECALLTO + add rsp. EEXIT below emits ret.
+
+**`lib/fnptr.cyr` doc refresh** — header doc-comment now
+enumerates 3 ABIs explicitly: SysV (LINUX/MACOS), MS x64
+(WIN/EFI), AAPCS64 subset (aarch64). No code change — the
+existing TARGET_WIN branches (shipped v5.5.7) fire under EFI
+builds via the new predefine.
+
+**OVMF smoke** at slot work: bare `kernel; fn efi_main(handle,
+st): i64 { return 0; }` boots cleanly under qemu+OVMF; firmware
+reads `rax=0` (EFI_SUCCESS) and unwinds to BootManagerMenu.
+Confirms entry save / restore / ECALLTO rel32 / EEXIT ret /
+firmware rax-readback all working end-to-end.
+
+**Out-of-scope (acknowledged)**:
+- gnoboot rebuild verify deferred to gnoboot-agent task (consumer
+  cleanup of ~50 lines → `fn efi_main` body).
+- Manual smoke surfaced a GP fault when efi_main's body uses
+  `var con_out = load64(st + 0x40);` — likely a cyrius emit
+  pattern issue with chained loads through MS-x64-passed RDX, NOT
+  the trampoline. Trampoline-only (bare `return 0;`) is clean.
+  Separate concern, separate slot.
+
+**Issue archive**:
+`docs/development/issues/2026-05-13-gnoboot-efi-main-convention.md`
+→ `archived/`.
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**827,976 B** / +2,216 from v5.11.51); `check.sh` **74/74**;
+`cyrius test` **150/150**. Default-off path (no
+`CYRIUS_TARGET_EFI`) byte-identical to v5.11.51.
+
+**Next**: cycle returns to absorber buffer (.52 → .67) with
+pinned .68 (heap-map full reorg) and .69 (conditional mabda fold).
+
 **5.11.51** (shipped 2026-05-13 — **Byte-array literal
 `var foo[N] = { 0x.., 0x.., ... };` — gnoboot ergonomic fix #1
 of 2**). Closes `2026-05-13-gnoboot-byte-array-literal.md`.
@@ -190,6 +260,7 @@ Cyrius cycle returns to v5.11.x absorber buffer (.50 → .67 open;
 
 ### Prior v5.11.x ships (one-liner per release; detail in CHANGELOG.md)
 
+- **v5.11.51** — Byte-array literal `var foo[N] = { 0x.., 0x.., ... };` — gnoboot ergonomic fix #1 of 2 (the other lands at .52). New `EADDRA_IMM` named op on 3 backends; PARSE_GVAR_ARR extension + EMIT_GVAR_INITS replay path. Token-ID gotcha caught at bringup (`{` is 13, not 19). 26-assert tcyr.
 - **v5.11.50** — Cap-drift detector + doc-size currency gates + fresh-tier doc refresh: `_cap_drift_gate()` cross-checks heap-map comments vs inline literal caps; `_doc_size_currency_gate()` scans fresh-tier docs for cc5 size refs (decimal KB ±50 KB tolerance); 4 docs refreshed v5.8.x → v5.11.50. check.sh 72→74.
 - **v5.11.49** — OVMF runtime smoke + gnoboot arc closeout: RELOCS_STRIPPED cleared in EFI mode (UEFI firmware needs latitude to place anywhere); new `_efi_ovmf_smoke_gate()` boots efi_probe.efi under qemu+OVMF and asserts "hello, uefi" on serial. Arc filing → ship same-day. check.sh 71→72.
 - **v5.11.48** — EFI Application probe + structural gate (gnoboot arc P2): `programs/efi_probe.cyr` (64 LoC, inline-asm-only); `_efi_emit_gate()` structural check (Subsystem=0xA, NX_COMPAT, Data Dirs zeroed, .text has ret); DllCharacteristics NX_COMPAT forced in EFI mode even without `.reloc`. check.sh 70→71.

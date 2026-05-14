@@ -300,6 +300,17 @@ PP_PREDEFINE(S, "CYRIUS_ARCH_X86");
 # (syscalls_windows.cyr + alloc_windows.cyr) instead of the
 # Linux peers that ship by default on the x86 branch.
 PP_PREDEFINE(S, "CYRIUS_TARGET_WIN");
+# v5.11.52: under CYRIUS_TARGET_EFI=1 (UEFI Application output), also
+# predefine CYRIUS_TARGET_EFI so consumers can target-discriminate
+# UEFI vs Windows-CUI at preprocessor time. EFI and Windows share MS
+# x64 ABI + PE32+ container; the lib/fnptr.cyr MS-x64 branches fire
+# under CYRIUS_TARGET_WIN regardless.
+var _efi_env_early_w = _read_env("CYRIUS_TARGET_EFI");
+if (_efi_env_early_w != 0) {
+    if (load8(_efi_env_early_w) == 49 && load8(_efi_env_early_w + 1) == 0) {
+        PP_PREDEFINE(S, "CYRIUS_TARGET_EFI");
+    }
+}
 
 # Preprocess includes
 PREPROCESS(S);

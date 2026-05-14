@@ -6,6 +6,168 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.52] — 2026-05-13
+
+**`fn efi_main(handle, st)` entry convention + CYRIUS_TARGET_EFI
+predefine — gnoboot ergonomic fix #2 of 2.** Closes the second of
+the two 2026-05-13 gnoboot-agent enhancement filings;
+[`2026-05-13-gnoboot-efi-main-convention.md`](docs/development/issues/archived/2026-05-13-gnoboot-efi-main-convention.md).
+Companion byte-array literal landed at v5.11.51. Ergonomic, not a
+bug.
+
+check.sh **74/74**; cc5 self-host **825,760 → 827,976 B**
+(+2,216 from entry save/restore + trampoline + efi_main lookup);
+cyrius test **150/150**. Default-off path (no `CYRIUS_TARGET_EFI`)
+byte-identical to v5.11.51 output.
+
+### Convention
+
+```cyrius
+kernel;
+
+fn efi_main(handle, st): i64 {
+    # normal cyrius — RCX = ImageHandle, RDX = SystemTable
+    return 0;   # EFI_SUCCESS
+}
+```
+
+When cyrius compiles a source with `CYRIUS_TARGET_EFI=1` AND a
+fn named `efi_main` is registered, the entry-point trampoline:
+
+1. Saves firmware-supplied RCX (ImageHandle) and RDX (SystemTable)
+   into callee-saved R14/R15 right after the entry jmp.
+2. Lets EMIT_GVAR_INITS + PARSE_PROG run normally (they clobber
+   RAX/RCX/RDX; R14/R15 survive since both SysV and MS x64 mark
+   them callee-saved and cyrius emit machinery never touches them).
+3. Restores RCX ← R14, RDX ← R15 after gvar inits.
+4. Allocates 0x28 stack (MS x64 shadow space + alignment).
+5. Calls efi_main directly via `ECALLTO`.
+6. Restores the stack.
+7. EEXIT emits `ret` under EFI mode — firmware reads RAX as
+   EFI_STATUS.
+
+If `efi_main` isn't defined, cyrius falls through to today's
+behavior: top-level statements run as the entry-point body and
+the consumer hand-rolls firmware-arg capture. **Opt-in via fn
+presence; no breaking change.**
+
+### Implementation
+
+`src/main.cyr` — three small additions:
+
+1. **Early env-var read** (`src/main.cyr:625`): in addition to
+   `CYRIUS_TARGET_WIN`, also read `CYRIUS_TARGET_EFI`. Either
+   env flips `_is_pe_build = 1`. When EFI is set, also set
+   `_is_efi_build = 1` for the downstream predefine.
+
+2. **PP_PREDEFINE branch** (`src/main.cyr:670`): when EFI build,
+   predefine BOTH `CYRIUS_TARGET_WIN` (so existing PE-targeting
+   stdlib paths fire — including `lib/fnptr.cyr`'s MS-x64 fncallN
+   branches) AND `CYRIUS_TARGET_EFI` (consumer target-discriminator).
+   Single source of truth: UEFI Application is PE32+ container +
+   MS x64 ABI; no parallel branching needed in fnptr / process /
+   syscalls libraries — they ride the `CYRIUS_TARGET_WIN` predefine
+   that's already in place.
+
+   Mirror change in `src/main_win.cyr:303` for cc5_win cross-build
+   parity.
+
+3. **Entry save + trampoline call** (`src/main.cyr:1266` save,
+   `src/main.cyr:1346` trampoline):
+   - **Save at entry**: right after `EPATCH(jmp_patch)` (which
+     points the entry jmp at the post-fn-body code), emit
+     `4C 89 CE` (mov r14, rcx) + `4C 89 D7` (mov r15, rdx) when
+     `_TARGET_EFI_APPLICATION == 1`. Six bytes, register-only
+     instructions that don't touch SP or flags.
+   - **Trampoline at exit**: after the GLVAR-load (which clobbers
+     rax), scan `fn_names` for `efi_main\0` (same byte-match shape
+     as the existing `main` auto-call lookup at line 1362). If
+     found AND its offset is set, emit:
+     ```
+     4C 89 F1                    mov rcx, r14    ; restore ImageHandle
+     4C 89 FA                    mov rdx, r15    ; restore SystemTable
+     48 83 EC 28                 sub rsp, 0x28   ; MS x64 shadow + align
+     E8 <rel32>                  call efi_main   ; via ECALLTO
+     48 83 C4 28                 add rsp, 0x28
+     ```
+   - EEXIT below emits `ret` under EFI mode (the v5.11.47
+     EFI-variant) — firmware reads rax as EFI_STATUS (the value
+     efi_main returned).
+
+### `lib/fnptr.cyr` doc-comment refresh
+
+The header doc-comment claimed all builds used SysV calling
+convention. With `CYRIUS_TARGET_WIN` (and now `CYRIUS_TARGET_EFI`
+via the predefine), `fncallN` actually uses MS x64. Header
+rewritten to enumerate the three ABIs explicitly:
+
+- x86_64 SysV (LINUX, MACOS): rdi/rsi/rdx/rcx/r8/r9.
+- x86_64 MS x64 (WIN, EFI): rcx/rdx/r8/r9 + 32-byte shadow space.
+- aarch64 AAPCS64 (subset): x0..x5.
+
+No code change — the TARGET_WIN branches already shipped at
+v5.5.7 with the correct MS x64 register loads + shadow space. The
+v5.11.52 predefine makes them activate under EFI builds too.
+
+### Verification
+
+**Manual OVMF smoke** at slot work:
+```cyrius
+kernel;
+fn efi_main(handle, st): i64 { return 0; }
+```
+
+Boots cleanly under qemu+OVMF; firmware reads `rax = 0`
+(EFI_SUCCESS), unwinds back to BootManagerMenu. Confirms:
+- Entry save (R14/R15) ✓
+- Restore (RCX/RDX) ✓
+- ECALLTO emits correct rel32 ✓
+- efi_main's fn body runs ✓
+- EEXIT under EFI emits `ret` ✓
+- Firmware reads rax correctly ✓
+
+**Regression**: existing `_efi_emit_gate()` (structural,
+compiles `programs/efi_probe.cyr` which has no `efi_main`) and
+`_efi_ovmf_smoke_gate()` (runtime, boots the probe) both stay
+green — opt-in via fn presence, default-off path unchanged.
+
+### Out-of-scope (acknowledged, deferred)
+
+- **gnoboot rebuild verify**: gnoboot itself wasn't rebuilt as
+  part of this slot's verify pass. The consumer-side cleanup
+  (collapse `~50 lines` of trampoline + asm to `fn efi_main`
+  body) is a gnoboot-agent task against `cyrius = "5.11.52"`.
+- **OutputString call shape inside efi_main**: a separate cyrius
+  concern. Manual smoke showed a GP fault in efi_main's body when
+  using `var con_out = load64(st + 0x40);` — likely a cyrius emit
+  pattern issue with chained loads through MS-x64-passed RDX, NOT
+  the trampoline. Trampoline-only verification (bare `return 0;`)
+  is clean.
+
+### Issue archive
+
+`docs/development/issues/2026-05-13-gnoboot-efi-main-convention.md`
+→ `docs/development/issues/archived/`.
+
+### Memory pins referenced
+
+- `feedback_premise_check_at_slot_entry` (manual OVMF smoke at
+  slot end caught that the issue was efi_main body emit, not the
+  trampoline — would have shipped broken if I'd skipped this).
+- `project_agnos_path_c_gnoboot` (pinned this as .52 of the
+  .51/.52 ergonomic split).
+- `feedback_close_to_archive_issues` (gnoboot efi_main filing
+  archived).
+
+### Next
+
+Two new gnoboot ergonomic filings closed (byte-array literal at
+.51, efi_main convention at .52). gnoboot consumer can pin
+`cyrius = "5.11.52"` and rewrite `main.cyr` against the new
+shape. v5.11.x cycle returns to the absorber buffer
+(.52 → .67) plus pinned .68 (heap-map full reorg) and .69
+(conditional mabda fold).
+
 ## [5.11.51] — 2026-05-13
 
 **Byte-array literal `var foo[N] = { 0x.., 0x.., ... };` — gnoboot

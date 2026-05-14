@@ -5,13 +5,32 @@
 # functions load args, call through the pointer, return the result.
 # fncall0..fncall8 are available (ceiling lifted from 6 to 8 at v5.4.13).
 #
-# Calling convention (both arches — cyrius's own, NOT AAPCS64's x0..x7):
-#   - Args 1-6 in registers: rdi/rsi/rdx/rcx/r8/r9 (x86_64 SysV) or
-#     x0..x5 (aarch64 — cyrius uses only 6 arg registers to stay
-#     symmetric with x86_64 SysV; see src/backend/aarch64/emit.cyr).
-#   - Args 7+ on the stack. x86_64: single stack slot per arg at
-#     [rsp+N*8]. aarch64: 16 bytes per arg (preserves SP alignment),
-#     pushed in pidx order via `str xN, [sp, #-16]!`.
+# Calling convention — per-target, **NOT** uniform across all builds:
+#
+#   x86_64 SysV (CYRIUS_TARGET_LINUX, CYRIUS_TARGET_MACOS):
+#     - Args 1-6 in registers: rdi / rsi / rdx / rcx / r8 / r9.
+#     - Args 7+ on the stack at [rsp+N*8].
+#
+#   x86_64 MS x64 (CYRIUS_TARGET_WIN — Windows AND, since v5.11.52,
+#                  CYRIUS_TARGET_EFI implies this branch):
+#     - Args 1-4 in registers: rcx / rdx / r8 / r9.
+#     - 32-byte shadow space ALWAYS reserved at every call site
+#       (sub rsp, 0x20 before, add rsp, 0x20 after). C callees may
+#       use the shadow as spill home for their arg registers.
+#     - Args 5+ on the stack at [rsp+0x20+(N-5)*8].
+#     - v5.11.52 note: under CYRIUS_TARGET_EFI=1, cyrius predefines
+#       BOTH CYRIUS_TARGET_WIN AND CYRIUS_TARGET_EFI — so the
+#       CYRIUS_TARGET_WIN branches below fire naturally for UEFI
+#       Application builds (UEFI and Windows share PE32+ + MS x64 ABI).
+#
+#   aarch64 AAPCS64 (CYRIUS_ARCH_AARCH64; cyrius's own subset, NOT
+#                    AAPCS64's full x0..x7):
+#     - Args 1-6 in registers: x0..x5 (cyrius uses 6 arg regs to stay
+#       symmetric with x86_64 SysV; see src/backend/aarch64/emit.cyr).
+#     - Args 7+: 16 bytes per arg (preserves SP alignment), pushed in
+#       pidx order via `str xN, [sp, #-16]!`.
+#
+# Common to all backends:
 #   - fp loaded into rax (x86) / x9 (aarch64) for the indirect call.
 #   - Result comes back in rax / x0 and is stored to the result slot.
 #   - Cyrius pads the local frame to 16 bytes (parse.cyr:1505

@@ -629,6 +629,21 @@ if (_pe_env_early != 0) {
         _is_pe_build = 1;
     }
 }
+# v5.11.52: CYRIUS_TARGET_EFI=1 implies the PE32+ container (Windows
+# and UEFI share MS x64 ABI, PE format, shadow space convention).
+# Setting _is_pe_build here makes downstream PP_PREDEFINE fire
+# CYRIUS_TARGET_WIN — lib/fnptr.cyr's MS-x64 branches and other
+# PE-targeting stdlib paths then activate for EFI builds. The
+# CYRIUS_TARGET_EFI predefine itself is added below so consumers
+# can target-discriminate when needed.
+var _efi_env_early = _read_env("CYRIUS_TARGET_EFI");
+var _is_efi_build = 0;
+if (_efi_env_early != 0) {
+    if (load8(_efi_env_early) == 49 && load8(_efi_env_early + 1) == 0) {
+        _is_pe_build = 1;
+        _is_efi_build = 1;
+    }
+}
 # v5.5.16: check the Mach-O env vars at the same early point so
 # `#ifdef CYRIUS_TARGET_MACOS` branches in stdlib (e.g. lib/alloc.cyr
 # → lib/alloc_macos.cyr) activate on cross-builds to arm64 / x86_64
@@ -654,6 +669,7 @@ if (_macho_arm_env_early != 0) {
 }
 if (_is_pe_build == 1) {
     PP_PREDEFINE(S, "CYRIUS_TARGET_WIN");
+    if (_is_efi_build == 1) { PP_PREDEFINE(S, "CYRIUS_TARGET_EFI"); }
 } else { if (_is_macho_build == 1) {
         PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
     } else {
@@ -1243,6 +1259,20 @@ SMOD(S, 0);
 # Patch jmp to land here (start of main code)
 EPATCH(S, jmp_patch);
 
+# v5.11.52: under CYRIUS_TARGET_EFI=1, save firmware-supplied entry
+# args (RCX = ImageHandle, RDX = SystemTable per UEFI MS x64 ABI)
+# into callee-saved R14/R15 BEFORE any user emit fires. EMIT_GVAR_INITS
+# and top-level statements emit instructions that clobber RAX/RCX
+# (e.g. `mov rcx, &gvar; mov [rcx], rax`). R14/R15 are callee-saved
+# in both SysV and MS x64 — cyrius's emit machinery preserves them
+# across all per-byte and per-call sequences, so they survive
+# everything up to the efi_main call below.
+# Bytes: 4C 89 CE  (mov r14, rcx) ; 4C 89 D7  (mov r15, rdx)
+if (_TARGET_EFI_APPLICATION == 1) {
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xCE);
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD7);
+}
+
 # In object mode AND shared mode, wrap top-level code as a callable
 # function (_cyrius_init). Object mode: linked binaries call it after
 # symbol merge. Shared mode: dynamic loader calls it via DT_INIT on
@@ -1311,6 +1341,71 @@ if (_prof_on == 1) { _prof_parse_end = _prof_clock_ns(); }
 # Exit epilogue
 var lv = GLVAR(S);
 if (lv >= 0) { EVLOAD(S, lv); }
+
+# v5.11.52: `fn efi_main(handle, st)` entry convention. When
+# CYRIUS_TARGET_EFI=1 AND a fn named `efi_main` is registered, emit
+# a trampoline call AFTER GLVAR load (which clobbers rax): restore
+# the firmware args saved at entry (R14 → RCX = ImageHandle, R15 →
+# RDX = SystemTable), allocate the MS x64 shadow space + 8-byte
+# stack alignment, call efi_main directly, restore the stack. The
+# EEXIT below emits a single `ret` under EFI mode — firmware reads
+# RAX as EFI_STATUS.
+#
+# Must run AFTER the GLVAR-load above (mirrors the main-fn auto-call
+# pattern at line ~1362) — that load otherwise clobbers efi_main's
+# rax return. Must run BEFORE EEXIT so EEXIT's `ret` returns rax to
+# firmware.
+#
+# If `efi_main` isn't defined, fall through to today's behavior:
+# top-level statements ran during PARSE_PROG, firmware-supplied args
+# survive on the caller's terms (hand-rolled inline-asm capture). The
+# convention is opt-in via fn presence.
+#
+# Closes the second of the two 2026-05-13 gnoboot ergonomic filings;
+# see archived/2026-05-13-gnoboot-efi-main-convention.md.
+if (_TARGET_EFI_APPLICATION == 1) {
+    var _efm_fc = GFNC(S);
+    var _efm_fi = 0;
+    var _efm_found = 0 - 1;
+    while (_efm_fi < _efm_fc) {
+        var _efm_noff = L64(S + 0x12CA000 + _efm_fi * 8);
+        if (load8(S + 0x60000 + _efm_noff)     == 101) {  # 'e'
+            if (load8(S + 0x60000 + _efm_noff + 1) == 102) {   # 'f'
+                if (load8(S + 0x60000 + _efm_noff + 2) == 105) {  # 'i'
+                    if (load8(S + 0x60000 + _efm_noff + 3) == 95) {   # '_'
+                        if (load8(S + 0x60000 + _efm_noff + 4) == 109) {  # 'm'
+                            if (load8(S + 0x60000 + _efm_noff + 5) == 97) {   # 'a'
+                                if (load8(S + 0x60000 + _efm_noff + 6) == 105) {  # 'i'
+                                    if (load8(S + 0x60000 + _efm_noff + 7) == 110) {  # 'n'
+                                        if (load8(S + 0x60000 + _efm_noff + 8) == 0) {
+                                            _efm_found = _efm_fi;
+                                            _efm_fi = _efm_fc;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _efm_fi = _efm_fi + 1;
+    }
+    if (_efm_found >= 0) {
+        var _efm_off = L64(S + 0x12DA000 + _efm_found * 8);
+        if (_efm_off >= 0) {
+            # Restore firmware args from callee-saved R14/R15
+            EB(S, 0x4C); EB(S, 0x89); EB(S, 0xF1);   # mov rcx, r14
+            EB(S, 0x4C); EB(S, 0x89); EB(S, 0xFA);   # mov rdx, r15
+            # MS x64 shadow space + 8-byte alignment.
+            EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28);   # sub rsp, 0x28
+            ECALLTO(S, _efm_off);
+            EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28);   # add rsp, 0x28
+            # EEXIT below emits `ret` under EFI mode — firmware reads
+            # rax as EFI_STATUS (the value efi_main returned).
+        }
+    }
+}
 
 # v5.9.37: auto-call `main()` if defined and not already called.
 # Pre-fix sources with only `fn main() { ... }` (no trailing
