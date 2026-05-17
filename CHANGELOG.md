@@ -6,6 +6,143 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.59] — 2026-05-17
+
+**DCE-aware undefined-fn reachability filter (cross-arch
+engineering slot).** Completes the deferred work from the
+.56 papercut split — `_check_fixup_undef_fn` now consults
+the DCE reachability bitmap to suppress warnings for fixups
+whose host fn is dead. Cross-arch parity in same slot
+(`feedback_cross_arch_propagation_mandatory`). The x86 path
+reorders an existing 30-LoC block; the aarch64 path adds a
+NEW ~200-LoC DCE pass (no DCE existed on aarch64 before).
+
+check.sh **75/75**; cc5 self-host **875,336 B** (+672 B
+from v5.11.58 — new u59 reachability filter block); cyrius
+test **150/150**; cross-compilers rebuilt: cc5_aarch64
+**558,016 B** (+8,192 B from v5.11.58 for the new DCE pass
++ filter), cc5_win **682,760 B** (+672 B for the filter).
+
+### x86_64 — undef-fn check reorder + filter (`src/backend/x86/fixup.cyr`)
+
+The pre-fix check ran BEFORE the fixup patch loop and the
+DCE pass; no reachability data existed yet. v5.59 moves the
+check to AFTER the DCE pass (which already builds `live[]`
+via byte-scan of E8/E9 control transfers) and adds the
+filter:
+
+- For each undef'd fixup (`utarget == -1`, type 2 or 3),
+  walk the fn table to locate the host fn whose
+  `[start, end)` contains the patch's `coff` — same shape
+  as the existing DCE seed loop at line 483-492.
+- If `host >= 0` and `live[host] == 0`, skip the warning.
+- Top-level / entry-code (`host < 0`) is always live;
+  warning fires unconditionally for that case.
+- `_strict_mode` hard-fail (line 184-189) preserved, but
+  now counts only REACHABLE undef refs — strict mode no
+  longer fails builds for dead-host refs that were
+  spuriously flagged pre-.59.
+- `undef_count` declared at fn scope (top of `FIXUP`) so
+  the moved check + strict exit can read it.
+
+Validation: `agnosticos/scripts/src/read-boot-log.cyr`
+(reachable code: ~5 fns; `vec_get` exists only inside
+DCE-detected-unreachable `vec_find`) now emits ZERO
+fixup-time warnings for `vec_get`. The parse-time warning
+from `src/main.cyr:1344` (different check; fn name
+registered but body never seen) still fires — that one's
+not reachability-aware and is intentionally out of scope
+for this slot.
+
+### aarch64 — full DCE pass + undef-fn filter (`src/backend/aarch64/fixup.cyr`)
+
+Pre-fix aarch64 had no DCE infrastructure at all — no
+reachability bitmap, no byte-scan, no dead-fn detection.
+This slot adds the complete pass mirroring x86's structure
+with aarch64-specific encodings:
+
+- **Env probes**: `CYRIUS_DCE` (NOP-fill opt-in),
+  `CYRIUS_DCE_VERBOSE` (per-fn dead list).
+- **`live[512]` bitmap** — 4096-fn capacity matching x86.
+- **`fn_start → fi+1` hash table at 0x114000** — reuses
+  the 16 KB region the x86 path uses (verified unused on
+  aarch64 by reading x86 fixup.cyr's v5.10.41 layout
+  comment); Knuth golden-ratio multiplicative hash,
+  explicit per-slot reset.
+- **Type-3 (addr-of) root marking** — same conservative
+  treatment as x86; fn pointers can dispatch indirectly.
+- **Seed pass — BL/B byte-scan**:
+  - 4-byte fixed instruction stride (vs x86's variable).
+  - BL (call): top 6 bits `100101` → byte-3 mask
+    `& 0xFC == 0x94` (covers 0x94..0x97).
+  - B (jump): top 6 bits `000101` → byte-3 mask
+    `& 0xFC == 0x14` (covers 0x14..0x17).
+  - rel26: `insn & 0x3FFFFFF`; sign-extend at 0x2000000;
+    byte offset is `imm26 * 4`. Target byte is
+    `scn + imm26*4` (vs x86's `scn + 5 + rel32`).
+- **Propagate pass** — fixpoint BFS, same shape as x86's
+  inner loop (also adapted to 4-byte stride + BL/B).
+- **Sweep — count + optional NOP-fill**:
+  - aarch64 NOP `0xD503201F` (4-byte) replaces dead bodies.
+  - Safety check: preceding instruction is RET
+    (`0xD65F03C0`) OR body's last instruction is RET. No
+    decoder-validation step needed (fixed 4-byte width
+    removes the x86 decoder dependency).
+  - NOP-fill gated on `CYRIUS_DCE=1` (matches x86 opt-in).
+- **`note: N unreachable fns (M bytes ...)` output** —
+  emits the same format as x86. Pre-.59 aarch64 had no
+  such output; this is the first aarch64 dead-code
+  visibility.
+- **`CYRIUS_DCE_VERBOSE=1`** — emits per-fn `  dead: <name>`
+  list, same format as x86.
+
+Validation:
+- `cc5_aarch64` cross-build of itself: emits `note: 79
+  unreachable fns (33049 bytes — set CYRIUS_DCE=1 to
+  eliminate, ...)` — NEW diagnostic on aarch64.
+- `agnosticos/scripts/src/read-boot-log.cyr` aarch64
+  cross-build: `vec_get` warning GONE (was present
+  pre-.59); only the pin-drift warning + the new dead-fn
+  count remain.
+- `CYRIUS_DCE=1` aarch64 cross-build of read-boot-log:
+  `note: 415 unreachable fns (15892 bytes NOPed)` — sweep
+  engaged successfully, file size unchanged (in-place NOP
+  fill).
+
+### Cross-arch + edge cases
+
+- **`_strict_mode` parity**: x86 + Windows have it; aarch64
+  doesn't currently declare the global. The aarch64 filter
+  emits the same warning but doesn't hard-exit on
+  reachable undef refs. Adding aarch64 strict-mode is a
+  separate slot (would need a `_strict_mode` decl in
+  `main_aarch64.cyr` + flag plumbing in the wrapper's
+  aarch64 dispatch). Not in .59 scope.
+- **Existing aarch64 fixup-patch logic unchanged**: the
+  UDF #0 sentinel (line 138-143) still fires for target<0
+  type-2 fixups (real undef calls SIGILL at runtime if
+  reached). DCE just gates the WARNING, not the patch.
+- **Hash table region (0x114000)**: x86 v5.10.41 sized
+  this for 8192 slots × 2 B = 16 KB; aarch64 reuses the
+  same region with identical semantics. Both archs zero
+  the region at pass entry (x86 always did; aarch64
+  matches).
+
+### What stays as-is
+
+- **Parse-time `warning: undefined function 'X'`** in
+  `src/main.cyr:1344` — different check (registered but
+  never defined) running BEFORE fixup. Out of scope for
+  .59 (would need cross-pass coordination). Aarch64
+  doesn't have this check because main_aarch64.cyr has its
+  own driver code.
+- **NOP-fill safety on aarch64**: two-check (preceding RET
+  OR ending RET) is simpler than x86's three-check
+  (preceding RET / JMP-over / epilogue + decoder). Aarch64
+  fixed instruction width removes the decoder dependency;
+  the two checks cover the same coverage cyrius emits
+  today.
+
 ## [5.11.58] — 2026-05-17
 
 **Wrapper polish — version-bump rebuild fix + `cyrius lib

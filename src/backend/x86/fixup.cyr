@@ -140,53 +140,17 @@ fn FIXUP(S): i64 {
         totvar = totvar + vsize;
         vi = vi + 1;
     }
-    # Check for undefined functions that are actually called (have fixup entries).
-    # v5.4.19: if the compiler was invoked with `--strict`, any undefined
-    # function becomes a hard failure rather than a "will crash at runtime"
-    # warning. Closes the mabda Issue 2 / v5.4.15 bench_print_all regression
-    # class — typos in fn names silently produce broken binaries today.
+    # v5.11.59: undef-fn check relocated below the DCE pass so the
+    # reachability bitmap (live[]) can suppress warnings for fixups
+    # whose host fn is unreachable from entry. The .56 wording-only
+    # downgrade dropped the `error:` + `OK` contradiction; .59 closes
+    # the false-positive surface entirely for dead-host refs. See
+    # the post-DCE block below + CHANGELOG [5.11.59].
+    #
+    # `undef_count` declared at fn scope here so the moved
+    # `_strict_mode` exit (still after the patch loop) can read it.
     var undef_count = 0;
     var fcnt_pre = GFCNT(S);
-    var ufi = 0;
-    while (ufi < fcnt_pre) {
-        var ufaddr = S + 0x198B000 + ufi * 16;
-        var uraw = L64(ufaddr + 8);
-        var uftype = uraw >> 56;
-        var uidx = uraw & 0x00FFFFFFFFFFFFFF;
-        # Type 2 = function call, type 3 = absolute function address
-        if (uftype == 2 || uftype == 3) {
-            var utarget = L64(S + 0x12DA000 + uidx * 8);
-            if (utarget == 0 - 1) {
-                var ufnoff = L64(S + 0x12CA000 + uidx * 8);
-                # v5.11.56: downgraded `error:` → `warning:` + reworded
-                # "(will crash at runtime)" → "(call site may be
-                # unreachable)" to close the `error:` + `OK`
-                # contradiction surfaced by iron-boot session papercut
-                # filing (Item 3). The reachability filter that would
-                # suppress this warning entirely for truly-dead host
-                # fns is .58 (See CHANGELOG [5.11.56]). `_strict_mode`
-                # hard-fail path below preserves the binary-refusal
-                # semantics for CI gating.
-                syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-                var unptr = S + 0x60000 + ufnoff;
-                var unlen = 0;
-                while (load8(unptr + unlen) != 0) { unlen = unlen + 1; }
-                syscall(SYS_WRITE, 2, unptr, unlen);
-                syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
-                # Mark as reported to avoid duplicates
-                S64(S + 0x12DA000 + uidx * 8, 0 - 2);
-                undef_count = undef_count + 1;
-            }
-        }
-        ufi = ufi + 1;
-    }
-    # --strict mode: refuse to emit a binary with undefined-fn fixups.
-    if (_strict_mode == 1 && undef_count > 0) {
-        syscall(SYS_WRITE, 2, "error: --strict: refusing to emit binary with ", 46);
-        PRNUM(undef_count);
-        syscall(SYS_WRITE, 2, " undefined function(s)\n", 23);
-        syscall(SYS_EXIT, 1);
-    }
     # Symbol dump — opt-in via CYRIUS_SYMS env var (value = output path)
     # Writes "VA name" per line to the given file. Used for crash localization:
     # map RIP from coredumpctl to function+offset. See docs/diagnosis-symbols.md.
@@ -679,6 +643,76 @@ fn FIXUP(S): i64 {
             }
         }
     }
+    # v5.11.59: undef-fn check moved here from before the fixup
+    # patch loop. The DCE pass above populated `live[]`; for each
+    # undef'd fixup (type 2 call, type 3 addr-of), locate the host
+    # fn whose [start, end) contains the patch's `coff`, and skip
+    # the warning when the host is unreachable (live[host] == 0).
+    # The `vec_get`-from-dead-`vec_find` class from iron-boot
+    # papercut Item 3 now stays silent; genuinely-reachable undef
+    # refs still surface the warning (and the `--strict-pin` /
+    # `_strict_mode` hard-fail paths still fire on real bugs).
+    #
+    # Top-level / entry-block code (host < 0 — coff outside every
+    # fn body) is always live; the warning fires unconditionally
+    # for that case.
+    var u59_ufi = 0;
+    while (u59_ufi < fcnt_pre) {
+        var u59_ufaddr = S + 0x198B000 + u59_ufi * 16;
+        var u59_ucoff = L64(u59_ufaddr);
+        var u59_uraw = L64(u59_ufaddr + 8);
+        var u59_uftype = u59_uraw >> 56;
+        var u59_uidx = u59_uraw & 0x00FFFFFFFFFFFFFF;
+        if (u59_uftype == 2 || u59_uftype == 3) {
+            var u59_utarget = L64(S + 0x12DA000 + u59_uidx * 8);
+            if (u59_utarget == 0 - 1) {
+                # Locate host fn — same shape as DCE seed loop.
+                var u59_host = 0 - 1;
+                var u59_fj = 0;
+                while (u59_fj < fnc) {
+                    var u59_fs = L64(S + 0x12DA000 + u59_fj * 8);
+                    if (u59_fs >= 0) {
+                        var u59_fe = GFNE(S, u59_fj);
+                        if (u59_fe > u59_fs && u59_ucoff >= u59_fs && u59_ucoff < u59_fe) {
+                            u59_host = u59_fj; u59_fj = fnc;
+                        }
+                    }
+                    if (u59_host < 0) { u59_fj = u59_fj + 1; }
+                }
+                var u59_skip = 0;
+                if (u59_host >= 0) {
+                    var u59_lb = load8(&live + (u59_host >> 3)) & (1 << (u59_host & 7));
+                    if (u59_lb == 0) { u59_skip = 1; }
+                }
+                if (u59_skip == 0) {
+                    var u59_ufnoff = L64(S + 0x12CA000 + u59_uidx * 8);
+                    syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
+                    var u59_unptr = S + 0x60000 + u59_ufnoff;
+                    var u59_unlen = 0;
+                    while (load8(u59_unptr + u59_unlen) != 0) { u59_unlen = u59_unlen + 1; }
+                    syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);
+                    syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
+                    undef_count = undef_count + 1;
+                }
+                # Mark as reported to avoid duplicates if a future caller
+                # walks the table again. Set even on skip — the fixup
+                # patch loop already ran above; this is just bookkeeping.
+                S64(S + 0x12DA000 + u59_uidx * 8, 0 - 2);
+            }
+        }
+        u59_ufi = u59_ufi + 1;
+    }
+    # --strict mode (v5.4.19): refuse to emit a binary with reachable
+    # undefined-fn fixups. Note that filtered-out (dead-host) refs
+    # do NOT count toward `undef_count`, so strict mode only fires
+    # on real bugs.
+    if (_strict_mode == 1 && undef_count > 0) {
+        syscall(SYS_WRITE, 2, "error: --strict: refusing to emit binary with ", 46);
+        PRNUM(undef_count);
+        syscall(SYS_WRITE, 2, " undefined function(s)\n", 23);
+        syscall(SYS_EXIT, 1);
+    }
+
     # Store data_size
     S64(S + 0x18FCD0, totvar);
     return 0;

@@ -94,34 +94,16 @@ fn FIXUP(S): i64 {
         totvar = totvar + L64(S + 0x12A000 + vi * 8);
         vi = vi + 1;
     }
-    # Check for undefined functions that are actually called
+    # v5.11.59: undef-fn check relocated below the fixup patch loop
+    # so the new aarch64 DCE pass can populate live[] first and the
+    # check can suppress warnings for fixups whose host fn is
+    # unreachable from entry. Cross-arch parity with x86 (same slot,
+    # per feedback_cross_arch_propagation_mandatory). The aarch64
+    # DCE pass below is NEW infrastructure mirroring x86's seed +
+    # propagate passes with aarch64 BL/B (4-byte fixed-width)
+    # opcodes. See CHANGELOG [5.11.59].
     var undef_count = 0;
     var fcnt_pre = GFCNT(S);
-    var ufi = 0;
-    while (ufi < fcnt_pre) {
-        var ufaddr = S + 0x198B000 + ufi * 16;
-        var uraw = L64(ufaddr + 8);
-        var uftype = uraw >> 56;
-        var uidx = uraw & 0x00FFFFFFFFFFFFFF;
-        if (uftype == 2 || uftype == 3) {
-            var utarget = L64(S + 0x12DA000 + uidx * 8);
-            if (utarget == 0 - 1) {
-                var ufnoff = L64(S + 0x12CA000 + uidx * 8);
-                # v5.11.56: cross-arch propagation of the x86 wording
-                # downgrade. See src/backend/x86/fixup.cyr comment +
-                # CHANGELOG [5.11.56].
-                syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-                var unptr = S + 0x60000 + ufnoff;
-                var unlen = 0;
-                while (load8(unptr + unlen) != 0) { unlen = unlen + 1; }
-                syscall(SYS_WRITE, 2, unptr, unlen);
-                syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
-                S64(S + 0x12DA000 + uidx * 8, 0 - 2);
-                undef_count = undef_count + 1;
-            }
-        }
-        ufi = ufi + 1;
-    }
     # Warning only — don't abort (partial includes are common in test files)
     var fcnt = GFCNT(S);
     var fi = 0;
@@ -239,6 +221,315 @@ fn FIXUP(S): i64 {
                             else { FIXUP_MOV(S, coff, vaddr); }
                         } } } } }
         fi = fi + 1;
+    }
+    # ================================================================
+    # v5.11.59: DCE-aware reachability pass (cross-arch parity with
+    # x86 fixup.cyr line 325-681). Mirrors the x86 mark-and-sweep
+    # algorithm: build live[] bitmap by byte-scanning BL/B control
+    # transfers, BFS-propagate from entry roots, then optionally
+    # NOP-fill dead bodies gated on CYRIUS_DCE=1.
+    #
+    # aarch64 specifics vs x86:
+    #   - 4-byte fixed instruction width (no length decoder needed).
+    #   - BL (call):  top 6 bits 100101 → b3 mask `& 0xFC == 0x94`.
+    #   - B  (jump):  top 6 bits 000101 → b3 mask `& 0xFC == 0x14`.
+    #   - rel26 sign-extend + shift-left-2 for byte offset.
+    #   - Target byte = scn + rel (vs x86's scn + 5 + rel32).
+    #   - RET = 0xD65F03C0 (safety sentinel for sweep — must precede
+    #     dead-fn slot OR be the dead-fn's own last instruction).
+    #   - NOP = 0xD503201F (fill word).
+    # ================================================================
+    var fnc = GFCNT(S);
+    var dce_enabled = 0;
+    var dce_env = _read_env("CYRIUS_DCE");
+    if (dce_env != 0) {
+        if (load8(dce_env) == 49 && load8(dce_env + 1) == 0) { dce_enabled = 1; }
+    }
+    var dce_verbose = 0;
+    var dce_verbose_env = _read_env("CYRIUS_DCE_VERBOSE");
+    if (dce_verbose_env != 0) {
+        if (load8(dce_verbose_env) == 49 && load8(dce_verbose_env + 1) == 0) { dce_verbose = 1; }
+    }
+    # live[i] = 1 iff fn i is reachable from entry. 512 bytes × 8
+    # bits = 4096 fn cap, matching x86's REGFN ceiling.
+    var live[512];
+    var ci = 0;
+    while (ci < 512) { store8(&live + ci, 0); ci = ci + 1; }
+    # Build fn_start → fi+1 hash table at 0x114000 (16 KB region
+    # shared with x86 path; verified unused on aarch64 by reading
+    # x86 fixup.cyr's v5.10.41 comment). Knuth golden-ratio
+    # multiplicative hash; load factor 0.5 at 4096 fns → avg <2
+    # probes. Region zero-init from prior heap state isn't
+    # guaranteed; explicit per-slot reset.
+    var sh_clr = 0;
+    while (sh_clr < 8192) {
+        store16(S + 0x114000 + sh_clr * 2, 0);
+        sh_clr = sh_clr + 1;
+    }
+    var sh_i = 0;
+    while (sh_i < fnc) {
+        var sh_start = L64(S + 0x12DA000 + sh_i * 8);
+        if (sh_start >= 0) {
+            var sh_h = (sh_start * 0x9E3779B97F4A7C15) >> 16;
+            var sh_slot = sh_h & 8191;
+            while (load16(S + 0x114000 + sh_slot * 2) != 0) {
+                sh_slot = (sh_slot + 1) & 8191;
+            }
+            store16(S + 0x114000 + sh_slot * 2, sh_i + 1);
+        }
+        sh_i = sh_i + 1;
+    }
+    # Type-3 address-of fixups are conservative roots: fn pointers
+    # can dispatch indirectly in ways the static call graph misses.
+    var t3i = 0;
+    while (t3i < fcnt_pre) {
+        var t3a = S + 0x198B000 + t3i * 16;
+        var t3r = L64(t3a + 8);
+        if ((t3r >> 56) == 3) {
+            var t3idx = t3r & 0x00FFFFFFFFFFFFFF;
+            if (t3idx < 4096) {
+                store8(&live + (t3idx >> 3), load8(&live + (t3idx >> 3)) | (1 << (t3idx & 7)));
+            }
+        }
+        t3i = t3i + 1;
+    }
+    # Seed pass: scan emitted bytes for BL/B (4-byte stride).
+    # Classify by host fn; mark targets live when host is entry
+    # (outside all fn bodies). Like x86, this over-approximates
+    # (intra-fn B jumps that happen to target a fn_start are kept
+    # alive — safe for DCE).
+    var b_base = S + 0x64A000;
+    var scn = 0;
+    while (scn + 4 <= acp) {
+        var insn = load32(b_base + scn);
+        var op_hi = (insn >> 24) & 0xFF;
+        var is_bl = 0;
+        var is_b = 0;
+        if ((op_hi & 0xFC) == 0x94) { is_bl = 1; }
+        if ((op_hi & 0xFC) == 0x14) { is_b = 1; }
+        if (is_bl == 1 || is_b == 1) {
+            var imm26 = insn & 0x3FFFFFF;
+            if (imm26 >= 0x2000000) { imm26 = imm26 - 0x4000000; }
+            var tgt = scn + imm26 * 4;
+            if (tgt >= 0 && tgt < acp) {
+                var fnhit = 0 - 1;
+                var th_h = (tgt * 0x9E3779B97F4A7C15) >> 16;
+                var th_slot = th_h & 8191;
+                var th_probes = 0;
+                while (th_probes < 8192) {
+                    var th_stored = load16(S + 0x114000 + th_slot * 2);
+                    if (th_stored == 0) { th_probes = 8192; }
+                    else {
+                        var th_fi = th_stored - 1;
+                        if (L64(S + 0x12DA000 + th_fi * 8) == tgt) {
+                            fnhit = th_fi;
+                            th_probes = 8192;
+                        } else {
+                            th_slot = (th_slot + 1) & 8191;
+                            th_probes = th_probes + 1;
+                        }
+                    }
+                }
+                if (fnhit >= 0) {
+                    # Host = fn containing scn. If none → entry =
+                    # ROOT. Linear walk like x86 seed.
+                    var host = 0 - 1;
+                    var fj = 0;
+                    while (fj < fnc) {
+                        var fs = L64(S + 0x12DA000 + fj * 8);
+                        if (fs >= 0) {
+                            var fe = GFNE(S, fj);
+                            if (fe > fs && scn >= fs && scn < fe) {
+                                host = fj; fj = fnc;
+                            }
+                        }
+                        if (host < 0) { fj = fj + 1; }
+                    }
+                    if (host < 0) {
+                        store8(&live + (fnhit >> 3), load8(&live + (fnhit >> 3)) | (1 << (fnhit & 7)));
+                    }
+                }
+            }
+        }
+        scn = scn + 4;
+    }
+    # Propagate: for each live fn, scan its body for BL/B and mark
+    # targets live. Fixpoint loop.
+    var changed = 1;
+    var iters = 0;
+    while (changed == 1 && iters < 512) {
+        changed = 0;
+        iters = iters + 1;
+        var pfi = 0;
+        while (pfi < fnc) {
+            var phl = load8(&live + (pfi >> 3)) & (1 << (pfi & 7));
+            if (phl != 0) {
+                var pfs = L64(S + 0x12DA000 + pfi * 8);
+                var pfe = GFNE(S, pfi);
+                if (pfs >= 0 && pfe > pfs) {
+                    var pscn = pfs;
+                    while (pscn + 4 <= pfe) {
+                        var pinsn = load32(b_base + pscn);
+                        var p_op_hi = (pinsn >> 24) & 0xFF;
+                        var p_is_bl = 0;
+                        var p_is_b = 0;
+                        if ((p_op_hi & 0xFC) == 0x94) { p_is_bl = 1; }
+                        if ((p_op_hi & 0xFC) == 0x14) { p_is_b = 1; }
+                        if (p_is_bl == 1 || p_is_b == 1) {
+                            var pimm26 = pinsn & 0x3FFFFFF;
+                            if (pimm26 >= 0x2000000) { pimm26 = pimm26 - 0x4000000; }
+                            var ptgt = pscn + pimm26 * 4;
+                            if (ptgt >= 0 && ptgt < acp) {
+                                var phit = 0 - 1;
+                                var ph_h = (ptgt * 0x9E3779B97F4A7C15) >> 16;
+                                var ph_slot = ph_h & 8191;
+                                var ph_probes = 0;
+                                while (ph_probes < 8192) {
+                                    var ph_stored = load16(S + 0x114000 + ph_slot * 2);
+                                    if (ph_stored == 0) { ph_probes = 8192; }
+                                    else {
+                                        var ph_fi = ph_stored - 1;
+                                        if (L64(S + 0x12DA000 + ph_fi * 8) == ptgt) {
+                                            phit = ph_fi;
+                                            ph_probes = 8192;
+                                        } else {
+                                            ph_slot = (ph_slot + 1) & 8191;
+                                            ph_probes = ph_probes + 1;
+                                        }
+                                    }
+                                }
+                                if (phit >= 0) {
+                                    var prev_live = load8(&live + (phit >> 3)) & (1 << (phit & 7));
+                                    if (prev_live == 0) {
+                                        store8(&live + (phit >> 3), load8(&live + (phit >> 3)) | (1 << (phit & 7)));
+                                        changed = 1;
+                                    }
+                                }
+                            }
+                        }
+                        pscn = pscn + 4;
+                    }
+                }
+            }
+            pfi = pfi + 1;
+        }
+    }
+    # Sweep: count dead fns + optionally NOP-fill bodies.
+    # Safety check for NOP-fill: the dead-fn body must end with RET
+    # (0xD65F03C0) AND the instruction preceding the fn body must
+    # also be RET (so control can't fall through). aarch64's fixed
+    # 4-byte width removes the x86 decoder-validation step.
+    var dead_count = 0;
+    var dce_bytes = 0;
+    var dwi = 0;
+    while (dwi < fnc) {
+        var dfoff = L64(S + 0x12DA000 + dwi * 8);
+        if (dfoff >= 0) {
+            var is_live = load8(&live + (dwi >> 3)) & (1 << (dwi & 7));
+            if (is_live == 0) {
+                dead_count = dead_count + 1;
+                var dfend = GFNE(S, dwi);
+                if (dfend > dfoff && dfoff >= 4) {
+                    var safe = 0;
+                    # (a) Preceding instruction is RET — no fallthrough.
+                    if (load32(S + 0x64A000 + dfoff - 4) == 0xD65F03C0) { safe = 1; }
+                    # (b) Body ends with RET — combined with the byte-
+                    #     scan confirming no callers, no byte executes.
+                    if (safe == 0 && dfend >= 4) {
+                        if (load32(S + 0x64A000 + dfend - 4) == 0xD65F03C0) { safe = 1; }
+                    }
+                    if (safe == 1) {
+                        dce_bytes = dce_bytes + (dfend - dfoff);
+                        if (dce_enabled == 1) {
+                            var nop_i = dfoff;
+                            while (nop_i + 4 <= dfend) {
+                                # Write NOP (0xD503201F) little-endian.
+                                store8(S + 0x64A000 + nop_i + 0, 0x1F);
+                                store8(S + 0x64A000 + nop_i + 1, 0x20);
+                                store8(S + 0x64A000 + nop_i + 2, 0x03);
+                                store8(S + 0x64A000 + nop_i + 3, 0xD5);
+                                nop_i = nop_i + 4;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        dwi = dwi + 1;
+    }
+    if (dead_count > 0) {
+        syscall(SYS_WRITE, 2, "note: ", 6);
+        PRNUM(dead_count);
+        syscall(SYS_WRITE, 2, " unreachable fns (", 18);
+        PRNUM(dce_bytes);
+        if (dce_enabled == 1) {
+            syscall(SYS_WRITE, 2, " bytes NOPed)\n", 14);
+        } else {
+            syscall(SYS_WRITE, 2, " bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n", 72);
+        }
+        if (dce_verbose == 1) {
+            var dni = 0;
+            while (dni < fnc) {
+                var dnoff = L64(S + 0x12DA000 + dni * 8);
+                if (dnoff >= 0) {
+                    var dn_live = load8(&live + (dni >> 3)) & (1 << (dni & 7));
+                    if (dn_live == 0) {
+                        syscall(SYS_WRITE, 2, "  dead: ", 8);
+                        PRSTR(S + 0x60000 + L64(S + 0x12CA000 + dni * 8));
+                        syscall(SYS_WRITE, 2, "\n", 1);
+                    }
+                }
+                dni = dni + 1;
+            }
+        }
+    }
+    # v5.11.59: reachability-filtered undef-fn check (moved from
+    # before the patch loop). Same shape as x86 — locate host fn
+    # for each undef'd fixup's coff; skip the warning if host is
+    # dead. aarch64 has no _strict_mode global today (only x86 +
+    # PE), so the strict-exit path from x86 is absent here; if
+    # cross-arch strict parity is added later, mirror this loop.
+    var u59_ufi = 0;
+    while (u59_ufi < fcnt_pre) {
+        var u59_ufaddr = S + 0x198B000 + u59_ufi * 16;
+        var u59_ucoff = L64(u59_ufaddr);
+        var u59_uraw = L64(u59_ufaddr + 8);
+        var u59_uftype = u59_uraw >> 56;
+        var u59_uidx = u59_uraw & 0x00FFFFFFFFFFFFFF;
+        if (u59_uftype == 2 || u59_uftype == 3) {
+            var u59_utarget = L64(S + 0x12DA000 + u59_uidx * 8);
+            if (u59_utarget == 0 - 1) {
+                var u59_host = 0 - 1;
+                var u59_fj = 0;
+                while (u59_fj < fnc) {
+                    var u59_fs = L64(S + 0x12DA000 + u59_fj * 8);
+                    if (u59_fs >= 0) {
+                        var u59_fe = GFNE(S, u59_fj);
+                        if (u59_fe > u59_fs && u59_ucoff >= u59_fs && u59_ucoff < u59_fe) {
+                            u59_host = u59_fj; u59_fj = fnc;
+                        }
+                    }
+                    if (u59_host < 0) { u59_fj = u59_fj + 1; }
+                }
+                var u59_skip = 0;
+                if (u59_host >= 0) {
+                    var u59_lb = load8(&live + (u59_host >> 3)) & (1 << (u59_host & 7));
+                    if (u59_lb == 0) { u59_skip = 1; }
+                }
+                if (u59_skip == 0) {
+                    var u59_ufnoff = L64(S + 0x12CA000 + u59_uidx * 8);
+                    syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
+                    var u59_unptr = S + 0x60000 + u59_ufnoff;
+                    var u59_unlen = 0;
+                    while (load8(u59_unptr + u59_unlen) != 0) { u59_unlen = u59_unlen + 1; }
+                    syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);
+                    syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
+                    undef_count = undef_count + 1;
+                }
+                S64(S + 0x12DA000 + u59_uidx * 8, 0 - 2);
+            }
+        }
+        u59_ufi = u59_ufi + 1;
     }
     S64(S + 0x18FCD0, totvar);
     return 0;

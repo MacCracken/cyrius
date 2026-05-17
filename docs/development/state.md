@@ -5,6 +5,62 @@
 
 ## Version
 
+**5.11.59** (shipped 2026-05-17 — **DCE-aware undefined-fn
+reachability filter (cross-arch engineering slot)**).
+Completes the deferred work from the .56 papercut split.
+Cross-arch parity in same slot per
+`feedback_cross_arch_propagation_mandatory`.
+
+**x86_64** (`src/backend/x86/fixup.cyr`) — moved the
+undef-fn check from BEFORE the fixup patch loop to AFTER
+the DCE pass; added host-fn reachability filter via the
+existing `live[]` bitmap. Strict-mode hard-fail preserved
+but now only counts reachable refs (no more false-positive
+strict failures on dead-host undef refs).
+
+**aarch64** (`src/backend/aarch64/fixup.cyr`) — added a
+NEW DCE pass (~200 LoC) mirroring x86's seed + propagate +
+sweep with aarch64 BL/B encodings (4-byte fixed instruction
+width, byte-3 mask `& 0xFC == 0x94` for BL / `== 0x14` for
+B, rel26 sign-extend + shift-left-2). NOP-fill uses
+`0xD503201F`, safety check via preceding RET
+(`0xD65F03C0`) OR body-ending RET. Reuses x86's hash table
+region at `0x114000` (verified unused on aarch64). aarch64
+now produces `note: N unreachable fns (M bytes ...)` for
+the first time — previously had no DCE visibility.
+
+**Validation**:
+- `agnosticos/scripts/src/read-boot-log.cyr` x86 + aarch64:
+  fixup-time `vec_get (call site may be unreachable)`
+  warning GONE on both archs (dead `vec_find` host); only
+  the parse-time main.cyr:1344 warning still fires on x86
+  (different check, out of scope).
+- `cc5_aarch64` cross-build of itself: emits `note: 79
+  unreachable fns ...` (first aarch64 DCE output).
+- `CYRIUS_DCE=1` aarch64 cross-build of read-boot-log:
+  `note: 415 unreachable fns (15892 bytes NOPed)` — sweep
+  engaged, file size unchanged (in-place NOP fill).
+
+**Strict-mode parity gap**: aarch64 doesn't declare
+`_strict_mode` (only x86 + main_win); filter emits warning
+but no hard-exit. Adding aarch64 strict is its own follow-
+up slot (would need `_strict_mode` decl in
+`main_aarch64.cyr` + flag plumbing in the wrapper's
+aarch64 dispatch).
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**875,336 B**, +672 B from v5.11.58 for u59 filter block);
+`check.sh` **75/75**; `cyrius test` **150/150**;
+cross-compilers rebuilt (cc5_aarch64 558,016 B / +8,192 B
+for full DCE pass; cc5_win 682,760 B / +672 B for filter
+only).
+
+**Next absorber band**: .60-.65 open buffer. Pinned: .66/
+.67 (byte-array literal peephole), .68 (heap-map full
+reorg + CVE-05), .69 (conditional mabda fold). Open
+follow-up candidate: aarch64 `_strict_mode` parity (small
+slot).
+
 **5.11.58** (shipped 2026-05-17 — **Wrapper polish —
 version-bump rebuild fix + `cyrius lib sync` + wrapper
 `--strict-pin` + `--version` manifest-pin line**). Closes
