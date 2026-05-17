@@ -88,6 +88,40 @@ fi
 # 5. Roadmap header
 sed -i "s/> \*\*v$OLD\.\*\*/> **v$NEW.**/" docs/development/roadmap.md 2>/dev/null || true
 
+# v5.11.58: force-rebuild binaries whose version_str.cyr dep
+# install.sh::_rebuild_stale can't see. The `-nt source` check
+# only looks at the direct source file; it misses transitive
+# includes. Without this, every bump since 2026-05-12 propagated
+# a stale `cyrius` wrapper (the iron-boot papercut filing Item 1
+# observed `cyrius --version: 5.11.25` despite consumers pinning
+# 5.11.55).
+#
+# Two-step:
+#   (a) `touch` every consumer source of version_str.cyr so
+#       install.sh's `binary -nt source` check fails and triggers
+#       rebuild. Captures all main_*.cyr cross-compilers + cbt/
+#       cyrius.cyr wrapper.
+#   (b) Rebuild cc5 explicitly — install.sh skips cc5 entirely
+#       per its "seed-bootstrapped" contract (line 158), so the
+#       touch alone wouldn't restore it.
+for _f in src/main.cyr src/main_aarch64.cyr src/main_win.cyr \
+          src/main_cx.cyr src/main_aarch64_native.cyr \
+          src/main_aarch64_macho.cyr cbt/cyrius.cyr; do
+    [ -f "$_f" ] && touch "$_f"
+done
+if [ -x build/cc5 ]; then
+    if cat src/main.cyr | ./build/cc5 > build/cc5.new 2>/tmp/cc5-rebuild.err; then
+        mv build/cc5.new build/cc5
+        chmod +x build/cc5
+        echo "  > cc5 rebuilt for $NEW"
+    else
+        echo "  ! cc5 rebuild failed (non-fatal):" >&2
+        sed 's/^/    /' /tmp/cc5-rebuild.err >&2
+        rm -f build/cc5.new
+    fi
+    rm -f /tmp/cc5-rebuild.err
+fi
+
 # 6. Install-snapshot refresh (v5.4.18): reconcile
 # ~/.cyrius/versions/$NEW/ with the current repo so a dep bump or
 # new tool appears immediately — no waiting for the next full install.

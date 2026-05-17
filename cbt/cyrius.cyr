@@ -40,13 +40,14 @@ fn usage(): i64 {
     println("Usage: cyrius <command> [options]");
     println("");
     println("Build:");
-    println("  build [--aarch64] [--no-deps] <src> <out>   compile a program");
+    println("  build [--aarch64] [--no-deps] [--strict-pin] <src> <out>   compile a program");
     println("  run [--aarch64] <source.cyr>    compile + run");
     println("  test [--aarch64] <test.cyr>     compile + run, check exit 0");
     println("  bench <bench.cyr>               compile + run benchmarks");
     println("  check [--with-deps] <src.cyr>  syntax check (default: standalone)");
     println("  self                            self-hosting check (cc5==cc5)");
     println("  clean                           remove build/ contents");
+    println("  lib sync [--dry-run]            copy snapshot lib/*.cyr → ./lib/ (sync to pin)");
     println("");
     println("Project:");
     println("  init <name>                     scaffold a new project");
@@ -258,11 +259,15 @@ fn main(): i64 {
                 _skip_deps = 1;
                 ai = ai + 1;
             }
+            elif (streq(argv(ai), "--strict-pin") == 1) {
+                _strict_pin = 1;
+                ai = ai + 1;
+            }
             else { break; }
         }
         if (vec_len(defs) > 0) { _defines = defs; }
         if (argc() < ai + 2) {
-            println("Usage: cyrius build [--aarch64] [-v] [-q] [--no-deps] [-D NAME]... <source> <output>");
+            println("Usage: cyrius build [--aarch64] [-v] [-q] [--no-deps] [--strict-pin] [-D NAME]... <source> <output>");
             return 1;
         }
         return cmd_build(argv(ai), argv(ai + 1));
@@ -391,6 +396,22 @@ fn main(): i64 {
     if (streq(cmd, "clean") == 1) {
         if (argc() > 2 && streq(argv(2), "--dry-run") == 1) { _dry_run = 1; }
         return cmd_clean();
+    }
+
+    # v5.11.58: `cyrius lib sync` — overwrite cwd ./lib/*.cyr with
+    # snapshot at ~/.cyrius/versions/<X>/lib/, where <X> is the
+    # cyrius.cyml pin (or wrapper version if no pin). Third
+    # remediation for the shadow-lib warning (Item 4) besides
+    # `delete ./lib/` and `CYRIUS_NO_WARN_SHADOW_LIB=1`.
+    if (streq(cmd, "lib") == 1) {
+        if (argc() > cmd_idx + 1) {
+            if (streq(argv(cmd_idx + 1), "sync") == 1) {
+                if (argc() > cmd_idx + 2 && streq(argv(cmd_idx + 2), "--dry-run") == 1) { _dry_run = 1; }
+                return cmd_lib_sync();
+            }
+        }
+        println("Usage: cyrius lib sync [--dry-run]");
+        return 1;
     }
 
     if (streq(cmd, "capacity") == 1) {
@@ -663,6 +684,23 @@ fn main(): i64 {
         sys_write(STDOUT_FD, "cyrius ", 7);
         sys_write(STDOUT_FD, _VERSION_TOOLCHAIN, strlen(_VERSION_TOOLCHAIN));
         sys_write(STDOUT_FD, "\n", 1);
+        # v5.11.58: when run inside a project tree (cwd has
+        # cyrius.cyml with [package].cyrius = "X.Y.Z"), append
+        # a `manifest-pin:` line so consumers spot toolchain
+        # drift the moment they check what wrapper they're
+        # running. Iron-boot papercut filing Item 1 (wrapper-
+        # side surface; cc5-side detection landed at v5.11.57).
+        var _ver_pin = _dep_read_cyml_cyrius_field();
+        if (_ver_pin != 0) {
+            sys_write(STDOUT_FD, "manifest-pin: ", 14);
+            sys_write(STDOUT_FD, _ver_pin, strlen(_ver_pin));
+            if (streq(_ver_pin, _VERSION_TOOLCHAIN) != 1) {
+                sys_write(STDOUT_FD, " (drift — wrapper is ", 23);
+                sys_write(STDOUT_FD, _VERSION_TOOLCHAIN, strlen(_VERSION_TOOLCHAIN));
+                sys_write(STDOUT_FD, ")", 1);
+            }
+            sys_write(STDOUT_FD, "\n", 1);
+        }
         return 0;
     }
 

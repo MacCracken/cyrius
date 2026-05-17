@@ -320,6 +320,81 @@ fn cmd_self(): i64 {
     return 1;
 }
 
+# v5.11.58: `cyrius lib sync` — copy ~/.cyrius/versions/<X>/lib/
+# *.cyr files into ./lib/. Closes the third-remediation gap from
+# iron-boot papercut filing Item 4. Pre-existing options were
+# "delete ./lib/" (destructive — may break project-local libs)
+# and `CYRIUS_NO_WARN_SHADOW_LIB=1` (silences without fixing).
+# `lib sync` overwrites local copies with the snapshot for
+# pin-faithful builds.
+#
+# Source version: cyrius.cyml [package].cyrius pin if present,
+# else the wrapper's own _VERSION_TOOLCHAIN. Snapshot must
+# exist at ~/.cyrius/versions/<v>/lib/ or we error out.
+fn cmd_lib_sync(): i64 {
+    var sync_ver = _dep_read_cyml_cyrius_field();
+    if (sync_ver == 0) { sync_ver = _VERSION_TOOLCHAIN; }
+    var src_sb = str_builder_new();
+    str_builder_add_cstr(src_sb, _home);
+    str_builder_add_cstr(src_sb, "/versions/");
+    str_builder_add_cstr(src_sb, sync_ver);
+    str_builder_add_cstr(src_sb, "/lib");
+    var src_dir = str_data(str_builder_build(src_sb));
+    if (is_dir(str_from(src_dir)) == 0) {
+        sys_write(STDERR_FD, "error: snapshot lib not found at ", 33);
+        sys_write(STDERR_FD, src_dir, strlen(src_dir));
+        sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
+        sys_write(STDERR_FD, sync_ver, strlen(sync_ver));
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    if (is_dir(str_from("lib")) == 0) {
+        sys_mkdir("lib", 0x1ED);
+    }
+    var entries = dir_list(str_from(src_dir));
+    var li = 0;
+    var copied = 0;
+    while (li < vec_len(entries)) {
+        var name_str = vec_get(entries, li);
+        var name = str_data(name_str);
+        var nlen = strlen(name);
+        var is_cyr = 0;
+        if (nlen > 4) {
+            if (load8(name + nlen - 4) == 46) {
+                if (load8(name + nlen - 3) == 99) {
+                    if (load8(name + nlen - 2) == 121) {
+                        if (load8(name + nlen - 1) == 114) {
+                            is_cyr = 1;
+                        }
+                    }
+                }
+            }
+        }
+        if (is_cyr == 1) {
+            var src_path = make_path(src_dir, name);
+            var dst_path = make_path("lib", name);
+            if (_dry_run == 1) {
+                sys_write(STDOUT_FD, "  would sync: ", 14);
+                println(dst_path);
+            } else {
+                _dep_copy_file(src_path, dst_path);
+                copied = copied + 1;
+            }
+        }
+        li = li + 1;
+    }
+    if (_dry_run == 1) {
+        sys_write(STDOUT_FD, "dry-run: would sync ", 20);
+    } else {
+        sys_write(STDOUT_FD, "synced from ", 12);
+        sys_write(STDOUT_FD, src_dir, strlen(src_dir));
+        sys_write(STDOUT_FD, " — copied ", 12);
+    }
+    fmt_int(copied);
+    println(" .cyr files");
+    return 0;
+}
+
 fn cmd_clean(): i64 {
     # Remove build/ contents except cc5, cyrc, asm
     if (is_dir(str_from("build")) == 0) {
@@ -353,7 +428,7 @@ fn cmd_clean(): i64 {
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: would remove ", 22);
     } else {
-        sys_write(STDOUT_FD, "cleaned build/ (preserved cc5, cyrc, asm, cyrius) — removed ", 60);
+        sys_write(STDOUT_FD, "cleaned build/ (preserved cc5, cyrc, asm, cyrius) — removed ", 62);
     }
     fmt_int(cleaned);
     println(" files");

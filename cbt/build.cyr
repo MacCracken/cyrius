@@ -130,7 +130,24 @@ fn compile(source, output): i64 {
         var argv[2];
         store64(&argv, cc);
         store64(&argv + 8, 0);
-        sys_execve(cc, &argv, _envp);
+        # v5.11.58: when --strict-pin is set, augment envp with
+        # CYRIUS_STRICT_PIN=1 so cc5's pin-drift check (added
+        # v5.11.57) exits non-zero on mismatch. CI gating path.
+        if (_strict_pin == 1) {
+            var sp_count = 0;
+            while (load64(_envp + sp_count * 8) != 0) { sp_count = sp_count + 1; }
+            var sp_envp = alloc((sp_count + 2) * 8);
+            var sp_ej = 0;
+            while (sp_ej < sp_count) {
+                store64(sp_envp + sp_ej * 8, load64(_envp + sp_ej * 8));
+                sp_ej = sp_ej + 1;
+            }
+            store64(sp_envp + sp_count * 8, "CYRIUS_STRICT_PIN=1");
+            store64(sp_envp + (sp_count + 1) * 8, 0);
+            sys_execve(cc, &argv, sp_envp);
+        } else {
+            sys_execve(cc, &argv, _envp);
+        }
         sys_exit(127);
     }
     var status_buf[1];

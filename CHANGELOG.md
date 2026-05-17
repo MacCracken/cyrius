@@ -6,6 +6,132 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.58] — 2026-05-17
+
+**Wrapper polish — version-bump rebuild fix + `cyrius lib
+sync` + wrapper `--strict-pin` + `--version` manifest-pin
+line.** Closes the wrapper-side surface of iron-boot
+papercut filing Items 1 + 4; cc5-side detection shipped at
+v5.11.57. Filing now fully closed across .56 + .57 + .58 —
+issue file archived.
+
+check.sh **75/75**; cc5 self-host **874,664 B** (unchanged
+from v5.11.57 — .58 only touches the wrapper layer + build
+scripts); cyrius test **150/150**; wrapper rebuilt at
+184,232 B (+3,376 B over .57 — new fns: `cmd_lib_sync` +
+manifest-pin block in `cyrius --version` + `--strict-pin`
+flag plumbing).
+
+### Wrapper rebuild bug fix (scripts/version-bump.sh)
+
+Root cause from .57 premise check: `scripts/install.sh::
+_rebuild_stale` checks `build/$target -nt $source` against
+the direct source only — misses transitive includes. Every
+`*.cyr` that includes `src/version_str.cyr` (auto-regenerated
+at every bump) was therefore never seen as stale, so the
+wrapper at `~/.cyrius/bin/cyrius` froze at the May-12 build
+embedding `5.11.25` and propagated forward into every
+snapshot.
+
+Fix: in `version-bump.sh`, after regenerating
+`src/version_str.cyr`:
+
+- `touch` every consumer source — `src/main.cyr`,
+  `src/main_aarch64.cyr`, `src/main_win.cyr`, `src/main_cx.cyr`,
+  `src/main_aarch64_native.cyr`, `src/main_aarch64_macho.cyr`,
+  `cbt/cyrius.cyr`. The touch bumps mtime, so install.sh's
+  `-nt` check now triggers a real rebuild.
+- Rebuild `build/cc5` explicitly (`cat src/main.cyr | ./build/
+  cc5 > build/cc5.new && mv`). install.sh skips cc5 by
+  contract (line 158: "seed-bootstrapped, never rebuilt by
+  --refresh-only"), so the touch alone wouldn't restore it.
+
+Existing stale snapshots at `~/.cyrius/versions/X.Y.Z/`
+remain historical debt — consumers can `cyrius install
+X.Y.Z` to refresh a specific version's snapshot. From .58
+onward, every fresh bump produces correct binaries in the
+new snapshot.
+
+### `cyrius lib sync` command (cbt/commands.cyr + dispatch)
+
+New `cmd_lib_sync()` — copies `~/.cyrius/versions/<X>/lib/
+*.cyr` into `./lib/`, where `<X>` is the cwd's `cyrius.cyml`
+`[package].cyrius` pin (or wrapper's `_VERSION_TOOLCHAIN` if
+no pin). Third remediation alongside the existing two for
+the shadow-lib warning (delete `./lib/` or set
+`CYRIUS_NO_WARN_SHADOW_LIB=1`).
+
+- Errors out (exit 1) when snapshot lib doesn't exist
+  (suggests `cyrius install X.Y.Z`).
+- `mkdir -p ./lib` if absent.
+- Walks snapshot via `dir_list` (cbt/commands.cyr line 329
+  pattern), filters for `.cyr` extension, copies each via
+  `_dep_copy_file` (cbt/deps.cyr).
+- `--dry-run` flag prints "would sync: ..." per file without
+  copying.
+- Empirical: synced 81 stdlib `.cyr` files into a fresh
+  `/tmp/lib-sync-test/lib/` from `~/.cyrius/versions/
+  5.11.57/lib/`.
+
+Dispatch shape: `cyrius lib sync [--dry-run]` (two-word
+subcommand keyed off `cmd == "lib"`).
+
+### `cyrius build --strict-pin` flag
+
+Wrapper-side CLI flag that augments the cc5 child's envp
+with `CYRIUS_STRICT_PIN=1`, which v5.11.57's
+`_check_cyml_pin_drift` reads to upgrade the pin-drift
+warning to a hard exit (code 1). CI-gating path for
+consumers that want pin-faithful builds — fail loudly on
+toolchain drift instead of building with the wrong stdlib.
+
+- New `_strict_pin` global in `cbt/core.cyr`.
+- Flag parsing in the `build` dispatch (cbt/cyrius.cyr).
+- `compile()` in cbt/build.cyr forks an augmented envp when
+  `_strict_pin == 1` — preserves the existing `_envp`
+  inheritance otherwise.
+- Empirical: `cyrius build --strict-pin` from agnos
+  (pin .55, cc5 .56) emits `error: cyrius.cyml pins 5.11.55
+  but cc5 is 5.11.56 — toolchain drift (CYRIUS_STRICT_PIN)`,
+  exit 1.
+
+### `cyrius --version` manifest-pin line
+
+When run inside a project tree (cwd has `cyrius.cyml` with
+`[package].cyrius`), `cyrius --version` appends a second
+line:
+
+```
+cyrius 5.11.57
+manifest-pin: 5.11.55 (drift — wrapper is 5.11.57)
+```
+
+The `(drift — wrapper is X.Y.Z)` suffix only appears when
+the pin differs from the wrapper version — clean match
+prints just `manifest-pin: 5.11.55`. Consumers spot the
+mismatch the moment they check what wrapper they're
+running, before the toolchain-drift warning fires during a
+build.
+
+### Drive-by fix: cmd_clean em-dash byte count
+
+`cbt/commands.cyr` `cmd_clean` had the same em-dash
+miscounted-as-1-byte bug surfaced in the .57 retro and my
+.58 first-pass warnings: `"cleaned build/ (preserved cc5,
+cyrc, asm, cyrius) — removed "` was coded as 60 bytes,
+actual is 62 (em dash is 3 bytes UTF-8). Pre-existing bug
+that would've chopped `"d "` off the output, rendering
+`removeN` instead of `removed N` after `fmt_int`. Fixed
+under the .57 hygiene pin's invitation to cross-check
+em-dash byte counts in syscall string-literal args.
+
+### Issue archive
+
+`docs/development/issues/2026-05-16-iron-boot-session-papercuts.md`
+**moved to archived/** — all 4 items in the filing closed
+across .56 (Items 2 + 3) + .57 (Items 1 + 4 cc5 surface) +
+.58 (Items 1 + 4 wrapper surface).
+
 ## [5.11.57] — 2026-05-17
 
 **cc5-side pin-drift + shadow-content detection (papercut

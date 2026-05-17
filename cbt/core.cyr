@@ -37,6 +37,11 @@ var _skip_deps = 0;
 # v5.7.8 P5: lockfile is written by default after every successful
 # `cyrius deps`. _no_lock = 1 suppresses the write for that run.
 var _no_lock = 0;
+# v5.11.58: --strict-pin flag — when 1, compile() augments the
+# child's envp with CYRIUS_STRICT_PIN=1 so cc5's pin-drift check
+# (added v5.11.57) exits non-zero on mismatch instead of warning.
+# CI path for pin-faithful builds.
+var _strict_pin = 0;
 
 # ================================================================
 # Output helpers — consistent error/warn/info/status
