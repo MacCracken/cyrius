@@ -5,6 +5,55 @@
 
 ## Version
 
+**5.11.56** (shipped 2026-05-17 — **Build-diagnostic polish
+(papercut Items 2 + 3) — LSP forks `cyrius` wrapper + undef-fn
+"will crash" wording downgrade**). Closes 2 of 4 items in the
+2026-05-16 iron-boot session papercut filing. .57 closes
+Items 1 + 4 (wrapper/lib-resolution infra). .58 earns the
+deferred precise DCE-aware reachability filter as its own
+cross-arch engineering slot.
+
+**Item 2 (LSP → wrapper)**: `programs/cyrius-lsp.cyr`
+`compile_and_capture()` previously forked **raw cc5** with
+NULL envp and the LSP's cwd; cc5 had no visibility into
+project `cyrius.cyml` `[deps.*]` declarations. New shape:
+`find_cyrius()` mirrors `find_cc5()` lookup chain;
+`find_project_root(filepath)` walks up looking for
+`cyrius.cyml`; `_build_envp_from_proc()` reads `/proc/self/
+environ` and forwards the LSP's env to the child (raw-cc5
+NULL envp resolved `HOME` to `/root/...` and surfaced bogus
+pin-mismatch diagnostics); `_compile_via_wrapper()` forks
+the wrapper with `chdir(project_root)` + `cyrius check
+--with-deps <filepath>`. Falls back to raw cc5 for files
+outside any project tree or when wrapper isn't installed.
+- Smoke: agnos xhci.cyr went from ~10 false-positive
+  diagnostics to 1 (genuine include-submodule cross-file ref;
+  separate scoping class, not the [deps.*] class).
+  read-boot-log.cyr went from 8 stdlib-fn false positives to
+  0; the genuine `vec_get` diagnostic remains with the new
+  wording from Item 3.
+
+**Item 3 (undef-fn wording downgrade)**: `src/backend/x86/
+fixup.cyr` + `src/backend/aarch64/fixup.cyr` fixup-time
+undef-fn check — `error: undefined function 'X' (will crash
+at runtime)` → `warning: undefined function 'X' (call site
+may be unreachable)`. Drops the `error:` + `OK` contradiction
+the filing flagged. `--strict` mode hard-fail path preserved
+unchanged (CI gating). Cross-arch in same slot per
+`feedback_cross_arch_propagation_mandatory`. cc5_aarch64
+(502,424 B) + cc5_win (634,704 B) rebuilt to propagate.
+
+Self-host byte-identical (3-step cc5 → stage2 == stage3 at
+**827,280 B**, −16 B from v5.11.55); `check.sh` **75/75**;
+`cyrius test` **150/150**; `cyrius-lsp` now 101,120 B
+(+4,704 B over v5.11.55 — new helpers + env forwarder).
+
+**Next absorber band**: .57 (wrapper/lib infra, Items 1 +
+4) → .58 (DCE-aware reachability filter, cross-arch
+engineering, ~300 LoC) → .59-.65 open buffer. Pinned: .66/
+.67 (byte-array literal peephole), .68 (heap-map full reorg
++ CVE-05), .69 (conditional mabda fold).
+
 **5.11.55** (shipped 2026-05-13 — **Refactor sweep — cap-drift gate
 `_verify_*` helpers + `_efi_compile_to_buf` consolidation (items
 #2 + #4)**). Pure housekeeping; no new gates, no behavior change.

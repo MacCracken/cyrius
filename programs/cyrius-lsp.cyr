@@ -182,6 +182,14 @@ fn uri_to_path(uri): i64 {
 # Global: path to cc5 binary
 var _cc5_path = 0;
 
+# v5.11.56: path to cyrius wrapper binary. compile_and_capture
+# prefers the wrapper for files inside a cyrius project (a tree
+# containing cyrius.cyml) so [deps.*] resolution happens — that
+# closes the undefined-stdlib-fn false-positive class flagged in
+# the iron-boot papercut filing Item 2. Raw-cc5 fallback retained
+# for files outside any project tree.
+var _cyrius_path = 0;
+
 # ================================================================
 # SYMBOL INDEX (v5.7.39)
 # ================================================================
@@ -707,9 +715,233 @@ fn find_cc5(): i64 {
     return 0;
 }
 
+# v5.11.56: find the `cyrius` wrapper binary. Mirrors find_cc5's
+# search order (HOME/.cyrius/bin → install_dir → ./build → /usr/
+# local/lib/cyrius → $CYRIUS_HOME). Returns 0 if not found;
+# compile_and_capture falls back to raw cc5 in that case.
+fn find_cyrius(): i64 {
+    var envfd = syscall(2, "/proc/self/environ", 0, 0);
+    if (envfd >= 0) {
+        var hbuf = alloc(32768);
+        var htotal = 0;
+        var hchunk = 1;
+        while (hchunk > 0) {
+            hchunk = syscall(0, envfd, hbuf + htotal, 32768 - htotal);
+            if (hchunk > 0) { htotal += hchunk; }
+        }
+        syscall(3, envfd);
+        var hpos = 0;
+        while (hpos < htotal) {
+            var hend = hpos;
+            while (hend < htotal && load8(hbuf + hend) != 0) { hend += 1; }
+            if (hend - hpos > 5 && memeq(hbuf + hpos, "HOME=", 5) == 1) {
+                var hvstart = hpos + 5;
+                var hvlen = hend - hvstart;
+                var hsb = str_builder_new();
+                var hval = alloc(hvlen + 1);
+                memcpy(hval, hbuf + hvstart, hvlen);
+                store8(hval + hvlen, 0);
+                str_builder_add_cstr(hsb, hval);
+                str_builder_add_cstr(hsb, "/.cyrius/bin/cyrius");
+                var p_latest = str_data(str_builder_build(hsb));
+                var fd_latest = syscall(2, p_latest, 0, 0);
+                if (fd_latest >= 0) { syscall(3, fd_latest); return p_latest; }
+            }
+            hpos = hend + 1;
+        }
+    }
+    var install_dir = _resolve_install_dir();
+    if (install_dir != 0) {
+        var sb_self = str_builder_new();
+        str_builder_add_cstr(sb_self, install_dir);
+        str_builder_add_cstr(sb_self, "/cyrius");
+        var p_self = str_data(str_builder_build(sb_self));
+        var fd_self = syscall(2, p_self, 0, 0);
+        if (fd_self >= 0) { syscall(3, fd_self); return p_self; }
+    }
+    var p1 = "build/cyrius";
+    var fd1 = syscall(2, p1, 0, 0);
+    if (fd1 >= 0) { syscall(3, fd1); return p1; }
+    var p2 = "/usr/local/lib/cyrius/cyrius";
+    var fd2 = syscall(2, p2, 0, 0);
+    if (fd2 >= 0) { syscall(3, fd2); return p2; }
+    var envfd2 = syscall(2, "/proc/self/environ", 0, 0);
+    if (envfd2 >= 0) {
+        var ebuf = alloc(32768);
+        var etotal = 0;
+        var echunk = 1;
+        while (echunk > 0) {
+            echunk = syscall(0, envfd2, ebuf + etotal, 32768 - etotal);
+            if (echunk > 0) { etotal += echunk; }
+        }
+        syscall(3, envfd2);
+        var pos = 0;
+        while (pos < etotal) {
+            var end = pos;
+            while (end < etotal && load8(ebuf + end) != 0) { end += 1; }
+            if (end - pos > 12 && memeq(ebuf + pos, "CYRIUS_HOME=", 12) == 1) {
+                var vstart = pos + 12;
+                var vlen = end - vstart;
+                var sb = str_builder_new();
+                var val = alloc(vlen + 1);
+                memcpy(val, ebuf + vstart, vlen);
+                store8(val + vlen, 0);
+                str_builder_add_cstr(sb, val);
+                str_builder_add_cstr(sb, "/cyrius");
+                var p3 = str_data(str_builder_build(sb));
+                var fd3 = syscall(2, p3, 0, 0);
+                if (fd3 >= 0) { syscall(3, fd3); return p3; }
+            }
+            pos = end + 1;
+        }
+    }
+    return 0;
+}
+
+# v5.11.56: walk up from filepath looking for cyrius.cyml. Returns
+# project root dir cstring on success, 0 if filepath is outside any
+# cyrius project tree (caller falls back to raw cc5). Returned
+# pointer is owned by the allocator; LSP doesn't free per-request
+# buffers — alloc churn is bounded by edit cadence.
+fn find_project_root(filepath): i64 {
+    var flen = strlen(filepath);
+    if (flen == 0) { return 0; }
+    var pbuf = alloc(flen + 1);
+    memcpy(pbuf, filepath, flen);
+    store8(pbuf + flen, 0);
+    var pos = flen;
+    while (pos > 0) {
+        pos = pos - 1;
+        if (load8(pbuf + pos) == 47) {
+            store8(pbuf + pos, 0);
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, pbuf);
+            str_builder_add_cstr(sb, "/cyrius.cyml");
+            var candidate = str_data(str_builder_build(sb));
+            var ckfd = syscall(2, candidate, 0, 0);
+            if (ckfd >= 0) {
+                syscall(3, ckfd);
+                var rlen = pos;
+                var result = alloc(rlen + 1);
+                memcpy(result, pbuf, rlen);
+                store8(result + rlen, 0);
+                return result;
+            }
+            store8(pbuf + pos, 47);
+        }
+    }
+    return 0;
+}
+
+# v5.11.56: read /proc/self/environ and build a NULL-terminated
+# envp[] array forwarding the LSP's environment to a child. The
+# cyrius wrapper needs HOME (for ~/.cyrius resolution) and PATH
+# (for git fallbacks during deps fetch); passing envp=NULL like
+# raw cc5 does breaks ~/.cyrius/versions/X.Y.Z/ lookup.
+fn _build_envp_from_proc(): i64 {
+    var envfd = syscall(2, "/proc/self/environ", 0, 0);
+    if (envfd < 0) { return 0; }
+    var buf = alloc(32768);
+    var total = 0;
+    var chunk = 1;
+    while (chunk > 0 && total < 32767) {
+        chunk = syscall(0, envfd, buf + total, 32767 - total);
+        if (chunk > 0) { total += chunk; }
+    }
+    syscall(3, envfd);
+    if (total == 0) { return 0; }
+    store8(buf + total, 0);
+    var count = 1;
+    var i = 0;
+    while (i < total - 1) {
+        if (load8(buf + i) == 0) { count = count + 1; }
+        i = i + 1;
+    }
+    var envp = alloc((count + 1) * 8);
+    store64(envp, buf);
+    var ei = 1;
+    var ji = 0;
+    while (ji < total - 1) {
+        if (load8(buf + ji) == 0) {
+            store64(envp + ei * 8, buf + ji + 1);
+            ei = ei + 1;
+        }
+        ji = ji + 1;
+    }
+    store64(envp + ei * 8, 0);
+    return envp;
+}
+
+# v5.11.56: fork cyrius wrapper with cwd=project_root, exec
+# `cyrius check --with-deps <filepath>`. Wrapper handles [deps.*]
+# resolution that raw cc5 (read source from stdin, no project
+# context) can't see. Closes the undefined-stdlib-fn false-positive
+# class. Returns stderr buffer (never NULL except on pipe failure
+# upstream of fork).
+fn _compile_via_wrapper(filepath, project_root): i64 {
+    var pipe_fds[2];
+    var pr = sys_pipe(&pipe_fds);
+    if (pr < 0) { return 0; }
+    var pipe_read = load32(&pipe_fds);
+    var pipe_write = load32(&pipe_fds + 4);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(pipe_read);
+        var nfdi = sys_open("/dev/null", 0, 0);
+        if (nfdi >= 0) { sys_dup2(nfdi, 0); sys_close(nfdi); }
+        var nfdo = sys_open("/dev/null", 1, 0);
+        if (nfdo >= 0) { sys_dup2(nfdo, 1); sys_close(nfdo); }
+        sys_dup2(pipe_write, 2);
+        sys_close(pipe_write);
+        # SYS_CHDIR = 80 on x86_64 Linux; LSP is x86-only currently.
+        syscall(80, project_root);
+        var argv[5];
+        store64(&argv, _cyrius_path);
+        store64(&argv + 8, "check");
+        store64(&argv + 16, "--with-deps");
+        store64(&argv + 24, filepath);
+        store64(&argv + 32, 0);
+        var envp = _build_envp_from_proc();
+        if (envp == 0) {
+            var envp_empty[1];
+            store64(&envp_empty, 0);
+            sys_execve(_cyrius_path, &argv, &envp_empty);
+        } else {
+            sys_execve(_cyrius_path, &argv, envp);
+        }
+        syscall(60, 127);
+    }
+    sys_close(pipe_write);
+    var errbuf = alloc(8192);
+    var total = 0;
+    var chunk = 1;
+    while (chunk > 0 && total < 8191) {
+        chunk = syscall(0, pipe_read, errbuf + total, 8191 - total);
+        if (chunk > 0) { total += chunk; }
+    }
+    store8(errbuf + total, 0);
+    sys_close(pipe_read);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return errbuf;
+}
+
 # Run cc5 on a file path, capture stderr for errors.
 # Returns a pointer to the stderr output (null-terminated), or 0 on failure.
+# v5.11.56: when both the cyrius wrapper and a project root are
+# available, prefer wrapper-mode. Wrapper resolves [deps.*] before
+# invoking cc5, which eliminates the false-positive
+# `undefined function 'X' (will crash at runtime)` warnings for
+# stdlib fns the consumer pulls via cyrius.cyml. Fall back to raw
+# cc5 (pre-.56 behavior) for files outside any project tree or
+# when the wrapper isn't installed.
 fn compile_and_capture(filepath): i64 {
+    if (_cyrius_path != 0) {
+        var project_root = find_project_root(filepath);
+        if (project_root != 0) {
+            return _compile_via_wrapper(filepath, project_root);
+        }
+    }
     if (_cc5_path == 0) { return 0; }
 
     # Create pipe for stderr capture
@@ -1665,6 +1897,18 @@ fn main(): i64 {
         str_builder_add_cstr(log_sb, "found cc5: ");
         str_builder_add_cstr(log_sb, _cc5_path);
         log_msg(str_data(str_builder_build(log_sb)));
+    }
+
+    # v5.11.56: find cyrius wrapper for project-aware compile path
+    # (closes [deps.*]-resolution false positives — Item 2).
+    _cyrius_path = find_cyrius();
+    if (_cyrius_path == 0) {
+        log_msg("note: cyrius wrapper not found — falling back to raw cc5 (deps will not resolve in diagnostics)");
+    } else {
+        var clog_sb = str_builder_new();
+        str_builder_add_cstr(clog_sb, "found cyrius wrapper: ");
+        str_builder_add_cstr(clog_sb, _cyrius_path);
+        log_msg(str_data(str_builder_build(clog_sb)));
     }
 
     # Main loop: read JSON-RPC messages

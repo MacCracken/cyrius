@@ -217,37 +217,50 @@ Four Low-severity surface-quality items filed 2026-05-16 from
 the AGNOS iron-boot Attempts 37-38 + Repair R10 session on
 `archaemenid` Beelink SER. None blocked the iron work (kernel +
 `read-boot-log` both rebuilt clean). Split across two patches
-by surface — user directive 2026-05-17.
+by surface — user directive 2026-05-17. Slot-entry premise
+check 2026-05-17 surfaced an Item 3 scope question (cross-arch
+DCE cost ~200 LoC NEW for aarch64); user chose to ship the
+wording-only contradiction fix in .56 and earn .58 as a real
+engineering slot for the reachability filter.
 
 **v5.11.56 — Build-diagnostic polish** (Items 2 + 3, cyrius
 diagnostic-emitter surface):
 
-- **Item 2 — LSP cross-file scope noise**: every edit produces
-  a wall of `✘ error: undefined function 'X' (will crash at
-  runtime)` for stdlib fns resolved via `[deps.*]` (`strlen`,
-  `println`, `args_init`, etc.). Trains "ignore diagnostics"
-  reflex. Quick-win fix: when fn name matches a known stdlib
-  export, downgrade `✘ error` → `⚠ warning: 'X' resolved at
-  build time via [deps.X]` or suppress. (Real fix — project-
-  scan-on-LSP-init for `#include` + `[deps.*]` resolution — is
-  larger scope; deferred unless the wording fix doesn't move
-  the needle.)
-- **Item 3 — `vec_get` "will crash" + `OK` contradiction** on
-  `read-boot-log` build: `error: undefined function 'vec_get'
-  (will crash at runtime)` immediately followed by `OK` and a
-  working binary. Either run DCE before the undefined-fn check
-  (so unreachable refs don't fire the error), or fix the
-  resolver to find `vec_get`. Trains consumer to ignore future
-  `error:` lines.
-- Cross-arch propagation per
-  `feedback_cross_arch_propagation_mandatory` (LSP/check.cyr
-  surface is arch-shared; verify x86_64 + aarch64 + cx paths
-  unchanged where applicable).
+- **Item 2 — LSP cross-file scope noise (REAL FIX)**: every
+  edit on `agnos/` / `agnosticos/` source produced a wall of
+  `✘ error: undefined function 'X' (will crash at runtime)`
+  for stdlib fns resolved via `[deps.*]` (`strlen`, `println`,
+  `args_init`, etc.). Root cause: `cyrius-lsp.cyr`'s
+  `compile_and_capture()` forks **raw `cc5`** with source on
+  stdin, NULL argv tail, NULL envp, LSP's cwd — cc5 has no way
+  to see `cyrius.cyml` `[deps.*]` because that resolution lives
+  in the `cyrius` wrapper. Fix: switch to forking the `cyrius`
+  wrapper as `cyrius check --with-deps <filepath>` with cwd set
+  to the project root (walk up from filepath looking for
+  `cyrius.cyml`). Wrapper resolves `[deps.*]` naturally; the
+  false-positive class disappears at the source instead of being
+  softened. Keep raw-cc5 fallback for files outside any project
+  tree. ~60 LoC in `programs/cyrius-lsp.cyr`. Single arch (LSP
+  is x86 only).
+- **Item 3 — `vec_get` "will crash" + `OK` contradiction
+  (LIGHT FIX: wording downgrade)**: drop the `error:` + `OK`
+  contradiction by reclassifying the fixup-time emit from
+  `error: undefined function 'X' (will crash at runtime)` →
+  `warning: undefined function 'X' (call site may be
+  unreachable)`. Cross-arch x86_64 + aarch64 in same slot per
+  `feedback_cross_arch_propagation_mandatory`. ~10 LoC across
+  `src/backend/x86/fixup.cyr` + `src/backend/aarch64/fixup.cyr`.
+  `--strict` mode hard-fail path (`_strict_mode == 1 →
+  undef_count > 0 → exit 1`) preserved unchanged for CI use.
+  The DCE-aware reachability filter (which would surface
+  "warning" ONLY for truly-dead callsites and stay silent for
+  reachable refs) is deferred to .58 as its own slot.
 - Acceptance: self-host byte-identical, `check.sh` 75/75,
-  `cyrius test` 150/150, false-positive LSP diagnostics on
-  `agnos/`/`agnosticos/` re-edit reduced to near-zero,
-  `read-boot-log` build no longer emits the `error:` + `OK`
-  contradiction.
+  `cyrius test` 150/150, fresh LSP smoke against `agnos/`
+  source surfaces no `[deps.*]`-resolution false positives, and
+  `cyrius build`/`cyrius build --aarch64` of `read-boot-log`
+  emits `warning:` (not `error:`) with the `(call site may be
+  unreachable)` qualifier.
 
 **v5.11.57 — Wrapper/lib-resolution infra** (Items 1 + 4,
 `cyrius` wrapper + lib snapshot resolution surface):
@@ -278,7 +291,68 @@ diagnostic-emitter surface):
 
 Issue file (verbatim per `feedback_close_to_archive_issues`):
 `docs/development/issues/2026-05-16-iron-boot-session-papercuts.md`
-→ `archived/` once both slots ship.
+→ `archived/` once .56 + .57 both ship (Items 1-4 closed; .58
+reachability filter is engineering-grade not papercut).
+
+### v5.11.58 — DCE-aware undefined-fn reachability filter (cross-arch engineering slot)
+
+Deferred from the .56 papercut split. .56 dropped the
+`error:` + `OK` contradiction via wording-only downgrade
+(`warning: ... (call site may be unreachable)`) — drops the
+false-alarm tone but still emits for genuinely-reachable undef
+refs. .58 earns the precise fix: query the call's host fn
+against the DCE reachability bitmap; suppress the warning
+entirely when the host is dead.
+
+**Scope** (~300 LoC total):
+
+- **x86_64** (`src/backend/x86/fixup.cyr`): the DCE pass at
+  line 325-642 already builds `live[512]` (4096-fn bitmap) via
+  byte-scan of E8/E9 control transfers. Move the undef-fn
+  check (currently at line 143-180, BEFORE DCE) to AFTER DCE.
+  For each undef'd fixup, walk `fn_table` to find the host fn
+  whose `[start, end)` contains the fixup's `coff` (same
+  pattern as the DCE seed loop at line 483-492); skip the
+  warning if `live[host_idx] == 0`. Preserve `_strict_mode`
+  exit semantics (host-dead undef refs don't count toward the
+  strict-fail count either). ~30 LoC delta.
+- **aarch64** (`src/backend/aarch64/fixup.cyr`): NO DCE pass
+  exists today. Add the reachability bitmap construction
+  (~200 LoC NEW) mirroring x86's seed + propagate passes but
+  with aarch64 instruction encodings:
+  - BL (call):   top 6 bits `100101` → `0x94..0x97` mask
+                 `op & 0xFC == 0x94` (little-endian byte 3).
+  - B  (jump):   top 6 bits `000101` → `0x14..0x17` mask
+                 `op & 0xFC == 0x14`.
+  - rel26 → byte offset: sign-extend 26-bit imm, shift left 2.
+  - 4-byte instruction stride (vs x86's variable-length).
+  - Same hash-table optimization for `fn_start → fi` lookup
+    (existing 0x114000 slot region; x86 sized for the same
+    8192 cap — verify aarch64 reuse safety).
+  - Sweep (NOP-fill with aarch64 NOP `0xD503201F`) gated on
+    `CYRIUS_DCE=1` (same env var, same opt-in semantics).
+- After both archs have `live[]` available, the undef-fn check
+  reorder + host-filter logic is parallel: ~30 LoC delta on
+  aarch64 to match x86.
+
+**Cross-arch acceptance gate**: same `cyrius build` /
+`cyrius build --aarch64` of `read-boot-log` (and a deliberate
+synthetic test with reachable undef refs) emits the warning
+ONLY for reachable callsites; the `vec_get`-style dead-ref
+case is fully silent. cc5 self-host byte-identical on both
+archs. The `note: N unreachable fns (M bytes — set
+CYRIUS_DCE=1 to eliminate...)` line should now fire on
+aarch64 too (it didn't before — confirms the new pass works).
+
+Memory pin: `feedback_cross_arch_propagation_mandatory`
+(same-slot cross-arch, not "x86 first / aarch64 follow-up"
+half-fix).
+
+Per `feedback_deferral_requires_roadmap_pinnage`, this slot
+is pinned at .58 explicitly at the time of the .56 split
+decision (2026-05-17). If priorities shift, the deferral
+must be re-pinned with new acceptance bar — not silently
+slipped.
 
 ### v5.11.66 / v5.11.67 — Byte-array literal peephole (5× emit compression)
 

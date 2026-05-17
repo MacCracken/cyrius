@@ -6,6 +6,115 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.56] — 2026-05-17
+
+**Build-diagnostic polish (papercut filing Items 2 + 3) — LSP
+forks `cyrius` wrapper for project-aware diagnostics + undef-fn
+"will crash" wording downgrade across x86 + aarch64.** From the
+2026-05-16 iron-boot session papercut bundle filing; split-by-
+surface per user direction 2026-05-17. Items 1 + 4 pinned at
+.57; the DCE-aware reachability filter (precise host-dead
+suppression) deferred to .58 as its own engineering slot per
+`feedback_deferral_requires_roadmap_pinnage`.
+
+check.sh **75/75**; cc5 self-host **827,280 B** (−16 B from
+v5.11.55 — the wording-string growth in `fixup.cyr` is offset
+by literal-pool coalescing); cyrius test **150/150**; LSP smoke
+against agnos + agnosticos sources surfaces zero `[deps.*]`-
+resolution false positives.
+
+### Item 2 — LSP forks `cyrius` wrapper (real fix)
+
+`programs/cyrius-lsp.cyr` — `compile_and_capture()` previously
+forked **raw `cc5`** (source on stdin, NULL argv tail, NULL
+envp, LSP's cwd). cc5 had no way to see the project's
+`cyrius.cyml` `[deps.*]` declarations, so every consumer
+edit produced a wall of `error: undefined function 'X' (will
+crash at runtime)` for stdlib fns the consumer pulls via deps
+(`strlen`, `println`, `args_init`, etc.). New shape:
+
+- `find_cyrius()` — mirrors the v5.11.54 `find_cc5()` lookup
+  chain for the `cyrius` wrapper binary
+  (`$HOME/.cyrius/bin/cyrius` first, then install_dir,
+  `./build/cyrius`, `/usr/local/lib/cyrius/cyrius`,
+  `$CYRIUS_HOME/cyrius`).
+- `find_project_root(filepath)` — walks up from filepath
+  looking for `cyrius.cyml`; returns the directory or 0 if
+  the file is outside any cyrius project tree.
+- `_build_envp_from_proc()` — reads `/proc/self/environ` and
+  builds a NULL-terminated `envp[]` array forwarding the LSP's
+  environment to the child. Wrapper needs `HOME` for
+  `~/.cyrius` resolution; passing `envp=NULL` (raw-cc5 default)
+  broke the version-pinned binary lookup and surfaced a bogus
+  `/root/.cyrius/...` diagnostic.
+- `_compile_via_wrapper(filepath, project_root)` — fork +
+  `chdir(project_root)` + `execve(cyrius, ["cyrius", "check",
+  "--with-deps", filepath, NULL], envp_from_proc)`; capture
+  stderr identically to the raw-cc5 path.
+- `compile_and_capture()` dispatches: wrapper-mode when both
+  `_cyrius_path != 0` and `find_project_root()` returns
+  non-zero; falls back to raw cc5 for files outside any
+  project tree or when the wrapper isn't installed.
+- `main()` calls `find_cyrius()` at init alongside
+  `find_cc5()`; logs both resolved paths.
+
+Empirical: pre-.56 LSP smoke against
+`/home/macro/Repos/agnos/kernel/arch/x86_64/usb/xhci.cyr`
+produced ~10 spurious `undefined variable / function`
+diagnostics (per filing); post-.56 smoke surfaces 1 (genuine
+include-submodule cross-file ref; separate scoping class, not
+the [deps.*] class). `agnosticos/scripts/src/read-boot-log.cyr`
+went from 8 stdlib-fn false positives to 0; the genuine
+`vec_get` diagnostic remains (with the .56 wording from Item 3
+below).
+
+### Item 3 — undef-fn wording downgrade (cross-arch wording-only fix)
+
+`src/backend/x86/fixup.cyr` + `src/backend/aarch64/fixup.cyr`
+fixup-time undef-fn check — drops the `error:` + `OK`
+contradiction surfaced in the filing (`error: undefined
+function 'vec_get' (will crash at runtime)` followed by `OK`
+and a working binary, because `vec_get` is reachable only from
+DCE-detected-unreachable `vec_find`). Wording change:
+
+- `error: undefined function 'X' (will crash at runtime)` →
+  `warning: undefined function 'X' (call site may be
+  unreachable)`.
+- Applied byte-for-byte across both arches per
+  `feedback_cross_arch_propagation_mandatory`.
+- `--strict` mode hard-fail path (`_strict_mode == 1 &&
+  undef_count > 0 → exit 1`) preserved unchanged — CI gating
+  callers that opt into strict still see the fatal exit; the
+  user-facing diagnostic is the only thing that softens.
+
+The precise reachability filter (only emit the warning for
+truly-dead host fns) is .58. That slot adds ~200 LoC of
+aarch64 byte-scan DCE bitmap construction (x86 already has
+it; aarch64 doesn't) so .56 stays proportional to the
+papercut scope.
+
+### Bringup gotchas (pinned)
+
+- **`envp=NULL` breaks wrapper-mode lookup**: first wrapper-
+  mode attempt inherited the raw-cc5 path's `envp=NULL`; the
+  cyrius wrapper read `HOME` as unset, resolved
+  `~/.cyrius/...` to `/root/.cyrius/...`, and fired a bogus
+  pin-mismatch diagnostic. Fix: `_build_envp_from_proc()`
+  forwards the LSP's full env to the child. Raw cc5 doesn't
+  care because it reads everything from stdin and writes to
+  stdout (no filesystem state).
+- **stdout polluting binary on `cat src/main.cyr | cc5 > out
+  2>&1`**: merging stderr into stdout puts the "note: N
+  unreachable fns" message at the START of the binary, making
+  it invalid as an ELF executable. Use `2>/dev/null` (or
+  `2>file.err`) for any compile-to-binary pipe.
+
+### Issue archive
+
+`docs/development/issues/2026-05-16-iron-boot-session-papercuts.md`
+stays in active until .57 (Items 1 + 4) also ships; archived
+after both slots close per `feedback_close_to_archive_issues`.
+
 ## [5.11.55] — 2026-05-13
 
 **Refactor sweep — cap-drift gate table-style helpers +

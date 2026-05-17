@@ -107,12 +107,15 @@ fn FIXUP(S): i64 {
             var utarget = L64(S + 0x12DA000 + uidx * 8);
             if (utarget == 0 - 1) {
                 var ufnoff = L64(S + 0x12CA000 + uidx * 8);
-                syscall(SYS_WRITE, 2, "error: undefined function '", 27);
+                # v5.11.56: cross-arch propagation of the x86 wording
+                # downgrade. See src/backend/x86/fixup.cyr comment +
+                # CHANGELOG [5.11.56].
+                syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
                 var unptr = S + 0x60000 + ufnoff;
                 var unlen = 0;
                 while (load8(unptr + unlen) != 0) { unlen = unlen + 1; }
                 syscall(SYS_WRITE, 2, unptr, unlen);
-                syscall(SYS_WRITE, 2, "' (will crash at runtime)\n", 26);
+                syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
                 S64(S + 0x12DA000 + uidx * 8, 0 - 2);
                 undef_count = undef_count + 1;
             }

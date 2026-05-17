@@ -158,12 +158,21 @@ fn FIXUP(S): i64 {
             var utarget = L64(S + 0x12DA000 + uidx * 8);
             if (utarget == 0 - 1) {
                 var ufnoff = L64(S + 0x12CA000 + uidx * 8);
-                syscall(SYS_WRITE, 2, "error: undefined function '", 27);
+                # v5.11.56: downgraded `error:` → `warning:` + reworded
+                # "(will crash at runtime)" → "(call site may be
+                # unreachable)" to close the `error:` + `OK`
+                # contradiction surfaced by iron-boot session papercut
+                # filing (Item 3). The reachability filter that would
+                # suppress this warning entirely for truly-dead host
+                # fns is .58 (See CHANGELOG [5.11.56]). `_strict_mode`
+                # hard-fail path below preserves the binary-refusal
+                # semantics for CI gating.
+                syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
                 var unptr = S + 0x60000 + ufnoff;
                 var unlen = 0;
                 while (load8(unptr + unlen) != 0) { unlen = unlen + 1; }
                 syscall(SYS_WRITE, 2, unptr, unlen);
-                syscall(SYS_WRITE, 2, "' (will crash at runtime)\n", 26);
+                syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
                 # Mark as reported to avoid duplicates
                 S64(S + 0x12DA000 + uidx * 8, 0 - 2);
                 undef_count = undef_count + 1;
