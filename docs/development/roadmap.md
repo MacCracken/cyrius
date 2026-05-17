@@ -211,6 +211,50 @@ both move to v6.4.x. No mid-window auto-promotion.
 
 Memory pin: `project_mabda_rc3_at_closeout`.
 
+### v5.11.66 / v5.11.67 — Byte-array literal peephole (5× emit compression)
+
+The v5.11.51 byte-array literal (`var foo[N] = { 0x.., ... };`)
+ships with a 21-byte-per-byte emit cost: each byte init goes
+through `EVADDR + EADDRA_IMM + EPUSHR + EMOVI + EPOPC + ESTORE8
++ EXORAA` (parser-side reuse of the existing `store8(...)` expr
+path, same code shape the consumer would write by hand). For
+gnoboot's UTF-16LE strings (~78 bytes each) and EFI GUIDs (16
+bytes each, ~8 declared), the per-byte overhead adds ~1300 bytes
+of `.text` per UTF-16 string + ~250 bytes per GUID.
+
+Peephole optimization: emit `mov byte [rcx+disp8], imm8`
+(opcode `C6 41 disp imm`, 4 bytes per byte) using a cached
+`&var` in RCX once at the head of the init sequence. For
+offsets 0-127 (covers all practical byte-array sizes), the cost
+drops from 21 → 4 bytes per byte (**5× compression**).
+
+Pinned at v5.11.66 / v5.11.67 — late in the absorber band, just
+before the .68 closeout heap-map reorg. Tag .67 is the standard
+pinnage; .66 is the runway slot for cross-arch propagation work
+(aarch64 + cx need parallel peephole helpers, per
+`feedback_cross_arch_propagation_mandatory`). If the cross-arch
+work shrinks the peephole into a single slot, .67 stays
+flexible / cycles into the absorber.
+
+**Scope** (per the v5.11.55 refactor-survey item #5):
+
+- New x86 named op `EMOV_BYTE_RCX_DISP8_IMM8(S, disp8, imm8)`
+  → `C6 41 disp imm` (4 bytes).
+- Equivalent aarch64 op (STRB Wn, [Xn, imm12]).
+- Equivalent cx op (bytecode store-byte with imm).
+- `EMIT_GVAR_INITS` byte-array-literal replay path emits the
+  base `mov rcx, &var` once + the direct-store form per byte
+  instead of the full expression machinery.
+- Byte-identity verify: existing cc5 self-host (no byte arrays
+  in compiler source) stays byte-identical. gnoboot binary
+  shrinks visibly.
+- Regression test: `tests/tcyr/byte_array_literal.tcyr` 26
+  sub-asserts continue passing.
+
+Memory pin: refactor-survey item #5 in CHANGELOG [5.11.55].
+Acceptance bar: gnoboot rebuild against v5.11.66/.67 shows
+`.text` reduction proportional to byte-array literal count.
+
 ### v5.11.68 — Heap-map full reorganization + CVE-05 (true closeout)
 
 The last substantive engineering work before v6.0.0 opens.
