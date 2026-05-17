@@ -3,6 +3,60 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-17 (end of .56-.59 ship arc + docs/vidya cleanup)
+
+Closing the session at **v5.11.59** after the iron-boot
+papercut 4-slot arc (.56-.59) and two cleanup commits that
+ride into the next release:
+
+- **Cyrius doc cleanup commit** — `docs/doc-health.md`
+  ledger refreshed (.50 → .59 inventory; +8 archived issues,
+  +2 open proposals, open-issues count corrected 0 → 2);
+  Tier 1 cc5-size claims refreshed in `docs/faq.md`,
+  `docs/platform-status.md`, `docs/size-comparisons.md`
+  (823,112 B → 875,336 B — +52 KB drift past the ±50 KB
+  doc-currency gate's tolerance).
+- **Vidya refresh commit** (sibling repo) —
+  `content/cyrius/language/features.cyml` +2 entries
+  (byte-array literal v5.11.51; efi_main entry convention
+  v5.11.52). `language/tooling.cyml` updated for cc5 +
+  cross-compiler sizes, `cyrius build [--strict-pin]`,
+  `cyrius lib sync`, `--version` manifest-pin behavior,
+  CYRIUS_NO_WARN_PIN_DRIFT / CYRIUS_STRICT_PIN env vars +
+  CYRIUS_DCE cross-arch note. `language/index.cyml` +
+  `ecosystem.cyml` + `field_notes/kernel.cyml` version refs
+  bumped to .59. Closeout-grade items (compiler/gotchas
+  field notes, retros, ADR-002 i64-tenet+SIMD-exception
+  reframing) deferred to the .68 closeout per user
+  direction.
+
+**Next absorber band**: .60-.65 open buffer (intentional —
+runway for the next inbound consumer filing or refactor
+opportunity). Pinned: .66/.67 (byte-array literal peephole,
+5× emit compression), .68 (heap-map full reorg + CVE-05 +
+ADR-002 update per
+[[project_adr_002_i64_core_tenet_simd_exception]]), .69
+(conditional mabda 3.0 fold).
+
+**Outstanding follow-up candidates**:
+- aarch64 `_strict_mode` parity (declared in v5.11.59 retro
+  as a small follow-up slot — would need a `_strict_mode`
+  decl in `main_aarch64.cyr` + flag plumbing in the wrapper's
+  aarch64 dispatch).
+- Two `🟠 read-through` doc-health items remain unreviewed
+  against v5.11.x reality (process-notes,
+  module-manifest-design, migration-strategy,
+  crash-localization, package-format, struct-packing) — not
+  known wrong, just unverified; their own slot whenever a
+  documentation-audit cycle lands.
+- Open issues: bote nested-call state-leak cold case (Low);
+  build-artifact pre-commit hook (Medium). Both stayed open
+  across the .50-.59 arc.
+- Open proposals: pie-support (v6.1.x pin),
+  cyrius-lsp-argv0-self-resolution (unpinned), kriya's
+  octal-literal-syntax + syscalls-`*at()`-family (both v6.x
+  per [[project_kriya_low_level_v6x_syscall_arc]]).
+
 ## Version
 
 **5.11.59** (shipped 2026-05-17 — **DCE-aware undefined-fn
