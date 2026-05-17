@@ -62,18 +62,22 @@
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius compiler itself (cc5) is **823,112 B**
-(~823 KB) on Linux ELF at v5.11.50. It compiles itself byte-identically.
+For perspective, the Cyrius compiler itself (cc5) is **875,336 B**
+(~875 KB) on Linux ELF at v5.11.59. It compiles itself byte-identically.
 At v5.5.10 it also compiles itself byte-identically on Windows
 (cc5_win.exe native → out.exe matches Linux cross-build md5).
 That's the whole self-hosting compiler — TLS / atomics / dynlib /
 NSS quartet / sum types + match / `?` propagation / Result-shaped
 stdlib / UEFI Application emit (v5.11.49) / ELF64 + multiboot2
-kernel emit (v5.11.43) — in less disk than Rust's stripped debug exit42.
+kernel emit (v5.11.43) / DCE-aware reachability filter cross-arch
+(v5.11.59) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cc5 (Linux ELF): **823,112 B** (v5.11.50)
-- cc5_aarch64 (Linux aarch64 cross): **506,216 B** (v5.11.x)
-- cc5_win (Windows PE cross): **630,272 B** (v5.11.x; PE format
+- Cyrius cc5 (Linux ELF): **875,336 B** (v5.11.59)
+- cc5_aarch64 (Linux aarch64 cross): **558,016 B** (v5.11.59; +51 KB
+  over v5.11.x earlier — v5.11.59 added full DCE bitmap pass to
+  aarch64 fixup.cyr, mirroring the x86 path that existed since
+  v5.10.x)
+- cc5_win (Windows PE cross): **682,760 B** (v5.11.59; PE format
   overhead + v5.5.35 .reloc + v5.6.31 DllChar 0x0160 + v5.11.47-.49
   EFI Application emit deltas)
 - cc5 compiles itself in milliseconds (no cache, no incremental build —
