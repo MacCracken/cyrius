@@ -262,47 +262,115 @@ diagnostic-emitter surface):
   emits `warning:` (not `error:`) with the `(call site may be
   unreachable)` qualifier.
 
-**v5.11.57 — Wrapper/lib-resolution infra** (Items 1 + 4,
-`cyrius` wrapper + lib snapshot resolution surface):
+**v5.11.57 — cc5-side pin-drift + shadow-content detection (Items 1 + 4 cc5 surface)**:
 
-- **Item 1 — Wrapper/manifest pin drift warn** (highest
-  leverage per filing triage): when `cyrius build` resolves
-  against a lib snapshot whose version != the `cyrius.cyml`
-  `cyrius = "X.Y.Z"` pin, warn loudly (one-liner, not buried
-  in a `note:`): `warning: cyrius.cyml pins X.Y.Z but build
-  resolved against lib snapshot X.Y.W — run 'cyrius update' to
-  refresh`. Optional `--strict-pin` flag (or `[build]
-  strict_pin = true` in cyrius.cyml) for CI. Also: `cyrius
-  --version` includes a `manifest-pin: X.Y.Z (project at
-  $PWD)` line when run inside a project tree. Risk profile is
-  real — silent skew hides emitter regressions until iron-burn
-  time.
-- **Item 4 — Shadow-lib content-hash compare**: today the
-  `note: cwd ./lib/ shadows version-pinned ...` fires on every
-  build, even when the local `lib/` is identical to the
-  snapshot. Compare content hashes; only warn when they
-  differ. Add a third remediation (besides "delete ./lib/" and
-  `CYRIUS_NO_WARN_SHADOW_LIB=1`): `cyrius lib sync` overwrites
-  local with snapshot for pin-faithful behavior.
+Premise check at .57 entry (2026-05-17) revealed Item 1's
+root cause is layered: the wrapper at `~/.cyrius/bin/cyrius`
+has been embedding `5.11.25` since 2026-05-12 because
+`scripts/install.sh::_rebuild_stale` checks `build/$target
+-nt $source` against `cbt/cyrius.cyr` only, missing the
+transitive dependency on `src/version_str.cyr` (which
+`cbt/cyrius.cyr` includes via `_VERSION_TOOLCHAIN`). Every
+bump since copied the stale May-12 binary forward into each
+snapshot. Consequence: `cyrius --version` reports `.25`
+regardless of what pin or actual install version a consumer
+has. **User direction 2026-05-17: split.** cc5-side detection
+ships in .57 (works regardless of wrapper staleness because
+cc5 is rebuilt every bump for self-host); wrapper polish
+earns .58.
+
+- **Item 1 (cc5 side)** — `src/frontend/lex.cyr` near
+  `_check_shadow_lib`: new `_check_cyml_pin_drift()` reads
+  cwd's `cyrius.cyml`, parses `[package].cyrius = "X.Y.Z"`,
+  compares to cc5's compile-time `_VERSION_STR_CC5`. When
+  pin exists AND pin != cc5 self-version, emit a loud
+  `warning: cyrius.cyml pins X.Y.Z but cc5 is X.Y.W —
+  toolchain drift (snapshot may be stale)`. Opt-out
+  `CYRIUS_NO_WARN_PIN_DRIFT=1`; strict mode
+  `CYRIUS_STRICT_PIN=1` exits with code 1 instead of
+  warning (CI-gating path the wrapper's --strict-pin flag in
+  .58 will set automatically). Cyml parser inline (mirrors
+  `cbt/deps.cyr::_dep_read_cyml_cyrius_field` shape but in
+  cc5 syntax). ~80 LoC.
+- **Item 4 (cc5 side)** — `_check_shadow_lib` rewrite: today
+  it just probes `lib/` directory existence and warns
+  unconditionally. New shape: enumerate `./lib/*.cyr`, for
+  each file with a counterpart in
+  `~/.cyrius/versions/<cc5-version>/lib/`, compare BYTE
+  SIZES (faster than content hash, catches the common
+  drift). Emit the note only when at least one pair
+  differs. Files unique to `./lib/` (project-specific code)
+  are ignored — they're not shadowing anything. ~70 LoC.
+- **NOT in .57** (split to .58): `cyrius lib sync` command,
+  `cyrius --version` manifest-pin line, `--strict-pin`
+  command-line flag, `scripts/install.sh` rebuild-staleness
+  fix. These are wrapper-side; they need the wrapper to be
+  current to work.
 - Acceptance: self-host byte-identical, `check.sh` 75/75,
-  `cyrius test` 150/150, fresh build of `read-boot-log` from
-  `agnosticos/scripts/` surfaces a single targeted warning
-  (pin-drift OR genuine shadow), not both.
+  `cyrius test` 150/150. Build of `read-boot-log` from
+  `agnosticos/scripts/` emits the new pin-drift warning
+  (pin .55 vs cc5 .57) and SUPPRESSES the shadow-lib note
+  when the local `lib/` byte-matches the snapshot.
 
-Issue file (verbatim per `feedback_close_to_archive_issues`):
-`docs/development/issues/2026-05-16-iron-boot-session-papercuts.md`
-→ `archived/` once .56 + .57 both ship (Items 1-4 closed; .58
-reachability filter is engineering-grade not papercut).
+### v5.11.58 — Wrapper polish (wrapper rebuild fix + lib sync + --strict-pin + --version pin line)
 
-### v5.11.58 — DCE-aware undefined-fn reachability filter (cross-arch engineering slot)
+Closes the wrapper-surface remainder of the iron-boot
+papercut filing (Items 1 + 4 wrapper portions; cc5 portions
+landed at .57). User direction 2026-05-17 split (3-slot
+papercut close was the trade-off for not punting the wrapper
+work into v6.x boundary cleanup).
 
-Deferred from the .56 papercut split. .56 dropped the
-`error:` + `OK` contradiction via wording-only downgrade
-(`warning: ... (call site may be unreachable)`) — drops the
-false-alarm tone but still emits for genuinely-reachable undef
-refs. .58 earns the precise fix: query the call's host fn
-against the DCE reachability bitmap; suppress the warning
-entirely when the host is dead.
+**Scope** (~200 LoC total):
+
+- **`scripts/install.sh` rebuild-staleness fix**: extend
+  `_rebuild_stale` to track `src/version_str.cyr` as an
+  explicit dependency of `cbt/cyrius.cyr` (and any other
+  binary that includes it). Without this, future bumps
+  continue to copy the stale wrapper into each snapshot.
+  Alternative: have `version-bump.sh` explicitly `touch
+  cbt/cyrius.cyr` (and other version_str.cyr consumers)
+  after regenerating version_str.cyr so the `-nt` check
+  triggers a rebuild. Pick whichever is cleaner; either
+  closes the underlying bug.
+- **`cyrius lib sync` command** (`cbt/cyrius.cyr` dispatch
+  + new `cmd_lib_sync` in `cbt/commands.cyr`): copies
+  `~/.cyrius/versions/<X>/lib/*.cyr` into `./lib/*.cyr`,
+  where `<X>` = current toolchain version (or cyml pin if
+  set). Third remediation alongside "delete ./lib/" and
+  `CYRIUS_NO_WARN_SHADOW_LIB=1` from Item 4.
+- **`cyrius --version` manifest-pin enhancement**: when run
+  in a project tree (cwd has `cyrius.cyml` with
+  `[package].cyrius`), append a second line `manifest-pin:
+  X.Y.Z (project at $PWD)` to the existing `cyrius X.Y.Z`
+  output. Helps consumers spot the mismatch the same moment
+  they check what wrapper they're running.
+- **`--strict-pin` flag** (and/or `[build] strict_pin =
+  true` in cyrius.cyml): wrapper passes through to cc5 as
+  `CYRIUS_STRICT_PIN=1` env var; cc5 (already shipped in
+  .57) upgrades the pin-drift warning to a hard exit. CI
+  pathway for consumers that want pin-faithful builds.
+
+**Acceptance**: self-host byte-identical, `check.sh` 75/75,
+`cyrius test` 150/150, fresh `version-bump.sh` cycle
+produces a wrapper that reports the current version (not the
+stale .25-era one), `cyrius lib sync` from
+`agnosticos/scripts/` silences the shadow note on next
+build, `cyrius --strict-pin build` in a pin-mismatched
+project exits non-zero.
+
+Issue file `2026-05-16-iron-boot-session-papercuts.md` →
+`archived/` after .58 ships (.56 + .57 + .58 collectively
+close Items 1-4).
+
+### v5.11.59 — DCE-aware undefined-fn reachability filter (cross-arch engineering slot)
+
+Bumped from .58 (now wrapper polish) per user direction
+2026-05-17. .56 dropped the `error:` + `OK` contradiction
+via wording-only downgrade (`warning: ... (call site may be
+unreachable)`) — drops the false-alarm tone but still emits
+for genuinely-reachable undef refs. .59 earns the precise
+fix: query the call's host fn against the DCE reachability
+bitmap; suppress the warning entirely when the host is dead.
 
 **Scope** (~300 LoC total):
 
@@ -349,10 +417,10 @@ Memory pin: `feedback_cross_arch_propagation_mandatory`
 half-fix).
 
 Per `feedback_deferral_requires_roadmap_pinnage`, this slot
-is pinned at .58 explicitly at the time of the .56 split
-decision (2026-05-17). If priorities shift, the deferral
-must be re-pinned with new acceptance bar — not silently
-slipped.
+is pinned at .59 explicitly (re-pinned 2026-05-17 from the
+prior .58 pin after the wrapper-polish slot earned .58).
+If priorities shift again, the deferral must be re-pinned
+with new acceptance bar — not silently slipped.
 
 ### v5.11.66 / v5.11.67 — Byte-array literal peephole (5× emit compression)
 

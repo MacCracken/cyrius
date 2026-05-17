@@ -3,7 +3,7 @@
 **Filed:** 2026-05-17 during kriya M2 (`touch`/`ln` implementation)
 **Severity:** Stdlib gap — kriya M2 utilities are calling raw `syscall(N, …)` with magic numbers for filesystem ops that POSIX considers core. Not a blocker (the raw syscalls work), but every consumer touching the filesystem reinvents the wrapper.
 **Affects:** `lib/syscalls_x86_64_linux.cyr`, `lib/syscalls_aarch64_linux.cyr` (the aarch64 peer already uses the `at`-family for `openat`/`newfstatat`/`mkdirat`/`unlinkat` internally — those wrappers just aren't exposed by name).
-**Target slot:** v5.11.x quality-of-life patch, or v6.x bundle — whichever a stdlib-grooming cycle lands first.
+**Target slot:** v6.x — bundles with a larger syscall-stdlib expansion arc the next major absorbs (kriya as the low-level surfacer, with agnos as a likely future consumer of the same set). v5.11.x is the final 5.x minor (closeout at .68); single proposals don't earn quality-of-life patches in the absorber band when a v6.x arc will land them coherently. User direction 2026-05-17.
 
 ## Summary
 

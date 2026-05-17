@@ -6,6 +6,153 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.57] — 2026-05-17
+
+**cc5-side pin-drift + shadow-content detection (papercut
+Items 1 + 4, cc5 surface).** Iron-boot papercut filing
+Items 1 + 4 split between cc5 surface (.57, this slot) and
+wrapper surface (.58, next slot) per user direction
+2026-05-17. .57 entry premise check revealed Item 1's root
+cause is deeper than the filing captured: the wrapper at
+`~/.cyrius/bin/cyrius` has been embedding `5.11.25` since
+2026-05-12 because `scripts/install.sh::_rebuild_stale`
+checks `build/$target -nt $source` against `cbt/cyrius.cyr`
+only, missing the transitive dependency on
+`src/version_str.cyr` (which `cbt/cyrius.cyr` includes via
+`_VERSION_TOOLCHAIN`). Every bump since copied the stale
+May-12 binary forward into each snapshot. Consequence:
+`cyrius --version` reports `.25` regardless of which pin or
+install version a consumer actually has. Wrapper-rebuild
+fix earns .58 alongside the rest of the wrapper polish
+(`cyrius lib sync`, `--strict-pin` flag, `--version`
+manifest-pin line). cc5 is rebuilt every bump for self-host
+so cc5 IS authoritative-current; detection from cc5 surfaces
+drift regardless of wrapper-rebuild state.
+
+The full DCE-aware reachability filter (originally pinned
+.58 at the v5.11.56 split) re-pinned to **.59** per
+`feedback_deferral_requires_roadmap_pinnage`.
+
+check.sh **75/75**; cc5 self-host **874,664 B** (+47,384 B
+from v5.11.56, +5.7% — new cc5 fns: `_check_cyml_pin_drift`,
+`_env_var_is_1`, `_file_size`, and the rewrite of
+`_check_shadow_lib`'s content-compare path); cyrius test
+**150/150**; cross-compilers rebuilt: cc5_aarch64
+549,824 B, cc5_win 682,088 B.
+
+### Item 1 (cc5 side) — pin-drift warning
+
+New `src/frontend/lex.cyr::_check_cyml_pin_drift()`, hooked
+into `_init_cyrius_lib` alongside the existing
+`_check_shadow_lib`. Behavior:
+
+- Reads cwd's `cyrius.cyml`, parses `[package].cyrius =
+  "X.Y.Z"`. Returns silently if absent (no pin to compare
+  against).
+- Compares pin to cc5's compile-time `_VERSION_STR_CC5`
+  (skips `"cc5 "` prefix, reads until `\n`).
+- On mismatch, emits to stderr:
+  `warning: cyrius.cyml pins X.Y.Z but cc5 is X.Y.W —
+  toolchain drift (snapshot may be stale; set
+  CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)`.
+- **Opt-out**: `CYRIUS_NO_WARN_PIN_DRIFT=1` env var
+  suppresses entirely.
+- **Strict mode**: `CYRIUS_STRICT_PIN=1` env var upgrades
+  the warning to `error: ... (CYRIUS_STRICT_PIN)` and exits
+  with code 1. CI-gating path the wrapper's `--strict-pin`
+  flag in .58 will set automatically.
+
+Inline cyml parser (mirrors the shape of
+`cbt/deps.cyr::_dep_read_cyml_cyrius_field` but in cyrius
+syntax — finds `[package]` header, walks lines until next
+section, matches `cyrius` field name + `=` + quoted value).
+
+### Item 4 (cc5 side) — shadow-lib content-compare filter
+
+Rewrite of `_check_shadow_lib` byte-size-compare path. Pre-
+fix, the note fired any time cwd had a `lib/` directory —
+including the agnosticos/scripts case where `./lib/` exists
+but is empty, and any consumer with a project-local `lib/`
+that doesn't shadow stdlib at all. New shape:
+
+- Existing `lib/` directory probe stays (returns silently
+  if absent).
+- Probe `./lib/alloc.cyr` as a canonical sentinel —
+  `alloc.cyr` is in every stdlib build; if it's NOT in
+  `./lib/`, the local lib isn't shadowing stdlib (project-
+  local-only). Skip the note.
+- If `./lib/alloc.cyr` IS present, byte-size-compare against
+  the snapshot's `~/.cyrius/versions/<cc5-version>/lib/
+  alloc.cyr` via new `_file_size(path)` helper (SYS_OPEN +
+  SYS_LSEEK SEEK_END). If sizes match, no drift; skip the
+  note.
+- Only emit the existing note when sizes differ (real
+  drift).
+
+Trade-off: sentinel-file approach (one canonical file) is
+~30 LoC vs full directory enumeration which would need
+`getdents64` infrastructure. The corner case missed is when
+`./lib/alloc.cyr` happens to match snapshot but other lib
+files differ — rare enough to accept; full enumeration can
+land later if a consumer hits it.
+
+### Helpers added
+
+- `_file_size(path)`: SYS_OPEN + SYS_LSEEK SEEK_END + close.
+  Returns size in bytes, -1 if absent. Used by
+  `_check_shadow_lib`.
+- `_env_var_is_1(name, name_len)`: reads
+  `/proc/self/environ`, scans for `<name>=1\0` entry.
+  Returns 1 on match. Used by `_check_cyml_pin_drift` for
+  both opt-out and strict-mode probes. Existing
+  `_check_shadow_lib` inline `CYRIUS_NO_WARN_SHADOW_LIB`
+  check predates this helper and stays inline for byte-
+  identity stability of the surrounding code; future
+  cleanup can converge.
+
+### Validation
+
+- `cd /home/macro/Repos/agnosticos/scripts && cat
+  src/read-boot-log.cyr | cc5_57` (cyml pins `5.11.55`, cc5
+  is `5.11.56`) emits `warning: cyrius.cyml pins 5.11.55
+  but cc5 is 5.11.56 — toolchain drift ...`. Shadow note is
+  CORRECTLY absent because `./lib/` is empty (sentinel
+  file absent). Previously emitted only the shadow note,
+  with no surface for the pin drift.
+- `CYRIUS_NO_WARN_PIN_DRIFT=1` opt-out: pin warning gone,
+  shadow filter unchanged.
+- `CYRIUS_STRICT_PIN=1` strict mode: emits `error:
+  cyrius.cyml pins 5.11.55 but cc5 is 5.11.56 — toolchain
+  drift (CYRIUS_STRICT_PIN)`, exit code 1.
+- Cyrius repo self-build: `./lib/alloc.cyr` size MATCHES
+  snapshot → shadow note correctly absent (was always
+  spuriously emitted pre-fix). Forcing a size diff (`echo
+  "// extra byte" >> lib/alloc.cyr`) re-emits the note,
+  confirming the compare logic engages.
+
+### Bringup gotchas (pinned)
+
+- **Em dash UTF-8 byte count**: first pass on the warning
+  string used the visible-char count (`86` for `" —
+  toolchain drift (snapshot may be stale; set
+  CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)\n"`); the em dash
+  is 3 bytes in UTF-8, not 1, so the actual byte length is
+  `88`. The strict-mode string had the same off-by-2.
+  Result: trailing `)\n` got chopped and warnings ran
+  together on stderr ("...silencewarning: undefined...").
+  Existing `_check_shadow_lib` strings use the correct
+  3-byte em-dash convention (112 bytes for its `"—"`-
+  containing string); future syscall-string-literal length
+  args should be cross-checked against this pattern.
+
+### Issue archive
+
+`docs/development/issues/2026-05-16-iron-boot-session-papercuts.md`
+stays in active until .58 ships (Item 1's wrapper-side polish +
+Item 4's `cyrius lib sync` command land then). Archive once
+the bundle is fully closed per
+`feedback_close_to_archive_issues`.
+
 ## [5.11.56] — 2026-05-17
 
 **Build-diagnostic polish (papercut filing Items 2 + 3) — LSP
