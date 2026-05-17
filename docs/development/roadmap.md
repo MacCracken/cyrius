@@ -211,6 +211,75 @@ both move to v6.4.x. No mid-window auto-promotion.
 
 Memory pin: `project_mabda_rc3_at_closeout`.
 
+### v5.11.56 / v5.11.57 — Iron-boot session papercut close (filing `2026-05-16-iron-boot-session-papercuts.md`)
+
+Four Low-severity surface-quality items filed 2026-05-16 from
+the AGNOS iron-boot Attempts 37-38 + Repair R10 session on
+`archaemenid` Beelink SER. None blocked the iron work (kernel +
+`read-boot-log` both rebuilt clean). Split across two patches
+by surface — user directive 2026-05-17.
+
+**v5.11.56 — Build-diagnostic polish** (Items 2 + 3, cyrius
+diagnostic-emitter surface):
+
+- **Item 2 — LSP cross-file scope noise**: every edit produces
+  a wall of `✘ error: undefined function 'X' (will crash at
+  runtime)` for stdlib fns resolved via `[deps.*]` (`strlen`,
+  `println`, `args_init`, etc.). Trains "ignore diagnostics"
+  reflex. Quick-win fix: when fn name matches a known stdlib
+  export, downgrade `✘ error` → `⚠ warning: 'X' resolved at
+  build time via [deps.X]` or suppress. (Real fix — project-
+  scan-on-LSP-init for `#include` + `[deps.*]` resolution — is
+  larger scope; deferred unless the wording fix doesn't move
+  the needle.)
+- **Item 3 — `vec_get` "will crash" + `OK` contradiction** on
+  `read-boot-log` build: `error: undefined function 'vec_get'
+  (will crash at runtime)` immediately followed by `OK` and a
+  working binary. Either run DCE before the undefined-fn check
+  (so unreachable refs don't fire the error), or fix the
+  resolver to find `vec_get`. Trains consumer to ignore future
+  `error:` lines.
+- Cross-arch propagation per
+  `feedback_cross_arch_propagation_mandatory` (LSP/check.cyr
+  surface is arch-shared; verify x86_64 + aarch64 + cx paths
+  unchanged where applicable).
+- Acceptance: self-host byte-identical, `check.sh` 75/75,
+  `cyrius test` 150/150, false-positive LSP diagnostics on
+  `agnos/`/`agnosticos/` re-edit reduced to near-zero,
+  `read-boot-log` build no longer emits the `error:` + `OK`
+  contradiction.
+
+**v5.11.57 — Wrapper/lib-resolution infra** (Items 1 + 4,
+`cyrius` wrapper + lib snapshot resolution surface):
+
+- **Item 1 — Wrapper/manifest pin drift warn** (highest
+  leverage per filing triage): when `cyrius build` resolves
+  against a lib snapshot whose version != the `cyrius.cyml`
+  `cyrius = "X.Y.Z"` pin, warn loudly (one-liner, not buried
+  in a `note:`): `warning: cyrius.cyml pins X.Y.Z but build
+  resolved against lib snapshot X.Y.W — run 'cyrius update' to
+  refresh`. Optional `--strict-pin` flag (or `[build]
+  strict_pin = true` in cyrius.cyml) for CI. Also: `cyrius
+  --version` includes a `manifest-pin: X.Y.Z (project at
+  $PWD)` line when run inside a project tree. Risk profile is
+  real — silent skew hides emitter regressions until iron-burn
+  time.
+- **Item 4 — Shadow-lib content-hash compare**: today the
+  `note: cwd ./lib/ shadows version-pinned ...` fires on every
+  build, even when the local `lib/` is identical to the
+  snapshot. Compare content hashes; only warn when they
+  differ. Add a third remediation (besides "delete ./lib/" and
+  `CYRIUS_NO_WARN_SHADOW_LIB=1`): `cyrius lib sync` overwrites
+  local with snapshot for pin-faithful behavior.
+- Acceptance: self-host byte-identical, `check.sh` 75/75,
+  `cyrius test` 150/150, fresh build of `read-boot-log` from
+  `agnosticos/scripts/` surfaces a single targeted warning
+  (pin-drift OR genuine shadow), not both.
+
+Issue file (verbatim per `feedback_close_to_archive_issues`):
+`docs/development/issues/2026-05-16-iron-boot-session-papercuts.md`
+→ `archived/` once both slots ship.
+
 ### v5.11.66 / v5.11.67 — Byte-array literal peephole (5× emit compression)
 
 The v5.11.51 byte-array literal (`var foo[N] = { 0x.., ... };`)

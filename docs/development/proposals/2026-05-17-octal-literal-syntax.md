@@ -3,7 +3,7 @@
 **Filed:** 2026-05-17 during kriya M2 implementation
 **Severity:** Quality-of-life — no current consumer is blocked (decimal literals work), but every syscall-flag / POSIX-mode call site in every Cyrius consumer pays an ongoing readability tax. First concrete instance: `kriya mkdir` at [kriya `src/cmd/mkdir.cyr`](https://github.com/MacCracken/kriya/blob/main/src/cmd/mkdir.cyr).
 **Affects:** `src/frontend/lex.cyr` (LEXNUM dispatch, new LEXOCT routine). One concentrated change. No backend / codegen impact — octal is just another integer-literal *spelling*.
-**Target slot:** v5.12.x — quality-of-life, no ABI impact, lands in the cycle that wants it.
+**Target slot:** v6.x — quality-of-life, no ABI impact; v5.11.x is the final 5.x minor, so this queues for the v6.x cycle (per `project_v5_11_x_closeout_at_40`).
 
 ## Summary
 
@@ -137,7 +137,7 @@ Binary literals (`0b1101`) are the same shape of change: another `LEXNUM` branch
 
 ## Decision required
 
-Not blocking for any current Cyrius version. Slot for **v5.12.x** acceptance whenever a quality-of-life slot is being chosen.
+Not blocking for any current Cyrius version. Slot for **v6.x** acceptance whenever a quality-of-life slot is being chosen (v5.11.x is the final 5.x minor — no v5.12.x exists).
 
 - [ ] Approve `0o`-prefix octal literals as a v5.12.x candidate.
 - [ ] Approve the syntax rules (mandatory `0o`, lowercase only, underscores allowed, no float fractional, `0..7` only).
