@@ -3,11 +3,11 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
-## Session close — 2026-05-18 (.60 ship — commandress papercut band slot 1/4)
+## Session close — 2026-05-18 (.60 + .61 ship — commandress papercut band slots 1+2 of 4)
 
-Closing the session at **v5.11.60** after shipping the
-first slot of the .60-.63 commandress absorber band
-pinned at .59 close:
+Closing the session at **v5.11.61** after shipping the
+first two slots of the .60-.63 commandress absorber
+band back-to-back:
 
 - **`lib/process.cyr` bug-fix pair (commandress Items 6
   + 7) shipped**. Item 6 (Medium): `_exec3`'s
@@ -56,20 +56,47 @@ pinned at .59 close:
   during version-bump replaced both with the .60
   snapshot.
 
-**Handoff note**: next agent kicks off on **.61**
-(`lib/toml.cyr::toml_parse_file` heap-alloc rewrite
-— commandress Item 2). The fn currently lands a
-256 KB on-fn-scope buffer in every consumer's bss
-regardless of reachability (commandress v0.2.0
-measured bss 289,640 B with 256 KB attributable to
-this fn alone). Fix shape is already proven by
-`toml_parse_file_r` (v5.8.30, heap-allocs already).
-Per `feedback_premise_check_at_slot_entry`, re-
-measure bss on a fresh commandress build pre-edit
-to confirm magnitude before scoping.
+**.61 ship details** —
+`lib/toml.cyr::toml_parse_file` heap-alloc rewrite
+(commandress Item 2). Pre-fix the fn declared a
+256 KB on-fn-scope buffer (`var buf[262144]`) that
+landed in every consumer's bss regardless of whether
+the fn was ever called (DCE drops the body but the
+static survives). Fix mirrors `toml_parse_file_r`
+(v5.8.30) exactly — `var buf = alloc(262144)` + drop
+the `&buf` address-of on subsequent uses. ~10 LoC
+delta + a 6-line comment block above the fn pointing
+to CHANGELOG [5.11.61].
 
-**Next absorber band — REMAINING after .60 ship**:
-.61-.63 still absorbs commandress papercut items;
+**Measured impact** — verified via two paths:
+- Synthetic repro in cyrius repo (include lib/toml.cyr,
+  don't call toml_parse_file): bss = **2,600 B** post-
+  fix. Confirms static is gone when fn is DCE-killed.
+- commandress consumer rebuild (transient swap of
+  `commandress/lib/toml.cyr`, repo restored to pre-
+  test state after — no persisted edits): pre-fix bss
+  **298,064 B** with `large static data` warning →
+  post-fix bss **35,920 B**, warning suppressed.
+  Delta **−262,144 B** = exactly the buffer size.
+
+commandress downstream gets the drop when they bump
+their `cyrius.cyml` pin to .61 + run `cyrius lib sync`
+to refresh their local `lib/` from the .61 snapshot.
+
+**Handoff note**: next agent kicks off on **.62**
+(commandress Items 5 + 1 — DCE-aware `large static
+data` warning gate + `cyrius init` bench-scaffold
+rewrite). Item 5 is the same shape as .59's undef-fn
+check reorder (move accounting after DCE OR filter
+byte count by `live[]`); Item 1 is a scaffold-
+template fix in `cbt/commands.cyr cmd_init`.
+Splittable per the roadmap pin — if scope drifts at
+slot entry, Item 1 absorbs into .64 and .65 stays
+open per user direction "keep .65 open so .62 can
+split."
+
+**Next absorber band — REMAINING after .60 + .61 ship**:
+.62-.63 closes out commandress papercut absorption;
 .64/.65 stay as explicit open bandwidth. Pinned
 tail: .66/.67 (byte-array literal peephole, 5× emit
 compression), .68 (heap-map full reorg + CVE-05 +
@@ -81,9 +108,10 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
 
 - **.60** — ✅ **SHIPPED 2026-05-18**. `lib/process.cyr`
   bug-fix pair (commandress Items 6 + 7).
-- **.61** — `lib/toml.cyr::toml_parse_file` heap-alloc rewrite
-  (commandress Item 2): 256 KB stack buf → `alloc()`; mirrors
-  existing `toml_parse_file_r`.
+- **.61** — ✅ **SHIPPED 2026-05-18**.
+  `lib/toml.cyr::toml_parse_file` heap-alloc rewrite
+  (commandress Item 2). −256 KB bss in any consumer
+  that includes `lib/toml.cyr`.
 - **.62** — Compiler/tooling pair (commandress Items 5 + 1):
   DCE-aware `large static data` warning gate (mirror of .59
   undef-fn reorder shape) + `cyrius init` bench-scaffold
@@ -107,10 +135,11 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   v5.11.x slot only if a fresh trigger surfaces during
   .64/.65, otherwise v6.x.
 - Open issues (NEW 2026-05-17): commandress papercuts —
-  Items 6+7 ✅ closed at v5.11.60; Items 1+2+5 remain in
-  the .61-.62 band; Items 3 (toml `[name]`), 4 (LSP
-  transitive-include), 8 (PATH lookup) deferred to v6.x.
-  Issue file stays open until .63 ship.
+  Items 6+7 ✅ closed at v5.11.60; Item 2 ✅ closed at
+  v5.11.61; Items 1+5 remain in the .62 band; Items 3
+  (toml `[name]`), 4 (LSP transitive-include), 8 (PATH
+  lookup) deferred to v6.x. Issue file stays open until
+  .63 ship.
 - Open proposals: pie-support (v6.1.x pin),
   cyrius-lsp-argv0-self-resolution (unpinned; v6.x LSP arc
   candidate alongside commandress Item 4),
@@ -120,6 +149,49 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   [[project_v5_11_x_closeout_at_40]]).
 
 ## Version
+
+**5.11.61** (shipped 2026-05-18 — **`lib/toml.cyr::toml_parse_file`
+heap-alloc rewrite — −256 KB bss in every consumer that
+includes `lib/toml.cyr`**). Second slot of the .60-.63
+commandress papercut absorber band; closes Item 2 of
+`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`.
+
+Pre-fix the fn body declared a 256 KB on-fn-scope buffer
+(`var buf[262144]`) that lived in `.bss` regardless of
+whether the fn was ever called — DCE drops the body but
+the static survives. Fix: `var buf = alloc(262144)` +
+drop the `&buf` address-of on subsequent uses (alloc
+already returns a payload pointer). Mirrors
+`toml_parse_file_r` (v5.8.30) exactly, which already
+heap-allocs. ~10 LoC delta + a 6-line comment block above
+the fn pointing to CHANGELOG [5.11.61] and naming
+`toml_parse_file_r` as the precedent.
+
+**Verification** — two paths:
+1. Synthetic repro (cyrius repo, local lib/, fn
+   DCE-killed): bss = **2,600 B**.
+2. commandress consumer rebuild (transient
+   `commandress/lib/toml.cyr` swap, restored after):
+   pre-fix **298,064 B** + `large static data (298064
+   bytes) — consider alloc() for buffers >4K` warning →
+   post-fix **35,920 B**, warning suppressed. **−262,144 B**
+   = exactly the buffer size.
+
+Self-host byte-identical at **875,336 B** (unchanged —
+lib/toml.cyr not included by cc5). `check.sh` **75/75**.
+`cyrius test` **151/150** (existing `toml.tcyr` +
+`toml_multiline.tcyr` cover the surface; no new tcyr).
+Cross-compilers unchanged (cc5_aarch64 558,016 B;
+cc5_win 682,760 B).
+
+**Snapshot-ping-pong guarded**: edit copied to
+`~/.cyrius/versions/5.11.60/lib/` + `~/.cyrius/lib/`
+before check.sh; `install.sh --refresh-only` during .61
+bump replaced both with the .61 snapshot.
+
+**Next**: .62 — commandress Items 5 + 1 (DCE-aware
+`large static data` warning gate + `cyrius init` bench-
+scaffold rewrite).
 
 **5.11.60** (shipped 2026-05-18 — **`lib/process.cyr`
 bug-fix pair — `_exec3` argv/envp byte-contract fix +

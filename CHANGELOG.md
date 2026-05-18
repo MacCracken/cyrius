@@ -6,6 +6,93 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.61] — 2026-05-18
+
+**`lib/toml.cyr::toml_parse_file` heap-alloc rewrite
+(commandress papercut filing Item 2).** Second slot of
+the .60-.63 commandress absorber band. The fn had a
+256 KB on-fn-scope buffer (`var buf[262144]`) that
+landed in every consumer's `.bss` regardless of whether
+the fn was ever called — DCE drops the fn body but the
+static survives. Mirrors the v5.8.30 `toml_parse_file_r`
+fix shape (heap-allocs already).
+
+check.sh **75/75**; cc5 self-host **875,336 B**
+(unchanged — lib/toml.cyr is not included by cc5);
+`cyrius test` **151/150** (no new tcyr; existing
+`toml.tcyr` + `toml_multiline.tcyr` cover the changed
+surface). Cross-compilers unchanged.
+
+### Fix shape
+
+Before:
+```cyrius
+fn toml_parse_file(path): i64 {
+    var buf[262144];                          # 256 KB in .bss
+    var n = file_read_all(path, &buf, 262144);
+    if (n <= 0) { return vec_new(); }
+    return toml_parse(str_new(&buf, n));
+}
+```
+
+After:
+```cyrius
+fn toml_parse_file(path): i64 {
+    var buf = alloc(262144);                  # heap-allocated on call
+    var n = file_read_all(path, buf, 262144);
+    if (n <= 0) { return vec_new(); }
+    return toml_parse(str_new(buf, n));
+}
+```
+
+The `&buf` → `buf` shift reflects the pointer-vs-static
+distinction: `alloc()` already returns the byte-payload
+pointer; `var buf[N]` requires `&buf` to take the
+address of the static. Identical to how
+`toml_parse_file_r` (v5.8.30) was already shaped.
+
+### Measured impact
+
+Verified via two paths before ship:
+
+1. **Synthetic repro** (in cyrius repo, against local
+   `lib/`) — includes `lib/toml.cyr` without calling
+   `toml_parse_file`; bss measured at **2,600 B**
+   post-fix (vs ~258 KB pre-fix). Confirms the static
+   is gone when the fn is DCE-eliminated.
+
+2. **commandress consumer rebuild** (transient swap of
+   `commandress/lib/toml.cyr` to verify magnitude;
+   commandress repo restored to pre-test state after
+   measurement, no persisted edits):
+   - Pre-fix bss: **298,064 B** (with `large static
+     data (298064 bytes) — consider alloc() for
+     buffers >4K` warning firing).
+   - Post-fix bss: **35,920 B**.
+   - Delta: **−262,144 B** (exactly the
+     `toml_parse_file` buffer size; warning suppressed).
+
+commandress's downstream rebuild against .61 (with
+their `cyrius.cyml` pin bumped + `cyrius lib sync` to
+refresh their local `lib/` from the .61 snapshot) will
+land the drop automatically.
+
+### Files touched
+
+- `lib/toml.cyr` — `toml_parse_file` body + a 6-line
+  comment block above the fn pointing to CHANGELOG
+  [5.11.61] and naming `toml_parse_file_r` as the
+  precedent.
+
+### Issue file
+
+[`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md)
+Item 2 — closed. Items 6+7 ✅ at v5.11.60; Items 1+5
+remain in .62 (splittable); Item 3 (toml `[name]`) /
+Item 4 (LSP) / Item 8 (PATH lookup) deferred to v6.x.
+Issue file archives at .63 ship (after the band's
+last in-scope item closes).
+
 ## [5.11.60] — 2026-05-18
 
 **`lib/process.cyr` bug-fix pair (commandress papercut filing
