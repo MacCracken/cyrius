@@ -768,8 +768,19 @@ fn PARSE_GVAR_REG(S): i64 {
     # registration so EMIT_GVAR_INITS won't replay the (now redundant)
     # runtime store. FIXUP's var-area writer reads gvar_initval and
     # writes the literal into the file image at the var's offset.
+    #
+    # SLVAR(vcnt) keeps the "last var" pointer in sync with the runtime-
+    # store path (which SLVAR's inside EMIT_GVAR_INITS's replay loop —
+    # see line ~900). Programs like `var x = 42;` with no main rely on
+    # the entry-trailing `EVLOAD(GLVAR())` → EEXIT to use the last var
+    # as the exit code (aarch64 ci's literal-only test cases hit this
+    # exact shape: `var x = 42;` expects exit 42). Without this call,
+    # static-init vars would silently fall out of the last-var chain
+    # and the binary would exit with whatever rax held — exit-code
+    # corruption the runtime-store path can't reproduce.
     if (sit_lit == 1) {
         S64(S + 0x1EC000 + vcnt * 8, sit_val);
+        SLVAR(S, vcnt);
     } else {
         # Save token index for deferred init
         var gc = L64(S + 0x19A000);
