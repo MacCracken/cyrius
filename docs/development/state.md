@@ -3,67 +3,84 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
-## Session close — 2026-05-17 (.56-.59 ship arc + docs/vidya cleanup + .60-.63 band pinnage)
+## Session close — 2026-05-18 (.60 ship — commandress papercut band slot 1/4)
 
-Closing the session at **v5.11.59** after the iron-boot
-papercut 4-slot arc (.56-.59), two cleanup commits, and a
-planning pass that pinned the next absorber band before
-handoff:
+Closing the session at **v5.11.60** after shipping the
+first slot of the .60-.63 commandress absorber band
+pinned at .59 close:
 
-- **Cyrius doc cleanup commit** — `docs/doc-health.md`
-  ledger refreshed (.50 → .59 inventory; +8 archived issues,
-  +2 open proposals, open-issues count corrected 0 → 2);
-  Tier 1 cc5-size claims refreshed in `docs/faq.md`,
-  `docs/platform-status.md`, `docs/size-comparisons.md`
-  (823,112 B → 875,336 B — +52 KB drift past the ±50 KB
-  doc-currency gate's tolerance).
-- **Vidya refresh commit** (sibling repo) —
-  `content/cyrius/language/features.cyml` +2 entries
-  (byte-array literal v5.11.51; efi_main entry convention
-  v5.11.52). `language/tooling.cyml` updated for cc5 +
-  cross-compiler sizes, `cyrius build [--strict-pin]`,
-  `cyrius lib sync`, `--version` manifest-pin behavior,
-  CYRIUS_NO_WARN_PIN_DRIFT / CYRIUS_STRICT_PIN env vars +
-  CYRIUS_DCE cross-arch note. `language/index.cyml` +
-  `ecosystem.cyml` + `field_notes/kernel.cyml` version refs
-  bumped to .59. Closeout-grade items (compiler/gotchas
-  field notes, retros, ADR-002 i64-tenet+SIMD-exception
-  reframing) deferred to the .68 closeout per user
-  direction.
-- **.60-.63 absorber band pinned** — commandress papercut
-  filing (`2026-05-17-commandress-stdlib-papercuts.md`,
-  8 items; new today during the v0.1.0 → v0.3.0 consumer
-  session) reviewed + slotted bottom-to-top. Roadmap +
-  state.md updated in same pass. Items 6 + 7 → .60,
-  Item 2 → .61, Items 5 + 1 → .62 (splittable), aarch64
-  `_strict_mode` parity → .63. Items 3, 4, 8 deferred to
-  v6.x (LSP arc + syscall-stdlib arc). .64/.65 stay as
-  explicit open bandwidth per user direction "keep .65 open
-  so .62 can split."
+- **`lib/process.cyr` bug-fix pair (commandress Items 6
+  + 7) shipped**. Item 6 (Medium): `_exec3`'s
+  `var argv[4]` reserved 4 BYTES (not 4 entries) of
+  stack and silently corrupted whatever sat after argv
+  on every call — `run_capture("/bin/echo", "hello",
+  0, ...)` returned 1 byte instead of 6, reproduced
+  pre-fix on cc5 .59. Fixed to `var argv[40]` + `var
+  envp[16]` per the byte-not-entry buffer contract; in-
+  source comment block pins the contract above the fn.
+  Item 7 (Low): four vec-based execs (`exec_capture`,
+  `exec_env`, `exec_capture_str`, `exec_env_str`) were
+  missing the stderr→/dev/null dup2 stanza that
+  `run_capture` ships. All four now mirror
+  `run_capture` (deliberate scope per user direction
+  2026-05-18 — breaks cstr-family parity where `run`
+  doesn't suppress, but matches the filing's explicit
+  4-fn enumeration).
+- **Premise check at slot entry**: confirmed Item 6
+  reproducer manifests on cc5 5.11.59 before scoping.
+  `/bin/echo hello` returned 1 byte (lone `\n`); post-
+  fix returns 6 bytes (`hello\n`). Item 7 confirmed by
+  code inspection (dup2 block visibly missing in all
+  four target fns).
+- **Scope clarification asked + answered**: cstr family
+  asymmetry (`run` no-suppress vs `run_capture`
+  suppress) made the "exec_capture family" pin
+  ambiguous between 2 and 4 fns. User picked all 4 per
+  the filing's enumeration. Noted in CHANGELOG +
+  in-source comments.
+- **Regression test**:
+  `tests/tcyr/process_run_capture_args.tcyr` (new, 6
+  sub-asserts) — single-arg / two-arg `run_capture`
+  byte counts + `run` two-arg no-capture exit code.
+  Skips cleanly when `/bin/echo` or `/bin/true` is
+  missing. `cyrius test` now 151/150.
+- **Mechanical gates green**: cc5 self-host byte-
+  identical at **875,336 B** (unchanged from .59 —
+  lib/process.cyr is not included by cc5);
+  `check.sh` **75/75**; cross-compilers unchanged
+  (cc5_aarch64 558,016 B; cc5_win 682,760 B).
+- **Snapshot ping-pong avoided**: edits copied to
+  `~/.cyrius/versions/5.11.59/lib/process.cyr` +
+  `~/.cyrius/lib/process.cyr` before check.sh per
+  CLAUDE.md mitigation; `install.sh --refresh-only`
+  during version-bump replaced both with the .60
+  snapshot.
 
-**Handoff note**: next agent kicks off on **.60**
-(`lib/process.cyr` Items 6 + 7) after the user's AGNOS
-iron-boot burn pushes kernel forward progress. Slot details
-in the "Next absorber band" block below + roadmap
-`### v5.11.60 → v5.11.63`. Slot-entry premise check is
-mandatory per `feedback_premise_check_at_slot_entry` —
-verify the commandress filing's reproducers still
-manifest on current cc5 before scoping.
+**Handoff note**: next agent kicks off on **.61**
+(`lib/toml.cyr::toml_parse_file` heap-alloc rewrite
+— commandress Item 2). The fn currently lands a
+256 KB on-fn-scope buffer in every consumer's bss
+regardless of reachability (commandress v0.2.0
+measured bss 289,640 B with 256 KB attributable to
+this fn alone). Fix shape is already proven by
+`toml_parse_file_r` (v5.8.30, heap-allocs already).
+Per `feedback_premise_check_at_slot_entry`, re-
+measure bss on a fresh commandress build pre-edit
+to confirm magnitude before scoping.
 
-**Next absorber band — PINNED 2026-05-17**: .60-.63 absorbs
-the commandress papercut filing (`2026-05-17-commandress-stdlib-papercuts.md`,
-8 items split bottom-to-top); .64/.65 stay as explicit open
-bandwidth (split-overflow runway + fresh-filing absorber).
-Pinned tail: .66/.67 (byte-array literal peephole, 5× emit
-compression), .68 (heap-map full reorg + CVE-05 + ADR-002
-update per [[project_adr_002_i64_core_tenet_simd_exception]]),
+**Next absorber band — REMAINING after .60 ship**:
+.61-.63 still absorbs commandress papercut items;
+.64/.65 stay as explicit open bandwidth. Pinned
+tail: .66/.67 (byte-array literal peephole, 5× emit
+compression), .68 (heap-map full reorg + CVE-05 +
+ADR-002 update per
+[[project_adr_002_i64_core_tenet_simd_exception]]),
 .69 (conditional mabda 3.0 fold).
 
 Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
 
-- **.60** — `lib/process.cyr` bug-fix pair (commandress Items
-  6 + 7): `_exec3` argv[4]→argv[40] silent-corruption fix +
-  stderr dup2 in vec-based `exec_capture` family.
+- **.60** — ✅ **SHIPPED 2026-05-18**. `lib/process.cyr`
+  bug-fix pair (commandress Items 6 + 7).
 - **.61** — `lib/toml.cyr::toml_parse_file` heap-alloc rewrite
   (commandress Item 2): 256 KB stack buf → `alloc()`; mirrors
   existing `toml_parse_file_r`.
@@ -90,9 +107,10 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   v5.11.x slot only if a fresh trigger surfaces during
   .64/.65, otherwise v6.x.
 - Open issues (NEW 2026-05-17): commandress papercuts —
-  Items 1+2+5+6+7 absorbed in .60-.62 band; Items 3 (toml
-  `[name]`), 4 (LSP transitive-include), 8 (PATH lookup)
-  deferred to v6.x.
+  Items 6+7 ✅ closed at v5.11.60; Items 1+2+5 remain in
+  the .61-.62 band; Items 3 (toml `[name]`), 4 (LSP
+  transitive-include), 8 (PATH lookup) deferred to v6.x.
+  Issue file stays open until .63 ship.
 - Open proposals: pie-support (v6.1.x pin),
   cyrius-lsp-argv0-self-resolution (unpinned; v6.x LSP arc
   candidate alongside commandress Item 4),
@@ -102,6 +120,58 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   [[project_v5_11_x_closeout_at_40]]).
 
 ## Version
+
+**5.11.60** (shipped 2026-05-18 — **`lib/process.cyr`
+bug-fix pair — `_exec3` argv/envp byte-contract fix +
+stderr→/dev/null dup2 across four vec-based execs**).
+First slot of the commandress papercut .60-.63 absorber
+band; closes Items 6 (Medium) + 7 (Low) of
+`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`.
+
+**Item 6** (`_exec3` byte-contract): `var argv[4]`
+and `var envp[1]` reserved **4 BYTES and 1 BYTE** of
+stack respectively. Body wrote up to 4×8 B + NUL into
+argv and 8 B into envp — silent stack corruption on
+every call. Pre-fix `run_capture("/bin/echo", "hello",
+0, ...)` returned 1 byte (lone `\n`); post-fix returns
+6 (`hello\n`). Fix: `var argv[40]` (5×8 B — cmd + 2
+args + NUL + slot headroom) + `var envp[16]` (2×8 B).
+Comment block above the fn documents the byte-vs-entry
+contract for the next reader. `_str` family
+(`exec_capture_str` etc.) was never affected — they
+heap-alloc argv via `alloc((argc+1)*8)`.
+
+**Item 7** (stderr leak): `exec_capture`, `exec_env`,
+`exec_capture_str`, `exec_env_str` were missing the
+`sys_open("/dev/null", 1, 0) + sys_dup2(devnull, 2)`
+stanza that `run_capture` ships (since v5.10.18). All
+four now mirror `run_capture`'s child-side dup2 block.
+Scope was 2-vs-4 ambiguous (cstr family is asymmetric:
+`run` no-suppress, `run_capture` suppress); user picked
+all 4 per filing's explicit enumeration — deliberately
+breaks cstr-family parity. Consumers needing stderr to
+surface from `exec_env` / `exec_env_str` now inline
+their own fork+pipe+execve.
+
+**Regression test** (new):
+`tests/tcyr/process_run_capture_args.tcyr` — 6 sub-
+asserts. Single-arg + two-arg `run_capture` byte counts
++ `run` two-arg no-capture exit code. Skips when
+`/bin/echo` or `/bin/true` is missing.
+
+Self-host byte-identical at **875,336 B** (unchanged —
+lib/process.cyr is not included by cc5). `check.sh`
+**75/75**. `cyrius test` **151/150** (+1 tcyr).
+Cross-compilers unchanged (cc5_aarch64 558,016 B,
+cc5_win 682,760 B). Snapshot-ping-pong guarded
+(`~/.cyrius/versions/5.11.59/lib/` + `~/.cyrius/lib/`
+refreshed pre-check.sh; .60 bump replaced both via
+`install.sh --refresh-only`).
+
+**Next**: .61 — `lib/toml.cyr::toml_parse_file` heap-
+alloc rewrite (commandress Item 2; 256 KB on-fn-scope
+buffer → `alloc()`, mirrors `toml_parse_file_r`
+v5.8.30).
 
 **5.11.59** (shipped 2026-05-17 — **DCE-aware undefined-fn
 reachability filter (cross-arch engineering slot)**).

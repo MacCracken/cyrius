@@ -13,14 +13,18 @@
 # `# O_RDONLY`).
 
 # Build argv array and execve. Called in child after fork. Does not return.
+# argv[40] = 5 × 8 B (cmd + up to 2 args + NUL + 1 slot headroom); envp[16] =
+# 2 × 8 B (envp[0] + NUL). var buf[N] is N BYTES per CLAUDE.md buffer contract;
+# the pre-v5.11.60 var argv[4] / var envp[1] reserved only 4 and 1 BYTES and
+# silently corrupted the stack on every call. See CHANGELOG [5.11.60].
 fn _exec3(cmd, arg1, arg2): i64 {
-    var argv[4];
+    var argv[40];
     store64(&argv, cmd);
     var ai = 1;
     if (arg1 != 0) { store64(&argv + ai * 8, arg1); ai = ai + 1; }
     if (arg2 != 0) { store64(&argv + ai * 8, arg2); ai = ai + 1; }
     store64(&argv + ai * 8, 0);
-    var envp[1];
+    var envp[16];
     store64(&envp, 0);
     sys_execve(cmd, &argv, &envp);
     sys_exit(127);
@@ -196,6 +200,8 @@ fn exec_capture(args, buf, buflen): i64 {
         sys_close(rfd);
         sys_dup2(wfd, 1);
         sys_close(wfd);
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }
@@ -239,6 +245,8 @@ fn exec_env(args, env): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }
@@ -321,6 +329,8 @@ fn exec_capture_str(args, buf, buflen): i64 {
         sys_close(rfd);
         sys_dup2(wfd, 1);
         sys_close(wfd);
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }
@@ -362,6 +372,8 @@ fn exec_env_str(args, env): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }

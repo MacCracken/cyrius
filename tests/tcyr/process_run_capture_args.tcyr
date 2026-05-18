@@ -1,0 +1,72 @@
+# Test: lib/process.cyr `_exec3` argv/envp buffer sizing (v5.11.60 Item 6).
+# Closes `docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`
+# Item 6: pre-v5.11.60 `var argv[4]` reserved 4 BYTES (not 4 entries) of stack
+# and silently corrupted whatever sat after argv on every call that pushed
+# more than zero args. Symptom: `run_capture("/bin/echo", "hello", 0, ...)`
+# returned 1 byte (a lone "\n") instead of 6 ("hello\n"). Same root cause
+# for `_str` family was NOT in scope (those heap-alloc argv); this regression
+# pins the cstr stack-buffer fix.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/result.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+# Skip when /bin/echo is missing (BSD-style without coreutils, minimal
+# containers, etc.). The `_exec3` argv contract is the artifact under test;
+# the binary is just convenient infrastructure.
+fn _bin_echo_present(): i64 {
+    var fd = sys_open("/bin/echo", 0, 0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return 1;
+}
+
+test_group("run_capture — single-arg argv (v5.11.60 Item 6 regression)");
+if (_bin_echo_present() == 1) {
+    var buf1[2048];
+    var res1 = run_capture("/bin/echo", "hello", 0, &buf1, 2048);
+    var n1 = result_unwrap_or(res1, 0);
+    # /bin/echo writes "hello\n" = 6 bytes. Pre-v5.11.60 this returned 1
+    # (lone "\n") because the second argv slot landed past the 4-byte
+    # buffer and execve saw an empty argv[1].
+    assert_eq(n1, 6, "/bin/echo hello captures 6 bytes (was 1 pre-.60)");
+    assert_eq(load8(&buf1), 104, "first byte = 'h'");
+} else {
+    println("  skip: /bin/echo not present on this host");
+}
+
+test_group("run_capture — two-arg argv (deeper overflow case)");
+if (_bin_echo_present() == 1) {
+    var buf2[2048];
+    var res2 = run_capture("/bin/echo", "-n", "hi", &buf2, 2048);
+    var n2 = result_unwrap_or(res2, 0);
+    # `/bin/echo -n hi` writes "hi" = 2 bytes (no newline). Pre-v5.11.60
+    # the third argv slot trampled even further past the buffer.
+    assert_eq(n2, 2, "/bin/echo -n hi captures 2 bytes");
+    assert_eq(load8(&buf2), 104, "first byte = 'h'");
+    assert_eq(load8(&buf2 + 1), 105, "second byte = 'i'");
+} else {
+    println("  skip: /bin/echo not present on this host");
+}
+
+test_group("run — exit code propagates with two args (no-capture path)");
+var true_fd = sys_open("/bin/true", 0, 0);
+if (true_fd >= 0) {
+    sys_close(true_fd);
+    # /bin/true exits 0 with no output; verify `run` (which also flows through
+    # _exec3) reaches it without trampling the stack on the wider argv buffer.
+    var res3 = run("/bin/true", "ignored1", "ignored2");
+    var rc3 = result_unwrap_or(res3, 0 - 1);
+    assert_eq(rc3, 0, "run /bin/true with two args exits 0");
+} else {
+    println("  skip: /bin/true not present on this host");
+}
+
+var r = assert_summary();

@@ -6,6 +6,113 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.60] — 2026-05-18
+
+**`lib/process.cyr` bug-fix pair (commandress papercut filing
+Items 6 + 7).** First slot of the .60-.63 commandress absorber
+band. Two unrelated-but-co-located stdlib bugs in the same
+module, one Medium (silent stack corruption) and one Low
+(stderr leak), shipped together per the roadmap pin.
+
+check.sh **75/75**; cc5 self-host **875,336 B** (unchanged —
+lib/process.cyr is not included by cc5); cyrius test
+**151/150** (+1 new tcyr, +6 sub-asserts); cross-compilers
+**unchanged** (cc5_aarch64 558,016 B; cc5_win 682,760 B).
+
+### Item 6 — `_exec3` argv/envp byte-contract fix (Medium)
+
+`lib/process.cyr::_exec3` declared `var argv[4]` and
+`var envp[1]`, which reserve **4 BYTES and 1 BYTE** of stack
+respectively (the `var buf[N]` contract is bytes-not-entries
+per CLAUDE.md, mirrored in `lib/fdlopen.cyr:234` and dozens
+of other stdlib sites). The body then wrote up to 4 × 8 B =
+32 B + NUL into argv and 8 B into envp. Whatever sat after
+argv on the stack (typically envp itself, then the saved
+frame pointer or local i64s) got clobbered every call.
+
+Observable symptom (reproduced before the fix on cc5
+5.11.59): `run_capture("/bin/echo", "hello", 0, buf, len)`
+returned **1 byte** (lone `\n`) instead of 6 (`hello\n`);
+`/bin/echo` saw an empty `argv[1]` because the second-pointer
+store landed past the 4-byte buffer into territory that
+execve read back as 0 or garbage. Same root cause silently
+broke commandress's vcs segment (`sit` got no `status` arg,
+ran the default branch, exited 1). Anything heavier than
+`run("/bin/x", 0, 0)` was rolling the dice on whatever was
+adjacent on the stack.
+
+Fix: `var argv[40]` (5 × 8 B — cmd + up to 2 args + NUL +
+1 slot headroom) and `var envp[16]` (2 × 8 B — envp[0] +
+NUL). One-line per-buffer delta plus a comment block
+documenting the byte-vs-entry contract above the fn so the
+next eyeball doesn't recompute it from scratch.
+
+The `_str` family (`exec_capture_str` etc.) heap-allocates
+argv via `alloc((argc + 1) * 8)`, so they were never affected;
+`exec_vec` / `exec_capture` / `exec_env` likewise. Only the
+3-arg cstr `_exec3` path used a stack buffer.
+
+Regression test (`tests/tcyr/process_run_capture_args.tcyr`,
+new): 6 sub-asserts — single-arg and two-arg `run_capture`
+invocations confirm `/bin/echo hello` captures 6 bytes (was 1)
+and `/bin/echo -n hi` captures 2 bytes; `run` two-arg
+no-capture path confirms `_exec3` reaches execve without
+trampling on the wider buffer. Skips cleanly when `/bin/echo`
+or `/bin/true` isn't on the host.
+
+### Item 7 — stderr→`/dev/null` dup2 in vec-based exec family (Low)
+
+The cstr `run_capture` (v5.10.18) correctly dups child stderr
+to `/dev/null` after the stdout-to-pipe dup2:
+
+```cyrius
+sys_dup2(write_fd, 1);
+sys_close(write_fd);
+var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY
+if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+```
+
+The four vec-based execs added at v5.10.44 (`exec_capture`,
+`exec_env`, `exec_capture_str`, `exec_env_str`) were missing
+this block — stderr leaked through to the caller's terminal.
+For commandress's vcs case the leak was visible on every
+prompt redraw: `sit: not a sit repository (run 'sit init')`
+showed up unconditionally when the user opted in to vcs and
+was outside a repo. Functionally broken for any consumer
+using these fns to embed external commands in interactive
+output.
+
+Fix: insert the same 2-line dup2 stanza into the child branch
+of all four vec exec fns, immediately before `sys_execve`.
+Identical pattern to `run_capture`, marker comment
+`# 1 = O_WRONLY (mirrors run_capture)` on each so a future
+reader can grep for the parity contract.
+
+Scope choice noted: the cstr family is asymmetric (`run` does
+NOT suppress stderr; only `run_capture` does). The vec family
+gets the suppression across all four fns per the filing's
+explicit enumeration, deliberately breaking the cstr-family
+parity. If a consumer of `exec_env` / `exec_env_str` needs
+stderr to surface, the consumer now needs to inline the
+fork+pipe+execve themselves — same workaround commandress
+already uses for vcs (`_vcs_capture` ~25 LoC).
+
+### Files touched
+
+- `lib/process.cyr` — `_exec3` buffer sizing + four-fn dup2
+  insertions. ~25 LoC delta total.
+- `tests/tcyr/process_run_capture_args.tcyr` — new
+  regression test (6 sub-asserts).
+
+### Issue file
+
+[`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md)
+Items 6 + 7 — stays open through the .61-.63 band (Item 2
+heap-alloc in .61, Items 5 + 1 in .62, aarch64 strict parity
+in .63). Will be archived at .63 ship when the remaining
+in-scope items close. Items 3 / 4 / 8 (deferred to v6.x)
+remain on the active queue under their own proposal files.
+
 ## [5.11.59] — 2026-05-17
 
 **DCE-aware undefined-fn reachability filter (cross-arch
