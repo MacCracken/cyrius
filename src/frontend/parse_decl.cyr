@@ -684,6 +684,29 @@ fn PARSE_GVAR_REG(S): i64 {
     }
     var is_struct = 0;
     var ssid = 0;
+    # v5.11.64: detect `var X = INT_LITERAL ;` shape for static init.
+    # Non-zero literals get pre-written into the var area at FIXUP time
+    # so the value is correct on FIRST READ — fixes the kmode-entry
+    # init-order bug where gvar reads before the post-PROG EMIT_GVAR_INITS
+    # block returned 0. Zero literals fall through to the existing
+    # runtime-store path (BSS-zero is already correct for them).
+    # See CHANGELOG [5.11.64] + the filed issue.
+    #
+    # Shadow-declaration opt-out: if FINDVAR already returns a match
+    # for this var name (i.e., an earlier top-level `var X = ...;`
+    # was registered before this one), skip static-init and fall
+    # through to the runtime-store path. Reason: EMIT_GVAR_INITS
+    # replays init tokens through FINDVAR which returns last-match —
+    # an earlier shadow's runtime store would end up targeting THIS
+    # var's address, clobbering our static-init bytes (mabda.cyr's
+    # `var F64_TWO = 0;` shadowed by math.cyr's `var F64_TWO =
+    # 0x4000_0000_0000_0000;` was the failing case during v5.11.64
+    # bring-up). The shadow case is rare enough that always falling
+    # back to runtime-store keeps the fix narrow.
+    var sit_lit = 0;
+    var sit_val = 0;
+    var sit_shadow = 0;
+    if (FINDVAR(S, noff) >= 0) { sit_shadow = 1; }
     if (PEEKT(S) == 4) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) == 2) {
@@ -695,6 +718,24 @@ fn PARSE_GVAR_REG(S): i64 {
             # like `var x = MASK & 0xF;` (where MASK is also a struct
             # name) must allocate a scalar slot, not STRUCTSZ bytes.
             if (ssid > 0 && TOKTYP(S, GTI(S) + 1) == 13) { is_struct = 1; }
+        }
+        # Static-init detection: shape is exactly `= NUM ;`. Negative
+        # literals (`= - NUM ;`), hex-as-expr, parenthesized literals,
+        # and arithmetic RHS all fall through to the runtime-store
+        # path. Conservative on purpose — no false positives means no
+        # silent value drift versus today's behavior.
+        #
+        # cx-mode opt-out: the cx bytecode backend has no file-image
+        # var area; its gvars live in cxvm-allocated memory zeroed at
+        # cxvm startup. Skipping the runtime store would leave them
+        # zero. Keep the runtime-store path for cx; static-init is
+        # an x86 / aarch64 / MachO / PE optimization.
+        if (_TARGET_CX != 1 && sit_shadow == 0 && PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 5) {
+            var lit = PEEKV(S);
+            if (lit != 0) {
+                sit_lit = 1;
+                sit_val = lit;
+            }
         }
     }
     STI(S, save_peek);  # restore
@@ -723,13 +764,21 @@ fn PARSE_GVAR_REG(S): i64 {
         }
     }
     SVCNT(S, vcnt + 1);
-    # Save token index for deferred init
-    var gc = L64(S + 0x19A000);
-    if (gc >= 1024) {
-        ERR_MSG(S, "too many initialized globals (max 1024)", 39);
+    # v5.11.64: static-init path — record literal value, skip gvar_toks
+    # registration so EMIT_GVAR_INITS won't replay the (now redundant)
+    # runtime store. FIXUP's var-area writer reads gvar_initval and
+    # writes the literal into the file image at the var's offset.
+    if (sit_lit == 1) {
+        S64(S + 0x1EC000 + vcnt * 8, sit_val);
+    } else {
+        # Save token index for deferred init
+        var gc = L64(S + 0x19A000);
+        if (gc >= 1024) {
+            ERR_MSG(S, "too many initialized globals (max 1024)", 39);
+        }
+        S64(S + 0x198000 + gc * 8, sti);
+        S64(S + 0x19A000, gc + 1);
     }
-    S64(S + 0x198000 + gc * 8, sti);
-    S64(S + 0x19A000, gc + 1);
     # Skip to semicolon
     var skg = 1;
     while (skg == 1) {

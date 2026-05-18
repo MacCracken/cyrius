@@ -1,0 +1,85 @@
+# v5.11.64 — top-level `var X = INT_LITERAL ;` static-init via
+# file-image bytes (no runtime store).
+# Filing: docs/development/issues/2026-05-18-gvar-init-order-zero-reads.md
+# (agnos xHCI Attempt 64 QEMU root-cause).
+#
+# Pre-v5.11.64: `var X = N;` at module top emitted a runtime store
+# sequence at the program entry. In kmode==1 the kernel's PARSE_PROG
+# body ran BEFORE the EMIT_GVAR_INITS block, so any fn called from
+# the kernel main body that read X saw 0 (the BSS default) instead
+# of N. Two agnos load-bearing instances (XHCI_CMD_TIMEOUT_SPINS,
+# XHCI_EVT_RING_SEGMENT_SIZE) ate ~10 iron-burn attempts before
+# the root cause surfaced.
+#
+# Post-v5.11.64: PARSE_GVAR_REG detects the `= NUM ;` shape and
+# records the literal in gvar_initval[vcnt]. FIXUP's emit paths
+# write the literal value into the var area's file image instead
+# of zero. No runtime store; the value is correct on first read,
+# regardless of when (or whether) the post-PROG init block runs.
+#
+# Verifies:
+# (1) Positive int literal reads back at module-top call site
+#     (simulates kmode entry sequence).
+# (2) Large 32-bit literal reads back (matches agnos's
+#     XHCI_CMD_TIMEOUT_SPINS = 10000000).
+# (3) Hex literal reads back at value.
+# (4) `var X = 0;` falls through to BSS-zero path (no regression
+#     for the zero-literal case which all-of-cc5 uses extensively).
+# (5) Arithmetic RHS falls through to the runtime-store path —
+#     read at module top is undefined in kmode; here we only
+#     check it reads N after main() has fully entered (the
+#     pre-fix path still works for executable mode).
+
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+# (1) Small positive literal.
+var SMALL_LIT = 42;
+# (2) Large literal (agnos's exact value).
+var XHCI_CMD_TIMEOUT_SPINS = 10000000;
+# (3) Hex literal (load-bearing register write in agnos's xhci_ring).
+var XHCI_EVT_RING_SEGMENT_SIZE = 256;
+var HEX_LIT = 0xDEADBEEF;
+# (4) Zero literal — BSS-zero is already correct.
+var ZERO_LIT = 0;
+# (5) Arithmetic RHS — falls through to runtime store.
+var ARITH = 100 + 1;
+
+fn read_small(): i64 { return SMALL_LIT; }
+fn read_spins(): i64 { return XHCI_CMD_TIMEOUT_SPINS; }
+fn read_segsz(): i64 { return XHCI_EVT_RING_SEGMENT_SIZE; }
+fn read_hex(): i64 { return HEX_LIT; }
+fn read_zero(): i64 { return ZERO_LIT; }
+fn read_arith(): i64 { return ARITH; }
+
+# Top-level call site — runs BEFORE main() in the entry stream.
+# Pre-fix in kmode: reads zero. Post-fix everywhere: reads literal.
+# Executable mode (this tcyr's kmode) places EMIT_GVAR_INITS BEFORE
+# top-level PARSE_PROG, so the runtime-store path also worked here
+# pre-fix — the static-init path now removes the runtime store but
+# the read still returns the correct value. The agnos kmode==1
+# scenario (PARSE_PROG before EMIT_GVAR_INITS) is exercised by the
+# `kmode emit order` gate in programs/check.cyr, which compiles a
+# minimal `kernel;` source against the same codegen path.
+var _early_small = read_small();
+var _early_spins = read_spins();
+var _early_segsz = read_segsz();
+var _early_hex   = read_hex();
+var _early_zero  = read_zero();
+
+assert_eq(_early_small, 42,        "(1) SMALL_LIT readable at top-level");
+assert_eq(_early_spins, 10000000,  "(2) XHCI_CMD_TIMEOUT_SPINS = 10000000 (agnos repro value)");
+assert_eq(_early_segsz, 256,       "(3a) XHCI_EVT_RING_SEGMENT_SIZE = 256 (agnos ring entry)");
+assert_eq(_early_hex,   0xDEADBEEF, "(3b) HEX_LIT = 0xDEADBEEF (hex literal)");
+assert_eq(_early_zero,  0,          "(4) ZERO_LIT = 0 (BSS-zero path)");
+
+# Also read AFTER main entry — both paths must agree.
+assert_eq(read_small(), 42,        "(1') SMALL_LIT consistent post-entry");
+assert_eq(read_spins(), 10000000,  "(2') XHCI_CMD_TIMEOUT_SPINS consistent post-entry");
+assert_eq(read_segsz(), 256,       "(3a') segsz consistent post-entry");
+assert_eq(read_hex(),   0xDEADBEEF, "(3b') hex consistent post-entry");
+assert_eq(read_zero(),  0,          "(4') zero consistent post-entry");
+assert_eq(read_arith(), 101,        "(5) arithmetic RHS still works via runtime-store path");
+
+var _exit_code = assert_summary();
+syscall(60, _exit_code);

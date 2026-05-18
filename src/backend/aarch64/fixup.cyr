@@ -90,7 +90,11 @@ fn FIXUP(S): i64 {
     var vcnt = GVCNT(S);
     var totvar = 0;
     var vi = 0;
+    # v5.11.64: also populate the stable gvar_byte_off mirror so the
+    # EMIT_* paths can patch static-init literal values at the correct
+    # offset (see _EMIT_GVAR_STATIC_INITS in src/common/util.cyr).
     while (vi < vcnt) {
+        S64(S + 0x1B0000 + vi * 8, totvar);
         totvar = totvar + L64(S + 0x12A000 + vi * 8);
         vi = vi + 1;
     }
@@ -686,8 +690,11 @@ fn EMITELF(S): i64 {
     var i = 0;
     while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
     # Variable data
+    var bss_o = op;
     i = 0;
     while (i < totvar) { store8(O + op, 0); op = op + 1; i = i + 1; }
+    # v5.11.64: overwrite static-init slots with their literal values
+    _EMIT_GVAR_STATIC_INITS(S, O, bss_o);
     # String data
     i = 0;
     while (i < spos) { store8(O + op, load8(S + 0x21A000 + i)); op = op + 1; i = i + 1; }
@@ -856,8 +863,11 @@ fn EMITELF_KERNEL(S): i64 {
     var i = 0;
     while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
     # Variable data
+    var bss_o = op;
     i = 0;
     while (i < totvar) { store8(O + op, 0); op = op + 1; i = i + 1; }
+    # v5.11.64: overwrite static-init slots with their literal values
+    _EMIT_GVAR_STATIC_INITS(S, O, bss_o);
     # String data
     i = 0;
     while (i < spos) { store8(O + op, load8(S + 0x21A000 + i)); op = op + 1; i = i + 1; }

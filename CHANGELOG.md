@@ -6,6 +6,250 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.64] — 2026-05-18
+
+**Static-init for top-level `var X = INT_LITERAL ;` —
+closes the kmode-entry init-order bug (agnos xHCI
+Attempt 64 root cause).** First absorber-band slot after
+the .60-.63 commandress papercut close.
+
+Filing (created same day): `docs/development/issues/
+2026-05-18-gvar-init-order-zero-reads.md`. Root cause
+recap: in kmode==1 (agnos kernel boot), cyrius's entry
+emits `[boot-shim asm from PARSE_PROG]` → `[rest of
+PARSE_PROG]` → `[EMIT_GVAR_INITS runtime stores]` (the
+v5.7.19 ordering invariant — top-level asm must run in
+32-bit protected mode BEFORE the REX.W gvar stores).
+The kernel's main body lives in PARSE_PROG and never
+returns, so the gvar-init stores that come AFTER it
+never execute. Any helper fn called from the kernel
+main body that reads a top-level gvar sees **0** (the
+BSS default) instead of the declared literal. Two
+load-bearing agnos cases (`XHCI_CMD_TIMEOUT_SPINS =
+10000000`, `XHCI_EVT_RING_SEGMENT_SIZE = 256`) ate ~10
+iron-burn attempts and a letter-ladder (FF → QQ+QQ2)
+before the compiler-side root cause surfaced.
+
+agnos's own `version-bump.sh` (line 86-95) documents
+the kmode==1 init-order constraint and works around it
+by wrapping banner strings in functions. The xHCI
+filings show the workaround misses the load-bearing-
+register case — the fix has to live at the language
+level.
+
+Issue archived after .64 ship.
+
+### Fix shape — Option 1 from the issue ("the cleanest")
+
+For `var IDENT = INT_LITERAL ;` at module top (positive
+literal, RHS shape = exactly NUM-then-SEMI), PARSE_GVAR_
+REG records the literal value in a new `gvar_initval`
+table (8 B per var) and SKIPS the gvar_toks registration
+so EMIT_GVAR_INITS doesn't replay the runtime-store
+sequence. FIXUP's prefix-sum loop mirrors per-var byte
+offsets into a stable `gvar_byte_off` table. Each
+emit fn's var-area zero-fill loop is followed by an
+`_EMIT_GVAR_STATIC_INITS(S, O, bss_o)` call that walks
+the gvar table and S64-writes literal values at their
+byte offsets — overwriting the zeros with the declared
+values. **The value lands in the binary's file image
+at the var's address. Read on first access returns the
+literal — no runtime store needed, regardless of when
+(or whether) the post-PROG init block runs.**
+
+Detection is conservative — only `= NUM ;` shape with a
+positive literal triggers static-init. Negative literals
+(`= -5;`), arithmetic RHS (`= N + M ;`), parenthesized
+literals (`= (N) ;`), and ident references (`= ENUM_VAL
+;`) all fall through to the existing runtime-store path.
+Zero-literal RHS (`var X = 0;`) also falls through —
+BSS-zero is already correct, so eliminating the runtime
+store would change cc5's binary in ways that don't fix
+any bug.
+
+### Shadow-declaration opt-out
+
+A nasty interaction surfaced during bring-up: when two
+top-level `var X = ...;` declarations exist for the same
+name in different files (mabda.cyr's `var F64_TWO = 0;`
+shadowed by math.cyr's `var F64_TWO = 0x4000_0000_0000
+_0000;` — both included in the same translation unit by
+the test runner's stdlib auto-prepend), `EMIT_GVAR_INITS`
+replays through `FINDVAR(noff)` which returns LAST-MATCH
+semantics. The EARLIER var's runtime-store-of-zero ends
+up targeting THE LATER var's address (math's F64_TWO),
+clobbering the static-init bytes the new fixup wrote.
+PRE-fix this self-corrected (both runtime stores fired,
+last-wins ordering put the right value in place). POST-
+fix, only mabda's runtime store fires (math's was elided
+because of static-init), so the wrong value sticks.
+
+The fix narrows the static-init opt-in: if `FINDVAR`
+returns a match for the var name BEFORE the new var is
+registered (i.e., this declaration shadows an earlier
+one), fall through to the runtime-store path even when
+the RHS is a literal. Shadow-redecl is rare enough that
+the loss of static-init for those cases is acceptable;
+the agnos use case (unique-name top-level gvars in
+kernel/arch/x86_64/usb/xhci_*.cyr) is untouched.
+
+Caught by `cyrius test` running the math_constants tcyr
+(F64_TWO read as 0 instead of 2.0's bit pattern); the
+synthetic two-include repro pinned it to a single shadow
+pair, confirming the FINDVAR-last-match interaction.
+
+### Cross-arch coverage (`feedback_cross_arch_propagation_mandatory`)
+
+The static-init write lands in **every** emit path that
+writes a var area to file:
+
+- `src/backend/x86/fixup.cyr`:
+  - `EMITELF_KERNEL`     (ELF32 + multiboot1)
+  - `EMITELF64_KERNEL`   (ELF64 + multiboot2 — the
+    agnos kernel path)
+  - `EMITELF_USER`       (ELF64 executable)
+  - `EMITELF_SHARED`     (ET_DYN; static-init lands
+    in the entire-buffer zero-fill before structured
+    writes stomp the metadata)
+  - `EMITELF_OBJ`        (object file; gvar_byte_off
+    populated even in the kmode==3 early-return path
+    so .o file's .data section has correct bytes)
+- `src/backend/aarch64/fixup.cyr`:
+  - `EMITELF`            (aarch64 user binaries)
+  - `EMITELF_KERNEL`     (aarch64 kernel mode)
+- `src/backend/macho/emit.cyr`:
+  - x86_64 path  (line 197)
+  - ARM64 path   (line 655 — guarded by has_data == 1)
+- `src/backend/pe/emit.cyr`:
+  - `EMITPE_EXEC` (handles both Windows EXE + EFI
+    Application post-.47 UEFI emit mode)
+
+cx bytecode backend opts OUT of static-init detection
+via a `_TARGET_CX != 1` guard in PARSE_GVAR_REG. cx
+gvars live in cxvm-allocated memory zeroed at vm
+startup; with no file-image var area to write, removing
+the runtime store would leave gvars permanently zero.
+cc5_cx (built with `_TARGET_CX = 1` baked in via static-
+init from cc5) sees the guard true at parse time and
+keeps the runtime-store path for its compiled output.
+
+### Heap layout
+
+Two new tables in the freed band post-v5.11.19 fn-table
+doubling relocations:
+
+- **`0x1B0000  gvar_byte_off [65536]`** — 8192 × 8B
+  per-gvar byte offset within the var area, populated
+  by FIXUP's prefix-sum loop. Stable mirror of the
+  output_buf scratch at 0x94A000+131072 (the latter
+  gets clobbered once output writing passes 128KB into
+  output_buf, which the EMIT_* paths frequently do).
+  Slot lives in the gap between `fn_start_fcnt` end
+  (0x1A6018) and `include_fnames` / `fn_names` start
+  (0x1C0000) — free in BOTH main.cyr and main_aarch64
+  heap maps.
+- **`0x1EC000  gvar_initval  [65536]`** — 8192 × 8B
+  per-gvar static-init literal value. Written by
+  PARSE_GVAR_REG when RHS matches `= INT_LITERAL ;`
+  with a non-zero value; read by `_EMIT_GVAR_STATIC_
+  INITS` at FIXUP-time emit. Slot uses v5.11.19's freed
+  region (was `fn_ret_sid` before .19 relocation).
+
+32 KB still free at 0x1FC000-0x204000; absorbed by
+v5.11.68's full heap-map reorg.
+
+### Helper fn (`src/common/util.cyr`)
+
+`_EMIT_GVAR_STATIC_INITS(S, O, bss_o)` walks GVCNT
+entries; for each var with a recorded non-zero literal
+in `gvar_initval[idx]` and `var_sizes[idx] == 8`
+(scalar; arrays use the byte-array literal path which
+keeps its existing runtime-store handling), S64-writes
+the literal at `O + bss_o + gvar_byte_off[idx]`. Three
+parameters keep the helper backend-agnostic — each
+emit fn passes its own buffer base + var-area-start
+offset.
+
+`GVSI` (get var static init) and `GVOFF` (get var byte
+offset) added as the standard `Sxxx`/`Gxxx` accessor
+pair next to `GFRA`/`SFRA`.
+
+### Test surface
+
+**New `tests/tcyr/gvar_static_init.tcyr`** (11 sub-
+asserts): five top-level `var X = ...;` declarations
+covering small positive literal (`42`), the exact agnos
+repro value (`10000000`), small literal load-bearing
+register write (`256`), 32-bit hex literal
+(`0xDEADBEEF`), zero literal (still BSS-zero), and
+arithmetic RHS (`100 + 1` — falls through to runtime
+store path; tests parity). Top-level read sites stash
+results into static vars BEFORE main() runs; post-main
+re-reads via fn calls cross-check both paths agree.
+This is the executable-mode mirror of the agnos kmode
+shape — the `_kmode_emit_order_gate` in programs/check.
+cyr exercises the kmode==1 path with the same codegen.
+
+**Updated `_kmode_emit_order_gate`** (programs/check.
+cyr line ~1024): test fixture changed from `var marker
+_var = 0xDEADBEEF;` (bare INT literal — now goes through
+static-init, no `48 b9` byte sequence) to `var marker
+_var = 0xDEADBEE0 | 0xF;` (arithmetic RHS — keeps the
+runtime-store path the gate's `48 b9` byte-search
+expects). The v5.7.19 invariant (top-level asm before
+gvar runtime stores in kmode) continues to be enforced
+for the cases where it still applies. Updated comment
+block above the fn documents the .64 fixture rationale.
+
+### Verification
+
+**cc5 self-host**: **872,952 B** (was 875,336 B; **-2,384 B**
+from eliminating runtime stores for cc5's own nonzero
+literal gvars — primarily the TS_TOK_* and TS_AST_*
+constant tables in `src/frontend/ts/lex.cyr` and `src/
+frontend/ts/parse.cyr`). Two-step bootstrap converges
+at pass2 (the new fixed point); pass2 == pass3 byte-
+identical.
+
+**Cross-builds**:
+- `cc5_aarch64`        563,144 B  (was 558,016 B; +5,128 B)
+- `cc5_aarch64_macho`  561,576 B
+- `cc5_aarch64_native` 541,592 B
+- `cc5_win`            685,352 B  (was 682,760 B; +2,592 B)
+- `cc5_cx`             488,576 B  (cx opted out of static-init detection)
+
+Size growth in cross-builds is the new parser logic +
+helper fn + EMIT_* call sites (~5 KB across the touched
+files). For x86 self-host the growth is offset by the
+runtime-store elimination, net **-2,528 B**.
+
+**check.sh**: **75/75 pass** (heap overlap, dlopen, kmode
+emit-order — all green after the fix shipped the
+shared-mode static-init call + the test-fixture refresh).
+`cyrius test`: **152/150** (added one tcyr).
+
+**Verbatim agnos repro**: `kernel;` source with
+`var XHCI_CMD_TIMEOUT_SPINS = 10000000;` + a helper
+fn reading it; binary inspection shows the literal
+bytes `80 96 98 00 00 00 00 00` at the var's file
+offset (0x140 in the test repro). Pre-fix the same
+bytes were zero. Helper fn read returns 10000000 from
+the file-image static init, no runtime store path
+involved.
+
+### Consumer impact
+
+agnos kernel: ready to revert the in-source enum-
+constant conversion of `XHCI_CMD_TIMEOUT_SPINS` /
+`XHCI_EVT_RING_SEGMENT_SIZE` if they pin to cyrius
+5.11.64+; or keep the enum form (works either way).
+Other consumers using `var X = N;` at module top
+will silently get correct first-read semantics with
+no source changes — the bug was invisible most of
+the time because main()-driven entry runs the gvar
+init prologue before user code, but bare-metal /
+kmode / EFI / DT_INIT-skipping shapes all benefit.
+
 ## [5.11.63] — 2026-05-18
 
 **aarch64 `_strict_mode` parity (.59 retro follow-up).**

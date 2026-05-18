@@ -1060,11 +1060,14 @@ fn EMITPE_EXEC(S): i64 {
     # (same treatment as ELF); runtime stores into them use the
     # same movabs+store path that works once the VA is mapped.
     # ============================================================
+    var bss_o = o;
     ti = 0;
     while (ti < _pe_rdata_totvar) {
         store8(O + o + ti, 0);
         ti = ti + 1;
     }
+    # v5.11.64: overwrite static-init slots with their literal values
+    _EMIT_GVAR_STATIC_INITS(S, O, bss_o);
     o = o + _pe_rdata_totvar;
     ti = 0;
     while (ti < _pe_rdata_spos) {

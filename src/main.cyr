@@ -160,6 +160,34 @@
 #                                        pending flags from preceding lexer
 #                                        tokens (122 = HASH_MUST_USE, 124 =
 #                                        HASH_DEPRECATED).
+#   0x1EC000 gvar_initval  [65536]       8192 × 8B — per-gvar static-init
+#                                        literal value (v5.11.64). Written
+#                                        by PARSE_GVAR_REG when RHS matches
+#                                        the shape `var X = INT_LITERAL ;`
+#                                        with a non-zero value; FIXUP-time
+#                                        emit paths write these bytes into
+#                                        the var area instead of zero,
+#                                        eliminating the runtime store
+#                                        sequence. Solves the kmode-entry
+#                                        init-order bug filed at
+#                                        docs/development/issues/
+#                                        2026-05-18-gvar-init-order-zero-reads.md
+#                                        (agnos xHCI Attempt 64). Slot uses
+#                                        v5.11.19 freed-region (was
+#                                        fn_ret_sid before .19 relocation).
+#   0x1B0000 gvar_byte_off [65536]       8192 × 8B — per-gvar byte offset
+#                                        within the var area, populated by
+#                                        FIXUP's prefix-sum loop (v5.11.64,
+#                                        relocated from output_buf scratch
+#                                        to a stable region so EMIT_*
+#                                        paths can read it after the output
+#                                        write reaches past 128KB). Slot
+#                                        lives in the freed band between
+#                                        fn_start_fcnt end (0x1A6018) and
+#                                        the include_fnames / fn_names
+#                                        section start at 0x1C0000 (free
+#                                        in BOTH main.cyr and main_aarch64
+#                                        heap maps, per cross-arch propagation).
 #   0x204000  var_enum_id   [65536]       8192 × 8B — per-variant parent
 #                                        enum id (1-based; 0 = not a
 #                                        variant). Written by PARSE_ENUM_

@@ -1024,13 +1024,20 @@ fn _find_bytes(buf, n, needle, nlen): i64 {
 # Bespoke gate: kmode emit order (v5.7.19; agnos boot regression).
 # Compiles a minimal `kernel;` source with two recognizable byte
 # markers — top-level asm 4× 0xF4 (HLT) and a single gvar init
-# (var marker = 0xDEADBEEF; emits REX.W `mov rcx, imm64` =
-# 48 b9 ...) — and asserts the asm marker's file offset is
-# strictly less than the first 48 b9 sequence. Pre-v5.7.19 cc5
-# emitted gvar inits before top-level asm; in kmode the
-# multiboot loader hands control in 32-bit protected mode, so a
-# 64-bit `mov [rcx], rax` before the boot-shim long-mode
-# transition triple-faulted on real hardware.
+# emitting REX.W `mov rcx, imm64` = 48 b9 ... — and asserts the
+# asm marker's file offset is strictly less than the first 48 b9
+# sequence. Pre-v5.7.19 cc5 emitted gvar inits before top-level
+# asm; in kmode the multiboot loader hands control in 32-bit
+# protected mode, so a 64-bit `mov [rcx], rax` before the
+# boot-shim long-mode transition triple-faulted on real hardware.
+#
+# v5.11.64 fixture update: the gvar RHS is `0xDEADBEE0 | 0xF`
+# (arithmetic, not a bare INT literal). The .64 static-init pass
+# routes `var X = INT_LITERAL ;` through the file-image bytes
+# instead of a runtime store — so a bare-literal RHS no longer
+# emits the 48 b9 marker the test relies on. Arithmetic RHS
+# keeps the runtime-store path, preserving the v5.7.19 invariant
+# this gate exists to enforce.
 fn _kmode_emit_order_gate(): i64 {
     var src_path = _tmp_path("audit_kmode_src_");
     var fd = sys_open(src_path, 577, 420);
@@ -1038,7 +1045,7 @@ fn _kmode_emit_order_gate(): i64 {
         _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
         return 1;
     }
-    var src = "kernel;\n\nvar marker_var = 0xDEADBEEF;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";
+    var src = "kernel;\n\nvar marker_var = 0xDEADBEE0 | 0xF;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";
     sys_write(fd, src, strlen(src));
     sys_close(fd);
 

@@ -3,6 +3,100 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-18 (.64 ship — agnos gvar-init-order bug closed)
+
+Closing **v5.11.64** with the static-init fix for top-
+level `var X = INT_LITERAL ;` declarations. First slot
+of the post-papercut absorber band; opened the same day
+the agnos issue filing (`docs/development/issues/
+2026-05-18-gvar-init-order-zero-reads.md`) landed.
+
+- **Root cause**: in kmode==1, cyrius emits `[boot-shim
+  asm] → [rest of PARSE_PROG] → [EMIT_GVAR_INITS]` at
+  the entry. agnos kernel main body lives in PARSE_PROG
+  and never returns; the gvar init stores after it never
+  execute, so any fn called from main reads the BSS-zero
+  default instead of the declared literal. Two load-
+  bearing agnos cases (`XHCI_CMD_TIMEOUT_SPINS = 1e7`,
+  `XHCI_EVT_RING_SEGMENT_SIZE = 256`) ate 10+ iron-burn
+  attempts before the compiler-side root cause surfaced.
+- **Fix shape (Option 1 from the issue, "the cleanest")**:
+  PARSE_GVAR_REG detects `= INT_LITERAL ;` shape with
+  positive non-zero RHS, records value in new
+  `gvar_initval` table (0x1EC000), skips gvar_toks
+  registration so EMIT_GVAR_INITS doesn't replay the
+  runtime store. FIXUP populates per-var byte offsets
+  in stable `gvar_byte_off` mirror (0x1B0000). Each
+  EMIT_* path adds `_EMIT_GVAR_STATIC_INITS(S, O, bss_o)`
+  after its var-area zero-fill to S64 literal bytes at
+  the right offsets. Result: value is in the file image
+  at first read; no runtime store needed.
+- **Cross-arch coverage**: x86 EMITELF_KERNEL +
+  EMITELF64_KERNEL + EMITELF_USER + EMITELF_SHARED +
+  EMITELF_OBJ; aarch64 EMITELF + EMITELF_KERNEL; MachO
+  x86 + ARM64; PE (EXE + EFI Application). cx
+  bytecode opts out via `_TARGET_CX != 1` guard.
+- **Shadow-declaration opt-out**: when `FINDVAR` finds
+  an existing match for the new var name (shadow redecl),
+  fall through to runtime-store. Caught during bring-up
+  by the math_constants tcyr — mabda's `var F64_TWO = 0`
+  shadowed by math's `var F64_TWO = 0x4000_0000_0000_
+  0000` hit `EMIT_GVAR_INITS`'s FINDVAR-last-match
+  semantics: mabda's runtime-store-of-zero targeted
+  math's address, clobbering the new static-init bytes.
+- **Verbatim repro green**: `kernel;` source with
+  `var XHCI_CMD_TIMEOUT_SPINS = 10000000;` + helper fn
+  reading it; binary inspection shows literal bytes
+  `80 96 98 00` at file offset 0x140. Helper read
+  returns 10000000.
+- **Mechanical gates green**: cc5 self-host byte-
+  identical at **872,952 B** (was 875,336 B; -2,384 B
+  from eliminating runtime stores for cc5's own TS_TOK_*
+  / TS_AST_* literal gvars in `src/frontend/ts/`).
+  Three-step bootstrap converges at pass2 / pass3 byte-
+  identical. `check.sh` **75/75**; `cyrius test` **152/150**
+  (new `tests/tcyr/gvar_static_init.tcyr` with 11 sub-
+  asserts).
+- **Test update**: `_kmode_emit_order_gate`'s fixture
+  changed from `var marker_var = 0xDEADBEEF;` (bare INT
+  literal — now static-init, no `48 b9` byte sequence
+  the gate looks for) to `var marker_var = 0xDEADBEE0 |
+  0xF;` (arithmetic RHS — preserves runtime-store
+  emit). Same value (0xDEADBEEF); v5.7.19 invariant
+  continues to be enforced for cases where it still
+  applies.
+- **Cross-builds**: cc5_aarch64 **563,144 B**
+  (+5,128 B), cc5_win **685,352 B** (+2,592 B); growth
+  from new parser logic + helper fn + EMIT_* call sites.
+  cc5_aarch64_macho / cc5_aarch64_native / cc5_cx all
+  build clean.
+
+Filing archived to
+`docs/development/issues/archived/2026-05-18-gvar-init-
+order-zero-reads.md` post-ship.
+
+Heap layout addition (v5.11.68 closeout will consolidate
+the band):
+
+- `0x1B0000  gvar_byte_off [65536]` — 8192 × 8B prefix-
+  sum mirror, FIXUP-time written / EMIT_*-time read.
+  Lives in the free band between `fn_start_fcnt` end
+  (0x1A6018) and `include_fnames` / `fn_names` start
+  (0x1C0000) — clean in both main.cyr and main_aarch64
+  heap maps.
+- `0x1EC000  gvar_initval  [65536]` — 8192 × 8B per-gvar
+  static-init literal. Uses v5.11.19's freed `fn_ret_sid`
+  slot (relocated to 0x15A000 at .19 doubling).
+
+Memory pins:
+- [feedback_cross_arch_propagation_mandatory] — all
+  arch paths handled in the same slot, no follow-up
+  half-fix.
+- [feedback_premise_check_at_slot_entry] — confirmed
+  agnos repro on cc5 .63 before scoping (synthetic
+  kmode source: `var X = N;` + fn reading X + top-
+  level asm; pre-fix reads X as 0, post-fix as N).
+
 ## Session close — 2026-05-18 (.60 + .61 + .62 + .63 ship — commandress papercut band CLOSED 4/4)
 
 Closing the session at **v5.11.63** after shipping the

@@ -193,8 +193,11 @@ fn EMITMACHO_EXEC(S): i64 {
     # ================================================================
     # Variable data (zeroed — matches ELF layout)
     # ================================================================
+    var bss_o = o;
     i = 0;
     while (i < totvar) { store8(O + o, 0); o = o + 1; i = i + 1; }
+    # v5.11.64: overwrite static-init slots with their literal values
+    _EMIT_GVAR_STATIC_INITS(S, O, bss_o);
 
     # ================================================================
     # String data (from str_data)
@@ -648,8 +651,11 @@ fn EMITMACHO_ARM64(S): i64 {
     # __DATA page (optional) — zero-initialised globals.
     # ================================================================
     if (has_data == 1) {
+        var bss_o = o;
         i = 0;
         while (i < totvar) { store8(O + o, 0); o = o + 1; i = i + 1; }
+        # v5.11.64: overwrite static-init slots with their literal values
+        _EMIT_GVAR_STATIC_INITS(S, O, bss_o);
         while (o < LINKEDIT_FILEOFF) { store8(O + o, 0); o = o + 1; }
     }
 

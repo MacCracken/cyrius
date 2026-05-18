@@ -156,6 +156,49 @@ fn SFVA(S, fi, v): i64 { S64(S + 0x16A000 + fi * 8, v); return 0; }
 # a `fn` definition; read by codegen in subsequent alphas.
 fn GFRA(S, fi): i64 { return L64(S + 0x14A000 + fi * 8); }
 fn SFRA(S, fi, v): i64 { S64(S + 0x14A000 + fi * 8, v); return 0; }
+
+# v5.11.64 — static-init literal value for `var X = INT_LITERAL ;`
+# gvars detected by PARSE_GVAR_REG. FIXUP-time emit paths read these
+# and pre-write into the var area, eliminating the runtime store
+# sequence and fixing the kmode-entry init-order bug filed at
+# docs/development/issues/2026-05-18-gvar-init-order-zero-reads.md.
+# Zero == not statically initialized (BSS-zero already correct, so
+# leave the runtime emit path in place — observable behavior is
+# identical, no need to fork).
+fn GVSI(S, vi): i64 { return L64(S + 0x1EC000 + vi * 8); }
+# v5.11.64 — stable mirror of FIXUP's prefix-sum table. Each entry
+# is the byte offset of var vi within the var area (post m128
+# alignment padding for size > 8 vars). Written in lockstep with
+# the codebuf-fixup `pfx` scratch at 0x94A000+131072 (latter gets
+# clobbered once output writing passes 128 KB into output_buf).
+fn GVOFF(S, vi): i64 { return L64(S + 0x1B0000 + vi * 8); }
+
+# v5.11.64 — apply gvar static-init values to the var area at the
+# given output offset `bss_o`. Called by each EMIT_* emit fn after
+# its var-area zero-fill loop completes. Iterates the gvar table;
+# any var with a recorded non-zero literal gets an 8-byte store at
+# its byte offset, overwriting the zeros. Vars without static init
+# (or with size != 8, e.g. arrays) are left zero — the array byte-
+# list path (PARSE_GVAR_ARR + EMIT_GVAR_INITS) keeps its existing
+# runtime-store handling, since per-byte arrays don't suffer the
+# kmode-entry init-order bug (the store sequence is the workaround
+# the user already writes by hand).
+fn _EMIT_GVAR_STATIC_INITS(S, O, bss_o): i64 {
+    var gvc = GVCNT(S);
+    var gvi = 0;
+    while (gvi < gvc) {
+        var siv = GVSI(S, gvi);
+        if (siv != 0) {
+            var vsize = L64(S + 0x12A000 + gvi * 8);
+            if (vsize == 8) {
+                S64(O + bss_o + GVOFF(S, gvi), siv);
+            }
+        }
+        gvi = gvi + 1;
+    }
+    return 0;
+}
+
 fn GIDEP(S): i64 { return L64(S + 0x1903E8); }
 fn SIDEP(S, v): i64 { S64(S + 0x1903E8, v); return 0; }
 # (GLVR/SLVR for r12 loop-var cache removed — the feature was
