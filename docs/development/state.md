@@ -3,11 +3,12 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
-## Session close — 2026-05-17 (end of .56-.59 ship arc + docs/vidya cleanup)
+## Session close — 2026-05-17 (.56-.59 ship arc + docs/vidya cleanup + .60-.63 band pinnage)
 
 Closing the session at **v5.11.59** after the iron-boot
-papercut 4-slot arc (.56-.59) and two cleanup commits that
-ride into the next release:
+papercut 4-slot arc (.56-.59), two cleanup commits, and a
+planning pass that pinned the next absorber band before
+handoff:
 
 - **Cyrius doc cleanup commit** — `docs/doc-health.md`
   ledger refreshed (.50 → .59 inventory; +8 archived issues,
@@ -29,33 +30,76 @@ ride into the next release:
   field notes, retros, ADR-002 i64-tenet+SIMD-exception
   reframing) deferred to the .68 closeout per user
   direction.
+- **.60-.63 absorber band pinned** — commandress papercut
+  filing (`2026-05-17-commandress-stdlib-papercuts.md`,
+  8 items; new today during the v0.1.0 → v0.3.0 consumer
+  session) reviewed + slotted bottom-to-top. Roadmap +
+  state.md updated in same pass. Items 6 + 7 → .60,
+  Item 2 → .61, Items 5 + 1 → .62 (splittable), aarch64
+  `_strict_mode` parity → .63. Items 3, 4, 8 deferred to
+  v6.x (LSP arc + syscall-stdlib arc). .64/.65 stay as
+  explicit open bandwidth per user direction "keep .65 open
+  so .62 can split."
 
-**Next absorber band**: .60-.65 open buffer (intentional —
-runway for the next inbound consumer filing or refactor
-opportunity). Pinned: .66/.67 (byte-array literal peephole,
-5× emit compression), .68 (heap-map full reorg + CVE-05 +
-ADR-002 update per
-[[project_adr_002_i64_core_tenet_simd_exception]]), .69
-(conditional mabda 3.0 fold).
+**Handoff note**: next agent kicks off on **.60**
+(`lib/process.cyr` Items 6 + 7) after the user's AGNOS
+iron-boot burn pushes kernel forward progress. Slot details
+in the "Next absorber band" block below + roadmap
+`### v5.11.60 → v5.11.63`. Slot-entry premise check is
+mandatory per `feedback_premise_check_at_slot_entry` —
+verify the commandress filing's reproducers still
+manifest on current cc5 before scoping.
 
-**Outstanding follow-up candidates**:
-- aarch64 `_strict_mode` parity (declared in v5.11.59 retro
-  as a small follow-up slot — would need a `_strict_mode`
-  decl in `main_aarch64.cyr` + flag plumbing in the wrapper's
-  aarch64 dispatch).
+**Next absorber band — PINNED 2026-05-17**: .60-.63 absorbs
+the commandress papercut filing (`2026-05-17-commandress-stdlib-papercuts.md`,
+8 items split bottom-to-top); .64/.65 stay as explicit open
+bandwidth (split-overflow runway + fresh-filing absorber).
+Pinned tail: .66/.67 (byte-array literal peephole, 5× emit
+compression), .68 (heap-map full reorg + CVE-05 + ADR-002
+update per [[project_adr_002_i64_core_tenet_simd_exception]]),
+.69 (conditional mabda 3.0 fold).
+
+Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
+
+- **.60** — `lib/process.cyr` bug-fix pair (commandress Items
+  6 + 7): `_exec3` argv[4]→argv[40] silent-corruption fix +
+  stderr dup2 in vec-based `exec_capture` family.
+- **.61** — `lib/toml.cyr::toml_parse_file` heap-alloc rewrite
+  (commandress Item 2): 256 KB stack buf → `alloc()`; mirrors
+  existing `toml_parse_file_r`.
+- **.62** — Compiler/tooling pair (commandress Items 5 + 1):
+  DCE-aware `large static data` warning gate (mirror of .59
+  undef-fn reorder shape) + `cyrius init` bench-scaffold
+  rewrite. Splittable — Item 1 absorbs into .64 if scope
+  drifts at slot entry.
+- **.63** — aarch64 `_strict_mode` parity (.59 retro follow-
+  up): `_strict_mode` decl in `main_aarch64.cyr` + flag
+  plumbing in wrapper aarch64 dispatch + exit-on-strict logic
+  in `src/backend/aarch64/fixup.cyr`.
+
+**Outstanding follow-up candidates** (not in pinned band):
 - Two `🟠 read-through` doc-health items remain unreviewed
   against v5.11.x reality (process-notes,
   module-manifest-design, migration-strategy,
   crash-localization, package-format, struct-packing) — not
   known wrong, just unverified; their own slot whenever a
   documentation-audit cycle lands.
-- Open issues: bote nested-call state-leak cold case (Low);
-  build-artifact pre-commit hook (Medium). Both stayed open
-  across the .50-.59 arc.
+- Open issues (carryover): bote nested-call state-leak cold
+  case (Low); build-artifact pre-commit hook (Medium). Both
+  stayed open across the .50-.59 arc. build-artifact earns a
+  v5.11.x slot only if a fresh trigger surfaces during
+  .64/.65, otherwise v6.x.
+- Open issues (NEW 2026-05-17): commandress papercuts —
+  Items 1+2+5+6+7 absorbed in .60-.62 band; Items 3 (toml
+  `[name]`), 4 (LSP transitive-include), 8 (PATH lookup)
+  deferred to v6.x.
 - Open proposals: pie-support (v6.1.x pin),
-  cyrius-lsp-argv0-self-resolution (unpinned), kriya's
-  octal-literal-syntax + syscalls-`*at()`-family (both v6.x
-  per [[project_kriya_low_level_v6x_syscall_arc]]).
+  cyrius-lsp-argv0-self-resolution (unpinned; v6.x LSP arc
+  candidate alongside commandress Item 4),
+  octal-literal-syntax + syscalls-`*at()`-family + toml-
+  single-bracket-sections (all v6.x per
+  [[project_kriya_low_level_v6x_syscall_arc]] /
+  [[project_v5_11_x_closeout_at_40]]).
 
 ## Version
 

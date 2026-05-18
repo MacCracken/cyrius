@@ -422,6 +422,113 @@ prior .58 pin after the wrapper-polish slot earned .58).
 If priorities shift again, the deferral must be re-pinned
 with new acceptance bar — not silently slipped.
 
+### v5.11.60 → v5.11.63 — commandress papercut absorber band (filing `2026-05-17-commandress-stdlib-papercuts.md`)
+
+Four-slot band pinned 2026-05-17 from the commandress v0.1.0
+→ v0.3.0 consumer filing (8 items). Bottom-to-top ordering:
+runtime stdlib bugs first, then compiler/tooling polish, then
+cross-arch parity. .64 / .65 stay as **explicit open bandwidth**
+— runway for inbound consumer filings before the .66/.67
+peephole pair, and split-overflow if .62 separates its pair.
+
+- **v5.11.60 — `lib/process.cyr` bug-fix pair** (Items 6 + 7).
+  - Item 6 — `_exec3` argv buffer is `var argv[4]` (4 **bytes**)
+    but stores up to 5 × 8 B = 40 B; silent stack corruption
+    surfaces as truncated `run_capture` output (commandress vcs
+    segment got 1 byte instead of 6 from `/bin/echo hello`).
+    Fix: `var argv[40]` + `var envp[16]` per CLAUDE.md buffer-
+    contract rule. ~5 LoC delta.
+  - Item 7 — vec-based `exec_capture` / `exec_env` /
+    `exec_capture_str` / `exec_env_str` missing the stderr-to-
+    /dev/null dup2 that the cstr-based `run_capture` family does
+    correctly. Effect: stderr leaks through to caller's terminal
+    (commandress prompt-redraw case: `sit: not a sit repository`
+    on every prompt). Fix: copy the dup2 stanza from `run_capture`
+    into all four vec variants. ~20 LoC.
+  - Same file, same surface, same test infra → one slot.
+  - Acceptance: regression test reproduces the truncation
+    (commandress papercut Item 6 reproducer) before fix, passes
+    after. cc5 self-host byte-identical.
+- **v5.11.61 — `lib/toml.cyr::toml_parse_file` heap-alloc rewrite**
+  (Item 2). Current shape: 256 KB on-fn-scope buffer (`var buf[262144]`)
+  lands in every consumer's `.bss` regardless of whether
+  `toml_parse_file` is actually called (DCE drops the fn, the
+  static survives). Measured impact on commandress v0.2.0: bss =
+  289,640 B (~290 KB), of which 256 KB is this single buffer.
+  Fix: mirror existing `toml_parse_file_r` (v5.8.30) — `alloc()`
+  the buffer instead of stack-declaring it. ~10 LoC delta.
+  Acceptance: commandress rebuild against .61 shows bss drop
+  proportional to toml usage; `lib/toml.cyr` tcyr stays green;
+  cc5 self-host byte-identical.
+- **v5.11.62 — Compiler/tooling polish pair** (Items 5 + 1).
+  - Item 5 — `large static data (N bytes) — consider alloc()`
+    warning fires BEFORE the DCE pass, so it counts bytes inside
+    fns the DCE-aware filter (shipped .59) correctly identifies
+    as dead. Mirror of .59's undef-fn check reorder shape: move
+    the static-data accounting to AFTER the DCE pass when
+    `CYRIUS_DCE=1`, or filter the byte count by `live[]` like
+    the .59 undef-fn filter does. Outside `CYRIUS_DCE=1`, the
+    warning stays honest (bytes ARE in bss). ~30 LoC delta.
+  - Item 1 — `cyrius init <name>` ships `tests/<name>.bcyr`
+    scaffold calling non-existent `bench(name, fp, n)` 3-arg
+    form. Real API is `bench_new` + `bench_batch_start/stop` +
+    `bench_report`. Rewrite the scaffold template (in
+    `cbt/commands.cyr` `cmd_init` shape) to emit the real
+    pattern. ~20 LoC.
+  - Different surfaces (compiler warning gate + scaffold
+    template). **Splittable**: if scope drift surfaces at slot
+    entry, Item 1 absorbs into .64 (preserved bandwidth);
+    .65 stays open per user direction 2026-05-17.
+  - Acceptance: commandress build with `CYRIUS_DCE=1` no longer
+    emits the spurious `large static data` warning when the
+    bloat host is DCE-eliminated. Fresh `cyrius init foo`
+    produces a `tests/foo.bcyr` that compiles + runs without
+    warnings.
+- **v5.11.63 — aarch64 `_strict_mode` parity** (.59 retro
+  follow-up). The DCE-aware reachability filter shipped at .59
+  with cross-arch parity, but `_strict_mode` (hard-exit on
+  undef refs for CI gating) was only declared in `main.cyr` +
+  `main_win.cyr` — not in `main_aarch64.cyr`. aarch64 emits the
+  warning but never hard-exits. Fix: add `_strict_mode` global
+  to `main_aarch64.cyr`, plumb the `--strict` flag through the
+  wrapper's aarch64 dispatch, mirror the x86 exit-on-strict
+  logic in `src/backend/aarch64/fixup.cyr`. Same-slot cross-
+  arch per `feedback_cross_arch_propagation_mandatory` is
+  honored — this is the *parity follow-up*, not a half-fix
+  split. ~40 LoC across three files.
+  Acceptance: `cyrius build --aarch64 --strict <file>` exits
+  with code 1 on any reachable undef ref (matching x86
+  behavior); cross-build cc5_aarch64 stays byte-identical.
+
+**v5.11.64 / v5.11.65 — open bandwidth**: explicit absorber
+runway for inbound consumer filings or .62 split-overflow.
+User direction 2026-05-17: ".65 stays open so .62 can split."
+If no fresh filings or .62 split surfaces, both slots cycle
+into the closeout window.
+
+**Deferred to v6.x** (per filing items pinned to v6.x or
+naturally grouped with v6.x arcs):
+
+- Item 3 (`lib/toml.cyr` single-bracket `[name]` section) —
+  proposal frontmatter already pins v6.x; additive parser
+  feature.
+- Item 4 (LSP transitive-include false positives) — groups
+  with existing `cyrius-lsp-argv0-self-resolution.md` proposal
+  as a v6.x LSP arc; LSP is top-of-stack (apps layer),
+  defers cleanly behind runtime stdlib fixes.
+- Item 8 (PATH lookup helper / `which()` / `run_p` family) —
+  additive stdlib API with design decision (`run_p` suffix vs
+  standalone `which()`); groups with v6.x syscall-stdlib arc
+  per [[project_kriya_low_level_v6x_syscall_arc]] (kriya
+  consumer overlap).
+- `2026-05-13-bote-nested-call-state-leak-root-cause.md` —
+  Low, cold case across .50-.59, no premise change.
+- `2026-05-13-build-artifact-precommit-hook.md` — Medium but
+  tooling-not-runtime; earns a v5.11.x slot only if a fresh
+  trigger surfaces during .64/.65, otherwise v6.x.
+- Two 🟠 read-through doc-health items — earn their own
+  documentation-audit cycle.
+
 ### v5.11.66 / v5.11.67 — Byte-array literal peephole (5× emit compression)
 
 The v5.11.51 byte-array literal (`var foo[N] = { 0x.., ... };`)
