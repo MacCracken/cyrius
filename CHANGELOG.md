@@ -6,6 +6,170 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.63] — 2026-05-18
+
+**aarch64 `_strict_mode` parity (.59 retro follow-up).**
+Final slot of the .60-.63 commandress papercut absorber
+band — closes the parity gap the v5.11.59 DCE-aware
+reachability filter slot deferred ("aarch64 doesn't declare
+`_strict_mode`; filter emits warning but no hard-exit.
+Adding aarch64 strict is its own follow-up slot"). aarch64
+now exits with code 1 on reachable undef-fn refs when
+`--strict` is set, matching x86's behavior since v5.4.19.
+Wrapper `--strict` plumbing extended to BOTH archs (was
+absent in the wrapper for both pre-.63; cc5 supported it
+via direct invocation only).
+
+check.sh **75/75**; cc5 self-host **876,408 B**
+(unchanged — main.cyr untouched); cc5_aarch64 cross-build
+**561,848 B** (+3,560 B for the new cmdline parsing block
++ strict-exit + parser tracking from .62 propagation);
+cc5_win **683,832 B** (unchanged — PE shares x86 fixup
+which already had _strict_mode); `cyrius test` **151/150**
+(no new tcyr; aarch64 exit-on-strict is a runtime gate,
+not a tcyr assertion).
+
+### Compiler-side parity (`src/main_aarch64*.cyr` + `src/backend/aarch64/fixup.cyr`)
+
+Three aarch64 build variants share `backend/aarch64/
+fixup.cyr`, so all three needed the `_strict_mode` global
+to keep the shared file compiling:
+
+- **`src/main_aarch64.cyr`** (Linux aarch64 cross — x86_64
+  host).
+- **`src/main_aarch64_macho.cyr`** (macOS arm64 cross —
+  x86_64 host).
+- **`src/main_aarch64_native.cyr`** (Pi aarch64 self-host
+  — native aarch64 host).
+
+Each variant gets the same `_strict_mode = 0` declaration
++ `/proc/self/cmdline` parse block. The block uses
+`if (SYS_OPEN == 2) ...` branching so the same source
+lands cleanly on both x86_64 hosts (`SYS_OPEN = 2` →
+direct `open`) and aarch64 hosts (`SYS_OPEN = 56` =
+`openat`, needs `AT_FDCWD = -100` as first arg). Trimmed
+from main.cyr's parser — only `--strict` is parsed;
+`--version` / `--lex-ts` / `--parse-ts` stay x86-only
+until a separate slot earns them on aarch64.
+
+`src/backend/aarch64/fixup.cyr` strict-exit (mirrors
+`src/backend/x86/fixup.cyr` lines 729-738):
+
+```cyrius
+if (_strict_mode == 1 && undef_count > 0) {
+    syscall(SYS_WRITE, 2, "error: --strict: refusing to emit binary with ", 46);
+    PRNUM(undef_count);
+    syscall(SYS_WRITE, 2, " undefined function(s)\n", 23);
+    syscall(SYS_EXIT, 1);
+}
+```
+
+Critically — `undef_count` is only bumped on REACHABLE
+undef refs (the v5.11.59 DCE-aware filter at line 514-518
+skips dead-host refs without counting them), so strict
+mode fires only on real bugs. The pre-existing comment
+block above the undef-fn loop was updated to reflect the
+parity arrival (was: "aarch64 has no `_strict_mode`
+global today (only x86 + PE)").
+
+### Wrapper plumbing (`cbt/core.cyr` + `cbt/cyrius.cyr` + `cbt/build.cyr`)
+
+`cyrius build` now accepts `--strict` for both archs.
+Previously `--strict` had to be invoked via direct
+`cc5 --strict <... < src` shell pipe — the wrapper's
+`compile()` hardcoded argv = [cc, 0] with no flag
+plumbing.
+
+- **`cbt/core.cyr`**: new `_strict` global with doc
+  comment noting it pairs with cc5's pre-existing
+  `_strict_mode` parsing path.
+- **`cbt/cyrius.cyr`**: `--strict` parsing in the
+  `build` dispatch (next to `--strict-pin`); usage
+  string updated.
+- **`cbt/build.cyr` `compile()`**: argv grows from
+  fixed-2 to dynamic-3 (`cc` + optional `"--strict"`
+  + `NUL`). Both the default and `--strict-pin` envp
+  branches use the same argv shape (one declaration,
+  two execve callsites — no duplication).
+
+Wrapper plumbing landed for **both archs** (not aarch64-
+only as the roadmap pin originally said) to avoid the
+asymmetric `cyrius build --aarch64 --strict` works /
+`cyrius build --strict` silently-no-ops shape. Same
+spirit as `feedback_cross_arch_propagation_mandatory` —
+flag handling must be symmetric across the wrapper's
+arch dispatch even though the pin nominally targeted
+aarch64.
+
+### End-to-end verification
+
+Synthetic source (`/tmp/strict_undef.cyr`): `fn main()`
+calls a non-existent fn (reachable from main).
+
+```
+$ cyrius build --aarch64 --strict /tmp/strict_undef.cyr /tmp/bin
+compile /tmp/strict_undef.cyr -> /tmp/bin [aarch64] note: 2148 unreachable fns (...)
+warning: undefined function 'undef_function_that_does_not_exist' (call site may be unreachable)
+error: --strict: refusing to emit binary with 1 undefined function(s)
+FAIL
+$ echo $?
+1
+
+$ cyrius build --strict /tmp/strict_undef.cyr /tmp/bin    # x86 parity
+[same shape — error + FAIL + exit 1]
+
+$ cyrius build --aarch64 --strict /tmp/clean_source.cyr /tmp/bin
+OK
+$ echo $?
+0
+```
+
+Pre-fix: aarch64 emitted the warning but never exited
+non-zero — silent CI gating gap on aarch64 builds.
+
+### Files touched
+
+- `src/main_aarch64.cyr` — `_strict_mode` + cmdline parse.
+- `src/main_aarch64_macho.cyr` — same block.
+- `src/main_aarch64_native.cyr` — same block.
+- `src/backend/aarch64/fixup.cyr` — strict-exit + updated
+  v5.11.59 comment.
+- `cbt/core.cyr` — `_strict` global.
+- `cbt/cyrius.cyr` — `--strict` flag in `build` dispatch.
+- `cbt/build.cyr` — argv pass-through in `compile()`.
+
+### Issue file — band closeout
+
+[`docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md)
+moved to `archived/`. All in-scope items closed:
+
+- Item 1 ✅ (.62 scaffold rewrite)
+- Item 2 ✅ (.61 toml heap-alloc)
+- Item 5 ✅ (.62 dead-fn attribution; reframed at slot entry)
+- Item 6 ✅ (.60 `_exec3` byte-contract fix)
+- Item 7 ✅ (.60 stderr dup2)
+
+Deferred to v6.x (own filings / arcs): Item 3 (toml
+`[name]` sections), Item 4 (LSP transitive-include false
+positives), Item 8 (PATH lookup helper).
+
+### .60-.63 band closed
+
+Four-slot commandress papercut absorber band shipped clean
+across two sessions on 2026-05-18. Net stdlib + tooling
+improvements:
+- `lib/process.cyr` `_exec3` byte-contract bug fixed +
+  stderr-suppress parity across the vec exec family (.60).
+- `lib/toml.cyr::toml_parse_file` heap-alloc — −256 KB bss
+  per consumer that includes it (.61).
+- DCE-aware `.bss` attribution hint in the
+  `large static data` warning + 2-byte byte-count fix
+  (.62).
+- `cyrius init` bench scaffold uses real `bench_*` API +
+  `bench` added to default stdlib deps (.62).
+- aarch64 `_strict_mode` parity + wrapper `--strict` for
+  both archs (.63).
+
 ## [5.11.62] — 2026-05-18
 
 **Compiler/tooling pair (commandress papercut filing Items 5
@@ -162,7 +326,7 @@ $ cd mytest && cyrius deps && cyrius bench tests/mytest.bcyr
 
 ### Issue file
 
-[`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md)
+[`docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md)
 Items 1 + 5 — closed. Item 6+7 ✅ at v5.11.60; Item 2 ✅
 at v5.11.61. Only aarch64 `_strict_mode` parity at .63
 remains in the band. Items 3 / 4 / 8 deferred to v6.x.
@@ -248,7 +412,7 @@ land the drop automatically.
 
 ### Issue file
 
-[`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md)
+[`docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md)
 Item 2 — closed. Items 6+7 ✅ at v5.11.60; Items 1+5
 remain in .62 (splittable); Item 3 (toml `[name]`) /
 Item 4 (LSP) / Item 8 (PATH lookup) deferred to v6.x.
@@ -355,7 +519,7 @@ already uses for vcs (`_vcs_capture` ~25 LoC).
 
 ### Issue file
 
-[`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md)
+[`docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md)
 Items 6 + 7 — stays open through the .61-.63 band (Item 2
 heap-alloc in .61, Items 5 + 1 in .62, aarch64 strict parity
 in .63). Will be archived at .63 ship when the remaining

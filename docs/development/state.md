@@ -3,11 +3,10 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
-## Session close — 2026-05-18 (.60 + .61 + .62 ship — commandress papercut band slots 1+2+3 of 4)
+## Session close — 2026-05-18 (.60 + .61 + .62 + .63 ship — commandress papercut band CLOSED 4/4)
 
-Closing the session at **v5.11.62** after shipping the
-first three slots of the .60-.63 commandress absorber
-band back-to-back:
+Closing the session at **v5.11.63** after shipping the
+full .60-.63 commandress absorber band in one session:
 
 - **`lib/process.cyr` bug-fix pair (commandress Items 6
   + 7) shipped**. Item 6 (Medium): `_exec3`'s
@@ -127,22 +126,51 @@ still fails on `bench_new` undefined). Verified end-to-
 end: `cyrius init mytest && cd mytest && cyrius deps &&
 cyrius bench tests/mytest.bcyr` → `noop: 2ns avg`.
 
-**Handoff note**: next agent kicks off on **.63**
-(aarch64 `_strict_mode` parity — the .59 retro follow-
-up). Scope: `_strict_mode` decl in `main_aarch64.cyr`
-+ flag plumbing in wrapper aarch64 dispatch +
-exit-on-strict logic in `src/backend/aarch64/fixup.cyr`.
-Per `feedback_cross_arch_propagation_mandatory` this is
-the explicit "same-slot cross-arch parity" follow-up.
+**.63 ship details** — aarch64 `_strict_mode` parity
+with the v5.11.59 DCE-aware reachability filter follow-up.
+Three aarch64 build variants
+(`main_aarch64.cyr` / `main_aarch64_macho.cyr` /
+`main_aarch64_native.cyr`) gained the same `_strict_mode`
+global + `/proc/self/cmdline` parse block via a
+`SYS_OPEN == 2` branch (covers x86_64 host AND aarch64
+native host with the right openat signature).
+`src/backend/aarch64/fixup.cyr` strict-exit mirrors
+x86's lines 729-738. **Drive-by**: wrapper `--strict`
+plumbing extended to BOTH archs (was absent in the
+wrapper for both pre-.63 even though cc5 supported
+`--strict` via direct invocation since v5.4.19), so
+`cyrius build --strict` and `cyrius build --aarch64
+--strict` are now symmetric.
 
-**Next absorber band — REMAINING after .60 + .61 + .62 ship**:
-only .63 closes out commandress papercut absorption;
-.64/.65 stay as explicit open bandwidth. Pinned tail:
-.66/.67 (byte-array literal peephole, 5× emit
-compression), .68 (heap-map full reorg + CVE-05 +
-ADR-002 update per
-[[project_adr_002_i64_core_tenet_simd_exception]]),
-.69 (conditional mabda 3.0 fold).
+End-to-end verified:
+- `cyrius build --aarch64 --strict <reachable-undef>` →
+  warning + error + FAIL + exit 1.
+- `cyrius build --strict <reachable-undef>` → same (x86
+  parity).
+- `cyrius build --aarch64 --strict <clean>` → OK + exit 0.
+
+**.60-.63 band CLOSED**. All four slots shipped clean
+without slipping. Commandress papercut filing
+(`2026-05-17-commandress-stdlib-papercuts.md`) moved to
+`archived/`. In-scope items: Items 1 + 2 + 5 + 6 + 7 ✅
+closed. Items 3 + 4 + 8 deferred to v6.x as own
+filings / arcs.
+
+**Handoff note**: next agent kicks off on **.64**
+(explicit open bandwidth per the roadmap). Per user
+direction 2026-05-17, .64 + .65 stay as the absorber
+runway for inbound consumer filings or split-overflow
+before the pinned .66/.67 byte-array literal peephole
+pair. If no fresh filings surface, both slots cycle into
+the closeout window approaching .68 (heap-map full
+reorg + CVE-05 + ADR-002 i64-tenet+SIMD-exception
+reframing).
+
+**Cycle tail status**: .64/.65 open bandwidth; .66/.67
+byte-array literal peephole (5× emit compression);
+.68 heap-map full reorg + CVE-05 + ADR-002 update per
+[[project_adr_002_i64_core_tenet_simd_exception]];
+.69 conditional mabda 3.0 fold.
 
 Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
 
@@ -158,10 +186,9 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   dead-fn `.bss` attribution hint instead. Item 1
   ships the real bench API scaffold + `bench` added to
   default stdlib deps.
-- **.63** — aarch64 `_strict_mode` parity (.59 retro follow-
-  up): `_strict_mode` decl in `main_aarch64.cyr` + flag
-  plumbing in wrapper aarch64 dispatch + exit-on-strict logic
-  in `src/backend/aarch64/fixup.cyr`.
+- **.63** — ✅ **SHIPPED 2026-05-18**. aarch64
+  `_strict_mode` parity (.59 retro follow-up) +
+  wrapper `--strict` plumbing for both archs.
 
 **Outstanding follow-up candidates** (not in pinned band):
 - Two `🟠 read-through` doc-health items remain unreviewed
@@ -175,13 +202,15 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   stayed open across the .50-.59 arc. build-artifact earns a
   v5.11.x slot only if a fresh trigger surfaces during
   .64/.65, otherwise v6.x.
-- Open issues (NEW 2026-05-17): commandress papercuts —
-  Items 6+7 ✅ closed at v5.11.60; Item 2 ✅ closed at
-  v5.11.61; Items 1+5 ✅ closed at v5.11.62 (Item 5
-  reframed mid-slot after CYRIUS_DCE=1-doesn't-shrink-bss
-  premise check); Items 3 (toml `[name]`), 4 (LSP
-  transitive-include), 8 (PATH lookup) deferred to v6.x.
-  Issue file stays open until .63 ship.
+- Open issues (carryover NEW 2026-05-17 → closed 2026-05-18):
+  commandress papercuts — Items 6+7 ✅ closed at v5.11.60;
+  Item 2 ✅ closed at v5.11.61; Items 1+5 ✅ closed at
+  v5.11.62 (Item 5 reframed mid-slot after
+  CYRIUS_DCE=1-doesn't-shrink-bss premise check); aarch64
+  `_strict_mode` parity ✅ closed at v5.11.63. Issue file
+  archived. Items 3 (toml `[name]`), 4 (LSP transitive-
+  include), 8 (PATH lookup) deferred to v6.x as own
+  filings / arcs.
 - Open proposals: pie-support (v6.1.x pin),
   cyrius-lsp-argv0-self-resolution (unpinned; v6.x LSP arc
   candidate alongside commandress Item 4),
@@ -192,11 +221,75 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
 
 ## Version
 
+**5.11.63** (shipped 2026-05-18 — **aarch64 `_strict_mode`
+parity (.59 retro follow-up) + wrapper `--strict` plumbing
+for both archs**). Final slot of the .60-.63 commandress
+papercut absorber band — band CLOSED.
+
+Closes the parity gap the v5.11.59 slot explicitly deferred
+("aarch64 doesn't declare `_strict_mode`; filter emits
+warning but no hard-exit. Adding aarch64 strict is its own
+follow-up slot"). aarch64 now exits with code 1 on
+reachable undef-fn refs when `--strict` is set, matching x86
+since v5.4.19.
+
+**Compiler-side** — three aarch64 build variants
+(`main_aarch64.cyr` / `main_aarch64_macho.cyr` /
+`main_aarch64_native.cyr`) gained the same `_strict_mode`
+global + `/proc/self/cmdline` parse block. Block uses
+`if (SYS_OPEN == 2) ...` branching so the same source lands
+cleanly on x86_64 hosts (cross-compile path) AND aarch64
+hosts (native self-host path with openat + AT_FDCWD).
+`src/backend/aarch64/fixup.cyr` strict-exit mirrors x86's
+lines 729-738 verbatim. `undef_count` only bumps on
+REACHABLE refs (v5.11.59 DCE filter preserved) — strict
+fires only on real bugs, not dead-host refs.
+
+**Drive-by** — wrapper `--strict` plumbing landed for BOTH
+archs (was absent in the wrapper for both pre-.63; cc5
+supported `--strict` via direct invocation only). New
+`_strict` global in `cbt/core.cyr`; flag parsing in
+`cbt/cyrius.cyr` build dispatch; argv pass-through in
+`cbt/build.cyr compile()` (covers both default and
+`--strict-pin` envp branches). Symmetric across archs to
+avoid the `--aarch64 --strict works` / `--strict
+silently-no-ops` shape.
+
+**End-to-end verified**:
+```
+$ cyrius build --aarch64 --strict <reachable-undef-ref>
+warning: undefined function '...' (call site may be unreachable)
+error: --strict: refusing to emit binary with 1 undefined function(s)
+FAIL ; exit 1
+
+$ cyrius build --strict <same>                  # x86 parity
+error: --strict: refusing to emit binary with 1 undefined function(s) ; exit 1
+
+$ cyrius build --aarch64 --strict <clean>       # no undef refs
+OK ; exit 0
+```
+
+Self-host byte-identical at **876,408 B** (unchanged —
+main.cyr untouched). `check.sh` **75/75**. `cyrius test`
+**151/150** (no new tcyr; aarch64 strict is a runtime
+gate). Cross-compilers: cc5_aarch64 **561,848 B**
+(+3,560 B for parser tracking from .62 propagation + new
+cmdline parse + strict-exit); cc5_win **683,832 B**
+(unchanged — PE shares x86 fixup which already had
+`_strict_mode`).
+
+**Snapshot-ping-pong guarded**: this slot is parser /
+fixup / wrapper / templates — no `lib/*.cyr` edits.
+`install.sh --refresh-only` ran via `version-bump.sh`.
+
+**.60-.63 band CLOSED**. Commandress papercut filing
+moved to `archived/`. Next: **.64** (open bandwidth).
+
 **5.11.62** (shipped 2026-05-18 — **Compiler/tooling pair —
 dead-fn `.bss` attribution in `large static data` warning +
 `cyrius init` bench-scaffold rewrite**). Third slot of the
 .60-.63 commandress papercut absorber band; closes Items 1
-+ 5 of `docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`.
++ 5 of `docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`.
 
 **Item 5 was reframed at slot entry** after a premise check
 (per `feedback_premise_check_at_slot_entry`) found the
@@ -279,7 +372,7 @@ follow-up). Closes the .60-.63 band.
 heap-alloc rewrite — −256 KB bss in every consumer that
 includes `lib/toml.cyr`**). Second slot of the .60-.63
 commandress papercut absorber band; closes Item 2 of
-`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`.
+`docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`.
 
 Pre-fix the fn body declared a 256 KB on-fn-scope buffer
 (`var buf[262144]`) that lived in `.bss` regardless of
@@ -323,7 +416,7 @@ bug-fix pair — `_exec3` argv/envp byte-contract fix +
 stderr→/dev/null dup2 across four vec-based execs**).
 First slot of the commandress papercut .60-.63 absorber
 band; closes Items 6 (Medium) + 7 (Low) of
-`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`.
+`docs/development/issues/archived/2026-05-17-commandress-stdlib-papercuts.md`.
 
 **Item 6** (`_exec3` byte-contract): `var argv[4]`
 and `var envp[1]` reserved **4 BYTES and 1 BYTE** of

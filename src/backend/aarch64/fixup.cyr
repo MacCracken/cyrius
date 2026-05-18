@@ -486,9 +486,11 @@ fn FIXUP(S): i64 {
     # v5.11.59: reachability-filtered undef-fn check (moved from
     # before the patch loop). Same shape as x86 — locate host fn
     # for each undef'd fixup's coff; skip the warning if host is
-    # dead. aarch64 has no _strict_mode global today (only x86 +
-    # PE), so the strict-exit path from x86 is absent here; if
-    # cross-arch strict parity is added later, mirror this loop.
+    # dead. v5.11.63 added the cross-arch `_strict_mode` parity —
+    # `main_aarch64.cyr` declares the global + parses `--strict`
+    # from /proc/self/cmdline; the strict-exit below mirrors
+    # x86/fixup.cyr lines 729-738 so `cc5_aarch64 --strict` exits
+    # with code 1 on any reachable undef ref.
     var u59_ufi = 0;
     while (u59_ufi < fcnt_pre) {
         var u59_ufaddr = S + 0x198B000 + u59_ufi * 16;
@@ -530,6 +532,17 @@ fn FIXUP(S): i64 {
             }
         }
         u59_ufi = u59_ufi + 1;
+    }
+    # v5.11.63: --strict parity with x86 (which has had it since
+    # v5.4.19). Filtered-out (dead-host) refs above did NOT bump
+    # undef_count, so strict mode only fires on reachable undef refs
+    # — matching x86's exit-on-strict semantics exactly. `_strict_mode`
+    # is declared + cmdline-parsed in `src/main_aarch64.cyr`.
+    if (_strict_mode == 1 && undef_count > 0) {
+        syscall(SYS_WRITE, 2, "error: --strict: refusing to emit binary with ", 46);
+        PRNUM(undef_count);
+        syscall(SYS_WRITE, 2, " undefined function(s)\n", 23);
+        syscall(SYS_EXIT, 1);
     }
     S64(S + 0x18FCD0, totvar);
     return 0;

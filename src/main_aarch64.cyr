@@ -112,6 +112,43 @@ include "src/backend/aarch64/fixup.cyr"
 # MAIN
 # ================================================================
 
+# v5.11.63: --strict parity with main.cyr (which has had it since
+# v5.4.19). When --strict appears anywhere in cmdline, set
+# _strict_mode = 1; aarch64 fixup.cyr's undef-fn check exits with
+# code 1 instead of just warning. The SYS_OPEN == 2 branch handles
+# both x86_64 host (cross-compile path: openat is unavailable as
+# SYS_OPEN; use direct open) and aarch64 host (native path: SYS_OPEN
+# resolves to openat, needs AT_FDCWD = -100 as first arg). The same
+# block lands verbatim in main_aarch64_macho.cyr +
+# main_aarch64_native.cyr so all three variants link against the
+# shared backend/aarch64/fixup.cyr that reads _strict_mode. See
+# CHANGELOG [5.11.63].
+var _strict_mode = 0;
+var _vbuf[256];
+var _vfd = 0;
+if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
+else { _vfd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
+var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
+syscall(SYS_CLOSE, _vfd);
+if (_vn > 0) {
+    var _vi = 0;
+    # Skip argv[0]
+    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
+    while (_vi < _vn) {
+        # "--st" (--strict) — set flag, keep parsing
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
+                    _strict_mode = 1;
+                }
+            }
+        }
+        # Skip to next arg (past next \0)
+        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
+        _vi = _vi + 1;
+    }
+}
+
 # Allocate heap
 # aarch64 syscall numbers (no translation layer — native numbers)
 var S = syscall(SYS_BRK, 0);

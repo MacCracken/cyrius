@@ -127,9 +127,20 @@ fn compile(source, output): i64 {
         sys_dup2(ofd, 1);
         sys_close(ofd);
 
-        var argv[2];
+        # v5.11.63: pass --strict in argv when the wrapper flag was
+        # set. cc5/cc5_aarch64 read /proc/self/cmdline at startup
+        # (since v5.4.19 / v5.11.63 respectively) — a single
+        # `--strict` token anywhere past argv[0] sets _strict_mode,
+        # which fixup.cyr's strict-exit reads after the patch loop.
+        # argv[24] = 3 × 8 B (cc + optional "--strict" + NUL).
+        var argv[24];
         store64(&argv, cc);
-        store64(&argv + 8, 0);
+        var ax = 1;
+        if (_strict == 1) {
+            store64(&argv + ax * 8, "--strict");
+            ax = ax + 1;
+        }
+        store64(&argv + ax * 8, 0);
         # v5.11.58: when --strict-pin is set, augment envp with
         # CYRIUS_STRICT_PIN=1 so cc5's pin-drift check (added
         # v5.11.57) exits non-zero on mismatch. CI gating path.

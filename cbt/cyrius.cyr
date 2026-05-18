@@ -40,7 +40,7 @@ fn usage(): i64 {
     println("Usage: cyrius <command> [options]");
     println("");
     println("Build:");
-    println("  build [--aarch64] [--no-deps] [--strict-pin] <src> <out>   compile a program");
+    println("  build [--aarch64] [--no-deps] [--strict] [--strict-pin] <src> <out>   compile a program");
     println("  run [--aarch64] <source.cyr>    compile + run");
     println("  test [--aarch64] <test.cyr>     compile + run, check exit 0");
     println("  bench <bench.cyr>               compile + run benchmarks");
@@ -263,11 +263,15 @@ fn main(): i64 {
                 _strict_pin = 1;
                 ai = ai + 1;
             }
+            elif (streq(argv(ai), "--strict") == 1) {
+                _strict = 1;
+                ai = ai + 1;
+            }
             else { break; }
         }
         if (vec_len(defs) > 0) { _defines = defs; }
         if (argc() < ai + 2) {
-            println("Usage: cyrius build [--aarch64] [-v] [-q] [--no-deps] [--strict-pin] [-D NAME]... <source> <output>");
+            println("Usage: cyrius build [--aarch64] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [-D NAME]... <source> <output>");
             return 1;
         }
         return cmd_build(argv(ai), argv(ai + 1));

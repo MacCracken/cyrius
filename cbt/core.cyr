@@ -42,6 +42,14 @@ var _no_lock = 0;
 # (added v5.11.57) exits non-zero on mismatch instead of warning.
 # CI path for pin-faithful builds.
 var _strict_pin = 0;
+# v5.11.63: --strict flag — when 1, compile() passes --strict to
+# cc5/cc5_aarch64 in argv. Both compilers' fixup pass exits with
+# code 1 on any reachable undefined-fn ref (after the v5.11.59
+# DCE-aware reachability filter), matching the existing direct
+# `cc5 --strict` shape from v5.4.19. Wrapper now exposes the same
+# behavior under both archs; previously the user had to invoke cc5
+# directly and pipe stdin/stdout themselves.
+var _strict = 0;
 
 # ================================================================
 # Output helpers — consistent error/warn/info/status

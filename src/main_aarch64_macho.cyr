@@ -116,6 +116,33 @@ include "src/backend/aarch64/fixup.cyr"
 # MAIN
 # ================================================================
 
+# v5.11.63: --strict parity with main.cyr. Same block as the Linux
+# aarch64 cross-compiler (main_aarch64.cyr); shared backend/aarch64/
+# fixup.cyr reads `_strict_mode` after the patch loop. See CHANGELOG
+# [5.11.63].
+var _strict_mode = 0;
+var _vbuf[256];
+var _vfd = 0;
+if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
+else { _vfd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
+var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
+syscall(SYS_CLOSE, _vfd);
+if (_vn > 0) {
+    var _vi = 0;
+    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
+    while (_vi < _vn) {
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
+                    _strict_mode = 1;
+                }
+            }
+        }
+        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
+        _vi = _vi + 1;
+    }
+}
+
 # Allocate heap via mmap — macOS has no brk. The Linux syscall number 9
 # gets translated to BSD 197 (_mmap) by ESYSXLAT at emit time; the flag
 # value 0x1002 (MAP_PRIVATE | MAP_ANON on macOS) is baked in as an
