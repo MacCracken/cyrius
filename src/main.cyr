@@ -100,6 +100,18 @@
 #
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
+#   0x1C8000  fn_var_bytes  [65536]       8192 × 8B — per-fn array-bytes
+#                                        accumulator (sum of all
+#                                        `var foo[N]` aligned sizes
+#                                        registered inside this fn body).
+#                                        Set by parse_decl.cyr's array-
+#                                        register path when `_cur_fn_ix >= 0`.
+#                                        Read by FIXUP's `large static data`
+#                                        warning to compute "M bytes inside
+#                                        N unreachable fns" attribution post-
+#                                        DCE. Uses the slot reclaimed at
+#                                        v5.11.19 when fn_regalloc relocated
+#                                        0x1C8000 → 0x14A000. v5.11.62.
 #   0x14A000  fn_regalloc   [65536]       8192 per-fn #regalloc flags (v4.8.4-alpha4; v5.11.19 doubled + relocated 0x1C8000 → 0x14A000)
 #   0x1D8000  enum_const_val[8192]        1024 slots × 8 B — PARSE_ENUM_DEF
 #                                        stores (1<<63)|val per variant; read

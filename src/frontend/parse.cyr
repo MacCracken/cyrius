@@ -104,6 +104,17 @@ var _ra_picker_cap = 0 - 1;
 var _ra_auto_cap = 0 - 1;
 var _ra_auto_count = 0;
 
+# v5.11.62: current fn index for the per-fn array-byte attribution
+# tracked at 0x1C8000 (reclaimed v5.11.19 fn_regalloc slot). PARSE_FN_DEF
+# sets to the fn's fi at entry and resets to -1 at exit. parse_decl.cyr's
+# array-registration path (parse_decl.cyr `PARSE_ARRAY`) adds the aligned
+# size into the slot when this is >= 0; top-level `var foo[N]` declarations
+# (no enclosing fn) skip the accounting. Read by FIXUP's `large static
+# data` warning emitter (src/backend/x86/fixup.cyr) to compute "M bytes
+# inside N unreachable fns" attribution after the DCE pass identifies dead
+# hosts. See CHANGELOG [5.11.62].
+var _cur_fn_ix = 0 - 1;
+
 
 # v5.5.38: struct/enum/union + shared-helper fns extracted.
 include "src/frontend/parse_types.cyr"

@@ -643,6 +643,30 @@ fn FIXUP(S): i64 {
             }
         }
     }
+    # v5.11.62: tally dead-host array-byte attribution for the
+    # `large static data` warning that EMITELF_USER emits later.
+    # live[] is fully populated by the DCE pass above; fn_var_bytes
+    # (parser-built at 0x1C8000) holds the sum of each fn's array
+    # declarations. The two need to land in EMITELF_USER, which is a
+    # separate fn and can't see this local live[] — so stash
+    # (dead_var_bytes, dead_fn_count) into the post-data_size scratch
+    # slots at 0x18FCD8/E0 for the warning emitter to read.
+    var u62_dvb = 0;
+    var u62_dcn = 0;
+    var u62_fi = 0;
+    while (u62_fi < fnc) {
+        var u62_dnoff = L64(S + 0x12DA000 + u62_fi * 8);
+        if (u62_dnoff >= 0) {
+            var u62_live = load8(&live + (u62_fi >> 3)) & (1 << (u62_fi & 7));
+            if (u62_live == 0) {
+                u62_dvb = u62_dvb + L64(S + 0x1C8000 + u62_fi * 8);
+                u62_dcn = u62_dcn + 1;
+            }
+        }
+        u62_fi = u62_fi + 1;
+    }
+    S64(S + 0x18FCD8, u62_dvb);
+    S64(S + 0x18FCE0, u62_dcn);
     # v5.11.59: undef-fn check moved here from before the fixup
     # patch loop. The DCE pass above populated `live[]`; for each
     # undef'd fixup (type 2 call, type 3 addr-of), locate the host
@@ -1147,7 +1171,21 @@ fn EMITELF_USER(S, etype): i64 {
     if (totvar > 131072) {
         syscall(SYS_WRITE, 2, "warning: large static data (", 28);
         PRNUM(totvar);
-        syscall(SYS_WRITE, 2, " bytes) — consider alloc() for buffers >4KB\n", 44);
+        syscall(SYS_WRITE, 2, " bytes) — consider alloc() for buffers >4KB\n", 46);
+        # v5.11.62: append dead-fn attribution if FIXUP's DCE pass
+        # found statics inside unreachable fns. CYRIUS_DCE=1 NOPs the
+        # CODE of those fns but does NOT free their bss reservations —
+        # users hitting this warning should know that "set CYRIUS_DCE=1"
+        # is NOT the fix. See CHANGELOG [5.11.62].
+        var u62_dvb = L64(S + 0x18FCD8);
+        var u62_dcn = L64(S + 0x18FCE0);
+        if (u62_dvb > 0) {
+            syscall(SYS_WRITE, 2, "  hint: ", 8);
+            PRNUM(u62_dvb);
+            syscall(SYS_WRITE, 2, " bytes inside ", 14);
+            PRNUM(u62_dcn);
+            syscall(SYS_WRITE, 2, " unreachable fn(s) — DCE NOPs code but keeps .bss; restructure with alloc() or move the static into a reachable consumer\n", 123);
+        }
     }
     var memsz = filesz + 4096;
 

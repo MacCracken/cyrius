@@ -3,10 +3,10 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
-## Session close — 2026-05-18 (.60 + .61 ship — commandress papercut band slots 1+2 of 4)
+## Session close — 2026-05-18 (.60 + .61 + .62 ship — commandress papercut band slots 1+2+3 of 4)
 
-Closing the session at **v5.11.61** after shipping the
-first two slots of the .60-.63 commandress absorber
+Closing the session at **v5.11.62** after shipping the
+first three slots of the .60-.63 commandress absorber
 band back-to-back:
 
 - **`lib/process.cyr` bug-fix pair (commandress Items 6
@@ -83,22 +83,62 @@ commandress downstream gets the drop when they bump
 their `cyrius.cyml` pin to .61 + run `cyrius lib sync`
 to refresh their local `lib/` from the .61 snapshot.
 
-**Handoff note**: next agent kicks off on **.62**
-(commandress Items 5 + 1 — DCE-aware `large static
-data` warning gate + `cyrius init` bench-scaffold
-rewrite). Item 5 is the same shape as .59's undef-fn
-check reorder (move accounting after DCE OR filter
-byte count by `live[]`); Item 1 is a scaffold-
-template fix in `cbt/commands.cyr cmd_init`.
-Splittable per the roadmap pin — if scope drifts at
-slot entry, Item 1 absorbs into .64 and .65 stays
-open per user direction "keep .65 open so .62 can
-split."
+**.62 ship details** — Compiler/tooling pair
+(commandress Items 5 + 1). Item 5 was **reframed at
+slot entry** after a premise-check finding: the roadmap
+pin's "filter the warning by `live[]` under CYRIUS_DCE=1"
+fix was empirically wrong. CYRIUS_DCE=1 NOPs `.text` only;
+bss reservations for dead-fn-local statics survive both
+modes (commandress measured at 298,064 B identical bss
+under both modes). User picked the reframe — keep the
+warning honest about disk bytes, add diagnostic
+attribution. Item 1 (scaffold rewrite) shipped alongside.
 
-**Next absorber band — REMAINING after .60 + .61 ship**:
-.62-.63 closes out commandress papercut absorption;
-.64/.65 stay as explicit open bandwidth. Pinned
-tail: .66/.67 (byte-array literal peephole, 5× emit
+**Item 5 implementation**: new 64 KB heap region at
+`0x1C8000` (reused slot vacated v5.11.19 by fn_regalloc
+relocation) tracks per-fn array bytes. Parser
+(`_cur_fn_ix` global + PARSE_FN_DEF entry/exit hooks +
+parse_decl.cyr array path) accumulates `var foo[N]`
+aligned sizes into the fn's slot. FIXUP's DCE pass walks
+fn_table after building `live[]` and sums dead-fn
+contributions; stash into post-data_size scratch at
+`0x18FCD8/E0` for EMITELF_USER's warning to read. New
+output:
+```
+warning: large static data (298056 bytes) — consider alloc() for buffers >4KB
+  hint: 275360 bytes inside 250 unreachable fn(s) — DCE NOPs code but keeps .bss;
+        restructure with alloc() or move the static into a reachable consumer
+```
+275,360 / 298,056 = **92% of commandress's bss attributable
+to unreachable fns**. Drive-by fix: pre-existing 44-vs-46
+byte-count bug in the warning's main line (em-dash is 3
+UTF-8 bytes; trailing `B\n` was truncated). Cross-arch
+parser tracking shared; warning x86-only by existing design.
+
+**Item 1 implementation**: rewrote both scaffold sources
+(`programs/cyrius-init-templates/proj-bcyr` for the
+binary path + `scripts/cyrius-init.sh` heredoc for the
+shell fallback) to use real `bench_new` +
+`bench_batch_start/stop` + `bench_report` API. Added
+`"bench"` to `[deps.stdlib]` in both cyml templates +
+the shell fallback's two embedded lists (otherwise
+`cyrius deps` skips `lib/bench.cyr` and the scaffold
+still fails on `bench_new` undefined). Verified end-to-
+end: `cyrius init mytest && cd mytest && cyrius deps &&
+cyrius bench tests/mytest.bcyr` → `noop: 2ns avg`.
+
+**Handoff note**: next agent kicks off on **.63**
+(aarch64 `_strict_mode` parity — the .59 retro follow-
+up). Scope: `_strict_mode` decl in `main_aarch64.cyr`
++ flag plumbing in wrapper aarch64 dispatch +
+exit-on-strict logic in `src/backend/aarch64/fixup.cyr`.
+Per `feedback_cross_arch_propagation_mandatory` this is
+the explicit "same-slot cross-arch parity" follow-up.
+
+**Next absorber band — REMAINING after .60 + .61 + .62 ship**:
+only .63 closes out commandress papercut absorption;
+.64/.65 stay as explicit open bandwidth. Pinned tail:
+.66/.67 (byte-array literal peephole, 5× emit
 compression), .68 (heap-map full reorg + CVE-05 +
 ADR-002 update per
 [[project_adr_002_i64_core_tenet_simd_exception]]),
@@ -112,11 +152,12 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   `lib/toml.cyr::toml_parse_file` heap-alloc rewrite
   (commandress Item 2). −256 KB bss in any consumer
   that includes `lib/toml.cyr`.
-- **.62** — Compiler/tooling pair (commandress Items 5 + 1):
-  DCE-aware `large static data` warning gate (mirror of .59
-  undef-fn reorder shape) + `cyrius init` bench-scaffold
-  rewrite. Splittable — Item 1 absorbs into .64 if scope
-  drifts at slot entry.
+- **.62** — ✅ **SHIPPED 2026-05-18**. Compiler/tooling
+  pair (commandress Items 5 + 1). Item 5 reframed at
+  slot entry (CYRIUS_DCE=1 doesn't shrink bss); ships
+  dead-fn `.bss` attribution hint instead. Item 1
+  ships the real bench API scaffold + `bench` added to
+  default stdlib deps.
 - **.63** — aarch64 `_strict_mode` parity (.59 retro follow-
   up): `_strict_mode` decl in `main_aarch64.cyr` + flag
   plumbing in wrapper aarch64 dispatch + exit-on-strict logic
@@ -136,10 +177,11 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   .64/.65, otherwise v6.x.
 - Open issues (NEW 2026-05-17): commandress papercuts —
   Items 6+7 ✅ closed at v5.11.60; Item 2 ✅ closed at
-  v5.11.61; Items 1+5 remain in the .62 band; Items 3
-  (toml `[name]`), 4 (LSP transitive-include), 8 (PATH
-  lookup) deferred to v6.x. Issue file stays open until
-  .63 ship.
+  v5.11.61; Items 1+5 ✅ closed at v5.11.62 (Item 5
+  reframed mid-slot after CYRIUS_DCE=1-doesn't-shrink-bss
+  premise check); Items 3 (toml `[name]`), 4 (LSP
+  transitive-include), 8 (PATH lookup) deferred to v6.x.
+  Issue file stays open until .63 ship.
 - Open proposals: pie-support (v6.1.x pin),
   cyrius-lsp-argv0-self-resolution (unpinned; v6.x LSP arc
   candidate alongside commandress Item 4),
@@ -149,6 +191,89 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   [[project_v5_11_x_closeout_at_40]]).
 
 ## Version
+
+**5.11.62** (shipped 2026-05-18 — **Compiler/tooling pair —
+dead-fn `.bss` attribution in `large static data` warning +
+`cyrius init` bench-scaffold rewrite**). Third slot of the
+.60-.63 commandress papercut absorber band; closes Items 1
++ 5 of `docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`.
+
+**Item 5 was reframed at slot entry** after a premise check
+(per `feedback_premise_check_at_slot_entry`) found the
+roadmap pin was empirically wrong. Pre-fix the pin said
+"filter the warning by `live[]` under CYRIUS_DCE=1", on
+the assumption that CYRIUS_DCE=1 frees the bss reservations
+for dead-fn-local statics. Reality: CYRIUS_DCE=1 NOPs
+`.text` only; bss survives. commandress reported 298,064 B
+bss IDENTICAL in both modes. Filtering would have produced
+a misleadingly LOWER number that doesn't match disk.
+
+User picked the reframe path — keep the warning honest about
+disk bytes, add diagnostic attribution. Implementation:
+
+- **New 64 KB heap region** at `0x1C8000` (reused slot
+  vacated v5.11.19 by `fn_regalloc` relocation to
+  `0x14A000`) — `fn_var_bytes [8192]`.
+- **Parser** (`parse.cyr` + `parse_fn.cyr` + `parse_decl.cyr`):
+  new `_cur_fn_ix` global, set in PARSE_FN_DEF entry +
+  zeroed slot, reset to -1 in PARSE_FN_DEF exit. Array
+  registration path in parse_decl accumulates the aligned
+  size into the current fn's slot when `_cur_fn_ix >= 0`.
+- **FIXUP tally** (`src/backend/x86/fixup.cyr`): after the
+  DCE pass populates `live[]`, walk fn_table and sum
+  `fn_var_bytes[fi]` for each unreachable fn. Stash totals
+  into post-data_size scratch at `0x18FCD8` (dead bytes) +
+  `0x18FCE0` (dead count) so EMITELF_USER (a separate fn)
+  reads them at warning time without re-running the bitmap.
+- **Warning emission** (same file): append
+  `hint: M bytes inside N unreachable fn(s) — DCE NOPs code
+  but keeps .bss; restructure with alloc() or move the
+  static into a reachable consumer` when M > 0.
+- **Drive-by**: fixed pre-existing 44-vs-46 byte-count bug
+  in the warning's main line (em-dash is 3 UTF-8 bytes;
+  trailing `B\n` was being truncated, producing the visible
+  `>4K` followed by whatever came next).
+
+**Measured impact** (commandress, direct via .62 cc5):
+```
+warning: large static data (298056 bytes) — consider alloc() for buffers >4KB
+  hint: 275360 bytes inside 250 unreachable fn(s) — DCE NOPs code but keeps .bss;
+        restructure with alloc() or move the static into a reachable consumer
+```
+275,360 / 298,056 = **92% of commandress's bss attributable
+to unreachable fns** — exactly the actionable signal Item
+5 was supposed to surface.
+
+**Item 1**: rewrote both scaffold sources
+(`programs/cyrius-init-templates/proj-bcyr` + the heredoc
+in `scripts/cyrius-init.sh`) to use real `bench_new` +
+`bench_batch_start/stop` + `bench_report` API. Added
+`"bench"` to `[deps.stdlib]` in both cyml templates +
+the shell fallback's two embedded lists. Verified end-to-
+end: `cyrius init mytest && cd mytest && cyrius deps &&
+cyrius bench tests/mytest.bcyr` → `noop: 2ns avg`.
+
+**Cross-arch**: parser tracking is shared (single-source
+parse_*.cyr); cc5_aarch64 silently builds `fn_var_bytes`
+but doesn't emit the warning (aarch64 fixup has no
+`large static data` warning today — x86-only by existing
+design, not by this slot's choice). cc5_win shares
+x86/fixup.cyr so the warning + attribution land there too.
+
+Self-host byte-identical at **876,408 B** (+1,072 B from
+.61 for new parser tracking + DCE tally + warning emit).
+`check.sh` **75/75**. `cyrius test` **151/150** (no new
+tcyr; existing suites cover the parser change).
+Cross-compilers: cc5_aarch64 **558,288 B** (+272 B, parser
+only); cc5_win **683,832 B** (+1,072 B, full warning).
+
+**Snapshot-ping-pong guarded**: lib/* untouched this slot
+(parser + fixup + scaffold templates only). `install.sh
+--refresh-only` ran twice — once via `version-bump.sh`,
+once after the post-bump scaffold-template edits.
+
+**Next**: .63 — aarch64 `_strict_mode` parity (.59 retro
+follow-up). Closes the .60-.63 band.
 
 **5.11.61** (shipped 2026-05-18 — **`lib/toml.cyr::toml_parse_file`
 heap-alloc rewrite — −256 KB bss in every consumer that

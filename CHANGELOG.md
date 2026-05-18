@@ -6,6 +6,168 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.62] — 2026-05-18
+
+**Compiler/tooling pair (commandress papercut filing Items 5
++ 1) — dead-fn `.bss` attribution in `large static data`
+warning + `cyrius init` bench-scaffold rewrite.** Third slot
+of the .60-.63 commandress absorber band. Item 5 was
+reframed at slot entry — the roadmap-pinned "filter the
+warning by `live[]` under CYRIUS_DCE=1" premise was
+empirically wrong (CYRIUS_DCE=1 NOPs `.text` only; bss
+reservations for dead-fn-local statics survive both modes,
+verified on commandress at 298,064 B identical bss in both
+modes). User picked the reframe path — keep the warning
+honest about disk bytes, add diagnostic attribution so the
+user knows where to look. Plus the small Item 1 scaffold
+fix that was already lined up to ship in this slot.
+
+check.sh **75/75**; cc5 self-host **876,408 B** (+1,072 B
+from .61 — new parser tracking + DCE-tally + warning
+extension); `cyrius test` **151/150** (no new tcyr —
+existing suites cover the parser change). Cross-compilers:
+cc5_aarch64 **558,288 B** (+272 B — parser tracking
+shared); cc5_win **683,832 B** (+1,072 B — PE backend shares
+x86 fixup.cyr).
+
+### Item 5 reframe — dead-fn `.bss` attribution
+
+Premise check at slot entry (per
+`feedback_premise_check_at_slot_entry`) ran commandress
+twice — bare and under `CYRIUS_DCE=1`. Both reported bss =
+298,064 B; CYRIUS_DCE=1's "45,423 bytes NOPed" message
+refers ONLY to `.text` NOP-fill of dead fn bodies, not bss
+reservations. The roadmap pin's "filter byte count by
+live[] when CYRIUS_DCE=1" fix would have produced a
+misleading lower number that doesn't match the on-disk bss.
+
+User reframed: keep the warning honest, improve the
+diagnostic by attributing how many bytes sit inside
+unreachable fns (so the user can grep for those fns and
+restructure). Implementation:
+
+**Parser side** (`src/frontend/`):
+- New global `_cur_fn_ix` in `parse.cyr` (current fn
+  index, -1 = top-level).
+- `parse_fn.cyr::PARSE_FN_DEF` entry: `_cur_fn_ix = fi`
+  and zero the per-fn accumulator slot.
+- `parse_fn.cyr::PARSE_FN_DEF` exit: `_cur_fn_ix = -1`
+  (alongside the existing `_cur_fn_regalloc` /
+  `_cur_fn_ret_stash` resets).
+- `parse_decl.cyr` array-registration path: when
+  `_cur_fn_ix >= 0`, add the aligned size of each
+  `var foo[N]` into the fn's slot.
+
+**Heap region** (`src/main.cyr` heap map):
+- New `0x1C8000 fn_var_bytes [65536]` (8192 fns × 8 B
+  = 64 KB) — reuses the slot vacated at v5.11.19 when
+  fn_regalloc relocated 0x1C8000 → 0x14A000.
+
+**Fixup tally** (`src/backend/x86/fixup.cyr`):
+- After the DCE pass populates `live[]`, walk fn_table
+  and sum `fn_var_bytes[fi]` for each unreachable fn
+  (matching the existing `dn_live` bit-extraction shape
+  at line 635).
+- Stash totals into the post-data_size scratch at
+  0x18FCD8 (dead bytes) + 0x18FCE0 (dead count) so
+  EMITELF_USER (a separate fn) can read them without
+  re-running the bitmap walk.
+
+**Warning emission** (same file, EMITELF_USER):
+- After the existing `consider alloc() for buffers >4KB`
+  line, if the stashed dead-bytes > 0, append:
+  ```
+    hint: M bytes inside N unreachable fn(s) — DCE NOPs
+    code but keeps .bss; restructure with alloc() or move
+    the static into a reachable consumer
+  ```
+- Drive-by: fixed pre-existing byte-count bug in the
+  warning's main line — `" bytes) — consider alloc() for
+  buffers >4KB\n"` was declared as 44 bytes but is actually
+  46 (em-dash is 3 UTF-8 bytes), so the trailing `B\n` got
+  truncated. The pre-fix output looked like
+  `>4KOK` (the `>4K` followed immediately by whatever came
+  next on stderr). Two-byte fix.
+
+**Cross-arch propagation**: parser tracking is shared
+across all backends (parse_*.cyr is single-source). aarch64
+fixup.cyr has no `large static data` warning today, so it
+silently builds the data but doesn't emit (no half-fix —
+the parser side IS propagated; the warning is x86-only by
+existing design, not by this slot's choice).
+
+**Measured impact** (commandress, direct via `.62` cc5):
+```
+warning: large static data (298056 bytes) — consider alloc() for buffers >4KB
+  hint: 275360 bytes inside 250 unreachable fn(s) — DCE NOPs code but keeps .bss;
+        restructure with alloc() or move the static into a reachable consumer
+```
+275,360 / 298,056 = **92% of commandress's bss is
+attributable to unreachable fns**. Without the hint, a
+consumer hitting the warning has no signal about whether
+their own `var buf[N]` is the bloat source or whether a
+dead-fn static they didn't write is the culprit. With it,
+the path forward is clear.
+
+### Item 1 — `cyrius init` bench scaffold rewrite
+
+Pre-fix `cyrius init <name>` shipped
+`tests/<name>.bcyr` calling `bench("noop", &bench_noop,
+1000000)` — a non-existent 3-arg form. Real API is
+`bench_new` + `bench_batch_start/stop` + `bench_report`
+(see `lib/bench.cyr` header for the overhead-vs-batching
+guidance).
+
+Two scaffold sources kept in lock-step:
+- `programs/cyrius-init-templates/proj-bcyr` (cyrius-
+  init binary path).
+- `scripts/cyrius-init.sh` heredoc (shell fallback).
+
+Also added `"bench"` to the `[deps.stdlib]` list in both
+cyml templates (`cyrius-cyml-bin` + `cyrius-cyml-lib`)
+plus the shell fallback's two embedded stdlib lists. Without
+this, `cyrius deps` skipped `lib/bench.cyr` and the bcyr
+scaffold's `bench_new(...)` calls landed as
+`warning: undefined function 'bench_new'` — same failure
+mode the OLD scaffold had, just on different symbols. Now
+a fresh `cyrius init` produces a scaffold that compiles
+and runs end-to-end:
+
+```
+$ cyrius init mytest
+$ cd mytest && cyrius deps && cyrius bench tests/mytest.bcyr
+  noop: 2ns avg (min=2ns max=2ns) [1000000 iters]
+```
+
+### Files touched
+
+- `src/main.cyr` — heap-map comment for new
+  `fn_var_bytes` region at 0x1C8000.
+- `src/frontend/parse.cyr` — `_cur_fn_ix` global +
+  doc comment.
+- `src/frontend/parse_fn.cyr` — set at PARSE_FN_DEF
+  entry, reset at exit.
+- `src/frontend/parse_decl.cyr` — accumulate array
+  bytes into the per-fn slot.
+- `src/backend/x86/fixup.cyr` — DCE tally + warning
+  hint emission + byte-count fix.
+- `programs/cyrius-init-templates/proj-bcyr` — new
+  scaffold using real bench API.
+- `programs/cyrius-init-templates/cyrius-cyml-bin` —
+  add `bench` to stdlib deps.
+- `programs/cyrius-init-templates/cyrius-cyml-lib` —
+  add `bench` to stdlib deps.
+- `scripts/cyrius-init.sh` — same scaffold + stdlib
+  updates in the shell fallback.
+
+### Issue file
+
+[`docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md`](docs/development/issues/2026-05-17-commandress-stdlib-papercuts.md)
+Items 1 + 5 — closed. Item 6+7 ✅ at v5.11.60; Item 2 ✅
+at v5.11.61. Only aarch64 `_strict_mode` parity at .63
+remains in the band. Items 3 / 4 / 8 deferred to v6.x.
+Issue file archives at .63 ship.
+
 ## [5.11.61] — 2026-05-18
 
 **`lib/toml.cyr::toml_parse_file` heap-alloc rewrite

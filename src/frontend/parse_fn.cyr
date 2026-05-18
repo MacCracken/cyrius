@@ -1309,6 +1309,11 @@ fn PARSE_FN_DEF(S): i64 {
             syscall(SYS_WRITE, 2, "' (last definition wins)\n", 25);
         }
     }
+    # v5.11.62: track the current fn for per-fn array-byte attribution.
+    # Initialize the slot to 0 — fn body may have been touched by an earlier
+    # forward-decl scan; this is the start of the body parse proper.
+    _cur_fn_ix = fi;
+    S64(S + 0x1C8000 + fi * 8, 0);
     # v5.5.36 Phase 2b — clear fn's struct-return slot. The `: StructName`
     # annotation after `)` sets it later if present; otherwise this fn
     # returns a scalar value in rax as usual.
@@ -2887,5 +2892,9 @@ fn PARSE_FN_DEF(S): i64 {
     _cur_fn_ret_pair = 0;
     # v5.8.20 — same for the #pure mirror.
     _cur_fn_is_pure = 0;
+    # v5.11.62 — clear per-fn array-byte attribution tracker so top-level
+    # `var foo[N]` declarations between fn defs don't get attributed to
+    # the previous fn.
+    _cur_fn_ix = 0 - 1;
     return 0;
 }
