@@ -190,13 +190,60 @@ Slot pins (per roadmap.md `### v5.11.60 → v5.11.63`):
   `_strict_mode` parity (.59 retro follow-up) +
   wrapper `--strict` plumbing for both archs.
 
+**Post-ship doc-health sweep — 2026-05-18 (non-release-bearing)**:
+Dedicated read-through of the 8 🟠 carryovers + bench-
+infrastructure verification + roadmap restructure. Sweep
+retired 7 of 8 🟠 docs (the 8th, `migration-strategy.md`,
+deferred to v6.0.0 doc-pass per user direction). Three
+classes of finding:
+- **Naming refresh** (4 docs): `process-notes` /
+  `crash-localization` / `architecture/cyrius` /
+  `architecture/package-format` had pre-v5.0.0 `cc3` and
+  pre-v5.5.x `cyrius.toml` references. Frontmatter notes +
+  in-context renames applied.
+- **Mechanical schema refresh** (1 doc):
+  `module-manifest-design` got `cyrius.toml` → `cyrius.cyml`
+  sed across 11 occurrences.
+- **Bench infrastructure orphan finding** (2 docs +
+  `BENCHMARKS.md` re-run): `scripts/bench-history.sh` 3-tier
+  suite + `BENCHMARKS.md` auto-gen + `bench-history.csv`
+  history all already existed since v5.7.x but the doc
+  pointers in `docs/benchmarks.md` and
+  `docs/development/benchmarks.md` were sending readers at
+  the frozen v5.6.x narrative. Pointers updated to canonical-
+  current `/BENCHMARKS.md`; historical-frontmatter added to
+  the dev-side doc. Fresh `bench-history.sh` run caught a
+  **+65.2 % self_compile regression vs 2026-04-18 baseline**
+  (244 ms → 404 ms). To investigate as its own slot — see
+  follow-up candidate below.
+- **Verified accurate** (1 doc): `ffi/struct-packing` —
+  `fncallN` ABI unchanged since v5.4.13 landing. Promoted
+  🟠 → ✅.
+
+Also collapsed v5.11.47-.63 shipped slot detail in
+`roadmap.md` into a single "Shipped this cycle" one-liner
+section per `feedback_doc_canonical_no_redundancy` (CHANGELOG
+is canonical; roadmap was duplicating ~315 lines of detail).
+Roadmap dropped from ~648 to ~330 lines while preserving all
+forward-looking content (.66/.67/.68/.69 detail intact).
+
 **Outstanding follow-up candidates** (not in pinned band):
-- Two `🟠 read-through` doc-health items remain unreviewed
-  against v5.11.x reality (process-notes,
-  module-manifest-design, migration-strategy,
-  crash-localization, package-format, struct-packing) — not
-  known wrong, just unverified; their own slot whenever a
-  documentation-audit cycle lands.
+- **Self-compile growth tax** (surfaced 2026-05-18 bench
+  refresh): self_compile **244 ms → 404 ms (+160 ms)** across
+  the v5.10.50 → v5.11.63 window (~30+ patches of real feature
+  work: stdlib annotation arc, named-op refactor, byte-array
+  literal, UEFI Application emit, full aarch64 DCE pass at
+  .59, per-fn array-bytes parser tracking at .62, aarch64
+  strict-mode parity at .63, etc). Averages ~+5 ms/patch which
+  isn't surprising for the work shipped. **Not pressing for
+  v5.11.x — reframed as a growth-tax audit for v6.x review
+  queue** (see `roadmap.md` "v6.x review queue"). Decision
+  shape at review: accept-as-cost-of-capability vs schedule a
+  perf miniarc (v5.10.40/.41 precedent: 2.7× total compile-
+  time win in 2 slots). cc5 binary grew only +1,072 B over
+  the same window — cost is parse/codegen overhead, not bloat.
+- `migration-strategy.md` — deferred to v6.0.0 doc-pass per
+  2026-05-18 user direction.
 - Open issues (carryover): bote nested-call state-leak cold
   case (Low); build-artifact pre-commit hook (Medium). Both
   stayed open across the .50-.59 arc. build-artifact earns a

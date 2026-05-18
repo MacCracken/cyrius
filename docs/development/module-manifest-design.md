@@ -5,7 +5,7 @@
 Declare what you need. Say where it is. No resolver. No SAT solver.
 The manifest is a map from names to locations. The compiler enforces boundaries.
 
-## cyrius.toml — The Manifest
+## cyrius.cyml — The Manifest
 
 ```toml
 name = "kybernet"
@@ -55,7 +55,7 @@ No `mod` keyword needed to declare — the filesystem is the declaration.
 
 ```
 kybernet/
-  cyrius.toml
+  cyrius.cyml
   src/
     main.cyr          # entry point
   lib/                # vendored stdlib (dep: stdlib)
@@ -90,7 +90,7 @@ agent_run(a);
 ```
 
 The compiler resolves `use agnostik.agent_new` by:
-1. Looking up `agnostik` in `cyrius.toml` deps → finds `path = "../agnostik/lib"`
+1. Looking up `agnostik` in `cyrius.cyml` deps → finds `path = "../agnostik/lib"`
 2. Scanning that directory for `pub fn agent_new`
 3. Creating the name alias (already implemented as mangled names)
 
@@ -156,7 +156,7 @@ $ cyrius build
 ```
 
 Build steps:
-1. Read `cyrius.toml`
+1. Read `cyrius.cyml`
 2. For each dep:
    - `path`: verify directory exists
    - `ark`: check cache (`~/.cyrius/cache/`), fetch if missing, verify hash
@@ -184,7 +184,7 @@ $ ark fetch nous 0.3.0
   hash: a7f3c8e1b4d2f...
   cached: ~/.cyrius/cache/nous/0.3.0/
 
-Add to cyrius.toml:
+Add to cyrius.cyml:
   [deps.nous]
   ark = "nous"
   version = "0.3.0"
@@ -197,11 +197,11 @@ Add to cyrius.toml:
 
 The compiler needs to know where dep modules live. Two approaches:
 
-**Option A — cyrius preprocesses**: cyrius reads `cyrius.toml`, resolves all dep paths,
+**Option A — cyrius preprocesses**: cyrius reads `cyrius.cyml`, resolves all dep paths,
 and passes a flat list of "module_name=path" to the compiler via a generated file
 or command-line mechanism.
 
-**Option B — compiler reads toml**: the compiler itself reads `cyrius.toml` and
+**Option B — compiler reads toml**: the compiler itself reads `cyrius.cyml` and
 resolves deps.
 
 Option A is simpler and keeps the compiler focused on compilation.
@@ -238,7 +238,7 @@ Currently all symbols are global. With enforcement:
 ## Migration path
 
 ### Phase 1 — Manifest deps (cyrius change only, no compiler change)
-- Parse `[deps]` from `cyrius.toml`
+- Parse `[deps]` from `cyrius.cyml`
 - Verify dep paths exist
 - `cyrius deps` command
 - `ark fetch` with hash verification
@@ -262,7 +262,7 @@ Currently all symbols are global. With enforcement:
 
 ## Example: kybernet with manifest deps
 
-### cyrius.toml
+### cyrius.cyml
 ```toml
 name = "kybernet"
 version = "0.9.0"

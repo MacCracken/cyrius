@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-05-17 (v5.11.59 — iron-boot papercut 4-slot arc fully closed (.56-.59) + DCE-aware reachability filter across x86 + aarch64. Sweep notes below. cc5-size claims in Tier 1 docs refreshed from v5.11.50's 823,112 B → v5.11.59's **875,336 B** (~875 KB) — +52 KB drift past the ±50 KB currency gate; refreshed in size-comparisons.md / platform-status.md / faq.md. check.sh 74 → 75 (LSP wrapper smoke gate added at .56). 5 issue filings closed across the .51-.58 arc (gnoboot byte-array literal / efi_main convention / UEFI app emit / elf64 kernel fixup / efi_main trampoline REX / LSP byte-array / iron-boot session papercuts); 2 new proposals filed by kriya 2026-05-17 (octal literal syntax, syscalls `*at()` family — both v6.x targets per [[project_kriya_low_level_v6x_syscall_arc]]). Prior refresh: 2026-05-13 v5.11.50 cap-drift + doc-size gates landed; 2026-05-13 v5.11.42 roadmap reorg. Earlier scaffold 2026-05-10 v5.10.39.) | **Refresh cadence**: when docs are touched, update the affected row. **Programmatic gates active**: `_doc_size_currency_gate()` flags cc5-size claims outside ±50 KB of actual; `_cap_drift_gate()` cross-checks heap-map comments against inline literal caps (both in `programs/check.cyr`).
+> **Last refresh**: 2026-05-18 (v5.11.63 — .60-.63 commandress papercut absorber band CLOSED 4/4 + **full doc-health sweep** retiring 7 of 8 🟠 read-through carryovers. Sweep notes below. cc5 grew 875,336 → **876,408 B** (+1,072 B; well within ±50 KB doc-currency gate — no Tier 1 size refreshes needed). check.sh 75/75. 1 issue filing closed (commandress papercut → archived). **Bench infrastructure finding**: `scripts/bench-history.sh` (3-tier suite) + `BENCHMARKS.md` (auto-gen at repo root) + `bench-history.csv` (history) were already in place but the doc pointers were sending readers at frozen `docs/development/benchmarks.md` (v5.6.x narrative) instead of the live `BENCHMARKS.md`; doc pointers updated, fresh bench run executed (caught +65 % self_compile regression vs 2026-04-18 baseline — to investigate as own slot). Prior refresh: 2026-05-17 v5.11.59 iron-boot arc + DCE filter cross-arch; 2026-05-13 v5.11.50 cap-drift + doc-size gates; 2026-05-13 v5.11.42 roadmap reorg.) | **Refresh cadence**: when docs are touched, update the affected row. **Programmatic gates active**: `_doc_size_currency_gate()` flags cc5-size claims outside ±50 KB of actual; `_cap_drift_gate()` cross-checks heap-map comments against inline literal caps (both in `programs/check.cyr`).
 > **Scope**: This repo only (`cyrius`) — the entire `docs/` tree plus root-level files (README, CHANGELOG, CLAUDE.md, VERSION). Per-stdlib-dep docs live in their own repos and are not audited here. Cross-repo cycle / pin / sweep state lives in [`development/state.md`](development/state.md), not here.
 >
 > **Convention adopted from agnosticos** (2026-05-10): pattern from `agnosticos/docs/doc-health.md`. Per `first-party-documentation.md` codification, smaller repos can adopt the same shape. Cyrius's tree is ~61 markdown files (vs agnosticos's ~265) so the tier structure here is leaner.
@@ -15,26 +15,38 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change.
 
 ---
 
-## At a glance — 2026-05-17 inventory
+## At a glance — 2026-05-18 inventory
 
-**~104 markdown files** across the repo (+23 since 2026-05-13 sweep — mostly archived issue resolutions during the .51-.58 ship arc + 2 new kriya-filed proposals). Bucket counts:
+**~104 markdown files** across the repo (steady from 2026-05-17 sweep — +1 archived issue (commandress papercut) offset by no new filings; doc-health passes promote rather than add). Bucket counts:
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh / touched in current cycle** | ~32 | Touched within the v5.10.x → v5.11.x cycle (2026-04 to 2026-05); state.md (v5.11.59) / roadmap.md (v5.11.59) / roadmap-old.md / cycle-discipline.md / CHANGELOG (v5.11.59) / completed-phases (trimmed at .41) / cyrius-guide / tutorial / faq (**cc5-size refreshed 2026-05-17**) / stdlib-reference / benchmarks / ecosystem / editor-integration / platform-status (**cc5-size refreshed 2026-05-17**) / size-comparisons (**cc5-size refreshed 2026-05-17**) / 6 ADRs / 5 audits / 4 open proposals / a few dev/* docs / threat-model (v5.10.35 refresh) / fncall-abi (v5.10.35 verified) / lib-tls-contract.md |
-| 🟡 **Stale — refresh in place** | 0 | None flagged. (Drift candidates flagged 🟠 below.) |
-| 🟠 **Read-through outstanding** | ~10 | Older dev/* docs (process-notes, module-manifest-design, migration-strategy, crash-localization), older architecture docs (package-format), older FFI docs (struct-packing) — all dated 2026-04-08 to 2026-04-30; not known to be wrong, but unreviewed against v5.11.x reality. |
+| ✅ **Fresh / touched in current cycle** | ~39 | Touched within the v5.10.x → v5.11.x cycle; state.md (v5.11.63) / roadmap.md (v5.11.63) / roadmap-old.md / cycle-discipline.md / CHANGELOG (v5.11.63) / completed-phases (trimmed at .41) / cyrius-guide / tutorial / faq (**cc5-size refreshed 2026-05-17**) / stdlib-reference / benchmarks (**re-pointed at root BENCHMARKS.md 2026-05-18**) / ecosystem / editor-integration / platform-status (**cc5-size refreshed 2026-05-17**) / size-comparisons (**cc5-size refreshed 2026-05-17**) / 6 ADRs / 5 audits / 4 open proposals / dev/process-notes (**historical-frontmatter 2026-05-18**) / dev/module-manifest-design (**cyrius.toml→cyrius.cyml 2026-05-18**) / dev/crash-localization (**cc3→cc5 + rename note 2026-05-18**) / dev/benchmarks (**historical-frontmatter 2026-05-18**) / arch/cyrius.md (**doc-currency frontmatter 2026-05-18**) / arch/package-format (**schema refresh + cc5 examples 2026-05-18**) / ffi/struct-packing (**verified accurate 2026-05-18**) / threat-model (v5.10.35 refresh) / fncall-abi (v5.10.35 verified) / lib-tls-contract.md / **NEW: `/BENCHMARKS.md` at repo root** (auto-gen by `scripts/bench-history.sh`) |
+| 🟡 **Stale — refresh in place** | 0 | None flagged. |
+| 🟠 **Read-through outstanding** | 1 | `docs/development/migration-strategy.md` — frozen at v5.7.39 Wave snapshot. Per 2026-05-18 user direction: defer to v6.0.0 cycle-open doc-pass (when the v5.x → v6.x migration story itself needs codification). The other 7 carryovers from prior sweep all retired this pass (3 were minor-refresh, 2 were major-rewrite resolved by `BENCHMARKS.md` auto-gen + historical-frontmatter, 1 was archive-by-design correction, 1 was actually-accurate verified). |
 | 🔵 **Probably evergreen** | ~4 | ADR-002/-003/-004 (everything-is-i64, fixed-heap-layout, convention-based-dispatch) + cycle-discipline.md — load-bearing principles; re-read pass quarterly, not weekly. |
-| 📦 **Archive — frozen by design** | ~49 | `docs/development/archive/` (6) + `docs/development/issues/archived/` (40 — +8 since 2026-05-13 from the .51-.58 ship arc closures) + `docs/development/proposals/archived/` (3 — unchanged). Verified — frozen by design. |
+| 📦 **Archive — frozen by design** | ~50 | `docs/development/archive/` (6) + `docs/development/issues/archived/` (41 — +1 since 2026-05-17 for commandress papercut filing) + `docs/development/proposals/archived/` (3 — unchanged). Verified — frozen by design. |
 | ❓ **Open strategic question** | 0 | None. |
 
 Numbers approximate; rolls up from the per-tier tables below.
 
 **Why now**: doc-health convention adopted at v5.10.34 alongside the sandhi 1.3.2 TLS unblocker. The cyrius doc tree has been actively maintained (CHANGELOG is canonical per CLAUDE.md, state.md refreshes every release, vidya sync at every minor closeout) but the *aggregate* currency has no surface — this file is that surface.
 
-**2026-05-17 sweep notes**: ledger lagged 9 patches behind reality (last refresh at v5.11.50; this sweep brings rows current to v5.11.59). Five issue filings closed during the .51-.58 ship arc (gnoboot byte-array literal → .51; efi_main convention → .52; efi_main trampoline REX → .53; LSP byte-array → .54; iron-boot session papercuts 4-item bundle → .56+.57+.58). DCE-aware reachability filter cross-arch (.59) — aarch64 gained full DCE infrastructure for the first time. Two new proposals filed 2026-05-17 (kriya M2): octal literal syntax (`0o755`) + POSIX `*at()` family stdlib wrappers — both pinned for **v6.x** per [[project_kriya_low_level_v6x_syscall_arc]] (kriya = low-level syscall surfacer; collect into v6.x syscall arc rather than v5.11.x absorber patches). cc5-size claims in Tier 1 docs refreshed from .50's 823,112 B → .59's **875,336 B** (~875 KB); the +52 KB drift was past the ±50 KB doc-currency gate. Wrapper-rebuild bug surfaced + fixed: install.sh `_rebuild_stale` missed `version_str.cyr` transitive dep, so the wrapper at `~/.cyrius/bin/cyrius` froze at .25-embedded since 2026-05-12; .58 closes it via version-bump.sh touch + explicit cc5 rebuild.
+**2026-05-18 sweep notes**: dedicated doc-health pass (not a normal release-bump touch) explicitly read-through of the 8 🟠 carryovers from the 2026-05-17 sweep + verification of bench infrastructure shape. Sweep retired 7 of 8 carryovers (the 8th, migration-strategy.md, deferred to v6.0.0 doc-pass per user direction). Three classes of finding:
 
-**Prior sweep (2026-05-13)**: ledger lagged 13 patches behind reality (last meaningful refresh at v5.10.39; that sweep brought rows current to v5.11.42 + caught proposals/archived/ miscategorization).
+1. **Mostly accurate, needed naming refresh** (4 docs): `process-notes.md` / `crash-localization.md` / `architecture/cyrius.md` / `architecture/package-format.md` had `cc3` / `cyrius.toml` references that pre-date the v5.0.0 binary rename and the v5.5.x manifest rename. Light frontmatter notes added documenting the renames + pointer at canonical-current docs. `module-manifest-design.md` got mechanical `cyrius.toml` → `cyrius.cyml` sed across 11 occurrences; rest of the doc remains canonical schema reference.
+
+2. **Bench infrastructure orphan** (2 docs): `docs/benchmarks.md` and `docs/development/benchmarks.md` were pointing at each other as authoritative — but the actual auto-gen 3-tier bench system (`scripts/bench-history.sh` + `BENCHMARKS.md` at repo root + `bench-history.csv` history) had been live since v5.7.x with the doc pointers never updated. Fix: `docs/benchmarks.md` now points at `/BENCHMARKS.md` as canonical-current; `docs/development/benchmarks.md` got a historical-frontmatter clarifying it's bounded to the v5.6.x perf arc only. Re-ran `bench-history.sh` to refresh the auto-gen file against v5.11.63 — and the new run caught a **+65.2 % self_compile regression vs 2026-04-18 baseline** (244 ms → 404 ms). To investigate as its own slot.
+
+3. **Accurate-as-is** (1 doc): `ffi/struct-packing.md` — agent-assessed STILL-ACCURATE and grep-verified (fncallN ABI unchanged since v5.4.13 landing).
+
+4. **Defer-to-v6.0.0** (1 doc): `docs/development/migration-strategy.md` — frozen at v5.7.39 Wave snapshot; most Wave work has shipped piecemeal (niyama fold v5.9.0, sandhi 1.3.3 v5.10.34, bayan/ganita carve in flight). User direction: refresh at v6.0.0 cycle-open when v5.x → v6.x migration story itself needs codification, not in this sweep.
+
+Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63 ship arc.
+
+**Prior sweep (2026-05-17, v5.11.59)**: ledger lagged 9 patches behind reality; brought rows current to v5.11.59. Iron-boot papercut 4-slot arc fully closed (.56-.59) + DCE-aware reachability filter cross-arch (aarch64 gained full DCE for the first time). cc5-size claims refreshed 823 KB → 875 KB.
+
+**Prior sweep (2026-05-13, v5.11.42 → v5.11.50)**: ledger lagged 13 patches behind reality; brought rows current to v5.11.42 + caught proposals/archived/ miscategorization. v5.11.50 added cap-drift + doc-size programmatic gates.
 
 ---
 
@@ -43,18 +55,19 @@ Numbers approximate; rolls up from the per-tier tables below.
 | File | Last touched | Status | Action |
 |---|---|---|---|
 | `README.md` | 2026-05-06 | ✅ Fresh | Top-level project README; last touched at v5.11.0 cycle open. |
-| `CHANGELOG.md` | 2026-05-17 | ✅ Fresh | **Source of truth per CLAUDE.md.** Through v5.11.59 (DCE-aware reachability filter cross-arch — closes iron-boot papercut 4-slot arc). Refreshed every release. |
-| `CLAUDE.md` | 2026-05-17 | ✅ Fresh | Process + procedures + project-identity. Volatile state delegated to state.md per its own principle. Version field at `5.11.59`. |
-| `VERSION` | 2026-05-17 | ✅ Fresh | Single source of truth for version (`5.11.59` at last edit). Bumped via `scripts/version-bump.sh` (v5.11.58 closed the rebuild-staleness bug that froze the wrapper at .25). |
+| `CHANGELOG.md` | 2026-05-18 | ✅ Fresh | **Source of truth per CLAUDE.md.** Through v5.11.63 (.60-.63 commandress papercut absorber band CLOSED). Refreshed every release. |
+| `CLAUDE.md` | 2026-05-18 | ✅ Fresh | Process + procedures + project-identity. Volatile state delegated to state.md per its own principle. Version field at `5.11.63`. |
+| `VERSION` | 2026-05-18 | ✅ Fresh | Single source of truth for version (`5.11.63` at last edit). Bumped via `scripts/version-bump.sh` (v5.11.58 closed the rebuild-staleness bug that froze the wrapper at .25). |
+| `BENCHMARKS.md` (root) | 2026-05-18 | ✅ Fresh | **NEW row, 2026-05-18 sweep**. Auto-generated by `scripts/bench-history.sh` (3-tier suite). Run history in `bench-history.csv`. Refreshed at this sweep — caught +65.2 % self_compile regression vs 2026-04-18 baseline (244 ms → 404 ms); to investigate as own slot. Cadence: every release closeout + on-demand. |
 | `docs/cyrius-guide.md` | 2026-05-03 | ✅ Fresh | Complete language reference. Last touched in the early-v5.10.x doc-audit pass; spot-check at next minor closeout. |
 | `docs/tutorial.md` | 2026-05-03 | ✅ Fresh | User-facing onboarding. Same provenance as cyrius-guide. |
-| `docs/faq.md` | 2026-05-17 | ✅ Fresh | **cc5-size claim refreshed 2026-05-17 (v5.11.59)**: ~823 KB → ~875 KB. Prior refresh during v5.10.x cycle. |
+| `docs/faq.md` | 2026-05-17 | ✅ Fresh | **cc5-size claim refreshed 2026-05-17 (v5.11.59)**: ~823 KB → ~875 KB. v5.11.63 cc5 at 876,408 B — within ±50 KB tolerance, no refresh needed. |
 | `docs/stdlib-reference.md` | 2026-05-03 | ✅ Fresh | API surface reference. Mirrors `docs/api-surface.snapshot` regeneration cadence. |
-| `docs/benchmarks.md` | 2026-05-03 | ✅ Fresh | User-facing benchmarks summary. Matches `docs/development/benchmarks.md` historical baseline. |
+| `docs/benchmarks.md` | 2026-05-18 | ✅ Fresh | **Re-pointed 2026-05-18**: was pointing at `docs/development/benchmarks.md` (frozen v5.6.x narrative); now points at `/BENCHMARKS.md` at repo root (auto-gen by `scripts/bench-history.sh`) as canonical-current. Pointer hub for the three bench surfaces (auto-gen / binary-size / historical perf arc). |
 | `docs/ecosystem.md` | 2026-05-06 | ✅ Fresh | Stdlib + downstream-consumer map. Refreshed at niyama-fold ship. |
 | `docs/editor-integration.md` | 2026-05-02 | ✅ Fresh | LSP + editor configs. |
-| `docs/size-comparisons.md` | 2026-05-17 | ✅ Fresh | **cc5-size claims refreshed 2026-05-17 (v5.11.59)**: 823,112 B → **875,336 B**. cc5 vs gcc/clang/rustc binary size table. |
-| `docs/platform-status.md` | 2026-05-17 | ✅ Fresh | **cc5-size claim refreshed 2026-05-17 (v5.11.59)**: ~823 KB → ~875 KB. Per-target status table. |
+| `docs/size-comparisons.md` | 2026-05-17 | ✅ Fresh | **cc5-size claims refreshed 2026-05-17 (v5.11.59)**: 823,112 B → **875,336 B**. v5.11.63 cc5 at 876,408 B — within tolerance. cc5 vs gcc/clang/rustc binary size table. |
+| `docs/platform-status.md` | 2026-05-17 | ✅ Fresh | **cc5-size claim refreshed 2026-05-17 (v5.11.59)**: ~823 KB → ~875 KB. v5.11.63 at 876,408 B — within tolerance. Per-target status table. |
 | `docs/api-surface.snapshot` | 2026-05-11 | ✅ Fresh | Generated artifact (not hand-written). Regenerated at every release; gate in `check.sh`. |
 
 ---
@@ -63,8 +76,8 @@ Numbers approximate; rolls up from the per-tier tables below.
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `cyrius.md` | 2026-04-25 | 🟠 Read-through | Architecture overview. Three weeks old; v5.10.x has shipped multiple ABI changes (typed-simd Phases 1-6, REAL TYPE SYSTEM arc) that may warrant entry-doc refresh. Verify at next minor closeout. |
-| `package-format.md` | 2026-04-09 | 🟠 Read-through | `.ark` package format spec. Roughly stable since shipping; verify once at v5.10.x close. |
+| `cyrius.md` | 2026-05-18 | ✅ Fresh | **2026-05-18 sweep**: doc-currency frontmatter added pointing at state.md/CHANGELOG for current state; cc3 → cc5 → cyc binary-rename history clarified. Core architecture narrative (Phases 0-11, principles, bootstrap lineage) is durable reference material. |
+| `package-format.md` | 2026-05-18 | ✅ Fresh | **2026-05-18 sweep**: cyrius.toml → cyrius.cyml schema refresh + cc5 in build examples + currency frontmatter. `.ark` format unchanged. |
 
 ---
 
@@ -74,17 +87,17 @@ Numbers approximate; rolls up from the per-tier tables below.
 
 | File | Last touched | Status | Action |
 |---|---|---|---|
-| `state.md` | 2026-05-17 | ✅ Fresh | **Rotates every release.** v5.11.x cycle state through v5.11.59 (DCE-aware reachability filter cross-arch — closes iron-boot papercut 4-slot arc). Per-release Version section refresh remains current. |
-| `roadmap.md` | 2026-05-17 | ✅ Fresh | **Rotates every release.** Through v5.11.59. Iron-boot papercut 4-slot arc fully closed (.56-.58 + .59 reachability filter). Remaining named slots: .66/.67 (byte-array literal peephole), .68 (heap-map full reorg + CVE-05), .69 (conditional mabda fold). Absorber buffer .60-.65 open. |
+| `state.md` | 2026-05-18 | ✅ Fresh | **Rotates every release.** v5.11.x cycle state through v5.11.63 (.60-.63 commandress papercut absorber band CLOSED 4/4). Per-release Version section refresh remains current. |
+| `roadmap.md` | 2026-05-18 | ✅ Fresh | **Rotates every release.** Through v5.11.63 (commandress band marked shipped). Remaining named slots: .66/.67 (byte-array literal peephole), .68 (heap-map full reorg + CVE-05), .69 (conditional mabda fold). Absorber buffer .64/.65 open. |
 | `roadmap-old.md` | 2026-05-13 | ✅ Fresh | **New 2026-05-13** — verbatim copy of the prior 1214-line roadmap, held for cleanout. Source for v6.x items to pull forward into `roadmap.md` at v5.x close; v5.x retrospective material will migrate to `completed-phases.md` under the same archive pattern used for prior cycles. Frozen content — don't edit in place. |
 | `cycle-discipline.md` | 2026-05-13 | 🔵 Evergreen | **New 2026-05-13** — durable operating principles extracted from accumulated v5.9.x–v5.11.x feedback (slot acceptance, bottom-to-top priority, premise-check at slot entry, cross-host smoke wrapper, cycle-close shape). Referenced from `CLAUDE.md` Key References and `roadmap.md`. Refresh only when a new principle proves durable across at least one subsequent cycle. |
 | `completed-phases.md` | 2026-05-12 | ✅ Fresh | Historical release narrative. Trimmed 627 → 95 lines at v5.11.41 per the doc-canonical phase-out track (Phase 0–11 retrospective preserved; v0.9.x → v5.9.x per-version narrative dropped — duplicated by CHANGELOG + vidya + state.md). Per CLAUDE.md, this is where shipped-cycle summaries land at minor closeout. |
-| `benchmarks.md` | 2026-04-25 | 🟠 Read-through | Per-release benchmark history. v5.10.x rows pending — refresh at minor closeout (typically lands as the "Post-audit benchmarks" P(-1) step). |
-| `process-notes.md` | 2026-04-12 | 🟠 Read-through | Process discipline / agent feedback log. ~4 weeks old; spot-check for stale references. |
+| `benchmarks.md` | 2026-05-18 | ✅ Fresh | **Historical-frontmatter added 2026-05-18**: explicitly bounded to v5.6.x perf miniarc; pointers at `/BENCHMARKS.md` (current) + CHANGELOG (per-arc events). No drift — the page IS frozen by design. |
+| `process-notes.md` | 2026-05-18 | ✅ Fresh | **Historical-frontmatter added 2026-05-18**: explicitly bounded to pre-v5.0.0 phases; pointers at CLAUDE.md + cycle-discipline.md + state.md + CHANGELOG for current process / state / shipped work. cc2/cc3 references retained in dated narrative entries. |
 | `threat-model.md` | 2026-05-10 | ✅ Fresh | **Refreshed 2026-05-10 (v5.10.35)**: added fdlopen-helper + libssl trust boundaries; CVE-02 path-traversal mitigation note; stdlib TLS surface table (v5.6.37 / v5.10.21 / v5.10.27 / v5.10.34 + security caveats for 0-RTT replay + verify-callback override); "Zero external dependencies" → "Zero external **language** dependencies" (stdlib bridges to libssl/libc via fdlopen). |
-| `module-manifest-design.md` | 2026-04-08 | 🟠 Read-through | `[deps]` + `[deps.stdlib]` design. Stable; verify at v5.10.x close. |
-| `migration-strategy.md` | 2026-04-30 | 🟠 Read-through | Migration playbook for stdlib changes. Recently touched but pre-v5.10.21 TLS work. |
-| `crash-localization.md` | 2026-04-13 | 🟠 Read-through | Crash-debugging playbook. Spot-check for v5.9.x / v5.10.x heap-map references. |
+| `module-manifest-design.md` | 2026-05-18 | ✅ Fresh | **2026-05-18 sweep**: mechanical `cyrius.toml` → `cyrius.cyml` (11 occurrences) since the v5.5.x manifest rename. `[deps]` + `[deps.stdlib]` design unchanged — schema is still canonical. |
+| `migration-strategy.md` | 2026-04-30 | 🟠 Read-through | **Deferred to v6.0.0 doc-pass per 2026-05-18 user direction.** Frozen at v5.7.39 Wave snapshot; most Wave work has shipped piecemeal (niyama fold v5.9.0, sandhi 1.3.3 v5.10.34, bayan/ganita carve in v5.11.x). Right time to rewrite is v6.0.0 cycle-open when the v5.x → v6.x migration story itself needs codification. |
+| `crash-localization.md` | 2026-05-18 | ✅ Fresh | **2026-05-18 sweep**: cc3 → cc5 in usage examples + binary-rename note (cc3 → cc5 at v5.0.0; → cyc at v6.0.0 per CLAUDE.md). CYRIUS_SYMS mechanism itself stable since v4.3.1. Open-bugs section trimmed (libro Heisenbug from v3.4.8+ resolved). |
 | `lib-tls-contract.md` | 2026-04-30 | ✅ Fresh | Stdlib TLS contract spec (caught by 2026-05-13 sweep — never tracked before). Sister doc to `threat-model.md`'s TLS surface table; references the v5.6.37 / v5.10.21 / v5.10.27 / v5.10.34 expansion arc. Verify at next minor closeout. |
 
 ---
@@ -152,15 +165,8 @@ Two issues stayed open across the .50-.59 ship arc — both Low/Medium severity,
 - `relax-uninitialized-var-or-improve-error.md` — shipped **v5.8.42** half (b) (mabda C1; improve-error option from the proposal; relax-parser option deliberately not taken).
 
 ### Archived issues
-**40 files** in `issues/archived/` (+8 since 2026-05-13). Verified frozen by design — each archived alongside its resolution (CHANGELOG entry that closed it). 2026-05-17 growth driver: the .51-.58 ship arc closures:
-- `2026-05-13-gnoboot-byte-array-literal.md` → resolved .51
-- `2026-05-13-gnoboot-efi-main-convention.md` → resolved .52
-- `2026-05-13-gnoboot-uefi-application-emit.md` → resolved across .47-.49
-- `2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md` → resolved earlier (archived in this window)
-- `2026-05-13-efi-main-trampoline-save-rex-wrong.md` → resolved .53 (hotfix)
-- `2026-05-13-gnoboot-lsp-byte-array-literal.md` → resolved .54
-- `2026-05-13-cap-drift-detector-gate.md` → resolved .50
-- `2026-05-16-iron-boot-session-papercuts.md` → 4-item bundle resolved across .56-.58 (+ .59 reachability filter closes the 4-slot arc).
+**41 files** in `issues/archived/` (+1 since 2026-05-17 for the .60-.63 ship arc closeout). Verified frozen by design — each archived alongside its resolution (CHANGELOG entry that closed it). 2026-05-18 growth driver:
+- `2026-05-17-commandress-stdlib-papercuts.md` → 5 items resolved across .60-.63: Items 6+7 → .60 (`lib/process.cyr` `_exec3` byte-contract + stderr dup2); Item 2 → .61 (`lib/toml.cyr` heap-alloc, −256 KB bss); Items 1+5 → .62 (cyrius init scaffold + dead-fn `.bss` attribution hint); aarch64 `_strict_mode` parity → .63. Items 3+4+8 deferred to v6.x as own filings/arcs.
 
 Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` back, not a re-file.
 
@@ -171,7 +177,7 @@ Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` b
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `fncall-abi.md` | 2026-04-25 | ✅ Fresh (verified 2026-05-10) | Spot-verified at v5.10.35 — content scoped to `fncallN` (int-class scalar calls); the v5.10.28-32 typed-simd ABI (`fn f(): f64v2`) is a separate codegen path not invoked via `fncallN`, so no update needed here. (Future: a sibling `docs/ffi/typed-simd-abi.md` may earn its own slot if consumers need a reference.) |
-| `struct-packing.md` | 2026-04-19 | 🟠 Read-through | Struct layout. Older; verify against current `parse_decl` struct emit. |
+| `struct-packing.md` | 2026-04-19 | ✅ Fresh (verified 2026-05-18) | **2026-05-18 sweep verified**: `fncallN` ABI for struct-by-value shims unchanged since v5.4.13 landing; `fncall2(shim_fp, ...)` pattern still canonical. mabda examples remain real. No update needed. |
 
 ---
 
@@ -180,7 +186,7 @@ Per the `feedback_close_to_archive_issues` memory pin: re-opens are a `git mv` b
 | Path | Count | Status |
 |---|---|---|
 | `docs/development/archive/` | 6 | 📦 Frozen — historical (cyml-format, handoff doc, v5.3.0 emitter, 2026-04 benchmarks/aarch64 stdlib, lsp-claude consolidation) |
-| `docs/development/issues/archived/` | 40 | 📦 Frozen — resolved bugs (+8 since 2026-05-13 from the .51-.58 ship arc closures listed above) |
+| `docs/development/issues/archived/` | 41 | 📦 Frozen — resolved bugs (+1 since 2026-05-17 for the .60-.63 commandress papercut close listed above) |
 | `docs/development/proposals/archived/` | 3 | 📦 Frozen — shipped proposals (raise-return-cap v5.10.6, raise-compile-source-cap v5.11.33, uninitialized-var error v5.8.42) |
 
 Leave alone unless they need re-classification (e.g., something archived prematurely surfaces again).
@@ -225,4 +231,4 @@ Items that are *scheduled* doc decisions, not stale state. Surfaced here so they
 
 ---
 
-*Initial scaffold: 2026-05-10 (v5.10.34). First full stale sweep: 2026-05-13 (v5.11.42 — caught 13 patches of drift, 3 archived issues miscategorized as open, 2 untracked proposals, 1 untracked doc, 1 new audit, +19 archived issues, retired v5.12.x ADR-008 reference, v6.0.0 audit re-pin) + proposals-archive pass (caught 3 already-shipped proposals miscategorized as open). Second sweep: 2026-05-13 (v5.11.50 — doc-currency programmatic gates landed). Third sweep: 2026-05-17 (v5.11.59 — iron-boot 4-slot arc fully closed; +8 archived issues; +2 open proposals (kriya M2 v6.x targets); cc5-size refresh 823 KB → 875 KB across Tier 1 docs after the +52 KB drift past the ±50 KB currency gate). Refresh in place when docs are touched.*
+*Initial scaffold: 2026-05-10 (v5.10.34). First full stale sweep: 2026-05-13 (v5.11.42 — caught 13 patches of drift, 3 archived issues miscategorized as open, 2 untracked proposals, 1 untracked doc, 1 new audit, +19 archived issues, retired v5.12.x ADR-008 reference, v6.0.0 audit re-pin) + proposals-archive pass (caught 3 already-shipped proposals miscategorized as open). Second sweep: 2026-05-13 (v5.11.50 — doc-currency programmatic gates landed). Third sweep: 2026-05-17 (v5.11.59 — iron-boot 4-slot arc fully closed; +8 archived issues; +2 open proposals (kriya M2 v6.x targets); cc5-size refresh 823 KB → 875 KB across Tier 1 docs after the +52 KB drift past the ±50 KB currency gate). Fourth sweep: 2026-05-18 (v5.11.63 — .60-.63 commandress papercut absorber band CLOSED + dedicated doc-health read-through retiring 7 of 8 🟠 carryovers; bench-infrastructure orphan finding: `BENCHMARKS.md` auto-gen system was live since v5.7.x but doc pointers sent readers at frozen v5.6.x narrative instead; pointers fixed + fresh bench run caught +65 % self_compile regression vs 2026-04-18 to investigate; only `migration-strategy.md` remains 🟠 (deferred to v6.0.0 doc-pass per user direction)). Refresh in place when docs are touched.*

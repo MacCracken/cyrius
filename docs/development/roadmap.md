@@ -45,100 +45,40 @@ Per-patch detail for v5.11.0 → current ships lives in
 [CHANGELOG.md](../../CHANGELOG.md); current-state snapshot lives
 in [state.md](state.md).
 
-### v5.11.51 / v5.11.52 — gnoboot ergonomic-improvement filings (post-arc consumer feedback)
+### Shipped this cycle (v5.11.47 → v5.11.63)
 
-Two enhancement filings landed 2026-05-13 from the gnoboot
-consumer agent during Step 4 (`HandleProtocol(LoadedImage)`
-work, the first cyrius-fn-driven gnoboot code post the pure-asm
-banner). Both are ergonomic, not bugs — gnoboot v0.1.0 can ship
-without them, the consumer-side workarounds work today. Pinned
-as separate slots per honest scope-split (different surfaces,
-clean bisect windows).
+Per-slot detail in [CHANGELOG.md](../../CHANGELOG.md). One-liner
+ledger below; expanded narrative for shipped work lives in CHANGELOG
++ state.md per `feedback_doc_canonical_no_redundancy`.
 
-- **v5.11.51 — byte-array literal `var foo[N] = { 0x.., ... };`**
-  Filing: `docs/development/issues/2026-05-13-gnoboot-byte-array-literal.md`.
-  Surface: `src/frontend/parse_decl.cyr` `PARSE_GVAR_ARR`
-  extension + gvar-init codegen to emit bytes into `.rdata` at
-  compile time. Length-mismatch error path. Optional `u16`-typed
-  variant for UTF-16LE friendliness. Estimate: ~80-150 LoC
-  parser + codegen wiring. Verification: 1-2 new tcyr; all
-  existing tests stay byte-identical. Acceptance: gnoboot's
-  ~150 lines of `store8(&msg_pre + N, 0x..)` collapse to ~10
-  lines of brace-list initializer.
-- **v5.11.52 — `fn efi_main(handle, st)` entry convention +
-  lib/fnptr.cyr MS-x64 branch**.
-  Filing: `docs/development/issues/2026-05-13-gnoboot-efi-main-convention.md`.
-  Surface: entry-point emit under `_TARGET_EFI_APPLICATION == 1`
-  (parser detect of `fn efi_main` + special trampoline emit) +
-  `lib/fnptr.cyr` `#ifdef CYRIUS_TARGET_EFI` branch for MS-x64
-  ABI. Existing `kernel;` + top-level-asm shape stays supported
-  (opt-in via fn presence). Estimate: ~100-200 LoC compiler
-  + ~30 LoC stdlib. Verification: efi_probe still boots under
-  OVMF (existing .49 gate); gnoboot rebuilds + OVMF smoke;
-  cross-arch propagation review of lib/fnptr.cyr touchpoints.
-  Acceptance: gnoboot's `main.cyr` trampoline (~50 lines of
-  store8 + asm + var fp + asm) collapses to a `fn efi_main(handle,
-  st)` body and cyrius handles the firmware ABI translation.
+**gnoboot AGNOS unblock arc (.47-.49, .51-.53)**
+- **.47** — UEFI Application PE emit mode P1: `_TARGET_EFI_APPLICATION` flag, Subsystem 3→0xA, EEXIT EFI variant, ExitProcess import skip, `_pe_ensure_*` refactor (9 helpers → 1).
+- **.48** — `programs/efi_probe.cyr` + structural gate (`_efi_emit_gate()`); check.sh 70 → 71.
+- **.49** — OVMF runtime smoke + RELOCS_STRIPPED clear; arc CLOSED. AGNOS unblocked to start writing gnoboot proper against `cyrius = "5.11.49"`. Memory pin: `project_agnos_path_c_gnoboot`.
+- **.51** — Byte-array literal `var foo[N] = { 0x.., 0x.., ... }`; new `EADDRA_IMM` named op + PARSE_GVAR_ARR extension. 26-assert tcyr.
+- **.52** — `fn efi_main(handle, st)` entry convention + `CYRIUS_TARGET_EFI` predefine. Both gnoboot ergonomic filings closed same-day.
+- **.53** — Hotfix: efi_main trampoline entry-save REX prefix 0x4C → 0x49 (MR-form REX.R vs REX.B for r14/r15-as-dst).
 
-### v5.11.47 → v5.11.49 — UEFI Application PE emit mode (gnoboot MVP unblocker)
+**Cycle infrastructure / polish (.50, .54-.55)**
+- **.50** — Cap-drift detector + doc-size currency gates + fresh-tier doc refresh.
+- **.54** — LSP papercut close + REX named ops + `_find_fn_by_name` helper; cc5 first shrink in v5.11.x.
+- **.55** — Refactor sweep — cap-drift gate extends to all 6 parse_*.cyr files; ESWITCH_DISPATCH_* named ops.
 
-3-slot arc authorised 2026-05-13 to unblock the AGNOS sovereign
-UEFI bootloader (`gnoboot`) MVP boot path. Path A (ELF64 +
-multiboot2 via GRUB) is dead-on-iron due to GRUB's
-`grub_relocator64_efi_boot` writing register state into its own
-RO `.text` under modern UEFI's Memory Attributes Protocol; Path C
-= sovereign Cyrius UEFI bootloader, ~2000 LoC, closed-beta target
-early June 2026. Filing:
-[`docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md`](issues/2026-05-13-gnoboot-uefi-application-emit.md).
+**Iron-boot session papercut close (.56-.59)**
+- **.56** — Build-diagnostic polish: LSP `[deps.*]` resolution fix (raw cc5 → wrapper); fixup-time wording downgrade error → warning + "(call site may be unreachable)".
+- **.57** — cc5-side pin-drift + shadow-content detection (`_check_cyml_pin_drift()` + `_check_shadow_lib` byte-size compare).
+- **.58** — Wrapper polish: version-bump rebuild fix (transitive `version_str.cyr` dep) + `cyrius lib sync` + wrapper `--strict-pin` + `--version` manifest-pin line.
+- **.59** — DCE-aware undefined-fn reachability filter (cross-arch x86 + aarch64). aarch64 gained full DCE infrastructure for the first time. Pre-existing strict-mode parity gap acknowledged → pinned at .63.
 
-Premise audit at slot entry surfaced that the filing's speculation
-was partially stale: `.reloc` directory + DllCharacteristics
-(NX_COMPAT + DYNAMIC_BASE + HIGH_ENTROPY_VA = 0x0160) already
-shipped at v5.5.35 / v5.6.31. Actual compiler-side deltas are
-smaller than the filing estimated.
+**commandress papercut absorber band (.60-.63, all 4 slots shipped 2026-05-18)**
+- **.60** — `lib/process.cyr` bug-fix pair (Items 6 + 7): `_exec3 var argv[4]` → `var argv[40]` byte-contract fix + stderr→/dev/null dup2 across vec-based `exec_capture`/`exec_env`/`exec_capture_str`/`exec_env_str`. New `tests/tcyr/process_run_capture_args.tcyr` (6 sub-asserts).
+- **.61** — `lib/toml.cyr::toml_parse_file` heap-alloc rewrite (Item 2): 256 KB on-fn-scope buffer → `alloc()`; mirrors `toml_parse_file_r` v5.8.30. −256 KB bss in any consumer that includes `lib/toml.cyr`.
+- **.62** — Compiler/tooling pair (Items 5 + 1): Item 5 reframed at slot entry after premise check (CYRIUS_DCE=1 NOPs `.text` only, doesn't shrink bss — empirically verified). Ships dead-fn `.bss` attribution hint via new `fn_var_bytes [8192]` heap region at 0x1C8000 + per-fn parser tracking; warning now shows "M bytes inside N unreachable fn(s)". commandress: 92 % of bss attributable. Drive-by 2-byte fix to pre-existing warning byte-count bug. Item 1: `cyrius init` bench scaffold uses real `bench_new` + `bench_batch_*` API + `bench` added to default `[deps.stdlib]`.
+- **.63** — aarch64 `_strict_mode` parity (.59 retro follow-up): `_strict_mode` global + `/proc/self/cmdline` parsing added to all three `main_aarch64*.cyr` variants; `src/backend/aarch64/fixup.cyr` strict-exit mirrors x86 lines 729-738. Drive-by: wrapper `--strict` plumbing extended to BOTH archs (was absent for both pre-.63). Band CLOSED.
 
-- **v5.11.47 — Compiler enablement + `_pe_ensure_*` refactor.**
-  Refactor first (consolidate 9 near-identical
-  `_pe_ensure_<X>` / `_pe_<X>_get` pairs in `src/backend/pe/emit.cyr`
-  — stdio_getstd, stdio_writef, readf, closeh, seekfp, vallo,
-  createf, createdir, deletef, gettick — into a single generic
-  helper; byte-identical proof). Then layer
-  `_TARGET_EFI_APPLICATION` flag + `CYRIUS_TARGET_EFI=1` env var
-  in `src/main.cyr` + `src/main_win.cyr`. Subsystem branch at
-  `src/backend/pe/emit.cyr:746` (3 → 0xA). EEXIT EFI variant in
-  `src/backend/x86/emit.cyr:545` (single `ret` byte 0xC3 — firmware
-  reads rax as EFI_STATUS). Skip `_pe_imp_add("ExitProcess")` at
-  `_pe_layout:439`; consolidated `_pe_ensure` helper errors out if
-  any kernel32 reroute fires in EFI mode (compile-error, not silent
-  miscompile). `.reloc` + DllCharacteristics audit-confirmed
-  EFI-correct, no code change there. ~150 LoC of compiler change.
-- **v5.11.48 — `programs/efi_probe.cyr` + structural gate.**
-  Minimal "hello, uefi" probe: capture RCX (ImageHandle) + RDX
-  (SystemTable) via inline asm as first top-level statements,
-  call `SystemTable->ConOut->OutputString(L"hello, uefi\\r\\n")` via
-  function-pointer indirection, return EFI_SUCCESS (0). New
-  `_efi_emit_gate()` in `programs/check.cyr` compiles efi_probe
-  with `CYRIUS_TARGET_EFI=1`, asserts Subsystem byte = 0x0A at the
-  optional-header offset, `.reloc` directory non-zero, no
-  kernel32!ExitProcess in `.idata`. check.sh **70 → 71**.
-- **v5.11.49 — OVMF smoke + arc closeout.**
-  `qemu-system-x86_64 -drive if=pflash,...OVMF_CODE.4m.fd
-  -drive ...OVMF_VARS.4m.fd -drive ...esp.img -serial stdio
-  -display none` boot of efi_probe.efi staged at
-  `/EFI/BOOT/BOOTX64.EFI` on a FAT ESP image; verify "hello, uefi"
-  appears on serial. Any runtime fix that surfaces (entry-point
-  shape, ABI corner, `.reloc` blocks under EFI relocation, missed
-  data-directory entry) lands as part of .49. Arc-closeout
-  CHANGELOG cross-links the three slots; issue
-  `2026-05-13-gnoboot-uefi-application-emit.md` archived. Memory
-  pin `project_agnos_path_c_gnoboot` updated with final shape.
+Issue file `2026-05-17-commandress-stdlib-papercuts.md` archived after .63 ship; .64/.65 stay as explicit open bandwidth (per user direction 2026-05-17 "keep .65 open so .62 can split").
 
-Cap is **.49**. If .47 ships clean and .48 probe boots first-try
-under OVMF, .49 compresses to verification + closeout doc only.
-Acceptance bar = AGNOS unblocked to start writing `gnoboot`
-proper against `cyrius = "5.11.49"`.
-
-Memory pin: `project_agnos_path_c_gnoboot`.
+---
 
 ### Stdlib data-domain distlib carve-out (bayan + ganita)
 
@@ -210,324 +150,6 @@ If GA works clean: fold here. If GA still leans on Class B FFI:
 both move to v6.4.x. No mid-window auto-promotion.
 
 Memory pin: `project_mabda_rc3_at_closeout`.
-
-### v5.11.56 / v5.11.57 — Iron-boot session papercut close (filing `2026-05-16-iron-boot-session-papercuts.md`)
-
-Four Low-severity surface-quality items filed 2026-05-16 from
-the AGNOS iron-boot Attempts 37-38 + Repair R10 session on
-`archaemenid` Beelink SER. None blocked the iron work (kernel +
-`read-boot-log` both rebuilt clean). Split across two patches
-by surface — user directive 2026-05-17. Slot-entry premise
-check 2026-05-17 surfaced an Item 3 scope question (cross-arch
-DCE cost ~200 LoC NEW for aarch64); user chose to ship the
-wording-only contradiction fix in .56 and earn .58 as a real
-engineering slot for the reachability filter.
-
-**v5.11.56 — Build-diagnostic polish** (Items 2 + 3, cyrius
-diagnostic-emitter surface):
-
-- **Item 2 — LSP cross-file scope noise (REAL FIX)**: every
-  edit on `agnos/` / `agnosticos/` source produced a wall of
-  `✘ error: undefined function 'X' (will crash at runtime)`
-  for stdlib fns resolved via `[deps.*]` (`strlen`, `println`,
-  `args_init`, etc.). Root cause: `cyrius-lsp.cyr`'s
-  `compile_and_capture()` forks **raw `cc5`** with source on
-  stdin, NULL argv tail, NULL envp, LSP's cwd — cc5 has no way
-  to see `cyrius.cyml` `[deps.*]` because that resolution lives
-  in the `cyrius` wrapper. Fix: switch to forking the `cyrius`
-  wrapper as `cyrius check --with-deps <filepath>` with cwd set
-  to the project root (walk up from filepath looking for
-  `cyrius.cyml`). Wrapper resolves `[deps.*]` naturally; the
-  false-positive class disappears at the source instead of being
-  softened. Keep raw-cc5 fallback for files outside any project
-  tree. ~60 LoC in `programs/cyrius-lsp.cyr`. Single arch (LSP
-  is x86 only).
-- **Item 3 — `vec_get` "will crash" + `OK` contradiction
-  (LIGHT FIX: wording downgrade)**: drop the `error:` + `OK`
-  contradiction by reclassifying the fixup-time emit from
-  `error: undefined function 'X' (will crash at runtime)` →
-  `warning: undefined function 'X' (call site may be
-  unreachable)`. Cross-arch x86_64 + aarch64 in same slot per
-  `feedback_cross_arch_propagation_mandatory`. ~10 LoC across
-  `src/backend/x86/fixup.cyr` + `src/backend/aarch64/fixup.cyr`.
-  `--strict` mode hard-fail path (`_strict_mode == 1 →
-  undef_count > 0 → exit 1`) preserved unchanged for CI use.
-  The DCE-aware reachability filter (which would surface
-  "warning" ONLY for truly-dead callsites and stay silent for
-  reachable refs) is deferred to .58 as its own slot.
-- Acceptance: self-host byte-identical, `check.sh` 75/75,
-  `cyrius test` 150/150, fresh LSP smoke against `agnos/`
-  source surfaces no `[deps.*]`-resolution false positives, and
-  `cyrius build`/`cyrius build --aarch64` of `read-boot-log`
-  emits `warning:` (not `error:`) with the `(call site may be
-  unreachable)` qualifier.
-
-**v5.11.57 — cc5-side pin-drift + shadow-content detection (Items 1 + 4 cc5 surface)**:
-
-Premise check at .57 entry (2026-05-17) revealed Item 1's
-root cause is layered: the wrapper at `~/.cyrius/bin/cyrius`
-has been embedding `5.11.25` since 2026-05-12 because
-`scripts/install.sh::_rebuild_stale` checks `build/$target
--nt $source` against `cbt/cyrius.cyr` only, missing the
-transitive dependency on `src/version_str.cyr` (which
-`cbt/cyrius.cyr` includes via `_VERSION_TOOLCHAIN`). Every
-bump since copied the stale May-12 binary forward into each
-snapshot. Consequence: `cyrius --version` reports `.25`
-regardless of what pin or actual install version a consumer
-has. **User direction 2026-05-17: split.** cc5-side detection
-ships in .57 (works regardless of wrapper staleness because
-cc5 is rebuilt every bump for self-host); wrapper polish
-earns .58.
-
-- **Item 1 (cc5 side)** — `src/frontend/lex.cyr` near
-  `_check_shadow_lib`: new `_check_cyml_pin_drift()` reads
-  cwd's `cyrius.cyml`, parses `[package].cyrius = "X.Y.Z"`,
-  compares to cc5's compile-time `_VERSION_STR_CC5`. When
-  pin exists AND pin != cc5 self-version, emit a loud
-  `warning: cyrius.cyml pins X.Y.Z but cc5 is X.Y.W —
-  toolchain drift (snapshot may be stale)`. Opt-out
-  `CYRIUS_NO_WARN_PIN_DRIFT=1`; strict mode
-  `CYRIUS_STRICT_PIN=1` exits with code 1 instead of
-  warning (CI-gating path the wrapper's --strict-pin flag in
-  .58 will set automatically). Cyml parser inline (mirrors
-  `cbt/deps.cyr::_dep_read_cyml_cyrius_field` shape but in
-  cc5 syntax). ~80 LoC.
-- **Item 4 (cc5 side)** — `_check_shadow_lib` rewrite: today
-  it just probes `lib/` directory existence and warns
-  unconditionally. New shape: enumerate `./lib/*.cyr`, for
-  each file with a counterpart in
-  `~/.cyrius/versions/<cc5-version>/lib/`, compare BYTE
-  SIZES (faster than content hash, catches the common
-  drift). Emit the note only when at least one pair
-  differs. Files unique to `./lib/` (project-specific code)
-  are ignored — they're not shadowing anything. ~70 LoC.
-- **NOT in .57** (split to .58): `cyrius lib sync` command,
-  `cyrius --version` manifest-pin line, `--strict-pin`
-  command-line flag, `scripts/install.sh` rebuild-staleness
-  fix. These are wrapper-side; they need the wrapper to be
-  current to work.
-- Acceptance: self-host byte-identical, `check.sh` 75/75,
-  `cyrius test` 150/150. Build of `read-boot-log` from
-  `agnosticos/scripts/` emits the new pin-drift warning
-  (pin .55 vs cc5 .57) and SUPPRESSES the shadow-lib note
-  when the local `lib/` byte-matches the snapshot.
-
-### v5.11.58 — Wrapper polish (wrapper rebuild fix + lib sync + --strict-pin + --version pin line)
-
-Closes the wrapper-surface remainder of the iron-boot
-papercut filing (Items 1 + 4 wrapper portions; cc5 portions
-landed at .57). User direction 2026-05-17 split (3-slot
-papercut close was the trade-off for not punting the wrapper
-work into v6.x boundary cleanup).
-
-**Scope** (~200 LoC total):
-
-- **`scripts/install.sh` rebuild-staleness fix**: extend
-  `_rebuild_stale` to track `src/version_str.cyr` as an
-  explicit dependency of `cbt/cyrius.cyr` (and any other
-  binary that includes it). Without this, future bumps
-  continue to copy the stale wrapper into each snapshot.
-  Alternative: have `version-bump.sh` explicitly `touch
-  cbt/cyrius.cyr` (and other version_str.cyr consumers)
-  after regenerating version_str.cyr so the `-nt` check
-  triggers a rebuild. Pick whichever is cleaner; either
-  closes the underlying bug.
-- **`cyrius lib sync` command** (`cbt/cyrius.cyr` dispatch
-  + new `cmd_lib_sync` in `cbt/commands.cyr`): copies
-  `~/.cyrius/versions/<X>/lib/*.cyr` into `./lib/*.cyr`,
-  where `<X>` = current toolchain version (or cyml pin if
-  set). Third remediation alongside "delete ./lib/" and
-  `CYRIUS_NO_WARN_SHADOW_LIB=1` from Item 4.
-- **`cyrius --version` manifest-pin enhancement**: when run
-  in a project tree (cwd has `cyrius.cyml` with
-  `[package].cyrius`), append a second line `manifest-pin:
-  X.Y.Z (project at $PWD)` to the existing `cyrius X.Y.Z`
-  output. Helps consumers spot the mismatch the same moment
-  they check what wrapper they're running.
-- **`--strict-pin` flag** (and/or `[build] strict_pin =
-  true` in cyrius.cyml): wrapper passes through to cc5 as
-  `CYRIUS_STRICT_PIN=1` env var; cc5 (already shipped in
-  .57) upgrades the pin-drift warning to a hard exit. CI
-  pathway for consumers that want pin-faithful builds.
-
-**Acceptance**: self-host byte-identical, `check.sh` 75/75,
-`cyrius test` 150/150, fresh `version-bump.sh` cycle
-produces a wrapper that reports the current version (not the
-stale .25-era one), `cyrius lib sync` from
-`agnosticos/scripts/` silences the shadow note on next
-build, `cyrius --strict-pin build` in a pin-mismatched
-project exits non-zero.
-
-Issue file `2026-05-16-iron-boot-session-papercuts.md` →
-`archived/` after .58 ships (.56 + .57 + .58 collectively
-close Items 1-4).
-
-### v5.11.59 — DCE-aware undefined-fn reachability filter (cross-arch engineering slot)
-
-Bumped from .58 (now wrapper polish) per user direction
-2026-05-17. .56 dropped the `error:` + `OK` contradiction
-via wording-only downgrade (`warning: ... (call site may be
-unreachable)`) — drops the false-alarm tone but still emits
-for genuinely-reachable undef refs. .59 earns the precise
-fix: query the call's host fn against the DCE reachability
-bitmap; suppress the warning entirely when the host is dead.
-
-**Scope** (~300 LoC total):
-
-- **x86_64** (`src/backend/x86/fixup.cyr`): the DCE pass at
-  line 325-642 already builds `live[512]` (4096-fn bitmap) via
-  byte-scan of E8/E9 control transfers. Move the undef-fn
-  check (currently at line 143-180, BEFORE DCE) to AFTER DCE.
-  For each undef'd fixup, walk `fn_table` to find the host fn
-  whose `[start, end)` contains the fixup's `coff` (same
-  pattern as the DCE seed loop at line 483-492); skip the
-  warning if `live[host_idx] == 0`. Preserve `_strict_mode`
-  exit semantics (host-dead undef refs don't count toward the
-  strict-fail count either). ~30 LoC delta.
-- **aarch64** (`src/backend/aarch64/fixup.cyr`): NO DCE pass
-  exists today. Add the reachability bitmap construction
-  (~200 LoC NEW) mirroring x86's seed + propagate passes but
-  with aarch64 instruction encodings:
-  - BL (call):   top 6 bits `100101` → `0x94..0x97` mask
-                 `op & 0xFC == 0x94` (little-endian byte 3).
-  - B  (jump):   top 6 bits `000101` → `0x14..0x17` mask
-                 `op & 0xFC == 0x14`.
-  - rel26 → byte offset: sign-extend 26-bit imm, shift left 2.
-  - 4-byte instruction stride (vs x86's variable-length).
-  - Same hash-table optimization for `fn_start → fi` lookup
-    (existing 0x114000 slot region; x86 sized for the same
-    8192 cap — verify aarch64 reuse safety).
-  - Sweep (NOP-fill with aarch64 NOP `0xD503201F`) gated on
-    `CYRIUS_DCE=1` (same env var, same opt-in semantics).
-- After both archs have `live[]` available, the undef-fn check
-  reorder + host-filter logic is parallel: ~30 LoC delta on
-  aarch64 to match x86.
-
-**Cross-arch acceptance gate**: same `cyrius build` /
-`cyrius build --aarch64` of `read-boot-log` (and a deliberate
-synthetic test with reachable undef refs) emits the warning
-ONLY for reachable callsites; the `vec_get`-style dead-ref
-case is fully silent. cc5 self-host byte-identical on both
-archs. The `note: N unreachable fns (M bytes — set
-CYRIUS_DCE=1 to eliminate...)` line should now fire on
-aarch64 too (it didn't before — confirms the new pass works).
-
-Memory pin: `feedback_cross_arch_propagation_mandatory`
-(same-slot cross-arch, not "x86 first / aarch64 follow-up"
-half-fix).
-
-Per `feedback_deferral_requires_roadmap_pinnage`, this slot
-is pinned at .59 explicitly (re-pinned 2026-05-17 from the
-prior .58 pin after the wrapper-polish slot earned .58).
-If priorities shift again, the deferral must be re-pinned
-with new acceptance bar — not silently slipped.
-
-### v5.11.60 → v5.11.63 — commandress papercut absorber band (filing `2026-05-17-commandress-stdlib-papercuts.md`)
-
-Four-slot band pinned 2026-05-17 from the commandress v0.1.0
-→ v0.3.0 consumer filing (8 items). Bottom-to-top ordering:
-runtime stdlib bugs first, then compiler/tooling polish, then
-cross-arch parity. .64 / .65 stay as **explicit open bandwidth**
-— runway for inbound consumer filings before the .66/.67
-peephole pair, and split-overflow if .62 separates its pair.
-
-- **v5.11.60 — `lib/process.cyr` bug-fix pair** (Items 6 + 7).
-  - Item 6 — `_exec3` argv buffer is `var argv[4]` (4 **bytes**)
-    but stores up to 5 × 8 B = 40 B; silent stack corruption
-    surfaces as truncated `run_capture` output (commandress vcs
-    segment got 1 byte instead of 6 from `/bin/echo hello`).
-    Fix: `var argv[40]` + `var envp[16]` per CLAUDE.md buffer-
-    contract rule. ~5 LoC delta.
-  - Item 7 — vec-based `exec_capture` / `exec_env` /
-    `exec_capture_str` / `exec_env_str` missing the stderr-to-
-    /dev/null dup2 that the cstr-based `run_capture` family does
-    correctly. Effect: stderr leaks through to caller's terminal
-    (commandress prompt-redraw case: `sit: not a sit repository`
-    on every prompt). Fix: copy the dup2 stanza from `run_capture`
-    into all four vec variants. ~20 LoC.
-  - Same file, same surface, same test infra → one slot.
-  - Acceptance: regression test reproduces the truncation
-    (commandress papercut Item 6 reproducer) before fix, passes
-    after. cc5 self-host byte-identical.
-- **v5.11.61 — `lib/toml.cyr::toml_parse_file` heap-alloc rewrite**
-  (Item 2). Current shape: 256 KB on-fn-scope buffer (`var buf[262144]`)
-  lands in every consumer's `.bss` regardless of whether
-  `toml_parse_file` is actually called (DCE drops the fn, the
-  static survives). Measured impact on commandress v0.2.0: bss =
-  289,640 B (~290 KB), of which 256 KB is this single buffer.
-  Fix: mirror existing `toml_parse_file_r` (v5.8.30) — `alloc()`
-  the buffer instead of stack-declaring it. ~10 LoC delta.
-  Acceptance: commandress rebuild against .61 shows bss drop
-  proportional to toml usage; `lib/toml.cyr` tcyr stays green;
-  cc5 self-host byte-identical.
-- **v5.11.62 — Compiler/tooling polish pair** (Items 5 + 1).
-  - Item 5 — `large static data (N bytes) — consider alloc()`
-    warning fires BEFORE the DCE pass, so it counts bytes inside
-    fns the DCE-aware filter (shipped .59) correctly identifies
-    as dead. Mirror of .59's undef-fn check reorder shape: move
-    the static-data accounting to AFTER the DCE pass when
-    `CYRIUS_DCE=1`, or filter the byte count by `live[]` like
-    the .59 undef-fn filter does. Outside `CYRIUS_DCE=1`, the
-    warning stays honest (bytes ARE in bss). ~30 LoC delta.
-  - Item 1 — `cyrius init <name>` ships `tests/<name>.bcyr`
-    scaffold calling non-existent `bench(name, fp, n)` 3-arg
-    form. Real API is `bench_new` + `bench_batch_start/stop` +
-    `bench_report`. Rewrite the scaffold template (in
-    `cbt/commands.cyr` `cmd_init` shape) to emit the real
-    pattern. ~20 LoC.
-  - Different surfaces (compiler warning gate + scaffold
-    template). **Splittable**: if scope drift surfaces at slot
-    entry, Item 1 absorbs into .64 (preserved bandwidth);
-    .65 stays open per user direction 2026-05-17.
-  - Acceptance: commandress build with `CYRIUS_DCE=1` no longer
-    emits the spurious `large static data` warning when the
-    bloat host is DCE-eliminated. Fresh `cyrius init foo`
-    produces a `tests/foo.bcyr` that compiles + runs without
-    warnings.
-- **v5.11.63 — aarch64 `_strict_mode` parity** (.59 retro
-  follow-up). The DCE-aware reachability filter shipped at .59
-  with cross-arch parity, but `_strict_mode` (hard-exit on
-  undef refs for CI gating) was only declared in `main.cyr` +
-  `main_win.cyr` — not in `main_aarch64.cyr`. aarch64 emits the
-  warning but never hard-exits. Fix: add `_strict_mode` global
-  to `main_aarch64.cyr`, plumb the `--strict` flag through the
-  wrapper's aarch64 dispatch, mirror the x86 exit-on-strict
-  logic in `src/backend/aarch64/fixup.cyr`. Same-slot cross-
-  arch per `feedback_cross_arch_propagation_mandatory` is
-  honored — this is the *parity follow-up*, not a half-fix
-  split. ~40 LoC across three files.
-  Acceptance: `cyrius build --aarch64 --strict <file>` exits
-  with code 1 on any reachable undef ref (matching x86
-  behavior); cross-build cc5_aarch64 stays byte-identical.
-
-**v5.11.64 / v5.11.65 — open bandwidth**: explicit absorber
-runway for inbound consumer filings or .62 split-overflow.
-User direction 2026-05-17: ".65 stays open so .62 can split."
-If no fresh filings or .62 split surfaces, both slots cycle
-into the closeout window.
-
-**Deferred to v6.x** (per filing items pinned to v6.x or
-naturally grouped with v6.x arcs):
-
-- Item 3 (`lib/toml.cyr` single-bracket `[name]` section) —
-  proposal frontmatter already pins v6.x; additive parser
-  feature.
-- Item 4 (LSP transitive-include false positives) — groups
-  with existing `cyrius-lsp-argv0-self-resolution.md` proposal
-  as a v6.x LSP arc; LSP is top-of-stack (apps layer),
-  defers cleanly behind runtime stdlib fixes.
-- Item 8 (PATH lookup helper / `which()` / `run_p` family) —
-  additive stdlib API with design decision (`run_p` suffix vs
-  standalone `which()`); groups with v6.x syscall-stdlib arc
-  per [[project_kriya_low_level_v6x_syscall_arc]] (kriya
-  consumer overlap).
-- `2026-05-13-bote-nested-call-state-leak-root-cause.md` —
-  Low, cold case across .50-.59, no premise change.
-- `2026-05-13-build-artifact-precommit-hook.md` — Medium but
-  tooling-not-runtime; earns a v5.11.x slot only if a fresh
-  trigger surfaces during .64/.65, otherwise v6.x.
-- Two 🟠 read-through doc-health items — earn their own
-  documentation-audit cycle.
 
 ### v5.11.66 / v5.11.67 — Byte-array literal peephole (5× emit compression)
 
@@ -646,3 +268,45 @@ lifted from long-term considerations) lives in
 pull-forward into this file at v5.x close. The v5.x → v6.x
 boundary is clean: v5.x = "what the language IS"; v6.x = "new
 platforms + advanced features the language gains."
+
+### v6.x review queue (noted-not-pressing for v5.11.x)
+
+Items surfaced during the v5.11.x cycle that don't warrant
+in-cycle action but should be reviewed at v6.0.0 cycle-open
+when the broader v6.x roadmap is pulled forward.
+
+- **Self-compile time growth audit** (surfaced 2026-05-18
+  doc-health sweep, framing adjusted per user direction same
+  day): `bench-history.sh` tier-3 shows self_compile **244 ms
+  → 404 ms (+160 ms / +65 %)** between commits `a17a8de`
+  (2026-04-18, post-v5.10.50) and `f60ec9b2` (2026-05-18,
+  post-v5.11.63). The 1-month / ~30-patch baseline spread is
+  itself the tell that this is **growth, not regression**.
+  Window covers: stdlib annotation arc (.0-.7), TS test
+  harness (.11), parser-to-emit named-op refactor (.35-.39),
+  ELF section header arc (.29-.34), byte-array literal (.51),
+  UEFI Application emit mode (.47-.49 + .52-.53), DCE-aware
+  reachability filter cross-arch (.59 — full aarch64 DCE
+  pass, ~200 LoC NEW), per-fn array-bytes attribution parser
+  tracking (.62), aarch64 `_strict_mode` parity (.63). Averages
+  to roughly +5 ms/patch of in-cycle feature work — expected
+  for the kind of work shipped (more parser tracking, more
+  dispatch checks, more cross-arch propagation). **Growth tax
+  to evaluate, not regression to bisect**: cc5 binary grew
+  only +1,072 B over the same window, so the cost is
+  parse/codegen overhead, not output bloat.
+  **Likely shape at v6.x review**: v6.x adds its own growth-
+  creating surfaces (PIE codegen, bare-metal + RISC-V rv64,
+  Class B FFI, language refinements) so the audit moves
+  late in the v6.x cycle once those have landed and the new
+  baseline is established. Form factor likely a **dedicated
+  perf-refactor minor** (vs the v5.10.40/.41 2-slot miniarc
+  inside a regular minor) — too much accumulated surface
+  across 5.x + early-v6.x to clean up in 2 slots, and a
+  whole minor lets the refactor breathe without bumping
+  capability work. First step at audit: capture intermediate
+  datapoints via on-quiet-box `bench-history.sh` runs so the
+  trend has more than 2 endpoints; gradual-accretion vs
+  one-patch-dominates determines whether bisection is even
+  productive (gradual is the likelier shape given the work
+  mix).

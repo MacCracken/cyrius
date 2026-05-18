@@ -1,6 +1,25 @@
-# Process Notes
+# Process Notes — Historical (Phases 3-6, April 2026)
 
-> Development observations across all phases.
+> **Historical artifact** — dated journal entries from the
+> pre-v5.0.0 bootstrap phases. References `cc2` / `cc3` /
+> `cyrc` / `Stage1f` binary names that were retired at the
+> `cc3` → `cc5` rename (v5.0.0); the current toolchain
+> binary is `cc5` (will be `cyc` post-v6.0.0 per the
+> permanent-binary-name rule in CLAUDE.md).
+>
+> **For current process discipline**: [`CLAUDE.md`](../../CLAUDE.md)
+> "Doing tasks" / "P(-1)" / "Closeout Pass" sections +
+> [`cycle-discipline.md`](cycle-discipline.md) (evergreen
+> operating principles: slot acceptance, bottom-to-top
+> priority, premise-check, cross-host smoke, cycle-close
+> shape).
+>
+> **For current state**: [`state.md`](state.md) — volatile
+> per-release status. **For shipped work**:
+> [`../CHANGELOG.md`](../../CHANGELOG.md) — canonical source
+> of truth.
+
+Development observations across the pre-v5.0.0 phases.
 
 ---
 
