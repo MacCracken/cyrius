@@ -6,6 +6,95 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.66] — 2026-05-19
+
+**Bridge-compiler retirement — `src/bridge.cyr` deleted
+(2,005 LoC).** Second v6.0-runway slot; absorbs one of
+v6.0.0's pinned accompanying-refactor items
+(`docs/development/roadmap-old.md` § v6.0.0 cleanup) so
+the major bump's surface shrinks. Bootstrap chain
+simplifies to `seed → cyrc → cc5`.
+
+### Removed
+
+- **`src/bridge.cyr`** (2,005 LoC) — the Phase 4 editable
+  compiler, self-contained with its own heap layout
+  separate from `src/common/util.cyr`'s shared layout.
+  Audit-at-slot-entry findings:
+  - `bootstrap/bootstrap.sh` produces `seed → cyrc → asm`
+    directly; **bridge is not invoked**. The Key Principle
+    wording "seed → cyrc → bridge → cc5" was historical /
+    aspirational, not actual.
+  - Only active code reference was
+    `scripts/bench-history.sh:162` treating `bridge.cyr`
+    as a cc5 INPUT (compile-time benchmark target), not as
+    a compiler. Removed in the same slot.
+  - `docs/api-surface.snapshot` carried 150 `bridge::*`
+    public-fn entries (the scanner walks all `.cyr` files
+    under `src/`). Snapshot regenerated post-deletion —
+    `cyrius api-surface --update` produces 2,850 fns
+    (was 3,000); diff is exactly the 150 `bridge::*` lines.
+  - No `#include` in `bridge.cyr` (self-contained); no
+    `bridge.cyr` import from any `src/`, `lib/`,
+    `programs/`, `cbt/`, or `tests/` consumer.
+- **`scripts/bench-history.sh:162`** —
+  `bench_cmd "compiler/bridge" ...` line deleted (bench
+  target file removed).
+- **150 lines from `docs/api-surface.snapshot`** —
+  regenerated to drop the `bridge::*` entries; gate stays
+  green on the new baseline.
+
+### Changed
+
+- **`CLAUDE.md`**:
+  - Project structure listing — `bridge.cyr` line removed.
+  - Key Principles: "Bootstrap chain integrity — never
+    break seed → cyrc → bridge → cc5" →
+    "seed → cyrc → cc5 (bridge retired v5.11.66)".
+- **`src/common/util.cyr:580`** — `_HEAP_INIT_SCRATCH`
+  doc comment dropped the "(bridge.cyr has its own
+  layout)" parenthetical. The 6 main_*.cyr entry points
+  remain enumerated.
+- **`docs/adr/001-assembly-cornerstone.md:20`** — historical
+  "Bootstrap chain is longer (seed → cyrc → bridge → cc3)"
+  annotated with the v5.0.0 cc3→cc5 + v5.11.66 bridge
+  retirement context. ADR consequence stays valid; the
+  chain is just shorter now.
+- **`docs/development/roadmap-old.md`** § v6.0.0
+  accompanying-refactor — "Bridge-compiler retirement
+  assessment" item struck and dated. Pull-forward at v5.x
+  close finds it already done.
+
+### Mechanical gates
+
+- cc5 self-host **byte-identical at 874,232 B** (no
+  change from .65 — bridge.cyr wasn't in any compile
+  path so the build is unaffected).
+- 3-step bootstrap converges (stage1 == stage2 == stage3
+  byte-identical).
+- `check.sh` **76/76**; `cyrius test` **152/152**;
+  `cyrius api-surface` gate passes against regenerated
+  snapshot.
+- No cross-arch propagation needed (deletion only, no
+  emit-side change).
+
+### Why this fits the v5.x close-out arc
+
+`v5.11.66` is part of the **v6.0-runway band** (.64-.67):
+real code that reduces v6.0.0's accompanying-refactor
+surface. Per the v5.x → v6.x boundary ("v5.x = what the
+language IS"), retiring a redundant compiler **is**
+clarifying what the language is — there's one canonical
+compiler (cc5), not two. The bootstrap chain shortens to
+the actual `seed → cyrc → cc5` path used in practice.
+
+### Memory pins
+
+- [`project_v5_11_66_bridge_retirement`] — slot shape;
+  audit-at-entry confirmed bridge was never in active
+  build path, retirement is pure deletion + ecosystem
+  cleanup.
+
 ## [5.11.65] — 2026-05-19
 
 **CVE-05 split forward from .68 — tok_names mangle-path

@@ -3,6 +3,47 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-19 (.66 ship — bridge-compiler retired; v6.0 march continues)
+
+Closing **v5.11.66** with the deletion of `src/bridge.cyr`
+(2,005 LoC). Second slot in the v6.0-runway band; absorbs
+one of v6.0.0's pinned accompanying-refactor line items.
+
+- **Audit-at-slot-entry**: bridge was never in the active
+  bootstrap chain. `bootstrap/bootstrap.sh` produces
+  `seed → cyrc → asm` directly; cc5 is built standalone.
+  The Key Principle "seed → cyrc → bridge → cc5" was
+  historical / aspirational wording, not actual.
+- **Only active reference**: `scripts/bench-history.sh:162`
+  treated `bridge.cyr` as a cc5 INPUT (compile-time bench
+  target), not as a compiler. Deleted in the same slot.
+- **API surface**: 150 `bridge::*` public-fn entries
+  cleanly removed from `docs/api-surface.snapshot` via
+  `cyrius api-surface --update` regeneration. Total fns
+  drops 3,000 → 2,850.
+- **Ecosystem cleanup**: `CLAUDE.md` project-structure
+  listing + "Bootstrap chain integrity" Key Principle
+  wording updated; `src/common/util.cyr:580` comment
+  cleanup (drops "bridge.cyr has its own layout"
+  parenthetical); `docs/adr/001-assembly-cornerstone.md:20`
+  historical chain annotated; `docs/development/
+  roadmap-old.md` v6.0.0 cleanup item struck and dated.
+- **Mechanical gates green**: cc5 **byte-identical at
+  874,232 B** (no change from .65 — bridge wasn't in any
+  compile path). 3-step bootstrap converges. `check.sh`
+  **76/76**; `cyrius test` **152/152**; `cyrius
+  api-surface` gate passes on regenerated snapshot.
+
+Bootstrap chain is now `seed → cyrc → cc5` cleanly — one
+canonical compiler line (cc5), no historical intermediate.
+v6.0.0's "accompanying refactor / cleanup" list shrinks
+by one item.
+
+Memory pins:
+- [`project_v5_11_66_bridge_retirement`] — slot shape
+  + audit findings (bridge never actually in active
+  build path).
+
 ## Session close — 2026-05-19 (.65 ship — CVE-05 split forward; v6.0 march starts)
 
 Closing **v5.11.65** with the CVE-05 tok_names mangle-

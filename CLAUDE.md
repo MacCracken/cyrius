@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 5.11.65
+- **Version**: 5.11.66
 
 ## Goal
 
@@ -44,7 +44,7 @@ cyrius bench                       # run .bcyr benchmarks
 - **ONE change at a time** — never bundle unrelated changes
 - **Research before implementation** — vidya entry before code
 - **When stuck, ASK the user** — never decide to defer, slip, re-slot, or split work mid-execution. Splits are planned decisions made *before* starting; reactive scope changes when stuck are deferment and count as slipping. Report findings and wait for direction. See [*Micro-Work and Agent Deferment*](https://github.com/MacCracken/agnosticos/blob/main/docs/articles/micro-work-and-agent-deferment.md) for the four-case classification (commit-through / prereq-bug / pre-planned decomposition / the sleight-of-hand to reject).
-- **Bootstrap chain integrity** — never break seed → cyrc → bridge → cc5
+- **Bootstrap chain integrity** — never break seed → cyrc → cc5 (bridge retired v5.11.66)
 - **Version lives in `VERSION` + `--version`, never in binary names** — after the v6.0.0 `cc5` → `cyc` rename, the compiler binary is `cyc` *forever*. No `cc6` at v7.0.0, no `cc7` at v8.0.0, no funny business. The cc3 → cc5 rename at v5.0.0 was the last name-change penalty paid; v6.0.0 fixes the pattern. Anyone tempted to add a version digit to a binary name (compiler, linker, formatter, anything) is reintroducing the bug we explicitly removed. `VERSION` file + binary `--version` output are the only sources of truth.
 
 ## P(-1): Project Hardening
@@ -144,7 +144,6 @@ bootstrap/           29KB seed binary + cyrc.cyr + asm.cyr
 src/
   main.cyr           Compiler entry point (includes modules)
   main_aarch64.cyr   Cross-compiler (swaps arch includes)
-  bridge.cyr         Bridge compiler (cyrc feature set)
   frontend/          lex.cyr, parse.cyr
   backend/x86/       emit.cyr, jump.cyr, fixup.cyr
   backend/aarch64/   emit.cyr, jump.cyr, fixup.cyr

@@ -577,8 +577,8 @@ fn ERR_MSG(S, msg, len): i64 {
 #
 # Universal across all 6 main_*.cyr entry points (main.cyr,
 # main_aarch64.cyr, main_aarch64_native.cyr, main_aarch64_macho.cyr,
-# main_cx.cyr, main_win.cyr — bridge.cyr has its own layout). Pre-
-# v5.8.63 each main inlined this ~30-line block; extraction here
+# main_cx.cyr, main_win.cyr). Pre-v5.8.63 each main inlined this
+# ~30-line block; extraction here
 # saves ~150 LOC of duplication. The aarch64 and cx mains over-zero
 # IR state (they include ir.cyr but don't actively use the IR
 # pipeline) — harmless because zero-init matches the post-brk

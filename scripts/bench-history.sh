@@ -159,7 +159,6 @@ bench_cmd() {
 
 bench_cmd "compiler/trivial" "echo 'var x = 42;' | $CC > /dev/null"
 bench_cmd "compiler/self_compile" "cat $REPO_ROOT/src/main.cyr | $CC > /dev/null"
-bench_cmd "compiler/bridge" "cat $REPO_ROOT/src/bridge.cyr | $CC > /dev/null"
 
 # Binary sizes (not timing, but track as metrics)
 if [ -f "$REPO_ROOT/build/cc5" ]; then

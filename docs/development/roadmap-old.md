@@ -942,10 +942,13 @@ patches:
   AARCH64}` and per-arch `EWRITE_PE` / `_pe_pending_imp_add` /
   `EDISP32` shim families. Consolidate into a single backend-
   dispatch table keyed on `(arch, format)`.
-- **Bridge-compiler retirement assessment.** `src/bridge.cyr`
-  exists to bridge cyrc's feature set to cc5's. With cc5 long
-  past cyrc's surface, audit whether bridge can be retired or
-  collapsed into cyrc's path.
+- ~~**Bridge-compiler retirement assessment.**~~ **Done v5.11.66
+  (2026-05-19).** `src/bridge.cyr` deleted (2005 LoC). Audit
+  confirmed bridge was never in any active build path — the only
+  active reference was a `scripts/bench-history.sh` line that
+  treated it as a cc5 INPUT (compile-time benchmark target),
+  not as a compiler. Bootstrap chain is now `seed → cyrc → cc5`
+  cleanly. v6.0.0 absorbs the win.
 - **`cc3`-era residue.** Vidya entries, comments in source,
   test fixtures still reference `cc3 4.8.5` and earlier. v5.5.39
   retired `src/cc/` + `src/compiler*.cyr` (3,333 LOC); remaining
