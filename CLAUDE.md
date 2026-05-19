@@ -39,6 +39,7 @@ cyrius bench                       # run .bcyr benchmarks
 
 - **Self-hosting is non-negotiable** — cycc==cycc byte-identical after every compiler change
 - **Two-step bootstrap for heap changes** — cycc compiles cc5b, cycc==cc5b
+- **Never use raw `cat | cycc` for projects** — always invoke `cyrius build`. The CLI wrapper resolves deps, auto-prepends includes from `cyrius.cyml`, handles cross-arch + strict flags, and produces consistent output naming. Raw `cat | cycc` is for compiler-internal self-host (the verifier script + bootstrap chain) — not consumer code.
 - **Assembly is the cornerstone** — understand every instruction the compiler emits
 - **Test after EVERY change** — not after the feature is "done"
 - **ONE change at a time** — never bundle unrelated changes
@@ -170,8 +171,8 @@ docs/                Architecture, roadmap, benchmarks, language guide
 ## Key References
 
 - `docs/guides/cyrius-guide.md` — Complete language reference
-- `docs/development/roadmap.md` — Current-cycle remaining work only (lean, refreshed at cycle close)
-- `docs/development/roadmap-old.md` — Prior roadmap held verbatim for cleanout; source for v6.x items to pull forward at v5.x close
+- `docs/development/roadmap.md` — Current-cycle (v6.x) remaining work
+- `docs/development/roadmap-future.md` — Long-term watching list (unpinned items, speculative work, v7.0+ aspirations)
 - `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape)
 - `docs/development/state.md` — Volatile cycle / pin / sweep state (refreshed every release)
 - `docs/doc-health.md` — Living doc-currency ledger (per-tier fresh / stale / archived; refreshed when docs are touched)

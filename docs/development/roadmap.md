@@ -1,12 +1,11 @@
-# Cyrius Development Roadmap
+# Cyrius Development Roadmap — v6.x
 
-**Scope** — only the **current cycle** (v5.11.x) **remaining** work.
-Everything else — long-term considerations, v6.x pre-pinned work,
-v5.x platform / toolchain / language sections, ecosystem snapshot —
-lives in [roadmap-old.md](roadmap-old.md) pending cleanout. The 6.x
-items will be pulled forward into this file once v5.x closes; the
-v5.x retrospective material will migrate to `completed-phases.md`
-under the same archive pattern used for prior cycles.
+**Scope** — the v6.x cycle (post-v6.0.0 cycle-open 2026-05-19).
+Items outside the current minor — v7.0+ aspirations, unpinned
+language refinements, speculative work — live in
+[roadmap-future.md](roadmap-future.md). v5.x history is canonical
+in [`CHANGELOG.md`](../../CHANGELOG.md) per-patch and in
+[completed-phases.md](completed-phases.md) for arc retrospective.
 
 ## See also
 
@@ -15,258 +14,511 @@ under the same archive pattern used for prior cycles.
   cross-host smoke, cycle-close shape). Evergreen; not cycle-specific.
 - [state.md](state.md) — volatile current state (version, cycc size,
   in-flight slot, recent shipped patches). Refreshed every release.
+- [roadmap-future.md](roadmap-future.md) — long-term watching list
+  (unpinned items, speculative type-system work, v7.0+ aspirations).
 - [completed-phases.md](completed-phases.md) — pre-v5.11.x historical
   arc retrospective (Phase 0–11 foundation summary post-trim).
-- [roadmap-old.md](roadmap-old.md) — full prior roadmap held verbatim
-  for cleanout; source for v6.x items to pull in at cycle close.
 - [`CHANGELOG.md`](../../CHANGELOG.md) — per-patch source of truth.
 
----
+## v6.x framing
 
-## v5.11.x — Final 5.x minor (close-out arc)
+v5.x froze "what the language IS." **v6.x is what the language
+gains** — new platforms, position-independent codegen, language
+features (closures, generics, async syntax), Class B FFI fix,
+cross-BB regalloc + the deferred optimization passes that gate on
+it. Plus a dedicated middle-late perf-refactor minor to absorb the
+accumulated growth-tax from v5.x feature work + early-v6.x platform
+additions.
 
-v5.11.x is the **last minor of the v5.x line**. All work that
-closes the v5.x arc — user-binary ELF cleanup, stdlib data-domain
-carve-out (bayan + ganita), parser-to-emit named-op refactor,
-sovereignty/polish remainders, and the pre-v6.0 heap-map full
-reorganization — lands here, sealing the cycle at the
-**v5.11.68 / v5.11.69 close pair** — heap-map full reorganization
-at .68 (the true closeout engineering work), with .69 reserved
-for any dep foldins that earn their slot during the window
-(mabda 3.0 GA conditional; if no fold lands, .68 is the final
-v5.x patch).
+## v6.x cycle budgeting
 
-Anything that would expand the language's *capabilities* — new
-platforms, new language features, new linker modes — moves to
-v6.x. The v5.x → v6.x boundary is now: **v5.x = "what the language
-IS"; v6.x = "new platforms + advanced features the language gains."**
+**Per-minor target**: ~30-slot budget = 20 planned + 10 bug
+bandwidth (per user direction 2026-05-19). Can flex to 40-50 like
+late v5.x cycles when a minor's substantive new-code surface
+warrants it (notably v6.2.x platform expansion + v6.4.x ABI+Perf
+arcs).
 
-Per-patch detail for v5.11.0 → current ships lives in
-[CHANGELOG.md](../../CHANGELOG.md); current-state snapshot lives
-in [state.md](state.md).
-
-### Shipped this cycle (v5.11.47 → v5.11.68)
-
-Per-slot detail in [CHANGELOG.md](../../CHANGELOG.md). One-liner
-ledger below; expanded narrative for shipped work lives in CHANGELOG
-+ state.md per `feedback_doc_canonical_no_redundancy`.
-
-**gnoboot AGNOS unblock arc (.47-.49, .51-.53)**
-- **.47** — UEFI Application PE emit mode P1: `_TARGET_EFI_APPLICATION` flag, Subsystem 3→0xA, EEXIT EFI variant, ExitProcess import skip, `_pe_ensure_*` refactor (9 helpers → 1).
-- **.48** — `programs/efi_probe.cyr` + structural gate (`_efi_emit_gate()`); check.sh 70 → 71.
-- **.49** — OVMF runtime smoke + RELOCS_STRIPPED clear; arc CLOSED. AGNOS unblocked to start writing gnoboot proper against `cyrius = "5.11.49"`. Memory pin: `project_agnos_path_c_gnoboot`.
-- **.51** — Byte-array literal `var foo[N] = { 0x.., 0x.., ... }`; new `EADDRA_IMM` named op + PARSE_GVAR_ARR extension. 26-assert tcyr.
-- **.52** — `fn efi_main(handle, st)` entry convention + `CYRIUS_TARGET_EFI` predefine. Both gnoboot ergonomic filings closed same-day.
-- **.53** — Hotfix: efi_main trampoline entry-save REX prefix 0x4C → 0x49 (MR-form REX.R vs REX.B for r14/r15-as-dst).
-
-**Cycle infrastructure / polish (.50, .54-.55)**
-- **.50** — Cap-drift detector + doc-size currency gates + fresh-tier doc refresh.
-- **.54** — LSP papercut close + REX named ops + `_find_fn_by_name` helper; cycc first shrink in v5.11.x.
-- **.55** — Refactor sweep — cap-drift gate extends to all 6 parse_*.cyr files; ESWITCH_DISPATCH_* named ops.
-
-**Iron-boot session papercut close (.56-.59)**
-- **.56** — Build-diagnostic polish: LSP `[deps.*]` resolution fix (raw cycc → wrapper); fixup-time wording downgrade error → warning + "(call site may be unreachable)".
-- **.57** — cycc-side pin-drift + shadow-content detection (`_check_cyml_pin_drift()` + `_check_shadow_lib` byte-size compare).
-- **.58** — Wrapper polish: version-bump rebuild fix (transitive `version_str.cyr` dep) + `cyrius lib sync` + wrapper `--strict-pin` + `--version` manifest-pin line.
-- **.59** — DCE-aware undefined-fn reachability filter (cross-arch x86 + aarch64). aarch64 gained full DCE infrastructure for the first time. Pre-existing strict-mode parity gap acknowledged → pinned at .63.
-
-**commandress papercut absorber band (.60-.63, all 4 slots shipped 2026-05-18)**
-- **.60** — `lib/process.cyr` bug-fix pair (Items 6 + 7): `_exec3 var argv[4]` → `var argv[40]` byte-contract fix + stderr→/dev/null dup2 across vec-based `exec_capture`/`exec_env`/`exec_capture_str`/`exec_env_str`. New `tests/tcyr/process_run_capture_args.tcyr` (6 sub-asserts).
-- **.61** — `lib/toml.cyr::toml_parse_file` heap-alloc rewrite (Item 2): 256 KB on-fn-scope buffer → `alloc()`; mirrors `toml_parse_file_r` v5.8.30. −256 KB bss in any consumer that includes `lib/toml.cyr`.
-- **.62** — Compiler/tooling pair (Items 5 + 1): Item 5 reframed at slot entry after premise check (CYRIUS_DCE=1 NOPs `.text` only, doesn't shrink bss — empirically verified). Ships dead-fn `.bss` attribution hint via new `fn_var_bytes [8192]` heap region at 0x1C8000 + per-fn parser tracking; warning now shows "M bytes inside N unreachable fn(s)". commandress: 92 % of bss attributable. Drive-by 2-byte fix to pre-existing warning byte-count bug. Item 1: `cyrius init` bench scaffold uses real `bench_new` + `bench_batch_*` API + `bench` added to default `[deps.stdlib]`.
-- **.63** — aarch64 `_strict_mode` parity (.59 retro follow-up): `_strict_mode` global + `/proc/self/cmdline` parsing added to all three `main_aarch64*.cyr` variants; `src/backend/aarch64/fixup.cyr` strict-exit mirrors x86 lines 729-738. Drive-by: wrapper `--strict` plumbing extended to BOTH archs (was absent for both pre-.63). Band CLOSED.
-
-**v6.0 runway (.64-.67)**
-- **.64** — agnos gvar-init-order fix: top-level `var X = INT_LITERAL ;` declarations now bake the literal into the file image at FIXUP-time via new `gvar_initval` / `gvar_byte_off` tables (cross-arch x86 + aarch64 + Mach-O + PE; cx opts out). Closes 10-iron-burn root-cause search; cycc SHRANK 2,384 B from eliminating runtime stores for cycc's own TS_TOK_* gvars.
-- **.65** — CVE-05 split forward from .68: tok_names mangle-path write-boundary guard. 11 mangle sites (BUILD_METHOD_NAME / BUILD_OP_NAME / PARSE_FN_DEF module-mangle / variant-ctor × 2 / use-alias × 6 main_*.cyr variants) replaced magic-256 NPOS_GUARD with computed-source-length shape; 4 of the 6 main_*.cyr variants had no prior tok_names guard at all on the use-alias path. `_cve05_guard_gate` locks the magic-256 pattern out. check.sh 75 → 76. .68 stays a pure heap-map reorg.
-- **.66** — Bridge-compiler retirement: `src/bridge.cyr` deleted (2,005 LoC). Audit confirmed bridge was never in active bootstrap chain (`seed → cybs → asm` is the real chain; cycc is built standalone). 150 `bridge::*` entries cleanly removed from `docs/api-surface.snapshot` via regeneration. CLAUDE.md Key Principle + project structure listing + util.cyr comment + ADR-001 historical note all updated. One v6.0.0 accompanying-refactor item absorbed into v5.x close.
-- **.67** — Triple-pull bundle of v6.0.0 accompanying-refactor items (effectively a double-pull after premise-check at slot entry caught `cyrius build --strict` plumbing already shipped at v5.11.63): (1) `scripts/build-cycc-verify.sh` (~100 LoC bash) — formalizes the cycc byte-identical fixpoint verifier, ad-hoc one-liners now permanent; renames to `build-cyc.sh` at v6.0.0; (2) cc3-era residue cleanup — `docs/adr/005-two-step-bootstrap.md` rewritten with stage_a/stage_b convention (was using cc3/cc4 ambiguously throughout an active ADR), `docs/doc-health.md` vidya example syntax updated, `roadmap-old.md` self-references marked done. README also updated for the post-bridge bootstrap chain. Byte-array literal peephole moved out to v6.0.x per user direction "put the pinned byte-array into 6.0.x line of work now."
-- **.68** — Heap-map full reorganization (true closeout engineering work): closes all four documented closeable gaps from the v5.8.61 minimum-blast-radius pass — 2.24 MB + 6 MB + 448 KB + 448 KB = 9.06 MB reclaimed. brk shrinks 0x56AD000 → **0x4D9D000** (-9.06 MB / ~77.6 MB total heap, was ~86.6 MB). 13.3 MB TS frontend reservation preserved. Cascade across four groups: codebuf + output_buf (-2.24 MB) → struct_ftypes (-8.19 MB) → struct_fnames (-8.62 MB) → 25+ regions through preprocess_out (-9.06 MB). ~32 distinct hex constants replace_all'd across 20 src/ files. Windows MMAP shrunk 0x5800000 → 0x4F00000. cycc byte-identical at 874,232 B; cross-arch unchanged. heapmap.sh: 99 regions, monotonic 0x00000 → brk except single TS reservation.
-
-Issue file `2026-05-17-commandress-stdlib-papercuts.md` archived after .63 ship; .64 absorbed the agnos gvar-init-order fix, .65 shipped CVE-05 split forward from .68 (tok_names mangle-path guard; per-region overflow checks). v6.0-runway scope confirmed at .65 entry per user direction 2026-05-19 "start the march to 6.0".
+Reference points: v5.11.x = 70 slots (longest in history),
+v5.7.x = 49. v6.x cycles target a middle-ground — most minors
+in the 30-40 range, with the substantive-new-code minors flexing
+higher.
 
 ---
 
-### Stdlib data-domain distlib carve-out (bayan + ganita)
+## v6.0.x — Language Cleanup + Stdlib Expansion + Stdlib Clean-Slate
 
-Two sandhi-fold siblings carved out of stdlib using the v5.7.0
-sandhi pattern (sakshi / patra / sigil precedent):
+**Theme**: absorb leftover v5.x runway-carryover items + small
+language QoL improvements + holdovers, paired with the
+near-imminent mabda 3.0 GA stdlib clean-slate (mabda fold +
+bayan/ganita carve, all together).
 
-- **bayan** — `json`, `toml`, `cyml`, `csv`, `base64`, `bigint`, `u128`
-- **ganita** — `matrix`, `linalg`, advanced math
+**Shipped**:
+- **v6.0.0** — two-binary rename ceremony: `cyrc → cybs` (Cyrius
+  Bootstrap) + `cc5 → cycc` (Cyrius Computer Compiler). Bootstrap
+  chain `seed (asm) → cybs → cycc`. ~2,100 occurrences renamed
+  across ~157 files; historical narrative preserved.
 
-Math primitives + regex stay in stdlib. Naming convention:
-`<sibling>_<module>_*`. Hisab is **out of scope** for this carve
-(parallel-universe external dep, not stdlib material).
+### v6.0-runway carry-forward (5 items from v5.11.x close band)
+
+The v5.11.x close absorbed 5 of 10 v6.0.0 accompanying-refactor
+items into v5.x close (CVE-05, bridge retirement, build-cycc-
+verify.sh skeleton, cc3-residue cleanup, heap-map full reorg).
+The remaining 5 land in v6.0.x:
+
+- **Byte-array literal peephole** — 5× emit compression for
+  `var foo[N] = { 0x.., ... };` init via `mov byte [rcx+disp8],
+  imm8` (x86) / STRB Wn, [Xn, imm12] (aarch64) / cx peer. Moved
+  here from v5.11.66/.67 at user direction. Acceptance: cycc
+  byte-identical; gnoboot binary shrinks visibly (~1300 B per
+  UTF-16LE string, ~250 B per EFI GUID). Cross-arch propagation
+  per `feedback_cross_arch_propagation_mandatory`.
+- **Dead-code careful sweep** — walk cycc's reported unreachable
+  fns. Per [`feedback_dead_code_audit_scope`]: scaffold (TS_*/
+  ir_*/cross-arch helpers) stays alive by default; only
+  confirmed-dead removable. Risk: 0-LoC outcome if all
+  candidates classify as scaffold.
+- **Return-patch buffer → vec** — proposal Option C
+  ([`proposals/archived/2026-05-08-raise-return-cap.md`](proposals/archived/2026-05-08-raise-return-cap.md)).
+  Convert fixed 256-cap array at `S + 0x18DA20` to growable
+  vec; removes magic-number'd parser-state field entirely.
+  **Requires allocator pulled into cycc** (currently no
+  `lib/alloc.cyr` included — v5.11.67 premise-check confirmed
+  this surface is "more invasive than a literal-bump").
+  Acceptance: cycc byte-identical post-conversion.
+- **`_TARGET_*` flag consolidation** — `_TARGET_MACHO`,
+  `_TARGET_PE`, `CYRIUS_TARGET_LINUX/WIN/MACOS`, `_AARCH64_BACKEND`,
+  plus per-arch `EWRITE_PE` / `_pe_pending_imp_add` / `EDISP32`
+  shim families. Consolidate into a single backend-dispatch
+  table keyed on `(arch, format)`. Substantial multi-slot
+  refactor; lands here per user direction "keep in v6.0.x
+  bundle".
+- **Backend module collapse where viable** — `src/backend/x86/`
+  and `src/backend/aarch64/` parallel `emit.cyr` / `jump.cyr` /
+  `fixup.cyr`. Audit which helpers can move to
+  `src/backend/common/` without entangling asm-byte tables.
+
+### Stdlib QoL expansion
+
+- **POSIX `*at()` family** — `openat`, `mkdirat`, `unlinkat`,
+  `fstatat`, `linkat`, `renameat`, `fchmodat`, `utimensat` +
+  `AT_FDCWD` / `AT_SYMLINK_NOFOLLOW` / `AT_REMOVEDIR` /
+  `AT_SYMLINK_FOLLOW` consts + bare-name peers (`sys_lstat`,
+  `sys_link`, `sys_rename`). kriya M2 surfaced this gap;
+  agnos likely co-consumer. Proposal:
+  [`proposals/2026-05-17-syscalls-at-family-stdlib.md`](proposals/2026-05-17-syscalls-at-family-stdlib.md).
+- **TOML `[section]` single-bracket** in `lib/toml.cyr` —
+  spec-conformant single-table syntax alongside existing
+  `[[name]]` array-of-tables. ~10 LOC change in `toml_parse`'s
+  dispatch. commandress config-loader driver. Proposal:
+  [`proposals/2026-05-17-toml-single-bracket-sections.md`](proposals/2026-05-17-toml-single-bracket-sections.md).
+- **Octal literal syntax** (`0o755`) — lexer-only feature,
+  ~30 LOC in `src/frontend/lex.cyr::LEXNUM` + new `LEXOCT`
+  routine. kriya M2 surfaced this for POSIX file-mode constants.
+  Proposal:
+  [`proposals/2026-05-17-octal-literal-syntax.md`](proposals/2026-05-17-octal-literal-syntax.md).
+
+### Holdovers
+
+- **Build-artifact pre-commit hook** — generalize the v5.11.45
+  `_cc5_contamination_gate` (now `_cycc_contamination_gate`)
+  from "catch after the fact" to "refuse the commit". Adds a
+  `cyrius hooks install` verb that installs `.git/hooks/pre-
+  commit` checking for foreign-binary strings, size sanity, and
+  ELF magic on `build/<bin>` commits. Issue:
+  [`issues/2026-05-13-build-artifact-precommit-hook.md`](issues/2026-05-13-build-artifact-precommit-hook.md).
+- **Cyim regex unblock** (mabda C6) — consumer-gated holdover.
+  Land when cyim repo updates + re-tests against v6.x. May not
+  fire in v6.0.x window.
+
+### Stdlib clean-slate — mabda 3.0 GA fold + bayan/ganita carve
+
+**Status**: near-imminent. mabda 3.0.0-rc.3 passed its initial
+soak window 2026-05-19; one 24-hour soak away from GA. Fold +
+carve land together as the v6.0.x **primary stdlib arc** when
+mabda 3.0 GA cuts.
+
+Per user direction 2026-05-19: "stdlib stuff will wait until
+mabda is 3.0 GA so we can clean slate and update all the items
+together... most likely will happen in 6.0.x cycle".
+
+**Three-part atomic update**:
+
+1. **mabda 3.0 fold** into stdlib using the v5.7.0 sandhi pattern
+   (sakshi/patra/sigil/vani/yukti/sankoch v5.8.x precedent; niyama
+   v5.9.0). Sister fold: agnosys (transitive via mabda).
+
+2. **bayan distfile carve** — extract `json` / `toml` / `cyml` /
+   `csv` / `base64` / `bigint` / `u128` modules from stdlib into
+   sibling repo + `[deps.bayan]` resolution. Naming convention
+   `bayan_<module>_*`. Math primitives + regex stay in stdlib.
+
+3. **ganita distfile carve** — extract `matrix` / `linalg` /
+   advanced math from stdlib into sibling repo + `[deps.ganita]`
+   resolution. Naming convention `ganita_<module>_*`.
 
 After the carve, stdlib stays primitives-only — bare-metal
-consumers in v6.x's RISC-V / firmware work won't drag the data
+consumers in v6.2.x's RISC-V / firmware work won't drag the data
 offshoots into kernel objects.
 
-Memory pin: `project_bayan_ganita_carve_arc`.
+**Class B FFI / wgpu fncall6 ABI**: if mabda 3.0 GA shipped clean
+(rc3 soak passing → GA is the test), the Class B FFI work doesn't
+gate the fold. Class B FFI ABI fix proper lands in v6.4.x
+regardless. If mabda 3.0 GA gates on the ABI fix in rare
+unforeseen circumstance, fold + ABI move together to v6.4.x.
 
-### Sovereignty / polish / consumer-filed buffer
+Memory pins: [`project_bayan_ganita_carve_arc`],
+[`project_mabda_rc3_at_closeout`] (carried forward from v5.x).
 
-The band between named slots (current → .68, roughly 25 slots) is
-the explicit absorber for items that surface during the cycle:
-emergent consumer bugs, doc-health follow-ups, audit-pinned
-peephole patterns, sovereignty pass remainders, agnosys
-post-release polish. Same default-bias as prior cycles — ride
-the cap rather than silently expanding; if the buffer truly
-fills, surface the pressure rather than punting.
+### Slot estimate (v6.0.x)
 
-**Held forward** (still gated on consumer-surface triggers):
+| Cluster | Slots |
+|---|---|
+| Runway carry-forward (5 items) | ~16 |
+| Stdlib QoL (POSIX *at + TOML + octal) | ~7 |
+| Holdovers (pre-commit hook + cyim conditional) | ~2-3 |
+| Stdlib clean-slate (mabda fold + bayan + ganita) | ~6-8 |
+| **Total planned** | **~31-34** |
+| Bug bandwidth | ~10 |
+| **Budget** | **~41-44** |
 
-- **Class B FFI / wgpu fncall6 ABI** (mabda B1/B2) — held per
-  v5.10.20 P(-1) sweep direction; pin if mabda resurfaces.
-- **`cyim` regex pattern parse error** (mabda C6) — defer per
-  user 2026-05-12 until cyim repo updates + re-tests against
-  current cyrius.
+The stdlib clean-slate flexes total slot count above the 30
+target — acceptable given the "clean slate, update all together"
+intent. If mabda GA slips past v6.0.x window, the stdlib portion
+defers and v6.0.x lands at ~25 planned slots.
 
-### mabda 3.0 GA fold — dropped from v5.11.x (2026-05-19)
+### Deferred to v6.1.0 cut
 
-User direction at .67 ship: "no mabda fold". The conditional
-fold that was originally pinned for v5.11.69 (gated on mabda
-3.0 GA cutting + 24-hour soak passing) is no longer in scope
-for v5.11.x. mabda stays as a git `[deps.*]` resolution
-through v6.x or until the fold is re-pinned in a future cycle.
-
-Class B FFI / wgpu fncall6 ABI work continues to track in
-v6.4.x as previously pinned — that decision is independent of
-the fold dropping.
-
-### Byte-array literal peephole — moved to v6.0.x (2026-05-19)
-
-The v5.11.51 byte-array literal peephole (5× emit compression
-for `var foo[N] = { ... }` init via `mov byte [rcx+disp8], imm8`)
-was originally pinned at v5.11.66 / v5.11.67. Per user direction
-2026-05-19 ("put the pinned byte-array into 6.0.x line of work
-now"), the work moved out of v5.11.x and into v6.0.x — it's
-optimization-shape, not v5.x close-out shape. Scope + cross-arch
-plan preserved in `docs/development/roadmap-old.md` under v6.x.
-
-The .66 + .67 slots that held it shipped other v6.0-runway
-items instead: .66 retired `src/bridge.cyr`, .67 shipped the
-build-cycc-verify.sh + cc3-era residue triple-pull
-(double-pull post-premise-check).
-
-### v5.11.68 — Heap-map full reorganization (true closeout)
-
-The last substantive engineering work before v6.0.0 opens.
-Originally pinned 2026-05-05 at v5.8.61 ship as the documented
-"last-minor-before-v6.0 effort"; re-pinned to v5.11.68 at the
-2026-05-12 tight-close. **CVE-05 was unpinned from this slot at
-v5.11.65** — the audit at slot entry confirmed earlier work
-(CVE-06 + `EB` + `NPOS_GUARD`) already covered the bulk of the
-write-boundary surface, and the remaining tok_names mangle-path
-gap was orthogonal to the heap-map layout reshuffle. .68 now
-stays a pure layout reorg per "Big Heavy One Thing" — the .65
-ship handles the write-side checks; the long-term
-`mmap`-with-guard-pages split tracks separately for v6.x.
-
-**Why .68 and not .69**: .68 is the Big Heavy heap-map
-engineering; .69 is reserved as **another v6.0-runway item**
-(user direction 2026-05-19 after .67 ship: "no mabda fold and
-we will make .69 another pre 6.0 item"). The split keeps the
-heap-map reorg cleanly bisectable from whatever .69 absorbs.
-
-**Remaining gaps post v5.8.61's minimum-blast-radius reorg**
-(~22 MB of unused heap reserved as documented headroom):
-
-- `0x41A000..0x44A000` (192 KB) — pad before preprocess_out
-- `0xB4A000..0x114A000` (6 MB) — output_buf → struct_ftypes gap
-- `0x115A000..0x11CA000` (450 KB) — struct_ftypes → struct_fnames
-- `0x11DA000..0x128A000` (700 KB) — struct_fnames → fn_names
-- `0x290B000..0x368C000` (13.5 MB) — **TS frontend functional
-  reservation; DO NOT CLOSE** unless TS frontend is retired
-
-**Closeable**: 8.4 MB across 4 gaps (excluding the TS reservation).
-
-**Scope estimate** (per the v5.8.61 audit):
-
-- ~200 references to shift across struct_*/fn_*/ir/fixup/tok
-  region offsets
-- ~750 references to relocate scratch state at
-  `0x18C100..0x1A6018` if the band consolidates
-- Total: 800-1000 edits across 20+ source files
-- Two-step bootstrap audit at byte-identity criticality
-
-Done as its own slot (not bundled) per cycle-discipline
-("Big Heavy One Thing"). Substantial enough that bundling would
-obscure the bisect target if anything regresses; the v5.8.61
-minimum-blast pass already proved the safer per-region approach
-is viable.
-
-**Reference**: full audit data in v5.8.61 CHANGELOG entry +
-`tests/heapmap.sh` output (84 regions documented).
-
-### v5.11.69 — Another v6.0-runway item (TBD at slot entry)
-
-Continues the .64-.67 v6.0-runway thread. User direction
-2026-05-19 retired the original conditional mabda-fold framing:
-"no mabda fold and we will make .69 another pre 6.0 item."
-Candidate selection happens at slot entry per
-[`feedback-no-unilateral-scope-decisions`] — pool drawn from
-[roadmap-old.md](roadmap-old.md) § v6.0.0 accompanying-refactor
-+ closeout list (dead-code careful sweep, vidya bulk refresh,
-security re-scan, downstream check, or another candidate
-surfaced during the .68 ship).
-
-Mabda 3.0 fold is **dropped from v5.11.x entirely** — stays as
-a git `[deps.*]` resolution through v6.x or until re-pinned in
-a future cycle. Class B FFI / wgpu fncall6 ABI work continues
-to track in v6.4.x as previously pinned.
+- v6.0.x → v6.1.0 back-compat symlink drop (cc5 → cycc + cyrc →
+  cybs in install snapshot + cbt/core.cyr lookup fallback). Per
+  the v6.0.0 transition policy.
 
 ---
 
-## What comes after v5.x
+## v6.1.x — Backend Codegen Multi-Arc
 
-v6.x scope (PIE codegen, bare-metal formalization + RISC-V rv64,
-language refinements, Class B FFI fold, cross-BB regalloc, items
-lifted from long-term considerations) lives in
-[roadmap-old.md](roadmap-old.md) under the v6.x sections, pending
-pull-forward into this file at v5.x close. The v5.x → v6.x
-boundary is clean: v5.x = "what the language IS"; v6.x = "new
-platforms + advanced features the language gains."
+**Theme**: position-independent codegen + dynamic-link migration
++ v6.0.x back-compat retirement. Multi-arc minor with 3 sub-arcs.
 
-### v6.x review queue (noted-not-pressing for v5.11.x)
+Per user direction 2026-05-19: "defer larger items for multi-arc
+in 6.1.x".
 
-Items surfaced during the v5.11.x cycle that don't warrant
-in-cycle action but should be reviewed at v6.0.0 cycle-open
-when the broader v6.x roadmap is pulled forward.
+### Sub-arc A — PIE codegen x86_64 (Option A: kernel-mode only)
 
-- **Self-compile time growth audit** (surfaced 2026-05-18
-  doc-health sweep, framing adjusted per user direction same
-  day): `bench-history.sh` tier-3 shows self_compile **244 ms
-  → 404 ms (+160 ms / +65 %)** between commits `a17a8de`
-  (2026-04-18, post-v5.10.50) and `f60ec9b2` (2026-05-18,
-  post-v5.11.63). The 1-month / ~30-patch baseline spread is
-  itself the tell that this is **growth, not regression**.
-  Window covers: stdlib annotation arc (.0-.7), TS test
-  harness (.11), parser-to-emit named-op refactor (.35-.39),
-  ELF section header arc (.29-.34), byte-array literal (.51),
-  UEFI Application emit mode (.47-.49 + .52-.53), DCE-aware
-  reachability filter cross-arch (.59 — full aarch64 DCE
-  pass, ~200 LoC NEW), per-fn array-bytes attribution parser
-  tracking (.62), aarch64 `_strict_mode` parity (.63). Averages
-  to roughly +5 ms/patch of in-cycle feature work — expected
-  for the kind of work shipped (more parser tracking, more
-  dispatch checks, more cross-arch propagation). **Growth tax
-  to evaluate, not regression to bisect**: cycc binary grew
-  only +1,072 B over the same window, so the cost is
-  parse/codegen overhead, not output bloat.
-  **Likely shape at v6.x review**: v6.x adds its own growth-
-  creating surfaces (PIE codegen, bare-metal + RISC-V rv64,
-  Class B FFI, language refinements) so the audit moves
-  late in the v6.x cycle once those have landed and the new
-  baseline is established. Form factor likely a **dedicated
-  perf-refactor minor** (vs the v5.10.40/.41 2-slot miniarc
-  inside a regular minor) — too much accumulated surface
-  across 5.x + early-v6.x to clean up in 2 slots, and a
-  whole minor lets the refactor breathe without bumping
-  capability work. First step at audit: capture intermediate
-  datapoints via on-quiet-box `bench-history.sh` runs so the
-  trend has more than 2 endpoints; gradual-accretion vs
-  one-patch-dominates determines whether bisection is even
-  productive (gradual is the likelier shape given the work
-  mix).
+`--pie` build flag emitting RIP-relative codegen: `lea rax,
+[rip + rel32]` instead of `mov rax, imm64` for absolute-address
+loads; fixup-table machinery learns whether each fixup is
+absolute (old mode) or RIP-relative (new mode). Userland
+binaries + stdlib distfiles continue to use non-PIE path
+unchanged.
+
+**AGNOS as first consumer**: full-binary KASLR (Option A in
+agnos's `2026-05-11-kaslr-scope.md`). AGNOS v1.28.0 ships
+data-only KASLR which doesn't need PIE; pressure here is "when
+AGNOS wants full binary relocation" — uncertain timing but
+likely materializes during v6.x.
+
+Work surface: ~200-400 LOC across `src/backend/x86/emit.cyr` +
+`fixup.cyr`, plus `parse_expr.cyr` fns handling `&fn_name` /
+`&global_var` in PIE mode.
+
+Reference proposal:
+[`proposals/2026-05-11-pie-support.md`](proposals/2026-05-11-pie-support.md).
+
+### Sub-arc B — PIE codegen aarch64
+
+`adrp` + `add` on aarch64 replacing the 4-chunk `movz`/`movk`
+absolute-address sequence. Lands after x86 sub-arc validates the
+fixup-table changes are shape-correct cross-arch.
+
+### Sub-arc C — `.gnu.hash` migration + dynamic-link cleanup
+
+Long-term `.gnu.hash` pin deferred at v5.6.38 (no consumer
+pressure) earns its slot here — modern dynamic loaders prefer
+`.gnu.hash`'s Bloom filter pre-check over the SysV `.hash` chain
+walk, and PIE binaries that go through `dlopen` / symbol
+resolution see the measurable difference. Land as part of
+v6.1.x dynamic-link work; drop SysV `.hash` once `.gnu.hash` is
+in place.
+
+### v6.1.0 — Back-compat symlink drop
+
+- Drop `~/.cyrius/bin/cc5 → cycc` + `~/.cyrius/bin/cyrc → cybs`
+  symlinks from `scripts/install.sh` release path.
+- Drop `cbt/core.cyr` lookup fallback (compiler-binary search
+  tries cycc only; no fallback to cc5).
+- Same shape for cross-arch symlinks (`cc5_aarch64 → cycc_aarch64`,
+  `cc5_win → cycc_win`).
+
+### Slot estimate (v6.1.x)
+
+| Sub-arc | Slots |
+|---|---|
+| PIE x86_64 (Option A — kernel-mode) | ~6 |
+| PIE aarch64 | ~3 |
+| `.gnu.hash` migration + drop SysV `.hash` | ~4 |
+| Back-compat symlink drop (v6.1.0) | ~1 |
+| AGNOS PIE smoke gate + cross-host verify | ~2 |
+| **Total planned** | **~16** |
+| Bug bandwidth | ~10 |
+| **Budget** | **~26** |
+
+---
+
+## v6.2.x — Platform Expansion (Bare-metal + RISC-V rv64)
+
+**Theme**: 4th platform peer (RISC-V rv64) + bare-metal target
+codification. Substantial new-code minor; substrate prerequisites
+all landed in v5.11.x close (parser-to-emit named-op refactor,
+heap-map full reorg) + v6.1.x backend codegen.
+
+Per user direction 2026-05-19: "previous C items lets break up
+logically into prioritized proposals into 6.2.x and 6.3.x" —
+platform work (bottom-to-top priority) takes v6.2.x.
+
+### v6.2.0 — Bare-metal target formalization
+
+Codify the ad-hoc bare-metal mode that agnos has been using
+since first boot into a first-class
+`--target bare-metal-x86_64-elf` (and aarch64 peer) triple.
+Six deliverables:
+
+1. Formal target triple (`<arch>-bare-metal-elf`)
+2. ELF no-libc output format (no PT_INTERP, no DT_NEEDED, no
+   _start expecting libc init)
+3. Interrupt-handler emit conventions (`naked_fn` attribute —
+   no prologue/epilogue, manual register save/restore)
+4. Kernel-mode stdlib subset (forbidden-module check errors
+   when bare-metal code pulls host-OS modules)
+5. Linker-script / section-placement control via `[sections]`
+   block in `cyrius.cyml`
+6. Inline assembly primitives for kernel work: `cli`/`sti`/`hlt`,
+   port I/O (`in`/`out`), memory barriers (`mfence`/`lfence`/
+   `sfence`), `cpuid`
+
+**Acceptance**: rebuilding the agnos kernel with `--target
+bare-metal-x86_64-elf` produces a byte-identical artifact to the
+current ad-hoc build; forbidden-module check errors clearly when
+bare-metal code pulls host-OS modules;
+`examples/firmware-hello.cyr` demonstrates the target outside
+of agnos.
+
+**Important framing**: bare-metal is **formalization, not
+enablement**. The agnos kernel already builds and boots without
+this target; v6.2.0 is a QoL feature for future bare-metal
+Cyrius consumers (firmware, alt-kernels, embedded). It does NOT
+gate AGNOS MVP.
+
+### v6.2.x — RISC-V rv64 backend
+
+First-class RISC-V 64-bit target. The 4th platform peer after
+x86_64 / aarch64 / PE-x86_64. Substrate prerequisites already
+landed: typed-simd ABI (v5.x), REAL TYPE SYSTEM (v5.10.x),
+struct-byval ABI (v5.10.x), parser-to-emit named-op refactor
+(v5.11.x close).
+
+**Scope**:
+- New backend: `src/backend/riscv64/{emit,jump,fixup}.cyr`
+- New stdlib syscall peer: `lib/syscalls_riscv64_linux.cyr`
+- New cross-entry: `src/main_riscv64.cyr`
+- New test runner: QEMU + HiFive Unmatched (or equivalent rv64
+  hardware) for self-host verify
+- New CI matrix arm
+
+**Acceptance gates**:
+1. Cross-compiler `build/cycc_riscv64` emits valid rv64 ELF
+   that `file(1)` identifies.
+2. Single-syscall "exit 42" probe runs under
+   `qemu-riscv64-static`.
+3. Hello-world via `sys_write` + `sys_exit` runs under QEMU.
+4. Self-host byte-identical on real rv64 hardware (hardware-
+   gated like the aarch64 ssh-pi check).
+5. `[release].cross_bins` in `cyrius.cyml` gets a
+   `cycc_riscv64` entry.
+
+### Slot estimate (v6.2.x)
+
+| Cluster | Slots |
+|---|---|
+| Bare-metal target formalization (6 deliverables) | ~8 |
+| RISC-V rv64 backend (new emit/jump/fixup + syscalls peer) | ~12 |
+| Cross-arch test harness + CI matrix | ~3 |
+| Hardware self-host gate (HiFive Unmatched or equivalent) | ~2 |
+| **Total planned** | **~25** |
+| Bug bandwidth | ~10 |
+| **Budget** | **~35** |
+
+Larger minor — flexes above 30 budget per user direction
+"larger patch bandwidth like the last few minor cycles of 5.x"
+when substantive new-code surface warrants.
+
+---
+
+## v6.3.x — Language Refinements
+
+**Theme**: language-level closures + generics + async sugar.
+Three syntactic/semantic additions the v5.x cycle held out
+explicitly (per 2026-05-12 tight-close).
+
+Per user direction 2026-05-19: language work (mid-priority,
+above ABI/perf) takes v6.3.x.
+
+### Closures with lexical capture
+
+Today: function pointers + lambda-pattern workarounds (see
+`lib/fnptr.cyr`). Gotcha #8 in v5.x Language Refinements table —
+consumers feel the absence.
+
+**Scope**: closure literals + lexical-capture analysis +
+closure-environment lowering (allocate-on-construct, deallocate
+when closure pointer goes out of scope; vtable-shaped indirect
+call). Pairs with existing trait/vtable infrastructure
+(`lib/trait.cyr`). v5.8.x ADTs (sum types + exhaustive match +
+Result + ?) make captured-state encoding cleaner than it would
+have been pre-v5.8.
+
+### Real generic instantiation (monomorphization)
+
+Today: generics parse (type params accepted at `SKIP_GENERICS`
+in `src/frontend/parse_decl.cyr`) but erase at compile time —
+no monomorphization, type-check semantics are weakest-applicable.
+Test floor: `tests/tcyr/enum_generics.tcyr` (v5.8.21 syntax-
+acceptance only).
+
+**Scope**: type checker recognizes type parameters as
+concrete-at-instantiation; emit-time substitution generates
+per-monomorph code. Kavach was the original 1-vote consumer
+(per v5.x Language Refinements table); re-verify pressure at
+slot entry per [`feedback_premise_check_at_slot_entry`].
+
+### Language-level async/await syntax
+
+Today: callback-based async on epoll runtime (`lib/async.cyr`,
+v5.11.15). Works but is verbose at consumer sites.
+
+**Scope**: `async fn` / `await` syntax compiles to
+CPS-transformed state machines over the existing epoll runtime.
+Same runtime semantics, sugarier surface. Pairs with closures
+(capture state across await points).
+
+### Slot estimate (v6.3.x)
+
+| Feature | Slots |
+|---|---|
+| Closures with lexical capture | ~7 |
+| Real generic instantiation | ~7 |
+| Language-level async/await syntax | ~5 |
+| Cross-feature integration + tcyr suite | ~3 |
+| **Total planned** | **~22** |
+| Bug bandwidth | ~10 |
+| **Budget** | **~32** |
+
+---
+
+## v6.4.x — ABI + Perf Arc
+
+**Theme**: Class B FFI / wgpu fncall6 ABI fix + register
+allocation upgrade + deferred peephole passes.
+
+Held-forward through v5.9.x / v5.10.x / v5.11.x. The
+*language-level* ABI work plus the regalloc-gated perf passes
+that have been waiting for cross-BB liveness data.
+
+### Class B FFI / wgpu fncall6 ABI fix
+
+Fix Cyrius's `fncall6` vs SysV AMD64 calling convention bug that
+mabda's wgpu integration needs. Lands here regardless of where
+the mabda fold itself lands (likely already shipped in v6.0.x
+clean-slate by this point per the mabda 3.0 GA timing).
+
+### Cross-BB regalloc + liveness pass
+
+Linear-scan register allocator with cross-BB liveness data.
+Unlocks three deferred passes that all share the same gate:
+
+- **Copy propagation** — deferred 2026-04-23 v5.6.18/.19. Stack-
+  machine IR had no virtual registers for the classical wins;
+  regalloc surfaces them. `ir_copyprop_recon` revival.
+- **Extended cross-BB dead-store elimination** — deferred same
+  date, same gate. Per-BB DSE shipped v5.6.18; cross-BB variant
+  needs the liveness-out set per BB that regalloc builds.
+  `ir_extdse_recon` revival.
+- **Float peephole** (`float.cyr:41`, 5-instruction → 3-byte
+  reduction) — worth landing here if bench delta justifies.
+
+### Slot estimate (v6.4.x)
+
+| Cluster | Slots |
+|---|---|
+| Class B FFI / wgpu fncall6 ABI fix | ~5 |
+| Cross-BB regalloc + liveness pass | ~6 |
+| Copy propagation revival | ~3 |
+| Extended cross-BB DSE | ~3 |
+| Float peephole | ~2 |
+| Bench-delta evaluation + tcyr coverage | ~2 |
+| **Total planned** | **~21** |
+| Bug bandwidth | ~10 |
+| **Budget** | **~31** |
+
+---
+
+## v6.5.x — Self-Compile Perf-Refactor
+
+**Theme**: dedicated perf cleanup once accumulated growth
+surfaces. Middle-late v6.x timing per user direction 2026-05-19:
+"compile time can holdover until later in 6.x cycle probably
+middle-late".
+
+### Background
+
+v5.11.x review queue (originally captured at v5.x cycle close,
+referenced from CHANGELOG [5.11.69])
+captured a perf-growth-tax finding: `bench-history.sh` tier-3
+shows self_compile **244 ms → 404 ms (+160 ms / +65 %)** between
+commits `a17a8de` (2026-04-18, post-v5.10.50) and `f60ec9b2`
+(2026-05-18, post-v5.11.63). Growth-tax not regression — cycc
+binary grew only +1,072 B over the same window, so the cost is
+parse/codegen overhead from feature work (more parser tracking,
+more dispatch checks, more cross-arch propagation), not output
+bloat.
+
+**v6.x adds its own growth-creating surfaces**: PIE codegen
+(v6.1.x), bare-metal + RISC-V rv64 (v6.2.x), language
+refinements (v6.3.x), Class B FFI + cross-BB regalloc (v6.4.x).
+By v6.5.x the new baseline is established and a dedicated
+perf-refactor minor can land without bumping capability work.
+
+### First-step audit
+
+Capture intermediate datapoints via on-quiet-box
+`bench-history.sh` runs across the v6.x cycle so the trend has
+more than 2 endpoints. Gradual-accretion vs one-patch-dominates
+determines whether bisection is even productive (gradual is the
+likelier shape given the work mix).
+
+### Slot estimate (v6.5.x)
+
+Open scope at v6.5.x slot entry — depends on the
+accumulated-growth shape uncovered during the audit phase.
+Target: ~20 planned + 10 bug bandwidth = ~30 budget. Could flex
+to 40+ if the perf-refactor surface is wider than expected.
+
+---
+
+## What comes after v6.x
+
+v7.x scope is open. Two known commitments per CLAUDE.md "Version
+lives in `VERSION` + `--version`, never in binary names":
+
+- **No binary rename at v7.0.0**. The v6.0.0 `cc5 → cycc` +
+  `cyrc → cybs` rename was the LAST name-change penalty paid.
+  Future major bumps run `version-bump.sh` and ship; no rename,
+  no downstream sweep, no vidya `cc?` residue.
+- **build/cc3 drops at v7.0.0** per the prior-major-seed
+  retirement policy (cc3 stays through v6.x as the
+  v5.0.0-era historical anchor; retires when v6.x → v7.x bump
+  removes the legacy back-compat surface).
+
+Beyond that, v7.x is open territory. Likely candidates: more
+language refinements based on consumer pressure from v6.x ship;
+toolchain improvements (LSP / formatter / linter evolution);
+agnos v2.0 alignment if AGNOS's roadmap creates pull.
