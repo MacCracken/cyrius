@@ -2092,6 +2092,61 @@ fn _verify_inline(buf, n, pattern, region): i64 {
     return 0;
 }
 
+# CVE-05 tok_names mangle-path guard (v5.11.65). At v5.11.64 every
+# mangle site (BUILD_METHOD_NAME / BUILD_OP_NAME / PARSE_FN_DEF
+# module mangle / parse_types variant-ctor / 6× main_*.cyr use-alias)
+# guarded its byte-copy loops with `NPOS_GUARD(S, 256)` — a magic
+# pessimistic budget that an over-long source identifier could
+# exceed silently, corrupting adjacent regions past tok_names @
+# 0x60000+0x40000. v5.11.65 replaced each with a compute-length-
+# then-NPOS_GUARD shape; this gate fails if any `NPOS_GUARD(S, 256)`
+# reappears in the affected files. (Small NPOS_GUARD calls — 8, 16,
+# flen+1 — are unaffected: they cover bounded literal writes, not
+# source-identifier copies.) See CHANGELOG [5.11.65] and
+# `docs/audit/2026-04-13-security-audit.md` § CVE-05.
+fn _cve05_guard_gate(): i64 {
+    var label = "CVE-05 tok_names mangle-path: no magic-256 NPOS_GUARD in any source-identifier copy site (v5.11.65)";
+    var files[88];
+    store64(&files + 0,  _root_path("src/frontend/parse_decl.cyr"));
+    store64(&files + 8,  _root_path("src/frontend/parse_expr.cyr"));
+    store64(&files + 16, _root_path("src/frontend/parse_fn.cyr"));
+    store64(&files + 24, _root_path("src/frontend/parse_types.cyr"));
+    store64(&files + 32, _root_path("src/main.cyr"));
+    store64(&files + 40, _root_path("src/main_aarch64.cyr"));
+    store64(&files + 48, _root_path("src/main_aarch64_macho.cyr"));
+    store64(&files + 56, _root_path("src/main_aarch64_native.cyr"));
+    store64(&files + 64, _root_path("src/main_cx.cyr"));
+    store64(&files + 72, _root_path("src/main_win.cyr"));
+
+    var fail = 0;
+    var fi = 0;
+    while (fi < 10) {
+        var path = load64(&files + fi * 8);
+        if (file_exists(path) == 1) {
+            if (_file_contains_substr(path, "NPOS_GUARD(S, 256)") == 1) {
+                _p("  ");
+                _p(ANSI_RED);
+                _p("FAIL");
+                _p(ANSI_RESET);
+                _p(": magic-256 NPOS_GUARD reappeared in ");
+                println(path);
+                fail = fail + 1;
+            }
+        }
+        fi = fi + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": no `NPOS_GUARD(S, 256)` in any mangle-path source file (10 files scanned)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Cap-drift gate (v5.11.50; refactored to use _verify_* helpers at
 # v5.11.55). Cross-checks heap-map comments at src/main.cyr:24+
 # against inline literal caps in src/frontend/lex.cyr. Each cap is
@@ -9171,6 +9226,10 @@ fn _run_regression_gates(): i64 {
 
     _section("EFI trampoline REX encoding (efi_main convention)");
     _efi_trampoline_rex_gate();
+    println("");
+
+    _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");
+    _cve05_guard_gate();
     println("");
 
     _section("Cap-drift detector (heap-map ↔ inline literals)");

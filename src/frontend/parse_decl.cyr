@@ -76,11 +76,17 @@ fn PARSE_ARRAY(S, noff): i64 {
 # '=', got string` because a post-corruption token noff now pointed
 # at garbled bytes.
 fn BUILD_METHOD_NAME(S, si, mnoff): i64 {
-    NPOS_GUARD(S, 256);
+    var snoff = L64(S + 0x18E630 + si * 8);
+    # v5.11.65 (CVE-05): walk source lengths first so NPOS_GUARD
+    # bounds the actual write — replaces the pre-v5.11.65 magic-256
+    # pessimistic budget that the byte-copy loops below could exceed
+    # on a long struct/method identifier. See CHANGELOG [5.11.65].
+    var _snlen = 0; while (load8(S + 0x60000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
+    var _mnlen = 0; while (load8(S + 0x60000 + mnoff + _mnlen) != 0) { _mnlen = _mnlen + 1; }
+    NPOS_GUARD(S, _snlen + 1 + _mnlen + 1);
     var scratch = GNPOS(S);
     var wp = scratch;
     # Copy struct name
-    var snoff = L64(S + 0x18E630 + si * 8);
     var ri = 0;
     var rc = load8(S + 0x60000 + snoff + ri);
     while (rc != 0) {

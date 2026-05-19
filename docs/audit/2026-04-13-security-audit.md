@@ -65,7 +65,7 @@ modules = ["../../.ssh/authorized_keys"]
 **Impact:** Silent data corruption, unpredictable codegen, potential code execution.
 **Fix:** Add overflow checks at write boundaries for critical regions (str_data, tok_names, codebuf). Long-term: mmap separate regions with guard pages.
 **Priority:** P1 — the Heisenbug may be a manifestation.
-**Pinned v5.11.68** (2026-05-13) — batched with the heap-map full reorganization closeout slot since CVE-05's mitigation is fundamentally a heap-layout concern (boundary guards + mmap-with-guard-pages split). The .68 slot's existing scope (closing unused gaps across struct_*/fn_*/ir/fixup/tok regions) is the natural place to land the per-region bounds-check shape alongside the relocation work. See [`docs/development/roadmap.md`](../development/roadmap.md) `v5.11.68` entry.
+**Shipped v5.11.65** (2026-05-19) — split forward from .68 once the audit at slot entry confirmed the bulk of CVE-05's surface was already covered by earlier work (CVE-06 for str_data write-boundary, `EB()` for codebuf append on both arches, `NPOS_GUARD`/`LEXID` for the tok_names lex hot path). The remaining gap was tok_names mangle-path byte-copy loops where `NPOS_GUARD(S, 256)` was a magic-pessimistic budget that an over-long source identifier could exceed. v5.11.65 replaced each magic-256 with a `compute-source-length → NPOS_GUARD(S, actual_len + …)` shape across 11 sites (parse_decl.cyr `BUILD_METHOD_NAME`, parse_expr.cyr `BUILD_OP_NAME`, parse_fn.cyr `PARSE_FN_DEF` module-mangle, parse_types.cyr × 2 variant-ctor sites, main.cyr / main_aarch64.cyr / main_aarch64_macho.cyr / main_aarch64_native.cyr / main_cx.cyr / main_win.cyr use-alias mangle); the 4 non-x86 main_*.cyr variants had no prior tok_names guard at all on the use-alias path. `programs/check.cyr::_cve05_guard_gate` locks the magic-256 pattern out of every mangle-path source file (check.sh 75 → 76). Patch-path codebuf writes in `src/backend/*/fixup.cyr` + `src/backend/*/jump.cyr` are safe by construction — they target previously-`EB`-validated offsets. Long-term `mmap`-with-guard-pages remains tracked for v6.x heap-layout work.
 
 ### CVE-06: String data region overflow
 
@@ -160,7 +160,7 @@ modules = ["../../.ssh/authorized_keys"]
 - [ ] CVE-09: Jump target table overflow warning
 
 ### v4.3.x
-- [ ] CVE-05: Critical region overflow checks (str_data, tok_names) — **pinned v5.11.68 closeout** (heap-map full reorg)
+- [x] CVE-05: Critical region overflow checks (str_data, tok_names, codebuf) — **shipped v5.11.65** (tok_names mangle-path guard; str_data + codebuf covered by earlier CVE-06 + EB work)
 - [ ] CVE-07: PIE binary generation (tracked under PIC codegen) — **pinned v6.1.x** via `proposals/2026-05-11-pie-support.md`
 - [ ] CVE-11: Stack canaries (post-CFG)
 - [ ] CVE-12: Bootstrap attestation command

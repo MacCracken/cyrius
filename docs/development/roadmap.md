@@ -45,7 +45,7 @@ Per-patch detail for v5.11.0 → current ships lives in
 [CHANGELOG.md](../../CHANGELOG.md); current-state snapshot lives
 in [state.md](state.md).
 
-### Shipped this cycle (v5.11.47 → v5.11.63)
+### Shipped this cycle (v5.11.47 → v5.11.65)
 
 Per-slot detail in [CHANGELOG.md](../../CHANGELOG.md). One-liner
 ledger below; expanded narrative for shipped work lives in CHANGELOG
@@ -76,7 +76,11 @@ ledger below; expanded narrative for shipped work lives in CHANGELOG
 - **.62** — Compiler/tooling pair (Items 5 + 1): Item 5 reframed at slot entry after premise check (CYRIUS_DCE=1 NOPs `.text` only, doesn't shrink bss — empirically verified). Ships dead-fn `.bss` attribution hint via new `fn_var_bytes [8192]` heap region at 0x1C8000 + per-fn parser tracking; warning now shows "M bytes inside N unreachable fn(s)". commandress: 92 % of bss attributable. Drive-by 2-byte fix to pre-existing warning byte-count bug. Item 1: `cyrius init` bench scaffold uses real `bench_new` + `bench_batch_*` API + `bench` added to default `[deps.stdlib]`.
 - **.63** — aarch64 `_strict_mode` parity (.59 retro follow-up): `_strict_mode` global + `/proc/self/cmdline` parsing added to all three `main_aarch64*.cyr` variants; `src/backend/aarch64/fixup.cyr` strict-exit mirrors x86 lines 729-738. Drive-by: wrapper `--strict` plumbing extended to BOTH archs (was absent for both pre-.63). Band CLOSED.
 
-Issue file `2026-05-17-commandress-stdlib-papercuts.md` archived after .63 ship; .64/.65 stay as explicit open bandwidth (per user direction 2026-05-17 "keep .65 open so .62 can split").
+**v6.0 runway (.64-.65)**
+- **.64** — agnos gvar-init-order fix: top-level `var X = INT_LITERAL ;` declarations now bake the literal into the file image at FIXUP-time via new `gvar_initval` / `gvar_byte_off` tables (cross-arch x86 + aarch64 + Mach-O + PE; cx opts out). Closes 10-iron-burn root-cause search; cc5 SHRANK 2,384 B from eliminating runtime stores for cc5's own TS_TOK_* gvars.
+- **.65** — CVE-05 split forward from .68: tok_names mangle-path write-boundary guard. 11 mangle sites (BUILD_METHOD_NAME / BUILD_OP_NAME / PARSE_FN_DEF module-mangle / variant-ctor × 2 / use-alias × 6 main_*.cyr variants) replaced magic-256 NPOS_GUARD with computed-source-length shape; 4 of the 6 main_*.cyr variants had no prior tok_names guard at all on the use-alias path. `_cve05_guard_gate` locks the magic-256 pattern out. check.sh 75 → 76. .68 stays a pure heap-map reorg.
+
+Issue file `2026-05-17-commandress-stdlib-papercuts.md` archived after .63 ship; .64 absorbed the agnos gvar-init-order fix, .65 shipped CVE-05 split forward from .68 (tok_names mangle-path guard; per-region overflow checks). v6.0-runway scope confirmed at .65 entry per user direction 2026-05-19 "start the march to 6.0".
 
 ---
 
@@ -195,18 +199,19 @@ Memory pin: refactor-survey item #5 in CHANGELOG [5.11.55].
 Acceptance bar: gnoboot rebuild against v5.11.66/.67 shows
 `.text` reduction proportional to byte-array literal count.
 
-### v5.11.68 — Heap-map full reorganization + CVE-05 (true closeout)
+### v5.11.68 — Heap-map full reorganization (true closeout)
 
 The last substantive engineering work before v6.0.0 opens.
 Originally pinned 2026-05-05 at v5.8.61 ship as the documented
 "last-minor-before-v6.0 effort"; re-pinned to v5.11.68 at the
-2026-05-12 tight-close. **CVE-05 batched in at 2026-05-13** —
-per-region overflow checks at str_data / tok_names / codebuf write
-boundaries (P1, from
-[`docs/audit/2026-04-13-security-audit.md`](../audit/2026-04-13-security-audit.md))
-land alongside the reorg since both are heap-layout concerns and
-the .68 surface already touches the same region-boundary
-arithmetic.
+2026-05-12 tight-close. **CVE-05 was unpinned from this slot at
+v5.11.65** — the audit at slot entry confirmed earlier work
+(CVE-06 + `EB` + `NPOS_GUARD`) already covered the bulk of the
+write-boundary surface, and the remaining tok_names mangle-path
+gap was orthogonal to the heap-map layout reshuffle. .68 now
+stays a pure layout reorg per "Big Heavy One Thing" — the .65
+ship handles the write-side checks; the long-term
+`mmap`-with-guard-pages split tracks separately for v6.x.
 
 **Why .68 and not .69**: v5.11.69 is reserved as the
 **fold-applied tag** for any dep foldins that earn their slot

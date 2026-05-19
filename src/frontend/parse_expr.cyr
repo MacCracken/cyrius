@@ -1418,9 +1418,12 @@ fn EPTR_SCALE(S, ps): i64 {
 # Build operator function name: StructName_op in tok_names
 # op_name is a short string like "add", "sub", "mul", "div"
 fn BUILD_OP_NAME(S, stype, op_str, op_len): i64 {
-    NPOS_GUARD(S, 256);
     var si = stype - 1;
     var snoff = L64(S + 0x18E630 + si * 8);
+    # v5.11.65 (CVE-05): bound against actual struct-name length + op
+    # suffix; was magic-256 pessimistic budget. See CHANGELOG [5.11.65].
+    var _snlen = 0; while (load8(S + 0x60000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
+    NPOS_GUARD(S, _snlen + 1 + op_len + 1);
     var owp = GNPOS(S);
     var onoff = owp;
     var ori = 0;

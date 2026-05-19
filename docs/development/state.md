@@ -3,6 +3,67 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-19 (.65 ship — CVE-05 split forward; v6.0 march starts)
+
+Closing **v5.11.65** with the CVE-05 tok_names mangle-
+path write-boundary guard — first v6.0-runway slot;
+split forward from .68 so the closeout slot stays a
+pure heap-map layout reorg per "Big Heavy One Thing."
+
+- **Audit-at-slot-entry premise check**: confirmed the
+  bulk of CVE-05's surface was already covered by
+  earlier work (CVE-06 for `str_data`, `EB()` on both
+  arches for `codebuf` append, `LEXID`+`NPOS_GUARD` for
+  the `tok_names` lex hot path). The actual remaining
+  gap was the **mangle-path byte-copy loops** at 11
+  sites using `NPOS_GUARD(S, 256)` as a magic-pessimistic
+  budget that an over-long source identifier could
+  silently exceed.
+- **Larger pre-existing gap than expected**: the 4 non-
+  x86 `main_*.cyr` variants (aarch64, aarch64_macho,
+  aarch64_native, cx) had **no prior tok_names guard at
+  all** on the use-alias path — the parallel x86
+  `main.cyr` had the magic-256 NPOS_GUARD that the cross-
+  arch variants never gained. Cross-arch propagation
+  per [`feedback_cross_arch_propagation_mandatory`] —
+  all 6 main_*.cyr variants treated in same slot.
+- **Fix shape** (single uniform pattern, no new helper):
+  pre-walk source identifier strlen(s); pass actual sum
+  to `NPOS_GUARD` which already has the region cap
+  check (`np + need >= 261872`). 11 sites updated:
+  parse_decl.cyr `BUILD_METHOD_NAME`, parse_expr.cyr
+  `BUILD_OP_NAME`, parse_fn.cyr `PARSE_FN_DEF`,
+  parse_types.cyr variant-ctor × 2, 6× main_*.cyr
+  use-alias.
+- **Structural gate** `_cve05_guard_gate` (programs/
+  check.cyr) scans the 10 affected source files for
+  `NPOS_GUARD(S, 256)`, fails fast on any reappearance.
+  Negative-tested at bring-up. check.sh **75 → 76**.
+- **Mechanical gates green**: cc5 self-host byte-
+  identical at **874,232 B** (+1,264 B vs .64 = the
+  11 strlen-walks + NPOS_GUARD inserts). 3-step
+  bootstrap converges. Cross-arch builds proportional:
+  cc5_aarch64 **564,456 B** (+1,312 B), cc5_win
+  **686,632 B** (+1,280 B); cc5_aarch64_macho /
+  cc5_aarch64_native / cc5_cx build clean.
+  `check.sh` **76/76**; `cyrius test` **152/152**.
+
+Audit + roadmap updates: CVE-05 unpinned from .68 in
+`docs/audit/2026-04-13-security-audit.md`, marked
+shipped .65 with corrected scope. .68 roadmap entry
+drops the CVE-05 batching language — closeout stays
+a pure heap-map layout reorg.
+
+Memory pins:
+- [`project_v5_11_65_cve_05_split`] — v6.0-runway slot
+  shape; CVE-05 split forward so .68 stays clean.
+- [`feedback_cross_arch_propagation_mandatory`] — 4
+  unguarded main_*.cyr variants were the bigger gap
+  than the magic-256 x86 sites; all fixed in same slot.
+- [`feedback_release_needs_code_not_just_docs`] —
+  v6.0-runway slot ships real security code, not just
+  doc reorg.
+
 ## Session close — 2026-05-18 (.64 ship — agnos gvar-init-order bug closed)
 
 Closing **v5.11.64** with the static-init fix for top-

@@ -389,7 +389,10 @@ while (scan == 1) {
                             var uc = GUSEC(S);
                             S64(S + 0x18FFD0 + uc * 8, ufn);
                             # Append mangled name to tok_names (after lexing, NPOS is stable)
-                            NPOS_GUARD(S, 256);
+                            # v5.11.65 (CVE-05): bound by actual source lengths.
+                            var _ulen1 = 0; while (load8(S + 0x60000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
+                            var _ulen2 = 0; while (load8(S + 0x60000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
+                            NPOS_GUARD(S, _ulen1 + 1 + _ulen2 + 1);
                             var apos = GNPOS(S);
                             var ri = 0;
                             var rc = load8(S + 0x60000 + umod + ri);

@@ -264,7 +264,10 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
             if (emit_code == 2) {
                 # Pass 2 function section: emit constructor bodies only
                 if (has_ctor == 1) {
-                    NPOS_GUARD(S, 256);
+                    # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
+                    # variant-name length; was magic-256.
+                    var _vnlen2 = 0; while (load8(S + 0x60000 + vnoff + _vnlen2) != 0) { _vnlen2 = _vnlen2 + 1; }
+                    NPOS_GUARD(S, _vnlen2 + 1);
                     var cwp2 = GNPOS(S);
                     var cnoff2 = cwp2;
                     var cri2 = 0;
@@ -346,7 +349,10 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 SVCNT(S, vcnt + 1);
                 # Register constructor function if has payload
                 if (has_ctor == 1) {
-                    NPOS_GUARD(S, 256);
+                    # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
+                    # variant-name length; was magic-256.
+                    var _vnlen1 = 0; while (load8(S + 0x60000 + vnoff + _vnlen1) != 0) { _vnlen1 = _vnlen1 + 1; }
+                    NPOS_GUARD(S, _vnlen1 + 1);
                     var cwp = GNPOS(S);
                     var cnoff = cwp;
                     var cri = 0;

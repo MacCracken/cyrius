@@ -1272,7 +1272,11 @@ fn PARSE_FN_DEF(S): i64 {
     # Mangle name if inside a module: mod_fn
     var mmod = GMOD(S);
     if (mmod != 0) {
-        NPOS_GUARD(S, 256);
+        # v5.11.65 (CVE-05): walk source lengths before NPOS_GUARD;
+        # replaces magic-256 pessimistic budget. See CHANGELOG [5.11.65].
+        var _mmlen = 0; while (load8(S + 0x60000 + mmod + _mmlen) != 0) { _mmlen = _mmlen + 1; }
+        var _nflen = 0; while (load8(S + 0x60000 + noff + _nflen) != 0) { _nflen = _nflen + 1; }
+        NPOS_GUARD(S, _mmlen + 1 + _nflen + 1);
         var mwp = GNPOS(S);
         var mnoff = mwp;
         var mri = 0;
