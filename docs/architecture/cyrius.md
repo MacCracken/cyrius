@@ -234,7 +234,7 @@ All 9 items complete:
   shipped), O3 IR passes (LASE + const-fold + DCE shipped, copy-prop
   + dead-store + fixpoint pinned v5.6.18, regalloc v5.6.19, codebuf
   compaction v5.6.22)
-- Documentation + tutorials (`docs/cyrius-guide.md` ongoing)
+- Documentation + tutorials (`docs/guides/cyrius-guide.md` ongoing)
 
 ### Phase 11 — Full Sovereignty
 - AGNOS builds entirely with Cyrius on x86_64 + aarch64 + RISC-V (v5.7.0)

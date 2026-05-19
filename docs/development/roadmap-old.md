@@ -925,19 +925,13 @@ patches:
   genuinely dead, and delete the latter. Per
   `feedback_dead_code_audit_scope`: scaffold is **alive by default**
   unless actual work behind it is debunked.
-- **`scripts/build-cyc.sh`** (pinned 2026-05-11 at v5.11.7 close).
-  Wrap the byte-identical fixpoint check that's the canonical
-  cyc/cc-rename verifier:
-  ```sh
-  cat src/main.cyr | build/cyc > /tmp/cyc_a && chmod +x /tmp/cyc_a
-  cat src/main.cyr | /tmp/cyc_a > /tmp/cyc_b && chmod +x /tmp/cyc_b
-  cmp /tmp/cyc_a /tmp/cyc_b && echo "FIXPOINT OK"
-  cmp /tmp/cyc_a build/cyc && echo "byte-identical to build/cyc"
-  ```
-  Currently this runs as ad-hoc one-liners in chat (see v5.11.x
-  retro transcript). At v6.0.0 the binary rename `cc5` → `cyc`
-  warrants a permanent script so the verifier survives the cut-over.
-  Mirror the `bootstrap/verify.sh` pattern.
+- ~~**`scripts/build-cyc.sh`**~~ **Done v5.11.67 (2026-05-19)
+  as `scripts/build-cc5-verify.sh`.** ~100 LoC bash with three
+  invariants + distinct exit codes (1=stage_a compile fail,
+  2=fixpoint diverged, 3=stale build artifact). Mirrors
+  `bootstrap/verify.sh`. At v6.0.0 cut, file renames to
+  `scripts/build-cyc.sh` alongside the binary rename. See
+  CHANGELOG [5.11.67].
 - **`_TARGET_*` flag consolidation.** `_TARGET_MACHO`,
   `_TARGET_PE`, `CYRIUS_TARGET_LINUX/WIN/MACOS`,
   `_AARCH64_BACKEND`, plus per-arch `#ifdef CYRIUS_ARCH_{X86,
@@ -966,17 +960,24 @@ patches:
   / `docs/size-comparisons.md` — these are explicitly
   historical anchor text in chronological context and stay
   as-is.
-- **Heap-map tightening.** v5.5.40 verified 72 regions. Audit
-  which are still load-bearing post-optimization-arc; reclaim
-  wasted address space; document post-v6.0.0 layout as new
-  baseline.
+- ~~**Heap-map tightening.**~~ **Done v5.11.68 (2026-05-19) —
+  full heap-map reorganization.** Closed all four documented
+  closeable gaps from the v5.8.61 minimum-blast-radius pass
+  (2.24 MB + 6 MB + 448 KB + 448 KB = ~9.06 MB reclaimed).
+  brk shrunk **0x56AD000 → 0x4D9D000** (~86.6 MB → ~77.6 MB
+  total heap). 13.3 MB TS frontend reservation preserved.
+  99 regions / 0 overlaps / monotonic. cc5 byte-identical at
+  874,232 B (pure offset relocation). See CHANGELOG [5.11.68].
 - **Backend module collapse where viable.** `src/backend/x86/`
   and `src/backend/aarch64/` each have parallel `emit.cyr`,
   `jump.cyr`, `fixup.cyr`. Audit which helpers can move to
   `src/backend/common/` without entangling asm-byte tables.
-- **`cyrius build --strict` mode** — escalate `undefined
-  function` warnings to hard errors through the build wrapper
-  (direct `cc5 --strict` shipped v5.4.19).
+- ~~**`cyrius build --strict` mode**~~ **Done v5.11.63
+  (2026-05-18).** Wrapper plumbing landed alongside the
+  aarch64 `_strict_mode` parity work (`cbt/build.cyr:130-142`
+  — argv carries `--strict` to cc5/cc5_aarch64; CHANGELOG
+  [5.11.63] "`cyrius build` now accepts `--strict` for both
+  archs"). Surfaced by v5.11.67 premise-check.
 - **Byte-array literal peephole** (moved here from v5.11.66/.67
   at 2026-05-19; was pinned in the v5.x absorber band). The
   v5.11.51 byte-array literal (`var foo[N] = { 0x.., ... };`)

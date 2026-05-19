@@ -2226,7 +2226,7 @@ fn _doc_size_currency_gate(): i64 {
     var paths = vec_new();
     vec_push(paths, str_from(_root_path("docs/size-comparisons.md")));
     vec_push(paths, str_from(_root_path("docs/platform-status.md")));
-    vec_push(paths, str_from(_root_path("docs/faq.md")));
+    vec_push(paths, str_from(_root_path("docs/guides/faq.md")));
     vec_push(paths, str_from(_root_path("README.md")));
 
     var fail = 0;

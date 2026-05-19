@@ -205,7 +205,14 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     fi
 
     for script in $_R_SCRIPTS; do
-        if [ -f "scripts/$script" ]; then
+        # v5.11.69: shim scripts (cyrius-init/port/repl) moved to
+        # scripts/shims/. Look there first; fall through to flat
+        # scripts/ for the genuinely user-facing scripts that stayed.
+        if [ -f "scripts/shims/$script" ]; then
+            cp "scripts/shims/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
+            chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
+            _refreshed=$((_refreshed + 1))
+        elif [ -f "scripts/$script" ]; then
             cp "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
             chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
             _refreshed=$((_refreshed + 1))
@@ -394,9 +401,14 @@ if [ "$installed" -eq 0 ]; then
     cp bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin/"
 
     # Scripts from [release].scripts (includes cyriusly + cyrius-*.sh)
+    # v5.11.69: shim scripts (cyrius-init/port/repl) live in
+    # scripts/shims/ — look there first, fall through to flat scripts/.
     _SCRIPTS=$(_parse_release_array scripts)
     for script in $_SCRIPTS; do
-        if [ -f "scripts/$script" ]; then
+        if [ -f "scripts/shims/$script" ]; then
+            cp "scripts/shims/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
+            chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
+        elif [ -f "scripts/$script" ]; then
             cp "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
             chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
         fi

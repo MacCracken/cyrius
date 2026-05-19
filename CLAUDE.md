@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 5.11.68
+- **Version**: 5.11.69
 
 ## Goal
 
@@ -169,7 +169,7 @@ docs/                Architecture, roadmap, benchmarks, language guide
 
 ## Key References
 
-- `docs/cyrius-guide.md` — Complete language reference
+- `docs/guides/cyrius-guide.md` — Complete language reference
 - `docs/development/roadmap.md` — Current-cycle remaining work only (lean, refreshed at cycle close)
 - `docs/development/roadmap-old.md` — Prior roadmap held verbatim for cleanout; source for v6.x items to pull forward at v5.x close
 - `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape)

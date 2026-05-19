@@ -3,6 +3,71 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-19 (.69 ship — v5.x CYCLE CLOSED)
+
+Closing **v5.11.69** as the **FINAL v5.x patch**. v5.11.x
+ran 70 slots across 2026-05-09 → 2026-05-19 — the longest
+minor in Cyrius history (prior record v5.7.x at 49 slots).
+
+Closeout bundle:
+- **`scripts/shims/`** for the 3 CLI-implementation-detail
+  bash scripts (cyrius-init/port/repl, 1,775 LOC). They're
+  invoked by `cyrius <verb>`, not by users. Moving them
+  out of top-level `scripts/` corrects the mis-signal.
+  User pushed back on initial "leave as-is" audit
+  recommendation: "you sure about scripts cause... most
+  of those command got folded into cyrius proper." Re-
+  audit surfaced this.
+- **`docs/guides/`** subdirectory with 4 guide-shape
+  files (tutorial, editor-integration, faq, cyrius-guide).
+  Cross-refs updated across README + CLAUDE.md + roadmap
+  + check.cyr + architecture docs + 2 archive docs.
+- **Doc sweep**: doc-health.md last-refresh header
+  rewritten for cycle-close framing; roadmap-old.md
+  v6.0.0 accompanying-refactor list — 5 items struck
+  through as done in v5.x close band.
+- **Vidya refresh** per CLAUDE.md Closeout Pass §11:
+  language/index.cyml header (verified-on 5.11.59 →
+  5.11.69, cycle-close framing); v511x.cyml new
+  cycle-close retro entry covering .50-.69 with process
+  patterns; gotchas.cyml + 2 entries (gvar-init-order
+  kmode + CVE-05 mangle-path magic-budget).
+
+**Mabda 3.0 fold DROPPED** from v5.11.x at user direction
+post-.67 ship. Mabda stays as git [deps.*] resolution
+through v6.x or until re-pinned. Class B FFI / wgpu
+fncall6 ABI work continues to track in v6.4.x.
+
+**v6.0-runway scoreboard (cycle CLOSE)**: 5 v6.0.0
+accompanying-refactor items absorbed into v5.x close —
+CVE-05 (.65), bridge retirement (.66), build-cc5-verify.sh
+skeleton (.67), cc3-era residue load-bearing portion (.67),
+heap-map full reorganization (.68). 5 items carry forward
+into v6.0.x (dead-code sweep, _TARGET_* consolidation,
+backend module collapse, byte-array literal peephole,
+return-patch-to-vec).
+
+**Mechanical gates green**: cc5 byte-identical at **874,232 B**
+(no compile-path changes in .69). check.sh 76/76; cyrius
+test 152/152. cyrius init/port/repl smoke-tested via the
+new scripts/shims/ path. build-cc5-verify.sh reports
+VERIFY OK end-to-end.
+
+**v5.11.x cycle stats**:
+- 70 slots over 11 days
+- cc5: 804,472 → 874,232 B (+69,760 B / +8.7%)
+- check.sh: 65 → 76 gates (+11)
+- cyrius test: 149 → 152 tcyr (+3)
+
+Next: v6.0.0 cycle opens. First slot is the `cc5 → cyc`
+rename (the v6.0.0 line item). Roadmap.md gets the v6.x
+pull-forward from roadmap-old.md during cycle-open
+doc-pass.
+
+Memory pins:
+- [`project_v5_11_x_closeout_at_40`] — v5.11.x retired.
+- [`project_v5_11_69_closeout_bundle`] — .69 slot shape.
+
 ## Session close — 2026-05-19 (.68 ship — heap-map full reorg, the true v5.x closeout engineering)
 
 Closing **v5.11.68** with the heap-map full reorganization

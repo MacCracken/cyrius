@@ -14,7 +14,7 @@ fn cmd_init(name): i64 {
         var rc = run_tool(bin, name, 0, 0);
         if (rc != 2) { return rc; }
     }
-    var script = make_path(_scripts_dir, "cyrius-init.sh");
+    var script = make_path(_scripts_dir, "shims/cyrius-init.sh");
     if (file_exists(script) == 0) {
         script = make_path(_home, "bin/cyrius-init.sh");
     }
@@ -35,7 +35,7 @@ fn cmd_init_args(arg1, arg2): i64 {
         var rc = run_tool(bin, arg1, arg2, 0);
         if (rc != 2) { return rc; }
     }
-    var script = make_path(_scripts_dir, "cyrius-init.sh");
+    var script = make_path(_scripts_dir, "shims/cyrius-init.sh");
     if (file_exists(script) == 0) {
         script = make_path(_home, "bin/cyrius-init.sh");
     }
@@ -43,7 +43,10 @@ fn cmd_init_args(arg1, arg2): i64 {
 }
 
 fn cmd_port(arg): i64 {
-    var script = make_path(_scripts_dir, "cyrius-port.sh");
+    var script = make_path(_scripts_dir, "shims/cyrius-port.sh");
+    if (file_exists(script) == 0) {
+        script = make_path(_scripts_dir, "cyrius-port.sh");
+    }
     return run_script(script, arg, 0);
 }
 

@@ -366,7 +366,10 @@ fn cmd_header(arg): i64 {
 }
 
 fn cmd_repl(): i64 {
-    var script = make_path(_scripts_dir, "cyrius-repl.sh");
+    var script = make_path(_scripts_dir, "shims/cyrius-repl.sh");
+    if (file_exists(script) == 0) {
+        script = make_path(_scripts_dir, "cyrius-repl.sh");
+    }
     return run_script(script, _cc, 0);
 }
 

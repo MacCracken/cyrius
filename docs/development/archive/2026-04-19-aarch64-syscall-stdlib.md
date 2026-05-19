@@ -306,7 +306,7 @@ because:
   to v5.4.11+, its own CI reports green.
 - **Documentation**: update `docs/stdlib-reference.md` line 311
   ("Linux x86_64 syscall bindings") and
-  `docs/cyrius-guide.md` line 406 in the same patch.
+  `docs/guides/cyrius-guide.md` line 406 in the same patch.
 
 ## Risks
 

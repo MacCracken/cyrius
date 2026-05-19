@@ -101,9 +101,9 @@ syscall(60, r);
 | Tests | **152** .tcyr + **5** .fcyr fuzz + **14** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
 | Gates (`scripts/check.sh`) | **76** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit, cyrius-x bytecode |
-| Stdlib modules | **79** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
+| Stdlib modules | **81** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
-| Heap layout | 84 regions, monotonic post-v5.8.61 reorg (str_data at 0x21A000), brk-final at 0x4E8C000 (~78.5 MB) |
+| Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000), brk-final at 0x4D9D000 (~77.6 MB) |
 
 ### Toolchain size comparison
 
@@ -268,7 +268,7 @@ install once and every Cyrius project on the machine picks up the LSP:
 /plugin install cyrius-lsp@cyrius-plugins
 ```
 
-See [docs/editor-integration.md](docs/editor-integration.md) for the
+See [docs/guides/editor-integration.md](docs/guides/editor-integration.md) for the
 `.lsp.json` shape, supported extensions, capabilities, and per-editor
 notes (Helix / Zed / VS Code / JetBrains).
 

@@ -6,6 +6,127 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.69] — 2026-05-19
+
+**v5.x cycle CLOSE — closeout doc / scripts / vidya sweep.**
+Final v5.x patch. v5.11.x = 70 slots total over 11 days
+(2026-05-09 → 2026-05-19), the longest minor in Cyrius
+history. **Mabda 3.0 fold dropped** from v5.11.x at user
+direction post-.67; .69 absorbs another pre-6.0 cleanup
+instead.
+
+### Added
+
+- **`scripts/shims/`** directory + `scripts/shims/README.md`
+  documenting the CLI-shim category. The 3 bash scripts
+  (`cyrius-init.sh` 1,031 LOC, `cyrius-port.sh` 646 LOC,
+  `cyrius-repl.sh` 98 LOC = 1,775 LOC total) are
+  **invoked by `cyrius <verb>`, not user-facing scripts**.
+  Move shape: `cbt/project.cyr` + `cbt/quality.cyr` look
+  up `scripts/shims/<name>.sh` first, fall back to
+  `~/.cyrius/bin/<name>.sh` (installed flat) or
+  `scripts/<name>.sh` (back-compat). `scripts/install.sh`
+  releases-array loop looks in `scripts/shims/` first.
+  Smoke: `cyrius init/port/repl` dispatch correctly.
+- **`docs/guides/`** subdirectory with 4 moved files:
+  `docs/{tutorial,editor-integration,faq,cyrius-guide}.md`
+  → `docs/guides/`. Cross-refs updated across README,
+  CLAUDE.md, CHANGELOG, doc-health, architecture, archive
+  docs, `programs/check.cyr::_doc_size_currency_gate`.
+
+### Changed
+
+- **`README.md`** Metrics row refreshed: stdlib modules
+  79 → 81; Heap layout 84 regions / brk-final 0x4E8C000
+  (~78.5 MB) → 99 regions / brk-final 0x4D9D000 (~77.6 MB)
+  reflecting the v5.11.68 reorg.
+- **`docs/doc-health.md`** last-refresh header rewritten
+  for cycle-close framing. Inventory note + bucket counts
+  updated; `_cve05_guard_gate()` added to active-gates list.
+- **`docs/development/roadmap-old.md`** v6.0.0
+  accompanying-refactor list — **5 items struck through**
+  as done in v5.x close band:
+  - ~~Bridge-compiler retirement~~ (done .66)
+  - ~~`scripts/build-cyc.sh`~~ (shipped as
+    `build-cc5-verify.sh` at .67; renames at v6.0.0)
+  - ~~cc3-era residue cleanup~~ (load-bearing portion .67;
+    vidya bulk refresh held for v6.0.0 §11)
+  - ~~Heap-map tightening~~ (done .68 as full
+    reorganization, ~9.06 MB reclaimed)
+  - ~~`cyrius build --strict` mode~~ (was already shipped
+    at v5.11.63; surfaced by .67 premise-check)
+- **Vidya refresh** per CLAUDE.md Closeout Pass §11
+  (`/home/macro/Repos/vidya/`):
+  - `content/cyrius/language/index.cyml` header — verified-
+    on version 5.11.59 → 5.11.69; cycle-close framing;
+    mabda fold dropped; .64-.68 highlights added.
+  - `content/cyrius/field_notes/compiler/retros/v511x.cyml`
+    — new `v511x_cycle_close_50_to_69` entry: full
+    cycle-close retrospective covering .50-.69,
+    v6.0-runway thread, mabda fold drop, process patterns
+    (premise-check at slot entry × 3, user push-back
+    catching scripts/shims insight, honest scope shrink
+    without re-litigation, two-step bootstrap at every
+    heap-change slot). 70-slot cycle stats.
+  - `content/cyrius/field_notes/compiler/gotchas.cyml` —
+    2 new entries:
+    - `gvar_init_order_kmode_static_v51164` — agnos xHCI
+      silent-zero-read root cause, kmode emit-order
+      explanation, static-init table fix shape, cross-
+      arch coverage list, shadow-redecl opt-out.
+    - `cve_05_tok_names_mangle_magic_budget_v51165` —
+      `NPOS_GUARD(S, 256)` magic-budget anti-pattern,
+      pre-existing unguarded paths in 4 non-x86
+      main_*.cyr variants, compute-length-then-NPOS_GUARD
+      fix shape, `EMIT_OVF_CALL` precedent.
+
+### v6.0-runway scoreboard (cycle CLOSE)
+
+**Five v6.0.0 accompanying-refactor items absorbed** into
+v5.x close band over .65-.68:
+- ✅ CVE-05 critical region overflow checks (.65)
+- ✅ Bridge-compiler retirement (.66)
+- ✅ `scripts/build-cyc.sh` skeleton (.67)
+- ✅ cc3-era residue cleanup, load-bearing portion (.67)
+- ✅ Heap-map tightening, full reorganization (.68)
+
+Five v6.0.0 accompanying-refactor items remain (carry
+forward into v6.0.x roadmap):
+- Dead-code careful sweep
+- `_TARGET_*` flag consolidation
+- Backend module collapse
+- Byte-array literal peephole (moved v5.11.66/.67 →
+  v6.0.x at user direction)
+- Return-patch buffer dynamic conversion (premise-check
+  at .67 confirmed needs allocator in cc5)
+
+### Mechanical gates
+
+- cc5 **byte-identical at 874,232 B** (no compile-path
+  changes — only doc moves, cbt path updates, shim
+  reorg, vidya updates).
+- `scripts/build-cc5-verify.sh`: **VERIFY OK** end-to-end.
+- `check.sh` **76/76**; `cyrius test` **152/152**.
+- `cyrius init --dry-run` / `port --dry-run` / `repl`
+  smoke-tested via the new `scripts/shims/` path.
+
+### v5.11.x cycle stats
+
+- **70 slots** (.0-.69) over 11 days
+- cc5 size delta: 804,472 B (.0) → 874,232 B (.69) =
+  **+69,760 B / +8.7%** across the cycle
+- `check.sh` gates: 65 (.0) → 76 (.69) = **+11 gates**
+- `cyrius test` tcyr: 149 → 152 = **+3 tcyr**
+
+### Memory pins
+
+- [`project_v5_11_x_closeout_at_40`] — cycle closed
+  2026-05-19; mabda fold dropped; v5.11.x retired.
+- [`project_v5_11_69_closeout_bundle`] — slot shape.
+- [`feedback_no_unilateral_scope_decisions`] +
+  [`feedback_premise_check_at_slot_entry`] — process
+  insights from the v6.0-runway thread.
+
 ## [5.11.68] — 2026-05-19
 
 **Heap-map full reorganization — the true v5.x closeout
@@ -2449,7 +2570,7 @@ Used by both new gates.
 
 `_doc_size_currency_gate()` scans four fresh-tier docs
 (`docs/size-comparisons.md`, `docs/platform-status.md`,
-`docs/faq.md`, `README.md`) for cc5 size references in the
+`docs/guides/faq.md`, `README.md`) for cc5 size references in the
 approximate form `cc5 ~NNN KB`. Each found claim is compared
 against the actual `build/cc5` size in decimal KB (823,112 B →
 823 KB, the prose convention) with ±50 KB tolerance (~5%). Lines
@@ -2478,7 +2599,7 @@ the prose was misleading consumers. Fixed forward:
 - **`docs/platform-status.md`** — Linux x86_64 row: `cc5 ~741 KB
   (v5.8.65); two-step bootstrap` → `cc5 ~823 KB (v5.11.50);
   3-step bootstrap` (3-step has been canonical since v5.6.16).
-- **`docs/faq.md`** — "Is it fast?" answer: self-compile time
+- **`docs/guides/faq.md`** — "Is it fast?" answer: self-compile time
   `~280ms (cc5 ~741KB at v5.8.65)` → `~387 ms (cc5 ~823 KB at
   v5.11.50)`. Added the v5.10.40+v5.10.41 compile-time-perf
   miniarc result (1037 ms → 387 ms, 2.7×).
@@ -23416,7 +23537,7 @@ The post-v5.8.27 unversioned work covers:
   document the 4 new heap regions
   (var_enum_id/enum_count/enum_variant_count/enum_name) +
   the cap bump.
-- **Internal docs** — `docs/cyrius-guide.md` add sum-type
+- **Internal docs** — `docs/guides/cyrius-guide.md` add sum-type
   syntax + exhaustive-match sections.
 - **completed-phases.md migration** — move v5.8.21–v5.8.27
   retrospective from CHANGELOG narrative into the historical
@@ -25004,7 +25125,7 @@ in practice ~99% of real subscripting happens inside fns.
 
 ### Editor integration (folded into this slot)
 
-- New `docs/editor-integration.md` — usage doc covering
+- New `docs/guides/editor-integration.md` — usage doc covering
   `cyrius-lsp` capabilities, the `.lsp.json` shape, per-editor
   notes (Claude Code / Helix / VS Code), highlighting state
   (TextMate grammar still on roadmap), troubleshooting.
@@ -48973,7 +49094,7 @@ map alignment. Zero new features. Heap audit now reports **0 warnings**
   suites / 442 assertions**. Stdlib module count aligned to **40 stdlib + 5 deps**
   (patra, sakshi, sakshi_full, sigil, yukti). Files touched:
   `CLAUDE.md`, `README.md`, `docs/benchmarks.md`, `docs/architecture/cyrius.md`,
-  `docs/cyrius-guide.md`, `docs/adr/001-assembly-cornerstone.md`,
+  `docs/guides/cyrius-guide.md`, `docs/adr/001-assembly-cornerstone.md`,
   `docs/development/roadmap.md`.
 - **CHANGELOG `[3.4.14]` stats line corrected**: Said `45 stdlib + 5 deps`, but
   the release only bumped the compiler for `_cyrius_init` export — no new stdlib
