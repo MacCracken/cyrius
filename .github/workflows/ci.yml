@@ -1004,7 +1004,7 @@ jobs:
       - name: Required docs exist
         run: |
           for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE \
-                     docs/tutorial.md docs/cyrius-guide.md docs/stdlib-reference.md docs/faq.md docs/benchmarks.md; do
+                     docs/guides/tutorial.md docs/guides/cyrius-guide.md docs/stdlib-reference.md docs/guides/faq.md docs/benchmarks.md; do
             test -f "$doc" || { echo "missing: $doc"; exit 1; }
           done
           echo "all documentation present"
