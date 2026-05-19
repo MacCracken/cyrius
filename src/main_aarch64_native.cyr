@@ -2,9 +2,9 @@
 # Cyrius Compiler v2 — Modular Self-Hosting Compiler
 # ================================================================
 # Same language as cc.cyr, split into modules using include.
-# Compiled by cc (cyrc's extended language).
+# Compiled by cc (cybs's extended language).
 #
-# Build: cat src/main_aarch64.cyr | cc5 > cc5_cross && cat src/main_aarch64_native.cyr | cc5_cross > cc5_native
+# Build: cat src/main_aarch64.cyr | cycc > cc5_cross && cat src/main_aarch64_native.cyr | cc5_cross > cc5_native
 # Native aarch64 compiler — runs on ARM hardware with native syscall numbers
 # ================================================================
 # HEAP MAP — Synced with main.cyr (v5.0.3)

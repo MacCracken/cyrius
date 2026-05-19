@@ -1,7 +1,7 @@
 # efi_probe — minimal cyrius UEFI Application that writes
 # "hello, uefi\r\n" to firmware's ConOut and returns EFI_SUCCESS.
 #
-# Build:    CYRIUS_TARGET_EFI=1 build/cc5 < programs/efi_probe.cyr > /tmp/efi_probe.efi
+# Build:    CYRIUS_TARGET_EFI=1 build/cycc < programs/efi_probe.cyr > /tmp/efi_probe.efi
 # Verify:   _efi_emit_gate() in programs/check.cyr (structural; v5.11.48)
 # Smoke:    qemu-system-x86_64 + OVMF (runtime; v5.11.49)
 #

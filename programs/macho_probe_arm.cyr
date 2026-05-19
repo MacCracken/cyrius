@@ -24,7 +24,7 @@
 #   (header + 15 cmds = 760 bytes, padded to 808 for __text)
 #
 # Build on Linux:
-#   cat programs/macho_probe_arm.cyr | build/cc5 > /tmp/macho_probe_arm \
+#   cat programs/macho_probe_arm.cyr | build/cycc > /tmp/macho_probe_arm \
 #     && chmod +x /tmp/macho_probe_arm
 #   /tmp/macho_probe_arm > /tmp/exit42_arm.macho
 #

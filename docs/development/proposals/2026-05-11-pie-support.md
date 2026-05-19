@@ -2,12 +2,12 @@
 
 **Filed:** 2026-05-11 during AGNOS v1.27.x → v1.28.x planning
 **Severity:** Feature request — no current consumer is blocked, but AGNOS's full-binary KASLR (Option A in [`agnos/docs/development/proposals/2026-05-11-kaslr-scope.md`](https://github.com/MacCracken/agnos/blob/main/docs/development/proposals/2026-05-11-kaslr-scope.md)) is gated on this landing.
-**Affects:** `src/backend/x86/emit.cyr`, `src/backend/aarch64/emit.cyr`, fixup-table machinery, every site that emits an absolute address into the binary. cc5 ABI implications discussed below.
+**Affects:** `src/backend/x86/emit.cyr`, `src/backend/aarch64/emit.cyr`, fixup-table machinery, every site that emits an absolute address into the binary. cycc ABI implications discussed below.
 **Target slot:** v6.1.x — after the v6.0.0 rename + cleanup arc settles. Not blocking v6.0.0.
 
 ## Summary
 
-cc5 emits absolute addresses into the binary at most call/jmp/data-access sites. Functions can be called via `call rel32` (already RIP-relative — fine), but global-data accesses, function-pointer loads, jump tables, and most fixup-table entries bake in absolute addresses. This means a cyrius binary cannot run correctly at any address other than its link-time base (`0x100000` for AGNOS kernel; the standard `0x400000` / `0x401000` for userland on Linux x86_64).
+cycc emits absolute addresses into the binary at most call/jmp/data-access sites. Functions can be called via `call rel32` (already RIP-relative — fine), but global-data accesses, function-pointer loads, jump tables, and most fixup-table entries bake in absolute addresses. This means a cyrius binary cannot run correctly at any address other than its link-time base (`0x100000` for AGNOS kernel; the standard `0x400000` / `0x401000` for userland on Linux x86_64).
 
 This proposal asks cyrius to grow a PIE codegen mode — invoked via `cyrius build --pie src/main.cyr build/foo` or equivalent — that emits a binary whose internal references are all RIP-relative (or `adrp`+`add` on aarch64), so the loader (or a relocating boot shim, in the AGNOS case) can slide the binary to any address at boot time.
 
@@ -15,7 +15,7 @@ This proposal asks cyrius to grow a PIE codegen mode — invoked via `cyrius bui
 
 - **Cross-cutting backend change.** Every code-emit site that produces an absolute address needs to be audited and converted. That's not a slot — it's a refactor of the same shape as the `_TARGET_*` consolidation already pinned to v6.0.0.
 - **ABI implication.** Linking a PIE binary against a non-PIE binary (or vice versa) doesn't work in general. Once cyrius can emit PIE, the question of whether stdlib distfiles are also PIE-compatible has to be answered. v5.x is mid-arc on stdlib annotation + foldin work; perturbing the ABI mid-cycle would compound risk.
-- **Major-bump signal to downstreams.** Same reasoning as the cc5 → cyc rename at v6.0.0: downstreams need to re-pin and re-verify. PIE codegen is an opt-in flag (non-PIE remains the default through v6.x), so consumers aren't *forced* to migrate, but the option appearing in a major-version bracket is the right signal.
+- **Major-bump signal to downstreams.** Same reasoning as the cycc → cyc rename at v6.0.0: downstreams need to re-pin and re-verify. PIE codegen is an opt-in flag (non-PIE remains the default through v6.x), so consumers aren't *forced* to migrate, but the option appearing in a major-version bracket is the right signal.
 
 ## Why not "just hand-roll relocation tables in the consumer" (the kludge alternative)
 
@@ -85,7 +85,7 @@ Make PIE a build-mode flag available to any consumer. Stdlib distfiles also beco
 
 ## Work breakdown — Option A (the v6.1.0 plan if approved)
 
-1. **Mode plumbing.** Add `--pie` flag to `cyrius build` wrapper; thread through to `cc5` as a build-mode bit. In source, recognize `kernel; pie;` as the dual-flag form. Decision needed: separate flag or implied by `kernel;`? Per "kernel-mode PIE only" scope, implying it from `kernel;` is tempting but locks out non-PIE kernel builds (which AGNOS today still wants for the v1.28.0 data-only KASLR cut). Recommendation: **separate flag**.
+1. **Mode plumbing.** Add `--pie` flag to `cyrius build` wrapper; thread through to `cycc` as a build-mode bit. In source, recognize `kernel; pie;` as the dual-flag form. Decision needed: separate flag or implied by `kernel;`? Per "kernel-mode PIE only" scope, implying it from `kernel;` is tempting but locks out non-PIE kernel builds (which AGNOS today still wants for the v1.28.0 data-only KASLR cut). Recommendation: **separate flag**.
 2. **Absolute-address audit.** Grep `src/backend/x86/emit.cyr` and `src/backend/aarch64/emit.cyr` for every site that emits a 64-bit immediate that's a symbol/address. Catalog them. Per-site decision: convert to RIP-relative, or leave (rare cases that don't matter for KASLR — e.g. MMIO addresses in kernel-only paths).
 3. **x86_64 emit conversions.** Convert the catalogued sites one at a time. Bracket each by: byte-identical fixpoint of the non-PIE path stays green, *plus* a new test that the PIE path emits the expected `lea rax, [rip + …]` shape. Use cyrius's existing byte-exact testing discipline.
 4. **Fixup table extension.** Add a `FIXUP_KIND_REL32` (or similar) variant. The existing fixup walk applies these as RIP-relative deltas at link time. Non-PIE consumers ignore the kind field; PIE consumers emit only the relative kind.

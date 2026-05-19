@@ -31,7 +31,7 @@
 | **Integer overflow in alloc** | Large allocation wraps to small size | brk return value checked; returns 0 on failure |
 | **Code injection via inline asm** | `asm { ... }` emits arbitrary bytes | By design — asm is a power tool, not a vulnerability |
 | **Denial of service** | Extremely large source files | Input buffer capped at 131KB; token array at 65536 |
-| **Supply chain** | Compromised compiler binary | **Narrow-scope self-hosting verification**: the compiler must produce byte-identical output when recompiling its own source (3-step fixpoint `cc_a → cc_b → cc_c; b == c`; pre-v5 this was `cc3 == cc3`, now `cc5 → cc5b → cc5c`). This invariant is check.sh-enforced on every commit across all active targets. **Note on scope**: this mitigates trusting-trust attacks against the compiler's own codegen only. It does NOT address platform-loader tolerance of the emitted binary (a separate "broad-scope" property — see `docs/architecture/cyrius.md` §"Self-hosting: two scopes of byte-identity"). |
+| **Supply chain** | Compromised compiler binary | **Narrow-scope self-hosting verification**: the compiler must produce byte-identical output when recompiling its own source (3-step fixpoint `cc_a → cc_b → cc_c; b == c`; pre-v5 this was `cc3 == cc3`, now `cycc → cc5b → cc5c`). This invariant is check.sh-enforced on every commit across all active targets. **Note on scope**: this mitigates trusting-trust attacks against the compiler's own codegen only. It does NOT address platform-loader tolerance of the emitted binary (a separate "broad-scope" property — see `docs/architecture/cyrius.md` §"Self-hosting: two scopes of byte-identity"). |
 | **Bootstrap trust** | Trusting the committed 29KB seed | Diverse double compilation possible; seed is auditable |
 
 ## Known Limitations
@@ -46,12 +46,12 @@
 
 ## Security Scanning
 
-`cyrc vet` scans for dangerous patterns:
+`cybs vet` scans for dangerous patterns:
 - Raw `syscall(59, ...)` (execve) outside process.cyr/agnosys
 - Unbounded loops without break conditions
 - Missing null checks on pointer arguments
 
-`cyrc deny` enforces policy:
+`cybs deny` enforces policy:
 - No shell execution in library code
 - No network syscalls in core libraries
 - Trusted path validation for include directives

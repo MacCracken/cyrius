@@ -3,14 +3,14 @@
 Since v4.3.1, the cyrius compiler can dump a symbol table during compilation.
 Combined with systemd-coredump and a little ELF arithmetic, this turns an
 opaque SIGSEGV into a concrete `function + offset` trace — even without gdb
-installed. (The compiler binary was renamed `cc3` → `cc5` at v5.0.0 and will
+installed. (The compiler binary was renamed `cc3` → `cycc` at v5.0.0 and will
 become `cyc` at v6.0.0 per the permanent-binary-name rule in CLAUDE.md.)
 
 ## Usage
 
 ```sh
 # Compile with symbols written to a side-file
-CYRIUS_SYMS=/tmp/myproj-syms.txt cat src/main.cyr | cc5 > build/myproj
+CYRIUS_SYMS=/tmp/myproj-syms.txt cat src/main.cyr | cycc > build/myproj
 
 # File format: one function per line, `VA name`
 #   000000000040007d strlen
@@ -68,4 +68,4 @@ Earlier known-bug list (libro PatraStore Heisenbug from v3.4.8+) has
 since resolved — current open bugs live in
 [`docs/development/issues/`](issues/). This page focuses on the
 CYRIUS_SYMS mechanism itself, which has been stable since v4.3.1
-across the cc3 → cc5 rename and through v5.11.x.
+across the cc3 → cycc rename and through v5.11.x.

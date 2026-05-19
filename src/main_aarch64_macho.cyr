@@ -2,11 +2,11 @@
 # Cyrius Compiler v2 — Modular Self-Hosting Compiler
 # ================================================================
 # Same language as cc.cyr, split into modules using include.
-# Compiled by cc (cyrc's extended language).
+# Compiled by cc (cybs's extended language).
 #
-# Build: cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./build/cc5_aarch64 > cc5_macho
-# NOTE: must be cc5_aarch64 (aarch64 backend), NOT cc5 (x86_64 backend).
-# cc5 with CYRIUS_MACHO_ARM=1 wraps x86 machine code in an arm64 Mach-O
+# Build: cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./build/cycc_aarch64 > cycc_macho
+# NOTE: must be cycc_aarch64 (aarch64 backend), NOT cycc (x86_64 backend).
+# cycc with CYRIUS_MACHO_ARM=1 wraps x86 machine code in an arm64 Mach-O
 # header — the binary looks valid to `file` but SIGILLs on Apple Silicon.
 # Mac self-host target: produces arm64 Mach-O that runs on Apple Silicon.
 # Only deviation from main_aarch64.cyr is the heap-init syscall — brk
@@ -152,7 +152,7 @@ if (_vn > 0) {
 # 0x457C000 (~78.5 MB) pre-v5.10.40.
 var S = syscall(9, 0, 0x4D9D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
-    syscall(SYS_WRITE, 2, "cc5_macho: mmap heap init failed\n", 33);
+    syscall(SYS_WRITE, 2, "cycc_macho: mmap heap init failed\n", 33);
     syscall(SYS_EXIT, 1);
 }
 
@@ -293,7 +293,7 @@ while (scan == 1) {
 # Reset module for pass 2
 SMOD(S, 0);
 
-# cc5_macho runs on Apple Silicon; its default output target is Mach-O
+# cycc_macho runs on Apple Silicon; its default output target is Mach-O
 # ARM64. Forced here rather than env-gated because this variant only
 # makes sense on macOS — a Mac user invoking it without the env var
 # would otherwise silently emit Linux aarch64 ELF, which is surprising.

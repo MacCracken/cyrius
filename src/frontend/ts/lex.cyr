@@ -10,15 +10,15 @@
 #
 #   - Separate heap regions from the .cyr lexer (cleaner, doesn't
 #     couple the two surfaces).
-#   - Internal dispatch in cc5: `cbt/build.cyr::compile()` detects
-#     `.ts` extension and passes a flag; cc5 routes to TS_LEX vs
+#   - Internal dispatch in cycc: `cbt/build.cyr::compile()` detects
+#     `.ts` extension and passes a flag; cycc routes to TS_LEX vs
 #     the existing LEX based on the flag. Mirrors platform dispatch.
 #   - Same backend chain: TS frontend lowers to the existing IR;
 #     all backends emit unchanged.
 #   - **TS-heap-relative offsets** (P1.2 redesign): all TS_*_OFF
 #     constants are relative to a `ts_base` pointer, not absolute
 #     heap addresses. P1.6 wire-in passes `ts_base = S + 0x1D0B000`
-#     (current cc5 brk); test drivers pass `ts_base = alloc(...)`.
+#     (current cycc brk); test drivers pass `ts_base = alloc(...)`.
 #     Decouples TS frontend from main.cyr's heap layout — TS region
 #     can move without touching the lexer code.
 #
@@ -36,7 +36,7 @@
 #
 # Offset       Region              Size       Stride  Purpose
 # -----------------------------------------------------------------
-# 0x000000     ts_tok_types        [0x200000] 8 B     256K i64 token types (matches cc5 ADDTOK pattern)
+# 0x000000     ts_tok_types        [0x200000] 8 B     256K i64 token types (matches cycc ADDTOK pattern)
 # 0x200000     ts_tok_values       [0x200000] 8 B     256K i64 token values (offset/length/literal-idx)
 # 0x400000     ts_tok_lines        [0x200000] 8 B     256K i64 source lines
 # 0x600000     ts_names            [0x100000] —       1 MB identifier intern table (P1.x)
@@ -357,7 +357,7 @@ fn TS_ISOCTDIGIT(c): i64 {
     return 0;
 }
 
-# Local memeq (cc5 has no stdlib memeq; we don't want to drag
+# Local memeq (cycc has no stdlib memeq; we don't want to drag
 # in lib/string.cyr just for this). Returns 1 if first n bytes match.
 fn _ts_memeq(a, b, n) : i64 {
     var i = 0;

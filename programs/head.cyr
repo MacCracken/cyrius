@@ -1,6 +1,6 @@
 # head — print first N lines from stdin (default 10)
 # Usage: cat file | ./head
-# Built by: cat head.cyr | ./build/cc5 > head && chmod +x head
+# Built by: cat head.cyr | ./build/cycc > head && chmod +x head
 
 fn head(max_lines: i64): i64 {
     var buf[1];

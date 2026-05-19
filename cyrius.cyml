@@ -17,8 +17,8 @@ output = "build/cc5"
 # hardcoded lists was never updated. Now: add a binary here, every
 # consumer picks it up automatically.
 [release]
-bins = ["cc5", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cyrc", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner"]
-cross_bins = ["cc5_aarch64", "cc5_win"]
+bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner"]
+cross_bins = ["cycc_aarch64", "cycc_win"]
 # v5.11.10: scripts/cyriusly retired from release.scripts — replaced by
 # programs/cyriusly.cyr in bins (cyrius binary handles all verbs; heavy
 # verbs shell-out to OS tools via process.exec). scripts/cyriusly stays

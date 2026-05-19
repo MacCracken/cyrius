@@ -24,11 +24,11 @@ cd "$ROOT"
 
 CHECK_BIN="$ROOT/build/cyrius_check"
 CHECK_SRC="$ROOT/programs/check.cyr"
-CC="$ROOT/build/cc5"
+CC="$ROOT/build/cycc"
 
 if [ ! -x "$CHECK_BIN" ] || [ "$CHECK_SRC" -nt "$CHECK_BIN" ]; then
     if [ ! -x "$CC" ]; then
-        printf "error: build/cc5 missing — run 'sh bootstrap/bootstrap.sh' first.\n" >&2
+        printf "error: build/cycc missing — run 'sh bootstrap/bootstrap.sh' first.\n" >&2
         exit 1
     fi
     cat "$CHECK_SRC" | "$CC" > "$CHECK_BIN" 2>/dev/null

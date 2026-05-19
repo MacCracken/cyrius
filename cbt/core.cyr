@@ -38,16 +38,16 @@ var _skip_deps = 0;
 # `cyrius deps`. _no_lock = 1 suppresses the write for that run.
 var _no_lock = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
-# child's envp with CYRIUS_STRICT_PIN=1 so cc5's pin-drift check
+# child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.
 # CI path for pin-faithful builds.
 var _strict_pin = 0;
 # v5.11.63: --strict flag — when 1, compile() passes --strict to
-# cc5/cc5_aarch64 in argv. Both compilers' fixup pass exits with
+# cycc/cycc_aarch64 in argv. Both compilers' fixup pass exits with
 # code 1 on any reachable undefined-fn ref (after the v5.11.59
 # DCE-aware reachability filter), matching the existing direct
-# `cc5 --strict` shape from v5.4.19. Wrapper now exposes the same
-# behavior under both archs; previously the user had to invoke cc5
+# `cycc --strict` shape from v5.4.19. Wrapper now exposes the same
+# behavior under both archs; previously the user had to invoke cycc
 # directly and pipe stdin/stdout themselves.
 var _strict = 0;
 
@@ -209,26 +209,40 @@ fn find_tools(): i64 {
         _home = make_path(proc_home, ".cyrius");
     }
 
-    # Try installed cc5 first
-    var installed_cc = make_path(_home, "bin/cc5");
+    # v6.0.0: compiler binary renamed cc5 → cycc. Lookup tries cycc
+    # first, then cc5 as a back-compat fallback (v6.0.x window only —
+    # v6.1.0 drops the fallback). Same shape for aarch64 cross-compiler.
+    var installed_cc = make_path(_home, "bin/cycc");
+    if (file_exists(installed_cc) == 0) {
+        installed_cc = make_path(_home, "bin/cc5");
+    }
     if (file_exists(installed_cc) == 1) {
         _cc = installed_cc;
         _tools_dir = make_path(_home, "bin");
     } else {
-        # Dev mode: ./build/cc5
-        if (file_exists("./build/cc5") == 1) {
+        # Dev mode: ./build/cycc (or ./build/cc5 fallback)
+        if (file_exists("./build/cycc") == 1) {
+            _cc = "./build/cycc";
+            _tools_dir = "./build";
+        } elif (file_exists("./build/cc5") == 1) {
             _cc = "./build/cc5";
             _tools_dir = "./build";
         } else {
-            # cc5 not found — ok for deps/clean/init/version/help, fatal for build/run/test
+            # not found — ok for deps/clean/init/version/help, fatal for build/run/test
             _cc = 0;
             _tools_dir = make_path(_home, "bin");
         }
     }
     # Search for aarch64 cross-compiler: tools dir, then ./build/
-    _cc_arm = make_path(_tools_dir, "cc5_aarch64");
+    # (same back-compat: cycc_aarch64 first, cc5_aarch64 fallback).
+    _cc_arm = make_path(_tools_dir, "cycc_aarch64");
     if (file_exists(_cc_arm) == 0) {
-        if (file_exists("./build/cc5_aarch64") == 1) {
+        _cc_arm = make_path(_tools_dir, "cc5_aarch64");
+    }
+    if (file_exists(_cc_arm) == 0) {
+        if (file_exists("./build/cycc_aarch64") == 1) {
+            _cc_arm = "./build/cycc_aarch64";
+        } elif (file_exists("./build/cc5_aarch64") == 1) {
             _cc_arm = "./build/cc5_aarch64";
         }
     }

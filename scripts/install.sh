@@ -99,8 +99,8 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     # v5.8.53: rebuild stale build/<bin> from source before copying.
     # Pre-fix, --refresh-only only `cp`'d existing build/<bin> into the
     # snapshot — so a stale binary (gitignored, dev-local) propagated
-    # forever. Symptom: cc5_aarch64 froze at 438896 B from v5.8.46
-    # through v5.8.52 because `build/cc5_aarch64` was last rebuilt
+    # forever. Symptom: cycc_aarch64 froze at 438896 B from v5.8.46
+    # through v5.8.52 because `build/cycc_aarch64` was last rebuilt
     # before the v5.8.46 token-cap raise; sit v0.7.2 release flow hit
     # the old 262144 cap on aarch64 cross-build six version-bumps
     # later. The version-bump.sh post-hook calls --refresh-only on
@@ -108,15 +108,15 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     # actually rebuild.
     #
     # Source-mapping rules:
-    #   - bins entry "cc5"     → seed-bootstrapped, NOT rebuilt here.
+    #   - bins entry "cycc"     → seed-bootstrapped, NOT rebuilt here.
     #   - bins entry "cyrius"  → cbt/cyrius.cyr
     #   - bins entry <other>   → programs/<name>.cyr (cyrlint, cyrfmt, ark, …)
-    #   - cross_bins "cc5_aarch64" → src/main_aarch64.cyr
+    #   - cross_bins "cycc_aarch64" → src/main_aarch64.cyr
     #   - cross_bins <other>      → src/main_<arch>.cyr (future-proof)
     #
     # Staleness rule: rebuild if binary is missing OR source mtime is
     # newer than binary mtime (`-nt`). Errors are surfaced (no
-    # `2>/dev/null` swallow) — if cc5 emits warnings we want them
+    # `2>/dev/null` swallow) — if cycc emits warnings we want them
     # visible so the next stale-binary trap doesn't take six bumps
     # to discover.
     _rebuild_stale() {
@@ -126,17 +126,17 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ]; then
             return 0
         fi
-        if [ ! -x "build/cc5" ]; then
-            warn "build/cc5 missing — cannot rebuild $target from $source; falling back to existing binary"
+        if [ ! -x "build/cycc" ]; then
+            warn "build/cycc missing — cannot rebuild $target from $source; falling back to existing binary"
             return 1
         fi
         local err_log
         err_log=$(mktemp)
-        if cat "$source" | ./build/cc5 > "build/$target" 2>"$err_log"; then
+        if cat "$source" | ./build/cycc > "build/$target" 2>"$err_log"; then
             chmod +x "build/$target"
             info "rebuilt $target from $source"
             if [ -s "$err_log" ]; then
-                # cc5 emitted warnings/notes. Don't fail — these are
+                # cycc emitted warnings/notes. Don't fail — these are
                 # commonly the "note: N unreachable fns" diagnostic and
                 # cross-arch latent-fn warnings (see v5.8.54 EFLADDR/PE
                 # parity slot). Surface them so they don't rot silently.
@@ -155,14 +155,14 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
 
     for bin in $_R_BINS; do
         case "$bin" in
-            cc5)    : ;;  # seed-bootstrapped, never rebuilt by --refresh-only
+            cycc)    : ;;  # seed-bootstrapped, never rebuilt by --refresh-only
             cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" ;;
             *)      _rebuild_stale "$bin"    "programs/${bin}.cyr" ;;
         esac
     done
     for cbin in $_R_CROSS; do
         case "$cbin" in
-            cc5_aarch64) _rebuild_stale "cc5_aarch64" "src/main_aarch64.cyr" ;;
+            cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" ;;
             cc5_*)
                 # Convention: cc5_<arch> ← src/main_<arch>.cyr
                 _arch="${cbin#cc5_}"
@@ -180,6 +180,20 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         fi
     done
     [ -f bootstrap/asm ] && cp bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin/"
+
+    # v6.0.0 back-compat symlinks: cc5 → cycc, cyrc → cybs, plus the
+    # cross-arch variants. Lets v5.11.x consumers re-pin to 6.0.x
+    # without breakage (their cyrius.cyml still says cyrius = "5.11.x"
+    # → resolves the installed snapshot → finds cc5 via symlink).
+    # Dropped at v6.1.0 per the v6.0.0 closeout plan.
+    _bindir="$CYRIUS_HOME/versions/$VERSION/bin"
+    for _pair in "cc5:cycc" "cc5_aarch64:cycc_aarch64" "cc5_win:cycc_win" "cyrc:cybs"; do
+        _old="${_pair%:*}"
+        _new="${_pair#*:}"
+        if [ -x "$_bindir/$_new" ] && [ ! -e "$_bindir/$_old" ]; then
+            (cd "$_bindir" && ln -sf "$_new" "$_old")
+        fi
+    done
 
     # v5.8.53: also rebuild dlopen-helper from C source. Pre-fix, the
     # full-install path (lines below) compiled the helper but
@@ -245,7 +259,7 @@ EOF_LIB
     echo "$VERSION" > "$CYRIUS_HOME/versions/$VERSION/VERSION"
 
     # v5.7.22: re-link ~/.cyrius/bin → versions/$VERSION/bin so the
-    # PATH-resolved cyrius/cc5/cyrfmt/cyrlint binaries match the
+    # PATH-resolved cyrius/cycc/cyrfmt/cyrlint binaries match the
     # version we just refreshed. Pre-v5.7.22, --refresh-only updated
     # the snapshot but left the bin/ symlink pointing at whatever
     # version was previously active. Local devs running version-bump.sh
@@ -334,16 +348,16 @@ if [ "$installed" -eq 0 ]; then
     cd cyrius
 
     sh bootstrap/bootstrap.sh
-    chmod +x build/cc5
+    chmod +x build/cycc
 
     # Verify self-hosting
-    cat src/main.cyr | ./build/cc5 > /tmp/cc5_verify
+    cat src/main.cyr | ./build/cycc > /tmp/cc5_verify
     chmod +x /tmp/cc5_verify
     cat src/main.cyr | /tmp/cc5_verify > /tmp/cc5_verify2
     if cmp -s /tmp/cc5_verify /tmp/cc5_verify2; then
         info "self-hosting verified"
     else
-        warn "self-hosting check failed, using committed cc5"
+        warn "self-hosting check failed, using committed cycc"
     fi
 
     # Build tools from cyrius.cyml [release].bins + cross_bins
@@ -353,16 +367,16 @@ if [ "$installed" -eq 0 ]; then
     # v5.8.53: stderr no longer suppressed via `2>/dev/null` and the
     # `|| true` shell trick is gone. Pre-fix, a build failure produced
     # no diagnostic and the downstream `cp` step silently dropped the
-    # missing artifact — exactly the trap that froze cc5_aarch64 from
+    # missing artifact — exactly the trap that froze cycc_aarch64 from
     # v5.8.46 → v5.8.52. Now: capture stderr to a tempfile, surface
-    # warnings/notes (cc5 emits a "note: N unreachable fns" diagnostic
+    # warnings/notes (cycc emits a "note: N unreachable fns" diagnostic
     # that's normal), and warn loudly if the build itself fails.
     _build_tool() {
         local target="$1"
         local source="$2"
         local err_log
         err_log=$(mktemp)
-        if cat "$source" | ./build/cc5 > "./build/$target" 2>"$err_log"; then
+        if cat "$source" | ./build/cycc > "./build/$target" 2>"$err_log"; then
             chmod +x "./build/$target"
             if [ -s "$err_log" ]; then sed 's/^/    /' "$err_log" >&2; fi
             rm -f "$err_log"
@@ -377,7 +391,7 @@ if [ "$installed" -eq 0 ]; then
     _BINS=$(_parse_release_array bins)
     _CROSS_BINS=$(_parse_release_array cross_bins)
     for tool in $_BINS; do
-        if [ "$tool" = "cc5" ] || [ "$tool" = "cyrius" ]; then continue; fi
+        if [ "$tool" = "cycc" ] || [ "$tool" = "cyrius" ]; then continue; fi
         if [ -f "programs/${tool}.cyr" ]; then
             _build_tool "$tool" "programs/${tool}.cyr"
         fi
@@ -389,7 +403,7 @@ if [ "$installed" -eq 0 ]; then
 
     # Cross-compiler(s)
     if [ -f src/main_aarch64.cyr ]; then
-        _build_tool "cc5_aarch64" "src/main_aarch64.cyr"
+        _build_tool "cycc_aarch64" "src/main_aarch64.cyr"
     fi
 
     # Copy binaries
@@ -529,7 +543,7 @@ if [ -f "$STARSHIP_CONFIG" ] && command -v starship > /dev/null 2>&1; then
         cat >> "$STARSHIP_CONFIG" << 'STARSHIP'
 
 [custom.cyrius]
-command = """if [ -f bootstrap/asm ]; then cat VERSION 2>/dev/null; else cc5 --version 2>/dev/null | awk '{print $2}' || cat ~/.cyrius/current 2>/dev/null || echo '?'; fi"""
+command = """if [ -f bootstrap/asm ]; then cat VERSION 2>/dev/null; else cycc --version 2>/dev/null | awk '{print $2}' || cat ~/.cyrius/current 2>/dev/null || echo '?'; fi"""
 when = "test -f cyrius.cyml || test -f cyrius.toml"
 symbol = "𝕮"
 style = "bg:teal"
@@ -543,7 +557,7 @@ elif command -v starship > /dev/null 2>&1; then
     mkdir -p "$(dirname "$STARSHIP_CONFIG")"
     cat > "$STARSHIP_CONFIG" << 'STARSHIP'
 [custom.cyrius]
-command = """if [ -f bootstrap/asm ]; then cat VERSION 2>/dev/null; else cc5 --version 2>/dev/null | awk '{print $2}' || cat ~/.cyrius/current 2>/dev/null || echo '?'; fi"""
+command = """if [ -f bootstrap/asm ]; then cat VERSION 2>/dev/null; else cycc --version 2>/dev/null | awk '{print $2}' || cat ~/.cyrius/current 2>/dev/null || echo '?'; fi"""
 when = "test -f cyrius.cyml || test -f cyrius.toml"
 symbol = "𝕮"
 style = "bg:teal"

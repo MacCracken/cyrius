@@ -1,4 +1,4 @@
-# pulsar.cyr — rebuild cc5 + tools from source, install, purge old versions
+# pulsar.cyr — rebuild cycc + tools from source, install, purge old versions
 
 # Parse an array field from cyrius.cyml's [release] table (v5.4.18).
 # Returns a vec of cstr (NUL-terminated). Empty vec if manifest or
@@ -58,12 +58,12 @@ fn cmd_pulsar(): i64 {
     var ver = read_file_str("VERSION");
     if (ver == 0) { ver = "unknown"; }
 
-    # Step 1: rebuild cc5
-    _status("  cc5...");
+    # Step 1: rebuild cycc
+    _status("  cycc...");
     var cc5_a = "/tmp/cyrius_pulsar_a";
     var cc5_b = "/tmp/cyrius_pulsar_b";
     if (compile("src/main.cyr", cc5_a) != 0) {
-        _err("cc5 compile failed");
+        _err("cycc compile failed");
         return 1;
     }
 
@@ -110,24 +110,24 @@ fn cmd_pulsar(): i64 {
             return 1;
         }
         # cc5_b == cc5_c, use cc5_b
-        _dep_copy_file(cc5_b, "build/cc5");
+        _dep_copy_file(cc5_b, "build/cycc");
         sys_unlink(cc5_c);
     } else {
-        _dep_copy_file(cc5_a, "build/cc5");
+        _dep_copy_file(cc5_a, "build/cycc");
     }
-    sys_chmod("build/cc5", 0x1ED);
+    sys_chmod("build/cycc", 0x1ED);
     sys_unlink(cc5_a); sys_unlink(cc5_b);
 
-    sys_write(STDOUT_FD, "  cc5: ", 7);
-    fmt_int(_file_size("build/cc5"));
+    sys_write(STDOUT_FD, "  cycc: ", 7);
+    fmt_int(_file_size("build/cycc"));
     println(" bytes (self-host OK)");
 
     # Step 2: rebuild aarch64 compilers
     if (file_exists("src/main_aarch64.cyr") == 1) {
-        _status("  cc5_aarch64 (cross)...");
-        compile("src/main_aarch64.cyr", "build/cc5_aarch64");
-        sys_write(STDOUT_FD, "  cc5_aarch64: ", 15);
-        fmt_int(_file_size("build/cc5_aarch64"));
+        _status("  cycc_aarch64 (cross)...");
+        compile("src/main_aarch64.cyr", "build/cycc_aarch64");
+        sys_write(STDOUT_FD, "  cycc_aarch64: ", 15);
+        fmt_int(_file_size("build/cycc_aarch64"));
         println(" bytes");
     }
 
@@ -137,7 +137,7 @@ fn cmd_pulsar(): i64 {
     store64(&tools, "cyrfmt");
     store64(&tools + 8, "cyrlint");
     store64(&tools + 16, "cyrdoc");
-    store64(&tools + 24, "cyrc");
+    store64(&tools + 24, "cybs");
     store64(&tools + 32, "ark");
     store64(&tools + 40, 0);
     var ti = 0;

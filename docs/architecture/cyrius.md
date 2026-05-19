@@ -6,7 +6,7 @@
 > and self-hosting framing below are durable across the v5.x cycle.
 > Historical version anchors (cc3 era, v5.6.43 "as of" stamps) are
 > retained for narrative continuity — they refer to the pre-rename
-> compiler binary (`cc3` → `cc5` at v5.0.0; `cc5` → `cyc` at v6.0.0
+> compiler binary (`cc3` → `cycc` at v5.0.0; `cycc` → `cyc` at v6.0.0
 > per CLAUDE.md's permanent-binary-name rule). For current per-release
 > state, see [`../development/state.md`](../development/state.md);
 > for shipped work, [`../../CHANGELOG.md`](../../CHANGELOG.md).
@@ -96,7 +96,7 @@ conflated:
 - A **narrow-scope break** is cyrius's fault and must block a
   release. Codegen non-determinism, a broken optimizer, heap-order
   dependencies — these get caught by the 3-step fixpoint and by
-  `cc5 == cc5b` checks and never ship.
+  `cycc == cc5b` checks and never ship.
 - A **broad-scope break** may be cyrius's fault (capability gap
   in our runtime, missing syscall wrapper, bad Mach-O shape) OR
   may be external (OS loader hardening, deprecated API). Either
@@ -134,11 +134,11 @@ Cyrius learns from all of them. Every mistake documented in vidya's gotchas, eve
 ```
 Assembly (the cornerstone)
   → cyrius-seed (Rust, archived — used to prove bootstrap correctness)
-    → stage1a → stage1b → stage1c → stage1d → stage1e → cyrc
+    → stage1a → stage1b → stage1c → stage1d → stage1e → cybs
       → asm.cyr (self-hosting assembler, 43 mnemonics)
         → bootstrap closure ✓ (byte-identical output)
           → bootstrap/asm (29KB committed binary — root of trust)
-            → cyrc (compiler) + asm (assembler)
+            → cybs (compiler) + asm (assembler)
               → cc.cyr → cc3 (modular, 7 modules, 181 fns)
                 → 38 programs, 137 tests (Phase 5) ✓
                   → kernel prerequisites (Phase 6) ✓
@@ -173,12 +173,12 @@ in `state.md` so this file doesn't rot.
 
 ### Phase 2 (Done) — Assembly Foundation
 - cyrius-seed: stage 0 assembler (Rust, 69 mnemonics, 195 tests)
-- stage1a through cyrc: progressive compiler chain (expressions → control flow → syscalls → functions → bitwise ops → token scaling)
+- stage1a through cybs: progressive compiler chain (expressions → control flow → syscalls → functions → bitwise ops → token scaling)
 - 378 tests across 6 stages, all passing
 
 ### Phase 3 (Done) — Self-Hosting Bootstrap
 - asm.cyr: self-hosting assembler (43 mnemonics, 1128 lines, 11 byte-exact matches)
-- Bootstrap closure: asm assembles cyrc.cyr, output matches seed
+- Bootstrap closure: asm assembles cybs.cyr, output matches seed
 - Committed binary seed (bootstrap/asm, 29KB)
 - Rust archived, upstream submodule deinited
 - Zero external language dependencies
@@ -228,7 +228,7 @@ All 9 items complete:
 
 ### Phase 10 — Prove at Scale (in progress)
 - Migrate Ark package manager to Cyrius
-- AGNOS userland tools (cyrfmt/cyrlint/cyrdoc/cyrc all self-hosting)
+- AGNOS userland tools (cyrfmt/cyrlint/cyrdoc/cybs all self-hosting)
 - Benchmark suite vs C/Rust (`docs/development/benchmarks.md`)
 - Compiler optimization arc (v5.6.x): O1 FNV-1a, O2 peephole (5/5
   shipped), O3 IR passes (LASE + const-fold + DCE shipped, copy-prop
@@ -264,7 +264,7 @@ All 9 items complete:
 
 ```
 bootstrap/asm (29KB committed binary)
-  → assembles cyrc.cyr → cyrc (12KB compiler)
+  → assembles cybs.cyr → cybs (12KB compiler)
     → compiles asm.cyr → asm_v2 (byte-identical ✓)
 
 Archive: seed (Rust, 2254 lines) — independent verification path

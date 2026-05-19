@@ -13,7 +13,7 @@ under the same archive pattern used for prior cycles.
 - [cycle-discipline.md](cycle-discipline.md) — durable operating
   principles (slot acceptance, bottom-to-top priority, premise-check,
   cross-host smoke, cycle-close shape). Evergreen; not cycle-specific.
-- [state.md](state.md) — volatile current state (version, cc5 size,
+- [state.md](state.md) — volatile current state (version, cycc size,
   in-flight slot, recent shipped patches). Refreshed every release.
 - [completed-phases.md](completed-phases.md) — pre-v5.11.x historical
   arc retrospective (Phase 0–11 foundation summary post-trim).
@@ -61,12 +61,12 @@ ledger below; expanded narrative for shipped work lives in CHANGELOG
 
 **Cycle infrastructure / polish (.50, .54-.55)**
 - **.50** — Cap-drift detector + doc-size currency gates + fresh-tier doc refresh.
-- **.54** — LSP papercut close + REX named ops + `_find_fn_by_name` helper; cc5 first shrink in v5.11.x.
+- **.54** — LSP papercut close + REX named ops + `_find_fn_by_name` helper; cycc first shrink in v5.11.x.
 - **.55** — Refactor sweep — cap-drift gate extends to all 6 parse_*.cyr files; ESWITCH_DISPATCH_* named ops.
 
 **Iron-boot session papercut close (.56-.59)**
-- **.56** — Build-diagnostic polish: LSP `[deps.*]` resolution fix (raw cc5 → wrapper); fixup-time wording downgrade error → warning + "(call site may be unreachable)".
-- **.57** — cc5-side pin-drift + shadow-content detection (`_check_cyml_pin_drift()` + `_check_shadow_lib` byte-size compare).
+- **.56** — Build-diagnostic polish: LSP `[deps.*]` resolution fix (raw cycc → wrapper); fixup-time wording downgrade error → warning + "(call site may be unreachable)".
+- **.57** — cycc-side pin-drift + shadow-content detection (`_check_cyml_pin_drift()` + `_check_shadow_lib` byte-size compare).
 - **.58** — Wrapper polish: version-bump rebuild fix (transitive `version_str.cyr` dep) + `cyrius lib sync` + wrapper `--strict-pin` + `--version` manifest-pin line.
 - **.59** — DCE-aware undefined-fn reachability filter (cross-arch x86 + aarch64). aarch64 gained full DCE infrastructure for the first time. Pre-existing strict-mode parity gap acknowledged → pinned at .63.
 
@@ -77,11 +77,11 @@ ledger below; expanded narrative for shipped work lives in CHANGELOG
 - **.63** — aarch64 `_strict_mode` parity (.59 retro follow-up): `_strict_mode` global + `/proc/self/cmdline` parsing added to all three `main_aarch64*.cyr` variants; `src/backend/aarch64/fixup.cyr` strict-exit mirrors x86 lines 729-738. Drive-by: wrapper `--strict` plumbing extended to BOTH archs (was absent for both pre-.63). Band CLOSED.
 
 **v6.0 runway (.64-.67)**
-- **.64** — agnos gvar-init-order fix: top-level `var X = INT_LITERAL ;` declarations now bake the literal into the file image at FIXUP-time via new `gvar_initval` / `gvar_byte_off` tables (cross-arch x86 + aarch64 + Mach-O + PE; cx opts out). Closes 10-iron-burn root-cause search; cc5 SHRANK 2,384 B from eliminating runtime stores for cc5's own TS_TOK_* gvars.
+- **.64** — agnos gvar-init-order fix: top-level `var X = INT_LITERAL ;` declarations now bake the literal into the file image at FIXUP-time via new `gvar_initval` / `gvar_byte_off` tables (cross-arch x86 + aarch64 + Mach-O + PE; cx opts out). Closes 10-iron-burn root-cause search; cycc SHRANK 2,384 B from eliminating runtime stores for cycc's own TS_TOK_* gvars.
 - **.65** — CVE-05 split forward from .68: tok_names mangle-path write-boundary guard. 11 mangle sites (BUILD_METHOD_NAME / BUILD_OP_NAME / PARSE_FN_DEF module-mangle / variant-ctor × 2 / use-alias × 6 main_*.cyr variants) replaced magic-256 NPOS_GUARD with computed-source-length shape; 4 of the 6 main_*.cyr variants had no prior tok_names guard at all on the use-alias path. `_cve05_guard_gate` locks the magic-256 pattern out. check.sh 75 → 76. .68 stays a pure heap-map reorg.
-- **.66** — Bridge-compiler retirement: `src/bridge.cyr` deleted (2,005 LoC). Audit confirmed bridge was never in active bootstrap chain (`seed → cyrc → asm` is the real chain; cc5 is built standalone). 150 `bridge::*` entries cleanly removed from `docs/api-surface.snapshot` via regeneration. CLAUDE.md Key Principle + project structure listing + util.cyr comment + ADR-001 historical note all updated. One v6.0.0 accompanying-refactor item absorbed into v5.x close.
-- **.67** — Triple-pull bundle of v6.0.0 accompanying-refactor items (effectively a double-pull after premise-check at slot entry caught `cyrius build --strict` plumbing already shipped at v5.11.63): (1) `scripts/build-cc5-verify.sh` (~100 LoC bash) — formalizes the cc5 byte-identical fixpoint verifier, ad-hoc one-liners now permanent; renames to `build-cyc.sh` at v6.0.0; (2) cc3-era residue cleanup — `docs/adr/005-two-step-bootstrap.md` rewritten with stage_a/stage_b convention (was using cc3/cc4 ambiguously throughout an active ADR), `docs/doc-health.md` vidya example syntax updated, `roadmap-old.md` self-references marked done. README also updated for the post-bridge bootstrap chain. Byte-array literal peephole moved out to v6.0.x per user direction "put the pinned byte-array into 6.0.x line of work now."
-- **.68** — Heap-map full reorganization (true closeout engineering work): closes all four documented closeable gaps from the v5.8.61 minimum-blast-radius pass — 2.24 MB + 6 MB + 448 KB + 448 KB = 9.06 MB reclaimed. brk shrinks 0x56AD000 → **0x4D9D000** (-9.06 MB / ~77.6 MB total heap, was ~86.6 MB). 13.3 MB TS frontend reservation preserved. Cascade across four groups: codebuf + output_buf (-2.24 MB) → struct_ftypes (-8.19 MB) → struct_fnames (-8.62 MB) → 25+ regions through preprocess_out (-9.06 MB). ~32 distinct hex constants replace_all'd across 20 src/ files. Windows MMAP shrunk 0x5800000 → 0x4F00000. cc5 byte-identical at 874,232 B; cross-arch unchanged. heapmap.sh: 99 regions, monotonic 0x00000 → brk except single TS reservation.
+- **.66** — Bridge-compiler retirement: `src/bridge.cyr` deleted (2,005 LoC). Audit confirmed bridge was never in active bootstrap chain (`seed → cybs → asm` is the real chain; cycc is built standalone). 150 `bridge::*` entries cleanly removed from `docs/api-surface.snapshot` via regeneration. CLAUDE.md Key Principle + project structure listing + util.cyr comment + ADR-001 historical note all updated. One v6.0.0 accompanying-refactor item absorbed into v5.x close.
+- **.67** — Triple-pull bundle of v6.0.0 accompanying-refactor items (effectively a double-pull after premise-check at slot entry caught `cyrius build --strict` plumbing already shipped at v5.11.63): (1) `scripts/build-cycc-verify.sh` (~100 LoC bash) — formalizes the cycc byte-identical fixpoint verifier, ad-hoc one-liners now permanent; renames to `build-cyc.sh` at v6.0.0; (2) cc3-era residue cleanup — `docs/adr/005-two-step-bootstrap.md` rewritten with stage_a/stage_b convention (was using cc3/cc4 ambiguously throughout an active ADR), `docs/doc-health.md` vidya example syntax updated, `roadmap-old.md` self-references marked done. README also updated for the post-bridge bootstrap chain. Byte-array literal peephole moved out to v6.0.x per user direction "put the pinned byte-array into 6.0.x line of work now."
+- **.68** — Heap-map full reorganization (true closeout engineering work): closes all four documented closeable gaps from the v5.8.61 minimum-blast-radius pass — 2.24 MB + 6 MB + 448 KB + 448 KB = 9.06 MB reclaimed. brk shrinks 0x56AD000 → **0x4D9D000** (-9.06 MB / ~77.6 MB total heap, was ~86.6 MB). 13.3 MB TS frontend reservation preserved. Cascade across four groups: codebuf + output_buf (-2.24 MB) → struct_ftypes (-8.19 MB) → struct_fnames (-8.62 MB) → 25+ regions through preprocess_out (-9.06 MB). ~32 distinct hex constants replace_all'd across 20 src/ files. Windows MMAP shrunk 0x5800000 → 0x4F00000. cycc byte-identical at 874,232 B; cross-arch unchanged. heapmap.sh: 99 regions, monotonic 0x00000 → brk except single TS reservation.
 
 Issue file `2026-05-17-commandress-stdlib-papercuts.md` archived after .63 ship; .64 absorbed the agnos gvar-init-order fix, .65 shipped CVE-05 split forward from .68 (tok_names mangle-path guard; per-region overflow checks). v6.0-runway scope confirmed at .65 entry per user direction 2026-05-19 "start the march to 6.0".
 
@@ -147,7 +147,7 @@ plan preserved in `docs/development/roadmap-old.md` under v6.x.
 
 The .66 + .67 slots that held it shipped other v6.0-runway
 items instead: .66 retired `src/bridge.cyr`, .67 shipped the
-build-cc5-verify.sh + cc3-era residue triple-pull
+build-cycc-verify.sh + cc3-era residue triple-pull
 (double-pull post-premise-check).
 
 ### v5.11.68 — Heap-map full reorganization (true closeout)
@@ -252,7 +252,7 @@ when the broader v6.x roadmap is pulled forward.
   to roughly +5 ms/patch of in-cycle feature work — expected
   for the kind of work shipped (more parser tracking, more
   dispatch checks, more cross-arch propagation). **Growth tax
-  to evaluate, not regression to bisect**: cc5 binary grew
+  to evaluate, not regression to bisect**: cycc binary grew
   only +1,072 B over the same window, so the cost is
   parse/codegen overhead, not output bloat.
   **Likely shape at v6.x review**: v6.x adds its own growth-

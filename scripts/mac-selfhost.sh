@@ -1,15 +1,15 @@
 #!/bin/sh
-# mac-selfhost.sh — validate cc5_macho byte-identical self-host on Apple Silicon.
-# Run this ON the Mac (archaemenid.local) after you've scp'd cc5_macho over
+# mac-selfhost.sh — validate cycc_macho byte-identical self-host on Apple Silicon.
+# Run this ON the Mac (archaemenid.local) after you've scp'd cycc_macho over
 # and ad-hoc-signed it. The source file can already live alongside (checked
 # out) or be scp'd in too — script handles both.
 #
 # Usage (from the Mac):
-#   ./mac-selfhost.sh [path-to-cc5_macho] [path-to-main_aarch64_macho.cyr]
-# Defaults: ./cc5_macho and ./main_aarch64_macho.cyr (or src/...)
+#   ./mac-selfhost.sh [path-to-cycc_macho] [path-to-main_aarch64_macho.cyr]
+# Defaults: ./cycc_macho and ./main_aarch64_macho.cyr (or src/...)
 set -e
 
-CC5=${1:-./cc5_macho}
+CC5=${1:-./cycc_macho}
 SRC=${2:-}
 
 # Locate the source file if not explicit
@@ -31,7 +31,7 @@ if [ ! -x "$CC5" ]; then
     exit 1
 fi
 
-echo "cc5:    $CC5 ($(wc -c < "$CC5") bytes)"
+echo "cycc:    $CC5 ($(wc -c < "$CC5") bytes)"
 echo "source: $SRC ($(wc -c < "$SRC") bytes)"
 echo ""
 
@@ -45,11 +45,11 @@ xattr -c "$CC5" 2>/dev/null
 echo "  re-signing ad-hoc..."
 codesign --force --sign - "$CC5"
 
-# Round 1: use the cc5_macho to compile itself → cc5_macho_b.
+# Round 1: use the cycc_macho to compile itself → cc5_macho_b.
 # Guarded by a 30s watchdog: a correct compile on M-series takes <2s, so if
 # we're past 30s the compiler is looping and we bail with enough context.
 echo "=== Round 1: compile self ==="
-echo "  cc5:  $CC5 ($(wc -c < "$CC5") bytes)"
+echo "  cycc:  $CC5 ($(wc -c < "$CC5") bytes)"
 echo "  src:  $SRC ($(wc -c < "$SRC") bytes)"
 echo "  starting compile..."
 
@@ -69,7 +69,7 @@ while kill -0 $pid 2>/dev/null; do
         head -20 cc5_macho_b.err
         echo
         echo "FAIL: self-host compile hung. Likely causes:"
-        echo "  - cc5_macho built with wrong backend (re-check it's cc5_aarch64 output)"
+        echo "  - cycc_macho built with wrong backend (re-check it's cycc_aarch64 output)"
         echo "  - infinite loop in a host-specific code path"
         echo "  - stdin redirect not wired; try: cat \"$SRC\" | \"$CC5\" > cc5_macho_b"
         exit 1

@@ -6,6 +6,144 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.0] — 2026-05-19
+
+**v6.0.0 cycle OPEN — two-binary rename ceremony.** First slot
+of v6.x. The compiler binaries get descriptive, version-agnostic
+names that are *forever*:
+
+- `cyrc` → **`cybs`** (Cyrius Bootstrap)
+- `cc5`  → **`cycc`** (Cyrius Computer Compiler)
+
+Bootstrap chain is now `seed (asm) → cybs → cycc`. The "Version
+lives in `VERSION` + `--version`, never in binary names" Key
+Principle stays — but the example is updated. No `cycc6` at
+v7.0.0, no `cybs7` at v8.0.0. The cc3 → cc5 (v5.0.0) and
+cyrc → cybs + cc5 → cycc (v6.0.0) sequence was the LAST
+name-change penalty paid.
+
+### Why both binaries (not just cc5)
+
+Originally `roadmap-old.md` pinned `cc5 → cyc` only. User
+direction at v6.0.0 cycle-open expanded scope to rename
+`cyrc → cybs` too:
+
+1. **Visual proximity eliminated**: `cyrc → cyc` would have
+   left a 2-char-diff pair (`cyrc`/`cyc`) in the bootstrap
+   chain. `cybs → cycc` is 4 chars different — clean.
+2. **Symmetric naming**: both binaries get descriptive
+   expansion (Bootstrap, Computer Compiler).
+3. **Version-agnostic forever**: both names carry no version
+   digit; future major bumps don't rename.
+
+### Rename surface (~2,100 occurrences across ~157 files)
+
+**Categorized sed** preserved historical narrative — the
+v5.x CHANGELOG entries, completed-phases.md, archives, audit
+date-stamps, and vidya retros referencing `cc5`/`cyrc` STAY as
+historical anchor text (those were the names at v5.x ship time).
+Current-state code + canonical-current docs renamed:
+
+- **File renames** (`git mv`):
+  - `bootstrap/cyrc.cyr` → `bootstrap/cybs.cyr`
+  - `scripts/build-cc5-verify.sh` → `scripts/build-cycc-verify.sh`
+  - `build/cc5` → `build/cycc` + cross-arch variants
+    (`cc5_aarch64`/`cc5_win` → `cycc_aarch64`/`cycc_win`) +
+    `build/cyrc` → `build/cybs`.
+- **Code-side bulk sed** across `bootstrap/`, `src/`, `scripts/`
+  (excluding `shims/`), `cbt/`, `programs/`, `lib/`, plus
+  extensionless launcher scripts (`scripts/cyrius`,
+  `scripts/cyrius-prompt-info`, `scripts/cyriusly`). Word-
+  boundary regex order: most-specific suffix variants first
+  (cc5_aarch64_macho, cc5_aarch64_native, cc5_aarch64_cross,
+  cc5_aarch64, cc5_win_cross, cc5_win, cc5_macho, cc5_cx,
+  cc5_x86, cc5; same shape for cyrc → cybs).
+- **Variable rename in `src/version_str.cyr`** (auto-generated
+  from VERSION at bump): `_VERSION_STR_CC5*` → `_VERSION_STR_CYCC*`,
+  `_VERSION_LEN_CC5*` → `_VERSION_LEN_CYCC*`. Byte-length
+  calcs corrected: "cycc " is 5 chars (was "cc5 " 4 chars), so
+  `_VERSION_LEN_CYCC = ${#NEW} + 6` etc. Consumers in
+  `src/main.cyr`, `src/main_win.cyr`, `src/frontend/lex.cyr`
+  updated to match new var names.
+- **Docs sed** across README, CLAUDE.md, doc-health, roadmap,
+  architecture/, ADRs, docs/guides/. Excluded: CHANGELOG,
+  completed-phases, archive/, issues/archived/, audit/,
+  state.md historical session-closes, roadmap-old.md (cleanup-
+  pending).
+- **`cyrius.cyml`** `[release].bins` array updated: cc5 → cycc,
+  cyrc → cybs, cc5_aarch64 → cycc_aarch64, cc5_win → cycc_win.
+
+### Back-compat (v6.0.x window)
+
+`scripts/install.sh` ships symlinks `cc5 → cycc`,
+`cyrc → cybs`, `cc5_aarch64 → cycc_aarch64`, `cc5_win →
+cycc_win` in `~/.cyrius/versions/<v>/bin/` so v5.11.x consumers
+re-pinning `cyrius.cyml` to `cyrius = "6.0.0"` find both names.
+Symlinks drop at v6.1.0 per the v6.0.0 closeout plan in
+`docs/development/roadmap-old.md`.
+
+**`cbt/core.cyr` lookup fallback**: the `cyrius` CLI binary's
+compiler-lookup tries `cycc` first, then `cc5` (and same for
+`cybs`/`cyrc`). This lets the new cyrius binary work against
+v5.11.x install snapshots until those re-sync. The fallback
+drops at v6.1.0 alongside the install symlinks.
+
+### Key Principles updated (CLAUDE.md)
+
+- **Bootstrap chain integrity** wording updated:
+  `seed (asm) → cybs → cycc` (was `seed → cyrc → cc5` with
+  bridge retired v5.11.66). Historical chain anchored in
+  comment: pre-v3.9.5 stage1f → cyrc (v3.9.5) → cybs (v6.0.0);
+  top compiler was cc3 → cc5 (v5.0.0) → cycc (v6.0.0).
+- **Version lives in VERSION + --version** Principle's example
+  flipped: at v6.0.0 the binaries cybs + cycc are *forever*.
+
+### Vidya selective refresh
+
+`vidya/content/cyrius/language/index.cyml` header — verified-on
+version 5.11.69 → 6.0.0, rename framing added, cycc/cycc_aarch64
+binary names in the metrics line. Retros (`field_notes/compiler/
+retros/v511x.cyml`) PRESERVED with their cc5/cyrc references —
+those are frozen historical narrative.
+
+### Mechanical gates
+
+- cycc self-host **byte-identical at 874,240 B** (was cc5
+  874,232 B at v5.11.69 close; +8 B for the longer "cycc"
+  binary-name strings in version_str.cyr).
+- `scripts/build-cycc-verify.sh` (was `build-cc5-verify.sh`):
+  three-step fixpoint check VERIFY OK against the new binary.
+- 3-step bootstrap: old cc5 (v5.11.69 PRESERVED at /tmp) →
+  cycc_a → cycc_b == cycc_a byte-identical.
+- Cross-arch: cycc_aarch64 564,456 B, cycc_win 686,632 B
+  (renamed binaries, unchanged content via the v5.11.x runtime).
+- `check.sh` **76/76**; `cyrius test` **152/152**.
+- `cyrius capacity`, `cyrius init`, `cyrius port`, `cyrius repl`
+  all dispatch correctly from scratch dirs (back-compat
+  fallback in `cbt/core.cyr` lets new cyrius find cc5 in the
+  v5.11.69 install snapshot).
+
+### v6.0.x roadmap (carry-forward from v5.x closeout)
+
+Five v6.0.0 accompanying-refactor items remain (pulled forward
+into v6.0.x slots, NOT bundled with the rename ceremony per
+"Big Heavy One Thing"):
+- Dead-code careful sweep
+- `_TARGET_*` flag consolidation
+- Backend module collapse
+- Byte-array literal peephole (moved v5.11.66/.67 → v6.0.x at
+  user direction during v5.11.x cycle)
+- Return-patch buffer dynamic conversion (premise-check at
+  v5.11.67 entry confirmed needs allocator in cycc — properly
+  v6.0.x scope)
+
+### Memory pins
+
+- [`project_v6_0_0_cycc_cybs_rename`] — rename ceremony shape;
+  user direction post-v5.11.69 ship.
+- [`project_v5_11_x_closeout_at_40`] — v5.11.x retired; v6.0.0
+  opens here.
+
 ## [5.11.69] — 2026-05-19
 
 **v5.x cycle CLOSE — closeout doc / scripts / vidya sweep.**

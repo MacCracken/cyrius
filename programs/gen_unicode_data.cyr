@@ -1084,7 +1084,7 @@ fn gen_normalize(): i64 {
     oo = oo + _emit_cstr(out_buf, oo, "#                  ligature). Histogram (UCD 17.0.0): 1=2685, 2=648,\n");
     oo = oo + _emit_cstr(out_buf, oo, "#                  3=411, 4=67, 5=16, 6=3, 7=1, 8=1, 18=1. Single-string\n");
     oo = oo + _emit_cstr(out_buf, oo, "#                  variable (~41 KB) — under the 64 KB length cap of the\n");
-    oo = oo + _emit_cstr(out_buf, oo, "#                  cc5 string-token encoding (offset<<16 | length, length\n");
+    oo = oo + _emit_cstr(out_buf, oo, "#                  cycc string-token encoding (offset<<16 | length, length\n");
     oo = oo + _emit_cstr(out_buf, oo, "#                  is u16); no piece splitting needed.\n");
     oo = oo + _emit_cstr(out_buf, oo, "# All sorted tables consumed by binary search in normalize.cyr;\n");
     oo = oo + _emit_cstr(out_buf, oo, "# composition is sorted by (cp1, cp2) — primary cp1 with secondary\n");

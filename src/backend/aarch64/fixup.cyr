@@ -493,7 +493,7 @@ fn FIXUP(S): i64 {
     # dead. v5.11.63 added the cross-arch `_strict_mode` parity —
     # `main_aarch64.cyr` declares the global + parses `--strict`
     # from /proc/self/cmdline; the strict-exit below mirrors
-    # x86/fixup.cyr lines 729-738 so `cc5_aarch64 --strict` exits
+    # x86/fixup.cyr lines 729-738 so `cycc_aarch64 --strict` exits
     # with code 1 on any reachable undef ref.
     var u59_ufi = 0;
     while (u59_ufi < fcnt_pre) {

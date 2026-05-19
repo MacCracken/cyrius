@@ -19,7 +19,7 @@ Capabilities (current):
 - `textDocument/didChange` — recompile, return diagnostics
 - `shutdown` — exit cleanly
 
-Diagnostics are produced by invoking the in-tree compiler (`cc5`) and
+Diagnostics are produced by invoking the in-tree compiler (`cycc`) and
 parsing its `error:<file>:<line>: <msg>` output back into LSP
 `Diagnostic` records.
 

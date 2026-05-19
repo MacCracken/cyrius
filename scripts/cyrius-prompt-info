@@ -10,7 +10,7 @@
 #                                 silent if not in one. Used by the
 #                                 ॐ Om package prompt segment.
 #   cyrius-prompt-info tool    -> prints the active toolchain version;
-#                                 falls back to cc5 --version, then to
+#                                 falls back to cycc --version, then to
 #                                 ~/.cyrius/current. Used by the 🌀 cyclone
 #                                 toolchain segment.
 #   cyrius-prompt-info both    -> prints "ॐ name version (repo) | 🌀 ver"
@@ -55,8 +55,8 @@ cy_tool_info() {
         tr -d '[:space:]' < VERSION 2>/dev/null
         return
     fi
-    # Otherwise read cc5 --version output, fall back to ~/.cyrius/current.
-    v=$(cc5 --version 2>/dev/null | awk '{print $2}')
+    # Otherwise read cycc --version output, fall back to ~/.cyrius/current.
+    v=$(cycc --version 2>/dev/null | awk '{print $2}')
     if [ -z "$v" ]; then
         v=$(cat "$HOME/.cyrius/current" 2>/dev/null)
     fi

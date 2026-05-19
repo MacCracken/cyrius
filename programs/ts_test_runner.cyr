@@ -1,6 +1,6 @@
 # ts_test_runner.cyr — standalone TS frontend harness.
 #
-# Walks a directory of .ts / .tsx files, runs `cc5 --parse-ts`
+# Walks a directory of .ts / .tsx files, runs `cycc --parse-ts`
 # (or `--lex-ts`) on each, reports pass/fail. The CLI version of
 # `_ts_corpus_gate` from programs/check.cyr — useful for ad-hoc
 # walks without invoking the full check.sh suite.
@@ -14,7 +14,7 @@
 #   ts_test_runner [--mode=parse|lex] [--ext=.ts|.tsx] [--show-fails] <path>
 #
 # Defaults:
-#   --mode=parse  (uses `cc5 --parse-ts`)
+#   --mode=parse  (uses `cycc --parse-ts`)
 #   --ext=.ts     (only .ts; use --ext=.tsx for tsx-only)
 #   no --show-fails (just summary)
 #
@@ -32,7 +32,7 @@ include "lib/args.cyr"
 include "lib/process.cyr"
 
 # ----------------------------------------------------------------
-# Run `cc5 <mode_flag>` with fixture as stdin, return WEXITSTATUS.
+# Run `cycc <mode_flag>` with fixture as stdin, return WEXITSTATUS.
 # Same shape as programs/check.cyr's `_ts_mode_run`.
 # ----------------------------------------------------------------
 fn _run_mode(cc_path, fixture_path, mode_flag): i64 {
@@ -152,8 +152,8 @@ fn _usage(): i64 {
     syscall(1, 1, "USAGE:\n", 7);
     syscall(1, 1, "    ts_test_runner [opts] <path>\n\n", 34);
     syscall(1, 1, "OPTS:\n", 6);
-    syscall(1, 1, "    --mode=parse    use `cc5 --parse-ts` (default)\n", 51);
-    syscall(1, 1, "    --mode=lex      use `cc5 --lex-ts`\n", 39);
+    syscall(1, 1, "    --mode=parse    use `cycc --parse-ts` (default)\n", 51);
+    syscall(1, 1, "    --mode=lex      use `cycc --lex-ts`\n", 39);
     syscall(1, 1, "    --ext=.ts       walk .ts files (default)\n", 46);
     syscall(1, 1, "    --ext=.tsx      walk .tsx files instead\n", 45);
     syscall(1, 1, "    --show-fails    print path of each failing fixture\n", 57);
@@ -172,17 +172,17 @@ fn main(): i64 {
     if (pa_rc == 2) { return _usage(); }
     if (pa_rc != 0) { return pa_rc; }
 
-    # Find cc5 — search ~/.cyrius/bin then PATH lookup is harder
-    # without exec; default to ~/.cyrius/bin/cc5.
+    # Find cycc — search ~/.cyrius/bin then PATH lookup is harder
+    # without exec; default to ~/.cyrius/bin/cycc.
     var home_env = getenv("HOME");
     if (home_env == 0) { home_env = "/root"; }
     var hlen = strlen(home_env);
     var cc_path = alloc(hlen + 32);
     memcpy(cc_path, home_env, hlen);
-    memcpy(cc_path + hlen, "/.cyrius/bin/cc5", 16);
+    memcpy(cc_path + hlen, "/.cyrius/bin/cycc", 16);
     store8(cc_path + hlen + 16, 0);
     if (file_exists(cc_path) != 1) {
-        syscall(1, 2, "error: cc5 not found at ", 24);
+        syscall(1, 2, "error: cycc not found at ", 24);
         syscall(1, 2, cc_path, strlen(cc_path));
         syscall(1, 2, "\n", 1);
         return 1;

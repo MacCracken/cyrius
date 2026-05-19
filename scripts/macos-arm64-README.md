@@ -1,7 +1,7 @@
 # Cyrius — Apple Silicon (arm64 Mach-O)
 
 This tarball ships the Apple Silicon stdlib and the four Cyrius
-tool binaries (`cyrfmt`, `cyrlint`, `cyrdoc`, `cyrc`) built as
+tool binaries (`cyrfmt`, `cyrlint`, `cyrdoc`, `cybs`) built as
 arm64 Mach-O. Verified end-to-end on Apple Silicon.
 
 ## Status: closed (as of v5.5.17)
@@ -35,7 +35,7 @@ non-zero slots.
 
 ### Per-OS stdlib dispatch (v5.5.16)
 
-When `CYRIUS_MACHO_ARM=1` is set, `cc5_aarch64` predefines
+When `CYRIUS_MACHO_ARM=1` is set, `cycc_aarch64` predefines
 `CYRIUS_TARGET_MACOS` (instead of `CYRIUS_TARGET_LINUX`). Stdlib
 modules dispatch per-OS:
 
@@ -63,7 +63,7 @@ lifetime. `lib/args_macos.cyr` reads x28 via inline asm to expose
 
 Install the Linux x86_64 tarball on a Linux host and run:
 
-    CYRIUS_MACHO_ARM=1 build/cc5_aarch64 < my.cyr > my.macho
+    CYRIUS_MACHO_ARM=1 build/cycc_aarch64 < my.cyr > my.macho
     chmod +x my.macho
     scp my.macho apple-silicon-host:/tmp/
     ssh apple-silicon-host 'codesign -s - /tmp/my.macho && /tmp/my.macho'
@@ -74,13 +74,13 @@ Tool binaries ship pre-built in this tarball:
     ./cyrfmt --check file.cyr       # exit 1 if formatting differs
     ./cyrlint file.cyr              # lint warnings
     ./cyrdoc file.cyr               # generate markdown API reference
-    ./cyrc vet file.cyr             # scan dependencies
+    ./cybs vet file.cyr             # scan dependencies
 
 ## Known limitations
 
 - `src/main.cyr`'s `--version` / `--strict` flag parsing still reads
-  `/proc/self/cmdline`. Only relevant if `cc5` itself is ever
-  built as a macOS binary (not today's flow — `cc5_aarch64` cross-
+  `/proc/self/cmdline`. Only relevant if `cycc` itself is ever
+  built as a macOS binary (not today's flow — `cycc_aarch64` cross-
   compiles FROM Linux TO Mach-O).
 - `envp` / `apple[]` are not exposed by `lib/args_macos.cyr`.
   Trivial follow-up: grow the entry prologue to push x2/x3 too.

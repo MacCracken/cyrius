@@ -601,7 +601,7 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18DA08, 0);
     S64(S + 0x18DA10, 0);
     S64(S + 0x18E220, 0);
-    # IR state (cc5 — gated by CYRIUS_IR=1 env at runtime; init
+    # IR state (cycc — gated by CYRIUS_IR=1 env at runtime; init
     # unconditionally so the gate read sees zero, not garbage)
     S64(S + 0xF3A000, 0);    # ir_node_count
     S64(S + 0x174A008, 0);    # ir_block_count

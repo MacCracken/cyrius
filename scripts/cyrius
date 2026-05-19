@@ -25,6 +25,6 @@ fi
 
 # Fallback: no compiled binary found
 echo "error: compiled cyrius tool not found." >&2
-echo "  Build it: cat cbt/cyrius.cyr | build/cc5 > build/cyrius && chmod +x build/cyrius" >&2
+echo "  Build it: cat cbt/cyrius.cyr | build/cycc > build/cyrius && chmod +x build/cyrius" >&2
 echo "  Or install: curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh" >&2
 exit 1

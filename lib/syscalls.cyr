@@ -3,7 +3,7 @@
 #
 # This file is the public include point for Linux syscalls. It
 # delegates to the per-arch peer based on the compile-time arch
-# macro that cc5 sets via PP_PREDEFINE in main.cyr / main_aarch64.cyr.
+# macro that cycc sets via PP_PREDEFINE in main.cyr / main_aarch64.cyr.
 # Consumers see a single file; the right syscall numbers, struct
 # layouts, and at-family wrappers come along automatically.
 #
@@ -29,7 +29,7 @@
 # `#ifplat` directive available (v5.4.19) but call sites stay on
 # `#ifdef` until codegen regression diagnosed; new consumers may use.
 #
-# cc5 / cc5_aarch64 predefine CYRIUS_TARGET_LINUX; cc5_win predefines
+# cycc / cycc_aarch64 predefine CYRIUS_TARGET_LINUX; cycc_win predefines
 # CYRIUS_TARGET_WIN. Mutually exclusive per compile; no #else needed.
 # See CHANGELOG [5.4.11], [5.4.19], [5.5.0].
 #ifdef CYRIUS_TARGET_WIN

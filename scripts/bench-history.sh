@@ -16,7 +16,7 @@ set -e
 #   3 — Compiler/toolchain (self-compile, tools)   ~30s
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CC="$REPO_ROOT/build/cc5"
+CC="$REPO_ROOT/build/cycc"
 HISTORY_FILE="$REPO_ROOT/bench-history.csv"
 BENCHMARKS_MD="$REPO_ROOT/BENCHMARKS.md"
 TMPDIR="/tmp/cyr_bench_$$"
@@ -161,14 +161,14 @@ bench_cmd "compiler/trivial" "echo 'var x = 42;' | $CC > /dev/null"
 bench_cmd "compiler/self_compile" "cat $REPO_ROOT/src/main.cyr | $CC > /dev/null"
 
 # Binary sizes (not timing, but track as metrics)
-if [ -f "$REPO_ROOT/build/cc5" ]; then
-    local_cc5_size=$(wc -c < "$REPO_ROOT/build/cc5")
+if [ -f "$REPO_ROOT/build/cycc" ]; then
+    local_cc5_size=$(wc -c < "$REPO_ROOT/build/cycc")
     echo "${TIMESTAMP},${COMMIT},${BRANCH},size/cc5_bytes,${local_cc5_size}" >> "$HISTORY_FILE"
-    printf "  %-35s %d bytes\n" "size/cc5" "$local_cc5_size"
+    printf "  %-35s %d bytes\n" "size/cycc" "$local_cc5_size"
 fi
 
 # Tool compile times
-for tool in cyrfmt cyrlint cyrdoc cyrc ark; do
+for tool in cyrfmt cyrlint cyrdoc cybs ark; do
     if [ -f "$REPO_ROOT/programs/${tool}.bcyr" ]; then
         bench_cmd "compiler/${tool}" "cat $REPO_ROOT/programs/${tool}.cyr | $CC > /dev/null"
     fi

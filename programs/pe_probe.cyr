@@ -27,7 +27,7 @@
 #   0x2058  Hint/Name "ExitProcess"
 #
 # Build on Linux:
-#   cat programs/pe_probe.cyr | build/cc5 > /tmp/pe_probe \
+#   cat programs/pe_probe.cyr | build/cycc > /tmp/pe_probe \
 #     && chmod +x /tmp/pe_probe
 #   /tmp/pe_probe > /tmp/exit42.exe
 #

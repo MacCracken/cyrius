@@ -824,7 +824,7 @@ fn EADD_IMM12(S, reg): i64 { return 0; }
 #   EFLADDR    → addr in r0 (pushed as fn-arg or paired with EPOPC)
 #   EFLADDR_X1 → addr in r1 (paired with EPOPR + storeN [r1], r0)
 # Sub-8-byte struct field stores route through EFLADDR_X1 when
-# the parent var is inline; without this stub cc5_cx hit SIGILL
+# the parent var is inline; without this stub cycc_cx hit SIGILL
 # at parse-time on any struct mixing i8/i16/i32 with i64.
 fn EFLADDR(S, lli): i64 {
     var disp = (lli + 1) * 8;

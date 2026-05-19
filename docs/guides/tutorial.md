@@ -11,18 +11,18 @@ Or build from source:
 ```sh
 git clone https://github.com/MacCracken/cyrius.git
 cd cyrius && sh bootstrap/bootstrap.sh
-cat src/main.cyr | ./build/cc5 > /tmp/cc5 && chmod +x /tmp/cc5
+cat src/main.cyr | ./build/cycc > /tmp/cycc && chmod +x /tmp/cycc
 ```
 
 ## Hello World
 
 ```sh
-echo 'syscall(1, 1, "Hello, world!\n", 14); syscall(60, 0);' | cc5 > hello
+echo 'syscall(1, 1, "Hello, world!\n", 14); syscall(60, 0);' | cycc > hello
 chmod +x hello
 ./hello
 ```
 
-That's it. No runtime. No linker. The `cc5` compiler reads source from stdin, writes a Linux ELF binary to stdout.
+That's it. No runtime. No linker. The `cycc` compiler reads source from stdin, writes a Linux ELF binary to stdout.
 
 ## Your First Program
 
@@ -40,7 +40,7 @@ syscall(60, r);
 Compile and run:
 
 ```sh
-cat hello.cyr | cc5 > hello && chmod +x hello && ./hello
+cat hello.cyr | cycc > hello && chmod +x hello && ./hello
 ```
 
 ## Variables and Expressions

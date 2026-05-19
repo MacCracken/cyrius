@@ -16,7 +16,7 @@
 #      flagged as suspect)
 #   4. Print side-by-side + report first mismatch offset or "match"
 #
-# Run: cat programs/fdlopen-phdr-probe.cyr | build/cc5 > /tmp/phdr
+# Run: cat programs/fdlopen-phdr-probe.cyr | build/cycc > /tmp/phdr
 #      && chmod +x /tmp/phdr && /tmp/phdr
 
 include "lib/syscalls.cyr"

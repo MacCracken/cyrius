@@ -7,7 +7,7 @@
 fn compile(source, output): i64 {
     var cc = current_cc();
     if (cc == 0) {
-        _err("cc5 not found. Install Cyrius or set CYRIUS_HOME.");
+        _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
         return 1;
     }
     if (file_exists(cc) == 0) {
@@ -106,7 +106,7 @@ fn compile(source, output): i64 {
     }
     # Atomic-output bug fix: write to a temp output then rename on
     # success. Pre-fix, `output` was opened with O_TRUNC before the
-    # compile ran, so any non-zero exit from cc5 left an empty
+    # compile ran, so any non-zero exit from cycc left an empty
     # file on disk — destroying any previously-working binary.
     var tmp_pid = syscall(39);
     var tmp_out_sb = str_builder_new();
@@ -128,7 +128,7 @@ fn compile(source, output): i64 {
         sys_close(ofd);
 
         # v5.11.63: pass --strict in argv when the wrapper flag was
-        # set. cc5/cc5_aarch64 read /proc/self/cmdline at startup
+        # set. cycc/cycc_aarch64 read /proc/self/cmdline at startup
         # (since v5.4.19 / v5.11.63 respectively) — a single
         # `--strict` token anywhere past argv[0] sets _strict_mode,
         # which fixup.cyr's strict-exit reads after the patch loop.
@@ -142,7 +142,7 @@ fn compile(source, output): i64 {
         }
         store64(&argv + ax * 8, 0);
         # v5.11.58: when --strict-pin is set, augment envp with
-        # CYRIUS_STRICT_PIN=1 so cc5's pin-drift check (added
+        # CYRIUS_STRICT_PIN=1 so cycc's pin-drift check (added
         # v5.11.57) exits non-zero on mismatch. CI gating path.
         if (_strict_pin == 1) {
             var sp_count = 0;

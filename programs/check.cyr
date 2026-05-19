@@ -6,7 +6,7 @@
 # build/cyrius_check on demand and dispatches here.
 #
 # What we run:
-#   1. Self-host two-step (cc5 → cc5b byte-identical)
+#   1. Self-host two-step (cycc → cc5b byte-identical)
 #   2. Heap-map audit (sh tests/heapmap.sh)
 #   3. Test suite (every .tcyr file under tests/tcyr/)
 #   4. ~50 regression gates (sh tests/regression-X.sh)
@@ -57,11 +57,11 @@ var ANSI_RESET = "\033[0m";
 
 # Discovered tool paths (resolved at startup).
 var ROOT_PATH    = 0;   # repo root absolute path (cstring)
-var CC_PATH      = 0;   # build/cc5 (cstring)
+var CC_PATH      = 0;   # build/cycc (cstring)
 var CYRFMT_PATH  = 0;   # build/cyrfmt or PATH-resolved cyrfmt (cstring)
 var CYRLINT_PATH = 0;   # build/cyrlint or PATH-resolved cyrlint (cstring)
 var CYRDOC_PATH  = 0;   # build/cyrdoc or PATH-resolved cyrdoc (cstring)
-var CC_AARCH64_PATH = 0; # build/cc5_aarch64 cross-compiler (cstring)
+var CC_AARCH64_PATH = 0; # build/cycc_aarch64 cross-compiler (cstring)
 
 # Counters.
 var G_PASS = 0;
@@ -226,7 +226,7 @@ fn _gate(name, script_rel): i64 {
 
 # ── tcyr-runner relay gate (v5.9.2) ─────────────────────────────
 # Replaces the strict-template `tests/regression-X.sh` shape:
-#   compile $ROOT/tests/tcyr/<NAME>.tcyr via stdin pipe to cc5,
+#   compile $ROOT/tests/tcyr/<NAME>.tcyr via stdin pipe to cycc,
 #   run binary, grep "0 failed" from stdout, on PASS extract the
 #   "<N> passed" count and print "  PASS: <inner_label> (<N>
 #   assertions)" — same line the deleted bash scripts emitted —
@@ -318,7 +318,7 @@ fn _tcyr_parse_passed(buf, n): i64 {
 
 # ── expected-output relay gate (v5.9.2) ─────────────────────────
 # Replaces the strict-template `tests/regression-X.sh` shape:
-#   compile $ROOT/tests/fixtures/<NAME>.cyr via stdin pipe to cc5,
+#   compile $ROOT/tests/fixtures/<NAME>.cyr via stdin pipe to cycc,
 #   run binary, exact-byte compare stdout against
 #   $ROOT/tests/fixtures/<NAME>.expected. PASS prints
 #   "  PASS: <inner_label> (<N> bytes match)"; the dispatcher's
@@ -447,7 +447,7 @@ fn _exec_run_clean(bin_path): i64 {
     return regression_exec_run(bin_path, EMPTY_ENVP);
 }
 
-# Compile fixture .cyr at fixture_path via cc5, run resulting
+# Compile fixture .cyr at fixture_path via cycc, run resulting
 # binary, return its exit code (or -1 on compile / fork issue).
 fn _compile_run_get_exit(fixture_path): i64 {
     var bin = _tmp_path("audit_xrun_");
@@ -462,17 +462,17 @@ fn _compile_run_get_exit(fixture_path): i64 {
     return ec;
 }
 
-# Bespoke gate: cc5 accepts source files between 512 KB and 1 MB.
-# Pinned to v5.7.10 — pre-v5.7.10 cc5 had a 524288-byte cap.
+# Bespoke gate: cycc accepts source files between 512 KB and 1 MB.
+# Pinned to v5.7.10 — pre-v5.7.10 cycc had a 524288-byte cap.
 # Generates a synthetic source ~700 KB of `# pad-line` comments
 # (comments are stripped at lex without consuming the tok_names
 # 128 KB cap; identifier padding would hit that cap before
-# input_buf), pipes to cc5, runs the binary, asserts exit 0.
+# input_buf), pipes to cycc, runs the binary, asserts exit 0.
 fn _input_1mb_gate(): i64 {
     var src_path = _tmp_path("audit_1mb_src_");
     var fd = sys_open(src_path, 577, 420);
     if (fd < 0) {
-        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
         return 1;
     }
     # Build the source in a single buffer to minimize syscalls.
@@ -509,7 +509,7 @@ fn _input_1mb_gate(): i64 {
         _p(": synthetic source ");
         print_num(src_len);
         println(" B is under the old 512 KB cap; regression doesn't exercise the cap");
-        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
         return 1;
     }
     if (src_len > 1048576) {
@@ -521,7 +521,7 @@ fn _input_1mb_gate(): i64 {
         _p(": synthetic source ");
         print_num(src_len);
         println(" B is over the new 1 MB cap; regression should fit");
-        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
         return 1;
     }
 
@@ -532,12 +532,12 @@ fn _input_1mb_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5 + run on a ");
+        _p(": cycc + run on a ");
         print_num(src_len);
         _p(" B source produced exit ");
         print_num(ec);
         println(" (expected 0)");
-        _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
         return 1;
     }
 
@@ -545,10 +545,10 @@ fn _input_1mb_gate(): i64 {
     _p(ANSI_GREEN);
     _p("PASS");
     _p(ANSI_RESET);
-    _p(": cc5 compiles + runs a ");
+    _p(": cycc compiles + runs a ");
     print_num(src_len);
     println(" B source (pre-v5.7.10 cap was 524288 B)");
-    _check("cc5 accepts >512 KB source (heap reshuffle, v5.7.10)", 0);
+    _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 0);
     return 0;
 }
 
@@ -598,7 +598,7 @@ fn _truthy_after_fncall_gate(): i64 {
 # Bespoke gate: `object;` mode emits `_cyrius_init` with
 # STB_GLOBAL (v3.4.14 → silently flipped to LOCAL at v4.6.0-alpha2
 # → restored at v5.4.9 after mabda's GPU-integration build broke).
-# Compiles a 2-line `object; fn x() { return 0; }` source via cc5,
+# Compiles a 2-line `object; fn x() { return 0; }` source via cycc,
 # parses the resulting ELF object's symbol table directly (no
 # external readelf), looks up `_cyrius_init`, asserts the binding
 # (high nibble of st_info) is 1 = STB_GLOBAL.
@@ -725,7 +725,7 @@ fn _object_init_gate(): i64 {
 # (v5.6.40 — pinned after the file silently broke when v5.6.12 O3a
 # shipped IR_RAW_EMIT markers and main_aarch64_macho.cyr was
 # missing `include "src/common/ir.cyr"`). Compiles the cross-
-# scaffold via cc5, verifies output is >100 KB and starts with
+# scaffold via cycc, verifies output is >100 KB and starts with
 # the ELF magic 7f 45 4c 46. No execution — host-side the binary
 # is a Linux ELF that *emits* Mach-O.
 fn _macho_cross_build_gate(): i64 {
@@ -907,7 +907,7 @@ fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
 # Sibling of _self_host_pipe: pipes src_path to compiler_path's
 # stdin, redirects compiler's stdout to /dev/null and stderr to
 # stderr_path. Returns child's wait-status. Used by gates that
-# verify cc5's error/warning diagnostics.
+# verify cycc's error/warning diagnostics.
 fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
     var src_cap = 2000000;
     var src_buf = alloc(src_cap);
@@ -960,7 +960,7 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
     return load32(&status_buf);
 }
 
-# Sub-case helper for stderr-grep gates. Compiles src_str via cc5,
+# Sub-case helper for stderr-grep gates. Compiles src_str via cycc,
 # captures stderr, checks for the expected substring presence.
 # want_present == 1: stderr MUST contain expect_substr (warn fired).
 # want_present == 0: stderr MUST NOT contain expect_substr (no
@@ -1026,7 +1026,7 @@ fn _find_bytes(buf, n, needle, nlen): i64 {
 # markers — top-level asm 4× 0xF4 (HLT) and a single gvar init
 # emitting REX.W `mov rcx, imm64` = 48 b9 ... — and asserts the
 # asm marker's file offset is strictly less than the first 48 b9
-# sequence. Pre-v5.7.19 cc5 emitted gvar inits before top-level
+# sequence. Pre-v5.7.19 cycc emitted gvar inits before top-level
 # asm; in kmode the multiboot loader hands control in 32-bit
 # protected mode, so a 64-bit `mov [rcx], rax` before the
 # boot-shim long-mode transition triple-faulted on real hardware.
@@ -1273,15 +1273,15 @@ fn _parse_emit_drift_gate(): i64 {
     return fail;
 }
 
-# v5.11.45: build/cc5 contamination gate. Scans the committed
-# build/cc5 binary for mabda/wgpu strings — symptoms of the slip
+# v5.11.45: build/cycc contamination gate. Scans the committed
+# build/cycc binary for mabda/wgpu strings — symptoms of the slip
 # at v5.11.28/.29 (silently fixed .30) and v5.11.43 (fixed .44)
-# where some other binary got cp'd over build/cc5 before commit.
-# A legitimate cc5 (compiled from src/) NEVER contains these
+# where some other binary got cp'd over build/cycc before commit.
+# A legitimate cycc (compiled from src/) NEVER contains these
 # strings; any hit = contamination. Fail-fast guard.
 fn _cc5_contamination_gate(): i64 {
-    var path = _root_path("build/cc5");
-    var cap = 2097152;    # 2 MB — fits cc5 (~821 KB) with headroom
+    var path = _root_path("build/cycc");
+    var cap = 2097152;    # 2 MB — fits cycc (~821 KB) with headroom
     var buf = alloc(cap);
     var n = file_read_all(path, buf, cap);
     if (n < 0) {
@@ -1289,8 +1289,8 @@ fn _cc5_contamination_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": build/cc5 not readable\n");
-        _check("build/cc5 contamination gate (v5.11.45)", 1);
+        _p(": build/cycc not readable\n");
+        _check("build/cycc contamination gate (v5.11.45)", 1);
         return 1;
     }
     var hits = 0;
@@ -1302,9 +1302,9 @@ fn _cc5_contamination_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": build/cc5 contains mabda/wgpu strings — likely contaminated (see CHANGELOG [5.11.44] postmortem)\n");
+        _p(": build/cycc contains mabda/wgpu strings — likely contaminated (see CHANGELOG [5.11.44] postmortem)\n");
     }
-    _check("build/cc5 contamination gate (v5.11.45; no mabda/wgpu strings)", hits);
+    _check("build/cycc contamination gate (v5.11.45; no mabda/wgpu strings)", hits);
     return hits;
 }
 
@@ -1580,7 +1580,7 @@ fn _read_u32_le(buf, off): i64 {
     return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
 }
 
-# v5.11.55 refactor: shared "compile a .cyr source through cc5 under
+# v5.11.55 refactor: shared "compile a .cyr source through cycc under
 # CYRIUS_TARGET_EFI=1 and read the output bytes into buf" helper.
 # Consolidates the boilerplate that _efi_emit_gate (.48) and
 # _efi_trampoline_rex_gate (.53) each open-coded.
@@ -1621,7 +1621,7 @@ fn _efi_compile_to_buf(src_path, out_buf, out_buf_cap, fail_label): i64 {
 #   - Data Directory [12] IAT zeroed
 #   - .text contains 0xC3 (ret) — EEXIT EFI variant in use
 #
-# Negative-test verified in slot: pre-fix cc5 emits Subsystem=3
+# Negative-test verified in slot: pre-fix cycc emits Subsystem=3
 # (WINDOWS_CUI) → gate FAILs. Post-fix → gate PASSes.
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
@@ -1810,9 +1810,9 @@ fn _efi_emit_gate(): i64 {
 # On Arch Linux these come from `qemu-base`, `parted`, `mtools`, and
 # `edk2-ovmf` packages.
 #
-# Negative-test verified in slot: with v5.11.48 cc5 (RELOCS_STRIPPED
+# Negative-test verified in slot: with v5.11.48 cycc (RELOCS_STRIPPED
 # still set on zero-fixup EFI binaries), OVMF BdsDxe reports
-# "Not Found" and "hello, uefi" never appears. v5.11.49 cc5 clears
+# "Not Found" and "hello, uefi" never appears. v5.11.49 cycc clears
 # RELOCS_STRIPPED in EFI mode; boot succeeds.
 fn _efi_ovmf_smoke_gate(): i64 {
     var label = "EFI Application boots under qemu+OVMF + writes hello via ConOut (v5.11.49; gnoboot arc KO)";
@@ -2191,36 +2191,36 @@ fn _cap_drift_gate(): i64 {
 
 # Gate: doc-size currency (v5.11.50). Scans selected fresh-tier docs
 # (size-comparisons.md, platform-status.md, faq.md, README.md) for
-# cc5 size references and verifies they match the current build/cc5
+# cycc size references and verifies they match the current build/cycc
 # size. Two pattern classes are checked:
 #
-#   - PRECISE: `cc5 NNN,NNN B` (e.g. "cc5 823,112 B") — must match
-#     build/cc5 exactly. Versioned historical refs ("(v5.8.31)") are
+#   - PRECISE: `cycc NNN,NNN B` (e.g. "cycc 823,112 B") — must match
+#     build/cycc exactly. Versioned historical refs ("(v5.8.31)") are
 #     skipped via context-sensitive matching.
-#   - APPROXIMATE: `cc5 ~NNN KB` (e.g. "cc5 ~823 KB") — must be
-#     within ±25 KB of build/cc5's actual KB.
+#   - APPROXIMATE: `cycc ~NNN KB` (e.g. "cycc ~823 KB") — must be
+#     within ±25 KB of build/cycc's actual KB.
 #
 # The gate is **strict** by design: stale doc-size claims propagate
 # downstream consumer confusion. If a historical version must be
 # referenced, anchor it with the version tag so the gate skips it
 # (this is the convention already used by docs/audit/*.md).
 fn _doc_size_currency_gate(): i64 {
-    var label = "doc-size currency — fresh-tier docs cite current cc5 size (v5.11.50)";
+    var label = "doc-size currency — fresh-tier docs cite current cycc size (v5.11.50)";
 
-    var cc5_size = _file_size(_root_path("build/cc5"));
+    var cc5_size = _file_size(_root_path("build/cycc"));
     if (cc5_size <= 0) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": doc-size — build/cc5 not readable; cannot validate doc references");
+        println(": doc-size — build/cycc not readable; cannot validate doc references");
         _check(label, 1);
         return 1;
     }
     # Display KB uses decimal (1000-based) per common doc convention —
     # 823,112 B is "~823 KB" in prose, not "~804 KiB". Tolerance is
-    # ±50,000 bytes (~5%); covers minor compile-time-perf cc5 churn
+    # ±50,000 bytes (~5%); covers minor compile-time-perf cycc churn
     # within a cycle without re-flagging every doc on each slot.
     var cc5_kb_display = (cc5_size + 500) / 1000;
 
-    # Scan each doc for any line containing "cc5" that mentions a
+    # Scan each doc for any line containing "cycc" that mentions a
     # specific size. Skip lines that include a version tag like
     # "(v5.X.Y)" — those are intentional historical references.
     var paths = vec_new();
@@ -2245,15 +2245,15 @@ fn _doc_size_currency_gate(): i64 {
             while (ls < dn) {
                 var le = ls;
                 while (le < dn && load8(dbuf + le) != 10) { le = le + 1; }
-                # [ls, le) is a single line. Look for "cc5"
-                var cc5_at = _find_str_from(dbuf, le, ls, "cc5", 3);
+                # [ls, le) is a single line. Look for "cycc"
+                var cc5_at = _find_str_from(dbuf, le, ls, "cycc", 3);
                 if (cc5_at >= 0 && cc5_at < le) {
                     # Skip lines tagged with a historical version
                     var ver_at = _find_str_from(dbuf, le, ls, "(v5.", 4);
                     if (ver_at >= 0 && ver_at < le) {
                         # Historical reference — skip
                     } else {
-                        # Look for "cc5 ~" or "cc5 " followed by NN KB pattern
+                        # Look for "cycc ~" or "cycc " followed by NN KB pattern
                         # Approximate form: "~NNN KB" or "NNNKB"
                         var tilde_at = _find_str_from(dbuf, le, cc5_at, "~", 1);
                         if (tilde_at >= 0 && tilde_at < le && tilde_at - cc5_at < 20) {
@@ -2274,7 +2274,7 @@ fn _doc_size_currency_gate(): i64 {
                                         _p(path);
                                         _p(" line ");
                                         print_num(line_no);
-                                        _p(" claims cc5 ~");
+                                        _p(" claims cycc ~");
                                         print_num(claimed_kb);
                                         _p(" KB; actual ");
                                         print_num(cc5_kb_display);
@@ -2300,7 +2300,7 @@ fn _doc_size_currency_gate(): i64 {
 
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-        _p(": doc-size — fresh-tier docs cite cc5 within ±50 KB of actual (");
+        _p(": doc-size — fresh-tier docs cite cycc within ±50 KB of actual (");
         print_num(cc5_kb_display);
         println(" KB)");
     }
@@ -2342,7 +2342,7 @@ fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec): i64 {
     return 0 - 1;
 }
 
-# Compile fixture .cyr → .o via cc5. Returns 0 on success.
+# Compile fixture .cyr → .o via cycc. Returns 0 on success.
 fn _compile_to_obj(src_path, obj_path): i64 {
     return _self_host_pipe(src_path, CC_PATH, obj_path);
 }
@@ -2547,7 +2547,7 @@ fn _struct_cap_gate(): i64 {
     var rc3 = _compile_capture_stderr(src3, CC_PATH, err3);
     sys_unlink(src3);
 
-    # rc3 is the wait-status from cc5. WIFEXITED + non-zero exit
+    # rc3 is the wait-status from cycc. WIFEXITED + non-zero exit
     # means compile aborted (expected). If exit was 0 the source
     # compiled past 256 structs — that's a cap-not-enforced bug.
     var compile_failed = 1;
@@ -3184,7 +3184,7 @@ fn _read_source_for_grep(path, len_out): i64 {
 # line), and the three backend emit.cyr files (TOKTYP / TOKVAL
 # read offsets). All backends must agree with the lex writes;
 # any drift = silent miscompile (the v5.7.28 incident:
-# cc5_cx silently broken on every input because src/backend/cx/
+# cycc_cx silently broken on every input because src/backend/cx/
 # emit.cyr was skipped during the v5.7.27 heap reshuffle).
 fn _cx_token_offsets_gate(): i64 {
     var label = "lex token writes match every backend's TOKTYP / TOKVAL reads (v5.7.28)";
@@ -3314,7 +3314,7 @@ fn _check_backend_token_offsets(name, buf, n, lex_typ, lex_val): i64 {
 }
 
 # Helper for `_cx_syscall_literal_gate`: write `syscall(60, V);`
-# to a temp source file, compile with cc5_cx (capturing bytecode
+# to a temp source file, compile with cycc_cx (capturing bytecode
 # to a temp file), feed bytecode to cxvm, return cxvm's exit
 # code. Returns -1 on internal error. Cleans up both temp files.
 fn _cx_syscall_run(cc_cx, cxvm, v): i64 {
@@ -3340,13 +3340,13 @@ fn _cx_syscall_run(cc_cx, cxvm, v): i64 {
 }
 
 # Bespoke gate: cx codegen propagates literal syscall args
-# (v5.7.23). Builds cc5_cx + cxvm; compiles `syscall(60, 42);`
+# (v5.7.23). Builds cycc_cx + cxvm; compiles `syscall(60, 42);`
 # and inspects the bytecode for `01 00 3c 00` (MOVI r0, 60) and
 # `01 00 2a 00` (MOVI r0, 42); runs the bytecode through cxvm
 # and confirms exit 42; loops V in {0, 7, 99, 200} and confirms
 # cxvm exit == V each time.
 fn _cx_syscall_literal_gate(): i64 {
-    var label = "cc5_cx propagates literal syscall args; cxvm exits with user code (v5.7.23)";
+    var label = "cycc_cx propagates literal syscall args; cxvm exits with user code (v5.7.23)";
     var cc_cx = _tmp_path("audit_cxsy_cc_");
     var cxvm  = _tmp_path("audit_cxsy_vm_");
     var rc1 = _self_host_pipe(_root_path("src/main_cx.cyr"), CC_PATH, cc_cx);
@@ -3359,7 +3359,7 @@ fn _cx_syscall_literal_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        println(": cc5_cx / cxvm build failed");
+        println(": cycc_cx / cxvm build failed");
         _check(label, 1);
         return 1;
     }
@@ -3415,7 +3415,7 @@ fn _cx_syscall_literal_gate(): i64 {
         _p(ANSI_RED);
         _p("case-FAIL");
         _p(ANSI_RESET);
-        println(": cc5_cx produced empty bytecode");
+        println(": cycc_cx produced empty bytecode");
         fail = fail + 1;
     }
 
@@ -3490,8 +3490,8 @@ fn _cx_syscall_literal_gate(): i64 {
 #                                  r3..r9 and ESTOREPARM storing param 7
 #                                  via the same r-to-frame shape.
 #
-# All three follow the `_cx_syscall_literal_gate` pattern: build cc5_cx
-# + cxvm via cc5, write fixture src to a tmp path, pipe through cc5_cx,
+# All three follow the `_cx_syscall_literal_gate` pattern: build cycc_cx
+# + cxvm via cycc, write fixture src to a tmp path, pipe through cycc_cx,
 # pipe the resulting .cyx through cxvm, exit code is the test signal
 # (42 for byval/sub-byte; 28 for 7-args = 1+2+3+4+5+6+7).
 #
@@ -3522,7 +3522,7 @@ fn _cx_phase2c_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        println(": cc5_cx / cxvm build failed");
+        println(": cycc_cx / cxvm build failed");
         _check(label, 1);
         return 1;
     }
@@ -3587,16 +3587,16 @@ fn _cx_phase2c_gate(): i64 {
     return fail;
 }
 
-# Bespoke gate: cc5_cx output is well-formed CYX bytecode with
+# Bespoke gate: cycc_cx output is well-formed CYX bytecode with
 # no x86 instruction-byte pollution (v5.7.12 path B). Builds
-# cc5_cx + cxvm via cc5; pipes empty input to cc5_cx and checks
+# cycc_cx + cxvm via cycc; pipes empty input to cycc_cx and checks
 # output ≥ 8 B + starts with "CYX"; pipes a one-fn program and
 # checks output contains no `48 89 5d f8` (x86 callee-save) or
 # `4c 8b 65 f0` (callee-restore) byte sequences; pipes the
 # bytecode to cxvm and checks it doesn't SIGSEGV and doesn't
 # emit "not a .cyx file".
 fn _cx_roundtrip_gate(): i64 {
-    var label = "cc5_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)";
+    var label = "cycc_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)";
     var src_cx = _root_path("src/main_cx.cyr");
     var src_vm = _root_path("programs/cxvm.cyr");
     var cc_cx = _tmp_path("audit_cxrt_cc_");
@@ -3611,7 +3611,7 @@ fn _cx_roundtrip_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        println(": cc5 build of main_cx.cyr failed");
+        println(": cycc build of main_cx.cyr failed");
         _check(label, 1);
         return 1;
     }
@@ -3621,7 +3621,7 @@ fn _cx_roundtrip_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        println(": cc5 build of programs/cxvm.cyr failed");
+        println(": cycc build of programs/cxvm.cyr failed");
         _check(label, 1);
         return 1;
     }
@@ -3643,7 +3643,7 @@ fn _cx_roundtrip_gate(): i64 {
         _p(ANSI_RED);
         _p("case-FAIL");
         _p(ANSI_RESET);
-        _p(": cc5_cx output for empty input is ");
+        _p(": cycc_cx output for empty input is ");
         print_num(size1);
         println(" B (expected >= 8 for magic header)");
         fail = fail + 1;
@@ -3660,7 +3660,7 @@ fn _cx_roundtrip_gate(): i64 {
                         _p(ANSI_RED);
                         _p("case-FAIL");
                         _p(ANSI_RESET);
-                        println(": cc5_cx output magic is not 'CYX'");
+                        println(": cycc_cx output magic is not 'CYX'");
                         fail = fail + 1;
                     } } }
         }
@@ -3691,7 +3691,7 @@ fn _cx_roundtrip_gate(): i64 {
             _p(ANSI_RED);
             _p("case-FAIL");
             _p(ANSI_RESET);
-            println(": cc5_cx output contains x86 callee-save bytes 48 89 5d f8 (regalloc save leak; v5.7.12 path-B regression)");
+            println(": cycc_cx output contains x86 callee-save bytes 48 89 5d f8 (regalloc save leak; v5.7.12 path-B regression)");
             fail = fail + 1;
         }
         var rest_needle[1];
@@ -3704,7 +3704,7 @@ fn _cx_roundtrip_gate(): i64 {
             _p(ANSI_RED);
             _p("case-FAIL");
             _p(ANSI_RESET);
-            println(": cc5_cx output contains x86 callee-restore bytes 4c 8b 65 f0");
+            println(": cycc_cx output contains x86 callee-restore bytes 4c 8b 65 f0");
             fail = fail + 1;
         }
     }
@@ -3719,7 +3719,7 @@ fn _cx_roundtrip_gate(): i64 {
         _p(ANSI_RESET);
         _p(": cxvm died on signal ");
         print_num(ec_vm - 128);
-        println(" running cc5_cx output");
+        println(" running cycc_cx output");
         fail = fail + 1;
     }
 
@@ -3731,20 +3731,20 @@ fn _cx_roundtrip_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": cc5_cx produces clean CYX bytecode (no x86 noise); cxvm consumes it without crash");
+        println(": cycc_cx produces clean CYX bytecode (no x86 noise); cxvm consumes it without crash");
     }
     _check(label, fail);
     return fail;
 }
 
-# Bespoke gate: cc5 builds main_cx.cyr; cc5_cx starts clean on
+# Bespoke gate: cycc builds main_cx.cyr; cycc_cx starts clean on
 # empty + trivial input (v5.7.11; bytecode correctness pinned
 # v5.7.12). Three sub-checks:
-# (1) `cc5 < src/main_cx.cyr` exits 0 with > 100 KB output.
-# (2) `cc5_cx < /dev/null` doesn't die on signal (exit < 128).
-# (3) `cc5_cx < "syscall(60, 0);"` doesn't die on signal.
+# (1) `cycc < src/main_cx.cyr` exits 0 with > 100 KB output.
+# (2) `cycc_cx < /dev/null` doesn't die on signal (exit < 128).
+# (3) `cycc_cx < "syscall(60, 0);"` doesn't die on signal.
 fn _cx_build_gate(): i64 {
-    var label = "cc5 builds main_cx.cyr; cc5_cx starts clean (v5.7.11; bytecode correctness pinned v5.7.12)";
+    var label = "cycc builds main_cx.cyr; cycc_cx starts clean (v5.7.11; bytecode correctness pinned v5.7.12)";
     var src = _root_path("src/main_cx.cyr");
     var cc_cx = _tmp_path("audit_cc_cx_");
     var rc1 = _self_host_pipe(src, CC_PATH, cc_cx);
@@ -3754,7 +3754,7 @@ fn _cx_build_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        println(": cc5 < src/main_cx.cyr exited abnormally");
+        println(": cycc < src/main_cx.cyr exited abnormally");
         _check(label, 1);
         return 1;
     }
@@ -3764,7 +3764,7 @@ fn _cx_build_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5 < src/main_cx.cyr exited ");
+        _p(": cycc < src/main_cx.cyr exited ");
         print_num(WEXITSTATUS(rc1));
         println("");
         _check(label, 1);
@@ -3777,7 +3777,7 @@ fn _cx_build_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5_cx output is ");
+        _p(": cycc_cx output is ");
         print_num(size);
         println(" B (suspiciously small; expected > 100 KB)");
         _check(label, 1);
@@ -3798,7 +3798,7 @@ fn _cx_build_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5_cx died on signal ");
+        _p(": cycc_cx died on signal ");
         print_num(ec_empty - 128);
         println(" on empty input (regression past v5.7.11 startup-clean bar)");
         _check(label, 1);
@@ -3819,7 +3819,7 @@ fn _cx_build_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5_cx died on signal ");
+        _p(": cycc_cx died on signal ");
         print_num(ec_triv - 128);
         println(" on trivial input");
         _check(label, 1);
@@ -3830,9 +3830,9 @@ fn _cx_build_gate(): i64 {
     _p(ANSI_GREEN);
     _p("PASS");
     _p(ANSI_RESET);
-    _p(": cc5 builds main_cx.cyr (");
+    _p(": cycc builds main_cx.cyr (");
     print_num(size);
-    println(" B); cc5_cx starts clean on empty + trivial input");
+    println(" B); cycc_cx starts clean on empty + trivial input");
     _check(label, 0);
     return 0;
 }
@@ -4751,7 +4751,7 @@ fn _ssh_target(env_name, default_name): i64 {
 # thread_local/flags acceptance cluster (v5.4.11 .. v5.5.33;
 # yukti + majra surfaced). Cross-builds the consolidated
 # `tests/fixtures/aarch64_cluster/syscalls_combined.cyr`
-# fixture with cc5_aarch64, scp's it to the configured SSH
+# fixture with cycc_aarch64, scp's it to the configured SSH
 # target (default `pi`), runs it, decodes the exit code:
 #   99 — all 9 sub-tests PASS
 #   <id*10 + sub> — sub-test `id` (1..9) failed at step `sub`
@@ -4856,7 +4856,7 @@ fn _aarch64_syscalls_gate(): i64 {
 # Bespoke gate (v5.9.26): aarch64 Phase 2b struct-by-value
 # round-trip cross-test. Cross-builds
 # `tests/fixtures/aarch64_cluster/struct_byval.cyr` with
-# cc5_aarch64, scp's it to the configured SSH target, runs it.
+# cycc_aarch64, scp's it to the configured SSH target, runs it.
 # Exit-code map (from the fixture's `syscall(60, N)` calls):
 #   0       — all field round-trips pass
 #   1/2/3   — make_point().{x,y,z} mismatch
@@ -4958,7 +4958,7 @@ fn _aarch64_struct_byval_gate(): i64 {
 # Bespoke gate (v5.9.27): aarch64 sub-byte struct field load
 # cross-test (agnosys 1.1.9 filing). Cross-builds
 # `tests/fixtures/aarch64_cluster/sub_byte_field_load.cyr`
-# with cc5_aarch64 and runs on pi via SSH. Exercises ldrb /
+# with cycc_aarch64 and runs on pi via SSH. Exercises ldrb /
 # ldrh / ldr-w through pointer-to-struct dot syntax over a
 # kernel-ABI-shape struct (i32 + i16 fields) and a
 # mixed-widths struct (i8 + i16 + i32 in one body).
@@ -5069,7 +5069,7 @@ fn _aarch64_sub_byte_field_load_gate(): i64 {
 }
 
 # Bespoke gate (v5.9.32): macOS arm64 Mach-O runtime gate. Cross-
-# builds 3 fixtures via cc5_aarch64 with `CYRIUS_MACHO_ARM=1`
+# builds 3 fixtures via cycc_aarch64 with `CYRIUS_MACHO_ARM=1`
 # env var injected (triggers the aarch64 backend's Mach-O emit
 # path), scp's each to ecb (macOS arm64), codesigns + runs,
 # verifies exit code (and stdout for the write fixture).
@@ -5348,7 +5348,7 @@ fn _macho_derive_serialize_gate(): i64 {
 }
 
 # Bespoke gate (v5.9.32): Windows 11 PE32+ runtime gate. Cross-
-# builds 3 fixtures via build/cc5_win_cross (the Linux-host
+# builds 3 fixtures via build/cycc_win_cross (the Linux-host
 # cyrius compiler that emits PE — built on demand from
 # src/main_win.cyr if absent), scp's each + a .bat wrapper to
 # cass (Windows 11), runs via `cmd /c`, parses `exit=N` from
@@ -5361,7 +5361,7 @@ fn _macho_derive_serialize_gate(): i64 {
 #   T3 — user fn + arithmetic + peephole.
 fn _pe_exit_gate(): i64 {
     var label = "PE syscall(60,42) → exit 42 on cass (pin v5.6.36)";
-    var cc_pe = _root_path("build/cc5_win_cross");
+    var cc_pe = _root_path("build/cycc_win_cross");
     if (file_exists(cc_pe) != 1) {
         # Build on demand from src/main_win.cyr.
         var main_win = _root_path("src/main_win.cyr");
@@ -5586,7 +5586,7 @@ fn _pe_exit_gate(): i64 {
 # side-effects.
 fn _pe_path_apis_gate(): i64 {
     var label = "PE kernel32 path APIs on cass (CreateFileW + mkdir + unlink; v5.11.23)";
-    var cc_pe = _root_path("build/cc5_win_cross");
+    var cc_pe = _root_path("build/cycc_win_cross");
     if (file_exists(cc_pe) != 1) {
         var main_win = _root_path("src/main_win.cyr");
         if (file_exists(main_win) == 1) {
@@ -5702,10 +5702,10 @@ fn _pe_path_apis_gate(): i64 {
     return fail;
 }
 
-# Bespoke gate: native aarch64 cc5 self-hosts byte-identical on
+# Bespoke gate: native aarch64 cycc self-hosts byte-identical on
 # Pi (v5.6.32). Pipeline:
-#   1. Cross-build aarch64-host cc5 from src/main_aarch64_native.cyr
-#      via the existing cc5_aarch64 cross-compiler.
+#   1. Cross-build aarch64-host cycc from src/main_aarch64_native.cyr
+#      via the existing cycc_aarch64 cross-compiler.
 #   2. scp the native binary to the configured SSH target.
 #   3. tar-pipe `src lib` to /tmp/cyr_selfhost_tree on the remote.
 #   4. On the remote, two-step compile:
@@ -5713,7 +5713,7 @@ fn _pe_path_apis_gate(): i64 {
 #        cat src/main_aarch64_native.cyr | cc5_b      > cc5_c
 #   5. Assert `cmp cc5_b cc5_c` returns 0 (byte-identical).
 fn _aarch64_native_selfhost_gate(): i64 {
-    var label = "native cc5 self-hosts byte-identical on Pi (pin v5.6.32)";
+    var label = "native cycc self-hosts byte-identical on Pi (pin v5.6.32)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
         _p(CC_PATH);
@@ -5730,12 +5730,12 @@ fn _aarch64_native_selfhost_gate(): i64 {
         return 0;
     }
 
-    # Step 1: cross-build aarch64-native cc5 via the existing
-    # cc5_aarch64 cross-compiler. (We can't reuse build/cc5_aarch64
+    # Step 1: cross-build aarch64-native cycc via the existing
+    # cycc_aarch64 cross-compiler. (We can't reuse build/cycc_aarch64
     # directly — that's an x86 binary that runs the aarch64
     # backend; we need a binary that is itself aarch64 ELF and
     # ALSO emits aarch64 code.)
-    var arch_cc_x86 = _root_path("build/cc5_aarch64");
+    var arch_cc_x86 = _root_path("build/cycc_aarch64");
     if (file_exists(arch_cc_x86) != 1) {
         _p("  skip: ");
         _p(arch_cc_x86);
@@ -5818,7 +5818,7 @@ fn _aarch64_native_selfhost_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        _p(": native aarch64 cc5 self-hosts byte-identical on ");
+        _p(": native aarch64 cycc self-hosts byte-identical on ");
         _p(target);
         println(" (v5.6.32)");
         _check(label, 0);
@@ -5839,7 +5839,7 @@ fn _aarch64_native_selfhost_gate(): i64 {
 }
 
 # Bespoke gate: aarch64 f64 basic-op correctness (v5.7.30).
-# Cross-builds an f64-op smoke fixture with cc5_aarch64, scp's
+# Cross-builds an f64-op smoke fixture with cycc_aarch64, scp's
 # the binary to the configured SSH target (default `pi`),
 # ssh-runs it, decodes the exit code (1-11 = per-op failure,
 # 99 = all PASS).
@@ -5941,7 +5941,7 @@ fn _aarch64_f64_basic_gate(): i64 {
 
 # Bespoke gate: aarch64 f64_exp / f64_ln / f64_log2 polyfill
 # correctness (v5.7.31 + v5.8.4; phylax-unblock). Same shape as
-# `_aarch64_f64_basic_gate` — cross-build via cc5_aarch64, scp,
+# `_aarch64_f64_basic_gate` — cross-build via cycc_aarch64, scp,
 # ssh-run, decode exit code (1-10 = per-shape failure within ulp
 # budget; 99 = all PASS).
 fn _aarch64_f64_polyfill_gate(): i64 {
@@ -6243,7 +6243,7 @@ fn _lint_init_order_gate(): i64 {
     return fail;
 }
 
-# Open fixture as stdin, fork cc5 with one mode flag (e.g.
+# Open fixture as stdin, fork cycc with one mode flag (e.g.
 # `--parse-ts` / `--lex-ts`), return WEXITSTATUS (0 on success,
 # non-zero on reject). stdout + stderr go to /dev/null. Used by
 # `_parse_ts_dir_gate` and `_ts_lex_gate`.
@@ -6281,7 +6281,7 @@ fn _parse_ts_run(fixture_path): i64 {
     return _ts_mode_run(fixture_path, "--parse-ts");
 }
 
-# Bespoke gate (v5.9.7): single-fixture `cc5 --lex-ts` on the
+# Bespoke gate (v5.9.7): single-fixture `cycc --lex-ts` on the
 # synthetic TS sample at `tests/fixtures/ts_lex/sample.ts`. The
 # fixture exercises every lex feature shipped in v5.7.2 P1.1-P1.6
 # (shebang, JSDoc, identifiers, 30+ keywords, all numeric literal
@@ -6295,10 +6295,10 @@ fn _ts_lex_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5 --lex-ts on sample.ts exit ");
+        _p(": cycc --lex-ts on sample.ts exit ");
         print_num(rc);
         println("");
-        _check("cc5 --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 1);
+        _check("cycc --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 1);
         return 1;
     }
     _p("  ");
@@ -6306,14 +6306,14 @@ fn _ts_lex_gate(): i64 {
     _p("PASS");
     _p(ANSI_RESET);
     println(": TS lexer integration (P1.1-P1.6 features)");
-    _check("cc5 --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 0);
+    _check("cycc --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 0);
     return 0;
 }
 
 # Bespoke gate (v5.9.17): SecureYeoman corpus acceptance gate.
 # Walks `~/Repos/secureyeoman` (configurable via SY_CORPUS env)
 # for every file with `ext`, pruning the standard JS/TS build-
-# artifact dirs, runs `cc5 --parse-ts` on each, asserts the PASS
+# artifact dirs, runs `cycc --parse-ts` on each, asserts the PASS
 # count meets `threshold`. v5.7.3 P3.1 baseline:
 #   .ts  → 2053 files, threshold 2053 (100% pinned at v5.9.17)
 #   .tsx → 435 files,  threshold 435  (same)
@@ -6402,14 +6402,14 @@ fn _ts_corpus_gate(label, ext, threshold): i64 {
 }
 
 # Bespoke gate template (v5.9.7): walk
-# `tests/fixtures/<subdir>/*.ts`, run `cc5 --parse-ts` on each
+# `tests/fixtures/<subdir>/*.ts`, run `cycc --parse-ts` on each
 # fixture, expect every fixture to parse cleanly (exit 0). Used
 # by the six TS acceptance gates (ts-asserts, ts-mapped,
 # ts-decorators, ts-variadic-tuples, ts-const-type-params,
 # ts-advanced-pin-audit), each with its own subdir of 5-7 .ts
 # fixtures extracted from the v5.7.x bash heredocs. Per-fixture
 # diagnostic on FAIL prints the case filename so a regression
-# in `cc5 --parse-ts` reports which input shape rejected.
+# in `cycc --parse-ts` reports which input shape rejected.
 fn _parse_ts_dir_gate(gate_name, inner_label, subdir): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, ROOT_PATH);
@@ -6436,7 +6436,7 @@ fn _parse_ts_dir_gate(gate_name, inner_label, subdir): i64 {
                 var nm_data = str_data(name);
                 var nm_len = str_len(name);
                 print(nm_data, nm_len);
-                _p(" — cc5 --parse-ts exit ");
+                _p(" — cycc --parse-ts exit ");
                 print_num(rc);
                 println("");
                 fail = fail + 1;
@@ -6535,7 +6535,7 @@ fn _args_init_4kb_gate(): i64 {
 # worst offender for diagnostic.
 fn _stdlib_doc_coverage_gate(): i64 {
     if (CYRDOC_PATH == 0) {
-        _p("  skip: cyrdoc not built (cat programs/cyrdoc.cyr | build/cc5 > build/cyrdoc)");
+        _p("  skip: cyrdoc not built (cat programs/cyrdoc.cyr | build/cycc > build/cyrdoc)");
         println("");
         _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
         return 0;
@@ -6705,7 +6705,7 @@ fn _fn_collision_gate(): i64 {
 # Bespoke gate: lexer reject paths for malformed string escapes
 # (v5.7.13). 11 sub-cases — \x##, \u####, \u{...} variants. Each
 # fixture is expected to fail compile with a specific lex error;
-# substring grep on cc5's stderr verifies the right diagnostic
+# substring grep on cycc's stderr verifies the right diagnostic
 # fired. Positive coverage lives in tests/tcyr/string_escapes.tcyr
 # (compile-success-only); this gate covers reject paths.
 fn _string_escape_rejects_gate(): i64 {
@@ -6883,7 +6883,7 @@ fn _derive_serialize_primitive_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5 compile rc=");
+        _p(": cycc compile rc=");
         print_num(rc);
         println("");
         _check(label, 1);
@@ -6980,21 +6980,21 @@ fn _self_host_gate(): i64 {
     var cc_b = _tmp_path("audit_cc_b_");
     var rc1 = _self_host_pipe(src, CC_PATH, cc_a);
     if (rc1 != 0) {
-        _check("cc5==cc5 byte-identical", 1);
+        _check("cycc==cycc byte-identical", 1);
         println("");
         return 1;
     }
     sys_chmod(cc_a, 493);
     var rc2 = _self_host_pipe(src, cc_a, cc_b);
     if (rc2 != 0) {
-        _check("cc5==cc5 byte-identical", 1);
+        _check("cycc==cycc byte-identical", 1);
         sys_unlink(cc_a);
         println("");
         return 1;
     }
     var ok = _files_identical(cc_a, cc_b);
-    if (ok == 1) { _check("cc5==cc5 byte-identical", 0); }
-    else         { _check("cc5==cc5 byte-identical", 1); }
+    if (ok == 1) { _check("cycc==cycc byte-identical", 0); }
+    else         { _check("cycc==cycc byte-identical", 1); }
     _p("    binary: ");
     print_num(_file_size(cc_a));
     println(" bytes");
@@ -7049,7 +7049,7 @@ fn _tcyr_parse_failed(buf, n): i64 {
     return 0;
 }
 
-# Compile a .tcyr file via stdin pipe to cc5, run the resulting
+# Compile a .tcyr file via stdin pipe to cycc, run the resulting
 # binary, parse "X passed, Y failed" from output. Returns:
 #   0 on PASS, positive int = failed count from summary, -1 on
 #   compile failure.
@@ -7131,13 +7131,13 @@ fn _testsuite_gate(): i64 {
 fn _format_gate(): i64 {
     _section("Format");
     if (CYRFMT_PATH == 0) {
-        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
         _check("format (stdlib)", 1);
         println("");
         return 1;
     }
     if (file_exists(CYRFMT_PATH) != 1) {
-        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
         _check("format (stdlib)", 1);
         println("");
         return 1;
@@ -7158,13 +7158,13 @@ fn _format_gate(): i64 {
 fn _lint_gate(): i64 {
     _section("Lint");
     if (CYRLINT_PATH == 0) {
-        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
         _check("lint (stdlib)", 1);
         println("");
         return 1;
     }
     if (file_exists(CYRLINT_PATH) != 1) {
-        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cc5");
+        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
         _check("lint (stdlib)", 1);
         println("");
         return 1;
@@ -7240,7 +7240,7 @@ fn _shared_dlopen_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5 < lib.cyr → .so failed (rc=");
+        _p(": cycc < lib.cyr → .so failed (rc=");
         print_num(rc1);
         println(")");
         _check(label, 1);
@@ -7259,7 +7259,7 @@ fn _shared_dlopen_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cc5 compile of dlopen_runner.cyr failed (rc=");
+        _p(": cycc compile of dlopen_runner.cyr failed (rc=");
         print_num(rc2);
         println(")");
         _check(label, 1);
@@ -7312,7 +7312,7 @@ fn _shared_dlopen_gate(): i64 {
 #   B. no leading global     (the shape that SIGSEGV'd pre-v5.5.21
 #                             from PXOR xmm,m128 on a 8-aligned-
 #                             not-16-aligned `var rk[240]`)
-# Each fixture compiles with cc5, runs, and writes 16 bytes to
+# Each fixture compiles with cycc, runs, and writes 16 bytes to
 # stdout. If either writes != 16 bytes, fixup.cyr's
 # 16-alignment-for-large-arrays prefix-sum pass regressed.
 fn _inline_asm_discard_gate(): i64 {
@@ -7348,7 +7348,7 @@ fn _inline_asm_discard_gate(): i64 {
             _p(ANSI_RESET);
             _p(": ");
             _p(shape_label);
-            _p(" cc5 compile rc=");
+            _p(" cycc compile rc=");
             print_num(rc);
             println("");
             fail = fail + 1;
@@ -7393,7 +7393,7 @@ fn _inline_asm_discard_gate(): i64 {
 # code (1/2 = sys_getrandom; 7 = enum constant mismatch;
 # 11/12 = random_bytes wrapper; 0 = pass). Test 3 (getdents64 +
 # landlock_*) is wiring-only — fns referenced from an unreachable
-# `if (0 != 0)` branch so cc5 emits the call sites (proving symbol
+# `if (0 != 0)` branch so cycc emits the call sites (proving symbol
 # resolution + arg shape) but the syscalls don't fire (avoids the
 # CI seccomp-kill that retired this from the tcyr loop at v5.7.35
 # ship — see the original .sh header for the long backstory).
@@ -7514,11 +7514,11 @@ fn _syscall_surface_v5735_gate(): i64 {
 # slot — closes the .sh-conversion arc, 0 .sh remaining;
 # precondition for v5.9.43 closeout). Behavior is preserved
 # exactly per the v5.6.37 pin: builds an fdlopen-based libssl
-# probe via cc5, runs it bounded by 30 s, asserts the response
+# probe via cycc, runs it bounded by 30 s, asserts the response
 # starts with "HTTP/1.1 ".
 #
 # Skip cleanly if:
-#   - cc5 not built
+#   - cycc not built
 #   - ~/.cyrius/dlopen-helper missing (fdlopen needs the
 #     ld.so-bootstrapped real glibc dlopen — see lib/fdlopen.cyr)
 #   - 1.1.1.1:443 unreachable (CI runner contexts vary; better to
@@ -7578,7 +7578,7 @@ fn _tls_live_gate(): i64 {
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        println(": cc5 compile of TLS probe failed");
+        println(": cycc compile of TLS probe failed");
         _check(label, 1);
         return 1;
     }
@@ -8233,7 +8233,7 @@ fn _install_shim_symlink_gate(): i64 {
 # --check on 7000-fn synthetic source (rc=1 + ">=85%" diagnostic;
 # fn count bumped 3500 → 7000 at v5.11.19 when fn_table cap doubled
 # 4096 → 8192 — old fixture stopped tripping the 85% threshold);
-# direct cc5 object-mode compile of the 7000-fn source (latent
+# direct cycc object-mode compile of the 7000-fn source (latent
 # fnc>2048 fix from alpha4); --json shape (fn_table key present);
 # --json on big shows fn_table.pct >= 85; missing-entry-point error
 # path runs from an empty cwd and surfaces "no file given".
@@ -8375,7 +8375,7 @@ fn _capacity_gate(): i64 {
         _p(ANSI_RED);
         _p("case-FAIL");
         _p(ANSI_RESET);
-        _p(": test4 cc5 compile of 7000-fn source rc=");
+        _p(": test4 cycc compile of 7000-fn source rc=");
         print_num(ec_t4);
         println(" (regression in fnc>2048 fix)");
         fail = fail + 1;
@@ -9036,11 +9036,11 @@ fn _resolve_root(): i64 {
 
 fn _setup_paths(): i64 {
     ROOT_PATH = _resolve_root();
-    CC_PATH = _root_path("build/cc5");
+    CC_PATH = _root_path("build/cycc");
     CYRFMT_PATH = _resolve_tool("build/cyrfmt", "cyrfmt");
     CYRLINT_PATH = _resolve_tool("build/cyrlint", "cyrlint");
     CYRDOC_PATH = _resolve_tool("build/cyrdoc", "cyrdoc");
-    CC_AARCH64_PATH = _root_path("build/cc5_aarch64");
+    CC_AARCH64_PATH = _root_path("build/cycc_aarch64");
     return 0;
 }
 
@@ -9133,11 +9133,11 @@ fn _run_regression_gates(): i64 {
     println("");
 
     _section("TS parser (SY acceptance)");
-    _ts_corpus_gate("cc5 --parse-ts vs SY .ts corpus ≥98%% baseline (v5.7.3 P3.1)", ".ts", 2053);
+    _ts_corpus_gate("cycc --parse-ts vs SY .ts corpus ≥98%% baseline (v5.7.3 P3.1)", ".ts", 2053);
     println("");
 
     _section("TS parser .tsx (JSX)");
-    _ts_corpus_gate("cc5 --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", ".tsx", 435);
+    _ts_corpus_gate("cycc --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", ".tsx", 435);
     println("");
 
     _section("Bare-truthy after fn-call");
@@ -9208,7 +9208,7 @@ fn _run_regression_gates(): i64 {
     _parse_emit_drift_gate();
     println("");
 
-    _section("build/cc5 contamination gate");
+    _section("build/cycc contamination gate");
     _cc5_contamination_gate();
     println("");
 
@@ -9236,7 +9236,7 @@ fn _run_regression_gates(): i64 {
     _cap_drift_gate();
     println("");
 
-    _section("Doc-size currency (fresh-tier docs cite current cc5)");
+    _section("Doc-size currency (fresh-tier docs cite current cycc)");
     _doc_size_currency_gate();
     println("");
 
@@ -9253,15 +9253,15 @@ fn _run_regression_gates(): i64 {
     println("");
 
     _section("TS asserts predicate signatures");
-    _parse_ts_dir_gate("cc5 --parse-ts accepts asserts predicate signatures + this-type (v5.7.24)", "asserts predicates + this-type (TS 3.7+)", "ts_asserts");
+    _parse_ts_dir_gate("cycc --parse-ts accepts asserts predicate signatures + this-type (v5.7.24)", "asserts predicates + this-type (TS 3.7+)", "ts_asserts");
     println("");
 
     _section("TS mapped types + modifiers");
-    _parse_ts_dir_gate("cc5 --parse-ts accepts mapped types + as-clause + +/- modifiers (v5.7.25)", "mapped types + as-clause + +/- modifiers", "ts_mapped");
+    _parse_ts_dir_gate("cycc --parse-ts accepts mapped types + as-clause + +/- modifiers (v5.7.25)", "mapped types + as-clause + +/- modifiers", "ts_mapped");
     println("");
 
     _section("TS decorators");
-    _parse_ts_dir_gate("cc5 --parse-ts accepts TS 5.0 stage-3 decorators (v5.7.26)", "TS 5.0 stage-3 decorators", "ts_decorators");
+    _parse_ts_dir_gate("cycc --parse-ts accepts TS 5.0 stage-3 decorators (v5.7.26)", "TS 5.0 stage-3 decorators", "ts_decorators");
     println("");
 
     _section("Token-offset parity");

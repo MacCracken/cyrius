@@ -15,7 +15,7 @@ Every value is a 64-bit integer. Strings are pointers (which are integers). Stru
 Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
 
 ### Is it fast?
-The compiler self-compiles in ~387 ms (cc5 → cc5b 3-step fixpoint, ~875 KB output at v5.11.59). Total compile time fell from 1037 ms → 387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc. Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler self-compiles in ~387 ms (cycc → cc5b 3-step fixpoint, ~875 KB output at v5.11.59). Total compile time fell from 1037 ms → 387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc. Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 
@@ -44,10 +44,10 @@ Exit codes are truncated to 0-255 (Linux limitation). Use `print_num()` or `fmt_
 This was a bug (fixed in 0.9.0). If you're on an older version, update. The fix: enum init code must run before global var init code in the compiler entry point.
 
 ### "include" string literal breaks compilation
-The preprocessor eats `"include "` patterns in string literals. Workaround: build the pattern at runtime using `store8()`. See the cyrc source for an example.
+The preprocessor eats `"include "` patterns in string literals. Workaround: build the pattern at runtime using `store8()`. See the cybs source for an example.
 
 ### aarch64 binary crashes with SIGILL
-Check that you're using `cc5_aarch64` (the cross-compiler) and running via `qemu-aarch64`. Common encoding bugs were fixed in 0.9.0.
+Check that you're using `cycc_aarch64` (the cross-compiler) and running via `qemu-aarch64`. Common encoding bugs were fixed in 0.9.0.
 
 ### Vec bounds check aborts
 `vec_get`/`vec_set` abort on out-of-bounds access. Check your indices. Use `vec_len()` to verify before accessing.

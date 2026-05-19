@@ -14,7 +14,7 @@
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** | cc5 5.8.31 | `echo 'syscall(60, 42);' \| cc5` | **152** | 1× |
+| **Cyrius** | cycc 5.8.31 | `echo 'syscall(60, 42);' \| cycc` | **152** | 1× |
 | Zig | 0.15.2 `-OReleaseSmall` | `zig build-exe -OReleaseSmall` | 4,840 | 32× |
 | Zig | 0.15.2 `-OReleaseSmall` Windows PE | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 30× |
 | C (GCC) | gcc 15.2.1 `-O2 -s` | `gcc -O2 -s` | 14,248 | 94× |
@@ -32,15 +32,15 @@
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** | cc5_win 5.8.31 native (on Windows) | `cc5_win.exe < exit42.cyr` | **1,536** | 1× |
-| **Cyrius** | cc5 5.8.31 Linux cross-build | `CYRIUS_TARGET_WIN=1 cc5` | 1,536 | 1× (byte-identical to native) |
+| **Cyrius** | cycc_win 5.8.31 native (on Windows) | `cycc_win.exe < exit42.cyr` | **1,536** | 1× |
+| **Cyrius** | cycc 5.8.31 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | 1,536 | 1× (byte-identical to native) |
 | Zig | 0.15.2 `-OReleaseSmall` | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 3× |
 | Go | go 1.26.2 `-s -w` | `GOOS=windows GOARCH=amd64 go build -ldflags="-s -w"` | 1,492,992 | 972× |
 | Go | go 1.26.2 default | `GOOS=windows GOARCH=amd64 go build` | 2,265,600 | 1,475× |
 
 ## Notes
 
-- **Cyrius Linux ELF is 152 B** because cc5 emits a stripped minimum-viable
+- **Cyrius Linux ELF is 152 B** because cycc emits a stripped minimum-viable
   ELF: the 64 B ELF header, one program header (56 B), a 5 B `mov eax, 60;
   syscall(42)` sequence, a handful of alignment bytes. No interpreter,
   no dynamic linker, no runtime. The binary talks directly to the
@@ -62,26 +62,26 @@
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius compiler itself (cc5) is **875,336 B**
+For perspective, the Cyrius compiler itself (cycc) is **875,336 B**
 (~875 KB) on Linux ELF at v5.11.59. It compiles itself byte-identically.
 At v5.5.10 it also compiles itself byte-identically on Windows
-(cc5_win.exe native → out.exe matches Linux cross-build md5).
+(cycc_win.exe native → out.exe matches Linux cross-build md5).
 That's the whole self-hosting compiler — TLS / atomics / dynlib /
 NSS quartet / sum types + match / `?` propagation / Result-shaped
 stdlib / UEFI Application emit (v5.11.49) / ELF64 + multiboot2
 kernel emit (v5.11.43) / DCE-aware reachability filter cross-arch
 (v5.11.59) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cc5 (Linux ELF): **875,336 B** (v5.11.59)
-- cc5_aarch64 (Linux aarch64 cross): **558,016 B** (v5.11.59; +51 KB
+- Cyrius cycc (Linux ELF): **875,336 B** (v5.11.59)
+- cycc_aarch64 (Linux aarch64 cross): **558,016 B** (v5.11.59; +51 KB
   over v5.11.x earlier — v5.11.59 added full DCE bitmap pass to
   aarch64 fixup.cyr, mirroring the x86 path that existed since
   v5.10.x)
-- cc5_win (Windows PE cross): **682,760 B** (v5.11.59; PE format
+- cycc_win (Windows PE cross): **682,760 B** (v5.11.59; PE format
   overhead + v5.5.35 .reloc + v5.6.31 DllChar 0x0160 + v5.11.47-.49
   EFI Application emit deltas)
-- cc5 compiles itself in milliseconds (no cache, no incremental build —
-  just `cat src/main.cyr | cc5 > cc5_new`).
+- cycc compiles itself in milliseconds (no cache, no incremental build —
+  just `cat src/main.cyr | cycc > cc5_new`).
 - Full release toolchain (`~/.cyrius/bin/`): **~3.7 MB** across compiler
   + cross-compilers + linker (cyrld) + LSP (cyrius-lsp) + formatter
   (cyrfmt) + linter (cyrlint) + doc tool (cyrdoc) + CLI (cyrius)
@@ -115,7 +115,7 @@ minor bump.
 
 ```bash
 # Minimum-viable repro (Linux x86_64):
-echo 'syscall(60, 42);' | ./build/cc5 > /tmp/exit42_cyr; wc -c /tmp/exit42_cyr
+echo 'syscall(60, 42);' | ./build/cycc > /tmp/exit42_cyr; wc -c /tmp/exit42_cyr
 echo 'int main(void) { return 42; }' > /tmp/exit42.c && \
     gcc -O2 -s /tmp/exit42.c -o /tmp/exit42_c && wc -c /tmp/exit42_c
 # ... and so on for each row.
@@ -136,7 +136,7 @@ echo 'int main(void) { return 42; }' > /tmp/exit42.c && \
   alignment fix, preprocessor cap raises, output_buf cap raise, dep
   bumps to patra 1.8.3 / sigil 2.9.3 / sankoch 2.1.0). Exit42 PE/ELF
   numbers unchanged. cc5_aarch64_macho_cross (411,040 B) and
-  cc5_aarch64 (411,616 B) added as listed cross-build artifacts.
+  cycc_aarch64 (411,616 B) added as listed cross-build artifacts.
 - **v5.8.31** (2026-05-03): compiler size refreshed to 739,672 B after
   the v5.7.x minor closed (49-patch arc: cyrius-ts JSX + advanced TS
   surface, JSON depth + streaming + pointer + lib/test.cyr testing
@@ -146,6 +146,6 @@ echo 'int main(void) { return 42; }' > /tmp/exit42.c && \
   (v5.8.21–v5.8.27, +5,568 B), `?` propagation operator (v5.8.29 +968 B
   + v5.8.31 PARSE_STMT extension +816 B). Stdlib Result migrations at
   v5.8.30 / v5.8.31 ship zero compiler delta — pure stdlib reorganization.
-  Exit42 PE/ELF numbers unchanged. cc5_win_cross bumped to 534,888 B
+  Exit42 PE/ELF numbers unchanged. cycc_win_cross bumped to 534,888 B
   (was 526,856 — +8,032 from the v5.7.x JSON / TS additions migrating
   through the cross-build path).

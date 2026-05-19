@@ -7,18 +7,18 @@ set -e
 
 SRC="${1:-src/main.cyr}"
 OUT="${2:-build/app}"
-CC="${CYRIUS_CC:-$(which cc5 2>/dev/null || echo "$HOME/.cyrius/bin/cc5")}"
+CC="${CYRIUS_CC:-$(which cycc 2>/dev/null || echo "$HOME/.cyrius/bin/cycc")}"
 INTERVAL="${CYRIUS_WATCH_INTERVAL:-1}"
 
 if [ ! -f "$SRC" ]; then echo "error: $SRC not found"; exit 1; fi
-if [ ! -x "$CC" ]; then echo "error: cc5 not found"; exit 1; fi
+if [ ! -x "$CC" ]; then echo "error: cycc not found"; exit 1; fi
 
 mkdir -p "$(dirname "$OUT")"
 STAMP="/tmp/cyrius_watch_stamp_$$"
 touch "$STAMP"
 
 echo "cyrius watch: $SRC → $OUT (every ${INTERVAL}s)"
-echo "  cc5: $CC"
+echo "  cycc: $CC"
 echo "  ctrl-c to stop"
 echo ""
 

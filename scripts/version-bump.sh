@@ -14,14 +14,16 @@ NEW="$1"
 OLD=$(cat VERSION | tr -d '[:space:]')
 
 # Regenerate src/version_str.cyr unconditionally — including same-version
-# invocations. This file is the single source of truth for the cc5/cc5_win/
-# cc5_aarch64 `--version` strings; if it drifts vs `VERSION`, `cc5
+# invocations. This file is the single source of truth for the cycc/cycc_win/
+# cycc_aarch64 `--version` strings; if it drifts vs `VERSION`, `cycc
 # --version` reports stale data. Same-version `version-bump.sh "$(cat
 # VERSION)"` is the documented "regenerate without bumping" path.
 if [ -f src/main.cyr ]; then
-    LEN_CC5=$((${#NEW} + 5))           # "cc5 " + version + "\n"
-    LEN_CC5_WIN=$((${#NEW} + 9))       # "cc5_win " + version + "\n"
-    LEN_CC5_AARCH64=$((${#NEW} + 13))  # "cc5_aarch64 " + version + "\n"
+    # v6.0.0: renamed CC5 → CYCC variables + binary names.
+    # Byte-length calcs: "cycc " (5) + ver + "\n" (1) = ver + 6, etc.
+    LEN_CYCC=$((${#NEW} + 6))            # "cycc " + version + "\n"
+    LEN_CYCC_WIN=$((${#NEW} + 10))       # "cycc_win " + version + "\n"
+    LEN_CYCC_AARCH64=$((${#NEW} + 14))   # "cycc_aarch64 " + version + "\n"
     cat > src/version_str.cyr <<EOF
 # src/version_str.cyr — AUTO-GENERATED from \`VERSION\` by
 # \`scripts/version-bump.sh\`. Do NOT edit by hand; the next bump
@@ -30,20 +32,20 @@ if [ -f src/main.cyr ]; then
 #   sh scripts/version-bump.sh "\$(cat VERSION)"
 #
 # Why this file exists: pre-v5.6.39, each \`main_*.cyr\` had its own
-# hardcoded \`"cc5 X.Y.Z\\n"\` literal + a hardcoded byte length.
+# hardcoded \`"cycc X.Y.Z\\n"\` literal + a hardcoded byte length.
 # \`version-bump.sh\`'s sed regex didn't handle \`-N\` hotfix suffixes
 # (e.g. \`5.6.29-1\`), so once a hotfix shipped, every subsequent bump
-# silently skipped the literal — \`cc5 --version\` got stuck at
+# silently skipped the literal — \`cycc --version\` got stuck at
 # \`5.6.29-1\` for 9 releases. Centralising the strings here means
 # version-bump.sh writes ONE file every time and the sources just
 # reference these vars. No regex hunting; no drift.
 
-var _VERSION_STR_CC5         = "cc5 $NEW\n";
-var _VERSION_LEN_CC5         = $LEN_CC5;
-var _VERSION_STR_CC5_WIN     = "cc5_win $NEW\n";
-var _VERSION_LEN_CC5_WIN     = $LEN_CC5_WIN;
-var _VERSION_STR_CC5_AARCH64 = "cc5_aarch64 $NEW\n";
-var _VERSION_LEN_CC5_AARCH64 = $LEN_CC5_AARCH64;
+var _VERSION_STR_CYCC          = "cycc $NEW\n";
+var _VERSION_LEN_CYCC          = $LEN_CYCC;
+var _VERSION_STR_CYCC_WIN      = "cycc_win $NEW\n";
+var _VERSION_LEN_CYCC_WIN      = $LEN_CYCC_WIN;
+var _VERSION_STR_CYCC_AARCH64  = "cycc_aarch64 $NEW\n";
+var _VERSION_LEN_CYCC_AARCH64  = $LEN_CYCC_AARCH64;
 
 # v5.11.25: bare-version string for cbt/cyrius.cyr's version-resolved
 # dispatcher. Compared against cyrius.cyml's \`[package].cyrius\` field
@@ -101,7 +103,7 @@ sed -i "s/> \*\*v$OLD\.\*\*/> **v$NEW.**/" docs/development/roadmap.md 2>/dev/nu
 #       install.sh's `binary -nt source` check fails and triggers
 #       rebuild. Captures all main_*.cyr cross-compilers + cbt/
 #       cyrius.cyr wrapper.
-#   (b) Rebuild cc5 explicitly — install.sh skips cc5 entirely
+#   (b) Rebuild cycc explicitly — install.sh skips cycc entirely
 #       per its "seed-bootstrapped" contract (line 158), so the
 #       touch alone wouldn't restore it.
 for _f in src/main.cyr src/main_aarch64.cyr src/main_win.cyr \
@@ -109,17 +111,17 @@ for _f in src/main.cyr src/main_aarch64.cyr src/main_win.cyr \
           src/main_aarch64_macho.cyr cbt/cyrius.cyr; do
     [ -f "$_f" ] && touch "$_f"
 done
-if [ -x build/cc5 ]; then
-    if cat src/main.cyr | ./build/cc5 > build/cc5.new 2>/tmp/cc5-rebuild.err; then
-        mv build/cc5.new build/cc5
-        chmod +x build/cc5
-        echo "  > cc5 rebuilt for $NEW"
+if [ -x build/cycc ]; then
+    if cat src/main.cyr | ./build/cycc > build/cycc.new 2>/tmp/cycc-rebuild.err; then
+        mv build/cycc.new build/cycc
+        chmod +x build/cycc
+        echo "  > cycc rebuilt for $NEW"
     else
-        echo "  ! cc5 rebuild failed (non-fatal):" >&2
-        sed 's/^/    /' /tmp/cc5-rebuild.err >&2
-        rm -f build/cc5.new
+        echo "  ! cycc rebuild failed (non-fatal):" >&2
+        sed 's/^/    /' /tmp/cycc-rebuild.err >&2
+        rm -f build/cycc.new
     fi
-    rm -f /tmp/cc5-rebuild.err
+    rm -f /tmp/cycc-rebuild.err
 fi
 
 # 6. Install-snapshot refresh (v5.4.18): reconcile

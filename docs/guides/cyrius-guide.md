@@ -885,14 +885,14 @@ See `programs/` for 68 examples:
 
 ```
 bootstrap/asm (29KB seed)
-  → cyrc (12KB compiler)
+  → cybs (12KB compiler)
     → bridge.cyr (bridge compiler)
-      → cc5 (modular compiler + IR, 9 modules)
-        → cc5_aarch64 (Linux + macOS Mach-O cross-compiler)
-        → cc5_win    (Windows PE32+ cross-compiler)
+      → cycc (modular compiler + IR, 9 modules)
+        → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
+        → cycc_win    (Windows PE32+ cross-compiler)
         → agnos.cyr  (AGNOS kernel)
 ```
 
-Current cc5 size, IR pipeline state, and cross-compiler stats live in
+Current cycc size, IR pipeline state, and cross-compiler stats live in
 [`docs/development/state.md`](development/state.md). Per-release narrative
 is in [`docs/development/completed-phases.md`](development/completed-phases.md).

@@ -2,10 +2,10 @@
 # Cyrius Compiler v2 — Modular Self-Hosting Compiler
 # ================================================================
 # Same language as cc.cyr, split into modules using include.
-# Compiled by cc (cyrc's extended language).
+# Compiled by cc (cybs's extended language).
 #
-# Build: cat src/main.cyr | ./build/cc5 > /tmp/cc5 && chmod +x /tmp/cc5
-# Self-host: cat src/main.cyr | /tmp/cc5 > /tmp/cc5b && cmp /tmp/cc5 /tmp/cc5b
+# Build: cat src/main.cyr | ./build/cycc > /tmp/cycc && chmod +x /tmp/cycc
+# Self-host: cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b
 # ================================================================
 # HEAP MAP — Authoritative offset registry (v3.6.10)
 # ================================================================
@@ -123,7 +123,7 @@
 #
 #   0x93A000 (fixup table: 16384 entries × 16 bytes ends at 0x9BA000)
 #
-# --- cc5 IR region (v5.0.0) ---
+# --- cycc IR region (v5.0.0) ---
 #   0xA3A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
 #   0xE3A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
 #   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
@@ -199,8 +199,8 @@ var _vfd = 0;
 # v5.5.9: --version / --strict parsing uses /proc/self/cmdline, a
 # Linux-only pseudofile. On Windows this CreateFileW returns
 # INVALID_HANDLE_VALUE and subsequent ReadFile on the bad handle
-# crashes cc5_win.exe at startup. Gate the whole block on
-# CYRIUS_TARGET_LINUX so cc5_win.exe (built by cc5_win_linux with
+# crashes cycc_win.exe at startup. Gate the whole block on
+# CYRIUS_TARGET_LINUX so cycc_win.exe (built by cc5_win_linux with
 # CYRIUS_TARGET_WIN predefined at runtime) skips it entirely.
 # Downside: no --version / --strict support on Windows yet;
 # GetCommandLineW-based replacement queued for v5.5.x tail.
@@ -219,7 +219,7 @@ if (_vn > 0) {
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
-                    syscall(SYS_WRITE, 1, _VERSION_STR_CC5_WIN, _VERSION_LEN_CC5_WIN);
+                    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC_WIN, _VERSION_LEN_CYCC_WIN);
                     syscall(SYS_EXIT, 0);
                 }
             }
@@ -244,10 +244,10 @@ if (_vn > 0) {
 # pattern crashes with STATUS_ACCESS_VIOLATION on PE because SYS_BRK
 # isn't rerouted). v5.5.8: use SYS_MMAP which works on both paths of
 # this file's build chain:
-#   - cc5 (Linux) compiles main_win.cyr → cc5_win_linux (Linux ELF):
+#   - cycc (Linux) compiles main_win.cyr → cc5_win_linux (Linux ELF):
 #     heap init runs on Linux, calls mmap(0, 32MB, PROT_RW=3,
 #     MAP_PRIVATE|MAP_ANONYMOUS=0x22, -1, 0) → valid region.
-#   - cc5_win_linux compiles main_win.cyr → cc5_win.exe (PE):
+#   - cc5_win_linux compiles main_win.cyr → cycc_win.exe (PE):
 #     heap init runs on Windows, PE backend (v5.5.1) routes to
 #     VirtualAlloc(0, 32MB, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
 #     The prot/flags/fd/offset are ignored by EMMAP_PE.
@@ -297,7 +297,7 @@ _init_cyrius_lib();
 # Register compiler-builtin arch marker so lib files can `#ifdef
 # CYRIUS_ARCH_X86` to select x86-specific asm over aarch64 asm.
 PP_PREDEFINE(S, "CYRIUS_ARCH_X86");
-# v5.5.0: cc5_win also defines CYRIUS_TARGET_WIN so stdlib can
+# v5.5.0: cycc_win also defines CYRIUS_TARGET_WIN so stdlib can
 # `#ifdef CYRIUS_TARGET_WIN` to select Windows-shaped includes
 # (syscalls_windows.cyr + alloc_windows.cyr) instead of the
 # Linux peers that ship by default on the x86 branch.
@@ -523,8 +523,8 @@ if (_macho_arm_env != 0) {
     }
 }
 
-# PE32+ output is the DEFAULT for cc5_win (this file). CYRIUS_TARGET_WIN=0
-# opts out and emits ELF instead (rare — use cc5 for ELF).
+# PE32+ output is the DEFAULT for cycc_win (this file). CYRIUS_TARGET_WIN=0
+# opts out and emits ELF instead (rare — use cycc for ELF).
 _TARGET_PE = 1;
 var _pe_env = _read_env("CYRIUS_TARGET_WIN");
 if (_pe_env != 0) {
@@ -547,7 +547,7 @@ if (_efi_env != 0) {
     }
 }
 
-# cc5: opt-in IR recording via CYRIUS_IR=1|2
+# cycc: opt-in IR recording via CYRIUS_IR=1|2
 var _ir_env = _read_env("CYRIUS_IR");
 if (_ir_env != 0) {
     var _ir_ch = load8(_ir_env);
@@ -732,7 +732,7 @@ if (_epi_km == 3 || _epi_km == 2) {
     EEXIT(S);
 }
 
-# cc5: IR stats/dump
+# cycc: IR stats/dump
 if (IR_ENABLED(S) == 1) {
     var ir_bbs = ir_build_bbs(S);
     var ir_edges = ir_build_edges(S);

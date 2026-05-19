@@ -282,7 +282,7 @@ fn EMITMACHO_ARM64(S): i64 {
     # __TEXT content spans code + __cstring, rounded up to whole pages.
     # text_content_pages is the number of 16KB pages needed for that payload;
     # __TEXT itself is 1 header page + content pages. Multi-page __TEXT
-    # enables real toolchain binaries (cyrfmt, cyrlint, cyrdoc, cc5) — a
+    # enables real toolchain binaries (cyrfmt, cyrlint, cyrdoc, cycc) — a
     # single page was the v5.3.1 bootstrap limit.
     var text_content_sz = code_aligned + spos;
     var text_content_pages = 1;

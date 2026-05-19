@@ -1,6 +1,6 @@
 # tee — copy stdin to stdout AND stderr
 # Usage: echo "hello" | ./tee
-# Built by: cat tee.cyr | ./build/cc5 > tee && chmod +x tee
+# Built by: cat tee.cyr | ./build/cycc > tee && chmod +x tee
 
 fn tee(): i64 {
     var buf[4096];

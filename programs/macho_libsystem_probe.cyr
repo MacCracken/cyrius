@@ -11,7 +11,7 @@
 # binary (-mmacosx-version-min=10.9) that was verified to run on ecb.
 #
 # Build on Linux:
-#   cat programs/macho_libsystem_probe.cyr | build/cc5 > /tmp/macho_libsys \
+#   cat programs/macho_libsystem_probe.cyr | build/cycc > /tmp/macho_libsys \
 #     && chmod +x /tmp/macho_libsys
 #   /tmp/macho_libsys > /tmp/libsys_exit42.macho
 #

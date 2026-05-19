@@ -1,5 +1,5 @@
 # cyrius-lsp — Language Server Protocol implementation for Cyrius
-# Provides: diagnostics (errors/warnings from cc5)
+# Provides: diagnostics (errors/warnings from cycc)
 # Protocol: JSON-RPC 2.0 over stdin/stdout
 #
 # Usage: cyrius-lsp (launched by editor)
@@ -179,14 +179,14 @@ fn uri_to_path(uri): i64 {
 # COMPILER INTEGRATION
 # ================================================================
 
-# Global: path to cc5 binary
+# Global: path to cycc binary
 var _cc5_path = 0;
 
 # v5.11.56: path to cyrius wrapper binary. compile_and_capture
 # prefers the wrapper for files inside a cyrius project (a tree
 # containing cyrius.cyml) so [deps.*] resolution happens — that
 # closes the undefined-stdlib-fn false-positive class flagged in
-# the iron-boot papercut filing Item 2. Raw-cc5 fallback retained
+# the iron-boot papercut filing Item 2. Raw-cycc fallback retained
 # for files outside any project tree.
 var _cyrius_path = 0;
 
@@ -589,11 +589,11 @@ fn lsp_read_file(path, total_out): i64 {
     return buf;
 }
 
-# Find cc5 binary — check common locations
+# Find cycc binary — check common locations
 # v5.11.44: Resolve the LSP binary's install directory via
 # /proc/self/exe — same pattern as
 # programs/cyrius-init.cyr:_resolve_templates_dir. Lets find_cc5
-# locate a co-installed cc5 even when the LSP launcher
+# locate a co-installed cycc even when the LSP launcher
 # (Claude Code, other editors with a minimal inherited env) wipes
 # PATH and CYRIUS_HOME. Returns a pointer to the dir cstring or 0.
 # See: docs/development/proposals/archived/cyrius-lsp-argv0-self-resolution.md
@@ -613,7 +613,7 @@ fn _resolve_install_dir(): i64 {
 }
 
 fn find_cc5(): i64 {
-    # v5.11.54: Try $HOME/.cyrius/bin/cc5 FIRST — that's the symlink
+    # v5.11.54: Try $HOME/.cyrius/bin/cycc FIRST — that's the symlink
     # to whatever ~/.cyrius/current points at (the LATEST installed
     # cyrius). Diagnostics should reflect the latest parser's view of
     # the source: a user editing a v5.11.51+ byte-array-literal file
@@ -647,7 +647,7 @@ fn find_cc5(): i64 {
                 memcpy(hval, hbuf + hvstart, hvlen);
                 store8(hval + hvlen, 0);
                 str_builder_add_cstr(hsb, hval);
-                str_builder_add_cstr(hsb, "/.cyrius/bin/cc5");
+                str_builder_add_cstr(hsb, "/.cyrius/bin/cycc");
                 var p_latest = str_data(str_builder_build(hsb));
                 var fd_latest = syscall(2, p_latest, 0, 0);
                 if (fd_latest >= 0) { syscall(3, fd_latest); return p_latest; }
@@ -658,30 +658,30 @@ fn find_cc5(): i64 {
 
     # v5.11.44: Self-resolve via /proc/self/exe. Handles the
     # editor-LSP-launcher case where PATH + CYRIUS_HOME + HOME are
-    # all absent from the inherited env. Co-installed cc5 in the
+    # all absent from the inherited env. Co-installed cycc in the
     # SAME version-snapshot as the LSP binary — used when the latest
     # symlink above is unreachable.
     var install_dir = _resolve_install_dir();
     if (install_dir != 0) {
         var sb_self = str_builder_new();
         str_builder_add_cstr(sb_self, install_dir);
-        str_builder_add_cstr(sb_self, "/cc5");
+        str_builder_add_cstr(sb_self, "/cycc");
         var p_self = str_data(str_builder_build(sb_self));
         var fd_self = syscall(2, p_self, 0, 0);
         if (fd_self >= 0) { syscall(3, fd_self); return p_self; }
     }
 
-    # Try ./build/cc5
-    var p1 = "build/cc5";
+    # Try ./build/cycc
+    var p1 = "build/cycc";
     var fd = syscall(2, p1, 0, 0);
     if (fd >= 0) { syscall(3, fd); return p1; }
 
-    # Try /usr/local/lib/cyrius/cc5
-    var p2 = "/usr/local/lib/cyrius/cc5";
+    # Try /usr/local/lib/cyrius/cycc
+    var p2 = "/usr/local/lib/cyrius/cycc";
     fd = syscall(2, p2, 0, 0);
     if (fd >= 0) { syscall(3, fd); return p2; }
 
-    # Try CYRIUS_HOME/cc5 via /proc/self/environ
+    # Try CYRIUS_HOME/cycc via /proc/self/environ
     var envfd2 = syscall(2, "/proc/self/environ", 0, 0);
     if (envfd2 >= 0) {
         var ebuf = alloc(32768);
@@ -704,7 +704,7 @@ fn find_cc5(): i64 {
                 memcpy(val, ebuf + vstart, vlen);
                 store8(val + vlen, 0);
                 str_builder_add_cstr(sb, val);
-                str_builder_add_cstr(sb, "/cc5");
+                str_builder_add_cstr(sb, "/cycc");
                 var p3 = str_data(str_builder_build(sb));
                 fd = syscall(2, p3, 0, 0);
                 if (fd >= 0) { syscall(3, fd); return p3; }
@@ -718,7 +718,7 @@ fn find_cc5(): i64 {
 # v5.11.56: find the `cyrius` wrapper binary. Mirrors find_cc5's
 # search order (HOME/.cyrius/bin → install_dir → ./build → /usr/
 # local/lib/cyrius → $CYRIUS_HOME). Returns 0 if not found;
-# compile_and_capture falls back to raw cc5 in that case.
+# compile_and_capture falls back to raw cycc in that case.
 fn find_cyrius(): i64 {
     var envfd = syscall(2, "/proc/self/environ", 0, 0);
     if (envfd >= 0) {
@@ -800,7 +800,7 @@ fn find_cyrius(): i64 {
 
 # v5.11.56: walk up from filepath looking for cyrius.cyml. Returns
 # project root dir cstring on success, 0 if filepath is outside any
-# cyrius project tree (caller falls back to raw cc5). Returned
+# cyrius project tree (caller falls back to raw cycc). Returned
 # pointer is owned by the allocator; LSP doesn't free per-request
 # buffers — alloc churn is bounded by edit cadence.
 fn find_project_root(filepath): i64 {
@@ -837,7 +837,7 @@ fn find_project_root(filepath): i64 {
 # envp[] array forwarding the LSP's environment to a child. The
 # cyrius wrapper needs HOME (for ~/.cyrius resolution) and PATH
 # (for git fallbacks during deps fetch); passing envp=NULL like
-# raw cc5 does breaks ~/.cyrius/versions/X.Y.Z/ lookup.
+# raw cycc does breaks ~/.cyrius/versions/X.Y.Z/ lookup.
 fn _build_envp_from_proc(): i64 {
     var envfd = syscall(2, "/proc/self/environ", 0, 0);
     if (envfd < 0) { return 0; }
@@ -874,7 +874,7 @@ fn _build_envp_from_proc(): i64 {
 
 # v5.11.56: fork cyrius wrapper with cwd=project_root, exec
 # `cyrius check --with-deps <filepath>`. Wrapper handles [deps.*]
-# resolution that raw cc5 (read source from stdin, no project
+# resolution that raw cycc (read source from stdin, no project
 # context) can't see. Closes the undefined-stdlib-fn false-positive
 # class. Returns stderr buffer (never NULL except on pipe failure
 # upstream of fork).
@@ -926,14 +926,14 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
     return errbuf;
 }
 
-# Run cc5 on a file path, capture stderr for errors.
+# Run cycc on a file path, capture stderr for errors.
 # Returns a pointer to the stderr output (null-terminated), or 0 on failure.
 # v5.11.56: when both the cyrius wrapper and a project root are
 # available, prefer wrapper-mode. Wrapper resolves [deps.*] before
-# invoking cc5, which eliminates the false-positive
+# invoking cycc, which eliminates the false-positive
 # `undefined function 'X' (will crash at runtime)` warnings for
 # stdlib fns the consumer pulls via cyrius.cyml. Fall back to raw
-# cc5 (pre-.56 behavior) for files outside any project tree or
+# cycc (pre-.56 behavior) for files outside any project tree or
 # when the wrapper isn't installed.
 fn compile_and_capture(filepath): i64 {
     if (_cyrius_path != 0) {
@@ -953,7 +953,7 @@ fn compile_and_capture(filepath): i64 {
 
     var pid = sys_fork();
     if (pid == 0) {
-        # Child: run cc5 with source on stdin, /dev/null on stdout, pipe on stderr
+        # Child: run cycc with source on stdin, /dev/null on stdout, pipe on stderr
         sys_close(pipe_read);
 
         var sfd = sys_open(filepath, 0, 0);
@@ -1006,8 +1006,8 @@ fn compile_and_capture(filepath): i64 {
 # DIAGNOSTIC PARSING
 # ================================================================
 
-# Parse cc5 stderr output into LSP diagnostics JSON.
-# cc5 format: "error:filename:line: message\n" or "warning:filename:line: message\n"
+# Parse cycc stderr output into LSP diagnostics JSON.
+# cycc format: "error:filename:line: message\n" or "warning:filename:line: message\n"
 # Sends publishDiagnostics notification for the given URI.
 fn parse_and_send_diagnostics(uri, stderr_output): i64 {
     var sb = str_builder_new();
@@ -1048,7 +1048,7 @@ fn parse_and_send_diagnostics(uri, stderr_output): i64 {
         }
 
         if (severity > 0) {
-            # Parse cc5 error format after "error:" or "warning:" prefix
+            # Parse cycc error format after "error:" or "warning:" prefix
             # Formats:
             #   "error: message"                    (no location)
             #   "error:42: message"                 (line only)
@@ -1888,13 +1888,13 @@ fn main(): i64 {
     # v5.7.39: allocate symbol-table backing buffers up front.
     lsp_index_init();
 
-    # Find cc5
+    # Find cycc
     _cc5_path = find_cc5();
     if (_cc5_path == 0) {
-        log_msg("warning: cc5 not found — diagnostics disabled");
+        log_msg("warning: cycc not found — diagnostics disabled");
     } else {
         var log_sb = str_builder_new();
-        str_builder_add_cstr(log_sb, "found cc5: ");
+        str_builder_add_cstr(log_sb, "found cycc: ");
         str_builder_add_cstr(log_sb, _cc5_path);
         log_msg(str_data(str_builder_build(log_sb)));
     }
@@ -1903,7 +1903,7 @@ fn main(): i64 {
     # (closes [deps.*]-resolution false positives — Item 2).
     _cyrius_path = find_cyrius();
     if (_cyrius_path == 0) {
-        log_msg("note: cyrius wrapper not found — falling back to raw cc5 (deps will not resolve in diagnostics)");
+        log_msg("note: cyrius wrapper not found — falling back to raw cycc (deps will not resolve in diagnostics)");
     } else {
         var clog_sb = str_builder_new();
         str_builder_add_cstr(clog_sb, "found cyrius wrapper: ");

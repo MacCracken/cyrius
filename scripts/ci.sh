@@ -38,10 +38,10 @@ done
 echo "$VERSION" > "$CYRIUS_HOME/current"
 
 # Verify
-if [ -x "$CYRIUS_HOME/bin/cc5" ]; then
-    echo "  cc5:  ok"
+if [ -x "$CYRIUS_HOME/bin/cycc" ]; then
+    echo "  cycc:  ok"
 else
-    echo "  error: cc5 not found"
+    echo "  error: cycc not found"
     exit 1
 fi
 

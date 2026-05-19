@@ -441,9 +441,9 @@ fn _sha_ni_cpuid_probe(out): i64 {
 #
 # Bswap mask is embedded in _sha_ni_buf rather than a separate
 # allocation so `_sha_ni_compress_one` has only 3 parameters
-# (`ctx`, `buf`, `kbuf`). cc5 spills 3 params reliably to
+# (`ctx`, `buf`, `kbuf`). cycc spills 3 params reliably to
 # [rbp-8], [rbp-16], [rbp-24] (proven by `aes_ni.cyr` since
-# 2.9.1); cc5.5.30 may spill a 4th param differently from cc5.6.x,
+# 2.9.1); cycc.5.30 may spill a 4th param differently from cycc.6.x,
 # so we stay at 3 to keep the build portable across the toolchain
 # versions sigil's CI matrix uses.
 #
@@ -578,8 +578,8 @@ fn _sha_ni_init(): i64 {
 #   [rbp-24] kbuf    — 256-byte packed K table
 #
 # 3 params (rather than 4) so the [rbp-N] spill convention is the
-# one cc5 has used reliably for asm-block functions since 2.9.1
-# (`aes_ni.cyr`'s 3-param `aes256_encrypt_block_ni`); cc5.5.30 may
+# one cycc has used reliably for asm-block functions since 2.9.1
+# (`aes_ni.cyr`'s 3-param `aes256_encrypt_block_ni`); cycc.5.30 may
 # spill a 4th param into a register rather than the stack, which
 # breaks the `mov ..., [rbp-32]` form.
 #
@@ -1483,7 +1483,7 @@ fn hkdf_expand(prk, prk_len, info, info_len, out, out_len): i64 {
     if (out_len == 0) { return 0; }
 
     # Promote all parameters to globals so nested HMAC calls can't
-    # clobber them via cc5's register allocator.
+    # clobber them via cycc's register allocator.
     _hkdf_prk = prk;
     _hkdf_prk_len = prk_len;
     _hkdf_info = info;
@@ -3650,7 +3650,7 @@ fn sc_reduce(out, s64): i64 {
     # Reduce 512-bit value mod L using: val = hi*2^256 + lo ≡ hi*R + lo (mod L)
     # where R = 2^256 mod L. Iterate until hi == 0.
     #
-    # Scratch is stack-local (3.0 re-test: cc5 5.5.32 preserves
+    # Scratch is stack-local (3.0 re-test: cycc 5.5.32 preserves
     # pointer-to-local across the nested u256_* calls in this
     # body, so the pre-3.0 globals-for-scratch workaround is no
     # longer needed here). `lo`, `hi`, `prod` live only for the
@@ -4049,7 +4049,7 @@ var MLDSA65_SIG_BYTES = 3309;       # = 48 + 5*640 + 61
 # signed 32-bit Montgomery-form value. Callers keep the value
 # within the documented bounds of each helper; we do not re-check.
 #
-# Cyrius arithmetic notes (cc5):
+# Cyrius arithmetic notes (cycc):
 #   - `>>` is LOGICAL shift right (zero-fill). Do not use for
 #     arithmetic sign-extension.
 #   - `/` is SIGNED 64-bit integer division (IDIV). Safe for the
@@ -4348,7 +4348,7 @@ fn mldsa_invntt_tomont(a): i64 {
 #
 # Hot paths (`polyvecl_pointwise_acc_montgomery`,
 # `polyvec_matrix_pointwise_montgomery`) promote their loop
-# state to module-level globals because cc5 clobbers locals
+# state to module-level globals because cycc clobbers locals
 # across deeply nested call chains (the matrix product goes
 # 3 levels deep into per-coefficient Montgomery reduces, same
 # call-depth pattern that bit sha256 / ed25519).
@@ -5444,7 +5444,7 @@ fn mldsa_rej_eta(a, len, buf, buflen): i64 {
 
 # State globals: the sampling chain calls through multiple
 # helpers, each with their own locals. Promote the loop state
-# to module-level to survive cc5 clobbering.
+# to module-level to survive cycc clobbering.
 var _mldsa_pu_ctr = 0;
 var _mldsa_pu_off = 0;
 var _mldsa_pu_buflen = 0;

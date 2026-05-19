@@ -2,9 +2,9 @@
 # Cyrius Compiler v2 — Modular Self-Hosting Compiler
 # ================================================================
 # Same language as cc.cyr, split into modules using include.
-# Compiled by cc (cyrc's extended language).
+# Compiled by cc (cybs's extended language).
 #
-# Build: cat src/main_aarch64.cyr | ./build/cc5 > /tmp/cc5_aarch64
+# Build: cat src/main_aarch64.cyr | ./build/cycc > /tmp/cycc_aarch64
 # Cross-compile: produces aarch64 ELF from x86 host
 # ================================================================
 # HEAP MAP — Synced with main.cyr (v4.2)

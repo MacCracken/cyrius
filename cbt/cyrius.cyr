@@ -45,7 +45,7 @@ fn usage(): i64 {
     println("  test [--aarch64] <test.cyr>     compile + run, check exit 0");
     println("  bench <bench.cyr>               compile + run benchmarks");
     println("  check [--with-deps] <src.cyr>  syntax check (default: standalone)");
-    println("  self                            self-hosting check (cc5==cc5)");
+    println("  self                            self-hosting check (cycc==cycc)");
     println("  clean                           remove build/ contents");
     println("  lib sync [--dry-run]            copy snapshot lib/*.cyr → ./lib/ (sync to pin)");
     println("");
@@ -80,7 +80,7 @@ fn usage(): i64 {
     println("Info:");
     println("  version                         show cyrius toolchain version");
     println("  version --project               show project version (from VERSION)");
-    println("  which                           show path to cc5");
+    println("  which                           show path to cycc");
     println("  help                            show this help");
     return 0;
 }
@@ -693,7 +693,7 @@ fn main(): i64 {
         # a `manifest-pin:` line so consumers spot toolchain
         # drift the moment they check what wrapper they're
         # running. Iron-boot papercut filing Item 1 (wrapper-
-        # side surface; cc5-side detection landed at v5.11.57).
+        # side surface; cycc-side detection landed at v5.11.57).
         var _ver_pin = _dep_read_cyml_cyrius_field();
         if (_ver_pin != 0) {
             sys_write(STDOUT_FD, "manifest-pin: ", 14);

@@ -7,7 +7,7 @@
 # via raw svc #0x80 twice — zero libSystem calls.
 #
 # Build on Linux:
-#   cat programs/macho_probe_arm_rawsvc.cyr | build/cc5 > /tmp/rawsvc \
+#   cat programs/macho_probe_arm_rawsvc.cyr | build/cycc > /tmp/rawsvc \
 #     && chmod +x /tmp/rawsvc
 #   /tmp/rawsvc > /tmp/rawsvc.macho
 #

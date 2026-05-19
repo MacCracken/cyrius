@@ -25,7 +25,7 @@ var _last_push_cp = 0 - 1;
 # v5.6.11 fix rewinds 8 B past mov+pop and replaces them with
 # `ldr x1,[sp],#16` (EPOPC encoding 0xF84107E1, 4 B), netting
 # 12 → 8 B per commutative-op site. 4419 sites in v5.6.10
-# cc5_aarch64 (ADD 4021, AND 266, ORR 95, MUL 35, EOR 2).
+# cycc_aarch64 (ADD 4021, AND 266, ORR 95, MUL 35, EOR 2).
 var _last_emovca_cp = 0 - 1;
 var _last_movca_popr_cp = 0 - 1;
 
@@ -98,11 +98,11 @@ fn EGETTICKS_PE(S): i64 {
 # emits these unconditionally inside its `if (_TARGET_PE == 1)`
 # branch — Win64 syscall reroutes for read/open/close/lseek/mmap.
 # `_TARGET_PE` is always 0 on aarch64 so the branch is statically
-# dead at runtime, but cc5's symbol resolution still requires the
+# dead at runtime, but cycc's symbol resolution still requires the
 # fns to exist at compile time. Pre-v5.8.54 only EWRITE_PE +
 # EGETTICKS_PE had stubs here — the others (read/open/close/lseek/
 # mmap) were defined ONLY in `src/backend/x86/emit.cyr`, surfacing
-# as five "undefined function ... (will crash at runtime)" cc5
+# as five "undefined function ... (will crash at runtime)" cycc
 # warnings on every aarch64 cross-build. Latent issue (dead branches
 # never executed) but exactly the kind of half-fix the user has
 # called out — landing the cohort closes the symmetry gap.
@@ -121,7 +121,7 @@ var _AARCH64_BACKEND = 1;
 # Emit one byte to codebuf
 # v5.7.34: cap raised 524288 → 3145728 to match the v5.7.27
 # codebuf grow on x86 (`src/backend/x86/emit.cyr:68`). v5.7.27
-# missed the aarch64 EB, so cc5_aarch64 was still rejecting
+# missed the aarch64 EB, so cycc_aarch64 was still rejecting
 # programs > 512 KB even though the heap region grew to 3 MB.
 # Phylax-surfaced when a downstream cross-build with phylax-
 # shape program tripped `error: codebuf overflow (.../524288)`
@@ -699,7 +699,7 @@ fn ESUBRSP(S): i64 {
 # v5.8.56: ELVRLOAD / ELVRSTORE / ELVRINIT stubs removed in lockstep
 # with x86's removal — the x86 versions were a v4.8.4-alpha6 loop-var
 # r12 caching optimization never wired up to the parser, and the
-# aarch64 stubs only existed to satisfy cc5's symbol resolution when
+# aarch64 stubs only existed to satisfy cycc's symbol resolution when
 # the x86 versions were called. With both gone, the symmetry holds.
 
 # Function epilogue: mov sp,x29; ldp x29,x30,[sp],#16; ret
@@ -930,7 +930,7 @@ fn ECALLFIX(S, fnidx): i64 {
 # Applies to 1-arg call sites (and the trailing pop of any N-arg
 # call, but only the N=1 case has the pop's CP == _last_push_cp
 # since EPOPARG(N-1..1) push the emit cursor forward before this).
-# Pre-v5.6.25 cc5_aarch64 carried 2,569 such pairs.
+# Pre-v5.6.25 cycc_aarch64 carried 2,569 such pairs.
 fn EPOPARG(S, n): i64 {
     if (n == 0) {
         if (GCP(S) == _last_push_cp) {
@@ -1082,7 +1082,7 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
 #
 # v5.10.36 switches to V0: a single 128-bit NEON load/store
 # (`ldur q0` / `stur q0`, 4 bytes each) replaces the v5.10.29
-# X-pair (8 bytes each). cc5_aarch64 shrinks by the
+# X-pair (8 bytes each). cycc_aarch64 shrinks by the
 # encoding-density gain (same shape as v5.10.32's -384 B on x86).
 #
 # `idx` is the NAMED slot's local index (returned by FINDLOCAL on

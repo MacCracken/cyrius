@@ -1,4 +1,4 @@
-# `cyrius-lsp`: probe `argv[0]` to self-resolve `cc5`
+# `cyrius-lsp`: probe `argv[0]` to self-resolve `cycc`
 
 **Filed:** 2026-05-02 alongside `consolidate-cyrius-lsp-claude-plugin`
 **Severity:** Low — diagnostics work when `~/.cyrius/bin` is on the
@@ -8,15 +8,15 @@ side fix; plugin / marketplace stay portable
 
 ## Summary
 
-`cyrius-lsp` shells out to `cc5` for diagnostics. It currently
-resolves `cc5` via the inherited environment's `PATH`. Run from an
+`cyrius-lsp` shells out to `cycc` for diagnostics. It currently
+resolves `cycc` via the inherited environment's `PATH`. Run from an
 interactive shell with `cyriusly setup` applied, that PATH includes
 `~/.cyrius/bin` and everything works. Run under Claude Code's LSP
 launcher (or another editor whose process inherits a minimal env),
 the search fails and `cyrius-lsp` falls back to:
 
 ```
-[cyrius-lsp] warning: cc5 not found — diagnostics disabled
+[cyrius-lsp] warning: cycc not found — diagnostics disabled
 ```
 
 Diagnostics go silently off. The user gets the LSP attached, hover
@@ -36,7 +36,7 @@ editor launched it.
 
 Per-machine: add an `env.PATH` block to the Claude Code plugin's
 `.lsp.json`, hard-coding the install directory. Documented in the
-plugin README's "Open: cc5 not found under Claude Code" section.
+plugin README's "Open: cycc not found under Claude Code" section.
 Doesn't generalize — every user who hits the silent-diagnostics
 state has to know about the workaround and edit a JSON file to fix
 it.
@@ -44,7 +44,7 @@ it.
 ## Proposed fix
 
 Inside `programs/cyrius-lsp.cyr`, on startup (before the first
-`cc5` invocation):
+`cycc` invocation):
 
 1. Read `argv[0]`. The auxiliary vector parsing already in
    `lib/syscalls.cyr` / `lib/fdlopen.cyr` provides the path —
@@ -55,22 +55,22 @@ Inside `programs/cyrius-lsp.cyr`, on startup (before the first
    warn loudly with the resolved path).
 3. Strip the basename to derive the install directory
    (`/home/<user>/.cyrius/bin/cyrius-lsp` → `/home/<user>/.cyrius/bin`).
-4. When looking up `cc5`, check the derived directory FIRST, then
+4. When looking up `cycc`, check the derived directory FIRST, then
    fall back to the inherited `PATH`. Don't mutate `PATH` globally
-   — pass the resolved absolute path to the `execve` of `cc5` and
+   — pass the resolved absolute path to the `execve` of `cycc` and
    skip the search entirely.
-5. Log the resolved `cc5` path on startup (stderr) so the user
-   sees which `cc5` is being invoked — same shape as the existing
-   `[cyrius-lsp] warning: cc5 not found` line.
+5. Log the resolved `cycc` path on startup (stderr) so the user
+   sees which `cycc` is being invoked — same shape as the existing
+   `[cyrius-lsp] warning: cycc not found` line.
 
 Behavior matrix after the fix:
 
-| Launch context | argv[0] | cc5 resolution |
+| Launch context | argv[0] | cycc resolution |
 |---|---|---|
 | `cyrius-lsp` from interactive shell | bare name | inherited `PATH` (unchanged) |
-| `~/.cyrius/bin/cyrius-lsp` from a wrapper | absolute | derive `~/.cyrius/bin/cc5` from argv[0] |
-| Claude Code LSP launcher | absolute (Claude Code expands the binary path on launch) | derive `~/.cyrius/bin/cc5` |
-| Symlinked into `/usr/local/bin/cyrius-lsp` | absolute (resolves to /usr/local/bin) | derive `/usr/local/bin/cc5` IF cc5 lives there too; else fall back to `PATH` |
+| `~/.cyrius/bin/cyrius-lsp` from a wrapper | absolute | derive `~/.cyrius/bin/cycc` from argv[0] |
+| Claude Code LSP launcher | absolute (Claude Code expands the binary path on launch) | derive `~/.cyrius/bin/cycc` |
+| Symlinked into `/usr/local/bin/cyrius-lsp` | absolute (resolves to /usr/local/bin) | derive `/usr/local/bin/cycc` IF cycc lives there too; else fall back to `PATH` |
 
 The symlink case wants one extra step: `realpath`-style resolution
 of `argv[0]` so the directory derived is the *real* install dir,
@@ -92,13 +92,13 @@ need for the workaround entirely — same property `gopls` enjoys.
 
 - New tcyr or smcyr that:
   1. Installs `cyrius-lsp` to a non-`PATH` location (e.g.,
-     `/tmp/cyrlsp-test/cyrius-lsp` + `/tmp/cyrlsp-test/cc5`).
+     `/tmp/cyrlsp-test/cyrius-lsp` + `/tmp/cyrlsp-test/cycc`).
   2. Spawns it from a minimal env (`env -i /tmp/cyrlsp-test/cyrius-lsp`).
   3. Sends an `initialize` + `textDocument/didOpen` for a `.cyr`
      file with a known parse error.
-  4. Asserts the diagnostic comes back (i.e., `cc5` was found
+  4. Asserts the diagnostic comes back (i.e., `cycc` was found
      and invoked).
-- Pre-fix: assertion fails (cc5 not found).
+- Pre-fix: assertion fails (cycc not found).
 - Post-fix: assertion passes.
 
 ## Severity

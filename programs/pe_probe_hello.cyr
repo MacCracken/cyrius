@@ -21,7 +21,7 @@
 #     non-NULL out pointer when lpOverlapped is NULL)
 #
 # Build on Linux:
-#   cat programs/pe_probe_hello.cyr | build/cc5 > /tmp/pe_probe_hello \
+#   cat programs/pe_probe_hello.cyr | build/cycc > /tmp/pe_probe_hello \
 #     && chmod +x /tmp/pe_probe_hello
 #   /tmp/pe_probe_hello > /tmp/hello.exe
 #

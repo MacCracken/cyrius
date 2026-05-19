@@ -11,7 +11,7 @@
 | **Current** compiler self-host + stdlib microbench timings (3-tier auto-gen, machine-readable run history) | [`/BENCHMARKS.md`](../BENCHMARKS.md) at repo root | Every `sh scripts/bench-history.sh` invocation; CSV history in `bench-history.csv` |
 | `exit42` binary size across languages (C / Rust / Go / Zig / Cyrius) on Linux ELF + Windows PE | [`docs/size-comparisons.md`](size-comparisons.md) | Every minor / major release |
 | Compiler perf-arc narrative (v5.6.x optimization arc: peephole / regalloc / DCE per-pass deltas) | [`docs/development/benchmarks.md`](development/benchmarks.md) — historical | Frozen — bounded to v5.6.x; do NOT quote as current state |
-| Toolchain disk footprint (cc5 + cyrius + cyrfmt + cyrlint + …) | [`docs/size-comparisons.md`](size-comparisons.md) §"Cyrius self-host context" | Every minor / major release |
+| Toolchain disk footprint (cycc + cyrius + cyrfmt + cyrlint + …) | [`docs/size-comparisons.md`](size-comparisons.md) §"Cyrius self-host context" | Every minor / major release |
 
 ## Auto-generated, not hand-maintained
 

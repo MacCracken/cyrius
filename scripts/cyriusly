@@ -69,9 +69,9 @@ case "${1:-help}" in
         #
         # `cyriusly setup` requires being run from a Cyrius repo
         # checkout (VERSION + cyrius.cyml + scripts/install.sh). It
-        # bootstraps the seed if `build/cc5` is missing, builds the
+        # bootstraps the seed if `build/cycc` is missing, builds the
         # release tools listed in `cyrius.cyml [release]` from the
-        # local `build/cc5`, and then delegates to `install.sh
+        # local `build/cycc`, and then delegates to `install.sh
         # --refresh-only` to populate `~/.cyrius/versions/$VERSION/`
         # and re-link `~/.cyrius/bin`.
         if [ ! -f "VERSION" ] || [ ! -f "cyrius.cyml" ] || [ ! -f "scripts/install.sh" ]; then
@@ -83,13 +83,13 @@ case "${1:-help}" in
         VERSION="$(tr -d '[:space:]' < VERSION)"
         echo "Setting up Cyrius $VERSION from $(pwd)..."
 
-        # Bootstrap the seed if cc5 isn't present.
-        if [ ! -x "build/cc5" ]; then
-            echo "  build/cc5 not found — running bootstrap/bootstrap.sh..."
+        # Bootstrap the seed if cycc isn't present.
+        if [ ! -x "build/cycc" ]; then
+            echo "  build/cycc not found — running bootstrap/bootstrap.sh..."
             sh bootstrap/bootstrap.sh || { echo "error: bootstrap failed"; exit 1; }
-            chmod +x build/cc5 2>/dev/null || true
-            if [ ! -x "build/cc5" ]; then
-                echo "error: bootstrap did not produce build/cc5"
+            chmod +x build/cycc 2>/dev/null || true
+            if [ ! -x "build/cycc" ]; then
+                echo "error: bootstrap did not produce build/cycc"
                 exit 1
             fi
         fi
@@ -111,25 +111,25 @@ case "${1:-help}" in
         _BINS=$(_setup_parse_release_array bins)
         _CROSS_BINS=$(_setup_parse_release_array cross_bins)
 
-        # Build any missing release tools from build/cc5. cc5 itself
+        # Build any missing release tools from build/cycc. cycc itself
         # already exists; cyrius lives in cbt/, all others in programs/.
         echo "  building release tools..."
         _built=0
         for tool in $_BINS; do
-            [ "$tool" = "cc5" ] && continue
+            [ "$tool" = "cycc" ] && continue
             [ -x "build/$tool" ] && continue
             if [ "$tool" = "cyrius" ] && [ -f "cbt/cyrius.cyr" ]; then
-                cat "cbt/cyrius.cyr" | ./build/cc5 > "build/$tool" && \
+                cat "cbt/cyrius.cyr" | ./build/cycc > "build/$tool" && \
                     chmod +x "build/$tool" && _built=$((_built + 1))
             elif [ -f "programs/${tool}.cyr" ]; then
-                cat "programs/${tool}.cyr" | ./build/cc5 > "build/$tool" && \
+                cat "programs/${tool}.cyr" | ./build/cycc > "build/$tool" && \
                     chmod +x "build/$tool" && _built=$((_built + 1))
             fi
         done
         for tool in $_CROSS_BINS; do
             [ -x "build/$tool" ] && continue
-            if [ "$tool" = "cc5_aarch64" ] && [ -f "src/main_aarch64.cyr" ]; then
-                cat "src/main_aarch64.cyr" | ./build/cc5 > "build/$tool" && \
+            if [ "$tool" = "cycc_aarch64" ] && [ -f "src/main_aarch64.cyr" ]; then
+                cat "src/main_aarch64.cyr" | ./build/cycc > "build/$tool" && \
                     chmod +x "build/$tool" && _built=$((_built + 1))
             fi
         done
@@ -162,7 +162,7 @@ case "${1:-help}" in
         ;;
 
     which)
-        echo "$CYRIUS_HOME/versions/$(current)/bin/cc5"
+        echo "$CYRIUS_HOME/versions/$(current)/bin/cycc"
         ;;
 
     home)

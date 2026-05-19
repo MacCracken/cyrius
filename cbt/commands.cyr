@@ -234,7 +234,7 @@ fn cmd_check(source, with_deps): i64 {
         var cn = file_read_all(source, check_buf, 4095);
         if (cn > 0) {
             store8(check_buf + cn, 0);
-            # Build needle at runtime so cyrc vet does not detect the
+            # Build needle at runtime so cybs vet does not detect the
             # literal as an include directive in this source.
             var needle = alloc(9);
             store8(needle, 105); store8(needle + 1, 110); store8(needle + 2, 99);
@@ -271,7 +271,7 @@ fn cmd_check(source, with_deps): i64 {
     # intermediate `<output>.tmp.<pid>` for atomic-rename, but
     # `/dev/null.tmp.<pid>` cannot be created (/dev/ is not writable),
     # so the fork sys_open(ofd) failed and sys_exit(1) ran with no
-    # error message. cc5 never actually ran in that path.
+    # error message. cycc never actually ran in that path.
     var ck_pid = syscall(39);
     var ck_sb = str_builder_new();
     str_builder_add_cstr(ck_sb, "/tmp/cyrius_check_");
@@ -301,12 +301,12 @@ fn cmd_self(): i64 {
         store64(&argv + 8, "-c");
         var script = alloc(512);
         var sb = str_builder_new();
-        str_builder_add_cstr(sb, "cc5=/tmp/cyr_cc5_$$;cc4=/tmp/cyr_cc4_$$;");
+        str_builder_add_cstr(sb, "cycc=/tmp/cyr_cc5_$$;cc4=/tmp/cyr_cc4_$$;");
         str_builder_add_cstr(sb, "cat src/main.cyr|");
         str_builder_add_cstr(sb, _cc);
-        str_builder_add_cstr(sb, ">$cc5&&chmod +x $cc5&&cat src/main.cyr|$cc5>$cc4&&");
-        str_builder_add_cstr(sb, "cmp -s $cc5 $cc4&&echo '  PASS: cc5==cc5 byte-identical'||");
-        str_builder_add_cstr(sb, "(echo '  FAIL: cc5!=cc5';exit 1)");
+        str_builder_add_cstr(sb, ">$cycc&&chmod +x $cycc&&cat src/main.cyr|$cycc>$cc4&&");
+        str_builder_add_cstr(sb, "cmp -s $cycc $cc4&&echo '  PASS: cycc==cycc byte-identical'||");
+        str_builder_add_cstr(sb, "(echo '  FAIL: cycc!=cycc';exit 1)");
         var cmd = str_builder_build(sb);
         store64(&argv + 16, str_data(cmd));
         store64(&argv + 24, 0);
@@ -396,7 +396,7 @@ fn cmd_lib_sync(): i64 {
 }
 
 fn cmd_clean(): i64 {
-    # Remove build/ contents except cc5, cyrc, asm
+    # Remove build/ contents except cycc, cybs, asm
     if (is_dir(str_from("build")) == 0) {
         println("nothing to clean");
         return 0;
@@ -408,10 +408,10 @@ fn cmd_clean(): i64 {
         var name = vec_get(entries, ci);
         var skip = 0;
         if (str_eq(name, str_from("cc")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("cc5")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("cyrc")) == 1) { skip = 1; }
+        if (str_eq(name, str_from("cycc")) == 1) { skip = 1; }
+        if (str_eq(name, str_from("cybs")) == 1) { skip = 1; }
         if (str_eq(name, str_from("asm")) == 1) { skip = 1; }
-        if (str_eq(name, str_from("cc5_aarch64")) == 1) { skip = 1; }
+        if (str_eq(name, str_from("cycc_aarch64")) == 1) { skip = 1; }
         if (str_eq(name, str_from("cyrius")) == 1) { skip = 1; }
         if (skip == 0) {
             var full = make_path("build", str_data(name));
@@ -428,7 +428,7 @@ fn cmd_clean(): i64 {
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: would remove ", 22);
     } else {
-        sys_write(STDOUT_FD, "cleaned build/ (preserved cc5, cyrc, asm, cyrius) — removed ", 62);
+        sys_write(STDOUT_FD, "cleaned build/ (preserved cycc, cybs, asm, cyrius) — removed ", 62);
     }
     fmt_int(cleaned);
     println(" files");
@@ -492,13 +492,13 @@ fn cmd_doc(arg1, arg2): i64 {
 }
 
 fn cmd_vet(file): i64 {
-    var cyrc = make_path(_tools_dir, "cyrc");
-    return run_tool(cyrc, "vet", file, 0);
+    var cybs = make_path(_tools_dir, "cybs");
+    return run_tool(cybs, "vet", file, 0);
 }
 
 fn cmd_deny(file): i64 {
-    var cyrc = make_path(_tools_dir, "cyrc");
-    return run_tool(cyrc, "deny", file, 0);
+    var cybs = make_path(_tools_dir, "cybs");
+    return run_tool(cybs, "deny", file, 0);
 }
 
 fn cmd_audit(): i64 {
@@ -515,7 +515,7 @@ fn cmd_audit(): i64 {
 
 fn cmd_capacity(source, check_mode, json_mode): i64 {
     var cc = current_cc();
-    if (cc == 0) { _err("cc5 not found"); return 1; }
+    if (cc == 0) { _err("cycc not found"); return 1; }
     if (source == 0) {
         _err("no file given");
         sys_write(STDERR_FD, "usage: cyrius capacity [--check] [--json] [file.cyr]\n", 54);

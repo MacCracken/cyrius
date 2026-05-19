@@ -91,10 +91,10 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cc5`) | **874,232 B** (~874 KB) x86_64 at v5.11.67 |
-| Cross compilers | `cc5_aarch64` 564,456 B, `cc5_win` 686,632 B (cross-built) |
+| Compiler (`cycc`) | **874,232 B** (~874 KB) x86_64 at v5.11.67 |
+| Cross compilers | `cycc_aarch64` 564,456 B, `cycc_win` 686,632 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
-| Bootstrap compiler (`cyrc`) | **12,344 B** |
+| Bootstrap compiler (`cybs`) | **12,344 B** |
 | LSP server (`cyrius-lsp`) | **94,440 B** |
 | Linker (`cyrld`) | **902,776 B** |
 | External dependencies | **0** at the compiler level (1 git dep at stdlib level: mabda) |
@@ -126,8 +126,8 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 | Stage | Binary | Size |
 |-------|--------|------|
 | 1. Root of trust (committed) | `bootstrap/asm` | 29 KB |
-| 2. Bootstrap compiler | `cyrc` | 12 KB |
-| 3. Full compiler | `cc5` | 874 KB |
+| 2. Bootstrap compiler | `cybs` | 12 KB |
+| 3. Full compiler | `cycc` | 874 KB |
 | 4. Linker | `cyrld` | 903 KB |
 
 ### Language surface
@@ -246,15 +246,15 @@ src/
 
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
-  -> cyrc (12,344 B compiler)
-    -> cc5 (modular compiler + IR, 874,232 B at v5.11.67)
-      -> cc5_aarch64, cc5_win_cross, cc5_macho_cross, cc5_cx (cross-compilers)
+  -> cybs (12,344 B compiler)
+    -> cycc (modular compiler + IR, 874,232 B at v5.11.67)
+      -> cycc_aarch64, cycc_win_cross, cc5_macho_cross, cycc_cx (cross-compilers)
 ```
 
 > The chain shortened at v5.11.66 — `src/bridge.cyr` (2,005 LoC standalone
 > Phase 4 compiler) retired after audit confirmed it was never in any
 > active build path. CLAUDE.md's Key Principle wording updated from
-> "seed → cyrc → bridge → cc5" to "seed → cyrc → cc5" the same release.
+> "seed → cybs → bridge → cycc" to "seed → cybs → cycc" the same release.
 
 ## Editor Integration
 
@@ -281,7 +281,7 @@ notes (Helix / Zed / VS Code / JetBrains).
 - [docs/platform-status.md](docs/platform-status.md) — what works on which platform today (refreshed every closeout)
 - [docs/ecosystem.md](docs/ecosystem.md) — downstream consumer repos + folded distlibs + live deps (refreshed every closeout)
 - [docs/development/roadmap.md](docs/development/roadmap.md) — release plan + pinned slots + long-term considerations
-- [docs/development/state.md](docs/development/state.md) — current version, cc5 size, in-flight slots
+- [docs/development/state.md](docs/development/state.md) — current version, cycc size, in-flight slots
 - [docs/development/completed-phases.md](docs/development/completed-phases.md) — historical release narrative
 
 ## License

@@ -4,14 +4,14 @@
 # ================================================================
 
 # Emit conditional jump (0F cc 00000000), return patch offset
-# cc5: records IR_JCC node with condition code in flags
+# cycc: records IR_JCC node with condition code in flags
 fn EJCC(S, cc): i64 {
     # Note: always emit x86 even in mode 2 — patch offsets needed by parse.cyr
     EB(S, 0x0F);
     EB(S, cc);
     var patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    # cc5: record conditional jump with patch offset for edge matching
+    # cycc: record conditional jump with patch offset for edge matching
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_JCC, cc, 0, patch); }
     # v5.6.27: record disp32 source CP for codebuf-compaction repair.
@@ -25,7 +25,7 @@ fn EJCC(S, cc): i64 {
 
 # Emit unconditional jmp to target (E9 rel32)
 # Also records target as a jump target for basic-block analysis.
-# cc5: records IR_JMP_BACK with absolute target offset
+# cycc: records IR_JMP_BACK with absolute target offset
 fn EJMP(S, target): i64 {
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_JMP_BACK, 0, 0, target); }
@@ -54,12 +54,12 @@ fn EJMP(S, target): i64 {
 }
 
 # Emit jmp placeholder (E9 00000000), return patch offset
-# cc5: records IR_JMP node (forward, target resolved at EPATCH)
+# cycc: records IR_JMP node (forward, target resolved at EPATCH)
 fn EJMP0(S): i64 {
     EB(S, 0xE9);
     var patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    # cc5: record forward JMP with patch offset for edge matching
+    # cycc: record forward JMP with patch offset for edge matching
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_JMP, 0, 0, patch); }
     # v5.6.27: record disp32 source CP for codebuf-compaction repair.
@@ -73,9 +73,9 @@ fn EJMP0(S): i64 {
 
 # Patch a previously emitted rel32 at codebuf offset to jump here
 # Also records GCP(S) as a jump target for basic-block analysis.
-# cc5: records IR_NOP as BB boundary marker (landing pad)
+# cycc: records IR_NOP as BB boundary marker (landing pad)
 fn EPATCH(S, off): i64 {
-    # cc5: record landing pad with the patch offset for edge matching
+    # cycc: record landing pad with the patch offset for edge matching
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_NOP, 0, off, 0); }
     var cp = GCP(S);

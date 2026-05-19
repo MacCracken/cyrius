@@ -353,7 +353,7 @@ fn _pe_createf_get(): i64 { return _pe_createf_idx; }
 # `syscall(83, path, mode)` (mkdir) + `syscall(87, path)` (unlink)
 # PE reroute. ai-hwaccel 2.2.2 surfaced the need: their cache.cyr
 # uses mkdir + unlink via raw syscall numbers; without these
-# reroutes, cc5_win emitted the generic `0F 05` SYSCALL instruction
+# reroutes, cycc_win emitted the generic `0F 05` SYSCALL instruction
 # which fault with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.
 
 var _pe_createdir_ready   = 0;
@@ -661,7 +661,7 @@ fn _pe_layout(S): i64 {
 # ================================================================
 # Walks regions in file order, writing bytes into output_buf at
 # S + 0x41A000. _pe_layout must have been called first. All
-# loop-local vars are hoisted to the function top because cc5
+# loop-local vars are hoisted to the function top because cycc
 # treats sequential `var x` declarations in the same scope as
 # redeclaration (reassignment is the supported pattern).
 
@@ -774,7 +774,7 @@ fn EMITPE_EXEC(S): i64 {
     # DllCharacteristics — 0 when RELOCS_STRIPPED. With .reloc shipped
     # (v5.5.35), set DYNAMIC_BASE (0x0040) + NX_COMPAT (0x0100)
     # = 0x0140. HIGH_ENTROPY_VA (0x0020) is DELIBERATELY OMITTED.
-    # Empirically cc5_win.exe deterministically fails stdin read on
+    # Empirically cycc_win.exe deterministically fails stdin read on
     # Win11 with HIGH_ENTROPY_VA set (5/5 runs). All 2043 MOVABS sites
     # in .text were audited — the 264 uncovered imm64 values are all
     # legitimate data constants (bitmasks, 0x140000000 used as literal

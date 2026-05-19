@@ -138,7 +138,7 @@ fn _cmd_list(): i64 {
 # `cyriusly which` — print path to active compiler.
 fn _cmd_which(): i64 {
     var home = _cyrius_home();
-    var binpath = _path_join(home, "bin/cc5");
+    var binpath = _path_join(home, "bin/cycc");
     syscall(1, 1, binpath, strlen(binpath));
     syscall(1, 1, "\n", 1);
     return 0;
@@ -507,7 +507,7 @@ fn _cmd_update(): i64 {
 }
 
 # `cyriusly setup` — install from current repo checkout.
-# Heaviest verb: bootstraps cc5 if missing, parses cyrius.cyml
+# Heaviest verb: bootstraps cycc if missing, parses cyrius.cyml
 # [release] section, builds release bins, then runs
 # `sh scripts/install.sh --refresh-only`. The native port of
 # the cyml [release] parsing is future work — for v5.11.10 this
@@ -527,8 +527,8 @@ fn _cmd_setup(): i64 {
         return 1;
     }
     # Bootstrap if needed.
-    if (file_exists("build/cc5") == 0) {
-        syscall(1, 1, "  build/cc5 not found — running bootstrap/bootstrap.sh...\n", 60);
+    if (file_exists("build/cycc") == 0) {
+        syscall(1, 1, "  build/cycc not found — running bootstrap/bootstrap.sh...\n", 60);
         var bs_rc = _exec_shell("sh bootstrap/bootstrap.sh");
         if (bs_rc != 0) {
             syscall(1, 2, "error: bootstrap failed\n", 24);
@@ -540,7 +540,7 @@ fn _cmd_setup(): i64 {
     # parsing via lib/cyml.cyr is doable but the awk one-liner is
     # already proven in scripts/cyriusly:101.
     syscall(1, 1, "  building release tools...\n", 28);
-    var build_cmd = "BINS=$(awk '/^\\[release\\]/{r=1;next} r&&/^\\[/{exit} r&&$1==\"bins\"{sub(/^[^=]+= \\[/,\"\");sub(/\\].*$/,\"\");gsub(/[\",]/,\" \");print;exit}' cyrius.cyml); CROSS=$(awk '/^\\[release\\]/{r=1;next} r&&/^\\[/{exit} r&&$1==\"cross_bins\"{sub(/^[^=]+= \\[/,\"\");sub(/\\].*$/,\"\");gsub(/[\",]/,\" \");print;exit}' cyrius.cyml); built=0; for t in $BINS; do [ \"$t\" = cc5 ] && continue; [ -x \"build/$t\" ] && continue; if [ \"$t\" = cyrius ] && [ -f cbt/cyrius.cyr ]; then cat cbt/cyrius.cyr | ./build/cc5 > build/$t && chmod +x build/$t && built=$((built+1)); elif [ -f programs/$t.cyr ]; then cat programs/$t.cyr | ./build/cc5 > build/$t && chmod +x build/$t && built=$((built+1)); fi; done; for t in $CROSS; do [ -x \"build/$t\" ] && continue; arch=${t#cc5_}; if [ -f src/main_$arch.cyr ]; then cat src/main_$arch.cyr | ./build/cc5 > build/$t && chmod +x build/$t && built=$((built+1)); fi; done; echo \"  built $built tool(s)\"";
+    var build_cmd = "BINS=$(awk '/^\\[release\\]/{r=1;next} r&&/^\\[/{exit} r&&$1==\"bins\"{sub(/^[^=]+= \\[/,\"\");sub(/\\].*$/,\"\");gsub(/[\",]/,\" \");print;exit}' cyrius.cyml); CROSS=$(awk '/^\\[release\\]/{r=1;next} r&&/^\\[/{exit} r&&$1==\"cross_bins\"{sub(/^[^=]+= \\[/,\"\");sub(/\\].*$/,\"\");gsub(/[\",]/,\" \");print;exit}' cyrius.cyml); built=0; for t in $BINS; do [ \"$t\" = cycc ] && continue; [ -x \"build/$t\" ] && continue; if [ \"$t\" = cyrius ] && [ -f cbt/cyrius.cyr ]; then cat cbt/cyrius.cyr | ./build/cycc > build/$t && chmod +x build/$t && built=$((built+1)); elif [ -f programs/$t.cyr ]; then cat programs/$t.cyr | ./build/cycc > build/$t && chmod +x build/$t && built=$((built+1)); fi; done; for t in $CROSS; do [ -x \"build/$t\" ] && continue; arch=${t#cc5_}; if [ -f src/main_$arch.cyr ]; then cat src/main_$arch.cyr | ./build/cycc > build/$t && chmod +x build/$t && built=$((built+1)); fi; done; echo \"  built $built tool(s)\"";
     _exec_shell(build_cmd);
     # Delegate the snapshot install to install.sh --refresh-only.
     syscall(1, 1, "  refreshing install snapshot...\n", 33);

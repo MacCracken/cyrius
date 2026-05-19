@@ -4,7 +4,7 @@
 #
 # Replaces the 60+ ad-hoc `streq("--foo", argv(i))` loops that
 # every toolchain binary (cyrius, ark, cyrld, cyrfmt, cyrlint,
-# cyrdoc, cyrc) and every consumer project ships today on top
+# cyrdoc, cybs) and every consumer project ships today on top
 # of `lib/args.cyr`'s bare argc/argv surface.
 #
 # Typical use:

@@ -1,4 +1,4 @@
-# ir.cyr — cc5 intermediate representation
+# ir.cyr — cycc intermediate representation
 #
 # Basic-block CFG between parse (frontend) and emit (backend).
 # Parse builds IR; lowering pass walks IR and calls emit functions.

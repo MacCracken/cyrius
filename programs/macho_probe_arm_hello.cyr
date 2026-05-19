@@ -6,7 +6,7 @@
 # byte-for-byte so codesign/dyld/kernel are happy on Apple Silicon.
 #
 # Build on Linux:
-#   cat programs/macho_probe_arm_hello.cyr | build/cc5 > /tmp/macho_probe_arm_hello \
+#   cat programs/macho_probe_arm_hello.cyr | build/cycc > /tmp/macho_probe_arm_hello \
 #     && chmod +x /tmp/macho_probe_arm_hello
 #   /tmp/macho_probe_arm_hello > /tmp/hello_arm.macho
 #

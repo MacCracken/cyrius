@@ -1,19 +1,19 @@
 # ================================================================
-# cyrc — Cyrius Bootstrap Compiler
+# cybs — Cyrius Bootstrap Compiler
 # ================================================================
 #
 # The bootstrap compiler. Reads Cyrius source from stdin, emits an
 # x86_64 ELF binary to stdout. Written in assembly, assembled by the
 # 29KB seed binary (bootstrap/asm). First real compiler in the chain:
-# seed → cyrc → bridge → cc3.
+# seed → cybs → bridge → cc3.
 #
 # Language: fn/return, var, arrays, assignment, if/else, while,
 #           arithmetic, bitwise ops, comparisons, syscall(),
 #           load8(), store8(), &var, strings, # comments.
 #
-# History: stage1a → 1b → 1c → 1d → 1e → 1f → cyrc (renamed v3.9.5)
+# History: stage1a → 1b → 1c → 1d → 1e → 1f → cybs (renamed v3.9.5)
 #
-# Usage: echo 'var x = 0xFF & 42;' | ./cyrc > prog && chmod +x prog && ./prog
+# Usage: echo 'var x = 0xFF & 42;' | ./cybs > prog && chmod +x prog && ./prog
 #
 # Register conventions (compiler registers):
 #   r15 = heap base (from brk, never clobbered)

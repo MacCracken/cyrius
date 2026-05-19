@@ -1,9 +1,9 @@
 #!/bin/sh
-# mac-diagnose.sh — dump everything needed to debug a SIGILL in cc5_macho.
+# mac-diagnose.sh — dump everything needed to debug a SIGILL in cycc_macho.
 # Run on the Mac. Paste the whole output back. Should take <5 seconds.
 set +e  # keep going past failing commands
 
-CC5=${1:-./cc5_macho}
+CC5=${1:-./cycc_macho}
 
 echo "=== System ==="
 uname -m
@@ -33,7 +33,7 @@ echo
 
 echo "=== Crash dump (if one landed) ==="
 ls -lt ~/Library/Logs/DiagnosticReports 2>/dev/null | head -3
-latest=$(ls -t ~/Library/Logs/DiagnosticReports/cc5_macho* 2>/dev/null | head -1)
+latest=$(ls -t ~/Library/Logs/DiagnosticReports/cycc_macho* 2>/dev/null | head -1)
 if [ -n "$latest" ]; then
     echo "--- $latest ---"
     head -60 "$latest"

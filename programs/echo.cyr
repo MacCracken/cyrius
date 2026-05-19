@@ -1,6 +1,6 @@
 # echo — print a string and newline
 # Usage: ./echo (prints "Hello from Cyrius!")
-# Built by: cat echo.cyr | ./build/cc5 > echo && chmod +x echo
+# Built by: cat echo.cyr | ./build/cycc > echo && chmod +x echo
 
 syscall(1, 1, "Hello from Cyrius!\n", 19);
 syscall(60, 0);

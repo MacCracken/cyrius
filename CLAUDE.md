@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 5.11.69
+- **Version**: 6.0.0
 
 ## Goal
 
@@ -15,7 +15,7 @@ Own the language. Own the toolchain. No crates.io. No external governance. Assem
 ## Current State
 
 > Volatile state lives in [`docs/development/state.md`](docs/development/state.md) —
-> current version, cc5 size, in-flight slots, recent shipped releases,
+> current version, cycc size, in-flight slots, recent shipped releases,
 > consumers, verification hosts, bootstrap chain. Refreshed every release.
 > Historical release narrative lives in
 > [`docs/development/completed-phases.md`](docs/development/completed-phases.md).
@@ -27,8 +27,8 @@ durable rules that change rarely, not state that bumps every release.
 
 ```bash
 sh bootstrap/bootstrap.sh          # bootstrap from seed
-cat src/main.cyr | build/cc5 > /tmp/cc5 && chmod +x /tmp/cc5  # build compiler
-cat src/main.cyr | /tmp/cc5 > /tmp/cc5b && cmp /tmp/cc5 /tmp/cc5b  # self-hosting verify
+cat src/main.cyr | build/cycc > /tmp/cycc && chmod +x /tmp/cycc  # build compiler
+cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b  # self-hosting verify
 sh scripts/check.sh                # full audit
 cyrius test                        # run .tcyr suite
 cyrius fuzz                        # run .fcyr harnesses
@@ -37,15 +37,15 @@ cyrius bench                       # run .bcyr benchmarks
 
 ## Key Principles
 
-- **Self-hosting is non-negotiable** — cc5==cc5 byte-identical after every compiler change
-- **Two-step bootstrap for heap changes** — cc5 compiles cc5b, cc5==cc5b
+- **Self-hosting is non-negotiable** — cycc==cycc byte-identical after every compiler change
+- **Two-step bootstrap for heap changes** — cycc compiles cc5b, cycc==cc5b
 - **Assembly is the cornerstone** — understand every instruction the compiler emits
 - **Test after EVERY change** — not after the feature is "done"
 - **ONE change at a time** — never bundle unrelated changes
 - **Research before implementation** — vidya entry before code
 - **When stuck, ASK the user** — never decide to defer, slip, re-slot, or split work mid-execution. Splits are planned decisions made *before* starting; reactive scope changes when stuck are deferment and count as slipping. Report findings and wait for direction. See [*Micro-Work and Agent Deferment*](https://github.com/MacCracken/agnosticos/blob/main/docs/articles/micro-work-and-agent-deferment.md) for the four-case classification (commit-through / prereq-bug / pre-planned decomposition / the sleight-of-hand to reject).
-- **Bootstrap chain integrity** — never break seed → cyrc → cc5 (bridge retired v5.11.66)
-- **Version lives in `VERSION` + `--version`, never in binary names** — after the v6.0.0 `cc5` → `cyc` rename, the compiler binary is `cyc` *forever*. No `cc6` at v7.0.0, no `cc7` at v8.0.0, no funny business. The cc3 → cc5 rename at v5.0.0 was the last name-change penalty paid; v6.0.0 fixes the pattern. Anyone tempted to add a version digit to a binary name (compiler, linker, formatter, anything) is reintroducing the bug we explicitly removed. `VERSION` file + binary `--version` output are the only sources of truth.
+- **Bootstrap chain integrity** — never break seed (asm) → cybs → cycc. Historical chain: pre-v3.9.5 stage1f → cyrc (v3.9.5) → cybs (v6.0.0); top compiler was cc3 → cc5 (v5.0.0) → cycc (v6.0.0). Bridge intermediate retired at v5.11.66.
+- **Version lives in `VERSION` + `--version`, never in binary names** — at v6.0.0 both compiler binaries got descriptive, version-agnostic names: the bootstrap compiler (formerly `cyrc`) is now **`cybs`** (Cyrius Bootstrap) and the top compiler (formerly `cc5`) is now **`cycc`** (Cyrius Computer Compiler). These names are *forever*. No `cycc6` at v7.0.0, no `cybs7` at v8.0.0, no funny business. The cc3 → cc5 rename (v5.0.0) and the cyrc → cybs + cc5 → cycc rename (v6.0.0) sequence was the LAST name-change penalty paid. Anyone tempted to add a version digit to a binary name (compiler, bootstrap, linker, formatter, anything) is reintroducing the bug we explicitly removed. `VERSION` file + binary `--version` output are the only sources of truth.
 
 ## P(-1): Project Hardening
 
@@ -64,8 +64,8 @@ Before starting new work on a release, run this audit phase:
 Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the current minor (e.g. 4.2.5 before 4.3.0). **Mechanical checks first, then the judgment-call passes (refactor / code review / cleanup), then the doc sync.**
 
 ### Mechanical (automated, fast-fail)
-1. **Self-host verify** — cc5 compiles itself byte-identical
-2. **Bootstrap closure** — seed → cyrc → asm → cyrc byte-identical
+1. **Self-host verify** — cycc compiles itself byte-identical
+2. **Bootstrap closure** — seed → cybs → asm → cybs byte-identical
 3. **Full check.sh** — all gates green (count grows per minor; record the number)
 
 ### Judgment-call passes (where bugs hide)
@@ -74,7 +74,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
    - Unused / stale regions (any region no code writes to → candidate for removal)
    - Regions that hit caps across the minor (grow before they bite)
    - Opportunity for consolidation (adjacent regions owned by the same subsystem)
-5. **Dead code audit** — remove unreachable fns; record the remaining floor in CHANGELOG. The `note: N unreachable fns` output from cc5 is the baseline.
+5. **Dead code audit** — remove unreachable fns; record the remaining floor in CHANGELOG. The `note: N unreachable fns` output from cycc is the baseline.
 6. **Refactor pass** — review the minor's additions for consolidation. When a minor added multiple `_TARGET_X` branches / new enum variants / new heap regions / parallel codepaths, check whether the dispatch can collapse into a single switch, whether helpers can merge, whether repeated inline asm blocks want a common emitter. Not about rewriting — about spotting the 2-3 obvious consolidations the minor earned.
 7. **Code review pass** — walk the minor's diffs end-to-end. Specifically look for: ABI leaks (unguarded x86 encodings on non-x86 paths, SysV leaks on Win64 paths), missed `_TARGET_PE` guards, byte-order typos in hand-rolled encoding hex literals, silently-ignored errors, off-by-one in fixup arithmetic. The places automated tests don't catch.
 8. **Cleanup sweep** — stale comments (grep for old version refs, outdated TODOs, references to renamed fns), dead `#ifdef` branches, unused includes, orphaned files in `build/` / `tests/`.
@@ -90,7 +90,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
    - **`vidya/content/cyrius/field_notes/language.toml`** — user-facing language gotchas (e.g. no `var` redecl in same scope, no comparisons in fn-call args, parser's `#ifdef`-but-not-`#else`).
    - **`vidya/content/cyrius/implementation.toml`** / **`types.toml`** — bump version refs and any structural changes (heap map, fixup table, fn table caps, IR opcode count, backend modules).
    - **`vidya/content/cyrius/dependencies.toml`** / **`ecosystem.toml`** — refresh when deps bump (sigil 2.8.4 → next, etc.) and when downstream consumer counts / test counts change.
-   - **Cross-check the version**: every vidya file mentioning a `cc?` version (`cc3 4.8.5`, `cc5 5.4.x`, etc.) should match the current `VERSION` file. `version-bump.sh` doesn't touch vidya — that's manual at closeout.
+   - **Cross-check the version**: every vidya file mentioning a `cc?` version (`cc3 4.8.5`, `cycc 5.4.x`, etc.) should match the current `VERSION` file. `version-bump.sh` doesn't touch vidya — that's manual at closeout.
 
 Order matters: mechanical checks fail-fast (if self-host breaks, stop). Judgment passes uncover scope for a follow-up patch if needed (landing the refactor during closeout is fine IF it stays byte-identical; otherwise defer to the next minor's first patch). Doc sync is last so it reflects whatever the judgment passes changed.
 
@@ -129,7 +129,7 @@ Periodically (before major releases, after significant changes), run a security 
 2. BUILD       — ONE change at a time
 3. TEST        — After EACH change:
                  ☐ Basic: 'var x = 42;' → 42
-                 ☐ Self-hosting: cc5==cc5 byte-identical
+                 ☐ Self-hosting: cycc==cycc byte-identical
                  ☐ Full suite: sh scripts/check.sh
 4. IF BROKEN   — Revert, apply ONE change, test, repeat
                  If stuck, STOP and ASK the user — never defer on your own
@@ -140,7 +140,7 @@ Periodically (before major releases, after significant changes), run a security 
 ## Project Structure
 
 ```
-bootstrap/           29KB seed binary + cyrc.cyr + asm.cyr
+bootstrap/           29KB seed binary + cybs.cyr + asm.cyr
 src/
   main.cyr           Compiler entry point (includes modules)
   main_aarch64.cyr   Cross-compiler (swaps arch includes)
@@ -155,10 +155,10 @@ tests/               Test suites (tcyr/*.tcyr, heapmap.sh)
 benches/             Benchmarks (*.bcyr)
 fuzz/                Fuzz harnesses (*.fcyr)
 build/               Generated binaries (gitignored except current-major
-                     compiler + prior-major seed binary — currently cc5
-                     and cc3. Sequence: cc3 drops at v6.0.0/cyc cut, cc5
+                     compiler + prior-major seed binary — currently cycc
+                     and cc3. Sequence: cc3 drops at v6.0.0/cyc cut, cycc
                      becomes the prior-major seed during v6.x as the LAST
-                     legacy binary; cc5 drops at the v6.x → v7.x bump and
+                     legacy binary; cycc drops at the v6.x → v7.x bump and
                      from v7.x onward ONLY cyc is tracked — `cyc` is the
                      final binary name (per `Version lives in VERSION +
                      --version, never in binary names` above), so no
@@ -185,8 +185,8 @@ docs/                Architecture, roadmap, benchmarks, language guide
 - Do not add language features without updating vidya
 - Do not skip self-hosting verification after compiler changes
 - Do not modify parse.cyr arch-specific functions — they live in emit files
-- Do not remove build/cc5-native-aarch64 — ARM binary needed for self-hosting on ARM hardware (generated by `cyrius pulsar`)
-- **v5.0.0 is the recommended minimum** — cc5 IR, cyrius.cyml manifest, patra 1.0.0, sankoch 1.2.0. v5.0.1+ adds security hardening (alloc/vec overflow guards). v5.1.0+ adds macOS Mach-O support.
+- Do not remove build/cycc-native-aarch64 — ARM binary needed for self-hosting on ARM hardware (generated by `cyrius pulsar`)
+- **v5.0.0 is the recommended minimum** — cycc IR, cyrius.cyml manifest, patra 1.0.0, sankoch 1.2.0. v5.0.1+ adds security hardening (alloc/vec overflow guards). v5.1.0+ adds macOS Mach-O support.
 
 ## Downstream repo setup (ecosystem rule)
 

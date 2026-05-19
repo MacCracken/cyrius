@@ -51,7 +51,7 @@
 #     would need parametrizing call shapes that are dispatcher-
 #     idiosyncratic.
 #   - Cyrius-specific tool integration (`_cyrlint_count_marker`
-#     uses `CYRLINT_PATH`, `_ts_mode_run` uses cc5 mode flags).
+#     uses `CYRLINT_PATH`, `_ts_mode_run` uses cycc mode flags).
 #     Those stay in their dispatchers as thin wrappers over the
 #     primitives this module exports.
 #

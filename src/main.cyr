@@ -2,10 +2,10 @@
 # Cyrius Compiler v2 — Modular Self-Hosting Compiler
 # ================================================================
 # Same language as cc.cyr, split into modules using include.
-# Compiled by cc (cyrc's extended language).
+# Compiled by cc (cybs's extended language).
 #
-# Build: cat src/main.cyr | ./build/cc5 > /tmp/cc5 && chmod +x /tmp/cc5
-# Self-host: cat src/main.cyr | /tmp/cc5 > /tmp/cc5b && cmp /tmp/cc5 /tmp/cc5b
+# Build: cat src/main.cyr | ./build/cycc > /tmp/cycc && chmod +x /tmp/cycc
+# Self-host: cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b
 # ================================================================
 # HEAP MAP — Authoritative offset registry
 # ================================================================
@@ -315,7 +315,7 @@
 #                                                  SIMD args into XMM regs rather than
 #                                                  int-class arg regs.
 #
-# --- cc5 IR region (v5.0.0) ---
+# --- cycc IR region (v5.0.0) ---
 #   0xA3A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
 #   0xE3A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
 #   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
@@ -365,7 +365,7 @@
 #                                            Replaces the v0.x O(N²) walk-from-
 #                                            offset-zero dedup loop in LEXID.
 #                                            cap 16384 → ~3× safety margin over
-#                                            cc5 self-compile's distinct-id count.
+#                                            cycc self-compile's distinct-id count.
 #
 #
 # --- Relocated large buffer (v5.11.33) ---
@@ -412,7 +412,7 @@ enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 1
 
 # v5.6.39: version string + length sourced from auto-generated
 # src/version_str.cyr (regenerated from VERSION on every bump).
-# Replaces a hardcoded "cc5 X.Y.Z\n" literal that drifted because
+# Replaces a hardcoded "cycc X.Y.Z\n" literal that drifted because
 # version-bump.sh's regex couldn't match `-N` hotfix suffixes.
 include "src/version_str.cyr"
 
@@ -445,7 +445,7 @@ var _strict_mode = 0;
 # v5.7.8: errors that print "error:" but want to keep going (so the
 # binary is still produced for downstream debug) set this flag; the
 # final exit returns it as the process exit code. Without this,
-# `cyrius check` and every gate-script that pipes through cc5 silently
+# `cyrius check` and every gate-script that pipes through cycc silently
 # treats failed compiles as successes.
 var _had_error = 0;
 var _ts_lex_only_mode = 0;       # P1.6b: --lex-ts CLI flag
@@ -466,7 +466,7 @@ if (_vn > 0) {
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
-                    syscall(SYS_WRITE, 1, _VERSION_STR_CC5, _VERSION_LEN_CC5);
+                    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC, _VERSION_LEN_CYCC);
                     syscall(SYS_EXIT, 0);
                 }
             }
@@ -480,7 +480,7 @@ if (_vn > 0) {
             }
         }
         # "--le" (--lex-ts) — TS lex-only mode (P1.6b wire-in).
-        # cc5 reads stdin, runs TS_LEX, exits 0 (clean lex) or 1 (error).
+        # cycc reads stdin, runs TS_LEX, exits 0 (clean lex) or 1 (error).
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 108 && load8(&_vbuf + _vi + 3) == 101) {
@@ -489,7 +489,7 @@ if (_vn > 0) {
             }
         }
         # "--pa" (--parse-ts) — TS parse-only mode (P2.1 wire-in).
-        # cc5 reads stdin, runs TS_LEX then TS_PARSE, exits 0 (both
+        # cycc reads stdin, runs TS_LEX then TS_PARSE, exits 0 (both
         # clean) or 1 (lex/parse error). No typecheck/lower yet — P3-P5.
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
@@ -544,7 +544,7 @@ SBL(S, bl);
 # When --lex-ts is set, run TS_LEX on the source bytes and exit with
 # 0 (clean lex) or 1 (lex error). No parser/typecheck/lower yet —
 # those are v5.7.2 P2-P5. This mode lets cbt/build.cyr's compile()
-# detect a .ts source and verify it lexes cleanly via cc5 directly,
+# detect a .ts source and verify it lexes cleanly via cycc directly,
 # without forcing every consumer to go through a separate test driver.
 if (_ts_lex_only_mode == 1) {
     var _ts_n = TS_LEX(S + 0x298B000, S, bl);
@@ -636,14 +636,14 @@ _init_cyrius_lib();
 # CYRIUS_ARCH_X86` to select x86-specific asm over aarch64 asm.
 PP_PREDEFINE(S, "CYRIUS_ARCH_X86");
 # v5.5.0: CYRIUS_TARGET_LINUX selects Linux-shaped stdlib peers
-# when the target OS isn't explicitly Windows (cc5_win) or Mac
-# (CYRIUS_MACHO envs). Paired with CYRIUS_TARGET_WIN (cc5_win.cyr)
+# when the target OS isn't explicitly Windows (cycc_win) or Mac
+# (CYRIUS_MACHO envs). Paired with CYRIUS_TARGET_WIN (cycc_win.cyr)
 # so stdlib selectors can pick per-OS peers without juggling
 # missing `#else` / `#ifndef` directives.
 # v5.5.6: honor the CYRIUS_TARGET_WIN=1 env var early (before
 # PREPROCESS) so `#ifdef CYRIUS_TARGET_WIN` blocks in user code
 # (notably lib/fnptr.cyr's Win64 fncallN variants) are actually
-# emitted when this cc5 binary is invoked with the env var to
+# emitted when this cycc binary is invoked with the env var to
 # produce PE output. Without this check the preprocessor saw
 # only CYRIUS_TARGET_LINUX and the Win64 blocks never fired,
 # silently falling back to SysV asm that crashed on Windows.
@@ -1065,7 +1065,7 @@ if (_efi_env != 0) {
     }
 }
 
-# cc5: opt-in IR recording via CYRIUS_IR=1|2
+# cycc: opt-in IR recording via CYRIUS_IR=1|2
 var _ir_env = _read_env("CYRIUS_IR");
 if (_ir_env != 0) {
     var _ir_ch = load8(_ir_env);
@@ -1349,9 +1349,9 @@ while (escan == 1) {
 # emit `mov rcx, imm64` (REX.W) + `mov [rcx], rax` sequences that
 # #GP under 32-bit. cc3 emitted top-level asm at the entry; that
 # ordering invariant was load-bearing for every agnos release and
-# silently dropped at v5.0.0 (cc4→cc5 IR overhaul). Path A1 from
-# agnos/docs/development/proposals/2026-04-27-cc5-kernel-boot-shim-regression.md
-# restores it for kmode only — non-kmode paths unchanged so cc5
+# silently dropped at v5.0.0 (cc4→cycc IR overhaul). Path A1 from
+# agnos/docs/development/proposals/2026-04-27-cycc-kernel-boot-shim-regression.md
+# restores it for kmode only — non-kmode paths unchanged so cycc
 # self-host stays byte-identical.
 if (_init_km == 1) {
     # Kernel mode: PARSE_PROG FIRST (top-level asm runs before gvar inits).
@@ -1470,7 +1470,7 @@ if (_epi_km == 3 || _epi_km == 2) {
     EEXIT(S);
 }
 
-# cc5: IR stats/dump
+# cycc: IR stats/dump
 if (IR_ENABLED(S) == 1) {
     var ir_bbs = ir_build_bbs(S);
     var ir_edges = ir_build_edges(S);

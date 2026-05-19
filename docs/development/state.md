@@ -3,6 +3,74 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-19 (v6.0.0 OPEN — two-binary rename ceremony)
+
+Opening **v6.0.0** with the two-binary rename ceremony per
+user direction post-v5.11.69 ship: ".69 is out; lets 6.0.0
+this baby thinking I want to name it cycc - so its seed →
+cyrc → cycc (cyrius computer compiler)" — then expanded to
+rename the bootstrap binary too: "seed (asm) → cybs (Cyrius
+Bootstrap) → cycc (Cyrius Computer Compiler)".
+
+**Rename**:
+- `cyrc` → **`cybs`** (Cyrius Bootstrap)
+- `cc5`  → **`cycc`** (Cyrius Computer Compiler)
+
+Bootstrap chain is now `seed (asm) → cybs → cycc`.
+
+**Surface**: ~2,100 occurrences across ~157 files. Categorized
+sed preserved historical narrative — v5.x CHANGELOG entries,
+archives, completed-phases, vidya retros stay as historical
+anchor text. Current-state code + canonical-current docs flipped.
+
+**Byte-length math**: `src/version_str.cyr` had its
+`_VERSION_LEN_CC5*` byte counts calculated assuming "cc5 "
+(4 chars + \n = 5). After sed-renaming the strings to "cycc "
+(5 chars + \n = 6), the lengths needed +1 each. Caught
+because sed-only update would have truncated `cycc --version`
+output. Fix: rename vars `_VERSION_STR_CC5*` →
+`_VERSION_STR_CYCC*` + update length calcs in
+`scripts/version-bump.sh` template (`LEN_CYCC = ${#NEW} + 6`
+etc.). All 3 consumers (main.cyr, main_win.cyr, lex.cyr)
+updated to match new var names.
+
+**Back-compat (v6.0.x window only)**:
+- `scripts/install.sh` ships `cc5 → cycc`, `cyrc → cybs`,
+  `cc5_aarch64 → cycc_aarch64`, `cc5_win → cycc_win`
+  symlinks in `~/.cyrius/versions/<v>/bin/`.
+- `cbt/core.cyr` compiler-lookup tries `cycc` first, falls
+  back to `cc5` (same for `cybs`/`cyrc`).
+- Both drop at v6.1.0.
+
+**Surprise during smoke**: `cyrius capacity` failed against
+v5.11.69 install snapshot — new cyrius binary couldn't find
+`cycc` because `~/.cyrius/bin/cycc` doesn't exist yet (snapshot
+has `cc5`). Added back-compat fallback in `cbt/core.cyr` so the
+new cyrius works against pre-rename and post-rename snapshots.
+
+**Mechanical gates**:
+- cycc self-host **byte-identical at 874,240 B** (was cc5
+  874,232 B at v5.11.69; +8 B for longer binary-name strings
+  baked into version_str.cyr).
+- `scripts/build-cycc-verify.sh` (renamed from
+  build-cc5-verify.sh): VERIFY OK end-to-end.
+- 3-step bootstrap: /tmp/cc5_v5_11_69_PRESERVED (saved
+  pre-rename binary) → cycc_a → cycc_b == cycc_a.
+- `check.sh` **76/76**; `cyrius test` **152/152**.
+
+**v6.0.x roadmap remaining** (carry-forward from v5.x close
+band — 5 accompanying-refactor items pulled forward into
+subsequent v6.0.x slots per "Big Heavy One Thing"):
+- Dead-code careful sweep
+- `_TARGET_*` flag consolidation
+- Backend module collapse
+- Byte-array literal peephole
+- Return-patch buffer dynamic conversion
+
+Memory pins:
+- [`project_v6_0_0_cycc_cybs_rename`] — rename ceremony shape.
+- [`project_v5_11_x_closeout_at_40`] — v5.x retired.
+
 ## Session close — 2026-05-19 (.69 ship — v5.x CYCLE CLOSED)
 
 Closing **v5.11.69** as the **FINAL v5.x patch**. v5.11.x

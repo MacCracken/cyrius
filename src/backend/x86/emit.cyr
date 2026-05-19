@@ -28,7 +28,7 @@ var _flags_reflect_rax = 0;
 # before any push falls through to the normal pop path. ANY
 # intervening emit advances CP, which breaks the equality check
 # naturally — no explicit invalidation needed across other helpers.
-# Observed v5.6.8 cc5 has 381 occurrences of `50 58` (push rax;
+# Observed v5.6.8 cycc has 381 occurrences of `50 58` (push rax;
 # pop rax) adjacent, mostly from v5.6.7 strength-reduction's
 # ESPILL → _TRY_MUL_BY_POW2 → EUNSPILL pattern. Cancel saves
 # 2 B per site.
@@ -51,7 +51,7 @@ var _last_push_cp = 0 - 1;
 # `48 89 C1 58`), emit `59` (pop rcx), then fall through to the
 # normal op bytes. Net: 7 B → 4 B per site, saves 3 B.
 #
-# Observed v5.6.9 cc5: 5399 ADD + 340 AND + 66 OR + 3 XOR + 53 IMUL
+# Observed v5.6.9 cycc: 5399 ADD + 340 AND + 66 OR + 3 XOR + 53 IMUL
 # sites = 5861 total → ~17.5 KB raw savings. Non-commutative ops
 # (SUB 392, CMP 3880) deliberately excluded — they need flag-order
 # flip / explicit negation, pinned for a later LEA-spirit patch.
@@ -108,7 +108,7 @@ fn E8(S, v): i64 {
 }
 
 # emit "mov rax, imm64" — 48 B8 <imm64>
-# cc5: records IR_LOAD_IMM when IR is enabled
+# cycc: records IR_LOAD_IMM when IR is enabled
 fn EMOVI(S, v): i64 {
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_LOAD_IMM, 0, 0, v); if (_ire == 2) { return 0; } }
@@ -140,8 +140,8 @@ fn E3(S, v): i64 {
     return 0;
 }
 
-# Standard codegen emissions (match cyrc exactly)
-# cc5: all record IR nodes when IR_ENABLED(S)==1
+# Standard codegen emissions (match cybs exactly)
+# cycc: all record IR nodes when IR_ENABLED(S)==1
 fn EPUSHR(S): i64 { if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
 fn EPOPC(S): i64 { if (_IR_REC0(S, IR_POP_RCX) == 1) { return 0; } EB(S, 0x59); return 0; }
 fn EPOPR(S): i64 {
@@ -186,7 +186,7 @@ fn EMOVCA(S): i64 { if (_IR_REC0(S, IR_MOV_CA) == 1) { return 0; } E3(S, 0xC1894
 # v5.7.9: deleted the imm8-form `EADDIMM_X1(S, imm)` that lived
 # here. It was a silent name collision with the imm32-form at
 # line ~1390; the imm32-form (later definition) was winning at
-# every call site since whenever it landed, and cc5 self-builds
+# every call site since whenever it landed, and cycc self-builds
 # clean because imm32 handles all the small-immediate values
 # the call sites use (just 3 extra bytes per call). The collision
 # was surfaced by v5.7.9's duplicate-fn warning (parse_fn.cyr).
@@ -666,7 +666,7 @@ fn EEXIT(S): i64 {
 
 # v5.5.13 x86 stub: the `_TARGET_MACHO == 2` branch in parse.cyr that
 # calls EMACHO_EXIT_ARM is unreachable on the x86 compiler — fixup.cyr
-# hard-errors on CYRIUS_MACHO_ARM=1 against cc5 before the parser gets
+# hard-errors on CYRIUS_MACHO_ARM=1 against cycc before the parser gets
 # here. This stub exists purely to resolve the symbol at link time so
 # parse.cyr can be built for both backends. If this ever emits bytes,
 # something routed a Mach-O arm64 build through the x86 backend.
@@ -850,7 +850,7 @@ fn EREAD_PE(S): i64 {
     # whatever was on the stack. Under DYNAMIC_BASE those bytes
     # happened to be zero and nobody noticed. Under HIGH_ENTROPY_VA
     # the Win11 loader randomises stack differently and the upper
-    # bytes carry garbage — cc5_win.exe's main read loop then saw
+    # bytes carry garbage — cycc_win.exe's main read loop then saw
     # `n = 0x29233B9948A` on a 74-byte stdin and tripped the
     # "input exceeds 512KB buffer" overflow check at main.cyr:341.
     # `mov eax, [rsp+0x28]` (4-byte opcode) implicitly zero-extends

@@ -1,7 +1,7 @@
 # macho_probe.cyr — emit a minimal Mach-O x86_64 binary to stdout
 # The generated binary does: exit(42)
 #
-# Build:  cat programs/macho_probe.cyr | build/cc5 > /tmp/macho_probe && chmod +x /tmp/macho_probe
+# Build:  cat programs/macho_probe.cyr | build/cycc > /tmp/macho_probe && chmod +x /tmp/macho_probe
 # Run:    /tmp/macho_probe > /tmp/exit42.macho
 # Test:   scp /tmp/exit42.macho mac:~ && ssh mac 'chmod +x exit42.macho && ./exit42.macho; echo $?'
 # Expect: 42

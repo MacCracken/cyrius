@@ -189,7 +189,7 @@ fn _init_cyrius_lib(): i64 {
     # v5.5.9: /proc/self/environ readback is Linux-only. On Windows
     # CreateFileW returns INVALID_HANDLE_VALUE for the non-existent
     # path; the `if (efd < 0)` guard below should handle it but in
-    # practice cc5_win.exe crashes somewhere in this fn's early
+    # practice cycc_win.exe crashes somewhere in this fn's early
     # syscall chain (exact cause TBD). Gate the whole body on
     # CYRIUS_TARGET_LINUX so Windows gets a no-op that leaves
     # _cyrius_lib empty — include-resolution falls back to CWD,
@@ -199,7 +199,7 @@ fn _init_cyrius_lib(): i64 {
     # v5.10.9 — version-PINNED lib path. Pre-v5.10.9 the fallback
     # was `$HOME/.cyrius/lib/` which is a symlink to whichever
     # version `cyriusly use` last pointed at. That created a
-    # contamination bug: if a user runs cc5 v5.10.8 against a
+    # contamination bug: if a user runs cycc v5.10.8 against a
     # symlink pointing at v5.10.6 lib, the codegen emits calls to
     # helpers (str_builder_add_json_str, etc.) that don't exist
     # in the older lib snapshot → undefined-fn warnings → SIGILL.
@@ -208,10 +208,10 @@ fn _init_cyrius_lib(): i64 {
     # 5.10.6 lib produced the SIGILL pattern documented in the
     # 1.1.12 issue file).
     #
-    # Fix: each cc5 binary loads `$HOME/.cyrius/versions/<MY_VERSION>/
+    # Fix: each cycc binary loads `$HOME/.cyrius/versions/<MY_VERSION>/
     # lib/` directly, where <MY_VERSION> is extracted from
-    # `_VERSION_STR_CC5` at runtime ("cc5 X.Y.Z\n" → "X.Y.Z").
-    # Each cc5 binary always uses its own version-matched lib;
+    # `_VERSION_STR_CYCC` at runtime ("cycc X.Y.Z\n" → "X.Y.Z").
+    # Each cycc binary always uses its own version-matched lib;
     # the `~/.cyrius/lib` symlink is no longer consulted (it stays
     # for `cyriusly use` to point `~/.cyrius/bin` at the active
     # version, but lib resolution doesn't go through it).
@@ -264,12 +264,12 @@ fn _init_cyrius_lib(): i64 {
                             store8(&_cyrius_lib + wi, 110); wi = wi + 1;  # n
                             store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
                             store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
-                            # Append the version digits from _VERSION_STR_CC5
-                            # ("cc5 X.Y.Z\n" — skip first 4 chars "cc5 ",
+                            # Append the version digits from _VERSION_STR_CYCC
+                            # ("cycc X.Y.Z\n" — skip first 4 chars "cycc ",
                             # copy until '\n').
                             var vp = 4;
-                            while (vp < _VERSION_LEN_CC5) {
-                                var vc = load8(_VERSION_STR_CC5 + vp);
+                            while (vp < _VERSION_LEN_CYCC) {
+                                var vc = load8(_VERSION_STR_CYCC + vp);
                                 if (vc == 10) { break; }
                                 store8(&_cyrius_lib + wi, vc);
                                 wi = wi + 1; vp = vp + 1;
@@ -305,8 +305,8 @@ fn _init_cyrius_lib(): i64 {
                             # consumers because wrapper has been
                             # stuck at .25 since May-12 (install.sh
                             # rebuild-staleness misses version_str.cyr
-                            # dep). cc5 IS current per self-host
-                            # discipline, so cc5 is the authoritative
+                            # dep). cycc IS current per self-host
+                            # discipline, so cycc is the authoritative
                             # surfacer. See CHANGELOG [5.11.57].
                             _check_cyml_pin_drift();
                             return 1;
@@ -468,14 +468,14 @@ fn _env_var_is_1(name, name_len): i64 {
 }
 
 # v5.11.57: detect toolchain drift between cwd's
-# cyrius.cyml [package].cyrius = "X.Y.Z" pin and cc5's own
+# cyrius.cyml [package].cyrius = "X.Y.Z" pin and cycc's own
 # compile-time version. Iron-boot papercut filing Item 1: the
 # wrapper has been stuck at .25 since 2026-05-12 (install.sh
 # rebuild-staleness misses src/version_str.cyr as transitive
 # dep), so consumers see `cyrius --version: 5.11.25` even when
-# they pin .55+ in cyml. cc5 IS rebuilt every bump for
-# self-host, so cc5's compile-time _VERSION_STR_CC5 is the
-# authoritative current version. Emitting from cc5 surfaces
+# they pin .55+ in cyml. cycc IS rebuilt every bump for
+# self-host, so cycc's compile-time _VERSION_STR_CYCC is the
+# authoritative current version. Emitting from cycc surfaces
 # the drift regardless of wrapper-rebuild state. Wrapper-side
 # fixes (--strict-pin CLI flag, --version manifest-pin line,
 # cyrius lib sync, install.sh rebuild fix) land in v5.11.58.
@@ -559,10 +559,10 @@ fn _check_cyml_pin_drift(): i64 {
     if (_pd_pin_start < 0) { return 0; }
     if (_pd_pin_end <= _pd_pin_start) { return 0; }
     var _pd_pin_len = _pd_pin_end - _pd_pin_start;
-    # cc5 self-version: skip "cc5 " (4 chars), read until '\n'.
+    # cycc self-version: skip "cycc " (4 chars), read until '\n'.
     var _pd_self_start = 4;
     var _pd_self_end = _pd_self_start;
-    while (_pd_self_end < _VERSION_LEN_CC5 && load8(_VERSION_STR_CC5 + _pd_self_end) != 10) {
+    while (_pd_self_end < _VERSION_LEN_CYCC && load8(_VERSION_STR_CYCC + _pd_self_end) != 10) {
         _pd_self_end = _pd_self_end + 1;
     }
     var _pd_self_len = _pd_self_end - _pd_self_start;
@@ -570,7 +570,7 @@ fn _check_cyml_pin_drift(): i64 {
         var _pd_match = 1;
         var _pd_mi = 0;
         while (_pd_mi < _pd_pin_len) {
-            if (load8(&_pd_buf + _pd_pin_start + _pd_mi) != load8(_VERSION_STR_CC5 + _pd_self_start + _pd_mi)) { _pd_match = 0; break; }
+            if (load8(&_pd_buf + _pd_pin_start + _pd_mi) != load8(_VERSION_STR_CYCC + _pd_self_start + _pd_mi)) { _pd_match = 0; break; }
             _pd_mi = _pd_mi + 1;
         }
         if (_pd_match == 1) { return 0; }
@@ -580,15 +580,15 @@ fn _check_cyml_pin_drift(): i64 {
     if (_pd_strict == 1) {
         syscall(1, 2, "error: cyrius.cyml pins ", 24);
         syscall(1, 2, &_pd_buf + _pd_pin_start, _pd_pin_len);
-        syscall(1, 2, " but cc5 is ", 12);
-        syscall(1, 2, _VERSION_STR_CC5 + _pd_self_start, _pd_self_len);
+        syscall(1, 2, " but cycc is ", 12);
+        syscall(1, 2, _VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
         syscall(1, 2, " — toolchain drift (CYRIUS_STRICT_PIN)\n", 41);
         syscall(60, 1);
     }
     syscall(1, 2, "warning: cyrius.cyml pins ", 26);
     syscall(1, 2, &_pd_buf + _pd_pin_start, _pd_pin_len);
-    syscall(1, 2, " but cc5 is ", 12);
-    syscall(1, 2, _VERSION_STR_CC5 + _pd_self_start, _pd_self_len);
+    syscall(1, 2, " but cycc is ", 12);
+    syscall(1, 2, _VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
     syscall(1, 2, " — toolchain drift (snapshot may be stale; set CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)\n", 88);
     #endif
     return 0;

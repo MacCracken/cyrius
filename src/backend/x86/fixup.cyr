@@ -72,7 +72,7 @@ fn _read_env(name): i64 {
 }
 
 fn FIXUP(S): i64 {
-    # Align code to 8 (don't write — leave as zeros, matching cyrc)
+    # Align code to 8 (don't write — leave as zeros, matching cybs)
     var cp = GCP(S);
     cp = (cp + 7) & (0 - 8);
     SCP(S, cp);
@@ -329,7 +329,7 @@ fn FIXUP(S): i64 {
     # NOP-fill (not code shifting) is the intentional tradeoff:
     #   - O(n) one pass, no fixup rework, deterministic (self-host stable)
     #   - Binary size unchanged (compresses vastly better though)
-    #   - Code shifting would break cc5==cc5 byte-identity; deferred.
+    #   - Code shifting would break cycc==cycc byte-identity; deferred.
     #
     # Opt-in via CYRIUS_DCE=1 until the pass is battle-tested across
     # downstream ports. Default is report-only.
@@ -1987,7 +1987,7 @@ fn EMITELF(S): i64 {
         # kernel SIGILLs at first instruction. Refuse at emit time so
         # users get a clear error pointing at the right compiler.
         syscall(SYS_WRITE, 2,
-        "error: CYRIUS_MACHO_ARM=1 requires the aarch64 backend. Use ./build/cc5_aarch64, not ./build/cc5.\n",
+        "error: CYRIUS_MACHO_ARM=1 requires the aarch64 backend. Use ./build/cycc_aarch64, not ./build/cycc.\n",
         103);
         syscall(SYS_EXIT, 1);
     }

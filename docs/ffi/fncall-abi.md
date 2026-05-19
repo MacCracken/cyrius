@@ -116,7 +116,7 @@ anyway for struct-by-value reasons.
 
 If a future release widens cyrius's convention to AAPCS64-proper on
 aarch64, that would be a v6.0.0-class ABI break (symmetric to the
-`cc5 → cyc` rename era) and not a v5.4.x patch.
+`cycc → cyc` rename era) and not a v5.4.x patch.
 
 ---
 

@@ -343,7 +343,7 @@ fn merge_symbols(): i64 {
                 # Skip section symbols — they aren't names we link by.
                 if (sttyp != STT_SECTION) {
                     var name_ptr = buf + strtab_off + st_name;
-                    # `_cyrius_init` is intentionally per-module: cc5
+                    # `_cyrius_init` is intentionally per-module: cycc
                     # emits it GLOBAL from v5.4.9 so external linkers
                     # (the system `ld` invoked by C-launcher builds —
                     # e.g. mabda's GPU integration) can resolve it,

@@ -47,7 +47,7 @@ fn munmap_stack(addr, size): i64 {
 # Why a dedicated helper instead of inlining in thread_create:
 # after `clone(CLONE_VM)`, the child shares the address space with
 # the parent but RBP still points at the parent's stack frame
-# (kernel only updates RSP to the child_stack we pass). cc5 emits
+# (kernel only updates RSP to the child_stack we pass). cycc emits
 # every local read/write as `[rbp-N]`, so any post-clone cyrius
 # code in the child reads/writes the parent's stack slots — which
 # the parent has already overwritten on its way through

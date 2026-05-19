@@ -19,7 +19,7 @@ A 2-arg inner fn-call inside another fn-call inside `assert`. Filing was at cyri
 Premise-check at slot entry:
 
 - Reverted bote's `cap0/cap1` var-stage workaround to recreate the inline-nested shape.
-- Compiled at v5.11.27 (current) AND v5.10.34 (filing version, preserved at `~/.cyrius/versions/5.10.34/bin/cc5`).
+- Compiled at v5.11.27 (current) AND v5.10.34 (filing version, preserved at `~/.cyrius/versions/5.10.34/bin/cycc`).
 - **Clean parse both times.**
 - Synthetic fuzz: 0 / 28 triggers across 9 preceding-line counts (50→240 SSRF-URL asserts before trigger) × both versions AND 10 ident counts (100→10000 filler fns spanning the filing's ~8700 speculation boundary).
 - No reproduction obtainable from any synthetic shape.

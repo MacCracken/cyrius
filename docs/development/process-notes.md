@@ -2,9 +2,9 @@
 
 > **Historical artifact** — dated journal entries from the
 > pre-v5.0.0 bootstrap phases. References `cc2` / `cc3` /
-> `cyrc` / `Stage1f` binary names that were retired at the
-> `cc3` → `cc5` rename (v5.0.0); the current toolchain
-> binary is `cc5` (will be `cyc` post-v6.0.0 per the
+> `cybs` / `Stage1f` binary names that were retired at the
+> `cc3` → `cycc` rename (v5.0.0); the current toolchain
+> binary is `cycc` (will be `cyc` post-v6.0.0 per the
 > permanent-binary-name rule in CLAUDE.md).
 >
 > **For current process discipline**: [`CLAUDE.md`](../../CLAUDE.md)
@@ -43,7 +43,7 @@ Development observations across the pre-v5.0.0 phases.
 ### Key Bugs Found and Fixed
 1. **VCNT restore erasing function-scope globals** — arrays inside functions were lost after function parsing. Fix: don't restore VCNT.
 2. **Duplicate var names** (hit 5 times!) — finally added compile-time detection.
-3. **Hex literal underscores** — cyrc doesn't support `_` in numbers.
+3. **Hex literal underscores** — cybs doesn't support `_` in numbers.
 4. **Function table overflow** — 136 fns in 128-slot table. Bumped to 256.
 
 ### Development Loop
@@ -65,9 +65,9 @@ Research → vidya → plan → build → test → audit → vidya. Vidya front-
 ### What We Did
 
 1. Built stage1e (bitwise ops: % & | ^ ~ << >>, hex literals, comments, uppercase idents — 63 tests)
-2. Built cyrc (token scaling: 4096→16384 slots — mechanical offset change)
+2. Built cybs (token scaling: 4096→16384 slots — mechanical offset change)
 3. Wrote asm.cyr (self-hosting assembler: 1128 lines, 43 mnemonics, two-pass, heap-based state)
-4. Achieved bootstrap closure: seed→cyrc→asm→cyrc_v2 byte-identical
+4. Achieved bootstrap closure: seed→cybs→asm→cyrc_v2 byte-identical
 5. Committed bootstrap binary (bootstrap/asm, 29KB) + bootstrap.sh
 6. Archived Rust seed (archive/seed/), deinited upstream submodule (saved 13GB)
 7. Cyrius now bootstraps with: `sh bootstrap/bootstrap.sh` — no Rust, no LLVM, no Python
@@ -75,14 +75,14 @@ Research → vidya → plan → build → test → audit → vidya. Vidya front-
 ### Key Bugs Found
 
 1. **Duplicate var names create separate stack slots** — declaring `var val` in two branches of the same function creates two separate local slots. The compiler allocates ALL var declarations during parsing regardless of control flow. Fix: split into separate functions (SHEX/SDEC for hex/decimal parsing).
-2. **fn-before-var ordering** — cyrc's parser requires all fn definitions before var declarations. Functions can't reference globals. Fix: heap-based state (S pointer + fixed offsets), passed as first param to every function.
+2. **fn-before-var ordering** — cybs's parser requires all fn definitions before var declarations. Functions can't reference globals. Fix: heap-based state (S pointer + fixed offsets), passed as first param to every function.
 3. **Return value 0 vs -1 for try-parse** — DO_ALU2 returned 0 on success (reg,reg handled), but 0 is rax's register code. Caller treated 0 as "unhandled, try immediate." Fix: return -1 for "handled," positive register code for "unhandled."
 4. **Input buffer overflow** — stage1d.cyr (73KB) didn't fit in 64KB input buffer. Silent truncation, labels past the cutoff couldn't be found. Fix: increased to 128KB.
 
 ### Architecture Decisions
 
-- **Heap state pattern**: All assembler state lives at fixed offsets from a heap base pointer (S). Every function takes S as its first parameter. This mirrors cyrc's own r15+offset pattern but at the high-level language layer.
-- **Packed word comparison**: Mnemonics dispatched by packing identifier bytes into a 64-bit value and comparing against precomputed constants — same technique cyrc's lexer uses for keywords.
+- **Heap state pattern**: All assembler state lives at fixed offsets from a heap base pointer (S). Every function takes S as its first parameter. This mirrors cybs's own r15+offset pattern but at the high-level language layer.
+- **Packed word comparison**: Mnemonics dispatched by packing identifier bytes into a 64-bit value and comparing against precomputed constants — same technique cybs's lexer uses for keywords.
 - **Incremental testing**: Each mnemonic addition verified by byte-exact comparison with seed output. Caught encoding errors immediately rather than at integration time.
 
 ### What Worked Well
