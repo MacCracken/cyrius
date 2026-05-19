@@ -6,6 +6,135 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.67] — 2026-05-19
+
+**Triple-pull → double-pull v6.0-runway slot.** Third
+v6.0-runway slot in the "do more marching" thread. Originally
+scoped as a triple-pull bundle of three v6.0.0 accompanying-
+refactor items; premise-check at slot entry caught one item
+already shipped at .63, slot completes on the other two.
+
+### Added
+
+- **`scripts/build-cc5-verify.sh`** (~100 LoC bash) — formalizes
+  the canonical cc5 byte-identical self-host fixpoint check
+  that's lived as ad-hoc one-liners in chat and commit
+  messages. Mirrors `bootstrap/verify.sh` pattern. Three
+  invariants enforced with distinct exit codes:
+  1. `stage_a` compile succeeds (exit 1 on failure)
+  2. `stage_a` recompiles its own source byte-identical
+     (exit 2 on divergence — real correctness bug)
+  3. `stage_a` matches committed `build/cc5` (exit 3 on
+     drift — stale build artifact, refresh command in error
+     message)
+  Pinned 2026-05-11 at v5.11.7 close. Renames to
+  `scripts/build-cyc.sh` at v6.0.0 cut per CLAUDE.md "Version
+  lives in VERSION + --version, never in binary names" Key
+  Principle.
+
+### Changed
+
+- **`docs/adr/005-two-step-bootstrap.md`** — substantive
+  rewrite. The ADR was active (load-bearing for current
+  heap-change procedure) but referred to `cc3` throughout
+  present-tense (predated v5.0.0 cc3 → cc5 rename). The
+  Decision / Rationale sections used `cc3` for both "the
+  committed compiler" and "the first-gen output" — an
+  ambiguity that worked when both shared the name. Rewritten
+  with stage_a/stage_b convention so the steps are
+  unambiguous regardless of the current binary name (works
+  for cc5 today, cyc post-v6.0.0). Adds explicit version-anchor
+  context block + Tooling section pointing at the new
+  `scripts/build-cc5-verify.sh`.
+- **`docs/doc-health.md`** — vidya-cross-check guidance updated
+  from "vidya files saying `cc3 4.8.5` / `cc5 5.4.x` should
+  match current VERSION" to current cc5 5.x example syntax;
+  the historical `cc3 4.8.5`-era ref preserved as anchor
+  context.
+- **`docs/development/roadmap-old.md`** § v6.0.0
+  accompanying-refactor:
+  - "cc3-era residue" item marked **partially done v5.11.67**;
+    historical anchor refs in `docs/architecture/cyrius.md`,
+    `docs/architecture/package-format.md`, `docs/development/
+    process-notes.md`, `docs/development/threat-model.md`,
+    `docs/benchmarks.md`, `docs/size-comparisons.md`
+    deliberately left as-is (explicit historical anchor text
+    in chronological context).
+  - "Why `cyc` and not `cc6` / `cc7` / etc." section: the
+    "every `cc3 4.8.5` residue we're still cleaning up" line
+    updated past-tense to reflect this slot.
+  - **Byte-array literal peephole added** to the v6.0.0
+    accompanying-refactor list (moved out of v5.11.66/.67 per
+    user direction 2026-05-19: "put the pinned byte-array into
+    6.0.x line of work now"). Full scope + cross-arch plan
+    preserved verbatim. Memory pin:
+    `project_byte_array_peephole_v6_0_x`.
+- **`docs/development/roadmap.md`** § v5.11.66/.67 byte-array
+  peephole section — replaced with a short "moved to v6.0.x"
+  note pointing at the roadmap-old.md entry. Shipped ledger
+  extended to .67.
+- **`README.md`** — refreshed for v6.0-runway state:
+  - Headline: 823 KB → 874 KB compiler; 79 → 81 stdlib
+    modules; 149 → 152 tcyr; 72 → 76 check.sh gates.
+  - Metrics table: cc5 / cc5_aarch64 / cc5_win binary sizes
+    updated to current; "Bridge compiler (`cyrc`)" label
+    corrected to "Bootstrap compiler (`cyrc`)" (cyrc has
+    always been the bootstrap compiler — the "bridge" label
+    conflated it with the just-retired `src/bridge.cyr`).
+  - Compiler Architecture listing: `bridge.cyr` line removed
+    (retired at .66).
+  - Bootstrap Chain ASCII art: bridge step removed; chain is
+    now `seed → cyrc → cc5 → cross-compilers` matching what
+    `bootstrap.sh` actually executes.
+  - Per-binary sizes table: stage 2 relabeled from "Bridge" to
+    "Bootstrap compiler"; cc5 size 823 KB → 874 KB.
+
+### Premise-check finding
+
+The slot was originally scoped as a triple-pull including
+`cyrius build --strict` wrapper plumbing. Audit at slot entry
+found this already shipped at v5.11.63 (cbt/build.cyr:130-142,
+"v5.11.63: pass --strict in argv when the wrapper flag was set"
++ CHANGELOG [5.11.63] "`cyrius build` now accepts `--strict`
+for both archs"). No-op surfaced + slot scope reshaped to
+double-pull per user direction. Recording per
+`feedback_premise_check_at_slot_entry` discipline so future
+audits can cross-check.
+
+### Mechanical gates
+
+- cc5 self-host **byte-identical at 874,232 B** (no compile-
+  path changes in this slot — just doc edits and a new
+  standalone script).
+- 3-step bootstrap converges; `scripts/build-cc5-verify.sh`
+  itself reports VERIFY OK end-to-end.
+- `check.sh` **76/76**; `cyrius test` **152/152**.
+- No cross-arch propagation needed (no compiler edits).
+
+### v6.0-runway scoreboard (post-.67)
+
+Three v6.0.0 accompanying-refactor items now done in v5.x
+close band; v6.0.0's surface shrinks correspondingly:
+- ✅ Bridge-compiler retirement (.66)
+- ✅ `scripts/build-cyc.sh` (shipped as build-cc5-verify.sh
+  at .67; renames at v6.0.0)
+- ✅ cc3-era residue cleanup — load-bearing portion (.67;
+  vidya bulk refresh still pinned for v6.0.0 Closeout Pass
+  §11)
+
+CVE-05 (.65) also closed early from the v5.11.68 batching.
+
+### Memory pins
+
+- [`project_v5_11_67_triple_pull`] — slot shape; double-pull
+  after premise-check.
+- [`project_byte_array_peephole_v6_0_x`] — peephole work
+  moved out per user direction.
+- [`project_v5_11_67_return_patch_vec`] — pushed back to
+  v6.0.x (premise-check at slot entry surfaced cc5 has no
+  allocator; "more invasive than a literal-bump" per
+  proposal's own framing).
+
 ## [5.11.66] — 2026-05-19
 
 **Bridge-compiler retirement — `src/bridge.cyr` deleted

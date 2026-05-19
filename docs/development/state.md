@@ -3,6 +3,69 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-19 (.67 ship — v6.0-runway triple-pull → double-pull after premise-check)
+
+Closing **v5.11.67** with a v6.0-runway double-pull bundle:
+`scripts/build-cc5-verify.sh` (formalizes the cc5 byte-
+identical fixpoint verifier) + cc3-era residue cleanup
+(ADR-005 substantive rewrite + doc-health + roadmap-old
+self-references). Byte-array literal peephole moved out
+to v6.0.x per user direction "put the pinned byte-array
+into 6.0.x line of work now."
+
+- **Premise-check at slot entry caught a no-op**: the
+  third item in the originally-pitched triple-pull —
+  `cyrius build --strict` wrapper plumbing — already
+  shipped at v5.11.63 (cbt/build.cyr:130-142 +
+  CHANGELOG [5.11.63]). Slot reshaped to double-pull;
+  noted explicitly in CHANGELOG so future audits can
+  cross-check.
+- **build-cc5-verify.sh** (~100 LoC bash) — three
+  invariants with distinct exit codes (1=stage_a compile
+  failed, 2=fixpoint diverged, 3=stale build artifact).
+  Renames to `scripts/build-cyc.sh` at v6.0.0 cut.
+- **ADR-005 substantive rewrite** — was using `cc3`
+  throughout an active ADR (predated v5.0.0 cc3 → cc5
+  rename); rewritten with stage_a/stage_b convention so
+  steps are unambiguous regardless of current binary
+  name. Adds Tooling section pointing at the new
+  verifier script.
+- **README refreshed** — 823 KB → 874 KB compiler;
+  79 → 81 stdlib modules; 149 → 152 tcyr; 72 → 76 gates;
+  Compiler Architecture listing + Bootstrap Chain ASCII
+  art updated post-bridge-retirement; "Bridge compiler
+  (cyrc)" label corrected to "Bootstrap compiler (cyrc)"
+  — cyrc has always been the bootstrap compiler, the
+  "bridge" framing conflated it with the just-retired
+  `src/bridge.cyr`.
+- **Byte-array peephole moved to v6.0.x** — full scope
+  + cross-arch plan preserved verbatim in
+  roadmap-old.md's v6.0.0 accompanying-refactor section.
+- **Mechanical gates green**: cc5 **byte-identical at
+  874,232 B** (no compile-path changes — only docs +
+  new standalone script). 3-step bootstrap converges.
+  `check.sh` **76/76**; `cyrius test` **152/152**.
+  `scripts/build-cc5-verify.sh` reports VERIFY OK
+  end-to-end on first invocation.
+
+**v6.0-runway scoreboard** (post-.67): three v6.0.0
+accompanying-refactor items absorbed into v5.x close —
+bridge retirement (.66), build-cyc.sh skeleton (.67),
+cc3-era residue load-bearing portion (.67). Plus CVE-05
+(.65). v6.0.0's surface shrinks by four line items.
+
+**Remaining slots** to v5.x close: .68 (heap-map full
+reorganization — the true closeout engineering work) +
+.69 (conditional mabda 3.0 GA fold).
+
+Memory pins:
+- [`project_v5_11_67_triple_pull`] — double-pull after
+  premise-check.
+- [`project_byte_array_peephole_v6_0_x`] — peephole
+  moved out.
+- [`project_v5_11_67_return_patch_vec`] — pushed back
+  to v6.0.x.
+
 ## Session close — 2026-05-19 (.66 ship — bridge-compiler retired; v6.0 march continues)
 
 Closing **v5.11.66** with the deletion of `src/bridge.cyr`

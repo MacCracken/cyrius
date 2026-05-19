@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~823 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 79 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 149 .tcyr + 1 soak + 1 smoke + 5 fuzz + 14 bench, 72 check.sh gates.
+~874 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 81 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 152 .tcyr + 1 soak + 1 smoke + 5 fuzz + 14 bench, 76 check.sh gates.
 
 ## Install
 
@@ -91,15 +91,15 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cc5`) | **823,112 B** (~820 KB) x86_64 at v5.11.49 |
-| Cross compilers | `cc5_aarch64` 506,216 B, `cc5_win` 630,272 B (cross-built) |
+| Compiler (`cc5`) | **874,232 B** (~874 KB) x86_64 at v5.11.67 |
+| Cross compilers | `cc5_aarch64` 564,456 B, `cc5_win` 686,632 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
-| Bridge compiler (`cyrc`) | **12,344 B** |
+| Bootstrap compiler (`cyrc`) | **12,344 B** |
 | LSP server (`cyrius-lsp`) | **94,440 B** |
 | Linker (`cyrld`) | **902,776 B** |
 | External dependencies | **0** at the compiler level (1 git dep at stdlib level: mabda) |
-| Tests | **149** .tcyr + **5** .fcyr fuzz + **14** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
-| Gates (`scripts/check.sh`) | **72** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49) |
+| Tests | **152** .tcyr + **5** .fcyr fuzz + **14** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Gates (`scripts/check.sh`) | **76** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit, cyrius-x bytecode |
 | Stdlib modules | **79** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
@@ -126,8 +126,8 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 | Stage | Binary | Size |
 |-------|--------|------|
 | 1. Root of trust (committed) | `bootstrap/asm` | 29 KB |
-| 2. Bridge | `cyrc` | 12 KB |
-| 3. Full compiler | `cc5` | 823 KB |
+| 2. Bootstrap compiler | `cyrc` | 12 KB |
+| 3. Full compiler | `cc5` | 874 KB |
 | 4. Linker | `cyrld` | 903 KB |
 
 ### Language surface
@@ -226,7 +226,6 @@ src/
   main_aarch64_macho.cyr    macOS aarch64 Mach-O entry
   main_win.cyr          Windows PE entry
   main_cx.cyr           cyrius-x bytecode entry
-  bridge.cyr            Bridge compiler (cyrc feature set)
   version_str.cyr       Auto-generated version string
 
   frontend/
@@ -248,10 +247,14 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cyrc (12,344 B compiler)
-    -> bridge.cyr (bridge compiler)
-      -> cc5 (modular compiler + IR, 823,112 B at v5.11.49)
-        -> cc5_aarch64, cc5_win_cross, cc5_macho_cross, cc5_cx (cross-compilers)
+    -> cc5 (modular compiler + IR, 874,232 B at v5.11.67)
+      -> cc5_aarch64, cc5_win_cross, cc5_macho_cross, cc5_cx (cross-compilers)
 ```
+
+> The chain shortened at v5.11.66 — `src/bridge.cyr` (2,005 LoC standalone
+> Phase 4 compiler) retired after audit confirmed it was never in any
+> active build path. CLAUDE.md's Key Principle wording updated from
+> "seed → cyrc → bridge → cc5" to "seed → cyrc → cc5" the same release.
 
 ## Editor Integration
 

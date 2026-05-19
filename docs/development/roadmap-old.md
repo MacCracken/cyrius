@@ -883,8 +883,10 @@ cost, forevermore source-of-truth:**
 - The `cc<N>` scheme couples the binary name to the major
   version. Every major bump (v6 → v7 → v8 …) would otherwise
   trigger another rename + downstream churn. We did this once
-  already (cc3 → cc5 with v5.0.0 — see CHANGELOG, vidya, and
-  every `cc3 4.8.5` residue we're still cleaning up).
+  already (cc3 → cc5 with v5.0.0 — see CHANGELOG, vidya; the
+  `cc3 4.8.5`-era source residue was largely cleaned up in
+  v5.11.67's triple-pull, with the active-doc references in
+  ADR-005 + `docs/doc-health.md` now updated past-tense).
 - `cyc` is **version-agnostic, permanently**. The binary stays
   `cyc` from v6.0.0 onward — through v7, v8, v∞. Version
   surfaces only via `cyc --version` and the `VERSION` file.
@@ -949,10 +951,21 @@ patches:
   treated it as a cc5 INPUT (compile-time benchmark target),
   not as a compiler. Bootstrap chain is now `seed → cyrc → cc5`
   cleanly. v6.0.0 absorbs the win.
-- **`cc3`-era residue.** Vidya entries, comments in source,
-  test fixtures still reference `cc3 4.8.5` and earlier. v5.5.39
-  retired `src/cc/` + `src/compiler*.cyr` (3,333 LOC); remaining
-  residue is in vidya + docs comments.
+- ~~**`cc3`-era residue.**~~ **Partially done v5.11.67
+  (2026-05-19).** Active-doc current-tense `cc3` references
+  retired: `docs/adr/005-two-step-bootstrap.md` rewritten with
+  stage_a/stage_b convention (was using `cc3`/`cc4`
+  ambiguously throughout); `docs/doc-health.md` vidya-cross-
+  check guidance updated to current cc5 5.x example syntax.
+  Remaining (held for v6.0.0 bulk vidya refresh per Closeout
+  Pass §11): vidya `cc3 4.8.5` anchor refs in
+  `vidya/content/cyrius/*.cyml`; historical-context refs in
+  `docs/architecture/cyrius.md` / `docs/architecture/
+  package-format.md` / `docs/development/process-notes.md`
+  /  `docs/development/threat-model.md` / `docs/benchmarks.md`
+  / `docs/size-comparisons.md` — these are explicitly
+  historical anchor text in chronological context and stay
+  as-is.
 - **Heap-map tightening.** v5.5.40 verified 72 regions. Audit
   which are still load-bearing post-optimization-arc; reclaim
   wasted address space; document post-v6.0.0 layout as new
@@ -964,6 +977,24 @@ patches:
 - **`cyrius build --strict` mode** — escalate `undefined
   function` warnings to hard errors through the build wrapper
   (direct `cc5 --strict` shipped v5.4.19).
+- **Byte-array literal peephole** (moved here from v5.11.66/.67
+  at 2026-05-19; was pinned in the v5.x absorber band). The
+  v5.11.51 byte-array literal (`var foo[N] = { 0x.., ... };`)
+  ships with a 21-byte-per-byte emit cost: each byte init goes
+  through `EVADDR + EADDRA_IMM + EPUSHR + EMOVI + EPOPC +
+  ESTORE8 + EXORAA` (parser-side reuse of the existing
+  `store8(...)` expr path). Peephole: emit
+  `mov byte [rcx+disp8], imm8` (opcode `C6 41 disp imm`, 4
+  bytes per byte) using a cached `&var` in RCX once at the
+  head of the init sequence — drops 21 → 4 bytes per byte
+  (**5× compression**) for offsets 0-127. Scope: new x86
+  named op `EMOV_BYTE_RCX_DISP8_IMM8`, equivalent aarch64
+  `STRB Wn, [Xn, imm12]`, equivalent cx op; `EMIT_GVAR_INITS`
+  byte-array replay path emits base `mov rcx, &var` once +
+  direct-store form per byte. Acceptance: cc5 byte-identical
+  (no byte arrays in compiler source); gnoboot binary shrinks
+  visibly (~1300 B saved per UTF-16LE string, ~250 B per EFI
+  GUID). Memory pin: `project_byte_array_peephole_v6_0_x`.
 - **Return-patch buffer dynamic conversion** (pinned 2026-05-08
   at v5.10.6 ship — proposal Option C). The cap raise to 256
   at v5.10.6 lifts the per-fn return ceiling well beyond any

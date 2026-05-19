@@ -45,7 +45,7 @@ Per-patch detail for v5.11.0 → current ships lives in
 [CHANGELOG.md](../../CHANGELOG.md); current-state snapshot lives
 in [state.md](state.md).
 
-### Shipped this cycle (v5.11.47 → v5.11.66)
+### Shipped this cycle (v5.11.47 → v5.11.67)
 
 Per-slot detail in [CHANGELOG.md](../../CHANGELOG.md). One-liner
 ledger below; expanded narrative for shipped work lives in CHANGELOG
@@ -76,10 +76,11 @@ ledger below; expanded narrative for shipped work lives in CHANGELOG
 - **.62** — Compiler/tooling pair (Items 5 + 1): Item 5 reframed at slot entry after premise check (CYRIUS_DCE=1 NOPs `.text` only, doesn't shrink bss — empirically verified). Ships dead-fn `.bss` attribution hint via new `fn_var_bytes [8192]` heap region at 0x1C8000 + per-fn parser tracking; warning now shows "M bytes inside N unreachable fn(s)". commandress: 92 % of bss attributable. Drive-by 2-byte fix to pre-existing warning byte-count bug. Item 1: `cyrius init` bench scaffold uses real `bench_new` + `bench_batch_*` API + `bench` added to default `[deps.stdlib]`.
 - **.63** — aarch64 `_strict_mode` parity (.59 retro follow-up): `_strict_mode` global + `/proc/self/cmdline` parsing added to all three `main_aarch64*.cyr` variants; `src/backend/aarch64/fixup.cyr` strict-exit mirrors x86 lines 729-738. Drive-by: wrapper `--strict` plumbing extended to BOTH archs (was absent for both pre-.63). Band CLOSED.
 
-**v6.0 runway (.64-.66)**
+**v6.0 runway (.64-.67)**
 - **.64** — agnos gvar-init-order fix: top-level `var X = INT_LITERAL ;` declarations now bake the literal into the file image at FIXUP-time via new `gvar_initval` / `gvar_byte_off` tables (cross-arch x86 + aarch64 + Mach-O + PE; cx opts out). Closes 10-iron-burn root-cause search; cc5 SHRANK 2,384 B from eliminating runtime stores for cc5's own TS_TOK_* gvars.
 - **.65** — CVE-05 split forward from .68: tok_names mangle-path write-boundary guard. 11 mangle sites (BUILD_METHOD_NAME / BUILD_OP_NAME / PARSE_FN_DEF module-mangle / variant-ctor × 2 / use-alias × 6 main_*.cyr variants) replaced magic-256 NPOS_GUARD with computed-source-length shape; 4 of the 6 main_*.cyr variants had no prior tok_names guard at all on the use-alias path. `_cve05_guard_gate` locks the magic-256 pattern out. check.sh 75 → 76. .68 stays a pure heap-map reorg.
 - **.66** — Bridge-compiler retirement: `src/bridge.cyr` deleted (2,005 LoC). Audit confirmed bridge was never in active bootstrap chain (`seed → cyrc → asm` is the real chain; cc5 is built standalone). 150 `bridge::*` entries cleanly removed from `docs/api-surface.snapshot` via regeneration. CLAUDE.md Key Principle + project structure listing + util.cyr comment + ADR-001 historical note all updated. One v6.0.0 accompanying-refactor item absorbed into v5.x close.
+- **.67** — Triple-pull bundle of v6.0.0 accompanying-refactor items (effectively a double-pull after premise-check at slot entry caught `cyrius build --strict` plumbing already shipped at v5.11.63): (1) `scripts/build-cc5-verify.sh` (~100 LoC bash) — formalizes the cc5 byte-identical fixpoint verifier, ad-hoc one-liners now permanent; renames to `build-cyc.sh` at v6.0.0; (2) cc3-era residue cleanup — `docs/adr/005-two-step-bootstrap.md` rewritten with stage_a/stage_b convention (was using cc3/cc4 ambiguously throughout an active ADR), `docs/doc-health.md` vidya example syntax updated, `roadmap-old.md` self-references marked done. README also updated for the post-bridge bootstrap chain. Byte-array literal peephole moved out to v6.0.x per user direction "put the pinned byte-array into 6.0.x line of work now."
 
 Issue file `2026-05-17-commandress-stdlib-papercuts.md` archived after .63 ship; .64 absorbed the agnos gvar-init-order fix, .65 shipped CVE-05 split forward from .68 (tok_names mangle-path guard; per-region overflow checks). v6.0-runway scope confirmed at .65 entry per user direction 2026-05-19 "start the march to 6.0".
 
@@ -156,49 +157,20 @@ both move to v6.4.x. No mid-window auto-promotion.
 
 Memory pin: `project_mabda_rc3_at_closeout`.
 
-### v5.11.66 / v5.11.67 — Byte-array literal peephole (5× emit compression)
+### Byte-array literal peephole — moved to v6.0.x (2026-05-19)
 
-The v5.11.51 byte-array literal (`var foo[N] = { 0x.., ... };`)
-ships with a 21-byte-per-byte emit cost: each byte init goes
-through `EVADDR + EADDRA_IMM + EPUSHR + EMOVI + EPOPC + ESTORE8
-+ EXORAA` (parser-side reuse of the existing `store8(...)` expr
-path, same code shape the consumer would write by hand). For
-gnoboot's UTF-16LE strings (~78 bytes each) and EFI GUIDs (16
-bytes each, ~8 declared), the per-byte overhead adds ~1300 bytes
-of `.text` per UTF-16 string + ~250 bytes per GUID.
+The v5.11.51 byte-array literal peephole (5× emit compression
+for `var foo[N] = { ... }` init via `mov byte [rcx+disp8], imm8`)
+was originally pinned at v5.11.66 / v5.11.67. Per user direction
+2026-05-19 ("put the pinned byte-array into 6.0.x line of work
+now"), the work moved out of v5.11.x and into v6.0.x — it's
+optimization-shape, not v5.x close-out shape. Scope + cross-arch
+plan preserved in `docs/development/roadmap-old.md` under v6.x.
 
-Peephole optimization: emit `mov byte [rcx+disp8], imm8`
-(opcode `C6 41 disp imm`, 4 bytes per byte) using a cached
-`&var` in RCX once at the head of the init sequence. For
-offsets 0-127 (covers all practical byte-array sizes), the cost
-drops from 21 → 4 bytes per byte (**5× compression**).
-
-Pinned at v5.11.66 / v5.11.67 — late in the absorber band, just
-before the .68 closeout heap-map reorg. Tag .67 is the standard
-pinnage; .66 is the runway slot for cross-arch propagation work
-(aarch64 + cx need parallel peephole helpers, per
-`feedback_cross_arch_propagation_mandatory`). If the cross-arch
-work shrinks the peephole into a single slot, .67 stays
-flexible / cycles into the absorber.
-
-**Scope** (per the v5.11.55 refactor-survey item #5):
-
-- New x86 named op `EMOV_BYTE_RCX_DISP8_IMM8(S, disp8, imm8)`
-  → `C6 41 disp imm` (4 bytes).
-- Equivalent aarch64 op (STRB Wn, [Xn, imm12]).
-- Equivalent cx op (bytecode store-byte with imm).
-- `EMIT_GVAR_INITS` byte-array-literal replay path emits the
-  base `mov rcx, &var` once + the direct-store form per byte
-  instead of the full expression machinery.
-- Byte-identity verify: existing cc5 self-host (no byte arrays
-  in compiler source) stays byte-identical. gnoboot binary
-  shrinks visibly.
-- Regression test: `tests/tcyr/byte_array_literal.tcyr` 26
-  sub-asserts continue passing.
-
-Memory pin: refactor-survey item #5 in CHANGELOG [5.11.55].
-Acceptance bar: gnoboot rebuild against v5.11.66/.67 shows
-`.text` reduction proportional to byte-array literal count.
+The .66 + .67 slots that held it shipped other v6.0-runway
+items instead: .66 retired `src/bridge.cyr`, .67 shipped the
+build-cc5-verify.sh + cc3-era residue triple-pull
+(double-pull post-premise-check).
 
 ### v5.11.68 — Heap-map full reorganization (true closeout)
 
