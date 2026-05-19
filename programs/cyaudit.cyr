@@ -1,5 +1,5 @@
-# cybs — Cyrius Check (dependency audit + policy enforcement)
-# Usage: cybs vet <file> | cybs deny <file>
+# cyaudit — Cyrius Check (dependency audit + policy enforcement)
+# Usage: cyaudit vet <file> | cyaudit deny <file>
 
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -59,7 +59,7 @@ fn scan_includes(fp, inc): i64 {
 }
 
 fn cmd_vet(fp): i64 {
-    println("=== cybs vet ===");
+    println("=== cyaudit vet ===");
     syscall(1, 1, "scanning: ", 10);
     syscall(1, 1, fp, strlen(fp));
     syscall(1, 1, "\n", 1);
@@ -95,7 +95,7 @@ fn cmd_vet(fp): i64 {
 }
 
 fn cmd_deny(fp): i64 {
-    println("=== cybs deny ===");
+    println("=== cyaudit deny ===");
     var inc = vec_new();
     scan_includes(fp, inc);
     var len = vec_len(inc);
@@ -135,9 +135,9 @@ fn main(): i64 {
     alloc_init();
     args_init();
     if (argc() < 3) {
-        println("cybs — Cyrius Check");
-        println("  cybs vet <file>  — audit dependencies");
-        println("  cybs deny <file> — enforce policies");
+        println("cyaudit — Cyrius Check");
+        println("  cyaudit vet <file>  — audit dependencies");
+        println("  cyaudit deny <file> — enforce policies");
         return 0;
     }
     var cmd = argv(1);

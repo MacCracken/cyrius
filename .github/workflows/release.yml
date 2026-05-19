@@ -34,18 +34,18 @@ jobs:
       - name: Bootstrap fresh toolchain
         run: |
           sh bootstrap/bootstrap.sh
-          chmod +x build/cc5
-          cat src/main.cyr | ./build/cc5 > /tmp/cc5_release
+          chmod +x build/cycc
+          cat src/main.cyr | ./build/cycc > /tmp/cc5_release
           chmod +x /tmp/cc5_release
           cat src/main.cyr | /tmp/cc5_release > /tmp/cc5_verify
           cmp /tmp/cc5_release /tmp/cc5_verify
-          echo "PASS: cc5 self-hosts (x86_64)"
-          cp /tmp/cc5_release build/cc5
+          echo "PASS: cycc self-hosts (x86_64)"
+          cp /tmp/cc5_release build/cycc
 
       - name: Build tools
         run: |
           # Read tool list from cyrius.cyml [release].bins (v5.4.18) — skip
-          # cc5 (already built by bootstrap) and cyrius (special-cased below).
+          # cycc (already built by bootstrap) and cyrius (special-cased below).
           BINS=$(awk -v k="bins" '
               /^\[release\]/ { in_r = 1; next }
               in_r && /^\[/ { exit }
@@ -55,21 +55,21 @@ jobs:
                   sub(/^ +/, ""); sub(/ +$/, ""); print; exit
               }' cyrius.cyml)
           for tool in $BINS; do
-            if [ "$tool" = "cc5" ] || [ "$tool" = "cyrius" ]; then continue; fi
+            if [ "$tool" = "cycc" ] || [ "$tool" = "cyrius" ]; then continue; fi
             if [ -f "programs/${tool}.cyr" ]; then
-              cat programs/${tool}.cyr | ./build/cc5 > ./build/${tool} && chmod +x ./build/${tool}
+              cat programs/${tool}.cyr | ./build/cycc > ./build/${tool} && chmod +x ./build/${tool}
             fi
           done
           # cyrius build tool — compiled from Cyrius (auto-include, deps, -v)
-          cat cbt/cyrius.cyr | ./build/cc5 > ./build/cyrius && chmod +x ./build/cyrius
+          cat cbt/cyrius.cyr | ./build/cycc > ./build/cyrius && chmod +x ./build/cyrius
           echo "cyrius tool: $(wc -c < ./build/cyrius) bytes"
           # Cross-compile aarch64 compiler for inclusion in x86_64 tarball
-          cat src/main_aarch64.cyr | ./build/cc5 > ./build/cc5_aarch64 && chmod +x ./build/cc5_aarch64
+          cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
 
       - name: Verify x86_64 binary
         run: |
-          file build/cc5 | grep -q "ELF 64-bit.*x86-64" || { echo "ERROR: cc5 not x86_64"; file build/cc5; exit 1; }
-          echo "PASS: cc5 is x86_64 ELF"
+          file build/cycc | grep -q "ELF 64-bit.*x86-64" || { echo "ERROR: cycc not x86_64"; file build/cycc; exit 1; }
+          echo "PASS: cycc is x86_64 ELF"
 
       - name: Package x86_64 tarball
         run: |
@@ -97,16 +97,16 @@ jobs:
           for bin in $BINS; do
             [ -f "build/$bin" ] && cp "build/$bin" "$STAGE/bin/"
           done
-          # v5.8.2: cc5_aarch64 ships under bin/ alongside cc5. Pre-v5.8.2
+          # v5.8.2: cycc_aarch64 ships under bin/ alongside cycc. Pre-v5.8.2
           # placed it at $STAGE/ top-level "as a dev tool" — but downstream
           # consumers (sakshi/yukti/patra/mabda CI) install via `cp bin/*`
           # to ~/.cyrius/bin/, silently dropping the top-level binary and
           # then failing aarch64 cross-builds with `compiler not found:
-          # ~/.cyrius/bin/cc5_aarch64`. Local install.sh has always placed
+          # ~/.cyrius/bin/cycc_aarch64`. Local install.sh has always placed
           # cross_bins in bin/ (scripts/install.sh:100); release tarball
           # now matches. Canonical upstream report:
-          # yukti/docs/development/issues/2026-04-30-cyrius-cc5-aarch64-packaging.md.
-          [ -f "build/cc5_aarch64" ] && cp "build/cc5_aarch64" "$STAGE/bin/"
+          # yukti/docs/development/issues/2026-04-30-cyrius-cycc-aarch64-packaging.md.
+          [ -f "build/cycc_aarch64" ] && cp "build/cycc_aarch64" "$STAGE/bin/"
           cp bootstrap/asm "$STAGE/bin/"
           for script in $SCRIPTS; do
             [ -f "scripts/$script" ] && cp "scripts/$script" "$STAGE/bin/"
@@ -147,14 +147,14 @@ jobs:
 
       - name: Build native aarch64 compiler
         run: |
-          chmod +x build/cc5
-          # Step 1: x86 cc5 → cross-compiler (x86 binary that emits aarch64)
-          cat src/main_aarch64.cyr | ./build/cc5 > /tmp/cc5_cross && chmod +x /tmp/cc5_cross
+          chmod +x build/cycc
+          # Step 1: x86 cycc → cross-compiler (x86 binary that emits aarch64)
+          cat src/main_aarch64.cyr | ./build/cycc > /tmp/cc5_cross && chmod +x /tmp/cc5_cross
           # Step 2: cross-compiler → native aarch64 binary
-          cat src/main_aarch64.cyr | /tmp/cc5_cross > ./build/cc5_aarch64 && chmod +x ./build/cc5_aarch64
-          echo "cc5_aarch64: $(wc -c < ./build/cc5_aarch64) bytes"
+          cat src/main_aarch64.cyr | /tmp/cc5_cross > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
+          echo "cycc_aarch64: $(wc -c < ./build/cycc_aarch64) bytes"
           # Verify architecture
-          file ./build/cc5_aarch64 | grep -q "ARM aarch64" || { echo "ERROR: not aarch64"; file ./build/cc5_aarch64; exit 1; }
+          file ./build/cycc_aarch64 | grep -q "ARM aarch64" || { echo "ERROR: not aarch64"; file ./build/cycc_aarch64; exit 1; }
           # Smoke test: cross-compiler produces working binaries
           echo "var x = 42;" | /tmp/cc5_cross > /tmp/a64_test && chmod +x /tmp/a64_test
           result=$(timeout 5 qemu-aarch64-static /tmp/a64_test; echo $?)
@@ -170,7 +170,7 @@ jobs:
           STAGE="cyrius-${VER}-aarch64-linux"
           mkdir -p "$STAGE/bin" "$STAGE/lib"
 
-          cp build/cc5_aarch64 "$STAGE/bin/cc5"
+          cp build/cycc_aarch64 "$STAGE/bin/cycc"
           # Build cyrius tool for aarch64 tarball (x86 binary — runs on host for cross builds)
           if [ -f "build/cyrius" ]; then cp build/cyrius "$STAGE/bin/"; fi
           cp scripts/cyrius-init.sh "$STAGE/bin/" 2>/dev/null || true
@@ -202,11 +202,11 @@ jobs:
 
       - name: Build macOS compiler + tools
         run: |
-          chmod +x build/cc5
-          # Build cc5 from source (for reproducibility)
-          cat src/main.cyr | ./build/cc5 > /tmp/cc5_fresh && chmod +x /tmp/cc5_fresh
-          # Cross-compile: cc5 itself as a Mach-O binary
-          # (The Mach-O cc5 won't self-host on Linux — it's for macOS)
+          chmod +x build/cycc
+          # Build cycc from source (for reproducibility)
+          cat src/main.cyr | ./build/cycc > /tmp/cc5_fresh && chmod +x /tmp/cc5_fresh
+          # Cross-compile: cycc itself as a Mach-O binary
+          # (The Mach-O cycc won't self-host on Linux — it's for macOS)
           # Instead, compile key tools for macOS
           for tool in cyrfmt cyrlint cyrdoc; do
             if [ -f "programs/${tool}.cyr" ]; then
@@ -269,7 +269,7 @@ jobs:
   # (brk, flock) — v5.3.12's parse-time gate correctly rejects these,
   # and the fix is libSystem imports (v5.4.x). Until then, users on
   # Apple Silicon cross-compile from a Linux host with
-  # `CYRIUS_MACHO_ARM=1 build/cc5_aarch64`.
+  # `CYRIUS_MACHO_ARM=1 build/cycc_aarch64`.
   build-macos-arm64:
     name: Build macOS arm64
     needs: [ci]
@@ -279,8 +279,8 @@ jobs:
 
       - name: Build arm64 cross-compiler
         run: |
-          chmod +x build/cc5
-          cat src/main.cyr | ./build/cc5 > /tmp/cc5_fresh && chmod +x /tmp/cc5_fresh
+          chmod +x build/cycc
+          cat src/main.cyr | ./build/cycc > /tmp/cc5_fresh && chmod +x /tmp/cc5_fresh
           cat src/main_aarch64.cyr | /tmp/cc5_fresh > /tmp/cc5_cross_arm && chmod +x /tmp/cc5_cross_arm
           echo "arm64 cross-compiler: $(wc -c < /tmp/cc5_cross_arm) bytes"
 

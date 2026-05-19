@@ -22,36 +22,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup compiler
-        run: chmod +x build/cc5
+        run: chmod +x build/cycc
       - name: Build x86_64 compiler from source
         run: |
-          cat src/main.cyr | ./build/cc5 > /tmp/cc5 && chmod +x /tmp/cc5
-          SZ=$(wc -c < /tmp/cc5)
-          echo "cc5 (x86_64): $SZ bytes"
+          cat src/main.cyr | ./build/cycc > /tmp/cycc && chmod +x /tmp/cycc
+          SZ=$(wc -c < /tmp/cycc)
+          echo "cycc (x86_64): $SZ bytes"
           test $SZ -gt 80000
       - name: Self-hosting verify
         run: |
-          cat src/main.cyr | /tmp/cc5 > /tmp/cc5b
-          cmp /tmp/cc5 /tmp/cc5b
-          echo "PASS: cc5==cc5 byte-identical"
+          cat src/main.cyr | /tmp/cycc > /tmp/cc5b
+          cmp /tmp/cycc /tmp/cc5b
+          echo "PASS: cycc==cycc byte-identical"
       - name: Build aarch64 cross-compiler
         run: |
-          echo "build/cc5: $(wc -c < ./build/cc5) bytes"
-          echo "build/cc5 md5: $(md5sum build/cc5 | cut -d' ' -f1)"
+          echo "build/cycc: $(wc -c < ./build/cycc) bytes"
+          echo "build/cycc md5: $(md5sum build/cycc | cut -d' ' -f1)"
           echo "lex.cyr md5: $(md5sum src/frontend/lex.cyr | cut -d' ' -f1)"
           echo "main_aarch64 md5: $(md5sum src/main_aarch64.cyr | cut -d' ' -f1)"
-          ./build/cc5 --version || echo "cc5 --version failed"
-          cat src/main_aarch64.cyr | ./build/cc5 > ./build/cc5_aarch64 && chmod +x ./build/cc5_aarch64
-          echo "cc5_aarch64: $(wc -c < ./build/cc5_aarch64) bytes"
-          file ./build/cc5_aarch64
+          ./build/cycc --version || echo "cycc --version failed"
+          cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
+          echo "cycc_aarch64: $(wc -c < ./build/cycc_aarch64) bytes"
+          file ./build/cycc_aarch64
       - name: Build tools
         run: |
-          cat cbt/cyrius.cyr | ./build/cc5 > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius
-          cat programs/cyrfmt.cyr | ./build/cc5 > ./build/cyrfmt && chmod +x ./build/cyrfmt
-          cat programs/cyrlint.cyr | ./build/cc5 > ./build/cyrlint && chmod +x ./build/cyrlint
-          cat programs/cyrdoc.cyr | ./build/cc5 > ./build/cyrdoc && chmod +x ./build/cyrdoc
-          cat programs/cyrc.cyr | ./build/cc5 > ./build/cyrc && chmod +x ./build/cyrc
-          cat programs/ark.cyr | ./build/cc5 > ./build/ark && chmod +x ./build/ark
+          cat cbt/cyrius.cyr | ./build/cycc > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius
+          cat programs/cyrfmt.cyr | ./build/cycc > ./build/cyrfmt && chmod +x ./build/cyrfmt
+          cat programs/cyrlint.cyr | ./build/cycc > ./build/cyrlint && chmod +x ./build/cyrlint
+          cat programs/cyrdoc.cyr | ./build/cycc > ./build/cyrdoc && chmod +x ./build/cyrdoc
+          cat programs/cyaudit.cyr | ./build/cycc > ./build/cyaudit && chmod +x ./build/cyaudit
+          cat programs/ark.cyr | ./build/cycc > ./build/ark && chmod +x ./build/ark
 
   # ── Check & Format ──
   check:
@@ -61,10 +61,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup
         run: |
-          chmod +x build/cc5
-          cat cbt/cyrius.cyr | ./build/cc5 > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius
-          cat programs/cyrfmt.cyr | ./build/cc5 > ./build/cyrfmt && chmod +x ./build/cyrfmt
-          cat programs/cyrlint.cyr | ./build/cc5 > ./build/cyrlint && chmod +x ./build/cyrlint
+          chmod +x build/cycc
+          cat cbt/cyrius.cyr | ./build/cycc > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius
+          cat programs/cyrfmt.cyr | ./build/cycc > ./build/cyrfmt && chmod +x ./build/cyrfmt
+          cat programs/cyrlint.cyr | ./build/cycc > ./build/cyrlint && chmod +x ./build/cyrlint
       - name: Resolve dependencies
         run: |
           chmod +x scripts/cyrius
@@ -110,17 +110,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup
         run: |
-          chmod +x build/cc5
-          cat programs/cyrc.cyr | ./build/cc5 > ./build/cyrc && chmod +x ./build/cyrc
+          chmod +x build/cycc
+          cat programs/cyaudit.cyr | ./build/cycc > ./build/cyaudit && chmod +x ./build/cyaudit
       - name: Vet
         run: |
-          for f in programs/ark.cyr cbt/cyrius.cyr programs/cyrc.cyr; do
-            if [ -f "$f" ]; then ./build/cyrc vet "$f"; fi
+          for f in programs/ark.cyr cbt/cyrius.cyr programs/cyaudit.cyr; do
+            if [ -f "$f" ]; then ./build/cyaudit vet "$f"; fi
           done
       - name: Deny
         run: |
-          for f in programs/ark.cyr cbt/cyrius.cyr programs/cyrc.cyr; do
-            if [ -f "$f" ]; then ./build/cyrc deny "$f"; fi
+          for f in programs/ark.cyr cbt/cyrius.cyr programs/cyaudit.cyr; do
+            if [ -f "$f" ]; then ./build/cyaudit deny "$f"; fi
           done
 
   # ── Security ──
@@ -144,7 +144,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup compiler
-        run: chmod +x build/cc5
+        run: chmod +x build/cycc
       - name: Benchmark suite (tier 1+2)
         run: sh scripts/bench-history.sh --tier2
       - name: Upload benchmark artifacts
@@ -165,14 +165,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup compiler
         run: |
-          chmod +x build/cc5
-          cat cbt/cyrius.cyr | ./build/cc5 > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius
+          chmod +x build/cycc
+          cat cbt/cyrius.cyr | ./build/cycc > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius
           # cyrld is needed by tests/regression-linker.sh + the
           # v5.4.9 _cyrius_init handshake gate further down. Build
-          # it from source against the just-verified cc5 so the
+          # it from source against the just-verified cycc so the
           # gate exercises the same toolchain the rest of the job
           # does, not whatever was last committed to build/cyrld.
-          cat programs/cyrld.cyr | ./build/cc5 > ./build/cyrld 2>/dev/null && chmod +x ./build/cyrld
+          cat programs/cyrld.cyr | ./build/cycc > ./build/cyrld 2>/dev/null && chmod +x ./build/cyrld
       - name: Resolve dependencies
         run: |
           chmod +x scripts/cyrius
@@ -185,7 +185,7 @@ jobs:
           for t in tests/tcyr/*.tcyr; do
             name=$(basename "$t" .tcyr)
             tmpbin="/tmp/ci_t_$$"
-            cat "$t" | ./build/cc5 > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
+            cat "$t" | ./build/cycc > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
             output=$("$tmpbin" 2>&1) && ec=0 || ec=$?
             rm -f "$tmpbin"
@@ -219,7 +219,7 @@ jobs:
           object;
           fn x() { return 0; }
           EOF
-          ./build/cc5 < /tmp/cyr_objinit.cyr > /tmp/cyr_objinit.o 2>/dev/null
+          ./build/cycc < /tmp/cyr_objinit.cyr > /tmp/cyr_objinit.o 2>/dev/null
           bind=$(readelf -s /tmp/cyr_objinit.o | awk '$NF == "_cyrius_init" { print $5; exit }')
           rm -f /tmp/cyr_objinit.cyr /tmp/cyr_objinit.o
           if [ -z "$bind" ]; then
@@ -235,7 +235,7 @@ jobs:
           # Companion gate: cyrld must still link multi-module
           # programs after the v5.4.9 GLOBAL flip. Catches any
           # regression in the dup-symbol-skip handshake between
-          # cc5 (`src/backend/x86/fixup.cyr`) and cyrld
+          # cycc (`src/backend/x86/fixup.cyr`) and cyrld
           # (`programs/cyrld.cyr` `merge_symbols`).
           #
           # v5.9.3 retired tests/regression-linker.sh into
@@ -244,10 +244,10 @@ jobs:
           # objects.
           if [ -x build/cyrld ]; then
             mkdir -p /tmp/cyr_linktest
-            ./build/cc5 < tests/fixtures/linker/a.cyr > /tmp/cyr_linktest/a.o 2>/dev/null
-            ./build/cc5 < tests/fixtures/linker/c.cyr > /tmp/cyr_linktest/c.o 2>/dev/null
-            ./build/cc5 < tests/fixtures/linker/d.cyr > /tmp/cyr_linktest/d.o 2>/dev/null
-            ./build/cc5 < tests/fixtures/linker/m.cyr > /tmp/cyr_linktest/m.o 2>/dev/null
+            ./build/cycc < tests/fixtures/linker/a.cyr > /tmp/cyr_linktest/a.o 2>/dev/null
+            ./build/cycc < tests/fixtures/linker/c.cyr > /tmp/cyr_linktest/c.o 2>/dev/null
+            ./build/cycc < tests/fixtures/linker/d.cyr > /tmp/cyr_linktest/d.o 2>/dev/null
+            ./build/cycc < tests/fixtures/linker/m.cyr > /tmp/cyr_linktest/m.o 2>/dev/null
 
             ./build/cyrld -o /tmp/cyr_linktest/exe1 /tmp/cyr_linktest/c.o /tmp/cyr_linktest/a.o >/dev/null
             chmod +x /tmp/cyr_linktest/exe1
@@ -282,10 +282,10 @@ jobs:
           # + fncall0/2 internally. Exit-code mapping in
           # dlopen_runner.cyr's header: 99 = green; 10..36 =
           # specific sub-test failure.
-          cat tests/fixtures/shared/lib.cyr | ./build/cc5 \
+          cat tests/fixtures/shared/lib.cyr | ./build/cycc \
               > /tmp/cyrius_audit_shared.so
           chmod +x /tmp/cyrius_audit_shared.so
-          cat tests/fixtures/shared/dlopen_runner.cyr | ./build/cc5 \
+          cat tests/fixtures/shared/dlopen_runner.cyr | ./build/cycc \
               > /tmp/cyrius_audit_dlopen_runner
           chmod +x /tmp/cyrius_audit_dlopen_runner
           set +e
@@ -306,11 +306,11 @@ jobs:
           # granular under the existing per-step CI layout.
           CYR="$PWD/scripts/cyrius"
           [ -x "$CYR" ] || { echo "skip: scripts/cyrius missing"; exit 0; }
-          # The shim resolves cc5 via $HOME/.cyrius/bin/cc5 first;
+          # The shim resolves cycc via $HOME/.cyrius/bin/cycc first;
           # sync the just-built binary so test 7's empty-cwd run
-          # still finds cc5 (matches v5.7.38 .sh behavior).
+          # still finds cycc (matches v5.7.38 .sh behavior).
           mkdir -p "$HOME/.cyrius/bin"
-          cp "$PWD/build/cc5" "$HOME/.cyrius/bin/cc5"
+          cp "$PWD/build/cycc" "$HOME/.cyrius/bin/cycc"
           T=$(mktemp -d); trap "rm -rf $T" EXIT
           echo 'fn main() { return 42; }' > "$T/small.cyr"
           # v5.11.19 bumped 3500 → 7000 because fn_table cap doubled
@@ -331,9 +331,9 @@ jobs:
           set +e; "$CYR" capacity --check "$T/big.cyr" > "$T/o3" 2>&1; rc=$?; set -e
           [ "$rc" -eq 1 ] || { echo "FAIL T3: rc=$rc (expected 1)"; cat "$T/o3"; exit 1; }
           grep -q "table(s) at >=85%" "$T/o3" || { echo "FAIL T3: '>=85%' missing"; exit 1; }
-          # T4: 7000-fn source compiles via cc5 + binary sane size.
-          set +e; cat "$T/big.cyr" | ./build/cc5 > "$T/big.o" 2>/dev/null; rc=$?; set -e
-          [ "$rc" -eq 0 ] || { echo "FAIL T4: cc5 exit=$rc"; exit 1; }
+          # T4: 7000-fn source compiles via cycc + binary sane size.
+          set +e; cat "$T/big.cyr" | ./build/cycc > "$T/big.o" 2>/dev/null; rc=$?; set -e
+          [ "$rc" -eq 0 ] || { echo "FAIL T4: cycc exit=$rc"; exit 1; }
           [ "$(wc -c < "$T/big.o")" -ge 100000 ] || { echo "FAIL T4: 7000-fn .o suspiciously small"; exit 1; }
           # T5/T6: --json on small + big has fn_table key.
           "$CYR" capacity --json "$T/small.cyr" > "$T/o5" 2>/dev/null
@@ -360,8 +360,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup compiler
         run: |
-          chmod +x build/cc5
-          cat cbt/cyrius.cyr | ./build/cc5 > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius || true
+          chmod +x build/cycc
+          cat cbt/cyrius.cyr | ./build/cycc > ./build/cyrius 2>/dev/null && chmod +x ./build/cyrius || true
           if command -v git >/dev/null 2>&1; then
             chmod +x scripts/cyrius
             ./scripts/cyrius deps
@@ -377,7 +377,7 @@ jobs:
             case "$name" in sakshi|sakshi_full) [ ! -f lib/sakshi.cyr ] && echo "SKIP: $name (no deps)" && continue ;; esac
             name=$(basename "$t" .tcyr)
             tmpbin="/tmp/ci_t_$$"
-            cat "$t" | ./build/cc5 > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
+            cat "$t" | ./build/cycc > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
             output=$("$tmpbin" 2>&1) && ec=0 || ec=$?
             rm -f "$tmpbin"
@@ -408,13 +408,13 @@ jobs:
           sudo apt-get install -y qemu-user-static
       - name: Setup compilers
         run: |
-          chmod +x build/cc5
-          echo "build/cc5: $(wc -c < ./build/cc5) bytes"
-          echo "build/cc5 md5: $(md5sum build/cc5 | cut -d' ' -f1)"
+          chmod +x build/cycc
+          echo "build/cycc: $(wc -c < ./build/cycc) bytes"
+          echo "build/cycc md5: $(md5sum build/cycc | cut -d' ' -f1)"
           echo "lex.cyr md5: $(md5sum src/frontend/lex.cyr | cut -d' ' -f1)"
-          ./build/cc5 --version || echo "cc5 --version failed with exit $?"
-          cat src/main_aarch64.cyr | ./build/cc5 > ./build/cc5_aarch64 && chmod +x ./build/cc5_aarch64
-          echo "cc5_aarch64: $(wc -c < ./build/cc5_aarch64) bytes"
+          ./build/cycc --version || echo "cycc --version failed with exit $?"
+          cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
+          echo "cycc_aarch64: $(wc -c < ./build/cycc_aarch64) bytes"
       - name: aarch64 tests
         run: |
           pass=0; fail=0
@@ -449,7 +449,7 @@ jobs:
             name=$(echo "$test" | cut -d: -f1)
             code=$(echo "$test" | cut -d: -f2)
             expected=$(echo "$test" | cut -d: -f3)
-            echo "$code" | ./build/cc5_aarch64 > /tmp/a64_t && chmod +x /tmp/a64_t
+            echo "$code" | ./build/cycc_aarch64 > /tmp/a64_t && chmod +x /tmp/a64_t
             result=$(timeout 5 qemu-aarch64-static /tmp/a64_t >/dev/null 2>&1; echo $?)
             if [ "$result" = "$expected" ]; then pass=$((pass+1)); else echo "FAIL: $name"; fail=$((fail+1)); fi
           done
@@ -465,7 +465,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup compiler
         run: |
-          chmod +x build/cc5
+          chmod +x build/cycc
       - name: Mach-O compilation tests
         run: |
           pass=0; fail=0
@@ -477,7 +477,7 @@ jobs:
           do
             name=$(echo "$test" | cut -d: -f1)
             code=$(echo "$test" | cut -d: -f2-)
-            printf "$code" | CYRIUS_MACHO=1 ./build/cc5 2>/dev/null > /tmp/macho_test
+            printf "$code" | CYRIUS_MACHO=1 ./build/cycc 2>/dev/null > /tmp/macho_test
             # Verify: non-empty, Mach-O magic (FEEDFACF little-endian = CF FA ED FE)
             sz=$(wc -c < /tmp/macho_test)
             magic=$(xxd -l4 -p /tmp/macho_test)
@@ -494,7 +494,7 @@ jobs:
         run: |
           echo 'include "lib/syscalls_macos.cyr"
           syscall(SYS_WRITE, 1, "hello\n", 6);
-          syscall(SYS_EXIT, 0);' | CYRIUS_MACHO=1 ./build/cc5 2>/dev/null > /tmp/macho_id
+          syscall(SYS_EXIT, 0);' | CYRIUS_MACHO=1 ./build/cycc 2>/dev/null > /tmp/macho_id
           file /tmp/macho_id | grep -q "Mach-O 64-bit x86_64"
 
   # ── macOS Apple Silicon (arm64) — static verification ──
@@ -509,9 +509,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup cross-compiler
         run: |
-          chmod +x build/cc5
-          cat src/main_aarch64.cyr | ./build/cc5 > ./build/cc5_aarch64 && chmod +x ./build/cc5_aarch64
-          echo "cc5_aarch64: $(wc -c < ./build/cc5_aarch64) bytes"
+          chmod +x build/cycc
+          cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
+          echo "cycc_aarch64: $(wc -c < ./build/cycc_aarch64) bytes"
       - name: Mach-O ARM64 compilation tests
         run: |
           mkdir -p /tmp/macho_arm_out
@@ -528,7 +528,7 @@ jobs:
             name=$(echo "$test" | cut -d: -f1)
             code=$(echo "$test" | cut -d: -f2-)
             out="/tmp/macho_arm_out/$name.macho"
-            printf "$code\n" | CYRIUS_MACHO_ARM=1 ./build/cc5_aarch64 2>/dev/null > "$out"
+            printf "$code\n" | CYRIUS_MACHO_ARM=1 ./build/cycc_aarch64 2>/dev/null > "$out"
             sz=$(wc -c < "$out")
             magic=$(xxd -l4 -p "$out" | tr -d ' \n')
             cputype=$(xxd -s4 -l4 -p "$out" | tr -d ' \n')
@@ -635,7 +635,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup compiler
-        run: chmod +x build/cc5
+        run: chmod +x build/cycc
       - name: Compile exit-code PE32+ test binaries
         run: |
           mkdir -p /tmp/win_out
@@ -653,7 +653,7 @@ jobs:
             code=$(echo "$test" | cut -d: -f2)
             expected=$(echo "$test" | cut -d: -f3)
             out="/tmp/win_out/$name.exe"
-            printf "$code\n" | CYRIUS_TARGET_WIN=1 ./build/cc5 2>/dev/null > "$out"
+            printf "$code\n" | CYRIUS_TARGET_WIN=1 ./build/cycc 2>/dev/null > "$out"
             sz=$(wc -c < "$out")
             # Validate PE32+ signature at container level
             magic=$(xxd -l2 -p "$out" | tr -d ' \n')
@@ -708,7 +708,7 @@ jobs:
             code=$(echo "$test" | cut -d: -f2)
             expected=$(echo "$test" | cut -d: -f3)
             out="/tmp/win_out/$name.exe"
-            printf "%s\n" "$code" | CYRIUS_TARGET_WIN=1 ./build/cc5 2>/dev/null > "$out"
+            printf "%s\n" "$code" | CYRIUS_TARGET_WIN=1 ./build/cycc 2>/dev/null > "$out"
             sz=$(wc -c < "$out")
             magic=$(xxd -l2 -p "$out" | tr -d ' \n')
             pesig=$(xxd -s64 -l4 -p "$out" | tr -d ' \n')
@@ -750,7 +750,7 @@ jobs:
             code=$(echo "$test" | cut -d: -f2)
             expected=$(echo "$test" | cut -d: -f3)
             out="/tmp/win_out/$name.exe"
-            printf "%s\n" "$code" | CYRIUS_TARGET_WIN=1 ./build/cc5 2>/dev/null > "$out"
+            printf "%s\n" "$code" | CYRIUS_TARGET_WIN=1 ./build/cycc 2>/dev/null > "$out"
             sz=$(wc -c < "$out")
             magic=$(xxd -l2 -p "$out" | tr -d ' \n')
             pesig=$(xxd -s64 -l4 -p "$out" | tr -d ' \n')
@@ -782,7 +782,7 @@ jobs:
           # 3-line PE branch in src/backend/x86/fixup.cyr ftype=3
           # mirroring the existing ftype=1 string-address guard.
           printf 'fn f() { return 42; } var fp = &f; syscall(60, 0);\n' \
-            | CYRIUS_TARGET_WIN=1 ./build/cc5 2>/dev/null > /tmp/win_out/w_fnaddr.exe
+            | CYRIUS_TARGET_WIN=1 ./build/cycc 2>/dev/null > /tmp/win_out/w_fnaddr.exe
           sz=$(wc -c < /tmp/win_out/w_fnaddr.exe)
           test "$sz" -gt 0 || { echo "FAIL: w_fnaddr.exe empty"; exit 1; }
           # Scan .text (file offset 0x200+) for `48 B8 <imm64>` and
@@ -832,7 +832,7 @@ jobs:
             expected=$(echo "$test" | cut -d: -f3)
             out="/tmp/win_out/$name.exe"
             printf 'include "lib/fnptr.cyr"\n%s\n' "$code" \
-              | CYRIUS_TARGET_WIN=1 ./build/cc5 2>/dev/null > "$out"
+              | CYRIUS_TARGET_WIN=1 ./build/cycc 2>/dev/null > "$out"
             sz=$(wc -c < "$out")
             if [ "$sz" -gt 0 ]; then
               pass=$((pass+1))
@@ -879,7 +879,7 @@ jobs:
           #   (e) the compiled movabs targets `0x140…` (PE VA), not
           #       `0x400…` (ELF VA) — v5.4.8 data-placement regression gate.
           printf 'syscall(1, 1, "hi\\n", 3); syscall(60, 0);\n' \
-            | CYRIUS_TARGET_WIN=1 ./build/cc5 2>/dev/null > /tmp/win_out/hello.exe
+            | CYRIUS_TARGET_WIN=1 ./build/cycc 2>/dev/null > /tmp/win_out/hello.exe
           sz=$(wc -c < /tmp/win_out/hello.exe)
           magic=$(xxd -l2 -p /tmp/win_out/hello.exe | tr -d ' \n')
           machine=$(xxd -s68 -l2 -p /tmp/win_out/hello.exe | tr -d ' \n')
@@ -988,8 +988,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build cyrdoc
         run: |
-          chmod +x build/cc5
-          cat programs/cyrdoc.cyr | ./build/cc5 > ./build/cyrdoc && chmod +x ./build/cyrdoc
+          chmod +x build/cycc
+          cat programs/cyrdoc.cyr | ./build/cycc > ./build/cyrdoc && chmod +x ./build/cyrdoc
       - name: Doc coverage (stdlib)
         run: |
           total=0

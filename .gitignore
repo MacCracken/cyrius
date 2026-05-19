@@ -1,15 +1,22 @@
 # Build artifacts
 /build/*
+# Committed binaries per the v6.0.x transition policy:
+# - cc3 stays as the v5.0.0-era prior-prior seed anchor (retired
+#   for fresh bootstraps but kept in tree as historical reference;
+#   drops at the v7.0.0 cycle-open per CLAUDE.md "Project Structure").
+# - cycc (Cyrius Computer Compiler) — current-major, v6.0.0 rename
+#   of cc5. Tracked so CI / install bootstrap have a starting point.
+# - cycc-native-aarch64 — the cycc binary built natively on aarch64,
+#   kept for ARM hardware self-host.
 !/build/cc3
-!/build/cc5
-!/build/cc3-native-aarch64
-!/build/cc5-native-aarch64
+!/build/cycc
+!/build/cycc-native-aarch64
 # Ad-hoc cross-compiled outputs at repo root (regenerated on demand;
 # see src/main_aarch64_macho.cyr header and scripts/mac-selfhost.sh).
-/cc5_macho
-/cc5_macho_b
-/cc5_macho_b_unsigned
-/cc5_macho_c
+/cycc_macho
+/cycc_macho_b
+/cycc_macho_b_unsigned
+/cycc_macho_c
 
 # Temporary files
 /tmp/
