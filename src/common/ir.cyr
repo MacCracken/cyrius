@@ -4,10 +4,10 @@
 # Parse builds IR; lowering pass walks IR and calls emit functions.
 #
 # Memory layout (all relative to S):
-#   0x134A000  ir_nodes    [4MB]   262144 nodes × 16 bytes
-#   0x174A000  ir_blocks   [256KB] 8192 blocks × 32 bytes
-#   0x184A000 ir_state    [4KB]   counters + current state
-#   0x184B000 ir_edges    [64KB]  8192 edges × 8 bytes
+#   0xA3A000  ir_nodes    [4MB]   262144 nodes × 16 bytes
+#   0xE3A000  ir_blocks   [256KB] 8192 blocks × 32 bytes
+#   0xF3A000 ir_state    [4KB]   counters + current state
+#   0xF3B000 ir_edges    [64KB]  8192 edges × 8 bytes
 #
 # IRNode (16 bytes):
 #   +0: opcode (i16) + flags (i16) packed in low 32 bits
@@ -153,8 +153,8 @@ fn _IR_REC(S, op, fl, a1, a2): i64 {
 # IR state accessors
 # ================================================================
 
-fn IR_NCNT(S): i64 { return L64(S + 0x184A000); }
-fn IR_SNCNT(S, v): i64 { S64(S + 0x184A000, v); return 0; }
+fn IR_NCNT(S): i64 { return L64(S + 0xF3A000); }
+fn IR_SNCNT(S, v): i64 { S64(S + 0xF3A000, v); return 0; }
 fn IR_BCNT(S): i64 { return L64(S + 0x174A008); }
 fn IR_SBCNT(S, v): i64 { S64(S + 0x174A008, v); return 0; }
 fn IR_CURBB(S): i64 { return L64(S + 0x174A010); }
@@ -175,7 +175,7 @@ fn _ir_pack_op(op, flags): i64 {
 
 # Write an IR node at index ni
 fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
-    var base = S + 0x134A000 + ni * 16;
+    var base = S + 0xA3A000 + ni * 16;
     store32(base, opflags);
     store32(base + 4, arg1);
     store64(base + 8, arg2);
@@ -183,11 +183,11 @@ fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
 }
 
 # Read IR node fields
-fn IR_NODE_CP(S, ni): i64 { return load32(S + 0x188B000 + ni * 4); }
-fn IR_NODE_OP(S, ni): i64 { return load16(S + 0x134A000 + ni * 16); }
-fn IR_NODE_FL(S, ni): i64 { return load16(S + 0x134A000 + ni * 16 + 2); }
-fn IR_NODE_A1(S, ni): i64 { return load32(S + 0x134A000 + ni * 16 + 4); }
-fn IR_NODE_A2(S, ni): i64 { return load64(S + 0x134A000 + ni * 16 + 8); }
+fn IR_NODE_CP(S, ni): i64 { return load32(S + 0xF7B000 + ni * 4); }
+fn IR_NODE_OP(S, ni): i64 { return load16(S + 0xA3A000 + ni * 16); }
+fn IR_NODE_FL(S, ni): i64 { return load16(S + 0xA3A000 + ni * 16 + 2); }
+fn IR_NODE_A1(S, ni): i64 { return load32(S + 0xA3A000 + ni * 16 + 4); }
+fn IR_NODE_A2(S, ni): i64 { return load64(S + 0xA3A000 + ni * 16 + 8); }
 
 # ================================================================
 # Basic block read/write
@@ -200,7 +200,7 @@ fn IR_NODE_A2(S, ni): i64 { return load64(S + 0x134A000 + ni * 16 + 8); }
 #   +24: succ0 | (succ1 << 32)
 
 fn _ir_set_bb(S, bi, first, count, succ0, succ1): i64 {
-    var base = S + 0x174A000 + bi * 32;
+    var base = S + 0xE3A000 + bi * 32;
     store64(base, bi);
     store64(base + 8, first);
     store64(base + 16, count);
@@ -208,11 +208,11 @@ fn _ir_set_bb(S, bi, first, count, succ0, succ1): i64 {
     return 0;
 }
 
-fn IR_BB_ID(S, bi): i64 { return load64(S + 0x174A000 + bi * 32); }
-fn IR_BB_FIRST(S, bi): i64 { return load64(S + 0x174A000 + bi * 32 + 8); }
-fn IR_BB_COUNT(S, bi): i64 { return load64(S + 0x174A000 + bi * 32 + 16); }
-fn IR_BB_SUCC0(S, bi): i64 { return load64(S + 0x174A000 + bi * 32 + 24) & 0xFFFFFFFF; }
-fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0x174A000 + bi * 32 + 24) >> 32) & 0xFFFFFFFF; }
+fn IR_BB_ID(S, bi): i64 { return load64(S + 0xE3A000 + bi * 32); }
+fn IR_BB_FIRST(S, bi): i64 { return load64(S + 0xE3A000 + bi * 32 + 8); }
+fn IR_BB_COUNT(S, bi): i64 { return load64(S + 0xE3A000 + bi * 32 + 16); }
+fn IR_BB_SUCC0(S, bi): i64 { return load64(S + 0xE3A000 + bi * 32 + 24) & 0xFFFFFFFF; }
+fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xE3A000 + bi * 32 + 24) >> 32) & 0xFFFFFFFF; }
 
 # ================================================================
 # IR builder — Phase 2 API
@@ -248,13 +248,13 @@ fn ir_emit(S, op, flags, arg1, arg2): i64 {
     }
     _ir_set_node(S, ni, _ir_pack_op(op, flags), arg1, arg2);
     # Record codebuf position (32-bit, CP fits in 1MB)
-    store32(S + 0x188B000 + ni * 4, GCP(S));
+    store32(S + 0xF7B000 + ni * 4, GCP(S));
     IR_SNCNT(S, ni + 1);
 
     # Update current BB's node count
     var bi = IR_CURBB(S);
     if (bi >= 0 && bi < 32768) {
-        var base = S + 0x174A000 + bi * 32;
+        var base = S + 0xE3A000 + bi * 32;
         store64(base + 16, load64(base + 16) + 1);
     }
     return ni;
@@ -271,7 +271,7 @@ fn ir_emit2(S, op, arg2): i64 { return ir_emit(S, op, 0, 0, arg2); }
 
 # Set BB successor (unconditional jump)
 fn ir_bb_set_succ(S, bi, target): i64 {
-    var base = S + 0x174A000 + bi * 32;
+    var base = S + 0xE3A000 + bi * 32;
     var cur = load64(base + 24);
     store64(base + 24, (target & 0xFFFFFFFF) | (cur & 0xFFFFFFFF00000000));
     return 0;
@@ -279,7 +279,7 @@ fn ir_bb_set_succ(S, bi, target): i64 {
 
 # Set BB successors (conditional: true_bb, false_bb)
 fn ir_bb_set_cond(S, bi, true_bb, false_bb): i64 {
-    var base = S + 0x174A000 + bi * 32;
+    var base = S + 0xE3A000 + bi * 32;
     store64(base + 24, (true_bb & 0xFFFFFFFF) | ((false_bb & 0xFFFFFFFF) << 32));
     return 0;
 }
@@ -288,14 +288,14 @@ fn ir_bb_set_cond(S, bi, true_bb, false_bb): i64 {
 fn ir_add_edge(S, from_bb, to_bb): i64 {
     var ec = IR_ECNT(S);
     if (ec >= 8192) { return 0; }
-    var base = S + 0x184B000 + ec * 8;
+    var base = S + 0xF3B000 + ec * 8;
     store64(base, (from_bb & 0xFFFFFFFF) | ((to_bb & 0xFFFFFFFF) << 32));
     IR_SECNT(S, ec + 1);
     return 0;
 }
 
-fn IR_EDGE_FROM(S, ei): i64 { return load64(S + 0x184B000 + ei * 8) & 0xFFFFFFFF; }
-fn IR_EDGE_TO(S, ei): i64 { return (load64(S + 0x184B000 + ei * 8) >> 32) & 0xFFFFFFFF; }
+fn IR_EDGE_FROM(S, ei): i64 { return load64(S + 0xF3B000 + ei * 8) & 0xFFFFFFFF; }
+fn IR_EDGE_TO(S, ei): i64 { return (load64(S + 0xF3B000 + ei * 8) >> 32) & 0xFFFFFFFF; }
 
 # Reset IR state (between functions or at start of compilation)
 fn ir_reset(S): i64 {
@@ -583,7 +583,7 @@ fn ir_apply_lase(S): i64 {
             if (sz > 0 && sz < 16) {
                 var j = 0;
                 while (j < sz) {
-                    store8(S + 0x64A000 + cp_start + j, 0x90);
+                    store8(S + 0x41A000 + cp_start + j, 0x90);
                     j = j + 1;
                 }
                 bytes = bytes + sz;
@@ -648,7 +648,7 @@ fn _ir_emovi_size(v): i64 {
 # emovi_size). Caller must ensure span >= emovi_size.
 fn _ir_write_emovi_at(S, off, v, span): i64 {
     var sz = _ir_emovi_size(v);
-    var base = S + 0x64A000 + off;
+    var base = S + 0x41A000 + off;
     if (v == 0) {
         # xor eax, eax (31 C0)
         store8(base, 0x31);
@@ -1050,7 +1050,7 @@ fn ir_build_bbs(S): i64 {
         # Terminators end the current BB and start a new one
         if (op == IR_JMP || op == IR_JCC || op == IR_JMP_BACK || op == IR_EPILOGUE || op == IR_RET) {
             # This node belongs to current BB — update count
-            var base = S + 0x174A000 + cur_bb * 32;
+            var base = S + 0xE3A000 + cur_bb * 32;
             store64(base + 16, i - IR_BB_FIRST(S, cur_bb) + 1);
 
             # Start new BB at next node
@@ -1058,7 +1058,7 @@ fn ir_build_bbs(S): i64 {
                 cur_bb = ir_bb_new(S);
                 ir_set_bb(S, cur_bb);
                 # Set first_node for the new BB
-                store64(S + 0x174A000 + cur_bb * 32 + 8, i + 1);
+                store64(S + 0xE3A000 + cur_bb * 32 + 8, i + 1);
             }
         }
         # NOP with patch offset = landing pad → always starts a new BB
@@ -1066,20 +1066,20 @@ fn ir_build_bbs(S): i64 {
         elif (op == IR_NOP && i > 0 && IR_NODE_A1(S, i) != 0) {
             var cur_first = IR_BB_FIRST(S, cur_bb);
             if (i > cur_first) {
-                var base = S + 0x174A000 + cur_bb * 32;
+                var base = S + 0xE3A000 + cur_bb * 32;
                 store64(base + 16, i - cur_first);
                 cur_bb = ir_bb_new(S);
                 ir_set_bb(S, cur_bb);
-                store64(S + 0x174A000 + cur_bb * 32 + 8, i);
+                store64(S + 0xE3A000 + cur_bb * 32 + 8, i);
             }
         }
         # PROLOG starts a new BB (function entry)
         elif (op == IR_PROLOGUE && i > 0) {
-            var base = S + 0x174A000 + cur_bb * 32;
+            var base = S + 0xE3A000 + cur_bb * 32;
             store64(base + 16, i - IR_BB_FIRST(S, cur_bb));
             cur_bb = ir_bb_new(S);
             ir_set_bb(S, cur_bb);
-            store64(S + 0x174A000 + cur_bb * 32 + 8, i);
+            store64(S + 0xE3A000 + cur_bb * 32 + 8, i);
         }
 
         i = i + 1;
@@ -1088,7 +1088,7 @@ fn ir_build_bbs(S): i64 {
     # Finalize last BB's node count
     if (IR_BCNT(S) > 0) {
         var last = IR_BCNT(S) - 1;
-        var base = S + 0x174A000 + last * 32;
+        var base = S + 0xE3A000 + last * 32;
         var first = load64(base + 8);
         store64(base + 16, ncnt - first);
     }
@@ -1276,7 +1276,7 @@ fn ir_dead_block_elim(S): i64 {
             if (sz > 0 && sz < 4096) {
                 var j = 0;
                 while (j < sz) {
-                    store8(S + 0x64A000 + cp_start + j, 0x90);
+                    store8(S + 0x41A000 + cp_start + j, 0x90);
                     j = j + 1;
                 }
                 bytes = bytes + sz;

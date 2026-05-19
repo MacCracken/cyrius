@@ -6,6 +6,176 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.11.68] — 2026-05-19
+
+**Heap-map full reorganization — the true v5.x closeout
+engineering work.** Closes all four documented closeable
+gaps from the v5.8.61 minimum-blast-radius pass: 2.24 MB
++ 6 MB + 448 KB + 448 KB = ~9.06 MB reclaimed. brk shrinks
+0x56AD000 → **0x4D9D000** (-9.06 MB / ~77.6 MB total
+heap, was ~86.6 MB). 13.3 MB TS frontend reservation
+preserved.
+
+Originally pinned 2026-05-05 at v5.8.61 ship as the
+"last-minor-before-v6.0 effort"; re-pinned to v5.11.68
+at the 2026-05-12 tight-close. CVE-05 was split out of
+this slot at v5.11.65; the closeout stays purely a layout
+reorg per "Big Heavy One Thing" — orthogonal to write-
+boundary checks.
+
+### Before / after layout
+
+| Region | Pre-.68 base | Post-.68 base | Shift |
+|---|---|---|---|
+| str_data | 0x21A000 | 0x21A000 | unchanged |
+| codebuf | 0x64A000 | **0x41A000** | -2.24 MB |
+| output_buf | 0x94A000 | **0x71A000** | -2.24 MB |
+| struct_ftypes | 0x114A000 | **0x91A000** | -8.19 MB |
+| struct_fnames | 0x11CA000 | **0x92A000** | -8.62 MB |
+| fn_param_cstring_mask | 0x124A000 | **0x93A000** | -9.06 MB |
+| fn_param_result_mask | 0x125A000 | **0x94A000** | -9.06 MB |
+| fn_param_option_mask | 0x126A000 | **0x95A000** | -9.06 MB |
+| fn_param_tagged_mask | 0x127A000 | **0x96A000** | -9.06 MB |
+| fn_overload_str | 0x128A000 | **0x97A000** | -9.06 MB |
+| fn_overload_int | 0x129A000 | **0x98A000** | -9.06 MB |
+| fn_overload_cstr | 0x12AA000 | **0x99A000** | -9.06 MB |
+| fn_param_simd_mask | 0x12BA000 | **0x9AA000** | -9.06 MB |
+| fn_names | 0x12CA000 | **0x9BA000** | -9.06 MB |
+| fn_offsets | 0x12DA000 | **0x9CA000** | -9.06 MB |
+| fn_params | 0x12EA000 | **0x9DA000** | -9.06 MB |
+| fn_body_start | 0x12FA000 | **0x9EA000** | -9.06 MB |
+| fn_body_end | 0x130A000 | **0x9FA000** | -9.06 MB |
+| fn_inline | 0x131A000 | **0xA0A000** | -9.06 MB |
+| fn_param_str_mask | 0x132A000 | **0xA1A000** | -9.06 MB |
+| fn_code_end | 0x133A000 | **0xA2A000** | -9.06 MB |
+| ir_nodes | 0x134A000 | **0xA3A000** | -9.06 MB |
+| ir_blocks | 0x174A000 | **0xE3A000** | -9.06 MB |
+| ir_state | 0x184A000 | **0xF3A000** | -9.06 MB |
+| ir_edges | 0x184B000 | **0xF3B000** | -9.06 MB |
+| ir_cp | 0x188B000 | **0xF7B000** | -9.06 MB |
+| fixup_tbl | 0x198B000 | **0x107B000** | -9.06 MB |
+| (TS reservation) | 0x298B000..0x368C000 | 0x207B000..0x2D7C000 | -9.06 MB (gap preserved) |
+| tok_types | 0x368C000 | **0x2D7C000** | -9.06 MB |
+| tok_values | 0x3E8C000 | **0x357C000** | -9.06 MB |
+| tok_lines | 0x468C000 | **0x3D7C000** | -9.06 MB |
+| lexid_count | 0x4E8C000 | **0x457C000** | -9.06 MB |
+| lexid_heads | 0x4E8C100 | **0x457C100** | -9.06 MB |
+| lexid_entries | 0x4E8C900 | **0x457C900** | -9.06 MB |
+| preprocess_out | 0x4EAD000 | **0x459D000** | -9.06 MB |
+| **brk-final** | 0x56AD000 | **0x4D9D000** | **-9.06 MB** |
+
+### Cascade shape (four group shifts)
+
+The closeable gaps are at increasing offsets, so each region
+shifts by the sum of all upstream gap sizes:
+
+- **Group 1** (codebuf + output_buf): shift -0x230000 (-2.24 MB).
+  Closes gap A (`0x41A000 → 0x64A000` str_data→codebuf).
+- **Group 2** (struct_ftypes alone): shift -0x830000 (-8.19 MB).
+  Closes gap A + gap B (6 MB output_buf→struct_ftypes).
+- **Group 3** (struct_fnames alone): shift -0x8A0000 (-8.62 MB).
+  Closes gap A + B + C (448 KB struct_ftypes→struct_fnames).
+- **Group 4** (fn_param_cstring_mask onwards): shift -0x910000
+  (-9.06 MB). Closes all four gaps; the TS frontend reservation
+  rides along (its 13.3 MB internal gap is preserved between
+  fixup_tbl end and tok_types start).
+
+### Windows MMAP shrink
+
+`main_win.cyr` MMAP region shrunk **0x5800000 → 0x4F00000**
+(-9.06 MB) to track the brk reduction. PE EMMAP routes via
+VirtualAlloc; the shrink eliminates ~9 MB of address-space
+allocation that was reserved-but-unused.
+
+### Edits
+
+- **Per-region replace_all in src/** (4 groups, ~32 distinct
+  hex constants across 20 files):
+  - Group 1: 0x64A000 → 0x41A000 (151 refs);
+    0x94A000 → 0x71A000 (30 refs).
+  - Group 2: 0x114A000 → 0x91A000 (11 refs).
+  - Group 3: 0x11CA000 → 0x92A000 (11 refs).
+  - Group 4: 28 hex constants from 0x124A000 through 0x56AD000,
+    all shifted -0x910000.
+- **Heap-map comment blocks refreshed** in 6 `src/main_*.cyr`
+  files (main.cyr full rewrite of str_data / codebuf / output_buf
+  / TS / preprocess_out / brk-final blocks; aarch64/native/macho/
+  win/cx focused fixes for the "2 MB FREED GAP" stub +
+  "~86.6 MB total heap" → "~77.6 MB").
+- **`src/common/util.cyr` historical comments** updated: the
+  v5.11.19 fn_table-doubled anchor stripped its bare hex
+  reference (sed mutated it); the `_HEAP_INIT_SCRATCH` block
+  comment now cites the post-.68 brk extent (0x4D9D000) with
+  lineage note.
+- Windows MMAP: 0x5800000 → 0x4F00000 in main_win.cyr.
+
+### Two-step bootstrap discipline
+
+Per CLAUDE.md "Two-step bootstrap for heap changes":
+
+1. **Stage A** — Old cc5 (v5.11.67 layout) compiles new
+   src/main.cyr → cc5_a (v5.11.68 layout). The OLD compiler
+   uses ITS OWN internal offsets to parse + emit, but its
+   OUTPUT (cc5_a) carries the NEW offsets. **874,232 bytes.**
+2. **Stage B** — cc5_a compiles same src/main.cyr → cc5_b.
+   The NEW compiler uses NEW offsets internally and produces
+   the same output. **874,232 bytes.**
+3. **Verify** — `cmp cc5_a cc5_b` → byte-identical.
+
+Cross-arch propagation per
+[`feedback_cross_arch_propagation_mandatory`]:
+- cc5_aarch64: **564,456 B** (unchanged — pure offset
+  relocation, hex literal widths identical).
+- cc5_win: **686,632 B** (unchanged).
+- cc5_aarch64_macho / cc5_aarch64_native / cc5_cx all build
+  clean against the new layout.
+
+### Mechanical gates
+
+- cc5 **byte-identical at 874,232 B** (no compiler size change
+  — same hex literal widths, just different values).
+- 3-step bootstrap converges: stage_a == stage_b == stage_c
+  byte-identical.
+- `scripts/build-cc5-verify.sh` reports **VERIFY OK** on first
+  invocation post-reorg.
+- `tests/heapmap.sh`: **99 regions, 0 overlaps, 0 warnings**.
+  Layout is monotonic from `0x00000` (input_buf) to `0x4D9D000`
+  (brk-final), with a single preserved 13.3 MB TS reservation
+  between fixup_tbl end (0x207B000) and tok_types start
+  (0x2D7C000).
+- `check.sh` **76/76**; `cyrius test` **152/152**.
+
+### Why .68 stayed pure layout (not bundled with CVE-05)
+
+CVE-05 split out at v5.11.65 because the audit at that slot
+entry showed earlier work (CVE-06 + EB() + NPOS_GUARD) had
+already covered the bulk of the write-boundary surface, and
+the remaining tok_names mangle-path gap was structurally
+orthogonal to the heap-map layout reshuffle. Keeping the
+slots split:
+- **.65** owned write-boundary checks (security)
+- **.68** owns layout reorg (memory hygiene)
+- Bisect targets stay clean if anything regresses.
+
+### v6.0-runway scoreboard (post-.68)
+
+**Five v6.0.0 items absorbed** into v5.x close band — CVE-05
+(.65), bridge retirement (.66), build-cyc.sh skeleton (.67),
+cc3-era residue load-bearing portion (.67), heap-map full
+reorganization (.68 — was explicitly pinned as a v6.0-runway
+item in roadmap-old.md "Long-term considerations" since
+v5.8.61). v6.0.0's accompanying-refactor surface shrinks
+correspondingly. One slot remains in v5.11.x (.69 = another
+pre-6.0 item, candidate TBD at slot entry).
+
+### Memory pins
+
+- [`project_v5_11_x_closeout_at_40`] — .68 = heap-map full
+  reorg; .69 framing updated 2026-05-19 to "another v6.0-runway
+  item, NOT mabda fold" per user direction.
+- [`feedback_cross_arch_propagation_mandatory`] — all 6
+  main_*.cyr variants treated in same slot.
+
 ## [5.11.67] — 2026-05-19
 
 **Triple-pull → double-pull v6.0-runway slot.** Third

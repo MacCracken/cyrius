@@ -13,7 +13,7 @@
 #
 #   EMITPE_EXEC(S):
 #     Walks regions in file order, writes bytes into output_buf at
-#     S + 0x64A000 using the _pe_wXX helpers. Writes final image
+#     S + 0x41A000 using the _pe_wXX helpers. Writes final image
 #     size to S + 0x1903F8 (same dual-use slot FIXUP's ELF path uses).
 #
 # Constants:
@@ -425,7 +425,7 @@ fn _pe_iat_fixup_add(S, coff, imp_idx): i64 {
         "error: fixup table full (262144)\n", 33);
         syscall(SYS_EXIT, 1);
     }
-    var faddr = S + 0x198B000 + fc * 16;
+    var faddr = S + 0x107B000 + fc * 16;
     SFCNT(S, fc + 1);
     S64(faddr, coff);
     S64(faddr + 8, (4 << 56) | imp_idx);
@@ -570,10 +570,10 @@ fn _pe_layout(S): i64 {
     var rl_prev = 0;
     var rl_shift = 0;
     while (rl_fi < rl_fcnt) {
-        rl_raw = L64(S + 0x198B000 + rl_fi * 16 + 8);
+        rl_raw = L64(S + 0x107B000 + rl_fi * 16 + 8);
         rl_ft = rl_raw >> 56;
         if (rl_ft == 0 || rl_ft == 1 || rl_ft == 3) {
-            rl_coff = L64(S + 0x198B000 + rl_fi * 16);
+            rl_coff = L64(S + 0x107B000 + rl_fi * 16);
             # Find insertion index (first slot where stored > rl_coff)
             rl_k = _pe_reloc_count;
             var rl_j = 0;
@@ -660,16 +660,16 @@ fn _pe_layout(S): i64 {
 # Pass 2: serialize
 # ================================================================
 # Walks regions in file order, writing bytes into output_buf at
-# S + 0x64A000. _pe_layout must have been called first. All
+# S + 0x41A000. _pe_layout must have been called first. All
 # loop-local vars are hoisted to the function top because cc5
 # treats sequential `var x` declarations in the same scope as
 # redeclaration (reassignment is the supported pattern).
 
 fn EMITPE_EXEC(S): i64 {
-    var O = S + 0x94A000;
+    var O = S + 0x71A000;
     var o = 0;
     var cp = GCP(S);
-    var cb = S + 0x64A000;       # codebuf base
+    var cb = S + 0x41A000;       # codebuf base
     var imp_count = _pe_imp_count;
     var dd_idx = 0;
     var ii = 0;

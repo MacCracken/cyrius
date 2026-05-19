@@ -14,8 +14,8 @@
 #   0x13A000 var_types[8192]      65536 bytes — struct_id per var (0=scalar)
 #   0x18E630  struct_names[256]    2048 bytes — name offset per struct (cap 256, v5.7.17)
 #   0x18EE30  struct_fcounts[256]  2048 bytes — field count per struct (bit 63 = union; relocated v5.7.17)
-#   0x114A000 struct_ftypes        65536 bytes — 256×32 field type IDs  (stride 256, v5.7.17)
-#   0x11CA000 struct_fnames        65536 bytes — 256×32 field name offsets (stride 256, v5.7.17)
+#   0x91A000 struct_ftypes        65536 bytes — 256×32 field type IDs  (stride 256, v5.7.17)
+#   0x92A000 struct_fnames        65536 bytes — 256×32 field name offsets (stride 256, v5.7.17)
 #   0x18F830  struct_count         8 bytes
 #   0x1D8000  enum_const_val[8192] 8192 bytes — 1024 × 8 B enum-fold table (v5.5.2)
 
@@ -81,8 +81,8 @@ fn FINDSTRUCT(S, noff): i64 {
 fn ADDFIELD(S, si, fnoff): i64 {
     var fc = L64(S + 0x18EE30 + si * 8);
     if (fc >= 32) { ERR_MSG(S, "too many struct fields (max 32)", 31); }
-    S64(S + 0x11CA000 + si * 256 + fc * 8, fnoff);
-    S64(S + 0x114A000 + si * 256 + fc * 8, 0);
+    S64(S + 0x92A000 + si * 256 + fc * 8, fnoff);
+    S64(S + 0x91A000 + si * 256 + fc * 8, 0);
     S64(S + 0x18EE30 + si * 8, fc + 1);
     return 0;
 }
@@ -90,21 +90,21 @@ fn ADDFIELD(S, si, fnoff): i64 {
 fn ADDFIELDTYPED(S, si, fnoff, ftype): i64 {
     var fc = L64(S + 0x18EE30 + si * 8);
     if (fc >= 32) { ERR_MSG(S, "too many struct fields (max 32)", 31); }
-    S64(S + 0x11CA000 + si * 256 + fc * 8, fnoff);
-    S64(S + 0x114A000 + si * 256 + fc * 8, ftype);
+    S64(S + 0x92A000 + si * 256 + fc * 8, fnoff);
+    S64(S + 0x91A000 + si * 256 + fc * 8, ftype);
     S64(S + 0x18EE30 + si * 8, fc + 1);
     return 0;
 }
 
 fn GETFTYPE(S, si, fi): i64 {
-    return L64(S + 0x114A000 + si * 256 + fi * 8);
+    return L64(S + 0x91A000 + si * 256 + fi * 8);
 }
 
 # Get field name offset (into tok_names at S+0x60000) for struct si, field fi.
 # Returns the same offset that was recorded by ADDFIELD, so direct equality
 # with a parsed IDENT's PEEKV works (idents are interned by the lexer).
 fn GETFNAME(S, si, fi): i64 {
-    return L64(S + 0x11CA000 + si * 256 + fi * 8);
+    return L64(S + 0x92A000 + si * 256 + fi * 8);
 }
 
 # Compare two null-terminated strings in tok_names. Returns 1 if equal.
@@ -277,8 +277,8 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                     SNPOS(S, cwp2);
                     var cfi = FINDFN(S, cnoff2);
                     if (cfi >= 0) {
-                        S64(S + 0x12DA000 + cfi * 8, GCP(S));
-                        S64(S + 0x12EA000 + cfi * 8, 1);
+                        S64(S + 0x9CA000 + cfi * 8, GCP(S));
+                        S64(S + 0x9DA000 + cfi * 8, 1);
                         EFNPRO(S);
                         var ctor_frame = ESUBRSP(S);
                         # v5.8.21 bite: store each incoming param into its
@@ -301,7 +301,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                         SNPOS(S, awnp + 6);
                         var afi = FINDFN(S, awnp);
                         if (afi < 0) { afi = REGFN(S, awnp); }
-                        var afoff = L64(S + 0x12DA000 + afi * 8);
+                        var afoff = L64(S + 0x9CA000 + afi * 8);
                         if (afoff >= 0) { ECALLTO(S, afoff); } else { ECALLFIX(S, afi); }
                         ECALLCLEAN(S, 1);
                         # v5.8.21 bite: alloc-ptr lives in slot `arity`
@@ -389,7 +389,7 @@ fn FINDFIELD(S, si, fnoff): i64 {
     var fc = GETFCOUNT(S, si);
     var i = 0;
     while (i < fc) {
-        var fn_off = L64(S + 0x11CA000 + si * 256 + i * 8);
+        var fn_off = L64(S + 0x92A000 + si * 256 + i * 8);
         if (STREQ(S, fn_off, fnoff) == 1) { return i; }
         i = i + 1;
     }

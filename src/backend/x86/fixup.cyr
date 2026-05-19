@@ -126,7 +126,7 @@ fn FIXUP(S): i64 {
     var totvar = 0;
     var vi = 0;
     # Store prefix sums in scratch area (output_buf tail, safe — ELF not written yet)
-    var pfx = S + 0x94A000 + 131072;
+    var pfx = S + 0x71A000 + 131072;
     # v5.11.64: mirror prefix sums into the stable gvar_byte_off region
     # (S+0x1B0000) so EMIT_* paths can read them after output writing
     # passes 128KB into output_buf (where pfx-in-scratch would be
@@ -174,7 +174,7 @@ fn FIXUP(S): i64 {
         if (symfd >= 0) {
             var sfi = 0;
             while (sfi < sym_fnc) {
-                var foff = L64(S + 0x12DA000 + sfi * 8);
+                var foff = L64(S + 0x9CA000 + sfi * 8);
                 if (foff >= 0) {
                     var vabuf[20];
                     var va = entry + foff;
@@ -188,7 +188,7 @@ fn FIXUP(S): i64 {
                     }
                     syscall(1, symfd, &vabuf, 16);
                     syscall(1, symfd, " ", 1);
-                    var nptr = S + 0x60000 + L64(S + 0x12CA000 + sfi * 8);
+                    var nptr = S + 0x60000 + L64(S + 0x9BA000 + sfi * 8);
                     var nlen = 0;
                     while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
                     syscall(1, symfd, nptr, nlen);
@@ -204,14 +204,14 @@ fn FIXUP(S): i64 {
     var fcnt = GFCNT(S);
     var fi = 0;
     while (fi < fcnt) {
-        var faddr = S + 0x198B000 + fi * 16;
+        var faddr = S + 0x107B000 + fi * 16;
         var coff = L64(faddr);
         var raw = L64(faddr + 8);
         var ftype = raw >> 56;
         var idx = raw & 0x00FFFFFFFFFFFFFF;
         if (ftype == 2) {
             # Function call — patch rel32
-            var target = L64(S + 0x12DA000 + idx * 8);
+            var target = L64(S + 0x9CA000 + idx * 8);
             # v5.6.29-1: undef-fn sentinel (-1 pre-warn, -2 post-warn). Default
             # non-strict mode lets the binary emit anyway with a "will crash
             # at runtime" message. But the placeholder disp32 resolves to an
@@ -223,7 +223,7 @@ fn FIXUP(S): i64 {
             # `e8 XX XX XX XX` with `0F 0B 0F 0B 90` (ud2; ud2; nop) so the
             # failure is a SIGILL at the call site, loud and localisable.
             if (target < 0) {
-                var pu = S + 0x64A000 + coff - 1;
+                var pu = S + 0x41A000 + coff - 1;
                 store8(pu + 0, 0x0F);
                 store8(pu + 1, 0x0B);
                 store8(pu + 2, 0x0F);
@@ -231,7 +231,7 @@ fn FIXUP(S): i64 {
                 store8(pu + 4, 0x90);
             } else {
                 var rel = target - coff - 4;
-                var pa = S + 0x64A000 + coff;
+                var pa = S + 0x41A000 + coff;
                 S64(pa, (L64(pa) >> 32 << 32) | (rel & 0xFFFFFFFF));
             }
         }
@@ -245,16 +245,16 @@ fn FIXUP(S): i64 {
                 # PE branch a dozen lines below. Without this the
                 # address-of-fn operator (`&fn`) emits an ELF-style VA
                 # that Windows rejects with error 216 at load time.
-                var tgt3 = entry + L64(S + 0x12DA000 + idx * 8);
+                var tgt3 = entry + L64(S + 0x9CA000 + idx * 8);
                 if (_TARGET_PE == 1) {
-                    tgt3 = 0x140000000 + _pe_text_rva + L64(S + 0x12DA000 + idx * 8);
+                    tgt3 = 0x140000000 + _pe_text_rva + L64(S + 0x9CA000 + idx * 8);
                 }
                 if (kmode == 2) {
                     var rel3 = tgt3 - (entry + coff + 4);
-                    var p3 = S + 0x64A000 + coff;
+                    var p3 = S + 0x41A000 + coff;
                     S64(p3, (L64(p3) >> 32 << 32) | (rel3 & 0xFFFFFFFF));
                 } else {
-                    S64(S + 0x64A000 + coff, tgt3);
+                    S64(S + 0x41A000 + coff, tgt3);
                 }
             }
             else { if (ftype == 1) {
@@ -269,10 +269,10 @@ fn FIXUP(S): i64 {
                     }
                     if (kmode == 2) {
                         var rel1 = tgt1 - (entry + coff + 4);
-                        var p1 = S + 0x64A000 + coff;
+                        var p1 = S + 0x41A000 + coff;
                         S64(p1, (L64(p1) >> 32 << 32) | (rel1 & 0xFFFFFFFF));
                     } else {
-                        S64(S + 0x64A000 + coff, tgt1);
+                        S64(S + 0x41A000 + coff, tgt1);
                     }
                 }
                 else { if (ftype == 4) {
@@ -283,7 +283,7 @@ fn FIXUP(S): i64 {
                         # points at the 4-byte disp32; +4 skips past it).
                         var iat_rva = _pe_idata_rva + _pe_iat_sub_off + idx * 8;
                         var rel4 = iat_rva - (_pe_text_rva + coff + 4);
-                        var p4 = S + 0x64A000 + coff;
+                        var p4 = S + 0x41A000 + coff;
                         S64(p4, (L64(p4) >> 32 << 32) | (rel4 & 0xFFFFFFFF));
                     }
                     else {
@@ -299,10 +299,10 @@ fn FIXUP(S): i64 {
                             }
                             if (kmode == 2) {
                                 var rel0 = tgt0 - (entry + coff + 4);
-                                var p0 = S + 0x64A000 + coff;
+                                var p0 = S + 0x41A000 + coff;
                                 S64(p0, (L64(p0) >> 32 << 32) | (rel0 & 0xFFFFFFFF));
                             } else {
-                                S64(S + 0x64A000 + coff, tgt0);
+                                S64(S + 0x41A000 + coff, tgt0);
                             }
                         }
                     } } } }
@@ -313,7 +313,7 @@ fn FIXUP(S): i64 {
     # Building blocks already in place:
     #   0x1C4000: fn_start   [fnc]  start offset of each defined fn
     #   0x1E0000: fn_end     [fnc]  end offset (GFNE) — recorded by PARSE_FN_DEF
-    #   0x114A000: fixup_tbl [fcnt] (coff, type|idx) — all calls + addr-of refs
+    #   0x91A000: fixup_tbl [fcnt] (coff, type|idx) — all calls + addr-of refs
     #
     # Algorithm:
     # 1. For each fixup (type 2 call, type 3 addr-of), classify the source:
@@ -382,7 +382,7 @@ fn FIXUP(S): i64 {
     #   roots for address-taken fns.
     # Pass B (propagate): worklist until fixpoint.
     #   For each E8 call with a live host, mark the target live.
-    var b_base = S + 0x64A000;
+    var b_base = S + 0x41A000;
     # v5.10.41: build fn_start → fi+1 hash table at 0x114000 ONCE before
     # the DCE byte-scan passes. Replaces the two O(N²) linear scans in
     # seed (line ~412) and propagate (line ~465) — each previously walked
@@ -402,7 +402,7 @@ fn FIXUP(S): i64 {
     }
     var sh_i = 0;
     while (sh_i < fnc) {
-        var sh_start = L64(S + 0x12DA000 + sh_i * 8);
+        var sh_start = L64(S + 0x9CA000 + sh_i * 8);
         if (sh_start >= 0) {
             var sh_h = (sh_start * 0x9E3779B97F4A7C15) >> 16;
             var sh_slot = sh_h & 8191;
@@ -416,7 +416,7 @@ fn FIXUP(S): i64 {
     # Type-3 address-of fixups are still roots.
     var t3i = 0;
     while (t3i < fcnt_pre) {
-        var t3a = S + 0x198B000 + t3i * 16;
+        var t3a = S + 0x107B000 + t3i * 16;
         var t3r = L64(t3a + 8);
         if ((t3r >> 56) == 3) {
             var t3idx = t3r & 0x00FFFFFFFFFFFFFF;
@@ -454,7 +454,7 @@ fn FIXUP(S): i64 {
                         if (th_stored == 0) { th_probes = 8192; }
                         else {
                             var th_fi = th_stored - 1;
-                            if (L64(S + 0x12DA000 + th_fi * 8) == tgt) {
+                            if (L64(S + 0x9CA000 + th_fi * 8) == tgt) {
                                 fnhit = th_fi;
                                 th_probes = 8192;
                             } else {
@@ -468,7 +468,7 @@ fn FIXUP(S): i64 {
                         var host = 0 - 1;
                         var fj = 0;
                         while (fj < fnc) {
-                            var fs = L64(S + 0x12DA000 + fj * 8);
+                            var fs = L64(S + 0x9CA000 + fj * 8);
                             if (fs >= 0) {
                                 var fe = GFNE(S, fj);
                                 if (fe > fs && scn >= fs && scn < fe) {
@@ -497,7 +497,7 @@ fn FIXUP(S): i64 {
         while (pfi < fnc) {
             var phl = load8(&live + (pfi >> 3)) & (1 << (pfi & 7));
             if (phl != 0) {
-                var pfs = L64(S + 0x12DA000 + pfi * 8);
+                var pfs = L64(S + 0x9CA000 + pfi * 8);
                 var pfe = GFNE(S, pfi);
                 if (pfs >= 0 && pfe > pfs) {
                     var pscn = pfs;
@@ -521,7 +521,7 @@ fn FIXUP(S): i64 {
                                         if (ph_stored == 0) { ph_probes = 8192; }
                                         else {
                                             var ph_fi = ph_stored - 1;
-                                            if (L64(S + 0x12DA000 + ph_fi * 8) == ptgt) {
+                                            if (L64(S + 0x9CA000 + ph_fi * 8) == ptgt) {
                                                 phit = ph_fi;
                                                 ph_probes = 8192;
                                             } else {
@@ -552,7 +552,7 @@ fn FIXUP(S): i64 {
     var dce_bytes = 0;
     var dwi = 0;
     while (dwi < fnc) {
-        var dfoff = L64(S + 0x12DA000 + dwi * 8);
+        var dfoff = L64(S + 0x9CA000 + dwi * 8);
         if (dfoff >= 0) {
             var is_live = load8(&live + (dwi >> 3)) & (1 << (dwi & 7));
             if (is_live == 0) {
@@ -576,18 +576,18 @@ fn FIXUP(S): i64 {
                 #       normally-emitted fn even when (a) and (b) miss.
                 if (dfend > dfoff && dfoff >= 1) {
                     var safe = 0;
-                    if (load8(S + 0x64A000 + dfoff - 1) == 0xC3) { safe = 1; }
+                    if (load8(S + 0x41A000 + dfoff - 1) == 0xC3) { safe = 1; }
                     if (safe == 0 && dfoff >= 5) {
-                        if (load8(S + 0x64A000 + dfoff - 5) == 0xE9) {
-                            var rel32 = load32(S + 0x64A000 + dfoff - 4);
+                        if (load8(S + 0x41A000 + dfoff - 5) == 0xE9) {
+                            var rel32 = load32(S + 0x41A000 + dfoff - 4);
                             if (rel32 >= 0x80000000) { rel32 = rel32 - 0x100000000; }
                             if (dfoff + rel32 >= dfend) { safe = 1; }
                         }
                     }
                     # (c) Epilogue C9 C3 at fn_end - 2
                     if (safe == 0 && dfend >= 2) {
-                        if (load8(S + 0x64A000 + dfend - 2) == 0xC9) {
-                            if (load8(S + 0x64A000 + dfend - 1) == 0xC3) { safe = 1; }
+                        if (load8(S + 0x41A000 + dfend - 2) == 0xC9) {
+                            if (load8(S + 0x41A000 + dfend - 1) == 0xC3) { safe = 1; }
                         }
                     }
                     if (safe == 1) {
@@ -602,7 +602,7 @@ fn FIXUP(S): i64 {
                         var valid = 1;
                         var vp = dfoff;
                         while (vp < dfend) {
-                            var ilen = DECODE_LEN(S + 0x64A000, vp);
+                            var ilen = DECODE_LEN(S + 0x41A000, vp);
                             if (ilen == 0) { valid = 0; vp = dfend; }
                             else { vp = vp + ilen; }
                         }
@@ -615,7 +615,7 @@ fn FIXUP(S): i64 {
                             if (dce_enabled == 1) {
                                 var nop_i = dfoff;
                                 while (nop_i < dfend) {
-                                    store8(S + 0x64A000 + nop_i, 0x90);
+                                    store8(S + 0x41A000 + nop_i, 0x90);
                                     nop_i = nop_i + 1;
                                 }
                             }
@@ -643,12 +643,12 @@ fn FIXUP(S): i64 {
         if (dce_verbose == 1) {
             var dni = 0;
             while (dni < fnc) {
-                var dnoff = L64(S + 0x12DA000 + dni * 8);
+                var dnoff = L64(S + 0x9CA000 + dni * 8);
                 if (dnoff >= 0) {
                     var dn_live = load8(&live + (dni >> 3)) & (1 << (dni & 7));
                     if (dn_live == 0) {
                         syscall(SYS_WRITE, 2, "  dead: ", 8);
-                        PRSTR(S + 0x60000 + L64(S + 0x12CA000 + dni * 8));
+                        PRSTR(S + 0x60000 + L64(S + 0x9BA000 + dni * 8));
                         syscall(SYS_WRITE, 2, "\n", 1);
                     }
                 }
@@ -668,7 +668,7 @@ fn FIXUP(S): i64 {
     var u62_dcn = 0;
     var u62_fi = 0;
     while (u62_fi < fnc) {
-        var u62_dnoff = L64(S + 0x12DA000 + u62_fi * 8);
+        var u62_dnoff = L64(S + 0x9CA000 + u62_fi * 8);
         if (u62_dnoff >= 0) {
             var u62_live = load8(&live + (u62_fi >> 3)) & (1 << (u62_fi & 7));
             if (u62_live == 0) {
@@ -695,19 +695,19 @@ fn FIXUP(S): i64 {
     # for that case.
     var u59_ufi = 0;
     while (u59_ufi < fcnt_pre) {
-        var u59_ufaddr = S + 0x198B000 + u59_ufi * 16;
+        var u59_ufaddr = S + 0x107B000 + u59_ufi * 16;
         var u59_ucoff = L64(u59_ufaddr);
         var u59_uraw = L64(u59_ufaddr + 8);
         var u59_uftype = u59_uraw >> 56;
         var u59_uidx = u59_uraw & 0x00FFFFFFFFFFFFFF;
         if (u59_uftype == 2 || u59_uftype == 3) {
-            var u59_utarget = L64(S + 0x12DA000 + u59_uidx * 8);
+            var u59_utarget = L64(S + 0x9CA000 + u59_uidx * 8);
             if (u59_utarget == 0 - 1) {
                 # Locate host fn — same shape as DCE seed loop.
                 var u59_host = 0 - 1;
                 var u59_fj = 0;
                 while (u59_fj < fnc) {
-                    var u59_fs = L64(S + 0x12DA000 + u59_fj * 8);
+                    var u59_fs = L64(S + 0x9CA000 + u59_fj * 8);
                     if (u59_fs >= 0) {
                         var u59_fe = GFNE(S, u59_fj);
                         if (u59_fe > u59_fs && u59_ucoff >= u59_fs && u59_ucoff < u59_fe) {
@@ -722,7 +722,7 @@ fn FIXUP(S): i64 {
                     if (u59_lb == 0) { u59_skip = 1; }
                 }
                 if (u59_skip == 0) {
-                    var u59_ufnoff = L64(S + 0x12CA000 + u59_uidx * 8);
+                    var u59_ufnoff = L64(S + 0x9BA000 + u59_uidx * 8);
                     syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
                     var u59_unptr = S + 0x60000 + u59_ufnoff;
                     var u59_unlen = 0;
@@ -734,7 +734,7 @@ fn FIXUP(S): i64 {
                 # Mark as reported to avoid duplicates if a future caller
                 # walks the table again. Set even on skip — the fixup
                 # patch loop already ran above; this is just bookkeeping.
-                S64(S + 0x12DA000 + u59_uidx * 8, 0 - 2);
+                S64(S + 0x9CA000 + u59_uidx * 8, 0 - 2);
             }
         }
         u59_ufi = u59_ufi + 1;
@@ -801,7 +801,7 @@ fn EMITELF_KERNEL(S): i64 {
     var shentsize = 40;
     var shstrndx = 4;
 
-    var O = S + 0x94A000;
+    var O = S + 0x71A000;
     var op = 0;
 
     # ---- ELF32 header (52 bytes) ----
@@ -845,7 +845,7 @@ fn EMITELF_KERNEL(S): i64 {
 
     # ---- Code ----
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
     # ---- Variable (bss) zeros ----
     var bss_o = op;
     i = 0;
@@ -988,7 +988,7 @@ fn EMITELF64_KERNEL(S): i64 {
     var shstrtab_foff = filesz;
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
 
-    var O = S + 0x94A000;
+    var O = S + 0x71A000;
     var op = 0;
 
     # ---- ELF64 header (64 bytes) ----
@@ -1042,7 +1042,7 @@ fn EMITELF64_KERNEL(S): i64 {
 
     # ---- Code ----
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
     # ---- Variable (.bss) zeros — included in p_filesz, marked SHT_NOBITS ----
     var bss_o = op;
     i = 0;
@@ -1226,7 +1226,7 @@ fn EMITELF_USER(S, etype): i64 {
     # ELF64 shdrs are 64 bytes each; align table to 8 bytes
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
 
-    var O = S + 0x94A000;
+    var O = S + 0x71A000;
     var op = 0;
     # ELF header (64 bytes) — e_type from parameter
     S64(O + op, 0x00010102464C457F); op = op + 8;
@@ -1250,7 +1250,7 @@ fn EMITELF_USER(S, etype): i64 {
     S64(O + op, 0x0000000000001000); op = op + 8;
     # Code
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
     # Variable data (zeroed)
     var bss_o = op;
     i = 0;
@@ -1374,7 +1374,7 @@ fn EMITELF_SHARED(S): i64 {
     # and executes every `var x = EXPR;` top-level initializer.
     var init_cp_off = L64(S + 0x1903F8);
 
-    var O = S + 0x94A000;
+    var O = S + 0x71A000;
 
     # ---- Collect exported symbols (global fns with a real body) ----
     # Skip underscore-prefixed internal names. Store fi indices in a
@@ -1388,8 +1388,8 @@ fn EMITELF_SHARED(S): i64 {
     var nsyms = 0;
     var fi = 0;
     while (fi < fnc) {
-        var fo = L64(S + 0x12DA000 + fi * 8);
-        var noff = L64(S + 0x12CA000 + fi * 8);
+        var fo = L64(S + 0x9CA000 + fi * 8);
+        var noff = L64(S + 0x9BA000 + fi * 8);
         var np = S + 0x60000 + noff;
         if (fo >= 0 && load8(np) != 95) {
             # Defined, not underscore-prefixed.
@@ -1478,7 +1478,7 @@ fn EMITELF_SHARED(S): i64 {
 
     # ---- Code ----
     var ci = 0;
-    while (ci < cp) { store8(O + code_off + ci, load8(S + 0x64A000 + ci)); ci = ci + 1; }
+    while (ci < cp) { store8(O + code_off + ci, load8(S + 0x41A000 + ci)); ci = ci + 1; }
 
     # ---- Data (zeroed already by the fill above) + string data ----
     var si = 0;
@@ -1493,8 +1493,8 @@ fn EMITELF_SHARED(S): i64 {
     var str_cursor = 1;                # running offset within .dynstr
     fi = 0;
     while (fi < fnc) {
-        var fo2 = L64(S + 0x12DA000 + fi * 8);
-        var noff2 = L64(S + 0x12CA000 + fi * 8);
+        var fo2 = L64(S + 0x9CA000 + fi * 8);
+        var noff2 = L64(S + 0x9BA000 + fi * 8);
         var np2 = S + 0x60000 + noff2;
         if (fo2 >= 0 && load8(np2) != 95) {
             # st_name = str_cursor (offset into .dynstr)
@@ -1593,7 +1593,7 @@ fn EMITELF_OBJ(S): i64 {
     var fcnt = GFCNT(S);
     var fnc = GFNC(S);
 
-    var O = S + 0x94A000;
+    var O = S + 0x71A000;
     var op = 0;
 
     # --- Allocate scratch via brk extension ---
@@ -1644,7 +1644,7 @@ fn EMITELF_OBJ(S): i64 {
     var fi = 0;
     while (fi < fnc) {
         S64(fn_strtab_off + fi * 8, sp);
-        var noff = L64(S + 0x12CA000 + fi * 8);
+        var noff = L64(S + 0x9BA000 + fi * 8);
         var np = S + 0x60000 + noff;
         si = 0;
         while (load8(np + si) != 0) { store8(strtab + sp, load8(np + si)); sp = sp + 1; si = si + 1; }
@@ -1698,7 +1698,7 @@ fn EMITELF_OBJ(S): i64 {
         # them as if they were in .text at offset 0 made the linker see
         # false duplicate-strong definitions when two objects referenced
         # the same extern. Fixed in 4.6.0 alpha2.
-        var foff = L64(S + 0x12DA000 + fi * 8);
+        var foff = L64(S + 0x9CA000 + fi * 8);
         if (foff < 0) {
             store8(symp + 6, 0); store8(symp + 7, 0);   # st_shndx = SHN_UNDEF
             S64(symp + 8, 0);                           # st_value = 0
@@ -1757,7 +1757,7 @@ fn EMITELF_OBJ(S): i64 {
 
     fi = 0;
     while (fi < fcnt) {
-        var faddr = S + 0x198B000 + fi * 16;
+        var faddr = S + 0x107B000 + fi * 16;
         var coff = L64(faddr);
         var raw = L64(faddr + 8);
         var ftype = raw >> 56;
@@ -1854,7 +1854,7 @@ fn EMITELF_OBJ(S): i64 {
 
     # --- Write .text section ---
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x64A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
 
     # --- Write .data section (zeroed) ---
     var bss_o = op;

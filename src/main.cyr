@@ -25,7 +25,7 @@
 #                                         NOTE: input_buf extends past 0x60000 (tok_names).
 #                                         tok_names is REBUILT by LEX after preprocessing —
 #                                         the overlap is tolerated because preprocessing reads
-#                                         from 0x4EAD000, not S+0.
+#                                         from 0x459D000, not S+0.
 #   0x60000  tok_names     [262144]      256KB packed identifier strings (nested in input_buf — rebuilt by LEX, v4.6.2 was 64KB, v5.11.18 doubled 128KB → 256KB; grows 0x60000-0xA0000 into the 0xA0000-0x18C100 gap)
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
@@ -86,16 +86,16 @@
 #   0x193400  local_slice_widths          v5.8.14 §6 — slice element widths (576 × 8B → ends 0x194600)
 #
 # --- Function tables (relocated v4.7.1 — caps raised 2048 → 4096) ---
-#   0x12CA000 fn_names      [32768]       4096 function name offsets
-#   0x12DA000 fn_offsets    [32768]       4096 function code offsets
-#   0x12EA000 fn_params     [32768]       4096 function param counts
-#   0x12FA000 fn_body_start [32768]       4096 inline body start
-#   0x130A000 fn_body_end   [32768]       4096 inline body end
-#   0x131A000 fn_inline     [32768]       4096 inline flags
-#   0x132A000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
-#   0x133A000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
+#   0x9BA000 fn_names      [32768]       4096 function name offsets
+#   0x9CA000 fn_offsets    [32768]       4096 function code offsets
+#   0x9DA000 fn_params     [32768]       4096 function param counts
+#   0x9EA000 fn_body_start [32768]       4096 inline body start
+#   0x9FA000 fn_body_end   [32768]       4096 inline body end
+#   0xA0A000 fn_inline     [32768]       4096 inline flags
+#   0xA1A000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
+#   0xA2A000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
 # Function tables live back-to-back in the 256 KB band ending at
-# 0x11CA000 (the IR region's start). Sized for 4096 fns × 8 bytes per
+# 0x92A000 (the IR region's start). Sized for 4096 fns × 8 bytes per
 # field × 8 fields.
 #
 # --- Reclaimable / scratch ---
@@ -248,7 +248,7 @@
 #                                        Built once at fixup() entry with
 #                                        explicit per-slot reset (the
 #                                        intervening 232 KB gap up to
-#                                        0x114A000 is not zeroed by
+#                                        0x91A000 is not zeroed by
 #                                        _HEAP_INIT_SCRATCH). Hash:
 #                                        (start * 0x9E3779B97F4A7C15) >> 16,
 #                                        mask 8191; linear probe. Replaces
@@ -267,32 +267,25 @@
 #                                        (~445 KB hex-pair encoded; v5.8.51-deferred
 #                                        / v5.8.59-bumped). Lineage: 32KB at 0x40000
 #                                        (v3.6.7) → 256KB at 0x14A000 (v3.6.9, 8x)
-#                                        → 2MB at 0x4E8C000 (v5.8.59 high-block, 8x
-#                                        forced off 0x14A000 by the 0x18C100 scratch
+#                                        → 2MB at high-block (v5.8.59, forced off
+#                                        0x14A000 by the 0x18C100 scratch
 #                                        collision) → 2MB at 0x21A000 (v5.8.61
 #                                        monotonic, fits the var_enum_id..
-#                                        preprocess_out gap; brk -2 MB). 192 KB
-#                                        residual at 0x41A000..0x44A000 is
-#                                        documented headroom for str_data growth.
+#                                        preprocess_out gap; brk -2 MB).
+#                                        Post-v5.11.68 reorg: directly abuts
+#                                        codebuf at 0x41A000 — 192 KB residual
+#                                        headroom absorbed in the closeout shift.
 #
 # --- Large buffers ---
-#   0x44A000..0x64A000 (2 MB FREED GAP)   Was preprocess_out [2097152]
-#                                        through v5.11.32. Relocated to
-#                                        0x4EAD000 at v5.11.33 + cap
-#                                        raised 2 MB → 8 MB. The 2 MB
-#                                        hole is intentional documented
-#                                        headroom; absorbed by v5.11.68's
-#                                        full heap-map reorg (closeout).
-#                                        See CHANGELOG [5.11.33].
-#   0x64A000 codebuf       [3145728]     3MB generated machine code (v5.7.27 — was 1MB pre-v5.7.27; bumped to absorb cyrius-ts test-compile pressure (94% on ts_parse_p52-54 across v5.7.24-v5.7.26)) (v3.5.2)
-#   0x94A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43) (v3.5.2).
+#   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27 — was 1MB pre-v5.7.27; bumped to absorb cyrius-ts test-compile pressure (94% on ts_parse_p52-54 across v5.7.24-v5.7.26)) (v3.5.2). Pulled DOWN 2.24 MB at v5.11.68 to abut str_data end (was 0x64A000).
+#   0x71A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43) (v3.5.2).
 #                                        Pre-v5.8.46 tok_types ALSO lived here (overlap recycled
 #                                        the buffer post-lex for ELF emission); v5.8.46 relocated
-#                                        tok_types to the post-TS high block at 0x368C000 to
+#                                        tok_types to the post-TS high block at 0x2D7C000 to
 #                                        free the cap for sandhi consumers — see below.
 #
 # --- Token arrays (v3.6.2 layout RETIRED v5.8.46) ---
-#   (was 0xB4A000 tok_types — note: comment was stale, code wrote at 0x94A000)
+#   (was 0xB4A000 tok_types — note: comment was stale, code wrote at 0x71A000)
 #   (was 0xD4A000 tok_values [2097152] 262144 entries × 8 bytes)
 #   (was 0xF4A000 tok_lines  [2097152] 262144 entries × 8 bytes)
 #   (262144-entry cap blocked sit v0.7.2 + every sandhi consumer named in the
@@ -300,21 +293,21 @@
 #    docs/development/issues/archived/2026-04-25-cyrius-fixup-table-cap.md)
 #
 # --- Relocated struct field tables (v3.6.6) ---
-#   0x114A000 struct_ftypes [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
-#   0x11CA000 struct_fnames [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
+#   0x91A000 struct_ftypes [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
+#   0x92A000 struct_fnames [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
 #
 #   --- v5.10.24 REAL TYPE SYSTEM Phase 2 — extended param-type masks ---
-#   (Mirror of fn_param_str_mask at 0x132A000 — bit N set = param N has the
+#   (Mirror of fn_param_str_mask at 0xA1A000 — bit N set = param N has the
 #   given type annotation. Used by PARSE_FNCALL call-site type check to fire
 #   warnings on type mismatches. Reused the 256 KB v5.5.37-retired gap.)
-#   0x124A000 fn_param_cstring_mask [32768] 4096 cstring-param bitmasks (v5.10.24)
-#   0x125A000 fn_param_result_mask  [32768] 4096 Result-param bitmasks  (v5.10.24)
-#   0x126A000 fn_param_option_mask  [32768] 4096 Option-param bitmasks  (v5.10.24)
-#   0x127A000 fn_param_tagged_mask  [32768] 4096 Tagged-param bitmasks  (v5.10.24)
-#   0x128A000 fn_overload_str       [32768] 4096 fi+1 of <name>_str  overload (v5.10.25)
-#   0x129A000 fn_overload_int       [32768] 4096 fi+1 of <name>_int  overload (v5.10.25)
-#   0x12AA000 fn_overload_cstr      [32768] 4096 fi+1 of <name>_cstr overload (v5.10.25)
-#   0x12BA000 fn_param_simd_mask    [32768] 4096 per-fn SIMD-param class mask (v5.10.38).
+#   0x93A000 fn_param_cstring_mask [32768] 4096 cstring-param bitmasks (v5.10.24)
+#   0x94A000 fn_param_result_mask  [32768] 4096 Result-param bitmasks  (v5.10.24)
+#   0x95A000 fn_param_option_mask  [32768] 4096 Option-param bitmasks  (v5.10.24)
+#   0x96A000 fn_param_tagged_mask  [32768] 4096 Tagged-param bitmasks  (v5.10.24)
+#   0x97A000 fn_overload_str       [32768] 4096 fi+1 of <name>_str  overload (v5.10.25)
+#   0x98A000 fn_overload_int       [32768] 4096 fi+1 of <name>_int  overload (v5.10.25)
+#   0x99A000 fn_overload_cstr      [32768] 4096 fi+1 of <name>_cstr overload (v5.10.25)
+#   0x9AA000 fn_param_simd_mask    [32768] 4096 per-fn SIMD-param class mask (v5.10.38).
 #                                                  2 bits per param: 00 int-class,
 #                                                  01 f64v2 (1 XMM reg slot),
 #                                                  10 f64v4 (2 XMM reg slots).
@@ -323,14 +316,14 @@
 #                                                  int-class arg regs.
 #
 # --- cc5 IR region (v5.0.0) ---
-#   0x134A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
-#   0x174A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
-#   0x184A000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0x184B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
-#   0x188B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
+#   0xA3A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
+#   0xE3A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
+#   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
+#   0xF3B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
+#   0xF7B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
 #
 # --- Fixup table — NEW slot (v5.5.37) ---
-#   0x198B000 fixup_tbl    [16777216]    1048576 entries × 16 bytes
+#   0x107B000 fixup_tbl    [16777216]    1048576 entries × 16 bytes
 #                                        (cap raised 32768 → 262144 in
 #                                        v5.7.1, then 262144 → 1048576
 #                                        in v5.7.7 — sandhi consumers
@@ -338,30 +331,32 @@
 #                                        codegen burn fixups faster
 #                                        than the 262K ceiling allows).
 #
-#   0x298B000 brk-fixup-end               39 MB at end of fixup_tbl
-#                                        (was 0x1D0B000, +12 MB for
-#                                        v5.7.7 fixup-cap 4× bump)
-#   0x368C000 brk-with-ts-frontend        ~52.5 MB — TS frontend heap
-#                                        adds 0xD81000 (~13.5 MB) past
-#                                        fixup_tbl-end
+#   0x207B000 brk-fixup-end               ~33 MB at end of fixup_tbl
+#                                        (post-v5.11.68 reorg; was
+#                                        0x298B000 / ~41.5 MB pre-.68)
+#   0x2D7C000 brk-with-ts-frontend        ~45.5 MB — 13.3 MB TS frontend
+#                                        reservation between fixup_tbl
+#                                        end (0x207B000) and tok_types
+#                                        start (0x2D7C000) preserved
+#                                        across the .68 reorg
 #
 # --- Token arrays RELOCATED here (v5.8.46) ---
-#   0x368C000 tok_types     [8388608]     1048576 entries × 8 bytes — was 0x94A000
+#   0x2D7C000 tok_types     [8388608]     1048576 entries × 8 bytes — was 0x71A000
 #                                        (overlap w/ output_buf, capped at 262144). Cap raise
 #                                        from 262144 → 1048576 (4×) sized to absorb sandhi
 #                                        consumers (sit v0.7.2 with sandhi in [deps].stdlib
 #                                        threshold-aborted at 262144); empirical M from the
 #                                        v5.8.46 `needed M, cap is N` diagnostic.
-#   0x3E8C000 tok_values    [8388608]     1048576 entries × 8 bytes — was 0xD4A000
-#   0x468C000 tok_lines     [8388608]     1048576 entries × 8 bytes — was 0xF4A000
+#   0x357C000 tok_values    [8388608]     1048576 entries × 8 bytes — was 0xD4A000
+#   0x3D7C000 tok_lines     [8388608]     1048576 entries × 8 bytes — was 0xF4A000
 #
 # --- LEXID dedup index (v5.10.40 — lex-hot-path optimization) ---
-#   0x4E8C000  lexid_count   [8]            entries used so far (≤16384)
-#   0x4E8C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B;
+#   0x457C000  lexid_count   [8]            entries used so far (≤16384)
+#   0x457C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B;
 #                                            0 = empty bucket). bucket = klen
 #                                            saturated at 255 (collisions tolerated;
 #                                            byte-compare still authoritative).
-#   0x4E8C900  lexid_entries [131072]       16384 × 8B linked-list nodes.
+#   0x457C900  lexid_entries [131072]       16384 × 8B linked-list nodes.
 #                                            Each entry packs (canonical offset
 #                                            into tok_names @ 0x60000 in low 32,
 #                                            next-entry idx+1 in high 32). Walked
@@ -374,38 +369,28 @@
 #
 #
 # --- Relocated large buffer (v5.11.33) ---
-#   0x4EAD000 preprocess_out [8388608]   8 MB expanded source buffer.
-#                                        Relocated here from 0x44A000 at
-#                                        v5.11.33 + cap raised 2 MB → 8 MB
+#   0x459D000 preprocess_out [8388608]   8 MB expanded source buffer.
+#                                        v5.11.33 raised cap 2 MB → 8 MB
 #                                        after sit v0.7.6 hit 2,099,593
 #                                        bytes (2,441 over the prior cap)
 #                                        on a stock sandhi-folded
-#                                        [deps].stdlib. Sized for
-#                                        headroom into v6.x (sandhi TLS
-#                                        rewrite + one more major).
-#                                        Lineage: 1 MB at 0x44A000 (v3.x)
-#                                        → 2 MB at 0x44A000 (v5.6.40,
-#                                        patra 1.8.3 + stdlib crossed
-#                                        1 MB) → 8 MB at 0x4EAD000
-#                                        (v5.11.33, sit-filed cap raise
-#                                        on sandhi-folded stdlib growth).
-#                                        Old 0x44A000..0x64A000 (2 MB) is
-#                                        a documented freed gap; absorbed
-#                                        by v5.11.68's full heap-map reorg.
-#                                        See CHANGELOG [5.11.33].
+#                                        [deps].stdlib. v5.11.68 reorg
+#                                        shifted from 0x4EAD000 → 0x459D000
+#                                        (-9.06 MB) as part of the full
+#                                        post-codebuf cascade.
+#                                        See CHANGELOG [5.11.33] +
+#                                        [5.11.68].
 #
-#   0x56AD000 brk-final                   ~86.6 MB — heap end. v5.11.33
-#                                        grew this from 0x4EAD000
-#                                        (~78.6 MB at v5.10.40) by the
-#                                        8 MB preprocess_out relocation
-#                                        above. Lineage: v5.10.40 grew
-#                                        brk from 0x4E8C000 (~78.5 MB at
-#                                        v5.8.61) by the 132 KB LEXID
-#                                        dedup; v5.8.61 shrunk from
-#                                        0x508C000 (~80.5 MB at v5.8.59)
-#                                        when str_data folded back to
-#                                        0x21A000; layout is monotonic
-#                                        from 0x00000 to brk.
+#   0x4D9D000 brk-final                   ~77.6 MB — heap end. v5.11.68
+#                                        full heap-map reorg shrunk brk
+#                                        by 9.06 MB (was 0x56AD000 /
+#                                        ~86.6 MB pre-.68). Layout is
+#                                        monotonic from 0x00000 to brk
+#                                        except the single 13.3 MB TS
+#                                        frontend reservation between
+#                                        fixup_tbl end and tok_types
+#                                        start. See CHANGELOG [5.11.68]
+#                                        for the gap-by-gap close shape.
 #
 # Token types:
 #   1=NUM 2=IDENT 3=VAR 4=EQ 5=SEMI 6=PLUS 7=MINUS 8=STAR 9=SLASH
@@ -525,7 +510,7 @@ var S = syscall(SYS_BRK, 0);
 # + 0xD81000 size, per src/frontend/ts/{lex,parse}.cyr design after
 # v5.7.2 P2.1). TS region is only TOUCHED in --lex-ts / --parse-ts
 # modes; the +13.5 MB brk extension is paid unconditionally.
-syscall(SYS_BRK, S + 0x56AD000);
+syscall(SYS_BRK, S + 0x4D9D000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
@@ -1271,7 +1256,7 @@ while (topgo == 1) {
                                             # callee-saved-reg state to. Leaving the flag armed would
                                             # leak it to whichever fn lands next.
                                             if (_regalloc_pending == 1) { _regalloc_pending = 0; }
-                                            S64(S + 0x12DA000 + stub_fi * 8, GCP(S));
+                                            S64(S + 0x9CA000 + stub_fi * 8, GCP(S));
                                             # Emit stub: xor eax, eax; ret (3 bytes)
                                             EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
                                             # Skip function body tokens
@@ -1383,9 +1368,9 @@ if (_prof_on == 1) { _prof_gvar_end = _prof_clock_ns(); }
 var wfi = 0;
 var wfc = GFNC(S);
 while (wfi < wfc) {
-    if (L64(S + 0x12DA000 + wfi * 8) < 0) {
+    if (L64(S + 0x9CA000 + wfi * 8) < 0) {
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(S + 0x12CA000 + wfi * 8));
+        PRSTR(S + 0x60000 + L64(S + 0x9BA000 + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -1430,7 +1415,7 @@ if (_TARGET_EFI_APPLICATION == 1) {
     # above; v5.11.52 shipped the open-coded version.
     var _efm_found = _find_fn_by_name(S, "efi_main", 8);
     if (_efm_found >= 0) {
-        var _efm_off = L64(S + 0x12DA000 + _efm_found * 8);
+        var _efm_off = L64(S + 0x9CA000 + _efm_found * 8);
         if (_efm_off >= 0) {
             # v5.11.54: byte-literal restore + RSP-adjust replaced
             # with named ops (parallel to the save above).
@@ -1469,7 +1454,7 @@ if (_epi_km_pre == 0) {
     # as the efi_main lookup below; both collapse to one helper.
     var _main_found = _find_fn_by_name(S, "main", 4);
     if (_main_found >= 0) {
-        var _main_off = L64(S + 0x12DA000 + _main_found * 8);
+        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
         if (_main_off >= 0) {
             ECALLTO(S, _main_off);
         }
@@ -1694,7 +1679,7 @@ var olen = L64(S + 0x1903F8);
 var written = 0;
 var wgo = 1;
 while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x94A000 + written, olen - written);
+    var w = syscall(SYS_WRITE, 1, S + 0x71A000 + written, olen - written);
     if (w <= 0) { wgo = 0; }
     else {
         written = written + w;

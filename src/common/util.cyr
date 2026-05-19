@@ -35,7 +35,10 @@ fn SVCNT(S, v): i64 {
 # at parse time. enum_variant_count[eid] tracks variants per
 # enum so PARSE_MATCH can verify all variants are covered.
 # Layout chosen 2026-05-03 — extends the metadata band past
-# fn_flags (0xF0000+0x10000 = 0x100000); brk reaches 0x368C000+0x80000 (v5.11.19 fn_table doubled).
+# fn_flags (0xF0000+0x10000 = 0x100000); fn_table was doubled at
+# v5.11.19, and the post-v5.11.68 heap-map full reorg dropped
+# brk-final to 0x4D9D000 (~77.6 MB; -9.06 MB from the v5.11.67
+# 0x56AD000 baseline).
 # v5.8.24 — enum cap bumped 256 → 1024. Audit data (2026-05-03):
 # stdlib alone has 299 enum decls; downstream vani/yukti/sigil/
 # patra/mabda compose to >250 in realistic multi-dep programs;
@@ -98,7 +101,7 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
     var fc = GFNC(S);
     var fi = 0;
     while (fi < fc) {
-        var sn = L64(S + 0x12CA000 + fi * 8);
+        var sn = L64(S + 0x9BA000 + fi * 8);
         var i = 0;
         var eq = 1;
         while (i < str_len) {
@@ -126,17 +129,17 @@ fn GRPC(S): i64 { return L64(S + 0x18E220); }
 fn SRPC(S, v): i64 { S64(S + 0x18E220, v); return 0; }
 # Inline metadata accessors (GFBE getter removed — unused;
 # SFBE is the only direction the inliner needs.)
-fn GFBS(S, fi): i64 { return L64(S + 0x12FA000 + fi * 8); }
-fn SFBS(S, fi, v): i64 { S64(S + 0x12FA000 + fi * 8, v); return 0; }
-fn SFBE(S, fi, v): i64 { S64(S + 0x130A000 + fi * 8, v); return 0; }
-fn GFINL(S, fi): i64 { return L64(S + 0x131A000 + fi * 8); }
-fn SFINL(S, fi, v): i64 { S64(S + 0x131A000 + fi * 8, v); return 0; }
+fn GFBS(S, fi): i64 { return L64(S + 0x9EA000 + fi * 8); }
+fn SFBS(S, fi, v): i64 { S64(S + 0x9EA000 + fi * 8, v); return 0; }
+fn SFBE(S, fi, v): i64 { S64(S + 0x9FA000 + fi * 8, v); return 0; }
+fn GFINL(S, fi): i64 { return L64(S + 0xA0A000 + fi * 8); }
+fn SFINL(S, fi, v): i64 { S64(S + 0xA0A000 + fi * 8, v); return 0; }
 # Fn code-end offset (v4.4.0 DCE). Set at end of PARSE_FN_DEF to the GCP
 # where the fn body finishes. Paired with fn code starts at 0x1C4000.
 # 0 means "not recorded" (fn was registered but never defined, or emitted
 # via a path that bypasses the recording site).
-fn GFNE(S, fi): i64 { return L64(S + 0x133A000 + fi * 8); }
-fn SFNE(S, fi, v): i64 { S64(S + 0x133A000 + fi * 8, v); return 0; }
+fn GFNE(S, fi): i64 { return L64(S + 0xA2A000 + fi * 8); }
+fn SFNE(S, fi, v): i64 { S64(S + 0xA2A000 + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 2b — per-fn struct return ID. 0 = scalar return,
 # sid = returns StructName. Set by PARSE_FN when signature has
@@ -169,7 +172,7 @@ fn GVSI(S, vi): i64 { return L64(S + 0x1EC000 + vi * 8); }
 # v5.11.64 — stable mirror of FIXUP's prefix-sum table. Each entry
 # is the byte offset of var vi within the var area (post m128
 # alignment padding for size > 8 vars). Written in lockstep with
-# the codebuf-fixup `pfx` scratch at 0x94A000+131072 (latter gets
+# the codebuf-fixup `pfx` scratch at 0x71A000+131072 (latter gets
 # clobbered once output writing passes 128 KB into output_buf).
 fn GVOFF(S, vi): i64 { return L64(S + 0x1B0000 + vi * 8); }
 
@@ -221,8 +224,8 @@ fn ADDXP(S, p): i64 {
 # Line tracking
 fn GCLINE(S): i64 { return L64(S + 0x18FCB8); }
 fn SCLINE(S, v): i64 { S64(S + 0x18FCB8, v); return 0; }
-fn GTLINE(S, ti): i64 { return L64(S + 0x468C000 + ti * 8); }
-fn STLINE(S, ti, v): i64 { S64(S + 0x468C000 + ti * 8, v); return 0; }
+fn GTLINE(S, ti): i64 { return L64(S + 0x3D7C000 + ti * 8); }
+fn STLINE(S, ti, v): i64 { S64(S + 0x3D7C000 + ti * 8, v); return 0; }
 
 # Block scoping
 fn GSDEP(S): i64 { return L64(S + 0x18FCC0); }
@@ -463,14 +466,14 @@ fn ERR(S): i64 {
 # sites and pre-empts the next "scan fn_names for a magic name"
 # pattern.
 #
-# Used at pass-2 emit time only — the fn-table at S+0x12CA000
-# (name offsets into tok_names @ S+0x60000) and S+0x12DA000 (fn
+# Used at pass-2 emit time only — the fn-table at S+0x9BA000
+# (name offsets into tok_names @ S+0x60000) and S+0x9CA000 (fn
 # code offsets) are populated by REGFN during pass 1.
 fn _find_fn_by_name(S, name_cstr, name_len): i64 {
     var fc = GFNC(S);
     var fi = 0;
     while (fi < fc) {
-        var noff = L64(S + 0x12CA000 + fi * 8);
+        var noff = L64(S + 0x9BA000 + fi * 8);
         var eq = 1;
         var ci = 0;
         while (ci < name_len) {
@@ -569,7 +572,7 @@ fn ERR_MSG(S, msg, len): i64 {
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
-# IR state at S+0x174A008..S+0x184A000 + global-var-init slots) to
+# IR state at S+0x174A008..S+0xF3A000 + global-var-init slots) to
 # zero, with two sentinel-value exceptions:
 #   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
 #   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
@@ -582,8 +585,9 @@ fn ERR_MSG(S, msg, len): i64 {
 # saves ~150 LOC of duplication. The aarch64 and cx mains over-zero
 # IR state (they include ir.cyr but don't actively use the IR
 # pipeline) — harmless because zero-init matches the post-brk
-# kernel-zeroed state, and brk extends through 0x4E8C000 in every
-# main so the writes land in mapped memory.
+# kernel-zeroed state, and brk extends through 0x4D9D000 in every
+# main (v5.11.68 reorg; was 0x56AD000 pre-.68) so the writes
+# land in mapped memory.
 fn _HEAP_INIT_SCRATCH(S): i64 {
     # Compiler-state scalars (BL, CP, VCNT, TCNT, TI, NPOS)
     S64(S + 0x18C100, 0);
@@ -599,7 +603,7 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18E220, 0);
     # IR state (cc5 — gated by CYRIUS_IR=1 env at runtime; init
     # unconditionally so the gate read sees zero, not garbage)
-    S64(S + 0x184A000, 0);    # ir_node_count
+    S64(S + 0xF3A000, 0);    # ir_node_count
     S64(S + 0x174A008, 0);    # ir_block_count
     S64(S + 0x174A010, 0);    # ir_cur_block (current BB index)
     S64(S + 0x174A018, 0);    # ir_edge_count

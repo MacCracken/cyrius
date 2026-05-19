@@ -333,7 +333,7 @@ fn PARSE_FACTOR(S): i64 {
             }
             # Register the function-address fixup (common to both
             # backends — only the placeholder bytes differ).
-            var fnaddr = S + 0x198B000 + fc * 16;
+            var fnaddr = S + 0x107B000 + fc * 16;
             # v5.11.36 path-A: parser-to-emit named-op refactor.
             # Dispatch + fixup record + SFCNT all live in
             # <backend>/emit.cyr::ELOAD_FN_ADDR.
@@ -766,7 +766,7 @@ fn PARSE_FACTOR(S): i64 {
         SSDEP(S, 0);
         # Emit function prologue
         var cl_jmp = EJMP0(S);
-        S64(S + 0x12DA000 + clfi * 8, GCP(S));
+        S64(S + 0x9CA000 + clfi * 8, GCP(S));
         EFNPRO(S);
         # Parse params until |
         var clpc = 0;
@@ -786,7 +786,7 @@ fn PARSE_FACTOR(S): i64 {
                 else { cpgo = 0; }
             }
         }
-        S64(S + 0x12EA000 + clfi * 8, clpc);
+        S64(S + 0x9DA000 + clfi * 8, clpc);
         if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
         STI(S, GTI(S) + 1);  # consume closing |
         ESUBRSP(S, GFLC(S));
@@ -821,7 +821,7 @@ fn PARSE_FACTOR(S): i64 {
             syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
             syscall(SYS_EXIT, 1);
         }
-        var clfaddr = S + 0x198B000 + clfc * 16;
+        var clfaddr = S + 0x107B000 + clfc * 16;
         # v5.11.36 path-A: closure-fn-addr uses the same named op
         # as `&fn_name` — identical emit shape, same fixup type.
         ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
@@ -1453,7 +1453,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
     ECALLPOPS(S, 2);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
-    var ofoff = L64(S + 0x12DA000 + ofi * 8);
+    var ofoff = L64(S + 0x9CA000 + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, 2);
@@ -1482,7 +1482,7 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     var fi = FINDFN(S, np);
     if (fi < 0) { fi = REGFN(S, np); }
     ECALLPOPS(S, 2);
-    var foff = L64(S + 0x12DA000 + fi * 8);
+    var foff = L64(S + 0x9CA000 + fi * 8);
     if (foff >= 0) { ECALLTO(S, foff); }
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, 2);

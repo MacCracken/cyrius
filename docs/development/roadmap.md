@@ -45,7 +45,7 @@ Per-patch detail for v5.11.0 → current ships lives in
 [CHANGELOG.md](../../CHANGELOG.md); current-state snapshot lives
 in [state.md](state.md).
 
-### Shipped this cycle (v5.11.47 → v5.11.67)
+### Shipped this cycle (v5.11.47 → v5.11.68)
 
 Per-slot detail in [CHANGELOG.md](../../CHANGELOG.md). One-liner
 ledger below; expanded narrative for shipped work lives in CHANGELOG
@@ -81,6 +81,7 @@ ledger below; expanded narrative for shipped work lives in CHANGELOG
 - **.65** — CVE-05 split forward from .68: tok_names mangle-path write-boundary guard. 11 mangle sites (BUILD_METHOD_NAME / BUILD_OP_NAME / PARSE_FN_DEF module-mangle / variant-ctor × 2 / use-alias × 6 main_*.cyr variants) replaced magic-256 NPOS_GUARD with computed-source-length shape; 4 of the 6 main_*.cyr variants had no prior tok_names guard at all on the use-alias path. `_cve05_guard_gate` locks the magic-256 pattern out. check.sh 75 → 76. .68 stays a pure heap-map reorg.
 - **.66** — Bridge-compiler retirement: `src/bridge.cyr` deleted (2,005 LoC). Audit confirmed bridge was never in active bootstrap chain (`seed → cyrc → asm` is the real chain; cc5 is built standalone). 150 `bridge::*` entries cleanly removed from `docs/api-surface.snapshot` via regeneration. CLAUDE.md Key Principle + project structure listing + util.cyr comment + ADR-001 historical note all updated. One v6.0.0 accompanying-refactor item absorbed into v5.x close.
 - **.67** — Triple-pull bundle of v6.0.0 accompanying-refactor items (effectively a double-pull after premise-check at slot entry caught `cyrius build --strict` plumbing already shipped at v5.11.63): (1) `scripts/build-cc5-verify.sh` (~100 LoC bash) — formalizes the cc5 byte-identical fixpoint verifier, ad-hoc one-liners now permanent; renames to `build-cyc.sh` at v6.0.0; (2) cc3-era residue cleanup — `docs/adr/005-two-step-bootstrap.md` rewritten with stage_a/stage_b convention (was using cc3/cc4 ambiguously throughout an active ADR), `docs/doc-health.md` vidya example syntax updated, `roadmap-old.md` self-references marked done. README also updated for the post-bridge bootstrap chain. Byte-array literal peephole moved out to v6.0.x per user direction "put the pinned byte-array into 6.0.x line of work now."
+- **.68** — Heap-map full reorganization (true closeout engineering work): closes all four documented closeable gaps from the v5.8.61 minimum-blast-radius pass — 2.24 MB + 6 MB + 448 KB + 448 KB = 9.06 MB reclaimed. brk shrinks 0x56AD000 → **0x4D9D000** (-9.06 MB / ~77.6 MB total heap, was ~86.6 MB). 13.3 MB TS frontend reservation preserved. Cascade across four groups: codebuf + output_buf (-2.24 MB) → struct_ftypes (-8.19 MB) → struct_fnames (-8.62 MB) → 25+ regions through preprocess_out (-9.06 MB). ~32 distinct hex constants replace_all'd across 20 src/ files. Windows MMAP shrunk 0x5800000 → 0x4F00000. cc5 byte-identical at 874,232 B; cross-arch unchanged. heapmap.sh: 99 regions, monotonic 0x00000 → brk except single TS reservation.
 
 Issue file `2026-05-17-commandress-stdlib-papercuts.md` archived after .63 ship; .64 absorbed the agnos gvar-init-order fix, .65 shipped CVE-05 split forward from .68 (tok_names mangle-path guard; per-region overflow checks). v6.0-runway scope confirmed at .65 entry per user direction 2026-05-19 "start the march to 6.0".
 
@@ -122,40 +123,17 @@ fills, surface the pressure rather than punting.
   user 2026-05-12 until cyim repo updates + re-tests against
   current cyrius.
 
-### v5.11.x — mabda 3.0 GA fold (CONDITIONAL, watching window)
+### mabda 3.0 GA fold — dropped from v5.11.x (2026-05-19)
 
-**If mabda 3.0 GA cuts during the v5.11.x window**, fold mabda
-into stdlib using the v5.7.0 sandhi pattern (sakshi 2.2.3 /
-patra 1.9.3 / sigil 3.1.0 / vani 0.9.2 / yukti 2.2.2 / sankoch
-2.2.4 precedent in v5.8.x; niyama 1.0.1 in v5.9.x). Sister fold:
-agnosys (transitive via mabda).
+User direction at .67 ship: "no mabda fold". The conditional
+fold that was originally pinned for v5.11.69 (gated on mabda
+3.0 GA cutting + 24-hour soak passing) is no longer in scope
+for v5.11.x. mabda stays as a git `[deps.*]` resolution
+through v6.x or until the fold is re-pinned in a future cycle.
 
-**Soak gate**: mabda 3.0.0-rc.2 is running its **24-hour passing
-soak** (project-leader-set standard for GA promotion). 2-hour
-window observed clean at 2026-05-12 session; remaining 22 hours
-decide whether GA cuts inside the v5.11.x window.
-
-**Why this fits 5.x close** (despite the language-feature
-exclusion rule): the fold itself is **stdlib hygiene, not a
-language capability addition** — it vendors source byte-identical
-into `lib/mabda.cyr` and removes the git-dep resolution. No new
-ABI, no new language syntax, no new backend. Same shape as the
-six v5.8.x sandhi folds.
-
-**Decoupled from Class B FFI / wgpu fncall6 ABI**: that's the
-*language-level* ABI work (held-forward through v5.9.x →
-v5.11.x); stays in v6.4.x as a capability addition regardless
-of whether the fold lands earlier. The mabda 3.0 GA fold can
-proceed in v5.11.x **only if mabda 3.0 GA shipped without
-needing the Class B FFI fix to be functional**. If mabda 3.0 GA
-gates on the ABI work, both fold + ABI move together to v6.4.x.
-
-**Slot-entry check**: at the moment mabda 3.0 GA cuts, re-verify
-the Class B FFI gate per `feedback_premise_check_at_slot_entry`.
-If GA works clean: fold here. If GA still leans on Class B FFI:
-both move to v6.4.x. No mid-window auto-promotion.
-
-Memory pin: `project_mabda_rc3_at_closeout`.
+Class B FFI / wgpu fncall6 ABI work continues to track in
+v6.4.x as previously pinned — that decision is independent of
+the fold dropping.
 
 ### Byte-array literal peephole — moved to v6.0.x (2026-05-19)
 
@@ -186,15 +164,11 @@ stays a pure layout reorg per "Big Heavy One Thing" — the .65
 ship handles the write-side checks; the long-term
 `mmap`-with-guard-pages split tracks separately for v6.x.
 
-**Why .68 and not .69**: v5.11.69 is reserved as the
-**fold-applied tag** for any dep foldins that earn their slot
-during the window (mabda 3.0 GA being the live candidate). If
-no fold lands in the window, .68 is the final v5.x patch and
-.69 is unused. If a fold lands, .69 = .68 + fold-applied
-(byte-identical sandhi-pattern vendor of source, drop the
-`[deps.*]` entry, regen). The .68/.69 split keeps the heavy
-heap-map engineering and the conditional fold cleanly
-bisectable.
+**Why .68 and not .69**: .68 is the Big Heavy heap-map
+engineering; .69 is reserved as **another v6.0-runway item**
+(user direction 2026-05-19 after .67 ship: "no mabda fold and
+we will make .69 another pre 6.0 item"). The split keeps the
+heap-map reorg cleanly bisectable from whatever .69 absorbs.
 
 **Remaining gaps post v5.8.61's minimum-blast-radius reorg**
 (~22 MB of unused heap reserved as documented headroom):
@@ -226,14 +200,22 @@ is viable.
 **Reference**: full audit data in v5.8.61 CHANGELOG entry +
 `tests/heapmap.sh` output (84 regions documented).
 
-### v5.11.69 — Conditional fold-applied tag
+### v5.11.69 — Another v6.0-runway item (TBD at slot entry)
 
-Reserved exclusively for dep-fold sandhi ceremony if a candidate
-GA's during the v5.11.x window. Currently watching mabda 3.0
-(see conditional slot above). Engineering work does NOT land
-here per [cycle-discipline.md](cycle-discipline.md) cycle-close
-shape; if no fold lands, .69 stays unused and .68 is the final
-v5.x patch.
+Continues the .64-.67 v6.0-runway thread. User direction
+2026-05-19 retired the original conditional mabda-fold framing:
+"no mabda fold and we will make .69 another pre 6.0 item."
+Candidate selection happens at slot entry per
+[`feedback-no-unilateral-scope-decisions`] — pool drawn from
+[roadmap-old.md](roadmap-old.md) § v6.0.0 accompanying-refactor
++ closeout list (dead-code careful sweep, vidya bulk refresh,
+security re-scan, downstream check, or another candidate
+surfaced during the .68 ship).
+
+Mabda 3.0 fold is **dropped from v5.11.x entirely** — stays as
+a git `[deps.*]` resolution through v6.x or until re-pinned in
+a future cycle. Class B FFI / wgpu fncall6 ABI work continues
+to track in v6.4.x as previously pinned.
 
 ---
 

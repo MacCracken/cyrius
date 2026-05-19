@@ -19,17 +19,15 @@ include "src/frontend/parse.cyr"
 
 # Allocate heap
 var S = syscall(SYS_BRK, 0);
-# v5.7.11: brk was 0x54A000 (5.5 MB) which never reached the
-# tok_types region at S+0x94A000 — main_cx.cyr SIGSEGVd at LEX
-# the moment a non-empty input landed any token. Match
-# main_aarch64.cyr's brk extent.
-# brk extends through tok_lines + LEXID dedup index (~78.6 MB) —
-# synced with main.cyr. cx skips the TS frontend, so the ~13.5 MiB
-# pad between fixup_tbl-end (0x298B000) and tok-block-start
-# (0x368C000) is unused on this path; kept for offset parity with
-# main.cyr. v5.10.40 grew brk from 0x4E8C000 by 132 KB for the
-# LEXID bucket index (see src/main.cyr §LEXID_DEDUP).
-syscall(SYS_BRK, S + 0x56AD000);
+# v5.7.11 / v5.11.68 — brk extends through preprocess_out
+# (~77.6 MB post-.68 heap-map full reorg; was ~86.6 MB through
+# .67). Pre-.68 sed left the body shifted; this comment block
+# was rewritten at .68 close to match the new layout. cx skips
+# the TS frontend, so the 13.3 MB pad between fixup_tbl-end
+# (0x207B000) and tok-block-start (0x2D7C000) is unused on this
+# path; kept for offset parity with main.cyr. See CHANGELOG
+# [5.11.68] for the full close shape.
+syscall(SYS_BRK, S + 0x4D9D000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

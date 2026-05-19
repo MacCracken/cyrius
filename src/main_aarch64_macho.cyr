@@ -56,33 +56,33 @@
 #   0x13A000 var_types     [65536]
 #   0x14A000 (free band — was str_data pre-v5.8.59; see main.cyr for full lineage)
 #   0x21A000 str_data      [2097152]     2MB string literal bytes (v5.8.61 monotonic — see main.cyr)
-#   0x44A000..0x64A000 (2 MB FREED GAP)   Was preprocess_out [2097152] through
-#                                        v5.11.32. Relocated to 0x4EAD000 +
-#                                        cap raised 2 MB → 8 MB at v5.11.33;
-#                                        absorbed by v5.11.68's full reorg.
-#   0x64A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
-#   0x94A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43)
+#   (2 MB freed gap retired v5.11.68 — was preprocess_out [2097152] pre-v5.11.32,
+#                                        relocated to 0x459D000 at v5.11.33 +
+#                                        cap raised 2 MB → 8 MB. The 2 MB hole was
+#                                        absorbed by v5.11.68's full heap-map reorg.)
+#   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
+#   0x71A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43)
 #   (tok arrays RETIRED here v5.8.46 — see main.cyr for canonical layout;
-#    relocated to 0x368C000 / 0x3E8C000 / 0x468C000 with cap 1048576)
-#   0x114A000 struct_ftypes [65536]       256 structs × 32 fields (cap 256, v5.7.17)
-#   0x11CA000 struct_fnames [65536]       256 structs × 32 fields (cap 256, v5.7.17)
-#   0x124A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
-#   0x134A000 (fn tables end here — IR region not used by aarch64 compiler)
+#    relocated to 0x2D7C000 / 0x357C000 / 0x3D7C000 with cap 1048576)
+#   0x91A000 struct_ftypes [65536]       256 structs × 32 fields (cap 256, v5.7.17)
+#   0x92A000 struct_fnames [65536]       256 structs × 32 fields (cap 256, v5.7.17)
+#   0x93A000 (legacy fixup-table slot — retired v5.5.37; 256 KB gap)
+#   0xA3A000 (fn tables end here — IR region not used by aarch64 compiler)
 #
 # --- LEXID dedup index (v5.10.40) ---
-#   0x4E8C000  lexid_count   [8]
-#   0x4E8C100  lexid_heads   [2048]
-#   0x4E8C900  lexid_entries [131072]
+#   0x457C000  lexid_count   [8]
+#   0x457C100  lexid_heads   [2048]
+#   0x457C900  lexid_entries [131072]
 #   (Full doc in src/main.cyr §LEXID_DEDUP)
 #
-#   0x4EAD000 preprocess_out [8388608]   8 MB expanded source buffer.
+#   0x459D000 preprocess_out [8388608]   8 MB expanded source buffer.
 #                                        Relocated here from 0x44A000 at v5.11.33
 #                                        + cap raised 2 MB → 8 MB. See
 #                                        CHANGELOG [5.11.33].
-#   0x56AD000 brk-equivalent              ~86.6 MB total heap. v5.11.33 grew this
-#                                        from 0x4EAD000 / 78.6 MB at v5.10.40 by
+#   0x4D9D000 brk-equivalent              ~77.6 MB total heap (post-v5.11.68 reorg — was ~86.6 MB pre-.68). v5.11.33 grew this
+#                                        from 0x459D000 / 78.6 MB at v5.10.40 by
 #                                        the 8 MB preprocess_out relocation;
-#                                        v5.10.40 grew from 0x4E8C000 / 78.5 MB
+#                                        v5.10.40 grew from 0x457C000 / 78.5 MB
 #                                        at v5.8.61 by 132 KB LEXID dedup; was
 #                                        0x508C000 / 80.5 MB at v5.8.59-.60;
 #                                        synced with main.cyr.
@@ -147,10 +147,10 @@ if (_vn > 0) {
 # gets translated to BSD 197 (_mmap) by ESYSXLAT at emit time; the flag
 # value 0x1002 (MAP_PRIVATE | MAP_ANON on macOS) is baked in as an
 # immediate, so it reaches the kernel unchanged at runtime.
-# Size 0x56AD000 (~86.6 MB) matches main.cyr's brk through the v5.11.33
-# preprocess_out relocation. Was 0x4EAD000 (~78.6 MB) pre-v5.11.33;
-# 0x4E8C000 (~78.5 MB) pre-v5.10.40.
-var S = syscall(9, 0, 0x56AD000, 3, 0x1002, 0 - 1, 0);
+# Size 0x4D9D000 (~86.6 MB) matches main.cyr's brk through the v5.11.33
+# preprocess_out relocation. Was 0x459D000 (~78.6 MB) pre-v5.11.33;
+# 0x457C000 (~78.5 MB) pre-v5.10.40.
+var S = syscall(9, 0, 0x4D9D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(SYS_WRITE, 2, "cc5_macho: mmap heap init failed\n", 33);
     syscall(SYS_EXIT, 1);
@@ -378,7 +378,7 @@ var olen = L64(S + 0x1903F8);
 var written = 0;
 var wgo = 1;
 while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x94A000 + written, olen - written);
+    var w = syscall(SYS_WRITE, 1, S + 0x71A000 + written, olen - written);
     if (w <= 0) { wgo = 0; }
     else {
         written = written + w;

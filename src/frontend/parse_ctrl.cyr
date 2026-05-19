@@ -229,7 +229,7 @@ fn PARSE_WHILE(S): i64 {
     # Patch all break jumps (linked list through codebuf rel32 fields)
     var brk_patch = L64(S + 0x18F840);
     while (brk_patch > 0) {
-        var _ba = S + 0x64A000 + brk_patch;
+        var _ba = S + 0x41A000 + brk_patch;
         var _nb = L64(_ba) & 0xFFFFFFFF;
         EPATCH(S, brk_patch);
         brk_patch = _nb;
@@ -288,7 +288,7 @@ fn PARSE_FOR(S): i64 {
                 SNPOS(S, vlnp + 8);
                 vlfi = FINDFN(S, vlnp);
                 if (vlfi < 0) { vlfi = REGFN(S, vlnp); }
-                var vloff = L64(S + 0x12DA000 + vlfi * 8);
+                var vloff = L64(S + 0x9CA000 + vlfi * 8);
                 if (vloff >= 0) { ECALLTO(S, vloff); } else { ECALLFIX(S, vlfi); }
                 ECALLCLEAN(S, 1);
                 # Store length in hidden var
@@ -352,7 +352,7 @@ fn PARSE_FOR(S): i64 {
                 SNPOS(S, vgnp + 8);
                 vgfi = FINDFN(S, vgnp);
                 if (vgfi < 0) { vgfi = REGFN(S, vgnp); }
-                var vgoff = L64(S + 0x12DA000 + vgfi * 8);
+                var vgoff = L64(S + 0x9CA000 + vgfi * 8);
                 if (vgoff >= 0) { ECALLTO(S, vgoff); } else { ECALLFIX(S, vgfi); }
                 ECALLCLEAN(S, 2);
                 EFLSTORE(S, fiitem);
@@ -379,7 +379,7 @@ fn PARSE_FOR(S): i64 {
                 PATCHXP(S);
                 EPATCH(S, ficond);
                 var fibrk = L64(S + 0x18F840);
-                while (fibrk > 0) { var _fba = S + 0x64A000 + fibrk; var _fnb = L64(_fba) & 0xFFFFFFFF; EPATCH(S, fibrk); fibrk = _fnb; }
+                while (fibrk > 0) { var _fba = S + 0x41A000 + fibrk; var _fnb = L64(_fba) & 0xFFFFFFFF; EPATCH(S, fibrk); fibrk = _fnb; }
                 S64(S + 0x18F838, fislt);
                 S64(S + 0x18F840, fisbk);
                 S64(S + 0x18F898, fiscfw);
@@ -444,7 +444,7 @@ fn PARSE_FOR(S): i64 {
             PATCHXP(S);
             EPATCH(S, ficond);
             var fibrk = L64(S + 0x18F840);
-            while (fibrk > 0) { var _fba = S + 0x64A000 + fibrk; var _fnb = L64(_fba) & 0xFFFFFFFF; EPATCH(S, fibrk); fibrk = _fnb; }
+            while (fibrk > 0) { var _fba = S + 0x41A000 + fibrk; var _fnb = L64(_fba) & 0xFFFFFFFF; EPATCH(S, fibrk); fibrk = _fnb; }
             S64(S + 0x18F838, fislt);
             S64(S + 0x18F840, fisbk);
             S64(S + 0x18F898, fiscfw);
@@ -541,7 +541,7 @@ fn PARSE_FOR(S): i64 {
     PATCHXP(S);
     EPATCH(S, cpat);
     var bpat = L64(S + 0x18F840);
-    while (bpat > 0) { var _bpa = S + 0x64A000 + bpat; var _bnb = L64(_bpa) & 0xFFFFFFFF; EPATCH(S, bpat); bpat = _bnb; }
+    while (bpat > 0) { var _bpa = S + 0x41A000 + bpat; var _bnb = L64(_bpa) & 0xFFFFFFFF; EPATCH(S, bpat); bpat = _bnb; }
     SCOPE_POP(S);
     S64(S + 0x18F838, slt);
     S64(S + 0x18F840, sbk);

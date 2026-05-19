@@ -37,7 +37,7 @@ fn ISINCLUDE(S, pos, bl): i64 {
 }
 
 # Preprocess: expand include directives in-place.
-# Uses S+0 as input, S+0x4EAD000 as expanded output (1MB), copies back to S+0.
+# Uses S+0 as input, S+0x459D000 as expanded output (1MB), copies back to S+0.
 # Check if buffer at pos starts with a directive (returns length or 0)
 fn ISDEFINE(S, pos, bl): i64 {
     # Leading whitespace tolerated (see PP_SKIP_WS). Note that the
@@ -1328,7 +1328,7 @@ fn PP_SKIPLINE(S, ip, bl): i64 {
 # Builds expanded source into a new buffer, then copies back.
 fn PP_PASS(S): i64 {
     var bl = GBL(S);
-    var out = S + 0x4EAD000;
+    var out = S + 0x459D000;
     var op = 0;
     var ip = 0;
     var bol = 1;
@@ -1683,7 +1683,7 @@ fn PP_PASS(S): i64 {
             }
         }
     }
-    # Check preprocess output size. Buffer is 8MB at 0x4EAD000
+    # Check preprocess output size. Buffer is 8MB at 0x459D000
     # (v5.11.33 — was 2MB at 0x44A000 pre-relocation; raised to absorb
     # sandhi-folded stdlib growth + headroom into v6.x).
     if (op > 8388608) {
@@ -1692,8 +1692,8 @@ fn PP_PASS(S): i64 {
         syscall(SYS_WRITE, 2, " bytes)\n", 8);
         syscall(SYS_EXIT, 1);
     }
-    # No copy-back — data stays at S+0x4EAD000.
-    # PP_IFDEF_PASS reads from 0x4EAD000, writes to S+0.
+    # No copy-back — data stays at S+0x459D000.
+    # PP_IFDEF_PASS reads from 0x459D000, writes to S+0.
     SBL(S, op);
     return had_include;
 }
@@ -1702,8 +1702,8 @@ fn PP_PASS(S): i64 {
 fn PP_MACRO_PASS(S): i64 {
     if (_pp_macro_count == 0) { return 0; }
     var bl = GBL(S);
-    # Copy from 0x4EAD000 to S+0, save/restore state if large
-    var out = S + 0x4EAD000;
+    # Copy from 0x459D000 to S+0, save/restore state if large
+    var out = S + 0x459D000;
     var op = 0;
     var ip = 0;
     while (ip < bl) {
@@ -1737,7 +1737,7 @@ fn PP_MACRO_PASS(S): i64 {
             ip = ip + 1;
         }
     }
-    # No copy-back — output stays at S+0x4EAD000. LEX reads from there.
+    # No copy-back — output stays at S+0x459D000. LEX reads from there.
     SBL(S, op);
     return 0;
 }
@@ -1745,15 +1745,15 @@ fn PP_MACRO_PASS(S): i64 {
 # Second pass: evaluate #ifdef/#define/#endif only (no includes).
 # Processes conditional blocks in already-included content.
 #
-# v3.6.5: reads source from the preprocess buffer (S+0x4EAD000) directly via
+# v3.6.5: reads source from the preprocess buffer (S+0x459D000) directly via
 # `src` pointer. Only the first 256KB is copied to S+0 for helper functions
 # (ISDEFINE, PP_DEFINE, PP_SKIPLINE, etc.) which read via S+pos and also
 # access heap state at S+0x190800. Directives only appear in the first few KB
 # of source (stdlib headers), so the 256KB copy always covers them.
 #
-# Output writes go to S+0x4EAD000 (in-place: op <= ip always, safe because
+# Output writes go to S+0x459D000 (in-place: op <= ip always, safe because
 # ifdef filtering only removes lines). NO copy-back to S+0 at the end —
-# LEX reads from S+0x4EAD000, and PP_MACRO_PASS short-circuits for programs
+# LEX reads from S+0x459D000, and PP_MACRO_PASS short-circuits for programs
 # without macros.
 #
 # This eliminates the Bug #35 family of copy-back overflows that corrupted
@@ -1794,7 +1794,7 @@ fn PP_IFDEF_PASS(S): i64 {
         var bl = GBL(S);
         # Copy the preprocessed source to the temp buffer
         var ci = 0;
-        while (ci < bl) { store8(tmp + ci, load8(S + 0x4EAD000 + ci)); ci = ci + 1; }
+        while (ci < bl) { store8(tmp + ci, load8(S + 0x459D000 + ci)); ci = ci + 1; }
         # Redirect S-based reads to the temp buffer by copying back to S+0
         # for helpers (PP_DEFINE, PP_DEFINED, PP_EVAL_IF, PP_DERIVE_*,
         # PP_SKIPLINE) that take `S` as a base pointer and touch other
@@ -1811,7 +1811,7 @@ fn PP_IFDEF_PASS(S): i64 {
         if (cap > 1048576) { cap = 1048576; }
         ci = 0;
         while (ci < cap) { store8(S + ci, load8(tmp + ci)); ci = ci + 1; }
-        var out = S + 0x4EAD000;
+        var out = S + 0x459D000;
         var op = 0;
         var ip = 0;
         var bol = 1;
@@ -2022,16 +2022,16 @@ fn PP_IFDEF_PASS(S): i64 {
         SBL(S, op);
         iter = iter + 1;
     }
-    # No copy-back. Output stays at S+0x4EAD000. LEX reads from there.
+    # No copy-back. Output stays at S+0x459D000. LEX reads from there.
     # Free the temp buffer.
     syscall(11, tmp, 8388608);
     return 0;
 }
 
-# Pre-pass: expand #ref directives in raw input (S+0) into S+0x4EAD000, copy back
+# Pre-pass: expand #ref directives in raw input (S+0) into S+0x459D000, copy back
 fn PP_REF_PASS(S): i64 {
     var bl = GBL(S);
-    var out = S + 0x4EAD000;
+    var out = S + 0x459D000;
     var op = 0;
     var ip = 0;
     var found = 0;

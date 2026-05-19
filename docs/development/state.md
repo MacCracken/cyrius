@@ -3,6 +3,49 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-19 (.68 ship — heap-map full reorg, the true v5.x closeout engineering)
+
+Closing **v5.11.68** with the heap-map full reorganization
+pinned at v5.8.61 ship as the "last-minor-before-v6.0
+effort." Four documented closeable gaps closed; brk shrunk
+**0x56AD000 → 0x4D9D000** (-9.06 MB / 86.6 MB → 77.6 MB
+total heap). 13.3 MB TS frontend reservation preserved.
+
+- **Closed gaps**: A (2.24 MB str_data→codebuf) + B (6.00
+  MB output_buf→struct_ftypes) + C (448 KB struct_ftypes
+  →struct_fnames) + D (448 KB struct_fnames→fn_param_cstring
+  _mask) = 9.06 MB reclaimed.
+- **Cascade shifts**: Group 1 (codebuf + output_buf, -2.24
+  MB) → Group 2 (struct_ftypes, -8.19 MB) → Group 3
+  (struct_fnames, -8.62 MB) → Group 4 (25+ regions through
+  preprocess_out, -9.06 MB). Each region shifts by the sum
+  of upstream gap sizes.
+- **Edits**: ~32 distinct hex constants replace_all'd across
+  20 files in src/; heap-map comment blocks in 6 main_*.cyr
+  refreshed; Windows MMAP shrunk 0x5800000 → 0x4F00000
+  (-9.06 MB tracking brk reduction); src/common/util.cyr
+  historical comments updated for post-.68 layout.
+- **Two-step bootstrap**: old cc5 (.67 layout) → cc5_a (.68
+  layout) → cc5_b == cc5_a byte-identical at **874,232 B**
+  (unchanged — pure offset relocation, hex widths identical).
+  cc5_aarch64 564,456 B + cc5_win 686,632 B also unchanged.
+- **Mechanical gates green**: heapmap.sh 99 regions / 0
+  overlaps / 0 warnings, layout monotonic 0x00000 → 0x4D9D000
+  with single 13.3 MB TS reservation preserved. `check.sh`
+  **76/76**; `cyrius test` **152/152**; `scripts/build-cc5-
+  verify.sh` reports VERIFY OK on first invocation post-reorg.
+
+**v6.0-runway scoreboard (post-.68)**: five v6.0.0 items
+absorbed — CVE-05 (.65), bridge retirement (.66), build-
+cc5-verify.sh skeleton (.67), cc3-era residue load-bearing
+portion (.67), heap-map full reorg (.68). One slot remains:
+**.69 = another pre-6.0 item** (candidate TBD at slot entry).
+
+Memory pins:
+- [`project_v5_11_x_closeout_at_40`] — updated 2026-05-19
+  to reflect mabda fold dropped + .69 absorbing another
+  pre-6.0 item.
+
 ## Session close — 2026-05-19 (.67 ship — v6.0-runway triple-pull → double-pull after premise-check)
 
 Closing **v5.11.67** with a v6.0-runway double-pull bundle:
