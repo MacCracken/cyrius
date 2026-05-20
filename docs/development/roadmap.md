@@ -73,6 +73,71 @@ bayan/ganita carve, all together).
   gnoboot adopted `stdlib = ["fnptr"]`. Two regression smoke gates
   added (check.sh 78/78 now).
 
+### Pinned slot sequence (next three)
+
+Per user direction 2026-05-20. v6.0.2 lands at the user's
+convenience once the in-flight stdlib walk completes; v6.0.3 +
+v6.0.4 form a two-slot mini-arc closing out the v5.11.x deferred
+return-patch-buffer → vec conversion (proposal Option C,
+[`proposals/archived/2026-05-08-raise-return-cap.md`](proposals/archived/2026-05-08-raise-return-cap.md)).
+
+- **v6.0.2 — stdlib pin refresh** — pull the latest of each
+  stdlib dep into cyrius's own `cyrius.cyml` (sigil, sakshi,
+  patra, sankoch, niyama, vani, yukti, agnosys, …) reflecting
+  the parallel "walk the stdlibs and update to 6.0.1" sweep the
+  user is running alongside kernel-arc work. **mabda holds at
+  its current pin** until rc.4 validation closes — explicit
+  exception. Acceptance: every dep's `cyrius` field tracks
+  v6.0.1; `cyrius deps` resolves clean; `scripts/check.sh` green;
+  smoke across all four SSH hosts ([[reference_verification_hosts_ssh]]).
+- **v6.0.3 — alloc + vec pull-in (prep)** — fold `lib/alloc.cyr`
+  (+ OS-variant `alloc_windows.cyr` / `alloc_macos.cyr` brought
+  in by its internal `#ifdef` chain) and `lib/vec.cyr` into
+  cycc's source tree. Add `include` lines to both `src/main.cyr`
+  and `src/main_aarch64.cyr`; call `alloc_init()` explicitly at
+  top-level (explicit > v5.8.37 lazy-init for compiler internals
+  — narrower failure mode). Allocate the parser's
+  return-patch vec once via `rp_vec = vec_new()` at parser-state
+  init. **Zero behavior change**: the fixed 256-slot array at
+  `S + 0x18DA20` is still the active storage; the parser still
+  errors out at >256 returns. This slot just makes the surface
+  available. Total pull-in surface: ~842 LoC (alloc 483 +
+  alloc_windows 87 + alloc_macos 117 + vec 155). Cycc binary
+  growth bookkept as honest growth-tax per
+  [[feedback_perf_deltas_growth_tax_default]]. Acceptance: cycc
+  byte-identical; full `scripts/check.sh`; 4-host smoke.
+- **v6.0.4 — return-patch buffer → vec (conversion)** — replace
+  the fixed-array storage at all 9 enforcement sites
+  (`parse.cyr` ×1, `parse_expr.cyr` ×3, `parse_fn.cyr` ×5) with
+  `vec_push(rp_vec, v)`; replace the read-back at
+  `parse_expr.cyr:803-812` with `vec_get(rp_vec, clri)` and the
+  iteration bound with `vec_len(rp_vec)`. Save/restore for
+  closure-bodied nesting at `parse_expr.cyr:760-812` becomes
+  `snap = vec_len(rp_vec); vec_truncate(rp_vec, 0)` on entry,
+  `vec_truncate(rp_vec, snap)` on exit (may need to add
+  `vec_truncate` to `lib/vec.cyr` if not already present —
+  confirm at slot entry). Per-fn lifecycle: `vec_truncate(rp_vec,
+  0)` at each fn-start — **Option A reuse pattern, chosen for
+  security reasons**: cycc's allocator is a bump allocator
+  (`lib/alloc.cyr` header line 17), so per-fn `vec_new`/free
+  would leave stranded allocations and create a DoS surface on
+  malicious input. Reset-per-fn keeps memory bounded at the
+  high-water-mark of the largest fn. Delete `GRPC`/`SRPC` from
+  `src/common/util.cyr:128-129` and sweep all callers; the dead
+  2KB region `[0x18DA20..0x18E220)` and the now-unused counter
+  slot at `0x18E220` stay in place — flagged for v6.x closeout
+  heap-map sweep per user direction 2026-05-20 ("if needed
+  collapse it otherwise closeouts should focus on those kind
+  of cleanups"). The "too many return statements (max 256)"
+  diagnostic is replaced by an OOM error at the single
+  `vec_new()` site. Cross-arch propagation mandatory
+  ([[feedback_cross_arch_propagation_mandatory]]): x86 +
+  aarch64 + cx + macho in this same slot. Acceptance: cycc
+  byte-identical post-conversion; new
+  `tests/tcyr/return_cap_removed.tcyr` exercising a fn with
+  >256 returns (currently rejected) compiling clean; full
+  `scripts/check.sh`; 4-host smoke.
+
 ### Planned
 
 #### Toolchain & tests
@@ -103,14 +168,11 @@ The remaining 5 land in v6.0.x:
   ir_*/cross-arch helpers) stays alive by default; only
   confirmed-dead removable. Risk: 0-LoC outcome if all
   candidates classify as scaffold.
-- **Return-patch buffer → vec** — proposal Option C
-  ([`proposals/archived/2026-05-08-raise-return-cap.md`](proposals/archived/2026-05-08-raise-return-cap.md)).
-  Convert fixed 256-cap array at `S + 0x18DA20` to growable
-  vec; removes magic-number'd parser-state field entirely.
-  **Requires allocator pulled into cycc** (currently no
-  `lib/alloc.cyr` included — v5.11.67 premise-check confirmed
-  this surface is "more invasive than a literal-bump").
-  Acceptance: cycc byte-identical post-conversion.
+- **Return-patch buffer → vec** — pinned as the v6.0.3 +
+  v6.0.4 mini-arc (alloc/vec pull-in + conversion). See
+  "Pinned slot sequence" above for full scope. Proposal
+  Option C; allocator prereq surface confirmed at v5.11.67
+  premise-check.
 - **`_TARGET_*` flag consolidation** — `_TARGET_MACHO`,
   `_TARGET_PE`, `CYRIUS_TARGET_LINUX/WIN/MACOS`, `_AARCH64_BACKEND`,
   plus per-arch `EWRITE_PE` / `_pe_pending_imp_add` / `EDISP32`
@@ -199,13 +261,14 @@ Memory pins: [`project_bayan_ganita_carve_arc`],
 
 | Cluster | Slots |
 |---|---|
-| Runway carry-forward (5 items) | ~16 |
+| Stdlib pin refresh (v6.0.2) | 1 |
+| Runway carry-forward (5 items, incl. v6.0.3+v6.0.4 mini-arc) | ~16 |
 | Stdlib QoL (POSIX *at + TOML + octal) | ~7 |
 | Holdovers (pre-commit hook + cyim conditional) | ~2-3 |
 | Stdlib clean-slate (mabda fold + bayan + ganita) | ~6-8 |
-| **Total planned** | **~31-34** |
+| **Total planned** | **~32-35** |
 | Bug bandwidth | ~10 |
-| **Budget** | **~41-44** |
+| **Budget** | **~42-45** |
 
 The stdlib clean-slate flexes total slot count above the 30
 target — acceptable given the "clean slate, update all together"
