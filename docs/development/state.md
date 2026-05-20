@@ -3,6 +3,57 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-19 (.1 ship — stdlib-resolution hotfix bundle)
+
+Closing **v6.0.1** as same-day hotfix for two stdlib-resolution
+path bugs surfaced by today's v6.0.0 cycle-open:
+
+**Filed by**: agnosticos (gnoboot 0.2.0 UEFI #UD on first
+firmware-call site; `objdump` showed `ud2 ud2 nop` sentinels
+where `call rel32` should have been). Issue file moved into
+`docs/development/issues/2026-05-19-cycc-6.0.0-uefi-fncall-ud2-emit.md`.
+
+**Root cause 1** (compiler, src/frontend/lex.cyr):
+`var vp = 4` (`_init_cyrius_lib`) + `var _pd_self_start = 4`
+(`_check_cyml_pin_drift`) skipped the first 4 chars of
+`_VERSION_STR_CYCC`. Correct for `"cc5 "` (4 chars), off-by-one
+for `"cycc "` (5 chars). Effects:
+
+- Version-pinned stdlib fallback path corrupted to
+  `$HOME/.cyrius/versions/ <v>/lib/` (leading space). Consumers
+  without a vendored `./lib/` couldn't resolve `include "lib/X.cyr"`.
+  Cycc emitted `ud2 ud2 nop` placeholders + exit 0.
+- Pin-drift warning fired even when cyml pin matched cycc
+  version (length-mismatch short-circuit).
+
+**Root cause 2** (wrapper, cbt/deps.cyr): `sys_mkdir("lib", 0x1ED)`
+unconditional at cmd_deps entry tripped `_dep_find_stdlib_dir`
+priority (a) for ANY downstream repo with `src/main.cyr` + non-
+empty stdlib pin. Pre-existing since v5.11.17; latent because no
+such consumer had been tested through `cyrius deps` until gnoboot
+adopted `stdlib = ["fnptr"]` at this slot.
+
+**Fixes**:
+- `src/frontend/lex.cyr` — both 4→5; comment text updated;
+  pin-drift warning syscall length 12→13 to preserve spacing.
+- `cbt/deps.cyr` — removed upfront `sys_mkdir("lib", ...)`;
+  `_dep_copy_file` prefix-walk already mkdir's lazily.
+- `programs/check.cyr` — two new regression gates:
+  `_efi_stdlib_fallback_gate` + `_deps_downstream_src_main_gate`.
+
+**Coordinated**: `gnoboot/cyrius.cyml` now declares
+`stdlib = ["fnptr"]` (belt-and-suspenders alongside the cycc-side
+fallback fix).
+
+**Mechanical gates**:
+- cycc self-host **byte-identical at 874,232 B** (same as v6.0.0).
+- `scripts/check.sh` **78/78** (was 76/76 at v6.0.0; +2 for the
+  new regression gates).
+- gnoboot `BOOTX64.EFI` 33,792 B PE32+ with **0 `0F 0B 0F 0B 90`
+  sentinels** (was 32 across 16 paired sites at v6.0.0).
+
+Memory pin: [`project_v6_0_1_skip_prefix_fix`].
+
 ## Session close — 2026-05-19 (v6.0.0 OPEN — two-binary rename ceremony)
 
 Opening **v6.0.0** with the two-binary rename ceremony per

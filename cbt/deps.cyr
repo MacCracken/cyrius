@@ -755,7 +755,19 @@ fn cmd_deps(): i64 {
         _err("no cyrius.cyml or cyrius.toml found");
         return 1;
     }
-    sys_mkdir("lib", 0x1ED);
+    # v6.0.1: removed unconditional `sys_mkdir("lib", 0x1ED)` here.
+    # Pre-fix the upfront mkdir created `./lib` before
+    # `_dep_find_stdlib_dir` ran, tripping its priority-(a) check
+    # `file_exists("src/main.cyr") && is_dir("./lib")` for ANY
+    # downstream repo with a `src/main.cyr` entry point + non-empty
+    # `stdlib = [...]` (gnoboot exposed this 2026-05-19 when
+    # adopting `stdlib = ["fnptr"]`). Priority (a) is supposed to
+    # identify the cyrius source repo only — it returned "./lib"
+    # for downstream repos and the stdlib copy failed because the
+    # src path resolved into the empty just-mkdir'd `./lib/`. The
+    # `_dep_copy_file` prefix-walk at line ~85 already mkdir's
+    # intermediate dirs lazily, so the upfront mkdir was redundant
+    # AND wrong. See CHANGELOG [6.0.1].
     var buf = alloc(32768);
     var n = file_read_all(_manifest, buf, 32767);
     if (n <= 0) { _err("cannot read manifest"); return 1; }

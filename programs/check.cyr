@@ -1986,6 +1986,255 @@ fn _efi_trampoline_rex_gate(): i64 {
     return fail;
 }
 
+# Gate: stdlib fallback path resolves `include "lib/X.cyr"` from
+# downstream consumers that have no vendored `./lib/` (v6.0.1;
+# rename-skip regression).
+#
+# Reproduces the v6.0.0 bug shape: cycc's `_init_cyrius_lib` built
+# `$HOME/.cyrius/versions/<v>/lib/` via skip-prefix on _VERSION_STR_CYCC.
+# The v5.x prefix `"cc5 "` (4 chars) became `"cycc "` (5 chars) at
+# v6.0.0 but the `vp = 4` constant was missed — yielding the path
+# `$HOME/.cyrius/versions/ <v>/lib/` (leading space), which doesn't
+# exist on the filesystem. Stdlib includes from consumers without a
+# local `./lib/` then failed to resolve; fixup.cyr emitted the
+# `0F 0B 0F 0B 90` (ud2/ud2/nop) sentinel at every fncallN call site;
+# cycc returned 0 and shipped a silently-broken UEFI binary that
+# #UD'd on entry into firmware.
+#
+# The gate stages a minimal fncall1-via-fnptr.cyr consumer in /tmp/,
+# chdirs the child to /tmp/ before execve so `./lib` is NOT visible
+# (forcing the version-pinned fallback path to be exercised), builds
+# with CYRIUS_TARGET_EFI=1, and asserts the output has zero ud2 ud2
+# nop sequences.
+#
+# Negative test verified in-slot: pre-fix cycc produces a PE32+ that
+# contains 16 ud2/ud2/nop sentinels (one per fncallN site); fixed
+# cycc produces a clean PE32+ with zero sentinels.
+fn _efi_stdlib_fallback_gate(): i64 {
+    var label = "stdlib fallback resolves lib/fnptr.cyr without vendored ./lib (v6.0.1; rename-skip regression)";
+
+    var src_path = "/tmp/audit_efi_fallback_src.cyr";
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) { _check(label, 1); return 1; }
+    var src = "include \"lib/fnptr.cyr\"\nfn main(): i64 { var fp = 0; var r = fncall1(fp, 0); return r; }\n";
+    sys_write(fd, src, strlen(src));
+    sys_close(fd);
+
+    var bin_path = "/tmp/audit_efi_fallback_bin";
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_unlink(src_path); _check(label, 1); return 1; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+
+    var out_fd = sys_open(bin_path, 577, 420);
+    if (out_fd < 0) {
+        sys_close(read_fd); sys_close(write_fd); sys_unlink(src_path);
+        _check(label, 1); return 1;
+    }
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
+        sys_unlink(src_path); _check(label, 1); return 1;
+    }
+    # Build augmented envp: parent's ENVP_ARR (carries HOME, needed
+    # by cycc's `_init_cyrius_lib` to build the version-pinned
+    # fallback path) + CYRIUS_TARGET_EFI=1 + NUL. _self_host_pipe_efi
+    # passes only "CYRIUS_TARGET_EFI=1" but that suffices for the
+    # inline-asm efi_probe.cyr — this gate needs HOME because the
+    # whole point is to exercise the stdlib-include fallback.
+    var aug_envp = alloc((ENVP_COUNT + 2) * 8);
+    var ei = 0;
+    while (ei < ENVP_COUNT) {
+        store64(aug_envp + ei * 8, load64(ENVP_ARR + ei * 8));
+        ei = ei + 1;
+    }
+    store64(aug_envp + ENVP_COUNT * 8, "CYRIUS_TARGET_EFI=1");
+    store64(aug_envp + (ENVP_COUNT + 1) * 8, 0);
+
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0); sys_close(read_fd);
+        sys_dup2(out_fd, 1); sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var cd_rc = syscall(SYS_CHDIR, "/tmp");
+        if (cd_rc < 0) { sys_exit(126); }
+        var argv[3];
+        store64(&argv,     CC_PATH);
+        store64(&argv + 8, 0);
+        sys_execve(CC_PATH, &argv, aug_envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+
+    var src_cap = 4096;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; } else { written = written + w; }
+    }
+    sys_close(write_fd);
+
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    sys_unlink(src_path);
+
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
+        sys_unlink(bin_path);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cycc exited non-zero (status="); print_num(status);
+        println(") with CYRIUS_TARGET_EFI=1 + include \"lib/fnptr.cyr\"");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": compiled but output unreadable");
+        _check(label, 1);
+        return 1;
+    }
+
+    var ud2_needle[1];
+    store8(&ud2_needle + 0, 0x0F);
+    store8(&ud2_needle + 1, 0x0B);
+    store8(&ud2_needle + 2, 0x0F);
+    store8(&ud2_needle + 3, 0x0B);
+    store8(&ud2_needle + 4, 0x90);
+    var ud2_at = _find_bytes(buf, n, &ud2_needle, 5);
+
+    var fail = 0;
+    if (ud2_at >= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": found ud2/ud2/nop sentinel (0F 0B 0F 0B 90) at offset ");
+        print_num(ud2_at);
+        println(" — lib/fnptr.cyr did not resolve via version-pinned fallback");
+        println("    (rename-skip regression — check src/frontend/lex.cyr `vp =` constant)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": fncall1 resolved via $HOME/.cyrius/versions/<v>/lib/fnptr.cyr (no ud2 sentinel)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# Gate: `cyrius deps` resolves stdlib pins for downstream repos that
+# have a `src/main.cyr` entry point (v6.0.1; cmd_deps mkdir-before-find
+# regression).
+#
+# Pre-fix, `cmd_deps` (cbt/deps.cyr) ran `sys_mkdir("lib", 0x1ED)`
+# unconditionally before `_dep_find_stdlib_dir`. Priority (a) of
+# `_dep_find_stdlib_dir` checks `file_exists("src/main.cyr") &&
+# is_dir("./lib")` to identify "we're inside the cyrius source repo"
+# — but the upfront mkdir created `./lib` first, tripping (a) for ANY
+# downstream repo with a `src/main.cyr` entry point + non-empty
+# `stdlib = [...]`. Priority (a) then returned "./lib" instead of
+# the pinned/legacy fallback path; the copy from `./lib/<mod>.cyr`
+# (which is empty) failed with "cannot read".
+#
+# Affected: gnoboot 0.2.0 the moment it adopted `stdlib = ["fnptr"]`
+# (2026-05-19). Surfaced during v6.0.1 triage of the agnosticos UEFI
+# fncall ud2 filing. Bug pre-dates v6.0.0 — would have hit any
+# downstream-with-src/main.cyr consumer with a non-empty stdlib pin
+# since v5.11.17 (when priority (a) landed).
+#
+# Fix: remove the upfront mkdir. The `_dep_copy_file` prefix-walk
+# already mkdir's intermediate dirs lazily when the actual copy runs
+# (cbt/deps.cyr:79-88), so the upfront mkdir was redundant AND
+# wrong.
+#
+# Gate stages a fixture in /tmp/ that exactly matches the downstream-
+# repo-with-src/main.cyr shape and asserts `cyrius deps` materializes
+# `./lib/fnptr.cyr` in the fixture.
+fn _deps_downstream_src_main_gate(): i64 {
+    var label = "cyrius deps resolves stdlib pins for downstream repos with src/main.cyr (v6.0.1; mkdir-before-find regression)";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fixture_dir = _tmp_path("audit_deps_downstream_");
+    sys_mkdir(fixture_dir, 0x1ED);
+
+    var src_dir_sb = str_builder_new();
+    str_builder_add_cstr(src_dir_sb, fixture_dir);
+    str_builder_add_cstr(src_dir_sb, "/src");
+    var src_dir = str_data(str_builder_build(src_dir_sb));
+    sys_mkdir(src_dir, 0x1ED);
+
+    var main_path_sb = str_builder_new();
+    str_builder_add_cstr(main_path_sb, src_dir);
+    str_builder_add_cstr(main_path_sb, "/main.cyr");
+    var main_path = str_data(str_builder_build(main_path_sb));
+    _write_file(main_path, "fn main(): i64 { return 0; }\n");
+
+    var cyml_path_sb = str_builder_new();
+    str_builder_add_cstr(cyml_path_sb, fixture_dir);
+    str_builder_add_cstr(cyml_path_sb, "/cyrius.cyml");
+    var cyml_path = str_data(str_builder_build(cyml_path_sb));
+    _write_file(cyml_path,
+        "[package]\nname = \"deps_gate_fixture\"\nversion = \"0.0.1\"\n\n[build]\nentry = \"src/main.cyr\"\n\n[deps]\nstdlib = [\"fnptr\"]\n");
+
+    var out_path = _tmp_path("audit_deps_downstream_out_");
+    var ec = _exec_in_dir(fixture_dir, cyrius_bin, "deps", out_path);
+
+    var lib_fnptr_sb = str_builder_new();
+    str_builder_add_cstr(lib_fnptr_sb, fixture_dir);
+    str_builder_add_cstr(lib_fnptr_sb, "/lib/fnptr.cyr");
+    var lib_fnptr = str_data(str_builder_build(lib_fnptr_sb));
+    var resolved = file_exists(lib_fnptr);
+    var sz = 0;
+    if (resolved == 1) { sz = _file_size(lib_fnptr); }
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(out_path);
+    sys_unlink(lib_fnptr);
+    sys_unlink(main_path);
+    sys_unlink(cyml_path);
+    var lib_dir_sb = str_builder_new();
+    str_builder_add_cstr(lib_dir_sb, fixture_dir);
+    str_builder_add_cstr(lib_dir_sb, "/lib");
+    sys_rmdir(str_data(str_builder_build(lib_dir_sb)));
+    sys_rmdir(src_dir);
+    sys_rmdir(fixture_dir);
+
+    var fail = 0;
+    if (ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cyrius deps exited "); print_num(ec); println(" (expected 0)");
+        fail = 1;
+    } elif (resolved != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": lib/fnptr.cyr not materialized in fixture (cmd_deps mkdir-before-find regression?)");
+        fail = 1;
+    } elif (sz <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": lib/fnptr.cyr exists but is empty (sz="); print_num(sz); println(")");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": cyrius deps materialized lib/fnptr.cyr (");
+        print_num(sz); println(" bytes) in downstream-with-src/main.cyr fixture");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Helper: find first occurrence of `needle` in [buf, buf+n) starting
 # at `from`. Returns offset on hit, -1 on miss. Used by the cap-drift
 # and doc-size gates to scan for textual patterns inside loaded buffers.
@@ -9226,6 +9475,14 @@ fn _run_regression_gates(): i64 {
 
     _section("EFI trampoline REX encoding (efi_main convention)");
     _efi_trampoline_rex_gate();
+    println("");
+
+    _section("EFI stdlib fallback resolves lib/fnptr.cyr (v6.0.1 regression)");
+    _efi_stdlib_fallback_gate();
+    println("");
+
+    _section("cyrius deps for downstream-with-src/main.cyr (v6.0.1 regression)");
+    _deps_downstream_src_main_gate();
     println("");
 
     _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");

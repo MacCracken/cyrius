@@ -6,6 +6,104 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.1] — 2026-05-19
+
+**Hotfix for two stdlib-resolution path bugs surfaced by the
+v6.0.0 cycle-open. Filed by agnosticos (gnoboot 0.2.0 #UD on
+first UEFI service call) and reproduced same-day.**
+
+### Fixed — `_init_cyrius_lib` + `_check_cyml_pin_drift` skip-prefix off-by-one
+
+`src/frontend/lex.cyr` had two `var vp = 4` / `var _pd_self_start
+= 4` constants that skipped the first 4 chars of `_VERSION_STR_CYCC`.
+Correct for the pre-v6.0.0 prefix `"cc5 "` (4 chars), wrong for
+the post-rename `"cycc "` (5 chars). Bug missed by the v6.0.0
+rename sed sweep because the constants were numeric literals, not
+string references.
+
+**Effects:**
+
+1. `_init_cyrius_lib` (lex.cyr:270) — built the version-pinned
+   stdlib fallback path `$HOME/.cyrius/versions/<v>/lib/` by
+   appending the version substring from index 4 of `"cycc X.Y.Z\n"`.
+   The off-by-one captured the trailing space as the leading char,
+   yielding `$HOME/.cyrius/versions/ <v>/lib/` (literal space). That
+   path doesn't exist on the filesystem, so `include "lib/X.cyr"`
+   from consumers without a vendored `./lib/` couldn't resolve via
+   the fallback. The fixup pass then emitted the
+   `0F 0B 0F 0B 90` (`ud2/ud2/nop`) sentinel at every unresolved
+   call site. cycc exited 0 and shipped silently-broken binaries.
+   **Blast radius**: every UEFI consumer using `lib/fnptr.cyr`'s
+   `fncallN` for firmware-call dispatch — `gnoboot` blocked AGNOS
+   Path C iron testing (Attempt 71) until the fix landed.
+
+2. `_check_cyml_pin_drift` (lex.cyr:564) — read the self-version
+   substring starting at index 4, yielding `" 6.0.0"` (6 chars w/
+   leading space) instead of `"6.0.0"` (5 chars). Length-mismatch
+   short-circuited the match check, firing the toolchain-drift
+   warning on every build even when the cyml pin and cycc version
+   were identical.
+
+**Fix:** Both constants → 5; comment text updated. Cosmetic
+side-effect: the warning's preceding constant text " but cycc is "
+was being written with length 12 (omitting its trailing space, but
+the old off-by-one happened to supply a leading space from the
+substring); length raised to 13 to keep the spacing clean now that
+the substring starts at the version digit.
+
+**Self-host gate:** byte-identical at 874,232 B (same as v6.0.0).
+
+### Fixed — `cmd_deps` mkdir-before-find regression
+
+`cbt/deps.cyr:768` ran `sys_mkdir("lib", 0x1ED)` unconditionally
+before calling `_dep_find_stdlib_dir`. The resolver's priority-(a)
+check (`file_exists("src/main.cyr") && is_dir("./lib")`) was
+supposed to identify "we're inside the cyrius source repo" — but
+the upfront mkdir created `./lib` first, tripping (a) for ANY
+downstream repo with a `src/main.cyr` entry point + non-empty
+`stdlib = [...]`. Priority (a) then returned `"./lib"` instead of
+the pinned/legacy fallback path; the copy from `./lib/<mod>.cyr`
+(which was just an empty dir) failed with `error: cannot read
+./lib/<mod>.cyr`.
+
+**Latency:** Bug shipped at v5.11.17 (when priority (a) landed)
+and stayed dormant because no downstream repo with both a
+`src/main.cyr` AND a non-empty stdlib pin had been tested through
+`cyrius deps` until gnoboot 0.2.0 adopted `stdlib = ["fnptr"]` at
+the v6.0.1 close.
+
+**Fix:** Removed the upfront mkdir. `_dep_copy_file`'s prefix-walk
+(deps.cyr:79-88) already mkdir's intermediate dirs lazily when the
+actual copy runs, so the upfront mkdir was redundant AND wrong.
+
+### Added — two regression smoke gates in `programs/check.cyr`
+
+1. **EFI stdlib fallback gate** (`_efi_stdlib_fallback_gate`) —
+   stages a minimal `include "lib/fnptr.cyr"` + `fncall1(...)`
+   fixture in `/tmp/`, chdir's the cycc child to `/tmp/` so
+   `./lib` is not visible (forcing the version-pinned fallback),
+   compiles with `CYRIUS_TARGET_EFI=1`, asserts the output has zero
+   `0F 0B 0F 0B 90` sentinel sequences. Augmented envp carries
+   parent's HOME (needed by `_init_cyrius_lib`) plus
+   `CYRIUS_TARGET_EFI=1`.
+
+2. **cyrius deps downstream gate** (`_deps_downstream_src_main_gate`)
+   — stages a fixture matching the downstream-repo-with-src/main.cyr
+   shape (cyrius.cyml with `stdlib = ["fnptr"]`, no `./lib`), runs
+   `cyrius deps` via `_exec_in_dir`, asserts `./lib/fnptr.cyr`
+   materializes in the fixture. Catches the mkdir-before-find
+   regression class.
+
+`scripts/check.sh` now runs 78/78 (up from 76/76 at v6.0.0).
+
+### Coordinated — gnoboot 0.2.0 cyrius.cyml
+
+Belt-and-suspenders: gnoboot's `cyrius.cyml` now declares
+`stdlib = ["fnptr"]` so `cyrius deps` vendors `lib/fnptr.cyr` into
+`gnoboot/lib/` (matches `docs/guides/getting-started.md`). Even
+with the cycc-side fallback fixed, vendoring is the more robust
+path for downstream consumers.
+
 ## [6.0.0] — 2026-05-19
 
 **v6.0.0 cycle OPEN — two-binary rename ceremony.** First slot

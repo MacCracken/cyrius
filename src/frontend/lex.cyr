@@ -265,9 +265,16 @@ fn _init_cyrius_lib(): i64 {
                             store8(&_cyrius_lib + wi, 115); wi = wi + 1;  # s
                             store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
                             # Append the version digits from _VERSION_STR_CYCC
-                            # ("cycc X.Y.Z\n" — skip first 4 chars "cycc ",
-                            # copy until '\n').
-                            var vp = 4;
+                            # ("cycc X.Y.Z\n" — skip first 5 chars "cycc ",
+                            # copy until '\n'). v6.0.1: was 4 (correct for
+                            # the old "cc5 " prefix), missed at v6.0.0
+                            # rename — yielded "/versions/ X.Y.Z/lib/"
+                            # (leading space) so the fallback path didn't
+                            # exist on FS, stdlib includes failed to
+                            # resolve, fncallN bodies went undefined,
+                            # fixup emitted ud2 sentinels. See CHANGELOG
+                            # [6.0.1].
+                            var vp = 5;
                             while (vp < _VERSION_LEN_CYCC) {
                                 var vc = load8(_VERSION_STR_CYCC + vp);
                                 if (vc == 10) { break; }
@@ -559,8 +566,12 @@ fn _check_cyml_pin_drift(): i64 {
     if (_pd_pin_start < 0) { return 0; }
     if (_pd_pin_end <= _pd_pin_start) { return 0; }
     var _pd_pin_len = _pd_pin_end - _pd_pin_start;
-    # cycc self-version: skip "cycc " (4 chars), read until '\n'.
-    var _pd_self_start = 4;
+    # cycc self-version: skip "cycc " (5 chars), read until '\n'.
+    # v6.0.1: was 4 (correct for the old "cc5 " prefix), missed at
+    # v6.0.0 rename — substring read started at the trailing space so
+    # length-mismatch fired pin-drift warning even when cyml pin and
+    # cycc version matched. See CHANGELOG [6.0.1].
+    var _pd_self_start = 5;
     var _pd_self_end = _pd_self_start;
     while (_pd_self_end < _VERSION_LEN_CYCC && load8(_VERSION_STR_CYCC + _pd_self_end) != 10) {
         _pd_self_end = _pd_self_end + 1;
@@ -580,14 +591,14 @@ fn _check_cyml_pin_drift(): i64 {
     if (_pd_strict == 1) {
         syscall(1, 2, "error: cyrius.cyml pins ", 24);
         syscall(1, 2, &_pd_buf + _pd_pin_start, _pd_pin_len);
-        syscall(1, 2, " but cycc is ", 12);
+        syscall(1, 2, " but cycc is ", 13);
         syscall(1, 2, _VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
         syscall(1, 2, " — toolchain drift (CYRIUS_STRICT_PIN)\n", 41);
         syscall(60, 1);
     }
     syscall(1, 2, "warning: cyrius.cyml pins ", 26);
     syscall(1, 2, &_pd_buf + _pd_pin_start, _pd_pin_len);
-    syscall(1, 2, " but cycc is ", 12);
+    syscall(1, 2, " but cycc is ", 13);
     syscall(1, 2, _VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
     syscall(1, 2, " — toolchain drift (snapshot may be stale; set CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)\n", 88);
     #endif

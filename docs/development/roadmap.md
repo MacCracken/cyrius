@@ -57,6 +57,32 @@ bayan/ganita carve, all together).
   Bootstrap) + `cc5 → cycc` (Cyrius Computer Compiler). Bootstrap
   chain `seed (asm) → cybs → cycc`. ~2,100 occurrences renamed
   across ~157 files; historical narrative preserved.
+- **v6.0.1** — two stdlib-resolution hotfixes filed same-day as the
+  v6.0.0 cycle-open. (1) Rename-skip off-by-one in
+  `src/frontend/lex.cyr` (`vp = 4` / `_pd_self_start = 4` should
+  have been 5 for `"cycc "`) corrupted the version-pinned stdlib
+  fallback path to `$HOME/.cyrius/versions/ <v>/lib/` (leading
+  space), causing `include "lib/X.cyr"` to silently fail-resolve
+  for consumers without a vendored `./lib/` — gnoboot 0.2.0
+  shipped a PE32+ with `ud2/ud2/nop` sentinels at every UEFI
+  service call. Same bug fired the pin-drift warning when versions
+  matched. (2) Pre-existing `cmd_deps` mkdir-before-find regression
+  (v5.11.17 vintage) — `sys_mkdir("lib", 0x1ED)` before
+  `_dep_find_stdlib_dir` tripped priority (a) for ANY downstream
+  repo with `src/main.cyr` + non-empty stdlib pin. Surfaced when
+  gnoboot adopted `stdlib = ["fnptr"]`. Two regression smoke gates
+  added (check.sh 78/78 now).
+
+### Planned
+
+#### Toolchain & tests
+
+- **`programs/check.cyr` → `programs/checks/main.cyr` + per-suite
+  split** — current monolithic ~9,300 LoC / ~80 gates file is
+  hard to navigate and saturated. Break out into a slim dispatcher
+  + per-suite files (self-host, EFI, deps, heap-map, etc. — exact
+  breakdown ASK at slot entry). Self-host byte-identical post-
+  split. User direction 2026-05-19.
 
 ### v6.0-runway carry-forward (5 items from v5.11.x close band)
 
