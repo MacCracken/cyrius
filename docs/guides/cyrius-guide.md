@@ -623,6 +623,40 @@ chain(100, 0, 5);                # Err(1) from first ?
 stricter "outside Result-returning fn is type error" check is
 pending fn return-type tracking.
 
+## No try / catch — design decision
+
+Cyrius **does not and will not** have unwinding exceptions. There
+is no `try` / `catch` / `throw` / `finally`, and none is planned.
+`Result<T, E>` + postfix `?` is the only sanctioned propagate-or-
+handle mechanism; checked-arithmetic overflow (`+?` / `-?` / `*?`)
+is the only "panic"-shaped path and it `syscall(60, 57)`s out
+unconditionally — no unwinder, no handlers, no stack walk.
+
+The reasoning, so this question doesn't recur:
+
+- **Bare-metal target hostility** — Cyrius compiles the AGNOS
+  kernel (v6.2.x bare-metal target, gnoboot, kernel proper). You
+  cannot unwind through an ISR frame; kernel code would have to
+  ban `catch` anyway, leaving the language with a userland-only
+  feature that can't be used where Cyrius's primary consumer lives.
+- **ABI cleanliness** — every call site would become a potential
+  unwind point, requiring `.eh_frame` / `.gcc_except_table` /
+  SEH tables, landing pads, and a polymorphic exception-object
+  protocol. That breaks the i64-everywhere tenet (ADR-002) and
+  bloats the self-hosting compiler's emit surface.
+- **The pattern already works** — `Result<T, E>` returns in
+  registers, propagates via `?` in a single byte of source per
+  call site, and pairs with per-module typed error enums (next
+  section). Rust + Go-with-errors both converged here for systems
+  work; the costs of unwinding don't pay back.
+- **Cross-frame context, if pressure surfaces, is solved with
+  richer error types**, not with unwinding — `Result<T, ErrorChain>`
+  or `result_with_context()` helpers stay in the existing model.
+
+If you find yourself wanting `try` / `catch`, the Cyrius answer
+is: return a richer `Result`, propagate with `?`, and match the
+`Err` variant where you'd have written `catch`.
+
 ## Typed errors in the stdlib (v5.8.30+)
 
 Every Result-returning stdlib fn pairs with a per-module error

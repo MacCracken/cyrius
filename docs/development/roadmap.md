@@ -489,6 +489,90 @@ CPS-transformed state machines over the existing epoll runtime.
 Same runtime semantics, sugarier surface. Pairs with closures
 (capture state across await points).
 
+### Required vs Optional Dependencies
+
+Today: `cyrius.cyml` has no required/optional distinction. Every
+entry in `[deps].stdlib = [...]` auto-prepends; every `[deps.<name>]`
+block resolves unconditionally via `cyrius deps`. No feature gating,
+no target conditionals, no schema knob for "include this only when
+needed." Consumers that want conditional code must wrap call sites
+in `#ifdef` and hope the transitive resolver doesn't drag the dep
+in anyway.
+
+**Scope** (per user direction 2026-05-23 — combine feature +
+platform axes):
+
+1. **Feature-gated optional deps** (Cargo-style)
+   - `optional = true` flag on `[deps.<name>]` blocks
+   - `[features]` table declaring named feature sets +
+     default-features
+   - `cyrius build --features <list>` / `--no-default-features`
+     CLI surface
+   - Resolver only fetches+prepends deps whose feature gate is
+     active for the current build
+2. **Platform-conditional resolution**
+   - `target = "<arch>"` / `target = "<os>"` keys on
+     `[deps.<name>]` blocks (e.g. `target = "windows"`,
+     `target = "aarch64"`, `target = "bare-metal"`)
+   - Matches existing cross-arch story (`_TARGET_PE` / aarch64
+     emit paths). Bare-metal target (v6.2.0) and RISC-V backend
+     (v6.2.x) immediately benefit — kernel objects skip
+     non-applicable userland deps without `#ifdef` gymnastics
+3. **Axes combine** — a dep can be both feature-gated AND
+   platform-conditional: `optional = true` + `target = "windows"`
+   + listed under a feature
+
+**Manifest schema delta** (illustrative):
+
+```toml
+[features]
+default = ["std-io"]
+std-io = []
+gpu = ["wgpu"]
+win-shell = ["mabda"]
+
+[deps.wgpu]
+git = "..."
+tag = "..."
+optional = true
+target = "linux"            # AGNOS userland only
+
+[deps.mabda]
+git = "..."
+tag = "..."
+optional = true
+target = "windows"          # win-shell feature gates further
+```
+
+**Touched surfaces**:
+- `src/frontend/parse_decl.cyr` / cyml parser — schema additions
+- `programs/cyrius_deps.cyr` — feature + target filtering before
+  resolve
+- `programs/cyrius_build.cyr` — `--features` / `--no-default-features`
+  CLI surface, target detection passthrough
+- Existing consumers (sakshi/patra/sigil/mabda/agnosys/etc.) —
+  audit `[deps]` for entries that should become optional once the
+  schema is available; consumer migration is opt-in (omitted
+  `optional` defaults to required, preserving today's behavior)
+- vidya — new `language.toml` entries for `[features]` block +
+  optional/target keys; `field_notes/language.toml` for the
+  "default = [...] vs --no-default-features" gotcha
+
+**Acceptance bar**:
+- Manifest parser round-trips a `[features]` block + optional/target
+  keys byte-identical
+- `cyrius build --features gpu` resolves wgpu, plain `cyrius build`
+  does not
+- `target = "windows"` deps skip resolution on aarch64-linux host
+- Pre-existing consumer manifests (no `[features]`, no `optional`)
+  build byte-identical to v6.2.x
+- One vidya entry per axis (feature gate, target gate, combined)
+
+**Out of scope for this slot**: feature unification across
+transitive deps (Cargo's hardest semantic — defer to v6.4.x or
+later if pressure surfaces); per-feature CHANGELOG/version
+constraints; cross-package feature exports.
+
 ### Slot estimate (v6.3.x)
 
 | Feature | Slots |
@@ -496,10 +580,11 @@ Same runtime semantics, sugarier surface. Pairs with closures
 | Closures with lexical capture | ~7 |
 | Real generic instantiation | ~7 |
 | Language-level async/await syntax | ~5 |
+| Required vs Optional Dependencies | ~5 |
 | Cross-feature integration + tcyr suite | ~3 |
-| **Total planned** | **~22** |
+| **Total planned** | **~27** |
 | Bug bandwidth | ~10 |
-| **Budget** | **~32** |
+| **Budget** | **~37** |
 
 ---
 
