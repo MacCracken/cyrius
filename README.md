@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~874 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 81 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 152 .tcyr + 1 soak + 1 smoke + 5 fuzz + 14 bench, 76 check.sh gates.
+~874 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 81 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 153 .tcyr + 1 soak + 1 smoke + 5 fuzz + 14 bench, 79 check.sh gates.
 
 ## Install
 
@@ -91,15 +91,15 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **874,232 B** (~874 KB) x86_64 at v5.11.67 |
+| Compiler (`cycc`) | **874,280 B** (~874 KB) x86_64 at v6.0.3 |
 | Cross compilers | `cycc_aarch64` 564,456 B, `cycc_win` 686,632 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
 | Bootstrap compiler (`cybs`) | **12,344 B** |
 | LSP server (`cyrius-lsp`) | **94,440 B** |
 | Linker (`cyrld`) | **902,776 B** |
 | External dependencies | **0** at the compiler level (1 git dep at stdlib level: mabda) |
-| Tests | **152** .tcyr + **5** .fcyr fuzz + **14** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
-| Gates (`scripts/check.sh`) | **76** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65) |
+| Tests | **153** .tcyr + **5** .fcyr fuzz + **14** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Gates (`scripts/check.sh`) | **79** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, deps correct-lock at v6.0.2, str_from overload at v6.0.3) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit, cyrius-x bytecode |
 | Stdlib modules | **81** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
@@ -247,7 +247,7 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 874,232 B at v5.11.67)
+    -> cycc (modular compiler + IR, 874,280 B at v6.0.3)
       -> cycc_aarch64, cycc_win_cross, cc5_macho_cross, cycc_cx (cross-compilers)
 ```
 
