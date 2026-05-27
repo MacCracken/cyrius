@@ -3,6 +3,39 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-27 (.3 ship — str_from overload-misroute codegen P1 fixed)
+
+Closing **v6.0.3**, the nous-0001 codegen P1 — root-caused to a different
+cause than the filing claimed.
+
+**Root cause (corrected):** the v5.10.25 overload dispatcher
+(`src/frontend/parse_fn.cyr`, `PARSE_FNCALL` ~803) auto-routed
+`str_from(<i64-returning-call>)` → `str_from_int`. Since cyrius is
+i64-everywhere (ADR-002), an i64 from `vec_get(): i64` is a cstr POINTER,
+so `str_from(vec_get(..))` stringified the pointer's decimal instead of
+wrapping the cstr → corrupted cstr map keys → DFS cycle detection read
+acyclic → silently-wrong "no cycle". **NOT** typed-vec_get codegen: premise-
+check disproved both the filing's bisection (stripping `: i64` doesn't help
+— i64 is the default return) and its fix (local-cache doesn't help). Also
+ruled out inlining (disabled) + regalloc (bug persists with it off).
+
+**Fix (Option A, user-chosen):** gate the `_int` auto-route on the base fn's
+return type — route only for output-style bases (i64 return, e.g. println);
+not for data-producing bases (non-i64 return, e.g. `str_from: Str`) where a
+wrong conversion corrupts data. `str_from` is the only such stdlib base;
+`GFRS(S, fi) == -8` gate is surgical. Also corrected latent misroutes in
+`lib/yukti.cyr` (GPT/MBR `*_to_str(): i64`) + `check.cyr` doc-path gates.
+
+**Mechanical gates green:** self-host **byte-identical at 874,280 B**
+(+48 B over v6.0.2's 874,232 — the gate code; cycc's own source doesn't use
+the misroute pattern so step-1 fixpoint held). `scripts/check.sh` **79/79**
+incl. new regression `tests/tcyr/str_from_ptr_overload.tcyr` (5 asserts).
+0 downstream consumer sites affected; nous can revert their 0001 de-nest
+workaround on bumping to v6.0.3.
+
+Memory pin: [`project_nous_typed_vec_get_nested_miscompile`] (corrected
+root cause + resolution).
+
 ## Session close — 2026-05-27 (.2 ship — cyrius deps correct-lock fix + stdlib pins verified)
 
 Closing **v6.0.2**, the dual-item slot.
@@ -797,6 +830,14 @@ forward-looking content (.66/.67/.68/.69 detail intact).
   [[project_v5_11_x_closeout_at_40]]).
 
 ## Version
+
+**6.0.3** (shipped 2026-05-27 — **`str_from` overload-misroute codegen P1
+(nous 0001)**). The overload dispatcher routed `str_from(<i64-returning-call>)`
+→ `str_from_int`, stringifying cstr pointers as decimal (silently-wrong data).
+Fixed by gating the `_int` auto-route to output-style (i64-return) bases only;
+data-producing bases (`str_from: Str`) no longer auto-route. Self-host
+byte-identical **874,280 B**; check.sh **79/79** + regression
+`str_from_ptr_overload.tcyr`. See CHANGELOG [6.0.3] + the .3 session-close above.
 
 **6.0.2** (shipped 2026-05-27 — **`cyrius deps` correct-lock fix
 (empty ecosystem-wide since v5.11.8) + stdlib pins verified at 6.0.1**).

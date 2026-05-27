@@ -801,10 +801,29 @@ fn PARSE_FNCALL(S, noff): i64 {
             }
         }
         if (_od_arg_scalar == 8) {
-            var _od_int_target = L64(S + 0x98A000 + fi * 8);
-            if (_od_int_target > 0) {
-                fi = _od_int_target - 1;
-                noff = L64(S + 0x9BA000 + fi * 8);
+            # v6.0.3 — Option A: only auto-route `base(i64-call) → base_int`
+            # when the BASE is OUTPUT-style (declares an i64 return, e.g.
+            # `println: i64`). DATA-producing bases (non-i64 return, e.g.
+            # `str_from: Str`) must NOT auto-route. Reason: cyrius is
+            # i64-everywhere (ADR-002), so the dispatcher cannot tell an
+            # i64 that is a NUMBER from an i64 that is a POINTER. The arg
+            # here is a fn-call returning i64 (e.g. `vec_get(): i64`,
+            # which returns a cstr pointer). Routing `str_from(vec_get(..))`
+            # to `str_from_int` STRINGIFIES the pointer's value (decimal)
+            # instead of wrapping the cstr — silently corrupting data that
+            # flows on (nous 0001: a cstr map key became "<pointer-decimal>"
+            # → every lookup missed → cycle detection read acyclic). For an
+            # output base the worst case is cosmetically-wrong output; for a
+            # value-conversion base it is wrong DATA. `str_from` (Str return)
+            # is the only such base in the stdlib; this gate blocks exactly
+            # it while keeping `println`/`log_info`/… (i64 return) routing.
+            # See CHANGELOG [6.0.3].
+            if (GFRS(S, fi) == 0 - 8) {
+                var _od_int_target = L64(S + 0x98A000 + fi * 8);
+                if (_od_int_target > 0) {
+                    fi = _od_int_target - 1;
+                    noff = L64(S + 0x9BA000 + fi * 8);
+                }
             }
         }
     }

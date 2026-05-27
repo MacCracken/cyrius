@@ -1,0 +1,48 @@
+# str_from_ptr_overload.tcyr — guards the v6.0.3 fix for the str_from
+# overload-misroute (nous 0001). The v5.10.25 overload dispatcher
+# auto-routed `str_from(<i64-returning-call>)` to `str_from_int`
+# (number → decimal string). But cyrius is i64-everywhere (ADR-002),
+# so an i64 returned by an accessor like `vec_get(): i64` is often a
+# cstr POINTER, not a number. So `str_from(vec_get(..))` stringified
+# the pointer's decimal value instead of wrapping the string —
+# silently corrupting data downstream (in nous a cstr map key became
+# "<pointer-decimal>", so every lookup missed and cycle detection
+# read acyclic). v6.0.3 gates the `_int` auto-route to OUTPUT-style
+# bases (i64 return, e.g. println, where a misroute is only cosmetic);
+# DATA-producing bases (str_from: Str) no longer auto-route, since a
+# wrong conversion there corrupts data, not just output. str_from is
+# the only such base in the stdlib. See CHANGELOG [6.0.3].
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+test_group("str_from(<i64-returning call>) wraps the cstr, not its pointer-decimal");
+var v = vec_new();
+vec_push(v, "alpha");
+vec_push(v, "beta");
+# vec_get returns i64 — here the i64 is a cstr pointer. Pre-v6.0.3 this
+# misrouted to str_from_int and produced the pointer's decimal string.
+var s0 = str_from(vec_get(v, 0));
+var s1 = str_from(vec_get(v, 1));
+assert_streq(str_data(s0), "alpha", "str_from(vec_get(v,0)) wraps cstr 'alpha'");
+assert_streq(str_data(s1), "beta", "str_from(vec_get(v,1)) wraps cstr 'beta'");
+
+test_group("str_from of plain cstr / literal still wraps content (unchanged)");
+var c = "gamma";
+var sc = str_from(c);
+assert_streq(str_data(sc), "gamma", "str_from(local cstr) wraps 'gamma'");
+var sl = str_from("delta");
+assert_streq(str_data(sl), "delta", "str_from(literal) wraps 'delta'");
+
+test_group("str_from_int still converts a number explicitly (output path intact)");
+var nstr = str_from_int(42);
+assert_streq(str_data(nstr), "42", "str_from_int(42) -> \"42\"");
+
+var r = assert_summary();

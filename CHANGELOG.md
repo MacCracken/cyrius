@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.3] — 2026-05-27
+
+**Codegen P1: `str_from` overload-dispatch misroute (nous 0001). Routing
+`str_from(<i64-returning-call>)` to `str_from_int` silently stringified
+cstr pointers as decimal, corrupting data downstream.**
+
+### Fixed — overload dispatcher must not auto-route `_int` for data-producing bases
+
+The v5.10.25 overload dispatcher (`src/frontend/parse_fn.cyr`,
+`PARSE_FNCALL`) auto-routes `base(arg) → base_<suffix>` by the argument's
+type. For a **function-call argument**, it reads the *callee's declared
+return* via `GFRS`; an i64 scalar return (-8) routed `base(...)` to its
+`_int` sibling. Since cyrius is i64-everywhere (ADR-002), an i64 returned
+by an accessor like `vec_get(): i64` is frequently a **cstr pointer**, not
+a number. So `str_from(vec_get(...))` was routed to **`str_from_int`**
+(number → decimal string), producing the pointer's decimal value (e.g.
+`"768176320"`) instead of wrapping the string `"A"`.
+
+Downstream this is **silently wrong data**: in nous's dep-graph resolver a
+cstr map key became `"<pointer-decimal>"`, so every `map_has`/`map_get`
+missed and DFS cycle detection read a cyclic graph as acyclic (then
+null-deref → SIGSEGV in the suite).
+
+**Fix (Option A):** gate the `_int` auto-route on the **base fn's return
+type**. Route only when the base is *output-style* (declares an i64 return
+— e.g. `println`/`log_info`, where a misroute is merely cosmetically-wrong
+output). Do **not** route *data-producing* bases (non-i64 return — e.g.
+`str_from: Str`), where a wrong conversion corrupts data, not just output.
+`str_from` is the only data-producing base with an `_int` sibling in the
+stdlib, so the gate (`GFRS(S, fi) == -8`) is surgical.
+
+This also corrected **pre-existing latent misroutes** already in the tree:
+`lib/yukti.cyr`'s GPT/MBR `*_to_str(): i64` type-name lookups (rendered as
+pointer decimals) and `programs/check.cyr`'s `str_from(_root_path(...))`
+doc-path gates.
+
+**Note on the filing:** the nous diagnosis was incorrect — neither stripping
+`: i64` from `vec_get` (i64 is the default return) nor binding to a local
+fixes it; `vec_get` codegen is innocent. The bisection mis-credited the
+annotation because the test swapped the whole 5.7.29 `vec.cyr`, not just the
+annotation. (nous's minimal repro also had a secondary logic bug —
+`return load64(result_holder)` returns 0 instead of 1 on a back edge — which
+the compiler bug had masked; not a Cyrius issue.) nous can revert their 0001
+de-nesting workaround once they bump to v6.0.3.
+
+### Added — `str_from` overload regression gate
+
+`tests/tcyr/str_from_ptr_overload.tcyr` (5 asserts): `str_from(vec_get(...))`
+wraps the cstr (not the pointer decimal); plain-cstr/literal `str_from` and
+explicit `str_from_int(42)` still behave. Self-host byte-identical at
+**874,280 B**; `scripts/check.sh` **79/79**.
+
 ## [6.0.2] — 2026-05-27
 
 **Dual-item slot: stdlib pin refresh (verify-only) + the `cyrius deps`
