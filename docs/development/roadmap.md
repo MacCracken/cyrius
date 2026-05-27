@@ -259,6 +259,75 @@ carry-forward list below).
   + per-suite files (self-host, EFI, deps, heap-map, etc. — exact
   breakdown ASK at slot entry). Self-host byte-identical post-
   split. User direction 2026-05-19.
+- **`cyrius tests` suite/folder runner — split from single-file
+  `cyrius test`** — today `cyrius test` does double duty: `cyrius
+  test <file>` runs one `.tcyr`, while bare `cyrius test`
+  shallow-walks only `tests/tcyr/` + `tests/` (top level), missing
+  subdirs / any non-`tcyr/` layout, so an agent ends up
+  hand-iterating files — "confusion city" (user, 2026-05-27).
+  Sibling verbs make it worse: `soak` (`.scyr`), `smoke`
+  (`.smcyr`), `fuzz` (`.fcyr`), `bench` (`.bcyr`) each own a
+  separate verb+extension+discovery, so full coverage means
+  running several commands. **Design (user direction 2026-05-27)**:
+  keep `cyrius test <file>` as the single-file runner; add a new
+  **plural `cyrius tests [suite]`** verb that either takes a
+  suite/folder argument for explicit folder specification (`cyrius
+  tests <dir>`) or, with no arg, searches the whole `tests/`
+  folder. Removes the iterate-by-hand papercut. **Confirm at slot
+  entry** ([[feedback_premise_check_at_slot_entry]]): (a) whether
+  bare `cyrius test` (no file) keeps its legacy auto-discover for
+  back-compat or redirects to `tests`; (b) whether the `tests`
+  folder search is `.tcyr`-only or also sweeps sibling categories
+  (`.scyr`/`.smcyr`/…). Wrapper-only change (`cbt/cyrius.cyr`
+  dispatch + `cbt/commands.cyr` walkers) — cycc compile path
+  untouched, so self-host is byte-identical trivially. Acceptance:
+  `cyrius tests` runs every `.tcyr` under `tests/` recursively;
+  `cyrius tests <suite>` scopes to one folder; `cyrius test <file>`
+  unchanged; `scripts/check.sh` green; usage banner + `docs/guides`
+  + vidya `language.toml` updated for the new verb.
+  **Priority** (user direction 2026-05-27): long-standing
+  papercut, **non-blocker** — not pinned to a slot yet, but
+  wanted cleaned up *soon* within v6.0.x. Pull into an open
+  bug-bandwidth slot ahead of the lower-pressure Planned items
+  when there's room; ASK for a slot number when ready to pin
+  ([[feedback_no_unilateral_scope_decisions]]).
+- **TS front-end scripting papercuts** (SecureYeoman `yeo-cy-test`
+  port probe, 2026-05-27) — three small toolchain bugs that break
+  *scripting* the TS front-end (CI / build tools). Issue:
+  [`issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md).
+  **Two confirmed in-tree at review:**
+  1. **`ts_test_runner` `cyc` truncation** —
+     `programs/ts_test_runner.cyr:182` does `memcpy(cc_path + hlen,
+     "/.cyrius/bin/cycc", 16)` but the literal is **17 bytes**, so it
+     looks for `~/.cyrius/bin/cyc`. Rename-leftover byte-count bug
+     (`/.cyrius/bin/cc5` was exactly 16; the cc5→cycc rename updated the
+     literal not the length — same class as the v6.0.1 skip-prefix
+     off-by-one). One-line fix (16→17, `store8` at +17). The same fn
+     `return 1`s on the not-found path but the process still exits 0 —
+     top-level `return` isn't wired to `sys_exit` (the TS modes in
+     `main.cyr` use explicit `syscall(SYS_EXIT, …)`); add the explicit
+     exit.
+  2. **`cyrius build` exits 0 on compile failure** — consumer saw
+     `error:` + `FAIL` + **exit 0** on a failing build. `cmd_build`
+     returns 1 on failure (`cbt/build.cyr:202`) and `cyrius.cyr:277`
+     propagates it, so a nonzero child-`cycc` status is swallowed
+     somewhere between `compile()` and process exit — **root-cause at
+     slot entry**. *Highest leverage of the three*: not TS-specific —
+     silently breaks every scripted / CI build. Same "exit-0-on-error"
+     family as #1's second half ([[feedback_tcyr_ending_pattern]] /
+     [[feedback_end_to_end_verify_helpers_before_commit]]).
+  3. **`--parse-ts <file>` blocks on stdin** — cycc reads stdin
+     unconditionally (`src/main.cyr:524-540`) and ignores the path arg,
+     so a scripted `cycc --parse-ts app.tsx` hangs (one orphan held a
+     lock ~17 min). Fix: open the path arg when present (or at minimum
+     document the `</dev/null` workaround).
+  **Priority** (user direction 2026-05-27): **near-term bug-bandwidth** —
+  pull into an open slot *soon* (the `cyc` one-liner + the build exit
+  code are the live ones). Cross-arch propagation per
+  [[feedback_cross_arch_propagation_mandatory]] where a fix touches
+  compiler emit. Not pinned to a slot number yet — ASK when ready to pin.
+  The frontend's missing JS/JSX **emit** stage from the same filing is a
+  larger arc, minor TBD — see [roadmap-future.md](roadmap-future.md).
 
 ### v6.0-runway carry-forward (5 items from v5.11.x close band)
 

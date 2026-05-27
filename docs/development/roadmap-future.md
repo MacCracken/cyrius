@@ -11,6 +11,38 @@ See [roadmap.md](roadmap.md) for current v6.x cycle work.
 
 ---
 
+## TS/TSX → JS emit — frontend builder (consumer-filed, minor TBD)
+
+SecureYeoman's `yeo-cy-test` port probe (2026-05-27) confirmed the
+Cyrius TS/TSX front-end **parses** real-world TS/TSX cleanly
+(interfaces, `<K extends string, V>` generics + default type params,
+`?.`/`??`, async/await, enums, `readonly`/optional members,
+destructuring, spread, tuples, `Record<K,V>`, a full React component
+with `useState`/`useEffect`/JSX) — but has **no emit**. `--lex-ts` /
+`--parse-ts` validate only; the P3–P5 lowering from the old v5.7.2 TS
+plan never shipped. So Cyrius can be the build-time *validator* of a TS
+frontend but not its *builder*; the consumer hand-maintains a parallel
+`web/app.js` as the production stopgap.
+
+**Ask**: a `cycc --emit-js <file.tsx>` (or `cyrius build --target=js`)
+codegen stage walking the existing AST — strip type annotations /
+interfaces / type aliases, lower JSX → `createElement`-style calls
+(configurable pragma), pass ESM through. Single-file emit only; a
+bundler is explicitly out of scope. The expensive part (a correct,
+full-fidelity TS/TSX parser) already exists — this is codegen on top.
+
+**Status**: consumer-filed with active pressure, but **minor TBD** per
+user direction 2026-05-27 ("arc TBD"). Larger than the three TS
+scripting papercuts the same filing surfaced (those are near-term
+v6.0.x bug-bandwidth — see [roadmap.md](roadmap.md)). Notable framing:
+this is a *non-machine-code output target* for an assembly-up compiler,
+so its home minor is a deliberate open decision rather than an obvious
+v6.3.x language-refinements fit. Issue:
+[`issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md);
+full write-up in `secureyeoman/yeo-cy-test/FINDINGS.md`.
+
+---
+
 ## Unpinned language refinements
 
 These were tracked through v5.x as known asks but explicitly held
