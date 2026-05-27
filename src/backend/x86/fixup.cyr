@@ -349,6 +349,14 @@ fn FIXUP(S): i64 {
     if (dce_verbose_env != 0) {
         if (load8(dce_verbose_env) == 49 && load8(dce_verbose_env + 1) == 0) { dce_verbose = 1; }
     }
+    # v6.0.4: CYRIUS_DEBUG_PHASES=1 emits DCE-pass progress markers
+    # (cross-arch parity with aarch64/fixup.cyr). Env-gated → self-host
+    # byte-identical (unset during verify).
+    var dce_dbg = 0;
+    var dce_dbg_env = _read_env("CYRIUS_DEBUG_PHASES");
+    if (dce_dbg_env != 0) {
+        if (load8(dce_dbg_env) == 49 && load8(dce_dbg_env + 1) == 0) { dce_dbg = 1; }
+    }
     # live[i] = 1 iff fn i is reachable from entry.
     # 1024 bytes × 8 bits = 8192 fn cap (matches the parse_fn.cyr REGFN
     # ceiling; v6.0.4 raised from 512/4096 — a >4096-fn unit overflowed
@@ -436,6 +444,13 @@ fn FIXUP(S): i64 {
     # call) is SAFE for DCE — it only keeps extra things alive. The target
     # must be a known fn_start for the edge to count; intra-fn jumps target
     # arbitrary offsets and won't match.
+    if (dce_dbg == 1) {
+        syscall(SYS_WRITE, 2, "[dce] x86 seed begin fnc=", 25);
+        PRNUM(fnc);
+        syscall(SYS_WRITE, 2, " acp=", 5);
+        PRNUM(acp);
+        syscall(SYS_WRITE, 2, "\n", 1);
+    }
     var scn = 0;
     while (scn < acp) {
         var op = load8(b_base + scn);
@@ -488,6 +503,7 @@ fn FIXUP(S): i64 {
         }
         scn = scn + 1;
     }
+    if (dce_dbg == 1) { syscall(SYS_WRITE, 2, "[dce] x86 seed done\n", 20); }
     # Propagate: for each live fn, find E8 calls inside its body and mark
     # their targets live. Fixpoint loop.
     var changed = 1;
@@ -495,6 +511,11 @@ fn FIXUP(S): i64 {
     while (changed == 1 && iters < 512) {
         changed = 0;
         iters = iters + 1;
+        if (dce_dbg == 1) {
+            syscall(SYS_WRITE, 2, "[dce] x86 prop iter=", 20);
+            PRNUM(iters);
+            syscall(SYS_WRITE, 2, "\n", 1);
+        }
         var pfi = 0;
         while (pfi < fnc) {
             var phl = load8(&live + (pfi >> 3)) & (1 << (pfi & 7));
@@ -548,6 +569,11 @@ fn FIXUP(S): i64 {
             }
             pfi = pfi + 1;
         }
+    }
+    if (dce_dbg == 1) {
+        syscall(SYS_WRITE, 2, "[dce] x86 prop done iters=", 26);
+        PRNUM(iters);
+        syscall(SYS_WRITE, 2, "\n", 1);
     }
     # Sweep: count + (optionally) NOP-fill dead fns.
     var dead_count = 0;

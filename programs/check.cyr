@@ -2486,6 +2486,44 @@ fn _cve05_guard_gate(): i64 {
     return fail;
 }
 
+# Gate: aarch64 DCE pass fn-count accessor + live[] cap (v6.0.4).
+# Guards the two v6.0.4 regressions:
+#   (1) the aarch64 DCE pass must size its fn-table loops with GFNC
+#       (fn count), NOT GFCNT (fixup count) — GFCNT overflowed the
+#       8192-slot hash → uncapped probe loop spun forever (kybernet
+#       aarch64 cross-build hang, issue 2026-05-20).
+#   (2) the live[] reachability bitmap must be 1024 bytes (8192-fn
+#       cap), not 512 (4096) — a >4096-fn unit OOB-wrote past live[]
+#       on both arches.
+# See CHANGELOG [6.0.4].
+fn _dce_fn_count_gate(): i64 {
+    var label = "aarch64 DCE uses GFNC (not GFCNT) + live[1024]/8192-fn cap both arches (v6.0.4)";
+    var aa = _root_path("src/backend/aarch64/fixup.cyr");
+    var x86 = _root_path("src/backend/x86/fixup.cyr");
+    var fail = 0;
+    if (_file_contains_substr(aa, "var fnc = GFCNT") == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": aarch64 fixup.cyr DCE fn-count reverted to GFCNT (fixup count) — re-opens the kybernet hang");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(aa, "var live[512]") == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": aarch64 fixup.cyr live[] reverted to 512 (4096-fn cap) — OOB past 4096 fns");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(x86, "var live[512]") == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": x86 fixup.cyr live[] reverted to 512 (4096-fn cap) — OOB past 4096 fns");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": aarch64 DCE fn-count is GFNC; live[1024]/8192-fn cap on both x86+aarch64");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Cap-drift gate (v5.11.50; refactored to use _verify_* helpers at
 # v5.11.55). Cross-checks heap-map comments at src/main.cyr:24+
 # against inline literal caps in src/frontend/lex.cyr. Each cap is
@@ -9581,6 +9619,10 @@ fn _run_regression_gates(): i64 {
 
     _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");
     _cve05_guard_gate();
+    println("");
+
+    _section("aarch64 DCE fn-count accessor + live[] cap (v6.0.4)");
+    _dce_fn_count_gate();
     println("");
 
     _section("Cap-drift detector (heap-map ↔ inline literals)");
