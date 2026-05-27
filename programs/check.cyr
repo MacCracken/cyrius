@@ -2350,7 +2350,7 @@ fn _find_str_from(buf, n, from, needle, nlen): i64 {
 fn _parse_dec_at(buf, n, off, end_out): i64 {
     var i = off;
     var c = load8(buf + i);
-    if (c < 48 || c > 57) { S64(end_out, off); return 0 - 1; }
+    if (c < 48 || c > 57) { store64(end_out, off); return 0 - 1; }
     var v = 0;
     while (i < n) {
         c = load8(buf + i);
@@ -2368,9 +2368,9 @@ fn _parse_dec_at(buf, n, off, end_out): i64 {
     while (k < n) {
         var c2 = load8(buf + k);
         if (c2 >= 48 && c2 <= 57) { k = k + 1; }
-        else { S64(end_out, k); return v; }
+        else { store64(end_out, k); return v; }
     }
-    S64(end_out, n);
+    store64(end_out, n);
     return v;
 }
 

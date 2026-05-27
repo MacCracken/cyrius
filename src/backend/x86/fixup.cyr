@@ -350,11 +350,13 @@ fn FIXUP(S): i64 {
         if (load8(dce_verbose_env) == 49 && load8(dce_verbose_env + 1) == 0) { dce_verbose = 1; }
     }
     # live[i] = 1 iff fn i is reachable from entry.
-    # 512 bytes × 8 bits = 4096 fn cap (matches REGFN ceiling raised
-    # in 4.7.1; was 256 / 2048 — segfaulted on units > 2048 fns).
-    var live[512];
+    # 1024 bytes × 8 bits = 8192 fn cap (matches the parse_fn.cyr REGFN
+    # ceiling; v6.0.4 raised from 512/4096 — a >4096-fn unit overflowed
+    # live[] with an OOB write. Was 256/2048 pre-4.7.1, 512/4096 through
+    # v6.0.3. See CHANGELOG [6.0.4]).
+    var live[1024];
     var ci = 0;
-    while (ci < 512) { store8(&live + ci, 0); ci = ci + 1; }
+    while (ci < 1024) { store8(&live + ci, 0); ci = ci + 1; }
     # Call-graph construction is BYTE-SCAN-based, not fixup-based, because
     # Cyrius emits top-level/late calls via ECALLTO (direct rel32, no fixup)
     # once the target's offset is known. Only forward-reference calls go
@@ -420,7 +422,7 @@ fn FIXUP(S): i64 {
         var t3r = L64(t3a + 8);
         if ((t3r >> 56) == 3) {
             var t3idx = t3r & 0x00FFFFFFFFFFFFFF;
-            if (t3idx < 4096) {
+            if (t3idx < 8192) {
                 store8(&live + (t3idx >> 3), load8(&live + (t3idx >> 3)) | (1 << (t3idx & 7)));
             }
         }

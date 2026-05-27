@@ -406,6 +406,8 @@ STI(S, gvar_save_ti);
 
 # Parse main code (top-level statements)
 PARSE_PROG(S);
+var _pp_dbg = _read_env("CYRIUS_DEBUG_PHASES");
+if (_pp_dbg != 0) { if (load8(_pp_dbg) == 49) { syscall(SYS_WRITE, 2, "[phase] aarch64 PARSE_PROG done\n", 32); } }
 
 # Exit epilogue — load last var
 var lv = GLVAR(S);

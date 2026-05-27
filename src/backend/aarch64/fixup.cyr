@@ -76,6 +76,12 @@ fn FIXUP(S): i64 {
             _TARGET_MACHO = 2;
         }
     }
+    var fx_dbg = 0;
+    var fx_dbg_env = _read_env("CYRIUS_DEBUG_PHASES");
+    if (fx_dbg_env != 0) {
+        if (load8(fx_dbg_env) == 49 && load8(fx_dbg_env + 1) == 0) { fx_dbg = 1; }
+    }
+    if (fx_dbg == 1) { syscall(SYS_WRITE, 2, "[phase] aarch64 FIXUP entry\n", 28); }
     var cp = GCP(S);
     cp = (cp + 3) & (0 - 4);
     SCP(S, cp);
@@ -226,6 +232,7 @@ fn FIXUP(S): i64 {
                         } } } } }
         fi = fi + 1;
     }
+    if (fx_dbg == 1) { syscall(SYS_WRITE, 2, "[phase] aarch64 reloc-loop done\n", 32); }
     # ================================================================
     # v5.11.59: DCE-aware reachability pass (cross-arch parity with
     # x86 fixup.cyr line 325-681). Mirrors the x86 mark-and-sweep
@@ -243,7 +250,15 @@ fn FIXUP(S): i64 {
     #     dead-fn slot OR be the dead-fn's own last instruction).
     #   - NOP = 0xD503201F (fill word).
     # ================================================================
-    var fnc = GFCNT(S);
+    # v6.0.4: fn count is GFNC (0x18DA00), NOT GFCNT (fixup count,
+    # 0x18FCA8). This pass walks the fn_start table (0x9CA000) and
+    # builds an 8192-slot hash; feeding the larger fixup count made
+    # `while (sh_i < fnc)` insert > 8192 entries → the uncapped
+    # open-addressing probe never found an empty slot → infinite loop
+    # (kybernet aarch64 cross-build hang, issue 2026-05-20). Also
+    # corrupted reachability (iterating garbage fn slots). x86 always
+    # used GFNC here. See CHANGELOG [6.0.4].
+    var fnc = GFNC(S);
     var dce_enabled = 0;
     var dce_env = _read_env("CYRIUS_DCE");
     if (dce_env != 0) {
@@ -254,11 +269,21 @@ fn FIXUP(S): i64 {
     if (dce_verbose_env != 0) {
         if (load8(dce_verbose_env) == 49 && load8(dce_verbose_env + 1) == 0) { dce_verbose = 1; }
     }
-    # live[i] = 1 iff fn i is reachable from entry. 512 bytes × 8
-    # bits = 4096 fn cap, matching x86's REGFN ceiling.
-    var live[512];
+    # v6.0.4: CYRIUS_DEBUG_PHASES=1 emits DCE-pass progress markers to
+    # stderr to localize the kybernet aarch64 hang (issue 2026-05-20).
+    # Env-gated → self-host byte-identical (unset during verify).
+    var dce_dbg = 0;
+    var dce_dbg_env = _read_env("CYRIUS_DEBUG_PHASES");
+    if (dce_dbg_env != 0) {
+        if (load8(dce_dbg_env) == 49 && load8(dce_dbg_env + 1) == 0) { dce_dbg = 1; }
+    }
+    # live[i] = 1 iff fn i is reachable from entry. 1024 bytes × 8
+    # bits = 8192 fn cap, matching the parse_fn.cyr REGFN ceiling.
+    # v6.0.4: was 512/4096 — a >4096-fn unit overflowed live[] with an
+    # OOB stack write (latent on both arches). See CHANGELOG [6.0.4].
+    var live[1024];
     var ci = 0;
-    while (ci < 512) { store8(&live + ci, 0); ci = ci + 1; }
+    while (ci < 1024) { store8(&live + ci, 0); ci = ci + 1; }
     # Build fn_start → fi+1 hash table at 0x114000 (16 KB region
     # shared with x86 path; verified unused on aarch64 by reading
     # x86 fixup.cyr's v5.10.41 comment). Knuth golden-ratio
@@ -291,7 +316,7 @@ fn FIXUP(S): i64 {
         var t3r = L64(t3a + 8);
         if ((t3r >> 56) == 3) {
             var t3idx = t3r & 0x00FFFFFFFFFFFFFF;
-            if (t3idx < 4096) {
+            if (t3idx < 8192) {
                 store8(&live + (t3idx >> 3), load8(&live + (t3idx >> 3)) | (1 << (t3idx & 7)));
             }
         }
@@ -303,6 +328,13 @@ fn FIXUP(S): i64 {
     # (intra-fn B jumps that happen to target a fn_start are kept
     # alive — safe for DCE).
     var b_base = S + 0x41A000;
+    if (dce_dbg == 1) {
+        syscall(SYS_WRITE, 2, "[dce] aarch64 seed begin fnc=", 29);
+        PRNUM(fnc);
+        syscall(SYS_WRITE, 2, " acp=", 5);
+        PRNUM(acp);
+        syscall(SYS_WRITE, 2, "\n", 1);
+    }
     var scn = 0;
     while (scn + 4 <= acp) {
         var insn = load32(b_base + scn);
@@ -357,6 +389,7 @@ fn FIXUP(S): i64 {
         }
         scn = scn + 4;
     }
+    if (dce_dbg == 1) { syscall(SYS_WRITE, 2, "[dce] aarch64 seed done\n", 24); }
     # Propagate: for each live fn, scan its body for BL/B and mark
     # targets live. Fixpoint loop.
     var changed = 1;
@@ -364,6 +397,11 @@ fn FIXUP(S): i64 {
     while (changed == 1 && iters < 512) {
         changed = 0;
         iters = iters + 1;
+        if (dce_dbg == 1) {
+            syscall(SYS_WRITE, 2, "[dce] aarch64 prop iter=", 24);
+            PRNUM(iters);
+            syscall(SYS_WRITE, 2, "\n", 1);
+        }
         var pfi = 0;
         while (pfi < fnc) {
             var phl = load8(&live + (pfi >> 3)) & (1 << (pfi & 7));
@@ -417,6 +455,11 @@ fn FIXUP(S): i64 {
             }
             pfi = pfi + 1;
         }
+    }
+    if (dce_dbg == 1) {
+        syscall(SYS_WRITE, 2, "[dce] aarch64 prop done iters=", 30);
+        PRNUM(iters);
+        syscall(SYS_WRITE, 2, "\n", 1);
     }
     # Sweep: count dead fns + optionally NOP-fill bodies.
     # Safety check for NOP-fill: the dead-fn body must end with RET
