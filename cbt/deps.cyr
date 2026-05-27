@@ -1205,26 +1205,87 @@ fn _sha256sum_file(path): i64 {
     return hash;
 }
 
-fn cmd_deps_lock(): i64 {
-    # Generate cyrius.lock from current lib/ dep files
-    var lock_fd = sys_open("cyrius.lock", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-    if (lock_fd < 0) { _err("cannot create cyrius.lock"); return 1; }
+# v6.0.2 — is this invocation running inside the cyrius source repo
+# itself? Signal: `[package] name = "cyrius"` in cwd's cyrius.cyml.
+# Used to skip lock generation here — cyrius authors its own `lib/`
+# stdlib (folded sandhi-pattern deps + in-tree modules), so a lock of
+# that lib/ is self-referential AND churns the tracked `cyrius.lock`
+# on every `check.sh` `cyrius deps` run. cyrius's real external deps
+# (mabda) are pinned by tag in `cyrius.cyml`, not by lib-file hash.
+#
+# Why name-based, not the `src/main.cyr` priority-(a) signal: downstream
+# repos (gnoboot, kybernet) ALSO build from `src/main.cyr` + have a
+# `./lib` of resolved deps — that conflation was the v6.0.1 mkdir bug.
+# `[package] name` is unique to the cyrius project manifest.
+fn _dep_is_cyrius_source_repo(): i64 {
+    if (file_exists("cyrius.cyml") == 0) { return 0; }
+    var buf = alloc(32768);
+    var n = file_read_all("cyrius.cyml", buf, 32767);
+    if (n <= 0) { return 0; }
+    var pos = 0;
+    while (pos < n) {
+        if (memeq(buf + pos, "[package]", 9) == 1) { break; }
+        pos = pos + 1;
+    }
+    if (pos >= n) { return 0; }
+    pos = pos + 9;
+    while (pos < n) {
+        while (pos < n && (load8(buf + pos) == 10 || load8(buf + pos) == 32 || load8(buf + pos) == 9)) {
+            pos = pos + 1;
+        }
+        if (pos >= n) { return 0; }
+        if (load8(buf + pos) == 91) { return 0; }  # `[` → next section
+        if (memeq(buf + pos, "name", 4) == 1) {
+            var after = pos + 4;
+            while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                after = after + 1;
+            }
+            if (after < n && load8(buf + after) == 61) {   # `=`
+                after = after + 1;
+                while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                    after = after + 1;
+                }
+                if (after < n && load8(buf + after) == 34) {   # `"`
+                    after = after + 1;
+                    # exact match: `name = "cyrius"` (not "cyrius-x")
+                    if (memeq(buf + after, "cyrius", 6) == 1 && load8(buf + after + 6) == 34) {
+                        return 1;
+                    }
+                    return 0;
+                }
+            }
+        }
+        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+    }
+    return 0;
+}
 
-    var entries = dir_list(str_from("lib"));
+# v6.0.2 — recursively hash every `.cyr` under `dir`, writing
+# `<sha256hex>  <path>\n` per file to `lock_fd`. Returns the count.
+# Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib modules
+# resolved by `cyrius deps` (v5.8.49 subdir-nested paths) are locked
+# too — a flat scan silently omitted them. Replaces the pre-v6.0.2
+# symlink-only filter, which was stale since v5.11.8 switched dep
+# resolution from symlink to file-copy (`_dep_copy_file`): every
+# resolved dep became a real file, `readlink` returned -EINVAL on all
+# of them, and the lock came out empty ecosystem-wide.
+fn _deps_lock_dir(dir, lock_fd): i64 {
     var count = 0;
+    var entries = dir_list(str_from(dir));
     var li = 0;
     while (li < vec_len(entries)) {
         var name = str_data(vec_get(entries, li));
         var nlen = str_len(vec_get(entries, li));
         li = li + 1;
+        if (nlen == 0) { continue; }
+        if (load8(name) == 46) { continue; }   # skip ".", "..", dotfiles
+        var path = make_path(dir, name);
+        if (is_dir(str_from(path)) == 1) {
+            count = count + _deps_lock_dir(path, lock_fd);
+            continue;
+        }
         if (nlen < 5) { continue; }
         if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
-        var path = make_path("lib", name);
-        # Only hash symlinked dep files (skip own stdlib)
-        var lbuf[1024];
-        var lr = syscall(89, path, &lbuf, 1023);
-        if (lr <= 0) { continue; }
-
         var hash = _sha256sum_file(path);
         if (hash != 0) {
             sys_write(lock_fd, hash, 64);
@@ -1234,6 +1295,22 @@ fn cmd_deps_lock(): i64 {
             count = count + 1;
         }
     }
+    return count;
+}
+
+fn cmd_deps_lock(): i64 {
+    # v6.0.2: cyrius's own repo authors its lib/ — skip (self-referential
+    # + would churn the tracked cyrius.lock on every check.sh). See
+    # _dep_is_cyrius_source_repo above + CHANGELOG [6.0.2].
+    if (_dep_is_cyrius_source_repo() == 1) {
+        println("cyrius.lock: skipped (source repo — lib/ is authored stdlib, not resolved deps)");
+        return 0;
+    }
+    # Generate cyrius.lock by hashing every resolved .cyr under lib/
+    # (recursively). See _deps_lock_dir for the v5.11.8-era root cause.
+    var lock_fd = sys_open("cyrius.lock", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    if (lock_fd < 0) { _err("cannot create cyrius.lock"); return 1; }
+    var count = _deps_lock_dir("lib", lock_fd);
     sys_close(lock_fd);
     sys_write(STDOUT_FD, "cyrius.lock: ", 13);
     fmt_int(count);

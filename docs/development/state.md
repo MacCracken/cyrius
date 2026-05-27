@@ -3,6 +3,50 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-27 (.2 ship — cyrius deps correct-lock fix + stdlib pins verified)
+
+Closing **v6.0.2**, the dual-item slot.
+
+**Item 1 — stdlib pin refresh (verify-only).** The parallel
+stdlib-walk-to-6.0.1 sweep already landed: sigil / sakshi / patra /
+sankoch / niyama / vani / yukti / agnosys all pin `cyrius = "6.0.1"`.
+mabda holds at `6.0.0` per the rc.4 exception. cyrius's own
+`cyrius.cyml` has only `[deps.mabda]` (held) — no manifest edit needed.
+
+**Item 2 — `cyrius deps` correct-lock fix.** `cyrius.lock` had been
+empty ecosystem-wide since **v5.11.8** (cyrius/kybernet/argonaut all
+0 bytes): `cmd_deps_lock` filtered by symlink (`readlink`), but v5.11.8
+switched resolution symlink→file-copy, so every resolved dep was
+skipped. Fix (`cbt/deps.cyr`): `cmd_deps_lock` now hashes every `.cyr`
+under `lib/` recursively (new `_deps_lock_dir`, drops the symlink
+filter); new `_dep_is_cyrius_source_repo()` (matches `[package] name =
+"cyrius"`) skips the self-referential lock in cyrius's own repo to
+avoid churning the tracked `cyrius.lock`. New `_deps_lock_gate`
+regression gate (`programs/check.cyr`) — the bug survived ~60 patches
+because nothing tested it.
+
+**Mechanical gates green:** `scripts/check.sh` **79/79** (was 78; +1
+for the new gate). cycc self-host unaffected by the bump only (lock fix
+is wrapper-side, not cycc). `cyrius.lock` stays 0 bytes in this repo
+(source-repo skip; no churn through check.sh). Verified the fix in a
+downstream sandbox: non-empty lock incl. `unicode/` subdir, `--verify`
+round-trips.
+
+**Cross-host smoke — blocked by toolchain, findings captured.** A live
+cross-host lock smoke couldn't run: neither pi (aarch64) nor ecb (macOS)
+has a usable native `cycc`, and the lock fix is host-agnostic logic
+anyway (verified-by-construction; `sha256sum` + `/bin/sh` confirmed on
+both). Three findings routed forward
+([`project_v6_0_2_cross_host_smoke_findings`]): (1) the aarch64 `cyrius`
+**wrapper** argv dispatch is broken (all commands → usage; suspect
+`lib/args.cyr` aarch64 path) → **v6.0.4** evidence the aarch64 problem
+is broader than the kybernet hang; (2) the Mach-O cross-emitter dies
+`mmap heap init failed` on Linux; (3) Windows `deps --lock` can't hash
+(no `sha256sum`/`/bin/sh`) → deps-portability holdover.
+
+Memory pins: [`project_v6_0_2_3_4_slot_sequence`] (.2 of the .2–.7
+sequence), [`project_v6_0_2_cross_host_smoke_findings`].
+
 ## Session close — 2026-05-19 (.1 ship — stdlib-resolution hotfix bundle)
 
 Closing **v6.0.1** as same-day hotfix for two stdlib-resolution
@@ -753,6 +797,17 @@ forward-looking content (.66/.67/.68/.69 detail intact).
   [[project_v5_11_x_closeout_at_40]]).
 
 ## Version
+
+**6.0.2** (shipped 2026-05-27 — **`cyrius deps` correct-lock fix
+(empty ecosystem-wide since v5.11.8) + stdlib pins verified at 6.0.1**).
+`cbt/deps.cyr::cmd_deps_lock` now hashes `lib/*.cyr` recursively
+instead of filtering by the stale symlink proxy; cyrius source repo
+skips the self-referential lock. New `_deps_lock_gate` → check.sh
+**79/79**. See CHANGELOG [6.0.2] + the .2 session-close above.
+
+<!-- Historical per-patch blocks below predate the v6.0.x cycle and
+are retained as narrative; the maintained current-state record is the
+session-close entries at the top of this file. -->
 
 **5.11.63** (shipped 2026-05-18 — **aarch64 `_strict_mode`
 parity (.59 retro follow-up) + wrapper `--strict` plumbing

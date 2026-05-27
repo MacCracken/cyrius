@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.2] — 2026-05-27
+
+**Dual-item slot: stdlib pin refresh (verify-only) + the `cyrius deps`
+correct-lock fix. `cyrius.lock` had been silently empty ecosystem-wide
+since v5.11.8.**
+
+### Fixed — `cyrius deps` produced an empty lock everywhere since v5.11.8
+
+`cbt/deps.cyr::cmd_deps_lock` filtered lock entries by symlink — it
+`readlink`'d each `lib/*.cyr` (syscall 89) and skipped anything that
+wasn't a symlink. That was correct until **v5.11.8 switched dep
+resolution from symlink to file-copy** (`_dep_copy_file`). After that,
+every resolved dep was a real copied file, `readlink` returned `-EINVAL`
+on all of them, and the lock came out **empty** — confirmed 0 bytes in
+cyrius, kybernet, and argonaut, and tracked-but-empty in every commit
+back. `cyrius deps --verify` had nothing to verify against for ~60
+patches. No gate covered it, so it went undetected.
+
+**Fix:**
+- `cmd_deps_lock` now hashes every `.cyr` under `lib/` **recursively**
+  (new `_deps_lock_dir` helper), so nested stdlib modules
+  (e.g. `lib/unicode/categories.cyr`, v5.8.49 subdir paths) are locked
+  too — a flat scan silently omitted them. The symlink filter is gone.
+- New `_dep_is_cyrius_source_repo()` (matches `[package] name =
+  "cyrius"`) **skips** lock generation in cyrius's own repo: its `lib/`
+  is authored/folded stdlib, not resolved deps, so a lock there is
+  self-referential and would churn the tracked `cyrius.lock` on every
+  `check.sh` `cyrius deps`. Name-based detection is used deliberately —
+  the `src/main.cyr` priority-(a) signal false-positives on downstream
+  repos like gnoboot/kybernet, which was the v6.0.1 mkdir bug.
+
+### Added — `_deps_lock_gate` regression gate
+
+`programs/check.cyr` gains a focused gate: a downstream-style fixture
+(name != `cyrius`) with a hand-built `lib/` incl. a `unicode/` subdir;
+asserts `cyrius deps --lock` writes a **non-empty** lock containing the
+subdir entry, and that `cyrius deps --verify` round-trips. Closes the
+"nothing tested the lock" hole that let the empty-lock bug survive.
+`scripts/check.sh` is now **79/79** (was 78).
+
+### Verified — stdlib pins (item 1, verify-only)
+
+The parallel stdlib-walk-to-6.0.1 sweep already landed: sigil / sakshi
+/ patra / sankoch / niyama / vani / yukti / agnosys all pin
+`cyrius = "6.0.1"`. mabda holds at `6.0.0` per the rc.4 exception.
+cyrius's own `cyrius.cyml` has only `[deps.mabda]` (held), so no
+manifest edit was needed.
+
+### Notes — cross-host smoke findings (captured, not fixed here)
+
+Attempting a live cross-host lock smoke surfaced three pre-existing
+issues, none of which is the lock fix (host-agnostic logic, verified on
+x86 via check.sh 79/79 + manual tests; `sha256sum` + `/bin/sh` confirmed
+present on the Linux + macOS hosts). Routed forward:
+- **aarch64 `cyrius` wrapper argv dispatch is broken** — a cross-built
+  (hence, by self-hosting, native-identical) aarch64 wrapper prints the
+  usage banner for every command; never reads `argv[1]`. Suspect
+  `lib/args.cyr`'s aarch64 path (the self-host gate never exercises
+  argv). Routed to **v6.0.4** as evidence the aarch64 problem is broader
+  than the kybernet codegen hang.
+- **Mach-O cross-emitter can't run on Linux** (`mmap heap init failed`)
+  — can't cross-produce a macOS `cycc` from a Linux host; needs a macOS
+  bootstrap.
+- **Windows `deps --lock` can't hash** — `_sha256sum_file` needs
+  `/bin/sh` + `sha256sum`; Windows has only `certutil`. Pre-existing;
+  filed as a deps-portability holdover.
+
 ## [6.0.1] — 2026-05-19
 
 **Hotfix for two stdlib-resolution path bugs surfaced by the

@@ -73,24 +73,128 @@ bayan/ganita carve, all together).
   gnoboot adopted `stdlib = ["fnptr"]`. Two regression smoke gates
   added (check.sh 78/78 now).
 
-### Pinned slot sequence (next three)
+### Pinned slot sequence
 
-Per user direction 2026-05-20. v6.0.2 lands at the user's
-convenience once the in-flight stdlib walk completes; v6.0.3 +
-v6.0.4 form a two-slot mini-arc closing out the v5.11.x deferred
-return-patch-buffer → vec conversion (proposal Option C,
-[`proposals/archived/2026-05-08-raise-return-cap.md`](proposals/archived/2026-05-08-raise-return-cap.md)).
+Per user direction 2026-05-20 (original .2/.3/.4) + 2026-05-27 (.2
+dual-item; two codegen P1s — nous-0001 and the kybernet aarch64
+hang + DCE — both inserted near-term ahead of the refactor work;
+sequence shifted). v6.0.2 lands at the user's convenience once the
+in-flight stdlib walk completes; **v6.0.3 = the nous-0001
+typed-`vec_get` codegen P1** and **v6.0.4 = the kybernet aarch64
+codegen-hang + DCE correctness audit** (both silently-wrong /
+hard-regression codegen, which outranks the refactor work — user
+direction 2026-05-27 "prioritize near-term"); v6.0.5 + v6.0.6 form the
+two-slot mini-arc closing out the v5.11.x deferred return-patch-buffer
+→ vec conversion (proposal Option C,
+[`proposals/archived/2026-05-08-raise-return-cap.md`](proposals/archived/2026-05-08-raise-return-cap.md));
+v6.0.7 = backend module collapse (pulled forward from the v6.0-runway
+carry-forward list below).
 
-- **v6.0.2 — stdlib pin refresh** — pull the latest of each
-  stdlib dep into cyrius's own `cyrius.cyml` (sigil, sakshi,
-  patra, sankoch, niyama, vani, yukti, agnosys, …) reflecting
-  the parallel "walk the stdlibs and update to 6.0.1" sweep the
-  user is running alongside kernel-arc work. **mabda holds at
-  its current pin** until rc.4 validation closes — explicit
-  exception. Acceptance: every dep's `cyrius` field tracks
-  v6.0.1; `cyrius deps` resolves clean; `scripts/check.sh` green;
-  smoke across all four SSH hosts ([[reference_verification_hosts_ssh]]).
-- **v6.0.3 — alloc + vec pull-in (prep)** — fold `lib/alloc.cyr`
+- **v6.0.2 — stdlib pin refresh + `cyrius deps` correct-lock fix**
+  (dual-item, per user direction 2026-05-27):
+  1. **Stdlib pin refresh** — pull the latest of each stdlib dep
+     into cyrius's own `cyrius.cyml` (sigil, sakshi, patra, sankoch,
+     niyama, vani, yukti, agnosys, …) reflecting the parallel "walk
+     the stdlibs and update to 6.0.1" sweep the user is running
+     alongside kernel-arc work. **mabda holds at its current pin**
+     until rc.4 validation closes — explicit exception.
+  2. **`cyrius deps` correct-lock fix** — `cyrius.lock` has been
+     **empty (0 bytes) ecosystem-wide since v5.11.8** (confirmed:
+     cyrius, kybernet, argonaut all 0 bytes; tracked-but-empty in
+     every commit). Root cause: v5.11.8 switched dep resolution from
+     symlink to file-copy (`cbt/deps.cyr:707` `_dep_copy_file`), but
+     `cmd_deps_lock` (`cbt/deps.cyr:1223-1226`) still filters for
+     symlinks only (`readlink` syscall 89; non-symlinks `continue`d).
+     Every resolved dep is now a real copied file → every entry
+     skipped → empty lock → `cyrius deps --verify` has nothing to
+     verify against. Fix shape (confirm at slot entry): identify
+     resolved-dep files by the resolved manifest module list
+     (`[deps.*]` + stdlib auto-prepend) rather than the stale
+     symlink proxy; hash + record those. Gate cyrius's own repo
+     (authored stdlib in `lib/` — self-referential lock is
+     meaningless) vs downstream consumers (all `lib/*.cyr` are
+     resolved deps).
+  - Acceptance: every dep's `cyrius` field tracks v6.0.1; `cyrius
+    deps` resolves clean and writes a **non-empty** `cyrius.lock`;
+    `cyrius deps --verify` round-trips; `scripts/check.sh` green;
+    smoke across all four SSH hosts
+    ([[reference_verification_hosts_ssh]]).
+- **v6.0.3 — nous-0001 typed-`vec_get` codegen fix** (codegen P1,
+  inserted near-term per user direction 2026-05-27). Upstream report
+  [`../../../nous/docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md`]:
+  under cycc 6.0.1, a typed stdlib accessor (`vec_get(v, i): i64`)
+  returns a **wrong value** when used as a **nested argument** to
+  another call (`str_from(vec_get(v, i))`, `map_get(m, vec_get(v, i))`)
+  or **re-evaluated for the same index** within one scope while other
+  typed calls + heap allocation intervene. Silently wrong (exit 0 in
+  isolation; SIGSEGV downstream). **Clean bisection**: `lib/vec.cyr`
+  byte-identical 5.7.29 ↔ 6.0.1 except the added `: i64` return-type
+  annotations — overlaying only the typed `vec.cyr` reproduces,
+  reverting only it fixes. So the defect is in **codegen for
+  typed-return accessors consumed as nested call args**, not the body.
+  Blast radius is ecosystem-wide (everything moved to typed sigs in
+  the v5.11.x annotation arc). **Premise-check the self-contained
+  minimal repro at slot entry** ([[feedback_premise_check_at_slot_entry]])
+  before scoping the codegen fix. Cross-arch propagation mandatory
+  ([[feedback_cross_arch_propagation_mandatory]]). Acceptance: repro
+  prints `cycle detected (correct)`; cycc byte-identical;
+  `tests/tcyr/` regression for the nested-accessor shape; full
+  `scripts/check.sh`; 4-host smoke. (nous 0002 — `exec_capture`
+  no-PATH-search — stays **nous-side, no cyrius slot** per user
+  direction 2026-05-27: intentional execve-not-execvp stdlib behavior,
+  fixed downstream.)
+- **v6.0.4 — kybernet aarch64 codegen-hang + DCE correctness audit**
+  (codegen P1, moved near-term per user direction 2026-05-27 — folds
+  the originally-pinned aarch64 investigation together with the DCE
+  review since they're one root-cause hunt). Filed issue:
+  [`issues/2026-05-20-kybernet-cycc_aarch64-6.0.1-codegen-hang.md`](issues/2026-05-20-kybernet-cycc_aarch64-6.0.1-codegen-hang.md).
+  **Symptom**: `cycc_aarch64` 6.0.1 parses kybernet's full dep-bundle
+  in <1s then **hot-spins at 99.9% CPU indefinitely** (never emits a
+  binary; killed at 4 min). `cc5_aarch64` 5.10.44 did the same work
+  in ~5s. aarch64 cross-build **unusable** for kybernet; argonaut is
+  the 2nd affected repo. x86_64 is clean. **Codegen-stage + size-
+  dependent**: a one-line source in the same project errors fast and
+  exits clean, so it's specific to kybernet's codegen workload
+  (fn ≥ 3256). **DCE is the leading suspect**: the hang reproduces
+  **with AND without `CYRIUS_DCE=1`**, and while the `.text` NOP-fill
+  is flag-gated, the `live[]` reachability mark-and-sweep runs
+  *unconditionally* (also feeds undef-fn warning suppression,
+  `src/backend/x86/fixup.cyr:311` / `:157`) — a worse-than-linear
+  mark-and-sweep would hang regardless of the flag. **Scope** (user
+  direction 2026-05-27 "hang + correctness audit"): (1) localize +
+  fix the termination/perf pathology so aarch64 terminates; (2) audit
+  reachability *classification* across the v6.0.0 rename — verify no
+  live fn is mis-marked dead (silently-wrong-output risk, nous-0001-
+  adjacent). Note DCE is still opt-in (`CYRIUS_DCE=1`, `fixup.cyr:334`
+  "until the pass is battle-tested"). Likely first step: land
+  `CYRIUS_DEBUG_PHASES=1` phase markers (parse/typecheck/DCE/regalloc/
+  instsel/emit) to localize the hang (the issue explicitly asks for
+  it). Reproduce on the aarch64 SSH host (`pi`,
+  [[reference_verification_hosts_ssh]]). Cross-arch propagation
+  mandatory ([[feedback_cross_arch_propagation_mandatory]]).
+  Outcome-conditional scope: if the fix is larger than a single slot,
+  ASK for the shape rather than silently re-slotting
+  ([[feedback_no_unilateral_scope_decisions]]). Acceptance: aarch64
+  cross-build of kybernet HEAD terminates and emits a valid ELF; no
+  reachability misclassification found (or fixed if found); cycc
+  byte-identical on x86; 4-host smoke.
+  - **New evidence from the v6.0.2 cross-host smoke (2026-05-27,
+    [[project_v6_0_2_cross_host_smoke_findings]])**: the aarch64
+    problem is **broader than the codegen hang**. A cross-built
+    aarch64 `cyrius` *wrapper* (`cat cbt/cyrius.cyr | build/cycc_aarch64`)
+    prints the usage banner for *every* command — it never reads
+    `argv[1]`. By self-hosting, a native-on-pi build is byte-identical,
+    so this is real emitted-code behavior, not a cross-build artifact.
+    Prime suspect: **`lib/args.cyr`'s aarch64 argv path**, which the
+    self-host gate never exercises (cycc reads stdin, not argv). Check
+    this at .4 entry — it may be the same root cause as the hang, or a
+    second aarch64 bug. Also relevant: a *live* cross-host smoke is
+    blocked because the hosts lack a native `cycc` (pi has only stale
+    5.10/5.11 + legacy `cc2`/`cyrb`; ecb is bare) and the Mach-O
+    cross-emitter dies `mmap heap init failed` on Linux — so this slot
+    may need to provision native toolchains (aarch64 bootstrap on pi)
+    before it can verify on hardware.
+- **v6.0.5 — alloc + vec pull-in (prep)** — fold `lib/alloc.cyr`
   (+ OS-variant `alloc_windows.cyr` / `alloc_macos.cyr` brought
   in by its internal `#ifdef` chain) and `lib/vec.cyr` into
   cycc's source tree. Add `include` lines to both `src/main.cyr`
@@ -106,7 +210,7 @@ return-patch-buffer → vec conversion (proposal Option C,
   growth bookkept as honest growth-tax per
   [[feedback_perf_deltas_growth_tax_default]]. Acceptance: cycc
   byte-identical; full `scripts/check.sh`; 4-host smoke.
-- **v6.0.4 — return-patch buffer → vec (conversion)** — replace
+- **v6.0.6 — return-patch buffer → vec (conversion)** — replace
   the fixed-array storage at all 9 enforcement sites
   (`parse.cyr` ×1, `parse_expr.cyr` ×3, `parse_fn.cyr` ×5) with
   `vec_push(rp_vec, v)`; replace the read-back at
@@ -137,6 +241,13 @@ return-patch-buffer → vec conversion (proposal Option C,
   `tests/tcyr/return_cap_removed.tcyr` exercising a fn with
   >256 returns (currently rejected) compiling clean; full
   `scripts/check.sh`; 4-host smoke.
+- **v6.0.7 — backend module collapse** (per user direction
+  2026-05-27; pulled forward from the v6.0-runway carry-forward
+  list below). Audit which helpers in `src/backend/x86/` and
+  `src/backend/aarch64/` parallel `emit.cyr` / `jump.cyr` /
+  `fixup.cyr` can move to `src/backend/common/` without entangling
+  the arch-specific asm-byte tables. cycc byte-identical
+  post-collapse; cross-arch builds proportional.
 
 ### Planned
 
@@ -167,9 +278,13 @@ The remaining 5 land in v6.0.x:
   fns. Per [`feedback_dead_code_audit_scope`]: scaffold (TS_*/
   ir_*/cross-arch helpers) stays alive by default; only
   confirmed-dead removable. Risk: 0-LoC outcome if all
-  candidates classify as scaffold.
-- **Return-patch buffer → vec** — pinned as the v6.0.3 +
-  v6.0.4 mini-arc (alloc/vec pull-in + conversion). See
+  candidates classify as scaffold. **Distinct from the v6.0.4 DCE
+  work** — that slot audits whether the reachability pass *classifies*
+  correctly (and fixes the aarch64 hang); this item is about
+  *removing* the fns the (now-trusted) pass reports as dead. Sequence
+  this after v6.0.4 so removal runs on a verified-correct classifier.
+- **Return-patch buffer → vec** — pinned as the v6.0.5 +
+  v6.0.6 mini-arc (alloc/vec pull-in + conversion). See
   "Pinned slot sequence" above for full scope. Proposal
   Option C; allocator prereq surface confirmed at v5.11.67
   premise-check.
@@ -180,8 +295,9 @@ The remaining 5 land in v6.0.x:
   table keyed on `(arch, format)`. Substantial multi-slot
   refactor; lands here per user direction "keep in v6.0.x
   bundle".
-- **Backend module collapse where viable** — `src/backend/x86/`
-  and `src/backend/aarch64/` parallel `emit.cyr` / `jump.cyr` /
+- **Backend module collapse where viable** — **pinned to v6.0.7**
+  (see "Pinned slot sequence" above). `src/backend/x86/` and
+  `src/backend/aarch64/` parallel `emit.cyr` / `jump.cyr` /
   `fixup.cyr`. Audit which helpers can move to
   `src/backend/common/` without entangling asm-byte tables.
 
@@ -217,6 +333,15 @@ The remaining 5 land in v6.0.x:
 - **Cyim regex unblock** (mabda C6) — consumer-gated holdover.
   Land when cyim repo updates + re-tests against v6.x. May not
   fire in v6.0.x window.
+- **`cyrius deps --lock` Windows-portable hash** — surfaced by the
+  v6.0.2 cross-host smoke ([[project_v6_0_2_cross_host_smoke_findings]]).
+  `cbt/deps.cyr::_sha256sum_file` forks `/bin/sh` + runs `sha256sum`;
+  Windows (cass) has neither (only `certutil -hashfile <f> SHA256`).
+  So a correct lock on native Windows needs a `certutil`/built-in hash
+  path behind a `_TARGET_PE` branch. **Pre-existing** (predates v6.0.2),
+  not a regression; deps-portability follow-up. Low urgency — native
+  Windows cyrius-deps consumers are rare. Lands when a Windows consumer
+  surfaces pressure, else a quiet v6.0.x slot.
 
 ### Stdlib clean-slate — mabda 3.0 GA fold + bayan/ganita carve
 
@@ -261,19 +386,22 @@ Memory pins: [`project_bayan_ganita_carve_arc`],
 
 | Cluster | Slots |
 |---|---|
-| Stdlib pin refresh (v6.0.2) | 1 |
-| Runway carry-forward (5 items, incl. v6.0.3+v6.0.4 mini-arc) | ~16 |
+| Stdlib pin refresh + deps correct-lock fix (v6.0.2) | 1-2 |
+| Codegen P1s — nous-0001 (.3) + kybernet aarch64 hang/DCE (.4) | ~2-4 |
+| Runway carry-forward (return-patch mini-arc .5+.6, _TARGET_* consolidation, backend collapse .7, byte-array peephole, dead-code sweep) | ~14 |
 | Stdlib QoL (POSIX *at + TOML + octal) | ~7 |
 | Holdovers (pre-commit hook + cyim conditional) | ~2-3 |
 | Stdlib clean-slate (mabda fold + bayan + ganita) | ~6-8 |
-| **Total planned** | **~32-35** |
+| **Total planned** | **~32-38** |
 | Bug bandwidth | ~10 |
-| **Budget** | **~42-45** |
+| **Budget** | **~42-48** |
 
-The stdlib clean-slate flexes total slot count above the 30
-target — acceptable given the "clean slate, update all together"
-intent. If mabda GA slips past v6.0.x window, the stdlib portion
-defers and v6.0.x lands at ~25 planned slots.
+The two codegen P1s (.3/.4) consume bug-bandwidth rather than adding
+to the planned arc — both are filed regressions, not new scope. The
+stdlib clean-slate flexes total slot count above the 30 target —
+acceptable given the "clean slate, update all together" intent. If
+mabda GA slips past v6.0.x window, the stdlib portion defers and
+v6.0.x lands at ~25 planned slots.
 
 ### Deferred to v6.1.0 cut
 
@@ -353,7 +481,7 @@ in place.
 
 ---
 
-## v6.2.x — Platform Expansion (Bare-metal + RISC-V rv64)
+## v6.2.x — Platform Expansion (Bare-metal + RISC-V rv64 + Native TLS)
 
 **Theme**: 4th platform peer (RISC-V rv64) + bare-metal target
 codification. Substantial new-code minor; substrate prerequisites
@@ -424,21 +552,86 @@ struct-byval ABI (v5.10.x), parser-to-emit named-op refactor
 5. `[release].cross_bins` in `cyrius.cyml` gets a
    `cycc_riscv64` entry.
 
+### v6.2.x — Native TLS stack (`lib/tls_native.cyr`)
+
+Per user direction 2026-05-27: build a **sovereign, pure-Cyrius TLS
+stack** to replace the current `lib/tls.cyr`, which is a
+**`libssl.so.3` / `libcrypto.so.3` wrapper via the fdlopen bridge**
+(client-only; depends on a host OpenSSL + `ld.so`-bootstrapped glibc
+TCB). Two consumers now justify the arc (the ≥2-consumer threshold,
+[[project_testing_framework_split]]):
+
+1. **The AGNOS kernel** — a freestanding/bare-metal kernel has **no
+   `libssl.so.3` to dlopen and no `ld.so`** to bootstrap the glibc TCB
+   the current wrapper requires, so the existing `tls.cyr` is
+   *structurally unusable* in-kernel. This is the forcing function.
+2. **sandhi** (`lib/sandhi.cyr`, folded at v5.7.0) — the larger
+   service-boundary wrapper that composes the stdlib network
+   primitives (`http`/`ws`/`tls`/`net`) into the full client+server
+   surface. Re-points onto the native stack.
+
+**Why v6.2.x**: the kernel consumer needs the **bare-metal target
+(v6.2.0)** to compile freestanding crypto + protocol code at all, so
+native TLS lands in the same minor, after the target formalizes.
+
+**Scope** (per user direction 2026-05-27): **TLS 1.2 + 1.3, client +
+server** — full parity with what the libssl wrapper exposes today,
+including 1.2 for older-peer interop.
+
+**Crypto base** — **stays in sigil**; the native TLS lib is a
+*protocol layer* (handshake state machine + record layer + ciphersuite
+negotiation + key schedule + X.509 chain-verify wiring) over sigil's
+primitives. sigil 3.4.x already ships AES-GCM / ECDSA-P256+P384 /
+X.509 / SHA-2 / HKDF / Ed25519 / RSA. The two genuine gaps for the
+modern TLS 1.3 `ChaCha20-Poly1305 + X25519` suite — **ChaCha20** and
+**X25519** — were added to **sigil's roadmap backlog 2026-05-27** with
+this arc as the forcing function. The kernel folds sigil in
+long-term the way it folds other select deps (per user analogy: a font
+lib; agnoshi as primary shell vs tortuga as emergency shell in the
+kernel codebase) — sigil is a kernel-folded crypto dep, not a
+TLS-internal vendored copy.
+
+**Sequencing within v6.2.x**: bare-metal target (v6.2.0) → sigil
+ChaCha20 + X25519 land (separate sigil minor, gated on this slot
+firming) → `lib/tls_native.cyr` record layer + handshake + cert verify
+→ sandhi re-point → kernel integration smoke.
+
+**Acceptance** (confirm shape at arc entry): native client handshakes
+against a real TLS 1.3 + TLS 1.2 peer (OpenSSL `s_server`); native
+server accepts a real client; X.509 chain verify via sigil; sandhi
+suite green on the native stack; kernel links `tls_native` freestanding
+(no `libssl`, no dlopen); `lib/tls.cyr` libssl path retained or retired
+per a decision at arc entry. Cross-arch propagation mandatory
+([[feedback_cross_arch_propagation_mandatory]]).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]].
+
 ### Slot estimate (v6.2.x)
 
 | Cluster | Slots |
 |---|---|
 | Bare-metal target formalization (6 deliverables) | ~8 |
 | RISC-V rv64 backend (new emit/jump/fixup + syscalls peer) | ~12 |
+| Native TLS stack (`tls_native.cyr` — 1.2+1.3 client+server over sigil) | ~12-15 |
 | Cross-arch test harness + CI matrix | ~3 |
 | Hardware self-host gate (HiFive Unmatched or equivalent) | ~2 |
-| **Total planned** | **~25** |
+| **Total planned** | **~37-40** |
 | Bug bandwidth | ~10 |
-| **Budget** | **~35** |
+| **Budget** | **~47-50** |
 
-Larger minor — flexes above 30 budget per user direction
-"larger patch bandwidth like the last few minor cycles of 5.x"
-when substantive new-code surface warrants.
+Now the **largest minor of the v6.x cycle** — bare-metal + RISC-V +
+native TLS is three substantial new-code arcs. Flexes well above the
+30 target per user direction "larger patch bandwidth like the last few
+minor cycles of 5.x."
+
+**Priority within the minor** (user direction 2026-05-27): **native
+TLS > RISC-V**. Native TLS is kernel-critical and sovereignty-bearing
+(it removes the libssl external dependency and unblocks in-kernel TLS);
+RISC-V is a 4th platform peer — valuable but not as load-bearing. So if
+v6.2.x proves unwieldy at entry, **RISC-V is the flagged split-out
+candidate** to defer into its own later minor (e.g. v6.2.x tail or a
+dedicated platform minor) — TLS and bare-metal stay. Bare-metal stays
+because it's the compile prerequisite for in-kernel native TLS.
 
 ---
 

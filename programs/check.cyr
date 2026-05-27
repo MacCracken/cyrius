@@ -2235,6 +2235,96 @@ fn _deps_downstream_src_main_gate(): i64 {
     return fail;
 }
 
+# Helper: join `base` + `suffix` into a fresh cstr. Local to the
+# v6.0.2 lock gate to keep its fixture path-building readable.
+fn _lk_path(base, suffix): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, base);
+    str_builder_add_cstr(sb, suffix);
+    return str_data(str_builder_build(sb));
+}
+
+# v6.0.2 regression gate — `cyrius deps --lock` must write a NON-EMPTY
+# lock that recurses into subdirs and round-trips through --verify.
+# Guards the bug that survived ~60 patches undetected: v5.11.8 switched
+# dep resolution from symlink to file-copy, but cmd_deps_lock kept
+# filtering for symlinks (readlink), so every resolved dep was skipped
+# and cyrius.lock came out empty ecosystem-wide (cyrius/kybernet/argonaut
+# all 0 bytes). No gate covered it. Fixture is a downstream-style repo
+# (name != "cyrius") with a hand-built lib/ incl. a unicode/ subdir.
+fn _deps_lock_gate(): i64 {
+    var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fx = _tmp_path("audit_deps_lock_");
+    sys_mkdir(fx, 0x1ED);
+    sys_mkdir(_lk_path(fx, "/lib"), 0x1ED);
+    sys_mkdir(_lk_path(fx, "/lib/unicode"), 0x1ED);
+    _write_file(_lk_path(fx, "/lib/foo.cyr"), "fn foo() { return 1; }\n");
+    _write_file(_lk_path(fx, "/lib/unicode/cats.cyr"), "fn cats() { return 2; }\n");
+    _write_file(_lk_path(fx, "/cyrius.cyml"), "[package]\nname = \"lock_gate_fixture\"\n");
+
+    var lout = _tmp_path("audit_deps_lock_out_");
+    var lec = _exec_in_dir3(fx, cyrius_bin, "deps", "--lock", 0, lout);
+
+    var lock_path = _lk_path(fx, "/cyrius.lock");
+    var lock_sz = 0;
+    if (file_exists(lock_path) == 1) { lock_sz = _file_size(lock_path); }
+
+    var has_subdir = 0;
+    if (lock_sz > 0) {
+        var lb = alloc(8192);
+        var ln = file_read_all(lock_path, lb, 8191);
+        if (ln > 0) {
+            store8(lb + ln, 0);
+            if (_find_str_from(lb, ln, 0, "lib/unicode/cats.cyr", 20) >= 0) { has_subdir = 1; }
+        }
+    }
+
+    var vec_ec = _exec_in_dir3(fx, cyrius_bin, "deps", "--verify", 0, lout);
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(lout);
+    sys_unlink(lock_path);
+    sys_unlink(_lk_path(fx, "/lib/unicode/cats.cyr"));
+    sys_unlink(_lk_path(fx, "/lib/foo.cyr"));
+    sys_unlink(_lk_path(fx, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fx, "/lib/unicode"));
+    sys_rmdir(_lk_path(fx, "/lib"));
+    sys_rmdir(fx);
+
+    var fail = 0;
+    if (lec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cyrius deps --lock exited "); print_num(lec); println(" (expected 0)");
+        fail = 1;
+    } elif (lock_sz <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cyrius.lock empty after --lock (symlink-filter regression returned?)");
+        fail = 1;
+    } elif (has_subdir == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cyrius.lock missing lib/unicode/cats.cyr (subdir recursion broken)");
+        fail = 1;
+    } elif (vec_ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cyrius deps --verify exited "); print_num(vec_ec); println(" (expected 0)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": cyrius.lock non-empty ("); print_num(lock_sz);
+        println(" bytes, incl. unicode/ subdir) + --verify round-trips");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Helper: find first occurrence of `needle` in [buf, buf+n) starting
 # at `from`. Returns offset on hit, -1 on miss. Used by the cap-drift
 # and doc-size gates to scan for textual patterns inside loaded buffers.
@@ -9483,6 +9573,10 @@ fn _run_regression_gates(): i64 {
 
     _section("cyrius deps for downstream-with-src/main.cyr (v6.0.1 regression)");
     _deps_downstream_src_main_gate();
+    println("");
+
+    _section("cyrius deps --lock writes a non-empty recursive lock (v6.0.2 regression)");
+    _deps_lock_gate();
     println("");
 
     _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");
