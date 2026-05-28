@@ -6,6 +6,100 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.14] — 2026-05-28
+
+**TLS arc Mini-arc A.5 — ciphersuite negotiation + AEAD dispatch.**
+Final slot of Mini-arc A. **`tls_native_available()` flips 0 → 1**
+— at least one ciphersuite end-to-end wired through encrypt/decrypt
+with the key schedule from .13. Ships with **2 of 3 TLS 1.3
+ciphersuites** (sigil 3.5.6 gap on AES-128 documented below).
+
+### Added — ciphersuite registry
+
+Lookup fns over the 3 TLS 1.3 ciphersuite IDs from `TlsCipherSuite`:
+- `tls_native_cipher_hash_algo(cipher)` → TLS_HASH_SHA256/384 / -1.
+- `tls_native_cipher_key_len(cipher)` → 16 / 32 / -1.
+- `tls_native_cipher_iv_len(cipher)` → 12 (always for the three suites).
+- `tls_native_cipher_tag_len(cipher)` → 16.
+- `tls_native_cipher_supported(cipher)` → 1 for AES-256-GCM and
+  ChaCha20-Poly1305; **0 for AES-128-GCM** (sigil gap, see below).
+
+### Added — ciphersuite selection
+
+`tls_native_cipher_select(client_offers, n_offers, server_prefs, n_prefs)`
+walks the server's preference list and picks the first ciphersuite
+that's (a) `_supported()` and (b) in the client's offer list.
+Returns 0 if no overlap. Inputs are TLS-wire-format uint16-BE arrays
+(matches the ClientHello.cipher_suites encoding directly).
+
+### Added — AEAD encrypt/decrypt dispatch
+
+- `tls_native_aead_encrypt(cipher, key, iv12, aad, aad_len, pt, pt_len, ct_out, tag_out)`
+  — dispatches AES-256-GCM-SHA384 → sigil's `aes_gcm_encrypt`;
+  ChaCha20-Poly1305-SHA256 → sigil's `chacha20poly1305_encrypt`;
+  AES-128-GCM-SHA256 → `TLS_ERR_CIPHER_NOT_SUPPORTED`.
+- `tls_native_aead_decrypt(...)` — same dispatch; returns
+  `TLS_ERR_DECRYPT` on AEAD tag mismatch (sigil's decrypt returns
+  non-zero on bad tag; we translate).
+
+### Changed — `tls_native_available()` returns 1
+
+Was `return 0` in the scaffold (.10). Now `return 1` — the
+capability check matches reality: a peer offering AES-256-GCM-SHA384
+OR ChaCha20-Poly1305-SHA256 can be served end-to-end via .11's
+record layer + .12's handshake framing + .13's key schedule +
+.14's AEAD dispatch. **This was the gate that mini-arcs B / C / D
+were waiting on** — the protocol layer is now usable.
+
+### Sigil gap — `TLS_AES_128_GCM_SHA256` (the RFC 8446 §9.1 mandatory ciphersuite)
+
+Sigil 3.5.6 ships only AES-256 (`aes_gcm_encrypt` internally uses
+`aes256_key_expand`). No AES-128. So cyrius ships 2 of 3 TLS 1.3
+ciphersuites — `TLS_AES_128_GCM_SHA256` is registered with
+`_supported() = 0` and the AEAD dispatch returns
+`TLS_ERR_CIPHER_NOT_SUPPORTED`. In practice:
+- All modern peers offer multiple suites and accept any.
+- A peer offering ONLY `0x1301` (RFC mandatory minimum) cannot
+  complete a handshake with us. That's the compliance gap.
+
+**Sigil-side ask filed comprehensively, not piecemeal**: same
+session, `sigil/docs/development/issues/2026-05-28-cyrius-tls-arc-full-audit.md`
+— covers ALL remaining sigil gaps for the FULL TLS arc (AES-128,
+RSA-PKCS1 + RSA-PSS sign + verify, ECDSA P-256/P-384 sign, private-
+key parsers for RSA/ECDSA/Ed25519, optional TLS 1.2 PRF). The user
+specifically requested the comprehensive-audit pattern over
+per-slot piecemeal filings. Each line item lifts a specific cyrius
+hold; sigil can ship in whichever order fits its cycle.
+
+### Updated — `tests/tcyr/tls_native_scaffold.tcyr`
+
+30 new asserts (161 → 191 total):
+- Registry (hash algo + key/iv/tag lengths + supported gate).
+- Selection (3 scenarios: server-prefers-AES picks AES-256;
+  server-prefers-ChaCha picks ChaCha20; server-only-offers-AES-128
+  → no match; client-only-offers-AES-128 → no match).
+- AEAD round-trip for AES-256-GCM ("Hello, TLS!" plaintext through
+  encrypt → decrypt → exact byte match).
+- AEAD round-trip for ChaCha20-Poly1305 (same shape).
+- Tag-tamper detection (flip last tag byte → `TLS_ERR_DECRYPT`).
+- AES-128 dispatch → `TLS_ERR_CIPHER_NOT_SUPPORTED`.
+
+Existing scaffold assert `tls_native_available() == 0` flipped to
+`== 1` (slot's contract change).
+
+### Mechanical
+
+- cycc x86 **byte-identical at 885,024 B** (stdlib-only).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,800 → 2,806 fns (+6 publics: 4 lookup fns
+  + 1 selection + 1 supported gate; AEAD dispatch +2 nets +8; some
+  count-adjustment).
+
+Memory pin: `project_native_tls_arc_v6_2_x` — **Mini-arc A
+COMPLETE**. Next is Mini-arc B (.15 → .22) — TLS 1.3 client.
+
 ## [6.0.13] — 2026-05-28
 
 **TLS arc Mini-arc A.4 — TLS 1.3 key schedule (HKDF tree).** Fourth

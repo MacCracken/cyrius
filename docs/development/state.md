@@ -3,6 +3,77 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.14 ship — TLS Mini-arc A.5 ciphersuite negotiation; **A COMPLETE**)
+
+Closing **v6.0.14**, the fifth and final slot of TLS Mini-arc A.
+**`tls_native_available()` flipped 0→1.** The protocol layer is
+usable end-to-end for 2 of 3 TLS 1.3 ciphersuites
+(`TLS_AES_256_GCM_SHA384` + `TLS_CHACHA20_POLY1305_SHA256`).
+
+**Ciphersuite registry** — 5 lookup fns (hash algo / key length / IV
+length / tag length / supported gate) over the three IANA-defined
+TLS 1.3 ciphersuite IDs. All three TLS 1.3 ciphersuites have entries
+in the registry; `_supported()` returns 0 for AES-128-GCM-SHA256
+until sigil ships AES-128 (see audit issue below).
+
+**Ciphersuite selection** — server-side picker walks the server's
+preference list and picks the first that's `_supported()` and in
+the client's offer list. Returns 0 on no overlap. Inputs use the
+exact TLS-wire-format uint16-BE arrays from ClientHello.cipher_suites.
+
+**AEAD dispatch** — `tls_native_aead_encrypt` and `_decrypt` route
+each call to sigil's `aes_gcm_*` or `chacha20poly1305_*` based on
+the cipher ID. Tag verification: sigil's decrypt fns return non-zero
+on bad tag; we translate to `TLS_ERR_DECRYPT`. Verified by tamper
+test (flip last tag byte → DECRYPT err).
+
+**Sigil gap — AES-128 missing**: sigil 3.5.6's `aes_gcm_encrypt`
+uses `aes256_key_expand` internally — it's hardcoded for AES-256.
+So we ship 2 of 3 TLS 1.3 ciphersuites. The mandatory minimum suite
+per RFC 8446 §9.1 (`TLS_AES_128_GCM_SHA256`) is registered but
+returns `TLS_ERR_CIPHER_NOT_SUPPORTED` until sigil ships the
+AES-128 path.
+
+**Sigil-side asks filed as ONE comprehensive audit** (user direction
+this session, frustrated with the piecemeal pattern of filing
+each gap at its forcing slot): `sigil/docs/development/issues/2026-05-28-cyrius-tls-arc-full-audit.md`
+covers ALL remaining sigil gaps for the FULL TLS arc through .37:
+- AES-128 (3 fns: key_expand + gcm_encrypt + gcm_decrypt)
+- RSA signature surface (8 fns: PKCS#1 v1.5 + PSS, sign + verify,
+  SHA-256 + SHA-384)
+- ECDSA P-256 + P-384 sign (4 fns: raw + DER for each curve)
+- Private-key parsers for RSA, ECDSA, Ed25519 (5 fns: 4 DER +
+  1 PEM auto-detect)
+- Optional: TLS 1.2 PRF (cyrius can build inline)
+
+Sigil ships these in whichever order/grouping fits its cycle.
+Each line item lifts a specific cyrius hold; net impact-without-
+shipping is 70% TLS surface coverage with 30% of the load-bearing
+interop gap (AES-128 + RSA).
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (stdlib-only).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,800 → 2,806 fns (+6 publics).
+- `tls_native_scaffold.tcyr` 161 → 191 asserts (+30 for registry +
+  selection + AEAD round-trip + tamper detection).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — **Mini-arc A
+COMPLETE**. v6.0.x going forward:
+  - .15–.22: Mini-arc B — TLS 1.3 client (ClientHello → ServerHello
+    → EncryptedExtensions → Certificate → CertificateVerify →
+    Finished → application data → X.509 chain → hostname → e2e).
+    Some slots will surface server-side dependencies (private key
+    parsers, RSA/ECDSA sign) but the bulk is client-side flow.
+  - .23–.28: Mini-arc C — TLS 1.3 server
+  - .29–.34: Mini-arc D — TLS 1.2 backport
+  - .35–.37: Mini-arc E — consumer + closeout
+  - .38–.39: cyrius tests + TOML
+  - .40–.44: back-end remaining
+  - .45: closeout
+
 ## Session close — 2026-05-28 (.13 ship — TLS Mini-arc A.4 key schedule)
 
 Closing **v6.0.13**, the fourth slot of the native TLS arc (A.4 of

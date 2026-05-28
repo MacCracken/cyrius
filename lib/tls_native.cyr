@@ -910,6 +910,127 @@ fn tls_native_derive_iv(sec, secret_len, hash_algo, iv_out, iv_len): i64 {
 }
 
 # ================================================================
+# Ciphersuite registry + AEAD dispatch (RFC 8446 §B.4, §5.2)
+# ================================================================
+# Three TLS 1.3 ciphersuites are IANA-defined; sigil 3.5.6 backs
+# 2 of 3 today (AES-256-GCM-SHA384 + ChaCha20-Poly1305-SHA256).
+# AES-128-GCM-SHA256 is the RFC 8446 §9.1 mandatory minimum suite
+# but needs AES-128 in sigil — filed at the comprehensive sigil
+# audit issue (2026-05-28-cyrius-tls-arc-full-audit.md). Until that
+# lands, tls_native_cipher_supported(TLS_AES_128_GCM_SHA256) returns
+# 0, and a peer offering ONLY 0x1301 cannot complete a handshake.
+
+# Lookup: return TLS_HASH_SHA256 / SHA384 / -1 for unknown cipher.
+fn tls_native_cipher_hash_algo(cipher): i64 {
+    if (cipher == TLS_AES_128_GCM_SHA256)       { return TLS_HASH_SHA256; }
+    if (cipher == TLS_AES_256_GCM_SHA384)       { return TLS_HASH_SHA384; }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) { return TLS_HASH_SHA256; }
+    return 0 - 1;
+}
+
+# Lookup: AEAD key length in bytes (16 for AES-128, 32 for AES-256
+# and ChaCha20-Poly1305). Returns -1 for unknown.
+fn tls_native_cipher_key_len(cipher): i64 {
+    if (cipher == TLS_AES_128_GCM_SHA256)       { return 16; }
+    if (cipher == TLS_AES_256_GCM_SHA384)       { return 32; }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) { return 32; }
+    return 0 - 1;
+}
+
+# Lookup: AEAD IV/nonce length (always 12 for all three TLS 1.3
+# ciphersuites per RFC 8446 §5.3). Returns -1 for unknown.
+fn tls_native_cipher_iv_len(cipher): i64 {
+    if (cipher == TLS_AES_128_GCM_SHA256)       { return 12; }
+    if (cipher == TLS_AES_256_GCM_SHA384)       { return 12; }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) { return 12; }
+    return 0 - 1;
+}
+
+# Lookup: AEAD authentication-tag length (always 16 for all three).
+fn tls_native_cipher_tag_len(cipher): i64 {
+    if (cipher == TLS_AES_128_GCM_SHA256)       { return 16; }
+    if (cipher == TLS_AES_256_GCM_SHA384)       { return 16; }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) { return 16; }
+    return 0 - 1;
+}
+
+# Capability: returns 1 if cyrius can complete a handshake using this
+# ciphersuite, 0 otherwise. AES-128-GCM-SHA256 returns 0 until sigil
+# ships AES-128 (see audit issue 2026-05-28).
+fn tls_native_cipher_supported(cipher): i64 {
+    if (cipher == TLS_AES_256_GCM_SHA384)       { return 1; }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) { return 1; }
+    return 0;
+}
+
+# Server-side selection: walks the server's preference list in order
+# and picks the first ciphersuite that is both (a) supported by us
+# and (b) offered by the client. Returns the picked cipher id (>0),
+# or 0 if no overlap.
+#
+# `client_offers` is a buffer of uint16 BE values (the TLS wire
+# format for the cipher_suites field of ClientHello). `server_prefs`
+# is the SAME wire format — caller-owned, in descending preference.
+# n_offers and n_prefs are COUNTS (not byte lengths).
+fn tls_native_cipher_select(client_offers, n_offers, server_prefs, n_prefs): i64 {
+    if (n_offers <= 0) { return 0; }
+    if (n_prefs <= 0)  { return 0; }
+    var i = 0;
+    while (i < n_prefs) {
+        var pref = _tn_be16_r(server_prefs + i * 2);
+        if (tls_native_cipher_supported(pref) == 1) {
+            var j = 0;
+            while (j < n_offers) {
+                var off = _tn_be16_r(client_offers + j * 2);
+                if (off == pref) { return pref; }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ----------------------------------------------------------------
+# AEAD encrypt / decrypt (RFC 8446 §5.2)
+# ----------------------------------------------------------------
+# Both branches use sigil's AEAD primitives directly. The key,
+# iv (12 bytes), aad + len, and pt/ct + len are caller-supplied;
+# tag_out / tag input is exactly 16 bytes.
+# Return TLS_OK / TLS_ERR_CIPHER_NOT_SUPPORTED / TLS_ERR_DECRYPT.
+
+# Encrypt: writes ciphertext + 16-byte tag.
+fn tls_native_aead_encrypt(cipher, key, iv12, aad, aad_len,
+pt, pt_len, ct_out, tag_out): i64 {
+    if (cipher == TLS_AES_256_GCM_SHA384) {
+        aes_gcm_encrypt(key, iv12, aad, aad_len, pt, pt_len, ct_out, tag_out);
+        return TLS_OK;
+    }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) {
+        chacha20poly1305_encrypt(key, iv12, aad, aad_len, pt, pt_len, ct_out, tag_out);
+        return TLS_OK;
+    }
+    return TLS_ERR_CIPHER_NOT_SUPPORTED;
+}
+
+# Decrypt + verify: returns TLS_OK on tag-match, TLS_ERR_DECRYPT on
+# tag mismatch (sigil's AEAD decrypt returns non-zero on bad tag).
+fn tls_native_aead_decrypt(cipher, key, iv12, aad, aad_len,
+ct, ct_len, tag, pt_out): i64 {
+    if (cipher == TLS_AES_256_GCM_SHA384) {
+        var r = aes_gcm_decrypt(key, iv12, aad, aad_len, ct, ct_len, tag, pt_out);
+        if (r != 0) { return TLS_ERR_DECRYPT; }
+        return TLS_OK;
+    }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) {
+        var r2 = chacha20poly1305_decrypt(key, iv12, aad, aad_len, ct, ct_len, tag, pt_out);
+        if (r2 != 0) { return TLS_ERR_DECRYPT; }
+        return TLS_OK;
+    }
+    return TLS_ERR_CIPHER_NOT_SUPPORTED;
+}
+
+# ================================================================
 # Opaque context handle
 # ================================================================
 # Returned by tls_native_new_client / new_server; passed to every
@@ -926,11 +1047,13 @@ fn tls_native_derive_iv(sec, secret_len, hash_algo, iv_out, iv_len): i64 {
 # Public API — every fn is a stub at v6.0.10
 # ================================================================
 
-# Capability check. Returns 1 once the protocol layer is in place
-# (.14 — when ciphersuite negotiation lands and at least one suite
-# is fully wired through encrypt/decrypt); 0 in the meantime.
+# Capability check. Returns 1 if cyrius can complete a TLS handshake
+# (at least one ciphersuite end-to-end wired through encrypt/decrypt).
+# Flipped 0→1 at v6.0.14 with AES-256-GCM-SHA384 + ChaCha20-Poly1305-
+# SHA256 backed by sigil 3.5.6. AES-128-GCM-SHA256 still needs sigil
+# AES-128; lands when that ships (see sigil audit issue 2026-05-28).
 fn tls_native_available(): i64 {
-    return 0;
+    return 1;
 }
 
 # Create a client-side context for connecting to `host` (NUL-terminated

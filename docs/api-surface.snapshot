@@ -2559,6 +2559,12 @@ tls::tls_write_early_data/3
 tls_native::tls_native_accept/2
 tls_native::tls_native_aead_nonce/3
 tls_native::tls_native_available/0
+tls_native::tls_native_cipher_hash_algo/1
+tls_native::tls_native_cipher_iv_len/1
+tls_native::tls_native_cipher_key_len/1
+tls_native::tls_native_cipher_select/4
+tls_native::tls_native_cipher_supported/1
+tls_native::tls_native_cipher_tag_len/1
 tls_native::tls_native_close/1
 tls_native::tls_native_connect/2
 tls_native::tls_native_derive_iv/5

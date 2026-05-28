@@ -27,8 +27,8 @@ include "lib/assert.cyr"
 
 test_group("tls_native v6.0.10 scaffold API surface");
 
-# Capability check
-assert_eq(tls_native_available(), 0, "tls_native_available() returns 0 pre-.14");
+# Capability check — flipped 0→1 at v6.0.14 (AES-256-GCM + ChaCha20-Poly1305 wired).
+assert_eq(tls_native_available(), 1, "tls_native_available() = 1 at .14");
 
 # Constructors return 0 (sentinel for alloc-fail / not-implemented)
 assert_eq(tls_native_new_client("example.com", 11), 0, "new_client stub returns 0");
@@ -444,5 +444,146 @@ var big_label[256];
 assert_eq(tls_native_hkdf_expand_label(&bogus_secret, 32, &big_label, 250, 0, 0,
                                        TLS_HASH_SHA256, &out_short, 8),
           TLS_ERR_INVALID_PARAM, "hkdf_expand_label rejects label_len + 6 > 255");
+
+test_group("v6.0.14 ciphersuite registry");
+
+# Hash algo per RFC 8446 §B.4
+assert_eq(tls_native_cipher_hash_algo(TLS_AES_128_GCM_SHA256),       TLS_HASH_SHA256, "AES-128-GCM uses SHA-256");
+assert_eq(tls_native_cipher_hash_algo(TLS_AES_256_GCM_SHA384),       TLS_HASH_SHA384, "AES-256-GCM uses SHA-384");
+assert_eq(tls_native_cipher_hash_algo(TLS_CHACHA20_POLY1305_SHA256), TLS_HASH_SHA256, "ChaCha20-Poly1305 uses SHA-256");
+assert_eq(tls_native_cipher_hash_algo(0x9999), 0 - 1, "unknown cipher → -1");
+
+# Key length
+assert_eq(tls_native_cipher_key_len(TLS_AES_128_GCM_SHA256),       16, "AES-128 key = 16 B");
+assert_eq(tls_native_cipher_key_len(TLS_AES_256_GCM_SHA384),       32, "AES-256 key = 32 B");
+assert_eq(tls_native_cipher_key_len(TLS_CHACHA20_POLY1305_SHA256), 32, "ChaCha20 key = 32 B");
+
+# IV + tag always 12/16 for all TLS 1.3 AEADs
+assert_eq(tls_native_cipher_iv_len(TLS_AES_256_GCM_SHA384),       12, "AES-256 IV = 12 B");
+assert_eq(tls_native_cipher_iv_len(TLS_CHACHA20_POLY1305_SHA256), 12, "ChaCha20 IV = 12 B");
+assert_eq(tls_native_cipher_tag_len(TLS_AES_256_GCM_SHA384),       16, "AES-256 tag = 16 B");
+assert_eq(tls_native_cipher_tag_len(TLS_CHACHA20_POLY1305_SHA256), 16, "ChaCha20 tag = 16 B");
+
+# Capability — AES-128 NOT supported until sigil ships it (see audit issue)
+assert_eq(tls_native_cipher_supported(TLS_AES_128_GCM_SHA256),       0, "AES-128 NOT supported (sigil gap)");
+assert_eq(tls_native_cipher_supported(TLS_AES_256_GCM_SHA384),       1, "AES-256 supported");
+assert_eq(tls_native_cipher_supported(TLS_CHACHA20_POLY1305_SHA256), 1, "ChaCha20-Poly1305 supported");
+assert_eq(tls_native_cipher_supported(0x9999), 0, "unknown cipher not supported");
+
+test_group("v6.0.14 ciphersuite selection");
+
+# Client offers all three; server prefers AES-256, ChaCha20, AES-128.
+# Server's preference order picks the first one we support that's
+# in client's offer list.
+var client_offers[6];
+_tn_be16_w(&client_offers,     TLS_AES_128_GCM_SHA256);
+_tn_be16_w(&client_offers + 2, TLS_AES_256_GCM_SHA384);
+_tn_be16_w(&client_offers + 4, TLS_CHACHA20_POLY1305_SHA256);
+
+var server_prefs_aes_first[6];
+_tn_be16_w(&server_prefs_aes_first,     TLS_AES_256_GCM_SHA384);
+_tn_be16_w(&server_prefs_aes_first + 2, TLS_CHACHA20_POLY1305_SHA256);
+_tn_be16_w(&server_prefs_aes_first + 4, TLS_AES_128_GCM_SHA256);
+assert_eq(tls_native_cipher_select(&client_offers, 3, &server_prefs_aes_first, 3),
+          TLS_AES_256_GCM_SHA384, "server-prefers-AES → picks AES-256");
+
+# Flip preferences: ChaCha20 first
+var server_prefs_chacha[6];
+_tn_be16_w(&server_prefs_chacha,     TLS_CHACHA20_POLY1305_SHA256);
+_tn_be16_w(&server_prefs_chacha + 2, TLS_AES_256_GCM_SHA384);
+_tn_be16_w(&server_prefs_chacha + 4, TLS_AES_128_GCM_SHA256);
+assert_eq(tls_native_cipher_select(&client_offers, 3, &server_prefs_chacha, 3),
+          TLS_CHACHA20_POLY1305_SHA256, "server-prefers-ChaCha → picks ChaCha20");
+
+# Server prefers ONLY AES-128 (unsupported by us); client offers
+# all three. Selection skips AES-128 (not supported), so... no match.
+var server_only_aes128[2];
+_tn_be16_w(&server_only_aes128, TLS_AES_128_GCM_SHA256);
+assert_eq(tls_native_cipher_select(&client_offers, 3, &server_only_aes128, 1),
+          0, "server-prefers-only-AES-128 (unsupported) → no match");
+
+# Client offers AES-128 only; server prefers AES-256 first then
+# ChaCha20. No overlap → 0.
+var client_aes128_only[2];
+_tn_be16_w(&client_aes128_only, TLS_AES_128_GCM_SHA256);
+assert_eq(tls_native_cipher_select(&client_aes128_only, 1, &server_prefs_aes_first, 3),
+          0, "client offers AES-128 only → no match (we don't support)");
+
+test_group("v6.0.14 AEAD encrypt/decrypt round-trip");
+
+# AES-256-GCM round-trip — verify ciphertext + tag round-trip
+# back to original plaintext. Inputs:
+#   key  = 32 bytes (0x40 0x41 .. 0x5F)
+#   iv   = 12 bytes (0xA0 0xA1 .. 0xAB)
+#   aad  = 5-byte record header (TLS 1.3 §5.2)
+#   pt   = "Hello, TLS!"
+var key256[32];
+var ki = 0;
+while (ki < 32) { store8(&key256 + ki, 0x40 + ki); ki = ki + 1; }
+var iv[12];
+var ivi = 0;
+while (ivi < 12) { store8(&iv + ivi, 0xA0 + ivi); ivi = ivi + 1; }
+var aad[5];
+tls_native_record_aad(TLS_CT_APPLICATION_DATA, 0x0303, 27, &aad);  # 11 pt + 16 tag = 27
+var plaintext[11];
+store8(&plaintext +  0, 72);   # 'H'
+store8(&plaintext +  1, 101);  # 'e'
+store8(&plaintext +  2, 108);  # 'l'
+store8(&plaintext +  3, 108);  # 'l'
+store8(&plaintext +  4, 111);  # 'o'
+store8(&plaintext +  5, 44);   # ','
+store8(&plaintext +  6, 32);   # ' '
+store8(&plaintext +  7, 84);   # 'T'
+store8(&plaintext +  8, 76);   # 'L'
+store8(&plaintext +  9, 83);   # 'S'
+store8(&plaintext + 10, 33);   # '!'
+
+var ct_aes[11];
+var tag_aes[16];
+var rc_enc_aes = tls_native_aead_encrypt(TLS_AES_256_GCM_SHA384,
+                                         &key256, &iv, &aad, 5,
+                                         &plaintext, 11, &ct_aes, &tag_aes);
+assert_eq(rc_enc_aes, TLS_OK, "AES-256-GCM encrypt OK");
+
+var pt_dec_aes[11];
+var rc_dec_aes = tls_native_aead_decrypt(TLS_AES_256_GCM_SHA384,
+                                         &key256, &iv, &aad, 5,
+                                         &ct_aes, 11, &tag_aes, &pt_dec_aes);
+assert_eq(rc_dec_aes, TLS_OK, "AES-256-GCM decrypt OK");
+assert_eq(load8(&pt_dec_aes),      72,  "AES decrypted byte 0 = 'H'");
+assert_eq(load8(&pt_dec_aes + 7),  84,  "AES decrypted byte 7 = 'T'");
+assert_eq(load8(&pt_dec_aes + 10), 33,  "AES decrypted byte 10 = '!'");
+
+# Tag tamper → TLS_ERR_DECRYPT (flip the last byte of the tag).
+store8(&tag_aes + 15, load8(&tag_aes + 15) ^ 1);
+var pt_dec_bad[11];
+assert_eq(tls_native_aead_decrypt(TLS_AES_256_GCM_SHA384,
+                                  &key256, &iv, &aad, 5,
+                                  &ct_aes, 11, &tag_aes, &pt_dec_bad),
+          TLS_ERR_DECRYPT, "AES-256-GCM tamper detected");
+
+# ChaCha20-Poly1305 round-trip — same shape, same key+iv+aad.
+var ct_cc[11];
+var tag_cc[16];
+var rc_enc_cc = tls_native_aead_encrypt(TLS_CHACHA20_POLY1305_SHA256,
+                                        &key256, &iv, &aad, 5,
+                                        &plaintext, 11, &ct_cc, &tag_cc);
+assert_eq(rc_enc_cc, TLS_OK, "ChaCha20-Poly1305 encrypt OK");
+
+var pt_dec_cc[11];
+var rc_dec_cc = tls_native_aead_decrypt(TLS_CHACHA20_POLY1305_SHA256,
+                                        &key256, &iv, &aad, 5,
+                                        &ct_cc, 11, &tag_cc, &pt_dec_cc);
+assert_eq(rc_dec_cc, TLS_OK, "ChaCha20-Poly1305 decrypt OK");
+assert_eq(load8(&pt_dec_cc),      72, "ChaCha decrypted byte 0 = 'H'");
+assert_eq(load8(&pt_dec_cc + 10), 33, "ChaCha decrypted byte 10 = '!'");
+
+# AES-128 (unsupported) → TLS_ERR_CIPHER_NOT_SUPPORTED
+var ct_128[11];
+var tag_128[16];
+assert_eq(tls_native_aead_encrypt(TLS_AES_128_GCM_SHA256,
+                                  &key256, &iv, &aad, 5,
+                                  &plaintext, 11, &ct_128, &tag_128),
+          TLS_ERR_CIPHER_NOT_SUPPORTED, "AES-128 encrypt → CIPHER_NOT_SUPPORTED");
 
 var r = assert_summary();
