@@ -6,6 +6,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.6] — 2026-05-28
+
+**alloc + vec pull-in (prep slot, mini-arc step 1/2).** First half of the
+v5.11.x deferred return-patch-buffer → vec conversion (proposal Option C,
+`proposals/archived/2026-05-08-raise-return-cap.md`). This slot fold the
+stdlib alloc + vec surface into cycc's source tree so the next slot
+(v6.0.7) can swap the fixed 256-slot ret_patches array for a vec without
+also pulling in 1.4k LoC of allocator code as a co-change. **Zero
+behavior change** at v6.0.6 — the fixed array at `S + 0x18DA20` is still
+the active storage and the parser still errors at >256 returns.
+
+### Added — `lib/alloc.cyr` + `lib/vec.cyr` in `src/main.cyr` and
+`src/main_aarch64.cyr`
+
+Two `include` lines at the end of the existing module-include block:
+
+```
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+```
+
+cycc's preprocessor already `PP_PREDEFINE`s `CYRIUS_TARGET_LINUX` and
+`CYRIUS_ARCH_X86` at top-level (`src/main.cyr:674,738`), so alloc.cyr's
+Linux brk branch and its transitive `include "lib/fnptr.cyr"` (765 LoC,
+heavily `#ifdef`-gated on TARGET + ARCH) resolve naturally — no manual
+`#define` needed in the entry file. The `alloc_windows.cyr` /
+`alloc_macos.cyr` branches stay dormant under the same gating that
+applies to consumer code.
+
+Active code surface added: ~1,400 LoC (alloc 483 + fnptr 765 + vec 155,
+counting only the Linux+X86 branches that actually emit). Cycc binary
++9,816 B on x86 (876,616 → 886,432), +9,840 B on aarch64 cross
+(566,416 → 576,256). DCE reports 71 unreachable fns on x86 (27,777 B
+under `CYRIUS_DCE=1`), 113 on aarch64 — these are alloc/vec/fnptr fns
+that aren't called yet in v6.0.6 and become reachable in v6.0.7.
+
+### Added — `alloc_init()` + `var rp_vec = vec_new()` at parser init
+
+Top-level, after `_HEAP_INIT_SCRATCH(S)`:
+
+```
+alloc_init();
+var rp_vec = vec_new();
+```
+
+`alloc_init()` runs after our `brk(S + 0x4D9D000)` extension so its
+`_heap_base` sits past the fixed-heap region (it consumes another 1 MB
+on top via brk). Explicit init over alloc.cyr's lazy-init keeps the
+failure mode narrow — cycc compiler internals shouldn't be doing
+heap-alloc on first-touch in a hot path. `rp_vec` is created here but
+**not yet consumed** by the parser; v6.0.7's conversion sites push to it
+without re-touching parser-state init.
+
+### Mechanical
+
+- cycc self-host **byte-identical at 886,432 B** on x86.
+- cycc_aarch64 cross-compile **byte-identical at 576,256 B**.
+- `scripts/check.sh` **82/82** — no new gates this slot (the surface is
+  pure prep; the behavior change lands in .7 with its own gate).
+
+Memory pin: `project_v6_0_2_3_4_slot_sequence` (.6 shipped — mini-arc
+half 1 of 2).
+
 ## [6.0.5] — 2026-05-28
 
 **TS scripting papercut bundle: three small toolchain bugs that each

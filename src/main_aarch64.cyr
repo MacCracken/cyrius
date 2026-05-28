@@ -108,6 +108,13 @@ include "src/frontend/parse.cyr"
 include "src/backend/macho/emit.cyr"
 include "src/backend/aarch64/fixup.cyr"
 
+# v6.0.6 — pull in lib/alloc + lib/vec for the v6.0.7 return-patch-buffer
+# → vec conversion (proposal Option C). Mirrors src/main.cyr; the aarch64
+# cross-compiler is x86-hosted so the same alloc.cyr Linux branch fires.
+# See src/main.cyr's v6.0.6 include header for full rationale.
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+
 # ================================================================
 # MAIN
 # ================================================================
@@ -160,6 +167,12 @@ syscall(SYS_BRK, S + 0x4D9D000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
+
+# v6.0.6 — initialize the alloc/vec surface and pre-allocate the
+# return-patch vec. Same shape as src/main.cyr; see there for full
+# rationale.
+alloc_init();
+var rp_vec = vec_new();
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;

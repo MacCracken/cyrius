@@ -107,17 +107,23 @@ bayan/ganita carve, all together).
 Per user direction 2026-05-20 (original .2/.3/.4) + 2026-05-27 (.2
 dual-item; two codegen P1s — nous-0001 and the kybernet aarch64
 hang + DCE — both inserted near-term ahead of the refactor work;
-sequence shifted). v6.0.2 lands at the user's convenience once the
-in-flight stdlib walk completes; **v6.0.3 = the nous-0001
+sequence shifted) + 2026-05-28 (yeo-cy-test TS scripting papercut
+bundle pulled into .5; alloc/vec mini-arc shifts to .6/.7; backend
+collapse shifts to .8). v6.0.2 lands at the user's convenience once
+the in-flight stdlib walk completes; **v6.0.3 = the nous-0001
 typed-`vec_get` codegen P1** and **v6.0.4 = the kybernet aarch64
 codegen-hang + DCE correctness audit** (both silently-wrong /
 hard-regression codegen, which outranks the refactor work — user
-direction 2026-05-27 "prioritize near-term"); v6.0.5 + v6.0.6 form the
-two-slot mini-arc closing out the v5.11.x deferred return-patch-buffer
-→ vec conversion (proposal Option C,
+direction 2026-05-27 "prioritize near-term"); **v6.0.5 = yeo-cy-test
+TS scripting papercut bundle** (SHIPPED 2026-05-28); v6.0.6 + v6.0.7
+form the two-slot mini-arc closing out the v5.11.x deferred return-
+patch-buffer → vec conversion (proposal Option C,
 [`proposals/archived/2026-05-08-raise-return-cap.md`](proposals/archived/2026-05-08-raise-return-cap.md));
-v6.0.7 = backend module collapse (pulled forward from the v6.0-runway
-carry-forward list below).
+v6.0.8 = backend module collapse (pulled forward from the v6.0-runway
+carry-forward list below). After v6.0.8 = re-evaluate; user direction
+2026-05-28 to **pull native TLS arc forward** from its original v6.2.x
+placement so sandhi + projects waiting on TLS unblock
+([[project_native_tls_arc_v6_2_x]]).
 
 - **v6.0.2 — stdlib pin refresh + `cyrius deps` correct-lock fix**
   (dual-item, per user direction 2026-05-27):
@@ -223,7 +229,7 @@ carry-forward list below).
     cross-emitter dies `mmap heap init failed` on Linux — so this slot
     may need to provision native toolchains (aarch64 bootstrap on pi)
     before it can verify on hardware.
-- **v6.0.5 — alloc + vec pull-in (prep)** — fold `lib/alloc.cyr`
+- **v6.0.6 — alloc + vec pull-in (prep)** — fold `lib/alloc.cyr`
   (+ OS-variant `alloc_windows.cyr` / `alloc_macos.cyr` brought
   in by its internal `#ifdef` chain) and `lib/vec.cyr` into
   cycc's source tree. Add `include` lines to both `src/main.cyr`
@@ -239,7 +245,7 @@ carry-forward list below).
   growth bookkept as honest growth-tax per
   [[feedback_perf_deltas_growth_tax_default]]. Acceptance: cycc
   byte-identical; full `scripts/check.sh`; 4-host smoke.
-- **v6.0.6 — return-patch buffer → vec (conversion)** — replace
+- **v6.0.7 — return-patch buffer → vec (conversion)** — replace
   the fixed-array storage at all 9 enforcement sites
   (`parse.cyr` ×1, `parse_expr.cyr` ×3, `parse_fn.cyr` ×5) with
   `vec_push(rp_vec, v)`; replace the read-back at
@@ -270,7 +276,7 @@ carry-forward list below).
   `tests/tcyr/return_cap_removed.tcyr` exercising a fn with
   >256 returns (currently rejected) compiling clean; full
   `scripts/check.sh`; 4-host smoke.
-- **v6.0.7 — backend module collapse** (per user direction
+- **v6.0.8 — backend module collapse** (per user direction
   2026-05-27; pulled forward from the v6.0-runway carry-forward
   list below). Audit which helpers in `src/backend/x86/` and
   `src/backend/aarch64/` parallel `emit.cyr` / `jump.cyr` /

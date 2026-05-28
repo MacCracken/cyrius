@@ -3,6 +3,48 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.6 ship — alloc + vec pull-in, mini-arc step 1/2)
+
+Closing **v6.0.6**, the first half of the return-patch-buffer → vec
+mini-arc. Folded `lib/alloc.cyr` (+ transitive `lib/fnptr.cyr`,
+~1.4k LoC active) and `lib/vec.cyr` into both `src/main.cyr` and
+`src/main_aarch64.cyr`; added explicit `alloc_init()` + `var rp_vec =
+vec_new()` at parser init right after `_HEAP_INIT_SCRATCH(S)`. Zero
+behavior change — the fixed 256-slot `ret_patches` array at `S +
+0x18DA20` is still the active storage. **Mini-arc step 2 (the
+conversion itself) lands at v6.0.7.**
+
+**Preprocessor mechanics**: cycc's own preprocessor already
+`PP_PREDEFINE`s `CYRIUS_TARGET_LINUX` + `CYRIUS_ARCH_X86` at top-level
+(`src/main.cyr:674,738`), so alloc.cyr's Linux brk branch and fnptr.cyr's
+x86 SysV branch resolve naturally during the self-build. The aarch64
+cross-compiler binary is x86-hosted so the same defines fire. No manual
+`#define` lines needed in the entry files.
+
+**Heap layering**: cycc's existing fixed-heap region runs `[S,
+S+0x4D9D000)` (~78 MB) for compiler scratch + token tables + fn tables.
+`alloc_init()` runs syscall(12, 0) which returns the post-extension
+brk, sets `_heap_base` to that, and extends another 1 MB on top. The
+alloc heap therefore lives at `[S+0x4D9D000, S+0x4E9D000)`, fully
+disjoint from the fixed-heap layout.
+
+**Mechanical gates green:**
+- cycc self-host **byte-identical 886,432 B** on x86 (+9,816 B over .5's
+  876,616). Growth-tax bookkept per
+  [[feedback_perf_deltas_growth_tax_default]] — ~1.4k LoC of new code,
+  not a regression to bisect.
+- cycc_aarch64 cross-compile **byte-identical 576,256 B** (+9,840 B).
+- `scripts/check.sh` **82/82**, no new gates this slot. The behavior
+  change + its regression gate land in .7.
+
+**DCE bookkeeping**: x86 reports 71 unreachable fns (27,777 B), aarch64
+113 — both are the freshly-included alloc/vec/fnptr surface that v6.0.6
+doesn't yet call. They become reachable when v6.0.7 swaps in
+`vec_push(rp_vec, ...)` at the 9 enforcement sites.
+
+Memory pin: [`project_v6_0_2_3_4_slot_sequence`] (.6 shipped — mini-arc
+step 1 of 2 done; .7 = the conversion).
+
 ## Session close — 2026-05-28 (.5 ship — TS scripting papercut bundle)
 
 Closing **v6.0.5**, the three near-term TS scripting papercuts filed by
