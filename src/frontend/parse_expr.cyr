@@ -757,12 +757,12 @@ fn PARSE_FACTOR(S): i64 {
         var cl_saved_lv = GLVAR(S);
         var cl_saved_infn = GINFN(S);
         var cl_saved_flc = GFLC(S);
-        var cl_saved_rpc = GRPC(S);
+        var cl_saved_rpc = vec_len(rp_vec);
         var cl_saved_sdep = GSDEP(S);
         # Set up closure function
         SINFN(S, 1);
         SFLC(S, 0);
-        SRPC(S, 0);
+        vec_truncate(rp_vec, 0);
         SSDEP(S, 0);
         # Emit function prologue
         var cl_jmp = EJMP0(S);
@@ -800,16 +800,16 @@ fn PARSE_FACTOR(S): i64 {
             PCMPE(S);
         }
         # Patch any return statements + emit epilogue
-        var clrpc = GRPC(S);
+        var clrpc = vec_len(rp_vec);
         for (var clri = 0; clri < clrpc; clri = clri + 1) {
-            EPATCH(S, L64(S + 0x18DA20 + clri * 8));
+            EPATCH(S, vec_get(rp_vec, clri));
         }
         EFNEPI(S);
         EPATCH(S, cl_jmp);
         # Restore state
         SINFN(S, cl_saved_infn);
         SFLC(S, cl_saved_flc);
-        SRPC(S, cl_saved_rpc);
+        vec_truncate(rp_vec, cl_saved_rpc);
         SSDEP(S, cl_saved_sdep);
         SLVAR(S, cl_saved_lv);
         # Emit address of closure function (like &fn_name) — mirrors
@@ -1021,10 +1021,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
         var rp = EJMP0(S);
-        var rpc = GRPC(S);
-        if (rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-        S64(S + 0x18DA20 + rpc * 8, rp);
-        SRPC(S, rpc + 1);
+        vec_push(rp_vec, rp);
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
@@ -1259,10 +1256,7 @@ fn PARSE_TERM(S): i64 {
         # Err path: rax = result_ptr, jmp to fn epilogue (RPC table)
         EVLOAD(S, qidx);
         var qrp = EJMP0(S);
-        var qrpc = GRPC(S);
-        if (qrpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-        S64(S + 0x18DA20 + qrpc * 8, qrp);
-        SRPC(S, qrpc + 1);
+        vec_push(rp_vec, qrp);
         # Ok path landing: rax = [result_ptr + 8] (payload)
         EPATCH(S, qjcc_ok);
         EVLOAD(S, qidx);                  # rax = result_ptr

@@ -359,10 +359,7 @@ fn PARSE_RETURN(S): i64 {
                                 ECALLCLEAN(S, tcargc);
                                 # Jump to function epilogue (same as normal return)
                                 var rp2 = EJMP0(S);
-                                var rpc2 = GRPC(S);
-                                if (rpc2 >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-                                S64(S + 0x18DA20 + rpc2 * 8, rp2);
-                                SRPC(S, rpc2 + 1);
+                                vec_push(rp_vec, rp2);
                             } else {
                                 # Emit epilogue + jmp (tail call, ≤6 args only)
                                 ETAILJMP(S, tcfi);
@@ -398,10 +395,7 @@ fn PARSE_RETURN(S): i64 {
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);  # consume ;
             var rp = EJMP0(S);
-            var rpc = GRPC(S);
-            if (rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-            S64(S + 0x18DA20 + rpc * 8, rp);
-            SRPC(S, rpc + 1);
+            vec_push(rp_vec, rp);
             return 0;
         }
     }
@@ -504,10 +498,7 @@ fn PARSE_RETURN(S): i64 {
         ESTRUCT_BYVAL_COPY(S, srn_src_disp, srn_stash_disp, srn_aligned);
         # jmp to epilogue (regular return-patch path)
         var srn_rp = EJMP0(S);
-        var srn_rpc = GRPC(S);
-        if (srn_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-        S64(S + 0x18DA20 + srn_rpc * 8, srn_rp);
-        SRPC(S, srn_rpc + 1);
+        vec_push(rp_vec, srn_rp);
         return 0;
     }
     # v5.10.45 Phase 1 — int-class 16B struct pair-return.
@@ -536,10 +527,7 @@ fn PARSE_RETURN(S): i64 {
                             STI(S, GTI(S) + 1);     # consume ';'
                             EFLLOAD_STRUCT_INT_PAIR(S, _ip_lli);
                             var _ip_rp = EJMP0(S);
-                            var _ip_rpc = GRPC(S);
-                            if (_ip_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-                            S64(S + 0x18DA20 + _ip_rpc * 8, _ip_rp);
-                            SRPC(S, _ip_rpc + 1);
+                            vec_push(rp_vec, _ip_rp);
                             return 0;
                         }
                     }
@@ -592,10 +580,7 @@ fn PARSE_RETURN(S): i64 {
                             EFLLOAD_F64V2_PAIR(S, _f2_lli);
                         }
                         var _f2_rp = EJMP0(S);
-                        var _f2_rpc = GRPC(S);
-                        if (_f2_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-                        S64(S + 0x18DA20 + _f2_rpc * 8, _f2_rp);
-                        SRPC(S, _f2_rpc + 1);
+                        vec_push(rp_vec, _f2_rp);
                         return 0;
                     }
                 }
@@ -628,10 +613,7 @@ fn PARSE_RETURN(S): i64 {
                             EFLLOAD_F64V4_PAIR(S, _f4_lli);
                         }
                         var _f4_rp = EJMP0(S);
-                        var _f4_rpc = GRPC(S);
-                        if (_f4_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-                        S64(S + 0x18DA20 + _f4_rpc * 8, _f4_rp);
-                        SRPC(S, _f4_rpc + 1);
+                        vec_push(rp_vec, _f4_rp);
                         return 0;
                     }
                 }
@@ -651,10 +633,7 @@ fn PARSE_RETURN(S): i64 {
         EMOVI(S, 0);
         STI(S, GTI(S) + 1);                             # consume ';'
         var br_rp = EJMP0(S);
-        var br_rpc = GRPC(S);
-        if (br_rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-        S64(S + 0x18DA20 + br_rpc * 8, br_rp);
-        SRPC(S, br_rpc + 1);
+        vec_push(rp_vec, br_rp);
         return 0;
     }
     PCMPE(S);
@@ -662,10 +641,7 @@ fn PARSE_RETURN(S): i64 {
     STI(S, GTI(S) + 1);
     # Emit jmp to epilogue (record as return patch)
     var rp = EJMP0(S);
-    var rpc = GRPC(S);
-    if (rpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-    S64(S + 0x18DA20 + rpc * 8, rp);
-    SRPC(S, rpc + 1);
+    vec_push(rp_vec, rp);
     return 0;
 }
 
@@ -943,18 +919,18 @@ fn PARSE_FNCALL(S, noff): i64 {
                 if (pc >= 2) { S64(S + 0x191000 + p1_slot * 8, pn1); SLDEP(S, p1_slot, GSDEP(S)); }
                 # Save state and replay body tokens
                 var saved_ti = GTI(S);
-                var saved_rpc = GRPC(S);
+                var saved_rpc = vec_len(rp_vec);
                 SIDEP(S, GIDEP(S) + 1);
                 STI(S, GFBS(S, fi));
                 PARSE_PROG(S);
                 # Patch return jumps from inlined body to here
-                var new_rpc = GRPC(S);
+                var new_rpc = vec_len(rp_vec);
                 var ri = saved_rpc;
                 while (ri < new_rpc) {
-                    EPATCH(S, L64(S + 0x18DA20 + ri * 8));
+                    EPATCH(S, vec_get(rp_vec, ri));
                     ri = ri + 1;
                 }
-                SRPC(S, saved_rpc);
+                vec_truncate(rp_vec, saved_rpc);
                 SIDEP(S, GIDEP(S) - 1);
                 # Restore token index
                 STI(S, saved_ti);
@@ -1704,7 +1680,11 @@ fn PARSE_FN_DEF(S): i64 {
     var saved_lv = GLVAR(S);
     SINFN(S, 1);
     SFLC(S, 0);
-    SRPC(S, 0);
+    # v6.0.7 — return-patch storage migrated from fixed array
+    # (S + 0x18DA20, cap 256) to rp_vec. Per-fn reset is now
+    # vec_truncate(rp_vec, 0); same semantic, bounded memory under the
+    # bump allocator (proposal Option A reuse pattern).
+    vec_truncate(rp_vec, 0);
     S64(S + 0x18F900, 0);  # defer_count = 0
     S64(S + 0x19E000, 0);  # jump_target_count = 0
     S64(S + 0x1A0000, 0);  # v5.6.27: jump_src_cnt = 0 (per-fn compaction)
@@ -2286,11 +2266,11 @@ fn PARSE_FN_DEF(S): i64 {
         EPATCH(S, defer_init_jmp);
         SCP(S, saved_cp);
     }
-    var rpc = GRPC(S);
+    var rpc = vec_len(rp_vec);
     # Patch return jumps to land here
     var ri = 0;
     while (ri < rpc) {
-        EPATCH(S, L64(S + 0x18DA20 + ri * 8));
+        EPATCH(S, vec_get(rp_vec, ri));
         ri = ri + 1;
     }
     # Execute deferred blocks LIFO: save rax, check flag, jmp→block, restore rax

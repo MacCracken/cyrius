@@ -163,6 +163,17 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     for cbin in $_R_CROSS; do
         case "$cbin" in
             cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" ;;
+            cycc-native-aarch64)
+                # v6.0.7 — native aarch64 self-host. Built by piping
+                # src/main_aarch64_native.cyr through build/cycc_aarch64
+                # (the x86-host cross-compiler that emits aarch64).
+                # _rebuild_stale's build path uses build/cycc (x86),
+                # which would produce an x86 binary — so we skip
+                # _rebuild_stale and let `cyrius pulsar` handle the
+                # native build chain. The binary stays committed
+                # (.gitignore whitelist) so a stale x86-host install
+                # still has a usable native binary in lockstep.
+                : ;;
             cc5_*)
                 # Convention: cc5_<arch> ← src/main_<arch>.cyr
                 _arch="${cbin#cc5_}"

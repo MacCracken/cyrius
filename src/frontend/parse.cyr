@@ -993,10 +993,7 @@ fn PARSE_STMT(S): i64 {
                 var qsjcc = EJCC(S, 0x84);
                 EVLOAD(S, qsidx);
                 var qsrp = EJMP0(S);
-                var qsrpc = GRPC(S);
-                if (qsrpc >= 256) { ERR_MSG(S, "too many return statements in function (max 256)", 48); }
-                S64(S + 0x18DA20 + qsrpc * 8, qsrp);
-                SRPC(S, qsrpc + 1);
+                vec_push(rp_vec, qsrp);
                 EPATCH(S, qsjcc);
                 EVLOAD(S, qsidx);
                 EPUSHR(S);

@@ -2739,6 +2739,7 @@ vec::vec_push/2
 vec::vec_push_a/3
 vec::vec_remove/2
 vec::vec_set/3
+vec::vec_truncate/2
 ws::ws_close/1
 ws::ws_connect/3
 ws::ws_fd/1

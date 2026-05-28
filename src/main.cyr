@@ -428,10 +428,6 @@ include "src/common/ir.cyr"
 include "src/frontend/lex.cyr"
 include "src/frontend/ts/lex.cyr"
 include "src/frontend/ts/parse.cyr"
-include "src/frontend/parse.cyr"
-include "src/backend/macho/emit.cyr"
-include "src/backend/pe/emit.cyr"
-include "src/backend/x86/fixup.cyr"
 
 # v6.0.6 — pull in lib/alloc + lib/vec for the v6.0.7 return-patch-buffer
 # → vec conversion (proposal Option C). cycc's existing fixed-heap layout
@@ -439,12 +435,24 @@ include "src/backend/x86/fixup.cyr"
 # our extension (alloc_init() runs syscall(12, 0) which returns the
 # post-extension brk and adds another 1 MB on top). vec.cyr depends on
 # alloc; alloc.cyr transitively includes lib/fnptr.cyr for vtable dispatch.
-# Behavior unchanged in v6.0.6 — the fixed 256-slot ret_patches array at
-# S + 0x18DA20 is still the active storage; this slot just makes the
-# alloc/vec surface available so v6.0.7's conversion sites can vec_push
-# without touching parser-state init.
+# Must precede parse.cyr/parse_expr/parse_fn so their fn bodies can
+# reference vec_push / vec_get / vec_len / vec_truncate at parse time
+# (v6.0.7 conversion).
 include "lib/alloc.cyr"
 include "lib/vec.cyr"
+
+# v6.0.7 — return-patch vec storage. Declared BEFORE parse.cyr so the
+# converted call sites in parse.cyr / parse_expr.cyr / parse_fn.cyr can
+# resolve `rp_vec` at parse time. Initialized to 0; the real
+# `rp_vec = vec_new()` assignment happens at the alloc_init() block
+# below, after the brk extension. Top-level execution order guarantees
+# alloc_init() + vec_new() run before LEX/PARSE/FIXUP touch it.
+var rp_vec = 0;
+
+include "src/frontend/parse.cyr"
+include "src/backend/macho/emit.cyr"
+include "src/backend/pe/emit.cyr"
+include "src/backend/x86/fixup.cyr"
 
 # ================================================================
 # MAIN
@@ -547,14 +555,14 @@ syscall(SYS_BRK, S + 0x4D9D000);
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
 
-# v6.0.6 — initialize the alloc/vec surface and pre-allocate the
-# return-patch vec. alloc_init() must run AFTER our brk extension so
-# its _heap_base sits past the fixed-heap region. rp_vec is created
-# here but NOT yet consumed by the parser — that's v6.0.7. Keeping
-# the explicit call over alloc.cyr's lazy-init for narrower failure
-# mode (per [[project_v6_0_2_3_4_slot_sequence]]).
+# v6.0.6 — initialize the alloc/vec surface. v6.0.7 — assign the
+# pre-declared `rp_vec` global (forward-declared above the parse.cyr
+# include) its real value. alloc_init() must run AFTER our brk
+# extension so its _heap_base sits past the fixed-heap region.
+# Keeping the explicit alloc_init over alloc.cyr's lazy-init for
+# narrower failure mode.
 alloc_init();
-var rp_vec = vec_new();
+rp_vec = vec_new();
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating

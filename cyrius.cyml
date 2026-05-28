@@ -18,7 +18,7 @@ output = "build/cc5"
 # consumer picks it up automatically.
 [release]
 bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner"]
-cross_bins = ["cycc_aarch64", "cycc_win"]
+cross_bins = ["cycc_aarch64", "cycc_win", "cycc-native-aarch64"]
 # v5.11.10: scripts/cyriusly retired from release.scripts — replaced by
 # programs/cyriusly.cyr in bins (cyrius binary handles all verbs; heavy
 # verbs shell-out to OS tools via process.exec). scripts/cyriusly stays

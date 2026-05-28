@@ -125,8 +125,11 @@ fn GINFN(S): i64 { return L64(S + 0x18DA08); }
 fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
 fn GFLC(S): i64 { return L64(S + 0x18DA10); }
 fn SFLC(S, v): i64 { S64(S + 0x18DA10, v); return 0; }
-fn GRPC(S): i64 { return L64(S + 0x18E220); }
-fn SRPC(S, v): i64 { S64(S + 0x18E220, v); return 0; }
+# GRPC/SRPC retired at v6.0.7 — return-patch storage moved off the fixed
+# 256-slot array at S + 0x18DA20 and onto rp_vec (lib/vec.cyr). The
+# counter slot at S + 0x18E220 and the 2 KB array region
+# [0x18DA20..0x18E220) remain in the heap layout but are dead — see
+# v6.x closeout heap-map sweep.
 # Inline metadata accessors (GFBE getter removed — unused;
 # SFBE is the only direction the inliner needs.)
 fn GFBS(S, fi): i64 { return L64(S + 0x9EA000 + fi * 8); }

@@ -130,6 +130,25 @@ fn cmd_pulsar(): i64 {
         fmt_int(_file_size("build/cycc_aarch64"));
         println(" bytes");
     }
+    # v6.0.7: Native aarch64 self-host binary (runs on aarch64 hardware,
+    # not the x86 host). Built via the cross-compiler we just produced:
+    # x86 cycc emits build/cycc_aarch64 (x86-host, aarch64-target), then
+    # build/cycc_aarch64 emits build/cycc-native-aarch64 (aarch64-host).
+    # `set_arch(ARCH_AARCH64)` switches `current_cc()` to point at
+    # cycc_aarch64 inside compile(). The binary is tracked (per
+    # .gitignore whitelist) so ARM consumers don't need a cross-build
+    # toolchain to bootstrap.
+    if (file_exists("src/main_aarch64_native.cyr") == 1) {
+        if (file_exists("build/cycc_aarch64") == 1) {
+            _status("  cycc-native-aarch64 (via cross)...");
+            set_arch(ARCH_AARCH64);
+            compile("src/main_aarch64_native.cyr", "build/cycc-native-aarch64");
+            set_arch(ARCH_X86);
+            sys_write(STDOUT_FD, "  cycc-native-aarch64: ", 22);
+            fmt_int(_file_size("build/cycc-native-aarch64"));
+            println(" bytes");
+        }
+    }
 
     # Step 3: rebuild tools
     _status("  tools...");

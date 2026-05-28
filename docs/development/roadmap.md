@@ -101,6 +101,26 @@ bayan/ganita carve, all together).
   `_ts_path_arg_gate` covers the bug 3 invariant (piping garbage to
   stdin while passing a valid path; exit 0 only if cycc reads the
   path). check.sh 80 → 82.
+- **v6.0.6** — alloc + vec pull-in (mini-arc step 1/2). Folded
+  `lib/alloc.cyr` + transitive `lib/fnptr.cyr` (~1.4k LoC active) and
+  `lib/vec.cyr` into `src/main.cyr` + `src/main_aarch64.cyr`. Explicit
+  `alloc_init()` + pre-allocated `rp_vec = vec_new()` at parser init.
+  Zero behavior change — fixed 256-slot array still active. +9,816 B
+  x86, +9,840 B aarch64 cross.
+- **v6.0.7** — return-patch buffer → vec conversion (mini-arc
+  step 2/2) + `cycc-native-aarch64` resurrection. 12 push sites + 3
+  read-backs + closure save/restore + inline save/restore + per-fn
+  reset migrated to `rp_vec`; `GRPC`/`SRPC` deleted; cap diagnostic
+  retired (new ceiling = alloc heap, ~131k returns per fn). Option A
+  reuse via `vec_truncate(rp_vec, 0)` keeps memory bounded at
+  high-water-mark of largest fn (DoS protection under bump
+  allocator). `lib/vec.cyr::vec_truncate` added.
+  `tests/tcyr/return_cap_removed.tcyr` (260 returns) joins the suite.
+  Cross-arch propagation: all 6 `src/main_*.cyr` variants wired. Net
+  -1,576 B per binary from push-site collapse. `build/cycc-native-
+  aarch64` resurrected from doc/policy ghost — added to `cyrius.cyml
+  [release].cross_bins`, `cbt/pulsar.cyr` builds via the cross,
+  binary committed (683,936 B ARM aarch64 ELF).
 
 ### Pinned slot sequence
 

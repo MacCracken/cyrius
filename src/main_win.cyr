@@ -180,6 +180,15 @@ include "src/backend/x86/jump.cyr"
 include "src/backend/x86/decode.cyr"
 include "src/common/ir.cyr"
 include "src/frontend/lex.cyr"
+
+# v6.0.7 — alloc + vec for return-patch vec storage. Must precede
+# parse.cyr so converted call sites resolve at parse time. The PE
+# build pre-defines CYRIUS_TARGET_WIN so alloc.cyr routes to
+# alloc_windows.cyr (VirtualAlloc) instead of brk.
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+var rp_vec = 0;
+
 include "src/frontend/parse.cyr"
 include "src/backend/macho/emit.cyr"
 include "src/backend/pe/emit.cyr"
@@ -265,6 +274,10 @@ var S = syscall(SYS_MMAP, 0, 0x4F00000, 3, 0x22, 0 - 1, 0);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
+
+# v6.0.7 — init alloc and assign rp_vec (return-patch storage).
+alloc_init();
+rp_vec = vec_new();
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating

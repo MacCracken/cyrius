@@ -12,6 +12,13 @@ include "src/backend/cx/emit.cyr"
 # Same shape as v5.6.32's main_aarch64_native.cyr fix.
 include "src/common/ir.cyr"
 include "src/frontend/lex.cyr"
+
+# v6.0.7 — alloc + vec for return-patch vec storage. Must precede
+# parse.cyr so converted call sites resolve at parse time.
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+var rp_vec = 0;
+
 include "src/frontend/parse.cyr"
 
 # MAIN
@@ -31,6 +38,10 @@ syscall(SYS_BRK, S + 0x4D9D000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
+
+# v6.0.7 — init alloc and assign rp_vec (return-patch storage).
+alloc_init();
+rp_vec = vec_new();
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;

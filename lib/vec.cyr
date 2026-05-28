@@ -132,6 +132,19 @@ fn vec_pop(v): i64 {
     return load64(data + len * 8);
 }
 
+# Shrink the vector to `new_len` (a no-op if new_len >= current len).
+# The underlying capacity + data slots are preserved — subsequent
+# vec_push reuses the existing buffer, so this is the bounded-memory
+# save/restore primitive for per-fn / per-scope reset patterns where
+# vec_new + free would leak under a bump allocator.
+fn vec_truncate(v, new_len): i64 {
+    if (new_len < 0) { return 0; }
+    var cur_len = load64(v + 8);
+    if (new_len >= cur_len) { return 0; }
+    store64(v + 8, new_len);
+    return 0;
+}
+
 # Find first occurrence of val, return index or -1
 fn vec_find(v, val): i64 {
     var len = load64(v + 8);
