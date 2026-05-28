@@ -45,12 +45,17 @@ higher.
 
 ---
 
-## v6.0.x — Language Cleanup + Stdlib Expansion + Stdlib Clean-Slate
+## v6.0.x — Language Cleanup + Stdlib + Native TLS arc
 
 **Theme**: absorb leftover v5.x runway-carryover items + small
-language QoL improvements + holdovers, paired with the
-near-imminent mabda 3.0 GA stdlib clean-slate (mabda fold +
-bayan/ganita carve, all together).
+language QoL improvements + holdovers + (per user direction
+2026-05-28) the **native TLS arc** (`lib/tls_native.cyr`) pulled
+forward from v6.2.x. Stdlib clean-slate (mabda fold + bayan/ganita
+carve) still pending mabda 3.0 GA; folds in this minor or the next
+once GA cuts. The original ~30-slot target for this minor was
+revised 2026-05-28 to a **35-60 patch window**, matching v5.7.x /
+v5.11.x precedent. (Window stated at arc open and open to change —
+see [[feedback_minor_window_at_arc_open]].)
 
 **Shipped**:
 - **v6.0.0** — two-binary rename ceremony: `cyrc → cybs` (Cyrius
@@ -136,6 +141,187 @@ bayan/ganita carve, all together).
   +168 B (honest growth-tax from unified `_prof_clock_ns`'s extra
   `#ifdef` branches); cycc_aarch64 cross -16 B; native binary
   byte-identical.
+
+### v6.0.9 — aarch64 wrapper argv + distlib blank-line residue
+
+User direction 2026-05-28: pull two small open bugs forward into .9
+ahead of the TLS arc.
+
+**aarch64 `cyrius` wrapper argv dispatch broken** (open since v6.0.2
+cross-host smoke, [[project_v6_0_2_cross_host_smoke_findings]]).
+A cross-built aarch64 `cyrius` wrapper (`cat cbt/cyrius.cyr |
+build/cycc_aarch64`) prints the usage banner for EVERY command — it
+never reads `argv[1]`. Self-hosting confirms a native-on-pi build is
+byte-identical, so it's real emitted-code behavior, not a cross
+artifact. Prime suspect: `lib/args.cyr`'s aarch64 argv path. The
+self-host gate doesn't exercise it (cycc reads stdin, not argv).
+
+**`cyrius distlib` blank-line residue** (deferred from v6.0.4,
+[`issues/2026-05-27-cyrius-distlib-blank-lines.md`](issues/2026-05-27-cyrius-distlib-blank-lines.md)).
+Double-blank lines at the header→first-module seam + include-strip
+residue → cosmetic cyrlint warnings on generated bundles. Fix =
+blank-collapse in `cmd_distlib` (`cbt/commands.cyr`). CI-unaffected
+(bundles are skipped); cosmetic only.
+
+Acceptance: aarch64 cyrius wrapper dispatches `cyrius build foo bar`
+correctly (not just `help`); `cyrius distlib <profile>` produces a
+bundle with no double-blank lines that cyrlint flags; cycc x86 +
+cycc_aarch64 cross both byte-identical; full `scripts/check.sh`.
+
+### Native TLS arc — v6.0.x .10 → .37 (5 mini-arcs A–E, ~28 slots, shifted +1 for .9)
+
+User direction 2026-05-28: pull the native TLS arc forward from its
+original v6.2.x placement so sandhi + projects-waiting-on-TLS
+unblock now. AGNOS kernel still waits for v6.2.0's bare-metal
+target — userspace-only in v6.0.x. Sigil prereqs MET (ChaCha20-
+Poly1305 + X25519 shipped in 3.5.1/.2/.3, cyrius pinned 3.5.5 at
+v6.0.4; full TLS 1.3 modern ciphersuite + classic suites already
+available). See [[project_native_tls_arc_v6_2_x]] for the full
+decision history.
+
+**Goal**: replace `lib/tls.cyr` (current libssl/fdlopen wrapper,
+client-only) with `lib/tls_native.cyr` — a sovereign, pure-Cyrius
+TLS protocol-layer stack over sigil's crypto primitives. TLS 1.2 +
+1.3, client + server. No external governance, no dlopen-of-libssl,
+no ld.so dependency.
+
+**Mini-arc A — tls_native scaffold + record layer (.10 → .14)**
+- **.10** — `lib/tls_native.cyr` scaffold: file structure, public
+  API surface (cstr → opaque handle), error codes, record-layer
+  types. Pure structure slot; no protocol logic yet.
+- **.11** — Record layer: `ContentType`, `ProtocolVersion`,
+  fragmentation, sequence numbers, the encryption boundary.
+- **.12** — Handshake message framing: `HandshakeType`,
+  message reader/writer, transcript hash accumulator.
+- **.13** — TLS 1.3 key schedule: HKDF tree (early secret →
+  handshake secret → master secret); per-direction client/server
+  application + handshake keys; key/IV derivation per RFC 8446
+  §7.1.
+- **.14** — Ciphersuite negotiation: `TLS_AES_128_GCM_SHA256`,
+  `TLS_AES_256_GCM_SHA384`, `TLS_CHACHA20_POLY1305_SHA256`. All
+  three available via sigil 3.5.5 already.
+
+**Mini-arc B — TLS 1.3 client (.15 → .22)**
+- **.15** — ClientHello construction: extensions, key_share with
+  X25519 + secp256r1 (P-256), supported_groups, supported_versions,
+  signature_algorithms.
+- **.16** — ServerHello parsing: version negotiation downgrade
+  protection, key share extraction, ciphersuite acceptance.
+- **.17** — EncryptedExtensions + Certificate + CertificateVerify:
+  server-auth path. CertificateVerify uses sigil's ECDSA / RSA-PSS.
+- **.18** — Finished message + handshake-complete state transition.
+  Transcript hash MAC over handshake.
+- **.19** — Application data send/recv: post-handshake AEAD
+  encrypt/decrypt; KeyUpdate handling.
+- **.20** — X.509 chain verification: wire sigil's existing X.509
+  primitives into the handshake. Cert chain walk; trust-store
+  loading (system bundle or caller-supplied).
+- **.21** — Hostname / SAN verification: RFC 6125 subject_alt_name
+  + wildcard matching.
+- **.22** — Client e2e test. Two options at slot entry — connect to
+  a known TLS 1.3 server (badssl.com or similar) **or** spin up a
+  localhost echo server using a peer's tls_native (might gate on
+  Mini-arc C); ASK at slot entry.
+
+**Mini-arc C — TLS 1.3 server (.23 → .28)**
+- **.23** — Server-side handshake state machine. Mirrors B but
+  drives transitions from the server side: WAIT_CH → WAIT_FLIGHT2
+  → WAIT_FINISHED → CONNECTED.
+- **.24** — Cert + key loading: PEM/DER decoding via sigil; key
+  format detection (RSA / ECDSA / Ed25519).
+- **.25** — ServerHello + key_share response. Server-side key
+  generation; HMAC for HelloRetryRequest if client key_share
+  insufficient.
+- **.26** — Optional client auth: CertificateRequest emission +
+  client certificate validation. May skip if not needed by initial
+  consumers — ASK at slot entry.
+- **.27** — Session ticket / resumption (PSK): RFC 8446 §4.6.1
+  ticket issuance + §2.2 PSK handshake. Lower priority — could
+  defer if Mini-arc D pressure builds.
+- **.28** — Server e2e: localhost client↔server loop using our own
+  tls_native on both sides. Closes B's e2e gap from .22 too.
+
+**Mini-arc D — TLS 1.2 backport (.29 → .34)**
+- **.29** — TLS 1.2 record layer differences: explicit IV (AEAD
+  cipher_suites), MAC-then-encrypt for legacy CBC suites (probably
+  skip — modern peers don't need them), TLS 1.2 sequence numbering.
+- **.30** — TLS 1.2 handshake: ClientHello / ServerHello version
+  field semantics (1.2's actual version vs 1.3's downgrade
+  indicator), RSA-PSS / RSA-PKCS1 cert signatures, version
+  downgrade-attack mitigations.
+- **.31** — TLS 1.2 PRF: SHA-256-based / SHA-384-based per
+  ciphersuite; master_secret + key derivation per RFC 5246 §5+§8.
+- **.32** — TLS 1.2 certificate + Finished: verify_data MAC over
+  handshake messages.
+- **.33** — TLS 1.2 ciphersuites: AES-GCM + ChaCha20-Poly1305 (RFC
+  7905); skip legacy CBC. The minimum-needed set for modern peer
+  interop.
+- **.34** — TLS 1.2 e2e: localhost + at least one real 1.2-only
+  peer (find one in the wild or stand one up).
+
+### v6.0.x back-end + closeout shape
+
+Per user direction 2026-05-28: after the TLS arc closes at .37, run
+a back-end window (.38 → .44, 7 slots) absorbing pinned-or-deferred
+items, then a typical closeout pass at .45. Closeout follows the
+CLAUDE.md "Closeout Pass" §: mechanical fail-fast (self-host +
+bootstrap closure + check.sh), then judgment-call passes (heap map
+/ dead code / refactor / code review / cleanup), then docs sync.
+
+**Pinned back-end slots:**
+- **.38 — `cyrius tests` plural verb** (folder/suite runner;
+  deferred from v6.0.5). Add `cyrius tests [suite]` as the
+  recursive folder runner (vs `cyrius test <file>` single-file).
+  Wrapper-only change.
+- **.39 — TOML `[section]` single-bracket** in `lib/toml.cyr`
+  (commandress config-loader driver). ~10 LOC change in
+  `toml_parse`'s dispatch. Proposal:
+  [`proposals/2026-05-17-toml-single-bracket-sections.md`](proposals/2026-05-17-toml-single-bracket-sections.md).
+
+**Remaining back-end candidates (.40 → .44, user picks at slot entry):**
+- POSIX `*at()` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`,
+  …). Proposal:
+  [`proposals/2026-05-17-syscalls-at-family-stdlib.md`](proposals/2026-05-17-syscalls-at-family-stdlib.md).
+- Octal literal syntax (`0o755`). Proposal:
+  [`proposals/2026-05-17-octal-literal-syntax.md`](proposals/2026-05-17-octal-literal-syntax.md).
+- Build-artifact pre-commit hook (generalize the v5.11.45
+  contamination gate from "catch after the fact" to "refuse the
+  commit"). Issue:
+  [`issues/2026-05-13-build-artifact-precommit-hook.md`](issues/2026-05-13-build-artifact-precommit-hook.md).
+- Dead 2 KB ret_patches heap region from v6.0.7
+  (`[0x18DA20..0x18E220)` + counter slot at `0x18E220`) —
+  heap-map sweep candidate, may fold into closeout's heap-map
+  judgment-call pass.
+- Stdlib clean-slate (mabda 3.0 GA fold + bayan/ganita carve) —
+  ONLY if mabda 3.0 GA cuts before this window; otherwise rolls
+  into v6.1.x.
+- `cyrius deps --lock` Windows-portable hash (low urgency;
+  surfaced by v6.0.2 cross-host smoke).
+
+**Mini-arc E — Consumer wiring + arc closeout (.35 → .37, compressed from 4 → 3 slots)**
+- **.35** — sandhi rewires onto `lib/tls_native.cyr` + libssl
+  wrapper disposition decision (was two slots; combined). Drop
+  libssl from sandhi's surface; pick the `lib/tls.cyr` fate
+  (deprecate / keep both / retire) — affects every downstream
+  consumer on the wrapper today. ASK at slot entry.
+- **.36** — Consumer smoke + `cyrius deps` bump path: walk every
+  TLS consumer in the ecosystem, verify the bump works, smoke each.
+- **.37** — TLS arc closeout: CHANGELOG retrospective, vidya
+  refresh (language.toml + field_notes/), state.md session-close,
+  memory pins update.
+
+**Premise-check at each mini-arc open** ([[feedback_premise_check_at_slot_entry]]):
+re-verify the sigil API surface for whichever primitives that
+mini-arc consumes; re-check sandhi state by Mini-arc E (current
+shape may drift); confirm 4-host smoke
+([[reference_verification_hosts_ssh]]) where TLS code paths exist.
+
+**Cross-arch propagation** ([[feedback_cross_arch_propagation_mandatory]]):
+tls_native is `lib/`-resident — it runs on whatever architecture
+the consumer compiles for; no per-arch compiler-emit changes are
+expected. If any do appear (e.g. inline-asm for constant-time
+primitives — sigil owns that, not tls_native), x86 + aarch64 + cx
++ macho all propagate in the same slot.
 
 ### Pinned slot sequence
 

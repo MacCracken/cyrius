@@ -3,6 +3,74 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.9 ship — aarch64 wrapper argv + distlib blank-lines)
+
+Closing **v6.0.9**, two open bugs pulled forward into the slot
+ahead of the TLS arc (which shifts +1 to .10–.37). Per user
+direction 2026-05-28: bump TLS Mini-arc A back one and slot
+these two unrelated cleanups in .9.
+
+**Bug A — aarch64 cyrius wrapper argv dispatch (TWO bugs in one
+path)**: `lib/args.cyr` used raw x86 syscall numbers (`syscall(2,
+...)` for open, etc.). On aarch64, syscall 2 = `io_destroy` and
+syscall 0 = `io_setup`, so `args_init()` was calling
+`io_destroy("/proc/self/cmdline")` and getting garbage —
+`_args_len = 0` → `argc() == 0` → every wrapper dispatch fell
+through to "Usage". Fix: switch to the arch-dispatched `sys_open`
+/ `sys_read` / `sys_close` wrappers; add `include
+"lib/syscalls.cyr"` to args.cyr so it's self-sufficient
+([[feedback_stdlib_self_sufficient_constants]]). SECOND bug
+surfaced after the first fix: `cbt/cyrius.cyr:732`'s
+`syscall(60, exit_code)` was x86's `sys_exit`; aarch64 needs 93.
+Switched to `syscall(SYS_EXIT, exit_code)`. Pi smoke confirms
+both: dispatch lands, exit code propagates.
+
+**Bug B — distlib blank-line residue**: `cmd_distlib` in
+`cbt/commands.cyr` wrote an explicit `\n` after the header AND
+the per-module loop's opener started with `\n# --- ...`, so two
+blanks ended up before the first module marker. Separately, the
+`include`-strip step removed include lines but not their
+surrounding blanks, leaving adjacent blanks at section-comment
+boundaries (e.g. `# ── Stdlib ──` + blank + 6 stripped includes
++ blank + `# ── Modules ──` collapsed to a double-blank).
+Fix: track `prev_blank` across writes; collapse blank-after-blank
+to a single blank. Verified on patra 1.10.3: bundle 5130 → 5128
+lines; `cyrlint dist/patra.cyr` clean (0 warnings).
+
+**Scope discipline**: the bug A class (raw `syscall(N, ...)` with
+x86 number) exists in many other places under `cbt/*.cyr` and
+`programs/*.cyr`. Out of scope for .9 per the v6.0.2 finding's
+specific complaint (argv dispatch). Will surface command-by-command
+as those commands get run on aarch64; filing as a follow-up rather
+than widening the slot ([[feedback_no_unilateral_scope_decisions]]).
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit
+  change — all fixes are in lib/args, cbt/cyrius wrapper, and
+  cbt/commands).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- build/cyrius wrapper grew (distlib + args + SYS_EXIT logic).
+- `scripts/check.sh` **82/82**.
+- Pi smoke: aarch64 cyrius wrapper dispatches all commands
+  correctly + propagates exit codes.
+
+Memory pin: [`project_v6_0_2_cross_host_smoke_findings`] (item 1
+of the v6.0.2 cross-host smoke now closed; items 2 + 3 still
+open — Mach-O cross-emitter mmap-fail on Linux, Windows
+lock-hash gap).
+
+v6.0.x shape going forward (post-.9):
+  - .10–.14: Mini-arc A (TLS scaffold/record/framing/key/cipher)
+  - .15–.22: Mini-arc B (TLS 1.3 client)
+  - .23–.28: Mini-arc C (TLS 1.3 server)
+  - .29–.34: Mini-arc D (TLS 1.2 backport)
+  - .35–.37: Mini-arc E (consumer wiring + arc closeout)
+  - .38: cyrius tests plural verb
+  - .39: TOML [section] single-bracket
+  - .40–.44: back-end remaining (5 slots, user picks)
+  - .45: cycle closeout
+
 ## Session close — 2026-05-28 (.8 ship — backend module collapse)
 
 Closing **v6.0.8**, the v6.0-runway "backend module collapse where

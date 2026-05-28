@@ -6,6 +6,119 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.9] — 2026-05-28
+
+**Two open aarch64 / distlib bugs pulled forward ahead of the TLS arc.**
+Per user direction 2026-05-28: bump TLS Mini-arc A back one slot
+(now .10–.14), fold these two unrelated open bugs into .9 instead.
+
+### Fixed — aarch64 `cyrius` wrapper argv dispatch (TWO bugs)
+
+The v6.0.2 cross-host smoke
+([[project_v6_0_2_cross_host_smoke_findings]] item 1) reported that
+a cross-built aarch64 `cyrius` wrapper printed the usage banner for
+every command — never read `argv[1]`. Root-cause hunt at .9 entry
+turned up TWO bugs in the same code path:
+
+**Bug A — `lib/args.cyr` uses x86-only syscall numbers.** Lines
+40-43 issued raw `syscall(2, ...)` / `syscall(0, ...)` /
+`syscall(3, ...)` for open/read/close on `/proc/self/cmdline`. On
+x86_64 those are correct. On **aarch64**:
+- syscall 2 = `io_destroy` (NOT `open` — aarch64 has only `openat`
+  at 56).
+- syscall 0 = `io_setup` (NOT `read` — aarch64 uses 63).
+- syscall 3 = `close` (coincidence — same on both).
+
+So on aarch64, `args_init()` was calling `io_destroy("/proc/self/cmdline")`
+→ garbage fd → `io_setup(garbage_fd, buf)` → garbage return →
+`_args_len = 0` → `argc()` returns 0 → every wrapper dispatch fell
+through to "Usage". Fix: switch to the `lib/syscalls.cyr` arch-
+dispatched `sys_open` / `sys_read` / `sys_close` wrappers (which
+internally route through `openat(AT_FDCWD)` etc. on aarch64). Add
+`include "lib/syscalls.cyr"` to `lib/args.cyr` so it's
+self-sufficient ([[feedback_stdlib_self_sufficient_constants]]) —
+every existing consumer already includes `lib/io.cyr` (which pulls
+in syscalls.cyr) before args.cyr, so include-once dedup makes the
+change zero-cost for those callers, and the lone direct consumer
+`programs/args.cyr` (the demo program) gets the include
+transitively.
+
+**Bug B — `cbt/cyrius.cyr:732` calls `syscall(60, exit_code)`.**
+60 is x86_64's `sys_exit`. On aarch64, syscall 60 is
+`sched_getparam` (and aarch64's `sys_exit` is 93). On x86 the
+wrapper exited correctly because raw 60 *does* mean exit; on
+aarch64 the call did nothing useful and the process fell off the
+end with whatever rax/x0 happened to hold (typically 0). Even
+after fixing Bug A, the wrapper appeared to "lose" exit codes on
+aarch64. Fix: `syscall(SYS_EXIT, exit_code)` — `SYS_EXIT` is the
+arch-dispatched enum value from `lib/syscalls_<arch>_linux.cyr`
+(60 on x86, 93 on aarch64). The aarch64 emit also has an x86→aarch64
+syscall-translation layer (`ESYSXLAT` in `src/backend/aarch64/emit.cyr`)
+that maps 60→93, so passing the aarch64 number 93 directly works
+too (no double-translation hazard — the xlat only fires when x8
+matches an x86 number).
+
+**Note**: this is the same bug class as several other
+`syscall(0, ...)` / `syscall(2, ...)` / `syscall(60, ...)` raw
+numbers in `cbt/build.cyr`, `cbt/deps.cyr`, `cbt/pulsar.cyr`,
+`cbt/quality.cyr`, and individual `programs/*.cyr` files. Those
+are **out of scope for v6.0.9** — they're internal to command
+implementations (cmd_build, cmd_deps, etc.) rather than the argv-
+dispatch surface the v6.0.2 finding named. The wrapper now
+*types* the right command on aarch64; *running* each command
+end-to-end on aarch64 will surface those one at a time. Filed
+as a separate follow-up.
+
+### Fixed — `cyrius distlib` blank-line residue
+
+The 2026-05-27 issue
+([`issues/2026-05-27-cyrius-distlib-blank-lines.md`](docs/development/issues/2026-05-27-cyrius-distlib-blank-lines.md))
+reported that generated bundles trip cyrlint's
+*"multiple consecutive blank lines"* rule even though every input
+module lints clean. Two causes, one fix:
+
+1. **Header → first-module separator double-blank** (bundle line 6).
+   `cmd_distlib` wrote `\n` after the header text, then the per-
+   module loop opened each module with `\n# --- <name> ---\n\n` —
+   the leading `\n` plus the header's trailing `\n` made two
+   adjacent blanks before the marker.
+
+2. **`include`-strip residue** (bundle lines 3301, 3304 in patra's
+   bundle, varies). When distlib strips `include "..."` lines, it
+   only consumed the line content — not the surrounding blanks. So
+   `# comment` + blank + `<6 includes>` + blank + `# comment`
+   collapsed to `# comment` + blank + blank + `# comment`.
+
+Fix in `cbt/commands.cyr::cmd_distlib`:
+- Drop the explicit blank after the header (the per-module loop's
+  leading-blank-on-first-emission provides the single needed blank).
+- Track `prev_blank` across all output lines. A blank line is
+  written only if the previous line was NOT blank. The include-strip
+  path's `continue` no longer leaks adjacent blanks because the
+  next-iteration blank gets collapsed.
+
+Verified against patra 1.10.3: bundle drops from 5130 → 5128 lines;
+`cyrlint dist/patra.cyr` reports **0 warnings**.
+
+### Mechanical
+
+- cycc x86 self-host **byte-identical at 885,024 B** (no change —
+  fixes are in `lib/args.cyr` + `cbt/cyrius.cyr` + `cbt/commands.cyr`,
+  not in cycc's emit).
+- cycc_aarch64 cross **byte-identical at 574,664 B** (no change).
+- cycc-native-aarch64 **byte-identical at 683,936 B** (no change).
+- build/cyrius wrapper **grew** to absorb the args fix + distlib
+  blank-collapse logic (counted as honest growth-tax —
+  [[feedback_perf_deltas_growth_tax_default]]).
+- `scripts/check.sh` **82/82**.
+- Pi smoke (`ssh pi`, aarch64 native): `/tmp/cyrius_aa help` exits
+  0; `build /nope /nope` dispatches + exits 1 with the cycc-
+  not-found error; `version` prints `cyrius 6.0.8` (this binary's
+  embedded version pre-bump) and exits 0.
+
+Memory pin: `project_v6_0_2_cross_host_smoke_findings` (item 1 of
+the v6.0.2 cross-host smoke is now closed; items 2 + 3 still open).
+
 ## [6.0.8] — 2026-05-28
 
 **Backend module collapse — `src/backend/common/` directory established.**

@@ -17,6 +17,7 @@ include "lib/args_macos.cyr"
 #endif
 
 #ifdef CYRIUS_TARGET_LINUX
+include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 
 var _args_base = 0;
@@ -33,14 +34,25 @@ var _args_len = 0;
 # threshold bisected 4063 / 4064 byte boundary). 2 MB matches the
 # kernel's hard cap; alloc() lazy-inits the heap via the v5.8.37
 # auto-bootstrap so calling args_init() first-thing still works.
+#
+# v6.0.9 — switched from raw `syscall(2, ...)` / `syscall(0, ...)` /
+# `syscall(3, ...)` to the lib/syscalls.cyr `sys_open` / `sys_read` /
+# `sys_close` wrappers. The raw numbers were x86_64-only: syscall 2 is
+# `open` on x86_64 but `io_destroy` on aarch64 (which uses openat at
+# 56), and syscall 0 is `read` on x86_64 but `io_setup` on aarch64.
+# Pre-v6.0.9, the cross-built aarch64 `cyrius` wrapper called
+# io_destroy("/proc/self/cmdline") → garbage fd → io_setup(...) →
+# _args_len landed at 0 → argc() returned 0 → every dispatch fell
+# through to "usage". Surfaced by the v6.0.2 cross-host smoke
+# ([[project_v6_0_2_cross_host_smoke_findings]] item 1).
 fn args_init() {
     var cap = 2097152;            # ARG_MAX on Linux
     var buf = alloc(cap);
     if (buf == 0) { return 0; }
-    var fd = syscall(2, "/proc/self/cmdline", 0, 0);
+    var fd = sys_open("/proc/self/cmdline", 0, 0);
     if (fd < 0) { return 0; }
-    var n = syscall(0, fd, buf, cap);
-    syscall(3, fd);
+    var n = sys_read(fd, buf, cap);
+    sys_close(fd);
     _args_base = buf;
     _args_len = n;
     return n;

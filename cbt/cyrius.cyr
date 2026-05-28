@@ -729,4 +729,8 @@ fn main(): i64 {
 }
 
 var exit_code = main();
-syscall(60, exit_code);
+# v6.0.9 — use SYS_EXIT constant (60 on x86_64, 93 on aarch64) so
+# the wrapper exits correctly on both arches. Raw syscall(60, ...)
+# called clock_gettime on aarch64 instead of exit, dropping the
+# exit code on the floor.
+syscall(SYS_EXIT, exit_code);
