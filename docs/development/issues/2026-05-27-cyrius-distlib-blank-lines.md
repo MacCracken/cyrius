@@ -137,6 +137,7 @@ Filed into cyrius for review. Two distinct things were conflated under
    The blank-collapse fix in `cmd_distlib` (`cbt/commands.cyr`) is the
    root-cause cleanup for cyrius-distlib-generated bundles. It is **not**
    CI-blocking (those bundles are skipped per #1), purely cosmetic on the
-   artifact. Deferred to the next-release distlib pass. After it lands +
-   upstreams regenerate, re-run `cyrius lint dist/<name>.cyr` → expect 0
-   warnings, then archive.
+   artifact. **Non-blocking — do NOT spend a dedicated slot; fold it into
+   the next code work that already touches `cmd_distlib` / the distlib path
+   (user direction 2026-05-27).** After it lands + upstreams regenerate,
+   re-run `cyrius lint dist/<name>.cyr` → expect 0 warnings, then archive.
