@@ -3,6 +3,63 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.12 ship — TLS Mini-arc A.3 handshake framing + transcript hash)
+
+Closing **v6.0.12**, the third slot of the native TLS arc
+(A.3 of A's 5 sub-slots). Adds the 4-byte handshake message header
+(`HandshakeType` + 24-bit length) and the transcript-hash
+accumulator (sha256 or sha384 per ciphersuite). With A.3 done, the
+only remaining A piece is .13 — the TLS 1.3 key schedule HKDF tree.
+
+**Transcript hash snapshot semantics** (RFC 8446 §4.4.1): the
+transcript-hash is sampled multiple times during a handshake
+(Finished MAC, CertificateVerify signature input, key schedule
+binding). sigil's `sha256_finalize` / `sha384_finalize` mutate
+the ctx (padding + length-block append), so `tls_native_transcript_digest`
+clones the ctx, finalizes the clone, and discards it — the original
+running ctx stays valid for further updates.
+
+**Transitive-include fix**: lib/tls_native.cyr was pre-.12
+including only syscalls + alloc + sigil. sigil needs a heavier
+dep set (freelist for fl_alloc, string for memcpy, vec, hashmap,
+io, fs, bigint, ct, keccak). Without those, `sha256_init` → `fl_alloc`
+hit the `ud2` undefined-fn sentinel → SIGILL. Added the full
+transitive set so consumers only need to `include "lib/tls_native.cyr"`
+([[feedback_stdlib_self_sufficient_constants]]). The pre-existing
+libssl wrapper `lib/tls.cyr` documents deps via comment (`Requires:
+alloc.cyr, syscalls.cyr, ...`) but tls_native goes the
+self-sufficient route.
+
+**Cited test vectors wrong from memory**: drafted `sha256("abcdef")[31]
+= 0xFA` and `sha384("abc")[23] = 0x31`. Sigil computed the correct
+0x21 and 0x63 (verified via `echo -n "..." | sha256sum / sha384sum`).
+Note for future slots: verify reference values against a tool, not
+recall.
+
+**Mechanical gates green**:
+- cycc x86 **byte-identical at 885,024 B** (stdlib-only).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,791 → 2,797 fns (+6 publics).
+- `tls_native_scaffold.tcyr` 78 → 122 asserts (+44 for handshake
+  framing + transcript hash with snapshot semantics + FIPS 180-4
+  vectors).
+
+Memory pin: [`project_native_tls_arc_v6_2_x`] — Mini-arc A step 3
+of 5 done. Next:
+  - .13: Mini-arc A.4 — TLS 1.3 key schedule (HKDF tree:
+    early/handshake/master secrets, per-direction keys)
+  - .14: Mini-arc A.5 — ciphersuite negotiation; tls_native_available()
+    flips from 0 to 1
+  - .15–.22: Mini-arc B — TLS 1.3 client
+  - .23–.28: Mini-arc C — TLS 1.3 server
+  - .29–.34: Mini-arc D — TLS 1.2 backport
+  - .35–.37: Mini-arc E — consumer + closeout
+  - .38–.39: cyrius tests + TOML
+  - .40–.44: back-end remaining
+  - .45: closeout
+
 ## Session close — 2026-05-28 (.11 ship — TLS Mini-arc A.2 record layer)
 
 Closing **v6.0.11**, the second slot of the native TLS arc (A.2 of

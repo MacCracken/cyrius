@@ -37,6 +37,15 @@
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/bigint.cyr"
+include "lib/ct.cyr"
+include "lib/keccak.cyr"
 include "lib/sigil.cyr"
 
 # ================================================================
@@ -389,6 +398,140 @@ fn tls_native_record_aad(ct, version, length, aad_out5): i64 {
 # kept distinct because §6 has a dedicated record_overflow alert at
 # wire value 22.)
 var TLS_ERR_RECORD_OVERFLOW = 0 - 20;
+
+# ================================================================
+# Handshake message framing (RFC 8446 §4)
+# ================================================================
+# Each handshake message has a 4-byte header:
+#   uint8  msg_type;    // TlsHandshakeType (TLS_HS_*)
+#   uint24 length;      // body length in bytes
+#   opaque body[length];
+# Handshake messages are emitted inside record fragments
+# (ContentType = TLS_CT_HANDSHAKE) and may span multiple records.
+
+var TLS_HANDSHAKE_HEADER_LEN = 4;
+
+# Write a 4-byte handshake message header into `buf`. Returns
+# TLS_HANDSHAKE_HEADER_LEN on success, TLS_ERR_INVALID_PARAM if
+# body_len doesn't fit in a uint24 (>= 16777216).
+fn tls_native_handshake_write_header(buf, hs_type, body_len): i64 {
+    if (body_len < 0) { return TLS_ERR_INVALID_PARAM; }
+    if (body_len > 0xFFFFFF) { return TLS_ERR_INVALID_PARAM; }
+    store8(buf, hs_type & 0xFF);
+    _tn_be24_w(buf + 1, body_len);
+    return TLS_HANDSHAKE_HEADER_LEN;
+}
+
+# Parse a 4-byte handshake header. Writes msg_type to `hs_type_out`,
+# body length to `body_len_out`. Returns TLS_HANDSHAKE_HEADER_LEN on
+# success, TLS_ERR_BAD_HANDSHAKE on short buffer.
+fn tls_native_handshake_read_header(buf, buflen, hs_type_out, body_len_out): i64 {
+    if (buflen < TLS_HANDSHAKE_HEADER_LEN) { return TLS_ERR_BAD_HANDSHAKE; }
+    store64(hs_type_out, load8(buf));
+    store64(body_len_out, _tn_be24_r(buf + 1));
+    return TLS_HANDSHAKE_HEADER_LEN;
+}
+
+# ================================================================
+# Transcript hash accumulator (RFC 8446 §4.4.1)
+# ================================================================
+# Transcript-Hash(M1 || M2 || … || Mn) where each Mi is a serialized
+# handshake message (header + body, BUT pre-encryption — TLS 1.3
+# uses the same shape as 1.2 for transcript purposes). The hash is
+# used for:
+#   - Finished MAC (§4.4.4)
+#   - CertificateVerify signature input (§4.4.3)
+#   - Key schedule binding (binder_key for PSK, §7.1)
+#   - HelloRetryRequest synthetic-ClientHello substitution (§4.4.1)
+#
+# Algorithm follows the negotiated ciphersuite: SHA-256 for
+# TLS_AES_128_GCM_SHA256 and TLS_CHACHA20_POLY1305_SHA256;
+# SHA-384 for TLS_AES_256_GCM_SHA384.
+
+var TLS_HASH_SHA256 = 0;
+var TLS_HASH_SHA384 = 1;
+
+# Hash output lengths (bytes).
+var TLS_HASH_SHA256_LEN = 32;
+var TLS_HASH_SHA384_LEN = 48;
+
+# Sigil sha256 ctx is 144 bytes, sha384 is 208. The transcript state
+# itself is 16 bytes (algo + ctx-pointer) plus the heap-alloc'd
+# hash ctx.
+var TLS_TRANSCRIPT_STATE_LEN = 16;
+var TLS_SHA256_CTX_LEN = 144;
+var TLS_SHA384_CTX_LEN = 208;
+
+# Initialize a transcript-hash accumulator. `hash_algo` is one of
+# TLS_HASH_SHA256 / TLS_HASH_SHA384. Returns a state handle (>0) or
+# 0 on OOM / invalid algo. Free implicit — the bump allocator
+# reclaims on alloc_reset.
+fn tls_native_transcript_init(hash_algo): i64 {
+    if (hash_algo != TLS_HASH_SHA256) {
+        if (hash_algo != TLS_HASH_SHA384) { return 0; }
+    }
+    var state = alloc(TLS_TRANSCRIPT_STATE_LEN);
+    if (state == 0) { return 0; }
+    var hctx = 0;
+    if (hash_algo == TLS_HASH_SHA256) {
+        hctx = sha256_init();
+    } else {
+        hctx = sha384_init();
+    }
+    if (hctx == 0) { return 0; }
+    store64(state,     hash_algo);
+    store64(state + 8, hctx);
+    return state;
+}
+
+# Feed `len` bytes from `data` into the transcript. Returns TLS_OK.
+# In TLS 1.3 the caller passes the FULL serialized handshake message
+# (header + body); the transcript hash never sees record-layer
+# wrapping.
+fn tls_native_transcript_update(state, data, len): i64 {
+    if (state == 0) { return TLS_ERR_INVALID_PARAM; }
+    var algo = load64(state);
+    var hctx = load64(state + 8);
+    if (algo == TLS_HASH_SHA256) {
+        sha256_update(hctx, data, len);
+    } else {
+        sha384_update(hctx, data, len);
+    }
+    return TLS_OK;
+}
+
+# Snapshot the current digest into `digest_out`. Critical: this must
+# NOT destroy the running ctx — the next handshake message will
+# extend it. sigil's *_finalize mutates the ctx (padding + length
+# block), so we clone the ctx, finalize the clone, and discard the
+# clone. Returns the digest length (32 for SHA-256, 48 for SHA-384).
+fn tls_native_transcript_digest(state, digest_out): i64 {
+    if (state == 0) { return 0 - 1; }
+    var algo = load64(state);
+    var hctx = load64(state + 8);
+    if (algo == TLS_HASH_SHA256) {
+        var clone = alloc(TLS_SHA256_CTX_LEN);
+        if (clone == 0) { return 0 - 1; }
+        memcpy(clone, hctx, TLS_SHA256_CTX_LEN);
+        sha256_finalize(clone, digest_out);
+        return TLS_HASH_SHA256_LEN;
+    }
+    var clone = alloc(TLS_SHA384_CTX_LEN);
+    if (clone == 0) { return 0 - 1; }
+    memcpy(clone, hctx, TLS_SHA384_CTX_LEN);
+    sha384_finalize(clone, digest_out);
+    return TLS_HASH_SHA384_LEN;
+}
+
+# Return the digest length for the transcript's algo without
+# computing it. 32 for SHA-256, 48 for SHA-384, -1 for invalid.
+fn tls_native_transcript_digest_len(state): i64 {
+    if (state == 0) { return 0 - 1; }
+    var algo = load64(state);
+    if (algo == TLS_HASH_SHA256) { return TLS_HASH_SHA256_LEN; }
+    if (algo == TLS_HASH_SHA384) { return TLS_HASH_SHA384_LEN; }
+    return 0 - 1;
+}
 
 # ================================================================
 # Opaque context handle

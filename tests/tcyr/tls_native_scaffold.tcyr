@@ -213,4 +213,114 @@ assert_eq(load8(&_aad),     23,   "aad[0] = ContentType");
 assert_eq(load8(&_aad + 3), 0x01, "aad[3] = length_hi (256 >> 8 = 1)");
 assert_eq(load8(&_aad + 4), 0x00, "aad[4] = length_lo (256 & 0xFF = 0)");
 
+test_group("v6.0.12 handshake framing — header encode/decode");
+
+assert_eq(TLS_HANDSHAKE_HEADER_LEN, 4, "handshake header is 1+3 bytes");
+
+# Encode a ClientHello-sized handshake header:
+#   hs_type = TLS_HS_CLIENT_HELLO (1)
+#   body_len = 512 (0x200) — typical real-world ClientHello range
+var _hsh[4];
+var hn = tls_native_handshake_write_header(&_hsh, TLS_HS_CLIENT_HELLO, 512);
+assert_eq(hn, 4, "write_handshake_header returns 4");
+assert_eq(load8(&_hsh),     1,    "byte0 = msg_type (ClientHello = 1)");
+assert_eq(load8(&_hsh + 1), 0x00, "byte1 = length_hi (uint24 MSB)");
+assert_eq(load8(&_hsh + 2), 0x02, "byte2 = length_mid (512 >> 8 = 2)");
+assert_eq(load8(&_hsh + 3), 0x00, "byte3 = length_lo (512 & 0xFF = 0)");
+
+# Decode round-trip
+var _ht_out[8];
+var _hl_out[8];
+var hr = tls_native_handshake_read_header(&_hsh, 4, &_ht_out, &_hl_out);
+assert_eq(hr, 4, "read_handshake_header returns 4");
+assert_eq(load64(&_ht_out), TLS_HS_CLIENT_HELLO, "decoded type = ClientHello");
+assert_eq(load64(&_hl_out), 512,                 "decoded length = 512");
+
+# Short-buffer rejection
+assert_eq(tls_native_handshake_read_header(&_hsh, 3, &_ht_out, &_hl_out),
+          TLS_ERR_BAD_HANDSHAKE, "read_handshake_header rejects buflen < 4");
+
+# uint24 overflow rejection
+assert_eq(tls_native_handshake_write_header(&_hsh, TLS_HS_CLIENT_HELLO, 16777216),
+          TLS_ERR_INVALID_PARAM, "write_handshake_header rejects body_len >= 2^24");
+
+# Max uint24 boundary (16777215 = 0xFFFFFF)
+var hmax = tls_native_handshake_write_header(&_hsh, TLS_HS_CERTIFICATE, 16777215);
+assert_eq(hmax, 4, "write_handshake_header accepts body_len = 2^24 - 1");
+assert_eq(load8(&_hsh + 1), 0xFF, "max body_len byte1");
+assert_eq(load8(&_hsh + 2), 0xFF, "max body_len byte2");
+assert_eq(load8(&_hsh + 3), 0xFF, "max body_len byte3");
+
+test_group("v6.0.12 transcript hash — algo constants + length");
+
+assert_eq(TLS_HASH_SHA256, 0, "sha256 algo = 0");
+assert_eq(TLS_HASH_SHA384, 1, "sha384 algo = 1");
+assert_eq(TLS_HASH_SHA256_LEN, 32, "sha256 digest = 32 bytes");
+assert_eq(TLS_HASH_SHA384_LEN, 48, "sha384 digest = 48 bytes");
+
+test_group("v6.0.12 transcript hash — SHA-256 FIPS 180-4 vector");
+
+# FIPS 180-4 §B.1: SHA-256("abc") =
+#   ba7816bf 8f01cfea 414140de 5dae2223
+#   b00361a3 96177a9c b410ff61 f20015ad
+var ts256 = tls_native_transcript_init(TLS_HASH_SHA256);
+assert(ts256 != 0, "transcript_init sha256 succeeds");
+assert_eq(tls_native_transcript_digest_len(ts256), 32, "digest_len = 32");
+
+tls_native_transcript_update(ts256, "abc", 3);
+var _dig256[32];
+var dlen = tls_native_transcript_digest(ts256, &_dig256);
+assert_eq(dlen, 32, "digest returns 32 for sha256");
+assert_eq(load8(&_dig256),      0xBA, "sha256(abc)[0] = 0xBA");
+assert_eq(load8(&_dig256 + 1),  0x78, "sha256(abc)[1] = 0x78");
+assert_eq(load8(&_dig256 + 2),  0x16, "sha256(abc)[2] = 0x16");
+assert_eq(load8(&_dig256 + 3),  0xBF, "sha256(abc)[3] = 0xBF");
+assert_eq(load8(&_dig256 + 15), 0x23, "sha256(abc)[15] = 0x23");
+assert_eq(load8(&_dig256 + 31), 0xAD, "sha256(abc)[31] = 0xAD");
+
+test_group("v6.0.12 transcript hash — snapshot semantics (digest preserves ctx)");
+
+# After digest(), the running ctx must still be usable. Snapshot
+# again with the same input — bytes must match. Then update with more
+# bytes — digest changes to sha256("abc" + extras).
+var _dig256b[32];
+var dlen2 = tls_native_transcript_digest(ts256, &_dig256b);
+assert_eq(dlen2, 32, "second digest still returns 32");
+assert_eq(load8(&_dig256b),      0xBA, "snapshot-2: sha256(abc)[0] same");
+assert_eq(load8(&_dig256b + 31), 0xAD, "snapshot-2: sha256(abc)[31] same");
+
+# Feed more bytes; digest should change.
+tls_native_transcript_update(ts256, "def", 3);
+var _dig256c[32];
+tls_native_transcript_digest(ts256, &_dig256c);
+# sha256("abcdef") = bef57ec7 f53a6d40 beb640a7 80a639c8
+#                   3bc29ac8 a9816f1f c6c5c6dc d93c4721
+assert_eq(load8(&_dig256c),     0xBE, "sha256(abcdef)[0] = 0xBE");
+assert_eq(load8(&_dig256c + 1), 0xF5, "sha256(abcdef)[1] = 0xF5");
+assert_eq(load8(&_dig256c + 31), 0x21, "sha256(abcdef)[31] = 0x21");
+
+test_group("v6.0.12 transcript hash — SHA-384 FIPS 180-4 vector");
+
+# FIPS 180-4 §B.1: SHA-384("abc") =
+#   cb00753f 45a35e8b b5a03d69 9ac65007
+#   272c32ab 0eded163 1a8b605a 43ff5bed
+#   8086072b a1e7cc23 58baeca1 34c825a7
+var ts384 = tls_native_transcript_init(TLS_HASH_SHA384);
+assert(ts384 != 0, "transcript_init sha384 succeeds");
+assert_eq(tls_native_transcript_digest_len(ts384), 48, "digest_len = 48");
+
+tls_native_transcript_update(ts384, "abc", 3);
+var _dig384[48];
+var dlen384 = tls_native_transcript_digest(ts384, &_dig384);
+assert_eq(dlen384, 48, "digest returns 48 for sha384");
+assert_eq(load8(&_dig384),      0xCB, "sha384(abc)[0] = 0xCB");
+assert_eq(load8(&_dig384 + 1),  0x00, "sha384(abc)[1] = 0x00");
+assert_eq(load8(&_dig384 + 2),  0x75, "sha384(abc)[2] = 0x75");
+assert_eq(load8(&_dig384 + 23), 0x63, "sha384(abc)[23] = 0x63");
+assert_eq(load8(&_dig384 + 47), 0xA7, "sha384(abc)[47] = 0xA7");
+
+# Invalid algo rejection
+assert_eq(tls_native_transcript_init(99), 0, "transcript_init rejects invalid algo");
+assert_eq(tls_native_transcript_digest_len(0), 0 - 1, "digest_len returns -1 for null state");
+
 var r = assert_summary();

@@ -6,6 +6,93 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.12] — 2026-05-28
+
+**TLS arc Mini-arc A.3 — handshake framing + transcript hash.**
+Third slot of A. Adds the 4-byte handshake message header
+(`HandshakeType` + 24-bit length) and the transcript-hash
+accumulator that feeds Finished MAC + CertificateVerify
+signatures + the TLS 1.3 key schedule. With this slot the only
+remaining A piece is `.13` — the TLS 1.3 key schedule (HKDF
+tree); after that, `.14` selects a ciphersuite and the public
+API stops returning `TLS_ERR_NOT_IMPLEMENTED`.
+
+### Added — handshake message framing
+
+- `TLS_HANDSHAKE_HEADER_LEN = 4` (1-byte type + 24-bit length).
+- `tls_native_handshake_write_header(buf, hs_type, body_len)` —
+  encode. Returns 4, or `TLS_ERR_INVALID_PARAM` if body_len >= 2^24.
+- `tls_native_handshake_read_header(buf, buflen, hs_type_out, body_len_out)`
+  — decode. Returns 4 or `TLS_ERR_BAD_HANDSHAKE` on short buffer.
+
+### Added — transcript hash accumulator (RFC 8446 §4.4.1)
+
+Algorithm switches with the ciphersuite (.14): SHA-256 for
+`TLS_AES_128_GCM_SHA256` + `TLS_CHACHA20_POLY1305_SHA256`;
+SHA-384 for `TLS_AES_256_GCM_SHA384`.
+
+- `TLS_HASH_SHA256 = 0`, `TLS_HASH_SHA384 = 1`.
+- `TLS_HASH_SHA256_LEN = 32`, `TLS_HASH_SHA384_LEN = 48`.
+- `TLS_TRANSCRIPT_STATE_LEN = 16`, `TLS_SHA256_CTX_LEN = 144`,
+  `TLS_SHA384_CTX_LEN = 208` (sigil ctx sizes).
+- `tls_native_transcript_init(hash_algo)` — alloc 16-byte state
+  + sigil hash ctx; returns state handle or 0.
+- `tls_native_transcript_update(state, data, len)` — feed bytes.
+- `tls_native_transcript_digest(state, digest_out)` — snapshot.
+  **Snapshot semantics**: sigil's `*_finalize` mutates the ctx
+  (padding + length-block append), so this clones the ctx,
+  finalizes the clone, and returns the digest length. The
+  original running ctx stays valid for further `update()` calls
+  — required because the transcript hash is sampled multiple
+  times during a handshake (Finished, CertificateVerify, key
+  schedule binding).
+- `tls_native_transcript_digest_len(state)` — 32 / 48 / -1
+  without computing.
+
+### Changed — `lib/tls_native.cyr` transitive includes
+
+The slot surfaced that sigil needs a substantial dep set
+(freelist, string, vec, hashmap, io, fs, bigint, ct, keccak).
+Pre-.12, `lib/tls_native.cyr` included only `lib/syscalls.cyr`
++ `lib/alloc.cyr` + `lib/sigil.cyr`. Including sigil without
+its deps left `fl_alloc` / `memcpy` / `ct_eq_bytes` / etc.
+unresolved — when sha256_init tried to call fl_alloc the `ud2`
+fixup-table sentinel fired (SIGILL). Added the full transitive
+set so consumers of `lib/tls_native.cyr` only need one include
+([[feedback_stdlib_self_sufficient_constants]]).
+
+### Updated — `tests/tcyr/tls_native_scaffold.tcyr`
+
+44 new asserts (78 → 122 total). Coverage:
+- Handshake header encode/decode round-trip
+  (`ct=1, body_len=512` → `01 00 02 00`).
+- Short-buffer + uint24-overflow rejection (`>= 2^24` rejected).
+- Max-uint24 boundary (`2^24 - 1` accepted).
+- Hash algo + digest-length constants.
+- SHA-256 FIPS 180-4 §B.1 vector: `sha256("abc")` first/middle/last bytes.
+- Snapshot semantics: digest, digest again (same), update with
+  `"def"`, digest changes to `sha256("abcdef")`.
+- SHA-384 FIPS 180-4 §B.1 vector: `sha384("abc")` first/middle/last.
+- Invalid-algo rejection.
+
+(I cited two SHA byte values wrong from memory while drafting
+— `sha256("abcdef")[31]` and `sha384("abc")[23]`. Sigil
+computed the correct values; assertions updated to match
+`echo -n "..." | sha256sum / sha384sum`. Note for future slots:
+verify reference vectors against a tool, not recall.)
+
+### Mechanical
+
+- cycc x86 **byte-identical at 885,024 B** (stdlib-only change).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,791 → 2,797 fns (+6 publics:
+  2 handshake-header fns + 4 transcript fns).
+
+Memory pin: `project_native_tls_arc_v6_2_x` — Mini-arc A step 3
+of 5 done; .13 = TLS 1.3 key schedule (HKDF tree) next.
+
 ## [6.0.11] — 2026-05-28
 
 **TLS arc Mini-arc A.2 — record layer.** Second slot of the native
