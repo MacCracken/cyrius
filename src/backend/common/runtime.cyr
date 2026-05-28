@@ -1,0 +1,116 @@
+# ================================================================
+# Runtime helpers — shared by x86 + aarch64 backends (v6.0.8 collapse)
+# ================================================================
+# _env_scratch, _read_env, _prof_clock_ns, RECFIX previously lived
+# in src/backend/x86/{fixup,emit}.cyr AND src/backend/aarch64/{fixup,
+# emit}.cyr. Bodies were logically identical; only syscall numbers
+# differed for _prof_clock_ns (228 vs 113) and RECFIX's error
+# message text. v6.0.8 unifies them here.
+#
+# NOT included from main_cx.cyr — cx/emit.cyr has its own RECFIX
+# (different fixup-table cap, different region) and a _read_env
+# stub returning 0 (no env-var support in the bytecode mode).
+
+# Static scratch for env value (256 bytes).
+var _env_scratch[256];
+
+# Read an env var by name. Returns &_env_scratch (NUL-terminated
+# value) on hit, 0 on miss. v5.5.9: /proc/self/environ is Linux-only;
+# Windows + macOS fall through to 0 (GetEnvironmentVariableW-based
+# Win lookup queued for v5.5.x tail). The SYS_OPEN == 2 shim picks
+# the correct path: x86_64 uses raw `open` (syscall 2), aarch64
+# native uses `openat(AT_FDCWD, ...)` (-100 first arg).
+fn _read_env(name): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    var ebuf[8192];
+    var efd = 0;
+    if (SYS_OPEN == 2) { efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
+    else { efd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
+    if (efd < 0) { return 0; }
+    var elen = syscall(SYS_READ, efd, &ebuf, 8191);
+    syscall(SYS_CLOSE, efd);
+    if (elen <= 0) { return 0; }
+    store8(&ebuf + elen, 0);
+    var nlen = 0;
+    while (load8(name + nlen) != 0) { nlen = nlen + 1; }
+    var pos = 0;
+    while (pos < elen) {
+        var end = pos;
+        while (end < elen && load8(&ebuf + end) != 0) { end = end + 1; }
+        if (end - pos > nlen && load8(&ebuf + pos + nlen) == 61) {
+            var matched = 1;
+            var k = 0;
+            while (k < nlen) {
+                if (load8(&ebuf + pos + k) != load8(name + k)) { matched = 0; break; }
+                k = k + 1;
+            }
+            if (matched == 1) {
+                var vstart = pos + nlen + 1;
+                var vlen = end - vstart;
+                if (vlen > 255) { vlen = 255; }
+                var ci = 0;
+                while (ci < vlen) {
+                    store8(&_env_scratch + ci, load8(&ebuf + vstart + ci));
+                    ci = ci + 1;
+                }
+                store8(&_env_scratch + vlen, 0);
+                return &_env_scratch;
+            }
+        }
+        pos = end + 1;
+    }
+    #endif
+    return 0;
+}
+
+# Nanosecond wall clock for CYRIUS_PROF (v5.6.5 O1 + v5.6.6).
+# Linux x86_64: clock_gettime(CLOCK_MONOTONIC=1) via syscall 228.
+# Linux aarch64: clock_gettime(CLOCK_MONOTONIC=1) via syscall 113
+# (generic table — different number from x86_64).
+# Windows PE: syscall(228, _, _) rerouted by EGETTICKS_PE to
+# kernel32!GetTickCount64; returns ms in rax, scaled to ns here.
+# macOS arm64: syscall(228, 4, _) rerouted by EMACHO_CLOCK_ARM to
+# libSystem _clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW=4) via
+# __got[6]; returns u64 ns directly in x0.
+# Non-Linux non-PE non-macOS: returns 0 (no clock available).
+fn _prof_clock_ns(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var _ms = syscall(228, 0, 0);
+    return _ms * 1000000;
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return syscall(228, 4, 0);
+    #endif
+    var ts[16];
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    syscall(228, 1, &ts);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    syscall(113, 1, &ts);
+    #endif
+    #endif
+    return load64(&ts) * 1000000000 + load64(&ts + 8);
+}
+
+# Record a fixup entry — append (codepos, var_idx) to the fixup
+# table at S + 0x107B000. Cap 262144 entries (16 bytes each →
+# 4 MiB region). Pre-collapse: x86 + aarch64 had byte-identical
+# bodies modulo the error message — aarch64 also printed the count
+# via PRNUM. Unified to use the PRNUM variant.
+# Note: cx/emit.cyr keeps its own RECFIX (cap 1048576, region
+# 0x150B000) — different storage layout.
+fn RECFIX(S, idx): i64 {
+    var fc = GFCNT(S);
+    if (fc >= 262144) {
+        syscall(SYS_WRITE, 2, "error: fixup table full (", 25);
+        PRNUM(fc);
+        syscall(SYS_WRITE, 2, "/262144)\n", 9);
+        syscall(SYS_EXIT, 1);
+    }
+    var addr = S + 0x107B000 + fc * 16;
+    S64(addr, GCP(S));
+    S64(addr + 8, idx);
+    SFCNT(S, fc + 1);
+    return 0;
+}

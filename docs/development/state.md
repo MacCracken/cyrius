@@ -3,6 +3,74 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.8 ship — backend module collapse)
+
+Closing **v6.0.8**, the v6.0-runway "backend module collapse where
+viable" item. Established `src/backend/common/` as the home for
+truly-shared backend helpers; moved ~80 LoC of genuinely duplicated
+code out of per-backend files.
+
+**Honest scope finding**: the audit at slot entry showed that the
+parallel `src/backend/x86/` and `src/backend/aarch64/` directories
+share ~133 fn NAMES (`ECMPR`, `EJCC`, `EMOVRA_RDX`, …) but those are
+the deliberate cross-arch API surface — same names, arch-specific
+bodies. The genuinely collapsible code was much narrower than the
+roadmap's "where viable" wording suggested. User picked "all 5
+candidates" — the conservative cut would have been even smaller
+(~40 LoC of byte-identical bodies).
+
+**Two new files in src/backend/common/**:
+
+1. `tokens.cyr` — `TOKTYP`, `TOKVAL`, `PEEKT`, `PEEKV` (4 token-stream
+   accessors that were byte-identical in x86 + aarch64 + cx).
+   3 copies → 1.
+2. `runtime.cyr` — `_env_scratch`, `_read_env`, `_prof_clock_ns`,
+   `RECFIX`. Previously 2 copies (x86 + aarch64) that diverged in
+   small ways. Unified:
+   - `_prof_clock_ns`: `#ifdef CYRIUS_ARCH_X86 / AARCH64` selects
+     syscall 228 (x86_64) vs 113 (aarch64) inside the existing
+     `#ifdef CYRIUS_TARGET_LINUX` block.
+   - `_read_env`: shim form `if (SYS_OPEN == 2) {direct open} else
+     {openat AT_FDCWD}` works for both archs (x86 path stays fast).
+   - `RECFIX`: aarch64's better-error-message variant (uses `PRNUM`
+     to show actual count, not just the cap) is the canonical one.
+   - cx kept its own `RECFIX` (cap 1048576 / region 0x150B000) and
+     `_read_env` stub — only token helpers shared.
+
+**Include-order discipline**: shared common files MUST precede the
+arch-specific emit/fixup includes in each `main_*.cyr` because the
+backend files call `_read_env`, `RECFIX`, and `PEEKT/V` internally
+during their top-level execution. Established the pattern in all 6
+variants this slot.
+
+**Gate rewire**: `_cx_token_offsets_gate` (v5.7.28) previously read
+three per-backend `emit.cyr` files and ran a case for each, asserting
+their TOKTYP/TOKVAL hex offsets matched the lex.cyr writes.
+Post-collapse, one canonical source — read `common/tokens.cyr` once.
+Same invariant, less surface.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (+168 B over
+  v6.0.7's 884,856 — counted as honest growth-tax for the unified
+  `_prof_clock_ns`'s extra `#ifdef` branches; aarch64 added a
+  CYRIUS_ARCH_AARCH64 case the x86 file didn't have).
+- cycc_aarch64 cross **byte-identical at 574,664 B** (-16 B).
+- cycc-native-aarch64 **byte-identical at 683,936 B** (no change —
+  the unified runtime helpers only affect the cross-compiler's
+  INTERNAL codepaths, not the aarch64 instructions it emits).
+- `scripts/check.sh` **82/82**.
+
+**v6.0.x cycle pause point reached**: the original pinned sequence
+.2 → .8 is complete (stdlib pin refresh, two codegen P1s, the TS
+scripting papercut bundle, the alloc/vec mini-arc, the backend
+collapse). Per user direction 2026-05-28, the next slot **re-evaluates
+the cycle** + decides on placement of the native TLS arc (pulled
+forward from v6.2.x; lands once sandhi + projects-waiting-on-TLS
+prereqs are met — see [[project_native_tls_arc_v6_2_x]]).
+
+Memory pin: [`project_v6_0_2_3_4_slot_sequence`] (.8 = backend
+module collapse done; v6.0.x .2-.8 mini-arc complete).
+
 ## Session close — 2026-05-28 (.7 ship — return-patch vec conversion + native binary resurrection)
 
 Closing **v6.0.7**, the second half of the return-patch mini-arc and

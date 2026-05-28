@@ -97,6 +97,9 @@ enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 1
 
 include "src/version_str.cyr"
 include "src/common/util.cyr"
+# v6.0.8 — shared backend helpers (see src/main.cyr).
+include "src/backend/common/tokens.cyr"
+include "src/backend/common/runtime.cyr"
 include "src/backend/aarch64/emit.cyr"
 include "src/backend/aarch64/jump.cyr"
 # v5.6.40: parse_*.cyr references `IR_RAW_EMIT` unconditionally

@@ -3677,19 +3677,18 @@ fn _cx_token_offsets_gate(): i64 {
     var lex_buf = _read_source_for_grep(_root_path("src/frontend/lex.cyr"), &lex_n);
     var util_n[1];
     var util_buf = _read_source_for_grep(_root_path("src/common/util.cyr"), &util_n);
-    var x86_n[1];
-    var x86_buf = _read_source_for_grep(_root_path("src/backend/x86/emit.cyr"), &x86_n);
-    var aa_n[1];
-    var aa_buf = _read_source_for_grep(_root_path("src/backend/aarch64/emit.cyr"), &aa_n);
-    var cx_n[1];
-    var cx_buf = _read_source_for_grep(_root_path("src/backend/cx/emit.cyr"), &cx_n);
+    # v6.0.8 — TOKTYP / TOKVAL extracted from per-backend emit.cyr
+    # files into src/backend/common/tokens.cyr (shared by x86 +
+    # aarch64 + cx). One source of truth instead of three.
+    var tok_n[1];
+    var tok_buf = _read_source_for_grep(_root_path("src/backend/common/tokens.cyr"), &tok_n);
 
-    if (lex_buf == 0 || util_buf == 0 || x86_buf == 0 || aa_buf == 0 || cx_buf == 0) {
+    if (lex_buf == 0 || util_buf == 0 || tok_buf == 0) {
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        println(": could not read one or more lex/util/backend source files");
+        println(": could not read lex / util / common/tokens source files");
         _check(label, 1);
         return 1;
     }
@@ -3724,12 +3723,11 @@ fn _cx_token_offsets_gate(): i64 {
         }
     }
 
-    fail = fail + _check_backend_token_offsets("x86",
-        x86_buf, load64(&x86_n), lex_typ, lex_val);
-    fail = fail + _check_backend_token_offsets("aarch64",
-        aa_buf, load64(&aa_n), lex_typ, lex_val);
-    fail = fail + _check_backend_token_offsets("cx",
-        cx_buf, load64(&cx_n), lex_typ, lex_val);
+    # v6.0.8 — one canonical check against src/backend/common/tokens.cyr
+    # (all backends share these defs). The per-backend cases were
+    # collapsed at the same slot.
+    fail = fail + _check_backend_token_offsets("common",
+        tok_buf, load64(&tok_n), lex_typ, lex_val);
 
     if (fail == 0) {
         _p("  ");

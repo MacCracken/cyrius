@@ -4,69 +4,8 @@
 # Patches MOVZ/MOVK sequences for variable/string/function addresses.
 # Emits aarch64 ELF64 binary (e_machine=0xB7=183).
 
-var _env_scratch[256];
-
-# v5.6.5 O1 + v5.6.6: nanosecond wall clock for CYRIUS_PROF.
-# * Linux aarch64: clock_gettime(CLOCK_MONOTONIC=1, &ts) via syscall
-#   113 (generic table — different from x86_64's 228).
-# * macOS arm64: `syscall(228, 4, 0)` is rerouted by EMACHO_CLOCK_ARM
-#   to libSystem _clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW=4) via
-#   __got[6]. Returns u64 ns directly in x0. The Linux-shape 3-arg
-#   form (clock_id, &ts-placeholder) keeps the call-site readable.
-# * Non-Linux non-macOS targets fall through to 0.
-fn _prof_clock_ns(): i64 {
-    #ifdef CYRIUS_TARGET_MACOS
-    return syscall(228, 4, 0);
-    #endif
-    var ts[16];
-    #ifdef CYRIUS_TARGET_LINUX
-    syscall(113, 1, &ts);
-    #endif
-    return load64(&ts) * 1000000000 + load64(&ts + 8);
-}
-
-# Read an env var by name. Returns &_env_scratch (NUL-terminated value) or 0.
-# aarch64 Linux syscalls: openat=56, read=63, close=57.
-fn _read_env(name): i64 {
-    var ebuf[8192];
-    var efd = 0;
-    if (SYS_OPEN == 2) { efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
-    else { efd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
-    if (efd < 0) { return 0; }
-    var elen = syscall(SYS_READ, efd, &ebuf, 8191);
-    syscall(SYS_CLOSE, efd);
-    if (elen <= 0) { return 0; }
-    store8(&ebuf + elen, 0);
-    var nlen = 0;
-    while (load8(name + nlen) != 0) { nlen = nlen + 1; }
-    var pos = 0;
-    while (pos < elen) {
-        var end = pos;
-        while (end < elen && load8(&ebuf + end) != 0) { end = end + 1; }
-        if (end - pos > nlen && load8(&ebuf + pos + nlen) == 61) {
-            var matched = 1;
-            var k = 0;
-            while (k < nlen) {
-                if (load8(&ebuf + pos + k) != load8(name + k)) { matched = 0; break; }
-                k = k + 1;
-            }
-            if (matched == 1) {
-                var vstart = pos + nlen + 1;
-                var vlen = end - vstart;
-                if (vlen > 255) { vlen = 255; }
-                var ci = 0;
-                while (ci < vlen) {
-                    store8(&_env_scratch + ci, load8(&ebuf + vstart + ci));
-                    ci = ci + 1;
-                }
-                store8(&_env_scratch + vlen, 0);
-                return &_env_scratch;
-            }
-        }
-        pos = end + 1;
-    }
-    return 0;
-}
+# _env_scratch, _read_env, _prof_clock_ns moved to
+# src/backend/common/runtime.cyr at v6.0.8 (shared with x86).
 
 fn FIXUP(S): i64 {
     # Check for Mach-O ARM64 output mode

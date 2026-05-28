@@ -6,6 +6,118 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.8] — 2026-05-28
+
+**Backend module collapse — `src/backend/common/` directory established.**
+Closes the v6.0-runway "backend module collapse where viable"
+carry-forward item from v5.11.x. Honest scope: the audit found ~80 LoC
+of genuinely shared code across the parallel x86/aarch64/cx backends;
+the rest (~133 `Exxx` instruction emitters that share NAMES but not
+bodies) is legitimate cross-arch API surface, not duplication.
+
+### Added — `src/backend/common/`
+
+Two new files extracted from the per-backend duplicates:
+
+- **`tokens.cyr`** — `TOKTYP`, `TOKVAL`, `PEEKT`, `PEEKV` (four
+  token-stream accessors that were byte-identical across
+  `src/backend/x86/emit.cyr`, `src/backend/aarch64/emit.cyr`, and
+  `src/backend/cx/emit.cyr`). Three copies → one.
+- **`runtime.cyr`** — `var _env_scratch[256]`, `_read_env(name)`,
+  `_prof_clock_ns()`, `RECFIX(S, idx)`. Previously two copies
+  (x86 + aarch64) that diverged in subtle ways:
+  - `_prof_clock_ns` used `syscall(228, ...)` on x86 and
+    `syscall(113, ...)` on aarch64 (Linux generic syscall table
+    differs). Unified via `#ifdef CYRIUS_ARCH_X86 / AARCH64`. The
+    `CYRIUS_TARGET_WIN` and `CYRIUS_TARGET_MACOS` branches stay
+    factored out (rerouted by `EGETTICKS_PE` / `EMACHO_CLOCK_ARM`).
+  - `_read_env` differed only in syscall-call shape (x86 used raw
+    `syscall(2, ...)`, aarch64 used the `SYS_OPEN == 2` shim with
+    `openat(AT_FDCWD, ...)` fallback). The shim is a strict superset
+    — x86 builds still resolve to the direct path since `SYS_OPEN
+    == 2` on x86. Unified to the shim.
+  - `RECFIX`'s error message: x86 printed `error: fixup table full
+    (262144)`, aarch64 printed `error: fixup table full (<count>/
+    262144)` via `PRNUM`. Unified to the aarch64 form — more useful
+    when triaging cap-full failures (you see how full the table got
+    after fewer than 262144 fixups, if anything ever truncated).
+  - **cx is NOT included from `runtime.cyr`** — `cx/emit.cyr` has
+    its own `RECFIX` (different cap 1048576, different region
+    0x150B000) and a `_read_env` stub returning 0 (no env-var
+    support in bytecode mode). The token helpers in `tokens.cyr`
+    DO get included by cx; the runtime helpers do not.
+
+### Removed (moved into the above)
+
+- `src/backend/x86/emit.cyr` — `RECFIX`, `TOKTYP`, `TOKVAL`, `PEEKT`,
+  `PEEKV`.
+- `src/backend/x86/fixup.cyr` — `_env_scratch`, `_read_env`,
+  `_prof_clock_ns`.
+- `src/backend/aarch64/emit.cyr` — `RECFIX`, `TOKTYP`, `TOKVAL`,
+  `PEEKT`, `PEEKV`.
+- `src/backend/aarch64/fixup.cyr` — `_env_scratch`, `_read_env`,
+  `_prof_clock_ns`.
+- `src/backend/cx/emit.cyr` — `TOKTYP`, `TOKVAL`, `PEEKT`, `PEEKV`
+  (kept its own `RECFIX` + `_read_env` stub).
+
+### Changed — main_*.cyr include wiring
+
+All 6 entry-point files now include the appropriate common files
+BEFORE the arch-specific backend includes (necessary because emit.cyr
+and fixup.cyr call `_read_env`, `RECFIX`, and `PEEKT/V` internally):
+
+| File | Includes added |
+|---|---|
+| `src/main.cyr` | `common/tokens.cyr` + `common/runtime.cyr` |
+| `src/main_aarch64.cyr` | `common/tokens.cyr` + `common/runtime.cyr` |
+| `src/main_aarch64_macho.cyr` | `common/tokens.cyr` + `common/runtime.cyr` |
+| `src/main_aarch64_native.cyr` | `common/tokens.cyr` + `common/runtime.cyr` |
+| `src/main_cx.cyr` | `common/tokens.cyr` ONLY |
+| `src/main_win.cyr` | `common/tokens.cyr` + `common/runtime.cyr` |
+
+### Changed — `_cx_token_offsets_gate` rewired
+
+The v5.7.28 gate that verified TOKTYP/TOKVAL offsets matched across
+backends previously read `x86/emit.cyr`, `aarch64/emit.cyr`, and
+`cx/emit.cyr` and ran three per-backend cases. Post-collapse, the
+canonical source is `common/tokens.cyr` — one check, one source of
+truth. Same invariant; less surface to drift.
+
+### What did NOT move
+
+The audit found the following NOT to be consolidation candidates,
+despite sharing fn names:
+
+- 133 `Exxx` instruction emitters (`ECMPR`, `EJCC`, `EMOVRA_RDX`,
+  `EFLLOAD_F64V2_PAIR`, …) — same names exist in both x86 and
+  aarch64 emit.cyr, but the BODIES emit arch-specific instruction
+  bytes. That's deliberate cross-arch API surface, not duplication.
+- `ASM_MNEMONIC` — arch-specific opcode tables (x86 `cli/sti/hlt`
+  vs aarch64 `svc/wfi/wfe/dmb`).
+- `_IS_OBJ` — divergence (x86 returns 1 when `km == 3 || km == 2`;
+  aarch64 only when `km == 3`). Could be a bug, could be intentional
+  — needs investigation before any merge.
+- The `EJCC/EJMP/EJMP0/EPATCH` family in `jump.cyr` — bodies are
+  byte-format-specific; x86 also does IR/jsc/jtc bookkeeping that
+  aarch64 doesn't have.
+- `_EFP_ADDR_X9` — x86 stubs to 0; aarch64 has real implementation.
+
+### Mechanical
+
+- cycc x86 self-host **byte-identical at 885,024 B** (+168 B over
+  .7's 884,856 — small growth from the unified `_prof_clock_ns`'s
+  extra `#ifdef` branches; counted as honest growth-tax).
+- cycc_aarch64 cross **byte-identical at 574,664 B** (-16 B).
+- cycc-native-aarch64 **byte-identical at 683,936 B** (no change —
+  the unified runtime helpers only affect the cross-compiler's
+  internal codepaths, not the aarch64 instructions it emits).
+- `scripts/check.sh` **82/82**, `_cx_token_offsets_gate` rewired
+  to check `common/tokens.cyr`.
+
+Memory pin: `project_v6_0_2_3_4_slot_sequence` (.8 = backend module
+collapse done; v6.0.x mini-arc complete; next = re-evaluation +
+native TLS pull-forward placement).
+
 ## [6.0.7] — 2026-05-28
 
 **Return-patch buffer → vec (mini-arc step 2/2) + native aarch64 binary

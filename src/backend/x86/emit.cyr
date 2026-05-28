@@ -332,19 +332,7 @@ fn EPOPR10(S): i64 { E2(S, 0x5A41); return 0; }
 fn EPOPR8(S): i64 { E2(S, 0x5841); return 0; }
 fn EPOPR9(S): i64 { E2(S, 0x5941); return 0; }
 
-# Record fixup: (codebuf_offset=CP, var_index) in fixup table
-fn RECFIX(S, idx): i64 {
-    var fc = GFCNT(S);
-    if (fc >= 262144) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (262144)\n", 33);
-        syscall(SYS_EXIT, 1);
-    }
-    var addr = S + 0x107B000 + fc * 16;
-    S64(addr, GCP(S));
-    S64(addr + 8, idx);
-    SFCNT(S, fc + 1);
-    return 0;
-}
+# RECFIX moved to src/backend/common/runtime.cyr at v6.0.8.
 
 # Check if compiling in object mode (kernel_mode == 3) OR shared mode
 # (kernel_mode == 2). Both require PIC-safe addressing: the linker
@@ -2269,13 +2257,10 @@ fn EFLSTORE(S, idx): i64 {
 # because the caching never reached the parser).
 
 # ================================================================
-# TOKEN ACCESS
+# TOKEN ACCESS — TOKTYP/TOKVAL/PEEKT/PEEKV moved to
+# src/backend/common/tokens.cyr at v6.0.8 (byte-identical across
+# x86 + aarch64 + cx backends).
 # ================================================================
-
-fn TOKTYP(S, i): i64 { return L64(S + 0x2D7C000 + i * 8); }   # v5.8.46: relocated from 0x71A000 (overlap w/ output_buf, capped at 262144) to fresh 8 MiB region (cap 1048576)
-fn TOKVAL(S, i): i64 { return L64(S + 0x357C000 + i * 8); }   # v5.8.46: relocated from 0xD4A000 (capped at 262144) to fresh 8 MiB region (cap 1048576)
-fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
-fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
 
 # ================================================================
 # x86_64 INLINE ASM MNEMONICS

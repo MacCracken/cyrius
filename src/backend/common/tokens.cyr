@@ -1,0 +1,14 @@
+# ================================================================
+# Token-stream accessors — shared across backends (v6.0.8 collapse)
+# ================================================================
+# Before v6.0.8 these four fns lived byte-identically in
+# src/backend/x86/emit.cyr, src/backend/aarch64/emit.cyr, AND
+# src/backend/cx/emit.cyr. The bodies are pure heap-offset reads
+# with no arch-specific encoding, so they belong in common/.
+# Region offsets (0x2D7C000 / 0x357C000) come from the v5.8.46 +
+# v5.11.68 heap-map layout — shared by all three backends.
+
+fn TOKTYP(S, i): i64 { return L64(S + 0x2D7C000 + i * 8); }
+fn TOKVAL(S, i): i64 { return L64(S + 0x357C000 + i * 8); }
+fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
+fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }

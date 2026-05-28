@@ -737,11 +737,7 @@ fn ETAILJMP(S, fnidx): i64 {
     return 0;
 }
 
-# Token access (same as x86 — shared with frontend)
-fn TOKTYP(S, i): i64 { return L64(S + 0x2D7C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576). Was 0x71A000 (overlap w/ output_buf, capped at 262144). v5.7.28 history: shifted from 0x74A000 → 0x71A000 to track v5.7.27 heap reshuffle.
-fn TOKVAL(S, i): i64 { return L64(S + 0x357C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576). Was 0xD4A000 (capped at 262144).
-fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
-fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
+# Token access moved to src/backend/common/tokens.cyr at v6.0.8.
 
 # Inline asm — not supported in bytecode
 fn ASM_MNEMONIC(S): i64 {

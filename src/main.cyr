@@ -420,6 +420,13 @@ include "src/version_str.cyr"
 # MODULES
 # ================================================================
 include "src/common/util.cyr"
+# v6.0.8 — shared backend helpers extracted from x86/aarch64 into
+# src/backend/common/. tokens.cyr = TOKTYP/TOKVAL/PEEKT/PEEKV.
+# runtime.cyr = _env_scratch + _read_env + _prof_clock_ns + RECFIX.
+# Must precede emit/fixup includes because those call _read_env +
+# RECFIX + PEEKT/V internally.
+include "src/backend/common/tokens.cyr"
+include "src/backend/common/runtime.cyr"
 include "src/backend/x86/emit.cyr"
 include "src/backend/x86/float.cyr"
 include "src/backend/x86/jump.cyr"

@@ -121,6 +121,21 @@ bayan/ganita carve, all together).
   aarch64` resurrected from doc/policy ghost — added to `cyrius.cyml
   [release].cross_bins`, `cbt/pulsar.cyr` builds via the cross,
   binary committed (683,936 B ARM aarch64 ELF).
+- **v6.0.8** — backend module collapse. Established
+  `src/backend/common/`; moved 4 token-stream accessors
+  (`TOKTYP`/`TOKVAL`/`PEEKT`/`PEEKV`) shared across x86 + aarch64 +
+  cx into `common/tokens.cyr`, and 4 runtime helpers
+  (`_env_scratch`/`_read_env`/`_prof_clock_ns`/`RECFIX`) shared
+  across x86 + aarch64 into `common/runtime.cyr`. cx kept its own
+  `RECFIX` (different cap/region) and `_read_env` stub. The audit
+  confirmed that the ~133 `Exxx` instruction emitters appearing in
+  both x86 and aarch64 emit.cyr files are deliberate cross-arch API
+  surface — same names, arch-specific bodies — and are NOT
+  consolidation candidates. `_cx_token_offsets_gate` rewired to
+  check `common/tokens.cyr` once instead of per-backend. cycc x86
+  +168 B (honest growth-tax from unified `_prof_clock_ns`'s extra
+  `#ifdef` branches); cycc_aarch64 cross -16 B; native binary
+  byte-identical.
 
 ### Pinned slot sequence
 

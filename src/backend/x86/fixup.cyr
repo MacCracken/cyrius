@@ -2,74 +2,9 @@
 # FIXUP — patch variable addresses after codegen
 # ================================================================
 
-# Static scratch for env value (256 bytes)
-var _env_scratch[256];
-
-# v5.6.5 O1 + v5.6.6: nanosecond wall clock for CYRIUS_PROF.
-# * Linux x86_64: clock_gettime(CLOCK_MONOTONIC=1, &ts) via syscall
-#   228. Returns seconds*1e9 + nanoseconds from the populated timespec.
-# * Windows PE: `syscall(228, _, _)` is rerouted by EGETTICKS_PE to
-#   kernel32!GetTickCount64, returning u64 ms in rax. Cyrius code
-#   reads the return value and scales ms → ns. The dummy arg value
-#   doesn't matter (EGETTICKS_PE drops them) but we keep the same
-#   shape as the Linux call so a single codepath works for both.
-# * Non-Linux non-PE (macOS x86, bare-metal): falls through to 0.
-fn _prof_clock_ns(): i64 {
-    #ifdef CYRIUS_TARGET_WIN
-    var _ms = syscall(228, 0, 0);
-    return _ms * 1000000;
-    #endif
-    var ts[16];
-    #ifdef CYRIUS_TARGET_LINUX
-    syscall(228, 1, &ts);
-    #endif
-    return load64(&ts) * 1000000000 + load64(&ts + 8);
-}
-
-# Read an env var by name. Returns &_env_scratch (NUL-terminated value) or 0.
-# v5.5.9: /proc/self/environ is Linux-only. On Windows, gate the whole
-# body so the fn returns 0 (env var not found). GetEnvironmentVariableW-
-# based lookup queued for v5.5.x tail. Same pattern as _init_cyrius_lib.
-fn _read_env(name): i64 {
-    #ifdef CYRIUS_TARGET_LINUX
-    var ebuf[8192];
-    var efd = syscall(2, "/proc/self/environ", 0, 0);
-    if (efd < 0) { return 0; }
-    var elen = syscall(0, efd, &ebuf, 8191);
-    syscall(3, efd);
-    if (elen <= 0) { return 0; }
-    store8(&ebuf + elen, 0);
-    var nlen = 0;
-    while (load8(name + nlen) != 0) { nlen = nlen + 1; }
-    var pos = 0;
-    while (pos < elen) {
-        var end = pos;
-        while (end < elen && load8(&ebuf + end) != 0) { end = end + 1; }
-        if (end - pos > nlen && load8(&ebuf + pos + nlen) == 61) {
-            var matched = 1;
-            var k = 0;
-            while (k < nlen) {
-                if (load8(&ebuf + pos + k) != load8(name + k)) { matched = 0; break; }
-                k = k + 1;
-            }
-            if (matched == 1) {
-                var vstart = pos + nlen + 1;
-                var vlen = end - vstart;
-                if (vlen > 255) { vlen = 255; }
-                var ci = 0;
-                while (ci < vlen) {
-                    store8(&_env_scratch + ci, load8(&ebuf + vstart + ci));
-                    ci = ci + 1;
-                }
-                store8(&_env_scratch + vlen, 0);
-                return &_env_scratch;
-            }
-        }
-        pos = end + 1;
-    }
-    #endif
-    return 0;
-}
+# _env_scratch, _read_env, _prof_clock_ns moved to
+# src/backend/common/runtime.cyr at v6.0.8 (shared with the
+# aarch64 backend; cx kept its own _read_env stub).
 
 fn FIXUP(S): i64 {
     # Align code to 8 (don't write — leave as zeros, matching cybs)

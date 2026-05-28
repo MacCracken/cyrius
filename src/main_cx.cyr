@@ -6,6 +6,10 @@ enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 1
 
 include "src/version_str.cyr"
 include "src/common/util.cyr"
+# v6.0.8 — token helpers shared with x86/aarch64. cx KEEPS its own
+# RECFIX (different cap + region) and _read_env stub, so it does
+# NOT include common/runtime.cyr.
+include "src/backend/common/tokens.cyr"
 include "src/backend/cx/emit.cyr"
 # v5.7.11: ir.cyr added at v5.6.12 (O3a IR instrumentation) but
 # never to main_cx.cyr; parse_expr.cyr references IR_RAW_EMIT.

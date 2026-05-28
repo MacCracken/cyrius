@@ -370,20 +370,8 @@ fn EADD_IMM12(S, reg): i64 {
 }
 
 # === Fixup + variable access ===
-fn RECFIX(S, idx): i64 {
-    var fc = GFCNT(S);
-    if (fc >= 262144) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (", 25);
-        PRNUM(fc);
-        syscall(SYS_WRITE, 2, "/262144)\n", 9);
-        syscall(SYS_EXIT, 1);
-    }
-    var addr = S + 0x107B000 + fc * 16;
-    S64(addr, GCP(S));
-    S64(addr + 8, idx);
-    SFCNT(S, fc + 1);
-    return 0;
-}
+# RECFIX moved to src/backend/common/runtime.cyr at v6.0.8 (the
+# aarch64 PRNUM-error-message form is the canonical one).
 
 # Load variable address into x1 (for struct field access)
 fn EVADDR_X1(S, idx): i64 {
@@ -1551,11 +1539,7 @@ fn EPATCHFRAME(S, patch, size): i64 {
     return 0;
 }
 
-# === Token access (arch-independent, same as x86) ===
-fn TOKTYP(S, i): i64 { return L64(S + 0x2D7C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576)
-fn TOKVAL(S, i): i64 { return L64(S + 0x357C000 + i * 8); }   # v5.8.46: relocated to fresh 8 MiB region post-TS (cap 1048576)
-fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
-fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
+# === Token access moved to src/backend/common/tokens.cyr at v6.0.8 ===
 
 # ================================================================
 # AARCH64 INLINE ASM MNEMONICS
