@@ -3,6 +3,67 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.11 ship — TLS Mini-arc A.2 record layer)
+
+Closing **v6.0.11**, the second slot of the native TLS arc (A.2 of
+A's 5 sub-slots). Built the record-layer building blocks:
+big-endian wire helpers, 5-byte header encode/decode, fragmentation
+count, per-direction sequence numbers with overflow refusal,
+RFC 8446 §5.3 AEAD nonce derivation, and RFC 8446 §5.2 AAD
+construction.
+
+**No existing stdlib peer** covered big-endian I/O — TLS is BE
+end-to-end. Inlined `_tn_be16/24/32/64_w/r` in tls_native.cyr;
+will promote to `lib/be.cyr` if a second consumer (QUIC, HTTP/2
+binary frames) materialises.
+
+**Sequence-number invariant per §5.3**: implementations MUST NOT
+wrap. `tls_native_seq_increment` returns `TLS_ERR_PROTOCOL` if
+asked to bump from the all-ones state. KeyUpdate (slot .19's
+client + .25's server) will rekey long before the counter
+approaches 2^64.
+
+**AEAD nonce derivation** (§5.3): XOR the direction's 12-byte
+static IV with the 8-byte sequence number, left-padded with 4
+zero bytes. Identical construction for AES-GCM and
+ChaCha20-Poly1305. Hand-vector verified in the .tcyr.
+
+**Bug caught by the .tcyr regression**: cyrius `var x[N]`
+allocates N **BYTES** (rounded to 8-byte alignment), not N i64
+slots. A 12-byte IV declared `var _iv[2]` was 8 bytes, and writes
+to bytes 8-11 clobbered the NEXT local (`_seq2`). aead_nonce
+returned phantom zeros for nonce[10] and nonce[11]. Cyrius
+source proof in `src/frontend/parse_decl.cyr` (`aligned = (asz +
+7) & ~7`). Pinned new memory `feedback_var_array_byte_sized` so
+this doesn't bite again in .12+. Note: `cbt/build.cyr`'s
+`var argv[4]` + `store64(&argv + 8, ...)` pattern is the same
+bug class but works only because `argv` is the last referenced
+local. Don't copy the pattern.
+
+**Mechanical gates green**:
+- cycc x86 **byte-identical at 885,024 B** (stdlib-only change).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,784 → 2,791 fns (+7 publics: 3 record
+  fns + 2 seq fns + 2 nonce/AAD fns; `_tn_be*_*` private).
+- `tls_native_scaffold.tcyr` 34 → 78 asserts (44 new for record
+  layer + BE + seq + nonce + AAD).
+
+Memory pin: [`project_native_tls_arc_v6_2_x`] — Mini-arc A step 2
+of 5 done. v6.0.x going forward:
+  - .12: handshake message framing (HandshakeType wire,
+    reader/writer, transcript hash accumulator)
+  - .13: TLS 1.3 key schedule (HKDF tree)
+  - .14: ciphersuite negotiation
+  - .15–.22: Mini-arc B (TLS 1.3 client)
+  - .23–.28: Mini-arc C (TLS 1.3 server)
+  - .29–.34: Mini-arc D (TLS 1.2 backport)
+  - .35–.37: Mini-arc E (consumer wiring + closeout)
+  - .38–.39: cyrius tests + TOML
+  - .40–.44: back-end remaining
+  - .45: cycle closeout
+
 ## Session close — 2026-05-28 (.10 ship — TLS Mini-arc A.1 scaffold)
 
 Closing **v6.0.10**, the first slot of the native TLS arc

@@ -84,4 +84,133 @@ assert_eq(TLS_HS_FINISHED, 20, "HandshakeType Finished = 20");
 assert_eq(TLS_GROUP_X25519, 0x001D, "X25519 group = 0x001D");
 assert_eq(TLS_GROUP_SECP256R1, 0x0017, "secp256r1 group = 0x0017");
 
+test_group("v6.0.11 record layer — constants + BE helpers");
+
+# Record-layer caps (RFC 8446 §5.1, §5.2)
+assert_eq(TLS_RECORD_HEADER_LEN, 5, "record header is 1+2+2 bytes");
+assert_eq(TLS_RECORD_MAX_PLAINTEXT, 16384, "max plaintext fragment = 2^14");
+assert_eq(TLS_RECORD_MAX_CIPHERTEXT, 16640, "max ciphertext fragment = 16384 + 256");
+assert_eq(TLS_AEAD_NONCE_LEN, 12, "AEAD nonce = 96 bits");
+assert_eq(TLS_AEAD_TAG_LEN, 16, "AEAD tag = 128 bits (Poly1305 / GCM-128)");
+assert_eq(TLS_SEQ_NUM_LEN, 8, "sequence number = 64 bits");
+
+# BE wire helpers — round-trip
+var _be_buf[2];
+_tn_be16_w(&_be_buf, 0x1303);  # TLS_CHACHA20_POLY1305_SHA256
+assert_eq(load8(&_be_buf),     0x13, "be16_w MSB first");
+assert_eq(load8(&_be_buf + 1), 0x03, "be16_w LSB second");
+assert_eq(_tn_be16_r(&_be_buf), 0x1303, "be16_r round-trips");
+
+var _be24[3];
+_tn_be24_w(&_be24, 0xABCDEF);
+assert_eq(load8(&_be24),     0xAB, "be24_w byte0");
+assert_eq(load8(&_be24 + 1), 0xCD, "be24_w byte1");
+assert_eq(load8(&_be24 + 2), 0xEF, "be24_w byte2");
+assert_eq(_tn_be24_r(&_be24), 0xABCDEF, "be24_r round-trips (handshake length field)");
+
+var _be64[8];
+_tn_be64_w(&_be64, 0x0123456789ABCDEF);
+assert_eq(_tn_be64_r(&_be64), 0x0123456789ABCDEF, "be64 round-trip");
+
+test_group("v6.0.11 record layer — header encode/decode");
+
+# Encode + decode a TLS 1.3 Application Data record header (the
+# typical post-handshake shape: ct=23, version=0x0303 legacy,
+# length=42 for a 42-byte ciphertext fragment).
+var _hdr[5];
+var n = tls_native_record_write_header(&_hdr, TLS_CT_APPLICATION_DATA, 0x0303, 42);
+assert_eq(n, 5, "write_header returns 5");
+assert_eq(load8(&_hdr),     23,   "header byte 0 = ContentType app_data (23)");
+assert_eq(load8(&_hdr + 1), 0x03, "header byte 1 = version_hi (0x03)");
+assert_eq(load8(&_hdr + 2), 0x03, "header byte 2 = version_lo (0x03)");
+assert_eq(load8(&_hdr + 3), 0x00, "header byte 3 = length_hi (0)");
+assert_eq(load8(&_hdr + 4), 42,   "header byte 4 = length_lo (42)");
+
+# Decode the same header back.
+var _ct_out[1];
+var _ver_out[1];
+var _len_out[1];
+var rc = tls_native_record_read_header(&_hdr, 5, &_ct_out, &_ver_out, &_len_out);
+assert_eq(rc, 5, "read_header returns 5");
+assert_eq(load64(&_ct_out),  TLS_CT_APPLICATION_DATA, "decoded ct");
+assert_eq(load64(&_ver_out), 0x0303,                  "decoded version");
+assert_eq(load64(&_len_out), 42,                      "decoded length");
+
+# Short-buffer rejection (RFC requires the full 5-byte header).
+var _short[1];
+assert_eq(tls_native_record_read_header(&_short, 4, &_ct_out, &_ver_out, &_len_out),
+          TLS_ERR_BAD_RECORD, "read_header rejects buflen < 5");
+
+# Length-cap rejection
+assert_eq(tls_native_record_write_header(&_hdr, 23, 0x0303, 16641),
+          TLS_ERR_INVALID_PARAM, "write_header rejects length > 16640");
+
+# Fragmentation counts (RFC 8446 §5.1)
+assert_eq(tls_native_record_fragment_count(0),     0, "empty payload → 0 records");
+assert_eq(tls_native_record_fragment_count(1),     1, "1 byte → 1 record");
+assert_eq(tls_native_record_fragment_count(16384), 1, "exactly cap → 1 record");
+assert_eq(tls_native_record_fragment_count(16385), 2, "cap+1 → 2 records");
+assert_eq(tls_native_record_fragment_count(32768), 2, "exactly 2× cap → 2 records");
+assert_eq(tls_native_record_fragment_count(32769), 3, "2×cap+1 → 3 records");
+
+test_group("v6.0.11 record layer — sequence numbers + AEAD nonce");
+
+# Sequence init + increment
+var _seq[1];
+tls_native_seq_init(&_seq);
+assert_eq(_tn_be64_r(&_seq), 0, "seq_init zeros the buffer");
+
+tls_native_seq_increment(&_seq);
+assert_eq(_tn_be64_r(&_seq), 1, "seq_increment: 0 → 1");
+tls_native_seq_increment(&_seq);
+tls_native_seq_increment(&_seq);
+assert_eq(_tn_be64_r(&_seq), 3, "seq_increment: 1 → 2 → 3");
+
+# Sequence-exhaustion guard: set to MAX and verify the next bump
+# returns TLS_ERR_PROTOCOL. (Use _tn_be64_w to plant the sentinel
+# value — increment-from-zero 2^64 times is not feasible.)
+_tn_be64_w(&_seq, 0 - 1);  # all 64 bits set
+assert_eq(tls_native_seq_increment(&_seq), TLS_ERR_PROTOCOL,
+          "seq_increment refuses to wrap from all-ones");
+
+# AEAD nonce derivation per RFC 8446 §5.3. Hand-crafted vector:
+#   static_iv = 0x404142434445464748494A4B  (12 bytes; arbitrary)
+#   seq       = 0x0000000000000007         (record #7)
+#   expected  = static_iv XOR (4 zero bytes || seq)
+#             = 0x40414243 4445464F 4E4D4C40
+#                                  ^^ high 4 bytes copied
+#                                              ^^ low 8 XOR'd
+# NB cyrius `var x[N]` allocates N BYTES (rounded up to 8), not N
+# slots — so we need [12] for the 12-byte IV, not [2]. Earlier draft
+# used [2] (8 bytes), which overlapped with the next local and got
+# clobbered by the seq write. Caught by the v6.0.11 .tcyr.
+var _iv[12];
+_tn_be32_w(&_iv,     0x40414243);
+_tn_be32_w(&_iv + 4, 0x44454647);
+_tn_be32_w(&_iv + 8, 0x48494A4B);
+
+var _seq2[8];
+_tn_be64_w(&_seq2, 7);  # record number 7
+
+var _nonce[12];
+tls_native_aead_nonce(&_iv, &_seq2, &_nonce);
+# Expected: high 4 bytes copy IV; low 8 bytes = IV[4..12] XOR seq[0..8]
+#   IV[4..12] = 44 45 46 47 48 49 4A 4B
+#   seq[0..8] = 00 00 00 00 00 00 00 07
+#   XOR       = 44 45 46 47 48 49 4A 4C
+assert_eq(load8(&_nonce),     0x40, "nonce[0] = iv[0]");
+assert_eq(load8(&_nonce + 3), 0x43, "nonce[3] = iv[3]");
+assert_eq(load8(&_nonce + 4), 0x44, "nonce[4] = iv[4] XOR seq[0]=0");
+assert_eq(load8(&_nonce + 10), 0x4A, "nonce[10] = iv[10] XOR seq[6]=0");
+assert_eq(load8(&_nonce + 11), 0x4C, "nonce[11] = iv[11] XOR seq[7]=7 → 0x4B^0x07 = 0x4C");
+
+# AAD construction: per RFC 8446 §5.2, the AAD for the AEAD is
+# the 5-byte record header — so tls_native_record_aad should be
+# byte-identical to tls_native_record_write_header.
+var _aad[5];
+tls_native_record_aad(TLS_CT_APPLICATION_DATA, 0x0303, 256, &_aad);
+assert_eq(load8(&_aad),     23,   "aad[0] = ContentType");
+assert_eq(load8(&_aad + 3), 0x01, "aad[3] = length_hi (256 >> 8 = 1)");
+assert_eq(load8(&_aad + 4), 0x00, "aad[4] = length_lo (256 & 0xFF = 0)");
+
 var r = assert_summary();

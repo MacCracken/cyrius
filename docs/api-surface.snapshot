@@ -2562,6 +2562,7 @@ tls::tls_supports_session_resumption/0
 tls::tls_write/3
 tls::tls_write_early_data/3
 tls_native::tls_native_accept/2
+tls_native::tls_native_aead_nonce/3
 tls_native::tls_native_available/0
 tls_native::tls_native_close/1
 tls_native::tls_native_connect/2
@@ -2573,6 +2574,12 @@ tls_native::tls_native_get_version/1
 tls_native::tls_native_new_client/2
 tls_native::tls_native_new_server/4
 tls_native::tls_native_read/3
+tls_native::tls_native_record_aad/4
+tls_native::tls_native_record_fragment_count/1
+tls_native::tls_native_record_read_header/5
+tls_native::tls_native_record_write_header/4
+tls_native::tls_native_seq_increment/1
+tls_native::tls_native_seq_init/1
 tls_native::tls_native_set_alpn/3
 tls_native::tls_native_set_ca_bundle/4
 tls_native::tls_native_set_verify/2

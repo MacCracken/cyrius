@@ -6,6 +6,96 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.11] — 2026-05-28
+
+**TLS arc Mini-arc A.2 — record layer.** Second slot of the native
+TLS arc. Adds the record-layer building blocks: wire-format BE
+helpers, 5-byte record header encode/decode, fragmentation count,
+per-direction sequence numbers, AEAD nonce derivation (RFC 8446
+§5.3), and AAD construction (§5.2). Still pure protocol primitives;
+the public consumer-facing API (`tls_native_connect/write/read`)
+stays stubbed until the key-schedule and ciphersuite slots
+(.13–.14) land.
+
+### Added — record-layer primitives in `lib/tls_native.cyr`
+
+**Constants**:
+- `TLS_RECORD_HEADER_LEN = 5` (ContentType + version + length).
+- `TLS_RECORD_MAX_PLAINTEXT = 16384` (RFC 8446 §5.1).
+- `TLS_RECORD_MAX_CIPHERTEXT = 16640` (= 16384 + 256, §5.2).
+- `TLS_AEAD_NONCE_LEN = 12` (96-bit, §5.3).
+- `TLS_AEAD_TAG_LEN = 16` (Poly1305 + GCM-128 both 128-bit).
+- `TLS_SEQ_NUM_LEN = 8`.
+- `TLS_ERR_RECORD_OVERFLOW = -20` (new error; record length exceeds cap).
+
+**BE wire helpers** (internal, `_tn_` prefix):
+- `_tn_be16_w` / `_tn_be16_r` — 2-byte length / version / ciphersuite fields.
+- `_tn_be24_w` / `_tn_be24_r` — 3-byte handshake-message length field.
+- `_tn_be32_w` / `_tn_be32_r` — 4-byte generic.
+- `_tn_be64_w` / `_tn_be64_r` — 8-byte sequence numbers.
+
+No existing stdlib peer covered big-endian I/O — TLS is BE end-to-end,
+and the only other consumer in flight (QUIC, HTTP/2 binary frames) is
+hypothetical, so inline here. Promote to `lib/be.cyr` if a second
+consumer materialises.
+
+**Record header encode / decode**:
+- `tls_native_record_write_header(buf, ct, version, length)` →
+  bytes-written (5) or `TLS_ERR_INVALID_PARAM` on length overflow.
+- `tls_native_record_read_header(buf, buflen, ct_out, version_out, length_out)`
+  → bytes-consumed (5) or `TLS_ERR_BAD_RECORD` on short buffer.
+- `tls_native_record_fragment_count(plaintext_len)` → number of
+  16 KiB records needed to ship `plaintext_len` bytes.
+
+**Sequence numbers + AEAD nonce + AAD**:
+- `tls_native_seq_init(seq8)` / `tls_native_seq_increment(seq8)` —
+  per-direction 64-bit counter. Increment refuses to wrap from
+  all-ones (RFC 8446 §5.3 invariant) → returns `TLS_ERR_PROTOCOL`.
+- `tls_native_aead_nonce(static_iv12, seq8, nonce_out12)` — XOR
+  the direction's static IV with the left-zero-padded sequence number,
+  per RFC 8446 §5.3. Both AEAD ciphersuites (AES-GCM,
+  ChaCha20-Poly1305) use this identical construction.
+- `tls_native_record_aad(ct, version, length, aad_out5)` — RFC 8446
+  §5.2 specifies the 5-byte record header IS the AEAD AAD. Thin
+  wrapper around `tls_native_record_write_header`.
+
+### Updated — `tests/tcyr/tls_native_scaffold.tcyr`
+
+44 new asserts (78 total). Coverage:
+- All 6 new constants (record caps, AEAD lengths, seq length).
+- BE round-trip for be16/be24/be64.
+- Header encode → decode with hand-computed wire bytes
+  (`ct=23, version=0x0303, length=42` → `17 03 03 00 2A`).
+- Short-buffer + length-cap rejection.
+- Fragmentation: 0 / 1 / 16384 / 16385 / 32768 / 32769 byte payloads
+  → 0 / 1 / 1 / 2 / 2 / 3 records.
+- Sequence init / increment / wrap-refusal.
+- AEAD nonce hand-vector: `static_iv = 0x404142434445464748494A4B`,
+  `seq = 7` → `nonce = 0x404142434445464748494A4C` (last byte XOR'd).
+- AAD construction byte-identity with header.
+
+### Pinned — `feedback_var_array_byte_sized`
+
+Slot also surfaced a cyrius gotcha that took ~30 min of debugging:
+`var x[N]` allocates `N` *bytes* (rounded to 8-byte alignment), NOT
+`N` i64 slots. A 12-byte IV declared `var iv[2]` is only 8 bytes;
+writes to `&iv + 8..11` clobber the next stack local. Caught by the
+.11 .tcyr (aead_nonce returned phantom zeros). Verified in
+`src/frontend/parse_decl.cyr` (`var aligned = (asz + 7) & ~7`).
+Memory pin: `feedback_var_array_byte_sized`.
+
+### Mechanical
+
+- cycc x86 **byte-identical at 885,024 B** (stdlib-only change).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,784 → 2,791 fns (+7 record-layer publics:
+  4 record fns + 3 seq/nonce/AAD; `_tn_be*_*` helpers stay private).
+
+Memory pin: `project_native_tls_arc_v6_2_x` — Mini-arc A step 2 of 5
+done; .12 = handshake message framing next.
+
 ## [6.0.10] — 2026-05-28
 
 **TLS arc Mini-arc A.1 — `lib/tls_native.cyr` scaffold.** First slot of
