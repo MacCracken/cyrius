@@ -152,8 +152,8 @@ fn _usage(): i64 {
     syscall(1, 1, "USAGE:\n", 7);
     syscall(1, 1, "    ts_test_runner [opts] <path>\n\n", 34);
     syscall(1, 1, "OPTS:\n", 6);
-    syscall(1, 1, "    --mode=parse    use `cycc --parse-ts` (default)\n", 51);
-    syscall(1, 1, "    --mode=lex      use `cycc --lex-ts`\n", 39);
+    syscall(1, 1, "    --mode=parse    use `cycc --parse-ts` (default)\n", 52);
+    syscall(1, 1, "    --mode=lex      use `cycc --lex-ts`\n", 40);
     syscall(1, 1, "    --ext=.ts       walk .ts files (default)\n", 46);
     syscall(1, 1, "    --ext=.tsx      walk .tsx files instead\n", 45);
     syscall(1, 1, "    --show-fails    print path of each failing fixture\n", 57);
@@ -179,10 +179,10 @@ fn main(): i64 {
     var hlen = strlen(home_env);
     var cc_path = alloc(hlen + 32);
     memcpy(cc_path, home_env, hlen);
-    memcpy(cc_path + hlen, "/.cyrius/bin/cycc", 16);
-    store8(cc_path + hlen + 16, 0);
+    memcpy(cc_path + hlen, "/.cyrius/bin/cycc", 17);
+    store8(cc_path + hlen + 17, 0);
     if (file_exists(cc_path) != 1) {
-        syscall(1, 2, "error: cycc not found at ", 24);
+        syscall(1, 2, "error: cycc not found at ", 25);
         syscall(1, 2, cc_path, strlen(cc_path));
         syscall(1, 2, "\n", 1);
         return 1;

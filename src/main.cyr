@@ -450,6 +450,13 @@ var _strict_mode = 0;
 var _had_error = 0;
 var _ts_lex_only_mode = 0;       # P1.6b: --lex-ts CLI flag
 var _ts_parse_only_mode = 0;     # P2.1: --parse-ts CLI flag
+# v6.0.5: path arg for `--parse-ts <file>` / `--lex-ts <file>` so a
+# scripted invocation doesn't block reading stdin (yeo-cy-test papercut
+# #3, 2026-05-27). The next non-flag arg after a TS mode flag is the
+# input path; if 0, fall back to stdin (preserves all existing callers
+# that dup2 a fixture fd onto stdin).
+var _ts_input_path = 0;
+var _ts_expect_path = 0;
 var _vbuf[256];
 var _vfd = 0;
 if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
@@ -462,6 +469,16 @@ if (_vn > 0) {
     # Walk the cmdline args, looking for --version or --strict. Each
     # arg is NUL-terminated; cmdline contains argv[0]\0argv[1]\0...
     while (_vi < _vn) {
+        # If a TS mode flag was just seen and the current arg isn't a
+        # flag, treat it as the input file path (v6.0.5).
+        if (_ts_expect_path == 1) {
+            if (_vi + 2 <= _vn) {
+                if (load8(&_vbuf + _vi) != 45 || load8(&_vbuf + _vi + 1) != 45) {
+                    _ts_input_path = &_vbuf + _vi;
+                    _ts_expect_path = 0;
+                }
+            }
+        }
         # "--ve" (--version) — short-circuit exit
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
@@ -485,6 +502,7 @@ if (_vn > 0) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 108 && load8(&_vbuf + _vi + 3) == 101) {
                     _ts_lex_only_mode = 1;
+                    _ts_expect_path = 1;
                 }
             }
         }
@@ -495,6 +513,7 @@ if (_vn > 0) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 112 && load8(&_vbuf + _vi + 3) == 97) {
                     _ts_parse_only_mode = 1;
+                    _ts_expect_path = 1;
                 }
             }
         }
@@ -519,17 +538,34 @@ _HEAP_INIT_SCRATCH(S);
 # fills the whole buffer, we error out explicitly instead of silently truncating
 # — the old silent cap at 131072 bytes masked the mabda 141KB bundle failure as
 # a random "unexpected end of file" at token ~3719.
+#
+# v6.0.5: when `--parse-ts <file>` / `--lex-ts <file>` provides a path arg,
+# read from the named file instead of stdin so scripted CI invocations don't
+# block on a terminal-less stdin.
+var _input_fd = 0;
+if (_ts_input_path != 0) {
+    if (SYS_OPEN == 2) { _input_fd = syscall(SYS_OPEN, _ts_input_path, 0, 0); }
+    else { _input_fd = syscall(SYS_OPEN, 0 - 100, _ts_input_path, 0, 0); }
+    if (_input_fd < 0) {
+        syscall(SYS_WRITE, 2, "error: cannot open '", 20);
+        var _pl = 0;
+        while (load8(_ts_input_path + _pl) != 0) { _pl = _pl + 1; }
+        syscall(SYS_WRITE, 2, _ts_input_path, _pl);
+        syscall(SYS_WRITE, 2, "'\n", 2);
+        syscall(SYS_EXIT, 1);
+    }
+}
 var bl = 0;
 var done = 0;
 while (done == 0) {
-    var n = syscall(SYS_READ, 0, S + bl, 1048576 - bl);
+    var n = syscall(SYS_READ, _input_fd, S + bl, 1048576 - bl);
     if (n <= 0) { done = 1; }
     else {
         bl = bl + n;
         if (bl >= 1048576) {
             # One more read to distinguish "exactly 256KB" from "more coming"
             var probe[1];
-            var pn = syscall(SYS_READ, 0, &probe, 1);
+            var pn = syscall(SYS_READ, _input_fd, &probe, 1);
             if (pn > 0) {
                 syscall(SYS_WRITE, 2, "error: input exceeds 1MB buffer (raise input_buf in src/main.cyr)\n", 66);
                 syscall(SYS_EXIT, 1);
@@ -538,6 +574,7 @@ while (done == 0) {
         }
     }
 }
+if (_input_fd != 0) { syscall(SYS_CLOSE, _input_fd); }
 SBL(S, bl);
 
 # ─── TS lex-only mode (P1.6b wire-in) ─────────────────────────────

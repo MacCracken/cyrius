@@ -88,6 +88,19 @@ bayan/ganita carve, all together).
   `_dce_fn_count_gate` (check.sh 80), `check.cyr` S64→store64 SIGILL
   fix, audit-walker `-- bundled distribution` recognition, and the
   stdlib refresh sigil 3.1.1→3.5.5 + patra 1.9.4→1.10.3.
+- **v6.0.5** — TS scripting papercut bundle from yeo-cy-test
+  (2026-05-27 filing). Bug 1: four v6.0.0 rename-drift length args in
+  `programs/ts_test_runner.cyr` (memcpy 16→17, store8 +16→+17, error
+  text 24→25, two help-text lines 51→52 + 39→40) — out-of-the-box
+  runner couldn't find `cycc`. Bug 3: `src/main.cyr`'s cmdline parser
+  ignored the path arg after `--parse-ts` / `--lex-ts`; cycc now opens
+  the named file instead of reading stdin (backward-compatible with all
+  `dup2(fd, 0)` callers). Bug 2 (`cyrius build` exit-0 on failure) did
+  not reproduce — `cmd_build` returns `compile()`'s nonzero result and
+  has since 2026-04-16; locked in as `_build_exit_nonzero_gate`.
+  `_ts_path_arg_gate` covers the bug 3 invariant (piping garbage to
+  stdin while passing a valid path; exit 0 only if cycc reads the
+  path). check.sh 80 → 82.
 
 ### Pinned slot sequence
 
@@ -307,43 +320,14 @@ carry-forward list below).
   bug-bandwidth slot ahead of the lower-pressure Planned items
   when there's room; ASK for a slot number when ready to pin
   ([[feedback_no_unilateral_scope_decisions]]).
-- **TS front-end scripting papercuts** (SecureYeoman `yeo-cy-test`
-  port probe, 2026-05-27) — three small toolchain bugs that break
-  *scripting* the TS front-end (CI / build tools). Issue:
-  [`issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md).
-  **Two confirmed in-tree at review:**
-  1. **`ts_test_runner` `cyc` truncation** —
-     `programs/ts_test_runner.cyr:182` does `memcpy(cc_path + hlen,
-     "/.cyrius/bin/cycc", 16)` but the literal is **17 bytes**, so it
-     looks for `~/.cyrius/bin/cyc`. Rename-leftover byte-count bug
-     (`/.cyrius/bin/cc5` was exactly 16; the cc5→cycc rename updated the
-     literal not the length — same class as the v6.0.1 skip-prefix
-     off-by-one). One-line fix (16→17, `store8` at +17). The same fn
-     `return 1`s on the not-found path but the process still exits 0 —
-     top-level `return` isn't wired to `sys_exit` (the TS modes in
-     `main.cyr` use explicit `syscall(SYS_EXIT, …)`); add the explicit
-     exit.
-  2. **`cyrius build` exits 0 on compile failure** — consumer saw
-     `error:` + `FAIL` + **exit 0** on a failing build. `cmd_build`
-     returns 1 on failure (`cbt/build.cyr:202`) and `cyrius.cyr:277`
-     propagates it, so a nonzero child-`cycc` status is swallowed
-     somewhere between `compile()` and process exit — **root-cause at
-     slot entry**. *Highest leverage of the three*: not TS-specific —
-     silently breaks every scripted / CI build. Same "exit-0-on-error"
-     family as #1's second half ([[feedback_tcyr_ending_pattern]] /
-     [[feedback_end_to_end_verify_helpers_before_commit]]).
-  3. **`--parse-ts <file>` blocks on stdin** — cycc reads stdin
-     unconditionally (`src/main.cyr:524-540`) and ignores the path arg,
-     so a scripted `cycc --parse-ts app.tsx` hangs (one orphan held a
-     lock ~17 min). Fix: open the path arg when present (or at minimum
-     document the `</dev/null` workaround).
-  **Priority** (user direction 2026-05-27): **near-term bug-bandwidth** —
-  pull into an open slot *soon* (the `cyc` one-liner + the build exit
-  code are the live ones). Cross-arch propagation per
-  [[feedback_cross_arch_propagation_mandatory]] where a fix touches
-  compiler emit. Not pinned to a slot number yet — ASK when ready to pin.
-  The frontend's missing JS/JSX **emit** stage from the same filing is a
-  larger arc, minor TBD — see [roadmap-future.md](roadmap-future.md).
+- ~~**TS front-end scripting papercuts** (SecureYeoman `yeo-cy-test`
+  port probe, 2026-05-27)~~ — **SHIPPED v6.0.5.** All three sub-bugs
+  resolved: #1 (`cyc` truncation) and #3 (`--parse-ts` stdin block)
+  fixed; #2 (`cyrius build` exit-0) didn't reproduce and is now gated
+  as an invariant (`_build_exit_nonzero_gate`). See CHANGELOG [6.0.5]
+  and the issue's *Status* section. The frontend's missing JS/JSX
+  **emit** stage from the same filing is a larger arc, minor TBD —
+  see [roadmap-future.md](roadmap-future.md).
 
 ### v6.0-runway carry-forward (5 items from v5.11.x close band)
 

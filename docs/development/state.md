@@ -3,6 +3,54 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.5 ship — TS scripting papercut bundle)
+
+Closing **v6.0.5**, the three near-term TS scripting papercuts filed by
+secureyeoman's `yeo-cy-test` port viability probe
+(`docs/development/issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`).
+Bugs 1 + 3 reproduced + fixed; bug 2 didn't reproduce on v6.0.4 — wiring
+was correct since 2026-04-16; gated as an invariant.
+
+**Bug 1 — `ts_test_runner` truncates `cycc` → `cyc`:** four v6.0.0
+rename-drift length args in `programs/ts_test_runner.cyr` (the `cc5` → `cycc`
+rename added 1 byte but `memcpy` / `syscall` len args weren't bumped):
+the `cc_path` memcpy (16→17), the `store8` NUL offset (+16→+17), the
+"not found at " error line (24→25), and two help-text lines (51→52 and
+39→40). Same off-by-one class as the v6.0.1 lex skip-prefix bug. Out-of-
+the-box `ts_test_runner` couldn't find the compiler on a fresh v6.0.0+
+install. Exit-code wiring was already correct (`syscall(60, rc)` at
+line 254); the filing's "exits 0" claim didn't reproduce locally.
+
+**Bug 3 — `cycc --parse-ts <file>` blocks on stdin:** `src/main.cyr`'s
+cmdline parser saw `--parse-ts` / `--lex-ts` but discarded the path arg
+that followed; the compiler then read stdin unconditionally and hung in
+no-tty contexts (yeo-cy-test reported a 17-min orphan holding a lock).
+Fix: track `_ts_expect_path` after a TS mode flag, capture the next
+non-flag arg as `_ts_input_path` (pointer into the file-scope `_vbuf`),
+and open that file instead of stdin in the read loop. Backward-compatible
+with all `dup2(fd, 0)` callers (no path arg → stays on stdin).
+
+**Bug 2 — `cyrius build` exit-0 on compile failure (gated, not fixed):**
+empirical premise-check across `cmd_build`, `--strict`, `-q`,
+stdout-suppressed, and bare invocation all exit 1 on v6.0.4. `cmd_build`
+returns `compile()`'s nonzero result directly (unchanged since
+2026-04-16), `main()` propagates, `syscall(60, exit_code)` does the right
+thing. The filer's environment likely wrapped the call in a shell that
+masked the exit code. Locked in via `_build_exit_nonzero_gate` —
+a future refactor that silently drops the nonzero status will go red.
+
+**Gates added (check.sh 80 → 82):**
+- `_build_exit_nonzero_gate` — `cyrius build` on a broken source exits ≠ 0.
+- `_ts_path_arg_gate` — `cycc --parse-ts <valid-file>` with **invalid TS
+  piped to stdin** exits 0 (proves the path arg path is taken, not stdin).
+
+**Mechanical gates green:** cycc self-host **byte-identical 876,616 B**
+(+1032 B over v6.0.4 — the bug 3 cmdline-parser + open-file wiring);
+check.sh **82/82**.
+
+Memory pin: this slot fulfils the "TS front-end scripting papercuts"
+near-term entry from `docs/development/roadmap.md` v6.0.x Planned list.
+
 ## Session close — 2026-05-27 (.4 ship — kybernet aarch64 codegen-hang fixed + stdlib refresh)
 
 Closing **v6.0.4**, the kybernet aarch64 codegen-hang + DCE correctness

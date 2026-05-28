@@ -2325,6 +2325,112 @@ fn _deps_lock_gate(): i64 {
     return fail;
 }
 
+# v6.0.5: `cycc --parse-ts <file>` MUST read from the named file instead
+# of stdin. yeo-cy-test papercut #3 (2026-05-27) reported that a scripted
+# invocation hung 17 min holding a lock because cycc read stdin
+# unconditionally and ignored the path arg. The discriminator: pipe
+# invalid TS to stdin AND pass a valid file path. Fix working → cycc
+# opens the file → exit 0. Fix regressed → cycc reads garbage from
+# stdin → exit non-zero.
+fn _ts_path_arg_gate(): i64 {
+    var label = "cycc --parse-ts <file> reads from file not stdin (v6.0.5; yeo-cy-test papercut #3 invariant)";
+
+    var fix = _root_path("tests/fixtures/ts_lex/sample.ts");
+    if (file_exists(fix) != 1) {
+        _p("  skip: sample.ts fixture missing\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var garbage_path = _tmp_path("audit_ts_path_arg_stdin_");
+    _write_file(garbage_path, "this is not valid TS @#$%^&*\n");
+
+    var pid = sys_fork();
+    if (pid < 0) { sys_unlink(garbage_path); _check(label, 1); return 1; }
+    if (pid == 0) {
+        var gfd = sys_open(garbage_path, 0, 0);
+        if (gfd >= 0) { sys_dup2(gfd, 0); sys_close(gfd); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[4];
+        store64(&argv,      CC_PATH);
+        store64(&argv + 8,  "--parse-ts");
+        store64(&argv + 16, fix);
+        store64(&argv + 24, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(CC_PATH, &argv, &envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    sys_unlink(garbage_path);
+    var status = load32(&stbuf);
+    var ec = 0 - 1;
+    if (WIFEXITED(status) == 1) { ec = WEXITSTATUS(status); }
+
+    var fail = 0;
+    if (ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cycc --parse-ts <path> exit "); print_num(ec);
+        println(" (regression — reading stdin instead of the path arg?)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": cycc --parse-ts <path> reads from file, ignores piped garbage stdin");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# v6.0.5: `cyrius build` MUST exit non-zero when the underlying cycc
+# compile fails. The yeo-cy-test 2026-05-27 filing claimed an exit-0
+# regression at v6.0.3 — premise-check at v6.0.4 debunked it (`cmd_build`
+# returns `r` from compile() since 2026-04-16, main() propagates, and
+# `syscall(60, exit_code)` does the right thing). This gate locks the
+# invariant so a future refactor of cmd_build / compile() / the wrapper's
+# exit path can't silently drop nonzero status without check.sh going red.
+fn _build_exit_nonzero_gate(): i64 {
+    var label = "cyrius build exits non-zero when cycc fails (v6.0.5; yeo-cy-test papercut #2 invariant)";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fx = _tmp_path("audit_build_exit_");
+    sys_mkdir(fx, 0x1ED);
+    # '//' triggers `error: <source>:1: unexpected '/'` in cycc (cyrius
+    # comments are '#'); guaranteed parse failure with no dep surface.
+    _write_file(_lk_path(fx, "/bad.cyr"), "//comment\n");
+    _write_file(_lk_path(fx, "/cyrius.cyml"), "[package]\nname = \"build_exit_gate\"\n");
+
+    var bout = _tmp_path("audit_build_exit_out_");
+    var bec = _exec_in_dir3(fx, cyrius_bin, "build", "bad.cyr", "bad.out", bout);
+
+    sys_unlink(bout);
+    sys_unlink(_lk_path(fx, "/bad.out"));
+    sys_unlink(_lk_path(fx, "/bad.cyr"));
+    sys_unlink(_lk_path(fx, "/cyrius.cyml"));
+    sys_rmdir(fx);
+
+    var fail = 0;
+    if (bec == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cyrius build returned 0 on broken source (yeo-cy-test papercut #2 regressed)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": cyrius build exited "); print_num(bec); println(" (non-zero) on broken source");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # Helper: find first occurrence of `needle` in [buf, buf+n) starting
 # at `from`. Returns offset on hit, -1 on miss. Used by the cap-drift
 # and doc-size gates to scan for textual patterns inside loaded buffers.
@@ -9623,6 +9729,14 @@ fn _run_regression_gates(): i64 {
 
     _section("aarch64 DCE fn-count accessor + live[] cap (v6.0.4)");
     _dce_fn_count_gate();
+    println("");
+
+    _section("cyrius build exits non-zero on cycc failure (v6.0.5)");
+    _build_exit_nonzero_gate();
+    println("");
+
+    _section("cycc --parse-ts <file> reads from path arg (v6.0.5)");
+    _ts_path_arg_gate();
     println("");
 
     _section("Cap-drift detector (heap-map ↔ inline literals)");

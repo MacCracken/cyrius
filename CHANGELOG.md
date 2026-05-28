@@ -6,6 +6,70 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.5] — 2026-05-28
+
+**TS scripting papercut bundle: three small toolchain bugs that each
+broke *scripting* the TS front-end (CI, build tools).** Filed by
+secureyeoman's `yeo-cy-test` port viability probe (issue
+`2026-05-27-yeo-cy-test-no-tsx-js-emit.md`). Bug 2 (`cyrius build`
+exits 0 on compile failure) couldn't be reproduced on v6.0.4 — the
+wiring is correct end-to-end since 2026-04-16; gated as an invariant.
+Bugs 1 + 3 confirmed and fixed.
+
+### Fixed — `ts_test_runner` looks for `cyc` instead of `cycc`
+
+`programs/ts_test_runner.cyr` had four v6.0.0 rename-drift byte-count
+bugs from the `cc5` → `cycc` rename (length added 1 char but the
+hardcoded length args weren't bumped):
+
+- Line 182: `memcpy(cc_path + hlen, "/.cyrius/bin/cycc", 16)` — `cycc`
+  is 17 bytes; the trailing `c` was truncated and the runner looked
+  for `~/.cyrius/bin/cyc`, which doesn't exist. Same off-by-one class
+  as the v6.0.1 lex skip-prefix bug. Bumped to 17 + `store8` offset
+  to +17.
+- Line 185: `"error: cycc not found at "` is 25 bytes; was 24. Trailing
+  space dropped on the error line.
+- Lines 155-156: two help-text rows where `cycc` (4) replaced `cc5` (3)
+  but lengths weren't bumped, dropping the trailing newline.
+
+Net effect: out-of-the-box `ts_test_runner` couldn't find the compiler
+on a fresh v6.0.0+ install. Fix is purely the length args.
+
+### Fixed — `cycc --parse-ts <file>` blocks on stdin
+
+`src/main.cyr`'s cmdline parser detected `--parse-ts` / `--lex-ts` but
+ignored any following path argument; the compiler then read stdin
+unconditionally (`syscall(SYS_READ, 0, …)`). In a scripted / no-tty
+context this hung forever — yeo-cy-test reported a 17-min orphan
+holding a lock. The recommended workaround was `</dev/null`.
+
+Fix: when a TS mode flag is seen, record the next non-flag arg as the
+input path and open it instead of reading stdin. Backward-compatible:
+callers that `dup2` a fixture fd onto stdin (the existing
+`_ts_corpus_gate` shape) still work because no path arg is passed.
+Open failure emits `error: cannot open '<path>'` and exits 1.
+
+### Gated — `cyrius build` exits non-zero on compile failure (invariant)
+
+The yeo-cy-test filing claimed `cyrius build` returned 0 on a failing
+build. Empirical repro on v6.0.4 contradicts: `cmd_build` returns
+`compile()`'s nonzero result directly (unchanged since 2026-04-16),
+`main()` propagates, and `syscall(60, exit_code)` does the right thing
+across `--strict`, `-q`, stdout-suppressed, and the bare invocation.
+The original filer probably wrapped the call in a shell that masked
+the exit code. Added `_build_exit_nonzero_gate` (check.sh 81) so a
+future refactor can't silently regress this.
+
+### Gates added
+
+- `_build_exit_nonzero_gate` — runs `cyrius build` on a deliberately
+  broken source (`//comment`), asserts exit != 0.
+- `_ts_path_arg_gate` — runs `cycc --parse-ts tests/fixtures/ts_lex/sample.ts`
+  with **invalid TS piped to stdin**; passes only if cycc reads from
+  the path arg (exit 0) and ignores the garbage stdin.
+
+check.sh 80 → 82.
+
 ## [6.0.4] — 2026-05-27
 
 **Codegen P1: `cycc_aarch64` hot-spun indefinitely on large compiled units

@@ -4,6 +4,13 @@
 **Severity:** Medium — blocks "build the TS/TSX frontend just by Cyrius"; consumer stopgap is a hand-lowered JS bundle
 **Affects:** `cycc` 6.0.3 TS/TSX front-end (`--parse-ts` / `--lex-ts`); `cyrius` build tool
 
+## Status
+
+- **Main ask (TS→JS / JSX emit):** OPEN. Larger arc, minor TBD. See `roadmap-future.md`.
+- **Adjacent papercut #1 (`ts_test_runner` `cyc` truncation):** FIXED in v6.0.5 (four v6.0.0 rename-drift length args in `programs/ts_test_runner.cyr`). The "still exits 0" sub-claim didn't reproduce — `syscall(60, rc)` was already wired at line 254; the truncation was the user-visible bug. See CHANGELOG [6.0.5].
+- **Adjacent papercut #2 (`cyrius build` exits 0 on failure):** NOT REPRODUCED on v6.0.4 / .5. Empirical repro across `cmd_build`, `--strict`, `-q`, stdout-suppressed: every variant exits 1. `cmd_build` returns `compile()`'s result directly (unchanged since 2026-04-16). Likely a consumer shell wrapper masking the exit code. Locked in as an invariant via `_build_exit_nonzero_gate` (check.sh 81) so it can't silently regress.
+- **Adjacent papercut #3 (`--parse-ts <file>` blocks on stdin):** FIXED in v6.0.5. `src/main.cyr`'s cmdline parser now captures the next non-flag arg after `--parse-ts` / `--lex-ts` and opens it instead of reading stdin. Backward-compatible with `dup2(fd, 0)` callers. Locked in via `_ts_path_arg_gate` (check.sh 82). See CHANGELOG [6.0.5].
+
 ## Summary
 
 The Cyrius TS/TSX front-end parses but does not **emit**. `cycc --parse-ts`
