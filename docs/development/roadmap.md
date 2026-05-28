@@ -72,6 +72,22 @@ bayan/ganita carve, all together).
   repo with `src/main.cyr` + non-empty stdlib pin. Surfaced when
   gnoboot adopted `stdlib = ["fnptr"]`. Two regression smoke gates
   added (check.sh 78/78 now).
+- **v6.0.2** — `cyrius deps` correct-lock fix (`cyrius.lock` empty
+  ecosystem-wide since v5.11.8: `cmd_deps_lock` filtered by the stale
+  symlink proxy) + stdlib pins verified at 6.0.1. check.sh 79.
+- **v6.0.3** — `str_from` overload-dispatch misroute codegen P1
+  (nous 0001): the `_int` auto-route now gates on the base fn's return
+  type, so data-producing bases (`str_from: Str`) no longer stringify
+  cstr pointers as decimals.
+- **v6.0.4** — kybernet aarch64 codegen-hang fix: the aarch64 DCE
+  reachability pass used `GFCNT` (fixup count) where `GFNC` (fn count)
+  was needed, overflowing the 8192-slot fn-start hash into an uncapped
+  probe loop → infinite spin on units with >8192 fixups (a **v5.11.59**
+  regression, not the 6.0.0 rename the filing blamed). + DCE `live[]`
+  4096→8192 cap (both arches), `CYRIUS_DEBUG_PHASES` markers,
+  `_dce_fn_count_gate` (check.sh 80), `check.cyr` S64→store64 SIGILL
+  fix, audit-walker `-- bundled distribution` recognition, and the
+  stdlib refresh sigil 3.1.1→3.5.5 + patra 1.9.4→1.10.3.
 
 ### Pinned slot sequence
 

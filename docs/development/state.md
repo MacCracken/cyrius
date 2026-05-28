@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-27 (.4 ship — kybernet aarch64 codegen-hang fixed + stdlib refresh)
+
+Closing **v6.0.4**, the kybernet aarch64 codegen-hang + DCE correctness
+audit, plus the v6.0.x stdlib refresh (sigil 3.5.5, patra 1.10.3).
+
+**Root cause (corrected vs filing):** the aarch64 DCE reachability pass
+(`src/backend/aarch64/fixup.cyr`, added **v5.11.59** — NOT the 6.0.0 rename
+the filing blamed) used `GFCNT(S)` (fixup count, 9903 for kybernet) where
+it needed `GFNC(S)` (fn count, 3372). The 8192-slot fn-start hash
+overflowed → the uncapped probe loop spun forever (99.9% CPU, no output).
+**aarch64-only** (x86 used GFNC), **size-dependent** (>8192 fixups), and
+also **corrupted reachability** on smaller units (cycc-self-aarch64: 1701
+unreachable vs x86's 37). `cycc_aarch64` is an **x86-hosted cross-compiler**,
+so the hang reproduced + was fixed entirely on x86 — no Pi/qemu needed.
+
+**Fix:** one accessor, `var fnc = GFNC(S)`. kybernet aarch64 cross-build now
+~1-2s, valid ELF; unreachable counts match x86.
+
+**Also shipped:**
+- DCE `live[]` bitmap 4096 → 8192-fn cap (both arches; latent OOB >4096 fns).
+- `CYRIUS_DEBUG_PHASES=1` DCE-pass markers (cross-arch, env-gated → byte-identical).
+- `_dce_fn_count_gate` regression gate (check.sh 79 → 80).
+- `programs/check.cyr` S64→store64 — pre-existing undefined-fn `ud2` that
+  SIGILL'd the doc-size gate on a fresh check-binary build.
+- `lib/audit_walk.cyr`: recognize `-- bundled distribution` marker so
+  upstream-self-generated dists (sigil) skip fmt/lint like distlib bundles.
+- sigil 3.1.1 → 3.5.5 (+ChaCha20-Poly1305 + X25519; +275 fns, no public removals);
+  patra 1.9.4 → 1.10.3 (+8 fns); `docs/api-surface.snapshot` regen (2766 fns).
+
+**Mechanical gates green:** cycc self-host **byte-identical 875,584 B**;
+check.sh **80/80**; kybernet aarch64 cross-build completes with a valid ELF.
+
+**Noted for next release (patra/sigil agent pass):** both dists carry
+cosmetic `multiple consecutive blank lines` at distlib module joins
+(correctly skipped as vendored). Separate still-open item: the aarch64
+`cyrius` **wrapper** argv dispatch (v6.0.2 cross-host finding) — not this slot.
+
+Memory pin: [`project_v6_0_2_3_4_slot_sequence`] (.4 shipped — sequence closes).
+
 ## Session close — 2026-05-27 (.3 ship — str_from overload-misroute codegen P1 fixed)
 
 Closing **v6.0.3**, the nous-0001 codegen P1 — root-caused to a different
@@ -830,6 +869,14 @@ forward-looking content (.66/.67/.68/.69 detail intact).
   [[project_v5_11_x_closeout_at_40]]).
 
 ## Version
+
+**6.0.4** (shipped 2026-05-27 — **kybernet aarch64 codegen-hang fix
+(`GFCNT`→`GFNC` in the aarch64 DCE pass) + DCE `live[]` 8192-fn cap + stdlib
+refresh sigil 3.5.5 / patra 1.10.3**). The aarch64 DCE reachability pass
+sized its fn-table loops with the fixup count, overflowing an 8192-slot
+hash into an infinite probe loop on large units (kybernet). self-host
+byte-identical **875,584 B**; check.sh **80/80** (+`_dce_fn_count_gate`).
+See CHANGELOG [6.0.4] + the .4 session-close above.
 
 **6.0.3** (shipped 2026-05-27 — **`str_from` overload-misroute codegen P1
 (nous 0001)**). The overload dispatcher routed `str_from(<i64-returning-call>)`
