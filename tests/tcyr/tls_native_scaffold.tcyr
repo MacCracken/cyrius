@@ -323,4 +323,126 @@ assert_eq(load8(&_dig384 + 47), 0xA7, "sha384(abc)[47] = 0xA7");
 assert_eq(tls_native_transcript_init(99), 0, "transcript_init rejects invalid algo");
 assert_eq(tls_native_transcript_digest_len(0), 0 - 1, "digest_len returns -1 for null state");
 
+test_group("v6.0.13 key schedule — early secret (no-PSK)");
+
+# RFC 8448 §3 reference: HKDF-Extract(salt=0, IKM=0^32) for SHA-256:
+#   33ad0a1c 607ec03b 09e6cd98 93680ce2
+#   10adf300 aa1f2660 e1b22e10 f170f92a
+var ks256 = tls_native_keysched_new(TLS_HASH_SHA256);
+assert(ks256 != 0, "keysched_new sha256 succeeds");
+assert_eq(tls_native_keysched_phase(ks256), TLS_KSP_EARLY, "phase = EARLY after new");
+
+var _es[32];
+var es_len = tls_native_keysched_get_secret(ks256, TLS_KS_EARLY, &_es);
+assert_eq(es_len, 32, "early_secret sha256 is 32 bytes");
+assert_eq(load8(&_es),      0x33, "early[0] = 0x33 (RFC 8448 §3)");
+assert_eq(load8(&_es + 1),  0xAD, "early[1] = 0xAD");
+assert_eq(load8(&_es + 4),  0x60, "early[4] = 0x60");
+assert_eq(load8(&_es + 16), 0x10, "early[16] = 0x10");
+assert_eq(load8(&_es + 31), 0x2A, "early[31] = 0x2A");
+
+# SHA-384 early_secret (Python-derived hkdf_extract_sha384(0, 0^48)):
+#   7ee8206f 5570023e 6dc7519e b1073bc4 e791ad37 b5c382aa
+#   10ba18e2 357e7169 71f9362f 2c2fe2a7 6bfd78df ec4ea9b5
+var ks384 = tls_native_keysched_new(TLS_HASH_SHA384);
+assert(ks384 != 0, "keysched_new sha384 succeeds");
+var _es384[48];
+var es384_len = tls_native_keysched_get_secret(ks384, TLS_KS_EARLY, &_es384);
+assert_eq(es384_len, 48, "early_secret sha384 is 48 bytes");
+assert_eq(load8(&_es384),      0x7E, "early384[0] = 0x7E");
+assert_eq(load8(&_es384 + 1),  0xE8, "early384[1] = 0xE8");
+assert_eq(load8(&_es384 + 23), 0xAA, "early384[23] = 0xAA");
+assert_eq(load8(&_es384 + 47), 0xB5, "early384[47] = 0xB5");
+
+test_group("v6.0.13 key schedule — HKDF-Expand-Label + Derive-Secret");
+
+# Derive-Secret(early, "derived", "") for the SHA-256 path. Expected
+# (Python ref):
+#   6f2615a1 08c702c5 678f54fc 9dbab697
+#   16c07618 9c48250c ebeac357 6c3611ba
+var derived[32];
+var empty_th = tls_native_transcript_init(TLS_HASH_SHA256);
+assert(empty_th != 0, "empty transcript init");
+var rc_derived = tls_native_derive_secret(&_es, 32, "derived", 7, empty_th, &derived);
+assert_eq(rc_derived, TLS_OK, "derive_secret OK");
+assert_eq(load8(&derived),      0x6F, "derived[0] = 0x6F");
+assert_eq(load8(&derived + 1),  0x26, "derived[1] = 0x26");
+assert_eq(load8(&derived + 16), 0x16, "derived[16] = 0x16");
+assert_eq(load8(&derived + 31), 0xBA, "derived[31] = 0xBA");
+
+# SHA-384 Derive-Secret(early, "derived", ""):
+#   1591dac5 cbbf0330 a4a84de9 c753330e 92d01f0a 88214b44
+#   64972fd6 68049e93 e52f2b16 fad922fd c0584478 428f282b
+var derived384[48];
+var empty_th384 = tls_native_transcript_init(TLS_HASH_SHA384);
+var rc_d384 = tls_native_derive_secret(&_es384, 48, "derived", 7, empty_th384, &derived384);
+assert_eq(rc_d384, TLS_OK, "derive_secret sha384 OK");
+assert_eq(load8(&derived384),      0x15, "derived384[0] = 0x15");
+assert_eq(load8(&derived384 + 1),  0x91, "derived384[1] = 0x91");
+assert_eq(load8(&derived384 + 47), 0x2B, "derived384[47] = 0x2B");
+
+test_group("v6.0.13 key schedule — Key+IV derivation");
+
+# From a known traffic secret, derive write_key + write_iv via
+# HKDF-Expand-Label(., "key" | "iv", "", N). Test secret:
+#   b3eddb12 6e067f35 a780b3ab f45e2d8f
+#   3b1a9507 38f52e96 00746a0e 27a55a21
+# Python-computed AES-128 key + 12-byte IV:
+#   key = dbfaa693d1762c5b666af5d950258d01
+#   iv  = 5bd3c71b836e0b76bb73265f
+var traffic_secret[32];
+_tn_be32_w(&traffic_secret,      0xB3EDDB12);
+_tn_be32_w(&traffic_secret + 4,  0x6E067F35);
+_tn_be32_w(&traffic_secret + 8,  0xA780B3AB);
+_tn_be32_w(&traffic_secret + 12, 0xF45E2D8F);
+_tn_be32_w(&traffic_secret + 16, 0x3B1A9507);
+_tn_be32_w(&traffic_secret + 20, 0x38F52E96);
+_tn_be32_w(&traffic_secret + 24, 0x00746A0E);
+_tn_be32_w(&traffic_secret + 28, 0x27A55A21);
+
+var write_key[16];
+var rk = tls_native_derive_key(&traffic_secret, 32, TLS_HASH_SHA256, &write_key, 16);
+assert_eq(rk, TLS_OK, "derive_key OK");
+assert_eq(load8(&write_key),      0xDB, "key[0] = 0xDB");
+assert_eq(load8(&write_key + 1),  0xFA, "key[1] = 0xFA");
+assert_eq(load8(&write_key + 8),  0x66, "key[8] = 0x66");
+assert_eq(load8(&write_key + 15), 0x01, "key[15] = 0x01");
+
+var write_iv[12];
+var ri = tls_native_derive_iv(&traffic_secret, 32, TLS_HASH_SHA256, &write_iv, 12);
+assert_eq(ri, TLS_OK, "derive_iv OK");
+assert_eq(load8(&write_iv),      0x5B, "iv[0] = 0x5B");
+assert_eq(load8(&write_iv + 1),  0xD3, "iv[1] = 0xD3");
+assert_eq(load8(&write_iv + 11), 0x5F, "iv[11] = 0x5F");
+
+test_group("v6.0.13 key schedule — state machine + invalid args");
+
+# Invalid algo at new
+assert_eq(tls_native_keysched_new(99), 0, "keysched_new rejects invalid algo");
+
+# Get secret before its phase is reached
+var fresh = tls_native_keysched_new(TLS_HASH_SHA256);
+var tmp[32];
+assert_eq(tls_native_keysched_get_secret(fresh, TLS_KS_HANDSHAKE, &tmp),
+          TLS_ERR_PROTOCOL, "get_secret HANDSHAKE before derivation = PROTOCOL err");
+assert_eq(tls_native_keysched_get_secret(fresh, TLS_KS_MASTER, &tmp),
+          TLS_ERR_PROTOCOL, "get_secret MASTER before derivation = PROTOCOL err");
+
+# derive_master before derive_handshake = state error
+var transcript = tls_native_transcript_init(TLS_HASH_SHA256);
+assert_eq(tls_native_keysched_derive_master(fresh, transcript), TLS_ERR_PROTOCOL,
+          "derive_master before derive_handshake = PROTOCOL err");
+
+# HKDF-Expand-Label arg validation
+var bogus_secret[32];
+var out_short[8];
+assert_eq(tls_native_hkdf_expand_label(&bogus_secret, 32, "x", 1, 0, 0,
+                                       TLS_HASH_SHA256, &out_short, 0 - 1),
+          TLS_ERR_INVALID_PARAM, "hkdf_expand_label rejects negative out_len");
+# Label too long: 6 + 250 > 255
+var big_label[256];
+assert_eq(tls_native_hkdf_expand_label(&bogus_secret, 32, &big_label, 250, 0, 0,
+                                       TLS_HASH_SHA256, &out_short, 8),
+          TLS_ERR_INVALID_PARAM, "hkdf_expand_label rejects label_len + 6 > 255");
+
 var r = assert_summary();

@@ -3,6 +3,123 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.13 ship — TLS Mini-arc A.4 key schedule)
+
+Closing **v6.0.13**, the fourth slot of the native TLS arc (A.4 of
+A's 5 sub-slots). Adds the full TLS 1.3 key schedule per RFC 8446
+§7.1 + §7.3: three-phase HKDF tree, four traffic secrets, exporter +
+resumption master, per-secret key/IV derivation.
+
+**Held earlier in the session pending sigil HKDF-SHA384** — see the
+hold note below. **Resolved by sigil 3.5.6** (same day, 2026-05-28)
+shipping `hmac_sha384` + `hkdf_extract_sha384` + `hkdf_expand_sha384`
++ `hkdf_sha384` exactly as requested. Bumped the sigil pin in
+cyrius.cyml + refreshed lib/sigil.cyr from sigil's dist bundle. Full
+TLS 1.3 ciphersuite set (AES-128/256-GCM-SHA256/384,
+ChaCha20-Poly1305-SHA256) now backable by the protocol layer.
+
+**Test vectors**:
+- RFC 8448 §3 SHA-256 `early_secret` matched byte-for-byte
+  (`33ad0a1c…f170f92a`).
+- Python-computed SHA-384 `early_secret` matched
+  (`7ee8206f…ec4ea9b5`).
+- Derive-Secret("derived") matched for both algorithms.
+- derive_key + derive_iv matched against Python reference
+  (`dbfaa693…258d01` + `5bd3c71b…73265f`).
+- State machine: pre-derivation `get_secret` returns
+  TLS_ERR_PROTOCOL; bad algo rejected; bad state transition rejected.
+
+**Cyrius gotchas surfaced (BOTH pinned to memory)**:
+
+1. **`secret` is a reserved keyword** — it's the zeroise-on-return
+   attribute (`secret var prk[32];` pattern in sigil). Using `secret`
+   as a fn param name fails the parser with
+   `error:src/aes_ni.cyr:<huge_line>: expected identifier, got
+   unknown` — error location is bogus (the cumulative post-
+   preprocessor source position, not the actual offending code).
+   Cost ~30 minutes to bisect. Renamed all my params from `secret`
+   to `sec`. Memory pin: [[feedback_secret_reserved_keyword]].
+
+2. **9-arg fn called incorrectly = SIGILL** — I drafted comments
+   for `_tn_hkdf_spec_set` + `_tn_hkdf_spec_set_ctx` helpers but
+   didn't implement them; test code calling those non-existent fns
+   compiled to ud2 sentinels → SIGILL with no debug info.
+   Refresher on [[feedback_end_to_end_verify_helpers_before_commit]]:
+   if you reference a fn in test code, actually implement it. Fixed
+   by removing the spec-helper test path; the 9-arg fn works fine
+   in practice (verified across 17 new vector asserts).
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (stdlib-only).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,797 → 2,800 fns (+3 publics this slot,
+  plus sigil 3.5.6's 4 new fns picked up via dist refresh).
+- `tls_native_scaffold.tcyr` 122 → 161 asserts (+39 for key
+  schedule with RFC 8448 §3 + Python-verified vectors).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc A step 4
+of 5 done. v6.0.x going forward:
+  - .14: Mini-arc A.5 — ciphersuite negotiation; `tls_native_available()`
+    flips from 0 to 1 (FIRST CIPHERSUITE END-TO-END wired through
+    encrypt/decrypt with the key schedule from this slot)
+  - .15–.22: Mini-arc B — TLS 1.3 client
+  - .23–.28: Mini-arc C — TLS 1.3 server
+  - .29–.34: Mini-arc D — TLS 1.2 backport
+  - .35–.37: Mini-arc E — consumer + closeout
+  - .38–.39: cyrius tests + TOML
+  - .40–.44: back-end remaining
+  - .45: closeout
+
+---
+
+## 2026-05-28 — v6.0.13 HELD pending sigil HKDF-SHA384 (RESOLVED same session)
+
+v6.0.13 (Mini-arc A.4 — TLS 1.3 key schedule) **held at slot
+entry**. Premise-check found sigil 3.5.5 ships HMAC-SHA256 +
+HKDF-Extract-SHA256 + HKDF-Expand-SHA256 only — no SHA-384 variants.
+The TLS 1.3 ciphersuite `TLS_AES_256_GCM_SHA384` (0x1302) uses
+HKDF-SHA384; without it, .13's key schedule can support
+`TLS_AES_128_GCM_SHA256` and `TLS_CHACHA20_POLY1305_SHA256` only.
+
+**User direction 2026-05-28**: hold .13 until sigil ships HKDF-SHA384.
+Rejected the alternative of inlining HMAC-SHA384 + HKDF-SHA384 in
+`lib/tls_native.cyr` — would violate the arc's charter that
+"crypto stays in sigil; tls_native is a protocol layer". Rejected
+also "ship SHA-256-only and patch later" — would have .14's
+`tls_native_available()` flip with an incomplete ciphersuite set.
+
+**Sigil-side issue filed (user-authorized cross-repo write)**:
+`~/Repos/sigil/docs/development/issues/2026-05-28-cyrius-tls-native-needs-hkdf-sha384.md`.
+The issue requests:
+- `hmac_sha384(key, key_len, msg, msg_len, out48): i64`
+- `hkdf_extract_sha384(salt, salt_len, ikm, ikm_len, prk_out48): i64`
+- `hkdf_expand_sha384(prk, prk_len, info, info_len, out, out_len): i64`
+- Optional: `hkdf_sha384(salt, salt_len, ikm, ikm_len, info, info_len, out, out_len): i64`
+
+Includes the SHA-384 block-size gotcha (128 bytes, not 64 — common
+copy-from-sha256 trap), implementation outline, RFC 4231 §4 test
+vectors for HMAC-SHA384, and pointer to RFC 8448 §4's full TLS 1.3
+handshake using AES-256-GCM-SHA384 (every intermediate secret
+published byte-for-byte; cyrius will verify against this once sigil
+ships).
+
+**Resume condition**: sigil 3.5.x patch tag exposing the three (or
+four) fns. Cyrius will bump the sigil pin in `cyrius.cyml` and
+resume Mini-arc A.4 from .13 entry. Mini-arcs B–E (.14–.37) and the
+back-end + closeout (.38–.45) all queue behind this — the whole TLS
+arc serialises here.
+
+**No version bump this turn** (nothing shipped). cyrius stays at
+v6.0.12. The held .13 slot doesn't consume the slot number — when
+work resumes, it still lands as .13.
+
+Memory pin: [`project_native_tls_arc_v6_2_x`] — updated 2026-05-28
+with the HELD status + sigil-side ask shape. Cyrius agent on resume
+should check sigil's tag for the new fns, bump pin, then start
+A.4 implementation from scratch (this session committed nothing).
+
 ## Session close — 2026-05-28 (.12 ship — TLS Mini-arc A.3 handshake framing + transcript hash)
 
 Closing **v6.0.12**, the third slot of the native TLS arc

@@ -58,9 +58,10 @@ stdlib = [
     "unicode/normalize", "unicode/_normalize_data",
 ]
 # v5.8.65 stdlib foldin (sandhi-pattern, per the v5.7.0 precedent):
-# sakshi 2.2.3, patra 1.10.3, sigil 3.5.5 (re-folded from 3.1.1 — purely
-# additive, +275 fns incl. ChaCha20-Poly1305 + X25519, no public-API
-# removals; see CHANGELOG), vani 0.9.2,
+# sakshi 2.2.3, patra 1.10.3, sigil 3.5.6 (3.5.5→.6 at v6.0.13:
+# unblocks TLS Mini-arc A.4 — adds hmac_sha384 + hkdf_extract_sha384 +
+# hkdf_expand_sha384 + hkdf_sha384 for the TLS_AES_256_GCM_SHA384
+# ciphersuite key schedule; pure additive, no removals), vani 0.9.2,
 # yukti 2.2.2, sankoch 2.2.4 are vendored byte-identical into `lib/<name>.cyr`
 # from their patched dist files at the tags listed above. They are
 # **NOT** added to the [deps].stdlib auto-prepend list — consumers

@@ -196,10 +196,27 @@ no ld.so dependency.
 - **.13** — TLS 1.3 key schedule: HKDF tree (early secret →
   handshake secret → master secret); per-direction client/server
   application + handshake keys; key/IV derivation per RFC 8446
-  §7.1.
+  §7.1. **HELD 2026-05-28 pending sigil HKDF-SHA384**. Premise-
+  check at slot entry found sigil 3.5.5 ships HMAC-SHA256 +
+  HKDF-Extract-SHA256 + HKDF-Expand-SHA256 only; the
+  `TLS_AES_256_GCM_SHA384` ciphersuite needs HKDF-SHA384. User
+  rejected both inlining the SHA-384 crypto in `lib/tls_native.cyr`
+  (would violate the "crypto stays in sigil" charter) and shipping
+  SHA-256-only and patching later (would leave .14's
+  `tls_native_available()` flipping with an incomplete suite set).
+  Sigil-side issue filed at
+  `~/Repos/sigil/docs/development/issues/2026-05-28-cyrius-tls-native-needs-hkdf-sha384.md`
+  requesting `hmac_sha384` + `hkdf_extract_sha384` +
+  `hkdf_expand_sha384`. Resume condition: sigil tag exposing the
+  three (or four — combined helper optional) fns; cyrius bumps pin
+  in cyrius.cyml and starts A.4 implementation. The whole TLS arc
+  (Mini-arcs B–E, slots .14–.37) serialises behind this.
 - **.14** — Ciphersuite negotiation: `TLS_AES_128_GCM_SHA256`,
   `TLS_AES_256_GCM_SHA384`, `TLS_CHACHA20_POLY1305_SHA256`. All
-  three available via sigil 3.5.5 already.
+  three become available once sigil ships HKDF-SHA384 (see .13
+  hold above). At slot entry, `tls_native_available()` flips from
+  0 to 1 — first ciphersuite end-to-end wired through encrypt/
+  decrypt.
 
 **Mini-arc B — TLS 1.3 client (.15 → .22)**
 - **.15** — ClientHello construction: extensions, key_share with

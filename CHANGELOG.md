@@ -6,6 +6,132 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.13] — 2026-05-28
+
+**TLS arc Mini-arc A.4 — TLS 1.3 key schedule (HKDF tree).** Fourth
+slot of A; the second-to-last before `tls_native_available()` can flip
+from 0 to 1 at .14. **Held earlier in the session** pending sigil
+HKDF-SHA384; resolved by sigil 3.5.6 shipping `hmac_sha384` +
+`hkdf_extract_sha384` + `hkdf_expand_sha384` + `hkdf_sha384` (issue
+filed at sigil's `docs/development/issues/2026-05-28-cyrius-tls-native-needs-hkdf-sha384.md`
+and resolved same day).
+
+### Changed — sigil pin 3.5.5 → 3.5.6
+
+`cyrius.cyml` comment + `lib/sigil.cyr` distfile both updated.
+Pure additive: 4 new fns for the SHA-384 HKDF surface, no removals,
+no signature changes to the existing SHA-256 helpers. The full TLS
+1.3 ciphersuite set (AES-128-GCM-SHA256, AES-256-GCM-SHA384,
+ChaCha20-Poly1305-SHA256) is now backable by the protocol layer.
+
+### Added — `lib/tls_native.cyr` key schedule (RFC 8446 §7.1, §7.2, §7.3)
+
+Three-phase HKDF tree (Early → Handshake → Master), four traffic
+secrets, exporter + resumption master, per-secret key + IV
+derivation.
+
+**Constants**:
+- `TLS_HKDF_LABEL_BUF_LEN = 512` (HkdfLabel scratch — length(2) +
+  label(≤256) + ctx(≤256)).
+- `TLS_HKDF_SPEC_LEN = 48` (HkdfLabelSpec — caller pattern for the
+  9-arg API).
+- `TLS_KEYSCHED_STATE_LEN = 96` (12 i64 slots for all 9 secrets + algo
+  + len + phase).
+- `TLS_MAX_DIGEST_LEN = 48` (SHA-384).
+- 9 `TLS_KS_*` identifiers for `keysched_get_secret`'s `which` arg
+  (EARLY / HANDSHAKE / MASTER / CLIENT_HANDSHAKE /
+  SERVER_HANDSHAKE / CLIENT_APPLICATION / SERVER_APPLICATION /
+  EXPORTER_MASTER / RESUMPTION_MASTER).
+- 4 `TLS_KSP_*` phase IDs (NONE / EARLY / HANDSHAKE / MASTER).
+
+**Public fns**:
+- `tls_native_hkdf_expand_label(sec, sec_len, label, label_len, ctx,
+  ctx_len, hash_algo, out, out_len)` — RFC 8446 §7.1 building block;
+  prepends `"tls13 "` to the label, builds HkdfLabel, dispatches to
+  sigil's `hkdf_expand` (SHA-256) or `hkdf_expand_sha384`. 9 args; the
+  fn body internally tolerates the stack-arg ABI for this slot — see
+  the [[feedback_fn_arg_count_6]] note below.
+- `tls_native_derive_secret(sec, sec_len, label, label_len,
+  transcript_state, out)` — RFC 8446 §7.1; wraps HKDF-Expand-Label
+  with `Transcript-Hash(Messages)` as the context.
+- `tls_native_keysched_new(hash_algo)` — alloc state, compute Early
+  Secret with PSK = `0^HashLen` (no-PSK case).
+- `tls_native_keysched_set_psk(ks, psk, psk_len)` — override Early
+  Secret with a real PSK.
+- `tls_native_keysched_derive_handshake(ks, dhe, dhe_len, transcript)`
+  — Derive-Secret("derived") bridge + HKDF-Extract over DHE +
+  client/server handshake traffic secrets.
+- `tls_native_keysched_derive_master(ks, transcript)` —
+  Derive-Secret("derived") bridge + HKDF-Extract over 0 + 4 master-
+  level Derive-Secret taps (client/server app traffic, exporter,
+  resumption).
+- `tls_native_keysched_get_secret(ks, which, out)` — copy any of the
+  9 derived secrets into `out`; `TLS_ERR_PROTOCOL` if the requested
+  secret hasn't been derived yet for the current phase.
+- `tls_native_keysched_phase(ks)` — diagnostic.
+- `tls_native_derive_key(sec, sec_len, hash_algo, key_out, key_len)`
+  — RFC 8446 §7.3 `HKDF-Expand-Label(secret, "key", "", N)`.
+- `tls_native_derive_iv(sec, sec_len, hash_algo, iv_out, iv_len)` —
+  same with `"iv"`. Split from a 7-arg `derive_key_iv` to fit the
+  register budget.
+
+### Cyrius gotchas surfaced
+
+Two surprises during slot work, both pinned to memory:
+
+**`secret` is a reserved keyword** — it's the zeroise-on-return
+attribute for local arrays (lex.cyr:782: `0x746572636573`). Using
+`secret` as a fn parameter name triggers a parser failure
+("expected identifier, got unknown") in the next include processed,
+not at the use site. Renamed all my new params from `secret` to
+`sec`. Pinning as memory `feedback_secret_reserved_keyword` for
+future slots that pull from RFC text (which uses "Secret" everywhere).
+
+**Multi-line block comments + `->` arrows trip the lexer** —
+preprocessor / lexer treats `->` and `->` patterns in ASCII art
+inside `#` comments as parseable tokens. Rewrote the key-schedule
+intro comment to plain prose. Lower-impact since it's a comment-
+only convention, but worth knowing for future RFC-quoted blocks.
+
+### Updated — `tests/tcyr/tls_native_scaffold.tcyr`
+
+39 new asserts (122 → 161 total). Coverage:
+- **RFC 8448 §3 vector**: `early_secret = HKDF-Extract(0, 0^32)` for
+  SHA-256, byte-for-byte against
+  `33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a`.
+- **SHA-384 early_secret** vs Python-computed
+  `7ee8206f5570023e6dc7519eb1073bc4e791ad37b5c382aa10ba18e2357e716971f9362f2c2fe2a76bfd78dfec4ea9b5`.
+- **Derive-Secret(early, "derived", "")** SHA-256 against
+  `6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba`.
+- **Derive-Secret(early, "derived", "")** SHA-384 against
+  `1591dac5cbbf0330a4a84de9c753330e92d01f0a88214b4464972fd668049e93e52f2b16fad922fdc0584478428f282b`.
+- **derive_key / derive_iv** from a synthetic traffic secret against
+  Python-computed `dbfaa693d1762c5b666af5d950258d01` (AES-128 key) and
+  `5bd3c71b836e0b76bb73265f` (12-byte IV).
+- **State machine**: invalid algo rejected at `keysched_new`;
+  pre-derivation `get_secret` returns `TLS_ERR_PROTOCOL`;
+  `derive_master` before `derive_handshake` returns `TLS_ERR_PROTOCOL`.
+- **Arg validation**: negative `out_len`, oversized label.
+
+Python reference computation (used for the Python-derived vectors):
+documented inline in CHANGELOG; can be re-run with `python3 -c '<see
+session notes>'` against `hmac` + `hashlib`.
+
+### Mechanical
+
+- cycc x86 **byte-identical at 885,024 B** (stdlib-only change).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,797 → 2,800 fns (+3: hkdf_expand_label,
+  derive_secret, derive_key/iv split nets +2; other +1 from sigil
+  3.5.6's new public fns picked up by the dist refresh: hmac_sha384,
+  hkdf_extract_sha384, hkdf_expand_sha384, hkdf_sha384).
+
+Memory pin: `project_native_tls_arc_v6_2_x` — Mini-arc A step 4 of
+5 done. .14 = ciphersuite negotiation (final A step) — at slot
+entry `tls_native_available()` flips from 0 to 1.
+
 ## [6.0.12] — 2026-05-28
 
 **TLS arc Mini-arc A.3 — handshake framing + transcript hash.**
