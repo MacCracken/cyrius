@@ -6,6 +6,91 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.10] — 2026-05-28
+
+**TLS arc Mini-arc A.1 — `lib/tls_native.cyr` scaffold.** First slot of
+the native TLS arc (Mini-arcs A–E, .10–.37). Pure structure — public
+API surface, types, error codes, state-machine states, ciphersuite
+constants, alert codes, signature schemes. Every fn is a stub
+returning `TLS_ERR_NOT_IMPLEMENTED` until the protocol-layer slots
+land (.11 record layer, .12 handshake framing, .13 key schedule,
+.14 ciphersuite negotiation, .15-.22 1.3 client, .23-.28 1.3 server,
+.29-.34 1.2 backport, .35-.37 consumer wiring + closeout).
+
+### Added — `lib/tls_native.cyr`
+
+353 lines, 16 public fns, 9 enums + 20 `var` error-code constants,
+3 sigil includes for crypto primitives.
+
+**Premise-check at slot entry:**
+- Real ecosystem TLS surface usage is only **5 fns** (`tls_available`,
+  `tls_connect`, `tls_write`, `tls_read`, `tls_close`) per ecosystem-
+  wide grep across `~/Repos/*/src/*.cyr` + `programs/*.cyr`. Plus
+  ALPN + verify hooks via sandhi's `tls_policy/` submodules. The
+  scaffold's 16 fns superset that with explicit accept (server) +
+  CA bundle setter + version-range setter + state/cipher/version
+  getters.
+- Sigil 3.5.5 (pinned at v6.0.4) confirmed to expose every primitive
+  the protocol layer needs: `x25519` + `x25519_base`,
+  `chacha20poly1305_encrypt/decrypt`, `aes_gcm_encrypt/decrypt`,
+  `hkdf_extract/expand`, `sha256`, `ecdsa_p256/p384`, `ed25519`,
+  `x509`. Zero crypto blockers.
+
+**Public API**:
+- `tls_native_available()` — capability check (0 until .14).
+- `tls_native_new_client(host, host_len)` / `tls_native_new_server(cert_chain, cert_len, key, key_len)` — context constructors.
+- `tls_native_set_alpn(ctx, protos, protos_len)`,
+  `tls_native_set_verify(ctx, mode)`,
+  `tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der)`,
+  `tls_native_set_version_range(ctx, min_ver, max_ver)` — pre-handshake config.
+- `tls_native_connect(ctx, sock_fd)` / `tls_native_accept(ctx, sock_fd)` — drive the handshake (blocking; caller manages socket).
+- `tls_native_write(ctx, buf, len)` / `tls_native_read(ctx, buf, maxlen)` / `tls_native_close(ctx)` — application data + teardown.
+- `tls_native_get_alpn_selected`, `tls_native_get_peer_cert_der`,
+  `tls_native_get_state`, `tls_native_get_cipher`,
+  `tls_native_get_version` — diagnostics.
+
+**Constants / enums**:
+- 20 error codes (`TLS_OK` + `TLS_ERR_*` ladder).
+- `TlsContentType` (record-layer types per RFC 8446 §5.1).
+- `TlsProtocolVersion` (1.0–1.3 wire values).
+- `TlsHandshakeType` (RFC 8446 §4 — all 15 message types, 1.2 + 1.3).
+- `TlsCipherSuite` (3 TLS 1.3 suites; all available in sigil 3.5.5).
+- `TlsAlertLevel` + `TlsAlertDescription` (RFC 8446 §6 — 26 alert codes).
+- `TlsRole` (client/server), `TlsState` (14 handshake states).
+- `TlsVerifyMode`, `TlsNamedGroup` (X25519/P-256/P-384),
+  `TlsSignatureScheme` (RSA-PSS / ECDSA / Ed25519).
+
+**Cyrius-enum quirk**: enum initializers don't accept arithmetic
+(`0 - 1`), so the negative-valued error codes live as top-level `var`
+constants instead. Other enums use positive literals only and stay as
+enums. Filed as a possible v6.x language polish item (not pinned).
+
+### Added — `tests/tcyr/tls_native_scaffold.tcyr`
+
+34-assertion regression that locks the API surface. Calls every
+public fn with sentinel args, asserts each returns the documented
+"not yet implemented" signal (`TLS_ERR_NOT_IMPLEMENTED`, 0, or
+`TLS_STATE_INIT` per the fn's semantics). Also checks wire-value
+invariants for ContentType / ProtocolVersion / ciphersuites /
+HandshakeType / NamedGroup per RFC. Joins `_testsuite_gate` walk
+automatically. When real implementations land in slots .11+, this
+test's assertions get updated in lockstep with the implementation
+change.
+
+### Mechanical
+
+- cycc x86 **byte-identical at 885,024 B** (no compiler change).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82** (tls_native_scaffold tcyr passes).
+- api-surface snapshot refreshed: 2,767 → 2,784 fns (+17 from the
+  new tls_native_* surface; the 16 listed above plus the
+  `tls_native_get_*` getters, hash to slightly more because of
+  fn-table internal accounting).
+
+Memory pin: `project_native_tls_arc_v6_2_x` — Mini-arc A step 1 of 5
+done; .11 = record layer next.
+
 ## [6.0.9] — 2026-05-28
 
 **Two open aarch64 / distlib bugs pulled forward ahead of the TLS arc.**

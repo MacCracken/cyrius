@@ -1,0 +1,87 @@
+# tls_native_scaffold.tcyr — v6.0.10 API-surface lock
+#
+# Mini-arc A.1 (v6.0.10) shipped the lib/tls_native.cyr scaffold —
+# public API, types, error codes, and stub implementations. No
+# protocol logic yet (slots .11-.34 ship that). This test locks
+# the public surface so a future slot can't accidentally rename a
+# fn or drop a const without check.sh going red.
+#
+# Each stub fn is called with sentinel args and asserted to return
+# the documented "not yet implemented" signal:
+#   - tls_native_available() returns 0 (capability check; will
+#     flip to 1 when .14 ciphersuite-negotiation lands).
+#   - tls_native_new_client / new_server return 0 (alloc-failure
+#     sentinel; will return real heap ctx handles later).
+#   - All other stateful fns return TLS_ERR_NOT_IMPLEMENTED.
+#   - Getters (get_alpn_selected, get_peer_cert_der, get_cipher,
+#     get_version) return 0 (no handshake completed); get_state
+#     returns TLS_STATE_INIT.
+#
+# When mini-arc A.2-D ship real implementations, this test gets
+# updated in lockstep — the assertion changes from
+# `assert_eq(..., TLS_ERR_NOT_IMPLEMENTED, ...)` to the real
+# expected behavior.
+
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+test_group("tls_native v6.0.10 scaffold API surface");
+
+# Capability check
+assert_eq(tls_native_available(), 0, "tls_native_available() returns 0 pre-.14");
+
+# Constructors return 0 (sentinel for alloc-fail / not-implemented)
+assert_eq(tls_native_new_client("example.com", 11), 0, "new_client stub returns 0");
+assert_eq(tls_native_new_server(0, 0, 0, 0), 0, "new_server stub returns 0");
+
+# All stateful fns return TLS_ERR_NOT_IMPLEMENTED. ctx arg is 0
+# (invalid handle) — the stub doesn't dereference yet.
+assert_eq(tls_native_set_alpn(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_alpn stub");
+assert_eq(tls_native_set_verify(0, TLS_VERIFY_PEER), TLS_ERR_NOT_IMPLEMENTED, "set_verify stub");
+assert_eq(tls_native_set_ca_bundle(0, 0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_ca_bundle stub");
+assert_eq(tls_native_set_version_range(0, TLS_VERSION_1_2, TLS_VERSION_1_3), TLS_ERR_NOT_IMPLEMENTED, "set_version_range stub");
+assert_eq(tls_native_connect(0, 0 - 1), TLS_ERR_NOT_IMPLEMENTED, "connect stub");
+assert_eq(tls_native_accept(0, 0 - 1), TLS_ERR_NOT_IMPLEMENTED, "accept stub");
+assert_eq(tls_native_write(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "write stub");
+assert_eq(tls_native_read(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "read stub");
+assert_eq(tls_native_close(0), TLS_ERR_NOT_IMPLEMENTED, "close stub");
+
+# Getters return defaults
+assert_eq(tls_native_get_alpn_selected(0, 0, 0), 0, "get_alpn_selected default 0");
+assert_eq(tls_native_get_peer_cert_der(0, 0, 0), 0, "get_peer_cert_der default 0");
+assert_eq(tls_native_get_state(0), TLS_STATE_INIT, "get_state returns INIT");
+assert_eq(tls_native_get_cipher(0), 0, "get_cipher default 0");
+assert_eq(tls_native_get_version(0), 0, "get_version default 0");
+
+test_group("v6.0.10 enum / const sanity");
+
+# Error code spread (negative ladder; catches accidental renumbering)
+assert_eq(TLS_OK, 0, "TLS_OK = 0");
+assert_eq(TLS_ERR_NOT_IMPLEMENTED, 0 - 1, "TLS_ERR_NOT_IMPLEMENTED = -1");
+assert_eq(TLS_ERR_PROTOCOL, 0 - 19, "TLS_ERR_PROTOCOL = -19 (last in ladder)");
+
+# Record-layer wire values per RFC 8446 §5.1
+assert_eq(TLS_CT_CHANGE_CIPHER_SPEC, 20, "ContentType change_cipher_spec wire = 20");
+assert_eq(TLS_CT_ALERT, 21, "ContentType alert wire = 21");
+assert_eq(TLS_CT_HANDSHAKE, 22, "ContentType handshake wire = 22");
+assert_eq(TLS_CT_APPLICATION_DATA, 23, "ContentType application_data wire = 23");
+
+# Protocol versions per RFC 5246 / 8446
+assert_eq(TLS_VERSION_1_2, 0x0303, "version 1.2 wire = 0x0303");
+assert_eq(TLS_VERSION_1_3, 0x0304, "version 1.3 wire = 0x0304");
+
+# Ciphersuites per RFC 8446 §B.4
+assert_eq(TLS_AES_128_GCM_SHA256, 0x1301, "TLS_AES_128_GCM_SHA256 = 0x1301");
+assert_eq(TLS_AES_256_GCM_SHA384, 0x1302, "TLS_AES_256_GCM_SHA384 = 0x1302");
+assert_eq(TLS_CHACHA20_POLY1305_SHA256, 0x1303, "TLS_CHACHA20_POLY1305_SHA256 = 0x1303");
+
+# Handshake types per RFC 8446 §4
+assert_eq(TLS_HS_CLIENT_HELLO, 1, "HandshakeType ClientHello = 1");
+assert_eq(TLS_HS_SERVER_HELLO, 2, "HandshakeType ServerHello = 2");
+assert_eq(TLS_HS_FINISHED, 20, "HandshakeType Finished = 20");
+
+# Named groups per IANA
+assert_eq(TLS_GROUP_X25519, 0x001D, "X25519 group = 0x001D");
+assert_eq(TLS_GROUP_SECP256R1, 0x0017, "secp256r1 group = 0x0017");
+
+var r = assert_summary();

@@ -3,6 +3,56 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-28 (.10 ship — TLS Mini-arc A.1 scaffold)
+
+Closing **v6.0.10**, the first slot of the native TLS arc
+(Mini-arc A.1 / A of 5). Pure structure slot — public API surface,
+types, error codes, state-machine states. No protocol logic yet;
+that's .11 (record layer) → .14 (ciphersuite negotiation) → .15+
+(1.3 client/server).
+
+**Premise-check findings at slot entry**:
+- Real ecosystem TLS usage is only 5 fns (`tls_available`,
+  `tls_connect`, `tls_write`, `tls_read`, `tls_close`) per
+  ecosystem-wide grep. Plus sandhi's `tls_policy/` submodules wrap
+  the surface for cert pinning. The scaffold's 16 fns superset that
+  + add accept (server), CA bundle setter, version-range setter,
+  diagnostic getters.
+- Sigil 3.5.5 confirmed to ship every primitive the protocol layer
+  needs (`x25519`, `chacha20poly1305_*`, `aes_gcm_*`, `hkdf_*`,
+  `sha256`, `ecdsa_p256/p384`, `ed25519`, `x509`). Zero crypto
+  blockers.
+
+**Cyrius-enum quirk discovered**: enum initializers don't accept
+arithmetic (`= 0 - 1`). Worked around by moving the negative-valued
+error codes (`TLS_ERR_*`) to top-level `var` constants; positive-
+valued enums (ContentType, HandshakeType, etc.) stay as `enum`.
+Filed as a v6.x language polish candidate (not pinned).
+
+**`cyrfmt` re-indented continuation comments** inside the enum
+body (lines 84-86 of the file got flush-left after fmt). Cosmetic
+only; doesn't affect parsing.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no compiler
+  change this slot — pure stdlib addition).
+- cycc_aarch64 cross **byte-identical at 574,664 B**.
+- cycc-native-aarch64 **byte-identical at 683,936 B**.
+- `scripts/check.sh` **82/82**, including the new
+  `tls_native_scaffold` tcyr (34 asserts).
+- api-surface snapshot refreshed (2,767 → 2,784 fns).
+
+Memory pin: [`project_native_tls_arc_v6_2_x`] — Mini-arc A step 1
+of 5 done. v6.0.x shape going forward:
+  - .11–.14: Mini-arc A remainder (record/framing/key/cipher)
+  - .15–.22: Mini-arc B (TLS 1.3 client)
+  - .23–.28: Mini-arc C (TLS 1.3 server)
+  - .29–.34: Mini-arc D (TLS 1.2 backport)
+  - .35–.37: Mini-arc E (consumer wiring + closeout)
+  - .38–.39: cyrius tests + TOML [section]
+  - .40–.44: back-end remaining
+  - .45: cycle closeout
+
 ## Session close — 2026-05-28 (.9 ship — aarch64 wrapper argv + distlib blank-lines)
 
 Closing **v6.0.9**, two open bugs pulled forward into the slot
