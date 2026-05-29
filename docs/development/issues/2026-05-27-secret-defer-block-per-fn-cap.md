@@ -73,3 +73,16 @@ named pointer slices. No correctness or zeroization compromise;
 purely a readability cost. sigil does not need this enhancement to
 ship the 3.5 crypto cycle — filing so the constraint is visible
 when the next ladder-shaped primitive lands.
+
+## Seen again — sigil 3.5.9 (2026-05-28, cyrius 6.0.14)
+
+The cap is still 8 at 6.0.14. sigil's ECDSA signing
+(`src/ecdsa_sign.cyr`, the 3.5.9 ship) hit it: `ecdsa_p256_sign` /
+`ecdsa_p384_sign` each want ~13 secret temporaries (`digest, e,
+h1oct, k, kint, kinv, dint, rint, sint, rd, hpd, Rx, Ry`) for the
+`s = k^{-1}(e + r·d) mod n` computation. Same workaround applied —
+one `secret var sc[416]` (P-256) / `sc[624]` (P-384) megablock with
+named offset slices. Second ladder/scalar-mult-shaped primitive to
+hit the cap; the 32-block headroom requested above would have let
+both X25519 and ECDSA-sign keep one `secret var` per temporary.
+Still P4 (worked around, not blocking) — recording the recurrence.

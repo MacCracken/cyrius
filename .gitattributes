@@ -1,4 +1,11 @@
+# Language Cyrius
+*.cyr 	linguist-language=Cyrius
+*.bcyr 	linguist-language=Cyrius
+*.tcyr 	linguist-language=Cyrius
+*.scyr  linguist-language=Cyrius
+*.smcyr linguist-language=Cyrius
+
 # Mark compiler binary as binary to prevent line-ending conversion
-build/cc3 binary
-build/cc3-native-aarch64 binary
+build/cycc binary
+build/cycc-native-aarch64 binary
 bootstrap/asm binary
