@@ -785,4 +785,86 @@ tls_native_handshake_write_header(&badch, TLS_HS_SERVER_HELLO, 100);
 assert_eq(tls_native_server_respond_hello(s_wt, &badch, 8, &sh, 256), TLS_ERR_BAD_HANDSHAKE, "non-ClientHello → BAD_HANDSHAKE");
 assert_eq(tls_native_get_state(s_wt), TLS_STATE_ERROR, "bad input → ctx ERROR");
 
+# ================================================================
+# v6.0.18 — server flight 2 (EE / Certificate / CertVerify / Finished)
+# ================================================================
+test_group("v6.0.18 server flight 2");
+
+# Ed25519 key (so CertificateVerify is Ed25519) + the P-256 leaf cert
+# (carried in the Certificate message). Reuses the .17 happy-path
+# ClientHello (ch / ch_total / cpriv).
+var s18 = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+assert_eq(tls_native_server_load_creds(s18), TLS_OK, "load creds (Ed25519 key)");
+assert_eq(tls_native_get_key_algo(s18), SIG_PRIVKEY_ED25519, "signing key = Ed25519");
+var sh18[256];
+var shn18 = tls_native_server_respond_hello(s18, &ch, ch_total, &sh18, 256);
+assert_gt(shn18, 0, "ServerHello built");
+assert_eq(tls_native_get_cipher(s18), TLS_AES_256_GCM_SHA384, "cipher AES-256-GCM-SHA384 (SHA-384)");
+
+var flight[2048];
+var fl = tls_native_server_build_flight(s18, &flight, 2048);
+assert_gt(fl, 0, "flight built");
+assert_eq(tls_native_get_state(s18), TLS_STATE_INIT, "ctx not in ERROR after flight");
+
+# Walk the flight: EE, Certificate, CertificateVerify, Finished.
+var ha = tls_native_cipher_hash_algo(tls_native_get_cipher(s18));   # SHA-384
+var hl = 48;
+var et = 0; var el = 0;
+tls_native_handshake_read_header(&flight, fl, &et, &el);
+assert_eq(et, TLS_HS_ENCRYPTED_EXTENSIONS, "msg1 = EncryptedExtensions");
+var ee_total = 4 + el;
+var cert_off = ee_total;
+tls_native_handshake_read_header(&flight + cert_off, fl - cert_off, &et, &el);
+assert_eq(et, TLS_HS_CERTIFICATE, "msg2 = Certificate");
+var cert_total = 4 + el;
+# Certificate carries the leaf DER: context(1)=0, list_len(3), cert_len(3)=413.
+assert_eq(load8(&flight + cert_off + 4), 0, "cert request context empty");
+assert_eq(_tn_be24_r(&flight + cert_off + 4 + 1 + 3), 413, "cert_data length = 413");
+var cv_off = cert_off + cert_total;
+tls_native_handshake_read_header(&flight + cv_off, fl - cv_off, &et, &el);
+assert_eq(et, TLS_HS_CERTIFICATE_VERIFY, "msg3 = CertificateVerify");
+var cv_total = 4 + el;
+assert_eq(_tn_be16_r(&flight + cv_off + 4), TLS_SIG_ED25519, "CV scheme = Ed25519");
+var fin_off = cv_off + cv_total;
+tls_native_handshake_read_header(&flight + fin_off, fl - fin_off, &et, &el);
+assert_eq(et, TLS_HS_FINISHED, "msg4 = Finished");
+assert_eq(el, hl, "Finished verify_data length = 48");
+
+# --- CertificateVerify signature is valid over CH..Certificate. ---
+var tr = tls_native_transcript_init(ha);
+tls_native_transcript_update(tr, &ch, ch_total);
+tls_native_transcript_update(tr, &sh18, shn18);
+tls_native_transcript_update(tr, &flight, ee_total);
+tls_native_transcript_update(tr, &flight + cert_off, cert_total);
+var th18[48];
+tls_native_transcript_digest(tr, &th18);
+var content[146];
+var ci = 0;
+while (ci < 64) { store8(&content + ci, 0x20); ci = ci + 1; }
+memcpy(&content + 64, "TLS 1.3, server CertificateVerify", 33);
+store8(&content + 97, 0);
+memcpy(&content + 98, &th18, 48);
+# Ed25519 pubkey from the parsed seed (same KEY_MAT the server signed with).
+var seed18 = load64(s18 + TLS_CTX_OFF_KEY_MAT);
+var sk18[64]; var pk18[32];
+ed25519_keypair(seed18, &sk18, &pk18);
+var cv_sig = &flight + cv_off + 4 + 4;   # skip hdr(4) + scheme(2) + siglen(2)
+assert_eq(ed25519_verify(&pk18, &content, 146, cv_sig), 1, "CertificateVerify signature verifies");
+
+# --- Finished verify_data matches an independent recomputation. ---
+var ks18 = load64(s18 + TLS_CTX_OFF_KEYSCHED);
+var shs18[48];
+tls_native_keysched_get_secret(ks18, TLS_KS_SERVER_HANDSHAKE, &shs18);
+var fk18[48];
+tls_native_hkdf_expand_label(&shs18, hl, "finished", 8, 0, 0, ha, &fk18, hl);
+tls_native_transcript_update(tr, &flight + cv_off, cv_total);   # extend to CH..CV
+var thcv[48];
+tls_native_transcript_digest(tr, &thcv);
+var vd18[48];
+hmac_sha384(&fk18, hl, &thcv, hl, &vd18);
+assert_streq(hex_encode(&vd18, 48), hex_encode(&flight + fin_off + 4, 48), "Finished verify_data matches");
+
+# Null / role guards.
+assert_eq(tls_native_server_build_flight(0, &flight, 2048), TLS_ERR_INVALID_PARAM, "build_flight(null) → INVALID_PARAM");
+
 var r = assert_summary();

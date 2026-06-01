@@ -2597,6 +2597,8 @@ tls_native::tls_native_record_read_header/5
 tls_native::tls_native_record_write_header/4
 tls_native::tls_native_seq_increment/1
 tls_native::tls_native_seq_init/1
+tls_native::tls_native_server_build_flight/3
+tls_native::tls_native_server_derive_handshake/1
 tls_native::tls_native_server_load_creds/1
 tls_native::tls_native_server_respond_hello/5
 tls_native::tls_native_server_sent_hrr/1
