@@ -76,9 +76,13 @@ case "$ARCH" in
 esac
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+# Map the host OS to the release tarball suffix. The release pipeline
+# publishes per-OS artifacts: <arch>-linux, <arch>-macos, <arch>-windows.
 case "$OS" in
-    linux) ;;
-    *) err "unsupported OS: $OS (Cyrius targets Linux only)" ;;
+    linux)                        OS_SUFFIX="linux" ;;
+    darwin)                       OS_SUFFIX="macos" ;;
+    mingw*|msys*|cygwin*|windows*) OS_SUFFIX="windows" ;;
+    *) err "unsupported OS: $OS (Cyrius targets Linux, macOS, and Windows)" ;;
 esac
 
 # ── --refresh-only fast path (v5.4.18) ──
@@ -315,7 +319,7 @@ mkdir -p "$CYRIUS_HOME/versions/$VERSION/bin"
 # ── Download tarball or bootstrap from source ──
 
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}"
-TARBALL="cyrius-${VERSION}-${ARCH}-linux.tar.gz"
+TARBALL="cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}.tar.gz"
 TMPDIR=$(mktemp -d)
 installed=0
 
@@ -334,7 +338,7 @@ if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}" -o "$TMPDIR/$TARBALL" 2>/dev/null; th
 
     # Untar into version directory
     tar xzf "$TMPDIR/$TARBALL" -C "$TMPDIR"
-    EXTRACTED="$TMPDIR/cyrius-${VERSION}-${ARCH}-linux"
+    EXTRACTED="$TMPDIR/cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}"
 
     if [ -d "$EXTRACTED/bin" ]; then
         cp -r "$EXTRACTED/bin"/* "$CYRIUS_HOME/versions/$VERSION/bin/"
@@ -348,6 +352,14 @@ if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}" -o "$TMPDIR/$TARBALL" 2>/dev/null; th
     fi
 
     installed=1
+fi
+
+if [ "$installed" -eq 0 ] && [ "$OS_SUFFIX" != "linux" ]; then
+    # The source-bootstrap seed (bootstrap/asm) is a Linux ELF, so the
+    # from-source path only works on Linux. On macOS/Windows we rely on
+    # the published per-OS tarball; if it's missing, fail clearly rather
+    # than running a Linux binary that can't execute here.
+    err "no prebuilt Cyrius ${VERSION} for ${ARCH}-${OS_SUFFIX} (and source-bootstrap is Linux-only). Check the release assets for this tag, or build on a Linux host."
 fi
 
 if [ "$installed" -eq 0 ]; then

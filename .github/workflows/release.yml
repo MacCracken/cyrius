@@ -334,10 +334,74 @@ jobs:
           name: release-macos-arm64
           path: dist/
 
+  # ── Build Windows x86_64 (PE32+) ──
+  # Windows binaries use the cycc_win cross-compiler (a Linux-hosted
+  # compiler that EMITS PE, built from src/main_win.cyr) rather than an
+  # env flag like Mach-O's CYRIUS_MACHO. The Windows-native cycc is then
+  # produced by compiling src/main_win.cyr THROUGH cycc_win.
+  build-windows:
+    name: Build Windows x86_64
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Windows compiler + tools (PE32+)
+        run: |
+          chmod +x build/cycc
+          cat src/main.cyr | ./build/cycc > /tmp/cc5_fresh && chmod +x /tmp/cc5_fresh
+          # cycc_win: Linux-hosted cross-compiler that emits PE.
+          cat src/main_win.cyr | /tmp/cc5_fresh > ./build/cycc_win && chmod +x ./build/cycc_win
+          # Windows-native cycc (PE): src/main_win.cyr compiled THROUGH cycc_win.
+          cat src/main_win.cyr | ./build/cycc_win > ./build/cycc.exe
+          # Windows-native tools (PE).
+          for tool in cyrfmt cyrlint cyrdoc; do
+            if [ -f "programs/${tool}.cyr" ]; then
+              cat "programs/${tool}.cyr" | ./build/cycc_win > "./build/${tool}.exe"
+            fi
+          done
+
+      - name: Verify PE32+ binaries
+        run: |
+          for f in build/cycc.exe build/*.exe; do
+            [ -f "$f" ] || continue
+            magic=$(xxd -l2 -p "$f")
+            test "$magic" = "4d5a" || { echo "ERROR: $f not PE (magic=$magic)"; exit 1; }
+            file "$f" | grep -q "PE32+ executable" || { echo "ERROR: $f not PE32+"; exit 1; }
+          done
+          echo "PASS: all PE32+ binaries verified"
+
+      - name: Package Windows tarball
+        run: |
+          VER="${GITHUB_REF_NAME}"
+          STAGE="cyrius-${VER}-x86_64-windows"
+          mkdir -p "$STAGE/bin" "$STAGE/lib"
+          cp build/cycc.exe "$STAGE/bin/"
+          for f in build/cyrfmt.exe build/cyrlint.exe build/cyrdoc.exe; do
+            [ -f "$f" ] && cp "$f" "$STAGE/bin/"
+          done
+          # Version manager + Windows-specific stdlib.
+          cp scripts/cyriusly "$STAGE/bin/" 2>/dev/null || true
+          sh scripts/release-lib.sh "$STAGE/lib"
+          cp lib/syscalls_windows.cyr "$STAGE/lib/"
+          cp lib/alloc_windows.cyr "$STAGE/lib/"
+          cp VERSION LICENSE "$STAGE/"
+
+          tar czf "${STAGE}.tar.gz" "$STAGE"
+          sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+
+          mkdir -p dist
+          mv "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256" dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/
+
   # ── Create GitHub Release ──
   release:
     name: Create GitHub Release
-    needs: [build-x86, build-aarch64, build-macos, build-macos-arm64]
+    needs: [build-x86, build-aarch64, build-macos, build-macos-arm64, build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -360,6 +424,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-macos-arm64
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows
           path: dist/
 
       - name: Add standalone installer

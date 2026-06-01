@@ -1454,4 +1454,67 @@ store8(load64(clX + TLS_CTX_OFF_SRV_FIN_BUF) + 4, load8(load64(clX + TLS_CTX_OFF
 var cfX[256];
 assert_eq(tls_native_client_finish(clX, &cfX, 256), TLS_ERR_AUTHN, "bad server Finished → client AUTHN");
 
+# ================================================================
+# v6.0.28 — application data (post-handshake send/recv)
+# ================================================================
+test_group("v6.0.28 application data");
+
+# Complete a mutual handshake (matching ECDSA-P256 cert/key), both
+# sides derive the master + install application-traffic keys.
+var srv28 = tls_native_new_server(cert23, 385, key23, 138);
+tls_native_server_load_creds(srv28);
+var cl28 = tls_native_new_client("localhost", 9);
+var ch28[512];
+var chn28 = tls_native_client_build_hello(cl28, &ch28, 512);
+var sh28[256];
+var sh28n = tls_native_server_respond_hello(srv28, &ch28, chn28, &sh28, 256);
+tls_native_client_parse_server_hello(cl28, &sh28, sh28n);
+tls_native_server_derive_handshake(srv28);
+tls_native_server_install_handshake_keys(srv28);
+var flight28[4096];
+var fl28 = tls_native_server_build_flight(srv28, &flight28, 4096);
+tls_native_server_derive_master(srv28);
+var flrec28[4096];
+var flrec28n = tls_native_server_seal_handshake(srv28, &flight28, fl28, &flrec28, 4096);
+tls_native_client_recv_flight(cl28, &flrec28, flrec28n);
+var cfin28[256];
+tls_native_client_finish(cl28, &cfin28, 256);
+assert_eq(tls_native_install_app_keys(srv28), TLS_OK, "server installed app keys");
+assert_eq(tls_native_install_app_keys(cl28), TLS_OK, "client installed app keys");
+
+# Client → server application data.
+var ping = "ping-over-tls";
+var crec28[128];
+var crn28 = tls_native_seal_app(cl28, ping, 13, &crec28, 128);
+assert_gt(crn28, 0, "client sealed app data");
+var sdec28[128];
+assert_eq(tls_native_open_app(srv28, &crec28, crn28, &sdec28, 128), 13, "server opened 13 bytes");
+assert_eq(_tn_ct_eq(&sdec28, ping, 13), 1, "server received client app data intact");
+
+# Server → client application data.
+var pong = "pong-reply!!";
+var srec28[128];
+var srn28 = tls_native_seal_app(srv28, pong, 12, &srec28, 128);
+var cdec28[128];
+assert_eq(tls_native_open_app(cl28, &srec28, srn28, &cdec28, 128), 12, "client opened 12 bytes");
+assert_eq(_tn_ct_eq(&cdec28, pong, 12), 1, "client received server app data intact");
+
+# Tampered app record → DECRYPT (seqs already advanced; 2nd message).
+var ping2 = "second-msg";
+var crec2[128];
+var crn2 = tls_native_seal_app(cl28, ping2, 10, &crec2, 128);
+store8(&crec2 + 6, load8(&crec2 + 6) ^ 0xFF);
+var x28[128];
+assert_eq(tls_native_open_app(srv28, &crec2, crn2, &x28, 128), TLS_ERR_DECRYPT, "tampered app record → DECRYPT");
+
+# KeyUpdate secret rotation (RFC §7.2): deterministic + transforms.
+var sap28[48];
+tls_native_keysched_get_secret(load64(cl28 + TLS_CTX_OFF_KEYSCHED), TLS_KS_SERVER_APPLICATION, &sap28);
+var upd1[48];
+var upd2[48];
+assert_eq(tls_native_key_update_secret(&sap28, 48, TLS_HASH_SHA384, &upd1), TLS_OK, "key_update_secret OK");
+tls_native_key_update_secret(&sap28, 48, TLS_HASH_SHA384, &upd2);
+assert_streq(hex_encode(&upd1, 48), hex_encode(&upd2, 48), "key_update_secret deterministic");
+assert_eq(_tn_ct_eq(&upd1, &sap28, 48), 0, "updated secret differs from original");
+
 var r = assert_summary();

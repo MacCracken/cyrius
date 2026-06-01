@@ -1109,7 +1109,13 @@ var TLS_CTX_OFF_CH_LEN        = 328; # ClientHello message length
 var TLS_CTX_OFF_SERVER_CERT   = 336; # client: parsed server leaf cert (.26)
 var TLS_CTX_OFF_SRV_FIN_BUF   = 344; # client: stashed server Finished message (.26 → .27)
 var TLS_CTX_OFF_SRV_FIN_LEN   = 352; # client: server Finished message length
-# 360..447 reserved for application-traffic keys (.28 / app data)
+# Application-traffic keys (.28) — installed after derive_master:
+var TLS_CTX_OFF_SRV_APP_KEY   = 360; # server application-traffic key ptr
+var TLS_CTX_OFF_SRV_APP_IV    = 368; # server application-traffic static IV ptr
+var TLS_CTX_OFF_CLI_APP_KEY   = 376; # client application-traffic key ptr
+var TLS_CTX_OFF_CLI_APP_IV    = 384; # client application-traffic static IV ptr
+var TLS_CTX_OFF_SRV_APP_SEQ   = 392; # inline 8-byte server app-record sequence
+var TLS_CTX_OFF_CLI_APP_SEQ   = 400; # inline 8-byte client app-record sequence
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -1640,6 +1646,113 @@ fn tls_native_client_finish(ctx, out, out_max): i64 {
     tls_native_transcript_update(ts, finmsg, TLS_HANDSHAKE_HEADER_LEN + hlen);
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
     return rl;
+}
+
+# ================================================================
+# Application data (.28, RFC 8446 §5.2 / §7.2)
+# ================================================================
+# After CONNECTED, records are protected with the application-traffic
+# keys. These helpers are role-aware: each side WRITES with its own
+# app key and READS with the peer's. The socket-level
+# tls_native_write/read + client connect() wire these in at the e2e
+# slot; KeyUpdate's message exchange does too (the secret-rotation
+# primitive ships here).
+
+# Derive + install the server & client application-traffic key/IV from
+# the (master-phase) key schedule and reset both app sequence numbers.
+# Call after derive_master.
+fn tls_native_install_app_keys(ctx): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
+    if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
+    var hash_algo = tls_native_cipher_hash_algo(cipher);
+    var key_len = tls_native_cipher_key_len(cipher);
+    var iv_len = tls_native_cipher_iv_len(cipher);
+    var hlen = _tn_hash_len(hash_algo);
+    var ss = alloc(TLS_MAX_DIGEST_LEN);
+    if (ss == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_APPLICATION, ss) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var sk = alloc(key_len);
+    var siv = alloc(iv_len);
+    if (sk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (siv == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_derive_key(ss, hlen, hash_algo, sk, key_len);
+    tls_native_derive_iv(ss, hlen, hash_algo, siv, iv_len);
+    store64(ctx + TLS_CTX_OFF_SRV_APP_KEY, sk);
+    store64(ctx + TLS_CTX_OFF_SRV_APP_IV, siv);
+    var cs = alloc(TLS_MAX_DIGEST_LEN);
+    if (cs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_APPLICATION, cs) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var ck = alloc(key_len);
+    var civ = alloc(iv_len);
+    if (ck == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (civ == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_derive_key(cs, hlen, hash_algo, ck, key_len);
+    tls_native_derive_iv(cs, hlen, hash_algo, civ, iv_len);
+    store64(ctx + TLS_CTX_OFF_CLI_APP_KEY, ck);
+    store64(ctx + TLS_CTX_OFF_CLI_APP_IV, civ);
+    tls_native_seq_init(ctx + TLS_CTX_OFF_SRV_APP_SEQ);
+    tls_native_seq_init(ctx + TLS_CTX_OFF_CLI_APP_SEQ);
+    return TLS_OK;
+}
+
+# Seal application data into a protected record under THIS side's
+# application-traffic key (client writes with the client key, server
+# with the server key). Returns the record length.
+fn tls_native_seal_app(ctx, buf, len, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var key = load64(ctx + TLS_CTX_OFF_SRV_APP_KEY);
+    var iv = load64(ctx + TLS_CTX_OFF_SRV_APP_IV);
+    var seqoff = TLS_CTX_OFF_SRV_APP_SEQ;
+    if (load64(ctx + TLS_CTX_OFF_ROLE) == TLS_ROLE_CLIENT) {
+        key = load64(ctx + TLS_CTX_OFF_CLI_APP_KEY);
+        iv = load64(ctx + TLS_CTX_OFF_CLI_APP_IV);
+        seqoff = TLS_CTX_OFF_CLI_APP_SEQ;
+    }
+    if (key == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    return tls_native_record_seal(load64(ctx + TLS_CTX_OFF_CIPHER), key, iv,
+    ctx + seqoff, TLS_CT_APPLICATION_DATA, buf, len, out, out_max);
+}
+
+# Open a protected application-data record from the peer (read with the
+# PEER's application-traffic key). Returns the application-data length
+# (inner content type 23), `TLS_ERR_ALERT` for an alert record, 0 for a
+# post-handshake handshake record (NewSessionTicket / KeyUpdate — full
+# handling later), or a negative error (TLS_ERR_DECRYPT on a bad tag).
+fn tls_native_open_app(ctx, record, record_len, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var key = load64(ctx + TLS_CTX_OFF_CLI_APP_KEY);
+    var iv = load64(ctx + TLS_CTX_OFF_CLI_APP_IV);
+    var seqoff = TLS_CTX_OFF_CLI_APP_SEQ;
+    if (load64(ctx + TLS_CTX_OFF_ROLE) == TLS_ROLE_CLIENT) {
+        key = load64(ctx + TLS_CTX_OFF_SRV_APP_KEY);
+        iv = load64(ctx + TLS_CTX_OFF_SRV_APP_IV);
+        seqoff = TLS_CTX_OFF_SRV_APP_SEQ;
+    }
+    if (key == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    var oct = 0;
+    var n = tls_native_record_open(load64(ctx + TLS_CTX_OFF_CIPHER), key, iv,
+    ctx + seqoff, record, record_len, out, out_max, &oct);
+    if (n < 0) { return n; }
+    if (oct == TLS_CT_APPLICATION_DATA) { return n; }
+    if (oct == TLS_CT_ALERT) { return TLS_ERR_ALERT; }
+    return 0;
+}
+
+# Derive the next-generation application-traffic secret for KeyUpdate
+# (RFC 8446 §7.2): secret_{N+1} = HKDF-Expand-Label(secret_N,
+# "traffic upd", "", Hash.length). The caller re-derives key/IV from
+# the new secret + resets the record sequence. (The KeyUpdate message
+# exchange wires in with the socket I/O layer.)
+fn tls_native_key_update_secret(sec, sec_len, hash_algo, out): i64 {
+    var hlen = _tn_hash_len(hash_algo);
+    return tls_native_hkdf_expand_label(sec, sec_len, "traffic upd", 11,
+    0, 0, hash_algo, out, hlen);
 }
 
 # Create a server-side context with the given certificate chain

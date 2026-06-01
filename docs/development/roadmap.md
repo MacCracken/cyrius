@@ -434,6 +434,15 @@ review / cleanup), then docs sync.
   [`proposals/2026-05-17-toml-single-bracket-sections.md`](proposals/2026-05-17-toml-single-bracket-sections.md).
 
 **Remaining back-end candidates (user picks at slot entry):**
+- **Multi-OS installer followups (end of v6.0.x — user direction
+  2026-06-01).** `.28` made `install.sh` OS-aware (linux + darwin→`-macos`
+  + windows→`-windows` tarball mapping; macOS install works now since
+  the `-macos` artifacts already shipped) and added a `build-windows`
+  release job (PE32+ via the `cycc_win` cross-emitter). **Followups**:
+  (1) `install.sh` polish; (3) **native Windows installer** (PowerShell
+  `.ps1` so Windows users don't need WSL/git-bash); + eventual
+  **AGNOS-target install** support. (Targets: Linux + Windows + Darwin,
+  AGNOS eventual.)
 - POSIX `*at()` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`,
   …). Proposal:
   [`proposals/2026-05-17-syscalls-at-family-stdlib.md`](proposals/2026-05-17-syscalls-at-family-stdlib.md).

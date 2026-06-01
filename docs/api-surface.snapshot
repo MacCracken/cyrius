@@ -2590,6 +2590,8 @@ tls_native::tls_native_get_state/1
 tls_native::tls_native_get_version/1
 tls_native::tls_native_handshake_read_header/4
 tls_native::tls_native_handshake_write_header/3
+tls_native::tls_native_install_app_keys/1
+tls_native::tls_native_key_update_secret/4
 tls_native::tls_native_keysched_derive_handshake/4
 tls_native::tls_native_keysched_derive_master/2
 tls_native::tls_native_keysched_get_secret/3
@@ -2598,6 +2600,7 @@ tls_native::tls_native_keysched_phase/1
 tls_native::tls_native_keysched_set_psk/3
 tls_native::tls_native_new_client/2
 tls_native::tls_native_new_server/4
+tls_native::tls_native_open_app/5
 tls_native::tls_native_psk_binder/6
 tls_native::tls_native_read/3
 tls_native::tls_native_record_aad/4
@@ -2606,6 +2609,7 @@ tls_native::tls_native_record_open/9
 tls_native::tls_native_record_read_header/5
 tls_native::tls_native_record_seal/9
 tls_native::tls_native_record_write_header/4
+tls_native::tls_native_seal_app/5
 tls_native::tls_native_seq_increment/1
 tls_native::tls_native_seq_init/1
 tls_native::tls_native_server_build_flight/3
