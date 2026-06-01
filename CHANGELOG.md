@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.28] — 2026-06-01
+
+**TLS arc Mini-arc B.5 — client application data + multi-OS installer.**
+Two deliverables (user direction 2026-06-01): the TLS 1.3 application-
+data layer, and a fix for the installer rejecting non-Linux hosts.
+
+### Fixed — installer supports macOS (+ Windows release artifacts)
+
+- `scripts/install.sh` is now OS-aware instead of Linux-only. It maps
+  the host OS to the published per-OS release tarball: `linux`,
+  `darwin → -macos`, `mingw/msys/cygwin/windows → -windows`. **macOS
+  install works now** — the `-macos` tarballs (x86_64 + arm64) already
+  shipped from the release pipeline; the installer simply rejected
+  `darwin` and hardcoded the `-linux` suffix. The source-bootstrap
+  fallback is guarded to Linux only (the seed is a Linux ELF) with a
+  clear error on other OSes.
+- `.github/workflows/release.yml` gained a **`build-windows`** job:
+  produces PE32+ binaries via the `cycc_win` cross-emitter (a
+  Linux-hosted compiler that emits PE, built from `src/main_win.cyr`;
+  the Windows-native cycc is `src/main_win.cyr` compiled *through*
+  `cycc_win`). Wired into the release publish job. So Linux + macOS +
+  Windows all have release artifacts (AGNOS eventual).
+- Followups (end of v6.0.x, user-flagged): `install.sh` polish; a
+  native Windows installer (PowerShell `.ps1`); AGNOS-target install.
+
+### Added — application data (`lib/tls_native.cyr`, RFC 8446 §5.2/§7.2)
+
+- `tls_native_install_app_keys(ctx)` — derives + installs the server &
+  client application-traffic key/IV from the master schedule and resets
+  the app sequence numbers. Call after `derive_master`.
+- `tls_native_seal_app(ctx, buf, len, out, out_max)` /
+  `tls_native_open_app(ctx, record, …)` — role-aware app-record
+  protection (each side writes with its own app key, reads with the
+  peer's). `open_app` surfaces `TLS_ERR_ALERT` for alert records and 0
+  for post-handshake handshake records (NewSessionTicket / KeyUpdate).
+- `tls_native_key_update_secret(sec, sec_len, hash_algo, out)` — the
+  §7.2 `traffic upd` secret rotation primitive.
+- New ctx fields for the application-traffic keys + sequences.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 341 → **352 asserts**: after a full mutual
+  handshake, **application data flows both directions** (client→server,
+  server→client) under the app-traffic keys; a tampered app record →
+  `DECRYPT`; the KeyUpdate secret is deterministic + transforms.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82** (install.sh syntax + the workflow change
+  don't affect it).
+- api-surface snapshot 2,838 → **2,842 fns** (+`install_app_keys`,
+  +`seal_app`, +`open_app`, +`key_update_secret`).
+
 ## [6.0.27] — 2026-06-01
 
 **TLS arc Mini-arc B.4 — TLS 1.3 client: Finished + handshake

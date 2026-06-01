@@ -3,6 +3,41 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.28 ship — client app data + multi-OS installer)
+
+Closing **v6.0.28**, two deliverables (user direction): TLS 1.3 app
+data + the installer multi-OS fix.
+
+**Installer**: `scripts/install.sh` now OS-aware (linux / darwin→-macos
+/ windows→-windows tarball mapping; macOS install works now — -macos
+artifacts already shipped; source-bootstrap guarded Linux-only).
+`.github/workflows/release.yml` + `build-windows` job (PE32+ via
+`cycc_win` cross-emitter, verified locally → `cycc.exe` PE32+). Targets
+Linux+Windows+Darwin (AGNOS eventual). Followups end-of-6.0.x:
+install.sh polish, native Windows .ps1 installer, AGNOS-target install
+(roadmap back-end candidates).
+
+**TLS app data**: `tls_native_install_app_keys` (server+client app
+key/IV + seqs), `tls_native_seal_app`/`open_app` (role-aware: write own
+key, read peer's; open surfaces alert/post-handshake), and
+`tls_native_key_update_secret` (§7.2 traffic-upd rotation). New ctx
+app-key fields.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,838 → **2,842 fns** (+4 app-data publics).
+- `tls_native_scaffold.tcyr` 341 → **352 asserts** (+11): full mutual
+  handshake → **app data both directions** under app keys; tamper →
+  DECRYPT; KeyUpdate secret rotation. (Traps: `secret` reserved-keyword
+  param → `sec`; 4-space continuation indent up front, no fmt nit.)
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc B step 5 of
+~8; TLS 1.3 app data flowing. Next: **.29 — X.509 chain verification**
+(wire sigil x509_verify_chain + trust store), then .30 hostname/SAN,
+.31 localhost client↔server socket e2e (+ connect() + socket-level
+write/read).
+
 ## Session close — 2026-06-01 (.27 ship — TLS Mini-arc B.4 client Finished; handshake complete)
 
 Closing **v6.0.27**, the fourth slot of TLS Mini-arc B (client). The
