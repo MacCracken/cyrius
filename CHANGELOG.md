@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.17] — 2026-05-31
+
+**TLS arc Mini-arc C.3 — ServerHello + key_share response.** Third
+slot of the server mini-arc: the server consumes a ClientHello and
+produces its ServerHello (or a HelloRetryRequest), establishing the
+x25519 ECDHE shared secret. `lib/`-only — no compiler change. Crypto
+(x25519, CSPRNG) is sigil/syscalls; this is the protocol wiring.
+
+### Added — ServerHello response (`lib/tls_native.cyr`)
+
+- `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max)`
+  — parses a ClientHello handshake message, negotiates the cipher +
+  x25519 group, generates the server ephemeral keypair + ECDHE shared
+  secret, initialises the transcript-hash for the negotiated cipher,
+  feeds ClientHello + ServerHello into it, and writes the ServerHello
+  (or HRR) handshake message to `out`. Returns the message length or a
+  negative `TLS_ERR_*` (ctx → ERROR).
+- `_tn_parse_client_hello` (private) — bounds-checked walk of the
+  (untrusted) ClientHello: client_random, legacy_session_id echo,
+  cipher_suites (→ `cipher_select`), and the key_share extension.
+  Every read is validated against the message length.
+- `_tn_find_ext` / `_tn_find_x25519_share` / `_tn_supports_x25519`
+  (private) — extension-block + key_share + supported_groups scanners,
+  each length-validated.
+- `_tn_gen_ephemeral_x25519` (private) — `sys_getrandom` scalar →
+  `x25519_base` (server pubkey) → `x25519` (ECDHE shared secret).
+- `_tn_build_server_hello` (private) — serializes the ServerHello /
+  HRR handshake message (version 0x0303, random, session-id echo,
+  cipher, supported_versions=0x0304, key_share).
+- `_tn_hrr_random` (private) — the `SHA-256("HelloRetryRequest")`
+  sentinel for the HRR random field (RFC 8446 §4.1.3).
+- `tls_native_get_group(ctx)` + `tls_native_server_sent_hrr(ctx)`
+  diagnostics; new ctx fields (client/server random, session id,
+  group, ephemeral priv/pub, ECDHE shared, peer pub, HRR flag).
+
+### Scope notes
+
+- **x25519 only** for the key exchange (the dominant TLS 1.3 group).
+  A client that offers no x25519 key_share but lists it in
+  supported_groups gets a HelloRetryRequest. P-256 ECDHE key_share
+  needs a sigil P-256 ECDH primitive (not yet present) and lands when
+  that does.
+- The HRR §4.4.1 transcript substitution + second-ClientHello retry
+  loop is deferred to the `accept()` driver; .17 emits a
+  structurally-valid HRR message.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 233 → **245 asserts**: a real ClientHello
+  (live client x25519 keypair) → ServerHello, with an end-to-end
+  **ECDHE shared-secret agreement** check (server's secret ==
+  client's independently-derived one), ServerHello round-trip, the
+  HRR sentinel random, and null/wrong-type negatives → ERROR.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,813 → **2,816 fns** (+3 publics:
+  `tls_native_server_respond_hello`, `tls_native_get_group`,
+  `tls_native_server_sent_hrr`).
+
 ## [6.0.16] — 2026-05-31
 
 **TLS arc Mini-arc C.2 — server cert + key loading.** Second slot of

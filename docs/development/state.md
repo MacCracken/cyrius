@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-31 (.17 ship — TLS Mini-arc C.3 ServerHello + key_share)
+
+Closing **v6.0.17**, the third slot of TLS Mini-arc C (server). The
+server consumes a ClientHello and produces its ServerHello (or HRR),
+establishing the x25519 ECDHE shared secret. `lib/`-only.
+
+`tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max)`:
+bounds-checked ClientHello parse (`_tn_parse_client_hello` +
+`_tn_find_ext` / `_tn_find_x25519_share` / `_tn_supports_x25519`) →
+cipher negotiation (AES-256-GCM ▸ ChaCha20 server pref) + x25519
+group → ephemeral keypair via `sys_getrandom` + `x25519_base`/`x25519`
+ECDHE → ServerHello serialize + transcript(CH,SH). HelloRetryRequest
+when the client offered no x25519 share but lists it in
+supported_groups (SHA-256("HelloRetryRequest") sentinel random).
+Added `get_group` / `server_sent_hrr` diagnostics + ctx fields.
+
+**Scope**: x25519 only (P-256 ECDHE awaits a sigil ECDH-P256
+primitive; HRR is the fallback). HRR §4.4.1 transcript substitution +
+retry loop deferred to the accept() driver.
+
+**Reserved-keyword traps**: `pub` and `shared` are reserved (like
+`secret`) — renamed to ppub/epub and dhe. Compiler flagged them
+precisely (unlike `secret`'s useless location). Pinned to
+[[feedback_secret_reserved_keyword]].
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,813 → **2,816 fns** (+3 publics).
+- `tls_native_scaffold.tcyr` 233 → **245 asserts** (+12; live CH →
+  SH with end-to-end ECDHE agreement, HRR sentinel, negatives).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 3 of
+6 done. Next: **.18 — EncryptedExtensions + Certificate +
+CertificateVerify + Finished** (derive the handshake secret from
+.17's ECDHE shared secret via keysched_derive_handshake, then the
+server's signed flight; CertificateVerify uses sigil ECDSA/Ed25519
+sign — RSA-PSS still awaits a sigil tag).
+
 ## Session close — 2026-05-31 (.16 ship — TLS Mini-arc C.2 server cert + key loading)
 
 Closing **v6.0.16**, the second slot of TLS Mini-arc C (server).
