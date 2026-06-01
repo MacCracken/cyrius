@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.22] — 2026-06-01
+
+**TLS arc Mini-arc C.8 — server `accept()` + cyrius-native loopback
+e2e.** The first full TLS 1.3 handshake over a socket in cyrius. The
+e2e capstone split: this is the socket handshake driver + a self-
+contained loopback; OpenSSL `s_client` real interop is .23. `lib/`-only
+(plus a cross-arch stdlib syscall).
+
+### Added — socket handshake driver (`lib/tls_native.cyr`)
+
+- `tls_native_accept(ctx, sock_fd)` — drives the server handshake over
+  a connected socket: reads the ClientHello record → sends a plaintext
+  ServerHello → derives + installs the handshake-traffic keys → sends
+  the **encrypted** server flight (EE/Cert/CertVerify/Finished) → reads
+  + verifies the client's **encrypted** Finished → CONNECTED. Returns
+  TLS_OK or a negative `TLS_ERR_*` (ctx → ERROR). ChangeCipherSpec +
+  HelloRetryRequest loops are .23 (OpenSSL interop); this clean TLS 1.3
+  path serves the cyrius-native loopback.
+- `_tn_sock_read_full` / `_tn_sock_read_record` / `_tn_sock_write_all`
+  (private) — partial-read/write-safe record framing over a socket.
+
+### Added — stdlib (`lib/syscalls_*`)
+
+- `sys_socketpair(domain, type, protocol, fds)` — `SYS_SOCKETPAIR`
+  added cross-arch (x86_64 = 53, aarch64 = 199) + the common wrapper.
+  Provides an in-process bidirectional connected fd pair (used for the
+  loopback e2e; generally useful).
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 298 → **301 asserts**: a `socketpair` +
+  `fork` loopback — parent runs `tls_native_accept`, child is a
+  minimal TLS 1.3 client (ClientHello, ServerHello parse, x25519 ECDHE,
+  matching key derivation, flight decrypt, client Finished) built from
+  the existing primitives. Asserts the **server `accept()` completes
+  → TLS_OK** and reaches **CONNECTED** over the socket. The
+  `accept(null,…)` scaffold assert flipped to `INVALID_PARAM`.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82** (the lint gate caught a >120-char line
+  in the new driver; wrapped).
+- api-surface snapshot 2,830 → **2,831 fns** (+`sys_socketpair`;
+  `tls_native_accept` was already in the surface as a stub).
+
 ## [6.0.21] — 2026-06-01
 
 **TLS arc Mini-arc C.7 — record-layer protection.** Seventh slot of

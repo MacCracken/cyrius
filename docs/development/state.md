@@ -3,6 +3,39 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.22 ship — TLS Mini-arc C.8 accept() + loopback e2e)
+
+Closing **v6.0.22** — the **first full TLS 1.3 handshake over a socket
+in cyrius**. The e2e capstone split: .22 = socket handshake driver +
+cyrius-native loopback; .23 = OpenSSL `s_client` real interop.
+
+`tls_native_accept(ctx, sock_fd)`: read CH record → plaintext SH →
+derive+install handshake keys → encrypted flight → read+verify
+encrypted client Finished → CONNECTED. Socket framing helpers
+`_tn_sock_read_full`/`_read_record`/`_write_all`. Added `sys_socketpair`
+cross-arch (SYS_SOCKETPAIR x86=53/aarch64=199 + common wrapper).
+
+Loopback test: socketpair + fork — parent server accept(), child a
+minimal TLS 1.3 client (CH, SH parse, x25519 ECDHE, matching key
+derivation, flight decrypt, Finished) from existing primitives →
+asserts accept()→TLS_OK + CONNECTED over the socket.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82** (lint gate caught a >120-char line in
+  the driver; wrapped).
+- api-surface snapshot 2,830 → **2,831 fns** (+sys_socketpair).
+- `tls_native_scaffold.tcyr` 298 → **301 asserts** (+3: socketpair,
+  accept→TLS_OK, CONNECTED).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 8 of
+9 done (e2e split widened C to 9). Next: **.23 — OpenSSL `s_client`
+real interop** (real TCP listen/accept + fork openssl; PEM-cert support
++ matching ECDSA-P256 cert/key gen + ChangeCipherSpec middlebox compat)
+closes Mini-arc C against a real peer. Premise-check at entry: openssl
+s_client flags for a raw TLS 1.3 handshake + how to generate a DER cert
++ key pair via openssl from the harness.
+
 ## Session close — 2026-06-01 (.21 ship — TLS Mini-arc C.7 record-layer protection)
 
 Closing **v6.0.21**, the seventh slot of TLS Mini-arc C (server) — the
