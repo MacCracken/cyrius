@@ -1102,7 +1102,11 @@ var TLS_CTX_OFF_CLI_HS_KEY    = 288; # client handshake-traffic key ptr
 var TLS_CTX_OFF_CLI_HS_IV     = 296; # client handshake-traffic static IV ptr (12 B)
 var TLS_CTX_OFF_SRV_SEQ       = 304; # inline 8-byte server write sequence number
 var TLS_CTX_OFF_CLI_SEQ       = 312; # inline 8-byte client (read) sequence number
-# 320..447 reserved for application-traffic keys (.22 / app data)
+# Client-side (.24): buffered ClientHello for retroactive transcript
+# init once the cipher (hence hash) is known from the ServerHello.
+var TLS_CTX_OFF_CH_BUF        = 320; # ptr to the sent ClientHello message bytes
+var TLS_CTX_OFF_CH_LEN        = 328; # ClientHello message length
+# 336..447 reserved for application-traffic keys (.25+ / app data)
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -1219,7 +1223,110 @@ fn tls_native_available(): i64 {
 # Returns: ctx handle (>0) on success, 0 on OOM. The ctx is NOT yet
 # connected — call tls_native_set_* hooks then tls_native_connect.
 fn tls_native_new_client(host, host_len): i64 {
-    return 0;
+    var ctx = _tn_ctx_new(TLS_ROLE_CLIENT);
+    if (ctx == 0) { return 0; }
+    store64(ctx + TLS_CTX_OFF_VERIFY, TLS_VERIFY_PEER);   # clients verify by default
+    if (host != 0) {
+        var hl = host_len;
+        if (hl == 0) { hl = strlen(host); }
+        if (hl > 0) {
+            var hbuf = alloc(hl + 1);
+            if (hbuf == 0) { return 0; }
+            memcpy(hbuf, host, hl);
+            store8(hbuf + hl, 0);
+            store64(ctx + TLS_CTX_OFF_HOST, hbuf);
+            store64(ctx + TLS_CTX_OFF_HOST_LEN, hl);
+        }
+    }
+    return ctx;
+}
+
+# ================================================================
+# TLS 1.3 client — ClientHello (.24, RFC 8446 §4.1.2)
+# ================================================================
+# Build a ClientHello into `out`: generate the client's x25519
+# ephemeral keypair + random, serialize the message (SNI when a host
+# was given, supported_versions=1.3, supported_groups=x25519,
+# signature_algorithms ECDSA/Ed25519, key_share x25519), and buffer
+# the message — the transcript hash can't be initialised until the
+# ServerHello reveals the cipher (hence the hash), so .25 replays the
+# buffered CH then the SH. Returns the message length or a negative
+# TLS_ERR_*. Offers x25519 only (no P-256 ECDH in sigil yet) and
+# ECDSA/Ed25519 sig algs only (RSA verify lands with sigil 3.5.10).
+fn tls_native_client_build_hello(ctx, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var priv = alloc(32);
+    var epub = alloc(32);
+    if (priv == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (epub == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (sys_getrandom(priv, 32, 0) != 32) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    x25519_base(priv, epub);
+    store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
+    store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
+    var crand = alloc(TLS_RANDOM_LEN);
+    if (crand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (sys_getrandom(crand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
+        return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
+    }
+    store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
+    var host = load64(ctx + TLS_CTX_OFF_HOST);
+    var host_len = load64(ctx + TLS_CTX_OFF_HOST_LEN);
+    var sni_ext = 0;
+    if (host != 0) {
+        if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
+    }
+    var ext_block = 7 + 8 + 12 + 42 + sni_ext;       # sv + sg + sa + key_share + SNI
+    var body_len = 2 + 32 + 1 + 2 + 6 + 2 + 2 + ext_block;
+    var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
+    if (total > out_max) { return _tn_ctx_fail(ctx, TLS_ERR_BUFFER_FULL); }
+    tls_native_handshake_write_header(out, TLS_HS_CLIENT_HELLO, body_len);
+    var p = out + TLS_HANDSHAKE_HEADER_LEN;
+    _tn_be16_w(p, 0x0303); p = p + 2;
+    memcpy(p, crand, 32); p = p + 32;
+    store8(p, 0); p = p + 1;                          # legacy_session_id (empty)
+    _tn_be16_w(p, 6); p = p + 2;                       # cipher_suites length
+    _tn_be16_w(p, TLS_AES_256_GCM_SHA384); p = p + 2;
+    _tn_be16_w(p, TLS_CHACHA20_POLY1305_SHA256); p = p + 2;
+    _tn_be16_w(p, TLS_AES_128_GCM_SHA256); p = p + 2;
+    store8(p, 1); p = p + 1; store8(p, 0); p = p + 1;  # legacy_compression null
+    _tn_be16_w(p, ext_block); p = p + 2;
+    if (sni_ext > 0) {
+        _tn_be16_w(p, 0); p = p + 2;                   # ext_type server_name
+        _tn_be16_w(p, 2 + 1 + 2 + host_len); p = p + 2;
+        _tn_be16_w(p, 1 + 2 + host_len); p = p + 2;    # server_name_list length
+        store8(p, 0); p = p + 1;                       # name_type host_name(0)
+        _tn_be16_w(p, host_len); p = p + 2;
+        memcpy(p, host, host_len); p = p + host_len;
+    }
+    _tn_be16_w(p, TLS_EXT_SUPPORTED_VERSIONS); p = p + 2;
+    _tn_be16_w(p, 3); p = p + 2;
+    store8(p, 2); p = p + 1;                           # versions list length
+    _tn_be16_w(p, 0x0304); p = p + 2;
+    _tn_be16_w(p, TLS_EXT_SUPPORTED_GROUPS); p = p + 2;
+    _tn_be16_w(p, 4); p = p + 2;
+    _tn_be16_w(p, 2); p = p + 2;                       # groups list length
+    _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
+    _tn_be16_w(p, 13); p = p + 2;                      # signature_algorithms
+    _tn_be16_w(p, 8); p = p + 2;
+    _tn_be16_w(p, 6); p = p + 2;                       # sig algs list length
+    _tn_be16_w(p, TLS_SIG_ECDSA_SECP256R1_SHA256); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_ECDSA_SECP384R1_SHA384); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_ED25519); p = p + 2;
+    _tn_be16_w(p, TLS_EXT_KEY_SHARE); p = p + 2;
+    _tn_be16_w(p, 38); p = p + 2;
+    _tn_be16_w(p, 36); p = p + 2;                      # client_shares length
+    _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
+    _tn_be16_w(p, 32); p = p + 2;
+    memcpy(p, epub, 32); p = p + 32;
+    var chbuf = alloc(total);
+    if (chbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    memcpy(chbuf, out, total);
+    store64(ctx + TLS_CTX_OFF_CH_BUF, chbuf);
+    store64(ctx + TLS_CTX_OFF_CH_LEN, total);
+    return total;
 }
 
 # Create a server-side context with the given certificate chain

@@ -30,9 +30,9 @@ test_group("tls_native v6.0.10 scaffold API surface");
 # Capability check — flipped 0→1 at v6.0.14 (AES-256-GCM + ChaCha20-Poly1305 wired).
 assert_eq(tls_native_available(), 1, "tls_native_available() = 1 at .14");
 
-# new_client is still a stub (.21); new_server is live (.15) but
+# new_client is live (.24) — returns a client ctx; new_server (.15)
 # rejects null cert/key args with the 0 sentinel.
-assert_eq(tls_native_new_client("example.com", 11), 0, "new_client stub returns 0");
+assert_nonnull(tls_native_new_client("example.com", 11), "new_client returns a ctx");
 assert_eq(tls_native_new_server(0, 0, 0, 0), 0, "new_server rejects null cert (0)");
 
 # Stateful fns not yet wired return TLS_ERR_NOT_IMPLEMENTED. ctx arg
@@ -1255,5 +1255,36 @@ if (sys_access("/usr/bin/openssl", 0) == 0) {
 } else {
     assert_eq(1, 1, "openssl absent — real-peer interop skipped");
 }
+
+# ================================================================
+# v6.0.24 — TLS 1.3 client: ClientHello construction
+# ================================================================
+test_group("v6.0.24 ClientHello construction");
+
+var c24 = tls_native_new_client("localhost", 9);
+assert_nonnull(c24, "new_client returns a ctx");
+assert_eq(tls_native_get_state(c24), TLS_STATE_INIT, "client ctx in INIT");
+
+var chbuf24[512];
+var chn24 = tls_native_client_build_hello(c24, &chbuf24, 512);
+assert_gt(chn24, 0, "ClientHello built");
+var cht24 = 0;
+var chl24 = 0;
+tls_native_handshake_read_header(&chbuf24, chn24, &cht24, &chl24);
+assert_eq(cht24, TLS_HS_CLIENT_HELLO, "message type = ClientHello");
+assert_eq(load64(c24 + TLS_CTX_OFF_CH_LEN), chn24, "ClientHello buffered for transcript");
+
+# Interop cross-check: our own server parses our ClientHello + responds.
+var srv24 = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_server_load_creds(srv24);
+var sh24[256];
+var sh24n = tls_native_server_respond_hello(srv24, &chbuf24, chn24, &sh24, 256);
+assert_gt(sh24n, 0, "server parsed our ClientHello + produced ServerHello");
+assert_eq(tls_native_get_cipher(srv24), TLS_AES_256_GCM_SHA384, "server negotiated AES-256-GCM from our CH");
+assert_eq(tls_native_get_group(srv24), TLS_GROUP_X25519, "server picked x25519 from our key_share");
+assert_eq(tls_native_server_sent_hrr(srv24), 0, "no HRR (x25519 offered)");
+
+# Null guard.
+assert_eq(tls_native_client_build_hello(0, &chbuf24, 512), TLS_ERR_INVALID_PARAM, "build_hello(null) → INVALID_PARAM");
 
 var r = assert_summary();
