@@ -3,6 +3,51 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-31 (.15 ship — TLS Mini-arc C.1 server handshake state machine)
+
+Closing **v6.0.15**, the first slot of TLS Mini-arc C (server),
+pulled ahead of the client per the 2026-05-31 re-order. Lays the
+**connection context** that all of Mini-arc C + B build on, plus the
+**server-side state-machine transitions**. `lib/`-only — no compiler
+change.
+
+**Connection ctx**: the opaque handle is now a real `alloc()`'d
+struct, 256-byte documented layout (`TLS_CTX_OFF_*` — role / state /
+version / cipher / verify / version-range / transcript + keysched
+handles / cert+key refs / host / sock fd / last-err). +136..255
+reserved for the read/write keys, seq nums, and I/O buffers B–D add.
+`_tn_ctx_new(role)` zero-inits + applies defaults (INIT, verify NONE,
+1.2..1.3); `_tn_ctx_fail` records err + drives state to ERROR.
+
+**Server state machine**: `tls_native_server_transition(ctx, event)`
+drives `INIT →START→ WAIT_CH →RECV_CH→ {WAIT_FINISHED |
+WAIT_CLIENT_FLIGHT2} →RECV_FINISHED→ CONNECTED`, verify-mode steering
+the client-auth branch. Illegal transitions → ERROR + TLS_ERR_PROTOCOL.
+Events `TLS_EV_*` added. The message build/parse firing each event is
+.16–.19; this slot proves the transitions in isolation.
+
+**Live now (were stubs)**: `new_server` (alloc + stores cert/key as
+opaque refs — DER parse is .16), `set_verify`, `get_state` /
+`get_cipher` / `get_version` (read live ctx), new `get_last_error`
+diagnostic. `new_client` / `connect` / `accept` / `set_version_range`
+/ … stay stubbed for later slots.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,806 → **2,808 fns** (+2 publics:
+  `tls_native_server_transition`, `tls_native_get_last_error`).
+- `tls_native_scaffold.tcyr` 191 → **219 asserts** (+28 for ctx +
+  server state machine: happy path, client-auth path, illegal
+  transitions, null guards).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 1 of
+6 done. Next: **.16 — cert + key loading** (PEM/DER decode via sigil;
+RSA / ECDSA / Ed25519 format detection). Premise-check sigil's
+server-side surface (private-key parsers + RSA/ECDSA sign) at .16
+entry — these are in the 2026-05-28 comprehensive audit but become
+load-bearing now; hold affected sub-slots if unshipped (.13 precedent).
+
 ## 2026-05-31 — TLS arc RE-ORDERED + AGNOS userspace-target arc inserted (planning note, no bump)
 
 User direction 2026-05-31 (two passes): with TLS Mini-arc A complete,

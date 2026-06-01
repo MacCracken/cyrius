@@ -6,6 +6,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.15] — 2026-05-31
+
+**TLS arc Mini-arc C.1 — TLS 1.3 server handshake state machine.**
+First slot of the server mini-arc (pulled ahead of the client per
+the 2026-05-31 re-order; see roadmap). Lays the **connection context**
+that all of Mini-arc C + B build on, plus the **server-side
+state-machine transitions**. The protocol primitives it drives
+(record / framing / transcript / key-schedule / ciphersuite / AEAD)
+were already shipped in Mini-arc A. No compiler change — `lib/`-only.
+
+### Added — connection context (`lib/tls_native.cyr`)
+
+The opaque ctx handle is now backed by a real `alloc()`'d struct with
+a documented 256-byte offset layout (`TLS_CTX_OFF_*`): role, state,
+negotiated version + cipher, verify mode, version range, transcript +
+key-schedule handles, server cert/key refs, client SNI host, socket
+fd, and last-error. Offsets +136..255 are reserved for the read/write
+key material, sequence numbers, and I/O buffers Mini-arcs B–D append.
+- `_tn_ctx_new(role)` (private) — allocates + zero-inits a ctx and
+  applies handshake defaults: state `TLS_STATE_INIT`, verify
+  `TLS_VERIFY_NONE`, version range 1.2..1.3.
+- `_tn_ctx_fail(ctx, err)` (private) — records a fatal error in the
+  ctx's LAST_ERR slot and drives it to `TLS_STATE_ERROR`.
+
+### Added — server handshake state machine
+
+`tls_native_server_transition(ctx, event)` validates + performs one
+server-side transition per event (RFC 8446 §A.2):
+- `INIT --START--> WAIT_CH`
+- `WAIT_CH --RECV_CH-->` `WAIT_FINISHED` (no client auth) or
+  `WAIT_CLIENT_FLIGHT2` (verify mode requests a client cert)
+- `WAIT_CLIENT_FLIGHT2 --RECV_CERT / RECV_CV-->` stay (client auth flight)
+- `WAIT_FINISHED | WAIT_CLIENT_FLIGHT2 --RECV_FINISHED--> CONNECTED`
+
+Any event illegal for the current state drives the ctx to
+`TLS_STATE_ERROR` and returns `TLS_ERR_PROTOCOL`. Event constants
+`TLS_EV_START` / `TLS_EV_RECV_CH` / `TLS_EV_RECV_CERT` /
+`TLS_EV_RECV_CV` / `TLS_EV_RECV_FINISHED` added. The protocol-message
+build/parse that fires each event lands in .16–.19; this slot proves
+the transitions in isolation so the driver they plug into is trusted.
+
+### Changed — context lifecycle fns now live (were stubs)
+
+- `tls_native_new_server(cert_chain, cert_len, key, key_len)` —
+  allocates a server ctx and stores the cert/key as **opaque refs**
+  (not copied, not parsed; DER decode + key-format detection is .16).
+  Rejects null/empty cert or key with the `0` sentinel.
+- `tls_native_set_verify(ctx, mode)` — validates the mode and stores
+  it; null ctx → `TLS_ERR_INVALID_PARAM`. On the server path the mode
+  steers `RECV_CH` into the client-auth branch.
+- `tls_native_get_state` / `tls_native_get_cipher` /
+  `tls_native_get_version` now read the live ctx fields (null ctx:
+  `get_state` → `TLS_STATE_ERROR`, the others → 0).
+- `tls_native_get_last_error(ctx)` — new diagnostic returning the
+  ctx's last recorded `TLS_ERR_*` (0 if none).
+
+`new_client` / `connect` / `accept` / `set_version_range` / `set_alpn`
+/ `set_ca_bundle` / `write` / `read` / `close` remain stubs for their
+later slots.
+
+### Tests
+
+- `tests/tcyr/tls_native_scaffold.tcyr` 191 → **219 asserts**: the
+  happy-path server flow, the client-auth path, illegal transitions
+  (→ `ERROR` + `last_error`), double-START, cert-outside-flight, and
+  null-ctx guards. Scaffold asserts for the now-live fns updated in
+  lockstep (`set_verify` null → INVALID_PARAM; `get_state(null)` →
+  ERROR).
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (no compiler
+  change — `tls_native` is `lib/`-resident, so no cross-arch emit
+  propagation needed this slot).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,806 → **2,808 fns** (+2 publics:
+  `tls_native_server_transition`, `tls_native_get_last_error`).
+
 ## [6.0.14] — 2026-05-28
 
 **TLS arc Mini-arc A.5 — ciphersuite negotiation + AEAD dispatch.**
