@@ -3,6 +3,48 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-31 (.16 ship — TLS Mini-arc C.2 server cert + key loading)
+
+Closing **v6.0.16**, the second slot of TLS Mini-arc C (server).
+Parses the cert chain + private key (stored as opaque refs by .15's
+new_server) into usable form, with key-format detection. `lib/`-only.
+
+**Premise-check correction (pinned)**: at slot entry I grepped
+cyrius's *vendored* `lib/sigil.cyr` (pin 3.5.6) and wrongly declared
+the private-key parsers "missing." Sigil was at **3.5.9** with all of
+it shipped — I checked the fold, not the repo. User was (rightly)
+furious; 3rd occurrence of this class. Pinned
+[[feedback_premise_check_upstream_repo_not_vendored]]: premise-check
+the UPSTREAM repo (`~/Repos/<dep>/VERSION` + `src/` + `dist/`), not the
+vendored copy; if the repo's ahead, RE-FOLD, don't block.
+
+**sigil fold 3.5.6 → 3.5.9**: re-folded `lib/sigil.cyr` byte-identical
+from sigil's dist (v5.8.65 fold model). Brings `src/privkey.cyr`
+(pem_decode_privkey + ed25519/p256/p384 `_privkey_from_der` + PKCS#8
+algo detect) and `src/ecdsa_sign.cyr` (ecdsa_p256/p384_sign + _der).
+RSA parse + RSA-PSS sign still a future sigil tag.
+
+**Cred loading**: `tls_native_server_load_creds(ctx)` →
+`_tn_load_privkey` (PEM 0x2D → pem_decode_privkey auto-detect; DER →
+try each typed parser) + `_tn_load_cert` (x509_parse leaf). Stores
+algo/material/leaf-cert in ctx; failure → ERROR + last_err. Added
+`tls_native_get_key_algo`, `TLS_ERR_KEY_UNSUPPORTED` (−21), and the
+parsed-cred ctx fields. RSA key → KEY_UNSUPPORTED. PEM-cert + full
+chain walk deferred to .18/.26.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82** (sigil 3.5.9 fold passes the suite).
+- api-surface snapshot 2,808 → **2,813 fns** (+2 tls publics + sigil
+  3.5.9's new parser/sign publics).
+- `tls_native_scaffold.tcyr` 219 → **233 asserts** (+14; real key +
+  cert vectors from sigil's test suite).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 2 of
+6 done. Next: **.17 — ServerHello + key_share response** (x25519
+ECDHE — confirmed present in the 3.5.9 fold; `x25519` + `x25519_base`).
+HelloRetryRequest if the client key_share is insufficient.
+
 ## Session close — 2026-05-31 (.15 ship — TLS Mini-arc C.1 server handshake state machine)
 
 Closing **v6.0.15**, the first slot of TLS Mini-arc C (server),

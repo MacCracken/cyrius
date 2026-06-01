@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.16] — 2026-05-31
+
+**TLS arc Mini-arc C.2 — server cert + key loading.** Second slot of
+the server mini-arc. Parses the cert chain + private key that
+`new_server` stored as opaque refs into usable form, with key-format
+detection. `lib/`-only — no compiler change.
+
+### Changed — sigil fold 3.5.6 → 3.5.9
+
+Re-folded `lib/sigil.cyr` byte-identical from sigil's 3.5.9 dist
+bundle (the v5.8.65 fold model). Brings the shipped private-key
+parsers (`src/privkey.cyr`: `pem_decode_privkey`,
+`ed25519_privkey_from_der`, `ecdsa_p256/p384_privkey_from_der`,
+PKCS#8 algo detection) and ECDSA sign surface (`src/ecdsa_sign.cyr`:
+`ecdsa_p256/p384_sign` + `_der`) into cyrius's stdlib — the
+server-side primitives the 2026-05-28 sigil audit requested. (RSA
+private-key parse + RSA-PSS sign remain a future sigil tag; recognized
+but not yet usable here.)
+
+### Added — server credential loading (`lib/tls_native.cyr`)
+
+- `tls_native_server_load_creds(ctx)` — parses the server's stored
+  cert chain + private key. On failure the ctx is driven to
+  `TLS_STATE_ERROR` (`_tn_ctx_fail`) and the negative `TLS_ERR_*`
+  returned; on success `CREDS_LOADED` is set and the ctx state is
+  unchanged. The eventual `accept()` driver calls this at handshake
+  start; exposed publicly so a caller can fail-fast on bad creds.
+- `_tn_load_privkey` (private) — detects PEM (first byte `0x2D` →
+  sigil `pem_decode_privkey`, which auto-detects SEC1 / PKCS#1 /
+  PKCS#8) vs raw DER (tries `ed25519` / `p256` / `p384`
+  `_privkey_from_der` in turn — the wrong-type parsers reject).
+  Stores the detected `SIG_PRIVKEY_*` algo + key material. RSA →
+  `TLS_ERR_KEY_UNSUPPORTED`.
+- `_tn_load_cert` (private) — `x509_parse` on the leaf certificate
+  (DER). PEM-cert decode + the full-chain walk land with the
+  Certificate message (.18) and chain verification (.26).
+- `tls_native_get_key_algo(ctx)` — diagnostic returning the loaded
+  key's `SIG_PRIVKEY_*` (Ed25519=1 / ECDSA-P256=2 / P-384=3 / RSA=4),
+  or `SIG_PRIVKEY_UNKNOWN` (0) if not loaded.
+- New error `TLS_ERR_KEY_UNSUPPORTED` (−21) — recognized-but-unusable
+  key (RSA today) or an undecodable key.
+- New ctx fields (`TLS_CTX_OFF_KEY_ALGO` / `_KEY_MAT` / `_KEY_MAT_LEN`
+  / `_LEAF_CERT` / `_CREDS_LOADED`) in the reserved +136 region.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 219 → **233 asserts**: Ed25519 + P-256
+  private-key detection (DER), the PEM dispatch path, garbage-key →
+  `KEY_UNSUPPORTED` + ctx ERROR, unparseable-cert → `CERT_INVALID`,
+  and null-ctx guards. Vectors reused from sigil's own privkey + x509
+  test suites (real OpenSSL-generated keys + a P-256 leaf cert).
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (no compiler
+  change — `tls_native` + sigil are `lib/`-resident).
+- `scripts/check.sh` **82/82** (sigil 3.5.9 fold passes the full suite).
+- api-surface snapshot 2,808 → **2,813 fns** (+2 tls_native publics;
+  the rest are sigil 3.5.9's new parser + sign publics).
+
 ## [6.0.15] — 2026-05-31
 
 **TLS arc Mini-arc C.1 — TLS 1.3 server handshake state machine.**
