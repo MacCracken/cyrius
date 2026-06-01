@@ -3,6 +3,41 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-31 (.18 ship — TLS Mini-arc C.4 server flight 2)
+
+Closing **v6.0.18**, the fourth slot of TLS Mini-arc C (server). The
+server derives the handshake secret from .17's ECDHE shared secret +
+the CH‖SH transcript, then emits its authenticated flight:
+EncryptedExtensions ‖ Certificate ‖ CertificateVerify ‖ Finished.
+`lib/`-only; messages are plaintext (record-layer AEAD wrapping under
+the handshake key is the accept() I/O layer, later).
+
+`tls_native_server_derive_handshake` (keysched_new +
+keysched_derive_handshake) → `tls_native_server_build_flight` builds
+the four messages, advancing the transcript after each. CertificateVerify
+signs `0x20*64 ‖ "TLS 1.3, server CertificateVerify" ‖ 0x00 ‖
+Transcript-Hash(CH..Cert)` via sigil ECDSA-P256/P384 (DER) or Ed25519
+(seed expanded to 64-byte sk via ed25519_keypair). RSA → KEY_UNSUPPORTED
+(RSA-PSS sign still awaits a sigil tag). Finished verify_data =
+HMAC(HKDF-Expand-Label(server_hs,"finished"), Transcript-Hash(..CV)).
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,816 → **2,818 fns** (+2 publics).
+- `tls_native_scaffold.tcyr` 245 → **262 asserts** (+17): full flight
+  off a real CH→SH exchange; the **CertificateVerify Ed25519 signature
+  verifies** against an independently-replayed transcript, and the
+  **Finished verify_data matches** an independent finished-key + HMAC
+  recompute.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 4 of
+6 done. Next: **.19 — optional client auth (CertificateRequest +
+client-cert validation) + session-ticket / PSK resumption** (RFC 8446
+§4.6.1 + §2.2), the last build-out before .20 server e2e. Full Mini-arc
+C scope keeps both (user chose full over minimal); split into sub-slots
+if either grows.
+
 ## Session close — 2026-05-31 (.17 ship — TLS Mini-arc C.3 ServerHello + key_share)
 
 Closing **v6.0.17**, the third slot of TLS Mini-arc C (server). The

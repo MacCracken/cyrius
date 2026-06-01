@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.18] — 2026-05-31
+
+**TLS arc Mini-arc C.4 — server flight 2 (EncryptedExtensions +
+Certificate + CertificateVerify + Finished).** Fourth slot of the
+server mini-arc: derives the handshake secret from the ECDHE shared
+secret (.17) and emits the server's authenticated flight. `lib/`-only.
+The messages are plaintext here; the record-layer AEAD wrapping under
+the server handshake-traffic key is the `accept()` I/O layer (later).
+
+### Added — server flight (`lib/tls_native.cyr`)
+
+- `tls_native_server_derive_handshake(ctx)` — `keysched_new` +
+  `keysched_derive_handshake` over the ECDHE shared secret + the
+  CH‖SH transcript → handshake secret + client/server
+  handshake-traffic secrets; stores the key-schedule handle in the ctx.
+- `tls_native_server_build_flight(ctx, out, out_max)` — derives the
+  handshake secret if needed, then builds EncryptedExtensions ‖
+  Certificate ‖ CertificateVerify ‖ Finished into `out`, feeding each
+  into the transcript as it is produced. Returns the total length or a
+  negative `TLS_ERR_*` (ctx → ERROR).
+- `_tn_build_ee` (private) — EncryptedExtensions with an empty
+  extension block.
+- `_tn_build_certificate` (private) — Certificate (§4.4.2): empty
+  certificate_request_context + a single-entry certificate_list
+  carrying the stored leaf DER with empty entry-extensions.
+- `_tn_build_cert_verify` (private) — CertificateVerify (§4.4.3):
+  signs `0x20×64 ‖ "TLS 1.3, server CertificateVerify" ‖ 0x00 ‖
+  Transcript-Hash(CH..Certificate)`. Dispatches ECDSA-P256 (scheme
+  0x0403, DER sig), ECDSA-P384 (0x0503, DER), or Ed25519 (0x0807,
+  64-byte sig — expands the parsed seed to the 64-byte sk via
+  `ed25519_keypair`). RSA → `TLS_ERR_KEY_UNSUPPORTED` (RSA-PSS sign
+  awaits a sigil tag). sigil's ECDSA sign hashes the content with the
+  scheme's hash internally.
+- `_tn_build_finished` (private) — Finished (§4.4.4): `verify_data =
+  HMAC(finished_key, Transcript-Hash(..CertificateVerify))`,
+  `finished_key = HKDF-Expand-Label(server_hs_traffic, "finished", "",
+  Hash.length)`.
+- `_tn_hash_len` (private) — 32 (SHA-256) / 48 (SHA-384).
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 245 → **262 asserts**: builds the full
+  flight off a real ClientHello→ServerHello exchange, asserts the four
+  message types + the Certificate's 413-byte leaf, and — the
+  cryptographic checks — verifies the **CertificateVerify Ed25519
+  signature** against the key's public key over an independently
+  replayed transcript, and confirms the **Finished verify_data**
+  matches an independent finished-key + HMAC recomputation.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,816 → **2,818 fns** (+2 publics:
+  `tls_native_server_derive_handshake`, `tls_native_server_build_flight`).
+
 ## [6.0.17] — 2026-05-31
 
 **TLS arc Mini-arc C.3 — ServerHello + key_share response.** Third
