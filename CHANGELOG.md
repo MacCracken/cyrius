@@ -6,6 +6,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.19] — 2026-05-31
+
+**TLS arc Mini-arc C.5 — optional client authentication.** Fifth slot
+of the server mini-arc (the old combined .19 was split — client-auth
+here, session/PSK resumption to .20, server e2e to .21 — per the
+2026-05-31 roadmap-sanctioned split). `lib/`-only.
+
+### Added — client auth (`lib/tls_native.cyr`)
+
+- CertificateRequest emission, wired into `tls_native_server_build_flight`
+  after EncryptedExtensions and **gated on the verify mode** (only when
+  the server requests a client cert). Carries a `signature_algorithms`
+  extension (ECDSA-P256/P384 + Ed25519). `_tn_build_cert_request`.
+- `tls_native_server_recv_client_certificate(ctx, msg, msg_len)` —
+  parses the client Certificate (§4.4.2), x509-parses + stores the
+  leaf; empty cert_list allowed unless verify mode is
+  FAIL_IF_NO_PEER_CERT. Advances the transcript + state (RECV_CERT).
+- `tls_native_server_recv_client_certverify(ctx, msg, msg_len)` —
+  verifies the signature over `0x20*64 ‖ "TLS 1.3, client
+  CertificateVerify" ‖ 0x00 ‖ Transcript-Hash(..client Cert)` against
+  the client leaf cert's public key. ECDSA-P256 (`ecdsa_p256_verify_der`)
+  + Ed25519 (`ed25519_verify`); ECDSA-P384 → `TLS_ERR_KEY_UNSUPPORTED`
+  (no sigil `verify_der` peer yet). RECV_CV.
+- `tls_native_server_recv_client_finished(ctx, msg, msg_len)` —
+  recomputes `HMAC(HKDF-Expand-Label(client_hs_traffic, "finished"),
+  Transcript-Hash)` and **constant-time compares** (`_tn_ct_eq`), then
+  RECV_FINISHED → CONNECTED. Used by both the no-auth (client's only
+  message) and client-auth (after Cert+CV) completion paths.
+- New ctx field `TLS_CTX_OFF_CLIENT_CERT`.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 262 → **276 asserts**: CertificateRequest
+  present/absent by verify mode, client-cert parse, the **client
+  Finished verifies → CONNECTED** (self-consistent positive) with a
+  wrong-Finished → AUTHN, and a garbage client-CertVerify → AUTHN +
+  ERROR.
+- **Honest scope note**: the *positive* client-CertVerify signature
+  path is not unit-tested — there is no cert + matching private-key
+  fixture (and no cert-gen) to synthesize a valid client signature.
+  It is covered at **.21** server e2e (OpenSSL `s_client -cert`
+  supplies a real client cert + CertificateVerify), which also
+  validates the x509-pubkey-format wiring against a real peer.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,818 → **2,821 fns** (+3 publics:
+  the three `recv_client_*` receivers).
+
 ## [6.0.18] — 2026-05-31
 
 **TLS arc Mini-arc C.4 — server flight 2 (EncryptedExtensions +

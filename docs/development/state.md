@@ -3,6 +3,43 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-31 (.19 ship — TLS Mini-arc C.5 optional client auth)
+
+Closing **v6.0.19**, the fifth slot of TLS Mini-arc C (server). The
+old combined .19 (client-auth + resumption) was **split** at slot
+entry (user direction, roadmap-sanctioned): client-auth here, session/
+PSK resumption → .20, server e2e → .21. `lib/`-only.
+
+CertificateRequest emission (verify-mode gated, in build_flight after
+EE; signature_algorithms ext). `tls_native_server_recv_client_certificate`
+(parse + store leaf), `_recv_client_certverify` (verify CV sig over
+"TLS 1.3, client CertificateVerify" content vs client cert pubkey —
+ECDSA-P256 via verify_der + Ed25519; P-384 → KEY_UNSUPPORTED, no sigil
+verify_der peer), `_recv_client_finished` (HMAC(client_hs finished_key,
+transcript) constant-time compare via `_tn_ct_eq` → CONNECTED; serves
+both no-auth + auth paths). New ctx field CLIENT_CERT.
+
+**Honest scope**: the *positive* client-CertVerify crypto isn't
+unit-tested — no cert + matching private-key fixture / cert-gen to
+synthesize a valid client sig. Covered at .21 e2e (OpenSSL
+`s_client -cert`), which also validates the x509-pubkey-format wiring.
+The negative path + client-Finished positive + everything else is
+tested now.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,818 → **2,821 fns** (+3 recv_client_* publics).
+- `tls_native_scaffold.tcyr` 262 → **276 asserts** (+14): CertReq by
+  verify mode, client-cert parse, **client Finished → CONNECTED**
+  positive + wrong-Finished AUTHN, garbage client-CV → AUTHN+ERROR.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 5 of
+7 done (split widened C to 7). Next: **.20 — session-ticket / PSK
+resumption** (resumption_master via keysched_derive_master,
+NewSessionTicket issuance, PSK binder), then **.21 server e2e** (vs
+OpenSSL s_client) closes Mini-arc C.
+
 ## Session close — 2026-05-31 (.18 ship — TLS Mini-arc C.4 server flight 2)
 
 Closing **v6.0.18**, the fourth slot of TLS Mini-arc C (server). The

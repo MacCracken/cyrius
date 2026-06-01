@@ -199,8 +199,8 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | Slots | Arc | Status |
 |---|---|---|
 | .10 → .14 | Mini-arc A — scaffold / record / framing / key-schedule / ciphersuite | ✅ COMPLETE |
-| .15 → .20 | **Mini-arc C — TLS 1.3 server** (FULL scope) | next |
-| .21 → .28 | **Mini-arc B — TLS 1.3 client** (completes the 1.3 stack) | |
+| .15 → .21 | **Mini-arc C — TLS 1.3 server** (FULL scope; .19 client-auth / .20 resumption split out) | in progress (4/7) |
+| .22 → .29 | **Mini-arc B — TLS 1.3 client** (completes the 1.3 stack) | |
 | .29 → .33 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
 | .34 → .39 | Mini-arc D — TLS 1.2 backport | |
 | .40 → .42 | Mini-arc E — consumer wiring + TLS arc closeout | |
@@ -234,7 +234,14 @@ no ld.so dependency.
   ChaCha20-Poly1305-SHA256); AES-128-GCM-SHA256 registered but gated
   on sigil AES-128 (see the 2026-05-28 comprehensive sigil audit). ✅
 
-**Mini-arc C — TLS 1.3 server (.15 → .20) — pulled forward, FULL scope**
+**Mini-arc C — TLS 1.3 server (.15 → .21) — pulled forward, FULL scope**
+
+> **Split 2026-05-31** (user direction, roadmap-sanctioned "split if
+> grows"): the old combined .19 (client-auth + resumption) is now
+> **.19 client-auth** + **.20 resumption**, and server e2e moves to
+> **.21**. Downstream nominal ranges shift +1 (B .22→.29, AGNOS
+> .30→.34, D .35→.40, E .41→.43, back-end ~.44–.50, closeout ~.51) —
+> numbers stay nominal per "don't care the additional slots."
 
 User direction 2026-05-31: server-side TLS 1.3 goes first, **full
 Mini-arc C as scoped** (not a minimal subset). **Forcing function for
@@ -255,13 +262,16 @@ hold (the .13 HKDF-SHA384 hold is the precedent).
   generation; HelloRetryRequest if client key_share insufficient.
 - **.18** — EncryptedExtensions + Certificate + CertificateVerify
   (server-auth signature via sigil RSA-PSS / ECDSA) + Finished.
-- **.19** — optional client auth (CertificateRequest emission +
-  client-cert validation) **and** session-ticket / resumption (PSK,
-  RFC 8446 §4.6.1 + §2.2). Full scope keeps both; split into two
-  sub-slots if either grows ("don't care the additional slots").
-- **.20** — server e2e: handshake against OpenSSL `s_client` as the
+- **.19** — optional client auth: CertificateRequest emission (in the
+  server flight, verify-mode gated) + client Certificate +
+  CertificateVerify validation + client Finished verification →
+  CONNECTED. Content string "TLS 1.3, client CertificateVerify".
+- **.20** — session-ticket / PSK resumption (RFC 8446 §4.6.1 + §2.2):
+  resumption_master via keysched_derive_master, NewSessionTicket
+  issuance, PSK binder.
+- **.21** — server e2e: handshake against OpenSSL `s_client` as the
   real peer (Mini-arc B client not built yet — the localhost
-  client↔server loop lands when B completes at .33).
+  client↔server loop lands when B completes).
 
 **Mini-arc B — TLS 1.3 client (.21 → .28) — completes the 1.3 stack**
 - **.21** — ClientHello construction (key_share X25519 + secp256r1

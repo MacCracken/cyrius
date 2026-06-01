@@ -867,4 +867,105 @@ assert_streq(hex_encode(&vd18, 48), hex_encode(&flight + fin_off + 4, 48), "Fini
 # Null / role guards.
 assert_eq(tls_native_server_build_flight(0, &flight, 2048), TLS_ERR_INVALID_PARAM, "build_flight(null) → INVALID_PARAM");
 
+# ================================================================
+# v6.0.19 — optional client authentication
+# ================================================================
+test_group("v6.0.19 client auth");
+
+# --- CertificateRequest emission gated on verify mode. ---
+# No client auth (verify NONE): flight is EE, Certificate, ...
+var sN = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_server_load_creds(sN);
+var shN[256];
+tls_native_server_respond_hello(sN, &ch, ch_total, &shN, 256);
+var fN[2048];
+var flN = tls_native_server_build_flight(sN, &fN, 2048);
+var t = 0; var l = 0;
+tls_native_handshake_read_header(&fN, flN, &t, &l);
+assert_eq(t, TLS_HS_ENCRYPTED_EXTENSIONS, "no-auth flight msg1 = EE");
+var offN = 4 + l;
+tls_native_handshake_read_header(&fN + offN, flN - offN, &t, &l);
+assert_eq(t, TLS_HS_CERTIFICATE, "no-auth flight msg2 = Certificate (no CertReq)");
+
+# Client auth requested (verify PEER): CertificateRequest after EE.
+var sP = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_server_load_creds(sP);
+tls_native_set_verify(sP, TLS_VERIFY_PEER);
+var shP[256];
+tls_native_server_respond_hello(sP, &ch, ch_total, &shP, 256);
+var fP[2048];
+var flP = tls_native_server_build_flight(sP, &fP, 2048);
+tls_native_handshake_read_header(&fP, flP, &t, &l);
+assert_eq(t, TLS_HS_ENCRYPTED_EXTENSIONS, "auth flight msg1 = EE");
+var offP = 4 + l;
+tls_native_handshake_read_header(&fP + offP, flP - offP, &t, &l);
+assert_eq(t, TLS_HS_CERTIFICATE_REQUEST, "auth flight msg2 = CertificateRequest");
+
+# --- Client Finished verification → CONNECTED (no-auth path). ---
+tls_native_server_transition(sN, TLS_EV_START);
+tls_native_server_transition(sN, TLS_EV_RECV_CH);
+assert_eq(tls_native_get_state(sN), TLS_STATE_WAIT_FINISHED, "no-auth → WAIT_FINISHED");
+var haN = tls_native_cipher_hash_algo(tls_native_get_cipher(sN));
+var hlN = 48;
+var ksN = load64(sN + TLS_CTX_OFF_KEYSCHED);
+var tsN = load64(sN + TLS_CTX_OFF_TRANSCRIPT);
+var chsN[48];
+tls_native_keysched_get_secret(ksN, TLS_KS_CLIENT_HANDSHAKE, &chsN);
+var fkN[48];
+tls_native_hkdf_expand_label(&chsN, hlN, "finished", 8, 0, 0, haN, &fkN, hlN);
+var thN[48];
+tls_native_transcript_digest(tsN, &thN);
+var vdN[48];
+hmac_sha384(&fkN, hlN, &thN, hlN, &vdN);
+var finN[64];
+tls_native_handshake_write_header(&finN, TLS_HS_FINISHED, hlN);
+memcpy(&finN + 4, &vdN, hlN);
+assert_eq(tls_native_server_recv_client_finished(sN, &finN, 4 + hlN), TLS_OK, "client Finished verifies");
+assert_eq(tls_native_get_state(sN), TLS_STATE_CONNECTED, "no-auth handshake → CONNECTED");
+
+# A wrong client Finished is rejected (fresh server).
+var sW = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_server_load_creds(sW);
+var shW[256];
+tls_native_server_respond_hello(sW, &ch, ch_total, &shW, 256);
+var fW[2048];
+tls_native_server_build_flight(sW, &fW, 2048);
+tls_native_server_transition(sW, TLS_EV_START);
+tls_native_server_transition(sW, TLS_EV_RECV_CH);
+var finW[64];
+tls_native_handshake_write_header(&finW, TLS_HS_FINISHED, hlN);
+var z = 0;
+while (z < hlN) { store8(&finW + 4 + z, 0x00); z = z + 1; }   # wrong verify_data
+assert_eq(tls_native_server_recv_client_finished(sW, &finW, 4 + hlN), TLS_ERR_AUTHN, "wrong client Finished → AUTHN");
+
+# --- Client Certificate parse + CertVerify negative (auth path). ---
+tls_native_server_transition(sP, TLS_EV_START);
+tls_native_server_transition(sP, TLS_EV_RECV_CH);
+assert_eq(tls_native_get_state(sP), TLS_STATE_WAIT_CLIENT_FLIGHT2, "auth → WAIT_CLIENT_FLIGHT2");
+var ccert[512];
+var cbody = &ccert + 4;
+store8(cbody, 0);                                   # certificate_request_context<0>
+var c_entry_len = 3 + 413 + 2;
+_tn_be24_w(cbody + 1, c_entry_len);                 # certificate_list length
+_tn_be24_w(cbody + 4, 413);                         # cert_data length
+memcpy(cbody + 7, leaf_cert, 413);
+_tn_be16_w(cbody + 7 + 413, 0);                     # entry extensions<0>
+var cbody_len = 1 + 3 + c_entry_len;
+tls_native_handshake_write_header(&ccert, TLS_HS_CERTIFICATE, cbody_len);
+assert_eq(tls_native_server_recv_client_certificate(sP, &ccert, 4 + cbody_len), TLS_OK, "client Certificate parsed");
+assert_eq(tls_native_get_state(sP), TLS_STATE_WAIT_CLIENT_FLIGHT2, "stays WAIT_CLIENT_FLIGHT2 after Cert");
+
+var ccv[128];
+var cvbody = &ccv + 4;
+_tn_be16_w(cvbody, TLS_SIG_ECDSA_SECP256R1_SHA256); # scheme matching the P-256 leaf
+_tn_be16_w(cvbody + 2, 64);                          # sig length
+var g = 0;
+while (g < 64) { store8(cvbody + 4 + g, 0xAA); g = g + 1; }   # garbage signature
+tls_native_handshake_write_header(&ccv, TLS_HS_CERTIFICATE_VERIFY, 4 + 64);
+assert_eq(tls_native_server_recv_client_certverify(sP, &ccv, 4 + 4 + 64), TLS_ERR_AUTHN, "garbage client CertVerify → AUTHN");
+assert_eq(tls_native_get_state(sP), TLS_STATE_ERROR, "bad client CV → ctx ERROR");
+
+# Null guards.
+assert_eq(tls_native_server_recv_client_finished(0, &finN, 4 + hlN), TLS_ERR_INVALID_PARAM, "recv_client_finished(null)");
+
 var r = assert_summary();
