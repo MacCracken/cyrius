@@ -645,4 +645,49 @@ assert_eq(tls_native_server_transition(dctx, TLS_EV_RECV_CERT), TLS_ERR_PROTOCOL
 # Null ctx guard on the transition driver.
 assert_eq(tls_native_server_transition(0, TLS_EV_START), TLS_ERR_INVALID_PARAM, "null ctx → INVALID_PARAM");
 
+# ================================================================
+# v6.0.16 — server credential loading (cert + key via sigil 3.5.9)
+# ================================================================
+test_group("v6.0.16 server cred loading");
+
+# Real vectors reused from sigil's privkey + x509 test suites.
+# P-256 leaf cert DER (413 B); Ed25519 PKCS#8 DER (48 B); P-256
+# PKCS#8 DER (138 B).
+var leaf_cert = hex_decode("308201993082013fa00302010202143a4b051073c53e3a443145eb11485caef9f09adc300a06082a8648ce3d040302301d311b301906035504030c12536967696c205465737420526f6f74204341301e170d3236303532323030333730365a170d3237303532323030333730365a301a3118301606035504030c0f536967696c2054657374204c6561663059301306072a8648ce3d020106082a8648ce3d03010703420004665d76a0781a7263dab8c5d88d2f7d2ed1028eaa116020b7602a71d9957a182f0513bbfdaca9bda7df5571dc08a24a6d974f71962bfd7b979509a4c48044dbaca360305e300c0603551d130101ff04023000300e0603551d0f0101ff040403020780301d0603551d0e04160414c0bd5bc3cf47d2b8869ab999263e9b5aae0b7842301f0603551d23041830168014c97b20ae5ba585c6752e0a9ba7200be5a658d768300a06082a8648ce3d040302034800304502202ee70f3665b4dd8c6cb9aadea0082dca0442c5304e72a08469248d5506e7bf45022100d0691fa7bcd1782f60d50346fc8a3730a200298dcd28319eff454205e593e728", 826);
+var ed_key = hex_decode("302e020100300506032b657004220420399843cd6b8ea5ba0309fe5b38fe4dd271ee65f20f39a48efc7d7503c0775f12", 96);
+var p256_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b020101042057f0ea4e28fdc366606bbe091d7bba5d96f953ce0a16d9127676021989b4f3bca14403420004a065ea9bf5dbfec0421c2d494efa12a696c1bc3fcbb222d5cf118caeaaaaaf9b95f556a870683712899ddda5a65150e14f6f8544003e204cb2e6a0fc8a322db9", 276);
+
+# Ed25519 private key (DER) + P-256 leaf cert → load OK, algo detected.
+var s_ed = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+assert_nonnull(s_ed, "new_server (ed25519 key + p256 cert)");
+assert_eq(tls_native_server_load_creds(s_ed), TLS_OK, "load_creds ed25519 OK");
+assert_eq(tls_native_get_key_algo(s_ed), SIG_PRIVKEY_ED25519, "key algo detected = Ed25519");
+assert_eq(tls_native_get_state(s_ed), TLS_STATE_INIT, "ctx still INIT after successful load");
+
+# P-256 private key (DER) + same cert → algo P-256.
+var s_p256 = tls_native_new_server(leaf_cert, 413, p256_key, 138);
+assert_eq(tls_native_server_load_creds(s_p256), TLS_OK, "load_creds p256 OK");
+assert_eq(tls_native_get_key_algo(s_p256), SIG_PRIVKEY_ECDSA_P256, "key algo detected = ECDSA P-256");
+
+# PEM key path (0x2D dispatch → sigil pem_decode_privkey) — Ed25519.
+var ed_pem = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIDmYQ81rjqW6Awn+Wzj+TdJx7mXyDzmkjvx9dQPAd18S\n-----END PRIVATE KEY-----\n";
+var s_pem = tls_native_new_server(leaf_cert, 413, ed_pem, strlen(ed_pem));
+assert_eq(tls_native_server_load_creds(s_pem), TLS_OK, "load_creds PEM ed25519 OK");
+assert_eq(tls_native_get_key_algo(s_pem), SIG_PRIVKEY_ED25519, "PEM key algo = Ed25519");
+
+# Negative: garbage DER key (0x30 lead, invalid body) → KEY_UNSUPPORTED + ERROR.
+var bad_key = hex_decode("3005020100ff", 12);
+var s_bad = tls_native_new_server(leaf_cert, 413, bad_key, 6);
+assert_eq(tls_native_server_load_creds(s_bad), TLS_ERR_KEY_UNSUPPORTED, "garbage key → KEY_UNSUPPORTED");
+assert_eq(tls_native_get_state(s_bad), TLS_STATE_ERROR, "bad creds → ctx ERROR");
+assert_eq(tls_native_get_last_error(s_bad), TLS_ERR_KEY_UNSUPPORTED, "last_error = KEY_UNSUPPORTED");
+
+# Negative: good key, unparseable cert → CERT_INVALID (key parsed first).
+var s_badcert = tls_native_new_server(bad_key, 6, ed_key, 48);
+assert_eq(tls_native_server_load_creds(s_badcert), TLS_ERR_CERT_INVALID, "bad cert → CERT_INVALID");
+
+# Null-ctx guards.
+assert_eq(tls_native_server_load_creds(0), TLS_ERR_INVALID_PARAM, "load_creds(null) → INVALID_PARAM");
+assert_eq(tls_native_get_key_algo(0), SIG_PRIVKEY_UNKNOWN, "get_key_algo(null) → UNKNOWN");
+
 var r = assert_summary();

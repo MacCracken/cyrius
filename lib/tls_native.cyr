@@ -399,6 +399,12 @@ fn tls_native_record_aad(ct, version, length, aad_out5): i64 {
 # wire value 22.)
 var TLS_ERR_RECORD_OVERFLOW = 0 - 20;
 
+# Server's private key (or its algorithm) can't be used: a recognized
+# but unsupported key type (e.g. RSA — sigil parses the label but the
+# RSA private-key parser + RSA-PSS sign arrive in a later sigil tag),
+# or a key whose format sigil couldn't decode.
+var TLS_ERR_KEY_UNSUPPORTED = 0 - 21;
+
 # ================================================================
 # Handshake message framing (RFC 8446 §4)
 # ================================================================
@@ -1070,6 +1076,12 @@ var TLS_CTX_OFF_HOST       = 104; # client: SNI host cstr ptr
 var TLS_CTX_OFF_HOST_LEN   = 112; # client: host byte len
 var TLS_CTX_OFF_SOCK_FD    = 120; # caller socket fd (set by accept/connect)
 var TLS_CTX_OFF_LAST_ERR   = 128; # last TLS_ERR_* recorded (0 if none)
+# Parsed server credentials (.16) — populated by load_creds:
+var TLS_CTX_OFF_KEY_ALGO   = 136; # SIG_PRIVKEY_* of the loaded private key
+var TLS_CTX_OFF_KEY_MAT    = 144; # ptr to parsed key material (scalar/seed)
+var TLS_CTX_OFF_KEY_MAT_LEN = 152; # key material length (32 P-256/Ed25519, 48 P-384)
+var TLS_CTX_OFF_LEAF_CERT  = 160; # ptr to the parsed x509 leaf-cert struct (256 B)
+var TLS_CTX_OFF_CREDS_LOADED = 168; # 1 once load_creds has succeeded
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -1207,6 +1219,112 @@ fn tls_native_new_server(cert_chain, cert_len, key, key_len): i64 {
     store64(ctx + TLS_CTX_OFF_KEY,        key);
     store64(ctx + TLS_CTX_OFF_KEY_LEN,    key_len);
     return ctx;
+}
+
+# ================================================================
+# Server credential loading (.16)
+# ================================================================
+# Parse the cert chain + private key (stored as opaque refs by
+# new_server) into usable form: detect the key format (PEM vs DER)
+# and algorithm (Ed25519 / ECDSA P-256 / P-384; RSA recognized but
+# not yet usable), and parse the leaf certificate. The crypto lives
+# in sigil (`lib/sigil.cyr`, folded 3.5.9); this is the protocol-layer
+# wiring. Signing with the loaded key is .18 (CertificateVerify).
+
+# Detect + parse the private key into ctx (KEY_ALGO / KEY_MAT /
+# KEY_MAT_LEN). PEM input ("-----BEGIN", first byte 0x2D) routes to
+# sigil's auto-detecting `pem_decode_privkey`; raw DER (0x30) tries
+# each typed parser (the wrong-type ones reject). Returns TLS_OK,
+# TLS_ERR_KEY_UNSUPPORTED (RSA or undecodable), TLS_ERR_OOM, or
+# TLS_ERR_INVALID_PARAM.
+fn _tn_load_privkey(ctx): i64 {
+    var key = load64(ctx + TLS_CTX_OFF_KEY);
+    var key_len = load64(ctx + TLS_CTX_OFF_KEY_LEN);
+    if (key == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (key_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    var kmat = alloc(48);
+    if (kmat == 0) { return TLS_ERR_OOM; }
+    var algo = SIG_PRIVKEY_UNKNOWN;
+    var klen = 0;
+    if ((load8(key) & 0xFF) == 0x2D) {
+        var ao = 0;
+        var n = pem_decode_privkey(key, key_len, kmat, 48, &ao);
+        if (n < 0) {
+            # n == 0 - SIG_PRIVKEY_RSA for a recognized RSA key (parser
+            # arrives in a later sigil tag); any other negative is a
+            # decode failure. Both are unusable here.
+            return TLS_ERR_KEY_UNSUPPORTED;
+        }
+        algo = ao;
+        klen = n;
+    } else {
+        if (ed25519_privkey_from_der(key, key_len, kmat) == 0) {
+            algo = SIG_PRIVKEY_ED25519;
+            klen = 32;
+        } else {
+            if (ecdsa_p256_privkey_from_der(key, key_len, kmat) == 0) {
+                algo = SIG_PRIVKEY_ECDSA_P256;
+                klen = 32;
+            } else {
+                if (ecdsa_p384_privkey_from_der(key, key_len, kmat) == 0) {
+                    algo = SIG_PRIVKEY_ECDSA_P384;
+                    klen = 48;
+                } else {
+                    return TLS_ERR_KEY_UNSUPPORTED;
+                }
+            }
+        }
+    }
+    if (algo == SIG_PRIVKEY_RSA) { return TLS_ERR_KEY_UNSUPPORTED; }
+    if (algo == SIG_PRIVKEY_UNKNOWN) { return TLS_ERR_KEY_UNSUPPORTED; }
+    store64(ctx + TLS_CTX_OFF_KEY_ALGO,    algo);
+    store64(ctx + TLS_CTX_OFF_KEY_MAT,     kmat);
+    store64(ctx + TLS_CTX_OFF_KEY_MAT_LEN, klen);
+    return TLS_OK;
+}
+
+# Parse the leaf certificate (first cert of the chain) into ctx via
+# sigil's `x509_parse`. .16 handles DER cert input; PEM-cert decode +
+# the full-chain walk land with the Certificate message (.18) and
+# chain verification (.26). Returns TLS_OK, TLS_ERR_CERT_INVALID, or
+# TLS_ERR_OOM.
+fn _tn_load_cert(ctx): i64 {
+    var cert = load64(ctx + TLS_CTX_OFF_CERT_CHAIN);
+    var cert_len = load64(ctx + TLS_CTX_OFF_CERT_LEN);
+    if (cert == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (cert_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    var leaf = x509_cert_alloc();
+    if (leaf == 0) { return TLS_ERR_OOM; }
+    if (x509_parse(cert, cert_len, leaf) != 1) { return TLS_ERR_CERT_INVALID; }
+    store64(ctx + TLS_CTX_OFF_LEAF_CERT, leaf);
+    return TLS_OK;
+}
+
+# Load + parse the server's cert chain and private key (the refs
+# stored by new_server). The eventual accept() driver calls this at
+# handshake start; it's a public entry so a caller can fail-fast on
+# bad creds before accepting a connection. On failure the ctx is
+# driven to ERROR (`_tn_ctx_fail`) and the negative TLS_ERR_* returned;
+# on success CREDS_LOADED is set and the ctx state is unchanged.
+fn tls_native_server_load_creds(ctx): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_SERVER) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var kr = _tn_load_privkey(ctx);
+    if (kr != TLS_OK) { return _tn_ctx_fail(ctx, kr); }
+    var cr = _tn_load_cert(ctx);
+    if (cr != TLS_OK) { return _tn_ctx_fail(ctx, cr); }
+    store64(ctx + TLS_CTX_OFF_CREDS_LOADED, 1);
+    return TLS_OK;
+}
+
+# Get the loaded private-key algorithm (`SIG_PRIVKEY_*` from sigil:
+# Ed25519=1, ECDSA-P256=2, ECDSA-P384=3, RSA=4). Returns
+# SIG_PRIVKEY_UNKNOWN (0) if creds haven't been loaded or null ctx.
+fn tls_native_get_key_algo(ctx): i64 {
+    if (ctx == 0) { return SIG_PRIVKEY_UNKNOWN; }
+    return load64(ctx + TLS_CTX_OFF_KEY_ALGO);
 }
 
 # Set the ALPN protocol list. `protos` is a series of length-prefixed

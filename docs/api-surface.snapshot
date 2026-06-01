@@ -2024,9 +2024,14 @@ shadow::shadow_hash/1
 shadow::shadow_invalidate_cache/0
 shadow::shadow_last_change/1
 shadow::shadow_name/1
+sigil::aes128_encrypt_block/3
+sigil::aes128_encrypt_block_ni/3
 sigil::aes256_encrypt_block/3
 sigil::aes256_encrypt_block_ni/3
 sigil::aes256_key_expand/2
+sigil::aes_128_gcm_decrypt/8
+sigil::aes_128_gcm_encrypt/8
+sigil::aes_128_key_expand/2
 sigil::aes_gcm_decrypt/8
 sigil::aes_gcm_encrypt/8
 sigil::aes_gcm_global_init/0
@@ -2048,8 +2053,6 @@ sigil::chacha20poly1305_encrypt/8
 sigil::check_detail/1
 sigil::check_name/1
 sigil::check_passed/1
-sigil::der_skip/5
-sigil::der_walk/6
 sigil::ecdsa_p256_verify/4
 sigil::ecdsa_p256_verify_der/5
 sigil::ecdsa_p384_verify/4
@@ -2571,6 +2574,7 @@ tls_native::tls_native_derive_iv/5
 tls_native::tls_native_derive_key/5
 tls_native::tls_native_get_alpn_selected/3
 tls_native::tls_native_get_cipher/1
+tls_native::tls_native_get_key_algo/1
 tls_native::tls_native_get_last_error/1
 tls_native::tls_native_get_peer_cert_der/3
 tls_native::tls_native_get_state/1
@@ -2592,6 +2596,7 @@ tls_native::tls_native_record_read_header/5
 tls_native::tls_native_record_write_header/4
 tls_native::tls_native_seq_increment/1
 tls_native::tls_native_seq_init/1
+tls_native::tls_native_server_load_creds/1
 tls_native::tls_native_server_transition/2
 tls_native::tls_native_set_alpn/3
 tls_native::tls_native_set_ca_bundle/4
