@@ -6,6 +6,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.25] — 2026-06-01
+
+**TLS arc Mini-arc B.2 — TLS 1.3 client: ServerHello parsing + key
+derivation.** Second slot of the client mini-arc. `lib/`-only.
+
+### Added — client (`lib/tls_native.cyr`)
+
+- `tls_native_client_parse_server_hello(ctx, sh, sh_len)` — parses the
+  ServerHello (RFC 8446 §4.1.3) and sets up the client's handshake
+  keys:
+  - **downgrade protection**: HelloRetryRequest-sentinel detection, the
+    §4.1.3 `DOWNGRD` markers in ServerHello.random, and
+    `supported_versions == 0x0304`.
+  - validates the negotiated cipher (`cipher_supported`) + extracts the
+    server's x25519 key_share.
+  - **retroactively initialises the transcript** for the now-known hash
+    (replays the buffered ClientHello, then the ServerHello).
+  - computes the client-side x25519 **ECDHE**, derives the handshake
+    secret (`keysched_derive_handshake`), and installs the
+    handshake-traffic keys. HelloRetryRequest retry is not yet handled
+    → `TLS_ERR_HANDSHAKE_FAILED`.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 317 → **326 asserts**: a real client↔server
+  hello exchange, then the definitive cross-check — **client and server
+  agree on both the ECDHE shared secret and the `server_hs_traffic`
+  secret** — plus negatives (non-ServerHello → BAD_HANDSHAKE, null →
+  INVALID_PARAM).
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,833 → **2,834 fns**
+  (+`tls_native_client_parse_server_hello`).
+
 ## [6.0.24] — 2026-06-01
 
 **TLS arc Mini-arc B.1 — TLS 1.3 client: ClientHello construction.**

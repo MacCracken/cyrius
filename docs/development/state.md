@@ -3,6 +3,33 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.25 ship — TLS Mini-arc B.2 ServerHello parse + client keys)
+
+Closing **v6.0.25**, the second slot of TLS Mini-arc B (client).
+`lib/`-only.
+
+`tls_native_client_parse_server_hello(ctx, sh, sh_len)`: downgrade
+protection (HRR sentinel + §4.1.3 DOWNGRD markers + supported_versions
+0x0304), validate cipher, extract server x25519 key_share, retroactive
+transcript init (buffered CH → SH), client ECDHE (x25519), derive
+handshake secret, install traffic keys → client ready to decrypt the
+server flight. HRR retry not yet handled (→ HANDSHAKE_FAILED).
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,833 → **2,834 fns** (+client_parse_server_hello).
+- `tls_native_scaffold.tcyr` 317 → **326 asserts** (+9): client↔server
+  hello exchange → **client+server agree on ECDHE shared secret AND
+  server_hs_traffic secret**; negatives.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc B step 2 of
+~8. Next: **.26 — EncryptedExtensions + Certificate + CertificateVerify**
+(client reads + decrypts the server flight via a client-open record
+wrapper; verifies the server's signature against its cert — ECDSA/
+Ed25519; RSA waits on sigil 3.5.10). Also exercises .19's positive
+CertVerify crypto from the client side.
+
 ## Session close — 2026-06-01 (.24 ship — TLS Mini-arc B.1 ClientHello construction)
 
 Closing **v6.0.24**, the first slot of TLS Mini-arc B (TLS 1.3 client).
