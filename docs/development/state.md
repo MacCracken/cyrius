@@ -3,6 +3,39 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.21 ship — TLS Mini-arc C.7 record-layer protection)
+
+Closing **v6.0.21**, the seventh slot of TLS Mini-arc C (server) — the
+record-layer AEAD encryption + traffic-key install (the prerequisite
+for a real handshake). `lib/`-only. The e2e capstone split: .21 =
+record layer, .22 = accept() socket loop + OpenSSL e2e.
+
+`tls_native_record_seal` / `_open` (TLSInnerPlaintext content‖type;
+nonce = static_iv XOR seq; AAD = 5-byte header; padding strip on open;
+DECRYPT on bad tag). `tls_native_server_install_handshake_keys`
+(derive+install server/client hs key/IV via derive_key/derive_iv;
+reset seqs). `server_seal_handshake` / `_open_handshake` ctx wrappers.
+New ctx fields (per-direction key/IV ptrs + inline 8-byte seqs);
+TLS_CTX_LEN 320→448 (room for app keys).
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82** (fmt gate caught a continuation-indent
+  nit in the new multi-line calls; fixed via cyrfmt — paren-aligned →
+  4-space continuation).
+- api-surface snapshot 2,825 → **2,830 fns** (+5 publics).
+- `tls_native_scaffold.tcyr` 286 → **298 asserts** (+12): seal/open
+  round-trip, seq-mismatch + tampered → DECRYPT, ctx-installed-key
+  server-seal round-trip.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 7 of
+8 done (e2e split widened C to 8). Next: **.22 — accept() socket loop
++ OpenSSL `s_client` e2e** closes Mini-arc C; validates the full
+plaintext+encrypted handshake flow + .19's positive client-auth crypto
++ x509-pubkey wiring against a real peer. Premise-check: sys_accept /
+sys_read / sys_write availability + how to spawn `openssl s_client`
+from a .tcyr (or a shell-driven smoke harness).
+
 ## Session close — 2026-05-31 (.20 ship — TLS Mini-arc C.6 session-ticket / PSK resumption)
 
 Closing **v6.0.20**, the sixth slot of TLS Mini-arc C (server) — the

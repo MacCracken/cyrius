@@ -199,8 +199,8 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | Slots | Arc | Status |
 |---|---|---|
 | .10 → .14 | Mini-arc A — scaffold / record / framing / key-schedule / ciphersuite | ✅ COMPLETE |
-| .15 → .21 | **Mini-arc C — TLS 1.3 server** (FULL scope; .19 client-auth / .20 resumption split out) | in progress (4/7) |
-| .22 → .29 | **Mini-arc B — TLS 1.3 client** (completes the 1.3 stack) | |
+| .15 → .22 | **Mini-arc C — TLS 1.3 server** (FULL scope; client-auth/.20, record-layer/.21, e2e/.22 split out) | in progress (7/8) |
+| ~.23 → ~.30 | **Mini-arc B — TLS 1.3 client** (completes the 1.3 stack) | |
 | .29 → .33 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
 | .34 → .39 | Mini-arc D — TLS 1.2 backport | |
 | .40 → .42 | Mini-arc E — consumer wiring + TLS arc closeout | |
@@ -234,14 +234,17 @@ no ld.so dependency.
   ChaCha20-Poly1305-SHA256); AES-128-GCM-SHA256 registered but gated
   on sigil AES-128 (see the 2026-05-28 comprehensive sigil audit). ✅
 
-**Mini-arc C — TLS 1.3 server (.15 → .21) — pulled forward, FULL scope**
+**Mini-arc C — TLS 1.3 server (.15 → .22) — pulled forward, FULL scope**
 
 > **Split 2026-05-31** (user direction, roadmap-sanctioned "split if
-> grows"): the old combined .19 (client-auth + resumption) is now
-> **.19 client-auth** + **.20 resumption**, and server e2e moves to
-> **.21**. Downstream nominal ranges shift +1 (B .22→.29, AGNOS
-> .30→.34, D .35→.40, E .41→.43, back-end ~.44–.50, closeout ~.51) —
-> numbers stay nominal per "don't care the additional slots."
+> grows"): the old combined .19 (client-auth + resumption) became
+> **.19 client-auth** + **.20 resumption**; then the e2e capstone split
+> into **.21 record-layer protection** (AEAD seal/open + traffic-key
+> install — the encryption prerequisite) + **.22 accept() socket loop +
+> OpenSSL `s_client` e2e**. Mini-arc C is now 8 slots (.15–.22).
+> Downstream nominal ranges shift +2 from the original (B → ~.23,
+> AGNOS → ~.31, D → ~.36, E → ~.42, back-end/closeout after) — numbers
+> stay nominal per "don't care the additional slots."
 
 User direction 2026-05-31: server-side TLS 1.3 goes first, **full
 Mini-arc C as scoped** (not a minimal subset). **Forcing function for
@@ -269,9 +272,15 @@ hold (the .13 HKDF-SHA384 hold is the precedent).
 - **.20** — session-ticket / PSK resumption (RFC 8446 §4.6.1 + §2.2):
   resumption_master via keysched_derive_master, NewSessionTicket
   issuance, PSK binder.
-- **.21** — server e2e: handshake against OpenSSL `s_client` as the
-  real peer (Mini-arc B client not built yet — the localhost
-  client↔server loop lands when B completes).
+- **.21** — record-layer protection: AEAD seal/open of TLS 1.3 records
+  (inner content type + padding strip, nonce = static_iv XOR seq, AAD =
+  record header) + derive/install the server & client handshake-traffic
+  key/IV. The encryption prerequisite for a real handshake.
+- **.22** — server e2e: `accept()` socket loop (sys_socket/bind/listen/
+  accept) driving the full handshake over a real fd, tested against
+  OpenSSL `s_client`. Validates the plaintext+encrypted record flow,
+  .19's positive client-auth crypto (`s_client -cert`), and the
+  x509-pubkey wiring against a real peer. Closes Mini-arc C.
 
 **Mini-arc B — TLS 1.3 client (.21 → .28) — completes the 1.3 stack**
 - **.21** — ClientHello construction (key_share X25519 + secp256r1

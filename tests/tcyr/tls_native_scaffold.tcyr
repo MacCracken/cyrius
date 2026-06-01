@@ -1019,4 +1019,68 @@ assert_eq(_tn_ct_eq(&bind1, &psk20, 48), 0, "binder != raw psk (transformed)");
 store8(tk_p + 28, load8(tk_p + 28) ^ 0xFF);
 assert_eq(tls_native_server_open_ticket(sN, tk_p, tklen, &rec_psk), 0 - 1, "tampered ticket → open fails");
 
+# ================================================================
+# v6.0.21 — record-layer protection (AEAD seal/open)
+# ================================================================
+test_group("v6.0.21 record-layer protection");
+
+# --- Generic seal/open round-trip (explicit key/iv/seq). ---
+var rkey[32];
+var riv[12];
+var ki = 0;
+while (ki < 32) { store8(&rkey + ki, ki); ki = ki + 1; }
+var vi = 0;
+while (vi < 12) { store8(&riv + vi, 0xB0 + vi); vi = vi + 1; }
+var seqA[8];
+var seqB[8];
+tls_native_seq_init(&seqA);
+tls_native_seq_init(&seqB);
+var msg21 = "handshake-data!";
+var rec[128];
+var recn = tls_native_record_seal(TLS_AES_256_GCM_SHA384, &rkey, &riv, &seqA, TLS_CT_HANDSHAKE, msg21, 15, &rec, 128);
+assert_gt(recn, 0, "record sealed");
+assert_eq(load8(&rec) & 0xFF, TLS_CT_APPLICATION_DATA, "outer opaque_type = application_data(23)");
+var dec[128];
+var dct = 0;
+var declen = tls_native_record_open(TLS_AES_256_GCM_SHA384, &rkey, &riv, &seqB, &rec, recn, &dec, 128, &dct);
+assert_eq(declen, 15, "opened content length = 15");
+assert_eq(dct, TLS_CT_HANDSHAKE, "recovered inner content type = handshake(22)");
+assert_eq(_tn_ct_eq(&dec, msg21, 15), 1, "decrypted content matches plaintext");
+
+# Re-opening the same record (seqB now advanced) → wrong nonce → DECRYPT.
+var dec2[128];
+var dct2 = 0;
+assert_eq(tls_native_record_open(TLS_AES_256_GCM_SHA384, &rkey, &riv, &seqB, &rec, recn, &dec2, 128, &dct2), TLS_ERR_DECRYPT, "seq mismatch → DECRYPT");
+
+# Tampered ciphertext (fresh seq) → DECRYPT.
+var seqC[8];
+tls_native_seq_init(&seqC);
+store8(&rec + 6, load8(&rec + 6) ^ 0xFF);
+var dec3[128];
+var dct3 = 0;
+assert_eq(tls_native_record_open(TLS_AES_256_GCM_SHA384, &rkey, &riv, &seqC, &rec, recn, &dec3, 128, &dct3), TLS_ERR_DECRYPT, "tampered record → DECRYPT");
+
+# --- ctx-installed handshake keys + server seal round-trip. ---
+var s21 = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_server_load_creds(s21);
+var sh21[256];
+tls_native_server_respond_hello(s21, &ch, ch_total, &sh21, 256);
+var fl21[2048];
+tls_native_server_build_flight(s21, &fl21, 2048);
+assert_eq(tls_native_server_install_handshake_keys(s21), TLS_OK, "install handshake keys");
+var srec[256];
+var srecn = tls_native_server_seal_handshake(s21, msg21, 15, &srec, 256);
+assert_gt(srecn, 0, "server sealed a handshake record");
+# Open with the server key from the peer's view (fresh read seq).
+var skey21 = load64(s21 + TLS_CTX_OFF_SRV_HS_KEY);
+var siv21 = load64(s21 + TLS_CTX_OFF_SRV_HS_IV);
+var pseq[8];
+tls_native_seq_init(&pseq);
+var sdec[256];
+var sdct = 0;
+var sdlen = tls_native_record_open(tls_native_get_cipher(s21), skey21, siv21, &pseq, &srec, srecn, &sdec, 256, &sdct);
+assert_eq(sdlen, 15, "server record opens to 15 bytes");
+assert_eq(sdct, TLS_CT_HANDSHAKE, "server record inner type = handshake");
+assert_eq(_tn_ct_eq(&sdec, msg21, 15), 1, "server-sealed content round-trips");
+
 var r = assert_summary();

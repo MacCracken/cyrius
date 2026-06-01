@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.21] — 2026-06-01
+
+**TLS arc Mini-arc C.7 — record-layer protection.** Seventh slot of
+the server mini-arc: AEAD record seal/open + traffic-key install — the
+encryption prerequisite for a real handshake (the post-ServerHello
+flight + app data ride protected records). `lib/`-only. The e2e
+capstone split: this is the record layer; the `accept()` socket loop +
+OpenSSL `s_client` e2e is .22.
+
+### Added — record protection (`lib/tls_native.cyr`, RFC 8446 §5.2)
+
+- `tls_native_record_seal(cipher, key, static_iv, seq8, inner_ct,
+  inner, inner_len, out, out_max)` — seals `TLSInnerPlaintext`
+  (content ‖ inner content type) under a traffic key: `nonce =
+  static_iv XOR seq`, `additional_data =` the 5-byte outer header
+  (opaque_type = application_data(23)). Increments seq. Returns the
+  record length.
+- `tls_native_record_open(cipher, key, static_iv, seq8, record,
+  record_len, out, out_max, out_ct)` — decrypts, strips trailing zero
+  padding, recovers the inner content type, increments seq.
+  `TLS_ERR_DECRYPT` on a bad tag.
+- `tls_native_server_install_handshake_keys(ctx)` — derives + installs
+  the server & client handshake-traffic key/IV (`derive_key`/
+  `derive_iv`) and resets both direction sequence numbers.
+- `tls_native_server_seal_handshake` / `tls_native_server_open_handshake`
+  — ctx wrappers using the installed keys (server write / client read).
+- New ctx fields: per-direction traffic key + IV pointers and inline
+  8-byte sequence numbers; `TLS_CTX_LEN` 320 → 448 (room reserved for
+  application-traffic keys).
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 286 → **298 asserts**: seal→open
+  round-trip (content + inner type recovered), **seq-mismatch →
+  DECRYPT**, **tampered ciphertext → DECRYPT**, and the
+  ctx-installed-key server-seal round-trip.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82** (a multi-line-call continuation-indent
+  fmt nit was caught by the format gate and corrected via `cyrfmt`).
+- api-surface snapshot 2,825 → **2,830 fns** (+5 publics:
+  `record_seal`, `record_open`, `server_install_handshake_keys`,
+  `server_seal_handshake`, `server_open_handshake`).
+
 ## [6.0.20] — 2026-05-31
 
 **TLS arc Mini-arc C.6 — session-ticket / PSK resumption (issuance).**
