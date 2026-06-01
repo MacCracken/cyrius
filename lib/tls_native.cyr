@@ -1058,7 +1058,7 @@ ct, ct_len, tag, pt_out): i64 {
 # control block; +136..+255 is reserved for the read/write key
 # material, sequence numbers, and I/O buffers Mini-arcs B-D append.
 
-var TLS_CTX_LEN          = 256;   # 32 i64 slots; room for B-D growth
+var TLS_CTX_LEN          = 320;   # 40 i64 slots; room for B-D growth
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -1082,6 +1082,17 @@ var TLS_CTX_OFF_KEY_MAT    = 144; # ptr to parsed key material (scalar/seed)
 var TLS_CTX_OFF_KEY_MAT_LEN = 152; # key material length (32 P-256/Ed25519, 48 P-384)
 var TLS_CTX_OFF_LEAF_CERT  = 160; # ptr to the parsed x509 leaf-cert struct (256 B)
 var TLS_CTX_OFF_CREDS_LOADED = 168; # 1 once load_creds has succeeded
+# Hello exchange (.17) — populated by server_respond_hello:
+var TLS_CTX_OFF_CLIENT_RANDOM = 176; # ptr to client_random (32 B, from ClientHello)
+var TLS_CTX_OFF_SERVER_RANDOM = 184; # ptr to server_random (32 B, ours)
+var TLS_CTX_OFF_SESSION_ID    = 192; # ptr to legacy_session_id echo bytes
+var TLS_CTX_OFF_SESSION_ID_LEN = 200; # session-id length (0..32)
+var TLS_CTX_OFF_GROUP         = 208; # negotiated TlsNamedGroup (0 until SH)
+var TLS_CTX_OFF_EPH_PRIV      = 216; # ptr to our ephemeral private scalar (32 B)
+var TLS_CTX_OFF_EPH_PUB       = 224; # ptr to our ephemeral public key (32 B)
+var TLS_CTX_OFF_SHARED        = 232; # ptr to the ECDHE shared secret (32 B)
+var TLS_CTX_OFF_PEER_PUB      = 240; # ptr to the client's x25519 pubkey (into CH buf)
+var TLS_CTX_OFF_SENT_HRR      = 248; # 1 if the last response was a HelloRetryRequest
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -1325,6 +1336,316 @@ fn tls_native_server_load_creds(ctx): i64 {
 fn tls_native_get_key_algo(ctx): i64 {
     if (ctx == 0) { return SIG_PRIVKEY_UNKNOWN; }
     return load64(ctx + TLS_CTX_OFF_KEY_ALGO);
+}
+
+# ================================================================
+# ServerHello + key_share response (.17, RFC 8446 §4.1.3 / §4.2.8)
+# ================================================================
+# Consume a ClientHello and produce the ServerHello (or a
+# HelloRetryRequest). Scope: **x25519** key exchange (the dominant
+# TLS 1.3 group) — a client that didn't offer an x25519 key_share but
+# lists x25519 in supported_groups gets an HRR; P-256 ECDHE key_share
+# needs a sigil P-256 ECDH primitive (not yet present) and lands when
+# that does. Crypto (x25519, CSPRNG via getrandom) is sigil/syscalls;
+# this is the protocol wiring.
+
+var TLS_EXT_SUPPORTED_GROUPS   = 10;
+var TLS_EXT_SUPPORTED_VERSIONS = 43;
+var TLS_EXT_KEY_SHARE          = 51;
+var TLS_X25519_KEY_LEN = 32;
+var TLS_RANDOM_LEN     = 32;
+
+# Find extension `want_type` in an extensions block (entries:
+# uint16 type + uint16 length + data). Stores the data ptr+len via
+# out-addrs, returns 1 found / 0 absent / -1 malformed.
+fn _tn_find_ext(ext_ptr, ext_len, want_type, out_dp, out_dl): i64 {
+    var pos = 0;
+    while (pos + 4 <= ext_len) {
+        var etype = _tn_be16_r(ext_ptr + pos);
+        var elen  = _tn_be16_r(ext_ptr + pos + 2);
+        pos = pos + 4;
+        if (pos + elen > ext_len) { return 0 - 1; }
+        if (etype == want_type) {
+            store64(out_dp, ext_ptr + pos);
+            store64(out_dl, elen);
+            return 1;
+        }
+        pos = pos + elen;
+    }
+    return 0;
+}
+
+# Scan a KeyShareClientHello (uint16 list-length + KeyShareEntry*) for
+# an x25519 entry; store the 32-byte pubkey ptr via out_pub. Returns
+# 1 found / 0 absent / -1 malformed.
+fn _tn_find_x25519_share(ks, ks_len, out_pub): i64 {
+    if (ks_len < 2) { return 0 - 1; }
+    var list_len = _tn_be16_r(ks);
+    if (2 + list_len > ks_len) { return 0 - 1; }
+    var end = 2 + list_len;
+    var pos = 2;
+    while (pos + 4 <= end) {
+        var group = _tn_be16_r(ks + pos);
+        var klen  = _tn_be16_r(ks + pos + 2);
+        pos = pos + 4;
+        if (pos + klen > end) { return 0 - 1; }
+        if (group == TLS_GROUP_X25519) {
+            if (klen != TLS_X25519_KEY_LEN) { return 0 - 1; }
+            store64(out_pub, ks + pos);
+            return 1;
+        }
+        pos = pos + klen;
+    }
+    return 0;
+}
+
+# Scan a client supported_groups extension for x25519. 1 / 0 / -1.
+fn _tn_supports_x25519(sg, sg_len): i64 {
+    if (sg_len < 2) { return 0 - 1; }
+    var list_len = _tn_be16_r(sg);
+    if (2 + list_len > sg_len) { return 0 - 1; }
+    var end = 2 + list_len;
+    var pos = 2;
+    while (pos + 2 <= end) {
+        if (_tn_be16_r(sg + pos) == TLS_GROUP_X25519) { return 1; }
+        pos = pos + 2;
+    }
+    return 0;
+}
+
+# Parse a ClientHello body into ctx (client_random, session_id echo,
+# selected cipher via server_prefs, x25519 key_share). Returns 1
+# (x25519 share present → proceed), 0 (no share but x25519 supported
+# → HelloRetryRequest), or a negative TLS_ERR_* (malformed / no cipher
+# overlap / no common group). Every read is bounds-checked against
+# body_len — this parses untrusted peer input.
+fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
+    var pos = 0;
+    if (2 + TLS_RANDOM_LEN + 1 > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    pos = pos + 2;                                  # legacy_version
+    var crand = alloc(TLS_RANDOM_LEN);
+    if (crand == 0) { return TLS_ERR_OOM; }
+    memcpy(crand, body + pos, TLS_RANDOM_LEN);
+    store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
+    pos = pos + TLS_RANDOM_LEN;
+    var sid_len = load8(body + pos) & 0xFF;
+    pos = pos + 1;
+    if (sid_len > 32) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (pos + sid_len > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (sid_len > 0) {
+        var sid = alloc(sid_len);
+        if (sid == 0) { return TLS_ERR_OOM; }
+        memcpy(sid, body + pos, sid_len);
+        store64(ctx + TLS_CTX_OFF_SESSION_ID, sid);
+    }
+    store64(ctx + TLS_CTX_OFF_SESSION_ID_LEN, sid_len);
+    pos = pos + sid_len;
+    if (pos + 2 > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    var cs_len = _tn_be16_r(body + pos);
+    pos = pos + 2;
+    if (pos + cs_len > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    var cipher = tls_native_cipher_select(body + pos, cs_len / 2, server_prefs, n_prefs);
+    if (cipher == 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
+    store64(ctx + TLS_CTX_OFF_CIPHER, cipher);
+    pos = pos + cs_len;
+    if (pos + 1 > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    var comp_len = load8(body + pos) & 0xFF;
+    pos = pos + 1 + comp_len;
+    if (pos > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (pos + 2 > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    var ext_total = _tn_be16_r(body + pos);
+    pos = pos + 2;
+    if (pos + ext_total > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    var ext_ptr = body + pos;
+    var ks_dp = 0;
+    var ks_dl = 0;
+    var fks = _tn_find_ext(ext_ptr, ext_total, TLS_EXT_KEY_SHARE, &ks_dp, &ks_dl);
+    if (fks < 0) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (fks == 1) {
+        var ppub = 0;
+        var fx = _tn_find_x25519_share(ks_dp, ks_dl, &ppub);
+        if (fx < 0) { return TLS_ERR_BAD_HANDSHAKE; }
+        if (fx == 1) {
+            store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
+            store64(ctx + TLS_CTX_OFF_PEER_PUB, ppub);
+            return 1;
+        }
+    }
+    # No usable x25519 key_share — HRR only if the client lists x25519
+    # in supported_groups (otherwise no common group → fail).
+    var sg_dp = 0;
+    var sg_dl = 0;
+    var fsg = _tn_find_ext(ext_ptr, ext_total, TLS_EXT_SUPPORTED_GROUPS, &sg_dp, &sg_dl);
+    if (fsg == 1) {
+        if (_tn_supports_x25519(sg_dp, sg_dl) == 1) {
+            store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
+            return 0;
+        }
+    }
+    return TLS_ERR_HANDSHAKE_FAILED;
+}
+
+# Generate our ephemeral x25519 keypair (kernel CSPRNG) and compute
+# the ECDHE shared secret against the client's pubkey (PEER_PUB).
+# Stores EPH_PRIV / EPH_PUB / SHARED. Returns TLS_OK or an error.
+fn _tn_gen_ephemeral_x25519(ctx): i64 {
+    var peer = load64(ctx + TLS_CTX_OFF_PEER_PUB);
+    if (peer == 0) { return TLS_ERR_INTERNAL; }
+    var priv = alloc(32);
+    var epub = alloc(32);
+    var dhe = alloc(32);
+    if (priv == 0) { return TLS_ERR_OOM; }
+    if (epub == 0) { return TLS_ERR_OOM; }
+    if (dhe == 0) { return TLS_ERR_OOM; }
+    if (sys_getrandom(priv, 32, 0) != 32) { return TLS_ERR_INTERNAL; }
+    x25519_base(priv, epub);
+    x25519(priv, peer, dhe);
+    store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
+    store64(ctx + TLS_CTX_OFF_EPH_PUB,  epub);
+    store64(ctx + TLS_CTX_OFF_SHARED,   dhe);
+    return TLS_OK;
+}
+
+# Store the HelloRetryRequest sentinel (SHA-256("HelloRetryRequest"),
+# RFC 8446 §4.1.3) into the 32-byte `out` ServerHello.random field.
+fn _tn_hrr_random(out): i64 {
+    store8(out + 0,  0xCF); store8(out + 1,  0x21); store8(out + 2,  0xAD); store8(out + 3,  0x74);
+    store8(out + 4,  0xE5); store8(out + 5,  0x9A); store8(out + 6,  0x61); store8(out + 7,  0x11);
+    store8(out + 8,  0xBE); store8(out + 9,  0x1D); store8(out + 10, 0x8C); store8(out + 11, 0x02);
+    store8(out + 12, 0x1E); store8(out + 13, 0x65); store8(out + 14, 0xB8); store8(out + 15, 0x91);
+    store8(out + 16, 0xC2); store8(out + 17, 0xA2); store8(out + 18, 0x11); store8(out + 19, 0x16);
+    store8(out + 20, 0x7A); store8(out + 21, 0xBB); store8(out + 22, 0x8C); store8(out + 23, 0x5E);
+    store8(out + 24, 0x07); store8(out + 25, 0x9E); store8(out + 26, 0x09); store8(out + 27, 0xE2);
+    store8(out + 28, 0xC8); store8(out + 29, 0xA8); store8(out + 30, 0x33); store8(out + 31, 0x9C);
+    return 32;
+}
+
+# Serialize the ServerHello (or HelloRetryRequest if is_hrr) as a full
+# handshake message (4-byte header + body) into `out`. Returns the
+# total length, or TLS_ERR_BUFFER_FULL. Real SH requires EPH_PUB +
+# SERVER_RANDOM set; HRR uses the sentinel random + a group-only
+# key_share.
+fn _tn_build_server_hello(ctx, out, out_max, is_hrr): i64 {
+    var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
+    var sid_len = load64(ctx + TLS_CTX_OFF_SESSION_ID_LEN);
+    var ks_ext_len = 40;                # type+len(4) + group(2)+klen(2)+key(32)
+    if (is_hrr == 1) { ks_ext_len = 6; } # type+len(4) + selected_group(2)
+    var ext_block = 6 + ks_ext_len;     # supported_versions ext (6) + key_share ext
+    var body_len = 2 + 32 + 1 + sid_len + 2 + 1 + 2 + ext_block;
+    var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
+    if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
+    tls_native_handshake_write_header(out, TLS_HS_SERVER_HELLO, body_len);
+    var p = out + TLS_HANDSHAKE_HEADER_LEN;
+    _tn_be16_w(p, 0x0303); p = p + 2;
+    if (is_hrr == 1) {
+        _tn_hrr_random(p);
+    } else {
+        memcpy(p, load64(ctx + TLS_CTX_OFF_SERVER_RANDOM), 32);
+    }
+    p = p + 32;
+    store8(p, sid_len & 0xFF); p = p + 1;
+    if (sid_len > 0) {
+        memcpy(p, load64(ctx + TLS_CTX_OFF_SESSION_ID), sid_len);
+        p = p + sid_len;
+    }
+    _tn_be16_w(p, cipher); p = p + 2;
+    store8(p, 0); p = p + 1;                          # legacy_compression_method
+    _tn_be16_w(p, ext_block); p = p + 2;
+    # supported_versions → selected_version 0x0304
+    _tn_be16_w(p, TLS_EXT_SUPPORTED_VERSIONS); p = p + 2;
+    _tn_be16_w(p, 2); p = p + 2;
+    _tn_be16_w(p, 0x0304); p = p + 2;
+    # key_share
+    _tn_be16_w(p, TLS_EXT_KEY_SHARE); p = p + 2;
+    if (is_hrr == 1) {
+        _tn_be16_w(p, 2); p = p + 2;
+        _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
+    } else {
+        _tn_be16_w(p, 36); p = p + 2;
+        _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
+        _tn_be16_w(p, TLS_X25519_KEY_LEN); p = p + 2;
+        memcpy(p, load64(ctx + TLS_CTX_OFF_EPH_PUB), TLS_X25519_KEY_LEN);
+        p = p + TLS_X25519_KEY_LEN;
+    }
+    return total;
+}
+
+# Server: consume a ClientHello handshake message (header + body) and
+# produce the ServerHello (or HelloRetryRequest) handshake message
+# into `out`. On the ServerHello path: selects the cipher, generates
+# the ephemeral x25519 keypair + ECDHE shared secret, initialises the
+# transcript-hash for the negotiated cipher and feeds CH + SH into it.
+# Returns the response message length (>0), or a negative TLS_ERR_*
+# (ctx driven to ERROR). `tls_native_server_sent_hrr` distinguishes
+# HRR from ServerHello. Note: the §4.4.1 HRR transcript substitution +
+# second-ClientHello loop is deferred — .17 emits a structurally valid
+# HRR but the retry round-trip lands with the accept() driver.
+fn tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_SERVER) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    store64(ctx + TLS_CTX_OFF_SENT_HRR, 0);
+    # Strip the handshake header; require a ClientHello.
+    var ht = 0;
+    var blen = 0;
+    if (tls_native_handshake_read_header(ch_msg, ch_len, &ht, &blen) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    if (ht != TLS_HS_CLIENT_HELLO) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (TLS_HANDSHAKE_HEADER_LEN + blen > ch_len) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    var body = ch_msg + TLS_HANDSHAKE_HEADER_LEN;
+    # Server cipher preference (descending): AES-256-GCM-SHA384,
+    # ChaCha20-Poly1305-SHA256. AES-128 isn't supported (sigil gap).
+    var prefs[4];
+    _tn_be16_w(&prefs,     TLS_AES_256_GCM_SHA384);
+    _tn_be16_w(&prefs + 2, TLS_CHACHA20_POLY1305_SHA256);
+    var r = _tn_parse_client_hello(ctx, body, blen, &prefs, 2);
+    if (r < 0) { return _tn_ctx_fail(ctx, r); }
+    if (r == 0) {
+        # HelloRetryRequest path (group-only key_share).
+        var hlen = _tn_build_server_hello(ctx, out, out_max, 1);
+        if (hlen < 0) { return _tn_ctx_fail(ctx, hlen); }
+        store64(ctx + TLS_CTX_OFF_SENT_HRR, 1);
+        return hlen;
+    }
+    # ServerHello path. Init transcript for the negotiated cipher and
+    # feed the ClientHello in.
+    var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
+    var ts = tls_native_transcript_init(tls_native_cipher_hash_algo(cipher));
+    if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
+    tls_native_transcript_update(ts, ch_msg, TLS_HANDSHAKE_HEADER_LEN + blen);
+    # Server random + ephemeral keypair + ECDHE.
+    var srand = alloc(TLS_RANDOM_LEN);
+    if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (sys_getrandom(srand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
+        return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
+    }
+    store64(ctx + TLS_CTX_OFF_SERVER_RANDOM, srand);
+    var er = _tn_gen_ephemeral_x25519(ctx);
+    if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }
+    # Build ServerHello + feed it into the transcript.
+    var slen = _tn_build_server_hello(ctx, out, out_max, 0);
+    if (slen < 0) { return _tn_ctx_fail(ctx, slen); }
+    tls_native_transcript_update(ts, out, slen);
+    return slen;
+}
+
+# Get the negotiated key-exchange group (TlsNamedGroup; 0 until a
+# ServerHello/HRR has been produced). Diagnostic.
+fn tls_native_get_group(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + TLS_CTX_OFF_GROUP);
+}
+
+# 1 if the last server_respond_hello produced a HelloRetryRequest
+# rather than a ServerHello.
+fn tls_native_server_sent_hrr(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + TLS_CTX_OFF_SENT_HRR);
 }
 
 # Set the ALPN protocol list. `protos` is a series of length-prefixed

@@ -690,4 +690,99 @@ assert_eq(tls_native_server_load_creds(s_badcert), TLS_ERR_CERT_INVALID, "bad ce
 assert_eq(tls_native_server_load_creds(0), TLS_ERR_INVALID_PARAM, "load_creds(null) → INVALID_PARAM");
 assert_eq(tls_native_get_key_algo(0), SIG_PRIVKEY_UNKNOWN, "get_key_algo(null) → UNKNOWN");
 
+# ================================================================
+# v6.0.17 — ServerHello + key_share response (x25519 ECDHE)
+# ================================================================
+test_group("v6.0.17 ServerHello + key_share");
+
+# Reuse the .16 leaf cert + Ed25519 key for new_server.
+# --- Happy path: client offers an x25519 key_share ---
+var cpriv[32];
+sys_getrandom(&cpriv, 32, 0);
+var cpub[32];
+x25519_base(&cpriv, &cpub);
+
+var ch[256];
+var bp = &ch + 4;
+_tn_be16_w(bp, 0x0303);                              # legacy_version
+var q = bp + 2;
+var i = 0;
+while (i < 32) { store8(q + i, 0x41); i = i + 1; }   # client random (dummy)
+q = q + 32;
+store8(q, 0); q = q + 1;                             # session id len 0
+_tn_be16_w(q, 4); q = q + 2;                         # cipher_suites len
+_tn_be16_w(q, TLS_AES_256_GCM_SHA384); q = q + 2;
+_tn_be16_w(q, TLS_CHACHA20_POLY1305_SHA256); q = q + 2;
+store8(q, 1); q = q + 1; store8(q, 0); q = q + 1;    # compression: null
+_tn_be16_w(q, 42); q = q + 2;                        # extensions length
+_tn_be16_w(q, TLS_EXT_KEY_SHARE); q = q + 2;
+_tn_be16_w(q, 38); q = q + 2;                        # ext_data len
+_tn_be16_w(q, 36); q = q + 2;                        # client_shares len
+_tn_be16_w(q, TLS_GROUP_X25519); q = q + 2;
+_tn_be16_w(q, 32); q = q + 2;                        # key_exchange len
+memcpy(q, &cpub, 32); q = q + 32;
+var body_len = q - bp;
+tls_native_handshake_write_header(&ch, TLS_HS_CLIENT_HELLO, body_len);
+var ch_total = 4 + body_len;
+
+var s_ch = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+var sh[256];
+var shn = tls_native_server_respond_hello(s_ch, &ch, ch_total, &sh, 256);
+assert_gt(shn, 0, "respond_hello → ServerHello length > 0");
+assert_eq(tls_native_server_sent_hrr(s_ch), 0, "ServerHello (not HRR)");
+assert_eq(tls_native_get_cipher(s_ch), TLS_AES_256_GCM_SHA384, "negotiated AES-256-GCM-SHA384");
+assert_eq(tls_native_get_group(s_ch), TLS_GROUP_X25519, "negotiated group x25519");
+
+# Response is a ServerHello handshake message.
+var sht = 0; var shb = 0;
+tls_native_handshake_read_header(&sh, shn, &sht, &shb);
+assert_eq(sht, TLS_HS_SERVER_HELLO, "response msg type = ServerHello");
+
+# ECDHE agreement: client derives the same secret from server_pub
+# (last 32 bytes of the SH, key_share is the final extension).
+var srvpub = &sh + shn - 32;
+var cdhe[32];
+x25519(&cpriv, srvpub, &cdhe);
+var sdhe = load64(s_ch + TLS_CTX_OFF_SHARED);
+assert_streq(hex_encode(&cdhe, 32), hex_encode(sdhe, 32), "ECDHE shared-secret agreement");
+
+# --- HelloRetryRequest: empty key_share + supported_groups[x25519] ---
+var ch2[128];
+var bp2 = &ch2 + 4;
+_tn_be16_w(bp2, 0x0303);
+var r2 = bp2 + 2;
+var k = 0;
+while (k < 32) { store8(r2 + k, 0x42); k = k + 1; }
+r2 = r2 + 32;
+store8(r2, 0); r2 = r2 + 1;                          # session id len 0
+_tn_be16_w(r2, 4); r2 = r2 + 2;                      # cipher_suites len
+_tn_be16_w(r2, TLS_AES_256_GCM_SHA384); r2 = r2 + 2;
+_tn_be16_w(r2, TLS_CHACHA20_POLY1305_SHA256); r2 = r2 + 2;
+store8(r2, 1); r2 = r2 + 1; store8(r2, 0); r2 = r2 + 1;
+_tn_be16_w(r2, 14); r2 = r2 + 2;                     # extensions length
+_tn_be16_w(r2, TLS_EXT_KEY_SHARE); r2 = r2 + 2;
+_tn_be16_w(r2, 2); r2 = r2 + 2;                      # ext_data len
+_tn_be16_w(r2, 0); r2 = r2 + 2;                      # client_shares len 0 (empty)
+_tn_be16_w(r2, TLS_EXT_SUPPORTED_GROUPS); r2 = r2 + 2;
+_tn_be16_w(r2, 4); r2 = r2 + 2;                      # ext_data len
+_tn_be16_w(r2, 2); r2 = r2 + 2;                      # group list len
+_tn_be16_w(r2, TLS_GROUP_X25519); r2 = r2 + 2;
+var body2 = r2 - bp2;
+tls_native_handshake_write_header(&ch2, TLS_HS_CLIENT_HELLO, body2);
+
+var s_hrr = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+var sh2[128];
+var hrrn = tls_native_server_respond_hello(s_hrr, &ch2, 4 + body2, &sh2, 128);
+assert_gt(hrrn, 0, "HRR length > 0");
+assert_eq(tls_native_server_sent_hrr(s_hrr), 1, "sent HelloRetryRequest");
+assert_streq(hex_encode(&sh2 + 6, 32), "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c", "HRR random = SHA256(HelloRetryRequest)");
+
+# --- Negatives ---
+assert_eq(tls_native_server_respond_hello(0, &ch, ch_total, &sh, 256), TLS_ERR_INVALID_PARAM, "respond_hello(null) → INVALID_PARAM");
+var s_wt = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+var badch[8];
+tls_native_handshake_write_header(&badch, TLS_HS_SERVER_HELLO, 100);
+assert_eq(tls_native_server_respond_hello(s_wt, &badch, 8, &sh, 256), TLS_ERR_BAD_HANDSHAKE, "non-ClientHello → BAD_HANDSHAKE");
+assert_eq(tls_native_get_state(s_wt), TLS_STATE_ERROR, "bad input → ctx ERROR");
+
 var r = assert_summary();

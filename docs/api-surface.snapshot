@@ -2574,6 +2574,7 @@ tls_native::tls_native_derive_iv/5
 tls_native::tls_native_derive_key/5
 tls_native::tls_native_get_alpn_selected/3
 tls_native::tls_native_get_cipher/1
+tls_native::tls_native_get_group/1
 tls_native::tls_native_get_key_algo/1
 tls_native::tls_native_get_last_error/1
 tls_native::tls_native_get_peer_cert_der/3
@@ -2597,6 +2598,8 @@ tls_native::tls_native_record_write_header/4
 tls_native::tls_native_seq_increment/1
 tls_native::tls_native_seq_init/1
 tls_native::tls_native_server_load_creds/1
+tls_native::tls_native_server_respond_hello/5
+tls_native::tls_native_server_sent_hrr/1
 tls_native::tls_native_server_transition/2
 tls_native::tls_native_set_alpn/3
 tls_native::tls_native_set_ca_bundle/4
