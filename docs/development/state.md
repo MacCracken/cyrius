@@ -3,6 +3,41 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.24 ship — TLS Mini-arc B.1 ClientHello construction)
+
+Closing **v6.0.24**, the first slot of TLS Mini-arc B (TLS 1.3 client).
+`lib/`-only.
+
+`tls_native_new_client(host, host_len)` now live (alloc client ctx,
+role CLIENT, verify PEER, copy host for SNI). `tls_native_client_build_hello`:
+x25519 ephemeral keypair + random → serialize ClientHello (SNI,
+supported_versions 1.3, supported_groups x25519, signature_algorithms
+ECDSA/Ed25519, key_share x25519); buffers the CH (ctx CH_BUF/CH_LEN)
+for retroactive transcript init at .25 (hash unknown until SH reveals
+the cipher).
+
+**Mini-arc B arc-open cross-walk** (sigil 3.5.9, against the repo):
+no new sigil filing — the 2026-05-28 audit covers the client surface.
+RSA cert verify → sigil 3.5.10 (audit-pinned; client does ECDSA/Ed25519
+certs only until then); x25519 key_share only (no P-256 ECDH); SAN/
+hostname (.30) is cyrius-side via sigil der_walk/der_skip.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,832 → **2,833 fns** (+client_build_hello).
+- `tls_native_scaffold.tcyr` 307 → **317 asserts** (+10): CH builds +
+  buffered; interop cross-check (our server parses our CH → SH,
+  AES-256-GCM + x25519, no HRR).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc B step 1 of
+~8. Next: **.25 — ServerHello parsing** (downgrade protection, key-
+share extraction, ciphersuite acceptance) + retroactive transcript
+init (CH then SH) + client ECDHE → handshake secret. Premise-check at
+entry: x25519 client→server shared-secret derivation already proven in
+the .22 loopback client; .25 packages the SH-parse + key derivation as
+library fns.
+
 ## Session close — 2026-06-01 (.23 ship — OpenSSL interop; **Mini-arc C COMPLETE**)
 
 Closing **v6.0.23** — the cyrius native TLS 1.3 **server** completes a

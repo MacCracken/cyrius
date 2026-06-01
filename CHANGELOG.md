@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.24] — 2026-06-01
+
+**TLS arc Mini-arc B.1 — TLS 1.3 client: ClientHello construction.**
+First slot of the client mini-arc. `lib/`-only.
+
+### Added — client (`lib/tls_native.cyr`)
+
+- `tls_native_new_client(host, host_len)` — now live: allocates a
+  client context (role CLIENT, verify PEER by default) and copies the
+  host (NUL-terminated; `host_len`=0 derives via `strlen`) for SNI +
+  later hostname verification.
+- `tls_native_client_build_hello(ctx, out, out_max)` — generates the
+  client's x25519 ephemeral keypair + random and serializes a
+  ClientHello (RFC 8446 §4.1.2): SNI server_name (when a host was
+  given), supported_versions=0x0304, supported_groups=x25519,
+  signature_algorithms (ECDSA-P256/P384 + Ed25519), key_share x25519.
+  The message is **buffered** in the ctx — the transcript hash can't
+  be initialised until the ServerHello reveals the cipher (hence the
+  hash), so .25 replays the buffered CH then the SH. New ctx fields
+  `TLS_CTX_OFF_CH_BUF` / `TLS_CTX_OFF_CH_LEN`.
+
+### Scope (per the Mini-arc B arc-open cross-walk)
+
+The 2026-05-28 sigil audit already covers the full client surface:
+**RSA cert verify lands with sigil 3.5.10** (audit-pinned) — until then
+the client offers + verifies **ECDSA / Ed25519** server certs only;
+**x25519 key_share only** (no P-256 ECDH in sigil); SAN/hostname (.30)
+is cyrius-side via sigil's `der_walk`/`der_skip`. No new sigil filing.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 307 → **317 asserts**: ClientHello builds
+  + is buffered, and the **interop cross-check** — our own server's
+  `respond_hello` parses our ClientHello, negotiates AES-256-GCM-SHA384
+  + x25519, and produces a ServerHello (no HRR). The `new_client`
+  scaffold assert flipped from stub to live.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,832 → **2,833 fns** (+`tls_native_client_build_hello`;
+  `tls_native_new_client` was already in the surface).
+
 ## [6.0.23] — 2026-06-01
 
 **TLS arc Mini-arc C.9 — OpenSSL `s_client` interop. Mini-arc C
