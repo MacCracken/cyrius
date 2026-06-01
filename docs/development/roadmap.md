@@ -199,8 +199,8 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | Slots | Arc | Status |
 |---|---|---|
 | .10 → .14 | Mini-arc A — scaffold / record / framing / key-schedule / ciphersuite | ✅ COMPLETE |
-| .15 → .22 | **Mini-arc C — TLS 1.3 server** (FULL scope; client-auth/.20, record-layer/.21, e2e/.22 split out) | in progress (7/8) |
-| ~.23 → ~.30 | **Mini-arc B — TLS 1.3 client** (completes the 1.3 stack) | |
+| .15 → .23 | **Mini-arc C — TLS 1.3 server** (FULL scope; .19 auth / .20 resumption / .21 record / .22 loopback / .23 OpenSSL split out) | in progress (8/9) |
+| ~.24 → ~.31 | **Mini-arc B — TLS 1.3 client** (completes the 1.3 stack) | |
 | .29 → .33 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
 | .34 → .39 | Mini-arc D — TLS 1.2 backport | |
 | .40 → .42 | Mini-arc E — consumer wiring + TLS arc closeout | |
@@ -234,7 +234,7 @@ no ld.so dependency.
   ChaCha20-Poly1305-SHA256); AES-128-GCM-SHA256 registered but gated
   on sigil AES-128 (see the 2026-05-28 comprehensive sigil audit). ✅
 
-**Mini-arc C — TLS 1.3 server (.15 → .22) — pulled forward, FULL scope**
+**Mini-arc C — TLS 1.3 server (.15 → .23) — pulled forward, FULL scope**
 
 > **Split 2026-05-31** (user direction, roadmap-sanctioned "split if
 > grows"): the old combined .19 (client-auth + resumption) became
@@ -276,11 +276,17 @@ hold (the .13 HKDF-SHA384 hold is the precedent).
   (inner content type + padding strip, nonce = static_iv XOR seq, AAD =
   record header) + derive/install the server & client handshake-traffic
   key/IV. The encryption prerequisite for a real handshake.
-- **.22** — server e2e: `accept()` socket loop (sys_socket/bind/listen/
-  accept) driving the full handshake over a real fd, tested against
-  OpenSSL `s_client`. Validates the plaintext+encrypted record flow,
-  .19's positive client-auth crypto (`s_client -cert`), and the
-  x509-pubkey wiring against a real peer. Closes Mini-arc C.
+- **.22** — `accept()` socket loop (read CH record → plaintext SH →
+  install keys → encrypted flight → read+verify client Finished →
+  CONNECTED) + a **cyrius-native loopback e2e** over a `socketpair`
+  (fork: parent server, child minimal client). First full TLS 1.3
+  handshake over a socket; no external deps. Added `sys_socketpair`.
+- **.23** — OpenSSL `s_client` real interop: real TCP listen/accept +
+  fork `openssl s_client`; PEM-cert support + a matching ECDSA-P256
+  cert/key generated via openssl + ChangeCipherSpec (middlebox compat).
+  Validates the handshake — and .19's positive client-auth crypto
+  (`s_client -cert`) + the x509-pubkey wiring — against a real peer.
+  Closes Mini-arc C.
 
 **Mini-arc B — TLS 1.3 client (.21 → .28) — completes the 1.3 stack**
 - **.21** — ClientHello construction (key_share X25519 + secp256r1

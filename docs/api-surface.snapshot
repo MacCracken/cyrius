@@ -2466,6 +2466,7 @@ syscalls_linux_common::sys_setuid/1
 syscalls_linux_common::sys_signalfd/3
 syscalls_linux_common::sys_sigprocmask/3
 syscalls_linux_common::sys_socket/3
+syscalls_linux_common::sys_socketpair/4
 syscalls_linux_common::sys_sync/0
 syscalls_linux_common::sys_timerfd_create/2
 syscalls_linux_common::sys_timerfd_settime/4

@@ -2418,10 +2418,110 @@ fn tls_native_connect(ctx, sock_fd): i64 {
     return TLS_ERR_NOT_IMPLEMENTED;
 }
 
-# Server-side: accept a handshake over `sock_fd` (caller-managed,
-# already accept()'d). Blocking; returns TLS_OK on success.
+# ----------------------------------------------------------------
+# Socket record I/O (.22)
+# ----------------------------------------------------------------
+# Read exactly `n` bytes from `fd` into `buf` (loops over partial
+# reads). Returns n, or a negative TLS_ERR_* on EOF / error.
+fn _tn_sock_read_full(fd, buf, n): i64 {
+    var got = 0;
+    while (got < n) {
+        var r = sys_read(fd, buf + got, n - got);
+        if (r <= 0) { return TLS_ERR_IO; }
+        got = got + r;
+    }
+    return n;
+}
+
+# Read one TLS record from `fd`: the 5-byte header, then the
+# header-declared fragment length. Returns the total record length
+# (5 + length), or a negative TLS_ERR_*.
+fn _tn_sock_read_record(fd, buf, buf_max): i64 {
+    if (buf_max < TLS_RECORD_HEADER_LEN) { return TLS_ERR_BUFFER_FULL; }
+    if (_tn_sock_read_full(fd, buf, TLS_RECORD_HEADER_LEN) < 0) { return TLS_ERR_IO; }
+    var len = _tn_be16_r(buf + 3);
+    if (len < 0) { return TLS_ERR_BAD_RECORD; }
+    if (TLS_RECORD_HEADER_LEN + len > buf_max) { return TLS_ERR_BUFFER_FULL; }
+    if (len > 0) {
+        if (_tn_sock_read_full(fd, buf + TLS_RECORD_HEADER_LEN, len) < 0) { return TLS_ERR_IO; }
+    }
+    return TLS_RECORD_HEADER_LEN + len;
+}
+
+# Write all `len` bytes of `buf` to `fd` (loops over partial writes).
+# Returns len, or TLS_ERR_IO.
+fn _tn_sock_write_all(fd, buf, len): i64 {
+    var sent = 0;
+    while (sent < len) {
+        var w = sys_write(fd, buf + sent, len - sent);
+        if (w <= 0) { return TLS_ERR_IO; }
+        sent = sent + w;
+    }
+    return len;
+}
+
+# Server-side: drive the TLS 1.3 handshake over `sock_fd` (a connected,
+# caller-managed socket — already accept()'d, or one end of a
+# socketpair). Reads the ClientHello, sends a plaintext ServerHello,
+# installs the handshake-traffic keys, sends the encrypted server
+# flight (EE/Cert/CertVerify/Finished), then reads + verifies the
+# client's (encrypted) Finished → CONNECTED. Returns TLS_OK on a
+# completed handshake, or a negative TLS_ERR_* (ctx → ERROR).
+# Note: ChangeCipherSpec (middlebox compat) + HelloRetryRequest loops
+# are .23 (OpenSSL interop) — this clean TLS 1.3 path serves the
+# cyrius-native loopback.
 fn tls_native_accept(ctx, sock_fd): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
+    var inbuf = alloc(cap);
+    if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    # ClientHello (plaintext handshake record).
+    var rl = _tn_sock_read_record(sock_fd, inbuf, cap);
+    if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    var sh = alloc(2048);
+    if (sh == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var ch_msg = inbuf + TLS_RECORD_HEADER_LEN;
+    var ch_len = rl - TLS_RECORD_HEADER_LEN;
+    var sh_len = tls_native_server_respond_hello(ctx, ch_msg, ch_len, sh, 2048);
+    if (sh_len < 0) { return sh_len; }
+    if (tls_native_server_sent_hrr(ctx) == 1) { return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED); }
+    # Send ServerHello as a plaintext handshake record.
+    var shrec = alloc(sh_len + TLS_RECORD_HEADER_LEN);
+    if (shrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_record_write_header(shrec, TLS_CT_HANDSHAKE, 0x0303, sh_len);
+    memcpy(shrec + TLS_RECORD_HEADER_LEN, sh, sh_len);
+    if (_tn_sock_write_all(sock_fd, shrec, sh_len + TLS_RECORD_HEADER_LEN) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_IO);
+    }
+    # Derive + install handshake-traffic keys (transcript is at CH..SH).
+    var dr = tls_native_server_derive_handshake(ctx);
+    if (dr != TLS_OK) { return dr; }
+    var ik = tls_native_server_install_handshake_keys(ctx);
+    if (ik != TLS_OK) { return ik; }
+    tls_native_server_transition(ctx, TLS_EV_START);
+    var rc = tls_native_server_transition(ctx, TLS_EV_RECV_CH);
+    if (rc != TLS_OK) { return rc; }
+    # Build + seal + send the server flight (one protected record).
+    var flight = alloc(4096);
+    if (flight == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var fl_len = tls_native_server_build_flight(ctx, flight, 4096);
+    if (fl_len < 0) { return fl_len; }
+    var flrec = alloc(fl_len + 64);
+    if (flrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var flrec_len = tls_native_server_seal_handshake(ctx, flight, fl_len, flrec, fl_len + 64);
+    if (flrec_len < 0) { return flrec_len; }
+    if (_tn_sock_write_all(sock_fd, flrec, flrec_len) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    # Read + open the client's (encrypted) Finished.
+    var crl = _tn_sock_read_record(sock_fd, inbuf, cap);
+    if (crl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    var finmsg = alloc(512);
+    if (finmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var finct = 0;
+    var fin_len = tls_native_server_open_handshake(ctx, inbuf, crl, finmsg, 512, &finct);
+    if (fin_len < 0) { return fin_len; }
+    if (finct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    return tls_native_server_recv_client_finished(ctx, finmsg, fin_len);
 }
 
 # Send `len` bytes from `buf` over the connected ctx. Returns bytes
