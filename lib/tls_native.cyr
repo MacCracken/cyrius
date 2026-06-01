@@ -1035,16 +1035,140 @@ ct, ct_len, tag, pt_out): i64 {
 # ================================================================
 # Returned by tls_native_new_client / new_server; passed to every
 # stateful fn. Internally points to an alloc()'d struct laid out
-# at slot .11 (record layer scaffolds it). Callers MUST treat as
-# opaque and free via tls_native_close (which calls into the bump
-# allocator's no-individual-free path — the heap is reclaimed on
-# alloc_reset, not per-ctx).
+# below (.15). Callers MUST treat as opaque and free via
+# tls_native_close (which calls into the bump allocator's
+# no-individual-free path — the heap is reclaimed on alloc_reset,
+# not per-ctx).
 #
 # At the API boundary a context is an i64 handle. 0 means "alloc
 # failed / invalid"; positive means a valid pointer.
 
 # ================================================================
-# Public API — every fn is a stub at v6.0.10
+# Connection context + server handshake state machine (.15)
+# ================================================================
+# The context is an alloc()'d struct; the API handle is its pointer
+# (>0). Shared by client (Mini-arc B) and server (Mini-arc C) — the
+# server path is wired first. Offsets +0..+128 are the handshake
+# control block; +136..+255 is reserved for the read/write key
+# material, sequence numbers, and I/O buffers Mini-arcs B-D append.
+
+var TLS_CTX_LEN          = 256;   # 32 i64 slots; room for B-D growth
+var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
+var TLS_CTX_OFF_STATE      = 8;   # TlsState
+var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
+var TLS_CTX_OFF_CIPHER     = 24;  # negotiated TlsCipherSuite (0 until SH)
+var TLS_CTX_OFF_VERIFY     = 32;  # TlsVerifyMode
+var TLS_CTX_OFF_MIN_VER    = 40;  # min acceptable TlsProtocolVersion
+var TLS_CTX_OFF_MAX_VER    = 48;  # max acceptable TlsProtocolVersion
+var TLS_CTX_OFF_TRANSCRIPT = 56;  # transcript-hash handle (0 until cipher known)
+var TLS_CTX_OFF_KEYSCHED   = 64;  # key-schedule handle (0 until derived)
+var TLS_CTX_OFF_CERT_CHAIN = 72;  # server: DER cert-chain ptr
+var TLS_CTX_OFF_CERT_LEN   = 80;  # server: cert-chain byte len
+var TLS_CTX_OFF_KEY        = 88;  # server: DER private-key ptr
+var TLS_CTX_OFF_KEY_LEN    = 96;  # server: key byte len
+var TLS_CTX_OFF_HOST       = 104; # client: SNI host cstr ptr
+var TLS_CTX_OFF_HOST_LEN   = 112; # client: host byte len
+var TLS_CTX_OFF_SOCK_FD    = 120; # caller socket fd (set by accept/connect)
+var TLS_CTX_OFF_LAST_ERR   = 128; # last TLS_ERR_* recorded (0 if none)
+
+# Handshake state-machine events. The protocol-message build/parse
+# that fires each event lands in .16-.19; this slot validates the
+# transitions in isolation so the driver they plug into is trusted.
+var TLS_EV_START         = 0;   # accept()/connect() begins the handshake
+var TLS_EV_RECV_CH       = 1;   # server got ClientHello (and emits its flight)
+var TLS_EV_RECV_CERT     = 2;   # received peer Certificate (client-auth)
+var TLS_EV_RECV_CV       = 3;   # received peer CertificateVerify (client-auth)
+var TLS_EV_RECV_FINISHED = 4;   # received peer Finished
+
+# Allocate + zero-init a context for `role`, applying handshake
+# defaults: state INIT, verify NONE, version range 1.2..1.3.
+# Returns the ctx pointer (>0) or 0 on OOM.
+fn _tn_ctx_new(role): i64 {
+    var ctx = alloc(TLS_CTX_LEN);
+    if (ctx == 0) { return 0; }
+    var i = 0;
+    while (i < TLS_CTX_LEN) {
+        store64(ctx + i, 0);
+        i = i + 8;
+    }
+    store64(ctx + TLS_CTX_OFF_ROLE,    role);
+    store64(ctx + TLS_CTX_OFF_STATE,   TLS_STATE_INIT);
+    store64(ctx + TLS_CTX_OFF_VERIFY,  TLS_VERIFY_NONE);
+    store64(ctx + TLS_CTX_OFF_MIN_VER, TLS_VERSION_1_2);
+    store64(ctx + TLS_CTX_OFF_MAX_VER, TLS_VERSION_1_3);
+    return ctx;
+}
+
+# Record a fatal error: stash it in LAST_ERR and drive the ctx to the
+# ERROR state (unusable). Returns `err` so callers can `return
+# _tn_ctx_fail(ctx, ...)` directly.
+fn _tn_ctx_fail(ctx, err): i64 {
+    store64(ctx + TLS_CTX_OFF_LAST_ERR, err);
+    store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_ERROR);
+    return err;
+}
+
+# Server-side handshake state machine (RFC 8446 §A.2). Drives one
+# transition per event:
+#   INIT --START--> WAIT_CH
+#   WAIT_CH --RECV_CH--> WAIT_FINISHED           (no client auth)
+#                     \-> WAIT_CLIENT_FLIGHT2     (client cert requested)
+#   WAIT_CLIENT_FLIGHT2 --RECV_CERT/RECV_CV--> (stay; client auth flight)
+#   WAIT_FINISHED      --RECV_FINISHED--> CONNECTED
+#   WAIT_CLIENT_FLIGHT2--RECV_FINISHED--> CONNECTED
+# Any event illegal for the current state drives the ctx to ERROR and
+# returns TLS_ERR_PROTOCOL. Returns TLS_OK on a legal transition.
+fn tls_native_server_transition(ctx, event): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_SERVER) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var st = load64(ctx + TLS_CTX_OFF_STATE);
+    if (event == TLS_EV_START) {
+        if (st != TLS_STATE_INIT) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+        store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_WAIT_CH);
+        return TLS_OK;
+    }
+    if (event == TLS_EV_RECV_CH) {
+        if (st != TLS_STATE_WAIT_CH) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+        # ClientHello consumed; the server's full flight is emitted in
+        # .16-.18. Whether we then expect the client's auth flight or
+        # just its Finished is decided by the verify mode set on the ctx.
+        if (load64(ctx + TLS_CTX_OFF_VERIFY) == TLS_VERIFY_NONE) {
+            store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_WAIT_FINISHED);
+        } else {
+            store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_WAIT_CLIENT_FLIGHT2);
+        }
+        return TLS_OK;
+    }
+    if (event == TLS_EV_RECV_CERT) {
+        if (st != TLS_STATE_WAIT_CLIENT_FLIGHT2) {
+            return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+        }
+        return TLS_OK;   # client Certificate consumed; CertificateVerify next
+    }
+    if (event == TLS_EV_RECV_CV) {
+        if (st != TLS_STATE_WAIT_CLIENT_FLIGHT2) {
+            return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+        }
+        return TLS_OK;   # client CertificateVerify consumed; Finished next
+    }
+    if (event == TLS_EV_RECV_FINISHED) {
+        if (st == TLS_STATE_WAIT_FINISHED) {
+            store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
+            return TLS_OK;
+        }
+        if (st == TLS_STATE_WAIT_CLIENT_FLIGHT2) {
+            store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
+            return TLS_OK;
+        }
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+}
+
+# ================================================================
+# Public API
 # ================================================================
 
 # Capability check. Returns 1 if cyrius can complete a TLS handshake
@@ -1068,9 +1192,21 @@ fn tls_native_new_client(host, host_len): i64 {
 # Create a server-side context with the given certificate chain
 # (DER-encoded, may be a single leaf or full chain) and private key
 # (DER-encoded; format auto-detected via sigil's X.509 helpers).
-# Returns: ctx handle (>0) on success, 0 on parse failure or OOM.
+# Returns: ctx handle (>0) on success, 0 on invalid args or OOM.
+# .15 stores the cert/key as opaque refs (not copied, not parsed) —
+# the DER decode + key-format detection lands in .16.
 fn tls_native_new_server(cert_chain, cert_len, key, key_len): i64 {
-    return 0;
+    if (cert_chain == 0) { return 0; }
+    if (cert_len <= 0) { return 0; }
+    if (key == 0) { return 0; }
+    if (key_len <= 0) { return 0; }
+    var ctx = _tn_ctx_new(TLS_ROLE_SERVER);
+    if (ctx == 0) { return 0; }
+    store64(ctx + TLS_CTX_OFF_CERT_CHAIN, cert_chain);
+    store64(ctx + TLS_CTX_OFF_CERT_LEN,   cert_len);
+    store64(ctx + TLS_CTX_OFF_KEY,        key);
+    store64(ctx + TLS_CTX_OFF_KEY_LEN,    key_len);
+    return ctx;
 }
 
 # Set the ALPN protocol list. `protos` is a series of length-prefixed
@@ -1083,9 +1219,20 @@ fn tls_native_set_alpn(ctx, protos, protos_len): i64 {
 
 # Set the peer-cert verification mode (see TlsVerifyMode). Default
 # for clients is TLS_VERIFY_PEER; for servers it's TLS_VERIFY_NONE
-# (i.e. don't request a client cert).
+# (i.e. don't request a client cert). On the server path the mode
+# steers the state machine: anything other than TLS_VERIFY_NONE makes
+# RECV_CH transition into WAIT_CLIENT_FLIGHT2 (request a client cert).
 fn tls_native_set_verify(ctx, mode): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (mode != TLS_VERIFY_NONE) {
+        if (mode != TLS_VERIFY_PEER) {
+            if (mode != TLS_VERIFY_FAIL_IF_NO_PEER_CERT) {
+                return TLS_ERR_INVALID_PARAM;
+            }
+        }
+    }
+    store64(ctx + TLS_CTX_OFF_VERIFY, mode);
+    return TLS_OK;
 }
 
 # Set the CA bundle used for peer-cert verification. `pem_bundle` is
@@ -1152,19 +1299,31 @@ fn tls_native_get_peer_cert_der(ctx, buf, bufmax): i64 {
 }
 
 # Get the current state-machine state (TlsState enum). Useful for
-# diagnostics; not normally consulted by application code.
+# diagnostics; not normally consulted by application code. A null
+# ctx reports TLS_STATE_ERROR (no valid state).
 fn tls_native_get_state(ctx): i64 {
-    return TLS_STATE_INIT;
+    if (ctx == 0) { return TLS_STATE_ERROR; }
+    return load64(ctx + TLS_CTX_OFF_STATE);
 }
 
 # Get the negotiated ciphersuite (TlsCipherSuite). Returns 0 if the
-# handshake hasn't completed yet.
+# handshake hasn't completed yet (or null ctx).
 fn tls_native_get_cipher(ctx): i64 {
-    return 0;
+    if (ctx == 0) { return 0; }
+    return load64(ctx + TLS_CTX_OFF_CIPHER);
 }
 
 # Get the negotiated protocol version (TlsProtocolVersion). Returns
-# 0 if the handshake hasn't completed yet.
+# 0 if the handshake hasn't completed yet (or null ctx).
 fn tls_native_get_version(ctx): i64 {
-    return 0;
+    if (ctx == 0) { return 0; }
+    return load64(ctx + TLS_CTX_OFF_VERSION);
+}
+
+# Get the last TLS_ERR_* recorded on the ctx (0 if none). Set when a
+# state-machine transition or later handshake step fails. Returns
+# TLS_ERR_INVALID_PARAM for a null ctx.
+fn tls_native_get_last_error(ctx): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    return load64(ctx + TLS_CTX_OFF_LAST_ERR);
 }

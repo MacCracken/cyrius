@@ -30,14 +30,16 @@ test_group("tls_native v6.0.10 scaffold API surface");
 # Capability check — flipped 0→1 at v6.0.14 (AES-256-GCM + ChaCha20-Poly1305 wired).
 assert_eq(tls_native_available(), 1, "tls_native_available() = 1 at .14");
 
-# Constructors return 0 (sentinel for alloc-fail / not-implemented)
+# new_client is still a stub (.21); new_server is live (.15) but
+# rejects null cert/key args with the 0 sentinel.
 assert_eq(tls_native_new_client("example.com", 11), 0, "new_client stub returns 0");
-assert_eq(tls_native_new_server(0, 0, 0, 0), 0, "new_server stub returns 0");
+assert_eq(tls_native_new_server(0, 0, 0, 0), 0, "new_server rejects null cert (0)");
 
-# All stateful fns return TLS_ERR_NOT_IMPLEMENTED. ctx arg is 0
-# (invalid handle) — the stub doesn't dereference yet.
+# Stateful fns not yet wired return TLS_ERR_NOT_IMPLEMENTED. ctx arg
+# is 0 (invalid handle) — these stubs don't dereference yet.
 assert_eq(tls_native_set_alpn(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_alpn stub");
-assert_eq(tls_native_set_verify(0, TLS_VERIFY_PEER), TLS_ERR_NOT_IMPLEMENTED, "set_verify stub");
+# set_verify is live (.15): null ctx → INVALID_PARAM, not NOT_IMPLEMENTED.
+assert_eq(tls_native_set_verify(0, TLS_VERIFY_PEER), TLS_ERR_INVALID_PARAM, "set_verify null ctx");
 assert_eq(tls_native_set_ca_bundle(0, 0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_ca_bundle stub");
 assert_eq(tls_native_set_version_range(0, TLS_VERSION_1_2, TLS_VERSION_1_3), TLS_ERR_NOT_IMPLEMENTED, "set_version_range stub");
 assert_eq(tls_native_connect(0, 0 - 1), TLS_ERR_NOT_IMPLEMENTED, "connect stub");
@@ -49,7 +51,7 @@ assert_eq(tls_native_close(0), TLS_ERR_NOT_IMPLEMENTED, "close stub");
 # Getters return defaults
 assert_eq(tls_native_get_alpn_selected(0, 0, 0), 0, "get_alpn_selected default 0");
 assert_eq(tls_native_get_peer_cert_der(0, 0, 0), 0, "get_peer_cert_der default 0");
-assert_eq(tls_native_get_state(0), TLS_STATE_INIT, "get_state returns INIT");
+assert_eq(tls_native_get_state(0), TLS_STATE_ERROR, "get_state(null) = ERROR");
 assert_eq(tls_native_get_cipher(0), 0, "get_cipher default 0");
 assert_eq(tls_native_get_version(0), 0, "get_version default 0");
 
@@ -585,5 +587,62 @@ assert_eq(tls_native_aead_encrypt(TLS_AES_128_GCM_SHA256,
                                   &key256, &iv, &aad, 5,
                                   &plaintext, 11, &ct_128, &tag_128),
           TLS_ERR_CIPHER_NOT_SUPPORTED, "AES-128 encrypt → CIPHER_NOT_SUPPORTED");
+
+# ================================================================
+# v6.0.15 — server connection ctx + handshake state machine
+# ================================================================
+test_group("v6.0.15 server ctx + state machine");
+
+# Dummy DER refs — .15 stores them opaque, doesn't parse (that's .16).
+var dummy_cert[8];
+var dummy_key[8];
+
+var sctx = tls_native_new_server(&dummy_cert, 8, &dummy_key, 8);
+assert_nonnull(sctx, "new_server returns a ctx handle");
+assert_eq(tls_native_get_state(sctx), TLS_STATE_INIT, "fresh server ctx in INIT");
+assert_eq(tls_native_get_cipher(sctx), 0, "no cipher negotiated yet");
+assert_eq(tls_native_get_version(sctx), 0, "no version negotiated yet");
+assert_eq(tls_native_get_last_error(sctx), TLS_OK, "no error recorded yet");
+
+# Happy path, no client auth: INIT→WAIT_CH→WAIT_FINISHED→CONNECTED.
+assert_eq(tls_native_server_transition(sctx, TLS_EV_START), TLS_OK, "START accepted");
+assert_eq(tls_native_get_state(sctx), TLS_STATE_WAIT_CH, "→ WAIT_CH");
+assert_eq(tls_native_server_transition(sctx, TLS_EV_RECV_CH), TLS_OK, "RECV_CH accepted");
+assert_eq(tls_native_get_state(sctx), TLS_STATE_WAIT_FINISHED, "→ WAIT_FINISHED (no client auth)");
+assert_eq(tls_native_server_transition(sctx, TLS_EV_RECV_FINISHED), TLS_OK, "RECV_FINISHED accepted");
+assert_eq(tls_native_get_state(sctx), TLS_STATE_CONNECTED, "→ CONNECTED");
+
+# Client-auth path: verify mode flips RECV_CH into WAIT_CLIENT_FLIGHT2.
+var actx = tls_native_new_server(&dummy_cert, 8, &dummy_key, 8);
+assert_nonnull(actx, "second server ctx");
+assert_eq(tls_native_set_verify(actx, TLS_VERIFY_PEER), TLS_OK, "set_verify PEER OK");
+assert_eq(tls_native_server_transition(actx, TLS_EV_START), TLS_OK, "START");
+assert_eq(tls_native_server_transition(actx, TLS_EV_RECV_CH), TLS_OK, "RECV_CH");
+assert_eq(tls_native_get_state(actx), TLS_STATE_WAIT_CLIENT_FLIGHT2, "→ WAIT_CLIENT_FLIGHT2 (client auth)");
+assert_eq(tls_native_server_transition(actx, TLS_EV_RECV_CERT), TLS_OK, "client Cert accepted");
+assert_eq(tls_native_server_transition(actx, TLS_EV_RECV_CV), TLS_OK, "client CertVerify accepted");
+assert_eq(tls_native_server_transition(actx, TLS_EV_RECV_FINISHED), TLS_OK, "client Finished accepted");
+assert_eq(tls_native_get_state(actx), TLS_STATE_CONNECTED, "→ CONNECTED (client auth)");
+
+# Illegal: RECV_FINISHED while WAIT_CH → PROTOCOL + ERROR state.
+var bctx = tls_native_new_server(&dummy_cert, 8, &dummy_key, 8);
+assert_eq(tls_native_server_transition(bctx, TLS_EV_START), TLS_OK, "START");
+assert_eq(tls_native_server_transition(bctx, TLS_EV_RECV_FINISHED), TLS_ERR_PROTOCOL, "Finished in WAIT_CH → PROTOCOL");
+assert_eq(tls_native_get_state(bctx), TLS_STATE_ERROR, "illegal transition → ERROR state");
+assert_eq(tls_native_get_last_error(bctx), TLS_ERR_PROTOCOL, "last_error records PROTOCOL");
+
+# Double START illegal: START in WAIT_CH → PROTOCOL.
+var cctx = tls_native_new_server(&dummy_cert, 8, &dummy_key, 8);
+assert_eq(tls_native_server_transition(cctx, TLS_EV_START), TLS_OK, "START");
+assert_eq(tls_native_server_transition(cctx, TLS_EV_START), TLS_ERR_PROTOCOL, "double START → PROTOCOL");
+
+# RECV_CERT outside the client-auth flight illegal.
+var dctx = tls_native_new_server(&dummy_cert, 8, &dummy_key, 8);
+tls_native_server_transition(dctx, TLS_EV_START);
+tls_native_server_transition(dctx, TLS_EV_RECV_CH);   # → WAIT_FINISHED (no auth)
+assert_eq(tls_native_server_transition(dctx, TLS_EV_RECV_CERT), TLS_ERR_PROTOCOL, "Cert without client-auth → PROTOCOL");
+
+# Null ctx guard on the transition driver.
+assert_eq(tls_native_server_transition(0, TLS_EV_START), TLS_ERR_INVALID_PARAM, "null ctx → INVALID_PARAM");
 
 var r = assert_summary();
