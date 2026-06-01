@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.23] — 2026-06-01
+
+**TLS arc Mini-arc C.9 — OpenSSL `s_client` interop. Mini-arc C
+(TLS 1.3 server) COMPLETE.** The cyrius native TLS 1.3 server completes
+a full handshake against OpenSSL 3.6.2 as a real client peer.
+`lib/`-only (plus a cross-arch stdlib syscall).
+
+### Added — ChangeCipherSpec handling (`lib/tls_native.cyr`)
+
+- `_tn_sock_read_record_skip_ccs` (private) — skips ChangeCipherSpec
+  records (content type 20) when reading; per RFC 8446 §5 a TLS 1.3
+  peer in middlebox-compatibility mode (e.g. OpenSSL) sends a dummy CCS
+  after its first flight, which MUST be ignored. Wired into both
+  `tls_native_accept` reads (the loopback `.22` has no CCS, so it is
+  unaffected).
+
+### Added — stdlib (`lib/syscalls_*`)
+
+- `sys_setsockopt(fd, level, optname, val, vallen)` — `SYS_SETSOCKOPT`
+  cross-arch (x86_64 = 54, aarch64 = 208) + common wrapper. Used for
+  SO_REUSEADDR on the interop listener.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 301 → **307 asserts**: loads an
+  openssl-generated matching ECDSA-P256 cert+key (DER), then — guarded
+  on openssl presence — stands up a real TCP listener, forks
+  `openssl s_client -connect … -tls1_3`, accepts, and asserts the
+  **server completes the TLS 1.3 handshake → TLS_OK + CONNECTED**
+  against OpenSSL 3.6.2 (`Cipher is TLS_AES_256_GCM_SHA384`; openssl's
+  only diagnostic is the expected self-signed-cert verify warning).
+  Skips cleanly if openssl is absent.
+
+### Mini-arc C complete (9 slots, .15–.23)
+
+TLS 1.3 **server**: handshake state machine → cert+key loading →
+ServerHello + x25519 key_share → signed flight (EE/Cert/CertVerify/
+Finished) → optional client auth → session-ticket/PSK resumption →
+record-layer AEAD protection → `accept()` socket loop + cyrius-native
+loopback → **OpenSSL interop**. Crypto stays in sigil (3.5.9); this is
+the sovereign protocol layer.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82** (the OpenSSL interop runs in-suite).
+- api-surface snapshot 2,831 → **2,832 fns** (+`sys_setsockopt`).
+
 ## [6.0.22] — 2026-06-01
 
 **TLS arc Mini-arc C.8 — server `accept()` + cyrius-native loopback

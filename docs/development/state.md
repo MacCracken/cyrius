@@ -3,6 +3,42 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.23 ship — OpenSSL interop; **Mini-arc C COMPLETE**)
+
+Closing **v6.0.23** — the cyrius native TLS 1.3 **server** completes a
+full handshake against **OpenSSL 3.6.2** `s_client`. **Mini-arc C done
+(9 slots, .15–.23).** `lib/`-only + a cross-arch syscall.
+
+`_tn_sock_read_record_skip_ccs` skips ChangeCipherSpec records (TLS 1.3
+middlebox-compat; openssl sends one) — wired into both accept() reads
+(loopback .22 unaffected). Added `sys_setsockopt` cross-arch
+(SYS_SETSOCKOPT x86=54/aarch64=208) for SO_REUSEADDR.
+
+Interop test (guarded on openssl presence): matching openssl-gen
+ECDSA-P256 cert+key (DER) → real TCP listen → fork `openssl s_client
+-tls1_3` → accept → **handshake TLS_OK + CONNECTED** (cipher
+AES-256-GCM-SHA384; openssl's only gripe is the expected self-signed
+verify warning).
+
+**Mini-arc C (TLS 1.3 server) — the full stack**: state machine →
+cert/key → ServerHello/x25519 → signed flight → client-auth →
+resumption → record-layer AEAD → accept() socket loop + loopback →
+OpenSSL interop. Crypto in sigil 3.5.9; sovereign protocol layer.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82** (OpenSSL interop runs in-suite).
+- api-surface snapshot 2,831 → **2,832 fns** (+sys_setsockopt).
+- `tls_native_scaffold.tcyr` 301 → **307 asserts** (+6: openssl cert/key
+  load + the real-peer handshake → CONNECTED).
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — **Mini-arc C COMPLETE
+(9/9)**. Next: **Mini-arc B — TLS 1.3 client** (~.24+), which completes
+the 1.3 stack and exercises the .19/.20 deferred items (positive
+client-auth crypto + resumption acceptance) once we have our own client
++ a localhost client↔server loop. Then Mini-arc D (1.2), AGNOS target
+arc (gated on agnos ABI re-freeze), Mini-arc E (consumer + closeout).
+
 ## Session close — 2026-06-01 (.22 ship — TLS Mini-arc C.8 accept() + loopback e2e)
 
 Closing **v6.0.22** — the **first full TLS 1.3 handshake over a socket
