@@ -1106,7 +1106,10 @@ var TLS_CTX_OFF_CLI_SEQ       = 312; # inline 8-byte client (read) sequence numb
 # init once the cipher (hence hash) is known from the ServerHello.
 var TLS_CTX_OFF_CH_BUF        = 320; # ptr to the sent ClientHello message bytes
 var TLS_CTX_OFF_CH_LEN        = 328; # ClientHello message length
-# 336..447 reserved for application-traffic keys (.25+ / app data)
+var TLS_CTX_OFF_SERVER_CERT   = 336; # client: parsed server leaf cert (.26)
+var TLS_CTX_OFF_SRV_FIN_BUF   = 344; # client: stashed server Finished message (.26 → .27)
+var TLS_CTX_OFF_SRV_FIN_LEN   = 352; # client: server Finished message length
+# 360..447 reserved for application-traffic keys (.28 / app data)
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -1422,6 +1425,125 @@ fn tls_native_client_parse_server_hello(ctx, sh, sh_len): i64 {
     var ik = tls_native_server_install_handshake_keys(ctx);
     if (ik != TLS_OK) { return ik; }
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_WAIT_EE);
+    return TLS_OK;
+}
+
+# Client: open a protected record sent by the server (reads with the
+# server handshake-traffic key + the server-key sequence number).
+fn tls_native_client_open_handshake(ctx, record, record_len, out, out_max, out_ct): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var key = load64(ctx + TLS_CTX_OFF_SRV_HS_KEY);
+    var iv = load64(ctx + TLS_CTX_OFF_SRV_HS_IV);
+    if (key == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    return tls_native_record_open(load64(ctx + TLS_CTX_OFF_CIPHER), key, iv,
+    ctx + TLS_CTX_OFF_SRV_SEQ, record, record_len,
+    out, out_max, out_ct);
+}
+
+# Client: receive + process the server's encrypted flight (.26):
+# EncryptedExtensions, Certificate, CertificateVerify, Finished, sealed
+# as one protected record. Decrypts it, feeds EE + Certificate +
+# CertificateVerify into the transcript, parses + stores the server
+# leaf cert, and **verifies the server's CertificateVerify signature**
+# over the §4.4.3 content against the cert's public key (ECDSA-P256 /
+# Ed25519; P-384 + RSA are sigil gaps → TLS_ERR_KEY_UNSUPPORTED). The
+# server Finished message is stashed for .27 (the transcript stays at
+# CH..CertificateVerify). Returns TLS_OK, TLS_ERR_AUTHN on a bad
+# signature, or another negative TLS_ERR_* (ctx → ERROR).
+fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+    if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    var hlen = _tn_hash_len(load64(ts));
+    var plain = alloc(TLS_RECORD_MAX_PLAINTEXT + 16);
+    if (plain == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var ct = 0;
+    var plen = tls_native_client_open_handshake(ctx, record, record_len, plain, TLS_RECORD_MAX_PLAINTEXT + 16, &ct);
+    if (plen < 0) { return plen; }
+    if (ct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    var pos = 0;
+    var mt = 0;
+    var ml = 0;
+    # EncryptedExtensions
+    if (tls_native_handshake_read_header(plain + pos, plen - pos, &mt, &ml) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    if (mt != TLS_HS_ENCRYPTED_EXTENSIONS) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var ee_total = TLS_HANDSHAKE_HEADER_LEN + ml;
+    tls_native_transcript_update(ts, plain + pos, ee_total);
+    pos = pos + ee_total;
+    # Certificate
+    if (tls_native_handshake_read_header(plain + pos, plen - pos, &mt, &ml) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    if (mt != TLS_HS_CERTIFICATE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var cert_total = TLS_HANDSHAKE_HEADER_LEN + ml;
+    var cbody = plain + pos + TLS_HANDSHAKE_HEADER_LEN;
+    var crc = load8(cbody) & 0xFF;
+    var cp = 1 + crc;
+    if (cp + 6 > ml) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    cp = cp + 3;                                       # certificate_list length
+    var cert_len = _tn_be24_r(cbody + cp);
+    cp = cp + 3;
+    if (cp + cert_len > ml) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var leaf = x509_cert_alloc();
+    if (leaf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (x509_parse(cbody + cp, cert_len, leaf) != 1) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    store64(ctx + TLS_CTX_OFF_SERVER_CERT, leaf);
+    tls_native_transcript_update(ts, plain + pos, cert_total);
+    pos = pos + cert_total;
+    # Transcript-hash through Certificate (the CertificateVerify input).
+    var th = alloc(TLS_MAX_DIGEST_LEN);
+    if (th == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_transcript_digest(ts, th);
+    # CertificateVerify
+    if (tls_native_handshake_read_header(plain + pos, plen - pos, &mt, &ml) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    if (mt != TLS_HS_CERTIFICATE_VERIFY) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var cv_total = TLS_HANDSHAKE_HEADER_LEN + ml;
+    var cvbody = plain + pos + TLS_HANDSHAKE_HEADER_LEN;
+    var scheme = _tn_be16_r(cvbody);
+    var sig_len = _tn_be16_r(cvbody + 2);
+    if (4 + sig_len > ml) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var sig = cvbody + 4;
+    var content = alloc(64 + 33 + 1 + 48);
+    if (content == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var ci = 0;
+    while (ci < 64) { store8(content + ci, 0x20); ci = ci + 1; }
+    memcpy(content + 64, "TLS 1.3, server CertificateVerify", 33);
+    store8(content + 97, 0);
+    memcpy(content + 98, th, hlen);
+    var content_len = 98 + hlen;
+    var pk = x509_cert_pubkey(leaf);
+    var ok = 0;
+    if (scheme == TLS_SIG_ECDSA_SECP256R1_SHA256) {
+        ok = ecdsa_p256_verify_der(pk, content, content_len, sig, sig_len);
+    } else {
+        if (scheme == TLS_SIG_ED25519) {
+            ok = ed25519_verify(pk, content, content_len, sig);
+        } else {
+            return _tn_ctx_fail(ctx, TLS_ERR_KEY_UNSUPPORTED);
+        }
+    }
+    if (ok != 1) { return _tn_ctx_fail(ctx, TLS_ERR_AUTHN); }
+    tls_native_transcript_update(ts, plain + pos, cv_total);
+    pos = pos + cv_total;
+    # Finished — stash for .27 (transcript stays at CH..CertificateVerify).
+    if (tls_native_handshake_read_header(plain + pos, plen - pos, &mt, &ml) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    if (mt != TLS_HS_FINISHED) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var fin_total = TLS_HANDSHAKE_HEADER_LEN + ml;
+    var finbuf = alloc(fin_total);
+    if (finbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    memcpy(finbuf, plain + pos, fin_total);
+    store64(ctx + TLS_CTX_OFF_SRV_FIN_BUF, finbuf);
+    store64(ctx + TLS_CTX_OFF_SRV_FIN_LEN, fin_total);
+    store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_WAIT_FINISHED);
     return TLS_OK;
 }
 

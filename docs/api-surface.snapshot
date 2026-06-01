@@ -2571,7 +2571,9 @@ tls_native::tls_native_cipher_select/4
 tls_native::tls_native_cipher_supported/1
 tls_native::tls_native_cipher_tag_len/1
 tls_native::tls_native_client_build_hello/3
+tls_native::tls_native_client_open_handshake/6
 tls_native::tls_native_client_parse_server_hello/3
+tls_native::tls_native_client_recv_flight/3
 tls_native::tls_native_close/1
 tls_native::tls_native_connect/2
 tls_native::tls_native_derive_iv/5

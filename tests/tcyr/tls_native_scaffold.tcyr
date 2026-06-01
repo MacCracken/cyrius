@@ -1329,4 +1329,57 @@ tls_native_handshake_write_header(&notsh, TLS_HS_CLIENT_HELLO, 100);
 assert_eq(tls_native_client_parse_server_hello(cl25b, &notsh, 8), TLS_ERR_BAD_HANDSHAKE, "non-ServerHello → BAD_HANDSHAKE");
 assert_eq(tls_native_client_parse_server_hello(0, &sh25, sh25n), TLS_ERR_INVALID_PARAM, "parse(null) → INVALID_PARAM");
 
+# ================================================================
+# v6.0.26 — client receives + verifies server flight (EE/Cert/CV)
+# ================================================================
+test_group("v6.0.26 client recv flight + CertVerify");
+
+# Helper to drive a server through respond_hello → install → sealed
+# flight, given a server ctx + a client's ClientHello.
+# (inlined per-case below since cyrius has no closures.)
+
+# Positive: server uses the MATCHING ECDSA-P256 cert+key (.23 pair) so
+# its CertificateVerify verifies against the cert.
+var srv26 = tls_native_new_server(cert23, 385, key23, 138);
+tls_native_server_load_creds(srv26);
+var cl26 = tls_native_new_client("localhost", 9);
+var ch26[512];
+var chn26 = tls_native_client_build_hello(cl26, &ch26, 512);
+var sh26[256];
+var sh26n = tls_native_server_respond_hello(srv26, &ch26, chn26, &sh26, 256);
+tls_native_client_parse_server_hello(cl26, &sh26, sh26n);
+tls_native_server_derive_handshake(srv26);
+tls_native_server_install_handshake_keys(srv26);
+var flight26[4096];
+var fl26 = tls_native_server_build_flight(srv26, &flight26, 4096);
+var flrec26[4096];
+var flrec26n = tls_native_server_seal_handshake(srv26, &flight26, fl26, &flrec26, 4096);
+assert_gt(flrec26n, 0, "server sealed its flight");
+assert_eq(tls_native_client_recv_flight(cl26, &flrec26, flrec26n), TLS_OK, "client received + verified server flight");
+assert_eq(tls_native_get_state(cl26), TLS_STATE_WAIT_FINISHED, "client → WAIT_FINISHED");
+assert_neq(load64(cl26 + TLS_CTX_OFF_SERVER_CERT), 0, "server leaf cert stored");
+assert_gt(load64(cl26 + TLS_CTX_OFF_SRV_FIN_LEN), 0, "server Finished stashed for .27");
+
+# Negative: server with a MISMATCHED cert/key (P-256 cert + Ed25519
+# key) — the client's CertVerify check against the cert fails → AUTHN.
+var srvBad = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_server_load_creds(srvBad);
+var clBad = tls_native_new_client("localhost", 9);
+var chB[512];
+var chBn = tls_native_client_build_hello(clBad, &chB, 512);
+var shB[256];
+var shBn = tls_native_server_respond_hello(srvBad, &chB, chBn, &shB, 256);
+tls_native_client_parse_server_hello(clBad, &shB, shBn);
+tls_native_server_derive_handshake(srvBad);
+tls_native_server_install_handshake_keys(srvBad);
+var flightB[4096];
+var flB = tls_native_server_build_flight(srvBad, &flightB, 4096);
+var flrecB[4096];
+var flrecBn = tls_native_server_seal_handshake(srvBad, &flightB, flB, &flrecB, 4096);
+assert_eq(tls_native_client_recv_flight(clBad, &flrecB, flrecBn), TLS_ERR_AUTHN, "mismatched cert/key → client AUTHN");
+assert_eq(tls_native_get_state(clBad), TLS_STATE_ERROR, "bad CertVerify → ctx ERROR");
+
+# Null guard.
+assert_eq(tls_native_client_recv_flight(0, &flrec26, flrec26n), TLS_ERR_INVALID_PARAM, "recv_flight(null) → INVALID_PARAM");
+
 var r = assert_summary();
