@@ -2590,6 +2590,7 @@ tls_native::tls_native_keysched_phase/1
 tls_native::tls_native_keysched_set_psk/3
 tls_native::tls_native_new_client/2
 tls_native::tls_native_new_server/4
+tls_native::tls_native_psk_binder/6
 tls_native::tls_native_read/3
 tls_native::tls_native_record_aad/4
 tls_native::tls_native_record_fragment_count/1
@@ -2599,7 +2600,10 @@ tls_native::tls_native_seq_increment/1
 tls_native::tls_native_seq_init/1
 tls_native::tls_native_server_build_flight/3
 tls_native::tls_native_server_derive_handshake/1
+tls_native::tls_native_server_derive_master/1
 tls_native::tls_native_server_load_creds/1
+tls_native::tls_native_server_new_session_ticket/3
+tls_native::tls_native_server_open_ticket/4
 tls_native::tls_native_server_recv_client_certificate/3
 tls_native::tls_native_server_recv_client_certverify/3
 tls_native::tls_native_server_recv_client_finished/3

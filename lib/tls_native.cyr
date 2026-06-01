@@ -1094,6 +1094,7 @@ var TLS_CTX_OFF_SHARED        = 232; # ptr to the ECDHE shared secret (32 B)
 var TLS_CTX_OFF_PEER_PUB      = 240; # ptr to the client's x25519 pubkey (into CH buf)
 var TLS_CTX_OFF_SENT_HRR      = 248; # 1 if the last response was a HelloRetryRequest
 var TLS_CTX_OFF_CLIENT_CERT   = 256; # ptr to the parsed client leaf cert (client auth)
+var TLS_CTX_OFF_STEK          = 264; # ptr to the server ticket-encryption key (32 B, lazy)
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -2049,6 +2050,170 @@ fn tls_native_server_recv_client_finished(ctx, msg, msg_len): i64 {
     }
     tls_native_transcript_update(ts, msg, TLS_HANDSHAKE_HEADER_LEN + blen);
     return tls_native_server_transition(ctx, TLS_EV_RECV_FINISHED);
+}
+
+# ================================================================
+# Session-ticket / PSK resumption (.20, RFC 8446 §4.6.1 / §2.2)
+# ================================================================
+# After the handshake the server derives the master secret (so the
+# resumption_master is available) and may issue a NewSessionTicket: a
+# self-encrypted ticket sealing the resumption PSK under a server
+# ticket-encryption key (STEK). On a later connection the client
+# presents the ticket + a PSK binder; the server opens the ticket and
+# verifies the binder. .20 ships issuance + the seal/open + binder
+# primitives; the resumed-handshake acceptance (parsing a resuming
+# ClientHello's pre_shared_key) rides the client mini-arc / e2e (it
+# needs a real resuming client to exercise).
+
+var TLS_TICKET_IV_LEN  = 12;
+var TLS_TICKET_TAG_LEN = 16;
+var TLS_TICKET_OVERHEAD = 28;   # IV(12) + tag(16)
+
+# Advance the key schedule to the master secret (resumption_master +
+# application-traffic secrets) over the CH..client-Finished transcript.
+fn tls_native_server_derive_master(ctx): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
+    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+    if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    var rc = tls_native_keysched_derive_master(ks, ts);
+    if (rc != TLS_OK) { return _tn_ctx_fail(ctx, rc); }
+    return TLS_OK;
+}
+
+# Ensure the ctx has a server ticket-encryption key (32-byte AES-256
+# key from the CSPRNG, generated once per ctx). Returns the STEK ptr
+# or 0 on failure.
+fn _tn_ctx_stek(ctx): i64 {
+    var stek = load64(ctx + TLS_CTX_OFF_STEK);
+    if (stek != 0) { return stek; }
+    stek = alloc(32);
+    if (stek == 0) { return 0; }
+    if (sys_getrandom(stek, 32, 0) != 32) { return 0; }
+    store64(ctx + TLS_CTX_OFF_STEK, stek);
+    return stek;
+}
+
+# Seal `secret_in` (the resumption PSK) into a ticket blob under the
+# STEK: out = IV(12) ‖ tag(16) ‖ ciphertext. Returns the blob length.
+fn _tn_ticket_seal(stek, secret_in, secret_in_len, out): i64 {
+    var iv = out;
+    if (sys_getrandom(iv, TLS_TICKET_IV_LEN, 0) != TLS_TICKET_IV_LEN) { return 0 - 1; }
+    var tag = out + TLS_TICKET_IV_LEN;
+    var ct = out + TLS_TICKET_OVERHEAD;
+    aes_gcm_encrypt(stek, iv, 0, 0, secret_in, secret_in_len, ct, tag);
+    return TLS_TICKET_OVERHEAD + secret_in_len;
+}
+
+# Open a ticket blob (reverse of _tn_ticket_seal). Writes the recovered
+# secret to `out`; returns its length, or -1 on a bad tag / short blob.
+fn tls_native_server_open_ticket(ctx, blob, blob_len, out): i64 {
+    if (ctx == 0) { return 0 - 1; }
+    if (blob_len < TLS_TICKET_OVERHEAD) { return 0 - 1; }
+    var stek = load64(ctx + TLS_CTX_OFF_STEK);
+    if (stek == 0) { return 0 - 1; }
+    var iv = blob;
+    var tag = blob + TLS_TICKET_IV_LEN;
+    var ct = blob + TLS_TICKET_OVERHEAD;
+    var ct_len = blob_len - TLS_TICKET_OVERHEAD;
+    if (aes_gcm_decrypt(stek, iv, 0, 0, ct, ct_len, tag, out) != 0) { return 0 - 1; }
+    return ct_len;
+}
+
+# Issue a NewSessionTicket (RFC 8446 §4.6.1). Derives the master
+# secret if needed, derives the resumption PSK =
+# HKDF-Expand-Label(resumption_master, "resumption", ticket_nonce,
+# Hash.length), seals it into the ticket, and serializes the message
+# into `out`. Returns the message length or a negative TLS_ERR_*.
+fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
+    if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    if (tls_native_keysched_phase(ks) != TLS_KSP_MASTER) {
+        var dm = tls_native_server_derive_master(ctx);
+        if (dm != TLS_OK) { return dm; }
+    }
+    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+    var hash_algo = load64(ts);
+    var hlen = _tn_hash_len(hash_algo);
+    var rm = alloc(TLS_MAX_DIGEST_LEN);
+    if (rm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_keysched_get_secret(ks, TLS_KS_RESUMPTION_MASTER, rm) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var nonce = alloc(8);
+    var age_add = alloc(4);
+    if (nonce == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (age_add == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    sys_getrandom(nonce, 8, 0);
+    sys_getrandom(age_add, 4, 0);
+    var psk = alloc(TLS_MAX_DIGEST_LEN);
+    if (psk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_hkdf_expand_label(rm, hlen, "resumption", 10, nonce, 8, hash_algo, psk, hlen) != TLS_OK) {
+        return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
+    }
+    var stek = _tn_ctx_stek(ctx);
+    if (stek == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    var ticket = alloc(TLS_TICKET_OVERHEAD + hlen);
+    if (ticket == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var ticket_len = _tn_ticket_seal(stek, psk, hlen, ticket);
+    if (ticket_len < 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    # body = lifetime(4) + age_add(4) + nonce(1+8) + ticket(2+len) + extensions(2)
+    var body_len = 4 + 4 + 1 + 8 + 2 + ticket_len + 2;
+    var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
+    if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
+    tls_native_handshake_write_header(out, TLS_HS_NEW_SESSION_TICKET, body_len);
+    var p = out + TLS_HANDSHAKE_HEADER_LEN;
+    _tn_be32_w(p, 7200); p = p + 4;            # ticket_lifetime (seconds)
+    memcpy(p, age_add, 4); p = p + 4;          # ticket_age_add
+    store8(p, 8); p = p + 1;                   # ticket_nonce<0..255>
+    memcpy(p, nonce, 8); p = p + 8;
+    _tn_be16_w(p, ticket_len); p = p + 2;      # ticket<1..2^16-1>
+    memcpy(p, ticket, ticket_len); p = p + ticket_len;
+    _tn_be16_w(p, 0); p = p + 2;               # extensions<0..> empty
+    return total;
+}
+
+# Compute a PSK binder (RFC 8446 §4.2.11.2) over `transcript_hash`:
+#   early_secret = HKDF-Extract(0, psk)
+#   binder_key   = Derive-Secret(early_secret, "res binder", "")
+#   finished_key = HKDF-Expand-Label(binder_key, "finished", "", L)
+#   binder       = HMAC(finished_key, transcript_hash)
+# Writes `out` (Hash.length bytes). Returns TLS_OK or an error. Used
+# by both ticket issuance verification and the resumed handshake.
+fn tls_native_psk_binder(psk, psk_len, hash_algo, transcript_hash, th_len, out): i64 {
+    var hlen = _tn_hash_len(hash_algo);
+    if (th_len != hlen) { return TLS_ERR_INVALID_PARAM; }
+    # early_secret = HKDF-Extract(salt=0^hlen, ikm=psk)
+    var zero = alloc(hlen);
+    if (zero == 0) { return TLS_ERR_OOM; }
+    var zi = 0;
+    while (zi < hlen) { store8(zero + zi, 0); zi = zi + 1; }
+    var early = alloc(hlen);
+    if (early == 0) { return TLS_ERR_OOM; }
+    _tn_hkdf_extract(zero, hlen, psk, psk_len, hash_algo, early);
+    # binder_key = Derive-Secret(early, "res binder", "")
+    var binder_key = alloc(hlen);
+    if (binder_key == 0) { return TLS_ERR_OOM; }
+    var empty_th = _tn_empty_transcript(hash_algo);
+    if (empty_th == 0) { return TLS_ERR_OOM; }
+    if (tls_native_derive_secret(early, hlen, "res binder", 10, empty_th, binder_key) != TLS_OK) {
+        return TLS_ERR_INTERNAL;
+    }
+    # finished_key = HKDF-Expand-Label(binder_key, "finished", "", L)
+    var fk = alloc(hlen);
+    if (fk == 0) { return TLS_ERR_OOM; }
+    if (tls_native_hkdf_expand_label(binder_key, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
+        return TLS_ERR_INTERNAL;
+    }
+    # binder = HMAC(finished_key, transcript_hash)
+    if (hash_algo == TLS_HASH_SHA384) {
+        hmac_sha384(fk, hlen, transcript_hash, th_len, out);
+    } else {
+        hmac_sha256(fk, hlen, transcript_hash, th_len, out);
+    }
+    return TLS_OK;
 }
 
 # Set the ALPN protocol list. `protos` is a series of length-prefixed
