@@ -1287,4 +1287,46 @@ assert_eq(tls_native_server_sent_hrr(srv24), 0, "no HRR (x25519 offered)");
 # Null guard.
 assert_eq(tls_native_client_build_hello(0, &chbuf24, 512), TLS_ERR_INVALID_PARAM, "build_hello(null) → INVALID_PARAM");
 
+# ================================================================
+# v6.0.25 — ServerHello parsing + client key derivation
+# ================================================================
+test_group("v6.0.25 ServerHello parse + client keys");
+
+var cl25 = tls_native_new_client("localhost", 9);
+var ch25[512];
+var chn25 = tls_native_client_build_hello(cl25, &ch25, 512);
+var srv25 = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_server_load_creds(srv25);
+var sh25[256];
+var sh25n = tls_native_server_respond_hello(srv25, &ch25, chn25, &sh25, 256);
+assert_gt(sh25n, 0, "server produced ServerHello");
+
+# Client parses the ServerHello + derives its handshake keys.
+assert_eq(tls_native_client_parse_server_hello(cl25, &sh25, sh25n), TLS_OK, "client parsed ServerHello");
+assert_eq(tls_native_get_cipher(cl25), TLS_AES_256_GCM_SHA384, "client cipher matches server");
+assert_eq(tls_native_get_group(cl25), TLS_GROUP_X25519, "client group x25519");
+assert_eq(tls_native_get_version(cl25), TLS_VERSION_1_3, "client negotiated TLS 1.3");
+
+# ECDHE agreement: client + server derive the same shared secret.
+assert_streq(hex_encode(load64(cl25 + TLS_CTX_OFF_SHARED), 32),
+             hex_encode(load64(srv25 + TLS_CTX_OFF_SHARED), 32),
+             "client/server ECDHE shared secret agree");
+
+# Handshake-secret agreement: derive the server side + compare the
+# server_handshake_traffic secret on both peers.
+tls_native_server_derive_handshake(srv25);
+var c_shs25[48];
+tls_native_keysched_get_secret(load64(cl25 + TLS_CTX_OFF_KEYSCHED), TLS_KS_SERVER_HANDSHAKE, &c_shs25);
+var s_shs25[48];
+tls_native_keysched_get_secret(load64(srv25 + TLS_CTX_OFF_KEYSCHED), TLS_KS_SERVER_HANDSHAKE, &s_shs25);
+assert_streq(hex_encode(&c_shs25, 48), hex_encode(&s_shs25, 48), "client/server server_hs_traffic secret agree");
+
+# Negatives.
+var cl25b = tls_native_new_client("localhost", 9);
+tls_native_client_build_hello(cl25b, &ch25, 512);
+var notsh[8];
+tls_native_handshake_write_header(&notsh, TLS_HS_CLIENT_HELLO, 100);
+assert_eq(tls_native_client_parse_server_hello(cl25b, &notsh, 8), TLS_ERR_BAD_HANDSHAKE, "non-ServerHello → BAD_HANDSHAKE");
+assert_eq(tls_native_client_parse_server_hello(0, &sh25, sh25n), TLS_ERR_INVALID_PARAM, "parse(null) → INVALID_PARAM");
+
 var r = assert_summary();

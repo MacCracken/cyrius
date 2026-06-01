@@ -1329,6 +1329,102 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     return total;
 }
 
+# Client: parse a ServerHello (.25, RFC 8446 §4.1.3) and set up the
+# client's handshake keys. Validates the negotiated cipher, enforces
+# downgrade protection (HRR sentinel + the §4.1.3 DOWNGRD markers +
+# supported_versions=0x0304), extracts the server's x25519 key_share,
+# retroactively initialises the transcript (buffered ClientHello then
+# this ServerHello), computes the ECDHE shared secret, derives the
+# handshake secret, and installs the handshake-traffic keys. After
+# this the client can decrypt the server's flight (.26). Returns
+# TLS_OK or a negative TLS_ERR_* (ctx → ERROR). HelloRetryRequest
+# (retry loop) is not yet handled — returns TLS_ERR_HANDSHAKE_FAILED.
+fn tls_native_client_parse_server_hello(ctx, sh, sh_len): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var ht = 0;
+    var blen = 0;
+    if (tls_native_handshake_read_header(sh, sh_len, &ht, &blen) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    if (ht != TLS_HS_SERVER_HELLO) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (TLS_HANDSHAKE_HEADER_LEN + blen > sh_len) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var body = sh + TLS_HANDSHAKE_HEADER_LEN;
+    if (2 + 32 + 1 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var pos = 2;                                       # skip legacy_version
+    var rnd = body + pos;
+    var hrr[32];
+    _tn_hrr_random(&hrr);
+    if (_tn_ct_eq(rnd, &hrr, 32) == 1) {
+        return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED);   # HRR retry not implemented
+    }
+    if (_tn_ct_eq(rnd + 24, "DOWNGRD", 7) == 1) {
+        return _tn_ctx_fail(ctx, TLS_ERR_VERSION);            # §4.1.3 downgrade sentinel
+    }
+    pos = pos + 32;
+    var sid_len = load8(body + pos) & 0xFF;
+    pos = pos + 1 + sid_len;
+    if (pos + 2 + 1 + 2 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var cipher = _tn_be16_r(body + pos);
+    pos = pos + 2;
+    if (tls_native_cipher_supported(cipher) != 1) {
+        return _tn_ctx_fail(ctx, TLS_ERR_CIPHER_NOT_SUPPORTED);
+    }
+    store64(ctx + TLS_CTX_OFF_CIPHER, cipher);
+    pos = pos + 1;                                     # legacy_compression
+    var ext_total = _tn_be16_r(body + pos);
+    pos = pos + 2;
+    if (pos + ext_total > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var ext_ptr = body + pos;
+    var sv_dp = 0;
+    var sv_dl = 0;
+    if (_tn_find_ext(ext_ptr, ext_total, TLS_EXT_SUPPORTED_VERSIONS, &sv_dp, &sv_dl) != 1) {
+        return _tn_ctx_fail(ctx, TLS_ERR_VERSION);
+    }
+    if (sv_dl < 2) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (_tn_be16_r(sv_dp) != 0x0304) { return _tn_ctx_fail(ctx, TLS_ERR_VERSION); }
+    store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_3);
+    var ks_dp = 0;
+    var ks_dl = 0;
+    if (_tn_find_ext(ext_ptr, ext_total, TLS_EXT_KEY_SHARE, &ks_dp, &ks_dl) != 1) {
+        return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED);
+    }
+    if (ks_dl < 4) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (_tn_be16_r(ks_dp) != TLS_GROUP_X25519) { return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED); }
+    if (_tn_be16_r(ks_dp + 2) != TLS_X25519_KEY_LEN) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (4 + TLS_X25519_KEY_LEN > ks_dl) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
+    var server_pub = ks_dp + 4;
+    store64(ctx + TLS_CTX_OFF_PEER_PUB, server_pub);
+    # Retroactive transcript: now the cipher (hence hash) is known.
+    var hash_algo = tls_native_cipher_hash_algo(cipher);
+    var ts = tls_native_transcript_init(hash_algo);
+    if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    tls_native_transcript_update(ts, load64(ctx + TLS_CTX_OFF_CH_BUF), load64(ctx + TLS_CTX_OFF_CH_LEN));
+    tls_native_transcript_update(ts, sh, TLS_HANDSHAKE_HEADER_LEN + blen);
+    store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
+    # Client ECDHE + handshake secret + traffic keys.
+    var dhe = alloc(32);
+    if (dhe == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    x25519(load64(ctx + TLS_CTX_OFF_EPH_PRIV), server_pub, dhe);
+    store64(ctx + TLS_CTX_OFF_SHARED, dhe);
+    var ks = tls_native_keysched_new(hash_algo);
+    if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    if (tls_native_keysched_derive_handshake(ks, dhe, TLS_X25519_KEY_LEN, ts) != TLS_OK) {
+        return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
+    }
+    store64(ctx + TLS_CTX_OFF_KEYSCHED, ks);
+    # install_handshake_keys is role-agnostic (derives both server- +
+    # client-side traffic key/IV); the client reads with the server key
+    # and writes with the client key (wrappers land with .26/.27).
+    var ik = tls_native_server_install_handshake_keys(ctx);
+    if (ik != TLS_OK) { return ik; }
+    store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_WAIT_EE);
+    return TLS_OK;
+}
+
 # Create a server-side context with the given certificate chain
 # (DER-encoded, may be a single leaf or full chain) and private key
 # (DER-encoded; format auto-detected via sigil's X.509 helpers).
