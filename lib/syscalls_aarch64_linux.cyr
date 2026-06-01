@@ -135,6 +135,7 @@ enum SysNr {
     # consumers hardcode x86_64 numbers. See CHANGELOG [5.11.18].
     SYS_SOCKET = 198;
     SYS_SOCKETPAIR = 199;
+    SYS_SETSOCKOPT = 208;
     SYS_BIND = 200;
     SYS_LISTEN = 201;
     SYS_CONNECT = 203;

@@ -1197,4 +1197,63 @@ sys_close(fd0);
 var wstatus[4];
 sys_waitpid(pid, &wstatus, 0);
 
+# ================================================================
+# v6.0.23 — OpenSSL s_client real-peer interop
+# ================================================================
+test_group("v6.0.23 OpenSSL s_client interop");
+
+# Matching ECDSA-P256 cert + key (openssl-generated, DER). The key's
+# public point appears in the cert SPKI — a genuine pair, so OpenSSL's
+# CertificateVerify check passes.
+var cert23 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var key23 = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+var s23 = tls_native_new_server(cert23, 385, key23, 138);
+assert_eq(tls_native_server_load_creds(s23), TLS_OK, "load openssl-generated cert+key");
+assert_eq(tls_native_get_key_algo(s23), SIG_PRIVKEY_ECDSA_P256, "openssl key algo = ECDSA P-256");
+
+# Real interop only when openssl is present (skip cleanly otherwise).
+if (sys_access("/usr/bin/openssl", 0) == 0) {
+    var lfd = sys_socket(2, 1, 0);                  # AF_INET, SOCK_STREAM
+    var one23[4];
+    store32(&one23, 1);
+    sys_setsockopt(lfd, 1, 2, &one23, 4);           # SOL_SOCKET, SO_REUSEADDR
+    var sa23[16];
+    var z23 = 0;
+    while (z23 < 16) { store8(&sa23 + z23, 0); z23 = z23 + 1; }
+    store8(&sa23, 2);                               # AF_INET (host order)
+    store8(&sa23 + 2, 0xAD); store8(&sa23 + 3, 0x23);   # port 44323 (BE)
+    store8(&sa23 + 4, 127); store8(&sa23 + 7, 1);   # 127.0.0.1 (BE)
+    assert_eq(sys_bind(lfd, &sa23, 16), 0, "bind 127.0.0.1:44323");
+    sys_listen(lfd, 1);
+    var pid23 = sys_fork();
+    if (pid23 == 0) {
+        # Child: exec `openssl s_client` (quiet, stdin = /dev/null).
+        sys_close(lfd);
+        var nf = sys_open("/dev/null", 2, 0);
+        sys_dup2(nf, 0); sys_dup2(nf, 1); sys_dup2(nf, 2);
+        var av[48];
+        store64(&av + 0, "openssl");
+        store64(&av + 8, "s_client");
+        store64(&av + 16, "-connect");
+        store64(&av + 24, "127.0.0.1:44323");
+        store64(&av + 32, "-tls1_3");
+        store64(&av + 40, 0);
+        var ev[8];
+        store64(&ev, 0);
+        sys_execve("/usr/bin/openssl", &av, &ev);
+        sys_exit(127);
+    }
+    var cfd23 = sys_accept4(lfd, 0, 0, 0);
+    assert_gt(cfd23, 0, "accepted OpenSSL connection");
+    var ar23 = tls_native_accept(s23, cfd23);
+    assert_eq(ar23, TLS_OK, "TLS 1.3 handshake vs OpenSSL s_client → TLS_OK");
+    assert_eq(tls_native_get_state(s23), TLS_STATE_CONNECTED, "server CONNECTED against OpenSSL");
+    sys_close(cfd23);
+    sys_close(lfd);
+    var st23[4];
+    sys_waitpid(pid23, &st23, 0);
+} else {
+    assert_eq(1, 1, "openssl absent — real-peer interop skipped");
+}
+
 var r = assert_summary();

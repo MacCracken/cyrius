@@ -2462,6 +2462,7 @@ syscalls_linux_common::sys_setgroups/2
 syscalls_linux_common::sys_setresgid/3
 syscalls_linux_common::sys_setresuid/3
 syscalls_linux_common::sys_setsid/0
+syscalls_linux_common::sys_setsockopt/5
 syscalls_linux_common::sys_setuid/1
 syscalls_linux_common::sys_signalfd/3
 syscalls_linux_common::sys_sigprocmask/3
