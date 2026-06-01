@@ -3,6 +3,36 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.27 ship — TLS Mini-arc B.4 client Finished; handshake complete)
+
+Closing **v6.0.27**, the fourth slot of TLS Mini-arc B (client). The
+TLS 1.3 handshake is now **complete on both sides**. `lib/`-only.
+
+`tls_native_client_seal_handshake` (seal with client hs key + CLI_SEQ).
+`tls_native_client_finish`: verify the server Finished (HMAC over
+CH..CertVerify, server hs finished key) → transcript → derive master +
+app-traffic secrets (over CH..serverFin, §7.1) → compute+seal client
+Finished (HMAC over CH..serverFin, client hs finished key) → transcript
+→ CONNECTED.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82** (fmt gate caught the continuation-indent
+  nit again — now pinned [[feedback_cyrfmt_continuation_indent]]).
+- api-surface snapshot 2,836 → **2,838 fns** (+client_seal_handshake,
+  +client_finish).
+- `tls_native_scaffold.tcyr` 334 → **341 asserts** (+7): **full
+  in-memory mutual handshake** — our client + our server both reach
+  CONNECTED + agree on server_application_traffic secret; bad server
+  Finished → client AUTHN. (Fixed a test bug: server derive_master must
+  be over CH..serverFin, not CH..clientFin.)
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc B step 4 of
+~8; **TLS 1.3 handshake complete client+server**. Next: **.28 — app
+data send/recv + KeyUpdate** (install app-traffic keys; tls_native_write
+/read over app records), then .29 X.509 chain verify, .30 hostname/SAN,
+.31 localhost client↔server e2e loop.
+
 ## Session close — 2026-06-01 (.26 ship — TLS Mini-arc B.3 client recv flight + CertVerify)
 
 Closing **v6.0.26**, the third slot of TLS Mini-arc B (client).

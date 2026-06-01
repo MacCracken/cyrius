@@ -6,6 +6,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.27] — 2026-06-01
+
+**TLS arc Mini-arc B.4 — TLS 1.3 client: Finished + handshake
+complete.** Fourth slot of the client mini-arc — the TLS 1.3 handshake
+is now complete on both client and server. `lib/`-only.
+
+### Added — client (`lib/tls_native.cyr`)
+
+- `tls_native_client_seal_handshake(ctx, inner, …)` — client-side
+  record seal (writes with the client handshake-traffic key + the
+  client-key sequence).
+- `tls_native_client_finish(ctx, out, out_max)` — completes the client
+  handshake: verifies the server's Finished (stashed by .26 — HMAC over
+  CH..CertificateVerify with the server handshake finished-key), feeds
+  it into the transcript, derives the master + application-traffic
+  secrets (over CH..serverFinished, RFC 8446 §7.1), then computes +
+  seals the client's own Finished (HMAC over CH..serverFinished, client
+  handshake finished-key) into `out`, feeds it into the transcript, and
+  transitions to CONNECTED. Returns the client Finished record length
+  or `TLS_ERR_AUTHN` on a bad server Finished.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 334 → **341 asserts**: a **full in-memory
+  mutual handshake** — our client and our server (matching ECDSA-P256
+  cert/key) both reach **CONNECTED** and **agree on the
+  `server_application_traffic` secret**; a corrupted server Finished →
+  client AUTHN.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82** (fmt gate caught a continuation-indent
+  nit; cyrfmt-corrected).
+- api-surface snapshot 2,836 → **2,838 fns** (+`client_seal_handshake`,
+  +`client_finish`).
+
 ## [6.0.26] — 2026-06-01
 
 **TLS arc Mini-arc B.3 — TLS 1.3 client: receive + verify server
