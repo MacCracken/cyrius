@@ -3,6 +3,53 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## 2026-05-31 — TLS arc RE-ORDERED + AGNOS userspace-target arc inserted (planning note, no bump)
+
+User direction 2026-05-31 (two passes): with TLS Mini-arc A complete,
+**all of TLS 1.3 first kept contiguous** (server then client — "no
+gaps"), then a new **AGNOS userspace-target arc**, then the **TLS 1.2
+backport**, then consumer/closeout. The "v6.0.x going forward" list
+under the .14 close below is **superseded** by this order (roadmap.md
+is the canonical plan). New execution order from .15:
+
+- **.15–.20 — Mini-arc C, TLS 1.3 server** (pulled forward, FULL
+  scope — user chose full over a minimal subset). Forcing function for
+  sigil's server-side gaps (RSA sign PKCS#1v1.5+PSS, ECDSA P-256/384
+  sign, RSA/ECDSA/Ed25519 private-key parsers) — all already in the
+  2026-05-28 comprehensive sigil audit; premise-check sigil's tag at
+  .15 entry, hold affected sub-slots if unshipped (.13 precedent).
+- **.21–.28 — Mini-arc B, TLS 1.3 client** — completes the 1.3 stack;
+  .28 client e2e closes the localhost client↔server loop. Kept
+  adjacent to C so 1.3 has no gap (user: "after 1.3 work so there is
+  no gaps").
+- **.29–.33 — AGNOS userspace target `CYRIUS_TARGET_AGNOS`** (new).
+  Cyrius-side gating prerequisite for AGNOS's 1.41.x shell-separation
+  arc: a ring-3 agnos syscall-ABI compile target so the OS-agnostic
+  **agnoshi** shell (`MacCracken/agnoshi`) rebuilds for agnos instead
+  of Linux. **Userspace only** (not the v6.2.0 kernel bare-metal
+  triple). **ABI contract now FILED**:
+  `agnos/docs/development/agnos-userland-abi.md` (canonical source
+  `agnos/kernel/core/syscall.cyr`). Table **0–28 🔒 FROZEN** (mirror
+  now); FS surface **29 getdents/30 unlink/31 rename/32 link/33 stat
+  + `a4=r10` + `AO_*` flags + blocking `read(fd 0)` is 🧪 PROPOSED**,
+  re-freezing as agnos 1.41.1 (stdin) + 1.41.2 (FS) land. **Hard gate
+  = FS surface re-freeze** (agnoshi build needs it). Peer gotchas:
+  agnos `exit`=0 not Linux 60; error `-1` not `-errno`; user ptr ≥
+  0x200000; agnos-native `stat`/`getdents` layouts. .29 plumbing +
+  `_start`/exit shim → .30 syscall peer (x86_64 + aarch64) → .31
+  stdlib subset gating + hello probe → .32 agnoshi cross-build gate
+  (flags if absent) → .33 closeout. agnoshi source stays in its own
+  repo; no cross-repo edit from cyrius.
+- **.34–.39 — Mini-arc D, TLS 1.2 backport** (user: "backport is fine
+  to be done after agnos bin works").
+- **.40–.42 — Mini-arc E, consumer wiring + TLS arc closeout**.
+- **~.43–.49 — back-end window; ~.50 — cycle closeout.**
+
+Slot numbers nominal; the arc may open additional slots (user: "don't
+care the additional slots it may open"). Memory pins updated:
+[[project_native_tls_arc_v6_2_x]], [[project_agnos_userspace_target_arc]].
+No version bump — cyrius stays at v6.0.14.
+
 ## Session close — 2026-05-28 (.14 ship — TLS Mini-arc A.5 ciphersuite negotiation; **A COMPLETE**)
 
 Closing **v6.0.14**, the fifth and final slot of TLS Mini-arc A.

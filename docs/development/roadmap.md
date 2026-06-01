@@ -168,16 +168,52 @@ correctly (not just `help`); `cyrius distlib <profile>` produces a
 bundle with no double-blank lines that cyrlint flags; cycc x86 +
 cycc_aarch64 cross both byte-identical; full `scripts/check.sh`.
 
-### Native TLS arc — v6.0.x .10 → .37 (5 mini-arcs A–E, ~28 slots, shifted +1 for .9)
+### Native TLS arc + AGNOS userspace target — v6.0.x .10 → ~.50 (TLS mini-arcs A–E + AGNOS target arc; **re-ordered 2026-05-31**)
 
 User direction 2026-05-28: pull the native TLS arc forward from its
 original v6.2.x placement so sandhi + projects-waiting-on-TLS
-unblock now. AGNOS kernel still waits for v6.2.0's bare-metal
-target — userspace-only in v6.0.x. Sigil prereqs MET (ChaCha20-
-Poly1305 + X25519 shipped in 3.5.1/.2/.3, cyrius pinned 3.5.5 at
-v6.0.4; full TLS 1.3 modern ciphersuite + classic suites already
-available). See [[project_native_tls_arc_v6_2_x]] for the full
-decision history.
+unblock now. Sigil prereqs MET (ChaCha20-Poly1305 + X25519 shipped
+in 3.5.1/.2/.3, cyrius pinned 3.5.6; full TLS 1.3 modern ciphersuite
++ classic suites available). See [[project_native_tls_arc_v6_2_x]]
+for the full decision history.
+
+**Re-ordered 2026-05-31 (user direction, two passes).** With Mini-arc
+A complete (`tls_native_available()` flipped at .14), the order is:
+**all of TLS 1.3 first, kept contiguous** — server (Mini-arc C) then
+client (Mini-arc B), **no gap in the 1.3 work** — then the **AGNOS
+userspace-target arc** (`CYRIUS_TARGET_AGNOS`), then the **TLS 1.2
+backport** (Mini-arc D), then **consumer wiring + arc closeout**
+(Mini-arc E). User: *"the native server side for tls 1.3; the Binary
+Agnos work then back to the remaining tls items. don't care the
+additional slots it may open in the arc"* → refined *"lets put the
+agnos target after 1.3 work so there is no gaps … backport is fine to
+be done after agnos bin works."* The kernel is mature enough to
+warrant userland programs — **agnoshi the first out the gate** — so
+cyrius builds the gating prerequisite (the agnos compile target) once
+the full 1.3 stack is in. AGNOS kernel-mode code still waits for
+v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
+(ring-3 over the agnos syscall ABI).
+
+**Execution order (post-.14):**
+
+| Slots | Arc | Status |
+|---|---|---|
+| .10 → .14 | Mini-arc A — scaffold / record / framing / key-schedule / ciphersuite | ✅ COMPLETE |
+| .15 → .20 | **Mini-arc C — TLS 1.3 server** (FULL scope) | next |
+| .21 → .28 | **Mini-arc B — TLS 1.3 client** (completes the 1.3 stack) | |
+| .29 → .33 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
+| .34 → .39 | Mini-arc D — TLS 1.2 backport | |
+| .40 → .42 | Mini-arc E — consumer wiring + TLS arc closeout | |
+| ~.43 → ~.49 | Back-end window (pinned + candidate items) | |
+| ~.50 | v6.0.x cycle closeout | |
+
+TLS 1.3 (server .15–.20 + client .21–.28) stays contiguous so the
+client e2e at .28 closes the localhost client↔server loop directly,
+then the AGNOS target lands on a complete 1.3 stack with no gap.
+
+Slot numbers are nominal — per user direction the arc may open
+additional slots ("don't care the additional slots"); ranges shift
+accordingly. Window stated 35–60 ([[feedback_minor_window_at_arc_open]]).
 
 **Goal**: replace `lib/tls.cyr` (current libssl/fdlopen wrapper,
 client-only) with `lib/tls_native.cyr` — a sovereign, pure-Cyrius
@@ -185,117 +221,192 @@ TLS protocol-layer stack over sigil's crypto primitives. TLS 1.2 +
 1.3, client + server. No external governance, no dlopen-of-libssl,
 no ld.so dependency.
 
-**Mini-arc A — tls_native scaffold + record layer (.10 → .14)**
-- **.10** — `lib/tls_native.cyr` scaffold: file structure, public
-  API surface (cstr → opaque handle), error codes, record-layer
-  types. Pure structure slot; no protocol logic yet.
-- **.11** — Record layer: `ContentType`, `ProtocolVersion`,
-  fragmentation, sequence numbers, the encryption boundary.
-- **.12** — Handshake message framing: `HandshakeType`,
-  message reader/writer, transcript hash accumulator.
-- **.13** — TLS 1.3 key schedule: HKDF tree (early secret →
-  handshake secret → master secret); per-direction client/server
-  application + handshake keys; key/IV derivation per RFC 8446
-  §7.1. **HELD 2026-05-28 pending sigil HKDF-SHA384**. Premise-
-  check at slot entry found sigil 3.5.5 ships HMAC-SHA256 +
-  HKDF-Extract-SHA256 + HKDF-Expand-SHA256 only; the
-  `TLS_AES_256_GCM_SHA384` ciphersuite needs HKDF-SHA384. User
-  rejected both inlining the SHA-384 crypto in `lib/tls_native.cyr`
-  (would violate the "crypto stays in sigil" charter) and shipping
-  SHA-256-only and patching later (would leave .14's
-  `tls_native_available()` flipping with an incomplete suite set).
-  Sigil-side issue filed at
-  `~/Repos/sigil/docs/development/issues/2026-05-28-cyrius-tls-native-needs-hkdf-sha384.md`
-  requesting `hmac_sha384` + `hkdf_extract_sha384` +
-  `hkdf_expand_sha384`. Resume condition: sigil tag exposing the
-  three (or four — combined helper optional) fns; cyrius bumps pin
-  in cyrius.cyml and starts A.4 implementation. The whole TLS arc
-  (Mini-arcs B–E, slots .14–.37) serialises behind this.
-- **.14** — Ciphersuite negotiation: `TLS_AES_128_GCM_SHA256`,
-  `TLS_AES_256_GCM_SHA384`, `TLS_CHACHA20_POLY1305_SHA256`. All
-  three become available once sigil ships HKDF-SHA384 (see .13
-  hold above). At slot entry, `tls_native_available()` flips from
-  0 to 1 — first ciphersuite end-to-end wired through encrypt/
-  decrypt.
+**Mini-arc A — tls_native scaffold + record layer (.10 → .14) — ✅ COMPLETE**
+- **.10** — scaffold (public API, types, error codes, states). ✅
+- **.11** — record layer (ContentType / version, fragmentation,
+  sequence numbers, BE wire helpers, AEAD nonce + AAD). ✅
+- **.12** — handshake message framing (HandshakeType, reader/writer,
+  transcript-hash accumulator with snapshot semantics). ✅
+- **.13** — TLS 1.3 key schedule (HKDF tree per RFC 8446 §7.1/§7.3).
+  Held briefly pending sigil HKDF-SHA384; resolved by sigil 3.5.6. ✅
+- **.14** — ciphersuite negotiation; `tls_native_available()` flipped
+  0→1. 2 of 3 TLS 1.3 suites live (AES-256-GCM-SHA384 +
+  ChaCha20-Poly1305-SHA256); AES-128-GCM-SHA256 registered but gated
+  on sigil AES-128 (see the 2026-05-28 comprehensive sigil audit). ✅
 
-**Mini-arc B — TLS 1.3 client (.15 → .22)**
-- **.15** — ClientHello construction: extensions, key_share with
-  X25519 + secp256r1 (P-256), supported_groups, supported_versions,
-  signature_algorithms.
-- **.16** — ServerHello parsing: version negotiation downgrade
-  protection, key share extraction, ciphersuite acceptance.
-- **.17** — EncryptedExtensions + Certificate + CertificateVerify:
-  server-auth path. CertificateVerify uses sigil's ECDSA / RSA-PSS.
-- **.18** — Finished message + handshake-complete state transition.
-  Transcript hash MAC over handshake.
-- **.19** — Application data send/recv: post-handshake AEAD
-  encrypt/decrypt; KeyUpdate handling.
-- **.20** — X.509 chain verification: wire sigil's existing X.509
-  primitives into the handshake. Cert chain walk; trust-store
-  loading (system bundle or caller-supplied).
-- **.21** — Hostname / SAN verification: RFC 6125 subject_alt_name
-  + wildcard matching.
-- **.22** — Client e2e test. Two options at slot entry — connect to
-  a known TLS 1.3 server (badssl.com or similar) **or** spin up a
-  localhost echo server using a peer's tls_native (might gate on
-  Mini-arc C); ASK at slot entry.
+**Mini-arc C — TLS 1.3 server (.15 → .20) — pulled forward, FULL scope**
 
-**Mini-arc C — TLS 1.3 server (.23 → .28)**
-- **.23** — Server-side handshake state machine. Mirrors B but
-  drives transitions from the server side: WAIT_CH → WAIT_FLIGHT2
-  → WAIT_FINISHED → CONNECTED.
-- **.24** — Cert + key loading: PEM/DER decoding via sigil; key
+User direction 2026-05-31: server-side TLS 1.3 goes first, **full
+Mini-arc C as scoped** (not a minimal subset). **Forcing function for
+sigil's server-side gaps** — RSA signature surface (PKCS#1 v1.5 + PSS,
+sign + verify, SHA-256+384), ECDSA P-256/P-384 sign, and private-key
+parsers (RSA / ECDSA / Ed25519 DER + PEM auto-detect) — all already in
+the 2026-05-28 comprehensive sigil audit
+(`sigil/docs/development/issues/2026-05-28-cyrius-tls-arc-full-audit.md`)
+but **load-bearing now** rather than at the old .23. **Premise-check
+sigil's tag at .15 entry** ([[feedback_premise_check_at_slot_entry]]);
+if the sign / parser surface hasn't shipped, the affected sub-slots
+hold (the .13 HKDF-SHA384 hold is the precedent).
+- **.15** — server-side handshake state machine: WAIT_CH →
+  WAIT_FLIGHT2 → WAIT_FINISHED → CONNECTED.
+- **.16** — cert + key loading: PEM/DER decoding via sigil; key
   format detection (RSA / ECDSA / Ed25519).
-- **.25** — ServerHello + key_share response. Server-side key
-  generation; HMAC for HelloRetryRequest if client key_share
-  insufficient.
-- **.26** — Optional client auth: CertificateRequest emission +
-  client certificate validation. May skip if not needed by initial
-  consumers — ASK at slot entry.
-- **.27** — Session ticket / resumption (PSK): RFC 8446 §4.6.1
-  ticket issuance + §2.2 PSK handshake. Lower priority — could
-  defer if Mini-arc D pressure builds.
-- **.28** — Server e2e: localhost client↔server loop using our own
-  tls_native on both sides. Closes B's e2e gap from .22 too.
+- **.17** — ServerHello + key_share response. Server-side key
+  generation; HelloRetryRequest if client key_share insufficient.
+- **.18** — EncryptedExtensions + Certificate + CertificateVerify
+  (server-auth signature via sigil RSA-PSS / ECDSA) + Finished.
+- **.19** — optional client auth (CertificateRequest emission +
+  client-cert validation) **and** session-ticket / resumption (PSK,
+  RFC 8446 §4.6.1 + §2.2). Full scope keeps both; split into two
+  sub-slots if either grows ("don't care the additional slots").
+- **.20** — server e2e: handshake against OpenSSL `s_client` as the
+  real peer (Mini-arc B client not built yet — the localhost
+  client↔server loop lands when B completes at .33).
 
-**Mini-arc D — TLS 1.2 backport (.29 → .34)**
-- **.29** — TLS 1.2 record layer differences: explicit IV (AEAD
-  cipher_suites), MAC-then-encrypt for legacy CBC suites (probably
-  skip — modern peers don't need them), TLS 1.2 sequence numbering.
-- **.30** — TLS 1.2 handshake: ClientHello / ServerHello version
-  field semantics (1.2's actual version vs 1.3's downgrade
-  indicator), RSA-PSS / RSA-PKCS1 cert signatures, version
-  downgrade-attack mitigations.
-- **.31** — TLS 1.2 PRF: SHA-256-based / SHA-384-based per
-  ciphersuite; master_secret + key derivation per RFC 5246 §5+§8.
-- **.32** — TLS 1.2 certificate + Finished: verify_data MAC over
-  handshake messages.
-- **.33** — TLS 1.2 ciphersuites: AES-GCM + ChaCha20-Poly1305 (RFC
-  7905); skip legacy CBC. The minimum-needed set for modern peer
-  interop.
-- **.34** — TLS 1.2 e2e: localhost + at least one real 1.2-only
-  peer (find one in the wild or stand one up).
+**Mini-arc B — TLS 1.3 client (.21 → .28) — completes the 1.3 stack**
+- **.21** — ClientHello construction (key_share X25519 + secp256r1
+  (P-256), supported_groups / supported_versions,
+  signature_algorithms).
+- **.22** — ServerHello parsing (downgrade protection, key-share
+  extraction, ciphersuite acceptance).
+- **.23** — EncryptedExtensions + Certificate + CertificateVerify
+  (server-auth path; sigil ECDSA / RSA-PSS verify).
+- **.24** — Finished + handshake-complete transition.
+- **.25** — application data send/recv; KeyUpdate handling.
+- **.26** — X.509 chain verification (sigil X.509 primitives; trust
+  store — system bundle or caller-supplied).
+- **.27** — hostname / SAN verification (RFC 6125 + wildcard).
+- **.28** — client e2e + localhost client↔server loop using our own
+  tls_native on both sides (closes Mini-arc C's .20 e2e gap too).
+
+**AGNOS userspace target arc — `CYRIUS_TARGET_AGNOS` (.29 → .33) — new**
+
+User direction 2026-05-31. The kernel is mature enough to warrant
+userland programs; agnoshi is the first. Placed **after the full TLS
+1.3 stack** (server .15–.20 + client .21–.28) so the 1.3 work stays
+contiguous — no gap (user: "lets put the agnos target after 1.3 work
+so there is no gaps"). agnos's `shell-separation-prior-art.md` §1a
+specifies the **gating prerequisite** for AGNOS's 1.41.x shell-
+separation arc: `agnsh` (agnoshi, `MacCracken/agnoshi`, ~5K LOC,
+ring-3) is an OS-agnostic shell whose Linux build emits Linux syscall
+numbers + struct layouts and **won't execute on AGNOS's sovereign
+syscall ABI**. The fix is "Cyrius learns to emit agnos syscalls," not
+"agnos answers Linux syscalls" — a new compile target, the same
+multi-target story cyrius already has (Linux / Windows / macOS →
+**+ agnos**).
+
+**Userspace only** (user direction — target-basis fork): ring-3
+programs over the agnos syscall ABI. NOT the kernel-mode bare-metal
+triple — that stays v6.2.0; the kernel already builds via its ad-hoc
+bare-metal mode.
+
+**ABI contract FILED** (2026-05-31):
+[`agnos/docs/development/agnos-userland-abi.md`](https://github.com/MacCracken/agnos/blob/main/docs/development/agnos-userland-abi.md)
+is the frozen interface both sides code against; canonical source is
+`agnos/kernel/core/syscall.cyr` (`ksyscall` dispatch). The cyrius
+`lib/syscalls_x86_64_agnos.cyr` peer **mirrors that doc** (kernel wins
+on any disagreement). Key gotchas for the peer, distinct from Linux:
+- **agnos `exit` = syscall 0** (NOT Linux `exit_group`/60) — the
+  `CYRIUS_TARGET_AGNOS` `_start`/`exit` runtime shim must use agnos
+  numbers, not the Linux epilogue.
+- **Error return = `-1`** (`0 - 1`), NOT Linux `-errno`. Wrappers test
+  `== -1`, no errno decoding.
+- **User-pointer rule**: every buffer pointer must be **≥ `0x200000`**
+  (kernel reserves 0–2 MB) or the call returns `-1`.
+- **3-arg calling convention** (`rdi`/`rsi`/`rdx`) with a 🧪 PROPOSED
+  **4th arg `a4 = r10`** for `rename`/`link` (§1a, lands 1.41.2 — adopt
+  the register, not Linux's numbers).
+- **`AO_*` open flags are agnos-native** (`AO_CREAT=0x100`,
+  `AO_TRUNC=0x200`, …) — do NOT copy Linux `O_*`. `create` is
+  `open` + `AO_CREAT`; no `chdir`/`getcwd` (CWD is userland-owned).
+- **agnos-native struct layouts** — `stat` (48 B, 8-byte fields, §4.1)
+  and `getdents` record (reclen-delimited, §4.2) are NOT Linux
+  `struct stat`/`dirent64`; mirror the exact byte offsets.
+
+**Gating premise-check ([[feedback_premise_check_at_slot_entry]])**:
+table **0–28 is 🔒 FROZEN** (mirror now). The shell-critical FS surface
+— **29 getdents · 30 unlink · 31 rename · 32 link · 33 stat**, the
+`a4=r10` extension, the `AO_*` flags, and **blocking `read(fd 0)`** —
+is **🧪 PROPOSED**, re-freezing as agnos **1.41.1** (stdin) and
+**1.41.2** (FS) land. So the arc's hard gate is **the FS surface
+re-freezing**: the peer can mirror 0–28 immediately, but the agnoshi
+cross-build (.32) only passes once `getdents`/`unlink`/`stat` + open-
+flags are 🔒. Open questions still live in the contract (O1 stdin RAW
+vs COOKED, O2 `a4=r10`, O3 dir-fds, O4 FAT `stat`/`link`). **Re-freeze
+on every change** (contract §5); coordination is agnos-side (user-
+driven); **no cross-repo edit from cyrius**
+([[feedback_no_unauthorized_cross_repo_edits]]).
+- **.29** — target plumbing: `CYRIUS_TARGET_AGNOS` `PP_PREDEFINE`
+  macro + target-triple / build-flag wiring (cbt + a
+  `src/main_agnos.cyr` entry variant or flag path) + cyrius.cyml
+  target selection + the agnos `_start`/`exit`(0) runtime shim. No
+  syscall bodies yet — the target compiles a trivial probe.
+- **.30** — `lib/syscalls_x86_64_agnos.cyr` peer: mirror the contract
+  (numbers 0–28 + the re-frozen 29–33; `a4=r10`; `AO_*`; `stat` +
+  `getdents` layouts; `-1` error; ptr ≥ 0x200000). Cross-arch:
+  aarch64 peer in the same slot
+  ([[feedback_cross_arch_propagation_mandatory]]).
+- **.31** — stdlib subset gating for the agnos target: classify which
+  `lib/` modules are agnos-ABI-safe (small syscall surface — no
+  socket / clock yet; those are deferred kernel-side per prior-art
+  §5). Forbidden-module / unavailable-syscall error when agnos-target
+  code pulls a Linux-only path. exit-42 + `write`(1) hello probe
+  against the agnos ABI (cyrius self-test; no agnos host needed).
+- **.32** — agnoshi cross-build smoke gate (user direction —
+  agnoshi-gate fork): a `scripts/check.sh` gate that compiles
+  `MacCracken/agnoshi` source against `CYRIUS_TARGET_AGNOS` and
+  asserts a valid AGNOS-ABI ELF. Adds a cross-repo dependency to
+  check.sh — guard it to **flag** (not silently pass) if the agnoshi
+  checkout is absent ([[feedback_flag_missing_repos_dont_skip]]).
+  4-host smoke where target paths differ
+  ([[reference_verification_hosts_ssh]]).
+- **.33** — AGNOS-target closeout: lockstep-contract note in
+  docs/guides + vidya (`language.toml` new target + `field_notes` for
+  the ABI-mirror gotcha); api-surface snapshot; state.md + memory
+  pins.
+
+**Mini-arc D — TLS 1.2 backport (.34 → .39) — remaining**
+- **.34** — TLS 1.2 record-layer differences (explicit IV, 1.2 seq;
+  skip legacy CBC).
+- **.35** — TLS 1.2 handshake (version-field semantics, RSA-PSS /
+  PKCS1 cert sigs, downgrade-attack mitigations).
+- **.36** — TLS 1.2 PRF (SHA-256 / SHA-384 per ciphersuite; RFC 5246
+  §5+§8).
+- **.37** — TLS 1.2 certificate + Finished (verify_data MAC).
+- **.38** — TLS 1.2 ciphersuites (AES-GCM + ChaCha20-Poly1305 / RFC
+  7905; skip legacy CBC — the minimum-needed modern-peer set).
+- **.39** — TLS 1.2 e2e (localhost + at least one real 1.2-only peer).
+
+**Mini-arc E — consumer wiring + TLS arc closeout (.40 → .42) — remaining**
+- **.40** — sandhi rewires onto `lib/tls_native.cyr` + libssl wrapper
+  disposition decision (deprecate / keep both / retire `lib/tls.cyr`
+  — affects every downstream consumer on the wrapper today; ASK at
+  slot entry).
+- **.41** — consumer smoke + `cyrius deps` bump path: walk every TLS
+  consumer in the ecosystem, verify the bump works, smoke each.
+- **.42** — TLS arc closeout: CHANGELOG retrospective, vidya refresh
+  (language.toml + field_notes/), state.md session-close, memory pins.
 
 ### v6.0.x back-end + closeout shape
 
-Per user direction 2026-05-28: after the TLS arc closes at .37, run
-a back-end window (.38 → .44, 7 slots) absorbing pinned-or-deferred
-items, then a typical closeout pass at .45. Closeout follows the
-CLAUDE.md "Closeout Pass" §: mechanical fail-fast (self-host +
-bootstrap closure + check.sh), then judgment-call passes (heap map
-/ dead code / refactor / code review / cleanup), then docs sync.
+Per user direction 2026-05-28 (slot numbers shifted by the 2026-05-31
+re-order): after the TLS arc + AGNOS target arc close, run a back-end
+window (~.43 → ~.49) absorbing pinned-or-deferred items, then a
+closeout pass at ~.50. Closeout follows the CLAUDE.md "Closeout Pass"
+§: mechanical fail-fast (self-host + bootstrap closure + check.sh),
+then judgment-call passes (heap map / dead code / refactor / code
+review / cleanup), then docs sync.
 
 **Pinned back-end slots:**
-- **.38 — `cyrius tests` plural verb** (folder/suite runner;
-  deferred from v6.0.5). Add `cyrius tests [suite]` as the
-  recursive folder runner (vs `cyrius test <file>` single-file).
-  Wrapper-only change.
-- **.39 — TOML `[section]` single-bracket** in `lib/toml.cyr`
-  (commandress config-loader driver). ~10 LOC change in
-  `toml_parse`'s dispatch. Proposal:
+- **`cyrius tests` plural verb** (folder/suite runner; deferred from
+  v6.0.5). Add `cyrius tests [suite]` as the recursive folder runner
+  (vs `cyrius test <file>` single-file). Wrapper-only change.
+- **TOML `[section]` single-bracket** in `lib/toml.cyr` (commandress
+  config-loader driver). ~10 LOC change in `toml_parse`'s dispatch.
+  Proposal:
   [`proposals/2026-05-17-toml-single-bracket-sections.md`](proposals/2026-05-17-toml-single-bracket-sections.md).
 
-**Remaining back-end candidates (.40 → .44, user picks at slot entry):**
+**Remaining back-end candidates (user picks at slot entry):**
 - POSIX `*at()` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`,
   …). Proposal:
   [`proposals/2026-05-17-syscalls-at-family-stdlib.md`](proposals/2026-05-17-syscalls-at-family-stdlib.md).
@@ -314,18 +425,6 @@ bootstrap closure + check.sh), then judgment-call passes (heap map
   into v6.1.x.
 - `cyrius deps --lock` Windows-portable hash (low urgency;
   surfaced by v6.0.2 cross-host smoke).
-
-**Mini-arc E — Consumer wiring + arc closeout (.35 → .37, compressed from 4 → 3 slots)**
-- **.35** — sandhi rewires onto `lib/tls_native.cyr` + libssl
-  wrapper disposition decision (was two slots; combined). Drop
-  libssl from sandhi's surface; pick the `lib/tls.cyr` fate
-  (deprecate / keep both / retire) — affects every downstream
-  consumer on the wrapper today. ASK at slot entry.
-- **.36** — Consumer smoke + `cyrius deps` bump path: walk every
-  TLS consumer in the ecosystem, verify the bump works, smoke each.
-- **.37** — TLS arc closeout: CHANGELOG retrospective, vidya
-  refresh (language.toml + field_notes/), state.md session-close,
-  memory pins update.
 
 **Premise-check at each mini-arc open** ([[feedback_premise_check_at_slot_entry]]):
 re-verify the sigil API surface for whichever primitives that
