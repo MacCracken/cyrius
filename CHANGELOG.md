@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.26] — 2026-06-01
+
+**TLS arc Mini-arc B.3 — TLS 1.3 client: receive + verify server
+flight.** Third slot of the client mini-arc. `lib/`-only.
+
+### Added — client (`lib/tls_native.cyr`)
+
+- `tls_native_client_open_handshake(ctx, record, …)` — client-side
+  record open (reads with the server handshake-traffic key + the
+  server-key sequence number).
+- `tls_native_client_recv_flight(ctx, record, record_len)` — decrypts
+  the server's flight (EncryptedExtensions ‖ Certificate ‖
+  CertificateVerify ‖ Finished, one protected record), feeds EE +
+  Certificate + CertificateVerify into the transcript, parses + stores
+  the server leaf cert, and **verifies the server's CertificateVerify
+  signature** over the §4.4.3 content (`"TLS 1.3, server
+  CertificateVerify"`) against the cert's public key (ECDSA-P256 /
+  Ed25519; P-384 + RSA are sigil gaps → `TLS_ERR_KEY_UNSUPPORTED`).
+  The server Finished message is stashed (`TLS_CTX_OFF_SRV_FIN_*`) for
+  .27; the transcript stays at CH..CertificateVerify. New ctx field
+  `TLS_CTX_OFF_SERVER_CERT`.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 326 → **334 asserts**: with a **matching
+  ECDSA-P256 cert/key** (the openssl pair) the client receives +
+  verifies the real server flight → TLS_OK, server cert stored,
+  Finished stashed; a **mismatched** cert/key → client `AUTHN` + ctx
+  ERROR. This positively closes .19's deferred CertVerify crypto from
+  the client side.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82** (fmt gate caught a continuation-indent
+  nit; corrected via cyrfmt).
+- api-surface snapshot 2,834 → **2,836 fns** (+`client_open_handshake`,
+  +`client_recv_flight`).
+
 ## [6.0.25] — 2026-06-01
 
 **TLS arc Mini-arc B.2 — TLS 1.3 client: ServerHello parsing + key

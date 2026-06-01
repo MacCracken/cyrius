@@ -3,6 +3,37 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.26 ship — TLS Mini-arc B.3 client recv flight + CertVerify)
+
+Closing **v6.0.26**, the third slot of TLS Mini-arc B (client).
+`lib/`-only.
+
+`tls_native_client_open_handshake` (open with server hs key + SRV_SEQ).
+`tls_native_client_recv_flight`: decrypt the server flight, transcript
+EE + Cert + CertVerify, parse+store server leaf cert, **verify the
+server CertificateVerify sig** ("TLS 1.3, server CertificateVerify"
+content vs cert pubkey — ECDSA-P256/Ed25519; P-384+RSA gap →
+KEY_UNSUPPORTED), stash the server Finished for .27. New ctx field
+SERVER_CERT.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82** (fmt gate caught a continuation-indent
+  nit; cyrfmt-corrected).
+- api-surface snapshot 2,834 → **2,836 fns** (+client_open_handshake,
+  +client_recv_flight).
+- `tls_native_scaffold.tcyr` 326 → **334 asserts** (+8): matching
+  ECDSA-P256 cert/key → client verifies real server flight → TLS_OK;
+  mismatched → client AUTHN. Positively closes .19's CertVerify crypto
+  from the client side.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc B step 3 of
+~8. Next: **.27 — Finished + handshake-complete**: client verifies the
+**server** Finished (stashed; MAC over CH..CertVerify with server_hs
+finished key), computes+sends its **own** Finished (client_hs key),
+derives master/app secrets, → CONNECTED. Completes the client
+handshake; sets up the .31 localhost client↔server loop.
+
 ## Session close — 2026-06-01 (.25 ship — TLS Mini-arc B.2 ServerHello parse + client keys)
 
 Closing **v6.0.25**, the second slot of TLS Mini-arc B (client).
