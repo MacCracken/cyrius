@@ -1382,4 +1382,76 @@ assert_eq(tls_native_get_state(clBad), TLS_STATE_ERROR, "bad CertVerify → ctx 
 # Null guard.
 assert_eq(tls_native_client_recv_flight(0, &flrec26, flrec26n), TLS_ERR_INVALID_PARAM, "recv_flight(null) → INVALID_PARAM");
 
+# ================================================================
+# v6.0.27 — client Finished + full mutual handshake → CONNECTED
+# ================================================================
+test_group("v6.0.27 client Finished + handshake complete");
+
+# Full in-memory handshake: our client ↔ our server (matching
+# ECDSA-P256 cert/key), both reaching CONNECTED.
+var srv27 = tls_native_new_server(cert23, 385, key23, 138);
+tls_native_server_load_creds(srv27);
+var cl27 = tls_native_new_client("localhost", 9);
+var ch27[512];
+var chn27 = tls_native_client_build_hello(cl27, &ch27, 512);
+var sh27[256];
+var sh27n = tls_native_server_respond_hello(srv27, &ch27, chn27, &sh27, 256);
+tls_native_client_parse_server_hello(cl27, &sh27, sh27n);
+tls_native_server_derive_handshake(srv27);
+tls_native_server_install_handshake_keys(srv27);
+var flight27[4096];
+var fl27 = tls_native_server_build_flight(srv27, &flight27, 4096);
+# Server derives master + app-traffic secrets over CH..serverFinished
+# (RFC 8446 §7.1) — i.e. now, before the client's Finished extends the
+# transcript. (The accept() driver does this at .28 / app-data time.)
+tls_native_server_derive_master(srv27);
+var flrec27[4096];
+var flrec27n = tls_native_server_seal_handshake(srv27, &flight27, fl27, &flrec27, 4096);
+tls_native_client_recv_flight(cl27, &flrec27, flrec27n);
+
+# Client completes: verifies server Finished, sends its own.
+var cfin27[256];
+var cfin27n = tls_native_client_finish(cl27, &cfin27, 256);
+assert_gt(cfin27n, 0, "client built + sealed its Finished");
+assert_eq(tls_native_get_state(cl27), TLS_STATE_CONNECTED, "CLIENT reached CONNECTED");
+
+# Server verifies the client's Finished → both sides CONNECTED.
+tls_native_server_transition(srv27, TLS_EV_START);
+tls_native_server_transition(srv27, TLS_EV_RECV_CH);
+var cfpl27[256];
+var cfct27 = 0;
+var cfn27 = tls_native_server_open_handshake(srv27, &cfin27, cfin27n, &cfpl27, 256, &cfct27);
+assert_gt(cfn27, 0, "server opened the client Finished record");
+assert_eq(tls_native_server_recv_client_finished(srv27, &cfpl27, cfn27), TLS_OK, "server verified client Finished");
+assert_eq(tls_native_get_state(srv27), TLS_STATE_CONNECTED, "SERVER reached CONNECTED — full mutual handshake!");
+
+# Both peers derived the same application-traffic secret (over
+# CH..serverFinished per §7.1).
+var c_sap[48];
+tls_native_keysched_get_secret(load64(cl27 + TLS_CTX_OFF_KEYSCHED), TLS_KS_SERVER_APPLICATION, &c_sap);
+var s_sap[48];
+tls_native_keysched_get_secret(load64(srv27 + TLS_CTX_OFF_KEYSCHED), TLS_KS_SERVER_APPLICATION, &s_sap);
+assert_streq(hex_encode(&c_sap, 48), hex_encode(&s_sap, 48), "client/server server_application_traffic secret agree");
+
+# Bad server Finished → AUTHN (corrupt the stashed Finished).
+var clX = tls_native_new_client("localhost", 9);
+var chX[512];
+var chXn = tls_native_client_build_hello(clX, &chX, 512);
+var srvX = tls_native_new_server(cert23, 385, key23, 138);
+tls_native_server_load_creds(srvX);
+var shX[256];
+var shXn = tls_native_server_respond_hello(srvX, &chX, chXn, &shX, 256);
+tls_native_client_parse_server_hello(clX, &shX, shXn);
+tls_native_server_derive_handshake(srvX);
+tls_native_server_install_handshake_keys(srvX);
+var flightX[4096];
+var flXc = tls_native_server_build_flight(srvX, &flightX, 4096);
+var flrecX[4096];
+var flrecXn = tls_native_server_seal_handshake(srvX, &flightX, flXc, &flrecX, 4096);
+tls_native_client_recv_flight(clX, &flrecX, flrecXn);
+# corrupt the stashed server Finished verify_data
+store8(load64(clX + TLS_CTX_OFF_SRV_FIN_BUF) + 4, load8(load64(clX + TLS_CTX_OFF_SRV_FIN_BUF) + 4) ^ 0xFF);
+var cfX[256];
+assert_eq(tls_native_client_finish(clX, &cfX, 256), TLS_ERR_AUTHN, "bad server Finished → client AUTHN");
+
 var r = assert_summary();

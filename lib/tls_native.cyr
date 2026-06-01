@@ -1547,6 +1547,101 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     return TLS_OK;
 }
 
+# Client: seal a handshake message into a protected record using the
+# installed client handshake-traffic key (client write direction).
+fn tls_native_client_seal_handshake(ctx, inner, inner_len, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var key = load64(ctx + TLS_CTX_OFF_CLI_HS_KEY);
+    var iv = load64(ctx + TLS_CTX_OFF_CLI_HS_IV);
+    if (key == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    return tls_native_record_seal(load64(ctx + TLS_CTX_OFF_CIPHER), key, iv,
+    ctx + TLS_CTX_OFF_CLI_SEQ, TLS_CT_HANDSHAKE,
+    inner, inner_len, out, out_max);
+}
+
+# Client: complete the handshake (.27). Verifies the server's Finished
+# (stashed by .26 — HMAC over CH..CertificateVerify with the server
+# handshake finished-key), feeds it into the transcript, derives the
+# master + application-traffic secrets, then computes + seals the
+# client's own Finished (HMAC over CH..serverFinished with the client
+# handshake finished-key) into `out`, feeds it into the transcript, and
+# transitions to CONNECTED. Returns the client Finished record length,
+# `TLS_ERR_AUTHN` on a bad server Finished, or another negative error.
+fn tls_native_client_finish(ctx, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+    var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
+    if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    var hash_algo = load64(ts);
+    var hlen = _tn_hash_len(hash_algo);
+    var srv_fin = load64(ctx + TLS_CTX_OFF_SRV_FIN_BUF);
+    var srv_fin_len = load64(ctx + TLS_CTX_OFF_SRV_FIN_LEN);
+    if (srv_fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+    if (srv_fin_len != TLS_HANDSHAKE_HEADER_LEN + hlen) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    # Verify the server Finished over CH..CertificateVerify.
+    var s_shs = alloc(TLS_MAX_DIGEST_LEN);
+    if (s_shs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, s_shs) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var s_fk = alloc(TLS_MAX_DIGEST_LEN);
+    if (s_fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_hkdf_expand_label(s_shs, hlen, "finished", 8, 0, 0, hash_algo, s_fk, hlen) != TLS_OK) {
+        return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
+    }
+    var th1 = alloc(TLS_MAX_DIGEST_LEN);
+    if (th1 == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_transcript_digest(ts, th1);
+    var s_exp = alloc(TLS_MAX_DIGEST_LEN);
+    if (s_exp == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (hash_algo == TLS_HASH_SHA384) {
+        hmac_sha384(s_fk, hlen, th1, hlen, s_exp);
+    } else {
+        hmac_sha256(s_fk, hlen, th1, hlen, s_exp);
+    }
+    if (_tn_ct_eq(s_exp, srv_fin + TLS_HANDSHAKE_HEADER_LEN, hlen) != 1) {
+        return _tn_ctx_fail(ctx, TLS_ERR_AUTHN);
+    }
+    tls_native_transcript_update(ts, srv_fin, srv_fin_len);   # → CH..serverFinished
+    # Derive master + application-traffic secrets over CH..serverFinished.
+    var dm = tls_native_keysched_derive_master(ks, ts);
+    if (dm != TLS_OK) { return _tn_ctx_fail(ctx, dm); }
+    # Build + seal the client Finished over CH..serverFinished.
+    var c_chs = alloc(TLS_MAX_DIGEST_LEN);
+    if (c_chs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, c_chs) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    var c_fk = alloc(TLS_MAX_DIGEST_LEN);
+    if (c_fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (tls_native_hkdf_expand_label(c_chs, hlen, "finished", 8, 0, 0, hash_algo, c_fk, hlen) != TLS_OK) {
+        return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
+    }
+    var th2 = alloc(TLS_MAX_DIGEST_LEN);
+    if (th2 == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_transcript_digest(ts, th2);
+    var finmsg = alloc(TLS_HANDSHAKE_HEADER_LEN + hlen);
+    if (finmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_handshake_write_header(finmsg, TLS_HS_FINISHED, hlen);
+    var vd = finmsg + TLS_HANDSHAKE_HEADER_LEN;
+    if (hash_algo == TLS_HASH_SHA384) {
+        hmac_sha384(c_fk, hlen, th2, hlen, vd);
+    } else {
+        hmac_sha256(c_fk, hlen, th2, hlen, vd);
+    }
+    var rl = tls_native_client_seal_handshake(ctx, finmsg, TLS_HANDSHAKE_HEADER_LEN + hlen, out, out_max);
+    if (rl < 0) { return rl; }
+    tls_native_transcript_update(ts, finmsg, TLS_HANDSHAKE_HEADER_LEN + hlen);
+    store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
+    return rl;
+}
+
 # Create a server-side context with the given certificate chain
 # (DER-encoded, may be a single leaf or full chain) and private key
 # (DER-encoded; format auto-detected via sigil's X.509 helpers).
