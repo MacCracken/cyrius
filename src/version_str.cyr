@@ -13,15 +13,15 @@
 # version-bump.sh writes ONE file every time and the sources just
 # reference these vars. No regex hunting; no drift.
 
-var _VERSION_STR_CYCC          = "cycc 6.0.19\n";
+var _VERSION_STR_CYCC          = "cycc 6.0.20\n";
 var _VERSION_LEN_CYCC          = 12;
-var _VERSION_STR_CYCC_WIN      = "cycc_win 6.0.19\n";
+var _VERSION_STR_CYCC_WIN      = "cycc_win 6.0.20\n";
 var _VERSION_LEN_CYCC_WIN      = 16;
-var _VERSION_STR_CYCC_AARCH64  = "cycc_aarch64 6.0.19\n";
+var _VERSION_STR_CYCC_AARCH64  = "cycc_aarch64 6.0.20\n";
 var _VERSION_LEN_CYCC_AARCH64  = 20;
 
 # v5.11.25: bare-version string for cbt/cyrius.cyr's version-resolved
 # dispatcher. Compared against cyrius.cyml's `[package].cyrius` field
 # at every `cyrius` invocation; if pinned !=  this, re-exec the pinned
 # binary. See `_try_redirect_to_pinned()` in cbt/cyrius.cyr.
-var _VERSION_TOOLCHAIN       = "6.0.19";
+var _VERSION_TOOLCHAIN       = "6.0.20";

@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.20] — 2026-05-31
+
+**TLS arc Mini-arc C.6 — session-ticket / PSK resumption (issuance).**
+Sixth slot of the server mini-arc: the server-side issuance + crypto
+primitives for TLS 1.3 resumption. `lib/`-only.
+
+### Added — resumption (`lib/tls_native.cyr`)
+
+- `tls_native_server_derive_master(ctx)` — advances the key schedule
+  to the master + resumption_master over the CH..client-Finished
+  transcript (`keysched_derive_master`).
+- `tls_native_server_new_session_ticket(ctx, out, out_max)` — issues a
+  NewSessionTicket (§4.6.1): derives the resumption PSK =
+  `HKDF-Expand-Label(resumption_master, "resumption", ticket_nonce,
+  Hash.length)`, seals it into a self-encrypted ticket (AES-256-GCM
+  under a per-ctx server ticket key / STEK), and serializes the
+  message (ticket_lifetime, ticket_age_add, nonce, ticket, extensions).
+- `tls_native_server_open_ticket(ctx, blob, blob_len, out)` — reverses
+  the seal (AEAD open, tag-checked); recovers the PSK or fails on a
+  bad tag.
+- `tls_native_psk_binder(psk, psk_len, hash_algo, transcript_hash,
+  th_len, out)` — the §4.2.11.2 binder: `early_secret = Extract(0,
+  psk)` → `binder_key = Derive-Secret(early, "res binder", "")` →
+  `finished_key` → `HMAC(transcript_hash)`.
+- Private `_tn_ticket_seal` + `_tn_ctx_stek` (lazy 32-byte CSPRNG
+  ticket key); new ctx field `TLS_CTX_OFF_STEK`. Ticket blob layout:
+  `IV(12) ‖ tag(16) ‖ ciphertext`.
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 276 → **286 asserts**: NewSessionTicket
+  issued + parsed; the ticket **opens back to a PSK equal to the
+  independently HKDF-derived PSK** (seal/open + derivation end-to-end);
+  binder is deterministic + a non-trivial transform of the PSK; a
+  tampered ticket fails the AEAD tag.
+- **Scope note**: this is issuance + primitives. The resumption
+  *acceptance* path (parsing a resuming ClientHello's `pre_shared_key`
+  + verifying the binder + deriving from the PSK) rides the client
+  mini-arc / e2e — it needs a real resuming client to exercise.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,821 → **2,825 fns** (+4 publics:
+  `derive_master`, `new_session_ticket`, `open_ticket`, `psk_binder`).
+
 ## [6.0.19] — 2026-05-31
 
 **TLS arc Mini-arc C.5 — optional client authentication.** Fifth slot

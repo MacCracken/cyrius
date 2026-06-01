@@ -3,6 +3,38 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-05-31 (.20 ship — TLS Mini-arc C.6 session-ticket / PSK resumption)
+
+Closing **v6.0.20**, the sixth slot of TLS Mini-arc C (server) — the
+server-side issuance + crypto primitives for TLS 1.3 resumption.
+`lib/`-only.
+
+`tls_native_server_derive_master` (→ master + resumption_master over
+CH..clientFin). `tls_native_server_new_session_ticket`: PSK =
+HKDF-Expand-Label(resumption_master, "resumption", nonce); sealed into
+a self-encrypted ticket (AES-256-GCM under a per-ctx STEK); serialized
+as NewSessionTicket (§4.6.1). `tls_native_server_open_ticket` (AEAD
+open). `tls_native_psk_binder` (§4.2.11.2: early→binder_key→
+finished_key→HMAC). Private `_tn_ticket_seal`/`_tn_ctx_stek`; new ctx
+field STEK. Ticket blob = IV(12)‖tag(16)‖ct.
+
+**Scope**: issuance + primitives. Resumption *acceptance* (parse a
+resuming CH pre_shared_key + verify binder + derive from PSK) rides
+the client mini-arc / e2e (needs a real resuming client).
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,821 → **2,825 fns** (+4 publics).
+- `tls_native_scaffold.tcyr` 276 → **286 asserts** (+10): NewSessionTicket
+  issue+parse; ticket **opens to a PSK == independently-derived PSK**;
+  binder deterministic + non-trivial; tampered ticket → AEAD fail.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc C step 6 of
+7 done. Next: **.21 — server e2e vs OpenSSL `s_client`** closes
+Mini-arc C and validates the full handshake (plus .19's positive
+client-auth crypto + the x509-pubkey wiring) against a real peer.
+
 ## Session close — 2026-05-31 (.19 ship — TLS Mini-arc C.5 optional client auth)
 
 Closing **v6.0.19**, the fifth slot of TLS Mini-arc C (server). The
