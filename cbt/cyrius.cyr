@@ -176,6 +176,13 @@ fn main(): i64 {
     load_environ();
     find_tools();
     set_arch(ARCH_X86);
+    # v6.0.34: the Mach-O wrapper runs on Apple Silicon — default to
+    # aarch64 (so current_cc() picks the native macho cycc_aarch64), not
+    # x86. An explicit --aarch64 is already handled below; this just makes
+    # the host-native default correct. macho-only; Linux/Windows unchanged.
+    #ifdef CYRIUS_TARGET_MACOS
+    set_arch(ARCH_AARCH64);
+    #endif
 
     # v5.11.25: per-repo isolation Part 2.
     # If cyrius.cyml pins a different version, re-exec the pinned

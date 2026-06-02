@@ -338,7 +338,18 @@ fn EMOVRDI(S): i64 { return 0; }  # no-op: x0 is already the first arg on aarch6
 fn ESYSCALL(S): i64 {
     if (_TARGET_MACHO == 2) {
         EW(S, 0xD4001001);      # svc #0x80
-        EW(S, 0xDA803400);      # csneg x0, x0, x0, cc
+        EW(S, 0xDA803400);      # csneg x0, x0, x0, cc  (error → -errno)
+        # v6.0.34 fork x1-fixup. macOS raw fork (BSD #2) returns the child
+        # pid in x0 for BOTH parent and child, distinguishing via x1
+        # (0=parent, 1=child). Without this, the child sees a nonzero x0
+        # and runs the parent path → broken fork. x16 holds the BSD num
+        # (preserved across svc) and x1 survives csneg, so: if fork and
+        # child, zero x0. Gated on x16==2 → no-op for every other syscall.
+        EW(S, 0xF1000A1F);      # cmp x16, #2   (fork?)
+        EW(S, 0x54000081);      # b.ne +16      (not fork → skip 3)
+        EW(S, 0xF100043F);      # cmp x1, #1    (child?)
+        EW(S, 0x54000041);      # b.ne +8       (parent → skip 1)
+        EW(S, 0xD2800000);      # movz x0, #0   (child → return 0)
         return 0;
     }
     EW(S, 0xD4000001); return 0;                               # svc #0
@@ -488,6 +499,48 @@ fn ESYSXLAT(S): i64 {
         EW(S, 0xF1002D1F); EW(S, 0x54000041); EW(S, 0xD2800930);
         # exit: 60→1    movz x16,#1  = 0xD2800030
         EW(S, 0xF100F11F); EW(S, 0x54000041); EW(S, 0xD2800030);
+        # ── v6.0.34: aarch64-Linux numbers → BSD ──
+        # The compiler's own enum Sys uses x86 numbers (handled above);
+        # the STDLIB the tools/wrapper pull (syscalls_aarch64_linux.cyr)
+        # uses aarch64 numbers. Translate those to BSD too so cyrfmt/
+        # cyrlint/cyrdoc/cyrius work on macOS. Pure renumbers below;
+        # openat is rerouted to BSD open(5) with an arg-shift (drop the
+        # AT_FDCWD dirfd — macOS open takes path/flags/mode directly).
+        EW(S, 0xF100FD1F); EW(S, 0x54000041); EW(S, 0xD2800070);  # read 63→3
+        EW(S, 0xF101011F); EW(S, 0x54000041); EW(S, 0xD2800090);  # write 64→4
+        EW(S, 0xF100E51F); EW(S, 0x54000041); EW(S, 0xD28000D0);  # close 57→6
+        EW(S, 0xF100F91F); EW(S, 0x54000041); EW(S, 0xD28018F0);  # lseek 62→199
+        EW(S, 0xF103791F); EW(S, 0x54000041); EW(S, 0xD28018B0);  # mmap 222→197
+        EW(S, 0xF103891F); EW(S, 0x54000041); EW(S, 0xD2800950);  # mprotect 226→74
+        EW(S, 0xF1035D1F); EW(S, 0x54000041); EW(S, 0xD2800930);  # munmap 215→73
+        EW(S, 0xF101751F); EW(S, 0x54000041); EW(S, 0xD2800030);  # exit 93→1
+        EW(S, 0xF101791F); EW(S, 0x54000041); EW(S, 0xD2800030);  # exit_group 94→1
+        # openat 56 → open 5 (arg-shift x0=path,x1=flags,x2=mode; b.ne +20)
+        EW(S, 0xF100E11F); EW(S, 0x540000A1);
+        EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xAA0303E2);
+        EW(S, 0xD28000B0);
+        # ── v6.0.34: wrapper (cbt) process + fs syscalls ──
+        EW(S, 0xF103751F); EW(S, 0x54000041); EW(S, 0xD2800770);  # execve 221→59
+        EW(S, 0xF100611F); EW(S, 0x54000041); EW(S, 0xD2800B50);  # dup3 24→dup2 90
+        EW(S, 0xF104111F); EW(S, 0x54000041); EW(S, 0xD28000F0);  # wait4 260→7
+        EW(S, 0xF103711F); EW(S, 0x54000041); EW(S, 0xD2800050);  # clone 220→fork 2 (x1-fixup post-svc)
+        # mkdirat 34 → mkdir 136 (arg-shift x0=path,x1=mode; b.ne +16)
+        EW(S, 0xF100891F); EW(S, 0x54000081); EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xD2801110);
+        # unlinkat 35 → unlink 10 (arg-shift x0=path; b.ne +12)
+        EW(S, 0xF1008D1F); EW(S, 0x54000061); EW(S, 0xAA0103E0); EW(S, 0xD2800150);
+        # fchmodat 53 → chmod 15 (arg-shift x0=path,x1=mode; b.ne +16)
+        EW(S, 0xF100D51F); EW(S, 0x54000081); EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xD28001F0);
+        # ── v6.0.34: raw x86-number syscalls the cbt wrapper hardcodes
+        # (syscall(39)/(82)/(4)/(79)/(88)) — same x86→BSD renumbers the
+        # Linux-aarch64 ESYSXLAT does. Without these, the untranslated svc
+        # ran with a stale x16 → garbage call + side effects that broke
+        # `cyrius build` (esp. getpid for the temp name + rename for the
+        # atomic output move). Pure renumbers (arg conventions match BSD).
+        EW(S, 0xF100111F); EW(S, 0x54000041); EW(S, 0xD2801790);  # stat 4→188
+        EW(S, 0xF1009D1F); EW(S, 0x54000041); EW(S, 0xD2800290);  # getpid 39→20
+        EW(S, 0xF1013D1F); EW(S, 0x54000041); EW(S, 0xD28028D0);  # getcwd 79→__getcwd 326
+        EW(S, 0xF101491F); EW(S, 0x54000041); EW(S, 0xD2801010);  # rename 82→128
+        EW(S, 0xF101611F); EW(S, 0x54000041); EW(S, 0xD2800730);  # symlink 88→57
         return 0;
     }
     # Emit: compare x8 against known x86 numbers, replace with aarch64

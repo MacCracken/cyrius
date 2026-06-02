@@ -175,10 +175,48 @@ fn load_environ(): i64 {
 # Tool discovery
 # ================================================================
 
+#ifdef CYRIUS_TARGET_MACOS
+# macOS has no /proc/self/environ. Flatten the entry-stack envp (envp
+# follows argv; base parked in x28 by the Mach-O entry prologue, read via
+# args_macos._macho_argv_base) into buf as NUL-separated NAME=VALUE so
+# find_tools' scan works unchanged. Returns total bytes written. v6.0.34.
+fn _macho_fill_environ(buf, cap): i64 {
+    var base = _macho_argv_base();
+    if (base == 0) { return 0; }
+    var m_argc = load64(base);
+    var m_argvp = load64(base + 8);
+    var envp = m_argvp + (m_argc + 1) * 8;
+    var pos = 0;
+    var i = 0;
+    var e = load64(envp);
+    while (e != 0) {
+        var k = 0;
+        while (load8(e + k) != 0) {
+            if (pos < cap - 1) { store8(buf + pos, load8(e + k)); pos = pos + 1; }
+            k = k + 1;
+        }
+        store8(buf + pos, 0); pos = pos + 1;
+        i = i + 1;
+        e = load64(envp + i * 8);
+    }
+    return pos;
+}
+#endif
+
 fn find_tools(): i64 {
+    # v6.0.34: the Mach-O wrapper is always Apple Silicon (arm64) — default
+    # to aarch64 so current_cc() picks cycc_aarch64 (the native macho cycc),
+    # not the x86 cycc. (Linux-aarch64 is untouched; this is macho-only.)
+    #ifdef CYRIUS_TARGET_MACOS
+    _arch = ARCH_AARCH64;
+    #endif
     # Read environment to find HOME and CYRIUS_HOME
     var env_buf = alloc(32768);
     var env_n = file_read_all("/proc/self/environ", env_buf, 32767);
+    # macOS: /proc/self/environ doesn't exist; read envp off the entry stack.
+    #ifdef CYRIUS_TARGET_MACOS
+    env_n = _macho_fill_environ(env_buf, 32768);
+    #endif
     var proc_home = 0;
     var cyrius_home = 0;
     if (env_n > 0) {
