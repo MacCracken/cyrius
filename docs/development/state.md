@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.33 ship — macOS self-host FIXED + cyrius audit cross-OS gate)
+
+Closing **v6.0.33**. **The macOS compiler self-host is fixed and proven
+byte-identical on Apple Silicon (ecb)** — the core of the ~9-minor rot.
+
+**Self-host fix (`src/`):** `main_aarch64_macho.cyr` was a stale fork
+missing the v5.5.17 entry prologue (`stp x0,x1`/`mov x28,sp`) + the
+`CYRIUS_TARGET_MACOS` predefine → cycc built from it emitted prologue-less,
+dispatch-less, Linux-shaped programs that SIGILL'd on Darwin. Added both.
+`runtime.cyr` `_read_env` gained a macOS branch (argc/argv/envp via x28).
+**Proven on ecb: cycc self-host round1==round2 byte-identical (639,412 B);
+output runs (`tiny`→42).** Linux unchanged: 885,024 B, check.sh 82/82.
+
+**`cyrius audit` cross-OS gate (`cbt/`):** after check.sh, `cyrius audit`
+now cross-builds the Mach-O cycc, ships to ecb, codesigns, self-hosts
+twice + `cmp` — **FAIL-LOUD** (unreachable = FAILURE, no "not available"
+skip). Verified: `cyrius audit` prints "PASS: ecb (macOS arm64) cycc
+self-host byte-identical". `_co_build_envp` reconstructs real env (from
+/proc/self/environ) so ssh/scp have HOME+agent. cass/Windows arm = .35.
+
+**Why this matters / how it rotted:** the macOS path was unverified since
+v5.3.13 because the native CI jobs (`macho-arm64-native` macos-14,
+`windows-native` windows-latest) only ran hello-world/exit-code smoke,
+never built or self-hosted cycc. ecb/cass were one `ssh` away, unused.
+Hardening: CLAUDE.md Key Principle "Cross-OS self-host is non-negotiable
+on REAL hardware" + Closeout 3b + the audit gate + memories.
+
+**KNOWN-INCOMPLETE (→ .34, scoped up front):** macOS **tool/wrapper**
+file I/O (cyrfmt/cyrlint/cyrdoc/cyrius-wrapper) still broken — the macho
+ESYSXLAT whitelists only 9 syscalls + auto-prepend forces aarch64
+numbers. Full BSD-ABI tool port (ESYSXLAT whitelist + reroutes +
+openat/stat + enum-collision) is `.34`. `cycc` itself unaffected.
+
+**Arc plan:** .34 = macOS tool/wrapper BSD-ABI port; .35 = Windows
+install + self-host (cass; wire the audit gate's cass arm); .36 = CI
+cross-OS self-host gate (extend macos-14/windows-latest jobs) — MANDATORY
+before AGNOS arc (~.37+). See [[project_macos_install_arm64_fix_v6_0_32]],
+[[feedback_macos_windows_ci_gate_mandatory]].
+
 ## Session close — 2026-06-01 (.32 ship — macOS install repair arc START + the CI-gate-gap reckoning)
 
 Closing **v6.0.32**, first slot of the macOS install-repair arc

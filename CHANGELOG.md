@@ -6,6 +6,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.33] — 2026-06-02
+
+**macOS self-host FIXED — proven byte-identical on Apple Silicon (ecb) —
++ `cyrius audit` cross-OS self-host gate.** Second slot of the macOS
+repair arc. The macOS compiler self-host had been broken and unverified
+since **v5.3.13** (~9 minors, 400+ patches) behind green CI jobs that
+only ran hello-world programs.
+
+### Fixed — macOS arm64 self-host (`src/`)
+
+- `src/main_aarch64_macho.cyr` was a **stale fork** of `main_aarch64.cyr`:
+  it never received the **v5.5.17 Mach-O entry prologue** (`stp x0,x1` /
+  `mov x28,sp` — saves argc/argv) and never predefined
+  **`CYRIUS_TARGET_MACOS`**. So a `cycc` built from it emitted programs
+  with no entry prologue (couldn't reach argv) and no macOS stdlib
+  dispatch (`alloc_init` undefined, `_read_env` always 0) → Linux-shaped
+  output that SIGILL'd on Apple Silicon. Added both. **`cycc` now
+  self-hosts byte-identical on ecb** (round1==round2, 639,412 B) and the
+  result compiles + runs (`tiny`→exit 42).
+- `src/backend/common/runtime.cyr` — `_read_env` gained a
+  `CYRIUS_TARGET_MACOS` branch (reads `argc/argv/envp` via the x28-parked
+  base; macOS has no `/proc/self/environ`) + the `_macho_x28` helper.
+
+### Added — `cyrius audit` cross-OS self-host gate (`cbt/`)
+
+- `cyrius audit` now runs, after `check.sh`, a **cross-OS self-host
+  verification on real hardware**: it cross-builds the Mach-O `cycc`,
+  ships it to **ecb (macOS arm64)**, ad-hoc codesigns, and self-hosts
+  twice with `cmp` (r1==r2). **FAIL-LOUD**: an unreachable host is a
+  FAILURE, never a skip — "not available" is no longer an excuse. The
+  cass/Windows arm is announced (TODO) and lands with v6.0.35.
+  `cbt/build.cyr` gained `_co_build_envp` (real env from
+  `/proc/self/environ` so ssh/scp have HOME+agent) + `_co_run_sh`.
+
+### Verification
+
+- Linux self-host **byte-identical at 885,024 B**; `check.sh` **82/82**.
+- **ecb (macOS arm64): `cycc` self-host byte-identical** (proven by
+  output, not a checkmark) — and `cyrius audit` reports
+  "PASS: ecb (macOS arm64) cycc self-host byte-identical".
+
+### Known-incomplete (v6.0.34)
+
+- macOS **tool/wrapper** file I/O (cyrfmt/cyrlint/cyrdoc/cyrius-wrapper)
+  still doesn't work on macOS: the macho `ESYSXLAT` only whitelists 9
+  syscalls and the auto-prepend forces aarch64 numbers. `cycc` itself is
+  unaffected (own x86-numbered `enum Sys`). The full BSD-ABI tool port
+  (ESYSXLAT whitelist + reroutes + openat/stat) is **.34**, scoped up
+  front in the roadmap. Documented in `lib/syscalls.cyr`.
+
 ## [6.0.32] — 2026-06-01
 
 **macОS install repair — arc start: syscall plumbing + the CI-gate-gap

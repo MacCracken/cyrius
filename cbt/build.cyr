@@ -290,3 +290,62 @@ fn run_script(script, arg1, arg2): i64 {
     return run_tool("/bin/sh", script, arg1, arg2);
 }
 
+# ── Cross-OS self-host gate support (v6.0.33) ──
+# The default _envp (cbt/core.cyr) is empty, so an execve'd `ssh` would
+# lack HOME / SSH_AUTH_SOCK and fail to reach the verification hosts.
+# Reconstruct the real environment from /proc/self/environ so ssh/scp
+# behave exactly as they would in the user's shell.
+var _co_env_buf[32768];     # 32 KB of NUL-separated NAME=VALUE pairs
+var _co_env_ptrs[8192];     # 1024 char* slots (8 bytes each)
+
+# Build a NULL-terminated char** of the current environment. Returns
+# &_co_env_ptrs, or 0 on failure (then callers fall back to _envp).
+fn _co_build_envp(): i64 {
+    var fd = sys_open("/proc/self/environ", 0, 0);
+    if (fd < 0) { return 0; }
+    var n = sys_read(fd, &_co_env_buf, 32767);
+    sys_close(fd);
+    if (n <= 0) { return 0; }
+    store8(&_co_env_buf + n, 0);
+    var pc = 0;
+    store64(&_co_env_ptrs, &_co_env_buf);   # first entry starts at byte 0
+    pc = 1;
+    var i = 0;
+    while (i < n) {
+        if (load8(&_co_env_buf + i) == 0) {
+            if (i + 1 < n) {
+                if (pc < 1023) {
+                    store64(&_co_env_ptrs + pc * 8, &_co_env_buf + i + 1);
+                    pc = pc + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    store64(&_co_env_ptrs + pc * 8, 0);      # NULL-terminate the vector
+    return &_co_env_ptrs;
+}
+
+# Run `/bin/sh -c <cmd>` with the real environment. Returns the shell
+# exit status (0 = success). Used by the cross-OS self-host gate so the
+# proven ssh/scp self-host sequence runs with full env.
+fn _co_run_sh(cmd): i64 {
+    var envp = _co_build_envp();
+    if (envp == 0) { envp = _envp; }
+    var pid = sys_fork();
+    if (pid == 0) {
+        var argv[32];                         # 4 char* slots
+        store64(&argv, "/bin/sh");
+        store64(&argv + 8, "-c");
+        store64(&argv + 16, cmd);
+        store64(&argv + 24, 0);
+        sys_execve("/bin/sh", &argv, envp);
+        sys_exit(127);
+    }
+    var st[8];
+    sys_waitpid(pid, &st, 0);
+    var status = load32(&st);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 1;
+}
+

@@ -501,9 +501,47 @@ fn cmd_deny(file): i64 {
     return run_tool(cybs, "deny", file, 0);
 }
 
+# Cross-OS self-host gate (v6.0.33). The Linux self-host is covered by
+# check.sh; this verifies cycc reproduces itself BYTE-IDENTICAL on real
+# macOS hardware (ecb) — the gap that let the macOS port rot 9 minors
+# behind a green hello-world CI job. FAIL-LOUD: an unreachable host is a
+# FAILURE, never a skip ("not available" is not an excuse). The Windows
+# (cass) arm lands with the v6.0.34 Windows self-host work.
+#
+# Sequence (run via /bin/sh with the real environment so ssh/scp have
+# HOME + agent): build the aarch64-emitting cross-compiler, cross-build
+# the Mach-O cycc from main_aarch64_macho.cyr, ship to ecb, ad-hoc
+# codesign, then self-host twice and `cmp` (r1==r2). `set -e` makes any
+# failure — including an unreachable ecb — exit non-zero.
+fn _cross_os_selfhost(): i64 {
+    var fails = 0;
+    println("");
+    println("── Cross-OS self-host (REAL hardware — fail-loud, no skip) ──");
+
+    # ecb (macOS, Apple Silicon)
+    var ecb_seq = "set -e; cat src/main.cyr | build/cycc > /tmp/_co_l && chmod +x /tmp/_co_l; cat src/main_aarch64.cyr | /tmp/_co_l > /tmp/_co_x && chmod +x /tmp/_co_x; cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 /tmp/_co_x > /tmp/_co_m; tar czf /tmp/_co.tgz src lib VERSION; ssh -o ConnectTimeout=15 -o BatchMode=yes ecb 'rm -rf ~/_cyaud && mkdir ~/_cyaud'; scp -q /tmp/_co.tgz /tmp/_co_m ecb:~/_cyaud/; ssh ecb 'cd ~/_cyaud && tar xzf _co.tgz && chmod +x _co_m && codesign -s - -f _co_m && cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./_co_m > r1 && cp r1 r1r && chmod +x r1r && codesign -s - -f r1r && cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./r1r > r2 && cmp r1 r2'";
+    var ecb_rc = _co_run_sh(ecb_seq);
+    if (ecb_rc == 0) {
+        println("  PASS: ecb (macOS arm64) cycc self-host byte-identical");
+    } else {
+        println("  FAIL: ecb (macOS arm64) cross-OS self-host — unreachable or NOT byte-identical");
+        fails = fails + 1;
+    }
+
+    # cass (Windows) — wired in v6.0.34 alongside the Windows self-host
+    # work. Announced so the gap is visible, not silently skipped.
+    println("  TODO(.34): cass (Windows) PE self-host gate");
+
+    if (fails > 0) { return 1; }
+    return 0;
+}
+
 fn cmd_audit(): i64 {
     var script = make_path(_scripts_dir, "check.sh");
-    return run_script(script, 0, 0);
+    var check_rc = run_script(script, 0, 0);
+    var cross_rc = _cross_os_selfhost();
+    if (check_rc != 0) { return check_rc; }
+    return cross_rc;
 }
 
 

@@ -14,6 +14,22 @@
 # Static scratch for env value (256 bytes).
 var _env_scratch[256];
 
+#ifdef CYRIUS_TARGET_MACOS
+# Return the argc/argv base the Mach-O arm64 entry prologue parked in
+# x28 (callee-saved, untouched by the aarch64 backend). Same inline-asm
+# pattern as lib/args_macos.cyr's _macho_argv_base — the result lands in
+# the single local at [x29,#-8]. Used by _read_env's macOS branch to
+# reach envp. Only compiled into macOS (CYRIUS_TARGET_MACOS) builds.
+fn _macho_x28(): i64 {
+    var r = 0;
+    asm {
+        0xE0; 0x03; 0x1C; 0xAA;    # mov x0, x28
+        0xA0; 0x83; 0x1F; 0xF8;    # stur x0, [x29, #-8]  (r)
+    }
+    return r;
+}
+#endif
+
 # Read an env var by name. Returns &_env_scratch (NUL-terminated
 # value) on hit, 0 on miss. v5.5.9: /proc/self/environ is Linux-only;
 # Windows + macOS fall through to 0 (GetEnvironmentVariableW-based
@@ -58,6 +74,52 @@ fn _read_env(name): i64 {
             }
         }
         pos = end + 1;
+    }
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    # macOS has no /proc/self/environ. The Mach-O arm64 entry prologue
+    # (main_aarch64.cyr v5.5.17) parked argc/argv in x28; on the Darwin
+    # stack envp immediately follows argv + its NULL terminator, so
+    # envp = argv + (argc+1)*8. Walk the NAME=VALUE entries (the array
+    # is NULL-terminated). Without this, _read_env returned 0 on macOS →
+    # a natively-running cycc never saw CYRIUS_MACHO_ARM → it built every
+    # binary Linux-shaped (no entry prologue, brk heap, no ESYSXLAT) and
+    # could not self-host on Apple Silicon. Root cause of the macOS
+    # self-host rot v5.3.13 → v6.0.32. See CHANGELOG [6.0.33].
+    var m_base = _macho_x28();
+    if (m_base == 0) { return 0; }
+    var m_argc = load64(m_base);
+    var m_argv = load64(m_base + 8);
+    var m_envp = m_argv + (m_argc + 1) * 8;
+    var m_nlen = 0;
+    while (load8(name + m_nlen) != 0) { m_nlen = m_nlen + 1; }
+    var m_i = 0;
+    var m_e = load64(m_envp);
+    while (m_e != 0) {
+        # m_e -> "NAME=VALUE\0". Match name then '='.
+        if (load8(m_e + m_nlen) == 61) {
+            var m_match = 1;
+            var m_k = 0;
+            while (m_k < m_nlen) {
+                if (load8(m_e + m_k) != load8(name + m_k)) { m_match = 0; break; }
+                m_k = m_k + 1;
+            }
+            if (m_match == 1) {
+                var m_vs = m_e + m_nlen + 1;
+                var m_vl = 0;
+                while (load8(m_vs + m_vl) != 0) { m_vl = m_vl + 1; }
+                if (m_vl > 255) { m_vl = 255; }
+                var m_ci = 0;
+                while (m_ci < m_vl) {
+                    store8(&_env_scratch + m_ci, load8(m_vs + m_ci));
+                    m_ci = m_ci + 1;
+                }
+                store8(&_env_scratch + m_vl, 0);
+                return &_env_scratch;
+            }
+        }
+        m_i = m_i + 1;
+        m_e = load64(m_envp + m_i * 8);
     }
     #endif
     return 0;

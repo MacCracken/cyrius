@@ -199,12 +199,31 @@ SBL(S, bl);
 # Preprocess includes
 _init_cyrius_lib();
 PP_PREDEFINE(S, "CYRIUS_ARCH_AARCH64");
+# v6.0.33: THIS file is the dedicated macОS arm64 compiler — always a
+# Mach-O build. It must predefine CYRIUS_TARGET_MACOS (main_aarch64.cyr
+# does this env-gated; this fork never did) so the programs it compiles
+# get the macOS stdlib dispatch (alloc_macos, syscalls_macos,
+# _read_env's macOS branch). Without it, a cycc built here compiled
+# every program with NO target macro → alloc_init undefined, _read_env
+# always 0, Linux-shaped output → the macOS self-host rot. See CHANGELOG.
+PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
 # v5.10.39 — non-PE targets support f64v2/f64v4 value-form param ABI.
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 PREPROCESS(S);
 
 # Lex
 LEX(S);
+
+# v6.0.33: Mach-O arm64 entry prologue — save argc/argv before the
+# branch-over-fn-bodies. At LC_MAIN entry Darwin hands argc in x0,
+# argv in x1; subsequent gvar/enum-init emit clobbers them, so push
+# x0/x1 and stash the base in x28 (callee-saved). lib/args_macos.cyr +
+# _read_env's macOS branch read argc/argv/envp through x28. This file
+# DROPPED this (main_aarch64.cyr added it at v5.5.17, env-gated; the
+# fork never got it) → compiled programs couldn't reach argv and the
+# self-host output SIGILL'd. Unconditional here — always a macho build.
+EW(S, 0xA9BF07E0);  # stp x0, x1, [sp, #-16]!
+EW(S, 0x910003FC);  # mov x28, sp
 
 # Emit initial branch over fn bodies (aarch64: B +0, patch later)
 var jmp_patch = EJMP0(S);

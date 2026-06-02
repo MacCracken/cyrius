@@ -201,13 +201,14 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | .10 → .14 | Mini-arc A — scaffold / record / framing / key-schedule / ciphersuite | ✅ COMPLETE |
 | .15 → .23 | **Mini-arc C — TLS 1.3 server** (FULL scope, 9 slots: state machine / cert+key / SH / flight / client-auth / resumption / record-layer / loopback / OpenSSL interop) | ✅ COMPLETE — interops with OpenSSL 3.6.2 |
 | .24 → .31 | **Mini-arc B — TLS 1.3 client** (8 slots: ClientHello / ServerHello+keys / recv flight+CertVerify / Finished / app data / chain verify / hostname-SAN / connect()+socket e2e) | ✅ COMPLETE — full client↔server handshake + app data over a socket |
-| .32 | **macOS install machinery** (build correct macho source `main_aarch64_macho.cyr`, ship cycc/cyrius/tools in macOS tarballs, sign at install, add macOS STD*_FD, drop stale release.yml comment) | in progress; ships a compiler that builds normal programs (verified tiny→42 on ecb) |
-| ~.33 | **aarch64/Mach-O self-host codegen bug** (cycc SIGILLs reproducing itself on Apple Silicon — backend instruction-encoding debug via ecb; macho path unverified since v5.3.13) | before AGNOS arc (user 2026-06-01) |
-| ~.34 | **Windows install** (verify/fix the cross-OS install story on cass; build-windows job added .28) | before AGNOS arc — "since we had to make a tire change" (user 2026-06-01) |
-| ~.35 | **CI cross-OS self-host GATE** (the forcing function that was missing) — extend the existing `macho-arm64-native` (macos-14) + `windows-native` (windows-latest) jobs from hello-world smoke to **build cycc from the correct per-target source + self-host byte-identical + run a `.tcyr` smoke**, fail-loud. Add cross-OS self-host to the Closeout Pass. **This is why the macОS port rotted v5.3.13→v6.0.31 undetected: the native CI jobs only ran tiny exit-code programs, never the compiler.** (user 2026-06-01: "MAKE SURE FINAL CHECKS CHECK THIS FROM NOW ON") | MANDATORY before AGNOS arc |
-| ~.36 → ~.40 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
-| ~.41 → ~.46 | Mini-arc D — TLS 1.2 backport | |
-| ~.47 → ~.49 | Mini-arc E — consumer wiring + TLS arc closeout | |
+| .32 | **macOS syscall plumbing + the CI-gate-gap finding** (syscalls.cyr MACOS dispatch + STD*_FD; discovered the macOS port rotted v5.3.13→v6.0.31 behind hello-world CI jobs) | ✅ COMPLETE |
+| .33 | **macOS self-host fix + `cyrius audit` cross-OS gate** — fixed the stale `main_aarch64_macho.cyr` fork (missing v5.5.17 entry prologue + `CYRIUS_TARGET_MACOS` predefine); `cycc` self-hosts **byte-identical on ecb (Apple Silicon)**; `cyrius audit` now verifies macOS self-host on real hardware, fail-loud (no "not available" skip) | ✅ COMPLETE — proven on ecb |
+| ~.34 | **macOS tool/wrapper BSD-ABI port** (dedicated effort, scoped up front) — expand the macho `ESYSXLAT` 9-syscall whitelist + reroutes (lseek/stat/fork/execve/dup2/pipe→BSD), route tool syscalls through x86 numbers (enum-collision fix), openat→open + stat layout → cyrfmt/cyrlint/cyrdoc/cyrius-wrapper work on macOS | before AGNOS arc |
+| ~.35 | **Windows install + self-host** (verify/fix on cass; build-windows job added .28; wire the cass arm of the audit cross-OS gate) | before AGNOS arc |
+| ~.36 | **CI cross-OS self-host GATE** (the forcing function that was missing) — extend the existing `macho-arm64-native` (macos-14) + `windows-native` (windows-latest) jobs from hello-world smoke to **build cycc from the correct per-target source + self-host byte-identical + run a `.tcyr` smoke**, fail-loud. Add cross-OS self-host to the Closeout Pass. **This is why the macОS port rotted v5.3.13→v6.0.31 undetected: the native CI jobs only ran tiny exit-code programs, never the compiler.** (user 2026-06-01: "MAKE SURE FINAL CHECKS CHECK THIS FROM NOW ON") | MANDATORY before AGNOS arc |
+| ~.37 → ~.41 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
+| ~.42 → ~.47 | Mini-arc D — TLS 1.2 backport | |
+| ~.48 → ~.50 | Mini-arc E — consumer wiring + TLS arc closeout | |
 | later | Back-end window + v6.0.x cycle closeout | |
 
 Slot numbers downstream of C are nominal (the e2e split widened C to 9
