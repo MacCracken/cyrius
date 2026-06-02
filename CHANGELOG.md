@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.37] — 2026-06-02
+
+**macОS `fn main()` return value now reaches the exit code.** Fourth-ish
+slot of the platform-cleanup window (before the AGNOS binary). Verified
+end-to-end on `ecb` (real Apple Silicon) via the `cyrius audit` gate.
+
+### Fixed — Mach-O entry never called `main()` (`src/main_aarch64_macho.cyr`)
+
+- A program whose only entry was `fn main() { … }` (no explicit
+  `var ec = main(); syscall(60, ec);` wiring) exited with **1**, not the
+  returned value. The native Mach-O driver `main_aarch64_macho.cyr` is a
+  fork that never received `main_aarch64.cyr`'s **v5.9.37 auto-call-`main`
+  fix** (same rot class as the v6.0.33 entry-prologue gap) — so the
+  emitted entry stub fell straight through to the exit syscall **without a
+  `bl main`**, exiting with whatever was in `x0` at `LC_MAIN` entry
+  (`argc` = 1). Ported the fix: walk the fn table for `"main\0"` and emit
+  `ECALLTO` before `EEXIT`. Disassembly confirmed the missing `bl` and the
+  fix restoring it; `fn main(){return 42;}` now exits 42 on `ecb`.
+- Cross-emitter (`main_aarch64.cyr` + `CYRIUS_MACHO_ARM=1`) was already
+  correct — the bug was native-compiler-only, which is why the `.35`/.36
+  cross-built smokes passed while the on-device toolchain did not. Tools
+  were unaffected (they call `sys_exit` explicitly).
+
+### Added — exit-code assertion in the macОS self-host gate (`cbt/commands.cyr`)
+
+- The `cyrius audit` cross-OS gate now compiles `fn main(){return 42;}`
+  with the freshly self-hosted Mach-O `cycc` and asserts it exits 42 — a
+  `var x = 42;`-only smoke would have passed straight through this exact
+  rot (`main` never called). Gate line is now "self-host byte-identical +
+  exit-code propagation".
+
+### Verified
+
+- `ecb`: `cycc` self-host **byte-identical (639,412 B)** + exit-code
+  assertion — via the real `cyrius audit` gate. x86 self-host **unchanged
+  / byte-identical (885,040 B)** (no `src/main.cyr` change);
+  `scripts/check.sh` **82/82**. The compiler source defines no firing
+  `fn main`, so the macОS self-host stays byte-identical.
+
 ## [6.0.36] — 2026-06-02
 
 **Open-issue low-hanging-fruit cleanup batch** (platform-cleanup window,

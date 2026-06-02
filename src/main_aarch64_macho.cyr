@@ -402,6 +402,45 @@ PARSE_PROG(S);
 # Exit epilogue — load last var
 var lv = GLVAR(S);
 if (lv >= 0) { EVLOAD(S, lv); }
+
+# v6.0.37: auto-call `main()` if defined — port of main_aarch64.cyr's
+# v5.9.37 fix that this stale Mach-O fork never received (same rot
+# class as the v6.0.33 entry-prologue gap). Without it, a source whose
+# only entry is `fn main() { ... }` (no trailing `var ec = main();
+# syscall(60, ec);`) never invoked main — the program exited with
+# whatever was in x0 at LC_MAIN entry (argc = 1), so `fn main(){return
+# 42;}` exited 1, not 42. Tools were unaffected (they `sys_exit`
+# explicitly); surfaced via the issue 2026-06-02 exit-propagation
+# repro. Walks the fn table for "main\0" and emits ECALLTO if found.
+var _epi_km_pre = L64(S + 0x18FCA0);
+if (_epi_km_pre == 0) {
+    var _main_fc = GFNC(S);
+    var _main_fi = 0;
+    var _main_found = 0 - 1;
+    while (_main_fi < _main_fc) {
+        var _main_noff = L64(S + 0x9BA000 + _main_fi * 8);
+        if (load8(S + 0x60000 + _main_noff)     == 109) {
+            if (load8(S + 0x60000 + _main_noff + 1) == 97) {
+                if (load8(S + 0x60000 + _main_noff + 2) == 105) {
+                    if (load8(S + 0x60000 + _main_noff + 3) == 110) {
+                        if (load8(S + 0x60000 + _main_noff + 4) == 0) {
+                            _main_found = _main_fi;
+                            _main_fi = _main_fc;
+                        }
+                    }
+                }
+            }
+        }
+        _main_fi = _main_fi + 1;
+    }
+    if (_main_found >= 0) {
+        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
+        if (_main_off >= 0) {
+            ECALLTO(S, _main_off);
+        }
+    }
+}
+
 EEXIT(S);
 
 # Fixup + ELF + write
