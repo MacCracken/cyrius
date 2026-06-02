@@ -784,7 +784,7 @@ fn EMITPE_EXEC(S): i64 {
     # primary security win. HIGH_ENTROPY_VA pinned as a v5.5.35
     # follow-up investigation.
     var _dllc = 0;
-    if (_pe_reloc_vsize != 0) { _dllc = 0x0160; }  # v5.6.31 probe: +HIGH_ENTROPY_VA
+    if (_pe_reloc_vsize != 0) { _dllc = 0x0140; }  # v6.0.39: drop accidental HIGH_ENTROPY_VA
     # v5.11.48: UEFI Application mode ALWAYS sets NX_COMPAT (0x0100),
     # even when no fixups → no .reloc. UEFI 2.0+ honors NX on code pages
     # for memory protection (Memory Attributes Protocol); firmware

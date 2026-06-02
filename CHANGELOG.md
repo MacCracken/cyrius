@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.39] — 2026-06-02
+
+**Windows `cycc` runtime — first real fix in a multi-bug arc.** Digging on
+real Windows (`cass`) revealed that `cycc` has **never run as a compiler
+on Windows** — it crashed on startup, hidden for ~30 minors because CI
+only ran *emitted* PE programs, never compiled one THROUGH `cycc` (the
+same placebo that hid the macOS rot). This lands the first fix and
+documents the arc; **Windows is NOT yet working** (see Known issues).
+
+### Fixed
+
+- **`lib/alloc_windows.cyr` allocator crashed cycc at startup.** It called
+  `syscall(12)` (BRK) assuming a "PE reroutes brk → VirtualAlloc" that was
+  **never implemented** — the PE syscall dispatch (`parse_expr.cyr`) has
+  cases for 0/1/2/3/8/9/60/228 but not 12, so `syscall(12)` fell through to
+  a raw `SYSCALL` instruction (illegal on Windows) → `STATUS_ACCESS_VIOLATION`.
+  cycc's own `vec_new()` hit it on the first `alloc()`, before reading a
+  byte of source. Fixed to `syscall(9)` (mmap), which the PE backend DOES
+  route to VirtualAlloc — the same reroute the main heap uses. Verified on
+  `cass`: `vec_new` no longer crashes and `cycc` now reads stdin (12/12
+  bytes). Shipped broken since v5.5.0.
+- **`src/backend/pe/emit.cyr` set `HIGH_ENTROPY_VA` by accident.** DllChar
+  was `0x0160` (DYNAMIC_BASE + NX_COMPAT + HIGH_ENTROPY_VA) while the
+  comment directly above said HIGH_ENTROPY_VA "is DELIBERATELY OMITTED" —
+  a `v5.6.31 probe` left in. Restored to the documented `0x0140`. Hygiene;
+  not load-bearing for the stdin fix (the allocator was).
+
+### Known issues — Windows still does not compile (multi-bug arc)
+
+- After the allocator fix, `cycc` runs and reads its input on Windows but
+  generates **zero code** (`GCP=0` → empty output) — the input length
+  (`BL`) is lost before parse (`SBL`'s store isn't landing where `GBL`
+  reads on Windows). A distinct bug beneath the allocator one, with likely
+  more layers. Tracked in
+  `docs/development/issues/2026-06-02-windows-cycc-runtime-multibug.md`.
+  **Windows is a multi-slot runtime arc, not the roadmap's one-line item.**
+
+### Verified
+
+- x86 self-host **byte-identical (885,040 B)**; Linux smoke 42. The pe
+  constant is embedded in cycc, so the binary differs from the old
+  `build/cycc` by that one value but self-hosts as a fixpoint. macOS arm64
+  + Linux unaffected (`alloc_windows`/PE code is `#ifdef`-gated off there).
+
 ## [6.0.38] — 2026-06-02
 
 **The macOS install actually ships a working compiler now.** The

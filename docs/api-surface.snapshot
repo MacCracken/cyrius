@@ -1459,7 +1459,9 @@ math::f64_atanh/1
 math::f64_clamp/3
 math::f64_cosh/1
 math::f64_fract/1
+math::f64_ge/2
 math::f64_hypot/2
+math::f64_le/2
 math::f64_lerp/3
 math::f64_max/2
 math::f64_min/2

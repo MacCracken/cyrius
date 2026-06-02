@@ -3,6 +3,35 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.39 ship — Windows `cycc` runtime bug 1 fixed; arc opened)
+
+Closing **v6.0.39**. Dug into Windows on real `cass` and found **`cycc`
+has NEVER run as a compiler on Windows** — crashed on startup, hidden
+~30 minors because CI only ran EMITTED PE programs, never compiled one
+THROUGH `cycc` (the macOS placebo, one platform over).
+
+**Bug 1 FIXED (verified on cass):** `lib/alloc_windows.cyr:alloc_init`
+called `syscall(12)` (BRK) assuming a "PE reroutes brk → VirtualAlloc"
+that was **never implemented** (PE dispatch handles 0/1/2/3/8/9/60/228,
+not 12) → raw SYSCALL → STATUS_ACCESS_VIOLATION on the first `alloc()`
+in `vec_new()` at startup. Fixed to `syscall(9)` (mmap → VirtualAlloc,
+the main-heap reroute). cycc now runs + reads stdin on cass (12/12).
+Also fixed `pe/emit.cyr` accidental HIGH_ENTROPY_VA (0x0160→0x0140,
+hygiene per its own comment). x86 self-host byte-identical 885,040 B;
+Linux smoke 42; macOS/Linux unaffected (`#ifdef`-gated).
+
+**Bug 2 OPEN (Windows still doesn't compile):** post-fix `cycc` reads
+input but generates 0 code (`GCP=0`) — `BL` is lost before parse
+(`GBL`=0 right after `SBL(S, bl=12)`; `SBL`'s store isn't landing where
+`GBL` reads on Windows). Distinct bug; likely more beneath. **Windows =
+a multi-slot RUNTIME ARC.** Issue `2026-06-02-windows-cycc-runtime-multibug.md`.
+
+**Order (user 2026-06-02): cut .39 → NEXT = x86_64-macОS runtime arc
+(x86 Mach-O cycc SIGSYS's on real compiles; verifiable on `ach`, Intel
+Mac) → then RETURN to grinding Windows bug 2+ → UEFI → CI gate → AGNOS.**
+PILLAR rule holds for every platform: real installer compiles+runs on
+hardware. See [[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.38 ship — macОS arm64 INSTALL actually ships a compiler)
 
 Closing **v6.0.38**. **The thing the user actually runs — `install.sh`

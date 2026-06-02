@@ -20,6 +20,13 @@ assert_eq(f64_eq(f64_from(5), f64_from(5)), 1, "eq yes");
 assert_eq(f64_eq(f64_from(5), f64_from(6)), 0, "eq no");
 assert_eq(f64_lt(f64_from(3), f64_from(5)), 1, "lt yes");
 assert_eq(f64_lt(f64_from(5), f64_from(3)), 0, "lt no");
+# f64_le / f64_ge (avatara proposal 2026-06-02): inclusive, NaN-correct.
+assert_eq(f64_le(f64_from(3), f64_from(5)), 1, "le less");
+assert_eq(f64_le(f64_from(5), f64_from(5)), 1, "le equal");
+assert_eq(f64_le(f64_from(5), f64_from(3)), 0, "le greater");
+assert_eq(f64_ge(f64_from(5), f64_from(3)), 1, "ge greater");
+assert_eq(f64_ge(f64_from(5), f64_from(5)), 1, "ge equal");
+assert_eq(f64_ge(f64_from(3), f64_from(5)), 0, "ge less");
 
 test_group("f64 convert");
 assert_eq(f64_to(f64_from(0)), 0, "zero");

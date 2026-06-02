@@ -1,0 +1,59 @@
+# 2026-06-02 — Windows: cycc has never run as a compiler (multi-bug runtime arc)
+
+**Filed:** 2026-06-02 (during the Windows-install pillar work)
+**Affected:** the PE runtime — `cycc.exe` running as a compiler on Windows
+**Severity:** High — Windows is claimed-supported but `cycc` does not
+compile anything there. Same class as the macOS rot, one platform over.
+**Status:** open — **multi-slot arc; bug 1 fixed in v6.0.39, bug 2+ open.**
+Verifiable on `cass` (Windows 10.0.26200, SSH-wired).
+
+## How it stayed hidden
+
+CI/release only ever ran *emitted* PE programs (exit42, hello-world) and
+the PE-emit magic check — **never compiled a program THROUGH `cycc.exe`
+on real Windows.** So every Windows "self-host"/"native" checkmark was a
+placebo. `cycc.exe` crashed on startup the whole time. The PE work
+(v5.4.x–v5.11.x) was all about *emitting* PE from Linux, never running
+the compiler on Windows.
+
+## Bug 1 — allocator (FIXED, v6.0.39)
+
+`lib/alloc_windows.cyr:alloc_init` called `syscall(12)` (BRK) assuming a
+"PE reroutes brk → VirtualAlloc" that was never implemented (the PE
+syscall dispatch in `parse_expr.cyr` handles 0/1/2/3/8/9/60/228, not 12).
+`syscall(12)` fell through to a raw `SYSCALL` instruction → illegal on
+Windows → `STATUS_ACCESS_VIOLATION`. cycc's `vec_new()` hit it on the
+first `alloc()` at startup. Fixed to `syscall(9)` (mmap → VirtualAlloc).
+**Verified on cass: `vec_new` no longer crashes, cycc reads stdin (12/12
+bytes).**
+
+## Bug 2 — input length lost before parse (OPEN)
+
+After bug 1, `cycc` reads its input but produces **zero code** (`GCP=0`
+before FIXUP → empty output, exit 0). Bisected on `cass`:
+- read loop reads the full input,
+- but `GBL(S)` reads **0** immediately after `SBL(S, bl)` with `bl=12`.
+
+So `SBL`'s store (`S64(S + 0x18C100, v)`) isn't landing where `GBL`
+(`L64(S + 0x18C100)`) reads it, on Windows specifically. Candidates: a
+store/load codegen issue at that offset under the PE/VirtualAlloc heap
+base, or a fn-arg passing bug for `SBL(S, bl)`. **Not yet root-caused.**
+Likely more bugs beneath this (compile → FIXUP → EMITPE → write).
+
+## How to continue (on `cass`)
+
+Use the exit-code-checkpoint method (ExitProcess works; stdout may not be
+needed): instrument `main_win.cyr` / the store path, build with a CLEAN
+PE cross-emitter (NOT one built from the instrumented source — it would
+exit early on Linux), ship to `cass`, read the errorlevel. Root-cause
+bug 2 (SBL/GBL store), then walk the rest of the compile→emit→write path
+until `cycc.exe` compiles `var x=42` to a runnable PE on `cass`, then
+`fn main(){return N}` (also needs the auto-call-main fix `main_win.cyr`
+lacks — the `0x40001000` exit), then self-host, then the REAL install
+(`install.sh`) on `cass`, then the cass arm of the `cyrius audit` gate.
+
+## Pillar
+
+Windows is not supported until the real `install.sh` on `cass` yields a
+`cycc` that compiles + runs (verified on hardware) — same bar as macOS
+arm64 (v6.0.38). This is a dedicated multi-slot arc, not a one-liner.
