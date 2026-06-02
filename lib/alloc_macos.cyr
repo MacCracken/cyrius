@@ -15,15 +15,26 @@ var _heap_end = 0;
 # Maximum single allocation size (256MB) — matches alloc.cyr
 var ALLOC_MAX = 0x10000000;
 
+# Initial heap reservation. v6.0.34: was 1MB, grown by 1MB chunks via a
+# HINTED mmap at _heap_end. macOS does NOT honor mmap address hints (no
+# MAP_FIXED), so any growth returned a non-contiguous region → the
+# contiguity guard failed (or a write ran past the 1MB page into the
+# unmapped next page → SIGBUS "byte write Translation fault"). A bump
+# allocator REQUIRES contiguity, so reserve a large region UP FRONT
+# instead (macOS overcommits anonymous mmap — only touched pages cost
+# RAM). This is why cycc itself worked (main_aarch64_macho.cyr mmaps its
+# whole ~78MB heap once) while the cyrius wrapper SIGBUS'd on its 2nd MB.
+var _MACOS_HEAP_RESERVE = 0x10000000;   # 256 MB virtual, lazy-committed
+
 # Initialize the heap allocator (must call before any alloc)
 fn alloc_init() {
-    # mmap(addr=0, len=1MB, prot=RW, flags=MAP_PRIVATE|MAP_ANON, fd=-1, offset=0)
-    _heap_base = syscall(9, 0, 0x100000, 3, 0x1002, 0 - 1, 0);
+    # mmap(addr=0, len=256MB, prot=RW, flags=MAP_PRIVATE|MAP_ANON, fd=-1, offset=0)
+    _heap_base = syscall(9, 0, _MACOS_HEAP_RESERVE, 3, 0x1002, 0 - 1, 0);
     if (_heap_base < 0) {
         syscall(1, 2, "alloc_init: mmap failed\n", 24);
         syscall(60, 1);
     }
-    _heap_end = _heap_base + 0x100000;
+    _heap_end = _heap_base + _MACOS_HEAP_RESERVE;
     _heap_ptr = _heap_base;
     return _heap_base;
 }
