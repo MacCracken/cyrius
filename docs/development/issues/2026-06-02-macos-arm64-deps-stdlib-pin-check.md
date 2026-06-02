@@ -93,20 +93,31 @@ the whole directory-listing surface (`is_dir`, `dir_list`) depends on it.
   Darwin-safe). Verified on ecb: the false "not installed" error is gone,
   the requested module (`io.cyr`) resolves into `./lib`.
 
-- **Bug 2 — `cyrius build` SIGSYS during deps resolution (OPEN).** With
-  bug 1 fixed, `cyrius build` (pin + `[deps] stdlib`) now **exits 140
-  (SIGSYS / bad syscall)**. The resolver's `dir_list(src_dir)`
-  (cbt/deps.cyr ~L1078, enumerating stdlib modules) calls `getdents64` →
-  unsupported on Darwin → SIGSYS. `cyrius deps` alone copied `io.cyr` and
-  survived, but the build-path resolution trips it. **Consumer
-  (ai-hwaccel) stays blocked until bug 2 lands.**
+- **Bug 2 — `cyrius build` SIGSYS (OPEN; ROOT CAUSE NOT YET PINNED).**
+  With bug 1 fixed, `cyrius build` (pin + `[deps] stdlib`) now **exits 140
+  (SIGSYS / bad syscall)** instead of the false error. `cyrius deps` alone
+  copied `io.cyr` and survived; only the `build` path trips it.
 
-  **Fix for bug 2 = port the dir-listing surface to Darwin:** add
-  `getdents64`→`getdirentries` (Darwin syscall 196) to the arm64 macho
-  ESYSXLAT AND make `lib/fs.cyr` `dir_list` parse the Darwin `dirent`
-  layout (differs from Linux). Same shape as the .32–.34 BSD-ABI arc, for
-  the fs-enumeration surface; likely also fixes the macОS tools'
-  dir-walking. Verify the full T4 repro on ecb after.
+  > **CORRECTION (2026-06-02):** an earlier revision of this note (and the
+  > v6.0.40 CHANGELOG) asserted the cause was the resolver's `dir_list`
+  > calling `getdents64`. That was an **unverified assumption and is
+  > probably wrong** — the `[deps] stdlib` resolver copies modules BY NAME
+  > (`_dep_copy_file` + `_dep_stdlib_seen`), it does not enumerate the dir.
+  > The actual SIGSYS source has NOT been pinned. Do not trust the
+  > "dir_list" claim. **Next step: reproduce T4 on ecb and instrument /
+  > checkpoint to find the exact syscall + step that SIGSYS's** (candidates:
+  > `_file_size`'s `stat` with the Linux struct offset; an is_dir on the
+  > build path; the auto-prepend; or the forked cycc compile of the
+  > `[deps]`-resolved unit). Pin it before claiming a fix.
+
+  Separately, the **directory-listing surface IS Linux-only on Darwin**
+  (`is_dir`/`dir_list` use `getdents64` = Linux 217, unported) — that's a
+  real gap (it caused bug 1) and likely bites `cyrius update` / tool
+  dir-walking on macOS, but a probe of raw Darwin `getdirentries`
+  (syscalls 344 and 196) returned **EFAULT** from a minimal test, so the
+  Darwin dir-enum ABI needs more investigation before that port lands.
+  **Consumer (ai-hwaccel) stays blocked until bug 2's real cause is found
+  and fixed.**
 
 ## Root cause (speculation — flag for verification)
 
