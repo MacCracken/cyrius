@@ -322,10 +322,38 @@ fn PARSE_FACTOR(S): i64 {
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var anoff = PEEKV(S);
         STI(S, GTI(S) + 1);
-        # Check if it's a function name first
+        # Resolution order is local → global → function: a VALUE of a
+        # given name shadows a function of the same name (correct lexical
+        # scoping). Pre-v6.0.35 this checked FINDFN *first*, so a local
+        # array named `argv` (shadowing stdlib `fn argv`) had `&argv`
+        # resolve to the function's __TEXT code address; the subsequent
+        # store wrote into __TEXT — silently masked on Linux (the load
+        # segment is RWX) but a hard SIGBUS on macOS (W^X). See
+        # CHANGELOG [6.0.35].
+        # Local (innermost scope) wins.
+        if (GINFN(S) == 1) {
+            var ali = FINDLOCAL(S, anoff);
+            if (ali >= 0) {
+                var adisp = 0 - ((ali + 1) * 8);
+                # v4.9.1: shift past all reserved callee-saved slots
+                if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }
+                if (_cur_fn_ret_stash > 0) { adisp = adisp - _cur_fn_ret_stash; }
+                # v5.11.36 path-A: dispatch lives in
+                # <backend>/emit.cyr::ELOAD_LOCAL_ADDR.
+                ELOAD_LOCAL_ADDR(S, adisp);
+                return 0;
+            }
+        }
+        # Global next.
+        var aidx = FINDVAR(S, anoff);
+        if (aidx >= 0) {
+            EVADDR(S, aidx);
+            return 0;
+        }
+        # Neither a local nor a global of this name → function pointer
+        # (&fn_name), emitted as a fixup-type-3 function address.
         var fni = FINDFN(S, anoff);
         if (fni >= 0) {
-            # Emit function address via fixup type 3
             var fc = GFCNT(S);
             if (fc >= 1048576) {
                 syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
@@ -340,25 +368,9 @@ fn PARSE_FACTOR(S): i64 {
             ELOAD_FN_ADDR(S, fnaddr, fc, fni);
             return 0;
         }
-        if (GINFN(S) == 1) {
-            var ali = FINDLOCAL(S, anoff);
-            if (ali >= 0) {
-                var adisp = 0 - ((ali + 1) * 8);
-                # v4.9.1: shift past all reserved callee-saved slots
-                if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }
-                if (_cur_fn_ret_stash > 0) { adisp = adisp - _cur_fn_ret_stash; }
-                # v5.11.36 path-A: dispatch lives in
-                # <backend>/emit.cyr::ELOAD_LOCAL_ADDR.
-                ELOAD_LOCAL_ADDR(S, adisp);
-                return 0;
-            }
-        }
-        var aidx = FINDVAR(S, anoff);
-        if (aidx < 0) {
-            syscall(SYS_WRITE, 2, "error:", 6); FM_LOOKUP(S, GTLINE(S, GTI(S))); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-            PRSTR(S + 0x60000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
-        }
-        EVADDR(S, aidx);
+        # Nothing of this name exists in any scope.
+        syscall(SYS_WRITE, 2, "error:", 6); FM_LOOKUP(S, GTLINE(S, GTI(S))); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+        PRSTR(S + 0x60000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
         return 0;
     }
     if (typ == 30) {
