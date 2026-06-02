@@ -3157,7 +3157,44 @@ fn tls_native_set_version_range(ctx, min_ver, max_ver): i64 {
 # TCP socket, already connect()'d). Blocking; returns TLS_OK when
 # handshake completes, or a negative TLS_ERR_* on failure.
 fn tls_native_connect(ctx, sock_fd): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
+    # Send ClientHello as a plaintext handshake record.
+    var ch = alloc(2048);
+    if (ch == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var chn = tls_native_client_build_hello(ctx, ch, 2048);
+    if (chn < 0) { return chn; }
+    var chrec = alloc(chn + TLS_RECORD_HEADER_LEN);
+    if (chrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_record_write_header(chrec, TLS_CT_HANDSHAKE, 0x0303, chn);
+    memcpy(chrec + TLS_RECORD_HEADER_LEN, ch, chn);
+    if (_tn_sock_write_all(sock_fd, chrec, chn + TLS_RECORD_HEADER_LEN) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_IO);
+    }
+    # Read the ServerHello (plaintext handshake record; skip any CCS).
+    var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
+    var inbuf = alloc(cap);
+    if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+    if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    var pr = tls_native_client_parse_server_hello(ctx, inbuf + TLS_RECORD_HEADER_LEN, rl - TLS_RECORD_HEADER_LEN);
+    if (pr != TLS_OK) { return pr; }
+    # Read the server's encrypted flight (EE/Cert/CertVerify/Finished).
+    var frl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+    if (frl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    var rf = tls_native_client_recv_flight(ctx, inbuf, frl);
+    if (rf != TLS_OK) { return rf; }
+    # Verify the server Finished + send the client Finished.
+    var fin = alloc(256);
+    if (fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var finn = tls_native_client_finish(ctx, fin, 256);
+    if (finn < 0) { return finn; }
+    if (_tn_sock_write_all(sock_fd, fin, finn) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    # Install application-traffic keys (client_finish derived the master).
+    var ik = tls_native_install_app_keys(ctx);
+    if (ik != TLS_OK) { return ik; }
+    return TLS_OK;
 }
 
 # ----------------------------------------------------------------
@@ -3230,6 +3267,7 @@ fn _tn_sock_write_all(fd, buf, len): i64 {
 # cyrius-native loopback.
 fn tls_native_accept(ctx, sock_fd): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var inbuf = alloc(cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
@@ -3270,6 +3308,13 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     var flrec_len = tls_native_server_seal_handshake(ctx, flight, fl_len, flrec, fl_len + 64);
     if (flrec_len < 0) { return flrec_len; }
     if (_tn_sock_write_all(sock_fd, flrec, flrec_len) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    # Derive the master + application-traffic secrets over CH..serverFinished
+    # (RFC 8446 §7.1 — now, before the client's Finished extends the
+    # transcript) and install the app keys so post-handshake write/read work.
+    var dm = tls_native_server_derive_master(ctx);
+    if (dm != TLS_OK) { return dm; }
+    var ak = tls_native_install_app_keys(ctx);
+    if (ak != TLS_OK) { return ak; }
     # Read + open the client's (encrypted) Finished.
     var crl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (crl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
@@ -3286,13 +3331,32 @@ fn tls_native_accept(ctx, sock_fd): i64 {
 # written (>=0) or a negative TLS_ERR_*. Partial writes return the
 # actual count; callers must loop on short writes.
 fn tls_native_write(ctx, buf, len): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_STATE) != TLS_STATE_CONNECTED) { return TLS_ERR_PROTOCOL; }
+    if (len > TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_INVALID_PARAM; }   # caller fragments
+    var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
+    var rec = alloc(len + 64);
+    if (rec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var rn = tls_native_seal_app(ctx, buf, len, rec, len + 64);
+    if (rn < 0) { return rn; }
+    if (_tn_sock_write_all(fd, rec, rn) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    return len;
 }
 
 # Receive up to `maxlen` bytes into `buf`. Returns bytes read (>=0;
 # 0 means peer-initiated close_notify), or a negative TLS_ERR_*.
 fn tls_native_read(ctx, buf, maxlen): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_STATE) != TLS_STATE_CONNECTED) { return TLS_ERR_PROTOCOL; }
+    var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
+    var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
+    var inbuf = alloc(cap);
+    if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var rl = _tn_sock_read_record_skip_ccs(fd, inbuf, cap);
+    if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    # open_app returns the app-data length, 0 for a post-handshake
+    # handshake record (NewSessionTicket / KeyUpdate), or TLS_ERR_ALERT.
+    return tls_native_open_app(ctx, inbuf, rl, buf, maxlen);
 }
 
 # Send a close_notify alert, then close + free the context. After

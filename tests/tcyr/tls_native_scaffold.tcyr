@@ -42,10 +42,10 @@ assert_eq(tls_native_set_alpn(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_alpn stub"
 assert_eq(tls_native_set_verify(0, TLS_VERIFY_PEER), TLS_ERR_INVALID_PARAM, "set_verify null ctx");
 assert_eq(tls_native_set_ca_bundle(0, 0, 0, 0), TLS_ERR_INVALID_PARAM, "set_ca_bundle null ctx (live .29)");
 assert_eq(tls_native_set_version_range(0, TLS_VERSION_1_2, TLS_VERSION_1_3), TLS_ERR_NOT_IMPLEMENTED, "set_version_range stub");
-assert_eq(tls_native_connect(0, 0 - 1), TLS_ERR_NOT_IMPLEMENTED, "connect stub");
+assert_eq(tls_native_connect(0, 0 - 1), TLS_ERR_INVALID_PARAM, "connect null ctx → INVALID_PARAM");
 assert_eq(tls_native_accept(0, 0 - 1), TLS_ERR_INVALID_PARAM, "accept null ctx → INVALID_PARAM");
-assert_eq(tls_native_write(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "write stub");
-assert_eq(tls_native_read(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "read stub");
+assert_eq(tls_native_write(0, 0, 0), TLS_ERR_INVALID_PARAM, "write null ctx → INVALID_PARAM");
+assert_eq(tls_native_read(0, 0, 0), TLS_ERR_INVALID_PARAM, "read null ctx → INVALID_PARAM");
 assert_eq(tls_native_close(0), TLS_ERR_NOT_IMPLEMENTED, "close stub");
 
 # Getters return defaults
@@ -1596,5 +1596,50 @@ assert_eq(tls_native_client_verify_hostname(h6), TLS_ERR_CERT_HOSTNAME_MISMATCH,
 
 # Guard.
 assert_eq(tls_native_client_verify_hostname(0), TLS_ERR_INVALID_PARAM, "verify_hostname(null)");
+
+# ================================================================
+# v6.0.31 — client connect() + full client↔server socket e2e
+# ================================================================
+test_group("v6.0.31 connect() + client<->server e2e");
+
+# socketpair + fork: parent = our server (accept), child = our client
+# (connect). Full TLS 1.3 handshake + bidirectional app data, over a
+# real socket, both sides cyrius-native.
+var fds31[8];
+sys_socketpair(1, 1, 0, &fds31);
+var fdp31 = load64(&fds31);
+var sfd31 = fdp31 & 0xFFFFFFFF;
+var cfd31 = (fdp31 >> 32) & 0xFFFFFFFF;
+
+var pid31 = sys_fork();
+if (pid31 == 0) {
+    # CHILD: client
+    sys_close(sfd31);
+    var clx = tls_native_new_client("localhost", 9);
+    if (tls_native_connect(clx, cfd31) != TLS_OK) { sys_exit(10); }
+    if (tls_native_get_state(clx) != TLS_STATE_CONNECTED) { sys_exit(11); }
+    if (tls_native_write(clx, "ping-from-client", 16) != 16) { sys_exit(12); }
+    var rb[64];
+    if (tls_native_read(clx, &rb, 64) != 16) { sys_exit(13); }
+    if (_tn_ct_eq(&rb, "pong-from-server", 16) != 1) { sys_exit(14); }
+    sys_close(cfd31);
+    sys_exit(0);
+}
+
+# PARENT: server
+sys_close(cfd31);
+var srv31 = tls_native_new_server(cert23, 385, key23, 138);
+tls_native_server_load_creds(srv31);
+assert_eq(tls_native_accept(srv31, sfd31), TLS_OK, "server accept() over socket → TLS_OK");
+assert_eq(tls_native_get_state(srv31), TLS_STATE_CONNECTED, "server CONNECTED");
+var sb31[64];
+assert_eq(tls_native_read(srv31, &sb31, 64), 16, "server read 16 bytes of client app data");
+assert_eq(_tn_ct_eq(&sb31, "ping-from-client", 16), 1, "server received the client's app data");
+assert_eq(tls_native_write(srv31, "pong-from-server", 16), 16, "server wrote its response");
+sys_close(sfd31);
+var st31[4];
+sys_waitpid(pid31, &st31, 0);
+var code31 = (load64(&st31) >> 8) & 0xFF;
+assert_eq(code31, 0, "client connect()+write+read succeeded (child exit 0)");
 
 var r = assert_summary();
