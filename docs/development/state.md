@@ -3,6 +3,48 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.35 ship — `cyrius build` macОS SIGBUS FIXED; `&` shadowing)
+
+Closing **v6.0.35**. The `.34`-deferred `cyrius build` Mach-O SIGBUS is
+**fixed** — single-line root cause, verified end-to-end on `ecb` (real
+Apple Silicon). The `.34` "non-ftype-0 / missed-fixup / large-binary"
+hypothesis was wrong: it was a **name-shadowing / W^X** bug.
+
+**Root cause (`src/frontend/parse_expr.cyr`):** the `&IDENT` operator
+checked `FINDFN` **before** `FINDLOCAL`/`FINDVAR`, so a local or global
+whose name collided with a function resolved to the **function's
+`__TEXT` code address**. The wrapper's `sys_system` has `var argv[4]`
+while `lib/args.cyr` defines `fn argv(n)` → `&argv` became `&(fn argv)`
+(a code pointer @ `0x10000F288`); `store64(&argv, "/bin/sh")` then wrote
+into `__TEXT`. **Why macОS-only:** cyrius x86 ELF uses a single **RWE**
+load segment, so the bogus write into code silently succeeded and the
+load-back round-tripped — invisible on Linux; macОS enforces **W^X** →
+hard SIGBUS. Not size-related (a 3-line repro triggers it); cycc itself
+was unaffected (no local/global collides with a function name).
+
+**Fix:** resolve `&IDENT` in **local → global → function** order
+(correct lexical scoping). `&fn_name` still works when nothing shadows
+(e.g. allocator vtable `&_arena_alloc`).
+
+**Gates:** x86 self-host **byte-identical 885,040 B**; `check.sh`
+**82/82**; conflict-probe over cycc's own source = **0** changed `&`
+resolutions (reorder is a no-op for the compiler). `ecb`: cycc self-host
+**byte-identical 639,412 B** + **`cyrius build` runs (exit 0, valid
+Mach-O)** — SIGBUS gone.
+
+**Found during the fix → filed, queued for the platform window (NOT
+.35):** macОS `fn main(){return N;}` exits **1**, not N — the Mach-O
+entry/exit epilogue doesn't propagate `main`'s return to the BSD exit
+syscall. **Pre-existing** (installed `.34` cycc identical), unrelated to
+this fix; tools are unaffected (they `sys_exit` explicitly). Issue:
+`docs/development/issues/2026-06-02-macho-main-return-exit-propagation.md`.
+
+**Arc (user 2026-06-02 — finish PLATFORM cleanup before the AGNOS
+binary):** the v6.0.x platform-cleanup window absorbs `.36` Windows
+install + self-host (cass), `.37` CI cross-OS self-host gate, **and the
+macОS main-return→exit bug above**, all **before** the AGNOS userspace
+target arc (`~.38+`). See [[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.34 ship — macOS TOOLS work; cyrius build wrapper deferred to .35)
 
 Closing **v6.0.34**. **cyrfmt / cyrlint / cyrdoc run real files on Apple

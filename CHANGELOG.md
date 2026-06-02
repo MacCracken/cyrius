@@ -6,6 +6,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.35] — 2026-06-02
+
+**`cyrius build` Mach-O SIGBUS fixed — `&local`/`&global` now shadow a
+same-named function (correct lexical scoping).** Fourth slot of the
+macOS-repair arc. Single-line root cause for the `.34`-deferred wrapper
+crash; verified end-to-end on `ecb` (real Apple Silicon).
+
+### Fixed — address-of resolution order (`src/frontend/parse_expr.cyr`)
+
+- The `&IDENT` operator checked `FINDFN` **before** `FINDLOCAL`/`FINDVAR`,
+  so a local or global whose name collided with a function resolved to
+  the **function's `__TEXT` code address**. The wrapper's `sys_system`
+  declares `var argv[4]` while `lib/args.cyr` defines `fn argv(n)`, so
+  `&argv` became `&(fn argv)` (a code-segment pointer); the subsequent
+  `store64(&argv, "/bin/sh")` wrote into `__TEXT`.
+- **Why it was macOS-only:** cyrius x86 ELF uses a single **RWE** load
+  segment, so the bogus write into code silently succeeded and the
+  load-back round-tripped — the bug was invisible on Linux. macOS
+  enforces **W^X** on `__TEXT`, so the write faulted with a hard SIGBUS
+  (`(Data Abort) byte write Translation fault` at `0x10000F288`, a
+  fixup-type-3 function address). Not size-related — a 3-line repro
+  reproduces it; cycc itself was unaffected because it has no
+  local/global name that collides with a function.
+- Fix: resolve `&IDENT` in **local → global → function** order. A value
+  shadows a function of the same name (standard lexical scoping);
+  `&fn_name` still resolves to the function when no local/global shadows
+  it (e.g. the allocator vtable `&_arena_alloc` / `&_bump_alloc`).
+
+### Verified
+
+- x86 self-host **byte-identical** (885,040 B); `scripts/check.sh`
+  **82/82**; a conflict-probe over cycc's own source found **zero**
+  changed `&` resolutions (the reorder is a no-op for the compiler).
+- `ecb` (macOS arm64): cycc self-host **byte-identical (639,412 B)** and
+  **`cyrius build` now runs (exit 0, valid Mach-O output)** — the SIGBUS
+  is gone.
+
 ## [6.0.34] — 2026-06-02
 
 **macOS tools work — cyrfmt / cyrlint / cyrdoc run real files on Apple
