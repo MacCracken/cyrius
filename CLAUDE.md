@@ -49,6 +49,38 @@ cyrius bench                       # run .bcyr benchmarks
 - **Bootstrap chain integrity** — never break seed (asm) → cybs → cycc. Historical chain: pre-v3.9.5 stage1f → cyrc (v3.9.5) → cybs (v6.0.0); top compiler was cc3 → cc5 (v5.0.0) → cycc (v6.0.0). Bridge intermediate retired at v5.11.66.
 - **Version lives in `VERSION` + `--version`, never in binary names** — at v6.0.0 both compiler binaries got descriptive, version-agnostic names: the bootstrap compiler (formerly `cyrc`) is now **`cybs`** (Cyrius Bootstrap) and the top compiler (formerly `cc5`) is now **`cycc`** (Cyrius Computer Compiler). These names are *forever*. No `cycc6` at v7.0.0, no `cybs7` at v8.0.0, no funny business. The cc3 → cc5 rename (v5.0.0) and the cyrc → cybs + cc5 → cycc rename (v6.0.0) sequence was the LAST name-change penalty paid. Anyone tempted to add a version digit to a binary name (compiler, bootstrap, linker, formatter, anything) is reintroducing the bug we explicitly removed. `VERSION` file + binary `--version` output are the only sources of truth.
 
+## Release & Slot Discipline
+
+**Atomic commits, packed releases.** Two different granularities — don't
+conflate them (the v6.0.33 mistake):
+
+- **Commits are fine-grained** — one logical change ("bite") per commit:
+  clean history, single-thing revertability. Bite freely.
+- **Releases (`.NN`) are coarse** — a release bundles MANY bites into one
+  coherent unit. The CHANGELOG entry has several bullets, not one.
+
+Rules (user 2026-06-02, 20-yr QA/DevOps direction):
+
+1. **A bug ships complete — no granularity by gnarliness.** However nasty
+   a bug turns out to be when investigated, fix it fully in one release.
+   NEVER slice one fix to defer the hard half across patches. "Easy part
+   now, hard part next slot" is the antipattern, even when each piece
+   "works." See `feedback_one_bug_one_complete_fix`.
+2. **Arcs are 1–2 releases, not per-phase releases.** A multi-phase arc
+   (e.g. TLS 1.3 client) is ONE, maybe two releases, with the phases
+   landing as commits/bites INSIDE the release — not 8–9 thin releases.
+3. **Once a roadmap is agreed, execute it.** When the user asks for
+   roadmapped items and a structure is agreed, build to it. Only request
+   a split if there is a TRULY HIGH NEED — not reactively when work grows.
+   Stop asking "should this be its own slot?" — that question is the nibble.
+4. **Only the user pivots focus.** Re-scoping, re-prioritizing, changing
+   what we work on is the user's call EXCLUSIVELY. Surface findings; never
+   unilaterally redirect or defer.
+5. **See the whole shape first** so the release can be packed
+   intentionally. For cross-OS / compiler work that means running it on
+   ecb/cass at slot one (the Cross-OS self-host principle), not
+   discovering scope layer by layer and reaching for a split each time.
+
 ## P(-1): Project Hardening
 
 Before starting new work on a release, run this audit phase:
