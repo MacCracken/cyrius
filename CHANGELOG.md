@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.29] — 2026-06-01
+
+**TLS arc Mini-arc B.6 — TLS 1.3 client: X.509 chain verification.**
+Sixth slot of the client mini-arc. `lib/`-only.
+
+### Added — client (`lib/tls_native.cyr`)
+
+- `tls_native_set_ca_bundle(ctx, bundle, bundle_len, is_der)` — now
+  live: parses the trust anchor (DER via `x509_parse`; PEM bundle via
+  `pem_decode_certs` → first cert) and stores it in the ctx.
+- `tls_native_client_verify_chain(ctx, now_unix)` — verifies the
+  server's parsed leaf certificate against the configured trust root
+  via sigil's `x509_verify_chain` (signature links, issuer/subject DN
+  match, validity at `now_unix`, CA basicConstraints). Returns TLS_OK
+  or `TLS_ERR_CERT_INVALID`. `now_unix` is caller-supplied (no stdlib
+  clock wrapper yet). New ctx field `TLS_CTX_OFF_CA_ROOT`.
+  Intermediate-cert chains from the Certificate message are a follow-on
+  (today the leaf must chain directly to the trust anchor).
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 352 → **360 asserts**: a self-signed
+  server cert chains to a trusted DER root → TLS_OK; an **untrusted
+  root** → `CERT_INVALID`; an **expired** window (now > notAfter) →
+  `CERT_INVALID`. The `set_ca_bundle` scaffold assert flipped from stub
+  to live.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,842 → **2,843 fns**
+  (+`tls_native_client_verify_chain`; `set_ca_bundle` was already in
+  the surface as a stub).
+
 ## [6.0.28] — 2026-06-01
 
 **TLS arc Mini-arc B.5 — client application data + multi-OS installer.**

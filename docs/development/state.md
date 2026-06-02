@@ -3,6 +3,31 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.29 ship — TLS Mini-arc B.6 X.509 chain verification)
+
+Closing **v6.0.29**, the sixth slot of TLS Mini-arc B (client).
+`lib/`-only.
+
+`tls_native_set_ca_bundle` now live (parse trust anchor — DER via
+x509_parse, PEM via pem_decode_certs first cert; store CA_ROOT).
+`tls_native_client_verify_chain(ctx, now_unix)`: sigil x509_verify_chain
+over server leaf + root (sig links, DN match, validity, CA bits) →
+TLS_OK / CERT_INVALID. now_unix caller-supplied (no stdlib clock).
+Intermediate chains a follow-on. New ctx field CA_ROOT.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,842 → **2,843 fns** (+client_verify_chain).
+- `tls_native_scaffold.tcyr` 352 → **360 asserts** (+8): self-signed →
+  trusted root TLS_OK; untrusted root → CERT_INVALID; expired → CERT_INVALID.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc B step 6 of
+~8. Next: **.30 — hostname / SAN verification** (RFC 6125: parse cert
+SAN via sigil der_walk/der_skip, match SNI host + wildcards), then
+**.31 — localhost client↔server socket e2e** (+ connect() + socket-level
+write/read; runs full client↔server handshake + app data over a socket).
+
 ## Session close — 2026-06-01 (.28 ship — client app data + multi-OS installer)
 
 Closing **v6.0.28**, two deliverables (user direction): TLS 1.3 app
