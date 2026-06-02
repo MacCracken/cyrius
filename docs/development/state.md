@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.34 ship — macOS TOOLS work; cyrius build wrapper deferred to .35)
+
+Closing **v6.0.34**. **cyrfmt / cyrlint / cyrdoc run real files on Apple
+Silicon (ecb)** — formats, lints, generates docs. Broad macho-arm BSD-ABI
+expansion. User cut at working tools; the `cyrius build` wrapper SIGBUS is
+a deep macho fixup bug, precisely localized, deferred to **.35**.
+
+**Landed (all `#ifdef`/`_TARGET_MACHO`-gated → Linux byte-identical):**
+- `src/backend/aarch64/emit.cyr` — ESYSXLAT expanded to the full BSD
+  syscall surface (read/write/close/lseek/mmap/mprotect/munmap/exit +
+  openat→open arg-shift + execve/dup3→dup2/wait4/clone→fork/mkdirat/
+  unlinkat/fchmodat arg-shifts + raw x86 stat/getpid/rename/symlink) +
+  **fork x1-fixup** in ESYSCALL (macOS raw fork child/parent x0 quirk).
+- `lib/syscalls_aarch64_linux.cyr` — macOS `OpenFlag` values (O_* differ).
+- `lib/alloc_macos.cyr` — 256 MB up-front heap reserve (macOS won't honor
+  mmap hints → growth SIGBUS'd; bump allocator needs contiguity).
+- `cbt/cyrius.cyr` + `cbt/core.cyr` — wrapper defaults arch=aarch64 +
+  reads HOME/env from the entry-stack envp (no /proc on macOS).
+
+**Gates:** Linux self-host **byte-identical 885,024 B**; `check.sh`
+**82/82**. ecb: tools verified by output.
+
+**THE .35 BUG (precisely localized):** `cyrius build` forks+execs cycc;
+the child SIGBUSes — `(Data Abort) byte write Translation fault`. crash
+report + lldb: a global assignment's macho `adrp/add` resolves to
+`0x10000F288` (**inside read-only __TEXT**, page-3 base) instead of
+`__DATA` (page 17, `0x44000`). The normal ftype-0 var path is CORRECT
+(verified `acp=219496` → `mfp=15` → page 17); this specific access uses a
+page-3 (`mfp=1`) base via a non-ftype-0 / missed-fixup path. macho-only
+(`cyrius build` works on Linux), large-binary-only (cycc self-hosts fine
+— it keeps state in its 78MB heap, not big static globals; the wrapper
+has 339KB static data). **.35 = trace which fixup record/emit path
+produces that page-3 address.**
+
+**Arc:** .35 = cyrius-build wrapper macho-fixup bug; .36 = Windows
+install + self-host (cass; wire the audit gate's cass arm); .37 = CI
+cross-OS self-host gate — MANDATORY before AGNOS (~.38+). See
+[[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.33 ship — macOS self-host FIXED + cyrius audit cross-OS gate)
 
 Closing **v6.0.33**. **The macOS compiler self-host is fixed and proven

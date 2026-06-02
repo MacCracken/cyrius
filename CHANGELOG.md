@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.34] — 2026-06-02
+
+**macOS tools work — cyrfmt / cyrlint / cyrdoc run real files on Apple
+Silicon.** Third slot of the macOS-repair arc: a broad macOS BSD-ABI
+expansion of the aarch64 Mach-O backend. All verified on `ecb`.
+
+### Added — macho-arm BSD syscall surface (`src/backend/aarch64/emit.cyr`)
+
+- ESYSXLAT now translates the full tool/wrapper syscall surface to BSD,
+  not just the original 9-syscall whitelist: read/write/close/lseek/
+  mmap/mprotect/munmap/exit/exit_group (aarch64 numbers), **openat→open
+  with an arg-shift reroute** (drops AT_FDCWD — macOS `open` takes
+  path/flags/mode), execve/dup3→dup2/wait4/clone→fork/mkdirat→mkdir/
+  unlinkat→unlink/fchmodat→chmod (with arg-shifts), and the raw x86
+  numbers cbt hardcodes (stat 4→188, getpid 39→20, rename 82→128,
+  symlink 88→57).
+- **fork x1-fixup** in `ESYSCALL`: macOS raw `fork` returns the child
+  pid in x0 for BOTH parent and child (x1=0 parent / 1 child), so a
+  post-svc `cmp x16,#2 / cmp x1,#1 / movz x0,#0` zeroes x0 for the
+  child. Without it the child ran the parent path → broken fork.
+
+### Fixed — macOS stdlib + wrapper env (`lib/`, `cbt/`)
+
+- `lib/syscalls_aarch64_linux.cyr` — `OpenFlag` now has macOS values
+  under `CYRIUS_TARGET_MACOS` (O_CREAT/EXCL/TRUNC/APPEND differ from
+  Linux); shared by Linux-aarch64 + macho. Without it file creation
+  passed Linux flag bits to BSD `open`.
+- `lib/alloc_macos.cyr` — reserve the heap (256 MB, lazy-committed) up
+  front instead of growing in 1 MB hinted chunks. macOS doesn't honor
+  mmap address hints, so a bump allocator must be contiguous; the old
+  growth path SIGBUS'd past the first MB (cycc was fine — it mmaps its
+  whole heap once).
+- `cbt/cyrius.cyr` + `cbt/core.cyr` — the Mach-O wrapper now defaults
+  arch to aarch64 and reads `HOME`/env from the entry-stack envp
+  (macOS has no `/proc/self/environ`), so it finds the installed
+  toolchain instead of `/root`.
+
+### Verification
+
+- Linux self-host **byte-identical at 885,024 B**; `check.sh` **82/82**
+  (all macOS changes are `#ifdef CYRIUS_TARGET_MACOS` / `_TARGET_MACHO`
+  -gated — emit-neutral on Linux).
+- ecb: **cyrfmt formats, cyrlint reports, cyrdoc generates** — real
+  files, real output. `cycc` + fork/exec/wait verified.
+
+### Known issue (→ .35)
+
+- `cyrius build` (the wrapper compiling via fork+exec) SIGBUSes on
+  macOS: a global assignment's Mach-O adrp/add resolves into read-only
+  `__TEXT` (page-3 base) instead of `__DATA` (page-17) for the large
+  wrapper binary — a deep backend fixup bug, precisely localized but
+  deferred to a focused slot. The tools (which don't fork a compiler)
+  are unaffected.
+
 ## [6.0.33] — 2026-06-02
 
 **macOS self-host FIXED — proven byte-identical on Apple Silicon (ecb) —
