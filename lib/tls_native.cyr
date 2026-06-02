@@ -2976,6 +2976,176 @@ fn tls_native_client_verify_chain(ctx, now_unix): i64 {
     return TLS_OK;
 }
 
+# ================================================================
+# Hostname / SAN verification (.30, RFC 6125)
+# ================================================================
+# sigil's x509 parser doesn't surface the SubjectAltName, so the client
+# walks the cert DER for the SAN extension (OID 2.5.29.17) and matches
+# its dNSName entries against the SNI host. Modern, SAN-only (the
+# legacy subject-CN fallback is deprecated by RFC 6125 §6.4.4).
+
+# Read a DER TLV header at `pos`. Stores the content start in *out_cpos
+# and content length in *out_clen; returns the tag byte, or -1 on a
+# malformed / out-of-bounds header. Handles short + 1/2-byte long form
+# (sufficient for certificate-sized structures).
+fn _tn_der_hdr(buf, buf_len, pos, out_cpos, out_clen): i64 {
+    if (pos + 2 > buf_len) { return 0 - 1; }
+    var tag = load8(buf + pos) & 0xFF;
+    var l0 = load8(buf + pos + 1) & 0xFF;
+    var clen = l0;
+    var cpos = pos + 2;
+    if (l0 == 0x81) {
+        if (pos + 3 > buf_len) { return 0 - 1; }
+        clen = load8(buf + pos + 2) & 0xFF;
+        cpos = pos + 3;
+    } else {
+        if (l0 == 0x82) {
+            if (pos + 4 > buf_len) { return 0 - 1; }
+            clen = ((load8(buf + pos + 2) & 0xFF) << 8) | (load8(buf + pos + 3) & 0xFF);
+            cpos = pos + 4;
+        } else {
+            if (l0 >= 0x80) { return 0 - 1; }   # >2 length bytes: unsupported here
+        }
+    }
+    if (cpos + clen > buf_len) { return 0 - 1; }
+    store64(out_cpos, cpos);
+    store64(out_clen, clen);
+    return tag;
+}
+
+# Case-insensitive (ASCII) equality over `n` bytes.
+fn _tn_ci_eq(a, b, n): i64 {
+    var i = 0;
+    while (i < n) {
+        var ca = load8(a + i) & 0xFF;
+        var cb = load8(b + i) & 0xFF;
+        if (ca >= 0x41) { if (ca <= 0x5A) { ca = ca + 32; } }
+        if (cb >= 0x41) { if (cb <= 0x5A) { cb = cb + 32; } }
+        if (ca != cb) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Match one dNSName (`dns`/`dns_len`) against `host` (RFC 6125): exact
+# case-insensitive, or a leftmost wildcard "*.domain" that matches
+# exactly one extra label (no embedded dot in the host's first label).
+fn _tn_host_match(dns, dns_len, host, host_len): i64 {
+    if (dns_len >= 2) {
+        if ((load8(dns) & 0xFF) == 0x2A) {
+            if ((load8(dns + 1) & 0xFF) == 0x2E) {
+                var suffix = dns + 1;            # ".domain.tld"
+                var suffix_len = dns_len - 1;
+                if (host_len <= suffix_len) { return 0; }
+                var firstdot = 0 - 1;
+                var i = 0;
+                while (i < host_len) {
+                    if ((load8(host + i) & 0xFF) == 0x2E) { firstdot = i; i = host_len; }
+                    else { i = i + 1; }
+                }
+                if (firstdot < 0) { return 0; }
+                if (host_len - firstdot != suffix_len) { return 0; }
+                return _tn_ci_eq(host + firstdot, suffix, suffix_len);
+            }
+        }
+    }
+    if (dns_len != host_len) { return 0; }
+    return _tn_ci_eq(dns, host, dns_len);
+}
+
+# Walk a cert DER to its SubjectAltName extension and match `host`
+# against the dNSName entries. Returns 1 on a match, 0 otherwise.
+fn _tn_cert_san_match(der, der_len, host, host_len): i64 {
+    var cp = 0;
+    var cl = 0;
+    if (_tn_der_hdr(der, der_len, 0, &cp, &cl) != 0x30) { return 0; }   # Certificate
+    var tp = 0;
+    var tl = 0;
+    if (_tn_der_hdr(der, der_len, cp, &tp, &tl) != 0x30) { return 0; }  # tbsCertificate
+    # Find the [3] extensions wrapper among the TBS elements.
+    var pos = tp;
+    var tbs_end = tp + tl;
+    var ext_cp = 0;
+    var found = 0;
+    while (pos < tbs_end) {
+        var ecp = 0;
+        var ecl = 0;
+        var tag = _tn_der_hdr(der, der_len, pos, &ecp, &ecl);
+        if (tag < 0) { return 0; }
+        if (tag == 0xA3) { ext_cp = ecp; found = 1; pos = tbs_end; }
+        else { pos = ecp + ecl; }
+    }
+    if (found == 0) { return 0; }
+    var sp = 0;
+    var sl = 0;
+    if (_tn_der_hdr(der, der_len, ext_cp, &sp, &sl) != 0x30) { return 0; }  # SEQ OF Extension
+    var ep = sp;
+    var ext_end = sp + sl;
+    while (ep < ext_end) {
+        var xcp = 0;
+        var xcl = 0;
+        if (_tn_der_hdr(der, der_len, ep, &xcp, &xcl) != 0x30) { return 0; }
+        var ext_next = xcp + xcl;
+        var op = 0;
+        var ol = 0;
+        if (_tn_der_hdr(der, der_len, xcp, &op, &ol) == 0x06) {
+            if (ol == 3) {
+                if ((load8(der + op) & 0xFF) == 0x55) {
+                    if ((load8(der + op + 1) & 0xFF) == 0x1D) {
+                        if ((load8(der + op + 2) & 0xFF) == 0x11) {
+                            # SAN: skip optional critical BOOLEAN → OCTET STRING.
+                            var vp = op + ol;
+                            var vcp = 0;
+                            var vcl = 0;
+                            var vtag = _tn_der_hdr(der, der_len, vp, &vcp, &vcl);
+                            if (vtag == 0x01) {
+                                vp = vcp + vcl;
+                                vtag = _tn_der_hdr(der, der_len, vp, &vcp, &vcl);
+                            }
+                            if (vtag != 0x04) { return 0; }
+                            var gp = 0;
+                            var gl = 0;
+                            if (_tn_der_hdr(der, der_len, vcp, &gp, &gl) != 0x30) { return 0; }
+                            var np = gp;
+                            var gn_end = gp + gl;
+                            while (np < gn_end) {
+                                var ncp = 0;
+                                var ncl = 0;
+                                var ntag = _tn_der_hdr(der, der_len, np, &ncp, &ncl);
+                                if (ntag < 0) { return 0; }
+                                if (ntag == 0x82) {
+                                    if (_tn_host_match(der + ncp, ncl, host, host_len) == 1) { return 1; }
+                                }
+                                np = ncp + ncl;
+                            }
+                            return 0;
+                        }
+                    }
+                }
+            }
+        }
+        ep = ext_next;
+    }
+    return 0;
+}
+
+# Client: verify the SNI host against the server cert's SubjectAltName
+# (.30). Returns TLS_OK on a match, TLS_ERR_CERT_HOSTNAME_MISMATCH if
+# no dNSName matches (or the cert has no SAN), or TLS_ERR_* on bad args.
+fn tls_native_client_verify_hostname(ctx): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var cert = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
+    var host = load64(ctx + TLS_CTX_OFF_HOST);
+    var host_len = load64(ctx + TLS_CTX_OFF_HOST_LEN);
+    if (cert == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    if (host == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INVALID_PARAM); }
+    if (host_len <= 0) { return _tn_ctx_fail(ctx, TLS_ERR_INVALID_PARAM); }
+    if (_tn_cert_san_match(load64(cert), load64(cert + 8), host, host_len) == 1) {
+        return TLS_OK;
+    }
+    return _tn_ctx_fail(ctx, TLS_ERR_CERT_HOSTNAME_MISMATCH);
+}
+
 # Set the minimum + maximum TLS protocol version. Both args use the
 # TlsProtocolVersion enum. Default is 1.2 .. 1.3; setting min=1.3
 # refuses 1.2-only peers. Setting max=1.2 disables 1.3.

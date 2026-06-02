@@ -1547,4 +1547,54 @@ assert_eq(tls_native_set_ca_bundle(0, cert23, 385, 1), TLS_ERR_INVALID_PARAM, "s
 var noRoot = tls_native_new_client("x", 1);
 assert_eq(tls_native_client_verify_chain(noRoot, now29), TLS_ERR_CERT_INVALID, "no leaf/root → CERT_INVALID");
 
+# ================================================================
+# v6.0.30 — hostname / SAN verification (RFC 6125)
+# ================================================================
+test_group("v6.0.30 hostname / SAN verification");
+
+# ECDSA-P256 cert with SAN = DNS:localhost, DNS:*.example.com.
+var san_der = hex_decode("308201a130820148a00302010202141058742248fc324a18a6fd67b46e74b49a4a4d6e300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630323030323335325a170d3336303533303030323335325a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200041b56c2a257abd9742b5943345d546b3822d9e006fb5948ab08a486e5a2d638a722abeeae915f15adaf4015bec926c5b73f65feeb01d7cc360f66ebff71636877a3783076301d0603551d0e0416041495babf46389fd75916533da2d7ad96a9e4e7f194301f0603551d2304183016801495babf46389fd75916533da2d7ad96a9e4e7f194300f0603551d130101ff040530030101ff30230603551d11041c301a82096c6f63616c686f7374820d2a2e6578616d706c652e636f6d300a06082a8648ce3d04030203470030440220746df90d6816c1f91763b15214b661d9d98d0acd66ad2a9ac1c9406aa0bc9d070220618f642d897e8d8e9b5e12eb2dd60e27fc89d3d76172475f4eed71cc7f5dda24", 842);
+var san_cert = x509_cert_alloc();
+assert_eq(x509_parse(san_der, 421, san_cert), 1, "SAN cert parses");
+
+# Exact SAN match (localhost).
+var h1 = tls_native_new_client("localhost", 9);
+store64(h1 + TLS_CTX_OFF_SERVER_CERT, san_cert);
+assert_eq(tls_native_client_verify_hostname(h1), TLS_OK, "exact SAN match: localhost");
+
+# Wildcard match (*.example.com → foo.example.com).
+var h2 = tls_native_new_client("foo.example.com", 15);
+store64(h2 + TLS_CTX_OFF_SERVER_CERT, san_cert);
+assert_eq(tls_native_client_verify_hostname(h2), TLS_OK, "wildcard match: foo.example.com");
+
+# Wildcard is single-label only.
+var h3 = tls_native_new_client("foo.bar.example.com", 19);
+store64(h3 + TLS_CTX_OFF_SERVER_CERT, san_cert);
+assert_eq(tls_native_client_verify_hostname(h3), TLS_ERR_CERT_HOSTNAME_MISMATCH, "wildcard rejects multi-label");
+
+# Wildcard doesn't match the bare domain.
+var h4 = tls_native_new_client("example.com", 11);
+store64(h4 + TLS_CTX_OFF_SERVER_CERT, san_cert);
+assert_eq(tls_native_client_verify_hostname(h4), TLS_ERR_CERT_HOSTNAME_MISMATCH, "wildcard rejects bare domain");
+
+# Unrelated host.
+var h5 = tls_native_new_client("evil.com", 8);
+store64(h5 + TLS_CTX_OFF_SERVER_CERT, san_cert);
+assert_eq(tls_native_client_verify_hostname(h5), TLS_ERR_CERT_HOSTNAME_MISMATCH, "unrelated host rejected");
+
+# Case-insensitive exact match.
+var h7 = tls_native_new_client("LOCALHOST", 9);
+store64(h7 + TLS_CTX_OFF_SERVER_CERT, san_cert);
+assert_eq(tls_native_client_verify_hostname(h7), TLS_OK, "case-insensitive SAN match");
+
+# Cert with no SAN (cert23) → mismatch.
+var h6 = tls_native_new_client("localhost", 9);
+var c23 = x509_cert_alloc();
+x509_parse(cert23, 385, c23);
+store64(h6 + TLS_CTX_OFF_SERVER_CERT, c23);
+assert_eq(tls_native_client_verify_hostname(h6), TLS_ERR_CERT_HOSTNAME_MISMATCH, "no SAN extension → mismatch");
+
+# Guard.
+assert_eq(tls_native_client_verify_hostname(0), TLS_ERR_INVALID_PARAM, "verify_hostname(null)");
+
 var r = assert_summary();
