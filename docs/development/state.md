@@ -3,6 +3,36 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.37 ship — macОS `fn main()` return→exit FIXED)
+
+Closing **v6.0.37**. macОS `fn main(){return N;}` now exits N (was 1).
+Verified end-to-end via the real `cyrius audit` gate on `ecb`.
+
+**Root cause (`src/main_aarch64_macho.cyr`):** the native Mach-O driver
+is a stale fork that never received `main_aarch64.cyr`'s **v5.9.37
+auto-call-`main` fix** (same rot class as the v6.0.33 entry-prologue
+gap). The emitted entry stub fell straight through to the exit syscall
+**without `bl main`** → `main()` never ran → exit with `argc` (1).
+Disassembly (native vs cross) confirmed the missing `bl`. Ported the
+fix: walk fn table for `"main\0"` → `ECALLTO` before `EEXIT`.
+**Native-compiler-only** — the cross-emitter (`main_aarch64.cyr`+env)
+already had it, so `.35`/.36 cross-built smokes passed while the
+on-device toolchain didn't. Tools unaffected (explicit `sys_exit`).
+
+**Gate hardening (`cbt/commands.cyr`):** the `cyrius audit` macОS gate
+now asserts `fn main(){return 42;}`→42 (a `var x=42;` smoke would sail
+past this exact rot). Gate line: "self-host byte-identical + exit-code
+propagation".
+
+**Gates:** `cyrius audit` PASS — ecb self-host **byte-identical 639,412
+B** + exit-code assertion. x86 self-host **byte-identical 885,040 B** (no
+`src/main.cyr` change); `check.sh` **82/82**. Compiler source defines no
+firing `fn main` → macОS self-host stays byte-identical.
+
+**Next (user order): Windows install + self-host (cass) → UEFI `fncallN`
+ud2 regression → CI cross-OS gate → AGNOS userspace arc.** See
+[[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.36 ship — open-issue LHF cleanup batch)
 
 Closing **v6.0.36**, the open-issue low-hanging-fruit cleanup batch
