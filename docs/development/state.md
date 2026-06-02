@@ -3,6 +3,33 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.30 ship — TLS Mini-arc B.7 hostname / SAN verification)
+
+Closing **v6.0.30**, the seventh slot of TLS Mini-arc B (client).
+`lib/`-only.
+
+`tls_native_client_verify_hostname(ctx)`: walks the server cert DER to
+its SubjectAltName (OID 2.5.29.17 — sigil doesn't surface SAN) + matches
+the SNI host per RFC 6125 (case-insensitive exact; leftmost wildcard,
+single-label). Private helpers `_tn_der_hdr` (TLV reader),
+`_tn_cert_san_match`, `_tn_host_match`, `_tn_ci_eq`. Returns TLS_OK /
+CERT_HOSTNAME_MISMATCH.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,843 → **2,844 fns** (+client_verify_hostname).
+- `tls_native_scaffold.tcyr` 360 → **369 asserts** (+9): SAN cert
+  (localhost + *.example.com) — exact, wildcard, multi-label reject,
+  bare-domain reject, case-insensitive, no-SAN → mismatch.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — Mini-arc B step 7 of 8.
+Next: **.31 — localhost client↔server socket e2e** (lands
+`tls_native_connect()` client socket driver + socket-level
+`tls_native_write`/`read`; runs full client↔server handshake + app data
+over a socketpair). Closes Mini-arc B → cyrius has a complete native
+TLS 1.3 client + server.
+
 ## Session close — 2026-06-01 (.29 ship — TLS Mini-arc B.6 X.509 chain verification)
 
 Closing **v6.0.29**, the sixth slot of TLS Mini-arc B (client).

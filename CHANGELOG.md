@@ -6,6 +6,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.30] — 2026-06-01
+
+**TLS arc Mini-arc B.7 — TLS 1.3 client: hostname / SAN verification.**
+Seventh slot of the client mini-arc. `lib/`-only.
+
+### Added — client (`lib/tls_native.cyr`, RFC 6125)
+
+- `tls_native_client_verify_hostname(ctx)` — walks the server cert DER
+  to its SubjectAltName extension (OID 2.5.29.17) and matches the SNI
+  host against the dNSName entries: case-insensitive **exact** match,
+  or a **leftmost wildcard** (`*.example.com` matches one extra label
+  only — not multi-label, not the bare domain). Returns TLS_OK or
+  `TLS_ERR_CERT_HOSTNAME_MISMATCH` (also when the cert has no SAN).
+  sigil's x509 parser doesn't surface the SAN, so this is cyrius-side:
+  private `_tn_der_hdr` (TLV reader), `_tn_cert_san_match` (DER walk to
+  the SAN extension), `_tn_host_match` + `_tn_ci_eq` (RFC 6125 matching).
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 360 → **369 asserts** with a generated
+  SAN cert (`DNS:localhost, DNS:*.example.com`): exact match, wildcard
+  match, multi-label rejection, bare-domain rejection, case-insensitive
+  match, and a no-SAN cert → mismatch.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot 2,843 → **2,844 fns**
+  (+`tls_native_client_verify_hostname`).
+
 ## [6.0.29] — 2026-06-01
 
 **TLS arc Mini-arc B.6 — TLS 1.3 client: X.509 chain verification.**
