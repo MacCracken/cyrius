@@ -1116,6 +1116,7 @@ var TLS_CTX_OFF_CLI_APP_KEY   = 376; # client application-traffic key ptr
 var TLS_CTX_OFF_CLI_APP_IV    = 384; # client application-traffic static IV ptr
 var TLS_CTX_OFF_SRV_APP_SEQ   = 392; # inline 8-byte server app-record sequence
 var TLS_CTX_OFF_CLI_APP_SEQ   = 400; # inline 8-byte client app-record sequence
+var TLS_CTX_OFF_CA_ROOT       = 408; # client: parsed trust-anchor cert (.29)
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -2934,7 +2935,45 @@ fn tls_native_set_verify(ctx, mode): i64 {
 # bundle is treated as a trust root. Defaults to the system bundle
 # (Linux: /etc/ssl/certs/ca-certificates.crt or platform equivalent).
 fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (pem_bundle == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (bundle_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    var root = x509_cert_alloc();
+    if (root == 0) { return TLS_ERR_OOM; }
+    if (is_der != 0) {
+        if (x509_parse(pem_bundle, bundle_len, root) != 1) { return TLS_ERR_CERT_INVALID; }
+    } else {
+        # PEM bundle: decode the first certificate as the trust anchor.
+        # (Multi-root bundles store >1 root — that refinement comes with
+        # the system-store path; .29 takes the first.)
+        var chain[16];
+        var n = pem_decode_certs(pem_bundle, bundle_len, &chain, 1);
+        if (n < 1) { return TLS_ERR_CERT_INVALID; }
+        if (x509_parse(load64(&chain), load64(&chain + 8), root) != 1) {
+            return TLS_ERR_CERT_INVALID;
+        }
+    }
+    store64(ctx + TLS_CTX_OFF_CA_ROOT, root);
+    return TLS_OK;
+}
+
+# Client: verify the server's certificate chain against the configured
+# trust anchor (.29). `now_unix` is the validation time (the caller
+# supplies it — there is no in-stdlib clock wrapper yet). Uses sigil's
+# x509_verify_chain over the parsed server leaf + the CA root. Returns
+# TLS_OK on a verified chain, or TLS_ERR_CERT_INVALID. Intermediate
+# certificates from the Certificate message are a follow-on (today the
+# leaf must chain directly to the trust anchor, e.g. self-signed roots).
+fn tls_native_client_verify_chain(ctx, now_unix): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
+    var root = load64(ctx + TLS_CTX_OFF_CA_ROOT);
+    if (leaf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    if (root == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    if (x509_verify_chain(leaf, 0, 0, root, now_unix) != 1) {
+        return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID);
+    }
+    return TLS_OK;
 }
 
 # Set the minimum + maximum TLS protocol version. Both args use the

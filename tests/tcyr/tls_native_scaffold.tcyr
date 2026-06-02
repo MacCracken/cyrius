@@ -40,7 +40,7 @@ assert_eq(tls_native_new_server(0, 0, 0, 0), 0, "new_server rejects null cert (0
 assert_eq(tls_native_set_alpn(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_alpn stub");
 # set_verify is live (.15): null ctx → INVALID_PARAM, not NOT_IMPLEMENTED.
 assert_eq(tls_native_set_verify(0, TLS_VERIFY_PEER), TLS_ERR_INVALID_PARAM, "set_verify null ctx");
-assert_eq(tls_native_set_ca_bundle(0, 0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_ca_bundle stub");
+assert_eq(tls_native_set_ca_bundle(0, 0, 0, 0), TLS_ERR_INVALID_PARAM, "set_ca_bundle null ctx (live .29)");
 assert_eq(tls_native_set_version_range(0, TLS_VERSION_1_2, TLS_VERSION_1_3), TLS_ERR_NOT_IMPLEMENTED, "set_version_range stub");
 assert_eq(tls_native_connect(0, 0 - 1), TLS_ERR_NOT_IMPLEMENTED, "connect stub");
 assert_eq(tls_native_accept(0, 0 - 1), TLS_ERR_INVALID_PARAM, "accept null ctx → INVALID_PARAM");
@@ -1516,5 +1516,35 @@ assert_eq(tls_native_key_update_secret(&sap28, 48, TLS_HASH_SHA384, &upd1), TLS_
 tls_native_key_update_secret(&sap28, 48, TLS_HASH_SHA384, &upd2);
 assert_streq(hex_encode(&upd1, 48), hex_encode(&upd2, 48), "key_update_secret deterministic");
 assert_eq(_tn_ct_eq(&upd1, &sap28, 48), 0, "updated secret differs from original");
+
+# ================================================================
+# v6.0.29 — X.509 chain verification
+# ================================================================
+test_group("v6.0.29 X.509 chain verification");
+
+# cl28 (from .28) holds the server's parsed leaf cert (cert23, a
+# self-signed CA:TRUE cert). Validate against a configured trust root.
+var leaf29 = load64(cl28 + TLS_CTX_OFF_SERVER_CERT);
+assert_neq(leaf29, 0, "client has the server leaf cert");
+var nb29 = x509_cert_not_before(leaf29);
+var now29 = nb29 + 86400;          # one day into the validity window
+
+# Trust the (self-signed) server cert as a DER root → chain verifies.
+assert_eq(tls_native_set_ca_bundle(cl28, cert23, 385, 1), TLS_OK, "set DER CA root");
+assert_eq(tls_native_client_verify_chain(cl28, now29), TLS_OK, "self-signed cert chains to trusted root");
+
+# Trust an UNRELATED cert (sigil's P-256 test leaf) → chain fails.
+assert_eq(tls_native_set_ca_bundle(cl28, leaf_cert, 413, 1), TLS_OK, "set a different DER root");
+assert_eq(tls_native_client_verify_chain(cl28, now29), TLS_ERR_CERT_INVALID, "untrusted root → CERT_INVALID");
+
+# Expired (now past notAfter) → CERT_INVALID even with the right root.
+tls_native_set_ca_bundle(cl28, cert23, 385, 1);
+var na29 = x509_cert_not_after(leaf29);
+assert_eq(tls_native_client_verify_chain(cl28, na29 + 86400), TLS_ERR_CERT_INVALID, "now > notAfter → CERT_INVALID");
+
+# Guards.
+assert_eq(tls_native_set_ca_bundle(0, cert23, 385, 1), TLS_ERR_INVALID_PARAM, "set_ca_bundle(null)");
+var noRoot = tls_native_new_client("x", 1);
+assert_eq(tls_native_client_verify_chain(noRoot, now29), TLS_ERR_CERT_INVALID, "no leaf/root → CERT_INVALID");
 
 var r = assert_summary();
