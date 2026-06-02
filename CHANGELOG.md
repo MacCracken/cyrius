@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.41] — 2026-06-02
+
+**arm64-macOS `[deps] stdlib` blocker fully fixed; x86-macOS runtime arc opened.**
+
+### Fixed
+
+- **arm64-macOS `[deps] stdlib` build SIGSYS — the v6.0.40 bug-1 follow-on,
+  now resolved (ai-hwaccel unblocked).** Pinned by checkpoint-bisection on
+  `ecb`; it was TWO more Darwin-ABI defects (NOT the `dir_list`/`getdents64`
+  the v6.0.40 "Known issues" note guessed — corrected: the `[deps]` resolver
+  copies by name and never lists a directory):
+  - **getcwd SIGSYS.** `cmd_deps` → `_abs_path(".")` issued `syscall(79)`
+    (x86 getcwd). The arm64-macho `ESYSXLAT` mapped `79→326` as "__getcwd",
+    but **Darwin has no getcwd syscall and slot 326 is unused** → an
+    unimplemented call → SIGSYS. cycc's self-host never calls getcwd, so the
+    bogus map shipped green for 6 minors. Fixed: `_abs_path` derives cwd on
+    Darwin via `open(".")→fcntl(F_GETPATH=50)→close`; `ESYSXLAT` gains
+    `fcntl 72→92` and drops the fraudulent `79→326`.
+  - **transitive stdlib silently dropped.** `_file_size` read the Linux
+    `st_size` offset (byte 48); the raw Darwin `stat` (188) fills the legacy
+    32-bit-inode struct with `st_size` at **byte 72** (verified by dumping
+    the struct on `ecb`). Wrong size → truncated include-scan → `io` copied
+    without its `syscalls`/`result` chain. Fixed (`#ifdef`, offset 72).
+  - Verified end-to-end on `ecb`: `[deps] stdlib=["io"]` resolves all 8
+    transitive files, builds, and the resolved stdlib **executes** (`io.print`
+    outputs, correct exit). x86 + arm64 self-host byte-identical.
+- **aarch64-Linux getcwd `79→17` (latent).** `_abs_path`'s `syscall(79)` is
+  `fstatat` on aarch64-Linux, so it had been returning a relative path
+  (degraded dep resolution, non-crashing). Now renumbered in the
+  aarch64-Linux `ESYSXLAT`.
+
+### Added
+
+- **x86-macOS runtime arc — first 2 layers (groundwork; the Intel-Mac cycc
+  is still non-functional, tracked in
+  `issues/2026-06-02-macos-x86-release-no-compiler.md`).** Diagnosed on
+  `ach`; exit walked 140→139 as each layer landed. Both are `#ifdef`/flag
+  gated to Mach-O — **inert on ELF/Linux**, x86 ELF self-host byte-identical.
+  - **mmap heap bootstrap** (`src/main.cyr`): the driver's first syscall was
+    `brk` (Darwin has no brk → instant SIGSYS); now mmaps the compiler-state
+    heap on macho, mirroring the arm64 driver.
+  - **`EMACHO_SYSXLAT`** (`src/backend/x86/emit.cyr`): the x86 analog of
+    arm64's `ESYSXLAT` — rewrites Linux syscall numbers → `0x2000000|<BSD>`
+    inline before each `syscall` instruction. Args already match Darwin's
+    x86_64 ABI. Remaining layers (`/proc/self/cmdline` arg parsing, envp
+    stack reading) are documented in the issue.
+
+### Docs
+
+- Filed `issues/2026-06-02-macos-getdirentries-dir-listing-port.md` — the
+  Darwin directory-enumeration gap (`getdents64`→`getdirentries`), a
+  separate surface that does NOT block `[deps]` (affects `cyrius update` /
+  git-dep locks). Updated the arm64-deps and x86-macOS issue notes with the
+  pinned root causes.
+
 ## [6.0.40] — 2026-06-02
 
 **Stdlib QoL + first fix of the arm64-macOS `[deps] stdlib` blocker.**

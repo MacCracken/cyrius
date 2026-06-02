@@ -3,6 +3,53 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.41 ship — arm64-macOS [deps] FIXED; x86-macOS arc opened)
+
+Closing **v6.0.41**. self-host byte-identical 886,272 B (x86 + arm64).
+
+**Fixed — arm64-macOS `[deps] stdlib` build SIGSYS (ai-hwaccel UNBLOCKED).**
+The v6.0.40 bug-1 follow-on, pinned by checkpoint-bisection on `ecb`. NOT
+`dir_list`/`getdents64` (the .40 guess was wrong — the resolver copies by
+name, never lists a dir). TWO Darwin-ABI defects:
+- **getcwd SIGSYS:** `_abs_path`'s `syscall(79)` mapped `79→326` ("__getcwd")
+  in arm64 `ESYSXLAT` — but **Darwin has no getcwd syscall; slot 326 is
+  unused** → SIGSYS. cycc self-host never calls getcwd → shipped green 6
+  minors. Now `open(".")→fcntl(F_GETPATH)→close`; `ESYSXLAT` gains
+  `fcntl 72→92`, drops `79→326`. Also `getcwd 79→17` added to aarch64-Linux
+  ESYSXLAT (was `fstatat` → relative-path degradation, latent).
+- **transitive stdlib dropped:** `_file_size` read Linux `st_size` offset
+  48; raw Darwin `stat` fills the legacy struct with size at **byte 72**
+  (verified by struct dump). Wrong size → truncated include-scan → `io`
+  copied without its chain. Fixed (`#ifdef`, offset 72).
+Verified end-to-end on `ecb`: 8 transitive files, build OK, stdlib executes.
+
+**Added — x86-macOS runtime arc, first 2 of N layers (Intel cycc still
+non-functional; gated to macho, inert on ELF, x86 ELF self-host byte-id).**
+Diagnosed on `ach`, exit walked 140→139: (1) mmap heap bootstrap in
+`main.cyr` (`brk` was first syscall → SIGSYS); (2) `EMACHO_SYSXLAT`
+(`backend/x86/emit.cyr`) — x86 analog of arm64 `ESYSXLAT`, rewrites Linux
+syscall nums → `0x2000000|BSD`. **Layer 3 (`/proc/self/cmdline` arg parse:
+no `/proc` + Darwin errno-in-carry → walks off stack → SIGSEGV) and layer 4
+(envp stack reading) remain.** Architecture call pending (dedicated
+`main_x86_macho.cyr` vs continued `#ifdef`). Issue
+`2026-06-02-macos-x86-release-no-compiler.md`.
+
+**Filed:** `2026-06-02-macos-getdirentries-dir-listing-port.md` (separate
+Darwin dir-enum gap; NOT a `[deps]` blocker — affects `cyrius update` /
+git-dep locks). **Queue intake requested:** struct-field cap (32) raise +
+related cap items from proposals/issues → next-version queue.
+
+**Queue (user-confirmed 2026-06-02):** x86_64-macOS runtime layers 3-4
+(`ach`: `/proc/self/cmdline`→stack-argv + Darwin errno convention, then
+envp) · Windows `cycc` runtime bug 2+ (`SBL`/`GBL`, `cass`) · UEFI ud2 ·
+CI cross-OS gate · **compiler table-cap raises bundle** (AFTER platform
+repairs — struct fields 32→64/128 [avatara 2.5.0 blocked], type table
+256→ + silent-FAIL diagnostic, secret/defer per-fn 8→32; all three are
+compile-state tables, ship as one packed release; issues:
+`2026-06-02-struct-field-cap-raise.md`,
+`2026-05-28-type-table-256-cap.md`, `2026-05-27-secret-defer-block-per-fn-cap.md`)
+· then AGNOS. See [[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.40 ship — stdlib QoL + arm64-macOS [deps] probe fix)
 
 Closing **v6.0.40**. check.sh 82/82; self-host byte-identical 885,040 B.

@@ -296,7 +296,7 @@ fn ETESTAZ(S): i64 { if (_IR_REC0(S, IR_TEST_AZ) == 1) { return 0; } E3(S, 0xC08
 fn EMOVRDXRAX(S): i64 { if (_IR_REC0(S, IR_MOV_RDX_RAX) == 1) { return 0; } E3(S, 0xC28948); return 0; }
 fn EMOVRA_RDX(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
 fn EMOVRDI(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xC78948); return 0; }
-fn ESYSCALL(S): i64 { if (_IR_REC0(S, IR_SYSCALL) == 1) { return 0; } E2(S, 0x050F); _flags_reflect_rax = 0; return 0; }
+fn ESYSCALL(S): i64 { if (_IR_REC0(S, IR_SYSCALL) == 1) { return 0; } if (_TARGET_MACHO == 1) { EMACHO_SYSXLAT(S); } E2(S, 0x050F); _flags_reflect_rax = 0; return 0; }
 fn ELOAD8(S): i64 { if (_IR_REC0(S, IR_LOAD8) == 1) { return 0; } EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
 fn ELOAD16(S): i64 { if (_IR_REC0(S, IR_LOAD16) == 1) { return 0; } EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
 fn ELOAD32(S): i64 { if (_IR_REC0(S, IR_LOAD32) == 1) { return 0; } EB(S, 0x8B); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
@@ -649,6 +649,57 @@ fn EEXIT(S): i64 {
     if (_TARGET_MACHO == 1) { EMOVI(S, 0x2000001); }
     else { EMOVI(S, 60); }
     ESYSCALL(S);
+    return 0;
+}
+
+# v6.0.41: x86_64 Darwin BSD syscall translation — the x86 analog of the
+# arm64 ESYSXLAT (v6.0.34). On Mach-O, `cycc`'s syscalls carry Linux
+# numbers (the compiler's Sys enum is x86-Linux), but Darwin uses BSD
+# numbers with the Unix-class flag 0x2000000 in rax. Emitted inline right
+# before the `syscall` instruction (see ESYSCALL) when _TARGET_MACHO==1.
+# Args already match — Darwin x86_64 passes rdi/rsi/rdx/r10/r8/r9 exactly
+# like Linux, so ESCPOPS needs no change; only the number is rewritten.
+# Without this the x86 Mach-O cycc ran trivial programs (exit path was
+# pre-classed in EEXIT) but SIGSYS'd on any real compile (read/mmap/write
+# hit untranslated numbers). See issue 2026-06-02-macos-x86-release-no-compiler.
+#
+# Each entry: cmp rax,<lin>; jne +7; mov rax,<0x2000000|bsd>. If rax holds
+# the Linux number it is rewritten and subsequent cmps (now rax≈0x2000xxx)
+# never match; otherwise it falls through unchanged (e.g. EEXIT's already-
+# classed 0x2000001 skips the whole chain).
+fn _msx(S, lin, classed): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, lin);    # cmp rax, lin (imm8)
+    EB(S, 0x75); EB(S, 0x07);                             # jne +7 (skip the mov)
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);                # mov rax, imm32:
+    EB(S, classed & 0xFF); EB(S, (classed >> 8) & 0xFF);
+    EB(S, (classed >> 16) & 0xFF); EB(S, (classed >> 24) & 0xFF);
+    return 0;
+}
+fn EMACHO_SYSXLAT(S): i64 {
+    _msx(S, 0,  0x2000003);   # read     0  → 3
+    _msx(S, 1,  0x2000004);   # write    1  → 4
+    _msx(S, 2,  0x2000005);   # open     2  → 5
+    _msx(S, 3,  0x2000006);   # close    3  → 6
+    _msx(S, 4,  0x20000BC);   # stat     4  → 188
+    _msx(S, 5,  0x20000BD);   # fstat    5  → 189
+    _msx(S, 8,  0x20000C7);   # lseek    8  → 199
+    _msx(S, 9,  0x20000C5);   # mmap     9  → 197
+    _msx(S, 10, 0x200004A);   # mprotect 10 → 74
+    _msx(S, 11, 0x2000049);   # munmap   11 → 73
+    _msx(S, 21, 0x2000021);   # access   21 → 33
+    _msx(S, 39, 0x2000014);   # getpid   39 → 20
+    _msx(S, 59, 0x200003B);   # execve   59 → 59
+    _msx(S, 60, 0x2000001);   # exit     60 → 1
+    _msx(S, 61, 0x2000007);   # wait4    61 → 7
+    _msx(S, 72, 0x200005C);   # fcntl    72 → 92
+    _msx(S, 77, 0x20000C9);   # ftruncate 77 → 201
+    _msx(S, 82, 0x2000080);   # rename   82 → 128
+    _msx(S, 83, 0x2000088);   # mkdir    83 → 136
+    _msx(S, 84, 0x2000089);   # rmdir    84 → 137
+    _msx(S, 87, 0x200000A);   # unlink   87 → 10
+    _msx(S, 88, 0x2000039);   # symlink  88 → 57
+    _msx(S, 89, 0x200003A);   # readlink 89 → 58
+    _msx(S, 90, 0x200000F);   # chmod    90 → 15
     return 0;
 }
 

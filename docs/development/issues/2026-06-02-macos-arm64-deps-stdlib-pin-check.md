@@ -80,11 +80,11 @@ the snapshot is reachable — only the `[deps] stdlib` resolver rejects it.
 x86_64 with the same 6.0.38 toolchain and an identical 82-file snapshot.
 Only Darwin arm64 false-negatives.
 
-## UPDATE 2026-06-02 — root cause confirmed on ecb; TWO bugs (common root)
+## UPDATE 2026-06-02 — RESOLVED on ecb; THREE distinct Darwin-ABI defects
 
-Dug on ecb. The common root is that **`getdents64` (Linux syscall 217) is
-not ported to Darwin** — arm64 macho ESYSXLAT (.34) never covered it, and
-the whole directory-listing surface (`is_dir`, `dir_list`) depends on it.
+Dug + checkpoint-bisected on ecb. There was **no single common root** (the
+first pass guessed "getdents64 everywhere" — only bug 1 was that). Three
+separate Darwin-ABI defects stacked, each masking the next:
 
 - **Bug 1 — install-probe `is_dir` false-negative (FIXED, v6.0.40).**
   `_dep_find_stdlib_dir` used `is_dir(pinned_lib)`, which probes via
@@ -93,31 +93,55 @@ the whole directory-listing surface (`is_dir`, `dir_list`) depends on it.
   Darwin-safe). Verified on ecb: the false "not installed" error is gone,
   the requested module (`io.cyr`) resolves into `./lib`.
 
-- **Bug 2 — `cyrius build` SIGSYS (OPEN; ROOT CAUSE NOT YET PINNED).**
-  With bug 1 fixed, `cyrius build` (pin + `[deps] stdlib`) now **exits 140
-  (SIGSYS / bad syscall)** instead of the false error. `cyrius deps` alone
-  copied `io.cyr` and survived; only the `build` path trips it.
+- **Bug 2 — `cyrius build`/`deps` SIGSYS (FIXED — pinned by checkpoint
+  bisection on ecb; was TWO distinct Darwin-ABI defects, NOT dir_list).**
 
-  > **CORRECTION (2026-06-02):** an earlier revision of this note (and the
-  > v6.0.40 CHANGELOG) asserted the cause was the resolver's `dir_list`
-  > calling `getdents64`. That was an **unverified assumption and is
-  > probably wrong** — the `[deps] stdlib` resolver copies modules BY NAME
-  > (`_dep_copy_file` + `_dep_stdlib_seen`), it does not enumerate the dir.
-  > The actual SIGSYS source has NOT been pinned. Do not trust the
-  > "dir_list" claim. **Next step: reproduce T4 on ecb and instrument /
-  > checkpoint to find the exact syscall + step that SIGSYS's** (candidates:
-  > `_file_size`'s `stat` with the Linux struct offset; an is_dir on the
-  > build path; the auto-prepend; or the forked cycc compile of the
-  > `[deps]`-resolved unit). Pin it before claiming a fix.
+  > **CORRECTION of the earlier "dir_list/getdents64" claim:** that was
+  > wrong. The `[deps] stdlib` resolver copies modules BY NAME — it never
+  > enumerates a directory. Checkpoint-bisecting `cyrius deps` on ecb
+  > pinned the real causes, both stat/getcwd-ABI, not dir listing:
 
-  Separately, the **directory-listing surface IS Linux-only on Darwin**
-  (`is_dir`/`dir_list` use `getdents64` = Linux 217, unported) — that's a
-  real gap (it caused bug 1) and likely bites `cyrius update` / tool
-  dir-walking on macOS, but a probe of raw Darwin `getdirentries`
-  (syscalls 344 and 196) returned **EFAULT** from a minimal test, so the
-  Darwin dir-enum ABI needs more investigation before that port lands.
-  **Consumer (ai-hwaccel) stays blocked until bug 2's real cause is found
-  and fixed.**
+  - **2a — getcwd SIGSYS (the hard crash).** After copying the stdlib by
+    name, `cmd_deps` calls `_abs_path(".")` to get the consumer dir, which
+    issued `syscall(79)` = x86 getcwd. The arm64-macho `ESYSXLAT` mapped
+    `79 → 326` claiming "__getcwd 326" — but **Darwin has no getcwd syscall
+    and slot 326 is unused** (`/* 326 */` in the SDK), so it ran an
+    unimplemented syscall → SIGSYS (exit 140). The macho self-host never
+    calls getcwd (cycc reads stdin), so the bogus map shipped green for 6
+    minors — only the wrapper's `[deps]` path hit it.
+    **Fix:** `_abs_path` now derives cwd on Darwin via
+    `open(".") → fcntl(fd, F_GETPATH=50, buf) → close` (`#ifdef
+    CYRIUS_TARGET_MACOS`); ESYSXLAT gains `fcntl 72→92` and drops the
+    fraudulent `79→326`. Also added `getcwd 79→17` to the aarch64-**Linux**
+    ESYSXLAT (there `syscall(79)` was silently `fstatat`, so `_abs_path`
+    returned a relative path — latent, non-crashing).
+
+  - **2b — transitive stdlib dropped (silent, would bite real consumers).**
+    With 2a fixed, `cyrius build` succeeded and a trivial `return 42`
+    binary ran — but **only `io.cyr` itself was copied; its `include`
+    chain (result, syscalls, platform files) was silently dropped**, so any
+    consumer actually *calling* stdlib fns would fail. Cause: the
+    include-scan sizes its read with `_file_size`, which read the **Linux**
+    `st_size` offset (byte 48). The raw Darwin `stat` syscall (188) fills
+    the **legacy 32-bit-inode** struct where st_size is at **byte 72** (not
+    48, and not the SDK INODE64 layout's 96 — verified by dumping the
+    struct on ecb: `@72=8781` for an 8781-byte file). Wrong offset →
+    garbage/0 size → truncated read → no `include` lines matched.
+    **Fix:** `_file_size` reads byte 72 on Darwin (`#ifdef`).
+
+  **VERIFIED on ecb (real Apple silicon), end-to-end:** `[deps]
+  stdlib=["io"]` resolves all **8 transitive files**, `cyrius build`
+  succeeds, and the resolved stdlib **executes** (`io.print` outputs, exit
+  code correct). x86 self-host byte-identical; Linux deps unaffected (8
+  files, `#else` paths). **ai-hwaccel UNBLOCKED.**
+
+  **Separate, still-open (NOT a blocker for [deps]):** the directory-
+  listing surface (`is_dir`/`dir_list` → `getdents64` = Linux 217 /
+  aarch64 61) remains unported on Darwin. It does **not** affect `[deps]
+  stdlib` resolution (copy-by-name) — confirmed the dep lock is not written
+  for stdlib-only manifests on *any* platform. It would affect `cyrius
+  update` and named/git-dep locks on macOS. A raw `getdirentries` probe
+  (344/196) returned EFAULT earlier; port deferred — file/track separately.
 
 ## Root cause (speculation — flag for verification)
 

@@ -552,12 +552,28 @@ if (_vn > 0) {
 }
 
 # Allocate heap
+#ifdef CYRIUS_TARGET_MACOS
+# v6.0.41: macOS has no brk syscall — bootstrap the compiler-state heap
+# via mmap, mirroring the arm64 driver (main_aarch64_macho.cyr). This is
+# the FIRST syscall cycc makes; on Darwin a raw brk(12) SIGSYS's before
+# any output (the x86 driver previously paid this unconditionally, so the
+# x86 Mach-O cycc never compiled on-device — only the syscall ABV xlat in
+# emit.cyr was missing too; both are needed). Linux mmap number 9 →
+# BSD 197 via EMACHO_SYSXLAT at emit. Size 0x4D9D000 matches the brk
+# extension below; flags MAP_ANON|MAP_PRIVATE = 0x1002.
+var S = syscall(9, 0, 0x4D9D000, 3, 0x1002, 0 - 1, 0);
+if (S < 0x100000) {
+    syscall(1, 2, "cycc: mmap heap init failed\n", 27);
+    syscall(60, 1);
+}
+#else
 var S = syscall(SYS_BRK, 0);
 # brk extends past the TS frontend heap region (0x1D0B000 base
 # + 0xD81000 size, per src/frontend/ts/{lex,parse}.cyr design after
 # v5.7.2 P2.1). TS region is only TOUCHED in --lex-ts / --parse-ts
 # modes; the +13.5 MB brk extension is paid unconditionally.
 syscall(SYS_BRK, S + 0x4D9D000);
+#endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

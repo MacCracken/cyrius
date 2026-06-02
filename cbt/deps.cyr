@@ -10,7 +10,19 @@ fn _file_size(path): i64 {
     var stat_buf[144];
     var r = syscall(4, path, &stat_buf);
     if (r != 0) { return 0 - 1; }
+    # st_size offset differs by platform. Linux struct stat puts it at
+    # byte 48. The raw Darwin stat syscall (SYS_stat 188) fills the LEGACY
+    # 32-bit-inode struct stat — st_size lands at byte 72 (NOT the SDK
+    # INODE64 layout's 96; the libc wrapper, not the raw syscall, produces
+    # that). Reading the wrong offset on Darwin returned garbage / 0, which
+    # truncated the stdlib include-scan read → transitive deps silently
+    # dropped on macOS (io copied without its syscalls/result chain).
+    # Verified by dumping the struct on ecb (size@72). See CHANGELOG [6.0.41].
+    #ifdef CYRIUS_TARGET_MACOS
+    return load64(&stat_buf + 72);
+    #else
     return load64(&stat_buf + 48);
+    #endif
 }
 
 # Resolve a (possibly relative) path to absolute using getcwd(2).
@@ -23,11 +35,27 @@ fn _file_size(path): i64 {
 fn _abs_path(src): i64 {
     if (load8(src) == 47) { return src; }
     var cwd[4096];
+    var cwd_len = 0;
+    #ifdef CYRIUS_TARGET_MACOS
+    # Darwin has NO getcwd syscall (slot 326 is unused → SIGSYS). Derive
+    # the cwd from the "." fd via fcntl(F_GETPATH): open(".") then
+    # fcntl(fd, F_GETPATH=50, buf) writes the absolute path, returns 0/-1.
+    # x86 syscall nums (ESYSXLAT renumbers): open 2→5, fcntl 72→92,
+    # close 3→6. See CHANGELOG [6.0.41].
+    var fd = syscall(2, ".", 0, 0);
+    if (fd < 0) { return src; }
+    var fr = syscall(72, fd, 50, &cwd);
+    syscall(3, fd);
+    if (fr != 0) { return src; }
+    while (load8(&cwd + cwd_len) != 0) { cwd_len = cwd_len + 1; }
+    #else
     # syscall 79 = getcwd(buf, size); returns length incl. nul, or -errno.
+    # (aarch64-Linux: ESYSXLAT renumbers x86 79 → aarch64 getcwd 17.)
     var n = syscall(79, &cwd, 4096);
     if (n <= 0) { return src; }
     # Strip trailing nul from length
-    var cwd_len = n - 1;
+    cwd_len = n - 1;
+    #endif
     var src_len = 0;
     while (load8(src + src_len) != 0) { src_len = src_len + 1; }
     var out = alloc(cwd_len + 1 + src_len + 1);
