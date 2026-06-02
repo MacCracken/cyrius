@@ -45,6 +45,17 @@ fn cmd_build(source, output): i64 {
     sys_write(STDOUT_FD, "] ", 2);
     var r = compile(source, output);
     if (r == 0) {
+        #ifdef CYRIUS_TARGET_MACOS
+        # Apple Silicon AMFI-SIGKILLs an unsigned arm64 binary, so a fresh
+        # `cyrius build` output won't run until it carries at least an
+        # ad-hoc signature. Sign it now so the produced binary is
+        # immediately runnable (no manual `codesign` step). CHANGELOG [6.0.38].
+        var _cs = str_builder_new();
+        str_builder_add_cstr(_cs, "codesign -s - -f ");
+        str_builder_add_cstr(_cs, output);
+        str_builder_add_cstr(_cs, " 2>/dev/null");
+        sys_system(str_data(str_builder_build(_cs)));
+        #endif
         println("OK");
     } else {
         println("FAIL");
@@ -569,6 +580,25 @@ fn _cross_os_selfhost(): i64 {
         println("  PASS: ecb (macOS arm64) cycc self-host byte-identical + exit-code propagation");
     } else {
         println("  FAIL: ecb (macOS arm64) cross-OS self-host — unreachable or NOT byte-identical");
+        fails = fails + 1;
+    }
+
+    # Install-path verification (v6.0.38). The self-host check above proves
+    # the COMPILER works — but the rot that shipped EMPTY macOS installs for
+    # 9 minors was in PACKAGING (the release tarball had no bin/), which a
+    # self-host check by construction can't catch. This builds the real
+    # macOS tarball via the same scripts/build-macos-arm64-tarball.sh the
+    # release uses, runs the REAL install.sh on ecb, then `cyrius build`s
+    # `fn main(){return 42}` and asserts exit 42 — catching a missing
+    # compiler, a broken installer, an unsigned toolchain, OR a build output
+    # that isn't ad-hoc-signed/runnable. This is the gate that would have
+    # caught "installed on a Mac and got no cyrius".
+    var ecb_install = "set -e; sh scripts/build-macos-arm64-tarball.sh /tmp/_co_dist >/dev/null 2>&1; V=$(tr -d '[:space:]' < VERSION); printf 'fn main() { return 42; }' > /tmp/_co_t.cyr; ssh -o ConnectTimeout=15 -o BatchMode=yes ecb 'rm -rf ~/_coih ~/_co_t.out'; scp -q scripts/install.sh /tmp/_co_t.cyr /tmp/_co_dist/cyrius-$V-aarch64-macos.tar.gz ecb:~/; ssh ecb 'CYRIUS_VERSION='$V' CYRIUS_HOME=$HOME/_coih CYRIUS_INSTALL_TARBALL=$HOME/cyrius-'$V'-aarch64-macos.tar.gz sh $HOME/install.sh >/dev/null 2>&1 && CYRIUS_HOME=$HOME/_coih $HOME/_coih/bin/cyrius build $HOME/_co_t.cyr $HOME/_co_t.out >/dev/null 2>&1 && (r=0; $HOME/_co_t.out || r=$?; [ $r -eq 42 ])'";
+    var ecb_inst_rc = _co_run_sh(ecb_install);
+    if (ecb_inst_rc == 0) {
+        println("  PASS: ecb (macOS arm64) REAL install -> cyrius build -> exit 42");
+    } else {
+        println("  FAIL: ecb (macOS arm64) real-install path — tarball missing the toolchain, installer broken, or build output not runnable");
         fails = fails + 1;
     }
 

@@ -3,6 +3,49 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.38 ship — macОS arm64 INSTALL actually ships a compiler)
+
+Closing **v6.0.38**. **The thing the user actually runs — `install.sh`
+on a Mac — now produces a working toolchain.** Verified end-to-end on
+real Apple Silicon (ecb) via the REAL installer, not an SSH cross-build.
+
+**THE FAILURE THIS FIXES:** the `build-macos-arm64` release job shipped
+only a `smoke.macho` toy — **every Apple Silicon install was EMPTY**
+(no `cycc`/`cyrius`). Flagged in the `.32` notes as problem #1, then I
+**punted it for 5 releases** while "verifying macОS" by hand-cross-
+building binaries on Linux and scp'ing them to ecb — never the real
+install. The user installed 6.0.37 on a Mac and got nothing: the exact
+"found by ports" failure, committed one level up from the CI rot that
+started this arc. **Pillar lesson pinned: a platform isn't supported
+until the REAL installer yields a working toolchain on real hardware —
+SSH self-host is necessary but CANNOT catch a packaging hole.**
+
+**Fixed (all verified via the real `install.sh` on ecb):**
+- release `build-macos-arm64` ships the full arm64 Mach-O toolchain in
+  `bin/` (cycc + cycc_aarch64 + cyrius + cyrfmt/cyrlint/cyrdoc +
+  cyriusly), via `scripts/build-macos-arm64-tarball.sh` (single source
+  of truth — release AND the audit gate both call it).
+- `install.sh` ad-hoc codesigns each Mach-O binary on macОS + hard-fails
+  on a no-`bin/` tarball + `CYRIUS_INSTALL_TARBALL` local override.
+- `cyrius build` ad-hoc-signs its output on macОS (`#ifdef
+  CYRIUS_TARGET_MACOS`) — unsigned arm64 = AMFI SIGKILL.
+- **`cyrius audit` real-install gate**: build tarball → install.sh →
+  `cyrius build fn-main`→42. PASSES. The check that catches an empty/
+  broken install. `check.sh` 82/82; cycc unchanged 885,040 B.
+
+**x86_64-macОS (`ach`, Intel) — NOT done, surfaced not punted:** the x86
+Mach-O `cycc` **SIGSYS's (rc 140) on real compiles** — only partial
+Darwin BSD-ABI syscall translation (arm64 got the full `ESYSXLAT` in
+.34; x86 never did). A runtime ARC, not a packaging patch. Issue
+`2026-06-02-macos-x86-release-no-compiler.md`. `ach` is SSH-wired for
+verification.
+
+**Platform window order (user 2026-06-02): Windows install+self-host
+(cass) → x86-macОS runtime arc → UEFI `fncallN` ud2 → CI cross-OS gate →
+AGNOS. PILLAR RULE: each platform's REAL installer must produce a
+working toolchain (verified on hardware) — "we don't support a platform
+if the installer doesn't work."** See [[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.37 ship — macОS `fn main()` return→exit FIXED)
 
 Closing **v6.0.37**. macОS `fn main(){return N;}` now exits N (was 1).

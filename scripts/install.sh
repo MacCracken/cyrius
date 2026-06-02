@@ -333,19 +333,32 @@ TARBALL="cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}.tar.gz"
 TMPDIR=$(mktemp -d)
 installed=0
 
-info "downloading Cyrius ${VERSION}..."
-if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}" -o "$TMPDIR/$TARBALL" 2>/dev/null; then
-    # Verify checksum if available
-    if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}.sha256" -o "$TMPDIR/checksum" 2>/dev/null; then
-        cd "$TMPDIR"
-        if sha256sum -c checksum > /dev/null 2>&1; then
-            info "checksum verified"
-        else
-            warn "checksum mismatch — continuing anyway"
+# CYRIUS_INSTALL_TARBALL=/path/to/tarball installs from a local file
+# instead of fetching from the release page — used to test the real
+# install flow against a locally-built tarball (and for offline installs).
+_got_tarball=0
+if [ -n "${CYRIUS_INSTALL_TARBALL:-}" ] && [ -f "$CYRIUS_INSTALL_TARBALL" ]; then
+    info "installing from local tarball: $CYRIUS_INSTALL_TARBALL"
+    cp "$CYRIUS_INSTALL_TARBALL" "$TMPDIR/$TARBALL"
+    _got_tarball=1
+else
+    info "downloading Cyrius ${VERSION}..."
+    if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}" -o "$TMPDIR/$TARBALL" 2>/dev/null; then
+        # Verify checksum if available
+        if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}.sha256" -o "$TMPDIR/checksum" 2>/dev/null; then
+            cd "$TMPDIR"
+            if sha256sum -c checksum > /dev/null 2>&1; then
+                info "checksum verified"
+            else
+                warn "checksum mismatch — continuing anyway"
+            fi
+            cd - > /dev/null
         fi
-        cd - > /dev/null
+        _got_tarball=1
     fi
+fi
 
+if [ "$_got_tarball" -eq 1 ]; then
     # Untar into version directory
     tar xzf "$TMPDIR/$TARBALL" -C "$TMPDIR"
     EXTRACTED="$TMPDIR/cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}"
@@ -353,7 +366,21 @@ if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}" -o "$TMPDIR/$TARBALL" 2>/dev/null; th
     if [ -d "$EXTRACTED/bin" ]; then
         cp -r "$EXTRACTED/bin"/* "$CYRIUS_HOME/versions/$VERSION/bin/"
         chmod +x "$CYRIUS_HOME/versions/$VERSION/bin"/*
+        # macOS ships unsigned cross-built Mach-O binaries; an unsigned
+        # binary is AMFI-SIGKILL'd on first exec. Ad-hoc codesign each at
+        # install time (shell scripts harmlessly fail and are skipped).
+        if [ "$OS_SUFFIX" = "macos" ] && command -v codesign > /dev/null 2>&1; then
+            for _b in "$CYRIUS_HOME/versions/$VERSION/bin"/*; do
+                [ -f "$_b" ] || continue
+                if head -c4 "$_b" | od -An -tx1 | tr -d ' \n' | grep -qiE "cffaedfe|cefaedfe|feedface|feedfacf"; then
+                    codesign -s - -f "$_b" 2>/dev/null || warn "codesign failed for $(basename "$_b")"
+                fi
+            done
+            info "codesigned macOS binaries (ad-hoc)"
+        fi
         info "binaries installed"
+    else
+        err "release tarball for ${ARCH}-${OS_SUFFIX} has no bin/ — refusing to install a toolchain with no compiler. This is a release-packaging bug; please report it."
     fi
 
     if [ -d "$EXTRACTED/lib" ]; then

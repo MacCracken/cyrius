@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.38] — 2026-06-02
+
+**The macOS install actually ships a working compiler now.** The
+v6.0.32–.37 arc fixed the *compiler* (self-host, runtime, exit codes)
+but never the *packaging* — the `build-macos-arm64` release job shipped
+only a `smoke.macho` toy binary, so **every Apple Silicon install was
+empty** (`cyrius`/`cycc` absent). This shipped undetected since the
+macOS target's inception because every "macOS verified" was an SSH
+cross-build done by hand, never the real `install.sh`. A user installing
+6.0.37 on a Mac got nothing — exactly the "found by ports" failure
+CLAUDE.md exists to prevent. Verified this time through the **real
+installer on real Apple Silicon (ecb)**.
+
+### Fixed — macOS arm64 release packaging + install
+
+- `.github/workflows/release.yml` `build-macos-arm64` now ships the full
+  arm64 Mach-O toolchain in `bin/` — `cycc` + `cycc_aarch64` (the native
+  compiler), the `cyrius` wrapper, and `cyrfmt`/`cyrlint`/`cyrdoc` — plus
+  `cyriusly` + the stdlib. Was: `smoke.macho` + lib + README, no compiler.
+- `scripts/install.sh`: (1) ad-hoc **codesigns** every Mach-O binary at
+  install time on macOS (unsigned arm64 = AMFI SIGKILL); (2) **hard-fails**
+  if a tarball has no `bin/` instead of silently installing an empty
+  toolchain; (3) `CYRIUS_INSTALL_TARBALL=<file>` installs from a local
+  tarball (offline + test installs).
+- `cyrius build` on macOS now **ad-hoc-signs its output** (`cbt/commands.cyr`,
+  `#ifdef CYRIUS_TARGET_MACOS`) — a freshly built arm64 binary is otherwise
+  SIGKILL'd when run.
+
+### Added — packaging single-source-of-truth + real-install gate
+
+- `scripts/build-macos-arm64-tarball.sh` — one script builds the macOS
+  arm64 tarball; the release pipeline AND the audit gate both call it, so
+  what is verified is byte-for-byte what ships (no drift).
+- `cyrius audit` cross-OS gate now runs a **real-install verification** on
+  ecb: build the tarball → run `install.sh` → `cyrius build
+  fn-main-return-42` → assert exit 42. A self-host check can't catch a
+  packaging hole; this does. Gate output: "REAL install -> cyrius build
+  -> exit 42". This is the check that would have caught the empty install.
+
+### Known gap
+
+- The **x86_64-macOS** release job (`build-macos`) is also incomplete —
+  it builds the quality tools but not `cycc`/`cyrius`. Fixing it needs an
+  Intel Mac to verify on (Apple Silicon can't validate x86 Mach-O
+  runtime); tracked in `docs/development/issues/`. Not fixed blind.
+
+### Verified
+
+- Real `install.sh` on ecb (Apple Silicon): install → `cyrius --version`
+  6.0.38, `cyrius build hello.cyr` → runs → **exit 42**, `cycc` direct →
+  42, `cyrlint` runs, and `cyrius build` output runs with **no manual
+  codesign** (`flags=0x2(adhoc)`). The `cyrius audit` gate's new
+  real-install check passes. x86 self-host unchanged (885,040 B);
+  `check.sh` 82/82.
+
 ## [6.0.37] — 2026-06-02
 
 **macОS `fn main()` return value now reaches the exit code.** Fourth-ish

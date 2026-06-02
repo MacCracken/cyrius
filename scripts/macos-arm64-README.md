@@ -1,13 +1,28 @@
 # Cyrius — Apple Silicon (arm64 Mach-O)
 
-This tarball ships the Apple Silicon stdlib and the four Cyrius
-tool binaries (`cyrfmt`, `cyrlint`, `cyrdoc`, `cybs`) built as
-arm64 Mach-O. Verified end-to-end on Apple Silicon.
+This tarball ships the full Apple Silicon toolchain as arm64 Mach-O:
+the compiler (`cycc` / `cycc_aarch64`), the `cyrius` build-tool
+wrapper, the quality tools (`cyrfmt`, `cyrlint`, `cyrdoc`), the
+version manager (`cyriusly`), and the stdlib. The binaries are
+cross-built on Linux and **unsigned**; `install.sh` ad-hoc codesigns
+each at install time (an unsigned arm64 binary is AMFI-SIGKILL'd on
+first exec), and `cyrius build` ad-hoc-signs its own output.
 
-## Status: closed (as of v5.5.17)
+After install, `cyrius build foo.cyr foo && ./foo` works directly.
 
-The macOS aarch64 target reached full functional parity with Linux
-x86_64 / aarch64 and Windows PE32+ over the v5.5.11–v5.5.17 arc.
+> **NOTE (v6.0.38):** before v6.0.38 this tarball shipped only a
+> `smoke.macho` toy binary and **no compiler** — every macOS arm64
+> install was empty. The release packaging plus a real-install
+> verification gate (`cyrius audit`, run on real Apple Silicon) were
+> added in v6.0.38 so this can't regress unnoticed. See CHANGELOG.
+
+## Status
+
+The macOS aarch64 target reached functional parity with Linux
+x86_64 / aarch64 and Windows PE32+ over the v5.5.11–v5.5.17 arc; the
+v6.0.32–v6.0.38 arc fixed the on-device runtime (self-host, exit-code
+propagation, `cyrius build`) **and the release/install packaging**
+that had been shipping nothing.
 Cross-compiled Cyrius binaries run through `libSystem` via
 classic dyld binds, use an mmap-based heap, read command-line
 args from the Darwin ABI entry registers, and call out to
