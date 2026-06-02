@@ -193,6 +193,21 @@ fn _dep_read_cyml_cyrius_field(): i64 {
 #       cyrius pin (existing behavior, unchanged).
 # Hard-error (not silent fallback) when cyml pins a version that
 # is NOT installed.
+# Cross-platform "does this dir hold the stdlib" check. `is_dir`
+# (lib/fs.cyr) probes via getdents64 (Linux syscall 217), which Darwin
+# does NOT provide (it uses getdirentries with a different ABI; .34's
+# ESYSXLAT doesn't cover 217) — so on arm64 macOS `is_dir` false-negatives
+# a directory that demonstrably exists. That made the pinned-version
+# install-probe below reject a valid snapshot, so every consumer manifest
+# with a `cyrius =` pin AND `[deps] stdlib` failed to build on Darwin
+# (ai-hwaccel 2.3.6 blocked; issue 2026-06-02-macos-arm64-deps-stdlib-pin-check).
+# `file_exists` is open()-based and works on Darwin; checking for a
+# canonical always-present stdlib file confirms the dir exists AND holds
+# the stdlib. See CHANGELOG [6.0.40].
+fn _dep_dir_has_stdlib(dir_cstr): i64 {
+    return file_exists(make_path(dir_cstr, "syscalls.cyr"));
+}
+
 fn _dep_find_stdlib_dir(): i64 {
     # (a) cyrius source-repo dev mode: `./lib` if we're in the
     # cyrius repo itself (signaled by src/main.cyr existing). The
@@ -200,7 +215,7 @@ fn _dep_find_stdlib_dir(): i64 {
     # downstream repos sometimes have a `./lib` directory of
     # resolved deps but no src/main.cyr.
     if (file_exists("src/main.cyr") == 1) {
-        if (is_dir(str_from("./lib")) == 1) { return "./lib"; }
+        if (_dep_dir_has_stdlib("./lib") == 1) { return "./lib"; }
     }
 
     # (b) cyrius.cyml-pinned version → per-repo isolation
@@ -212,7 +227,7 @@ fn _dep_find_stdlib_dir(): i64 {
         str_builder_add_cstr(sb, pin);
         str_builder_add_cstr(sb, "/lib");
         var pinned_lib = str_data(str_builder_build(sb));
-        if (is_dir(str_from(pinned_lib)) == 1) { return pinned_lib; }
+        if (_dep_dir_has_stdlib(pinned_lib) == 1) { return pinned_lib; }
         # Pinned version not installed → hard error per acceptance bar
         sys_write(STDERR_FD, "error: cyrius.cyml pins version ", 32);
         sys_write(STDERR_FD, pin, strlen(pin));
@@ -226,9 +241,9 @@ fn _dep_find_stdlib_dir(): i64 {
 
     # (c) legacy fallback — `~/.cyrius/lib` global symlink
     var installed = make_path(_home, "lib");
-    if (is_dir(str_from(installed)) == 1) { return installed; }
+    if (_dep_dir_has_stdlib(installed) == 1) { return installed; }
     # Dev mode without a cyrius repo signal (rare): `./lib`
-    if (is_dir(str_from("./lib")) == 1) { return "./lib"; }
+    if (_dep_dir_has_stdlib("./lib") == 1) { return "./lib"; }
     return 0;
 }
 

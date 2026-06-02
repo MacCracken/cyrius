@@ -6,6 +6,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.40] — 2026-06-02
+
+**Stdlib QoL + first fix of the arm64-macOS `[deps] stdlib` blocker.**
+
+### Added
+
+- **`lib/math.cyr`: `f64_le` / `f64_ge`** (avatara proposal 2026-06-02).
+  The compiler ships `f64_lt`/`f64_gt`/`f64_eq` builtins but no inclusive
+  `<=`/`>=`, so every consumer doing a bounded-f64 range check
+  (`0.0 <= x <= 1.0`) rolled its own. NaN-correct by construction. Tests
+  in `tests/tcyr/math.tcyr`; api-surface 2844→2846. avatara drops its
+  `src/types.cyr` copies once this ships.
+
+### Fixed
+
+- **arm64-macOS `[deps] stdlib` install-probe false-negative.** On Darwin,
+  `cyrius build` with a `cyrius =` pin AND a `[deps] stdlib` block aborted
+  with a *false* "version not installed at …/lib" even though the snapshot
+  was present — blocking the normal consumer manifest (ai-hwaccel 2.3.6).
+  Root cause: `_dep_find_stdlib_dir` checked the lib dir with `is_dir`,
+  which probes via `getdents64` (Linux syscall 217) — not ported to Darwin
+  → false negative. Fixed: the probe now checks for a canonical stdlib file
+  via `file_exists` (open-based, cross-platform). Verified on `ecb`: the
+  false error is gone and the requested module resolves.
+
+### Known issues
+
+- **arm64-macOS `[deps] stdlib` build still SIGSYS's (exit 140).** With the
+  probe fixed, the build-path resolver's `dir_list` (cbt/deps.cyr) also
+  calls `getdents64` → unsupported on Darwin. The full fix is porting the
+  directory-listing surface (`getdents64`→`getdirentries` in arm64 ESYSXLAT
+  + Darwin `dirent` parsing in `lib/fs.cyr`). ai-hwaccel stays blocked
+  until then. Issue `2026-06-02-macos-arm64-deps-stdlib-pin-check.md` (bug 2).
+
+### Verified
+
+- `check.sh` 82/82; x86 self-host byte-identical 885,040 B; ecb probe-fix
+  verified via the real install. (`f64_le`/`f64_ge` are not in cycc's
+  include set; `deps.cyr` is the wrapper — neither affects self-host.)
+
 ## [6.0.39] — 2026-06-02
 
 **Windows `cycc` runtime — first real fix in a multi-bug arc.** Digging on

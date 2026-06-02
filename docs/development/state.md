@@ -3,6 +3,35 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.40 ship — stdlib QoL + arm64-macOS [deps] probe fix)
+
+Closing **v6.0.40**. check.sh 82/82; self-host byte-identical 885,040 B.
+
+**Added:** `lib/math.cyr` `f64_le`/`f64_ge` (avatara proposal 2026-06-02;
+NaN-correct; +6 math.tcyr asserts; api-surface 2844→2846). avatara drops
+its `src/types.cyr` copies once shipped. Proposal archived.
+
+**Fixed:** arm64-macOS `[deps] stdlib` install-probe false-negative —
+`_dep_find_stdlib_dir` used `is_dir` (getdents64, Linux syscall 217, not
+ported to Darwin) → false "version not installed" on a present snapshot,
+blocking every pinned consumer manifest with stdlib deps (ai-hwaccel
+2.3.6). Probe now uses `file_exists(<lib>/syscalls.cyr)` (open-based).
+Verified on ecb: false error gone, `io.cyr` resolves.
+
+**Open (consumer still blocked):** arm64-macOS `cyrius build` with
+`[deps] stdlib` now **SIGSYS's (exit 140)** — the resolver's `dir_list`
+also calls `getdents64`. **Common root: the directory-listing surface
+(`is_dir`/`dir_list`/`getdents64`) was NEVER ported to Darwin.** Bug 2 =
+add `getdents64`→`getdirentries` (Darwin syscall 196) to arm64 ESYSXLAT
++ Darwin `dirent` parsing in `lib/fs.cyr` (a .32–.34-shaped BSD-ABI piece
+for fs-enumeration). Issue `2026-06-02-macos-arm64-deps-stdlib-pin-check.md`.
+
+**Platform-repair queue (all PILLAR, real-install-verified on hardware):**
+arm64-macOS getdents/dir-listing (unblocks ai-hwaccel) · x86_64-macOS
+runtime arc (SIGSYS, `ach`) · Windows `cycc` runtime bug 2+ (`SBL`/`GBL`,
+`cass`) · UEFI ud2 · CI cross-OS gate · then AGNOS. See
+[[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.39 ship — Windows `cycc` runtime bug 1 fixed; arc opened)
 
 Closing **v6.0.39**. Dug into Windows on real `cass` and found **`cycc`

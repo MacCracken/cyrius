@@ -80,6 +80,34 @@ the snapshot is reachable — only the `[deps] stdlib` resolver rejects it.
 x86_64 with the same 6.0.38 toolchain and an identical 82-file snapshot.
 Only Darwin arm64 false-negatives.
 
+## UPDATE 2026-06-02 — root cause confirmed on ecb; TWO bugs (common root)
+
+Dug on ecb. The common root is that **`getdents64` (Linux syscall 217) is
+not ported to Darwin** — arm64 macho ESYSXLAT (.34) never covered it, and
+the whole directory-listing surface (`is_dir`, `dir_list`) depends on it.
+
+- **Bug 1 — install-probe `is_dir` false-negative (FIXED, v6.0.40).**
+  `_dep_find_stdlib_dir` used `is_dir(pinned_lib)`, which probes via
+  `getdents64` → fails on Darwin → "not installed" on a present snapshot.
+  Fixed: the probe now checks `file_exists(<lib>/syscalls.cyr)` (open-based,
+  Darwin-safe). Verified on ecb: the false "not installed" error is gone,
+  the requested module (`io.cyr`) resolves into `./lib`.
+
+- **Bug 2 — `cyrius build` SIGSYS during deps resolution (OPEN).** With
+  bug 1 fixed, `cyrius build` (pin + `[deps] stdlib`) now **exits 140
+  (SIGSYS / bad syscall)**. The resolver's `dir_list(src_dir)`
+  (cbt/deps.cyr ~L1078, enumerating stdlib modules) calls `getdents64` →
+  unsupported on Darwin → SIGSYS. `cyrius deps` alone copied `io.cyr` and
+  survived, but the build-path resolution trips it. **Consumer
+  (ai-hwaccel) stays blocked until bug 2 lands.**
+
+  **Fix for bug 2 = port the dir-listing surface to Darwin:** add
+  `getdents64`→`getdirentries` (Darwin syscall 196) to the arm64 macho
+  ESYSXLAT AND make `lib/fs.cyr` `dir_list` parse the Darwin `dirent`
+  layout (differs from Linux). Same shape as the .32–.34 BSD-ABI arc, for
+  the fs-enumeration surface; likely also fixes the macОS tools'
+  dir-walking. Verify the full T4 repro on ecb after.
+
 ## Root cause (speculation — flag for verification)
 
 The `[deps] stdlib` resolver does its own "is the pinned version
