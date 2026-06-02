@@ -3,6 +3,49 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.31 ship — TLS Mini-arc B.8 connect() + e2e; **Mini-arc B COMPLETE**)
+
+Closing **v6.0.31**, the eighth/final slot of TLS Mini-arc B (client).
+**The TLS 1.3 stack — client + server — is complete.** `lib/`-only.
+
+`tls_native_connect(ctx, sock_fd)` — client socket handshake driver
+(mirror of `accept()`): send ClientHello plaintext record → read SH
+(CCS-skipping) → `client_parse_server_hello` → read encrypted flight →
+`client_recv_flight` → verify server Finished + send client Finished
+(`client_finish`) → `install_app_keys`. `tls_native_write`/`read` —
+socket-level app I/O (`seal_app`/`open_app` over the stored fd, CONNECTED
+required). `accept()` now stores the fd + derives master/installs app
+keys so the server does app data too.
+
+**Mechanical gates green**:
+- cycc x86 self-host **byte-identical at 885,024 B** (no emit change).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot **2,844 fns** (connect/write/read were stubs in
+  the surface; now live, same signatures).
+- `tls_native_scaffold.tcyr` 369 → **375 asserts** (+6): `socketpair`+
+  `fork` e2e — **our client (`connect`) ↔ our server (`accept`)**, full
+  TLS 1.3 handshake + bidirectional app data over a real socket.
+
+Memory pin: [[project_native_tls_arc_v6_2_x]] — **Mini-arc B COMPLETE
+(8/8)**; the full 1.3 stack (A primitives + C server + B client) ships.
+
+**Next: `.32` — macOS install + arm64 Mach-O runtime fix** (slotted
+BEFORE the AGNOS binary arc, per user 2026-06-01). Bug surfaced this
+session: macOS install ships **only `cyriusly`**, no compiler. Root
+cause on Apple Silicon (`ecb`, Darwin arm64): (1) the `aarch64-macos`
+release tarball carries no `bin/` (stale "arm64 pulls brk/flock outside
+BSD whitelist" claim in `release.yml` build-macos-arm64); (2) `cycc`
+*does* build clean as an arm64 Mach-O (639 KB, valid magic/PIE) but
+**SIGKILLs (rc=137) on any real compile** on ecb — even `var x=42;`.
+Data heap is `prot=3` RW (not a W^X kill); leading suspect is the
+`alloc_macos.cyr` contiguity guard (hinted 1MB `mmap`s that macOS won't
+place at `_heap_end`). Also `syscalls_macos.cyr` defines no `STD*_FD`, so
+the `cyrius` wrapper fails to build for macOS (`cbt/core.cyr:60
+undefined STDERR_FD`). x86_64-macos build-macos job also omits cycc but
+there's no x86_64-macOS host to verify against (ecb is arm64). `.32`
+scope = make the macOS install ship a working compiler + fix the arm64
+runtime; verify end-to-end on ecb via SSH.
+
 ## Session close — 2026-06-01 (.30 ship — TLS Mini-arc B.7 hostname / SAN verification)
 
 Closing **v6.0.30**, the seventh slot of TLS Mini-arc B (client).

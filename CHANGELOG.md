@@ -6,6 +6,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.31] — 2026-06-01
+
+**TLS arc Mini-arc B.8 — TLS 1.3 client: `connect()` + full
+client↔server socket e2e. Mini-arc B COMPLETE — the TLS 1.3 stack
+(client + server) is done.** `lib/`-only.
+
+### Added — client (`lib/tls_native.cyr`)
+
+- `tls_native_connect(ctx, sock_fd)` — the client socket handshake
+  driver (mirror of `accept()`): stores the fd, sends ClientHello as a
+  plaintext handshake record, reads the ServerHello (CCS-skipping) →
+  `client_parse_server_hello`, reads the encrypted server flight →
+  `client_recv_flight`, verifies the server Finished + sends the client
+  Finished → `client_finish`, then `install_app_keys`. Returns TLS_OK.
+- `tls_native_write(ctx, buf, len)` — socket-level app write: requires
+  CONNECTED, `seal_app` → `_tn_sock_write_all` over the stored fd,
+  returns `len`.
+- `tls_native_read(ctx, buf, maxlen)` — socket-level app read: requires
+  CONNECTED, reads one record (CCS-skipping) → `open_app` into `buf`.
+- `accept()` now stores the socket fd and derives the master + installs
+  application-traffic keys after the flight (so the server side does app
+  data too).
+
+### Tests
+
+- `tls_native_scaffold.tcyr` 369 → **375 asserts**: a `socketpair`+
+  `fork` end-to-end where **our client (`connect`) and our server
+  (`accept`) complete a full TLS 1.3 handshake over a real socket and
+  exchange application data both ways** (client→server "ping",
+  server→client "pong"; child exit 0). The connect/write/read scaffold
+  asserts flipped from NOT_IMPLEMENTED to INVALID_PARAM (now live).
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (`lib/`-only).
+- `scripts/check.sh` **82/82**.
+- api-surface snapshot **2,844 fns** (connect/write/read were already in
+  the surface as stubs; now implemented, same signatures).
+
+### Known issue (filed to .32)
+
+- macOS install ships **only `cyriusly`** — no compiler. The
+  `aarch64-macos` release tarball carries no `bin/` (the stale
+  "arm64 toolchain pulls brk/flock outside the BSD whitelist" claim),
+  and `cycc` built as an arm64 Mach-O **SIGKILLs on a real compile** on
+  Apple Silicon (confirmed on `ecb`) — a genuine arm64 runtime port bug,
+  not an installer tweak. **`.32`** addresses the macOS install +
+  arm64 Mach-O runtime, before the AGNOS binary arc.
+
 ## [6.0.30] — 2026-06-01
 
 **TLS arc Mini-arc B.7 — TLS 1.3 client: hostname / SAN verification.**

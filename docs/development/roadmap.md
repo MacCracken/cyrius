@@ -201,9 +201,10 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | .10 → .14 | Mini-arc A — scaffold / record / framing / key-schedule / ciphersuite | ✅ COMPLETE |
 | .15 → .23 | **Mini-arc C — TLS 1.3 server** (FULL scope, 9 slots: state machine / cert+key / SH / flight / client-auth / resumption / record-layer / loopback / OpenSSL interop) | ✅ COMPLETE — interops with OpenSSL 3.6.2 |
 | .24 → .31 | **Mini-arc B — TLS 1.3 client** (8 slots: ClientHello / ServerHello+keys / recv flight+CertVerify / Finished / app data / chain verify / hostname-SAN / connect()+socket e2e) | ✅ COMPLETE — full client↔server handshake + app data over a socket |
-| ~.32 → ~.36 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | next; gated on agnos FS-ABI re-freeze |
-| ~.37 → ~.42 | Mini-arc D — TLS 1.2 backport | |
-| ~.43 → ~.45 | Mini-arc E — consumer wiring + TLS arc closeout | |
+| .32 | **macOS install + arm64 Mach-O runtime fix** (interrupt — macOS install ships only cyriusly; arm64 cycc SIGKILLs on real compile, confirmed on ecb) | next; before AGNOS arc (user 2026-06-01) |
+| ~.33 → ~.37 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
+| ~.38 → ~.43 | Mini-arc D — TLS 1.2 backport | |
+| ~.44 → ~.46 | Mini-arc E — consumer wiring + TLS arc closeout | |
 | later | Back-end window + v6.0.x cycle closeout | |
 
 Slot numbers downstream of C are nominal (the e2e split widened C to 9
