@@ -547,7 +547,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     memcpy(dep_tag, buf + ts, tlen);
                     store8(dep_tag + tlen, 0);
                 }
-                if (memeq(buf + si, "modules", 7) == 1) {
+                # Key-boundary check (space/`=` after `modules`) — matches
+                # the path/git/tag siblings above. Without it `modules` was
+                # the one key here that bare-substring-matched, e.g. inside a
+                # comment or a longer token. See CHANGELOG [6.0.36].
+                if (memeq(buf + si, "modules", 7) == 1 && (load8(buf + si + 7) == 32 || load8(buf + si + 7) == 61)) {
                     dep_modules = _parse_toml_str_array(buf, n, si);
                 }
                 while (si < n && load8(buf + si) != 10) { si = si + 1; }
@@ -975,16 +979,33 @@ fn _auto_deps(): i64 {
     i = 0;
     while (i < n) {
         if (memeq(buf + i, "[build]", 7) == 1) {
-            # Scan within [build] section for modules = [...]
+            # Scan within [build] section for the `modules` key. Key-
+            # boundary + comment aware (mirrors the `stdlib` guard above,
+            # v5.5.26): match `modules` only as the first non-space token
+            # on a non-comment line and only when followed by space/tab/`=`.
+            # The old raw line-start `memeq` both false-matched `modules`
+            # inside `[build]` comments (auto-prepending every `[lib]`
+            # module → input_buf overflow, blaming the wrong file) and
+            # missed indented `  modules = [...]` keys. See CHANGELOG [6.0.36].
             var bi = i + 7;
             while (bi < n) {
                 if (load8(buf + bi) == 91 && load8(buf + bi + 1) != 91) {
                     # Hit next section
                     break;
                 }
-                if (memeq(buf + bi, "modules", 7) == 1) {
-                    _build_modules = _parse_toml_str_array(buf, n, bi);
-                    break;
+                # First non-space char on this line.
+                var ls = bi;
+                while (ls < n && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) {
+                    ls = ls + 1;
+                }
+                # Skip comment lines; require the `modules` key followed by
+                # a key separator (space / tab / `=`).
+                if (ls < n && load8(buf + ls) != 35 && memeq(buf + ls, "modules", 7) == 1) {
+                    var after = load8(buf + ls + 7);
+                    if (after == 32 || after == 9 || after == 61) {
+                        _build_modules = _parse_toml_str_array(buf, n, ls);
+                        break;
+                    }
                 }
                 while (bi < n && load8(buf + bi) != 10) { bi = bi + 1; }
                 bi = bi + 1;

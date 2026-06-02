@@ -3,6 +3,17 @@
 # ================================================================
 
 fn cmd_build(source, output): i64 {
+    # Refuse to write the build output over a `.cyr` file. A compiled
+    # binary never has a `.cyr` name, so a `.cyr` output is almost always
+    # a misparsed CLI that would silently clobber a source (issue
+    # 2026-04-26). Hard error before any write. See CHANGELOG [6.0.36].
+    var _olen = strlen(output);
+    if (_olen >= 4 && memeq(output + _olen - 4, ".cyr", 4) == 1) {
+        sys_write(STDERR_FD, "error: refusing to write build output over a .cyr source file: ", 63);
+        sys_write(STDERR_FD, output, _olen);
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
     # Ensure output directory exists
     var oi = 0;
     var last_slash = 0 - 1;
@@ -456,8 +467,37 @@ fn cmd_fmt(file, check_mode): i64 {
     return run_tool(cyrfmt, file, 0, 0);
 }
 
-fn cmd_lint(file): i64 {
+# cyrius hooks install — copy the repo's build-artifact pre-commit hook
+# into .git/hooks/ so commits can't ship a contaminated build/cycc.
+# See scripts/hooks/pre-commit + CHANGELOG [6.0.36]. install.sh also
+# installs it on --refresh-only; this verb is the explicit/manual path.
+fn cmd_hooks(action): i64 {
+    if (streq(action, "install") == 0) {
+        println("Usage: cyrius hooks install");
+        return 1;
+    }
+    if (file_exists(".git") == 0) {
+        println("error: not a git repository (.git not found)");
+        return 1;
+    }
+    if (file_exists("scripts/hooks/pre-commit") == 0) {
+        println("error: scripts/hooks/pre-commit not found (run from the cyrius repo root)");
+        return 1;
+    }
+    var r = sys_system("cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit");
+    if (r == 0) {
+        println("installed build-artifact pre-commit hook (.git/hooks/pre-commit)");
+    } else {
+        println("error: failed to install hook");
+    }
+    return r;
+}
+
+fn cmd_lint(file, strict): i64 {
     var cyrlint = make_path(_tools_dir, "cyrlint");
+    # --strict makes cyrlint exit 2 when warnings are present (default is
+    # a conventional 0/1 rc — see programs/cyrlint.cyr). CHANGELOG [6.0.36].
+    if (strict == 1) { return run_tool(cyrlint, "--strict", file, 0); }
     return run_tool(cyrlint, file, 0, 0);
 }
 
@@ -1096,9 +1136,19 @@ fn cmd_distlib(profile): i64 {
             var bi = si + header_len;
             while (bi < mlen) {
                 if (load8(mbuf + bi) == 91 && load8(mbuf + bi + 1) != 91) { break; }
-                if (memeq(mbuf + bi, "modules", 7) == 1) {
-                    modules = _parse_toml_str_array(mbuf, mlen, bi);
-                    break;
+                # First non-space token; skip comments; require a key
+                # boundary after `modules` (space/tab/`=`). Boundary/
+                # comment-aware + indented-key capable — see CHANGELOG [6.0.36].
+                var ls = bi;
+                while (ls < mlen && (load8(mbuf + ls) == 32 || load8(mbuf + ls) == 9)) {
+                    ls = ls + 1;
+                }
+                if (ls < mlen && load8(mbuf + ls) != 35 && memeq(mbuf + ls, "modules", 7) == 1) {
+                    var after = load8(mbuf + ls + 7);
+                    if (after == 32 || after == 9 || after == 61) {
+                        modules = _parse_toml_str_array(mbuf, mlen, ls);
+                        break;
+                    }
                 }
                 while (bi < mlen && load8(mbuf + bi) != 10) { bi = bi + 1; }
                 bi = bi + 1;

@@ -257,18 +257,37 @@ function prompt_cyrius() {
                             echo "error: starship not installed"
                             exit 1
                         fi
+                        # v6.0.36: resolve a symlinked config to its real
+                        # target before editing. `sed -i` on a symlink
+                        # replaces the link with a regular file, breaking
+                        # dotfile management (chezmoi/stow/hapi); operating on
+                        # the target preserves the link and edits the tracked
+                        # file in place. Also take a `.bak` first — the prior
+                        # behavior left no recovery point (issue 2026-05-20).
+                        _starship_target="$_starship_conf"
+                        if [ -L "$_starship_conf" ]; then
+                            _starship_link=$(readlink "$_starship_conf")
+                            case "$_starship_link" in
+                                /*) _starship_target="$_starship_link" ;;
+                                *)  _starship_target="$(dirname "$_starship_conf")/$_starship_link" ;;
+                            esac
+                        fi
+                        if [ -e "$_starship_target" ]; then
+                            cp "$_starship_target" "$_starship_target.bak" 2>/dev/null && \
+                                echo "  (backed up existing config -> $_starship_target.bak)"
+                        fi
                         # v5.8.0: clean up BOTH the legacy single-segment
                         # block (`[custom.cyrius]` from v5.7.x) AND the
                         # new package segment (`[custom.cyrius_pkg]`).
                         # Each `[custom.X]` block runs to the next blank
                         # line per the existing convention.
-                        if grep -qE "custom\.cyrius(_pkg)?" "$_starship_conf" 2>/dev/null; then
-                            sed -i '/\[custom\.cyrius_pkg\]/,/^$/d' "$_starship_conf"
-                            sed -i '/\[custom\.cyrius\]/,/^$/d' "$_starship_conf"
+                        if grep -qE "custom\.cyrius(_pkg)?" "$_starship_target" 2>/dev/null; then
+                            sed -i '/\[custom\.cyrius_pkg\]/,/^$/d' "$_starship_target"
+                            sed -i '/\[custom\.cyrius\]/,/^$/d' "$_starship_target"
                         fi
-                        echo "" >> "$_starship_conf"
-                        echo "$_CYRIUS_STARSHIP" >> "$_starship_conf"
-                        echo "starship: Cyrius segments (cyrius_pkg + cyrius) installed in $_starship_conf"
+                        echo "" >> "$_starship_target"
+                        echo "$_CYRIUS_STARSHIP" >> "$_starship_target"
+                        echo "starship: Cyrius segments (cyrius_pkg + cyrius) installed in $_starship_target"
                         ;;
                     p10k|powerlevel10k)
                         if [ ! -f "$_p10k_conf" ]; then
@@ -292,9 +311,20 @@ function prompt_cyrius() {
             remove)
                 case "$_CT_TOOL" in
                     starship)
-                        if grep -qE "custom\.cyrius(_pkg)?" "$_starship_conf" 2>/dev/null; then
-                            sed -i '/\[custom\.cyrius_pkg\]/,/^$/d' "$_starship_conf"
-                            sed -i '/\[custom\.cyrius\]/,/^$/d' "$_starship_conf"
+                        # Symlink-safe (see the install path, v6.0.36): edit
+                        # the link target so dotfile-managed configs keep
+                        # their symlink instead of being replaced by sed -i.
+                        _starship_target="$_starship_conf"
+                        if [ -L "$_starship_conf" ]; then
+                            _starship_link=$(readlink "$_starship_conf")
+                            case "$_starship_link" in
+                                /*) _starship_target="$_starship_link" ;;
+                                *)  _starship_target="$(dirname "$_starship_conf")/$_starship_link" ;;
+                            esac
+                        fi
+                        if grep -qE "custom\.cyrius(_pkg)?" "$_starship_target" 2>/dev/null; then
+                            sed -i '/\[custom\.cyrius_pkg\]/,/^$/d' "$_starship_target"
+                            sed -i '/\[custom\.cyrius\]/,/^$/d' "$_starship_target"
                             echo "starship: Cyrius segments removed"
                         else
                             echo "starship: no Cyrius segment found"

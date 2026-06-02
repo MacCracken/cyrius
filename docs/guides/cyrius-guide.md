@@ -51,7 +51,10 @@ else { ... }
 # While
 while (x < 10) { x = x + 1; }
 
-# For
+# For — all three clauses (init; cond; step) are required and non-empty.
+# Cyrius does not accept `for (;;)` / `for (; c;)` (omitted clauses).
+# For an unbounded or custom-stepped loop, use `while`; the idiomatic
+# forms are the counted `for` above and (where supported) `for x in …`.
 for (var i = 0; i < 10; i = i + 1) { ... }
 
 # Break / Continue (in while and for)

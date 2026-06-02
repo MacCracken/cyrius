@@ -3,6 +3,43 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.36 ship — open-issue LHF cleanup batch)
+
+Closing **v6.0.36**, the open-issue low-hanging-fruit cleanup batch
+(platform-cleanup window, before the AGNOS binary). **No compiler
+(`src/`) change** — `cycc` self-host byte-identical **885,040 B**;
+`check.sh` **82/82**. Open issues **16 → 7**.
+
+**7 bited fixes:**
+- `lib/bigint.cyr` `u256_addmod` honors the 2²⁵⁶ carry-out (was wrong for
+  moduli near 2²⁵⁶, e.g. P-256 order; Curve25519 callers unaffected) +
+  regression test (fails pre-fix).
+- `cyrlint` exit code conventional (0/1/2; `--strict`, opt-in
+  `--exit-with-count`); `cyrius lint --strict` passthrough. Gates parse
+  stdout → unaffected.
+- `cyrius build` rejects unknown `-…` flags + refuses `.cyr` output
+  (source-clobber data-loss guard).
+- `cbt` `modules` TOML key: all 3 readers boundary/comment-aware +
+  indented-key capable.
+- `cyriusly` starship install/remove symlink-safe (preserves dotfile
+  links) + `.bak` backup.
+- Build-artifact **pre-commit hook** (`scripts/hooks/pre-commit`) +
+  `cyrius hooks install` verb + `install.sh --refresh-only` auto-install
+  (fired live during this bump). check.cyr gate stays as backstop.
+
+**2 verified-resolved + archived:** `type-table-256-cap` (diagnostic
+ships), `distlib-blank-lines` (fixed v6.0.9). **1 won't-fix:** `for(;;)`
+empty clauses (documented in cyrius-guide.md).
+
+**Remaining open (7):** `cc5-18-arg-scramble`, `uefi-fncall-ud2`,
+`yeo-tsx-emit`, `bote` (cold), `asm-block` (P3), `secret/defer cap` (own
+release), **`macho-main-return-exit` (NEXT)**.
+
+**Next (user order 2026-06-02): macОS `fn main()` return→exit
+propagation → Windows/cass install+self-host → UEFI `fncallN` ud2
+regression → CI cross-OS gate → AGNOS userspace arc.** See
+[[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-02 (.35 ship — `cyrius build` macОS SIGBUS FIXED; `&` shadowing)
 
 Closing **v6.0.35**. The `.34`-deferred `cyrius build` Mach-O SIGBUS is

@@ -578,11 +578,32 @@ fn main(): i64 {
     args_init();
 
     if (argc() < 2) {
-        println("Usage: cyrlint <file.cyr>");
+        println("Usage: cyrlint [--strict] [--exit-with-count] <file.cyr>");
         return 1;
     }
 
-    var path = argv(1);
+    # Exit-code policy (v6.0.36, issue 2026-04-26): default is conventional
+    # (0 = success, 1 = read error, 2 = --strict and warnings present) so
+    # `set -eo pipefail` CI scripts see a clean rc and the warning detail
+    # in stdout. The old "rc == warning count" behavior — useful in some
+    # scripts but indistinguishable from a crash under `set -e` — is opt-in
+    # via --exit-with-count. Flags may appear before or after the path.
+    var strict = 0;
+    var exit_with_count = 0;
+    var path = 0;
+    var ai = 1;
+    while (ai < argc()) {
+        var a = argv(ai);
+        if (streq(a, "--strict") == 1) { strict = 1; }
+        elif (streq(a, "--exit-with-count") == 1) { exit_with_count = 1; }
+        elif (path == 0) { path = a; }
+        ai = ai + 1;
+    }
+    if (path == 0) {
+        println("Usage: cyrlint [--strict] [--exit-with-count] <file.cyr>");
+        return 1;
+    }
+
     syscall(1, 1, "=== cyrlint: ", 13);
     syscall(1, 1, path, strlen(path));
     syscall(1, 1, " ===\n", 5);
@@ -602,7 +623,10 @@ fn main(): i64 {
     syscall(1, 1, &nb, nl);
     syscall(1, 1, " warnings\n", 10);
 
-    return _warnings;
+    # See the exit-code policy note at the top of main().
+    if (exit_with_count == 1) { return _warnings; }
+    if (strict == 1 && _warnings > 0) { return 2; }
+    return 0;
 }
 var r = main();
 syscall(60, r);

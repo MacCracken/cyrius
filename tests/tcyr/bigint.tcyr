@@ -59,6 +59,17 @@ assert_eq(u256_limb(r, 0), 2, "17 mod 5 = 2");
 test_group("u256 addmod");
 u256_addmod(r, u256_from(4), u256_from(3), u256_from(5));
 assert_eq(u256_limb(r, 0), 2, "(4+3) mod 5 = 2");
+# Carry-overflow case (regression: dropped 2^256 carry). p = P-256 group
+# order n (≈ 2^256 − 2^224); a = b = n−1, so a + b = 2n−2 overflows 2^256.
+# Correct (n−1)+(n−1) mod n = n−2. Pre-6.0.36 dropped the carry → wrong.
+var cn = u256_from_hex("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551");
+var cnm1 = u256_zero();
+u256_sub(cnm1, cn, u256_from(1));
+var cnm2 = u256_zero();
+u256_sub(cnm2, cn, u256_from(2));
+var cr = u256_zero();
+u256_addmod(cr, cnm1, cnm1, cn);
+assert_eq(u256_eq(cr, cnm2), 1, "(n-1)+(n-1) mod n = n-2 (2^256 carry honored)");
 
 test_group("u256 hex");
 var hex = u256_to_hex(u256_from(255));

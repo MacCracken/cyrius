@@ -81,6 +81,7 @@ fn usage(): i64 {
     println("  version                         show cyrius toolchain version");
     println("  version --project               show project version (from VERSION)");
     println("  which                           show path to cycc");
+    println("  hooks install                   install the build-artifact pre-commit hook");
     println("  help                            show this help");
     return 0;
 }
@@ -274,7 +275,20 @@ fn main(): i64 {
                 _strict = 1;
                 ai = ai + 1;
             }
-            else { break; }
+            else {
+                # An unrecognized token that LOOKS like a flag (`-…`) must
+                # NOT fall through into positional parsing — that shifts
+                # <source>/<output> by one and silently writes the build
+                # output over a source file (data loss; issue 2026-04-26).
+                # A bare positional (no leading `-`) is the source → stop.
+                if (load8(argv(ai)) == 45) {
+                    sys_write(STDERR_FD, "error: unknown flag '", 21);
+                    sys_write(STDERR_FD, argv(ai), strlen(argv(ai)));
+                    sys_write(STDERR_FD, "'\n", 2);
+                    return 1;
+                }
+                break;
+            }
         }
         if (vec_len(defs) > 0) { _defines = defs; }
         if (argc() < ai + 2) {
@@ -559,10 +573,24 @@ fn main(): i64 {
 
     if (streq(cmd, "lint") == 1) {
         if (argc() < 3) {
-            println("Usage: cyrius lint <file.cyr>");
+            println("Usage: cyrius lint [--strict] <file.cyr>");
             return 1;
         }
-        return cmd_lint(argv(2));
+        # File = first non-flag arg after the subcommand; --strict opt-in.
+        var lstrict = 0;
+        var lfile = 0;
+        var li = 2;
+        while (li < argc()) {
+            var la = argv(li);
+            if (streq(la, "--strict") == 1) { lstrict = 1; }
+            elif (lfile == 0) { lfile = la; }
+            li = li + 1;
+        }
+        if (lfile == 0) {
+            println("Usage: cyrius lint [--strict] <file.cyr>");
+            return 1;
+        }
+        return cmd_lint(lfile, lstrict);
     }
 
     if (streq(cmd, "doc") == 1) {
@@ -718,6 +746,12 @@ fn main(): i64 {
     if (streq(cmd, "which") == 1) {
         println(_cc);
         return 0;
+    }
+
+    if (streq(cmd, "hooks") == 1) {
+        var haction = "install";
+        if (argc() > cmd_idx + 1) { haction = argv(cmd_idx + 1); }
+        return cmd_hooks(haction);
     }
 
     var is_help = streq(cmd, "help");

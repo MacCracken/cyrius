@@ -1,0 +1,68 @@
+#!/bin/sh
+# Cyrius pre-commit hook — refuse to commit a contaminated build artifact.
+#
+# build/cycc (and build/cybs / build/cc3) are git-tracked compiler binaries.
+# They have been silently overwritten with foreign binaries multiple times
+# (v5.11.28/29, v5.11.43, v5.11.45) when a release-prep script cp'd a
+# sibling-repo binary over them right before commit. The check.cyr
+# `_cc5_contamination_gate` catches this AFTER the fact; this hook refuses
+# it BEFORE the commit lands. See docs/development/issues/archived/
+# 2026-05-13-build-artifact-precommit-hook.md.
+#
+# Install with `cyrius hooks install` (or scripts/install.sh on refresh).
+# Bypassable with `git commit --no-verify` — the check.cyr gate remains
+# the defense-in-depth backstop.
+
+set -e
+
+_fail() { echo "pre-commit: $1" >&2; }
+
+_size() {
+    # Portable file size: GNU `stat -c` then BSD/macOS `stat -f`.
+    stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0
+}
+
+status=0
+
+for bin in build/cycc build/cybs build/cc3; do
+    [ -e "$bin" ] || continue
+    # Only inspect artifacts staged in this commit.
+    git diff --cached --quiet -- "$bin" 2>/dev/null && continue
+
+    # 1. Foreign-binary string signatures (the v5.11.43/.44 mabda/wgpu slip).
+    if strings "$bin" 2>/dev/null | grep -qE "mabda: gpu|wgpuDevice|compute_pipeline"; then
+        _fail "$bin contains foreign-binary strings (mabda/wgpu/compute_pipeline) — refusing commit"
+        _fail "  restore: cat src/main.cyr | build/cycc > /tmp/canonical && cp /tmp/canonical $bin"
+        status=1
+        continue
+    fi
+
+    # 2. ELF magic (the tracked artifacts are x86_64 Linux ELF). Catches a
+    #    wrong-platform binary (Mach-O/PE) cp'd over them.
+    magic=$(dd if="$bin" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    if [ "$magic" != "7f454c46" ]; then
+        _fail "$bin is not an ELF binary (magic=$magic) — wrong-platform artifact? refusing commit"
+        status=1
+        continue
+    fi
+
+    # 3. Size sanity — the cyrius compiler binaries sit in a known band.
+    size=$(_size "$bin")
+    case "$bin" in
+        build/cycc)
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 1200000 ]; then
+                _fail "build/cycc size ${size}B outside the expected 700K–1.2M range — likely contaminated/truncated; refusing commit"
+                status=1
+            fi
+            ;;
+        build/cybs|build/cc3)
+            if [ "$size" -lt 100000 ] || [ "$size" -gt 1500000 ]; then
+                _fail "$bin size ${size}B outside the expected 100K–1.5M range — refusing commit"
+                status=1
+            fi
+            ;;
+    esac
+done
+
+[ "$status" -eq 0 ] || _fail "commit blocked (bypass with --no-verify if you are certain)"
+exit "$status"

@@ -6,6 +6,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.36] — 2026-06-02
+
+**Open-issue low-hanging-fruit cleanup batch** (platform-cleanup window,
+before the AGNOS binary arc). Seven bited fixes across stdlib + tooling +
+process hardening; two issues verified already-resolved and archived; one
+closed won't-fix. No compiler (`src/`) change — `cycc` self-host stays
+byte-identical at 885,040 B; `scripts/check.sh` 82/82.
+
+### Fixed
+
+- **`lib/bigint.cyr` `u256_addmod` dropped the 2²⁵⁶ carry** — when
+  `a + b ≥ 2^256` the truncated sum tested `< p` and the needed reduce was
+  skipped, leaving the result short by `2^256 − p`. Wrong for moduli near
+  `2^256` (e.g. the P-256 group order); Curve25519 callers (`p < 2^255`)
+  never overflowed so it stayed latent. Now honors `u256_add`'s carry-out,
+  mirroring `u256_submod`. Regression test added (`tests/tcyr/bigint.tcyr`,
+  P-256 `(n-1)+(n-1) mod n = n-2`). [issue 2026-05-28]
+- **`cyrius lint` exit code is now conventional** — `cyrlint` defaulted to
+  `exit == warning count`, indistinguishable from a crash under
+  `set -eo pipefail`. Default is now 0 (success) / 1 (read error) / 2
+  (`--strict` and warnings present); the old behavior is opt-in via
+  `--exit-with-count`. `cyrius lint [--strict] <file>` passes the flag
+  through. The check.cyr + CI lint gates parse cyrlint's stdout (not its
+  rc), so they are unaffected. [issue 2026-04-26]
+- **`cyrius build` could clobber a source file from a misparsed CLI** — an
+  unrecognized `-…` flag fell through into positional parsing, shifting
+  `<source>`/`<output>` so the build output overwrote a `.cyr` source.
+  Unknown flags are now rejected (`error: unknown flag '…'`), and
+  `cmd_build` refuses any `.cyr` output path. [issue 2026-04-26]
+- **`cbt` `modules` TOML key matched as a bare substring** — hardened all
+  three `modules` readers (`_read_build_modules`, the `[deps.X]` reader,
+  the `[lib]`/`[build]` profile reader) to require a key boundary
+  (space/tab/`=`), skip comment lines, and find the first non-space token
+  (also enabling indented `  modules = […]` keys). The original 5.7.x
+  flat-substring repro was already mitigated by a prior line-oriented
+  rewrite; this closes the class. [issue 2026-04-26]
+- **`cyriusly cmdtools install/remove starship` is now symlink- and
+  backup-safe** — resolves a symlinked `starship.toml` to its target before
+  editing (so `sed -i` no longer replaces the link with a regular file and
+  breaks dotfile managers), and takes a `.bak` before modifying. The
+  from-scratch overwrite was already fixed (append-with-block-replace);
+  this closes the dotfile-manager + no-recovery-point gaps. [issue 2026-05-20]
+
+### Added
+
+- **Build-artifact pre-commit hook** (`scripts/hooks/pre-commit`) — refuses
+  to commit `build/cycc`/`build/cybs`/`build/cc3` if it carries foreign
+  strings (`mabda: gpu`/`wgpuDevice`/`compute_pipeline`), is non-ELF, or is
+  outside the expected size band — the silent-contamination class that bit
+  v5.11.28/.43/.45. Installed automatically by `install.sh --refresh-only`
+  (inside a git checkout) and via the new **`cyrius hooks install`** verb.
+  The check.cyr `_cc5_contamination_gate` stays as the catch-after
+  backstop (the hook is `--no-verify`-bypassable). [issue 2026-05-13]
+
+### Docs / closed
+
+- Documented that `for (…;…;…)` requires all three clauses
+  (`docs/guides/cyrius-guide.md`); `for (;;)` is unsupported by design.
+  Closed `for-empty-clauses` **won't-fix**. [issue 2026-04-26]
+- Archived `type-table-256-cap-silent-fail` (a real diagnostic now prints
+  at the cap — verified) and `distlib-blank-lines` (collapse-runs fix
+  shipped at v6.0.9 — verified lint-clean) as already-resolved.
+
 ## [6.0.35] — 2026-06-02
 
 **`cyrius build` Mach-O SIGBUS fixed — `&local`/`&global` now shadow a

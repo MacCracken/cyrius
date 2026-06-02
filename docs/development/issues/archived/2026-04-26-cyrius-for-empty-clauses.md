@@ -1,5 +1,12 @@
 # 2026-04-26 — cyrius parser: `for (init; cond; step)` requires all three clauses non-empty
 
+> **RESOLUTION (2026-06-02, v6.0.36): WON'T-FIX — intentional.** Cyrius
+> requires all three `for` clauses; omitted clauses (`for (;;)`) are not
+> supported by design. Use `while` for unbounded/custom-stepped loops and
+> the counted `for` / `for x in …` forms otherwise. The convention is now
+> documented in `docs/guides/cyrius-guide.md` (control-flow section).
+> Closed per user direction during the v6.0.36 open-issue cleanup batch.
+
 **Component:** `cyrius` parser (`src/frontend/parse_ctrl.cyr` `PARSE_FOR`)
 **Toolchain seen:** cyrius 5.7.10 (parser shape unchanged for several minor releases)
 **Severity:** Misleading parse errors at the wrong line — easy to chase the wrong file

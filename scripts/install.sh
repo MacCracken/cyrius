@@ -286,6 +286,16 @@ EOF_LIB
     ln -sf "$CYRIUS_HOME/versions/$VERSION/bin" "$CYRIUS_HOME/bin"
     ln -sf "$CYRIUS_HOME/versions/$VERSION/lib" "$CYRIUS_HOME/lib"
 
+    # v6.0.36: install the build-artifact pre-commit hook when refreshing
+    # from inside the git repo, so a fresh clone (or any version-bump) is
+    # protected from committing a contaminated build/cycc. See
+    # docs/development/issues/archived/2026-05-13-build-artifact-precommit-hook.md.
+    if [ -d .git ] && [ -f scripts/hooks/pre-commit ]; then
+        cp scripts/hooks/pre-commit .git/hooks/pre-commit && \
+            chmod +x .git/hooks/pre-commit && \
+            info "installed build-artifact pre-commit hook (.git/hooks/pre-commit)"
+    fi
+
     info "refreshed $_refreshed bins/scripts + $_lib_count stdlib files"
     exit 0
 fi
