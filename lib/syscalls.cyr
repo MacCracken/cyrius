@@ -43,3 +43,16 @@ include "lib/syscalls_x86_64_linux.cyr"
 include "lib/syscalls_aarch64_linux.cyr"
 #endif
 #endif
+# macOS (Mach-O). x86_64 uses the BSD-numbered syscalls_macos.cyr
+# directly; arm64 reuses the Linux aarch64 numbers and lets ESYSXLAT
+# translate them to BSD svc numbers at emit time — the same mechanism
+# the compiler itself relies on (src/main_aarch64_macho.cyr). Mirrors
+# the CYRIUS_TARGET_MACOS dispatch in lib/alloc.cyr.
+#ifdef CYRIUS_TARGET_MACOS
+#ifdef CYRIUS_ARCH_X86
+include "lib/syscalls_macos.cyr"
+#endif
+#ifdef CYRIUS_ARCH_AARCH64
+include "lib/syscalls_aarch64_linux.cyr"
+#endif
+#endif

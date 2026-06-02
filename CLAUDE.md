@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.0.31
+- **Version**: 6.0.32
 
 ## Goal
 
@@ -38,6 +38,7 @@ cyrius bench                       # run .bcyr benchmarks
 ## Key Principles
 
 - **Self-hosting is non-negotiable** — cycc==cycc byte-identical after every compiler change
+- **Cross-OS self-host is non-negotiable, on REAL hardware** — "self-hosting" means cycc reproduces itself byte-identical on **every target it claims to support**, not just x86_64 Linux. After ANY compiler-backend or stdlib change, verify cycc self-hosts on **ecb (macOS, arm64)** + **cass (Windows, PE)** via SSH — they're wired in `~/.ssh/config`, one `ssh` away, every slot. **A green CI checkmark is NOT verification.** The macOS compiler self-host rotted silently for ~9 minors (v5.3.13 → v6.0.32, 400+ patches) behind a CI job named "Mach-O ARM64 Native ✓" that only ran hello-world / exit-code programs and never once built or self-hosted `cycc`. It surfaced only when a human installed on a Mac and got a broken toolchain — the exact "found by ports" failure. Hello-world smoke is a placebo; the compiler self-hosting on the target IS the test. Never trust a checkmark over running the compiler on the hardware. See `feedback_macos_windows_ci_gate_mandatory`, `reference_verification_hosts_ssh`, Closeout 3b.
 - **Two-step bootstrap for heap changes** — cycc compiles cc5b, cycc==cc5b
 - **Never use raw `cat | cycc` for projects** — always invoke `cyrius build`. The CLI wrapper resolves deps, auto-prepends includes from `cyrius.cyml`, handles cross-arch + strict flags, and produces consistent output naming. Raw `cat | cycc` is for compiler-internal self-host (the verifier script + bootstrap chain) — not consumer code.
 - **Assembly is the cornerstone** — understand every instruction the compiler emits
@@ -68,6 +69,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 1. **Self-host verify** — cycc compiles itself byte-identical
 2. **Bootstrap closure** — seed → cybs → asm → cybs byte-identical
 3. **Full check.sh** — all gates green (count grows per minor; record the number)
+3b. **Cross-OS self-host (NON-NEGOTIABLE — added v6.0.x after the macOS rot incident)** — cycc must build from the correct per-target source AND **self-host byte-identical on real macOS (ecb) + Windows (cass)**, not just x86_64 Linux. Hello-world/exit-code smoke is NOT self-host — the macOS port rotted v5.3.13→v6.0.31 precisely because the `macho-arm64-native`/`windows-native` CI jobs only ran tiny programs, never the compiler. Verify via the `macos-14`/`windows-latest` CI jobs (once extended to self-host) AND/OR SSH to ecb/cass. A minor does NOT close with macOS/Windows self-host unverified or red. See [reference: verification hosts, `feedback_macos_windows_ci_gate_mandatory`].
 
 ### Judgment-call passes (where bugs hide)
 4. **Heap map audit** — beyond "verify the map matches usage", evaluate:

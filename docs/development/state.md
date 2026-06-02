@@ -3,6 +3,49 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-01 (.32 ship — macOS install repair arc START + the CI-gate-gap reckoning)
+
+Closing **v6.0.32**, first slot of the macOS install-repair arc
+(interrupt before the AGNOS binary work). `lib/`-only code + process
+hardening.
+
+**Code (verified on Linux byte-identical + on ecb):**
+- `lib/syscalls.cyr` — added the `CYRIUS_TARGET_MACOS` dispatch branch
+  (was missing; neither WIN nor LINUX fired for a Mach-O build →
+  `undefined STDERR_FD`). x86_64 → `syscalls_macos.cyr`; arm64 → Linux
+  aarch64 numbers + ESYSXLAT (same as the compiler).
+- `lib/syscalls_macos.cyr` — added `STDIN_FD`/`STDOUT_FD`/`STDERR_FD`.
+- Result: `cyrius` wrapper builds as arm64 Mach-O (262,580 B) on ecb;
+  `cycc` from `src/main_aarch64_macho.cyr` (mmap heap) runs + compiles
+  `tiny`→exit 42 on ecb once ad-hoc codesigned.
+
+**Gates:** cycc x86 self-host **byte-identical 885,024 B**; `check.sh`
+**82/82** (plumbing is emit-neutral on Linux).
+
+**THE RECKONING (why this arc exists):** the macOS compiler self-host
+rotted silently from **v5.3.13 → v6.0.32** — ~9 minor lines, 400+
+patches — behind a green CI job named "Mach-O ARM64 Native". That job
+(and `windows-native`) only ran hello-world / exit-code smoke programs;
+neither ever built or self-hosted `cycc`. The rot surfaced only when the
+user installed on a Mac and got only `cyriusly`. ecb/cass were wired in
+`~/.ssh/config` the whole time, one `ssh` away, unused by any gate and
+by me across the whole TLS arc. Root causes mapped on ecb: unsigned →
+AMFI SIGKILL (fix: install-time `codesign -s -`); brk heap in main.cyr
+(the correct `main_aarch64_macho.cyr` mmap source exists); native
+self-host SIGILL (→ .33); tool/wrapper file-I/O broken (→ .33).
+
+**Hardening landed this slot:** CLAUDE.md Key Principle "Cross-OS
+self-host is non-negotiable, on REAL hardware" + Closeout Pass item 3b
+(no minor closes with macOS/Windows self-host unverified/red). Memories:
+[[feedback_macos_windows_ci_gate_mandatory]], reinforced
+[[reference_verification_hosts_ssh]] + [[feedback_cross_arch_propagation_mandatory]].
+
+**Arc plan:** .33 = aarch64/Mach-O **self-host codegen bug** (cycc
+reproduces itself byte-identical on ecb) + tool file-I/O; .34 = Windows
+install (verify on cass); **.35 = CI cross-OS self-host GATE** (extend
+the macos-14/windows-latest jobs to self-host cycc — MANDATORY before
+AGNOS arc). See [[project_macos_install_arm64_fix_v6_0_32]].
+
 ## Session close — 2026-06-01 (.31 ship — TLS Mini-arc B.8 connect() + e2e; **Mini-arc B COMPLETE**)
 
 Closing **v6.0.31**, the eighth/final slot of TLS Mini-arc B (client).

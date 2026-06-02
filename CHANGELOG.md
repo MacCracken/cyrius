@@ -6,6 +6,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.32] — 2026-06-01
+
+**macОS install repair — arc start: syscall plumbing + the CI-gate-gap
+finding.** First slot of the macОS-repair arc (interrupt before the
+AGNOS binary work). `lib/`-only code; process/doc hardening.
+
+### Added — macОS syscall plumbing (`lib/`)
+
+- `lib/syscalls.cyr` — `CYRIUS_TARGET_MACOS` dispatch branch (mirrors
+  the existing `lib/alloc.cyr` macОS dispatch): x86_64 macho uses the
+  BSD-numbered `syscalls_macos.cyr`; arm64 macho reuses the Linux aarch64
+  numbers and lets ESYSXLAT translate to BSD svc at emit time — the same
+  mechanism the compiler itself relies on. Pre-fix, neither
+  `CYRIUS_TARGET_WIN` nor `CYRIUS_TARGET_LINUX` fired for a Mach-O build,
+  so wrapper/tool sources hit `undefined STDERR_FD` and couldn't build.
+- `lib/syscalls_macos.cyr` — `STDIN_FD`/`STDOUT_FD`/`STDERR_FD` (= 0/1/2),
+  which every other platform's syscall file already carried. Unblocks
+  the `cyrius` wrapper Mach-O build (`cbt/core.cyr` references STDERR_FD).
+
+With these, the `cyrius` wrapper now **builds** as arm64 Mach-O
+(262,580 B) — verified on ecb. `cycc` itself builds from
+`src/main_aarch64_macho.cyr` (mmap heap, NOT the brk-based `main.cyr`),
+runs on Apple Silicon once ad-hoc codesigned, and compiles a real
+program (`tiny.out` → exit 42 on ecb).
+
+### Process / docs hardening (the bigger finding)
+
+- The macОS toolchain rotted silently from v5.3.13 → v6.0.31: `ci.yml`
+  HAS real `macho-arm64-native` (macos-14) + `windows-native`
+  (windows-latest) jobs, but they only run **hello-world / exit-code
+  smoke programs** — they never build, run, or self-host `cycc`, so the
+  compiler's macОS self-host (which SIGILLs) and the tools' file-I/O
+  breakage stayed invisible while CI showed green.
+- **CLAUDE.md Closeout Pass item 3b** (non-negotiable): cross-OS
+  self-host on real macОS (ecb) + Windows (cass) — hello-world smoke is
+  not self-host. A minor does not close with macОS/Windows self-host
+  unverified or red.
+- Roadmap: `.33` aarch64/Mach-O self-host codegen bug, `.34` Windows
+  install, **`.35` CI cross-OS self-host gate** (extend the native jobs
+  to self-host cycc) — MANDATORY before the AGNOS arc.
+
+### Verification
+
+- cycc x86 self-host **byte-identical at 885,024 B** (plumbing is
+  emit-neutral on Linux).
+- `scripts/check.sh` **82/82**.
+- arm64 Mach-O: `cyrius` wrapper builds; `cycc` builds + runs + compiles
+  `tiny`→42 on ecb (signed). Native self-host SIGILL and tool file-I/O
+  are tracked to `.33` (macОS runtime correctness).
+
 ## [6.0.31] — 2026-06-01
 
 **TLS arc Mini-arc B.8 — TLS 1.3 client: `connect()` + full
