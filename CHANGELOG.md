@@ -6,6 +6,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.43] — 2026-06-02
+
+**x86-macOS compiler self-hosts on Intel hardware — the carry-negate keystone.**
+
+### Fixed
+
+- **x86-macOS: convert Darwin's carry-flag syscall errors to negative
+  returns** (`backend/x86/emit.cyr`, `ESYSCALL`). Darwin signals syscall
+  failure via the **CARRY flag with a POSITIVE errno** in rax, not Linux's
+  negative return — so every `if (result < 0)` error check in the compiler
+  silently passed on failure on x86-macho, using garbage values (e.g.
+  `PP_IFDEF_PASS`'s scratch `mmap`, which must fall back from Linux flags
+  to macOS `MAP_ANON` on failure → SIGSEGV inside PREPROCESS). The arm64
+  backend handles this with `csneg x0,x0,x0,cc`; x86 now emits the
+  equivalent `jnc +3; neg rax` after every Mach-O `syscall` (5 bytes,
+  gated `_TARGET_MACHO==1`). This was the keystone of the x86-macOS runtime
+  arc (layers 1-5).
+
+  **Verified on `ach` (Intel, Darwin 13.7.8):** the x86_64 Mach-O `cycc`
+  now runs (was SIGSYS at instruction one), compiles trivial → exit 42,
+  compiles fib (recursion + loop + arithmetic) → exit 88, and
+  **self-hosts byte-identical** (cross-built → c2 [741376 B] → c3,
+  `cmp` clean). x86 ELF self-host + arm64 macho self-host byte-identical;
+  check.sh 82/82 — no regressions (the fix is Mach-O-gated).
+
+  **The x86-macOS COMPILER is now functional and self-hosting.** The
+  remaining pillar work (argv entry prologue for the `cyrius` wrapper +
+  tools, `build-macos-x86-tarball.sh`, install.sh, the real-install gate on
+  `ach`) is tracked in
+  `issues/2026-06-02-macos-x86-release-no-compiler.md` for a following
+  release.
+
 ## [6.0.42] — 2026-06-02
 
 **x86-macOS runtime arc — dedicated driver + layers 3-4 (groundwork).**

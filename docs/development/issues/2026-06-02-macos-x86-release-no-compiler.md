@@ -201,3 +201,42 @@ all resolved. New crash:
 Remaining: layer 5 (macho entry alignment) → then re-test full compile +
 self-host on `ach`, then argv/--version prologue, then the release packaging
 + real-install gate (build-macos-x86-tarball.sh).
+
+## UPDATE 2026-06-02 (cont.) — ★ COMPILER SELF-HOSTS on Intel Mac (layer 5 FIXED)
+
+Layer 5 pinned + fixed on `ach`. The PREPROCESS SIGSEGV was NOT alignment —
+it was `PP_IFDEF_PASS`'s own `mmap` (tries Linux flags 34, falls back to
+macOS `0x1002` on failure) where the **failure check `if (tmp < 0)` never
+fired**: Darwin returns syscall errors via the **CARRY flag with a POSITIVE
+errno**, not Linux's negative return. arm64's `ESYSCALL` converts this with
+`csneg x0,x0,x0,cc`; the x86 `EMACHO_SYSXLAT` only renumbered, never
+converted — so every `result < 0` check on x86-macho silently passed on
+failure → garbage pointer → SIGSEGV.
+
+**Fix (the keystone):** `ESYSCALL` now emits `jnc +3; neg rax` after every
+Mach-O `syscall` (x86 `csneg` equivalent) — negate rax only when carry/error
+is set. 5 bytes, gated `_TARGET_MACHO==1`.
+
+**RESULT — verified on `ach` (Intel, Darwin 13.7.8):**
+- cycc runs (was SIGSYS at instruction one).
+- compiles trivial → `./out` exits 42 ✓
+- compiles fib (recursion + while + arithmetic) → exits 88 ✓
+- **self-hosts byte-identical**: c0 (cross-built) → c2 (741376 B) → c3;
+  `cmp c2 c3` byte-identical. The Intel-Mac cycc reproduces itself. ✓
+- x86 ELF self-host byte-identical; arm64 macho self-host byte-identical;
+  check.sh 82/82 — no regressions (carry-negate is macho-gated).
+
+Layers 1-5 DONE. **The x86-macOS COMPILER is functional and self-hosts.**
+
+### Remaining for the full pillar (PILLAR RULE: install.sh → working cyrius)
+1. **argv entry prologue** (deferred layer-4 follow-up): the `cyrius` wrapper
+   + tools (cyrfmt/lint/doc) need argv. Emit `push rsi; push rdi; mov r13,sp`
+   into each macho output's entry (cycc itself needs no argv — reads stdin),
+   and make `_macho_x28`/`_macho_argv_base` read r13 (only callers that
+   actually parked it — i.e. the wrapper/tools, not cycc). `--version`/
+   `--strict` ride on this too.
+2. **`scripts/build-macos-x86-tarball.sh`** (mirror the arm64 one) — package
+   cycc + driver + wrapper + tools as x86_64 Mach-O.
+3. **install.sh** x86-macho path + **release.yml** `build-macos` → the tarball.
+4. **Real-install gate on `ach`**: install.sh → `cyrius build fn-main-42` →
+   exit 42. Do NOT close the pillar until this passes on hardware.

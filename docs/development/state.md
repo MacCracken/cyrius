@@ -3,6 +3,37 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.43 ship — ★ x86-macOS COMPILER SELF-HOSTS on Intel)
+
+Closing **v6.0.43**. ELF self-host byte-identical 886,432 B; check.sh green.
+
+**★ The x86_64 Mach-O cycc self-hosts on real Intel hardware (`ach`).** The
+keystone fix (5 bytes): `ESYSCALL` now emits `jnc +3; neg rax` after every
+Mach-O syscall — Darwin signals errors via the CARRY flag + POSITIVE errno,
+not Linux's negative return, so every `if (result < 0)` check silently
+passed on failure (e.g. `PP_IFDEF_PASS`'s fallback mmap → SIGSEGV in
+PREPROCESS). arm64 had `csneg`; x86 had nothing. Gated `_TARGET_MACHO==1`.
+
+**Verified on `ach` (Intel, Darwin 13.7.8):** cycc runs (was SIGSYS at
+instruction 1) → trivial exits 42 → fib (recursion+loop) exits 88 →
+**self-hosts byte-identical** (cross→c2 741376 B→c3, cmp clean). x86 ELF +
+arm64 macho self-host byte-identical; check.sh 82/82. No regressions
+(macho-gated).
+
+**x86-macOS COMPILER pillar layers 1-5 DONE.** Remaining for the FULL pillar
+(PILLAR RULE — install.sh→working cyrius on HW), next release:
+1. **argv entry prologue** — wrapper + tools (fmt/lint/doc) need argv (cycc
+   reads stdin, needs none). Emit `push rsi/rdi; mov r13,sp` into outputs;
+   `_macho_x28`/`_macho_argv_base` read r13. --version/--strict ride this.
+2. **`scripts/build-macos-x86-tarball.sh`** (mirror arm64) + install.sh x86
+   path + release.yml `build-macos`.
+3. **Real-install gate on `ach`** — install.sh → `cyrius build fn-main-42`
+   → exit 42. Pillar NOT closed until this passes on hardware.
+
+**Queue:** x86-macOS full pillar (argv→pkg→install→gate) · Windows `cycc`
+bug 2+ (`cass`) · UEFI ud2 · CI cross-OS gate · cap-raise bundle (struct
+256/type-table 1024/secret 64) · then AGNOS.
+
 ## Session close — 2026-06-02 (.42 ship — x86-macOS dedicated driver; layers 3-4)
 
 Closing **v6.0.42**. self-host byte-identical 886,272 B; check.sh green.
