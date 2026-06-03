@@ -117,6 +117,11 @@ fn EOPEN_PE(S)   { return 0; }
 fn ECLOSE_PE(S)  { return 0; }
 fn ELSEEK_PE(S)  { return 0; }
 fn EMMAP_PE(S)   { return 0; }
+fn EWAIT_PE(S)       { return 0; }   # v6.0.51 Win32 process-creation reroutes
+fn EGETEXIT_PE(S)    { return 0; }   # (x86-only real impl; aarch64 stubs for
+fn ESETHANDLE_PE(S)  { return 0; }   #  parse_expr.cyr symbol resolution — these
+fn ECREATEPIPE_PE(S) { return 0; }   #  branches are dead under the aarch64 backend)
+fn ECREATEPROC_PE(S) { return 0; }
 
 # Marker that the aarch64 backend is present in this compiler binary.
 # Checked by EMITMACHO_ARM64 to refuse Mach-O ARM output when accidentally

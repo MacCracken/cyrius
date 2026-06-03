@@ -582,18 +582,66 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.0.51: PE-internal Win32 process-creation reroutes (the
+            # ai-hwaccel spawn arc). 0xF00N is an out-of-band block (Linux
+            # syscalls top out ~450) reserved for kernel32 calls whose arity
+            # exceeds the syscall(n, ≤6) form — process_win.cyr drives them
+            # via named consts (WIN_SYS_*). See lib/process_win.cyr + the
+            # EWIN*_PE emit fns in backend/x86/emit.cyr.
+            if (sc_num == 61441) {
+                if (argc == 3) {
+                    # syscall(0xF001, handle, timeout) → WaitForSingleObject.
+                    EWAIT_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61442) {
+                if (argc == 3) {
+                    # syscall(0xF002, handle, &code) → GetExitCodeProcess.
+                    EGETEXIT_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61443) {
+                if (argc == 4) {
+                    # syscall(0xF003, handle, mask, flags) → SetHandleInformation.
+                    ESETHANDLE_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61444) {
+                if (argc == 5) {
+                    # syscall(0xF004, &rd, &wr, &sa, size) → CreatePipe.
+                    ECREATEPIPE_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61445) {
+                if (argc == 2) {
+                    # syscall(0xF005, &args) → CreateProcessW (10 args from *args).
+                    ECREATEPROC_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # Non-mapped syscalls: emitting the generic ESCPOPS path
             # below would produce an `0F 05` syscall that faults
             # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
-            # (0xC000001D). Routed numbers (v5.11.22):
+            # (0xC000001D). Routed numbers (v5.11.22, +v6.0.51):
             # 0=read, 1=write, 2=open, 3=close, 8=lseek, 9=mmap,
-            # 60=exit, 83=mkdir, 87=unlink, 228=clock_gettime.
+            # 60=exit, 83=mkdir, 87=unlink, 228=clock_gettime, and
+            # 0xF001-0xF005 = Win32 process creation (Wait/GetExit/
+            # SetHandle/CreatePipe/CreateProcessW; see process_win.cyr).
             # Others crash; gate with `#ifdef CYRIUS_TARGET_WIN`
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
-            150);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            194);
         }
         ESCPOPS(S, argc);
         _cfo = 0;

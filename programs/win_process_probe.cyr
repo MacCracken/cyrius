@@ -1,0 +1,31 @@
+# win_process_probe — a stdlib subprocess-spawning Windows program so
+# `_win_process_gate` (programs/check.cyr) can assert that CYRIUS_TARGET_WIN=1
+# routes process creation through CreateProcessW. This is the v6.0.51 arc's
+# Linux-side structural gate (the cass runtime spawn-test is the v6.0.52 gate).
+#
+# Including lib/process.cyr under CYRIUS_TARGET_WIN selects lib/process_win.cyr
+# (CreateProcessW + CreatePipe + WaitForSingleObject + GetExitCodeProcess);
+# calling run_capture + exec_capture forces those reroutes to emit, so the gate
+# can confirm the CreateProcessW import is present in the PE. See issue
+# 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/tagged.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/process.cyr"
+
+fn main() {
+    var buf[256];
+    # 3-arg form → CreateProcessW + pipe capture.
+    var r = run_capture("cmd.exe", "/c", "echo hi", &buf, 256);
+    # vec form → CreateProcessW via the exec_* family.
+    var args = vec_new();
+    vec_push(args, "cmd.exe");
+    vec_push(args, "/c");
+    vec_push(args, "ver");
+    var n = exec_capture(args, &buf, 256);
+    sys_write(STDOUT_FD, "spawn-probe\n", 12);
+    return 0;
+}

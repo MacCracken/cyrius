@@ -12,6 +12,18 @@
 # (matching the pattern in `lib/fdlopen.cyr:234` —
 # `# O_RDONLY`).
 
+# v6.0.51: Win32 has no fork/exec — the Windows process surface lives in a
+# CreateProcessW-based variant. The POSIX implementations below are guarded
+# out under CYRIUS_TARGET_WIN (the predefine chain in src/main.cyr makes
+# exactly one of WIN/MACOS/AGNOS/LINUX active, so #ifndef WIN covers Linux,
+# macOS, and agnos). See lib/process_win.cyr + issue
+# 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
+#ifdef CYRIUS_TARGET_WIN
+include "lib/process_win.cyr"
+#endif
+
+#ifndef CYRIUS_TARGET_WIN
+
 # Build argv array and execve. Called in child after fork. Does not return.
 # argv[40] = 5 × 8 B (cmd + up to 2 args + NUL + 1 slot headroom); envp[16] =
 # 2 × 8 B (envp[0] + NUL). var buf[N] is N BYTES per CLAUDE.md buffer contract;
@@ -401,3 +413,5 @@ fn exec_cmd(cmdline): i64 {
     }
     return exec_vec(args);
 }
+
+#endif

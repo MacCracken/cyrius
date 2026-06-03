@@ -8,12 +8,20 @@
 > Added a Windows stdlib-cross-build gate (`_win_build_gate`, check.sh 84). The
 > 5.11.5 ExitProcess/WriteFile hazard (#4) is confirmed gone on 6.x (the cass
 > cross-OS self-host writes via WriteFile + exits via ExitProcess every release).
-> **v6.0.51 = the RUNTIME blocker (#1), still OPEN:** route Win32 process creation
-> — `fork`(57)/`execve`(59) (+`pipe`/`wait4`/`dup2`/`getcwd`) are unrouted, so
-> ai-hwaccel's probe spawns fault (STATUS_ILLEGAL_INSTRUCTION). Needs a
-> `CreateProcess`-based `run`/`run_capture` under `#ifdef CYRIUS_TARGET_WIN`
-> (no 1:1 fork mapping) + kernel32 imports (CreateProcessW/CreatePipe/
-> WaitForSingleObject/GetExitCodeProcess) + a cass spawn-build gate. Keep OPEN.
+> **v6.0.51 = the RUNTIME blocker (#1), RESOLVED + cass-verified.** Win32 process
+> creation now routes through CreateProcessW. `lib/process_win.cyr` (included by
+> `lib/process.cyr` under `#ifdef CYRIUS_TARGET_WIN`, POSIX defs guarded by
+> `#ifndef`) reimplements the full surface — run / run_capture / spawn / wait_pid /
+> exec_vec / exec_capture / exec_env + the `_str` family — over five new
+> PE-internal syscall reroutes in `src/backend/x86/emit.cyr` (0xF001-0xF005 →
+> WaitForSingleObject / GetExitCodeProcess / SetHandleInformation / CreatePipe /
+> CreateProcessW), reusing EREAD_PE (raw-handle ReadFile, v6.0.45) + ECLOSE_PE
+> (CloseHandle). `ECREATEPROC_PE` force-aligns rsp — the 10-arg CreateProcessW
+> faults on the misalign the ≤4-arg reroutes tolerate (found ON cass, not by
+> objdump). **VERIFIED on real Windows (cass):** `exec_capture` spawns `cmd.exe`
+> and captures its stdout (`cyrius-spawn-ok`); cycc self-hosts byte-identical on
+> ecb/cass/pi; check.sh 85/85 incl. the new `_win_process_gate`. **Remaining
+> (v6.0.52):** ai-hwaccel downstream wheel smoke — now UNBLOCKED; pin to 6.0.51.
 
 **Discovered:** 2026-06-03 assessing the ai-hwaccel v2.3.7 Windows wheel
 (consumer: **ai-hwaccel**, cyrius pinned 6.0.47).

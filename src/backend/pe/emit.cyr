@@ -319,6 +319,60 @@ fn _pe_ensure_closeh(S): i64 {
 }
 fn _pe_closeh_get(): i64 { return _pe_closeh_idx; }
 
+# v6.0.51: Windows process-creation kernel32 imports (the ai-hwaccel
+# spawn arc). Mirror the _pe_ensure_closeh scaffold. Called from the
+# bespoke EWIN*_PE emit reroutes in src/backend/x86/emit.cyr; see
+# lib/process_win.cyr + issue 2026-06-03-windows-pe-syscall-surface.
+var _pe_waitobj_ready     = 0;
+var _pe_waitobj_idx       = 0;
+fn _pe_ensure_waitobj(S): i64 {
+    if (_pe_waitobj_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_waitobj_idx, "WaitForSingleObject");
+    _pe_waitobj_ready = 1;
+    return 0;
+}
+fn _pe_waitobj_get(): i64 { return _pe_waitobj_idx; }
+
+var _pe_getexit_ready     = 0;
+var _pe_getexit_idx       = 0;
+fn _pe_ensure_getexit(S): i64 {
+    if (_pe_getexit_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getexit_idx, "GetExitCodeProcess");
+    _pe_getexit_ready = 1;
+    return 0;
+}
+fn _pe_getexit_get(): i64 { return _pe_getexit_idx; }
+
+var _pe_createpipe_ready  = 0;
+var _pe_createpipe_idx    = 0;
+fn _pe_ensure_createpipe(S): i64 {
+    if (_pe_createpipe_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_createpipe_idx, "CreatePipe");
+    _pe_createpipe_ready = 1;
+    return 0;
+}
+fn _pe_createpipe_get(): i64 { return _pe_createpipe_idx; }
+
+var _pe_sethandle_ready   = 0;
+var _pe_sethandle_idx     = 0;
+fn _pe_ensure_sethandle(S): i64 {
+    if (_pe_sethandle_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_sethandle_idx, "SetHandleInformation");
+    _pe_sethandle_ready = 1;
+    return 0;
+}
+fn _pe_sethandle_get(): i64 { return _pe_sethandle_idx; }
+
+var _pe_createproc_ready  = 0;
+var _pe_createproc_idx    = 0;
+fn _pe_ensure_createproc(S): i64 {
+    if (_pe_createproc_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_createproc_idx, "CreateProcessW");
+    _pe_createproc_ready = 1;
+    return 0;
+}
+fn _pe_createproc_get(): i64 { return _pe_createproc_idx; }
+
 var _pe_seekfp_ready      = 0;
 var _pe_seekfp_idx        = 0;
 fn _pe_ensure_seekfp(S): i64 {

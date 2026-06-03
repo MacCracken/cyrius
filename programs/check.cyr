@@ -1841,6 +1841,43 @@ fn _win_build_gate(): i64 {
     return 0;
 }
 
+# Gate: CYRIUS_TARGET_WIN routes process creation through CreateProcessW
+# (v6.0.51 — the ai-hwaccel spawn arc; Linux-side STRUCTURAL check. The cass
+# runtime spawn-test is the v6.0.52 gate). Compiles programs/win_process_probe.cyr
+# (includes lib/process.cyr → lib/process_win.cyr, calls run_capture +
+# exec_capture) under CYRIUS_TARGET_WIN=1 and asserts: valid PE32+ + the
+# "CreateProcessW" import name present in the image (proving the 0xF005 reroute
+# emitted AND registered the kernel32 import). Before v6.0.51 the POSIX
+# fork/execve path emitted unrouted syscalls → STATUS_ILLEGAL_INSTRUCTION on the
+# first spawn. See issue 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
+fn _win_process_gate(): i64 {
+    var label = "CYRIUS_TARGET_WIN routes process creation via CreateProcessW (v6.0.51 spawn arc; structural)";
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = _win_compile_to_buf(_root_path("programs/win_process_probe.cyr"), buf, cap, "win_process_probe");
+    if (n <= 0) { _check(label, 1); return 1; }
+    if (load8(buf) != 0x4D || load8(buf + 1) != 0x5A) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": win process probe missing MZ DOS header"); _check(label, 1); return 1;
+    }
+    var pe_off = _read_u32_le(buf, 60);
+    var magic = _read_u16_le(buf, pe_off + 4 + 20);
+    if (magic != 0x020B) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": win process probe Optional Header Magic "); print_num(magic); println(" != 0x020B (PE32+)");
+        _check(label, 1); return 1;
+    }
+    if (_find_bytes(buf, n, "CreateProcessW", 14) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": win process probe — CreateProcessW import absent (process surface not wired)");
+        _check(label, 1); return 1;
+    }
+    _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+    println(": CYRIUS_TARGET_WIN — process_win.cyr emits CreateProcessW (run_capture + exec_capture)");
+    _check(label, 0);
+    return 0;
+}
+
 # Gate: UEFI Application PE emit produces a structurally correct
 # PE32+ image (v5.11.48, gnoboot arc P2).
 #
@@ -9970,6 +10007,7 @@ fn _run_regression_gates(): i64 {
 
     _section("Windows PE stdlib cross-build (CYRIUS_TARGET_WIN)");
     _win_build_gate();
+    _win_process_gate();
     println("");
 
     _section("EFI Application OVMF runtime smoke (gnoboot arc KO)");

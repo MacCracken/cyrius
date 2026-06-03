@@ -868,6 +868,149 @@ fn ECLOSE_PE(S): i64 {
     return 0;
 }
 
+# v6.0.51: Windows process-creation reroutes (the ai-hwaccel spawn arc).
+# Each mirrors ECLOSE_PE's frame shape: pop args (top→bottom = last→first)
+# off the expr stack into Win64 ABI regs (rcx/rdx/r8/r9 + stack for 5+),
+# drop the sc_nr, sub rsp 0x28 (32 B shadow + 8 align — same net rsp offset
+# from pre-push as ECLOSE_PE), `FF 15` IAT-call the auto-registered import,
+# unwind. process_win.cyr drives these via syscall(0xF00N, ...). See
+# lib/process_win.cyr + issue 2026-06-03-windows-pe-syscall-surface.
+
+# syscall(0xF001, handle, timeout) → WaitForSingleObject(handle, timeout).
+# Stack on entry (top→bottom): [timeout] [handle] [sc_nr]. Ret in rax = the
+# DWORD wait result (0 = WAIT_OBJECT_0).
+fn EWAIT_PE(S): i64 {
+    _pe_ensure_waitobj(S);
+    var idx = _pe_waitobj_get();
+    EB(S, 0x58);                                        # pop rax (timeout)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (handle)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28); # sub rsp, 0x28
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28); # add rsp, 0x28
+    return 0;
+}
+
+# syscall(0xF002, handle, &exitcode) → GetExitCodeProcess(handle, &code).
+# Stack (top→bottom): [&exitcode] [handle] [sc_nr]. Ret rax = BOOL.
+fn EGETEXIT_PE(S): i64 {
+    _pe_ensure_getexit(S);
+    var idx = _pe_getexit_get();
+    EB(S, 0x58);                                        # pop rax (&exitcode)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (handle)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28); # sub rsp, 0x28
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28); # add rsp, 0x28
+    return 0;
+}
+
+# syscall(0xF003, handle, mask, flags) →
+# SetHandleInformation(handle, mask, flags). Used to clear
+# HANDLE_FLAG_INHERIT on the parent ends of the stdio pipes.
+# Stack (top→bottom): [flags] [mask] [handle] [sc_nr]. Ret rax = BOOL.
+fn ESETHANDLE_PE(S): i64 {
+    _pe_ensure_sethandle(S);
+    var idx = _pe_sethandle_get();
+    EB(S, 0x58);                                        # pop rax (flags)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax (a3)
+    EB(S, 0x58);                                        # pop rax (mask)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (handle)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28); # sub rsp, 0x28
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28); # add rsp, 0x28
+    return 0;
+}
+
+# syscall(0xF004, &rd, &wr, &sa, size) →
+# CreatePipe(&hReadPipe, &hWritePipe, &saAttributes, nSize).
+# Stack (top→bottom): [size] [&sa] [&wr] [&rd] [sc_nr]. Ret rax = BOOL.
+fn ECREATEPIPE_PE(S): i64 {
+    _pe_ensure_createpipe(S);
+    var idx = _pe_createpipe_get();
+    EB(S, 0x58);                                        # pop rax (size)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC1);              # mov r9, rax (a4)
+    EB(S, 0x58);                                        # pop rax (&sa)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax (a3)
+    EB(S, 0x58);                                        # pop rax (&wr)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (&rd)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28); # sub rsp, 0x28
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28); # add rsp, 0x28
+    return 0;
+}
+
+# syscall(0xF005, &args) → CreateProcessW(...10 args from *args...).
+# CreateProcessW has 10 params — past the syscall(n, ≤6) form AND
+# fncall8 — so process_win.cyr packs them into a 10-qword struct and
+# passes its address. Layout (i64 each): [0]lpApplicationName
+# [8]lpCommandLine [16]lpProcessAttributes [24]lpThreadAttributes
+# [32]bInheritHandles [40]dwCreationFlags [48]lpEnvironment
+# [56]lpCurrentDirectory [64]lpStartupInfo [72]lpProcessInformation.
+# a1-a4 → rcx/rdx/r8/r9; a5-a10 → [rsp+0x20..0x48]. Frame 0x50 (32 B
+# shadow + 48 B for the 6 stack args) keeps rsp 16-aligned at the call
+# (the expr stack is 16-aligned at the syscall boundary; see EWRITE_PE).
+# Stack (top→bottom): [&args] [sc_nr]. Ret rax = BOOL.
+fn ECREATEPROC_PE(S): i64 {
+    _pe_ensure_createproc(S);
+    var idx = _pe_createproc_get();
+    EB(S, 0x58);                                        # pop rax (&args base)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    # Force 16-byte rsp alignment for the call: CreateProcessW's internal SSE
+    # string ops fault on a misaligned stack, and the syscall-site rsp alignment
+    # is NOT guaranteed (the ≤4-arg reroutes tolerate a misalign this 10-arg call
+    # does not — verified on cass: CreatePipe ran, CreateProcessW faulted). Save
+    # the live rsp in callee-saved rbx (preserved across the Win64 call), align
+    # down, then carve the 0x50 frame (32 B shadow + 6 stack args). rax (&args)
+    # is an absolute pointer, unaffected by the rsp shuffle.
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x50); # sub rsp, 0x50
+    # a1-a4 → registers.
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x48); EB(S, 0x00); # mov rcx, [rax+0]
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x08); # mov rdx, [rax+8]
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x40); EB(S, 0x10); # mov r8,  [rax+16]
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x48); EB(S, 0x18); # mov r9,  [rax+24]
+    # a5-a10 → [rsp+0x20 .. rsp+0x48] via r10.
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x20); # mov r10, [rax+32]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], r10
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x28); # mov r10, [rax+40]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x28); # mov [rsp+0x28], r10
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x30); # mov r10, [rax+48]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], r10
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x38); # mov r10, [rax+56]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r10
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x40); # mov r10, [rax+64]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40); # mov [rsp+0x40], r10
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x48); # mov r10, [rax+72]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x48); # mov [rsp+0x48], r10
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx (undo align + frame)
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
 # emit Win64 read epilogue: `syscall(0, fd, buf, len)` →
 # `GetStdHandle(fd) + ReadFile(hFile, buf, len, &n, 0)`. Stack on
 # entry (top→bottom): [len] [buf] [fd] [sc_nr=0]. Mirrors
