@@ -648,6 +648,13 @@ fn PARSE_FACTOR(S): i64 {
                     # called with 2 user args, so the structural match
                     # is unambiguous (same logic as the SYS_OPEN skip).
                     if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+                    # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
+                    # collide with Linux numbers at different arities (agnos
+                    # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
+                    # read=0/3-args; ...). This arity table is Linux-only, so
+                    # it false-positives on every agnos syscall;
+                    # lib/syscalls_x86_64_agnos.cyr is the authority.
+                    if (_TARGET_AGNOS == 1) { skip_warn = 1; }
                     if (skip_warn == 0) {
                         WARN(S, "syscall arity mismatch", 22);
                     }

@@ -25,6 +25,9 @@ var _TARGET_ELF64_KERNEL = 0;
 # emission; this is a parser-resolution stub kept consistent with the
 # x86/aarch64 emit headers.
 var _TARGET_EFI_APPLICATION = 0;
+# v6.0.48: AGNOS target marker — x86-only; always-zero parser-resolution
+# stub (parse_expr.cyr references _TARGET_AGNOS in the syscall arity skip).
+var _TARGET_AGNOS = 0;
 # v5.7.12: this is the cyrius-x bytecode backend. =1 here so
 # parse_*.cyr can gate direct x86-byte emits via
 # `if (_TARGET_CX == 0)` (path B from

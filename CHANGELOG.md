@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.48] — 2026-06-03
+
+**cycc can now emit AGNOS ring-3 userspace binaries — `CYRIUS_TARGET_AGNOS=1`.**
+The new emit target + the agnos syscall-ABI peer; agnoshi's path to rebuilding
+as an agnos binary is open. Verified against the real frozen ABI (agnos 1.41.1).
+
+agnos is an emit target like `CYRIUS_MACHO_ARM` — cycc runs on the host and emits
+an x86_64 ELF64 that runs as an agnos ring-3 process, using the agnos syscall ABI
+(distinct numbers, `exit`=`syscall(0)`, `a4`=r10 4-arg, `AO_*` open flags). No new
+driver; no self-host on agnos (it's a cross-compile target).
+
+### Added
+
+- **`CYRIUS_TARGET_AGNOS` emit target** (x86_64 ELF64, agnos ring-3 syscall ABI).
+  `CYRIUS_TARGET_AGNOS=1 cycc` emits an agnos binary. The only codegen divergence
+  is `EEXIT` — the program-exit epilogue emits the agnos `exit` (`syscall(0)`,
+  with the code in `rdi`), not Linux `60`. Wired via a `_TARGET_AGNOS` global +
+  the `CYRIUS_TARGET_AGNOS` predefine in main.cyr (env-driven, parallel to
+  `CYRIUS_MACHO`); declared as an always-zero shim in the aarch64/cx backends so
+  the shared frontend's reference resolves on cross-builds. Emits valid ELF64 at
+  entry `0x400078` (≥ agnos's `0x200000` user-range floor).
+  (src/main.cyr, src/backend/x86/emit.cyr `EEXIT`, +aarch64/cx shims)
+- **`lib/syscalls_x86_64_agnos.cyr`** — the agnos syscall-ABI peer, a faithful
+  mirror of `agnos/docs/development/agnos-userland-abi.md` (agnos 1.41.x): the
+  frozen syscall numbers 0-33 (`exit`=0, `write`=1, `read`=5, `open`=7, …
+  `getdents`=29 … `stat`=33), the agnos-native `AO_*` open flags (NOT Linux
+  `O_*`), the `a4`=r10 4-arg convention (`rename`/`link`), and the agnos `stat`
+  (48 B) + `getdents` record layouts. Standalone (does not reuse the Linux common
+  wrappers — agnos has its own numbers + explicit-length signatures). Selected
+  via `lib/syscalls.cyr` when `CYRIUS_TARGET_AGNOS` is defined. Re-freeze with the
+  doc per its §5 protocol.
+
+### Fixed
+
+- **syscall arity-warning false-positives for agnos builds** — the parse-time
+  arity check validates against a Linux arity table; agnos numbers collide with
+  Linux numbers at different arities (agnos `getpid`=2 vs Linux `open`=2/3-args,
+  agnos `exit`=0 vs Linux `read`=0/3-args, …), so it warned on every agnos
+  syscall. Skipped for `CYRIUS_TARGET_AGNOS` builds. (src/frontend/parse_expr.cyr)
+
+### Notes
+
+- Verified: exit-code + write-string agnos binaries compile warning-free, and
+  objdump confirms the agnos ABI — `syscall(0)` exit (zero `0x3c`/Linux-60),
+  `syscall(1)` write, agnos numbers throughout, valid ELF64. Self-host
+  byte-identical on all targets; check.sh 82/82. api-surface 2727 → 2761.
+- The compiler changes are gated on `_TARGET_AGNOS==1` (inert for every other
+  target), so the existing targets' codegen is unchanged.
+- Remaining AGNOS arc: `lib/alloc.cyr` heap via agnos `mmap`(27) → unblocks
+  agnoshi (it allocs); then run-on-agnos verification (QEMU loader) + an
+  agnos-emit regression gate + `cyrius build --target agnos` CLI wiring.
+
 ## [6.0.47] — 2026-06-03
 
 **The compiler table-cap raises — struct fields 32→256, struct/type table

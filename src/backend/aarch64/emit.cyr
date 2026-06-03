@@ -59,6 +59,12 @@ var _TARGET_ELF64_KERNEL = 0;
 # always-zero shim so shared parser/codegen references resolve when
 # compiling the aarch64-backed entry points.
 var _TARGET_EFI_APPLICATION = 0;
+# v6.0.48: AGNOS ring-3 userspace target marker. x86-only by
+# construction (agnos is x86_64; only x86/emit.cyr's EEXIT branches on
+# it). Always-zero shim here so parse_expr.cyr's syscall-arity-skip
+# reference to _TARGET_AGNOS resolves when the x86 cycc cross-compiles
+# the aarch64-backed entry points.
+var _TARGET_AGNOS = 0;
 # v5.7.12: cx (cyrius-x bytecode) backend marker. =0 on aarch64
 # emit (this file); =1 only on backend/cx/emit.cyr. See path B
 # notes in docs/audit/2026-04-27-cx-direct-emit-inventory.md.

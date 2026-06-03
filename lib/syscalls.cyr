@@ -69,3 +69,10 @@ include "lib/syscalls_macos.cyr"
 include "lib/syscalls_aarch64_linux.cyr"
 #endif
 #endif
+# AGNOS ring-3 userspace (x86_64). Agnos syscall numbers + AO_* open flags
+# + the a4=r10 4-arg convention. Selected when cycc predefines
+# CYRIUS_TARGET_AGNOS (a CYRIUS_TARGET_AGNOS=1 build). Standalone peer —
+# see its header + agnos/docs/development/agnos-userland-abi.md.
+#ifdef CYRIUS_TARGET_AGNOS
+include "lib/syscalls_x86_64_agnos.cyr"
+#endif

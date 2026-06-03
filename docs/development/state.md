@@ -3,6 +3,43 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.48 ship — AGNOS userspace target: cycc emits agnos ring-3 binaries)
+
+Closing **v6.0.48**. **cycc can now emit AGNOS ring-3 userspace binaries**
+(`CYRIUS_TARGET_AGNOS=1`) — the first two phases of the AGNOS target arc.
+check.sh 82/82; self-host byte-identical (888,016 B); **cross-OS self-host
+byte-identical on pi/ecb/ach/cass** (the changes are agnos-gated/inert for
+every other target, but verified on real hardware per the non-negotiable gate).
+
+**What shipped:**
+- **`CYRIUS_TARGET_AGNOS` emit target** — env-driven like `CYRIUS_MACHO_ARM`
+  (cycc on host emits an x86_64 ELF64 agnos binary; NOT a self-host platform —
+  it's a cross-compile target). No new driver. Only codegen divergence: `EEXIT`
+  emits agnos `exit` = `syscall(0)` (code in rdi), not Linux `60`. `_TARGET_AGNOS`
+  global + `CYRIUS_TARGET_AGNOS` predefine in main.cyr; always-zero shim in the
+  aarch64/cx backends (shared frontend resolves on cross-builds — cross-arch
+  propagation was mandatory: the first attempt broke 7 cross-arch gates because
+  the shim was x86-only).
+- **`lib/syscalls_x86_64_agnos.cyr`** — agnos syscall-ABI peer: numbers 0-33,
+  `AO_*` flags, `a4`=r10 4-arg (rename/link), agnos `stat`(48B)/`getdents` layouts.
+  Standalone (NOT the Linux common wrappers — agnos has its own numbers +
+  explicit-length signatures). Wired into lib/syscalls.cyr's #ifdef dispatcher.
+- **Fixed** the syscall arity-warning false-positive for agnos (Linux arity
+  table vs agnos's colliding numbers) — skipped for CYRIUS_TARGET_AGNOS.
+- Verified by objdump: exit-code + write-string agnos binaries use `syscall(0)`
+  exit (zero Linux `0x3c`), `syscall(1)` write, agnos numbers, valid ELF64.
+
+**Agnos ABI ground truth (agnos 1.41.1, frozen):** rax=num, rdi/rsi/rdx/r10=a1-4,
+ret -1 on error (not -errno), user ptrs ≥0x200000, exit=syscall(0), mmap=27
+(2MB-granular)/munmap=28, getdents=29/unlink=30/rename=31(a4)/link=32(a4)/stat=33.
+New FS *types* land as mount backends behind vfs_resolve_mount — they do NOT
+change the syscall ABI the peer mirrors (re-freeze only on number/sig/layout change, §5).
+
+**Next (AGNOS arc continues):** Phase 3 = `lib/alloc.cyr` agnos heap via `mmap`(27)
+→ unblocks **agnoshi** (it allocs). Phase 4 = run-on-agnos verification (QEMU ELF
+loader / spawn=3) + an agnos-emit regression gate (objdump no-Linux-60) +
+`cyrius build --target agnos` CLI wiring.
+
 ## Session close — 2026-06-03 (.47 ship — compiler table-cap raises via packed field pool; AGNOS path clear)
 
 Closing **v6.0.47**. The cap-raise bundle that gates the AGNOS arc is done:
