@@ -458,6 +458,48 @@ jobs:
           done
           echo "$pass passed, $fail failed"
           test $fail -eq 0
+      - name: Stage native aarch64 cycc + source for native self-host
+        run: |
+          # v6.0.45: ship the NATIVE aarch64 cycc so a real ARM runner can
+          # SELF-HOST it. cycc_aarch64 emits aarch64; compile main_aarch64.cyr
+          # THROUGH it to get the native compiler.
+          mkdir -p /tmp/a64_out
+          cat src/main_aarch64.cyr | ./build/cycc_aarch64 > /tmp/a64_out/cycc_a64 && chmod +x /tmp/a64_out/cycc_a64
+          file /tmp/a64_out/cycc_a64 | grep -q "ARM aarch64" || { echo "ERROR: cycc_a64 not aarch64 ELF"; exit 1; }
+          tar czf /tmp/a64_out/_src.tgz src lib VERSION
+          echo "staged cycc_a64: $(wc -c < /tmp/a64_out/cycc_a64) bytes"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aarch64-native-binaries
+          path: /tmp/a64_out/
+          retention-days: 7
+
+  # ── Linux aarch64 — native self-host on REAL ARM (v6.0.45) ──
+  # release.yml previously SKIPPED this, citing a "subtle QEMU codegen
+  # difference" — but it's a REAL bug on REAL silicon (the native aarch64 cycc
+  # drops the _TARGET_MACHO global during its own compile; verified failing on
+  # host 'pi'). ubuntu-24.04-arm is a native arm64 runner — the honest gate the
+  # excuse hid. Expected RED until the aarch64 backend bug is fixed.
+  aarch64-native:
+    name: aarch64 Native Self-Host
+    needs: [aarch64]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Download native aarch64 cycc
+        uses: actions/download-artifact@v4
+        with:
+          name: aarch64-native-binaries
+          path: ./a64
+      - name: SELF-HOST cycc byte-identical (THE real gate)
+        run: |
+          cd a64
+          tar xzf _src.tgz
+          chmod +x cycc_a64
+          file cycc_a64
+          cat src/main_aarch64.cyr | ./cycc_a64 > r1 && chmod +x r1
+          cat src/main_aarch64.cyr | ./r1 > r2
+          cmp r1 r2 || { echo "FAIL: aarch64 native self-host NOT byte-identical"; exit 1; }
+          echo "PASS: aarch64 Linux cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
 
   # ── macOS Mach-O ──
   macho:
@@ -563,6 +605,17 @@ jobs:
             }
           done
           echo "PASS: MH_PIE|MH_DYLDLINK|MH_TWOLEVEL on all binaries"
+      - name: Stage the REAL arm64 cycc + source for native self-host
+        run: |
+          # v6.0.45: the native job must SELF-HOST the actual compiler, not
+          # just run toy binaries — toy-only smoke is exactly what let the
+          # macOS port rot 9 minors behind a green checkmark. Cross-build the
+          # arm64 Mach-O cycc and bundle the source it self-hosts from.
+          cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./build/cycc_aarch64 > /tmp/macho_arm_out/cycc_macho_arm
+          file /tmp/macho_arm_out/cycc_macho_arm | grep -q "Mach-O 64-bit arm64" \
+            || { echo "ERROR: cycc_macho_arm not arm64 Mach-O"; file /tmp/macho_arm_out/cycc_macho_arm; exit 1; }
+          tar czf /tmp/macho_arm_out/_src.tgz src lib VERSION
+          echo "staged cycc_macho_arm: $(wc -c < /tmp/macho_arm_out/cycc_macho_arm) bytes"
       - name: Upload arm64 Mach-O binaries for native run
         uses: actions/upload-artifact@v4
         with:
@@ -624,6 +677,73 @@ jobs:
           test $ec -eq 0 || { echo "var_plus_string: expected exit 0, got $ec"; exit 1; }
           test "$out" = "ok" || { echo "var_plus_string: expected 'ok', got '$out'"; exit 1; }
           echo "PASS: var_plus_string → 'ok' (exit 0)"
+      - name: SELF-HOST cycc byte-identical (THE real gate — v6.0.45)
+        run: |
+          # The actual test: does the arm64 macOS cycc reproduce ITSELF
+          # byte-identical on this real Apple Silicon runner? This is the
+          # check that was missing for 9 minors. Mirrors scripts/cross-os-selfhost.sh.
+          cd macho-arm64
+          tar xzf _src.tgz
+          chmod +x cycc_macho_arm
+          codesign -s - --force cycc_macho_arm
+          cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./cycc_macho_arm > r1
+          cp r1 r1r && chmod +x r1r && codesign -s - --force r1r
+          cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./r1r > r2
+          cmp r1 r2 || { echo "FAIL: arm64 macOS self-host NOT byte-identical"; exit 1; }
+          echo "PASS: arm64 macOS cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
+          # v6.0.37 rot-class guard: main()'s return must reach the exit syscall.
+          printf 'fn main() { return 42; }' > _ec.cyr
+          cat _ec.cyr | CYRIUS_MACHO_ARM=1 ./r1r > _ec && chmod +x _ec && codesign -s - --force _ec
+          ./_ec; ec=$?
+          test $ec -eq 42 || { echo "FAIL: fn main(){return 42;} exited $ec, not 42"; exit 1; }
+          echo "PASS: fn main(){return 42;} → exit 42"
+
+  # ── macOS Intel (x86_64) — cross-compile + native self-host (v6.0.45) ──
+  # The x86_64 macOS cycc SELF-HOSTS byte-identical (verified on real Intel
+  # hardware 'ach'); the v6.0.44 "doesn't self-host" retraction was a
+  # codesign-comparison artifact. macos-13 is the Intel runner. NO codesign
+  # (Intel runs unsigned; codesign rejects + mutates the binary).
+  macho-x86:
+    name: Mach-O x86_64 Cross
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross-build the x86_64 Mach-O cycc + bundle source
+        run: |
+          chmod +x build/cycc
+          mkdir -p /tmp/macho_x86_out
+          cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 ./build/cycc > /tmp/macho_x86_out/cycc_macho_x86
+          file /tmp/macho_x86_out/cycc_macho_x86 | grep -q "Mach-O 64-bit x86_64" \
+            || { echo "ERROR: cycc_macho_x86 not x86_64 Mach-O"; file /tmp/macho_x86_out/cycc_macho_x86; exit 1; }
+          tar czf /tmp/macho_x86_out/_src.tgz src lib VERSION
+          echo "staged cycc_macho_x86: $(wc -c < /tmp/macho_x86_out/cycc_macho_x86) bytes"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macho-x86-binaries
+          path: /tmp/macho_x86_out/
+          retention-days: 7
+
+  macho-x86-native:
+    name: Mach-O x86_64 Native
+    needs: [macho-x86]
+    runs-on: macos-13
+    steps:
+      - name: Download x86_64 Mach-O cycc
+        uses: actions/download-artifact@v4
+        with:
+          name: macho-x86-binaries
+          path: ./macho-x86
+      - name: SELF-HOST cycc byte-identical (THE real gate)
+        run: |
+          cd macho-x86
+          tar xzf _src.tgz
+          chmod +x cycc_macho_x86
+          # NO codesign — Intel runs unsigned; codesign rejects this Mach-O.
+          cat src/main_x86_macho.cyr | ./cycc_macho_x86 > r1 && chmod +x r1
+          cat src/main_x86_macho.cyr | ./r1 > r2
+          cmp r1 r2 || { echo "FAIL: x86_64 macOS self-host NOT byte-identical"; exit 1; }
+          echo "PASS: x86_64 macOS cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
 
   # ── Windows x86_64 PE32+ cross-compile ──
   # Runs on ubuntu-latest; compiles exit-code programs with
@@ -912,6 +1032,18 @@ jobs:
           echo "hi" > /tmp/win_out/hello.expected_stdout
           echo "0"  > /tmp/win_out/hello.expected
           echo "PASS: v5.4.8 PE data placement gate"
+      - name: Stage the REAL cycc.exe + source for native self-host
+        run: |
+          # v6.0.45: the native job must SELF-HOST cycc.exe, not just run toy
+          # exit-code binaries — that placebo hid "cycc emits 0 code on
+          # Windows" for ~30 minors. cycc_win = Linux-hosted PE emitter;
+          # cycc.exe = main_win.cyr compiled THROUGH cycc_win (mirrors release.yml).
+          cat src/main_win.cyr | ./build/cycc > /tmp/cycc_win && chmod +x /tmp/cycc_win
+          cat src/main_win.cyr | /tmp/cycc_win > /tmp/win_out/cycc.exe
+          magic=$(xxd -l2 -p /tmp/win_out/cycc.exe)
+          test "$magic" = "4d5a" || { echo "ERROR: cycc.exe not PE (magic=$magic)"; exit 1; }
+          tar czf /tmp/win_out/_src.tgz src lib VERSION
+          echo "staged cycc.exe: $(wc -c < /tmp/win_out/cycc.exe) bytes"
       - name: Upload PE32+ binaries for native run
         uses: actions/upload-artifact@v4
         with:
@@ -982,6 +1114,15 @@ jobs:
           }
           Write-Host "native: $pass passed, $fail failed"
           if ($fail -gt 0) { exit 1 }
+      - name: SELF-HOST cycc.exe byte-identical (THE real gate — v6.0.45)
+        shell: cmd
+        run: |
+          REM The actual test: does cycc.exe reproduce ITSELF byte-identical on
+          REM real Windows? Single &&-chain so the step fails at the FIRST broken
+          REM command — newline-separated commands would let `fc` falsely report
+          REM "no differences" when cycc.exe emits two empty outputs (the exact
+          REM lie this replaces). Mirrors scripts/cross-os-selfhost.sh (cass).
+          cd win && tar xzf _src.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe && echo PASS: Windows cycc self-hosts byte-identical
 
   # ── Documentation ──
   doc:
