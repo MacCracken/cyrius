@@ -602,6 +602,16 @@ var _TARGET_MACHO = 0;
 # which routes to EMITPE_EXEC in src/backend/pe/emit.cyr.
 var _TARGET_PE = 0;
 
+# AGNOS ring-3 userspace output target: 0=off, 1=on. Set from
+# CYRIUS_TARGET_AGNOS=1 in main.cyr. Emits standard x86_64 ELF64 (the
+# default _TARGET_PE==0/_TARGET_MACHO==0 path) but with the agnos syscall
+# ABI: the only codegen divergence is EEXIT (agnos exit = syscall 0, not
+# Linux 60). The agnos syscall NUMBERS for read/write/open/... come from
+# lib/syscalls_x86_64_agnos.cyr (the program's wrappers emit them directly),
+# so ESYSCALL needs no per-number translation. See
+# agnos/docs/development/agnos-userland-abi.md.
+var _TARGET_AGNOS = 0;
+
 # ELF64 kernel output target: 0=off (kernel; emits ELF32 multiboot1 —
 # legacy/latent path), 1=on (kernel; emits ELF64 multiboot2 with
 # MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64 for UEFI x86_64 boot via
@@ -665,6 +675,7 @@ fn EEXIT(S): i64 {
     }
     EMOVRDI(S);
     if (_TARGET_MACHO == 1) { EMOVI(S, 0x2000001); }
+    elif (_TARGET_AGNOS == 1) { EMOVI(S, 0); }   # agnos exit = syscall 0 (not Linux 60)
     else { EMOVI(S, 60); }
     ESYSCALL(S);
     return 0;

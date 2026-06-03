@@ -802,11 +802,27 @@ if (_macho_arm_env_early != 0) {
         _is_macho_build = 1;
     }
 }
+# AGNOS ring-3 userspace target (x86_64 ELF + agnos syscall ABI) via
+# CYRIUS_TARGET_AGNOS=1 — an emit target (cycc runs on the host, emits an
+# agnos binary). See agnos/docs/development/agnos-userland-abi.md.
+var _agnos_env_early = _read_env("CYRIUS_TARGET_AGNOS");
+var _is_agnos_build = 0;
+if (_agnos_env_early != 0) {
+    if (load8(_agnos_env_early) == 49 && load8(_agnos_env_early + 1) == 0) {
+        _is_agnos_build = 1;
+    }
+}
 if (_is_pe_build == 1) {
     PP_PREDEFINE(S, "CYRIUS_TARGET_WIN");
     if (_is_efi_build == 1) { PP_PREDEFINE(S, "CYRIUS_TARGET_EFI"); }
 } else { if (_is_macho_build == 1) {
         PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
+    } else { if (_is_agnos_build == 1) {
+        # agnos ring-3: x86_64 ELF (default emit), agnos syscall ABI. NOT
+        # CYRIUS_TARGET_LINUX (no /proc, different syscall numbers); agnos-
+        # specific behavior is gated on #ifdef CYRIUS_TARGET_AGNOS.
+        PP_PREDEFINE(S, "CYRIUS_TARGET_AGNOS");
+        PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
     } else {
         PP_PREDEFINE(S, "CYRIUS_TARGET_LINUX");
 # v5.10.39 — non-PE targets support the f64v2/f64v4 value-form
@@ -814,7 +830,7 @@ if (_is_pe_build == 1) {
 # typed wrappers on this flag so PE builds skip them and the
 # pointer-form `_ptr` siblings remain the supported PE path.
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
-    } }
+    } } }
 
 # v5.6.5 O1: total compile-time instrumentation. Gated by the
 # CYRIUS_PROF env var (set to "1" to enable). Reads clock_gettime(
@@ -1141,6 +1157,16 @@ var _pe_env = _read_env("CYRIUS_TARGET_WIN");
 if (_pe_env != 0) {
     if (load8(_pe_env) == 49 && load8(_pe_env + 1) == 0) {
         _TARGET_PE = 1;
+    }
+}
+
+# AGNOS ring-3 output via CYRIUS_TARGET_AGNOS=1 (x86_64 ELF, agnos syscall
+# numbers + agnos exit=0). Shares the default ELF emit path (_TARGET_PE==0,
+# _TARGET_MACHO==0); EEXIT branches on _TARGET_AGNOS for syscall(0) exit.
+var _agnos_env = _read_env("CYRIUS_TARGET_AGNOS");
+if (_agnos_env != 0) {
+    if (load8(_agnos_env) == 49 && load8(_agnos_env + 1) == 0) {
+        _TARGET_AGNOS = 1;
     }
 }
 
