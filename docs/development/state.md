@@ -28,6 +28,13 @@ args.cyr's CYRIUS_TARGET_WIN branch** (GetCommandLineW) — slotted separately
 (docs/development/issues/2026-06-03-windows-args-stdlib-gap.md, user "slot args separately"). Wheel
 stays gated until then; ai-hwaccel pin unchanged.
 
+**Also folded into .53 before the tag (user-directed):** sakshi 2.2.4→2.2.6 + sigil 3.5.9→3.6.0
+(byte-identical to dists; check.sh sakshi/sigil green; sigil purely additive — no removals). The
+sigil fold (610 KB dist) surfaced + fixed a latent api-surface bug: the per-file read buffer was
+256 KB → truncated sigil mid-file → false "9 removed"; hoisted out of the scan loop + raised to 2 MB,
+and the snapshot corrected 2789 → 3824 publics (the tool had silently hidden ~1035 fns across the
+>256 KB libs). cycc UNCHANGED by the folds/tool-fix → self-host + cross-OS carry over; check.sh 85/85.
+
 **Next = v6.0.54 (the agnos CYRIUS_TARGET_AGNOS args+io gap)** per the slate; then .55 *at+fsync,
 .56 cc5-18-arg + QoL, .57 TS→JS, **TLS resumes at .58** ([[project_native_tls_arc_v6_2_x]]). The
 Windows-args gap is tracked but UNPOSITIONED — user's call (sibling of the agnos args gap).

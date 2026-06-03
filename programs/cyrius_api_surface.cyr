@@ -454,6 +454,12 @@ fn _scan_dir(dir_cstr) {
     if (names == 0) { return 0; }
     var n = vec_len(names);
     var dir_len = strlen(dir_cstr);
+    # v6.0.53: per-file read buffer alloc'd ONCE + reused. Was alloc(262144) PER
+    # FILE inside the loop — both too small for sigil 3.6.0's 610 KB dist (it
+    # truncated mid-file at 256 KB, dropping the tail P-384 fns as false
+    # "removed/changed" in the api-surface diff) and ×N-files wasteful. 2 MB
+    # handles the largest dep + growth; reused so it doesn't accumulate.
+    var filebuf = alloc(2097152);
     var i = 0;
     while (i < n) {
         var fname_str = vec_get(names, i);
@@ -471,8 +477,7 @@ fn _scan_dir(dir_cstr) {
                             var qi = 0;
                             while (qi < fname_len) { store8(path_buf + dir_len + 1 + qi, load8(fname + qi)); qi = qi + 1; }
                             store8(path_buf + dir_len + 1 + fname_len, 0);
-                            var filebuf = alloc(262144);
-                            var nbytes = file_read_all(path_buf, filebuf, 262144);
+                            var nbytes = file_read_all(path_buf, filebuf, 2097152);
                             if (nbytes > 0) {
                                 var module_len = _module_name(fname, fname_len);
                                 _scan_file(filebuf, nbytes, fname, module_len);

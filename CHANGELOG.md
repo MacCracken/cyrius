@@ -39,11 +39,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   predated them). libro can now use `#derive(accessors)` on `tpm_anchor` without the hand-written
   workaround. (Issue: 2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md.)
 
+### Fixed
+
+- **`cyrius api-surface` truncated lib files at 256 KB** (`programs/cyrius_api_surface.cyr`). The
+  per-file read buffer was `alloc(262144)` *inside* the scan loop; the sigil 3.6.0 fold (610 KB dist)
+  exceeded it, so `file_read_all` over-read/truncated mid-file and the tail fns (sigil's P-384
+  cluster, just past byte 262144) vanished — reported as a false `BREAKING: 9 removed`. The buffer is
+  now hoisted out of the loop (alloc'd once, reused) and raised to 2 MB (~3.4× the largest lib, so it
+  won't recur until some single dist crosses 2 MB). The committed snapshot was itself incomplete
+  (2789) for the same reason — **corrected to the full 3824 public fns** (the tool had silently been
+  hiding ~1035 fns across sigil + other >256 KB libs).
+
 ### Dependencies
 
 - **sakshi 2.2.4 → 2.2.6** folded (`lib/sakshi.cyr`, byte-identical to the upstream dist; built/tested
   on 6.0.52). check.sh `sakshi` + `sakshi_full` green.
-- **sigil → 3.6.0** folded (`lib/sigil.cyr`). [pending upstream 3.6.0 — fold before release]
+- **sigil 3.5.9 → 3.6.0** folded (`lib/sigil.cyr`, byte-identical to the regenerated dist; +12 KB,
+  purely additive — **no public removals or signature changes** once the full surface is read; see
+  the api-surface fix below).
 
 ### Notes
 
