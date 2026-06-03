@@ -1,3 +1,5 @@
+> **RESOLVED v6.0.47** — struct/type-table cap 256 → 1024 (+ struct field cap 32 → 256) via a packed field pool; the silent overflow now fails loud (`struct field pool exhausted` + `#derive` cap-64 guard). See CHANGELOG [6.0.47].
+
 # 2026-05-28 — type/struct table caps at 256 entries (silent FAIL, no diagnostic)
 
 **Filed:** 2026-05-28 (issue doc 2026-06-02; repro existed orphaned in

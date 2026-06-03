@@ -12,8 +12,8 @@
 # Heap layout for structs — see src/main.cyr for the authoritative map.
 # Quick reference of the regions this file touches:
 #   0x13A000 var_types[8192]      65536 bytes — struct_id per var (0=scalar)
-#   0x18E630  struct_names[256]    2048 bytes — name offset per struct (cap 256, v5.7.17)
-#   0x18EE30  struct_fcounts[256]  2048 bytes — field count per struct (bit 63 = union; relocated v5.7.17)
+#   0x1A6018  struct_names[256]    2048 bytes — name offset per struct (cap 256, v5.7.17)
+#   0x1A8018  struct_fcounts[256]  2048 bytes — field count per struct (bit 63 = union; relocated v5.7.17)
 #   0x91A000 struct_ftypes        65536 bytes — 256×32 field type IDs  (stride 256, v5.7.17)
 #   0x92A000 struct_fnames        65536 bytes — 256×32 field name offsets (stride 256, v5.7.17)
 #   0x18F830  struct_count         8 bytes
@@ -39,7 +39,7 @@ fn DUMP_STRUCTS(S): i64 {
     syscall(SYS_WRITE, 2, " structs registered (deps usually fill most via auto-prepend); names follow:\n", 77);
     var i = 0;
     while (i < sc) {
-        var noff = L64(S + 0x18E630 + i * 8);
+        var noff = L64(S + 0x1A6018 + i * 8);
         syscall(SYS_WRITE, 2, "  #", 3);
         PRNUM(i);
         syscall(SYS_WRITE, 2, " ", 1);
@@ -55,12 +55,13 @@ fn DUMP_STRUCTS(S): i64 {
 # Register a new struct, return index (1-based, 0 = not a struct)
 fn REGSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
-    if (sc >= 256) {
+    if (sc >= 1024) {
         DUMP_STRUCTS(S);
-        ERR_MSG(S, "too many struct definitions (max 256)", 37);
+        ERR_MSG(S, "too many struct definitions (max 1024)", 38);
     }
-    S64(S + 0x18E630 + sc * 8, noff);
-    S64(S + 0x18EE30 + sc * 8, 0);
+    S64(S + 0x1A6018 + sc * 8, noff);
+    S64(S + 0x1A8018 + sc * 8, 0);
+    S64(S + 0x1AA018 + sc * 8, L64(S + 0x1AC018));   # field_base[sc] = pooltop (v6.0.47 packed field pool)
     SSTC(S, sc + 1);
     return sc + 1;
 }
@@ -70,7 +71,7 @@ fn FINDSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     var i = 0;
     while (i < sc) {
-        var sn = L64(S + 0x18E630 + i * 8);
+        var sn = L64(S + 0x1A6018 + i * 8);
         if (STREQ(S, sn, noff) == 1) { return i + 1; }
         i = i + 1;
     }
@@ -79,32 +80,40 @@ fn FINDSTRUCT(S, noff): i64 {
 
 # Add field to struct (0-based struct index si), ftype = struct_id or 0 for scalar
 fn ADDFIELD(S, si, fnoff): i64 {
-    var fc = L64(S + 0x18EE30 + si * 8);
-    if (fc >= 32) { ERR_MSG(S, "too many struct fields (max 32)", 31); }
-    S64(S + 0x92A000 + si * 256 + fc * 8, fnoff);
-    S64(S + 0x91A000 + si * 256 + fc * 8, 0);
-    S64(S + 0x18EE30 + si * 8, fc + 1);
+    var fc = L64(S + 0x1A8018 + si * 8);
+    if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); }
+    var ent = L64(S + 0x1AA018 + si * 8) + fc;   # packed pool: field_base[si] + fc
+    if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); }
+    S64(S + 0x92A000 + ent * 8, fnoff);
+    S64(S + 0x91A000 + ent * 8, 0);
+    S64(S + 0x1A8018 + si * 8, fc + 1);
+    S64(S + 0x1AC018, ent + 1);   # pooltop = ent + 1 (sequential per-struct fill)
     return 0;
 }
 
 fn ADDFIELDTYPED(S, si, fnoff, ftype): i64 {
-    var fc = L64(S + 0x18EE30 + si * 8);
-    if (fc >= 32) { ERR_MSG(S, "too many struct fields (max 32)", 31); }
-    S64(S + 0x92A000 + si * 256 + fc * 8, fnoff);
-    S64(S + 0x91A000 + si * 256 + fc * 8, ftype);
-    S64(S + 0x18EE30 + si * 8, fc + 1);
+    var fc = L64(S + 0x1A8018 + si * 8);
+    if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); }
+    var ent = L64(S + 0x1AA018 + si * 8) + fc;   # packed pool: field_base[si] + fc
+    if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); }
+    S64(S + 0x92A000 + ent * 8, fnoff);
+    S64(S + 0x91A000 + ent * 8, ftype);
+    S64(S + 0x1A8018 + si * 8, fc + 1);
+    S64(S + 0x1AC018, ent + 1);   # pooltop = ent + 1 (sequential per-struct fill)
     return 0;
 }
 
 fn GETFTYPE(S, si, fi): i64 {
-    return L64(S + 0x91A000 + si * 256 + fi * 8);
+    var b = L64(S + 0x1AA018 + si * 8);
+    return L64(S + 0x91A000 + (b + fi) * 8);
 }
 
 # Get field name offset (into tok_names at S+0x60000) for struct si, field fi.
 # Returns the same offset that was recorded by ADDFIELD, so direct equality
 # with a parsed IDENT's PEEKV works (idents are interned by the lexer).
 fn GETFNAME(S, si, fi): i64 {
-    return L64(S + 0x92A000 + si * 256 + fi * 8);
+    var b = L64(S + 0x1AA018 + si * 8);
+    return L64(S + 0x92A000 + (b + fi) * 8);
 }
 
 # Compare two null-terminated strings in tok_names. Returns 1 if equal.
@@ -144,7 +153,7 @@ fn STREQTOK(S, a_off, b_off): i64 {
 # `my_str`/`42` as data/len.
 fn IS_STR_FIELD(S, ft): i64 {
     if (ft <= 0) { return 0; }
-    var sname_off = L64(S + 0x18E630 + (ft - 1) * 8);
+    var sname_off = L64(S + 0x1A6018 + (ft - 1) * 8);
     if (load8(S + 0x60000 + sname_off)     != 83)  { return 0; }
     if (load8(S + 0x60000 + sname_off + 1) != 116) { return 0; }
     if (load8(S + 0x60000 + sname_off + 2) != 114) { return 0; }
@@ -381,15 +390,16 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
 }
 
 # Get field count for struct (0-based index). High bit = union flag.
-fn GETFCOUNT(S, si): i64 { return L64(S + 0x18EE30 + si * 8) & 0x7FFFFFFFFFFFFFFF; }
-fn ISUNION(S, si): i64 { return L64(S + 0x18EE30 + si * 8) >> 63; }
+fn GETFCOUNT(S, si): i64 { return L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF; }
+fn ISUNION(S, si): i64 { return L64(S + 0x1A8018 + si * 8) >> 63; }
 
 # Find field index in struct (0-based struct index), return field index or -1
 fn FINDFIELD(S, si, fnoff): i64 {
     var fc = GETFCOUNT(S, si);
+    var fbase = L64(S + 0x1AA018 + si * 8);
     var i = 0;
     while (i < fc) {
-        var fn_off = L64(S + 0x92A000 + si * 256 + i * 8);
+        var fn_off = L64(S + 0x92A000 + (fbase + i) * 8);
         if (STREQ(S, fn_off, fnoff) == 1) { return i; }
         i = i + 1;
     }
@@ -456,7 +466,7 @@ fn PARSE_UNION_DEF(S): i64 {
     var sid = REGSTRUCT(S, noff);
     var si = sid - 1;
     # Set union flag (high bit of fcount)
-    S64(S + 0x18EE30 + si * 8, 1 << 63);
+    S64(S + 0x1A8018 + si * 8, 1 << 63);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
     var go = 1;

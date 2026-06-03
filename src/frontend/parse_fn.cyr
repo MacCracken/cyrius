@@ -1685,7 +1685,7 @@ fn PARSE_FN_DEF(S): i64 {
     # vec_truncate(rp_vec, 0); same semantic, bounded memory under the
     # bump allocator (proposal Option A reuse pattern).
     vec_truncate(rp_vec, 0);
-    S64(S + 0x18F900, 0);  # defer_count = 0
+    S64(S + 0x1AC020, 0);  # defer_count = 0
     S64(S + 0x19E000, 0);  # jump_target_count = 0
     S64(S + 0x1A0000, 0);  # v5.6.27: jump_src_cnt = 0 (per-fn compaction)
     S64(S + 0x1A2008, 0);  # v5.6.27: nop_run_cnt = 0
@@ -2245,14 +2245,14 @@ fn PARSE_FN_DEF(S): i64 {
         } else { SFINL(S, fi, 0); }
     }
     STI(S, GTI(S) + 1);
-    var dc = L64(S + 0x18F900);
+    var dc = L64(S + 0x1AC020);
     # Backpatch defer flag init: emit zeroing code, then jmp to body
     if (dc > 0) {
         # Emit zeroing trampoline at current CP (after body, before epilogue)
         EPATCH(S, defer_init_jmp);  # patch initial jmp → here (zeroing code)
         var dzi = 0;
         while (dzi < dc) {
-            var dzflag = L64(S + 0x18F908 + dzi * 24 + 16);
+            var dzflag = L64(S + 0x1AC028 + dzi * 24 + 16);
             EMOVI(S, 0);
             EFLSTORE(S, dzflag);
             dzi = dzi + 1;
@@ -2278,9 +2278,9 @@ fn PARSE_FN_DEF(S): i64 {
         EPUSHR(S);  # save return value
         var di = dc - 1;
         while (di >= 0) {
-            var bstart = L64(S + 0x18F908 + di * 24);
-            var bend = L64(S + 0x18F908 + di * 24 + 8);
-            var dflag = L64(S + 0x18F908 + di * 24 + 16);
+            var bstart = L64(S + 0x1AC028 + di * 24);
+            var bend = L64(S + 0x1AC028 + di * 24 + 8);
+            var dflag = L64(S + 0x1AC028 + di * 24 + 16);
             # Check flag: load flag, test rax==0, je skip
             EFLLOAD(S, dflag);
             ETESTAZ(S);

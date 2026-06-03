@@ -1,3 +1,5 @@
+> **RESOLVED v6.0.47** — `secret`/`defer` per-fn cap raised 8 → 64 (table relocated to S+0x1AC020/0x1AC028). See CHANGELOG [6.0.47].
+
 # cyrius: raise the per-function `secret`/`defer` block cap (8 → 32)
 
 **Filed:** 2026-05-27

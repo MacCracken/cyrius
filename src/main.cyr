@@ -29,8 +29,8 @@
 #   0x60000  tok_names     [262144]      256KB packed identifier strings (nested in input_buf — rebuilt by LEX, v4.6.2 was 64KB, v5.11.18 doubled 128KB → 256KB; grows 0x60000-0xA0000 into the 0xA0000-0x18C100 gap)
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
-#   0x18E630  struct_names  [2048]        256 struct name offsets (cap 256, v5.7.17)
-#   0x18EE30  struct_fcounts[2048]        256 struct field counts (bit 63 = union; relocated 0x18E830→0x18EE30 v5.7.17)
+#   0x18E630  (FREED v6.0.47)             was struct_names → relocated to 0x1A6018 [1024], cap 256→1024
+#   0x18EE30  (FREED v6.0.47)             was struct_fcounts → relocated to 0x1A8018 [1024]
 #   0x18F830  struct_count  [8]
 #
 # --- Compiler state (scalars) ---
@@ -52,8 +52,8 @@
 #   0x18F890  ptr_scale     [8]
 #   0x18F898  continue_count [8]
 #   0x18F8A0  continue_patches [64]       8 continue forward-patches
-#   0x18F900  defer_count   [8]           deferred blocks per function (max 8)
-#   0x18F908  defer_addrs   [64]          8 deferred block code offsets (LIFO)
+#   0x18F900  (FREED v6.0.47)             was defer_count → relocated to 0x1AC020 (cap 8→64)
+#   0x18F908  (FREED v6.0.47)             was defer_addrs → relocated to 0x1AC028
 #   0x18FCA0  kernel_mode   [8]
 #   0x18FCA8  fixup_cnt     [8]
 #   0x18FCB0  last_var      [8]
@@ -128,6 +128,13 @@
 #   0x1A6010  fn_start_fcnt [8]           v5.6.27: GFCNT at fn start; compact_nops walks
 #                                        new fixup entries [fn_start_fcnt, GFCNT) to
 #                                        shift their CPs.
+#   --- v6.0.47 cap-raise relocations (freed band 0x1A6018-0x1B0000) ---
+#   0x1A6018  struct_names  [8192]        1024 struct name offsets (cap 256→1024; was 0x18E630)
+#   0x1A8018  struct_fcounts[8192]        1024 field counts (bit 63 = union; was 0x18EE30)
+#   0x1AA018  struct_field_base[8192]     1024 × 8B per-struct start index into the packed field pools (NEW v6.0.47)
+#   0x1AC018  struct_field_pooltop[8]     next free packed-pool entry index (NEW v6.0.47)
+#   0x1AC020  defer_count   [8]           deferred/secret blocks per fn (cap 8→64; was 0x18F900)
+#   0x1AC028  defer_addrs   [1536]        64 × 24B {block_start, end_jmp, flag_local} (was 0x18F908)
 #   0x1DA000  DCE bitmap    [8192]        dead-code-elimination scratch (pass 2 only)
 #   0x1DC000  pe_reloc_coffs[65536]       8192 × 8B coff slots for PE base-
 #                                        relocation collection (DIR64 sites),
@@ -293,8 +300,8 @@
 #    docs/development/issues/archived/2026-04-25-cyrius-fixup-table-cap.md)
 #
 # --- Relocated struct field tables (v3.6.6) ---
-#   0x91A000 struct_ftypes [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
-#   0x92A000 struct_fnames [65536]       256 structs × 32 fields × 8 bytes (cap 256, v5.7.17 — region grew from 16K)
+#   0x91A000 struct_ftypes [65536]       PACKED field-type pool (v6.0.47): 8192 flat entries × 8B, addr = (field_base[si]+fc)*8 (was 256×32 fixed grid). Overflow → "pool exhausted" diag.
+#   0x92A000 struct_fnames [65536]       PACKED field-name pool (v6.0.47): 8192 flat entries × 8B, same indexing
 #
 #   --- v5.10.24 REAL TYPE SYSTEM Phase 2 — extended param-type masks ---
 #   (Mirror of fn_param_str_mask at 0xA1A000 — bit N set = param N has the

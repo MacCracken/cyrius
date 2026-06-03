@@ -49,7 +49,12 @@ HN=$(ssh -G "$ALIAS" 2>/dev/null | awk '/^hostname /{print $2; exit}')
 IP=""
 i=0
 while [ "$i" -lt 6 ]; do
-  IP=$(getent hosts "$HN" 2>/dev/null | awk '{print $1; exit}')
+  # Prefer IPv4: mDNS returns IPv6 (incl. the UNUSABLE fe80:: link-local,
+  # which fails plain ssh with "Invalid argument") in nondeterministic order
+  # via `getent hosts` — that flaked the cass leg of the v6.0.47 run. Fall
+  # back to `getent hosts` only if the host has no IPv4.
+  IP=$(getent ahostsv4 "$HN" 2>/dev/null | awk '{print $1; exit}')
+  [ -n "$IP" ] || IP=$(getent hosts "$HN" 2>/dev/null | awk '{print $1; exit}')
   [ -n "$IP" ] && break
   i=$((i + 1)); sleep 2
 done

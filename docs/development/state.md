@@ -3,6 +3,39 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.47 ship — compiler table-cap raises via packed field pool; AGNOS path clear)
+
+Closing **v6.0.47**. The cap-raise bundle that gates the AGNOS arc is done:
+**struct fields 32→256, struct/type table 256→1024, `secret`/`defer` 8→64.**
+check.sh 82/82; x86 self-host **887,272 B**; **cross-OS self-host byte-identical
+on real hardware: pi (aarch64), ecb (macOS arm64), ach (macOS x86), cass (Windows).**
+
+**How (no S extension, no driver mmap changes):** the heap was at zero headroom,
+so instead of the naive 1024×256×8 fixed grid (~4 MB of mostly-zero table), the
+per-struct field tables (`struct_ftypes` 0x91A000 / `struct_fnames` 0x92A000)
+became a flat **packed pool** addressed `(field_base[si]+fc)*8` — sized by the
+SUM of fields (≤8192 entries), reusing the existing 64 KB regions in place.
+`REGSTRUCT` records each struct's pool base; `ADDFIELD` fills sequentially
+(verified: no per-struct interleave). New index tables (`field_base[1024]`,
+`pooltop`) + relocated `struct_names`/`fcounts` + the `secret`/`defer` table went
+into the grep-verified-free **0x1A6018-0x1B0000** band; the 256-field `#derive`
+parse scratch into **0x1FC000-0x204000**. Heap map (src/main.cyr) updated; driver
+heap-map comments defer to main.cyr (cosmetically stale — refresh at closeout).
+
+**Silent-overflow fixes (issue 2026-05-28 "worse half"):** packed pool emits
+`"struct field pool exhausted (8192 max)"`; `#derive` metadata table (cap 64)
+now errors instead of clobbering. **Gate hardening:** `cross-os-selfhost.sh`
+prefers IPv4 (mDNS `fe80::` link-local flaked the cass leg).
+
+**Surgery method (future reference):** one cap at a time, self-host byte-identical
++ targeted test after EACH phase (A secret/defer → B field scratch reloc → C1
+struct-table reloc → C2/D pool+caps → E #derive diag), then check.sh + 4-host
+cross-OS. Tests: 10-secret fn (42), 40-field #derive accessors (85), 1000 structs
+clean, 300-structs-then-40-field (80, proves base[] correct at scale).
+
+**Next: AGNOS userspace target arc** (CYRIUS_TARGET_AGNOS) — the cap blockers are
+now clear. Gated on agnos FS-ABI re-freeze; verify upstream before committing.
+
 ## Session close — 2026-06-03 (.46 ship — argv/envp byte-sizing class closed repo-wide + UEFI ud2 regression guard)
 
 Closing **v6.0.46**. check.sh **82/82**; x86 self-host **886,656 B**, byte-

@@ -1,3 +1,5 @@
+> **RESOLVED v6.0.46/.47** — `preprocess_out` was already 8 MB (v5.11.33); premise-checked, no code change. Archived with the cap-sweep bundle. See CHANGELOG [6.0.46].
+
 # Preprocess-output cap raise: 2 MB → 6–8 MB
 
 > **ALREADY SATISFIED — premise-check 2026-06-03 (v6.0.46 cap-sweep entry).**

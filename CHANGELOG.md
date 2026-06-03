@@ -6,6 +6,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.47] — 2026-06-03
+
+**The compiler table-cap raises — struct fields 32→256, struct/type table
+256→1024, `secret`/`defer` 8→64 — clearing the path for the AGNOS arc. Done as
+a heap-map relocation + a packed field pool: NO S extension, NO driver mmap
+changes, and byte-identical self-host on all five targets (x86_64 + aarch64
+Linux, macOS arm64 + x86, Windows).**
+
+The naive raise (1024 structs × 256 fields × 8 B fixed grid) would have cost
+~4 MB of mostly-zero table. Instead the per-struct field tables became a flat
+**packed pool** addressed by a per-struct base offset — sized by the *sum* of
+fields, not the product — so the existing 64 KB `struct_ftypes`/`struct_fnames`
+regions hold 1024 structs in place. All raised/new index tables relocated into
+two grep-verified-free heap bands (`0x1A6018`, `0x1FC000`).
+
+### Changed
+
+- **Struct field cap 32 → 256** and **struct/type-table cap 256 → 1024.** The
+  `struct_ftypes` (0x91A000) / `struct_fnames` (0x92A000) tables changed from a
+  fixed 256-byte-stride 2D grid (`si*256 + fc*8`, max 32 fields/struct) to a
+  flat sum-pool addressed `(field_base[si] + fc)*8` over 8192 entries. New
+  `field_base[1024]` + `pooltop` index tables: `REGSTRUCT` records each struct's
+  pool base, `ADDFIELD`/`ADDFIELDTYPED` fill sequentially (verified invariant:
+  fields are added contiguously per struct, no interleave).
+  (src/frontend/parse_types.cyr, lex_pp.cyr scratch)
+- **`secret`/`defer` per-function block cap 8 → 64** — crypto headroom for
+  per-field-element `secret var` blocks (sigil X25519; issue 2026-05-27).
+- **Heap-map relocations** into the freed `0x1A6018-0x1B0000` band (struct_names
+  /fcounts/field_base/pooltop + secret/defer table) and the `0x1FC000-0x204000`
+  band (256-field `#derive` parse scratch). No S extension; compile-state heap
+  map (src/main.cyr) updated.
+
+### Fixed
+
+- **Silent cap overflows now fail loud.** The packed field pool emits
+  `"struct field pool exhausted (8192 max)"` past 8192 total fields, and the
+  `#derive` struct-metadata table (cap 64) now errors instead of silently
+  clobbering past `derive_names[64]` — the "worse half" of issue 2026-05-28.
+- **Cross-OS gate flakiness** — `scripts/cross-os-selfhost.sh` now prefers IPv4;
+  mDNS returned the unusable `fe80::` IPv6 link-local in nondeterministic order
+  via `getent hosts`, flaking the cass leg.
+
+### Notes
+
+- Cross-OS self-host verified **byte-identical on real hardware**: pi (aarch64),
+  ecb (macOS arm64), ach (macOS x86), cass (Windows). x86_64 self-host 887,272 B.
+- `preprocess_out` cap (the bundle's 4th item) was already 8 MB since v5.11.33 —
+  no change needed (premise-checked + noted in v6.0.46).
+
 ## [6.0.46] — 2026-06-03
 
 **A silent test-harness correctness bug — `argv`/`envp` stack arrays sized in

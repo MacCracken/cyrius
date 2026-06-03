@@ -705,15 +705,15 @@ fn PARSE_STMT(S): i64 {
             sqi = sqi + 1;
         }
         var ssend = EJMP0(S);
-        var sdci = L64(S + 0x18F900);
-        if (sdci >= 8) {
-            syscall(SYS_WRITE, 2, "error: too many defer/secret blocks (max 8)\n", 44);
+        var sdci = L64(S + 0x1AC020);
+        if (sdci >= 64) {
+            syscall(SYS_WRITE, 2, "error: too many defer/secret blocks (max 64)\n", 45);
             syscall(SYS_EXIT, 1);
         }
-        S64(S + 0x18F908 + sdci * 24, ssbody);
-        S64(S + 0x18F908 + sdci * 24 + 8, ssend);
-        S64(S + 0x18F908 + sdci * 24 + 16, sflag);
-        S64(S + 0x18F900, sdci + 1);
+        S64(S + 0x1AC028 + sdci * 24, ssbody);
+        S64(S + 0x1AC028 + sdci * 24 + 8, ssend);
+        S64(S + 0x1AC028 + sdci * 24 + 16, sflag);
+        S64(S + 0x1AC020, sdci + 1);
         EPATCH(S, sjmp);
         return 0;
     }
@@ -841,15 +841,15 @@ fn PARSE_STMT(S): i64 {
         # Emit jmp placeholder (patched to next defer block or epilogue)
         var dend = EJMP0(S);
         # Store {block_start, end_jmp, flag_local} triple (24 bytes per entry)
-        var dci = L64(S + 0x18F900);
-        if (dci >= 8) {
-            syscall(SYS_WRITE, 2, "error: too many defer blocks (max 8)\n", 36);
+        var dci = L64(S + 0x1AC020);
+        if (dci >= 64) {
+            syscall(SYS_WRITE, 2, "error: too many defer blocks (max 64)\n", 37);
             syscall(SYS_EXIT, 1);
         }
-        S64(S + 0x18F908 + dci * 24, dstart);
-        S64(S + 0x18F908 + dci * 24 + 8, dend);
-        S64(S + 0x18F908 + dci * 24 + 16, dflag);
-        S64(S + 0x18F900, dci + 1);
+        S64(S + 0x1AC028 + dci * 24, dstart);
+        S64(S + 0x1AC028 + dci * 24 + 8, dend);
+        S64(S + 0x1AC028 + dci * 24 + 16, dflag);
+        S64(S + 0x1AC020, dci + 1);
         # Patch jmp-over to land here (after the deferred block)
         EPATCH(S, djmp);
         return 0;
