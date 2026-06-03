@@ -222,6 +222,38 @@ while (scan == 1) {
 # Reset module for pass 2
 SMOD(S, 0);
 
+# DCE pre-scan: build referenced-name bitmap in one pass over tokens.
+# IDENTICAL to main.cyr — the shared x86 driver stubs unreferenced
+# top-level fns to `xor eax,eax; ret` (3 bytes), so this driver MUST do
+# the same or the cross-built (main.cyr) cycc and the native (this
+# driver) cycc disagree on every uncalled fn and self-host diverges.
+# That divergence was the x86-macОS self-host bug: m1 (main.cyr) stubbed
+# uncalled fns when building cycc_macho, but cycc_macho (this driver)
+# emitted them full → cycc != cycc(cycc). See issue layer 7.
+# Bitmap at S+0x1DA000 (8KB scratch, safe — EMITELF runs later); bit N
+# set means tok_names offset N appears as a non-FN-definition identifier.
+var dce_bm = S + 0x1DA000;
+var dce_zi = 0;
+while (dce_zi < 8192) { store8(dce_bm + dce_zi, 0); dce_zi = dce_zi + 1; }
+var dce_ti = 0;
+var dce_tc = GTCNT(S);
+var dce_prev = 0;
+while (dce_ti < dce_tc) {
+    var dce_tt = TOKTYP(S, dce_ti);
+    if (dce_tt == 2) {
+        if (dce_prev != 32) {
+            var dce_noff = TOKVAL(S, dce_ti);
+            if (dce_noff < 65536) {
+                var dce_byte = dce_noff >> 3;
+                var dce_bit = dce_noff & 7;
+                store8(dce_bm + dce_byte, load8(dce_bm + dce_byte) | (1 << dce_bit));
+            }
+        }
+    }
+    dce_prev = dce_tt;
+    dce_ti = dce_ti + 1;
+}
+
 # Dedicated x86 Mach-O target.
 _TARGET_MACHO = 1;
 
@@ -257,7 +289,101 @@ while (topgo == 1) {
                                 if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                             }
                             else { if (PEEKT(S) == 32) {
-                                    PARSE_FN_DEF(S);
+                                    # DCE: stub unreferenced top-level fns to `xor eax,eax;
+                                    # ret`. IDENTICAL to main.cyr (1247-1375) — keeps this
+                                    # driver byte-for-byte with the shared driver so cycc
+                                    # self-hosts on x86-macОS. See the DCE pre-scan above.
+                                    var dce_fnoff = TOKVAL(S, GTI(S) + 1);
+                                    var dce_reachable = 1;
+                                    var dce_km = L64(S + 0x18FCA0);
+                                    if (dce_km == 3 || dce_km == 2) { dce_reachable = 1; }
+                                    else { if (GMOD(S) == 0) {
+                                            var dce_is_main = 0;
+                                            if (load8(S + 0x60000 + dce_fnoff) == 109) {
+                                                if (load8(S + 0x60000 + dce_fnoff + 1) == 97) {
+                                                    if (load8(S + 0x60000 + dce_fnoff + 2) == 105) {
+                                                        if (load8(S + 0x60000 + dce_fnoff + 3) == 110) {
+                                                            if (load8(S + 0x60000 + dce_fnoff + 4) == 0) {
+                                                                dce_is_main = 1;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            var dce_np = S + 0x60000 + dce_fnoff;
+                                            var dce_has_us = 0;
+                                            var dce_ni = 0;
+                                            while (load8(dce_np + dce_ni) != 0) {
+                                                if (load8(dce_np + dce_ni) == 95) { dce_has_us = 1; }
+                                                dce_ni = dce_ni + 1;
+                                            }
+                                            if (dce_is_main == 0) {
+                                                if (dce_has_us == 0) {
+                                                    if (dce_fnoff < 65536) {
+                                                        var dce_byte = dce_fnoff >> 3;
+                                                        var dce_bit = dce_fnoff & 7;
+                                                        if ((load8(dce_bm + dce_byte) & (1 << dce_bit)) == 0) {
+                                                            dce_reachable = 0;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } }
+                                    if (dce_reachable == 0) {
+                                        var _mp_save_ti = GTI(S);
+                                        STI(S, GTI(S) + 1);
+                                        STI(S, GTI(S) + 1);
+                                        if (PEEKT(S) == 19) {
+                                            while (PEEKT(S) != 20) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); }
+                                            if (PEEKT(S) == 20) { STI(S, GTI(S) + 1); }
+                                        }
+                                        if (PEEKT(S) == 10) {
+                                            STI(S, GTI(S) + 1);
+                                            var _mp_pd = 1;
+                                            while (_mp_pd > 0 && PEEKT(S) != 12) {
+                                                if (PEEKT(S) == 10) { _mp_pd = _mp_pd + 1; }
+                                                elif (PEEKT(S) == 11) { _mp_pd = _mp_pd - 1; }
+                                                STI(S, GTI(S) + 1);
+                                            }
+                                        }
+                                        if (PEEKT(S) == 49) {
+                                            STI(S, GTI(S) + 1);
+                                            if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
+                                        }
+                                        if (PEEKT(S) == 13) {
+                                            STI(S, GTI(S) + 1);
+                                            var _mp_bd = 1;
+                                            while (_mp_bd > 0 && PEEKT(S) != 12) {
+                                                if (PEEKT(S) == 13) { _mp_bd = _mp_bd + 1; }
+                                                elif (PEEKT(S) == 14) { _mp_bd = _mp_bd - 1; }
+                                                elif (PEEKT(S) == 75) { dce_reachable = 1; }
+                                                STI(S, GTI(S) + 1);
+                                            }
+                                        }
+                                        STI(S, _mp_save_ti);
+                                    }
+                                    if (dce_reachable == 1) {
+                                        PARSE_FN_DEF(S);
+                                    } else {
+                                        STI(S, GTI(S) + 1);
+                                        var stub_noff = PEEKV(S);
+                                        STI(S, GTI(S) + 1);
+                                        if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+                                        var stub_fi = FINDFN(S, stub_noff);
+                                        if (stub_fi < 0) { stub_fi = REGFN(S, stub_noff); }
+                                        if (_regalloc_pending == 1) { _regalloc_pending = 0; }
+                                        S64(S + 0x9CA000 + stub_fi * 8, GCP(S));
+                                        EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
+                                        var sdep = 0;
+                                        var ssk2 = 1;
+                                        while (ssk2 == 1) {
+                                            var st = PEEKT(S);
+                                            if (st == 13) { sdep = sdep + 1; }
+                                            if (st == 14) { sdep = sdep - 1; if (sdep == 0) { ssk2 = 0; } }
+                                            if (st == 12) { ssk2 = 0; }
+                                            STI(S, GTI(S) + 1);
+                                        }
+                                    }
                                 }
                                 else { if (PEEKT(S) == 3) {
                                         var vsk = 1;

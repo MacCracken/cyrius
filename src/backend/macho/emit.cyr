@@ -271,16 +271,8 @@ fn EMITMACHO_ARM64(S): i64 {
     var TEXT_BASE = 0x100000000;
     var CODE_OFF = PAGE;                   # code starts at page 1
 
-    # v6.0.44: code/string boundary MUST align to 8 to match FIXUP's
-    # `acp = (cp + 7) & ~7` (fixup.cyr:12). FIXUP computes the absolute
-    # string/gvar addresses baked into `mov rax, imm64` sites from the
-    # 8-aligned acp; if EMITMACHO places the __cstring section at only a
-    # 4-aligned boundary, the two disagree by 4 bytes whenever the code size
-    # is 4-mod-8 — every string/data address is then 4 bytes off, corrupting
-    # the self-compile (works on programs whose code happens to be 8-aligned,
-    # crashes otherwise — the layout-sensitive x86-macОS self-host bug). The
-    # old `& ~4` comment claimed it matched acp; it did not.
-    var code_aligned = (cp + 7) & (0 - 8);
+    # Code is 4-byte aligned (matches FIXUP's acp). Strings follow inside __TEXT.
+    var code_aligned = (cp + 3) & (0 - 4);
 
     var has_cstring = 0;
     if (spos > 0) { has_cstring = 1; }
