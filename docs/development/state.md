@@ -3,6 +3,41 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.51 ship — Windows process creation: CreateProcessW spawn arc)
+
+Closing **v6.0.51** — the RUNTIME half of the Windows PE issue (ai-hwaccel,
+issue 2026-06-03-windows-pe-syscall-surface-blocks-detection.md). Win32 process
+creation now routes through CreateProcessW. check.sh **85/85**; self-host
+byte-identical (895,240 B) on Linux + **ecb (macOS) + cass (Windows) + pi
+(aarch64)**; **cass RUNTIME verified** — `exec_capture(["cmd.exe","/c","echo
+cyrius-spawn-ok"])` spawns a real process and captures `cyrius-spawn-ok`.
+
+**Shipped:**
+- **lib/process_win.cyr** — full POSIX process surface (run / run_capture / spawn /
+  wait_pid / exec_vec / exec_capture / exec_env + the `_str` family + exec_cmd) over
+  CreateProcessW + an anonymous inheritable pipe. Included by lib/process.cyr under
+  `#ifdef CYRIUS_TARGET_WIN`; POSIX defs guarded by `#ifndef` (covers Linux/macOS/
+  agnos — exactly one target predefined). UTF-16LE cmdline/env builders +
+  STARTUPINFOW/PROCESS_INFORMATION layouts.
+- **Five PE-internal kernel32 reroutes** (src/backend/x86/emit.cyr, syscalls
+  0xF001-0xF005): WaitForSingleObject / GetExitCodeProcess / SetHandleInformation /
+  CreatePipe / CreateProcessW — bespoke MS-x64 IAT-call emit fns (CreateProcessW's 10
+  args via a packed struct ptr → ECREATEPROC_PE). Pipe reads reuse EREAD_PE's
+  raw-handle path (v6.0.45); close reuses ECLOSE_PE. aarch64 dead stubs for
+  parse_expr symbol resolution.
+- **_win_process_gate** (check.sh 84 → 85) + win_process_probe.cyr — structural
+  CreateProcessW-import assertion.
+- **FOUND ON HARDWARE:** ECREATEPROC_PE force-aligns rsp — the 10-arg CreateProcessW
+  faults on a misalign the ≤4-arg reroutes tolerate (CreatePipe ran, CreateProcessW
+  SIGSEGV'd on cass; invisible to objdump). The "run it on the hardware, never trust
+  a checkmark" principle in action.
+
+**Next = v6.0.52 (carries the ai-hwaccel downstream wheel smoke).** The cass
+spawn-runtime gate originally scoped for .52 landed in .51; .52 = pin ai-hwaccel to
+6.0.51 + verify the win_amd64 wheel builds/spawns (downstream, now unblocked). Then
+.53 = stdlib syscall bundle (`*at` + fsync) per the pinned slate
+([[project_native_tls_arc_v6_2_x]] PRE-TLS SLATE). TLS resumes at .56.
+
 ## Session close — 2026-06-03 (.50 ship — Windows PE foundation: cycc_win unfrozen + stdlib-build gate)
 
 Closing **v6.0.50** — the FOUNDATION half of the Windows PE issue (ai-hwaccel,

@@ -1867,13 +1867,35 @@ fn _win_process_gate(): i64 {
         _p(": win process probe Optional Header Magic "); print_num(magic); println(" != 0x020B (PE32+)");
         _check(label, 1); return 1;
     }
+    # Assert ALL FIVE process reroutes registered their kernel32 imports — the
+    # probe's run_capture + exec_capture emit every one (CreatePipe /
+    # SetHandleInformation / CreateProcessW / WaitForSingleObject /
+    # GetExitCodeProcess). Checking only CreateProcessW would let a regression
+    # that drops any other import's registration pass green while the PE faults
+    # at runtime — the same thin-smoke trap (1-of-5) this whole arc exists to kill.
     if (_find_bytes(buf, n, "CreateProcessW", 14) < 0) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         println(": win process probe — CreateProcessW import absent (process surface not wired)");
         _check(label, 1); return 1;
     }
+    if (_find_bytes(buf, n, "CreatePipe", 10) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": win process probe — CreatePipe import absent"); _check(label, 1); return 1;
+    }
+    if (_find_bytes(buf, n, "SetHandleInformation", 20) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": win process probe — SetHandleInformation import absent"); _check(label, 1); return 1;
+    }
+    if (_find_bytes(buf, n, "WaitForSingleObject", 19) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": win process probe — WaitForSingleObject import absent"); _check(label, 1); return 1;
+    }
+    if (_find_bytes(buf, n, "GetExitCodeProcess", 18) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": win process probe — GetExitCodeProcess import absent"); _check(label, 1); return 1;
+    }
     _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-    println(": CYRIUS_TARGET_WIN — process_win.cyr emits CreateProcessW (run_capture + exec_capture)");
+    println(": CYRIUS_TARGET_WIN — process_win.cyr emits all 5 process reroutes (run_capture + exec_capture)");
     _check(label, 0);
     return 0;
 }

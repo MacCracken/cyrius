@@ -23,6 +23,32 @@
 > ecb/cass/pi; check.sh 85/85 incl. the new `_win_process_gate`. **Remaining
 > (v6.0.52):** ai-hwaccel downstream wheel smoke — now UNBLOCKED; pin to 6.0.51.
 
+> **v6.0.52 validation checklist (v6.0.51 adversarial audit, no high/critical found).**
+> The cass smoke exercised `exec_capture` with a small output + simple argv. The
+> ai-hwaccel downstream smoke should validate these untested-path behaviours against
+> real probe invocations (none block the core path; all match POSIX contract or a
+> documented limit):
+> 1. **Large-output capture** — `_win_drain` truncates at `buflen` and the parent
+>    closes the read end before `WaitForSingleObject(INFINITE)`; confirm a probe
+>    whose stdout exceeds `buflen` truncates cleanly and the child exits (broken-pipe)
+>    rather than hanging. (POSIX relies on SIGPIPE; Win32 relies on read-end close.)
+> 2. **argv with spaces** — the cmdline is space-joined + unquoted; a probe path like
+>    `C:\Program Files\...` needs quoting. Add CommandLineToArgvW-style quoting if a
+>    real probe path contains spaces.
+> 3. **`exec_env` replaces the environment** (POSIX-consistent) — a child needing
+>    `SystemRoot`/`PATH` must get them in the passed env; merge-with-parent is not done.
+> 4. **NULL stdin** for captured children (STARTF_USESTDHANDLES) — fine for probes
+>    that don't read stdin; set `hStdInput = GetStdHandle(STD_INPUT)` if one does.
+> 5. **ASCII-only UTF-16 widening** — non-ASCII path bytes pass through as the low
+>    byte; real UTF-8→UTF-16 decode if a probe path is non-ASCII.
+>
+> Separately, queue a **vidya compiler field-note** (v6.1.0 closeout): Win64 IAT-call
+> reroutes with >4 args must force `rsp` 16-alignment — CreateProcessW's SSE string
+> ops fault on the misalign the ≤4-arg reroutes tolerate; invisible to objdump,
+> surfaces only on real Windows. And consider a compile-time arity-mismatch error for
+> the `0xF00N` syscall range (today a wrong-arity call silently falls through to the
+> Linux `0F 05` path → faults on Windows).
+
 **Discovered:** 2026-06-03 assessing the ai-hwaccel v2.3.7 Windows wheel
 (consumer: **ai-hwaccel**, cyrius pinned 6.0.47).
 **Severity:** High — hard blocker for a roadmapped consumer deliverable

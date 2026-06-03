@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.51] — 2026-06-03
+
+**Windows process creation (`CreateProcessW`) — the ai-hwaccel spawn blocker.
+`fork`/`execve` don't exist on Win32; `lib/process_win.cyr` reimplements the full
+process API over `CreateProcessW` + an anonymous inheritable pipe, behind five new
+PE-internal kernel32 reroutes. Verified end-to-end on real Windows (cass): cycc
+spawns `cmd.exe` and captures its stdout.** (Issue:
+2026-06-03-windows-pe-syscall-surface-blocks-detection.md.)
+
+### Added
+
+- **`lib/process_win.cyr` — the Win32 process surface.** The spawning POSIX process API —
+  `run` / `run_capture` / `spawn` / `wait_pid` / `exec_vec` / `exec_capture` / `exec_env` /
+  `exec_vec_str` / `exec_capture_str` / `exec_env_str` / `exec_cmd` — reimplemented over
+  `CreateProcessW` (`getpid`/`getppid` are scoped-out return-0 stubs — self-pid via
+  GetCurrentProcessId is not part of this arc). Included by `lib/process.cyr` under
+  `#ifdef CYRIUS_TARGET_WIN`; the POSIX fork/exec defs are now guarded by
+  `#ifndef CYRIUS_TARGET_WIN` (the `src/main.cyr` predefine chain makes exactly one of
+  WIN/MACOS/AGNOS/LINUX active, so the guard covers Linux, macOS, and agnos). Includes
+  UTF-16LE command-line + environment-block builders, STARTUPINFOW/PROCESS_INFORMATION
+  layouts, and an anonymous inheritable pipe for stdout/stderr capture. A spawned "pid"
+  is the process HANDLE (an opaque token for `wait_pid`); `getpid`/`getppid` are
+  scoped-out stubs (self-pid via GetCurrentProcessId is not part of this arc).
+- **Five PE-internal kernel32 reroutes** (`src/backend/x86/emit.cyr`, syscalls
+  `0xF001`-`0xF005`): WaitForSingleObject, GetExitCodeProcess, SetHandleInformation,
+  CreatePipe, CreateProcessW. Each is a bespoke MS-x64 IAT-call emit fn (mirrors
+  `EWRITE_PE`/`ECLOSE_PE`), dispatched from `parse_expr.cyr`. CreateProcessW's 10 args
+  exceed both `syscall(n, ≤6)` and `fncall8`, so `process_win.cyr` packs them into a
+  10-qword struct and `ECREATEPROC_PE` unpacks it (a1-a4 → rcx/rdx/r8/r9; a5-a10 →
+  `[rsp+0x20..0x48]`). Pipe reads reuse `EREAD_PE`'s raw-handle path (v6.0.45); handle
+  close reuses `ECLOSE_PE`. The aarch64 backend carries dead stubs for the new emit fns
+  so `parse_expr.cyr`'s shared symbol references resolve cross-arch.
+- **`_win_process_gate`** (check.sh 84 → 85) + `programs/win_process_probe.cyr`:
+  cross-builds a `run_capture`+`exec_capture` program under `CYRIUS_TARGET_WIN=1` and
+  asserts the `CreateProcessW` import is present (Linux-side structural gate; the cass
+  spawn-runtime is verified directly).
+
+### Fixed
+
+- **`ECREATEPROC_PE` force-aligns `rsp`.** The 10-arg CreateProcessW faults on a stack
+  misalignment that the ≤4-arg reroutes tolerate — on cass, CreatePipe/SetHandleInformation
+  ran but CreateProcessW SIGSEGV'd, a fault invisible to objdump that only surfaced running
+  on real Windows. The emit fn now saves the live `rsp` in callee-saved `rbx`, does
+  `and rsp,-16`, carves the 0x50 frame (32 B shadow + 6 stack args), and restores via
+  `rbx` — correct regardless of the syscall-site alignment, since CreateProcessW's
+  internal SSE string ops require a 16-byte-aligned stack.
+
+### Notes
+
+- Verified byte-identical self-host on Linux + **ecb** (macOS arm64) + **cass** (Windows
+  x86_64) + **pi** (aarch64); check.sh 85/85. cass runtime:
+  `exec_capture(["cmd.exe","/c","echo cyrius-spawn-ok"])` spawns and captures
+  `cyrius-spawn-ok`. This is the cass spawn-runtime verification originally scoped for
+  v6.0.52; **v6.0.52 carries the ai-hwaccel downstream wheel smoke** (now unblocked — pin
+  to 6.0.51).
+
 ## [6.0.50] — 2026-06-03
 
 **Windows PE foundation — `cycc_win` unfrozen from `cc5_win` 5.11.69 to 6.0.x +
