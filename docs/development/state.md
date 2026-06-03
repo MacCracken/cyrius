@@ -34,9 +34,12 @@ cyrius-spawn-ok"])` spawns a real process and captures `cyrius-spawn-ok`.
 
 **Next = v6.0.52 (carries the ai-hwaccel downstream wheel smoke).** The cass
 spawn-runtime gate originally scoped for .52 landed in .51; .52 = pin ai-hwaccel to
-6.0.51 + verify the win_amd64 wheel builds/spawns (downstream, now unblocked). Then
-.53 = stdlib syscall bundle (`*at` + fsync) per the pinned slate
-([[project_native_tls_arc_v6_2_x]] PRE-TLS SLATE). TLS resumes at .56.
+6.0.51 + verify the win_amd64 wheel builds/spawns (downstream, now unblocked).
+**Then v6.0.53 = the cyrius CYRIUS_TARGET_AGNOS stdlib args+io gap** (user "after .52"
+2026-06-03; agnos-side issue 2026-06-03-cyrius-agnos-stdlib-args-io-gap.md) — lib/args.cyr
++ lib/io.cyr have no CYRIUS_TARGET_AGNOS branch so agnsh #UDs at startup (args_init → ud2);
+blocks the agnsh-on-agnos boot. After that .54 = stdlib `*at`+fsync, .55 = cc5-18-arg +
+QoL, .56 = TS→JS, **TLS resumes at .57** ([[project_native_tls_arc_v6_2_x]] PRE-TLS SLATE).
 
 ## Session close — 2026-06-03 (.50 ship — Windows PE foundation: cycc_win unfrozen + stdlib-build gate)
 
