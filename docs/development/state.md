@@ -3,6 +3,37 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-02 (.42 ship — x86-macOS dedicated driver; layers 3-4)
+
+Closing **v6.0.42**. self-host byte-identical 886,272 B; check.sh green.
+
+**x86-macOS runtime arc (Intel cycc, `ach`) — dedicated driver + layers
+3-4. Still non-functional; gated/macho-only, x86 ELF self-host byte-id.**
+- **NEW `src/main_x86_macho.cyr`** — dedicated x86 Mach-O driver (peer of
+  `main_aarch64_macho.cyr`; chosen over `#ifdef`-ing main.cyr because the
+  entry-prologue argv parking hits a bootstrap chicken-and-egg). Hardcodes
+  target+arch, mmaps heap, skips /proc. Includes pe/emit.cyr for the
+  `_pe_text_rva` symbols x86/fixup references.
+- **Layer 3** — skip `/proc/self/cmdline` on macho (main.cyr; no /proc +
+  Darwin errno-in-carry made a failed open look like success → off-stack
+  walk).
+- **Layer 4** — `_macho_x28`/`_macho_argv_base` x86-safe (return 0 on
+  `#ifdef CYRIUS_ARCH_X86`; were arm64 asm → garbage on x86).
+- cycc now reaches **PREPROCESS** (layers 1-4 cleared). **Layer 5 OPEN:
+  SIGSEGV inside PREPROCESS — leading hypothesis Darwin LC_MAIN entry stack
+  alignment (`rsp%16==8` vs ELF `0`) faulting SSE-aligned ops; fix belongs
+  in shared macho entry emit (backend/macho/emit.cyr x86 path).** Heap
+  fully accessible (probe verified). Issue
+  `2026-06-02-macos-x86-release-no-compiler.md` has the full layer ledger.
+
+**Cap-raise bundle (after platform repairs) — TARGETS user-set:** struct
+fields 32→256, type table 256→1024 (+ silent-FAIL diagnostic), secret/defer
+8→64. type-table issue filed (`2026-05-28-type-table-256-cap.md`).
+
+**Queue:** x86-macOS layer 5 (entry alignment, `ach`) → argv prologue →
+x86 release packaging + real-install gate · Windows `cycc` bug 2+ (`cass`)
+· UEFI ud2 · CI cross-OS gate · cap-raise bundle · then AGNOS.
+
 ## Session close — 2026-06-02 (.41 ship — arm64-macOS [deps] FIXED; x86-macOS arc opened)
 
 Closing **v6.0.41**. self-host byte-identical 886,272 B (x86 + arm64).
@@ -43,8 +74,9 @@ related cap items from proposals/issues → next-version queue.
 (`ach`: `/proc/self/cmdline`→stack-argv + Darwin errno convention, then
 envp) · Windows `cycc` runtime bug 2+ (`SBL`/`GBL`, `cass`) · UEFI ud2 ·
 CI cross-OS gate · **compiler table-cap raises bundle** (AFTER platform
-repairs — struct fields 32→64/128 [avatara 2.5.0 blocked], type table
-256→ + silent-FAIL diagnostic, secret/defer per-fn 8→32; all three are
+repairs — TARGETS user-set 2026-06-02: struct fields 32→256 [avatara
+2.5.0 blocked], type table 256→1024 + silent-FAIL diagnostic, secret/defer
+per-fn 8→64; all three are
 compile-state tables, ship as one packed release; issues:
 `2026-06-02-struct-field-cap-raise.md`,
 `2026-05-28-type-table-256-cap.md`, `2026-05-27-secret-defer-block-per-fn-cap.md`)

@@ -41,3 +41,7 @@ Part of the **compiler table-cap raises** cluster (one well-packed release):
 - type table 256→larger + the silent-fail diagnostic (this issue).
 All three are fixed-size tables in the compile-state struct; raising them is
 the same shape of change and ships together.
+
+## Target (user-set 2026-06-02)
+
+type/struct table cap **256 → 1024** + add the overflow diagnostic. Table-cap bundle, after platform repairs.

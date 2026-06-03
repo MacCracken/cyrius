@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.42] — 2026-06-02
+
+**x86-macOS runtime arc — dedicated driver + layers 3-4 (groundwork).**
+
+### Added
+
+- **`src/main_x86_macho.cyr` — dedicated x86_64 Mach-O driver** (peer of
+  `main_aarch64_macho.cyr`). The shared x86 driver `main.cyr` reads `/proc`
+  and env off the Linux entry stack, neither of which exists on Darwin; and
+  the entry-prologue argv-parking can't be `#ifdef`'d into `main.cyr`
+  without a bootstrap chicken-and-egg. So — matching the arm64 approach —
+  this dedicated driver hardcodes the Mach-O target + arch, mmaps the heap,
+  and skips `/proc`. With it, the Intel-Mac cycc now advances from "SIGSYS
+  at instruction one" through heap init, `_init`, predefines, and into
+  `PREPROCESS` (verified on `ach`). **Still non-functional** — a SIGSEGV
+  inside PREPROCESS remains (layer 5: Darwin LC_MAIN entry stack alignment,
+  `rsp%16==8` vs ELF's `0`); tracked in
+  `issues/2026-06-02-macos-x86-release-no-compiler.md`.
+
+### Fixed
+
+- **x86-macOS arc layer 3 — skip `/proc/self/cmdline` arg scan on macho**
+  (`main.cyr`). Darwin returns errno via the carry flag (positive rax), so
+  a failed `/proc` open looked like success and the arg loop walked off the
+  stack → SIGSEGV. `--version`/`--strict` from argv on macho is deferred to
+  the entry-prologue follow-up.
+- **x86-macOS arc layer 4 — `_macho_x28()` / `_macho_argv_base()` are now
+  x86-safe** (`backend/common/runtime.cyr`, `lib/args_macos.cyr`). Their
+  bodies were arm64 inline asm (`mov x0,x28`); on x86 those bytes are
+  garbage, so `_read_env` dereferenced junk. Now guarded on the TARGET arch
+  (`#ifdef CYRIUS_ARCH_AARCH64` → x28 asm, `#else` → return 0). Keying on
+  `CYRIUS_ARCH_AARCH64` (not `CYRIUS_ARCH_X86`) is load-bearing: the x86
+  cross-compiler predefines `CYRIUS_ARCH_X86` even when building the *arm64*
+  cycc, so an X86 guard would zero x28 parking on the shipped arm64 binary
+  (caught by the ecb self-host gate). On x86 it returns 0 so
+  `_read_env`/`args_init` fall through to "not found" safely.
+
+All x86-macOS changes are gated/macho-only — **x86 ELF self-host
+byte-identical**, working platforms untouched.
+
+### Docs
+
+- Filed `issues/2026-05-28-type-table-256-cap.md` (256-entry type/struct
+  table cap + its silent-FAIL diagnostic; was an orphaned repro). Pinned the
+  **compiler table-cap raise targets** (user-set): struct fields 32→256,
+  type table 256→1024, secret/defer per-fn 8→64 — one packed release, queued
+  AFTER the platform-repair pillars.
+
 ## [6.0.41] — 2026-06-02
 
 **arm64-macOS `[deps] stdlib` blocker fully fixed; x86-macOS runtime arc opened.**

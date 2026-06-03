@@ -21,12 +21,28 @@ var _env_scratch[256];
 # the single local at [x29,#-8]. Used by _read_env's macOS branch to
 # reach envp. Only compiled into macOS (CYRIUS_TARGET_MACOS) builds.
 fn _macho_x28(): i64 {
+    # Guard on the TARGET arch (CYRIUS_ARCH_AARCH64), NOT CYRIUS_ARCH_X86:
+    # when the x86 cross-compiler (cc_x) builds the arm64 macho cycc it
+    # predefines CYRIUS_ARCH_X86 *alongside* the driver's CYRIUS_ARCH_AARCH64,
+    # so an `#ifdef CYRIUS_ARCH_X86` here would wrongly fire for the arm64
+    # build and zero out x28 parking on the shipped (cross-built) arm64 cycc.
+    # AARCH64 is only ever predefined for the arm64 target. See [6.0.42].
+    #ifdef CYRIUS_ARCH_AARCH64
     var r = 0;
     asm {
         0xE0; 0x03; 0x1C; 0xAA;    # mov x0, x28
         0xA0; 0x83; 0x1F; 0xF8;    # stur x0, [x29, #-8]  (r)
     }
     return r;
+    #else
+    # x86-macOS (v6.0.42 dedicated-driver arc): the x28 argv-parking
+    # mechanism is arm64-only. No x86 entry prologue parks argv yet, so
+    # return 0 — _read_env's macho branch falls through to "not found"
+    # instead of dereferencing garbage. The x86 macho driver hardcodes the
+    # target, so env-based detection isn't needed; argv / --version on
+    # x86-macOS is the follow-up. See issue layer 4.
+    return 0;
+    #endif
 }
 #endif
 

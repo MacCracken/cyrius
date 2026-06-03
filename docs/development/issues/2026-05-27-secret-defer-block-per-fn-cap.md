@@ -86,3 +86,7 @@ named offset slices. Second ladder/scalar-mult-shaped primitive to
 hit the cap; the 32-block headroom requested above would have let
 both X25519 and ECDSA-sign keep one `secret var` per temporary.
 Still P4 (worked around, not blocking) — recording the recurrence.
+
+## Target (user-set 2026-06-02)
+
+secret/defer per-fn cap **8 → 64** (supersedes the 32 originally requested). Table-cap bundle, after platform repairs.

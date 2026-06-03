@@ -114,3 +114,90 @@ continuing.
 - `src/main.cyr`: `#ifdef CYRIUS_TARGET_MACOS` mmap heap bootstrap.
 - `src/backend/x86/emit.cyr`: `EMACHO_SYSXLAT` + `_msx` helper, wired into
   `ESYSCALL`. x86 ELF self-host verified byte-identical.
+
+## UPDATE 2026-06-02 (cont.) — layer 3 FIXED, layer 4 pinned → dedicated-driver call
+
+Continued on `ach`. Checkpoint-bisected the post-140 SIGSEGV.
+
+- **Layer 3 — `/proc/self/cmdline` arg parse (FIXED).** cycc scanned
+  `/proc/self/cmdline` for `--version`/`--strict`/`--lex-ts`. macOS has no
+  `/proc`; the failed `open` returns errno via Darwin's **carry-flag
+  convention (POSITIVE rax)**, so the Linux-shaped `if (_vn > 0)` guard
+  fired on garbage and the arg loop walked off the 256-byte stack buffer.
+  Fixed: `#ifdef CYRIUS_TARGET_MACOS` skips the `/proc` scan (`_vn`=0). cycc
+  now clears cmdline + heap + `_init_cyrius_lib` on `ach` (verified by
+  checkpoint: CP-heap, CP-init print). `--version`/`--strict`/`--lex-ts`
+  from argv on macho need stack-argv (layer 4). x86 ELF self-host
+  byte-identical (gated).
+
+- **Layer 4 — `_read_env` / argv parking (OPEN — the current SIGSEGV; needs
+  the dedicated-driver decision).** Next crash is in `_read_env`
+  (`backend/common/runtime.cyr`). Its `#ifdef CYRIUS_TARGET_MACOS` branch
+  calls `_macho_x28()`, whose body is **arm64 inline asm** (`mov x0, x28`)
+  — on x86 those bytes decode to garbage and there is no parked argv base,
+  so `load64(garbage)` → SIGSEGV. `_macho_argv_base()` (lib/args_macos.cyr)
+  has the same arm64-only asm. The arm64 fix (v6.0.33) was a **driver entry
+  prologue** (`stp x0,x1,[sp,#-16]!; mov x28,sp`) parking argc/argv, read
+  back via `_macho_x28()`.
+
+  **Why this forces the architecture decision:** the prologue must be the
+  first instructions of cycc's OWN `.text`, but `main.cyr`'s entry sequence
+  is emitted by whatever compiler builds cycc — and a Linux `cc_x` (built
+  without the macho prologue branch) won't emit it into the first
+  x86-macho cycc, so that cycc can't run to self-host the prologue in
+  (chicken-and-egg). arm64 sidestepped this with a **dedicated
+  `main_aarch64_macho.cyr`** whose prologue + macho specifics are
+  unconditional top-level emit. The x86 path almost certainly wants the
+  same: a **dedicated `main_x86_macho.cyr`** (peer of the arm64 driver)
+  rather than continued `#ifdef`-ing of `main.cyr`. RECOMMEND adopting the
+  dedicated driver for layer 4 onward.
+
+### Landed so far (gated, ELF self-host byte-identical)
+- Layer 1: mmap heap bootstrap (`main.cyr`).
+- Layer 2: `EMACHO_SYSXLAT` (`backend/x86/emit.cyr`).
+- Layer 3: skip `/proc/self/cmdline` on macho (`main.cyr`).
+Remaining: layer 4 (argv parking / `_read_env` / `_macho_x28` x86) — pending
+the dedicated-driver call — then envp + the `--version`/`--strict` flags.
+
+## UPDATE 2026-06-02 (cont.) — dedicated driver built; layers 1-4 cleared; layer 5 = PREPROCESS crash
+
+Per the architecture decision, created **`src/main_x86_macho.cyr`** — a lean
+dedicated x86 Mach-O driver (peer of `main_aarch64_macho.cyr`). It hardcodes
+`_TARGET_MACHO=1` + `CYRIUS_TARGET_MACOS`, mmaps the heap, skips `/proc`, and
+includes the x86 backend (+ `pe/emit.cyr` for the `_pe_text_rva` symbols
+`x86/fixup.cyr` references). Also made `_macho_x28()` (runtime.cyr) and
+`_macho_argv_base()` (lib/args_macos.cyr) return **0 on `#ifdef
+CYRIUS_ARCH_X86`** so `_read_env`/`args_init` fall through safely instead of
+running arm64 asm (`mov x0,x28`) as x86 garbage.
+
+Result on `ach`: cycc now clears heap → `_init` → predefines, and reaches
+**PREPROCESS** — i.e. layers 1-4 (brk, syscall xlat, /proc, _read_env) are
+all resolved. New crash:
+
+- **Layer 5 — SIGSEGV inside `PREPROCESS(S)` (OPEN).** Checkpoints: CP-heap,
+  CP-prePP print; a heap-write probe at `S+0x459D000` AND `S+0x4D9C000`
+  (preprocess_out start + near heap end) both succeed, so the mmap heap is
+  fully accessible. CP-preLEX (after PREPROCESS) does not print. PREPROCESS
+  is arch-independent and works on arm64-macho + x86-ELF, so this is an
+  **x86-macho codegen/runtime** defect, not a frontend bug.
+  **Leading hypothesis: Darwin LC_MAIN entry stack alignment.** ELF `_start`
+  enters at `rsp%16==0`; macOS LC_MAIN *calls* `main(argc,argv,envp,apple)`,
+  so cycc's top-level code runs at `rsp%16==8`. cycc's codegen assumes the
+  ELF alignment, so any SSE-aligned op (movaps/movapd) deep in PREPROCESS
+  would `#GP` → SIGSEGV. The fix likely belongs in the **shared macho entry
+  emit** (so cycc's OWN entry is realigned by whatever builds it — the
+  driver-level prologue can't fix cycc's own entry, the bootstrap problem),
+  paired with the x86 entry prologue (realign + later argv parking).
+  Next: confirm the alignment hypothesis (e.g. dtrace/lldb on `ach`, or an
+  emitted `sub rsp,8`/`and rsp,-16` at the macho entry) and land the fix in
+  backend/macho/emit.cyr's x86 entry path.
+
+### Landed this session (gated/macho-only, x86 ELF self-host byte-identical)
+- `src/main_x86_macho.cyr` (NEW dedicated driver).
+- `_macho_x28` / `_macho_argv_base` x86-safe (return 0).
+- (plus layers 1-3 from earlier: mmap heap + EMACHO_SYSXLAT + /proc-skip — the
+  layer-1/3 #ifdefs in main.cyr are now superseded by the dedicated driver
+  and can be reverted in a cleanup once the driver path is the build default.)
+Remaining: layer 5 (macho entry alignment) → then re-test full compile +
+self-host on `ach`, then argv/--version prologue, then the release packaging
++ real-install gate (build-macos-x86-tarball.sh).

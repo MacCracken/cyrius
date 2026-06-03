@@ -1,0 +1,344 @@
+# ================================================================
+# Cyrius Compiler — dedicated x86_64 Mach-O driver
+# ================================================================
+# Build: cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 ./build/cycc > cycc_macho_x86
+# Mac (Intel) self-host target: produces x86_64 Mach-O that runs on
+# Intel Macs.
+#
+# Peer of main_aarch64_macho.cyr (arm64). Created v6.0.42 for the
+# x86-macOS runtime arc: main.cyr's shared x86 driver reads /proc and
+# env off the Linux entry stack, which doesn't exist on Darwin. Rather
+# than #ifdef-accrete main.cyr (and fight the entry-prologue bootstrap),
+# this dedicated driver HARDCODES the Mach-O target + arch and avoids
+# /proc entirely — exactly the shape the arm64 fork uses. See issue
+# 2026-06-02-macos-x86-release-no-compiler.md.
+#
+# Deviations from main.cyr (the shared x86 driver):
+#   - heap via mmap (9→BSD 197 by EMACHO_SYSXLAT), not brk (Darwin has none)
+#   - no /proc/self/cmdline scan (no /proc on macOS; --strict/--version
+#     via argv is a follow-up needing the entry prologue + r13 parking)
+#   - _TARGET_MACHO + CYRIUS_TARGET_MACOS hardcoded (never env-gated)
+#   - syscall translation: backend/x86/emit.cyr's EMACHO_SYSXLAT (v6.0.41)
+#     rewrites Linux numbers → 0x2000000|BSD before each `syscall`.
+# ================================================================
+# HEAP MAP — identical layout to main.cyr / main_aarch64_macho.cyr.
+# All offsets in parse.cyr/lex.cyr are shared. See main.cyr for the
+# authoritative annotated heap map.
+# ================================================================
+
+# HOST syscall numbers — x86_64 Linux (cross-compiler runs on x86 Linux)
+enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 12; SYS_EXIT = 60; }
+
+include "src/version_str.cyr"
+include "src/common/util.cyr"
+include "src/backend/common/tokens.cyr"
+include "src/backend/common/runtime.cyr"
+include "src/backend/x86/emit.cyr"
+include "src/backend/x86/float.cyr"
+include "src/backend/x86/jump.cyr"
+include "src/backend/x86/decode.cyr"
+include "src/common/ir.cyr"
+include "src/frontend/lex.cyr"
+
+# alloc + vec for return-patch vec storage. Must precede parse.cyr so its
+# vec_push/vec_get/vec_len/vec_truncate call sites resolve at parse time.
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+var rp_vec = 0;
+
+include "src/frontend/parse.cyr"
+include "src/backend/macho/emit.cyr"
+# pe/emit.cyr defines PE globals (_pe_text_rva, …) that x86/fixup.cyr
+# references unconditionally. Not emitted for Mach-O output, but must be
+# linked so the symbols resolve (same reason main.cyr includes it).
+include "src/backend/pe/emit.cyr"
+include "src/backend/x86/fixup.cyr"
+
+# ================================================================
+# MAIN
+# ================================================================
+
+# --strict is parsed from argv on Linux/macho-arm64; on x86-macOS argv
+# isn't reachable until the entry-prologue follow-up lands, so default
+# off. (Kept as a var so fixup.cyr's read of _strict_mode resolves.)
+var _strict_mode = 0;
+
+# Allocate heap via mmap — macOS has no brk. Linux syscall number 9 is
+# translated to BSD 197 by EMACHO_SYSXLAT at emit; flags 0x1002
+# (MAP_PRIVATE | MAP_ANON) reach the kernel as an immediate. Size
+# 0x4D9D000 matches main.cyr's brk extent.
+var S = syscall(9, 0, 0x4D9D000, 3, 0x1002, 0 - 1, 0);
+if (S < 0x100000) {
+    syscall(SYS_WRITE, 2, "cycc_macho_x86: mmap heap init failed\n", 38);
+    syscall(SYS_EXIT, 1);
+}
+
+# Zero scratch state (see src/common/util.cyr for slot list)
+_HEAP_INIT_SCRATCH(S);
+
+# init alloc and assign rp_vec (return-patch storage).
+alloc_init();
+rp_vec = vec_new();
+
+# Read input (1 MB input_buf)
+var bl = 0;
+var done = 0;
+while (done == 0) {
+    var n = syscall(SYS_READ, 0, S + bl, 1048576 - bl);
+    if (n <= 0) { done = 1; }
+    else {
+        bl = bl + n;
+        if (bl >= 1048576) {
+            var probe[1];
+            var pn = syscall(SYS_READ, 0, &probe, 1);
+            if (pn > 0) {
+                syscall(SYS_WRITE, 2, "error: input exceeds 1MB buffer (raise input_buf in src/main.cyr)\n", 66);
+                syscall(SYS_EXIT, 1);
+            }
+            done = 1;
+        }
+    }
+}
+SBL(S, bl);
+
+# Preprocess includes
+_init_cyrius_lib();
+PP_PREDEFINE(S, "CYRIUS_ARCH_X86");
+# Dedicated x86 Mach-O compiler — always a Mach-O build. Predefine
+# CYRIUS_TARGET_MACOS so compiled programs get the macОS stdlib dispatch
+# (alloc_macos, syscalls_macos, _read_env's macOS branch). Hardcoded,
+# never env-gated.
+PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
+PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
+PREPROCESS(S);
+
+# Lex
+LEX(S);
+
+# NOTE: no Mach-O entry prologue here yet. The arm64 driver parks
+# argc/argv (stp x0,x1,[sp,#-16]!; mov x28,sp) so _read_env / args_init
+# can reach argv. The x86 equivalent (push rsi/rdi; mov r13,sp + an
+# r13-reading _macho_x28) is the argv/--version follow-up. cycc compiles
+# fine without it because this driver hardcodes the target and
+# _macho_x28() returns 0 on x86 (→ _read_env safely reports "not found").
+
+# Emit initial jmp over fn bodies
+var jmp_patch = EJMP0(S);
+
+# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
+STI(S, 0);
+var scan = 1;
+while (scan == 1) {
+    if (PEEKT(S) == 72) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 2) { SMOD(S, PEEKV(S)); STI(S, GTI(S) + 1); }
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    }
+    else { if (PEEKT(S) == 73) {
+            STI(S, GTI(S) + 1);
+        }
+        else { if (PEEKT(S) == 74) {
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) == 2) {
+                    var umod = PEEKV(S);
+                    STI(S, GTI(S) + 1);
+                    if (PEEKT(S) == 41) {
+                        STI(S, GTI(S) + 1);
+                        if (PEEKT(S) == 2) {
+                            var ufn = PEEKV(S);
+                            STI(S, GTI(S) + 1);
+                            var uc = GUSEC(S);
+                            S64(S + 0x18FFD0 + uc * 8, ufn);
+                            var _ulen1 = 0; while (load8(S + 0x60000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
+                            var _ulen2 = 0; while (load8(S + 0x60000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
+                            NPOS_GUARD(S, _ulen1 + 1 + _ulen2 + 1);
+                            var apos = GNPOS(S);
+                            var ri = 0;
+                            var rc = load8(S + 0x60000 + umod + ri);
+                            while (rc != 0) { store8(S + 0x60000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0x60000 + umod + ri); }
+                            store8(S + 0x60000 + apos, 95); apos = apos + 1;
+                            ri = 0; rc = load8(S + 0x60000 + ufn + ri);
+                            while (rc != 0) { store8(S + 0x60000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0x60000 + ufn + ri); }
+                            store8(S + 0x60000 + apos, 0); apos = apos + 1;
+                            var alias_noff = GNPOS(S);
+                            SNPOS(S, apos);
+                            S64(S + 0x1901D0 + uc * 8, alias_noff);
+                            SUSEC(S, uc + 1);
+                        }
+                    }
+                }
+                if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+            }
+            else { if (PEEKT(S) == 40) { PARSE_STRUCT_DEF(S); }
+                else { if (PEEKT(S) == 101) { PARSE_UNION_DEF(S); }
+                    else { if (PEEKT(S) == 3) { PARSE_GVAR_REG(S); }
+                        else { if (PEEKT(S) == 32) {
+                                STI(S, GTI(S) + 1);
+                                STI(S, GTI(S) + 1);
+                                if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+                                var dep = 0;
+                                var fsk = 1;
+                                while (fsk == 1) {
+                                    var ft = PEEKT(S);
+                                    if (ft == 13) { dep = dep + 1; }
+                                    if (ft == 14) { dep = dep - 1; if (dep == 0) { fsk = 0; } }
+                                    if (ft == 12) { fsk = 0; }
+                                    STI(S, GTI(S) + 1);
+                                }
+                            }
+                            else { if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 0); }
+                                else { if (_TOK_IS_KERNEL(S) == 1) {
+                                        S64(S + 0x18FCA0, 1);
+                                        STI(S, GTI(S) + 1);
+                                        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                                    }
+                                    else { if (PEEKT(S) == 78) {
+                                            S64(S + 0x18FCA0, 2);
+                                            STI(S, GTI(S) + 1);
+                                            if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                                        }
+                                        else { if (PEEKT(S) == 77) {
+                                                STI(S, GTI(S) + 1);
+                                                STI(S, GTI(S) + 1);
+                                                STI(S, GTI(S) + 1);
+                                                STI(S, GTI(S) + 1);
+                                                if (PEEKT(S) == 13) {
+                                                    STI(S, GTI(S) + 1);
+                                                    var idep = 0;
+                                                    var isk = 1;
+                                                    while (isk == 1) {
+                                                        var it = PEEKT(S);
+                                                        if (it == 13) { idep = idep + 1; }
+                                                        if (it == 14) { if (idep == 0) { isk = 0; } else { idep = idep - 1; } }
+                                                        if (it == 12) { isk = 0; }
+                                                        STI(S, GTI(S) + 1);
+                                                    }
+                                                }
+                                            }
+                                            else { scan = 0; } } } } } } } } } } }
+}
+
+# Reset module for pass 2
+SMOD(S, 0);
+
+# Dedicated x86 Mach-O target.
+_TARGET_MACHO = 1;
+
+# Pass 2: Parse struct and fn definitions (vars already registered)
+STI(S, 0);
+var topgo = 1;
+while (topgo == 1) {
+    if (PEEKT(S) == 72) { STI(S, GTI(S) + 1); if (PEEKT(S) == 2) { SMOD(S, PEEKV(S)); STI(S, GTI(S) + 1); } if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
+    else { if (PEEKT(S) == 73) { STI(S, GTI(S) + 1); }
+        else { if (PEEKT(S) == 74) { while (PEEKT(S) != 5) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); } if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
+            else { if (PEEKT(S) == 40) {
+                    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+                    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+                    if (PEEKT(S) != 13) { ERR(S); }
+                    STI(S, GTI(S) + 1);
+                    var ssk = 1;
+                    while (ssk == 1) { if (PEEKT(S) == 14) { ssk = 0; } else { STI(S, GTI(S) + 1); } }
+                    STI(S, GTI(S) + 1);
+                }
+                else { if (PEEKT(S) == 101) {
+                        STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+                        if (PEEKT(S) != 13) { ERR(S); }
+                        STI(S, GTI(S) + 1);
+                        var usk = 1;
+                        while (usk == 1) { if (PEEKT(S) == 14) { usk = 0; } else { STI(S, GTI(S) + 1); } }
+                        STI(S, GTI(S) + 1);
+                    }
+                    else { if (PEEKT(S) == 60) {
+                            PARSE_ENUM_DEF(S, 2);
+                        }
+                        else { if (_TOK_IS_KERNEL(S) == 1) {
+                                STI(S, GTI(S) + 1);
+                                if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                            }
+                            else { if (PEEKT(S) == 32) {
+                                    PARSE_FN_DEF(S);
+                                }
+                                else { if (PEEKT(S) == 3) {
+                                        var vsk = 1;
+                                        while (vsk == 1) { if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); vsk = 0; } else { STI(S, GTI(S) + 1); } }
+                                    }
+                                    else { if (PEEKT(S) == 77) { PARSE_IMPL(S); }
+                                        else { if (PEEKT(S) == 78) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
+                                            else { topgo = 0; } } } } } } } } } } }
+}
+
+# Reset module
+SMOD(S, 0);
+
+# Patch jmp to land here (start of main code)
+EPATCH(S, jmp_patch);
+
+# Emit enum initializations FIRST (before gvar inits)
+var gvar_save_ti = GTI(S);
+STI(S, 0);
+var escan = 1;
+while (escan == 1) {
+    if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 1); }
+    else { if (PEEKT(S) == 12) { escan = 0; }
+        else { STI(S, GTI(S) + 1); } }
+}
+# Emit deferred global var initializations
+EMIT_GVAR_INITS(S);
+STI(S, gvar_save_ti);
+
+# Parse main code (top-level statements)
+PARSE_PROG(S);
+
+# Exit epilogue — load last var
+var lv = GLVAR(S);
+if (lv >= 0) { EVLOAD(S, lv); }
+
+# Auto-call `main()` if defined (port of main_aarch64_macho.cyr v6.0.37).
+# Walks the fn table for "main\0" and emits ECALLTO if found, so a source
+# whose only entry is `fn main(){...}` exits with main's return value.
+var _epi_km_pre = L64(S + 0x18FCA0);
+if (_epi_km_pre == 0) {
+    var _main_fc = GFNC(S);
+    var _main_fi = 0;
+    var _main_found = 0 - 1;
+    while (_main_fi < _main_fc) {
+        var _main_noff = L64(S + 0x9BA000 + _main_fi * 8);
+        if (load8(S + 0x60000 + _main_noff)     == 109) {
+            if (load8(S + 0x60000 + _main_noff + 1) == 97) {
+                if (load8(S + 0x60000 + _main_noff + 2) == 105) {
+                    if (load8(S + 0x60000 + _main_noff + 3) == 110) {
+                        if (load8(S + 0x60000 + _main_noff + 4) == 0) {
+                            _main_found = _main_fi;
+                            _main_fi = _main_fc;
+                        }
+                    }
+                }
+            }
+        }
+        _main_fi = _main_fi + 1;
+    }
+    if (_main_found >= 0) {
+        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
+        if (_main_off >= 0) {
+            ECALLTO(S, _main_off);
+        }
+    }
+}
+
+EEXIT(S);
+
+# Fixup + emit (EMITELF dispatches to Mach-O on _TARGET_MACHO==1) + write
+FIXUP(S);
+EMITELF(S);
+var olen = L64(S + 0x1903F8);
+var written = 0;
+var wgo = 1;
+while (wgo == 1) {
+    var w = syscall(SYS_WRITE, 1, S + 0x71A000 + written, olen - written);
+    if (w <= 0) { wgo = 0; }
+    else {
+        written = written + w;
+        if (written >= olen) { wgo = 0; }
+    }
+}
+syscall(SYS_EXIT, 0);

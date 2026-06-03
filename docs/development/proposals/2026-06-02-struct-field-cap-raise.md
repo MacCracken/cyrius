@@ -61,3 +61,7 @@ post-2.4.5, is correct). The struct migration is parked on this cap — same
 pattern as the 2026-06-02 `f64_le`/`f64_ge` proposal: avatara flips to the
 native struct once the cap is raised. Marked here so future-claude doing the
 cap bump knows the first real consumer is waiting.
+
+## Target (user-set 2026-06-02)
+
+struct field cap **32 → 256**. Part of the table-cap bundle (after platform repairs).

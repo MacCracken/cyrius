@@ -487,10 +487,23 @@ var _ts_input_path = 0;
 var _ts_expect_path = 0;
 var _vbuf[256];
 var _vfd = 0;
+var _vn = 0;
+#ifdef CYRIUS_TARGET_MACOS
+# v6.0.42 (x86-macOS runtime arc, layer 3): macOS has no /proc. A failed
+# `open("/proc/self/cmdline")` returns errno via Darwin's carry-flag
+# convention (POSITIVE rax, not Linux's negative), so the `if (_vn > 0)`
+# guard below — written for Linux — would fire on garbage and walk the
+# parse loop off `_vbuf` → SIGSEGV. Skip the /proc scan on macho; `_vn`
+# stays 0 so the flag-parse block is bypassed. cycc still compiles from
+# stdin. --version/--strict/--lex-ts flags on macho need stack-argv
+# (layer 4 — Darwin entry stack: argc/argv/envp/apple). See issue
+# 2026-06-02-macos-x86-release-no-compiler.md.
+#else
 if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
 else { _vfd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
+_vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
 syscall(SYS_CLOSE, _vfd);
+#endif
 if (_vn > 0) {
     var _vi = 0;
     while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
