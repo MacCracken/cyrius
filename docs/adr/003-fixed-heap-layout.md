@@ -36,6 +36,31 @@ Use fixed-offset heap arrays allocated via a single `brk` syscall. No malloc, no
 brk: 0x4BE000 (~4.7MB total)
 ```
 
+### Preprocessing scratch (overlays `tok_types`, 0x13E000–0x23E000)
+
+The `#derive` / include preprocessing pass runs **before** tokenization, so it
+scratch-uses part of the `tok_types` 1 MB region (which holds no live token data
+until tokenization repopulates it after preprocessing finishes):
+
+```
+0x190800.. #ifdef/macro/include preprocessor state (hashes, def text, flags)
+0x197000   derive struct count (8B), op, field_count, cumul_off, sname[64]
+0x198000   derive struct sizes[512]    (4KB; ends 0x199000)   v6.0.53 (was 0x197500[64])
+0x199000   derive struct names[512*32] (16KB; ends 0x19D000)  v6.0.53 (was 0x197700[64])
+0x197F00   include count (8B)   — persistent; callers in main*.cyr / util.cyr
+0x197F10   pp_state nesting     (64B)
+0x1FC000   field_names[256][32] (8KB)   v6.0.47 field-table band
+0x1FE000   field_types[256][32] (8KB)
+0x200000   field_offsets[256][8] (2KB; ends 0x200800)
+```
+
+v6.0.53 raised the per-file `#derive` cap 64 → 512 (libro `-D LIBRO_TPM` pulls 66
+`#derive` structs — the *real* TPM blocker, distinct from the 256→1024 type-table
+cap; see issue 2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md). `sizes`/
+`names` were butted against the 0x197F00 metadata with no room to grow, so they
+relocated into the free 0x198000–0x1FC000 scratch (~410 KB). Cap headroom: 512
+structs = 20 KB of a 410 KB band.
+
 ## Consequences
 
 - Fixed capacity limits (131072 tokens, 8192 vars, 1024 functions, 256 locals, 1024 globals)

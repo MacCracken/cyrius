@@ -352,9 +352,11 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
 # as `tate_X`).
 #
 # Fix: separate the per-struct tables from the shared parse buffer
-# entirely + bump the cap to 64. Shared parse state moves to the
-# low half (0x197008..0x1974E0); per-struct tables move to the high
-# half (0x197500..0x197F00). 0x197F00 (include count) and
+# entirely + bump the cap (64 → 512 at v6.0.53). Shared parse state stays
+# in the low half (0x197008..0x1974E0); the per-struct derive tables (sizes,
+# names) relocated v6.0.53 to the free 0x198000 scratch band — they had been
+# at 0x197500/0x197700, butted against the 0x197F00 metadata with no room to
+# grow. 0x197F00 (include count) and
 # 0x197F10 (pp_state) stay where they were — those have callers
 # in src/main.cyr / src/main_win.cyr / src/common/util.cyr.
 #
@@ -372,8 +374,11 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
 # S+0x1FC000: field_names[256][32]  (8192 bytes)
 # S+0x1FE000: field_types[256][32]  (8192 bytes)
 # S+0x200000: field_offsets[256][8] (2048 bytes; ends 0x200800)
-# S+0x197500: derive struct sizes[64] (512 bytes)
-# S+0x197700: derive struct names[64*32] (2048 bytes; ends 0x197F00)
+# S+0x198000: derive struct sizes[512]    (4096 bytes; ends 0x199000)
+# S+0x199000: derive struct names[512*32] (16384 bytes; ends 0x19D000)
+#   v6.0.53: cap 64 → 512 (libro -D LIBRO_TPM pulls 66 #derive structs — 27
+#   libro + 39 agnosys — over the old 64 cap); relocated into the free
+#   tok_types preprocessing-scratch band 0x198000-0x1FC000 (~410 KB free).
 var _pp_derive_count = 0;
 
 # Helper: write decimal integer to output buffer, return bytes written
@@ -537,27 +542,27 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
                 if (pb1 == 54) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 52) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fsz = 8; } } }
             }
             # Nested-struct override (matched against derive-name
-            # table at S+0x197700; its size lives at S+0x197500).
+            # table at S+0x199000; its size lives at S+0x198000).
             var di = 0;
             while (di < _pp_derive_count) {
                 var eq = 1; var ci = 0;
-                while (eq == 1) { var a = load8(S + 0x1FE000 + fi * 32 + ci); var b = load8(S + 0x197700 + di * 32 + ci); if (a != b) { eq = 0; } if (a == 0) { break; } ci = ci + 1; }
-                if (eq == 1) { fsz = load64(S + 0x197500 + di * 8); }
+                while (eq == 1) { var a = load8(S + 0x1FE000 + fi * 32 + ci); var b = load8(S + 0x199000 + di * 32 + ci); if (a != b) { eq = 0; } if (a == 0) { break; } ci = ci + 1; }
+                if (eq == 1) { fsz = load64(S + 0x198000 + di * 8); }
                 di = di + 1;
             }
             cumul = cumul + fsz;
         } else { cumul = cumul + 8; }
         fi = fi + 1;
     }
-    if (_pp_derive_count >= 64) {
-        syscall(SYS_WRITE, 2, "error: too many #derive structs in one file (max 64)\n", 53);
+    if (_pp_derive_count >= 512) {
+        syscall(SYS_WRITE, 2, "error: too many #derive structs in one file (max 512)\n", 54);
         syscall(SYS_EXIT, 1);
     }
     var dsi = _pp_derive_count;
     var ri = 0;
-    while (load8(S + 0x197020 + ri) != 0) { store8(S + 0x197700 + dsi * 32 + ri, load8(S + 0x197020 + ri)); ri = ri + 1; }
-    store8(S + 0x197700 + dsi * 32 + ri, 0);
-    store64(S + 0x197500 + dsi * 8, cumul);
+    while (load8(S + 0x197020 + ri) != 0) { store8(S + 0x199000 + dsi * 32 + ri, load8(S + 0x197020 + ri)); ri = ri + 1; }
+    store8(S + 0x199000 + dsi * 32 + ri, 0);
+    store64(S + 0x198000 + dsi * 8, cumul);
     _pp_derive_count = _pp_derive_count + 1;
     store64(S + 0x197008, op);
     store64(S + 0x197010, fc);
@@ -792,12 +797,12 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     var ci = 0;
                     while (eq == 1) {
                         var a = load8(S + 0x1FE000 + fi * 32 + ci);
-                        var b = load8(S + 0x197700 + di * 32 + ci);
+                        var b = load8(S + 0x199000 + di * 32 + ci);
                         if (a != b) { eq = 0; }
                         if (a == 0) { break; }
                         ci = ci + 1;
                     }
-                    if (eq == 1) { tsz = load64(S + 0x197500 + di * 8); }
+                    if (eq == 1) { tsz = load64(S + 0x198000 + di * 8); }
                     di = di + 1;
                 }
                 op = op + PP_EMIT_INT(out, op, tsz);

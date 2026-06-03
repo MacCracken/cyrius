@@ -3,6 +3,35 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.53 ship — Windows threading (serial) + #derive cap 64→512, PACKED)
+
+Closing **v6.0.53** — two packed items (user "pack windows thread and cap together as .53").
+check.sh **85/85**; self-host byte-identical on Linux + ecb + cass + pi (895,240 B; cycc changed via
+the lex_pp.cyr cap relocation → cross-OS re-verified). **Windows threading runs on cass: THREAD-OK.**
+
+**Shipped:**
+- **lib/thread_win.cyr — Windows threading/mutex (serial-fallback).** thread.cyr's Linux body
+  (SYS_CLONE/CLONE_*/futex hand-asm) can't parse under CYRIUS_TARGET_WIN → guarded `#ifndef WIN`,
+  thread_win.cyr included `#ifdef WIN` (process.cyr→process_win.cyr pattern). thread_create runs the
+  fn inline via fncall1 (serial), mutexes are single-threaded no-ops; full public surface matched.
+  cass-verified: thread_create+mutex+join → THREAD-OK (fncall1 calls a cyrius fn ptr under MS-x64,
+  per the EFI/gnoboot precedent). Real CreateThread/SRWLOCK = future upgrade.
+- **#derive cap 64 → 512** (heap surgery). The 64-#derive cap — NOT the 256→1024 type-table cap a
+  prior agent MISDIAGNOSED + "fixed" — was libro's real -D LIBRO_TPM blocker (66 derives: 27 libro +
+  39 agnosys). sizes[]/names[] were butted against the 0x197F00 metadata → relocated into the free
+  tok_types scratch band (sizes[512]@0x198000, names[512*32]@0x199000; 512 chosen generously, won't
+  revisit). Boundary verified 512 ok / 513 fails. ADR-003 updated (the scratch regions were
+  undocumented). libro can drop its hand-written-accessor workaround.
+
+**ai-hwaccel:** cross-builds for Windows past the threading wall; **the LAST remaining gap is
+args.cyr's CYRIUS_TARGET_WIN branch** (GetCommandLineW) — slotted separately
+(docs/development/issues/2026-06-03-windows-args-stdlib-gap.md, user "slot args separately"). Wheel
+stays gated until then; ai-hwaccel pin unchanged.
+
+**Next = v6.0.54 (the agnos CYRIUS_TARGET_AGNOS args+io gap)** per the slate; then .55 *at+fsync,
+.56 cc5-18-arg + QoL, .57 TS→JS, **TLS resumes at .58** ([[project_native_tls_arc_v6_2_x]]). The
+Windows-args gap is tracked but UNPOSITIONED — user's call (sibling of the agnos args gap).
+
 ## Session close — 2026-06-03 (.52 ship — `cyrius build --win` + PROT_READ cross-target fix)
 
 Closing **v6.0.52**. Scoped as the ai-hwaccel wheel smoke (carry from .51); GREW into a cyrius
@@ -29,8 +58,11 @@ mutexes (lazy/cache, every run) → needs a Windows threading/mutex stdlib (guar
 thread_win.cyr, like process.cyr→.51; real CreateThread/SRWLOCK or serial-fallback). Issue
 docs/development/issues/2026-06-03-windows-threading-stdlib-gap.md. **USER POSITIONS this in the slate.**
 
-**Next = v6.0.53 (the agnos CYRIUS_TARGET_AGNOS args+io gap)** per the pinned slate; then .54 *at+fsync,
-.55 cc5-18-arg + QoL, .56 TS→JS, **TLS resumes at .57** ([[project_native_tls_arc_v6_2_x]]).
+**Next = v6.0.53 — PACKED: Windows threading/mutex stdlib arc (thread_win.cyr) + the 64→512
+`#derive`-cap raise (heap surgery)** (user 2026-06-03 "pack windows thread and cap together as .53";
+512 cap = generous, won't revisit). Issues: 2026-06-03-windows-threading-stdlib-gap.md +
+2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md. Then .54 agnos args+io gap, .55 *at+fsync,
+.56 cc5-18-arg + QoL, .57 TS→JS, **TLS resumes at .58** ([[project_native_tls_arc_v6_2_x]]).
 
 ## Session close — 2026-06-03 (.51 ship — Windows process creation: CreateProcessW spawn arc)
 

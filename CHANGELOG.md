@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.53] — 2026-06-03
+
+**Windows threading (serial-fallback `thread_win.cyr`) + the per-file `#derive` cap raised 64 → 512
+(heap surgery) — two packed items.** (Issues: 2026-06-03-windows-threading-stdlib-gap.md;
+2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md.)
+
+### Added
+
+- **`lib/thread_win.cyr` — Windows threading/mutex (serial-fallback).** `lib/thread.cyr`'s Linux body
+  (SYS_CLONE / CLONE_* / futex + hand-assembled clone trampolines) can't parse under
+  `CYRIUS_TARGET_WIN`, so it's now guarded `#ifndef CYRIUS_TARGET_WIN`, with `thread_win.cyr` included
+  under `#ifdef` (the lib/process.cyr → lib/process_win.cyr pattern from .51). It runs "threads"
+  inline (serially): `thread_create` executes the fn immediately via `fncall1`, `thread_join` returns,
+  mutexes are single-threaded no-ops; the full public surface
+  (thread_create/join/gettid/mutex_*/chan_*) is matched. Adequate where threading is a parallelism
+  optimization (ai-hwaccel's parallel probe-spawn detection runs serially). Real preemptive Windows
+  threads (CreateThread/SRWLOCK) are a future upgrade. **Verified on cass:** thread_create + mutex +
+  thread_join → THREAD-OK (`fncall1` correctly calls a cyrius fn pointer under MS-x64, per the
+  EFI/gnoboot precedent).
+
+### Changed
+
+- **Per-file `#derive` struct cap raised 64 → 512** (heap surgery). The 64-`#derive` cap — NOT the
+  256→1024 type-table cap a prior issue misattributed and "fixed" — was the real blocker for libro's
+  `-D LIBRO_TPM` build (66 `#derive` structs: 27 libro + 39 agnosys). The `sizes[]`/`names[]`
+  preprocessing tables were butted against the `0x197F00` metadata with no room to grow, so they
+  relocated into the free `tok_types` preprocessing-scratch band (`sizes[512]`@0x198000 = 4 KB,
+  `names[512*32]`@0x199000 = 16 KB; ~410 KB band, so ample headroom — chosen generously so it won't
+  need revisiting). Boundary verified: 512 `#derive` structs build, 513 fails (`max 512`). ADR-003
+  updated to document the preprocessing-scratch regions (previously undocumented — the v2.6 map
+  predated them). libro can now use `#derive(accessors)` on `tpm_anchor` without the hand-written
+  workaround. (Issue: 2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md.)
+
+### Dependencies
+
+- **sakshi 2.2.4 → 2.2.6** folded (`lib/sakshi.cyr`, byte-identical to the upstream dist; built/tested
+  on 6.0.52). check.sh `sakshi` + `sakshi_full` green.
+- **sigil → 3.6.0** folded (`lib/sigil.cyr`). [pending upstream 3.6.0 — fold before release]
+
+### Notes
+
+- cycc changed (lex_pp.cyr cap relocation) → self-host re-verified byte-identical on Linux + ecb +
+  cass + pi; check.sh 85/85. ai-hwaccel cross-builds for Windows past the threading wall; the last
+  remaining gap for its win_amd64 wheel is the `args.cyr` `CYRIUS_TARGET_WIN` branch (GetCommandLineW),
+  slotted separately (2026-06-03-windows-args-stdlib-gap.md). The wheel stays gated until that lands,
+  so the ai-hwaccel pin is unchanged.
+
 ## [6.0.52] — 2026-06-03
 
 **`cyrius build --win` (Linux→Windows cross-build flag) + a PROT_READ cross-target stdlib fix —
