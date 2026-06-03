@@ -318,7 +318,7 @@ fn cmd_self(): i64 {
     _status("=== Self-Hosting Check ===");
     var pid = sys_fork();
     if (pid == 0) {
-        var argv[4];
+        var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
         store64(&argv, "/bin/sh");
         store64(&argv + 8, "-c");
         var script = alloc(512);
@@ -694,12 +694,12 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
         sys_dup2(efd, 2);
         sys_close(efd);
         # Set CYRIUS_STATS=1 in environment — simpler: use env command
-        var argv[4];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv, cc);
         store64(&argv + 8, 0);
         # Modify environ to add CYRIUS_STATS=1
         # Simplest: exec via env
-        var sh_argv[5];
+        var sh_argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
         store64(&sh_argv, "/bin/sh");
         store64(&sh_argv + 8, "-c");
         # Build command string
@@ -881,7 +881,7 @@ fn cmd_soak(iters): i64 {
                 sys_dup2(sfd, 0); sys_close(sfd);
                 var ofd = sys_open(cc4_t, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
                 sys_dup2(ofd, 1); sys_close(ofd);
-                var argv[2];
+                var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
                 store64(&argv, cc5_t);
                 store64(&argv + 8, 0);
                 sys_execve(cc5_t, &argv, _envp);

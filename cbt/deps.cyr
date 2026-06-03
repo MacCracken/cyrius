@@ -1247,7 +1247,7 @@ fn _sha256sum_file(path): i64 {
         var ofd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
         sys_dup2(ofd, 1);
         sys_close(ofd);
-        var argv[4];
+        var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
         store64(&argv, "/bin/sh");
         store64(&argv + 8, "-c");
         store64(&argv + 16, cmd);

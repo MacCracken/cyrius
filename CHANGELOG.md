@@ -6,6 +6,70 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.46] — 2026-06-03
+
+**A silent test-harness correctness bug — `argv`/`envp` stack arrays sized in
+element counts instead of bytes — surfaced as 8 TypeScript `check.sh` gates
+failing, and is now closed across the *entire* repo. Plus a UEFI `fncallN`
+regression guard so the v6.0.0 `ud2`-emit footgun can't quietly return.**
+
+The cyrius buffer contract is `var x[N]` = N **bytes** (rounded to 8), not N
+pointer slots — so `var argv[3]` is 8 bytes, not 3 pointers. Several inline
+`fork`+`execve` sites pre-dated that contract and wrote pointers past the
+declared bytes; where a local `var envp[1]` followed `argv`, `envp[0]` aliased
+`argv[1]` and a later `store64(&envp, 0)` silently zeroed a real argument. The
+fix sizes every such array to the v5.11.60 canonical byte contract.
+
+### Fixed
+
+- **8 TypeScript `check.sh` gates were silently failing.** The `--lex-ts` /
+  `--parse-ts` gate runner declared `var argv[3]; … var envp[1];`; `envp[0]`
+  aliased `argv[1]` and `store64(&envp, 0)` zeroed the mode flag, so `cycc` ran
+  in cyrius mode, applied the ASCII-only source check, and rejected the em-dash
+  in the TS fixtures. Tell-tale signature: the identical `cycc --lex-ts <
+  fixture` command exited 0 from a shell but 1 when the harness fork+execve'd
+  it (fork-only nondeterminism on identical bytes). Pre-existing — the v6.0.44
+  `cycc` reproduces it; it was latent until a check-binary rebuild shifted the
+  stack layout. (programs/check.cyr)
+- **The same `argv`/`envp` byte-sizing class, closed repo-wide.** An exhaustive
+  sweep sized every inline fork+execve `argv`/`envp` correctly:
+  `lib/regression.cyr` (the SSH/scp/exec helpers, including the ssh-alive probe
+  that wrote 8 pointers into an 8-byte `argv[8]`), `lib/pam.cyr`,
+  `cbt/build.cyr`, `cbt/commands.cyr`, `cbt/deps.cyr`, `cbt/pulsar.cyr` (the
+  cyrius CLI's `/bin/sh -c`, qemu-run, tool-run, and pulsar self-host execs),
+  `programs/ts_test_runner.cyr` (same `envp`-aliases-`argv[1]` bug zeroing
+  `mode_flag`), and `programs/cyrius-lsp.cyr`. None were actively broken in
+  practice (they worked by stack-layout luck), but all were under-sized and a
+  layout shift could re-trigger exactly the TS-gate failure. The compiler
+  source (`src/`) was verified clean — 0 sites.
+- **`tar` bundling in the cross-OS gate could overflow `argv`.** The member-
+  packing loop wrote one `argv` slot per space-separated member with no bound,
+  into a 5-slot `argv[40]` — the comment claimed a 32-member cap the code never
+  enforced. Now `argv[304]` (5 fixed + 32 members + NUL) with an `idx < 37`
+  guard. (programs/check.cyr)
+
+### Added
+
+- **UEFI `fncallN` `ud2`-emit regression guard.** `programs/efi_fncall_probe.cyr`
+  exercises `fncall1..fncall5` under `CYRIUS_TARGET_EFI=1`; `_efi_emit_gate`
+  compiles it and byte-scans the emitted PE for the `0F 0B 0F 0B` (`ud2 ud2`)
+  pair, failing if present. Locks in the v6.0.x fix for the 2026-05-19 gnoboot
+  footgun — cycc 6.0.0 emitted `ud2` at every UEFI service call when the
+  `CYRIUS_TARGET_EFI ⇒ CYRIUS_TARGET_WIN` predefine regressed — so it can't
+  silently return. Issue archived to `docs/development/issues/archived/`.
+
+### Notes
+
+- `cycc` is byte-identical to v6.0.45 (no compiler source changed); the
+  cross-OS self-host status carries over.
+- `preprocess_out` is already 8 MB (since v5.11.33) — the queued
+  "2 MB → 6–8 MB" cap-raise needs no code change; the remaining 2 MB checks in
+  `lex.cyr` guard a different buffer (`str_data`). Premise-check noted on the
+  issue.
+- The compiler table-cap raises (struct-field 32→256, type-table 256→1024 with
+  a silent-overflow diagnostic, `secret`/`defer` 8→64) are a heap-map
+  relocation + a packed-pool refactor and ship in v6.0.47.
+
 ## [6.0.45] — 2026-06-03
 
 **The cross-OS self-host gate becomes a REAL, publish-blocking gate — and

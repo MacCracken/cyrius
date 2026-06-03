@@ -3,6 +3,46 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.46 ship — argv/envp byte-sizing class closed repo-wide + UEFI ud2 regression guard)
+
+Closing **v6.0.46**. check.sh **82/82**; x86 self-host **886,656 B**, byte-
+identical to .45 (no compiler source changed — only the version string
+`6.0.45`→`6.0.46`, same byte length → identical binary behavior, so the .45
+cross-OS self-host status carries over unchanged).
+
+**The bug that surfaced:** 8 TypeScript `check.sh` gates were silently failing.
+Root cause = the cyrius buffer contract (`var x[N]` = N **bytes**, not N
+slots): the `--lex-ts`/`--parse-ts` gate runner used `var argv[3]; … var
+envp[1];`, so `envp[0]` aliased `argv[1]` and `store64(&envp, 0)` zeroed the
+mode flag → cycc ran cyrius-mode + rejected the TS fixtures' em-dash. Pre-
+existing (the .44 cycc reproduces it); latent until a check-binary rebuild
+shifted the stack layout. Tell-tale: fork-only nondeterminism (same `cycc
+--lex-ts < fixture` exits 0 from a shell, 1 when fork+execve'd).
+
+**Shipped (packed):**
+- **`argv`/`envp` byte-sizing class closed REPO-WIDE** (exhaustive sweep, not
+  just the failing gate): `programs/check.cyr` (16 sites), `lib/regression.cyr`
+  (SSH/scp/exec helpers + the ssh-alive probe writing 8 ptrs into `argv[8]`),
+  `lib/pam.cyr`, `cbt/{build,commands,deps,pulsar}.cyr` (the cyrius CLI execs),
+  `programs/ts_test_runner.cyr` (same `envp`-aliases-`argv[1]` bug zeroing
+  `mode_flag`), `programs/cyrius-lsp.cyr`. Compiler `src/` verified clean — 0
+  sites. + the `tar` member-loop in the cross-OS gate got `argv[304]` + the
+  missing `idx < 37` 32-member bound guard.
+- **UEFI `fncallN` ud2 regression guard** — `programs/efi_fncall_probe.cyr` +
+  `_efi_emit_gate` byte-scan for `0F 0B 0F 0B`; issue archived. (The bug was
+  already fixed in v6.0.x; this locks it in.)
+- **Premise-check:** `preprocess_out` is already 8 MB (v5.11.33) — that cap-
+  raise needs no code; the `lex.cyr` 2 MB checks guard a different buffer
+  (`str_data`). Noted on the issue.
+
+**Next: v6.0.47 = the cap-raise heap-map surgery** (deferred from .46 by user
+direction — "cut and do the surgery next release"). Struct-field 32→256 +
+type-table 256→1024 (+ the silent-overflow diagnostic) via a **packed-pool
+decoupled layout** (per-struct base offset into a flat pool sized by SUM of
+fields, not `structs×maxfields` — avoids ~4 MB of zero-padding), `secret`/
+`defer` 8→64. Every raise needs relocation (S is a tightly-packed ~78 MB
+mmap). Then AGNOS userspace target arc.
+
 ## Session close — 2026-06-03 (.45 ship — cross-OS gate REAL; aarch64 + Windows self-host FIXED on real hardware)
 
 Closing **v6.0.45**. The cross-OS self-host gate is now REAL and

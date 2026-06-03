@@ -197,7 +197,7 @@ fn _gate_run(script_abs): i64 {
     var pid = sys_fork();
     if (pid < 0) { return 1; }
     if (pid == 0) {
-        var argv[3];
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 3 ptrs need 24 B
         store64(&argv,     "/bin/sh");
         store64(&argv + 8, script_abs);
         store64(&argv + 16, 0);
@@ -882,10 +882,10 @@ fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
         sys_close(out_fd);
         var devnull = sys_open("/dev/null", 1, 0);
         if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
-        var argv[3];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
-        var envp[1];
+        var envp[16];
         store64(&envp, 0);
         sys_execve(compiler_path, &argv, &envp);
         sys_exit(127);
@@ -938,10 +938,10 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
         sys_close(err_fd);
         var devnull = sys_open("/dev/null", 1, 0);
         if (devnull >= 0) { sys_dup2(devnull, 1); sys_close(devnull); }
-        var argv[3];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
-        var envp[1];
+        var envp[16];
         store64(&envp, 0);
         sys_execve(compiler_path, &argv, &envp);
         sys_exit(127);
@@ -1341,10 +1341,10 @@ fn _self_host_pipe_elf64k(src_path, compiler_path, out_path): i64 {
         sys_close(out_fd);
         var devnull = sys_open("/dev/null", 1, 0);
         if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
-        var argv[3];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
-        var envp[4];
+        var envp[24];   # 3 env ptrs need 24 B (was envp[4]=8 B → overlapped argv[1])
         store64(&envp,      "CYRIUS_KERNEL=1");
         store64(&envp + 8,  "CYRIUS_ELF64_KERNEL=1");
         store64(&envp + 16, 0);
@@ -1539,10 +1539,10 @@ fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
         sys_close(out_fd);
         var devnull = sys_open("/dev/null", 1, 0);
         if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
-        var argv[3];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
-        var envp[3];
+        var envp[16];   # 2 env ptrs need 16 B (was envp[3]=8 B → overlapped argv[1])
         store64(&envp,     "CYRIUS_TARGET_EFI=1");
         store64(&envp + 8, 0);
         sys_execve(compiler_path, &argv, &envp);
@@ -1786,11 +1786,41 @@ fn _efi_emit_gate(): i64 {
         return 1;
     }
 
+    # v6.0.46 regression guard: fncallN under EFI must NOT emit `ud2 ud2`.
+    # The 2026-05-19 UEFI bug dropped the CYRIUS_TARGET_WIN predefine under
+    # CYRIUS_TARGET_EFI=1 → fncallN went undefined → every call site got the
+    # undefined-fn stub `ud2 ud2 nop` (0F 0B 0F 0B 90, same 4 bytes as
+    # `call rel32`) → #UD at every UEFI service call (gnoboot panicked OVMF).
+    # Rotted + fixed untested; this locks it in. See efi_fncall_probe.cyr.
+    var fbuf = alloc(cap);
+    var fn_n = _efi_compile_to_buf(_root_path("programs/efi_fncall_probe.cyr"), fbuf, cap, "efi_fncall_probe");
+    if (fn_n <= 0) { _check(label, 1); return 1; }
+    var ud2_found = 0;
+    var ui = 0;
+    while (ui < fn_n - 3) {
+        if (load8(fbuf + ui) == 0x0F && load8(fbuf + ui + 1) == 0x0B
+            && load8(fbuf + ui + 2) == 0x0F && load8(fbuf + ui + 3) == 0x0B) {
+            ud2_found = 1;
+            ui = fn_n;
+        } else {
+            ui = ui + 1;
+        }
+    }
+    if (ud2_found == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": efi_fncall_probe emits `ud2 ud2` — fncallN undefined under EFI (the 2026-05-19 UEFI regression)");
+        _check(label, 1);
+        return 1;
+    }
+
     _p("  ");
     _p(ANSI_GREEN);
     _p("PASS");
     _p(ANSI_RESET);
-    _p(": EFI Application emit — Subsystem=0xA, DllChar NX_COMPAT, Data Dirs [1]/[12] zeroed, .text has ret");
+    _p(": EFI Application emit — Subsystem=0xA, DllChar NX_COMPAT, Data Dirs [1]/[12] zeroed, .text has ret; fncallN emit no ud2 (2026-05-19 UEFI guard)");
     println("");
     _check(label, 0);
     return 0;
@@ -2062,7 +2092,7 @@ fn _efi_stdlib_fallback_gate(): i64 {
         if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
         var cd_rc = syscall(SYS_CHDIR, "/tmp");
         if (cd_rc < 0) { sys_exit(126); }
-        var argv[3];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     CC_PATH);
         store64(&argv + 8, 0);
         sys_execve(CC_PATH, &argv, aug_envp);
@@ -2354,12 +2384,12 @@ fn _ts_path_arg_gate(): i64 {
         if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
         var dn2 = sys_open("/dev/null", 1, 0);
         if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
-        var argv[4];
-        store64(&argv,      CC_PATH);
-        store64(&argv + 8,  "--parse-ts");
-        store64(&argv + 16, fix);
-        store64(&argv + 24, 0);
-        var envp[1];
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs need
+        store64(&argv,      CC_PATH);    # 32 B. argv[4]/envp[1] reserved 8 B
+        store64(&argv + 8,  "--parse-ts");  # each → envp[0] overlapped argv[1]
+        store64(&argv + 16, fix);        # and zeroed "--parse-ts" → cyrius-mode
+        store64(&argv + 24, 0);          # compile of garbage stdin → exit 1.
+        var envp[16];
         store64(&envp, 0);
         sys_execve(CC_PATH, &argv, &envp);
         sys_exit(127);
@@ -4354,7 +4384,7 @@ fn _exec_in_dir(work_dir, bin_path, arg, out_path): i64 {
         }
         var dn0 = sys_open("/dev/null", 0, 0);
         if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
-        var argv[3];
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): cmd+arg+NUL = 24 B
         store64(&argv,     bin_path);
         if (arg != 0) {
             store64(&argv + 8,  arg);
@@ -4412,7 +4442,7 @@ fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_p
         }
         var dn0 = sys_open("/dev/null", 0, 0);
         if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
-        var argv[5];
+        var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + ≤3 args + NUL = 40 B
         store64(&argv, bin_path);
         var off = 8;
         if (arg1 != 0) { store64(&argv + off, arg1); off = off + 8; }
@@ -4451,7 +4481,7 @@ fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path): i64 {
         }
         var dn0 = sys_open("/dev/null", 0, 0);
         if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
-        var argv[5];
+        var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + ≤3 args + NUL = 40 B
         store64(&argv, bin_path);
         var off = 8;
         if (arg1 != 0) { store64(&argv + off, arg1); off = off + 8; }
@@ -4770,10 +4800,10 @@ fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
         sys_close(c2p_w);
         var dn = sys_open("/dev/null", 1, 0);
         if (dn >= 0) { sys_dup2(dn, 2); sys_close(dn); }
-        var argv[2];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     bin_path);
         store64(&argv + 8, 0);
-        var envp[1];
+        var envp[16];
         store64(&envp, 0);
         sys_execve(bin_path, &argv, &envp);
         sys_exit(127);
@@ -5082,7 +5112,7 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
         sys_close(out_fd);
         var devnull = sys_open("/dev/null", 1, 0);
         if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
-        var argv[3];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
         sys_execve(compiler_path, &argv, aug_envp);
@@ -5149,7 +5179,7 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
         # Exec: tar cf - -C <src_root> <member1> <member2> ...
         # `members` is space-separated; explode to argv. Cap at
         # 32 members which is plenty for src + lib + extras.
-        var argv[40];
+        var argv[304];  # N BYTES per CLAUDE.md buffer contract: 5 fixed + ≤32 members + NUL = 38 ptrs = 304 B
         store64(&argv,      "tar");
         store64(&argv + 8,  "cf");
         store64(&argv + 16, "-");
@@ -5170,11 +5200,11 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
             var c = load8(buf + i);
             if (c == 32) {
                 store8(buf + i, 0);
-                if (i > s) { store64(&argv + idx * 8, buf + s); idx = idx + 1; }
+                if (i > s) { if (idx < 37) { store64(&argv + idx * 8, buf + s); idx = idx + 1; } }
                 s = i + 1;
             }
             if (c == 0) {
-                if (i > s) { store64(&argv + idx * 8, buf + s); idx = idx + 1; }
+                if (i > s) { if (idx < 37) { store64(&argv + idx * 8, buf + s); idx = idx + 1; } }
             }
             i = i + 1;
         }
@@ -5195,7 +5225,7 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
         if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
         var dn2 = sys_open("/dev/null", 1, 0);
         if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
-        var argv[4];
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs need 32 B
         store64(&argv,      "ssh");
         store64(&argv + 8,  target);
         store64(&argv + 16, remote_cmd);
@@ -6740,12 +6770,12 @@ fn _ts_mode_run(fixture_path, mode_flag): i64 {
         if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
         var dn2 = sys_open("/dev/null", 1, 0);
         if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
-        var argv[3];
-        store64(&argv,     CC_PATH);
-        store64(&argv + 8, mode_flag);
-        store64(&argv + 16, 0);
-        var envp[1];
-        store64(&envp, 0);
+        var argv[40];   # 5 ptr slots; `var x[N]` is N BYTES (CLAUDE.md
+        store64(&argv,     CC_PATH);   # buffer contract). argv[3]/envp[1]
+        store64(&argv + 8, mode_flag); # reserved only 8 B each, so envp[0]
+        store64(&argv + 16, 0);        # overlapped argv[1] and zeroed the
+        var envp[16];                  # mode flag → cycc ran cyrius-mode +
+        store64(&envp, 0);             # rejected TS non-ASCII. See CHANGELOG.
         sys_execve(CC_PATH, &argv, &envp);
         sys_exit(127);
     }

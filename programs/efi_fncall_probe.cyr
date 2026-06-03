@@ -1,0 +1,32 @@
+# efi_fncall_probe — exercises fncall1..fncall5 under CYRIUS_TARGET_EFI=1 so
+# `_efi_emit_gate` (programs/check.cyr) can assert NO `ud2 ud2` is emitted at
+# any fncallN call site.
+#
+# Regression guard for the 2026-05-19 → fixed-by-6.0.x UEFI bug: at cycc 6.0.0
+# the CYRIUS_TARGET_WIN predefine was dropped under CYRIUS_TARGET_EFI=1, so
+# fnptr.cyr's MS-x64 fncallN bodies (gated `#ifdef CYRIUS_TARGET_WIN`) never
+# emitted → fncallN went "undefined" → every call site got the undefined-fn
+# stub `ud2 ud2 nop` (0F 0B 0F 0B 90 — same 4 bytes as `call rel32`) → #UD at
+# every UEFI service call (found via gnoboot panicking OVMF). The bug rotted
+# AND was fixed with no test catching either; this probe + the gate's byte-scan
+# lock it in. Mirrors gnoboot's fncall1/2/3/4/5 usage.
+# See CHANGELOG [6.0.46] +
+# docs/development/issues/archived/2026-05-19-cycc-6.0.0-uefi-fncall-ud2-emit.md.
+
+include "lib/fnptr.cyr"
+
+fn cb1(a) { return a; }
+fn cb2(a, b) { return a + b; }
+fn cb3(a, b, c) { return a + b + c; }
+fn cb4(a, b, c, d) { return a + b + c + d; }
+fn cb5(a, b, c, d, e) { return a + b + c + d + e; }
+
+fn main() {
+    var r = 0;
+    r = r + fncall1(&cb1, 1);
+    r = r + fncall2(&cb2, 1, 2);
+    r = r + fncall3(&cb3, 1, 2, 3);
+    r = r + fncall4(&cb4, 1, 2, 3, 4);
+    r = r + fncall5(&cb5, 1, 2, 3, 4, 5);
+    return r;
+}

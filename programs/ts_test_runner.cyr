@@ -47,11 +47,11 @@ fn _run_mode(cc_path, fixture_path, mode_flag): i64 {
         if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
         var dn2 = sys_open("/dev/null", 1, 0);
         if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
-        var argv[3];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + flag + NUL = 24 B
         store64(&argv,      cc_path);
         store64(&argv + 8,  mode_flag);
         store64(&argv + 16, 0);
-        var envp[1];
+        var envp[16];   # was envp[1] = 8 B → aliased argv[1] (mode_flag) and zeroed it
         store64(&envp, 0);
         sys_execve(cc_path, &argv, &envp);
         sys_exit(127);

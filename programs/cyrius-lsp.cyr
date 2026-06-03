@@ -895,7 +895,7 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
         sys_close(pipe_write);
         # SYS_CHDIR = 80 on x86_64 Linux; LSP is x86-only currently.
         syscall(80, project_root);
-        var argv[5];
+        var argv[40];   # N BYTES per CLAUDE.md buffer contract: 5 ptrs = 40 B
         store64(&argv, _cyrius_path);
         store64(&argv + 8, "check");
         store64(&argv + 16, "--with-deps");
@@ -972,11 +972,11 @@ fn compile_and_capture(filepath): i64 {
         sys_dup2(pipe_write, 2);
         sys_close(pipe_write);
 
-        var argv[2];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv, _cc5_path);
         store64(&argv + 8, 0);
         # envp = NULL (minimal env)
-        var envp[1];
+        var envp[16];
         store64(&envp, 0);
         sys_execve(_cc5_path, &argv, &envp);
         syscall(60, 127);

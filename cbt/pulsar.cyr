@@ -74,7 +74,7 @@ fn cmd_pulsar(): i64 {
         sys_dup2(sfd, 0); sys_close(sfd);
         var ofd = sys_open(cc5_b, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
         sys_dup2(ofd, 1); sys_close(ofd);
-        var argv[2];
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv, cc5_a);
         store64(&argv + 8, 0);
         sys_execve(cc5_a, &argv, _envp);
@@ -95,7 +95,7 @@ fn cmd_pulsar(): i64 {
             var ofd = sys_open(cc5_c, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
             sys_dup2(ofd, 1); sys_close(ofd);
             sys_chmod(cc5_b, 0x1ED);
-            var argv[2];
+            var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
             store64(&argv, cc5_b);
             store64(&argv + 8, 0);
             sys_execve(cc5_b, &argv, _envp);
