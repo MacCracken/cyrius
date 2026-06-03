@@ -276,6 +276,20 @@ notes (Helix / Zed / VS Code / JetBrains).
 
 `cyrius port` scaffolds Cyrius projects from Rust repos. See [migration strategy](docs/development/migration-strategy.md) for the porting playbook.
 
+## Development
+
+Setting up a dev / verification environment? Install the **per-environment toolchain** first so cross-target work doesn't stall on a missing tool:
+
+- [docs/development/dev-tools-linux.md](docs/development/dev-tools-linux.md) — x86_64 Linux dev/verification box: build + cross-emit every target, run the aarch64/PE binaries locally (qemu/wine) to reproduce platform self-host bugs without round-tripping to hardware, disassemble (llvm-objdump), and SSH to the real hosts for authoritative verification. macOS/Windows siblings to follow.
+
+```bash
+sh bootstrap/bootstrap.sh                                          # seed asm → cybs → cycc
+cat src/main.cyr | build/cycc > /tmp/cycc && chmod +x /tmp/cycc
+cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b # self-host byte-identical
+sh scripts/check.sh                                                # full Linux audit
+sh scripts/cross-os-selfhost.sh ecb                                # real-hardware self-host (per host: ecb/ach/pi/cass)
+```
+
 ## See also
 
 - [docs/platform-status.md](docs/platform-status.md) — what works on which platform today (refreshed every closeout)

@@ -209,6 +209,7 @@ docs/                Architecture, roadmap, benchmarks, language guide
 - `docs/development/roadmap-future.md` — Long-term watching list (unpinned items, speculative work, v7.0+ aspirations)
 - `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape)
 - `docs/development/state.md` — Volatile cycle / pin / sweep state (refreshed every release)
+- `docs/development/dev-tools-linux.md` — per-environment dev toolchain (Linux x86_64 first; `qemu-user`/`wine` to reproduce aarch64/PE self-host bugs locally, `llvm-objdump` disasm, SSH cross-host verify). macOS/Windows siblings to follow. Install these before cross-target codegen work.
 - `docs/doc-health.md` — Living doc-currency ledger (per-tier fresh / stale / archived; refreshed when docs are touched)
 - `CHANGELOG.md` — Source of truth for all changes
 - `../vidya/content/compiler_bootstrapping/cyrius_*.toml` — 90+ vidya entries
