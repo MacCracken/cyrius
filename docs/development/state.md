@@ -3,6 +3,38 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.50 ship — Windows PE foundation: cycc_win unfrozen + stdlib-build gate)
+
+Closing **v6.0.50** — the FOUNDATION half of the Windows PE issue (ai-hwaccel,
+issue 2026-06-03-windows-pe-syscall-surface-blocks-detection.md). check.sh **84/84**;
+self-host byte-identical (888,016 B); cycc src UNCHANGED (.50 = install.sh +
+check.cyr + probes + the cycc_win artifact) → cross-OS carries over from .49.
+
+**Premise-check reshaped the issue (filed at 6.0.47):** the 6.0.x EMIT path
+(`CYRIUS_TARGET_WIN=1 cycc`) already resolves the WIN stdlib closure (0
+`PROT_READ`) — the break was the FROZEN `cc5_win` 5.11.69 frontend, which
+install.sh copied forward because it had NO `cycc_win` rebuild rule.
+
+**Shipped (foundation):**
+- **cycc_win unfrozen 5.11.69 → 6.0.x** — both install.sh paths now build it from
+  `src/main_win.cyr` with `CYRIUS_TARGET_WIN=1` (rebuilt unconditionally so a
+  stale mtime can't skip the unfreeze). Verified: the version-bump install rule
+  fires; snapshot cycc_win 686632 B (5.11.69) → 749568 B (6.0.x PE32+).
+- **Windows stdlib-cross-build gate** (`win_emit_probe.cyr` + `_win_build_gate`):
+  compiles a stdlib program under CYRIUS_TARGET_WIN=1, asserts MZ + PE32+ +
+  Subsystem 3. Guards the `PROT_READ` closure regression + PE emit. 83 → 84.
+- The 5.11.5 ExitProcess/WriteFile hazard is gone on 6.x (the cass cross-OS
+  self-host writes via WriteFile + exits via ExitProcess every release).
+
+**Next = v6.0.51 (the process-creation arc — the actual ai-hwaccel runtime
+blocker):** route Win32 process creation — a `CreateProcess`-based `run`/
+`run_capture` under `#ifdef CYRIUS_TARGET_WIN` (the fork/execve+pipe+wait+dup2
+pattern lib/process.cyr emits has no 1:1 Win32 mapping) + the kernel32 imports
+(CreateProcessW/CreatePipe/WaitForSingleObject/GetExitCodeProcess) + a cass
+spawn-build gate. fork(57)/execve(59) are currently unrouted → ai-hwaccel's
+probe spawns fault with STATUS_ILLEGAL_INSTRUCTION. **Then return to the TLS arc**
+([[project_native_tls_arc_v6_2_x]]).
+
 ## Session close — 2026-06-03 (.49 ship — AGNOS Phase 3+4: heap + emit gate + CLI; cyrius-side arc COMPLETE)
 
 Closing **v6.0.49**. AGNOS target arc Phase 3+4 — the **cyrius side of the AGNOS

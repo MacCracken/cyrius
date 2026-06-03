@@ -183,6 +183,29 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
                 _arch="${cbin#cc5_}"
                 _rebuild_stale "$cbin" "src/main_${_arch}.cyr"
                 ;;
+            cycc_win)
+                # v6.0.50: unfreeze the PE compiler. Build cycc_win from
+                # src/main_win.cyr with CYRIUS_TARGET_WIN=1 (the x86 cycc
+                # emits a PE32+ cycc that runs on Windows) instead of copying
+                # the frozen cc5_win 5.11.69 binary forward. The 5.11.69 freeze
+                # blocked consumers (ai-hwaccel) whose 6.0.x stdlib WIN closure
+                # the old frontend couldn't resolve (`undefined PROT_READ`).
+                # _rebuild_stale can't set the env var, so the build is inlined;
+                # rebuilt unconditionally (no -nt skip) so the unfreeze can't be
+                # skipped by the frozen binary's mtime. See issue
+                # 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
+                if [ -f src/main_win.cyr ] && [ -x build/cycc ]; then
+                    _cw_err=$(mktemp)
+                    if cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win 2>"$_cw_err"; then
+                        chmod +x build/cycc_win
+                        info "rebuilt cycc_win from src/main_win.cyr (CYRIUS_TARGET_WIN=1 → PE32+)"
+                        [ -s "$_cw_err" ] && sed 's/^/    /' "$_cw_err" >&2
+                    else
+                        warn "rebuild of cycc_win failed:"; sed 's/^/    /' "$_cw_err" >&2; rm -f build/cycc_win
+                    fi
+                    rm -f "$_cw_err"
+                fi
+                ;;
             *) warn "unknown cross_bins entry '$cbin' — no rebuild rule, will copy existing build/$cbin if present" ;;
         esac
     done
@@ -464,6 +487,19 @@ if [ "$installed" -eq 0 ]; then
     # Cross-compiler(s)
     if [ -f src/main_aarch64.cyr ]; then
         _build_tool "cycc_aarch64" "src/main_aarch64.cyr"
+    fi
+    # v6.0.50: PE compiler — build cycc_win from src/main_win.cyr with
+    # CYRIUS_TARGET_WIN=1 (the x86 cycc emits a PE32+ cycc). Unfreezes it
+    # from the frozen cc5_win 5.11.69 binary the copy-step shipped forward
+    # (which couldn't resolve the 6.0.x stdlib WIN closure). _build_tool
+    # can't set the env, so inline the build.
+    if [ -f src/main_win.cyr ] && [ -x build/cycc ]; then
+        info "building cycc_win from src/main_win.cyr (CYRIUS_TARGET_WIN=1 → PE32+)"
+        if cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win 2>/dev/null; then
+            chmod +x build/cycc_win
+        else
+            warn "cycc_win build failed — falling back to existing build/cycc_win if present"
+        fi
     fi
 
     # Copy binaries

@@ -1,5 +1,20 @@
 # 2026-06-03 — Windows PE: ~10-syscall surface + frozen `cc5_win` 5.11.69 block a real consumer build
 
+> **STATUS — split into foundation (v6.0.50, DONE) + arc (v6.0.51, OPEN):**
+> **v6.0.50 cleared the BUILD blocker (#2):** `cycc_win` unfrozen 5.11.69 → 6.0.x
+> (scripts/install.sh now has a rebuild rule; it had none → copied the frozen
+> binary forward). The `PROT_READ` closure break was the frozen frontend — the
+> 6.0.x emit path (`CYRIUS_TARGET_WIN=1 cycc`) always resolved the WIN closure.
+> Added a Windows stdlib-cross-build gate (`_win_build_gate`, check.sh 84). The
+> 5.11.5 ExitProcess/WriteFile hazard (#4) is confirmed gone on 6.x (the cass
+> cross-OS self-host writes via WriteFile + exits via ExitProcess every release).
+> **v6.0.51 = the RUNTIME blocker (#1), still OPEN:** route Win32 process creation
+> — `fork`(57)/`execve`(59) (+`pipe`/`wait4`/`dup2`/`getcwd`) are unrouted, so
+> ai-hwaccel's probe spawns fault (STATUS_ILLEGAL_INSTRUCTION). Needs a
+> `CreateProcess`-based `run`/`run_capture` under `#ifdef CYRIUS_TARGET_WIN`
+> (no 1:1 fork mapping) + kernel32 imports (CreateProcessW/CreatePipe/
+> WaitForSingleObject/GetExitCodeProcess) + a cass spawn-build gate. Keep OPEN.
+
 **Discovered:** 2026-06-03 assessing the ai-hwaccel v2.3.7 Windows wheel
 (consumer: **ai-hwaccel**, cyrius pinned 6.0.47).
 **Severity:** High — hard blocker for a roadmapped consumer deliverable

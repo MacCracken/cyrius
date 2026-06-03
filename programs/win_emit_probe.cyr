@@ -1,0 +1,20 @@
+# win_emit_probe — a stdlib-using Windows program so `_win_build_gate`
+# (programs/check.cyr) can assert that `CYRIUS_TARGET_WIN=1` cross-builds the
+# 6.0.x stdlib WIN include-closure CLEAN into a valid PE32+ console binary.
+# This is the regression guard for the frozen-frontend closure break the
+# ai-hwaccel consumer hit: the frozen `cc5_win` 5.11.69 frontend couldn't
+# resolve the 6.0.x stdlib's WIN closure (`undefined variable 'PROT_READ'`,
+# `lib/atomic.cyr`). Including lib/syscalls.cyr + lib/alloc.cyr here exercises
+# that closure; the gate fails if it stops resolving or the PE emit breaks.
+#
+# NO subprocess spawn — fork/execve PE routing (CreateProcess) is the v6.0.51
+# arc. See issue 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+
+fn main() {
+    var p = alloc(64);
+    store64(p, 0x57494E);                    # "WIN"
+    sys_write(STDOUT_FD, "win-ok\n", 7);     # syscall(1) → WriteFile under WIN
+    return load64(p) - 0x57494E;             # 0
+}

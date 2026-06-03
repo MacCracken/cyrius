@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.50] — 2026-06-03
+
+**Windows PE foundation — `cycc_win` unfrozen from `cc5_win` 5.11.69 to 6.0.x +
+a Windows stdlib-cross-build gate. Clears the *build* blocker for the ai-hwaccel
+`win_amd64` wheel; the process-creation (fork/exec → CreateProcess) routing is
+the v6.0.51 arc.** (Issue: 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.)
+
+### Fixed
+
+- **`cycc_win` unfrozen: `cc5_win` 5.11.69 → 6.0.x.** `scripts/install.sh` had no
+  rebuild rule for `cycc_win` (the v6.0.48 bump warned `unknown cross_bins entry
+  'cycc_win'`), so both install paths copied the frozen 5.11.69 PE compiler
+  forward — and its frontend couldn't resolve the 6.0.x stdlib's WIN include
+  closure (`undefined variable 'PROT_READ'`, lib/atomic.cyr), blocking the
+  ai-hwaccel wheel. Both paths now build `cycc_win` from `src/main_win.cyr` with
+  `CYRIUS_TARGET_WIN=1` (the x86 cycc emits a PE32+ cycc), rebuilt unconditionally
+  so the unfreeze can't be skipped by the frozen binary's mtime. build/cycc_win
+  686632 B (5.11.69) → 749568 B (6.0.x PE32+). (scripts/install.sh)
+
+### Added
+
+- **Windows stdlib-cross-build gate.** `programs/win_emit_probe.cyr` (includes
+  lib/syscalls.cyr + lib/alloc.cyr) + `_win_build_gate` (programs/check.cyr)
+  compile it under `CYRIUS_TARGET_WIN=1` and assert MZ + PE32+ optional-header
+  magic (0x020B) + Subsystem 3 (WINDOWS_CUI). The stdlib include exercises — and
+  guards against regression of — the closure the frozen 5.11.69 frontend broke
+  on (`PROT_READ`). check.sh 83 → 84.
+
+### Notes
+
+- The 6.0.x emit path (`CYRIUS_TARGET_WIN=1 cycc`) already resolved the WIN
+  closure (0 `PROT_READ`) — confirming the break was the frozen 5.11.69 frontend,
+  not the 6.0.x stdlib.
+- The 5.11.5 ExitProcess/WriteFile userspace-propagation hazard is gone on 6.x:
+  the cass cross-OS self-host (cycc — a PE — self-hosting byte-identical on
+  Windows) writes its output via WriteFile and exits via ExitProcess every
+  release, so both reach userspace (else self-host would fail).
+- cycc source is UNCHANGED (.50 = install.sh + check.cyr + probes + the cycc_win
+  artifact), so the compiler self-hosts byte-identical and the v6.0.49 cross-OS
+  result carries over.
+- **Remaining = the v6.0.51 arc:** route Win32 process creation — a
+  `CreateProcess`-based `run`/`run_capture` under `#ifdef CYRIUS_TARGET_WIN`
+  (the fork/execve+pipe+wait+dup2 pattern in lib/process.cyr) + the kernel32
+  imports (CreateProcessW/CreatePipe/WaitForSingleObject/GetExitCodeProcess) + a
+  cass spawn-build gate. That unblocks ai-hwaccel's spawn-based hardware detection.
+
 ## [6.0.49] — 2026-06-03
 
 **AGNOS target Phase 3+4 — agnos programs get a heap, the emit path is gated +
