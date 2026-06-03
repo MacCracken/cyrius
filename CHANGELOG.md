@@ -51,12 +51,13 @@ ship.
   `windows-latest`, new `ubuntu-24.04-arm`) now build + self-host `cycc`
   instead of running pre-built toy binaries, and block `release.yml`'s publish
   via the existing `needs: [ci]` chain (each with a `timeout-minutes` so a
-  hang fails loud, never the 6 h default). The new `macos-13` (Intel) x86-macOS
-  job is **non-blocking** (`continue-on-error`): GitHub's Intel fleet is scarce
-  and `download-artifact` quarantine blocks the unsigned binary on headless
-  Gatekeeper, so it strips quarantine + hard-timeouts and stays informational —
-  the authoritative x86-macOS gate is `cyrius audit` on the real Intel Mac
-  `ach`, with a self-hosted `ach` runner queued to replace the hosted job
+  hang fails loud, never the 6 h default). **x86-macOS hosted CI is omitted:**
+  GitHub's Intel (`macos-13`) fleet is aged/scarce, so the job sits queued for
+  a runner (and `timeout-minutes` covers only run time, not the queue) — plus
+  `download-artifact` quarantine blocks the unsigned binary on headless
+  Gatekeeper. x86-macOS self-host is verified locally via `cyrius audit` on the
+  real Intel Mac `ach`; restoring it as a real blocking gate on a dedicated
+  self-hosted `ach` runner is queued
   (`docs/development/issues/2026-06-03-ach-selfhosted-runner.md`).
 - **`docs/development/dev-tools-linux.md`** — per-environment dev toolchain
   (`qemu-user` + `wine` to reproduce aarch64/PE self-host locally,

@@ -703,68 +703,17 @@ jobs:
           test $ec -eq 42 || { echo "FAIL: fn main(){return 42;} exited $ec, not 42"; exit 1; }
           echo "PASS: fn main(){return 42;} → exit 42"
 
-  # ── macOS Intel (x86_64) — cross-compile + native self-host (v6.0.45) ──
-  # The x86_64 macOS cycc SELF-HOSTS byte-identical (verified on real Intel
-  # hardware 'ach'); the v6.0.44 "doesn't self-host" retraction was a
-  # codesign-comparison artifact. macos-13 is the Intel runner. NO codesign
-  # (Intel runs unsigned; codesign rejects + mutates the binary).
-  macho-x86:
-    name: Mach-O x86_64 Cross
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Cross-build the x86_64 Mach-O cycc + bundle source
-        run: |
-          chmod +x build/cycc
-          mkdir -p /tmp/macho_x86_out
-          cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 ./build/cycc > /tmp/macho_x86_out/cycc_macho_x86
-          file /tmp/macho_x86_out/cycc_macho_x86 | grep -q "Mach-O 64-bit x86_64" \
-            || { echo "ERROR: cycc_macho_x86 not x86_64 Mach-O"; file /tmp/macho_x86_out/cycc_macho_x86; exit 1; }
-          tar czf /tmp/macho_x86_out/_src.tgz src lib VERSION
-          echo "staged cycc_macho_x86: $(wc -c < /tmp/macho_x86_out/cycc_macho_x86) bytes"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macho-x86-binaries
-          path: /tmp/macho_x86_out/
-          retention-days: 7
-
-  macho-x86-native:
-    name: Mach-O x86_64 Native
-    needs: [macho-x86]
-    runs-on: macos-13
-    # NON-BLOCKING (v6.0.45): GitHub's Intel macos-13 fleet is scarce/deprecated,
-    # so this can queue or (pre-fix) hang on Gatekeeper. The AUTHORITATIVE
-    # x86-macOS gate is `cyrius audit` on the real Intel Mac `ach`; this GitHub
-    # job is an informational cross-check that must not chain releases to the
-    # Intel-runner supply. A self-hosted `ach` runner replaces it (see
-    # docs/development/issues/2026-06-03-ach-selfhosted-runner.md).
-    continue-on-error: true
-    timeout-minutes: 5
-    steps:
-      - name: Download x86_64 Mach-O cycc
-        uses: actions/download-artifact@v4
-        with:
-          name: macho-x86-binaries
-          path: ./macho-x86
-      - name: SELF-HOST cycc byte-identical (THE real gate)
-        run: |
-          set -euo pipefail
-          cd macho-x86
-          tar xzf _src.tgz
-          chmod +x cycc_macho_x86
-          # actions/download-artifact tags the binary with com.apple.quarantine;
-          # first-exec of an UNSIGNED downloaded Mach-O blocks forever on the
-          # headless runner's Gatekeeper (syspolicyd) assessment → the job HANGS.
-          # `codesign -s -` rejects this Mach-O ("failed strict validation"), so
-          # stripping quarantine is the only escape. Verified on real ach. (v6.0.45)
-          xattr -cr . || true
-          # Hard timeout so a future hang FAILS LOUD instead of stalling the job.
-          TO() { if command -v gtimeout >/dev/null; then gtimeout "$@"; elif command -v timeout >/dev/null; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV or exit 127' "$@"; fi; }
-          cat src/main_x86_macho.cyr | TO 120 ./cycc_macho_x86 > r1 && chmod +x r1
-          cat src/main_x86_macho.cyr | TO 120 ./r1 > r2
-          cmp r1 r2 || { echo "FAIL: x86_64 macOS self-host NOT byte-identical"; exit 1; }
-          echo "PASS: x86_64 macOS cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
+  # ── macOS Intel (x86_64) self-host — REMOVED from hosted CI (v6.0.45) ──
+  # testing local passes; needs dedicated self-hosted runner — age/availability
+  #
+  # The x86_64 Mach-O cycc self-hosts byte-identical and is verified locally via
+  # `cyrius audit` → `scripts/cross-os-selfhost.sh ach` on the real Intel Mac.
+  # GitHub's hosted Intel (macos-13) fleet is aged/scarce: the job sits QUEUED
+  # waiting for a runner (and `timeout-minutes` only counts RUN time, not the
+  # queue, so it never fires), and `download-artifact` quarantine blocks the
+  # unsigned binary on headless Gatekeeper. Restore as a real blocking gate on a
+  # dedicated self-hosted `ach` runner —
+  # see docs/development/issues/2026-06-03-ach-selfhosted-runner.md.
 
   # ── Windows x86_64 PE32+ cross-compile ──
   # Runs on ubuntu-latest; compiles exit-code programs with
