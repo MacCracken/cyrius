@@ -1609,6 +1609,130 @@ fn _efi_compile_to_buf(src_path, out_buf, out_buf_cap, fail_label): i64 {
     return n;
 }
 
+# v6.0.49: AGNOS-target siblings of the EFI compile helpers — pipe a .cyr
+# through cycc under CYRIUS_TARGET_AGNOS=1 and read the emitted bytes.
+fn _self_host_pipe_agnos(src_path, compiler_path, out_path): i64 {
+    var src_cap = 2000000;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n <= 0) { return 0 - 1; }
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0 - 2; }
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 3; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(read_fd); sys_close(write_fd); sys_close(out_fd); return 0 - 4; }
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0);
+        sys_close(read_fd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
+        store64(&argv,     compiler_path);
+        store64(&argv + 8, 0);
+        var envp[16];
+        store64(&envp,     "CYRIUS_TARGET_AGNOS=1");
+        store64(&envp + 8, 0);
+        sys_execve(compiler_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(write_fd);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return load32(&status_buf);
+}
+
+# Compile `src_path` under CYRIUS_TARGET_AGNOS=1, read the emitted bytes
+# into `out_buf` (cap `out_buf_cap`). Returns bytes-read, or -1 (printing
+# the FAIL diagnostic). Sibling of _efi_compile_to_buf.
+fn _agnos_compile_to_buf(src_path, out_buf, out_buf_cap, fail_label): i64 {
+    var bin_path = _tmp_path("audit_agnos_compile_bin_");
+    var rc = _self_host_pipe_agnos(src_path, CC_PATH, bin_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(fail_label); _p(" compile failed (rc="); print_num(rc); println(")");
+        return 0 - 1;
+    }
+    var n = file_read_all(bin_path, out_buf, out_buf_cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(fail_label); println(" — compiled but output unreadable");
+        return 0 - 1;
+    }
+    return n;
+}
+
+# Gate: CYRIUS_TARGET_AGNOS emits a valid agnos ring-3 ELF (v6.0.49).
+# Compiles programs/agnos_emit_probe.cyr under CYRIUS_TARGET_AGNOS=1 and
+# asserts: ELF64 magic + class 64 + x86-64 machine + entry ≥ 0x200000
+# (agnos's user-range floor), AND no Linux exit sequence (`mov eax,60` =
+# B8 3C 00 00 00 — agnos exit is `syscall(0)`). Regression guard: a future
+# EEXIT change reverting agnos exit to Linux 60, or a broken target, FAILs
+# here. (Live run-on-agnos is gated on an agnos-side boot-run hook — see
+# CHANGELOG [6.0.49]; this static gate locks the emit codegen.)
+fn _agnos_emit_gate(): i64 {
+    var label = "CYRIUS_TARGET_AGNOS emits valid agnos ring-3 ELF (v6.0.49; ELF64, entry ≥ 0x200000, exit=syscall(0), no Linux-60)";
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = _agnos_compile_to_buf(_root_path("programs/agnos_emit_probe.cyr"), buf, cap, "agnos_emit_probe");
+    if (n <= 0) { _check(label, 1); return 1; }
+    if (load8(buf) != 0x7F || load8(buf + 1) != 0x45 || load8(buf + 2) != 0x4C || load8(buf + 3) != 0x46) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos probe output is not an ELF"); _check(label, 1); return 1;
+    }
+    if (load8(buf + 4) != 2) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos probe not ELF64 (e_ident class != 2)"); _check(label, 1); return 1;
+    }
+    var machine = _read_u16_le(buf, 18);
+    if (machine != 0x3E) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": agnos probe machine "); print_num(machine); println(" != 0x3E (x86-64)"); _check(label, 1); return 1;
+    }
+    var entry = _read_u32_le(buf, 24);
+    if (entry < 0x200000) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": agnos probe entry "); print_num(entry); println(" < 0x200000 (agnos user-range floor)"); _check(label, 1); return 1;
+    }
+    var i = 0;
+    var found_linux_exit = 0;
+    while (i < n - 4) {
+        if (load8(buf + i) == 0xB8) {
+            if (load8(buf + i + 1) == 0x3C) {
+                if (load8(buf + i + 2) == 0) { if (load8(buf + i + 3) == 0) { if (load8(buf + i + 4) == 0) {
+                    found_linux_exit = 1;
+                } } }
+            }
+        }
+        i = i + 1;
+    }
+    if (found_linux_exit == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos binary contains a Linux exit (mov eax,60) — EEXIT agnos branch regressed?");
+        _check(label, 1); return 1;
+    }
+    _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+    println(": CYRIUS_TARGET_AGNOS — valid ELF64, entry ≥ 0x200000, agnos exit syscall(0) (no Linux-60)");
+    _check(label, 0);
+    return 0;
+}
+
 # Gate: UEFI Application PE emit produces a structurally correct
 # PE32+ image (v5.11.48, gnoboot arc P2).
 #
@@ -9730,6 +9854,10 @@ fn _run_regression_gates(): i64 {
 
     _section("EFI Application PE emit (gnoboot MVP unblocker)");
     _efi_emit_gate();
+    println("");
+
+    _section("AGNOS ring-3 userspace emit (CYRIUS_TARGET_AGNOS)");
+    _agnos_emit_gate();
     println("");
 
     _section("EFI Application OVMF runtime smoke (gnoboot arc KO)");

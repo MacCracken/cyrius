@@ -3,6 +3,36 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.49 ship — AGNOS Phase 3+4: heap + emit gate + CLI; cyrius-side arc COMPLETE)
+
+Closing **v6.0.49**. AGNOS target arc Phase 3+4 — the **cyrius side of the AGNOS
+userspace target arc is COMPLETE** (target + peer in .48; heap + gate + CLI in .49).
+check.sh **83/83**; self-host byte-identical (888,016 B). **cycc source UNCHANGED
+from .48** (Phase 3+4 = lib/programs/cbt only) → cross-OS (pi/ecb/ach/cass) carries
+over from .48's 4-host green (no compiler change, like the .46 precedent).
+
+**Shipped:**
+- **lib/alloc_agnos.cyr** — agnos heap: chunk-based bump over agnos mmap(27)
+  (2 MB-granular, hint-less → discontiguous chunks; no brk). Unblocks agnoshi.
+- **`cyrius build --agnos`** — CLI injects CYRIUS_TARGET_AGNOS=1 into cycc's envp
+  (cbt _envp is empty, so explicit, like --strict-pin). cbt/{core,cyrius,build}.cyr.
+- **_agnos_emit_gate** (programs/check.cyr + agnos_emit_probe.cyr) — static gate:
+  compiles a probe under CYRIUS_TARGET_AGNOS=1, asserts valid ELF64 + entry ≥
+  0x200000 + NO Linux-60 (agnos exit = syscall(0)). 82 → 83.
+
+**Live run-on-agnos = the one remaining proof, GATED on an agnos-side hook.** agnos
+runs a userspace binary interactively (kybernet `run /prog`) or via a kernel
+EXEC_SELFTEST that hand-builds its OWN ELF; running an arbitrary cyrius binary
+automatically needs an agnos-side hook to load it from ext2 at boot — NO cyrius-side
+cross-repo edit (coordination item for the agnos side). The static gate + objdump
+proofs (exit=syscall(0), write=syscall(1), mmap(27) heap, valid ELF64) lock the
+cyrius-side codegen meanwhile.
+
+**Next (pinned sequence, user 2026-06-03):** **.50 = the new Windows PE syscall-
+surface issue** (docs/development/issues/2026-06-03-windows-pe-syscall-surface-blocks-detection.md,
+found by the ai-hwaccel client) → **then return to the TLS arc**
+([[project_native_tls_arc_v6_2_x]]).
+
 ## Session close — 2026-06-03 (.48 ship — AGNOS userspace target: cycc emits agnos ring-3 binaries)
 
 Closing **v6.0.48**. **cycc can now emit AGNOS ring-3 userspace binaries**

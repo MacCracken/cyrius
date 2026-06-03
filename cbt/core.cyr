@@ -50,6 +50,10 @@ var _strict_pin = 0;
 # behavior under both archs; previously the user had to invoke cycc
 # directly and pipe stdin/stdout themselves.
 var _strict = 0;
+# v6.0.49: `cyrius build --agnos` → inject CYRIUS_TARGET_AGNOS=1 into cycc's
+# envp so it emits an AGNOS ring-3 binary (cbt's _envp is empty, so the env
+# var must be added explicitly — same mechanism as --strict-pin).
+var _agnos_target = 0;
 
 # ================================================================
 # Output helpers — consistent error/warn/info/status

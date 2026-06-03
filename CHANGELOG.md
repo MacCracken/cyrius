@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.49] — 2026-06-03
+
+**AGNOS target Phase 3+4 — agnos programs get a heap, the emit path is gated +
+CLI-wired. The cyrius side of the AGNOS userspace target arc is complete; the
+binaries are objdump-proven (live run-on-agnos awaits an agnos-side boot hook).**
+
+### Added
+
+- **`lib/alloc_agnos.cyr` — the agnos heap (Phase 3).** A chunk-based bump
+  allocator over agnos `mmap`(27): 2 MB-granular, hint-less (the kernel picks
+  the base, so chunks are discontiguous — agnos has no brk and can't reserve a
+  contiguous region like the Linux/macOS paths). Bumps within the current chunk;
+  on overflow, mmaps a fresh chunk. Mirrors the `alloc`/`alloc_init`/`alloc_reset`/
+  `alloc_used` surface; selected via `lib/alloc.cyr`'s `#ifdef` dispatch. Unblocks
+  agnoshi (it allocs).
+- **`cyrius build --agnos` (Phase 4).** The CLI injects `CYRIUS_TARGET_AGNOS=1`
+  into cycc's envp — cbt's `_envp` is empty, so the var is added explicitly (same
+  mechanism as `--strict-pin`; both can be set). (cbt/core.cyr, cyrius.cyr, build.cyr)
+- **AGNOS-emit regression gate (Phase 4).** `programs/agnos_emit_probe.cyr` +
+  `_agnos_emit_gate` (programs/check.cyr) compile the probe under
+  `CYRIUS_TARGET_AGNOS=1` and assert: valid ELF64 + x86-64 + entry ≥ 0x200000
+  (agnos's user-range floor) + NO Linux exit (`mov eax,60`/`B8 3C 00 00 00` —
+  agnos exit is `syscall(0)`). Locks the agnos exit codegen against regression.
+  check.sh 82 → 83.
+
+### Notes
+
+- **cycc source is UNCHANGED from v6.0.48** (Phase 3+4 touch only lib/programs/cbt),
+  so the compiler self-hosts byte-identical and the v6.0.48 4-host cross-OS result
+  (pi/ecb/ach/cass) carries over. check.sh 83/83. api-surface 2761 → 2765.
+- Verified: an alloc'ing agnos program emits agnos `mmap`(27) for its heap;
+  `cyrius build --agnos` produces a valid agnos ELF (`syscall(0)` exit, no Linux-60).
+- **Live run-on-agnos** (the remaining proof) is gated on an agnos-side boot hook:
+  agnos runs a userspace binary either interactively (kybernet `run /prog`) or via
+  a kernel `EXEC_SELFTEST` that hand-builds its *own* ELF. Running an arbitrary
+  cyrius binary automatically needs an agnos-side hook to load it from ext2 at boot
+  — NO cyrius-side cross-repo edit. The static gate locks the emit codegen
+  meanwhile. → agnos-side coordination item.
+- **AGNOS arc (cyrius side) COMPLETE:** target + syscall peer (v6.0.48) → heap +
+  gate + CLI (v6.0.49).
+
 ## [6.0.48] — 2026-06-03
 
 **cycc can now emit AGNOS ring-3 userspace binaries — `CYRIUS_TARGET_AGNOS=1`.**

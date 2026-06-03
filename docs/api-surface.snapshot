@@ -623,6 +623,10 @@ alloc::test_allocator/0
 alloc::test_allocator_alloc_count/1
 alloc::test_allocator_bytes_total/1
 alloc::test_allocator_fail_after/2
+alloc_agnos::alloc/1
+alloc_agnos::alloc_init/0
+alloc_agnos::alloc_reset/0
+alloc_agnos::alloc_used/0
 alloc_macos::alloc/1
 alloc_macos::alloc_init/0
 alloc_macos::alloc_reset/0

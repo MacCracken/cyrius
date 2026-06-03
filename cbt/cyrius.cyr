@@ -275,6 +275,10 @@ fn main(): i64 {
                 _strict = 1;
                 ai = ai + 1;
             }
+            elif (streq(argv(ai), "--agnos") == 1) {
+                _agnos_target = 1;
+                ai = ai + 1;
+            }
             else {
                 # An unrecognized token that LOOKS like a flag (`-…`) must
                 # NOT fall through into positional parsing — that shifts
