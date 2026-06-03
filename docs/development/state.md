@@ -3,7 +3,44 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
-## Session close — 2026-06-02 (.43 ship — ★ x86-macOS COMPILER SELF-HOSTS on Intel)
+## Session close — 2026-06-02 (.44 ship — DCE driver-parity fix + .43 retraction)
+
+Closing **v6.0.44**. ELF self-host byte-identical; check.sh green. x86-macOS
+does **NOT** self-host — correcting the .43 record.
+
+**RETRACTION:** the .43 "x86-macOS self-hosts byte-identical" claim was
+false — a codesigned-vs-unsigned `cmp` (LC_CODE_SIGNATURE changes ncmds/size)
++ a stale file. `cycc(cycc) != cycc` on `ach`. The cross-built cycc runs and
+compiles real programs (42, 88, strings, gvars, enums, includes verified) —
+it is NOT a self-hosting compiler. The carry-negate fix itself is real.
+
+**Real fix this slot:** `main_x86_macho.cyr` was missing `main.cyr`'s
+always-on DCE stub pass (unreferenced top-level fns → 3-byte `xor eax,eax;
+ret`). The hand-written dedicated driver dropped it → cross-builder stubbed,
+native didn't → guaranteed `cycc != cycc(cycc)` on every uncalled fn. Ported
+the pre-scan bitmap + stub decision verbatim; verified correct under trusted
+Linux execution (`note: 6 unreachable fns (0 bytes)`).
+
+**Blocker (the real root):** layout-sensitive Darwin **global-variable
+access** heisenbug. m1-built cycc_macho == trusted-built one (emission is
+byte-perfect), but on the Mac it mis-accesses one of its own top-level
+globals at its exact gvar layout — right DCE decision in isolation, wrong in
+place. ANY added global shifts the layout and fixes it → every probe masks
+it. Ruled out: heap >4GB, segment vmsize/totvar, DCE bitmap (popcount equal
+both hosts), gvar-array 16-align (FIXUP uses real dbase), non-determinism.
+Next avenue: byte-level disasm of cycc_macho's gvar map (reconstruct from
+EMIT_GVAR_INITS prologue) OR a debugger that attaches to ad-hoc Mach-O.
+
+**Queue:** x86-macOS gvar heisenbug (self-host blocker) · then full pillar
+(argv→pkg→install→gate) · Windows `cycc` bug 2+ (`cass`) · UEFI ud2 · CI
+cross-OS gate · cap-raise bundle (struct 256/type-table 1024/secret 64) ·
+then AGNOS.
+
+## Session close — 2026-06-02 (.43 ship — x86-macOS carry-negate keystone)
+
+> **RETRACTED in .44** — the self-host claim below did not hold
+> (codesigned-vs-unsigned cmp + stale file). x86-macOS does not self-host.
+> The carry-negate fix is real; only the self-host conclusion is withdrawn.
 
 Closing **v6.0.43**. ELF self-host byte-identical 886,432 B; check.sh green.
 

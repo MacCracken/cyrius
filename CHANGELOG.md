@@ -6,7 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.44] — 2026-06-02
+
+**x86-macOS self-host — DCE driver-parity fix + honest retraction of the
+[6.0.43] self-host claim.**
+
+### Corrected (retraction)
+
+- **x86-macOS does NOT self-host. The [6.0.43] "self-hosts byte-identical"
+  claim was false** and is retracted. It rested on a `cmp` that compared a
+  codesigned binary against an unsigned one (LC_CODE_SIGNATURE changes
+  `ncmds`/size) and, on re-test, a stale file — neither was a real
+  fixpoint. The cross-built `cycc` runs and compiles real programs on `ach`
+  (trivial → 42, fib → 88, strings, gvars, enums, includes — all verified),
+  but `cycc(cycc) != cycc`: it is not yet a self-hosting compiler. A green
+  checkmark and a careless `cmp` are not verification — running the
+  compiler on the hardware and comparing **unsigned-vs-unsigned** is. See
+  `feedback_macos_windows_ci_gate_mandatory`.
+
+### Fixed
+
+- **`main_x86_macho.cyr` was missing `main.cyr`'s always-on DCE stub pass.**
+  `main.cyr` builds a referenced-name bitmap (one token pass) and emits any
+  unreferenced, non-`main`, non-underscore top-level fn as a 3-byte
+  `xor eax,eax; ret` stub. The hand-written dedicated x86-macho driver
+  re-implemented the pass-1/pass-2 loops in simplified form and **dropped
+  this entirely** — so the cross-builder (from `main.cyr`) stubbed
+  unreferenced fns when building `cycc_macho`, but `cycc_macho` (from this
+  driver) emitted them full → a guaranteed `cycc != cycc(cycc)` divergence
+  on every uncalled function. The pre-scan bitmap + stub decision are now
+  ported verbatim from `main.cyr`. **Verified correct in isolation**: the
+  patched driver under trusted Linux execution stubs byte-identically to
+  the reference (`note: 6 unreachable fns (0 bytes)`).
+
+### Known issue (tracked)
+
+- **x86-macOS self-host is still blocked by a layout-sensitive Darwin
+  global-variable access bug.** With the DCE pass restored, the m1-built
+  `cycc_macho` is byte-identical to one built by a trusted-execution
+  compiler (so the *emission* is correct), yet `cycc_macho` running on the
+  Mac still mis-accesses one of its own top-level globals at its exact gvar
+  layout — it computes the right DCE stub decision in isolation but the
+  wrong one in place, so it emits full bodies where the cross-builder
+  stubbed. It is a **heisenbug**: a single extra global anywhere shifts the
+  layout and fixes it, so every exit-code/instrumentation probe masks it.
+  Ruled out: heap >4GB, segment `vmsize`/`totvar`, the DCE bitmap (popcount
+  identical mac vs Linux), gvar-array 16-alignment (FIXUP uses the real
+  `dbase`), and non-determinism (the binary is byte-stable). Tracked in
+  `issues/2026-06-02-macos-x86-release-no-compiler.md`.
+
 ## [6.0.43] — 2026-06-02
+
+> **RETRACTED in [6.0.44]** — the "self-hosts byte-identical" claim below
+> did not hold (codesigned-vs-unsigned `cmp` + stale file). x86-macOS does
+> not yet self-host. The carry-negate fix itself is real and stands; only
+> the self-host conclusion is withdrawn.
 
 **x86-macOS compiler self-hosts on Intel hardware — the carry-negate keystone.**
 
