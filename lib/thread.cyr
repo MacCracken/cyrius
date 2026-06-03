@@ -1,6 +1,6 @@
 # thread.cyr — thread creation, joining, and synchronization
 # Usage: include "lib/thread.cyr"
-# Requires: syscalls.cyr, alloc.cyr, atomic.cyr (transitively via mutex)
+# Requires: syscalls.cyr, alloc.cyr, mmap.cyr (PROT_*), atomic.cyr (via mutex)
 #
 # Threads share the process address space (CLONE_VM).
 # Each thread gets its own stack via mmap.
@@ -8,7 +8,17 @@
 #
 # >>> include "lib/syscalls.cyr"
 # >>> include "lib/alloc.cyr"
+# >>> include "lib/mmap.cyr"
 # >>> include "lib/thread.cyr"
+
+# v6.0.52: explicit include of mmap.cyr for the PROT_READ/PROT_WRITE enum
+# used in the thread-stack mmap below. Previously free-rode on alloc.cyr's
+# Linux closure transitively pulling mmap.cyr — which broke under
+# CYRIUS_TARGET_WIN (alloc_windows.cyr doesn't pull it), so any Windows
+# cross-build that included thread.cyr failed with `undefined PROT_READ`
+# (the ai-hwaccel win_amd64 wheel blocker .50's small probe masked).
+# include-once dedupes when alloc/another module already pulled mmap.cyr.
+include "lib/mmap.cyr"
 
 # v5.5.31: mutex_lock / mutex_unlock use atomic_cas for race-free
 # acquisition. Explicit include so existing callers of thread.cyr

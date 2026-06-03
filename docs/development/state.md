@@ -3,6 +3,35 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.52 ship — `cyrius build --win` + PROT_READ cross-target fix)
+
+Closing **v6.0.52**. Scoped as the ai-hwaccel wheel smoke (carry from .51); GREW into a cyrius
+release when the smoke surfaced real gaps. check.sh **85/85**; self-host byte-identical on Linux +
+ecb + cass + pi (cycc UNCHANGED this release — cbt + lib/thread + lib/freelist only; version_str is
+the sole src/ delta, so the bump's cycc is a clean fixpoint; 895,240 B).
+
+**Shipped:**
+- **`cyrius build --win`** — Linux→Windows cross-build flag (cbt/{core,cyrius,build}.cyr; injects
+  CYRIUS_TARGET_WIN into cycc's envp, mirrors --agnos). Fills the cross-build gap — cycc_win runs
+  only ON Windows, wheels.yml's win job built native-only. Verified: `cyrius build --win` → PE32+.
+- **PROT_READ cross-target fix** — lib/thread.cyr + lib/freelist.cyr free-rode on alloc.cyr's Linux
+  closure transitively pulling mmap.cyr; now they `include "lib/mmap.cyr"` explicitly. Broke every
+  Windows cross-build that pulled thread/freelist. **.50's green win gate MASKED it** (win_emit_probe
+  pulls only syscalls+alloc — the too-small-probe placebo, macOS-rot class).
+
+**ai-hwaccel:** compiles clean native against 6.0.51 (0 warn); spawn path (exec_capture →
+CreateProcessW) proven on cass (.51); **pin UNCHANGED at 6.0.47 — the win_amd64 wheel is NOT fully
+unblocked** (the next blocker below).
+
+**The remaining blocker, SLOTTED SEPARATELY (user "ship .52 now, slot threading separately"):**
+lib/thread.cyr is Linux-only (SYS_CLONE/CLONE_*/futex); ai-hwaccel uses threads (async_detect) +
+mutexes (lazy/cache, every run) → needs a Windows threading/mutex stdlib (guard thread.cyr +
+thread_win.cyr, like process.cyr→.51; real CreateThread/SRWLOCK or serial-fallback). Issue
+docs/development/issues/2026-06-03-windows-threading-stdlib-gap.md. **USER POSITIONS this in the slate.**
+
+**Next = v6.0.53 (the agnos CYRIUS_TARGET_AGNOS args+io gap)** per the pinned slate; then .54 *at+fsync,
+.55 cc5-18-arg + QoL, .56 TS→JS, **TLS resumes at .57** ([[project_native_tls_arc_v6_2_x]]).
+
 ## Session close — 2026-06-03 (.51 ship — Windows process creation: CreateProcessW spawn arc)
 
 Closing **v6.0.51** — the RUNTIME half of the Windows PE issue (ai-hwaccel,

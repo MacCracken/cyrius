@@ -40,7 +40,7 @@ fn usage(): i64 {
     println("Usage: cyrius <command> [options]");
     println("");
     println("Build:");
-    println("  build [--aarch64] [--no-deps] [--strict] [--strict-pin] <src> <out>   compile a program");
+    println("  build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--strict-pin] <src> <out>   compile a program");
     println("  run [--aarch64] <source.cyr>    compile + run");
     println("  test [--aarch64] <test.cyr>     compile + run, check exit 0");
     println("  bench <bench.cyr>               compile + run benchmarks");
@@ -279,6 +279,10 @@ fn main(): i64 {
                 _agnos_target = 1;
                 ai = ai + 1;
             }
+            elif (streq(argv(ai), "--win") == 1) {
+                _win_target = 1;
+                ai = ai + 1;
+            }
             else {
                 # An unrecognized token that LOOKS like a flag (`-…`) must
                 # NOT fall through into positional parsing — that shifts
@@ -296,7 +300,7 @@ fn main(): i64 {
         }
         if (vec_len(defs) > 0) { _defines = defs; }
         if (argc() < ai + 2) {
-            println("Usage: cyrius build [--aarch64] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [-D NAME]... <source> <output>");
+            println("Usage: cyrius build [--aarch64|--win|--agnos] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [-D NAME]... <source> <output>");
             return 1;
         }
         return cmd_build(argv(ai), argv(ai + 1));

@@ -145,11 +145,13 @@ fn compile(source, output): i64 {
         # CYRIUS_STRICT_PIN=1 so cycc's pin-drift check (added
         # v5.11.57) exits non-zero on mismatch. CI gating path.
         # v6.0.49: clone _envp + append per-flag vars (--strict-pin →
-        # CYRIUS_STRICT_PIN=1; --agnos → CYRIUS_TARGET_AGNOS=1). Both can be
-        # set; the agnos var makes cycc emit an AGNOS ring-3 binary.
+        # CYRIUS_STRICT_PIN=1; --agnos → CYRIUS_TARGET_AGNOS=1). v6.0.52: --win →
+        # CYRIUS_TARGET_WIN=1 (cross-emit a Windows PE32+). Any combination can be
+        # set; --win and --agnos are distinct emit targets (don't combine).
         var sp_extra = 0;
         if (_strict_pin == 1) { sp_extra = sp_extra + 1; }
         if (_agnos_target == 1) { sp_extra = sp_extra + 1; }
+        if (_win_target == 1) { sp_extra = sp_extra + 1; }
         if (sp_extra > 0) {
             var sp_count = 0;
             while (load64(_envp + sp_count * 8) != 0) { sp_count = sp_count + 1; }
@@ -162,6 +164,7 @@ fn compile(source, output): i64 {
             var sp_ni = sp_count;
             if (_strict_pin == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_STRICT_PIN=1"); sp_ni = sp_ni + 1; }
             if (_agnos_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_AGNOS=1"); sp_ni = sp_ni + 1; }
+            if (_win_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_WIN=1"); sp_ni = sp_ni + 1; }
             store64(sp_envp + sp_ni * 8, 0);
             sys_execve(cc, &argv, sp_envp);
         } else {

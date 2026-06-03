@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.52] — 2026-06-03
+
+**`cyrius build --win` (Linux→Windows cross-build flag) + a PROT_READ cross-target stdlib fix —
+surfaced, and the first layers cleared, while validating the ai-hwaccel `win_amd64` wheel against
+6.0.51.** (Issues: 2026-06-03-windows-pe-syscall-surface-blocks-detection.md;
+2026-06-03-windows-threading-stdlib-gap.md.)
+
+### Added
+
+- **`cyrius build --win`** — cross-emit a Windows PE32+ (win_amd64) from Linux/macOS by injecting
+  `CYRIUS_TARGET_WIN=1` into cycc's envp (`cbt/{core,cyrius,build}.cyr`; mirrors `--agnos`'s
+  env-inject). Fills the Linux→Windows cross-build gap — `cycc_win` runs only *on* Windows, and the
+  wheels.yml win job built native-only. Usage: `cyrius build [--aarch64|--win|--agnos] <src> <out>`.
+
+### Fixed
+
+- **`PROT_READ` undefined on Windows cross-builds (`lib/thread.cyr`, `lib/freelist.cyr`).** Both use
+  `PROT_READ`/`PROT_WRITE` from `mmap.cyr`'s enum but didn't include it — they free-rode on
+  `alloc.cyr`'s Linux closure transitively pulling `mmap.cyr`. Under `CYRIUS_TARGET_WIN`
+  (`alloc_windows.cyr`) that transitive pull is absent, so any Windows cross-build pulling
+  `thread`/`freelist` (e.g. ai-hwaccel via `[deps]`) failed with `undefined PROT_READ`. Both now
+  `include "lib/mmap.cyr"` explicitly (include-once dedupes). v6.0.50's Windows gate missed this —
+  `win_emit_probe.cyr` pulls only syscalls+alloc, never thread/freelist (a too-small probe, the
+  same placebo class as the macOS rot).
+
+### Notes
+
+- ai-hwaccel now compiles clean against 6.0.51 natively (0 warnings), and the subprocess-spawn path
+  (`exec_capture` → CreateProcessW) is proven on cass (v6.0.51). But the full Windows *build* is
+  still blocked on `lib/thread.cyr` being Linux-only (clone/futex) — ai-hwaccel uses threads +
+  mutexes. That Windows-threading stdlib arc is slotted separately
+  (2026-06-03-windows-threading-stdlib-gap.md); the `win_amd64` wheel stays gated until it lands, so
+  the ai-hwaccel pin is unchanged. cycc is unchanged this release (cbt + lib only) → self-host
+  byte-identical Linux + ecb + cass + pi; check.sh 85/85.
+
 ## [6.0.51] — 2026-06-03
 
 **Windows process creation (`CreateProcessW`) — the ai-hwaccel spawn blocker.
