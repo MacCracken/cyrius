@@ -32,9 +32,8 @@ fn _macho_argv_base() {
     }
     return result;
     #else
-    # x86-macOS: no x28 argv parking yet (arm64-only mechanism). Return 0;
-    # callers (args_init) treat 0 as "no args". argv on x86-macOS needs the
-    # entry-prologue + r13 follow-up. See 2026-06-02-macos-x86-release-no-compiler.
+    # x86-macOS: argv parking deferred to the shared macho entry emit (see
+    # _macho_x28 in runtime.cyr + issue layer 6). Return 0 for now.
     return 0;
     #endif
 }

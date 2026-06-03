@@ -115,12 +115,13 @@ PREPROCESS(S);
 # Lex
 LEX(S);
 
-# NOTE: no Mach-O entry prologue here yet. The arm64 driver parks
-# argc/argv (stp x0,x1,[sp,#-16]!; mov x28,sp) so _read_env / args_init
-# can reach argv. The x86 equivalent (push rsi/rdi; mov r13,sp + an
-# r13-reading _macho_x28) is the argv/--version follow-up. cycc compiles
-# fine without it because this driver hardcodes the target and
-# _macho_x28() returns 0 on x86 (→ _read_env safely reports "not found").
+# Mach-O x86_64 entry prologue (argv parking) is DEFERRED — it must live in
+# the shared macho entry emit, not here: cycc itself calls _read_env (lex.cyr
+# CYRIUS_ALLOW_PARENT_INCLUDES, fixup.cyr CYRIUS_DCE), and a driver-emitted
+# prologue only reaches OUTPUTS, leaving cross-built cycc's own r13 garbage →
+# crash. (arm64 gets away with a driver prologue only because Darwin leaves
+# x28==0 at entry, so its `if (m_base==0) return 0` guard fires; x86 r13 is
+# non-zero garbage.) See issue layer 6 — argv prologue.
 
 # Emit initial jmp over fn bodies
 var jmp_patch = EJMP0(S);

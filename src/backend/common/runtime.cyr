@@ -35,12 +35,12 @@ fn _macho_x28(): i64 {
     }
     return r;
     #else
-    # x86-macOS (v6.0.42 dedicated-driver arc): the x28 argv-parking
-    # mechanism is arm64-only. No x86 entry prologue parks argv yet, so
-    # return 0 — _read_env's macho branch falls through to "not found"
-    # instead of dereferencing garbage. The x86 macho driver hardcodes the
-    # target, so env-based detection isn't needed; argv / --version on
-    # x86-macOS is the follow-up. See issue layer 4.
+    # x86-macOS: argv parking (entry prologue + r13 read) is deferred until
+    # it can live in the shared macho entry emit — cycc itself calls
+    # _read_env, and its cross-built entry has garbage r13, so reading r13
+    # here crashes cycc. Return 0 (→ _read_env reports "not found", env
+    # features default off) until the macho-emit prologue lands. See issue
+    # 2026-06-02-macos-x86-release-no-compiler.md layer 6.
     return 0;
     #endif
 }
@@ -102,6 +102,16 @@ fn _read_env(name): i64 {
     # binary Linux-shaped (no entry prologue, brk heap, no ESYSXLAT) and
     # could not self-host on Apple Silicon. Root cause of the macOS
     # self-host rot v5.3.13 → v6.0.32. See CHANGELOG [6.0.33].
+    # v6.0.44: only the arm64 driver parks argv in x28. On x86-macOS there
+    # is no argv parking yet, so _macho_x28() would return a stale-register
+    # garbage value (e.g. 0x23), which the `m_base == 0` guard does NOT
+    # catch → load64(garbage) SIGSEGVs. There's nothing to read on x86
+    # macho, so return 0 directly without touching _macho_x28. Guard on the
+    # TARGET arch (AARCH64), NOT CYRIUS_ARCH_X86 (the x86 cross-compiler
+    # predefines X86 even when building the arm64 cycc). See issue layer 6.
+    #ifndef CYRIUS_ARCH_AARCH64
+    return 0;
+    #endif
     var m_base = _macho_x28();
     if (m_base == 0) { return 0; }
     var m_argc = load64(m_base);

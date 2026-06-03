@@ -240,3 +240,39 @@ Layers 1-5 DONE. **The x86-macOS COMPILER is functional and self-hosts.**
 3. **install.sh** x86-macho path + **release.yml** `build-macos` → the tarball.
 4. **Real-install gate on `ach`**: install.sh → `cyrius build fn-main-42` →
    exit 42. Do NOT close the pillar until this passes on hardware.
+
+## CORRECTION 2026-06-02 — the "self-host" claim was WRONG; cycc does NOT self-host
+
+**Retraction.** The v6.0.43 claim that the x86-macOS cycc "self-hosts
+byte-identical" is FALSE. It was a flawed measurement (a codesigned binary
+compared against an unsigned one / a stale output file read as a match — the
+same codesign-artifact trap that bit the arm64 check twice). Re-tested
+cleanly on `ach` (unsigned vs unsigned):
+
+- cross-built cycc `x0` (ELF cycc → macho) compiles real programs correctly:
+  trivial → 42, fib → 88 (GENUINE — verified many times). It also compiles
+  the full compiler source → `x2` (741376 B).
+- BUT `x2` (the NATIVE macho cycc) **differs from `x0`** (`cmp` differs at
+  byte 216, same size) AND **deterministically SIGSEGVs (139) when it
+  compiles the full compiler source** (5/5 runs), while compiling trivial +
+  fib fine. So there is NO fixpoint: cross ≠ native, and native is broken on
+  the largest input.
+
+**What IS true:** the carry-negate fix (.43) is real and correct — the
+cross-built x86 macho cycc genuinely compiles normal programs to working
+binaries. **What is NOT true:** that the compiler self-hosts. It does not.
+
+**This is the macОS-rot pattern recurring** — a self-host claimed on a
+flawed check rather than a clean one. The lesson (again): compare ONLY
+unsigned-vs-unsigned, on fresh files, and treat a single "identical" with
+suspicion until reproduced.
+
+### The actual remaining bug (layer 6 — the real one)
+The native macho cycc (`x2`, emitted by the cross cycc `x0`) miscompiles
+itself: `x0` works but the `x2` it produces crashes on the big self-compile.
+So `x0` (= ELF-cycc's macho codegen output) contains a miscompiled codegen
+function that only manifests when `x2` compiles the largest/most-complex
+input. The byte-216 cross-vs-native delta is a lead. This is a genuine
+codegen miscompile to find before the x86-macOS compiler can be called
+"working" — NOT a packaging/install matter. Layers 1-5 (run + compile real
+programs) hold; the self-host (layer 6) does not.
