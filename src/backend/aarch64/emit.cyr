@@ -559,8 +559,20 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF100011F); EW(S, 0x54000041); EW(S, 0xD28007E8);
     # write: 1→64    movz x8,#64  = 0xD2800808
     EW(S, 0xF100051F); EW(S, 0x54000041); EW(S, 0xD2800808);
-    # open: 2→56     movz x8,#56  = 0xD2800708
-    EW(S, 0xF100091F); EW(S, 0x54000041); EW(S, 0xD2800708);
+    # open: 2→56 + arg-shift to openat(AT_FDCWD,path,flags,mode). aarch64-Linux
+    # has NO open(2); the compiler's `enum Sys` uses x86 open=2 (correct for the
+    # x86-hosted cross-compiler, which is ESYSXLAT-free), but the EMITTED native
+    # aarch64 code must call openat(56) with AT_FDCWD inserted as the dirfd.
+    # open(path,flags,mode) in x0/x1/x2 → openat(AT_FDCWD,path,flags,mode) in
+    # x0/x1/x2/x3. Without the shift, `path` sat in the dirfd slot → EFAULT, so
+    # READFILE returned 0 and PREPROCESS expanded ZERO includes — which is why
+    # native aarch64 self-host (never gated until v6.0.45) failed with
+    # 'undefined variable _TARGET_MACHO'. The Mach-O path does the inverse
+    # (openat→open) shift above. cmp x8,#2; b.ne +24 (skip 5); mov x3,x2;
+    # mov x2,x1; mov x1,x0; movn x0,#99(AT_FDCWD=-100); movz x8,#56.
+    EW(S, 0xF100091F); EW(S, 0x540000C1);
+    EW(S, 0xAA0203E3); EW(S, 0xAA0103E2); EW(S, 0xAA0003E1); EW(S, 0x92800C60);
+    EW(S, 0xD2800708);
     # close: 3→57    movz x8,#57  = 0xD2800728
     EW(S, 0xF1000D1F); EW(S, 0x54000041); EW(S, 0xD2800728);
     # brk: 12→214    movz x8,#214 = 0xD2801AC8

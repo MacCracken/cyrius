@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.45] — 2026-06-03
+
+**The cross-OS self-host gate becomes a REAL, publish-blocking gate — and
+immediately catches the two platform bugs it was built to catch. Native
+aarch64 Linux (`pi`) and Windows (`cass`) now self-host byte-identical on
+REAL hardware, proven — not behind a green checkmark.**
+
+The macOS / Windows / aarch64 ports had shipped "green" for many minors
+behind CI jobs that only ran toy exit-code / hello-world binaries and never
+built or self-hosted `cycc` on the target. This release makes verification
+honest: the gate builds and self-hosts the actual compiler on every target,
+fails loud, and blocks the publish path — so a broken platform can no longer
+ship.
+
+### Fixed
+
+- **Native aarch64 Linux self-host (`pi`) — `READFILE` could not open include
+  files.** The aarch64 `ESYSXLAT` translated `open` (x86 #2) → aarch64
+  `openat` (#56) by *number only*, never inserting the `AT_FDCWD` dirfd, so
+  the path landed in `openat`'s dirfd register → `EFAULT`. `READFILE`
+  returned 0, `PREPROCESS` expanded zero includes, and every build died with
+  `undefined variable '_TARGET_MACHO'`. `ESYSXLAT` now does the `open→openat`
+  arg-shift (`x3←x2; x2←x1; x1←x0; x0=AT_FDCWD`), mirroring the Mach-O path's
+  inverse shift. `release.yml` had dismissed this as "a subtle QEMU codegen
+  difference" — it was a real bug on real silicon. (src/backend/aarch64/emit.cyr)
+- **Windows self-host (`cass`) — `READFILE` could open files but not read
+  them.** `EREAD_PE` mapped *every* fd through `GetStdHandle` (`neg; sub 10`
+  → `{-10,-11,-12}`), correct only for stdin/stdout/stderr. A real
+  `CreateFileW` handle (e.g. 52) became `GetStdHandle(-62)` → garbage →
+  `ReadFile` returned 0 → the same zero-include / `_TARGET_MACHO` failure.
+  The reroute now uses `GetStdHandle` only for std fds {0,1,2} and uses any
+  other fd directly as the handle. This is the first time `cycc` has ever
+  compiled *through itself* on Windows. (src/backend/x86/emit.cyr)
+
+### Added
+
+- **Real, publish-blocking cross-OS self-host gate.**
+  `scripts/cross-os-selfhost.sh` builds and self-hosts `cycc` byte-identical
+  on each real host (`ecb`/`ach`/`pi`/`cass`), fail-loud (unreachable or
+  non-identical = FAIL; IP-pinned + `HostKeyAlias` to survive transient
+  `.local` mDNS), and `cyrius audit` now runs all four (was: `ecb` only, with
+  `cass` a TODO no-op). `.github/workflows/ci.yml` native jobs (`macos-14`,
+  new `macos-13` Intel, `windows-latest`, new `ubuntu-24.04-arm`) now build +
+  self-host `cycc` instead of running pre-built toy binaries, and block
+  `release.yml`'s publish via the existing `needs: [ci]` chain.
+- **`docs/development/dev-tools-linux.md`** — per-environment dev toolchain
+  (`qemu-user` + `wine` to reproduce aarch64/PE self-host locally,
+  `llvm-objdump`, SSH cross-host verify). Linked from README (new
+  Development section) + CLAUDE.md. macOS/Windows siblings to follow.
+
+### Changed
+
+- **mabda folded at 3.0.1** (the AMD-native GA): `lib/mabda.cyr` vendored
+  byte-identical from its dist; `[deps.mabda]` git resolution removed (sandhi
+  pattern). Kept **opt-in** (not auto-prepended — 515 KB would blow the
+  preprocess cap); mabda 3.0.1 newly needs `mmap` + `dynlib` + `sakshi`, so
+  consumers `include` those before `lib/mabda.cyr` (documented in mabda's
+  Quick Start). `docs/api-surface.snapshot` regenerated for mabda 3.0.1's
+  restructured surface (2,846 → 2,727 public fns; all-`mabda::` delta).
+
+### Queued
+
+- `docs/development/issues/2026-06-03-preprocess-cap-raise.md` — raise the
+  `preprocess_out` cap 2 MB → 6/8 MB during cap-sweep work, so the
+  "keep dep code opt-in" policy is driven by architecture, not the buffer
+  ceiling.
+
 ## [6.0.44] — 2026-06-02
 
 **x86-macOS self-host — DCE driver-parity fix + honest retraction of the

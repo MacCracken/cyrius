@@ -871,25 +871,32 @@ fn EREAD_PE(S): i64 {
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);         # mov r8, rax
     EB(S, 0x58);                                   # pop rax (buf)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);         # mov rdx, rax
-    EB(S, 0x58);                                   # pop rax (fd)
-    # Map Linux fd {0,1,2} → Win32 nStdHandle {-10,-11,-12}:
-    # neg rax; sub rax, 10.
-    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);         # neg rax
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE8); EB(S, 0x0A); # sub rax, 10
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax
+    EB(S, 0x58);                                   # pop rax (fd / handle)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
-    # 64 B frame + stash buf/len across GetStdHandle.
+    # 64 B frame + stash buf/len across the (possible) GetStdHandle call.
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x40); # sub rsp, 0x40
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx (buf)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8 (len)
 
+    # v6.0.45: resolve the Win32 HANDLE into rcx. fd {0,1,2} are the std streams
+    # (map to nStdHandle {-10,-11,-12} via GetStdHandle); ANY other fd is a real
+    # handle returned by CreateFileW (the `include` file reads) and must be used
+    # DIRECTLY — GetStdHandle(realHandle) returns garbage, which made every
+    # include READFILE return 0 (the Windows self-host bug: zero includes
+    # expanded → 'undefined variable _TARGET_MACHO').
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
+    EB(S, 0x77); EB(S, 0x15);                      # ja +21 → .direct (skip std block)
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);         # neg rax
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE8); EB(S, 0x0A); # sub rax, 10
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax (nStdHandle)
     EB(S, 0xFF); EB(S, 0x15);                      # call [rip+GetStdHandle]
     _pe_iat_fixup_add(S, GCP(S), gsh_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-
-    # Reload ReadFile args; hFile = rax.
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax (std handle)
+    EB(S, 0xEB); EB(S, 0x03);                      # jmp +3 → .ready (skip .direct)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # .direct: mov rcx, rax (fd IS the handle)
+    # .ready: rcx = handle; reload ReadFile args.
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov r8, [rsp+0x38]
     EB(S, 0x4C); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x28); # lea r9, [rsp+0x28] (lpNumberOfBytesRead)

@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.45 ship — cross-OS gate REAL; aarch64 + Windows self-host FIXED on real hardware)
+
+Closing **v6.0.45**. The cross-OS self-host gate is now REAL and
+publish-blocking, and it caught + drove the fix of the two platforms that
+shipped "green" while broken. **All four hosts self-host byte-identical on
+REAL hardware:** ecb (macOS arm64), ach (macOS x86_64), pi (Linux aarch64),
+cass (Windows). check.sh 82/82; x86 self-host **886,656 B**.
+
+**Corrected ground truth (verified on hardware, not a checkmark):**
+- **x86-macOS (ach) self-hosts** — the .44 "doesn't self-host" retraction was
+  a codesign-comparison artifact (`codesign -s -` mutates the Mach-O with an
+  LC_CODE_SIGNATURE load command). Run UNSIGNED → byte-identical fixpoint. The
+  .39–.44 x86-macOS "runtime arc" chased a testing artifact, not a bug.
+- **aarch64-Linux (pi) FIXED** — `ESYSXLAT` translated open(2)→openat(56) by
+  NUMBER only, never inserting AT_FDCWD → path landed in the dirfd register →
+  EFAULT → READFILE returned 0 → zero includes → `undefined variable
+  '_TARGET_MACHO'`. Now does the open→openat arg-shift. release.yml's "subtle
+  QEMU codegen difference" excuse hid a real bug on real silicon.
+- **Windows (cass) FIXED** — `EREAD_PE` ran GetStdHandle on EVERY fd (correct
+  only for std fds); a real CreateFileW handle (52) → GetStdHandle(-62) →
+  garbage → ReadFile returned 0. Now: GetStdHandle for std fds {0,1,2},
+  real handles used directly. First time cycc compiles *through itself* on Windows.
+
+**Shipped this release (packed):**
+- **Real publish-blocking gate:** `scripts/cross-os-selfhost.sh` (4 hosts,
+  fail-loud, IP-pinned + HostKeyAlias) + `cyrius audit` 4-host arms + `ci.yml`
+  native jobs that build+self-host cycc (macos-14 / new macos-13 Intel /
+  windows-latest / new ubuntu-24.04-arm) and block `release.yml` publish.
+- **mabda folded at 3.0.1** (AMD-native GA) — vendored opt-in, `[deps.mabda]`
+  removed; needs mmap/dynlib/sakshi (consumer-included; documented in mabda
+  README). `docs/api-surface.snapshot` regenerated 2,846 → **2,727** fns.
+- **`docs/development/dev-tools-linux.md`** (per-env dev toolchain) + README /
+  CLAUDE.md links.
+
+**Queue:** the macOS/Windows/aarch64 cross-OS self-host SAGA is CLOSED — all
+four hosts green on real hardware. Remaining: preprocess-cap raise (2 MB →
+6/8 MB, `2026-06-03-preprocess-cap-raise.md`, cap-sweep) · UEFI `fncallN`
+ud2 · cap-raise bundle (struct 256 / type-table 1024 / secret 64) · then AGNOS.
+
 ## Session close — 2026-06-02 (.44 ship — DCE driver-parity fix + .43 retraction)
 
 Closing **v6.0.44**. ELF self-host byte-identical; check.sh green. x86-macOS
