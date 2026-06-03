@@ -46,6 +46,13 @@ include "lib/fs.cyr"
 include "lib/bigint.cyr"
 include "lib/ct.cyr"
 include "lib/keccak.cyr"
+# v6.0.53: sigil 3.6.0 added a thread-local constant-bank (reachable
+# thread_local_init at init) + worker-batch thread_create/join, and declares
+# `# Requires: lib/thread_local.cyr` — so any sigil consumer must pull
+# thread.cyr + thread_local.cyr BEFORE sigil or sigil's thread_* calls emit ud2
+# (the v6.0.53 CI SIGILL in tls_native_scaffold). include-once dedupes.
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
 include "lib/sigil.cyr"
 
 # ================================================================

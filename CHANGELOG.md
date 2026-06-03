@@ -28,16 +28,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Per-file `#derive` struct cap raised 64 → 512** (heap surgery). The 64-`#derive` cap — NOT the
-  256→1024 type-table cap a prior issue misattributed and "fixed" — was the real blocker for libro's
+- **Per-file `#derive` struct cap raised 64 → 512.** The 64-`#derive` cap — NOT the 256→1024
+  type-table cap a prior issue misattributed and "fixed" — was the real blocker for libro's
   `-D LIBRO_TPM` build (66 `#derive` structs: 27 libro + 39 agnosys). The `sizes[]`/`names[]`
-  preprocessing tables were butted against the `0x197F00` metadata with no room to grow, so they
-  relocated into the free `tok_types` preprocessing-scratch band (`sizes[512]`@0x198000 = 4 KB,
-  `names[512*32]`@0x199000 = 16 KB; ~410 KB band, so ample headroom — chosen generously so it won't
-  need revisiting). Boundary verified: 512 `#derive` structs build, 513 fails (`max 512`). ADR-003
-  updated to document the preprocessing-scratch regions (previously undocumented — the v2.6 map
-  predated them). libro can now use `#derive(accessors)` on `tpm_anchor` without the hand-written
-  workaround. (Issue: 2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md.)
+  preprocessing tables are now **`alloc()`'d from the heap** (post-brk, lazily on first registration)
+  rather than at fixed S-offsets — the fixed scratch band is packed solid (the old `0x197500`/
+  `0x197700` slot fit only 64; every nearby fixed region is live during preprocessing). Boundary
+  verified: 512 build, 513 fails (`max 512`). libro can now use `#derive(accessors)` on `tpm_anchor`
+  without the hand-written workaround. (Issue: 2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md.)
 
 ### Fixed
 
@@ -49,6 +47,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   won't recur until some single dist crosses 2 MB). The committed snapshot was itself incomplete
   (2789) for the same reason — **corrected to the full 3824 public fns** (the tool had silently been
   hiding ~1035 fns across sigil + other >256 KB libs).
+- **CI SIGILL (`Illegal instruction` after `tls_early_data_status`) — two faults the .53 work
+  introduced, both fixed.** (1) The first cut of the `#derive` cap relocated `sizes[]`/`names[]` to a
+  FIXED `0x198000`, which is `gvar_toks` (deferred global-var inits) — corrupting global-init codegen
+  in any unit with gvars + derives → `ud2`. Now heap-`alloc()`'d (above). (2) The sigil 3.6.0 fold
+  added a reachable thread-local constant-bank (`thread_local_init`) + worker-batch `thread_create`/
+  `thread_join`; sigil declares `# Requires: lib/thread_local.cyr`, but `lib/tls_native.cyr` (a sigil
+  consumer) didn't pull `thread.cyr`/`thread_local.cyr` → undefined → `ud2`. tls_native.cyr now
+  includes both before sigil. Full `cyrius test` 155/155; self-host byte-identical Linux+ecb+cass+pi.
 
 ### Dependencies
 
@@ -56,7 +62,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on 6.0.52). check.sh `sakshi` + `sakshi_full` green.
 - **sigil 3.5.9 → 3.6.0** folded (`lib/sigil.cyr`, byte-identical to the regenerated dist; +12 KB,
   purely additive — **no public removals or signature changes** once the full surface is read; see
-  the api-surface fix below).
+  the api-surface fix below). **New transitive dep:** sigil 3.6.0 uses a thread-local constant-bank +
+  worker-batch threading and declares `# Requires: lib/thread_local.cyr` — **any sigil consumer must
+  now include `thread.cyr` + `thread_local.cyr` before sigil.** cyrius's `tls_native.cyr` is updated;
+  downstream sigil consumers (kavach/libro/agnoshi/ai-hwaccel) need the same on their next pin, and
+  the Windows path needs a WIN `thread_local` (today's is Linux TLS) — tracked for the Windows arc.
 
 ### Notes
 
