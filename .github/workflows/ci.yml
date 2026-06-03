@@ -484,6 +484,7 @@ jobs:
     name: aarch64 Native Self-Host
     needs: [aarch64]
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25   # fail-loud on a hang, never the 6h default
     steps:
       - name: Download native aarch64 cycc
         uses: actions/download-artifact@v4
@@ -631,6 +632,7 @@ jobs:
     name: Mach-O ARM64 Native
     needs: [macho-arm64]
     runs-on: macos-14
+    timeout-minutes: 25   # fail-loud on a hang, never the 6h default
     steps:
       - name: Download arm64 Mach-O binaries
         uses: actions/download-artifact@v4
@@ -694,7 +696,10 @@ jobs:
           # v6.0.37 rot-class guard: main()'s return must reach the exit syscall.
           printf 'fn main() { return 42; }' > _ec.cyr
           cat _ec.cyr | CYRIUS_MACHO_ARM=1 ./r1r > _ec && chmod +x _ec && codesign -s - --force _ec
-          ./_ec; ec=$?
+          # `./_ec && ec=0 || ec=$?` captures the exit WITHOUT tripping the
+          # job's `set -e` — a bare `./_ec; ec=$?` aborts the step on the
+          # (intended) exit 42 before the test runs. (v6.0.45 CI hotfix.)
+          ec=0; ./_ec || ec=$?
           test $ec -eq 42 || { echo "FAIL: fn main(){return 42;} exited $ec, not 42"; exit 1; }
           echo "PASS: fn main(){return 42;} → exit 42"
 
@@ -728,6 +733,14 @@ jobs:
     name: Mach-O x86_64 Native
     needs: [macho-x86]
     runs-on: macos-13
+    # NON-BLOCKING (v6.0.45): GitHub's Intel macos-13 fleet is scarce/deprecated,
+    # so this can queue or (pre-fix) hang on Gatekeeper. The AUTHORITATIVE
+    # x86-macOS gate is `cyrius audit` on the real Intel Mac `ach`; this GitHub
+    # job is an informational cross-check that must not chain releases to the
+    # Intel-runner supply. A self-hosted `ach` runner replaces it (see
+    # docs/development/issues/2026-06-03-ach-selfhosted-runner.md).
+    continue-on-error: true
+    timeout-minutes: 25
     steps:
       - name: Download x86_64 Mach-O cycc
         uses: actions/download-artifact@v4
@@ -736,12 +749,20 @@ jobs:
           path: ./macho-x86
       - name: SELF-HOST cycc byte-identical (THE real gate)
         run: |
+          set -euo pipefail
           cd macho-x86
           tar xzf _src.tgz
           chmod +x cycc_macho_x86
-          # NO codesign — Intel runs unsigned; codesign rejects this Mach-O.
-          cat src/main_x86_macho.cyr | ./cycc_macho_x86 > r1 && chmod +x r1
-          cat src/main_x86_macho.cyr | ./r1 > r2
+          # actions/download-artifact tags the binary with com.apple.quarantine;
+          # first-exec of an UNSIGNED downloaded Mach-O blocks forever on the
+          # headless runner's Gatekeeper (syspolicyd) assessment → the job HANGS.
+          # `codesign -s -` rejects this Mach-O ("failed strict validation"), so
+          # stripping quarantine is the only escape. Verified on real ach. (v6.0.45)
+          xattr -cr . || true
+          # Hard timeout so a future hang FAILS LOUD instead of stalling the job.
+          TO() { if command -v gtimeout >/dev/null; then gtimeout "$@"; elif command -v timeout >/dev/null; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV or exit 127' "$@"; fi; }
+          cat src/main_x86_macho.cyr | TO 300 ./cycc_macho_x86 > r1 && chmod +x r1
+          cat src/main_x86_macho.cyr | TO 300 ./r1 > r2
           cmp r1 r2 || { echo "FAIL: x86_64 macOS self-host NOT byte-identical"; exit 1; }
           echo "PASS: x86_64 macOS cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
 
@@ -1059,6 +1080,7 @@ jobs:
     name: Windows PE32+ Native
     needs: [windows-cross]
     runs-on: windows-latest
+    timeout-minutes: 25   # fail-loud on a hang, never the 6h default
     steps:
       - name: Download PE32+ binaries
         uses: actions/download-artifact@v4
