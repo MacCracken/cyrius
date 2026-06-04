@@ -617,6 +617,13 @@ jobs:
             || { echo "ERROR: cycc_macho_arm not arm64 Mach-O"; file /tmp/macho_arm_out/cycc_macho_arm; exit 1; }
           tar czf /tmp/macho_arm_out/_src.tgz src lib VERSION
           echo "staged cycc_macho_arm: $(wc -c < /tmp/macho_arm_out/cycc_macho_arm) bytes"
+      - name: Build the full macOS arm64 tarball (for the FUNCTIONAL gate)
+        run: |
+          # v6.0.63: the functional gate installs the REAL release artifact and
+          # runs the consumer flow on the macOS runner. Build the same tarball
+          # the release uses so the gate tests what users actually get.
+          sh scripts/build-macos-arm64-tarball.sh /tmp/macho_arm_out >/dev/null
+          ls -la /tmp/macho_arm_out/cyrius-*-aarch64-macos.tar.gz
       - name: Upload arm64 Mach-O binaries for native run
         uses: actions/upload-artifact@v4
         with:
@@ -702,6 +709,41 @@ jobs:
           ec=0; ./_ec || ec=$?
           test $ec -eq 42 || { echo "FAIL: fn main(){return 42;} exited $ec, not 42"; exit 1; }
           echo "PASS: fn main(){return 42;} → exit 42"
+
+  # ── macOS Apple Silicon — REAL consumer-flow FUNCTIONAL gate (v6.0.63) ──
+  # The self-host + toy-smoke checks above BOTH pass while is_dir/dir_list are
+  # broken — neither walks a directory. That blind spot let arm64-macOS `lib sync`
+  # rot GREEN for 10+ releases (known + papered over since v6.0.40 — cbt/deps.cyr's
+  # own comment; surfaced by yantra, not us). This job installs the REAL release
+  # tarball and runs the flow a user runs: init → lib sync → deps → build an
+  # allocating fib → run/assert fib(30) → hash + reproducible-build. It FAILS RED
+  # on the broken state — the truth the placebo hid.
+  # `continue-on-error: true` keeps macOS VISIBLY RED here without blocking Linux
+  # releases (the honest known-broken bypass — red + tracked, never green-over-
+  # broken). REMOVE it once .63's getdirentries codegen fix lands and this is
+  # green. Issue: docs/development/issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md
+  macho-arm64-funcgate:
+    name: Mach-O ARM64 Functional Gate (real consumer flow)
+    needs: [macho-arm64]
+    runs-on: macos-14
+    timeout-minutes: 8
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download arm64 Mach-O tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: macho-arm64-binaries
+          path: ./macho-arm64
+      - name: Install the real release artifact + run the functional gate
+        run: |
+          set -e
+          V=$(tr -d '[:space:]' < VERSION)
+          TARBALL="$PWD/macho-arm64/cyrius-$V-aarch64-macos.tar.gz"
+          test -f "$TARBALL" || { echo "ERROR: tarball missing: $TARBALL"; ls -la macho-arm64; exit 1; }
+          export CYRIUS_HOME="$HOME/_ciih"
+          CYRIUS_VERSION="$V" CYRIUS_INSTALL_TARBALL="$TARBALL" sh scripts/install.sh
+          sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_cifg" "$CYRIUS_HOME"
 
   # ── macOS Intel (x86_64) self-host — REMOVED from hosted CI (v6.0.45) ──
   # testing local passes; needs dedicated self-hosted runner — age/availability
