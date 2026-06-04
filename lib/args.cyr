@@ -80,6 +80,10 @@ include "lib/args_macos.cyr"
 include "lib/args_win.cyr"
 #endif
 
+#ifdef CYRIUS_TARGET_AGNOS
+include "lib/args_agnos.cyr"
+#endif
+
 #ifdef CYRIUS_TARGET_LINUX
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

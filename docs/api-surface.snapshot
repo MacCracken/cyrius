@@ -774,6 +774,9 @@ alloc_windows::alloc_used/0
 args::argc/0
 args::args_init/0
 args::argv/1
+args_agnos::argc/0
+args_agnos::args_init/0
+args_agnos::argv/1
 args_macos::argc/0
 args_macos::args_init/0
 args_macos::argv/1
@@ -3448,6 +3451,7 @@ syscalls_windows::sys_open/3
 syscalls_windows::sys_read/3
 syscalls_windows::sys_write/3
 syscalls_x86_64_agnos::is_err/1
+syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_close/1
 syscalls_x86_64_agnos::sys_dup/1
 syscalls_x86_64_agnos::sys_epoll_create/0

@@ -1566,6 +1566,24 @@ if (_TARGET_EFI_APPLICATION == 1) {
     }
 }
 
+# v6.0.55: agnos init-stack capture. On the km==0 executable path nothing
+# moves rsp between e_entry and the auto-call to main below, so here — while
+# rsp still equals the kernel-supplied init rsp ([rsp]=argc, [rsp+8+i*8]=
+# argv[i], per agnos elf_load_from_file) — emit `call _agnos_capture_rsp`
+# (lib/args_agnos.cyr), which records rsp into _agnos_init_rsp so
+# args_init/argc/argv resolve. Mirrors the efi_main forward-call above.
+# Gated `_TARGET_AGNOS` → emits nothing on every other target, so cycc
+# self-hosts byte-identical. See CHANGELOG [6.0.55].
+if (_TARGET_AGNOS == 1) {
+    var _acap_found = _find_fn_by_name(S, "_agnos_capture_rsp", 18);
+    if (_acap_found >= 0) {
+        var _acap_off = L64(S + 0x9CA000 + _acap_found * 8);
+        if (_acap_off >= 0) {
+            ECALLTO(S, _acap_off);
+        }
+    }
+}
+
 # v5.9.37: auto-call `main()` if defined and not already called.
 # Pre-fix sources with only `fn main() { ... }` (no trailing
 # `var ec = main(); syscall(60, ec);` wiring) ran the gvar
