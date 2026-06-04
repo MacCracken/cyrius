@@ -119,6 +119,12 @@ fn sys_read(fd, buf, count): i64 { return syscall(SYS_READ, fd, buf, count); }
 # Close `fd`. Returns 0, or -1.
 fn sys_close(fd): i64 { return syscall(SYS_CLOSE, fd); }
 
+# v6.0.55: chmod no-op. agnos has no chmod in the frozen 0-33 syscall
+# surface (permissions aren't modeled the POSIX way); returning 0 (success)
+# is the pre-authorized stub so consumers that chmod (agnsh history.cyr)
+# build + run without a ud2. See the agnos args+io gap issue / CHANGELOG.
+fn sys_chmod(path, mode): i64 { return 0; }
+
 # Open `name` (length `namelen`) with agnos AO_* `flags`. Returns a
 # fd, or -1. Frozen open(7) is 2-arg (name, namelen); the flags arg
 # (a3) lands with 1.41.2 mount-routing — passing it now is forward-
