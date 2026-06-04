@@ -10,6 +10,7 @@ var _defines = 0;
 var _pass = 0;
 var _fail = 0;
 var _total = 0;
+var _tests_found = 0;   # v6.0.62: `cyrius tests` recursive-walk found-a-.tcyr flag
 var _tools_dir = 0;
 var _scripts_dir = 0;
 var _repo_root = 0;

@@ -699,6 +699,30 @@ fn LEXHEX(S, p): i64 {
     return p;
 }
 
+# v6.0.62: lex an octal literal (0o755). Mirrors LEXHEX but base-8:
+# accumulate `val << 3 | digit` over digits 0-7 only; an 8/9 (or any
+# non-octal) terminates the literal. Underscore separators (0o7_5_5)
+# skipped silently, like hex/decimal.
+fn LEXOCT(S, p): i64 {
+    var val = 0;
+    var go = 1;
+    while (go == 1) {
+        if (p >= GBL(S)) { go = 0; }
+        if (go == 1) {
+            var c = load8(S + 0x459D000 + p);
+            if (c == 95) { p = p + 1; }
+            else {
+                var od = 0 - 1;
+                if (c >= 48) { if (c <= 55) { od = c - 48; } }
+                if (od >= 0) { val = val << 3 | od; p = p + 1; }
+                else { go = 0; }
+            }
+        }
+    }
+    ADDTOK(S, 1, val);
+    return p;
+}
+
 # Lex decimal number
 fn LEXDEC(S, p): i64 {
     var c = load8(S + 0x459D000 + p);
@@ -754,6 +778,9 @@ fn LEXNUM(S, p): i64 {
         if (p + 1 < GBL(S)) {
             if (load8(S + 0x459D000 + p + 1) == 120) {
                 return LEXHEX(S, p + 2);
+            }
+            if (load8(S + 0x459D000 + p + 1) == 111) {
+                return LEXOCT(S, p + 2);
             }
         }
     }

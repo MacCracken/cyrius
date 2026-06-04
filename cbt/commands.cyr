@@ -104,6 +104,55 @@ fn cmd_test(source): i64 {
     return exit_code;
 }
 
+# v6.0.62: `cyrius tests [dir]` — the plural verb, a RECURSIVE folder/suite
+# runner (vs `cyrius test <file>` single-file + bare `cyrius test` shallow
+# auto-discover, both unchanged). Walks `dir` (default "tests") for *.tcyr at
+# any depth, runs each via cmd_test, aggregates _pass/_fail. Mirrors the
+# proven shallow-discover pattern (dir_list + make_path → NUL-terminated cstr
+# for cmd_test's strlen; dir_list already skips . / ..) rather than find_files,
+# whose path_join Strs are not guaranteed NUL-terminated.
+fn _tests_walk(dir): i64 {
+    var entries = dir_list(str_from(dir));
+    var ei = 0;
+    while (ei < vec_len(entries)) {
+        var name = vec_get(entries, ei);
+        var full = make_path(dir, str_data(name));
+        if (is_dir(str_from(full)) == 1) {
+            _tests_walk(full);
+        }
+        elif (str_ends_with(name, str_from(".tcyr")) == 1) {
+            _tests_found = 1;
+            cmd_test(full);
+        }
+        ei = ei + 1;
+    }
+    return 0;
+}
+
+fn cmd_tests(dir): i64 {
+    _pass = 0; _fail = 0; _tests_found = 0;
+    if (is_dir(str_from(dir)) == 0) {
+        sys_write(STDERR_FD, "cyrius tests: not a directory: ", 31);
+        sys_write(STDERR_FD, dir, strlen(dir));
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    _tests_walk(dir);
+    if (_tests_found == 0) {
+        sys_write(STDOUT_FD, "No .tcyr files found under ", 27);
+        sys_write(STDOUT_FD, dir, strlen(dir));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 1;
+    }
+    sys_write(STDOUT_FD, "\n", 1);
+    fmt_int(_pass);
+    sys_write(STDOUT_FD, " passed, ", 9);
+    fmt_int(_fail);
+    println(" failed");
+    if (_fail > 0) { return 1; }
+    return 0;
+}
+
 fn cmd_fuzz(): i64 {
     # Discover fuzz/*.fcyr harnesses, compile and run each
     _status("=== cyrius fuzz ===");

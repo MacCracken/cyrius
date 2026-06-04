@@ -186,6 +186,24 @@ fn toml_parse(src): i64 {
             while (pos < slen && load8(data + pos) != 10) { pos = pos + 1; }
         }
 
+        # Table header: [section]  (single bracket — v6.0.62). The [[name]]
+        # array-of-tables case is checked above, so a bare `[` reaches here
+        # only as a single-bracket table header. One closing `]`, not two.
+        elif (c == 91) {
+            # Save current section if it has pairs
+            if (vec_len(cur_pairs) > 0) {
+                vec_push(sections, toml_section_new(cur_name, cur_pairs));
+            }
+            pos = pos + 1;
+            var sbstart = pos;
+            while (pos < slen && load8(data + pos) != 93) { pos = pos + 1; }
+            cur_name = str_new(data + sbstart, pos - sbstart);
+            if (pos < slen && load8(data + pos) == 93) { pos = pos + 1; }
+            cur_pairs = vec_new();
+            # Skip to end of line
+            while (pos < slen && load8(data + pos) != 10) { pos = pos + 1; }
+        }
+
         # Key = value
         else {
             # Read key (until = or whitespace)

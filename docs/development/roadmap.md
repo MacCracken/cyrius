@@ -50,9 +50,9 @@ higher.
 **Theme**: absorb leftover v5.x runway-carryover items + small
 language QoL improvements + holdovers + (per user direction
 2026-05-28) the **native TLS arc** (`lib/tls_native.cyr`) pulled
-forward from v6.2.x. Stdlib clean-slate (mabda fold + bayan/ganita
-carve) still pending mabda 3.0 GA; folds in this minor or the next
-once GA cuts. The original ~30-slot target for this minor was
+forward from v6.2.x. Stdlib clean-slate SPLIT (2026-06-04): the
+mabda fold shipped @ .45; the bayan/ganita carve deferred to v6.1.x.
+The original ~30-slot target for this minor was
 revised 2026-05-28 to a **35-60 patch window**, matching v5.7.x /
 v5.11.x precedent. (Window stated at arc open and open to change —
 see [[feedback_minor_window_at_arc_open]].)
@@ -321,7 +321,10 @@ hold (the .13 HKDF-SHA384 hold is the precedent).
 - **.28** — client e2e + localhost client↔server loop using our own
   tls_native on both sides (closes Mini-arc C's .20 e2e gap too).
 
-**AGNOS userspace target arc — `CYRIUS_TARGET_AGNOS` (.29 → .33) — new**
+**AGNOS userspace target arc — `CYRIUS_TARGET_AGNOS` — new** *(SHIPPED: the
+nominal .29→.33 estimate below is stale — the target + ABI peer landed .48–.49 and
+boot-to-prompt at .55–.56; the slot range slipped because the TLS arc + macOS/Windows
+work ran ahead of it. Capability is complete; only this slot range is historical.)*
 
 User direction 2026-05-31. The kernel is mature enough to warrant
 userland programs; agnoshi is the first. Placed **after the full TLS
@@ -431,13 +434,46 @@ driven); **no cross-repo edit from cyrius**
 
 ### v6.0.x back-end + closeout shape
 
-Per user direction 2026-05-28 (slot numbers shifted by the 2026-05-31
-re-order): after the TLS arc + AGNOS target arc close, run a back-end
-window (~.43 → ~.49) absorbing pinned-or-deferred items, then a
-closeout pass at ~.50. Closeout follows the CLAUDE.md "Closeout Pass"
-§: mechanical fail-fast (self-host + bootstrap closure + check.sh),
-then judgment-call passes (heap map / dead code / refactor / code
-review / cleanup), then docs sync.
+**FINALIZED remaining-cycle plan (user direction 2026-06-04 at .61 — supersedes the
+earlier ~.43→.49 / ~.50 estimate; the cycle ran long: AGNOS target landed .48–.49 +
+boot-to-prompt .55–.56, then the macOS/Windows platform-hardening slate ran .58–.61, so
+we are at .61, one past the 35–60 window — closing stretch).** Execute in order;
+premise-check each at slot entry:
+
+1. **.62 — QoL / language smalls** (packed, self-contained): octal literals `0o755`,
+   TOML `[section]` single-bracket, `cyrius tests` plural verb, `cyrius hooks install`,
+   POSIX `*at()` clean stdlib surface. (Item detail in the lists below.)
+2. **.63 — global allocator thread-safety**
+   (`issues/2026-06-04-cyrius-global-allocator-not-thread-safe.md`): rec fix = single
+   global alloc-lock, packing in the macho `__ulock`/agnos-futex primitive gap
+   (CAS-spinlock fallback on those targets) per one-bug-one-complete-fix.
+3. **.64–.66 (extend if needed) — partials block**: ach self-hosted runner
+   (`issues/2026-06-03-ach-selfhosted-runner.md`) + Windows follow-up nuances §3 full
+   `CommandLineToArgvW` (shell32) + §0 COM/DXGI GPU-enum
+   (`issues/2026-06-03-windows-followup-nuances.md` +
+   `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + agnos follow-up-after-boot
+   consumer-side items (`issues/2026-06-03-agnos-followup-after-boot.md`) + asm-block
+   global-symbol pseudo-op (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`).
+4. **.67–x — native TLS items**: Mini-arc D (TLS 1.2 backport) + Mini-arc E (consumer
+   wiring + closeout). sandhi is handled AT THIS ARC when we get there — version-bump
+   sandhi + update language docs then; NOT cross-walked/pre-filed now (user 2026-06-04,
+   overriding the general upfront-cross-walk default for this case).
+5. **.x–y — Windows fixes**: PE cycc-as-compiler multibug bug 2+
+   (`issues/2026-06-02-windows-cycc-runtime-multibug.md`, verify on cass) + `cyrius deps
+   --lock` Windows-portable hash + the native Windows `.ps1` installer + AGNOS-target
+   install.
+6. **LAST before closeout — cleanup / refactor cluster**: dead `ret_patches` 2 KB heap
+   region, byte-array literal peephole, dead-code careful sweep, `_TARGET_*` flag
+   consolidation, `programs/check.cyr` modularization.
+7. **Closeout → v6.1.0**: the CLAUDE.md "Closeout Pass" § — mechanical fail-fast
+   (self-host + bootstrap closure + check.sh + cross-OS 4-host) → judgment passes (heap
+   map / dead code / refactor / code review / cleanup) → docs sync (incl. reconciling the
+   stale slot-number lines this long cycle accreted).
+
+**Deferred OUT of v6.0.x → v6.1.x** (user 2026-06-04): bayan/ganita stdlib carve (the
+mabda-fold half already shipped — 3.0.1 vendored @ .45); x86-macho cycc self-compile
+(layer-6 miscompile, `issues/2026-06-02-macos-x86-release-no-compiler.md` — HELD, Intel
+EOL); TS/TSX→JS emit (`issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`).
 
 **Pinned back-end slots:**
 - **`cyrius tests` plural verb** (folder/suite runner; deferred from
@@ -471,11 +507,13 @@ review / cleanup), then docs sync.
   (`[0x18DA20..0x18E220)` + counter slot at `0x18E220`) —
   heap-map sweep candidate, may fold into closeout's heap-map
   judgment-call pass.
-- Stdlib clean-slate (mabda 3.0 GA fold + bayan/ganita carve) —
-  ONLY if mabda 3.0 GA cuts before this window; otherwise rolls
-  into v6.1.x.
+- Stdlib clean-slate — **RESOLVED/SPLIT**: the mabda fold shipped
+  (3.0.1 vendored, opt-in, @ v6.0.45); the bayan/ganita distfile
+  carve is **deferred to v6.1.x** (user 2026-06-04). See the
+  clean-slate section below + the finalized plan above.
 - `cyrius deps --lock` Windows-portable hash (low urgency;
-  surfaced by v6.0.2 cross-host smoke).
+  surfaced by v6.0.2 cross-host smoke) — folded into the .x–y
+  Windows-fixes block above.
 
 **Premise-check at each mini-arc open** ([[feedback_premise_check_at_slot_entry]]):
 re-verify the sigil API surface for whichever primitives that
@@ -808,10 +846,13 @@ The remaining 5 land in v6.0.x:
 
 ### Stdlib clean-slate — mabda 3.0 GA fold + bayan/ganita carve
 
-**Status**: near-imminent. mabda 3.0.0-rc.3 passed its initial
-soak window 2026-05-19; one 24-hour soak away from GA. Fold +
-carve land together as the v6.0.x **primary stdlib arc** when
-mabda 3.0 GA cuts.
+**Status (updated 2026-06-04)**: SPLIT, no longer atomic. The
+**mabda fold SHIPPED** — mabda 3.0.1 was vendored (opt-in,
+`[deps.mabda]` removed) at **v6.0.45**. The **bayan/ganita carve is
+deferred to v6.1.x** (user 2026-06-04) — it did not need to ride the
+fold. Part 1 below is done; parts 2–3 (the carves) roll forward.
+(Original status: "near-imminent; fold + carve land together when
+mabda 3.0 GA cuts" — superseded.)
 
 Per user direction 2026-05-19: "stdlib stuff will wait until
 mabda is 3.0 GA so we can clean slate and update all the items
@@ -847,6 +888,11 @@ Memory pins: [`project_bayan_ganita_carve_arc`],
 
 ### Slot estimate (v6.0.x)
 
+_(Original cycle-open estimate, kept for historical context. ACTUAL: the cycle ran to
+.61+ — the native TLS 1.3 work, AGNOS target arc, and the macOS/Windows platform-hardening
+slate all consumed more than budgeted. The authoritative remaining sequence is the
+**finalized remaining-cycle plan** above, not this table.)_
+
 | Cluster | Slots |
 |---|---|
 | Stdlib pin refresh + deps correct-lock fix (v6.0.2) | 1-2 |
@@ -871,6 +917,16 @@ v6.0.x lands at ~25 planned slots.
 - v6.0.x → v6.1.0 back-compat symlink drop (cc5 → cycc + cyrc →
   cybs in install snapshot + cbt/core.cyr lookup fallback). Per
   the v6.0.0 transition policy.
+- **bayan/ganita stdlib distfile carve** (user 2026-06-04) — the
+  mabda-fold half shipped @ .45; the carve rolls into a v6.1.x
+  arc. [[project_bayan_ganita_carve_arc]].
+- **x86-macho cycc self-compile** (layer-6 miscompile,
+  `issues/2026-06-02-macos-x86-release-no-compiler.md`) — HELD
+  (Apple Intel EOL); revisited as 6.1.x arc working, not a 6.0.x
+  blocker. arm64-macOS is the supported macOS target.
+- **TS/TSX → JS emit** (`cycc --emit-js`,
+  `issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`) — its own
+  arc, v6.1.x+ (user 2026-06-04 "TS/TSX→JS in 6.1.x is fine").
 
 ---
 

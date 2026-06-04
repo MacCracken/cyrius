@@ -417,16 +417,36 @@ if [ "$_got_tarball" -eq 1 ]; then
     fi
 
     if [ -d "$EXTRACTED/lib" ]; then
-        cp -r "$EXTRACTED/lib" "$CYRIUS_HOME/versions/$VERSION/"
+        # v6.0.62: copy the stdlib CONTENTS into a pre-created dir
+        # (mkdir + cp -R src/.) rather than the whole-dir form
+        # (cp -r src dest/). The whole-dir form returned 0 yet left
+        # versions/<v>/lib MISSING on the GitHub macos-15-arm64 runner
+        # (yantra CI, 6.0.59+): install printed "standard library installed"
+        # and succeeded, but `cyrius lib sync` then failed with "snapshot lib
+        # not found". Not reproducible on ecb — a runner-image cp quirk — but
+        # the contents-into-premade-dir pattern is exactly what the downstream
+        # backfill workaround proved works there, and it matches the bin copy
+        # above. Assert non-empty + fail loud so a packaging regression can
+        # never again masquerade as success (the macOS-rot lesson). See
+        # 2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md.
+        rm -rf "$CYRIUS_HOME/versions/$VERSION/lib"
+        mkdir -p "$CYRIUS_HOME/versions/$VERSION/lib"
+        cp -R "$EXTRACTED/lib/." "$CYRIUS_HOME/versions/$VERSION/lib/"
+        [ -n "$(ls -A "$CYRIUS_HOME/versions/$VERSION/lib" 2>/dev/null)" ] \
+            || err "stdlib snapshot empty after copy from $EXTRACTED/lib — release-packaging/cp bug"
         info "standard library installed"
+    else
+        err "release tarball for ${ARCH}-${OS_SUFFIX} has no lib/ — refusing to install a toolchain with no stdlib. This is a release-packaging bug; please report it."
     fi
 
     # v6.0.60: cyrius-init scaffolding templates → versions/<v>/programs/ so the
     # cyrius-init binary finds them via its F_GETPATH-resolved root.
     if [ -d "$EXTRACTED/programs/cyrius-init-templates" ]; then
-        mkdir -p "$CYRIUS_HOME/versions/$VERSION/programs"
+        # Same contents-into-premade-dir pattern as the stdlib copy above —
+        # the whole-dir `cp -r dir dest/` form is unreliable on the macOS runner.
         rm -rf "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates"
-        cp -r "$EXTRACTED/programs/cyrius-init-templates" "$CYRIUS_HOME/versions/$VERSION/programs/"
+        mkdir -p "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates"
+        cp -R "$EXTRACTED/programs/cyrius-init-templates/." "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates/"
         info "cyrius-init templates installed"
     fi
 

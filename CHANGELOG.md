@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.62] — 2026-06-04
+
+**QoL/language smalls + a macOS install hotfix.** Three self-contained QoL items (the premise-checked
+.62 bundle; `cyrius hooks` was found already shipped at v6.0.36 and dropped) plus an out-of-band fix
+for the macOS install path that was breaking downstream CI. check.sh 85/85; self-host byte-identical
+(906,528 B); cross-OS `SELFHOST_OK` on cass/pi/ecb/ach.
+
+### Added
+
+- **Octal integer literals (`0o755`).** `lex.cyr` LEXNUM now dispatches `0o` → a new LEXOCT (mirrors
+  LEXHEX, base-8: `val << 3 | digit`, digits 0-7, underscore separators like `0o7_5_5`). New
+  `tests/tcyr/octal_literals.tcyr` gate (10 cases incl. `0o755 == 0x1ED`, file-mode `0o644 == 420`).
+  Self-host byte-identical (octal is inert for the compiler sources); cross-OS green.
+- **`cyrius tests [dir]` — plural recursive suite runner.** Walks `dir` (default `tests/`) for `*.tcyr`
+  at any depth and aggregates pass/fail; distinct from `cyrius test <file>` (single-file) and bare
+  `cyrius test` (shallow auto-discover), both unchanged. cbt/{cyrius,commands,core}.cyr.
+
+### Fixed
+
+- **TOML `[section]` single-bracket headers** (`lib/toml.cyr`). `toml_parse` only handled `[[name]]`
+  array-of-tables; a bare `[section]` was swallowed as a key. Added a single-bracket branch (after the
+  `[[` check; single open/close). Unblocks the commandress config-loader driver. `toml.tcyr` extended.
+- **macOS install left `versions/<v>/lib` missing → `cyrius lib sync` failed** (`scripts/install.sh`).
+  The download path's stdlib copy used the whole-dir `cp -r "$EXTRACTED/lib" "versions/<v>/"`, which
+  returns 0 on the GitHub `macos-15-arm64` runner yet leaves the snapshot missing — install printed
+  "standard library installed" and succeeded, then `lib sync` failed with "snapshot lib not found".
+  (Not reproducible on ecb — a runner-image `cp` quirk; the **bin** copy worked because it used the
+  contents form.) Now uses the contents-into-premade-dir pattern (`rm -rf` + `mkdir -p` +
+  `cp -R "$EXTRACTED/lib/."`), matching the bin copy and the proven downstream backfill, **plus a
+  fail-loud assert** (an empty snapshot aborts the install with a packaging error) and an `else err`
+  if the tarball has no `lib/`. Same pattern applied to the cyrius-init-templates copy. Verified
+  regression-safe on ecb. (Issue: 2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md;
+  yantra confirms on its runner after bumping to 6.0.62, then removes its backfill workaround.)
+
+### Notes
+
+- `cyrius hooks install` was already shipped (v6.0.36) — dropped from the bundle (no action).
+- POSIX `*at()` clean stdlib surface pulled to its own slot — larger than a QoL small (2-arch parity
+  + cross-arch tests).
+- Vidya (octal `language` entry) + roadmap reconciliation (.62 shipped, hooks-done, `*at` pulled)
+  deferred to a post-cut doc pass (user direction).
+
 ## [6.0.61] — 2026-06-04
 
 **Real Windows threading + thread-local storage.** Replaces the v6.0.53 serial fallback

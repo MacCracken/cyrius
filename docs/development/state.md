@@ -3,6 +3,36 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-04 (.62 ship — QoL/language smalls + macOS install hotfix)
+
+Closing **v6.0.62** — the first .62-slate slot (QoL/language smalls), with an urgent macOS install
+hotfix folded in. check.sh **85/85**; self-host byte-identical (906,528 B); **cross-OS `SELFHOST_OK`
+on ALL FOUR** (cass + pi + ecb + ach).
+
+**Shipped (4 items — premise-checked at slot entry):**
+- **Octal literals `0o755`** (`lex.cyr` LEXOCT, base-8, underscores) — self-host-critical bite, landed
+  last + isolated; byte-identical self-host (octal inert for compiler sources); `octal_literals.tcyr`
+  10/10; cross-OS green.
+- **`cyrius tests [dir]`** plural recursive suite runner (cbt) — `cyrius test` single/auto-discover
+  unchanged; verified finds nested `.tcyr`.
+- **TOML `[section]` single-bracket** (`lib/toml.cyr`) — unblocks commandress; `toml.tcyr` 31/31.
+- **macOS install hotfix** (`scripts/install.sh`) — the download-path stdlib copy used the whole-dir
+  `cp -r` form, which returns 0 but leaves `versions/<v>/lib` MISSING on the GitHub `macos-15-arm64`
+  runner (yantra CI red on 6.0.59+; `lib sync` → "snapshot lib not found"). NOT reproducible on ecb
+  (runner-image cp quirk); the **bin** copy worked because it used the contents form. Fixed to
+  contents-into-premade-dir (`mkdir -p` + `cp -R src/lib/.`) + **fail-loud assert** + `else err` for a
+  no-lib tarball; same for templates. Regression-safe on ecb. Issue
+  2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md — FIXED cyrius-side, pending
+  runner confirmation on 6.0.62 (yantra's backfill keeps CI green meanwhile; not archived yet).
+
+**Dropped/deferred:** `cyrius hooks` already shipped @ v6.0.36 (premise-check caught it). POSIX `*at()`
+pulled to its own slot (not a "small"). **Deferred to a post-cut doc pass (user direction):** vidya
+octal `language` entry + roadmap reconciliation (.62 shipped / hooks-done / `*at` pulled).
+
+**Next (slate [[project_v6_0_x_remaining_slot_plan]]):** .63 = global allocator thread-safety
+(2026-06-04-cyrius-global-allocator-not-thread-safe). Then .64-66 partials, .67-x TLS, .x windows
+fixes, cleanup-refactor cluster, closeout → v6.1.0.
+
 ## Session close — 2026-06-04 (.61 ship — real Windows threading + thread-local storage)
 
 Closing **v6.0.61** — third of the pinned macOS/Windows hardening slate (the Windows nuances item).

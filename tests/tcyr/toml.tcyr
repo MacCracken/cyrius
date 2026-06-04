@@ -118,6 +118,18 @@ fn toml_parse(src) {
             cur_pairs = vec_new();
             while (pos < slen && load8(data + pos) != 10) { pos = pos + 1; }
         }
+        elif (c == 91) {
+            if (vec_len(cur_pairs) > 0) {
+                vec_push(sections, toml_section_new(cur_name, cur_pairs));
+            }
+            pos = pos + 1;
+            var sbstart = pos;
+            while (pos < slen && load8(data + pos) != 93) { pos = pos + 1; }
+            cur_name = str_new(data + sbstart, pos - sbstart);
+            if (pos < slen && load8(data + pos) == 93) { pos = pos + 1; }
+            cur_pairs = vec_new();
+            while (pos < slen && load8(data + pos) != 10) { pos = pos + 1; }
+        }
         else {
             var kstart = pos;
             while (pos < slen) {
@@ -226,6 +238,21 @@ var gb = toml_get_sections(secs2, str_from("b"));
 assert_eq(vec_len(gb), 1, "one b");
 var gn = toml_get_sections(secs2, str_from("z"));
 assert_eq(vec_len(gn), 0, "zero z");
+
+test_group("single-bracket [section]");
+var srcsb = str_from("[server]\nhost = \"localhost\"\nport = 8080\n");
+var secssb = toml_parse(srcsb);
+assert_eq(vec_len(secssb), 1, "one single-bracket section");
+var ssb = vec_get(secssb, 0);
+assert_eq(str_eq(toml_section_name(ssb), str_from("server")), 1, "section name server");
+var psb = toml_section_pairs(ssb);
+assert_eq(vec_len(psb), 2, "two pairs");
+assert_eq(str_eq(toml_get(psb, str_from("host")), str_from("localhost")), 1, "host=localhost");
+assert_eq(str_eq(toml_get(psb, str_from("port")), str_from("8080")), 1, "port=8080");
+# top-level pairs before a [section] go into the implicit "" section
+var srcmix = str_from("title = \"doc\"\n[server]\nhost = \"h\"\n");
+var secsmix = toml_parse(srcmix);
+assert_eq(vec_len(secsmix), 2, "implicit + server");
 
 test_group("top-level pairs");
 var src3 = str_from("title = \"doc\"\nver = 1\n");

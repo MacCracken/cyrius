@@ -43,6 +43,7 @@ fn usage(): i64 {
     println("  build [--aarch64|--win|--agnos] [--no-deps] [--strict] [--strict-pin] <src> <out>   compile a program");
     println("  run [--aarch64] <source.cyr>    compile + run");
     println("  test [--aarch64] <test.cyr>     compile + run, check exit 0");
+    println("  tests [--aarch64] [dir]         recursively run all .tcyr under dir (default tests/)");
     println("  bench <bench.cyr>               compile + run benchmarks");
     println("  check [--with-deps] <src.cyr>  syntax check (default: standalone)");
     println("  self                            self-hosting check (cycc==cycc)");
@@ -223,7 +224,7 @@ fn main(): i64 {
     # as v5.7.21's fuzz fix. cmd_soak now walks `tests/scyr/*.scyr`
     # harnesses and cmd_smoke walks `tests/smcyr/*.smcyr` files; both
     # rely on compile() reading _dep_includes for stdlib auto-prepend.
-    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1) {
+    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1) {
         var dr = _auto_deps();
         if (dr > 0) { return dr; }
     }
@@ -385,6 +386,33 @@ fn main(): i64 {
         println(" failed");
         if (_fail > 0) { return 1; }
         return 0;
+    }
+
+    # v6.0.62: plural verb — recursive folder/suite runner. `cyrius tests`
+    # walks tests/ at any depth; `cyrius tests <dir>` scopes to a subtree.
+    # Distinct from `cyrius test <file>` (single) + bare `cyrius test`
+    # (shallow auto-discover), both unchanged.
+    if (streq(cmd, "tests") == 1) {
+        var ti = 2;
+        while (argc() > ti) {
+            if (streq(argv(ti), "--aarch64") == 1) {
+                set_arch(ARCH_AARCH64);
+                ti = ti + 1;
+            }
+            elif (streq(argv(ti), "-v") == 1) {
+                _verbose = 1;
+                ti = ti + 1;
+            }
+            elif (streq(argv(ti), "--dry-run") == 1) {
+                _dry_run = 1;
+                ti = ti + 1;
+            }
+            else { break; }
+        }
+        if (argc() > ti) {
+            return cmd_tests(argv(ti));
+        }
+        return cmd_tests("tests");
     }
 
     if (streq(cmd, "bench") == 1) {
