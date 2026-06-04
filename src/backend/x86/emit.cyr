@@ -1833,6 +1833,28 @@ fn EPOPARG(S, n): i64 {
 # Args pushed left-to-right: stack = [a1..aN] with aN on top.
 # For ≤6: pop top N → registers. Pop order (r9,r8,rcx,rdx,rsi,rdi) reverses
 #   the push order, giving rdi=a1, rsi=a2, etc.
+# v6.0.57: emit `mov reg, [rsp+disp]` (op=0x8B) or `mov [rsp+disp], reg`
+# (op=0x89), auto-selecting the disp8 (mod=01) vs disp32 (mod=10) ModRM form
+# so a large arg frame doesn't overflow the signed disp8 (+127). `rex` is
+# 0x48 (or 0x4C for r8-r15, REX.R+W), `reg3` the low 3 bits of the register.
+# Byte-identical to the old hardcoded disp8 emit when disp < 128, so small
+# (<= 16-arg) calls are unchanged. Closes the >16-arg ECALLPOPS param scramble
+# (issue 2026-04-26-cc5-18-arg-fn-scrambles-params.md): at 17 args, (n-1)*8 =
+# 128 > 127, so the disp8 sign-wrapped negative and read garbage below rsp.
+fn _emov_rsp_disp(S, rex, op, reg3, disp): i64 {
+    EB(S, rex); EB(S, op);
+    if (disp < 128) {
+        EB(S, 0x40 + reg3 * 8 + 0x04);   # mod=01 (disp8), reg=reg3, rm=100 (SIB)
+        EB(S, 0x24);                       # SIB: base=rsp, no index
+        EB(S, disp);
+    } else {
+        EB(S, 0x80 + reg3 * 8 + 0x04);   # mod=10 (disp32)
+        EB(S, 0x24);
+        EDISP32(S, disp);
+    }
+    return 0;
+}
+
 # For >6: the top (n-6) items are stack args that must stay on the stack.
 #   Pop them to temp (r11), pop 6 register args, push them back.
 fn ECALLPOPS(S, n): i64 {
@@ -1969,31 +1991,27 @@ fn ECALLPOPS(S, n): i64 {
         write_base = write_base - 8;   # = 40: step-2 writes one slot deeper
         sp_drop = 0x28;                # = 40: step-3 drops one less slot
     }
-    # Step 1: load 6 reg args from stack (a_k at [rsp+(n-k)*8]).
-    # rdi = a1 at [rsp+(n-1)*8]
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x7C); EB(S, 0x24); EB(S, (n - 1) * 8);
-    # rsi = a2 at [rsp+(n-2)*8]
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x74); EB(S, 0x24); EB(S, (n - 2) * 8);
-    # rdx = a3 at [rsp+(n-3)*8]
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, (n - 3) * 8);
-    # rcx = a4 at [rsp+(n-4)*8]
-    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, (n - 4) * 8);
-    # r8  = a5 at [rsp+(n-5)*8]
-    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, (n - 5) * 8);
-    # r9  = a6 at [rsp+(n-6)*8]
-    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, (n - 6) * 8);
-    # Step 2: shift extras (a_n is at [rsp+0], deepest extra a_7 at [rsp+(nextra-1)*8]).
-    # Even nextra → write to [rsp+(6+i)*8] = [rsp+48..]; drops 6 reg-arg slots → 16-aligned.
-    # Odd nextra → write to [rsp+(5+i)*8] = [rsp+40..]; drops 5 reg-arg slots → also 16-aligned.
-    # For odd nextra the write target overlaps with [rsp+40] which held a2 — but a2 was
-    # already loaded into rsi in Step 1, so the overwrite is harmless.
-    var si = 0;
-    while (si < nextra) {
-        # mov r10, [rsp + si*8]
-        EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, si * 8);
-        # mov [rsp + write_base + si*8], r10
-        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, write_base + si * 8);
-        si = si + 1;
+    # Step 1: load 6 reg args from stack (a_k at [rsp+(n-k)*8]). disp8/disp32
+    # auto-selected — at n >= 17 the displacement crosses 127 (the old bug).
+    _emov_rsp_disp(S, 0x48, 0x8B, 7, (n - 1) * 8);   # rdi = a1
+    _emov_rsp_disp(S, 0x48, 0x8B, 6, (n - 2) * 8);   # rsi = a2
+    _emov_rsp_disp(S, 0x48, 0x8B, 2, (n - 3) * 8);   # rdx = a3
+    _emov_rsp_disp(S, 0x48, 0x8B, 1, (n - 4) * 8);   # rcx = a4
+    _emov_rsp_disp(S, 0x4C, 0x8B, 0, (n - 5) * 8);   # r8  = a5
+    _emov_rsp_disp(S, 0x4C, 0x8B, 1, (n - 6) * 8);   # r9  = a6
+    # Step 2: shift extras up to [rsp+write_base..] (a_n at [rsp+0], deepest
+    # extra a_7 at [rsp+(nextra-1)*8]). The write target [rsp+write_base+si*8]
+    # equals the read source of iteration si+6 ([rsp+(si+6)*8]) once nextra > 6,
+    # so ASCENDING order overwrote a slot a later iteration still needed → the
+    # middle args (7-12) scrambled. Iterate DESCENDING so every read happens
+    # before the write that clobbers its slot. (v6.0.57; was the second half of
+    # the >12-arg corruption alongside the disp8 overflow above.)
+    var si = nextra - 1;
+    while (si >= 0) {
+        # mov r10, [rsp + si*8]  then  mov [rsp + write_base + si*8], r10
+        _emov_rsp_disp(S, 0x4C, 0x8B, 2, si * 8);
+        _emov_rsp_disp(S, 0x4C, 0x89, 2, write_base + si * 8);
+        si = si - 1;
     }
     # Step 3: drop 6 reg-arg slots (even nextra) or 5 (odd nextra → 16-aligned at CALL).
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, sp_drop);

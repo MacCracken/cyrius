@@ -1,5 +1,19 @@
 # 2026-04-26 — cc5 5.7.10: 18-arg fn call scrambles register/stack params
 
+> **Status: RESOLVED v6.0.57.** Two root causes in `ECALLPOPS`, both fixed +
+> cross-arch: (1) x86 emitted a disp8 displacement that sign-wrapped negative
+> once `(n-1)*8 > 127` (fires at **17** args, not 18) — now auto-selects disp32
+> via `_emov_rsp_disp` (src/backend/x86/emit.cyr); (2) the step-2 extras shuttle
+> had a read-after-write overlap (`[rsp+48+si*8]` re-read by iteration `si+6`)
+> that scrambled the middle args at n>12 — now iterated descending. aarch64 had
+> a parallel bug (hardcoded ≤4-extra / ≤10-arg cap) — rewritten to the same
+> memory-shuffle (src/backend/aarch64/emit.cyr). Verified: x86 18-arg per-arg
+> verifier all-correct + self-host byte-identical; aarch64 18-arg verifier
+> all-correct under qemu-aarch64. **cx FLAGGED (not yet verified):** cx's
+> ECALLPOPS pops args into r3+i virtual registers — whether the cx VM passes
+> >6 of them as args needs checking (niche bytecode backend; no consumer
+> blocked). See CHANGELOG [6.0.57].
+
 **Component:** cc5 codegen (x86_64 SysV calling convention)
 **Toolchain seen:** cyrius 5.7.10
 **Severity:** Silent miscompile — wrong values, no warning, downstream segfault

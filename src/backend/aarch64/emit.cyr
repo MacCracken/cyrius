@@ -1027,31 +1027,42 @@ fn EPOPARG(S, n): i64 {
 }
 
 # Pop args into registers for function call
+# v6.0.57: ldr/str xN, [sp, #imm] (unsigned offset, 64-bit; imm a multiple of
+# 8). For the >6-arg ECALLPOPS memory-shuffle — loads/stores WITHOUT moving sp,
+# so it handles any arg count (the 12-bit scaled imm reaches ~32 KB).
+fn ELDR_SP(S, reg, imm): i64 { EW(S, 0xF94003E0 | ((imm / 8) << 10) | reg); return 0; }
+fn ESTR_SP(S, reg, imm): i64 { EW(S, 0xF90003E0 | ((imm / 8) << 10) | reg); return 0; }
+
 fn ECALLPOPS(S, n): i64 {
     if (n <= 6) {
         var i = n - 1;
         while (i >= 0) { EPOPARG(S, i); i = i - 1; }
         return 0;
     }
-    # >6 args: stack = [a1..aN], aN on top.
-    # 1. Pop (n-6) extras into x9-x12 (caller-saved temps)
-    # 2. Pop 6 register args into x0-x5
-    # 3. Push extras back for callee to find at [sp]
+    # >6 args: stack = [a1..aN], aN on top, slots 16 B; a_k at [sp+(n-k)*16].
+    # v6.0.57: was capped at 4 extras (10 args) via x9-x12 pop/push — fns with
+    # >10 args silently mishandled args 11+. Rewritten to the same memory-shuffle
+    # the x86 backend uses (load reg args by offset, shift extras up by 6 slots,
+    # add sp), which matches the old result for nextra<=4 and extends to any
+    # count. Closes the aarch64 half of 2026-04-26-cc5-18-arg-fn-scrambles-params.
     var nextra = n - 6;
-    # Step 1: pop extras into x9-x12 (up to 4 extras = 10 args max)
-    # ldr x9, [sp], #16
-    EW(S, 0xF84107E9);
-    if (nextra >= 2) { EW(S, 0xF84107EA); }  # ldr x10, [sp], #16
-    if (nextra >= 3) { EW(S, 0xF84107EB); }  # ldr x11, [sp], #16
-    if (nextra >= 4) { EW(S, 0xF84107EC); }  # ldr x12, [sp], #16
-    # Step 2: pop 6 register args
-    var i = 5;
-    while (i >= 0) { EPOPARG(S, i); i = i - 1; }
-    # Step 3: push extras back (reverse order)
-    if (nextra >= 4) { EW(S, 0xF81F0FEC); }  # str x12, [sp, #-16]!
-    if (nextra >= 3) { EW(S, 0xF81F0FEB); }  # str x11, [sp, #-16]!
-    if (nextra >= 2) { EW(S, 0xF81F0FEA); }  # str x10, [sp, #-16]!
-    EW(S, 0xF81F0FE9);                        # str x9, [sp, #-16]!
+    # Step 1: load the 6 reg args a1..a6 into x0..x5 (no pop).
+    var k = 1;
+    while (k <= 6) {
+        ELDR_SP(S, k - 1, (n - k) * 16);
+        k = k + 1;
+    }
+    # Step 2: shift the extras up by 6 slots (96 B) to land below the dropped
+    # reg slots. Descending so a write never clobbers a slot a later read needs
+    # (the same read-after-write hazard fixed on x86).
+    var si = nextra - 1;
+    while (si >= 0) {
+        ELDR_SP(S, 9, si * 16);            # x9 = extra at [sp+si*16]
+        ESTR_SP(S, 9, 96 + si * 16);       # [sp+96+si*16] = x9
+        si = si - 1;
+    }
+    # Step 3: drop the 6 reg-arg slots: add sp, sp, #96 (16-aligned throughout).
+    EW(S, 0x910003FF | (96 << 10));
     return 0;
 }
 

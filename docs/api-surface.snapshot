@@ -762,11 +762,6 @@ alloc_macos::alloc/1
 alloc_macos::alloc_init/0
 alloc_macos::alloc_reset/0
 alloc_macos::alloc_used/0
-alloc_macos::arena_alloc/2
-alloc_macos::arena_new/1
-alloc_macos::arena_remaining/1
-alloc_macos::arena_reset/1
-alloc_macos::arena_used/1
 alloc_windows::alloc/1
 alloc_windows::alloc_init/0
 alloc_windows::alloc_reset/0

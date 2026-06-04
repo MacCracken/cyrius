@@ -37,8 +37,14 @@ AFTER the heavier items); resolved windows-args issue archived. Pinned
 **The on-hardware proof (consumer step):** agnsh `run`-on-agnos via agnoshi `cyrius update` + OVMF/ext2.
 cyrius side ready.
 
-**Next** per slate: .57 cc5-18-arg + QoL, .58 TS→JS, **TLS resumes .59** — OR user re-pivots (agnos
-arc may continue if more walls surface). [[project_native_tls_arc_v6_2_x]].
+**Next — slate RE-PIVOTED (user 2026-06-03 at .56 ship): bug line → agnos follow-ups → TLS → Windows
+nuances, in that order.** (1) **Bug line** = the open correctness bugs in docs/development/issues/
+(cc5-18-arg param scramble, bote nested-call state leak, asm-block global-symbol, macos-alloc-arena
+duplicate-fns, …) — premise-check each at entry (these pins are old, may be stale). (2) **agnos
+follow-ups** = 2026-06-03-agnos-followup-after-boot.md remainder (sys_stat consumer guard + any new
+walls; the kernel-ABI items are agnos-side). (3) **TLS** resumes ([[project_native_tls_arc_v6_2_x]]).
+(4) **Windows nuances** = 2026-06-03-windows-followup-nuances.md (threading → thread_local TLS → full
+CommandLineToArgvW → COM/DXGI GPU-enum). TS→JS (yeo) folds into the bug line or QoL as it fits.
 
 ## Session close — 2026-06-03 (.55 ship — agnos boot-to-prompt: CYRIUS_TARGET_AGNOS stdlib args + io gap closed)
 
