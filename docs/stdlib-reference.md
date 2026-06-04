@@ -138,9 +138,9 @@ File I/O wrappers around Linux syscalls.
 | `file_write_all_r` | `file_write_all_r(path, buf, len) → Result<n, IoError>` |
 
 Pair the `_r` variants with the `?` operator (v5.8.29) for clean
-chaining: `var fd = file_open_r(path, 0, 0)?; ...`. Legacy
-int-returning fns stay callable through v5.8.x; v6.0.0 closeout
-removes them.
+chaining: `var fd = file_open_r(path, 0, 0)?; ...`. The legacy
+int-returning fns (`file_open`, `file_close`, `file_read`,
+`file_write`, `file_read_all`) remain callable as of v6.0.x.
 
 ### fmt.cyr
 
@@ -454,9 +454,9 @@ Glob matching and string search/replace.
 
 ## System Libraries
 
-### agnosys/syscalls.cyr
+### syscalls.cyr
 
-Linux x86_64 syscall bindings. 50 syscall numbers + 20+ wrappers.
+Linux syscall bindings (arch-dispatched x86_64 / aarch64). 61 syscall numbers + 65 `sys_*` wrappers (x86_64).
 
 See [agnosys documentation](cyrius-guide.md#agnos-system-libraries) for full API.
 
@@ -599,7 +599,7 @@ sole rule type in 5.13).
 ---
 
 > **Coverage note**: this reference documents the most-used core
-> surface — see `lib/*.cyr` for the full ~67 first-party modules
+> surface — see `lib/*.cyr` for the full ~89 first-party modules
 > (concurrency: thread, thread_local, atomic, async, freelist; data:
 > base64, math, matrix, linalg, bigint, u128, csv, toml, cyml; crypto:
 > sha1, keccak, ct, overflow; network: net, http, ws, tls, sandhi;

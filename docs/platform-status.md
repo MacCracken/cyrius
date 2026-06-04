@@ -8,15 +8,15 @@ section tracks the per-release add history; this file is the
 
 | Platform | Format | Status |
 |----------|--------|--------|
-| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~874 KB (v6.0.3); 3-step bootstrap byte-identical. |
+| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~906 KB (v6.0.62); 3-step bootstrap byte-identical. |
 | Linux aarch64 | ELF | **✅ Narrow + Broad** — cross-build byte-identity + native self-host on Pi 4 (repaired v5.6.32). Three libs (`lib/hashmap_fast`, `lib/u128`, `lib/mabda`) still contain ungated x86 asm — arch-gating queued. |
 | cyrius-x bytecode | .cyx | **✅ Narrow** — clean CYX bytecode (path B, v5.7.12); literal-arg propagation pinned v5.7.x patch slot. |
-| macOS x86_64 | Mach-O | **✅ Narrow** (v5.1.0). |
-| macOS aarch64 | Mach-O | **✅ Narrow + Broad** — gate fixture repaired v5.6.33 (no compiler regression existed; bytes unchanged since v5.5.13). |
+| macOS x86_64 | Mach-O | **⏸️ Held — parity-only** (Apple Intel EOL). Not a verified self-host target; arm64 is the verified macOS target. |
+| macOS aarch64 | Mach-O | **✅ Narrow + Broad** — cycc self-hosts byte-identical on real hardware (`ecb`), proven v6.0.45 (the `READFILE`/`openat` cross-OS gate). |
 | Windows x86_64 | PE/COFF | **✅ Narrow + Broad** — gate fixture repaired v5.6.36; HIGH_ENTROPY_VA enabled v5.6.31. Win64 ABI complete (v5.5.36); .reloc + 32-bit ASLR (v5.5.35). |
 | Compiler optimization (O1–O6) | — | **✅ Closed** (v5.6.5 + v5.6.7–v5.6.27). |
-| RISC-V (rv64) | ELF | Queued — **v5.10.x** (moved from v5.9.x at v5.8.x close). |
-| Bare-metal | ELF (no-libc) | Queued — **v5.10.0**. AGNOS kernel target. |
+| RISC-V (rv64) | ELF | Queued — **v6.2.x** (Platform Expansion minor). |
+| Bare-metal | ELF (no-libc) | Queued — **v6.2.0**. AGNOS kernel target. |
 
 ## Verification hosts (cross-arch SSH-wired)
 
@@ -45,5 +45,6 @@ Run during CLAUDE.md step 11 (vidya / docs sync) at every minor:
       row with the landing version.
 - [ ] Cross-check pinned future targets against
       [roadmap.md](development/roadmap.md) — no version-skew.
-- [ ] Re-verify SSH-wired hosts by running
-      `cyrius cross-test --host {pi,cass,ecb}` (or equivalent).
+- [ ] Re-verify SSH-wired hosts by running `cyrius audit` (runs the
+      cross-OS self-host across ach/ecb/pi/cass via
+      `scripts/cross-os-selfhost.sh`).

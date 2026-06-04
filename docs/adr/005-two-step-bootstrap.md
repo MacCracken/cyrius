@@ -1,7 +1,7 @@
 # ADR-005: Two-Step Bootstrap for Compiler Changes
 
 **Status**: Accepted
-**Date**: 2026-04-05 (cc3 era; current binary is cycc after the v5.0.0 cc3 → cycc rename, will be cyc after the v6.0.0 cycc → cyc rename — the principle applies regardless of the current binary name)
+**Date**: 2026-04-05 (cc3 era; current binary is cycc after the cc3 → cc5 rename at v5.0.0 and the cc5 → cycc rename at v6.0.0. `cycc` is the final, version-agnostic name — the principle applies regardless of the binary name)
 **Context**: Heap layout changes break the bootstrap chain because the committed compiler binary uses old offsets.
 
 ## Decision
@@ -35,4 +35,4 @@ Any compiler change that modifies heap offsets, token array sizes, or buffer loc
 
 ## Tooling
 
-The canonical verifier was formalized at v5.11.67 as `scripts/build-cycc-verify.sh` (renames to `scripts/build-cyc.sh` at v6.0.0). It enforces the three byte-identity invariants above plus a third check (stage_a == build/cycc) that surfaces stale build artifacts.
+The canonical verifier was formalized at v5.11.67 as `scripts/build-cycc-verify.sh`. It enforces the three byte-identity invariants above plus a third check (stage_a == build/cycc) that surfaces stale build artifacts.

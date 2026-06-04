@@ -6,8 +6,9 @@
 > and self-hosting framing below are durable across the v5.x cycle.
 > Historical version anchors (cc3 era, v5.6.43 "as of" stamps) are
 > retained for narrative continuity — they refer to the pre-rename
-> compiler binary (`cc3` → `cycc` at v5.0.0; `cycc` → `cyc` at v6.0.0
-> per CLAUDE.md's permanent-binary-name rule). For current per-release
+> compiler binary (`cc3` → `cc5` at v5.0.0; `cc5` → `cycc` at v6.0.0,
+> alongside `cyrc` → `cybs` — these are the final, permanent binary
+> names per CLAUDE.md's permanent-binary-name rule). For current per-release
 > state, see [`../development/state.md`](../development/state.md);
 > for shipped work, [`../../CHANGELOG.md`](../../CHANGELOG.md).
 

@@ -20,26 +20,34 @@ plus whenever a port lands or a new repo joins.
 ## Folded-in distlibs (sandhi-pattern)
 
 Sibling repos vendored byte-identical into `cyrius/lib/` at a
-patched tag. Removed from `[deps]` once folded; live deps below
-remain explicit.
+patched tag. Removed from `[deps]` once folded. As of the mabda
+3.0.1 fold (v6.0.45) there are no remaining explicit `[deps.*]`
+git entries (see Live deps below).
 
 | Lib | Folded at | Source tag | Domain |
 |-----|-----------|------------|--------|
-| `lib/sandhi.cyr` | v5.7.0 | sandhi 1.x | HTTP/2 + JSON-RPC + service discovery + TLS policy |
-| `lib/vani.cyr` | v5.8.0 (refold v5.8.65) | vani 0.9.2 | Audio (ALSA PCM + ring buffer + mixer) |
-| `lib/sakshi.cyr` | v5.8.65 | sakshi 2.2.3 | Tracing |
-| `lib/patra.cyr` | v5.8.65 | patra 1.9.3 | Storage |
-| `lib/sigil.cyr` | v5.8.65 | sigil 3.0.1 | Security |
-| `lib/yukti.cyr` | v5.8.65 | yukti 2.2.2 | Hardware enumeration |
-| `lib/sankoch.cyr` | v5.8.65 | sankoch 2.2.4 | Compression |
-| `lib/niyama.cyr` | **v5.9.0** (2026-05-06) | niyama 1.0.1 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |
+| `lib/sandhi.cyr` | v5.7.0 | sandhi 1.4.1 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
+| `lib/vani.cyr` | v5.8.0 (refold v5.8.65) | vani 0.9.3 | Audio (ALSA PCM + ring buffer + mixer) |
+| `lib/sakshi.cyr` | v5.8.65 | sakshi 2.2.6 | Tracing |
+| `lib/patra.cyr` | v5.8.65 | patra 1.10.3 | Storage |
+| `lib/sigil.cyr` | v5.8.65 | sigil 3.6.4 | Security |
+| `lib/yukti.cyr` | v5.8.65 | yukti 2.2.3 | Hardware enumeration |
+| `lib/sankoch.cyr` | v5.8.65 | sankoch 2.2.5 | Compression |
+| `lib/niyama.cyr` | **v5.9.0** (2026-05-06) | niyama 1.0.2 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |
+| `lib/mabda.cyr` | **v6.0.45** | mabda 3.0.1 | GPU/compute (AMD-native GA) |
 
 ## Live deps (explicit `[deps.*]`)
 
-| Dep | Version | Status |
-|-----|---------|--------|
-| **mabda** | 2.5.0 GA | Held pre-v3.0.0-rc.2 soak; Class B FFI/wgpu fncall6 ABI work pinned to v5.10.x. |
-| **agnosys** | (transitive via mabda) | Held; folds out when mabda v3 lands. |
+None. As of the mabda 3.0.1 fold (v6.0.45), `cyrius.cyml` has no
+explicit `[deps.*]` git entries — every former dep is now a folded
+distlib (see table above). `[deps].stdlib` is the auto-prepend list
+only, not git resolution.
+
+- **mabda** — folded byte-identical into `lib/mabda.cyr` at 3.0.1
+  (removed from `[deps]`; opt-in via `include "lib/mabda.cyr"`).
+- **agnosys** — was transitive via mabda's git resolution; with mabda
+  vendored it is no longer pulled (re-add `[deps.agnosys]` if a
+  consumer needs it).
 
 ## Downstream server-stack arc
 

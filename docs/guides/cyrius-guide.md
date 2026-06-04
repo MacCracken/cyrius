@@ -875,11 +875,9 @@ offsets past the params.
 
 ## Known Limitations
 
-- No `&&`/`||` mixed in same condition — use nested `if`
 - `for` loop step must be simple assignment (`i = i + 1`)
 - Exit codes truncated to 0-255 (Linux limitation)
 - Max ~64 global vars with initializers (use enums for constants)
-- No negative literals — use `(0 - N)` instead of `-N`
 - `default`, `match`, `in`, `shared` are keywords
 - Block closures (`|x| { ... }`) only work inside functions
 
@@ -911,7 +909,7 @@ qemu-system-x86_64 -kernel build/agnos -serial stdio -display none
 
 ## Example Programs
 
-See `programs/` for 68 examples:
+See `programs/` for 80 examples:
 - **CLI tools**: cat, echo, head, wc, grep, hexdump, tail, tr, uniq, sort, basename, cols, count, toupper, rot13, rev, nl, seq, tee, yes, true, false
 - **Algorithms**: fizzbuzz, primes, sieve, collatz, ackermann, gcd, brainfuck, life, xor
 - **Data structures**: struct_list (linked list), alloctest (heap), strtype (fat strings)
@@ -922,12 +920,11 @@ See `programs/` for 68 examples:
 
 ```
 bootstrap/asm (29KB seed)
-  → cybs (12KB compiler)
-    → bridge.cyr (bridge compiler)
-      → cycc (modular compiler + IR, 9 modules)
-        → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
-        → cycc_win    (Windows PE32+ cross-compiler)
-        → agnos.cyr  (AGNOS kernel)
+  → cybs (~43KB bootstrap compiler)
+    → cycc (modular compiler + IR)
+      → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
+      → cycc_win    (Windows PE32+ cross-compiler)
+      → agnos.cyr  (AGNOS kernel)
 ```
 
 Current cycc size, IR pipeline state, and cross-compiler stats live in

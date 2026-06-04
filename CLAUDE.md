@@ -184,8 +184,8 @@ src/
   backend/aarch64/   emit.cyr, jump.cyr, fixup.cyr
   backend/cx/        emit.cyr (cyrius-x bytecode)
   common/            util.cyr, ir.cyr
-lib/                 Standard library (54 modules + 6 deps)
-programs/            59 programs (tools, tests, demos, algorithms)
+lib/                 Standard library (80 modules + 9 deps)
+programs/            80 programs (tools, tests, demos, algorithms)
 tests/               Test suites (tcyr/*.tcyr, heapmap.sh)
 benches/             Benchmarks (*.bcyr)
 fuzz/                Fuzz harnesses (*.fcyr)

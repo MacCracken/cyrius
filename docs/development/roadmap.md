@@ -440,9 +440,13 @@ boot-to-prompt .55–.56, then the macOS/Windows platform-hardening slate ran .5
 we are at .61, one past the 35–60 window — closing stretch).** Execute in order;
 premise-check each at slot entry:
 
-1. **.62 — QoL / language smalls** (packed, self-contained): octal literals `0o755`,
-   TOML `[section]` single-bracket, `cyrius tests` plural verb, `cyrius hooks install`,
-   POSIX `*at()` clean stdlib surface. (Item detail in the lists below.)
+1. **.62 — QoL / language smalls — ✅ SHIPPED 2026-06-04.** Octal literals `0o755`
+   (`lex.cyr` LEXOCT) + TOML `[section]` single-bracket (`lib/toml.cyr`) + `cyrius tests`
+   plural recursive runner (cbt). `cyrius hooks` was found ALREADY shipped (v6.0.36) →
+   dropped. POSIX `*at()` clean stdlib surface PULLED to its own slot (not a "small" —
+   2-arch parity + cross-arch tests; → v6.1.x candidate / re-slot at user's call). Also
+   folded in: the **macOS install lib-snapshot hotfix** (`scripts/install.sh`,
+   `issues/2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md`).
 2. **.63 — global allocator thread-safety**
    (`issues/2026-06-04-cyrius-global-allocator-not-thread-safe.md`): rec fix = single
    global alloc-lock, packing in the macho `__ulock`/agnos-futex primitive gap

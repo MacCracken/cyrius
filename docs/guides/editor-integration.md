@@ -9,7 +9,7 @@ machine picks up the LSP automatically (no per-repo `.lsp.json`).
 ## `cyrius-lsp` (the server)
 
 `cyrius-lsp` is the in-tree LSP — JSON-RPC 2.0 over stdin/stdout.
-Source lives at [`programs/cyrius-lsp.cyr`](../programs/cyrius-lsp.cyr).
+Source lives at [`programs/cyrius-lsp.cyr`](../../programs/cyrius-lsp.cyr).
 
 Capabilities (current):
 
@@ -85,7 +85,7 @@ toolchain plugins. Install once at user scope:
 Every Cyrius project on the machine then picks up the LSP
 automatically — no per-repo `.lsp.json` to copy or sync.
 
-See [`docs/development/proposals/consolidate-cyrius-lsp-claude-plugin.md`](development/proposals/consolidate-cyrius-lsp-claude-plugin.md)
+See [`docs/development/archive/consolidate-cyrius-lsp-claude-plugin.md`](../development/archive/consolidate-cyrius-lsp-claude-plugin.md)
 for the full rationale (drift, scaffold gaps, single edit point).
 
 ## Editor-specific notes
@@ -103,7 +103,7 @@ for the full rationale (drift, scaffold gaps, single edit point).
 `cyrius-lsp` does not yet provide semantic-tokens. For syntax
 highlighting today, fall back to the editor's TextMate / regex grammar
 (or treat as plain text). A `cyrius.tmLanguage` grammar slot is on the
-roadmap; track it in [`docs/development/roadmap.md`](development/roadmap.md).
+roadmap; track it in [`docs/development/roadmap.md`](../development/roadmap.md).
 
 ## Troubleshooting
 

@@ -12,12 +12,14 @@ must route through a C shim.
 
 ## Calling convention
 
-Cyrius uses a single calling convention across both arches:
+Cyrius uses a per-target calling convention (see the `lib/fnptr.cyr`
+header for the authoritative breakdown):
 
-| Arch    | Args 1–6                    | Args 7+              | Return | Indirect-call reg |
-|---------|-----------------------------|----------------------|--------|-------------------|
-| x86_64  | `rdi, rsi, rdx, rcx, r8, r9`| `[rsp+0], [rsp+8], …` | `rax`  | `rax`             |
-| aarch64 | `x0, x1, x2, x3, x4, x5`    | `[sp+0], [sp+16], …` | `x0`   | `x9`              |
+| Target                  | Args                                  | Args overflow         | Return | Indirect-call reg |
+|-------------------------|---------------------------------------|-----------------------|--------|-------------------|
+| x86_64 SysV (Linux/macOS) | 1–6 in `rdi, rsi, rdx, rcx, r8, r9` | `[rsp+0], [rsp+8], …` | `rax`  | `rax`             |
+| x86_64 MS-x64 (Windows PE / UEFI) | 1–4 in `rcx, rdx, r8, r9`, +32 B shadow space | `[rsp+0x20+(N-5)*8]` | `rax`  | `rax`             |
+| aarch64 (cyrius subset of AAPCS64) | 1–6 in `x0, x1, x2, x3, x4, x5`   | `[sp+0], [sp+16], …` | `x0`   | `x9`              |
 
 On aarch64 cyrius uses only **6** argument registers (not AAPCS64's
 8) to stay symmetric with x86_64 SysV. Stack args on aarch64 occupy
@@ -25,7 +27,7 @@ On aarch64 cyrius uses only **6** argument registers (not AAPCS64's
 alignment AAPCS64 and AArch64 SPAlignmentCheck require.
 
 Cyrius pads the local frame to a 16-byte boundary
-(`src/cc/parse.cyr:1505`: `fsz = (flc*8 + 15) & ~15`), so RSP / SP
+(`src/frontend/parse.cyr`: `fsz = (flc*8 + 15) & ~15`), so RSP / SP
 is 16-byte aligned in every function body. `fncall7` / `fncall8`'s
 x86 variants reserve 16 bytes via `sub rsp, 16` to hold the stack
 arg(s) plus padding; aarch64 pushes each stack arg with
@@ -116,7 +118,7 @@ anyway for struct-by-value reasons.
 
 If a future release widens cyrius's convention to AAPCS64-proper on
 aarch64, that would be a v6.0.0-class ABI break (symmetric to the
-`cycc → cyc` rename era) and not a v5.4.x patch.
+`cyrc → cybs` / `cc5 → cycc` rename era) and not a v5.4.x patch.
 
 ---
 

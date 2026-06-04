@@ -77,7 +77,7 @@ Durable cycle retrospectives + field-note narratives live in
 | `v511x.cyml` | v5.11.x close arc (in-progress at file-trim time) |
 | `foldin_arc_v57_v59.cyml` | sandhi-pattern fold-in arc spanning v5.7.0–v5.9.0 |
 
-Volatile current-cycle state (current version, cc5 size, in-flight
+Volatile current-cycle state (current version, cycc size, in-flight
 slots, recent shipped patches) lives in
 [`state.md`](state.md) — refreshed every release via
 `scripts/version-bump.sh`'s post-hook.

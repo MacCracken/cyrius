@@ -13,11 +13,11 @@ Build Cyrius from assembly up — no C compiler, no Rust, no LLVM, no libc in th
 - **Auditability**: A 29KB binary can be reviewed by a single person
 - **Sovereignty**: No external toolchain governance can block the project
 - **Reproducibility**: Byte-exact self-hosting from a committed binary
-- **Size**: The entire toolchain (250KB compiler + 29KB seed) is smaller than most profile photos
+- **Size**: The entire toolchain (~900KB compiler + 29KB seed) is smaller than most profile photos
 
 ## Consequences
 
-- Bootstrap chain is longer (seed → cybs → cycc; bridge intermediate retired v5.11.66, cc3 → cycc at v5.0.0)
+- Bootstrap chain is longer (seed → cybs → cycc; bridge intermediate retired v5.11.66; top compiler renamed cc3 → cc5 at v5.0.0, cc5 → cycc at v6.0.0)
 - No access to libc functions — must implement everything from syscalls
 - Every new feature must work without external libraries
 - Self-hosting verification is mandatory after every compiler change

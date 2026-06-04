@@ -2,10 +2,11 @@
 
 > **Historical artifact** — dated journal entries from the
 > pre-v5.0.0 bootstrap phases. References `cc2` / `cc3` /
-> `cybs` / `Stage1f` binary names that were retired at the
-> `cc3` → `cycc` rename (v5.0.0); the current toolchain
-> binary is `cycc` (will be `cyc` post-v6.0.0 per the
-> permanent-binary-name rule in CLAUDE.md).
+> `cybs` / `Stage1f` binary names from the early bootstrap
+> chain; the top compiler was renamed `cc3` → `cc5` (v5.0.0)
+> then `cc5` → `cycc` (v6.0.0). The current toolchain binary
+> is `cycc` — the permanent name per the binary-name rule in
+> CLAUDE.md.
 >
 > **For current process discipline**: [`CLAUDE.md`](../../CLAUDE.md)
 > "Doing tasks" / "P(-1)" / "Closeout Pass" sections +

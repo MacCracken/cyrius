@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~874 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 81 stdlib modules + 1 git dep (mabda; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 153 .tcyr + 1 soak + 1 smoke + 5 fuzz + 14 bench, 79 check.sh gates.
+~906 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 81 stdlib modules + 0 git deps (mabda folded into stdlib at 3.0.1; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 157 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 85 check.sh gates.
 
 ## Install
 
@@ -91,15 +91,15 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **874,280 B** (~874 KB) x86_64 at v6.0.3 |
-| Cross compilers | `cycc_aarch64` 564,456 B, `cycc_win` 686,632 B (cross-built) |
+| Compiler (`cycc`) | **906,528 B** (~906 KB) x86_64 at v6.0.62 |
+| Cross compilers | `cycc_aarch64` 581,920 B, `cycc_win` 775,680 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
-| Bootstrap compiler (`cybs`) | **12,344 B** |
-| LSP server (`cyrius-lsp`) | **94,440 B** |
-| Linker (`cyrld`) | **902,776 B** |
-| External dependencies | **0** at the compiler level (1 git dep at stdlib level: mabda) |
-| Tests | **153** .tcyr + **5** .fcyr fuzz + **14** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
-| Gates (`scripts/check.sh`) | **79** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, deps correct-lock at v6.0.2, str_from overload at v6.0.3) |
+| Bootstrap compiler (`cybs`) | **44,496 B** |
+| LSP server (`cyrius-lsp`) | **101,392 B** |
+| Linker (`cyrld`) | **902,184 B** |
+| External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded at 3.0.1) |
+| Tests | **157** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Gates (`scripts/check.sh`) | **85** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, deps correct-lock at v6.0.2, str_from overload at v6.0.3) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit, cyrius-x bytecode |
 | Stdlib modules | **81** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
@@ -126,8 +126,8 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 | Stage | Binary | Size |
 |-------|--------|------|
 | 1. Root of trust (committed) | `bootstrap/asm` | 29 KB |
-| 2. Bootstrap compiler | `cybs` | 12 KB |
-| 3. Full compiler | `cycc` | 874 KB |
+| 2. Bootstrap compiler | `cybs` | 44 KB |
+| 3. Full compiler | `cycc` | 906 KB |
 | 4. Linker | `cyrld` | 903 KB |
 
 ### Language surface
@@ -169,7 +169,7 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (79 modules + 1 git dep)
+## Standard Library (79 modules + 0 git deps)
 
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
@@ -179,10 +179,10 @@ vendor at the patched tag, removed from `[deps]`):
 - **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
 - **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; ~6,664 lines)
 
-Mabda (GPU integration; held at 2.5.0 GA pre-v3.0.0-rc soak) +
-its transitive `agnosys` stay live as the only `[deps.*]` git
-resolutions until v5.9.x's Class B FFI / wgpu fncall6 ABI work
-lands. v5.7.35 added `lib/random.cyr` (kernel entropy via
+Mabda (GPU integration) folded into stdlib at 3.0.1 (v6.0.x,
+sandhi-pattern), removed from `[deps]`; with mabda vendored its
+transitive `agnosys` is no longer pulled, leaving zero `[deps.*]`
+git resolutions. v5.7.35 added `lib/random.cyr` (kernel entropy via
 getrandom) and `lib/security.cyr` (Landlock policy enums) as new
 first-party modules. v5.8.49–.52 + .60 added the
 `lib/unicode/` family (categories / casefold / NFC / NFD / NFKC
@@ -214,7 +214,7 @@ slot redesign).
 | Security | **sigil** (folded v5.8.65) |
 | Hardware | **yukti** (folded v5.8.65) |
 | Compression | **sankoch** (folded v5.8.65) |
-| GPU (dep) | mabda (held — v3 pre-GA; agnosys transitive) |
+| GPU | **mabda** (folded v6.0.x at 3.0.1; opt-in `include "lib/mabda.cyr"`) |
 
 ## Compiler Architecture
 
@@ -246,9 +246,9 @@ src/
 
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
-  -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 874,280 B at v6.0.3)
-      -> cycc_aarch64, cycc_win_cross, cc5_macho_cross, cycc_cx (cross-compilers)
+  -> cybs (44,496 B compiler)
+    -> cycc (modular compiler + IR, 906,528 B at v6.0.62)
+      -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 
 > The chain shortened at v5.11.66 — `src/bridge.cyr` (2,005 LoC standalone
