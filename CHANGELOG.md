@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.54] — 2026-06-03
+
+**The last of the Windows arc — command-line argument support: a `GetCommandLineW` reroute +
+`lib/args_win.cyr` + a Windows `thread_local` (for sigil's crypto banks) + cycc's own Windows
+`--version`/`--strict` — fully unblocking ai-hwaccel's `win_amd64` wheel. Packed: the .23 aarch64
+PE-stub debt and a cycc_win `fn main()` rooting fix found on real Windows. sigil folded 3.6.0 → 3.6.4.**
+(Issue: 2026-06-03-windows-args-stdlib-gap.md.)
+
+### Added
+
+- **Windows `lib/args.cyr` branch (`lib/args_win.cyr`).** `args_init`/`argc`/`argv` on Windows — the
+  last undefined fns in ai-hwaccel's WIN stdlib closure. Windows has no `/proc/self/cmdline` (Linux)
+  and no entry-stack argv (macOS), so `args_init` calls `kernel32!GetCommandLineW` (one UTF-16LE
+  string) and tokenizes it into the SAME NUL-joined blob the Linux branch builds — so `argc`/`argv`
+  reuse the Linux logic verbatim. The tokenizer (`_args_tokenize_utf16`, kept target-agnostic and pure
+  in `lib/args.cyr`) is quote-aware (split on unquoted space/tab, strip `"`, keep empty `""` args) and
+  ASCII-down-converts; unit-tested on Linux (`tests/tcyr/args_win_tokenize.tcyr`, 8 cases). **Verified
+  on real cass:** `argc a b c` → 4, `--version` → 2, bare → 1.
+- **`GetCommandLineW` PE reroute (`syscall(0xF006)` → `EGETCMDLINE_PE`).** The 6th PE-internal kernel32
+  reroute (after .51's 0xF001-0xF005), a 0-arg leaf returning the cmdline `LPWSTR` in rax:
+  `_pe_ensure_getcmdline` import scaffold (`backend/pe/emit.cyr`), the `EGETCMDLINE_PE` emit fn
+  (`backend/x86/emit.cyr`), the dispatch + routed-syscall-warning byte-count bump 194 → 213
+  (`frontend/parse_expr.cyr`), and an aarch64 dead-stub. Drives both `args_win.cyr` and cycc's own
+  Windows `--version`.
+- **Windows `lib/thread_local.cyr` branch.** sigil 3.6.x's crypto-scratch banks call
+  `thread_local_init`/`get`/`set` on the hot path of every banked primitive, so a Windows
+  `thread_local` is required for sigil to cross-build for Windows. The existing arch-asm body — which
+  had NO OS guard, so under `CYRIUS_TARGET_WIN` it emitted `arch_prctl(158)`/`fs:[]` → SIGILL — is now
+  wrapped `#ifndef CYRIUS_TARGET_WIN`, with a WIN branch backed by a global 16-slot array. Correct
+  under the .53 serial `thread_win` model (one logical thread live at a time → thread-local ≡ global);
+  a load-bearing comment ties the upgrade-to-real-TLS to 2026-06-03-windows-threading-stdlib-gap.md.
+- **cycc's own Windows `--version` / `--strict`.** `src/main_win.cyr` had a Linux-only
+  `/proc/self/cmdline` flag parser whose comment queued a "GetCommandLineW-based replacement" since
+  v5.5.x; that's now wired through the 0xF006 reroute (a quote-aware UTF-16 token walk). **Verified on
+  cass:** `cycc_win --version` → `cycc_win 6.0.54`.
+- **cass `fn main(){return 42;}` exit-code regression gate** (`scripts/cross-os-selfhost.sh`) — the
+  Windows analog of the ecb leg's v6.0.37 guard. Catches the rot-class where the native cycc_win
+  stubs / never-calls `main` (which the byte-identity `fc /b` does NOT catch). `cmd /v` for correct
+  `!errorlevel!` (the `%errorlevel%` parse-time-expansion footgun).
+
+### Fixed
+
+- **cycc_win mis-compiled `fn main(){...}` programs to the wrong exit code — found on real Windows.**
+  The native PE compiler (`src/main_win.cyr`) lacked `src/main.cyr`'s v5.9.37 "exempt `main` from DCE"
+  + auto-call-main epilogue, so an explicit `fn main()` was DCE-stubbed to `xor eax,eax; ret` and never
+  called → the program exited without running its body (`fn main(){return 42}` exited `0x40001040`
+  instead of 42). Pre-existing (latent since ~.45 — the cross-OS gate only checked byte-identity, and
+  cross-builds via `main.cyr` are correct, so ai-hwaccel's `cyrius build --win` was unaffected). Both
+  halves ported to `main_win.cyr`; locked by the new cass exit-code gate.
+- **Closed the .23 aarch64 PE-stub gap.** `ECREATEDIR_PE` (mkdir/83) + `EDELETEF_PE` (unlink/87)
+  shipped x86-only at v5.11.22-23 and never got aarch64 stubs, firing "undefined function" warnings on
+  every aarch64 cross-build (FATAL under `--strict`). Stubbed in `backend/aarch64/emit.cyr` (now
+  symmetric with x86 at 15 `_PE` defs); the aarch64 cross-build is fully `--strict`-clean.
+- **args tokenizer edge cases** (from an adversarial review): an empty quoted arg `""` is preserved
+  (argc matches Linux/Windows `CommandLineToArgvW`); a non-ASCII wide char no longer injects a NUL that
+  splits an argument (maps to `?`); the driver `--version` walk terminates only on the full double-NUL
+  (not any zero low byte); the blob cap is 64 KB (≥ 2× the 32767-char Windows cmdline max, so a valid
+  command line never truncates).
+
+### Dependencies
+
+- **sigil 3.6.0 → 3.6.4** (vendored fold, byte-identical to `sigil/dist`). +26 public fns (the `bn_*`
+  constant-time bignum cluster + TLS 1.2 PRF), zero removals (api-surface 3830 → 3856). sigil 3.6.x's
+  `# Requires: lib/thread_local.cyr` is now satisfied on Windows by the WIN `thread_local` branch
+  above; sigil's README gained a mabda-style opt-in note (include `thread.cyr` + `thread_local.cyr`
+  before `sigil`).
+
 ## [6.0.53] — 2026-06-03
 
 **Windows threading (serial-fallback `thread_win.cyr`) + the per-file `#derive` cap raised 64 → 512

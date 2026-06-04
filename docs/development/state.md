@@ -3,6 +3,49 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.54 ship — Windows command-line args: GetCommandLineW + args_win.cyr + WIN thread_local + cycc_win main-rooting fix; LAST windows arc item)
+
+Closing **v6.0.54** — the last of the Windows arc (command-line argument support), fully unblocking
+ai-hwaccel's win_amd64 wheel. check.sh **85/85**; self-host byte-identical (896,288 B); **cross-OS
+self-host byte-identical on cass + ecb + pi (real hardware)**; real-cass runtime verified
+(`argc a b c`→4, thread_local slots 0/15/7→0, `cycc_win --version`→6.0.54, `fn main(){return 42}`→42).
+
+**Shipped (5 bites + sigil fold):**
+- **GetCommandLineW `0xF006` reroute** (EGETCMDLINE_PE x86-emit + `_pe_ensure_getcmdline` scaffold +
+  parse_expr dispatch + aarch64 stub) + **`lib/args_win.cyr`** — `args_init`/`argc`/`argv` via
+  GetCommandLineW; the shared pure `_args_tokenize_utf16` (UTF-16→NUL-joined blob, quote-aware, ASCII)
+  is unit-tested 22/22 on Linux, so argc/argv reuse the Linux logic verbatim. Last undefined fns in
+  ai-hwaccel's WIN closure.
+- **`lib/thread_local.cyr` WIN branch** — the arch-asm body had NO OS guard (→ `arch_prctl(158)`/`fs:[]`
+  → SIGILL on WIN); wrapped `#ifndef WIN` + a global 16-slot array (serial thread_win →
+  thread-local≡global; upgrade caveat tied to the windows-threading issue). Unblocks sigil 3.6.x's
+  crypto-bank on Windows.
+- **cycc's own Windows `--version`/`--strict`** (main_win.cyr GetCommandLineW token walk — the
+  v5.5.x-queued replacement).
+- **PACKED: the .23 aarch64 PE-stub debt** (ECREATEDIR_PE/EDELETEF_PE — aarch64 cross now fully
+  `--strict`-clean, symmetric with x86 at 15 `_PE` defs) **+ the cycc_win main-rooting fix** — FOUND on
+  real cass: native cycc_win lacked main.cyr's v5.9.37 exempt-`main`-from-DCE + auto-call-main, so
+  `fn main(){...}` programs were DCE-stubbed (`xor eax,eax;ret`) → wrong exit (`0x40001040`, not 42).
+  Ported both to main_win.cyr + added a **cass `fn main(){return 42}` exit-code regression gate** to
+  cross-os-selfhost.sh (the byte-identity `fc /b` never caught it). Pre-existing (~.45); ai-hwaccel
+  unaffected (its wheel cross-builds via main.cyr, which is correct).
+- **sigil 3.6.0 → 3.6.4 fold** (byte-identical to sigil/dist; +26 public `bn_*` constant-time bignum +
+  TLS 1.2 PRF fns, **0 removals**; api-surface 3830 → 3856). sigil's `# Requires: lib/thread_local.cyr`
+  now satisfied on WIN; sigil README got a mabda-style opt-in note.
+
+**Verification depth:** an adversarial review (20 agents — 5 dimensions + a refute pass) returned "safe
+to ship" and surfaced 4 P2 + 2 P3, all folded (empty-quoted-arg preserved, non-ASCII NUL-injection
+guard, driver `--version` walk double-NUL termination, blob cap 32768→65536, two comment fixes). It
+also corrected a mental-model error now pinned: a **GLOBAL `var x[N]` reserves N i64 slots (N*8 bytes)
+— the byte-sizing gotcha is LOCAL-only** ([[feedback_var_array_byte_sized]]). **Gate hardening:**
+`cross-os-selfhost.sh` SSHO now sets `RemoteCommand=none`/`RequestTTY=no` (robust against a host's
+`~/.ssh/config` RemoteCommand directive — ecb's test setup had broken the gate with exit 255).
+
+**ai-hwaccel:** pin bump + its Windows patch work = USER-handled in parallel (the cyrius side is ready).
+
+**Next = v6.0.55 (the agnos CYRIUS_TARGET_AGNOS stdlib args+io gap)** per the slate; then .56 *at+fsync,
+.57 cc5-18-arg + QoL, .58 TS→JS, **TLS resumes at .59** ([[project_native_tls_arc_v6_2_x]]).
+
 ## Session close — 2026-06-03 (.53 ship — Windows threading (serial) + #derive cap 64→512, PACKED)
 
 Closing **v6.0.53** — two packed items (user "pack windows thread and cap together as .53").

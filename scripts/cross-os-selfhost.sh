@@ -62,7 +62,12 @@ done
 # Connect to the pinned IP but verify the host key under the configured
 # hostname (known_hosts is keyed by $HN, not the IP) — without HostKeyAlias
 # the IP-pin fails BatchMode with "Host key verification failed".
-SSHO="-o ConnectTimeout=20 -o BatchMode=yes -o HostName=$IP -o HostKeyAlias=$HN"
+# RemoteCommand=none + RequestTTY=no override any per-host `RemoteCommand`/
+# `RequestTTY force` directive in ~/.ssh/config (e.g. an ecb test setup that
+# cd's into a working dir + execs a login shell) — those conflict with the
+# gate passing its own command and fail with "Cannot execute command-line
+# and remote command" (exit 255). The gate cd's to its own _cyaud dir anyway.
+SSHO="-o ConnectTimeout=20 -o BatchMode=yes -o HostName=$IP -o HostKeyAlias=$HN -o RemoteCommand=none -o RequestTTY=no"
 
 # Linux-side seed + source bundle (shared by the self-host cases; harmless for
 # ecb-install, which builds its own tarball). Built from clean source so what
