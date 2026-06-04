@@ -1,5 +1,13 @@
 # 2026-06-02 — macOS: directory-listing surface (`getdents64`) unported to Darwin
 
+> **RESOLVED v6.0.60 (arm64, verified on ecb).** Ported: both Mach-O backends translate getdents64
+> 217 → getdirentries64 (344); `lib/fs.cyr` dir_list/is_dir pass the 4th `basep` out-param (Linux
+> ignores it — the prior EFAULT WAS the missing basep) and parse the Darwin dirent (d_type@20,
+> name@21; reclen@16 same), dumped empirically on ecb. is_dir's 32-byte buffer was too small for
+> Darwin getdirentries64 → bumped to 4096. Verified on ecb: dir_list enumerates correctly,
+> is_dir(dir)=1 / is_dir(file)=0; `lib sync` / `cyrius update` / dir-walks unblocked on macOS. x86
+> EMACHO entry added for parity (unverified — x86 held, Intel EOL).
+
 **Discovered:** 2026-06-02 while pinning the arm64-macOS `[deps] stdlib`
 SIGSYS ([`2026-06-02-macos-arm64-deps-stdlib-pin-check.md`](./2026-06-02-macos-arm64-deps-stdlib-pin-check.md)).
 **Severity:** Medium — **no consumer currently blocked**. Affects only

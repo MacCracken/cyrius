@@ -293,6 +293,16 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
 $(find -L lib -type f -name '*.cyr')
 EOF_LIB
 
+    # v6.0.60: cyrius-init scaffolding templates → versions/<v>/programs/ so the
+    # cyrius-init binary (F_GETPATH-resolved <root>/programs/cyrius-init-templates)
+    # finds them on installs (finishes the v5.9.29 install template path; was
+    # dev-mode/repo-only, so installs fell through to the bash shim).
+    if [ -d programs/cyrius-init-templates ]; then
+        mkdir -p "$CYRIUS_HOME/versions/$VERSION/programs"
+        rm -rf "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates"
+        cp -r programs/cyrius-init-templates "$CYRIUS_HOME/versions/$VERSION/programs/"
+    fi
+
     echo "$VERSION" > "$CYRIUS_HOME/current"
     echo "$VERSION" > "$CYRIUS_HOME/versions/$VERSION/VERSION"
 
@@ -409,6 +419,15 @@ if [ "$_got_tarball" -eq 1 ]; then
     if [ -d "$EXTRACTED/lib" ]; then
         cp -r "$EXTRACTED/lib" "$CYRIUS_HOME/versions/$VERSION/"
         info "standard library installed"
+    fi
+
+    # v6.0.60: cyrius-init scaffolding templates → versions/<v>/programs/ so the
+    # cyrius-init binary finds them via its F_GETPATH-resolved root.
+    if [ -d "$EXTRACTED/programs/cyrius-init-templates" ]; then
+        mkdir -p "$CYRIUS_HOME/versions/$VERSION/programs"
+        rm -rf "$CYRIUS_HOME/versions/$VERSION/programs/cyrius-init-templates"
+        cp -r "$EXTRACTED/programs/cyrius-init-templates" "$CYRIUS_HOME/versions/$VERSION/programs/"
+        info "cyrius-init templates installed"
     fi
 
     installed=1

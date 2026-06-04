@@ -64,6 +64,10 @@ done
 sh scripts/release-lib.sh "$WORK/$STAGE/lib" >/dev/null
 cp lib/syscalls_macos.cyr lib/alloc_macos.cyr "$WORK/$STAGE/lib/"
 cp VERSION LICENSE "$WORK/$STAGE/"
+# v6.0.60: cyrius-init scaffolding templates (see arm64 builder). Resolved at
+# <install-root>/programs/cyrius-init-templates by the cyrius-init binary.
+mkdir -p "$WORK/$STAGE/programs"
+cp -r programs/cyrius-init-templates "$WORK/$STAGE/programs/"
 [ -f scripts/macos-x86-README.md ] && cp scripts/macos-x86-README.md "$WORK/$STAGE/README.md"
 
 mkdir -p "$OUT_DIR"

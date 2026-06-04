@@ -47,8 +47,30 @@ include "lib/syscalls.cyr"
 # to copy the template tree.
 fn _resolve_templates_dir(argv0): i64 {
     var buf = alloc(4096);
-    # Try readlink /proc/self/exe.
-    var n = sys_readlink("/proc/self/exe", buf, 4095);
+    var n = 0;
+    #ifdef CYRIUS_TARGET_MACOS
+    # macОS has no /proc/self/exe, and argv0 is the UNRESOLVED `~/.cyrius/bin`
+    # symlink path (→ root `~/.cyrius`, where templates/VERSION do NOT live —
+    # they're in versions/<v>/). Resolve the REAL binary path through the
+    # symlink via open(argv0) + fcntl(F_GETPATH) — the same Darwin trick the
+    # v6.0.41 cwd fix uses (no getcwd on Darwin). That yields
+    # ~/.cyrius/versions/<v>/bin/cyrius-init → root versions/<v>, where the
+    # bundled templates + VERSION live. v6.0.60.
+    var afd = sys_open(argv0, 0, 0);
+    if (afd >= 0) {
+        var gr = syscall(72, afd, 50, buf);   # fcntl(fd, F_GETPATH=50, buf)
+        sys_close(afd);
+        if (gr >= 0) { n = strlen(buf); }
+    }
+    if (n <= 0) {
+        var l0 = strlen(argv0);
+        if (l0 >= 4095) { l0 = 4095; }
+        memcpy(buf, argv0, l0);
+        n = l0;
+    }
+    #else
+    # Linux: /proc/self/exe is the resolved binary path (symlinks followed).
+    n = sys_readlink("/proc/self/exe", buf, 4095);
     if (n <= 0) {
         # Fall back to argv0 — best effort.
         var l = strlen(argv0);
@@ -56,6 +78,7 @@ fn _resolve_templates_dir(argv0): i64 {
         memcpy(buf, argv0, l);
         n = l;
     }
+    #endif
     store8(buf + n, 0);
     # Walk back to last `/` to get the bin's directory.
     var i = n - 1;

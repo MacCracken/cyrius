@@ -64,6 +64,12 @@ done
 sh scripts/release-lib.sh "$WORK/$STAGE/lib" >/dev/null
 cp lib/syscalls_macos.cyr lib/alloc_macos.cyr "$WORK/$STAGE/lib/"
 cp VERSION LICENSE "$WORK/$STAGE/"
+# v6.0.60: cyrius-init scaffolding templates. The cyrius-init binary resolves
+# them at <install-root>/programs/cyrius-init-templates (via F_GETPATH of its
+# own path); install.sh lands them in versions/<v>/programs/. Without these the
+# binary fell through to the bash shim ("VERSION lookup failed").
+mkdir -p "$WORK/$STAGE/programs"
+cp -r programs/cyrius-init-templates "$WORK/$STAGE/programs/"
 [ -f scripts/macos-arm64-README.md ] && cp scripts/macos-arm64-README.md "$WORK/$STAGE/README.md"
 
 mkdir -p "$OUT_DIR"

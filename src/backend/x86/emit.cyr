@@ -781,6 +781,9 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 54, 0x2000069);   # setsockopt 54 → 105
     _msx(S, 55, 0x2000076);   # getsockopt 55 → 118
     _msx(S, 7,  0x20000E6);   # poll        7 → 230
+    # v6.0.60: dir enumeration — getdents64 217 → getdirentries64 344 (0x158).
+    # fs.cyr passes the 4th basep out-param (Linux ignores it). Parity w/ arm64.
+    _msx(S, 217, 0x2000158);  # getdents64 217 → getdirentries64 344
     return 0;
 }
 

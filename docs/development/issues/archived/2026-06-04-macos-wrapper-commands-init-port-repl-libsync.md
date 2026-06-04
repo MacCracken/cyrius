@@ -1,5 +1,18 @@
 # 2026-06-04 — macOS: `cyrius init` / `port` / `repl` / `lib sync` broken on a fresh install
 
+> **RESOLVED across v6.0.58 + v6.0.60 (arm64, verified on ecb).**
+> - `port` / `repl` (.58): the macOS tarballs now bundle the cyrius-init binary + the
+>   cyrius-{init,port,repl}.sh shims — "script not found" gone.
+> - `init` (.60): finished the dev-mode-only v5.9.29 install template path — cyrius-init resolves its
+>   real binary path on macOS via open(argv0)+fcntl(F_GETPATH), the macOS tarballs bundle
+>   `programs/cyrius-init-templates/`, install.sh lands them at `versions/<v>/programs/`. `cyrius init
+>   <name>` scaffolds a full project via the BINARY (verified on ecb). Advanced flags still cascade to
+>   the bash shim, unchanged.
+> - `lib sync` (.60): it's the getdirentries gap — fixed by the dir-listing port
+>   (2026-06-02-macos-getdirentries-dir-listing-port.md, also .60).
+> The remaining x86-macho tools/wrapper argv item is tracked in
+> 2026-06-02-macos-x86-release-no-compiler.md (held — Apple Intel EOL).
+
 **Filed:** 2026-06-04 (found-by-ports: user installed on ecb (real Apple Silicon)
 and hit these immediately after a clean install)
 **Affected:** the macOS tarballs (`scripts/build-macos-arm64-tarball.sh` +

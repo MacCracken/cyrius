@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.60] — 2026-06-04
+
+**macOS dir-listing + scaffolding: `getdirentries` port (fixes `lib sync` / `update` / any dir-walk)
++ `cyrius init` now scaffolds via the sovereign binary on installs.** Two items from the pinned macOS
+hardening slate; both verified on ecb (arm64). Mach-O-gated; Linux 85/85 + self-host byte-identical.
+
+### Fixed
+
+- **`lib/fs.cyr` directory enumeration ported to Darwin getdirentries64.** dir_list/is_dir used Linux
+  getdents64 (217) + the Linux dirent layout, which Darwin has no equivalent for → dir_list returned
+  empty, is_dir false (degraded; broke `cyrius lib sync` / `cyrius update` / any dir-walk on macOS).
+  (Issue: 2026-06-02-macos-getdirentries-dir-listing-port.md.)
+  - Both Mach-O backends translate getdents64 217 → getdirentries64 (344). fs.cyr passes the 4th
+    `basep` out-param (Linux getdents64 ignores it — portable). The EFAULT prior raw probes hit was
+    the missing basep.
+  - Darwin `dirent` layout (confirmed empirically on ecb, not SDK headers): d_ino@0, d_seekoff@8,
+    d_reclen@16, d_namlen@18, d_type@20, d_name@21 — vs Linux: d_type@20 (was 18), name@21 (was 19);
+    reclen@16 is the same.
+  - is_dir's 32-byte buffer was too small for Darwin getdirentries64 (it misreported dirs as non-dirs)
+    → bumped to 4096. Verified on ecb: dir_list enumerates; is_dir(dir)=1 / is_dir(file)=0.
+- **`cyrius init` scaffolds via the cyrius-init BINARY on installs (macOS), not the bash shim.** The
+  binary's template resolution had been dev-mode/repo-only since v5.9.28/29 — on installs it couldn't
+  find templates ("VERSION lookup failed → falling through to bash"), and on macOS the bash fallback
+  failed too. (Issue: 2026-06-04-macos-wrapper-commands-init-port-repl-libsync.md.) Finished the
+  long-stalled v5.9.29 install path:
+  - cyrius-init resolves its REAL binary path on macOS via `open(argv0)+fcntl(F_GETPATH)` — argv0 is
+    the unresolved `~/.cyrius/bin` symlink (→ root `~/.cyrius`, no templates there); F_GETPATH yields
+    `versions/<v>/bin/cyrius-init` → the versioned root where templates + VERSION live. (Linux keeps
+    `/proc/self/exe`.) Same Darwin trick as the v6.0.41 cwd fix.
+  - The macOS tarballs now bundle `programs/cyrius-init-templates/`, and install.sh (tarball +
+    refresh-only paths) lands them at `versions/<v>/programs/cyrius-init-templates`.
+  - Verified on ecb: `cyrius init <name>` scaffolds a full project (cyrius.cyml + src/main.cyr + docs/
+    tests/CHANGELOG/LICENSE) via the program. (Advanced flags — --lib/--language/--agent/--dry-run —
+    still cascade to the bash shim, unchanged.)
+
+x86-macho parity (the EMACHO getdents64 entry + the cyrius-init F_GETPATH path) is in but unverified —
+x86 Mach-O is held (Apple Intel EOL); arm64 is the verified target.
+
 ## [6.0.59] — 2026-06-04
 
 **macOS networking: `lib/net.cyr` ported to Darwin (BSD socket ABI) — unblocks yantra (CDP/WebDriver/

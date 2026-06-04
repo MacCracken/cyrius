@@ -3,6 +3,33 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-04 (.60 ship — macOS getdirentries port + cyrius init sovereign-binary scaffolding)
+
+Closing **v6.0.60** — second of the pinned macOS hardening slate. check.sh **85/85**; self-host
+byte-identical (897,960 B); **cross-OS `SELFHOST_OK` on ALL FOUR** (ecb + ach + pi + cass).
+
+**Fixed:**
+- **`lib/fs.cyr` dir enumeration → Darwin getdirentries64.** getdents64 (217) → getdirentries64 (344)
+  in both Mach-O backends (ESYSXLAT arm64 + EMACHO x86); fs.cyr passes the 4th `basep` out-param
+  (Linux ignores it — the prior EFAULT was the missing basep). Darwin dirent layout dumped
+  empirically on ecb: d_type@20 / name@21 (vs Linux 18/19), reclen@16 same. is_dir buffer 32→4096
+  (32 too small for Darwin getdirentries64 → misreported dirs as non-dirs). Fixes `lib sync` /
+  `cyrius update` / any dir-walk on macOS. Verified on ecb (dir_list enumerates, is_dir dir=1/file=0).
+- **`cyrius init` scaffolds via the BINARY on installs** (finished the dev-mode-only v5.9.29 path).
+  cyrius-init resolves its real path on macOS via `open(argv0)+fcntl(F_GETPATH)` (argv0 = unresolved
+  `~/.cyrius/bin` symlink → root `~/.cyrius` w/o templates; F_GETPATH → `versions/<v>/bin` → versioned
+  root w/ templates+VERSION). macOS tarballs bundle `programs/cyrius-init-templates/`; install.sh
+  (tarball + refresh-only) lands them at `versions/<v>/programs/`. Verified on ecb: `cyrius init
+  <name>` scaffolds a full project (cyrius.cyml + src/main.cyr + docs/tests/...) via the program.
+
+x86-macho parity in (getdents64 EMACHO + cyrius-init F_GETPATH) but unverified — x86 held (Intel EOL).
+Issues archived: getdirentries; wrapper-commands (init/port/repl/lib-sync all resolved; the x86 argv
+item → the x86-release issue, held).
+
+**Next (slate [[project_macos_windows_platform_hardening_first]]):** .61 = Windows nuances (threading
+→ thread_local TLS → CommandLineToArgvW → COM/DXGI). Then the macOS cluster is essentially clear
+(x86-macho argv reserved-reg remains, held).
+
 ## Session close — 2026-06-04 (.59 ship — lib/net.cyr Darwin socket port: unblocks yantra + sandhi HTTP on Apple Silicon)
 
 Closing **v6.0.59** — first of the pinned macOS hardening slate. check.sh **85/85**; self-host
