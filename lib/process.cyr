@@ -22,7 +22,16 @@
 include "lib/process_win.cyr"
 #endif
 
+# v6.0.56: agnos has no fork/exec/dup2 either — it spawns an in-memory ELF via
+# sys_spawn + sys_waitpid. The agnos process surface lives in process_agnos.cyr;
+# the POSIX block below is excluded on agnos too (nested #ifndef AGNOS). See
+# docs/development/issues/2026-06-03-agnos-followup-after-boot.md.
+#ifdef CYRIUS_TARGET_AGNOS
+include "lib/process_agnos.cyr"
+#endif
+
 #ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 
 # Build argv array and execve. Called in child after fork. Does not return.
 # argv[40] = 5 × 8 B (cmd + up to 2 args + NUL + 1 slot headroom); envp[16] =
@@ -414,4 +423,5 @@ fn exec_cmd(cmdline): i64 {
     return exec_vec(args);
 }
 
+#endif
 #endif

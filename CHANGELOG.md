@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.56] — 2026-06-03
+
+**The rest of the agnos follow-up, so agnosticos stops hitting cyrius walls release-after-release:**
+the agnos process `exec` arc (sys_spawn-based, unblocking agnsh's `run`), the `W*` wait macros, a
+chrono fixed-epoch fallback, and `syscall(60)` exit normalization — everything carved out of v6.0.55,
+done. (Issue: 2026-06-03-agnos-followup-after-boot.md.)
+
+### Added
+
+- **agnos process `exec` (`lib/process_agnos.cyr`).** agnos has no fork/exec/dup2 in the frozen 0-33
+  syscall surface — it spawns an in-memory ELF: `sys_spawn(elf_addr, elf_size)` → pid, then
+  `sys_waitpid(pid)` → exit_code DIRECTLY. So "run the program at PATH" = read the ELF into memory,
+  `sys_spawn`, wait. The full public process surface (`run` / `run_capture` / `spawn` / `wait_pid` /
+  `exec_vec` / `exec_capture` / `exec_env` + the `_str` family + `exec_cmd` / `getpid` / `getppid`)
+  is implemented over that model, mirroring the `lib/process_win.cyr` (.51) pattern. process.cyr now
+  dispatches to it under `#ifdef CYRIUS_TARGET_AGNOS` and excludes the POSIX fork/exec block on agnos
+  (nested `#ifndef`). **Two agnos ABI limits documented (frozen 0-33, flag-back, not cyrius gaps):**
+  `sys_spawn` takes no argv/envp (args aren't passed to the spawned program), and `sys_dup` is a stub
+  (the capture variants run the program with output to the terminal + report 0 captured bytes).
+- **agnos `W*` wait-status macros** (`lib/syscalls_x86_64_agnos.cyr`) — `WIFEXITED`/`WEXITSTATUS`/
+  `WIFSIGNALED`/`WTERMSIG`. Trivial on agnos: `sys_waitpid` returns the exit code directly (not a
+  Linux wait-status word), so `WEXITSTATUS` is the code itself, `WIFEXITED` is always 1.
+
+### Fixed
+
+- **`lib/chrono.cyr` on agnos.** `clock_now_ns` / `clock_epoch_secs` / `clock_epoch_ns` used raw
+  `syscall(228)` (clock_gettime) and `sleep_ms` used `syscall(35)` (nanosleep) — both outside agnos's
+  0-33 range (invalid syscalls → bogus values). Added `CYRIUS_TARGET_AGNOS` branches: a fixed-zero
+  epoch for the clocks, a no-op for sleep — deterministic instead of garbage. agnos has no
+  wall-clock/sleep syscall in the frozen surface.
+- **Raw `syscall(60)` (Linux `exit_group`) aborts on agnos error paths** in `lib/vec.cyr`,
+  `lib/hashmap.cyr`, `lib/tagged.cyr`. agnos exit is `syscall(0)`, so `syscall(60)` was an invalid
+  syscall (a no-op that let a fatal error path keep running with corrupt state). Each file's
+  out-of-bounds / OOM / `unwrap`-on-None abort now goes through a tiny target-aware `_die()` (agnos
+  `syscall(0,1)` / else `syscall(60,1)`), kept raw so these collection modules stay
+  `syscalls.cyr`-free. Behavior-identical on every non-agnos target.
+
+### Dependencies
+
+- **sandhi 1.3.4 → 1.4.1** (vendored fold, byte-identical to `sandhi/dist`; non-breaking, 0 removals).
+
+### Notes
+
+- agnos `sys_spawn` argv-passing + a real stdout-redirect (capture) are agnos kernel-ABI additions, not
+  cyrius gaps — tracked in 2026-06-03-agnos-followup-after-boot.md. Windows follow-up nuances (real
+  threads, thread_local TLS, full CommandLineToArgvW, COM/DXGI GPU-enum) now tracked in
+  2026-06-03-windows-followup-nuances.md.
+
 ## [6.0.55] — 2026-06-03
 
 **agnos boot-to-prompt: the `CYRIUS_TARGET_AGNOS` stdlib args + io gap closed.** `agnsh` built with

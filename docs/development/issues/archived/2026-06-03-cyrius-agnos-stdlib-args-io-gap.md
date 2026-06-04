@@ -1,7 +1,11 @@
 # cyrius `CYRIUS_TARGET_AGNOS` stdlib gap — args + io (blocks agnsh-on-agnos boot)
 
-> **Status**: OPEN — **slotted v6.0.53** (user "after .52", 2026-06-03). cyrius-side fix; the
+> **Status**: RESOLVED v6.0.55 (args + io + chmod shipped; CHANGELOG [6.0.55]). cyrius-side fix; the
 > agnos kernel side is confirmed correct + complete (no agnos edit — that repo is READ-ONLY).
+> **Carve-outs moved to their own tracked home**: 2026-06-03-agnos-followup-after-boot.md (the agnos
+> `exec` arc, chrono, sys_stat sudo-path, raw syscall(60)). The on-hardware boot smoke (agnoshi
+> `cyrius update` + OVMF/ext2) is the remaining consumer step. The carve-out/decisions sections below
+> are kept for the historical record.
 > **Origin**: filed agnos-side at `agnos/docs/development/issue/2026-06-03-cyrius-agnos-stdlib-args-io-gap.md`
 > (agnos 1.41.4 shell-separation). This is the cyrius-side tracking copy + the v6.0.51 scoping survey.
 > **Repro toolchain**: cyrius 6.0.51, agnoshi 1.3.4, agnos 1.41.3+, OVMF + NVMe ext2.

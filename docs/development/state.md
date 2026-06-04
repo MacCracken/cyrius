@@ -3,6 +3,43 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.56 ship — the REST of the agnos follow-up: exec arc + W* + chrono + syscall(60); + deferred-work tracking)
+
+Closing **v6.0.56** — everything carved out of .55, done in one slot (user: stop hitting agnos walls
+release-after-release; "don't hide the deferred"). check.sh **85/85**; self-host byte-identical
+(896,592 B); **cross-OS cass + ecb + pi `SELFHOST_OK`**. All lib-only except version_str → cycc
+unchanged-behavior.
+
+**Shipped:**
+- **agnos process `exec` (`lib/process_agnos.cyr`)** — agnos has no fork/exec/dup2; spawns an in-memory
+  ELF: read ELF → `sys_spawn(elf,size)` → `sys_waitpid`→exit_code DIRECTLY. Full process surface (run/
+  run_capture/spawn/wait_pid/exec_vec/exec_capture/exec_env + _str family + exec_cmd/getpid/getppid)
+  over that model; process.cyr dispatches under `#ifdef AGNOS` + excludes the POSIX block (nested
+  `#ifndef`). Unblocks agnsh's `run`. **2 agnos ABI limits (flag-back, not cyrius gaps):** sys_spawn
+  takes no argv (args not passed), sys_dup is a stub (no capture redirect → output to terminal).
+- **agnos `W*` wait macros** (peer) — trivial (waitpid returns the code directly).
+- **chrono agnos branches** — fixed-zero epoch (228/35 are out of 0-33) + no-op sleep.
+- **`syscall(60)` normalization** — vec/hashmap/tagged abort paths used Linux exit_group (invalid on
+  agnos → no-op that lets a fatal path keep running); now a per-file target-aware `_die()` (agnos
+  syscall(0,1)). Kept raw (these stay syscalls.cyr-free). Behavior-identical off agnos.
+- **sandhi 1.3.4 → 1.4.1** fold (byte-identical; non-breaking). api-surface +25 → 3885 (process_agnos
+  exec surface + W* + sandhi), 0 removals.
+
+**Process correction this slot (user, justified annoyance):** I'd been carving out work into report
+prose ("separate arc / future work") without a tracked home — "agnos follow up work went where?" Fixed:
+the agnos remainder → **2026-06-03-agnos-followup-after-boot.md** (sys_spawn argv + stdout-redirect =
+agnos kernel-ABI additions), the resolved args+io issue archived. Same for Windows →
+**2026-06-03-windows-followup-nuances.md** (real threads, thread_local TLS, full CommandLineToArgvW,
+and the user's flagged COM/DXGI GPU-enum wrinkle = 2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md,
+AFTER the heavier items); resolved windows-args issue archived. Pinned
+[[feedback_file_deferred_work_dont_hide_in_prose]].
+
+**The on-hardware proof (consumer step):** agnsh `run`-on-agnos via agnoshi `cyrius update` + OVMF/ext2.
+cyrius side ready.
+
+**Next** per slate: .57 cc5-18-arg + QoL, .58 TS→JS, **TLS resumes .59** — OR user re-pivots (agnos
+arc may continue if more walls surface). [[project_native_tls_arc_v6_2_x]].
+
 ## Session close — 2026-06-03 (.55 ship — agnos boot-to-prompt: CYRIUS_TARGET_AGNOS stdlib args + io gap closed)
 
 Closing **v6.0.55** — the cyrius side of the agnos boot-to-prompt milestone. `agnsh` built with

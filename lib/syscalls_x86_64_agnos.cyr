@@ -145,6 +145,19 @@ fn sys_spawn(elf_addr, elf_size): i64 { return syscall(SYS_SPAWN, elf_addr, elf_
 # status word / options → no WEXITSTATUS indirection needed), or -1.
 fn sys_waitpid(pid): i64 { return syscall(SYS_WAITPID, pid); }
 
+# v6.0.56: wait-status decoders. agnos sys_waitpid returns the child's exit
+# code DIRECTLY (not a Linux wait-status word with packed signal/exit bits),
+# so these are trivial — the agnos peer parallels syscalls_linux_common.cyr's
+# W* but for the agnos model. Used by process_agnos.cyr + agnsh.
+# True iff the child exited normally — always 1 on agnos (waitpid returns a code).
+fn WIFEXITED(status): i64 { return 1; }
+# The child's exit code — on agnos sys_waitpid already returns it directly.
+fn WEXITSTATUS(status): i64 { return status; }
+# True iff the child was killed by a signal — always 0 on agnos (no signal status).
+fn WIFSIGNALED(status): i64 { return 0; }
+# The terminating signal — always 0 on agnos (signals aren't encoded in the status).
+fn WTERMSIG(status): i64 { return 0; }
+
 # Send signal `sig` to process `pid` (pid 0 protected; self/child only).
 fn sys_kill(pid, sig): i64 { return syscall(SYS_KILL, pid, sig); }
 
