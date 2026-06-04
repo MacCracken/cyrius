@@ -190,11 +190,20 @@ fn load_environ(): i64 {
 # args_macos._macho_argv_base) into buf as NUL-separated NAME=VALUE so
 # find_tools' scan works unchanged. Returns total bytes written. v6.0.34.
 fn _macho_fill_environ(buf, cap): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    # arm64: argv is a char** parked at [x28+8]; envp follows argv+NULL.
     var base = _macho_argv_base();
     if (base == 0) { return 0; }
     var m_argc = load64(base);
     var m_argvp = load64(base + 8);
     var envp = m_argvp + (m_argc + 1) * 8;
+    #else
+    # x86: the LC_UNIXTHREAD init stack is inline — [rsp]=argc, argv[i] at
+    # rsp+8+i*8, then a NULL, then envp. So envp = init_rsp + 8 + (argc+1)*8.
+    if (_macho_init_rsp == 0) { return 0; }
+    var m_argc = load64(_macho_init_rsp);
+    var envp = _macho_init_rsp + 8 + (m_argc + 1) * 8;
+    #endif
     var pos = 0;
     var i = 0;
     var e = load64(envp);
@@ -213,11 +222,15 @@ fn _macho_fill_environ(buf, cap): i64 {
 #endif
 
 fn find_tools(): i64 {
-    # v6.0.34: the Mach-O wrapper is always Apple Silicon (arm64) — default
-    # to aarch64 so current_cc() picks cycc_aarch64 (the native macho cycc),
-    # not the x86 cycc. (Linux-aarch64 is untouched; this is macho-only.)
+    # v6.0.34/6.0.58: on arm64-macОS default to aarch64 so current_cc() picks
+    # cycc_aarch64 (the native macho cycc); on x86-macОS keep the X86 default
+    # (_arch=0) so it picks the x86 `cycc`. Guard on CYRIUS_ARCH_AARCH64 (NOT
+    # CYRIUS_ARCH_X86 — the x86 cross-compiler predefines X86 even when building
+    # the arm64 wrapper; see args_macos.cyr [6.0.42]). Linux-aarch64 untouched.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_AARCH64
     _arch = ARCH_AARCH64;
+    #endif
     #endif
     # Read environment to find HOME and CYRIUS_HOME
     var env_buf = alloc(32768);

@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.58] — 2026-06-04
+
+**macOS fixes and repairs: x86-macho compiler self-host completion (stdlib peer + fork/pipe ABI),
+macOS wrapper-command packaging (init/port/repl), wrapper env/arch fixes, and the x86-macho
+argv-capture foundation.** Several Darwin-surface gaps surfaced by on-hardware use (ecb arm64 /
+ach Intel) are fixed; the deeper ones are tracked as issues. Every change is Mach-O-gated — Linux
+stays 85/85 + self-host byte-identical.
+
+### Fixed
+
+- **x86-macho stdlib syscall peer (`lib/syscalls_macos.cyr`) completed.** It was numbers-only (no
+  `sys_*` wrappers), so the cross-built tools/wrapper compiled to `ud2` stubs. Rewritten as a real
+  peer: Linux syscall numbers (EMACHO_SYSXLAT translates them) + `include
+  syscalls_linux_common.cyr` for the shared wrappers + the x86-direct peer wrappers
+  (open/stat/dup2/mkdir/unlink/chmod/fork/pipe) + Darwin `O_*` / mmap / signal / **stat offsets**
+  (st_size @ 72, empirically confirmed on ach). cycc + file-I/O + stat + heap alloc verified
+  working on real Intel hardware (ach). (Issue: 2026-06-02-macos-x86-release-no-compiler.md.)
+- **macOS `fork` / `pipe` multi-return ABI fixup (x86).** `EMACHO_SYSXLAT` now also translates
+  fork 57→2, dup2 33→90, pipe 22→42; a new post-syscall `EMACHO_PROC_FIXUP` applies the Darwin
+  rax:rdx fixups (fork: child rax←0 when rdx==1; pipe: fd0:fd1 → `*fds`) — the x86 analog of the
+  aarch64 .34 x1-fixup, completing cross-arch parity. fork/dup2/execve/wait4 verified on ach
+  (child runs + writes its marker, parent reaps `WEXITSTATUS`=7).
+- **macOS `cyrius port` / `repl` failed "script not found" on a clean install.** The macOS tarballs
+  never bundled the `cyrius-init` binary or the `cyrius-{init,port,repl}.sh` shims; both tarball
+  builders now ship them (binary added to the cross-emit + Mach-O validation loops). `port`/`repl`
+  resolve — verified on ecb. (Issue: 2026-06-04-macos-wrapper-commands-init-port-repl-libsync.md.)
+- **macOS wrapper env + arch discovery (`cbt/core.cyr`).** `find_tools` hard-forced `_arch =
+  ARCH_AARCH64` on every macOS target, so x86-macho picked the absent `cycc_aarch64`; now gated on
+  `CYRIUS_ARCH_AARCH64` so x86 keeps `cycc`. `_macho_fill_environ` read envp via the arm64 x28
+  base (returns 0 on x86) → no `CYRIUS_HOME`; now derives envp from the x86 init stack.
+
+### Added
+
+- **`scripts/build-macos-x86-tarball.sh`** — the x86_64 macOS release tarball builder (the single
+  source of truth; mirror of the arm64 one). The x86 Mach-O cycc has self-hosted since .43–.45;
+  this packages it (cycc + cyrius + cyrfmt/cyrlint/cyrdoc + cyrius-init + shims + lib).
+- **x86-macho argv/env capture foundation (`lib/args_macos.cyr`).** `_macho_capture_args` records
+  the LC_UNIXTHREAD init-stack pointer; argc()/argv() read the inline argv (the agnos/Linux shape —
+  x86 Mach-O delivers args on the stack, not in registers). Works for simple programs; the full
+  tools/wrapper argv (where `var r = main()` runs main inside `EMIT_GVAR_INITS`, before any capture
+  point) needs a reserved register (mirror of arm64 x28) and is tracked.
+
+### Known / tracked (macOS Darwin-surface gaps — filed, not yet fixed)
+
+- `cyrius init` scaffolding: `cyrius-init` uses `/proc/self/exe` (no `/proc` on macOS), templates
+  not bundled, bash fallback needs VERSION (2026-06-04-macos-wrapper-commands).
+- `cyrius lib sync` + any dir-listing: getdents64 unported to Darwin getdirentries
+  (2026-06-02-macos-getdirentries-dir-listing-port).
+- `lib/net.cyr` TCP/UDP sockets: Linux syscall numbers unported to Darwin — all networking fails
+  on macOS (2026-06-04-macos-net-socket-syscalls-unported, surfaced by yantra M4 on ecb).
+- x86-macho full tools/wrapper argv: reserved-register follow-up (2026-06-02-macos-x86-release).
+
 ## [6.0.57] — 2026-06-03
 
 **Bug-line pass: the >16-arg fn-call param scramble fixed (x86 + aarch64), plus a macOS arena

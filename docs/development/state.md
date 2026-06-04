@@ -3,6 +3,37 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-04 (.58 ship — macOS fixes & repairs: x86-macho self-host completion + wrapper-command packaging)
+
+Closing **v6.0.58** — macOS-focused fixes and repairs from on-hardware use (ecb arm64 / ach Intel).
+check.sh **85/85**; self-host byte-identical (897,672 B); **cross-OS `SELFHOST_OK` on ALL FOUR —
+ecb (arm64-macho) + ach (x86-macho) + pi (aarch64-Linux) + cass (Windows)**.
+
+**Fixed:**
+- **x86-macho stdlib syscall peer (`syscalls_macos.cyr`) completed** — was numbers-only (tools/wrapper
+  compiled to `ud2`); rewritten as a real peer (Linux nums + EMACHO_SYSXLAT + shared common wrappers +
+  x86 peer wrappers + Darwin O_*/mmap/stat@72). cycc + file-I/O + stat + heap-alloc verified on ach.
+- **macOS fork/pipe multi-return ABI fixup (x86)** — EMACHO_SYSXLAT fork 57→2 / dup2 33→90 / pipe
+  22→42 + new EMACHO_PROC_FIXUP (fork: child rax←0 when rdx==1; pipe: fd0:fd1→`*fds`), the x86 analog
+  of the aarch64 .34 x1-fixup. fork/dup2/execve/wait4 verified on ach (WEXITSTATUS=7).
+- **macOS `cyrius port`/`repl` "script not found"** — tarballs never bundled the cyrius-init binary +
+  the cyrius-{init,port,repl}.sh shims; both builders now ship them. Verified on ecb.
+- **macOS wrapper env/arch (`cbt/core.cyr`)** — `find_tools` forced `_arch=AARCH64` on all macOS → x86
+  picked the absent cycc_aarch64; now gated on CYRIUS_ARCH_AARCH64. `_macho_fill_environ` x86 reads
+  envp off the LC_UNIXTHREAD init stack (was x28-only → 0 on x86).
+
+**Added:** `scripts/build-macos-x86-tarball.sh` (the x86 tarball single-source-of-truth); x86-macho
+argv/env capture foundation (`args_macos.cyr` `_macho_capture_args`, stack model — works for simple
+programs).
+
+**Tracked (Darwin-surface gaps — filed, NOT fixed this slot):** `cyrius init` scaffolding
+(`/proc/self/exe` + templates unbundled + VERSION), `lib sync` + dir-listing (getdirentries), `lib/net.cyr`
+sockets (Linux nums unported — surfaced by yantra M4 on ecb), x86-macho full tools/wrapper argv (where
+`var r = main()` runs main inside EMIT_GVAR_INITS — needs a reserved register like arm64 x28).
+
+**Next:** the tracked macOS Darwin-surface ports (getdirentries, net sockets, x86 argv reserved-reg,
+init scaffolding) — then agnos follow-ups → TLS → Windows nuances ([[project_native_tls_arc_v6_2_x]]).
+
 ## Session close — 2026-06-03 (.57 ship — bug line: >16-arg ECALLPOPS param scramble fixed x86+aarch64 + macOS arena dedup)
 
 Closing **v6.0.57** — first bug-line slot of the re-pivoted order (bug line → agnos → TLS → Windows).

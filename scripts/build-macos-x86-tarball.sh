@@ -39,16 +39,20 @@ mkdir -p "$WORK/$STAGE/bin" "$WORK/$STAGE/lib"
 cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cycc"
 # Wrapper + quality tools, cross-emitted to x86_64 Mach-O.
 cat cbt/cyrius.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cyrius"
-for tool in cyrfmt cyrlint cyrdoc; do
+for tool in cyrfmt cyrlint cyrdoc cyrius-init; do
     cat "programs/${tool}.cyr" | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/${tool}"
 done
-# Version manager + prompt helper (shell, run as-is).
+# Version manager + prompt helper + scaffolding shims. The cyrius wrapper looks
+# for cyrius-init (binary, preferred) and the cyrius-{init,port,repl}.sh shims in
+# <home>/bin. v6.0.58: they were missing from the macOS tarball, so `cyrius
+# init`/`port`/`repl` failed "script not found" even though install was fine.
 cp scripts/cyriusly scripts/cyrius-prompt-info "$WORK/$STAGE/bin/"
+cp scripts/shims/cyrius-init.sh scripts/shims/cyrius-port.sh scripts/shims/cyrius-repl.sh "$WORK/$STAGE/bin/"
 chmod +x "$WORK/$STAGE/bin"/*
 
 # Validate every Mach-O binary (magic cffaedfe = MH_MAGIC_64, cputype
 # 07000001 = CPU_TYPE_X86_64) — refuse to package a non-x86 / empty artifact.
-for b in cycc cyrius cyrfmt cyrlint cyrdoc; do
+for b in cycc cyrius cyrfmt cyrlint cyrdoc cyrius-init; do
     f="$WORK/$STAGE/bin/$b"
     magic=$(xxd -l4 -p "$f" | tr -d ' \n')
     cput=$(xxd -s4 -l4 -p "$f" | tr -d ' \n')

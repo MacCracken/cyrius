@@ -52,6 +52,31 @@
 > `cycc < file.cyr` compiles + runs) but a **non-functional `cyrius` wrapper / tools**. Tarball
 > packaging + install.sh x86-macho branch + release.yml remain pending (gated on the tools).
 
+> **v6.0.58 CORRECTION (empirically on ach — the above LC_MAIN claim was WRONG):**
+> cyrius Mach-O executables use **LC_UNIXTHREAD**, not LC_MAIN (backend/macho/emit.cyr:168,
+> x86_THREAD_STATE64, all GPRs zero except rip). So on x86 the kernel hands args on the
+> **STACK** ([rsp]=argc, inline argv — the agnos/Linux shape), NOT in rdi/rsi (those are 0 at
+> entry — verified: a register capture read argc=0). arm64 differs only because the arm64
+> kernel passes argc/argv in x0/x1 for LC_UNIXTHREAD; x86 uses the stack. So the x86 capture is
+> the **agnos pattern**: record the init rsp (rbp+16 in a `call`ed capture fn), argc=[rsp],
+> argv(n)=[rsp+8+n*8] inline. Implemented `_macho_capture_args` + the stack-read argc()/argv()
+> in args_macos.cyr; the simple argv probe now returns 75 on ach.
+>
+> **BUT the real blocker is capture TIMING, and it needs a reserved register.** The tools +
+> wrapper do `var r = main(); syscall(60, r)` at top level — and `var r = main()` is a GLOBAL
+> INITIALIZER, executed *inside* `EMIT_GVAR_INITS`, i.e. main runs BEFORE the auto-call-main.
+> So the capture must run before EMIT_GVAR_INITS. But a normal global (`var _macho_init_rsp =
+> 0`) gets reset by its own EMIT_GVAR_INITS entry AFTER an early capture; capturing after
+> EMIT_GVAR_INITS is too late (main already ran via the gvar-init); and uninitialized globals
+> (`var x;`) don't work in cyrius (verified: read-back returns garbage). A callee-saved register
+> can't hold it either — fns repurpose rbx/r12–r15 via regalloc, so it's not init_rsp by the
+> time a deep `argc()` call reads it. **The correct fix mirrors arm64 x28 exactly: RESERVE one
+> register (e.g. r15) from x86 regalloc on the macho target, park init_rsp there at the EPATCH
+> landing, read it in argc()/argv()/_read_env.** That's a regalloc change (reserve r15 for
+> _TARGET_MACHO x86) — the focused remaining piece. cycc itself is unaffected (reads stdin, no
+> argv); only the tools/wrapper need it. Current uncommitted state has the stack-capture
+> foundation + the cbt/core.cyr env/arch fixes; the reserved-reg work is not yet done.
+
 
 **Filed:** 2026-06-02 (alongside the v6.0.38 arm64 packaging fix)
 **Affected:** the x86_64 Mach-O runtime (`CYRIUS_MACHO=1` path) +
