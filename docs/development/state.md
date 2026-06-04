@@ -3,6 +3,37 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.57 ship — bug line: >16-arg ECALLPOPS param scramble fixed x86+aarch64 + macOS arena dedup)
+
+Closing **v6.0.57** — first bug-line slot of the re-pivoted order (bug line → agnos → TLS → Windows).
+A 6-agent premise-check of the open bug issues found ONE live correctness bug; the rest were already
+fixed incidentally (archived). check.sh **85/85**; self-host byte-identical (896,480 B); **cross-OS
+cass + pi + ecb `SELFHOST_OK`**.
+
+**Fixed — the cc5-18-arg `ECALLPOPS` >16-arg param scramble (silent miscompile), TWO root causes,
+cross-arch:**
+- **x86 (1) disp8 overflow:** the reg-arg loads + extras shuttle emitted a signed-disp8 stack
+  displacement; at 17 args `(n-1)*8=128>127` wrapped negative → garbage. New `_emov_rsp_disp` helper
+  auto-selects disp32 (byte-identical for ≤16-arg, so small calls unchanged). **(2) shuttle
+  read-after-write:** step-2 wrote `[rsp+48+si*8]` which iteration `si+6` re-read → middle args
+  (7-12) scrambled at n>12. Now descending.
+- **aarch64 parallel bug:** ECALLPOPS was hardcoded to ≤4 extras (≤10 args) via x9-x12 pop/push.
+  Rewritten to the same memory-shuffle (ELDR_SP/ESTR_SP + add sp) — matches old behavior for ≤4
+  extras, extends to any count. **cx FLAGGED** (bytecode arg-reg count — niche, nothing blocked).
+- **Verified:** 18-arg per-arg verifier all-correct on x86 (native) + aarch64 (qemu-aarch64); self-host
+  byte-identical; cross-OS green.
+- **macОS `alloc_macos.cyr` arena_* duplicate-fn dedup** — 5 dups of alloc.cyr's un-gated arena_*
+  removed (5 warnings/macOS build → 0 on ecb). api-surface non-breaking (the 5 `alloc_macos::arena_*`
+  drop, all still under `alloc::`; 3880).
+
+**Archived (premise-check found stale/resolved):** bote nested-call leak (v5.11.18), derive-cap
+(v6.0.53), + the 2 fixed-this-slot. **asm-block `sym32`/`param_load` → roadmap** (feature, nothing
+blocked).
+
+**Bug line continues:** macОS platform gaps (deps-pin / getdirentries / x86-release — real Darwin
+BSD-ABI port work, bigger) + ach-selfhosted-runner (CI) + yeo TS→JS (feature). Then agnos follow-ups →
+TLS → Windows nuances ([[project_native_tls_arc_v6_2_x]]).
+
 ## Session close — 2026-06-03 (.56 ship — the REST of the agnos follow-up: exec arc + W* + chrono + syscall(60); + deferred-work tracking)
 
 Closing **v6.0.56** — everything carved out of .55, done in one slot (user: stop hitting agnos walls

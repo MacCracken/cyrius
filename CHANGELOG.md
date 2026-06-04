@@ -6,6 +6,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.57] — 2026-06-03
+
+**Bug-line pass: the >16-arg fn-call param scramble fixed (x86 + aarch64), plus a macOS arena
+duplicate-fn cleanup.** A premise-check of the open bug issues found this the only live correctness
+bug (the rest were already fixed incidentally — bote state-leak v5.11.18, derive-cap v6.0.53 — and are
+archived). (Issue: 2026-04-26-cc5-18-arg-fn-scrambles-params.md.)
+
+### Fixed
+
+- **`ECALLPOPS` scrambled params on fn calls with >16 args (x86_64) — silent miscompile, wrong values,
+  no warning.** Two root causes, both fixed:
+  - **disp8 overflow:** the 6 register-arg loads + the extras shuttle emitted a single-byte (signed
+    disp8) stack displacement. At 17 args, `(n-1)*8 = 128 > 127`, so the displacement sign-wrapped
+    negative (`mov -0x80(%rsp),%rdi`) and read garbage below rsp. A new `_emov_rsp_disp` helper
+    auto-selects the disp32 ModRM form (mod=10) when the displacement exceeds 127 — byte-identical to
+    the old emit for ≤16-arg calls, so small calls are unchanged.
+  - **shuttle read-after-write:** step-2 wrote each extra to `[rsp+48+si*8]`, which iteration `si+6`
+    later re-read as its source — so the middle args (7-12) were clobbered once n > 12. Now iterated
+    descending, so every read precedes the write that overwrites its slot.
+- **aarch64 had a parallel >N-arg bug.** Its `ECALLPOPS` was hardcoded to ≤4 extras (≤10 args) via the
+  x9-x12 pop/push; fns with >10 args silently mishandled args 11+. Rewritten to the same memory-shuffle
+  (load reg args by offset, shift extras up, `add sp`) — matches the old result for ≤4 extras and
+  extends to any count. (cx backend flagged for a follow-up arg-register-count check; bytecode, niche,
+  nothing blocked.) **Verified:** an 18-arg per-arg verifier returns every arg correctly on x86 (native)
+  and aarch64 (qemu-aarch64); self-host byte-identical; cross-OS cass + pi + ecb green.
+- **macOS `alloc_macos.cyr` redefined 5 `arena_*` fns** already defined un-gated in `alloc.cyr`,
+  producing 5 `duplicate fn ... (last definition wins)` warnings on every macOS build. Removed the
+  duplicates (same shape as `alloc_windows.cyr`); ecb build is now arena-warning-free. (api-surface:
+  the 5 `alloc_macos::arena_*` entries drop, all still present under `alloc::` — non-breaking.)
+
 ## [6.0.56] — 2026-06-03
 
 **The rest of the agnos follow-up, so agnosticos stops hitting cyrius walls release-after-release:**
