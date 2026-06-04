@@ -1,5 +1,58 @@
 # 2026-06-02 — x86_64-macOS: cycc SIGSYS's on real compiles (runtime arc, not just packaging)
 
+> **Status update v6.0.58 (premise-check + build):** the cycc RUNTIME half is DONE — x86 Mach-O cycc
+> self-hosts byte-identical + `return 42`→42 on real Intel hardware (`ach`), per the .43-.45 work. The
+> remaining work was assumed to be "just packaging," but BUILDING the tarball revealed it is NOT: the
+> x86-macho syscall peer **`lib/syscalls_macos.cyr` is incomplete** — it has the BSD syscall *numbers*
+> + mmap/STD_FD constants but **NO `sys_*` wrapper fns**, so the TOOLS + the `cyrius` wrapper (which use
+> the wrappers, unlike cycc which uses raw `syscall()`) build with `ud2` stubs and would crash. Missing
+> (verified by `cat cbt/cyrius.cyr | CYRIUS_MACHO=1 build/cycc`): `sys_open/read/write/close/unlink/
+> lseek/chmod/mkdir/pipe/fork/execve/dup2/waitpid` + `WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG`, plus
+> the Darwin `O_*` flag values (added v6.0.58 — was the first blocker, `undefined O_EXCL`). The process
+> family needs the Darwin BSD numbers + the macOS raw-`fork` x0 child/parent quirk (cf. the arm64
+> `ESYSCALL` fork-x1-fixup, CHANGELOG [6.0.34]). So this is a real **x86-macho stdlib + ABI completion
+> slot** (mirror `syscalls_aarch64_linux.cyr`'s wrapper set), with **ach verification of the tools** —
+> not a packaging patch. DONE so far (v6.0.58 start): `scripts/build-macos-x86-tarball.sh` (the tarball
+> single-source-of-truth, mirror of the arm64 one) + the Darwin `O_*` enum in `syscalls_macos.cyr`.
+
+> **v6.0.58 implementation + ON-HARDWARE (ach, Darwin x86_64 13.7.8) verification:**
+>
+> Built out + VERIFIED WORKING on the real Intel Mac (`ach`):
+> - **`lib/syscalls_macos.cyr` fully rewritten** as a proper x86-macho peer: Linux syscall
+>   numbers (EMACHO_SYSXLAT translates them) + `include syscalls_linux_common.cyr` for the
+>   shared wrappers (read/write/close/exit/execve/wait4/W*/...) + the x86-direct peer wrappers
+>   (open/stat/dup2/mkdir/unlink/chmod/fork/pipe) + Darwin O_*/mmap/signal/**stat offsets**.
+>   All tools + the `cyrius` wrapper now BUILD clean (was: 13 `undefined sys_*`).
+> - **EMACHO_SYSXLAT (x86 emit): added fork 57→2, dup2 33→90, pipe 22→42.**
+> - **EMACHO_PROC_FIXUP (x86 emit): the macOS rax:rdx multi-return fixup** — fork (child gets
+>   rax=0 when rdx==1) + pipe (fd0:fd1 → *fds). The x86 analog of the aarch64 .34 x1-fixup
+>   (cross-arch parity). BUG found+fixed: the fixup must push the **raw Linux num** pre-
+>   translation and compare `r11` against 57/22 — comparing against the *translated* BSD value
+>   (0x2000002) silently never matched, so the child ran the parent path (exit 0, no child).
+> - VERIFIED on `ach`: cycc compiles+runs (`return 42`→42); **fork/dup2/execve/wait4 work**
+>   (child writes marker + exits 7, parent decodes WEXITSTATUS=7); file I/O round-trips
+>   (open/write/read with Darwin O_*); **STAT_SIZE=72 is correct** (5-byte file → 5); heap
+>   alloc works (alloc_macos 256MB reserve + 2MB growth). Linux stays 85/85 + self-host
+>   byte-identical (all changes macho-gated).
+>
+> **STILL BROKEN — the one remaining blocker = "layer 6", the argv prologue:** the `cyrius`
+> wrapper + cyrfmt/cyrlint/cyrdoc ALL **segfault (139)** on `ach`. Root-caused:
+> `lib/args_macos.cyr` `_macho_argv_base()` is a known stub that **returns 0 for x86**, so
+> `argc()` does `load64(0)` → null deref; every tool reads argv → instant crash. The fix is
+> NOT a quick port: x86-macho uses **LC_MAIN**, so argc/argv arrive in **registers**
+> (rdi=argc, rsi=argv `char**`) at entry — not the stack — so the agnos `rbp+16` stack-capture
+> pattern does NOT apply, and unlike arm64 (which parks x0/x1 in callee-saved **x28**) x86 has
+> **no free callee-saved reg** (regalloc uses rbx/r12–r15, per main_x86_macho.cyr:118). So the
+> entry prologue must park rsi/rdi into a **global** via an entry-emit store (mirror the arm64
+> `stp x0,x1` at main_aarch64_macho.cyr:225, emitted before `EJMP0`), then `args_macos.cyr`
+> x86 reads argc from `[global_argc]` and `argv(n)` from `[load64(global_argv) + n*8]` (rsi is
+> a real `char**` → double-deref, like the arm64 path — NOT the inline-init-stack shape
+> agnos/Linux use). That entry-emit + the args read path + ach re-verify is the focused
+> remaining piece. Until it lands, the toolchain has a **working cycc** (direct
+> `cycc < file.cyr` compiles + runs) but a **non-functional `cyrius` wrapper / tools**. Tarball
+> packaging + install.sh x86-macho branch + release.yml remain pending (gated on the tools).
+
+
 **Filed:** 2026-06-02 (alongside the v6.0.38 arm64 packaging fix)
 **Affected:** the x86_64 Mach-O runtime (`CYRIUS_MACHO=1` path) +
 `.github/workflows/release.yml` `build-macos`

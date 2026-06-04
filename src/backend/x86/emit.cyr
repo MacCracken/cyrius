@@ -298,7 +298,10 @@ fn EMOVRA_RDX(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S
 fn EMOVRDI(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0xC78948); return 0; }
 fn ESYSCALL(S): i64 {
     if (_IR_REC0(S, IR_SYSCALL) == 1) { return 0; }
-    if (_TARGET_MACHO == 1) { EMACHO_SYSXLAT(S); }
+    if (_TARGET_MACHO == 1) {
+        EB(S, 0x50);                       # push rax — stash the RAW Linux num for
+        EMACHO_SYSXLAT(S);                 # EMACHO_PROC_FIXUP, THEN translate to BSD
+    }                                      # (syscall clobbers rax; we pop the num back)
     E2(S, 0x050F);
     # v6.0.43: Darwin returns syscall errors via the CARRY flag with a
     # POSITIVE errno in rax (BSD convention), not Linux's negative return.
@@ -312,8 +315,41 @@ fn ESYSCALL(S): i64 {
     if (_TARGET_MACHO == 1) {
         EB(S, 0x73); EB(S, 0x03);          # jnc +3 (skip neg when no error)
         EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);  # neg rax
+        EMACHO_PROC_FIXUP(S);              # fork/pipe rax:rdx multi-return fixup
     }
     _flags_reflect_rax = 0; return 0;
+}
+
+# v6.0.58: macOS process-syscall fixups that can't live in EMACHO_SYSXLAT's
+# number table because they touch the rax:rdx multi-return AFTER the syscall.
+# The BSD number was pushed pre-syscall (ESYSCALL); recover it into r11 (dead
+# post-syscall — the kernel clobbers it with rflags) and branch on it:
+#   fork (BSD 2): the kernel returns the child pid in rax for BOTH processes,
+#     setting rdx=1 in the child. POSIX fork wants 0 in the child → if rdx==1,
+#     zero rax. (x86 analog of the aarch64 .34 x1-fixup; cross-arch parity.)
+#   pipe (BSD 42): returns fd0:fd1 in rax:rdx, NOT through a *fds pointer. The
+#     Linux-shaped caller passed an fds ptr in rdi (preserved across the
+#     syscall); on success store fd0→[rdi], fd1→[rdi+4] and return 0. The `js`
+#     guard skips the store when the carry-negate already left rax<0 (error).
+# Every other syscall falls straight through (both cmps miss), paying only the
+# pop + two compares — cycc's own read/write/mmap/exit are unaffected, so it
+# still self-hosts byte-identical. macho-only (Linux path never reaches here).
+# r11 holds the RAW Linux syscall number (pushed pre-translation in ESYSCALL),
+# so the compares use the Linux numbers (fork 57, pipe 22) as clean imm8s.
+fn EMACHO_PROC_FIXUP(S): i64 {
+    EB(S, 0x41); EB(S, 0x5B);                            # pop r11  (recover Linux num)
+    EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x39);  # cmp r11, 57  (fork?)
+    EB(S, 0x75); EB(S, 0x09);                            # jne +9
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xFA); EB(S, 0x01);  # cmp rdx, 1   (child?)
+    EB(S, 0x75); EB(S, 0x03);                            # jne +3
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);               # xor rax, rax (child → 0)
+    EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x16);  # cmp r11, 22  (pipe?)
+    EB(S, 0x75); EB(S, 0x0A);                            # jne +10
+    EB(S, 0x78); EB(S, 0x08);                            # js  +8  (rax<0 error → skip)
+    EB(S, 0x89); EB(S, 0x07);                            # mov [rdi], eax     (fds[0])
+    EB(S, 0x89); EB(S, 0x57); EB(S, 0x04);               # mov [rdi+4], edx   (fds[1])
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);               # xor rax, rax (success → 0)
+    return 0;
 }
 fn ELOAD8(S): i64 { if (_IR_REC0(S, IR_LOAD8) == 1) { return 0; } EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
 fn ELOAD16(S): i64 { if (_IR_REC0(S, IR_LOAD16) == 1) { return 0; } EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x00); _flags_reflect_rax = 0; return 0; }
@@ -729,6 +765,12 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 88, 0x2000039);   # symlink  88 → 57
     _msx(S, 89, 0x200003A);   # readlink 89 → 58
     _msx(S, 90, 0x200000F);   # chmod    90 → 15
+    # v6.0.58: process family for the cyrius wrapper's fork-exec (cbt/build.cyr).
+    # dup2 needs translating (Linux 33 == BSD `access`!). fork + pipe also get a
+    # post-syscall fixup in ESYSCALL (rax:rdx multi-return) — see EMACHO_PROC_FIXUP.
+    _msx(S, 33, 0x200005A);   # dup2     33 → 90
+    _msx(S, 22, 0x200002A);   # pipe     22 → 42
+    _msx(S, 57, 0x2000002);   # fork     57 → 2
     return 0;
 }
 
