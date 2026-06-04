@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.55] — 2026-06-03
+
+**agnos boot-to-prompt: the `CYRIUS_TARGET_AGNOS` stdlib args + io gap closed.** `agnsh` built with
+`cyrius build --agnos` now gets its command line (via an init-stack capture) and file ops with the
+correct agnos ABI, instead of `#UD`-ing at `args_init()` on startup. (Issue:
+2026-06-03-cyrius-agnos-stdlib-args-io-gap.md.)
+
+### Added
+
+- **agnos command-line arguments — `lib/args_agnos.cyr` + an emit-side init-stack capture.**
+  `lib/args.cyr` had only `CYRIUS_TARGET_MACOS`/`LINUX` branches, so `args_init`/`argc`/`argv` were
+  undefined under `CYRIUS_TARGET_AGNOS` and cycc emitted its `ud2` unresolved-call sentinel at the
+  `args_init()` call in agnsh's `main`. agnos has no `/proc/self/cmdline` (Linux) and no entry-register
+  argv (macOS); its kernel (`elf_load_from_file`) builds a SysV init stack at exec — `[rsp]`=argc,
+  `[rsp+8+i*8]`=argv[i]. Two parts:
+  - **emit-side capture (`src/main.cyr`):** on the agnos executable path nothing moves `rsp` between
+    `e_entry` and the auto-call to `main`, so the entry epilogue emits `call _agnos_capture_rsp`
+    (mirroring the EFI `efi_main` forward-call) while `rsp` still equals the init rsp. Gated
+    `_TARGET_AGNOS`, so it emits nothing on every other target — cycc self-hosts byte-identical on
+    Linux + cass + ecb + pi.
+  - **`lib/args_agnos.cyr`:** `_agnos_capture_rsp` records the init rsp (= `rbp+16` after the `call`
+    pushed the return address + `EFNPRO` pushed rbp) into `_agnos_init_rsp`; `argc`/`argv` read from
+    there (the same shape as `lib/args_macos.cyr` reading the arm64 entry's x28). Verified on a real
+    SysV init stack (agnos's format == Linux's): argc/argv resolve correctly.
+- **`sys_chmod` no-op** (`lib/syscalls_x86_64_agnos.cyr`). agnos has no chmod in the frozen 0-33
+  syscall surface; returning 0 (success) lets consumers that chmod (agnsh) build + run without a `ud2`.
+
+### Fixed
+
+- **`lib/io.cyr` file ops silently ABI-miscompiled on agnos.** `file_open(path, flags, mode)` forwarded
+  to `sys_open(path, flags, mode)`, but the agnos `sys_open` is `(name, namelen, ao_flags)` with
+  different `AO_*` bits (AO_CREAT 0x100 vs O_CREAT 64, AO_TRUNC 0x200 vs O_TRUNC 512, …) — so on agnos
+  the Linux `O_*` value landed in `namelen` and the mode in `ao_flags`, breaking every file op with
+  **no `ud2`** to flag it. `file_open` now has an agnos branch computing `namelen = strlen(path)` +
+  mapping `O_*` → `AO_*`; the `_r` open variants funnel through it. `getenv` degrades gracefully on
+  agnos (its `/proc/self/environ` open fails → returns 0), needing no separate branch.
+
+### Notes
+
+- **agnos process `exec` is a separate arc** — `sys_fork`/`sys_execve`/`sys_dup2` + the `WEXITSTATUS`/
+  `WIFEXITED`/`WIFSIGNALED`/`WTERMSIG` wait macros (the agnos `sys_spawn(elf,size)` model). Boot-to-
+  prompt does not need it; agnsh's `run <external>` remains its own future work. After this release
+  agnsh's only remaining `--agnos` undefineds are that carve-out.
+
 ## [6.0.54] — 2026-06-03
 
 **The last of the Windows arc — command-line argument support: a `GetCommandLineW` reroute +

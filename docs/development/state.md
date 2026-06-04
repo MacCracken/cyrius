@@ -3,6 +3,44 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-03 (.55 ship — agnos boot-to-prompt: CYRIUS_TARGET_AGNOS stdlib args + io gap closed)
+
+Closing **v6.0.55** — the cyrius side of the agnos boot-to-prompt milestone. `agnsh` built with
+`cyrius build --agnos` was `#UD`-ing at `args_init()` on startup (no agnos branch → cycc's `ud2`
+sentinel); now it gets its command line + correct-ABI file ops. check.sh **85/85**; self-host
+byte-identical (896,592 B); **cross-OS self-host byte-identical on cass + ecb + pi** (the bite-1 emit
+change is in the self-host driver); the init-stack capture verified on a real SysV stack (agnos's
+format == Linux's: an `--agnos` test ran on Linux → argc/argv correct).
+
+**Shipped (5 bites, exec carved out):**
+- **agnos command-line args** — two parts. (1) **emit-side init-`rsp` capture (`src/main.cyr`):** on
+  the km==0 agnos path nothing moves rsp between e_entry and the auto-call to main, so the epilogue
+  emits `call _agnos_capture_rsp` (mirroring the EFI efi_main forward-call) while rsp = the kernel's
+  init rsp; gated `_TARGET_AGNOS` → emits nothing elsewhere (self-host byte-identical). (2)
+  **`lib/args_agnos.cyr`:** `_agnos_capture_rsp` records init rsp (= rbp+16) into `_agnos_init_rsp`;
+  `argc`/`argv` read argc/argv from there (the agnos kernel builds a SysV init stack: [rsp]=argc,
+  [rsp+8+i*8]=argv[i]). Same shape as args_macos.cyr's x28 read. Decisive design point: x86 `#regalloc`
+  uses r14/r15, so a callee-saved reg (the macOS-x28 trick) is unsafe → a reserved global is required.
+- **`sys_chmod` no-op** (syscalls_x86_64_agnos.cyr) — agnos has no chmod in the frozen 0-33 surface.
+- **`lib/io.cyr` AO_* bridge (silent miscompile fix)** — agnos `sys_open` is `(name, namelen, ao_flags)`
+  with different `AO_*` bits, so the Linux `(path, O_flags, mode)` shape silently miscompiled (no
+  `ud2`). `file_open` now computes namelen + maps O_*→AO_*; the `_r` opens funnel through it. `getenv`
+  degrades to 0 (no /proc) for free.
+- **api-surface +4 non-breaking** (`args_agnos::{argc,args_init,argv}` + `sys_chmod`, 0 removals → 3860).
+
+**Left as a SEPARATE arc (not boot-to-prompt):** agnos process `exec` — `sys_fork`/`sys_execve`/
+`sys_dup2` + the `W*` wait macros (the `sys_spawn(elf,size)` model). agnsh's `run <external>` stays its
+own future work; after .55 those are agnsh's only remaining `--agnos` undefineds, so it boots to a
+prompt. Carve-outs still open: chrono fixed-epoch, sys_stat sudo-path (consumer-side guard), raw
+`syscall(60)` aborts.
+
+**The on-hardware proof (consumer step, like .54's wheel):** agnsh boots to a prompt on agnos — needs
+agnoshi to `cyrius update` (re-vendor the .55 lib; cyrius did NOT touch agnoshi/lib) + the agnos
+OVMF/ext2 boot smoke. The cyrius side is ready.
+
+**Next = v6.0.56 (stdlib `*at`-family + fsync/fdatasync)** per the slate; then .57 cc5-18-arg + QoL,
+.58 TS→JS, **TLS resumes at .59** ([[project_native_tls_arc_v6_2_x]]).
+
 ## Session close — 2026-06-03 (.54 ship — Windows command-line args: GetCommandLineW + args_win.cyr + WIN thread_local + cycc_win main-rooting fix; LAST windows arc item)
 
 Closing **v6.0.54** — the last of the Windows arc (command-line argument support), fully unblocking
