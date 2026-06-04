@@ -3,6 +3,40 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-04 (.61 ship — real Windows threading + thread-local storage)
+
+Closing **v6.0.61** — third of the pinned macOS/Windows hardening slate (the Windows nuances item).
+check.sh **85/85**; self-host byte-identical (905,856 B); **cross-OS `SELFHOST_OK` on ALL FOUR**
+(cass + pi + ecb + ach). Replaces the v6.0.53 serial fallback with real preemptive threads, SRWLOCK
+mutexes, and real per-thread TLS — 8 new kernel32 reroutes (0xF007-0xF00E).
+
+**Shipped (2 stages):**
+- **Stage 1 — real threads + SRWLOCK mutexes (`lib/thread_win.cyr`).** thread_create → CreateThread
+  (0xF007); thread_join → WaitForSingleObject (0xF001) + CloseHandle (3). The cyrius body fn is a
+  valid MS-x64 ThreadProc directly (PE arg0==RCX==lpParameter) — NO trampoline; 6 params via struct
+  ptr (ECREATEPROC_PE pattern). mutex_* → InitializeSRWLock/Acquire/ReleaseSRWLockExclusive
+  (0xF008-0xF00A). Channels became SRWLOCK-protected rings. **cass-verified:** 4 threads × 100000
+  under a mutex → exactly 400000; the same workload WITHOUT the mutex → lost updates (<400000),
+  proving real parallelism (not the serial fallback).
+- **Stage 2 — real per-thread TLS + gettid (`lib/thread_local.cyr`).** thread_local_init/get/set key
+  off one TlsAlloc'd (0xF00C) TEB index; each thread installs its own 128-byte block via TlsSetValue
+  (0xF00E) / TlsGetValue (0xF00D). gettid → GetCurrentThreadId (0xF00B). **cass-verified:** 4 threads
+  each read back their own slot-0 value after interleaving + report nonzero, distinct-from-main tids.
+
+**The bug found on hardware:** SRWLOCK's CONTENDED path builds a stack wait-block needing 16-aligned
+ops → the bare `sub rsp,0x28` reroute faulted (0xC0000005) only when ≥2 real threads contended
+(single-thread + 1-worker ran fine; 4 contending crashed). Fix = the rbx-anchored 16-align (the
+ECREATEPROC_PE/CreateProcessW SSE pattern), applied to all 3 SRWLOCK + 4 TLS reroutes. The "run it on
+the hardware, never trust a checkmark" principle again — a Linux build is blind to this.
+
+x86-macho UNTOUCHED this slot. The bump allocator stays non-thread-safe (thread bodies pass
+pre-alloc'd buffers via the arg); a blocking chan_recv (condvar) is future.
+
+**Next (slate [[project_macos_windows_platform_hardening_first]]):** remaining Windows nuances — full
+CommandLineToArgvW (2026-06-03-windows-followup-nuances.md) + COM/DXGI GPU-enum
+(2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md, the heavier deferred item). macOS cluster is
+essentially clear (x86-macho argv reserved-reg remains, HELD — Intel EOL).
+
 ## Session close — 2026-06-04 (.60 ship — macOS getdirentries port + cyrius init sovereign-binary scaffolding)
 
 Closing **v6.0.60** — second of the pinned macOS hardening slate. check.sh **85/85**; self-host

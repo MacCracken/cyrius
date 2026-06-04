@@ -122,55 +122,66 @@ fn thread_local_set(slot, val): i64 {
 #endif
 
 #ifdef CYRIUS_TARGET_WIN
-# Windows (PE/x86_64) thread-local storage — v6.0.54.
+# Windows (PE/x86_64) thread-local storage — REAL per-thread storage (v6.0.61).
 #
 # The Linux/macOS body above installs a per-thread block via the CPU
 # thread-pointer register (`%fs` / `TPIDR_EL0`). Windows has neither
 # arch_prctl(158) nor a settable fs base at ring 3 (the TEB lives at gs,
-# managed by the OS), so that path SIGILLs. Under the v6.0.53 serial
-# thread_win.cyr model, `thread_create` runs each fn INLINE to completion
-# before returning — strictly one logical thread is ever live — so
-# thread-local storage degenerates to a single process-global slot array.
-# No TlsAlloc / kernel32 / compiler reroute is needed.
+# managed by the OS), so that path SIGILLs. Instead we use the Win32 TLS
+# API (the v6.0.61 0xF00C-0xF00E reroutes — see backend/x86/emit.cyr):
+# TlsAlloc() reserves ONE process-global TEB slot index; each thread stores
+# its own pointer to a fresh 128-byte (16 × i64) block at that index via
+# TlsSetValue / reads it via TlsGetValue. So the 16 logical slots become
+# real per-thread storage — concurrent workers no longer collide.
 #
-# CAVEAT (load-bearing): this is correct ONLY while thread_win.cyr is
-# serial. When real Windows threads land (CreateThread/WaitForSingleObject/
-# SRWLOCK — the future upgrade noted in lib/thread_win.cyr), this MUST
-# become real per-thread storage (TlsAlloc/TlsGetValue via new 0xF0xx
-# reroutes), or concurrent workers will collide on the shared slots. Keep
-# this in lockstep with docs/development/issues/
+# Supersedes the v6.0.53 serial process-global array. In lockstep with real
+# threads (lib/thread_win.cyr) per docs/development/issues/
 # 2026-06-03-windows-threading-stdlib-gap.md.
 #
 # Satisfies sigil 3.6.x's crypto-bank contract: slot 0 only, values masked
 # 0..7, a fresh slot reads 0, init idempotent (sigil src/crypto_scratch.cyr).
+#
+# NOTE: the one-time TlsAlloc is guarded by the `_tlocal_win_idx == -1`
+# check, NOT a mutex — the contract (shared with the Linux body) is that the
+# MAIN thread calls thread_local_init() before spawning workers, so the
+# allocation is single-threaded. Two workers racing a first-ever call would
+# at worst leak one TLS index and re-block; it self-heals.
 
-# 16 i64 slots = 128 bytes. A GLOBAL var x[N] reserves N i64 slots (N*8
-# bytes); only a LOCAL var x[N] is N bytes (the well-known gotcha).
-var _TLOCAL_WIN_SLOTS[16];
-var _tlocal_win_inited = 0;
+var _tlocal_win_idx = 0 - 1;   # TlsAlloc'd index; -1 = not yet allocated
 
-# Zero the slot array once (guarded so a re-init never wipes a live bank).
-# The flag is a scalar with an explicit 0 initializer, so it is reliably
-# zero at load even where a static array's zero-init is not guaranteed.
-fn thread_local_init(): i64 {
-    if (_tlocal_win_inited == 1) { return 1; }
-    var i = 0;
-    while (i < 128) {
-        store8(&_TLOCAL_WIN_SLOTS + i, 0);
-        i = i + 1;
+# Resolve (lazily allocating) THIS thread's 128-byte (16-slot) block:
+# allocate the process-global TLS index on first use, then ensure the
+# current thread has its own zeroed block installed at it.
+fn _tlocal_win_block(): i64 {
+    if (_tlocal_win_idx == (0 - 1)) {
+        _tlocal_win_idx = syscall(61452);            # TlsAlloc → index
     }
-    _tlocal_win_inited = 1;
+    var blk = syscall(61453, _tlocal_win_idx);       # TlsGetValue(idx)
+    if (blk == 0) {
+        alloc_init();
+        blk = alloc(128);
+        var i = 0;
+        while (i < 128) { store8(blk + i, 0); i = i + 1; }
+        syscall(61454, _tlocal_win_idx, blk);        # TlsSetValue(idx, blk)
+    }
+    return blk;
+}
+
+# Install this thread's TLS block (and, first call, the process-global TLS
+# index). Idempotent. Returns 1 on success.
+fn thread_local_init(): i64 {
+    _tlocal_win_block();
     return 1;
 }
 
 # Read the i64 at `slot` (0 on a fresh slot).
 fn thread_local_get(slot): i64 {
-    return load64(&_TLOCAL_WIN_SLOTS + slot * 8);
+    return load64(_tlocal_win_block() + slot * 8);
 }
 
 # Write `val` into `slot`.
 fn thread_local_set(slot, val): i64 {
-    store64(&_TLOCAL_WIN_SLOTS + slot * 8, val);
+    store64(_tlocal_win_block() + slot * 8, val);
     return 0;
 }
 #endif

@@ -1182,6 +1182,149 @@ fn EGETCMDLINE_PE(S): i64 {
     return 0;
 }
 
+# v6.0.61: real Windows threading reroutes (lib/thread_win.cyr).
+# syscall(0xF007, &args6) → CreateThread(lpThreadAttributes, dwStackSize,
+# lpStartAddress, lpParameter, dwCreationFlags, lpThreadId). 6 params — packed
+# into a 6-qword struct + passed by address (same as ECREATEPROC_PE). a1-a4 →
+# rcx/rdx/r8/r9; a5-a6 → [rsp+0x20],[rsp+0x28]; rbx-anchored 16-aligned 0x40
+# frame (32 shadow + 16 for the 2 stack args). Ret rax = thread HANDLE. The
+# cyrius thread-body fn is a valid MS-x64 ThreadProc directly (PE arg0 == RCX ==
+# lpParameter), so no trampoline. Struct (i64 each): [0]attrs [8]stacksize
+# [16]startaddr [24]param [32]flags [40]threadid.
+fn ECREATETHREAD_PE(S): i64 {
+    _pe_ensure_createthread(S);
+    var idx = _pe_createthread_get();
+    EB(S, 0x58);                                        # pop rax (&args base)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x40); # sub rsp, 0x40
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x48); EB(S, 0x00); # mov rcx, [rax+0]  (attrs)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x08); # mov rdx, [rax+8]  (stacksize)
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x40); EB(S, 0x10); # mov r8,  [rax+16] (startaddr)
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x48); EB(S, 0x18); # mov r9,  [rax+24] (param)
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x20); # mov r10, [rax+32] (flags)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], r10
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x50); EB(S, 0x28); # mov r10, [rax+40] (threadid)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x28); # mov [rsp+0x28], r10
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
+# 1-arg kernel32 reroute with FORCED 16-byte rsp alignment (rbx-anchored, the
+# ECREATEPROC_PE pattern). The bare `sub rsp,0x28` form tolerates a misaligned
+# call site only on a fn's FAST path; AcquireSRWLockExclusive's CONTENDED path
+# builds a wait-block on the stack and uses 16-aligned ops on it, so it faults
+# (0xC0000005) when two real threads contend on a misaligned rsp — verified on
+# cass: uncontended (1 thread) ran, 4 threads contending crashed. Save the live
+# rsp in callee-saved rbx, align down, carve the 32 B shadow, call, restore. rax
+# (&lock) is an absolute pointer, unaffected by the rsp shuffle. Used by all
+# three SRWLOCK reroutes (init/acquire/release) for uniformity.
+fn _pe_srw_call_1arg(S, idx): i64 {
+    EB(S, 0x58);                                        # pop rax (&lock)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1 = &lock)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
+# syscall(0xF008, &lock) → InitializeSRWLock(&lock). 1 arg. SRWLOCK is one
+# pointer (8 bytes), zero-initialized; InitializeSRWLock just sets it to the
+# SRWLOCK_INIT state. Ret void. Stack (top→bottom): [&lock] [sc_nr].
+fn EINITSRW_PE(S): i64 {
+    _pe_ensure_initsrw(S);
+    return _pe_srw_call_1arg(S, _pe_initsrw_get());
+}
+
+# syscall(0xF009, &lock) → AcquireSRWLockExclusive(&lock). 1 arg.
+fn EACQSRW_PE(S): i64 {
+    _pe_ensure_acqsrw(S);
+    return _pe_srw_call_1arg(S, _pe_acqsrw_get());
+}
+
+# syscall(0xF00A, &lock) → ReleaseSRWLockExclusive(&lock). 1 arg.
+fn ERELSRW_PE(S): i64 {
+    _pe_ensure_relsrw(S);
+    return _pe_srw_call_1arg(S, _pe_relsrw_get());
+}
+
+# 0-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as
+# _pe_srw_call_1arg). Result in rax. Stack on entry (top→bottom): [sc_nr].
+fn _pe_call_0arg_aligned(S, idx): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
+# 2-arg kernel32 reroute, 16-byte aligned. a1→rcx, a2→rdx (set BEFORE the rsp
+# shuffle; the align/shadow ops touch only rax/rbx/rsp). Result in rax. Stack
+# on entry (top→bottom): [a2] [a1] [sc_nr].
+fn _pe_call_2arg_aligned(S, idx): i64 {
+    EB(S, 0x58);                                        # pop rax (a2)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (a1)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
+# syscall(0xF00B) → GetCurrentThreadId(). 0 args. DWORD thread id in eax
+# (zero-extended to rax). Backs gettid() on Windows.
+fn EGETCURTID_PE(S): i64 {
+    _pe_ensure_getcurtid(S);
+    return _pe_call_0arg_aligned(S, _pe_getcurtid_get());
+}
+
+# syscall(0xF00C) → TlsAlloc(). 0 args. Returns a fresh TLS slot index (DWORD)
+# in eax, or TLS_OUT_OF_INDEXES (0xFFFFFFFF) on failure.
+fn ETLSALLOC_PE(S): i64 {
+    _pe_ensure_tlsalloc(S);
+    return _pe_call_0arg_aligned(S, _pe_tlsalloc_get());
+}
+
+# syscall(0xF00D, idx) → TlsGetValue(idx). 1 arg. Returns this thread's LPVOID
+# at the slot (0 if never set) in rax.
+fn ETLSGET_PE(S): i64 {
+    _pe_ensure_tlsget(S);
+    return _pe_srw_call_1arg(S, _pe_tlsget_get());
+}
+
+# syscall(0xF00E, idx, val) → TlsSetValue(idx, val). 2 args. BOOL in eax.
+fn ETLSSET_PE(S): i64 {
+    _pe_ensure_tlsset(S);
+    return _pe_call_2arg_aligned(S, _pe_tlsset_get());
+}
+
 # emit Win64 seek: `syscall(8, fd, offset, whence)` →
 # SetFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod).
 # Stack on entry (top→bottom): [whence] [offset] [fd] [sc_nr=8].

@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.61] — 2026-06-04
+
+**Real Windows threading + thread-local storage.** Replaces the v6.0.53 serial fallback
+(threads ran inline, mutexes were no-ops, TLS was a process-global array) with real preemptive
+threads, SRWLOCK mutexes, and real per-thread TLS — all via 8 new kernel32 IAT reroutes
+(0xF007-0xF00E). From the pinned macOS/Windows hardening slate; verified on cass (real Windows).
+PE-gated; Linux 85/85 + self-host byte-identical; cross-OS self-host green on cass/pi/ecb/ach.
+
+### Added
+
+- **Real OS threads (`lib/thread_win.cyr`).** thread_create → CreateThread (0xF007); thread_join →
+  WaitForSingleObject(INFINITE) (0xF001) + CloseHandle (3). The cyrius thread-body fn is a valid
+  MS-x64 ThreadProc directly (PE arg0 == RCX == lpParameter) — NO trampoline. The 6 CreateThread
+  params are packed into a struct + passed by address (the ECREATEPROC_PE pattern). Verified on cass:
+  4 threads × 100000 increments under a mutex → exactly 400000; the same workload WITHOUT the mutex
+  loses updates (< 400000), proving real parallelism (not the serial fallback).
+- **SRWLOCK mutexes.** mutex_new/lock/unlock → InitializeSRWLock (0xF008) / AcquireSRWLockExclusive
+  (0xF009) / ReleaseSRWLockExclusive (0xF00A) over an 8-byte in-place lock cell. Channels became
+  SRWLOCK-protected FIFO rings (recv stays non-blocking — a blocking recv needs a condvar, future).
+- **Real per-thread TLS (`lib/thread_local.cyr`).** thread_local_init/get/set now key off one
+  TlsAlloc'd (0xF00C) TEB index; each thread installs its own 128-byte (16-slot) block via
+  TlsSetValue (0xF00E) / reads it via TlsGetValue (0xF00D), so concurrent workers no longer collide
+  on the 16 logical slots. gettid → GetCurrentThreadId (0xF00B). Verified on cass: 4 threads each
+  read back their own slot-0 value after interleaving + report nonzero, distinct-from-main thread ids.
+- 8 reroutes wired end-to-end: import scaffolds (backend/pe/emit.cyr), emit fns (backend/x86/emit.cyr),
+  parse_expr dispatch (0xF007-0xF00E, warning string updated), aarch64 dead stubs.
+
+### Fixed
+
+- **SRWLOCK + TLS reroutes force 16-byte rsp alignment (rbx-anchored).** The bare `sub rsp,0x28`
+  reroute form tolerates a misaligned call site only on a fn's uncontended FAST path;
+  AcquireSRWLockExclusive's CONTENDED path builds a wait-block on the stack and uses 16-aligned ops
+  on it → it faulted (0xC0000005) when two real threads contended on a misaligned rsp. The three
+  SRWLOCK reroutes + the four TLS reroutes now save rsp in callee-saved rbx, align down, carve the
+  32-byte shadow, call, restore — the same ECREATEPROC_PE pattern that fixed CreateProcessW's SSE
+  faults. Found on cass: single-threaded + 1-worker ran; 4 contending threads crashed; aligned → 42.
+
+### Notes
+
+- The bump allocator (alloc.cyr) is not itself thread-safe; thread bodies should avoid concurrent
+  alloc() (same as the Linux thread.cyr model) — pass pre-allocated buffers via the arg pointer.
+- thread_local's one-time TlsAlloc is guarded by an `index == -1` check, not a mutex; the contract
+  (shared with the Linux body) is that the main thread inits before spawning workers.
+- (Issues: 2026-06-03-windows-threading-stdlib-gap.md; threading/TLS portions of
+  2026-06-03-windows-followup-nuances.md. x86-macOS tools/wrapper argv stays HELD — Intel EOL.)
+
 ## [6.0.60] — 2026-06-04
 
 **macOS dir-listing + scaffolding: `getdirentries` port (fixes `lib sync` / `update` / any dir-walk)

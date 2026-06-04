@@ -639,6 +639,75 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.0.61: real Windows threading reroutes (lib/thread_win.cyr) —
+            # CreateThread + SRWLOCK mutexes (join reuses 0xF001/WaitForSingleObject
+            # + syscall(3)/CloseHandle). See thread + nuances issues.
+            if (sc_num == 61447) {
+                if (argc == 2) {
+                    # syscall(0xF007, &args6) → CreateThread (6 args via struct).
+                    ECREATETHREAD_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61448) {
+                if (argc == 2) {
+                    # syscall(0xF008, &lock) → InitializeSRWLock.
+                    EINITSRW_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61449) {
+                if (argc == 2) {
+                    # syscall(0xF009, &lock) → AcquireSRWLockExclusive.
+                    EACQSRW_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61450) {
+                if (argc == 2) {
+                    # syscall(0xF00A, &lock) → ReleaseSRWLockExclusive.
+                    ERELSRW_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            # v6.0.61: thread-local storage reroutes (lib/thread_local.cyr) —
+            # per-thread slot block keyed off one TlsAlloc'd index + gettid.
+            if (sc_num == 61451) {
+                if (argc == 1) {
+                    # syscall(0xF00B) → GetCurrentThreadId (no args, DWORD in rax).
+                    EGETCURTID_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61452) {
+                if (argc == 1) {
+                    # syscall(0xF00C) → TlsAlloc (no args, slot index in rax).
+                    ETLSALLOC_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61453) {
+                if (argc == 2) {
+                    # syscall(0xF00D, idx) → TlsGetValue (LPVOID in rax).
+                    ETLSGET_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61454) {
+                if (argc == 3) {
+                    # syscall(0xF00E, idx, val) → TlsSetValue (BOOL in rax).
+                    ETLSSET_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # Non-mapped syscalls: emitting the generic ESCPOPS path
             # below would produce an `0F 05` syscall that faults
             # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
@@ -652,8 +721,8 @@ fn PARSE_FACTOR(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
-            213);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            272);
         }
         ESCPOPS(S, argc);
         _cfo = 0;

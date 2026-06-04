@@ -459,6 +459,92 @@ fn _pe_ensure_getcmdline(S): i64 {
 }
 fn _pe_getcmdline_get(): i64 { return _pe_getcmdline_idx; }
 
+# v6.0.61: real Windows threading kernel32 imports (lib/thread_win.cyr — the
+# CreateThread + SRWLOCK upgrade from the v6.0.53 serial fallback). Mirror the
+# _pe_ensure_closeh scaffold; lazily registered on the first 0xF007-0xF00A
+# syscall the parser sees under _TARGET_PE==1. (WaitForSingleObject + CloseHandle
+# for thread_join already exist — reused.) See thread issue + nuances issue.
+var _pe_createthread_ready = 0;
+var _pe_createthread_idx   = 0;
+fn _pe_ensure_createthread(S): i64 {
+    if (_pe_createthread_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_createthread_idx, "CreateThread");
+    _pe_createthread_ready = 1;
+    return 0;
+}
+fn _pe_createthread_get(): i64 { return _pe_createthread_idx; }
+
+var _pe_initsrw_ready = 0;
+var _pe_initsrw_idx   = 0;
+fn _pe_ensure_initsrw(S): i64 {
+    if (_pe_initsrw_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_initsrw_idx, "InitializeSRWLock");
+    _pe_initsrw_ready = 1;
+    return 0;
+}
+fn _pe_initsrw_get(): i64 { return _pe_initsrw_idx; }
+
+var _pe_acqsrw_ready = 0;
+var _pe_acqsrw_idx   = 0;
+fn _pe_ensure_acqsrw(S): i64 {
+    if (_pe_acqsrw_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_acqsrw_idx, "AcquireSRWLockExclusive");
+    _pe_acqsrw_ready = 1;
+    return 0;
+}
+fn _pe_acqsrw_get(): i64 { return _pe_acqsrw_idx; }
+
+var _pe_relsrw_ready = 0;
+var _pe_relsrw_idx   = 0;
+fn _pe_ensure_relsrw(S): i64 {
+    if (_pe_relsrw_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_relsrw_idx, "ReleaseSRWLockExclusive");
+    _pe_relsrw_ready = 1;
+    return 0;
+}
+fn _pe_relsrw_get(): i64 { return _pe_relsrw_idx; }
+
+# v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
+var _pe_getcurtid_ready = 0;
+var _pe_getcurtid_idx   = 0;
+fn _pe_ensure_getcurtid(S): i64 {
+    if (_pe_getcurtid_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getcurtid_idx, "GetCurrentThreadId");
+    _pe_getcurtid_ready = 1;
+    return 0;
+}
+fn _pe_getcurtid_get(): i64 { return _pe_getcurtid_idx; }
+
+var _pe_tlsalloc_ready = 0;
+var _pe_tlsalloc_idx   = 0;
+fn _pe_ensure_tlsalloc(S): i64 {
+    if (_pe_tlsalloc_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_tlsalloc_idx, "TlsAlloc");
+    _pe_tlsalloc_ready = 1;
+    return 0;
+}
+fn _pe_tlsalloc_get(): i64 { return _pe_tlsalloc_idx; }
+
+var _pe_tlsget_ready = 0;
+var _pe_tlsget_idx   = 0;
+fn _pe_ensure_tlsget(S): i64 {
+    if (_pe_tlsget_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_tlsget_idx, "TlsGetValue");
+    _pe_tlsget_ready = 1;
+    return 0;
+}
+fn _pe_tlsget_get(): i64 { return _pe_tlsget_idx; }
+
+var _pe_tlsset_ready = 0;
+var _pe_tlsset_idx   = 0;
+fn _pe_ensure_tlsset(S): i64 {
+    if (_pe_tlsset_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_tlsset_idx, "TlsSetValue");
+    _pe_tlsset_ready = 1;
+    return 0;
+}
+fn _pe_tlsset_get(): i64 { return _pe_tlsset_idx; }
+
 # Called from `parse.cyr`'s `#pe_import("dll", "symbol")` handler
 # with `name` pointing at the NUL-terminated symbol string inside
 # str_data. Appends the name to the pending buffer; `_pe_layout`
