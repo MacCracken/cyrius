@@ -1,5 +1,15 @@
 # 2026-06-04 — macOS: socket surface (`lib/net.cyr`) uses Linux syscall numbers, unported to Darwin
 
+> **RESOLVED v6.0.59 (arm64, verified on ecb).** Ported per the fix sketch below: socket syscall
+> numbers translated to BSD by ESYSXLAT (arm64) + EMACHO_SYSXLAT (x86) — socket 41→97, connect 42→98,
+> accept 43→30, bind 49→104, listen 50→106, setsockopt 54→105, getsockopt 55→118, shutdown 48→134,
+> poll 7→230; BSD `sockaddr_in` (sin_len/sin_family); Darwin SO_*/SOL_SOCKET=0xFFFF/O_NONBLOCK/
+> EINPROGRESS constants + 32-bit timeval. **SOL_SOCKET=0xFFFF was NOT in the deltas below** (the
+> repro only tested socket+connect, not setsockopt) — caught by inspection, confirmed on ecb. Verified
+> on ecb: client (socket+setsockopt+connect) AND server (socket/bind/listen/accept/connect/fork/send/
+> recv) both exit 42. x86-macho EMACHO entries added for cross-arch parity but unverified (x86 held —
+> Apple Intel EOL). yantra + sandhi networking unblocked on Apple Silicon.
+
 **Discovered:** 2026-06-04 bringing up yantra's M4 (iOS/Appium) backend on
 `ecb` (arm64 macOS 26.x). yantra + sandhi build and the unit suite passes on
 macOS, but every networked backend (CDP / WebDriver / Appium) fails to connect.

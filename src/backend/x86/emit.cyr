@@ -771,6 +771,16 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 33, 0x200005A);   # dup2     33 → 90
     _msx(S, 22, 0x200002A);   # pipe     22 → 42
     _msx(S, 57, 0x2000002);   # fork     57 → 2
+    # v6.0.59: net.cyr socket surface (parity with arm64 ESYSXLAT — cross-arch).
+    _msx(S, 41, 0x2000061);   # socket     41 → 97
+    _msx(S, 42, 0x2000062);   # connect    42 → 98
+    _msx(S, 43, 0x200001E);   # accept     43 → 30
+    _msx(S, 48, 0x2000086);   # shutdown   48 → 134
+    _msx(S, 49, 0x2000068);   # bind       49 → 104
+    _msx(S, 50, 0x200006A);   # listen     50 → 106
+    _msx(S, 54, 0x2000069);   # setsockopt 54 → 105
+    _msx(S, 55, 0x2000076);   # getsockopt 55 → 118
+    _msx(S, 7,  0x20000E6);   # poll        7 → 230
     return 0;
 }
 

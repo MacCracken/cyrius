@@ -1,4 +1,8 @@
-# net.cyr — TCP/UDP network sockets via Linux syscalls
+# net.cyr — TCP/UDP network sockets. Uses the Linux x86_64 socket syscall
+# numbers; the Mach-O backends translate them to Darwin BSD (ESYSXLAT /
+# EMACHO_SYSXLAT) and the BSD option/flag constants + sockaddr layout are
+# platform-branched (#ifdef CYRIUS_TARGET_MACOS). Verified on arm64 macOS (ecb)
+# v6.0.59 — see 2026-06-04-macos-net-socket-syscalls-unported.md.
 # Usage: include "lib/net.cyr"
 # Requires: agnosys/syscalls.cyr, alloc.cyr, tagged.cyr
 
@@ -11,17 +15,38 @@ var SYS_LISTEN = 50;
 var SYS_SETSOCKOPT = 54;
 var SYS_SHUTDOWN = 48;
 
-# Socket constants
+# Socket constants. AF_INET / SOCK_* are the same on Linux and Darwin; the
+# SO_*/SOL_SOCKET option constants and O_NONBLOCK/EINPROGRESS differ (BSD), so
+# they're platform-branched. v6.0.59: Darwin port — Darwin socket syscall
+# numbers are translated by the Mach-O backends (ESYSXLAT/EMACHO_SYSXLAT map the
+# Linux numbers below to BSD), but these option/flag CONSTANTS are passed to the
+# kernel verbatim, so they must carry the Darwin values directly.
+# See 2026-06-04-macos-net-socket-syscalls-unported.md.
 enum SockDomain { AF_INET = 2; AF_INET6 = 10; }
 enum SockType { SOCK_STREAM = 1; SOCK_DGRAM = 2; }
-enum SockOpt { SOL_SOCKET = 1; SO_REUSEADDR = 2; SO_RCVTIMEO = 20; }
+#ifdef CYRIUS_TARGET_MACOS
+enum SockOpt { SOL_SOCKET = 0xFFFF; SO_REUSEADDR = 0x0004; SO_RCVTIMEO = 0x1006; SO_ERROR = 0x1007; }
+var _NET_O_NONBLOCK = 0x0004;
+var _NET_EINPROGRESS = 36;
+#else
+enum SockOpt { SOL_SOCKET = 1; SO_REUSEADDR = 2; SO_RCVTIMEO = 20; SO_ERROR = 4; }
+var _NET_O_NONBLOCK = 2048;
+var _NET_EINPROGRESS = 115;
+#endif
 
 # sockaddr_in: { family(2), port(2), addr(4), zero(8) } = 16 bytes
 # Build a sockaddr_in struct from address and port
 fn sockaddr_in(addr, port): i64 {
     var sa = alloc(16);
     memset(sa, 0, 16);
+    #ifdef CYRIUS_TARGET_MACOS
+    # BSD sockaddr_in prefixes a length byte: sin_len(u8=16) @0, sin_family(u8) @1.
+    store8(sa, 16);
+    store8(sa + 1, AF_INET);
+    #else
+    # Linux: sin_family is a u16 at offset 0.
     store16(sa, AF_INET);
+    #endif
     # Port in network byte order (big-endian)
     store8(sa + 2, (port >> 8) & 0xFF);
     store8(sa + 3, port & 0xFF);
@@ -66,8 +91,15 @@ fn sock_set_recv_timeout(fd, secs, usecs): i64 {
     # Linux (16 bytes total). Kernel reads 16 bytes; padding doesn't
     # matter because both fields are 64-bit.
     var tv = alloc(16);
-    store64(tv,     secs);
+    memset(tv, 0, 16);
+    store64(tv, secs);
+    #ifdef CYRIUS_TARGET_MACOS
+    # Darwin struct timeval is {tv_sec: i64, tv_usec: i32} — tv_usec is 32-bit
+    # (a 64-bit write would spill into the next field / past the struct).
+    store32(tv + 8, usecs);
+    #else
     store64(tv + 8, usecs);
+    #endif
     return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, tv, 16);
 }
 
@@ -161,12 +193,14 @@ fn sock_shutdown(fd, how): i64 {
 # the duplicated-twice version always got slightly wrong;
 # centralizing here makes it impossible to skip.
 #
-# Linux-x86_64 syscall numbers used (Mach-O ARM64 / aarch64
-# Linux pick up the same numbers via lib/syscalls_*.cyr;
-# fcntl=72, poll=7, getsockopt=55 are stable on both):
-#   fcntl=72, poll=7, getsockopt=55.
-# F_GETFL=3, F_SETFL=4, O_NONBLOCK=2048 (Linux), POLLOUT=4,
-# SOL_SOCKET=1, SO_ERROR=4, EINPROGRESS=115.
+# Uses the Linux-x86_64 syscall numbers (fcntl=72, poll=7, getsockopt=55,
+# connect=42). On Mach-O these are translated to BSD by the backend SYSXLAT
+# (ESYSXLAT / EMACHO_SYSXLAT: 72→92, 7→230, 55→118, 42→98) — v6.0.59. The
+# Darwin-specific flag/option values (O_NONBLOCK, EINPROGRESS, SOL_SOCKET,
+# SO_ERROR) are passed verbatim, so they come from the platform-branched
+# constants above (_NET_O_NONBLOCK / _NET_EINPROGRESS / SockOpt). Linux:
+# O_NONBLOCK=2048, EINPROGRESS=115, SOL_SOCKET=1, SO_ERROR=4. F_GETFL=3,
+# F_SETFL=4, POLLOUT=4 are the same on both.
 var _NET_CONN_NB_OK = 0;
 var _NET_CONN_NB_ERR = 0 - 1;
 var _NET_CONN_NB_TIMEOUT = 0 - 2;
@@ -180,13 +214,18 @@ fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     # Save current flags so we can restore blocking mode on every exit path.
     var saved_flags = syscall(72, fd, 3, 0);                # F_GETFL
     if (saved_flags < 0) { return _NET_CONN_NB_ERR; }
-    syscall(72, fd, 4, saved_flags | 2048);                 # F_SETFL O_NONBLOCK
+    syscall(72, fd, 4, saved_flags | _NET_O_NONBLOCK);      # F_SETFL O_NONBLOCK
 
     # Build sockaddr_in inline (avoid alloc — net_connect_nb is
     # called from regression / probe code that runs without an
     # allocator). 16 bytes on the stack via a local array.
     var sa[3];
+    #ifdef CYRIUS_TARGET_MACOS
+    store8(&sa,      16);                                   # sin_len (BSD)
+    store8(&sa + 1,  2);                                    # sin_family AF_INET
+    #else
     store16(&sa,     2);                                    # AF_INET
+    #endif
     store16(&sa + 2, ((port & 0xFF) << 8) | ((port >> 8) & 0xFF));
     store32(&sa + 4, addr);
     store64(&sa + 8, 0);
@@ -196,7 +235,7 @@ fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     if (cr == 0) {
         # Immediate connect (e.g. localhost) — no poll needed.
         result = _NET_CONN_NB_OK;
-    } else { if (cr == 0 - 115) {
+    } else { if (cr == 0 - _NET_EINPROGRESS) {
             # EINPROGRESS — connect in flight. Wait via poll.
             var pfd[1];
             store32(&pfd,     fd);
@@ -209,7 +248,7 @@ fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
                 var slen[1];
                 store32(&sb,   0);
                 store32(&slen, 4);
-                syscall(55, fd, 1, 4, &sb, &slen);          # getsockopt SOL_SOCKET SO_ERROR
+                syscall(55, fd, SOL_SOCKET, SO_ERROR, &sb, &slen);  # getsockopt SOL_SOCKET SO_ERROR
                 if (load32(&sb) == 0) { result = _NET_CONN_NB_OK; }
             } else { if (pr == 0) {
                     result = _NET_CONN_NB_TIMEOUT;

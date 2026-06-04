@@ -3,6 +3,29 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-04 (.59 ship — lib/net.cyr Darwin socket port: unblocks yantra + sandhi HTTP on Apple Silicon)
+
+Closing **v6.0.59** — first of the pinned macOS hardening slate. check.sh **85/85**; self-host
+byte-identical (897,928 B); **cross-OS `SELFHOST_OK` on ALL FOUR** (ecb + ach + pi + cass).
+
+**Fixed — `lib/net.cyr` ported to Darwin BSD socket ABI.** Was Linux-hardcoded (socket nums +
+sockaddr + sockopt), so ALL TCP/UDP failed on macOS: `socket()` returned a garbage fd, `connect()`
+→ EBADF. Surfaced by yantra M4 on ecb.
+- Socket syscall nums → BSD via BOTH Mach-O backends: ESYSXLAT (arm64) + EMACHO_SYSXLAT (x86) —
+  socket 41→97, connect 42→98, accept 43→30, bind 49→104, listen 50→106, setsockopt 54→105,
+  getsockopt 55→118, shutdown 48→134, poll 7→230 (aarch64 cmp/b.ne/movz encodings llvm-mc-verified).
+- BSD `sockaddr_in` (sin_len/sin_family byte pair); Darwin `SO_*`/`SOL_SOCKET=0xFFFF`/`O_NONBLOCK`/
+  `EINPROGRESS` constants (SOL_SOCKET=0xFFFF was NOT in the issue's hardware deltas — caught +
+  confirmed on ecb via setsockopt); 32-bit `timeval` for SO_RCVTIMEO.
+- **Verified on ecb (arm64):** client (socket+setsockopt+connect) AND server (socket/bind/listen/
+  accept/connect/fork/send/recv) both round-trip exit 42. Issue archived.
+
+x86-macho parity (EMACHO socket entries) added for cross-arch consistency but unverified — x86 HELD
+(Apple Intel EOL).
+
+**Next (pinned slate [[project_macos_windows_platform_hardening_first]]):** .60 = getdirentries +
+`cyrius init` scaffolding; .61 = Windows nuances. x86-macho argv reserved-reg HELD.
+
 ## Session close — 2026-06-04 (.58 ship — macOS fixes & repairs: x86-macho self-host completion + wrapper-command packaging)
 
 Closing **v6.0.58** — macOS-focused fixes and repairs from on-hardware use (ecb arm64 / ach Intel).

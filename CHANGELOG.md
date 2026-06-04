@@ -6,6 +6,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.59] — 2026-06-04
+
+**macOS networking: `lib/net.cyr` ported to Darwin (BSD socket ABI) — unblocks yantra (CDP/WebDriver/
+Appium) + sandhi HTTP on Apple Silicon.** net.cyr hardcoded Linux socket syscall numbers + a Linux
+sockaddr/sockopt ABI, so EVERY TCP/UDP operation failed on macOS — `socket()` returned a garbage fd,
+`connect()` → EBADF. Now fully working, verified end-to-end on real arm64 macOS (ecb). Mach-O-gated;
+Linux 85/85 + self-host byte-identical.
+
+### Fixed
+
+- **`lib/net.cyr` socket surface ported to Darwin** (Issue:
+  2026-06-04-macos-net-socket-syscalls-unported.md — surfaced bringing up yantra's M4 backend on ecb):
+  - **Socket syscall numbers** are now translated to BSD by both Mach-O backends — `ESYSXLAT` (arm64)
+    + `EMACHO_SYSXLAT` (x86) map socket 41→97, connect 42→98, accept 43→30, bind 49→104, listen
+    50→106, setsockopt 54→105, getsockopt 55→118, shutdown 48→134, poll 7→230. (aarch64 cmp/b.ne/movz
+    encodings llvm-mc-verified.)
+  - **BSD `sockaddr_in`** — `sin_len`(u8=16)@0 + `sin_family`(u8)@1, not Linux's `u16 family`@0 (both
+    `sockaddr_in()` and net_connect_nb's inline build).
+  - **Darwin socket option/flag constants** (passed to the kernel verbatim, so platform-branched):
+    SOL_SOCKET 1→0xFFFF, SO_REUSEADDR 2→0x0004, SO_RCVTIMEO 20→0x1006, SO_ERROR 4→0x1007,
+    O_NONBLOCK 2048→0x0004, EINPROGRESS 115→36. (SOL_SOCKET=0xFFFF was NOT in the issue's
+    hardware-derived deltas — caught by inspection, confirmed on ecb via a successful setsockopt.)
+  - **`timeval` for SO_RCVTIMEO** — Darwin `tv_usec` is 32-bit (was a 64-bit write that spilled).
+  - **Verified on ecb (arm64 macOS):** socket+setsockopt+connect (client path → yantra) AND
+    socket/bind/listen/accept/connect/fork/send/recv (server path → sandhi) both round-trip exit 42.
+
+x86-macho parity (the `EMACHO_SYSXLAT` socket entries) is in for cross-arch consistency but is
+unverified — x86 Mach-O tool/wrapper support is held (Apple Intel is EOL-track); arm64 is the
+verified, supported target for every macOS fix.
+
 ## [6.0.58] — 2026-06-04
 
 **macOS fixes and repairs: x86-macho compiler self-host completion (stdlib peer + fork/pipe ABI),
