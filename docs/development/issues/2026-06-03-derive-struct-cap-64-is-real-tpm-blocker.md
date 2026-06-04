@@ -1,7 +1,15 @@
 # Per-file `#derive` struct cap (max 64) is the real blocker for libro's `-D LIBRO_TPM` build — corrects the 2026-05-28 type-table issue
 
 **Discovered:** 2026-06-03, re-testing libro's `-D LIBRO_TPM` build under the cyrius 6.0.14 → 6.0.51 toolchain bump
-**Status:** OPEN — **RAISE THE CAP (user 2026-06-03), slotted for the next release.** The filer marked
+**Status:** ✅ RESOLVED in cyrius 6.0.53 — the cap was raised 64 → **512** as directed. Verified from libro
+2026-06-03: standalone repro now builds at 512 derive structs and fails at 513 with `error: too many
+#derive structs in one file (max 512)`; libro's `-D LIBRO_TPM` build compiles with `tpm_anchor` as a
+plain `#derive(accessors)` struct (the 2.6.5 hand-written-accessor workaround was removed in libro
+2.7.1), 502 default / 514 TPM tests pass. The diagnostic-with-count nicety was not bundled (message
+still reads `(max 512)` without the observed count) — minor, not reopening for it. Original directive
+retained below for the record.
+
+_Original status —_ **RAISE THE CAP (user 2026-06-03), slotted for the next release.** The filer marked
 this "no fix required" because the consumer workaround (hand-written accessors) is clean and 6.0.51
 now diagnoses the cap loudly. The PROJECT LEADER overrides: the prior issue raised the WRONG cap
 (256 type-table → 1024) while declaring libro fixed; the REAL binding limit — the 64-`#derive`-per-file

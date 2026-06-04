@@ -115,13 +115,22 @@ case "$HOST" in
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.
     cat src/main_win.cyr | /tmp/_co_l > /tmp/_co_w && chmod +x /tmp/_co_w
     cat src/main_win.cyr | /tmp/_co_w > /tmp/_co_exe
+    printf 'fn main() { return 42; }' > /tmp/_co_ec.cyr
     ssh $SSHO cass 'cmd /c "rmdir /s /q %USERPROFILE%\_cyaud 2>nul & mkdir %USERPROFILE%\_cyaud"'
     scp -q $SSHO /tmp/_co.tgz cass:_cyaud/_co.tgz
     scp -q $SSHO /tmp/_co_exe cass:_cyaud/cycc.exe
+    scp -q $SSHO /tmp/_co_ec.cyr cass:_cyaud/_ec.cyr
     # cmd.exe for `<` redirection. The &&-chain stops at the first failure and
     # cmd /c returns that command's exit code, which ssh propagates back, so a
     # broken cycc.exe (emits 0 code today) fails the gate for the right reason.
-    ssh $SSHO cass 'cmd /c "cd /d %USERPROFILE%\_cyaud && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"'
+    # Then the v6.0.54 exit-code guard (the WIN analog of the ecb leg's v6.0.37
+    # guard): a `fn main(){return 42;}` program compiled by the NATIVE cycc.exe
+    # must exit 42. The byte-identity `fc /b` above does NOT catch the rot-class
+    # where main_win.cyr's DCE stubs `fn main` / never auto-calls it (the bug
+    # fixed in v6.0.54). `cmd /v` is REQUIRED — bare `%errorlevel%` expands at
+    # parse time and falsely reads 0 (feedback_windows_errorlevel_test_wrapper).
+    ssh $SSHO cass 'cmd /c "cd /d %USERPROFILE%\_cyaud && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
     ;;
   ecb-install)
     # Packaging-rot guard (v6.0.38): build the real tarball via the same

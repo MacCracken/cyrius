@@ -777,6 +777,9 @@ args::argv/1
 args_macos::argc/0
 args_macos::args_init/0
 args_macos::argv/1
+args_win::argc/0
+args_win::args_init/0
+args_win::argv/1
 assert::assert/2
 assert::assert_eq/3
 assert::assert_gt/3
@@ -3503,7 +3506,10 @@ thread::mutex_unlock/1
 thread::thread_create/2
 thread::thread_join/1
 thread_local::thread_local_get/1
+thread_local::thread_local_get/1
 thread_local::thread_local_init/0
+thread_local::thread_local_init/0
+thread_local::thread_local_set/2
 thread_local::thread_local_set/2
 thread_win::chan_close/1
 thread_win::chan_new/1

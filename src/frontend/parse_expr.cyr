@@ -628,20 +628,32 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.0.54: GetCommandLineW for the Windows args.cyr branch
+            # (lib/args_win.cyr) + cycc's own --version/--strict. 0 args,
+            # returns the UTF-16LE command-line LPWSTR in rax.
+            if (sc_num == 61446) {
+                if (argc == 1) {
+                    # syscall(0xF006) → GetCommandLineW (no args, LPWSTR in rax).
+                    EGETCMDLINE_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # Non-mapped syscalls: emitting the generic ESCPOPS path
             # below would produce an `0F 05` syscall that faults
             # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
-            # (0xC000001D). Routed numbers (v5.11.22, +v6.0.51):
+            # (0xC000001D). Routed numbers (v5.11.22, +v6.0.51, +v6.0.54):
             # 0=read, 1=write, 2=open, 3=close, 8=lseek, 9=mmap,
             # 60=exit, 83=mkdir, 87=unlink, 228=clock_gettime, and
             # 0xF001-0xF005 = Win32 process creation (Wait/GetExit/
-            # SetHandle/CreatePipe/CreateProcessW; see process_win.cyr).
+            # SetHandle/CreatePipe/CreateProcessW; see process_win.cyr),
+            # 0xF006 = GetCommandLineW (args.cyr; see args_win.cyr).
             # Others crash; gate with `#ifdef CYRIUS_TARGET_WIN`
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
-            194);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            213);
         }
         ESCPOPS(S, argc);
         _cfo = 0;

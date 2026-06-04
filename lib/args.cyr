@@ -12,8 +12,72 @@
 # enum/gvar inits clobber x0/x1; args_macos.cyr reads from there
 # (XNU has no /procfs). See CHANGELOG [5.5.17].
 
+# Tokenize a UTF-16LE NUL-terminated command line at `w` into a NUL-joined
+# cstr blob in `buf` (cap bytes): "arg0\0arg1\0...". Quote-aware (toggle on
+# '"', split on unquoted space/tab), ASCII down-convert (each wide char's
+# low byte is kept, high byte dropped). Returns the blob length in bytes.
+#
+# Used by lib/args_win.cyr (fed GetCommandLineW); kept here, target-agnostic
+# and pure (no syscall), so the parse is unit-testable on any host
+# (tests/tcyr/args_win_tokenize.tcyr). Dead on Linux/macOS (DCE-stubbed).
+# Scope boundary (ASCII-only, no backslash-quote semantics) documented in
+# lib/args_win.cyr. See CHANGELOG [6.0.54].
+fn _args_tokenize_utf16(w, buf, cap) {
+    var bo = 0;
+    var i = 0;
+    var in_quote = 0;
+    var in_arg = 0;
+    var lo = 0;
+    var hi = 0;
+    var is_sep = 0;
+    var done = 0;
+    while (done == 0) {
+        lo = load8(w + i);                            # low byte (ASCII)
+        hi = load8(w + i + 1);                        # high byte (dropped)
+        if (lo == 0) { if (hi == 0) { done = 1; } }   # double-NUL terminates
+        if (bo >= cap - 2) { done = 1; }              # defensive: room for the NUL
+        if (done == 0) {
+            if (lo == 34) {                           # '"' — toggle; mark in-arg so a bare ""
+                in_arg = 1;                            #   yields an empty arg (Linux + Windows
+                in_quote = 1 - in_quote;               #   CommandLineToArgvW both keep it)
+            } else {
+                is_sep = 0;
+                if (in_quote == 0) {
+                    if (lo == 32) { is_sep = 1; }     # space
+                    if (lo == 9) { is_sep = 1; }      # tab
+                }
+                if (is_sep == 1) {
+                    if (in_arg == 1) {
+                        store8(buf + bo, 0);          # arg separator NUL
+                        bo = bo + 1;
+                        in_arg = 0;
+                    }
+                } else {
+                    in_arg = 1;
+                    # A non-ASCII wide char (low byte 0, high byte != 0) must NOT
+                    # store a literal NUL — that would fabricate an arg boundary
+                    # (argc inflation). Map it to '?' so it stays one arg.
+                    if (lo == 0) { lo = 63; }
+                    store8(buf + bo, lo);             # keep low byte (ASCII)
+                    bo = bo + 1;
+                }
+            }
+            i = i + 2;
+        }
+    }
+    if (in_arg == 1) {                                # terminate the trailing arg
+        store8(buf + bo, 0);
+        bo = bo + 1;
+    }
+    return bo;
+}
+
 #ifdef CYRIUS_TARGET_MACOS
 include "lib/args_macos.cyr"
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+include "lib/args_win.cyr"
 #endif
 
 #ifdef CYRIUS_TARGET_LINUX

@@ -444,6 +444,21 @@ fn _pe_ensure_gettick(S): i64 {
 }
 fn _pe_gettick_get(): i64 { return _pe_gettick_idx; }
 
+# v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
+# (lib/args_win.cyr) and cycc's own --version/--strict on Windows.
+# kernel32!GetCommandLineW() takes no args, returns the process's
+# UTF-16LE command-line LPWSTR in rax. Lazily registered on the first
+# `syscall(0xF006)` the parser sees under `_TARGET_PE == 1`.
+var _pe_getcmdline_ready  = 0;
+var _pe_getcmdline_idx    = 0;
+fn _pe_ensure_getcmdline(S): i64 {
+    if (_pe_getcmdline_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getcmdline_idx, "GetCommandLineW");
+    _pe_getcmdline_ready = 1;
+    return 0;
+}
+fn _pe_getcmdline_get(): i64 { return _pe_getcmdline_idx; }
+
 # Called from `parse.cyr`'s `#pe_import("dll", "symbol")` handler
 # with `name` pointing at the NUL-terminated symbol string inside
 # str_data. Appends the name to the pending buffer; `_pe_layout`

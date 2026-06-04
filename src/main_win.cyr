@@ -214,8 +214,9 @@ var _vfd = 0;
 # crashes cycc_win.exe at startup. Gate the whole block on
 # CYRIUS_TARGET_LINUX so cycc_win.exe (built by cc5_win_linux with
 # CYRIUS_TARGET_WIN predefined at runtime) skips it entirely.
-# Downside: no --version / --strict support on Windows yet;
-# GetCommandLineW-based replacement queued for v5.5.x tail.
+# v6.0.54: the Windows equivalent below uses GetCommandLineW (the
+# `syscall(0xF006)` PE reroute, src/backend/x86/emit.cyr) — the
+# "GetCommandLineW-based replacement" the prior comment queued.
 #ifdef CYRIUS_TARGET_LINUX
 if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
 else { _vfd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
@@ -247,6 +248,56 @@ if (_vn > 0) {
         # Skip to next arg (past next \0)
         while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
         _vi = _vi + 1;
+    }
+}
+#endif
+
+# v6.0.54: the Windows --version / --strict path. GetCommandLineW returns
+# ONE UTF-16LE string (program path + args, space-separated, NOT NUL-split),
+# so we walk it char-by-char (2 bytes each, ASCII low byte) and, at each
+# token start (string start or just after an unquoted space), test the
+# first four chars for "--ve" (--version → print + exit) or "--st"
+# (--strict → set the flag). Reading +6 max stays inside the kernel-owned,
+# double-NUL-terminated buffer. ASCII-only, like lib/args_win.cyr; a path
+# containing "--version" mid-token is not at a token start, so no false hit.
+#ifdef CYRIUS_TARGET_WIN
+var _vw = syscall(61446);              # GetCommandLineW → UTF-16LE LPWSTR in rax
+if (_vw != 0) {
+    var _wi = 0;
+    var _wtok = 1;                     # at a token start (start-of-string counts)
+    var _wdone = 0;
+    var _wc = 0;
+    var _whi = 0;
+    while (_wdone == 0) {
+        _wc = load8(_vw + _wi);        # low byte of the wide char (ASCII)
+        _whi = load8(_vw + _wi + 1);   # high byte
+        # double-NUL terminates; a U+xx00 char (low 0, high != 0) is NOT the end.
+        if (_wc == 0) { if (_whi == 0) { _wdone = 1; } }
+        if (_wdone == 0) {
+            if (_wc == 32) {
+                _wtok = 1;             # unquoted space → next char starts a token
+            } else {
+                if (_wtok == 1) {
+                    if (load8(_vw + _wi) == 45) {
+                        if (load8(_vw + _wi + 2) == 45) {
+                            if (load8(_vw + _wi + 4) == 118) {
+                                if (load8(_vw + _wi + 6) == 101) {
+                                    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC_WIN, _VERSION_LEN_CYCC_WIN);
+                                    syscall(SYS_EXIT, 0);
+                                }
+                            }
+                            if (load8(_vw + _wi + 4) == 115) {
+                                if (load8(_vw + _wi + 6) == 116) {
+                                    _strict_mode = 1;
+                                }
+                            }
+                        }
+                    }
+                    _wtok = 0;
+                }
+            }
+            _wi = _wi + 2;
+        }
     }
 }
 #endif
@@ -626,6 +677,25 @@ while (topgo == 1) {
                                         var dce_km = L64(S + 0x18FCA0);
                                         if (dce_km == 3 || dce_km == 2) { dce_reachable = 1; }
                                         else { if (GMOD(S) == 0) {
+                                                # v6.0.54: exempt `main` from DCE — port of main.cyr's
+                                                # v5.9.37 fix. The WIN driver lacked it, so native
+                                                # cycc_win stubbed an explicit `fn main()` to
+                                                # `xor eax,eax; ret` and the program exited 0 without
+                                                # running its body (the auto-call-main epilogue below
+                                                # calls main from generated code, so DCE never sees an
+                                                # ident reference). See CHANGELOG [5.9.37] / [6.0.54].
+                                                var dce_is_main = 0;
+                                                if (load8(S + 0x60000 + dce_fnoff) == 109) {     # 'm'
+                                                    if (load8(S + 0x60000 + dce_fnoff + 1) == 97) {   # 'a'
+                                                        if (load8(S + 0x60000 + dce_fnoff + 2) == 105) {   # 'i'
+                                                            if (load8(S + 0x60000 + dce_fnoff + 3) == 110) {   # 'n'
+                                                                if (load8(S + 0x60000 + dce_fnoff + 4) == 0) {
+                                                                    dce_is_main = 1;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                                 # Check for underscore in name (mangled — skip DCE)
                                                 var dce_np = S + 0x60000 + dce_fnoff;
                                                 var dce_has_us = 0;
@@ -634,13 +704,15 @@ while (topgo == 1) {
                                                     if (load8(dce_np + dce_ni) == 95) { dce_has_us = 1; }
                                                     dce_ni = dce_ni + 1;
                                                 }
-                                                if (dce_has_us == 0) {
-                                                    # Check bitmap: is this name offset referenced?
-                                                    if (dce_fnoff < 65536) {
-                                                        var dce_byte = dce_fnoff >> 3;
-                                                        var dce_bit = dce_fnoff & 7;
-                                                        if ((load8(dce_bm + dce_byte) & (1 << dce_bit)) == 0) {
-                                                            dce_reachable = 0;
+                                                if (dce_is_main == 0) {
+                                                    if (dce_has_us == 0) {
+                                                        # Check bitmap: is this name offset referenced?
+                                                        if (dce_fnoff < 65536) {
+                                                            var dce_byte = dce_fnoff >> 3;
+                                                            var dce_bit = dce_fnoff & 7;
+                                                            if ((load8(dce_bm + dce_byte) & (1 << dce_bit)) == 0) {
+                                                                dce_reachable = 0;
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -738,6 +810,24 @@ PARSE_PROG(S);
 # Exit epilogue
 var lv = GLVAR(S);
 if (lv >= 0) { EVLOAD(S, lv); }
+
+# v6.0.54: auto-call `main()` if defined and not already called — port of
+# main.cyr's v5.9.37 fix (the WIN driver lacked it, so a source with only
+# `fn main() { ... }` and no explicit `syscall(60, main())` wire ran the
+# gvar inits + parse-prog and exited with rax=junk; main never ran). Must
+# run AFTER the GLVAR-load above — that load clobbers main's rax return.
+# Pairs with the `dce_is_main` exemption in the DCE block above (without it
+# DCE would stub main to `xor eax,eax; ret`). See CHANGELOG [5.9.37]/[6.0.54].
+var _epi_km_pre = L64(S + 0x18FCA0);
+if (_epi_km_pre == 0) {
+    var _main_found = _find_fn_by_name(S, "main", 4);
+    if (_main_found >= 0) {
+        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
+        if (_main_off >= 0) {
+            ECALLTO(S, _main_off);
+        }
+    }
+}
 var _epi_km = L64(S + 0x18FCA0);
 if (_epi_km == 3 || _epi_km == 2) {
     # Object / shared mode: return from _cyrius_init (leave; ret).

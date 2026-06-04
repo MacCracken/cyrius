@@ -1103,6 +1103,30 @@ fn EGETTICKS_PE(S): i64 {
     return 0;
 }
 
+# v6.0.54: emit Win64 GetCommandLineW call. `syscall(0xF006)` on PE →
+# GetCommandLineW() — 0 args, returns the process command-line LPWSTR
+# (UTF-16LE, NUL-terminated, kernel-owned/process-static) in rax,
+# returned to the cyrius caller as-is (lib/args_win.cyr down-converts).
+# Stack on entry: [sc_nr=0xF006] (argc=1). `add rsp,8` drops the sc_nr
+# slot; `sub rsp,0x28` opens the Win64 frame (32-byte shadow + 8 pad).
+# Net delta entry→CALL is `sub rsp,0x20` (32 B, a multiple of 16) — so the
+# CALL keeps whatever 16-alignment the site entered with. Same leaf shape
+# as EGETTICKS_PE (pure pointer return, no path-API alignment trap).
+# Verified on real Windows: cycc_win self-hosts + --version + argv all OK.
+fn EGETCMDLINE_PE(S): i64 {
+    _pe_ensure_getcmdline(S);
+    var gc_idx = _pe_getcmdline_get();
+
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28); # sub rsp, 0x28 (shadow+align)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetCommandLineW]
+    _pe_iat_fixup_add(S, GCP(S), gc_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x28); # add rsp, 0x28
+    # rax now holds the LPWSTR command-line pointer.
+    return 0;
+}
+
 # emit Win64 seek: `syscall(8, fd, offset, whence)` →
 # SetFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod).
 # Stack on entry (top→bottom): [whence] [offset] [fd] [sc_nr=8].

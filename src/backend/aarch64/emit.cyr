@@ -122,6 +122,14 @@ fn EGETEXIT_PE(S)    { return 0; }   # (x86-only real impl; aarch64 stubs for
 fn ESETHANDLE_PE(S)  { return 0; }   #  parse_expr.cyr symbol resolution — these
 fn ECREATEPIPE_PE(S) { return 0; }   #  branches are dead under the aarch64 backend)
 fn ECREATEPROC_PE(S) { return 0; }
+fn EGETCMDLINE_PE(S) { return 0; }   # v6.0.54 GetCommandLineW reroute (x86-only real impl)
+# v6.0.54: close the .23 stub gap. ECREATEDIR_PE (mkdir/83) +
+# EDELETEF_PE (unlink/87) shipped x86-only at v5.11.22-23 and never
+# got aarch64 stubs — they fired "undefined function" warnings on
+# every aarch64 cross-build (FATAL under --strict). Same dead-branch
+# justification as the cohort above. See CHANGELOG [5.11.23] / [6.0.54].
+fn ECREATEDIR_PE(S)  { return 0; }
+fn EDELETEF_PE(S)    { return 0; }
 
 # Marker that the aarch64 backend is present in this compiler binary.
 # Checked by EMITMACHO_ARM64 to refuse Mach-O ARM output when accidentally

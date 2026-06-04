@@ -35,9 +35,11 @@ sigil fold (610 KB dist) surfaced + fixed a latent api-surface bug: the per-file
 and the snapshot corrected 2789 → 3824 publics (the tool had silently hidden ~1035 fns across the
 >256 KB libs). cycc UNCHANGED by the folds/tool-fix → self-host + cross-OS carry over; check.sh 85/85.
 
-**Next = v6.0.54 (the agnos CYRIUS_TARGET_AGNOS args+io gap)** per the slate; then .55 *at+fsync,
-.56 cc5-18-arg + QoL, .57 TS→JS, **TLS resumes at .58** ([[project_native_tls_arc_v6_2_x]]). The
-Windows-args gap is tracked but UNPOSITIONED — user's call (sibling of the agnos args gap).
+**Next = v6.0.54 (the LAST Windows-arc items: lib/args.cyr CYRIUS_TARGET_WIN branch [GetCommandLineW
+→ argv] + WIN thread_local for sigil 3.6.0)** per the reordered slate (user 2026-06-03: ".54 the last
+of the windows arc items then .55 can be agnos"); fully unblocks ai-hwaccel's win_amd64 wheel. Then
+.55 agnos CYRIUS_TARGET_AGNOS args+io gap, .56 *at+fsync, .57 cc5-18-arg + QoL, .58 TS→JS, **TLS
+resumes at .59** ([[project_native_tls_arc_v6_2_x]]).
 
 ## Session close — 2026-06-03 (.52 ship — `cyrius build --win` + PROT_READ cross-target fix)
 
