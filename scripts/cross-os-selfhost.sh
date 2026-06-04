@@ -144,9 +144,27 @@ case "$HOST" in
     sh scripts/build-macos-arm64-tarball.sh /tmp/_co_dist >/dev/null 2>&1
     V=$(tr -d '[:space:]' < VERSION)
     printf 'fn main() { return 42; }' > /tmp/_co_t.cyr
-    ssh $SSHO ecb 'rm -rf ~/_coih ~/_co_t.out'
-    scp -q $SSHO scripts/install.sh /tmp/_co_t.cyr "/tmp/_co_dist/cyrius-$V-aarch64-macos.tar.gz" ecb:~/
+    ssh $SSHO ecb 'rm -rf ~/_coih ~/_co_t.out ~/_cofg'
+    scp -q $SSHO scripts/install.sh scripts/funcgate-posix.sh /tmp/_co_t.cyr "/tmp/_co_dist/cyrius-$V-aarch64-macos.tar.gz" ecb:~/
     ssh $SSHO ecb "CYRIUS_VERSION=$V CYRIUS_HOME=\$HOME/_coih CYRIUS_INSTALL_TARBALL=\$HOME/cyrius-$V-aarch64-macos.tar.gz sh \$HOME/install.sh >/dev/null 2>&1 && CYRIUS_HOME=\$HOME/_coih \$HOME/_coih/bin/cyrius build \$HOME/_co_t.cyr \$HOME/_co_t.out >/dev/null 2>&1 && (r=0; \$HOME/_co_t.out || r=\$?; [ \$r -eq 42 ])"
+    # v6.0.63 FUNCTIONAL gate — the REAL consumer flow (init -> lib sync -> deps
+    # -> build a vec-grown fib that allocates -> run/assert -> hash). Self-host +
+    # the single-file build above BOTH pass while is_dir/dir_list are broken
+    # (neither walks a directory) — the blind spot that let arm64-macOS lib sync
+    # rot green for 10+ releases (known + papered-over since v6.0.40, deps.cyr's
+    # own comment). This step FAILS RED on the broken state — that's the truth.
+    # Honest known-broken bypass: FUNCGATE_ALLOW_KNOWN_BROKEN=1 downgrades a
+    # tracked-broken host to exit 4 (visible RED, not blocking Linux, NEVER green).
+    # Issue: 2026-06-04-shipped-broken-functionality-found-by-consumers.md.
+    _frc=0
+    ssh $SSHO ecb "sh \$HOME/funcgate-posix.sh \$HOME/_coih/bin/cyrius \$HOME/_cofg \$HOME/_coih" || _frc=$?
+    if [ "$_frc" -ne 0 ]; then
+      echo "FUNCGATE_FAIL: ecb arm64 macOS real-flow broken (rc=$_frc) — see 2026-06-04-shipped-broken-functionality-found-by-consumers.md"
+      if [ "${FUNCGATE_ALLOW_KNOWN_BROKEN:-0}" = "1" ]; then
+        echo "FUNCGATE_KNOWN_BROKEN: ecb (tracked) — NOT blocking, NOT claiming green"; exit 4
+      fi
+      exit 1
+    fi
     ;;
   *)
     echo "ERROR: unknown host '$HOST' (expected ecb|ach|pi|cass|ecb-install)"; exit 2

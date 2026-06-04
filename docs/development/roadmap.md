@@ -447,29 +447,41 @@ premise-check each at slot entry:
    2-arch parity + cross-arch tests; → v6.1.x candidate / re-slot at user's call). Also
    folded in: the **macOS install lib-snapshot hotfix** (`scripts/install.sh`,
    `issues/2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md`).
-2. **.63 — global allocator thread-safety**
+2. **.63 — arm64 macOS `getdirentries64` codegen fix** (user 2026-06-04, inserted; rest
+   slides back one). `is_dir` / `dir_list` / `cyrius lib sync` / any dir-walk return
+   EFAULT/EBADF on arm64 macOS: `getdirentries64` (syscall 217→344) gets corrupted args
+   in any RUNTIME-LINKED program (works only in a no-alloc raw probe; inconsistent errno
+   = garbage args). Reproduced on ecb. **RETRACT** the .62 `install.sh` "fix" + that
+   issue's resolution — the lib snapshot was never the problem; the wrapper can't READ
+   the dir. Also exposes that .60's "dir_list verified" was bogus (macOS-rot). Fix the
+   arm64 syscall/getdirentries64 emit; **verify real `cyrius lib sync` on ecb before
+   claiming**. (`issues/2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md`,
+   re-scope to the real cause.) **+ fold sigil 3.7.3 into stdlib** at the end of this slot
+   (user 2026-06-04 — sandhi-pattern, byte-identical at the tag).
+3. **.64 — global allocator thread-safety** (was .63)
    (`issues/2026-06-04-cyrius-global-allocator-not-thread-safe.md`): rec fix = single
    global alloc-lock, packing in the macho `__ulock`/agnos-futex primitive gap
-   (CAS-spinlock fallback on those targets) per one-bug-one-complete-fix.
-3. **.64–.66 (extend if needed) — partials block**: ach self-hosted runner
+   (CAS-spinlock fallback) per one-bug-one-complete-fix.
+4. **.65–.67 (extend if needed) — partials block** (was .64–.66): ach self-hosted runner
    (`issues/2026-06-03-ach-selfhosted-runner.md`) + Windows follow-up nuances §3 full
    `CommandLineToArgvW` (shell32) + §0 COM/DXGI GPU-enum
    (`issues/2026-06-03-windows-followup-nuances.md` +
    `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + agnos follow-up-after-boot
    consumer-side items (`issues/2026-06-03-agnos-followup-after-boot.md`) + asm-block
    global-symbol pseudo-op (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`).
-4. **.67–x — native TLS items**: Mini-arc D (TLS 1.2 backport) + Mini-arc E (consumer
-   wiring + closeout). sandhi is handled AT THIS ARC when we get there — version-bump
-   sandhi + update language docs then; NOT cross-walked/pre-filed now (user 2026-06-04,
-   overriding the general upfront-cross-walk default for this case).
-5. **.x–y — Windows fixes**: PE cycc-as-compiler multibug bug 2+
+5. **.68–x — native TLS items** (was .67–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
+   (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
+   version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
+   2026-06-04, overriding the general upfront-cross-walk default for this case).
+6. **.x–y — Windows fixes**: PE cycc-as-compiler multibug bug 2+
    (`issues/2026-06-02-windows-cycc-runtime-multibug.md`, verify on cass) + `cyrius deps
    --lock` Windows-portable hash + the native Windows `.ps1` installer + AGNOS-target
    install.
-6. **LAST before closeout — cleanup / refactor cluster**: dead `ret_patches` 2 KB heap
-   region, byte-array literal peephole, dead-code careful sweep, `_TARGET_*` flag
-   consolidation, `programs/check.cyr` modularization.
-7. **Closeout → v6.1.0**: the CLAUDE.md "Closeout Pass" § — mechanical fail-fast
+7. **LAST before closeout — cleanup / refactor cluster + sigil 3.7.3 fold**: dead
+   `ret_patches` 2 KB heap region, byte-array literal peephole, dead-code careful sweep,
+   `_TARGET_*` flag consolidation, `programs/check.cyr` modularization, **+ fold sigil
+   3.7.3 into stdlib** (user 2026-06-04 — sandhi-pattern, byte-identical at the tag).
+8. **Closeout → v6.1.0**: the CLAUDE.md "Closeout Pass" § — mechanical fail-fast
    (self-host + bootstrap closure + check.sh + cross-OS 4-host) → judgment passes (heap
    map / dead code / refactor / code review / cleanup) → docs sync (incl. reconciling the
    stale slot-number lines this long cycle accreted).
