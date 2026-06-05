@@ -131,6 +131,7 @@ fn EGETCURTID_PE(S) { return 0; }    # v6.0.61 Stage 2 thread-local storage
 fn ETLSALLOC_PE(S) { return 0; }     #  reroutes (x86-only real impl; aarch64
 fn ETLSGET_PE(S) { return 0; }       #  stubs for parse_expr.cyr symbol
 fn ETLSSET_PE(S) { return 0; }       #  resolution)
+fn ESLEEP_PE(S) { return 0; }        # v6.0.65 Sleep reroute (x86-only real impl)
 # v6.0.54: close the .23 stub gap. ECREATEDIR_PE (mkdir/83) +
 # EDELETEF_PE (unlink/87) shipped x86-only at v5.11.22-23 and never
 # got aarch64 stubs — they fired "undefined function" warnings on
@@ -648,6 +649,38 @@ fn ESYSXLAT(S): i64 {
     # path (degraded dep resolution). cmp x8,#79 = 0xF1013D1F; movz x8,#17
     # = 0xD2800228.
     EW(S, 0xF1013D1F); EW(S, 0x54000041); EW(S, 0xD2800228);  # getcwd 79→17
+    return 0;
+}
+
+# v6.0.65: SINGLE SOURCE OF TRUTH for "is syscall n safely handled on Mach-O
+# ARM?" — used by parse_expr.cyr's macho whitelist warning instead of a drifting
+# parallel list. MUST mirror the cmp x8,#N entries in ESYSXLAT's _TARGET_MACHO==2
+# branch above (+ 228 clock_gettime, handled on macho via the __got[6] reroute,
+# not ESYSXLAT). When you add/remove an ESYSXLAT macho entry, update this too —
+# they sit adjacent for exactly that reason. 35 here is aarch64 unlinkat (→unlink),
+# NOT x86 nanosleep; portable sleeping goes through lib/chrono.cyr sleep_ms (poll).
+fn _macho_arm_routes(n): i64 {
+    if (n == 0) { return 1; }    if (n == 1) { return 1; }    # read / write
+    if (n == 2) { return 1; }    if (n == 3) { return 1; }    # open / close
+    if (n == 4) { return 1; }    if (n == 7) { return 1; }    # stat / poll (sleep_ms)
+    if (n == 9) { return 1; }    if (n == 10) { return 1; }   # mmap / mprotect
+    if (n == 11) { return 1; }   if (n == 24) { return 1; }   # munmap / dup3→dup2
+    if (n == 34) { return 1; }   if (n == 35) { return 1; }   # mkdirat / unlinkat
+    if (n == 39) { return 1; }   if (n == 41) { return 1; }   # getpid / socket
+    if (n == 42) { return 1; }   if (n == 43) { return 1; }   # connect / accept
+    if (n == 48) { return 1; }   if (n == 49) { return 1; }   # shutdown / bind
+    if (n == 50) { return 1; }   if (n == 53) { return 1; }   # listen / fchmodat
+    if (n == 54) { return 1; }   if (n == 55) { return 1; }   # setsockopt / getsockopt
+    if (n == 56) { return 1; }   if (n == 57) { return 1; }   # openat / close(a64)
+    if (n == 60) { return 1; }   if (n == 61) { return 1; }   # exit / getdents64(a64)
+    if (n == 62) { return 1; }   if (n == 63) { return 1; }   # lseek / read(a64)
+    if (n == 64) { return 1; }   if (n == 72) { return 1; }   # write(a64) / fcntl
+    if (n == 82) { return 1; }   if (n == 88) { return 1; }   # rename / symlink
+    if (n == 93) { return 1; }   if (n == 94) { return 1; }   # exit(a64) / exit_group
+    if (n == 215) { return 1; }  if (n == 217) { return 1; }  # munmap(a64) / getdents64(x86)
+    if (n == 220) { return 1; }  if (n == 221) { return 1; }  # clone→fork / execve(a64)
+    if (n == 222) { return 1; }  if (n == 226) { return 1; }  # mmap(a64) / mprotect(a64)
+    if (n == 228) { return 1; }  if (n == 260) { return 1; }  # clock_gettime(__got) / wait4
     return 0;
 }
 

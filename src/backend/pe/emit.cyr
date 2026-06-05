@@ -504,6 +504,18 @@ fn _pe_ensure_relsrw(S): i64 {
 }
 fn _pe_relsrw_get(): i64 { return _pe_relsrw_idx; }
 
+# v6.0.65: kernel32 Sleep import — portable lib/chrono.cyr sleep_ms on Windows
+# (poll isn't routed on PE; raw nanosleep 35 faulted). 1-arg (dwMilliseconds).
+var _pe_sleep_ready = 0;
+var _pe_sleep_idx   = 0;
+fn _pe_ensure_sleep(S): i64 {
+    if (_pe_sleep_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_sleep_idx, "Sleep");
+    _pe_sleep_ready = 1;
+    return 0;
+}
+fn _pe_sleep_get(): i64 { return _pe_sleep_idx; }
+
 # v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
 var _pe_getcurtid_ready = 0;
 var _pe_getcurtid_idx   = 0;

@@ -79,18 +79,34 @@ fn dur_between(start_ns, end_ns): i64 {
     return dur_new(diff / 1000000000, diff % 1000000000);
 }
 
-# Sleep for ms milliseconds (blocking)
+# Sleep for ms milliseconds (blocking). Portable across targets — v6.0.65
+# replaced the raw `syscall(35)` (Linux nanosleep) that faulted off Linux:
+# Darwin has NO plain `nanosleep` BSD syscall (XNU implements it over
+# semaphore primitives) and PE never routed 35, so on macOS/Windows the old
+# body emitted a bad `svc`/illegal-instruction. `poll(NULL, 0, ms)` is the
+# portable ms-granular sleep — `poll` (syscall 7 → Darwin 230) is already
+# rerouted on both Mach-O backends and works on Linux; Windows uses kernel32
+# `Sleep`. agnos has no sleep syscall in its frozen 0-33 surface → no-op.
+# See CHANGELOG [6.0.65], issue 2026-06-04-macos-nanosleep-syscall-35-not-in-esysxlat.
 fn sleep_ms(ms): i64 {
-    #ifdef CYRIUS_TARGET_AGNOS
-    return 0;                       # no nanosleep on agnos — no-op
-    #endif
-    #ifndef CYRIUS_TARGET_AGNOS
-    var ts[16];
-    store64(&ts, ms / 1000);
-    store64(&ts + 8, (ms % 1000) * 1000000);
-    syscall(35, &ts, 0);
+    #ifdef CYRIUS_TARGET_WIN
+    # Sleep(ms) via kernel32 (PE reroute 0xF00F). nanosleep(35) was never routed
+    # on PE, and WaitForSingleObject on the current process/thread pseudo-handle
+    # returns immediately (doesn't block) — verified on cass — so a real Sleep
+    # reroute is the correct path.
+    syscall(0xF00F, ms);            # Sleep(ms)
     return 0;
     #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    syscall(7, 0, 0, ms);           # poll(NULL, 0, ms) — 7→230 on Darwin
+    return 0;
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    syscall(7, 0, 0, ms);           # poll(NULL, 0, ms)
+    return 0;
+    #endif
+    # agnos (no sleep in 0-33) + cx + any other target: no-op
+    return 0;
 }
 
 # ================================================================

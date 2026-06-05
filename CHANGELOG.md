@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.65] — 2026-06-05
+
+**Partials / repairs — portable `sleep_ms` (unblocks yantra's macOS-arm64 iOS CI) + a single-source
+Mach-O syscall whitelist + the x86-macOS CI gate restored on real hardware.** `lib/chrono.cyr`'s
+`sleep_ms` called raw `syscall(35)` (Linux nanosleep), which faults off Linux — Darwin has no plain
+`nanosleep` BSD syscall (35 there collides with aarch64 `unlinkat`) and PE never routed it. Now it uses
+`poll(NULL,0,ms)` on Linux+macOS and a kernel32 `Sleep` reroute on Windows. Verified `sleep_ms(500)` ≈
+500ms on Linux + macOS-arm64 (ecb) + macOS-x86 (ach) + Windows (cass); self-host byte-identical on all
+four + check.sh 85/85. (asm-block global-symbol pseudo deferred to v6.0.66 — it's a cross-arch feature,
+not a small squeeze-in.)
+
+### Fixed
+
+- **Portable `sleep_ms`** (`lib/chrono.cyr`) — replaced the raw `syscall(35)` nanosleep (Linux-only;
+  faulted on macOS/Windows) with `poll(NULL,0,ms)` on Linux+macOS (`poll` 7→230 is already routed on
+  both Mach-O backends and is the portable ms-granular sleep) + a new kernel32 `Sleep` reroute on
+  Windows; agnos/cx no-op. Unblocks yantra's iOS e2e on `macos-15-arm64` (it moves `_yantra_sleep_ms`
+  off raw `syscall(35)`). Issue `2026-06-04-macos-nanosleep-syscall-35-not-in-esysxlat.md`.
+- **`lib/regression.cyr`** — its 100ms poll-wait used raw `syscall(35)` too; moved to `poll`.
+- **Mach-O ARM syscall whitelist drift** (`src/frontend/parse_expr.cyr` + `src/backend/aarch64/emit.cyr`)
+  — the parse-time "syscall not routed on Mach-O" warning hardcoded `{0,1,2,3,9,10,11,60,228}` while
+  ESYSXLAT routes ~40, so it fired for routed syscalls and drowned the genuinely-unrouted ones. Replaced
+  with a single source of truth: `_macho_arm_routes()` adjacent to ESYSXLAT, queried by the warning —
+  no parallel list to drift. The warning now fires only for genuinely-unrouted syscalls.
+
+### Added
+
+- **Windows kernel32 `Sleep` reroute** (`0xF00F`; `src/backend/{pe,x86,aarch64}/*` + parse_expr) — 1-arg
+  reroute mirroring the SRWLock reroutes; backs `sleep_ms` on PE. cass-verified (Sleep(500)≈558ms).
+- **x86-macOS (`ach`/Achaemenid) self-host CI gate** (`.github/workflows/ci.yml`) — restored as a real
+  blocking gate on the self-hosted Intel-Mac runner: `macho-x86-native` stages the x86 Mach-O cycc +
+  source, self-hosts byte-identical, runs the rot-class exit-42 guard + the consumer-flow funcgate.
+  Replaces the scarce/quarantine-flaky GitHub `macos-13` job. Fork PRs are gated out (self-hosted
+  security). Issue `2026-06-03-ach-selfhosted-runner.md` (runner registration is operator-side).
+
 ## [6.0.64] — 2026-06-05
 
 **Thread-safe global allocator** — concurrent `alloc()` across real threads no longer corrupts the heap.

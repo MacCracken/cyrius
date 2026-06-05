@@ -416,20 +416,15 @@ fn PARSE_FACTOR(S): i64 {
         # for specific syscalls the tools actually exercise.
         if (_TARGET_MACHO == 2) {
             if (sc_num >= 0) {
-                var sc_ok = 0;
-                if (sc_num == 0) { sc_ok = 1; }
-                elif (sc_num == 1) { sc_ok = 1; }
-                elif (sc_num == 2) { sc_ok = 1; }
-                elif (sc_num == 3) { sc_ok = 1; }
-                elif (sc_num == 9) { sc_ok = 1; }
-                elif (sc_num == 10) { sc_ok = 1; }
-                elif (sc_num == 11) { sc_ok = 1; }
-                elif (sc_num == 60) { sc_ok = 1; }
-                elif (sc_num == 228) { sc_ok = 1; }   # v5.6.6 — _clock_gettime_nsec_np via __got[6]
+                # v6.0.65: query the single source of truth (_macho_arm_routes,
+                # adjacent to ESYSXLAT in src/backend/aarch64/emit.cyr) instead of
+                # a parallel hardcoded list that drifted out of sync (it had only
+                # 0,1,2,3,9,10,11,60,228 while ESYSXLAT routes ~40, drowning the log).
+                var sc_ok = _macho_arm_routes(sc_num);
                 if (sc_ok == 0) {
                     syscall(SYS_WRITE, 2,
-                    "warning: syscall not on Mach-O BSD whitelist (0,1,2,3,9,10,11,60,228); runtime call will fault unless a reroute is added.\n",
-                    131);
+                    "warning: syscall not routed by the Mach-O ARM translation (ESYSXLAT/__got); will fault on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
+                    144);
                 }
             }
         }
@@ -704,6 +699,15 @@ fn PARSE_FACTOR(S): i64 {
                 if (argc == 3) {
                     # syscall(0xF00E, idx, val) → TlsSetValue (BOOL in rax).
                     ETLSSET_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61455) {
+                if (argc == 2) {
+                    # syscall(0xF00F, ms) → Sleep(ms). v6.0.65 portable sleep_ms
+                    # (lib/chrono.cyr) on Windows — poll isn't routed on PE.
+                    ESLEEP_PE(S);
                     _cfo = 0;
                     return 0;
                 }

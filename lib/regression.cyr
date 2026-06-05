@@ -252,9 +252,6 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
     }
     var stbuf[1];
     var elapsed = 0;
-    var ts[2];
-    store64(&ts,     0);
-    store64(&ts + 8, 100000000);
     while (elapsed < timeout_ms) {
         var w = sys_waitpid(pid, &stbuf, 1);
         if (w == pid) {
@@ -263,8 +260,8 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
             if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
             return 0 - 1;
         }
-        syscall(35, &ts, 0);
-        elapsed = elapsed + 100;
+        syscall(7, 0, 0, 100);          # poll(NULL,0,100ms) — portable 100ms sleep
+        elapsed = elapsed + 100;        # (was nanosleep 35; faults off Linux). v6.0.65
     }
     sys_kill(pid, 9);
     sys_waitpid(pid, &stbuf, 0);

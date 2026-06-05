@@ -3,6 +3,41 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-05 (.65 ship — partials/repairs: portable sleep_ms + single-source macho whitelist + ach CI gate)
+
+Closing **v6.0.65** (partials/repairs slate). check.sh **85/85**; self-host byte-identical on **x86_64 +
+aarch64-linux (pi native+cross) + macho-arm (ecb) + macho-x86 (ach) + Windows (cass)**.
+
+**Headline — `lib/chrono.cyr` `sleep_ms` is portable.** It called raw `syscall(35)` (Linux nanosleep),
+which faults off Linux: Darwin has no plain `nanosleep` BSD syscall (35 there collides with aarch64
+`unlinkat`) and PE never routed it. Now: `poll(NULL,0,ms)` on Linux+macOS (poll 7→230 already routed on
+both Mach-O backends) + a new kernel32 `Sleep` reroute (0xF00F) on Windows; agnos/cx no-op. Measured
+`sleep_ms(500)` ≈ 501/500/503/558 ms on Linux/ecb/ach/cass. **Unblocks yantra's macOS-arm64 iOS CI** —
+yantra moves `_yantra_sleep_ms` off raw `syscall(35)`. `lib/regression.cyr` moved off 35 too.
+
+**Single-source Mach-O whitelist (user-chosen over a parallel-list sync).** The parse-time
+"syscall-not-routed-on-Mach-O" warning hardcoded `{0,1,2,3,9,10,11,60,228}` while ESYSXLAT routes ~40 —
+firing for routed syscalls and hiding the genuinely-unrouted. Replaced with `_macho_arm_routes()`
+adjacent to ESYSXLAT (src/backend/aarch64/emit.cyr), queried by parse_expr.cyr — no drift. Warning now
+fires only for genuinely-unrouted syscalls. (The naive partial sync was reverted as a half-measure.)
+
+**ach (Achaemenid) x86-macOS CI gate restored** (`ci.yml` `macho-x86-native`) — real blocking self-host +
+funcgate on the self-hosted Intel-Mac runner, replacing the scarce/quarantine-flaky GitHub `macos-13`
+job; fork PRs gated out. Runner registration is operator-side (live per user); needs a first green CI run.
+
+**Process note:** two premise-check findings surfaced + were taken to the user mid-slot: (1) the
+whitelist sync was harder than the issue implied (dual number-convention + hex-encoded ESYSXLAT) → user
+chose the single-source refactor; (2) the asm-block global-symbol pseudo is a cross-arch FEATURE (the
+issue itself suggests a dedicated cycle), not a "small squeeze-in" → **deferred to v6.0.66** (its own slot).
+
+**Issues archived:** `2026-06-04-macos-nanosleep-syscall-35-not-in-esysxlat.md` (resolved) +
+`2026-06-03-agnos-followup-after-boot.md` (cyrius-side complete .56). `macos-install-lib-snapshot` held
+(its own "await yantra runner confirmation" gate); `ach-selfhosted-runner` stays active until the first
+green CI run on the registered runner.
+
+**Next:** v6.0.66 = asm-block global-symbol pseudo (`sym32`/`param_load`, cross-arch + fixup, full
+design); then the slate continues (TLS, remaining Windows/macho follow-ups).
+
 ## Session close — 2026-06-05 (.64 ship — thread-safe global allocator + 2 latent aarch64 bugs fixed)
 
 Closing **v6.0.64**. check.sh **85/85**; self-host byte-identical on **x86_64 + aarch64-linux

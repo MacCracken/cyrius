@@ -582,6 +582,27 @@ jobs:
           syscall(SYS_WRITE, 1, "hello\n", 6);
           syscall(SYS_EXIT, 0);' | CYRIUS_MACHO=1 ./build/cycc 2>/dev/null > /tmp/macho_id
           file /tmp/macho_id | grep -q "Mach-O 64-bit x86_64"
+      - name: Stage the REAL x86 cycc + source for native self-host (ach)   # v6.0.65
+        run: |
+          # Mirror macho-arm64's staging: the self-hosted `ach` job SELF-HOSTS the
+          # actual x86 Mach-O compiler + runs the consumer funcgate — not toy smoke
+          # (toy-only smoke is what let the macOS port rot 9 minors green).
+          mkdir -p /tmp/macho_x86_out
+          cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 ./build/cycc > /tmp/macho_x86_out/cycc_macho_x86
+          file /tmp/macho_x86_out/cycc_macho_x86 | grep -q "Mach-O 64-bit x86_64" \
+            || { echo "ERROR: cycc_macho_x86 not x86_64 Mach-O"; file /tmp/macho_x86_out/cycc_macho_x86; exit 1; }
+          tar czf /tmp/macho_x86_out/_src.tgz src lib VERSION
+          echo "staged cycc_macho_x86: $(wc -c < /tmp/macho_x86_out/cycc_macho_x86) bytes"
+      - name: Build the full macOS x86 tarball (for the FUNCTIONAL gate)   # v6.0.65
+        run: |
+          sh scripts/build-macos-x86-tarball.sh /tmp/macho_x86_out >/dev/null
+          ls -la /tmp/macho_x86_out/cyrius-*-x86_64-macos.tar.gz
+      - name: Upload x86 Mach-O binaries for native run
+        uses: actions/upload-artifact@v4
+        with:
+          name: macho-x86-binaries
+          path: /tmp/macho_x86_out/
+          retention-days: 7
 
   # ── macOS Apple Silicon (arm64) — static verification ──
   # Compiles arm64 Mach-O binaries with the cross-compiler on ubuntu
@@ -770,17 +791,57 @@ jobs:
           CYRIUS_VERSION="$V" CYRIUS_INSTALL_TARBALL="$TARBALL" sh scripts/install.sh
           sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_cifg" "$CYRIUS_HOME"
 
-  # ── macOS Intel (x86_64) self-host — REMOVED from hosted CI (v6.0.45) ──
-  # testing local passes; needs dedicated self-hosted runner — age/availability
-  #
-  # The x86_64 Mach-O cycc self-hosts byte-identical and is verified locally via
-  # `cyrius audit` → `scripts/cross-os-selfhost.sh ach` on the real Intel Mac.
-  # GitHub's hosted Intel (macos-13) fleet is aged/scarce: the job sits QUEUED
-  # waiting for a runner (and `timeout-minutes` only counts RUN time, not the
-  # queue, so it never fires), and `download-artifact` quarantine blocks the
-  # unsigned binary on headless Gatekeeper. Restore as a real blocking gate on a
-  # dedicated self-hosted `ach` runner —
-  # see docs/development/issues/2026-06-03-ach-selfhosted-runner.md.
+  # ── macOS Intel (x86_64) — native self-host on the SELF-HOSTED `ach` runner ──
+  # v6.0.65: restored as a REAL blocking gate. GitHub's hosted Intel (macos-13)
+  # fleet is aged/scarce (jobs sit QUEUED; `timeout-minutes` only counts RUN time
+  # so they never fire) and `download-artifact` quarantine blocks the unsigned
+  # binary on headless Gatekeeper. The authoritative gate now runs on the real
+  # Intel Mac `ach` registered as a self-hosted runner (verified locally via
+  # `cyrius audit` → `scripts/cross-os-selfhost.sh ach`; self-hosts byte-identical
+  # ~0.95 s/pass). SECURITY: never run untrusted fork PRs on self-hosted hardware
+  # — gated to push / workflow_dispatch / same-repo PRs only.
+  # See docs/development/issues/2026-06-03-ach-selfhosted-runner.md.
+  macho-x86-native:
+    name: Mach-O x86 Native (ach, self-hosted)
+    needs: [macho]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download x86 Mach-O binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: macho-x86-binaries
+          path: ./macho-x86
+      - name: SELF-HOST cycc byte-identical (THE real gate)
+        run: |
+          cd macho-x86
+          tar xzf _src.tgz
+          chmod +x cycc_macho_x86
+          xattr -cr cycc_macho_x86 2>/dev/null || true   # clear any download quarantine (belt-and-suspenders)
+          # x86 Mach-O cycc reproduces ITSELF byte-identical on real Intel macOS.
+          # NO codesign needed on x86 (unlike arm64 AMFI). Mirrors cross-os-selfhost.sh ach.
+          cat src/main_x86_macho.cyr | ./cycc_macho_x86 > r1 && chmod +x r1
+          xattr -cr r1 2>/dev/null || true
+          cat src/main_x86_macho.cyr | ./r1 > r2
+          cmp r1 r2 || { echo "FAIL: x86 macOS self-host NOT byte-identical"; exit 1; }
+          echo "PASS: x86 macOS cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
+          # v6.0.37 rot-class guard: main()'s return must reach the exit syscall.
+          printf 'fn main() { return 42; }' > _ec.cyr
+          cat _ec.cyr | ./r1 > _ec && chmod +x _ec
+          ec=0; ./_ec || ec=$?
+          test $ec -eq 42 || { echo "FAIL: fn main(){return 42;} exited $ec, not 42"; exit 1; }
+          echo "PASS: fn main(){return 42;} → exit 42"
+      - name: REAL consumer-flow functional gate (HARD — v6.0.63 pattern)
+        run: |
+          set -e
+          V=$(tr -d '[:space:]' < VERSION)
+          TARBALL="$PWD/macho-x86/cyrius-$V-x86_64-macos.tar.gz"
+          test -f "$TARBALL" || { echo "ERROR: tarball missing: $TARBALL"; ls -la macho-x86; exit 1; }
+          export CYRIUS_HOME="$HOME/_ciih_x86"
+          CYRIUS_VERSION="$V" CYRIUS_INSTALL_TARBALL="$TARBALL" sh scripts/install.sh
+          sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_cifg_x86" "$CYRIUS_HOME"
 
   # ── Windows x86_64 PE32+ cross-compile ──
   # Runs on ubuntu-latest; compiles exit-code programs with

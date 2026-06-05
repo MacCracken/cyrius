@@ -1,6 +1,13 @@
 # agnos `CYRIUS_TARGET_AGNOS` follow-up — the work carved out of v6.0.55 (post boot-to-prompt)
 
-> **Status**: OPEN — tracked, UNSLOTTED (user positions). Filed at v6.0.55 close so the deferred
+> **Status**: ✅ cyrius-side COMPLETE (archived v6.0.65). All cyrius-side items shipped by v6.0.56:
+> process `exec` (lib/process_agnos.cyr sys_spawn/waitpid + exec_* family), `W*` wait macros, chrono
+> fixed-epoch + no-op sleep, and the `syscall(60)` → target-aware `_die()` normalization. The only
+> remainder is **agnos kernel-ABI work on the agnos side** (sys_spawn argv passing + sys_dup stdout
+> redirect) — READ-ONLY here (no cyrius edit), tracked on agnos's plate, not a cyrius blocker. Archived
+> with this cross-reference to v6.0.56; `git mv` back if a cyrius coordination point reopens.
+>
+> **Original (filed v6.0.55 close):** tracked, UNSLOTTED. Filed so the deferred
 > agnos work has a visible home instead of living in the (now resolved) args+io issue's prose.
 > **Predecessor**: 2026-06-03-cyrius-agnos-stdlib-args-io-gap.md (args + io gap — RESOLVED v6.0.55,
 > archived). This file is everything that issue explicitly carved OUT of boot-to-prompt.

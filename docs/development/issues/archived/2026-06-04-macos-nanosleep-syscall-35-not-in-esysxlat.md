@@ -1,5 +1,17 @@
 # arm64 macOS: nanosleep (syscall 35) not in ESYSXLAT → consumer runtime fault
 
+> **Status**: ✅ RESOLVED in v6.0.65 — recommended option 3 (portable stdlib sleep).
+> `lib/chrono.cyr` `sleep_ms` no longer calls raw `syscall(35)` (which on arm64
+> macOS collided with aarch64 `unlinkat` and faulted): it now uses `poll(NULL,0,ms)`
+> on Linux + macOS (poll 7→230 is already routed on both Mach-O backends) and a new
+> kernel32 `Sleep` reroute (0xF00F) on Windows; agnos/cx stay no-op. `lib/regression.cyr`
+> moved off raw 35 too. Verified `sleep_ms(500)` measures ~500ms on Linux / macOS-arm64
+> (ecb) / macOS-x86 (ach) / Windows (cass). yantra switches `_yantra_sleep_ms` →
+> `chrono.sleep_ms`. The secondary finding (stale parse_expr.cyr macho whitelist) was
+> fixed RIGHT: a single-source `_macho_arm_routes()` next to ESYSXLAT replaces the
+> drifting hardcoded list, so the warning now fires only for genuinely-unrouted syscalls.
+> See CHANGELOG [6.0.65].
+
 - **Filed**: 2026-06-04
 - **Reporter**: yantra (downstream consumer; GitHub Actions `macos-15-arm64` runner)
 - **Affects**: aarch64-macOS, ≥6.0.63 (surfaced once 6.0.63's dir-walk fix let

@@ -467,21 +467,26 @@ premise-check each at slot entry:
    `alloc_thread_safe.tcyr` proves it (fails 5/5 without the lock); 4-thread contended run green on real
    aarch64. Self-host byte-identical on x86_64 + aarch64 (pi native+cross) + macho-arm (ecb) + Windows
    (cass); check.sh 85/85. Issue archived. See CHANGELOG [6.0.64].
-4. **.65–.67 (extend if needed) — partials block** (was .64–.66): ach self-hosted runner
-   (`issues/2026-06-03-ach-selfhosted-runner.md`) + Windows follow-up nuances §3 full
-   `CommandLineToArgvW` (shell32) + §0 COM/DXGI GPU-enum
-   (`issues/2026-06-03-windows-followup-nuances.md` +
-   `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + agnos follow-up-after-boot
-   consumer-side items (`issues/2026-06-03-agnos-followup-after-boot.md`) + asm-block
-   global-symbol pseudo-op (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`)
-   **+ macho/platform syscall-coverage cluster** (both surfaced by the .63 functional gate,
-   register §D): (a) **arm64 macOS `nanosleep` (35) not in ESYSXLAT**
-   (`issues/2026-06-04-macos-nanosleep-syscall-35-not-in-esysxlat.md`) — XNU has no plain BSD
-   nanosleep, so reroute / `__got` / a portable stdlib `sleep_ms`; **+ sync the stale
-   `parse_expr.cyr` warning-whitelist** to the ESYSXLAT-covered set (it drowns the one syscall
-   that genuinely isn't rerouted); blocks yantra iOS CI. (b) **`cyrius deps` silently fails on
-   aarch64 Linux** (register §D1) — the prerequisite before `aarch64-native` can join macho +
-   Windows as a HARD funcgate.
+4. **.65 — partials/repairs: nanosleep + whitelist + ach CI** ✅ COMPLETE.
+   (a) **Portable `sleep_ms`** (`lib/chrono.cyr`) — `poll(NULL,0,ms)` on Linux+macOS + kernel32 `Sleep`
+   reroute (0xF00F) on Windows; agnos/cx no-op. Replaced the raw `syscall(35)` that faulted off Linux
+   (Darwin has no plain nanosleep; 35 there is aarch64 `unlinkat`). Unblocks yantra iOS CI; `regression.cyr`
+   moved off 35 too. (b) **Mach-O whitelist → single source of truth** — `_macho_arm_routes()` next to
+   ESYSXLAT, queried by parse_expr.cyr (user chose the refactor over a drift-prone parallel-list sync);
+   warns only on genuinely-unrouted syscalls now. (c) **ach (Achaemenid) x86-macOS self-host CI gate**
+   restored on the self-hosted Intel-Mac runner (`ci.yml` `macho-x86-native`; runner registration
+   operator-side, needs first green run). Verified: sleep_ms ≈500ms on Linux/ecb/ach/cass; self-host
+   byte-identical 4-host; check.sh 85/85. Issues archived: nanosleep, agnos-followup. See CHANGELOG [6.0.65].
+5. **.66 — asm-block global-symbol pseudo** (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`),
+   deferred from the .65 squeeze-in once close reading showed it's a cross-arch FEATURE, not a small
+   repair (the issue itself suggests a dedicated cycle). Weigh Option 1 `sym32(name)` (PC32-to-global
+   fixup, general) vs Option 2 `param_load(reg,idx)` (regalloc-disp-aware, targeted); x86 + aarch64 +
+   fixup + tests; migrate `lib/atomic.cyr`/`thread.cyr` off hardcoded `[rbp-N]` as the proof.
+6. **.67+ — remaining partials block**: Windows follow-up nuances §3 full `CommandLineToArgvW` (shell32) +
+   §0 COM/DXGI GPU-enum (`issues/2026-06-03-windows-followup-nuances.md` +
+   `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + **`cyrius deps` silently fails on aarch64
+   Linux** (register §D1) — the prerequisite before `aarch64-native` can join macho + Windows as a HARD
+   funcgate.
 5. **.68–x — native TLS items** (was .67–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
    (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
    version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
