@@ -17,6 +17,71 @@
 # (VirtualAlloc); macOS → alloc_macos.cyr (mmap; Darwin has no brk).
 # arena_* helpers are OS-agnostic. See CHANGELOG [5.5.0], [5.5.16].
 
+# ================================================================
+# Global allocation lock (v6.0.64) — thread-safe alloc()/alloc_reset()
+# ================================================================
+# The bump allocator's _heap_ptr read-modify-write + grow are NOT
+# atomic. cyrius threads are REAL and share one process heap (Linux
+# CLONE_VM / Windows CreateThread), so concurrent alloc() across threads
+# interleaves the bump pointer and overlap-allocates → heap corruption
+# (~5000 corruptions observed across 4 worker threads). A single
+# process-wide CAS spinlock serializes alloc()/alloc_reset() across ALL
+# four targets. Spinlock (not futex/SRWLOCK) because:
+#   (a) Darwin has NO futex (syscalls_macos.cyr's SYS_FUTEX=202 is a
+#       bogus copied Linux number) and the agnos ABI exposes none, so a
+#       blocking lock would degrade to a spinlock on 2 of 4 targets;
+#   (b) the critical section is a pointer bump (nanoseconds) — spin cost
+#       is negligible and there is no syscall-per-alloc tax;
+#   (c) one implementation, uniform + byte-identical across targets.
+# A future BLOCKING-lock upgrade needs new primitives (macho
+# __ulock_wait/_wake, an agnos-userland-ABI futex) — filed as separate
+# follow-on issues.
+# See docs/development/issues/2026-06-04-cyrius-global-allocator-not-thread-safe.md.
+#
+# cx bytecode has no threads and atomic_cas has no cx body, so the loop
+# is gated to the two real-thread arches (x86 / aarch64); on cx the lock
+# compiles to a no-op (correct — single-threaded VM).
+include "lib/atomic.cyr"
+
+var _alloc_lock = 0;
+
+# Acquire the global alloc spinlock (busy-wait until the 0→1 CAS wins), then an
+# ACQUIRE barrier. Mirrors lib/thread.cyr mutex_lock: on x86 the CAS (lock
+# cmpxchg) is already a full barrier so atomic_fence is a cheap near-no-op, but
+# on aarch64 the CAS is plain ldxr/stxr (NO ordering) — without this fence the
+# critical-section _heap_ptr read can be observed before the lock is held,
+# yielding a stale bump pointer → overlap-allocation on a weak memory model.
+fn _alloc_lock_acquire(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    while (atomic_cas(&_alloc_lock, 0, 1) == 0) { }
+    atomic_fence();
+    return 0;
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    while (atomic_cas(&_alloc_lock, 0, 1) == 0) { }
+    atomic_fence();
+    return 0;
+    #endif
+    return 0;
+}
+
+# Release the global alloc spinlock. The fence is a RELEASE barrier:
+# without it on aarch64's weak model the critical-section _heap_ptr /
+# _heap_end writes can reorder AFTER the lock-release store, so the next
+# acquirer reads a stale bump pointer and overlap-allocates. Mirrors
+# lib/thread.cyr mutex_unlock.
+fn _alloc_lock_release(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    atomic_fence();
+    atomic_store(&_alloc_lock, 0);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    atomic_fence();
+    atomic_store(&_alloc_lock, 0);
+    #endif
+    return 0;
+}
+
 #ifdef CYRIUS_TARGET_WIN
 include "lib/alloc_windows.cyr"
 #endif
@@ -53,24 +118,21 @@ var ALLOC_MAX = 0x10000000;
 
 # Allocate size bytes from the heap, 8-byte aligned
 fn alloc(size): i64 {
-    # v5.8.37 — lazy-init the heap if alloc_init() was never called.
-    # Pre-v5.8.37 every consumer had to call alloc_init() explicitly
-    # at top-level; the auto-bootstrap below makes that step
-    # optional. Callers may still invoke alloc_init() for
-    # explicitness; second invocations re-brk the heap (matches
-    # historic behavior — no idempotence guard added because the
-    # cost is one syscall and the prior contract was "callable
-    # once at startup", not "safe to call multiple times").
-    if (_heap_base == 0) { alloc_init(); }
-    # Reject oversized or negative allocations
+    # Reject oversized or negative allocations. Pure (no shared state) —
+    # validated OUTSIDE the lock so bad calls never contend.
     if (size <= 0) { return 0; }
     if (size > ALLOC_MAX) { return 0; }
-    # Align to 8 bytes
+    # Align to 8 bytes (local — outside the lock).
     size = (size + 7) & (0 - 8);
+    # --- critical section: bump pointer + grow are shared mutable state ---
+    _alloc_lock_acquire();
+    # v5.8.37 — lazy-init the heap if alloc_init() was never called
+    # (now race-safe: two threads can't both init). See CHANGELOG [5.8.37].
+    if (_heap_base == 0) { alloc_init(); }
     var ptr = _heap_ptr;
     var new_ptr = ptr + size;
     # Overflow check: wrapped pointer means arithmetic overflow
-    if (new_ptr < ptr) { return 0; }
+    if (new_ptr < ptr) { _alloc_lock_release(); return 0; }
     _heap_ptr = new_ptr;
     if (_heap_ptr > _heap_end) {
         # Grow to cover _heap_ptr, round up to next 1MB grain
@@ -80,16 +142,21 @@ fn alloc(size): i64 {
         if (result < new_end) {
             # brk failed — out of memory
             _heap_ptr = ptr;
+            _alloc_lock_release();
             return 0;
         }
         _heap_end = new_end;
     }
+    _alloc_lock_release();
     return ptr;
 }
 
-# Reset the heap, freeing all allocations at once
+# Reset the heap, freeing all allocations at once. Locked so a concurrent
+# alloc() can't observe a half-updated bump pointer.
 fn alloc_reset(): i64 {
+    _alloc_lock_acquire();
     _heap_ptr = _heap_base;
+    _alloc_lock_release();
     return 0;
 }
 
@@ -482,8 +549,24 @@ var _default_allocator = 0;
 # bump_allocator() each time except memoized — every call returns
 # the same Allocator pointer.
 fn default_alloc(): i64 {
+    # v6.0.64 — race-safe lazy publish. Can't reuse _alloc_lock: building
+    # the allocator calls alloc(40), which takes _alloc_lock → a non-
+    # recursive spinlock would self-deadlock. Instead build first (alloc()
+    # is independently thread-safe) then CAS-publish: if a peer published
+    # first, ours (40 bytes, identical bump vtable) is abandoned and we use
+    # theirs. atomic_cas is gated to the real-thread arches; on cx the bare
+    # store path is correct (single-threaded VM).
     if (_default_allocator == 0) {
-        _default_allocator = bump_allocator();
+        var a = bump_allocator();
+        #ifdef CYRIUS_ARCH_X86
+        atomic_cas(&_default_allocator, 0, a);
+        return _default_allocator;
+        #endif
+        #ifdef CYRIUS_ARCH_AARCH64
+        atomic_cas(&_default_allocator, 0, a);
+        return _default_allocator;
+        #endif
+        _default_allocator = a;
     }
     return _default_allocator;
 }

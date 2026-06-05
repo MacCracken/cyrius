@@ -122,3 +122,26 @@ from the release TAG, so the fix is only live once a tag ships with it. yantra
 confirms on its `macos-15-arm64` CI after bumping the pin to **6.0.62**, then
 removes the `setup-cyrius` backfill step. Do NOT archive this issue until that
 confirmation lands.
+
+## Update — the 6.0.62 fix was a red herring; ACTUAL fix in v6.0.63
+
+6.0.62 did **not** fix the runner: yantra CI still failed at `cyrius lib sync`
+with `snapshot lib not found at …/versions/6.0.62/lib`. The `cp`-form change
+addressed a symptom that wasn't the cause — the stdlib files were on disk the
+whole time (the shell `ls -A` assert in install.sh passed). The real bug, fixed
+in **6.0.63** (`941564ec`, `src/backend/aarch64/emit.cyr` ESYSXLAT):
+
+> `SYS_GETDENTS64` is multiply-defined — `217` (x86/macos) but **`61`** in
+> `syscalls_aarch64_linux.cyr`, bound by include order. The macho ESYSXLAT
+> translated only `217→344` and **missed `61→344`**, so untranslated `61` ran
+> with a stale `x16` → `EBADF`. `cyrius lib sync` couldn't *enumerate* the
+> snapshot directory and reported it "not found" though it existed.
+
+So this was a directory-read (`dir_list`/`is_dir`) failure on arm64 macOS, not a
+packaging/`cp` issue. The self-host gate missed it for 10+ releases because
+self-host reads sources by path and never walks a directory; 6.0.63 also adds a
+real consumer-flow functional gate (`scripts/funcgate-*`) so a dir-walk
+regression can't hide again. yantra bumped its pin to 6.0.63; the `setup-cyrius`
+"Ensure toolchain complete" step (shell-based, can't fix a syscall bug) remains
+only as defense-in-depth + diagnostics until `macos-15-arm64` CI confirms green,
+then it's removed. **Archive once that green run lands.**

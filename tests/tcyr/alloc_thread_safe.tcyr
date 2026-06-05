@@ -1,0 +1,158 @@
+# alloc_thread_safe.tcyr — regression coverage for the v6.0.64
+# thread-safe global allocator (global alloc-lock).
+#
+# Distinct from thread_safety.tcyr: that test wraps every container
+# mutation in an EXTERNAL mutex, so only one worker is ever inside
+# alloc() at a time — it never exercises concurrent allocation. THIS
+# test calls the BARE global alloc()/default_alloc() from 4 worker
+# threads with NO external serialization, which is exactly the race
+# the v6.0.64 alloc-lock closes (issue
+# 2026-06-04-cyrius-global-allocator-not-thread-safe: concurrent
+# alloc corrupts memory — ~5000 corruptions across 4 threads).
+#
+# Mechanism under test (issue "Root cause"):
+#   1. bump-pointer race — two threads read _heap_ptr=X, both return
+#      overlapping regions; subsequent writes clobber each other.
+#   2. grow race — concurrent brk/mmap growth corrupts _heap_end.
+#   3. default_alloc() lazy-init race — two threads both build a
+#      vtable, one is lost (now CAS-published).
+#
+# Detection: each of the N*K blocks is stamped with a GLOBALLY-UNIQUE
+# nonzero sentinel in EVERY word. After join, main re-reads every word
+# of every block and asserts the sentinel survived. If any two blocks
+# overlapped, at least one block's sentinel is clobbered → caught.
+# Total ~2 MB forces heap growth, so the grow path is exercised too.
+#
+# See CHANGELOG [6.0.64].
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/atomic.cyr"
+include "lib/thread.cyr"
+
+var _AT_THREADS = 4;
+var _AT_PER = 1000;       # allocs per thread
+var _AT_BLK = 256;        # bytes per block (8-byte-word stamped)
+var _at_ptrs = 0;         # base of the N*K pointer-record array
+var _at_dflt = 0;         # base of the N default_alloc()-result array
+
+# Globally-unique nonzero sentinel for thread t's i-th block.
+fn _at_sentinel(t, i): i64 {
+    return (t * _AT_PER + i) + 1;
+}
+
+# Worker: K concurrent bare alloc() calls. Stamp every word of each
+# block with its unique sentinel, then record the pointer. No external
+# mutex — relies entirely on alloc()'s internal lock.
+fn _at_alloc_worker(arg): i64 {
+    var tid = arg;
+    var i = 0;
+    while (i < _AT_PER) {
+        var p = alloc(_AT_BLK);
+        var s = _at_sentinel(tid, i);
+        var w = 0;
+        while (w < _AT_BLK) {
+            store64(p + w, s);
+            w = w + 8;
+        }
+        store64(_at_ptrs + (tid * _AT_PER + i) * 8, p);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Worker: hammer default_alloc() concurrently (the lazy-init race).
+fn _at_dflt_worker(arg): i64 {
+    var tid = arg;
+    var i = 0;
+    var last = 0;
+    while (i < 200) {
+        last = default_alloc();
+        i = i + 1;
+    }
+    store64(_at_dflt + tid * 8, last);
+    return 0;
+}
+
+fn test_concurrent_alloc_no_overlap() {
+    test_group("4-thread concurrent bare alloc() — no overlap, no corruption");
+    # Pre-allocate the record array single-threaded (before spawn).
+    _at_ptrs = alloc(_AT_THREADS * _AT_PER * 8);
+    var t0 = thread_create(&_at_alloc_worker, 0);
+    var t1 = thread_create(&_at_alloc_worker, 1);
+    var t2 = thread_create(&_at_alloc_worker, 2);
+    var t3 = thread_create(&_at_alloc_worker, 3);
+    thread_join(t0);
+    thread_join(t1);
+    thread_join(t2);
+    thread_join(t3);
+
+    # Verify: no alloc returned 0, and every word of every block still
+    # holds that block's unique sentinel (no overlapping write).
+    var zero_ptrs = 0;
+    var clobbered = 0;
+    var t = 0;
+    while (t < _AT_THREADS) {
+        var i = 0;
+        while (i < _AT_PER) {
+            var p = load64(_at_ptrs + (t * _AT_PER + i) * 8);
+            if (p == 0) {
+                zero_ptrs = zero_ptrs + 1;
+            } else {
+                var s = _at_sentinel(t, i);
+                var w = 0;
+                while (w < _AT_BLK) {
+                    if (load64(p + w) != s) {
+                        clobbered = clobbered + 1;
+                        w = _AT_BLK;
+                    }
+                    w = w + 8;
+                }
+            }
+            i = i + 1;
+        }
+        t = t + 1;
+    }
+    assert_eq(zero_ptrs, 0, "every concurrent alloc() returned a live block");
+    assert_eq(clobbered, 0, "no block clobbered by an overlapping concurrent alloc");
+}
+
+fn test_concurrent_default_alloc() {
+    test_group("4-thread concurrent default_alloc() — single published allocator");
+    _at_dflt = alloc(_AT_THREADS * 8);
+    var t0 = thread_create(&_at_dflt_worker, 0);
+    var t1 = thread_create(&_at_dflt_worker, 1);
+    var t2 = thread_create(&_at_dflt_worker, 2);
+    var t3 = thread_create(&_at_dflt_worker, 3);
+    thread_join(t0);
+    thread_join(t1);
+    thread_join(t2);
+    thread_join(t3);
+
+    var a0 = load64(_at_dflt + 0);
+    var same = 1;
+    var nonzero = 1;
+    var t = 0;
+    while (t < _AT_THREADS) {
+        var a = load64(_at_dflt + t * 8);
+        if (a == 0) { nonzero = 0; }
+        if (a != a0) { same = 0; }
+        t = t + 1;
+    }
+    assert_eq(nonzero, 1, "default_alloc() never returned 0 under contention");
+    assert_eq(same, 1, "all threads observe the SAME published allocator (CAS-publish)");
+}
+
+fn main() {
+    alloc_init();
+    test_concurrent_alloc_no_overlap();
+    test_concurrent_default_alloc();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

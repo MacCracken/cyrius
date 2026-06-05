@@ -22,7 +22,16 @@ fn FIXUP(S): i64 {
     }
     if (fx_dbg == 1) { syscall(SYS_WRITE, 2, "[phase] aarch64 FIXUP entry\n", 28); }
     var cp = GCP(S);
-    cp = (cp + 3) & (0 - 4);
+    # v6.0.64: round the code size to 8 (was 4) so the var-area base
+    # (entry + acp for the global-addr fixups; 0x400000 + bss_foff in EMITELF)
+    # is 8-byte aligned. aarch64 ldxr/stxr — used by atomic_cas on a GLOBAL
+    # (e.g. lib/alloc.cyr's _alloc_lock) — FAULT with SIGBUS on a 4-aligned
+    # address even where plain access is permitted. x86 fixup.cyr already
+    # rounds code to 8 for the same reason. SCP stores it so EMITELF /
+    # EMITELF_KERNEL / EMITMACHO_ARM64 and the dbase fixups all read one
+    # consistent size via GCP; the <=4 extra .text pad bytes are zero and
+    # never executed (entry + branches stay within the real code). See CHANGELOG [6.0.64].
+    cp = (cp + 7) & (0 - 8);
     SCP(S, cp);
     var acp = cp;
     var kmode = L64(S + 0x18FCA0);

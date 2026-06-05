@@ -117,6 +117,23 @@ macOS gate would have RED at `init(10)` — a cosmetic detection miss — not th
 dir-walk bug, i.e. the right color for the wrong reason. Fixed by exporting the documented `CYRIUS_VER`
 override in the gate; re-verified on ecb that it now reaches and reds at `lib sync(11)`.
 
+### D4. arm64 macOS: `nanosleep` (syscall 35) not in ESYSXLAT — NEW, untracked (next macho slot)
+Surfaced by yantra **once .63's dir-walk fix let `lib sync` succeed and the e2e finally reached
+runtime**: a program calling `syscall(35, ts, 0)` (nanosleep) faults on arm64 macOS (exit 127) because
+the macho `ESYSXLAT` doesn't translate `35` — same class as the getdents `61` gap and the socket
+surface, an x86/Linux number a consumer uses that ESYSXLAT never renumbers to a Darwin BSD number.
+**Caveat:** XNU has no plain `nanosleep` BSD syscall (libsystem layers it over `__semwait_signal`/
+`clock_nanosleep`), so it is NOT a one-line renumber like sockets — options are a reroute-with-arg-shuffle,
+a `__got` libSystem reroute (mirror `clock_gettime_nsec_np`), or — cleaner long-term — a portable
+`sleep_ms` in the stdlib (`lib/time.cyr`/`process.cyr`) so consumers stop hardcoding `syscall(35)`.
+**Secondary finding:** the compile-time warning whitelist in `parse_expr.cyr` (~L419,
+`{0,1,2,3,9,10,11,60,228}`) is stale — it no longer matches what ESYSXLAT actually translates, so it
+fires for dozens of already-rerouted syscalls and **drowns the one (35) that genuinely isn't**. Sync
+that whitelist to the ESYSXLAT-covered set so the warning means something. A real-flow funcgate that
+exercises sleep would have caught this (à la the .63 dir-walk gate). Full issue:
+`docs/development/issues/2026-06-04-macos-nanosleep-syscall-35-not-in-esysxlat.md`. **Pinned to the next
+macho/platform slot** (roadmap partials block) — NOT a .63 follow-up.
+
 ## Process note
 
 This whole register only exists because deferred/broken work was left in source comments

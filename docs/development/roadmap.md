@@ -447,28 +447,41 @@ premise-check each at slot entry:
    2-arch parity + cross-arch tests; → v6.1.x candidate / re-slot at user's call). Also
    folded in: the **macOS install lib-snapshot hotfix** (`scripts/install.sh`,
    `issues/2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md`).
-2. **.63 — arm64 macOS `getdirentries64` codegen fix** (user 2026-06-04, inserted; rest
-   slides back one). `is_dir` / `dir_list` / `cyrius lib sync` / any dir-walk return
-   EFAULT/EBADF on arm64 macOS: `getdirentries64` (syscall 217→344) gets corrupted args
-   in any RUNTIME-LINKED program (works only in a no-alloc raw probe; inconsistent errno
-   = garbage args). Reproduced on ecb. **RETRACT** the .62 `install.sh` "fix" + that
-   issue's resolution — the lib snapshot was never the problem; the wrapper can't READ
-   the dir. Also exposes that .60's "dir_list verified" was bogus (macOS-rot). Fix the
-   arm64 syscall/getdirentries64 emit; **verify real `cyrius lib sync` on ecb before
-   claiming**. (`issues/2026-06-04-macos-install-lib-snapshot-missing-breaks-lib-sync.md`,
-   re-scope to the real cause.) **+ fold sigil 3.7.3 into stdlib** at the end of this slot
-   (user 2026-06-04 — sandhi-pattern, byte-identical at the tag).
-3. **.64 — global allocator thread-safety** (was .63)
-   (`issues/2026-06-04-cyrius-global-allocator-not-thread-safe.md`): rec fix = single
-   global alloc-lock, packing in the macho `__ulock`/agnos-futex primitive gap
-   (CAS-spinlock fallback) per one-bug-one-complete-fix.
+2. **.63 — arm64 macOS dir-walk fix + real-flow functional gate** ✅ COMPLETE (verified on ecb).
+   Root cause was **NOT codegen** (the "getdirentries64 217→344 arg-corruption" diagnosis was wrong,
+   disproved by bisection): `SYS_GETDENTS64` is multiply-defined — 217 (x86/macos) but **61**
+   (`syscalls_aarch64_linux.cyr`) — the wrapper binds 61 by include order, and the .60 macho ESYSXLAT
+   translated only 217→344, **missing 61→344**. Fix = add `cmp x8,#61; b.ne; movz x16,#344` to
+   `src/backend/aarch64/emit.cyr`. Shipped with the **real consumer-flow functional gate**
+   (`scripts/funcgate-posix.sh`/`funcgate-win.ps1`/`funcgate-stage.sh`) wired into CI on every platform
+   (macho-arm64-native + windows-native HARD; test HARD; test-agnos/aarch64-native tracking) + the
+   `cyrlint --strict-deferrals` rule. Self-host byte-identical on x86_64+aarch64-linux+macho-arm;
+   check.sh 85/85. (sigil 3.7.3 fold — confirm status at next slot.)
+3. **.64 — global allocator thread-safety** ✅ COMPLETE (was .63).
+   Process-wide CAS spinlock (`_alloc_lock`) serializing `alloc()`/`alloc_reset()` across all four
+   allocator peers + a CAS-publish for the `default_alloc()` singleton — closes the bump-pointer, grow,
+   and lazy-init races. Spinlock (not futex/SRWLOCK) because Darwin + agnos expose none. Packed in TWO
+   latent aarch64 bugs it surfaced: a missing post-CAS acquire `atomic_fence` and the aarch64 ELF
+   var-area base being only 4-aligned (so `atomic_cas` on a global SIGBUS'd — fixed by rounding the code
+   size to 8 in `src/backend/aarch64/fixup.cyr`; atomic-on-any-global now works, matching x86). New
+   `alloc_thread_safe.tcyr` proves it (fails 5/5 without the lock); 4-thread contended run green on real
+   aarch64. Self-host byte-identical on x86_64 + aarch64 (pi native+cross) + macho-arm (ecb) + Windows
+   (cass); check.sh 85/85. Issue archived. See CHANGELOG [6.0.64].
 4. **.65–.67 (extend if needed) — partials block** (was .64–.66): ach self-hosted runner
    (`issues/2026-06-03-ach-selfhosted-runner.md`) + Windows follow-up nuances §3 full
    `CommandLineToArgvW` (shell32) + §0 COM/DXGI GPU-enum
    (`issues/2026-06-03-windows-followup-nuances.md` +
    `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + agnos follow-up-after-boot
    consumer-side items (`issues/2026-06-03-agnos-followup-after-boot.md`) + asm-block
-   global-symbol pseudo-op (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`).
+   global-symbol pseudo-op (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`)
+   **+ macho/platform syscall-coverage cluster** (both surfaced by the .63 functional gate,
+   register §D): (a) **arm64 macOS `nanosleep` (35) not in ESYSXLAT**
+   (`issues/2026-06-04-macos-nanosleep-syscall-35-not-in-esysxlat.md`) — XNU has no plain BSD
+   nanosleep, so reroute / `__got` / a portable stdlib `sleep_ms`; **+ sync the stale
+   `parse_expr.cyr` warning-whitelist** to the ESYSXLAT-covered set (it drowns the one syscall
+   that genuinely isn't rerouted); blocks yantra iOS CI. (b) **`cyrius deps` silently fails on
+   aarch64 Linux** (register §D1) — the prerequisite before `aarch64-native` can join macho +
+   Windows as a HARD funcgate.
 5. **.68–x — native TLS items** (was .67–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
    (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
    version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user

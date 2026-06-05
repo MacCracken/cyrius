@@ -3,6 +3,42 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-05 (.64 ship — thread-safe global allocator + 2 latent aarch64 bugs fixed)
+
+Closing **v6.0.64**. check.sh **85/85**; self-host byte-identical on **x86_64 + aarch64-linux
+(pi native+cross) + macho-arm (ecb) + Windows (cass)**; self_compile perf neutral (449 vs 451 ms).
+The slated **global allocator thread-safety** fix — and two latent aarch64 bugs it exposed.
+
+**The headline — concurrent `alloc()` no longer corrupts the heap.** A consumer's multi-threaded
+accept loop was blocked: the bump allocator's `_heap_ptr` read-modify-write + grow were unsynchronized,
+so `CLONE_VM`/`CreateThread` threads sharing one heap overlap-allocated (~5000 corruptions / 4 threads).
+Fix = recommended option (b): a process-wide CAS spinlock (`_alloc_lock`) serializing
+`alloc()`/`alloc_reset()` across **all four** allocator peers + a CAS-publish for the `default_alloc()`
+singleton — closing the bump-pointer, grow, and lazy-init races. Spinlock not futex/SRWLOCK because
+Darwin + agnos expose no futex. New `alloc_thread_safe.tcyr` **proves it**: fails 5/5 with the lock
+removed, passes with it; verified by a 4-thread contended run on **real aarch64 hardware** (pi).
+
+**Two latent aarch64 bugs surfaced + fixed in the same release (one-bug-one-complete-fix):**
+- **Missing acquire barrier** (`lib/alloc.cyr`) — `_alloc_lock_acquire` lacked the post-CAS
+  `atomic_fence()` that `thread.cyr` `mutex_lock` carries. aarch64's CAS is plain `ldxr/stxr` (no
+  ordering), so the critical-section `_heap_ptr` read could hoist before the lock → stale bump pointer.
+- **Globals only 4-byte aligned** (`src/backend/aarch64/fixup.cyr`, user-chosen root-cause fix) — the
+  aarch64 ELF var-area base inherited the code size's 4-alignment (x86 rounds code to 8; aarch64 to 4).
+  `atomic_cas` on a *global* uses `ldxr/stxr`, which **SIGBUS on a non-8-aligned address**, so
+  atomic-on-a-global faulted (caught by the native-pi self-host gate). One-line fix: round code size to
+  8 — now **atomic-on-any-global works on aarch64**, matching x86. `build/cycc_aarch64` +
+  `cycc-native-aarch64` regenerated with the fix (`cyrius pulsar`).
+
+**Process note:** the adversarial review caught the acquire-barrier bug; check.sh's pi gates caught the
+SIGBUS — both before ship. "Run it on the hardware, never trust a checkmark" held again (x86 was green
+throughout; only real aarch64 exposed both).
+
+**Issues archived:** `2026-06-04-cyrius-global-allocator-not-thread-safe.md` (resolved) +
+`2026-06-03-windows-pe-syscall-surface-blocks-detection.md` (core resolved .50–.52, downstream done).
+
+**Next:** the slate resumes (partials, then TLS); macho/platform syscall-coverage cluster (the tracked
+§D4 nanosleep + aarch64 `cyrius deps` §D1) at the next macho/platform slot.
+
 ## Session close — 2026-06-04 (.63 ship — real-flow functional gate + arm64 macOS dir-walk fix)
 
 Closing **v6.0.63**. check.sh **85/85**; self-host byte-identical on **x86_64 + aarch64-linux (qemu) +
@@ -33,7 +69,10 @@ and worked, masking it — **the wrapper, not a probe, is the test.** Full consu
 
 **Tracked / still-open (gate did its job):** §D1 **`cyrius deps` silently fails on aarch64 Linux**
 (rc=9, empty stderr, wipes `lib/`) — blocks `aarch64-native` from HARD until fixed. §D2 **cyrius wrapper
-not ported to Windows** (fork/execve/mkdir/… undefined for PE) — bigger arc.
+not ported to Windows** (fork/execve/mkdir/… undefined for PE) — bigger arc. §D4 **arm64 macOS
+`nanosleep` (35) not in ESYSXLAT** (`2026-06-04-macos-nanosleep-syscall-35-not-in-esysxlat.md`; surfaced
+once .63's lib-sync fix let yantra's e2e reach runtime) + the stale `parse_expr.cyr` warning-whitelist —
+pinned to the next macho/platform slot (roadmap partials block).
 
 **Next:** fix §D1 (aarch64 deps) so `aarch64-native` can join macho+Windows as a HARD gate; then the
 slate resumes (global-allocator thread-safety, partials, TLS).

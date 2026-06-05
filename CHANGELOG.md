@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.64] — 2026-06-05
+
+**Thread-safe global allocator** — concurrent `alloc()` across real threads no longer corrupts the heap.
+A consumer's multi-threaded accept loop was blocked because the bump allocator's `_heap_ptr`
+read-modify-write and grow path were unsynchronized; with `CLONE_VM` / `CreateThread` threads sharing one
+process heap, concurrent allocations overlapped (~5000 corruptions across 4 threads). Fixed with a single
+process-wide CAS spinlock across all four allocator peers — closing the bump-pointer race, the grow race,
+and the `default_alloc()` lazy-init race. Two latent aarch64 bugs surfaced and were fixed in the same
+release (a missing acquire barrier and a global-alignment SIGBUS). self-host byte-identical on x86_64 +
+aarch64-linux (pi, native + cross) + macho-arm (ecb) + Windows (cass); check.sh 85/85; self_compile perf
+neutral (449 vs 451 ms). Issue `2026-06-04-cyrius-global-allocator-not-thread-safe.md`.
+
+### Fixed
+
+- **Global allocator thread-safety** (`lib/alloc.cyr` + `alloc_{macos,windows,agnos}.cyr`) — a
+  process-wide CAS spinlock (`_alloc_lock`) serializes `alloc()` / `alloc_reset()` across all four
+  targets, plus a CAS-publish for the `default_alloc()` singleton. Spinlock (not futex/SRWLOCK) because
+  Darwin and the agnos ABI expose no futex — a blocking lock would degrade to a spinlock on 2 of 4 targets
+  anyway, and the critical section is a pointer bump. The existing `thread_safety.tcyr` never exercised
+  this: it serializes every allocation behind an external mutex.
+- **aarch64 missing acquire barrier** (`lib/alloc.cyr`) — `_alloc_lock_acquire` omitted the post-CAS
+  `atomic_fence()` that `thread.cyr`'s proven `mutex_lock` carries. On aarch64 the CAS is plain
+  `ldxr/stxr` (no ordering), so without the fence the critical-section `_heap_ptr` read could be observed
+  before the lock was held → a stale bump pointer → overlap-allocation on a weak memory model. Added the
+  fence (a cheap near-no-op on x86, where `lock cmpxchg` is already a full barrier).
+- **aarch64 globals were only 4-byte aligned** (`src/backend/aarch64/fixup.cyr`) — the ELF var-area base
+  inherited the 4-alignment of the code size (x86 already rounds code to 8; aarch64 rounded to 4). An
+  `atomic_cas` on a *global* (e.g. the new `_alloc_lock`) uses `ldxr/stxr`, which **SIGBUS on any
+  non-8-aligned address** — so atomic-on-a-global faulted on aarch64. Fixed by rounding the code size to 8
+  (one line, mirroring x86); this makes **atomic-on-any-global work on aarch64**, not just the allocator.
+  The native-pi self-host gate caught it; `build/cycc_aarch64` / `cycc-native-aarch64` rebuilt with the fix.
+
+### Added
+
+- **`tests/tcyr/alloc_thread_safe.tcyr`** — 4-thread concurrent `alloc()` / `default_alloc()` stress test
+  with a per-block unique sentinel in every word (detects any overlap) and a >1 MB working set (exercises
+  the grow race). Proves the fix: fails 5/5 with the lock removed, passes with it; runs on real aarch64.
+
 ## [6.0.63] — 2026-06-04
 
 **arm64 macOS dir-walk repaired + a real consumer-flow functional gate on every platform.** The

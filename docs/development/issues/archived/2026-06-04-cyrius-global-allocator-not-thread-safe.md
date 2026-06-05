@@ -1,6 +1,17 @@
 # cyrius global allocator is not thread-safe — blocks any multi-threaded accept loop (race audit 2026-06-04)
 
-> **Status**: OPEN — tracked, UNSLOTTED. cyrius-side only; no cross-repo edit. **Observed by a
+> **Status**: ✅ RESOLVED in v6.0.64 — recommended fix (b): a process-wide CAS spinlock (`_alloc_lock`)
+> serializes `alloc()`/`alloc_reset()` across all four allocator peers + a CAS-publish for the
+> `default_alloc()` singleton, closing all three races (bump-pointer, grow, lazy-init). Two latent
+> aarch64 bugs surfaced and were fixed in the same release: (1) a missing post-CAS acquire `atomic_fence`
+> in `_alloc_lock_acquire` (the CAS is plain `ldxr/stxr` with no ordering on aarch64); (2) the aarch64
+> ELF var-area base was only 4-byte aligned, so `atomic_cas` on a *global* SIGBUS'd — fixed by rounding
+> the code size to 8 in `src/backend/aarch64/fixup.cyr` (now atomic-on-any-global works, matching x86).
+> Verified: new `alloc_thread_safe.tcyr` (fails 5/5 without the lock, passes with) + a 4-thread contended
+> run on real aarch64 hardware; self-host byte-identical on x86_64 + aarch64 (pi native+cross) + macho-arm
+> (ecb) + Windows (cass); check.sh 85/85. See CHANGELOG [6.0.64].
+>
+> **Original (race audit 2026-06-04)**: Observed by a
 > consumer on cyrius 6.0.57** (a multi-threaded accept loop; race audit 2026-06-04). This is a
 > **PRE-EXISTING limitation of the global allocator — NOT introduced by v6.0.61.** Linux threads
 > (`clone`/`futex` in `lib/thread.cyr`) have been REAL since long before 6.0.57, so the race has been

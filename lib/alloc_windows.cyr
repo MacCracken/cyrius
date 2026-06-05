@@ -63,27 +63,33 @@ var ALLOC_MAX = 0x10000000;
 # Allocate size bytes, 8-byte aligned. Returns 0 on overflow /
 # out-of-region.
 fn alloc(size) {
-    # v5.8.37 — lazy-init the heap if alloc_init() was never called.
-    # Mirrors the Linux + macOS branches; alloc_init() is now
-    # optional. See lib/alloc.cyr header for the full migration note.
-    if (_heap_base == 0) { alloc_init(); }
+    # Pure validation OUTSIDE the v6.0.64 alloc lock (no shared state).
     if (size <= 0) { return 0; }
     if (size > ALLOC_MAX) { return 0; }
     size = (size + 7) & (0 - 8);
+    # --- critical section (shared bump pointer) ---
+    _alloc_lock_acquire();
+    # v5.8.37 — lazy-init the heap if alloc_init() was never called
+    # (now race-safe). See lib/alloc.cyr header for the migration note.
+    if (_heap_base == 0) { alloc_init(); }
     var ptr = _heap_ptr;
     var new_ptr = ptr + size;
     # Overflow check: wrapped pointer = arithmetic overflow.
-    if (new_ptr < ptr) { return 0; }
+    if (new_ptr < ptr) { _alloc_lock_release(); return 0; }
     # Out-of-region: no grow on Windows.
-    if (new_ptr > _heap_end) { return 0; }
+    if (new_ptr > _heap_end) { _alloc_lock_release(); return 0; }
     _heap_ptr = new_ptr;
+    _alloc_lock_release();
     return ptr;
 }
 
 # Reset the bump pointer back to base. All previously-allocated
-# memory is invalidated (same contract as Linux peer).
+# memory is invalidated (same contract as Linux peer). Locked so a
+# concurrent alloc() can't observe a half-updated bump pointer.
 fn alloc_reset() {
+    _alloc_lock_acquire();
     _heap_ptr = _heap_base;
+    _alloc_lock_release();
     return 0;
 }
 

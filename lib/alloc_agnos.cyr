@@ -55,14 +55,17 @@ fn alloc_init(): i64 {
 # on overflow, mmaps a new chunk big enough for the request. Returns the
 # pointer, or 0 on out-of-memory.
 fn alloc(size): i64 {
+    var asz = (size + 7) & (0 - 8);   # local — outside the v6.0.64 lock
+    # --- critical section (shared chunk state + _agnos_new_chunk) ---
+    _alloc_lock_acquire();
     if (_heap_base == 0) { alloc_init(); }
-    var asz = (size + 7) & (0 - 8);
     if (_heap_ptr + asz > _heap_end) {
-        if (_agnos_new_chunk(asz) == 0) { return 0; }
+        if (_agnos_new_chunk(asz) == 0) { _alloc_lock_release(); return 0; }
     }
     var p = _heap_ptr;
     _heap_ptr = _heap_ptr + asz;
     _heap_used = _heap_used + asz;
+    _alloc_lock_release();
     return p;
 }
 
@@ -70,10 +73,12 @@ fn alloc(size): i64 {
 # re-grown by fresh mmaps if needed again — agnos reclaims all at exit), so
 # this is a cheap reuse of the first chunk, not a full munmap sweep.
 fn alloc_reset(): i64 {
+    _alloc_lock_acquire();
     _heap_base = _heap_first_base;
     _heap_ptr = _heap_first_base;
     _heap_end = _heap_first_end;
     _heap_used = 0;
+    _alloc_lock_release();
     return 0;
 }
 

@@ -41,18 +41,20 @@ fn alloc_init() {
 
 # Allocate size bytes from the heap, 8-byte aligned
 fn alloc(size) {
-    # v5.8.37 — lazy-init the heap if alloc_init() was never called.
-    # Mirrors the Linux branch in lib/alloc.cyr; alloc_init() is now
-    # optional. See lib/alloc.cyr header for the full migration note.
-    if (_heap_base == 0) { alloc_init(); }
+    # Pure validation OUTSIDE the v6.0.64 alloc lock (no shared state).
     if (size <= 0) { return 0; }
     if (size > ALLOC_MAX) { return 0; }
-    # Align to 8 bytes
+    # Align to 8 bytes (local).
     size = (size + 7) & (0 - 8);
+    # --- critical section (shared bump pointer + grow) ---
+    _alloc_lock_acquire();
+    # v5.8.37 — lazy-init the heap if alloc_init() was never called
+    # (now race-safe). Mirrors lib/alloc.cyr; see its header.
+    if (_heap_base == 0) { alloc_init(); }
     var ptr = _heap_ptr;
     var new_ptr = ptr + size;
     # Overflow check
-    if (new_ptr < ptr) { return 0; }
+    if (new_ptr < ptr) { _alloc_lock_release(); return 0; }
     _heap_ptr = new_ptr;
     # Loop per-1MB mmaps; mmap hint contract is stricter than brk
     # (big single mmap may return a different base, breaking the
@@ -61,22 +63,28 @@ fn alloc(size) {
         var result = syscall(9, _heap_end, 0x100000, 3, 0x1002, 0 - 1, 0);
         if (result < 0) {
             _heap_ptr = ptr;
+            _alloc_lock_release();
             return 0;
         }
         # If kernel gave us a different address, the heap is non-contiguous — fail
         if (result != _heap_end) {
             syscall(11, result, 0x100000);
             _heap_ptr = ptr;
+            _alloc_lock_release();
             return 0;
         }
         _heap_end = _heap_end + 0x100000;
     }
+    _alloc_lock_release();
     return ptr;
 }
 
-# Reset the heap, freeing all allocations at once
+# Reset the heap, freeing all allocations at once. Locked so a concurrent
+# alloc() can't observe a half-updated bump pointer.
 fn alloc_reset() {
+    _alloc_lock_acquire();
     _heap_ptr = _heap_base;
+    _alloc_lock_release();
     return 0;
 }
 
