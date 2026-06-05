@@ -3,6 +3,35 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-05 (.67 ship — asm-block param_load(reg, idx) pseudo-op + atomic/thread migration)
+
+Closing **v6.0.67** (the asm-block global-symbol pseudo, split from .66). check.sh **85/85**; self-host
+byte-identical on **x86_64 + aarch64 (pi native+cross) + macho-arm (ecb) + macho-x86 (ach) + Windows
+(cass)**.
+
+**Headline — `param_load(reg, idx)` decouples inline asm from prologue layout.** Inline asm loads a
+parameter from its ACTUAL prologue slot (disp = -(idx+1+_cur_fn_regalloc)*8) instead of hardcoding
+`[rbp-N]`/`[x29,#-N]` byte literals that silently break on prologue drift (the recurring sigil AES-NI /
+cyrius atomic.cyr coupling bug; issue 2026-05-21). x86 → `mov reg,[rbp+disp]`, aarch64 → `ldur
+reg,[x29,#disp]`. Implemented Option 2 (user-chosen); Option 1 `sym32(name)` left as a future general
+enhancement. `_asm_{x86,aarch64}_reg` name→encoding maps + ASM_PARAM_LOAD emit in each backend.
+
+**Proof — BYTE-IDENTICAL.** Migrating `lib/atomic.cyr` (atomic_cas/atomic_fetch_add) + `lib/thread.cyr`
+(clone arg-marshal) to param_load produced a byte-identical cycc (atomic.cyr is in cycc via the .64
+alloc lock) → param_load emits exactly the hand-rolled bytes (and confirms regalloc=0 for those fns).
+atomics/threads/thread_safety/thread_local green on x86 + pi; new `param_load.tcyr` 5/5 both arches.
+
+**Bootstrap finding (taken to the leader, who chose to keep the migration):** atomic.cyr/thread.cyr are
+bootstrap-critical (in cycc), so migrating them COUPLES them to param_load — a pre-6.0.67 cycc can't
+compile them (the smoke gate caught a stale installed cycc). The leader accepted this: consumers get
+lib+cycc together via `cyrius deps`, the bootstrap propagates param_load from the current backend (cybs
+does NOT compile main.cyr directly — `cat main.cyr | cybs` fails pre-existing, so cybs is not the
+main.cyr compiler), and pulsar's self-host chain carries param_load forward. Smoke passes once .67 is
+installed. (Feature-only — atomic/thread hand-rolled — was also verified 85/85 as the fallback.)
+
+**Next:** **.68+ partials block** (Windows follow-up nuances §3/§0; aarch64 `cyrius deps` §D1), then
+**.69+ TLS**. Consumer follow-up: sigil migrates aes_ni/sha_ni off `[rbp-N]` to param_load (its filing).
+
 ## Session close — 2026-06-05 (.66 ship — cbt: `cyrius test` works on Apple Silicon; 2 stacked bugs fixed)
 
 Closing **v6.0.66**. **Leader split (2026-06-05):** the in-flight work was turned into two slots — the

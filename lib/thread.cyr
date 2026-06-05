@@ -86,16 +86,13 @@ fn _thread_spawn(flags, child_stack, t, tls): i64 {
     var ret = 0;
     #ifdef CYRIUS_ARCH_X86
     asm {
-        # --- pre-syscall: marshal params from cyrius locals ---
-        # Layout in this fn's frame (cyrius convention):
-        #   [rbp-8]  flags          [rbp-24] t
-        #   [rbp-16] child_stack    [rbp-32] tls
-        #                            [rbp-40] ret
-        0x48; 0x8B; 0x7D; 0xF8;        # mov rdi, [rbp-8]   ; flags
-        0x48; 0x8B; 0x75; 0xF0;        # mov rsi, [rbp-16]  ; child_stack
-        0x48; 0x8B; 0x55; 0xE8;        # mov rdx, [rbp-24]  ; t (parent_tid)
-        0x4C; 0x8B; 0x55; 0xE8;        # mov r10, [rbp-24]  ; t (child_tid — syscall ABI uses r10 for arg4)
-        0x4C; 0x8B; 0x45; 0xE0;        # mov r8, [rbp-32]   ; tls (FS base if CLONE_SETTLS)
+        # --- pre-syscall: marshal params from cyrius locals (v6.0.67: param_load,
+        # prologue-drift-proof; was hand-rolled [rbp-N]). [rbp-40]=ret. ---
+        param_load(rdi, 0);            # flags
+        param_load(rsi, 1);            # child_stack
+        param_load(rdx, 2);            # t (parent_tid)
+        param_load(r10, 2);            # t (child_tid — syscall ABI uses r10 for arg4)
+        param_load(r8, 3);             # tls (FS base if CLONE_SETTLS)
         0xB8; 0x38; 0x00; 0x00; 0x00;  # mov eax, 56        ; SYS_CLONE (zero-extends to rax)
         0x0F; 0x05;                    # syscall            ; rax = child_tid (parent) | 0 (child) | -errno
 
@@ -128,11 +125,11 @@ fn _thread_spawn(flags, child_stack, t, tls): i64 {
         #   x3 = tls,   x4 = child_tidptr
         # We pass t for both parent_tidptr (x2) and child_tidptr (x4);
         # x3 = tls (from param, kernel installs into TPIDR_EL0 if CLONE_SETTLS).
-        0xA0; 0x83; 0x5F; 0xF8;        # ldur x0, [x29, #-8]    ; flags
-        0xA1; 0x03; 0x5F; 0xF8;        # ldur x1, [x29, #-16]   ; child_stack
-        0xA2; 0x83; 0x5E; 0xF8;        # ldur x2, [x29, #-24]   ; t (parent_tidptr)
-        0xA3; 0x03; 0x5E; 0xF8;        # ldur x3, [x29, #-32]   ; tls
-        0xA4; 0x83; 0x5E; 0xF8;        # ldur x4, [x29, #-24]   ; t (child_tidptr)
+        param_load(x0, 0);             # flags             (v6.0.67: was ldur [x29,#-N])
+        param_load(x1, 1);             # child_stack
+        param_load(x2, 2);             # t (parent_tidptr)
+        param_load(x3, 3);             # tls
+        param_load(x4, 2);             # t (child_tidptr)
         0x88; 0x1B; 0x80; 0xD2;        # mov x8, #220           ; SYS_CLONE
         0x01; 0x00; 0x00; 0xD4;        # svc #0                 ; x0 = child_tid (parent) | 0 (child) | -errno
 

@@ -9,7 +9,18 @@ that catches the symptomatic class of bug at boot time. The
 upstream feature requested here would let downstream stop coupling
 asm-block parameter loads to the cyrius prologue layout entirely
 — a structural fix rather than a runtime fallback.
-**Status:** open — feature request.
+**Status:** ✅ RESOLVED in v6.0.67 — shipped **Option 2 `param_load(reg, idx)`**
+(the lower-surface-area fix for the parameter-load bug class). Inline asm loads a
+parameter from its ACTUAL prologue slot (disp = -(idx+1+_cur_fn_regalloc)*8) — x86
+`mov reg,[rbp+disp]`, aarch64 `ldur reg,[x29,#disp]` — so downstream stops coupling
+asm-block param loads to the cyrius prologue layout. Byte-identical proof: migrating
+cyrius's own `lib/atomic.cyr` + `lib/thread.cyr` off their `[rbp-N]`/`[x29,#-N]`
+literals produced a byte-identical cycc. `param_load.tcyr` 5/5 on x86 + aarch64.
+**Sigil follow-up** (its committed plan): migrate `aes256_encrypt_block_ni` /
+`_aes_ni_cpuid_probe` / `_sha_ni_compress_one` / `_sha_ni_cpuid_probe` off the
+`[rbp-N]` byte literals to `param_load`, compiled by a ≥6.0.67 cycc. **Option 1
+`sym32(name)`** (arbitrary-global PC32 fixup, the general long-term shape) left as a
+future enhancement — no current consumer needs the arbitrary-global case. See CHANGELOG [6.0.67].
 
 ## Summary
 

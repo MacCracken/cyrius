@@ -1,0 +1,80 @@
+# param_load.tcyr — regression coverage for the v6.0.67 asm-block
+# `param_load(reg, idx)` pseudo-op.
+#
+# param_load emits `mov reg, [rbp+disp]` (x86) / `ldur reg, [x29, #disp]`
+# (aarch64) loading the idx-th parameter from its ACTUAL prologue slot
+# (disp = -(idx + 1 + _cur_fn_regalloc)*8), instead of hardcoding
+# `[rbp-N]` byte literals that silently break when the prologue layout
+# shifts (the sigil AES-NI / cyrius atomic.cyr coupling bug class — see
+# issue 2026-05-21-asm-block-global-symbol-pseudo.md).
+#
+# These fns deliberately have NO trailing `return`: the asm leaves the
+# result in the ABI return register (rax / x0) and the epilogue preserves
+# it. That makes param_load's loaded value directly observable.
+#
+# (lib/atomic.cyr + lib/thread.cyr were migrated to param_load in v6.0.67
+# byte-identically — atomics/threads/thread_safety/thread_local.tcyr are
+# the transitive coverage; this file is the direct, named test.)
+#
+# See CHANGELOG [6.0.67].
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+
+# Loads BOTH params via param_load and returns their sum (in the return reg).
+fn pl_sum(a, b): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        param_load(rax, 0);            # rax = a
+        param_load(rcx, 1);            # rcx = b
+        0x48; 0x01; 0xC8;              # add rax, rcx  → rax = a + b
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        param_load(x0, 0);             # x0 = a
+        param_load(x1, 1);             # x1 = b
+        0x00; 0x00; 0x01; 0x8B;        # add x0, x0, x1 → x0 = a + b
+    }
+    #endif
+}
+
+# Loads ONLY param 1 into the return register — proves `idx` selects the
+# correct parameter slot (returns b, never a).
+fn pl_second(a, b): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm { param_load(rax, 1); }        # rax = b
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm { param_load(x0, 1); }         # x0 = b
+    #endif
+}
+
+# Loads param 3 (a deeper slot, disp8 -32) — exercises a higher idx and r8/x3.
+fn pl_fourth(a, b, c, d): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm { param_load(rax, 3); }        # rax = d
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm { param_load(x0, 3); }         # x0 = d
+    #endif
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("asm param_load(reg, idx)");
+    assert_eq(pl_sum(40, 2), 42, "param_load loads + sums both params");
+    assert_eq(pl_sum(100, 23), 123, "param_load sum, different values");
+    assert_eq(pl_second(7, 99), 99, "param_load(idx=1) selects param 1, not 0");
+    assert_eq(pl_second(0 - 5, 11), 11, "param_load(idx=1) with negative param 0");
+    assert_eq(pl_fourth(1, 2, 3, 44), 44, "param_load(idx=3) selects the 4th param");
+    var r = assert_summary();
+    return r;
+}
+
+var ec = main();
+syscall(60, ec);

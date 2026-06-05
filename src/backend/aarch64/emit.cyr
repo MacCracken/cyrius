@@ -1730,6 +1730,7 @@ fn ASM_MNEMONIC(S): i64 {
     elif (mnem & 0xFFFFFF == 0x627369) { EW(S, 0xD50330DF); }                  # isb
     elif (mnem & 0xFFFFFF == 0x706F6E) { EW(S, 0xD503201F); }                  # nop
     elif (mnem & 0xFFFFFF == 0x746572) { EW(S, 0xD65F03C0); }                  # ret
+    elif (mnem == 0x6F6C5F6D61726170) { ASM_PARAM_LOAD(S, noff); }             # param_load(reg,idx)
     else {
         syscall(SYS_WRITE, 2, "error:", 6);
         FM_LOOKUP(S, GTLINE(S, GTI(S) - 1));
@@ -1737,6 +1738,55 @@ fn ASM_MNEMONIC(S): i64 {
         syscall(SYS_EXIT, 1);
     }
     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# v6.0.67: map an aarch64 register NAME (first bytes as L64) → number 0-30. 3-char
+# names (x10-x30) checked before 2-char (x0-x9) so "x10" doesn't match "x1".
+fn _asm_aarch64_reg(n): i64 {
+    if (n & 0xFFFFFF == 0x303178) { return 10; }   if (n & 0xFFFFFF == 0x313178) { return 11; }
+    if (n & 0xFFFFFF == 0x323178) { return 12; }   if (n & 0xFFFFFF == 0x333178) { return 13; }
+    if (n & 0xFFFFFF == 0x343178) { return 14; }   if (n & 0xFFFFFF == 0x353178) { return 15; }
+    if (n & 0xFFFFFF == 0x363178) { return 16; }   if (n & 0xFFFFFF == 0x373178) { return 17; }
+    if (n & 0xFFFFFF == 0x383178) { return 18; }   if (n & 0xFFFFFF == 0x393178) { return 19; }
+    if (n & 0xFFFFFF == 0x303278) { return 20; }   if (n & 0xFFFFFF == 0x313278) { return 21; }
+    if (n & 0xFFFFFF == 0x323278) { return 22; }   if (n & 0xFFFFFF == 0x333278) { return 23; }
+    if (n & 0xFFFFFF == 0x343278) { return 24; }   if (n & 0xFFFFFF == 0x353278) { return 25; }
+    if (n & 0xFFFFFF == 0x363278) { return 26; }   if (n & 0xFFFFFF == 0x373278) { return 27; }
+    if (n & 0xFFFFFF == 0x383278) { return 28; }   if (n & 0xFFFFFF == 0x393278) { return 29; }
+    if (n & 0xFFFFFF == 0x303378) { return 30; }
+    if (n & 0xFFFF == 0x3078) { return 0; }   if (n & 0xFFFF == 0x3178) { return 1; }
+    if (n & 0xFFFF == 0x3278) { return 2; }   if (n & 0xFFFF == 0x3378) { return 3; }
+    if (n & 0xFFFF == 0x3478) { return 4; }   if (n & 0xFFFF == 0x3578) { return 5; }
+    if (n & 0xFFFF == 0x3678) { return 6; }   if (n & 0xFFFF == 0x3778) { return 7; }
+    if (n & 0xFFFF == 0x3878) { return 8; }   if (n & 0xFFFF == 0x3978) { return 9; }
+    return 0 - 1;
+}
+
+# v6.0.67: asm-block `param_load(reg, idx)` — emit `ldur reg, [x29, #disp]` loading the
+# idx-th parameter from its ACTUAL prologue slot (disp = -(idx+1+_cur_fn_regalloc)*8),
+# instead of hardcoded `[x29,#-N]` byte literals that break on prologue drift. Byte-
+# identical to the old literals when _cur_fn_regalloc==0. ldur's imm9 is signed
+# -256..255; params beyond that ERR (rare). See issue 2026-05-21-asm-block-global-symbol-pseudo.
+fn ASM_PARAM_LOAD(S, noff): i64 {
+    if (load8(S + 0x60000 + noff + 8) != 97) { ERR(S); }    # 'a'
+    if (load8(S + 0x60000 + noff + 9) != 100) { ERR(S); }   # 'd'
+    if (PEEKT(S) != 10) { ERR(S); }      # (
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 2) { ERR(S); }       # register identifier
+    var reg = _asm_aarch64_reg(L64(S + 0x60000 + PEEKV(S)));
+    if (reg < 0) { ERR(S); }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 31) { ERR(S); }      # ,
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 1) { ERR(S); }       # idx (integer literal)
+    var idx = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 11) { ERR(S); }      # )
+    STI(S, GTI(S) + 1);
+    var disp = 0 - ((idx + 1 + _cur_fn_regalloc) * 8);
+    if (disp < 0 - 256) { ERR(S); }      # ldur imm9 signed range
+    EW(S, 0xF8400000 | ((disp & 0x1FF) << 12) | (29 << 5) | reg);
     return 0;
 }
 

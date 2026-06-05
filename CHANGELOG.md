@@ -6,6 +6,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.67] — 2026-06-05
+
+**asm-block `param_load(reg, idx)` pseudo-op.** Inline asm can now load a function parameter from its
+ACTUAL prologue slot instead of hardcoding `[rbp-N]` / `[x29,#-N]` byte literals that silently break when
+the prologue layout shifts (the recurring sigil AES-NI / cyrius atomic.cyr coupling bug class; issue
+2026-05-21). x86 emits `mov reg, [rbp+disp]`, aarch64 `ldur reg, [x29, #disp]`, with
+disp = -(idx+1+_cur_fn_regalloc)*8 — **byte-identical** to the hand-rolled literals (proven: migrating
+atomic.cyr produces a byte-identical cycc). self-host byte-identical on x86_64 + aarch64 (pi native+cross)
++ macho-arm (ecb) + macho-x86 (ach) + Windows (cass); check.sh 85/85. Leader split 2026-06-05: was bundled
+with the .66 cbt fixes.
+
+### Added
+
+- **`param_load(reg, idx)` asm-block pseudo-op** (`src/backend/{x86,aarch64}/emit.cyr` + ASM_MNEMONIC
+  dispatch) — reg-name→encoding maps (`_asm_{x86,aarch64}_reg`) + emit at the prologue-correct
+  displacement (disp8 form for the common case). For consumer inline-asm (e.g. sigil's AES-NI/SHA-NI to
+  drop their `[rbp-N]` byte literals).
+- **`tests/tcyr/param_load.tcyr`** — direct coverage (sum of two params; idx selects the correct param;
+  deeper idx) on x86 + aarch64.
+
+### Changed
+
+- **`lib/atomic.cyr` + `lib/thread.cyr` migrated to `param_load`** — atomic_cas / atomic_fetch_add param
+  loads + the `clone()` syscall-arg marshal no longer hardcode stack offsets. Byte-identical to the prior
+  literals (cycc unchanged; atomics/threads/thread_safety/thread_local green on x86 + aarch64). NOTE: this
+  couples these libs to the param_load feature — they now require a param_load-capable (≥6.0.67) cycc to
+  compile. Consumers get lib+cycc together via `cyrius deps`; the bootstrap propagates param_load from the
+  current backend (cybs does not compile main.cyr directly).
+
 ## [6.0.66] — 2026-06-05
 
 **cbt: `cyrius test` (and run / bench / fuzz / doctest) now work on Apple Silicon.** Two stacked cbt bugs

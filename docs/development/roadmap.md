@@ -485,11 +485,17 @@ premise-check each at slot entry:
    (6.0.38); cmd_test/run/bench/fuzz/doctest ran unsigned → AMFI SIGKILL (137); hoisted the codesign into
    a shared `_macho_codesign()` called inside `run_binary` (cmd_build DRY'd to it). Wrapper-only (cycc
    unchanged). Proof: `cyrius test` green on ecb. See CHANGELOG [6.0.66].
-6. **.67 — asm-block global-symbol pseudo** (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`), was
-   .66. Implement Option 2 `param_load(reg,idx)` (user-chosen): regalloc-disp-aware emit-time load,
-   x86 + aarch64, byte-identical migration of `lib/atomic.cyr`/`thread.cyr` off hardcoded `[rbp-N]` as the
-   proof (+ a .tcyr). Design + exact encodings already settled (disp = -(idx+1+_cur_fn_regalloc)*8;
-   x86 disp8 `mov`, aarch64 `ldur`). Option 1 `sym32(name)` left as a future general enhancement.
+6. **.67 — asm-block `param_load(reg, idx)` pseudo** ✅ COMPLETE (was .66; issue
+   `2026-05-21-asm-block-global-symbol-pseudo.md`, archived). Option 2 (user-chosen): emit-time load at
+   the prologue-correct disp = -(idx+1+_cur_fn_regalloc)*8; x86 `mov reg,[rbp+disp]` (disp8) + aarch64
+   `ldur reg,[x29,#disp]`; `_asm_{x86,aarch64}_reg` name maps + ASM_PARAM_LOAD. **Byte-identical proof:**
+   migrating `lib/atomic.cyr` + `lib/thread.cyr` (clone) off `[rbp-N]` produced a byte-identical cycc
+   (atomic.cyr is in cycc via the .64 lock). New `param_load.tcyr` 5/5 on x86 + pi; self-host byte-
+   identical on x86 + aarch64 (pi) + macho-arm (ecb) + macho-x86 (ach) + Windows (cass); check.sh 85/85.
+   **Bootstrap note (leader-approved):** the migration couples atomic/thread to param_load (need ≥6.0.67
+   cycc); consumers get lib+cycc together via `cyrius deps`; cybs doesn't compile main.cyr directly so the
+   bootstrap propagates param_load from the current backend. Option 1 `sym32(name)` = future enhancement.
+   Consumer follow-up: sigil migrates aes_ni/sha_ni off `[rbp-N]`. See CHANGELOG [6.0.67].
 7. **.68+ — remaining partials block** (was .67+): Windows follow-up nuances §3 full `CommandLineToArgvW`
    (shell32) + §0 COM/DXGI GPU-enum (`issues/2026-06-03-windows-followup-nuances.md` +
    `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + **`cyrius deps` silently fails on aarch64
