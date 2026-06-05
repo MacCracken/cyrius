@@ -679,8 +679,9 @@ jobs:
     name: Mach-O ARM64 Native
     needs: [macho-arm64]
     runs-on: macos-14
-    timeout-minutes: 5   # fail-loud on a hang, never the 6h default
+    timeout-minutes: 10   # self-host + the folded-in functional gate
     steps:
+      - uses: actions/checkout@v4   # scripts/funcgate-posix.sh + install.sh + VERSION for the functional gate
       - name: Download arm64 Mach-O binaries
         uses: actions/download-artifact@v4
         with:
@@ -749,37 +750,17 @@ jobs:
           ec=0; ./_ec || ec=$?
           test $ec -eq 42 || { echo "FAIL: fn main(){return 42;} exited $ec, not 42"; exit 1; }
           echo "PASS: fn main(){return 42;} → exit 42"
-
-  # ── macOS Apple Silicon — REAL consumer-flow FUNCTIONAL gate (v6.0.63) ──
-  # The self-host + toy-smoke checks above BOTH pass while is_dir/dir_list are
-  # broken — neither walks a directory. That blind spot let arm64-macOS `lib sync`
-  # rot GREEN for 10+ releases (known + papered over since v6.0.40 — cbt/deps.cyr's
-  # own comment; surfaced by yantra, not us). This job installs the REAL release
-  # tarball and runs the flow a user runs: init → lib sync → deps → build an
-  # allocating fib → run/assert fib(30) → hash + reproducible-build. It FAILS RED
-  # on the broken state — the truth the placebo hid.
-  # `continue-on-error: true` keeps macOS VISIBLY RED here without blocking Linux
-  # releases (the honest known-broken bypass — red + tracked, never green-over-
-  # broken). REMOVE it once .63's getdirentries codegen fix lands and this is
-  # green. Issue: docs/development/issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md
-  macho-arm64-funcgate:
-    name: Mach-O ARM64 Functional Gate (real consumer flow)
-    needs: [macho-arm64]
-    runs-on: macos-14
-    timeout-minutes: 8
-    # v6.0.63: HARD gate. The arm64-macOS dir-walk was repaired (SYS_GETDENTS64
-    # aarch64 number 61 → Darwin getdirentries 344 in ESYSXLAT), so the full
-    # consumer flow (init→lib sync→deps→build→run→reproducible→hashmap) now passes
-    # byte-for-byte on real hardware (ecb). continue-on-error removed — a red here
-    # is now a real macOS regression that must block, like windows-native.
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download arm64 Mach-O tarball
-        uses: actions/download-artifact@v4
-        with:
-          name: macho-arm64-binaries
-          path: ./macho-arm64
-      - name: Install the real release artifact + run the functional gate
+      - name: REAL consumer-flow functional gate (HARD — v6.0.63)
+        # The self-host + toy-smoke steps above BOTH pass while is_dir/dir_list are
+        # broken — neither walks a directory. That blind spot let arm64-macOS
+        # `lib sync` rot GREEN for 10+ releases (found by yantra, not us). This
+        # installs the REAL release tarball and runs the flow a user runs:
+        # init → lib sync (dir-walk) → deps → build an allocating fib → run/assert →
+        # reproducible-build → u64-hashmap. Green since the .63 ESYSXLAT 61→344 fix
+        # (verified byte-for-byte on ecb); a red here is a real macOS regression that
+        # blocks, like windows-native. Folded in from the standalone funcgate job so
+        # the macOS native suite owns its own end-to-end gate.
+        # Issue: docs/development/issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md
         run: |
           set -e
           V=$(tr -d '[:space:]' < VERSION)

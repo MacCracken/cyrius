@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.63] — 2026-06-04
+
+**arm64 macOS dir-walk repaired + a real consumer-flow functional gate on every platform.** The
+self-host gate (`cycc==cycc`) passed for 10+ releases while `cyrius lib sync` was broken on arm64 macOS
+— because self-host reads source by path and never walks a directory. Found by yantra CI, not us. This
+release adds a fail-loud gate that runs the flow a consumer actually runs, wires it into CI on every
+platform, and fixes the macOS dir-walk it surfaced. self-host byte-identical on x86_64 + aarch64-linux
+(qemu) + macho-arm (ecb); check.sh 85/85.
+
+### Fixed
+
+- **arm64 macOS dir-walk** (`is_dir` / `dir_list` / `cyrius lib sync`) — `src/backend/aarch64/emit.cyr`
+  ESYSXLAT. The earlier "arm64 arg-corruption codegen bug" diagnosis was **wrong**, disproved by
+  bisection on ecb: `SYS_GETDENTS64` is multiply-defined — `217` (x86/macos) but **`61`** in
+  `syscalls_aarch64_linux.cyr` — and the wrapper binds `61` by include order (`fs.cyr` then
+  `syscalls.cyr`, last-definition-wins). The .60 macho ESYSXLAT translated only the x86 `217→344` and
+  **missed the aarch64 `61→344`**, so untranslated `61` ran with a stale `x16` → EBADF, and `lib sync`
+  reported "snapshot lib not found" on a directory that exists ⇒ macOS broken-in-fact. Fix: add
+  `cmp x8,#61; b.ne; movz x16,#344` (llvm-mc-verified) beside the existing `217→344`. A standalone probe
+  bound `217` by include order and worked, masking it — **the wrapper, not a probe, is the test.**
+- **Functional-gate reproducibility check** — compared two *different* output names (`fib` vs `fib2`);
+  Mach-O embeds the output basename (signing identifier), so they always differed by one byte even when
+  the compiler output is identical. ELF doesn't embed it, so Linux passed and hid it. Now rebuilds the
+  SAME name and hashes the **unsigned** output (codesign is non-deterministic — the .44 lesson).
+- `lib/tls_native.cyr` header reconciled to the truth (TLS 1.3 client+server are implemented; 3 public
+  fns genuinely return `NOT_IMPLEMENTED`, now tracked in the register, not a stale "SCAFFOLD" lie).
+
+### Added
+
+- **Real consumer-flow functional gate** — `scripts/funcgate-posix.sh` (Linux/macOS) +
+  `scripts/funcgate-win.ps1` (Windows codegen) + `scripts/funcgate-stage.sh` (portable `CYRIUS_HOME`
+  stage). Runs init → lib sync (dir-walk) → deps → build+run a vec-grown fib **and** a u64-hashmap →
+  reproducible-build, with a distinct exit code per step. Wired into CI: `test` (x86 Linux, **HARD**),
+  `test-agnos` (AGNOS container, tracking), `aarch64-native` (tracking), `windows-native` (**HARD**,
+  codegen), and folded into `macho-arm64-native` (**HARD**). Closes the "found by ports" blind spot the
+  self-host gate couldn't see — the old macOS/Windows CI only ran hello-world/exit-code smoke, which
+  never allocates or walks a directory. Hardware-verified on pi / ecb / cass.
+- **`cyrlint` deferral-language rule** (`--strict-deferrals`) — flags deferred / broken-work markers
+  (`TODO` / `FIXME` / `SCAFFOLD` / `NOT_IMPLEMENTED` / `deferred` / `for now` / …) not cross-referenced
+  by a CHANGELOG / issue / roadmap / version pointer. Separate counter so the 185-item legacy backlog
+  doesn't break the existing `--strict` gate; reports by default, `--strict-deferrals` is the hardening
+  switch. Stops deferred work rotting untracked in comments.
+
+### Tracked (surfaced by the new gate — `docs/development/issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md`)
+
+- **`cyrius deps` silently fails on aarch64 Linux** (`0 resolved, 9 errors`, rc=9, empty stderr,
+  destroys `lib/`) — `lib sync` works there, so arm64 codegen is fine; specific to the deps stdlib-copy
+  recursion. Blocks `aarch64-native` from going HARD until fixed. Register §D1.
+- **The cyrius CLI wrapper is not ported to Windows** — `sys_fork`/`execve`/`waitpid`/`mkdir`/`unlink`/
+  `chmod` undefined for PE, so `init`/`build`/`lib sync` can't run there; the Windows gate exercises
+  what IS native — `cycc.exe` compiling + running allocating programs (verified on cass). Register §D2.
+
 ## [6.0.62] — 2026-06-04
 
 **QoL/language smalls + a macOS install hotfix.** Three self-contained QoL items (the premise-checked

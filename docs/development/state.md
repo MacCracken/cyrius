@@ -3,6 +3,41 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-04 (.63 ship — real-flow functional gate + arm64 macOS dir-walk fix)
+
+Closing **v6.0.63**. check.sh **85/85**; self-host byte-identical on **x86_64 + aarch64-linux (qemu) +
+macho-arm (ecb)** (906,528 B x86). The slate was redirected (user): .63 became the functional-gate arc
++ the macOS dir-walk fix (global-allocator thread-safety + partials slide).
+
+**The headline — arm64 macOS dir-walk repaired (`src/backend/aarch64/emit.cyr`).** The prior
+"arm64 arg-corruption codegen bug" diagnosis was WRONG (disproved by bisection on ecb). Root cause:
+`SYS_GETDENTS64` is multiply-defined — `217` (x86/macos) but **`61`** (`syscalls_aarch64_linux.cyr`) —
+and the wrapper binds `61` by include order (`fs.cyr` then `syscalls.cyr`, last wins). The .60 macho
+ESYSXLAT translated only the x86 `217→344` and **missed the aarch64 `61→344`**, so untranslated `61`
+ran with a stale `x16` → EBADF and `lib sync` reported "snapshot lib not found" on a dir that exists.
+Fix: one entry, `cmp x8,#61; b.ne; movz x16,#344` (llvm-mc-verified). A standalone probe bound `217`
+and worked, masking it — **the wrapper, not a probe, is the test.** Full consumer flow GREEN on ecb.
+
+**Shipped:**
+- **Real consumer-flow functional gate** — `scripts/funcgate-posix.sh` (Linux/macOS) + `funcgate-win.ps1`
+  (Windows codegen) + `funcgate-stage.sh`. init → lib sync (dir-walk) → deps → build+run a vec-fib AND a
+  u64-hashmap → reproducible. Wired into CI: `test` **HARD**, `test-agnos` + `aarch64-native` tracking,
+  `windows-native` **HARD**, folded into `macho-arm64-native` **HARD**. Hardware-verified pi/ecb/cass.
+  Closes the self-host "found-by-ports" blind spot (self-host never walks a dir).
+- **Funcgate reproducibility fix** — was comparing two different output names; Mach-O embeds the output
+  basename, so they always differed. Now rebuilds the SAME name + hashes unsigned (codesign non-det).
+- **`cyrlint --strict-deferrals`** — flags deferred/broken-work markers not cross-referenced by a
+  CHANGELOG/issue/roadmap pointer (185-item backlog reported, non-failing by default).
+- `lib/tls_native.cyr` header reconciled to truth; findings register
+  (`2026-06-04-shipped-broken-functionality-found-by-consumers.md`).
+
+**Tracked / still-open (gate did its job):** §D1 **`cyrius deps` silently fails on aarch64 Linux**
+(rc=9, empty stderr, wipes `lib/`) — blocks `aarch64-native` from HARD until fixed. §D2 **cyrius wrapper
+not ported to Windows** (fork/execve/mkdir/… undefined for PE) — bigger arc.
+
+**Next:** fix §D1 (aarch64 deps) so `aarch64-native` can join macho+Windows as a HARD gate; then the
+slate resumes (global-allocator thread-safety, partials, TLS).
+
 ## Session close — 2026-06-04 (.62 ship — QoL/language smalls + macOS install hotfix)
 
 Closing **v6.0.62** — the first .62-slate slot (QoL/language smalls), with an urgent macOS install
