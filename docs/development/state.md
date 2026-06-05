@@ -3,6 +3,33 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-05 (.66 ship — cbt: `cyrius test` works on Apple Silicon; 2 stacked bugs fixed)
+
+Closing **v6.0.66**. **Leader split (2026-06-05):** the in-flight work was turned into two slots — the
+current cbt fixes ship as **.66**; the asm-block `param_load` pseudo slips to **.67**; everything after
+slips one (partials → .68+, TLS → .69+). Wrapper-only release (cycc UNCHANGED → self-host carries; the
+version-string bump is the only cycc delta).
+
+**Headline — `cyrius test` (and run/bench/fuzz/doctest) now work on arm64 macOS.** Two stacked cbt bugs,
+surfaced by the **yantra extensions CI** (macos-15-arm64), each masked the next:
+- **Bug 1 (exit 127) — qemu mis-route.** `find_tools()` forces `_arch=AARCH64` on arm64-macOS, so
+  `run_binary` took the qemu-aarch64 cross-run branch — but a native Apple-Silicon host has no
+  `/usr/bin/qemu-aarch64` → execve-fail → exit 127, zero test output. (ecb had qemu installed, masking it;
+  the hosted runner doesn't.) Fix: gate the qemu branch `#ifndef CYRIUS_TARGET_MACOS` → macho execs directly.
+- **Bug 2 (exit 137) — unsigned AMFI SIGKILL.** Only `cmd_build` ad-hoc-codesigned (6.0.38);
+  test/run/bench/fuzz/doctest compiled to /tmp + ran via `run_binary` unsigned → AMFI SIGKILL. Fix:
+  hoisted the codesign into a shared `_macho_codesign()` called inside `run_binary` (cmd_build DRY'd to it).
+
+**Proof:** `cyrius test smoke.tcyr` on ecb → `1 passed, 0 failed` (the 132/SIGILL during diagnosis was a
+test-setup artifact — `lib/` includes not resolving in /tmp; the binary RAN, proving past 127/137).
+
+**Process note:** the deeper root-cause (Bug 1, the qemu mis-route = the literal 127) came from the user's
+own investigation in the yantra issue — my first pass found only Bug 2 (the codesign asymmetry). Both fixed.
+
+**Next:** **.67 = asm-block `param_load` pseudo** (Option 2; design + exact byte encodings already settled
+— x86 disp8 `mov`, aarch64 `ldur`, disp = -(idx+1+_cur_fn_regalloc)*8; byte-identical atomic.cyr migration
+as the proof). Then .68+ partials, .69+ TLS.
+
 ## Session close — 2026-06-05 (.65 ship — partials/repairs: portable sleep_ms + single-source macho whitelist + ach CI gate)
 
 Closing **v6.0.65** (partials/repairs slate). check.sh **85/85**; self-host byte-identical on **x86_64 +

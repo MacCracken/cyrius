@@ -233,10 +233,36 @@ fn sys_system(cmd): i64 {
     return 1;
 }
 
+# Ad-hoc codesign a freshly-compiled Mach-O binary so Apple-Silicon AMFI doesn't
+# SIGKILL it (exit 137). No-op off macOS (the #ifdef strips it); harmless on
+# x86-macOS (codesign -s - rejects but 2>/dev/null swallows it, and the unsigned
+# binary runs there anyway). Hoisted from cmd_build's inline v6.0.38 codesign so
+# every run path signs. See CHANGELOG [6.0.66].
+fn _macho_codesign(path): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var cs = str_builder_new();
+    str_builder_add_cstr(cs, "codesign -s - -f ");
+    str_builder_add_cstr(cs, path);
+    str_builder_add_cstr(cs, " 2>/dev/null");
+    sys_system(str_data(str_builder_build(cs)));
+    #endif
+    return 0;
+}
+
 fn run_binary(path): i64 {
     var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + arg + NUL ≤ 24 B
+    # Bug 2 (v6.0.66): cmd_test/run/bench/fuzz/doctest compile to /tmp and run via
+    # run_binary without signing — only cmd_build signed (6.0.38). On arm64 macOS an
+    # unsigned binary is AMFI-SIGKILL'd (128+9=137). Sign here so EVERY run path works.
+    _macho_codesign(path);
     var pid = sys_fork();
     if (pid == 0) {
+        # Bug 1 (v6.0.66): qemu-aarch64 is the x86-Linux-host cross-run path for an
+        # aarch64 TARGET. A native Mach-O host (Apple Silicon) has NO qemu-aarch64 and
+        # runs its own arch directly; find_tools() forces _arch=AARCH64 on arm64-macOS,
+        # so this branch execve-failed → exit 127 with zero test output (the yantra
+        # Apple-Silicon `cyrius test` failure). Gate it OUT on macOS — exec directly.
+        #ifndef CYRIUS_TARGET_MACOS
         if (_arch == ARCH_AARCH64) {
             store64(&argv, "/usr/bin/qemu-aarch64");
             store64(&argv + 8, path);
@@ -244,6 +270,7 @@ fn run_binary(path): i64 {
             sys_execve("/usr/bin/qemu-aarch64", &argv, _envp);
             sys_exit(127);
         }
+        #endif
         store64(&argv, path);
         store64(&argv + 8, 0);
         sys_execve(path, &argv, _envp);

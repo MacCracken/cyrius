@@ -45,17 +45,11 @@ fn cmd_build(source, output): i64 {
     sys_write(STDOUT_FD, "] ", 2);
     var r = compile(source, output);
     if (r == 0) {
-        #ifdef CYRIUS_TARGET_MACOS
         # Apple Silicon AMFI-SIGKILLs an unsigned arm64 binary, so a fresh
-        # `cyrius build` output won't run until it carries at least an
-        # ad-hoc signature. Sign it now so the produced binary is
-        # immediately runnable (no manual `codesign` step). CHANGELOG [6.0.38].
-        var _cs = str_builder_new();
-        str_builder_add_cstr(_cs, "codesign -s - -f ");
-        str_builder_add_cstr(_cs, output);
-        str_builder_add_cstr(_cs, " 2>/dev/null");
-        sys_system(str_data(str_builder_build(_cs)));
-        #endif
+        # `cyrius build` output won't run until it carries an ad-hoc signature
+        # (CHANGELOG [6.0.38]). v6.0.66: hoisted into the shared _macho_codesign
+        # helper (also used by run_binary for test/run/bench/fuzz/doctest).
+        _macho_codesign(output);
         println("OK");
     } else {
         println("FAIL");

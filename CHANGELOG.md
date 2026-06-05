@@ -6,6 +6,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.66] — 2026-06-05
+
+**cbt: `cyrius test` (and run / bench / fuzz / doctest) now work on Apple Silicon.** Two stacked cbt bugs
+made the compile-and-run commands fail on arm64 macOS — surfaced by the yantra extensions CI. Wrapper-only
+(cycc unchanged); `cyrius test` verified green on ecb (`1 passed`). Leader split 2026-06-05: these current
+fixes ship as .66 and the asm-block `param_load` pseudo slips to v6.0.67.
+
+### Fixed
+
+- **`cyrius test` exit 127 on Apple Silicon — qemu mis-route** (`cbt/build.cyr` `run_binary`). On
+  arm64-macOS `find_tools()` forces `_arch=AARCH64`, so `run_binary` took the qemu-aarch64 cross-run
+  branch — but a native Apple-Silicon host has no `/usr/bin/qemu-aarch64`, so execve failed → `exit(127)`
+  with zero test output (only on the macOS runner; ecb has qemu installed which masked it). Gated the
+  qemu branch `#ifndef CYRIUS_TARGET_MACOS` so a native Mach-O host execs the binary directly. (qemu stays
+  the x86-Linux-host cross-run path for aarch64 targets.)
+- **`cyrius test`/run/bench/fuzz/doctest unsigned → AMFI SIGKILL (137)** (`cbt/build.cyr`). Only
+  `cmd_build` ad-hoc-codesigned its output (6.0.38); the compile-and-run commands compiled to /tmp and ran
+  via `run_binary` UNsigned, which arm64 macOS AMFI SIGKILLs. Hoisted the codesign into a shared
+  `_macho_codesign()` helper called inside `run_binary` so every run path signs; `cmd_build` DRY'd to it.
+  No-op off macOS (and harmless on x86-macOS). This is the next domino after Bug 1 — both needed for
+  `cyrius test` to pass on Apple Silicon.
+
+### Notes
+
+- Both fixes are in the `cyrius` wrapper (cbt), not the compiler — cycc self-host is unaffected.
+- Found by the yantra extensions CI (macos-15-arm64 runner); see its filed issue.
+
 ## [6.0.65] — 2026-06-05
 
 **Partials / repairs — portable `sleep_ms` (unblocks yantra's macOS-arm64 iOS CI) + a single-source

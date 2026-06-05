@@ -477,17 +477,25 @@ premise-check each at slot entry:
    restored on the self-hosted Intel-Mac runner (`ci.yml` `macho-x86-native`; runner registration
    operator-side, needs first green run). Verified: sleep_ms ≈500ms on Linux/ecb/ach/cass; self-host
    byte-identical 4-host; check.sh 85/85. Issues archived: nanosleep, agnos-followup. See CHANGELOG [6.0.65].
-5. **.66 — asm-block global-symbol pseudo** (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`),
-   deferred from the .65 squeeze-in once close reading showed it's a cross-arch FEATURE, not a small
-   repair (the issue itself suggests a dedicated cycle). Weigh Option 1 `sym32(name)` (PC32-to-global
-   fixup, general) vs Option 2 `param_load(reg,idx)` (regalloc-disp-aware, targeted); x86 + aarch64 +
-   fixup + tests; migrate `lib/atomic.cyr`/`thread.cyr` off hardcoded `[rbp-N]` as the proof.
-6. **.67+ — remaining partials block**: Windows follow-up nuances §3 full `CommandLineToArgvW` (shell32) +
-   §0 COM/DXGI GPU-enum (`issues/2026-06-03-windows-followup-nuances.md` +
+5. **.66 — cbt macho test-run fix** ✅ COMPLETE (leader split 2026-06-05: current fixes ship as .66; the
+   asm-block pseudo slips to .67). Two stacked cbt bugs that made `cyrius test` fail on Apple Silicon
+   (found via the yantra extensions CI): **Bug 1** — `run_binary`'s qemu-aarch64 branch fired on native
+   arm64-macOS (find_tools forces _arch=AARCH64) where there's no qemu → execve-fail → exit 127; gated
+   `#ifndef CYRIUS_TARGET_MACOS` so macho execs directly. **Bug 2** — only `cmd_build` ad-hoc-codesigned
+   (6.0.38); cmd_test/run/bench/fuzz/doctest ran unsigned → AMFI SIGKILL (137); hoisted the codesign into
+   a shared `_macho_codesign()` called inside `run_binary` (cmd_build DRY'd to it). Wrapper-only (cycc
+   unchanged). Proof: `cyrius test` green on ecb. See CHANGELOG [6.0.66].
+6. **.67 — asm-block global-symbol pseudo** (`issues/2026-05-21-asm-block-global-symbol-pseudo.md`), was
+   .66. Implement Option 2 `param_load(reg,idx)` (user-chosen): regalloc-disp-aware emit-time load,
+   x86 + aarch64, byte-identical migration of `lib/atomic.cyr`/`thread.cyr` off hardcoded `[rbp-N]` as the
+   proof (+ a .tcyr). Design + exact encodings already settled (disp = -(idx+1+_cur_fn_regalloc)*8;
+   x86 disp8 `mov`, aarch64 `ldur`). Option 1 `sym32(name)` left as a future general enhancement.
+7. **.68+ — remaining partials block** (was .67+): Windows follow-up nuances §3 full `CommandLineToArgvW`
+   (shell32) + §0 COM/DXGI GPU-enum (`issues/2026-06-03-windows-followup-nuances.md` +
    `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + **`cyrius deps` silently fails on aarch64
    Linux** (register §D1) — the prerequisite before `aarch64-native` can join macho + Windows as a HARD
    funcgate.
-5. **.68–x — native TLS items** (was .67–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
+8. **.69–x — native TLS items** (was .68–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
    (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
    version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
    2026-06-04, overriding the general upfront-cross-walk default for this case).
