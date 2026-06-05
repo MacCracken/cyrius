@@ -350,6 +350,18 @@ jobs:
           [ "$rc" -ne 0 ] || { echo "FAIL T7: expected non-zero exit"; exit 1; }
           grep -q "no file given" "$T/e7" || { echo "FAIL T7: 'no file given' missing"; cat "$T/e7"; exit 1; }
           echo "PASS: cyrius capacity (default / --check / --json / fnc>2048 / no-args) — 7 sub-cases"
+      - name: Functional gate (real consumer flow — init/sync/deps/build/run/hash)
+        # HARD gate on the reference x86 Linux platform: init -> lib sync (dir-walk)
+        # -> deps -> build+run two allocating programs (vec fib + u64 hashmap) ->
+        # reproducible-build. Self-host never walks a dir; this catches the class
+        # of toolchain break (dir-walk, allocator, stdlib codegen) that shipped
+        # green for 10+ releases until a consumer hit it. Green here is required.
+        run: |
+          set -e
+          [ -s build/cyrius ] || { cat cbt/cyrius.cyr | ./build/cycc > build/cyrius && chmod +x build/cyrius; }
+          export CYRIUS_HOME="$HOME/_fg_home"
+          sh scripts/funcgate-stage.sh build/cycc build/cyrius "$CYRIUS_HOME"
+          sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_fg_work" "$CYRIUS_HOME"
 
   # ── Tests (AGNOS) ──
   test-agnos:
@@ -393,6 +405,18 @@ jobs:
           done
           echo "$pass passed, $fail failed"
           test $fail -eq 0
+      - name: Functional gate (real consumer flow — AGNOS userland container)
+        # Tracking gate inside the sovereign AGNOS x86 userland container. Same
+        # real flow as Test (ubuntu); continue-on-error so a container-only
+        # toolchain gap shows RED-but-non-blocking until proven green, then it
+        # gets promoted to a hard gate (TDD-style introduction).
+        continue-on-error: true
+        run: |
+          set -e
+          [ -s build/cyrius ] || { cat cbt/cyrius.cyr | ./build/cycc > build/cyrius && chmod +x build/cyrius; }
+          export CYRIUS_HOME="$HOME/_fg_home"
+          sh scripts/funcgate-stage.sh build/cycc build/cyrius "$CYRIUS_HOME"
+          sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_fg_work" "$CYRIUS_HOME"
 
   # ── aarch64 ──
   aarch64:
@@ -484,8 +508,9 @@ jobs:
     name: aarch64 Native Self-Host
     needs: [aarch64]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 5   # fail-loud on a hang, never the 6h default
+    timeout-minutes: 8   # fail-loud on a hang, never the 6h default
     steps:
+      - uses: actions/checkout@v4   # full repo: scripts/cbt/programs/lib for the functional gate
       - name: Download native aarch64 cycc
         uses: actions/download-artifact@v4
         with:
@@ -501,6 +526,21 @@ jobs:
           cat src/main_aarch64.cyr | ./r1 > r2
           cmp r1 r2 || { echo "FAIL: aarch64 native self-host NOT byte-identical"; exit 1; }
           echo "PASS: aarch64 Linux cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
+      - name: Functional gate (real consumer flow, NATIVE aarch64)
+        # The honest test of whether the arm64 dir-walk/codegen bug that breaks
+        # macOS lib sync also bites aarch64 LINUX. cycc_a64 is the native arm64
+        # compiler; build the native cyrius wrapper with it, then run the real
+        # init -> lib sync -> deps -> build+run flow. continue-on-error: visible
+        # RED-but-non-blocking until proven green (self-host above stays hard).
+        continue-on-error: true
+        run: |
+          set -e
+          chmod +x a64/cycc_a64
+          cp a64/cycc_a64 build/cycc_native_a64
+          cat cbt/cyrius.cyr | a64/cycc_a64 > build/cyrius_a64 && chmod +x build/cyrius_a64
+          export CYRIUS_HOME="$HOME/_fg_a64"
+          sh scripts/funcgate-stage.sh build/cycc_native_a64 build/cyrius_a64 "$CYRIUS_HOME"
+          sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_fg_a64_work" "$CYRIUS_HOME"
 
   # ── macOS Mach-O ──
   macho:
@@ -1071,8 +1111,9 @@ jobs:
     name: Windows PE32+ Native
     needs: [windows-cross]
     runs-on: windows-latest
-    timeout-minutes: 5   # fail-loud on a hang, never the 6h default
+    timeout-minutes: 8   # fail-loud on a hang, never the 6h default
     steps:
+      - uses: actions/checkout@v4   # for scripts/funcgate-win.ps1
       - name: Download PE32+ binaries
         uses: actions/download-artifact@v4
         with:
@@ -1136,6 +1177,18 @@ jobs:
           REM "no differences" when cycc.exe emits two empty outputs (the exact
           REM lie this replaces). Mirrors scripts/cross-os-selfhost.sh (cass).
           cd win && tar xzf _src.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe && echo PASS: Windows cycc self-hosts byte-identical
+      - name: Functional gate (cycc.exe codegen — allocating fib + hashmap)
+        # The self-host step's `tar xzf _src.tgz` populated win/ with lib/ + cycc.exe.
+        # The cyrius WRAPPER can't run on Windows (sys_fork/execve/mkdir undefined,
+        # tracked separately), so this gate exercises what IS native — does cycc.exe
+        # correctly compile + RUN allocating programs (vec fib + u64 hashmap)? The
+        # old hello-world/exit-code smoke never allocates, so a Windows heap/hashmap
+        # codegen bug ships green; this catches it. Verified green on real Windows
+        # (cass) before wiring — a HARD gate, like the self-host above.
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE/scripts/funcgate-win.ps1" -Cycc win/cycc.exe -Work win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # ── Documentation ──
   doc:

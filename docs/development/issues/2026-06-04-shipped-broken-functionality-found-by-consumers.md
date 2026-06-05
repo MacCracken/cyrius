@@ -50,6 +50,54 @@ placebo for "does the toolchain work."
 release. It must turn the *current* macOS state red the first time it runs; that's the tell it's real
 and not lipstick. Replaces / augments the self-host-only check.
 
+## D. Platform findings the new functional gate surfaced (the gate working as intended)
+
+Built `scripts/funcgate-posix.sh` (Linux/macOS) + `scripts/funcgate-win.ps1` (Windows) +
+`scripts/funcgate-stage.sh`, wired into CI (`test` hard, `test-agnos`/`aarch64-native` tracking,
+`macho-arm64-funcgate`/`windows-native`) AND verified on real hardware (pi/ecb/cass) before claiming
+anything. Flow: init → lib sync (dir-walk) → deps → build+run a vec-grown fib AND a u64-hashmap →
+reproducible-build. Per-platform truth, **hardware-verified 2026-06-04**:
+
+| Platform | Result | Where |
+|---|---|---|
+| x86_64 Linux | **GREEN** — full flow | local + `test` job |
+| aarch64 Linux | lib sync OK, **`deps` REDS** | pi |
+| arm64 macOS | **`lib sync` REDS** (getdirentries) | ecb |
+| Windows PE | codegen **GREEN**; wrapper-flow N/A | cass |
+
+### D1. `cyrius deps` silently fails on aarch64 Linux — NEW, untracked
+On pi (`ubuntu-24.04-arm` equiv), `cyrius lib sync` **works** (dir-walk + 89/90 files copied — so the
+arm64 codegen is fine and the macOS bug is Darwin-specific, NOT arm64-generic). But `cyrius deps`
+returns `0 deps resolved, 9 errors` / **rc=9**, prints **nothing to stderr**, and is **destructive** —
+it leaves `lib/` short (`vec.cyr` goes missing after). Traced to `_dep_copy_stdlib_recursive`
+(`cbt/deps.cyr:902`) returning 1 for every stdlib module while the IO-error prints
+(`_dep_copy_file:119/127`) never fire — i.e. it fails *before/around* the copy without the diagnostic,
+OR the `STDERR_FD` write itself is misrouted on aarch64. Same `sys_open`/read path that `lib sync` uses
+*works*, so it is specific to the deps stdlib-copy recursion. A real aarch64 consumer is blocked at
+`cyrius deps`. **Surfaced by the gate, not a consumer.** Pin: user to slot (NOT folded into .63 — that
+is gate-fix + macOS getdirentries + sigil 3.7.3).
+
+### D2. The cyrius CLI wrapper is not ported to Windows — NEW, untracked
+Compiling `cbt/cyrius.cyr` for PE (`CYRIUS_TARGET_WIN=1`) emits **undefined**:
+`sys_fork`, `sys_execve`, `sys_waitpid`, `sys_dup2`, `sys_mkdir`, `sys_unlink`, `sys_chmod`,
+`WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG`; and most `syscall(n)` values trap with
+`STATUS_ILLEGAL_INSTRUCTION`. So the wrapper can't spawn processes or mutate the filesystem on Windows
+— `cyrius init` (spawns `sh cyrius-init.sh`), `cyrius build` (spawns `cycc`), `cyrius lib sync`
+(`getdents`, which Windows lacks) all fail there. The wrapper-driven funcgate is therefore **not
+portable to Windows** and the Windows gate instead exercises what IS native: **`cycc.exe` compiling +
+running allocating programs** (vec fib → 42, u64 hashmap → 43, reproducible) — **verified GREEN on cass**.
+The old Windows CI only ran no-alloc exit-code programs, so a Windows heap/hashmap codegen bug would
+have shipped green; the new gate closes that. Porting the wrapper (Win32 process + `FindFirstFile`
+dir-walk + `CreateDirectory`) is a separate, larger arc — pin: user to slot.
+
+### D3. Gate-harness bug the hardware caught (fixed in this change)
+`funcgate-posix.sh` first ran GREEN locally because the ambient `~/.cyrius` masked it; on a clean host
+(pi) `cyrius init` failed `no toolchain detected`. `cyrius-init.sh` checks `~/.cyrius/current` + a
+symlink-sensitive `$CYRIUS/VERSION`, neither honoring a scratch `CYRIUS_HOME`. **Consequence:** the
+macOS gate would have RED at `init(10)` — a cosmetic detection miss — not the real `lib-sync(11)`
+dir-walk bug, i.e. the right color for the wrong reason. Fixed by exporting the documented `CYRIUS_VER`
+override in the gate; re-verified on ecb that it now reaches and reds at `lib sync(11)`.
+
 ## Process note
 
 This whole register only exists because deferred/broken work was left in source comments

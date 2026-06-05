@@ -7,12 +7,20 @@
 # consumer (yantra) hit it. This gate runs the flow a real user runs and fails
 # LOUD at the first broken step:
 #
-#   init -> lib sync (dir-walk) -> add a path dep + pull deps -> build a fib that
-#   ALLOCATES (vec-grown sequence) -> run/assert -> hash + reproducible-build.
+#   init -> lib sync (dir-walk) -> pull deps -> build a fib that ALLOCATES
+#   (vec-grown sequence) -> run/assert -> hash + reproducible-build -> build a
+#   SECOND program that exercises the hashmap (hash_u64 + str/fmt) -> run/assert.
+#
+# Two distinct allocating programs (vec path + hashmap/str path) so a codegen or
+# stdlib regression localizes to a toolchain area by exit code rather than a
+# single pass/fail. This is also wired into the always-green Linux jobs (Test
+# ubuntu / AGNOS) as a baseline — a red there is a real toolchain regression, not
+# a platform gap.
 #
 # Usage: funcgate-posix.sh <cyrius-bin> <scratch-dir> <CYRIUS_HOME>
-# Exits 0 only if the WHOLE flow works; a distinct non-zero code per failing step
-# (11 lib-sync, 12 deps, 13 build, 14 run/alloc, 15 non-reproducible). See
+# Exits 0 only if the WHOLE flow works; a distinct non-zero code per failing step:
+#   10 init    11 lib-sync(dir-walk)   12 deps   13 fib-build   14 fib-run/alloc
+#   15 non-reproducible   16 map-build   17 map-run(hashmap/str). See
 # docs/development/issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md.
 set -e
 
@@ -20,12 +28,26 @@ CY="${1:?usage: funcgate-posix.sh <cyrius-bin> <scratch> <CYRIUS_HOME>}"
 WORK="${2:?scratch dir}"
 export CYRIUS_HOME="${3:?CYRIUS_HOME}"
 
-_hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
+_hash() {
+  if   command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum     >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v openssl    >/dev/null 2>&1; then openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else cksum "$1" | awk '{print "cksum:"$1"-"$2}'; fi   # cksum is POSIX — always present
+}
 _sign() { command -v codesign >/dev/null 2>&1 && codesign -s - -f "$1" >/dev/null 2>&1 || true; }
 
 rm -rf "$WORK" && mkdir -p "$WORK" && cd "$WORK"
 
-echo "funcgate: init"
+# Tell `cyrius init` which toolchain version to stamp into cyrius.cyml. A real
+# consumer install conveys this via ~/.cyrius/current; with a throwaway
+# CYRIUS_HOME the init script's detection can miss it (it checks
+# ~/.cyrius/current and a symlink-sensitive $CYRIUS/VERSION). This is the
+# DOCUMENTED override and is purely cosmetic — without it the gate would
+# falsely RED at init instead of reaching the steps that actually exercise the
+# toolchain (lib sync / build / run). The real platform truth is below.
+export CYRIUS_VER="${CYRIUS_VER:-$(cat "$CYRIUS_HOME/current" 2>/dev/null)}"
+
+echo "funcgate: init (CYRIUS_VER=$CYRIUS_VER)"
 "$CY" init proj >/dev/null 2>&1 || { echo "FUNCGATE FAIL(10): cyrius init"; exit 10; }
 cd proj
 
@@ -70,4 +92,34 @@ _sign build/fib2
 H2=$(_hash build/fib2)
 [ "$H1" = "$H2" ] || { echo "FUNCGATE FAIL(15): non-reproducible build ($H1 != $H2)"; exit 15; }
 
-echo "FUNCGATE_OK hash=$H1"
+echo "funcgate: build a SECOND program — u64 hashmap + str/fmt (hash + more alloc)"
+cat > src/mapprog.cyr <<'CYR'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+include "lib/hashmap.cyr"
+fn main(): i64 {
+    alloc_init();
+    var m = map_u64_new();
+    var i = 1;
+    while (i <= 50) { map_u64_set(m, i, i * i); i = i + 1; }   # hash + grow/rehash
+    var sum = 0;
+    var k = 1;
+    while (k <= 50) { sum = sum + map_u64_get(m, k); k = k + 1; }   # probe/lookup
+    if (sum == 42925 && map_count(m) == 50) { return 43; }   # sum of squares 1..50
+    return 1;
+}
+CYR
+"$CY" build src/mapprog.cyr build/mapprog >/dev/null 2>&1 && [ -e build/mapprog ] \
+  || { echo "FUNCGATE FAIL(16): hashmap program failed to build"; exit 16; }
+_sign build/mapprog
+
+echo "funcgate: run hashmap program (assert sum-of-squares -> exit 43)"
+r=0; ./build/mapprog || r=$?
+[ "$r" -eq 43 ] || { echo "FUNCGATE FAIL(17): mapprog exited $r (expected 43) — hashmap/str codegen broken"; exit 17; }
+
+echo "FUNCGATE_OK hash=$H1 (fib+hashmap flows verified)"

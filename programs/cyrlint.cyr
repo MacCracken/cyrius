@@ -25,6 +25,74 @@ fn warn(line, msg): i64 {
     return 0;
 }
 
+# === Deferral-language policy (sigil idea, 2026-06-04) ===
+# Flag deferred / broken-work markers in source that are NOT cross-referenced by   #skip-lint
+# a tracking pointer (CHANGELOG / issue / roadmap / version). A bare `# TODO` or
+# `return ..._NOT_IMPLEMENTED` with no pointer is the antipattern that let whole   #skip-lint
+# arcs rot untracked in comments (see docs/development/issues/ shipped-broken
+# register). Reported by default (separate counter, non-failing so the existing
+# --strict gate is unaffected by the legacy backlog); `--strict-deferrals` makes
+# it a hard gate once the backlog is cross-referenced (TDD-style hardening).
+var _deferrals = 0;
+var _strict_deferrals = 0;
+
+# Bounded substring search within a line [start,end). Line buffers aren't
+# NUL-terminated, so strstr() can't be used directly.
+fn _line_has(buf, start, end, needle): i64 {
+    var nl = strlen(needle);
+    if (nl == 0) { return 0; }
+    var i = start;
+    while (i + nl <= end) {
+        if (memeq(buf + i, needle, nl) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Returns the matched deferral-term cstr, or 0 if the line carries no marker.
+fn _line_deferral_term(buf, start, end): i64 {
+    if (_line_has(buf, start, end, "NOT_IMPLEMENTED") == 1) { return "NOT_IMPLEMENTED"; }   #skip-lint
+    if (_line_has(buf, start, end, "SCAFFOLD") == 1) { return "SCAFFOLD"; }                 #skip-lint
+    if (_line_has(buf, start, end, "TODO") == 1) { return "TODO"; }                         #skip-lint
+    if (_line_has(buf, start, end, "FIXME") == 1) { return "FIXME"; }                       #skip-lint
+    if (_line_has(buf, start, end, "XXX") == 1) { return "XXX"; }                           #skip-lint
+    if (_line_has(buf, start, end, "deferred") == 1) { return "deferred"; }                 #skip-lint
+    if (_line_has(buf, start, end, "follow-up") == 1) { return "follow-up"; }               #skip-lint
+    if (_line_has(buf, start, end, "for now") == 1) { return "for now"; }                   #skip-lint
+    if (_line_has(buf, start, end, "not yet") == 1) { return "not yet"; }                   #skip-lint
+    if (_line_has(buf, start, end, "later bite") == 1) { return "later bite"; }             #skip-lint
+    if (_line_has(buf, start, end, "future bite") == 1) { return "future bite"; }           #skip-lint
+    if (_line_has(buf, start, end, "out of scope") == 1) { return "out of scope"; }         #skip-lint
+    return 0;
+}
+
+# A deferral line is "tracked" if it points at where the work lives.
+fn _line_has_tracking_ptr(buf, start, end): i64 {
+    if (_line_has(buf, start, end, "CHANGELOG") == 1) { return 1; }   #skip-lint
+    if (_line_has(buf, start, end, "roadmap") == 1) { return 1; }     #skip-lint
+    if (_line_has(buf, start, end, "docs/") == 1) { return 1; }       #skip-lint
+    if (_line_has(buf, start, end, "issue") == 1) { return 1; }       #skip-lint
+    if (_line_has(buf, start, end, "See ") == 1) { return 1; }        #skip-lint
+    if (_line_has(buf, start, end, "v6.") == 1) { return 1; }         #skip-lint
+    if (_line_has(buf, start, end, "v5.") == 1) { return 1; }         #skip-lint
+    return 0;
+}
+
+fn note_deferral(line, term): i64 {
+    var p1 = "  deferral line ";
+    syscall(1, 2, p1, strlen(p1));
+    var nb[24];
+    var nl = fmt_int_buf(line, &nb);
+    syscall(1, 2, &nb, nl);
+    var p2 = ": untracked '";
+    syscall(1, 2, p2, strlen(p2));
+    syscall(1, 2, term, strlen(term));
+    var p3 = "' (cross-reference a CHANGELOG/issue/roadmap entry, or #skip-lint)\n";
+    syscall(1, 2, p3, strlen(p3));
+    _deferrals += 1;
+    return 0;
+}
+
 fn lint_file(buf, total): i64 {
     var lineno = 1;
     var pos = 0;
@@ -77,6 +145,12 @@ fn lint_file(buf, total): i64 {
                 var last = load8(buf + eol - 1);
                 if (last == 32) { warn(lineno, "trailing whitespace"); }
                 if (last == 9) { warn(lineno, "trailing tab"); }
+            }
+
+            # === Rule: untracked deferral language (separate counter) ===
+            var _dterm = _line_deferral_term(buf, pos, eol);
+            if (_dterm != 0) {
+                if (_line_has_tracking_ptr(buf, pos, eol) == 0) { note_deferral(lineno, _dterm); }
             }
 
             # === Rule: no tabs (use spaces) ===
@@ -578,7 +652,7 @@ fn main(): i64 {
     args_init();
 
     if (argc() < 2) {
-        println("Usage: cyrlint [--strict] [--exit-with-count] <file.cyr>");
+        println("Usage: cyrlint [--strict] [--strict-deferrals] [--exit-with-count] <file.cyr>");
         return 1;
     }
 
@@ -596,11 +670,12 @@ fn main(): i64 {
         var a = argv(ai);
         if (streq(a, "--strict") == 1) { strict = 1; }
         elif (streq(a, "--exit-with-count") == 1) { exit_with_count = 1; }
+        elif (streq(a, "--strict-deferrals") == 1) { _strict_deferrals = 1; }
         elif (path == 0) { path = a; }
         ai = ai + 1;
     }
     if (path == 0) {
-        println("Usage: cyrlint [--strict] [--exit-with-count] <file.cyr>");
+        println("Usage: cyrlint [--strict] [--strict-deferrals] [--exit-with-count] <file.cyr>");
         return 1;
     }
 
@@ -623,9 +698,16 @@ fn main(): i64 {
     syscall(1, 1, &nb, nl);
     syscall(1, 1, " warnings\n", 10);
 
+    var db[24];
+    var dl = fmt_int_buf(_deferrals, &db);
+    syscall(1, 1, &db, dl);
+    var dsfx = " untracked deferrals\n";
+    syscall(1, 1, dsfx, strlen(dsfx));
+
     # See the exit-code policy note at the top of main().
     if (exit_with_count == 1) { return _warnings; }
     if (strict == 1 && _warnings > 0) { return 2; }
+    if (_strict_deferrals == 1 && _deferrals > 0) { return 2; }
     return 0;
 }
 var r = main();
