@@ -80,11 +80,11 @@ reproducible-build. Per-platform truth, **hardware-verified 2026-06-04**:
 | Platform | Result | Where |
 |---|---|---|
 | x86_64 Linux | **GREEN** — full flow | local + `test` job |
-| aarch64 Linux | lib sync OK, **`deps` REDS** | pi |
+| aarch64 Linux | **GREEN** — full flow (fixed .68) | pi |
 | arm64 macOS | **`lib sync` REDS** (getdirentries) | ecb |
 | Windows PE | codegen **GREEN**; wrapper-flow N/A | cass |
 
-### D1. `cyrius deps` silently fails on aarch64 Linux — NEW, untracked
+### D1. `cyrius deps` silently fails on aarch64 Linux — ✅ FIXED in .68
 On pi (`ubuntu-24.04-arm` equiv), `cyrius lib sync` **works** (dir-walk + 89/90 files copied — so the
 arm64 codegen is fine and the macOS bug is Darwin-specific, NOT arm64-generic). But `cyrius deps`
 returns `0 deps resolved, 9 errors` / **rc=9**, prints **nothing to stderr**, and is **destructive** —
@@ -95,6 +95,22 @@ OR the `STDERR_FD` write itself is misrouted on aarch64. Same `sys_open`/read pa
 *works*, so it is specific to the deps stdlib-copy recursion. A real aarch64 consumer is blocked at
 `cyrius deps`. **Surfaced by the gate, not a consumer.** Pin: user to slot (NOT folded into .63 — that
 is gate-fix + macOS getdirentries + sigil 3.7.3).
+
+**✅ Resolution (.68).** Root cause was NOT the recursion returning 1 / a misrouted STDERR (the original
+guess above). It was the aarch64-Linux **ESYSXLAT missing `stat 4`**: `cbt`'s `_file_size` issues a
+literal `syscall(4)`, which on aarch64-Linux is `io_getevents` (4 wasn't in the non-macho ESYSXLAT) →
+`_file_size` returned -1 → the transitive-include SCAN's `if (sz<=0) return 0` short-circuited → the
+recursion copied each top module but NEVER followed its `include` chain (so `syscalls.cyr` arrived
+without `syscalls_aarch64_linux.cyr`/`alloc_*`/`atomic`; on the current build rc=0 with peers missing,
+not rc=9 — the original rc=9/vec-missing was an earlier manifestation). Fixed by adding `stat 4→fstatat
+79` to the ESYSXLAT, plus the same-class `rename 82→renameat 38` (`cyrius build`'s output-rename ran as
+`fsync` → never produced a binary) and `symlink 88→symlinkat 36` (`cyrius pulsar`). Fixing deps then
+unmasked TWO more: the SHIPPED native cycc (`main_aarch64_native.cyr`) never got the v5.9.37
+auto-call-`main` port (bare-`fn main()` builds exited 0), and the CI `aarch64-native` gate built/tested
+`cycc_a64` from the CROSS source (`main_aarch64.cyr`) instead of the shipped native binary — a placebo.
+All three fixed; `aarch64-native` now builds/self-hosts/funcgates the shipped `cycc_native_a64` **HARD**.
+`cyrius deps` resolves all 14 transitive files on pi (matching x86); full funcgate GREEN on pi (init→
+sync→deps→build→run=42→reproducible→hashmap=43); 4-host self-host green. See CHANGELOG [6.0.68].
 
 ### D2. The cyrius CLI wrapper is not ported to Windows — NEW, untracked
 Compiling `cbt/cyrius.cyr` for PE (`CYRIUS_TARGET_WIN=1`) emits **undefined**:

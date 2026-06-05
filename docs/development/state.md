@@ -3,6 +3,48 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-05 (.68 ship — aarch64-Linux native toolchain completion: §D1 deps + native auto-call-main + honest HARD funcgate)
+
+Closing **v6.0.68**. check.sh **85/85**; self-host byte-identical on **x86_64 + aarch64-Linux (pi
+native+cross) + macho-arm (ecb) + macho-x86 (ach) + Windows (cass)**; full aarch64 funcgate green.
+
+**Headline — three latent aarch64-Linux bugs killed; the aarch64-native funcgate is now an HONEST HARD
+gate.** Registered §D1 (`cyrius deps` silently fails on aarch64-Linux) was the aarch64-Linux ESYSXLAT
+missing a CLASS of x86→aarch64 syscall translations the `cbt` wrapper issues as literals:
+- **`stat 4 → fstatat 79`** (the §D1 root cause). aarch64 syscall 4 is `io_getevents`; `_file_size`
+  (`cbt/deps.cyr`) returned -1 → the deps include-scan short-circuited (`if (sz<=0) return 0`) →
+  transitive stdlib peers (`syscalls_aarch64_linux.cyr`, `alloc_*`, `atomic`, …) silently dropped →
+  consumers got a broken `lib/`. Ordered AFTER `getcwd 79→17` so the `x8=79` it sets isn't re-caught.
+- **`rename 82 → renameat 38`** + **`symlink 88 → symlinkat 36`** (same class, AT_FDCWD arg-shifts).
+  `rename` 82 = `fsync` on aarch64 → `cyrius build` never renamed `.tmp.<pid>` to the final binary;
+  `symlink` 88 broke `cyrius pulsar`'s install symlinks. Every instruction's hex assembler-verified on pi.
+
+**Two more, unmasked by fixing §D1:**
+- **Native auto-call-`main` missing.** The SHIPPED native cycc (`cycc-native-aarch64`, from
+  `main_aarch64_native.cyr`) never got the v5.9.37 auto-call-`main` port the cross / macho (v6.0.37) /
+  win (v6.0.54) all have → every `cyrius build` on aarch64 using the bare-`fn main()` convention
+  silently exited 0 (the funcgate's fib exited 0, not 42). Latent since v6.0.7, masked by §D1's deps
+  failure + the soft funcgate. Ported; native self-hosts byte-identical either way (compiler
+  `sys_exit`s explicitly, so its own binary is unchanged).
+- **The gate was a placebo.** CI `aarch64-native` built/self-hosted/funcgated `cycc_a64` from
+  `main_aarch64.cyr` (the CROSS source, which HAD auto-call-main), NOT the shipped
+  `main_aarch64_native.cyr` binary → it stayed green while the shipped toolchain was broken (the exact
+  "found by ports" pattern). Reworked to build/self-host/funcgate the shipped `cycc_native_a64` and
+  made HARD (`continue-on-error` dropped).
+
+**Proof:** full aarch64 funcgate green on pi (init → lib sync → deps [14 transitive files, matching
+x86] → build → run=42 → reproducible → hashmap=43); native self-host byte-identical (3-gen, pi); 4-host
+cross-OS self-host green (pi + ecb + ach + cass); check.sh 85/85; x86 unaffected (`main.cyr` doesn't
+include the aarch64 backend).
+
+**Scope note:** registered as "§D1 deps" but the investigation surfaced the whole shape — deps + build +
+pulsar syscalls, the native codegen gap, AND the placebo gate — all blockers to the same goal (an
+honest HARD aarch64-native funcgate). Leader confirmed packing all three + the gate fix into .68 (the
+"see the whole shape, pack intentionally" discipline).
+
+**Next:** **.69+ partials block** (Windows §3 `CommandLineToArgvW` + §0 COM/DXGI GPU-enum), then
+**.70+ TLS** (Mini-arc D backport + E consumer wiring).
+
 ## Session close — 2026-06-05 (.67 ship — asm-block param_load(reg, idx) pseudo-op + atomic/thread migration)
 
 Closing **v6.0.67** (the asm-block global-symbol pseudo, split from .66). check.sh **85/85**; self-host

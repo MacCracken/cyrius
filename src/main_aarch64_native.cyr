@@ -374,6 +374,49 @@ PARSE_PROG(S);
 # Exit epilogue — load last var
 var lv = GLVAR(S);
 if (lv >= 0) { EVLOAD(S, lv); }
+
+# v6.0.68: auto-call `main()` if defined — port of main_aarch64.cyr's
+# v5.9.37 fix that this NATIVE aarch64-Linux fork never received (same
+# rot class as the Mach-O fork at v6.0.37 and main_win at v6.0.54).
+# Without it a source whose only entry is `fn main() { ... }` (no
+# trailing `var ec = main(); syscall(60, ec);`) never invoked main and
+# exited with junk in x0 — so EVERY `cyrius build` on aarch64-Linux that
+# used the bare-`main` convention silently produced a binary exiting 0.
+# Latent the whole life of build/cycc-native-aarch64 (v6.0.7+) because
+# the aarch64-native funcgate was soft, masked behind §D1's deps failure;
+# surfaced the instant §D1 was fixed and the funcgate reached the run step
+# (fib exited 0, not 42). The compiler itself sys_exits explicitly, so it
+# self-hosts byte-identical either way. Walks the fn table for "main\0"
+# and emits ECALLTO if found.
+var _epi_km_pre = L64(S + 0x18FCA0);
+if (_epi_km_pre == 0) {
+    var _main_fc = GFNC(S);
+    var _main_fi = 0;
+    var _main_found = 0 - 1;
+    while (_main_fi < _main_fc) {
+        var _main_noff = L64(S + 0x9BA000 + _main_fi * 8);
+        if (load8(S + 0x60000 + _main_noff)     == 109) {
+            if (load8(S + 0x60000 + _main_noff + 1) == 97) {
+                if (load8(S + 0x60000 + _main_noff + 2) == 105) {
+                    if (load8(S + 0x60000 + _main_noff + 3) == 110) {
+                        if (load8(S + 0x60000 + _main_noff + 4) == 0) {
+                            _main_found = _main_fi;
+                            _main_fi = _main_fc;
+                        }
+                    }
+                }
+            }
+        }
+        _main_fi = _main_fi + 1;
+    }
+    if (_main_found >= 0) {
+        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
+        if (_main_off >= 0) {
+            ECALLTO(S, _main_off);
+        }
+    }
+}
+
 EEXIT(S);
 
 # Fixup + ELF + write

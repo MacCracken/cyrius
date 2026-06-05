@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.68] — 2026-06-05
+
+**aarch64-Linux native toolchain completion — three latent bugs killed, the aarch64-native funcgate
+made an HONEST HARD gate.** Registered §D1 (`cyrius deps` silently fails on aarch64-Linux) was the
+aarch64-Linux ESYSXLAT missing a whole CLASS of x86→aarch64 syscall translations that the `cbt`
+wrapper issues as literals. `syscall(4)` (x86 `stat`) ran as aarch64 `io_getevents` → `_file_size`
+returned -1 → the deps include-scan short-circuited (`if (sz<=0) return 0`) → transitive stdlib peers
+(`syscalls_aarch64_linux.cyr`, `alloc_*`, `atomic`, …) silently dropped, leaving consumers a broken
+`lib/`. The same class broke `cyrius build` (`rename` 82 = `fsync` on aarch64 → the `.tmp.<pid>` output
+never renamed to its final name → no binary) and `cyrius pulsar` (`symlink` 88). Fixing §D1 unmasked a
+SECOND latent bug: the SHIPPED native compiler `cycc-native-aarch64` (built from
+`main_aarch64_native.cyr`) never received the v5.9.37 auto-call-`main` port that the cross/macho/win
+entries all have, so every `cyrius build` on aarch64 using the bare-`fn main()` convention silently
+exited 0 (latent since v6.0.7). Making the gate HARD exposed a THIRD: the CI `aarch64-native` job
+built + self-hosted + funcgated `cycc_a64` from `main_aarch64.cyr` (the CROSS source), NOT the shipped
+`main_aarch64_native.cyr` binary — a placebo that stayed green while real ARM users got a broken
+toolchain (the exact "found by ports" pattern). All three fixed; the aarch64-native funcgate is now an
+honest HARD gate that tests what ships. Self-host byte-identical on all four real hosts
+(pi native ARM + ecb macOS-arm64 + ach macOS-x86 + cass Windows); check.sh 85/85.
+
+### Fixed
+
+- **§D1 — `cyrius deps` silently drops transitive stdlib on aarch64-Linux** (`src/backend/aarch64/emit.cyr`
+  ESYSXLAT non-macho branch). Added the missing x86→aarch64 translations the `cbt` wrapper issues as
+  literals: `stat 4 → fstatat 79`, `rename 82 → renameat 38`, `symlink 88 → symlinkat 36`, each with the
+  `AT_FDCWD` arg-shift (mirrors the existing `openat 2→56` reroute; every instruction's hex
+  assembler-verified). The `stat` entry is ordered AFTER `getcwd 79→17` so the `x8=79` it sets isn't
+  re-caught by `cmp x8,#79`. `cyrius deps` now resolves all transitive includes (14 files for
+  `syscalls`+`alloc`+`vec`, matching x86); `cyrius build` finalizes its output binary; `cyrius pulsar`
+  creates its install symlinks. (`fcntl 72` is macho-only — Darwin `F_GETPATH`; aarch64-Linux uses the
+  `getcwd` path — so no entry needed.)
+- **Native aarch64 `cyrius build` silently produced exit-0 binaries** (`src/main_aarch64_native.cyr`).
+  Ported the v5.9.37 auto-call-`main` block — present in the cross entry (`main_aarch64.cyr`) and ported
+  to macho at v6.0.37 / win at v6.0.54, but never to the native aarch64-Linux entry. Without it a source
+  whose only entry is `fn main() { ... }` (no trailing `var ec = main(); syscall(60, ec);`) was never
+  invoked and exited with junk in x0. Latent the whole life of `build/cycc-native-aarch64` (v6.0.7+),
+  masked behind §D1's deps failure + the soft funcgate. The compiler `sys_exit`s explicitly, so it
+  self-hosts byte-identical either way.
+
+### Changed
+
+- **`aarch64-native` CI job is now an HONEST HARD gate** (`.github/workflows/ci.yml`). It builds,
+  self-hosts, and funcgates the SHIPPED native compiler (`main_aarch64_native.cyr → cycc_native_a64`),
+  not the cross source `main_aarch64.cyr`; both the self-host and functional steps are hard
+  (`continue-on-error` dropped). The old gate tested a binary nobody installs, which is exactly why the
+  native auto-call-main bug above stayed green for the gate's entire life — the placebo pattern from the
+  macOS-rot incident, now closed for aarch64 too.
+
+### Verified
+
+- check.sh 85/85; x86_64 self-host byte-identical (unaffected — `main.cyr` doesn't include the aarch64
+  backend); aarch64-Linux NATIVE self-host byte-identical on real ARM (pi, 3-gen); full aarch64
+  funcgate green (init → lib sync → deps → build → run=42 → reproducible-build → hashmap=43); cross-OS
+  self-host green on all four real hosts — pi (native ARM) + ecb (macOS arm64) + ach (macOS x86) + cass
+  (Windows).
+
 ## [6.0.67] — 2026-06-05
 
 **asm-block `param_load(reg, idx)` pseudo-op.** Inline asm can now load a function parameter from its

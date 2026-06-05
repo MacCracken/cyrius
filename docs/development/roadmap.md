@@ -496,12 +496,21 @@ premise-check each at slot entry:
    cycc); consumers get lib+cycc together via `cyrius deps`; cybs doesn't compile main.cyr directly so the
    bootstrap propagates param_load from the current backend. Option 1 `sym32(name)` = future enhancement.
    Consumer follow-up: sigil migrates aes_ni/sha_ni off `[rbp-N]`. See CHANGELOG [6.0.67].
-7. **.68+ — remaining partials block** (was .67+): Windows follow-up nuances §3 full `CommandLineToArgvW`
+7. **.68 — §D1 + aarch64-native honest HARD funcgate** ✅ COMPLETE. `cyrius deps` silently failed on
+   aarch64-Linux: the aarch64 ESYSXLAT lacked `stat 4→fstatat 79` (also `rename 82→renameat 38`,
+   `symlink 88→symlinkat 36`, AT_FDCWD arg-shifts) → `_file_size` returned -1 → the deps include-scan
+   short-circuited (`if (sz<=0) return 0`) → transitive stdlib peers silently dropped; the same class
+   broke `cyrius build`'s output-rename + `cyrius pulsar`'s install symlinks. Fixing it unmasked TWO
+   more: the SHIPPED native cycc (`main_aarch64_native.cyr`) never got the v5.9.37 auto-call-`main` port
+   (every bare-`fn main()` build exited 0, latent since v6.0.7), and the CI `aarch64-native` gate tested
+   `cycc_a64` from the CROSS source (`main_aarch64.cyr`), not the shipped native binary — a placebo. All
+   three fixed; `aarch64-native` now builds/self-hosts/funcgates the shipped `cycc_native_a64` HARD.
+   4-host self-host green (pi+ecb+ach+cass); full aarch64 funcgate green; check.sh 85/85. See
+   CHANGELOG [6.0.68].
+8. **.69+ — remaining partials block** (was .68+): Windows follow-up nuances §3 full `CommandLineToArgvW`
    (shell32) + §0 COM/DXGI GPU-enum (`issues/2026-06-03-windows-followup-nuances.md` +
-   `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`) + **`cyrius deps` silently fails on aarch64
-   Linux** (register §D1) — the prerequisite before `aarch64-native` can join macho + Windows as a HARD
-   funcgate.
-8. **.69–x — native TLS items** (was .68–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
+   `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`).
+9. **.70–x — native TLS items** (was .69–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
    (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
    version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
    2026-06-04, overriding the general upfront-cross-walk default for this case).

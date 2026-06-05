@@ -649,6 +649,39 @@ fn ESYSXLAT(S): i64 {
     # path (degraded dep resolution). cmp x8,#79 = 0xF1013D1F; movz x8,#17
     # = 0xD2800228.
     EW(S, 0xF1013D1F); EW(S, 0x54000041); EW(S, 0xD2800228);  # getcwd 79→17
+    # v6.0.68: stat 4 → fstatat 79 + AT_FDCWD arg-shift. aarch64-Linux has NO
+    # stat(2) (79 IS fstatat — see getcwd note above); x86 syscall(4) [used by
+    # _file_size in cbt/deps.cyr] ran as aarch64 io_getevents(4) → garbage →
+    # _file_size returned -1 → the `cyrius deps` include-scan short-circuited
+    # (`if (sz<=0) return 0`) → transitive stdlib deps SILENTLY dropped on
+    # aarch64-Linux (the dispatcher modules' peers — syscalls_aarch64_linux.cyr,
+    # alloc_*, atomic — never copied). §D1, found by the gate not a consumer.
+    # MUST come AFTER getcwd (79→17) so the x8=79 we set isn't re-caught by
+    # cmp x8,#79. stat(path,buf)→fstatat(AT_FDCWD,path,buf,0): shift x1→x2, x0→x1,
+    # x0=AT_FDCWD(-100), x3=0, x8=79. struct stat st_size@48 (same as x86_64).
+    # cmp x8,#4; b.ne +24 (skip 5); movz x3,#0; mov x2,x1; mov x1,x0; movn x0,#99; movz x8,#79
+    EW(S, 0xF100111F); EW(S, 0x540000C1);
+    EW(S, 0xD2800003); EW(S, 0xAA0103E2); EW(S, 0xAA0003E1); EW(S, 0x92800C60);
+    EW(S, 0xD28009E8);
+    # v6.0.68: rename 82 → renameat 38 + AT_FDCWD arg-shift. Same class as stat:
+    # aarch64-Linux has no rename(2) (82 is fsync there). cbt/build.cyr:185 issues
+    # x86 syscall(82, tmp_out, output) to finalize a build; untranslated it ran as
+    # fsync → the .tmp.<pid> output was NEVER renamed to the final name, so every
+    # `cyrius build` on aarch64-Linux silently produced no binary (the funcgate's
+    # build step). rename(old,new) x0/x1 → renameat(AT_FDCWD,old,AT_FDCWD,new)
+    # x0/x1/x2/x3. cmp x8,#82; b.ne +24 (skip 5); mov x3,x1; mov x1,x0; movn x0,#99; movn x2,#99; movz x8,#38
+    EW(S, 0xF101491F); EW(S, 0x540000C1);
+    EW(S, 0xAA0103E3); EW(S, 0xAA0003E1); EW(S, 0x92800C60); EW(S, 0x92800C62);
+    EW(S, 0xD28004C8);
+    # v6.0.68: symlink 88 → symlinkat 36 + AT_FDCWD arg-shift. aarch64-Linux has no
+    # symlink(2). cbt/pulsar.cyr:270-271 issues x86 syscall(88, target, linkpath)
+    # to create the install bin/lib symlinks; untranslated `cyrius pulsar` left a
+    # native aarch64 install without its symlinks. symlink(target,linkpath) x0/x1 →
+    # symlinkat(target,AT_FDCWD,linkpath) x0/x1/x2.
+    # cmp x8,#88; b.ne +16 (skip 3); mov x2,x1; movn x1,#99; movz x8,#36
+    EW(S, 0xF101611F); EW(S, 0x54000081);
+    EW(S, 0xAA0103E2); EW(S, 0x92800C61);
+    EW(S, 0xD2800488);
     return 0;
 }
 

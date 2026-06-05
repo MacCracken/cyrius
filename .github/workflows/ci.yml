@@ -484,14 +484,19 @@ jobs:
           test $fail -eq 0
       - name: Stage native aarch64 cycc + source for native self-host
         run: |
-          # v6.0.45: ship the NATIVE aarch64 cycc so a real ARM runner can
-          # SELF-HOST it. cycc_aarch64 emits aarch64; compile main_aarch64.cyr
-          # THROUGH it to get the native compiler.
+          # v6.0.68: build the SHIPPED native compiler — the one install.sh /
+          # pulsar put on real ARM hardware — which is main_aarch64_NATIVE.cyr
+          # piped through the cross (cycc_aarch64), NOT main_aarch64.cyr. The old
+          # gate built cycc_a64 from main_aarch64.cyr (the cross source), so it
+          # self-hosted+funcgated a binary NOBODY SHIPS: when main_aarch64_native.cyr
+          # silently lacked the v5.9.37 auto-call-main port, the gate stayed green
+          # while every `cyrius build` on real ARM exited 0 (the placebo-gate /
+          # "found by ports" pattern). Test what ships. See CHANGELOG [6.0.68].
           mkdir -p /tmp/a64_out
-          cat src/main_aarch64.cyr | ./build/cycc_aarch64 > /tmp/a64_out/cycc_a64 && chmod +x /tmp/a64_out/cycc_a64
-          file /tmp/a64_out/cycc_a64 | grep -q "ARM aarch64" || { echo "ERROR: cycc_a64 not aarch64 ELF"; exit 1; }
+          cat src/main_aarch64_native.cyr | ./build/cycc_aarch64 > /tmp/a64_out/cycc_native_a64 && chmod +x /tmp/a64_out/cycc_native_a64
+          file /tmp/a64_out/cycc_native_a64 | grep -q "ARM aarch64" || { echo "ERROR: cycc_native_a64 not aarch64 ELF"; exit 1; }
           tar czf /tmp/a64_out/_src.tgz src lib VERSION
-          echo "staged cycc_a64: $(wc -c < /tmp/a64_out/cycc_a64) bytes"
+          echo "staged cycc_native_a64 (main_aarch64_native.cyr): $(wc -c < /tmp/a64_out/cycc_native_a64) bytes"
       - uses: actions/upload-artifact@v4
         with:
           name: aarch64-native-binaries
@@ -500,10 +505,11 @@ jobs:
 
   # ── Linux aarch64 — native self-host on REAL ARM (v6.0.45) ──
   # release.yml previously SKIPPED this, citing a "subtle QEMU codegen
-  # difference" — but it's a REAL bug on REAL silicon (the native aarch64 cycc
-  # drops the _TARGET_MACHO global during its own compile; verified failing on
-  # host 'pi'). ubuntu-24.04-arm is a native arm64 runner — the honest gate the
-  # excuse hid. Expected RED until the aarch64 backend bug is fixed.
+  # difference" — but it was a REAL bug on REAL silicon. v6.0.68 made this an
+  # HONEST HARD gate: it now builds, self-hosts, AND funcgates the SHIPPED
+  # native compiler (main_aarch64_native.cyr → cycc_native_a64), not the cross
+  # source main_aarch64.cyr. ubuntu-24.04-arm is a native arm64 runner. Both
+  # steps are hard — a red here is a real regression in what ARM users install.
   aarch64-native:
     name: aarch64 Native Self-Host
     needs: [aarch64]
@@ -516,28 +522,27 @@ jobs:
         with:
           name: aarch64-native-binaries
           path: ./a64
-      - name: SELF-HOST cycc byte-identical (THE real gate)
+      - name: SELF-HOST cycc byte-identical (THE real gate — SHIPPED native source)
         run: |
           cd a64
           tar xzf _src.tgz
-          chmod +x cycc_a64
-          file cycc_a64
-          cat src/main_aarch64.cyr | ./cycc_a64 > r1 && chmod +x r1
-          cat src/main_aarch64.cyr | ./r1 > r2
+          chmod +x cycc_native_a64
+          file cycc_native_a64
+          # Self-host the binary ARM users actually run, from its own source.
+          cat src/main_aarch64_native.cyr | ./cycc_native_a64 > r1 && chmod +x r1
+          cat src/main_aarch64_native.cyr | ./r1 > r2
           cmp r1 r2 || { echo "FAIL: aarch64 native self-host NOT byte-identical"; exit 1; }
-          echo "PASS: aarch64 Linux cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
-      - name: Functional gate (real consumer flow, NATIVE aarch64)
-        # The honest test of whether the arm64 dir-walk/codegen bug that breaks
-        # macOS lib sync also bites aarch64 LINUX. cycc_a64 is the native arm64
-        # compiler; build the native cyrius wrapper with it, then run the real
-        # init -> lib sync -> deps -> build+run flow. continue-on-error: visible
-        # RED-but-non-blocking until proven green (self-host above stays hard).
-        continue-on-error: true
+          echo "PASS: aarch64 Linux native cycc self-hosts byte-identical ($(wc -c < r1) bytes)"
+      - name: Functional gate (real consumer flow, NATIVE aarch64 — HARD)
+        # The honest test of the SHIPPED native toolchain: build the native
+        # cyrius wrapper with cycc_native_a64, then run the real init -> lib sync
+        # -> deps -> build+run flow. HARD as of v6.0.68 (was continue-on-error
+        # while §D1's deps bug + the native auto-call-main gap were unfixed).
         run: |
           set -e
-          chmod +x a64/cycc_a64
-          cp a64/cycc_a64 build/cycc_native_a64
-          cat cbt/cyrius.cyr | a64/cycc_a64 > build/cyrius_a64 && chmod +x build/cyrius_a64
+          chmod +x a64/cycc_native_a64
+          cp a64/cycc_native_a64 build/cycc_native_a64
+          cat cbt/cyrius.cyr | a64/cycc_native_a64 > build/cyrius_a64 && chmod +x build/cyrius_a64
           export CYRIUS_HOME="$HOME/_fg_a64"
           sh scripts/funcgate-stage.sh build/cycc_native_a64 build/cyrius_a64 "$CYRIUS_HOME"
           sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_fg_a64_work" "$CYRIUS_HOME"
