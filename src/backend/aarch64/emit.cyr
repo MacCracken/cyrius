@@ -591,6 +591,15 @@ fn ESYSXLAT(S): i64 {
         # getdirentries64 (344). Darwin takes a 4th basep out-param; fs.cyr
         # passes it on macОS. See 2026-06-02-macos-getdirentries-dir-listing-port.md.
         EW(S, 0xF103651F); EW(S, 0x54000041); EW(S, 0xD2802B10);  # getdents64 217→344
+        # v6.0.63: the .60 port only translated the x86 number (217). But the
+        # wrapper/tools pull the aarch64-Linux stdlib (syscalls_aarch64_linux.cyr),
+        # whose SYS_GETDENTS64 = 61 — and which WINS over fs.cyr's 217 when included
+        # last (cbt/cyrius.cyr: fs.cyr then syscalls.cyr). Untranslated 61 ran with a
+        # stale x16 → EBADF, so `cyrius lib sync` reported "snapshot lib not found"
+        # on a dir that exists, and macOS was broken-in-fact (found by yantra CI).
+        # A small probe bound 217 (different include order) and worked, masking it.
+        # cmp x8,#61 = 0xF100F51F; movz x16,#344 = 0xD2802B10. See CHANGELOG [6.0.63].
+        EW(S, 0xF100F51F); EW(S, 0x54000041); EW(S, 0xD2802B10);  # getdents64 aarch64 61→344
         return 0;
     }
     # Emit: compare x8 against known x86 numbers, replace with aarch64

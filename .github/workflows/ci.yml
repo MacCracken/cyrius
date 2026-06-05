@@ -767,7 +767,11 @@ jobs:
     needs: [macho-arm64]
     runs-on: macos-14
     timeout-minutes: 8
-    continue-on-error: true
+    # v6.0.63: HARD gate. The arm64-macOS dir-walk was repaired (SYS_GETDENTS64
+    # aarch64 number 61 → Darwin getdirentries 344 in ESYSXLAT), so the full
+    # consumer flow (init→lib sync→deps→build→run→reproducible→hashmap) now passes
+    # byte-for-byte on real hardware (ecb). continue-on-error removed — a red here
+    # is now a real macOS regression that must block, like windows-native.
     steps:
       - uses: actions/checkout@v4
       - name: Download arm64 Mach-O tarball

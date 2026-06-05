@@ -79,17 +79,22 @@ fn main(): i64 {
 CYR
 "$CY" build src/main.cyr build/fib >/dev/null 2>&1 && [ -e build/fib ] \
   || { echo "FUNCGATE FAIL(13): cyrius build produced no binary"; exit 13; }
+# Hash the UNSIGNED compiler output now: codesign is non-deterministic, so a
+# signed binary can't be compared for reproducibility (the .44 lesson).
+H1=$(_hash build/fib)
 _sign build/fib
 
 echo "funcgate: run (assert fib(30)=832040 -> exit 42; exercises the allocator)"
 r=0; ./build/fib || r=$?
 [ "$r" -eq 42 ] || { echo "FUNCGATE FAIL(14): fib exited $r (expected 42) — allocation/codegen broken"; exit 14; }
 
-echo "funcgate: hash + reproducible-build"
-H1=$(_hash build/fib)
-"$CY" build src/main.cyr build/fib2 >/dev/null 2>&1
-_sign build/fib2
-H2=$(_hash build/fib2)
+echo "funcgate: reproducible-build (rebuild SAME source + SAME output name)"
+# Must reuse the SAME output name: Mach-O embeds the output basename as the
+# code-signature identifier, so building fib vs fib2 always differs by those
+# bytes even when the compiler output is otherwise identical. Rebuild build/fib
+# (overwriting the signed copy with a fresh unsigned one) and compare unsigned.
+"$CY" build src/main.cyr build/fib >/dev/null 2>&1
+H2=$(_hash build/fib)
 [ "$H1" = "$H2" ] || { echo "FUNCGATE FAIL(15): non-reproducible build ($H1 != $H2)"; exit 15; }
 
 echo "funcgate: build a SECOND program — u64 hashmap + str/fmt (hash + more alloc)"

@@ -28,14 +28,33 @@ Surfaced by agnsh (`run <prog>` output goes to the terminal, can't be captured).
 `2026-06-03-agnos-followup-after-boot.md` for the kernel-ABI side; cross-linked here as a
 consumer-discoverable hole.
 
-## B. Platform: arm64 macOS dir-walk codegen bug — the active blocker
+## B. Platform: arm64 macOS dir-walk — FIXED in .63 (root cause was NOT codegen)
 
-`is_dir` / `dir_list` / `cyrius lib sync` / any dir-walk return EFAULT/EBADF on **arm64 macOS**:
-`getdirentries64` (syscall 217→344) gets corrupted args in real (runtime-linked) programs — an arm64
-**codegen** bug, reproduced extensively on ecb. `lib sync` broken ⇒ can't build ⇒ **arm64 macOS is
-broken in fact.** Found by **yantra CI**, not us. The `2026-06-04-macos-install-lib-snapshot-missing-
-breaks-lib-sync.md` issue (+ the .62 install.sh change) was MIS-SCOPED at the install layer — the lib
-snapshot was never the problem; re-scope it to this codegen cause. Pinned as **.63**.
+`is_dir` / `dir_list` / `cyrius lib sync` returned EBADF on **arm64 macOS**, so `lib sync` reported
+"snapshot lib not found" on a dir that exists ⇒ couldn't build ⇒ **arm64 macOS broken in fact**
+(found by **yantra CI**). The earlier "arg-corruption codegen bug" characterization was **wrong** —
+proven by bisection on ecb (2026-06-04):
+
+- A standalone probe calling `dir_list`/`is_dir` on the same path **worked** (91 files, correct names),
+  but the cyrius WRAPPER's `lib sync` failed. Same `is_dir` source, opposite result.
+- Instrumenting `is_dir` in the wrapper showed `fd=3` (open OK) but `getdirentries n=-9` (EBADF), and
+  crucially **`SYS_GETDENTS64` loaded as 61, not 217**.
+- **Root cause:** `SYS_GETDENTS64` is multiply-defined — 217 (x86/macos) in `fs.cyr`/`syscalls_macos`,
+  but **61** (the aarch64-Linux number) in `syscalls_aarch64_linux.cyr`. The wrapper includes
+  `fs.cyr` (217) *then* `syscalls.cyr` (→ aarch64 → 61), so **61 wins** ("last definition wins"). The
+  probe's include order bound 217, masking it. The .60 macho `ESYSXLAT` translated only the x86 `217→344`
+  and **missed the aarch64 `61→344`** — yet the wrapper/tools pull the aarch64 stdlib (61). Untranslated
+  61 ran with a stale x16 → EBADF.
+- **Fix (`src/backend/aarch64/emit.cyr` ESYSXLAT, macho block):** add `cmp x8,#61; b.ne; movz x16,#344`
+  (`0xF100F51F / 0x54000041 / 0xD2802B10`, llvm-mc-verified), next to the existing 217→344 and the other
+  aarch64→BSD renumbers. Makes both 61 and 217 translate, robust to include order.
+- **Verified on ecb (real arm64 macOS):** `lib sync` copies 89 files; the FULL funcgate (init→lib sync→
+  deps→build→run→reproducible→hashmap) is **GREEN**. Self-host byte-identical on x86_64 + aarch64-linux
+  (qemu) + macho-arm. `macho-arm64-funcgate` promoted to a **HARD** CI gate.
+- **Gate bug also fixed:** the funcgate's reproducible-build compared two *different* output names
+  (fib vs fib2); Mach-O embeds the output basename (signing identifier) so they always differed by those
+  bytes (one byte: `1`↔`2`). Now rebuilds the SAME name and hashes the **unsigned** output (codesign is
+  non-deterministic — the .44 lesson). Linux/ELF didn't embed the name so it passed there, hiding it.
 
 ## C. Root cause of the whole class — the verification never tested the real thing
 
