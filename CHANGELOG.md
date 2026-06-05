@@ -39,7 +39,10 @@ not a small squeeze-in.)
   blocking gate on the self-hosted Intel-Mac runner: `macho-x86-native` stages the x86 Mach-O cycc +
   source, self-hosts byte-identical, runs the rot-class exit-42 guard + the consumer-flow funcgate.
   Replaces the scarce/quarantine-flaky GitHub `macos-13` job. Fork PRs are gated out (self-hosted
-  security). Issue `2026-06-03-ach-selfhosted-runner.md` (runner registration is operator-side).
+  security). The self-host step is HARD (authoritative + rot-proof); the consumer funcgate step is SOFT
+  on x86-macho — its first step `cyrius init` no-ops there (the HELD x86-macho argv/init gap, Intel EOL),
+  so it can't pass yet (flip to HARD once that's unheld; dir-walk/consumer coverage stays HARD on arm64
+  ecb). Issue `2026-06-03-ach-selfhosted-runner.md` (runner registration is operator-side).
 
 ## [6.0.64] — 2026-06-05
 

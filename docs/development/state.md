@@ -21,9 +21,13 @@ firing for routed syscalls and hiding the genuinely-unrouted. Replaced with `_ma
 adjacent to ESYSXLAT (src/backend/aarch64/emit.cyr), queried by parse_expr.cyr — no drift. Warning now
 fires only for genuinely-unrouted syscalls. (The naive partial sync was reverted as a half-measure.)
 
-**ach (Achaemenid) x86-macOS CI gate restored** (`ci.yml` `macho-x86-native`) — real blocking self-host +
-funcgate on the self-hosted Intel-Mac runner, replacing the scarce/quarantine-flaky GitHub `macos-13`
-job; fork PRs gated out. Runner registration is operator-side (live per user); needs a first green CI run.
+**ach (Achaemenid) x86-macOS CI gate restored** (`ci.yml` `macho-x86-native`) — on the self-hosted
+Intel-Mac runner, replacing the scarce/quarantine-flaky GitHub `macos-13` job; fork PRs gated out.
+**First CI run finding:** self-host step is GREEN + HARD (authoritative, rot-proof); the consumer
+funcgate step is **SOFT on x86-macho** — its first step `cyrius init` no-ops there (the HELD x86-macho
+argv/init gap; `cd proj` → No such file or directory), Apple-Intel EOL so it's backlog under higher
+priorities. codesign/dlopen-helper warnings on the runner are non-fatal env quirks. dir-walk/consumer
+coverage stays HARD on arm64 (ecb). Flip funcgate to HARD once x86-macho argv/init is unheld.
 
 **Process note:** two premise-check findings surfaced + were taken to the user mid-slot: (1) the
 whitelist sync was harder than the issue implied (dual number-convention + hex-encoded ESYSXLAT) → user

@@ -2,7 +2,20 @@
 
 **Filed:** 2026-06-03
 **Severity:** P2 (CI reliability)
-**Status:** queued (user-directed 2026-06-03)
+**Status:** IN PROGRESS — `macho-x86-native` job landed v6.0.65 (`.github/workflows/ci.yml`); runner
+registered + live (operator). **First CI run on `ach` (v6.0.65):**
+- ✅ **Self-host step GREEN + HARD** — the x86 Mach-O cycc self-hosts byte-identical on real Intel macOS.
+  This is the authoritative, rot-proof gate and it works.
+- ⚠️ **Funcgate step made SOFT** (`continue-on-error: true`) — the consumer flow's first step
+  `cyrius init proj` exits 0 but scaffolds NOTHING on x86-macho (`cd proj` → No such file or directory):
+  the HELD x86-macho argv/init gap (wrapper `main()` runs inside EMIT_GVAR_INITS without an arm64-style
+  reserved register → argv not captured). Apple-Intel EOL ⇒ backlog under higher priorities; flip the
+  funcgate to HARD once x86-macho argv/init is unheld. dir-walk/consumer coverage stays HARD on arm64 (ecb).
+- ℹ️ Non-fatal runner-env quirks: `codesign failed for <bins>` (no signing identity; x86 runs unsigned)
+  and `dlopen-helper compile failed` (fdlopen degrades to FDL_ERR_HELPER_MISSING) — neither blocks.
+
+Remaining to fully close: a first all-green run with the funcgate HARD (gated on the held x86-macho
+argv/init fix). Until then the job is green via the hard self-host + soft funcgate.
 
 ## Why
 
