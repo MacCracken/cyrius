@@ -693,16 +693,20 @@ fn main(): i64 {
     lint_file(buf, n);
     lint_globals_init_order(buf, n);
 
+    # Deferral summary goes to STDERR (with its per-line notes), and BEFORE the
+    # warnings line, so the canonical machine-readable last line of STDOUT stays
+    # "<n> warnings" — gates parse it via `tail -1 | grep -oP '^\d+'` and must
+    # NOT pick up the deferral count.
+    var db[24];
+    var dl = fmt_int_buf(_deferrals, &db);
+    syscall(1, 2, &db, dl);
+    var dsfx = " untracked deferrals\n";
+    syscall(1, 2, dsfx, strlen(dsfx));
+
     var nb[24];
     var nl = fmt_int_buf(_warnings, &nb);
     syscall(1, 1, &nb, nl);
     syscall(1, 1, " warnings\n", 10);
-
-    var db[24];
-    var dl = fmt_int_buf(_deferrals, &db);
-    syscall(1, 1, &db, dl);
-    var dsfx = " untracked deferrals\n";
-    syscall(1, 1, dsfx, strlen(dsfx));
 
     # See the exit-code policy note at the top of main().
     if (exit_with_count == 1) { return _warnings; }
