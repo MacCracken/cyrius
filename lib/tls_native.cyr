@@ -3380,13 +3380,14 @@ fn _tn_sh_is_tls13(sh, sh_len): i64 {
 }
 
 # Client: parse a TLS 1.2 ServerHello (RFC 5246 §7.4.1.3). Validates
-# the legacy_version (0x0303), rejects the RFC 8446 §4.1.3 downgrade
-# sentinel ("DOWNGRD" prefix in the last 8 random bytes), asserts
-# supported_versions is ABSENT (its presence means a 1.3 server — a
-# protocol error on this path), reverse-maps the chosen wire
-# ciphersuite to the internal AEAD identity (rejecting unsupported),
-# stores the identity at OFF_CIPHER, the server random, and version
-# 0x0303. Returns TLS_OK or a negative TLS_ERR_* (ctx → ERROR).
+# the legacy_version (0x0303), asserts supported_versions is ABSENT
+# (its presence means a 1.3 server — a protocol error on this path),
+# validates the secure-renegotiation echo (RFC 5746), and reverse-maps
+# the chosen wire ciphersuite to the internal AEAD identity (rejecting
+# unsupported), storing the identity at OFF_CIPHER plus the server
+# random and version 0x0303. (No RFC 8446 §4.1.3 downgrade-sentinel
+# check — a 1.2-pinned client never offered 1.3, so there is nothing to
+# downgrade from.) Returns TLS_OK or a negative TLS_ERR_* (ctx → ERROR).
 fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {

@@ -3,6 +3,42 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.74 ship — TLS 1.2 handshake message flow; Mini-arc D COMPLETE)
+
+Closing **v6.0.74** (Mini-arc D step 3 — the 1.2 backport is now COMPLETE). check.sh **85/85**;
+self-host byte-identical (x86_64) at 6.0.74; `tls_native_scaffold` 375/375 (TLS 1.3 path unaffected).
+
+**Headline — the full TLS 1.2 (ECDHE) handshake.** `lib/tls_native.cyr` gains the complete 1.2
+client+server handshake over the `.72` AEAD record layer + `.73` PRF/key-schedule: the ciphersuite
+registry (the 6 wire suites ↔ the internal `0x130x` AEAD identity the crypto layer keys off; supported =
+`0xC02C`+`0xCCA9`), every handshake message (CH/SH/Cert/ServerKeyExchange-sign+verify/SHD/ClientKeyExchange/
+CCS/Finished), the ECDHE key-schedule glue (ephemeral-pub-only, x25519 premaster with the mandatory
+all-zero reject, derive_keys into the reused 1.3 app-key ctx slots), and the `tls_native_connect_12` /
+`tls_native_accept_12` drivers. `tls_native_connect`/`accept` now version-dispatch (client by `max_ver`,
+server by a ClientHello `key_share`/`supported_versions` sniff); `seal_app`/`open_app` route 1.2 app data
+to the `.72` record layer; `set_version_range` is implemented. New ctx offset `OFF_MASTER12=416`.
+
+**Verification depth (ultracode):** a 21-agent byte-exact spec workflow drove the wire formats correct up
+front; a **16-agent adversarial review found 8 real defects — all fixed + regression-tested in this same
+release** (one-bug-one-complete-fix): a **P0 remote OOB heap read** (`_tn_12_client_consume_flight` fed an
+unbounded 24-bit handshake length into `sha*_update` — now length-bounded), a downgrade-sentinel
+false-reject of conformant 1.3-capable servers, a ClientKeyExchange transcript desync, RFC 5746 secure
+renegotiation (signal + echo-validate), and `_tn_ctx_fail` wrapping. **e2e on x86_64 AND aarch64** (the
+socketpair our-client↔our-server handshake + bidirectional app data, plus all unit suites:
+`tls12_ciphersuites` 28/28, `tls12_handshake_msgs` 66/66, `tls12_handshake` 19/19 — identical on both
+arches, aarch64 via a native cross-compile under qemu → byte-order/ABI clean). api-surface +22; stdlib-only.
+
+**Cross-OS posture:** stdlib-only change — `cycc` does NOT include `lib/tls_native.cyr`, so its bytes
+change only by the arch-independent `--version` string; the four-host `cycc` self-host is structurally
+unaffected. Real-hardware **ecb/cass** runtime of the 1.2 `.tcyr` suite was NOT run this session (the 1.3
+path interops with OpenSSL since `.23`; the 1.2 e2e is our↔our only). Aarch64 IS covered (qemu).
+
+**Next:** **Mini-arc E** — consumer wiring + TLS arc closeout (sandhi onto `tls_native`, libssl-wrapper
+disposition, consumer smoke). Real-peer OpenSSL 1.2 interop + **EMS (RFC 7627)** must be addressed before
+that (the 1.2 path uses the legacy master derivation; EMS negotiation → different keys). Carve-outs:
+client-auth, resumption, RSA-auth suites + P-384 SKE-verify (sigil gaps). Then the near-end Windows repair
+cluster, last cleanup/refactor + sigil fold, cycle closeout → v6.1.0.
+
 ## Session close — 2026-06-06 (.73 ship — TLS 1.2 PRF + key derivation)
 
 Closing **v6.0.73** (Mini-arc D step 2). check.sh **85/85**; self-host byte-identical on **all four

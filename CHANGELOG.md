@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.74] — 2026-06-06
+
 **TLS 1.2 handshake message flow — the complete 1.2 (ECDHE) backport (Mini-arc D, step 3).**
 This closes the 1.2 backport: a full, sovereign client *and* server 1.2 handshake over the `.72` AEAD
 record layer + `.73` PRF/key-schedule, proven end-to-end our-client ↔ our-server over a socketpair
