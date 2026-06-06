@@ -1,0 +1,42 @@
+# callptr_real_win64.cyr — Windows regression for the v6.0.71 callptr→real-
+# Win64-callee frame-alignment fix (issue 2026-06-05-windows-com-vtable-real-
+# callee-frame-corruption.md). Run on cass; must exit 42.
+#
+# Before v6.0.71 the PE executable ran the whole cyrius call chain 8 bytes
+# misaligned (Windows enters the entry at rsp ≡ 8; cyrius `call main` had no
+# align seed). A `callptr` to a real Win64 callee then faulted on the callee's
+# aligned `movaps` SSE spill, or returned a constant garbage value (5) as the
+# corrupted caller frame unwound. callptr to a TRIVIAL cyrius callee never
+# tripped it (no SSE), so the v6.0.70 self-tests passed while this stayed
+# broken — the exact "found by ports" shape. EALIGN_RSP16_PE at the entry
+# (src/main.cyr) seeds rsp ≡ 0, restoring ABI-correct 16-alignment.
+#
+# Resolves real kernel32 function pointers with GetModuleHandleA/GetProcAddress
+# (v6.0.71 PE imports) and dispatches them through callptr at 1, 2 and 3 args.
+
+fn main(): i64 {
+    var k = syscall(0xF013, "kernel32.dll");          # GetModuleHandleA
+    if (k == 0) { return 1; }
+
+    # 1-arg real callee: lstrlenA("abcdefg") == 7. Pre-fix corrupted to 5.
+    var f_len = syscall(0xF014, k, "lstrlenA");        # GetProcAddress
+    if (f_len == 0) { return 2; }
+    var n = callptr(f_len, "abcdefg");
+    if (n != 7) { return 10 + n; }
+
+    # 1-arg real callee returning a pointer: GetModuleHandleA("kernel32.dll")
+    # via callptr must equal the handle the reroute returned.
+    var f_gmh = syscall(0xF014, k, "GetModuleHandleA");
+    if (f_gmh == 0) { return 3; }
+    var h = callptr(f_gmh, "kernel32.dll");
+    if (h != k) { return 4; }
+
+    # 3-arg real callee (the COM-method arg shape: this, idx, out):
+    # MulDiv(10, 4, 2) == 20.
+    var f_md = syscall(0xF014, k, "MulDiv");
+    if (f_md == 0) { return 5; }
+    var q = callptr(f_md, 10, 4, 2);
+    if (q != 20) { return 50 + q; }
+
+    return 42;
+}

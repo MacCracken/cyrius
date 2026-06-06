@@ -679,6 +679,99 @@ var _TARGET_EFI_APPLICATION = 0;
 # docs/audit/2026-04-27-cx-direct-emit-inventory.md.
 var _TARGET_CX = 0;
 
+# v6.0.71 — force-16-aligned `callptr` call for PE/Win64 (issue 2026-06-05-
+# windows-com-vtable-real-callee-frame-corruption.md). REPLACES the generic
+# ECALLPOPS+ECALLIND+ECALLCLEAN trio at a callptr site under _TARGET_PE.
+#
+# WHY: cyrius's PE call chain runs at a CONSTANT body alignment that lands
+# every callee at entry rsp ≡ 0, NOT the Win64-ABI-required ≡ 8 (Windows
+# enters the EXE at rsp ≡ 8 and cyrius never re-aligns). cyrius-emitted code
+# never uses SSE so the misalignment is harmless; the kernel32 IAT reroutes
+# mask it with their own `push rbx; and rsp,-16` anchor; but `callptr` exists
+# precisely to invoke REAL Win64 callees (COM vtable methods), whose aligned
+# `movaps` SSE spill #GP-faults (AV 0xC0000005) or corrupts the caller frame
+# when entered at ≡ 0. Seeding alignment at the entry instead (an earlier
+# attempt) destabilised the top-level-only cycc compiler itself, so the fix
+# is local to the callptr site — the same proven anchor the reroutes use,
+# robust to ANY caller body alignment (main or top-level reaches it).
+#
+# Args are already pushed (a1..aN, aN on top). Marshal them into the Win64
+# arg registers, THEN `push rbx; mov rbx,rsp; and rsp,-16` (16-align,
+# rbx-anchored for exact restore), shadow/stack-arg sub, `call [rbp+disp]`
+# (the callee spill slot is rbp-relative — survives every rsp move), then
+# `mov rsp,rbx; pop rbx`. The callee is entered at rsp ≡ 8 → its SSE spills
+# are aligned. disp mirrors EFLLOAD_W / ECALLIND.
+fn ECALLPTR_PE(S, idx, n): i64 {
+    var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    if (n <= 4) {
+        var i = n - 1;
+        while (i >= 0) { EPOPARG(S, i); i = i - 1; }       # a1→rcx, a2→rdx, a3→r8, a4→r9
+        EB(S, 0x53);                                        # push rbx
+        EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp (anchor)
+        EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+        EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+        EB(S, 0xFF); EB(S, 0x95); EDISP32(S, disp);         # call [rbp+disp]
+        EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx (restore)
+        EB(S, 0x5B);                                        # pop rbx
+        _flags_reflect_rax = 0;
+        return 0;
+    }
+    # n > 4: extras go on the stack above shadow. Pop extras into temp regs
+    # (r10/r11/r14/r15/r12 — same scratch set ECALLPOPS uses), pop the 4 reg
+    # args, anchor+align, sub the shadow+stack-arg frame, write extras above
+    # shadow, call, restore. Mirrors ECALLPOPS's Win64 >4 layout with the
+    # rbx-align inserted before the frame sub.
+    var nextra = n - 4;
+    if (nextra >= 1) { EB(S, 0x58); E3(S, 0xC28949); }      # pop rax; mov r10, rax (a[n-1])
+    if (nextra >= 2) { EB(S, 0x58); E3(S, 0xC38949); }      # pop rax; mov r11, rax (a[n-2])
+    if (nextra >= 3) { EB(S, 0x58); E3(S, 0xC68949); }      # pop rax; mov r14, rax (a[n-3])
+    if (nextra >= 4) { EB(S, 0x58); E3(S, 0xC78949); }      # pop rax; mov r15, rax (a[n-4])
+    if (nextra >= 5) { EB(S, 0x58); E3(S, 0xC48949); }      # pop rax; mov r12, rax (a[n-5])
+    EB(S, 0x41); EB(S, 0x59);                               # pop r9   (a[3])
+    EB(S, 0x41); EB(S, 0x58);                               # pop r8   (a[2])
+    EB(S, 0x5A);                                            # pop rdx  (a[1])
+    EB(S, 0x59);                                            # pop rcx  (a[0])
+    EB(S, 0x53);                                            # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);                  # mov rbx, rsp (anchor)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0);     # and rsp, -16
+    var framesize = 32 + nextra * 8;
+    if ((framesize & 15) != 0) { framesize = framesize + 8; }
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, framesize); # sub rsp, framesize
+    # Write extras above shadow at [rsp+32..] (same register→slot map as ECALLPOPS).
+    if (nextra == 1) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r10
+    }
+    if (nextra == 2) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r10
+    }
+    if (nextra == 3) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r14
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30);   # [rsp+48] r10
+    }
+    if (nextra == 4) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r15
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r14
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x30);   # [rsp+48] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x38);   # [rsp+56] r10
+    }
+    if (nextra == 5) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x64); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r12
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r15
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x30);   # [rsp+48] r14
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x38);   # [rsp+56] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40);   # [rsp+64] r10
+    }
+    EB(S, 0xFF); EB(S, 0x95); EDISP32(S, disp);             # call [rbp+disp]
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);                  # mov rsp, rbx (restore)
+    EB(S, 0x5B);                                            # pop rbx
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
 # emit exit epilogue: mov rdi, rax; mov rax, <exit_nr>; syscall
 fn EEXIT(S): i64 {
     if (_TARGET_PE == 1) {
@@ -1283,6 +1376,20 @@ fn ECMDTOARGV_PE(S): i64 {
 fn ELOCALFREE_PE(S): i64 {
     _pe_ensure_localfree(S);
     return _pe_srw_call_1arg(S, _pe_localfree_get());
+}
+
+# syscall(0xF013, name) → kernel32!GetModuleHandleA(name). 1 arg (LPCSTR→rcx).
+# Returns HMODULE in rax. v6.0.71 — runtime symbol resolution for callptr FFI.
+fn EGETMODH_PE(S): i64 {
+    _pe_ensure_getmodh(S);
+    return _pe_srw_call_1arg(S, _pe_getmodh_get());
+}
+
+# syscall(0xF014, hmod, name) → kernel32!GetProcAddress(hmod, name). 2 args
+# (HMODULE→rcx, LPCSTR→rdx). Returns FARPROC in rax. v6.0.71.
+fn EGETPROC_PE(S): i64 {
+    _pe_ensure_getproc(S);
+    return _pe_call_2arg_aligned(S, _pe_getproc_get());
 }
 
 # syscall(0xF012, &iid, &ppFactory) → dxgi!CreateDXGIFactory1. 2 args

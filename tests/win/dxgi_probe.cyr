@@ -1,0 +1,40 @@
+# dxgi_probe.cyr — Windows regression + demonstrator for the v6.0.70 §0 COM/
+# DXGI capability, unblocked by the v6.0.71 callptr alignment fix. Run on cass
+# (needs a real GPU + DXGI); must exit 42.
+#
+# Drives the full COM vtable chain entirely through callptr:
+#   CreateDXGIFactory1 (syscall 0xF012) -> IDXGIFactory1
+#   EnumAdapters1(this, 0, &adapter)    @ slot 12  (3-arg COM method via callptr)
+#   GetDesc1(this, &desc)               @ slot 10  (2-arg COM method via callptr)
+#   DedicatedVideoMemory @ desc+272
+# Non-42 codes pinpoint the failing step. Exit 42 means the real Win64 COM
+# methods ran via callptr AND the cyrius caller frame survived (the v6.0.70
+# bug returned 5 / faulted here).
+
+include "lib/dxgi.cyr"
+
+fn main(): i64 {
+    var iid[16];
+    _dxgi_iid_factory1(&iid);
+    var pFactory = 0;
+    var hr = syscall(0xF012, &iid, &pFactory);          # CreateDXGIFactory1
+    if (hr != 0) { return 60; }
+    if (pFactory == 0) { return 61; }
+    var fvtbl = load64(pFactory);
+    var pAdapter = 0;
+    var hr2 = callptr(load64(fvtbl + 12 * 8), pFactory, 0, &pAdapter);  # EnumAdapters1
+    if (hr2 != 0) { return 62; }
+    if (pAdapter == 0) { return 63; }
+    var avtbl = load64(pAdapter);
+    var desc[320];
+    var hr3 = callptr(load64(avtbl + 10 * 8), pAdapter, &desc);          # GetDesc1
+    if (hr3 != 0) { return 64; }
+    var vram = load64(&desc + 272);                     # DedicatedVideoMemory
+    var vendor = load64(&desc + 256) & 0xFFFFFFFF;      # VendorId (Intel = 0x8086)
+    _dxgi_release(pAdapter);
+    _dxgi_release(pFactory);
+    # Sanity: a real adapter has a nonzero VendorId. (Integrated GPUs may
+    # report 0 DedicatedVideoMemory, so VRAM==0 is NOT a failure here.)
+    if (vendor == 0) { return 65; }
+    return 42;
+}

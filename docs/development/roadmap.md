@@ -523,14 +523,25 @@ premise-check each at slot entry:
    foundation). Both §0 capabilities (non-kernel32 imports + COM vtable dispatch) delivered + verified:
    callptr 7/7 x86+pi, exit-42 on cass+ecb, loaded-callee on cass; CreateDXGIFactory1 S_OK on cass;
    4-host self-host; check.sh 85/85. See CHANGELOG [6.0.70].
-10. **.71 — DXGI demonstrator + the Win64-COM-callee fix** (the §0 follow-up the leader deferred at .70):
-   `callptr` to a *real Win64 COM callee* corrupts the cyrius caller frame (NOT a callptr bug — loaded-
-   callee + 3-arg verified; slots ruled out); needs windbg on cass to pin. Fix the callptr call frame for
-   real Win64 callees, add a cass regression, then write `lib/dxgi.cyr` `dxgi_vram_bytes()`
-   (CreateDXGIFactory1 → EnumAdapters1 → GetDesc1 → DedicatedVideoMemory). Issue:
-   `issues/2026-06-05-windows-com-vtable-real-callee-frame-corruption.md`. Then the remaining Windows
-   partials (D2 wrapper port / deps-lock / .ps1 installer).
-11. **.72–x — native TLS items** (was .71–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
+10. **.71 — Win64-COM-callee `callptr` frame fix (ECALLPTR_PE)** ✅ COMPLETE (the §0 follow-up the leader
+   deferred at .70). ROOT CAUSE: cyrius's PE call chain runs at a constant body alignment landing every
+   callee at entry rsp ≡ 0, not the Win64-ABI ≡ 8 (Windows enters at ≡ 8, cyrius never re-aligns) — harmless
+   for cyrius's SSE-free code + masked on kernel32 by the reroutes' own `and rsp,-16`, but `callptr` to a
+   real Win64 callee #GP-faults its aligned `movaps` SSE spill. FIX: `ECALLPTR_PE` force-16-aligns the
+   callptr site (rbx-anchored `and rsp,-16`, the reroute pattern), local to callptr (a whole-program
+   entry-seed was tried + rejected — it broke the top-level-only `cycc` itself). + `GetModuleHandleA`/
+   `GetProcAddress` PE imports (0xF013/0xF014) + `tests/win/callptr_real_win64.cyr` (cass-leg gate) +
+   `lib/dxgi.cyr`. VERIFIED on cass: regression → 42; COM `EnumAdapters1`/`GetDesc1` dispatch via callptr;
+   4-host self-host byte-identical; check.sh 85/85. Found via local **wine + winedbg** (PE self-hosts under
+   wine byte-identical → deterministic repro without the GPU). Issue:
+   `issues/2026-06-05-windows-com-vtable-real-callee-frame-corruption.md`.
+   **DEFERRED to .72 (leader-approved split):** on the REAL GPU, 1-arg COM `Release`/`AddRef` + the full
+   `dxgi_vram_bytes()` chain still AV — a SECOND interaction the alignment fix doesn't cover (emit is
+   byte-identical to the working cases; reproduces only on real DXGI hardware) → needs windbg/cdb on cass.
+11. **.72 — windbg-on-cass: finish the DXGI demonstrator** (the .71 residual): install a Windows debugger
+   on cass, single-step the 1-arg-COM / multi-COM-call AV, finish `lib/dxgi.cyr` `dxgi_vram_bytes()` against
+   the real GPU. Then the remaining Windows partials (D2 wrapper port / deps-lock / .ps1 installer).
+12. **.73–x — native TLS items** (was .72–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
    (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
    version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
    2026-06-04, overriding the general upfront-cross-walk default for this case).

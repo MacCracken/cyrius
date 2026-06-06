@@ -411,9 +411,21 @@ fn PARSE_FACTOR(S): i64 {
         }
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
         STI(S, GTI(S) + 1);                     # consume ')'
-        ECALLPOPS(S, cp_argc);                  # marshal args into arg regs (+ Win64 shadow)
-        ECALLIND(S, cp_idx);                    # load callee from the slot + call/blr
-        ECALLCLEAN(S, cp_argc);                 # unwind the arg frame
+        # v6.0.71: on PE/Win64, callptr targets REAL Win64 callees (COM vtable
+        # methods) whose aligned SSE spills need rsp ≡ 0 at the `call`. The
+        # generic marshal+call below runs at cyrius's constant body alignment,
+        # which lands callees at ≡ 0 entry (off by 8) — fine for cyrius callees
+        # (no SSE), fatal for real Win64 ones. ECALLPTR_PE force-aligns the
+        # call with an rbx-anchored `and rsp,-16` (the kernel32-reroute pattern),
+        # so the callee is entered ABI-correct regardless of caller alignment.
+        # See issue 2026-06-05-windows-com-vtable-real-callee-frame-corruption.md.
+        if (_TARGET_PE == 1) {
+            ECALLPTR_PE(S, cp_idx, cp_argc);    # force-aligned marshal + call [rbp+disp]
+        } else {
+            ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
+            ECALLIND(S, cp_idx);               # load callee from the slot + call/blr
+            ECALLCLEAN(S, cp_argc);            # unwind the arg frame
+        }
         _cfo = 0;
         return 0;
     }
@@ -776,6 +788,22 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            if (sc_num == 61459) {
+                if (argc == 2) {
+                    # syscall(0xF013, name) → GetModuleHandleA. v6.0.71.
+                    EGETMODH_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61460) {
+                if (argc == 3) {
+                    # syscall(0xF014, hmod, name) → GetProcAddress. v6.0.71.
+                    EGETPROC_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # Non-mapped syscalls: emitting the generic ESCPOPS path
             # below would produce an `0F 05` syscall that faults
             # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
@@ -789,8 +817,8 @@ fn PARSE_FACTOR(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
-            366);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF014 (GetModuleHandleA/GetProcAddress) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            416);
         }
         ESCPOPS(S, argc);
         _cfo = 0;

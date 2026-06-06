@@ -920,6 +920,8 @@ cyml::cyml_expand_value/1
 cyml::cyml_parse/2
 cyml::cyml_parse_file_r/1
 cyml::cyml_split/6
+dxgi::dxgi_adapter_vram_bytes/1
+dxgi::dxgi_vram_bytes/0
 dynlib::dynlib_auxv_get/3
 dynlib::dynlib_bootstrap_cpu_features/0
 dynlib::dynlib_bootstrap_environ/1

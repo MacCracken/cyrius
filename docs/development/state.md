@@ -3,6 +3,43 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-05 (.71 ship — callptr→real-Win64-callee frame fix (ECALLPTR_PE) + COM vtable dispatch works on real cass)
+
+Closing **v6.0.71** — the v6.0.70 §0 follow-up. check.sh **85/85**; self-host byte-identical on
+**x86_64 + aarch64-Linux (pi) + macho-arm (ecb) + macho-x86 (ach) + Windows (cass)** — all 4 cross-OS
+hosts green; cass leg now also runs the callptr→real-Win64 regression → 42.
+
+**Headline — `callptr` to a REAL Win64 callee no longer corrupts the caller; calling a COM vtable method
+from cyrius works.** v6.0.70's `callptr` was verified only against trivial cyrius callees; the DXGI
+demonstrator surfaced that `callptr` to a real Win64 callee (COM method, kernel32 entry) AV'd/corrupted
+(issue 2026-06-05-windows-com-vtable-real-callee-frame-corruption.md).
+
+**Root cause:** cyrius's PE call chain runs at a CONSTANT body alignment landing every callee at entry
+rsp ≡ 0, NOT the Win64-ABI ≡ 8 (Windows enters the EXE at ≡ 8, cyrius never re-aligns). Harmless for
+cyrius's own SSE-free code; the kernel32 IAT reroutes mask it with `and rsp,-16`; but `callptr` invokes
+real Win64 callees whose aligned `movaps` SSE spill #GP-faults when misaligned. Found via local
+**wine + winedbg** (wine self-hosts the PE compiler byte-identically — isolated the bug deterministically
+WITHOUT the GPU) + cass exit-code bisect.
+
+**Fix — `ECALLPTR_PE` (`src/backend/x86/emit.cyr`):** force-16-align the callptr call site with the same
+rbx-anchored `and rsp,-16` the reroutes use → callee entered ABI-correct regardless of caller alignment.
+Local to callptr (a whole-program entry-seed was tried + **rejected** — it destabilised the top-level-only
+`cycc` compiler itself). Plus `GetModuleHandleA`/`GetProcAddress` PE imports (0xF013/0xF014) for resolving
+real callee pointers, `tests/win/callptr_real_win64.cyr` (wired into the cass leg), and `lib/dxgi.cyr`.
+
+**Verified on real cass:** regression (callptr → kernel32 `lstrlenA`/`GetModuleHandleA`/`MulDiv`) → 42;
+COM `EnumAdapters1` (slot 12) → S_OK; `GetDesc1` (slot 10) → reads `DXGI_ADAPTER_DESC1` (VendorId ≠ 0).
+The §0 capability (call a COM vtable from cyrius) WORKS.
+
+**Deferred to next slot (leader-approved split):** on the REAL GPU, `Release`/`AddRef` (1-arg COM) + the
+full `dxgi_vram_bytes()` chain still AV. The callptr EMIT for the failing 1-arg-COM case is byte-identical
+to the working 1-arg-kernel32 case, and the pre-fix symptom was the INVERSE — a SECOND subtler interaction
+the alignment fix doesn't cover, reproducible ONLY on real DXGI hardware (wine has no GPU). **Next: install
+windbg/cdb on cass, pin it, finish the VRAM demonstrator.** Issue re-filed with full v6.0.71 status.
+
+**Next:** **.72 — windbg-on-cass: finish the DXGI demonstrator** (the deferred residual), then the
+remaining Windows partials (D2 wrapper port / deps-lock / .ps1 installer), then **TLS** Mini-arcs D/E.
+
 ## Session close — 2026-06-05 (.70 ship — compiler-emitted indirect calls (callptr/IR_CALL_INDIRECT) = the COM-vtable-call capability §0)
 
 Closing **v6.0.70** — second half of the Windows FFI arc. check.sh **85/85**; self-host byte-identical on

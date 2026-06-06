@@ -489,6 +489,30 @@ fn _pe_ensure_gettick(S): i64 {
 }
 fn _pe_gettick_get(): i64 { return _pe_gettick_idx; }
 
+# v6.0.71 — GetModuleHandleA / GetProcAddress for runtime symbol resolution
+# (real Win64 function pointers callable via callptr). kernel32!GetModuleHandleA
+# (LPCSTR→rcx) returns HMODULE in rax; kernel32!GetProcAddress (HMODULE→rcx,
+# LPCSTR→rdx) returns FARPROC in rax.
+var _pe_getmodh_ready = 0;
+var _pe_getmodh_idx   = 0;
+fn _pe_ensure_getmodh(S): i64 {
+    if (_pe_getmodh_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getmodh_idx, "GetModuleHandleA");
+    _pe_getmodh_ready = 1;
+    return 0;
+}
+fn _pe_getmodh_get(): i64 { return _pe_getmodh_idx; }
+
+var _pe_getproc_ready = 0;
+var _pe_getproc_idx   = 0;
+fn _pe_ensure_getproc(S): i64 {
+    if (_pe_getproc_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getproc_idx, "GetProcAddress");
+    _pe_getproc_ready = 1;
+    return 0;
+}
+fn _pe_getproc_get(): i64 { return _pe_getproc_idx; }
+
 # v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
 # (lib/args_win.cyr) and cycc's own --version/--strict on Windows.
 # kernel32!GetCommandLineW() takes no args, returns the process's

@@ -73,7 +73,7 @@ SSHO="-o ConnectTimeout=20 -o BatchMode=yes -o HostName=$IP -o HostKeyAlias=$HN 
 # ecb-install, which builds its own tarball). Built from clean source so what
 # we verify is what we ship.
 cat src/main.cyr | ./build/cycc > /tmp/_co_l && chmod +x /tmp/_co_l
-tar czf /tmp/_co.tgz src lib VERSION
+tar czf /tmp/_co.tgz src lib tests/win VERSION   # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg)
 
 case "$HOST" in
   ecb)
@@ -135,7 +135,14 @@ case "$HOST" in
     # fixed in v6.0.54). `cmd /v` is REQUIRED — bare `%errorlevel%` expands at
     # parse time and falsely reads 0 (feedback_windows_errorlevel_test_wrapper).
     ssh $SSHO cass 'cmd /c "cd /d %USERPROFILE%\_cyaud && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
+      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
+    # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
+    # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
+    # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this
+    # returned a corrupted 5 / AV'd. Guards the ECALLPTR_PE force-align. (The
+    # full DXGI/COM demonstrator + AddRef/Release residual is tracked separately
+    # — needs windbg on cass; see 2026-06-05-windows-com-vtable issue.)
     ;;
   ecb-install)
     # Packaging-rot guard (v6.0.38): build the real tarball via the same
