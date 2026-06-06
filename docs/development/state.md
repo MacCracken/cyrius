@@ -3,6 +3,37 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.75 ship — macOS CSPRNG + freelist repair + cross-OS lib-test gate)
+
+Closing **v6.0.75**. check.sh **85/85**; self-host byte-identical (x86_64 + aarch64); macho-arm64
+self-hosts on ecb. A compiler-backend + stdlib slot, NOT a TLS-feature slot — it makes the native
+TLS/crypto stack actually *run* on macOS (it never had — only cycc-self-host ran on ecb, never the
+`.tcyr` tests).
+
+**Headline — three stacked macOS "found by ports" bugs, surfaced by a new cross-OS lib-test gate.**
+The native TLS stack had never executed on real macOS. A new opt-in **lib-test fallback**
+(`scripts/cross-os-selfhost.sh <host> [tcyr-glob]` — runs the slot's `tests/tcyr/<glob>*.tcyr` on the
+real host with its native cycc after the self-host check) ran the TLS suite on ecb for the first time
+and peeled back: (1) **CSPRNG broken** — `sys_getrandom` issued Linux syscall 318 on Mach-O → garbage
+random → whole TLS stack dead. **Fixed**: ESYSXLAT 318/278 → Darwin getentropy 500 on BOTH backends
+(aarch64 + x86; x86 needed an imm32 `_msx32` since 318 > 255) + stdlib 0→len normalize. (2) **Freelist
+mmap broken** — `fl_alloc` used Linux `MAP_ANON=0x20`; Darwin's is `0x1000` → MAP_FAILED → SIGSEGV →
+crashed ALL sigil crypto (the bump alloc worked via `alloc_macos.cyr`). **Fixed**: `_fl_map_flags()`
+target-conditional. (3) **sigil ECDSA-P256 verify SIGSEGVs** — the last layer; characterized + logged
+(`docs/development/issues/2026-06-06-macos-ecdsa-verify-crash.md`), deferred per leader.
+
+**Verified on ecb (post-fix):** getrandom fills the buffer; `fl_alloc`/`sha256`/`x25519` ECDH/
+`hex_decode`/X.509 parse/`ecdsa_p256_sign_der` all work; `tls12_ciphersuites` passes (28/28). Still
+crashing: the EC **verify** path (sign works, verify doesn't) → `tls12_handshake_msgs`/`tls12_handshake`
+don't pass on macOS yet. **Cross-OS posture (the .75 lesson, now a pinned rule):** the four-host gate
+only ever ran cycc-self-host, which is lib-independent — exactly why stdlib bugs shipped green for the
+whole TLS arc. The lib-test fallback closes that; it's interim (per-platform manifests + a PE-safe cass
+subset are TODO — fork/socketpair are POSIX-only).
+
+**Next:** the macOS ECDSA-verify crash (its own slot, finishes TLS-on-macOS), then the deferred
+**OpenSSL 1.2 interop + EMS** (Mini-arc D real-peer validation; spec workflow output cached on disk),
+then Mini-arc E (consumer wiring), the Windows repair cluster, and cycle closeout → v6.1.0.
+
 ## Session close — 2026-06-06 (.74 ship — TLS 1.2 handshake message flow; Mini-arc D COMPLETE)
 
 Closing **v6.0.74** (Mini-arc D step 3 — the 1.2 backport is now COMPLETE). check.sh **85/85**;

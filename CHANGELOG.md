@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.75] — 2026-06-06
+
 **macOS CSPRNG + freelist mmap repair + a cross-OS lib-test gate — making the native TLS/crypto stack
 actually run on macOS.** The native TLS/crypto stack had *never run* on macOS — only cycc-self-host
 ever ran on the Apple-Silicon host (ecb), never the `.tcyr` tests. A new opt-in cross-OS **lib-test**
