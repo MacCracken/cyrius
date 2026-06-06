@@ -6,6 +6,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.76] — 2026-06-06
+
+**sigil 3.7.3 re-fold + the macOS TLS crash pinned to a cyrius freelist codegen bug.** Continuing the
+macOS thread from `.75` (the cross-OS lib-test gate surfaced that the native TLS stack had never run on
+macOS): this re-folds sigil to the latest and, via a deep bisect + lldb on real ecb, root-causes the
+remaining macOS TLS blocker — the `ecdsa_p256_verify` SIGSEGV — down to a **cyrius Mach-O codegen bug**,
+not sigil. The fix is deferred to a focused backend slot; it is fully characterized + logged.
+
+### Changed
+
+- **Re-folded `lib/sigil.cyr` 3.6.4 → 3.7.3** (dist fold). Non-breaking: **+13 public fns, 0 removals** —
+  including **AES-128-GCM** (`aes_128_gcm_encrypt/decrypt_iv`, `aes_gcm_*_iv`) and **RSA-PSS**
+  (`rsa_pss_sign/verify_sha256/384`), plus TEE quote-verify (`sgx`/`tdx`). Linux `check.sh` 85/85;
+  api-surface snapshot +13. A useful side effect: AES-128-GCM + RSA-PSS now exist in sigil, which
+  unblocks the TLS ciphersuites stubbed in `.74` (AES-128 + the RSA-auth suites) for a future slot.
+
+### Known issues
+
+- **macOS native TLS still blocked — root-caused to a cyrius freelist codegen bug (not sigil).** The
+  `.75` cross-OS gate's `tls12_handshake_msgs`/`tls12_handshake` SIGSEGV was bisected (exhaustively, then
+  under lldb on ecb) from "`ecdsa_p256_verify` crashes" → `ecdsa_p256_sign`'s `_rfc6979_k_p256` corrupts
+  the heap → the freelist's `load64(&_fl_heads + cls*8)` faults with the **global array base resolving to
+  0** (`ldr x0,[x0]`, x0=0x18). Sigil 3.7.3 (re-folded here) is byte-identical in this path and does not
+  fix it. It is a **cyrius Mach-O codegen / global-address bug** — fix is cyrius-side, no sigil change
+  needed. Full bisect + lldb writeup + repro: `docs/development/issues/2026-06-06-macos-ecdsa-verify-crash.md`.
+
 ## [6.0.75] — 2026-06-06
 
 **macOS CSPRNG + freelist mmap repair + a cross-OS lib-test gate — making the native TLS/crypto stack

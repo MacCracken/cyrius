@@ -3,6 +3,28 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.76 ship — sigil 3.7.3 re-fold + macOS TLS crash pinned to a cyrius codegen bug)
+
+Closing **v6.0.76**. check.sh **85/85**; self-host byte-identical. A stdlib re-fold + a deep diagnosis
+slot (no TLS feature). Continues the `.75` macOS thread (the cross-OS lib-test gate that revealed the
+native TLS stack had never run on macOS).
+
+**Headline:** (1) **Re-folded sigil 3.6.4 → 3.7.3** (dist fold, non-breaking: +13 public fns / 0
+removals — AES-128-GCM + RSA-PSS + TEE quote-verify; api-surface +13). Side benefit: AES-128-GCM +
+RSA-PSS now exist in sigil → unblocks the `.74`-stubbed TLS ciphersuites (AES-128 + RSA-auth) for a
+future slot. (2) **Root-caused the remaining macOS TLS blocker** (the `.75` `tls12_handshake_msgs`/
+`tls12_handshake` SIGSEGV) via exhaustive bisect + **lldb on ecb**: "`ecdsa_p256_verify` crashes" →
+`ecdsa_p256_sign`'s `_rfc6979_k_p256` corrupts the heap → the freelist's `load64(&_fl_heads + cls*8)`
+faults with the **global-array base resolving to 0** (`ldr x0,[x0]`, x0=0x18). It is a **cyrius Mach-O
+codegen / global-address bug, NOT sigil** — 3.7.3 is byte-identical in this path and doesn't fix it; the
+fix is cyrius-side. Arena-grow exonerated (700×fl_alloc>64 KB then hash = clean). Logged in full:
+`docs/development/issues/2026-06-06-macos-ecdsa-verify-crash.md`.
+
+**Next (leader: bank .76, move on):** the deferred TLS-arc work — **OpenSSL 1.2 interop + EMS** (Mini-arc
+D real-peer validation; spec workflow output cached on disk) — then Mini-arc E (consumer wiring). The
+macOS freelist `&_fl_heads` codegen bug + the Windows repair cluster are queued as their own slots
+(both surfaced/kept-visible by the cross-OS gate). cycle closeout → v6.1.0.
+
 ## Session close — 2026-06-06 (.75 ship — macOS CSPRNG + freelist repair + cross-OS lib-test gate)
 
 Closing **v6.0.75**. check.sh **85/85**; self-host byte-identical (x86_64 + aarch64); macho-arm64

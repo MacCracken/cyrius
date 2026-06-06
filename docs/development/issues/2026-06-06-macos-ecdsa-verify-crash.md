@@ -53,7 +53,40 @@ layout — benign on Linux's. The exact OOB is the remaining work.
 - **But every loop ingredient is clean in isolation** (all on ecb, with `_p256_init()`): `hmac_sha256` at msg_len 32/33/56/64/97, the `u256_load_be/is_zero/cmp/store_be` sequence (×5), 7 live `secret var`s + hmac, `sha256`, `fl_alloc`/`fl_free`/reuse. **A `u256` test first looked guilty (139) but was a false positive — it had skipped `_p256_init()`, so `_p256_n` was a null global.** With init it is clean (`82`).
 - **Conclusion:** the corruption only manifests from `_rfc6979_k_p256`'s *full* interleaving (hmac's internal `fl_alloc`/`fl_free` of the 144-byte sha256 ctx ↔ the surrounding `u256`/`memcpy` over 7 live secret-scratch buffers), leaving a freelist free-list head / heap-metadata corrupted so the *next* `fl_alloc` faults. printf-bisection can't isolate it further — every part is individually fine.
 
-### Suggested next step — **lldb on ecb**, not more printf-bisection
+### lldb on ecb — DEFINITIVE: a cyrius freelist near-null deref (NOT a sigil bug)
+
+Ran the crashing binary under lldb on ecb (needs `codesign -s - --entitlements get-task-allow.plist`,
+and `lldb -b -o run -k "<post-crash cmds>"` since batch mode can't go interactive on the crash):
+
+```
+stop reason = EXC_BAD_ACCESS (code=1, address=0x18)
+->  ldr x0, [x0]        ; x0 = 0x18  → fault
+    ...
+    ldur x0, [x29,#-0x18]   ; x0 = cls = 3
+    lsl  x0, x0, #3         ; x0 = cls*8 = 0x18
+    ldr  x1, [sp], #0x10    ; x1 = base = 0x0   ← the BASE is null
+    add  x0, x0, x1         ; x0 = 0x18 + 0 = 0x18
+->  ldr  x0, [x0]           ; load64(0x18) → EXC_BAD_ACCESS
+regs: x0=0x18 x1=0x0 x2=0x20 x8=0x9 x16=0xC5(=197 mmap)
+```
+
+This is the freelist's **`load64(&_fl_heads + cls*8)`** (`lib/freelist.cyr`; `var _fl_heads[72]`) with the
+**base `&_fl_heads` resolved to 0** (cls=3). The *first* `&_fl_heads` access in the same instruction
+stream is VALID; a *second* one is 0 — and the same access works fine during `_rfc6979`'s own
+`hmac`→`fl_free` calls, so it is **context-dependent, not a static address bug**. `x16=197` shows a
+freelist arena mmap happened recently, but forcing an arena grow (700×`fl_alloc(144)` > 64 KB) then a
+hash is **clean** — so arena-grow itself is exonerated; the null base is a codegen/register-or-stack
+issue around the freelist access after `_rfc6979`'s specific activity.
+
+**Conclusion: this is a CYRIUS Mach-O codegen bug in the freelist `&_fl_heads` global-address access,
+NOT a sigil bug.** The fix is cyrius-side (`src/backend/` and/or `lib/freelist.cyr`), no sigil change /
+fold needed. Next: find why the `&_fl_heads` base computes 0 in this path — disassemble the full
+`fl_free`/`fl_alloc` on ecb (it is a 2-arg-shaped frame: arg0→fp-0x8 valid, arg1→fp-0x10 = 0), check
+how cyrius emits `&<module-level array global>` on Mach-O when it appears twice in a function, and
+whether a preceding `svc` (the freelist mmap) clobbers the cached base. A targeted reproducer + a
+backend codegen fix; the cross-OS lib-test gate will confirm `tls12_*` green on ecb.
+
+### Earlier suggested step — lldb (now done, see above)
 
 Run the crashing binary under `lldb` on ecb: catch the SIGSEGV (it will be in `sha256_init`→`fl_alloc` dereferencing a bad free-list `next`), then set a **watchpoint** on that freed block / the `_fl_heads[cls]` slot and re-run to catch the *write* that corrupts it inside `_rfc6979_k_p256`. That pins whether it is a sigil OOB or a cyrius freelist-linkage / macho-codegen bug. Strong suspicion now leans toward a **cyrius freelist free-list** edge (the `.75` fix covered only the arena `MAP_ANON`, not the free/reuse linkage under interleaved different-size alloc/free) OR a macho codegen issue — i.e. possibly a **cyrius** fix, not sigil.
 
