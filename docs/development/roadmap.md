@@ -507,10 +507,21 @@ premise-check each at slot entry:
    three fixed; `aarch64-native` now builds/self-hosts/funcgates the shipped `cycc_native_a64` HARD.
    4-host self-host green (pi+ecb+ach+cass); full aarch64 funcgate green; check.sh 85/85. See
    CHANGELOG [6.0.68].
-8. **.69+ — remaining partials block** (was .68+): Windows follow-up nuances §3 full `CommandLineToArgvW`
-   (shell32) + §0 COM/DXGI GPU-enum (`issues/2026-06-03-windows-followup-nuances.md` +
-   `2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`).
-9. **.70–x — native TLS items** (was .69–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
+8. **.69 — Windows multi-DLL FFI foundation + full §3 `CommandLineToArgvW`** ✅ COMPLETE. First half of
+   the Windows FFI arc (leader-blessed .69+.70 split). The PE backend (`src/backend/pe/emit.cyr`) went
+   from one hardcoded kernel32 import descriptor to N DLLs — per-import DLL tagging, grouped per-descriptor
+   IAT/ILT runs, `imp_idx → physical slot` remap (`_pe_iat_slot`, byte-identical at one DLL). First
+   consumer: `shell32!CommandLineToArgvW` + `kernel32!LocalFree` (cyrius's first 2-DLL PE). `lib/args_win.cyr`
+   `args_init` now splits with shell32 (full `\\"`-quote rules) + UTF-16→UTF-8 via host-testable `_args_w2u8`
+   (kills the non-ASCII corruption). Cross-arch stubs in aarch64/emit.cyr. Verified: argtest on cass
+   (argc/quote/LocalFree), `_args_w2u8` 21/21, check.sh 85/85, 4-host self-host. See CHANGELOG [6.0.69].
+9. **.70 — §0 COM/DXGI** (the FFI arc's second half): new `IR_CALL_INDIRECT` opcode (x86 `FF /2` + aarch64
+   `blr` backport, cross-arch same slot) + a call-through-pointer primitive, then `dxgi.dll` import +
+   `CreateDXGIFactory1 → IDXGIFactory1::EnumAdapters1 → IDXGIAdapter1::GetDesc1 →
+   DXGI_ADAPTER_DESC1.DedicatedVideoMemory` (64-bit VRAM). DXGI GPU enumeration as ordinary cyrius
+   (`issues/2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`). The multi-DLL import foundation
+   landed in .69; .70 adds the indirect-call codegen the COM vtable dispatch needs.
+10. **.71–x — native TLS items** (was .70–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
    (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
    version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
    2026-06-04, overriding the general upfront-cross-walk default for this case).

@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-05 (.69 ship — Windows multi-DLL FFI foundation + full §3 CommandLineToArgvW)
+
+Closing **v6.0.69** — first half of the Windows FFI arc (**.69 = foundation + §3; .70 = indirect-call
+codegen + §0 DXGI**, leader-blessed split). check.sh **85/85**; self-host byte-identical on **x86_64 +
+aarch64-Linux (pi native+cross) + macho-arm (ecb) + macho-x86 (ach) + Windows (cass)**.
+
+**Headline — the PE backend can import from any DLL now, and Windows argv is full-fidelity.** Two bites:
+
+**Bite 1 — multi-DLL IAT foundation** (`src/backend/pe/emit.cyr`). The PE import machinery was hardcoded
+to a single kernel32 descriptor (`imp_dir_size = 20*2`, literal "kernel32.dll", flat IAT where
+imp_idx == slot). Generalized to **N DLLs**: each import is tagged with a DLL id; `_pe_layout` groups
+imports by DLL into per-descriptor IAT/ILT runs (kernel32=0 first so ExitProcess stays at physical slot 0),
+sizes `imp_dir_size = (dll_count+1)*20`, and builds an `imp_idx → physical slot` remap (`_pe_iat_pos` /
+`_pe_iat_slot()`) that the ftype=4 fixup (`src/backend/x86/fixup.cyr`) now uses. **Byte-identical to the
+old path at one DLL** — proven before adding a second: same compiler, same Windows program → identical
+2560-byte PE. This is the foundation both §3 (shell32) and .70's §0 (dxgi) named as their blocker.
+
+**Bite 2 — full §3 `CommandLineToArgvW`.** The first non-kernel32 import: `shell32!CommandLineToArgvW`
+(+ `kernel32!LocalFree`), `0xF010`/`0xF011` reroutes → cyrius's **first 2-DLL PE**. `lib/args_win.cyr`
+`args_init` now splits the command line with the real shell32 call (correct `\\"`-quote rules) and converts
+each wide arg to UTF-8 via the new host-testable `_args_w2u8` (`lib/args.cyr`, surrogate-aware), then frees
+the `LPWSTR*` with `LocalFree`. Replaces the v6.0.54 ASCII-only `_args_tokenize_utf16` that dropped each
+wide char's high byte (a Unicode install path corrupted silently). New `tests/tcyr/args_win_utf8.tcyr`
+(21 assertions) replaces `args_win_tokenize.tcyr`.
+
+**Cross-arch:** `ECMDTOARGV_PE`/`ELOCALFREE_PE` got no-op stubs in `src/backend/aarch64/emit.cyr` (dead
+under aarch64/macho, FATAL under `--strict` without them — same cohort as the existing PE-reroute stubs);
+cx parity confirmed (identical to ESLEEP_PE).
+
+**Proof:** 2-DLL args program on cass — `argtest a b c`→65 (argc 4), `argtest "hello world"`→43 (argc 2,
+quoted arg kept whole, len 11), no-args→16; PE carries both `kernel32.dll`+`shell32.dll`; `_args_w2u8`
+21/21 on Linux; check.sh 85/85; 4-host cross-OS self-host green (pi+ecb+ach+cass).
+
+**Next:** **.70 — §0 COM/DXGI** (the second half): new `IR_CALL_INDIRECT` opcode (x86 `FF /2` + aarch64
+`blr`, cross-arch same slot) + a call-through-pointer primitive, then `dxgi.dll` import +
+`CreateDXGIFactory1 → EnumAdapters1 → GetDesc1 → DedicatedVideoMemory` (64-bit VRAM) — DXGI GPU
+enumeration as ordinary cyrius. Then **.71+** Windows wrapper port (D2) / deps-lock / .ps1 installer, then
+TLS Mini-arcs D/E.
+
 ## Session close — 2026-06-05 (.68 ship — aarch64-Linux native toolchain completion: §D1 deps + native auto-call-main + honest HARD funcgate)
 
 Closing **v6.0.68**. check.sh **85/85**; self-host byte-identical on **x86_64 + aarch64-Linux (pi

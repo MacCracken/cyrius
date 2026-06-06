@@ -145,3 +145,12 @@ regression can't hide again. yantra bumped its pin to 6.0.63; the `setup-cyrius`
 "Ensure toolchain complete" step (shell-based, can't fix a syscall bug) remains
 only as defense-in-depth + diagnostics until `macos-15-arm64` CI confirms green,
 then it's removed. **Archive once that green run lands.**
+
+## Resolution confirmed — green, archived (2026-06-06)
+
+yantra's macOS CI (the iOS/XCUITest e2e on `macos-latest`) is **green on 6.0.66**:
+`cyrius lib sync` populates and reads `versions/<v>/lib` correctly on the hosted
+arm64 runner, and the full iOS e2e passes 4/4. The GETDENTS64 dir-walk fix
+(6.0.63) holds. yantra has **removed** the `setup-cyrius` "Ensure toolchain
+complete" defense-in-depth/diagnostic step; the install now relies solely on the
+canonical `scripts/install.sh`. Closing.

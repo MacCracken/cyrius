@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.69] — 2026-06-05
+
+**Windows multi-DLL FFI foundation + full `CommandLineToArgvW` (§3).** First half of the Windows FFI arc
+(.69 = foundation + §3; .70 = indirect-call codegen + §0 DXGI). The PE backend generalized from a single
+hardcoded kernel32 import descriptor to **N DLLs**, then used it for the first non-kernel32 import —
+`shell32!CommandLineToArgvW` — replacing the v6.0.54 ASCII-only argv tokenizer with full backslash-quote
+fidelity (shell32 does the parsing) + UTF-16→UTF-8 conversion (no more silent non-ASCII corruption).
+cyrius's **first 2-DLL PE**. Self-host byte-identical on all four real hosts (pi native + ecb + ach + cass);
+check.sh 85/85.
+
+### Added
+
+- **Multi-DLL PE imports** (`src/backend/pe/emit.cyr`) — the shared FFI foundation. Per-import DLL tagging
+  (`_pe_imp_dll` / `_pe_pending_imp_dll`), `_pe_register_import(…, dll_id)` (the kernel32 wrapper now
+  forwards to it), `_pe_dll_name(id)` (kernel32=0 / shell32=1 / dxgi=2), and an `imp_idx → physical IAT
+  slot` remap (`_pe_iat_pos` + `_pe_iat_slot()`). `_pe_layout` groups imports by DLL into per-descriptor
+  IAT/ILT runs (kernel32 first → ExitProcess stays at slot 0), `imp_dir_size = (dll_count+1)*20`,
+  concatenated DLL-name region. **Byte-identical to the old single-kernel32 path at one DLL** (proven:
+  same compiler, same Windows program → identical 2560-byte PE).
+- **`shell32!CommandLineToArgvW` + `kernel32!LocalFree` imports** (`0xF010` / `0xF011` reroutes via
+  `ECMDTOARGV_PE` / `ELOCALFREE_PE`, using the existing `_pe_call_2arg_aligned` / `_pe_srw_call_1arg`).
+- **`_args_w2u8`** (`lib/args.cyr`) — UTF-16LE→UTF-8 of one wide string, surrogate-pair aware (4-byte),
+  pure + host-testable. **`tests/tcyr/args_win_utf8.tcyr`** (21 assertions: ASCII / 2-/3-/4-byte / mixed /
+  empty), replacing `args_win_tokenize.tcyr`.
+
+### Changed
+
+- **`lib/args_win.cyr` `args_init`** now splits the command line with the real `CommandLineToArgvW`
+  (correct `\\"`-quote semantics) and converts each returned wide arg through `_args_w2u8`, then frees the
+  `LPWSTR*` with `LocalFree`. Replaces the v6.0.54 `_args_tokenize_utf16` (ASCII-only, dropped each wide
+  char's high byte → a Unicode install path corrupted silently; only the common quote subset).
+- **`src/backend/x86/fixup.cyr`** ftype=4 PE IAT fixup resolves through `_pe_iat_slot(idx)` (identity at
+  one DLL) instead of the flat `idx*8`.
+- **`src/backend/aarch64/emit.cyr`** — `ECMDTOARGV_PE` / `ELOCALFREE_PE` no-op stubs (parse_expr.cyr
+  symbol resolution on the non-x86 backends; dead under the aarch64/macho backends, FATAL under `--strict`
+  without them — same cohort as the existing PE-reroute stubs).
+
+### Verified
+
+- check.sh 85/85; `_args_w2u8` 21/21 (Linux); the 2-DLL args program on **cass** — `a b c`→argc 4,
+  `"hello world"`→argc 2 (quoted arg kept whole), no-args→argc 1, `LocalFree` clean; the PE carries both
+  `kernel32.dll` + `shell32.dll` descriptors; cross-OS self-host byte-identical on **pi + ecb + ach +
+  cass**. x86_64 unaffected at one DLL (byte-identical PE output).
+
 ## [6.0.68] — 2026-06-05
 
 **aarch64-Linux native toolchain completion — three latent bugs killed, the aarch64-native funcgate
