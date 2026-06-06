@@ -3,6 +3,39 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.72 ship — native TLS arc resumes: TLS 1.2 AEAD record layer; Windows back-burned)
+
+Closing **v6.0.72**. check.sh **85/85**; self-host byte-identical on **all four cross-OS hosts** —
+`pi` (aarch64-Linux), `cass` (Windows PE), `ach` (x86-macOS), `ecb` (arm64-macOS), each via
+`scripts/cross-os-selfhost.sh` after the bump.
+
+**Slate re-order (leader direction 2026-06-06):** *"back burn the windows items posted from .72 until later
+after tls … windows remaining repair goes to near end of 6.0.x line of work."* The `.71`-deferred
+windbg/DXGI demonstrator residual + the standalone Windows-repair slot are consolidated into ONE near-end
+Windows repair cluster that runs **after** the TLS arc. `.72` onward = native TLS (Mini-arc D then E),
+then the Windows repair cluster, then the LAST cleanup/refactor + sigil 3.7.3 fold, then closeout → v6.1.0.
+roadmap.md back-end shape updated to match.
+
+**Headline — TLS 1.2 AEAD record layer (Mini-arc D, step 1).** `tls_native_record_seal_12` /
+`tls_native_record_open_12` + `tls_native_aead_nonce_12_gcm` + `tls_native_record_aad_12` + the
+`_tn_cipher_is_gcm` predicate (all `lib/tls_native.cyr`). The three 1.2-vs-1.3 differences: real content
+type in the **outer** header (no inner-type/padding); **13-byte AAD** (`seq‖type‖version‖length`, plaintext
+length, RFC 5246 §6.2.3.3); **GCM 8-byte explicit nonce on the wire** (`salt(4)‖explicit(8)`, RFC 5288 §3)
+vs **ChaCha20-Poly1305 implicit nonce** (`iv XOR seq`, RFC 7905). Legacy CBC intentionally skipped. The
+RFC 5246 §6.2.1 2¹⁴ plaintext cap is enforced on seal AND open. `tests/tcyr/tls12_record.tcyr` (17 asserts:
+both AEADs round-trip + wire format + tag-tamper → DECRYPT + over-cap → RECORD_OVERFLOW).
+
+**Verification depth (ultracode):** an 18-agent adversarial spec-conformance review (4 lenses, each finding
+independently refuted) cleared 13 of 14 findings — the one confirmed P3 (missing 2¹⁴ plaintext cap) was
+fixed before cut. The new record code was additionally proven on **aarch64**: a native aarch64 `cycc`
+(x86→cross→native) compiled the test and ran it under qemu → **17/17**, matching x86. sigil 3.7.3 already
+vendors every 1.2 primitive (`tls12_prf_sha256/384`, RSA PKCS1/PSS) — no crypto blocker. api-surface
+snapshot +4 public `tls_native::*` fns; compiler binary changes only by the `--version` string.
+
+**Next:** **.73 — TLS 1.2 handshake + PRF key derivation** (produces the 4-byte GCM salt / 12-byte ChaCha
+IV this record layer takes as input), then cert + Finished, the 1.2 ciphersuite set, and 1.2 e2e; then
+Mini-arc E (consumer wiring + closeout), the near-end Windows repair cluster, and cycle closeout.
+
 ## Session close — 2026-06-05 (.71 ship — callptr→real-Win64-callee frame fix (ECALLPTR_PE) + COM vtable dispatch works on real cass)
 
 Closing **v6.0.71** — the v6.0.70 §0 follow-up. check.sh **85/85**; self-host byte-identical on

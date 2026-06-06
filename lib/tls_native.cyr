@@ -13,9 +13,13 @@
 #     `tls_native_set_alpn`, `tls_native_set_version_range`, `tls_native_close`
 #     (no clean close_notify). A consumer hits these silently. Tracked:
 #     issues/2026-06-04-shipped-broken-functionality-found-by-consumers.md.
-#   NOT YET DONE — TLS 1.2 backport (Mini-arc D) + consumer wiring/closeout
-#     (Mini-arc E); pinned in roadmap.md (v6.0.x, .68–x). Per-slot landing
-#     history in CHANGELOG.
+#   IN PROGRESS — TLS 1.2 backport (Mini-arc D). .72 landed the 1.2 AEAD
+#     record layer (record_seal_12 / _open_12: 13-byte AAD, GCM explicit
+#     nonce per RFC 5288, ChaCha20-Poly1305 implicit nonce per RFC 7905;
+#     legacy CBC intentionally skipped). Still ahead: 1.2 handshake +
+#     PRF key derivation + cert/Finished + ciphersuites + e2e.
+#   NOT YET DONE — consumer wiring/closeout (Mini-arc E); pinned in
+#     roadmap.md (v6.0.x). Per-slot landing history in CHANGELOG.
 #
 # **Why a sovereign stack** (vs the existing `lib/tls.cyr` libssl
 # wrapper):
@@ -2842,6 +2846,136 @@ fn tls_native_record_open(cipher, key, static_iv, seq8, record, record_len, out,
     store64(out_ct, load8(out + idx) & 0xFF);
     tls_native_seq_increment(seq8);
     return idx;
+}
+
+# ================================================================
+# TLS 1.2 record-layer protection (Mini-arc D, .72)
+# ================================================================
+# TLS 1.2 AEAD records differ from 1.3 in three ways (RFC 5246
+# §6.2.3.3, RFC 5288 for AES-GCM, RFC 7905 for ChaCha20-Poly1305):
+#   1. No TLSInnerPlaintext — the real content type rides the OUTER
+#      record header; there is no inner-type byte and no padding.
+#   2. AAD is the classic 13 bytes: seq_num(8) ‖ type(1) ‖ version(2)
+#      ‖ length(2), where length is the PLAINTEXT length.
+#   3. AES-GCM carries an 8-byte explicit nonce on the wire (we use the
+#      sequence number, RFC 5288 §3); the 12-byte GCM nonce is
+#      salt(4, from the key block) ‖ explicit(8). ChaCha20-Poly1305
+#      (RFC 7905) instead reuses the 1.3-style implicit nonce
+#      (iv XOR seq) with NO explicit field.
+# Legacy CBC suites are intentionally NOT implemented (modern-peer set
+# only). See CHANGELOG [6.0.72].
+
+# 1 if `cipher` is an AES-GCM suite (explicit nonce on the wire under
+# TLS 1.2), 0 for ChaCha20-Poly1305 (implicit nonce) — RFC 5288 vs 7905.
+fn _tn_cipher_is_gcm(cipher): i64 {
+    if (cipher == TLS_AES_128_GCM_SHA256) { return 1; }
+    if (cipher == TLS_AES_256_GCM_SHA384) { return 1; }
+    return 0;
+}
+
+# Build the 12-byte TLS-1.2 AES-GCM nonce: salt(4) ‖ explicit(8)
+# (RFC 5288 §3). `salt4` is the 4-byte implicit IV from the key block;
+# `explicit8` is the 8-byte explicit nonce (the value sent on the wire).
+fn tls_native_aead_nonce_12_gcm(salt4, explicit8, nonce_out12): i64 {
+    memcpy(nonce_out12, salt4, 4);
+    memcpy(nonce_out12 + 4, explicit8, 8);
+    return TLS_OK;
+}
+
+# Build the 13-byte TLS-1.2 AEAD additional-data:
+#   seq_num(8) ‖ type(1) ‖ version(2) ‖ length(2)
+# `length` is the plaintext length (RFC 5246 §6.2.3.3). `seq8` is the
+# 8-byte BE sequence buffer; copied verbatim.
+fn tls_native_record_aad_12(seq8, ct, version, length, aad_out13): i64 {
+    memcpy(aad_out13, seq8, 8);
+    store8(aad_out13 + 8, ct & 0xFF);
+    _tn_be16_w(aad_out13 + 9, version);
+    _tn_be16_w(aad_out13 + 11, length);
+    return 13;
+}
+
+# Seal `plain` (real content type `ct`) into a TLS 1.2 AEAD record at
+# `out`. `iv` is the GCM 4-byte salt or the ChaCha 12-byte IV per the
+# cipher. Increments `seq8`. Returns the total record length, or a
+# negative TLS_ERR_*.
+fn tls_native_record_seal_12(cipher, key, iv, seq8, ct, plain, plain_len, out, out_max): i64 {
+    var tag_len = tls_native_cipher_tag_len(cipher);
+    if (tag_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
+    var is_gcm = _tn_cipher_is_gcm(cipher);
+    var explicit_len = 0;
+    if (is_gcm != 0) { explicit_len = 8; }
+    # RFC 5246 §6.2.1: TLSPlaintext.fragment is capped at 2^14 (16384)
+    # independent of AEAD expansion. Defend the cap at the record layer —
+    # the ciphertext-total cap below would otherwise let a ChaCha fragment
+    # (explicit_len 0) reach 16624 before tripping, emitting an over-length
+    # record a strict peer rejects with record_overflow. See CHANGELOG [6.0.72].
+    if (plain_len > TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_RECORD_OVERFLOW; }
+    var rec_len = explicit_len + plain_len + tag_len;
+    if (rec_len > TLS_RECORD_MAX_CIPHERTEXT) { return TLS_ERR_RECORD_OVERFLOW; }
+    var total = TLS_RECORD_HEADER_LEN + rec_len;
+    if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
+    var aad[13];
+    tls_native_record_aad_12(seq8, ct, 0x0303, plain_len, &aad);
+    var nonce[12];
+    if (is_gcm != 0) {
+        tls_native_aead_nonce_12_gcm(iv, seq8, &nonce);
+    } else {
+        tls_native_aead_nonce(iv, seq8, &nonce);
+    }
+    var wh = tls_native_record_write_header(out, ct, 0x0303, rec_len);
+    if (wh < 0) { return wh; }
+    var body = out + TLS_RECORD_HEADER_LEN;
+    if (is_gcm != 0) {
+        memcpy(body, seq8, 8);
+        body = body + 8;
+    }
+    var tag_out = body + plain_len;
+    var er = tls_native_aead_encrypt(cipher, key, &nonce, &aad, 13, plain, plain_len, body, tag_out);
+    if (er != TLS_OK) { return er; }
+    tls_native_seq_increment(seq8);
+    return total;
+}
+
+# Open a TLS 1.2 AEAD record. Writes plaintext to `out`, the record's
+# content type to `out_ct`, increments `seq8`. Returns the plaintext
+# length, or a negative TLS_ERR_* (TLS_ERR_DECRYPT on a bad tag).
+fn tls_native_record_open_12(cipher, key, iv, seq8, record, record_len, out, out_max, out_ct): i64 {
+    var tag_len = tls_native_cipher_tag_len(cipher);
+    if (tag_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
+    var is_gcm = _tn_cipher_is_gcm(cipher);
+    var explicit_len = 0;
+    if (is_gcm != 0) { explicit_len = 8; }
+    if (record_len < TLS_RECORD_HEADER_LEN + explicit_len + tag_len) { return TLS_ERR_BAD_RECORD; }
+    var rct = 0;
+    var ver = 0;
+    var len = 0;
+    if (tls_native_record_read_header(record, record_len, &rct, &ver, &len) < 0) {
+        return TLS_ERR_BAD_RECORD;
+    }
+    if (TLS_RECORD_HEADER_LEN + len > record_len) { return TLS_ERR_BAD_RECORD; }
+    var pt_len = len - explicit_len - tag_len;
+    if (pt_len < 0) { return TLS_ERR_BAD_RECORD; }
+    # RFC 5246 §6.2.3: a received fragment exceeding 2^14 is a
+    # record_overflow condition — reject before decrypt (incoming-DoS
+    # defense + symmetry with seal_12's cap). See CHANGELOG [6.0.72].
+    if (pt_len > TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_RECORD_OVERFLOW; }
+    if (pt_len > out_max) { return TLS_ERR_BUFFER_FULL; }
+    var body = record + TLS_RECORD_HEADER_LEN;
+    var nonce[12];
+    if (is_gcm != 0) {
+        tls_native_aead_nonce_12_gcm(iv, body, &nonce);
+        body = body + 8;
+    } else {
+        tls_native_aead_nonce(iv, seq8, &nonce);
+    }
+    var aad[13];
+    tls_native_record_aad_12(seq8, rct, ver, pt_len, &aad);
+    var tag_in = body + pt_len;
+    var dr = tls_native_aead_decrypt(cipher, key, &nonce, &aad, 13, body, pt_len, tag_in, out);
+    if (dr != TLS_OK) { return dr; }
+    store64(out_ct, rct & 0xFF);
+    tls_native_seq_increment(seq8);
+    return pt_len;
 }
 
 # Derive + install the server and client handshake-traffic key/IV from

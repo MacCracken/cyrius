@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.72] — 2026-06-06
+
+**Native TLS arc resumes — TLS 1.2 AEAD record layer (Mini-arc D, step 1 of the 1.2 backport).**
+With the full TLS 1.3 stack shipped (server .15–.23 + client .24–.31), the TLS arc resumes at the 1.2
+backport. **Slate re-ordered (leader direction 2026-06-06):** the `.71`-deferred windbg/DXGI demonstrator
+residual + the standalone Windows-repair slot are *back-burned* into a single near-end Windows repair
+cluster that runs **after** the TLS arc — *"back burn the windows items posted from .72 until later after
+tls … windows remaining repair goes to near end of 6.0.x line of work."* So `.72` onward is native TLS.
+
+This release adds the record-layer half: TLS 1.2 AEAD protect/unprotect, which differs from 1.3 in three
+ways (RFC 5246 §6.2.3.3, RFC 5288 for AES-GCM, RFC 7905 for ChaCha20-Poly1305) — the real content type
+rides the **outer** header (no 1.3 inner-type/padding); the AAD is the classic **13 bytes**
+(`seq ‖ type ‖ version ‖ length`, plaintext length); and **AES-GCM carries an 8-byte explicit nonce on
+the wire** (nonce = `salt(4) ‖ explicit(8)`) while **ChaCha20-Poly1305 reuses the implicit nonce**
+(`iv XOR seq`, no explicit field). Legacy CBC is intentionally not implemented (modern-peer set only).
+
+### Added
+
+- **`tls_native_record_seal_12` / `tls_native_record_open_12`** (`lib/tls_native.cyr`) — TLS 1.2 AEAD
+  record protect / unprotect. `seal_12` writes the real content type to the outer header, the 13-byte 1.2
+  AAD with the plaintext length, the GCM 8-byte explicit nonce (the sequence number, RFC 5288 §3) for GCM
+  suites, and the ciphertext+tag; `open_12` reads the explicit nonce **from the wire** (so it interops with
+  a peer that chose a different explicit nonce), rebuilds the AAD, decrypts/verifies, and returns the
+  content type + plaintext length. Both increment the per-direction sequence and **enforce the RFC 5246
+  §6.2.1 plaintext cap (2¹⁴)** on seal *and* open (`TLS_ERR_RECORD_OVERFLOW`) — the ciphertext-total cap
+  alone would otherwise let a ChaCha fragment reach 16624 bytes before tripping.
+- **`tls_native_aead_nonce_12_gcm`** (GCM `salt(4) ‖ explicit(8)` nonce, RFC 5288 §3),
+  **`tls_native_record_aad_12`** (the 13-byte TLS-1.2 AAD), and the internal **`_tn_cipher_is_gcm`**
+  predicate that selects explicit-nonce (GCM) vs implicit-nonce (ChaCha, RFC 7905) framing.
+- **`tests/tcyr/tls12_record.tcyr`** (17 asserts) — round-trips both AEADs (AES-256-GCM with the wire
+  explicit nonce; ChaCha20-Poly1305 without), asserts the wire format (header content type, version,
+  length field, GCM explicit-nonce bytes), sequence advance, **tag-tamper → `TLS_ERR_DECRYPT`**, and the
+  `>2¹⁴`-plaintext `RECORD_OVERFLOW` rejection.
+
+### Verified
+
+- **Cross-OS self-host byte-identical on all four real-hardware hosts**: `pi` (aarch64-Linux), `cass`
+  (Windows PE), `ach` (x86-macOS), `ecb` (arm64-macOS) — `cycc 6.0.72` self-hosts via
+  `scripts/cross-os-selfhost.sh`.
+- **New record code proven on aarch64** — a native aarch64 `cycc` (built x86→cross→native) compiled
+  `tls12_record.tcyr` and ran it under qemu: **17/17** (matches x86-Linux 17/17), proving the new
+  functions' aarch64 codegen + sigil AEAD round-trip on ARM, not just x86.
+- **Adversarial spec-conformance review** (18 agents across 4 lenses — RFC-conformance, symmetric-bug,
+  memory/arithmetic, integration — each finding then independently refuted): **13 of 14 findings refuted**
+  (the recurring "AES-128-GCM advertised-but-unwired" alarm is dead code — `tls_native_cipher_supported`
+  gates 0x1301 out end-to-end; record-version non-validation is correct because the version is
+  authenticated *inside* the AAD). The **1 confirmed finding** (P3: missing 2¹⁴ plaintext cap) is fixed in
+  this release.
+- Local: self-host byte-identical (x86_64); `check.sh` **85/85**; api-surface snapshot updated (+4 public
+  `tls_native::*` fns). The compiler binary changes only by the embedded `--version` string (pure stdlib
+  addition otherwise).
+
+### Notes
+
+- **Mini-arc D remaining** (next slots): 1.2 handshake + PRF key derivation (the 4-byte GCM salt / 12-byte
+  ChaCha IV this record layer takes as input), certificate + Finished (`verify_data` MAC), the 1.2
+  ciphersuite set, and a localhost + real-peer e2e. Then Mini-arc E (consumer wiring + closeout), the
+  near-end Windows repair cluster, and cycle closeout. sigil 3.7.3 already vendors every 1.2 primitive
+  (`tls12_prf_sha256/384`, RSA PKCS1/PSS sign+verify) — no crypto blocker.
+
 ## [6.0.71] — 2026-06-05
 
 **`callptr` to a real Win64 callee no longer corrupts the caller — the COM-vtable-call path works.**

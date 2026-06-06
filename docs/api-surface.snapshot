@@ -3616,6 +3616,7 @@ tls::tls_write/3
 tls::tls_write_early_data/3
 tls_native::tls_native_accept/2
 tls_native::tls_native_aead_nonce/3
+tls_native::tls_native_aead_nonce_12_gcm/3
 tls_native::tls_native_available/0
 tls_native::tls_native_cipher_hash_algo/1
 tls_native::tls_native_cipher_iv_len/1
@@ -3659,10 +3660,13 @@ tls_native::tls_native_open_app/5
 tls_native::tls_native_psk_binder/6
 tls_native::tls_native_read/3
 tls_native::tls_native_record_aad/4
+tls_native::tls_native_record_aad_12/5
 tls_native::tls_native_record_fragment_count/1
 tls_native::tls_native_record_open/9
+tls_native::tls_native_record_open_12/9
 tls_native::tls_native_record_read_header/5
 tls_native::tls_native_record_seal/9
+tls_native::tls_native_record_seal_12/9
 tls_native::tls_native_record_write_header/4
 tls_native::tls_native_seal_app/5
 tls_native::tls_native_seq_increment/1

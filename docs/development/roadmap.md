@@ -538,22 +538,28 @@ premise-check each at slot entry:
    **DEFERRED to .72 (leader-approved split):** on the REAL GPU, 1-arg COM `Release`/`AddRef` + the full
    `dxgi_vram_bytes()` chain still AV — a SECOND interaction the alignment fix doesn't cover (emit is
    byte-identical to the working cases; reproduces only on real DXGI hardware) → needs windbg/cdb on cass.
-11. **.72 — windbg-on-cass: finish the DXGI demonstrator** (the .71 residual): install a Windows debugger
-   on cass, single-step the 1-arg-COM / multi-COM-call AV, finish `lib/dxgi.cyr` `dxgi_vram_bytes()` against
-   the real GPU. Then the remaining Windows partials (D2 wrapper port / deps-lock / .ps1 installer).
-12. **.73–x — native TLS items** (was .72–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
-   (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
-   version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
-   2026-06-04, overriding the general upfront-cross-walk default for this case).
-6. **.x–y — Windows fixes**: PE cycc-as-compiler multibug bug 2+
-   (`issues/2026-06-02-windows-cycc-runtime-multibug.md`, verify on cass) + `cyrius deps
-   --lock` Windows-portable hash + the native Windows `.ps1` installer + AGNOS-target
-   install.
-7. **LAST before closeout — cleanup / refactor cluster + sigil 3.7.3 fold**: dead
+11. **.72–x — native TLS items** (pulled ahead of the Windows DXGI residual per leader
+   direction 2026-06-06: "back burn the windows items posted from .72 until later after
+   tls"): Mini-arc D (TLS 1.2 backport, was .34–.39) + Mini-arc E (consumer wiring +
+   closeout, was .40–.42). sandhi is handled AT THIS ARC when we get there — version-bump
+   sandhi + update language docs then; NOT cross-walked/pre-filed now (user 2026-06-04,
+   overriding the general upfront-cross-walk default for this case).
+12. **Near-end — Windows remaining repair cluster** (back-burned 2026-06-06, user
+   direction: "windows remaining repair goes to near end of 6.0.x line of work" — runs
+   AFTER the TLS arc above). Consolidates the .71-deferred DXGI residual with the prior
+   standalone Windows-fixes slot:
+   - **windbg-on-cass: finish the DXGI demonstrator** (the .71 residual): install a Windows
+     debugger on cass, single-step the 1-arg-COM / multi-COM-call AV, finish `lib/dxgi.cyr`
+     `dxgi_vram_bytes()` against the real GPU.
+   - PE cycc-as-compiler multibug bug 2+
+     (`issues/2026-06-02-windows-cycc-runtime-multibug.md`, verify on cass).
+   - `cyrius deps --lock` Windows-portable hash + the native Windows `.ps1` installer +
+     AGNOS-target install + the remaining Windows partials (D2 wrapper port / deps-lock).
+13. **LAST before closeout — cleanup / refactor cluster + sigil 3.7.3 fold**: dead
    `ret_patches` 2 KB heap region, byte-array literal peephole, dead-code careful sweep,
    `_TARGET_*` flag consolidation, `programs/check.cyr` modularization, **+ fold sigil
    3.7.3 into stdlib** (user 2026-06-04 — sandhi-pattern, byte-identical at the tag).
-8. **Closeout → v6.1.0**: the CLAUDE.md "Closeout Pass" § — mechanical fail-fast
+14. **Closeout → v6.1.0**: the CLAUDE.md "Closeout Pass" § — mechanical fail-fast
    (self-host + bootstrap closure + check.sh + cross-OS 4-host) → judgment passes (heap
    map / dead code / refactor / code review / cleanup) → docs sync (incl. reconciling the
    stale slot-number lines this long cycle accreted).

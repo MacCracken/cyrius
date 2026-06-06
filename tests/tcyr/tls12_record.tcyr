@@ -1,0 +1,84 @@
+# tls12_record.tcyr — v6.0.72 TLS 1.2 record-layer round-trip
+#
+# Mini-arc D step 1 (.72) adds the TLS 1.2 AEAD record layer
+# (tls_native_record_seal_12 / _open_12 + the 13-byte AAD and the
+# GCM explicit-nonce construction). This seals a plaintext and opens
+# it back for both supported AEADs, asserting the recovered content,
+# the content type, the wire format (explicit nonce present for GCM,
+# absent for ChaCha20-Poly1305 per RFC 7905), sequence advance, and
+# tag-tamper rejection. See CHANGELOG [6.0.72].
+
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+test_group("TLS 1.2 record layer (.72)");
+
+var plain = "hello tls 1.2 record";        # 20 bytes
+
+# --- AES-256-GCM (RFC 5288): 8-byte explicit nonce on the wire ---
+var gkey[32];
+var i = 0;
+while (i < 32) { store8(&gkey + i, i + 1); i = i + 1; }
+var gsalt[4];                               # 4-byte implicit IV (salt)
+store8(&gsalt,     0xDE);
+store8(&gsalt + 1, 0xAD);
+store8(&gsalt + 2, 0xBE);
+store8(&gsalt + 3, 0xEF);
+
+var wseq[8]; tls_native_seq_init(&wseq);
+var rseq[8]; tls_native_seq_init(&rseq);
+
+var rec[128];
+var n = tls_native_record_seal_12(TLS_AES_256_GCM_SHA384, &gkey, &gsalt, &wseq, TLS_CT_APPLICATION_DATA, plain, 20, &rec, 128);
+# total = 5 (header) + 8 (explicit) + 20 (pt) + 16 (tag) = 49
+assert_eq(n, 49, "GCM seal_12 total record length = 49");
+assert_eq(load8(&rec), TLS_CT_APPLICATION_DATA, "outer header carries the real content type 23");
+assert_eq(_tn_be16_r(&rec + 1), 0x0303, "record version = 0x0303");
+assert_eq(_tn_be16_r(&rec + 3), 44, "record length = 8+20+16");
+assert_eq(_tn_be64_r(&rec + 5), 0, "GCM explicit nonce on the wire = seq 0");
+assert_eq(_tn_be64_r(&wseq), 1, "write seq incremented to 1 after seal");
+
+var out[128];
+var ct = 0;
+var m = tls_native_record_open_12(TLS_AES_256_GCM_SHA384, &gkey, &gsalt, &rseq, &rec, n, &out, 128, &ct);
+assert_eq(m, 20, "GCM open_12 recovers 20 plaintext bytes");
+assert_eq(ct, TLS_CT_APPLICATION_DATA, "recovered content type = 23");
+assert_eq(_tn_ct_eq(&out, plain, 20), 1, "GCM round-trip plaintext matches");
+assert_eq(_tn_be64_r(&rseq), 1, "read seq incremented to 1 after open");
+
+# Tag-tamper → TLS_ERR_DECRYPT
+store8(&rec + n - 1, load8(&rec + n - 1) ^ 0xFF);
+var rseq2[8]; tls_native_seq_init(&rseq2);
+var ct2 = 0;
+assert_eq(tls_native_record_open_12(TLS_AES_256_GCM_SHA384, &gkey, &gsalt, &rseq2, &rec, n, &out, 128, &ct2), TLS_ERR_DECRYPT, "tampered GCM tag → TLS_ERR_DECRYPT");
+
+# --- ChaCha20-Poly1305 (RFC 7905): implicit nonce, NO explicit field ---
+var ckey[32];
+var j = 0;
+while (j < 32) { store8(&ckey + j, j + 7); j = j + 1; }
+var civ[12];
+var k = 0;
+while (k < 12) { store8(&civ + k, k + 0x20); k = k + 1; }
+var wseqc[8]; tls_native_seq_init(&wseqc);
+var rseqc[8]; tls_native_seq_init(&rseqc);
+
+var recc[128];
+var nc = tls_native_record_seal_12(TLS_CHACHA20_POLY1305_SHA256, &ckey, &civ, &wseqc, TLS_CT_HANDSHAKE, plain, 20, &recc, 128);
+# total = 5 + 0 (no explicit nonce) + 20 + 16 = 41
+assert_eq(nc, 41, "ChaCha seal_12 total = 41 (no explicit nonce)");
+assert_eq(_tn_be16_r(&recc + 3), 36, "ChaCha record length = 20+16");
+
+var outc[128];
+var ctc = 0;
+var mc = tls_native_record_open_12(TLS_CHACHA20_POLY1305_SHA256, &ckey, &civ, &rseqc, &recc, nc, &outc, 128, &ctc);
+assert_eq(mc, 20, "ChaCha open_12 recovers 20 bytes");
+assert_eq(ctc, TLS_CT_HANDSHAKE, "ChaCha recovered content type = 22");
+assert_eq(_tn_ct_eq(&outc, plain, 20), 1, "ChaCha round-trip plaintext matches");
+
+# --- RFC 5246 §6.2.1 plaintext cap (defense-in-depth) ---
+# seal_12 rejects a >2^14 plaintext before touching any buffer (the cap
+# check precedes the AEAD read), so a dummy small out buffer is fine here.
+var wseqx[8]; tls_native_seq_init(&wseqx);
+assert_eq(tls_native_record_seal_12(TLS_AES_256_GCM_SHA384, &gkey, &gsalt, &wseqx, TLS_CT_APPLICATION_DATA, plain, TLS_RECORD_MAX_PLAINTEXT + 1, &rec, 128), TLS_ERR_RECORD_OVERFLOW, "seal_12 rejects >16384 plaintext with RECORD_OVERFLOW");
+
+var r = assert_summary();
