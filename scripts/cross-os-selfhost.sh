@@ -33,10 +33,23 @@
 # See CHANGELOG [6.0.45].
 set -e
 
-HOST="${1:?usage: cross-os-selfhost.sh <ecb|ach|pi|cass|ecb-install>}"
+HOST="${1:?usage: cross-os-selfhost.sh <ecb|ach|pi|cass|ecb-install> [tcyr-glob]}"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing (run bootstrap first)"; exit 1; }
+
+# Cross-OS LIB-TEST fallback (v6.0.75) — INTERIM mechanism, the trigger is
+# opt-in so normal self-host runs stay lean. Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST)
+# is a glob; when set, AFTER the cycc self-host passes on this host, the
+# slot's matching `tests/tcyr/<glob>*.tcyr` are compiled by the freshly-built
+# NATIVE host cycc and run on real hardware — catching stdlib breakage (a
+# syscall the target doesn't translate, an ABI/byte-order bug) BEFORE CI/ports.
+# It bundles from THIS repo + scp's, so it does NOT depend on the host having a
+# current checkout. FALLBACK, not the gate: CI still runs the full matrix; this
+# is "catch before CI if possible" (user 2026-06-06). A better mechanism (per-
+# platform test manifests, a PE-safe subset for cass since fork/socketpair are
+# POSIX-only) is TODO. Fail-loud: a lib-test failure exits 1.
+LIBTEST="${2:-${CYRIUS_CROSS_OS_LIBTEST:-}}"
 
 # The ssh-config alias for this job (ecb-install reuses the ecb host).
 ALIAS="$HOST"
@@ -73,7 +86,13 @@ SSHO="-o ConnectTimeout=20 -o BatchMode=yes -o HostName=$IP -o HostKeyAlias=$HN 
 # ecb-install, which builds its own tarball). Built from clean source so what
 # we verify is what we ship.
 cat src/main.cyr | ./build/cycc > /tmp/_co_l && chmod +x /tmp/_co_l
-tar czf /tmp/_co.tgz src lib tests/win VERSION   # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg)
+# tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
+# lib/assert.cyr only ride along when the lib-test fallback is triggered.
+if [ -n "$LIBTEST" ]; then
+  tar czf /tmp/_co.tgz src lib tests/win tests/tcyr VERSION
+else
+  tar czf /tmp/_co.tgz src lib tests/win VERSION
+fi
 
 case "$HOST" in
   ecb)
@@ -179,3 +198,41 @@ case "$HOST" in
 esac
 
 echo "SELFHOST_OK: $HOST"
+
+# ---- LIB-TEST fallback phase (v6.0.75; opt-in) -------------------------------
+# After self-host, compile + run the slot's matching tests/tcyr/<glob>*.tcyr
+# with the NATIVE host cycc just built (ecb=r1r codesigned / ach,pi=r1 /
+# cass=c2.exe), on real hardware. Glob is expanded LOCALLY (avoids host-side
+# globbing, esp. cmd.exe). Fail-loud. ecb-install has no native cycc → skipped.
+if [ -n "$LIBTEST" ]; then
+  case "$HOST" in
+    ecb|ach|pi|cass) ;;
+    *) echo "  lib-test: $HOST is not a lib-test host — skipped"; LIBTEST="" ;;
+  esac
+fi
+if [ -n "$LIBTEST" ]; then
+  TESTS=$(ls tests/tcyr/${LIBTEST}*.tcyr 2>/dev/null || true)
+  [ -n "$TESTS" ] || { echo "LIBTEST_FAIL: no tests/tcyr matched '${LIBTEST}'"; exit 1; }
+  echo "── lib-test fallback on $HOST (native cycc, real hardware) ──"
+  for t in $TESTS; do
+    base=$(basename "$t")
+    case "$HOST" in
+      ecb)
+        ssh $SSHO ecb "cd ~/_cyaud && cat $t | CYRIUS_MACHO_ARM=1 ./r1r > _lt 2>/dev/null && chmod +x _lt && codesign -s - -f _lt >/dev/null 2>&1 && (rc=0; ./_lt >/dev/null 2>&1 || rc=\$?; [ \$rc -eq 0 ])" \
+          || { echo "  LIBTEST_FAIL: $base on ecb"; exit 1; }
+        ;;
+      ach|pi)
+        ssh $SSHO $HOST "cd ~/_cyaud && cat $t | ./r1 > _lt 2>/dev/null && chmod +x _lt && (rc=0; ./_lt >/dev/null 2>&1 || rc=\$?; [ \$rc -eq 0 ])" \
+          || { echo "  LIBTEST_FAIL: $base on $HOST"; exit 1; }
+        ;;
+      cass)
+        # PE: the glob MUST select PE-safe tests (fork/socketpair are POSIX-only).
+        wt=$(echo "$t" | tr '/' '\\')
+        ssh $SSHO cass "cmd /v /c \"cd /d %USERPROFILE%\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
+          || { echo "  LIBTEST_FAIL: $base on cass (PE-incompatible? fork/socketpair are POSIX-only)"; exit 1; }
+        ;;
+    esac
+    echo "  PASS: $base on $HOST"
+  done
+  echo "LIBTEST_OK: $HOST ($(echo "$TESTS" | wc -l | tr -d ' ') tests)"
+fi

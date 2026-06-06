@@ -833,6 +833,18 @@ fn _msx(S, lin, classed): i64 {
     EB(S, (classed >> 16) & 0xFF); EB(S, (classed >> 24) & 0xFF);
     return 0;
 }
+# Like _msx but with a 32-bit `cmp rax, imm32` for Linux syscall numbers
+# > 255 (getrandom is 318 — the imm8 cmp in _msx can't reach it). v6.0.75.
+fn _msx32(S, lin, classed): i64 {
+    EB(S, 0x48); EB(S, 0x3D);                            # cmp rax, imm32 (REX.W 3D)
+    EB(S, lin & 0xFF); EB(S, (lin >> 8) & 0xFF);
+    EB(S, (lin >> 16) & 0xFF); EB(S, (lin >> 24) & 0xFF);
+    EB(S, 0x75); EB(S, 0x07);                            # jne +7 (skip the mov)
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);               # mov rax, imm32:
+    EB(S, classed & 0xFF); EB(S, (classed >> 8) & 0xFF);
+    EB(S, (classed >> 16) & 0xFF); EB(S, (classed >> 24) & 0xFF);
+    return 0;
+}
 fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 0,  0x2000003);   # read     0  → 3
     _msx(S, 1,  0x2000004);   # write    1  → 4
@@ -877,6 +889,11 @@ fn EMACHO_SYSXLAT(S): i64 {
     # v6.0.60: dir enumeration — getdents64 217 → getdirentries64 344 (0x158).
     # fs.cyr passes the 4th basep out-param (Linux ignores it). Parity w/ arm64.
     _msx(S, 217, 0x2000158);  # getdents64 217 → getdirentries64 344
+    # v6.0.75: getrandom 318 → Darwin getentropy 500 (cross-arch parity with
+    # the aarch64 ESYSXLAT). 318 > 255 → needs the imm32 cmp (_msx32). The
+    # 0-on-success → byte-count return is normalized in sys_getrandom (stdlib),
+    # so no x86 post-syscall fixup is needed.
+    _msx32(S, 318, 0x20001F4);  # getrandom 318 → getentropy 500
     return 0;
 }
 

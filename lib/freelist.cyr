@@ -68,12 +68,30 @@ fn _fl_block_size(cls): i64 {
     return 0;
 }
 
+# mmap flags for an anonymous private mapping. CRITICAL cross-target gotcha
+# (v6.0.75): MAP_ANON is target-specific — Darwin's is 0x1000, Linux's
+# MAP_ANONYMOUS (lib/mmap.cyr) is 0x20. The freelist is ONE shared file
+# across targets (unlike the bump allocator, which dispatches to
+# alloc_macos.cyr), so it must pick the right value itself. Using the Linux
+# 0x20 on Darwin made every freelist mmap return MAP_FAILED → the first
+# store SIGSEGV'd, which crashed EVERY fl_alloc consumer — all of sigil's
+# crypto (sha256/x25519/hex_decode), so the entire TLS/crypto stack was
+# non-functional on macOS (found by the .75 cross-OS lib-test). The bump
+# allocator already used 0x1002 = MAP_PRIVATE|MAP_ANON(0x1000) in
+# alloc_macos.cyr. See CHANGELOG [6.0.75].
+fn _fl_map_flags(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return MAP_PRIVATE | 0x1000;
+    #endif
+    return MAP_PRIVATE | MAP_ANONYMOUS;
+}
+
 # Allocate from arena (bump within mmap'd chunk)
 fn _fl_arena_alloc(bsize): i64 {
     if (_fl_arena_pos + bsize > _fl_arena_end) {
         # Need new arena chunk
         var prot = PROT_READ | PROT_WRITE;
-        var flags = MAP_PRIVATE | MAP_ANONYMOUS;
+        var flags = _fl_map_flags();
         _fl_arena = syscall(SYS_MMAP, 0, FL_ARENA_SIZE, prot, flags, 0 - 1, 0);
         _fl_arena_pos = _fl_arena;
         _fl_arena_end = _fl_arena + FL_ARENA_SIZE;
@@ -91,7 +109,7 @@ fn fl_alloc(size): i64 {
         # Large allocation: mmap directly
         var total = size + 16;
         var prot = PROT_READ | PROT_WRITE;
-        var flags = MAP_PRIVATE | MAP_ANONYMOUS;
+        var flags = _fl_map_flags();
         var blk = syscall(SYS_MMAP, 0, total, prot, flags, 0 - 1, 0);
         store64(blk, 0);
         store64(blk + 8, total);

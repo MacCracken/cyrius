@@ -287,8 +287,19 @@ fn sys_getdents64(fd, buf, count): i64 {
 # Fill `buf` with `len` bytes from the kernel CSPRNG. `flags`
 # is GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE (see
 # lib/random.cyr for constants). Returns bytes filled or -errno.
+#
+# macOS portability (v6.0.75): on Mach-O the backend ESYSXLAT rewrites the
+# getrandom syscall (318/278) to Darwin getentropy (500), which fills `len`
+# bytes (≤256) and returns 0 on success / -errno on failure — NOT the byte
+# count Linux getrandom returns. Normalize that 0→len here so every caller
+# gets the Linux contract on both platforms. This is a no-op on Linux:
+# getrandom only returns 0 when len==0 (otherwise it returns a positive
+# count or -errno), so `r==0 → return len` already equals `return r` there.
+# (getentropy's 256-byte cap is ample for TLS's ≤32-byte requests.)
 fn sys_getrandom(buf, len, flags): i64 {
-    return syscall(SYS_GETRANDOM, buf, len, flags);
+    var r = syscall(SYS_GETRANDOM, buf, len, flags);
+    if (r == 0) { return len; }
+    return r;
 }
 
 # ================================================================

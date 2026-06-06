@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**macOS CSPRNG + freelist mmap repair + a cross-OS lib-test gate — making the native TLS/crypto stack
+actually run on macOS.** The native TLS/crypto stack had *never run* on macOS — only cycc-self-host
+ever ran on the Apple-Silicon host (ecb), never the `.tcyr` tests. A new opt-in cross-OS **lib-test**
+fallback (run the slot's `tests/tcyr/<glob>*.tcyr` on the real host with its native cycc, after the
+self-host check) ran the TLS suite on real macOS for the first time and peeled back three stacked
+"found by ports" bugs. Two are fixed here; the third (sigil ECDSA-verify) is characterized + logged.
+
+### Fixed
+
+- **macOS CSPRNG was non-functional** — `sys_getrandom` issued Linux syscall **318** on Mach-O, where
+  Darwin has no getrandom there, so it returned garbage and filled every key/nonce/random buffer with
+  junk → the WHOLE native TLS stack (1.2 *and* 1.3) was broken on macOS. The backend ESYSXLAT (both
+  `aarch64` and `x86` Mach-O paths) now maps getrandom (318, plus the aarch64-Linux 278) → Darwin
+  **getentropy (500)**, and `sys_getrandom` (stdlib) normalizes getentropy's 0-on-success return to the
+  byte count Linux callers expect (a no-op on Linux — getrandom only returns 0 when len==0). getentropy's
+  256-byte cap is ample for TLS's ≤32-byte draws. Verified on ecb: `getrandom` fills the buffer + returns
+  the count; `build_client_hello` / `x25519` ECDH / `sha256` all work.
+- **The freelist allocator's mmap was broken on macOS** — `fl_alloc` used Linux `MAP_ANONYMOUS=0x20`, but
+  Darwin's `MAP_ANON` is **0x1000**, so every freelist mmap returned `MAP_FAILED` and the first store
+  SIGSEGV'd. Because all of sigil's crypto allocates via `fl_alloc`, *every* crypto function
+  (sha256/x25519/hex_decode/…) crashed on macOS, while the bump allocator (which has a Darwin path in
+  `alloc_macos.cyr`) worked. `lib/freelist.cyr` now picks `MAP_ANON` per target (`_fl_map_flags()`;
+  `CYRIUS_TARGET_MACOS` → `0x1000`). Verified on ecb: `fl_alloc` (arena + large), `sha256`, `x25519`,
+  `hex_decode`, X.509 cert/key parse, and **`ecdsa_p256_sign_der`** all work now.
+
+### Added
+
+- **Cross-OS lib-test fallback** (`scripts/cross-os-selfhost.sh <host> [tcyr-glob]`, opt-in via the glob
+  arg or `$CYRIUS_CROSS_OS_LIBTEST`). After the per-host cycc self-host, it compiles + runs the matching
+  `tests/tcyr/<glob>*.tcyr` with the freshly-built **native** host cycc on real hardware (codesign on
+  ecb; cmd.exe on cass), bundling from this repo so the host needs no current checkout. This closes the
+  gap that hid the macOS rot: self-host (lib-independent) was the only macOS gate, so stdlib bugs shipped
+  green. Interim mechanism (a better one — per-platform manifests, a PE-safe subset for cass since
+  fork/socketpair are POSIX-only — is TODO). Fail-loud; CI remains the backstop.
+
+### Known issues
+
+- **sigil ECDSA-P256 *verify* SIGSEGVs on macOS** — the last stacked layer; the EC public-key verify path
+  (`ecdsa_p256_verify_der` and/or `x509_cert_pubkey`) crashes on ecb while the sign path works. This blocks
+  the full TLS handshake on macOS (server-signature verification). Characterized + logged for a follow-up
+  slot: `docs/development/issues/2026-06-06-macos-ecdsa-verify-crash.md`.
+
 ## [6.0.74] — 2026-06-06
 
 **TLS 1.2 handshake message flow — the complete 1.2 (ECDHE) backport (Mini-arc D, step 3).**
