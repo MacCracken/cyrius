@@ -712,6 +712,24 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            if (sc_num == 61456) {
+                if (argc == 3) {
+                    # syscall(0xF010, cmdline, &argc) → CommandLineToArgvW
+                    # (shell32). v6.0.69 §3 — full-fidelity argv (lib/args_win.cyr).
+                    ECMDTOARGV_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61457) {
+                if (argc == 2) {
+                    # syscall(0xF011, ptr) → LocalFree (kernel32) — frees the
+                    # LPWSTR* CommandLineToArgvW returned. v6.0.69 §3.
+                    ELOCALFREE_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # Non-mapped syscalls: emitting the generic ESCPOPS path
             # below would produce an `0F 05` syscall that faults
             # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
@@ -725,8 +743,8 @@ fn PARSE_FACTOR(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
-            272);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            336);
         }
         ESCPOPS(S, argc);
         _cfo = 0;

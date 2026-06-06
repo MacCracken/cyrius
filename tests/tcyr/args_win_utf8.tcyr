@@ -1,0 +1,115 @@
+# Test: UTF-16LE → UTF-8 conversion of one wide arg (_args_w2u8).
+#
+# v6.0.69 §3: args_win.cyr splits the command line with the real shell32!
+# CommandLineToArgvW (Windows-only) and converts each returned wide arg to
+# UTF-8 via the shared, target-agnostic _args_w2u8 (lib/args.cyr). The
+# conversion is pure (no syscall), so we exercise it here on Linux with
+# hand-built UTF-16 — including the non-ASCII / surrogate paths the old
+# ASCII-only tokenizer corrupted. Run-verified before it reaches cass.
+# See CHANGELOG [6.0.69].
+
+include "lib/alloc.cyr"
+include "lib/args.cyr"
+include "lib/assert.cyr"
+
+# Write ASCII cstr `src` into `dst` as UTF-16LE + double-NUL terminator.
+fn _mk_wide(dst, src) {
+    var i = 0;
+    var o = 0;
+    while (load8(src + i) != 0) {
+        store8(dst + o, load8(src + i));
+        store8(dst + o + 1, 0);
+        o = o + 2;
+        i = i + 1;
+    }
+    store8(dst + o, 0);
+    store8(dst + o + 1, 0);
+    return o;
+}
+
+# Append one UTF-16 code unit (little-endian) at offset `o`; return o+2.
+fn _wput(dst, o, cu) {
+    store8(dst + o, cu & 0xFF);
+    store8(dst + o + 1, (cu >> 8) & 0xFF);
+    return o + 2;
+}
+
+# 1 if the NUL-terminated cstr at `p` equals `expected`.
+fn _streq_at(p, expected) {
+    var i = 0;
+    while (1) {
+        if (load8(p + i) != load8(expected + i)) { return 0; }
+        if (load8(p + i) == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+alloc_init();
+var wbuf = alloc(4096);
+var out = alloc(4096);
+var ret = 0;
+var o = 0;
+
+# Case 1: ASCII — UTF-8 == ASCII, NUL-terminated, len includes the NUL.
+_mk_wide(wbuf, "prog");
+ret = _args_w2u8(wbuf, out, 4096);
+test_group("ascii");
+assert_eq(ret, 5, "len = 5 (prog + NUL)");
+assert(_streq_at(out, "prog") == 1, "out = prog");
+
+# Case 2: U+00E9 (é) → 0xC3 0xA9 (2-byte).
+o = 0;
+o = _wput(wbuf, o, 0x00E9);
+store8(wbuf + o, 0); store8(wbuf + o + 1, 0);
+ret = _args_w2u8(wbuf, out, 4096);
+test_group("2-byte");
+assert_eq(ret, 3, "len = 3 (2 bytes + NUL)");
+assert_eq(load8(out + 0), 0xC3, "b0 = C3");
+assert_eq(load8(out + 1), 0xA9, "b1 = A9");
+assert_eq(load8(out + 2), 0, "b2 = NUL");
+
+# Case 3: U+20AC (€) → 0xE2 0x82 0xAC (3-byte).
+o = 0;
+o = _wput(wbuf, o, 0x20AC);
+store8(wbuf + o, 0); store8(wbuf + o + 1, 0);
+ret = _args_w2u8(wbuf, out, 4096);
+test_group("3-byte");
+assert_eq(ret, 4, "len = 4 (3 bytes + NUL)");
+assert_eq(load8(out + 0), 0xE2, "b0 = E2");
+assert_eq(load8(out + 1), 0x82, "b1 = 82");
+assert_eq(load8(out + 2), 0xAC, "b2 = AC");
+
+# Case 4: U+1F600 (😀) via surrogate pair D83D DE00 → 0xF0 0x9F 0x98 0x80.
+o = 0;
+o = _wput(wbuf, o, 0xD83D);
+o = _wput(wbuf, o, 0xDE00);
+store8(wbuf + o, 0); store8(wbuf + o + 1, 0);
+ret = _args_w2u8(wbuf, out, 4096);
+test_group("4-byte surrogate");
+assert_eq(ret, 5, "len = 5 (4 bytes + NUL)");
+assert_eq(load8(out + 0), 0xF0, "b0 = F0");
+assert_eq(load8(out + 1), 0x9F, "b1 = 9F");
+assert_eq(load8(out + 2), 0x98, "b2 = 98");
+assert_eq(load8(out + 3), 0x80, "b3 = 80");
+
+# Case 5: mixed ASCII + 2-byte: "a" + U+00E9 → 0x61 0xC3 0xA9.
+o = 0;
+o = _wput(wbuf, o, 0x0061);
+o = _wput(wbuf, o, 0x00E9);
+store8(wbuf + o, 0); store8(wbuf + o + 1, 0);
+ret = _args_w2u8(wbuf, out, 4096);
+test_group("mixed ascii+wide");
+assert_eq(ret, 4, "len = 4 (a + 2 bytes + NUL)");
+assert_eq(load8(out + 0), 0x61, "b0 = a");
+assert_eq(load8(out + 1), 0xC3, "b1 = C3");
+assert_eq(load8(out + 2), 0xA9, "b2 = A9");
+
+# Case 6: empty wide string → just the NUL, len 1.
+store8(wbuf, 0); store8(wbuf + 1, 0);
+ret = _args_w2u8(wbuf, out, 4096);
+test_group("empty");
+assert_eq(ret, 1, "len = 1 (just NUL)");
+assert_eq(load8(out + 0), 0, "b0 = NUL");
+
+var r = assert_summary();

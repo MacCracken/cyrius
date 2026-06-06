@@ -12,64 +12,80 @@
 # enum/gvar inits clobber x0/x1; args_macos.cyr reads from there
 # (XNU has no /procfs). See CHANGELOG [5.5.17].
 
-# Tokenize a UTF-16LE NUL-terminated command line at `w` into a NUL-joined
-# cstr blob in `buf` (cap bytes): "arg0\0arg1\0...". Quote-aware (toggle on
-# '"', split on unquoted space/tab), ASCII down-convert (each wide char's
-# low byte is kept, high byte dropped). Returns the blob length in bytes.
+# Convert ONE UTF-16LE NUL-terminated wide string at `w` into UTF-8 in
+# `dst` (≤ cap bytes), NUL-terminated; returns the total bytes written
+# INCLUDING the trailing NUL. Surrogate pairs (U+10000+) decode to 4-byte
+# UTF-8. Pure (no syscall), target-agnostic, so it is unit-testable on any
+# host (tests/tcyr/args_win_utf8.tcyr); dead on Linux/macOS (DCE-stubbed).
 #
-# Used by lib/args_win.cyr (fed GetCommandLineW); kept here, target-agnostic
-# and pure (no syscall), so the parse is unit-testable on any host
-# (tests/tcyr/args_win_tokenize.tcyr). Dead on Linux/macOS (DCE-stubbed).
-# Scope boundary (ASCII-only, no backslash-quote semantics) documented in
-# lib/args_win.cyr. See CHANGELOG [6.0.54].
-fn _args_tokenize_utf16(w, buf, cap) {
-    var bo = 0;
+# v6.0.69 §3: lib/args_win.cyr now splits the command line with the real
+# shell32!CommandLineToArgvW (correct \\"-quote semantics) and converts
+# each returned wide arg through here — so a non-ASCII (Unicode) install
+# path no longer corrupts. Replaces the v6.0.54 ASCII-only tokenizer
+# (`_args_tokenize_utf16`, low-byte-kept / '?'-mapped). See CHANGELOG [6.0.69].
+fn _args_w2u8(w, dst, cap) {
     var i = 0;
-    var in_quote = 0;
-    var in_arg = 0;
+    var o = 0;
     var lo = 0;
     var hi = 0;
-    var is_sep = 0;
+    var cu = 0;
+    var cp = 0;
+    var lo2 = 0;
+    var hi2 = 0;
+    var cu2 = 0;
     var done = 0;
     while (done == 0) {
-        lo = load8(w + i);                            # low byte (ASCII)
-        hi = load8(w + i + 1);                        # high byte (dropped)
-        if (lo == 0) { if (hi == 0) { done = 1; } }   # double-NUL terminates
-        if (bo >= cap - 2) { done = 1; }              # defensive: room for the NUL
-        if (done == 0) {
-            if (lo == 34) {                           # '"' — toggle; mark in-arg so a bare ""
-                in_arg = 1;                            #   yields an empty arg (Linux + Windows
-                in_quote = 1 - in_quote;               #   CommandLineToArgvW both keep it)
-            } else {
-                is_sep = 0;
-                if (in_quote == 0) {
-                    if (lo == 32) { is_sep = 1; }     # space
-                    if (lo == 9) { is_sep = 1; }      # tab
-                }
-                if (is_sep == 1) {
-                    if (in_arg == 1) {
-                        store8(buf + bo, 0);          # arg separator NUL
-                        bo = bo + 1;
-                        in_arg = 0;
+        lo = load8(w + i);
+        hi = load8(w + i + 1);
+        cu = lo | (hi << 8);
+        if (cu == 0) {
+            done = 1;
+        } else {
+            cp = cu;
+            i = i + 2;
+            # High surrogate (0xD800-0xDBFF) + low surrogate (0xDC00-0xDFFF)
+            # → one U+10000+ code point. A lone surrogate falls through and
+            # is encoded as its 3-byte form (best effort).
+            if (cu >= 0xD800) {
+                if (cu <= 0xDBFF) {
+                    lo2 = load8(w + i);
+                    hi2 = load8(w + i + 1);
+                    cu2 = lo2 | (hi2 << 8);
+                    if (cu2 >= 0xDC00) {
+                        if (cu2 <= 0xDFFF) {
+                            cp = 0x10000 + ((cu - 0xD800) << 10) + (cu2 - 0xDC00);
+                            i = i + 2;
+                        }
                     }
-                } else {
-                    in_arg = 1;
-                    # A non-ASCII wide char (low byte 0, high byte != 0) must NOT
-                    # store a literal NUL — that would fabricate an arg boundary
-                    # (argc inflation). Map it to '?' so it stays one arg.
-                    if (lo == 0) { lo = 63; }
-                    store8(buf + bo, lo);             # keep low byte (ASCII)
-                    bo = bo + 1;
                 }
             }
-            i = i + 2;
+            # Room for up to 4 UTF-8 bytes + the final NUL.
+            if (o + 5 < cap) {
+                if (cp < 0x80) {
+                    store8(dst + o, cp);
+                    o = o + 1;
+                } elif (cp < 0x800) {
+                    store8(dst + o, 0xC0 | (cp >> 6));
+                    store8(dst + o + 1, 0x80 | (cp & 0x3F));
+                    o = o + 2;
+                } elif (cp < 0x10000) {
+                    store8(dst + o, 0xE0 | (cp >> 12));
+                    store8(dst + o + 1, 0x80 | ((cp >> 6) & 0x3F));
+                    store8(dst + o + 2, 0x80 | (cp & 0x3F));
+                    o = o + 3;
+                } else {
+                    store8(dst + o, 0xF0 | (cp >> 18));
+                    store8(dst + o + 1, 0x80 | ((cp >> 12) & 0x3F));
+                    store8(dst + o + 2, 0x80 | ((cp >> 6) & 0x3F));
+                    store8(dst + o + 3, 0x80 | (cp & 0x3F));
+                    o = o + 4;
+                }
+            }
         }
     }
-    if (in_arg == 1) {                                # terminate the trailing arg
-        store8(buf + bo, 0);
-        bo = bo + 1;
-    }
-    return bo;
+    store8(dst + o, 0);   # NUL-terminate this arg
+    o = o + 1;
+    return o;
 }
 
 #ifdef CYRIUS_TARGET_MACOS

@@ -1269,6 +1269,22 @@ fn ESLEEP_PE(S): i64 {
     return _pe_srw_call_1arg(S, _pe_sleep_get());
 }
 
+# syscall(0xF010, cmdline, &argc) → shell32!CommandLineToArgvW. 2 args
+# (lpCmdLine→rcx, *pNumArgs→rdx). Returns LPWSTR* (array of arg pointers)
+# in rax; *pNumArgs receives the count. v6.0.69 §3 — the first shell32
+# (non-kernel32) import, exercising the multi-DLL IAT foundation.
+fn ECMDTOARGV_PE(S): i64 {
+    _pe_ensure_cmdtoargv(S);
+    return _pe_call_2arg_aligned(S, _pe_cmdtoargv_get());
+}
+
+# syscall(0xF011, ptr) → kernel32!LocalFree(ptr). 1 arg. Frees the
+# LPWSTR* CommandLineToArgvW allocated.
+fn ELOCALFREE_PE(S): i64 {
+    _pe_ensure_localfree(S);
+    return _pe_srw_call_1arg(S, _pe_localfree_get());
+}
+
 # v6.0.65: stub for the macho-ARM syscall-routed query (real impl in
 # src/backend/aarch64/emit.cyr next to ESYSXLAT). parse_expr.cyr references it
 # for the _TARGET_MACHO==2 whitelist warning; that path is dead on x86, so this

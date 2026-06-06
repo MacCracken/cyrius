@@ -561,6 +561,30 @@ fn _pe_ensure_sleep(S): i64 {
 }
 fn _pe_sleep_get(): i64 { return _pe_sleep_idx; }
 
+# v6.0.69 §3: full CommandLineToArgvW for lib/args_win.cyr. CommandLineToArgvW
+# lives in shell32.dll (DLL id 1) — the FIRST non-kernel32 import, the real
+# exercise of the v6.0.69 multi-DLL IAT foundation. LocalFree (kernel32, id 0)
+# frees the LPWSTR* the call returns.
+var _pe_cmdtoargv_ready = 0;
+var _pe_cmdtoargv_idx   = 0;
+fn _pe_ensure_cmdtoargv(S): i64 {
+    if (_pe_cmdtoargv_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_cmdtoargv_idx, "CommandLineToArgvW", 1);
+    _pe_cmdtoargv_ready = 1;
+    return 0;
+}
+fn _pe_cmdtoargv_get(): i64 { return _pe_cmdtoargv_idx; }
+
+var _pe_localfree_ready = 0;
+var _pe_localfree_idx   = 0;
+fn _pe_ensure_localfree(S): i64 {
+    if (_pe_localfree_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_localfree_idx, "LocalFree");
+    _pe_localfree_ready = 1;
+    return 0;
+}
+fn _pe_localfree_get(): i64 { return _pe_localfree_idx; }
+
 # v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
 var _pe_getcurtid_ready = 0;
 var _pe_getcurtid_idx   = 0;
