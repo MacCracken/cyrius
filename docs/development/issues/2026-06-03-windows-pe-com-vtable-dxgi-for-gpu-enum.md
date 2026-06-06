@@ -1,11 +1,13 @@
 # 2026-06-03 — Windows PE: no COM vtable calls / non-kernel32 IAT blocks native DXGI GPU enumeration
 
-> **Status (v6.0.70):** the two CAPABILITIES this issue named as blockers are DELIVERED + verified —
-> (1) non-kernel32 IAT imports (v6.0.69 multi-DLL foundation; `dxgi.dll!CreateDXGIFactory1` returns S_OK
-> on cass) and (2) COM vtable / indirect calls (`callptr`/`IR_CALL_INDIRECT`, verified on 4 hosts). The
-> DXGI GPU-enum DEMONSTRATOR (`lib/dxgi.cyr`) is the remaining piece, blocked on a real-Win64-COM-callee
-> frame-corruption bug — pinned to **v6.0.71**:
-> `docs/development/issues/2026-06-05-windows-com-vtable-real-callee-frame-corruption.md`.
+> **Status (updated 2026-06-06):** the two CAPABILITIES this issue named as blockers are DELIVERED +
+> verified — (1) non-kernel32 IAT imports (v6.0.69 multi-DLL foundation; `dxgi.dll!CreateDXGIFactory1`
+> returns S_OK on cass) and (2) COM vtable / indirect calls (`callptr`/`IR_CALL_INDIRECT`, verified on
+> 4 hosts). The Win64-COM-callee frame-corruption bug was FIXED in **v6.0.71** (`ECALLPTR_PE` force-16-align;
+> issue now in `issues/archived/2026-06-05-windows-com-vtable-real-callee-frame-corruption.md`). The
+> remaining piece — the real-GPU DXGI GPU-enum DEMONSTRATOR (`lib/dxgi.cyr` full `dxgi_vram_bytes()` chain,
+> needs windbg-on-cass) — was **back-burned 2026-06-06** into the **near-end Windows repair cluster** that
+> runs AFTER the TLS arc (roadmap.md back-end shape).
 
 **Discovered:** 2026-06-03 implementing the ai-hwaccel v2.3.7 Windows
 GPU detection (consumer: **ai-hwaccel**, cyrius pinned 6.0.54).

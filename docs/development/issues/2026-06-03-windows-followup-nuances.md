@@ -1,9 +1,12 @@
 # Windows `CYRIUS_TARGET_WIN` follow-up nuances (tracked, not urgent)
 
 > **Status**: PARTIAL — §1 (real threads) + §2 (per-thread TLS) RESOLVED v6.0.61; §3 (full
-> CommandLineToArgvW + UTF-8) RESOLVED v6.0.69. Remaining OPEN: §0 (COM/DXGI GPU-enum, its own issue,
-> the heavier item) — slotted to **v6.0.70** (the Windows FFI arc's second half; needs the new
-> IR_CALL_INDIRECT codegen for COM vtable dispatch). cyrius-side; no cross-repo edit.
+> CommandLineToArgvW + UTF-8) RESOLVED v6.0.69. §0 (COM/DXGI GPU-enum, its own issue): the COM
+> vtable / IR_CALL_INDIRECT capability LANDED (v6.0.70 callptr + v6.0.71 ECALLPTR_PE frame fix,
+> verified on cass) — only the real-GPU DXGI demonstrator residual remains. **Re-ordered 2026-06-06**:
+> that residual + the other Windows partials were back-burned into the **near-end Windows repair
+> cluster** that runs AFTER the TLS arc (see roadmap.md back-end shape; `.72+` = native TLS).
+> cyrius-side; no cross-repo edit.
 > **NOTE TO USER**: you flagged "another wrinkle" you have in mind — add it under §0 so it's captured.
 
 ## 0. COM vtable + DXGI for GPU enumeration — the user's flagged wrinkle

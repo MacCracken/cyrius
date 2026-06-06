@@ -2,8 +2,9 @@
 
 > Sovereign, self-hosting systems language. Assembly up.
 
-> **Doc currency** (refreshed at v5.11.63 doc sweep): the principles
-> and self-hosting framing below are durable across the v5.x cycle.
+> **Doc currency** (reviewed at v6.0.73; framing last reworked at the
+> v5.11.63 sweep): the principles and self-hosting framing below are
+> durable across the v5.x → v6.x cycles.
 > Historical version anchors (cc3 era, v5.6.43 "as of" stamps) are
 > retained for narrative continuity — they refer to the pre-rename
 > compiler binary (`cc3` → `cc5` at v5.0.0; `cc5` → `cycc` at v6.0.0,

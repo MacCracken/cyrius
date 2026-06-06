@@ -15,7 +15,7 @@ Every value is a 64-bit integer. Strings are pointers (which are integers). Stru
 Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
 
 ### Is it fast?
-The compiler self-compiles in ~387 ms (cycc → cc5b 3-step fixpoint, ~874 KB output at v6.0.3). Total compile time fell from 1037 ms → 387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc. Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler self-compiles in ~387 ms (cycc → cc5b 3-step fixpoint, ~907 KB output at v6.0.73). Total compile time fell from 1037 ms → 387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc. Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 

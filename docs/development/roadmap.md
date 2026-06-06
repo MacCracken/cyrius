@@ -410,14 +410,19 @@ driven); **no cross-repo edit from cyrius**
   the ABI-mirror gotcha); api-surface snapshot; state.md + memory
   pins.
 
-**Mini-arc D — TLS 1.2 backport (.34 → .39) — remaining**
-- **.34** — TLS 1.2 record-layer differences (explicit IV, 1.2 seq;
-  skip legacy CBC).
+**Mini-arc D — TLS 1.2 backport (was .34 → .39; now landing at .72+) — IN PROGRESS** (record layer + key schedule shipped @ .72/.73; handshake / cert / Finished / ciphersuites / e2e remaining)
+- **.34 → shipped @ v6.0.72** ✅ — TLS 1.2 AEAD record layer
+  (`lib/tls_native.cyr`: `record_seal_12`/`record_open_12`, 13-byte AAD,
+  GCM explicit nonce / ChaCha implicit nonce; explicit IV, 1.2 seq; skip
+  legacy CBC).
 - **.35** — TLS 1.2 handshake (version-field semantics, RSA-PSS /
   PKCS1 cert sigs, downgrade-attack mitigations).
-- **.36** — TLS 1.2 PRF (SHA-256 / SHA-384 per ciphersuite; RFC 5246
-  §5+§8).
-- **.37** — TLS 1.2 certificate + Finished (verify_data MAC).
+- **.36 → shipped @ v6.0.73** ✅ — TLS 1.2 PRF + key derivation
+  (`master_secret`, `key_block`, `partition`, `verify_data`, `iv_len_12`;
+  SHA-256 / SHA-384 per ciphersuite; RFC 5246 §5+§8).
+- **.37** — TLS 1.2 certificate + Finished WIRING (the `verify_data`
+  MAC primitive itself shipped @ .73 via `tls_native_12_verify_data`;
+  this slot is the certificate message + Finished exchange that consume it).
 - **.38** — TLS 1.2 ciphersuites (AES-GCM + ChaCha20-Poly1305 / RFC
   7905; skip legacy CBC — the minimum-needed modern-peer set).
 - **.39** — TLS 1.2 e2e (localhost + at least one real 1.2-only peer).
@@ -541,7 +546,11 @@ premise-check each at slot entry:
 11. **.72–x — native TLS items** (pulled ahead of the Windows DXGI residual per leader
    direction 2026-06-06: "back burn the windows items posted from .72 until later after
    tls"): Mini-arc D (TLS 1.2 backport, was .34–.39) + Mini-arc E (consumer wiring +
-   closeout, was .40–.42). sandhi is handled AT THIS ARC when we get there — version-bump
+   closeout, was .40–.42). **IN PROGRESS** — **.72 ✅ TLS 1.2 AEAD record layer**
+   (`record_seal_12`/`open_12`, 13-byte AAD, GCM explicit nonce / ChaCha implicit nonce)
+   + **.73 ✅ TLS 1.2 PRF + key derivation** (`master_secret`, `key_block`, `partition`,
+   `verify_data`, `iv_len_12`); handshake / cert / Finished / ciphersuites / e2e + Mini-arc E
+   remaining. sandhi is handled AT THIS ARC when we get there — version-bump
    sandhi + update language docs then; NOT cross-walked/pre-filed now (user 2026-06-04,
    overriding the general upfront-cross-walk default for this case).
 12. **Near-end — Windows remaining repair cluster** (back-burned 2026-06-06, user

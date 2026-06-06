@@ -15,25 +15,29 @@ Use fixed-offset heap arrays allocated via a single `brk` syscall. No malloc, no
 - **Speed**: Direct offset calculation, no pointer chasing
 - **Auditability**: Every buffer has a known address documented in the HEAP MAP
 
-## Layout (v2.6, consolidated from v0.9.5)
+## Layout (summary — reconciled v6.0.73)
+
+The **authoritative** registry is the `HEAP MAP` comment block in
+`src/main.cyr` (lines 10–391, 84 regions, verified monotonic + overlap-free
+by `tests/heapmap.sh`). This ADR keeps only a high-level summary; when the
+two disagree, **`src/main.cyr` wins**. Major regions, in offset order:
 
 ```
-0x00000  input_buf      128KB    Source text
-0x20000  codebuf        256KB    Generated machine code
-0x60000  tok_names       64KB    Identifier strings (dedup)
-0x8A000  struct tables    24KB   Field types, names, counts
-0x8C100  compiler state   14KB   Counters, scalars, patches
-0x98000  gvar_toks        8KB    1024 deferred global inits
-0xA0000  fixup_tbl      128KB    8192 fixup entries × 16 bytes
-0xC0000  fn tables        48KB   names, offsets, params, inline
-0xCC000  struct_fnames    8KB    32×32 field name offsets
-0xCE000  output_buf     256KB    ELF output
-0x10E000 var tables     192KB    8192 vars (noffs, sizes, types)
-0x13E000 tok_types        1MB    131072 token type slots
-0x23E000 tok_values       1MB    131072 token value slots
-0x33E000 tok_lines        1MB    131072 token line number slots
-0x43E000 preprocess_out 512KB    Include expansion buffer
-brk: 0x4BE000 (~4.7MB total)
+0x00000   input_buf       1 MB    raw stdin source (tok_names nested at 0x60000)
+0x60000   tok_names     256 KB    packed identifier strings (rebuilt by LEX)
+0x12A000  var tables    ~128 KB   8192 vars (offsets / sizes / types)
+0x14A000  fn_regalloc    64 KB    per-fn #regalloc flags
+0x18C100  compiler state ~80 KB   scalars, struct / patch / jump tables, gvar_toks (0x198000), field tables (0x1FC000, v6.0.47)
+0x21A000  str_data        2 MB    string-literal bytes
+0x41A000  codebuf         3 MB    generated machine code
+0x71A000  output_buf      2 MB    ELF / Mach-O / PE output
+0x9BA000  fn tables     ~256 KB   4096 functions (names / offsets / params / inline / …)
+0x107B000 fixup_tbl      16 MB    1,048,576 fixup entries × 16 bytes
+0x2D7C000 tok_types       8 MB    1,048,576 token type slots
+0x357C000 tok_values      8 MB    1,048,576 token value slots
+0x3D7C000 tok_lines       8 MB    1,048,576 token line slots
+0x459D000 preprocess_out  8 MB    include / #derive expansion buffer
+0x4D9D000 brk-final     ~77.6 MB  heap end (v5.11.68 reorg; monotonic 0x0 → brk)
 ```
 
 ### Preprocessing scratch (overlays `tok_types`, 0x13E000–0x23E000)
@@ -63,7 +67,7 @@ clobbered `gvar_toks` → CI SIGILL). Heap alloc (post-brk) is collision-free.
 
 ## Consequences
 
-- Fixed capacity limits (131072 tokens, 8192 vars, 1024 functions, 256 locals, 1024 globals)
+- Fixed capacity limits (1,048,576 tokens, 8192 vars, 4096 functions, 512 `#derive` structs, 1024 globals)
 - Buffer overflow bugs are silent corruption — always add bounds checks
 - Relocating buffers requires two-step bootstrap (ADR documented in vidya)
 - Adjacent buffers with no guard bytes are time bombs (tok_names overflow, v0.9.2)

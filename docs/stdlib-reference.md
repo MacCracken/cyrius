@@ -599,7 +599,7 @@ sole rule type in 5.13).
 ---
 
 > **Coverage note**: this reference documents the most-used core
-> surface — see `lib/*.cyr` for the full ~89 first-party modules
+> surface — see `lib/*.cyr` for the full ~90 first-party modules
 > (concurrency: thread, thread_local, atomic, async, freelist; data:
 > base64, math, matrix, linalg, bigint, u128, csv, toml, cyml; crypto:
 > sha1, keccak, ct, overflow; network: net, http, ws, tls, sandhi;
