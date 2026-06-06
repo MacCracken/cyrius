@@ -3641,6 +3641,7 @@ tls_native::tls_native_12_derive_keys/3
 tls_native::tls_native_12_key_block/6
 tls_native::tls_native_12_key_block_len/1
 tls_native::tls_native_12_master_secret/6
+tls_native::tls_native_12_master_secret_ems/6
 tls_native::tls_native_12_open/6
 tls_native::tls_native_12_parse_client_key_exchange/3
 tls_native::tls_native_12_parse_server_hello_done/2

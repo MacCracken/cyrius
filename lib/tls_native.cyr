@@ -1236,8 +1236,12 @@ var TLS_CTX_OFF_CA_ROOT       = 408; # client: parsed trust-anchor cert (.29)
 var TLS_CTX_OFF_MASTER12      = 416; # TLS 1.2: ptr to the 48-byte master_secret (.74)
 # — 1.2 has no HKDF keysched object, so both
 # Finished verify_data computations need a home
-# for the master here. 424/432/440 stay free
+# for the master here. 432/440 stay free
 # within TLS_CTX_LEN=448.
+var TLS_CTX_OFF_USE_EMS       = 424; # TLS 1.2 Extended Master Secret (RFC 7627, .77):
+# 1 = EMS negotiated, 0 = legacy. READ by
+# derive_keys; SET/cleared by the CH/SH parsers.
+# Zeroed by the new_ctx loop → defaults to legacy.
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -2032,6 +2036,9 @@ var TLS_EXT_SIGNATURE_ALGORITHMS = 13;
 var TLS_EXT_SUPPORTED_VERSIONS = 43;
 var TLS_EXT_KEY_SHARE          = 51;
 var TLS_EXT_RENEGOTIATION_INFO = 0xFF01;   # RFC 5746 (empty in initial 1.2 SH)
+var TLS_EXT_EXTENDED_MASTER_SECRET = 23;   # 0x0017, RFC 7627 §5.1 — empty ext. The
+# value coincides with TLS_GROUP_SECP256R1
+# (0x0017); disjoint namespaces, benign.
 var TLS_X25519_KEY_LEN = 32;
 var TLS_RANDOM_LEN     = 32;
 
@@ -3164,6 +3171,18 @@ fn tls_native_12_master_secret(cipher, pre_master, pm_len, client_random, server
     &seed, 64, out48, TLS12_MASTER_SECRET_LEN);
 }
 
+# Extended Master Secret variant (RFC 7627 §4): when EMS is negotiated,
+# master = PRF(pre_master, "extended master secret", session_hash)[0..47].
+# The label is 22 bytes (NOT the legacy 13) and the seed is the session_hash
+# ALONE — NOT client_random ‖ server_random. session_hash = Hash(CH..CKE)
+# under the ciphersuite PRF hash (sh_len = 32 SHA-256 / 48 SHA-384). EMS binds
+# the master to the full handshake transcript, closing the triple-handshake
+# class of attacks. See CHANGELOG [6.0.77].
+fn tls_native_12_master_secret_ems(cipher, pre_master, pm_len, session_hash, sh_len, out48): i64 {
+    return tls_native_12_prf(cipher, pre_master, pm_len, "extended master secret", 22,
+    session_hash, sh_len, out48, TLS12_MASTER_SECRET_LEN);
+}
+
 # key_block = PRF(master_secret, "key expansion",
 #                 server_random ‖ client_random)  (RFC 5246 §6.3).
 # NOTE the random order is REVERSED vs master_secret (server first here).
@@ -3254,7 +3273,8 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     # ext_block = SNI + supported_groups(8) + ec_point_formats(6)
     #           + signature_algorithms(12, three schemes)
     #           + renegotiation_info(5, empty — RFC 5746 §3.4)
-    var ext_block = sni_ext + 8 + 6 + 12 + 5;
+    #           + extended_master_secret(4, empty — RFC 7627 §5.1)
+    var ext_block = sni_ext + 8 + 6 + 12 + 5 + 4;
     # cipher_suites = 2-byte len + two supported suites (4 bytes)
     var body_len = 2 + 32 + 1 + 2 + 4 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
@@ -3294,6 +3314,9 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     _tn_be16_w(p, TLS_EXT_RENEGOTIATION_INFO); p = p + 2;   # RFC 5746 secure renegotiation
     _tn_be16_w(p, 1); p = p + 2;                       # ext_data length
     store8(p, 0); p = p + 1;                           # renegotiated_connection<0> (empty)
+    _tn_be16_w(p, TLS_EXT_EXTENDED_MASTER_SECRET); p = p + 2;   # RFC 7627 — always offer
+    _tn_be16_w(p, 0); p = p + 2;                       # empty extension_data
+    store64(ctx + TLS_CTX_OFF_USE_EMS, 1);             # offered; SH parser clears it if not echoed
     var chbuf = alloc(total);
     if (chbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     memcpy(chbuf, out, total);
@@ -3315,9 +3338,12 @@ fn _tn_build_server_hello_12(ctx, out, out_max, want_ecpf): i64 {
     var wire = tls_native_aead_to_wire_12(identity, TLS12_AUTH_ECDSA);
     if (wire < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
     var sid_len = load64(ctx + TLS_CTX_OFF_SESSION_ID_LEN);
+    var ems = load64(ctx + TLS_CTX_OFF_USE_EMS);
     var ecpf_ext = 0;
     if (want_ecpf == 1) { ecpf_ext = 6; }
-    var ext_block = 5 + ecpf_ext;                      # renegotiation_info(5) + ec_point_formats
+    var ems_ext = 0;
+    if (ems == 1) { ems_ext = 4; }                     # RFC 7627 — echo iff client offered
+    var ext_block = 5 + ecpf_ext + ems_ext;            # renegotiation_info(5) + ec_point_formats + EMS
     var body_len = 2 + 32 + 1 + sid_len + 2 + 1 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
     if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
@@ -3341,6 +3367,10 @@ fn _tn_build_server_hello_12(ctx, out, out_max, want_ecpf): i64 {
         _tn_be16_w(p, 2); p = p + 2;
         store8(p, 1); p = p + 1;                        # list length (1 BYTE)
         store8(p, 0); p = p + 1;                        # uncompressed(0)
+    }
+    if (ems == 1) {
+        _tn_be16_w(p, TLS_EXT_EXTENDED_MASTER_SECRET); p = p + 2;   # RFC 7627 echo (empty)
+        _tn_be16_w(p, 0); p = p + 2;
     }
     return total;
 }
@@ -3425,6 +3455,11 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     var identity = tls_native_12_cipher_aead_identity(wire);
     if (identity < 0) { return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED); }
     if (tls_native_12_cipher_supported(wire) != 1) { return _tn_ctx_fail(ctx, TLS_ERR_CIPHER_NOT_SUPPORTED); }
+    # EMS (RFC 7627): the client always offered it (flag set to 1 in
+    # build_client_hello). Default to legacy fallback — clear the flag now, then
+    # set it back to 1 only if the server echoes the extension below. A legacy
+    # server (no extension block, or a block without EMS) thus falls back to 0.
+    store64(ctx + TLS_CTX_OFF_USE_EMS, 0);
     # Extensions: supported_versions MUST be absent (else a 1.3 server).
     if (pos < blen) {
         if (pos + 2 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
@@ -3446,6 +3481,18 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
         if (rn == 1) {
             if (rl2 != 1) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
             if ((load8(rp) & 0xFF) != 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+        }
+        # Extended Master Secret echo (RFC 7627 §5.1): a present echo MUST be
+        # empty; record EMS active. Absent → leave the flag at 0 (legacy
+        # fallback; the §5.2 SHOULD-abort is relaxed to keep legacy-server
+        # interop — OpenSSL 3.x always echoes it, so the abort path is moot).
+        var ep = 0;
+        var el = 0;
+        var ems = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
+        if (ems == 0 - 1) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        if (ems == 1) {
+            if (el != 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
+            store64(ctx + TLS_CTX_OFF_USE_EMS, 1);
         }
     }
     store64(ctx + TLS_CTX_OFF_CIPHER, identity);
@@ -3735,16 +3782,37 @@ fn tls_native_12_compute_premaster(ctx, peer_eph_pub32, out32): i64 {
 # Returns TLS_OK or a negative TLS_ERR_*.
 fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
-    var cr = load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM);
-    var sr = load64(ctx + TLS_CTX_OFF_SERVER_RANDOM);
-    if (cr == 0) { return TLS_ERR_PROTOCOL; }
-    if (sr == 0) { return TLS_ERR_PROTOCOL; }
     var master = alloc(TLS12_MASTER_SECRET_LEN);
     if (master == 0) { return TLS_ERR_OOM; }
-    if (tls_native_12_master_secret(identity, premaster, pm_len, cr, sr, master) != TLS_OK) {
-        return TLS_ERR_INTERNAL;
+    if (load64(ctx + TLS_CTX_OFF_USE_EMS) == 1) {
+        # Extended Master Secret (RFC 7627): master derives from the
+        # session_hash (Hash(CH..CKE)), NOT the randoms. The transcript already
+        # covers CH..CKE at this point (the server feeds CKE before deriving;
+        # the client reorder in connect_12 ensures the same). transcript_digest
+        # is non-destructive, so the running transcript the later Finished
+        # verify_data needs stays intact.
+        var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+        if (ts == 0) { return TLS_ERR_PROTOCOL; }
+        var shbuf[48];
+        var sh_len = tls_native_transcript_digest(ts, &shbuf);
+        if (sh_len < 0) { return TLS_ERR_INTERNAL; }
+        if (tls_native_12_master_secret_ems(identity, premaster, pm_len, &shbuf, sh_len, master) != TLS_OK) {
+            return TLS_ERR_INTERNAL;
+        }
+    } else {
+        var crl = load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM);
+        var srl = load64(ctx + TLS_CTX_OFF_SERVER_RANDOM);
+        if (crl == 0) { return TLS_ERR_PROTOCOL; }
+        if (srl == 0) { return TLS_ERR_PROTOCOL; }
+        if (tls_native_12_master_secret(identity, premaster, pm_len, crl, srl, master) != TLS_OK) {
+            return TLS_ERR_INTERNAL;
+        }
     }
     store64(ctx + TLS_CTX_OFF_MASTER12, master);
+    # The key_block (RFC 5246 §6.3) uses the randoms in BOTH EMS and legacy
+    # modes — re-load them at function scope for the key_block call below.
+    var cr = load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM);
+    var sr = load64(ctx + TLS_CTX_OFF_SERVER_RANDOM);
     var kb_len = tls_native_12_key_block_len(identity);
     if (kb_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
     var kb = alloc(kb_len);
@@ -3959,6 +4027,26 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
             j = j + 2;
         }
     }
+    # Detect the client's extended_master_secret offer (RFC 7627). Walk past
+    # cipher_suites + compression_methods to the extensions block. All reads
+    # bounds-checked vs blen (untrusted CH); lenient — a malformed/absent ext
+    # block leaves EMS=0 and never fails the handshake. (The cipher loop used
+    # pos+j indexing and did not mutate pos, so pos is still at cipher_suites.)
+    pos = pos + cs_len;
+    if (pos + 1 <= blen) {
+        var cm_len = load8(body + pos) & 0xFF;
+        pos = pos + 1 + cm_len;
+        if (pos + 2 <= blen) {
+            var ext_total = _tn_be16_r(body + pos);
+            pos = pos + 2;
+            if (pos + ext_total <= blen) {
+                var ep = 0;
+                var el = 0;
+                var got = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
+                if (got == 1) { store64(ctx + TLS_CTX_OFF_USE_EMS, 1); }
+            }
+        }
+    }
     if (chosen == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
     store64(ctx + TLS_CTX_OFF_CIPHER, tls_native_12_cipher_aead_identity(chosen));
     return chosen;
@@ -4087,12 +4175,20 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var pr = tls_native_12_compute_premaster(ctx, load64(ctx + TLS_CTX_OFF_PEER_PUB), pm);
     if (pr != TLS_OK) { return _tn_ctx_fail(ctx, pr); }
-    var dk = tls_native_12_derive_keys(ctx, pm, 32);
-    if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
+    # Build the ClientKeyExchange + feed it into the transcript BEFORE deriving
+    # keys, so the EMS session_hash (RFC 7627) covers CH..CKE. The legacy master
+    # ignores the transcript, so this reorder is safe in both modes; the CKE
+    # record-wrap + socket-send stay below (the wire bytes are order-independent).
+    # The server (_tn_12_server_drive) already feeds CKE before deriving — it
+    # needs no reorder.
     var cke = alloc(64);
     if (cke == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var cken = tls_native_12_build_client_key_exchange(load64(ctx + TLS_CTX_OFF_EPH_PUB), cke, 64);
     if (cken < 0) { return _tn_ctx_fail(ctx, cken); }
+    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+    tls_native_transcript_update(ts, cke, cken);
+    var dk = tls_native_12_derive_keys(ctx, pm, 32);
+    if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
     var ckerec = alloc(cken + TLS_RECORD_HEADER_LEN);
     if (ckerec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(ckerec, TLS_CT_HANDSHAKE, 0x0303, cken);
@@ -4100,8 +4196,6 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (_tn_sock_write_all(sock_fd, ckerec, cken + TLS_RECORD_HEADER_LEN) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_IO);
     }
-    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
-    tls_native_transcript_update(ts, cke, cken);
     var ccs = alloc(8);
     if (ccs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ccsn = tls_native_ccs_record_write(ccs);

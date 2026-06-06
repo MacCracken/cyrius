@@ -6,6 +6,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**TLS 1.2 Extended Master Secret (RFC 7627) + real-peer OpenSSL interop.** Closes Mini-arc D's
+real-peer validation: our 1.2 stack now negotiates EMS and interoperates with OpenSSL 3.6.2 `s_client`
+(ECDHE-ECDSA, AES-256-GCM + ChaCha20-Poly1305). EMS binds the master_secret to the full handshake
+transcript (`session_hash = Hash(CH..CKE)`), closing the triple-handshake attack class. Shipped as one
+unit — flag + derivation + client reorder land together (a flag without the derivation produces
+offered+echoed EMS with a legacy master → Finished MAC mismatch).
+
+### Added
+
+- **`tls_native_12_master_secret_ems`** — EMS master derivation: `PRF(pre_master, "extended master
+  secret", session_hash)[0..47]`. Label is 22 bytes (not the legacy 13); seed is the session_hash
+  alone (not `client_random‖server_random`).
+- **`TLS_EXT_EXTENDED_MASTER_SECRET` (0x0017)** + **`TLS_CTX_OFF_USE_EMS`** ctx flag (offset 424,
+  zeroed → legacy default).
+- **OpenSSL `s_client` 1.2 interop test** (`tls_native_scaffold.tcyr`) — our server vs real OpenSSL
+  client, AES-256-GCM + ChaCha20 variants, EMS-echo proven (`USE_EMS == 1`). Ports 44324/44325,
+  `-no_ticket -quiet`, no `-verify` (self-signed); guarded by `sys_access("/usr/bin/openssl")` so it
+  skips cleanly where OpenSSL is absent. A portable our↔our EMS regression covers the client reorder
+  on every host (`tls12_handshake.tcyr` asserts `USE_EMS` on both sides).
+
+### Changed
+
+- **EMS negotiation across the 1.2 handshake.** Client `build_client_hello` always offers EMS (empty
+  ext); `parse_server_hello_12` clears the flag then re-sets it only on a valid (empty) echo — a legacy
+  server falls back to the legacy master (RFC 7627 §5.2 SHOULD-abort relaxed for interop). Server
+  `_tn_12_parse_client_hello` now parses the CH extension block (it previously stopped after
+  cipher_suites) to detect the offer; `_tn_build_server_hello_12` echoes iff offered.
+- **`tls_native_12_derive_keys`** branches EMS-vs-legacy; re-loads the randoms after the branch for the
+  key_block (which uses them in both modes).
+- **`tls_native_connect_12` client reorder** — build + transcript-feed the ClientKeyExchange *before*
+  deriving keys, so the EMS session_hash covers CH..CKE. The server already fed CKE before deriving and
+  is unchanged. Legacy mode is transcript-independent, so the reorder is safe in both modes (self-host
+  byte-identical; cross-OS self-host green on ecb + cass).
+
 ## [6.0.76] — 2026-06-06
 
 **sigil 3.7.3 re-fold + the macOS TLS crash pinned to a cyrius freelist codegen bug.** Continuing the

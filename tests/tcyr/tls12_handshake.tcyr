@@ -42,6 +42,7 @@ if (pid == 0) {
     if (tls_native_connect(clx, cfd) != TLS_OK) { sys_exit(10); }
     if (tls_native_get_state(clx) != TLS_STATE_CONNECTED) { sys_exit(11); }
     if (tls_native_get_version(clx) != TLS_VERSION_1_2) { sys_exit(12); }
+    if (load64(clx + TLS_CTX_OFF_USE_EMS) != 1) { sys_exit(17); }   # EMS (RFC 7627) negotiated
     if (tls_native_write(clx, "ping-from-client", 16) != 16) { sys_exit(13); }
     var rb[64];
     if (tls_native_read(clx, &rb, 64) != 16) { sys_exit(14); }
@@ -60,6 +61,7 @@ assert_eq(tls_native_accept(srv, sfd), TLS_OK, "server accept() drives the 1.2 h
 assert_eq(tls_native_get_state(srv), TLS_STATE_CONNECTED, "server CONNECTED");
 assert_eq(tls_native_get_version(srv), TLS_VERSION_1_2, "server negotiated TLS 1.2");
 assert_eq(tls_native_get_cipher(srv), TLS_AES_256_GCM_SHA384, "negotiated AES-256-GCM (identity)");
+assert_eq(load64(srv + TLS_CTX_OFF_USE_EMS), 1, "server negotiated Extended Master Secret (RFC 7627)");
 var sb[64];
 assert_eq(tls_native_read(srv, &sb, 64), 16, "server reads 16 bytes of client app data");
 assert_eq(_tn_ct_eq(&sb, "ping-from-client", 16), 1, "server received the client's app data (decrypts)");

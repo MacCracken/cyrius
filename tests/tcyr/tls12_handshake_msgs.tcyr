@@ -199,6 +199,37 @@ var badfin[32]; var bj = 0; while (bj < 16) { store8(&badfin + bj, load8(&cfin +
 store8(&badfin + 4, load8(&badfin + 4) ^ 0xFF);
 assert_eq(tls_native_12_verify_finished(clf2, &badfin, 16, "client finished"), TLS_ERR_AUTHN, "tampered Finished -> AUTHN");
 
+# ---------------- Extended Master Secret (RFC 7627, .77) ----------------
+# build_client_hello (called on `cl` above) offers EMS: sets the flag + emits
+# the empty ext as the LAST ClientHello extension.
+assert_eq(load64(cl + TLS_CTX_OFF_USE_EMS), 1, "build_client_hello sets the EMS-offered flag");
+assert_eq(_tn_be16_r(&ch + chn - 4), TLS_EXT_EXTENDED_MASTER_SECRET, "CH last ext = extended_master_secret (0x0017)");
+assert_eq(_tn_be16_r(&ch + chn - 2), 0, "CH EMS extension is empty (len 0)");
+# Server echoes iff the client offered; client records the echo.
+store64(srv + TLS_CTX_OFF_USE_EMS, 1);
+var shems[256];
+var shemsn = _tn_build_server_hello_12(srv, &shems, 256, 0);
+var clp = tls_native_new_client(0, 0);
+assert_eq(tls_native_client_parse_server_hello_12(clp, &shems, shemsn), TLS_OK, "parse EMS-echoing ServerHello ok");
+assert_eq(load64(clp + TLS_CTX_OFF_USE_EMS), 1, "client records EMS echo -> USE_EMS=1");
+# A ServerHello WITHOUT the echo -> client falls back to legacy (flag 0).
+store64(srv + TLS_CTX_OFF_USE_EMS, 0);
+var shno[256];
+var shnon = _tn_build_server_hello_12(srv, &shno, 256, 0);
+var clp2 = tls_native_new_client(0, 0);
+tls_native_client_parse_server_hello_12(clp2, &shno, shnon);
+assert_eq(load64(clp2 + TLS_CTX_OFF_USE_EMS), 0, "no EMS echo -> legacy fallback (USE_EMS=0)");
+# EMS master (PRF over session_hash) differs from the legacy master (PRF over randoms).
+var ts_ems = tls_native_transcript_init(TLS_HASH_SHA384);
+tls_native_transcript_update(ts_ems, &ch, chn);
+var shd[48];
+var shdl = tls_native_transcript_digest(ts_ems, &shd);
+var m_ems[48];
+tls_native_12_master_secret_ems(TLS_AES_256_GCM_SHA384, &pmA, 32, &shd, shdl, &m_ems);
+var m_leg[48];
+tls_native_12_master_secret(TLS_AES_256_GCM_SHA384, &pmA, 32, &cr, &sr, &m_leg);
+assert_eq(_tn_ct_eq(&m_ems, &m_leg, 48), 0, "EMS master differs from the legacy master");
+
 # ---------------- malformed server flight: oversized sub-message length ----------------
 # Regression for the .74 review's P0: a server flight whose ServerHello
 # claims a ~16 MB body must be rejected by the length-vs-buffer guard in

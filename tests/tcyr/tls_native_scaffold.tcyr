@@ -1642,4 +1642,90 @@ sys_waitpid(pid31, &st31, 0);
 var code31 = (load64(&st31) >> 8) & 0xFF;
 assert_eq(code31, 0, "client connect()+write+read succeeded (child exit 0)");
 
+# ================================================================
+# v6.0.77 — OpenSSL s_client TLS 1.2 interop (ECDHE-ECDSA + EMS)
+# ================================================================
+# Real-peer validation of the 1.2 stack: OpenSSL is the CLIENT, our code the
+# SERVER (auto-routed to _tn_12_server_drive). OpenSSL 3.x offers EMS (RFC
+# 7627) in every 1.2 ClientHello → our server must echo + honor it (proven by
+# the USE_EMS assertion). cert23/key23 (the matched ECDSA-P256 pair) reused
+# from the .23 block above. Mirrors the .23 1.3 pattern: bind+listen in the
+# parent BEFORE forking openssl (no race). Success = our accept() → TLS_OK +
+# CONNECTED + EMS; we do NOT assert on s_client's (racy, -ign_eof) exit code.
+test_group("v6.0.77 OpenSSL s_client 1.2 interop");
+
+var s77a = tls_native_new_server(cert23, 385, key23, 138);
+assert_eq(tls_native_server_load_creds(s77a), TLS_OK, "load cert+key (AES variant)");
+
+if (sys_access("/usr/bin/openssl", 0) == 0) {
+    # ---- ECDHE-ECDSA-AES256-GCM-SHA384, port 44324 ----
+    var lfa = sys_socket(2, 1, 0);
+    var one77[4]; store32(&one77, 1); sys_setsockopt(lfa, 1, 2, &one77, 4);
+    var saa[16]; var za = 0; while (za < 16) { store8(&saa + za, 0); za = za + 1; }
+    store8(&saa, 2); store8(&saa + 2, 0xAD); store8(&saa + 3, 0x24);
+    store8(&saa + 4, 127); store8(&saa + 7, 1);                          # 127.0.0.1:44324
+    assert_eq(sys_bind(lfa, &saa, 16), 0, "bind 127.0.0.1:44324");
+    sys_listen(lfa, 1);
+    var pa = sys_fork();
+    if (pa == 0) {
+        sys_close(lfa);
+        var nfa = sys_open("/dev/null", 2, 0); sys_dup2(nfa, 0); sys_dup2(nfa, 1); sys_dup2(nfa, 2);
+        var av[80];
+        store64(&av + 0,  "openssl");           store64(&av + 8,  "s_client");
+        store64(&av + 16, "-connect");          store64(&av + 24, "127.0.0.1:44324");
+        store64(&av + 32, "-tls1_2");           store64(&av + 40, "-cipher");
+        store64(&av + 48, "ECDHE-ECDSA-AES256-GCM-SHA384");
+        store64(&av + 56, "-no_ticket");        store64(&av + 64, "-quiet");
+        store64(&av + 72, 0);
+        var eva[8]; store64(&eva, 0);
+        sys_execve("/usr/bin/openssl", &av, &eva);
+        sys_exit(127);
+    }
+    var cfa = sys_accept4(lfa, 0, 0, 0);
+    assert_gt(cfa, 0, "accepted OpenSSL connection (AES)");
+    var ara = tls_native_accept(s77a, cfa);
+    assert_eq(load64(s77a + TLS_CTX_OFF_VERSION), TLS_VERSION_1_2, "negotiated TLS 1.2 (AES)");
+    assert_eq(ara, TLS_OK, "TLS 1.2 ECDHE-ECDSA-AES256-GCM vs OpenSSL s_client -> TLS_OK");
+    assert_eq(tls_native_get_state(s77a), TLS_STATE_CONNECTED, "server CONNECTED vs OpenSSL (AES)");
+    assert_eq(load64(s77a + TLS_CTX_OFF_USE_EMS), 1, "EMS negotiated vs OpenSSL (AES)");
+    sys_close(cfa); sys_close(lfa);
+    var sta[4]; sys_waitpid(pa, &sta, 0);
+
+    # ---- ECDHE-ECDSA-CHACHA20-POLY1305, port 44325, fresh ctx ----
+    var s77b = tls_native_new_server(cert23, 385, key23, 138);
+    tls_native_server_load_creds(s77b);
+    var lfb = sys_socket(2, 1, 0);
+    var oneb[4]; store32(&oneb, 1); sys_setsockopt(lfb, 1, 2, &oneb, 4);
+    var sab[16]; var zb = 0; while (zb < 16) { store8(&sab + zb, 0); zb = zb + 1; }
+    store8(&sab, 2); store8(&sab + 2, 0xAD); store8(&sab + 3, 0x25);
+    store8(&sab + 4, 127); store8(&sab + 7, 1);                          # 127.0.0.1:44325
+    assert_eq(sys_bind(lfb, &sab, 16), 0, "bind 127.0.0.1:44325");
+    sys_listen(lfb, 1);
+    var pb = sys_fork();
+    if (pb == 0) {
+        sys_close(lfb);
+        var nfb = sys_open("/dev/null", 2, 0); sys_dup2(nfb, 0); sys_dup2(nfb, 1); sys_dup2(nfb, 2);
+        var avb[80];
+        store64(&avb + 0,  "openssl");          store64(&avb + 8,  "s_client");
+        store64(&avb + 16, "-connect");         store64(&avb + 24, "127.0.0.1:44325");
+        store64(&avb + 32, "-tls1_2");          store64(&avb + 40, "-cipher");
+        store64(&avb + 48, "ECDHE-ECDSA-CHACHA20-POLY1305");
+        store64(&avb + 56, "-no_ticket");       store64(&avb + 64, "-quiet");
+        store64(&avb + 72, 0);
+        var evb[8]; store64(&evb, 0);
+        sys_execve("/usr/bin/openssl", &avb, &evb);
+        sys_exit(127);
+    }
+    var cfb = sys_accept4(lfb, 0, 0, 0);
+    assert_gt(cfb, 0, "accepted OpenSSL connection (ChaCha)");
+    var arb = tls_native_accept(s77b, cfb);
+    assert_eq(arb, TLS_OK, "TLS 1.2 ECDHE-ECDSA-CHACHA20 vs OpenSSL s_client -> TLS_OK");
+    assert_eq(tls_native_get_state(s77b), TLS_STATE_CONNECTED, "server CONNECTED vs OpenSSL (ChaCha)");
+    assert_eq(load64(s77b + TLS_CTX_OFF_USE_EMS), 1, "EMS negotiated vs OpenSSL (ChaCha)");
+    sys_close(cfb); sys_close(lfb);
+    var stb[4]; sys_waitpid(pb, &stb, 0);
+} else {
+    assert_eq(1, 1, "openssl absent — 1.2 real-peer interop skipped");
+}
+
 var r = assert_summary();
