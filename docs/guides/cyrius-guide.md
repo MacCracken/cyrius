@@ -776,10 +776,33 @@ Or use the helper API (`is_some` / `unwrap_or` / etc.) which encapsulates this.
 ```
 fn add(a, b) { return a + b; }
 var fp = &add;                       # Get function address
+```
 
-# Call through pointer (using fnptr library):
+Call through a pointer with the `callptr` builtin (v6.0.70+) — a
+compiler-emitted indirect call (`IR_CALL_INDIRECT`: x86 `call [rbp-disp]`,
+aarch64 `blr`), no library needed:
+
+```
+fn run() {                           # callptr needs a function frame
+    var fp = &add;
+    var result = callptr(fp, 20, 22);   # result = 42 — callptr(callee, args...)
+}
+```
+
+`callptr(callee, arg1, …, argN)` evaluates the callee, then calls it with
+the given args (any count); the result lands in the usual return register.
+It works on every backend (x86_64, aarch64, Windows PE) and is the basis
+for COM-vtable dispatch (`callptr(load64(load64(obj) + slot*8), obj, …)`).
+The callee is spilled to a frame slot, so `callptr` must be used **inside a
+function** (top-level use is a compile error — top-level vars are globals,
+with no frame).
+
+The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
+existing code:
+
+```
 include "lib/fnptr.cyr"
-var result = fncall2(fp, 20, 22);    # result = 42
+var result = fncall2(&add, 20, 22);  # result = 42
 ```
 
 ## Global Initializers
