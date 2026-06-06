@@ -6,6 +6,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.70] — 2026-06-05
+
+**Compiler-emitted indirect calls (`IR_CALL_INDIRECT` / `callptr`) — the COM-vtable-call capability
+(§0).** Second half of the Windows FFI arc. cyrius can now call through a computed function pointer in
+ordinary source — `callptr(callee, args…)` — lowered to `IR_CALL_INDIRECT` (x86 `call [rbp-disp]`,
+aarch64 `ldr x6;blr x6`), NOT the hand-rolled `lib/fnptr.cyr` asm. The callee is spilled to a fresh
+frame slot before the args, so it survives `ECALLPOPS` (which on Win64 carves the 32 B shadow home and
+would bury a stack-pushed callee); the slot is re-entrant (nested `callptr` → distinct slots) and works
+for any arg count. Paired with the `dxgi.dll!CreateDXGIFactory1` import (the 3rd PE import DLL, via the
+v6.0.69 multi-DLL foundation), this delivers both §0 capabilities — non-kernel32 imports + COM vtable
+dispatch — that the COM/DXGI issue named as blockers. Self-host byte-identical on all four real hosts;
+check.sh 85/85. (The DXGI GPU-enum *demonstrator* `lib/dxgi.cyr` is deferred to v6.0.71 — see Known.)
+
+### Added
+
+- **`callptr(callee, arg1, …, argN)` builtin** (lex token 111 + `PARSE_FACTOR` dispatch) → `IR_CALL_INDIRECT`
+  (`src/common/ir.cyr` = 66, + the `_ir_clobbers_rax` / `_ir_uses_rax` / `_ir_def_rcx_any` predicates and
+  the `CIND` opname). x86 `ECALLIND` (`FF /2` `call [rbp+disp]`), aarch64 `ECALLIND` (`ldur/ldr x6` +
+  `blr x6` — x6 because x0-x5 are arg regs and x9 is the >6-arg shuffle scratch). The callee is spilled
+  to a fresh frame local (`GFLC`/`EFLSTORE`), so `callptr` requires a function frame — top-level use is a
+  **loud compile error** (top-level vars are globals, no rbp frame), never a silent crash. cx has no
+  indirect-call op → a loud compile error there too.
+- **`tests/tcyr/callptr.tcyr`** — 0–7 args (7 forces the >6-arg `ECALLPOPS` stack shuffle), callee from a
+  variable, and nested `callptr` (the inner call's spill slot must differ from the outer's).
+- **`dxgi.dll!CreateDXGIFactory1` import** (`0xF012` → `ECREATEDXGI_PE`, `_pe_register_import(…, dll_id 2)`)
+  — the 3rd import DLL, exercising the v6.0.69 multi-DLL IAT foundation against `dxgi.dll`.
+
+### Verified
+
+- `callptr.tcyr` 7/7 on x86_64 + aarch64 (pi); a `callptr` exerciser returns 42 on **cass (Win64)** and
+  **ecb (macho-arm)**; `callptr` with a *loaded* callee (2- and 3-arg) returns 42 on cass; self-host
+  byte-identical (cycc itself uses no `callptr`); cross-OS self-host green on pi + ecb + ach + cass;
+  check.sh 85/85. `CreateDXGIFactory1` returns `S_OK` + a non-null `IDXGIFactory1` on cass (the 3-DLL PE
+  — kernel32 + shell32 + dxgi — loads and resolves).
+
+### Known / deferred to v6.0.71
+
+- **The DXGI GPU-enum demonstrator (`lib/dxgi.cyr`) is deferred.** `callptr` to a *real Win64 COM callee*
+  (EnumAdapters/GetDesc over a DXGI vtable) corrupts the cyrius caller frame on cass — **not** a `callptr`
+  bug (loaded-callee + 3-arg dispatch are verified working on Win64; the vtable slots and frame-slot
+  allocation are ruled out), but a subtle real-Win64-callee interaction that needs a Windows debugger to
+  pin. Filed: `docs/development/issues/2026-06-05-windows-com-vtable-real-callee-frame-corruption.md`. The
+  §0 *capability* (indirect calls + non-kernel32 imports) is delivered and verified here; only the DXGI
+  consumer is blocked.
+
 ## [6.0.69] — 2026-06-05
 
 **Windows multi-DLL FFI foundation + full `CommandLineToArgvW` (§3).** First half of the Windows FFI arc

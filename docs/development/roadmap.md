@@ -515,13 +515,22 @@ premise-check each at slot entry:
    `args_init` now splits with shell32 (full `\\"`-quote rules) + UTF-16→UTF-8 via host-testable `_args_w2u8`
    (kills the non-ASCII corruption). Cross-arch stubs in aarch64/emit.cyr. Verified: argtest on cass
    (argc/quote/LocalFree), `_args_w2u8` 21/21, check.sh 85/85, 4-host self-host. See CHANGELOG [6.0.69].
-9. **.70 — §0 COM/DXGI** (the FFI arc's second half): new `IR_CALL_INDIRECT` opcode (x86 `FF /2` + aarch64
-   `blr` backport, cross-arch same slot) + a call-through-pointer primitive, then `dxgi.dll` import +
-   `CreateDXGIFactory1 → IDXGIFactory1::EnumAdapters1 → IDXGIAdapter1::GetDesc1 →
-   DXGI_ADAPTER_DESC1.DedicatedVideoMemory` (64-bit VRAM). DXGI GPU enumeration as ordinary cyrius
-   (`issues/2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md`). The multi-DLL import foundation
-   landed in .69; .70 adds the indirect-call codegen the COM vtable dispatch needs.
-10. **.71–x — native TLS items** (was .70–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
+9. **.70 — §0 indirect-call codegen (the COM-vtable-call capability)** ✅ COMPLETE. `callptr(callee,
+   args…)` → new `IR_CALL_INDIRECT` opcode (x86 `FF /2` `call [rbp-disp]`, aarch64 `ldr x6;blr x6`,
+   cross-arch same slot), with a re-entrant frame-slot callee spill that survives ECALLPOPS's Win64
+   shadow (the design's "pop after ECALLPOPS" was wrong for Win64 — leader chose the full frame-slot
+   spill). Paired with the `dxgi.dll!CreateDXGIFactory1` import (3rd PE DLL via the .69 multi-DLL
+   foundation). Both §0 capabilities (non-kernel32 imports + COM vtable dispatch) delivered + verified:
+   callptr 7/7 x86+pi, exit-42 on cass+ecb, loaded-callee on cass; CreateDXGIFactory1 S_OK on cass;
+   4-host self-host; check.sh 85/85. See CHANGELOG [6.0.70].
+10. **.71 — DXGI demonstrator + the Win64-COM-callee fix** (the §0 follow-up the leader deferred at .70):
+   `callptr` to a *real Win64 COM callee* corrupts the cyrius caller frame (NOT a callptr bug — loaded-
+   callee + 3-arg verified; slots ruled out); needs windbg on cass to pin. Fix the callptr call frame for
+   real Win64 callees, add a cass regression, then write `lib/dxgi.cyr` `dxgi_vram_bytes()`
+   (CreateDXGIFactory1 → EnumAdapters1 → GetDesc1 → DedicatedVideoMemory). Issue:
+   `issues/2026-06-05-windows-com-vtable-real-callee-frame-corruption.md`. Then the remaining Windows
+   partials (D2 wrapper port / deps-lock / .ps1 installer).
+11. **.72–x — native TLS items** (was .71–x): Mini-arc D (TLS 1.2 backport) + Mini-arc E
    (consumer wiring + closeout). sandhi is handled AT THIS ARC when we get there —
    version-bump sandhi + update language docs then; NOT cross-walked/pre-filed now (user
    2026-06-04, overriding the general upfront-cross-walk default for this case).

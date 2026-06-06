@@ -585,6 +585,21 @@ fn _pe_ensure_localfree(S): i64 {
 }
 fn _pe_localfree_get(): i64 { return _pe_localfree_idx; }
 
+# v6.0.70 §0 — dxgi.dll!CreateDXGIFactory1 (dll_id 2), the direct (non-vtable)
+# entry point returning an IDXGIFactory1 COM object. The factory's virtual
+# methods (EnumAdapters1, GetDesc1, Release) are then dispatched via callptr
+# over the object's vtable. dxgi.dll is the 3rd import DLL — the v6.0.69
+# multi-DLL IAT foundation made non-kernel32 imports possible.
+var _pe_createdxgi_ready = 0;
+var _pe_createdxgi_idx   = 0;
+fn _pe_ensure_createdxgi(S): i64 {
+    if (_pe_createdxgi_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_createdxgi_idx, "CreateDXGIFactory1", 2);
+    _pe_createdxgi_ready = 1;
+    return 0;
+}
+fn _pe_createdxgi_get(): i64 { return _pe_createdxgi_idx; }
+
 # v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
 var _pe_getcurtid_ready = 0;
 var _pe_getcurtid_idx   = 0;
