@@ -129,6 +129,38 @@ var _pe_imp_name_offs[256];      # 32 slots × 8 bytes
 var _pe_imp_count          = 0;
 var _pe_imp_buf_pos        = 0;
 
+# ----------------------------------------------------------------
+# Multi-DLL imports (v6.0.69). Each import carries a DLL id; v6.0.68
+# and earlier hardcoded a single kernel32 descriptor. `_pe_layout`
+# groups imports by DLL into per-descriptor IAT/ILT runs (each run
+# null-terminated) and builds `_pe_iat_pos` so the ftype=4 fixup can
+# map a flat imp_idx → its physical IAT slot. kernel32 MUST be id 0:
+# ExitProcess is imp_idx 0 and EEXIT hardcodes IAT slot 0, so kernel32
+# (id 0) is laid out first → ExitProcess stays at physical slot 0.
+# DLL ids: 0=kernel32, 1=shell32, 2=dxgi. With a single DLL the
+# grouped layout is byte-identical to the old hardcoded path.
+var _pe_imp_dll[256];            # imp_idx → dll_id (u8 per slot)
+var _pe_pending_imp_dll[256];    # pending_idx → dll_id (u8 per slot)
+var _pe_iat_pos[256];            # imp_idx → physical IAT/ILT slot (u64, 32 slots)
+var _pe_imp_hn_off[256];         # imp_idx → hint/name sub-offset (u64, 32 slots)
+var _pe_dll_first[64];           # descriptor_idx → first physical slot (u64, 8 slots)
+var _pe_dll_id_used[64];         # descriptor_idx → dll_id of that descriptor
+var _pe_dll_name_off[64];        # descriptor_idx → name offset within dll-name region
+var _pe_dll_count          = 0;  # number of distinct DLLs actually imported from
+
+# DLL id → name string. kernel32 is the default/fallback (id 0).
+fn _pe_dll_name(id): i64 {
+    if (id == 1) { return "shell32.dll"; }
+    if (id == 2) { return "dxgi.dll"; }
+    return "kernel32.dll";
+}
+
+# imp_idx → physical IAT slot. Read by the ftype=4 fixup in
+# src/backend/x86/fixup.cyr (cross-file global read kept behind a fn,
+# mirroring _pe_*_get). Populated by _pe_layout; identity for a single
+# DLL (so the legacy single-kernel32 path is byte-identical).
+fn _pe_iat_slot(idx): i64 { return L64(&_pe_iat_pos + idx * 8); }
+
 # ================================================================
 # Byte writers — little-endian, offset-returning
 # ================================================================
@@ -252,18 +284,31 @@ var _pe_pending_imp_pos   = 0;
 # firmware has no kernel32 — any kernel32-rerouted syscall in user
 # source is a compile-time error rather than a silent miscompile that
 # emits an unresolvable IAT reference.
-fn _pe_register_kernel32(S, idx_addr, name): i64 {
-    if (_TARGET_EFI_APPLICATION == 1) {
-        syscall(SYS_WRITE, 2, "error: kernel32 import '", 24);
-        var nlen = 0;
-        while (load8(name + nlen) != 0) { nlen = nlen + 1; }
-        syscall(SYS_WRITE, 2, name, nlen);
-        syscall(SYS_WRITE, 2, "' not available in EFI mode (CYRIUS_TARGET_EFI=1)\n", 50);
-        syscall(SYS_EXIT, 1);
+# Generic import registration (v6.0.69) — records the import's DLL id
+# (parallel to the pending name queue) so _pe_layout can group by DLL.
+# kernel32 imports go through _pe_register_kernel32 (dll_id 0); non-
+# kernel32 callers (shell32, dxgi) call this directly. The EFI guard
+# only fires for kernel32 — UEFI firmware has no kernel32, but a
+# non-kernel32 import in EFI mode is a different (future) error class.
+fn _pe_register_import(S, idx_addr, name, dll_id): i64 {
+    if (dll_id == 0) {
+        if (_TARGET_EFI_APPLICATION == 1) {
+            syscall(SYS_WRITE, 2, "error: kernel32 import '", 24);
+            var nlen = 0;
+            while (load8(name + nlen) != 0) { nlen = nlen + 1; }
+            syscall(SYS_WRITE, 2, name, nlen);
+            syscall(SYS_WRITE, 2, "' not available in EFI mode (CYRIUS_TARGET_EFI=1)\n", 50);
+            syscall(SYS_EXIT, 1);
+        }
     }
     S64(idx_addr, 1 + _pe_pending_imp_count);
+    store8(&_pe_pending_imp_dll + _pe_pending_imp_count, dll_id);
     _pe_pending_imp_add(S, name);
     return 0;
+}
+
+fn _pe_register_kernel32(S, idx_addr, name): i64 {
+    return _pe_register_import(S, idx_addr, name, 0);
 }
 
 var _pe_stdio_ready       = 0;
@@ -616,18 +661,23 @@ fn _pe_layout(S): i64 {
     # IAT-reference fixup is hardcoded against that slot). v5.11.47:
     # UEFI Application mode skips this entirely — UEFI has no
     # kernel32 and EEXIT emits a bare `ret`, not an IAT call.
-    if (_TARGET_EFI_APPLICATION == 0) { _pe_imp_add("ExitProcess"); }
+    # ExitProcess at imp_idx 0 is kernel32 (dll id 0).
+    if (_TARGET_EFI_APPLICATION == 0) { _pe_imp_add("ExitProcess"); store8(&_pe_imp_dll, 0); }
 
     # Consume `#pe_import` declarations collected at parse time.
     # ExitProcess stays at imp_idx=0 (EEXIT hardcodes that slot);
     # user imports start at imp_idx=1. Duplicates of ExitProcess
     # are allowed and harmless (extra IAT slot with same target).
+    # Tag each import with its DLL id (parallel to the name) BEFORE
+    # _pe_imp_add increments _pe_imp_count, so _pe_imp_dll is keyed by
+    # the same imp_idx the ftype=4 fixups already captured.
     var pi = 0;
     var pi_off = 0;
     var pi_ptr = 0;
     while (pi < _pe_pending_imp_count) {
         pi_off = L64(&_pe_pending_imp_offs + pi * 8);
         pi_ptr = &_pe_pending_imp_buf + pi_off;
+        store8(&_pe_imp_dll + _pe_imp_count, load8(&_pe_pending_imp_dll + pi));
         _pe_imp_add(pi_ptr);
         pi = pi + 1;
     }
@@ -654,16 +704,58 @@ fn _pe_layout(S): i64 {
     # each import table ends with a zero thunk.
     var imp_count = _pe_imp_count;
     _pe_iat_sub_off = 0;
-    _pe_iat_size = (imp_count + 1) * 8;
+
+    # Group imports by DLL into per-descriptor IAT/ILT runs (each run
+    # null-terminated, PE32+ 8-byte thunks). Walk DLL ids ascending
+    # (kernel32=0 first → ExitProcess stays at physical slot 0).
+    # _pe_iat_pos[imp_idx] = physical slot (for the ftype=4 fixup);
+    # _pe_dll_first / _pe_dll_id_used / _pe_dll_name_off describe each
+    # emitted descriptor. One DLL reproduces the legacy layout exactly.
+    var phys = 0;
+    var dname_off = 0;
+    var dll = 0;
+    var dll_has = 0;
+    var first_phys = 0;
+    var k = 0;
+    var dn = 0;
+    var dnl = 0;
+    _pe_dll_count = 0;
+    while (dll < 3) {
+        dll_has = 0;
+        first_phys = phys;
+        k = 0;
+        while (k < imp_count) {
+            if (load8(&_pe_imp_dll + k) == dll) {
+                if (dll_has == 0) { first_phys = phys; dll_has = 1; }
+                S64(&_pe_iat_pos + k * 8, phys);
+                phys = phys + 1;
+            }
+            k = k + 1;
+        }
+        if (dll_has == 1) {
+            phys = phys + 1;   # per-DLL null thunk terminator
+            S64(&_pe_dll_first + _pe_dll_count * 8, first_phys);
+            S64(&_pe_dll_id_used + _pe_dll_count * 8, dll);
+            S64(&_pe_dll_name_off + _pe_dll_count * 8, dname_off);
+            dn = _pe_dll_name(dll);
+            dnl = 0;
+            while (load8(dn + dnl) != 0) { dnl = dnl + 1; }
+            dname_off = dname_off + ((dnl + 1 + 1) & (0 - 2));
+            _pe_dll_count = _pe_dll_count + 1;
+        }
+        dll = dll + 1;
+    }
+    _pe_iat_size = phys * 8;
     _pe_imp_dir_sub_off = _pe_iat_sub_off + _pe_iat_size;
-    _pe_imp_dir_size = 20 * 2;
+    _pe_imp_dir_size = (_pe_dll_count + 1) * 20;
     _pe_ilt_sub_off = _pe_imp_dir_sub_off + _pe_imp_dir_size;
-    _pe_ilt_size = (imp_count + 1) * 8;
+    _pe_ilt_size = phys * 8;
     _pe_hint_name_sub_off = _pe_ilt_sub_off + _pe_ilt_size;
 
     # Hint/Name table: each entry = 2-byte hint + name + NUL,
-    # word-aligned per entry (so the next ILT/IAT index lands on
-    # an even RVA and the high-bit ordinal test stays unambiguous).
+    # word-aligned per entry. Kept in imp_idx order (bytes unchanged
+    # from the legacy path); _pe_imp_hn_off[imp_idx] lets the grouped
+    # IAT/ILT emit find each import's entry by imp_idx.
     var hn_total = 0;
     var i = 0;
     var name_off = 0;
@@ -671,6 +763,7 @@ fn _pe_layout(S): i64 {
     var nlen = 0;
     var entry = 0;
     while (i < imp_count) {
+        S64(&_pe_imp_hn_off + i * 8, hn_total);
         name_off = L64(&_pe_imp_name_offs + i * 8);
         np = &_pe_imp_name_buf + name_off;
         nlen = 0;
@@ -682,9 +775,10 @@ fn _pe_layout(S): i64 {
     }
     _pe_hint_name_size = hn_total;
 
-    # DLL name — "kernel32.dll" + NUL = 13 bytes, word-align to 14.
+    # DLL names — one word-aligned NUL-terminated string per descriptor,
+    # concatenated; _pe_dll_name_off[d] is each descriptor's offset.
     _pe_dll_name_sub_off = _pe_hint_name_sub_off + _pe_hint_name_size;
-    _pe_dll_name_size = (13 + 1) & (0 - 2);
+    _pe_dll_name_size = dname_off;
 
     _pe_idata_vsize = _pe_dll_name_sub_off + _pe_dll_name_size;
     _pe_idata_file_size = (_pe_idata_vsize + 0x1FF) & (0 - 0x200);
@@ -840,12 +934,9 @@ fn EMITPE_EXEC(S): i64 {
     var imp_count = _pe_imp_count;
     var dd_idx = 0;
     var ii = 0;
-    var hn_off = 0;
     var name_off = 0;
     var np = 0;
     var nlen = 0;
-    var esz = 0;
-    var entry_rva = 0;
     var idata_start = 0;
     var idata_pad_target = 0;
     var ti = 0;
@@ -1145,30 +1236,36 @@ fn EMITPE_EXEC(S): i64 {
     # ============================================================
     idata_start = o;
 
-    # IAT — each thunk is the RVA of its IMAGE_IMPORT_BY_NAME entry.
-    # High bit clear = import-by-name (not ordinal).
-    ii = 0;
-    hn_off = 0;
-    while (ii < imp_count) {
-        entry_rva = _pe_idata_rva + _pe_hint_name_sub_off + hn_off;
-        o = _pe_w64(O, o, entry_rva);
-        name_off = L64(&_pe_imp_name_offs + ii * 8);
-        np = &_pe_imp_name_buf + name_off;
-        nlen = 0;
-        while (load8(np + nlen) != 0) { nlen = nlen + 1; }
-        esz = 2 + nlen + 1;
-        esz = (esz + 1) & (0 - 2);
-        hn_off = hn_off + esz;
-        ii = ii + 1;
+    # IAT — grouped by DLL, each DLL's run null-terminated. Each thunk
+    # is the RVA of its IMAGE_IMPORT_BY_NAME (hint/name) entry; high bit
+    # clear = import-by-name. Descriptors in layout order; within each,
+    # that DLL's imports in imp_idx order (hint/name offset precomputed).
+    var dd = 0;
+    var ddll = 0;
+    while (dd < _pe_dll_count) {
+        ddll = L64(&_pe_dll_id_used + dd * 8);
+        ii = 0;
+        while (ii < imp_count) {
+            if (load8(&_pe_imp_dll + ii) == ddll) {
+                o = _pe_w64(O, o, _pe_idata_rva + _pe_hint_name_sub_off + L64(&_pe_imp_hn_off + ii * 8));
+            }
+            ii = ii + 1;
+        }
+        o = _pe_w64(O, o, 0);   # per-DLL IAT null terminator
+        dd = dd + 1;
     }
-    o = _pe_w64(O, o, 0);       # IAT null terminator
 
-    # Import Directory — one kernel32 descriptor + null terminator
-    o = _pe_w32(O, o, _pe_idata_rva + _pe_ilt_sub_off);     # OriginalFirstThunk (ILT)
-    o = _pe_w32(O, o, 0);                                    # TimeDateStamp
-    o = _pe_w32(O, o, 0);                                    # ForwarderChain
-    o = _pe_w32(O, o, _pe_idata_rva + _pe_dll_name_sub_off); # Name (DLL name RVA)
-    o = _pe_w32(O, o, _pe_idata_rva + _pe_iat_sub_off);      # FirstThunk (IAT)
+    # Import Directory — one descriptor per DLL + null terminator. Each
+    # descriptor's ILT/IAT thunks point at this DLL's run start.
+    dd = 0;
+    while (dd < _pe_dll_count) {
+        o = _pe_w32(O, o, _pe_idata_rva + _pe_ilt_sub_off + L64(&_pe_dll_first + dd * 8) * 8);    # OriginalFirstThunk
+        o = _pe_w32(O, o, 0);                                                                       # TimeDateStamp
+        o = _pe_w32(O, o, 0);                                                                       # ForwarderChain
+        o = _pe_w32(O, o, _pe_idata_rva + _pe_dll_name_sub_off + L64(&_pe_dll_name_off + dd * 8));  # Name (DLL name RVA)
+        o = _pe_w32(O, o, _pe_idata_rva + _pe_iat_sub_off + L64(&_pe_dll_first + dd * 8) * 8);       # FirstThunk
+        dd = dd + 1;
+    }
     # 20 bytes of zero — terminator descriptor
     o = _pe_w32(O, o, 0);
     o = _pe_w32(O, o, 0);
@@ -1176,24 +1273,22 @@ fn EMITPE_EXEC(S): i64 {
     o = _pe_w32(O, o, 0);
     o = _pe_w32(O, o, 0);
 
-    # ILT — mirrors IAT (same thunk RVAs). Spec wants both; the
-    # loader only strictly needs IAT, but emitting ILT costs
-    # nothing and avoids loader-version compatibility surprises.
-    ii = 0;
-    hn_off = 0;
-    while (ii < imp_count) {
-        entry_rva = _pe_idata_rva + _pe_hint_name_sub_off + hn_off;
-        o = _pe_w64(O, o, entry_rva);
-        name_off = L64(&_pe_imp_name_offs + ii * 8);
-        np = &_pe_imp_name_buf + name_off;
-        nlen = 0;
-        while (load8(np + nlen) != 0) { nlen = nlen + 1; }
-        esz = 2 + nlen + 1;
-        esz = (esz + 1) & (0 - 2);
-        hn_off = hn_off + esz;
-        ii = ii + 1;
+    # ILT — mirrors the IAT exactly (same grouped thunk RVAs + per-DLL
+    # nulls). The loader strictly needs only the IAT, but emitting the
+    # ILT avoids loader-version compatibility surprises.
+    dd = 0;
+    while (dd < _pe_dll_count) {
+        ddll = L64(&_pe_dll_id_used + dd * 8);
+        ii = 0;
+        while (ii < imp_count) {
+            if (load8(&_pe_imp_dll + ii) == ddll) {
+                o = _pe_w64(O, o, _pe_idata_rva + _pe_hint_name_sub_off + L64(&_pe_imp_hn_off + ii * 8));
+            }
+            ii = ii + 1;
+        }
+        o = _pe_w64(O, o, 0);   # per-DLL ILT null terminator
+        dd = dd + 1;
     }
-    o = _pe_w64(O, o, 0);       # ILT null terminator
 
     # Hint/Name table — per import: 2-byte hint (0 = name lookup),
     # NUL-terminated name, pad to 2-byte alignment.
@@ -1207,9 +1302,14 @@ fn EMITPE_EXEC(S): i64 {
         ii = ii + 1;
     }
 
-    # DLL name — "kernel32.dll"
-    o = _pe_wstr(O, o, "kernel32.dll");
-    o = _pe_wpad(O, o, 2);
+    # DLL names — one NUL-terminated, word-aligned string per descriptor,
+    # in the same layout order as _pe_dll_name_off recorded.
+    dd = 0;
+    while (dd < _pe_dll_count) {
+        o = _pe_wstr(O, o, _pe_dll_name(L64(&_pe_dll_id_used + dd * 8)));
+        o = _pe_wpad(O, o, 2);
+        dd = dd + 1;
+    }
 
     # Pad .idata to FileAlignment.
     idata_pad_target = idata_start + _pe_idata_file_size;

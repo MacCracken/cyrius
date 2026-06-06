@@ -213,10 +213,12 @@ fn FIXUP(S): i64 {
                 else { if (ftype == 4) {
                         # PE IAT reference — patch disp32 for `FF 15 <disp32>`
                         # (call [rip+disp32]) to reach the IAT slot for import
-                        # `idx`. IAT_RVA = _pe_idata_rva + _pe_iat_sub_off + idx*8.
-                        # RIP at the disp32 read is text_rva + coff + 4 (coff
-                        # points at the 4-byte disp32; +4 skips past it).
-                        var iat_rva = _pe_idata_rva + _pe_iat_sub_off + idx * 8;
+                        # `idx`. v6.0.69: imports are grouped by DLL, so the flat
+                        # imp_idx maps to a physical IAT slot via _pe_iat_slot()
+                        # (identity for a single DLL). IAT_RVA = _pe_idata_rva +
+                        # _pe_iat_sub_off + slot*8. RIP at the disp32 read is
+                        # text_rva + coff + 4 (coff points at the disp32; +4 skips it).
+                        var iat_rva = _pe_idata_rva + _pe_iat_sub_off + _pe_iat_slot(idx) * 8;
                         var rel4 = iat_rva - (_pe_text_rva + coff + 4);
                         var p4 = S + 0x41A000 + coff;
                         S64(p4, (L64(p4) >> 32 << 32) | (rel4 & 0xFFFFFFFF));
