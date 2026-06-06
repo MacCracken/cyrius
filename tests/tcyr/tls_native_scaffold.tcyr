@@ -41,7 +41,7 @@ assert_eq(tls_native_set_alpn(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_alpn stub"
 # set_verify is live (.15): null ctx → INVALID_PARAM, not NOT_IMPLEMENTED.
 assert_eq(tls_native_set_verify(0, TLS_VERIFY_PEER), TLS_ERR_INVALID_PARAM, "set_verify null ctx");
 assert_eq(tls_native_set_ca_bundle(0, 0, 0, 0), TLS_ERR_INVALID_PARAM, "set_ca_bundle null ctx (live .29)");
-assert_eq(tls_native_set_version_range(0, TLS_VERSION_1_2, TLS_VERSION_1_3), TLS_ERR_NOT_IMPLEMENTED, "set_version_range stub");
+assert_eq(tls_native_set_version_range(0, TLS_VERSION_1_2, TLS_VERSION_1_3), TLS_ERR_INVALID_PARAM, "set_version_range null ctx → INVALID_PARAM (implemented .74)");
 assert_eq(tls_native_connect(0, 0 - 1), TLS_ERR_INVALID_PARAM, "connect null ctx → INVALID_PARAM");
 assert_eq(tls_native_accept(0, 0 - 1), TLS_ERR_INVALID_PARAM, "accept null ctx → INVALID_PARAM");
 assert_eq(tls_native_write(0, 0, 0), TLS_ERR_INVALID_PARAM, "write null ctx → INVALID_PARAM");

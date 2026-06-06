@@ -217,9 +217,10 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | then | **UEFI `fncallN` ud2-emit regression** (cycc 6.0.0 emits `ud2 ud2` at every `fncallN` for `CYRIUS_TARGET_EFI=1`; blocks gnoboot/AGNOS boot). Issue `2026-05-19-cycc-6.0.0-uefi-fncall-ud2-emit.md` | before AGNOS arc |
 | ~.37 | **CI cross-OS self-host GATE** — extend the existing `macho-arm64-native` (macos-14) + `windows-native` (windows-latest) jobs from hello-world smoke to **build cycc + self-host byte-identical + `.tcyr` smoke**, fail-loud. (Closeout 3b + `cyrius audit` gate already landed .33.) **The native CI jobs only ran tiny exit-code programs, never the compiler — why the macOS port rotted undetected.** | MANDATORY before AGNOS arc |
 | ~.38 → ~.42 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
-| ~.43 → ~.48 | Mini-arc D — TLS 1.2 backport | |
-| ~.49 → ~.51 | Mini-arc E — consumer wiring + TLS arc closeout | |
-| later | Back-end window + v6.0.x cycle closeout | |
+| .72 → .74 | **Mini-arc D — TLS 1.2 backport** (.72 AEAD record layer / .73 PRF + key schedule / .74 handshake message flow + client+server drivers + socketpair e2e) | ✅ COMPLETE — full 1.2 (ECDHE) handshake, our-client ↔ our-server; .74 verified x86 + aarch64, 8 review findings fixed |
+| next (~.75+) | Mini-arc E — consumer wiring + TLS arc closeout (sandhi onto tls_native, libssl-wrapper disposition, consumer smoke; real-peer OpenSSL 1.2 interop + EMS before that) | |
+| then | near-end **Windows repair cluster** (back-burned per user 2026-06-06) | |
+| later | last cleanup/refactor + sigil fold + v6.0.x cycle closeout → v6.1.0 | |
 
 Slot numbers downstream of C are nominal (the e2e split widened C to 9
 slots; "don't care the additional slots").

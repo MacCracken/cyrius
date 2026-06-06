@@ -1,0 +1,211 @@
+# tls12_handshake_msgs.tcyr — v6.0.74 TLS 1.2 handshake messages
+#
+# Mini-arc D step 3 (.74) adds the TLS 1.2 (ECDHE) handshake message
+# builders/parsers + key-schedule glue. This round-trips each message
+# (build -> parse), asserts the load-bearing byte layouts, and proves
+# the two crypto closures end-to-end WITHOUT a socket: (a) the
+# ServerKeyExchange ECDHE-param signature signs+verifies against a
+# matched P-256 cert/key, and (b) both peers, from the same premaster
+# + randoms + transcript, derive identical keys and cross-verify each
+# other's Finished. See CHANGELOG [6.0.74].
+
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+test_group("TLS 1.2 handshake messages (.74)");
+
+# Matched P-256 leaf cert (385 B) + P-256 private key (138 B) — the
+# OpenSSL-generated pair the 1.3 socketpair e2e uses.
+var cert23 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var key23 = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+
+# Shared randoms (the SKE signature + the PRF cover both).
+var cr[32]; sys_getrandom(&cr, 32, 0);
+var sr[32]; sys_getrandom(&sr, 32, 0);
+
+# ---------------- ClientHello ----------------
+var cl = tls_native_new_client("localhost", 9);
+var ch[512];
+var chn = tls_native_12_build_client_hello(cl, &ch, 512);
+assert_gt(chn, 0, "build_client_hello ok");
+assert_eq(load8(&ch), TLS_HS_CLIENT_HELLO, "CH handshake type = 1");
+assert_eq(_tn_be24_r(&ch + 1), chn - 4, "CH body length field = total - 4");
+assert_eq(_tn_be16_r(&ch + 4), 0x0303, "CH legacy_version = 0x0303");
+assert_eq(load8(&ch + 4 + 2 + 32), 0, "CH legacy_session_id empty");
+assert_eq(_tn_be16_r(&ch + 4 + 2 + 32 + 1), 4, "CH cipher_suites length = 4 (two suites)");
+assert_eq(_tn_be16_r(&ch + 4 + 2 + 32 + 1 + 2), TLS12_ECDHE_ECDSA_AES256_GCM_SHA384, "CH first suite = 0xC02C");
+assert_eq(_tn_be16_r(&ch + 4 + 2 + 32 + 1 + 4), TLS12_ECDHE_ECDSA_CHACHA20_SHA256, "CH second suite = 0xCCA9");
+# the CH must be buffered into the ctx for the retroactive transcript init
+assert_eq(load64(cl + TLS_CTX_OFF_CH_LEN), chn, "CH buffered length matches");
+
+# ---------------- ServerHello build -> parse ----------------
+var srv = tls_native_new_server(cert23, 385, key23, 138);
+assert_eq(tls_native_server_load_creds(srv), TLS_OK, "load_creds (P-256)");
+store64(srv + TLS_CTX_OFF_CIPHER, TLS_AES_256_GCM_SHA384);   # negotiated identity
+store64(srv + TLS_CTX_OFF_SERVER_RANDOM, &sr);
+var sh[256];
+var shn = _tn_build_server_hello_12(srv, &sh, 256, 1);
+assert_gt(shn, 0, "build_server_hello_12 ok");
+assert_eq(load8(&sh), TLS_HS_SERVER_HELLO, "SH handshake type = 2");
+assert_eq(_tn_be16_r(&sh + 4), 0x0303, "SH server_version = 0x0303");
+# the chosen wire ciphersuite (after version + random + empty session_id)
+assert_eq(_tn_be16_r(&sh + 4 + 2 + 32 + 1), TLS12_ECDHE_ECDSA_AES256_GCM_SHA384, "SH cipher = 0xC02C wire id");
+assert_eq(_tn_sh_is_tls13(&sh, shn), 0, "1.2 ServerHello is NOT detected as 1.3 (no supported_versions)");
+
+var cl2 = tls_native_new_client(0, 0);
+assert_eq(tls_native_client_parse_server_hello_12(cl2, &sh, shn), TLS_OK, "parse_server_hello_12 ok");
+assert_eq(load64(cl2 + TLS_CTX_OFF_CIPHER), TLS_AES_256_GCM_SHA384, "client stored AEAD identity (not wire id)");
+assert_eq(load64(cl2 + TLS_CTX_OFF_VERSION), TLS_VERSION_1_2, "client negotiated version = 1.2");
+
+# A synthetic 1.3 ServerHello (supported_versions=0x0304) must be flagged.
+var sh13[64];
+tls_native_handshake_write_header(&sh13, TLS_HS_SERVER_HELLO, 2 + 32 + 1 + 2 + 1 + 2 + 6);
+store8(&sh13 + 4, 3); store8(&sh13 + 5, 3);                  # legacy_version 0x0303
+var z = 0; while (z < 32) { store8(&sh13 + 6 + z, 0); z = z + 1; }
+store8(&sh13 + 38, 0);                                       # empty session_id
+store8(&sh13 + 39, 0x13); store8(&sh13 + 40, 0x01);          # cipher
+store8(&sh13 + 41, 0);                                       # compression
+store8(&sh13 + 42, 0); store8(&sh13 + 43, 6);               # extensions length = 6
+store8(&sh13 + 44, 0); store8(&sh13 + 45, 0x2B);            # supported_versions (43)
+store8(&sh13 + 46, 0); store8(&sh13 + 47, 2);              # ext_data length 2
+store8(&sh13 + 48, 3); store8(&sh13 + 49, 4);              # 0x0304
+assert_eq(_tn_sh_is_tls13(&sh13, 50), 1, "supported_versions=0x0304 detected as 1.3");
+
+# ---------------- Certificate build -> parse ----------------
+var certmsg[512];
+var certn = _tn_build_certificate_12(srv, &certmsg, 512);
+assert_gt(certn, 0, "build_certificate_12 ok");
+assert_eq(load8(&certmsg), TLS_HS_CERTIFICATE, "Cert handshake type = 11");
+assert_eq(_tn_be24_r(&certmsg + 4), 3 + 385, "Cert certificate_list length = 3 + cert_len");
+assert_eq(_tn_be24_r(&certmsg + 7), 385, "Cert inner cert length = 385");
+assert_eq(_tn_parse_certificate_12(cl2, &certmsg + 4, certn - 4), TLS_OK, "parse_certificate_12 -> SERVER_CERT");
+assert_neq(load64(cl2 + TLS_CTX_OFF_SERVER_CERT), 0, "client stored the parsed leaf cert");
+# empty certificate_list must be rejected
+var emptycert[8];
+store8(&emptycert, 0); store8(&emptycert + 1, 0); store8(&emptycert + 2, 0);
+assert_eq(_tn_parse_certificate_12(cl2, &emptycert, 3), TLS_ERR_CERT_INVALID, "empty cert_list rejected");
+
+# ---------------- ServerKeyExchange sign -> verify ----------------
+store64(srv + TLS_CTX_OFF_CLIENT_RANDOM, &cr);
+# srv server_random already set; client randoms must match for the sig content
+_tn_gen_ephemeral_x25519_pub_only(srv);
+var ske[256];
+var sken = _tn_12_build_server_kex(srv, &ske, 256);
+assert_gt(sken, 0, "build_server_kex ok (P-256 signs ECDHE params)");
+assert_eq(load8(&ske), TLS_HS_SERVER_KEY_EXCHANGE, "SKE handshake type = 12");
+assert_eq(load8(&ske + 4), 3, "SKE curve_type = named_curve(3)");
+assert_eq(_tn_be16_r(&ske + 5), TLS_GROUP_X25519, "SKE namedcurve = x25519");
+assert_eq(load8(&ske + 7), 32, "SKE ECPoint length = 32");
+assert_eq(_tn_be16_r(&ske + 4 + 36), TLS_SIG_ECDSA_SECP256R1_SHA256, "SKE SignatureScheme = ecdsa_secp256r1_sha256");
+# client side: the verify needs the same randoms + the parsed cert
+store64(cl2 + TLS_CTX_OFF_CLIENT_RANDOM, &cr);
+store64(cl2 + TLS_CTX_OFF_SERVER_RANDOM, &sr);
+assert_eq(_tn_12_parse_server_kex(cl2, &ske + 4, sken - 4), TLS_OK, "parse+verify server_kex (sig valid)");
+assert_neq(load64(cl2 + TLS_CTX_OFF_PEER_PUB), 0, "client stored server ephemeral pubkey");
+# tamper the last signature byte -> AUTHN
+var lastb = load8(&ske + sken - 1);
+store8(&ske + sken - 1, lastb ^ 0xFF);
+assert_eq(_tn_12_parse_server_kex(cl2, &ske + 4, sken - 4), TLS_ERR_AUTHN, "tampered SKE signature -> AUTHN");
+store8(&ske + sken - 1, lastb);
+
+# ---------------- ServerHelloDone ----------------
+var shd[8];
+var shdn = tls_native_12_build_server_hello_done(&shd, 8);
+assert_eq(shdn, 4, "ServerHelloDone = bare 4-byte header");
+assert_eq(load8(&shd), TLS_HS_SERVER_HELLO_DONE, "SHD type = 14");
+assert_eq(_tn_be24_r(&shd + 1), 0, "SHD body length = 0");
+assert_eq(tls_native_12_parse_server_hello_done(&shd, 4), TLS_OK, "parse SHD ok");
+store8(&shd + 1, 1);  # non-zero body length
+assert_eq(tls_native_12_parse_server_hello_done(&shd, 4), TLS_ERR_BAD_HANDSHAKE, "SHD with body rejected");
+
+# ---------------- ClientKeyExchange ----------------
+var cpub[32]; var i = 0; while (i < 32) { store8(&cpub + i, i + 7); i = i + 1; }
+var cke[64];
+var cken = tls_native_12_build_client_key_exchange(&cpub, &cke, 64);
+assert_eq(cken, 37, "ClientKeyExchange = 4 + 1 + 32");
+assert_eq(load8(&cke), TLS_HS_CLIENT_KEY_EXCHANGE, "CKE type = 16");
+assert_eq(load8(&cke + 4), 32, "CKE point length = 32 (1-byte prefix)");
+var recovered[32];
+assert_eq(tls_native_12_parse_client_key_exchange(&cke, cken, &recovered), TLS_OK, "parse CKE ok");
+assert_eq(_tn_ct_eq(&recovered, &cpub, 32), 1, "CKE point round-trips");
+# trailing garbage rejected (body must be exactly 33)
+store8(&cke + 1, 0); store8(&cke + 2, 0); store8(&cke + 3, 34);
+assert_eq(tls_native_12_parse_client_key_exchange(&cke, 38, &recovered), TLS_ERR_BAD_HANDSHAKE, "CKE with trailing byte rejected");
+
+# ---------------- ChangeCipherSpec ----------------
+var ccs[8];
+assert_eq(tls_native_ccs_record_write(&ccs), 6, "CCS record = 6 bytes");
+assert_eq(load8(&ccs), TLS_CT_CHANGE_CIPHER_SPEC, "CCS ContentType = 20 (0x14)");
+assert_eq(_tn_be16_r(&ccs + 1), 0x0303, "CCS version = 0x0303");
+assert_eq(_tn_be16_r(&ccs + 3), 1, "CCS length = 1");
+assert_eq(load8(&ccs + 5), 1, "CCS payload byte = 0x01");
+
+# ---------------- ECDHE premaster (agreement + all-zero reject) ----------------
+var apriv[32]; sys_getrandom(&apriv, 32, 0); var apub[32]; x25519_base(&apriv, &apub);
+var bpriv[32]; sys_getrandom(&bpriv, 32, 0); var bpub[32]; x25519_base(&bpriv, &bpub);
+var actx = tls_native_new_client(0, 0); store64(actx + TLS_CTX_OFF_EPH_PRIV, &apriv);
+var bctx = tls_native_new_client(0, 0); store64(bctx + TLS_CTX_OFF_EPH_PRIV, &bpriv);
+var pmA[32]; var pmB[32];
+assert_eq(tls_native_12_compute_premaster(actx, &bpub, &pmA), TLS_OK, "premaster A ok (non-zero)");
+assert_eq(tls_native_12_compute_premaster(bctx, &apub, &pmB), TLS_OK, "premaster B ok");
+assert_eq(_tn_ct_eq(&pmA, &pmB, 32), 1, "ECDH agreement: A and B derive the same premaster");
+# all-zero u (low-order point) -> all-zero shared -> reject (RFC 8422 §5.11)
+var zero_u[32]; var zz = 0; while (zz < 32) { store8(&zero_u + zz, 0); zz = zz + 1; }
+var pmz[32];
+assert_eq(tls_native_12_compute_premaster(actx, &zero_u, &pmz), TLS_ERR_HANDSHAKE_FAILED, "all-zero ECDH rejected");
+
+# ---------------- key schedule + Finished cross-verify ----------------
+# Both peers: identity + randoms + premaster identical -> identical keys.
+var clf = tls_native_new_client(0, 0);
+store64(clf + TLS_CTX_OFF_CIPHER, TLS_AES_256_GCM_SHA384);
+store64(clf + TLS_CTX_OFF_CLIENT_RANDOM, &cr);
+store64(clf + TLS_CTX_OFF_SERVER_RANDOM, &sr);
+assert_eq(tls_native_12_derive_keys(clf, &pmA, 32), TLS_OK, "client derive_keys ok");
+var svf = tls_native_new_server(cert23, 385, key23, 138);
+store64(svf + TLS_CTX_OFF_CIPHER, TLS_AES_256_GCM_SHA384);
+store64(svf + TLS_CTX_OFF_CLIENT_RANDOM, &cr);
+store64(svf + TLS_CTX_OFF_SERVER_RANDOM, &sr);
+assert_eq(tls_native_12_derive_keys(svf, &pmA, 32), TLS_OK, "server derive_keys ok");
+# both write keys must match (same key_block)
+assert_eq(_tn_ct_eq(load64(clf + TLS_CTX_OFF_CLI_APP_KEY), load64(svf + TLS_CTX_OFF_CLI_APP_KEY), 32), 1, "client-write key identical on both sides");
+assert_eq(_tn_ct_eq(load64(clf + TLS_CTX_OFF_SRV_APP_IV), load64(svf + TLS_CTX_OFF_SRV_APP_IV), 4), 1, "server-write GCM salt identical on both sides");
+# shared transcript: feed the SAME handshake bytes (use the CH we built)
+var tcc = tls_native_transcript_init(TLS_HASH_SHA384); store64(clf + TLS_CTX_OFF_TRANSCRIPT, tcc);
+var tss = tls_native_transcript_init(TLS_HASH_SHA384); store64(svf + TLS_CTX_OFF_TRANSCRIPT, tss);
+tls_native_transcript_update(tcc, &ch, chn);
+tls_native_transcript_update(tss, &ch, chn);
+# client Finished -> server verifies
+var cfin[32];
+var cfn = tls_native_12_build_finished(clf, "client finished", &cfin, 32);
+assert_eq(cfn, 16, "client Finished = 4 + 12 bytes");
+assert_eq(load8(&cfin), TLS_HS_FINISHED, "Finished type = 20");
+assert_eq(_tn_be24_r(&cfin + 1), 12, "Finished verify_data length = 12 (NOT hash length)");
+assert_eq(tls_native_12_verify_finished(svf, &cfin, cfn, "client finished"), TLS_OK, "server verifies client Finished");
+# server Finished -> client verifies (transcript now includes client Finished both sides)
+var sfin[32];
+var sfn = tls_native_12_build_finished(svf, "server finished", &sfin, 32);
+assert_eq(tls_native_12_verify_finished(clf, &sfin, sfn, "server finished"), TLS_OK, "client verifies server Finished");
+# a tampered Finished verify_data -> AUTHN
+store8(&sfin + 4, load8(&sfin + 4) ^ 0xFF);
+# rebuild client transcript state is already advanced; re-derive a fresh pair to test mismatch cleanly
+var clf2 = tls_native_new_client(0, 0);
+store64(clf2 + TLS_CTX_OFF_CIPHER, TLS_AES_256_GCM_SHA384);
+store64(clf2 + TLS_CTX_OFF_CLIENT_RANDOM, &cr);
+store64(clf2 + TLS_CTX_OFF_SERVER_RANDOM, &sr);
+tls_native_12_derive_keys(clf2, &pmA, 32);
+var tcc2 = tls_native_transcript_init(TLS_HASH_SHA384); store64(clf2 + TLS_CTX_OFF_TRANSCRIPT, tcc2);
+tls_native_transcript_update(tcc2, &ch, chn);
+var badfin[32]; var bj = 0; while (bj < 16) { store8(&badfin + bj, load8(&cfin + bj)); bj = bj + 1; }
+store8(&badfin + 4, load8(&badfin + 4) ^ 0xFF);
+assert_eq(tls_native_12_verify_finished(clf2, &badfin, 16, "client finished"), TLS_ERR_AUTHN, "tampered Finished -> AUTHN");
+
+# ---------------- malformed server flight: oversized sub-message length ----------------
+# Regression for the .74 review's P0: a server flight whose ServerHello
+# claims a ~16 MB body must be rejected by the length-vs-buffer guard in
+# _tn_12_client_consume_flight, NOT drive an OOB read in sha*_update.
+var badflight[16];
+tls_native_handshake_write_header(&badflight, TLS_HS_SERVER_HELLO, 0xFFFFFE);
+var bclient = tls_native_new_client(0, 0);
+assert_eq(_tn_12_client_consume_flight(bclient, &badflight, 16), TLS_ERR_BAD_HANDSHAKE, "oversized ServerHello length rejected (no OOB read)");
+
+var r = assert_summary();

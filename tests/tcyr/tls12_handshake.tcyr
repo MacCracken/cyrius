@@ -1,0 +1,109 @@
+# tls12_handshake.tcyr — v6.0.74 TLS 1.2 end-to-end handshake
+#
+# Mini-arc D step 3 (.74) closes the TLS 1.2 backport: a full
+# cyrius-native client <-> cyrius-native server 1.2 (ECDHE) handshake
+# over a socketpair, then bidirectional application data. The client
+# is pinned to 1.2 (set_version_range), so tls_native_connect routes
+# to the 1.2 driver; the server auto-negotiates 1.2 because the
+# ClientHello carries no supported_versions=0x0304. Also checks the
+# version-range validation and the ChaCha20 key-schedule path.
+# See CHANGELOG [6.0.74].
+
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+test_group("TLS 1.2 end-to-end handshake (.74)");
+
+# Matched P-256 leaf cert (385 B) + P-256 key (138 B) — same pair the
+# 1.3 socketpair e2e uses (ECDHE_ECDSA suites authenticate with it).
+var cert23 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var key23 = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+
+# --- version-range validation (drives the connect/accept dispatch) ---
+var vctx = tls_native_new_client(0, 0);
+assert_eq(tls_native_set_version_range(vctx, TLS_VERSION_1_2, TLS_VERSION_1_2), TLS_OK, "set_version_range 1.2..1.2 ok");
+assert_eq(load64(vctx + TLS_CTX_OFF_MAX_VER), TLS_VERSION_1_2, "max_ver pinned to 1.2");
+assert_eq(tls_native_set_version_range(vctx, TLS_VERSION_1_3, TLS_VERSION_1_2), TLS_ERR_INVALID_PARAM, "min>max rejected");
+assert_eq(tls_native_set_version_range(vctx, 0x0301, 0x0303), TLS_ERR_INVALID_PARAM, "TLS 1.0 min rejected");
+
+# --- full 1.2 handshake + app data over a socketpair ---
+var fds[8];
+sys_socketpair(1, 1, 0, &fds);
+var fdp = load64(&fds);
+var sfd = fdp & 0xFFFFFFFF;
+var cfd = (fdp >> 32) & 0xFFFFFFFF;
+
+var pid = sys_fork();
+if (pid == 0) {
+    # CHILD: client, pinned to TLS 1.2
+    sys_close(sfd);
+    var clx = tls_native_new_client("localhost", 9);
+    tls_native_set_version_range(clx, TLS_VERSION_1_2, TLS_VERSION_1_2);
+    if (tls_native_connect(clx, cfd) != TLS_OK) { sys_exit(10); }
+    if (tls_native_get_state(clx) != TLS_STATE_CONNECTED) { sys_exit(11); }
+    if (tls_native_get_version(clx) != TLS_VERSION_1_2) { sys_exit(12); }
+    if (tls_native_write(clx, "ping-from-client", 16) != 16) { sys_exit(13); }
+    var rb[64];
+    if (tls_native_read(clx, &rb, 64) != 16) { sys_exit(14); }
+    if (_tn_ct_eq(&rb, "pong-from-server", 16) != 1) { sys_exit(15); }
+    # a second, longer app record (exercises seq advance + a 2nd record)
+    if (tls_native_write(clx, "the-second-client-message", 25) != 25) { sys_exit(16); }
+    sys_close(cfd);
+    sys_exit(0);
+}
+
+# PARENT: server (auto-negotiates 1.2 from the 1.2 ClientHello)
+sys_close(cfd);
+var srv = tls_native_new_server(cert23, 385, key23, 138);
+tls_native_server_load_creds(srv);
+assert_eq(tls_native_accept(srv, sfd), TLS_OK, "server accept() drives the 1.2 handshake → TLS_OK");
+assert_eq(tls_native_get_state(srv), TLS_STATE_CONNECTED, "server CONNECTED");
+assert_eq(tls_native_get_version(srv), TLS_VERSION_1_2, "server negotiated TLS 1.2");
+assert_eq(tls_native_get_cipher(srv), TLS_AES_256_GCM_SHA384, "negotiated AES-256-GCM (identity)");
+var sb[64];
+assert_eq(tls_native_read(srv, &sb, 64), 16, "server reads 16 bytes of client app data");
+assert_eq(_tn_ct_eq(&sb, "ping-from-client", 16), 1, "server received the client's app data (decrypts)");
+assert_eq(tls_native_write(srv, "pong-from-server", 16), 16, "server wrote its response");
+var sb2[64];
+assert_eq(tls_native_read(srv, &sb2, 64), 25, "server reads the second client record");
+assert_eq(_tn_ct_eq(&sb2, "the-second-client-message", 25), 1, "second record decrypts (seq advanced)");
+sys_close(sfd);
+var st[4];
+sys_waitpid(pid, &st, 0);
+var code = (load64(&st) >> 8) & 0xFF;
+assert_eq(code, 0, "client connect()+handshake+app-data succeeded (child exit 0)");
+
+# --- ChaCha20-Poly1305 key-schedule + Finished cross-verify (SHA-256 path) ---
+# The socket e2e negotiates AES-256-GCM (SHA-384); this exercises the
+# ChaCha identity (SHA-256 PRF + 12-byte IV) through derive_keys +
+# Finished without a second fork.
+var cc_cr[32]; sys_getrandom(&cc_cr, 32, 0);
+var cc_sr[32]; sys_getrandom(&cc_sr, 32, 0);
+var apriv[32]; sys_getrandom(&apriv, 32, 0); var apub[32]; x25519_base(&apriv, &apub);
+var bpriv[32]; sys_getrandom(&bpriv, 32, 0); var bpub[32]; x25519_base(&bpriv, &bpub);
+var acx = tls_native_new_client(0, 0); store64(acx + TLS_CTX_OFF_EPH_PRIV, &apriv);
+var ccpm[32];
+assert_eq(tls_native_12_compute_premaster(acx, &bpub, &ccpm), TLS_OK, "ChaCha premaster ok");
+var ccl = tls_native_new_client(0, 0);
+store64(ccl + TLS_CTX_OFF_CIPHER, TLS_CHACHA20_POLY1305_SHA256);
+store64(ccl + TLS_CTX_OFF_CLIENT_RANDOM, &cc_cr);
+store64(ccl + TLS_CTX_OFF_SERVER_RANDOM, &cc_sr);
+assert_eq(tls_native_12_derive_keys(ccl, &ccpm, 32), TLS_OK, "ChaCha derive_keys ok");
+# ChaCha IV is the full 12-byte implicit nonce (no GCM 4-byte salt)
+var ccs_iv = tls_native_cipher_iv_len_12(TLS_CHACHA20_POLY1305_SHA256);
+assert_eq(ccs_iv, 12, "ChaCha 1.2 IV length = 12");
+var ccsv = tls_native_new_server(cert23, 385, key23, 138);
+store64(ccsv + TLS_CTX_OFF_CIPHER, TLS_CHACHA20_POLY1305_SHA256);
+store64(ccsv + TLS_CTX_OFF_CLIENT_RANDOM, &cc_cr);
+store64(ccsv + TLS_CTX_OFF_SERVER_RANDOM, &cc_sr);
+tls_native_12_derive_keys(ccsv, &ccpm, 32);
+var cctc = tls_native_transcript_init(TLS_HASH_SHA256); store64(ccl + TLS_CTX_OFF_TRANSCRIPT, cctc);
+var ccts = tls_native_transcript_init(TLS_HASH_SHA256); store64(ccsv + TLS_CTX_OFF_TRANSCRIPT, ccts);
+tls_native_transcript_update(cctc, "synthetic 1.2 transcript", 24);
+tls_native_transcript_update(ccts, "synthetic 1.2 transcript", 24);
+var ccfin[32];
+var ccfn = tls_native_12_build_finished(ccl, "client finished", &ccfin, 32);
+assert_eq(ccfn, 16, "ChaCha client Finished = 16 bytes");
+assert_eq(tls_native_12_verify_finished(ccsv, &ccfin, ccfn, "client finished"), TLS_OK, "ChaCha: server verifies client Finished (SHA-256 PRF)");
+
+var r = assert_summary();

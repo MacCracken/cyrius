@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**TLS 1.2 handshake message flow — the complete 1.2 (ECDHE) backport (Mini-arc D, step 3).**
+This closes the 1.2 backport: a full, sovereign client *and* server 1.2 handshake over the `.72` AEAD
+record layer + `.73` PRF/key-schedule, proven end-to-end our-client ↔ our-server over a socketpair
+(full ECDHE handshake + bidirectional application data, no external deps). The 1.2 wire ciphersuites
+are distinct from the internal AEAD identity (`0x130x`) the crypto layer dispatches on — the new
+registry bridges them — and the 1.2 handshake's ordering differs from 1.3 (the client's ECDHE share
+rides ClientKeyExchange after a signed ServerKeyExchange, not the hello). Modern AEAD suites only
+(ECDHE/x25519, ECDSA auth); no legacy CBC, no RSA key-transport, no client-auth/resumption.
+
+### Added
+
+- **TLS 1.2 ciphersuite registry** (`lib/tls_native.cyr`) — the six modern AEAD ECDHE wire suites
+  (`0xC02B/C02C/C02F/C030`, `0xCCA8/CCA9`, RFC 5289 §3.2 + RFC 7905) plus the wire→property lookups:
+  **`tls_native_12_cipher_aead_identity`** (wire → the `0x130x` AEAD identity every `.72`/`.73` helper
+  keys off — the single highest-risk integration point; the wire id must never reach an identity-keyed
+  helper), **`_cipher_auth`** (ECDSA vs RSA — the identity collapse erases this), **`_cipher_hash`**,
+  **`_cipher_supported`** (allowlist: only `0xC02C` + `0xCCA9` complete today — AES-128 is crypto-dead,
+  RSA-auth awaits sigil), and **`tls_native_aead_to_wire_12`** (reverse map for ServerHello).
+- **1.2 handshake messages** — builders + parsers for ClientHello (1.2 semantics: no
+  `supported_versions`/`key_share`; `ec_point_formats` + `signature_algorithms`), ServerHello,
+  Certificate (no 1.3 context byte / per-cert extensions), **ServerKeyExchange** (ECDHE x25519
+  ServerECDHParams signed over `client_random ‖ server_random ‖ params`, RFC 8422 §5.4 — ECDSA-P256 /
+  Ed25519), ServerHelloDone, ClientKeyExchange, ChangeCipherSpec, and **Finished**
+  (`verify_data` always 12 bytes via `.73`'s `tls_native_12_verify_data` over the running transcript).
+- **1.2 key-schedule glue** — `_tn_gen_ephemeral_x25519_pub_only` (generate-only; the 1.2 ordering
+  defers the DH), **`tls_native_12_compute_premaster`** (x25519 → 32-byte premaster with the mandatory
+  RFC 8422 §5.11 all-zero / low-order-point rejection — sigil's `x25519` never signals it), and
+  **`tls_native_12_derive_keys`** (master → key block → AEAD partition into the reused 1.3
+  application-traffic ctx slots for the single 1.2 epoch, both sequences reset to 0).
+- **1.2 connect/accept drivers** — **`tls_native_connect_12`** / **`tls_native_accept_12`** +
+  `_tn_12_server_drive` (coalesced server flight; CCS + sealed Finished; transcript fed raw handshake
+  bytes only, CCS excluded). **`tls_native_connect` / `tls_native_accept` now version-dispatch**: a
+  1.2-pinned client routes to the 1.2 driver, and the server auto-classifies the ClientHello as 1.2 vs
+  1.3 (`key_share`/`supported_versions` ⇒ 1.3). **`tls_native_seal_app` / `_open_app`** gained a 1.2
+  branch so post-handshake `tls_native_write`/`read` use the `.72` record layer.
+  **`tls_native_set_version_range`** is now implemented (was a stub).
+- **`tests/tcyr/tls12_ciphersuites.tcyr`** (28), **`tls12_handshake_msgs.tcyr`** (66 — every
+  builder/parser round-trip, real-P-256 ServerKeyExchange sign+verify, the full key-schedule + Finished
+  cross-verify, and the OOB regression), **`tls12_handshake.tcyr`** (19 — the socketpair e2e + version
+  dispatch + the ChaCha key-schedule path).
+
+### Fixed
+
+- **Hardening from the .74 adversarial review (8 confirmed findings, all fixed in this release):**
+  a **P0 remote OOB heap read** in `_tn_12_client_consume_flight` — each server-flight sub-message's
+  24-bit length is now bounded against the remaining buffer before it reaches `sha*_update` (a hostile
+  server's oversized length drove a multi-MB out-of-bounds read); the **downgrade-sentinel false-reject**
+  that wrongly aborted conformant 1.3-capable servers negotiating 1.2 with a 1.2-only client (removed —
+  a 1.2-only client has no downgrade to detect); the **ClientKeyExchange transcript desync** (the server
+  fed the record payload, not the exact 37-byte message); **secure renegotiation** (RFC 5746) — the
+  ClientHello now sends an empty `renegotiation_info` and the client validates the server's echo; and
+  consistent `_tn_ctx_fail` wrapping on the Finished/CKE build-error paths.
+
+### Verified
+
+- **End-to-end on x86_64 and aarch64**: the socketpair handshake (our client ↔ our server,
+  auto-negotiated 1.2, AES-256-GCM-SHA384, bidirectional app data) + all unit suites pass identically —
+  `tls12_ciphersuites` 28/28, `tls12_handshake_msgs` 66/66, `tls12_handshake` 19/19 — on both arches
+  (aarch64 via a native cross-compile run under qemu), proving the wire encoding + crypto wiring are
+  byte-order/ABI clean.
+- **Adversarial review** (16 agents: 7 review dimensions → per-finding skeptic verification → synthesis)
+  found **8 real defects** (1 P0, 1 P1, 5 P2, 1 P3) — **all fixed and regression-tested** in this release
+  (see *Fixed*). The earlier byte-exact spec workflow (21 agents) drove the implementation correct on the
+  RFC wire formats.
+- Local: self-host byte-identical (x86_64); `tls_native_scaffold` 375/375 (1.3 path unaffected);
+  `check.sh` **85/85**; api-surface snapshot +22 public `tls_native::*` fns. Stdlib-only addition.
+
 ## [6.0.73] — 2026-06-06
 
 **TLS 1.2 PRF + key derivation (Mini-arc D, step 2) — the key material the `.72` record layer consumes.**
