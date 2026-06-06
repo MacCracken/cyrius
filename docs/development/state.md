@@ -3,6 +3,33 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.73 ship — TLS 1.2 PRF + key derivation)
+
+Closing **v6.0.73** (Mini-arc D step 2). check.sh **85/85**; self-host byte-identical on **all four
+cross-OS hosts** (`pi` aarch64-Linux, `cass` Windows-PE, `ach` x86-macOS, `ecb` arm64-macOS) at 6.0.73.
+
+**Headline — TLS 1.2 PRF + key derivation.** `tls_native_12_prf` (dispatch to sigil's P_hash by
+ciphersuite hash) + `tls_native_12_master_secret` (PRF over `client_random‖server_random`, RFC 5246 §8.1)
++ `tls_native_12_key_block` (PRF over `server_random‖client_random` — the **reversed** order, §6.3) +
+`tls_native_12_partition_keys` (AEAD: `cw_key‖sw_key‖cw_iv‖sw_iv`, no MAC keys) + `tls_native_12_key_block_len`
++ `tls_native_cipher_iv_len_12` (GCM 4-byte salt vs ChaCha 12-byte IV) + `tls_native_12_verify_data`
+(Finished MAC, §7.4.9). All `lib/tls_native.cyr`, stateless — the handshake slot wires them to the ctx.
+The PRF wrapper propagates sigil's seed-cap failure (no silent TLS_OK on an over-cap transcript hash).
+
+**Verification depth (ultracode):** `tests/tcyr/tls12_keysched.tcyr` (26 asserts) is a **known-answer test**
+cross-checked against an independent RFC 5246 §5 P_hash reference (HMAC expansion) for BOTH hashes
+(AES-256-GCM-SHA384 + ChaCha20-Poly1305-SHA256) — master secret, key block (proving the reversed random
+order), partition offsets, verify_data — plus a `.72` record round-trip with the **derived** keys. KAT also
+proven on **aarch64** (native cycc under qemu → 26/26). 7-agent adversarial review (3 lenses, each finding
+refuted) → **0 confirmed**; the lone shared nit (PRF wrapper discarding sigil's return) was unreachable for
+the fixed-size internal seeds but hardened anyway. api-surface +7; stdlib-only (compiler changes only by
+`--version`). sigil 3.7.3 already vendors `tls12_prf` + RSA sigs — no crypto blocker.
+
+**Next:** **.74 — TLS 1.2 handshake message flow** (ClientHello/ServerHello version semantics, key
+exchange, certificate + signature wiring) → Finished (consuming `.73`'s `verify_data`) → 1.2 ciphersuite
+registration → 1.2 e2e; then Mini-arc E (consumer wiring + closeout), the near-end Windows repair cluster,
+cycle closeout.
+
 ## Session close — 2026-06-06 (.72 ship — native TLS arc resumes: TLS 1.2 AEAD record layer; Windows back-burned)
 
 Closing **v6.0.72**. check.sh **85/85**; self-host byte-identical on **all four cross-OS hosts** —

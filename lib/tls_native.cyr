@@ -2978,6 +2978,117 @@ fn tls_native_record_open_12(cipher, key, iv, seq8, record, record_len, out, out
     return pt_len;
 }
 
+# ================================================================
+# TLS 1.2 PRF + key derivation (Mini-arc D, .73)
+# ================================================================
+# TLS 1.2 derives all key material from one PRF (RFC 5246 §5):
+#   PRF(secret, label, seed) = P_<hash>(secret, label ‖ seed)
+# where <hash> is the ciphersuite's hash (SHA-256 or SHA-384) and
+# P_hash is the HMAC expansion. sigil's tls12_prf_sha{256,384} implement
+# P_hash and concatenate label ‖ seed internally, so these wrappers just
+# select the hash and assemble the two-random seed. The outputs feed the
+# .72 record layer (the key + the GCM 4-byte salt / ChaCha 12-byte IV).
+# See CHANGELOG [6.0.72]/[6.0.73].
+
+var TLS12_MASTER_SECRET_LEN = 48;       # RFC 5246 §8.1 (fixed 48 bytes)
+var TLS12_VERIFY_DATA_LEN   = 12;       # RFC 5246 §7.4.9 (default 12)
+var TLS12_RANDOM_LEN        = 32;       # client/server Random (RFC 5246 §7.4.1.2)
+
+# TLS 1.2 "fixed_iv_length" per ciphersuite — distinct from the 1.3
+# 12-byte IV: AES-GCM uses a 4-byte implicit salt (the 8-byte explicit
+# nonce rides the wire, RFC 5288 §3); ChaCha20-Poly1305 uses the full
+# 12-byte IV with no explicit nonce (RFC 7905). Returns -1 for unknown.
+fn tls_native_cipher_iv_len_12(cipher): i64 {
+    if (cipher == TLS_AES_128_GCM_SHA256)       { return 4; }
+    if (cipher == TLS_AES_256_GCM_SHA384)       { return 4; }
+    if (cipher == TLS_CHACHA20_POLY1305_SHA256) { return 12; }
+    return 0 - 1;
+}
+
+# The TLS 1.2 PRF: dispatch to sigil's P_hash by the ciphersuite hash.
+# (`sec` not `secret` — `secret` is the reserved zeroise keyword.)
+# sigil's tls12_prf_* returns `out_len` on success and 0 if the assembled
+# `label ‖ seed` exceeds its 256-byte seed cap (writing nothing) — propagate
+# that 0 as an error so a derive call can't silently report TLS_OK with an
+# uninitialized output buffer. Unreachable for the fixed-size internal seeds
+# (≤77 B) but verify_data's handshake-hash arg is caller-supplied.
+fn tls_native_12_prf(cipher, sec, secret_len, label, label_len, seed, seed_len, out, out_len): i64 {
+    var algo = tls_native_cipher_hash_algo(cipher);
+    if (algo == TLS_HASH_SHA384) {
+        if (tls12_prf_sha384(sec, secret_len, label, label_len, seed, seed_len, out, out_len) == 0) {
+            return TLS_ERR_INVALID_PARAM;
+        }
+        return TLS_OK;
+    }
+    if (algo == TLS_HASH_SHA256) {
+        if (tls12_prf_sha256(sec, secret_len, label, label_len, seed, seed_len, out, out_len) == 0) {
+            return TLS_ERR_INVALID_PARAM;
+        }
+        return TLS_OK;
+    }
+    return TLS_ERR_CIPHER_NOT_SUPPORTED;
+}
+
+# master_secret = PRF(pre_master_secret, "master secret",
+#                     client_random ‖ server_random)[0..48]  (RFC 5246 §8.1).
+# `client_random` / `server_random` are 32 bytes each; `out48` gets 48 bytes.
+fn tls_native_12_master_secret(cipher, pre_master, pm_len, client_random, server_random, out48): i64 {
+    var seed[64];
+    memcpy(&seed,                     client_random, TLS12_RANDOM_LEN);
+    memcpy(&seed + TLS12_RANDOM_LEN,  server_random, TLS12_RANDOM_LEN);
+    return tls_native_12_prf(cipher, pre_master, pm_len, "master secret", 13,
+    &seed, 64, out48, TLS12_MASTER_SECRET_LEN);
+}
+
+# key_block = PRF(master_secret, "key expansion",
+#                 server_random ‖ client_random)  (RFC 5246 §6.3).
+# NOTE the random order is REVERSED vs master_secret (server first here).
+# Caller sizes `out` via tls_native_12_key_block_len.
+fn tls_native_12_key_block(cipher, master48, client_random, server_random, out, out_len): i64 {
+    var seed[64];
+    memcpy(&seed,                     server_random, TLS12_RANDOM_LEN);
+    memcpy(&seed + TLS12_RANDOM_LEN,  client_random, TLS12_RANDOM_LEN);
+    return tls_native_12_prf(cipher, master48, TLS12_MASTER_SECRET_LEN, "key expansion", 13,
+    &seed, 64, out, out_len);
+}
+
+# Bytes of key_block an AEAD suite needs: 2*key_len + 2*iv_len (no MAC
+# keys for AEAD — RFC 5288/7905). Returns -1 for unknown cipher.
+fn tls_native_12_key_block_len(cipher): i64 {
+    var kl = tls_native_cipher_key_len(cipher);
+    var il = tls_native_cipher_iv_len_12(cipher);
+    if (kl < 0) { return 0 - 1; }
+    if (il < 0) { return 0 - 1; }
+    return kl + kl + il + il;
+}
+
+# Partition a TLS 1.2 AEAD key_block (RFC 5246 §6.3, AEAD has zero MAC
+# keys) into client_write_key ‖ server_write_key ‖ client_write_IV ‖
+# server_write_IV. Each `*_key` gets cipher_key_len bytes; each `*_iv`
+# gets cipher_iv_len_12 bytes.
+fn tls_native_12_partition_keys(cipher, key_block, cw_key, sw_key, cw_iv, sw_iv): i64 {
+    var kl = tls_native_cipher_key_len(cipher);
+    var il = tls_native_cipher_iv_len_12(cipher);
+    if (kl < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
+    if (il < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
+    var p = key_block;
+    memcpy(cw_key, p, kl); p = p + kl;
+    memcpy(sw_key, p, kl); p = p + kl;
+    memcpy(cw_iv,  p, il); p = p + il;
+    memcpy(sw_iv,  p, il);
+    return TLS_OK;
+}
+
+# Finished verify_data = PRF(master_secret, finished_label,
+#                           Hash(handshake_messages))[0..12]  (RFC 5246
+# §7.4.9). `label` is "client finished" or "server finished" (15 bytes);
+# `handshake_hash` is the ciphersuite-hash digest of the handshake
+# transcript. Writes 12 bytes to `out12`.
+fn tls_native_12_verify_data(cipher, master48, label, label_len, handshake_hash, hh_len, out12): i64 {
+    return tls_native_12_prf(cipher, master48, TLS12_MASTER_SECRET_LEN,
+    label, label_len, handshake_hash, hh_len, out12, TLS12_VERIFY_DATA_LEN);
+}
+
 # Derive + install the server and client handshake-traffic key/IV from
 # the key schedule, and reset both direction sequence numbers. Call
 # after the handshake secret is derived (.18).

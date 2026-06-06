@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.73] — 2026-06-06
+
+**TLS 1.2 PRF + key derivation (Mini-arc D, step 2) — the key material the `.72` record layer consumes.**
+TLS 1.2 derives every key from one PRF (RFC 5246 §5): `PRF(secret, label, seed) = P_<hash>(secret,
+label ‖ seed)`, where `<hash>` is the ciphersuite's hash. This release wires the TLS-level derivation over
+sigil's `tls12_prf_sha{256,384}` (which implement `P_hash`): the master secret, the key block + its AEAD
+partition (producing the exact write keys + the GCM 4-byte salt / ChaCha 12-byte IV that `record_seal_12`
+/ `record_open_12` take as input), and the Finished `verify_data`.
+
+### Added
+
+- **`tls_native_12_master_secret`** (`master_secret = PRF(pre_master, "master secret",
+  client_random ‖ server_random)[0..48]`, RFC 5246 §8.1) and **`tls_native_12_key_block`**
+  (`key_block = PRF(master_secret, "key expansion", server_random ‖ client_random)`, RFC 5246 §6.3 — note
+  the **random order is reversed** vs the master secret, the classic gotcha) in `lib/tls_native.cyr`.
+- **`tls_native_12_partition_keys`** — splits an AEAD key block into `client_write_key ‖ server_write_key ‖
+  client_write_IV ‖ server_write_IV` (zero MAC keys for AEAD, RFC 5288/7905), and **`tls_native_12_key_block_len`**
+  (`2·key + 2·iv`). **`tls_native_cipher_iv_len_12`** returns the 1.2 fixed-IV length — **4** for AES-GCM
+  (the salt; the 8-byte explicit nonce rides the wire) vs **12** for ChaCha20-Poly1305 — distinct from the
+  1.3 fixed 12.
+- **`tls_native_12_verify_data`** — Finished `verify_data = PRF(master_secret, finished_label,
+  Hash(handshake_messages))[0..12]` (RFC 5246 §7.4.9; `"client finished"` / `"server finished"`), and
+  **`tls_native_12_prf`** — the hash-dispatching PRF wrapper. The wrapper **propagates sigil's seed-cap
+  failure** (returns `TLS_ERR_INVALID_PARAM` rather than a silent `TLS_OK` with an uninitialized buffer) —
+  defense-in-depth on the caller-supplied `verify_data` transcript-hash argument.
+- **`tests/tcyr/tls12_keysched.tcyr`** (26 asserts) — **known-answer vectors** cross-checked against an
+  independent RFC 5246 §5 `P_hash` reference (HMAC expansion) for **both** ciphersuite hashes
+  (AES-256-GCM-SHA384 + ChaCha20-Poly1305-SHA256): master secret, key block (proving the reversed
+  random order), the partition offsets, and `verify_data` — plus an integration check that the **derived**
+  keys protect a real `.72` record round-trip for both AEADs.
+
+### Verified
+
+- **Cross-OS self-host byte-identical on all four real-hardware hosts** at `cycc 6.0.73`: `pi`
+  (aarch64-Linux), `cass` (Windows PE), `ach` (x86-macOS), `ecb` (arm64-macOS).
+- **KAT proven on aarch64** — a native aarch64 `cycc` compiled `tls12_keysched.tcyr` and ran it under qemu:
+  **26/26**, byte-identical derivation to x86 against the independent reference.
+- **Adversarial review** (7 agents across 3 lenses — RFC-conformance, memory/arithmetic,
+  integration/completeness — each finding independently refuted): **0 confirmed findings**; the code is
+  RFC-correct. The one shared nit (the PRF wrapper discarding sigil's return) was refuted as unreachable
+  for the fixed-size internal seeds but hardened anyway (above), since it's the "silently-ignored errors"
+  class. The `key_block_len` `-1` sentinel was confirmed *consistent* with the sibling `cipher_*_len`
+  helpers (length fns return `-1`; action fns return `TLS_ERR_*`) — left as-is.
+- Local: self-host byte-identical (x86_64); `check.sh` **85/85**; api-surface snapshot +7 public
+  `tls_native::*` fns. Stdlib-only addition (compiler binary changes only by the `--version` string).
+
+### Notes
+
+- **Mini-arc D remaining**: the 1.2 handshake message flow (ClientHello/ServerHello version semantics,
+  ServerKeyExchange/ClientKeyExchange, the certificate + signature wiring), then Finished (using this
+  `verify_data`), the 1.2 ciphersuite registration, and a localhost + real-peer e2e. Then Mini-arc E
+  (consumer wiring + closeout), the near-end Windows repair cluster, and cycle closeout.
+
 ## [6.0.72] — 2026-06-06
 
 **Native TLS arc resumes — TLS 1.2 AEAD record layer (Mini-arc D, step 1 of the 1.2 backport).**
