@@ -3,6 +3,29 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.77 ship — TLS 1.2 Extended Master Secret (RFC 7627) + OpenSSL interop)
+
+Closing **v6.0.77**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +
+cass. Closes **Mini-arc D's real-peer validation** — the deferred OpenSSL 1.2 interop, shipped together
+with EMS as one negotiated feature.
+
+**Headline:** TLS 1.2 **Extended Master Secret** (RFC 7627) end-to-end — `master = PRF(pm, "extended
+master secret", session_hash)` where session_hash = Hash(CH..CKE). New `tls_native_12_master_secret_ems`
+(+1 public fn, non-breaking), `TLS_EXT_EXTENDED_MASTER_SECRET`/`TLS_CTX_OFF_USE_EMS`, full negotiation
+(client offers + validates echo with legacy fallback; server parses the CH ext block — which it
+previously skipped — and echoes iff offered), the EMS-vs-legacy branch in derive_keys, and the
+load-bearing client reorder in connect_12 (feed CKE before derive; server already correct). Real-peer
+proof: our server interops with **OpenSSL 3.6.2 s_client** (ECDHE-ECDSA, AES-256-GCM + ChaCha20),
+EMS negotiated on the wire. Tests: scaffold 387 (incl. the live OpenSSL interop), handshake_msgs 73
+(+7 EMS units), handshake e2e 20 (+EMS both sides). 4 bites, tested after each.
+
+**Side-benefit available:** the `.76` sigil 3.7.3 fold added AES-128-GCM + RSA-PSS → the `.74`-stubbed
+TLS ciphersuites (AES-128 + RSA-auth suites) are now enable-able in a future slot.
+
+**Next:** Mini-arc E (consumer wiring) is the remaining TLS-arc step. Queued as own slots: the macOS
+`&_fl_heads` freelist codegen bug (the lldb-pinned `.76` issue — unblocks TLS-on-macOS), the Windows
+repair cluster, and the AES-128/RSA-auth ciphersuite enablement. cycle closeout → v6.1.0.
+
 ## Session close — 2026-06-06 (.76 ship — sigil 3.7.3 re-fold + macOS TLS crash pinned to a cyrius codegen bug)
 
 Closing **v6.0.76**. check.sh **85/85**; self-host byte-identical. A stdlib re-fold + a deep diagnosis

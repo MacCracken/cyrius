@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.77] — 2026-06-06
+
 **TLS 1.2 Extended Master Secret (RFC 7627) + real-peer OpenSSL interop.** Closes Mini-arc D's
 real-peer validation: our 1.2 stack now negotiates EMS and interoperates with OpenSSL 3.6.2 `s_client`
 (ECDHE-ECDSA, AES-256-GCM + ChaCha20-Poly1305). EMS binds the master_secret to the full handshake
