@@ -1109,6 +1109,27 @@ fn ECALLFIX(S, fnidx): i64 {
     return 0;
 }
 
+# v6.0.70 §0 — indirect call through a callee ptr spilled to local `idx`.
+# The callptr builtin spills the callee to a fresh frame slot BEFORE the
+# args so it survives ECALLPOPS. Mirror EFLLOAD_W's [x29,#disp] addressing
+# but load into x6 (NOT x0 — x0 holds arg0 after ECALLPOPS; x6 is outside
+# cyrius's 6 arg regs x0-x5 and isn't the x9 >6-arg shuffle scratch), then
+# blr x6. aarch64 emits directly (no IR record layer; cf. ECALLFIX). disp
+# matches EFLLOAD_W exactly (ret_stash only — aarch64 has no regalloc slots).
+fn ECALLIND(S, idx): i64 {
+    var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    if (disp >= 0 - 256) {
+        var off9 = disp & 0x1FF;
+        EW(S, 0xF84003A6 | (off9 << 12));   # ldur x6, [x29, #disp]
+    } else {
+        _EFP_ADDR_X9(S, disp);              # x9 = x29 + disp
+        EW(S, 0xF9400126);                  # ldr x6, [x9]
+    }
+    EW(S, 0xD63F00C0);                       # blr x6
+    return 0;
+}
+
 # Pop into aarch64 arg register (x0-x7).
 # v5.6.25: when n == 0 and the immediately preceding instruction is
 # `push x0` (EPUSHR), the push+pop pair is a no-op — rewind past the

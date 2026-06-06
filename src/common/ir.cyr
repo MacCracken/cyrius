@@ -88,6 +88,7 @@ enum IROp {
     IR_CALL_CLEAN  = 63;  # arg1 = argc (stack cleanup)
     IR_TAIL_JMP    = 64;  # arg1 = fn index
     IR_SYSCALL     = 65;  # syscall instruction
+    IR_CALL_INDIRECT = 66;  # arg1 = spill local idx holding the callee ptr; call [rbp-disp] / blr (v6.0.70)
 
     # -- Control flow (terminators) --
     IR_JMP         = 70;  # arg1 = target BB index
@@ -389,6 +390,7 @@ fn _ir_lower_node(S, op, fl, a1, a2): i64 {
     if (op == IR_CALL_CLEAN)    { ECALLCLEAN(S, a1); return 0; }
     if (op == IR_TAIL_JMP)      { ETAILJMP(S, a1); return 0; }
     if (op == IR_SYSCALL)       { ESYSCALL(S); return 0; }
+    if (op == IR_CALL_INDIRECT) { ECALLIND(S, a1); return 0; }
 
     if (op == IR_PROLOGUE)      { EFNPRO(S); return 0; }
     if (op == IR_ALLOC_FRAME)   { ESUBRSP(S); return 0; }
@@ -457,6 +459,7 @@ fn _ir_opname(op): i64 {
     if (op == IR_CALL_POPS)    { return "CPOPS"; }
     if (op == IR_CALL_CLEAN)   { return "CCLEN"; }
     if (op == IR_SYSCALL)      { return "SYSC"; }
+    if (op == IR_CALL_INDIRECT) { return "CIND"; }
     if (op == IR_PROLOGUE)     { return "PROLOG"; }
     if (op == IR_EPILOGUE)     { return "EPILOG"; }
     if (op == IR_MOV_RDX_RAX)  { return "MVDXA"; }
@@ -512,6 +515,7 @@ fn _ir_clobbers_rax(op): i64 {
     if (op == IR_MOV_RAX_RDX)  { return 1; }
     if (op == IR_CALL)         { return 1; }
     if (op == IR_CALL_KNOWN)   { return 1; }
+    if (op == IR_CALL_INDIRECT) { return 1; }
     if (op == IR_SYSCALL)      { return 1; }
     # v5.6.12: conservative — parse raw emits can clobber anything,
     # including rax. Stops LASE's last_store tracking at the boundary.
@@ -851,6 +855,7 @@ fn _ir_uses_rax(op): i64 {
     if (op == IR_SYSCALL)      { return 1; }
     if (op == IR_CALL)         { return 1; }
     if (op == IR_CALL_KNOWN)   { return 1; }
+    if (op == IR_CALL_INDIRECT) { return 1; }
     if (op == IR_TAIL_JMP)     { return 1; }
     if (op == IR_RET)          { return 1; }
     if (op == IR_EPILOGUE)     { return 1; }
@@ -893,6 +898,7 @@ fn _ir_def_rcx_any(op): i64 {
     if (op == IR_POP_RCX)      { return 1; }
     if (op == IR_CALL)         { return 1; }
     if (op == IR_CALL_KNOWN)   { return 1; }
+    if (op == IR_CALL_INDIRECT) { return 1; }
     if (op == IR_CALL_POPS)    { return 1; }
     if (op == IR_CALL_CLEAN)   { return 1; }
     if (op == IR_TAIL_JMP)     { return 1; }

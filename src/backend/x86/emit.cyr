@@ -2034,6 +2034,25 @@ fn ECALLFIX(S, fnidx): i64 {
     return 0;
 }
 
+# v6.0.70 §0 — indirect call through a callee pointer spilled to local
+# `idx`. The callptr builtin evaluates the callee + stores it to a FRESH
+# frame slot BEFORE pushing the args, so it survives ECALLPOPS — which on
+# Win64 does `sub rsp, 0x20` for the shadow home and would bury a
+# stack-pushed callee below rsp. `call [rbp+disp]` is rbp-relative
+# (unaffected by ECALLPOPS's rsp moves) and clobbers no arg register, so
+# it works for every ABI + arg count. disp mirrors the local-var formula
+# (EFLLOAD_W: regalloc + ret_stash offsets). FF /2, mod=10, rm=101 (rbp).
+fn ECALLIND(S, idx): i64 {
+    if (_IR_REC1(S, IR_CALL_INDIRECT, idx) == 1) { return 0; }
+    var disp = 0 - ((idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    EB(S, 0xFF); EB(S, 0x95);     # call [rbp + disp32]
+    EDISP32(S, disp);
+    _flags_reflect_rax = 0;       # callee clobbers flags; rax = return value
+    return 0;
+}
+
 # Emit pop into arg register for arg N.
 # SysV x86_64: n=0..5 → rdi/rsi/rdx/rcx/r8/r9.
 # Win64   (v5.5.3): n=0..3 → rcx/rdx/r8/r9. n>=4 falls through to

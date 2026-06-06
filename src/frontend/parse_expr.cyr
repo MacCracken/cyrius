@@ -381,6 +381,42 @@ fn PARSE_FACTOR(S): i64 {
         ESADDR(S, soff);
         return 0;
     }
+    if (typ == 111) {
+        # callptr(callee, arg1, ..., argN) — v6.0.70 §0 indirect call.
+        # Evaluate the callee FIRST and spill it to a FRESH frame slot
+        # (re-entrant: nested callptr → distinct slots), so it survives
+        # ECALLPOPS — which on Win64 sub's rsp for the 32 B shadow home and
+        # would bury a stack-pushed callee. Then push args, marshal, and call
+        # through the slot via ECALLIND (call [rbp-disp] / ldr x6;blr x6).
+        # Result (the callee's return) lands in rax/x0 like any call.
+        # The spill is a frame local, so callptr needs a function frame —
+        # top-level vars are globals (no rbp frame). Fail loud, not crash.
+        if (_cur_fn_ix < 0) {
+            syscall(SYS_WRITE, 2, "error: callptr() must be used inside a function, not at top level\n", 66);
+            syscall(SYS_EXIT, 1);
+        }
+        STI(S, GTI(S) + 1);                     # consume 'callptr'
+        if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
+        STI(S, GTI(S) + 1);                     # consume '('
+        var cp_idx = GFLC(S);                   # fresh frame slot for the callee ptr
+        SFLC(S, cp_idx + 1);
+        PCMPE(S);                               # eval callee → rax
+        EFLSTORE(S, cp_idx);                    # spill callee → [rbp-disp(cp_idx)]
+        var cp_argc = 0;
+        while (PEEKT(S) == 31) {                # ',' → another arg
+            STI(S, GTI(S) + 1);                 # consume ','
+            PCMPE(S);                           # eval arg → rax
+            EPUSHR(S);                          # push arg
+            cp_argc = cp_argc + 1;
+        }
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        STI(S, GTI(S) + 1);                     # consume ')'
+        ECALLPOPS(S, cp_argc);                  # marshal args into arg regs (+ Win64 shadow)
+        ECALLIND(S, cp_idx);                    # load callee from the slot + call/blr
+        ECALLCLEAN(S, cp_argc);                 # unwind the arg frame
+        _cfo = 0;
+        return 0;
+    }
     if (typ == 24) {
         # syscall(args...)
         STI(S, GTI(S) + 1);

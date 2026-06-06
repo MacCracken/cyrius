@@ -1015,6 +1015,8 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFFFFFF == 0x7669645F343666) { ADDTOK(S, 65, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x67656E5F343666) { ADDTOK(S, 71, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x7362615F343666) { ADDTOK(S, 80, 0); return p; }
+        # "callptr" = 0x7274706C6C6163 → token 111 (v6.0.70 §0 indirect-call builtin)
+        if (kw & 0xFFFFFFFFFFFFFF == 0x7274706C6C6163) { ADDTOK(S, 111, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x6E69735F343666) { ADDTOK(S, 83, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x736F635F343666) { ADDTOK(S, 84, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x7078655F343666) { ADDTOK(S, 85, 0); return p; }

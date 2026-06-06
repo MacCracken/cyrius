@@ -1,0 +1,48 @@
+# Test: callptr(fn, args...) — v6.0.70 §0 compiler-emitted indirect call.
+#
+# Exercises the IR_CALL_INDIRECT path (x86 `call [rbp-disp]`, aarch64
+# `ldr x6;blr x6`) + the frame-slot callee spill that survives ECALLPOPS.
+# Covers 0..7 args (7 forces the >6-arg ECALLPOPS stack-arg shuffle),
+# callee-from-variable, and NESTED callptr (the inner call's spill slot
+# must be distinct from the outer's — the re-entrancy guarantee). Pure
+# cyrius, no lib/fnptr.cyr asm.
+#
+# callptr spills the callee to a FRAME LOCAL, so it requires a function
+# frame (top-level vars are globals, no rbp frame) — each call is wrapped
+# in a helper fn invoked from top-level. See CHANGELOG [6.0.70].
+
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn noarg() { return 99; }
+fn id1(x) { return x; }
+fn add2(a, b) { return a + b; }
+fn sum3(a, b, c) { return a + b + c; }
+fn nargs7(a, b, c, d, e, f, g) { return a + b + c + d + e + f + g; }
+
+fn c0() { return callptr(&noarg); }
+fn c1() { return callptr(&id1, 42); }
+fn c2() { return callptr(&add2, 20, 22); }
+fn c3() { return callptr(&sum3, 10, 15, 17); }
+fn c7() { return callptr(&nargs7, 1, 2, 3, 4, 5, 6, 21); }
+fn cvar() { var p = &add2; return callptr(p, 19, 23); }
+fn cnest() { return callptr(&add2, callptr(&id1, 40), 2); }
+
+alloc_init();
+
+test_group("callptr arity");
+assert_eq(c0(), 99, "0-arg");
+assert_eq(c1(), 42, "1-arg");
+assert_eq(c2(), 42, "2-arg");
+assert_eq(c3(), 42, "3-arg");
+
+test_group("callptr stack args (>6)");
+assert_eq(c7(), 42, "7-arg via ECALLPOPS shuffle");
+
+test_group("callptr callee from variable");
+assert_eq(cvar(), 42, "callee in a local");
+
+test_group("callptr nested (re-entrant spill slots)");
+assert_eq(cnest(), 42, "nested callptr arg");
+
+var r = assert_summary();
