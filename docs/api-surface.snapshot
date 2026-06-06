@@ -2637,10 +2637,14 @@ sigil::aes256_encrypt_block/3
 sigil::aes256_encrypt_block_ni/3
 sigil::aes256_key_expand/2
 sigil::aes_128_gcm_decrypt/8
+sigil::aes_128_gcm_decrypt_iv/9
 sigil::aes_128_gcm_encrypt/8
+sigil::aes_128_gcm_encrypt_iv/9
 sigil::aes_128_key_expand/2
 sigil::aes_gcm_decrypt/8
+sigil::aes_gcm_decrypt_iv/9
 sigil::aes_gcm_encrypt/8
+sigil::aes_gcm_encrypt_iv/9
 sigil::aes_gcm_global_init/0
 sigil::aes_ni_available/0
 sigil::alog_clear/1
@@ -3011,6 +3015,10 @@ sigil::rsa_pkcs1v15_sign_sha384/4
 sigil::rsa_pkcs1v15_verify_sha256/8
 sigil::rsa_pkcs1v15_verify_sha384/8
 sigil::rsa_privkey_from_der/3
+sigil::rsa_pss_sign_sha256/4
+sigil::rsa_pss_sign_sha384/4
+sigil::rsa_pss_verify_sha256/8
+sigil::rsa_pss_verify_sha384/8
 sigil::rsa_pubkey_from_der/7
 sigil::sc_muladd/4
 sigil::sc_reduce/2
@@ -3035,6 +3043,7 @@ sigil::sgx_quote_qe_report_sig_ptr/1
 sigil::sgx_quote_report_body_ptr/1
 sigil::sgx_quote_report_data_ptr/1
 sigil::sgx_quote_verify_full/4
+sigil::sgx_quote_verify_full_into/5
 sigil::sgx_quote_verify_with_pck/2
 sigil::sgx_quote_version/1
 sigil::sha256/3
@@ -3170,6 +3179,7 @@ sigil::tdx_quote_td_attributes_ptr/1
 sigil::tdx_quote_td_body_ptr/1
 sigil::tdx_quote_tee_type/1
 sigil::tdx_quote_verify_full/4
+sigil::tdx_quote_verify_full_into/5
 sigil::tdx_quote_verify_with_pck/2
 sigil::tdx_quote_version/1
 sigil::tdx_quote_xfam_ptr/1
@@ -3217,6 +3227,7 @@ sigil::vresult_set_passed/2
 sigil::x25519/3
 sigil::x25519_base/2
 sigil::x509_cert_alloc/0
+sigil::x509_cert_alloc_into/1
 sigil::x509_cert_curve/1
 sigil::x509_cert_is_ca/1
 sigil::x509_cert_not_after/1
@@ -3224,8 +3235,10 @@ sigil::x509_cert_not_before/1
 sigil::x509_cert_path_len/1
 sigil::x509_cert_pubkey/1
 sigil::x509_cert_pubkey_len/1
+sigil::x509_cert_rsa_pubkey/1
 sigil::x509_cert_sig_algo/1
 sigil::x509_parse/3
+sigil::x509_parse_into/4
 sigil::x509_verify_chain/5
 sigil::zeroize_key/2
 simd::f64v2_abs/1

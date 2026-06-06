@@ -1,9 +1,70 @@
-# sigil ECDSA-P256 **verify** path SIGSEGVs on macOS (Mach-O) — the last layer blocking the TLS stack on macOS
+# sigil `ecdsa_p256_sign` corrupts heap/global memory on macOS (Mach-O) — the last layer blocking the TLS stack on macOS
 
-- **Filed**: 2026-06-06 (v6.0.75)
+- **Filed**: 2026-06-06 (v6.0.75); **root cause refined 2026-06-06 (.76 investigation)**
 - **Reporter**: the .75 cross-OS lib-test (`scripts/cross-os-selfhost.sh ecb tls12`) on real ecb (Apple Silicon)
-- **Affects**: `lib/sigil.cyr` EC public-key verify (`ecdsa_p256_verify_der` / `ecdsa_p256_verify`, and/or `x509_cert_pubkey`) on **macOS** (Mach-O, arm64 confirmed on ecb; x86-macOS/ach almost certainly the same — it's a sigil-level issue, not arch-specific). **Linux unaffected** (full TLS suite is green on x86_64 + aarch64).
-- **Severity**: blocks the native TLS handshake on macOS — the client verifies the server's ServerKeyExchange / certificate signature via this path. With it crashing, no real TLS handshake completes on macOS.
+- **Affects**: `lib/sigil.cyr` **`ecdsa_p256_sign`** (`src/ecdsa_p256.cyr` in the sigil repo) on **macOS** (Mach-O; arm64 confirmed on ecb; x86-macOS/ach almost certainly the same — it's sigil-level, not arch-specific). **Linux unaffected** (full TLS suite green on x86_64 + aarch64, where the SKE sign→verify round-trip passes).
+- **Severity**: blocks the native TLS handshake on macOS — the server signs the ServerKeyExchange with `ecdsa_p256_sign_der`, which corrupts memory so the *next* allocation/hash crashes (in practice the client's signature-verify, or any subsequent crypto). No real TLS handshake completes on macOS.
+
+## ROOT CAUSE (refined): it is **sign**, not verify
+
+The original symptom was "`ecdsa_p256_verify_der` SIGSEGVs," but a full bisect on ecb relocated it:
+**`ecdsa_p256_sign` (the SKE/CertVerify signer) corrupts heap/global memory on macOS** — it completes
+and returns a valid-length signature, but a buffer overflow / out-of-bounds write clobbers critical
+memory (benign on Linux's heap/global layout, fatal on Darwin's), so the **next** `sha256` /
+`fl_alloc` SIGSEGVs. The handshake test happened to crash in the verify-side `sha256` *because verify
+runs right after sign*, which is why it first looked like a verify bug.
+
+### Bisect evidence (ecb, native macho-arm64 cycc, post-.75 CSPRNG+freelist fixes)
+
+- `ecdsa_p256_verify` **alone** (no preceding sign, crafted in-range sig) → **runs fine** (returns 0/1, no crash).
+- `ecdsa_p256_sign_der` **alone** → returns a valid sig (`sl > 0`).
+- `sign` **then** a plain `sha256` (no verify at all) → **SIGSEGV** in the sha256. ⟸ the decisive test: sign corrupts state that any later `sha256`/alloc trips over.
+- The corruption **persists after sign returns** → it is a **heap or global** OOB write, not a reclaimed stack-local.
+- Verify reaches `pt_is_on_curve`/`pt_from_affine` fine; it dies at the `sha256(msg,len,_ecv_digest)` call — i.e. at the first post-sign allocation, not in EC arithmetic.
+
+### Localized to `_rfc6979_k_p256` (RFC 6979 deterministic nonce) — but a SUBTLE combination bug
+
+Further bisection narrowed the corruptor inside sign to **`_rfc6979_k_p256`** (`lib/sigil.cyr` ~8258):
+`sign-then-_rfc6979-then-sha256` SIGSEGVs, and isolating `_rfc6979_k_p256` + a following `sha256`
+reproduces it directly. But **every individual ingredient works in isolation on ecb** — so it is a
+subtle combination/interleaving bug, not an obvious oversized buffer:
+
+| Tested in isolation on ecb | Result |
+|---|---|
+| `sha256` (standalone) | ✅ OK |
+| `fl_alloc` small/arena + large + `fl_free`/reuse | ✅ OK |
+| `secret var sc[416]` (1 block) + a following `sha256` | ✅ OK |
+| 7 `secret var`s (mirroring `_rfc6979`'s V/K/Kt/Vt/data/d1/kint) + `sha256` | ✅ OK |
+| 1 `hmac_sha256(key32, msg97)` + `sha256` | ✅ OK |
+| 10× `hmac_sha256` in a loop + `sha256` | ✅ OK |
+| EC verify arithmetic (`pt_scalarmul`/`pt_add`/`pt_to_affine`/`fn_p256_inv/mul`) — verify-alone | ✅ OK |
+| **`_rfc6979_k_p256` then `sha256`** | 🔴 **SIGSEGV** |
+
+So the shared EC arithmetic + the freelist + `secret` codegen + `hmac_sha256` are all exonerated. The
+corruption emerges only from `_rfc6979_k_p256`'s specific mix: **interleaved `fl_alloc`/`fl_free` of
+different sizes (`hmac_sha256`'s internal sha256 ctx vs any `u256` bignum scratch) over its 7 live
+secret-scratch buffers**, which appears to corrupt a freelist class-list (heap metadata) on Darwin's
+layout — benign on Linux's. The exact OOB is the remaining work.
+
+### Update (.76): sigil 3.7.3 re-fold does NOT fix it; localized to the reject loop; printf-bisection exhausted
+
+- **Re-folded sigil 3.6.4 → 3.7.3** (non-breaking: +13 public fns incl. AES-128-GCM, RSA-PSS, TEE quote-verify; no removals; Linux `check.sh` 85/85). The `_rfc6979_k_p256` source is **byte-identical** in 3.7.3 and **still crashes** on ecb (`rfc6979-then-sha256 = 139`). So this is not a stale-vendored-copy bug.
+- **Narrowed to the RFC 6979 reject loop:** an instrumented early-return *before* `while (tries < 256)` is **clean** (`81`); the loop body is the corruptor.
+- **But every loop ingredient is clean in isolation** (all on ecb, with `_p256_init()`): `hmac_sha256` at msg_len 32/33/56/64/97, the `u256_load_be/is_zero/cmp/store_be` sequence (×5), 7 live `secret var`s + hmac, `sha256`, `fl_alloc`/`fl_free`/reuse. **A `u256` test first looked guilty (139) but was a false positive — it had skipped `_p256_init()`, so `_p256_n` was a null global.** With init it is clean (`82`).
+- **Conclusion:** the corruption only manifests from `_rfc6979_k_p256`'s *full* interleaving (hmac's internal `fl_alloc`/`fl_free` of the 144-byte sha256 ctx ↔ the surrounding `u256`/`memcpy` over 7 live secret-scratch buffers), leaving a freelist free-list head / heap-metadata corrupted so the *next* `fl_alloc` faults. printf-bisection can't isolate it further — every part is individually fine.
+
+### Suggested next step — **lldb on ecb**, not more printf-bisection
+
+Run the crashing binary under `lldb` on ecb: catch the SIGSEGV (it will be in `sha256_init`→`fl_alloc` dereferencing a bad free-list `next`), then set a **watchpoint** on that freed block / the `_fl_heads[cls]` slot and re-run to catch the *write* that corrupts it inside `_rfc6979_k_p256`. That pins whether it is a sigil OOB or a cyrius freelist-linkage / macho-codegen bug. Strong suspicion now leans toward a **cyrius freelist free-list** edge (the `.75` fix covered only the arena `MAP_ANON`, not the free/reuse linkage under interleaved different-size alloc/free) OR a macho codegen issue — i.e. possibly a **cyrius** fix, not sigil.
+
+### Original suggested next step (superseded by the lldb plan above)
+
+Instrument `_rfc6979_k_p256` on ecb with an inline `sha256`-canary after each portion (the first 4
+HMAC blocks vs the accept/reject loop) to pin which interleaving corrupts; then check `u256_*`'s
+scratch allocation vs `hmac_sha256`'s for a free-list class mismatch. **Fix lands in the sigil repo
+(`~/Repos/sigil/src/`, currently 3.7.3 vs vendored 3.6.4) + a re-fold into `lib/sigil.cyr`** — a stdlib
+dep bump (needs the leader's signal). Re-folding sigil 3.7.3 first (it's ahead) is worth trying — it may
+already differ in this path.
 
 ## Context — this is the LAST of three stacked "found by ports" macOS bugs
 
