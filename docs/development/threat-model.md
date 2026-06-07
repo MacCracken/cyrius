@@ -7,7 +7,7 @@
 > bridge to system libraries (libssl, libc) via the v5.6.37
 > fdlopen-bootstrapped helper — see Trust Boundaries below.
 >
-> **Last reviewed**: 2026-05-10 (v5.10.35).
+> **Last reviewed**: 2026-06-06 (v6.0.83) — adds the sovereign native TLS backend.
 
 ## Trust Boundaries
 
@@ -19,7 +19,7 @@
 | Syscall interface (Linux kernel) | Trusted — OS provides memory isolation |
 | Generated binaries | Untrusted until verified — self-hosting proves compiler correctness |
 | `~/.cyrius/dlopen-helper` (v5.6.37+) | Trusted — built by `install.sh` from cyrius source; used by `fdlopen.cyr` to bootstrap real glibc for libssl bridge. Missing helper = TLS / libssl features disabled at runtime, not a security risk. |
-| Linked `libssl.so.3` / `libcrypto.so.3` (when `tls_available() == 1`) | System-trusted — the host's OpenSSL. Stdlib `lib/tls.cyr` is a thin bridge; OpenSSL CVEs apply transitively when used. |
+| Linked `libssl.so.3` / `libcrypto.so.3` (default backend, when `tls_available() == 1`) | System-trusted — the host's OpenSSL. Stdlib `lib/tls.cyr` is a thin bridge; OpenSSL CVEs apply transitively when used. **Built with `-D CYRIUS_TLS_NATIVE` there is NO libssl dependency** — TLS runs on the in-tree native stack (`lib/tls_native.cyr` + sigil crypto/x509), so OpenSSL CVEs do not apply. |
 
 ## Attack Surface
 
@@ -62,7 +62,16 @@ Security issues: security@agnos.dev
 Response SLA: 48 hours
 Disclosure: 90-day coordinated
 
-## Stdlib TLS surface (v5.7.0+)
+## Stdlib TLS surface (v5.7.0+; native backend v6.0.74–.83)
+
+`lib/tls.cyr` has two backends behind one verb contract. **Default:** brokers
+TLS 1.2/1.3 via OpenSSL's `libssl.so.3` (below). **Opt-in (`-D CYRIUS_TLS_NATIVE`):**
+the sovereign native stack `lib/tls_native.cyr` — TLS 1.2 + 1.3, auth via ECDSA
+P-256/P-384 + RSA (PSS / PKCS#1 v1.5) + Ed25519, AES-128/256-GCM + ChaCha20-Poly1305,
+EMS, ALPN, OS trust-store + intermediate-chain + SNI-hostname verification, server-flight
+reassembly — no OpenSSL, crypto/x509 in-tree (sigil). Backend-agnostic peer-introspection
+verbs `tls_get_alpn_selected` / `tls_get_peer_spki_der` (v6.0.82). Live-Cloudflare- +
+OpenSSL-interop-proven. The libssl-bridge surface (legacy):
 
 `lib/tls.cyr` brokers TLS 1.2/1.3 via OpenSSL's `libssl.so.3`,
 bootstrapped through fdlopen for correct pthread TCB layout

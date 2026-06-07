@@ -41,7 +41,7 @@ project (e.g. `bote-cirlf-injection.md`,
 
 **Discovered:** YYYY-MM-DD during {context}
 **Severity:** Low / Medium / High / Critical
-**Affects:** cc3 {version range}
+**Affects:** cycc {version range}
 
 ## Summary
 
@@ -107,9 +107,9 @@ working.
 
 When filing a consumer bug, report the Cyrius version you're on
 AND the recommended minimum you'd need for the fix to deploy.
-The current recommended floor is **v4.8.4** (preprocessor 256 KB
-scan-blindness fix + `#regalloc` + capacity meter). v4.8.5 adds
-math stdlib + CRLF hardening on top.
+The current recommended floor is **v5.0.0** (cycc IR, cyrius.cyml
+manifest); v5.0.1+ adds the alloc/vec overflow-guard hardening and
+v5.1.0+ adds macOS Mach-O support (per CLAUDE.md's DO-NOT block).
 
 ## Pointers
 

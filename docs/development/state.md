@@ -5357,12 +5357,12 @@ All AGNOS ecosystem projects depend on the compiler and stdlib.
 
 ```
 bootstrap/asm (29 KB committed binary — root of trust)
-  → cyrc (12 KB compiler)
-    → bridge.cyr (bridge compiler)
-      → cc5 (modular compiler + IR, 9 modules)
-        → cc5_aarch64 (cross-compiler)
-        → cc5_win (cross-compiler)
+  → cybs (bootstrap compiler; formerly cyrc, renamed v6.0.0)
+    → cycc (modular compiler + IR; formerly cc5, renamed v6.0.0)
+      → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
+      → cycc_win (Windows PE32+ cross-compiler)
 
+(bridge.cyr — the old intermediate stage — was retired at v5.11.66.)
 No Rust. No LLVM. No Python. Just sh + Linux x86_64.
 Build: sh bootstrap/bootstrap.sh
 ```

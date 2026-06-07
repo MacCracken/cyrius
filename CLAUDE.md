@@ -184,21 +184,21 @@ src/
   backend/aarch64/   emit.cyr, jump.cyr, fixup.cyr
   backend/cx/        emit.cyr (cyrius-x bytecode)
   common/            util.cyr, ir.cyr
-lib/                 Standard library (80 modules + 9 deps)
+lib/                 Standard library (81 modules + 9 deps)
 programs/            80 programs (tools, tests, demos, algorithms)
 tests/               Test suites (tcyr/*.tcyr, heapmap.sh)
 benches/             Benchmarks (*.bcyr)
 fuzz/                Fuzz harnesses (*.fcyr)
-build/               Generated binaries (gitignored except current-major
-                     compiler + prior-major seed binary — currently cycc
-                     and cc3. Sequence: cc3 drops at v6.0.0/cyc cut, cycc
-                     becomes the prior-major seed during v6.x as the LAST
-                     legacy binary; cycc drops at the v6.x → v7.x bump and
-                     from v7.x onward ONLY cyc is tracked — `cyc` is the
-                     final binary name (per `Version lives in VERSION +
-                     --version, never in binary names` above), so no
-                     more prior-seed slot is needed because there are no
-                     more name changes for fresh checkouts to bridge.)
+build/               Generated binaries (gitignored except the current-major
+                     compiler + a prior-major seed binary — currently cycc
+                     and cc3. cc3 (the last legacy seed bridging the
+                     pre-v6.0.0 rename history) is tracked through v6.x and
+                     drops at the v6.x → v7.x bump. From v7.x onward ONLY
+                     `cycc` is tracked — `cycc` is the final, forever binary
+                     name (per `Version lives in VERSION + --version, never
+                     in binary names` above), so no prior-seed slot is
+                     needed: there are no more name changes for fresh
+                     checkouts to bridge.)
 docs/                Architecture, roadmap, benchmarks, language guide
 ```
 

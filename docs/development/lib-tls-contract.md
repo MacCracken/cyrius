@@ -24,18 +24,27 @@ long as existing verbs keep their semantics.
 
 ## Transport model
 
-The current transport is libssl 3.x loaded via `lib/fdlopen.cyr`
-(see `lib/tls.cyr` header comment for the rationale — minimal `%fs`
-TCB stub deadlocks libssl's pthread init at first `SSL_CTX_new`).
-Consumers MUST treat the transport as **opaque**:
+As of v6.0.x there are **two** transports behind one contract:
+
+1. **libssl 3.x** loaded via `lib/fdlopen.cyr` — the **default** backend
+   (see `lib/tls.cyr` header for the rationale — minimal `%fs` TCB stub
+   deadlocks libssl's pthread init at first `SSL_CTX_new`).
+2. **The sovereign native cyrius TLS stack** (`lib/tls_native.cyr`) — opt-in,
+   selected by building with `-D CYRIUS_TLS_NATIVE`. No libssl/OpenSSL
+   dependency; crypto + x509 are in-tree (sigil). Shipped across .74–.83
+   (TLS 1.2 + 1.3, ECDSA P-256/P-384 + RSA + Ed25519, AES-128/256-GCM +
+   ChaCha20, OS trust-store + SNI verification, live-Cloudflare-proven).
+
+`lib/tls.cyr` dispatches on `_tls_backend`; the verb contract below is
+identical for both. Consumers MUST treat the transport as **opaque**:
 
 - All handles (`ctx`, `handle` in hooks, `session`) are integer
   pointers; consumers may store and pass them, but MUST NOT
-  dereference or assume layout. The 24-byte `ctx` struct layout is
+  dereference or assume layout. The `ctx` struct layout is
   documented in `lib/tls.cyr` for stdlib maintainers, not consumers.
-- A future native-cyrius TLS transport will keep this contract.
-  Verb signatures and semantics survive; the underlying pointer
-  type is what changes.
+- The contract is honored by **both** backends — verb signatures and
+  semantics survive a `tls_set_backend` switch; only the underlying
+  pointer type changes.
 - `tls_dlsym` (see "Escape hatch" below) is the one place where the
   contract leaks libssl ABI. It is soft-deprecated.
 
@@ -196,12 +205,17 @@ window.
 the fdlopen-managed handle. **It is soft-deprecated as of v5.10.13.**
 
 - Each direct call binds the consumer to libssl's symbol name + ABI.
-- A future native-TLS transport swap will break every `tls_dlsym`
-  call site. The typed wrappers (`tls_set_alpn` / `tls_set_verify`)
-  WILL keep working.
-- The single legitimate current use is `SSL_get0_alpn_selected`
-  (sandhi 1.3.0 ALPN response read — no typed wrapper exists yet;
-  see sandhi note at `lib/sandhi.cyr:1181`).
+- Each direct call only works on the libssl backend; it is a no-op /
+  unavailable under `CYRIUS_TLS_NATIVE`. The typed wrappers
+  (`tls_set_alpn` / `tls_set_verify` / `tls_get_alpn_selected` /
+  `tls_get_peer_spki_der`) work on **both** backends.
+- The ALPN-read + SPKI-pin uses that previously needed `tls_dlsym`
+  (`SSL_get0_alpn_selected`, `SSL_get1_peer_certificate` +
+  `X509_get_pubkey` + `i2d_PUBKEY`) now have typed verbs
+  (`tls_get_alpn_selected` @ v6.0.82, `tls_get_peer_spki_der` @ v6.0.82);
+  sandhi 1.4.2 migrated onto them (v6.0.83). The remaining `tls_dlsym`
+  sites in the ecosystem are the libssl-only mTLS / trust-store config
+  fns (`SSL_CTX_load_verify_locations` etc.).
 - New consumer code that needs an unwrapped symbol SHOULD file a
   request for a new typed `tls_*` verb instead of calling
   `tls_dlsym` directly.
@@ -227,7 +241,8 @@ is preserved.
 
 ## Cross-reference
 
-- Code: `lib/tls.cyr` (688 LOC as of v5.10.42).
+- Code: `lib/tls.cyr` (~905 LOC at v6.0.83, after the native re-backing) +
+  `lib/tls_native.cyr` (the sovereign native backend).
 - Heavy consumer: `lib/sandhi.cyr` (HTTPS client, session cache,
   0-RTT retry).
 - Filing trail: sandhi 2026-04-24 ALPN hook request →

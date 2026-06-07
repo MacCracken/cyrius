@@ -698,8 +698,9 @@ fn read_line(path) {
 ```
 
 The legacy int-returning fns (`file_open` / `json_parse_file` /
-etc.) stay callable through v5.8.x for back-compat. v6.0.0 closeout
-removes the old shape.
+etc.) remain callable for back-compat alongside the `_r` Result-returning
+variants — they were not removed at the v6.0.0 closeout and have no current
+removal date. Prefer the `_r` shape in new code.
 
 ## Switch
 

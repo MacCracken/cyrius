@@ -26,11 +26,11 @@ git entries (see Live deps below).
 
 | Lib | Folded at | Source tag | Domain |
 |-----|-----------|------------|--------|
-| `lib/sandhi.cyr` | v5.7.0 | sandhi 1.4.1 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
+| `lib/sandhi.cyr` | v5.7.0 (refold v6.0.83) | sandhi 1.4.2 | HTTP/2 + JSON-RPC + service discovery + TLS policy (ALPN/SPKI on typed native verbs) |
 | `lib/vani.cyr` | v5.8.0 (refold v5.8.65) | vani 0.9.3 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/sakshi.cyr` | v5.8.65 | sakshi 2.2.6 | Tracing |
 | `lib/patra.cyr` | v5.8.65 | patra 1.10.3 | Storage |
-| `lib/sigil.cyr` | v5.8.65 | sigil 3.6.4 | Security |
+| `lib/sigil.cyr` | v5.8.65 (refold v6.0.83) | sigil 3.7.4 | Security (x509 RSA-root parse fix; powers native TLS) |
 | `lib/yukti.cyr` | v5.8.65 | yukti 2.2.3 | Hardware enumeration |
 | `lib/sankoch.cyr` | v5.8.65 | sankoch 2.2.5 | Compression |
 | `lib/niyama.cyr` | **v5.9.0** (2026-05-06) | niyama 1.0.2 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |

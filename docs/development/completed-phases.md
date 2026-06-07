@@ -74,7 +74,7 @@ Durable cycle retrospectives + field-note narratives live in
 | `v58x_back_half.cyml` + `v58x_agent_perspective.cyml` | v5.8.x retrospective (longest minor by patch count at the time, 65 patches) |
 | `v59x.cyml` | v5.9.x cleanup-and-lib-improvement cycle (43 patches) |
 | `v510x.cyml` | v5.10.x typed-simd / REAL TYPE SYSTEM / struct-by-value arcs (50 patches) |
-| `v511x.cyml` | v5.11.x close arc (in-progress at file-trim time) |
+| `v511x.cyml` | v5.11.x close arc (closed; final 5.x minor) |
 | `foldin_arc_v57_v59.cyml` | sandhi-pattern fold-in arc spanning v5.7.0–v5.9.0 |
 
 Volatile current-cycle state (current version, cycc size, in-flight

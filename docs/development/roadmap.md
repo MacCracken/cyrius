@@ -218,8 +218,8 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | ~.37 | **CI cross-OS self-host GATE** — extend the existing `macho-arm64-native` (macos-14) + `windows-native` (windows-latest) jobs from hello-world smoke to **build cycc + self-host byte-identical + `.tcyr` smoke**, fail-loud. (Closeout 3b + `cyrius audit` gate already landed .33.) **The native CI jobs only ran tiny exit-code programs, never the compiler — why the macOS port rotted undetected.** | MANDATORY before AGNOS arc |
 | ~.38 → ~.42 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
 | .72 → .74 | **Mini-arc D — TLS 1.2 backport** (.72 AEAD record layer / .73 PRF + key schedule / .74 handshake message flow + client+server drivers + socketpair e2e) | ✅ COMPLETE — full 1.2 (ECDHE) handshake, our-client ↔ our-server; .74 verified x86 + aarch64, 8 review findings fixed |
-| next (~.75+) | Mini-arc E — consumer wiring + TLS arc closeout (sandhi onto tls_native, libssl-wrapper disposition, consumer smoke; real-peer OpenSSL 1.2 interop + EMS before that) | |
-| then | near-end **Windows repair cluster** (back-burned per user 2026-06-06) | |
+| .77 → .83 | **Mini-arc E — consumer wiring + TLS arc closeout** (EMS + OpenSSL 1.2 interop @ .77; AES-128/RSA/P-384 ciphersuites @ .83; lib/tls.cyr re-backed onto native behind CYRIUS_TLS_NATIVE @ .80; typed verbs @ .82; sandhi 1.4.2 rewired @ .83) | ✅ COMPLETE — native-TLS arc CLOSED; live Cloudflare HTTPS proven |
+| next | **Repair cluster** — macOS `&_fl_heads` freelist codegen bug + Windows PE cluster, then v6.1.0 cycle closeout | |
 | later | last cleanup/refactor + sigil fold + v6.0.x cycle closeout → v6.1.0 | |
 
 Slot numbers downstream of C are nominal (the e2e split widened C to 9
@@ -250,7 +250,8 @@ no ld.so dependency.
 - **.14** — ciphersuite negotiation; `tls_native_available()` flipped
   0→1. 2 of 3 TLS 1.3 suites live (AES-256-GCM-SHA384 +
   ChaCha20-Poly1305-SHA256); AES-128-GCM-SHA256 registered but gated
-  on sigil AES-128 (see the 2026-05-28 comprehensive sigil audit). ✅
+  on sigil AES-128. ✅ (gate cleared @ **.83** — AES-128-GCM now live
+  via sigil `aes_128_gcm_*`, folded .76/.80.)
 
 **Mini-arc C — TLS 1.3 server (.15 → .23) — pulled forward, FULL scope**
 
@@ -411,32 +412,27 @@ driven); **no cross-repo edit from cyrius**
   the ABI-mirror gotcha); api-surface snapshot; state.md + memory
   pins.
 
-**Mini-arc D — TLS 1.2 backport (was .34 → .39; now landing at .72+) — IN PROGRESS** (record layer + key schedule shipped @ .72/.73; handshake / cert / Finished / ciphersuites / e2e remaining)
-- **.34 → shipped @ v6.0.72** ✅ — TLS 1.2 AEAD record layer
-  (`lib/tls_native.cyr`: `record_seal_12`/`record_open_12`, 13-byte AAD,
-  GCM explicit nonce / ChaCha implicit nonce; explicit IV, 1.2 seq; skip
-  legacy CBC).
-- **.35** — TLS 1.2 handshake (version-field semantics, RSA-PSS /
-  PKCS1 cert sigs, downgrade-attack mitigations).
-- **.36 → shipped @ v6.0.73** ✅ — TLS 1.2 PRF + key derivation
-  (`master_secret`, `key_block`, `partition`, `verify_data`, `iv_len_12`;
-  SHA-256 / SHA-384 per ciphersuite; RFC 5246 §5+§8).
-- **.37** — TLS 1.2 certificate + Finished WIRING (the `verify_data`
-  MAC primitive itself shipped @ .73 via `tls_native_12_verify_data`;
-  this slot is the certificate message + Finished exchange that consume it).
-- **.38** — TLS 1.2 ciphersuites (AES-GCM + ChaCha20-Poly1305 / RFC
-  7905; skip legacy CBC — the minimum-needed modern-peer set).
-- **.39** — TLS 1.2 e2e (localhost + at least one real 1.2-only peer).
+**Mini-arc D — TLS 1.2 backport — ✅ COMPLETE (.72 → .83)**
+- **.34 → .72** ✅ — TLS 1.2 AEAD record layer (`record_seal_12`/`record_open_12`,
+  13-byte AAD, GCM explicit nonce / ChaCha implicit nonce; explicit IV, 1.2 seq).
+- **.36 → .73** ✅ — TLS 1.2 PRF + key derivation (`master_secret`, `key_block`,
+  `partition`, `verify_data`, `iv_len_12`; SHA-256/384 per suite; RFC 5246 §5+§8).
+- **.35 / .37 → .74** ✅ — TLS 1.2 ECDHE handshake + certificate + Finished, full
+  e2e (our-client ↔ our-server).
+- **EMS (RFC 7627) + OpenSSL s_client 1.2 interop → .77** ✅ — real-peer 1.2.
+- **.38 ciphersuites → .74 + .83** ✅ — AES-256-GCM + ChaCha20-Poly1305 @ .74;
+  AES-128-GCM + ECDHE_RSA (RSA-PSS/PKCS#1) + ECDSA P-384 @ .83 (the .74 stubs retired).
+- **.39 e2e → .74 / .77** ✅ — our-side e2e @ .74; real-peer OpenSSL 1.2 @ .77.
 
-**Mini-arc E — consumer wiring + TLS arc closeout (.40 → .42) — remaining**
-- **.40** — sandhi rewires onto `lib/tls_native.cyr` + libssl wrapper
-  disposition decision (deprecate / keep both / retire `lib/tls.cyr`
-  — affects every downstream consumer on the wrapper today; ASK at
-  slot entry).
-- **.41** — consumer smoke + `cyrius deps` bump path: walk every TLS
-  consumer in the ecosystem, verify the bump works, smoke each.
-- **.42** — TLS arc closeout: CHANGELOG retrospective, vidya refresh
-  (language.toml + field_notes/), state.md session-close, memory pins.
+**Mini-arc E — consumer wiring + TLS arc closeout — ✅ COMPLETE (.78 → .83)**
+- **.40 wrapper disposition → .80** ✅ — resolved KEEP-BOTH: `lib/tls.cyr` re-backed
+  onto the native stack behind `-D CYRIUS_TLS_NATIVE` (libssl.so.3 fdlopen bridge
+  stays the default backend; native is opt-in). New backend-agnostic typed verbs
+  `tls_get_alpn_selected` / `tls_get_peer_spki_der` @ .82.
+- **.41 sandhi rewire → .83** ✅ — sandhi 1.4.2 moved its ALPN-read + SPKI-pin off
+  the raw libssl `SSL*` / `tls_dlsym` onto the typed verbs; folded byte-identical.
+- **.42 closeout → .83** ✅ — CHANGELOG + state.md + the live Cloudflare real-peer
+  smoke + OpenSSL s_server/s_client interop. **Mini-arc E (the native-TLS arc) is CLOSED.**
 
 ### v6.0.x back-end + closeout shape
 
@@ -462,7 +458,7 @@ premise-check each at slot entry:
    (`scripts/funcgate-posix.sh`/`funcgate-win.ps1`/`funcgate-stage.sh`) wired into CI on every platform
    (macho-arm64-native + windows-native HARD; test HARD; test-agnos/aarch64-native tracking) + the
    `cyrlint --strict-deferrals` rule. Self-host byte-identical on x86_64+aarch64-linux+macho-arm;
-   check.sh 85/85. (sigil 3.7.3 fold — confirm status at next slot.)
+   check.sh 85/85. (sigil 3.7.3 folded @ .76; sigil 3.7.4 folded @ .80.)
 3. **.64 — global allocator thread-safety** ✅ COMPLETE (was .63).
    Process-wide CAS spinlock (`_alloc_lock`) serializing `alloc()`/`alloc_reset()` across all four
    allocator peers + a CAS-publish for the `default_alloc()` singleton — closes the bump-pointer, grow,
@@ -544,16 +540,13 @@ premise-check each at slot entry:
    **DEFERRED to .72 (leader-approved split):** on the REAL GPU, 1-arg COM `Release`/`AddRef` + the full
    `dxgi_vram_bytes()` chain still AV — a SECOND interaction the alignment fix doesn't cover (emit is
    byte-identical to the working cases; reproduces only on real DXGI hardware) → needs windbg/cdb on cass.
-11. **.72–x — native TLS items** (pulled ahead of the Windows DXGI residual per leader
-   direction 2026-06-06: "back burn the windows items posted from .72 until later after
-   tls"): Mini-arc D (TLS 1.2 backport, was .34–.39) + Mini-arc E (consumer wiring +
-   closeout, was .40–.42). **IN PROGRESS** — **.72 ✅ TLS 1.2 AEAD record layer**
-   (`record_seal_12`/`open_12`, 13-byte AAD, GCM explicit nonce / ChaCha implicit nonce)
-   + **.73 ✅ TLS 1.2 PRF + key derivation** (`master_secret`, `key_block`, `partition`,
-   `verify_data`, `iv_len_12`); handshake / cert / Finished / ciphersuites / e2e + Mini-arc E
-   remaining. sandhi is handled AT THIS ARC when we get there — version-bump
-   sandhi + update language docs then; NOT cross-walked/pre-filed now (user 2026-06-04,
-   overriding the general upfront-cross-walk default for this case).
+11. **.72–.83 — native TLS arc** (Mini-arc D TLS 1.2 backport + Mini-arc E consumer wiring
+   + closeout). ✅ **COMPLETE.** .72 AEAD record layer / .73 PRF+key schedule / .74 full
+   1.2 ECDHE handshake + e2e / .77 EMS + OpenSSL 1.2 interop / .78–.81 native client
+   features (close_notify, ALPN, trust store, server-flight reassembly, live Cloudflare
+   HTTPS) / .80 lib/tls.cyr re-backed onto native (CYRIUS_TLS_NATIVE) / .82 typed verbs /
+   .83 AES-128 + RSA + P-384 ciphersuites + sandhi 1.4.2 rewire. sandhi was bumped at the
+   arc (1.4.2, folded .83), per the user's at-this-arc handling (2026-06-04).
 12. **Near-end — Windows remaining repair cluster** (back-burned 2026-06-06, user
    direction: "windows remaining repair goes to near end of 6.0.x line of work" — runs
    AFTER the TLS arc above). Consolidates the .71-deferred DXGI residual with the prior
@@ -565,10 +558,10 @@ premise-check each at slot entry:
      (`issues/2026-06-02-windows-cycc-runtime-multibug.md`, verify on cass).
    - `cyrius deps --lock` Windows-portable hash + the native Windows `.ps1` installer +
      AGNOS-target install + the remaining Windows partials (D2 wrapper port / deps-lock).
-13. **LAST before closeout — cleanup / refactor cluster + sigil 3.7.3 fold**: dead
+13. **LAST before closeout — cleanup / refactor cluster**: dead
    `ret_patches` 2 KB heap region, byte-array literal peephole, dead-code careful sweep,
-   `_TARGET_*` flag consolidation, `programs/check.cyr` modularization, **+ fold sigil
-   3.7.3 into stdlib** (user 2026-06-04 — sandhi-pattern, byte-identical at the tag).
+   `_TARGET_*` flag consolidation, `programs/check.cyr` modularization. (The sigil fold is
+   already current — 3.7.3 folded @ .76, 3.7.4 @ .80; refold whatever tag is current at closeout.)
 14. **Closeout → v6.1.0**: the CLAUDE.md "Closeout Pass" § — mechanical fail-fast
    (self-host + bootstrap closure + check.sh + cross-OS 4-host) → judgment passes (heap
    map / dead code / refactor / code review / cleanup) → docs sync (incl. reconciling the

@@ -9,7 +9,13 @@
 
 ## A. Broken PUBLIC API shipped returning errors silently
 
-### `lib/tls_native.cyr` — "shipped TLS 1.3" has unimplemented public functions
+### `lib/tls_native.cyr` — "shipped TLS 1.3" has unimplemented public functions — ✅ RESOLVED (.78–.83)
+**Status:** all three stub fns are implemented and the header lie is gone. `tls_native_close` sends an
+encrypted close_notify (.78), `tls_native_set_alpn` stores the offered protocol (.78), and
+`tls_native_set_version_range` pins/restricts the version (.74). The whole native stack went on to ship
+TLS 1.2 + 1.3, RSA/P-384 auth, AES-128, live-Cloudflare HTTPS through .83 (CHANGELOG [6.0.78]–[6.0.83]).
+Mini-arcs D/E are CLOSED, not "unstarted". Original report below for history.
+
 The 1.3 client+server core IS real (slots .15–.28, OpenSSL interop CONNECTED). But:
 - **Stale header lie** (L7): still declares *"v6.0.10 SCAFFOLD — every fn returns NOT_IMPLEMENTED."*
   False — the stack works. Reconciled to the truth in this same change.
