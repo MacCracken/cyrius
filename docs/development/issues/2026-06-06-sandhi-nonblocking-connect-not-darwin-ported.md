@@ -4,6 +4,8 @@
 - **Reporter**: yantra (downstream consumer; iOS/XCUITest e2e on a GitHub Apple-Silicon runner, driving a local Appium server)
 - **Affects**: `lib/sandhi.cyr` on **aarch64 macOS** (Mach-O). **Linux is unaffected.** Seen with the 6.0.66 stdlib snapshot.
 - **Severity**: any `sandhi_http_*` call that sets `connect_ms > 0` cannot connect on macOS, even to a listening localhost server.
+- **Status (2026-06-07): OPEN.** Still unfixed — `lib/sandhi.cyr` carries Linux constants (`_SANDHI_EINPROGRESS = 115`, `_SANDHI_SO_RCVTIMEO = 20`; macOS needs `36` / `0x1006`). The v6.0.84 macOS work (thread_local TPIDR + socketpair ESYSXLAT) did **not** touch these — do not assume resolved.
+- **Resolution path**: fix in the **sandhi repo (upstream)** first — Darwin socket constants + arch-gating (`#ifdef CYRIUS_TARGET_MACOS`) — then **re-fold** into cyrius `lib/sandhi.cyr` via the normal dep-fold. NOT a direct edit of the vendored copy (ecosystem rule: vendored `lib/<dep>.cyr` is a fold of the upstream repo). Same pattern for the remaining sigil issues (sigil-repo work → fold).
 
 ## Symptom
 
