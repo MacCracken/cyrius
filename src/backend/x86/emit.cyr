@@ -1413,6 +1413,37 @@ fn EGETPROC_PE(S): i64 {
     return _pe_call_2arg_aligned(S, _pe_getproc_get());
 }
 
+# syscall(0xF015, name, buf, size) → kernel32!GetEnvironmentVariableA(name, buf,
+# size). 3 args (LPCSTR→rcx, LPSTR→rdx, DWORD→r8). Returns the char count in rax.
+# v6.0.85 — the Windows env-read path for the cyrius wrapper's cycc resolution.
+fn EGETENV_PE(S): i64 {
+    _pe_ensure_getenv(S);
+    return _pe_call_3arg_aligned(S, _pe_getenv_get());
+}
+
+# 3-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as the
+# 1/2-arg callers above). Stack on entry (top→bottom): [a3][a2][a1][sc_nr].
+# a1→rcx, a2→rdx, a3→r8 (Win64 integer arg order), then carve the 32 B shadow.
+fn _pe_call_3arg_aligned(S, idx): i64 {
+    EB(S, 0x58);                                        # pop rax (a3)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax  (a3)
+    EB(S, 0x58);                                        # pop rax (a2)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (a1)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
 # syscall(0xF012, &iid, &ppFactory) → dxgi!CreateDXGIFactory1. 2 args
 # (REFIID riid → rcx, void** ppFactory → rdx). Returns HRESULT (0=S_OK) in
 # rax/eax; *ppFactory receives the IDXGIFactory1*. v6.0.70 §0 — dxgi.dll is

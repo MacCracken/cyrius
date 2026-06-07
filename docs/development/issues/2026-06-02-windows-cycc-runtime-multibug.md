@@ -4,8 +4,17 @@
 **Affected:** the PE runtime — `cycc.exe` running as a compiler on Windows
 **Severity:** High — Windows is claimed-supported but `cycc` does not
 compile anything there. Same class as the macOS rot, one platform over.
-**Status:** open — **multi-slot arc; bug 1 fixed in v6.0.39, bug 2+ open.**
-Verifiable on `cass` (Windows 10.0.26200, SSH-wired).
+**Status:** bug 1 (v6.0.39) + **bug 2 RESOLVED** — only the install Pillar
+remains. `cycc.exe` compiles + runs + self-hosts on real `cass`. The cross-OS
+cass gate (`scripts/cross-os-selfhost.sh cass`) runs the REAL on-Windows
+compile chain (`cycc.exe < main_win.cyr > c2.exe && c2.exe < main_win.cyr >
+c3.exe && fc /b`, + the exit-42 + callptr-real-Win64 guards) and is green.
+**Re-verified hands-on 2026-06-07:** `cycc.exe` compiled a non-trivial program
+(fns + while-loop + args) on cass → a 1536-byte runnable PE → exit 90 (correct).
+The remaining work is the **Pillar** (real install on cass → working cycc +
+cass `cyrius audit` gate) — scoped as the v6.0.85 Windows install bundle (cyrius
+is NOT yet installed on cass: no `~/.cyrius`). Verifiable on `cass`
+(Windows 10.0.26200, SSH-wired).
 
 ## How it stayed hidden
 
@@ -27,10 +36,19 @@ first `alloc()` at startup. Fixed to `syscall(9)` (mmap → VirtualAlloc).
 **Verified on cass: `vec_new` no longer crashes, cycc reads stdin (12/12
 bytes).**
 
-## Bug 2 — input length lost before parse (OPEN)
+## Bug 2 — input length lost before parse (RESOLVED)
 
-After bug 1, `cycc` reads its input but produces **zero code** (`GCP=0`
-before FIXUP → empty output, exit 0). Bisected on `cass`:
+> **RESOLVED (verified 2026-06-07).** `cycc.exe` now compiles non-trivial
+> programs on cass and self-hosts byte-identical (the cross-OS cass gate runs
+> the real on-Windows compile chain every slot). The original "zero code"
+> symptom is gone — direct hands-on test compiled fns + a while-loop + args to
+> a runnable 1536-byte PE that exits 90. (The SBL/GBL store concern below was
+> resolved in the compile→emit→write hardening that landed with the WIN
+> auto-call-main guard and the self-host bring-up; the issue text was left
+> stale.) Remaining: the install **Pillar** below (= v6.0.85).
+
+Original symptom (historical): after bug 1, `cycc` read its input but produced
+**zero code** (`GCP=0` before FIXUP → empty output, exit 0). Bisected on `cass`:
 - read loop reads the full input,
 - but `GBL(S)` reads **0** immediately after `SBL(S, bl)` with `bl=12`.
 

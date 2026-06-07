@@ -503,6 +503,21 @@ fn _pe_ensure_getmodh(S): i64 {
 }
 fn _pe_getmodh_get(): i64 { return _pe_getmodh_idx; }
 
+# v6.0.85 — kernel32!GetEnvironmentVariableA for the Windows env-read path.
+# (LPCSTR name→rcx, LPSTR buf→rdx, DWORD size→r8) returns the char count
+# written (0 = not set / error) in rax. The cyrius wrapper (cbt/core.cyr) uses
+# it to resolve CYRIUS_HOME / USERPROFILE on Windows — there is no
+# /proc/self/environ, so `cyrius build` could not find cycc before this.
+var _pe_getenv_ready = 0;
+var _pe_getenv_idx   = 0;
+fn _pe_ensure_getenv(S): i64 {
+    if (_pe_getenv_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getenv_idx, "GetEnvironmentVariableA");
+    _pe_getenv_ready = 1;
+    return 0;
+}
+fn _pe_getenv_get(): i64 { return _pe_getenv_idx; }
+
 var _pe_getproc_ready = 0;
 var _pe_getproc_idx   = 0;
 fn _pe_ensure_getproc(S): i64 {
