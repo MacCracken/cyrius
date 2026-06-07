@@ -3,6 +3,35 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.80 ship — Mini-arc E Release A complete: sigil 3.7.4 fold + native TLS wrapper)
+
+Closing **v6.0.80**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +
+cass. **Mini-arc E Release A complete** — the sovereign native-TLS client path is wired end-to-end into
+the stdlib wrapper, and real-server cert verification works.
+
+**Two substantive pieces:** (1) **Folded sigil 3.7.4** — its `x509_parse` `ec_fw` fix (retry r,s width
+at 48 on overflow) lets real-world ECDSA roots parse (SSL.com Root ECC = P-384 key + ecdsa-with-SHA256,
++ ~12 OS roots that were silently dropped). With `.78`'s trust store, **the live Cloudflare → SSL.com
+chain validates through the real OS trust store in cyrius** (dev-check = VERIFIED). The `.78`
+"x509_parse SIGSEGV" report was a test-harness bug (wrong hex_decode length) — corrected + archived.
+(2) **Bite 4 — `lib/tls.cyr` re-backed onto native** behind `CYRIUS_TLS_NATIVE` (keep-both: libssl is
+the default; the flag pulls tls_native.cyr + defaults to native; `tls_set_backend` switches at runtime).
+The full client path (connect/write-fragmenting/read/close + typed set_alpn/set_verify, hook on the
+opaque native ctx, chain+SNI verification on complete) routes to `tls_native_*`. Committed e2e:
+wrapper-client (native) ↔ cyrius-native server (`tls_wrapper_native.tcyr`). +2 public fns, non-breaking.
+
+**The sigil saga (premise correction):** the "sigil x509_parse crashes on real certs" `.78` claim was
+WRONG (my hex_decode test bug). The real bug was a parse REJECTION (ec_fw hash-derived, not curve-aware)
+of P-384-key-with-SHA256 roots. Fixed in sigil 3.7.4 (retry-on-overflow — the first attempt, forcing
+ec_fw by the cert's own curve, broke the SEV-SNP VCEK; corrected). Off-diagonal ECDSA *verify*
+(hash≠curve chain LINKS) is P1 on sigil's roadmap + an issue — not needed for cloudflare-class chains.
+
+**Next — Mini-arc E Release B:** server-flight reassembly (the last blocker for live EXTERNAL HTTPS),
+sandhi rewire (ALPN-read + SPKI-pin onto typed native verbs, drop tls_dlsym — leader authorized in-arc),
+the live one.one.one.one:443 real-peer smoke (now that cert verification works), + closeout. Then
+cycle closeout → v6.1.0. Also queued: macOS &_fl_heads freelist codegen bug, Windows repair cluster
+(cdb now provisioned on cass), AES-128/RSA-auth ciphersuite enablement.
+
 ## Session close — 2026-06-06 (.79 ship — SECURITY: cyml_parse OOB stack-write fix)
 
 Closing **v6.0.79**. check.sh **85/85**; self-host byte-identical (cyml not in cycc). A HIGH-sev

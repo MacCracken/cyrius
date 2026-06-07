@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.80] — 2026-06-06
+
 **Mini-arc E Release A complete — sovereign TLS wrapper, real-cert verification unblocked.** Folds
 sigil 3.7.4 (real-world ECDSA roots now parse) and re-backs the stdlib `lib/tls.cyr` onto the native TLS
 stack behind a build flag, keeping libssl as the default. The native client now verifies real public
