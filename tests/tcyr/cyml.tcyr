@@ -1,5 +1,8 @@
 # cyml.tcyr — CYML parser tests
 include "lib/string.cyr"
+include "lib/vec.cyr"      # fmt.cyr uses vec_get; explicit include so it
+                          # resolves on the Windows PE build too (not just the
+                          # Linux/macOS closure). See CHANGELOG [6.0.79].
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -63,6 +66,26 @@ fn main() {
     var e5 = cyml_doc_entry(d5, 0);
     assert(cyml_entry_header_len(e5) > 0, "header-only entry");
     assert_eq(cyml_entry_body_len(e5), 0);
+
+    # === Many entries — OOB stack-write regression (.79) ===
+    # entry_starts is written at 8-byte stride; before the [256]→[2048] fix it
+    # was 256 BYTES (32 slots), so >32 [[entries]] overflowed the stack (clobbering
+    # the return address) from untrusted CYML. 50 entries exercises slots 32–49.
+    test_group("many-entries OOB regression");
+    var mbuf = alloc(4096);
+    var mhdr = "[topic]\nid = \"x\"\n\n";
+    var mp = strlen(mhdr);
+    memcpy(mbuf, mhdr, mp);
+    var mblk = "[[entries]]\nname = \"e\"\n\n---\n\nbody\n\n";
+    var mbl = strlen(mblk);
+    var mk = 0;
+    while (mk < 50) {
+        memcpy(mbuf + mp, mblk, mbl);
+        mp = mp + mbl;
+        mk = mk + 1;
+    }
+    var dm = cyml_parse(mbuf, mp);
+    assert_eq(cyml_doc_entry_count(dm), 50);
 
     syscall(60, assert_summary());
 }

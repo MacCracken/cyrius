@@ -6,6 +6,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**Security: fix the `cyml_parse` out-of-bounds stack write.** A HIGH-severity memory-safety bug in
+shipping stdlib, found by the agnos 1.42.14 pre-burn security audit. Driven entirely by untrusted CYML
+file bytes, so it ships to every CYML consumer (commandress `config_load`, bannermanor `font_load`).
+
+### Fixed
+
+- **`lib/cyml.cyr` `cyml_parse` — 1792-byte OOB stack write (CVE-class: stack buffer overflow).** The
+  `[[entries]]` offset table `var entry_starts[256]` is **function-local**, so it is 256 *bytes*
+  (32 eight-byte slots), but the code writes it at an 8-byte stride up to the `entry_count >= 256` cap —
+  i.e. it needs **2048 bytes**. A CYML doc with >32 `[[entries]]` markers overflowed the buffer (up to
+  256 markers → a 1792-byte write past it), clobbering adjacent locals, the saved frame pointer, and the
+  **return address** — return-address control-flow hijack at worst, in ring-3 tools that run as the user.
+  Fixed by sizing the buffer for its true capacity: `var entry_starts[2048]` (256 × 8 B), with a comment
+  nailing the function-local **N-byte** unit so the slot/byte footgun isn't reinstated. Regression test:
+  a 50-entry CYML now parses correctly (`tests/tcyr/cyml.tcyr`). Verified on Linux + real macOS (ecb).
+  The `var X[N]`-is-N-bytes class is documented in `state.md`; a compile-time lint is the durable guard.
+  Issue: `docs/development/issues/2026-06-06-cyml-parse-entry-starts-var-array-overflow.md`.
+
+### Known issues
+
+- **`cyml.tcyr` can't run on the Windows PE build** — a pre-existing Windows gap (surfaced by running the
+  test cross-OS): an unrouted `syscall(n)` in cyml's `alloc`/`fmt` deps → `STATUS_ILLEGAL_INSTRUCTION`.
+  `cyml_parse` itself uses neither, so the library + the fix are correct on Windows; only the test
+  harness is blocked. Belongs to the Windows repair cluster. (This patch also adds an explicit
+  `include "lib/vec.cyr"` to the test, resolving one of the two Windows gaps — `fmt`'s `vec_get`.)
+
 ## [6.0.78] — 2026-06-06
 
 **Sovereign native-TLS client features (Mini-arc E Release A, part 1).** Three client-side features the
