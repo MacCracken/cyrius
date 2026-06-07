@@ -53,3 +53,40 @@ fn argv(n) {
     if (n >= cnt) { return 0; }
     return load64(_agnos_init_rsp + 8 + n * 8);
 }
+
+# v6.0.87: getenv on agnos. agnos has no /proc; the kernel stages envp on the
+# exec init stack (agnos 1.43.2, ABI §4.6): argc=[rsp], the argv NULL is at
+# [rsp+8+argc*8], then envp[j] = [rsp+8+(argc+1+j)*8] (NUL-terminated), each a
+# "KEY=VALUE" cstr (default env HOME=/, PWD=/). lib/io.cyr getenv() delegates
+# here under CYRIUS_TARGET_AGNOS — the _agnos_init_rsp global lives here and
+# io.cyr is included BEFORE args, so the delegation is a forward fn ref (REGFN),
+# not a forward global ref. Returns a heap copy of VALUE, or 0 if unset. envc
+# is bounded (256) so a malformed/unterminated envp can't spin.
+fn _agnos_getenv(name) {
+    if (_agnos_init_rsp == 0) { return 0; }
+    var acnt = load64(_agnos_init_rsp);
+    var nlen = strlen(name);
+    var base = _agnos_init_rsp + 8 + (acnt + 1) * 8;   # &envp[0]
+    var j = 0;
+    while (j < 256) {
+        var ep = load64(base + j * 8);
+        if (ep == 0) { return 0; }                     # envp NULL terminator
+        var eq = 1;
+        var ci = 0;
+        while (ci < nlen) {
+            if (load8(ep + ci) != load8(name + ci)) { eq = 0; break; }
+            ci = ci + 1;
+        }
+        if (eq == 1) { if (load8(ep + nlen) == 61) {   # 61 = '='
+                var vs = ep + nlen + 1;
+                var vl = 0;
+                while (load8(vs + vl) != 0) { vl = vl + 1; }
+                var res = alloc(vl + 1);
+                memcpy(res, vs, vl);
+                store8(res + vl, 0);
+                return res;
+            } }
+        j = j + 1;
+    }
+    return 0;
+}

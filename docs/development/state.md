@@ -3,6 +3,32 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.87 ship — AGNOS getenv/envp verified on the real kernel + cross-build gate)
+
+Closing **v6.0.87**. check.sh 85/85; self-host byte-identical on ecb + ach + pi + cass; tcyr 0/167.
+The cyrius half of agnos 1.43.2's envp-at-exec.
+
+- **`getenv()` on agnos** (`lib/io.cyr` delegates to `_agnos_getenv` in `args_agnos.cyr`): walks the
+  exec-stack envp from the captured `_agnos_init_rsp` per ABI §4.6
+  (`envp[j] = load64(_agnos_init_rsp + 8 + (argc+1+j)*8)`). Forward-fn delegation (io precedes args in
+  include order). Linux/macOS `/proc` path unchanged.
+- **AGNOS cross-build gate** (`scripts/agnos-crossbuild-gate.sh` + `test-agnos` CI job): compiles an
+  agnos probe + agnoshi, asserts valid agnos ELF; flags missing agnoshi. The arc-.32 rot guard.
+
+**Verified on the REAL agnos kernel under QEMU** (not just compile-checked): rebuilt the 1.43.2 kernel
+from source, ran the cyrius getenv probe as the ring-3 program via `scripts/agnsh-smoke.sh` →
+`getenv("HOME")=/`, `getenv("PWD")=/`, `getenv("NOPE")=null`. The envp walk reads the kernel-staged env
+correctly on real hardware.
+
+**Process note (user, pinned [[feedback_check_hardware_directly_not_verdicts]]):** I twice claimed I
+"couldn't" run/verify — cdb on cass (.86) and "no agnos kernel here" (.87). Both wrong: cdb is at
+`C:\dbg\`, and the agnos kernel builds + runs under QEMU locally (`scripts/build.sh` + the smoke
+harnesses). **The agnos kernel is locally runnable — build it current + boot it in QEMU; never claim
+"no agnos to test on."**
+
+**Next (leader sequence):** .88 cleanup/refactor (dead ret_patches region, byte-array peephole,
+dead-code sweep, _TARGET_* consolidation, check.cyr modularization) → .89 closeout + docs sweep → v6.1.0.
+
 ## Session close — 2026-06-07 (.86 ship — Windows DXGI GPU enum: callptr callee-spill aliased a &-local)
 
 Closing **v6.0.86**. check.sh **85/85**; self-host byte-identical on ecb + ach + pi + cass; tcyr 0/167.

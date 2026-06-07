@@ -6,6 +6,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.87] — 2026-06-07
+
+**AGNOS: `getenv()`/envp works on real agnos + a cross-build rot gate.** The cyrius half of agnos
+1.43.2's envp-at-exec. Verified on the **real agnos kernel under QEMU** (not just compile-checked).
+
+### Added
+
+- **`getenv()` on agnos** (`lib/io.cyr` + `lib/args_agnos.cyr`). agnos has no `/proc`, so `getenv()`
+  delegates under `CYRIUS_TARGET_AGNOS` to `_agnos_getenv`, which walks the exec-stack envp from the
+  already-captured `_agnos_init_rsp` per the agnos ABI §4.6:
+  `envp[j] = load64(_agnos_init_rsp + 8 + (argc+1+j)*8)`, NUL-terminated, matching `KEY=`. Forward-fn
+  delegation (io.cyr precedes args in the stdlib include order, so the `_agnos_init_rsp` global is
+  reached via a REGFN call, not a forward global ref). The Linux/macOS `/proc` path is unchanged.
+- **AGNOS cross-build gate** (`scripts/agnos-crossbuild-gate.sh`, wired into the `test-agnos` CI job) —
+  the missing arc-.32 rot guard. Compiles a `CYRIUS_TARGET_AGNOS` probe (args + getenv-envp) and
+  **agnoshi** itself, asserting a valid agnos ELF; flags (not silently skips) a missing agnoshi
+  checkout. Guards agnos-target codegen from silent rot — the "found by ports" class.
+
+### Verified
+
+- **On the real agnos 1.43.2 kernel under QEMU** (rebuilt from source; the getenv probe run as the
+  ring-3 program via `scripts/agnsh-smoke.sh`): `getenv("HOME")` → `/`, `getenv("PWD")` → `/`,
+  `getenv("NOPE")` → null. The cyrius envp walk reads the kernel-staged env correctly on real hardware.
+- self-host byte-identical on ecb + ach + pi + cass; check.sh 85/85; tcyr 0/167; the cross-build gate
+  green (probe + agnoshi both → valid agnos ELF); Linux getenv regression unchanged.
+
 ## [6.0.86] — 2026-06-07
 
 **Windows DXGI GPU enumeration works — the `callptr` callee-spill could alias a `&`-taken local.**

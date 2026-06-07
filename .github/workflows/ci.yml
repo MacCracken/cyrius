@@ -383,6 +383,14 @@ jobs:
           else
             echo "git not available, skipping dep resolution"
           fi
+      - name: AGNOS cross-build gate (--agnos -> valid ELF)
+        # v6.0.87 (arc-.32): guard CYRIUS_TARGET_AGNOS codegen from silent rot —
+        # the "found by ports" class that rotted macOS for 9 minors. Compiles an
+        # agnos-target probe (args + getenv-envp, the v6.0.87 ABI §4.6 surface)
+        # and asserts a valid agnos ELF; cross-builds agnoshi if checked out.
+        run: |
+          [ -s build/cyrius ] || { cat cbt/cyrius.cyr | ./build/cycc > build/cyrius && chmod +x build/cyrius; }
+          sh scripts/agnos-crossbuild-gate.sh
       - name: Test suite (.tcyr)
         run: |
           pass=0; fail=0
