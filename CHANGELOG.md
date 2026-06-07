@@ -24,6 +24,11 @@ OS trust store + SNI hostname check — then exchanges HTTP. No libssl.
   decrypting handshake records into one plaintext buffer until the flight is complete (new
   `_tn_flight_complete` walks handshake messages and stops at Finished), bounded at 64 KB. Each
   `open_handshake` advances the read sequence correctly. our↔our (single-record) flights are unchanged.
+- **`tls_native_set_ca_system` portability** — it hardcoded `/etc/ssl/cert.pem` (macOS/Arch), which
+  doesn't exist on Debian/Ubuntu (CI) or RHEL/Fedora, so the trust store silently failed to load there.
+  Now tries the standard locations in order: `/etc/ssl/cert.pem`, `/etc/ssl/certs/ca-certificates.crt`,
+  `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`. (The live smoke is also now fully
+  skip-on-failure so it never fails the suite on an environment/network condition.)
 
 ### Added
 

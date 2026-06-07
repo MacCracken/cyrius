@@ -4652,15 +4652,21 @@ fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
     return TLS_OK;
 }
 
-# Load the OS trust store — a single concatenated-PEM bundle (e.g.
-# /etc/ssl/cert.pem on Linux/macOS) — as the ctx's trust anchors. Returns
-# TLS_OK, TLS_ERR_IO if the file can't be read, or a parse error.
+# Load the OS trust store — a single concatenated-PEM CA bundle — as the ctx's
+# trust anchors. Tries the standard bundle locations across distros + macOS
+# (the path is NOT the same everywhere: Debian/Ubuntu use
+# /etc/ssl/certs/ca-certificates.crt, RHEL/Fedora /etc/pki/..., macOS/Arch
+# /etc/ssl/cert.pem). Returns TLS_OK, TLS_ERR_IO if no bundle is readable, or a
+# parse error.
 fn tls_native_set_ca_system(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var cap = 1048576;                          # 1 MiB; system bundles are ~250 KB
     var buf = alloc(cap);
     if (buf == 0) { return TLS_ERR_OOM; }
-    var fd = sys_open("/etc/ssl/cert.pem", 0, 0);   # O_RDONLY
+    var fd = sys_open("/etc/ssl/cert.pem", 0, 0);                          # macOS, Arch
+    if (fd < 0) { fd = sys_open("/etc/ssl/certs/ca-certificates.crt", 0, 0); }   # Debian/Ubuntu
+    if (fd < 0) { fd = sys_open("/etc/pki/tls/certs/ca-bundle.crt", 0, 0); }     # RHEL/Fedora
+    if (fd < 0) { fd = sys_open("/etc/ssl/ca-bundle.pem", 0, 0); }               # openSUSE
     if (fd < 0) { return TLS_ERR_IO; }
     var total = 0;
     var rdone = 0;
