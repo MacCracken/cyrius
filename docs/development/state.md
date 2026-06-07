@@ -3,6 +3,35 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.83 ship — AES-128 + RSA-auth + P-384 ciphersuite enablement; sandhi 1.4.2 fold)
+
+Closing **v6.0.83**. check.sh **85/85**; self-host byte-identical; cross-OS green on ecb + cass. The
+native TLS client now speaks the rest of the mainstream web's crypto: **AES-128-GCM**, **RSA** server
+certs (RSA-PSS over 1.3, PKCS#1 v1.5 / PSS over 1.2), and **ECDSA P-384**, on top of the ECDSA-P-256 it
+already did. The .74 ciphersuite stubs are retired.
+
+**Shipped:** AES-128-GCM (0x1301 in 1.3 + the 1.2 AES-128 suites; sigil `aes_128_gcm_*`, nr=10 — NOT
+`aes_gcm_*` which is nr=14/AES-256). RSA server auth via a shared `_tn_rsa_verify_scheme` (n/e from
+sigil's cert+248 side block, fail-closed on non-RSA). ECDSA P-384 (sigil `ecdsa_p384_verify` over a
+DER→raw r‖s parse). TLS 1.2 server-flight reassembly (the .81 1.3 fix's sibling — `_tn_flight_complete`
+gained a terminator-type param). Both sig-verify sites unified into `_tn_verify_sig_scheme`. Folded
+**sandhi 1.4.2** (byte-identical). All helpers internal — api-surface unchanged.
+
+**Method note — adversarial review caught 3 real bugs, all fixed in-slot:** (P1) the new 1.2
+reassembly loop spun forever on zero-length handshake records (no timeout) → now `BAD_RECORD`; (P2) the
+1.3 CertVerify accepted `rsa_pkcs1_*` schemes RFC 8446 §4.2.3 forbids in 1.3 → now rejected (1.2 SKE
+still allows them); (P2) P-384 was advertised-but-unhandled → wired. The review correctly DISMISSED a
+flagged `alloc(128)` server-RSA-sign overflow as unreachable (that sign path returns KEY_UNSUPPORTED
+first). Verified vs OpenSSL `s_server`: RSA-1.3+AES-128 / RSA-1.2 / P-384 all handshake OK; live
+Cloudflare regression green. scaffold 412.
+
+**Latent (tracked, not reached):** `_tn_12_sign_kex_params` allocs sig[128] — too small for a 256-byte
+RSA-2048 signature IF cyrius-as-SERVER ever signs with RSA; currently unreachable (no server RSA-sign
+path). Fix when/if server-side RSA certs land.
+
+**Next (leader order):** repair slots — macOS `&_fl_heads` freelist codegen bug; Windows cluster (cdb
+on cass) — then cycle closeout → **v6.1.0**.
+
 ## Session close — 2026-06-06 (.82 ship — backend-agnostic TLS peer-introspection verbs; sandhi-rewire enablement)
 
 Closing **v6.0.82**. check.sh **85/85**; self-host byte-identical; cross-OS green on ecb + cass. The

@@ -37,12 +37,13 @@ assert_eq(tls_native_12_cipher_hash(TLS12_ECDHE_ECDSA_AES128_GCM_SHA256), TLS_HA
 assert_eq(tls_native_12_cipher_hash(TLS12_ECDHE_ECDSA_CHACHA20_SHA256),   TLS_HASH_SHA256, "0xCCA9 hash = SHA256");
 assert_eq(tls_native_12_cipher_hash(0x0000), 0 - 1, "unknown wire id -> -1 hash");
 
-# --- supported allowlist: exactly {0xC02C, 0xCCA9} ---
+# --- supported allowlist (.83): ECDHE_ECDSA + ECDHE_RSA over AES-128/256-GCM + ChaCha ---
 assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_ECDSA_AES256_GCM_SHA384), 1, "0xC02C supported");
 assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_ECDSA_CHACHA20_SHA256),   1, "0xCCA9 supported");
-assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_ECDSA_AES128_GCM_SHA256), 0, "0xC02B NOT supported (AES-128 crypto-dead)");
-assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_RSA_AES256_GCM_SHA384),   0, "0xC030 NOT supported (RSA awaits sigil)");
-assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_RSA_CHACHA20_SHA256),     0, "0xCCA8 NOT supported (RSA)");
+assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_ECDSA_AES128_GCM_SHA256), 1, "0xC02B supported (.83 AES-128)");
+assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_RSA_AES256_GCM_SHA384),   1, "0xC030 supported (.83 RSA-auth)");
+assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_RSA_AES128_GCM_SHA256),   1, "0xC02F supported (.83 RSA+AES-128)");
+assert_eq(tls_native_12_cipher_supported(TLS12_ECDHE_RSA_CHACHA20_SHA256),     1, "0xCCA8 supported (.83 RSA-auth)");
 assert_eq(tls_native_12_cipher_supported(0x0000), 0, "unknown wire id NOT supported");
 
 # --- reverse map (identity + auth -> wire id for ServerHello) ---

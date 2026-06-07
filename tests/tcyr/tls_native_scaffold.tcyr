@@ -466,8 +466,8 @@ assert_eq(tls_native_cipher_iv_len(TLS_CHACHA20_POLY1305_SHA256), 12, "ChaCha20 
 assert_eq(tls_native_cipher_tag_len(TLS_AES_256_GCM_SHA384),       16, "AES-256 tag = 16 B");
 assert_eq(tls_native_cipher_tag_len(TLS_CHACHA20_POLY1305_SHA256), 16, "ChaCha20 tag = 16 B");
 
-# Capability — AES-128 NOT supported until sigil ships it (see audit issue)
-assert_eq(tls_native_cipher_supported(TLS_AES_128_GCM_SHA256),       0, "AES-128 NOT supported (sigil gap)");
+# Capability — AES-128-GCM is wired (sigil aes_128_gcm_*). See CHANGELOG [6.0.83].
+assert_eq(tls_native_cipher_supported(TLS_AES_128_GCM_SHA256),       1, "AES-128-GCM supported (.83)");
 assert_eq(tls_native_cipher_supported(TLS_AES_256_GCM_SHA384),       1, "AES-256 supported");
 assert_eq(tls_native_cipher_supported(TLS_CHACHA20_POLY1305_SHA256), 1, "ChaCha20-Poly1305 supported");
 assert_eq(tls_native_cipher_supported(0x9999), 0, "unknown cipher not supported");
@@ -497,19 +497,19 @@ _tn_be16_w(&server_prefs_chacha + 4, TLS_AES_128_GCM_SHA256);
 assert_eq(tls_native_cipher_select(&client_offers, 3, &server_prefs_chacha, 3),
           TLS_CHACHA20_POLY1305_SHA256, "server-prefers-ChaCha → picks ChaCha20");
 
-# Server prefers ONLY AES-128 (unsupported by us); client offers
-# all three. Selection skips AES-128 (not supported), so... no match.
+# Server prefers ONLY AES-128; client offers all three. AES-128 is now
+# supported (.83), so it is selected.
 var server_only_aes128[2];
 _tn_be16_w(&server_only_aes128, TLS_AES_128_GCM_SHA256);
 assert_eq(tls_native_cipher_select(&client_offers, 3, &server_only_aes128, 1),
-          0, "server-prefers-only-AES-128 (unsupported) → no match");
+          TLS_AES_128_GCM_SHA256, "server-prefers-only-AES-128 → picks AES-128 (.83)");
 
-# Client offers AES-128 only; server prefers AES-256 first then
-# ChaCha20. No overlap → 0.
+# Client offers AES-128 only; server prefs include AES-128 (last entry).
+# Now supported (.83) → overlap lands on AES-128.
 var client_aes128_only[2];
 _tn_be16_w(&client_aes128_only, TLS_AES_128_GCM_SHA256);
 assert_eq(tls_native_cipher_select(&client_aes128_only, 1, &server_prefs_aes_first, 3),
-          0, "client offers AES-128 only → no match (we don't support)");
+          TLS_AES_128_GCM_SHA256, "client offers AES-128 only → picks AES-128 (.83)");
 
 test_group("v6.0.14 AEAD encrypt/decrypt round-trip");
 
@@ -580,13 +580,21 @@ assert_eq(rc_dec_cc, TLS_OK, "ChaCha20-Poly1305 decrypt OK");
 assert_eq(load8(&pt_dec_cc),      72, "ChaCha decrypted byte 0 = 'H'");
 assert_eq(load8(&pt_dec_cc + 10), 33, "ChaCha decrypted byte 10 = '!'");
 
-# AES-128 (unsupported) → TLS_ERR_CIPHER_NOT_SUPPORTED
+# AES-128-GCM now wired (.83) — encrypt + decrypt round-trip. aes_128_gcm_*
+# uses the first 16 bytes of the key (nr=10). See CHANGELOG [6.0.83].
 var ct_128[11];
 var tag_128[16];
 assert_eq(tls_native_aead_encrypt(TLS_AES_128_GCM_SHA256,
                                   &key256, &iv, &aad, 5,
                                   &plaintext, 11, &ct_128, &tag_128),
-          TLS_ERR_CIPHER_NOT_SUPPORTED, "AES-128 encrypt → CIPHER_NOT_SUPPORTED");
+          TLS_OK, "AES-128-GCM encrypt OK (.83)");
+var pt_dec_128[11];
+assert_eq(tls_native_aead_decrypt(TLS_AES_128_GCM_SHA256,
+                                  &key256, &iv, &aad, 5,
+                                  &ct_128, 11, &tag_128, &pt_dec_128),
+          TLS_OK, "AES-128-GCM decrypt OK");
+assert_eq(load8(&pt_dec_128),      load8(&plaintext),      "AES-128 round-trip byte 0");
+assert_eq(load8(&pt_dec_128 + 10), load8(&plaintext + 10), "AES-128 round-trip byte 10");
 
 # ================================================================
 # v6.0.15 — server connection ctx + handshake state machine
@@ -1597,6 +1605,33 @@ assert_eq(load8(&spkih + 1) & 0xFF, 0x35, "SPKI pin hash[1] matches openssl");
 assert_eq(load8(&spkih + 31) & 0xFF, 0x81, "SPKI pin hash[31] matches openssl");
 var certder[512];
 assert_eq(tls_native_get_peer_cert_der(spkictx, &certder, 512), 385, "peer cert DER length = 385");
+
+# ================================================================
+# v6.0.83 — RSA cert pubkey extraction + RSA-scheme dispatch
+# ================================================================
+test_group("v6.0.83 RSA pubkey extraction + scheme dispatch");
+var rsacert = hex_decode("30820309308201f1a003020102021476acb2e982b5bf67ba8df672951f87ad4e69b09c300d06092a864886f70d01010b050030143112301006035504030c096c6f63616c686f7374301e170d3236303630373035323730365a170d3336303630343035323730365a30143112301006035504030c096c6f63616c686f737430820122300d06092a864886f70d01010105000382010f003082010a02820101009101712a4b812988d1418d87944c596cd831a15de75084b448e4d6e58931ff23baf21a446de5b546298b6bcafced3633d2e7722203018bc340a008dd57eb2910ec85f949cb4ac52d5ed7f8ae33fce416911f9a22e11d0bff74932a23722f10ad79f51a20b8b14fa444c5a7a31e05f45f189efdd1f59dc915e2e73bb06aa6ed565e35a53288db87af96f53a8e8792bc52677aa28265e780fc1b3fdcb962d199196ef5bfe9314ddf72ac0a5bdc620268915fdec677d17a3ae4920ba469ad52e754d54d8eba3011fb30092a0b9d53b3eda2b422eb0e4b16289964f1af9d9106d80390e4b2f31028423c2a733033ba2008c505678466299283c33bac6c146d3333730203010001a3533051301d0603551d0e04160414aba97de9da0cb1268b632d576784e2ab494b3ca7301f0603551d23041830168014aba97de9da0cb1268b632d576784e2ab494b3ca7300f0603551d130101ff040530030101ff300d06092a864886f70d01010b050003820101004eb7769e8d9a1206464b4b8ee332893800d97af3c8afd12d5da9b3e5d440e3ea8aaf64dba2c92932f4b92840d0517abfdfad27bc3ba11da09c175195552a8ef0f2c53d6f4e5757122a89d60bf2dfb9956625b86b5051ed46b2deef71a98941d5d237d7628081996ced1bbb3e0d0b1145779b8d21b3f976593ecdd3014ff43c446fccce0e9561bf326c6f844000ee884f3ca0356c8d388ae68c55ef860fd91cfdb00b36e552d13b7bea9f7a0f0a9794555eb47704f274baa3e5a008f73c4468b192658aecb7b20239d285ff039f37bb9b5af155223936f293b8a6e12344e003da449bc65719c0767eefdfe7caccca0cf3cd7f07c242ff6b736e84c1b81c296395", 1562);
+var rleaf = x509_cert_alloc();
+assert_eq(x509_parse(rsacert, 781, rleaf), 1, "RSA-2048 cert parses");
+assert_eq(x509_cert_curve(rleaf), X509_CURVE_RSA, "cert key type = RSA");
+var rblk = x509_cert_rsa_pubkey(rleaf);
+assert_neq(rblk, 0, "RSA pubkey side-block present (cert+248)");
+assert_eq(load64(rblk + 528), 256, "RSA-2048 modulus n = 256 bytes");
+# _tn_rsa_verify_scheme dispatch: a non-RSA scheme returns -1 (caller tries EC).
+var rdummy[8];
+assert_eq(_tn_rsa_verify_scheme(TLS_SIG_ECDSA_SECP256R1_SHA256, rleaf, &rdummy, 8, &rdummy, 8), 0 - 1, "non-RSA scheme -> -1");
+# An RSA scheme on an EC cert (cert23) fail-closes to 0 (no RSA pubkey).
+var recleaf = x509_cert_alloc();
+x509_parse(cert23, 385, recleaf);
+assert_eq(_tn_rsa_verify_scheme(TLS_SIG_RSA_PSS_RSAE_SHA256, recleaf, &rdummy, 8, &rdummy, 8), 0, "RSA scheme on EC cert -> 0 (fail-closed)");
+# P-384 ECDSA is wired into the verify dispatch (.83 review fix): a P-384 cert
+# parses, and _tn_verify_sig_scheme DISPATCHES ecdsa_secp384r1_sha384 (returns 0
+# for a bad sig, not -1 "unsupported").
+var p384cert = hex_decode("308201bb30820140a00302010202147674a3c08dc5ea765b456bbd730f7d496665aa74300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630373035353934315a170d3336303630343035353934315a30143112301006035504030c096c6f63616c686f73743076301006072a8648ce3d020106052b8104002203620004dfd16d79bc1b411e41c6ff91370e0ae30402cc6adb2a6d9dba246ababc32f43757430973b8a6d46c75e7705bb6d9f52ddd699994990e7490b7dc32ae4a583baa8ba016f7b77c716b0f43caede7667ad684aa474337e527d2b0df7ad215470afda3533051301d0603551d0e04160414021399a302143d2b1f50cef4a0ea7e3336e82bdd301f0603551d23041830168014021399a302143d2b1f50cef4a0ea7e3336e82bdd300f0603551d130101ff040530030101ff300a06082a8648ce3d0403020369003066023100aaf2de6cc1731abadb4ac05e5216daa7c5169ee09055da81630bf716cb7de4d3073728a7d7b67222e1201b379f653d07023100cbc0967e6deed83a3778fb6b62f1db533147290b3e39cb05a321799786ca1fb178c9f67d995a2f860a7ccb5c9ad09a0a", 894);
+var p384leaf = x509_cert_alloc();
+assert_eq(x509_parse(p384cert, 447, p384leaf), 1, "P-384 cert parses");
+assert_eq(x509_cert_curve(p384leaf), X509_CURVE_P384, "cert curve = P-384");
+assert_eq(_tn_verify_sig_scheme(TLS_SIG_ECDSA_SECP384R1_SHA384, p384leaf, &rdummy, 8, &rdummy, 8), 0, "P-384 scheme dispatched (handled, not -1)");
 
 # ================================================================
 # v6.0.30 — hostname / SAN verification (RFC 6125)

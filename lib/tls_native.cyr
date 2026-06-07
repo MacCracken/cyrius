@@ -1006,6 +1006,7 @@ fn tls_native_cipher_tag_len(cipher): i64 {
 fn tls_native_cipher_supported(cipher): i64 {
     if (cipher == TLS_AES_256_GCM_SHA384)       { return 1; }
     if (cipher == TLS_CHACHA20_POLY1305_SHA256) { return 1; }
+    if (cipher == TLS_AES_128_GCM_SHA256)       { return 1; }   # See CHANGELOG [6.0.83]
     return 0;
 }
 
@@ -1092,13 +1093,16 @@ fn tls_native_12_cipher_hash(wire_id): i64 {
 
 # Capability: 1 if cyrius can complete a 1.2 handshake using this wire
 # ciphersuite, 0 otherwise. EXPLICIT allowlist (so unregistered ids
-# default unsupported): only ECDHE_ECDSA with AES-256-GCM or
-# ChaCha20-Poly1305. AES-128 (0x1301) has no aead_encrypt branch and
-# no sigil backing; RSA-auth suites await sigil RSA sign/verify (filed
-# at 2026-05-28-cyrius-tls-arc-full-audit.md). See CHANGELOG [6.0.74].
+# default unsupported). ECDHE_ECDSA + ECDHE_RSA over AES-128-GCM /
+# AES-256-GCM / ChaCha20-Poly1305 — RSA-auth (SKE verify) and AES-128-GCM
+# both wired in .83. See CHANGELOG [6.0.83].
 fn tls_native_12_cipher_supported(wire_id): i64 {
     if (wire_id == TLS12_ECDHE_ECDSA_AES256_GCM_SHA384) { return 1; }
     if (wire_id == TLS12_ECDHE_ECDSA_CHACHA20_SHA256)   { return 1; }
+    if (wire_id == TLS12_ECDHE_ECDSA_AES128_GCM_SHA256) { return 1; }
+    if (wire_id == TLS12_ECDHE_RSA_AES256_GCM_SHA384)   { return 1; }
+    if (wire_id == TLS12_ECDHE_RSA_AES128_GCM_SHA256)   { return 1; }
+    if (wire_id == TLS12_ECDHE_RSA_CHACHA20_SHA256)     { return 1; }
     return 0;
 }
 
@@ -1128,6 +1132,12 @@ pt, pt_len, ct_out, tag_out): i64 {
         aes_gcm_encrypt(key, iv12, aad, aad_len, pt, pt_len, ct_out, tag_out);
         return TLS_OK;
     }
+    if (cipher == TLS_AES_128_GCM_SHA256) {
+        # AES-128 = nr=10; aes_gcm_encrypt hardcodes nr=14 (AES-256) and would
+        # run a 14-round schedule over a 16-byte key. See CHANGELOG [6.0.83].
+        aes_128_gcm_encrypt(key, iv12, aad, aad_len, pt, pt_len, ct_out, tag_out);
+        return TLS_OK;
+    }
     if (cipher == TLS_CHACHA20_POLY1305_SHA256) {
         chacha20poly1305_encrypt(key, iv12, aad, aad_len, pt, pt_len, ct_out, tag_out);
         return TLS_OK;
@@ -1142,6 +1152,11 @@ ct, ct_len, tag, pt_out): i64 {
     if (cipher == TLS_AES_256_GCM_SHA384) {
         var r = aes_gcm_decrypt(key, iv12, aad, aad_len, ct, ct_len, tag, pt_out);
         if (r != 0) { return TLS_ERR_DECRYPT; }
+        return TLS_OK;
+    }
+    if (cipher == TLS_AES_128_GCM_SHA256) {
+        var r3 = aes_128_gcm_decrypt(key, iv12, aad, aad_len, ct, ct_len, tag, pt_out);
+        if (r3 != 0) { return TLS_ERR_DECRYPT; }
         return TLS_OK;
     }
     if (cipher == TLS_CHACHA20_POLY1305_SHA256) {
@@ -1425,7 +1440,7 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     var apl = 0;
     var alpn_ext = 0;
     if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }   # 4 hdr + 2 list-len + protos
-    var ext_block = 7 + 8 + 12 + 42 + sni_ext + alpn_ext;   # sv + sg + sa + key_share + SNI + ALPN
+    var ext_block = 7 + 8 + 16 + 42 + sni_ext + alpn_ext;   # sv+sg+sa(5)+key_share+SNI+ALPN; CHANGELOG [6.0.83]
     var body_len = 2 + 32 + 1 + 2 + 6 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
     if (total > out_max) { return _tn_ctx_fail(ctx, TLS_ERR_BUFFER_FULL); }
@@ -1457,10 +1472,12 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     _tn_be16_w(p, 2); p = p + 2;                       # groups list length
     _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
     _tn_be16_w(p, 13); p = p + 2;                      # signature_algorithms
-    _tn_be16_w(p, 8); p = p + 2;
-    _tn_be16_w(p, 6); p = p + 2;                       # sig algs list length
+    _tn_be16_w(p, 12); p = p + 2;                      # ext_data len (2 + 5*2); see CHANGELOG [6.0.83]
+    _tn_be16_w(p, 10); p = p + 2;                      # sig algs list length (5 schemes)
     _tn_be16_w(p, TLS_SIG_ECDSA_SECP256R1_SHA256); p = p + 2;
     _tn_be16_w(p, TLS_SIG_ECDSA_SECP384R1_SHA384); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_RSA_PSS_RSAE_SHA256); p = p + 2;   # RSA-cert servers
+    _tn_be16_w(p, TLS_SIG_RSA_PSS_RSAE_SHA384); p = p + 2;
     _tn_be16_w(p, TLS_SIG_ED25519); p = p + 2;
     _tn_be16_w(p, TLS_EXT_KEY_SHARE); p = p + 2;
     _tn_be16_w(p, 38); p = p + 2;
@@ -1600,18 +1617,86 @@ fn tls_native_client_open_handshake(ctx, record, record_len, out, out_max, out_c
 # server Finished message is stashed for .27 (the transcript stays at
 # CH..CertificateVerify). Returns TLS_OK, TLS_ERR_AUTHN on a bad
 # signature, or another negative TLS_ERR_* (ctx → ERROR).
+# Verify a DER-encoded ECDSA-P384 signature (SHA-384). sigil ships
+# ecdsa_p384_verify on RAW r||s (96 bytes), so parse the DER SEQUENCE { r, s }
+# into a 96-byte buffer (each left-padded to 48) with sigil's _ecdsa_der_int_w.
+# `pk` is the 96-byte affine Qx||Qy. Returns 1 (valid) / 0 (invalid/malformed).
+fn _tn_ecdsa_p384_verify_der(pk, msg, msg_len, sig_der, sig_der_len): i64 {
+    var raw = alloc(96);
+    if (raw == 0) { return 0; }
+    memset(raw, 0, 96);
+    var off = _ecdsa_der_int_w(sig_der, 2, sig_der_len, raw, 48);
+    if (off < 0) { return 0; }
+    off = _ecdsa_der_int_w(sig_der, off, sig_der_len, raw + 48, 48);
+    if (off < 0) { return 0; }
+    return ecdsa_p384_verify(pk, msg, msg_len, raw);
+}
+
+# Verify an RSA signature over `msg` with the leaf cert's RSA pubkey, dispatched
+# by the TLS SignatureScheme: PKCS#1 v1.5 (1.2 ServerKeyExchange) + PSS (1.2 + 1.3
+# CertificateVerify), SHA-256/384. Returns 1 (valid), 0 (invalid — incl. an RSA
+# scheme on a non-RSA cert), or -1 if `scheme` is not an RSA scheme (caller tries
+# the EC/EdDSA algos). The RSA modulus/exponent live in sigil's 544-byte side
+# block (cert+248: n[512] | e@512 | n_len@528 | e_len@536). See CHANGELOG [6.0.83].
+fn _tn_rsa_verify_scheme(scheme, leaf, msg, msg_len, sig, sig_len): i64 {
+    var is_rsa = 0;
+    if (scheme == TLS_SIG_RSA_PSS_RSAE_SHA256) { is_rsa = 1; }
+    if (scheme == TLS_SIG_RSA_PSS_RSAE_SHA384) { is_rsa = 1; }
+    if (scheme == TLS_SIG_RSA_PKCS1_SHA256)    { is_rsa = 1; }
+    if (scheme == TLS_SIG_RSA_PKCS1_SHA384)    { is_rsa = 1; }
+    if (is_rsa == 0) { return 0 - 1; }
+    var rblk = x509_cert_rsa_pubkey(leaf);
+    if (rblk == 0) { return 0; }                       # RSA scheme, non-RSA cert → invalid
+    var rn = rblk;
+    var rnl = load64(rblk + 528);
+    var re = rblk + 512;
+    var rel = load64(rblk + 536);
+    if (scheme == TLS_SIG_RSA_PSS_RSAE_SHA256) {
+        return rsa_pss_verify_sha256(rn, rnl, re, rel, msg, msg_len, sig, sig_len);
+    }
+    if (scheme == TLS_SIG_RSA_PSS_RSAE_SHA384) {
+        return rsa_pss_verify_sha384(rn, rnl, re, rel, msg, msg_len, sig, sig_len);
+    }
+    if (scheme == TLS_SIG_RSA_PKCS1_SHA256) {
+        return rsa_pkcs1v15_verify_sha256(rn, rnl, re, rel, msg, msg_len, sig, sig_len);
+    }
+    return rsa_pkcs1v15_verify_sha384(rn, rnl, re, rel, msg, msg_len, sig, sig_len);
+}
+
+# Verify a server handshake signature (1.3 CertificateVerify / 1.2
+# ServerKeyExchange) over `msg` by SignatureScheme. Derives the cert's affine
+# EC pubkey for ECDSA/EdDSA; RSA pulls n/e from the cert side block. Returns
+# 1 (valid), 0 (invalid), or -1 (unsupported scheme → caller maps to
+# KEY_UNSUPPORTED). NOTE: a 1.3 caller MUST reject the PKCS#1 v1.5 schemes
+# (0x0401/0x0501) before calling — RFC 8446 §4.2.3 forbids them in the 1.3
+# handshake; this helper accepts them for the 1.2 SKE. See CHANGELOG [6.0.83].
+fn _tn_verify_sig_scheme(scheme, leaf, msg, msg_len, sig, sig_len): i64 {
+    var pk = x509_cert_pubkey(leaf);
+    if (scheme == TLS_SIG_ECDSA_SECP256R1_SHA256) {
+        return ecdsa_p256_verify_der(pk, msg, msg_len, sig, sig_len);
+    }
+    if (scheme == TLS_SIG_ECDSA_SECP384R1_SHA384) {
+        return _tn_ecdsa_p384_verify_der(pk, msg, msg_len, sig, sig_len);
+    }
+    if (scheme == TLS_SIG_ED25519) {
+        return ed25519_verify(pk, msg, msg_len, sig);
+    }
+    return _tn_rsa_verify_scheme(scheme, leaf, msg, msg_len, sig, sig_len);
+}
+
 # True (1) iff buf[0..len] holds a COMPLETE server flight — a run of handshake
-# messages (4-byte header + body) ending in a fully-present Finished (type 20).
-# 0 = more record bytes still needed. Drives recv_flight's reassembly of a flight
-# a real server fragments across TLS records (RFC 8446 §5.1).
-fn _tn_flight_complete(buf, len): i64 {
+# messages (4-byte header + body) ending in a fully-present `end_type` message
+# (Finished/20 for the 1.3 encrypted flight; ServerHelloDone/14 for the 1.2
+# plaintext flight). 0 = more record bytes still needed. Drives both clients'
+# reassembly of a flight a real server fragments across TLS records.
+fn _tn_flight_complete(buf, len, end_type): i64 {
     var pos = 0;
     while (pos + TLS_HANDSHAKE_HEADER_LEN <= len) {
         var ml = _tn_be24_r(buf + pos + 1);
         if (pos + TLS_HANDSHAKE_HEADER_LEN + ml > len) { return 0; }
         var mt = load8(buf + pos) & 0xFF;
         pos = pos + TLS_HANDSHAKE_HEADER_LEN + ml;
-        if (mt == TLS_HS_FINISHED) { return 1; }
+        if (mt == end_type) { return 1; }
     }
     return 0;
 }
@@ -1639,7 +1724,7 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     if (ct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
     var rcap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    var rdone = _tn_flight_complete(plain, plen);
+    var rdone = _tn_flight_complete(plain, plen, TLS_HS_FINISHED);
     while (rdone == 0) {
         if (plen >= pcap) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }   # flight too large
         var inbuf = alloc(rcap);
@@ -1651,7 +1736,7 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
         if (more < 0) { return more; }
         if (ct2 != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
         plen = plen + more;
-        rdone = _tn_flight_complete(plain, plen);
+        rdone = _tn_flight_complete(plain, plen, TLS_HS_FINISHED);
     }
     var pos = 0;
     var mt = 0;
@@ -1757,17 +1842,12 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     store8(content + 97, 0);
     memcpy(content + 98, th, hlen);
     var content_len = 98 + hlen;
-    var pk = x509_cert_pubkey(leaf);
-    var ok = 0;
-    if (scheme == TLS_SIG_ECDSA_SECP256R1_SHA256) {
-        ok = ecdsa_p256_verify_der(pk, content, content_len, sig, sig_len);
-    } else {
-        if (scheme == TLS_SIG_ED25519) {
-            ok = ed25519_verify(pk, content, content_len, sig);
-        } else {
-            return _tn_ctx_fail(ctx, TLS_ERR_KEY_UNSUPPORTED);
-        }
-    }
+    # RFC 8446 §4.2.3: the 1.3 CertificateVerify forbids the rsa_pkcs1_* schemes
+    # (list-only for backward compat) — accept ECDSA / EdDSA / RSA-PSS only.
+    if (scheme == TLS_SIG_RSA_PKCS1_SHA256) { return _tn_ctx_fail(ctx, TLS_ERR_KEY_UNSUPPORTED); }
+    if (scheme == TLS_SIG_RSA_PKCS1_SHA384) { return _tn_ctx_fail(ctx, TLS_ERR_KEY_UNSUPPORTED); }
+    var ok = _tn_verify_sig_scheme(scheme, leaf, content, content_len, sig, sig_len);
+    if (ok < 0) { return _tn_ctx_fail(ctx, TLS_ERR_KEY_UNSUPPORTED); }
     if (ok != 1) { return _tn_ctx_fail(ctx, TLS_ERR_AUTHN); }
     tls_native_transcript_update(ts, plain + pos, cv_total);
     pos = pos + cv_total;
@@ -3396,7 +3476,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
         if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
     }
     # ext_block = SNI + supported_groups(8) + ec_point_formats(6)
-    #           + signature_algorithms(12, three schemes)
+    #           + signature_algorithms(20, seven schemes — .83 added RSA PSS+PKCS1)
     #           + renegotiation_info(5, empty — RFC 5746 §3.4)
     #           + extended_master_secret(4, empty — RFC 7627 §5.1)
     #           + ALPN(6+protos, RFC 7301) when offered
@@ -3404,9 +3484,9 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     var apl = 0;
     var alpn_ext = 0;
     if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }
-    var ext_block = sni_ext + 8 + 6 + 12 + 5 + 4 + alpn_ext;
-    # cipher_suites = 2-byte len + two supported suites (4 bytes)
-    var body_len = 2 + 32 + 1 + 2 + 4 + 2 + 2 + ext_block;
+    var ext_block = sni_ext + 8 + 6 + 20 + 5 + 4 + alpn_ext;
+    # cipher_suites = 2-byte len + six supported suites (12 bytes; .83 added RSA + AES-128)
+    var body_len = 2 + 32 + 1 + 2 + 12 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
     if (total > out_max) { return _tn_ctx_fail(ctx, TLS_ERR_BUFFER_FULL); }
     tls_native_handshake_write_header(out, TLS_HS_CLIENT_HELLO, body_len);
@@ -3414,9 +3494,13 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     _tn_be16_w(p, 0x0303); p = p + 2;
     memcpy(p, crand, 32); p = p + 32;
     store8(p, 0); p = p + 1;                          # legacy_session_id (empty)
-    _tn_be16_w(p, 4); p = p + 2;                       # cipher_suites length
+    _tn_be16_w(p, 12); p = p + 2;                      # cipher_suites length (6 suites); see CHANGELOG [6.0.83]
     _tn_be16_w(p, TLS12_ECDHE_ECDSA_AES256_GCM_SHA384); p = p + 2;
     _tn_be16_w(p, TLS12_ECDHE_ECDSA_CHACHA20_SHA256); p = p + 2;
+    _tn_be16_w(p, TLS12_ECDHE_ECDSA_AES128_GCM_SHA256); p = p + 2;
+    _tn_be16_w(p, TLS12_ECDHE_RSA_AES256_GCM_SHA384); p = p + 2;
+    _tn_be16_w(p, TLS12_ECDHE_RSA_AES128_GCM_SHA256); p = p + 2;
+    _tn_be16_w(p, TLS12_ECDHE_RSA_CHACHA20_SHA256); p = p + 2;
     store8(p, 1); p = p + 1; store8(p, 0); p = p + 1;  # legacy_compression null
     _tn_be16_w(p, ext_block); p = p + 2;
     if (sni_ext > 0) {
@@ -3436,10 +3520,14 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     store8(p, 1); p = p + 1;                           # ec_point_format_list length (1 BYTE)
     store8(p, 0); p = p + 1;                           # uncompressed(0)
     _tn_be16_w(p, TLS_EXT_SIGNATURE_ALGORITHMS); p = p + 2;
-    _tn_be16_w(p, 8); p = p + 2;
-    _tn_be16_w(p, 6); p = p + 2;                       # supported_signature_algorithms len
+    _tn_be16_w(p, 16); p = p + 2;                      # ext_data len (2 + 7*2); see CHANGELOG [6.0.83]
+    _tn_be16_w(p, 14); p = p + 2;                      # supported_signature_algorithms len (7 schemes)
     _tn_be16_w(p, TLS_SIG_ECDSA_SECP256R1_SHA256); p = p + 2;
     _tn_be16_w(p, TLS_SIG_ECDSA_SECP384R1_SHA384); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_RSA_PSS_RSAE_SHA256); p = p + 2;   # RSA-cert 1.2 servers
+    _tn_be16_w(p, TLS_SIG_RSA_PSS_RSAE_SHA384); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_RSA_PKCS1_SHA256); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_RSA_PKCS1_SHA384); p = p + 2;
     _tn_be16_w(p, TLS_SIG_ED25519); p = p + 2;
     _tn_be16_w(p, TLS_EXT_RENEGOTIATION_INFO); p = p + 2;   # RFC 5746 secure renegotiation
     _tn_be16_w(p, 1); p = p + 2;                       # ext_data length
@@ -3793,17 +3881,10 @@ fn _tn_12_parse_server_kex(ctx, body, body_len): i64 {
     memcpy(content + 64, body, 36);
     var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
     if (leaf == 0) { return TLS_ERR_CERT_INVALID; }
-    var pk = x509_cert_pubkey(leaf);
-    var ok = 0;
-    if (scheme == TLS_SIG_ECDSA_SECP256R1_SHA256) {
-        ok = ecdsa_p256_verify_der(pk, content, 100, sig, sig_len);
-    } else {
-        if (scheme == TLS_SIG_ED25519) {
-            ok = ed25519_verify(pk, content, 100, sig);
-        } else {
-            return TLS_ERR_KEY_UNSUPPORTED;
-        }
-    }
+    # 1.2 SKE allows ECDSA (P-256/P-384), EdDSA, and RSA (PKCS#1 v1.5 or PSS,
+    # per the SKE's SignatureAndHashAlgorithm). See CHANGELOG [6.0.83].
+    var ok = _tn_verify_sig_scheme(scheme, leaf, content, 100, sig, sig_len);
+    if (ok < 0) { return TLS_ERR_KEY_UNSUPPORTED; }
     if (ok != 1) { return TLS_ERR_AUTHN; }
     return TLS_OK;
 }
@@ -4306,10 +4387,28 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var inbuf = alloc(cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
-    if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
-    var cf = _tn_12_client_consume_flight(ctx, inbuf + TLS_RECORD_HEADER_LEN, rl - TLS_RECORD_HEADER_LEN);
+    # The 1.2 server flight (ServerHello, Certificate, ServerKeyExchange,
+    # ServerHelloDone) is plaintext, but a real server fragments it across
+    # records (a large RSA Certificate especially). Reassemble the handshake
+    # bytes until ServerHelloDone (type 14), then consume. See CHANGELOG [6.0.83].
+    var fbuf = alloc(65536);
+    if (fbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var flen = 0;
+    var fdone = 0;
+    while (fdone == 0) {
+        var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+        if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+        if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+        var paylen = rl - TLS_RECORD_HEADER_LEN;
+        # A zero-length handshake record makes no progress; reject it so a peer
+        # streaming empty records can't spin this loop forever. See CHANGELOG [6.0.83].
+        if (paylen <= 0) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+        if (flen + paylen > 65536) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        memcpy(fbuf + flen, inbuf + TLS_RECORD_HEADER_LEN, paylen);
+        flen = flen + paylen;
+        fdone = _tn_flight_complete(fbuf, flen, TLS_HS_SERVER_HELLO_DONE);
+    }
+    var cf = _tn_12_client_consume_flight(ctx, fbuf, flen);
     if (cf != TLS_OK) { return _tn_ctx_fail(ctx, cf); }
     var er = _tn_gen_ephemeral_x25519_pub_only(ctx);
     if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }

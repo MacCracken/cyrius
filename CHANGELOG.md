@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.83] — 2026-06-06
+
+**AES-128 + RSA-auth ciphersuite enablement + sandhi 1.4.2 fold.** The native TLS client can now
+negotiate AES-128-GCM and authenticate **RSA** server certificates (the majority of the public web) —
+over both TLS 1.3 (RSA-PSS CertificateVerify) and TLS 1.2 (RSA ServerKeyExchange). The .74 stubs that
+parked these "until sigil ships the primitives" are now wired (sigil 3.5/3.6 shipped them). Verified
+against OpenSSL `s_server`: RSA cert + AES-128-GCM over 1.3, and ECDHE-RSA over 1.2, both complete.
+
+### Added
+
+- **AES-128-GCM (`TLS_AES_128_GCM_SHA256` / 0x1301)** — `cipher_supported` + the AEAD encrypt/decrypt
+  dispatch now wire sigil's `aes_128_gcm_encrypt/decrypt` (nr=10; **not** `aes_gcm_*`, which hardcode
+  nr=14/AES-256). The key-length plumbing already produced a 16-byte key for 0x1301. Enables 0x1301 in
+  TLS 1.3 and the AES-128 suites (0xC02B/0xC02F) in TLS 1.2.
+- **RSA server authentication** — new `_tn_rsa_verify_scheme` helper (RSA-PSS sha256/384 + PKCS#1 v1.5
+  sha256/384) drives both the **1.3 CertificateVerify** and the **1.2 ServerKeyExchange** signature
+  checks. The RSA modulus/exponent come from sigil's parsed-cert side block (`cert+248`), guarded
+  against a non-RSA cert (fail-closed to invalid). The ClientHello now offers RSA-PSS (1.3) and RSA-PSS
+  + PKCS#1 (1.2) signature_algorithms, and `cipher_supported_12` accepts the ECDHE_RSA suites
+  (0xC030/0xC02F/0xCCA8). Cloudflare-class ECDSA chains continue to work unchanged.
+- **ECDSA P-384 (`ecdsa_secp384r1_sha384`) signature verification** — both ClientHellos already
+  advertised P-384, but the verify dispatch only handled P-256 + Ed25519, so a P-384-cert server we'd
+  offered it to failed with `KEY_UNSUPPORTED`. Now wired (sigil's `ecdsa_p384_verify` over a DER→raw
+  r‖s parse), and both signature-verify sites collapse into one `_tn_verify_sig_scheme` helper. Verified
+  against an OpenSSL P-384 `s_server`.
+
+### Fixed
+
+- **TLS 1.2 server-flight reassembly** — `connect_12` read a single record then parsed the flight
+  (ServerHello/Certificate/ServerKeyExchange/ServerHelloDone), so a real server that fragmented a large
+  (RSA) Certificate across records produced a partial flight → `BAD_HANDSHAKE`. Now it loop-reads +
+  concatenates handshake records until ServerHelloDone, mirroring the .81 fix for the 1.3 flight.
+  `_tn_flight_complete` gained a terminating-message-type parameter (Finished for 1.3, ServerHelloDone
+  for 1.2).
+- **Hardening from an adversarial review of the .83 crypto changes:** (a) the new 1.2 reassembly loop
+  made no progress on a zero-length handshake record — a peer streaming empty records could spin it
+  forever (no timeout); now rejected as `BAD_RECORD`. (b) The 1.3 CertificateVerify accepted the
+  `rsa_pkcs1_*` schemes that RFC 8446 §4.2.3 forbids in the 1.3 handshake (we only *offer* PSS, so no
+  conformant server hit it, but it weakened posture); now rejected — PKCS#1 v1.5 stays accepted only on
+  the 1.2 ServerKeyExchange where it's legal.
+
+### Changed
+
+- **Folded sandhi 1.4.2** (`lib/sandhi.cyr`) — its ALPN-read + SPKI-pin rewire onto the typed stdlib
+  verbs (`tls_get_alpn_selected` / `tls_get_peer_spki_der` from .82), closing the Mini-arc E consumer
+  migration off libssl. Byte-identical to sandhi's tested dist (h2 167 + sandhi 440 green).
+
 ## [6.0.82] — 2026-06-06
 
 **Backend-agnostic TLS peer-introspection verbs (Mini-arc E — sandhi-rewire enablement).** The stdlib
