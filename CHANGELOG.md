@@ -6,6 +6,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.81] — 2026-06-06
+
+**Sovereign HTTPS works against real servers — server-flight reassembly (Mini-arc E Release B).** The
+last technical blocker for live external HTTPS is closed: the native TLS client now reassembles a
+server flight fragmented across TLS records. End-to-end, the native stack completes a real TLS 1.3
+handshake with **Cloudflare (`1.1.1.1:443`)** — flight reassembly + cert-chain verification through the
+OS trust store + SNI hostname check — then exchanges HTTP. No libssl.
+
+### Fixed
+
+- **Server-flight reassembly** (`tls_native_client_recv_flight`, `lib/tls_native.cyr`). The 1.3 client
+  previously read **one** record for the server flight (EncryptedExtensions, Certificate,
+  CertificateVerify, Finished) and parsed it — fine for a tiny self-signed cert (one record), but a real
+  server fragments a large Certificate (chain + SCTs) across multiple records (RFC 8446 §5.1), so the
+  client got a partial flight and hung/failed. Now it decrypts the first record, then keeps reading +
+  decrypting handshake records into one plaintext buffer until the flight is complete (new
+  `_tn_flight_complete` walks handshake messages and stops at Finished), bounded at 64 KB. Each
+  `open_handshake` advances the read sequence correctly. our↔our (single-record) flights are unchanged.
+
+### Added
+
+- **Live real-peer HTTPS smoke** (`tls_native_realpeer.tcyr`). Through the stdlib `lib/tls.cyr` native
+  backend, completes a real TLS 1.3 handshake with Cloudflare `1.1.1.1:443` (reassembly + full
+  cert-chain verification rooted at the OS-trusted SSL.com root + SNI), GETs `/`, and asserts an
+  `HTTP/1.1` response. Guarded — skips cleanly with no network; 10 s socket timeouts so a slow peer
+  can't hang the suite; robust to leaf rotation (verification roots at the stable OS-trusted root).
+
 ## [6.0.80] — 2026-06-06
 
 **Mini-arc E Release A complete — sovereign TLS wrapper, real-cert verification unblocked.** Folds

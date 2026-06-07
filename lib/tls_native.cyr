@@ -1600,6 +1600,22 @@ fn tls_native_client_open_handshake(ctx, record, record_len, out, out_max, out_c
 # server Finished message is stashed for .27 (the transcript stays at
 # CH..CertificateVerify). Returns TLS_OK, TLS_ERR_AUTHN on a bad
 # signature, or another negative TLS_ERR_* (ctx → ERROR).
+# True (1) iff buf[0..len] holds a COMPLETE server flight — a run of handshake
+# messages (4-byte header + body) ending in a fully-present Finished (type 20).
+# 0 = more record bytes still needed. Drives recv_flight's reassembly of a flight
+# a real server fragments across TLS records (RFC 8446 §5.1).
+fn _tn_flight_complete(buf, len): i64 {
+    var pos = 0;
+    while (pos + TLS_HANDSHAKE_HEADER_LEN <= len) {
+        var ml = _tn_be24_r(buf + pos + 1);
+        if (pos + TLS_HANDSHAKE_HEADER_LEN + ml > len) { return 0; }
+        var mt = load8(buf + pos) & 0xFF;
+        pos = pos + TLS_HANDSHAKE_HEADER_LEN + ml;
+        if (mt == TLS_HS_FINISHED) { return 1; }
+    }
+    return 0;
+}
+
 fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
@@ -1608,12 +1624,35 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
     var hlen = _tn_hash_len(load64(ts));
-    var plain = alloc(TLS_RECORD_MAX_PLAINTEXT + 16);
+    # The server flight (EncryptedExtensions, Certificate, CertificateVerify,
+    # Finished) can span MULTIPLE TLS records — a real server fragments a large
+    # Certificate (chain + SCTs) across record boundaries, or splits the flight
+    # arbitrarily (RFC 8446 §5.1). Decrypt the first record, then keep reading +
+    # decrypting handshake records into ONE plaintext buffer until the flight is
+    # complete (through Finished). Each open_handshake advances the read seq.
+    var pcap = 65536;
+    var plain = alloc(pcap);
     if (plain == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ct = 0;
-    var plen = tls_native_client_open_handshake(ctx, record, record_len, plain, TLS_RECORD_MAX_PLAINTEXT + 16, &ct);
+    var plen = tls_native_client_open_handshake(ctx, record, record_len, plain, pcap, &ct);
     if (plen < 0) { return plen; }
     if (ct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
+    var rcap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
+    var rdone = _tn_flight_complete(plain, plen);
+    while (rdone == 0) {
+        if (plen >= pcap) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }   # flight too large
+        var inbuf = alloc(rcap);
+        if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+        var rl = _tn_sock_read_record_skip_ccs(fd, inbuf, rcap);
+        if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+        var ct2 = 0;
+        var more = tls_native_client_open_handshake(ctx, inbuf, rl, plain + plen, pcap - plen, &ct2);
+        if (more < 0) { return more; }
+        if (ct2 != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+        plen = plen + more;
+        rdone = _tn_flight_complete(plain, plen);
+    }
     var pos = 0;
     var mt = 0;
     var ml = 0;

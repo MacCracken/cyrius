@@ -3,6 +3,29 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.81 ship — SOVEREIGN HTTPS: server-flight reassembly + live Cloudflare smoke)
+
+Closing **v6.0.81**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +
+cass. **Milestone: the native TLS stack does real-world HTTPS, no libssl.** Mini-arc E Release B's
+load-bearing technical piece.
+
+**Headline:** **server-flight reassembly** — the last blocker for live EXTERNAL HTTPS.
+`tls_native_client_recv_flight` previously read ONE record for the server flight (EE/Cert/CertVerify/
+Finished) — fine for a tiny self-signed cert, but real servers fragment a large Certificate (chain +
+SCTs) across records (RFC 8446 §5.1), so the client got a partial flight and hung. Now: decrypt the
+first record, then loop-read+decrypt handshake records into one plaintext buffer until the flight is
+complete (`_tn_flight_complete` walks messages, stops at Finished; bounded 64 KB). **Proven LIVE: a
+real TLS 1.3 handshake with Cloudflare 1.1.1.1:443 — reassembly + cert-chain verification through the
+OS trust store (rooted at the SSL.com root, parseable since sigil 3.7.4) + SNI — then an HTTP GET
+returns `HTTP/1.1`.** Committed as a guarded smoke (`tls_native_realpeer.tcyr`; skips offline, 10 s
+socket timeouts, robust to leaf rotation).
+
+**Next — Mini-arc E Release B remaining:** **sandhi rewire** (cross-repo, leader-authorized in-arc:
+ALPN-read onto `tls_native_get_alpn_selected`, SPKI-pin onto `tls_native_get_peer_cert_der` + sigil
+hash, drop the `tls_dlsym`/raw-SSL-ptr sites) → closes Mini-arc E. **Then** (leader order): AES-128 +
+RSA-auth ciphersuite enablement (unblocked by sigil 3.7.x) → repair slots (macOS `&_fl_heads` freelist
+codegen bug; Windows cluster, cdb now on cass) → **cycle closeout → v6.1.0.**
+
 ## Session close — 2026-06-06 (.80 ship — Mini-arc E Release A complete: sigil 3.7.4 fold + native TLS wrapper)
 
 Closing **v6.0.80**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +
