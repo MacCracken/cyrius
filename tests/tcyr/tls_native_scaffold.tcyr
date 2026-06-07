@@ -37,7 +37,7 @@ assert_eq(tls_native_new_server(0, 0, 0, 0), 0, "new_server rejects null cert (0
 
 # Stateful fns not yet wired return TLS_ERR_NOT_IMPLEMENTED. ctx arg
 # is 0 (invalid handle) — these stubs don't dereference yet.
-assert_eq(tls_native_set_alpn(0, 0, 0), TLS_ERR_NOT_IMPLEMENTED, "set_alpn stub");
+assert_eq(tls_native_set_alpn(0, 0, 0), TLS_ERR_INVALID_PARAM, "set_alpn null ctx → INVALID_PARAM (implemented .78)");
 # set_verify is live (.15): null ctx → INVALID_PARAM, not NOT_IMPLEMENTED.
 assert_eq(tls_native_set_verify(0, TLS_VERIFY_PEER), TLS_ERR_INVALID_PARAM, "set_verify null ctx");
 assert_eq(tls_native_set_ca_bundle(0, 0, 0, 0), TLS_ERR_INVALID_PARAM, "set_ca_bundle null ctx (live .29)");
@@ -46,7 +46,7 @@ assert_eq(tls_native_connect(0, 0 - 1), TLS_ERR_INVALID_PARAM, "connect null ctx
 assert_eq(tls_native_accept(0, 0 - 1), TLS_ERR_INVALID_PARAM, "accept null ctx → INVALID_PARAM");
 assert_eq(tls_native_write(0, 0, 0), TLS_ERR_INVALID_PARAM, "write null ctx → INVALID_PARAM");
 assert_eq(tls_native_read(0, 0, 0), TLS_ERR_INVALID_PARAM, "read null ctx → INVALID_PARAM");
-assert_eq(tls_native_close(0), TLS_ERR_NOT_IMPLEMENTED, "close stub");
+assert_eq(tls_native_close(0), TLS_ERR_INVALID_PARAM, "close null ctx → INVALID_PARAM (implemented .78)");
 
 # Getters return defaults
 assert_eq(tls_native_get_alpn_selected(0, 0, 0), 0, "get_alpn_selected default 0");
@@ -1548,6 +1548,28 @@ var noRoot = tls_native_new_client("x", 1);
 assert_eq(tls_native_client_verify_chain(noRoot, now29), TLS_ERR_CERT_INVALID, "no leaf/root → CERT_INVALID");
 
 # ================================================================
+# v6.0.78 — multi-root trust store + OS system store
+# ================================================================
+test_group("v6.0.78 multi-root trust store + system store");
+# CA_ROOT now holds a SET [count][root0]... — verified by the self-signed
+# DER-root tests above still passing through the new multi-root path.
+var sysctx = tls_native_new_client("localhost", 9);
+var sysrc = tls_native_set_ca_system(sysctx);
+if (sysrc == TLS_OK) {
+    var rootset78 = load64(sysctx + TLS_CTX_OFF_CA_ROOT);
+    assert_neq(rootset78, 0, "system root set stored");
+    assert_gt(load64(rootset78), 50, "OS trust store parsed >50 anchors (multi-root PEM at scale)");
+    # cert23 (self-signed, not a public CA's child) → the loop tries every
+    # system root and rejects: exercises the full multi-root walk.
+    var leaf78 = x509_cert_alloc();
+    x509_parse(cert23, 385, leaf78);
+    store64(sysctx + TLS_CTX_OFF_SERVER_CERT, leaf78);
+    assert_eq(tls_native_client_verify_chain(sysctx, now29), TLS_ERR_CERT_INVALID, "untrusted leaf vs ~OS roots → CERT_INVALID");
+} else {
+    assert_eq(1, 1, "no OS trust store at /etc/ssl/cert.pem — system-store test skipped");
+}
+
+# ================================================================
 # v6.0.30 — hostname / SAN verification (RFC 6125)
 # ================================================================
 test_group("v6.0.30 hostname / SAN verification");
@@ -1622,6 +1644,7 @@ if (pid31 == 0) {
     var rb[64];
     if (tls_native_read(clx, &rb, 64) != 16) { sys_exit(13); }
     if (_tn_ct_eq(&rb, "pong-from-server", 16) != 1) { sys_exit(14); }
+    if (tls_native_close(clx) != TLS_OK) { sys_exit(15); }   # .78: 1.3 close_notify
     sys_close(cfd31);
     sys_exit(0);
 }
@@ -1636,6 +1659,8 @@ var sb31[64];
 assert_eq(tls_native_read(srv31, &sb31, 64), 16, "server read 16 bytes of client app data");
 assert_eq(_tn_ct_eq(&sb31, "ping-from-client", 16), 1, "server received the client's app data");
 assert_eq(tls_native_write(srv31, "pong-from-server", 16), 16, "server wrote its response");
+var sb31b[64];
+assert_eq(tls_native_read(srv31, &sb31b, 64), 0, "server read sees 1.3 client close_notify → clean EOF (0)");
 sys_close(sfd31);
 var st31[4];
 sys_waitpid(pid31, &st31, 0);

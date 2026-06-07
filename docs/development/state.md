@@ -3,6 +3,31 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.78 ship — sovereign native-TLS client features: close_notify + ALPN + trust store)
+
+Closing **v6.0.78**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +
+cass. **Mini-arc E Release A, part 1** — the native client-side features the stdlib `lib/tls.cyr`
+wrapper will need, landed + hermetically tested. The wrapper rebuild (bite 4) was deferred mid-arc
+behind a sigil blocker (below).
+
+**Headline (3 bites):** (1) **`tls_native_close`** — encrypted close_notify send + receive (read→0 on
+clean EOF), 1.2 + 1.3, e2e-proven. (2) **client ALPN** (RFC 7301) — CH offer (1.2+1.3), selection
+parse from EE/SH, `get_alpn_selected`; hermetic. (3) **real trust store** — multi-root `set_ca_bundle`,
+`set_ca_system` (OS bundle, >150 anchors), intermediate capture, `verify_chain` reverse+loop (sigil
+already owned the chain walk; bite 3 was plumbing, no split). `TLS_CTX_LEN` 448→456; +2 public fns
+(`set_ca_system`, non-breaking).
+
+**Blocker found (reshaped the arc):** a dev-check against a live Cloudflare chain showed **sigil's
+`x509_parse` SIGSEGVs on a real CT-SCT leaf cert** (+ fails on a real intermediate) — HIGH-sev (crash
+on untrusted server cert) and the blocker for Release B's real-peer smoke + sandhi.
+[issue: 2026-06-06-sigil-x509-parse-crashes-real-world-certs.md]
+
+**Next (leader-set order):** **`.79`** = the cyml_parse OOB stack-write security fix
+(`var entry_starts[256]`→`[2048]`; issue 2026-06-06-cyml-parse-…). **`.80`** = fix sigil `x509_parse`
+(in ~/Repos/sigil, then re-fold) + bite 4 (the `lib/tls.cyr` wrapper rebuild onto native, keep libssl
+fallback). Then Release B (sandhi rewire + real-peer smoke + closeout), which also needs server-flight
+reassembly. cycle closeout → v6.1.0.
+
 ## Session close — 2026-06-06 (.77 ship — TLS 1.2 Extended Master Secret (RFC 7627) + OpenSSL interop)
 
 Closing **v6.0.77**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +

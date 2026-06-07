@@ -3730,6 +3730,7 @@ tls_native::tls_native_server_sent_hrr/1
 tls_native::tls_native_server_transition/2
 tls_native::tls_native_set_alpn/3
 tls_native::tls_native_set_ca_bundle/4
+tls_native::tls_native_set_ca_system/1
 tls_native::tls_native_set_verify/2
 tls_native::tls_native_set_version_range/3
 tls_native::tls_native_transcript_digest/2

@@ -230,6 +230,40 @@ var m_leg[48];
 tls_native_12_master_secret(TLS_AES_256_GCM_SHA384, &pmA, 32, &cr, &sr, &m_leg);
 assert_eq(_tn_ct_eq(&m_ems, &m_leg, 48), 0, "EMS master differs from the legacy master");
 
+# ---------------- ALPN (RFC 7301, .78) — client offer + selection read ----------------
+# set_alpn stores [be16 len][protos]; protos are OpenSSL-style 1-byte-len-
+# prefixed names. Offer "h2" = 02 68 32.
+var alc = tls_native_new_client("localhost", 9);
+var aprotos[3];
+store8(&aprotos, 2); store8(&aprotos + 1, 0x68); store8(&aprotos + 2, 0x32);
+assert_eq(tls_native_set_alpn(alc, &aprotos, 3), TLS_OK, "set_alpn h2 → TLS_OK");
+assert_eq(load64(alc + TLS_CTX_OFF_ALPN_OFFER) != 0, 1, "set_alpn stores the offer");
+assert_eq(tls_native_set_alpn(alc, &aprotos, 0), TLS_ERR_INVALID_PARAM, "set_alpn rejects empty");
+# The 1.2 ClientHello carries the ALPN ext (type 0x0010) with the offered list.
+var alch[512];
+var alchn = tls_native_12_build_client_hello(alc, &alch, 512);
+assert_gt(alchn, 0, "1.2 CH builds with ALPN offered");
+var ebl = _tn_be16_r(&alch + 47);                 # extensions-block length
+var alp = 0;
+var all = 0;
+assert_eq(_tn_find_ext(&alch + 49, ebl, TLS_EXT_ALPN, &alp, &all), 1, "CH ext block carries ALPN");
+assert_eq(_tn_be16_r(alp), 3, "ALPN ProtocolNameList length = 3");
+assert_eq(load8(alp + 2) & 0xFF, 2, "first protocol length = 2 (h2)");
+# A no-ALPN client's CH is exactly 9 bytes shorter (6 hdr + 3 protos).
+var noac = tls_native_new_client("localhost", 9);
+var noach[512];
+assert_eq(alchn - tls_native_12_build_client_hello(noac, &noach, 512), 9, "ALPN ext = 6 + protos(3) = 9 bytes");
+# Read path: a server's ALPN selection → get_alpn_selected.
+var alc2 = tls_native_new_client(0, 0);
+var alsel[8];
+store8(&alsel, 0); store8(&alsel + 1, 3);          # ProtocolNameList length = 3
+store8(&alsel + 2, 2); store8(&alsel + 3, 0x68); store8(&alsel + 4, 0x32);   # 02 "h2"
+_tn_store_alpn_selected(alc2, &alsel, 5);
+var algot[16];
+assert_eq(tls_native_get_alpn_selected(alc2, &algot, 16), 2, "get_alpn_selected → 2-byte proto");
+assert_eq(_tn_ct_eq(&algot, "h2", 2), 1, "selected ALPN proto is h2");
+assert_eq(tls_native_get_alpn_selected(alc, &algot, 16), 0, "no selection recorded → 0");
+
 # ---------------- malformed server flight: oversized sub-message length ----------------
 # Regression for the .74 review's P0: a server flight whose ServerHello
 # claims a ~16 MB body must be rejected by the length-vs-buffer guard in

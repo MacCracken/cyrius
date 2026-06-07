@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.78] — 2026-06-06
+
+**Sovereign native-TLS client features (Mini-arc E Release A, part 1).** Three client-side features the
+stdlib `lib/tls.cyr` wrapper will need once it's re-backed onto the native stack: clean connection
+teardown, ALPN, and a real trust store. All hermetically tested; self-host byte-identical; cross-OS
+self-host green on ecb + cass. The wrapper rebuild (bite 4) is deferred to `.80` behind a sigil fix
+(see Known issues) — wiring native into consumers is premature while it can't verify real certs.
+
+### Added
+
+- **`tls_native_close`** — sends an encrypted close_notify alert (RFC 5246 §7.2.1 / RFC 8446 §6.1) then
+  marks the ctx CLOSED (idempotent; bump-allocated ctx isn't individually freed; caller owns the fd).
+  The read path now recognizes a peer close_notify (alert description 0) and returns **0 (clean EOF)**
+  instead of `TLS_ERR_ALERT`, both TLS 1.2 and 1.3. Proven e2e on both versions.
+- **ALPN (RFC 7301), client side** — `tls_native_set_alpn` (was a stub) stores the offered protocol
+  list; the ClientHello carries the ALPN extension (TLS 1.2 + 1.3); the server's selection is parsed
+  from EncryptedExtensions (1.3) / ServerHello (1.2); `tls_native_get_alpn_selected` returns it.
+  `TLS_EXT_ALPN` (0x0010) + ctx slots `TLS_CTX_OFF_ALPN_OFFER`/`_SEL`.
+- **Real trust store + intermediate-chain walk** — `set_ca_bundle` now decodes **every** cert in a PEM
+  bundle into a trust-anchor SET (was single-anchor); **`tls_native_set_ca_system`** loads the OS bundle
+  (`/etc/ssl/cert.pem`, >150 anchors); the Certificate-message parser **captures the server's
+  intermediates** (`TLS_CTX_OFF_SERVER_INTERS`); `verify_chain` reverses them into sigil's
+  `x509_verify_chain` order and loops the anchor set. (sigil already implemented the chain walk itself.)
+  `TLS_CTX_LEN` 448 → 456.
+
+### Known issues (block Mini-arc E Release B)
+
+- **sigil `x509_parse` SIGSEGVs on real-world server certs** (CT-SCT leaf → crash; one real intermediate
+  → parse-fail) — HIGH-sev (crash on an untrusted server cert) and the blocker for the live
+  `one.one.one.one:443` real-peer smoke + sandhi HTTPS. Fix in sigil, then re-fold. Slotted for **`.80`**.
+  Full repro: `docs/development/issues/2026-06-06-sigil-x509-parse-crashes-real-world-certs.md`.
+- **Server-flight reassembly** — the native client doesn't reassemble a fragmented server flight, so the
+  OpenSSL `s_server -alpn` real-peer interop (and ALPN/cert verification against a live peer) waits on
+  that rework. ALPN + trust-store are verified hermetically meanwhile.
+
 ## [6.0.77] — 2026-06-06
 
 **TLS 1.2 Extended Master Secret (RFC 7627) + real-peer OpenSSL interop.** Closes Mini-arc D's

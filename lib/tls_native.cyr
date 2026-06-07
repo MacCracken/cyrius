@@ -1174,7 +1174,7 @@ ct, ct_len, tag, pt_out): i64 {
 # control block; +136..+255 is reserved for the read/write key
 # material, sequence numbers, and I/O buffers Mini-arcs B-D append.
 
-var TLS_CTX_LEN          = 448;   # 56 i64 slots; room for B-D growth
+var TLS_CTX_LEN          = 456;   # 57 i64 slots; room for B-D growth
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -1242,6 +1242,14 @@ var TLS_CTX_OFF_USE_EMS       = 424; # TLS 1.2 Extended Master Secret (RFC 7627,
 # 1 = EMS negotiated, 0 = legacy. READ by
 # derive_keys; SET/cleared by the CH/SH parsers.
 # Zeroed by the new_ctx loop → defaults to legacy.
+var TLS_CTX_OFF_ALPN_OFFER    = 432; # ALPN (RFC 7301, .78): ptr to [be16 len][protos]
+# offered list (OpenSSL-style 1-byte-len-prefixed protos), or 0.
+# SET by set_alpn; READ by the CH builders.
+var TLS_CTX_OFF_ALPN_SEL      = 440; # ALPN: ptr to [u8 len][proto] the peer selected, or 0.
+# SET by the SH/EE parsers; READ by get_alpn_selected.
+var TLS_CTX_OFF_SERVER_INTERS = 448; # client: ptr to [count][interm0 ptr]... the server's
+# intermediate certs in TLS (leaf→root) order, or 0. SET by the cert-chain parser;
+# READ (reversed) by verify_chain. (.78 trust-store + intermediate-chain walk)
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -1413,7 +1421,11 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     if (host != 0) {
         if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
     }
-    var ext_block = 7 + 8 + 12 + 42 + sni_ext;       # sv + sg + sa + key_share + SNI
+    var alpn = load64(ctx + TLS_CTX_OFF_ALPN_OFFER);
+    var apl = 0;
+    var alpn_ext = 0;
+    if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }   # 4 hdr + 2 list-len + protos
+    var ext_block = 7 + 8 + 12 + 42 + sni_ext + alpn_ext;   # sv + sg + sa + key_share + SNI + ALPN
     var body_len = 2 + 32 + 1 + 2 + 6 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
     if (total > out_max) { return _tn_ctx_fail(ctx, TLS_ERR_BUFFER_FULL); }
@@ -1456,6 +1468,12 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
     _tn_be16_w(p, 32); p = p + 2;
     memcpy(p, epub, 32); p = p + 32;
+    if (alpn != 0) {
+        _tn_be16_w(p, TLS_EXT_ALPN); p = p + 2;
+        _tn_be16_w(p, 2 + apl); p = p + 2;             # extension_data length
+        _tn_be16_w(p, apl); p = p + 2;                  # ProtocolNameList length
+        memcpy(p, alpn + 2, apl); p = p + apl;          # the offered protocols
+    }
     var chbuf = alloc(total);
     if (chbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     memcpy(chbuf, out, total);
@@ -1604,6 +1622,19 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
         return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
     }
     if (mt != TLS_HS_ENCRYPTED_EXTENSIONS) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    # EncryptedExtensions carries the server's ALPN selection (RFC 7301 / 8446
+    # §4.3.1). Parse it before the transcript-feed; lenient on malformed exts.
+    var eebody = plain + pos + TLS_HANDSHAKE_HEADER_LEN;
+    if (ml >= 2) {
+        var ee_ext_total = _tn_be16_r(eebody);
+        if (ee_ext_total + 2 <= ml) {
+            var ap = 0;
+            var al = 0;
+            if (_tn_find_ext(eebody + 2, ee_ext_total, TLS_EXT_ALPN, &ap, &al) == 1) {
+                _tn_store_alpn_selected(ctx, ap, al);
+            }
+        }
+    }
     var ee_total = TLS_HANDSHAKE_HEADER_LEN + ml;
     tls_native_transcript_update(ts, plain + pos, ee_total);
     pos = pos + ee_total;
@@ -1616,15 +1647,52 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     var cbody = plain + pos + TLS_HANDSHAKE_HEADER_LEN;
     var crc = load8(cbody) & 0xFF;
     var cp = 1 + crc;
-    if (cp + 6 > ml) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    cp = cp + 3;                                       # certificate_list length
+    if (cp + 3 > ml) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    var clist_len = _tn_be24_r(cbody + cp);            # certificate_list length
+    cp = cp + 3;
+    var clist_end = cp + clist_len;
+    if (clist_end > ml) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    # First CertificateEntry = the leaf.
+    if (cp + 3 > clist_end) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     var cert_len = _tn_be24_r(cbody + cp);
     cp = cp + 3;
-    if (cp + cert_len > ml) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (cp + cert_len > clist_end) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     var leaf = x509_cert_alloc();
     if (leaf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (x509_parse(cbody + cp, cert_len, leaf) != 1) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
     store64(ctx + TLS_CTX_OFF_SERVER_CERT, leaf);
+    cp = cp + cert_len;
+    if (cp + 2 <= clist_end) { cp = cp + 2 + _tn_be16_r(cbody + cp); }   # skip leaf entry extensions
+    # Remaining CertificateEntries = intermediates (TLS order: leaf-signer
+    # first → top intermediate last). Capture up to 16 for verify_chain.
+    var inters = alloc(8 + 16 * 8);
+    if (inters == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var nint = 0;
+    var idone = 0;
+    while (idone == 0) {
+        if (cp + 3 > clist_end) { idone = 1; }
+        if (idone == 0) {
+            var ilen = _tn_be24_r(cbody + cp);
+            cp = cp + 3;
+            if (cp + ilen > clist_end) { idone = 1; }
+            if (idone == 0) {
+                if (nint < 16) {
+                    var icert = x509_cert_alloc();
+                    if (icert != 0) {
+                        if (x509_parse(cbody + cp, ilen, icert) == 1) {
+                            store64(inters + 8 + nint * 8, icert);
+                            nint = nint + 1;
+                        }
+                    }
+                }
+                cp = cp + ilen;
+                if (cp + 2 > clist_end) { idone = 1; }
+                if (idone == 0) { cp = cp + 2 + _tn_be16_r(cbody + cp); }
+            }
+        }
+    }
+    store64(inters, nint);
+    store64(ctx + TLS_CTX_OFF_SERVER_INTERS, inters);
     tls_native_transcript_update(ts, plain + pos, cert_total);
     pos = pos + cert_total;
     # Transcript-hash through Certificate (the CertificateVerify input).
@@ -1830,10 +1898,13 @@ fn tls_native_install_app_keys(ctx): i64 {
 # Seal application data into a protected record under THIS side's
 # application-traffic key (client writes with the client key, server
 # with the server key). Returns the record length.
-fn tls_native_seal_app(ctx, buf, len, out, out_max): i64 {
+# Seal `len` bytes of `buf` as a protected record of content type `ct`
+# (application_data=23 or alert=21) under this role's WRITE key/iv/seq.
+# Shared by seal_app (app data) and the close_notify path (alert).
+fn _tn_seal_ct(ctx, ct, buf, len, out, out_max): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_VERSION) == TLS_VERSION_1_2) {
-        return tls_native_12_seal(ctx, TLS_CT_APPLICATION_DATA, buf, len, out, out_max);
+        return tls_native_12_seal(ctx, ct, buf, len, out, out_max);
     }
     var key = load64(ctx + TLS_CTX_OFF_SRV_APP_KEY);
     var iv = load64(ctx + TLS_CTX_OFF_SRV_APP_IV);
@@ -1845,7 +1916,11 @@ fn tls_native_seal_app(ctx, buf, len, out, out_max): i64 {
     }
     if (key == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
     return tls_native_record_seal(load64(ctx + TLS_CTX_OFF_CIPHER), key, iv,
-    ctx + seqoff, TLS_CT_APPLICATION_DATA, buf, len, out, out_max);
+    ctx + seqoff, ct, buf, len, out, out_max);
+}
+
+fn tls_native_seal_app(ctx, buf, len, out, out_max): i64 {
+    return _tn_seal_ct(ctx, TLS_CT_APPLICATION_DATA, buf, len, out, out_max);
 }
 
 # Open a protected application-data record from the peer (read with the
@@ -1860,7 +1935,12 @@ fn tls_native_open_app(ctx, record, record_len, out, out_max): i64 {
         var n12 = tls_native_12_open(ctx, record, record_len, out, out_max, &oct12);
         if (n12 < 0) { return n12; }
         if (oct12 == TLS_CT_APPLICATION_DATA) { return n12; }
-        if (oct12 == TLS_CT_ALERT) { return TLS_ERR_ALERT; }
+        if (oct12 == TLS_CT_ALERT) {
+            # close_notify (description byte 0) = clean shutdown → EOF (0); any
+            # other alert is an error.
+            if (n12 >= 2) { if ((load8(out + 1) & 0xFF) == 0) { return 0; } }
+            return TLS_ERR_ALERT;
+        }
         return 0;
     }
     var key = load64(ctx + TLS_CTX_OFF_CLI_APP_KEY);
@@ -1877,7 +1957,12 @@ fn tls_native_open_app(ctx, record, record_len, out, out_max): i64 {
     ctx + seqoff, record, record_len, out, out_max, &oct);
     if (n < 0) { return n; }
     if (oct == TLS_CT_APPLICATION_DATA) { return n; }
-    if (oct == TLS_CT_ALERT) { return TLS_ERR_ALERT; }
+    if (oct == TLS_CT_ALERT) {
+        # close_notify (description byte 0) = clean shutdown → EOF (0); any
+        # other alert is an error.
+        if (n >= 2) { if ((load8(out + 1) & 0xFF) == 0) { return 0; } }
+        return TLS_ERR_ALERT;
+    }
     return 0;
 }
 
@@ -2035,6 +2120,7 @@ var TLS_EXT_EC_POINT_FORMATS   = 11;   # 1.2 ECDHE (RFC 8422 §5.1.2)
 var TLS_EXT_SIGNATURE_ALGORITHMS = 13;
 var TLS_EXT_SUPPORTED_VERSIONS = 43;
 var TLS_EXT_KEY_SHARE          = 51;
+var TLS_EXT_ALPN               = 16;   # 0x0010, RFC 7301 application_layer_protocol_negotiation
 var TLS_EXT_RENEGOTIATION_INFO = 0xFF01;   # RFC 5746 (empty in initial 1.2 SH)
 var TLS_EXT_EXTENDED_MASTER_SECRET = 23;   # 0x0017, RFC 7627 §5.1 — empty ext. The
 # value coincides with TLS_GROUP_SECP256R1
@@ -3274,7 +3360,12 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     #           + signature_algorithms(12, three schemes)
     #           + renegotiation_info(5, empty — RFC 5746 §3.4)
     #           + extended_master_secret(4, empty — RFC 7627 §5.1)
-    var ext_block = sni_ext + 8 + 6 + 12 + 5 + 4;
+    #           + ALPN(6+protos, RFC 7301) when offered
+    var alpn = load64(ctx + TLS_CTX_OFF_ALPN_OFFER);
+    var apl = 0;
+    var alpn_ext = 0;
+    if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }
+    var ext_block = sni_ext + 8 + 6 + 12 + 5 + 4 + alpn_ext;
     # cipher_suites = 2-byte len + two supported suites (4 bytes)
     var body_len = 2 + 32 + 1 + 2 + 4 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
@@ -3317,6 +3408,12 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     _tn_be16_w(p, TLS_EXT_EXTENDED_MASTER_SECRET); p = p + 2;   # RFC 7627 — always offer
     _tn_be16_w(p, 0); p = p + 2;                       # empty extension_data
     store64(ctx + TLS_CTX_OFF_USE_EMS, 1);             # offered; SH parser clears it if not echoed
+    if (alpn != 0) {
+        _tn_be16_w(p, TLS_EXT_ALPN); p = p + 2;
+        _tn_be16_w(p, 2 + apl); p = p + 2;             # extension_data length
+        _tn_be16_w(p, apl); p = p + 2;                  # ProtocolNameList length
+        memcpy(p, alpn + 2, apl); p = p + apl;          # offered protocols
+    }
     var chbuf = alloc(total);
     if (chbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     memcpy(chbuf, out, total);
@@ -3493,6 +3590,12 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
         if (ems == 1) {
             if (el != 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
             store64(ctx + TLS_CTX_OFF_USE_EMS, 1);
+        }
+        # ALPN selection (RFC 7301): the 1.2 server returns it in the SH.
+        var alpn_ad = 0;
+        var alpn_al = 0;
+        if (_tn_find_ext(body + pos, ext_total, TLS_EXT_ALPN, &alpn_ad, &alpn_al) == 1) {
+            _tn_store_alpn_selected(ctx, alpn_ad, alpn_al);
         }
     }
     store64(ctx + TLS_CTX_OFF_CIPHER, identity);
@@ -4407,7 +4510,39 @@ fn tls_native_server_open_handshake(ctx, record, record_len, out, out_max, out_c
 # "\x08http/1.1\x02h2", protos_len = 13). Returns TLS_OK on success,
 # TLS_ERR_INVALID_PARAM on malformed input.
 fn tls_native_set_alpn(ctx, protos, protos_len): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (protos == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (protos_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    if (protos_len > 255) { return TLS_ERR_INVALID_PARAM; }   # one CH record's worth
+    # Store a length-prefixed copy [be16 protos_len][protos] so the CH builder
+    # can emit it without re-counting. The protos bytes are the wire-format
+    # ProtocolNameList contents (1-byte-len-prefixed protocol names).
+    var buf = alloc(2 + protos_len);
+    if (buf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    _tn_be16_w(buf, protos_len);
+    memcpy(buf + 2, protos, protos_len);
+    store64(ctx + TLS_CTX_OFF_ALPN_OFFER, buf);
+    return TLS_OK;
+}
+
+# Parse a server-sent ALPN extension body (RFC 7301 §3.1: a 2-byte
+# ProtocolNameList length, then exactly ONE 1-byte-len-prefixed protocol)
+# and store the selected protocol on the ctx as [u8 len][proto]. `ext_data`
+# points at the extension_data; `ext_len` is its length. Lenient: a malformed
+# ALPN ext is ignored (selected stays unset). Returns TLS_OK always.
+fn _tn_store_alpn_selected(ctx, ext_data, ext_len): i64 {
+    if (ext_len < 3) { return TLS_OK; }
+    var list_len = _tn_be16_r(ext_data);
+    if (list_len + 2 > ext_len) { return TLS_OK; }
+    var plen = load8(ext_data + 2) & 0xFF;
+    if (plen == 0) { return TLS_OK; }
+    if (plen + 1 > list_len) { return TLS_OK; }
+    var sel = alloc(1 + plen);
+    if (sel == 0) { return TLS_OK; }
+    store8(sel, plen);
+    memcpy(sel + 1, ext_data + 3, plen);
+    store64(ctx + TLS_CTX_OFF_ALPN_SEL, sel);
+    return TLS_OK;
 }
 
 # Set the peer-cert verification mode (see TlsVerifyMode). Default
@@ -4432,27 +4567,73 @@ fn tls_native_set_verify(ctx, mode): i64 {
 # a concatenated PEM file (or DER if `is_der != 0`); each cert in the
 # bundle is treated as a trust root. Defaults to the system bundle
 # (Linux: /etc/ssl/certs/ca-certificates.crt or platform equivalent).
+# CA_ROOT holds a trust-anchor SET: a ptr to [count][root0 ptr]...[rootN-1 ptr].
+# (.78: was a single root; now a set so system bundles + multi-root PEM work.)
+var TLS_CA_MAX_ROOTS = 300;
+
 fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (pem_bundle == 0) { return TLS_ERR_INVALID_PARAM; }
     if (bundle_len <= 0) { return TLS_ERR_INVALID_PARAM; }
-    var root = x509_cert_alloc();
-    if (root == 0) { return TLS_ERR_OOM; }
     if (is_der != 0) {
+        # Single DER trust anchor → a one-element set.
+        var root = x509_cert_alloc();
+        if (root == 0) { return TLS_ERR_OOM; }
         if (x509_parse(pem_bundle, bundle_len, root) != 1) { return TLS_ERR_CERT_INVALID; }
-    } else {
-        # PEM bundle: decode the first certificate as the trust anchor.
-        # (Multi-root bundles store >1 root — that refinement comes with
-        # the system-store path; .29 takes the first.)
-        var chain[16];
-        var n = pem_decode_certs(pem_bundle, bundle_len, &chain, 1);
-        if (n < 1) { return TLS_ERR_CERT_INVALID; }
-        if (x509_parse(load64(&chain), load64(&chain + 8), root) != 1) {
-            return TLS_ERR_CERT_INVALID;
-        }
+        var set1 = alloc(16);
+        if (set1 == 0) { return TLS_ERR_OOM; }
+        store64(set1, 1);
+        store64(set1 + 8, root);
+        store64(ctx + TLS_CTX_OFF_CA_ROOT, set1);
+        return TLS_OK;
     }
-    store64(ctx + TLS_CTX_OFF_CA_ROOT, root);
+    # PEM bundle: decode EVERY certificate as a trust anchor (OS stores carry
+    # hundreds). A cert sigil can't parse is skipped, not fatal.
+    var chain = alloc(TLS_CA_MAX_ROOTS * 16);
+    if (chain == 0) { return TLS_ERR_OOM; }
+    var n = pem_decode_certs(pem_bundle, bundle_len, chain, TLS_CA_MAX_ROOTS);
+    if (n < 1) { return TLS_ERR_CERT_INVALID; }
+    var set = alloc(8 + n * 8);
+    if (set == 0) { return TLS_ERR_OOM; }
+    var i = 0;
+    var stored = 0;
+    while (i < n) {
+        var r = x509_cert_alloc();
+        if (r != 0) {
+            if (x509_parse(load64(chain + i * 16), load64(chain + i * 16 + 8), r) == 1) {
+                store64(set + 8 + stored * 8, r);
+                stored = stored + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (stored < 1) { return TLS_ERR_CERT_INVALID; }
+    store64(set, stored);
+    store64(ctx + TLS_CTX_OFF_CA_ROOT, set);
     return TLS_OK;
+}
+
+# Load the OS trust store — a single concatenated-PEM bundle (e.g.
+# /etc/ssl/cert.pem on Linux/macOS) — as the ctx's trust anchors. Returns
+# TLS_OK, TLS_ERR_IO if the file can't be read, or a parse error.
+fn tls_native_set_ca_system(ctx): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var cap = 1048576;                          # 1 MiB; system bundles are ~250 KB
+    var buf = alloc(cap);
+    if (buf == 0) { return TLS_ERR_OOM; }
+    var fd = sys_open("/etc/ssl/cert.pem", 0, 0);   # O_RDONLY
+    if (fd < 0) { return TLS_ERR_IO; }
+    var total = 0;
+    var rdone = 0;
+    while (rdone == 0) {
+        var r = sys_read(fd, buf + total, cap - total);
+        if (r > 0) { total = total + r; }
+        if (r <= 0) { rdone = 1; }
+        if (total >= cap) { rdone = 1; }
+    }
+    sys_close(fd);
+    if (total <= 0) { return TLS_ERR_IO; }
+    return tls_native_set_ca_bundle(ctx, buf, total, 0);
 }
 
 # Client: verify the server's certificate chain against the configured
@@ -4465,13 +4646,36 @@ fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
 fn tls_native_client_verify_chain(ctx, now_unix): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
-    var root = load64(ctx + TLS_CTX_OFF_CA_ROOT);
+    var rootset = load64(ctx + TLS_CTX_OFF_CA_ROOT);
     if (leaf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
-    if (root == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
-    if (x509_verify_chain(leaf, 0, 0, root, now_unix) != 1) {
-        return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID);
+    if (rootset == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    # Reverse the server's intermediates: TLS order (leaf-signer..top) → the
+    # order x509_verify_chain wants (root-signed first..leaf-signer last).
+    var inters = load64(ctx + TLS_CTX_OFF_SERVER_INTERS);
+    var ni = 0;
+    var rev = 0;
+    if (inters != 0) {
+        ni = load64(inters);
+        if (ni > 0) {
+            rev = alloc(ni * 8);
+            if (rev == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+            var k = 0;
+            while (k < ni) {
+                store64(rev + k * 8, load64(inters + 8 + (ni - 1 - k) * 8));
+                k = k + 1;
+            }
+        }
     }
-    return TLS_OK;
+    # Try each trusted root until one validates leaf←intermediates←root.
+    var rcount = load64(rootset);
+    var ri = 0;
+    while (ri < rcount) {
+        if (x509_verify_chain(leaf, rev, ni, load64(rootset + 8 + ri * 8), now_unix) == 1) {
+            return TLS_OK;
+        }
+        ri = ri + 1;
+    }
+    return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID);
 }
 
 # ================================================================
@@ -4888,11 +5092,34 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
     return tls_native_open_app(ctx, inbuf, rl, buf, maxlen);
 }
 
-# Send a close_notify alert, then close + free the context. After
-# tls_native_close, the ctx handle MUST NOT be reused. Returns
-# TLS_OK regardless of close_notify success (best-effort).
+# Send a close_notify alert (RFC 5246 §7.2.1 / RFC 8446 §6.1), then mark the
+# context closed. After tls_native_close the handle MUST NOT be reused.
+# Returns TLS_OK regardless of close_notify success (best-effort, per the
+# contract). Idempotent — a second call is a no-op.
+#
+# Memory note: the ctx is bump-allocated (no per-object free), so this does
+# NOT free the ctx storage — that is reclaimed at arena/process teardown. The
+# caller owns the socket fd (TLS_CTX_OFF_SOCK_FD) and closes it after this
+# returns. The lib/tls.cyr wrapper frees its own shim struct.
 fn tls_native_close(ctx): i64 {
-    return TLS_ERR_NOT_IMPLEMENTED;
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var state = load64(ctx + TLS_CTX_OFF_STATE);
+    if (state == TLS_STATE_CLOSED) { return TLS_OK; }   # idempotent
+    # close_notify is only sealable once CONNECTED (app-traffic keys exist).
+    if (state == TLS_STATE_CONNECTED) {
+        var alert[2];
+        store8(&alert, TLS_ALERT_WARNING);              # level (ignored in 1.3)
+        store8(&alert + 1, 0);                          # description 0 = close_notify
+        var rec = alloc(64);
+        if (rec != 0) {
+            var rn = _tn_seal_ct(ctx, TLS_CT_ALERT, &alert, 2, rec, 64);
+            if (rn > 0) {
+                _tn_sock_write_all(load64(ctx + TLS_CTX_OFF_SOCK_FD), rec, rn);
+            }
+        }
+    }
+    store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CLOSED);
+    return TLS_OK;
 }
 
 # Get the ALPN protocol the peer selected (for clients) or that we
@@ -4900,7 +5127,14 @@ fn tls_native_close(ctx): i64 {
 # (up to `bufmax`) and returns the byte count, or 0 if no ALPN
 # was negotiated.
 fn tls_native_get_alpn_selected(ctx, buf, bufmax): i64 {
-    return 0;
+    if (ctx == 0) { return 0; }
+    var sel = load64(ctx + TLS_CTX_OFF_ALPN_SEL);
+    if (sel == 0) { return 0; }                       # no ALPN negotiated
+    var plen = load8(sel) & 0xFF;
+    if (plen == 0) { return 0; }
+    if (plen > bufmax) { return 0; }                  # caller's buffer too small
+    memcpy(buf, sel + 1, plen);
+    return plen;
 }
 
 # Get the peer's leaf certificate in DER form. Writes to `buf` (up

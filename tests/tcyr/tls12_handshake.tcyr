@@ -49,6 +49,7 @@ if (pid == 0) {
     if (_tn_ct_eq(&rb, "pong-from-server", 16) != 1) { sys_exit(15); }
     # a second, longer app record (exercises seq advance + a 2nd record)
     if (tls_native_write(clx, "the-second-client-message", 25) != 25) { sys_exit(16); }
+    if (tls_native_close(clx) != TLS_OK) { sys_exit(18); }   # .78: send close_notify
     sys_close(cfd);
     sys_exit(0);
 }
@@ -69,6 +70,8 @@ assert_eq(tls_native_write(srv, "pong-from-server", 16), 16, "server wrote its r
 var sb2[64];
 assert_eq(tls_native_read(srv, &sb2, 64), 25, "server reads the second client record");
 assert_eq(_tn_ct_eq(&sb2, "the-second-client-message", 25), 1, "second record decrypts (seq advanced)");
+var sb3[64];
+assert_eq(tls_native_read(srv, &sb3, 64), 0, "server read sees client close_notify → clean EOF (0)");
 sys_close(sfd);
 var st[4];
 sys_waitpid(pid, &st, 0);
