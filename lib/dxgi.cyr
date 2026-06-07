@@ -19,14 +19,15 @@
 # on cass: `CreateDXGIFactory1 → EnumAdapters1 → GetDesc1` dispatch correctly
 # (the §0 capability — calling a COM vtable from cyrius — works).
 #
-# ⚠ v6.0.71 RESIDUAL (NOT yet GPU-verified): on real DXGI hardware, the full
-# `dxgi_vram_bytes()` chain — specifically `Release`/`AddRef` (1-arg COM) and
-# longer multi-COM-call sequences — still AVs at runtime. The callptr EMIT is
-# byte-identical to the working EnumAdapters1/GetDesc1 cases, so this is a
-# subtle runtime interaction needing a Windows debugger single-stepping on cass
-# (deferred to a follow-up slot; see the re-filed issue). Until then this
-# module's data-path (factory → adapter → desc read) is proven but the whole
-# function is NOT green on the real GPU. See CHANGELOG [6.0.71].
+# v6.0.86: the full `dxgi_vram_bytes()` chain is GPU-VERIFIED on cass
+# (Intel UHD 600): factory → EnumAdapters1 → GetDesc1 → Release(adapter) →
+# Release(factory) → DedicatedVideoMemory (128 MB), exit clean. The v6.0.71
+# residual AV (GetDesc1 / 1-arg `Release`) was NOT a callptr-alignment issue —
+# cdb on cass pinned it to the v6.0.70 callptr design spilling the callee to a
+# GFLC frame slot that could ALIAS a `&`-taken local (here EnumAdapters1's
+# `&pAdapter` out-param shared the callee-spill slot → frame / regalloc
+# corruption → AV). Fixed by emitting the PE callptr callee on the STACK +
+# `call rax` (no frame slot → no alias); see ECALLPTR_PE. CHANGELOG [6.0.86].
 #
 # COM vtable layout (each method N at load64(vtbl + N*8)):
 #   IUnknown:        QueryInterface@0, AddRef@1, Release@2

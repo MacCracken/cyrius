@@ -3,6 +3,30 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.86 ship — Windows DXGI GPU enum: callptr callee-spill aliased a &-local)
+
+Closing **v6.0.86**. check.sh **85/85**; self-host byte-identical on ecb + ach + pi + cass; tcyr 0/167.
+**The last Windows item — `lib/dxgi.cyr` `dxgi_vram_bytes()` (ai-hwaccel's native GPU detection) — is
+GPU-VERIFIED on cass** (Intel UHD 600 → 128 MB DedicatedVideoMemory, full COM chain clean).
+
+Root cause (cdb on cass — `C:\dbg\cdb.exe`, tools were there): **the `callptr` callee-spill frame slot
+could alias a `&`-taken local.** v6.0.70 spilled the indirect-call target to a `GFLC` frame slot; in a
+frame passing a `&local` out-param to a COM method, that slot landed on the SAME offset as the local
+(`&pAdapter` for EnumAdapters1 == the callee-spill at rbp-0x50) → out-param/spill collision → frame +
+regalloc corruption → the GetDesc1 dispatch loaded avtbl from a stale r12=0 → `mov rax,[0x50]` → AV.
+Frame-dependent, real-Win64-callee-only, invisible to self-host (cycc has no callptr). **Fix:** emit the
+PE callptr callee on the STACK + `call rax` (no frame slot → no alias); non-PE path unchanged
+(byte-identical Linux/macOS/aarch64). The v6.0.71 ECALLPTR_PE force-align was a separate, real fix.
+
+**Process note (user correction, pinned [[feedback_check_hardware_directly_not_verdicts]]):** I'd
+twice deferred DXGI as "operator-gated (no debugger / integrated GPU)" — both wrong. cdb WAS on cass
+(`C:\dbg\`; my Program-Files-only + minimal-PATH `where` searches missed it), and the integrated GPU is
+plenty (it's a codegen bug, not VRAM-size). User: *"TOOLS ARE THERE MAN"* / *"IF YOU CANNOT SOLVE FOR
+INTEGRATED..."*. **The Windows arc is now fully closed.**
+
+**Next (leader sequence):** .87 AGNOS (cross-build gate + envp/getenv — gated on agnos landing
+envp-at-exec first) → .88 cleanup/refactor → .89 closeout + docs sweep → v6.1.0.
+
 ## Session close — 2026-06-07 (.85 ship — Windows install pillar: `cyrius build` works on Windows)
 
 Closing **v6.0.85**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb + ach

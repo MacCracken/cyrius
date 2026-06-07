@@ -1,6 +1,17 @@
 # 2026-06-03 — Windows PE: no COM vtable calls / non-kernel32 IAT blocks native DXGI GPU enumeration
 
-> **Status (updated 2026-06-06):** the two CAPABILITIES this issue named as blockers are DELIVERED +
+> **RESOLVED — v6.0.86 (2026-06-07).** `lib/dxgi.cyr` `dxgi_vram_bytes()` is GPU-verified on cass
+> (Intel UHD 600 → 128 MB DedicatedVideoMemory; full factory → EnumAdapters1 → GetDesc1 → Release×2
+> chain clean, exit 42). The real-GPU residual was NOT the windbg-needed mystery it looked like — cdb
+> on cass (`C:\dbg\cdb.exe`) pinned it: the v6.0.70 `callptr` design spilled the indirect-call target
+> to a `GFLC` frame slot that could **alias a `&`-taken local** (EnumAdapters1's `&pAdapter` out-param
+> shared the callee-spill slot at rbp-0x50 → frame/regalloc corruption → AV in the GetDesc1 dispatch).
+> Fixed by emitting the PE callptr callee on the STACK + `call rax` (no frame slot → no alias);
+> `ECALLPTR_PE` + parse_expr.cyr. The kernel32-callptr regression (`callptr_real_win64`) still passes.
+> ai-hwaccel's native GPU detection is unblocked. **The Windows arc is fully closed** (cycc runtime,
+> install pillar .85, DXGI .86). See CHANGELOG [6.0.86].
+>
+> **Historical status (2026-06-06):** the two CAPABILITIES this issue named as blockers are DELIVERED +
 > verified — (1) non-kernel32 IAT imports (v6.0.69 multi-DLL foundation; `dxgi.dll!CreateDXGIFactory1`
 > returns S_OK on cass) and (2) COM vtable / indirect calls (`callptr`/`IR_CALL_INDIRECT`, verified on
 > 4 hosts). The Win64-COM-callee frame-corruption bug was FIXED in **v6.0.71** (`ECALLPTR_PE` force-16-align;

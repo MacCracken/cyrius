@@ -701,18 +701,24 @@ var _TARGET_CX = 0;
 # (the callee spill slot is rbp-relative — survives every rsp move), then
 # `mov rsp,rbx; pop rbx`. The callee is entered at rsp ≡ 8 → its SSE spills
 # are aligned. disp mirrors EFLLOAD_W / ECALLIND.
-fn ECALLPTR_PE(S, idx, n): i64 {
-    var disp = 0 - ((idx + 1) * 8);
-    if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
-    if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+# v6.0.86: the callee arrives on the STACK (pushed FIRST by the parser, so it
+# sits BELOW all the args), NOT in a frame slot. v6.0.70 spilled it to a GFLC
+# frame slot (`call [rbp+disp]`), but that slot could ALIAS a `&`-taken local
+# (cdb on cass: a COM out-param `&pAdapter` and the callee-spill both landed at
+# rbp-0x50 → EnumAdapters1's out-param fought the spilled callee → frame/regalloc
+# corruption → AV in the GetDesc1 dispatch). Popping the callee into rax (a
+# volatile scratch, consumed immediately by `call rax`) removes the frame slot
+# entirely, so no local can collide. cycc has no callptr → self-host unaffected.
+fn ECALLPTR_PE(S, n): i64 {
     if (n <= 4) {
         var i = n - 1;
-        while (i >= 0) { EPOPARG(S, i); i = i - 1; }       # a1→rcx, a2→rdx, a3→r8, a4→r9
+        while (i >= 0) { EPOPARG(S, i); i = i - 1; }       # a1→rcx, a2→rdx, a3→r8, a4→r9 (args were on top)
+        EB(S, 0x58);                                        # pop rax (callee — now top, pushed first/below args)
         EB(S, 0x53);                                        # push rbx
         EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp (anchor)
         EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
         EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
-        EB(S, 0xFF); EB(S, 0x95); EDISP32(S, disp);         # call [rbp+disp]
+        EB(S, 0xFF); EB(S, 0xD0);                           # call rax
         EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx (restore)
         EB(S, 0x5B);                                        # pop rbx
         _flags_reflect_rax = 0;
@@ -733,6 +739,7 @@ fn ECALLPTR_PE(S, idx, n): i64 {
     EB(S, 0x41); EB(S, 0x58);                               # pop r8   (a[2])
     EB(S, 0x5A);                                            # pop rdx  (a[1])
     EB(S, 0x59);                                            # pop rcx  (a[0])
+    EB(S, 0x58);                                            # pop rax  (callee — below all args)
     EB(S, 0x53);                                            # push rbx
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);                  # mov rbx, rsp (anchor)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0);     # and rsp, -16
@@ -765,7 +772,7 @@ fn ECALLPTR_PE(S, idx, n): i64 {
         EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x38);   # [rsp+56] r11
         EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40);   # [rsp+64] r10
     }
-    EB(S, 0xFF); EB(S, 0x95); EDISP32(S, disp);             # call [rbp+disp]
+    EB(S, 0xFF); EB(S, 0xD0);                               # call rax (callee popped below the args)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);                  # mov rsp, rbx (restore)
     EB(S, 0x5B);                                            # pop rbx
     _flags_reflect_rax = 0;

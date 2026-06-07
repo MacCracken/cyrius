@@ -6,6 +6,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.86] — 2026-06-07
+
+**Windows DXGI GPU enumeration works — the `callptr` callee-spill could alias a `&`-taken local.**
+The last Windows item: `lib/dxgi.cyr`'s `dxgi_vram_bytes()` (native GPU enumeration, consumer:
+ai-hwaccel) AV'd on real DXGI hardware. Root-caused with cdb on cass — NOT the GPU, NOT alignment (the
+v6.0.71 ECALLPTR_PE force-align was a different, real fix). Verified GPU-green on the integrated
+Intel UHD 600 (a discrete card was never needed — it's a codegen bug, not a VRAM-size thing).
+
+### Fixed
+
+- **`callptr` callee-spill frame slot could alias a `&`-taken local (PE/Win64) → COM-dispatch AV.**
+  v6.0.70 spilled the indirect-call target to a `GFLC` frame slot and called `[rbp+disp]`. In a frame
+  where a `&local` out-param is passed to one COM method and a later method is dispatched, that slot
+  could land on the **same offset as the local** (cdb: `&pAdapter` for `EnumAdapters1` and the
+  callee-spill both at `rbp-0x50`) — EnumAdapters1's out-param write and the spilled callee fought over
+  the slot, corrupting the frame/regalloc so the `GetDesc1` dispatch loaded `avtbl` from a stale
+  `r12=0` → `mov rax,[0x50]` → `0xC0000005`. Frame-dependent (the colliding pair shifts with layout),
+  only on real-Win64 callees (which write near rsp), invisible to self-host (cycc has no `callptr`).
+  **Fix:** on PE, emit the callptr callee on the **stack** (pushed below the args) and `call rax` after
+  popping it — no frame slot, so no local can alias it (`src/backend/x86/emit.cyr` `ECALLPTR_PE` +
+  `src/frontend/parse_expr.cyr`). The non-PE path (frame-slot spill + `ECALLIND`) is unchanged →
+  byte-identical Linux/macOS/aarch64. **`dxgi_vram_bytes()` now returns the real DedicatedVideoMemory
+  (128 MB on the UHD 600); the full factory → EnumAdapters1 → GetDesc1 → Release×2 chain is clean.**
+
+### Verified
+
+- self-host byte-identical on **ecb + ach + pi + cass** (the cass leg includes the
+  `callptr_real_win64` kernel32-callptr regression → 42); check.sh 85/85; tcyr exit-code sweep 0/167.
+- On cass: `dxgi_vram_bytes()` → 128 MB + exit 42; the marker-instrumented full COM chain
+  (factory/enum/getdesc/release-adapter/release-factory) all pass.
+
 ## [6.0.85] — 2026-06-07
 
 **Windows install pillar: `cyrius build` works on a real Windows box.** Windows was

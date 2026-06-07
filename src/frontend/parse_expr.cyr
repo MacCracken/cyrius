@@ -398,10 +398,19 @@ fn PARSE_FACTOR(S): i64 {
         STI(S, GTI(S) + 1);                     # consume 'callptr'
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
         STI(S, GTI(S) + 1);                     # consume '('
-        var cp_idx = GFLC(S);                   # fresh frame slot for the callee ptr
-        SFLC(S, cp_idx + 1);
         PCMPE(S);                               # eval callee → rax
-        EFLSTORE(S, cp_idx);                    # spill callee → [rbp-disp(cp_idx)]
+        # v6.0.86: on PE the callee goes on the STACK (pushed FIRST, below the
+        # args), NOT a frame slot — a GFLC slot could alias a `&`-taken local
+        # (the COM-out-param AV; see ECALLPTR_PE). Non-PE keeps the frame-slot
+        # spill (its ECALLPOPS shadow would otherwise bury a stack-pushed callee).
+        var cp_idx = 0;
+        if (_TARGET_PE == 1) {
+            EPUSHR(S);                          # push callee (consumed by ECALLPTR_PE)
+        } else {
+            cp_idx = GFLC(S);                   # fresh frame slot for the callee ptr
+            SFLC(S, cp_idx + 1);
+            EFLSTORE(S, cp_idx);                # spill callee → [rbp-disp(cp_idx)]
+        }
         var cp_argc = 0;
         while (PEEKT(S) == 31) {                # ',' → another arg
             STI(S, GTI(S) + 1);                 # consume ','
@@ -420,7 +429,7 @@ fn PARSE_FACTOR(S): i64 {
         # so the callee is entered ABI-correct regardless of caller alignment.
         # See issue 2026-06-05-windows-com-vtable-real-callee-frame-corruption.md.
         if (_TARGET_PE == 1) {
-            ECALLPTR_PE(S, cp_idx, cp_argc);    # force-aligned marshal + call [rbp+disp]
+            ECALLPTR_PE(S, cp_argc);            # pop args + pop callee (rax) + call rax
         } else {
             ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
             ECALLIND(S, cp_idx);               # load callee from the slot + call/blr
