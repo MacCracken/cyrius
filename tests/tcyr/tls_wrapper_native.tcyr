@@ -1,0 +1,63 @@
+# tls_wrapper_native.tcyr — v6.0.80 (Mini-arc E bite 4)
+# lib/tls.cyr re-backed onto the native TLS stack. Built with
+# CYRIUS_TLS_NATIVE, the stdlib tls_* wrapper API drives the sovereign
+# native transport instead of the libssl.so.3 fdlopen bridge: a wrapper
+# client (tls_connect_with_ctx_hook → native) completes a real handshake
+# with a cyrius-native server over a socketpair, exchanges app data both
+# ways, and closes — proving the backend selector + the typed tls_set_*
+# verbs route to native. (Live external HTTPS awaits server-flight
+# reassembly; this is the our-client ↔ our-server proof.) See CHANGELOG [6.0.80].
+#define CYRIUS_TLS_NATIVE
+include "lib/fdlopen.cyr"
+include "lib/tls_native.cyr"
+include "lib/tls.cyr"
+include "lib/assert.cyr"
+
+test_group("lib/tls.cyr native backend (.80)");
+
+assert_eq(tls_get_backend(), TLS_BACKEND_NATIVE, "CYRIUS_TLS_NATIVE → native default");
+assert_eq(tls_available(), 1, "native backend always available");
+assert_eq(tls_set_backend(TLS_BACKEND_LIBSSL), 0, "can select libssl");
+assert_eq(tls_set_backend(TLS_BACKEND_NATIVE), 0, "can select native");
+
+var cert = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+
+# Disable peer verification for the self-signed test cert via the typed verb
+# (routes to tls_native_set_verify under the native backend).
+fn vhook(hctx, handle): i64 { tls_set_verify(handle, 0, 0); return 0; }
+
+var fds[8];
+sys_socketpair(1, 1, 0, &fds);
+var fdp = load64(&fds);
+var sfd = fdp & 0xFFFFFFFF;
+var cfd = (fdp >> 32) & 0xFFFFFFFF;
+
+var pid = sys_fork();
+if (pid == 0) {
+    sys_close(sfd);
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    var ctx = tls_connect_with_ctx_hook(cfd, "localhost", &vhook, 0);
+    if (ctx == 0) { sys_exit(10); }
+    if (tls_write(ctx, "hello-wrapper", 13) != 13) { sys_exit(11); }
+    var rb[64];
+    if (tls_read(ctx, &rb, 64) != 9) { sys_exit(12); }
+    if (_tn_ct_eq(&rb, "ack-nativ", 9) != 1) { sys_exit(13); }
+    tls_close(ctx);
+    sys_close(cfd);
+    sys_exit(0);
+}
+
+sys_close(cfd);
+var srv = tls_native_new_server(cert, 385, key, 138);
+tls_native_server_load_creds(srv);
+assert_eq(tls_native_accept(srv, sfd), TLS_OK, "native server accepts the wrapper client");
+var sb[64];
+assert_eq(tls_native_read(srv, &sb, 64), 13, "server reads wrapper app data");
+assert_eq(_tn_ct_eq(&sb, "hello-wrapper", 13), 1, "wrapper write decrypts server-side");
+assert_eq(tls_native_write(srv, "ack-nativ", 9), 9, "server responds");
+var st[4];
+sys_waitpid(pid, &st, 0);
+assert_eq((load64(&st) >> 8) & 0xFF, 0, "wrapper client read+verify+close ok (child exit 0)");
+
+var r = assert_summary();

@@ -6,6 +6,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**Mini-arc E Release A complete — sovereign TLS wrapper, real-cert verification unblocked.** Folds
+sigil 3.7.4 (real-world ECDSA roots now parse) and re-backs the stdlib `lib/tls.cyr` onto the native TLS
+stack behind a build flag, keeping libssl as the default. The native client now verifies real public
+servers' certificates through the OS trust store — the live Cloudflare chain validates in cyrius.
+
+### Changed
+
+- **Folded sigil 3.6.4-line → 3.7.4** (`lib/sigil.cyr`). 3.7.4 fixes `x509_parse` rejecting real-world
+  ECDSA roots whose key curve is wider than their signature hash (the SSL.com Root ECC — P-384 key,
+  ecdsa-with-SHA256 — and ~12 other OS-trust-store roots were being silently dropped, breaking any chain
+  rooting at them, e.g. Cloudflare's). With the fold, the native trust store + intermediate-chain walk
+  from `.78` validate the **live Cloudflare → SSL.com chain through the real OS trust store**. The
+  earlier `.78` "x509_parse SIGSEGVs on real certs" report was a test-harness bug (a wrong `hex_decode`
+  length), corrected + archived. Regression: the SSL.com P-384/SHA-256 root now parses
+  (`tls_native_scaffold.tcyr`).
+- **`lib/tls.cyr` re-backed onto native TLS (Mini-arc E bite 4).** The stdlib `tls_*` wrapper API keeps
+  **both** transports: built with `CYRIUS_TLS_NATIVE` it pulls in `lib/tls_native.cyr` and defaults the
+  backend to the sovereign native stack; without the flag, the libssl.so.3 fdlopen bridge is the only
+  backend (libssl-only consumers stay light). `tls_set_backend()` / `tls_get_backend()` switch at
+  runtime when both are present. Under the native backend, `tls_connect_alloc/complete`,
+  `tls_write` (loop-fragmenting to the record cap), `tls_read`, `tls_close`, and the typed
+  `tls_set_alpn`/`tls_set_verify` verbs route to `tls_native_*`; the consumer hook fires on the native
+  ctx (opaque handle preserved); peer verification (chain + SNI hostname against the OS trust store) is
+  enforced on `complete`. Proven by a committed e2e — a native-backed wrapper client completes a real
+  handshake with a cyrius-native server over a socketpair (`tls_wrapper_native.tcyr`). Live external
+  HTTPS still awaits server-flight reassembly (Release B); the our-client ↔ our-server path is proven.
+  +2 public fns (`tls_set_backend`, `tls_get_backend`), non-breaking. self-host byte-identical.
+
 ## [6.0.79] — 2026-06-06
 
 **Security: fix the `cyml_parse` out-of-bounds stack write.** A HIGH-severity memory-safety bug in

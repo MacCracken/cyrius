@@ -1,4 +1,30 @@
-# sigil `x509_parse` crashes / fails on real-world server certs (CT SCTs leaf → SIGSEGV) — blocks native-TLS real-peer verification
+# sigil `x509_parse` rejects real-world ECDSA roots (P-384 key + SHA-256 sig) — FIXED in sigil 3.7.4
+
+> **CORRECTION (2026-06-06, `.80` investigation): the original "SIGSEGV / crash" diagnosis below was
+> WRONG — it was a test-harness bug, not a sigil bug.** The dev-check called
+> `hex_decode(hexstr, 1413)`, but `hex_decode`'s 2nd arg is the **hex-char count (2826)**, not the byte
+> count. Passing the byte count decoded a truncated buffer, then handed `x509_parse` a length (1413)
+> larger than the real allocation → an OOB read past the short buffer. **sigil's `x509_parse` does not
+> crash on real certs.**
+>
+> **The REAL bug** (found while verifying the live Cloudflare chain): `x509_parse` *rejected* (returned
+> 0, no crash) certain real roots — the **SSL.com Root ECC** (P-384 key, self-signed with
+> ecdsa-with-SHA256) and ~12 of 121 OS-trust-store roots. The signature field width `ec_fw` was derived
+> from the *hash* (SHA-256 → 32), but the r,s width is the issuer key's **curve** (P-384 → 48). So the
+> 48-byte r,s overflowed `ec_fw=32` and the cert was dropped — silently removed from the trust store,
+> breaking the chain that roots at it.
+>
+> **FIX (sigil 3.7.4, `src/x509.cyr`):** widen `ec_fw` to 48 when the cert's own key curve is P-384.
+> Verified: the full live Cloudflare → SSL.com chain now validates through a real OS trust store (cyrius
+> dev-check returns VERIFIED), with no regression (tls12 21, scaffold 391). **Pending the sigil 3.7.4
+> release + re-fold into `lib/sigil.cyr`** (then archive this issue).
+>
+> Residual (follow-up, not blocking cloudflare-class chains): `_x509_verify_link` still couples
+> hash↔curve, so sigil can't yet *verify* an off-diagonal link (P-384 key signing a child with SHA-256).
+> The only off-diagonal cert in these chains is the trust anchor, which is never link-verified.
+>
+> ---
+> *Original (incorrect) writeup retained below for the record.*
 
 - **Filed**: 2026-06-06 (cycc 6.0.78, sigil 3.7.3 vendored)
 - **Reporter**: the `.78` Mini-arc E bite-3 dev-check — verifying a live Cloudflare chain
