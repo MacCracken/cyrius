@@ -35,6 +35,22 @@
 var TLOCAL_BLOCK_SIZE = 4096;
 var TLOCAL_MAX_SLOTS = 16;
 
+# macOS process-global thread-local slots. macOS owns the thread-pointer
+# register (TPIDR_EL0 on arm64, %fs on x86): the kernel saves+restores it
+# as thread state and overwrites any userspace install on the FIRST
+# preemption — proven on ecb (Apple Silicon), where a pure-compute loop with
+# zero syscalls reset TPIDR_EL0 from a valid installed block (0x1xxxxxxxx) to
+# a small Darwin thread value (~0x2010). The arm64 `msr TPIDR_EL0` / x86
+# arch_prctl(158) path below therefore cannot be used on Darwin — after the
+# first preemption every `mrs TPIDR_EL0` reads garbage and the slot load/store
+# faults. cyrius threads don't run on macOS (thread.cyr is clone-only, no
+# Darwin bsdthread path), so the crypto-scratch bank is single-threaded and a
+# process-global slot store is race-free. This is the macOS analogue of the
+# Windows TlsAlloc path below. See CHANGELOG [6.0.84].
+#ifdef CYRIUS_TARGET_MACOS
+var _tlocal_macos[128];     # TLOCAL_MAX_SLOTS (16) * 8 bytes, zero-init .bss
+#endif
+
 #ifndef CYRIUS_TARGET_WIN
 # Install `tls` as the current thread's thread-pointer register base.
 # x86_64: syscall(158, ARCH_SET_FS=0x1002, tls)
@@ -60,6 +76,9 @@ fn _tlocal_install(tls): i64 {
 # installed automatically by CLONE_SETTLS, so they do NOT need to
 # call this. Returns 1 on success, 0 on failure.
 fn thread_local_init(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 1;     # process-global _tlocal_macos is zero-init .bss; nothing to install
+    #endif
     alloc_init();
     var tls = alloc(TLOCAL_BLOCK_SIZE);
     if (tls == 0) { return 0; }
@@ -76,6 +95,9 @@ fn thread_local_init(): i64 {
 # Read the i64 value at `slot`. Returns 0 on fresh slots.
 fn thread_local_get(slot): i64 {
     var ret = 0;
+    #ifdef CYRIUS_TARGET_MACOS
+    return load64(&_tlocal_macos + slot * 8);
+    #endif
     #ifdef CYRIUS_ARCH_X86
     asm {
         # Frame: [rbp-8]=slot, [rbp-16]=ret
@@ -99,6 +121,10 @@ fn thread_local_get(slot): i64 {
 
 # Write `val` into `slot`.
 fn thread_local_set(slot, val): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    store64(&_tlocal_macos + slot * 8, val);
+    return 0;
+    #endif
     #ifdef CYRIUS_ARCH_X86
     asm {
         # Frame: [rbp-8]=slot, [rbp-16]=val

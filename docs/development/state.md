@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.84 ship — macOS native-TLS: thread_local TPIDR + socketpair, both fixed)
+
+Closing **v6.0.84**. check.sh **85/85**; self-host byte-identical; cross-OS green on ecb + pi + cass.
+**The full TLS 1.2 e2e suite now runs on Apple Silicon** — `tls12_*` 5/5 on ecb incl. the
+fork+socketpair handshake that was crashing.
+
+The roadmap item was *"macOS `&_fl_heads` freelist codegen bug."* That diagnosis (from the issue's
+earlier lldb) was **WRONG** — the `&global` adrp+add path is provably correct. An lldb repro on real
+ecb surfaced two genuinely distinct stacked bugs:
+
+1. **`thread_local` can't own `TPIDR_EL0` on macOS** (the crypto crash). `lib/thread_local.cyr` used
+   `msr/mrs TPIDR_EL0` for the TLS base. Darwin owns that register and **restores it across
+   preemption** — proven with a 2-billion-iter pure-compute loop (zero syscalls) that reset it from a
+   valid block to a Darwin thread value (`~0x2010`). sigil's `cbank()` lazy-inits once, so the first
+   preemption during crypto (ECDSA sign) made every later `thread_local_get` fault. Fix: macOS
+   process-global slot array (no TPIDR) — cyrius threads don't run on macOS (`thread.cyr` is
+   clone-only), so single-threaded is correct. Lib-only → self-host byte-identical.
+2. **`socketpair` untranslated on Darwin** (unmasked once crypto worked). arm-macho pulls
+   `syscalls_aarch64_linux.cyr` → socketpair is **199**, not the x86/macos **53** (which is *fchmodat*
+   on that enum — a 53 entry collides). Fix: `199→135` (aarch64-macho) + `53→135` (x86-macho) ESYSXLAT
+   + whitelist sync. Encodings assembler-verified on ecb.
+
+**Cross-OS:** ecb (arm64) self-host + 5/5 tls12; pi (aarch64-Linux) self-host + 5/5; cass (Windows)
+self-host byte-identical. **ach (x86-macho)** self-hosts but `tls_native` tests can't compile — the
+pre-existing **held** x86-macho cycc layer-6 miscompile (`error: unexpected enum`, a frontend parse
+error; issue `2026-06-02-macos-x86-release-no-compiler.md`, Intel/EOL). The x86-macho fixes are present
++ correct in the self-hosted cycc, runtime-unverifiable there until that held issue clears.
+
+**Latent finding (NOT fixed — surfaced, out of scope):** the macho-arm socket *family*
+(socket/connect/accept/bind/listen) is mapped with x86 numbers (41-50) in the aarch64-macho ESYSXLAT,
+but arm-macho uses aarch64-Linux numbers (198/203/202/200/201) → **real-network sockets are likely
+broken on arm-macho** (the .81 live-Cloudflare proof was on Linux). Doesn't affect the socketpair e2e
+or the tls12 suite. Related to `2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`. Candidate
+for a follow-up slot.
+
+**Next (leader order):** the Windows remaining repair cluster (DXGI demonstrator / PE cycc-runtime
+bug 2+ / deps-lock hash / `.ps1` installer / AGNOS-target install) → cleanup/refactor cluster → cycle
+closeout → v6.1.0.
+
 ## Session close — 2026-06-06 (.83 ship — AES-128 + RSA-auth + P-384 ciphersuite enablement; sandhi 1.4.2 fold)
 
 Closing **v6.0.83**. check.sh **85/85**; self-host byte-identical; cross-OS green on ecb + cass. The

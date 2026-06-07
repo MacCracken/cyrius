@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.84] — 2026-06-07
+
+**macOS native-TLS: two stacked bugs fixed — the crypto stack and the socketpair e2e now run on Apple
+Silicon.** The issue tracked this as a "`&_fl_heads` freelist codegen bug"; an lldb repro on real ecb
+showed that diagnosis was wrong (the `&global` adrp+add path is provably correct) and surfaced two
+distinct root causes, both fixed here. The full TLS 1.2 e2e suite (`tls12_*`, incl. the fork+socketpair
+handshake) now passes on ecb — verified on real hardware, not a green checkmark.
+
+### Fixed
+
+- **macOS aarch64 `thread_local` can't own `TPIDR_EL0` — the crypto-scratch crash.**
+  `lib/thread_local.cyr` installed a per-thread TLS block via `msr TPIDR_EL0` (arm64) / `arch_prctl`
+  (x86). On Darwin the kernel owns the thread-pointer register and **restores it across preemption** —
+  proven on ecb with a 2-billion-iteration pure-compute loop (zero syscalls) that reset `TPIDR_EL0`
+  from a valid block (`0x1xxxxxxxx`) to a Darwin thread value (`~0x2010`). sigil's crypto-scratch
+  `cbank()` lazy-inits the TLS block once (`_crypto_tls_inited` guard), so the first preemption during
+  any non-trivial crypto (e.g. an ECDSA sign) left every later `thread_local_get` reading garbage →
+  SIGSEGV. This is the real root cause of the long-standing "ECDSA verify crashes on macOS" report
+  (`2026-06-06-macos-ecdsa-verify-crash.md`) — its earlier `&_fl_heads` codegen diagnosis was wrong.
+  Fix: a macOS process-global slot array (no TPIDR), analogous to the Windows `TlsAlloc` path. cyrius
+  threads don't run on macOS (`thread.cyr` is clone-only, no Darwin path), so the crypto-scratch bank
+  is single-threaded and the process-global store is race-free. Lib-only → cycc self-host byte-identical.
+- **macOS `socketpair` untranslated → the fork+socketpair TLS e2e failed (`TLS_ERR_IO`).** Unmasked
+  once the crypto crash above was fixed (the test now reaches the socket layer). The macho `ESYSXLAT`
+  ported the socket family in v6.0.59 but not `socketpair`. The trap (cf. the v6.0.63 getdents64
+  dual-number bug): arm-macho pulls `syscalls_aarch64_linux.cyr` (there is no
+  `syscalls_aarch64_macos.cyr`), so the number is the aarch64-Linux **199**, NOT the x86/macos **53** —
+  and 53 is *fchmodat* on that enum (already mapped → a 53 entry would collide). Fix: `socketpair
+  199→135` in the aarch64-macho ESYSXLAT and `53→135` in the x86-macho `EMACHO_SYSXLAT`
+  (`src/backend/{aarch64,x86}/emit.cyr`); `_macho_arm_routes` whitelist synced (53 relabeled back to
+  fchmodat, 199 added). Encodings assembler-verified on ecb.
+
+### Verified
+
+- **Cross-OS, real hardware:** ecb (macOS arm64) self-host byte-identical + **5/5 `tls12_*`** incl. the
+  fork+socketpair e2e (`tls12_handshake.tcyr`, was crashing → green); pi (aarch64 Linux) self-host +
+  5/5; cass (Windows) self-host byte-identical. check.sh **85/85**; full 167-file tcyr exit-code sweep
+  clean.
+- **ach (macOS x86):** self-hosts, but `tls_native` tests can't compile due to the pre-existing **held**
+  x86-macho cycc layer-6 miscompile (`error: unexpected enum`, a frontend parse error — impossible from
+  this slot's backend/lib changes; issue `2026-06-02-macos-x86-release-no-compiler.md`, Intel/EOL). The
+  x86-macho fixes (`thread_local` macOS branch + `socketpair 53→135`) are present + correct in the
+  self-hosted cycc, runtime-unverifiable there until that held issue clears.
+
 ## [6.0.83] — 2026-06-06
 
 **AES-128 + RSA-auth ciphersuite enablement + sandhi 1.4.2 fold.** The native TLS client can now

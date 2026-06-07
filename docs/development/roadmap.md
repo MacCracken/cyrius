@@ -219,8 +219,9 @@ v6.2.0's bare-metal target; the AGNOS arc here is **userspace only**
 | ~.38 → ~.42 | **AGNOS userspace target — `CYRIUS_TARGET_AGNOS`** (new) | gated on agnos FS-ABI re-freeze |
 | .72 → .74 | **Mini-arc D — TLS 1.2 backport** (.72 AEAD record layer / .73 PRF + key schedule / .74 handshake message flow + client+server drivers + socketpair e2e) | ✅ COMPLETE — full 1.2 (ECDHE) handshake, our-client ↔ our-server; .74 verified x86 + aarch64, 8 review findings fixed |
 | .77 → .83 | **Mini-arc E — consumer wiring + TLS arc closeout** (EMS + OpenSSL 1.2 interop @ .77; AES-128/RSA/P-384 ciphersuites @ .83; lib/tls.cyr re-backed onto native behind CYRIUS_TLS_NATIVE @ .80; typed verbs @ .82; sandhi 1.4.2 rewired @ .83) | ✅ COMPLETE — native-TLS arc CLOSED; live Cloudflare HTTPS proven |
-| next | **Repair cluster** — macOS `&_fl_heads` freelist codegen bug + Windows PE cluster, then v6.1.0 cycle closeout | |
-| later | last cleanup/refactor + sigil fold + v6.0.x cycle closeout → v6.1.0 | |
+| .84 | **macOS native-TLS repair** — NOT the `&_fl_heads` codegen bug the issue guessed (that path is correct). Two stacked bugs: (1) `thread_local` can't own `TPIDR_EL0` on macOS (Darwin restores it across preemption) → crypto-scratch crash → macOS process-global slot store; (2) `socketpair` untranslated (arm-macho 199, x86-macho 53) → fork+socketpair e2e `TLS_ERR_IO` → ESYSXLAT 199→135 / 53→135 + whitelist sync | ✅ COMPLETE — `tls12_*` 5/5 on ecb + pi; cass self-host; ach held (x86-macho cycc miscompile, Intel/EOL) |
+| next | **Windows repair cluster** — DXGI demonstrator (windbg-on-cass) / PE cycc-runtime bug 2+ / `cyrius deps --lock` Windows-portable hash / native `.ps1` installer / AGNOS-target install | |
+| later | last cleanup/refactor + sigil fold + v6.0.x cycle closeout → v6.1.0. **Latent:** macho-arm socket *family* (socket/connect/accept) still mapped with x86 nums in the aarch64-macho ESYSXLAT but arm-macho uses aarch64-Linux nums → real-network sockets likely broken on arm-macho (cf. sandhi-connect issue). | |
 
 Slot numbers downstream of C are nominal (the e2e split widened C to 9
 slots; "don't care the additional slots").

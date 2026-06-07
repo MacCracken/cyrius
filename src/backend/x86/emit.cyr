@@ -885,6 +885,10 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 50, 0x200006A);   # listen     50 → 106
     _msx(S, 54, 0x2000069);   # setsockopt 54 → 105
     _msx(S, 55, 0x2000076);   # getsockopt 55 → 118
+    # v6.0.84: socketpair was the last untranslated socket syscall (cross-arch
+    # parity with the arm64 ESYSXLAT). The fork+socketpair TLS e2e ran the Linux
+    # number on Darwin → garbage fds → TLS_ERR_IO. See aarch64/emit.cyr.
+    _msx(S, 53, 0x2000087);   # socketpair 53 → 135
     _msx(S, 7,  0x20000E6);   # poll        7 → 230
     # v6.0.60: dir enumeration — getdents64 217 → getdirentries64 344 (0x158).
     # fs.cyr passes the 4th basep out-param (Linux ignores it). Parity w/ arm64.

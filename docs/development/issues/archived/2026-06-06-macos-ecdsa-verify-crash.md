@@ -1,5 +1,21 @@
 # sigil `ecdsa_p256_sign` corrupts heap/global memory on macOS (Mach-O) — the last layer blocking the TLS stack on macOS
 
+> **RESOLVED — v6.0.84 (2026-06-07).** The root cause was NOT a `&_fl_heads` freelist codegen bug (the
+> `&global` adrp+add path is provably correct — the lldb base=0 reading below was an artifact of the
+> earlier instrumented binary). An lldb repro on real ecb of the CURRENT crash pinned it to
+> **`lib/thread_local.cyr`**: sigil's crypto-scratch `cbank()` stores its bank index via `mrs/msr
+> TPIDR_EL0`, but **Darwin owns `TPIDR_EL0` and restores it across preemption** — proven with a
+> 2-billion-iteration pure-compute loop (zero syscalls) that reset it from a valid block to a Darwin
+> thread value (`~0x2010`). `cbank()` lazy-inits once, so the first preemption during crypto left every
+> later `thread_local_get` reading garbage → SIGSEGV. Fix: a macOS process-global slot store (no TPIDR);
+> cyrius threads don't run on macOS so single-threaded is correct. Fixing it unmasked a SECOND bug —
+> `socketpair` untranslated on Darwin (arm-macho 199 / x86-macho 53 → Darwin 135) — which broke the
+> fork+socketpair e2e (`TLS_ERR_IO`); also fixed. **Verified on ecb: `tls12_*` 5/5 incl. the e2e.** See
+> CHANGELOG [6.0.84]. (Definition of done met on ecb; ach blocked by the held x86-macho cycc miscompile,
+> issue `2026-06-02-macos-x86-release-no-compiler.md`.)
+>
+> Historical investigation notes (incl. the superseded `&_fl_heads` diagnosis) retained below.
+
 - **Filed**: 2026-06-06 (v6.0.75); **root cause refined 2026-06-06 (.76 investigation)**
 - **Reporter**: the .75 cross-OS lib-test (`scripts/cross-os-selfhost.sh ecb tls12`) on real ecb (Apple Silicon)
 - **Affects**: `lib/sigil.cyr` **`ecdsa_p256_sign`** (`src/ecdsa_p256.cyr` in the sigil repo) on **macOS** (Mach-O; arm64 confirmed on ecb; x86-macOS/ach almost certainly the same — it's sigil-level, not arch-specific). **Linux unaffected** (full TLS suite green on x86_64 + aarch64, where the SKE sign→verify round-trip passes).
