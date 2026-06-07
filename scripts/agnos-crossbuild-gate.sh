@@ -19,15 +19,26 @@ cd "$ROOT"
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing (run bootstrap first)"; exit 1; }
 [ -x build/cyrius ] || { echo "ERROR: build/cyrius missing"; exit 1; }
 
-# A valid agnos ring-3 binary is a statically-linked x86-64 ELF (the agnos
-# target emits a flat static ELF over the agnos syscall ABI; no interpreter).
+# A valid agnos ring-3 binary is a static x86-64 ELF (the agnos target emits a
+# flat ET_EXEC over the agnos syscall ABI; no interpreter). Checked with only
+# portable tools — the agnos CI container is minimal (no xxd/file/git), so we
+# read the magic with grep -a (binary-safe) and the e_machine with od (guarded;
+# skipped cleanly if od is unavailable rather than erroring under `set -e`).
 assert_agnos_elf() {
     f="$1"
     [ -f "$f" ] || { echo "FAIL: $f not produced"; exit 1; }
-    magic=$(xxd -l4 -p "$f" 2>/dev/null)
-    [ "$magic" = "7f454c46" ] || { echo "FAIL: $f not an ELF (magic=$magic)"; exit 1; }
-    file "$f" | grep -q "x86-64" || { echo "FAIL: $f not x86-64"; exit 1; }
-    file "$f" | grep -q "statically linked" || { echo "FAIL: $f not statically linked"; exit 1; }
+    if command -v od >/dev/null 2>&1; then
+        magic=$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' \n')      # 7f 45 4c 46
+        [ "$magic" = "7f454c46" ] || { echo "FAIL: $f bad ELF magic ($magic)"; exit 1; }
+        em=$(od -An -tx1 -j18 -N2 "$f" 2>/dev/null | tr -d ' \n')    # e_machine (LE)
+        [ "$em" = "3e00" ] || { echo "FAIL: $f not x86-64 (e_machine=$em)"; exit 1; }
+        et=$(od -An -tx1 -j16 -N2 "$f" 2>/dev/null | tr -d ' \n')    # e_type (LE)
+        [ "$et" = "0200" ] || { echo "FAIL: $f not a static ET_EXEC (e_type=$et)"; exit 1; }
+    else
+        # Fallback when od is absent — only cat+grep (always present). The
+        # \x7fELF magic guarantees the "ELF" substring near the start.
+        grep -q 'ELF' "$f" 2>/dev/null || { echo "FAIL: $f has no ELF magic"; exit 1; }
+    fi
 }
 
 # 1. In-tree probe — exercises the agnos peer surface that's bitten us before:
