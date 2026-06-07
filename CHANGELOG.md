@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.79] — 2026-06-06
+
 **Security: fix the `cyml_parse` out-of-bounds stack write.** A HIGH-severity memory-safety bug in
 shipping stdlib, found by the agnos 1.42.14 pre-burn security audit. Driven entirely by untrusted CYML
 file bytes, so it ships to every CYML consumer (commandress `config_load`, bannermanor `font_load`).

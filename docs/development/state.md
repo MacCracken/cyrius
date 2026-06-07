@@ -3,6 +3,28 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.79 ship — SECURITY: cyml_parse OOB stack-write fix)
+
+Closing **v6.0.79**. check.sh **85/85**; self-host byte-identical (cyml not in cycc). A HIGH-sev
+stdlib memory-safety patch, slotted between TLS arc work per leader order.
+
+**Fix:** `lib/cyml.cyr` `cyml_parse` — `var entry_starts[256]` (256 *bytes* = 32 slots, function-local)
+was written at 8-byte stride up to 256 entries → **1792-byte OOB stack write from untrusted CYML**
+(return-address hijack at worst; reachable in ring-3 tools commandress/bannermanor). Sized to true
+capacity: `var entry_starts[2048]` (256×8 B) + a byte-unit comment guarding the `var X[N]`-is-N-bytes
+footgun. Found by the agnos 1.42.14 audit. Regression: a 50-entry CYML now parses
+(`tests/tcyr/cyml.tcyr`). Verified Linux + real macOS (ecb); issue archived.
+
+**Windows note:** running cyml.tcyr cross-OS surfaced a *pre-existing* Windows gap — an unrouted
+`syscall(n)` in cyml's alloc/fmt deps → STATUS_ILLEGAL_INSTRUCTION. `cyml_parse` uses neither, so the
+lib + fix are correct on Windows; only the test harness is blocked → **Windows repair cluster**. Fixed
+one of two gaps en route (explicit `include "lib/vec.cyr"` so fmt's `vec_get` resolves on PE).
+
+**Next (leader-set order):** **`.80`** = fix sigil `x509_parse` real-cert crash (in ~/Repos/sigil, then
+re-fold — issue 2026-06-06-sigil-x509-parse-…) **+ bite 4** (the `lib/tls.cyr` wrapper rebuild onto
+native, keep libssl fallback). Unblocks Mini-arc E Release B (sandhi rewire + real-peer smoke +
+closeout), which also needs server-flight reassembly. cycle closeout → v6.1.0.
+
 ## Session close — 2026-06-06 (.78 ship — sovereign native-TLS client features: close_notify + ALPN + trust store)
 
 Closing **v6.0.78**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +
