@@ -3,6 +3,26 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-06 (.82 ship — backend-agnostic TLS peer-introspection verbs; sandhi-rewire enablement)
+
+Closing **v6.0.82**. check.sh **85/85**; self-host byte-identical; cross-OS green on ecb + cass. The
+cyrius half of the Mini-arc E sandhi rewire — the typed verbs sandhi needs to drop its raw-SSL-ptr +
+tls_dlsym bindings.
+
+**Added:** `tls_native_get_peer_spki_der` (extracts the leaf SubjectPublicKeyInfo DER via sigil's
+der_walk — SHA-256 matches openssl's pin EXACTLY, hermetic + live-verified), `tls_native_get_peer_cert_der`
+(was a stub → returns leaf DER), and the backend-agnostic wrappers `tls_get_alpn_selected` /
+`tls_get_peer_spki_der` in lib/tls.cyr (native → the sovereign verbs; libssl → the FFI moved out of
+sandhi). Live-validated vs Cloudflare: ALPN `h2` + SPKI both via the wrapper verbs on native. +3 public
+fns, non-breaking. Scaffold 400.
+
+**Next — the sandhi EDIT (gated on .82 release):** sandhi vendors lib/tls.cyr via `cyrius deps`, so it
+re-syncs the released .82 first, then I rewire `src/http/conn.cyr` (_sandhi_alpn_read_selected →
+`tls_get_alpn_selected`) + `src/tls_policy/apply.cyr` (_sandhi_check_spki → `tls_get_peer_spki_der` +
+SHA-256) and drop all its tls_dlsym/raw-SSL* sites. That CLOSES Mini-arc E. Then (leader order):
+AES-128 + RSA-auth ciphersuite enablement → repair slots (macOS `&_fl_heads` freelist codegen; Windows
+cluster, cdb on cass) → cycle closeout → **v6.1.0**.
+
 ## Session close — 2026-06-06 (.81 ship — SOVEREIGN HTTPS: server-flight reassembly + live Cloudflare smoke)
 
 Closing **v6.0.81**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb +

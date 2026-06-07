@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.82] — 2026-06-06
+
 **Backend-agnostic TLS peer-introspection verbs (Mini-arc E — sandhi-rewire enablement).** The stdlib
 now exposes typed `tls_*` verbs for the two things consumers (sandhi) previously got by reading the raw
 libssl `SSL*` (`load64(ctx+8)`) + `tls_dlsym`'ing OpenSSL symbols: the negotiated ALPN protocol and the
