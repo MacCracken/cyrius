@@ -32,7 +32,7 @@ assert_eq(load8(&ch), TLS_HS_CLIENT_HELLO, "CH handshake type = 1");
 assert_eq(_tn_be24_r(&ch + 1), chn - 4, "CH body length field = total - 4");
 assert_eq(_tn_be16_r(&ch + 4), 0x0303, "CH legacy_version = 0x0303");
 assert_eq(load8(&ch + 4 + 2 + 32), 0, "CH legacy_session_id empty");
-assert_eq(_tn_be16_r(&ch + 4 + 2 + 32 + 1), 4, "CH cipher_suites length = 4 (two suites)");
+assert_eq(_tn_be16_r(&ch + 4 + 2 + 32 + 1), 12, "CH cipher_suites length = 12 (6 suites; .83 added RSA + AES-128)");
 assert_eq(_tn_be16_r(&ch + 4 + 2 + 32 + 1 + 2), TLS12_ECDHE_ECDSA_AES256_GCM_SHA384, "CH first suite = 0xC02C");
 assert_eq(_tn_be16_r(&ch + 4 + 2 + 32 + 1 + 4), TLS12_ECDHE_ECDSA_CHACHA20_SHA256, "CH second suite = 0xCCA9");
 # the CH must be buffered into the ctx for the retroactive transcript init
@@ -243,10 +243,11 @@ assert_eq(tls_native_set_alpn(alc, &aprotos, 0), TLS_ERR_INVALID_PARAM, "set_alp
 var alch[512];
 var alchn = tls_native_12_build_client_hello(alc, &alch, 512);
 assert_gt(alchn, 0, "1.2 CH builds with ALPN offered");
-var ebl = _tn_be16_r(&alch + 47);                 # extensions-block length
+# Offsets shifted +8 in .83: cipher_suites grew from 2 to 6 suites (4 → 12 bytes).
+var ebl = _tn_be16_r(&alch + 55);                 # extensions-block length
 var alp = 0;
 var all = 0;
-assert_eq(_tn_find_ext(&alch + 49, ebl, TLS_EXT_ALPN, &alp, &all), 1, "CH ext block carries ALPN");
+assert_eq(_tn_find_ext(&alch + 57, ebl, TLS_EXT_ALPN, &alp, &all), 1, "CH ext block carries ALPN");
 assert_eq(_tn_be16_r(alp), 3, "ALPN ProtocolNameList length = 3");
 assert_eq(load8(alp + 2) & 0xFF, 2, "first protocol length = 2 (h2)");
 # A no-ALPN client's CH is exactly 9 bytes shorter (6 hdr + 3 protos).
