@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**Backend-agnostic TLS peer-introspection verbs (Mini-arc E — sandhi-rewire enablement).** The stdlib
+now exposes typed `tls_*` verbs for the two things consumers (sandhi) previously got by reading the raw
+libssl `SSL*` (`load64(ctx+8)`) + `tls_dlsym`'ing OpenSSL symbols: the negotiated ALPN protocol and the
+peer's SubjectPublicKeyInfo (the HPKP pin target). Both work on either backend, so consumers bind to
+neither the `SSL*` layout nor libssl symbol names — the prerequisite for moving sandhi off libssl.
+
+### Added
+
+- **`tls_native_get_peer_spki_der`** (`lib/tls_native.cyr`) — extracts the peer leaf's SubjectPublicKeyInfo
+  DER (the TLV after the subject in the TBSCertificate) via sigil's `der_walk`. Its SHA-256 matches
+  OpenSSL's `x509 -pubkey | pkey -pubin -outform der | sha256` exactly (verified in
+  `tls_native_scaffold.tcyr`). And **`tls_native_get_peer_cert_der`** is implemented (was a stub) —
+  returns the leaf cert DER.
+- **`tls_get_alpn_selected` / `tls_get_peer_spki_der`** (`lib/tls.cyr`) — backend-dispatching wrappers.
+  Under the native backend they route to the sovereign verbs; under libssl they do the FFI
+  (`SSL_get0_alpn_selected`; `SSL_get1_peer_certificate` + `X509_get_pubkey` + `i2d_PUBKEY`) here, so
+  consumers stop doing it themselves. Live-validated against Cloudflare: ALPN negotiates `h2` and the
+  SPKI is extracted from the live leaf, both through the wrapper verbs on the native backend.
+
 ## [6.0.81] — 2026-06-06
 
 **Sovereign HTTPS works against real servers — server-flight reassembly (Mini-arc E Release B).** The

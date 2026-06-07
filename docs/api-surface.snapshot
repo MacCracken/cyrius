@@ -3614,8 +3614,10 @@ tls::tls_ctx_set_session_get_cb/2
 tls::tls_ctx_set_session_new_cb/2
 tls::tls_ctx_set_session_remove_cb/2
 tls::tls_dlsym/1
+tls::tls_get_alpn_selected/3
 tls::tls_get_backend/0
 tls::tls_get_early_data_status/1
+tls::tls_get_peer_spki_der/3
 tls::tls_get_session/1
 tls::tls_read/3
 tls::tls_read_early_data/3
@@ -3686,6 +3688,7 @@ tls_native::tls_native_get_group/1
 tls_native::tls_native_get_key_algo/1
 tls_native::tls_native_get_last_error/1
 tls_native::tls_native_get_peer_cert_der/3
+tls_native::tls_native_get_peer_spki_der/3
 tls_native::tls_native_get_state/1
 tls_native::tls_native_get_version/1
 tls_native::tls_native_handshake_read_header/4

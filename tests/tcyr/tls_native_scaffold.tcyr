@@ -1577,6 +1577,28 @@ if (sysrc == TLS_OK) {
 }
 
 # ================================================================
+# v6.0.82 — peer-introspection verbs (SPKI / cert DER) for the sandhi rewire
+# ================================================================
+test_group("v6.0.82 peer-introspection verbs");
+var spkictx = tls_native_new_client("x", 1);
+var spkileaf = x509_cert_alloc();
+x509_parse(cert23, 385, spkileaf);
+store64(spkictx + TLS_CTX_OFF_SERVER_CERT, spkileaf);
+# SubjectPublicKeyInfo DER — the HPKP pin target. SHA-256 must equal openssl's
+# `x509 -pubkey | pkey -pubin -outform der | sha256` = c3355a74…658b0d81.
+var spki[256];
+var spkilen = tls_native_get_peer_spki_der(spkictx, &spki, 256);
+assert_eq(spkilen, 91, "SPKI DER length (P-256 SubjectPublicKeyInfo)");
+assert_eq(load8(&spki) & 0xFF, 0x30, "SPKI is a DER SEQUENCE");
+var spkih[32];
+sha256(&spki, spkilen, &spkih);
+assert_eq(load8(&spkih) & 0xFF, 0xc3, "SPKI pin hash[0] matches openssl");
+assert_eq(load8(&spkih + 1) & 0xFF, 0x35, "SPKI pin hash[1] matches openssl");
+assert_eq(load8(&spkih + 31) & 0xFF, 0x81, "SPKI pin hash[31] matches openssl");
+var certder[512];
+assert_eq(tls_native_get_peer_cert_der(spkictx, &certder, 512), 385, "peer cert DER length = 385");
+
+# ================================================================
 # v6.0.30 — hostname / SAN verification (RFC 6125)
 # ================================================================
 test_group("v6.0.30 hostname / SAN verification");

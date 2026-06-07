@@ -5184,9 +5184,46 @@ fn tls_native_get_alpn_selected(ctx, buf, bufmax): i64 {
 
 # Get the peer's leaf certificate in DER form. Writes to `buf` (up
 # to `bufmax`); returns DER length, 0 if no peer cert was sent, or
-# negative TLS_ERR_BUFFER_FULL if bufmax is too small.
+# negative TLS_ERR_BUFFER_FULL if bufmax is too small. The leaf's DER
+# ptr+len live in sigil's parsed x509 struct (`+0`/`+8`).
 fn tls_native_get_peer_cert_der(ctx, buf, bufmax): i64 {
-    return 0;
+    if (ctx == 0) { return 0; }
+    var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
+    if (leaf == 0) { return 0; }
+    var der = load64(leaf);
+    var der_len = load64(leaf + 8);
+    if (der == 0) { return 0; }
+    if (der_len <= 0) { return 0; }
+    if (der_len > bufmax) { return TLS_ERR_BUFFER_FULL; }
+    memcpy(buf, der, der_len);
+    return der_len;
+}
+
+# Get the peer leaf's SubjectPublicKeyInfo (SPKI) in DER form — the HPKP
+# pin target (consumers SHA-256 it). Writes to `buf` (up to `bufmax`);
+# returns SPKI length, 0 on no cert / parse failure, or TLS_ERR_BUFFER_FULL.
+# The SPKI is the TLV immediately after the subject in the TBSCertificate;
+# sigil's parsed x509 struct stores the subject span at `+64`/`+72`, and we
+# walk one SEQUENCE past it with sigil's der_walk.
+fn tls_native_get_peer_spki_der(ctx, buf, bufmax): i64 {
+    if (ctx == 0) { return 0; }
+    var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
+    if (leaf == 0) { return 0; }
+    var der = load64(leaf);
+    var der_len = load64(leaf + 8);
+    var subj_off = load64(leaf + 64);
+    var subj_len = load64(leaf + 72);
+    if (der == 0) { return 0; }
+    if (subj_off <= 0) { return 0; }
+    var spki_start = subj_off + subj_len;
+    var spki_cp = 0;
+    var spki_np = 0;
+    if (der_walk(der, der_len, spki_start, DER_TAG_SEQUENCE, &spki_cp, &spki_np) < 0) { return 0; }
+    var spki_len = spki_np - spki_start;
+    if (spki_len <= 0) { return 0; }
+    if (spki_len > bufmax) { return TLS_ERR_BUFFER_FULL; }
+    memcpy(buf, der + spki_start, spki_len);
+    return spki_len;
 }
 
 # Get the current state-machine state (TlsState enum). Useful for

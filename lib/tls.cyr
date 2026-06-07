@@ -365,6 +365,95 @@ fn tls_set_verify(handle, mode, callback): i64 {
     return 0;
 }
 
+# ---- Typed peer-introspection verbs (.82, Mini-arc E) ----
+# Backend-agnostic replacements for consumers that previously read the raw
+# libssl SSL* (load64(ctx+8)) + tls_dlsym'd SSL_get0_alpn_selected /
+# X509_get_pubkey / i2d_PUBKEY. Under the native backend they route to the
+# sovereign native verbs; under libssl they do the FFI here so consumers
+# (sandhi) bind to neither the SSL* layout nor libssl symbols.
+var _fn_SSL_get0_alpn_selected_v = 0;
+var _fn_SSL_get1_peer_cert_v     = 0;
+var _fn_X509_get_pubkey_v        = 0;
+var _fn_i2d_PUBKEY_v             = 0;
+var _fn_X509_free_v              = 0;
+var _fn_EVP_PKEY_free_v          = 0;
+var _tls_introspect_resolved     = 0;
+
+fn _tls_resolve_introspect(): i64 {
+    if (_tls_introspect_resolved == 1) { return 0; }
+    _fn_SSL_get0_alpn_selected_v = tls_dlsym("SSL_get0_alpn_selected");
+    _fn_SSL_get1_peer_cert_v     = tls_dlsym("SSL_get1_peer_certificate");
+    if (_fn_SSL_get1_peer_cert_v == 0) { _fn_SSL_get1_peer_cert_v = tls_dlsym("SSL_get_peer_certificate"); }
+    _fn_X509_get_pubkey_v        = tls_dlsym("X509_get_pubkey");
+    _fn_i2d_PUBKEY_v             = tls_dlsym("i2d_PUBKEY");
+    _fn_X509_free_v              = tls_dlsym("X509_free");
+    _fn_EVP_PKEY_free_v          = tls_dlsym("EVP_PKEY_free");
+    _tls_introspect_resolved = 1;
+    return 0;
+}
+
+# Copy the peer-negotiated ALPN protocol into `buf` (up to `bufmax`); returns
+# its byte length, or 0 if none was negotiated.
+fn tls_get_alpn_selected(ctx, buf, bufmax): i64 {
+    if (ctx == 0) { return 0; }
+    #ifdef CYRIUS_TLS_NATIVE
+    if (_tls_backend == 1) { return tls_native_get_alpn_selected(load64(ctx), buf, bufmax); }
+    #endif
+    _tls_resolve_introspect();
+    if (_fn_SSL_get0_alpn_selected_v == 0) { return 0; }
+    var ssl = load64(ctx + 8);
+    if (ssl == 0) { return 0; }
+    var op[8];
+    var ol[8];
+    store64(&op, 0);
+    store64(&ol, 0);
+    fncall3(_fn_SSL_get0_alpn_selected_v, ssl, &op, &ol);
+    var data = load64(&op);
+    var dlen = load64(&ol);
+    if (dlen <= 0) { return 0; }
+    if (data == 0) { return 0; }
+    if (dlen > bufmax) { return 0; }
+    var i = 0;
+    while (i < dlen) { store8(buf + i, load8(data + i)); i = i + 1; }
+    return dlen;
+}
+
+# Copy the peer leaf's SubjectPublicKeyInfo (SPKI) DER into `buf` (up to
+# `bufmax`); returns its length, or 0 on failure. The HPKP pin target —
+# consumers SHA-256 it.
+fn tls_get_peer_spki_der(ctx, buf, bufmax): i64 {
+    if (ctx == 0) { return 0; }
+    #ifdef CYRIUS_TLS_NATIVE
+    if (_tls_backend == 1) { return tls_native_get_peer_spki_der(load64(ctx), buf, bufmax); }
+    #endif
+    _tls_resolve_introspect();
+    if (_fn_SSL_get1_peer_cert_v == 0) { return 0; }
+    if (_fn_X509_get_pubkey_v == 0) { return 0; }
+    if (_fn_i2d_PUBKEY_v == 0) { return 0; }
+    var ssl = load64(ctx + 8);
+    if (ssl == 0) { return 0; }
+    var x509 = fncall1(_fn_SSL_get1_peer_cert_v, ssl);
+    if (x509 == 0) { return 0; }
+    var pkey = fncall1(_fn_X509_get_pubkey_v, x509);
+    if (pkey == 0) {
+        if (_fn_X509_free_v != 0) { fncall1(_fn_X509_free_v, x509); }
+        return 0;
+    }
+    var ret = 0;
+    var size = fncall2(_fn_i2d_PUBKEY_v, pkey, 0);   # NULL → required size
+    if (size > 0) {
+        if (size <= bufmax) {
+            var pc[8];
+            store64(&pc, buf);
+            var written = fncall2(_fn_i2d_PUBKEY_v, pkey, &pc);
+            if (written > 0) { ret = written; }
+        }
+    }
+    if (_fn_EVP_PKEY_free_v != 0) { fncall1(_fn_EVP_PKEY_free_v, pkey); }
+    if (_fn_X509_free_v != 0) { fncall1(_fn_X509_free_v, x509); }
+    return ret;
+}
+
 # v5.6.40: resolve a libssl/libcrypto symbol by name via the
 # fdlopen-managed libssl handle. Lets consumers (e.g. sandhi's
 # `tls_policy/alpn.cyr`) call SSL_CTX_set_alpn_protos /
