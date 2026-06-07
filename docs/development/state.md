@@ -5474,6 +5474,7 @@ All AGNOS ecosystem projects depend on the compiler and stdlib.
 
 - `ssh pi` — Pi 4 (Linux aarch64 native runtime)
 - `ssh ecb` — Apple Silicon MBP (Mach-O arm64 runtime)
+- `ssh ach` — Intel Mac (Mach-O x86_64 runtime, Apple EOL-track; self-hosts byte-identical)
 - `ssh cass` — Windows 11 24H2 (PE32+ runtime)
 
 ## Bootstrap chain
