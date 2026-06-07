@@ -179,6 +179,31 @@ fn _win_wait_close(pi): i64 {
     return ec;
 }
 
+# v6.0.85 — spawn `cc < source > output` for `cyrius build` on Windows. cycc
+# reads its source from stdin and writes the PE to stdout; Win32 has no
+# fork/dup2/execve, so we hand the redirect to cmd.exe via CreateProcessW.
+# `cmd /s /c "<inner>"` strips ONLY the outermost quote pair (the /s rule), so
+# the inner per-path quotes + the `<` / `>` operators reach cmd intact:
+#   cmd /s /c ""C:\...\cycc.exe" < "src.cyr" > "out.exe""
+# Writes directly to `output` (SYS_RENAME is not a PE reroute, so the POSIX
+# atomic tmp+rename can't be used here). Returns the child exit code; 1 if the
+# spawn itself fails.
+fn _win_compile_spawn(cc, source, output): i64 {
+    var wbuf = alloc(16384);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, cc);
+    o = _w_append_cstr(wbuf, o, "\" < \"");
+    o = _w_append_cstr(wbuf, o, source);
+    o = _w_append_cstr(wbuf, o, "\" > \"");
+    o = _w_append_cstr(wbuf, o, output);
+    o = _w_append_cstr(wbuf, o, "\"\"");
+    _w_terminate(wbuf, o);
+    var pi[24];
+    if (_win_create_process(wbuf, 0, 0, &pi) == 0) { return 1; }
+    return _win_wait_close(&pi);
+}
+
 # Create an anonymous inheritable pipe, mark the read end non-inheritable,
 # and return the read handle (write handle returned via *wr_out). Returns
 # the read handle, or 0 on failure.

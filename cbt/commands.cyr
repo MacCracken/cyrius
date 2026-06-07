@@ -692,6 +692,22 @@ fn _cross_os_selfhost(): i64 {
         fails = fails + 1;
     }
 
+    # cass install pillar (v6.0.85) — the Windows analog of the ecb install gate
+    # above. Self-host proves the COMPILER; this proves PACKAGING: the real
+    # install.ps1 yields a cyrius that `cyrius build`s fn main(){return 42} to a
+    # runnable PE exiting 42. Catches a tarball missing cyrius.exe, a broken
+    # installer, or a non-runnable build — the macOS-rot class, one platform over.
+    var cass_inst_rc = _co_run_sh("sh scripts/cass-install-gate.sh");
+    if (cass_inst_rc == 0) {
+        println("  PASS: cass (Windows x86_64) REAL install -> cyrius build -> exit 42");
+    } elif (cass_inst_rc == 3) {
+        println("  FAIL: cass (Windows x86_64) install gate UNREACHABLE — cannot verify (publish blocked)");
+        fails = fails + 1;
+    } else {
+        println("  FAIL: cass (Windows x86_64) real-install path — tarball missing cyrius.exe, installer broken, or build output not runnable");
+        fails = fails + 1;
+    }
+
     if (fails > 0) { return 1; }
     return 0;
 }

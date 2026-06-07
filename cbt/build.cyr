@@ -104,6 +104,17 @@ fn compile(source, output): i64 {
             actual_source = tmp;
         }
     }
+    # v6.0.85 — Windows path. Win32 has no fork/dup2/execve, and SYS_RENAME(82)
+    # + getpid(39) are not PE reroutes, so the POSIX fork+atomic-rename block
+    # below can't run here. Spawn `cc < actual_source > output` via cmd.exe
+    # (CreateProcessW) and write directly to `output`. Dep/define prepends still
+    # apply above (actual_source); a dep build needs a writable temp the Windows
+    # path doesn't yet have — tracked for follow-up. See CHANGELOG [6.0.85].
+    #ifdef CYRIUS_TARGET_WIN
+    var wrc = _win_compile_spawn(cc, actual_source, output);
+    if (wrc != 0) { sys_unlink(output); return 1; }
+    return 0;
+    #endif
     # Atomic-output bug fix: write to a temp output then rename on
     # success. Pre-fix, `output` was opened with O_TRUNC before the
     # compile ran, so any non-zero exit from cycc left an empty

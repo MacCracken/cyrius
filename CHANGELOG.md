@@ -6,6 +6,64 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.85] — 2026-06-07
+
+**Windows install pillar: `cyrius build` works on a real Windows box.** Windows was
+claimed-supported but had never been installed-and-used end-to-end — `cycc.exe` self-hosted (the
+cross-OS gate), but the `cyrius` wrapper couldn't find or invoke it on Windows, and the release tarball
+shipped no wrapper + no native installer. This closes the macOS-`.38`-equivalent bar for Windows: a real
+`install.ps1` yields a toolchain that `cyrius build`s a program to a runnable PE. Every layer was found
+by *testing on cass* (Windows 10.0.26200, SSH-wired), not by inference. (The Windows DXGI demonstrator
+residual stays deferred — cass has no windbg/cdb and only an integrated GPU; operator-provisioning
+gated.)
+
+### Added
+
+- **`GetEnvironmentVariableA` PE reroute (`0xF015`)** — `src/backend/pe/emit.cyr` registers the
+  kernel32 import; `src/backend/x86/emit.cyr` adds `EGETENV_PE` + a 3-arg 16-byte-aligned caller
+  (`_pe_call_3arg_aligned`); `src/frontend/parse_expr.cyr` dispatches `syscall(0xF015, name, buf, size)`;
+  aarch64 gets the x86-only no-op stub. The toolchain had **no Windows env-reading at all** before this
+  (`_read_env`/the wrapper read `/proc/self/environ`, which doesn't exist on Windows).
+- **Native Windows installer `scripts/install.ps1`** — a PowerShell installer (no WSL/git-bash) that
+  lays out `%USERPROFILE%\.cyrius\{bin,lib,versions\<v>,current}`, copies the active version into `bin`
+  (Windows has no ring-3 symlinks), puts it on the User PATH, and **refuses to "succeed" with no
+  `cycc.exe`** (the install-pillar guard). ASCII-only (Windows PowerShell 5.1 mis-decodes UTF-8).
+- **`scripts/build-windows-tarball.sh`** — single source of truth for the Windows release tarball
+  (mirrors the macOS scripts), now including **`cyrius.exe`** (the wrapper, previously absent) +
+  `install.ps1`. `release.yml`'s `build-windows` job calls it, so the shipped tarball is byte-for-byte
+  what the gate verifies.
+- **cass install gate in `cyrius audit`** (`scripts/cass-install-gate.{sh,ps1}`) — the Windows analog of
+  the ecb install gate: real `install.ps1` → `cyrius build fn main(){return 42}` → assert exit 42.
+  Catches a tarball missing `cyrius.exe`, a broken installer, or a non-runnable build (the macOS-rot
+  class, one platform over). PILLAR RULE compliance.
+
+### Fixed
+
+- **`cyrius build` on Windows — cycc resolution + invocation.** The wrapper (`cbt/core.cyr`) now reads
+  `CYRIUS_HOME`/`USERPROFILE` via the `0xF015` reroute and resolves `bin/cycc.exe` (was `bin/cycc`, and
+  `_home` defaulted to `/root` with no env-read) → cycc is found. And `compile()` (`cbt/build.cyr`)
+  spawns `cycc < source > output` via cmd.exe + `CreateProcessW` (`lib/process_win.cyr`
+  `_win_compile_spawn`) instead of POSIX `fork`/`dup2`/`execve`, which Win32 lacks → cycc is invoked.
+  Verified on cass: a fresh `install.ps1` then `cyrius build` produces a PE that runs with the correct
+  exit code.
+- **`cyrius deps --lock` on Windows** — `cbt/deps.cyr` `_sha256sum_file` uses `certutil -hashfile <p>
+  SHA256` (no `/bin/sh`/`sha256sum` on Windows) and parses the digest line. Verified on cass: matches
+  the known SHA-256 exactly.
+
+### Verified
+
+- self-host byte-identical; check.sh 85/85; tcyr exit-code sweep 0/167; ecb + ach + pi self-host
+  byte-identical; **cass install pillar gate green** (real `install.ps1` → `cyrius build` → exit 42).
+  Each sub-capability tested individually on cass: env read (`USERPROFILE`), `cyrius build`→correct
+  exit, certutil hash exact match.
+
+### Premise-check note
+
+- The Windows `cycc`-runtime "bug 2" (`issues/.../2026-06-02-windows-cycc-runtime-multibug.md`) was
+  **already resolved** — re-verified hands-on: `cycc.exe` compiles a non-trivial program (fns + loop +
+  args) to a runnable PE on cass. The issue text was stale; corrected + the install Pillar (the
+  remaining item) delivered here.
+
 ## [6.0.84] — 2026-06-07
 
 **macOS native-TLS: two stacked bugs fixed — the crypto stack and the socketpair e2e now run on Apple

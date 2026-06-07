@@ -7,6 +7,13 @@
 > that residual + the other Windows partials were back-burned into the **near-end Windows repair
 > cluster** that runs AFTER the TLS arc (see roadmap.md back-end shape; `.72+` = native TLS).
 > cyrius-side; no cross-repo edit.
+> **v6.0.85 update**: the **Windows install pillar is DONE** — `cyrius build` works on a real Windows
+> box (env reroute + wrapper `.exe`/env resolution + cmd.exe-redirect spawn + native `install.ps1` +
+> cass `cyrius audit` install gate; the `deps --lock` certutil hash landed too). The PE cycc-runtime
+> "bug 2" was found already-resolved (stale pin; multibug issue archived). **Only §0 (the real-GPU DXGI
+> demonstrator) remains, and it is OPERATOR-GATED**: cass has no windbg/cdb and only an integrated Intel
+> UHD 600 GPU, so the 1-arg-COM AV can't be single-stepped and `DedicatedVideoMemory` is ~0 there —
+> needs the operator to provision a debugger + a discrete GPU before it can be driven.
 > **NOTE TO USER**: you flagged "another wrinkle" you have in mind — add it under §0 so it's captured.
 
 ## 0. COM vtable + DXGI for GPU enumeration — the user's flagged wrinkle

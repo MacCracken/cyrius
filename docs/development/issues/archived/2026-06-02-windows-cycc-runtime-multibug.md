@@ -70,8 +70,19 @@ until `cycc.exe` compiles `var x=42` to a runnable PE on `cass`, then
 lacks — the `0x40001000` exit), then self-host, then the REAL install
 (`install.sh`) on `cass`, then the cass arm of the `cyrius audit` gate.
 
-## Pillar
+## Pillar — DONE (v6.0.85)
 
-Windows is not supported until the real `install.sh` on `cass` yields a
-`cycc` that compiles + runs (verified on hardware) — same bar as macOS
-arm64 (v6.0.38). This is a dedicated multi-slot arc, not a one-liner.
+Windows is not supported until the real installer on `cass` yields a `cyrius`
+that compiles + runs (verified on hardware) — same bar as macOS arm64 (v6.0.38).
+**Met @ v6.0.85.** Native `scripts/install.ps1` + `scripts/build-windows-tarball.sh`
+(now shipping `cyrius.exe`) produce an install where `cyrius build fn
+main(){return 42}` yields a runnable PE exiting 42, verified by the new cass arm
+of `cyrius audit` (`scripts/cass-install-gate.{sh,ps1}`). Required, all landed
+@ .85: the `GetEnvironmentVariableA` PE reroute (`0xF015`) for Windows env-read,
+the wrapper's `bin/cycc.exe` resolution (cbt/core.cyr), and the `compile()`
+cmd.exe-redirect spawn via `CreateProcessW` (cbt/build.cyr + lib/process_win.cyr)
+— Win32 has no fork/dup2/execve. See CHANGELOG [6.0.85]. **Issue resolved.**
+
+> The only remaining Windows item is the DXGI GPU-enum demonstrator — operator-
+> gated (cass has no windbg/cdb + only an integrated GPU); tracked in
+> 2026-06-03-windows-pe-com-vtable-dxgi-for-gpu-enum.md + -followup-nuances.md.

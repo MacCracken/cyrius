@@ -3,6 +3,40 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.85 ship — Windows install pillar: `cyrius build` works on Windows)
+
+Closing **v6.0.85**. check.sh **85/85**; self-host byte-identical; cross-OS self-host green on ecb + ach
++ pi; **cass install pillar gate green** (real `install.ps1` → `cyrius build` → exit 42). **Windows is
+now a verified-supported platform at the macOS-`.38` bar** — a real install yields a toolchain you can
+`cyrius build` with.
+
+Windows had a green cross-OS *self-host* gate but had **never been installed-and-used end-to-end**. I
+put hands directly on cass (after the user's correction — don't take gate verdicts/pins/probes as
+gospel, [[feedback_check_hardware_directly_not_verdicts]]) and each layer surfaced by testing:
+
+1. **No Windows env-reading in the toolchain** → new **`GetEnvironmentVariableA` PE reroute (`0xF015`)**
+   (pe/x86/aarch64 emit + parse_expr; 3-arg aligned caller).
+2. **Wrapper couldn't find cycc** → `cbt/core.cyr` reads `CYRIUS_HOME`/`USERPROFILE` via the reroute +
+   resolves `bin/cycc.exe` (was `bin/cycc`, `_home` defaulted to `/root`).
+3. **Wrapper couldn't invoke cycc** (POSIX fork/execve) → `compile()` spawns `cycc < src > out` via
+   cmd.exe + `CreateProcessW` (`lib/process_win.cyr` `_win_compile_spawn`).
+4. **No native installer / tarball had no wrapper** → `scripts/install.ps1` + `build-windows-tarball.sh`
+   (SSOT, now ships `cyrius.exe` + the installer); release.yml rewired to it.
+5. **No hardware install gate** → `cass-install-gate.{sh,ps1}` wired into `cyrius audit`.
+6. **`cyrius deps --lock`** → certutil hash on Windows (`cbt/deps.cyr`).
+
+**Premise-check win:** the Windows `cycc`-runtime "bug 2" pin was STALE — `cycc.exe` already compiles +
+self-hosts on cass (re-verified hands-on: fns+loop+args → runnable PE). Issue corrected + archived;
+only the install Pillar remained, delivered here.
+
+**Still deferred (operator-gated, NOT this slot):** the Windows **DXGI demonstrator** — cass has no
+windbg/cdb and only an integrated Intel UHD 600 GPU, so the 1-arg-COM AV can't be single-stepped and
+`DedicatedVideoMemory` is ~0 there. Needs the operator to provision a debugger + a discrete GPU.
+**Latent (from .84):** macho-arm socket *family* (socket/connect/accept) still mapped with x86 nums.
+
+**Next (leader order):** the remaining Windows DXGI residual (operator-gated) + `cyrius deps --lock`
+Windows-portable end-to-end + AGNOS-target install → cleanup/refactor cluster → cycle closeout → v6.1.0.
+
 ## Session close — 2026-06-07 (.84 ship — macOS native-TLS: thread_local TPIDR + socketpair, both fixed)
 
 Closing **v6.0.84**. check.sh **85/85**; self-host byte-identical; cross-OS green on ecb + pi + cass.

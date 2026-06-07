@@ -1,0 +1,82 @@
+# install.ps1 - native Windows installer for the Cyrius toolchain (v6.0.85).
+#
+# The POSIX install.sh needs WSL/git-bash; this is the native PowerShell
+# equivalent so Windows users get a working toolchain with no Unix layer:
+#
+#   %USERPROFILE%\.cyrius\
+#     bin\                 active-version binaries (on PATH): cycc.exe, cyrius.exe, ...
+#     lib\                 active-version stdlib
+#     versions\<v>\bin     version-specific binaries
+#     versions\<v>\lib     version-specific stdlib
+#     current              active version
+#
+# Windows has no ring-3 symlinks by default, so the active version is a COPY of
+# versions\<v>\* into bin\/lib\ (install.sh symlinks on POSIX). The cyrius
+# wrapper resolves cycc at <home>\bin\cycc.exe (cbt/core.cyr; the .exe suffix +
+# the GetEnvironmentVariableA env-read were added v6.0.85). Run it from a
+# tarball or a pre-extracted staging dir:
+#
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -Tarball cyrius-<v>-x86_64-windows.tar.gz
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -Stage   <extracted-dir>
+#
+# Env: CYRIUS_HOME overrides the install root (default %USERPROFILE%\.cyrius).
+# NOTE: keep this file ASCII-only. Windows PowerShell 5.1 reads scripts as the
+# system ANSI codepage, so a UTF-8 em-dash breaks the parser.
+param(
+    [string]$Tarball = "",
+    [string]$Stage   = "",
+    [switch]$NoPath
+)
+$ErrorActionPreference = "Stop"
+
+$CyriusHome = if ($env:CYRIUS_HOME) { $env:CYRIUS_HOME } else { Join-Path $env:USERPROFILE ".cyrius" }
+
+# Resolve the staging dir (an extracted "cyrius-<v>-x86_64-windows" tree).
+if (-not $Stage) {
+    if (-not $Tarball) { throw "provide -Tarball <path.tar.gz> or -Stage <dir>" }
+    if (-not (Test-Path $Tarball)) { throw "tarball not found: $Tarball" }
+    $tmp = Join-Path $env:TEMP ("cyrius-install-" + [System.Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    # tar.exe ships in System32 on Windows 10 1803+; the release tarball is .tar.gz.
+    & tar.exe -xzf $Tarball -C $tmp
+    if ($LASTEXITCODE -ne 0) { throw "tar extraction failed ($LASTEXITCODE)" }
+    $Stage = (Get-ChildItem -Directory $tmp | Select-Object -First 1).FullName
+}
+if (-not (Test-Path (Join-Path $Stage "VERSION"))) { throw "no VERSION in staging dir: $Stage" }
+
+$Ver    = (Get-Content (Join-Path $Stage "VERSION") -Raw).Trim()
+$VerDir = Join-Path $CyriusHome "versions\$Ver"
+
+foreach ($d in @("$VerDir\bin", "$VerDir\lib", "$CyriusHome\bin", "$CyriusHome\lib")) {
+    New-Item -ItemType Directory -Force -Path $d | Out-Null
+}
+
+# Version-specific tree.
+Copy-Item "$Stage\bin\*" "$VerDir\bin\" -Force -Recurse
+Copy-Item "$Stage\lib\*" "$VerDir\lib\" -Force -Recurse
+# Active version: copy into <home>\bin + <home>\lib (no symlinks on Windows).
+Copy-Item "$VerDir\bin\*" "$CyriusHome\bin\" -Force -Recurse
+Copy-Item "$VerDir\lib\*" "$CyriusHome\lib\" -Force -Recurse
+Set-Content -Path (Join-Path $CyriusHome "current") -Value $Ver -NoNewline
+
+# Refuse to "succeed" with no compiler (the install pillar guard): a platform is
+# not supported if its installer yields no working toolchain.
+if (-not (Test-Path (Join-Path $CyriusHome "bin\cycc.exe"))) {
+    throw "install produced no cycc.exe - refusing (no toolchain == platform not supported)"
+}
+
+# Put <home>\bin on the User PATH (idempotent).
+if (-not $NoPath) {
+    $binPath  = Join-Path $CyriusHome "bin"
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) { $userPath = "" }
+    if (($userPath -split ';') -notcontains $binPath) {
+        $newPath = if ($userPath) { "$binPath;$userPath" } else { $binPath }
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        Write-Host "Added $binPath to your User PATH (restart the shell to pick it up)."
+    }
+}
+
+Write-Host "Cyrius $Ver installed to $CyriusHome"
+Write-Host "  cycc.exe   : $CyriusHome\bin\cycc.exe"
+Write-Host "  cyrius.exe : $CyriusHome\bin\cyrius.exe"
