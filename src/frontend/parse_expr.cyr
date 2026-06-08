@@ -34,6 +34,8 @@ fn _SC_ARITY(n): i64 {
     if (n == 63) { return 1; }   # uname(buf)
     if (n == 72) { return 3; }   # fcntl(fd, cmd, arg)
     if (n == 79) { return 2; }   # getcwd(buf, size)
+    if (n == 262) { return 4; }  # newfstatat(dirfd, path, buf, flags) — at-family stat (v6.1.3)
+    if (n == 280) { return 4; }  # utimensat(dirfd, path, times, flags) (v6.1.3)
     if (n == 80) { return 1; }   # chdir(path)
     if (n == 83) { return 2; }   # mkdir(path, mode)
     if (n == 84) { return 1; }   # rmdir(path)

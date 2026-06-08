@@ -3,6 +3,37 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-08 (v6.1.3 — POSIX *at() family + aarch64 ESYSXLAT collision fix, Phase A slot 3)
+
+Cutting **v6.1.3**, last Phase-A slot. Added the POSIX `*at()` family + bare-name peers
+(`sys_link`/`sys_lstat`/`sys_rename`) — and fixed the pre-existing aarch64 ESYSXLAT collision the
+`*at()` test surfaced.
+
+- **Stdlib (`lib/syscalls_*`)**: `sys_openat`/`mkdirat`/`fstatat`/`unlinkat`/`linkat`/`renameat`/
+  `fchmodat`/`utimensat` in linux_common (shared x86+aarch64+macOS) + bare-name peers per-arch +
+  centralized AT_*/UTIME_* constants. New `tests/tcyr/syscalls_at_family.tcyr` (18 asserts). kriya M2.
+- **aarch64 ESYSXLAT collision fix (pre-existing bug)**: the aarch64 backend translates the
+  compiler's x86 syscall numbers → aarch64 on every `svc`, hitting stdlib calls too. aarch64-native
+  `newfstatat`(79) collided with x86 `getcwd`(79→17), `utimensat`(88) with x86 `symlink`(88→36) →
+  stdlib calls mis-remapped → **-EFAULT**. **This silently broke native-aarch64 `sys_stat`/`lstat`/
+  `fstatat`/`utimensat` since v6.0.41** (never runtime-verified — found-by-ports). Fix: the aarch64
+  stdlib emits x86 numbers (262/280) for the collided ops; ESYSXLAT renumbers 262→79 / 280→88 (pure
+  renumbers, placed LAST so the produced 79/88 aren't re-captured). cbt's raw x86 getcwd/symlink keep
+  working. `parse_expr` arity += 262/280.
+
+**Bench (rule #6):** `cycc 931,960 B` (+96 B from 2 arity entries); self_compile unchanged.
+
+**Verified:** x86 self-host byte-identical; **pi (real aarch64) native self-host byte-identical**;
+check.sh 85/85; api-surface regenerated (+11 fns). **Adversarial/real-hardware**: at-family 15/18 →
+**18/18 on pi**; pre-existing `sys_stat` repro now passes; macho cycc compiles on **ecb** (exit 42).
+
+**FILED (macho-arm follow-up, pre-existing, no regression):** the at-family ops lacking Darwin
+ESYSXLAT mappings (fstatat/utimensat/linkat/renameat → 262/280/37/38) are broken on macho-arm —
+`2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md`. openat/mkdirat/unlinkat/fchmodat work.
+(`sys_stat` was already broken on macho-arm; Darwin lacks `utimensat` outright → needs design.)
+
+**Next:** **v6.1.4** — Phase B (backend prep): `_TARGET_*` decl move + `_emit_fmt`/`_entry_base` hoist.
+
 ## Session close — 2026-06-08 (v6.1.2 — aarch64 EADDRA_IMM >4095 fix, Phase A slot 2)
 
 Cutting **v6.1.2**. Latent pre-existing aarch64 silent-corruption fix (filed at .91 closeout).

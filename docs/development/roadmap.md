@@ -63,7 +63,7 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.0** ✅ | Clean cut — roadmap split (`roadmap.md`/`roadmap_6.md`) + full docs sweep + `build/` cleanup (prior-major slot `cc3 → cc5`) + benchmark-every-release gate | shipped |
 | **v6.1.1** ✅ | Back-compat symlink drop (install symlinks + `cbt/core.cyr` cc5 fallback + repl shim) | A — housekeeping |
 | **v6.1.2** ✅ | `aarch64 EADDRA_IMM` >4095 fix (low+hi adds + movz/movk guard; pi+ecb verified) | A — housekeeping |
-| **v6.1.3** | POSIX `*at()` family | A — housekeeping |
+| **v6.1.3** ✅ | POSIX `*at()` family + bare-name peers + aarch64 ESYSXLAT collision fix (repaired pre-existing native-aarch64 `sys_stat`) | A — housekeeping |
 | **v6.1.4** | Backend prep — `_TARGET_*` decl move + `_emit_fmt`/`_entry_base` hoist | B — backend prep |
 | **v6.1.5** | DCE mark-and-sweep consolidation | B — backend prep |
 | **v6.1.6** | PIE codegen x86_64 (Sub-arc A) | C — PIE |

@@ -1,0 +1,59 @@
+# v6.1.3 — POSIX *at() family + bare-name fs peers (kriya M2).
+# Round-trips the new wrappers on Linux (x86_64 + aarch64; the bare-name
+# peers route through the at-family on aarch64). Proposal:
+# docs/development/proposals/2026-05-17-syscalls-at-family-stdlib.md
+#
+# Existence is checked via sys_access (portable — no arch-dependent
+# struct stat offsets). Uses /tmp to avoid CWD pollution.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+var stbuf[160];
+
+# Clean any leftovers from a prior run (ignore errors).
+sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_a", 0);
+sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_b", 0);
+sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_c", 0);
+sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_d", AT_REMOVEDIR);
+
+# sys_openat(AT_FDCWD, ...) with O_CREAT creates the file. mode 0644 = 0x1A4.
+var fd = sys_openat(AT_FDCWD, "/tmp/cyr_at_a", 65, 420);   # O_CREAT|O_WRONLY=64|1, 0644
+assert_gte(fd, 0, "sys_openat(AT_FDCWD, O_CREAT) returns a fd");
+sys_close(fd);
+assert_eq(sys_access("/tmp/cyr_at_a", 0), 0, "file exists after sys_openat");
+
+# sys_lstat / sys_fstatat on the regular file succeed.
+assert_eq(sys_lstat("/tmp/cyr_at_a", &stbuf), 0, "sys_lstat regular file ok");
+assert_eq(sys_fstatat(AT_FDCWD, "/tmp/cyr_at_a", &stbuf, 0), 0, "sys_fstatat ok");
+
+# sys_link hard-links; both names resolve.
+assert_eq(sys_link("/tmp/cyr_at_a", "/tmp/cyr_at_b"), 0, "sys_link hard link");
+assert_eq(sys_access("/tmp/cyr_at_b", 0), 0, "hard link exists");
+
+# sys_rename moves b -> c.
+assert_eq(sys_rename("/tmp/cyr_at_b", "/tmp/cyr_at_c"), 0, "sys_rename ok");
+assert_neq(sys_access("/tmp/cyr_at_b", 0), 0, "renamed-from path gone");
+assert_eq(sys_access("/tmp/cyr_at_c", 0), 0, "renamed-to path exists");
+
+# sys_mkdirat + sys_unlinkat(AT_REMOVEDIR) create/remove a dir. 0755 = 493.
+assert_eq(sys_mkdirat(AT_FDCWD, "/tmp/cyr_at_d", 493), 0, "sys_mkdirat creates dir");
+assert_eq(sys_access("/tmp/cyr_at_d", 0), 0, "dir exists after mkdirat");
+assert_eq(sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_d", AT_REMOVEDIR), 0, "sys_unlinkat AT_REMOVEDIR rmdir");
+assert_neq(sys_access("/tmp/cyr_at_d", 0), 0, "dir gone after unlinkat AT_REMOVEDIR");
+
+# sys_utimensat with NULL times = set both to now.
+assert_eq(sys_utimensat(AT_FDCWD, "/tmp/cyr_at_a", 0, 0), 0, "sys_utimensat NULL times = now");
+
+# Cleanup: a and c are two names for the same inode (a, then hardlink->b, renamed->c).
+assert_eq(sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_a", 0), 0, "sys_unlinkat removes file");
+assert_eq(sys_unlink("/tmp/cyr_at_c"), 0, "sys_unlink removes the hard-linked name");
+assert_neq(sys_access("/tmp/cyr_at_a", 0), 0, "a gone");
+assert_neq(sys_access("/tmp/cyr_at_c", 0), 0, "c gone");
+
+var _exit_code = assert_summary();
+syscall(60, _exit_code);

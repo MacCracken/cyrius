@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.3] — 2026-06-08
+
+**v6.1.x slot 3 (Phase A): POSIX `*at()` family + bare-name fs peers — and the
+aarch64 ESYSXLAT collision fix it forced (which also repairs a silently-broken
+`sys_stat` on native aarch64 since v6.0.41).**
+
+**Benchmark:** `cycc 931,960 B` (x86; +96 B from the 2 arity-table entries).
+self_compile unchanged.
+
+### Added (stdlib)
+
+- **POSIX `*at()` family**: `sys_openat`, `sys_mkdirat`, `sys_fstatat`,
+  `sys_unlinkat`, `sys_linkat`, `sys_renameat`, `sys_fchmodat`, `sys_utimensat`
+  (in `lib/syscalls_linux_common.cyr`, shared x86_64 + aarch64 + macOS), plus
+  **bare-name peers** `sys_link` / `sys_lstat` / `sys_rename` (per-arch:
+  x86_64/macOS use the bare syscalls, aarch64 routes through the at-family).
+  Constants `AT_FDCWD` / `AT_EMPTY_PATH` / `AT_REMOVEDIR` / `AT_SYMLINK_NOFOLLOW`
+  / `AT_SYMLINK_FOLLOW` / `AT_NO_AUTOMOUNT` / `UTIME_NOW` / `UTIME_OMIT`
+  centralized in `syscalls_linux_common.cyr` (were aarch64-peer-only). kriya M2
+  surfaced the gap; proposal `2026-05-17-syscalls-at-family-stdlib.md` (archived).
+  New test `tests/tcyr/syscalls_at_family.tcyr` (round-trip, 18 asserts).
+
+### Fixed (aarch64 codegen — pre-existing)
+
+- **aarch64 ESYSXLAT syscall-number collision** — the aarch64-Linux backend
+  translates the compiler's x86 syscall numbers → aarch64 before every `svc`,
+  and ran that translation on stdlib calls too. The aarch64-native `newfstatat`
+  (79) collided with ESYSXLAT's x86 `getcwd` (79→17) entry, and `utimensat`
+  (88) with x86 `symlink` (88→36) — so a stdlib `syscall(79/88,…)` was wrongly
+  remapped (newfstatat→getcwd with the buffer in the wrong arg → **-EFAULT**).
+  This **silently broke `sys_stat`/`sys_lstat`/`sys_fstatat`/`sys_utimensat` on
+  native aarch64 since v6.0.41** (never caught — native-aarch64 `sys_stat` was
+  never runtime-verified; classic "found by ports", surfaced here by the `*at()`
+  test). Fix: the aarch64 stdlib emits the **x86 numbers** for these collided
+  ops (`newfstatat`=262, `utimensat`=280) and ESYSXLAT renumbers 262→79 / 280→88
+  as pure renumbers (identical arg layouts), placed AFTER the getcwd/symlink
+  entries so the produced 79/88 aren't re-captured. cbt's raw x86
+  `getcwd(79)`/`symlink(88)` keep working; no collision. `parse_expr.cyr` arity
+  table learns 262/280 (4 args).
+
+### Verified
+
+- x86 cycc self-host byte-identical; **pi (real aarch64 Linux) native self-host
+  byte-identical**; check.sh 85/85. **Adversarial / real-hardware**: the at-family
+  test went 15/18 → **18/18 on pi** with the fix, and the pre-existing `sys_stat`
+  repro flipped to passing. macho cycc still compiles on **ecb** (real arm64
+  macOS, exit 42). api-surface snapshot regenerated (+11 public fns).
+- **Filed (macho-arm follow-up, pre-existing, no regression):** the at-family
+  ops that lack Darwin ESYSXLAT mappings (`fstatat`/`utimensat`/`linkat`/
+  `renameat` → 262/280/37/38) are broken on macho-arm — its own slot
+  (`2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md`); `sys_stat` was
+  already broken there. `openat`/`mkdirat`/`unlinkat`/`fchmodat` work on macho.
+
 ## [6.1.2] — 2026-06-08
 
 **v6.1.x slot 2 (Phase A — housekeeping): aarch64 `EADDRA_IMM` 12-bit-mask
