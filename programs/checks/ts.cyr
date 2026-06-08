@@ -162,6 +162,44 @@ fn _ts_lex_gate(): i64 {
     return 0;
 }
 
+# v6.1.10: the TS parser used to build a CORRUPT AST for nested lists
+# (call args, block stmts, object props, JSX attrs/children, ...) because
+# children-list RESERVE didn't advance the pool cursor, so sibling lists
+# overlapped. `cycc --emit-js` walks the AST through its value edges and
+# exits non-zero if any node is reached twice (overlap) or a list entry is
+# out of range — i.e. if a builder ever regresses to the old pattern. The
+# fixture exercises every list builder the bug touched.
+fn _ts_walk_gate(): i64 {
+    var label = "cycc --emit-js walks the AST without overlap (v6.1.10 children-list allocator fix)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var fix = _root_path("tests/fixtures/ts_emit/walk_nested.tsx");
+    var rc = _ts_mode_run(fix, "--emit-js");
+    if (rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cycc --emit-js AST walk exit ");
+        print_num(rc);
+        println(" (overlapping/corrupt children list — allocator regression)");
+        _check(label, 1);
+        return 1;
+    }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    println(": nested call-args/block/object/array/JSX/template/switch/destructure lists all contiguous");
+    _check(label, 0);
+    return 0;
+}
+
 fn _ts_corpus_gate(label, ext, threshold): i64 {
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");

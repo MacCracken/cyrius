@@ -6,6 +6,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.10] — 2026-06-08
+
+**v6.1.x slot 10 (Phase D prereq): fix the TS/TSX parser's children-list
+allocator — it was silently building a corrupt AST for every nested list.**
+The Phase D premise ("the parser exists; emit is codegen on top") didn't
+survive slot entry: the TS parser *validates* real TS/TSX but produced a
+**non-walkable AST**, so the planned `--emit-js` had nothing sound to walk.
+Per user direction Phase D became a mini-arc — this slot fixes the allocator
+(+ adds a walk-verification gate); the JS emitter lands in v6.1.11.
+
+**Benchmark:** `self_compile 515 ms` (+61 ms vs 454 — growth-tax: a new
+`backend/js` module + the parser restructure; the 64 KB scratch is pure data,
+verified not to affect compile time), `cycc 1,012,184 B` (+78,640 B: a 64 KB
+parse-time scratch stack — relocatable to the TS heap in v6.1.11 — plus the
+~15 KB walk tool; the TS frontend is x86-Linux-only, so only x86 cycc grows).
+check.sh 87/87 (+1: the walk gate).
+
+### Fixed
+
+- **TS children-list allocator built a corrupt AST for nested lists.**
+  `TS_AST_CHILDREN_RESERVE` (`src/frontend/ts/parse.cyr`) returned the pool
+  cursor **without advancing it**, and builders reserved their list *before*
+  parsing its elements — so each element's own sub-lists were allocated at the
+  same offset and stomped the parent (and vice versa). Verified empirically:
+  `function f(x){ return g(x,1); }` had the call's args list and the block's
+  stmt list both land at children-offset 3, the block clobbering `g`'s
+  arguments. `--parse-ts` never noticed because **nothing read the lists
+  back** — parse success only checks for parse *errors*, not list integrity.
+  Fix: a deferred-construction model (`TS_CST_PUSH`/`TS_CST_FLUSH` +
+  `TS_AST_CHILDREN_WRITE`) — builders push each fully-parsed element's index
+  onto a scratch stack, then flush one **contiguous, non-overlapping** block
+  once every element subtree is allocated. Converted all value-walked builders
+  (ROOT, block, call args, array, object, arrow/fn params, var bindings,
+  destructuring patterns, switch cases + bodies, class members, JSX
+  attrs/children, template quasi/expr, import/export specifiers). Type-only
+  builders (kept on the old path) can't corrupt value lists — they only ever
+  allocate at/above the cursor that the fixed value builders advance.
+- **`<T,>` trailing-comma generic params rejected.** `TS_PARSE_TYPE_PARAMS`
+  demanded another param after a comma, so the TSX disambiguation form
+  `const f = async <T,>(x) => …` (used by the consumer's real `web/app.tsx`)
+  failed to parse. Now a trailing comma before `>` closes the list. The v6.0.3
+  issue's "parses clean" claim was stale; re-verified failing at v6.1.9.
+
+### Added
+
+- **`cycc --emit-js <file.tsx>` — AST walk + verification tool.** Walks the
+  parsed AST through its value edges and prints a stable, kind-based
+  S-expression (`(root (function (param) (block (return (call ident ident
+  int)))))`). It exits non-zero if any node is reached twice (overlapping
+  lists) or a list entry is out of range — i.e. if a builder ever regresses to
+  the old pattern. Proven to catch a deliberately re-broken allocator (clean
+  non-zero exit, no run-away). `CYRIUS_TS_DUMP=1` gives the raw node-table +
+  children-region dump. This is the walk-verification half of the slot; the
+  real JS emitter (which reuses this per-kind traversal) lands in v6.1.11.
+- **check.sh `_ts_walk_gate` (gate 87).** Runs `--emit-js` on
+  `tests/fixtures/ts_emit/walk_nested.tsx`, which exercises every list builder
+  the bug touched; asserts the walk completes without overlap.
+
+### Verified
+
+- x86 self-host **byte-identical**; check.sh **87/87**; all **169 `.tcyr`**
+  exit-code clean; the SY `.ts`/`.tsx` parse corpus + the consumer `app.tsx`
+  all `--parse-ts` clean (the full `app.tsx` now parses + walks correctly).
+- **Cross-OS on real hardware**: cass (Windows PE), pi (aarch64 native), ecb
+  (arm64 macOS) all self-host byte-identical. (The TS frontend is x86-Linux
+  only — those targets don't compile the changed files — but verified per the
+  "never skip cross-OS on a 'doesn't affect' judgment" rule.)
+
 ## [6.1.9] — 2026-06-08
 
 **v6.1.x slot 9 (Phase C — dynamic-link cleanup, Sub-arc C): migrate ELF `.so`

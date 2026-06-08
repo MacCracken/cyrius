@@ -308,6 +308,89 @@ fn TS_AST_CHILDREN_COMMIT(ts_base, count): i64 {
 }
 
 # ================================================================
+# Deferred children-list construction (v6.1.10)
+# ================================================================
+# The pre-v6.1.10 RESERVE-then-fill pattern silently CORRUPTED nested
+# lists: `TS_AST_CHILDREN_RESERVE` returns `used` WITHOUT advancing it,
+# so when a list's elements were parsed, each element's own sub-lists
+# were allocated at the SAME `used` offset and stomped the parent's
+# region (and vice versa). `--parse-ts` never noticed because nothing
+# read the lists back; the TS→JS emitter (the first AST consumer)
+# would have walked garbage. See CHANGELOG [6.1.10].
+#
+# The fix: builders PUSH each fully-parsed element's node index onto
+# this scratch stack (a child is pushed only AFTER its whole subtree is
+# parsed, so a builder's run is contiguous on the stack), then FLUSH
+# the run into a freshly-allocated, contiguous children block — by which
+# point every element's subtree is already allocated, so the block can't
+# overlap anything. Builders nest safely: each saves TS_CST_TOP() on
+# entry and flushes back to it.
+var _ts_cst[8192];            # node-index scratch stack (8192 i64 slots)
+var _ts_cst_top = 0;
+var _ts_cst_overflow = 0;
+
+fn TS_CST_TOP(): i64 { return _ts_cst_top; }
+
+# Push a fully-parsed element index. Overflow is recorded (not fatal
+# here) and surfaced by TS_CST_FLUSH so callers keep their single
+# `off < 0` error check.
+fn TS_CST_PUSH(idx): i64 {
+    if (_ts_cst_top >= 8192) { _ts_cst_overflow = 1; return 0; }
+    store64(&_ts_cst + _ts_cst_top * 8, idx);
+    _ts_cst_top = _ts_cst_top + 1;
+    return 0;
+}
+
+# Flush stack[base.._ts_cst_top) into a contiguous children block plus a
+# -1 terminator, pop the run back to `base`, and return the block's
+# children-offset (>= 1; offset 0 is the parser's reserved sentinel).
+# Returns -1 on stack-overflow or children-pool exhaustion.
+fn TS_CST_FLUSH(ts_base, base): i64 {
+    if (_ts_cst_overflow == 1) {
+        store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 2);
+        return 0 - 1;
+    }
+    var n = _ts_cst_top - base;
+    var used = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED);
+    if (used + n + 1 > TS_AST_CHILDREN_CAP) {
+        store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 2);
+        return 0 - 1;
+    }
+    var i = 0;
+    while (i < n) {
+        store64(ts_base + TS_AST_CHILDREN_OFF + (used + i) * 8,
+                load64(&_ts_cst + (base + i) * 8));
+        i = i + 1;
+    }
+    store64(ts_base + TS_AST_CHILDREN_OFF + (used + n) * 8, 0 - 1);
+    store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED, used + n + 1);
+    _ts_cst_top = base;
+    return used;
+}
+
+# Write `n` node indices from a caller-supplied i64 array `arr` into a
+# fresh contiguous children block (+ -1 terminator); return its offset
+# (>= 1) or -1 on pool exhaustion. For builders that assemble two
+# interleaved lists at once (the template quasi/expr pair) where a single
+# push/flush run doesn't fit — collect into locals, then write each here
+# AFTER all element subtrees are allocated.
+fn TS_AST_CHILDREN_WRITE(ts_base, arr, n): i64 {
+    var used = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED);
+    if (used + n + 1 > TS_AST_CHILDREN_CAP) {
+        store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 2);
+        return 0 - 1;
+    }
+    var i = 0;
+    while (i < n) {
+        store64(ts_base + TS_AST_CHILDREN_OFF + (used + i) * 8, load64(arr + i * 8));
+        i = i + 1;
+    }
+    store64(ts_base + TS_AST_CHILDREN_OFF + (used + n) * 8, 0 - 1);
+    store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED, used + n + 1);
+    return used;
+}
+
+# ================================================================
 # Token-stream helpers (parser walks tokens emitted by TS_LEX)
 # ================================================================
 
@@ -378,6 +461,8 @@ fn TS_PARSE_INIT(ts_base): i64 {
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 0);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX, 0);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ROOT_NODE, 0);
+    _ts_cst_top = 0;
+    _ts_cst_overflow = 0;
     return 0;
 }
 
@@ -475,9 +560,9 @@ fn TS_BINARY_PREC(op): i64 {
 # (i64-index, not bytes). Caller sets that as a payload of the call/new node.
 # Returns -1 on error.
 fn TS_PARSE_ARGS(ts_base): i64 {
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);  # initial guess; can grow
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    # v6.1.10: collect args on the scratch stack, then flush one contiguous
+    # children block once every arg subtree is allocated (see TS_CST_*).
+    var base = TS_CST_TOP();
     if (TS_PARSE_PEEK(ts_base) != TS_TOK_RPAREN) {
         var done = 0;
         while (done == 0) {
@@ -489,13 +574,12 @@ fn TS_PARSE_ARGS(ts_base): i64 {
                 var sp = TS_AST_PUSH(ts_base, TS_AST_EXPR_SPREAD, 0);
                 if (sp < 0) { return 0 - 1; }
                 TS_AST_SET_PAYLOAD(ts_base, sp, 0, inner);
-                TS_AST_CHILDREN_SET(ts_base, off + i, sp);
+                TS_CST_PUSH(sp);
             } else {
                 var e = TS_PARSE_EXPR(ts_base);
                 if (e < 0) { return 0 - 1; }
-                TS_AST_CHILDREN_SET(ts_base, off + i, e);
+                TS_CST_PUSH(e);
             }
-            i = i + 1;
             if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) {
                 done = 1;
             } else {
@@ -510,10 +594,8 @@ fn TS_PARSE_ARGS(ts_base): i64 {
             }
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);   # sentinel
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RPAREN) < 0) { return 0 - 1; }
-    return off;
+    return TS_CST_FLUSH(ts_base, base);
 }
 
 # Parse array literal: [e1, e2, ...e3]. Caller has consumed [.
@@ -522,9 +604,7 @@ fn TS_PARSE_ARRAY_LITERAL(ts_base): i64 {
     var span = TS_PARSE_TOK_VAL(ts_base);
     var node = TS_AST_PUSH(ts_base, TS_AST_EXPR_ARRAY, span);
     if (node < 0) { return 0 - 1; }
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     if (TS_PARSE_PEEK(ts_base) != TS_TOK_RBRACKET) {
         var done = 0;
         while (done == 0) {
@@ -535,13 +615,12 @@ fn TS_PARSE_ARRAY_LITERAL(ts_base): i64 {
                 var sp = TS_AST_PUSH(ts_base, TS_AST_EXPR_SPREAD, 0);
                 if (sp < 0) { return 0 - 1; }
                 TS_AST_SET_PAYLOAD(ts_base, sp, 0, inner);
-                TS_AST_CHILDREN_SET(ts_base, off + i, sp);
+                TS_CST_PUSH(sp);
             } else {
                 var e = TS_PARSE_EXPR(ts_base);
                 if (e < 0) { return 0 - 1; }
-                TS_AST_CHILDREN_SET(ts_base, off + i, e);
+                TS_CST_PUSH(e);
             }
-            i = i + 1;
             if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) {
                 done = 1;
             } else {
@@ -558,9 +637,9 @@ fn TS_PARSE_ARRAY_LITERAL(ts_base): i64 {
             }
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACKET) < 0) { return 0 - 1; }
+    var off = TS_CST_FLUSH(ts_base, base);
+    if (off < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, node, 0, off);
     return node;
 }
@@ -571,9 +650,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
     var span = TS_PARSE_TOK_VAL(ts_base);
     var node = TS_AST_PUSH(ts_base, TS_AST_EXPR_OBJECT, span);
     if (node < 0) { return 0 - 1; }
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     if (TS_PARSE_PEEK(ts_base) != TS_TOK_RBRACE) {
         var done = 0;
         while (done == 0) {
@@ -609,7 +686,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                 var sp = TS_AST_PUSH(ts_base, TS_AST_EXPR_SPREAD, 0);
                 if (sp < 0) { return 0 - 1; }
                 TS_AST_SET_PAYLOAD(ts_base, sp, 0, inner);
-                TS_AST_CHILDREN_SET(ts_base, off + i, sp);
+                TS_CST_PUSH(sp);
             } elif (t == TS_TOK_LBRACKET) {
                 # Computed property name: { [expr]: value }
                 TS_PARSE_CONSUME(ts_base);
@@ -623,7 +700,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                 if (cpa < 0) { return 0 - 1; }
                 TS_AST_SET_PAYLOAD(ts_base, cpa, 0, ckey);
                 TS_AST_SET_PAYLOAD(ts_base, cpa, 1, cval);
-                TS_AST_CHILDREN_SET(ts_base, off + i, cpa);
+                TS_CST_PUSH(cpa);
             } else {
                 # Property: key [: value]
                 var key_span = TS_PARSE_TOK_VAL(ts_base);
@@ -653,7 +730,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                     if (pa < 0) { return 0 - 1; }
                     TS_AST_SET_PAYLOAD(ts_base, pa, 0, key_span);
                     TS_AST_SET_PAYLOAD(ts_base, pa, 1, v);
-                    TS_AST_CHILDREN_SET(ts_base, off + i, pa);
+                    TS_CST_PUSH(pa);
                 } elif (pkk == TS_TOK_LPAREN || pkk == TS_TOK_LT) {
                     # Object method shorthand: { name(args) { body } }
                     # or { name<T>(args): R { body } }
@@ -677,16 +754,15 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                     TS_AST_SET_PAYLOAD(ts_base, mn_o, 1, mp_o);
                     TS_AST_SET_PAYLOAD(ts_base, mn_o, 2, mr_o);
                     TS_AST_SET_PAYLOAD(ts_base, mn_o, 3, mb_o);
-                    TS_AST_CHILDREN_SET(ts_base, off + i, mn_o);
+                    TS_CST_PUSH(mn_o);
                 } else {
                     # Shorthand: { x } sugar for { x: x }
                     var sh = TS_AST_PUSH(ts_base, TS_AST_SHORTHAND_PROP, key_span);
                     if (sh < 0) { return 0 - 1; }
                     TS_AST_SET_PAYLOAD(ts_base, sh, 0, key_span);
-                    TS_AST_CHILDREN_SET(ts_base, off + i, sh);
+                    TS_CST_PUSH(sh);
                 }
             }
-            i = i + 1;
             if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) {
                 done = 1;
             } else {
@@ -703,9 +779,9 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
             }
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACE) < 0) { return 0 - 1; }
+    var off = TS_CST_FLUSH(ts_base, base);
+    if (off < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, node, 0, off);
     return node;
 }
@@ -721,45 +797,52 @@ fn TS_PARSE_TEMPLATE(ts_base): i64 {
 
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_TEMPLATE_NOSUB) {
         # Single chunk; just attach the quasi span.
-        var q_off = TS_AST_CHILDREN_RESERVE(ts_base, 2);
-        if (q_off < 0) { return 0 - 1; }
         var q = TS_AST_PUSH(ts_base, TS_AST_TEMPLATE_QUASI, span);
-        TS_AST_CHILDREN_SET(ts_base, q_off, q);
-        TS_AST_CHILDREN_SET(ts_base, q_off + 1, 0 - 1);
-        TS_AST_CHILDREN_COMMIT(ts_base, 2);
-        TS_AST_SET_PAYLOAD(ts_base, node, 0, q_off);
+        if (q < 0) { return 0 - 1; }
+        var qa1[16];
+        store64(&qa1, q);
+        var q_off1 = TS_AST_CHILDREN_WRITE(ts_base, &qa1, 1);
+        if (q_off1 < 0) { return 0 - 1; }
+        TS_AST_SET_PAYLOAD(ts_base, node, 0, q_off1);
         TS_PARSE_CONSUME(ts_base);
         return node;
     }
 
-    # Interpolated path: HEAD expr (MID expr)* TAIL
-    var q_off = TS_AST_CHILDREN_RESERVE(ts_base, 32);
-    if (q_off < 0) { return 0 - 1; }
-    var e_off = TS_AST_CHILDREN_RESERVE(ts_base, 32);
-    if (e_off < 0) { return 0 - 1; }
-    var qi = 0;
-    var ei = 0;
+    # Interpolated path: HEAD expr (MID expr)* TAIL. v6.1.10: the quasi
+    # and expr lists interleave during parsing, so collect each into a
+    # local array and write them as two separate contiguous blocks AFTER
+    # every expr subtree is allocated (see TS_AST_CHILDREN_WRITE).
+    var quasis[1024];
+    var exprs[1024];
+    var qn = 0;
+    var en = 0;
 
     # HEAD
     var head_span = TS_PARSE_TOK_VAL(ts_base);
     var head_q = TS_AST_PUSH(ts_base, TS_AST_TEMPLATE_QUASI, head_span);
-    TS_AST_CHILDREN_SET(ts_base, q_off + qi, head_q);
-    qi = qi + 1;
+    if (head_q < 0) { return 0 - 1; }
+    store64(&quasis + qn * 8, head_q);
+    qn = qn + 1;
     TS_PARSE_CONSUME(ts_base);
 
     var done = 0;
     while (done == 0) {
+        if (qn >= 120 || en >= 120) {
+            store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 5);
+            return 0 - 1;
+        }
         # Expression inside ${}
         var e = TS_PARSE_EXPR(ts_base);
         if (e < 0) { return 0 - 1; }
-        TS_AST_CHILDREN_SET(ts_base, e_off + ei, e);
-        ei = ei + 1;
+        store64(&exprs + en * 8, e);
+        en = en + 1;
         # Followed by MID (more interps) or TAIL (end)
         var t = TS_PARSE_PEEK(ts_base);
         var part_span = TS_PARSE_TOK_VAL(ts_base);
         var part_q = TS_AST_PUSH(ts_base, TS_AST_TEMPLATE_QUASI, part_span);
-        TS_AST_CHILDREN_SET(ts_base, q_off + qi, part_q);
-        qi = qi + 1;
+        if (part_q < 0) { return 0 - 1; }
+        store64(&quasis + qn * 8, part_q);
+        qn = qn + 1;
         TS_PARSE_CONSUME(ts_base);
         if (t == TS_TOK_TEMPLATE_TAIL) { done = 1; }
         elif (t != TS_TOK_TEMPLATE_MID) {
@@ -767,9 +850,10 @@ fn TS_PARSE_TEMPLATE(ts_base): i64 {
             return 0 - 1;
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, q_off + qi, 0 - 1);
-    TS_AST_CHILDREN_SET(ts_base, e_off + ei, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, qi + 1 + ei + 1);
+    var q_off = TS_AST_CHILDREN_WRITE(ts_base, &quasis, qn);
+    if (q_off < 0) { return 0 - 1; }
+    var e_off = TS_AST_CHILDREN_WRITE(ts_base, &exprs, en);
+    if (e_off < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, node, 0, q_off);
     TS_AST_SET_PAYLOAD(ts_base, node, 1, e_off);
     return node;
@@ -823,9 +907,7 @@ fn TS_PARSE_JSX_CHILD(ts_base): i64 {
 # Parse children until JSX_CLOSE_START or JSX_FRAGMENT_CLOSE.
 # Returns children-region offset where list starts (sentinel-terminated).
 fn TS_PARSE_JSX_CHILDREN(ts_base): i64 {
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     var done = 0;
     while (done == 0) {
         var t = TS_PARSE_PEEK(ts_base);
@@ -839,21 +921,16 @@ fn TS_PARSE_JSX_CHILDREN(ts_base): i64 {
         } else {
             var c = TS_PARSE_JSX_CHILD(ts_base);
             if (c < 0) { return 0 - 1; }
-            TS_AST_CHILDREN_SET(ts_base, off + i, c);
-            i = i + 1;
+            TS_CST_PUSH(c);
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
-    return off;
+    return TS_CST_FLUSH(ts_base, base);
 }
 
 # Parse attributes between JSX_TAG_NAME and JSX_OPEN_END/JSX_SELF_CLOSE.
 # Accepts JSX_ATTR_NAME (with optional =value) and JSX_EXPR_OPEN (spread).
 fn TS_PARSE_JSX_ATTRS(ts_base): i64 {
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 8);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     var done = 0;
     while (done == 0) {
         var t = TS_PARSE_PEEK(ts_base);
@@ -885,8 +962,7 @@ fn TS_PARSE_JSX_ATTRS(ts_base): i64 {
             } else {
                 TS_AST_SET_PAYLOAD(ts_base, attr, 1, 0);
             }
-            TS_AST_CHILDREN_SET(ts_base, off + i, attr);
-            i = i + 1;
+            TS_CST_PUSH(attr);
         } elif (t == TS_TOK_JSX_EXPR_OPEN) {
             TS_PARSE_CONSUME(ts_base);
             var sp = TS_AST_PUSH(ts_base, TS_AST_JSX_SPREAD_ATTR, 0);
@@ -902,8 +978,7 @@ fn TS_PARSE_JSX_ATTRS(ts_base): i64 {
                 TS_AST_SET_PAYLOAD(ts_base, sp, 0, sp_expr);
             }
             if (TS_PARSE_EXPECT(ts_base, TS_TOK_JSX_EXPR_CLOSE) < 0) { return 0 - 1; }
-            TS_AST_CHILDREN_SET(ts_base, off + i, sp);
-            i = i + 1;
+            TS_CST_PUSH(sp);
         } else {
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 13);
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
@@ -911,9 +986,7 @@ fn TS_PARSE_JSX_ATTRS(ts_base): i64 {
             return 0 - 1;
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
-    return off;
+    return TS_CST_FLUSH(ts_base, base);
 }
 
 # Parse one JSX element or fragment. Caller has not consumed the
@@ -1676,9 +1749,7 @@ fn TS_PARSE_DECORATOR_LIST(ts_base): i64 {
 }
 
 fn TS_PARSE_ARROW_PARAMS(ts_base): i64 {
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     if (TS_PARSE_PEEK(ts_base) != TS_TOK_RPAREN) {
         var done = 0;
         while (done == 0) {
@@ -1744,8 +1815,7 @@ fn TS_PARSE_ARROW_PARAMS(ts_base): i64 {
                 if (defv < 0) { return 0 - 1; }
                 TS_AST_SET_PAYLOAD(ts_base, p, 2, defv);
             }
-            TS_AST_CHILDREN_SET(ts_base, off + i, p);
-            i = i + 1;
+            TS_CST_PUSH(p);
             if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) {
                 done = 1;
             } else {
@@ -1759,10 +1829,8 @@ fn TS_PARSE_ARROW_PARAMS(ts_base): i64 {
             }
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RPAREN) < 0) { return 0 - 1; }
-    return off;
+    return TS_CST_FLUSH(ts_base, base);
 }
 
 # ================================================================
@@ -2596,9 +2664,7 @@ fn TS_PARSE_BLOCK(ts_base): i64 {
     var span = 0;
     var node = TS_AST_PUSH(ts_base, TS_AST_STMT_BLOCK, span);
     if (node < 0) { return 0 - 1; }
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 32);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     var go = 1;
     while (go == 1) {
         var t = TS_PARSE_PEEK(ts_base);
@@ -2606,13 +2672,12 @@ fn TS_PARSE_BLOCK(ts_base): i64 {
         else {
             var s = TS_PARSE_STMT(ts_base);
             if (s < 0) { return 0 - 1; }
-            TS_AST_CHILDREN_SET(ts_base, off + i, s);
-            i = i + 1;
+            TS_CST_PUSH(s);
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACE) < 0) { return 0 - 1; }
+    var off = TS_CST_FLUSH(ts_base, base);
+    if (off < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, node, 0, off);
     return node;
 }
@@ -2633,9 +2698,7 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
         TS_PARSE_CONSUME(ts_base);
         var n = TS_AST_PUSH(ts_base, TS_AST_PATTERN_OBJECT, 0);
         if (n < 0) { return 0 - 1; }
-        var off = TS_AST_CHILDREN_RESERVE(ts_base, 16);
-        if (off < 0) { return 0 - 1; }
-        var i = 0;
+        var base = TS_CST_TOP();
         if (TS_PARSE_PEEK(ts_base) != TS_TOK_RBRACE) {
             var done = 0;
             while (done == 0) {
@@ -2647,7 +2710,7 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                     var rest = TS_AST_PUSH(ts_base, TS_AST_PATTERN_REST, rname);
                     if (rest < 0) { return 0 - 1; }
                     TS_AST_SET_PAYLOAD(ts_base, rest, 0, rname);
-                    TS_AST_CHILDREN_SET(ts_base, off + i, rest);
+                    TS_CST_PUSH(rest);
                 } elif (pt == TS_TOK_LBRACKET) {
                     # Computed property name: { [expr]: target }. The
                     # binding target after the COLON is required (no
@@ -2666,7 +2729,7 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                         if (ck_def < 0) { return 0 - 1; }
                         TS_AST_SET_PAYLOAD(ts_base, ck_pat, 2, ck_def);
                     }
-                    TS_AST_CHILDREN_SET(ts_base, off + i, ck_pat);
+                    TS_CST_PUSH(ck_pat);
                 } elif (pt == TS_TOK_STRING || pt == TS_TOK_INT) {
                     # String/numeric-keyed property in destructure:
                     # `{ "literal": x }` / `{ 1: x }`. Binding target
@@ -2681,7 +2744,7 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                         if (sk_def < 0) { return 0 - 1; }
                         TS_AST_SET_PAYLOAD(ts_base, sk_pat, 2, sk_def);
                     }
-                    TS_AST_CHILDREN_SET(ts_base, off + i, sk_pat);
+                    TS_CST_PUSH(sk_pat);
                 } else {
                     var name_v = TS_PARSE_TOK_VAL(ts_base);
                     var nt = TS_PARSE_PEEK(ts_base);
@@ -2707,9 +2770,8 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                         if (dv < 0) { return 0 - 1; }
                         TS_AST_SET_PAYLOAD(ts_base, pn, 2, dv);
                     }
-                    TS_AST_CHILDREN_SET(ts_base, off + i, pn);
+                    TS_CST_PUSH(pn);
                 }
-                i = i + 1;
                 if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) {
                     done = 1;
                 } else {
@@ -2726,9 +2788,9 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                 }
             }
         }
-        TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-        TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
         if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACE) < 0) { return 0 - 1; }
+        var off = TS_CST_FLUSH(ts_base, base);
+        if (off < 0) { return 0 - 1; }
         TS_AST_SET_PAYLOAD(ts_base, n, 0, off);
         return n;
     }
@@ -2736,18 +2798,18 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
         TS_PARSE_CONSUME(ts_base);
         var n2 = TS_AST_PUSH(ts_base, TS_AST_PATTERN_ARRAY, 0);
         if (n2 < 0) { return 0 - 1; }
-        var off2 = TS_AST_CHILDREN_RESERVE(ts_base, 16);
-        if (off2 < 0) { return 0 - 1; }
-        var i2 = 0;
+        var base2 = TS_CST_TOP();
         if (TS_PARSE_PEEK(ts_base) != TS_TOK_RBRACKET) {
             var done2 = 0;
             while (done2 == 0) {
                 var pt2 = TS_PARSE_PEEK(ts_base);
                 if (pt2 == TS_TOK_COMMA) {
-                    # Hole: `[, x]` — leave slot empty, just consume the
-                    # comma and continue.
+                    # Hole: `[, x]` — push a NONE placeholder so the slot
+                    # is preserved (emitter renders it as an empty element).
                     TS_PARSE_CONSUME(ts_base);
-                    i2 = i2 + 1;
+                    var hole = TS_AST_PUSH(ts_base, TS_AST_NONE, 0);
+                    if (hole < 0) { return 0 - 1; }
+                    TS_CST_PUSH(hole);
                 } elif (pt2 == TS_TOK_RBRACKET) {
                     done2 = 1;
                 } elif (pt2 == TS_TOK_ELLIPSIS) {
@@ -2757,8 +2819,7 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                     var rest2 = TS_AST_PUSH(ts_base, TS_AST_PATTERN_REST, rname2);
                     if (rest2 < 0) { return 0 - 1; }
                     TS_AST_SET_PAYLOAD(ts_base, rest2, 0, rname2);
-                    TS_AST_CHILDREN_SET(ts_base, off2 + i2, rest2);
-                    i2 = i2 + 1;
+                    TS_CST_PUSH(rest2);
                     if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) { done2 = 1; }
                 } else {
                     # Allow nested patterns
@@ -2774,15 +2835,14 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                         if (apdv < 0) { return 0 - 1; }
                         TS_AST_SET_PAYLOAD(ts_base, inner, 2, apdv);
                     }
-                    TS_AST_CHILDREN_SET(ts_base, off2 + i2, inner);
-                    i2 = i2 + 1;
+                    TS_CST_PUSH(inner);
                     if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) { done2 = 1; }
                 }
             }
         }
-        TS_AST_CHILDREN_SET(ts_base, off2 + i2, 0 - 1);
-        TS_AST_CHILDREN_COMMIT(ts_base, i2 + 1);
         if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACKET) < 0) { return 0 - 1; }
+        var off2 = TS_CST_FLUSH(ts_base, base2);
+        if (off2 < 0) { return 0 - 1; }
         TS_AST_SET_PAYLOAD(ts_base, n2, 0, off2);
         return n2;
     }
@@ -2838,15 +2898,12 @@ fn TS_PARSE_VAR_DECL(ts_base): i64 {
     var node = TS_AST_PUSH(ts_base, TS_AST_STMT_VAR_DECL, 0);
     if (node < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, node, 0, kind_tok);
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 8);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     var done = 0;
     while (done == 0) {
         var b = TS_PARSE_VAR_BINDING(ts_base);
         if (b < 0) { return 0 - 1; }
-        TS_AST_CHILDREN_SET(ts_base, off + i, b);
-        i = i + 1;
+        TS_CST_PUSH(b);
         if (TS_PARSE_MATCH(ts_base, TS_TOK_COMMA) == 0) {
             done = 1;
         } else {
@@ -2862,8 +2919,8 @@ fn TS_PARSE_VAR_DECL(ts_base): i64 {
             }
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
+    var off = TS_CST_FLUSH(ts_base, base);
+    if (off < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, node, 1, off);
     TS_PARSE_OPT_SEMI(ts_base);
     return node;
@@ -3121,9 +3178,7 @@ fn TS_PARSE_SWITCH(ts_base): i64 {
     var n = TS_AST_PUSH(ts_base, TS_AST_STMT_SWITCH, 0);
     if (n < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, n, 0, disc);
-    var coff = TS_AST_CHILDREN_RESERVE(ts_base, 32);
-    if (coff < 0) { return 0 - 1; }
-    var ci = 0;
+    var base_c = TS_CST_TOP();
     var go = 1;
     while (go == 1) {
         var t = TS_PARSE_PEEK(ts_base);
@@ -3142,9 +3197,7 @@ fn TS_PARSE_SWITCH(ts_base): i64 {
             }
             if (TS_PARSE_EXPECT(ts_base, TS_TOK_COLON) < 0) { return 0 - 1; }
             # Body: stmts until next case/default/}
-            var soff = TS_AST_CHILDREN_RESERVE(ts_base, 16);
-            if (soff < 0) { return 0 - 1; }
-            var si = 0;
+            var base_s = TS_CST_TOP();
             var sgo = 1;
             while (sgo == 1) {
                 var st = TS_PARSE_PEEK(ts_base);
@@ -3154,22 +3207,20 @@ fn TS_PARSE_SWITCH(ts_base): i64 {
                 } else {
                     var s = TS_PARSE_STMT(ts_base);
                     if (s < 0) { return 0 - 1; }
-                    TS_AST_CHILDREN_SET(ts_base, soff + si, s);
-                    si = si + 1;
+                    TS_CST_PUSH(s);
                 }
             }
-            TS_AST_CHILDREN_SET(ts_base, soff + si, 0 - 1);
-            TS_AST_CHILDREN_COMMIT(ts_base, si + 1);
+            var soff = TS_CST_FLUSH(ts_base, base_s);
+            if (soff < 0) { return 0 - 1; }
             TS_AST_SET_PAYLOAD(ts_base, case_node, 1, soff);
-            TS_AST_CHILDREN_SET(ts_base, coff + ci, case_node);
-            ci = ci + 1;
+            TS_CST_PUSH(case_node);
         } else {
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 7);
             return 0 - 1;
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, coff + ci, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, ci + 1);
+    var coff = TS_CST_FLUSH(ts_base, base_c);
+    if (coff < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, n, 1, coff);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACE) < 0) { return 0 - 1; }
     return n;
@@ -3202,37 +3253,54 @@ fn TS_PARSE_TYPE_PARAMS(ts_base): i64 {
         || pt == TS_TOK_GT_GT_GT_EQ) {
             done = 1;
         } else {
+            var trailing_comma = 0;
             if (n > 0) {
                 if (TS_PARSE_EXPECT(ts_base, TS_TOK_COMMA) < 0) { return 0 - 1; }
+                # v6.1.10: allow a trailing comma before the closing `>` —
+                # the TSX disambiguation form `<T,>` on generic arrows
+                # (`const f = <T,>(x) => x`) and any `<A, B,>`. After the
+                # comma, if the next token closes the list, stop instead of
+                # demanding another param. Without this the consumer's real
+                # app.tsx (and all `.tsx` generic arrows) fail to parse.
+                var pt2 = TS_PARSE_PEEK(ts_base);
+                if (pt2 == TS_TOK_GT || pt2 == TS_TOK_GT_GT || pt2 == TS_TOK_GT_GT_GT
+                || pt2 == TS_TOK_GT_EQ || pt2 == TS_TOK_GT_GT_EQ
+                || pt2 == TS_TOK_GT_GT_GT_EQ) {
+                    trailing_comma = 1;
+                }
             }
-            # v5.7.45: optional `const` modifier (TS 5.0). `<const T>`
-            # narrows inferred literal types in the typechecker; at
-            # parse-acceptance level we just consume the keyword so
-            # the IDENT expect below sees the param name. Per
-            # "parse loosely, type strictly" — typechecker enforces
-            # const-only-on-type-param-position, parser is permissive.
-            # No AST emission: TS_PARSE_TYPE_PARAMS doesn't push
-            # TS_AST_DECL_TYPE_PARAM nodes for any param yet (just
-            # counts), so adding emission only for `const` ones would
-            # be inconsistent — pin AST work for a future slot.
-            if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_CONST) {
-                TS_PARSE_CONSUME(ts_base);
+            if (trailing_comma == 1) {
+                done = 1;
+            } else {
+                # v5.7.45: optional `const` modifier (TS 5.0). `<const T>`
+                # narrows inferred literal types in the typechecker; at
+                # parse-acceptance level we just consume the keyword so
+                # the IDENT expect below sees the param name. Per
+                # "parse loosely, type strictly" — typechecker enforces
+                # const-only-on-type-param-position, parser is permissive.
+                # No AST emission: TS_PARSE_TYPE_PARAMS doesn't push
+                # TS_AST_DECL_TYPE_PARAM nodes for any param yet (just
+                # counts), so adding emission only for `const` ones would
+                # be inconsistent — pin AST work for a future slot.
+                if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_CONST) {
+                    TS_PARSE_CONSUME(ts_base);
+                }
+                # Param name
+                if (TS_PARSE_EXPECT(ts_base, TS_TOK_IDENT) < 0) { return 0 - 1; }
+                # Optional `extends ConstraintType`
+                if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_EXTENDS) {
+                    TS_PARSE_CONSUME(ts_base);
+                    var c = TS_PARSE_TYPE(ts_base);
+                    if (c < 0) { return 0 - 1; }
+                }
+                # Optional `= DefaultType`
+                if (TS_PARSE_PEEK(ts_base) == TS_TOK_EQ) {
+                    TS_PARSE_CONSUME(ts_base);
+                    var d = TS_PARSE_TYPE(ts_base);
+                    if (d < 0) { return 0 - 1; }
+                }
+                n = n + 1;
             }
-            # Param name
-            if (TS_PARSE_EXPECT(ts_base, TS_TOK_IDENT) < 0) { return 0 - 1; }
-            # Optional `extends ConstraintType`
-            if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_EXTENDS) {
-                TS_PARSE_CONSUME(ts_base);
-                var c = TS_PARSE_TYPE(ts_base);
-                if (c < 0) { return 0 - 1; }
-            }
-            # Optional `= DefaultType`
-            if (TS_PARSE_PEEK(ts_base) == TS_TOK_EQ) {
-                TS_PARSE_CONSUME(ts_base);
-                var d = TS_PARSE_TYPE(ts_base);
-                if (d < 0) { return 0 - 1; }
-            }
-            n = n + 1;
         }
     }
     if (TS_PARSE_EXPECT_TYPE_GT(ts_base) < 0) { return 0 - 1; }
@@ -3701,22 +3769,19 @@ fn TS_PARSE_DECL_CLASS(ts_base): i64 {
         if (impl_off < 0) { return 0 - 1; }
     }
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LBRACE) < 0) { return 0 - 1; }
-    var members_off = TS_AST_CHILDREN_RESERVE(ts_base, 64);
-    if (members_off < 0) { return 0 - 1; }
-    var mi = 0;
+    var members_base = TS_CST_TOP();
     while (TS_PARSE_PEEK(ts_base) != TS_TOK_RBRACE) {
         if (TS_PARSE_PEEK(ts_base) == TS_TOK_SEMI) {
             TS_PARSE_CONSUME(ts_base);
         } else {
             var m = TS_PARSE_CLASS_MEMBER(ts_base);
             if (m < 0) { return 0 - 1; }
-            TS_AST_CHILDREN_SET(ts_base, members_off + mi, m);
-            mi = mi + 1;
+            TS_CST_PUSH(m);
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, members_off + mi, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, mi + 1);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACE) < 0) { return 0 - 1; }
+    var members_off = TS_CST_FLUSH(ts_base, members_base);
+    if (members_off < 0) { return 0 - 1; }
     var n = TS_AST_PUSH(ts_base, TS_AST_DECL_CLASS, name_v);
     if (n < 0) { return 0 - 1; }
     TS_AST_SET_PAYLOAD(ts_base, n, 0, name_v);
@@ -3792,9 +3857,7 @@ fn TS_IS_IMPORT_NAME_TOK(t): i64 {
 # Parse `{ a, b as c, type T }`. Caller has consumed the `{`.
 # Returns children-array offset (terminated by -1).
 fn TS_PARSE_IMPORT_NAMED_LIST(ts_base): i64 {
-    var off = TS_AST_CHILDREN_RESERVE(ts_base, 32);
-    if (off < 0) { return 0 - 1; }
-    var i = 0;
+    var base = TS_CST_TOP();
     while (TS_PARSE_PEEK(ts_base) != TS_TOK_RBRACE) {
         # Optional per-spec `type` modifier: `{ type T }` — skip.
         if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_TYPE) {
@@ -3829,16 +3892,13 @@ fn TS_PARSE_IMPORT_NAMED_LIST(ts_base): i64 {
         if (spec < 0) { return 0 - 1; }
         TS_AST_SET_PAYLOAD(ts_base, spec, 0, imp_name);
         TS_AST_SET_PAYLOAD(ts_base, spec, 1, local_name);
-        TS_AST_CHILDREN_SET(ts_base, off + i, spec);
-        i = i + 1;
+        TS_CST_PUSH(spec);
         if (TS_PARSE_PEEK(ts_base) == TS_TOK_COMMA) {
             TS_PARSE_CONSUME(ts_base);
         }
     }
-    TS_AST_CHILDREN_SET(ts_base, off + i, 0 - 1);
-    TS_AST_CHILDREN_COMMIT(ts_base, i + 1);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACE) < 0) { return 0 - 1; }
-    return off;
+    return TS_CST_FLUSH(ts_base, base);
 }
 
 # `import ...`. Caller has consumed `import`.
@@ -4505,25 +4565,20 @@ fn TS_PARSE(ts_base): i64 {
     # ROOT.payload[0] = children-array offset (head)
     # ROOT.payload[1] = statement count
     # Sentinel -1 closes the children list.
-    var head = 0 - 1;
+    # v6.1.10: collect top-level statements on the scratch stack, then
+    # flush one contiguous block. The old reserve-a-slot-after-each-stmt
+    # loop produced a NON-contiguous list (each stmt's slot was separated
+    # by its own subtree's children), so head+count couldn't be walked.
+    var base = TS_CST_TOP();
     var count = 0;
-    var first = 1;
     while (TS_PARSE_PEEK(ts_base) != TS_TOK_EOF) {
         var s = TS_PARSE_STMT(ts_base);
         if (s < 0) { return 0 - 1; }
-        var slot = TS_AST_CHILDREN_RESERVE(ts_base, 1);
-        if (slot < 0) { return 0 - 1; }
-        TS_AST_CHILDREN_SET(ts_base, slot, s);
-        TS_AST_CHILDREN_COMMIT(ts_base, 1);
-        if (first == 1) { head = slot; first = 0; }
+        TS_CST_PUSH(s);
         count = count + 1;
     }
-    # Append sentinel
-    var sent = TS_AST_CHILDREN_RESERVE(ts_base, 1);
-    if (sent >= 0) {
-        TS_AST_CHILDREN_SET(ts_base, sent, 0 - 1);
-        TS_AST_CHILDREN_COMMIT(ts_base, 1);
-    }
+    var head = TS_CST_FLUSH(ts_base, base);
+    if (head < 0) { return 0 - 1; }
     if (count > 0) {
         TS_AST_SET_PAYLOAD(ts_base, root, 0, head);
     }

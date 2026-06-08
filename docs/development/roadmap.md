@@ -70,9 +70,10 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.7** ✅ | **Packed (user-directed)**: Windows COM/DXGI `.rdata` corruption fix (ai-hwaccel consumer bug — m128 array-padding base mismatch between `FIXUP` + `_pe_layout`; GPU-confirmed 60→42) **+** kernel-PIE ELF wrapper (`EMITELF64_KERNEL` ET_DYN+p_vaddr=0, the deferred v6.1.6 pickup) | bug-bandwidth + C |
 | **v6.1.8** ✅ | PIE codegen aarch64 (Sub-arc B — `adrp`/`add` via the proven Mach-O PIC path; ET_DYN; full tcyr corpus exit-parity on pi). **Completes the PIE arc on both arches.** | C — PIE |
 | **v6.1.9** ✅ | `.gnu.hash` migration + drop SysV `.hash` (Sub-arc C) — `EMITELF_SHARED` emits single-bucket `.gnu.hash` + `DT_GNU_HASH` matching `lib/dynlib.cyr::_gnu_hash_lookup` (loader was already gnu-hash-only; the SysV table was dead weight). x86-only; cycc byte-identical; cass/pi/ecb self-host | C — PIE / dynlink |
-| **v6.1.10** | TS/TSX → JS emit (`cycc --emit-js`) | D — frontend emit |
-| **v6.1.11** | bayan distfile carve | E — stdlib carve |
-| **v6.1.12** | ganita distfile carve | E — stdlib carve |
+| **v6.1.10** ✅ | **TS AST children-list allocator fix** (Phase D prereq) — the parser built a corrupt AST for nested lists (`RESERVE` didn't advance `used` → call-args/block/object/JSX sub-lists stomped each other; verified empirically). Restructured all value builders to deferred collect-then-contiguous-write (`TS_CST_PUSH`/`FLUSH`) + the `<T,>` trailing-comma parse fix + `cycc --emit-js` self-validating AST-walk (kind-S-expr; check.sh gate 87, proven to catch a re-broken allocator). x86-Linux-only; cycc +79 KB; cass/pi/ecb green. | D — frontend emit (prereq) |
+| **v6.1.11** | TS/TSX → JS emit (`cycc --emit-js`) — AST-driven, pragma `h` + optional prelude, type-strip + JSX-lower + ESM passthrough, on the corrected AST (reuses v6.1.10's per-kind walk) | D — frontend emit |
+| **v6.1.12** | bayan distfile carve | E — stdlib carve |
+| **v6.1.13** | ganita distfile carve | E — stdlib carve |
 | *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):

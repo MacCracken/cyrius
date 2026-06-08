@@ -353,6 +353,10 @@ fn _run_regression_gates(): i64 {
     _ts_corpus_gate("cycc --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", ".tsx", 435);
     println("");
 
+    _section("TS AST walk (v6.1.10 children-list allocator)");
+    _ts_walk_gate();
+    println("");
+
     _section("Bare-truthy after fn-call");
     _truthy_after_fncall_gate();
     println("");

@@ -437,6 +437,7 @@ include "src/common/ir.cyr"
 include "src/frontend/lex.cyr"
 include "src/frontend/ts/lex.cyr"
 include "src/frontend/ts/parse.cyr"
+include "src/backend/js/emit.cyr"
 
 # v6.0.6 — pull in lib/alloc + lib/vec for the v6.0.7 return-patch-buffer
 # → vec conversion (proposal Option C). cycc's existing fixed-heap layout
@@ -480,6 +481,7 @@ var _strict_mode = 0;
 var _had_error = 0;
 var _ts_lex_only_mode = 0;       # P1.6b: --lex-ts CLI flag
 var _ts_parse_only_mode = 0;     # P2.1: --parse-ts CLI flag
+var _ts_emit_js_mode = 0;        # v6.1.10: --emit-js CLI flag (Phase D)
 # v6.0.5: path arg for `--parse-ts <file>` / `--lex-ts <file>` so a
 # scripted invocation doesn't block reading stdin (yeo-cy-test papercut
 # #3, 2026-05-27). The next non-flag arg after a TS mode flag is the
@@ -567,6 +569,19 @@ if (_vn > 0) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 112 && load8(&_vbuf + _vi + 3) == 97) {
                     _ts_parse_only_mode = 1;
+                    _ts_expect_path = 1;
+                }
+            }
+        }
+        # "--em" (--emit-js) — TS/TSX → JS emit (v6.1.10, Phase D).
+        # cycc lexes + parses the TS/TSX input then walks the AST emitting
+        # browser JS to stdout: strips types/interfaces/aliases, lowers JSX
+        # to `h(...)`-pragma calls (+ optional standalone prelude), passes
+        # ESM through. e(101) m(109) disambiguate from every other flag.
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 101 && load8(&_vbuf + _vi + 3) == 109) {
+                    _ts_emit_js_mode = 1;
                     _ts_expect_path = 1;
                 }
             }
@@ -743,6 +758,21 @@ if (_ts_parse_only_mode == 1) {
         syscall(SYS_EXIT, 1);
     }
     syscall(SYS_EXIT, 0);
+}
+
+if (_ts_emit_js_mode == 1) {
+    var _ej_lex_n = TS_LEX(S + 0x298B000, S, bl);
+    if (_ej_lex_n < 0) {
+        syscall(SYS_WRITE, 2, "ts lex error before emit\n", 25);
+        syscall(SYS_EXIT, 1);
+    }
+    var _ej_parse_n = TS_PARSE(S + 0x298B000);
+    if (_ej_parse_n < 0) {
+        syscall(SYS_WRITE, 2, "ts parse error before emit\n", 27);
+        syscall(SYS_EXIT, 1);
+    }
+    var _ej_rc = TS_JS_EMIT(S + 0x298B000, S);
+    syscall(SYS_EXIT, _ej_rc);
 }
 
 # Init stdlib fallback path from HOME env
