@@ -6,6 +6,70 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.88] — 2026-06-07
+
+**Cleanup / refactor cluster (part 1).** sigil/sandhi refold + dead `ret_patches`
+heap region removed + the byte-array literal peephole (cross-arch) + a dead-code
+sweep. Cut early at the leader's call; the two heavy refactors (`_TARGET_*`
+consolidation, `check.cyr` modularization) split to .89/.90. The peephole's
+real-hardware pass surfaced a **pre-existing** x86-macOS byte-array compile bug
+(filed, not a .88 regression).
+
+### Added
+
+- **Byte-array literal peephole** (`var foo[N] = { 0x.., ... };`). The
+  per-byte gvar-init codegen hoisted `&var` and recomputed the address on
+  every byte (a ~7-op `EVADDR`/`EADDRA_IMM`/`PUSH`/`MOVI`/`POPC`/`STORE8`/
+  `XORAA` chain, plus one fixup per byte). The base is now hoisted into
+  rcx/x1/r1 ONCE via `_EVRCX`, then each byte emits a single direct
+  store — x86 `mov byte [rcx+disp], imm8` (`C6 /0`, disp8 or disp32),
+  aarch64 `strb w0, [x1, #imm12]`, cx `store8 [r1(+disp)], r0`. ~5× emit
+  compression and one fixup per array. The base is loaded via the
+  obj-aware `_EVRCX` (rip-relative `LEA rcx` when `_IS_OBJ`, else absolute
+  `mov`) — NOT `EVADDR_X1`, whose absolute-only form would have regressed
+  byte arrays compiled to relocatable objects (`-c`) on x86; aarch64/cx
+  alias `_EVRCX` to their already-correct `EVADDR_X1` (aarch64's has the
+  Mach-O `adrp/add` branch). IR recording (`CYRIUS_IR=1|2`, opt-in) keeps
+  the legacy IR-aware sequence so the IR stream is unchanged; aarch64
+  `disp >= 4096` also falls back. New emit helpers: `ESTOREB_IMM` +
+  `_EVRCX` (x86 / aarch64 / cx). cycc has no byte-array literals →
+  self-host byte-identical on all four hosts (ecb/ach/pi/cass).
+  **Verified:** x86-Linux disp8/disp32 split + runtime (26/26),
+  aarch64 `strb`-imm runtime under qemu-aarch64 (26/26), aarch64-macOS
+  (ecb) + Windows-PE (cass) lib-test on real hardware, cx compiles. The
+  x86-**macOS** path could not be runtime-checked: that target's `cycc`
+  can't compile byte-array literals at all — a **pre-existing** parser
+  miscompile (the released .87 fails identically; invisible to self-host
+  since cycc uses no byte arrays), filed as
+  `issues/2026-06-07-x86-macho-byte-array-literal-no-compile.md`.
+
+### Removed
+
+- **Dead-code sweep** — walked cycc's 69 reported-unreachable fns. One
+  genuine removal: `EMIT_STRUCT_FIELD` (a legacy 8-byte back-compat
+  wrapper around `EMIT_STRUCT_FIELD_W(...,8)` — every call site already
+  passes an explicit width). The other 68 classify as intentional
+  scaffold and stay (per `feedback_dead_code_audit_scope`): the IR backend
+  (`ir_lower_*`/`ir_dce`/`ir_dead_*`/`CLASSIFY_CF`), the TS frontend
+  (`TS_*`), cross-arch emit (aarch64 `EW`/`EADRP`, `EMITMACHO_ARM64`,
+  `_macho_*`), and stdlib API pulled into cycc at v6.0.7 but only
+  partially used by the compiler itself (`vec_*`/`arena_*`/`atomic_*`/
+  `fncall*`). Unreachable floor: **68 fns / 26 818 bytes** (was 69 /
+  26 960); `CYRIUS_DCE=1` still strips them from size-sensitive builds.
+- **Dead `ret_patches` heap region** (`[0x18DA20..0x18E220)`, 2 KB array +
+  the `ret_patch_cnt` counter slot at `0x18E220`). Return-patch storage
+  migrated to `rp_vec` at v6.0.7; the fixed array has been untouched since
+  and the counter only ever received dead zero-init writes (three sites:
+  `main.cyr`, `main_win.cyr`, `util.cyr` — the aarch64 mains never wrote
+  it). Writes removed, region marked `FREED` in every `main_*` heap map.
+  cycc self-hosts byte-identical (48 bytes smaller — the three removed
+  stores).
+
+### Changed
+
+- **Folded sigil 3.7.4 → 3.7.7 and sandhi 1.4.2 → 1.4.4** into
+  `lib/sigil.cyr` / `lib/sandhi.cyr` from their dist bundles.
+
 ## [6.0.87] — 2026-06-07
 
 **AGNOS: `getenv()`/envp works on real agnos + a cross-build rot gate.** The cyrius half of agnos

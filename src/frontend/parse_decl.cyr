@@ -1,5 +1,5 @@
 # PARSER — declarations: PARSE_ARRAY / PARSE_FIELD_LOAD /
-# PARSE_FIELD_STORE / EMIT_STRUCT_FIELD / PARSE_STRUCT_INIT /
+# PARSE_FIELD_STORE / EMIT_STRUCT_FIELD_W / PARSE_STRUCT_INIT /
 # PARSE_GVAR_ARR / PARSE_GVAR_REG / EMIT_GVAR_INITS / PARSE_VAR /
 # PARSE_ASSIGN + BUILD_METHOD_NAME.
 # ================================================================
@@ -427,13 +427,6 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     return 0;
 }
 
-# Back-compat: legacy 8-byte EMIT_STRUCT_FIELD wrapper. Existing
-# call sites that don't yet pass a width default to 8 to preserve
-# pre-v5.9.36 behavior.
-fn EMIT_STRUCT_FIELD(S, vcnt, boff): i64 {
-    return EMIT_STRUCT_FIELD_W(S, vcnt, boff, 8);
-}
-
 fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     var si = sid - 1;
     STI(S, GTI(S) + 1);
@@ -834,6 +827,23 @@ fn EMIT_GVAR_INITS(S): i64 {
             if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
             STI(S, GTI(S) + 1);              # consume `{`
             var b_vidx = FINDVAR(S, noff);
+            # v6.0.88 peephole: hoist &var into rcx/x1/r1 ONCE (via _EVRCX),
+            # then emit a single direct byte-store per element (ESTOREB_IMM) instead
+            # of the ~7-op EVADDR/EADDRA_IMM/PUSH/MOVI/POPC/STORE8/XORAA
+            # chain per byte. ~5× emit compression + one fixup per array
+            # (was one per byte). Cross-arch: x86 `mov byte [rcx+d],imm8`,
+            # aarch64 `strb w0,[x1,#d]`, cx `store8 [r1(+d)],r0`.
+            # IR recording (CYRIUS_IR=1|2, opt-in) keeps the legacy
+            # IR-aware sequence so the IR stream is unchanged; the default
+            # (IR-off) path — every consumer build + self-host — gets the
+            # peephole. See CHANGELOG [6.0.88].
+            var b_vidx_ir = IR_ENABLED(S);
+            # _EVRCX (not EVADDR_X1): obj-aware base load. x86 EVADDR_X1 is
+            # absolute-mov only, which stores to the wrong address under
+            # x86-Mach-O PIE (caught on real ach hardware, v6.0.88). _EVRCX
+            # emits rip-relative LEA when _IS_OBJ; aarch64/cx alias to their
+            # already-correct EVADDR_X1.
+            if (b_vidx_ir == 0) { _EVRCX(S, b_vidx); }
             var b_i = 0;
             var b_go = 1;
             while (b_go == 1) {
@@ -841,14 +851,24 @@ fn EMIT_GVAR_INITS(S): i64 {
                 else {
                     var b_v = PEEKV(S);
                     STI(S, GTI(S) + 1);
-                    # Emit `store8(&var + b_i, b_v)` equivalent:
-                    EVADDR(S, b_vidx);
-                    if (b_i > 0) { EADDRA_IMM(S, b_i); }
-                    EPUSHR(S);
-                    EMOVI(S, b_v);
-                    EPOPC(S);
-                    ESTORE8(S);
-                    EXORAA(S);
+                    # b_legacy = 1 → emit the legacy per-byte chain. Used
+                    # under IR recording, and when the peephole reports the
+                    # disp is out of the arch's direct-store range
+                    # (ESTOREB_IMM returns non-zero, e.g. aarch64 >= 4096).
+                    var b_legacy = 1;
+                    if (b_vidx_ir == 0) {
+                        b_legacy = ESTOREB_IMM(S, b_i, b_v);
+                    }
+                    if (b_legacy != 0) {
+                        # legacy `store8(&var + b_i, b_v)`:
+                        EVADDR(S, b_vidx);
+                        if (b_i > 0) { EADDRA_IMM(S, b_i); }
+                        EPUSHR(S);
+                        EMOVI(S, b_v);
+                        EPOPC(S);
+                        ESTORE8(S);
+                        EXORAA(S);
+                    }
                     b_i = b_i + 1;
                     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                 }

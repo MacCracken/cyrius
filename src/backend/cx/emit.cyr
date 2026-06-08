@@ -155,6 +155,22 @@ fn ELOAD32(S): i64 { CX_EMIT(S, 69, 0, 0, 0); return 0; }  # load32 r0, [r0]
 fn ELOAD64(S): i64 { CX_EMIT(S, 65, 0, 0, 0); return 0; }  # load64 r0, [r0]
 fn ELODC(S): i64 { CX_EMIT(S, 65, 0, 1, 0); return 0; }    # load64 r0, [r1]
 fn ESTORE8(S): i64 { CX_EMIT(S, 66, 1, 0, 0); return 0; }  # store8 [r1], r0
+# v6.0.88: byte-array literal peephole — base &var is hoisted into r1 once
+# via EVADDR_X1; this stores r0=val into [r1+disp] without recomputing the
+# address each byte. cx has no displacement-store opcode, so for disp>0 we
+# form the effective address in scratch r2 (r1 is preserved across bytes).
+# 64-bit disp, so this always handles the store (returns 0). CHANGELOG [6.0.88].
+fn ESTOREB_IMM(S, disp, val): i64 {
+    CX_MOVI(S, 0, val);               # r0 = val
+    if (disp == 0) {
+        CX_EMIT(S, 66, 1, 0, 0);      # store8 [r1], r0
+    } else {
+        CX_MOVI(S, 2, disp);          # r2 = disp
+        CX_EMIT(S, 16, 2, 1, 2);      # add r2, r1, r2
+        CX_EMIT(S, 66, 2, 0, 0);      # store8 [r2], r0
+    }
+    return 0;
+}
 # v5.9.40: ESTORE16/ESTORE32 also had approximations; wire to real
 # cxvm 0x46/0x47 opcodes. ESTORE64 / ESTOC stay the same.
 fn ESTORE16(S): i64 { CX_EMIT(S, 70, 1, 0, 0); return 0; }
@@ -730,6 +746,11 @@ fn EVADDR_X1(S, idx): i64 {
     RECFIX(S, idx);
     return 0;
 }
+
+# v6.0.88: obj-aware &var-into-base alias for the byte-array peephole.
+# cx is bytecode with no PIE/rip-relative distinction, so EVADDR_X1 is
+# already correct; shared name with the x86/aarch64 `_EVRCX`. CHANGELOG [6.0.88].
+fn _EVRCX(S, idx): i64 { return EVADDR_X1(S, idx); }
 
 # Add immediate to r1
 fn EADDIMM_X1(S, val): i64 {

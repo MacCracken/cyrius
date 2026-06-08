@@ -335,6 +335,17 @@ fn ELOAD64(S): i64 { EW(S, 0xF9400000); return 0; }   # ldr x0, [x0]
 
 # === Store: [x1] = x0 (various widths) ===
 fn ESTORE8(S): i64 { EW(S, 0x39000020); return 0; }   # strb w0, [x1]
+# v6.0.88: byte-array literal peephole — `mov w0, #imm; strb w0, [x1, #disp]`.
+# Base &var is hoisted into x1 once via EVADDR_X1; this emits 2 ops per
+# byte instead of the ~6-op legacy chain. STRB's unsigned imm12 offset
+# caps at 4095; for disp >= 4096 we return 1 so the caller falls back to
+# the legacy per-byte sequence. See CHANGELOG [6.0.88].
+fn ESTOREB_IMM(S, disp, val): i64 {
+    if (disp >= 4096) { return 1; }
+    EMOVI(S, val);                              # x0 = val (movz/movk)
+    EW(S, 0x39000020 | ((disp & 0xFFF) << 10)); # strb w0, [x1, #disp]
+    return 0;
+}
 fn ESTORE16(S): i64 { EW(S, 0x79000020); return 0; }  # strh w0, [x1]
 fn ESTORE32(S): i64 { EW(S, 0xB9000020); return 0; }  # str w0, [x1]
 fn ESTORE64(S): i64 { EW(S, 0xF9000020); return 0; }  # str x0, [x1]
@@ -440,6 +451,13 @@ fn EVADDR_X1(S, idx): i64 {
     EW(S, 0xF2C00001);  # movk x1, #0, lsl 32
     return 0;
 }
+
+# v6.0.88: obj-aware &var-into-base alias for the byte-array peephole.
+# aarch64 EVADDR_X1 is already Mach-O-aware (adrp/add branch above), so
+# the base load is correct under PIE — unlike the x86 EVADDR_X1, whose
+# absolute-mov form needed the rip-relative `_EVRCX` variant. Shared name
+# so EMIT_GVAR_INITS can hoist the base on every backend. See CHANGELOG [6.0.88].
+fn _EVRCX(S, idx): i64 { return EVADDR_X1(S, idx); }
 
 # Add immediate to x1
 fn EADDIMM_X1(S, val): i64 {

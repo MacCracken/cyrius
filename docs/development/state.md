@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.88 ship — cleanup/refactor part 1: sigil/sandhi refold + dead ret_patches + byte-array peephole + dead-code sweep)
+
+Closing **v6.0.88**. check.sh 85/85; self-host byte-identical on **ach + ecb + pi + cass**; tcyr 167/167.
+The first half of the .88 cleanup/refactor cluster — **cut early at the leader's call**, with the two
+heavy refactors split forward.
+
+- **sigil 3.7.4 → 3.7.7 + sandhi 1.4.2 → 1.4.4 refold** (`lib/sigil.cyr` / `lib/sandhi.cyr` from dist;
+  snapshot refreshed to dodge ping-pong).
+- **Dead `ret_patches` 2 KB heap region removed** — `[0x18DA20..0x18E220)` + the `ret_patch_cnt`
+  counter at `0x18E220`, both dead since the v6.0.7 `rp_vec` migration. The counter only ever got dead
+  zero-init writes (3 sites: `main.cyr` / `main_win.cyr` / `util.cyr`; aarch64 mains never wrote it);
+  writes gone, region `FREED` in every `main_*` heap map. cycc −48 B, self-host byte-identical.
+- **Byte-array literal peephole** — hoist `&var` into rcx/x1/r1 ONCE via the obj-aware **`_EVRCX`**
+  (NOT `EVADDR_X1` — its absolute-only form would regress `-c` object-mode byte arrays on x86), then a
+  single `ESTOREB_IMM` direct store per byte (x86 `mov byte [rcx+d],imm8` disp8/disp32; aarch64
+  `strb w0,[x1,#imm12]` with a `>=4096` legacy fallback; cx `store8 [r1(+d)],r0`). ~5× emit compression,
+  one fixup per array. IR mode (opt-in) keeps the legacy IR-aware sequence. Runtime-verified: x86-Linux
+  26/26, aarch64 under qemu 26/26, ecb (arm64-macho) + cass (PE) lib-test on real hardware.
+- **Dead-code sweep** — one genuine removal (legacy `EMIT_STRUCT_FIELD` 8-byte wrapper; all callers use
+  `_W`). The other 68 unreachable fns are intentional scaffold (IR backend / TS frontend / cross-arch
+  emit) + stdlib API pulled into cycc at v6.0.7 (`vec_*`/`arena_*`/`atomic_*`/`fncall*`). Floor: 68 fns /
+  26 818 B (was 69 / 26 960). The expected near-0-LoC outcome per `feedback_dead_code_audit_scope`.
+
+**Found on real hardware (pre-existing, NOT a .88 regression):** the **x86-macOS** `cycc` cannot compile
+byte-array literals at all (`expected ';', got '='` — a parser miscompile **invisible to self-host**
+since cycc itself uses no byte arrays). Confirmed by stashing to the **released .87 source** on `ach` —
+it fails identically. Filed `issues/2026-06-07-x86-macho-byte-array-literal-no-compile.md`; gated behind
+the broader x86-macOS-self-compile HELD decision (Intel/EOL). The byte-array peephole is emit-layer and
+cannot cause a parse error.
+
+**Process note:** the cross-OS gate's shared local temp file (`/tmp/_co_x`) is **not parallel-safe** —
+running all four hosts at once collided (`Text file busy` → false 126 on ecb). Re-run **sequentially**;
+verdicts were clean once serialized. (Candidate hardening for `cross-os-selfhost.sh`: per-host temp paths.)
+
+**Next (leader sequence):** .89/.90 = cleanup/refactor part 2 — `_TARGET_*` flag consolidation
+(substantial multi-slot backend-dispatch refactor, ~280 sites) + `programs/check.cyr` modularization
+(10.2K LoC / 163 fns → `programs/checks/`; breakdown ASK at slot entry). Order TBD by leader. → .91
+closeout + docs sweep → v6.1.0.
+
 ## Session close — 2026-06-07 (.87 ship — AGNOS getenv/envp verified on the real kernel + cross-build gate)
 
 Closing **v6.0.87**. check.sh 85/85; self-host byte-identical on ecb + ach + pi + cass; tcyr 0/167.

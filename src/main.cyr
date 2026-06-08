@@ -36,15 +36,10 @@
 # --- Compiler state (scalars) ---
 #   0x18C100  BL,CP,VCNT,TCNT,TI,NPOS    6 × 8 bytes
 #   0x18DA00  fn_count, in_fn, local_cnt
-#   0x18DA20  ret_patches   [2048]        256 return patch offsets
-#                                          (cap raised 64 → 256 at v5.10.6 —
-#                                          vyakarana 2.1.0 prereq + Option B
-#                                          do-it-once headroom; old offset
-#                                          0x18DA20+512=0x18DC20 for
-#                                          ret_patch_cnt collided with the
-#                                          new 2 KB array, so cnt relocated
-#                                          to 0x18E220)
-#   0x18E220  ret_patch_cnt [8]            (relocated from 0x18DC20 at v5.10.6)
+#   0x18DA20  (FREED v6.0.88)             was ret_patches [2048] — return
+#                                          patches migrated to rp_vec @ v6.0.7;
+#                                          2 KB array + counter retired here.
+#   0x18E220  (FREED v6.0.88)             was ret_patch_cnt [8]
 #   0x18F838  loop_top      [8]
 #   0x18F840  break_patch   [8]
 #   0x18F848  extra_patches [64]          8 && condition patches
@@ -934,7 +929,6 @@ S64(S + 0x18FCB0, 0 - 1);   # last_var
 S64(S + 0x18DA00, 0);       # fn_count
 S64(S + 0x18DA08, 0);       # in_fn
 S64(S + 0x18DA10, 0);       # local_cnt
-S64(S + 0x18E220, 0);       # ret_patch_cnt
 S64(S + 0x18F830, 0);       # struct_count
 S64(S + 0x18F888, 0);       # extra_patch_cnt
 S64(S + 0x18FCA0, 0);       # kernel_mode
