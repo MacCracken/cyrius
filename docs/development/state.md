@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.8** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 933,000 B (unchanged @ 6.1.8 — aarch64-only slot) |
+| **Version** | **6.1.9** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 933,544 B (+544 B @ 6.1.9 — `.gnu.hash` emit code) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 593,376 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 805,376 B |
@@ -25,23 +25,23 @@
 | check.sh gates | 86/86 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~452 ms |
+| bench (every-release gate) | self_compile ~454 ms |
 
-> **Handoff (2026-06-08, pre-reboot for kernel testing):** v6.1.8 is **committed**
-> (clean tree; HEAD = "aarch64 PIE — the PIE arc is now complete on both arches");
-> confirm it's tagged/pushed if not already. All gates green at the cut (x86 +
-> aarch64 self-host byte-identical, pi/ecb/cass cross-OS, check.sh 86/86, bench).
-> **PIE arc is COMPLETE on both arches** (x86 v6.1.6, aarch64 v6.1.8).
+> **Handoff (2026-06-08):** v6.1.9 ready for cut — `.gnu.hash` migration done +
+> verified. Tree has the v6.1.9 working changes (src/backend/x86/fixup.cyr +
+> CHANGELOG/roadmap/state); run `version-bump.sh 6.1.9` was applied, smoke green;
+> user pushes/tags after CI. All gates green: cycc byte-identical self-host,
+> check.sh 86/86, all 169 tcyr exit-code clean, dlopen gate resolves *through* the
+> new gnu.hash path (exit 99), cass/pi/ecb cross-OS self-host byte-identical, bench
+> self_compile 454 ms. **PIE arc COMPLETE on both arches** (x86 v6.1.6, aarch64
+> v6.1.8); **dynlink cleanup COMPLETE** (v6.1.9).
 >
-> **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — relevant to the kernel
-> testing): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |
+> **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — still pending an AGNOS
+> `--pie` harness): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |
 > CYRIUS_PIE=1 build/cycc > k.elf` → **ET_DYN, p_vaddr=0, e_entry=0xA8**, RIP-
 > relative `.text`. The boot shim (AGNOS gnoboot) must handle ET_DYN: pick a base,
-> slide the single PT_LOAD, jump to `base + 0xA8`. This **gnoboot-boot validation
-> was the one piece left unverified** at v6.1.7 (no AGNOS `--pie` harness yet) — if
-> this reboot is that test, that's the gap it closes. aarch64 kernel-PIE is still a
-> follow-on (this slot did aarch64 *userland* PIE). Verification hosts pi/ecb/cass
-> are remote → unaffected by a local reboot.
+> slide the single PT_LOAD, jump to `base + 0xA8`. gnoboot-boot validation +
+> aarch64 kernel-PIE remain the consumer-gated follow-ons.
 
 ## v6.1.x — active cycle (Backend Codegen Multi-Arc)
 
@@ -98,11 +98,19 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   corpus as aarch64 PIE on **pi (real ARM)** — exit-code parity with non-PIE, zero
   PIE-only failures; 338-input non-PIE byte-identical; pi/ecb/cass self-host; x86
   cycc untouched. See CHANGELOG [6.1.8].
+- **v6.1.9** — Phase C tail (Sub-arc C): **`.gnu.hash` migration** — `EMITELF_SHARED`
+  (x86 `fixup.cyr`) emits a single-bucket `.gnu.hash` + `DT_GNU_HASH` instead of
+  SysV `.hash`/`DT_HASH`. The native loader (`lib/dynlib.cyr`) was **already**
+  gnu-hash-only — it never read `DT_HASH`, so cyrius `.so`s were resolving via the
+  linear `.dynsym` fallback over a dead SysV table; this flips them onto the O(1)
+  Bloom path. x86-only (aarch64 has no `.so` path). cycc byte-identical self-host;
+  dlopen gate resolves *through* gnu.hash (exit 99); cass/pi/ecb cross-OS green.
+  The v5.6.38 pin, closed. See CHANGELOG [6.1.9].
 
-**Next:** **v6.1.9** — Phase C tail: `.gnu.hash` migration + drop SysV `.hash` (the
-long-deferred v5.6.38 pin). Then D (TS/TSX→JS emit — active SecureYeoman pressure),
-E (bayan/ganita carve). The kernel-PIE gnoboot-boot validation + aarch64 kernel-PIE
-land when an AGNOS `--pie` harness exists. See roadmap.md.
+**Next:** **v6.1.10** — Phase D: TS/TSX → JS emit (`cycc --emit-js`) — active
+SecureYeoman (`yeo-cy-test`) pressure; the parser already exists. Then E
+(bayan/ganita distfile carve, v6.1.11–12). The kernel-PIE gnoboot-boot validation +
+aarch64 kernel-PIE land when an AGNOS `--pie` harness exists. See roadmap.md.
 
 **Open / filed (v6.1.x):**
 - `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm

@@ -1296,25 +1296,38 @@ fn EMITELF_USER(S, etype): i64 {
 # Produces a dlopen-able shared object with:
 #   .dynsym  — one Elf64_Sym per exported global fn (+ null entry)
 #   .dynstr  — null-separated names
-#   .hash    — SysV hash table, nbucket=1 (all syms chain from bucket 0)
-#   .dynamic — DT_HASH/DT_SYMTAB/DT_STRTAB/DT_STRSZ/DT_SYMENT/DT_NULL
+#   .gnu.hash — GNU hash table, nbuckets=1, with a Bloom-filter pre-check
+#   .dynamic — DT_GNU_HASH/DT_SYMTAB/DT_STRTAB/DT_STRSZ/DT_SYMENT/DT_NULL
 # Plus a PT_DYNAMIC program header pointing at .dynamic.
 # Single PT_LOAD RWX for simplicity (W^X comes later when split into
 # RX/RW segments).
 # All internal refs are already PC-relative (LEA [rip+disp32] /
 # CALL rel32) so code works at any load bias.
 #
-# v5.6.38: removed the dead `SYSV_HASH` function and its misleading
-# comment claiming "chain lookup needs hash comparison". Per the
-# SysV ELF spec + glibc `dl-lookup.c::do_lookup_x`, the dynamic
-# loader uses `bucket[hash mod nbucket]` to pick the FIRST chain
-# index, then walks the chain doing pure `strcmp(symtab[i].name,
-# lookup_name)`. The hash value is never compared per-chain entry.
-# With cyrius's `nbucket=1` choice (every lookup starts at bucket 0),
-# the hash function would only be called on the lookup name, never
-# on stored symbols — and the loader does that itself, externally.
-# `.gnu.hash` (a Bloom-filter optimization) deferred until any
-# consumer needs faster lookup; not on the v5.6.x roadmap.
+# v6.1.9: migrated SysV `.hash` → `.gnu.hash` (the v5.6.38 pin). The
+# native loader (lib/dynlib.cyr) reads only DT_GNU_HASH — it never
+# consumed DT_HASH, so cyrius `.so`s used to fall back to a linear
+# `.dynsym` scan. Emitting `.gnu.hash` (matching that loader's
+# `_gnu_hash_lookup`) flips them onto the O(1) Bloom-filter path and
+# lets the SysV table go. Table shape: nbuckets=1 (every export chains
+# from bucket 0 — the order constraint is trivially met), symoffset=1
+# (sym 0 is the null entry, never hashed), bloom_size=1, bloom_shift=6.
+# Hash is glibc's `dl_new_hash` (h=5381; h=h*33+c; 32-bit) — see
+# `_GNUHASH` below + lib/dynlib.cyr::_gnu_hash.
+
+# GNU hash of a NUL-terminated name — must match lib/dynlib.cyr::_gnu_hash.
+fn _GNUHASH(np): i64 {
+    var h = 5381;
+    var i = 0;
+    var c = load8(np + i);
+    while (c != 0) {
+        h = ((h << 5) + h) + c;
+        h = h & 0xFFFFFFFF;
+        i = i + 1;
+        c = load8(np + i);
+    }
+    return h;
+}
 
 fn EMITELF_SHARED(S): i64 {
     var cp = GCP(S);
@@ -1367,9 +1380,11 @@ fn EMITELF_SHARED(S): i64 {
     var dynsym_off = (str_off + spos + 7) & (0 - 8);
     var dynsym_size = (nsyms + 1) * 24;    # +1 for the null sym
     var dynstr_off = dynsym_off + dynsym_size;
-    var hash_off = (dynstr_off + dynstr_size + 7) & (0 - 8);
-    var hash_size = 8 + 4 + (nsyms + 1) * 4;    # nbucket + nchain + 1 bucket + (nsyms+1) chains
-    var dynamic_off = (hash_off + hash_size + 7) & (0 - 8);
+    var gnuhash_off = (dynstr_off + dynstr_size + 7) & (0 - 8);
+    # 16-byte header + 1 bloom word (u64) + 1 bucket (u32) + nsyms
+    # chain words (u32, one per hashed sym from symoffset=1).
+    var gnuhash_size = 16 + 8 + 4 + nsyms * 4;
+    var dynamic_off = (gnuhash_off + gnuhash_size + 7) & (0 - 8);
     var dynamic_size = 16 * 8;     # 7 DT entries + DT_NULL
     var filesz = dynamic_off + dynamic_size;
     filesz = (filesz + 7) & (0 - 8);
@@ -1480,42 +1495,61 @@ fn EMITELF_SHARED(S): i64 {
         fi = fi + 1;
     }
 
-    # ---- .hash (SysV hash table) ----
-    # nbucket=1: everything chains from bucket 0.
-    # nchain = nsyms + 1 (including null sym at index 0).
-    var hp = O + hash_off;
-    store8(hp + 0, 1); store8(hp + 1, 0); store8(hp + 2, 0); store8(hp + 3, 0);   # nbucket
-    var nch = nsyms + 1;
-    store8(hp + 4, nch & 0xFF);
-    store8(hp + 5, (nch >> 8) & 0xFF);
-    store8(hp + 6, (nch >> 16) & 0xFF);
-    store8(hp + 7, (nch >> 24) & 0xFF);
-    # buckets[0] = 1 (first real symbol index) if nsyms > 0 else 0
+    # ---- .gnu.hash ----
+    # Single-bucket GNU hash matching lib/dynlib.cyr::_gnu_hash_lookup:
+    #   nbuckets=1, symoffset=1 (sym 0 is the null entry, never hashed),
+    #   bloom_size=1, bloom_shift=6. bucket[0] points at the first real
+    #   sym; chain[i] holds sym (i+1)'s hash with bit0 the chain-end flag.
+    # Layout: [nbuckets u32][symoffset u32][bloom_size u32][bloom_shift u32]
+    #         [bloom[0] u64][bucket[0] u32][chain[0..nsyms-1] u32].
+    var gp = O + gnuhash_off;
+    store8(gp + 0, 1);     # nbuckets = 1   (high 3 bytes stay zeroed)
+    store8(gp + 4, 1);     # symoffset = 1
+    store8(gp + 8, 1);     # bloom_size = 1
+    store8(gp + 12, 6);    # bloom_shift = 6
+    var buckets_off = 16 + 8;             # after header + 1 bloom word
+    var chains_off = buckets_off + 4;     # after 1 bucket word
+    # bucket[0] = symoffset(1) when there are exports, else 0 (empty).
     var bfirst = 0;
     if (nsyms > 0) { bfirst = 1; }
-    store8(hp + 8, bfirst);
-    # chain[0] = 0 (null sym)
-    # chain[i] = i+1 for i in 1..nsyms-1, chain[nsyms] = 0 (terminator)
-    var ci2 = 1;
-    while (ci2 <= nsyms) {
-        var next = ci2 + 1;
-        if (ci2 == nsyms) { next = 0; }
-        var coff = 12 + ci2 * 4;   # 8 (hdr) + 4 (bucket) + ci2*4
-        store8(hp + coff + 0, next & 0xFF);
-        store8(hp + coff + 1, (next >> 8) & 0xFF);
-        store8(hp + coff + 2, (next >> 16) & 0xFF);
-        store8(hp + coff + 3, (next >> 24) & 0xFF);
-        ci2 = ci2 + 1;
+    store8(gp + buckets_off, bfirst);
+    # Walk the fn table again in .dynsym order, hashing each export into
+    # the chain + accumulating its Bloom bits.
+    var bloom = 0;
+    var hi = 1;
+    fi = 0;
+    while (fi < fnc) {
+        var fo3 = L64(S + 0x9CA000 + fi * 8);
+        var noff3 = L64(S + 0x9BA000 + fi * 8);
+        var np3 = S + 0x60000 + noff3;
+        if (fo3 >= 0 && load8(np3) != 95) {
+            var hh = _GNUHASH(np3);
+            # Bloom: bit (h % 64) and bit ((h >> bloom_shift) % 64).
+            bloom = bloom | (1 << (hh % 64));
+            bloom = bloom | (1 << ((hh >> 6) % 64));
+            # chain entry = hash, bit0 cleared; last export flags chain end.
+            var cv = hh & 0xFFFFFFFE;
+            if (hi == nsyms) { cv = cv | 1; }
+            var coff = chains_off + (hi - 1) * 4;
+            store8(gp + coff + 0, cv & 0xFF);
+            store8(gp + coff + 1, (cv >> 8) & 0xFF);
+            store8(gp + coff + 2, (cv >> 16) & 0xFF);
+            store8(gp + coff + 3, (cv >> 24) & 0xFF);
+            hi = hi + 1;
+        }
+        fi = fi + 1;
     }
+    # bloom word (u64, 8-byte aligned at gp+16).
+    S64(gp + 16, bloom);
 
     # ---- .dynamic ----
     # DT tag values:
-    #   DT_INIT=12, DT_HASH=4, DT_STRTAB=5, DT_SYMTAB=6, DT_STRSZ=10,
-    #   DT_SYMENT=11, DT_NULL=0
+    #   DT_INIT=12, DT_GNU_HASH=0x6FFFFEF5, DT_STRTAB=5, DT_SYMTAB=6,
+    #   DT_STRSZ=10, DT_SYMENT=11, DT_NULL=0
     # DT_INIT VA = file offset of _cyrius_init (since p_vaddr=0).
     var dp = O + dynamic_off;
     S64(dp +  0, 12);               S64(dp +   8, code_off + init_cp_off);  # DT_INIT
-    S64(dp + 16, 4);                S64(dp +  24, hash_off);       # DT_HASH
+    S64(dp + 16, 0x6FFFFEF5);       S64(dp +  24, gnuhash_off);    # DT_GNU_HASH
     S64(dp + 32, 6);                S64(dp +  40, dynsym_off);     # DT_SYMTAB
     S64(dp + 48, 5);                S64(dp +  56, dynstr_off);     # DT_STRTAB
     S64(dp + 64, 10);               S64(dp +  72, dynstr_size);    # DT_STRSZ

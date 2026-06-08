@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.9] — 2026-06-08
+
+**v6.1.x slot 9 (Phase C — dynamic-link cleanup, Sub-arc C): migrate ELF `.so`
+emission from SysV `.hash` to `.gnu.hash`, and drop the SysV table.** The
+long-deferred v5.6.38 pin. cyrius's native loader (`lib/dynlib.cyr`) already reads
+**only** `DT_GNU_HASH` — it never consumed `DT_HASH`, so cyrius-emitted `.so`s were
+silently resolving symbols via the linear `.dynsym` fallback while carrying a dead
+SysV hash table. Emitting `.gnu.hash` flips them onto the loader's O(1) Bloom-filter
+path (`_gnu_hash_lookup`) and retires the unused table.
+
+**Benchmark:** `self_compile 454 ms` (+2 ms vs 452 — noise), `cycc 933,544 B`
+(+544 B for the `.gnu.hash` emit). check.sh 86/86.
+
+### Changed
+
+- **`EMITELF_SHARED` (`src/backend/x86/fixup.cyr`) emits `.gnu.hash`, not SysV
+  `.hash`.** Single-bucket table (`nbuckets=1`, `symoffset=1`, `bloom_size=1`,
+  `bloom_shift=6`) byte-matching the loader's `_gnu_hash_lookup`: a 16-byte header,
+  one 64-bit Bloom word accumulating each export's hash bits, `bucket[0]`, and one
+  32-bit chain word per export (hash with bit 0 = chain-end flag). `.dynamic` now
+  carries `DT_GNU_HASH` (`0x6FFFFEF5`) in place of `DT_HASH` (4). New `_GNUHASH`
+  helper mirrors glibc's `dl_new_hash` (`h = 5381; h = h*33 + c; 32-bit`) exactly,
+  matching `lib/dynlib.cyr::_gnu_hash`. **x86-only** — aarch64 has no `.so` path;
+  macho/PE use their own dylib/DLL mechanisms.
+
+### Verified
+
+- **`shared;` + dlopen round-trip resolves *through* the gnu.hash path.**
+  `dynlib_sym` is strict either/or (`if (gnuhash != 0) _gnu_hash_lookup else
+  _linear_sym_lookup` — no fallback chaining), so the gate's exit=99 (4 exports +
+  `DT_INIT` counter + state persistence) proves the new table resolves; a broken
+  table would return 0 → exit 21–24. `readelf -d` confirms `DT_GNU_HASH`, no
+  `DT_HASH`. check.sh 86/86; all 169 `.tcyr` pass by exit code.
+- **cycc byte-identical self-host** — cycc isn't emitted via `EMITELF_SHARED`, so
+  the change touches only `.so` outputs; the new emit code grows cycc by 544 B but
+  it self-hosts to a fixpoint.
+- **Cross-OS on real hardware**: cass (Windows PE — compiles the changed
+  `x86/fixup.cyr` into its cross-compiler), pi (aarch64 native), ecb (arm64 macOS)
+  all self-host **byte-identical**. (ach/x86-macho self-compile remains the HELD
+  Intel-EOL tail.)
+
 ## [6.1.8] — 2026-06-08
 
 **v6.1.x slot 8 (Phase C — PIE, Sub-arc B): position-independent codegen for
