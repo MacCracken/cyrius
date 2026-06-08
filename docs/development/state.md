@@ -14,9 +14,9 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.7** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 933,000 B |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 592,512 B |
+| **Version** | **6.1.8** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 933,000 B (unchanged @ 6.1.8 — aarch64-only slot) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 593,376 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 752,512 B |
 | **cycc_win** (PE32+ cross) | 804,864 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
@@ -74,12 +74,19 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   ELF wrapper** — `EMITELF64_KERNEL` emits ET_DYN+p_vaddr=0+`e_entry=0xA8` under
   `--pie` (the deferred v6.1.6 pickup); structurally validated, gnoboot-boot pending
   the AGNOS harness. See CHANGELOG [6.1.7].
+- **v6.1.8** — Phase C (PIE, Sub-arc B): **aarch64 PIE** — `--pie`/`CYRIUS_PIE=1`
+  reuses the proven Mach-O `adrp`/`add` PIC path for ELF (6 address-emit sites + 3
+  fixup branches gated on `_TARGET_MACHO==2` now also fire for `_pie_mode`; ELF
+  emitter → ET_DYN+p_vaddr=0; `FIXUP_ADRP_ADD` uses `_entry_base`, Mach-O
+  byte-identical). **Completes the PIE arc on both arches.** Validated: full tcyr
+  corpus as aarch64 PIE on **pi (real ARM)** — exit-code parity with non-PIE, zero
+  PIE-only failures; 338-input non-PIE byte-identical; pi/ecb/cass self-host; x86
+  cycc untouched. See CHANGELOG [6.1.8].
 
-**Next:** **v6.1.8** — Phase C: PIE codegen aarch64 (the `_IS_OBJ` aarch64 path
-covers only object mode today; `adrp`/`add` conversions) — bumped from v6.1.7,
-which the user redirected to the COM fix + wrapper. Then `.gnu.hash`, D (TS/TSX→JS),
-E (bayan/ganita carve). The kernel-PIE gnoboot-boot validation lands when an AGNOS
-`--pie` harness exists. See roadmap.md.
+**Next:** **v6.1.9** — Phase C tail: `.gnu.hash` migration + drop SysV `.hash` (the
+long-deferred v5.6.38 pin). Then D (TS/TSX→JS emit — active SecureYeoman pressure),
+E (bayan/ganita carve). The kernel-PIE gnoboot-boot validation + aarch64 kernel-PIE
+land when an AGNOS `--pie` harness exists. See roadmap.md.
 
 **Open / filed (v6.1.x):**
 - `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm

@@ -118,7 +118,7 @@ fn FIXUP(S): i64 {
                 #     runtime. (v5.9.39 Bug B fix; v5.9.38 shipped the
                 #     `lib/fnptr.cyr` macOS-branch companion as Fix A.)
                 var ftarget = L64(S + 0x9CA000 + idx * 8) + entry;
-                if (_TARGET_MACHO == 2) { FIXUP_ADRP_ADD(S, coff, ftarget); }
+                if (_TARGET_MACHO == 2 || _pie_mode == 1) { FIXUP_ADRP_ADD(S, coff, ftarget); }
                 else { FIXUP_MOV(S, coff, ftarget); }
             }
             else { if (ftype == 4) {
@@ -139,7 +139,7 @@ fn FIXUP(S): i64 {
                         # String address: Linux flat layout vs Mach-O ARM __cstring section.
                         var saddr = dbase + totvar + idx;
                         if (_TARGET_MACHO == 2) { saddr = entry + acp + idx; }
-                        if (_TARGET_MACHO == 2) { FIXUP_ADRP_ADD(S, coff, saddr); }
+                        if (_TARGET_MACHO == 2 || _pie_mode == 1) { FIXUP_ADRP_ADD(S, coff, saddr); }
                         else { FIXUP_MOV(S, coff, saddr); }
                     }
                     else { if (ftype == 5) {
@@ -191,7 +191,7 @@ fn FIXUP(S): i64 {
                                 }
                                 vaddr = 0x100000000 + (2 + mfp) * 16384 + cumul;
                             }
-                            if (_TARGET_MACHO == 2) { FIXUP_ADRP_ADD(S, coff, vaddr); }
+                            if (_TARGET_MACHO == 2 || _pie_mode == 1) { FIXUP_ADRP_ADD(S, coff, vaddr); }
                             else { FIXUP_MOV(S, coff, vaddr); }
                         } } } } }
         fi = fi + 1;
@@ -514,7 +514,12 @@ fn FIXUP(S): i64 {
 # Apple Silicon enforces MH_PIE, so absolute addressing (MOVZ/MOVK) is unsafe.
 # This pair is PC-relative and survives the ASLR slide.
 fn FIXUP_ADRP_ADD(S, coff, addr): i64 {
-    var pc = 0x100004000 + coff;
+    # v6.1.8: pc base = _entry_base (the adrp instruction's VA base) so this
+    # serves ELF PIE too, not just Mach-O. For Mach-O _entry_base==0x100004000
+    # (byte-identical); for ELF PIE it's the ELF text VA, and since both `addr`
+    # and `pc` use the same page-aligned base, the base cancels in the page-diff
+    # → the patched offset is load-bias-correct (ASLR-safe). See CHANGELOG [6.1.8].
+    var pc = _entry_base(S) + coff;
     var pc_page = pc >> 12;
     var target_page = addr >> 12;
     var page_diff = target_page - pc_page;
@@ -540,7 +545,9 @@ fn FIXUP_ADRP_ADD(S, coff, addr): i64 {
 # FIXUP_ADRP_ADD because its low 12 bits are 0, and 0 in the ADD's
 # imm12 field coincides with 0 in the LDR's imm12 field.
 fn FIXUP_ADRP_LDR(S, coff, addr): i64 {
-    var pc = 0x100004000 + coff;
+    # v6.1.8: pc base via _entry_base (see FIXUP_ADRP_ADD). Mach-O-only path
+    # today (__got, ftype 5) so byte-identical there.
+    var pc = _entry_base(S) + coff;
     var pc_page = pc >> 12;
     var target_page = addr >> 12;
     var page_diff = target_page - pc_page;
@@ -602,14 +609,21 @@ fn EMITELF(S): i64 {
     # Section header table — v5.11.34 mirror of v5.11.32 (x86 user) and
     # v5.11.30 (aarch64 kernel). Non-loaded metadata past PT_LOAD;
     # 5-section ELF64 (NULL + .text + .rodata + .bss + .shstrtab).
+    # v6.1.8: PIE (--pie) → ET_DYN at base 0 (the loader/kernel ASLR-slides it);
+    # the adrp/add codegen (via _pie_mode + FIXUP_ADRP_ADD) is PC-relative so it
+    # runs at any base. Non-PIE keeps the fixed 0x400000 ET_EXEC layout, so it
+    # stays byte-identical. Mirror of x86 EMITELF_USER. See CHANGELOG [6.1.8].
+    var base = 0x400000;
+    var etype = 2;
+    if (_pie_mode == 1) { base = 0; etype = 3; }
     var text_foff = 120;
-    var text_addr = 0x400000 + 120;
+    var text_addr = base + 120;
     var text_size = cp;
     var bss_foff = 120 + cp;
-    var bss_addr = 0x400000 + bss_foff;
+    var bss_addr = base + bss_foff;
     var bss_size = totvar;
     var rod_foff = bss_foff + totvar;
-    var rod_addr = 0x400000 + rod_foff;
+    var rod_addr = base + rod_foff;
     var rod_size = spos;
     # .shstrtab: "\0.text\0.rodata\0.bss\0.shstrtab\0" = 30 bytes
     var shstrtab_size = 30;
@@ -623,10 +637,10 @@ fn EMITELF(S): i64 {
     # e_ident: ELF magic + class64 + LE + version + ELFOSABI_NONE
     S64(O + op, 0x00010102464C457F); op = op + 8;
     S64(O + op, 0x0000000000000000); op = op + 8;
-    # e_type=EXEC(2) + e_machine=AARCH64(0xB7=183)
-    S64(O + op, 0x0000000100B70002); op = op + 8;
-    # e_entry = 0x400078
-    S64(O + op, 0x0000000000400078); op = op + 8;
+    # e_type=etype (EXEC(2); DYN(3) for PIE) + e_machine=AARCH64(0xB7=183)
+    S64(O + op, 0x0000000100B70000 | etype); op = op + 8;
+    # e_entry = base + 0x78 (base-relative for PIE)
+    S64(O + op, base + 0x78); op = op + 8;
     # e_phoff = 64
     S64(O + op, 0x0000000000000040); op = op + 8;
     # e_shoff (v5.11.34 — was 0)
@@ -639,8 +653,8 @@ fn EMITELF(S): i64 {
     # Program header (56 bytes)
     S64(O + op, 0x0000000700000001); op = op + 8;
     S64(O + op, 0x0000000000000000); op = op + 8;
-    S64(O + op, 0x0000000000400000); op = op + 8;
-    S64(O + op, 0x0000000000400000); op = op + 8;
+    S64(O + op, base); op = op + 8;                 # p_vaddr (0 for PIE)
+    S64(O + op, base); op = op + 8;                 # p_paddr
     S64(O + op, filesz); op = op + 8;
     S64(O + op, memsz); op = op + 8;
     S64(O + op, 0x0000000000010000); op = op + 8;

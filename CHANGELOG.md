@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.8] — 2026-06-08
+
+**v6.1.x slot 8 (Phase C — PIE, Sub-arc B): position-independent codegen for
+aarch64.** Completes the PIE arc — `--pie` / `CYRIUS_PIE=1` now produces working
+position-independent executables on **both** x86_64 (v6.1.6) and aarch64.
+Validated by running the full tcyr corpus as ASLR-loaded aarch64 PIE binaries on
+**pi (real ARM hardware)**.
+
+**Benchmark:** `self_compile 452 ms`, `cycc 933,000 B` (x86 cycc **byte-identical**
+this slot — the edits are aarch64-only; `cycc_aarch64` +1,584 B for the PIE
+plumbing). check.sh 86/86.
+
+### Added
+
+- **aarch64 PIE codegen (`--pie` / `CYRIUS_PIE=1`).** Reuses the byte-proven
+  Mach-O `adrp`/`add` PC-relative machinery (`FIXUP_ADRP_ADD`): the six
+  address-emit sites (`EVADDR`/`ESADDR`/`EVADDR_X1`/`EVSTORE`/`EVLOAD`/
+  `ELOAD_FN_ADDR`) and the three fixup branches (ftype 0/1/3) that were gated on
+  `_TARGET_MACHO == 2` now also fire for `_pie_mode`, emitting the 2-instruction
+  `adrp`+`add` pair instead of the 3-instruction `movz`/`movk` absolute chain. The
+  aarch64 ELF emitter produces **ET_DYN + p_vaddr=0 + base-relative `e_entry`
+  (`0x78`)** under `--pie`. `--pie` flag/env plumbed into `src/main_aarch64.cyr`.
+- **`FIXUP_ADRP_ADD` / `FIXUP_ADRP_LDR` base generalized** — the adrp `pc` base is
+  now `_entry_base(S)` (the instruction's VA base) instead of the hardcoded Mach-O
+  `0x100004000`, so the PC-relative patch serves ELF PIE too. For Mach-O
+  `_entry_base == 0x100004000` → **byte-identical** (ecb self-host confirms); for
+  ELF PIE the page-aligned base cancels in the adrp page-diff, so the result is
+  load-bias-correct (ASLR-safe).
+
+### Verified
+
+- **338-input non-PIE aarch64 differential = zero drift** (the PIE plumbing is
+  inert for non-PIE); aarch64 self-host (pi) + Mach-O self-host (ecb) byte-identical.
+- **Full tcyr corpus as aarch64 PIE on pi (real ARM): exit-code parity with
+  non-PIE — zero PIE-only failures.** A PIE binary's `.text` uses `adrp`/`add`
+  (vs `movz`/`movk` non-PIE) and runs correctly across randomized ASLR bases (a
+  global / string / fn-call test returns 42 on every load). x86 cycc untouched →
+  x86 self-host + check.sh 86/86 unaffected.
+- **Cross-OS on real hardware**: pi (aarch64 native), ecb (arm64 macOS), cass
+  (Windows PE) all self-host byte-identical.
+
 ## [6.1.7] — 2026-06-08
 
 **v6.1.x slot 7 (packed): Windows COM/DXGI `.rdata` corruption fix (ai-hwaccel

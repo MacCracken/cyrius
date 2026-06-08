@@ -68,11 +68,11 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.5** ✅ | DCE mark-and-sweep consolidation (`_dce_hash_lookup` + `_dce_host_fn` hoist to `common/runtime.cyr`; 4 probe-blocks → 1, 4 host-scans → 1; −51 LOC, cycc −752 B; logic-preserving) | B — backend prep |
 | **v6.1.6** ✅ | PIE codegen x86_64 — `--pie`/`CYRIUS_PIE=1` ships working **userland** PIE executables (ET_DYN, RIP-relative; 169/169 tcyr run as ASLR'd PIE + new gate). Reused the ~80%-prebuilt `shared`/object `_IS_OBJ` machinery (premise correction) + fixed `EVADDR_X1`. Kernel-PIE ELF = follow-on (needs AGNOS `--pie` boot harness). | C — PIE |
 | **v6.1.7** ✅ | **Packed (user-directed)**: Windows COM/DXGI `.rdata` corruption fix (ai-hwaccel consumer bug — m128 array-padding base mismatch between `FIXUP` + `_pe_layout`; GPU-confirmed 60→42) **+** kernel-PIE ELF wrapper (`EMITELF64_KERNEL` ET_DYN+p_vaddr=0, the deferred v6.1.6 pickup) | bug-bandwidth + C |
-| **v6.1.8** | PIE codegen aarch64 (Sub-arc B — `adrp`/`add`) | C — PIE |
-| **v6.1.8** | `.gnu.hash` migration + drop SysV `.hash` (Sub-arc C) | C — PIE / dynlink |
-| **v6.1.9** | TS/TSX → JS emit (`cycc --emit-js`) | D — frontend emit |
-| **v6.1.10** | bayan distfile carve | E — stdlib carve |
-| **v6.1.11** | ganita distfile carve | E — stdlib carve |
+| **v6.1.8** ✅ | PIE codegen aarch64 (Sub-arc B — `adrp`/`add` via the proven Mach-O PIC path; ET_DYN; full tcyr corpus exit-parity on pi). **Completes the PIE arc on both arches.** | C — PIE |
+| **v6.1.9** | `.gnu.hash` migration + drop SysV `.hash` (Sub-arc C) | C — PIE / dynlink |
+| **v6.1.10** | TS/TSX → JS emit (`cycc --emit-js`) | D — frontend emit |
+| **v6.1.11** | bayan distfile carve | E — stdlib carve |
+| **v6.1.12** | ganita distfile carve | E — stdlib carve |
 | *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):
