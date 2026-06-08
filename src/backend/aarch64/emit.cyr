@@ -296,8 +296,28 @@ fn EADDR(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0x8B010000); return 0; }
 # `ADD x0, x0, #imm`: 0x91000000 base | (imm << 10). imm fits 0..4095;
 # byte-array literal callers stay within this range by construction
 # (byte offsets in a single array).
+# add x0, x0, #n. The aarch64 ADD-immediate form only carries a 12-bit
+# operand (with an optional LSL #12), so the pre-v6.1.2 single
+# `add x0,x0,#(n & 0xFFF)` SILENTLY corrupted for n >= 4096 (e.g. n==4096
+# masked to #0 → byte written to &var+0). Fixed: split into the 12-bit
+# low + LSL #12 high adds (covers n <= 0xFFFFFF / 16 MB, above the 8 MB
+# compile-source cap so it reaches every in-range offset), with a
+# movz/movk + add-reg guard for the >24-bit case so the bug class can't
+# re-emerge if the source cap is ever raised past 16 MB. x16 (IP0) is a
+# scratch the allocator never holds a value in. See CHANGELOG [6.1.2],
+# issue 2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md.
 fn EADDRA_IMM(S, n): i64 {
-    EW(S, 0x91000000 | ((n & 0xFFF) << 10));
+    if (n < 4096) {
+        EW(S, 0x91000000 | (n << 10));                       # add x0, x0, #n
+    } elif (n <= 0xFFFFFF) {
+        var _lo = n & 0xFFF;
+        if (_lo != 0) { EW(S, 0x91000000 | (_lo << 10)); }   # add x0, x0, #lo
+        EW(S, 0x91400000 | (((n >> 12) & 0xFFF) << 10));     # add x0, x0, #hi, LSL #12
+    } else {
+        EW(S, 0xD2800010 | ((n & 0xFFFF) << 5));             # movz x16, #(n & 0xFFFF)
+        EW(S, 0xF2A00010 | (((n >> 16) & 0xFFFF) << 5));     # movk x16, #(n>>16), LSL #16
+        EW(S, 0x8B100000);                                   # add x0, x0, x16
+    }
     return 0;
 }
 # sub x0, x0, x1 — non-commutative, NOT fused (swap inverts subtract).

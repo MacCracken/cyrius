@@ -6,6 +6,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.2] — 2026-06-08
+
+**v6.1.x slot 2 (Phase A — housekeeping): aarch64 `EADDRA_IMM` 12-bit-mask
+fix.** A latent, pre-existing silent-corruption bug in the aarch64 backend
+(filed at the v6.0.91 closeout). x86 is unaffected (full disp32 `add`).
+
+**Benchmark:** `cycc 931,864 B` (x86 cycc byte-identical — the change is
+aarch64-only); self_compile unchanged.
+
+### Fixed
+
+- **`src/backend/aarch64/emit.cyr` `EADDRA_IMM`** — the op emitted a single
+  `add x0, x0, #(n & 0xFFF)`, masking the operand to 12 bits, so a byte-array
+  literal with an element offset `>= 4096` silently corrupted (at `n == 4096`,
+  `4096 & 0xFFF == 0` → `add #0` → the byte landed at `&var+0`). Reached via
+  the v6.0.88 peephole's correct `disp >= 4096` legacy fallback. Fixed: split
+  into the 12-bit low add + the `LSL #12` high add (covers `n <= 0xFFFFFF` /
+  16 MB, above the 8 MB compile-source cap so it reaches every in-range
+  offset), with a `movz`/`movk` + `add`-reg guard (scratch `x16`) for the
+  `>24-bit` case so the silent-corruption class can't re-emerge if the source
+  cap is ever raised past 16 MB. Issue
+  `2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md` (archived).
+- New regression test `tests/tcyr/aarch64_byte_literal_over_4096.tcyr` — an
+  8200-element byte-array literal with markers at the 4096 wrap point and the
+  8192 (hi-chunk=2) boundary. Passes trivially on x86; the guard for aarch64
+  (run under qemu / on pi+ecb).
+
+### Verified
+
+- x86 cycc self-host byte-identical (the change is not in `src/main.cyr`'s
+  include chain); check.sh 85/85.
+- **Adversarial**: the new test fails 7/7 on the pre-fix aarch64 compiler
+  (clean repro — the 8192 write wrapped onto byte 0) and passes 7/7 on the
+  fixed one (qemu-aarch64).
+- **Cross-OS on real hardware**: native aarch64 cycc self-hosts byte-identical
+  on **pi** (Linux aarch64) with the fix; the >4096 test passes on **ecb**
+  (real arm64 macOS, Mach-O — same shared `EADDRA_IMM` emit). Committed
+  `build/cycc-native-aarch64` regenerated (pi-self-host-verified). cass
+  (Windows/PE-x86) is unaffected — the aarch64 backend isn't in its path.
+
 ## [6.1.1] — 2026-06-08
 
 **v6.1.x slot 1 (Phase A — housekeeping): back-compat symlink drop.** The

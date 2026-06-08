@@ -3,6 +3,32 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-08 (v6.1.2 — aarch64 EADDRA_IMM >4095 fix, Phase A slot 2)
+
+Cutting **v6.1.2**. Latent pre-existing aarch64 silent-corruption fix (filed at .91 closeout).
+x86 cycc untouched (byte-identical); aarch64-backend-only change.
+
+- **`src/backend/aarch64/emit.cyr` `EADDRA_IMM`** — was `add x0,x0,#(n & 0xFFF)` (12-bit mask →
+  byte-array literal offset >=4096 silently corrupted; n==4096 → `add #0` → wrote to &var+0).
+  Fixed: 12-bit low add + `LSL #12` high add (covers n<=0xFFFFFF, above the 8 MB source cap) +
+  `movz`/`movk`+add-reg guard (x16) for >24-bit so the bug class can't re-emerge if the cap grows.
+- New regression test `tests/tcyr/aarch64_byte_literal_over_4096.tcyr` (8200-elem literal, markers
+  at the 4096 wrap + 8192 hi-chunk boundary).
+
+**Bench (rule #6):** `cycc 931,864 B` (x86 byte-identical — aarch64-only change).
+
+**Verified:** x86 self-host byte-identical (change not in main.cyr); check.sh 85/85. **Adversarial:**
+test fails 7/7 on pre-fix aarch64 compiler, passes 7/7 fixed (qemu). **Cross-OS real hardware:**
+native aarch64 self-hosts byte-identical on **pi** with the fix; >4096 test passes on **ecb** (real
+arm64 macOS, Mach-O — shared EADDRA_IMM emit). Committed `build/cycc-native-aarch64` regenerated
+(pi-verified). cass (Windows/PE-x86) unaffected (aarch64 backend not in its path). Issue archived.
+
+**Note:** ecb's repo checkout is STALE (main @ 6.0.1, committed x86 build/cycc — only its installed
+`~/.cyrius/bin/cycc` works). Full ecb repo self-host needs the user to update that checkout; this slot
+verified via cross-emitted macho-arm binary run on ecb hardware + pi native self-host.
+
+**Next:** **v6.1.3** — POSIX `*at()` family (Phase A). 2-arch parity + cross-arch tests.
+
 ## Session close — 2026-06-08 (v6.1.1 — back-compat symlink drop, Phase A slot 1)
 
 Cutting **v6.1.1**, first working slot of v6.1.x (Phase A — housekeeping). The v6.0.0
