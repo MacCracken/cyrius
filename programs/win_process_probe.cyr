@@ -1,5 +1,5 @@
 # win_process_probe — a stdlib subprocess-spawning Windows program so
-# `_win_process_gate` (programs/check.cyr) can assert that CYRIUS_TARGET_WIN=1
+# `_win_process_gate` (programs/checks/platform_win_macho.cyr) can assert that CYRIUS_TARGET_WIN=1
 # routes process creation through CreateProcessW. This is the v6.0.51 arc's
 # Linux-side structural gate (the cass runtime spawn-test is the v6.0.52 gate).
 #

@@ -1,5 +1,5 @@
 # efi_fncall_probe — exercises fncall1..fncall5 under CYRIUS_TARGET_EFI=1 so
-# `_efi_emit_gate` (programs/check.cyr) can assert NO `ud2 ud2` is emitted at
+# `_efi_emit_gate` (programs/checks/platform_efi.cyr) can assert NO `ud2 ud2` is emitted at
 # any fncallN call site.
 #
 # Regression guard for the 2026-05-19 → fixed-by-6.0.x UEFI bug: at cycc 6.0.0

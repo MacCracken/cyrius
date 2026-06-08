@@ -2,7 +2,7 @@
 #
 # Cyrius port of scripts/lib/audit-walk.sh shipped at v5.9.1 as the
 # first slot of the v5.9.x sovereignty pass (bash-toolchain → cyrius
-# conversion). Used by programs/check.cyr (the cyrius-native audit
+# conversion). Used by programs/checks/ (the cyrius-native audit
 # dispatcher that replaces scripts/check.sh).
 #
 # scripts/lib/audit-walk.sh stays bash for now — it is still consumed

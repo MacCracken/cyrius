@@ -55,7 +55,7 @@ fn path_dirname(path): i64 {
 # Check if path has a specific extension. Both args are Str
 # (matches str_ends_with's signature). Callers passing a cstring
 # literal must wrap via str_from(".tcyr"). v5.9.6 added the wrap
-# at programs/check.cyr's _testsuite_gate caller.
+# at programs/checks/selfhost.cyr's _testsuite_gate caller.
 fn path_has_ext(path, ext): i64 {
     return str_ends_with(path, ext);
 }
@@ -67,7 +67,7 @@ fn path_has_ext(path, ext): i64 {
 # str_from(name))` borrowed the byte pointer into the 4096-byte
 # `buf`; on the next outer iteration, getdents64 overwrote that
 # buf with the next batch, and previously-pushed Strs silently
-# pointed at garbage. Surfaced when programs/check.cyr's
+# pointed at garbage. Surfaced when programs/checks/selfhost.cyr's
 # `_testsuite_gate` reported "0 files" despite 128 .tcyr files
 # present — `path_has_ext(name, ".tcyr")` returned false for
 # every borrowed-then-clobbered name. dir_list_full + dir_walk

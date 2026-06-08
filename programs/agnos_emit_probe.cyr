@@ -1,5 +1,5 @@
 # agnos_emit_probe — exercises the AGNOS ring-3 ABI so `_agnos_emit_gate`
-# (programs/check.cyr) can assert that `CYRIUS_TARGET_AGNOS=1` emits a valid
+# (programs/checks/ts.cyr) can assert that `CYRIUS_TARGET_AGNOS=1` emits a valid
 # agnos binary: a `write`(syscall 1) to stdout + a non-zero exit, so the gate
 # verifies the agnos exit epilogue (`syscall(0)`, NOT Linux `60`/`0xB8 0x3C`)
 # and a valid ELF64 at entry ≥ 0x200000 (agnos's user-range floor).

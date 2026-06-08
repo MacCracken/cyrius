@@ -3,6 +3,52 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.91 ship — v6.0.x → v6.1.0 CLOSEOUT pass)
+
+Closing **v6.0.91** — the last v6.0.x patch (the closeout). v6.1.0 opens next (clean cycle open).
+
+**Mechanical gates (all green):** cycc self-host byte-identical; bootstrap closure verified
+(`bootstrap/verify.sh`: asm reproducible from the Rust seed, `asm → cyrc_v2` matches `seed → cybs`);
+check.sh **85/85**; cross-OS self-host on **ach + ecb + pi + cass**.
+
+**Judgment passes (6-agent workflow, clean):**
+- **Heap-map** — the v6.0.88 FREED `ret_patches` region `[0x18DA20..0x18E220)` verified dead in all 5
+  inline-map mains (the other 2 use the peer-defer "see main.cyr" pattern); no new regions; no code
+  reads/writes the freed offsets.
+- **Dead-code** — floor holds at **68 fns / 26,818 bytes** (unchanged across .88–.90), all intentional
+  scaffold (IR backend / TS frontend / cross-arch emit) + stdlib API; nothing removable.
+- **Security** — clean; no new vulnerability class. Byte-array peephole bounds-checked (pass-1 cap +
+  arch disp caps).
+- **Downstream** — 76 `cyrius.cyml` pins surveyed, **zero anomalies** (no future/malformed/below-min).
+- **Refactor / code-review** — see findings below.
+
+**Found (pre-existing, filed, NOT a .88–.90 regression):** `aarch64 EADDRA_IMM` masks its operand to
+12 bits → byte-array literals **> 4096 elements** silently corrupt (at offset 4096, `4096 & 0xFFF == 0`
+→ no-op add → byte lands at `&var+0`). Reached only via the peephole's *correct* `disp >= 4096` legacy
+fallback. Reproduced at `affc8ac4` on the pre-peephole aarch64 compiler; doesn't bite in-tree (no
+brace-literal byte array > 4096). Issue `2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md`; fix
+deferred to v6.1.x (changes aarch64 codegen → needs cross-OS reverify).
+
+**v6.1.x carry-in (roadmap-future.md):** (1) hoist `_emit_fmt`/`_entry_base` to a shared home —
+**confirmed blocked** at closeout by the single-pass parser + include order (`runtime.cyr` parsed before
+`emit.cyr`; `_emit_fmt` reads `_TARGET_*` as bare-identifier globals → hard "undefined variable", not a
+deferrable fixup; prereq = move the `_TARGET_*` decls earlier). This **validates the .89 decision** to
+keep `_emit_fmt` per-backend. (2) consolidate the duplicated DCE mark-and-sweep across the two
+`fixup.cyr` backends. (3) the `EADDRA_IMM` fix.
+
+**Cleanup:** repointed the residual `programs/check.cyr` comment refs (deleted @ .90) → per-suite files
+in `lib/fs.cyr`, `lib/regression.cyr`, `lib/audit_walk.cyr`, the probe programs, and one `.tcyr`.
+**Vidya:** added the .88–.90 compiler gotchas to `gotchas.cyml`.
+
+**Doc-currency debt noted (doc-health):** vidya `dependencies.cyml` dep catalog is stale beyond this
+cycle (sigil listed at 2.9.3 vs current 3.7.7) — accumulated over many minors, a fuller refresh is its
+own task, not folded into this closeout. Also: `bootstrap/verify.sh` dirties tracked
+`archive/seed/target/*` Rust build artifacts (restored this slot) — candidate for `.gitignore`.
+
+**Next:** **v6.1.0** — clean cycle open + docs update (the v6.1.x cycle structure: PIE + .gnu.hash arc,
+per `project_v6_x_cycle_structure`). Latent/filed: x86-macOS byte-array no-compile; macho-arm socket
+*family* x86-syscall-nums; aarch64 EADDRA_IMM >4095.
+
 ## Session close — 2026-06-07 (.90 ship — check.cyr modularization: programs/check.cyr → programs/checks/)
 
 Closing **v6.0.90**. check.sh 85/85; self-host byte-identical (cycc untouched — this is Linux-only

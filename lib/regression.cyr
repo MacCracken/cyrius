@@ -1,5 +1,5 @@
 # regression.cyr — testing-stdlib primitives carved from
-# `programs/check.cyr` at v5.9.42.
+# `programs/checks/` at v5.9.42.
 #
 # Usage: include "lib/regression.cyr"
 # Requires: string.cyr, syscalls.cyr (host arch variant),
@@ -30,7 +30,7 @@
 #     reachability skip-check, remote-exit, remote-exec-capture,
 #     scp-to, macOS codesign-remote.
 #   - Compile-shaped helpers (`pipe-to-compiler-and-run`,
-#     `compile-capture-stderr`) live in `programs/check.cyr`
+#     `compile-capture-stderr`) live in `programs/checks/`
 #     because they wrap `_self_host_pipe`'s 2 MB source-cap +
 #     raw-status return convention; the lib's
 #     `regression_pipe_to_bin*` use a 1 MB cap and WEXITSTATUS,
@@ -46,7 +46,7 @@
 #     surface narrow + earn it on consumer ask, not bundle here.
 #   - cyrius-specific gate dispatchers (`_tcyr_relay_gate` /
 #     `_expected_output_gate` shapes). Those live in
-#     `programs/check.cyr` because they use audit-internal
+#     `programs/checks/` because they use audit-internal
 #     accounting (`_check`, ROOT_PATH, etc.); generalizing them
 #     would need parametrizing call shapes that are dispatcher-
 #     idiosyncratic.
@@ -654,7 +654,7 @@ fn regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_
 # public surface but consistent within this module) ────────
 
 # Build "/tmp/<prefix><pid>" — used by the *_capture variants
-# for their scratch files. Same shape as `programs/check.cyr`'s
+# for their scratch files. Same shape as `programs/checks/`'s
 # `_tmp_path` so cleanup behavior + collision properties are
 # identical.
 fn _regression_tmp_path(prefix): i64 {

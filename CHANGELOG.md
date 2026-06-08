@@ -6,6 +6,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.91] — 2026-06-07
+
+**v6.0.x → v6.1.0 closeout.** The last v6.0.x patch: all mechanical gates green,
+a clean 6-agent judgment-pass workflow, the residual `check.cyr` comment sweep, and
+vidya field notes. One pre-existing latent aarch64 bug filed; three concrete v6.1.x
+refactor items recorded. v6.1.0 opens next.
+
+### Changed
+
+- **v6.0.x → v6.1.0 closeout pass.** The last v6.0.x patch. Mechanical gates
+  all green: cycc self-hosts byte-identical; bootstrap closure verified
+  (asm reproducible from the Rust seed; `asm → cyrc_v2` matches `seed → cybs`);
+  check.sh 85/85; cross-OS self-host on **ach + ecb + pi + cass**. Judgment
+  passes (heap-map / dead-code / refactor / code-review / security /
+  downstream), run as a 6-agent workflow, came back clean: the v6.0.88 FREED
+  `ret_patches` region is verified dead in every heap map; the dead-code floor
+  holds at 68 fns / 26,818 bytes (all intentional scaffold); no new
+  vulnerability class; 76 downstream `cyrius.cyml` pins surveyed, zero
+  anomalies (no future/malformed pins).
+- **Cleanup sweep** — repointed the remaining stale `programs/check.cyr`
+  comment references (deleted at .90) to their per-suite files: `lib/fs.cyr`,
+  `lib/regression.cyr`, `lib/audit_walk.cyr`, the probe programs
+  (`efi_probe`, `efi_fncall_probe`, `agnos_emit_probe`, `win_emit_probe`,
+  `win_process_probe`, `ts_test_runner`), and `tests/tcyr/gvar_static_init.tcyr`.
+- **Vidya field notes** — added the .88–.90 compiler gotchas to
+  `vidya/.../compiler/gotchas.cyml` (x86-Mach-O byte-array-literal
+  self-host-invisible miscompile; the obj-aware `_EVRCX` vs absolute-only
+  `EVADDR_X1` base-load; `_emit_fmt` Mach-O-before-PE precedence + the
+  zsh-no-word-split test-harness trap).
+
+### Notes
+
+- **Found (pre-existing, filed):** `aarch64 EADDRA_IMM` masks its operand to
+  12 bits → byte-array literals > 4096 elements silently corrupt (reached only
+  via the peephole's correct `disp >= 4096` fallback). Reproduced at
+  `affc8ac4` — **not** a .88–.90 regression; doesn't bite in-tree. Issue
+  `2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md`; fix deferred to
+  v6.1.x (changes aarch64 codegen).
+- **v6.1.x carry-in** (in `roadmap-future.md`): hoist `_emit_fmt`/`_entry_base`
+  to a shared home (blocked at closeout by the single-pass parser + include
+  order — confirms the .89 per-backend decision); consolidate the duplicated
+  DCE mark-and-sweep across the two `fixup.cyr` backends; the `EADDRA_IMM` fix.
+
 ## [6.0.90] — 2026-06-07
 
 **Cleanup / refactor cluster (part 2b): `check.cyr` modularization.** The 10.2K-line

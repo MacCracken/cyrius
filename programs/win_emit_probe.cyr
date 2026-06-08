@@ -1,5 +1,5 @@
 # win_emit_probe — a stdlib-using Windows program so `_win_build_gate`
-# (programs/check.cyr) can assert that `CYRIUS_TARGET_WIN=1` cross-builds the
+# (programs/checks/platform_win_macho.cyr) can assert that `CYRIUS_TARGET_WIN=1` cross-builds the
 # 6.0.x stdlib WIN include-closure CLEAN into a valid PE32+ console binary.
 # This is the regression guard for the frozen-frontend closure break the
 # ai-hwaccel consumer hit: the frozen `cc5_win` 5.11.69 frontend couldn't

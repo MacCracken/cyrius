@@ -59,7 +59,7 @@ fn read_arith(): i64 { return ARITH; }
 # pre-fix — the static-init path now removes the runtime store but
 # the read still returns the correct value. The agnos kmode==1
 # scenario (PARSE_PROG before EMIT_GVAR_INITS) is exercised by the
-# `kmode emit order` gate in programs/check.cyr, which compiles a
+# `kmode emit order` gate in programs/checks/platform_efi.cyr, which compiles a
 # minimal `kernel;` source against the same codegen path.
 var _early_small = read_small();
 var _early_spins = read_spins();

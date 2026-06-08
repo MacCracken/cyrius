@@ -2,7 +2,7 @@
 #
 # Walks a directory of .ts / .tsx files, runs `cycc --parse-ts`
 # (or `--lex-ts`) on each, reports pass/fail. The CLI version of
-# `_ts_corpus_gate` from programs/check.cyr — useful for ad-hoc
+# `_ts_corpus_gate` from programs/checks/ts.cyr — useful for ad-hoc
 # walks without invoking the full check.sh suite.
 #
 # Pinned at v5.10.20 P(-1) sweep (option E from v5.7.37), landed
@@ -33,7 +33,7 @@ include "lib/process.cyr"
 
 # ----------------------------------------------------------------
 # Run `cycc <mode_flag>` with fixture as stdin, return WEXITSTATUS.
-# Same shape as programs/check.cyr's `_ts_mode_run`.
+# Same shape as programs/checks/ts.cyr's `_ts_mode_run`.
 # ----------------------------------------------------------------
 fn _run_mode(cc_path, fixture_path, mode_flag): i64 {
     var fd = sys_open(fixture_path, 0, 0);

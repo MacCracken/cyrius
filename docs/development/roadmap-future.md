@@ -11,6 +11,44 @@ See [roadmap.md](roadmap.md) for current v6.x cycle work.
 
 ---
 
+## v6.1.x carry-in (from the v6.0.x → v6.1.0 closeout, 2026-06-07)
+
+Surfaced by the v6.0.91 closeout judgment-pass workflow (heap/dead-code/
+refactor/code-review/security/downstream — all otherwise clean). These are
+concrete v6.1.x first-patch candidates, not speculative:
+
+- **`aarch64 EADDRA_IMM` 12-bit mask** (latent codegen bug, **pre-existing**
+  — reproduced at `affc8ac4`, not a .88–.90 regression). `add x0,x0,#imm12`
+  masks the operand to 12 bits, so a byte-array literal `> 4096` elements
+  silently corrupts (at offset 4096, `4096 & 0xFFF == 0` → no-op add → byte
+  lands at `&var+0`). Reached only via the peephole's correct `disp >= 4096`
+  legacy fallback. Doesn't bite in-tree (no brace-literal byte array > 4096).
+  Fix: a `> 4095` path (chunked add-imm12 or movz/movk + add-reg). Issue:
+  [`issues/2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md`](issues/2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md).
+- **Hoist `_emit_fmt` / `_entry_base` to a shared home** — the v6.0.89
+  first-bite left these byte-identical-duplicated in `x86/fixup.cyr` +
+  `aarch64/fixup.cyr` deliberately. The hoist is BLOCKED by the single-pass
+  parser + include order: `runtime.cyr` is parsed before `emit.cyr`, but
+  `_emit_fmt` reads `_TARGET_MACHO/_PE/_ELF64_KERNEL` as bare-identifier
+  globals declared only in `emit.cyr` → a hoist there is a hard "undefined
+  variable" exit, not a deferrable fixup. Prereq: move the `_TARGET_*`
+  declarations into `runtime.cyr`/`tokens.cyr` first (verified feasible — no
+  early reader; all assignments happen after every include). Structural
+  multi-backend change; needs ecb/cass self-host reverify.
+- **Consolidate the DCE mark-and-sweep across `x86/fixup.cyr` +
+  `aarch64/fixup.cyr`** — the hash build/seed/propagate/sweep/undef-fn pass
+  is duplicated across the two backends, and within each the open-addressing
+  hash-probe + the linear host-fn scan are each written twice. A shared
+  `_dce_hash_lookup` + `_dce_host_fn` collapse 4 probe-blocks → 1 and 4
+  host-scans → 1 (arch delta is only `E8/E9`+`DECODE_LEN` vs `BL/B` 4-byte
+  stride). Changes emitted helper code → cross-OS self-host reverify.
+- **Reclaim the FREED scalar holes** (informational) — the compiler-state
+  scalar band has the ~2 KB v6.0.88 `ret_patches` hole + the v6.0.47 holes
+  (`0x18E630`/`0x18EE30`/`0x18F900`/`0x18F908`); allocate the next new
+  compiler-state scalar into the `.88` hole rather than growing the band.
+
+---
+
 ## TS/TSX → JS emit — frontend builder (consumer-filed, minor TBD)
 
 SecureYeoman's `yeo-cy-test` port probe (2026-05-27) confirmed the
