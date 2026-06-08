@@ -410,38 +410,12 @@ fn FIXUP(S): i64 {
                 if (tgt >= 0 && tgt < acp) {
                     # v5.10.41: hash lookup fn_start → fi via 0x114000.
                     # Replaces an O(fnc) linear scan that ran per E8/E9 match.
-                    var fnhit = 0 - 1;
-                    var th_h = (tgt * 0x9E3779B97F4A7C15) >> 16;
-                    var th_slot = th_h & 8191;
-                    var th_probes = 0;
-                    while (th_probes < 8192) {
-                        var th_stored = load16(S + 0x114000 + th_slot * 2);
-                        if (th_stored == 0) { th_probes = 8192; }
-                        else {
-                            var th_fi = th_stored - 1;
-                            if (L64(S + 0x9CA000 + th_fi * 8) == tgt) {
-                                fnhit = th_fi;
-                                th_probes = 8192;
-                            } else {
-                                th_slot = (th_slot + 1) & 8191;
-                                th_probes = th_probes + 1;
-                            }
-                        }
-                    }
+                    # v6.1.5: probe + host-scan hoisted to common/runtime.cyr
+                    # (_dce_hash_lookup / _dce_host_fn) — byte-identical.
+                    var fnhit = _dce_hash_lookup(S, tgt);
                     if (fnhit >= 0) {
                         # Host = fn containing scn. If none, entry = ROOT.
-                        var host = 0 - 1;
-                        var fj = 0;
-                        while (fj < fnc) {
-                            var fs = L64(S + 0x9CA000 + fj * 8);
-                            if (fs >= 0) {
-                                var fe = GFNE(S, fj);
-                                if (fe > fs && scn >= fs && scn < fe) {
-                                    host = fj; fj = fnc;
-                                }
-                            }
-                            if (host < 0) { fj = fj + 1; }
-                        }
+                        var host = _dce_host_fn(S, scn, fnc);
                         if (host < 0) {
                             store8(&live + (fnhit >> 3), load8(&live + (fnhit >> 3)) | (1 << (fnhit & 7)));
                         }
@@ -481,26 +455,9 @@ fn FIXUP(S): i64 {
                                 var ptgt = pscn + 5 + prel;
                                 if (ptgt >= 0 && ptgt < acp) {
                                     # v5.10.41: hash lookup fn_start → fi via 0x114000.
-                                    # Replaces an O(fnc) scan running per E8/E9 inside
-                                    # the propagate fixpoint loop (up to 512 iterations).
-                                    var phit = 0 - 1;
-                                    var ph_h = (ptgt * 0x9E3779B97F4A7C15) >> 16;
-                                    var ph_slot = ph_h & 8191;
-                                    var ph_probes = 0;
-                                    while (ph_probes < 8192) {
-                                        var ph_stored = load16(S + 0x114000 + ph_slot * 2);
-                                        if (ph_stored == 0) { ph_probes = 8192; }
-                                        else {
-                                            var ph_fi = ph_stored - 1;
-                                            if (L64(S + 0x9CA000 + ph_fi * 8) == ptgt) {
-                                                phit = ph_fi;
-                                                ph_probes = 8192;
-                                            } else {
-                                                ph_slot = (ph_slot + 1) & 8191;
-                                                ph_probes = ph_probes + 1;
-                                            }
-                                        }
-                                    }
+                                    # v6.1.5: probe hoisted to common/runtime.cyr
+                                    # (_dce_hash_lookup) — byte-identical.
+                                    var phit = _dce_hash_lookup(S, ptgt);
                                     if (phit >= 0) {
                                         var prev_live = load8(&live + (phit >> 3)) & (1 << (phit & 7));
                                         if (prev_live == 0) {
@@ -680,18 +637,8 @@ fn FIXUP(S): i64 {
             var u59_utarget = L64(S + 0x9CA000 + u59_uidx * 8);
             if (u59_utarget == 0 - 1) {
                 # Locate host fn — same shape as DCE seed loop.
-                var u59_host = 0 - 1;
-                var u59_fj = 0;
-                while (u59_fj < fnc) {
-                    var u59_fs = L64(S + 0x9CA000 + u59_fj * 8);
-                    if (u59_fs >= 0) {
-                        var u59_fe = GFNE(S, u59_fj);
-                        if (u59_fe > u59_fs && u59_ucoff >= u59_fs && u59_ucoff < u59_fe) {
-                            u59_host = u59_fj; u59_fj = fnc;
-                        }
-                    }
-                    if (u59_host < 0) { u59_fj = u59_fj + 1; }
-                }
+                # v6.1.5: host-scan hoisted to common/runtime.cyr (_dce_host_fn).
+                var u59_host = _dce_host_fn(S, u59_ucoff, fnc);
                 var u59_skip = 0;
                 if (u59_host >= 0) {
                     var u59_lb = load8(&live + (u59_host >> 3)) & (1 << (u59_host & 7));

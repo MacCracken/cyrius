@@ -247,3 +247,56 @@ fn RECFIX(S, idx): i64 {
     SFCNT(S, fc + 1);
     return 0;
 }
+
+# ================================================================
+# DCE shared probes (v6.1.5) — hoisted from the byte-identical copies
+# in x86/fixup.cyr + aarch64/fixup.cyr. The mark-and-sweep reachability
+# pass in each backend's FIXUP duplicated two arch-identical lookups, and
+# each was written twice within a backend: the open-addressing fn_start→fi
+# hash probe (seed + propagate) and the linear host-fn [start,end) scan
+# (seed + undef-fn). The only arch delta is the opcode-scan STRIDE
+# (x86 E8/E9 + DECODE_LEN vs aarch64 BL/B fixed 4-byte), which stays inline
+# in each FIXUP. These two lookups read the same heap regions on both
+# arches, so they unify here. Logic-preserving — see CHANGELOG [6.1.5].
+
+# fn_start → fn-index lookup over the 8192-slot open-addressing hash at
+# S+0x114000 (built once per FIXUP before the DCE byte-scan). Knuth
+# golden-ratio multiplicative hash (0x9E3779B97F4A7C15 = floor(2^64/phi)),
+# slot 0..8191, mask 8191. Returns the fn whose start offset == tgt, or -1
+# on miss. Byte-identical to the four inline probe loops it replaces — the
+# old `probes = 8192` loop-exit on empty-slot / match becomes a direct
+# return; same termination, same result.
+fn _dce_hash_lookup(S, tgt): i64 {
+    var h = (tgt * 0x9E3779B97F4A7C15) >> 16;
+    var slot = h & 8191;
+    var probes = 0;
+    while (probes < 8192) {
+        var stored = load16(S + 0x114000 + slot * 2);
+        if (stored == 0) { return 0 - 1; }
+        var fi = stored - 1;
+        if (L64(S + 0x9CA000 + fi * 8) == tgt) { return fi; }
+        slot = (slot + 1) & 8191;
+        probes = probes + 1;
+    }
+    return 0 - 1;
+}
+
+# Host fn for a code offset: the fn whose [start, end) range contains
+# `coff`, or -1 when `coff` lies outside every fn body (entry / top-level
+# code → conservative ROOT in the seed pass; always-live in the undef-fn
+# check). Linear scan over the fn_start table at S+0x9CA000 (ends via
+# GFNE); returns the FIRST match in index order. Byte-identical to the
+# four inline host-scan loops it replaces — the old `host = fj; fj = fnc`
+# early-exit (guarded so it didn't re-increment) becomes a direct return.
+fn _dce_host_fn(S, coff, fnc): i64 {
+    var fj = 0;
+    while (fj < fnc) {
+        var fs = L64(S + 0x9CA000 + fj * 8);
+        if (fs >= 0) {
+            var fe = GFNE(S, fj);
+            if (fe > fs && coff >= fs && coff < fe) { return fj; }
+        }
+        fj = fj + 1;
+    }
+    return 0 - 1;
+}

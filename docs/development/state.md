@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.4** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 931,960 B |
+| **Version** | **6.1.5** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 931,208 B |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 592,512 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 752,512 B |
 | **cycc_win** (PE32+ cross) | 804,864 B |
@@ -25,7 +25,7 @@
 | check.sh gates | 85/85 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~458 ms |
+| bench (every-release gate) | self_compile ~472 ms |
 
 ## v6.1.x — active cycle (Backend Codegen Multi-Arc)
 
@@ -49,10 +49,17 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
 - **v6.1.4** — Phase B: hoist `_TARGET_*` + `_emit_fmt` to
   `src/backend/common/runtime.cyr` (logic-preserving). `_entry_base` stays
   per-arch (premise-check: arch-specific VAs, not a dup).
+- **v6.1.5** — Phase B (final): DCE mark-and-sweep probe consolidation —
+  `_dce_hash_lookup` + `_dce_host_fn` hoisted to `common/runtime.cyr`, collapsing
+  4 hash-probe blocks → 1 and 4 host-fn scans → 1 across the two `fixup.cyr`
+  backends. Logic-preserving (−51 LOC, cycc −752 B). Verified byte-identical via
+  338-input old-vs-new corpus + DCE-torture (report + `CYRIUS_DCE=1` NOP-fill,
+  both arches) + a 4-reviewer adversarial workflow + pi/ecb/cass self-host.
 
-**Next:** **v6.1.5** — Phase B: DCE mark-and-sweep consolidation across the two
-`fixup.cyr` backends. Then Phase C (PIE x86→aarch64→`.gnu.hash`), D (TS/TSX→JS),
-E (bayan/ganita carve). See roadmap.md.
+**Next:** **v6.1.6** — Phase C (PIE): position-independent codegen x86_64
+(`--pie`, RIP-relative loads + fixup-table mode bit), landing on the now-cleaned
+backend. Then v6.1.7 (PIE aarch64), v6.1.8 (`.gnu.hash`), D (TS/TSX→JS), E
+(bayan/ganita carve). See roadmap.md.
 
 **Open / filed (v6.1.x):**
 - `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm

@@ -65,7 +65,7 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.2** ✅ | `aarch64 EADDRA_IMM` >4095 fix (low+hi adds + movz/movk guard; pi+ecb verified) | A — housekeeping |
 | **v6.1.3** ✅ | POSIX `*at()` family + bare-name peers + aarch64 ESYSXLAT collision fix (repaired pre-existing native-aarch64 `sys_stat`) | A — housekeeping |
 | **v6.1.4** ✅ | Backend prep — `_TARGET_*` decl move + `_emit_fmt` hoist to common/runtime.cyr (`_entry_base` stays per-arch — not a dup) | B — backend prep |
-| **v6.1.5** | DCE mark-and-sweep consolidation | B — backend prep |
+| **v6.1.5** ✅ | DCE mark-and-sweep consolidation (`_dce_hash_lookup` + `_dce_host_fn` hoist to `common/runtime.cyr`; 4 probe-blocks → 1, 4 host-scans → 1; −51 LOC, cycc −752 B; logic-preserving) | B — backend prep |
 | **v6.1.6** | PIE codegen x86_64 (Sub-arc A) | C — PIE |
 | **v6.1.7** | PIE codegen aarch64 (Sub-arc B) | C — PIE |
 | **v6.1.8** | `.gnu.hash` migration + drop SysV `.hash` (Sub-arc C) | C — PIE / dynlink |

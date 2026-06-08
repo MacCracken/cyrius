@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.5] — 2026-06-08
+
+**v6.1.x slot 5 (Phase B — backend prep): DCE mark-and-sweep probe
+consolidation.** Logic-preserving refactor (no behavior change) — the second and
+final Phase B carry-in, landing the backend cleanup before the PIE arc (Phase C)
+extends the same `emit.cyr`/`fixup.cyr` files. The DCE reachability pass in each
+backend's `FIXUP` duplicated two arch-identical lookups across `x86/fixup.cyr` +
+`aarch64/fixup.cyr`, and each was written twice within a backend; this collapses
+**4 hash-probe blocks → 1** shared `_dce_hash_lookup` and **4 host-fn scans → 1**
+shared `_dce_host_fn` in `common/runtime.cyr`. Net −51 LOC.
+
+**Benchmark:** `self_compile 472 ms`, `cycc 931,208 B` (−752 B from the removed
+inline code). Interleaved same-box old-vs-new shows **no self_compile
+regression** — new ≈ old −9 ms; the per-probe call cost is offset by the smaller,
+colder code.
+
+### Changed (refactor)
+
+- **`_dce_hash_lookup(S, tgt)`** — the open-addressing `fn_start → fn-index`
+  probe over the 8192-slot golden-ratio hash at `S+0x114000` — hoisted from the
+  four byte-identical inline copies (x86 seed + propagate, aarch64 seed +
+  propagate) into `src/backend/common/runtime.cyr`. The old `probes = 8192`
+  loop-exit on empty-slot / match becomes a direct `return`; same termination,
+  same result.
+- **`_dce_host_fn(S, coff, fnc)`** — the linear `[start, end)` host-fn scan over
+  the `fn_start` table (ends via `GFNE`) — hoisted from the four inline copies
+  (x86 seed + undef-fn, aarch64 seed + undef-fn). The old guarded early-exit
+  (`host = fj; fj = fnc` paired with `if (host < 0) { fj++ }`) becomes a direct
+  `return` — verified equivalent (the guard only suppressed the increment after a
+  match, which the early return prevents entirely).
+- The arch-specific opcode byte-scan stride (x86 `E8/E9` + `DECODE_LEN`, aarch64
+  `BL/B` fixed 4-byte) stays **inline** in each `FIXUP` — it is the only real arch
+  delta. The hash-table **build/insert** loop (a probe-for-empty, one copy per
+  backend) also stays inline: it is a different operation from lookup.
+
+### Verified
+
+- **Logic-preserving (empirical)**: x86 self-host fixpoint byte-identical; a
+  338-input old-vs-new corpus (programs + 169 tcyr + lib) **all byte-identical**;
+  a DCE-torture program (dead mutually-recursive cluster + lone fns + an `&fn`
+  type-3 root) reports 6 dead fns and gives byte-identical output old-vs-new in
+  **both** report-only and `CYRIUS_DCE=1` NOP-fill modes on **x86 AND aarch64**;
+  self-compile DCE note unchanged (x86 68 fns / 26818 B; aarch64 110 / 49848).
+  check.sh 85/85; 169/169 tcyr compile+run exit 0.
+- **Logic-preserving (adversarial)**: a 4-reviewer + critic logic-equivalence
+  workflow over the diff — all confirmed byte-for-byte equivalent with zero
+  findings (probe termination, guarded-increment ↔ early-return, full-table-miss
+  path, call-site arg routing, no orphaned `th_*`/`ph_*`/`u59_*` residue, cx
+  backend isolation, helper reachability).
+- **Cross-OS on real hardware** (the refactor touches every backend): pi
+  (aarch64 native) byte-identical self-host; ecb (arm64 macOS) byte-identical;
+  cass (Windows PE) byte-identical + the exit-42 / callptr-Win64 guards. The new
+  cycc differs from the prior binary only by the removed inline code (−752 B).
+
 ## [6.1.4] — 2026-06-08
 
 **v6.1.x slot 4 (Phase B — backend prep): hoist `_TARGET_*` + `_emit_fmt` to a
