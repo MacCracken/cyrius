@@ -5,7 +5,7 @@
 #
 # Usage: cyrius repl
 
-CC="${1:-./build/cc5}"
+CC="${1:-./build/cycc}"
 
 echo "Cyrius REPL ($(cat VERSION 2>/dev/null || echo '?'))"
 echo "Type expressions. Result = exit code (0-255). Use syscall(1,1,...) for output."

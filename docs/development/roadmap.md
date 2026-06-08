@@ -61,7 +61,7 @@ land only on consumer pressure or explicit user direction.
 | Slot | Item | Phase |
 |---|---|---|
 | **v6.1.0** ✅ | Clean cut — roadmap split (`roadmap.md`/`roadmap_6.md`) + full docs sweep + `build/` cleanup (prior-major slot `cc3 → cc5`) + benchmark-every-release gate | shipped |
-| **v6.1.1** | Back-compat symlink drop | A — housekeeping |
+| **v6.1.1** ✅ | Back-compat symlink drop (install symlinks + `cbt/core.cyr` cc5 fallback + repl shim) | A — housekeeping |
 | **v6.1.2** | `aarch64 EADDRA_IMM` >4095 fix | A — housekeeping |
 | **v6.1.3** | POSIX `*at()` family | A — housekeeping |
 | **v6.1.4** | Backend prep — `_TARGET_*` decl move + `_emit_fmt`/`_entry_base` hoist | B — backend prep |

@@ -290,31 +290,23 @@ fn find_tools(): i64 {
         _home = make_path(proc_home, ".cyrius");
     }
 
-    # v6.0.0: compiler binary renamed cc5 → cycc. Lookup tries cycc
-    # first, then cc5 as a back-compat fallback (v6.0.x window only —
-    # v6.1.0 drops the fallback). Same shape for aarch64 cross-compiler.
-    # v6.0.85: Windows binaries carry the .exe suffix; the install ships
-    # bin/cycc.exe, so the wrapper must look for that name on Windows.
+    # Compiler binary is `cycc` (the v6.0.0 rename of cc5 is permanent;
+    # the v6.0.x back-compat cc5 fallback was DROPPED at v6.1.0 — and
+    # build/cc5 is now the tracked PRIOR-major v5.x compiler, which must
+    # NOT be picked up to build v6.x source). Windows ships bin/cycc.exe,
+    # so the wrapper looks for that name on PE (v6.0.85).
     var _ccname = "bin/cycc";
-    var _ccname2 = "bin/cc5";
     #ifdef CYRIUS_TARGET_WIN
     _ccname = "bin/cycc.exe";
-    _ccname2 = "bin/cc5.exe";
     #endif
     var installed_cc = make_path(_home, _ccname);
-    if (file_exists(installed_cc) == 0) {
-        installed_cc = make_path(_home, _ccname2);
-    }
     if (file_exists(installed_cc) == 1) {
         _cc = installed_cc;
         _tools_dir = make_path(_home, "bin");
     } else {
-        # Dev mode: ./build/cycc (or ./build/cc5 fallback)
+        # Dev mode: ./build/cycc
         if (file_exists("./build/cycc") == 1) {
             _cc = "./build/cycc";
-            _tools_dir = "./build";
-        } elif (file_exists("./build/cc5") == 1) {
-            _cc = "./build/cc5";
             _tools_dir = "./build";
         } else {
             # not found — ok for deps/clean/init/version/help, fatal for build/run/test
@@ -322,17 +314,11 @@ fn find_tools(): i64 {
             _tools_dir = make_path(_home, "bin");
         }
     }
-    # Search for aarch64 cross-compiler: tools dir, then ./build/
-    # (same back-compat: cycc_aarch64 first, cc5_aarch64 fallback).
+    # Search for aarch64 cross-compiler: tools dir, then ./build/.
     _cc_arm = make_path(_tools_dir, "cycc_aarch64");
-    if (file_exists(_cc_arm) == 0) {
-        _cc_arm = make_path(_tools_dir, "cc5_aarch64");
-    }
     if (file_exists(_cc_arm) == 0) {
         if (file_exists("./build/cycc_aarch64") == 1) {
             _cc_arm = "./build/cycc_aarch64";
-        } elif (file_exists("./build/cc5_aarch64") == 1) {
-            _cc_arm = "./build/cc5_aarch64";
         }
     }
 

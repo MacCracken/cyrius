@@ -178,11 +178,6 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
                 # (.gitignore whitelist) so a stale x86-host install
                 # still has a usable native binary in lockstep.
                 : ;;
-            cc5_*)
-                # Convention: cc5_<arch> ← src/main_<arch>.cyr
-                _arch="${cbin#cc5_}"
-                _rebuild_stale "$cbin" "src/main_${_arch}.cyr"
-                ;;
             cycc_win)
                 # v6.0.50: unfreeze the PE compiler. Build cycc_win from
                 # src/main_win.cyr with CYRIUS_TARGET_WIN=1 (the x86 cycc
@@ -219,19 +214,11 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     done
     [ -f bootstrap/asm ] && cp bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin/"
 
-    # v6.0.0 back-compat symlinks: cc5 → cycc, cyrc → cybs, plus the
-    # cross-arch variants. Lets v5.11.x consumers re-pin to 6.0.x
-    # without breakage (their cyrius.cyml still says cyrius = "5.11.x"
-    # → resolves the installed snapshot → finds cc5 via symlink).
-    # Dropped at v6.1.0 per the v6.0.0 closeout plan.
-    _bindir="$CYRIUS_HOME/versions/$VERSION/bin"
-    for _pair in "cc5:cycc" "cc5_aarch64:cycc_aarch64" "cc5_win:cycc_win" "cyrc:cybs"; do
-        _old="${_pair%:*}"
-        _new="${_pair#*:}"
-        if [ -x "$_bindir/$_new" ] && [ ! -e "$_bindir/$_old" ]; then
-            (cd "$_bindir" && ln -sf "$_new" "$_old")
-        fi
-    done
+    # v6.1.0: the v6.0.x back-compat install symlinks (cc5 → cycc,
+    # cyrc → cybs, + cross-arch variants) were DROPPED here per the
+    # v6.0.0 closeout plan. The rename grace period is over; consumers
+    # still pinned to 5.11.x must re-pin to a 6.x tag. cycc / cybs are
+    # the only names installed.
 
     # v5.8.53: also rebuild dlopen-helper from C source. Pre-fix, the
     # full-install path (lines below) compiled the helper but

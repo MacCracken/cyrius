@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.1] — 2026-06-08
+
+**v6.1.x slot 1 (Phase A — housekeeping): back-compat symlink drop.** The
+v6.0.0 rename grace period is over; the `cc5`/`cyrc` back-compat surface is
+retired. cycc untouched (self-host byte-identical); wrapper-only + install
+change.
+
+**Benchmark:** `self_compile 470 ms`, `cycc 931,864 B` (byte-identical to
+6.1.0 — no compiler change; +7 ms is measurement jitter).
+
+### Removed
+
+- **`scripts/install.sh`** — dropped the v6.0.0 back-compat install symlinks
+  (`cc5 → cycc`, `cc5_aarch64 → cycc_aarch64`, `cc5_win → cycc_win`,
+  `cyrc → cybs`). Consumers still pinned to 5.11.x must now re-pin to a 6.x
+  tag — `cycc`/`cybs` are the only names installed. Also removed the now-dead
+  `cc5_*)` cross-bin rebuild case (no `cross_bins` entry has matched it since
+  the v6.0.0 rename).
+- **`cbt/core.cyr`** — dropped the `cc5` back-compat fallback in compiler
+  lookup. The wrapper now resolves `cycc` (or `cycc.exe` on Windows) only —
+  installed `bin/cycc` first, then dev-mode `./build/cycc`; same for the
+  aarch64 cross-compiler (`cycc_aarch64`, no `cc5_aarch64` fallback). This
+  also closes a footgun introduced by re-tracking `build/cc5` as the
+  prior-major v5.x compiler at v6.1.0: the wrapper can no longer silently
+  fall back to that ancient binary to build v6.x source.
+- **`scripts/shims/cyrius-repl.sh`** — default compiler changed
+  `./build/cc5` → `./build/cycc`.
+
+### Verified
+
+- cycc self-host byte-identical (cbt is not in `src/main.cyr`); check.sh
+  85/85; wrapper rebuilds + dispatches + builds a program; the edited
+  `#ifdef CYRIUS_TARGET_WIN` lookup path + aarch64 cross both compile; the
+  shipped wrapper carries zero `cc5` lookup strings.
+- **Cross-OS premise check (real hardware):** the removed paths were only
+  fallbacks (happy path unchanged), so the change can only differ where an
+  install ships `cc5` instead of `cycc`. Confirmed neither does — **ecb**
+  (macOS) ships `cycc`/`cycc_aarch64`, **cass** (Windows) ships `cycc.exe`,
+  no `cc5` on either. (pi has no checkout; aarch64 wrapper uses the identical
+  POSIX `cycc` lookup, cross-built clean.)
+
 ## [6.1.0] — 2026-06-08
 
 **v6.1.x cycle-open — clean cut.** Doc / policy / housekeeping release; no

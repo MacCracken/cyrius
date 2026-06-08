@@ -3,6 +3,32 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-08 (v6.1.1 — back-compat symlink drop, Phase A slot 1)
+
+Cutting **v6.1.1**, first working slot of v6.1.x (Phase A — housekeeping). The v6.0.0
+rename grace period is over; `cc5`/`cyrc` back-compat retired. **cycc untouched**
+(self-host byte-identical at 6.1.1); wrapper + install change only.
+
+- **`scripts/install.sh`** — dropped the back-compat install symlink loop (`cc5→cycc`,
+  `cc5_aarch64→cycc_aarch64`, `cc5_win→cycc_win`, `cyrc→cybs`) + the now-dead `cc5_*)`
+  cross-bin rebuild case.
+- **`cbt/core.cyr`** — dropped the `cc5`/`cc5_aarch64`/`cc5.exe` fallback in compiler
+  lookup; wrapper resolves `cycc`(`.exe`) / `cycc_aarch64` only. Closes the footgun from
+  re-tracking `build/cc5` (prior-major v5.x) at .0 — no silent fall-back to the ancient
+  compiler. Verified: shipped wrapper has **zero `cc5` lookup strings**.
+- **`scripts/shims/cyrius-repl.sh`** — default `./build/cc5` → `./build/cycc`.
+
+**Bench (rule #6):** `self_compile 470 ms`, `cycc 931,864 B` (byte-identical to .0; +7 ms jitter).
+
+**Verified:** check.sh 85/85; cycc self-host byte-identical; wrapper rebuilds/dispatches/builds;
+`#ifdef CYRIUS_TARGET_WIN` path + aarch64 cross compile clean. **Cross-OS premise check (real
+hardware):** removed paths are fallback-only, so the change differs only where an install ships
+`cc5` not `cycc` — confirmed neither does (**ecb** macOS: `cycc`/`cycc_aarch64`; **cass** Windows:
+`cycc.exe`; no `cc5` on either). pi has no checkout (flagged) — identical POSIX lookup, cross-built clean.
+
+**Next:** **v6.1.2** — aarch64 `EADDRA_IMM` >4095 fix (Phase A). Changes aarch64 codegen → full
+ecb/pi cross-OS self-host reverify required.
+
 ## Session close — 2026-06-08 (v6.1.0 — clean cycle open + roadmap split + docs sweep)
 
 Cutting **v6.1.0**, the v6.1.x cycle-open. Doc / policy / housekeeping release — **no
