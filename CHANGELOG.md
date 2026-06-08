@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.7] — 2026-06-08
+
+**v6.1.x slot 7 (packed): Windows COM/DXGI `.rdata` corruption fix (ai-hwaccel
+consumer bug) + the kernel-PIE ELF wrapper (the deferred v6.1.6 pickup).** Two
+items, one release.
+
+**Benchmark:** `self_compile 450 ms` (interleaved old-vs-new +1 ms — noise),
+`cycc 933,000 B`. check.sh 86/86.
+
+### Fixed
+
+- **Windows: a DXGI COM call silently corrupted a `.rdata` string literal in any
+  program that did real work after the call** (filed by ai-hwaccel integrating
+  DXGI precise-VRAM; `str_builder_add_cstr("true")` after `dxgi_vram_bytes()` came
+  out garbled). **Root cause — NOT a callptr register/DF bug** (the v6.0.71/.86
+  fixes' residual was misattributed): function-local arrays are `.rdata` globals,
+  and the SSE **m128-alignment padding** for arrays >8 B (`x86/fixup.cyr`
+  prefix-sum) was computed against the **ELF `dbase`**, while `_pe_layout`
+  (`pe/emit.cyr`) sized the string offset / physical gvar zone from the
+  **unpadded** sum. The padded type-0 `&gvar` prefix-sum thus **diverged** from the
+  unpadded string region, so `&desc` (`GetDesc1`'s `DXGI_ADAPTER_DESC1` out-param,
+  a `var desc[320]` array-global) drifted **+8 into the string region** and its
+  ~312-B write landed on the `"true"` literal. `dxgi_probe` looked clean because it
+  reads VRAM back from that same overwritten slot. **Fix**: compute the m128
+  padding against the real **PE gvar VA base** (`0x140000000 + _pe_rdata_rva`) in
+  **both** `FIXUP`'s prefix-sum and `_pe_layout`, so the `&gvar` address, the string
+  offset, the physical gvar zone, and static-init placement all agree. PE-guarded →
+  ELF/aarch64 self-host byte-identical. **Diagnosed entirely via exit-code probes
+  on real-GPU cass** (cdb unavailable; DXGI needs a desktop session, so headless
+  SSH can't run the COM chain) and **GPU-confirmed** (`ec_verify` exit 60 → 42).
+  Issue: `2026-06-08-windows-com-callee-corrupts-caller-in-nontrivial-program.md`;
+  repros under `issues/repros/2026-06-08-com-*`.
+
+### Added
+
+- **Kernel-PIE ELF wrapper** (deferred from v6.1.6). `EMITELF64_KERNEL` emits
+  **ET_DYN + `p_vaddr=0` + base-relative `e_entry` (`0xA8`)** under `--pie`, on top
+  of the v6.1.6 RIP-relative codegen — so a `kernel; --pie` build is a
+  position-independent kernel a KASLR boot shim (AGNOS gnoboot) can slide.
+  Validated structurally (ET_DYN, 0 absolute `movabs`, RIP-relative `.text`); the
+  non-PIE kernel is **byte-identical to 6.1.6**. The live gnoboot **boot** at a slid
+  base still awaits an AGNOS `--pie` harness (documented; AGNOS isn't pulling yet).
+
+### Verified
+
+- x86 self-host fixpoint byte-identical; 338-input non-PIE differential = zero
+  drift (the COM fix is PE-only); check.sh 86/86; 169/169 tcyr exit 0; headless
+  `.rdata`-layout check confirms `"true"` now sits ~1.2 KB past `desc`'s write range.
+- **Cross-OS on real hardware**: pi (aarch64 native), ecb (arm64 macOS), cass
+  (Windows PE — exercises the fixed `.rdata` layout + the COM-callptr guards) all
+  self-host byte-identical. COM fix **GPU-confirmed** on cass.
+
 ## [6.1.6] — 2026-06-08
 
 **v6.1.x slot 6 (Phase C — PIE): position-independent codegen, x86_64.** A `--pie`

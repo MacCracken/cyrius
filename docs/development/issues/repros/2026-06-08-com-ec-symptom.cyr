@@ -1,0 +1,27 @@
+# Exit-code COM-corruption probe — SYMPTOM (v6.1.7). Run in a real-GPU desktop
+# session; read `echo %errorlevel%`. No debugger, no stdout needed.
+#   42 = "true" bytes correct (bug NOT reproduced / fixed)
+#   50/51/52/53 = the t/r/u/e byte (idx 10..13) is corrupted (bug reproduced)
+#   60 = built string length wrong   61 = dxgi chain returned 0
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/dxgi.cyr"
+fn run(): i64 {
+    var v = dxgi_vram_bytes();
+    if (v == 0) { return 61; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "available=");
+    str_builder_add_cstr(sb, "true");
+    var s = str_builder_build(sb);
+    if (str_len(s) != 14) { return 60; }
+    if (load8(str_data(s) + 10) != 116) { return 50; }
+    if (load8(str_data(s) + 11) != 114) { return 51; }
+    if (load8(str_data(s) + 12) != 117) { return 52; }
+    if (load8(str_data(s) + 13) != 101) { return 53; }
+    return 42;
+}
+fn main(): i64 { alloc_init(); return run(); }

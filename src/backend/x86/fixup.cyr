@@ -91,7 +91,19 @@ fn FIXUP(S): i64 {
         # `pxor xmm0, [rdi]` over `var round_keys[240]` — narrowed in
         # v5.5.19, fixed here.
         if (vsize > 8) {
+            # v6.1.x: the m128-alignment padding must be computed against the
+            # ACTUAL gvar VA base of the active target, not the ELF `dbase`.
+            # On PE gvars live at 0x140000000 + _pe_rdata_rva (16-aligned),
+            # NOT at dbase (= ELF entry + acp). Using dbase on PE injected a
+            # phantom +8 into pfx[idx] that (a) mis-aligned the gvar on Win64
+            # and (b) diverged the padded type-0 prefix sum from the UNPADDED
+            # _pe_rdata_str_off / physical gvar zone (pe/emit.cyr _pe_layout +
+            # the .rdata byte writer), so the last array's struct write
+            # overran the unpadded zone into the .rdata string literals
+            # (the DXGI GetDesc1 → corrupt "true" bug). _pe_layout mirrors
+            # the same padding so all four consumers agree. See CHANGELOG.
             var va = dbase + totvar;
+            if (_TARGET_PE == 1) { va = 0x140000000 + _pe_rdata_rva + totvar; }
             totvar = totvar + ((0 - va) & 15);
         }
         S64(pfx + vi * 8, totvar);

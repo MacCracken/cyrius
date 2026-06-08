@@ -865,11 +865,26 @@ fn _pe_layout(S): i64 {
     # totvar/spos are computed here from the same state FIXUP later
     # walks; snapshotting them onto globals keeps EMITPE_EXEC and
     # fixup.cyr's ftype=0/1 branches pulling from one source of truth.
+    # NOTE order: _pe_rdata_rva is needed to compute the gvar VA base for the
+    # m128-alignment padding below, so resolve it BEFORE the totvar loop. It
+    # is page-aligned (hence 16-aligned), and 0x140000000 is 16-aligned, so
+    # the gvar base's low 4 bits are 0 — but keep the full base in the padding
+    # arithmetic to stay textually identical to FIXUP's prefix-sum loop
+    # (src/backend/x86/fixup.cyr). Both MUST apply the same padding or the
+    # padded type-0 `&gvar` prefix sum diverges from this UNPADDED string
+    # offset and the array write overruns into the .rdata strings.
+    _pe_rdata_rva = (_pe_idata_rva + _pe_idata_vsize + 0xFFF) & (0 - 0x1000);
     var vcnt = GVCNT(S);
     var totvar = 0;
     var rvi = 0;
     while (rvi < vcnt) {
-        totvar = totvar + L64(S + 0x12A000 + rvi * 8);
+        var vsize = L64(S + 0x12A000 + rvi * 8);
+        # Mirror FIXUP's m128 padding (arrays > 8 bytes 16-align their VA).
+        if (vsize > 8) {
+            var va = 0x140000000 + _pe_rdata_rva + totvar;
+            totvar = totvar + ((0 - va) & 15);
+        }
+        totvar = totvar + vsize;
         rvi = rvi + 1;
     }
     var spos = GSPOS(S);
@@ -878,7 +893,6 @@ fn _pe_layout(S): i64 {
     _pe_rdata_gvar_off = 0;
     _pe_rdata_str_off  = totvar;
 
-    _pe_rdata_rva = (_pe_idata_rva + _pe_idata_vsize + 0xFFF) & (0 - 0x1000);
     _pe_rdata_file_off = _pe_idata_file_off + _pe_idata_file_size;
     _pe_rdata_vsize = totvar + spos;
     _pe_rdata_file_size = (_pe_rdata_vsize + 0x1FF) & (0 - 0x200);

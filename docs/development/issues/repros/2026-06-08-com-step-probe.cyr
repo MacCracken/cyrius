@@ -1,0 +1,36 @@
+# Step probe: replicate the DXGI chain, checking load8("true") after EACH COM
+# call to pinpoint which one smashes the .rdata literal. Run in a GPU session;
+# exit code = the culprit call. 30=CreateDXGIFactory1 31=EnumAdapters1
+# 32=GetDesc1 33=Release(adapter) 34=Release(factory) 42=none corrupted it
+# 61/62=factory/adapter null (no GPU)  10=broken before we start.
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/dxgi.cyr"
+fn run(): i64 {
+    if (load8("true") != 116) { return 10; }
+    var iid[16];
+    _dxgi_iid_factory1(&iid);
+    var pFactory = 0;
+    var hr = syscall(0xF012, &iid, &pFactory);
+    if (load8("true") != 116) { return 30; }
+    if (pFactory == 0) { return 61; }
+    var fvtbl = load64(pFactory);
+    var pAdapter = 0;
+    var hr2 = callptr(load64(fvtbl + 12 * 8), pFactory, 0, &pAdapter);
+    if (load8("true") != 116) { return 31; }
+    if (pAdapter == 0) { return 62; }
+    var avtbl = load64(pAdapter);
+    var desc[320];
+    var hr3 = callptr(load64(avtbl + 10 * 8), pAdapter, &desc);
+    if (load8("true") != 116) { return 32; }
+    _dxgi_release(pAdapter);
+    if (load8("true") != 116) { return 33; }
+    _dxgi_release(pFactory);
+    if (load8("true") != 116) { return 34; }
+    return 42;
+}
+fn main(): i64 { alloc_init(); return run(); }

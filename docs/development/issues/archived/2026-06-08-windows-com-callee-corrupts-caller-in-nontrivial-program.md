@@ -103,3 +103,36 @@ None within the calling program — reproduces with cyrius's own `lib/dxgi.cyr` 
 `lib/str.cyr`. Consumers must avoid the real COM path until fixed. ai-hwaccel
 keeps Windows GPU VRAM on the WMI `Win32_VideoController.AdapterRAM` path
 (4 GiB-capped) and gates the DXGI pass behind `-D AI_HWACCEL_DXGI` (off).
+
+## ROOT CAUSE + FIX (2026-06-08, v6.1.7) — NOT a callptr register/DF bug; a PE `.rdata` layout divergence
+
+Diagnosed entirely on cass via **exit-code probes** (no debugger; DXGI needs a GPU
+desktop session, so headless SSH can't run the COM chain — `dxgi_probe` exits 1
+headless). Probes established: str_builder is fine without DXGI (ctrl→114); after
+the DXGI chain a string literal's **data** is overwritten at a **stable address**
+with a **pointer-shaped, ASLR-varying** value; a plain integer loop after the call
+is fine (NOT a register clobber); the **step-probe pinned it to `GetDesc1`** (the
+only chain call whose out-param is a **large array local**, `var desc[320]`).
+
+**Mechanism:** function-local arrays are registered as **globals in `.rdata`**
+(`parse_decl.cyr:47`). The m128-alignment padding for arrays >8 bytes
+(`x86/fixup.cyr` prefix-sum, v5.5.21, for SSE operands) was computed against the
+**ELF `dbase` (`entry + acp`)**, but on PE gvars live at `0x140000000 +
+_pe_rdata_rva`. Meanwhile `_pe_layout` (`pe/emit.cyr`) computed the string offset
+`_pe_rdata_str_off` and sized the physical gvar zone from the **UNPADDED** sum.
+So the padded type-0 `&desc` prefix-sum **diverged** from the unpadded string
+offset / physical zone (disasm: `&desc` = `0x…018` vs the correct `0x…010` — a
+phantom +8 that depends on code size). `&desc` resolved into the string region, so
+`GetDesc1`'s ~312-byte `DXGI_ADAPTER_DESC1` write landed on the `"true"` literal.
+`dxgi_probe` looked clean because it reads VRAM back from that same location.
+
+**Fix** (`x86/fixup.cyr` prefix-sum + `pe/emit.cyr` `_pe_layout`): compute the
+m128 padding against the **real PE gvar VA base** (`0x140000000 + _pe_rdata_rva`)
+in BOTH places, so the type-0 `&gvar` prefix-sum, the type-1 string offset, the
+physical gvar zone, and static-init placement all agree. PE-guarded → non-PE
+self-host byte-identical. Headless-verified: `&desc` back to `0x…010`; `.rdata`
+grows to fit the padded gvars; `"true"`/`"available="` now sit ~1.2 KB past the
+end of `desc`'s write range. **GPU-CONFIRMED on cass** (`ec_verify.exe` → exit
+**42**, was 60) + pi/ecb/cass self-host byte-identical. **RESOLVED in v6.1.7**
+(shipped with the kernel-PIE ELF wrapper). ai-hwaccel can re-enable the DXGI
+precise-VRAM path (`-D AI_HWACCEL_DXGI`).

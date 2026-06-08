@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.6** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 932,584 B |
+| **Version** | **6.1.7** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 933,000 B |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 592,512 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 752,512 B |
 | **cycc_win** (PE32+ cross) | 804,864 B |
@@ -25,7 +25,7 @@
 | check.sh gates | 86/86 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~464 ms |
+| bench (every-release gate) | self_compile ~450 ms |
 
 ## v6.1.x — active cycle (Backend Codegen Multi-Arc)
 
@@ -64,11 +64,22 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   case" was a non-issue. Non-PIE byte-identical (338-input differential). Kernel-PIE
   ELF (AGNOS KASLR) is a follow-on (needs the AGNOS `--pie` boot harness; no live
   pull). See CHANGELOG [6.1.6].
+- **v6.1.7** — packed (user-directed): (1) **Windows COM/DXGI `.rdata` corruption
+  fix** (ai-hwaccel consumer bug) — function-local arrays are `.rdata` globals and
+  the m128 array padding was computed against the ELF base in `FIXUP` but the
+  unpadded sum in `_pe_layout`, so `&desc` (GetDesc1's out-param) drifted +8 into
+  the string region and its write smashed `"true"`. Fixed by padding against the PE
+  gvar VA base in both. Diagnosed debugger-free via exit-code probes on real-GPU
+  cass; GPU-confirmed (60→42). PE-only → ELF/aarch64 byte-identical. (2) **Kernel-PIE
+  ELF wrapper** — `EMITELF64_KERNEL` emits ET_DYN+p_vaddr=0+`e_entry=0xA8` under
+  `--pie` (the deferred v6.1.6 pickup); structurally validated, gnoboot-boot pending
+  the AGNOS harness. See CHANGELOG [6.1.7].
 
-**Next:** **v6.1.7** — Phase C: PIE codegen aarch64 (the `_IS_OBJ` aarch64 path
-covers only object mode today) **and/or** the kernel-PIE ELF wrapper when an AGNOS
-`--pie` boot harness lands. Then v6.1.8 (`.gnu.hash`), D (TS/TSX→JS), E
-(bayan/ganita carve). See roadmap.md.
+**Next:** **v6.1.8** — Phase C: PIE codegen aarch64 (the `_IS_OBJ` aarch64 path
+covers only object mode today; `adrp`/`add` conversions) — bumped from v6.1.7,
+which the user redirected to the COM fix + wrapper. Then `.gnu.hash`, D (TS/TSX→JS),
+E (bayan/ganita carve). The kernel-PIE gnoboot-boot validation lands when an AGNOS
+`--pie` harness exists. See roadmap.md.
 
 **Open / filed (v6.1.x):**
 - `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm
