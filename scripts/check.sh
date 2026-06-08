@@ -1,10 +1,11 @@
 #!/bin/sh
-# scripts/check.sh — thin shim around programs/check.cyr.
+# scripts/check.sh — thin shim around programs/checks/main.cyr.
 #
 # v5.9.1 (2026-05-06) — first slot of the v5.9.x sovereignty pass
 # (bash-toolchain → cyrius). The dispatcher logic that used to live
-# here (~743 LOC of bash) moved into programs/check.cyr (~700 LOC
-# of cyrius). This shim:
+# here (~743 LOC of bash) moved into cyrius. At v6.0.90 the monolithic
+# programs/check.cyr (10.2K LoC) was split into programs/checks/
+# (slim dispatcher main.cyr + per-suite files). This shim:
 #   1. cd's to the repo root so child gates see the expected CWD,
 #   2. builds build/cyrius_check on demand (mirrors the v5.8.44
 #      auto-build pattern for build/cyrius_api_surface),
@@ -14,7 +15,7 @@
 # is still consumed by the bash scripts/cyrius dispatcher, queued
 # for cyrius conversion at v5.9.5 alongside that dispatcher. The
 # fmt/lint walk logic was simultaneously ported into
-# lib/audit_walk.cyr (cyrius stdlib module) for programs/check.cyr's
+# lib/audit_walk.cyr (cyrius stdlib module) for the check program's
 # use; once scripts/cyrius converts, both audit-walk.sh and this
 # bridge can retire together.
 
@@ -23,10 +24,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 CHECK_BIN="$ROOT/build/cyrius_check"
-CHECK_SRC="$ROOT/programs/check.cyr"
+# v6.0.90: programs/check.cyr split into programs/checks/ (slim dispatcher
+# main.cyr + per-suite files). CHECK_SRC is the dispatcher; the rebuild
+# trigger watches EVERY suite file (a single-file -nt test would miss a
+# stale binary after a suite edit — masking a regression).
+CHECK_SRC="$ROOT/programs/checks/main.cyr"
 CC="$ROOT/build/cycc"
 
-if [ ! -x "$CHECK_BIN" ] || [ "$CHECK_SRC" -nt "$CHECK_BIN" ]; then
+NEWEST_SRC="$(ls -t "$ROOT"/programs/checks/*.cyr 2>/dev/null | head -1)"
+# Rebuild if: no binary, the glob matched nothing (force a rebuild so the
+# build fails loudly rather than running a stale binary), or any suite file
+# is newer than the binary.
+if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_BIN" ]; then
     if [ ! -x "$CC" ]; then
         printf "error: build/cycc missing — run 'sh bootstrap/bootstrap.sh' first.\n" >&2
         exit 1

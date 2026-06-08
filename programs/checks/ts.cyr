@@ -1,0 +1,293 @@
+# ================================================================
+# programs/checks/ts.cyr — TypeScript frontend gates + the AGNOS userspace-target gate
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _agnos_emit_gate(): i64 {
+    var label = "CYRIUS_TARGET_AGNOS emits valid agnos ring-3 ELF (v6.0.49; ELF64, entry ≥ 0x200000, exit=syscall(0), no Linux-60)";
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = _agnos_compile_to_buf(_root_path("programs/agnos_emit_probe.cyr"), buf, cap, "agnos_emit_probe");
+    if (n <= 0) { _check(label, 1); return 1; }
+    if (load8(buf) != 0x7F || load8(buf + 1) != 0x45 || load8(buf + 2) != 0x4C || load8(buf + 3) != 0x46) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos probe output is not an ELF"); _check(label, 1); return 1;
+    }
+    if (load8(buf + 4) != 2) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos probe not ELF64 (e_ident class != 2)"); _check(label, 1); return 1;
+    }
+    var machine = _read_u16_le(buf, 18);
+    if (machine != 0x3E) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": agnos probe machine "); print_num(machine); println(" != 0x3E (x86-64)"); _check(label, 1); return 1;
+    }
+    var entry = _read_u32_le(buf, 24);
+    if (entry < 0x200000) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": agnos probe entry "); print_num(entry); println(" < 0x200000 (agnos user-range floor)"); _check(label, 1); return 1;
+    }
+    var i = 0;
+    var found_linux_exit = 0;
+    while (i < n - 4) {
+        if (load8(buf + i) == 0xB8) {
+            if (load8(buf + i + 1) == 0x3C) {
+                if (load8(buf + i + 2) == 0) { if (load8(buf + i + 3) == 0) { if (load8(buf + i + 4) == 0) {
+                    found_linux_exit = 1;
+                } } }
+            }
+        }
+        i = i + 1;
+    }
+    if (found_linux_exit == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos binary contains a Linux exit (mov eax,60) — EEXIT agnos branch regressed?");
+        _check(label, 1); return 1;
+    }
+    _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+    println(": CYRIUS_TARGET_AGNOS — valid ELF64, entry ≥ 0x200000, agnos exit syscall(0) (no Linux-60)");
+    _check(label, 0);
+    return 0;
+}
+
+fn _ts_path_arg_gate(): i64 {
+    var label = "cycc --parse-ts <file> reads from file not stdin (v6.0.5; yeo-cy-test papercut #3 invariant)";
+
+    var fix = _root_path("tests/fixtures/ts_lex/sample.ts");
+    if (file_exists(fix) != 1) {
+        _p("  skip: sample.ts fixture missing\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var garbage_path = _tmp_path("audit_ts_path_arg_stdin_");
+    _write_file(garbage_path, "this is not valid TS @#$%^&*\n");
+
+    var pid = sys_fork();
+    if (pid < 0) { sys_unlink(garbage_path); _check(label, 1); return 1; }
+    if (pid == 0) {
+        var gfd = sys_open(garbage_path, 0, 0);
+        if (gfd >= 0) { sys_dup2(gfd, 0); sys_close(gfd); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs need
+        store64(&argv,      CC_PATH);    # 32 B. argv[4]/envp[1] reserved 8 B
+        store64(&argv + 8,  "--parse-ts");  # each → envp[0] overlapped argv[1]
+        store64(&argv + 16, fix);        # and zeroed "--parse-ts" → cyrius-mode
+        store64(&argv + 24, 0);          # compile of garbage stdin → exit 1.
+        var envp[16];
+        store64(&envp, 0);
+        sys_execve(CC_PATH, &argv, &envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    sys_unlink(garbage_path);
+    var status = load32(&stbuf);
+    var ec = 0 - 1;
+    if (WIFEXITED(status) == 1) { ec = WEXITSTATUS(status); }
+
+    var fail = 0;
+    if (ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cycc --parse-ts <path> exit "); print_num(ec);
+        println(" (regression — reading stdin instead of the path arg?)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": cycc --parse-ts <path> reads from file, ignores piped garbage stdin");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _ts_mode_run(fixture_path, mode_flag): i64 {
+    var fd = sys_open(fixture_path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(fd); return 0 - 1; }
+    if (pid == 0) {
+        sys_dup2(fd, 0);
+        sys_close(fd);
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[40];   # 5 ptr slots; `var x[N]` is N BYTES (CLAUDE.md
+        store64(&argv,     CC_PATH);   # buffer contract). argv[3]/envp[1]
+        store64(&argv + 8, mode_flag); # reserved only 8 B each, so envp[0]
+        store64(&argv + 16, 0);        # overlapped argv[1] and zeroed the
+        var envp[16];                  # mode flag → cycc ran cyrius-mode +
+        store64(&envp, 0);             # rejected TS non-ASCII. See CHANGELOG.
+        sys_execve(CC_PATH, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+fn _parse_ts_run(fixture_path): i64 {
+    return _ts_mode_run(fixture_path, "--parse-ts");
+}
+
+fn _ts_lex_gate(): i64 {
+    var fix = _root_path("tests/fixtures/ts_lex/sample.ts");
+    var rc = _ts_mode_run(fix, "--lex-ts");
+    if (rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cycc --lex-ts on sample.ts exit ");
+        print_num(rc);
+        println("");
+        _check("cycc --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 1);
+        return 1;
+    }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    println(": TS lexer integration (P1.1-P1.6 features)");
+    _check("cycc --lex-ts on synthetic TS sample (v5.7.2 P1.7 acceptance)", 0);
+    return 0;
+}
+
+fn _ts_corpus_gate(label, ext, threshold): i64 {
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var corpus_root = _ssh_target("SY_CORPUS", "/home/macro/Repos/secureyeoman");
+    if (is_dir(str_from(corpus_root)) != 1) {
+        _p("  skip: SY corpus not at ");
+        _p(corpus_root);
+        println(" (override via SY_CORPUS=...)");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Build prune vec — same set as the .sh's find -not -path *.
+    var prunes = vec_new();
+    vec_push(prunes, str_from("node_modules"));
+    vec_push(prunes, str_from("dist"));
+    vec_push(prunes, str_from("build"));
+    vec_push(prunes, str_from(".next"));
+    vec_push(prunes, str_from("coverage"));
+
+    var files = find_files_with_prunes(str_from(corpus_root),
+                                       str_from(ext), prunes);
+    var total = vec_len(files);
+
+    # For .ts we need to ALSO exclude .tsx (the .sh did this via
+    # `-not -name '*.tsx'`). path_has_ext(".ts") matches both
+    # foo.ts AND foo.tsx (the trailing 3 chars match either way
+    # — actually no, `.ts` is exact suffix; `.tsx` ends with `.tsx`
+    # not `.ts`). Verify: str_ends_with(".tsx", ".ts") on ASCII —
+    # ".tsx"[len-3..] == ".sx" not ".ts", so no false match. Good.
+
+    var pass = 0;
+    var fail = 0;
+    var fi = 0;
+    while (fi < total) {
+        var fp = vec_get(files, fi);
+        var rc = _ts_mode_run(str_data(fp), "--parse-ts");
+        if (rc == 0) { pass = pass + 1; }
+        else { fail = fail + 1; }
+        fi = fi + 1;
+    }
+
+    if (pass < threshold) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(ext);
+        _p(" corpus pass count ");
+        print_num(pass);
+        _p("/");
+        print_num(total);
+        _p(" below threshold ");
+        print_num(threshold);
+        println(" (regression)");
+        _check(label, 1);
+        return 1;
+    }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": ");
+    _p(ext);
+    _p(" corpus ");
+    print_num(pass);
+    _p("/");
+    print_num(total);
+    _p(" parses (≥");
+    print_num(threshold);
+    println(" threshold)");
+    _check(label, 0);
+    return 0;
+}
+
+fn _parse_ts_dir_gate(gate_name, inner_label, subdir): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, ROOT_PATH);
+    str_builder_add_cstr(sb, "/tests/fixtures/");
+    str_builder_add_cstr(sb, subdir);
+    var dir_path = str_data(str_builder_build(sb));
+    var dir_str = str_from(dir_path);
+    var entries = dir_list(dir_str);
+    var fail = 0;
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var name = vec_get(entries, i);
+        if (path_has_ext(name, str_from(".ts")) == 1) {
+            total = total + 1;
+            var full = path_join(dir_str, name);
+            var rc = _parse_ts_run(str_data(full));
+            if (rc != 0) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                _p(": ");
+                var nm_data = str_data(name);
+                var nm_len = str_len(name);
+                print(nm_data, nm_len);
+                _p(" — cycc --parse-ts exit ");
+                print_num(rc);
+                println("");
+                fail = fail + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(inner_label);
+        _p(" (");
+        print_num(total);
+        println(" cases)");
+    }
+    _check(gate_name, fail);
+    return fail;
+}

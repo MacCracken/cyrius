@@ -29,7 +29,7 @@ fn is_trusted(path): i64 {
 fn scan_includes(fp, inc): i64 {
     _init_pat();
     # v5.11.45: cap raised 16384 → 262144 to match _parse_drift_scan
-    # in programs/check.cyr; src/main.cyr alone is 86 KB and was
+    # in programs/checks/lint_fmt.cyr; src/main.cyr alone is 86 KB and was
     # being scanned truncated, returning "no dependencies" falsely.
     var cap = 262144;
     var buf = alloc(cap);

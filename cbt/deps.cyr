@@ -296,7 +296,7 @@ fn _dep_find_stdlib_dir(): i64 {
 # went undefined → cascading "unexpected unknown" /
 # "undefined variable 'SYS_CLOSE'" diagnostics.
 #
-# In-tree consumers (cyrius's own `programs/check.cyr`)
+# In-tree consumers (cyrius's own `programs/checks/`)
 # dodged because the dev-mode `./lib` path resolves the
 # whole repo lib/ tree at once. agnosys 1.1.13 surfaced the
 # gap on CI which uses the installed `~/.cyrius/lib` snapshot.

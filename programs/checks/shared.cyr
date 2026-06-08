@@ -1,0 +1,448 @@
+# ================================================================
+# programs/checks/shared.cyr — leaf helpers (tmp/exec/find/read/file utils) shared by every suite
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _exec_capture_clean(bin_path, buf, buflen): i64 {
+    return regression_exec_capture(bin_path, buf, buflen, EMPTY_ENVP);
+}
+
+fn _file_contains_substr(path, substr): i64 {
+    return regression_file_contains_substr(path, substr);
+}
+
+fn _exec_run_clean(bin_path): i64 {
+    return regression_exec_run(bin_path, EMPTY_ENVP);
+}
+
+fn _find_bytes(buf, n, needle, nlen): i64 {
+    if (nlen == 0) { return 0; }
+    if (nlen > n) { return 0 - 1; }
+    var i = 0;
+    while (i <= n - nlen) {
+        if (_buf_eq(buf + i, needle, nlen) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn _find_u64_le(buf, n, val): i64 {
+    var i = 0;
+    var limit = n - 8;
+    while (i <= limit) {
+        if (load64(buf + i) == val) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn _read_u16_le(buf, off): i64 {
+    var lo = load8(buf + off);
+    var hi = load8(buf + off + 1);
+    return lo | (hi << 8);
+}
+
+fn _read_u32_le(buf, off): i64 {
+    var b0 = load8(buf + off);
+    var b1 = load8(buf + off + 1);
+    var b2 = load8(buf + off + 2);
+    var b3 = load8(buf + off + 3);
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+fn _find_str_from(buf, n, from, needle, nlen): i64 {
+    var i = from;
+    var limit = n - nlen;
+    while (i <= limit) {
+        var j = 0;
+        var ok = 1;
+        while (j < nlen) {
+            if (load8(buf + i + j) != load8(needle + j)) { ok = 0; j = nlen; }
+            else { j = j + 1; }
+        }
+        if (ok == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn _parse_dec_at(buf, n, off, end_out): i64 {
+    var i = off;
+    var c = load8(buf + i);
+    if (c < 48 || c > 57) { store64(end_out, off); return 0 - 1; }
+    var v = 0;
+    while (i < n) {
+        c = load8(buf + i);
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+            i = i + 1;
+        } else {
+            i = n;
+        }
+    }
+    # Walk back: last iteration set i = n when non-digit found, but i
+    # may have been incremented past the non-digit. Re-find end by
+    # rescanning forward from off.
+    var k = off;
+    while (k < n) {
+        var c2 = load8(buf + k);
+        if (c2 >= 48 && c2 <= 57) { k = k + 1; }
+        else { store64(end_out, k); return v; }
+    }
+    store64(end_out, n);
+    return v;
+}
+
+fn _exec_with_arg_capture(bin_path, arg, buf, buflen): i64 {
+    return regression_exec_with_arg_capture(bin_path, arg, buf, buflen, EMPTY_ENVP);
+}
+
+fn _gen_struct_decls_source(path, n): i64 {
+    var fd = sys_open(path, 577, 420);
+    if (fd < 0) { return 0 - 1; }
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < n) {
+        str_builder_add_cstr(sb, "struct S");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, " { x; }\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "syscall(60, 0);\n");
+    var s = str_builder_build(sb);
+    sys_write(fd, str_data(s), str_len(s));
+    sys_close(fd);
+    return 0;
+}
+
+fn _join(parent, child): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, parent);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, child);
+    return str_data(str_builder_build(sb));
+}
+
+fn _check_file_exists(pdir, rel, fail_label): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pdir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, rel);
+    var path = str_data(str_builder_build(sb));
+    if (file_exists(path) != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(fail_label);
+        _p(" missing ");
+        println(rel);
+        return 1;
+    }
+    return 0;
+}
+
+fn _check_file_grep(pdir, rel, substr, expect_match, fail_label): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pdir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, rel);
+    var path = str_data(str_builder_build(sb));
+    var hit = _file_contains_substr(path, substr);
+    if (hit != expect_match) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(fail_label);
+        if (expect_match == 1) { _p(" missing '"); }
+        else                   { _p(" unexpected '"); }
+        _p(substr);
+        _p("' in ");
+        println(rel);
+        return 1;
+    }
+    return 0;
+}
+
+fn _count_substr_buf(buf, n, needle): i64 {
+    return regression_count_substr(buf, n, needle);
+}
+
+fn _exec_with_arg_capture_both(bin_path, arg, buf, buflen): i64 {
+    return regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, EMPTY_ENVP);
+}
+
+fn _network_probe_check(addr_ipv4, port, timeout_ms): i64 {
+    return regression_network_probe(addr_ipv4, port, timeout_ms);
+}
+
+fn _run_with_timeout(bin_path, timeout_ms): i64 {
+    return regression_run_with_timeout(bin_path, timeout_ms, ENVP_ARR);
+}
+
+fn _pipe_file_to_bin_capture(bin_path, src_path, out_path): i64 {
+    return regression_pipe_to_bin_capture(bin_path, src_path, out_path, EMPTY_ENVP);
+}
+
+fn _pipe_file_to_bin(bin_path, src_path): i64 {
+    return regression_pipe_to_bin(bin_path, src_path, EMPTY_ENVP);
+}
+
+fn _extract_hex_in_line_with(buf, n, marker): i64 {
+    var mlen = strlen(marker);
+    var i = 0;
+    while (i + mlen <= n) {
+        if (_buf_eq(buf + i, marker, mlen) == 1) {
+            # Walk back to line start.
+            var ls = i;
+            while (ls > 0) {
+                if (load8(buf + ls - 1) == 10) { break; }
+                ls = ls - 1;
+            }
+            # Walk forward to line end.
+            var le = i + mlen;
+            while (le < n) {
+                if (load8(buf + le) == 10) { break; }
+                le = le + 1;
+            }
+            # Within [ls, le), find the first "0x" + read hex digits.
+            var p = ls;
+            while (p + 1 < le) {
+                if (load8(buf + p) == 48 && load8(buf + p + 1) == 120) {
+                    var hex_start = p;
+                    var hex_end = p + 2;
+                    while (hex_end < le) {
+                        var c = load8(buf + hex_end);
+                        var is_hex = 0;
+                        if (c >= 48 && c <= 57)  { is_hex = 1; }
+                        if (c >= 65 && c <= 70)  { is_hex = 1; }
+                        if (c >= 97 && c <= 102) { is_hex = 1; }
+                        if (is_hex == 0) { break; }
+                        hex_end = hex_end + 1;
+                    }
+                    var hl = hex_end - hex_start;
+                    var copy = alloc(hl + 1);
+                    var k = 0;
+                    while (k < hl) {
+                        store8(copy + k, load8(buf + hex_start + k));
+                        k = k + 1;
+                    }
+                    store8(copy + hl, 0);
+                    return copy;
+                }
+                p = p + 1;
+            }
+            i = i + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+fn _read_source_for_grep(path, len_out): i64 {
+    var cap = 524288;
+    var buf = alloc(cap + 1);
+    var n = file_read_all(path, buf, cap);
+    if (n <= 0) { store64(len_out, 0); return 0; }
+    store8(buf + n, 0);
+    store64(len_out, n);
+    return buf;
+}
+
+fn _exec_in_dir(work_dir, bin_path, arg, out_path): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var cd_rc = syscall(SYS_CHDIR, work_dir);
+        if (cd_rc < 0) { sys_exit(126); }
+        var out_fd = 0 - 1;
+        if (out_path == 0) {
+            out_fd = sys_open("/dev/null", 1, 0);
+        } else {
+            out_fd = sys_open(out_path, 577, 420);
+        }
+        if (out_fd >= 0) {
+            sys_dup2(out_fd, 1);
+            sys_dup2(out_fd, 2);
+            sys_close(out_fd);
+        }
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): cmd+arg+NUL = 24 B
+        store64(&argv,     bin_path);
+        if (arg != 0) {
+            store64(&argv + 8,  arg);
+            store64(&argv + 16, 0);
+        } else {
+            store64(&argv + 8, 0);
+        }
+        sys_execve(bin_path, &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path): i64 {
+    var n_extras = vec_len(env_extras_vec);
+    var aug_envp = alloc((ENVP_COUNT + n_extras + 1) * 8);
+    var ei = 0;
+    while (ei < ENVP_COUNT) {
+        store64(aug_envp + ei * 8, load64(ENVP_ARR + ei * 8));
+        ei = ei + 1;
+    }
+    var xj = 0;
+    while (xj < n_extras) {
+        store64(aug_envp + (ENVP_COUNT + xj) * 8, vec_get(env_extras_vec, xj));
+        xj = xj + 1;
+    }
+    store64(aug_envp + (ENVP_COUNT + n_extras) * 8, 0);
+
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var cd_rc = syscall(SYS_CHDIR, work_dir);
+        if (cd_rc < 0) { sys_exit(126); }
+        var out_fd = 0 - 1;
+        if (out_path == 0) {
+            out_fd = sys_open("/dev/null", 1, 0);
+        } else {
+            out_fd = sys_open(out_path, 577, 420);
+        }
+        if (out_fd >= 0) {
+            sys_dup2(out_fd, 1);
+            sys_dup2(out_fd, 2);
+            sys_close(out_fd);
+        }
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + ≤3 args + NUL = 40 B
+        store64(&argv, bin_path);
+        var off = 8;
+        if (arg1 != 0) { store64(&argv + off, arg1); off = off + 8; }
+        if (arg1 != 0) { if (arg2 != 0) { store64(&argv + off, arg2); off = off + 8; } }
+        if (arg1 != 0) { if (arg2 != 0) { if (arg3 != 0) { store64(&argv + off, arg3); off = off + 8; } } }
+        store64(&argv + off, 0);
+        sys_execve(bin_path, &argv, aug_envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var cd_rc = syscall(SYS_CHDIR, work_dir);
+        if (cd_rc < 0) { sys_exit(126); }
+        var out_fd = 0 - 1;
+        if (out_path == 0) {
+            out_fd = sys_open("/dev/null", 1, 0);
+        } else {
+            out_fd = sys_open(out_path, 577, 420);
+        }
+        if (out_fd >= 0) {
+            sys_dup2(out_fd, 1);
+            sys_dup2(out_fd, 2);
+            sys_close(out_fd);
+        }
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + ≤3 args + NUL = 40 B
+        store64(&argv, bin_path);
+        var off = 8;
+        if (arg1 != 0) { store64(&argv + off, arg1); off = off + 8; }
+        if (arg1 != 0) { if (arg2 != 0) { store64(&argv + off, arg2); off = off + 8; } }
+        if (arg1 != 0) { if (arg2 != 0) { if (arg3 != 0) { store64(&argv + off, arg3); off = off + 8; } } }
+        store64(&argv + off, 0);
+        sys_execve(bin_path, &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+fn _write_file(path, text): i64 {
+    var fd = sys_open(path, 577, 420);
+    if (fd < 0) { return 0 - 1; }
+    var n = sys_write(fd, text, strlen(text));
+    sys_close(fd);
+    return n;
+}
+
+fn _files_identical(path_a, path_b): i64 {
+    var cap = 2000000;
+    var buf_a = alloc(cap);
+    var buf_b = alloc(cap);
+    var na = file_read_all(path_a, buf_a, cap);
+    var nb = file_read_all(path_b, buf_b, cap);
+    if (na != nb) { return 0; }
+    var i = 0;
+    while (i < na) {
+        if (load8(buf_a + i) != load8(buf_b + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn _file_size(path): i64 {
+    var sbuf = alloc(144);
+    var rc = sys_stat(path, sbuf);
+    if (rc < 0) { return 0; }
+    return load64(sbuf + 48);
+}
+
+fn _tmp_path(prefix): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/");
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add_int(sb, sys_getpid());
+    var s = str_builder_build(sb);
+    return str_data(s);
+}
+
+fn _buf_eq(p, s, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(s + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn _mkdir_p(path): i64 {
+    var plen = strlen(path);
+    var buf = alloc(plen + 1);
+    var i = 0;
+    while (i < plen) { store8(buf + i, load8(path + i)); i = i + 1; }
+    store8(buf + plen, 0);
+    var pos = 1;
+    while (pos <= plen) {
+        if (pos == plen) {
+            sys_mkdir(buf, 493);
+        } else { if (load8(buf + pos) == 47) {
+                store8(buf + pos, 0);
+                sys_mkdir(buf, 493);
+                store8(buf + pos, 47);
+            } }
+        pos = pos + 1;
+    }
+    return 0;
+}

@@ -4,7 +4,7 @@
 #
 # v5.10.18 — was hard-blocked on `O_WRONLY` from `lib/io.cyr` for
 # the `/dev/null` redirect in `run_capture`; cyrius's own
-# `programs/check.cyr` (the only in-tree consumer) happened to
+# check program (the only in-tree consumer) happened to
 # include io.cyr first so it parsed clean, but every downstream
 # consumer that didn't (agnosys 1.1.x specifically) hit
 # `error: undefined variable 'O_WRONLY'`. Replaced with the

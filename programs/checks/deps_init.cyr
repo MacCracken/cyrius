@@ -1,0 +1,861 @@
+# ================================================================
+# programs/checks/deps_init.cyr — cyrius deps + cyrius init/port scaffolding gates
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _deps_downstream_src_main_gate(): i64 {
+    var label = "cyrius deps resolves stdlib pins for downstream repos with src/main.cyr (v6.0.1; mkdir-before-find regression)";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fixture_dir = _tmp_path("audit_deps_downstream_");
+    sys_mkdir(fixture_dir, 0x1ED);
+
+    var src_dir_sb = str_builder_new();
+    str_builder_add_cstr(src_dir_sb, fixture_dir);
+    str_builder_add_cstr(src_dir_sb, "/src");
+    var src_dir = str_data(str_builder_build(src_dir_sb));
+    sys_mkdir(src_dir, 0x1ED);
+
+    var main_path_sb = str_builder_new();
+    str_builder_add_cstr(main_path_sb, src_dir);
+    str_builder_add_cstr(main_path_sb, "/main.cyr");
+    var main_path = str_data(str_builder_build(main_path_sb));
+    _write_file(main_path, "fn main(): i64 { return 0; }\n");
+
+    var cyml_path_sb = str_builder_new();
+    str_builder_add_cstr(cyml_path_sb, fixture_dir);
+    str_builder_add_cstr(cyml_path_sb, "/cyrius.cyml");
+    var cyml_path = str_data(str_builder_build(cyml_path_sb));
+    _write_file(cyml_path,
+        "[package]\nname = \"deps_gate_fixture\"\nversion = \"0.0.1\"\n\n[build]\nentry = \"src/main.cyr\"\n\n[deps]\nstdlib = [\"fnptr\"]\n");
+
+    var out_path = _tmp_path("audit_deps_downstream_out_");
+    var ec = _exec_in_dir(fixture_dir, cyrius_bin, "deps", out_path);
+
+    var lib_fnptr_sb = str_builder_new();
+    str_builder_add_cstr(lib_fnptr_sb, fixture_dir);
+    str_builder_add_cstr(lib_fnptr_sb, "/lib/fnptr.cyr");
+    var lib_fnptr = str_data(str_builder_build(lib_fnptr_sb));
+    var resolved = file_exists(lib_fnptr);
+    var sz = 0;
+    if (resolved == 1) { sz = _file_size(lib_fnptr); }
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(out_path);
+    sys_unlink(lib_fnptr);
+    sys_unlink(main_path);
+    sys_unlink(cyml_path);
+    var lib_dir_sb = str_builder_new();
+    str_builder_add_cstr(lib_dir_sb, fixture_dir);
+    str_builder_add_cstr(lib_dir_sb, "/lib");
+    sys_rmdir(str_data(str_builder_build(lib_dir_sb)));
+    sys_rmdir(src_dir);
+    sys_rmdir(fixture_dir);
+
+    var fail = 0;
+    if (ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cyrius deps exited "); print_num(ec); println(" (expected 0)");
+        fail = 1;
+    } elif (resolved != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": lib/fnptr.cyr not materialized in fixture (cmd_deps mkdir-before-find regression?)");
+        fail = 1;
+    } elif (sz <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": lib/fnptr.cyr exists but is empty (sz="); print_num(sz); println(")");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": cyrius deps materialized lib/fnptr.cyr (");
+        print_num(sz); println(" bytes) in downstream-with-src/main.cyr fixture");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _lk_path(base, suffix): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, base);
+    str_builder_add_cstr(sb, suffix);
+    return str_data(str_builder_build(sb));
+}
+
+fn _deps_lock_gate(): i64 {
+    var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fx = _tmp_path("audit_deps_lock_");
+    sys_mkdir(fx, 0x1ED);
+    sys_mkdir(_lk_path(fx, "/lib"), 0x1ED);
+    sys_mkdir(_lk_path(fx, "/lib/unicode"), 0x1ED);
+    _write_file(_lk_path(fx, "/lib/foo.cyr"), "fn foo() { return 1; }\n");
+    _write_file(_lk_path(fx, "/lib/unicode/cats.cyr"), "fn cats() { return 2; }\n");
+    _write_file(_lk_path(fx, "/cyrius.cyml"), "[package]\nname = \"lock_gate_fixture\"\n");
+
+    var lout = _tmp_path("audit_deps_lock_out_");
+    var lec = _exec_in_dir3(fx, cyrius_bin, "deps", "--lock", 0, lout);
+
+    var lock_path = _lk_path(fx, "/cyrius.lock");
+    var lock_sz = 0;
+    if (file_exists(lock_path) == 1) { lock_sz = _file_size(lock_path); }
+
+    var has_subdir = 0;
+    if (lock_sz > 0) {
+        var lb = alloc(8192);
+        var ln = file_read_all(lock_path, lb, 8191);
+        if (ln > 0) {
+            store8(lb + ln, 0);
+            if (_find_str_from(lb, ln, 0, "lib/unicode/cats.cyr", 20) >= 0) { has_subdir = 1; }
+        }
+    }
+
+    var vec_ec = _exec_in_dir3(fx, cyrius_bin, "deps", "--verify", 0, lout);
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(lout);
+    sys_unlink(lock_path);
+    sys_unlink(_lk_path(fx, "/lib/unicode/cats.cyr"));
+    sys_unlink(_lk_path(fx, "/lib/foo.cyr"));
+    sys_unlink(_lk_path(fx, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fx, "/lib/unicode"));
+    sys_rmdir(_lk_path(fx, "/lib"));
+    sys_rmdir(fx);
+
+    var fail = 0;
+    if (lec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cyrius deps --lock exited "); print_num(lec); println(" (expected 0)");
+        fail = 1;
+    } elif (lock_sz <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cyrius.lock empty after --lock (symlink-filter regression returned?)");
+        fail = 1;
+    } elif (has_subdir == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cyrius.lock missing lib/unicode/cats.cyr (subdir recursion broken)");
+        fail = 1;
+    } elif (vec_ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cyrius deps --verify exited "); print_num(vec_ec); println(" (expected 0)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": cyrius.lock non-empty ("); print_num(lock_sz);
+        println(" bytes, incl. unicode/ subdir) + --verify round-trips");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _scaffold_init(scratch_dir, init_script, flag, name): i64 {
+    sys_mkdir(scratch_dir, 493);
+    var out = _tmp_path("audit_init_out_");
+    var ec = _exec_in_dir3(scratch_dir, "/bin/sh", init_script, flag, name, out);
+    sys_unlink(out);
+    if (ec != 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, scratch_dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, name);
+    return str_data(str_builder_build(sb));
+}
+
+fn _init_lib_bin_gate(): i64 {
+    var label = "cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)";
+    var init_script = _root_path("scripts/cyrius-init.sh");
+    if (file_exists(init_script) != 1) {
+        _p("  skip: ");
+        _p(init_script);
+        println(" missing");
+        _check(label, 0);
+        return 0;
+    }
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_init_lb_");
+    sys_mkdir(scratch, 493);
+    var fail = 0;
+
+    # Case 1: --lib emits library shape, builds smoke clean.
+    var c1 = _join(scratch, "case1");
+    var p1 = _scaffold_init(c1, init_script, "--lib", "mylib");
+    if (p1 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case1 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p1, "programs/smoke.cyr", "case1 (--lib)");
+        var test_path = _join(p1, "src/test.cyr");
+        if (file_exists(test_path) == 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 src/test.cyr emitted in lib shape (should be omitted)");
+            fail = fail + 1;
+        }
+        fail = fail + _check_file_grep(p1, "cyrius.cyml", "[lib]",                          1, "case1");
+        fail = fail + _check_file_grep(p1, "cyrius.cyml", "\ntest ",                        0, "case1");
+        fail = fail + _check_file_grep(p1, "cyrius.cyml", "entry = \"programs/smoke.cyr\"", 1, "case1");
+        # Build smoke + run.
+        var build_out = _tmp_path("audit_init_b_");
+        var ec_b = _exec_in_dir3(p1, cyrius_bin, "build", "programs/smoke.cyr", "build/mylib-smoke", build_out);
+        sys_unlink(build_out);
+        if (ec_b != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": case1 cyrius build smoke exit ");
+            print_num(ec_b);
+            println("");
+            fail = fail + 1;
+        } else {
+            var smoke_bin = _join(p1, "build/mylib-smoke");
+            if (file_exists(smoke_bin) != 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": case1 build/mylib-smoke not produced");
+                fail = fail + 1;
+            } else {
+                var ec_r = _exec_run_clean(smoke_bin);
+                if (ec_r != 0) {
+                    _p("    ");
+                    _p(ANSI_RED);
+                    _p("case-FAIL");
+                    _p(ANSI_RESET);
+                    _p(": case1 smoke run exit ");
+                    print_num(ec_r);
+                    println("");
+                    fail = fail + 1;
+                }
+            }
+        }
+    }
+
+    # Case 2: --bin emits binary shape (existing behavior preserved).
+    var c2 = _join(scratch, "case2");
+    var p2 = _scaffold_init(c2, init_script, "--bin", "foo");
+    if (p2 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case2 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p2, "src/main.cyr", "case2 (--bin)");
+        fail = fail + _check_file_exists(p2, "src/test.cyr", "case2 (--bin)");
+        var prog_dir = _join(p2, "programs");
+        if (file_exists(prog_dir) == 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case2 programs/ created for bin shape (should not exist)");
+            fail = fail + 1;
+        }
+        fail = fail + _check_file_grep(p2, "cyrius.cyml", "entry = \"src/main.cyr\"", 1, "case2");
+        var build_out = _tmp_path("audit_init_b_");
+        var ec_b = _exec_in_dir3(p2, cyrius_bin, "build", "src/main.cyr", "build/foo", build_out);
+        sys_unlink(build_out);
+        if (ec_b != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": case2 cyrius build bin exit ");
+            print_num(ec_b);
+            println("");
+            fail = fail + 1;
+        } else {
+            var bin_path = _join(p2, "build/foo");
+            if (file_exists(bin_path) == 1) {
+                var ec_r = _exec_run_clean(bin_path);
+                if (ec_r != 0) {
+                    _p("    ");
+                    _p(ANSI_RED);
+                    _p("case-FAIL");
+                    _p(ANSI_RESET);
+                    _p(": case2 bin run exit ");
+                    print_num(ec_r);
+                    println("");
+                    fail = fail + 1;
+                }
+            }
+        }
+    }
+
+    # Case 3: bare invocation defaults to bin.
+    var c3 = _join(scratch, "case3");
+    sys_mkdir(c3, 493);
+    var c3_out = _tmp_path("audit_init_c3_");
+    var ec_c3 = _exec_in_dir3(c3, "/bin/sh", init_script, "bareproj", 0, c3_out);
+    sys_unlink(c3_out);
+    if (ec_c3 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case3 bare init exit non-zero");
+        fail = fail + 1;
+    } else {
+        var p3 = _join(c3, "bareproj");
+        var p3_prog = _join(p3, "programs");
+        if (file_exists(p3_prog) == 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 bare init created programs/ (should default to --bin)");
+            fail = fail + 1;
+        }
+        fail = fail + _check_file_grep(p3, "cyrius.cyml", "entry = \"src/main.cyr\"", 1, "case3");
+    }
+
+    # Case 4: --lib CI workflow build cmd targets programs/smoke.cyr.
+    var c4 = _join(scratch, "case4");
+    var p4 = _scaffold_init(c4, init_script, "--lib", "libci");
+    if (p4 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case4 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_grep(p4, ".github/workflows/ci.yml", "cyrius build src/main.cyr",                  0, "case4");
+        fail = fail + _check_file_grep(p4, ".github/workflows/ci.yml", "cyrius build programs/smoke.cyr build/",    1, "case4");
+    }
+
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius init --lib/--bin/bare (4/4 cases)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _init_doctree_gate(): i64 {
+    var label = "cyrius init/port emit adr/architecture/guides/examples/development + CLAUDE.md (v5.7.16)";
+    var init_script = _root_path("scripts/cyrius-init.sh");
+    var port_script = _root_path("scripts/cyrius-port.sh");
+    if (file_exists(init_script) != 1) {
+        _p("  skip: scripts/cyrius-init.sh missing");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists(port_script) != 1) {
+        _p("  skip: scripts/cyrius-port.sh missing");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_init_dt_");
+    sys_mkdir(scratch, 493);
+    var fail = 0;
+
+    # Case 1: cyrius init --lib emits full doc-tree.
+    var c1 = _join(scratch, "case1");
+    var p1 = _scaffold_init(c1, init_script, "--lib", "mylib");
+    if (p1 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case1 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p1, "docs/adr/README.md",                "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/adr/template.md",              "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/architecture/README.md",       "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/guides/getting-started.md",    "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/examples/.gitkeep",            "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/development/state.md",         "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "docs/development/roadmap.md",       "case1 (--lib)");
+        fail = fail + _check_file_exists(p1, "CLAUDE.md",                         "case1 (--lib)");
+        fail = fail + _check_file_grep(p1, "docs/adr/template.md", "# NNNN ",            1, "case1 ADR template");
+        # Bash original: `grep -E '^\*\*Version\*\*: \[?[0-9]'` —
+        # detects an INLINED version number (digit or `[` after the
+        # bold marker). The valid CLAUDE.md text is `**Version**:
+        # VERSION at the project root is the source of truth` (no
+        # number). Approximate via "do not inline the number" check.
+        fail = fail + _check_file_grep(p1, "CLAUDE.md", "do not inline the number",       1, "case1 CLAUDE.md version-sync hint");
+        fail = fail + _check_file_grep(p1, "CLAUDE.md", "docs/development/state.md",     1, "case1 CLAUDE.md → state.md link");
+        fail = fail + _check_file_grep(p1, "CLAUDE.md", "cyrius build programs/smoke.cyr", 1, "case1 CLAUDE.md lib build hint");
+    }
+
+    # Case 2: cyrius init --bin doc-tree.
+    var c2 = _join(scratch, "case2");
+    var p2 = _scaffold_init(c2, init_script, "--bin", "foo");
+    if (p2 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case2 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(p2, "docs/adr/README.md",                "case2 (--bin)");
+        fail = fail + _check_file_exists(p2, "docs/development/state.md",         "case2 (--bin)");
+        fail = fail + _check_file_exists(p2, "CLAUDE.md",                         "case2 (--bin)");
+        fail = fail + _check_file_grep(p2, "CLAUDE.md", "cyrius build src/main.cyr", 1, "case2 CLAUDE.md bin build hint");
+    }
+
+    # Case 3: bare cyrius init defaults to bin + still gets doc-tree.
+    var c3 = _join(scratch, "case3");
+    sys_mkdir(c3, 493);
+    var c3_out = _tmp_path("audit_init_dt_c3_");
+    var ec_c3 = _exec_in_dir3(c3, "/bin/sh", init_script, "bareproj", 0, c3_out);
+    sys_unlink(c3_out);
+    if (ec_c3 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case3 bare init exit non-zero");
+        fail = fail + 1;
+    } else {
+        var p3 = _join(c3, "bareproj");
+        fail = fail + _check_file_exists(p3, "docs/adr/README.md",                "case3 (bare)");
+        fail = fail + _check_file_exists(p3, "CLAUDE.md",                         "case3 (bare)");
+    }
+
+    # Case 4: cyrius port mirrors the same doc-tree.
+    var c4 = _join(scratch, "case4/portproj");
+    sys_mkdir(_join(scratch, "case4"), 493);
+    sys_mkdir(c4, 493);
+    sys_mkdir(_join(c4, "src"), 493);
+    _write_file(_join(c4, "src/main.rs"), "fn main() {}\n");
+    _write_file(_join(c4, "Cargo.toml"), "[package]\nname = \"portproj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+    var c4_out = _tmp_path("audit_init_dt_c4_");
+    var ec_c4 = _exec_in_dir3(_join(scratch, "case4"), "/bin/sh", port_script, c4, 0, c4_out);
+    sys_unlink(c4_out);
+    if (ec_c4 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case4 cyrius port exit ");
+        print_num(ec_c4);
+        println("");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_exists(c4, "docs/adr/README.md",                "case4 (cyrius port)");
+        fail = fail + _check_file_exists(c4, "CLAUDE.md",                         "case4 (cyrius port)");
+        fail = fail + _check_file_grep(c4, "CLAUDE.md", "rust-old", 1, "case4 port CLAUDE.md");
+    }
+
+    # Case 5: state.md carries 'Cyrius pin'; CLAUDE.md does not.
+    var c5 = _join(scratch, "case5");
+    var p5 = _scaffold_init(c5, init_script, "--lib", "pinproj");
+    if (p5 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case5 init exit non-zero");
+        fail = fail + 1;
+    } else {
+        fail = fail + _check_file_grep(p5, "docs/development/state.md", "Cyrius pin", 1, "case5 state.md pin line");
+        fail = fail + _check_file_grep(p5, "CLAUDE.md",                  "\n- **Cyrius pin**", 0, "case5 CLAUDE.md no leaked pin");
+    }
+
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius init/port doc-tree (5/5 cases)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _fuzz_deps_prepend_gate(): i64 {
+    var label = "cyrius fuzz manifest-deps auto-prepend parity with test/bench (v5.7.21)";
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var fail = 0;
+
+    # Case 1: manifest declares stdlib deps; .fcyr uses strlen.
+    var sc1 = _tmp_path("audit_fuzz_deps1_");
+    _mkdir_p(sc1);
+    var sb_fuzz_dir1 = str_builder_new();
+    str_builder_add_cstr(sb_fuzz_dir1, sc1);
+    str_builder_add_cstr(sb_fuzz_dir1, "/fuzz");
+    var fuzz_dir1 = str_data(str_builder_build(sb_fuzz_dir1));
+    sys_mkdir(fuzz_dir1, 493);
+    var sb_cyml1 = str_builder_new();
+    str_builder_add_cstr(sb_cyml1, sc1);
+    str_builder_add_cstr(sb_cyml1, "/cyrius.cyml");
+    _write_file(str_data(str_builder_build(sb_cyml1)),
+        "[package]\nname = \"fz1\"\nversion = \"0.1.0\"\nlicense = \"GPL-3.0-only\"\nlanguage = \"cyrius\"\n\n[deps]\nstdlib = [\"string\", \"syscalls\"]\n");
+    var sb_fcyr1 = str_builder_new();
+    str_builder_add_cstr(sb_fcyr1, fuzz_dir1);
+    str_builder_add_cstr(sb_fcyr1, "/uses_stdlib.fcyr");
+    _write_file(str_data(str_builder_build(sb_fcyr1)),
+        "fn fuzz_main(data, n) {\n    if (n == 0) { return 0; }\n    if (strlen(\"hello\") != 5) { return 1; }\n    return 0;\n}\nfn main() {\n    if (fuzz_main(\"dummy\", 5) != 0) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n");
+    var out1 = _tmp_path("audit_fuzz_out1_");
+    var ec1 = _exec_in_dir(sc1, cyrius_bin, "fuzz", out1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case1 cyrius fuzz exited ");
+        print_num(ec1);
+        println(" (auto-prepend not working)");
+        fail = fail + 1;
+    } else { if (_file_contains_substr(out1, "1 passed, 0 failed") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 fuzz ran but did not summarize '1 passed, 0 failed'");
+            fail = fail + 1;
+        } }
+    sys_unlink(out1);
+
+    # Case 2: no manifest; .fcyr self-contained.
+    var sc2 = _tmp_path("audit_fuzz_deps2_");
+    _mkdir_p(sc2);
+    var sb_fuzz_dir2 = str_builder_new();
+    str_builder_add_cstr(sb_fuzz_dir2, sc2);
+    str_builder_add_cstr(sb_fuzz_dir2, "/fuzz");
+    var fuzz_dir2 = str_data(str_builder_build(sb_fuzz_dir2));
+    sys_mkdir(fuzz_dir2, 493);
+    var sb_fcyr2 = str_builder_new();
+    str_builder_add_cstr(sb_fcyr2, fuzz_dir2);
+    str_builder_add_cstr(sb_fcyr2, "/standalone.fcyr");
+    _write_file(str_data(str_builder_build(sb_fcyr2)),
+        "fn fuzz_main(data, n) {\n    if (n == 0) { return 0; }\n    return 0;\n}\nfn main() {\n    if (fuzz_main(\"x\", 1) != 0) { syscall(60, 1); }\n    syscall(60, 0);\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n");
+    var out2 = _tmp_path("audit_fuzz_out2_");
+    var ec2 = _exec_in_dir(sc2, cyrius_bin, "fuzz", out2);
+    if (ec2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case2 cyrius fuzz exited ");
+        print_num(ec2);
+        println(" (no-manifest path broken)");
+        fail = fail + 1;
+    }
+    sys_unlink(out2);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius fuzz auto-prepend parity (2/2 cases)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _deps_transitive_gate(): i64 {
+    var label = "cyrius deps walks [deps.X] transitively (3-level + diamond + cycle + rel-path; v5.7.14)";
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var fail = 0;
+
+    # ── Case 1: 3-level chain A→B→C ──
+    var sc1 = _tmp_path("audit_deps_chain_");
+    var dirs1[7];
+    store64(&dirs1,      sc1);
+    var p1 = str_builder_new();
+    str_builder_add_cstr(p1, sc1);
+    str_builder_add_cstr(p1, "/A");
+    var a1 = str_data(str_builder_build(p1));
+    var p1b = str_builder_new();
+    str_builder_add_cstr(p1b, sc1);
+    str_builder_add_cstr(p1b, "/B/dist");
+    var b1d = str_data(str_builder_build(p1b));
+    var p1c = str_builder_new();
+    str_builder_add_cstr(p1c, sc1);
+    str_builder_add_cstr(p1c, "/C/dist");
+    var c1d = str_data(str_builder_build(p1c));
+    _mkdir_p(a1);
+    _mkdir_p(b1d);
+    _mkdir_p(c1d);
+
+    var sbBcyr = str_builder_new();
+    str_builder_add_cstr(sbBcyr, sc1);
+    str_builder_add_cstr(sbBcyr, "/B/dist/B.cyr");
+    _write_file(str_data(str_builder_build(sbBcyr)), "# B\n");
+    var sbCcyr = str_builder_new();
+    str_builder_add_cstr(sbCcyr, sc1);
+    str_builder_add_cstr(sbCcyr, "/C/dist/C.cyr");
+    _write_file(str_data(str_builder_build(sbCcyr)), "# C\n");
+
+    var sbCyml_C = str_builder_new();
+    str_builder_add_cstr(sbCyml_C, sc1);
+    str_builder_add_cstr(sbCyml_C, "/C/cyrius.cyml");
+    _write_file(str_data(str_builder_build(sbCyml_C)),
+        "[package]\nname = \"C\"\n[lib]\nmodules = [\"dist/C.cyr\"]\n");
+
+    var sbCyml_B = str_builder_new();
+    str_builder_add_cstr(sbCyml_B, sc1);
+    str_builder_add_cstr(sbCyml_B, "/B/cyrius.cyml");
+    var sbCB = str_builder_new();
+    str_builder_add_cstr(sbCB, "[package]\nname = \"B\"\n[deps.C]\npath = \"");
+    str_builder_add_cstr(sbCB, sc1);
+    str_builder_add_cstr(sbCB, "/C\"\nmodules = [\"dist/C.cyr\"]\n");
+    _write_file(str_data(str_builder_build(sbCyml_B)),
+        str_data(str_builder_build(sbCB)));
+
+    var sbCyml_A = str_builder_new();
+    str_builder_add_cstr(sbCyml_A, sc1);
+    str_builder_add_cstr(sbCyml_A, "/A/cyrius.cyml");
+    var sbCA = str_builder_new();
+    str_builder_add_cstr(sbCA, "[package]\nname = \"A\"\n[deps.B]\npath = \"");
+    str_builder_add_cstr(sbCA, sc1);
+    str_builder_add_cstr(sbCA, "/B\"\nmodules = [\"dist/B.cyr\"]\n");
+    _write_file(str_data(str_builder_build(sbCyml_A)),
+        str_data(str_builder_build(sbCA)));
+
+    var out1 = _tmp_path("audit_deps_chain_out_");
+    var ec1 = _exec_in_dir(a1, cyrius_bin, "deps", out1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case1 (3-level chain) cyrius deps exited ");
+        print_num(ec1);
+        println("");
+        fail = fail + 1;
+    } else {
+        # Both B.cyr and C.cyr should appear under A/lib/
+        var sbAB = str_builder_new();
+        str_builder_add_cstr(sbAB, a1);
+        str_builder_add_cstr(sbAB, "/lib/B.cyr");
+        var sbAC = str_builder_new();
+        str_builder_add_cstr(sbAC, a1);
+        str_builder_add_cstr(sbAC, "/lib/C.cyr");
+        if (file_exists(str_data(str_builder_build(sbAB))) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 — A/lib/B.cyr missing");
+            fail = fail + 1;
+        }
+        if (file_exists(str_data(str_builder_build(sbAC))) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case1 — A/lib/C.cyr missing (transitive not resolved)");
+            fail = fail + 1;
+        }
+    }
+    sys_unlink(out1);
+
+    # ── Case 2: diamond A→{B,C}→D, dedup ──
+    var sc2 = _tmp_path("audit_deps_diam_");
+    var p2a = str_builder_new();
+    str_builder_add_cstr(p2a, sc2);
+    str_builder_add_cstr(p2a, "/A");
+    var a2 = str_data(str_builder_build(p2a));
+    _mkdir_p(a2);
+    var p2bd = str_builder_new();
+    str_builder_add_cstr(p2bd, sc2);
+    str_builder_add_cstr(p2bd, "/B/dist");
+    _mkdir_p(str_data(str_builder_build(p2bd)));
+    var p2cd = str_builder_new();
+    str_builder_add_cstr(p2cd, sc2);
+    str_builder_add_cstr(p2cd, "/C/dist");
+    _mkdir_p(str_data(str_builder_build(p2cd)));
+    var p2dd = str_builder_new();
+    str_builder_add_cstr(p2dd, sc2);
+    str_builder_add_cstr(p2dd, "/D/dist");
+    _mkdir_p(str_data(str_builder_build(p2dd)));
+
+    var pBcyr = str_builder_new();
+    str_builder_add_cstr(pBcyr, sc2);
+    str_builder_add_cstr(pBcyr, "/B/dist/B.cyr");
+    _write_file(str_data(str_builder_build(pBcyr)), "# B\n");
+    var pCcyr = str_builder_new();
+    str_builder_add_cstr(pCcyr, sc2);
+    str_builder_add_cstr(pCcyr, "/C/dist/C.cyr");
+    _write_file(str_data(str_builder_build(pCcyr)), "# C\n");
+    var pDcyr = str_builder_new();
+    str_builder_add_cstr(pDcyr, sc2);
+    str_builder_add_cstr(pDcyr, "/D/dist/D.cyr");
+    _write_file(str_data(str_builder_build(pDcyr)), "# D\n");
+
+    var pDyml = str_builder_new();
+    str_builder_add_cstr(pDyml, sc2);
+    str_builder_add_cstr(pDyml, "/D/cyrius.cyml");
+    _write_file(str_data(str_builder_build(pDyml)),
+        "[package]\nname = \"D\"\n[lib]\nmodules = [\"dist/D.cyr\"]\n");
+
+    var pByml = str_builder_new();
+    str_builder_add_cstr(pByml, sc2);
+    str_builder_add_cstr(pByml, "/B/cyrius.cyml");
+    var pByml_body = str_builder_new();
+    str_builder_add_cstr(pByml_body, "[package]\nname = \"B\"\n[deps.D]\npath = \"");
+    str_builder_add_cstr(pByml_body, sc2);
+    str_builder_add_cstr(pByml_body, "/D\"\nmodules = [\"dist/D.cyr\"]\n");
+    _write_file(str_data(str_builder_build(pByml)),
+        str_data(str_builder_build(pByml_body)));
+
+    var pCyml = str_builder_new();
+    str_builder_add_cstr(pCyml, sc2);
+    str_builder_add_cstr(pCyml, "/C/cyrius.cyml");
+    var pCyml_body = str_builder_new();
+    str_builder_add_cstr(pCyml_body, "[package]\nname = \"C\"\n[deps.D]\npath = \"");
+    str_builder_add_cstr(pCyml_body, sc2);
+    str_builder_add_cstr(pCyml_body, "/D\"\nmodules = [\"dist/D.cyr\"]\n");
+    _write_file(str_data(str_builder_build(pCyml)),
+        str_data(str_builder_build(pCyml_body)));
+
+    var pAyml = str_builder_new();
+    str_builder_add_cstr(pAyml, sc2);
+    str_builder_add_cstr(pAyml, "/A/cyrius.cyml");
+    var pAyml_body = str_builder_new();
+    str_builder_add_cstr(pAyml_body, "[package]\nname = \"A\"\n[deps.B]\npath = \"");
+    str_builder_add_cstr(pAyml_body, sc2);
+    str_builder_add_cstr(pAyml_body, "/B\"\nmodules = [\"dist/B.cyr\"]\n[deps.C]\npath = \"");
+    str_builder_add_cstr(pAyml_body, sc2);
+    str_builder_add_cstr(pAyml_body, "/C\"\nmodules = [\"dist/C.cyr\"]\n");
+    _write_file(str_data(str_builder_build(pAyml)),
+        str_data(str_builder_build(pAyml_body)));
+
+    var out2 = _tmp_path("audit_deps_diam_out_");
+    var ec2 = _exec_in_dir(a2, cyrius_bin, "deps", out2);
+    if (ec2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case2 (diamond) cyrius deps exited ");
+        print_num(ec2);
+        println("");
+        fail = fail + 1;
+    } else { if (_file_contains_substr(out2, "3 deps resolved") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case2 (diamond) — '3 deps resolved' not in stdout (D not dedup'd?)");
+            fail = fail + 1;
+        } }
+    sys_unlink(out2);
+
+    # ── Case 3: cycle A→B→A — must terminate, exit 0 ──
+    var sc3 = _tmp_path("audit_deps_cyc_");
+    var p3a = str_builder_new();
+    str_builder_add_cstr(p3a, sc3);
+    str_builder_add_cstr(p3a, "/A/dist");
+    _mkdir_p(str_data(str_builder_build(p3a)));
+    var p3b = str_builder_new();
+    str_builder_add_cstr(p3b, sc3);
+    str_builder_add_cstr(p3b, "/B/dist");
+    _mkdir_p(str_data(str_builder_build(p3b)));
+
+    var p3Acyr = str_builder_new();
+    str_builder_add_cstr(p3Acyr, sc3);
+    str_builder_add_cstr(p3Acyr, "/A/dist/A.cyr");
+    _write_file(str_data(str_builder_build(p3Acyr)), "# A\n");
+    var p3Bcyr = str_builder_new();
+    str_builder_add_cstr(p3Bcyr, sc3);
+    str_builder_add_cstr(p3Bcyr, "/B/dist/B.cyr");
+    _write_file(str_data(str_builder_build(p3Bcyr)), "# B\n");
+
+    var p3Ayml = str_builder_new();
+    str_builder_add_cstr(p3Ayml, sc3);
+    str_builder_add_cstr(p3Ayml, "/A/cyrius.cyml");
+    var p3A_body = str_builder_new();
+    str_builder_add_cstr(p3A_body, "[package]\nname = \"A\"\n[deps.B]\npath = \"");
+    str_builder_add_cstr(p3A_body, sc3);
+    str_builder_add_cstr(p3A_body, "/B\"\nmodules = [\"dist/B.cyr\"]\n");
+    _write_file(str_data(str_builder_build(p3Ayml)),
+        str_data(str_builder_build(p3A_body)));
+
+    var p3Byml = str_builder_new();
+    str_builder_add_cstr(p3Byml, sc3);
+    str_builder_add_cstr(p3Byml, "/B/cyrius.cyml");
+    var p3B_body = str_builder_new();
+    str_builder_add_cstr(p3B_body, "[package]\nname = \"B\"\n[deps.A]\npath = \"");
+    str_builder_add_cstr(p3B_body, sc3);
+    str_builder_add_cstr(p3B_body, "/A\"\nmodules = [\"dist/A.cyr\"]\n");
+    _write_file(str_data(str_builder_build(p3Byml)),
+        str_data(str_builder_build(p3B_body)));
+
+    var sb3a = str_builder_new();
+    str_builder_add_cstr(sb3a, sc3);
+    str_builder_add_cstr(sb3a, "/A");
+    var a3 = str_data(str_builder_build(sb3a));
+    var out3 = _tmp_path("audit_deps_cyc_out_");
+    var ec3 = _exec_in_dir(a3, cyrius_bin, "deps", out3);
+    if (ec3 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case3 (cycle) — expected exit 0, got ");
+        print_num(ec3);
+        println(" (likely infinite-loop pre-v5.7.14)");
+        fail = fail + 1;
+    }
+    sys_unlink(out3);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius deps transitive walk + dedup + cycle-break (3/3 cases; v5.7.14)");
+    }
+    _check(label, fail);
+    return fail;
+}

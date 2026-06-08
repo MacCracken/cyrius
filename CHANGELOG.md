@@ -6,6 +6,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.90] — 2026-06-07
+
+**Cleanup / refactor cluster (part 2b): `check.cyr` modularization.** The 10.2K-line
+monolith becomes a slim dispatcher + 13 suite files via a deterministic, verbatim
+fn-relocation — byte-identical check output, confirmed by a clean adversarial review.
+Closes the .88–.90 cleanup/refactor cluster.
+
+### Changed
+
+- **`programs/check.cyr` modularized into `programs/checks/`.** The
+  monolithic ~10,210-line / 163-fn check program is split into a slim
+  dispatcher (`programs/checks/main.cyr`: the 19 lib includes + 18 module
+  globals + 13 infra/driver fns — `_run_regression_gates`, `main`, `_check`,
+  `_gate`, … — kept **byte-verbatim** so gate order and the pass/fail tally
+  are unchanged) plus 13 suite files, each a bare fn-definition collection
+  (no includes, no globals, no driver): `shared` (leaf helpers), `selfhost`,
+  `crosshost`, `platform_efi`, `platform_win_macho`, `platform_aarch64`,
+  `cx`, `ts`, `deps_init`, `lint_fmt`, `heap_audit`, `services`, and
+  `codegen_regress` (the codegen-behavior gates split off so no suite
+  exceeds ~1,350 lines). Done as a deterministic, verbatim fn-relocation —
+  all 163 fn bodies are bit-for-bit unchanged (verified), and the rebuilt
+  `cyrius_check` produces **byte-identical output** to the pre-split monolith
+  (605 lines, 85 passed / 0 failed). `cyrius_check` is not in the self-host
+  chain, so its binary may differ; the acceptance test is behavioral
+  identity, which holds exactly. `scripts/check.sh` now builds from
+  `programs/checks/main.cyr` and its rebuild-staleness check watches **every**
+  suite file (a single-file `-nt` test would mask a stale binary after a
+  suite edit). The old `programs/check.cyr` is removed; stale references in
+  `cbt/deps.cyr`, `programs/cyaudit.cyr`, `lib/process.cyr`, and `ci.yml`
+  comments repointed to the new paths.
+
 ## [6.0.89] — 2026-06-07
 
 **Cleanup / refactor cluster (part 2a): `_TARGET_*` consolidation, first bite.**

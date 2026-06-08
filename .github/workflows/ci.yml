@@ -214,7 +214,7 @@ jobs:
           # the next silent flip can't ship.
           #
           # v5.9.3 retired tests/regression-object-init.sh into
-          # programs/check.cyr's `_object_init_gate` (native cyrius
+          # programs/checks/codegen_regress.cyr's `_object_init_gate` (native cyrius
           # ELF symbol-table parse, no readelf shell-out). The CI
           # equivalent below mirrors the same fixture + assertion
           # in shell so this job stays granular.
@@ -242,7 +242,7 @@ jobs:
           # (`programs/cyrld.cyr` `merge_symbols`).
           #
           # v5.9.3 retired tests/regression-linker.sh into
-          # programs/check.cyr's `_linker_gate`; CI equivalent
+          # programs/checks/services.cyr's `_linker_gate`; CI equivalent
           # below uses the same `tests/fixtures/linker/*.cyr`
           # objects.
           if [ -x build/cyrld ]; then
@@ -276,7 +276,7 @@ jobs:
       - name: Regression — shared object (.so + dlopen)
         run: |
           # v5.9.17 retired tests/regression-shared.sh into
-          # programs/check.cyr's `_shared_dlopen_gate`; CI
+          # programs/checks/services.cyr's `_shared_dlopen_gate`; CI
           # equivalent inlines the same fixture pair —
           # tests/fixtures/shared/{lib.cyr,dlopen_runner.cyr}
           # — so failure points back to the same artifacts the
@@ -304,7 +304,7 @@ jobs:
       - name: Regression — cyrius capacity meter
         run: |
           # v5.9.22 retired tests/regression-capacity.sh into
-          # programs/check.cyr's `_capacity_gate`; CI equivalent
+          # programs/checks/heap_audit.cyr's `_capacity_gate`; CI equivalent
           # inlines the 7 sub-cases here so failure surface stays
           # granular under the existing per-step CI layout.
           CYR="$PWD/scripts/cyrius"
@@ -319,7 +319,7 @@ jobs:
           # v5.11.19 bumped 3500 → 7000 because fn_table cap doubled
           # 4096 → 8192; 7000/8192 = 85.4% trips the threshold
           # (3500/8192 = 42.7% does not). Keep in sync with
-          # programs/check.cyr::_capacity_gate.
+          # programs/checks/heap_audit.cyr::_capacity_gate.
           ( echo 'object;'; i=0; while [ "$i" -lt 7000 ]; do printf 'fn f%d() { return %d; }\n' "$i" "$i"; i=$((i+1)); done ) > "$T/big.cyr"
           # T1: default mode emits 6 stat keys.
           "$CYR" capacity "$T/small.cyr" > "$T/o1" 2>"$T/e1"

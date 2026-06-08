@@ -1,0 +1,199 @@
+# ================================================================
+# programs/checks/crosshost.cyr — SSH/SCP/codesign cross-host (pi/ecb/cass) primitives + IPC session
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
+    var p2c[16];
+    var c2p[16];
+    var pr1 = sys_pipe(&p2c);
+    if (pr1 < 0) { return 0; }
+    var pr2 = sys_pipe(&c2p);
+    if (pr2 < 0) { return 0; }
+    var p2c_r = load32(&p2c);
+    var p2c_w = load32(&p2c + 4);
+    var c2p_r = load32(&c2p);
+    var c2p_w = load32(&c2p + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(p2c_r); sys_close(p2c_w);
+        sys_close(c2p_r); sys_close(c2p_w);
+        return 0;
+    }
+    if (pid == 0) {
+        sys_close(p2c_w);
+        sys_close(c2p_r);
+        sys_dup2(p2c_r, 0);
+        sys_close(p2c_r);
+        sys_dup2(c2p_w, 1);
+        sys_close(c2p_w);
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 2); sys_close(dn); }
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        var envp[16];
+        store64(&envp, 0);
+        sys_execve(bin_path, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(p2c_r);
+    sys_close(c2p_w);
+
+    var written = 0;
+    while (written < req_len) {
+        var w = sys_write(p2c_w, req_buf + written, req_len - written);
+        if (w <= 0) { written = req_len; }
+        else { written = written + w; }
+    }
+    sys_close(p2c_w);
+
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(c2p_r, out_buf + total, out_cap - total);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= out_cap) { rgo = 0; }
+        }
+    }
+    sys_close(c2p_r);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    return total;
+}
+
+fn _ssh_skip_check(target): i64 {
+    return regression_ssh_skip_check(target);
+}
+
+fn _scp_to(target, local_path, remote_path): i64 {
+    return regression_scp_to(target, local_path, remote_path, ENVP_ARR);
+}
+
+fn _ssh_remote_exit(target, command): i64 {
+    return regression_ssh_remote_exit(target, command, ENVP_ARR);
+}
+
+fn _ssh_remote_exec_capture(target, command, out_path): i64 {
+    return regression_ssh_remote_exec_capture(target, command, out_path, ENVP_ARR);
+}
+
+fn _codesign_remote(target, remote_path): i64 {
+    return regression_codesign_remote(target, remote_path, ENVP_ARR);
+}
+
+fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
+    # Build the remote shell command:
+    #   "rm -rf <remote_dir> && mkdir -p <remote_dir>
+    #    && cd <remote_dir> && tar xf -"
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "rm -rf ");
+    str_builder_add_cstr(cmd_sb, remote_dir);
+    str_builder_add_cstr(cmd_sb, " && mkdir -p ");
+    str_builder_add_cstr(cmd_sb, remote_dir);
+    str_builder_add_cstr(cmd_sb, " && cd ");
+    str_builder_add_cstr(cmd_sb, remote_dir);
+    str_builder_add_cstr(cmd_sb, " && tar xf -");
+    var remote_cmd = str_data(str_builder_build(cmd_sb));
+
+    # Pipe between tar (parent of members in src_root) and ssh.
+    var fds[16];
+    var pipe_rc = sys_pipe(&fds);
+    if (pipe_rc < 0) { return 0 - 2; }
+    var rfd = load32(&fds);
+    var wfd = load32(&fds + 4);
+
+    # tar producer
+    var tar_pid = sys_fork();
+    if (tar_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
+    if (tar_pid == 0) {
+        sys_dup2(wfd, 1);
+        sys_close(rfd);
+        sys_close(wfd);
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        # Exec: tar cf - -C <src_root> <member1> <member2> ...
+        # `members` is space-separated; explode to argv. Cap at
+        # 32 members which is plenty for src + lib + extras.
+        var argv[304];  # N BYTES per CLAUDE.md buffer contract: 5 fixed + ≤32 members + NUL = 38 ptrs = 304 B
+        store64(&argv,      "tar");
+        store64(&argv + 8,  "cf");
+        store64(&argv + 16, "-");
+        store64(&argv + 24, "-C");
+        store64(&argv + 32, src_root);
+        # Walk `members` cstring, splitting on space, writing
+        # each token's start pointer + null-terminating each
+        # in a private mutable buffer.
+        var mlen = strlen(members);
+        var buf = alloc(mlen + 1);
+        var b = 0;
+        while (b < mlen) { store8(buf + b, load8(members + b)); b = b + 1; }
+        store8(buf + mlen, 0);
+        var idx = 5;   # next argv slot
+        var s = 0;
+        var i = 0;
+        while (i <= mlen) {
+            var c = load8(buf + i);
+            if (c == 32) {
+                store8(buf + i, 0);
+                if (i > s) { if (idx < 37) { store64(&argv + idx * 8, buf + s); idx = idx + 1; } }
+                s = i + 1;
+            }
+            if (c == 0) {
+                if (i > s) { if (idx < 37) { store64(&argv + idx * 8, buf + s); idx = idx + 1; } }
+            }
+            i = i + 1;
+        }
+        store64(&argv + idx * 8, 0);
+        sys_execve("/usr/bin/tar", &argv, ENVP_ARR);
+        sys_execve("/bin/tar",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+
+    # ssh consumer
+    var ssh_pid = sys_fork();
+    if (ssh_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
+    if (ssh_pid == 0) {
+        sys_dup2(rfd, 0);
+        sys_close(rfd);
+        sys_close(wfd);
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs need 32 B
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  target);
+        store64(&argv + 16, remote_cmd);
+        store64(&argv + 24, 0);
+        sys_execve("/usr/bin/ssh", &argv, ENVP_ARR);
+        sys_execve("/bin/ssh",     &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+
+    # Parent closes both ends and waits.
+    sys_close(rfd);
+    sys_close(wfd);
+    var s1[1];
+    var s2[1];
+    sys_waitpid(tar_pid, &s1, 0);
+    sys_waitpid(ssh_pid, &s2, 0);
+    var st1 = load32(&s1);
+    var st2 = load32(&s2);
+    if (WIFEXITED(st1) != 1) { return 0 - 1; }
+    if (WIFEXITED(st2) != 1) { return 0 - 1; }
+    if (WEXITSTATUS(st1) != 0) { return 0 - 1; }
+    return WEXITSTATUS(st2);
+}
+
+fn _ssh_target(env_name, default_name): i64 {
+    return regression_ssh_target(env_name, default_name);
+}

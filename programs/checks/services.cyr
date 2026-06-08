@@ -1,0 +1,1364 @@
+# ================================================================
+# programs/checks/services.cyr — tool/service gates (lsp/api/linker/dlopen/distlib/smoke/install/tls/sit)
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec): i64 {
+    var nobjs = vec_len(obj_paths_vec);
+    var argv = alloc((nobjs + 4) * 8);
+    store64(argv,         cyrld_path);
+    store64(argv + 8,     "-o");
+    store64(argv + 16,    out_path);
+    var i = 0;
+    while (i < nobjs) {
+        store64(argv + (i + 3) * 8, vec_get(obj_paths_vec, i));
+        i = i + 1;
+    }
+    store64(argv + (nobjs + 3) * 8, 0);
+
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 1); sys_close(dn); }
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve(cyrld_path, argv, &envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+fn _compile_to_obj(src_path, obj_path): i64 {
+    return _self_host_pipe(src_path, CC_PATH, obj_path);
+}
+
+fn _linker_gate(): i64 {
+    var cyrld = _root_path("build/cyrld");
+    if (file_exists(cyrld) != 1) {
+        _p("  skip: build/cyrld not present");
+        println("");
+        _check("cyrld cross-module link", 0);
+        return 0;
+    }
+    var fa = _root_path("tests/fixtures/linker/a.cyr");
+    var fc = _root_path("tests/fixtures/linker/c.cyr");
+    var fd = _root_path("tests/fixtures/linker/d.cyr");
+    var fm = _root_path("tests/fixtures/linker/m.cyr");
+
+    var oa = _tmp_path("audit_link_a_");
+    var oc = _tmp_path("audit_link_c_");
+    var od = _tmp_path("audit_link_d_");
+    var om = _tmp_path("audit_link_m_");
+
+    var rca = _compile_to_obj(fa, oa);
+    var rcc = _compile_to_obj(fc, oc);
+    var rcd = _compile_to_obj(fd, od);
+    var rcm = _compile_to_obj(fm, om);
+    if (rca != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+    if (rcc != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+    if (rcd != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+    if (rcm != 0) { _linker_gate_cleanup(oa, oc, od, om); _check("cyrld cross-module link", 1); return 1; }
+
+    # Test 1: link [c, a] → exe1, run, expect exit 43.
+    var exe1 = _tmp_path("audit_link_exe1_");
+    var args1 = vec_new();
+    vec_push(args1, oc);
+    vec_push(args1, oa);
+    var lrc1 = _link_objects_invoke(cyrld, exe1, args1);
+    if (lrc1 != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cyrld test1 returned ");
+        print_num(lrc1);
+        println("");
+        _linker_gate_cleanup(oa, oc, od, om);
+        sys_unlink(exe1);
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+    sys_chmod(exe1, 493);
+    var ec1 = _exec_run_clean(exe1);
+    sys_unlink(exe1);
+    if (ec1 != 43) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cross-module call exit ");
+        print_num(ec1);
+        println(" (expected 43)");
+        _linker_gate_cleanup(oa, oc, od, om);
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+
+    # Test 2: link [m, d] → exe2, run, expect exit 44.
+    var exe2 = _tmp_path("audit_link_exe2_");
+    var args2 = vec_new();
+    vec_push(args2, om);
+    vec_push(args2, od);
+    var lrc2 = _link_objects_invoke(cyrld, exe2, args2);
+    _linker_gate_cleanup(oa, oc, od, om);
+    if (lrc2 != 0) {
+        sys_unlink(exe2);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cyrld test2 returned ");
+        print_num(lrc2);
+        println("");
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+    sys_chmod(exe2, 493);
+    var ec2 = _exec_run_clean(exe2);
+    sys_unlink(exe2);
+    if (ec2 != 44) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": data + init ordering exit ");
+        print_num(ec2);
+        println(" (expected 44)");
+        _check("cyrld cross-module link", 1);
+        return 1;
+    }
+
+    _check("cyrld cross-module link", 0);
+    return 0;
+}
+
+fn _linker_gate_cleanup(a, b, c, d): i64 {
+    sys_unlink(a);
+    sys_unlink(b);
+    sys_unlink(c);
+    sys_unlink(d);
+    return 0;
+}
+
+fn _smoke_discovery_gate(): i64 {
+    var label = "cyrius smoke discovers .smcyr + fail-fast bailout (v5.7.38)";
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var fail = 0;
+
+    var out1 = _tmp_path("audit_smoke1_");
+    var ec1 = _exec_in_dir(ROOT_PATH, cyrius_bin, "smoke", out1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test1 'cyrius smoke' on live repo exited ");
+        print_num(ec1);
+        println(" (expected 0)");
+        fail = fail + 1;
+    } else { if (_file_contains_substr(out1, "compile_minimal.smcyr") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test1 output didn't list compile_minimal.smcyr");
+            fail = fail + 1;
+        } }
+    sys_unlink(out1);
+
+    var empty_dir = _tmp_path("audit_smoke_empty_");
+    sys_mkdir(empty_dir, 493);
+    var out2 = _tmp_path("audit_smoke2_");
+    var ec2 = _exec_in_dir(empty_dir, cyrius_bin, "smoke", out2);
+    if (ec2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test2 empty-dir smoke exited ");
+        print_num(ec2);
+        println(" (expected 0)");
+        fail = fail + 1;
+    } else { if (_file_contains_substr(out2, "No smoke harnesses found") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test2 missing 'No smoke harnesses found' message");
+            fail = fail + 1;
+        } }
+    sys_unlink(out2);
+    sys_rmdir(empty_dir);
+
+    var fail_dir = _tmp_path("audit_smoke_fail_");
+    sys_mkdir(fail_dir, 493);
+    var tests_sb = str_builder_new();
+    str_builder_add_cstr(tests_sb, fail_dir);
+    str_builder_add_cstr(tests_sb, "/tests");
+    var tests_dir = str_data(str_builder_build(tests_sb));
+    sys_mkdir(tests_dir, 493);
+    var smcyr_sb = str_builder_new();
+    str_builder_add_cstr(smcyr_sb, tests_dir);
+    str_builder_add_cstr(smcyr_sb, "/smcyr");
+    var smcyr_dir = str_data(str_builder_build(smcyr_sb));
+    sys_mkdir(smcyr_dir, 493);
+    var cyml_sb = str_builder_new();
+    str_builder_add_cstr(cyml_sb, fail_dir);
+    str_builder_add_cstr(cyml_sb, "/cyrius.cyml");
+    _write_file(str_data(str_builder_build(cyml_sb)),
+        "[package]\nname = \"smoke_failfast_gate\"\nversion = \"0.0.1\"\n\n[build]\nsrc = \"src/main.cyr\"\noutput = \"build/main\"\n");
+    var smcyr_path_sb = str_builder_new();
+    str_builder_add_cstr(smcyr_path_sb, smcyr_dir);
+    str_builder_add_cstr(smcyr_path_sb, "/fails.smcyr");
+    _write_file(str_data(str_builder_build(smcyr_path_sb)),
+        "include \"lib/syscalls.cyr\"\nsyscall(60, 1);\n");
+
+    var out3 = _tmp_path("audit_smoke3_");
+    var ec3 = _exec_in_dir(fail_dir, cyrius_bin, "smoke", out3);
+    if (ec3 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test3 failing harness should exit non-zero, got 0");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out3, "fails.smcyr") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test3 output didn't mention fails.smcyr");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out3, "smoke aborted") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test3 missing 'smoke aborted' message");
+        fail = fail + 1;
+    }
+    sys_unlink(out3);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius smoke discovers .smcyr, exits 0 on pass, bails on first fail (v5.7.38)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _distlib_large_module_gate(): i64 {
+    var label = "cyrius distlib bundles >64KB modules without truncation (mabda-surfaced; v5.7.36)";
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_distlib_");
+    sys_mkdir(scratch, 493);
+    var src_dir_sb = str_builder_new();
+    str_builder_add_cstr(src_dir_sb, scratch);
+    str_builder_add_cstr(src_dir_sb, "/src");
+    var src_dir = str_data(str_builder_build(src_dir_sb));
+    sys_mkdir(src_dir, 493);
+
+    # Synthesize ~80 KB module: 4000 lines of `var f_NNNNN = NNNNN;`
+    # plus a sentinel as the LAST line.
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < 4000) {
+        str_builder_add_cstr(sb, "var f_");
+        if (i < 10) { str_builder_add_cstr(sb, "0000"); }
+        else { if (i < 100) { str_builder_add_cstr(sb, "000"); }
+            else { if (i < 1000) { str_builder_add_cstr(sb, "00"); }
+                else { if (i < 10000) { str_builder_add_cstr(sb, "0"); }
+                    else { } } } }
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, " = ");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, ";\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "var DISTLIB_LARGE_MODULE_SENTINEL = 1;\n");
+    var src_text = str_builder_build(sb);
+    var src_path_sb = str_builder_new();
+    str_builder_add_cstr(src_path_sb, src_dir);
+    str_builder_add_cstr(src_path_sb, "/big.cyr");
+    var src_path = str_data(str_builder_build(src_path_sb));
+    var src_fd = sys_open(src_path, 577, 420);
+    sys_write(src_fd, str_data(src_text), str_len(src_text));
+    sys_close(src_fd);
+    var src_size = str_len(src_text);
+
+    if (src_size <= 65536) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": fixture only ");
+        print_num(src_size);
+        println(" bytes — must exceed 64KB to exercise the cap");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Minimal manifest. [lib].modules drives distlib's no-profile
+    # path (cmd_distlib's [build] / [lib] fallback).
+    var cyml_path_sb = str_builder_new();
+    str_builder_add_cstr(cyml_path_sb, scratch);
+    str_builder_add_cstr(cyml_path_sb, "/cyrius.cyml");
+    var cyml_path = str_data(str_builder_build(cyml_path_sb));
+    _write_file(cyml_path, "[package]\nname = \"distlib_capgate\"\nversion = \"0.0.1\"\n\n[lib]\nmodules = [\"src/big.cyr\"]\n");
+
+    # Run `cyrius distlib` in the scratch dir.
+    var ec = _exec_in_dir(scratch, cyrius_bin, "distlib", 0);
+    if (ec != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cyrius distlib exited ");
+        print_num(ec);
+        println("");
+        _check(label, 1);
+        return 1;
+    }
+
+    var bundle_path_sb = str_builder_new();
+    str_builder_add_cstr(bundle_path_sb, scratch);
+    str_builder_add_cstr(bundle_path_sb, "/dist/distlib_capgate.cyr");
+    var bundle_path = str_data(str_builder_build(bundle_path_sb));
+    if (file_exists(bundle_path) != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": dist/distlib_capgate.cyr not produced");
+        _check(label, 1);
+        return 1;
+    }
+
+    if (_file_contains_substr(bundle_path, "DISTLIB_LARGE_MODULE_SENTINEL") != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": bundle truncated — sentinel missing (input ");
+        print_num(src_size);
+        _p(" bytes, bundle ");
+        print_num(_file_size(bundle_path));
+        println(" bytes)");
+        _check(label, 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": cyrius distlib bundles a ");
+    print_num(src_size);
+    println("-byte module without truncation (v5.7.36)");
+    _check(label, 0);
+    return 0;
+}
+
+fn _lsp_frame(sb, json_body): i64 {
+    var jlen = strlen(json_body);
+    str_builder_add_cstr(sb, "Content-Length: ");
+    str_builder_add_int(sb, jlen);
+    str_builder_add_cstr(sb, "\r\n\r\n");
+    str_builder_add_cstr(sb, json_body);
+    return 0;
+}
+
+fn _lsp_definition_gate(): i64 {
+    var label = "cyrius-lsp definitionProvider + documentSymbol + cross-file indexing (v5.7.39)";
+    var lsp_path = _root_path("build/cyrius-lsp");
+    if (file_exists(lsp_path) != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(lsp_path);
+        println(" not built");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+    var out_cap = 65536;
+
+    # ─ Phase 1: decl-only fixture; initialize+didOpen+definition+
+    #   documentSymbol+shutdown. Tests 1-4.
+    var decl_path = _root_path("tests/fixtures/lsp/decl_only.cyr");
+    var sb = str_builder_new();
+    _lsp_frame(sb, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+    var open1_sb = str_builder_new();
+    str_builder_add_cstr(open1_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(open1_sb, decl_path);
+    str_builder_add_cstr(open1_sb, "\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb, str_data(str_builder_build(open1_sb)));
+    var def1_sb = str_builder_new();
+    str_builder_add_cstr(def1_sb, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(def1_sb, decl_path);
+    str_builder_add_cstr(def1_sb, "\"},\"position\":{\"line\":0,\"character\":5}}}");
+    _lsp_frame(sb, str_data(str_builder_build(def1_sb)));
+    var sym1_sb = str_builder_new();
+    str_builder_add_cstr(sym1_sb, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(sym1_sb, decl_path);
+    str_builder_add_cstr(sym1_sb, "\"}}}");
+    _lsp_frame(sb, str_data(str_builder_build(sym1_sb)));
+    _lsp_frame(sb, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}");
+    var reqs1 = str_builder_build(sb);
+    var out1 = alloc(out_cap);
+    var n1 = _ipc_session(lsp_path, str_data(reqs1), str_len(reqs1), out1, out_cap);
+
+    fail = fail + _lsp_check_substr(out1, n1, "\"definitionProvider\":true",
+        "test1: initialize did not advertise definitionProvider");
+    fail = fail + _lsp_check_substr(out1, n1, "\"documentSymbolProvider\":true",
+        "test1b: initialize did not advertise documentSymbolProvider");
+    var uri1_sb = str_builder_new();
+    str_builder_add_cstr(uri1_sb, "\"uri\":\"file://");
+    str_builder_add_cstr(uri1_sb, decl_path);
+    fail = fail + _lsp_check_substr(out1, n1, str_data(str_builder_build(uri1_sb)),
+        "test2: definition response missing fixture URI");
+    fail = fail + _lsp_check_substr(out1, n1, "\"line\":0,\"character\":3",
+        "test3: definition response missing expected position (line 0, char 3)");
+    fail = fail + _lsp_check_substr(out1, n1, "\"name\":\"foo_bar\"",
+        "test4: documentSymbol missing 'foo_bar' name");
+    fail = fail + _lsp_check_substr(out1, n1, "\"kind\":12",
+        "test4b: documentSymbol kind != 12 (Function)");
+
+    # ─ Phase 2: cross-file include. Generate includer.cyr at
+    #   /tmp with absolute path to fixtures/lsp/included.cyr;
+    #   initialize+didOpen(includer)+definition(call site)+shutdown.
+    #   Tests 5-5b.
+    var inc_path = _root_path("tests/fixtures/lsp/included.cyr");
+    # NOTE: the LSP's handle_did_open_or_save early-returns on
+    # paths that don't end in `.cyr`. The temp filename must
+    # carry the extension or didOpen silently no-ops and the
+    # subsequent definition request returns null.
+    var use_path_base = _tmp_path("audit_lsp_includer_");
+    var use_path_sb = str_builder_new();
+    str_builder_add_cstr(use_path_sb, use_path_base);
+    str_builder_add_cstr(use_path_sb, ".cyr");
+    var use_path = str_data(str_builder_build(use_path_sb));
+    var use_sb = str_builder_new();
+    str_builder_add_cstr(use_sb, "include \"");
+    str_builder_add_cstr(use_sb, inc_path);
+    str_builder_add_cstr(use_sb, "\"\nfn caller() {\n    return lib_helper();\n}\n");
+    var use_text = str_builder_build(use_sb);
+    var ufd = sys_open(use_path, 577, 420);
+    sys_write(ufd, str_data(use_text), str_len(use_text));
+    sys_close(ufd);
+
+    var sb2 = str_builder_new();
+    _lsp_frame(sb2, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+    var open2_sb = str_builder_new();
+    str_builder_add_cstr(open2_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(open2_sb, use_path);
+    str_builder_add_cstr(open2_sb, "\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb2, str_data(str_builder_build(open2_sb)));
+    var def2_sb = str_builder_new();
+    str_builder_add_cstr(def2_sb, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(def2_sb, use_path);
+    str_builder_add_cstr(def2_sb, "\"},\"position\":{\"line\":2,\"character\":11}}}");
+    _lsp_frame(sb2, str_data(str_builder_build(def2_sb)));
+    _lsp_frame(sb2, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"shutdown\"}");
+    var reqs2 = str_builder_build(sb2);
+    var out2 = alloc(out_cap);
+    var n2 = _ipc_session(lsp_path, str_data(reqs2), str_len(reqs2), out2, out_cap);
+    sys_unlink(use_path);
+
+    var inc_uri_sb = str_builder_new();
+    str_builder_add_cstr(inc_uri_sb, "\"uri\":\"file://");
+    str_builder_add_cstr(inc_uri_sb, inc_path);
+    fail = fail + _lsp_check_substr(out2, n2, str_data(str_builder_build(inc_uri_sb)),
+        "test5: cross-file definition didn't resolve to included.cyr");
+    fail = fail + _lsp_check_substr(out2, n2, "\"line\":0,\"character\":3",
+        "test5b: cross-file definition position wrong (expected line 0 char 3)");
+
+    # ─ Phase 3: v5.9.10 new providers. decl_and_use.cyr;
+    #   initialize+didOpen+references+semanticTokens+shutdown.
+    #   Tests 6-8.
+    var newp_path = _root_path("tests/fixtures/lsp/decl_and_use.cyr");
+    var sb3 = str_builder_new();
+    _lsp_frame(sb3, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+    var open3_sb = str_builder_new();
+    str_builder_add_cstr(open3_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(open3_sb, newp_path);
+    str_builder_add_cstr(open3_sb, "\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb3, str_data(str_builder_build(open3_sb)));
+    var ref3_sb = str_builder_new();
+    str_builder_add_cstr(ref3_sb, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(ref3_sb, newp_path);
+    str_builder_add_cstr(ref3_sb, "\"},\"position\":{\"line\":0,\"character\":5},\"context\":{\"includeDeclaration\":true}}}");
+    _lsp_frame(sb3, str_data(str_builder_build(ref3_sb)));
+    var st3_sb = str_builder_new();
+    str_builder_add_cstr(st3_sb, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/semanticTokens/full\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(st3_sb, newp_path);
+    str_builder_add_cstr(st3_sb, "\"}}}");
+    _lsp_frame(sb3, str_data(str_builder_build(st3_sb)));
+    _lsp_frame(sb3, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}");
+    var reqs3 = str_builder_build(sb3);
+    var out3 = alloc(out_cap);
+    var n3 = _ipc_session(lsp_path, str_data(reqs3), str_len(reqs3), out3, out_cap);
+
+    fail = fail + _lsp_check_substr(out3, n3, "\"referencesProvider\":true",
+        "test6: initialize did not advertise referencesProvider");
+    fail = fail + _lsp_check_substr(out3, n3, "\"semanticTokensProvider\":",
+        "test6b: initialize did not advertise semanticTokensProvider");
+    # v5.11.42: legend extended with `parameter` (index 6) so
+    # locals + fn args get coverage. Test bumped to match.
+    fail = fail + _lsp_check_substr(out3, n3,
+        "\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\",\"parameter\"]",
+        "test6c: semanticTokensProvider legend missing or in wrong shape");
+    var ref_uri_sb = str_builder_new();
+    str_builder_add_cstr(ref_uri_sb, "\"uri\":\"file://");
+    str_builder_add_cstr(ref_uri_sb, newp_path);
+    var ref_uri_marker = str_data(str_builder_build(ref_uri_sb));
+    var ref_count = _count_substr_buf(out3, n3, ref_uri_marker);
+    if (ref_count < 2) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test7: /references returned ");
+        print_num(ref_count);
+        println(" Locations (expected 2)");
+        fail = fail + 1;
+    }
+    fail = fail + _lsp_check_substr(out3, n3, "\"data\":[0,0,2,5,0",
+        "test8: /semanticTokens data did not start with 'fn' keyword token tuple");
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius-lsp definitionProvider + documentSymbolProvider + referencesProvider + semanticTokensProvider/full + cross-file indexing (v5.7.39 + v5.9.10)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _lsp_check_substr(out_buf, n, needle, fail_msg): i64 {
+    if (_count_substr_buf(out_buf, n, needle) >= 1) { return 0; }
+    _p("    ");
+    _p(ANSI_RED);
+    _p("case-FAIL");
+    _p(ANSI_RESET);
+    _p(": ");
+    println(fail_msg);
+    return 1;
+}
+
+fn _stdlib_doc_coverage_gate(): i64 {
+    if (CYRDOC_PATH == 0) {
+        _p("  skip: cyrdoc not built (cat programs/cyrdoc.cyr | build/cycc > build/cyrdoc)");
+        println("");
+        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+        return 0;
+    }
+    if (file_exists(CYRDOC_PATH) != 1) {
+        _p("  skip: cyrdoc not built (");
+        _p(CYRDOC_PATH);
+        println(" missing)");
+        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+        return 0;
+    }
+    var lib_dir = str_from(_root_path("lib"));
+    var names = vec_new();
+    var dtypes = vec_new();
+    _aw_dir_list_typed(lib_dir, names, dtypes);
+    var total = 0;
+    var worst_n = 0;
+    var worst_name = 0;
+    var skipped = 0;
+    var cap = 200000;
+    var buf = alloc(cap);
+    var i = 0;
+    while (i < vec_len(names)) {
+        var name = vec_get(names, i);
+        if (_aw_is_cyr(name) == 1) {
+            var dtype = vec_get(dtypes, i);
+            var full = path_join(lib_dir, name);
+            if (dtype == 10) {                       # DT_LNK — symlink
+                skipped = skipped + 1;
+            } else {
+                if (_aw_is_distlib_bundle(full) == 1) {
+                    skipped = skipped + 1;
+                } else {
+                    var args = vec_new();
+                    vec_push(args, CYRDOC_PATH);
+                    vec_push(args, "--check");
+                    vec_push(args, str_data(full));
+                    var n = exec_capture(args, buf, cap);
+                    var u = _doc_parse_undocumented(buf, n);
+                    if (u > 0) {
+                        total = total + u;
+                        if (u > worst_n) {
+                            worst_n = u;
+                            worst_name = str_data(path_basename(full));
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if (total > 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        print_num(total);
+        println(" undocumented public fns across lib/*.cyr");
+        if (worst_name != 0) {
+            _p("    worst offender: ");
+            _p(worst_name);
+            _p(" (");
+            print_num(worst_n);
+            println(" undocumented)");
+        }
+        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 1);
+        return 1;
+    }
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    println(": lib/*.cyr doc coverage (0 undocumented)");
+    _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+    return 0;
+}
+
+fn _shared_dlopen_gate(): i64 {
+    var label = "shared; + dlopen round-trip";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Step 1: compile the shared-library fixture to /tmp/<fixed>.so.
+    # Uses a fixed path because the runner has it baked in (avoids
+    # arg passing in a one-shot fixture; dlopen_runner.cyr documents
+    # the contract).
+    var lib_src = _root_path("tests/fixtures/shared/lib.cyr");
+    var so_path = "/tmp/cyrius_audit_shared.so";
+    var rc1 = _self_host_pipe(lib_src, CC_PATH, so_path);
+    if (rc1 != 0) {
+        sys_unlink(so_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cycc < lib.cyr → .so failed (rc=");
+        print_num(rc1);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(so_path, 493);
+
+    # Step 2: compile the runner.
+    var runner_src = _root_path("tests/fixtures/shared/dlopen_runner.cyr");
+    var runner_bin = _tmp_path("audit_dlopen_runner_");
+    var rc2 = _self_host_pipe(runner_src, CC_PATH, runner_bin);
+    if (rc2 != 0) {
+        sys_unlink(so_path);
+        sys_unlink(runner_bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cycc compile of dlopen_runner.cyr failed (rc=");
+        print_num(rc2);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(runner_bin, 493);
+
+    # Step 3: run the runner, decode exit code.
+    var ec = _exec_run_clean(runner_bin);
+    sys_unlink(so_path);
+    sys_unlink(runner_bin);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": cyrius `shared;` .so loadable via dynlib_open + dynlib_init; 4 exports + DT_INIT counter + state persistence");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": dlopen runner exit=");
+    print_num(ec);
+    if (ec == 10) { _p(" — dynlib_bootstrap_cpu_features (no /lib64/ld-linux?)"); }
+    if (ec == 11) { _p(" — dynlib_open returned 0"); }
+    if (ec == 12) { _p(" — dynlib_init non-zero"); }
+    if (ec == 21) { _p(" — dynlib_sym(\"add\") returned 0"); }
+    if (ec == 22) { _p(" — dynlib_sym(\"greeting\") returned 0"); }
+    if (ec == 23) { _p(" — dynlib_sym(\"get_counter\") returned 0"); }
+    if (ec == 24) { _p(" — dynlib_sym(\"inc_counter\") returned 0"); }
+    if (ec == 31) { _p(" — add(17, 25) != 42"); }
+    if (ec == 32) { _p(" — greeting() string mismatch"); }
+    if (ec == 33) { _p(" — get_counter() != 100 (DT_INIT didn't run)"); }
+    if (ec == 34) { _p(" — inc_counter() first call != 101"); }
+    if (ec == 35) { _p(" — inc_counter() second call != 102"); }
+    if (ec == 36) { _p(" — get_counter() didn't persist"); }
+    println("");
+    _check(label, 1);
+    return 1;
+}
+
+fn _tls_live_gate(): i64 {
+    var label = "libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var home = getenv("HOME");
+    if (home == 0) {
+        _p("  skip: HOME unset");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var dlh_sb = str_builder_new();
+    str_builder_add_cstr(dlh_sb, home);
+    str_builder_add_cstr(dlh_sb, "/.cyrius/dlopen-helper");
+    var dlopen_helper = str_data(str_builder_build(dlh_sb));
+    if (file_exists(dlopen_helper) != 1) {
+        _p("  skip: ");
+        _p(dlopen_helper);
+        println(" missing — run scripts/install.sh");
+        _check(label, 0);
+        return 0;
+    }
+    var ip_111 = 1 | (1 << 8) | (1 << 16) | (1 << 24);
+    if (_network_probe_check(ip_111, 443, 3000) != 1) {
+        println("  skip: 1.1.1.1:443 unreachable (no network)");
+        _check(label, 0);
+        return 0;
+    }
+
+    var src = _tmp_path("audit_tls_src_");
+    _write_file(src, "include \"lib/alloc.cyr\"\ninclude \"lib/string.cyr\"\ninclude \"lib/syscalls.cyr\"\ninclude \"lib/mmap.cyr\"\ninclude \"lib/fnptr.cyr\"\ninclude \"lib/dynlib.cyr\"\ninclude \"lib/fdlopen.cyr\"\ninclude \"lib/tagged.cyr\"\ninclude \"lib/net.cyr\"\ninclude \"lib/tls.cyr\"\n\nfn main() {\n    alloc_init();\n    if (tls_available() == 0) { return 10; }\n    var fd = payload(tcp_socket());\n    var ip = 1 | (1 << 8) | (1 << 16) | (1 << 24);\n    sock_connect(fd, ip, 443);\n    var tls = tls_connect(fd, \"one.one.one.one\");\n    if (tls == 0) { return 12; }\n    var req = \"GET / HTTP/1.1\\r\\nHost: 1.1.1.1\\r\\nConnection: close\\r\\n\\r\\n\";\n    var req_len = strlen(req);\n    if (tls_write(tls, req, req_len) < 0) { return 13; }\n    var buf = alloc(4096);\n    var n = tls_read(tls, buf, 4096);\n    if (n < 12) { return 14; }\n    var expect = \"HTTP/1.1 \";\n    var i = 0;\n    while (i < 9) {\n        if (load8(buf + i) != load8(expect + i)) { return 20 + i; }\n        i = i + 1;\n    }\n    tls_close(tls);\n    sock_close(fd);\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n");
+    var bin = _tmp_path("audit_tls_bin_");
+    var rc = _self_host_pipe(src, CC_PATH, bin);
+    sys_unlink(src);
+    if (WIFEXITED(rc) != 1 || WEXITSTATUS(rc) != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cycc compile of TLS probe failed");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin, 493);
+
+    var ec = _run_with_timeout(bin, 30000);
+    sys_unlink(bin);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": TLS live round-trip (1.1.1.1:443 HTTP/1.1 response)");
+        _check(label, 0);
+        return 0;
+    }
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    if (ec == 10)      { println(": tls_available() returned 0"); }
+    elif (ec == 12)    { println(": tls_connect returned 0 (handshake failed)"); }
+    elif (ec == 13)    { println(": tls_write returned negative"); }
+    elif (ec == 14)    { println(": tls_read returned < 12 bytes"); }
+    elif (ec == 0 - 2) { println(": timeout (30s) — likely hung in SSL_connect (v5.6.37 regression?)"); }
+    else {
+        _p(": rc=");
+        print_num(ec);
+        if (ec >= 20 && ec < 30) {
+            _p(" (HTTP/1.1 prefix mismatch at byte ");
+            print_num(ec - 20);
+            println(")");
+        } else {
+            println(" (unknown)");
+        }
+    }
+    _check(label, 1);
+    return 1;
+}
+
+fn _sit_status_gate(): i64 {
+    var label = "sit fsck on 100-commit fixture reports 0 bad (pin v5.6.35; sankoch deflate)";
+    var sit_dir = getenv("SIT_DIR");
+    if (sit_dir == 0) { sit_dir = _root_path("../sit"); }
+
+    var sit_bin_sb = str_builder_new();
+    str_builder_add_cstr(sit_bin_sb, sit_dir);
+    str_builder_add_cstr(sit_bin_sb, "/build/sit");
+    var sit_bin = str_data(str_builder_build(sit_bin_sb));
+
+    if (file_exists(sit_bin) != 1) {
+        _p("  skip: ");
+        _p(sit_bin);
+        println(" not built");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_sit_");
+    if (sys_mkdir(scratch, 493) < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot create scratch dir");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+
+    # sit init in scratch.
+    var ec = _exec_in_dir3(scratch, sit_bin, "init", 0, 0, 0);
+    if (ec != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": sit init exit ");
+        print_num(ec);
+        println("");
+        fail = fail + 1;
+    }
+
+    # 100 add+commit iterations.
+    var i = 0;
+    while (i < 100) {
+        if (fail != 0) { i = 100; }
+        else {
+            # Write fN.txt with content "file N content\n".
+            var fname_sb = str_builder_new();
+            str_builder_add_cstr(fname_sb, scratch);
+            str_builder_add_cstr(fname_sb, "/f");
+            str_builder_add_int(fname_sb, i);
+            str_builder_add_cstr(fname_sb, ".txt");
+            var fname = str_data(str_builder_build(fname_sb));
+
+            var content_sb = str_builder_new();
+            str_builder_add_cstr(content_sb, "file ");
+            str_builder_add_int(content_sb, i);
+            str_builder_add_cstr(content_sb, " content\n");
+            var content = str_data(str_builder_build(content_sb));
+            _write_file(fname, content);
+
+            # sit add fN.txt — relative path from cwd=scratch.
+            var rel_sb = str_builder_new();
+            str_builder_add_cstr(rel_sb, "f");
+            str_builder_add_int(rel_sb, i);
+            str_builder_add_cstr(rel_sb, ".txt");
+            var rel = str_data(str_builder_build(rel_sb));
+
+            var ec_a = _exec_in_dir3(scratch, sit_bin, "add", rel, 0, 0);
+            if (ec_a != 0) {
+                _p("  ");
+                _p(ANSI_RED);
+                _p("FAIL");
+                _p(ANSI_RESET);
+                _p(": sit add f");
+                print_num(i);
+                _p(".txt exit ");
+                print_num(ec_a);
+                println("");
+                fail = fail + 1;
+            } else {
+                # sit commit -m cN.
+                var cmsg_sb = str_builder_new();
+                str_builder_add_cstr(cmsg_sb, "c");
+                str_builder_add_int(cmsg_sb, i);
+                var cmsg = str_data(str_builder_build(cmsg_sb));
+
+                var ec_c = _exec_in_dir3(scratch, sit_bin, "commit", "-m", cmsg, 0);
+                if (ec_c != 0) {
+                    _p("  ");
+                    _p(ANSI_RED);
+                    _p("FAIL");
+                    _p(ANSI_RESET);
+                    _p(": sit commit c");
+                    print_num(i);
+                    _p(" exit ");
+                    print_num(ec_c);
+                    println("");
+                    fail = fail + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    if (fail == 0) {
+        # sit fsck — capture output, must contain "0 bad".
+        var fsck_out = _tmp_path("audit_sit_fsck_");
+        var ec_f = _exec_in_dir3(scratch, sit_bin, "fsck", 0, 0, fsck_out);
+        # fsck may exit non-zero on bad objects, but we use the
+        # output text to determine pass/fail (matches .sh shape).
+        if (_file_contains_substr(fsck_out, "0 bad") != 1) {
+            _p("  ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": fsck output didn't report '0 bad' (exit ");
+            print_num(ec_f);
+            println(")");
+            fail = fail + 1;
+        }
+        sys_unlink(fsck_out);
+
+        # sit status — must exit 0.
+        var ec_s = _exec_in_dir3(scratch, sit_bin, "status", 0, 0, 0);
+        if (ec_s != 0) {
+            _p("  ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": sit status exit ");
+            print_num(ec_s);
+            println("");
+            fail = fail + 1;
+        }
+    }
+
+    # Cleanup scratch dir tree (sit creates a .sit subdir + 100
+    # f*.txt files). Fork /bin/rm -rf — simpler than reimplementing
+    # recursive descent; the scratch path is dispatcher-owned so
+    # there's no path-injection surface to worry about.
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    _check(label, fail);
+    return fail;
+}
+
+fn _install_shim_symlink_gate(): i64 {
+    var label = "install.sh --refresh-only re-links ~/.cyrius/bin to current version (v5.7.22; H3)";
+    var install_sh = _root_path("scripts/install.sh");
+    if (file_exists(install_sh) != 1) {
+        _p("  skip: ");
+        _p(install_sh);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var version_path = _root_path("VERSION");
+    if (file_exists(version_path) != 1) {
+        _p("  skip: VERSION missing (refresh-only needs a repo context)");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Read current VERSION (trim trailing whitespace).
+    var ver_buf = alloc(64);
+    var ver_n = file_read_all(version_path, ver_buf, 63);
+    if (ver_n <= 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot read VERSION");
+        _check(label, 1);
+        return 1;
+    }
+    while (ver_n > 0) {
+        var c = load8(ver_buf + ver_n - 1);
+        if (c == 10) { ver_n = ver_n - 1; }
+        else { if (c == 13) { ver_n = ver_n - 1; }
+            else { if (c == 32) { ver_n = ver_n - 1; }
+                else { c = 0 - 1; ver_n = ver_n + 1; ver_n = ver_n - 1; break; } } }
+    }
+    store8(ver_buf + ver_n, 0);
+    var current_ver = ver_buf;
+
+    var fake_home = _tmp_path("audit_install_shim_");
+    if (sys_mkdir(fake_home, 493) < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot create fake CYRIUS_HOME");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+
+    # Build $FAKE/versions and the OLD-version snapshot.
+    var versions_sb = str_builder_new();
+    str_builder_add_cstr(versions_sb, fake_home);
+    str_builder_add_cstr(versions_sb, "/versions");
+    sys_mkdir(str_data(str_builder_build(versions_sb)), 493);
+
+    var old_version = "0.0.1-test";
+    var old_dir_sb = str_builder_new();
+    str_builder_add_cstr(old_dir_sb, fake_home);
+    str_builder_add_cstr(old_dir_sb, "/versions/");
+    str_builder_add_cstr(old_dir_sb, old_version);
+    var old_dir = str_data(str_builder_build(old_dir_sb));
+    sys_mkdir(old_dir, 493);
+
+    var old_bin_sb = str_builder_new();
+    str_builder_add_cstr(old_bin_sb, old_dir);
+    str_builder_add_cstr(old_bin_sb, "/bin");
+    var old_bin = str_data(str_builder_build(old_bin_sb));
+    sys_mkdir(old_bin, 493);
+
+    var old_lib_sb = str_builder_new();
+    str_builder_add_cstr(old_lib_sb, old_dir);
+    str_builder_add_cstr(old_lib_sb, "/lib");
+    var old_lib = str_data(str_builder_build(old_lib_sb));
+    sys_mkdir(old_lib, 493);
+
+    # Stale shell-script "cyrius" inside the OLD bin/.
+    var old_cyrius_sb = str_builder_new();
+    str_builder_add_cstr(old_cyrius_sb, old_bin);
+    str_builder_add_cstr(old_cyrius_sb, "/cyrius");
+    var old_cyrius = str_data(str_builder_build(old_cyrius_sb));
+    _write_file(old_cyrius, "#!/bin/sh\necho stale-cyrius\n");
+    sys_chmod(old_cyrius, 493);
+
+    # ~/.cyrius/current and per-version VERSION files.
+    var current_file_sb = str_builder_new();
+    str_builder_add_cstr(current_file_sb, fake_home);
+    str_builder_add_cstr(current_file_sb, "/current");
+    _write_file(str_data(str_builder_build(current_file_sb)), old_version);
+
+    var old_version_file_sb = str_builder_new();
+    str_builder_add_cstr(old_version_file_sb, old_dir);
+    str_builder_add_cstr(old_version_file_sb, "/VERSION");
+    _write_file(str_data(str_builder_build(old_version_file_sb)), old_version);
+
+    # Point $FAKE/bin → OLD/bin and $FAKE/lib → OLD/lib (stale state).
+    var fake_bin_sb = str_builder_new();
+    str_builder_add_cstr(fake_bin_sb, fake_home);
+    str_builder_add_cstr(fake_bin_sb, "/bin");
+    var fake_bin = str_data(str_builder_build(fake_bin_sb));
+
+    var fake_lib_sb = str_builder_new();
+    str_builder_add_cstr(fake_lib_sb, fake_home);
+    str_builder_add_cstr(fake_lib_sb, "/lib");
+    var fake_lib = str_data(str_builder_build(fake_lib_sb));
+
+    sys_symlink(old_bin, fake_bin);
+    sys_symlink(old_lib, fake_lib);
+
+    # Sanity: fake_bin should resolve to old_bin pre-refresh.
+    var rl_buf = alloc(4096);
+    var rl_n = sys_readlink(fake_bin, rl_buf, 4095);
+    if (rl_n > 0) { store8(rl_buf + rl_n, 0); }
+    if (rl_n <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": pre-state setup — fake_bin not a symlink");
+        fail = fail + 1;
+    }
+
+    # Run install.sh --refresh-only with CYRIUS_HOME=fake_home.
+    # CWD = repo root (install.sh reads ./VERSION + ./build/* etc).
+    var env_extras = vec_new();
+    var env_pair_sb = str_builder_new();
+    str_builder_add_cstr(env_pair_sb, "CYRIUS_HOME=");
+    str_builder_add_cstr(env_pair_sb, fake_home);
+    vec_push(env_extras, str_data(str_builder_build(env_pair_sb)));
+
+    var refresh_out = _tmp_path("audit_install_shim_out_");
+    var ec_refresh = _exec_in_dir3_env(ROOT_PATH, "/bin/sh", install_sh, "--refresh-only", 0, env_extras, refresh_out);
+    if (ec_refresh != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": install.sh --refresh-only exit ");
+        print_num(ec_refresh);
+        println("");
+        fail = fail + 1;
+    }
+    sys_unlink(refresh_out);
+
+    # Post-refresh: fake_bin must point at versions/$current_ver/bin.
+    var expected_bin_sb = str_builder_new();
+    str_builder_add_cstr(expected_bin_sb, fake_home);
+    str_builder_add_cstr(expected_bin_sb, "/versions/");
+    str_builder_add_cstr(expected_bin_sb, current_ver);
+    str_builder_add_cstr(expected_bin_sb, "/bin");
+    var expected_bin = str_data(str_builder_build(expected_bin_sb));
+
+    var actual_bin_buf = alloc(4096);
+    var ab_n = sys_readlink(fake_bin, actual_bin_buf, 4095);
+    if (ab_n <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": fake_bin readlink failed post-refresh");
+        fail = fail + 1;
+    } else {
+        store8(actual_bin_buf + ab_n, 0);
+        if (streq(actual_bin_buf, expected_bin) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": fake_bin not re-linked. expected ");
+            _p(expected_bin);
+            _p(" actual ");
+            _p(actual_bin_buf);
+            println("");
+            fail = fail + 1;
+        }
+    }
+
+    # Same for lib/.
+    var expected_lib_sb = str_builder_new();
+    str_builder_add_cstr(expected_lib_sb, fake_home);
+    str_builder_add_cstr(expected_lib_sb, "/versions/");
+    str_builder_add_cstr(expected_lib_sb, current_ver);
+    str_builder_add_cstr(expected_lib_sb, "/lib");
+    var expected_lib = str_data(str_builder_build(expected_lib_sb));
+
+    var actual_lib_buf = alloc(4096);
+    var al_n = sys_readlink(fake_lib, actual_lib_buf, 4095);
+    if (al_n <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": fake_lib readlink failed post-refresh");
+        fail = fail + 1;
+    } else {
+        store8(actual_lib_buf + al_n, 0);
+        if (streq(actual_lib_buf, expected_lib) != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": fake_lib not re-linked. expected ");
+            _p(expected_lib);
+            _p(" actual ");
+            _p(actual_lib_buf);
+            println("");
+            fail = fail + 1;
+        }
+    }
+
+    # Cleanup.
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", fake_home, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": refresh-only re-links bin + lib symlinks at $CYRIUS_HOME (TMPDIR-isolated)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _api_surface_gate(): i64 {
+    var label = "cyrius api-surface diff: snapshot match + add/remove detection (v5.7.33; auto-build at v5.8.44)";
+    var tool = _root_path("build/cyrius_api_surface");
+    var snapshot = _root_path("docs/api-surface.snapshot");
+    if (file_exists(tool) != 1) {
+        _p("  skip: ");
+        _p(tool);
+        println(" not built");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists(snapshot) != 1) {
+        _p("  skip: ");
+        _p(snapshot);
+        println(" missing — run 'cyrius api-surface --update' first");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+
+    # Test 1: committed snapshot matches current.
+    var sb1 = str_builder_new();
+    str_builder_add_cstr(sb1, "--snapshot=");
+    str_builder_add_cstr(sb1, snapshot);
+    var arg1 = str_data(str_builder_build(sb1));
+    var out1 = _tmp_path("audit_api1_");
+    var ec1 = _exec_in_dir(ROOT_PATH, tool, arg1, out1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test1 committed snapshot drift detected (rc=");
+        print_num(ec1);
+        println(")");
+        fail = fail + 1;
+    }
+    sys_unlink(out1);
+
+    # Test 2: snapshot + extra synthetic entry → BREAKING.
+    var snap2 = _tmp_path("audit_api_snap2_");
+    var snap_sz = _file_size(snapshot);
+    if (snap_sz <= 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": snapshot file_size <= 0");
+        fail = fail + 1;
+    } else {
+        var snap_buf = alloc(snap_sz + 64);
+        var got = file_read_all(snapshot, snap_buf, snap_sz);
+        # Append synthetic entry (sorts after `yukti::*`).
+        var extra = "zzz_synth::synthetic_fn/0\n";
+        var elen = strlen(extra);
+        var ej = 0;
+        while (ej < elen) { store8(snap_buf + got + ej, load8(extra + ej)); ej = ej + 1; }
+        file_write_all(snap2, snap_buf, got + elen);
+
+        var sb2 = str_builder_new();
+        str_builder_add_cstr(sb2, "--snapshot=");
+        str_builder_add_cstr(sb2, snap2);
+        var arg2 = str_data(str_builder_build(sb2));
+        var out2 = _tmp_path("audit_api2_");
+        var ec2 = _exec_in_dir(ROOT_PATH, tool, arg2, out2);
+        if (ec2 != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": test2 synthetic removal not flagged (rc=");
+            print_num(ec2);
+            println(", expected 1)");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(out2, "zzz_synth::synthetic_fn") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test2 synthetic name not in BREAKING report");
+            fail = fail + 1;
+        }
+        sys_unlink(out2);
+        sys_unlink(snap2);
+    }
+
+    # Test 3: snapshot with first line dropped → +1 addition.
+    var snap3 = _tmp_path("audit_api_snap3_");
+    if (snap_sz > 0) {
+        var sb3_buf = alloc(snap_sz + 4);
+        var got3 = file_read_all(snapshot, sb3_buf, snap_sz);
+        # Locate the first \n; write everything after it.
+        var nl = 0;
+        while (nl < got3) {
+            if (load8(sb3_buf + nl) == 10) { break; }
+            nl = nl + 1;
+        }
+        if (nl < got3) {
+            file_write_all(snap3, sb3_buf + nl + 1, got3 - nl - 1);
+        }
+
+        var sb3 = str_builder_new();
+        str_builder_add_cstr(sb3, "--snapshot=");
+        str_builder_add_cstr(sb3, snap3);
+        var arg3 = str_data(str_builder_build(sb3));
+        var out3 = _tmp_path("audit_api3_");
+        var ec3 = _exec_in_dir(ROOT_PATH, tool, arg3, out3);
+        if (ec3 != 0) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": test3 synthetic addition flagged as breaking (rc=");
+            print_num(ec3);
+            println(", expected 0)");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(out3, "1 added since snapshot") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": test3 addition count not reported as 1");
+            fail = fail + 1;
+        }
+        sys_unlink(out3);
+        sys_unlink(snap3);
+    }
+
+    if (fail == 0) {
+        var n_entries = 0;
+        var c_buf = alloc(snap_sz + 1);
+        var c_got = file_read_all(snapshot, c_buf, snap_sz);
+        var ci = 0;
+        while (ci < c_got) {
+            if (load8(c_buf + ci) == 10) { n_entries = n_entries + 1; }
+            ci = ci + 1;
+        }
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": cyrius api-surface diff (snapshot ");
+        print_num(n_entries);
+        println(" entries; +1 added detected; -1 removed detected) (v5.7.33)");
+    }
+    _check(label, fail);
+    return fail;
+}

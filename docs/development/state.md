@@ -3,6 +3,45 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.90 ship — check.cyr modularization: programs/check.cyr → programs/checks/)
+
+Closing **v6.0.90**. check.sh 85/85; self-host byte-identical (cycc untouched — this is Linux-only
+test-harness work, no cross-OS gate needed); the rebuilt `cyrius_check` is **byte-identical in output**
+to the pre-split monolith. Closes the .88–.90 cleanup/refactor cluster (part 2b).
+
+- **`programs/check.cyr` (10,210 LoC / 163 fns) split into `programs/checks/`** — `main.cyr` (slim
+  dispatcher: 19 lib includes + 18 module globals + 13 infra/driver fns incl. `_run_regression_gates`
+  + `main`, kept **byte-verbatim** so gate order + tally are unchanged + the per-suite include lines) +
+  13 suite files (fn-bodies only, no includes/globals/driver): `shared`, `selfhost`, `crosshost`,
+  `platform_efi`, `platform_win_macho`, `platform_aarch64`, `cx`, `ts`, `deps_init`, `lint_fmt`,
+  `heap_audit`, `services`, `codegen_regress` (leader chose the 14-file layout — codegen-behavior gates
+  split off so the largest suite is ~1,342 L vs the old 10.2K monolith).
+- **Deterministic, verbatim relocation** — done with a Python fn-boundary extractor, NOT hand-copying.
+  Verified: all 163 fn bodies bit-for-bit unchanged (set equality + per-fn diff = 0 altered); rebuilt
+  `cyrius_check` output **byte-identical** to baseline (605 lines, 85/85). `cyrius_check` is not in the
+  self-host chain, so byte-identity of the BINARY isn't required — the acceptance test is behavioral
+  identity, which holds exactly.
+- **`scripts/check.sh` repointed** — `CHECK_SRC=programs/checks/main.cyr`; rebuild-staleness now globs
+  ALL `programs/checks/*.cyr` (a single-file `-nt` test would mask a stale binary after a suite edit) +
+  an empty-glob guard. Verified: editing a suite triggers a rebuild. Old monolith `git rm`'d.
+- **References repointed** — `cbt/deps.cyr`, `programs/cyaudit.cyr`, `lib/process.cyr`, `ci.yml` comments.
+  CI was already independent (ci.yml re-implements the gates inline; never invoked check.sh).
+
+**Verification (ultracode):** behavioral-identity (byte-identical output) + a 2-lens adversarial-review
+workflow (behavioral-equivalence skeptic + check.sh/CI wiring), **both clean** — confirmed no gate reads
+its own source / assumes check.cyr exists; the scanning gates (`_cc5_contamination`, `_parse_emit_drift`)
+target hardcoded `src/` paths, not the check tree; no fnptr dispatch so fn-table layout is irrelevant.
+
+**Deferred to .91 closeout (§8 doc/comment sweep — review-flagged nits):** residual stale comment refs to
+the deleted `programs/check.cyr` in `lib/regression.cyr` (×4), `lib/fs.cyr` (×2), `lib/audit_walk.cyr`,
+and the probe programs (`efi_probe`, `efi_fncall_probe`, `agnos_emit_probe`, `win_emit_probe`,
+`win_process_probe`, `ts_test_runner`) + `tests/tcyr/gvar_static_init.tcyr` — repoint to the per-suite
+files. Comment-only, zero behavioral impact.
+
+**Next (leader sequence):** .91 = closeout + docs sweep (CLAUDE.md Closeout Pass §; the stale-comment
+sweep above; vidya refresh; reconcile slot-number drift) → v6.1.0. **Latent, filed:** x86-macOS
+byte-array-literal no-compile; macho-arm socket *family* x86-syscall-nums bug.
+
 ## Session close — 2026-06-07 (.89 ship — _TARGET_* consolidation, first bite: _emit_fmt / _entry_base)
 
 Closing **v6.0.89**. check.sh 85/85; self-host byte-identical on **ach + ecb + pi + cass**; tcyr 167/167.

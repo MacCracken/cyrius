@@ -1,0 +1,650 @@
+# ================================================================
+# programs/checks/heap_audit.cyr — heap-map / cap-drift / CVE-05 / DCE / capacity / struct-cap gates
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _verify_heap_map(buf, n, anchor, byte_lit, human, region): i64 {
+    var fail = 0;
+    var off = _find_str_from(buf, n, 0, anchor, strlen(anchor));
+    if (off < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — heap-map line for "); _p(region); println(" not found");
+        return 1;
+    }
+    var lb = _find_str_from(buf, n, off, byte_lit, strlen(byte_lit));
+    if (lb < 0 || lb - off > 60) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — "); _p(region); _p(" heap-map byte size != "); _p(byte_lit); println("");
+        fail = fail + 1;
+    }
+    var hb = _find_str_from(buf, n, off, human, strlen(human));
+    if (hb < 0 || hb - off > 80) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — "); _p(region); _p(" heap-map human label != "); _p(human); println("");
+        fail = fail + 1;
+    }
+    return fail;
+}
+
+fn _verify_inline(buf, n, pattern, region): i64 {
+    var at = _find_str_from(buf, n, 0, pattern, strlen(pattern));
+    if (at < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cap-drift — "); _p(region); _p(" inline cap (");
+        _p(pattern); println(") missing from lex.cyr");
+        return 1;
+    }
+    return 0;
+}
+
+fn _cve05_guard_gate(): i64 {
+    var label = "CVE-05 tok_names mangle-path: no magic-256 NPOS_GUARD in any source-identifier copy site (v5.11.65)";
+    var files[88];
+    store64(&files + 0,  _root_path("src/frontend/parse_decl.cyr"));
+    store64(&files + 8,  _root_path("src/frontend/parse_expr.cyr"));
+    store64(&files + 16, _root_path("src/frontend/parse_fn.cyr"));
+    store64(&files + 24, _root_path("src/frontend/parse_types.cyr"));
+    store64(&files + 32, _root_path("src/main.cyr"));
+    store64(&files + 40, _root_path("src/main_aarch64.cyr"));
+    store64(&files + 48, _root_path("src/main_aarch64_macho.cyr"));
+    store64(&files + 56, _root_path("src/main_aarch64_native.cyr"));
+    store64(&files + 64, _root_path("src/main_cx.cyr"));
+    store64(&files + 72, _root_path("src/main_win.cyr"));
+
+    var fail = 0;
+    var fi = 0;
+    while (fi < 10) {
+        var path = load64(&files + fi * 8);
+        if (file_exists(path) == 1) {
+            if (_file_contains_substr(path, "NPOS_GUARD(S, 256)") == 1) {
+                _p("  ");
+                _p(ANSI_RED);
+                _p("FAIL");
+                _p(ANSI_RESET);
+                _p(": magic-256 NPOS_GUARD reappeared in ");
+                println(path);
+                fail = fail + 1;
+            }
+        }
+        fi = fi + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": no `NPOS_GUARD(S, 256)` in any mangle-path source file (10 files scanned)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _dce_fn_count_gate(): i64 {
+    var label = "aarch64 DCE uses GFNC (not GFCNT) + live[1024]/8192-fn cap both arches (v6.0.4)";
+    var aa = _root_path("src/backend/aarch64/fixup.cyr");
+    var x86 = _root_path("src/backend/x86/fixup.cyr");
+    var fail = 0;
+    if (_file_contains_substr(aa, "var fnc = GFCNT") == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": aarch64 fixup.cyr DCE fn-count reverted to GFCNT (fixup count) — re-opens the kybernet hang");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(aa, "var live[512]") == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": aarch64 fixup.cyr live[] reverted to 512 (4096-fn cap) — OOB past 4096 fns");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(x86, "var live[512]") == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": x86 fixup.cyr live[] reverted to 512 (4096-fn cap) — OOB past 4096 fns");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": aarch64 DCE fn-count is GFNC; live[1024]/8192-fn cap on both x86+aarch64");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _cap_drift_gate(): i64 {
+    var label = "cap-drift detector — heap-map comments and inline literal caps agree (v5.11.50)";
+
+    var main_cap = 524288;
+    var main_buf = alloc(main_cap);
+    var main_n = file_read_all(_root_path("src/main.cyr"), main_buf, main_cap);
+    if (main_n <= 0) { _check(label, 1); return 1; }
+    var lex_cap = 524288;
+    var lex_buf = alloc(lex_cap);
+    var lex_n = file_read_all(_root_path("src/frontend/lex.cyr"), lex_buf, lex_cap);
+    if (lex_n <= 0) { _check(label, 1); return 1; }
+
+    var fail = 0;
+
+    # Cap 1: input_buf (1 MB).
+    fail = fail + _verify_heap_map(main_buf, main_n, "0x00000  input_buf", "[1048576]", "1MB", "input_buf");
+    fail = fail + _verify_inline(lex_buf, lex_n, ">= 1048576", "input_buf");
+
+    # Cap 2: tok_names / identifier buffer (256 KB). Inline check uses
+    # 261872 = 262144 - 272 (LEXID slack for the inner-loop write
+    # window — see lex.cyr's NPOS_GUARD).
+    fail = fail + _verify_heap_map(main_buf, main_n, "0x60000  tok_names", "[262144]", "256KB", "tok_names");
+    fail = fail + _verify_inline(lex_buf, lex_n, ">= 261872", "tok_names");
+
+    # Cap 3: str_data (2 MB). Inline-only check — str_data's heap-map
+    # line is structured differently; a _verify_heap_map call can be
+    # added if a future refactor makes that line uniform.
+    fail = fail + _verify_inline(lex_buf, lex_n, ">= 2097152", "str_data");
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": cap-drift — input_buf (1MB) + tok_names (256KB) + str_data (2MB) all in sync");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _doc_size_currency_gate(): i64 {
+    var label = "doc-size currency — fresh-tier docs cite current cycc size (v5.11.50)";
+
+    var cc5_size = _file_size(_root_path("build/cycc"));
+    if (cc5_size <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": doc-size — build/cycc not readable; cannot validate doc references");
+        _check(label, 1);
+        return 1;
+    }
+    # Display KB uses decimal (1000-based) per common doc convention —
+    # 823,112 B is "~823 KB" in prose, not "~804 KiB". Tolerance is
+    # ±50,000 bytes (~5%); covers minor compile-time-perf cycc churn
+    # within a cycle without re-flagging every doc on each slot.
+    var cc5_kb_display = (cc5_size + 500) / 1000;
+
+    # Scan each doc for any line containing "cycc" that mentions a
+    # specific size. Skip lines that include a version tag like
+    # "(v5.X.Y)" — those are intentional historical references.
+    var paths = vec_new();
+    vec_push(paths, str_from(_root_path("docs/size-comparisons.md")));
+    vec_push(paths, str_from(_root_path("docs/platform-status.md")));
+    vec_push(paths, str_from(_root_path("docs/guides/faq.md")));
+    vec_push(paths, str_from(_root_path("README.md")));
+
+    var fail = 0;
+    var pi = 0;
+    while (pi < vec_len(paths)) {
+        var path_str = vec_get(paths, pi);
+        var path = str_data(path_str);
+        var dcap = 524288;
+        var dbuf = alloc(dcap);
+        var dn = file_read_all(path, dbuf, dcap);
+        if (dn <= 0) { pi = pi + 1; }
+        else {
+            # Walk line-by-line
+            var ls = 0;
+            var line_no = 1;
+            while (ls < dn) {
+                var le = ls;
+                while (le < dn && load8(dbuf + le) != 10) { le = le + 1; }
+                # [ls, le) is a single line. Look for "cycc"
+                var cc5_at = _find_str_from(dbuf, le, ls, "cycc", 3);
+                if (cc5_at >= 0 && cc5_at < le) {
+                    # Skip lines tagged with a historical version
+                    var ver_at = _find_str_from(dbuf, le, ls, "(v5.", 4);
+                    if (ver_at >= 0 && ver_at < le) {
+                        # Historical reference — skip
+                    } else {
+                        # Look for "cycc ~" or "cycc " followed by NN KB pattern
+                        # Approximate form: "~NNN KB" or "NNNKB"
+                        var tilde_at = _find_str_from(dbuf, le, cc5_at, "~", 1);
+                        if (tilde_at >= 0 && tilde_at < le && tilde_at - cc5_at < 20) {
+                            # Parse the digits after ~
+                            var end_pos = alloc(8);
+                            var claimed_kb = _parse_dec_at(dbuf, le, tilde_at + 1, end_pos);
+                            if (claimed_kb > 0) {
+                                # Check for "KB" suffix nearby
+                                var kb_at = _find_str_from(dbuf, le, tilde_at, "KB", 2);
+                                if (kb_at >= 0 && kb_at < le && kb_at - tilde_at < 8) {
+                                    # Compare in decimal-KB units (claimed × 1000 vs actual bytes).
+                                    var claimed_b = claimed_kb * 1000;
+                                    var diff = claimed_b - cc5_size;
+                                    if (diff < 0) { diff = 0 - diff; }
+                                    if (diff > 50000) {
+                                        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+                                        _p(": doc-size — ");
+                                        _p(path);
+                                        _p(" line ");
+                                        print_num(line_no);
+                                        _p(" claims cycc ~");
+                                        print_num(claimed_kb);
+                                        _p(" KB; actual ");
+                                        print_num(cc5_kb_display);
+                                        println(" KB");
+                                        fail = fail + 1;
+                                    }
+                                }
+                            }
+                        }
+                        # Precise form: "NNN,NNN B" with comma
+                        # (skip — most precise refs in the corpus today
+                        # carry version tags and the version-tag skip above
+                        # handles them. Future enhancement: parse precise
+                        # form when un-tagged.)
+                    }
+                }
+                ls = le + 1;
+                line_no = line_no + 1;
+            }
+            pi = pi + 1;
+        }
+    }
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": doc-size — fresh-tier docs cite cycc within ±50 KB of actual (");
+        print_num(cc5_kb_display);
+        println(" KB)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _struct_cap_gate(): i64 {
+    var fail = 0;
+
+    # Case 1: 80 structs compile + run + exit 0.
+    var src1 = _tmp_path("audit_sc1_src_");
+    _gen_struct_decls_source(src1, 80);
+    var ec1 = _compile_run_get_exit(src1);
+    sys_unlink(src1);
+    if (ec1 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case1 — 80-struct binary exit ");
+        print_num(ec1);
+        println(" (expected 0; cap regressed below 80)");
+        fail = fail + 1;
+    }
+
+    # Case 2: 1000 structs must compile clean.
+    var src2 = _tmp_path("audit_sc2_src_");
+    _gen_struct_decls_source(src2, 1000);
+    var bin2 = _tmp_path("audit_sc2_bin_");
+    var rc2 = _self_host_pipe(src2, CC_PATH, bin2);
+    sys_unlink(src2);
+    sys_unlink(bin2);
+    if (rc2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": case2 — 1000-struct compile failed (rc=");
+        print_num(rc2);
+        println("; cap regressed below 1000)");
+        fail = fail + 1;
+    }
+
+    # Case 3: 1025 structs overflow — compile MUST fail with
+    # specific diagnostic strings.
+    var src3 = _tmp_path("audit_sc3_src_");
+    _gen_struct_decls_source(src3, 1025);
+    var err3 = _tmp_path("audit_sc3_err_");
+    var rc3 = _compile_capture_stderr(src3, CC_PATH, err3);
+    sys_unlink(src3);
+
+    # rc3 is the wait-status from cycc. WIFEXITED + non-zero exit
+    # means compile aborted (expected). If exit was 0 the source
+    # compiled past 256 structs — that's a cap-not-enforced bug.
+    var compile_failed = 1;
+    if (WIFEXITED(rc3) == 1) {
+        if (WEXITSTATUS(rc3) == 0) { compile_failed = 0; }
+    }
+    if (compile_failed != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": case3 — 1025-struct compile unexpectedly succeeded (cap > 1024?)");
+        fail = fail + 1;
+    } else {
+        # Check the four expected diagnostic substrings.
+        if (_file_contains_substr(err3, "note: 1024 structs registered") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — overflow note missing 'note: 1024 structs registered'");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(err3, "#0 S0") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — name-dump missing '#0 S0'");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(err3, "#1023 S1023") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — name-dump missing '#1023 S1023'");
+            fail = fail + 1;
+        }
+        if (_file_contains_substr(err3, "too many struct definitions (max 1024)") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": case3 — final error line not updated to 'max 1024'");
+            fail = fail + 1;
+        }
+    }
+    sys_unlink(err3);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": struct cap →1024 + diagnostic dump (3/3 cases)");
+    }
+    _check("1000-struct compile clean; 1025-struct overflow dumps registered names (v5.7.17 kybernet; cap 1024 v6.0.47)", fail);
+    return fail;
+}
+
+fn _match_coverage_dce_gate(): i64 {
+    var label = "match exhaustiveness check fires for DCE-dead fns regardless of fn name (v5.9.24; agnosys 1.1.5)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+    var probe_names_buf[64];
+    store64(&probe_names_buf,        "name");
+    store64(&probe_names_buf + 8,    "func");
+    store64(&probe_names_buf + 16,   "describe");
+    store64(&probe_names_buf + 24,   "handle");
+
+    var i = 0;
+    while (i < 4) {
+        var fn_nm = load64(&probe_names_buf + i * 8);
+
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "include \"lib/string.cyr\"\n");
+        str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
+        str_builder_add_cstr(sb, "include \"lib/syscalls.cyr\"\n");
+        str_builder_add_cstr(sb, "enum E { A1 = 1; B1 = 2; C1 = 3; }\n");
+        str_builder_add_cstr(sb, "fn ");
+        str_builder_add_cstr(sb, fn_nm);
+        str_builder_add_cstr(sb, "(x) { match x { A1 => { return 1; } B1 => { return 2; } } return 0; }\n");
+        str_builder_add_cstr(sb, "fn main() { return 0; }\nvar ec = main(); syscall(60, ec);\n");
+
+        var src_path = _tmp_path("audit_match_dce_src_");
+        var err_path = _tmp_path("audit_match_dce_err_");
+        _write_file(src_path, str_data(str_builder_build(sb)));
+
+        _compile_capture_stderr(src_path, CC_PATH, err_path);
+        if (_file_contains_substr(err_path, "non-exhaustive match over enum") != 1) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": fn '");
+            _p(fn_nm);
+            println("' did not emit 'non-exhaustive match' diagnostic");
+            fail = fail + 1;
+        }
+        sys_unlink(src_path);
+        sys_unlink(err_path);
+        i = i + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": warning fires for 4/4 dead fns (name / func / describe / handle)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _capacity_gate(): i64 {
+    var label = "cyrius capacity (default / --check / --json / fnc>2048)";
+    var cyrius_shim = _root_path("scripts/cyrius");
+    if (file_exists(cyrius_shim) != 1) {
+        _p("  skip: ");
+        _p(cyrius_shim);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var scratch = _tmp_path("audit_capacity_");
+    if (sys_mkdir(scratch, 493) < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot create scratch dir");
+        _check(label, 1);
+        return 1;
+    }
+
+    var fail = 0;
+
+    # Build small.cyr fixture.
+    var small_sb = str_builder_new();
+    str_builder_add_cstr(small_sb, scratch);
+    str_builder_add_cstr(small_sb, "/small.cyr");
+    var small_path = str_data(str_builder_build(small_sb));
+    _write_file(small_path, "fn main() { return 42; }\n");
+
+    # Build big.cyr — 7000-fn synthetic stress source matching the
+    # `object;` + `fn fN() { return N; }` shape the .sh used. v5.11.19
+    # bumped 3500 → 7000 because the fn_table cap doubled 4096 → 8192;
+    # 7000/8192 = 85.4% trips the threshold (3500/8192 = 42.7% does not).
+    var big_sb_path = str_builder_new();
+    str_builder_add_cstr(big_sb_path, scratch);
+    str_builder_add_cstr(big_sb_path, "/big.cyr");
+    var big_path = str_data(str_builder_build(big_sb_path));
+    var big = str_builder_new();
+    str_builder_add_cstr(big, "object;\n");
+    var ix = 0;
+    while (ix < 7000) {
+        str_builder_add_cstr(big, "fn f");
+        str_builder_add_int(big, ix);
+        str_builder_add_cstr(big, "() { return ");
+        str_builder_add_int(big, ix);
+        str_builder_add_cstr(big, "; }\n");
+        ix = ix + 1;
+    }
+    _write_file(big_path, str_data(str_builder_build(big)));
+
+    var out1 = _tmp_path("audit_capacity_out1_");
+    var out2 = _tmp_path("audit_capacity_out2_");
+    var out3 = _tmp_path("audit_capacity_out3_");
+    var out5 = _tmp_path("audit_capacity_out5_");
+    var out6 = _tmp_path("audit_capacity_out6_");
+    var out7 = _tmp_path("audit_capacity_out7_");
+
+    # Test 1: default mode prints all 6 stat keys.
+    _exec_in_dir3(scratch, cyrius_shim, "capacity", small_path, 0, out1);
+    var i_keys = 0;
+    var keys_missing = 0;
+    while (i_keys < 6) {
+        var key = 0;
+        if (i_keys == 0) { key = "  fn_table:"; }
+        if (i_keys == 1) { key = "  identifiers:"; }
+        if (i_keys == 2) { key = "  var_table:"; }
+        if (i_keys == 3) { key = "  fixup_table:"; }
+        if (i_keys == 4) { key = "  string_data:"; }
+        if (i_keys == 5) { key = "  code_size:"; }
+        if (_file_contains_substr(out1, key) != 1) {
+            keys_missing = keys_missing + 1;
+        }
+        i_keys = i_keys + 1;
+    }
+    if (keys_missing != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test1 default-mode missing ");
+        print_num(keys_missing);
+        println(" of 6 stat keys");
+        fail = fail + 1;
+    }
+
+    # Test 2: --check on small file rc=0 + "ok (all caps under 85%)".
+    var ec_t2 = _exec_in_dir3(scratch, cyrius_shim, "capacity", "--check", small_path, out2);
+    if (ec_t2 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test2 --check small rc=");
+        print_num(ec_t2);
+        println(" (expected 0)");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out2, "ok (all caps under 85%)") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test2 --check small missing 'ok' message");
+        fail = fail + 1;
+    }
+
+    # Test 3: --check on 7000-fn big.cyr rc=1 + "table(s) at >=85%".
+    var ec_t3 = _exec_in_dir3(scratch, cyrius_shim, "capacity", "--check", big_path, out3);
+    if (ec_t3 != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test3 --check big rc=");
+        print_num(ec_t3);
+        println(" (expected 1)");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out3, "table(s) at >=85%") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test3 --check big missing 'table(s) at >=85%' diagnostic");
+        fail = fail + 1;
+    }
+
+    # Test 4: 7000-fn source compiles object-mode clean (alpha4
+    # fnc>2048 fix). Uses _self_host_pipe directly for stdin pipe.
+    var big_obj = _tmp_path("audit_capacity_bigo_");
+    var ec_t4 = _self_host_pipe(big_path, CC_PATH, big_obj);
+    if (ec_t4 != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": test4 cycc compile of 7000-fn source rc=");
+        print_num(ec_t4);
+        println(" (regression in fnc>2048 fix)");
+        fail = fail + 1;
+    } else {
+        var sz = _file_size(big_obj);
+        if (sz < 100000) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            _p(": test4 7000-fn binary suspiciously small (");
+            print_num(sz);
+            println(" B)");
+            fail = fail + 1;
+        }
+    }
+    sys_unlink(big_obj);
+
+    # Test 5: --json output contains fn_table key.
+    _exec_in_dir3(scratch, cyrius_shim, "capacity", "--json", small_path, out5);
+    if (_file_contains_substr(out5, "\"fn_table\":") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test5 --json missing fn_table key");
+        fail = fail + 1;
+    }
+
+    # Test 6: --json on big.cyr — basic shape check; the .sh used
+    # jq for pct>=85 verification, which is optional here. Keeping
+    # the smoke check that --json on big returns non-empty + has
+    # the fn_table key (the pct>=85 implication is already covered
+    # by Test 3's --check exit-1 path).
+    _exec_in_dir3(scratch, cyrius_shim, "capacity", "--json", big_path, out6);
+    if (_file_contains_substr(out6, "\"fn_table\":") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test6 --json on big missing fn_table key");
+        fail = fail + 1;
+    }
+
+    # Test 7: empty cwd + no entry point arg → error with "no file
+    # given" diagnostic. Use a fresh empty scratch sub-dir.
+    var empty_sb = str_builder_new();
+    str_builder_add_cstr(empty_sb, scratch);
+    str_builder_add_cstr(empty_sb, "/empty");
+    var empty_dir = str_data(str_builder_build(empty_sb));
+    sys_mkdir(empty_dir, 493);
+    var ec_t7 = _exec_in_dir3(empty_dir, cyrius_shim, "capacity", 0, 0, out7);
+    if (ec_t7 == 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test7 capacity-with-no-args expected non-zero exit, got 0");
+        fail = fail + 1;
+    }
+    if (_file_contains_substr(out7, "no file given") != 1) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        println(": test7 missing 'no file given' diagnostic");
+        fail = fail + 1;
+    }
+
+    # Cleanup output files + scratch.
+    sys_unlink(out1);
+    sys_unlink(out2);
+    sys_unlink(out3);
+    sys_unlink(out5);
+    sys_unlink(out6);
+    sys_unlink(out7);
+    _exec_in_dir3("/tmp", "/bin/rm", "-rf", scratch, 0, 0);
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": 7 sub-cases (default / --check ok+fail / 7000-fn stress / --json / no-args)");
+    }
+    _check(label, fail);
+    return fail;
+}

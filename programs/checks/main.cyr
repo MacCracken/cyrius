@@ -1,0 +1,616 @@
+# check.cyr — full project audit dispatcher.
+#
+# Cyrius port of scripts/check.sh shipped at v5.9.1 as the first
+# slot of the v5.9.x sovereignty pass (bash-toolchain → cyrius
+# conversion). scripts/check.sh becomes a 1-line shim that builds
+# build/cyrius_check on demand and dispatches here.
+#
+# What we run:
+#   1. Self-host two-step (cycc → cc5b byte-identical)
+#   2. Heap-map audit (sh tests/heapmap.sh)
+#   3. Test suite (every .tcyr file under tests/tcyr/)
+#   4. ~50 regression gates (sh tests/regression-X.sh)
+#   5. Format walk (cyrfmt across lib/)
+#   6. Lint walk (cyrlint across lib/)
+#
+# Each gate emits PASS/FAIL with ANSI color and increments
+# pass/fail/total counters. Exit code = number of failed gates;
+# 0 = all green.
+#
+# Architectural notes:
+# * The 50+ regression-X.sh gates remain bash for v5.9.1 — those
+#   batch-convert in v5.9.2-v5.9.4 per the roadmap. This dispatcher
+#   spawns each via lib/process.cyr's run() (sovereign cyrius fork+
+#   execve+wait — not sh -c).
+# * `set -e` is deliberately not part of the cyrius dispatcher
+#   semantics. Every gate captures its exit code into a local and
+#   reports PASS/FAIL via _check(); a single gate failure does not
+#   abort the full audit (matches the bash version's v5.7.29 fix).
+# * Self-host gate inlines the stdin-pipe fork+execve+dup2 dance
+#   that bash expressed as `cat src/main.cyr | $CC > $cc_a` —
+#   ~25 LOC of cyrius primitives instead of a sh -c invocation.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/fnptr.cyr"
+include "lib/flags.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+include "lib/bounds.cyr"
+include "lib/tagged.cyr"
+include "lib/result.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+include "lib/net.cyr"
+include "lib/regression.cyr"
+
+# ANSI color escapes — match scripts/check.sh's printf "\033[3Xm".
+var ANSI_GREEN = "\033[32m";
+var ANSI_RED   = "\033[31m";
+var ANSI_RESET = "\033[0m";
+
+# Discovered tool paths (resolved at startup).
+var ROOT_PATH    = 0;   # repo root absolute path (cstring)
+var CC_PATH      = 0;   # build/cycc (cstring)
+var CYRFMT_PATH  = 0;   # build/cyrfmt or PATH-resolved cyrfmt (cstring)
+var CYRLINT_PATH = 0;   # build/cyrlint or PATH-resolved cyrlint (cstring)
+var CYRDOC_PATH  = 0;   # build/cyrdoc or PATH-resolved cyrdoc (cstring)
+var CC_AARCH64_PATH = 0; # build/cycc_aarch64 cross-compiler (cstring)
+
+# Counters.
+var G_PASS = 0;
+var G_FAIL = 0;
+var G_TOTAL = 0;
+
+# Cached environment pointer-array, built once at startup from
+# /proc/self/environ. Child processes inherit this env via execve.
+var ENVP_BUF = 0;       # raw environ buffer (null-separated KEY=VAL)
+var ENVP_LEN = 0;
+var ENVP_ARR = 0;       # null-terminated array of pointers into ENVP_BUF
+var ENVP_COUNT = 0;
+# v5.9.42: shared empty-envp pointer for the pre-v5.9.42 helpers
+# that always called execve with `var envp[1]; store64(&envp, 0)`.
+# Used by the lib/regression.cyr wrappers in this file to keep
+# original call semantics — execve gets an empty environment.
+var EMPTY_ENVP = 0;
+
+# Convenience: print null-terminated c-string to stdout (no newline).
+# ================================================================
+# v6.0.90: programs/check.cyr split into programs/checks/. This is the
+# slim dispatcher: lib includes + the 18 module globals + the per-suite
+# includes below + the infra/driver fns (_run_regression_gates, main —
+# kept VERBATIM so gate order + tally are unchanged). check.sh points
+# CHECK_SRC here. Acceptance is BEHAVIORAL identity (cyrius_check is not
+# in the self-host chain; concatenation order may change its bytes).
+# ================================================================
+
+# --- per-suite fn definitions ---
+include "programs/checks/shared.cyr"
+include "programs/checks/selfhost.cyr"
+include "programs/checks/crosshost.cyr"
+include "programs/checks/platform_efi.cyr"
+include "programs/checks/platform_win_macho.cyr"
+include "programs/checks/platform_aarch64.cyr"
+include "programs/checks/cx.cyr"
+include "programs/checks/ts.cyr"
+include "programs/checks/deps_init.cyr"
+include "programs/checks/lint_fmt.cyr"
+include "programs/checks/heap_audit.cyr"
+include "programs/checks/services.cyr"
+include "programs/checks/codegen_regress.cyr"
+
+# --- dispatcher + driver (verbatim from the monolith) ---
+fn _p(cstr): i64 {
+    print(cstr, strlen(cstr));
+    return 0;
+}
+
+fn _check(name, exit_code): i64 {
+    G_TOTAL = G_TOTAL + 1;
+    _p("  ");
+    if (exit_code == 0) {
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        G_PASS = G_PASS + 1;
+    } else {
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        G_FAIL = G_FAIL + 1;
+    }
+    _p(": ");
+    println(name);
+    return 0;
+}
+
+fn _section(label): i64 {
+    _p("── ");
+    _p(label);
+    println(" ──");
+    return 0;
+}
+
+fn _root_path(tail): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, ROOT_PATH);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, tail);
+    var s = str_builder_build(sb);
+    return str_data(s);
+}
+
+fn _resolve_tool(rel_build_path, name): i64 {
+    var absp = _root_path(rel_build_path);
+    if (file_exists(absp) == 1) { return absp; }
+    var home = getenv("HOME");
+    if (home == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, home);
+    str_builder_add_cstr(sb, "/.cyrius/bin/");
+    str_builder_add_cstr(sb, name);
+    var s = str_builder_build(sb);
+    var cand = str_data(s);
+    if (file_exists(cand) == 1) { return cand; }
+    return 0;
+}
+
+fn _load_environ(): i64 {
+    var cap = 65536;
+    ENVP_BUF = alloc(cap);
+    var fd = file_open("/proc/self/environ", 0, 0);
+    if (fd < 0) { return 0; }
+    ENVP_LEN = file_read(fd, ENVP_BUF, cap);
+    file_close(fd);
+    if (ENVP_LEN <= 0) { return 0; }
+    # Count entries (null-separated) and allocate pointer array.
+    var count = 0;
+    var i = 0;
+    while (i < ENVP_LEN) {
+        if (load8(ENVP_BUF + i) == 0) { count = count + 1; }
+        i = i + 1;
+    }
+    ENVP_COUNT = count;
+    ENVP_ARR = alloc((count + 1) * 8);
+    var ai = 0;
+    var start = 0;
+    var j = 0;
+    while (j < ENVP_LEN) {
+        if (load8(ENVP_BUF + j) == 0) {
+            store64(ENVP_ARR + ai * 8, ENVP_BUF + start);
+            ai = ai + 1;
+            start = j + 1;
+        }
+        j = j + 1;
+    }
+    store64(ENVP_ARR + count * 8, 0);
+    # v5.9.42: build EMPTY_ENVP — a freshly-alloc'd 1-elem array of
+    # 0. Used by the lib/regression.cyr wrappers below for the
+    # helpers that originally execve'd with `var envp[1]; store64(&envp, 0)`.
+    EMPTY_ENVP = alloc(8);
+    store64(EMPTY_ENVP, 0);
+    return count;
+}
+
+fn _gate_run(script_abs): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 1; }
+    if (pid == 0) {
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 3 ptrs need 24 B
+        store64(&argv,     "/bin/sh");
+        store64(&argv + 8, script_abs);
+        store64(&argv + 16, 0);
+        sys_execve("/bin/sh", &argv, ENVP_ARR);
+        sys_exit(127);
+    }
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    return 1;
+}
+
+fn _gate(name, script_rel): i64 {
+    var script_abs = _root_path(script_rel);
+    var rc = _gate_run(script_abs);
+    _check(name, rc);
+    return rc;
+}
+
+fn _build_api_surface_if_missing(): i64 {
+    var bin = _root_path("build/cyrius_api_surface");
+    if (file_exists(bin) == 1) { return 0; }
+    var src = _root_path("programs/cyrius_api_surface.cyr");
+    if (file_exists(src) != 1) { return 0; }
+    if (file_exists(CC_PATH) != 1) { return 0; }
+    _self_host_pipe(src, CC_PATH, bin);
+    sys_chmod(bin, 493);
+    return 0;
+}
+
+fn _resolve_root(): i64 {
+    var cwd_buf = alloc(4096);
+    var n = syscall(79, cwd_buf, 4096);   # SYS_GETCWD on x86_64
+    if (n <= 0) {
+        store8(cwd_buf, 46);   # '.'
+        store8(cwd_buf + 1, 0);
+    }
+    return cwd_buf;
+}
+
+fn _setup_paths(): i64 {
+    ROOT_PATH = _resolve_root();
+    CC_PATH = _root_path("build/cycc");
+    CYRFMT_PATH = _resolve_tool("build/cyrfmt", "cyrfmt");
+    CYRLINT_PATH = _resolve_tool("build/cyrlint", "cyrlint");
+    CYRDOC_PATH = _resolve_tool("build/cyrdoc", "cyrdoc");
+    CC_AARCH64_PATH = _root_path("build/cycc_aarch64");
+    return 0;
+}
+
+fn _run_regression_gates(): i64 {
+    _section("Shared-object");
+    _shared_dlopen_gate();
+    println("");
+
+    _section("Linker");
+    _linker_gate();
+    println("");
+
+    _section("Capacity meter");
+    _capacity_gate();
+    println("");
+
+    _section("Object init binding");
+    _object_init_gate();
+    println("");
+
+    _section("aarch64 syscalls + threads");
+    _aarch64_syscalls_gate();
+    println("");
+
+    _section("Mach-O aarch64 cross-build");
+    _macho_cross_build_gate();
+    println("");
+
+    _section("Inline-asm discard-result");
+    _inline_asm_discard_gate();
+    println("");
+
+    _section("cyrfmt --write");
+    _cyrfmt_write_gate();
+    println("");
+
+    _section("Reserved-keyword diag");
+    _reserved_kw_diag_gate();
+    println("");
+
+    # v5.9.25 (per v5.9.6 pin): the 6 _tcyr_relay_gate calls
+    # previously here (shadow_pam / fdlopen / thread_local /
+    # atomics / thread_safety / flags) are removed — each tcyr is
+    # ALSO covered by `_testsuite_gate()` below, which walks
+    # tests/tcyr/* alphabetically. Pre-v5.9.25 each of these 6
+    # files compiled + ran twice per check.sh invocation; now each
+    # runs exactly once via the testsuite walk. Audit gate count
+    # drops 67 → 61 (six relay-pass lines retired).
+
+    _section("aarch64 native self-host");
+    _aarch64_native_selfhost_gate();
+    println("");
+
+    _section("aarch64 struct-by-value (Phase 2b; v5.9.26)");
+    _aarch64_struct_byval_gate();
+    println("");
+
+    _section("aarch64 sub-byte field load (v5.9.27)");
+    _aarch64_sub_byte_field_load_gate();
+    println("");
+
+    _section("Mach-O arm64 runtime");
+    _macho_exit_gate();
+    println("");
+
+    _section("Mach-O arm64 #derive(Serialize)");
+    _macho_derive_serialize_gate();
+    println("");
+
+    _section("PE32+ Windows runtime");
+    _pe_exit_gate();
+    println("");
+
+    _section("PE32+ kernel32 path APIs (v5.11.23)");
+    _pe_path_apis_gate();
+    println("");
+
+    _section("sit 100-commit fixture");
+    _sit_status_gate();
+    println("");
+
+    _section("TLS live");
+    _tls_live_gate();
+    println("");
+
+    _section("TS lexer (cyrius-ts)");
+    _ts_lex_gate();
+    println("");
+
+    _section("TS parser (SY acceptance)");
+    _ts_corpus_gate("cycc --parse-ts vs SY .ts corpus ≥98%% baseline (v5.7.3 P3.1)", ".ts", 2053);
+    println("");
+
+    _section("TS parser .tsx (JSX)");
+    _ts_corpus_gate("cycc --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", ".tsx", 435);
+    println("");
+
+    _section("Bare-truthy after fn-call");
+    _truthy_after_fncall_gate();
+    println("");
+
+    _section("fn-name collision warning");
+    _fn_collision_gate();
+    println("");
+
+    _section("input_buf 1 MB cap");
+    _input_1mb_gate();
+    println("");
+
+    _section("cyrius-x bytecode entry");
+    _cx_build_gate();
+    println("");
+
+    _section("cyrius-x bytecode cleanliness");
+    _cx_roundtrip_gate();
+    println("");
+
+    _section("String-escape rejects");
+    _string_escape_rejects_gate();
+    println("");
+
+    _section("match coverage check (DCE-dead fn determinism; v5.9.24)");
+    _match_coverage_dce_gate();
+    println("");
+
+    _section("#derive(Serialize) primitive-field codegen (v5.9.30; agnosys 1.1.12)");
+    _derive_serialize_primitive_gate();
+    println("");
+
+    _section("cyrius deps transitive");
+    _deps_transitive_gate();
+    println("");
+
+    _section("cyrius init --lib/--bin");
+    _init_lib_bin_gate();
+    println("");
+
+    _section("cyrius init/port doc-tree");
+    _init_doctree_gate();
+    println("");
+
+    _section("struct cap raise + diag");
+    _struct_cap_gate();
+    println("");
+
+    _section("kmode emit order");
+    _kmode_emit_order_gate();
+    println("");
+
+    _section("stdlib doc coverage");
+    _stdlib_doc_coverage_gate();
+    println("");
+
+    _section("cyrius fuzz auto-prepend");
+    _fuzz_deps_prepend_gate();
+    println("");
+
+    _section("cyrfmt comment/string brace skip");
+    _cyrfmt_comment_braces_gate();
+    println("");
+
+    _section("path-A drift gate (parse_*.cyr direct emits)");
+    _parse_emit_drift_gate();
+    println("");
+
+    _section("build/cycc contamination gate");
+    _cc5_contamination_gate();
+    println("");
+
+    _section("ELF64 kernel entry agreement (FIXUP ↔ EMITELF64_KERNEL)");
+    _elf64_kernel_entry_gate();
+    println("");
+
+    _section("EFI Application PE emit (gnoboot MVP unblocker)");
+    _efi_emit_gate();
+    println("");
+
+    _section("AGNOS ring-3 userspace emit (CYRIUS_TARGET_AGNOS)");
+    _agnos_emit_gate();
+    println("");
+
+    _section("Windows PE stdlib cross-build (CYRIUS_TARGET_WIN)");
+    _win_build_gate();
+    _win_process_gate();
+    println("");
+
+    _section("EFI Application OVMF runtime smoke (gnoboot arc KO)");
+    _efi_ovmf_smoke_gate();
+    println("");
+
+    _section("EFI trampoline REX encoding (efi_main convention)");
+    _efi_trampoline_rex_gate();
+    println("");
+
+    _section("EFI stdlib fallback resolves lib/fnptr.cyr (v6.0.1 regression)");
+    _efi_stdlib_fallback_gate();
+    println("");
+
+    _section("cyrius deps for downstream-with-src/main.cyr (v6.0.1 regression)");
+    _deps_downstream_src_main_gate();
+    println("");
+
+    _section("cyrius deps --lock writes a non-empty recursive lock (v6.0.2 regression)");
+    _deps_lock_gate();
+    println("");
+
+    _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");
+    _cve05_guard_gate();
+    println("");
+
+    _section("aarch64 DCE fn-count accessor + live[] cap (v6.0.4)");
+    _dce_fn_count_gate();
+    println("");
+
+    _section("cyrius build exits non-zero on cycc failure (v6.0.5)");
+    _build_exit_nonzero_gate();
+    println("");
+
+    _section("cycc --parse-ts <file> reads from path arg (v6.0.5)");
+    _ts_path_arg_gate();
+    println("");
+
+    _section("Cap-drift detector (heap-map ↔ inline literals)");
+    _cap_drift_gate();
+    println("");
+
+    _section("Doc-size currency (fresh-tier docs cite current cycc)");
+    _doc_size_currency_gate();
+    println("");
+
+    _section("install --refresh-only shim");
+    _install_shim_symlink_gate();
+    println("");
+
+    _section("cx syscall literal propagation");
+    _cx_syscall_literal_gate();
+    println("");
+
+    _section("cx Phase 2c parity");
+    _cx_phase2c_gate();
+    println("");
+
+    _section("TS asserts predicate signatures");
+    _parse_ts_dir_gate("cycc --parse-ts accepts asserts predicate signatures + this-type (v5.7.24)", "asserts predicates + this-type (TS 3.7+)", "ts_asserts");
+    println("");
+
+    _section("TS mapped types + modifiers");
+    _parse_ts_dir_gate("cycc --parse-ts accepts mapped types + as-clause + +/- modifiers (v5.7.25)", "mapped types + as-clause + +/- modifiers", "ts_mapped");
+    println("");
+
+    _section("TS decorators");
+    _parse_ts_dir_gate("cycc --parse-ts accepts TS 5.0 stage-3 decorators (v5.7.26)", "TS 5.0 stage-3 decorators", "ts_decorators");
+    println("");
+
+    _section("Token-offset parity");
+    _cx_token_offsets_gate();
+    println("");
+
+    _section("aarch64 f64 basic ops");
+    _aarch64_f64_basic_gate();
+    println("");
+
+    _section("aarch64 f64_exp / f64_ln / f64_log2 polyfills");
+    _aarch64_f64_polyfill_gate();
+    println("");
+
+    _section("cyrlint global-init-order");
+    _lint_init_order_gate();
+    println("");
+
+    _section("cyrlint large-file");
+    _cyrlint_large_file_gate();
+    println("");
+
+    _build_api_surface_if_missing();
+    _section("cyrius api-surface");
+    _api_surface_gate();
+    println("");
+
+    _section("aarch64 codebuf cap");
+    _aarch64_codebuf_cap_gate();
+    println("");
+
+    _section("stdlib syscall surface (v5.7.35)");
+    _syscall_surface_v5735_gate();
+    println("");
+
+    _section("distlib >64KB module");
+    _distlib_large_module_gate();
+    println("");
+
+    _section("smoke discovery");
+    _smoke_discovery_gate();
+    println("");
+
+    _section("lsp definition");
+    _lsp_definition_gate();
+    println("");
+
+    _section("json pretty");
+    _expected_output_gate("json_v_build_pretty(v, indent) end-to-end canonical shape (v5.7.40)", "json pretty-print indent=2", "json_pretty");
+    println("");
+
+    _section("json stream");
+    _expected_output_gate("json_stream_parse(buf, len, h) event order canonical sequence (v5.7.41)", "json streaming events canonical order", "json_stream");
+    println("");
+
+    _section("json pointer");
+    _expected_output_gate("json_v_pointer(v, ptr) RFC 6901 paths + ~0/~1 escapes + OOB/miss (v5.7.42)", "JSON Pointer RFC 6901 + ~0/~1 escapes", "json_pointer");
+    println("");
+
+    _section("test_each");
+    _expected_output_gate("test_each(cases_vec, fp) iteration order + transitive include chain (v5.7.43)", "test_each iteration + include chain", "test_lib");
+    println("");
+
+    _section("variadic tuples");
+    _parse_ts_dir_gate("TS variadic tuples — parse acceptance for spread element forms (v5.7.44)", "variadic tuple spread forms", "ts_variadic_tuples");
+    println("");
+
+    _section("const type params");
+    _parse_ts_dir_gate("TS const type params <const T> — parse acceptance (v5.7.45)", "const type params <const T>", "ts_const_type_params");
+    println("");
+
+    _section("advanced-TS pin audit");
+    _parse_ts_dir_gate("TS advanced-pin audit — as const + satisfies + never/unknown + conditional types (v5.7.46)", "advanced-TS pin audit", "ts_advanced_pin_audit");
+    println("");
+
+    _section("args_init >4 KB cmdline (v5.9.5; cyim BUG-001)");
+    _args_init_4kb_gate();
+    println("");
+
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _load_environ();
+    _setup_paths();
+
+    println("=== Cyrius v2.0 Audit ===");
+    println("");
+
+    _self_host_gate();
+    _heapmap_gate();
+    _testsuite_gate();
+    _run_regression_gates();
+    _format_gate();
+    _lint_gate();
+
+    println("════════════════════════");
+    print_num(G_PASS);
+    _p(" passed, ");
+    print_num(G_FAIL);
+    _p(" failed (");
+    print_num(G_TOTAL);
+    println(" total)");
+
+    return G_FAIL;
+}
+
+var r = main();
+syscall(60, r);

@@ -1,0 +1,696 @@
+# ================================================================
+# programs/checks/platform_efi.cyr — EFI/UEFI + ELF64-kernel + kmode emit gates
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _kmode_emit_order_gate(): i64 {
+    var src_path = _tmp_path("audit_kmode_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) {
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    var src = "kernel;\n\nvar marker_var = 0xDEADBEE0 | 0xF;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";
+    sys_write(fd, src, strlen(src));
+    sys_close(fd);
+
+    var bin_path = _tmp_path("audit_kmode_bin_");
+    var rc = _self_host_pipe(src_path, CC_PATH, bin_path);
+    sys_unlink(src_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": kmode compile (rc=");
+        print_num(rc);
+        println(")");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+
+    var cap = 524288;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+
+    # Build the two needle byte sequences via store8 (cyrius string
+    # literals can't carry raw 0xF4 / 0x48 bytes ergonomically).
+    var asm_needle[1];
+    store8(&asm_needle,     0xF4);
+    store8(&asm_needle + 1, 0xF4);
+    store8(&asm_needle + 2, 0xF4);
+    store8(&asm_needle + 3, 0xF4);
+    var gvar_needle[1];
+    store8(&gvar_needle,     0x48);
+    store8(&gvar_needle + 1, 0xB9);
+
+    var asm_off = _find_bytes(buf, n, &asm_needle, 4);
+    var gvar_off = _find_bytes(buf, n, &gvar_needle, 2);
+
+    if (asm_off < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": asm marker (f4 f4 f4 f4) not found in kmode binary");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    if (gvar_off < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": gvar-init marker (48 b9) not found in kmode binary");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    if (asm_off >= gvar_off) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": asm marker at byte ");
+        print_num(asm_off);
+        _p(" not before gvar init at byte ");
+        print_num(gvar_off);
+        println("");
+        println("    This is the v5.7.19 regression — kmode emit order broken;");
+        println("    agnos kernel will triple-fault on multiboot entry.");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": kmode emit order — asm (offset ");
+    print_num(asm_off);
+    _p(") before gvar init (offset ");
+    print_num(gvar_off);
+    println(")");
+    _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 0);
+    return 0;
+}
+
+fn _elf64_kernel_entry_gate(): i64 {
+    var label = "kmode==1 + CYRIUS_ELF64_KERNEL=1: FIXUP entry agrees with EMITELF64_KERNEL header (v5.11.46; agnos UEFI boot)";
+    var src_path = _root_path("programs/kernel_hello.cyr");
+    var bin_path = _tmp_path("audit_elf64k_bin_");
+    var rc = _self_host_pipe_elf64k(src_path, CC_PATH, bin_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": elf64-kernel compile (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cap = 524288;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _check(label, 1);
+        return 1;
+    }
+
+    # ELF64 magic + class + endian sanity. Identifies a malformed
+    # output before we trust e_entry / p_vaddr.
+    if (load64(buf) != 0x00010102464C457F) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": elf64-kernel output is not a valid ELF64 LSB binary");
+        _check(label, 1);
+        return 1;
+    }
+
+    var e_entry = load64(buf + 24);
+    if (e_entry != 0x1000A8) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ELF64 e_entry = ");
+        print_num(e_entry);
+        println(" (expected 1048744 = 0x1000A8 = 0x100000 + 120 + 48)");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Locate "Hello from Cyrius!" — kernel_hello.cyr's vga_print() arg.
+    var sneedle = "Hello from Cyrius!";
+    var s_off = _find_bytes(buf, n, sneedle, 18);
+    if (s_off < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": kernel_hello marker string not present in compiled binary");
+        _check(label, 1);
+        return 1;
+    }
+
+    var true_va = 0x100000 + s_off;
+    var old_va  = true_va - 0x48;
+    var bad_at  = _find_u64_le(buf, n, old_va);
+    if (bad_at >= 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": FIXUP regressed — OLD-entry-shifted address ");
+        print_num(old_va);
+        _p(" (true_va - 72) at file offset ");
+        print_num(bad_at);
+        _p("; true VA ");
+        print_num(true_va);
+        println("");
+        println("    This is the v5.11.43 → v5.11.45 agnos UEFI boot bug. FIXUP's");
+        println("    kmode==1 entry must gate on _TARGET_ELF64_KERNEL — see CHANGELOG [5.11.46].");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Positive sanity — the true-VA pattern must appear at least once
+    # (otherwise the test vehicle didn't actually exercise a string
+    # fixup and the negative check above is vacuous).
+    var good_at = _find_u64_le(buf, n, true_va);
+    if (good_at < 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": no fixup baked the string's true VA ");
+        print_num(true_va);
+        println(" (test vehicle didn't exercise a fixup — gate is vacuous)");
+        _check(label, 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": ELF64 kernel entry agreement — e_entry=0x1000A8, fixup baked true VA ");
+    print_num(true_va);
+    println("");
+    _check(label, 0);
+    return 0;
+}
+
+fn _efi_emit_gate(): i64 {
+    var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = _efi_compile_to_buf(_root_path("programs/efi_probe.cyr"), buf, cap, "efi_probe");
+    if (n <= 0) { _check(label, 1); return 1; }
+
+    # DOS header: MZ at offset 0
+    if (load8(buf) != 0x4D || load8(buf + 1) != 0x5A) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": efi_probe output missing MZ DOS header");
+        _check(label, 1);
+        return 1;
+    }
+
+    # PE signature offset at byte 60; signature = "PE\0\0"
+    var pe_off = _read_u32_le(buf, 60);
+    if (load8(buf + pe_off) != 0x50 || load8(buf + pe_off + 1) != 0x45) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": efi_probe PE signature not found at e_lfanew");
+        _check(label, 1);
+        return 1;
+    }
+
+    var opt_off = pe_off + 4 + 20;
+
+    # Optional Header Magic must be PE32+ (0x020B)
+    var magic = _read_u16_le(buf, opt_off);
+    if (magic != 0x020B) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Optional Header Magic ");
+        print_num(magic);
+        println(" != 0x020B (PE32+)");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Subsystem at OptionalHeader + 68
+    var subsys = _read_u16_le(buf, opt_off + 68);
+    if (subsys != 10) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Subsystem ");
+        print_num(subsys);
+        println(" != 10 (IMAGE_SUBSYSTEM_EFI_APPLICATION)");
+        _check(label, 1);
+        return 1;
+    }
+
+    # DllCharacteristics at OptionalHeader + 70; require NX_COMPAT (0x0100)
+    var dllc = _read_u16_le(buf, opt_off + 70);
+    if ((dllc & 0x0100) == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": DllCharacteristics ");
+        print_num(dllc);
+        println(" missing NX_COMPAT (0x0100) — UEFI 2.0+ requires it");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Data directories at OptionalHeader + 112 (PE32+). Each entry = 8 bytes.
+    var dd_base = opt_off + 112;
+
+    # [1] Import directory — must be zeroed (no kernel32 in UEFI)
+    var imp_rva  = _read_u32_le(buf, dd_base + 8);
+    var imp_size = _read_u32_le(buf, dd_base + 12);
+    if (imp_rva != 0 || imp_size != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Data Dir [1] Import not zeroed (RVA=");
+        print_num(imp_rva);
+        _p(", Size=");
+        print_num(imp_size);
+        println(") — EFI mode should suppress kernel32 imports");
+        _check(label, 1);
+        return 1;
+    }
+
+    # [12] IAT — must be zeroed
+    var iat_rva  = _read_u32_le(buf, dd_base + 96);
+    var iat_size = _read_u32_le(buf, dd_base + 100);
+    if (iat_rva != 0 || iat_size != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": Data Dir [12] IAT not zeroed (RVA=");
+        print_num(iat_rva);
+        _p(", Size=");
+        print_num(iat_size);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Locate .text section to verify the EEXIT EFI variant (ret = 0xC3)
+    # actually emitted. Section table starts at OptionalHeader + 240.
+    var st_off = opt_off + 240;
+    var found_text = 0;
+    var ret_found = 0;
+    var si = 0;
+    while (si < 6) {
+        var so = st_off + si * 40;
+        # Name compare: ".text\0\0\0"
+        if (load8(buf + so) == 0x2E
+            && load8(buf + so + 1) == 0x74
+            && load8(buf + so + 2) == 0x65
+            && load8(buf + so + 3) == 0x78
+            && load8(buf + so + 4) == 0x74
+            && load8(buf + so + 5) == 0x00) {
+            found_text = 1;
+            var foff = _read_u32_le(buf, so + 20);
+            var vsz  = _read_u32_le(buf, so + 8);
+            # Scan .text for 0xC3 (ret) — EEXIT EFI variant
+            var ti = 0;
+            while (ti < vsz) {
+                if (load8(buf + foff + ti) == 0xC3) {
+                    ret_found = 1;
+                    ti = vsz;
+                } else {
+                    ti = ti + 1;
+                }
+            }
+            si = 6;
+        } else {
+            si = si + 1;
+        }
+    }
+    if (found_text == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": .text section not found in efi_probe output");
+        _check(label, 1);
+        return 1;
+    }
+    if (ret_found == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": 0xC3 (ret) not found in .text — EEXIT EFI variant not emitting");
+        _check(label, 1);
+        return 1;
+    }
+
+    # v6.0.46 regression guard: fncallN under EFI must NOT emit `ud2 ud2`.
+    # The 2026-05-19 UEFI bug dropped the CYRIUS_TARGET_WIN predefine under
+    # CYRIUS_TARGET_EFI=1 → fncallN went undefined → every call site got the
+    # undefined-fn stub `ud2 ud2 nop` (0F 0B 0F 0B 90, same 4 bytes as
+    # `call rel32`) → #UD at every UEFI service call (gnoboot panicked OVMF).
+    # Rotted + fixed untested; this locks it in. See efi_fncall_probe.cyr.
+    var fbuf = alloc(cap);
+    var fn_n = _efi_compile_to_buf(_root_path("programs/efi_fncall_probe.cyr"), fbuf, cap, "efi_fncall_probe");
+    if (fn_n <= 0) { _check(label, 1); return 1; }
+    var ud2_found = 0;
+    var ui = 0;
+    while (ui < fn_n - 3) {
+        if (load8(fbuf + ui) == 0x0F && load8(fbuf + ui + 1) == 0x0B
+            && load8(fbuf + ui + 2) == 0x0F && load8(fbuf + ui + 3) == 0x0B) {
+            ud2_found = 1;
+            ui = fn_n;
+        } else {
+            ui = ui + 1;
+        }
+    }
+    if (ud2_found == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": efi_fncall_probe emits `ud2 ud2` — fncallN undefined under EFI (the 2026-05-19 UEFI regression)");
+        _check(label, 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": EFI Application emit — Subsystem=0xA, DllChar NX_COMPAT, Data Dirs [1]/[12] zeroed, .text has ret; fncallN emit no ud2 (2026-05-19 UEFI guard)");
+    println("");
+    _check(label, 0);
+    return 0;
+}
+
+fn _efi_ovmf_smoke_gate(): i64 {
+    var label = "EFI Application boots under qemu+OVMF + writes hello via ConOut (v5.11.49; gnoboot arc KO)";
+
+    # Probe for required tooling. Any missing → SKIP gracefully (don't
+    # fail check.sh; the gate is opt-in via presence of the test
+    # environment, same pattern as the macho cross-build gate which
+    # skips when codesign is absent).
+    if (file_exists("/usr/bin/qemu-system-x86_64") != 1) {
+        _p("  "); _p(ANSI_RESET); _p("SKIP"); _p(ANSI_RESET);
+        println(": qemu-system-x86_64 not installed — runtime smoke skipped");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/bin/parted") != 1) {
+        _p("  SKIP: parted not installed — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/bin/mformat") != 1) {
+        _p("  SKIP: mtools (mformat) not installed — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd") != 1) {
+        _p("  SKIP: OVMF_CODE.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+    if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd") != 1) {
+        _p("  SKIP: OVMF_VARS.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Compile programs/efi_probe.cyr under CYRIUS_TARGET_EFI=1.
+    var src_path = _root_path("programs/efi_probe.cyr");
+    var efi_bin = _tmp_path("efi_smoke_probe_");
+    var rc = _self_host_pipe_efi(src_path, CC_PATH, efi_bin);
+    if (rc != 0) {
+        sys_unlink(efi_bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": efi_probe compile failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Runtime smoke pipeline. The orchestration is a /bin/sh -c
+    # one-liner — test glue, not a separate shell-script deliverable
+    # (cyrius owns the gate; sh is just stdlib-tool composition for
+    # parted/mtools/qemu invocation, same shape as how cross-host
+    # smoke uses ssh). The .efi path comes through as $1.
+    var script = "set -e; D=$(mktemp -d -t efi-smoke.XXXXXX); trap 'rm -rf \"$D\"' EXIT; cd \"$D\"; dd if=/dev/zero of=disk.img bs=1M count=64 status=none; parted -s disk.img mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1; mformat -i disk.img@@1048576 -F; mmd -i disk.img@@1048576 ::EFI; mmd -i disk.img@@1048576 ::EFI/BOOT; mcopy -i disk.img@@1048576 \"$1\" ::EFI/BOOT/BOOTX64.EFI; cp /usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd vars.fd; chmod +w vars.fd; timeout 12 qemu-system-x86_64 -machine q35 -m 256M -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=vars.fd -drive file=disk.img,format=raw -serial stdio -display none -no-reboot 2>/dev/null | grep -q 'hello, uefi'";
+
+    var args = vec_new();
+    vec_push(args, str_from("/bin/sh"));
+    vec_push(args, str_from("-c"));
+    vec_push(args, str_from(script));
+    vec_push(args, str_from("--"));
+    vec_push(args, str_from(efi_bin));
+    var rc2 = exec_vec_str(args);
+    sys_unlink(efi_bin);
+
+    if (rc2 == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": OVMF firmware loaded BOOTX64.EFI; \"hello, uefi\" captured on serial");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": OVMF runtime smoke did not produce \"hello, uefi\" (sh rc=");
+    print_num(rc2);
+    println(")");
+    _check(label, 1);
+    return 1;
+}
+
+fn _efi_trampoline_rex_gate(): i64 {
+    var label = "efi_main trampoline REX prefix encoding (v5.11.53; save=49, restore=4C)";
+
+    if (file_exists("/usr/bin/qemu-system-x86_64") != 1) {
+        _p("  SKIP: qemu tooling not present (gate is paired with OVMF smoke ecosystem)\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Compile minimal efi_main source via CYRIUS_TARGET_EFI=1 pipe.
+    var src_path = _tmp_path("audit_efi_tramp_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) { _check(label, 1); return 1; }
+    var src = "kernel;\n\nfn efi_main(handle, st): i64 {\n    return 0;\n}\n";
+    sys_write(fd, src, strlen(src));
+    sys_close(fd);
+
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = _efi_compile_to_buf(src_path, buf, cap, "efi_main minimal source");
+    sys_unlink(src_path);
+    if (n <= 0) { _check(label, 1); return 1; }
+
+    # Build needles via store8 (string literals can't carry 0x49 / 0x4C
+    # reliably and the bytes here are explicitly chosen for the test).
+    var save_good[1];
+    store8(&save_good + 0, 0x49); store8(&save_good + 1, 0x89); store8(&save_good + 2, 0xCE);
+    store8(&save_good + 3, 0x49); store8(&save_good + 4, 0x89); store8(&save_good + 5, 0xD7);
+
+    var save_bad[1];
+    store8(&save_bad + 0, 0x4C); store8(&save_bad + 1, 0x89); store8(&save_bad + 2, 0xCE);
+    store8(&save_bad + 3, 0x4C); store8(&save_bad + 4, 0x89); store8(&save_bad + 5, 0xD7);
+
+    var restore_good[1];
+    store8(&restore_good + 0, 0x4C); store8(&restore_good + 1, 0x89); store8(&restore_good + 2, 0xF1);
+    store8(&restore_good + 3, 0x4C); store8(&restore_good + 4, 0x89); store8(&restore_good + 5, 0xFA);
+
+    var save_at    = _find_bytes(buf, n, &save_good, 6);
+    var save_bad_at = _find_bytes(buf, n, &save_bad, 6);
+    var restore_at = _find_bytes(buf, n, &restore_good, 6);
+
+    var fail = 0;
+    if (save_at < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": entry save bytes (49 89 CE 49 89 D7 = mov r14,rcx / mov r15,rdx) NOT found in output");
+        fail = fail + 1;
+    }
+    if (save_bad_at >= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": v5.11.52 wrong-REX bytes (4C 89 CE 4C 89 D7 = mov rsi,r9 / mov rdi,r10) regressed at file offset ");
+        print_num(save_bad_at);
+        println("");
+        fail = fail + 1;
+    }
+    if (restore_at < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": restore bytes (4C 89 F1 4C 89 FA = mov rcx,r14 / mov rdx,r15) NOT found in output");
+        fail = fail + 1;
+    }
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": efi_main trampoline encoding — save=49/89/CE+49/89/D7; restore=4C/89/F1+4C/89/FA");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _efi_stdlib_fallback_gate(): i64 {
+    var label = "stdlib fallback resolves lib/fnptr.cyr without vendored ./lib (v6.0.1; rename-skip regression)";
+
+    var src_path = "/tmp/audit_efi_fallback_src.cyr";
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) { _check(label, 1); return 1; }
+    var src = "include \"lib/fnptr.cyr\"\nfn main(): i64 { var fp = 0; var r = fncall1(fp, 0); return r; }\n";
+    sys_write(fd, src, strlen(src));
+    sys_close(fd);
+
+    var bin_path = "/tmp/audit_efi_fallback_bin";
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_unlink(src_path); _check(label, 1); return 1; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+
+    var out_fd = sys_open(bin_path, 577, 420);
+    if (out_fd < 0) {
+        sys_close(read_fd); sys_close(write_fd); sys_unlink(src_path);
+        _check(label, 1); return 1;
+    }
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
+        sys_unlink(src_path); _check(label, 1); return 1;
+    }
+    # Build augmented envp: parent's ENVP_ARR (carries HOME, needed
+    # by cycc's `_init_cyrius_lib` to build the version-pinned
+    # fallback path) + CYRIUS_TARGET_EFI=1 + NUL. _self_host_pipe_efi
+    # passes only "CYRIUS_TARGET_EFI=1" but that suffices for the
+    # inline-asm efi_probe.cyr — this gate needs HOME because the
+    # whole point is to exercise the stdlib-include fallback.
+    var aug_envp = alloc((ENVP_COUNT + 2) * 8);
+    var ei = 0;
+    while (ei < ENVP_COUNT) {
+        store64(aug_envp + ei * 8, load64(ENVP_ARR + ei * 8));
+        ei = ei + 1;
+    }
+    store64(aug_envp + ENVP_COUNT * 8, "CYRIUS_TARGET_EFI=1");
+    store64(aug_envp + (ENVP_COUNT + 1) * 8, 0);
+
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0); sys_close(read_fd);
+        sys_dup2(out_fd, 1); sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var cd_rc = syscall(SYS_CHDIR, "/tmp");
+        if (cd_rc < 0) { sys_exit(126); }
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
+        store64(&argv,     CC_PATH);
+        store64(&argv + 8, 0);
+        sys_execve(CC_PATH, &argv, aug_envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+
+    var src_cap = 4096;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; } else { written = written + w; }
+    }
+    sys_close(write_fd);
+
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    sys_unlink(src_path);
+
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 0 || WEXITSTATUS(status) != 0) {
+        sys_unlink(bin_path);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cycc exited non-zero (status="); print_num(status);
+        println(") with CYRIUS_TARGET_EFI=1 + include \"lib/fnptr.cyr\"");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": compiled but output unreadable");
+        _check(label, 1);
+        return 1;
+    }
+
+    var ud2_needle[1];
+    store8(&ud2_needle + 0, 0x0F);
+    store8(&ud2_needle + 1, 0x0B);
+    store8(&ud2_needle + 2, 0x0F);
+    store8(&ud2_needle + 3, 0x0B);
+    store8(&ud2_needle + 4, 0x90);
+    var ud2_at = _find_bytes(buf, n, &ud2_needle, 5);
+
+    var fail = 0;
+    if (ud2_at >= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": found ud2/ud2/nop sentinel (0F 0B 0F 0B 90) at offset ");
+        print_num(ud2_at);
+        println(" — lib/fnptr.cyr did not resolve via version-pinned fallback");
+        println("    (rename-skip regression — check src/frontend/lex.cyr `vp =` constant)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": fncall1 resolved via $HOME/.cyrius/versions/<v>/lib/fnptr.cyr (no ud2 sentinel)");
+    }
+    _check(label, fail);
+    return fail;
+}

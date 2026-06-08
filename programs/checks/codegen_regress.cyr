@@ -1,0 +1,631 @@
+# ================================================================
+# programs/checks/codegen_regress.cyr — codegen-behavior regression gates (input_1mb/truthy/object_init/derive_serialize/args_init/inline_asm/syscall_surface/build_exit_nonzero)
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _input_1mb_gate(): i64 {
+    var src_path = _tmp_path("audit_1mb_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) {
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+    # Build the source in a single buffer to minimize syscalls.
+    # Each pad line is ~78 chars × 9000 ≈ 702 KB. Comfortably above
+    # the old 512 KB cap, comfortably below the new 1 MB cap.
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < 9000) {
+        str_builder_add_cstr(sb, "# pad-line ");
+        # 5-digit zero-padded index, awk's "%05d" equivalent.
+        if (i < 10) { str_builder_add_cstr(sb, "0000"); }
+        else { if (i < 100) { str_builder_add_cstr(sb, "000"); }
+            else { if (i < 1000) { str_builder_add_cstr(sb, "00"); }
+                else { if (i < 10000) { str_builder_add_cstr(sb, "0"); }
+                    else { } } } }
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, ": this is a no-op comment line for input-buffer sizing\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "var pad_done = 1;\nsyscall(60, 0);\n");
+    var src_str = str_builder_build(sb);
+    var src_data = str_data(src_str);
+    var src_len = str_len(src_str);
+    sys_write(fd, src_data, src_len);
+    sys_close(fd);
+
+    # Sanity: must be > 524288 (old cap) and < 1048576 (new cap).
+    if (src_len < 524288) {
+        sys_unlink(src_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": synthetic source ");
+        print_num(src_len);
+        println(" B is under the old 512 KB cap; regression doesn't exercise the cap");
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+    if (src_len > 1048576) {
+        sys_unlink(src_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": synthetic source ");
+        print_num(src_len);
+        println(" B is over the new 1 MB cap; regression should fit");
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+
+    var ec = _compile_run_get_exit(src_path);
+    sys_unlink(src_path);
+    if (ec != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cycc + run on a ");
+        print_num(src_len);
+        _p(" B source produced exit ");
+        print_num(ec);
+        println(" (expected 0)");
+        _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": cycc compiles + runs a ");
+    print_num(src_len);
+    println(" B source (pre-v5.7.10 cap was 524288 B)");
+    _check("cycc accepts >512 KB source (heap reshuffle, v5.7.10)", 0);
+    return 0;
+}
+
+fn _truthy_after_fncall_gate(): i64 {
+    var fix1 = _root_path("tests/fixtures/truthy/var.cyr");
+    var fix2 = _root_path("tests/fixtures/truthy/direct.cyr");
+    var rc1 = _compile_run_get_exit(fix1);
+    var rc2 = _compile_run_get_exit(fix2);
+    var fail = 0;
+    if (rc1 != 99) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": bare-truthy-after-fncall (var r): exit ");
+        print_num(rc1);
+        println(" (expected 99). v5.6.x _flags_reflect_rax stale-flag regression has returned.");
+        fail = 1;
+    }
+    if (rc2 != 77) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": bare-truthy-direct-fncall: exit ");
+        print_num(rc2);
+        println(" (expected 77).");
+        fail = 1;
+    }
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": bare-truthy after fn-call returns correct branch");
+    }
+    _check("bare-truthy 'if (r)' after fn-call branches correctly (v5.6.21 fix)", fail);
+    return fail;
+}
+
+fn _object_init_gate(): i64 {
+    var src_path = _tmp_path("audit_oinit_src_");
+    var src_fd = sys_open(src_path, 577, 420);
+    if (src_fd < 0) {
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+    var src_text = "object;\nfn x() { return 0; }\n";
+    sys_write(src_fd, src_text, strlen(src_text));
+    sys_close(src_fd);
+
+    var obj_path = _tmp_path("audit_oinit_obj_");
+    var rc = _self_host_pipe(src_path, CC_PATH, obj_path);
+    sys_unlink(src_path);
+    if (rc != 0) {
+        sys_unlink(obj_path);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": object; fixture did not compile (rc=");
+        print_num(rc);
+        println(")");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    var buf_cap = 1048576;
+    var buf = alloc(buf_cap);
+    var n = file_read_all(obj_path, buf, buf_cap);
+    sys_unlink(obj_path);
+    if (n <= 0) {
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    # ELF64 header (little-endian on x86_64): e_shoff @ 40 (u64),
+    # e_shentsize @ 58 (u16), e_shnum @ 60 (u16). Walk section
+    # headers to find SHT_SYMTAB (sh_type == 2). Each section
+    # header is e_shentsize bytes; sh_type @ +4, sh_offset @ +24,
+    # sh_size @ +32, sh_link @ +40.
+    var e_shoff = load64(buf + 40);
+    var e_shentsize = load16(buf + 58);
+    var e_shnum = load16(buf + 60);
+
+    var symtab_off = 0;
+    var symtab_size = 0;
+    var symtab_link = 0;
+    var i = 0;
+    while (i < e_shnum) {
+        var sh = buf + e_shoff + i * e_shentsize;
+        var sh_type = load32(sh + 4);
+        if (sh_type == 2) {                 # SHT_SYMTAB
+            symtab_off = load64(sh + 24);
+            symtab_size = load64(sh + 32);
+            symtab_link = load32(sh + 40);
+        }
+        i = i + 1;
+    }
+
+    if (symtab_off == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": no SHT_SYMTAB section in .o");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    # The associated strtab is symtab_link's section header.
+    var strtab_sh = buf + e_shoff + symtab_link * e_shentsize;
+    var strtab_off = load64(strtab_sh + 24);
+
+    # Walk symbol entries. Elf64_Sym is 24 bytes: st_name @ +0
+    # (u32 — offset into strtab), st_info @ +4 (u8 — high nibble
+    # is the bind, low nibble is the type).
+    var entries = symtab_size / 24;
+    var found_bind = 0 - 1;
+    var j = 0;
+    while (j < entries) {
+        var sym = buf + symtab_off + j * 24;
+        var st_name = load32(sym);
+        var name_ptr = buf + strtab_off + st_name;
+        if (streq(name_ptr, "_cyrius_init") == 1) {
+            var st_info = load8(sym + 4);
+            found_bind = st_info / 16;       # high nibble
+            j = entries;
+        } else {
+            j = j + 1;
+        }
+    }
+
+    if (found_bind == 0 - 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": _cyrius_init missing from .o symbol table");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    if (found_bind != 1) {                   # STB_GLOBAL == 1
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": _cyrius_init bind=");
+        print_num(found_bind);
+        println(" (expected 1=STB_GLOBAL — see v5.4.9 regression)");
+        _check("_cyrius_init STB_GLOBAL in object; mode", 1);
+        return 1;
+    }
+
+    _check("_cyrius_init STB_GLOBAL in object; mode", 0);
+    return 0;
+}
+
+fn _build_exit_nonzero_gate(): i64 {
+    var label = "cyrius build exits non-zero when cycc fails (v6.0.5; yeo-cy-test papercut #2 invariant)";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fx = _tmp_path("audit_build_exit_");
+    sys_mkdir(fx, 0x1ED);
+    # '//' triggers `error: <source>:1: unexpected '/'` in cycc (cyrius
+    # comments are '#'); guaranteed parse failure with no dep surface.
+    _write_file(_lk_path(fx, "/bad.cyr"), "//comment\n");
+    _write_file(_lk_path(fx, "/cyrius.cyml"), "[package]\nname = \"build_exit_gate\"\n");
+
+    var bout = _tmp_path("audit_build_exit_out_");
+    var bec = _exec_in_dir3(fx, cyrius_bin, "build", "bad.cyr", "bad.out", bout);
+
+    sys_unlink(bout);
+    sys_unlink(_lk_path(fx, "/bad.out"));
+    sys_unlink(_lk_path(fx, "/bad.cyr"));
+    sys_unlink(_lk_path(fx, "/cyrius.cyml"));
+    sys_rmdir(fx);
+
+    var fail = 0;
+    if (bec == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cyrius build returned 0 on broken source (yeo-cy-test papercut #2 regressed)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        _p(": cyrius build exited "); print_num(bec); println(" (non-zero) on broken source");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _args_init_4kb_gate(): i64 {
+    var fix = _root_path("tests/fixtures/argc_print.cyr");
+    var bin = _tmp_path("audit_argc_bin_");
+    var rc = _self_host_pipe(fix, CC_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": argc_print fixture compile (rc=");
+        print_num(rc);
+        println(")");
+        _check("args_init reads >4 KB cmdline; argc()==2 with 8 KB arg (cyim BUG-001)", 1);
+        return 1;
+    }
+    sys_chmod(bin, 493);
+
+    # Synthesize an 8192-byte arg — 'A' repeated 8192 times,
+    # null-terminated. Comfortably above the pre-v5.9.5 4063-byte
+    # truncation threshold; comfortably below ARG_MAX (2 MB).
+    var arg_len = 8192;
+    var arg = alloc(arg_len + 1);
+    var ai = 0;
+    while (ai < arg_len) {
+        store8(arg + ai, 65);   # 'A'
+        ai = ai + 1;
+    }
+    store8(arg + arg_len, 0);
+
+    var out_cap = 4096;
+    var out_buf = alloc(out_cap);
+    var out_n = _exec_with_arg_capture(bin, arg, out_buf, out_cap);
+    sys_unlink(bin);
+
+    # Parse leading int from captured stdout. Fixture prints
+    # `<argc>\n` only.
+    var got = _aw_parse_leading_int(out_buf, out_n);
+    if (got != 2) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": argc()==");
+        print_num(got);
+        _p(" with 8 KB arg (expected 2; pre-v5.9.5 cap returned 1, captured ");
+        print_num(out_n);
+        println(" bytes)");
+        _check("args_init reads >4 KB cmdline; argc()==2 with 8 KB arg (cyim BUG-001)", 1);
+        return 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    _p(": argc()==2 with 8 KB arg (heap-backed buffer, cap 2 MB = ARG_MAX)");
+    println("");
+    _check("args_init reads >4 KB cmdline; argc()==2 with 8 KB arg (cyim BUG-001)", 0);
+    return 0;
+}
+
+fn _derive_serialize_primitive_gate(): i64 {
+    var label = "#derive(Serialize) emits working JSON for i64-typed struct fields (v5.9.30; agnosys 1.1.12)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "include \"lib/string.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/fmt.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/vec.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/str.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/syscalls.cyr\"\n");
+    str_builder_add_cstr(sb, "#derive(Serialize)\n");
+    str_builder_add_cstr(sb, "struct point { x: i64; y: i64; z: i64; }\n");
+    str_builder_add_cstr(sb, "fn main() {\n");
+    str_builder_add_cstr(sb, "    alloc_init();\n");
+    str_builder_add_cstr(sb, "    var p = point { 11, 22, 33 };\n");
+    str_builder_add_cstr(sb, "    var sb = str_builder_new();\n");
+    str_builder_add_cstr(sb, "    point_to_json(&p, sb);\n");
+    str_builder_add_cstr(sb, "    var out = str_builder_build(sb);\n");
+    str_builder_add_cstr(sb, "    sys_write(1, str_data(out), str_len(out));\n");
+    str_builder_add_cstr(sb, "    return 0;\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "var ec = main(); syscall(60, ec);\n");
+
+    var src_path = _tmp_path("audit_derive_ser_src_");
+    if (_write_file(src_path, str_data(str_builder_build(sb))) <= 0) {
+        sys_unlink(src_path);
+        _check(label, 1);
+        return 1;
+    }
+
+    var bin = _tmp_path("audit_derive_ser_bin_");
+    var rc = _self_host_pipe(src_path, CC_PATH, bin);
+    sys_unlink(src_path);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cycc compile rc=");
+        print_num(rc);
+        println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin, 493);
+
+    var cap = 256;
+    var out_buf = alloc(cap);
+    var n = _exec_capture_clean(bin, out_buf, cap);
+    sys_unlink(bin);
+
+    var expected = "{\"x\":11,\"y\":22,\"z\":33}";
+    var elen = strlen(expected);
+    if (n < elen) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": output ");
+        print_num(n);
+        _p(" bytes < expected ");
+        print_num(elen);
+        println(" bytes (pre-v5.9.30 emitted empty body or SIGILL?)");
+        _check(label, 1);
+        return 1;
+    }
+    var i = 0;
+    while (i < elen) {
+        if (load8(out_buf + i) != load8(expected + i)) {
+            _p("  ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": output mismatch at byte ");
+            print_num(i);
+            println("");
+            _check(label, 1);
+            return 1;
+        }
+        i = i + 1;
+    }
+
+    _p("  ");
+    _p(ANSI_GREEN);
+    _p("PASS");
+    _p(ANSI_RESET);
+    println(": point_to_json emits {\"x\":11,\"y\":22,\"z\":33} for #derive(Serialize)");
+    _check(label, 0);
+    return 0;
+}
+
+fn _inline_asm_discard_gate(): i64 {
+    var label = "120B asm fn + standalone sys_write (sigil AES-NI shape)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fail = 0;
+    var i = 0;
+    while (i < 2) {
+        var fix_path = 0;
+        var shape_label = 0;
+        if (i == 0) {
+            fix_path = _root_path("tests/fixtures/inline_asm_discard/with_leading_global.cyr");
+            shape_label = "shape A (with leading global)";
+        }
+        if (i == 1) {
+            fix_path = _root_path("tests/fixtures/inline_asm_discard/no_leading_global.cyr");
+            shape_label = "shape B (no leading global; pre-v5.5.21 SIGSEGV)";
+        }
+        var bin = _tmp_path("audit_inline_asm_");
+        var rc = _self_host_pipe(fix_path, CC_PATH, bin);
+        if (rc != 0) {
+            sys_unlink(bin);
+            _p("    ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": ");
+            _p(shape_label);
+            _p(" cycc compile rc=");
+            print_num(rc);
+            println("");
+            fail = fail + 1;
+            i = i + 1;
+            continue;
+        }
+        sys_chmod(bin, 493);
+
+        var cap = 64;
+        var buf = alloc(cap);
+        var n = _exec_capture_clean(bin, buf, cap);
+        sys_unlink(bin);
+        if (n != 16) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("FAIL");
+            _p(ANSI_RESET);
+            _p(": ");
+            _p(shape_label);
+            _p(" wrote ");
+            print_num(n);
+            println(" bytes (expected 16) — fixup.cyr 16-alignment regressed?");
+            fail = fail + 1;
+        }
+        i = i + 1;
+    }
+
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": both shapes write 16 B (sigil 2.9.0 workaround + originally-SIGSEGV path; v5.5.21)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+fn _syscall_surface_v5735_gate(): i64 {
+    var label = "stdlib syscall surface — getrandom + getdents64 + landlock + random_bytes (v5.7.35)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var s_syscalls = _root_path("lib/syscalls.cyr");
+    var s_random   = _root_path("lib/random.cyr");
+    var s_security = _root_path("lib/security.cyr");
+    var s_alloc    = _root_path("lib/alloc.cyr");
+    if (file_exists(s_syscalls) != 1) { _p("  skip: lib/syscalls.cyr missing"); println(""); _check(label, 0); return 0; }
+    if (file_exists(s_random)   != 1) { _p("  skip: lib/random.cyr missing");   println(""); _check(label, 0); return 0; }
+    if (file_exists(s_security) != 1) { _p("  skip: lib/security.cyr missing"); println(""); _check(label, 0); return 0; }
+    if (file_exists(s_alloc)    != 1) { _p("  skip: lib/alloc.cyr missing");    println(""); _check(label, 0); return 0; }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/syscalls.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/random.cyr\"\n");
+    str_builder_add_cstr(sb, "include \"lib/security.cyr\"\n");
+    str_builder_add_cstr(sb, "var buf1[32];\n");
+    str_builder_add_cstr(sb, "var n1 = sys_getrandom(&buf1, 32, 0);\n");
+    str_builder_add_cstr(sb, "if (n1 != 32) { syscall(60, 1); }\n");
+    str_builder_add_cstr(sb, "var any1 = 0;\n");
+    str_builder_add_cstr(sb, "var i1 = 0;\n");
+    str_builder_add_cstr(sb, "while (i1 < 32) {\n");
+    str_builder_add_cstr(sb, "    if (load8(&buf1 + i1) != 0) { any1 = 1; }\n");
+    str_builder_add_cstr(sb, "    i1 = i1 + 1;\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "if (any1 != 1) { syscall(60, 2); }\n");
+    str_builder_add_cstr(sb, "var buf2[64];\n");
+    str_builder_add_cstr(sb, "var i2 = 0;\n");
+    str_builder_add_cstr(sb, "while (i2 < 64) { store8(&buf2 + i2, 0); i2 = i2 + 1; }\n");
+    str_builder_add_cstr(sb, "var n2 = random_bytes(&buf2, 64);\n");
+    str_builder_add_cstr(sb, "if (n2 != 64) { syscall(60, 11); }\n");
+    str_builder_add_cstr(sb, "var any2 = 0;\n");
+    str_builder_add_cstr(sb, "i2 = 0;\n");
+    str_builder_add_cstr(sb, "while (i2 < 64) {\n");
+    str_builder_add_cstr(sb, "    if (load8(&buf2 + i2) != 0) { any2 = 1; }\n");
+    str_builder_add_cstr(sb, "    i2 = i2 + 1;\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "if (any2 != 1) { syscall(60, 12); }\n");
+    # Wiring-only references (unreachable branch; symbol resolution
+    # required, runtime invocation skipped — CI seccomp guard).
+    str_builder_add_cstr(sb, "if (0 != 0) {\n");
+    str_builder_add_cstr(sb, "    var trash[64];\n");
+    str_builder_add_cstr(sb, "    var _g  = sys_getdents64(0 - 1, &trash, 64);\n");
+    str_builder_add_cstr(sb, "    var _l1 = sys_landlock_create_ruleset(0, 0, 1);\n");
+    str_builder_add_cstr(sb, "    var _l2 = sys_landlock_add_rule(0 - 1, 1, 0, 0);\n");
+    str_builder_add_cstr(sb, "    var _l3 = sys_landlock_restrict_self(0 - 1, 0);\n");
+    str_builder_add_cstr(sb, "}\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_EXECUTE    != 1)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_WRITE_FILE != 2)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_READ_FILE  != 4)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_READ_DIR   != 8)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_ACCESS_FS_MAKE_SYM   != 4096) { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (LANDLOCK_RULE_PATH_BENEATH    != 1)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (GRND_NONBLOCK                 != 1)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (GRND_RANDOM                   != 2)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "if (GRND_INSECURE                 != 4)    { syscall(60, 7); }\n");
+    str_builder_add_cstr(sb, "syscall(60, 0);\n");
+
+    var src_path = _tmp_path("audit_syscall_surface_");
+    var src = str_builder_build(sb);
+    if (_write_file(src_path, str_data(src)) <= 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": cannot write tmp source");
+        sys_unlink(src_path);
+        _check(label, 1);
+        return 1;
+    }
+
+    var ec = _compile_run_get_exit(src_path);
+    sys_unlink(src_path);
+
+    if (ec == 0) {
+        _check(label, 0);
+        return 0;
+    }
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": ");
+    if (ec == 1)  { println("sys_getrandom returned wrong byte count"); }
+    if (ec == 2)  { println("sys_getrandom buffer all-zero (CSPRNG?)"); }
+    if (ec == 7)  { println("enum constant mismatch (security.cyr or random.cyr)"); }
+    if (ec == 11) { println("random_bytes returned wrong count"); }
+    if (ec == 12) { println("random_bytes buffer all-zero"); }
+    if (ec == 0 - 1) { println("compile or fork issue"); }
+    var known = 0;
+    if (ec == 1)  { known = 1; }
+    if (ec == 2)  { known = 1; }
+    if (ec == 7)  { known = 1; }
+    if (ec == 11) { known = 1; }
+    if (ec == 12) { known = 1; }
+    if (ec == 0 - 1) { known = 1; }
+    if (known == 0) {
+        _p("unexpected exit code ");
+        print_num(ec);
+        println(" (segfault or sandbox kill)");
+    }
+    _check(label, 1);
+    return 1;
+}

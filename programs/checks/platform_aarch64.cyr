@@ -1,0 +1,646 @@
+# ================================================================
+# programs/checks/platform_aarch64.cyr — aarch64 backend codegen gates
+# ================================================================
+# v6.0.90: split out of the monolithic programs/check.cyr (10.2K LoC).
+# Fn DEFINITIONS only — no includes, no module-level vars, no driver.
+# All lib includes + the 18 globals + the dispatcher/driver live in
+# programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
+
+fn _aarch64_codebuf_cap_gate(): i64 {
+    var emit_path = _root_path("src/backend/aarch64/emit.cyr");
+    if (file_exists(emit_path) != 1) {
+        _p("  skip: ");
+        _p(emit_path);
+        println(" missing");
+        _check("aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)", 0);
+        return 0;
+    }
+    var has_3mb = _file_contains_substr(emit_path, "if (cp >= 3145728)");
+    var has_512kb = _file_contains_substr(emit_path, "if (cp >= 524288)");
+    var fail = 0;
+    if (has_3mb != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": aarch64 EB codebuf cap < 3 MB — re-grow to match v5.7.27");
+        fail = 1;
+    }
+    if (has_512kb == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": aarch64 EB still has the 512 KB cap (canary tripped)");
+        fail = 1;
+    }
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)");
+    }
+    _check("aarch64 EB codebuf cap matches v5.7.27 region size (3 MB; v5.7.34)", fail);
+    return fail;
+}
+
+fn _aarch64_syscalls_gate(): i64 {
+    var label = "aarch64 syscall stdlib + post-clone trampoline (via ssh pi)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_cluster/syscalls_combined.cyr");
+    var bin = _tmp_path("audit_aarch64_syscalls_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyr_aarch64_cluster_smoke";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " /tmp/cyrius_regr_fs_probe.txt; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": aarch64 syscall stdlib + thread/atomic/thread_local/flags green on ");
+        _p(target);
+        println(" (9/9 sub-tests; v5.4.11 .. v5.5.33)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": aarch64 cluster sub-test failed (exit=");
+    print_num(ec);
+    if (ec == 11) { _p(" — t1 sys_open failed"); }
+    if (ec == 12) { _p(" — t1 sys_read returned 0"); }
+    if (ec == 21) { _p(" — t2 thread_create returned 0"); }
+    if (ec == 22) { _p(" — t2 thread_join non-zero"); }
+    if (ec == 31) { _p(" — t3 alloc returned 0 inside loop"); }
+    if (ec == 32) { _p(" — t3 alloc tail mismatch"); }
+    if (ec >= 41) { if (ec <= 45) { _p(" — t4 fs roundtrip failed"); } }
+    if (ec == 51) { _p(" — t5 mt thread_create returned 0"); }
+    if (ec == 52) { _p(" — t5 mt thread_join non-zero"); }
+    if (ec >= 61) { if (ec <= 65) { _p(" — t6 thread_local TPIDR_EL0 path"); } }
+    if (ec >= 71) { if (ec <= 77) { _p(" — t7 atomic LL-SC sequence"); } }
+    if (ec >= 81) { if (ec <= 82) { _p(" — t8 mutex+hashmap contention"); } }
+    if (ec >= 91) { if (ec <= 96) { _p(" — t9 lib/flags.cyr parse"); } }
+    println(")");
+    _check(label, 1);
+    return 1;
+}
+
+fn _aarch64_struct_byval_gate(): i64 {
+    var label = "aarch64 struct-by-value round-trip (Phase 2b X8 / LDRB-STRB; via ssh pi)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_cluster/struct_byval.cyr");
+    var bin = _tmp_path("audit_aarch64_byval_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyr_aarch64_byval";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": Point{11,22,33} + shifted_point(5)={106,107,108} round-trip on ");
+        println(target);
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": struct-by-value round-trip exit=");
+    print_num(ec);
+    if (ec == 1) { _p(" — make_point().x != 11"); }
+    if (ec == 2) { _p(" — make_point().y != 22"); }
+    if (ec == 3) { _p(" — make_point().z != 33"); }
+    if (ec == 4) { _p(" — shifted_point(5).x != 106"); }
+    if (ec == 5) { _p(" — shifted_point(5).y != 107"); }
+    if (ec == 6) { _p(" — shifted_point(5).z != 108"); }
+    if (ec == 139) { _p(" — SIGSEGV (frame-disp adjustment broken?)"); }
+    println("");
+    _check(label, 1);
+    return 1;
+}
+
+fn _aarch64_sub_byte_field_load_gate(): i64 {
+    var label = "aarch64 sub-byte struct field load via dot syntax (v5.9.27; agnosys 1.1.9; via ssh pi)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_cluster/sub_byte_field_load.cyr");
+    var bin = _tmp_path("audit_aarch64_subbyte_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(") — pre-v5.9.27 error:1610 regression?");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyr_aarch64_subbyte";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": 10 sub-cases (i8 / i16 / i32 field loads via dot syntax) on ");
+        println(target);
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": sub-byte field load round-trip exit=");
+    print_num(ec);
+    if (ec == 1)  { _p(" — nlmsghdr.nlmsg_len (i32) mismatch"); }
+    if (ec == 2)  { _p(" — nlmsghdr.nlmsg_type (i16) mismatch"); }
+    if (ec == 3)  { _p(" — nlmsghdr.nlmsg_flags (i16, offset>0) mismatch"); }
+    if (ec == 4)  { _p(" — nlmsghdr.nlmsg_seq (i32, offset>0) mismatch"); }
+    if (ec == 5)  { _p(" — mixed_widths.flag (i8) mismatch"); }
+    if (ec == 6)  { _p(" — mixed_widths.pad8 (i8, offset 1) mismatch"); }
+    if (ec == 7)  { _p(" — mixed_widths.word_a (i16) mismatch"); }
+    if (ec == 8)  { _p(" — mixed_widths.word_b (i16) mismatch"); }
+    if (ec == 9)  { _p(" — mixed_widths.long_x (i32) mismatch"); }
+    if (ec == 10) { _p(" — mixed_widths.long_y (i32) mismatch"); }
+    println("");
+    _check(label, 1);
+    return 1;
+}
+
+fn _aarch64_native_selfhost_gate(): i64 {
+    var label = "native cycc self-hosts byte-identical on Pi (pin v5.6.32)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_PATH);
+        println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh (no aarch64 runner available)");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Step 1: cross-build aarch64-native cycc via the existing
+    # cycc_aarch64 cross-compiler. (We can't reuse build/cycc_aarch64
+    # directly — that's an x86 binary that runs the aarch64
+    # backend; we need a binary that is itself aarch64 ELF and
+    # ALSO emits aarch64 code.)
+    var arch_cc_x86 = _root_path("build/cycc_aarch64");
+    if (file_exists(arch_cc_x86) != 1) {
+        _p("  skip: ");
+        _p(arch_cc_x86);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var native_src = _root_path("src/main_aarch64_native.cyr");
+    var cc_native = _tmp_path("audit_cc_native_");
+    var rc1 = _self_host_pipe(native_src, arch_cc_x86, cc_native);
+    if (rc1 != 0) {
+        sys_unlink(cc_native);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": cc5_native cross-build failed (rc=");
+        print_num(rc1);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Step 2: ship cc5_native to remote.
+    var remote_cc = "/tmp/cyr_selfhost_cc5";
+    var scp_rc = _scp_to(target, cc_native, remote_cc);
+    sys_unlink(cc_native);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp cc5_native to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Step 3: tar-pipe src + lib to remote.
+    var remote_tree = "/tmp/cyr_selfhost_tree";
+    var tar_rc = _tar_pipe_ssh(target, ROOT_PATH, "src lib", remote_tree);
+    if (tar_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": tar-pipe src+lib to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(tar_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    # Step 4: two-step compile on remote, then cmp.
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote_cc);
+    str_builder_add_cstr(cmd_sb, " && cd ");
+    str_builder_add_cstr(cmd_sb, remote_tree);
+    str_builder_add_cstr(cmd_sb, " && cat src/main_aarch64_native.cyr | ");
+    str_builder_add_cstr(cmd_sb, remote_cc);
+    str_builder_add_cstr(cmd_sb, " > cc5_b 2>/dev/null && chmod +x cc5_b && ");
+    str_builder_add_cstr(cmd_sb, "cat src/main_aarch64_native.cyr | ./cc5_b > cc5_c 2>/dev/null && ");
+    str_builder_add_cstr(cmd_sb, "cmp cc5_b cc5_c >/dev/null; rc=$?; ");
+    str_builder_add_cstr(cmd_sb, "rm -rf ");
+    str_builder_add_cstr(cmd_sb, remote_cc);
+    str_builder_add_cstr(cmd_sb, " ");
+    str_builder_add_cstr(cmd_sb, remote_tree);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": native aarch64 cycc self-hosts byte-identical on ");
+        _p(target);
+        println(" (v5.6.32)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": native self-host failed on ");
+    _p(target);
+    _p(" (rc=");
+    print_num(ec);
+    println(") — compile error or cc5_b != cc5_c");
+    _check(label, 1);
+    return 1;
+}
+
+fn _aarch64_f64_basic_gate(): i64 {
+    var label = "aarch64 f64 add/sub/mul/div/sqrt/neg/floor/ceil/round + int↔f64 bit-exact on Pi (v5.7.30)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_f64/basic_ops.cyr");
+    var bin = _tmp_path("audit_f64_basic_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyrius_f64_aa_smoke";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": aarch64 f64 basic ops bit-exact on ");
+        _p(target);
+        println(" (v5.7.30)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": aarch64 f64 basic op failure (exit=");
+    print_num(ec);
+    if (ec == 1) { _p(" — f64_add(2.0, 3.0) != 5.0"); }
+    if (ec == 2) { _p(" — f64_sub(3.0, 2.0) != 1.0"); }
+    if (ec == 3) { _p(" — f64_mul(2.0, 3.0) != 6.0"); }
+    if (ec == 4) { _p(" — f64_div(3.0, 2.0) != 1.5"); }
+    if (ec == 5) { _p(" — f64_neg(2.0) != -2.0"); }
+    if (ec == 6) { _p(" — f64_sqrt(4.0) != 2.0"); }
+    if (ec == 7) { _p(" — f64_floor(2.5) != 2.0"); }
+    if (ec == 8) { _p(" — f64_ceil(2.5) != 3.0"); }
+    if (ec == 9) { _p(" — f64_round(2.5) != 2.0 (ties-to-even)"); }
+    if (ec == 10) { _p(" — f64_to(f64_from(42)) != 42"); }
+    if (ec == 11) { _p(" — f64_to(f64_from(-7)) != -7"); }
+    println(")");
+    _check(label, 1);
+    return 1;
+}
+
+fn _aarch64_f64_polyfill_gate(): i64 {
+    var label = "aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate on Pi (v5.7.31 + v5.8.4; phylax-unblock)";
+    if (file_exists(CC_AARCH64_PATH) != 1) {
+        _p("  skip: ");
+        _p(CC_AARCH64_PATH);
+        println(" not built (cross-compiler required)");
+        _check(label, 0);
+        return 0;
+    }
+    var target = _ssh_target("SSH_TARGET", "pi");
+    if (_ssh_skip_check(target) != 1) {
+        _p("  skip: ");
+        _p(target);
+        println(" unreachable via ssh");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fix = _root_path("tests/fixtures/aarch64_f64/polyfill_ops.cyr");
+    var bin = _tmp_path("audit_f64_poly_");
+    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": aarch64 cross-build of polyfill smoke test failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var remote = "/tmp/cyrius_polyfill_aa_smoke";
+    var scp_rc = _scp_to(target, bin, remote);
+    sys_unlink(bin);
+    if (scp_rc != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": scp to ");
+        _p(target);
+        _p(" failed (rc=");
+        print_num(scp_rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+
+    var cmd_sb = str_builder_new();
+    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, " && ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, "; exit $rc");
+    var cmd = str_data(str_builder_build(cmd_sb));
+    var ec = _ssh_remote_exit(target, cmd);
+
+    if (ec == 99) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        _p(": aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate within ulp budget on ");
+        _p(target);
+        println(" (v5.7.31 + v5.8.4)");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  ");
+    _p(ANSI_RED);
+    _p("FAIL");
+    _p(ANSI_RESET);
+    _p(": polyfill failure (exit=");
+    print_num(ec);
+    if (ec == 1)  { _p(" — f64_exp(0) != 1.0 exactly"); }
+    if (ec == 2)  { _p(" — f64_exp(1) deviates >1024 ulp from e"); }
+    if (ec == 3)  { _p(" — f64_ln(1) deviates >1024 ulp from 0"); }
+    if (ec == 4)  { _p(" — f64_ln(e) deviates >1024 ulp from 1.0"); }
+    if (ec == 5)  { _p(" — exp(ln(2)) deviates >4096 ulp from 2.0 (round-trip)"); }
+    if (ec == 6)  { _p(" — f64_exp(-1) deviates >1024 ulp from 1/e"); }
+    if (ec == 7)  { _p(" — f64_log2(1) deviates >1024 ulp from 0"); }
+    if (ec == 8)  { _p(" — f64_log2(8) deviates >8192 ulp from 3.0"); }
+    if (ec == 9)  { _p(" — f64_log2(1024) deviates >8192 ulp from 10.0"); }
+    if (ec == 10) { _p(" — f64_log2(0.5) deviates >8192 ulp from -1.0"); }
+    println(")");
+    _check(label, 1);
+    return 1;
+}
