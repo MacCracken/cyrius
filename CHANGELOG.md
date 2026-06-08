@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.89] — 2026-06-07
+
+**Cleanup / refactor cluster (part 2a): `_TARGET_*` consolidation, first bite.**
+The duplicated output-format ladders in each fixup backend collapse into a
+shared `_emit_fmt` selector + an `_entry_base` helper — a deliberately narrow,
+byte-identical extraction (the full consolidation is genuinely multi-slot). An
+adversarial review caught and fixed a Mach-O-vs-PE precedence flip before ship.
+
+### Changed
+
+- **`_TARGET_*` consolidation — first bite: `_emit_fmt` / `_entry_base`.**
+  The output-format selection was a pair of parallel raw-`_TARGET_*`
+  if-ladders duplicated *within* each fixup backend — once in `FIXUP` for
+  the entry virtual address, once in `EMITELF` for the final-emit
+  dispatch. Both now read a single derived selector `_emit_fmt(S)` →
+  `0=ELF, 1=Mach-O x86_64, 2=Mach-O ARM64, 3=PE32+`, and the entry-address
+  ladder is factored into `_entry_base(S)`. `EMITELF` dispatches on
+  `_emit_fmt`; `FIXUP` takes its entry from `_entry_base` (the PE
+  `_pe_layout` side-effect stays inline). Applied symmetrically to
+  `src/backend/x86/fixup.cyr` and `src/backend/aarch64/fixup.cyr` (the
+  selector is kept byte-for-byte identical across the two so a later slot
+  can hoist it to a shared home; on aarch64 the PE / Mach-O-x86 branches
+  are statically-dead shims). This is deliberately **only** the top-level
+  format dispatcher — the rest of the `_TARGET_*` surface is genuinely
+  multi-slot (the per-op `ESYSCALL`/`EEXIT` emitters are byte-incompatible
+  across arches and the `~20 var _TARGET_*=0` shims are load-bearing
+  symbol resolution for the shared frontend; neither is touched).
+  `_emit_fmt` tests Mach-O **before** PE, matching the old `EMITELF`
+  ladder exactly — so even the unguarded, never-set-in-practice combined
+  state (`CYRIUS_MACHO=1` + `CYRIUS_TARGET_WIN=1`, where both `_TARGET_*`
+  flags are set by independent env vars) still resolves Mach-O-wins as
+  before (an adversarial review caught a draft that flipped this to
+  PE-wins; the final lands byte-identical for that combo too — Mach-O
+  8192 B on both).
+  **Byte-identical, exhaustively verified** — the refactor changes no
+  emitted output: `.88` vs `.89` compilers produce byte-identical binaries
+  across ELF-user, kernel (ELF32 *and* ELF64), shared, object, EFI (real
+  sources), AGNOS, PE32+, Mach-O x86_64, the Mach-O+PE conflict (x86) and
+  ELF + Mach-O ARM64 (aarch64); cycc self-hosts byte-identical on all four
+  hosts (ach + ecb + pi + cass); check.sh 85/85.
+
 ## [6.0.88] — 2026-06-07
 
 **Cleanup / refactor cluster (part 1).** sigil/sandhi refold + dead `ret_patches`

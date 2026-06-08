@@ -6,6 +6,48 @@
 # src/backend/common/runtime.cyr at v6.0.8 (shared with the
 # aarch64 backend; cx kept its own _read_env stub).
 
+# v6.0.89: derived output-format selector — the single place mapping the
+# per-backend _TARGET_* output flags to one format id, read by BOTH the
+# entry-base computation (FIXUP) and the final-emit dispatcher (EMITELF)
+# in place of the parallel raw-flag ladders they each carried. The first
+# bite of the _TARGET_* consolidation (the rest is genuinely multi-slot —
+# the per-op ESYSCALL/EEXIT emitters are byte-incompatible across arches).
+# Values: 0=ELF, 1=Mach-O x86_64, 2=Mach-O ARM64, 3=PE32+. kmode
+# (0=user/1=kernel/2=shared/3=obj), EFI and AGNOS are orthogonal modifiers
+# read separately. The branch taxonomy is identical to the aarch64 fixup's
+# copy (where _TARGET_PE / _TARGET_MACHO==1 are statically-dead shims) so a
+# later slot can hoist this to a shared home. See CHANGELOG [6.0.89].
+fn _emit_fmt(S): i64 {
+    # Precedence matches the pre-v6.0.89 EMITELF ladder EXACTLY — Mach-O is
+    # tested before PE. _TARGET_MACHO and _TARGET_PE come from independent
+    # unguarded env vars (CYRIUS_MACHO / CYRIUS_TARGET_WIN), so the combined
+    # state is reachable even though no sane build sets both; the old code
+    # let Mach-O win that collision, and we keep that to stay byte-identical.
+    if (_TARGET_MACHO == 1) { return 1; }
+    if (_TARGET_MACHO == 2) { return 2; }
+    if (_TARGET_PE == 1) { return 3; }
+    return 0;
+}
+
+# Entry virtual address for the active (format, kmode) combination. Mach-O
+# overrides kmode (the two are never combined); PE keeps the default ELF
+# entry — its layout runs via _pe_layout in FIXUP. Byte-identical to the
+# pre-v6.0.89 inline ladder; this value feeds EVERY absolute fixup
+# (dbase = entry + acp), so a wrong result shifts all loads into the wrong
+# section ("garbled output post-boot", per the FIXUP warning).
+fn _entry_base(S): i64 {
+    var fmt = _emit_fmt(S);
+    if (fmt == 1) { return 0x100001000; }   # Mach-O x86_64: TEXT_BASE + 4096
+    if (fmt == 2) { return 0x100004000; }   # Mach-O ARM64: TEXT_BASE + 16384
+    var kmode = L64(S + 0x18FCA0);
+    if (kmode == 1) {
+        if (_TARGET_ELF64_KERNEL == 1) { return 0x100000 + 120 + 48; }
+        return 0x100000 + 84 + 12;
+    }
+    if (kmode == 2) { return 232; }
+    return 0x400078;
+}
+
 fn FIXUP(S): i64 {
     # Align code to 8 (don't write — leave as zeros, matching cybs)
     var cp = GCP(S);
@@ -33,27 +75,13 @@ fn FIXUP(S): i64 {
     }
     var acp = cp;
     var kmode = L64(S + 0x18FCA0);
-    var entry = 0x400078;
-    # Kernel mode (kmode == 1) dispatches to either EMITELF_KERNEL (ELF32 +
-    # multiboot1, hdrsz=84 + mb_sz=12 → entry 0x100060) or EMITELF64_KERNEL
-    # (ELF64 + multiboot2, hdrsz=120 + mb_sz=48 → entry 0x1000A8). FIXUP's
-    # `entry` must agree with the eventual layout or every absolute fixup
-    # shifts by `hdrsz_delta + mb_sz_delta` bytes and loads land inside
-    # .text instead of .rodata (manifests as garbled output post-boot).
-    if (kmode == 1) {
-        entry = 0x100000 + 84 + 12;
-        if (_TARGET_ELF64_KERNEL == 1) { entry = 0x100000 + 120 + 48; }
-    }
-    # Shared objects: p_vaddr=0, code starts right after 3 PHs (hdr=232).
-    # All data/string refs must be RIP-relative for load-bias safety.
-    if (kmode == 2) { entry = 232; }
-    # Mach-O x86_64: code at TEXT_BASE + 4096 (4KB page)
-    if (_TARGET_MACHO == 1) { entry = 0x100001000; }
-    # Mach-O ARM64: code at TEXT_BASE + 16384 (16KB page on Apple Silicon)
-    if (_TARGET_MACHO == 2) { entry = 0x100004000; }
-    # PE32+ (Windows): run the PE layout pass now so any ftype=4
-    # IAT-reference fixups can resolve against `_pe_*` RVAs during
-    # the patch loop below. EMITPE_EXEC reads the same globals.
+    # v6.0.89: entry VA via _entry_base / _emit_fmt (was a raw-flag ladder
+    # duplicated against EMITELF's dispatch; see the kernel-layout / Mach-O
+    # / PE notes there). The entry-address feeds every absolute fixup
+    # (dbase = entry + acp). PE keeps the default ELF entry but still runs
+    # its layout pass here so ftype=4 IAT-reference fixups resolve against
+    # `_pe_*` RVAs in the patch loop below.
+    var entry = _entry_base(S);
     if (_TARGET_PE == 1) { _pe_layout(S); }
     var dbase = entry + acp;
     # Precompute cumulative var offsets (prefix sum — O(n) instead of O(n²) per fixup)
@@ -1945,8 +1973,11 @@ fn EMITELF_OBJ(S): i64 {
 }
 
 fn EMITELF(S): i64 {
-    if (_TARGET_MACHO == 1) { EMITMACHO_EXEC(S); return 0; }
-    if (_TARGET_MACHO == 2) {
+    # v6.0.89: dispatch on the derived _emit_fmt instead of re-reading the
+    # raw _TARGET_* flags (same selector FIXUP uses for the entry base).
+    var fmt = _emit_fmt(S);
+    if (fmt == 1) { EMITMACHO_EXEC(S); return 0; }
+    if (fmt == 2) {
         # The x86 backend cannot emit arm64 code. Calling EMITMACHO_ARM64
         # here wraps x86 machine code in an arm64 Mach-O header — the
         # kernel SIGILLs at first instruction. Refuse at emit time so
@@ -1956,7 +1987,7 @@ fn EMITELF(S): i64 {
         103);
         syscall(SYS_EXIT, 1);
     }
-    if (_TARGET_PE == 1) {
+    if (fmt == 3) {
         # PE32+ (Windows x86_64) output via CYRIUS_TARGET_WIN=1.
         # `_pe_layout(S)` already ran inside FIXUP so any IAT-ref
         # fixups could resolve; region globals are populated. This

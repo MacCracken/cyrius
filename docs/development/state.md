@@ -3,6 +3,48 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-07 (.89 ship — _TARGET_* consolidation, first bite: _emit_fmt / _entry_base)
+
+Closing **v6.0.89**. check.sh 85/85; self-host byte-identical on **ach + ecb + pi + cass**; tcyr 167/167.
+The first bite of the `_TARGET_*` consolidation (part 2a of the cleanup/refactor cluster). Leader picked
+this over the check.cyr split for .89 (check.cyr modularization remains for .90).
+
+- **`_emit_fmt(S)` + `_entry_base(S)`** in `src/backend/x86/fixup.cyr` + `src/backend/aarch64/fixup.cyr`.
+  The output-format selection was a pair of parallel raw-`_TARGET_*` if-ladders duplicated *within* each
+  fixup backend — once in `FIXUP` (entry VA), once in `EMITELF` (final-emit dispatch). Both now read a
+  single derived selector `_emit_fmt` → `0=ELF, 1=Mach-O x86_64, 2=Mach-O ARM64, 3=PE32+`; the entry
+  ladder is factored into `_entry_base`. The PE `_pe_layout` side-effect stays inline in `FIXUP`.
+  Deliberately narrow — **only** the top-level format dispatcher. The rest of the `_TARGET_*` surface is
+  genuinely multi-slot (the understand-phase workflow confirmed: ~76 per-op `ESYSCALL`/`EEXIT` branches
+  dispatch to byte-incompatible per-arch emitters; the ~20 `var _TARGET_*=0` shims are load-bearing
+  symbol resolution for the shared frontend — neither touched).
+- **`_emit_fmt` tests Mach-O before PE** — matches the old `EMITELF` ladder exactly. `_TARGET_MACHO` and
+  `_TARGET_PE` come from independent **unguarded** env vars (`CYRIUS_MACHO` / `CYRIUS_TARGET_WIN`;
+  `main.cyr` has no mutual-exclusion guard), so the combined state is reachable; the old code let Mach-O
+  win and we keep that to stay byte-identical (Mach-O 8192 B on both `.88` and `.89` for that combo).
+
+**Verification (exhaustive, ultracode):** `.88` vs `.89` compilers produce **byte-identical** output across
+every mode — ELF-user, kernel ELF32 + ELF64, shared (kmode 2), object (kmode 3), EFI (real sources),
+AGNOS, PE32+, Mach-O x86_64, the Mach-O+PE conflict (x86), and ELF + Mach-O ARM64 (aarch64) — proven by
+building `.88`/`.89` compilers and diffing emitted binaries. Self-host byte-identical on all four hosts.
+A 3-lens adversarial-review workflow (divergence / hazard / skeptic, each finding adversarially verified)
+**caught a real divergence**: the draft `_emit_fmt` checked PE before Mach-O, flipping the conflicting-combo
+result to PE-wins. Fixed (Mach-O-first) → byte-identical for that combo too.
+
+**Process notes:**
+1. **zsh does NOT word-split unquoted `$var`** — `env $combo sh -c …` with `combo="A=1 B=1"` passed ONE
+   malformed env var (`A="1 B=1"`), silently testing the no-flags case. Multi-var env in test loops must
+   use literal `env A=1 B=1 …`, not a variable. Cost a verification cycle until the magic bytes (ELF, not
+   Mach-O) gave it away — check the actual output, don't trust the harness.
+2. **The cross-OS gate `cross-os-selfhost.sh` is not parallel-safe** (shared `/tmp/_co_x`); run sequentially.
+   (Still a candidate hardening: per-host temp paths.)
+
+**Next (leader sequence):** .90 = `programs/check.cyr` modularization (10.2K LoC / 163 fns → `programs/checks/`;
+the understand-phase workflow produced a 12–13-file breakdown + behavioral-identity acceptance plan; the
+services-split decision is the one open ASK) → .91 closeout + docs sweep → v6.1.0. **Latent, filed:**
+x86-macOS byte-array-literal no-compile (`issues/2026-06-07-…`); macho-arm socket *family* uses x86
+syscall nums in the aarch64-macho ESYSXLAT (real-network sockets likely broken on arm-macho).
+
 ## Session close — 2026-06-07 (.88 ship — cleanup/refactor part 1: sigil/sandhi refold + dead ret_patches + byte-array peephole + dead-code sweep)
 
 Closing **v6.0.88**. check.sh 85/85; self-host byte-identical on **ach + ecb + pi + cass**; tcyr 167/167.

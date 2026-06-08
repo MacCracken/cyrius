@@ -7,6 +7,33 @@
 # _env_scratch, _read_env, _prof_clock_ns moved to
 # src/backend/common/runtime.cyr at v6.0.8 (shared with x86).
 
+# v6.0.89: derived output-format selector — same selector + branch taxonomy
+# as the x86 fixup's copy (kept byte-for-byte identical so a later slot can
+# hoist it to a shared home). On the aarch64 backend _TARGET_PE and
+# _TARGET_MACHO==1 are statically-dead shims (=0), so this yields only 0=ELF
+# or 2=Mach-O ARM64. Read by both _entry_base (FIXUP) and EMITELF in place
+# of the raw-flag ladders. See CHANGELOG [6.0.89].
+fn _emit_fmt(S): i64 {
+    # Mach-O tested before PE — identical precedence + branch order to the
+    # x86 fixup's copy (see there). On aarch64 the PE / Mach-O-x86 branches
+    # are statically-dead shims, so order is moot here; kept identical so a
+    # later slot can hoist this verbatim to a shared home.
+    if (_TARGET_MACHO == 1) { return 1; }
+    if (_TARGET_MACHO == 2) { return 2; }
+    if (_TARGET_PE == 1) { return 3; }
+    return 0;
+}
+
+# Entry virtual address for the active (format, kmode) combination. Mach-O
+# ARM64 overrides kmode; the 16-byte kernel preamble stays a FIXUP-local
+# modifier (added to dbase there, not part of the entry base). Byte-identical
+# to the pre-v6.0.89 inline ladder.
+fn _entry_base(S): i64 {
+    if (_emit_fmt(S) == 2) { return 0x100004000; }   # Mach-O ARM64: TEXT_BASE + 16384
+    if (L64(S + 0x18FCA0) == 1) { return 0x40000078; }   # kernel
+    return 0x400078;
+}
+
 fn FIXUP(S): i64 {
     # Check for Mach-O ARM64 output mode
     var _ma_env = _read_env("CYRIUS_MACHO_ARM");
@@ -35,11 +62,13 @@ fn FIXUP(S): i64 {
     SCP(S, cp);
     var acp = cp;
     var kmode = L64(S + 0x18FCA0);
-    var entry = 0x400078;
+    # v6.0.89: entry VA via _entry_base / _emit_fmt (was a raw-flag ladder
+    # duplicated against EMITELF's dispatch). Mach-O ARM64 overrides kmode;
+    # the 16-byte kernel preamble stays a FIXUP-local modifier on dbase.
+    # Byte-identical to the prior ladder.
+    var entry = _entry_base(S);
     var preamble = 0;
-    if (kmode == 1) { entry = 0x40000078; preamble = 16; }
-    # Mach-O ARM64: code at TEXT_BASE + 16384 (16KB page)
-    if (_TARGET_MACHO == 2) { entry = 0x100004000; }
+    if (kmode == 1) { preamble = 16; }
     var dbase = entry + preamble + acp;
     var vcnt = GVCNT(S);
     var totvar = 0;
@@ -623,7 +652,9 @@ fn FIXUP_MOV(S, coff, addr): i64 {
 # ================================================================
 
 fn EMITELF(S): i64 {
-    if (_TARGET_MACHO == 2) { EMITMACHO_ARM64(S); return 0; }
+    # v6.0.89: dispatch on the derived _emit_fmt (same selector _entry_base
+    # uses) instead of re-reading the raw _TARGET_MACHO flag.
+    if (_emit_fmt(S) == 2) { EMITMACHO_ARM64(S); return 0; }
     if (L64(S + 0x18FCA0) == 1) { EMITELF_KERNEL(S); return 0; }
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
