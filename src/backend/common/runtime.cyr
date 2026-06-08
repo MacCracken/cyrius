@@ -39,6 +39,15 @@ var _TARGET_EFI_APPLICATION = 0;
 # in backend/cx/emit.cyr's own copy. gates direct-byte emits in shared
 # parse paths. See docs/audit/2026-04-27-cx-direct-emit-inventory.md.
 var _TARGET_CX = 0;
+# PIE codegen (v6.1.6): 0=off, 1=on. Set from --pie cmdline / CYRIUS_PIE=1 env
+# in the main_*.cyr entry points AFTER includes; default 0. When 1 AND kmode==1
+# (kernel), x86 codegen goes position-independent — `lea [rip+disp32]` instead of
+# `mov imm64` (reusing the proven shared/object _IS_OBJ path), the fixup walk
+# patches RIP-relative deltas, and EMITELF64_KERNEL emits an ET_DYN with a real
+# _start + p_vaddr=0 so a boot shim can KASLR-slide the kernel. Read by name in
+# x86 emit/fixup; non-PIE builds keep _pie_mode==0 → byte-identical. x86_64 only
+# this slot (aarch64 PIE is a later sub-arc). See CHANGELOG [6.1.6].
+var _pie_mode = 0;
 
 # Active output format for the (target-flag) combination — 0=ELF,
 # 1=Mach-O x86_64, 2=Mach-O ARM64, 3=PE. Hoisted from the byte-identical

@@ -747,6 +747,55 @@ fn _shared_dlopen_gate(): i64 {
     return 1;
 }
 
+fn _pie_exec_gate(): i64 {
+    var label = "--pie ET_DYN executable runs (ASLR)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: "); _p(CC_PATH); println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    # Compile the PIE smoke fixture with CYRIUS_PIE=1 (the env form of --pie,
+    # so the existing _self_host_pipe_env hook carries it into the child).
+    var src = _root_path("tests/fixtures/pie/pie_smoke.cyr");
+    var out = _tmp_path("audit_pie_");
+    var rc = _self_host_pipe_env(src, CC_PATH, out, "CYRIUS_PIE=1");
+    if (rc != 0) {
+        sys_unlink(out);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cycc CYRIUS_PIE=1 compile failed (rc="); print_num(rc); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(out, 493);
+    # Assert ET_DYN — e_type is the 2-byte LE field at file offset 16; ET_DYN==3.
+    # A non-PIE bake would be ET_EXEC(2) here, and any baked absolute VA would
+    # crash the run below once the kernel slides the ET_DYN to a random base.
+    var hb[24];
+    var hf = sys_open(out, 0, 0);
+    var hn = sys_read(hf, &hb, 20);
+    sys_close(hf);
+    var etype = load8(&hb + 16);
+    if (hn < 18 || etype != 3) {
+        sys_unlink(out);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": --pie output not ET_DYN (e_type="); print_num(etype); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    var ec = _exec_run_clean(out);
+    sys_unlink(out);
+    if (ec == 42) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": cycc --pie emits ET_DYN; global/string/&fn all RIP-relative; runs to 42 at ASLR base");
+        _check(label, 0);
+        return 0;
+    }
+    _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+    _p(": --pie binary exit="); print_num(ec); println(" (expected 42 — a baked absolute address?)");
+    _check(label, 1);
+    return 1;
+}
+
 fn _tls_live_gate(): i64 {
     var label = "libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)";
     if (file_exists(CC_PATH) != 1) {

@@ -6,6 +6,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.6] — 2026-06-08
+
+**v6.1.x slot 6 (Phase C — PIE): position-independent codegen, x86_64.** A `--pie`
+/ `CYRIUS_PIE=1` build mode that emits a **working, runnable position-independent
+executable** (ET_DYN, RIP-relative throughout), validated by running the **entire
+169-test `.tcyr` corpus as ASLR-loaded PIE binaries** with exit-code parity to the
+non-PIE build.
+
+**Premise-check correction (the proposal was wrong about the starting point).** The
+2026-05-11 proposal scoped PIE as greenfield (~200-400 LOC). It is not: the
+RIP-relative `lea [rip+disp32]` emit + the rel32 fixup arithmetic were **already
+~80% built and byte-proven** by the `shared;` / object-mode (`kmode==2/3`)
+`_IS_OBJ` path (dlopen-gated green in check.sh). v6.1.6 reuses that proven machinery
+behind a widened gate rather than rebuilding it. The feared fn-ptr-in-data / vtable
+"awkward case" turned out to be a **non-issue**: `&fn` (`ELOAD_FN_ADDR`) is already
+PIC-gated, so runtime `store64(&fn)` and indirect `fncallN` dispatch resolve to the
+correct runtime address — fn-pointers, callbacks, interface dispatch, and even
+address-valued global initializers (`var gp = &foo;`) all run correctly under PIE.
+
+**Benchmark:** `self_compile 464 ms` (interleaved old-vs-new +2 ms — noise, no
+regression), `cycc 932,584 B` (+1,376 B for the feature). check.sh **86/85→86**
+(new `--pie ET_DYN` gate).
+
+### Added
+
+- **`--pie` / `CYRIUS_PIE=1` PIE codegen mode (x86_64).** Produces an ET_DYN
+  executable with `p_vaddr=0` and a base-relative entry (`0x78`); the kernel maps
+  it at a random base (ASLR) and the RIP-relative code runs correctly there. Opt-in
+  and **inert for every existing build** — non-PIE output is byte-identical to 6.1.5
+  across all 338 corpus inputs. Plumbing in `src/main.cyr` (cmdline + env) +
+  `_pie_mode` in `src/backend/common/runtime.cyr`.
+- **`tests/fixtures/pie/pie_smoke.cyr` + `_pie_exec_gate`** (`programs/checks/`):
+  compiles the fixture with `CYRIUS_PIE=1`, asserts the output is ET_DYN, and runs
+  it to exit 42 (a baked absolute address would crash or return wrong) — the new
+  86th check.sh gate.
+
+### Fixed
+
+- **`EVADDR_X1` absolute-address leak (the PIE prerequisite bug).** The `&var → rcx`
+  base load for struct-field / array-element access emitted an unconditional
+  absolute `mov rcx, imm64` — the one address-emit site `_IS_OBJ` never gated (the
+  aarch64 `emit.cyr:449` comment already documented the x86 gap). Now takes the
+  `lea rcx, [rip+disp32]` path under `_IS_OBJ`, fixing shared/object/PIE builds that
+  use a byte-array literal or aggregate field access. Non-PIE unaffected.
+
+### Changed (codegen)
+
+- **`_IS_OBJ(S)`** (`x86/emit.cyr`) now returns PIC-safe for any `_pie_mode` build,
+  routing `_EVRCX` / `EVADDR` / `ESADDR` / `ELOAD_FN_ADDR` / switch-table / the fixed
+  `EVADDR_X1` to `lea [rip+disp32]`.
+- **The fixup walk** (`x86/fixup.cyr`) fires its RIP-relative rel32 branches (ftype
+  0/1/3) for `_pie_mode`, not just `kmode==2`. The `rel = tgt - (entry + coff + 4)`
+  math is self-canceling in `entry`, so a `--pie` `.text` is **byte-identical to the
+  proven shared-mode codegen** — only the ELF wrapper differs.
+- **`EMITELF_USER`** emits `ET_DYN` + `p_vaddr=0` + base-relative `e_entry` under
+  `_pie_mode` (its previously-unused `etype=3` path); `EMITELF` dispatches `--pie`
+  userland there.
+
+### Verified
+
+- x86 self-host fixpoint byte-identical; **338-input non-PIE differential vs 6.1.5
+  = zero drift** (feature fully opt-in); **169/169 `.tcyr` run correctly as `--pie`
+  ET_DYN** (global / string / `&fn` / fn-ptr / callbacks / traits / static
+  addr-init); PIE `.text` has **zero absolute `movabs`** vs 4 in the non-PIE build;
+  check.sh 86/86; 169/169 tcyr exit 0.
+- **Cross-OS on real hardware** (touches x86 backend): pi (aarch64 native), ecb
+  (arm64 macOS), cass (Windows PE) all self-host byte-identical (the PIE path is
+  x86-only + opt-in, so non-x86/non-PIE are unperturbed).
+
+### Follow-on (not this slot)
+
+- **Kernel-PIE ELF for AGNOS KASLR.** The hard part — the RIP-relative codegen +
+  fixup machinery — is done and proven via userland PIE. A KASLR kernel needs only
+  the ET_DYN-multiboot ELF *wrapper* variant of `EMITELF64_KERNEL` (real `_start`,
+  `p_vaddr=0`). It is **not shipped here** because it cannot be validated without an
+  AGNOS `--pie` boot harness, and AGNOS is not pulling on it (data-only KASLR shipped
+  at v1.28.0; full-binary PIE-KASLR is deferred/unscheduled on agnos's side).
+  Shipping it blind would be the "green checkmark over running it on hardware"
+  antipattern. Lands when the AGNOS boot harness is wired for `--pie`.
+- **aarch64 PIE** — `_IS_OBJ` on aarch64 covers only object mode; a later sub-arc.
+
 ## [6.1.5] — 2026-06-08
 
 **v6.1.x slot 5 (Phase B — backend prep): DCE mark-and-sweep probe

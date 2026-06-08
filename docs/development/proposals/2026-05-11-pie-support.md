@@ -112,3 +112,54 @@ Not blocking for v6.0.0. Slot for v6.1.x acceptance happens when v6.0.0 ships an
 - [ ] Approve x86_64-first / aarch64-follows sequencing.
 
 Promote this proposal to an ADR if approved before v6.1.0 implementation begins — the "why not hand-roll relocation in the consumer" reasoning carries enough "why not the other thing" content to deserve durable capture, especially because AGNOS engineers would otherwise face that exact temptation.
+
+---
+
+## Implementation findings (v6.1.6, 2026-06-08)
+
+The slot-entry premise-check overturned this proposal's central assumption. **PIE
+codegen was NOT greenfield** — it was ~80% pre-built and byte-proven:
+
+- The `shared;` keyword (`lex.cyr` token 78 → `kmode==2`) and `object` (`kmode==3`)
+  already drive a PIC-safe path via `_IS_OBJ(S)` (`x86/emit.cyr`), emitting
+  `lea reg, [rip+disp32]` for variable (`_EVRCX`/`EVADDR`), string (`ESADDR`), and
+  function (`ELOAD_FN_ADDR`) addresses, plus the switch jump table. The fixup walk
+  (`x86/fixup.cyr`) already patches RIP-relative `rel = tgt - (entry + coff + 4)`
+  under `if (kmode==2)`. A green check.sh gate (`_shared_dlopen_gate`) dlopen-proves
+  it. The `mov→lea` conversions this proposal lists as the bulk of the work mostly
+  existed.
+
+**What v6.1.6 actually did** (x86_64): added a `_pie_mode` bit (`--pie` /
+`CYRIUS_PIE=1`), widened `_IS_OBJ` + the 3 fixup rel32 branches to fire for
+`_pie_mode`, taught `EMITELF_USER` to emit ET_DYN + `p_vaddr=0` + base-relative
+`e_entry` (its previously-dead `etype=3` path), and **fixed the one ungated absolute
+site the proposal's catalog missed — `EVADDR_X1`** (the `&var→rcx` base load for
+struct-field / array-element access). Net result: a `--pie` build produces a
+**working userland PIE executable** whose `.text` is byte-identical to the proven
+shared-mode codegen (the `entry` term self-cancels in the rel32 math), validated by
+running the entire 169-test `.tcyr` corpus as ASLR-loaded ET_DYN binaries.
+
+**The "awkward case" (fn-ptr-in-data / vtables, §"Codegen scope" row 6) was a
+non-issue.** Because `&fn` is computed at runtime via the PIC `ELOAD_FN_ADDR` (a
+`lea [rip+...]`), runtime `store64(&fn)` into a table stores the correct runtime
+address, and indirect `fncallN` dispatch works. fn-pointers, callbacks, interface
+dispatch, and even address-valued global initializers (`var gp = &foo;`) all run
+correctly under PIE with no relocation-table machinery. **Option B (universal PIE)
+is therefore effectively already delivered for userland** — no stdlib recompile or
+ABI commitment was needed; PIE stays an opt-in per-binary flag, non-PIE output
+byte-identical.
+
+**Still open (deferred from v6.1.6):**
+
+1. **Kernel-PIE ELF for AGNOS KASLR** (the proposal's original Option-A motivation).
+   The codegen is done; only the ELF *wrapper* remains — an ET_DYN + multiboot2
+   variant of `EMITELF64_KERNEL` with a real `_start` and `p_vaddr=0` (the current
+   kernel path is ET_EXEC at a fixed `0x100000`). Deliberately NOT shipped blind:
+   AGNOS (v1.43.5) is not pulling on it (data-only KASLR shipped v1.28.0; full-binary
+   PIE-KASLR is deferred/unscheduled), and it cannot be validated without an AGNOS
+   `--pie` boot harness (a two-boot QEMU+OVMF base-diff exists in agnos CI, wireable
+   to `--pie`). Lands on that harness, per "never trust a checkmark over running it
+   on hardware."
+2. **aarch64 PIE.** aarch64 `_IS_OBJ` covers only `kmode==3` (object); the `adrp`+`add`
+   conversions for shared/PIE are unbuilt. A later sub-arc (x86_64-first per this
+   proposal's recommendation).

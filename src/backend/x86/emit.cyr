@@ -417,6 +417,12 @@ fn EPOPR9(S): i64 { E2(S, 0x5941); return 0; }
 fn _IS_OBJ(S): i64 {
     var km = L64(S + 0x18FCA0);
     if (km == 3 || km == 2) { return 1; }
+    # v6.1.6: any --pie/CYRIUS_PIE build takes the PIC-safe LEA path (a PIE
+    # executable the kernel/boot-shim loads at a random base → ASLR/KASLR).
+    # Reuses the proven shared/object RIP-relative emit + rel32 fixup math.
+    # _pie_mode==0 on every non-PIE build → this branch is dead → byte-
+    # identical. See CHANGELOG [6.1.6].
+    if (_pie_mode == 1) { return 1; }
     return 0;
 }
 
@@ -2848,6 +2854,18 @@ fn EFLLOAD(S, idx): i64 {
 # Load variable address into rcx (x86: mov rcx, <addr>)
 fn EVADDR_X1(S, idx): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_LOAD_ADDR_G, idx); }
+    # v6.1.6: PIC-gate the byte-array-literal address load. This was the one
+    # &global address-emit site _IS_OBJ did NOT gate — an unconditional
+    # absolute `mov rcx, imm64` that broke shared/object/PIE builds using a
+    # byte-array literal (`var b[N] = {...}`), since the baked VA can't
+    # survive a load-bias / .o relocation. Mirror _EVRCX's LEA form. Non-PIE
+    # builds (_IS_OBJ==0) keep the absolute path → byte-identical. CHANGELOG [6.1.6].
+    if (_IS_OBJ(S) == 1) {
+        EB(S, 0x48); EB(S, 0x8D); EB(S, 0x0D);   # lea rcx, [rip+disp32]
+        RECFIX(S, idx);
+        EDISP32(S, 0);
+        return 0;
+    }
     E2(S, 0xB948);
     RECFIX(S, idx);
     E8(S, 0);

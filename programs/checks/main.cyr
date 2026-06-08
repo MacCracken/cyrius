@@ -260,6 +260,10 @@ fn _run_regression_gates(): i64 {
     _shared_dlopen_gate();
     println("");
 
+    _section("PIE executable");
+    _pie_exec_gate();
+    println("");
+
     _section("Linker");
     _linker_gate();
     println("");

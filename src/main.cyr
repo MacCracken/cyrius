@@ -539,6 +539,17 @@ if (_vn > 0) {
                 }
             }
         }
+        # "--pie" (v6.1.6) — position-independent codegen. chars p(112) i(105)
+        # e(101) disambiguate from --parse-ts (--pa). Effective only with
+        # `kernel;` (kmode==1); ignored otherwise. Also honored via CYRIUS_PIE=1
+        # env (set below) for the cyrius-build wrapper + cross/test harnesses.
+        if (_vi + 5 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 112 && load8(&_vbuf + _vi + 3) == 105 && load8(&_vbuf + _vi + 4) == 101) {
+                    _pie_mode = 1;
+                }
+            }
+        }
         # "--le" (--lex-ts) — TS lex-only mode (P1.6b wire-in).
         # cycc reads stdin, runs TS_LEX, exits 0 (clean lex) or 1 (error).
         if (_vi + 4 <= _vn) {
@@ -757,6 +768,16 @@ var _is_pe_build = 0;
 if (_pe_env_early != 0) {
     if (load8(_pe_env_early) == 49 && load8(_pe_env_early + 1) == 0) {
         _is_pe_build = 1;
+    }
+}
+# v6.1.6: CYRIUS_PIE=1 env mirrors the --pie cmdline flag (parsed above from
+# /proc/self/cmdline). The cyrius-build wrapper + cross/test harnesses set the
+# env; either path sets _pie_mode → position-independent kernel codegen.
+# Effective only with `kernel;` (kmode==1); a no-op for userland/shared/object.
+var _pie_env_early = _read_env("CYRIUS_PIE");
+if (_pie_env_early != 0) {
+    if (load8(_pie_env_early) == 49 && load8(_pie_env_early + 1) == 0) {
+        _pie_mode = 1;
     }
 }
 # v5.11.52: CYRIUS_TARGET_EFI=1 implies the PE32+ container (Windows

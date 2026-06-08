@@ -66,13 +66,13 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.3** ✅ | POSIX `*at()` family + bare-name peers + aarch64 ESYSXLAT collision fix (repaired pre-existing native-aarch64 `sys_stat`) | A — housekeeping |
 | **v6.1.4** ✅ | Backend prep — `_TARGET_*` decl move + `_emit_fmt` hoist to common/runtime.cyr (`_entry_base` stays per-arch — not a dup) | B — backend prep |
 | **v6.1.5** ✅ | DCE mark-and-sweep consolidation (`_dce_hash_lookup` + `_dce_host_fn` hoist to `common/runtime.cyr`; 4 probe-blocks → 1, 4 host-scans → 1; −51 LOC, cycc −752 B; logic-preserving) | B — backend prep |
-| **v6.1.6** | PIE codegen x86_64 (Sub-arc A) | C — PIE |
+| **v6.1.6** ✅ | PIE codegen x86_64 — `--pie`/`CYRIUS_PIE=1` ships working **userland** PIE executables (ET_DYN, RIP-relative; 169/169 tcyr run as ASLR'd PIE + new gate). Reused the ~80%-prebuilt `shared`/object `_IS_OBJ` machinery (premise correction) + fixed `EVADDR_X1`. Kernel-PIE ELF = follow-on (needs AGNOS `--pie` boot harness). | C — PIE |
 | **v6.1.7** | PIE codegen aarch64 (Sub-arc B) | C — PIE |
 | **v6.1.8** | `.gnu.hash` migration + drop SysV `.hash` (Sub-arc C) | C — PIE / dynlink |
 | **v6.1.9** | TS/TSX → JS emit (`cycc --emit-js`) | D — frontend emit |
 | **v6.1.10** | bayan distfile carve | E — stdlib carve |
 | **v6.1.11** | ganita distfile carve | E — stdlib carve |
-| *(bug bandwidth)* | x86-macho cycc self-compile (HELD), cyim regex unblock, Windows deps `--lock` hash | absorbed into bug bandwidth |
+| *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):
 the housekeeping items (Phase A) are small, ready, and have concrete
@@ -166,23 +166,38 @@ KASLR (Option A in agnos's `2026-05-11-kaslr-scope.md`); AGNOS v1.28.0
 ships data-only KASLR that doesn't need PIE, so this arc may land ahead of
 live consumer pressure. Premise-check AGNOS pull at slot entry.
 
-#### v6.1.6 — PIE codegen x86_64 (Sub-arc A, Option A: kernel-mode only)
+#### v6.1.6 ✅ — PIE codegen x86_64 (Sub-arc A)
 
-`--pie` build flag emitting RIP-relative codegen: `lea rax, [rip + rel32]`
-instead of `mov rax, imm64` for absolute-address loads; the fixup-table
-machinery learns whether each fixup is absolute (old mode) or RIP-relative
-(new mode). Userland binaries + stdlib distfiles keep the non-PIE path
-unchanged. Work surface: ~200-400 LOC across `src/backend/x86/emit.cyr` +
-`fixup.cyr`, plus `parse_expr.cyr` fns handling `&fn_name` / `&global_var`
-in PIE mode. Reference proposal:
+**Shipped.** `--pie` / `CYRIUS_PIE=1` emits a working **userland** position-
+independent executable (ET_DYN, `lea [rip+disp32]` throughout), validated by
+running all 169 `.tcyr` as ASLR'd PIE + a new `_pie_exec_gate` (check.sh 86).
+**Premise correction**: PIE was ~80% pre-built and dlopen-proven via the
+`shared`/object `_IS_OBJ` path — so this widened the gate + fixed the one ungated
+site (`EVADDR_X1`) rather than greenfield, and the fn-ptr/vtable "awkward case"
+was a non-issue. Non-PIE byte-identical. Full implementation findings appended to
 [`proposals/2026-05-11-pie-support.md`](proposals/2026-05-11-pie-support.md).
+
+**Backlog (deferred from v6.1.6, still v6.1.x):**
+
+- **Kernel-PIE ELF for AGNOS KASLR** (the original Option-A motivation). The
+  codegen is done + proven via userland PIE; only the ELF *wrapper* remains — an
+  `ET_DYN` + multiboot2 variant of `EMITELF64_KERNEL` with a real `_start` +
+  `p_vaddr=0` (the kernel path is `ET_EXEC` at fixed `0x100000` today). **Gated on
+  an AGNOS `--pie` boot harness** (two-boot QEMU+OVMF base-diff exists in agnos CI,
+  wireable to `--pie`) — NOT shipped blind per "never trust a checkmark over running
+  it on hardware." AGNOS (v1.43.5) isn't pulling (data-only KASLR shipped v1.28.0;
+  full-binary PIE-KASLR deferred/unscheduled there). Lands on the harness or explicit
+  user direction; rides the bug-bandwidth/consumer-gated tail until then.
 
 #### v6.1.7 — PIE codegen aarch64 (Sub-arc B)
 
-`adrp` + `add` on aarch64 replacing the 4-chunk `movz`/`movk`
-absolute-address sequence. Lands after the x86 sub-arc validates the
-fixup-table changes are shape-correct cross-arch. (The `EADDRA_IMM` fix
-shipped @ v6.1.2, so the `add`-imm path is already >4095-safe here.)
+`adrp` + `add` on aarch64 replacing the 4-chunk `movz`/`movk` absolute-address
+sequence. The x86 sub-arc (v6.1.6) validated the fixup-table + `_IS_OBJ` gate
+shape; aarch64 `_IS_OBJ` (`src/backend/aarch64/emit.cyr`) covers only object mode
+(`kmode==3`) today — this slot adds the shared/PIE `adrp`/`add` conversions. (The
+`EADDRA_IMM` fix shipped @ v6.1.2, so the `add`-imm path is already >4095-safe.)
+The kernel-PIE ELF wrapper (above) may land alongside this slot if the AGNOS
+harness is ready.
 
 #### v6.1.8 — `.gnu.hash` migration + dynamic-link cleanup (Sub-arc C)
 
@@ -244,16 +259,28 @@ lands in an open bug-bandwidth slot on consumer pressure or explicit user
 direction ([[feedback_no_unilateral_scope_decisions]]), not as a pinned
 planned release.
 
+- **Kernel-PIE ELF for AGNOS KASLR** (deferred from v6.1.6 — see Phase C). The
+  RIP-relative codegen is done + proven via userland PIE; the remaining piece is the
+  `ET_DYN`+multiboot2 wrapper variant of `EMITELF64_KERNEL` (real `_start`,
+  `p_vaddr=0`). **Consumer-gated**: needs an AGNOS `--pie` boot harness to validate
+  (won't ship blind); AGNOS isn't pulling yet (data-only KASLR shipped @ v1.28.0).
+  Lands on the harness or explicit user direction. May ride v6.1.7 if the harness is
+  ready. [[project_v616_bugband_then_full_pie]].
 - **x86-macho cycc self-compile** (layer-6 miscompile) — **HELD** (Apple
   Intel EOL); arm64-macOS is the supported macOS target. Revisited as a
   working item, not a blocker.
   [`issues/2026-06-02-macos-x86-release-no-compiler.md`](issues/2026-06-02-macos-x86-release-no-compiler.md),
   [`issues/2026-06-07-x86-macho-byte-array-literal-no-compile.md`](issues/2026-06-07-x86-macho-byte-array-literal-no-compile.md).
+- **macho-arm `*at()`/stat ESYSXLAT mappings** — `sys_stat`/`fstatat`/`linkat`/
+  `renameat`/`utimensat` lack Darwin ESYSXLAT entries on arm64-macOS (supported
+  platform; `sys_stat` pre-existing broken since v6.0.41). The cross-platform peer of
+  the v6.1.3 aarch64-Linux fix; `utimensat` needs a Darwin-design decision (no such
+  syscall). [`issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md`](issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md).
 - **Cyim regex unblock** (mabda C6) — consumer-gated; land when cyim
   updates + re-tests against v6.x.
-- **`cyrius deps --lock` Windows-portable hash** — `certutil`/built-in
-  hash path behind a `_TARGET_PE` branch (cass has no `sha256sum`/`sh`).
-  Low urgency; lands when a Windows deps consumer surfaces pressure.
+- **`cyrius deps --lock` Windows-portable hash** — ✅ **DONE @ v6.0.85**
+  (`_sha256sum_file` uses `certutil -hashfile` behind the Windows path in
+  `cbt/deps.cyr`); kept here only to mark it resolved — no longer a candidate.
 
 ---
 

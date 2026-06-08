@@ -1,0 +1,40 @@
+# 2026-06-08-windows-com-callee-corrupts-caller-nontrivial.cyr
+#
+# Minimal repro: a callptr -> real-Win64-COM chain corrupts the cyrius CALLER
+# when the program does any real work AFTER the COM call. Uses ONLY cyrius's
+# own lib/dxgi.cyr (GPU-verified at 6.0.86) + lib/str.cyr — no consumer logic.
+#
+# Build (Linux host): cycc_win < this > repro.exe
+# Run on a real-GPU Windows box (cass): expect stdout "available=true".
+# ACTUAL (v6.1.5, cass, Intel UHD 600): "available=" + garbage bytes
+#   (observed `85 31` where `74 72 75 65` "true" is expected) — the
+#   str_builder_add_cstr("true") AFTER dxgi_vram_bytes() is corrupted.
+#
+# Contrast: tests/win/dxgi_probe.cyr exits 42 on the SAME box, because it does
+# nothing after the COM chain but compare ints and return. The corruption only
+# shows once post-COM code runs.
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/dxgi.cyr"
+
+fn run(): i64 {
+    var v = dxgi_vram_bytes();              # cyrius's GPU-verified COM chain
+    var sb = str_builder_new();
+    var a1 = str_builder_add_cstr(sb, "available=");
+    var a2 = str_builder_add_cstr(sb, "true");   # <-- comes out garbled
+    var s = str_builder_build(sb);
+    var w = syscall(1, 1, str_data(s), str_len(s));
+    var nl = syscall(1, 1, "\n", 1);
+    return v;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var r = run();
+    return 0;
+}

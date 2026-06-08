@@ -14,18 +14,18 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.5** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 931,208 B |
+| **Version** | **6.1.6** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 932,584 B |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 592,512 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 752,512 B |
 | **cycc_win** (PE32+ cross) | 804,864 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
-| check.sh gates | 85/85 |
+| check.sh gates | 86/86 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~472 ms |
+| bench (every-release gate) | self_compile ~464 ms |
 
 ## v6.1.x — active cycle (Backend Codegen Multi-Arc)
 
@@ -55,10 +55,19 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   backends. Logic-preserving (−51 LOC, cycc −752 B). Verified byte-identical via
   338-input old-vs-new corpus + DCE-torture (report + `CYRIUS_DCE=1` NOP-fill,
   both arches) + a 4-reviewer adversarial workflow + pi/ecb/cass self-host.
+- **v6.1.6** — Phase C (PIE): `--pie` / `CYRIUS_PIE=1` position-independent codegen
+  x86_64. Ships **working userland PIE executables** (ET_DYN, RIP-relative) —
+  validated by running the full 169-test `.tcyr` corpus as ASLR'd PIE binaries +
+  a new check.sh gate. **Premise correction**: PIE was ~80% pre-built via
+  `shared`/object `_IS_OBJ` (proven), so this widened the gate + fixed the one
+  ungated site (`EVADDR_X1`) rather than greenfield; the fn-ptr/vtable "awkward
+  case" was a non-issue. Non-PIE byte-identical (338-input differential). Kernel-PIE
+  ELF (AGNOS KASLR) is a follow-on (needs the AGNOS `--pie` boot harness; no live
+  pull). See CHANGELOG [6.1.6].
 
-**Next:** **v6.1.6** — Phase C (PIE): position-independent codegen x86_64
-(`--pie`, RIP-relative loads + fixup-table mode bit), landing on the now-cleaned
-backend. Then v6.1.7 (PIE aarch64), v6.1.8 (`.gnu.hash`), D (TS/TSX→JS), E
+**Next:** **v6.1.7** — Phase C: PIE codegen aarch64 (the `_IS_OBJ` aarch64 path
+covers only object mode today) **and/or** the kernel-PIE ELF wrapper when an AGNOS
+`--pie` boot harness lands. Then v6.1.8 (`.gnu.hash`), D (TS/TSX→JS), E
 (bayan/ganita carve). See roadmap.md.
 
 **Open / filed (v6.1.x):**

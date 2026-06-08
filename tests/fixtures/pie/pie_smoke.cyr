@@ -1,0 +1,19 @@
+# PIE smoke fixture (v6.1.6). Exercises the three address-emit sites that
+# --pie converts from absolute `mov reg, imm64` to RIP-relative
+# `lea reg, [rip+disp32]`: a global variable (ftype-0), a string literal
+# (ftype-1), and a function address `&fn` (ftype-3) — plus a direct call.
+# Compiled with CYRIUS_PIE=1 by programs/checks/services.cyr::_pie_exec_gate,
+# which asserts the output is ET_DYN and runs to exit 42 at a random ASLR
+# base (a position-dependent bake would crash or return the wrong value).
+# No includes — kept self-contained so the gate's `cat | cycc` compile has
+# no dep-resolution surface. See CHANGELOG [6.1.6].
+var g = 30;
+fn bump(x: i64): i64 { return x + 2; }
+fn main(): i64 {
+    var s = "pie";           # ftype-1: string address (lea [rip+disp32] under PIE)
+    var fp = &bump;          # ftype-3: function address (must be PIC, not a baked VA)
+    g = bump(g);             # ftype-0: global read/write + a direct rel32 call
+    if (load8(s) != 112) { return 1; }   # 'p' — string addressing resolved correctly
+    if (fp == 0) { return 2; }           # &fn produced a (non-zero) address
+    return g + 10;           # 32 + 10 = 42
+}
