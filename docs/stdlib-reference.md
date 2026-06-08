@@ -599,11 +599,23 @@ sole rule type in 5.13).
 ---
 
 > **Coverage note**: this reference documents the most-used core
-> surface — see `lib/*.cyr` for the full ~90 first-party modules
-> (concurrency: thread, thread_local, atomic, async, freelist; data:
-> base64, math, matrix, linalg, bigint, u128, csv, toml, cyml; crypto:
-> sha1, keccak, ct, overflow; network: net, http, ws, tls, sandhi;
-> systems: mmap, dynlib, fdlopen, cffi, audio, log, chrono; vidya).
-> Doc additions tracked as their consumers stabilize — the source files
-> themselves are the canonical signature reference (`cyrdoc <file.cyr>`
-> emits markdown from the doc-comment header on every public fn).
+> surface (~33 of ~90 modules). The remaining ~57 first-party modules in
+> `lib/*.cyr` are NOT yet documented here — including major shipped
+> surfaces:
+> - **network/TLS**: `net`, `http`, `ws`, `ws_server`, `tls`, and the
+>   native **TLS 1.3 stack in `lib/tls_native.cyr`** (no OpenSSL).
+> - **concurrency**: `thread`, `thread_local`, `atomic`, `async`, `freelist`.
+> - **math/SIMD**: `math`, `simd` (`f64v2`/`f64v4`), `matrix`, `linalg`,
+>   `bigint`, `u128`.
+> - **data**: `base64`, `csv`, `flags`, `chrono`, `log`.
+> - **crypto**: `sha1`, `keccak`, `ct`, `overflow`.
+> - **systems/FFI**: `mmap`, `dynlib`, `fdlopen`, `cffi`.
+> - **folded deps**: `sigil`, `sandhi`, `patra`, `sankoch`, `mabda`,
+>   `niyama`, and other sibling modules.
+>
+> (Platform-variant internals — `*_macos`, `*_win`, `*_agnos`,
+> `syscalls_*` — are intentionally not listed as a public surface.)
+> Per-module API docs are tracked as their consumers stabilize; until
+> then the source files are the canonical signature reference
+> (`cyrdoc <file.cyr>` emits markdown from the doc-comment header on
+> every public fn).

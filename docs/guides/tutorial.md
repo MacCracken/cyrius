@@ -45,7 +45,8 @@ cat hello.cyr | cycc > hello && chmod +x hello && ./hello
 
 ## Variables and Expressions
 
-Everything is a 64-bit integer. No floats, no separate types.
+The core type is the 64-bit integer (`i64`) — one register width, one
+storage size (see ADR-002). Most code is just integers:
 
 ```
 var x = 42;
@@ -53,6 +54,13 @@ var y = x + 8;
 var z = x * y / 2;
 var remainder = 100 % 7;     # 2
 ```
+
+`i64` stays the core tenet, but it isn't the *only* type. A deliberate,
+narrow exception exists for math hot paths: scalar `f64` floats plus the
+`f64v2` / `f64v4` SIMD vector types (see `lib/math.cyr`, `lib/simd.cyr`).
+These are bit-pattern values backed by SSE2/NEON builtins — not a full
+float type system, just enough for numeric kernels. Everything else
+remains an i64.
 
 ## Functions
 

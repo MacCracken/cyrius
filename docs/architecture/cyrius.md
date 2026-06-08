@@ -85,10 +85,10 @@ not control:
 | Target | Narrow scope | Broad scope | Notes |
 |--------|--------------|-------------|-------|
 | Linux x86_64 | ✅ | ✅ | Daily-driver host. Byte-identical 3-step fixpoint at both `IR_ENABLED == 0` and `IR_ENABLED == 3`, self-host compile ~355 ms. |
-| Linux aarch64 (cross) | ✅ | ✅ (cross-built binary runs on Pi) | `tests/regression-aarch64-syscalls.sh` gates the runtime path. |
-| Linux aarch64 (native self-host on Pi) | ✅ | ✅ | Closed at **v5.6.32** (1-line fix: missing `include "src/common/ir.cyr"` in `main_aarch64_native.cyr`). Earlier `_TARGET_MACHO` framing was stale shape from pre-v5.6.12 source. `tests/regression-aarch64-native-selfhost.sh` is the active gate. |
-| macOS arm64 Mach-O | ✅ | ✅ | Closed at **v5.6.33** (gate fixture rewrite — no compiler regression existed; `fn main()` fixture never ran main() per cyrius's no-auto-main rule). `tests/regression-macho-exit.sh` is the active gate. |
-| Windows 11 PE32+ | ✅ | ✅ | Closed at **v5.6.36** (gate fixture rewrite — same shape as v5.6.33; PE shape unchanged on Win11 24H2). `tests/regression-pe-exit.sh` is the active gate. v5.6.31 separately fixed the HIGH_ENTROPY_VA `EREAD_PE`/`EWRITE_PE` DWORD-into-qword post-call read. |
+| Linux aarch64 (cross) | ✅ | ✅ (cross-built binary runs on Pi) | `programs/checks/platform_aarch64.cyr` (via `scripts/check.sh`) gates the runtime path. |
+| Linux aarch64 (native self-host on Pi) | ✅ | ✅ | Closed at **v5.6.32** (1-line fix: missing `include "src/common/ir.cyr"` in `main_aarch64_native.cyr`). Earlier `_TARGET_MACHO` framing was stale shape from pre-v5.6.12 source. `programs/checks/platform_aarch64.cyr` is the active gate. |
+| macOS arm64 Mach-O | ✅ | ✅ | Closed at **v5.6.33** (gate fixture rewrite — no compiler regression existed; `fn main()` fixture never ran main() per cyrius's no-auto-main rule). `programs/checks/platform_win_macho.cyr` is the active gate. |
+| Windows 11 PE32+ | ✅ | ✅ | Closed at **v5.6.36** (gate fixture rewrite — same shape as v5.6.33; PE shape unchanged on Win11 24H2). `programs/checks/platform_win_macho.cyr` is the active gate. v5.6.31 separately fixed the HIGH_ENTROPY_VA `EREAD_PE`/`EWRITE_PE` DWORD-into-qword post-call read. |
 
 ### Why the distinction matters
 
@@ -107,9 +107,10 @@ conflated:
 
 Every slot in the v5.6.26–v5.6.28 repair cluster (later resolved
 v5.6.32 / v5.6.33 / v5.6.36) explicitly tagged which scope it
-was fixing. `tests/regression-aarch64-native-selfhost.sh` /
-`regression-macho-exit.sh` / `regression-pe-exit.sh` are **broad-
-scope gates** that shipped as skip-stubs pre-fix (so check.sh
+was fixing. The per-target gates in `programs/checks/`
+(`platform_aarch64.cyr`, `platform_win_macho.cyr`, run via
+`scripts/check.sh`) are **broad-scope gates** that shipped as
+skip-stubs pre-fix (so check.sh
 stayed green while the investigation was queued) and flipped
 to active PASS as the slot closed. Narrow-scope gates never
 skip; they always run and must pass. As of v5.6.43, all three

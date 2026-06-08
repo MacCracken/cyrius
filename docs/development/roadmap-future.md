@@ -7,7 +7,8 @@ extensions, and the public-release manuscript pin. Items here may
 get pulled forward into a v6.x minor when consumer pressure
 materializes; the placement is "watching" not "deferred".
 
-See [roadmap.md](roadmap.md) for current v6.x cycle work.
+See [roadmap.md](roadmap.md) for the current active minor and
+[roadmap_6.md](roadmap_6.md) for the whole v6.x cycle.
 
 ---
 

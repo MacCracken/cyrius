@@ -1,5 +1,18 @@
 # AGNOS Ecosystem Migration Strategy
 
+> ⚠️ **HISTORICAL SNAPSHOT — frozen at compiler v5.7.39 (≈2026-04-30).
+> Superseded; not maintained.** The metrics, wave plan, and "compiler
+> is on v5.7.39" framing below are a point-in-time snapshot and have
+> NOT been updated through the v5.8–v6.x cycles (the compiler is now
+> v6.1.x; many waves shipped piecemeal — niyama fold v5.9.0, sandhi
+> 1.3.3 v5.10.34, mabda 3.0.1 fold v6.0.45, native TLS v6.0.x, the
+> AGNOS userspace target v6.0.x). For the **current** ecosystem /
+> consumer / pin state see [`docs/ecosystem.md`](../ecosystem.md) and
+> [`state.md`](state.md); for shipped-arc history see
+> [`completed-phases.md`](completed-phases.md) + [`CHANGELOG.md`](../../CHANGELOG.md).
+> Kept as a record of the original migration framing, not as live
+> guidance.
+
 > **107 Rust repos. ~980K lines. One language to replace them all.**
 >
 > This document tracks the Rust → Cyrius migration across the entire AGNOS ecosystem.

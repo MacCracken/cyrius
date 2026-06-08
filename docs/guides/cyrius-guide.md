@@ -11,18 +11,42 @@ cyrius build hello.cyr build/hello           # Compile (resolves deps from cyriu
 
 ## Types
 
-Everything is a 64-bit integer. No floats, no separate pointer type at the value level. Type annotations are optional and don't enforce:
+The core type is the 64-bit integer (`i64`) — no separate pointer type at
+the value level (see ADR-002). Type annotations are optional and don't
+enforce:
 
 ```
 var x = 42;
 var y: i64 = 42;      # Same thing — annotation is documentation
 ```
 
+`i64` is the core tenet, not the only type. A deliberate, narrow exception
+exists for math hot paths: scalar `f64` floats and the `f64v2` / `f64v4`
+SIMD vector types (`lib/math.cyr`, `lib/simd.cyr`), backed by SSE2/NEON
+builtins. These are reinterpreted bit patterns — float ops use explicit
+`f64_from` / `f64_to` conversions, not a full float type system.
+
+## Number Literals
+
+Integer literals may be written in three bases. Underscore separators
+(`_`) are allowed in any base and are ignored:
+
+```
+var dec = 1_000_000;   # decimal
+var hex = 0x1ED;        # hexadecimal (0x prefix)        → 493
+var oct = 0o755;        # octal (0o prefix, base-8)       → 493
+var perms = 0o644;      # common Unix file-mode form      → 420
+```
+
+Octal uses digits `0`–`7`; a `8` or `9` ends the literal. (There is no
+`0b` binary literal form.) A decimal literal with a fractional part
+(`3.14`) is lexed as an `f64` float.
+
 ## Variables
 
 ```
 var x = 10;            # Global or local (context-dependent)
-var buf[256];           # Array (256 * 8 = 2048 bytes)
+var buf[256];           # Byte array — 256 BYTES (rounded up to 8), not 256 i64 slots
 x = x + 1;             # Reassignment
 ```
 
@@ -851,27 +875,37 @@ include "lib/math.cyr"    # Math functions: f64_atan and extended math ops
 
 ## AGNOS System Libraries
 
-```
-# Shared types (agnostik)
-include "lib/agnostik/error.cyr"    # Error codes (1001-1010), err_is_retriable, err_print
-include "lib/agnostik/types.cyr"    # AgentType, AgentStatus, MessageType, SystemStatus enums
-include "lib/agnostik/security.cyr" # Permission (bitmask), Role, SecurityContext struct
-include "lib/agnostik/agent.cyr"    # AgentConfig, AgentInfo, AgentStats structs
-include "lib/agnostik/audit.cyr"    # AuditSeverity, AuditEntry, audit_print
-include "lib/agnostik/config.cyr"   # AgnosConfig, environment profiles
+The AGNOS components (agnostik, agnosys, …) are **downstream sibling
+repos**, not bundled in cyrius's `lib/`. Consume them as named deps in
+`cyrius.cyml` — the build tool resolves each picked module to a flat,
+namespaced file `lib/{depname}_{basename}.cyr` (see *Dependencies* above;
+there is no `lib/{depname}/` subdirectory form):
 
-# Syscall bindings (agnosys)
-include "lib/agnosys/syscalls.cyr"  # 50 syscall numbers, 20+ wrappers, sigset, epoll, timerfd
-
-# Init system (kybernet)
-include "lib/kybernet/console.cyr"  # PID 1 stdio redirect
-include "lib/kybernet/signals.cyr"  # Signal blocking + signalfd
-include "lib/kybernet/reaper.cyr"   # Zombie process reaper (waitpid loop)
-include "lib/kybernet/privdrop.cyr" # Privilege dropping (setgroups/setgid/setuid)
-include "lib/kybernet/mount.cyr"    # Essential filesystem mounts
-include "lib/kybernet/cgroup.cyr"   # Cgroup v2 service management
-include "lib/kybernet/eventloop.cyr"# Epoll + timerfd event loop
 ```
+# cyrius.cyml
+[deps.agnostik]
+path = "../agnostik"
+modules = ["src/error.cyr", "src/types.cyr", "src/security.cyr",
+           "src/agent.cyr", "src/audit.cyr", "src/config.cyr"]
+
+[deps.agnosys]
+path = "../agnosys"
+modules = ["src/syscall.cyr"]
+```
+
+Resolution produces, e.g., `lib/agnostik_error.cyr` (error codes,
+`err_is_retriable`, `err_print`), `lib/agnostik_types.cyr` (agent/status
+enums), `lib/agnostik_security.cyr` (Permission bitmask, Role,
+SecurityContext), plus the agent/audit/config structs, and
+`lib/agnosys_syscall.cyr` (syscall numbers + wrappers). The build tool
+auto-prepends the resolved includes; source files only reference their own
+project includes.
+
+<!-- STALE: the former kybernet init-system block here (console / signals /
+     reaper / privdrop / mount / cgroup / eventloop) referenced modules that
+     no longer exist in ../kybernet/src (now only bench/main/test.cyr).
+     Removed pending a human decision on whether kybernet still exposes an
+     includable init-system surface to re-document. -->
 
 ## Inline Assembly
 

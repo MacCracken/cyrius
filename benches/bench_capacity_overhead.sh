@@ -14,7 +14,7 @@ set -e
 
 N="${1:-50}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CC="$ROOT/build/cc3"
+CC="$ROOT/build/cycc"
 SRC="$ROOT/src/main.cyr"
 
 if [ ! -x "$CC" ]; then

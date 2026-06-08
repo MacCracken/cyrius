@@ -8,7 +8,7 @@ section tracks the per-release add history; this file is the
 
 | Platform | Format | Status |
 |----------|--------|--------|
-| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~931 KB (v6.0.87); 3-step bootstrap byte-identical. |
+| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~931 KB (v6.1.0); 3-step bootstrap byte-identical. |
 | Linux aarch64 | ELF | **✅ Narrow + Broad** — cross-build byte-identity + native self-host on Pi 4 (repaired v5.6.32). Three libs (`lib/hashmap_fast`, `lib/u128`, `lib/mabda`) still contain ungated x86 asm — arch-gating queued. |
 | cyrius-x bytecode | .cyx | **✅ Narrow** — clean CYX bytecode (path B, v5.7.12); literal-arg propagation pinned v5.7.x patch slot. |
 | macOS x86_64 | Mach-O | **⏸️ Parity-track** (Apple Intel EOL) — cycc DOES self-host byte-identical on real Intel hardware (`ach`), verified every slot via `cross-os-selfhost.sh ach`. Kept parity-only; arm64 (`ecb`) is the primary/promised macOS target. |
@@ -16,6 +16,7 @@ section tracks the per-release add history; this file is the
 | Windows x86_64 | PE/COFF | **✅ Narrow + Broad** — gate fixture repaired v5.6.36; HIGH_ENTROPY_VA enabled v5.6.31. Win64 ABI complete (v5.5.36); .reloc + 32-bit ASLR (v5.5.35). |
 | Compiler optimization (O1–O6) | — | **✅ Closed** (v5.6.5 + v5.6.7–v5.6.27). |
 | AGNOS userspace | ELF (ring-3, agnos ABI) | **✅ Shipped** — `CYRIUS_TARGET_AGNOS` ring-3 target (.48–.49; boot-to-prompt .55–.56). `getenv`/envp (.87) verified on the real agnos 1.43.2 kernel under QEMU. Cross-build rot gate: `scripts/agnos-crossbuild-gate.sh`. Distinct from the bare-metal KERNEL target below. |
+| UEFI Application | PE32+ (Subsystem 10) | **✅ Shipped** — `_TARGET_EFI_APPLICATION` emit mode (PE32+ container + Subsystem 10 + EFI-variant EEXIT + zeroed Data Dirs [1]/[12]), landed across the v5.11.47–v5.11.49 gnoboot arc. OVMF runtime smoke proven; structural gate in `programs/checks/platform_efi.cyr`. Consumer: gnoboot. |
 | RISC-V (rv64) | ELF | Queued — **v6.2.x** (Platform Expansion minor). |
 | Bare-metal | ELF (no-libc) | Queued — **v6.2.0**. AGNOS kernel target (not the userspace target above). |
 
