@@ -895,17 +895,26 @@ fn EMITELF64_KERNEL(S): i64 {
     var filesz = hdrsz + mb_sz + cp + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);
     var memsz = filesz + 65536;
+    # v6.1.7: PIE kernel (--pie) is ET_DYN at base 0 so a KASLR boot shim
+    # (AGNOS gnoboot) can slide it to a random base; non-PIE keeps the fixed
+    # 0x100000 ET_EXEC layout. The .text is RIP-relative either way (via _IS_OBJ
+    # + the fixup rel32 branches that fire for _pie_mode), so it runs correctly
+    # at whatever base the loader picks. Non-PIE kernels keep base=0x100000 +
+    # etype=2 → byte-identical. See CHANGELOG [6.1.7].
+    var base = 0x100000;
+    var etype = 2;
+    if (_pie_mode == 1) { base = 0; etype = 3; }
     # Entry = base + headers + multiboot2 (kernel's first 64-bit instruction)
-    var entry = 0x100000 + hdrsz + mb_sz;
+    var entry = base + hdrsz + mb_sz;
 
     var text_foff = hdrsz + mb_sz;
-    var text_addr = 0x100000 + text_foff;
+    var text_addr = base + text_foff;
     var text_size = cp;
     var bss_foff = hdrsz + mb_sz + cp;
-    var bss_addr = 0x100000 + bss_foff;
+    var bss_addr = base + bss_foff;
     var bss_size = totvar;
     var rod_foff = bss_foff + totvar;
-    var rod_addr = 0x100000 + rod_foff;
+    var rod_addr = base + rod_foff;
     var rod_size = spos;
     var shstrtab_size = 30;
     var shstrtab_foff = filesz;
@@ -918,9 +927,9 @@ fn EMITELF64_KERNEL(S): i64 {
     # e_ident: 7F 45 4C 46  02 01 01 00 (ELFCLASS64, ELFDATA2LSB, EV_CURRENT, OSABI=SYSV)
     S64(O + op, 0x00010102464C457F); op = op + 8;
     S64(O + op, 0x0000000000000000); op = op + 8;
-    # e_type=ET_EXEC(2), e_machine=EM_X86_64(0x3E), e_version=1
-    S64(O + op, 0x00000001003E0002); op = op + 8;
-    # e_entry (u64)
+    # e_type=etype (ET_EXEC(2); ET_DYN(3) for PIE), e_machine=EM_X86_64(0x3E)
+    S64(O + op, 0x00000001003E0000 | etype); op = op + 8;
+    # e_entry (u64) — base-relative (0xA8) for PIE so the slid base + e_entry lands on _start
     S64(O + op, entry); op = op + 8;
     # e_phoff = 64 (PH64 right after ELF header)
     S64(O + op, 64); op = op + 8;
@@ -937,8 +946,8 @@ fn EMITELF64_KERNEL(S): i64 {
     # p_type=PT_LOAD(1), p_flags=RWX(7)
     S64(O + op, 0x0000000700000001); op = op + 8;
     S64(O + op, 0); op = op + 8;             # p_offset
-    S64(O + op, 0x100000); op = op + 8;      # p_vaddr
-    S64(O + op, 0x100000); op = op + 8;      # p_paddr
+    S64(O + op, base); op = op + 8;          # p_vaddr (0 for PIE → boot shim biases)
+    S64(O + op, base); op = op + 8;          # p_paddr
     S64(O + op, filesz); op = op + 8;        # p_filesz
     S64(O + op, memsz); op = op + 8;         # p_memsz
     S64(O + op, 0x1000); op = op + 8;        # p_align
@@ -1934,7 +1943,10 @@ fn EMITELF(S): i64 {
         return 0;
     }
     if (L64(S + 0x18FCA0) == 1) {
-        if (_TARGET_ELF64_KERNEL == 1) { EMITELF64_KERNEL(S); }
+        # v6.1.7: a --pie kernel is always ET_DYN ELF64 (the 32-bit multiboot1
+        # path is not a KASLR target); EMITELF64_KERNEL emits ET_DYN + p_vaddr=0
+        # when _pie_mode is set.
+        if (_TARGET_ELF64_KERNEL == 1 || _pie_mode == 1) { EMITELF64_KERNEL(S); }
         else { EMITELF_KERNEL(S); }
         return 0;
     }

@@ -1,0 +1,30 @@
+# int3 COM-corruption diagnostic — CLEAN BASELINE variant (v6.1.7).
+#
+# Byte-for-byte identical to 2026-06-08-com-int3-dxgi.cyr EXCEPT the COM call
+# is short-circuited to a constant (no callptr → no corruption). Same three
+# breakpoints + same surrounding string work. Run under cdb the same way; the
+# register-dump DIFF vs the DXGI variant at each break pins the clobbered
+# register / DF that the real COM callptr leaves behind.
+#
+# Build:  cycc_win < this > diag_clean.exe
+# Debug:  cdb diag_clean.exe   (g; r; g; r; g; r; q — paste each r)
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/dxgi.cyr"
+fn run(): i64 {
+    var v = 42;                             # short-circuit: NO COM callptr
+    asm { 0xCC; }                           # B1 — same position, clean state
+    var sb = str_builder_new();
+    var a1 = str_builder_add_cstr(sb, "available=");
+    asm { 0xCC; }                           # B2
+    var a2 = str_builder_add_cstr(sb, "true");
+    asm { 0xCC; }                           # B3
+    var s = str_builder_build(sb);
+    syscall(1, 1, str_data(s), str_len(s));
+    return v;
+}
+fn main(): i64 { alloc_init(); run(); return 0; }
