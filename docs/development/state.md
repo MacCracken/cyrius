@@ -3,6 +3,27 @@
 > Refreshed every release. CLAUDE.md is preferences/process/procedures (durable);
 > this file is **state** (volatile). Bumped via `version-bump.sh` post-hook.
 
+## Session close — 2026-06-08 (v6.1.4 — backend prep: _TARGET_* + _emit_fmt hoist, Phase B slot 1)
+
+Cutting **v6.1.4**, first Phase-B slot. Logic-preserving backend refactor (no behavior change).
+
+- Moved the `_TARGET_*` output-target flags from per-backend `x86/emit.cyr` + `aarch64/emit.cyr`
+  into shared `src/backend/common/runtime.cyr` (the prereq the .91 closeout identified — decls now
+  precede the shared selector). `cx/emit.cyr` keeps its own copy (`_TARGET_CX=1`).
+- Hoisted `_emit_fmt` (byte-identical dup) from both `fixup.cyr` into `common/runtime.cyr`.
+- **Premise-check finding**: `_entry_base` is NOT a dup (arch-specific entry VAs — x86 default
+  0x400078 + macho-x86 0x100001000; aarch64 different + kernel 0x40000078) → stays per-backend. The
+  closeout note over-stated both as hoistable; only `_emit_fmt` was.
+
+**Bench (rule #6):** `self_compile 458 ms`, `cycc 931,960 B`.
+
+**Verified (logic-preserving):** x86 self-host fixpoint byte-identical; check.sh 85/85 (incl.
+EFI/PE/macho/agnos format gates `_emit_fmt` drives). **Cross-OS real hardware** (touches every
+backend): pi (aarch64) native self-host byte-identical; ecb (macОS, `_emit_fmt`→2) compiles → 42;
+cass (Windows PE, `_emit_fmt`→3) compiles → 42. New cycc differs from prior only by moved-code layout.
+
+**Next:** **v6.1.5** — Phase B: DCE mark-and-sweep consolidation across the two `fixup.cyr` backends.
+
 ## Session close — 2026-06-08 (v6.1.3 — POSIX *at() family + aarch64 ESYSXLAT collision fix, Phase A slot 3)
 
 Cutting **v6.1.3**, last Phase-A slot. Added the POSIX `*at()` family + bare-name peers

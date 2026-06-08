@@ -7,22 +7,9 @@
 # _env_scratch, _read_env, _prof_clock_ns moved to
 # src/backend/common/runtime.cyr at v6.0.8 (shared with x86).
 
-# v6.0.89: derived output-format selector — same selector + branch taxonomy
-# as the x86 fixup's copy (kept byte-for-byte identical so a later slot can
-# hoist it to a shared home). On the aarch64 backend _TARGET_PE and
-# _TARGET_MACHO==1 are statically-dead shims (=0), so this yields only 0=ELF
-# or 2=Mach-O ARM64. Read by both _entry_base (FIXUP) and EMITELF in place
-# of the raw-flag ladders. See CHANGELOG [6.0.89].
-fn _emit_fmt(S): i64 {
-    # Mach-O tested before PE — identical precedence + branch order to the
-    # x86 fixup's copy (see there). On aarch64 the PE / Mach-O-x86 branches
-    # are statically-dead shims, so order is moot here; kept identical so a
-    # later slot can hoist this verbatim to a shared home.
-    if (_TARGET_MACHO == 1) { return 1; }
-    if (_TARGET_MACHO == 2) { return 2; }
-    if (_TARGET_PE == 1) { return 3; }
-    return 0;
-}
+# _emit_fmt hoisted to src/backend/common/runtime.cyr at v6.1.4 (shared with
+# x86 now that _TARGET_* live in runtime.cyr). _entry_base below stays per-
+# backend — aarch64's entry VAs differ from x86's. See CHANGELOG [6.1.4].
 
 # Entry virtual address for the active (format, kmode) combination. Mach-O
 # ARM64 overrides kmode; the 16-byte kernel preamble stays a FIXUP-local

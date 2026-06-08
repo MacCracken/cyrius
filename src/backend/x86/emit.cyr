@@ -648,56 +648,11 @@ fn ESCPOPS(S, n): i64 {
     return 0;
 }
 
-# Target format: 0=ELF (Linux), 1=Mach-O x86_64 (macOS), 2=Mach-O ARM64
-var _TARGET_MACHO = 0;
-
-# PE32+ (Windows x86_64) output target: 0=off, 1=on. Set from
-# CYRIUS_TARGET_WIN=1 in main.cyr. Mirrors _TARGET_MACHO shape —
-# runtime flag read at Win64-ABI-divergent call sites inside this
-# emitter (fncall*, &fn, direct-EB) and at final emit dispatch
-# which routes to EMITPE_EXEC in src/backend/pe/emit.cyr.
-var _TARGET_PE = 0;
-
-# AGNOS ring-3 userspace output target: 0=off, 1=on. Set from
-# CYRIUS_TARGET_AGNOS=1 in main.cyr. Emits standard x86_64 ELF64 (the
-# default _TARGET_PE==0/_TARGET_MACHO==0 path) but with the agnos syscall
-# ABI: the only codegen divergence is EEXIT (agnos exit = syscall 0, not
-# Linux 60). The agnos syscall NUMBERS for read/write/open/... come from
-# lib/syscalls_x86_64_agnos.cyr (the program's wrappers emit them directly),
-# so ESYSCALL needs no per-number translation. See
-# agnos/docs/development/agnos-userland-abi.md.
-var _TARGET_AGNOS = 0;
-
-# ELF64 kernel output target: 0=off (kernel; emits ELF32 multiboot1 —
-# legacy/latent path), 1=on (kernel; emits ELF64 multiboot2 with
-# MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64 for UEFI x86_64 boot via
-# GRUB-EFI's long-mode handoff). Set from CYRIUS_ELF64_KERNEL=1 in
-# main.cyr. Read at EMITELF dispatch in fixup.cyr — when kernel mode
-# (L64(S+0x18FCA0)==1) AND this flag, route to EMITELF64_KERNEL
-# instead of EMITELF_KERNEL. Source language unchanged — the directive
-# is `kernel;` in both cases; the build target decides the ELF class.
-# See agnosticos/docs/development/path-a-elf64-multiboot2.md.
-var _TARGET_ELF64_KERNEL = 0;
-# v5.11.47: UEFI Application PE emit mode marker. 0=off (default —
-# `_TARGET_PE == 1` emits Windows-CUI PE32+ with Subsystem=3 and
-# kernel32!ExitProcess IAT call); 1=on (PE32+ with Subsystem=0xA
-# IMAGE_SUBSYSTEM_EFI_APPLICATION, no kernel32 imports, EEXIT emits
-# a single `ret` since rax holds EFI_STATUS at firmware-return).
-# Set from CYRIUS_TARGET_EFI=1 env var in src/main_win.cyr (alongside
-# CYRIUS_TARGET_WIN=1; the EFI flag implies the PE flag). Read by
-# pe/emit.cyr (Subsystem byte + import-table guard) and EEXIT
-# (below). Source language unchanged — same `kernel;`-style cyrius
-# code targets either Windows or UEFI by environment flag at compile
-# time. Unblocks the gnoboot sovereign UEFI bootloader (AGNOS MVP
-# boot path; see issue 2026-05-13-gnoboot-uefi-application-emit.md).
-var _TARGET_EFI_APPLICATION = 0;
-# v5.7.12: cx (cyrius-x bytecode) backend marker. parse_*.cyr
-# uses this to gate direct x86-byte emits in shared codepaths
-# that would otherwise pollute the CYX bytecode stream. Always
-# 0 on x86 emit (this file); =1 only when backend/cx/emit.cyr
-# is the active include. See path B in
-# docs/audit/2026-04-27-cx-direct-emit-inventory.md.
-var _TARGET_CX = 0;
+# Output-target flags (_TARGET_MACHO / _TARGET_PE / _TARGET_AGNOS /
+# _TARGET_ELF64_KERNEL / _TARGET_EFI_APPLICATION / _TARGET_CX) moved to
+# src/backend/common/runtime.cyr at v6.1.4 — included before this file so
+# they're declared once for both x86 + aarch64 (cx keeps its own copy).
+# Set from CYRIUS_* env vars in the main_*.cyr entry points after includes.
 
 # v6.0.71 — force-16-aligned `callptr` call for PE/Win64 (issue 2026-06-05-
 # windows-com-vtable-real-callee-frame-corruption.md). REPLACES the generic

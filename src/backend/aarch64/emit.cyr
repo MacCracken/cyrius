@@ -36,39 +36,11 @@ var _last_movca_popr_cp = 0 - 1;
 # Register mapping: x0=rax(result), x1=rcx(scratch), x0-x7=args
 # x9-x15 = temporaries, x29=fp(rbp), x30=lr, sp=rsp
 
-# Target format: 0=ELF (Linux), 2=Mach-O ARM64 (macOS)
-var _TARGET_MACHO = 0;
-
-# PE32+ (Windows x86_64) output target is x86-only — declared here
-# as an always-zero shim so `src/frontend/parse.cyr`'s `_TARGET_PE`
-# reference (for the `syscall(60)` Win32 reroute) resolves when
-# compiling the aarch64-backed entry points (`main_aarch64*.cyr`).
-# Mirrors the parallel `_TARGET_MACHO` declaration pattern between
-# the two backends. The `if (_TARGET_PE == 1)` branches in parse.cyr
-# are statically dead on aarch64 targets — Windows PE is x86_64 only.
-var _TARGET_PE = 0;
-# ELF64 kernel target — x86-only concern (AGNOS kernel build for
-# UEFI x86_64 boot). Declared here as always-zero shim so any future
-# shared parser/codegen reference to _TARGET_ELF64_KERNEL resolves
-# when compiling the aarch64-backed entry points. Statically dead on
-# aarch64 — aarch64 kernel emit (aarch64/fixup.cyr EMITELF_KERNEL) is
-# already ELF64 by definition of the target architecture.
-var _TARGET_ELF64_KERNEL = 0;
-# v5.11.47: UEFI Application PE emit marker. x86-only by construction
-# (only the x86 PE backend has _TARGET_PE wired). Declared here as
-# always-zero shim so shared parser/codegen references resolve when
-# compiling the aarch64-backed entry points.
-var _TARGET_EFI_APPLICATION = 0;
-# v6.0.48: AGNOS ring-3 userspace target marker. x86-only by
-# construction (agnos is x86_64; only x86/emit.cyr's EEXIT branches on
-# it). Always-zero shim here so parse_expr.cyr's syscall-arity-skip
-# reference to _TARGET_AGNOS resolves when the x86 cycc cross-compiles
-# the aarch64-backed entry points.
-var _TARGET_AGNOS = 0;
-# v5.7.12: cx (cyrius-x bytecode) backend marker. =0 on aarch64
-# emit (this file); =1 only on backend/cx/emit.cyr. See path B
-# notes in docs/audit/2026-04-27-cx-direct-emit-inventory.md.
-var _TARGET_CX = 0;
+# Output-target flags (_TARGET_MACHO / _TARGET_PE / _TARGET_ELF64_KERNEL /
+# _TARGET_EFI_APPLICATION / _TARGET_AGNOS / _TARGET_CX) moved to
+# src/backend/common/runtime.cyr at v6.1.4 — included before this file so
+# they're declared once for both backends (the aarch64 values are all 0;
+# the PE / kernel / agnos / EFI branches are statically-dead shims here).
 
 # No-op shim for the PE pending-imports helper, same reasoning:
 # `parse.cyr` calls `_pe_pending_imp_add` from the `#pe_import`

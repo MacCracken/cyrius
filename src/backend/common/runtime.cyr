@@ -9,7 +9,52 @@
 #
 # NOT included from main_cx.cyr — cx/emit.cyr has its own RECFIX
 # (different fixup-table cap, different region) and a _read_env
-# stub returning 0 (no env-var support in the bytecode mode).
+# stub returning 0 (no env-var support in the bytecode mode). cx also
+# keeps its OWN _TARGET_* block (with _TARGET_CX=1); the copy below is
+# the shared x86+aarch64 one.
+
+# ================================================================
+# Output-target flags (v6.1.4: hoisted here from x86/emit.cyr +
+# aarch64/emit.cyr so they're declared BEFORE the backend emit/fixup
+# includes — the prereq that unblocks the shared _emit_fmt below).
+# Set from CYRIUS_* env vars in the main_*.cyr entry points AFTER all
+# includes; default 0. Read by name in emit/fixup/parse, so the move is
+# offset-independent. cx/emit.cyr declares its own copy (CX=1).
+# ================================================================
+# 0=ELF (Linux), 1=Mach-O x86_64 (macOS), 2=Mach-O ARM64 (macOS).
+var _TARGET_MACHO = 0;
+# PE32+ (Windows x86_64): 0=off, 1=on. Set from CYRIUS_TARGET_WIN=1.
+# x86-only in practice; the aarch64 branches are statically dead shims.
+var _TARGET_PE = 0;
+# AGNOS ring-3 userspace target: 0=off, 1=on (CYRIUS_TARGET_AGNOS=1).
+# x86_64 ELF64 with the agnos syscall ABI; only EEXIT diverges.
+var _TARGET_AGNOS = 0;
+# ELF64 kernel target: 0=off, 1=on (CYRIUS_ELF64_KERNEL=1). x86-only —
+# routes EMITELF→EMITELF64_KERNEL (multiboot2/UEFI x86_64 boot).
+var _TARGET_ELF64_KERNEL = 0;
+# UEFI Application PE emit mode: 0=off, 1=on (CYRIUS_TARGET_EFI=1; implies
+# _TARGET_PE). Subsystem=0xA, no kernel32 imports, EEXIT=ret. x86-only.
+var _TARGET_EFI_APPLICATION = 0;
+# cx (cyrius-x bytecode) backend marker. 0 on x86+aarch64 emit; =1 only
+# in backend/cx/emit.cyr's own copy. gates direct-byte emits in shared
+# parse paths. See docs/audit/2026-04-27-cx-direct-emit-inventory.md.
+var _TARGET_CX = 0;
+
+# Active output format for the (target-flag) combination — 0=ELF,
+# 1=Mach-O x86_64, 2=Mach-O ARM64, 3=PE. Hoisted from the byte-identical
+# copies in x86/fixup.cyr + aarch64/fixup.cyr at v6.1.4 (the v6.0.89
+# first-bite left them duplicated pending the _TARGET_* move above).
+# Precedence matches the pre-v6.0.89 EMITELF ladder EXACTLY: Mach-O is
+# tested before PE — _TARGET_MACHO / _TARGET_PE are independent unguarded
+# env vars, so the combined state is reachable; the old code let Mach-O
+# win, and we keep that. (_entry_base stays per-backend — its entry VAs
+# are arch-specific, NOT a byte-identical dup. See each fixup.cyr.)
+fn _emit_fmt(S): i64 {
+    if (_TARGET_MACHO == 1) { return 1; }
+    if (_TARGET_MACHO == 2) { return 2; }
+    if (_TARGET_PE == 1) { return 3; }
+    return 0;
+}
 
 # Static scratch for env value (256 bytes).
 var _env_scratch[256];

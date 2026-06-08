@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.4] — 2026-06-08
+
+**v6.1.x slot 4 (Phase B — backend prep): hoist `_TARGET_*` + `_emit_fmt` to a
+shared home.** Logic-preserving refactor (no behavior change); completes the
+v6.0.89 first-bite's deferred consolidation. **Premise-check finding**:
+`_entry_base` is NOT a byte-identical dup (its entry VAs are arch-specific) —
+only `_emit_fmt` was, so `_entry_base` stays per-backend (the closeout note
+over-stated it as hoistable).
+
+**Benchmark:** `self_compile 458 ms`, `cycc 931,960 B`.
+
+### Changed (refactor)
+
+- **`_TARGET_*` output-target flags** (`_TARGET_MACHO`/`_TARGET_PE`/
+  `_TARGET_AGNOS`/`_TARGET_ELF64_KERNEL`/`_TARGET_EFI_APPLICATION`/`_TARGET_CX`)
+  moved from the per-backend `x86/emit.cyr` + `aarch64/emit.cyr` into the shared
+  `src/backend/common/runtime.cyr` (included before both backends in every
+  `main_*.cyr` entry). This is the prereq the v6.0.91 closeout identified: the
+  decls now precede the shared `_emit_fmt`. `cx/emit.cyr` keeps its own copy
+  (`_TARGET_CX=1`); flags are read by name, so the move is offset-independent.
+- **`_emit_fmt`** (the `_TARGET_*` → format-id selector) hoisted from the
+  byte-identical copies in `x86/fixup.cyr` + `aarch64/fixup.cyr` into
+  `common/runtime.cyr`. `_entry_base` stays per-backend (arch-specific VAs).
+
+### Verified
+
+- **Logic-preserving**: x86 cycc self-host fixpoint byte-identical; check.sh
+  85/85 (incl. the EFI/PE/macho/agnos format-selection gates that `_emit_fmt`
+  drives). **Cross-OS on real hardware** (the refactor touches every backend):
+  pi (aarch64) native self-host byte-identical; ecb (arm64 macOS, `_emit_fmt`→2)
+  compiles → 42; cass (Windows PE, `_emit_fmt`→3) compiles → 42. The new cycc
+  differs from the prior binary only by the moved code's layout (expected).
+
 ## [6.1.3] — 2026-06-08
 
 **v6.1.x slot 3 (Phase A): POSIX `*at()` family + bare-name fs peers — and the

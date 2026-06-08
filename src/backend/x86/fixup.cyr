@@ -6,28 +6,11 @@
 # src/backend/common/runtime.cyr at v6.0.8 (shared with the
 # aarch64 backend; cx kept its own _read_env stub).
 
-# v6.0.89: derived output-format selector — the single place mapping the
-# per-backend _TARGET_* output flags to one format id, read by BOTH the
-# entry-base computation (FIXUP) and the final-emit dispatcher (EMITELF)
-# in place of the parallel raw-flag ladders they each carried. The first
-# bite of the _TARGET_* consolidation (the rest is genuinely multi-slot —
-# the per-op ESYSCALL/EEXIT emitters are byte-incompatible across arches).
-# Values: 0=ELF, 1=Mach-O x86_64, 2=Mach-O ARM64, 3=PE32+. kmode
-# (0=user/1=kernel/2=shared/3=obj), EFI and AGNOS are orthogonal modifiers
-# read separately. The branch taxonomy is identical to the aarch64 fixup's
-# copy (where _TARGET_PE / _TARGET_MACHO==1 are statically-dead shims) so a
-# later slot can hoist this to a shared home. See CHANGELOG [6.0.89].
-fn _emit_fmt(S): i64 {
-    # Precedence matches the pre-v6.0.89 EMITELF ladder EXACTLY — Mach-O is
-    # tested before PE. _TARGET_MACHO and _TARGET_PE come from independent
-    # unguarded env vars (CYRIUS_MACHO / CYRIUS_TARGET_WIN), so the combined
-    # state is reachable even though no sane build sets both; the old code
-    # let Mach-O win that collision, and we keep that to stay byte-identical.
-    if (_TARGET_MACHO == 1) { return 1; }
-    if (_TARGET_MACHO == 2) { return 2; }
-    if (_TARGET_PE == 1) { return 3; }
-    return 0;
-}
+# _emit_fmt (the _TARGET_*→format-id selector) was hoisted to
+# src/backend/common/runtime.cyr at v6.1.4 — shared by x86 + aarch64 now
+# that the _TARGET_* decls live in runtime.cyr too (the prereq). _entry_base
+# below stays per-backend: its entry VAs are arch-specific (not a dup).
+# See CHANGELOG [6.0.89] (first bite) + [6.1.4] (hoist).
 
 # Entry virtual address for the active (format, kmode) combination. Mach-O
 # overrides kmode (the two are never combined); PE keeps the default ELF
