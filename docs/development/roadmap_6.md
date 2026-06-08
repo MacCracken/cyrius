@@ -103,71 +103,25 @@ consolidation).
 > slot-by-slot view; the section below is the cycle-level summary kept
 > here for the v6.x overview. When the two disagree, roadmap.md wins.
 
-**Theme**: position-independent codegen + dynamic-link migration
-+ v6.0.x back-compat retirement. Multi-arc minor with 3 sub-arcs.
+**Theme**: position-independent codegen + dynamic-link migration +
+v6.0.x back-compat retirement + the v6.0.x → v6.1.x carry-ins. Pinned
+2026-06-08 into a per-sub-arc sequence (primary expected items first):
 
-Per user direction 2026-05-19: "defer larger items for multi-arc
-in 6.1.x".
+| Phase | Slots | Items |
+|---|---|---|
+| **A — housekeeping** | v6.1.1–.3 | back-compat symlink drop · `aarch64 EADDRA_IMM` >4095 fix · POSIX `*at()` family |
+| **B — backend prep** | v6.1.4–.5 | `_TARGET_*` decl move + `_emit_fmt`/`_entry_base` hoist · DCE mark-and-sweep consolidation |
+| **C — PIE codegen** | v6.1.6–.8 | PIE x86_64 → PIE aarch64 → `.gnu.hash` migration + drop SysV `.hash` |
+| **D — frontend emit** | v6.1.9 | TS/TSX → JS emit (`cycc --emit-js`) |
+| **E — stdlib carve** | v6.1.10–.11 | bayan distfile carve · ganita distfile carve |
+| *(bug bandwidth)* | — | x86-macho cycc self-compile (HELD) · cyim regex unblock · Windows deps `--lock` hash |
 
-### Sub-arc A — PIE codegen x86_64 (Option A: kernel-mode only)
-
-`--pie` build flag emitting RIP-relative codegen: `lea rax,
-[rip + rel32]` instead of `mov rax, imm64` for absolute-address
-loads; fixup-table machinery learns whether each fixup is
-absolute (old mode) or RIP-relative (new mode). Userland
-binaries + stdlib distfiles continue to use non-PIE path
-unchanged.
-
-**AGNOS as first consumer**: full-binary KASLR (Option A in
-agnos's `2026-05-11-kaslr-scope.md`). AGNOS v1.28.0 ships
-data-only KASLR which doesn't need PIE; pressure here is "when
-AGNOS wants full binary relocation" — uncertain timing but
-likely materializes during v6.x.
-
-Work surface: ~200-400 LOC across `src/backend/x86/emit.cyr` +
-`fixup.cyr`, plus `parse_expr.cyr` fns handling `&fn_name` /
-`&global_var` in PIE mode.
-
-Reference proposal:
-[`proposals/2026-05-11-pie-support.md`](proposals/2026-05-11-pie-support.md).
-
-### Sub-arc B — PIE codegen aarch64
-
-`adrp` + `add` on aarch64 replacing the 4-chunk `movz`/`movk`
-absolute-address sequence. Lands after x86 sub-arc validates the
-fixup-table changes are shape-correct cross-arch.
-
-### Sub-arc C — `.gnu.hash` migration + dynamic-link cleanup
-
-Long-term `.gnu.hash` pin deferred at v5.6.38 (no consumer
-pressure) earns its slot here — modern dynamic loaders prefer
-`.gnu.hash`'s Bloom filter pre-check over the SysV `.hash` chain
-walk, and PIE binaries that go through `dlopen` / symbol
-resolution see the measurable difference. Land as part of
-v6.1.x dynamic-link work; drop SysV `.hash` once `.gnu.hash` is
-in place.
-
-### v6.1.0 — Back-compat symlink drop
-
-- Drop `~/.cyrius/bin/cc5 → cycc` + `~/.cyrius/bin/cyrc → cybs`
-  symlinks from `scripts/install.sh` release path.
-- Drop `cbt/core.cyr` lookup fallback (compiler-binary search
-  tries cycc only; no fallback to cc5).
-- Same shape for cross-arch symlinks (`cc5_aarch64 → cycc_aarch64`,
-  `cc5_win → cycc_win`).
-
-### Slot estimate (v6.1.x)
-
-| Sub-arc | Slots |
-|---|---|
-| PIE x86_64 (Option A — kernel-mode) | ~6 |
-| PIE aarch64 | ~3 |
-| `.gnu.hash` migration + drop SysV `.hash` | ~4 |
-| Back-compat symlink drop (v6.1.0) | ~1 |
-| AGNOS PIE smoke gate + cross-host verify | ~2 |
-| **Total planned** | **~16** |
-| Bug bandwidth | ~10 |
-| **Budget** | **~26** |
+Primary expected ≈ **11 planned slots** + ~10 bug bandwidth. PIE is the
+headline (its AGNOS KASLR consumer is uncertain-timing); the Phase-B
+refactors are PIE prep (the `_emit_fmt` hoist needs the `_TARGET_*` decls
+moved, and PIE extends the same `emit.cyr`/`fixup.cyr`). Full slot detail,
+rationale, and the HELD-tail conditions live in
+[roadmap.md](roadmap.md) — the authoritative active-minor view.
 
 ---
 
