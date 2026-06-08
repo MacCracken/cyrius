@@ -17,15 +17,31 @@
 | **Version** | **6.1.8** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
 | **cycc** (x86_64 ELF) | 933,000 B (unchanged @ 6.1.8 — aarch64-only slot) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 593,376 B |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 752,512 B |
-| **cycc_win** (PE32+ cross) | 804,864 B |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
+| **cycc_win** (PE32+ cross) | 805,376 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 86/86 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~450 ms |
+| bench (every-release gate) | self_compile ~452 ms |
+
+> **Handoff (2026-06-08, pre-reboot for kernel testing):** v6.1.8 is **committed**
+> (clean tree; HEAD = "aarch64 PIE — the PIE arc is now complete on both arches");
+> confirm it's tagged/pushed if not already. All gates green at the cut (x86 +
+> aarch64 self-host byte-identical, pi/ecb/cass cross-OS, check.sh 86/86, bench).
+> **PIE arc is COMPLETE on both arches** (x86 v6.1.6, aarch64 v6.1.8).
+>
+> **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — relevant to the kernel
+> testing): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |
+> CYRIUS_PIE=1 build/cycc > k.elf` → **ET_DYN, p_vaddr=0, e_entry=0xA8**, RIP-
+> relative `.text`. The boot shim (AGNOS gnoboot) must handle ET_DYN: pick a base,
+> slide the single PT_LOAD, jump to `base + 0xA8`. This **gnoboot-boot validation
+> was the one piece left unverified** at v6.1.7 (no AGNOS `--pie` harness yet) — if
+> this reboot is that test, that's the gap it closes. aarch64 kernel-PIE is still a
+> follow-on (this slot did aarch64 *userland* PIE). Verification hosts pi/ecb/cass
+> are remote → unaffected by a local reboot.
 
 ## v6.1.x — active cycle (Backend Codegen Multi-Arc)
 
