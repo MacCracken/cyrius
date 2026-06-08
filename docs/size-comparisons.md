@@ -4,7 +4,7 @@
 > languages and platforms. Referenced by external articles and the
 > agnosticos project. Updated as new compiler versions ship.
 >
-> **Last measured**: 2026-06-08, at Cyrius v6.1.0 (Cyrius self-host figures; the
+> **Last measured**: 2026-06-08, at Cyrius v6.1.4 (Cyrius self-host figures; the
 > comparison-tool sizes below are from the 2026-05-03 sweep).
 > **Methodology**: `int main() { return 42; }` (or language equivalent — all
 > sources are ≤ 4 lines), no external dependencies, default invocation
@@ -63,8 +63,8 @@
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius compiler itself (cycc) is **931,864 B**
-(~931 KB) on Linux ELF at v6.1.0. It compiles itself byte-identically.
+For perspective, the Cyrius compiler itself (cycc) is **931,960 B**
+(~931 KB) on Linux ELF at v6.1.4. It compiles itself byte-identically.
 At v5.5.10 it also compiles itself byte-identically on Windows
 (cycc_win.exe native → out.exe matches Linux cross-build md5).
 That's the whole self-hosting compiler — TLS / atomics / dynlib /
@@ -73,11 +73,11 @@ stdlib / UEFI Application emit (v5.11.49) / ELF64 + multiboot2
 kernel emit (v5.11.43) / DCE-aware reachability filter cross-arch
 (v5.11.59) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cycc (Linux ELF): **931,864 B** (v6.1.0)
-- cycc_aarch64 (Linux aarch64 cross): **591,856 B** (v6.1.0; the
+- Cyrius cycc (Linux ELF): **931,960 B** (v6.1.4)
+- cycc_aarch64 (Linux aarch64 cross): **592,512 B** (v6.1.4; the
   v5.11.59 full DCE bitmap pass for aarch64 fixup.cyr — mirroring the
   x86 path since v5.10.x — accounts for the bulk over earlier v5.11.x)
-- cycc_win (Windows PE cross): **804,864 B** (v6.1.0; PE format
+- cycc_win (Windows PE cross): **804,864 B** (v6.1.4; PE format
   overhead + v5.5.35 .reloc + v5.6.31 DllChar 0x0160 + v5.11.47-.49
   EFI Application emit deltas)
 - cycc compiles itself in milliseconds (no cache, no incremental build —

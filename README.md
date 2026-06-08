@@ -91,7 +91,7 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **931,864 B** (~931 KB) x86_64 at v6.1.0 |
+| Compiler (`cycc`) | **931,960 B** (~931 KB) x86_64 at v6.1.4 |
 | Cross compilers | `cycc_aarch64` 591,152 B, `cycc_win` 803,840 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
 | Bootstrap compiler (`cybs`) | **44,496 B** |
@@ -247,7 +247,7 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cybs (44,496 B compiler)
-    -> cycc (modular compiler + IR, 931,864 B at v6.1.0)
+    -> cycc (modular compiler + IR, 931,960 B at v6.1.4)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 
