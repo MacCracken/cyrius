@@ -60,6 +60,12 @@ var _agnos_target = 0;
 # --agnos. Fills the Linux→Windows cross-build gap (cycc_win runs only ON Windows;
 # wheels.yml's win job built native-only). x86_64 target (no set_arch change).
 var _win_target = 0;
+# v6.1.12: `cyrius build --target=js` → route to cycc's `--emit-js` (the v6.1.11
+# TS/TSX → browser-JS emitter) instead of the native-binary compile path. This is
+# a different invocation model (path-arg in, JS to stdout — see _emit_js in
+# build.cyr), not an env-injected emit target like --agnos/--win. x86-Linux-only
+# (the TS frontend is x86-Linux-only). See CHANGELOG [6.1.12].
+var _js_target = 0;
 
 # ================================================================
 # Output helpers — consistent error/warn/info/status

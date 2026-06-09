@@ -284,6 +284,12 @@ fn main(): i64 {
                 _win_target = 1;
                 ai = ai + 1;
             }
+            elif (streq(argv(ai), "--target=js") == 1) {
+                # v6.1.12: route to cycc's TS/TSX → browser-JS emitter (v6.1.11)
+                # instead of the native compile path. x86-Linux-only.
+                _js_target = 1;
+                ai = ai + 1;
+            }
             else {
                 # An unrecognized token that LOOKS like a flag (`-…`) must
                 # NOT fall through into positional parsing — that shifts
@@ -301,7 +307,7 @@ fn main(): i64 {
         }
         if (vec_len(defs) > 0) { _defines = defs; }
         if (argc() < ai + 2) {
-            println("Usage: cyrius build [--aarch64|--win|--agnos] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [-D NAME]... <source> <output>");
+            println("Usage: cyrius build [--aarch64|--win|--agnos|--target=js] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [-D NAME]... <source> <output>");
             return 1;
         }
         return cmd_build(argv(ai), argv(ai + 1));

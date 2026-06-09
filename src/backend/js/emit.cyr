@@ -20,6 +20,18 @@
 var _js_buf = 0;
 var _js_len = 0;
 var _js_walk_err = 0;          # revisit / out-of-range → non-zero exit
+# v6.1.12: structural-newline indent depth (2 spaces/level). Bumped only around
+# block bodies (class/block/switch); applied ONLY at structural newlines via
+# _ej_nl, never inside verbatim string/template content (_ej_raw), so template
+# literals carrying their own newlines are never re-indented. See CHANGELOG [6.1.12].
+var _js_ind = 0;
+# v6.1.12: when set, a STMT_VAR_DECL emits its binding WITHOUT the trailing `;`.
+# Used for loop headers: a for-init / for-of / for-in binding is a var-decl node
+# but must not carry its own statement semicolon (`for (let i = 0;; …)` /
+# `for (const x; of …)` were invalid JS — the var-decl's `;` plus the header
+# separator). Set only around the header binding, cleared immediately. See
+# CHANGELOG [6.1.12].
+var _js_omit_semi = 0;
 # JSX pragma (default "h") + whether to emit the standalone h prelude.
 var _jsx_pragma[64];
 var _jsx_pragma_len = 0;
@@ -54,6 +66,30 @@ fn _ej_raw(src, start, len): i64 {
         _ej(load8(src + start + i));
         i = i + 1;
     }
+    return 0;
+}
+
+# v6.1.12: emit the current indent (2 spaces × _js_ind).
+fn _ej_indent(): i64 {
+    var i = 0;
+    while (i < _js_ind) { _ej(32); _ej(32); i = i + 1; }
+    return 0;
+}
+
+# v6.1.12: structural newline — `\n` then the current indent for the next line.
+fn _ej_nl(): i64 {
+    _ej(10);
+    _ej_indent();
+    return 0;
+}
+
+# v6.1.12: emit a for-loop-header binding (init / for-of / for-in target). If it
+# is a var-decl it must drop its statement `;` (the header supplies separators).
+# A plain expression target (`for (x of …)`) is emitted unchanged.
+fn _ej_for_head(ts_base, src, p): i64 {
+    _js_omit_semi = 1;
+    _TS_JS(ts_base, src, p);
+    _js_omit_semi = 0;
     return 0;
 }
 
@@ -227,6 +263,28 @@ fn _ej_list(ts_base, src, off, sep): i64 {
         if (guard >= 131072) { _js_walk_err = 1; return 0; }
         if (first == 0) { _ejs(sep); }
         first = 0;
+        _TS_JS(ts_base, src, c);
+        at = at + 1;
+        guard = guard + 1;
+        c = TS_AST_CHILDREN_GET(ts_base, at);
+    }
+    return 0;
+}
+
+# v6.1.12: like _ej_list but emits a structural newline+indent (_ej_nl) BEFORE
+# each item, so every body statement lands on its own line at the current indent.
+# Leading (not separating) so an empty body yields a clean `{\n}` from the caller
+# (no dangling indented blank line). Used for block/class/switch bodies.
+fn _ej_list_nl(ts_base, src, off): i64 {
+    if (off <= 0) { return 0; }
+    var nc = TS_AST_NODE_COUNT(ts_base);
+    var at = off;
+    var guard = 0;
+    var c = TS_AST_CHILDREN_GET(ts_base, at);
+    while (c != 0 - 1) {
+        if (c < 0 || c >= nc) { _js_walk_err = 1; return 0; }
+        if (guard >= 131072) { _js_walk_err = 1; return 0; }
+        _ej_nl();
         _TS_JS(ts_base, src, c);
         at = at + 1;
         guard = guard + 1;
@@ -587,12 +645,12 @@ fn _TS_JS(ts_base, src, idx): i64 {
     if (k == TS_AST_DECL_CLASS) {
         _ejs("class "); _ej_span(src, p0);
         if (p2 > 0 && _is_node_ref(p2) == 1) { _ejs(" extends "); _TS_JS(ts_base, src, p2); }
-        _ejs(" {\n"); _ej_list(ts_base, src, p1, "\n"); _ejs("\n}");
+        _ejs(" {"); _js_ind = _js_ind + 1; _ej_list_nl(ts_base, src, p1); _js_ind = _js_ind - 1; _ej_nl(); _ejs("}");
         return 0;
     }
 
     # ---- statements ----
-    if (k == TS_AST_STMT_BLOCK) { _ejs("{\n"); _ej_list(ts_base, src, p0, "\n"); _ejs("\n}"); return 0; }
+    if (k == TS_AST_STMT_BLOCK) { _ejs("{"); _js_ind = _js_ind + 1; _ej_list_nl(ts_base, src, p0); _js_ind = _js_ind - 1; _ej_nl(); _ejs("}"); return 0; }
     if (k == TS_AST_STMT_EXPR) { _TS_JS(ts_base, src, p0); _ej(59); return 0; }
     if (k == TS_AST_STMT_IF) {
         _ejs("if ("); _TS_JS(ts_base, src, p0); _ejs(") "); _TS_JS(ts_base, src, p1);
@@ -601,7 +659,7 @@ fn _TS_JS(ts_base, src, idx): i64 {
     }
     if (k == TS_AST_STMT_FOR) {
         _ejs("for (");
-        if (_is_node_ref(p0) == 1) { _TS_JS(ts_base, src, p0); }
+        if (_is_node_ref(p0) == 1) { _ej_for_head(ts_base, src, p0); }
         _ejs("; ");
         if (_is_node_ref(p1) == 1) { _TS_JS(ts_base, src, p1); }
         _ejs("; ");
@@ -609,8 +667,8 @@ fn _TS_JS(ts_base, src, idx): i64 {
         _ejs(") "); _TS_JS(ts_base, src, p3);
         return 0;
     }
-    if (k == TS_AST_STMT_FOR_OF) { _ejs("for ("); _TS_JS(ts_base, src, p0); _ejs(" of "); _TS_JS(ts_base, src, p1); _ejs(") "); _TS_JS(ts_base, src, p2); return 0; }
-    if (k == TS_AST_STMT_FOR_IN) { _ejs("for ("); _TS_JS(ts_base, src, p0); _ejs(" in "); _TS_JS(ts_base, src, p1); _ejs(") "); _TS_JS(ts_base, src, p2); return 0; }
+    if (k == TS_AST_STMT_FOR_OF) { _ejs("for ("); _ej_for_head(ts_base, src, p0); _ejs(" of "); _TS_JS(ts_base, src, p1); _ejs(") "); _TS_JS(ts_base, src, p2); return 0; }
+    if (k == TS_AST_STMT_FOR_IN) { _ejs("for ("); _ej_for_head(ts_base, src, p0); _ejs(" in "); _TS_JS(ts_base, src, p1); _ejs(") "); _TS_JS(ts_base, src, p2); return 0; }
     if (k == TS_AST_STMT_WHILE) { _ejs("while ("); _TS_JS(ts_base, src, p0); _ejs(") "); _TS_JS(ts_base, src, p1); return 0; }
     if (k == TS_AST_STMT_DO_WHILE) { _ejs("do "); _TS_JS(ts_base, src, p0); _ejs(" while ("); _TS_JS(ts_base, src, p1); _ejs(");"); return 0; }
     if (k == TS_AST_STMT_RETURN) {
@@ -639,15 +697,17 @@ fn _TS_JS(ts_base, src, idx): i64 {
         _ej(32); _TS_JS(ts_base, src, p1);
         return 0;
     }
-    if (k == TS_AST_STMT_SWITCH) { _ejs("switch ("); _TS_JS(ts_base, src, p0); _ejs(") {\n"); _ej_list(ts_base, src, p1, "\n"); _ejs("\n}"); return 0; }
+    if (k == TS_AST_STMT_SWITCH) { _ejs("switch ("); _TS_JS(ts_base, src, p0); _ejs(") {"); _js_ind = _js_ind + 1; _ej_list_nl(ts_base, src, p1); _js_ind = _js_ind - 1; _ej_nl(); _ejs("}"); return 0; }
     if (k == TS_AST_STMT_SWITCH_CASE) {
-        if (_is_node_ref(p0) == 1) { _ejs("case "); _TS_JS(ts_base, src, p0); _ejs(": "); }
-        else { _ejs("default: "); }
-        _ej_list(ts_base, src, p1, "\n");
+        if (_is_node_ref(p0) == 1) { _ejs("case "); _TS_JS(ts_base, src, p0); _ejs(":"); }
+        else { _ejs("default:"); }
+        # Case body statements indent one level under the case label.
+        _js_ind = _js_ind + 1; _ej_list_nl(ts_base, src, p1); _js_ind = _js_ind - 1;
         return 0;
     }
     if (k == TS_AST_STMT_VAR_DECL) {
-        _ej_varkind(p0); _ej(32); _ej_list(ts_base, src, p1, ", "); _ej(59);
+        _ej_varkind(p0); _ej(32); _ej_list(ts_base, src, p1, ", ");
+        if (_js_omit_semi == 0) { _ej(59); }   # v6.1.12: suppressed in loop headers
         return 0;
     }
 

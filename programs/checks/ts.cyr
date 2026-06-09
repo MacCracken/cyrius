@@ -194,6 +194,33 @@ fn _emit_js_to_file(fixture_path, out_path): i64 {
     return 0 - 1;
 }
 
+# v6.1.12: scan emitted JS for the invalid for-header patterns that shipped
+# undetected through 6.1.10/6.1.11 (the loop binding carried its statement `;`):
+# `;;` (regular for), `; of `, `; in `. Returns 1 if any are present. Catches the
+# regression class the parse-ts round-trip can't (parse-ts is lenient). No node
+# dependency — pure substring scan. See CHANGELOG [6.1.12].
+fn _emit_has_bad_for(out_path): i64 {
+    var buf = alloc(262144);
+    var n = file_read_all(out_path, buf, 262144);
+    if (n <= 0) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(buf + i);
+        if (c == 59) {                                   # ';'
+            if (i + 1 < n && load8(buf + i + 1) == 59) { return 1; }   # ";;"
+            # "; of " / "; in " — ';' ' ' [oi] [fn] ' '
+            if (i + 4 < n && load8(buf + i + 1) == 32 && load8(buf + i + 4) == 32) {
+                var a = load8(buf + i + 2);
+                var b = load8(buf + i + 3);
+                if (a == 111 && b == 102) { return 1; }   # "of"
+                if (a == 105 && b == 110) { return 1; }   # "in"
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # v6.1.10 fixed the TS children-list allocator (sibling lists used to
 # overlap); v6.1.11 added the real TS/TSX→JS emitter on top. This gate is
 # both guards in one: `cycc --emit-js` walks the AST emitting JS and exits
@@ -223,6 +250,16 @@ fn _ts_walk_gate(): i64 {
         _p(": cycc --emit-js exit ");
         print_num(rc1);
         println(" (overlapping/corrupt children list — allocator regression)");
+        _check(label, 1);
+        return 1;
+    }
+    if (_emit_has_bad_for(out) == 1) {
+        sys_unlink(out);
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": emitted for-loop header has a stray/double semicolon (`;;` / `; of ` / `; in `) — invalid JS, emit regression");
         _check(label, 1);
         return 1;
     }

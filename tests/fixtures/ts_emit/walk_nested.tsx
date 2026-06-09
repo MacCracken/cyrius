@@ -16,4 +16,18 @@ function row({ id, body }: Note, ...rest: number[]): JSX.Element {
   }
 }
 
-export { row };
+// v6.1.12: for / for-of / for-in headers (a var-decl binding must NOT carry its
+// statement `;` here — regression guard for the stray/double-semicolon bug).
+function loops(arr: number[], o: object): void {
+  for (let i = 0; i < arr.length; i = i + 1) {
+    console.log(arr[i]);
+  }
+  for (const x of arr) {
+    console.log(x);
+  }
+  for (const k in o) {
+    console.log(k);
+  }
+}
+
+export { row, loops };

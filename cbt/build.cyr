@@ -2,6 +2,62 @@
 # Core operations
 # ================================================================
 
+# v6.1.12: `cyrius build --target=js <source.tsx> <output.js>` — surface cycc's
+# `--emit-js` (v6.1.11 TS/TSX → browser-JS emitter) through the CLI. Distinct
+# from the native compile path: cycc reads the source as a PATH arg and writes
+# JS to stdout (no stdin pipe, no dep/define prepend — JS emit doesn't take
+# cyrius includes). We fork cycc with [cc, "--emit-js", source, 0] and dup2 the
+# output file onto stdout. x86-Linux-only (the TS frontend is). See CHANGELOG [6.1.12].
+fn _emit_js(source, output): i64 {
+    var cc = current_cc();
+    if (cc == 0) {
+        _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
+        return 1;
+    }
+    if (file_exists(cc) == 0) {
+        _err_ctx("compiler not found", cc);
+        return 1;
+    }
+    # Atomic-output: emit to a temp then rename on success, so a failed emit
+    # never leaves a truncated .js over a previously-good one (mirrors compile()).
+    var tmp_pid = syscall(39);
+    var tmp_out_sb = str_builder_new();
+    str_builder_add_cstr(tmp_out_sb, output);
+    str_builder_add_cstr(tmp_out_sb, ".tmp.");
+    str_builder_add_int(tmp_out_sb, tmp_pid);
+    var tmp_out = str_data(str_builder_build(tmp_out_sb));
+    sys_unlink(tmp_out);
+    var pid = sys_fork();
+    if (pid == 0) {
+        var ofd = sys_open(tmp_out, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
+        if (ofd < 0) { sys_exit(1); }
+        sys_dup2(ofd, 1);
+        sys_close(ofd);
+        # argv: cc, "--emit-js", <source path>, NUL. emit-js reads the path arg,
+        # writes JS to stdout (now the output file). No envp injection needed.
+        var argv[32];
+        store64(&argv, cc);
+        store64(&argv + 8, "--emit-js");
+        store64(&argv + 16, source);
+        store64(&argv + 24, 0);
+        sys_execve(cc, &argv, _envp);
+        sys_exit(127);
+    }
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 1) {
+        if (WEXITSTATUS(status) == 0) {
+            sys_unlink(output);
+            syscall(82, tmp_out, output);   # SYS_RENAME on Linux x86_64
+            sys_chmod(output, 0x1A4);        # 0644 — JS is data, not executable
+            return 0;
+        }
+    }
+    sys_unlink(tmp_out);
+    return 1;
+}
+
 # Compile source.cyr to output using current compiler
 # If _defines vec is set, prepend #define lines to a temp file first.
 fn compile(source, output): i64 {

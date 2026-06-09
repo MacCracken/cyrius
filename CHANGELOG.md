@@ -6,6 +6,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.12] — 2026-06-08
+
+**v6.1.x slot 12: agnos `getenv` stack/`.bss` HIGH-sev consumer fix, packed with
+the Phase D JS-emitter completion items.** The headline is an agnoshi-reported
+fix (agnsh #PF'd on real hardware after its banner); folded in alongside three
+TS/TSX → JS emitter items that finish off Phase D's edges (CLI surface, readable
+output, and a pre-existing for-loop codegen bug surfaced while doing them).
+Phase E (bayan carve) moves to 6.1.13.
+
+**Benchmark:** `self_compile 485 ms` (vs 570 @ 6.1.11 — within noise, faster),
+`cycc 1,038,072 B` (+1,224 B; the JS-emitter indent/for-loop logic, x86-Linux-only
+TS frontend). check.sh **87/87**; all 169 `.tcyr` clean.
+
+### Fixed
+
+- **`lib/io.cyr` `getenv()` no longer reserves an 8 KB buffer on the agnos
+  target (HIGH-sev, agnoshi).** The `/proc/self/environ` reader's `var buf[8192]`
+  sat *after* the `#ifdef CYRIUS_TARGET_AGNOS` early `return _agnos_getenv(name)`,
+  so it was compiled into the agnos build even though that path never touches it.
+  Now the whole reader (buffer + parse loop) is guarded behind
+  `#ifndef CYRIUS_TARGET_AGNOS`. **Mechanism note (checked on the real agnos
+  build, not assumed):** in cycc a function-local `var[]` this size lands in
+  **`.bss` static storage, not the stack frame** as the issue hypothesized — the
+  `--agnos` build's `.bss` shrinks 0x2f18 → 0xf08 (−8,208 B) and `.text` −928 B
+  (the now-dead reader). So the agnos #PF is `.bss`-image / loader-mapping
+  related, not init-stack overflow; agnos's "widen the ring-3 init stack"
+  follow-on is aimed a layer off. agnos consumers can call `getenv` freely again.
+  Default (non-agnos) `getenv` is unchanged; x86 cycc self-host byte-identical.
+- **TS/TSX → JS emitter: every `for` / `for-of` / `for-in` header emitted invalid
+  JS** (pre-existing, shipped silently in 6.1.10/6.1.11 — the consumer `app.tsx`
+  had no loops). The loop binding is a var-decl node and carried its statement
+  `;`, producing `for (let i = 0;; …)`, `for (const x; of …)`,
+  `for (const k; in …)`. Fixed by suppressing the var-decl's trailing `;` in loop
+  headers (`_js_omit_semi` / `_ej_for_head`). The `_ts_walk_gate` now scans
+  emitted JS for the `;;` / `; of ` / `; in ` patterns (catches the class the
+  lenient `--parse-ts` round-trip can't), and `walk_nested.tsx` gains for /
+  for-of / for-in coverage.
+
+### Added
+
+- **`cyrius build --target=js <in.tsx> <out.js>`** — surfaces the v6.1.11
+  `cycc --emit-js` TS/TSX → browser-JS emitter through the CLI (its own
+  invocation model: source as a path arg, JS to stdout, atomic-output rename,
+  no dep/define prepend). x86-Linux-only (the TS frontend is). `--dry-run`
+  honored; a parse error leaves any prior output untouched.
+- **Indented JS output** — the emitter now emits 2-space structural indentation
+  (block / class / switch bodies, nested under the case label). AST-driven: the
+  indent is applied only at structural newlines (`_ej_nl` / `_ej_list_nl`), never
+  inside verbatim string/template content, so template literals carrying their
+  own newlines are never re-indented. Output stays valid (`node --check`) and
+  round-trips through `--parse-ts`.
+
+### Verified
+
+- x86 cycc self-host **byte-identical**; check.sh **87/87**; all **169 `.tcyr`**
+  clean (per-file exit-code loop, not just the grep summary).
+- Emitted JS for nested blocks + all three loop forms passes `node --check` and
+  the `--parse-ts` round-trip; the agnos `getenv` build drops the 8 KB `.bss`
+  buffer (agnos cross-build gate green).
+- **Cross-OS on real hardware**: pi (aarch64 native), ach (Intel macOS), ecb
+  (arm64 macOS) self-host **byte-identical**. **cass (Windows PE) deferred** — a
+  stale `c2.exe` from a concurrent-run mistake tripped a Defender heuristic
+  quarantine that holds a persistent file lock (WinDefend is a protected service,
+  can't be restarted; RTP toggle didn't release it). cass self-host verified
+  clean earlier the same day (6.1.11); the change to its cycc binary is only the
+  target-independent JS emitter (not exercised during self-compile). Re-verify
+  after the box is reset.
+
 ## [6.1.11] — 2026-06-08
 
 **v6.1.x slot 11 (Phase D): TS/TSX → JS emitter — `cycc --emit-js <file.tsx>`

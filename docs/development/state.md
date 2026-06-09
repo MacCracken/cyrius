@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.11** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,036,848 B (+24,664 B @ 6.1.11 — TS/TSX→JS emitter replaces the walk tool; x86-only) |
+| **Version** | **6.1.12** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,038,072 B (+1,224 B @ 6.1.12 — JS-emitter indent + for-loop fix; x86-only TS frontend) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 593,384 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 805,888 B |
@@ -25,18 +25,24 @@
 | check.sh gates | 87/87 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~570 ms |
+| bench (every-release gate) | self_compile ~485 ms |
 
-> **Handoff (2026-06-08):** v6.1.11 ready for cut — **Phase D mini-arc COMPLETE**
-> (v6.1.10 allocator fix + v6.1.11 JS emitter). `version-bump.sh 6.1.11` applied;
-> user pushes/tags after CI. All gates green: x86 cycc byte-identical self-host,
-> check.sh **87/87** (`_ts_walk_gate` does emit→round-trip), all 169 tcyr clean,
-> the consumer `app.tsx` emits valid runnable JS (node --check + parse-ts
-> round-trip + stub-DOM run), cass/pi/ecb cross-OS byte-identical, bench
-> self_compile 570 ms / cycc 1,036,848 B. **Next = Phase E** (bayan/ganita carve,
-> v6.1.12–13). **Deferred polish** (no consumer ask): relocate the 64 KB `_ts_cst`
-> scratch to the ts_base heap to reclaim binary size; emitted JS is flat (valid,
-> un-indented); a `cyrius build --target=js` wrapper.
+> **Handoff (2026-06-08):** v6.1.12 ready for cut — **agnos `getenv` HIGH-sev
+> consumer fix packed with three Phase D JS-emitter completion items.**
+> `version-bump.sh 6.1.12` applied; user pushes/tags after CI. Gates: x86 cycc
+> byte-identical self-host (post-bump), check.sh **87/87**, all 169 tcyr clean
+> (per-file exit-code loop), `cyrius build --target=js` emits valid INDENTED JS
+> via the installed toolchain (node --check + parse-ts round-trip), bench
+> self_compile 485 ms / cycc 1,038,072 B (+1,224 B). **Cross-OS: pi/ach/ecb
+> self-host byte-identical; cass DEFERRED** — a stale `c2.exe` from a
+> concurrent-run mistake tripped a Defender heuristic quarantine that holds a
+> persistent file lock (WinDefend is protected, can't be restarted; RTP toggle
+> didn't release it). cass verified clean on 6.1.11 the same day; its cycc only
+> gained the target-independent JS emitter (not run during self-compile).
+> **User will reset the box; re-run `sh scripts/cross-os-selfhost.sh cass` after.**
+> **Next = Phase E** (bayan carve v6.1.13, then ganita). **Deferred polish** (no
+> consumer ask): relocate the 64 KB `_ts_cst` scratch to the ts_base heap (the #3
+> pack candidate, held until after the carves).
 >
 > **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — still pending an AGNOS
 > `--pie` harness): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |
@@ -127,8 +133,19 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   (node --check + `--parse-ts` round-trip + stub-DOM run all pass). `_ts_walk_gate`
   upgraded to emit→round-trip. x86-Linux-only; cycc +24.7 KB. Closes the SY
   `yeo-cy-test` ask. **Phase D mini-arc COMPLETE.** See CHANGELOG [6.1.11].
+- **v6.1.12** — agnos `getenv` HIGH-sev fix + Phase D edges. (1) `lib/io.cyr`
+  `getenv()` guards its 8 KB `/proc/self/environ` reader behind
+  `#ifndef CYRIUS_TARGET_AGNOS` — the buffer was compiled past the agnos early
+  return (agnoshi #PF). **Verified it's `.bss` static, not a stack frame** as the
+  issue assumed (agnos `.bss` −8,208 B, `.text` −928 B). (2) `cyrius build
+  --target=js` CLI wrapper over `cycc --emit-js`. (3) Indented JS output (AST-
+  driven structural newlines). (4) **Fixed a pre-existing bug: every for /
+  for-of / for-in header emitted invalid JS** (`;;` / `; of ` / `; in ` — the
+  loop binding kept its statement `;`); shipped silent in 6.1.10/.11 (consumer
+  had no loops); `_ts_walk_gate` now scans for it + fixture coverage. See
+  CHANGELOG [6.1.12].
 
-**Next:** **Phase E** — bayan distfile carve (v6.1.12) then ganita (v6.1.13); see
+**Next:** **Phase E** — bayan distfile carve (v6.1.13) then ganita; see
 [[project_bayan_ganita_carve_arc]]. The kernel-PIE gnoboot-boot validation +
 aarch64 kernel-PIE land when an AGNOS `--pie` harness exists. (Possible polish: a
 `cyrius build --target=js` wrapper + indentation in emitted JS — emitter is flat
