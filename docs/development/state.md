@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.12** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,038,072 B (+1,224 B @ 6.1.12 — JS-emitter indent + for-loop fix; x86-only TS frontend) |
+| **Version** | **6.1.13** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,038,072 B (**flat** @ 6.1.13 — agnos `fnptr` fix is stdlib-only, not in cycc) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 593,384 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 805,888 B |
@@ -25,24 +25,30 @@
 | check.sh gates | 87/87 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~485 ms |
+| bench (every-release gate) | self_compile ~479 ms |
 
-> **Handoff (2026-06-08):** v6.1.12 ready for cut — **agnos `getenv` HIGH-sev
-> consumer fix packed with three Phase D JS-emitter completion items.**
-> `version-bump.sh 6.1.12` applied; user pushes/tags after CI. Gates: x86 cycc
-> byte-identical self-host (post-bump), check.sh **87/87**, all 169 tcyr clean
-> (per-file exit-code loop), `cyrius build --target=js` emits valid INDENTED JS
-> via the installed toolchain (node --check + parse-ts round-trip), bench
-> self_compile 485 ms / cycc 1,038,072 B (+1,224 B). **Cross-OS: pi/ach/ecb
-> self-host byte-identical; cass DEFERRED** — a stale `c2.exe` from a
-> concurrent-run mistake tripped a Defender heuristic quarantine that holds a
-> persistent file lock (WinDefend is protected, can't be restarted; RTP toggle
-> didn't release it). cass verified clean on 6.1.11 the same day; its cycc only
-> gained the target-independent JS emitter (not run during self-compile).
-> **User will reset the box; re-run `sh scripts/cross-os-selfhost.sh cass` after.**
-> **Next = Phase E** (bayan carve v6.1.13, then ganita). **Deferred polish** (no
-> consumer ask): relocate the 64 KB `_ts_cst` scratch to the ts_base heap (the #3
-> pack candidate, held until after the carves).
+> **Handoff (2026-06-08):** v6.1.13 ready for cut — **the REAL agnsh
+> banner-then-die fix: `lib/fnptr.cyr` `fncall0..8` had no `CYRIUS_TARGET_AGNOS`
+> branch → every indirect call returned 0 on agnos → null allocator vtable.**
+> This is the actual root cause that 6.1.12's `getenv` `.bss` fix was a layer off
+> from. Added the agnos+x86 SysV asm branch in-place to each `fncallN`
+> (byte-identical to its Linux block; offsets are frame-layout-coupled so no
+> shared helper). `version-bump.sh 6.1.13` applied; user pushes/tags after CI.
+> Gates: x86 cycc byte-identical self-host (post-bump — fnptr.cyr isn't in cycc,
+> so cycc is flat), check.sh **87/87**, all 169 tcyr clean (per-file exit-code
+> loop), **agnos `--agnos` emit A/B-verified: a `fncall2` program emits 0 `call
+> rax` before / 1 after the fix**, bench self_compile 479 ms / cycc 1,038,072 B
+> (flat). **Cross-OS: BOTH GREEN this slot** — ecb (macOS arm64) `SELFHOST_OK`
+> byte-identical, cass (Windows PE) `FC: no differences` / `SELFHOST_OK` (the
+> 6.1.12 Defender quarantine has since cleared). Expected: the change is `#ifdef
+> CYRIUS_TARGET_AGNOS`-gated, compiled out of every non-agnos build, so the
+> macOS/Windows cycc is unchanged; the agnos target is verified by the emit-level
+> A/B above (full QEMU+gnoboot agnsh smoke is agnoshi's harness, not in this
+> repo). **Next = Phase E** (bayan carve, now v6.1.14, then ganita).
+> **Sibling flagged (not fixed):** `lib/fdlopen.cyr` has the same Linux-only asm
+> gap but is the dlopen/ld.so/auxv path agnos static binaries never reach. **Deferred
+> polish** (no consumer ask): relocate the 64 KB `_ts_cst` scratch to the ts_base
+> heap (the #3 pack candidate, held until after the carves).
 >
 > **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — still pending an AGNOS
 > `--pie` harness): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |

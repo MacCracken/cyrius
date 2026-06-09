@@ -6,6 +6,71 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.13] — 2026-06-08
+
+**v6.1.x slot 13: the REAL agnsh-banner-then-die fix — `lib/fnptr.cyr`'s
+`fncall0..8` had no agnos branch, so every indirect call returned 0 on the
+agnos target.** This is the actual root cause of the agnoshi #PF that 6.1.12's
+`getenv` `.bss` fix was aimed a layer off from (that entry's own hedge: *"agnos's
+'widen the ring-3 init stack' follow-on is aimed a layer off"* — correct, it was
+this). Each `fncallN` guards its inline-asm body on `#ifdef CYRIUS_TARGET_LINUX`
+/ `_MACOS` / `_WIN` with **no `CYRIUS_TARGET_AGNOS` branch**; since
+`cyrius build --agnos` predefines `CYRIUS_TARGET_AGNOS` and *deliberately not*
+`CYRIUS_TARGET_LINUX` (`src/main.cyr:866`), none of the asm compiled in and every
+`fncallN` degenerated to `return result;` with `result == 0`. That nulled the
+entire `Allocator` vtable layer (`alloc_via`/`realloc_via`/`free_via` dispatch
+through `fncall1/2/4`), so `vec_new` → `alloc_via(a,24)` → **0**, and the first
+consumer to deref that null vec faulted — in agnsh, `CommandHistory_new()` right
+after the banner, before the first prompt. **Phase E (bayan carve) moves to
+6.1.14.**
+
+**Benchmark:** `self_compile 479 ms` (vs 485 @ 6.1.12 — faster, within noise),
+`cycc 1,038,072 B` (**flat** — `fnptr.cyr` is a stdlib module, not compiled into
+cycc, so the compiler is byte-identical). check.sh **87/87**; all 169 `.tcyr`
+clean.
+
+### Fixed
+
+- **`lib/fnptr.cyr` `fncall0`..`fncall8` now carry a `CYRIUS_TARGET_AGNOS` +
+  `CYRIUS_ARCH_X86` branch (HIGH-sev, agnoshi).** Byte-identical to each
+  function's existing Linux/x86 SysV asm block (agnos is x86_64 ELF using the
+  SysV register-arg convention — same opcodes, same `[rbp-N]` offsets). Added
+  **in-place inside each function**, mirroring the v5.9.38 macOS fix: the asm
+  bodies use hardcoded `[rbp-N]` offsets coupled to cycc's per-definition frame
+  layout, so a shared/standalone helper would spill callee-saved regs first and
+  read garbage (verified empirically in the issue). **A/B-confirmed on the real
+  `--agnos` emit:** a `fncall2(&fn, 0, 42)` program emits **zero** `call rax`
+  (`ff d0`) instructions before the fix (the indirect call is dead) and exactly
+  one after. Restores the allocator vtable + every `vec`/`str`/`hashmap`
+  function-pointer consumer on agnos; agnsh reaches `[ASSIST] >` and dispatches.
+  Host/Linux/macOS/Windows builds `#ifdef` the new block out entirely → cycc
+  self-host byte-identical, all other targets unaffected. The agnoshi-side
+  `scripts/patch-fnptr-agnos.py` stopgap can be retired once agnoshi re-vendors
+  against this release.
+
+### Notes
+
+- **Sibling sweep (`#ifdef CYRIUS_TARGET_LINUX`-gated asm across `lib/`):**
+  `lib/fdlopen.cyr` (`dl_setjmp`/`dl_longjmp`/`_fdlopen_enter_ldso`) has the same
+  Linux/x86-only asm shape with no agnos branch, but it is the **fd-based dlopen /
+  ld.so / auxv** machinery — agnos static ring-3 binaries never reach it (the
+  fnptr fix alone gets agnsh to the prompt, QEMU-confirmed in the issue). Left
+  as-is rather than speculatively patched: it has no agnos consumer to validate
+  against and its asm reads `[rbp]`/`[rbp+8]` (even more frame-layout-coupled). If
+  an agnos consumer ever needs `fdlopen`, it gets the same in-place treatment.
+
+### Verified
+
+- agnos `--agnos` emit carries the indirect `call rax` (A/B: 0 → 1).
+- x86 cycc self-host **byte-identical** (fnptr.cyr is not in cycc); check.sh
+  **87/87**; all **169 `.tcyr`** clean (per-file exit-code loop, not just the
+  grep summary).
+- **Cross-OS self-host BOTH GREEN** (run even though the change is gated out of
+  non-agnos builds — "lib-only, unaffected" is never a skip excuse): **ecb**
+  (macOS arm64) `SELFHOST_OK` byte-identical; **cass** (Windows PE)
+  `FC: no differences encountered` / `SELFHOST_OK` (6.1.12's Defender quarantine
+  has cleared).
+
 ## [6.1.12] — 2026-06-08
 
 **v6.1.x slot 12: agnos `getenv` stack/`.bss` HIGH-sev consumer fix, packed with
