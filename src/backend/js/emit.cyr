@@ -1,79 +1,233 @@
 # ================================================================
-# src/backend/js/emit.cyr — TS/TSX AST walk (Phase D, v6.1.10)
+# src/backend/js/emit.cyr — TS/TSX → JS emitter (Phase D, v6.1.11)
 # ================================================================
-# v6.1.10 ships the AST children-list allocator FIX (in parse.cyr) plus
-# this walk-verification tool. `cycc --emit-js <file.tsx>` walks the
-# parsed AST through its VALUE edges and prints a stable, kind-based
-# S-expression of the tree — e.g.
-#   function f(x){ return g(x,1); }
-#   -> (root (function (param) (block (return (call ident ident int)))))
-# The S-expr is correct ONLY IF the children lists are contiguous and
-# non-overlapping, so a regression of the allocator fix (any builder
-# reverting to the old RESERVE-then-fill pattern) changes the output and
-# trips the check.sh gate. The real JS emitter replaces this walk in
-# v6.1.11 (it reuses the same per-kind traversal). Set CYRIUS_TS_DUMP=1
-# for the raw node-table + children-region dump used during bring-up.
-# See CHANGELOG [6.1.10].
+# `cycc --emit-js <file.tsx>` walks the parsed AST (made walkable by the
+# v6.1.10 children-list allocator fix) and emits browser JS:
+#   - strips type annotations, interfaces, type aliases, `as`/`!`,
+#     generic type-args, optional `?` markers, param/return types;
+#   - lowers JSX to `h(tag, props, ...children)` pragma calls (pragma
+#     configurable via CYRIUS_JSX_PRAGMA; default `h`), and — unless a
+#     custom pragma is set — prepends a ~12-line standalone `h` runtime so
+#     the output is browser-runnable with zero deps;
+#   - passes ESM import/export through, pruning type-only export names;
+#   - re-emits template literals + string/number literals verbatim.
+# Single-file emit; no bundler. The AST traversal mirrors the v6.1.10
+# walk-validator and keeps its revisit self-check, so `--emit-js` still
+# exits non-zero on a children-list regression (check.sh _ts_walk_gate).
+# CYRIUS_TS_DUMP=1 gives the raw node-table dump. See CHANGELOG [6.1.11].
 
-# Walk-integrity flag. A well-formed AST is a TREE: every node has exactly
-# one parent, so a value-edge walk visits each node at most once. The old
-# allocator bug made sibling lists overlap, so the SAME child slot (hence
-# the same node) appeared in two lists — a revisit. _TS_SX records each
-# visited node in the (post-parse, idle) `_ts_cst` scratch and sets this on
-# a revisit or an out-of-range list entry; TS_JS_EMIT turns it into a
-# non-zero exit so the check.sh gate catches any allocator regression.
-var _ts_walk_err = 0;
+# ---- output buffer (src + 0x71A000 = the otherwise-idle output_buf) ----
+var _js_buf = 0;
+var _js_len = 0;
+var _js_walk_err = 0;          # revisit / out-of-range → non-zero exit
+# JSX pragma (default "h") + whether to emit the standalone h prelude.
+var _jsx_pragma[64];
+var _jsx_pragma_len = 0;
+var _jsx_prelude = 1;
+# Type-only names (interfaces + type aliases) to prune from `export {}`.
+var _type_spans[512];          # up to 512 packed name-spans
+var _type_count = 0;
 
-# --- stdout helpers (fd 1) ---
-fn _js_str(s): i64 {
-    var n = 0;
-    while (load8(s + n) != 0) { n = n + 1; }
-    syscall(SYS_WRITE, 1, s, n);
+fn _ej(b): i64 {
+    if (_js_len >= 2097152) { return 0; }
+    store8(_js_buf + _js_len, b & 0xFF);
+    _js_len = _js_len + 1;
     return 0;
 }
 
-fn _js_dec(v): i64 {
-    var n = v;
-    if (n < 0) { _js_str("-"); n = 0 - n; }
-    if (n == 0) { _js_str("0"); return 0; }
-    var buf[24];
+# Emit a NUL-terminated cstring literal.
+fn _ejs(s): i64 {
     var i = 0;
-    while (n > 0) {
-        store8(&buf + i, 48 + n % 10);
-        n = n / 10;
+    var c = load8(s + i);
+    while (c != 0) {
+        _ej(c);
+        i = i + 1;
+        c = load8(s + i);
+    }
+    return 0;
+}
+
+# Emit `len` raw bytes from src+start.
+fn _ej_raw(src, start, len): i64 {
+    var i = 0;
+    while (i < len) {
+        _ej(load8(src + start + i));
         i = i + 1;
     }
-    var rev[24];
-    var j = 0;
-    while (j < i) {
-        store8(&rev + j, load8(&buf + (i - 1 - j)));
-        j = j + 1;
-    }
-    syscall(SYS_WRITE, 1, &rev, i);
     return 0;
 }
 
-# Number of AST nodes — bounds-checks node-index payloads so the walker
-# can tell a real child-node index from a packed span / token / flag.
-fn _js_nodecount(ts_base): i64 {
-    return TS_AST_NODE_COUNT(ts_base);
+fn _span_start(span): i64 { return (span / 16777216) % 16777216; }
+fn _span_len(span): i64 { return span % 16777216; }
+
+# Emit the source text a span covers (identifier / number / raw chunk).
+fn _ej_span(src, span): i64 {
+    _ej_raw(src, _span_start(span), _span_len(span));
+    return 0;
 }
 
-# Walk a sentinel(-1)-terminated children list, S-expr'ing each entry.
-# (_TS_SX is defined below — cyrius resolves the forward call via fixup.)
-fn _TS_SX_LIST(ts_base, off): i64 {
+# Emit a string literal verbatim INCLUDING its original quotes. Lex spans
+# for string content exclude the quotes, so the opening quote sits at
+# start-1 and the closing quote at start+len — emit start-1 .. start+len+1.
+fn _ej_strlit(src, span): i64 {
+    var st = _span_start(span);
+    var ln = _span_len(span);
+    if (st > 0) {
+        _ej_raw(src, st - 1, ln + 2);
+    } else {
+        _ej(34); _ej_raw(src, st, ln); _ej(34);
+    }
+    return 0;
+}
+
+# True if a span's text is a valid JS identifier (so a JSX attr name can be
+# an unquoted object key; `data-id` etc. must be quoted).
+fn _is_ident_span(src, span): i64 {
+    var st = _span_start(span);
+    var ln = _span_len(span);
+    if (ln == 0) { return 0; }
+    var i = 0;
+    while (i < ln) {
+        var c = load8(src + st + i);
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }      # a-z
+        elif (c >= 65 && c <= 90) { ok = 1; }      # A-Z
+        elif (c == 95 || c == 36) { ok = 1; }      # _ $
+        elif (i > 0 && c >= 48 && c <= 57) { ok = 1; }  # 0-9 (not first)
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# True if a span's first char is uppercase (JSX component vs HTML tag).
+fn _is_upper_span(src, span): i64 {
+    var st = _span_start(span);
+    var c = load8(src + st);
+    if (c >= 65 && c <= 90) { return 1; }
+    return 0;
+}
+
+# Compare two spans' source text for equality.
+fn _span_eq(src, a, b): i64 {
+    var la = _span_len(a);
+    var lb = _span_len(b);
+    if (la != lb) { return 0; }
+    var sa = _span_start(a);
+    var sb = _span_start(b);
+    var i = 0;
+    while (i < la) {
+        if (load8(src + sa + i) != load8(src + sb + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn _is_type_name(src, span): i64 {
+    var i = 0;
+    while (i < _type_count) {
+        if (_span_eq(src, span, load64(&_type_spans + i * 8)) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Map a TS_TOK_* operator constant to its JS text. Word operators
+# (typeof/void/delete/await/yield/in/instanceof) include a trailing space;
+# the caller handles spacing for symbol operators.
+fn _ej_op(op): i64 {
+    if (op == TS_TOK_PLUS)        { _ejs("+"); return 0; }
+    if (op == TS_TOK_MINUS)       { _ejs("-"); return 0; }
+    if (op == TS_TOK_STAR)        { _ejs("*"); return 0; }
+    if (op == TS_TOK_SLASH)       { _ejs("/"); return 0; }
+    if (op == TS_TOK_PERCENT)     { _ejs("%"); return 0; }
+    if (op == TS_TOK_STAR_STAR)   { _ejs("**"); return 0; }
+    if (op == TS_TOK_BANG)        { _ejs("!"); return 0; }
+    if (op == TS_TOK_TILDE)       { _ejs("~"); return 0; }
+    if (op == TS_TOK_AMP)         { _ejs("&"); return 0; }
+    if (op == TS_TOK_PIPE)        { _ejs("|"); return 0; }
+    if (op == TS_TOK_CARET)       { _ejs("^"); return 0; }
+    if (op == TS_TOK_EQ)          { _ejs("="); return 0; }
+    if (op == TS_TOK_EQ_EQ)       { _ejs("=="); return 0; }
+    if (op == TS_TOK_EQ_EQ_EQ)    { _ejs("==="); return 0; }
+    if (op == TS_TOK_BANG_EQ)     { _ejs("!="); return 0; }
+    if (op == TS_TOK_BANG_EQ_EQ)  { _ejs("!=="); return 0; }
+    if (op == TS_TOK_LT)          { _ejs("<"); return 0; }
+    if (op == TS_TOK_GT)          { _ejs(">"); return 0; }
+    if (op == TS_TOK_LT_EQ)       { _ejs("<="); return 0; }
+    if (op == TS_TOK_GT_EQ)       { _ejs(">="); return 0; }
+    if (op == TS_TOK_LT_LT)       { _ejs("<<"); return 0; }
+    if (op == TS_TOK_GT_GT)       { _ejs(">>"); return 0; }
+    if (op == TS_TOK_GT_GT_GT)    { _ejs(">>>"); return 0; }
+    if (op == TS_TOK_AMP_AMP)     { _ejs("&&"); return 0; }
+    if (op == TS_TOK_PIPE_PIPE)   { _ejs("||"); return 0; }
+    if (op == TS_TOK_QQ)          { _ejs("??"); return 0; }
+    if (op == TS_TOK_PLUS_PLUS)   { _ejs("++"); return 0; }
+    if (op == TS_TOK_MINUS_MINUS) { _ejs("--"); return 0; }
+    if (op == TS_TOK_PLUS_EQ)     { _ejs("+="); return 0; }
+    if (op == TS_TOK_MINUS_EQ)    { _ejs("-="); return 0; }
+    if (op == TS_TOK_STAR_EQ)     { _ejs("*="); return 0; }
+    if (op == TS_TOK_SLASH_EQ)    { _ejs("/="); return 0; }
+    if (op == TS_TOK_PERCENT_EQ)  { _ejs("%="); return 0; }
+    if (op == TS_TOK_STAR_STAR_EQ){ _ejs("**="); return 0; }
+    if (op == TS_TOK_AMP_EQ)      { _ejs("&="); return 0; }
+    if (op == TS_TOK_PIPE_EQ)     { _ejs("|="); return 0; }
+    if (op == TS_TOK_CARET_EQ)    { _ejs("^="); return 0; }
+    if (op == TS_TOK_LT_LT_EQ)    { _ejs("<<="); return 0; }
+    if (op == TS_TOK_GT_GT_EQ)    { _ejs(">>="); return 0; }
+    if (op == TS_TOK_GT_GT_GT_EQ) { _ejs(">>>="); return 0; }
+    if (op == TS_TOK_AMP_AMP_EQ)  { _ejs("&&="); return 0; }
+    if (op == TS_TOK_PIPE_PIPE_EQ){ _ejs("||="); return 0; }
+    if (op == TS_TOK_QQ_EQ)       { _ejs("??="); return 0; }
+    if (op == TS_TOK_KW_TYPEOF)   { _ejs("typeof "); return 0; }
+    if (op == TS_TOK_KW_VOID)     { _ejs("void "); return 0; }
+    if (op == TS_TOK_KW_DELETE)   { _ejs("delete "); return 0; }
+    if (op == TS_TOK_KW_AWAIT)    { _ejs("await "); return 0; }
+    if (op == TS_TOK_KW_YIELD)    { _ejs("yield "); return 0; }
+    if (op == TS_TOK_KW_IN)       { _ejs(" in "); return 0; }
+    if (op == TS_TOK_KW_INSTANCEOF) { _ejs(" instanceof "); return 0; }
+    return 0;
+}
+
+# Emit "var" / "let" / "const" from the kind token.
+fn _ej_varkind(tok): i64 {
+    if (tok == TS_TOK_KW_LET)   { _ejs("let"); return 0; }
+    if (tok == TS_TOK_KW_CONST) { _ejs("const"); return 0; }
+    _ejs("var");
+    return 0;
+}
+
+# Emit the configured JSX pragma.
+fn _ej_pragma(): i64 {
+    var i = 0;
+    while (i < _jsx_pragma_len) { _ej(load8(&_jsx_pragma + i)); i = i + 1; }
+    return 0;
+}
+
+# True if payload `p` is a child-node reference (small) rather than a packed
+# span/token/flag. Param/binding name spans always have start>0 (a name never
+# sits at source offset 0), so a packed span is >= 1<<24; a node index is not.
+fn _is_node_ref(p): i64 {
+    if (p > 0 && p < 16777216) { return 1; }
+    return 0;
+}
+
+# (forward calls to _TS_JS below are resolved by cyrius's fixup table)
+
+# Emit a sentinel-terminated children list, each via _TS_JS, joined by `sep`.
+fn _ej_list(ts_base, src, off, sep): i64 {
     if (off <= 0) { return 0; }
-    var nc = _js_nodecount(ts_base);
+    var nc = TS_AST_NODE_COUNT(ts_base);
     var at = off;
+    var first = 1;
     var guard = 0;
     var c = TS_AST_CHILDREN_GET(ts_base, at);
     while (c != 0 - 1) {
-        # Out-of-range entry or a list with no terminator within the pool
-        # are both corruption symptoms — flag and stop walking this list.
-        if (c < 0 || c >= nc) { _ts_walk_err = 1; return 0; }
-        if (guard >= 131072) { _ts_walk_err = 1; return 0; }
-        _js_str(" ");
-        _TS_SX(ts_base, c);
+        if (c < 0 || c >= nc) { _js_walk_err = 1; return 0; }
+        if (guard >= 131072) { _js_walk_err = 1; return 0; }
+        if (first == 0) { _ejs(sep); }
+        first = 0;
+        _TS_JS(ts_base, src, c);
         at = at + 1;
         guard = guard + 1;
         c = TS_AST_CHILDREN_GET(ts_base, at);
@@ -81,193 +235,644 @@ fn _TS_SX_LIST(ts_base, off): i64 {
     return 0;
 }
 
-# Recurse into a payload IF it is a real child-node index (1..count-1),
-# else treat it as a leaf (span / token / flag) and ignore. Used for the
-# few payloads that are sometimes a node and sometimes a span (e.g.
-# DECL_PARAM payload[0] = name-span or destructuring-pattern node).
-fn _TS_SX_NODE_OPT(ts_base, p): i64 {
-    if (p <= 0) { return 0; }
-    var nc = _js_nodecount(ts_base);
-    if (p >= nc) { return 0; }
-    _js_str(" ");
-    _TS_SX(ts_base, p);
+# Emit a parameter list `(a, b, c)` from a params children-offset.
+fn _ej_params(ts_base, src, off): i64 {
+    _ej(40);                       # (
+    _ej_list(ts_base, src, off, ", ");
+    _ej(41);                       # )
     return 0;
 }
 
-# Kind-name table for the readable S-expr. Unmapped kinds print "k<N>".
-fn _TS_SX_NAME(k): i64 {
-    if (k == 1)   { _js_str("root"); return 0; }
-    if (k == 10)  { _js_str("int"); return 0; }
-    if (k == 11)  { _js_str("float"); return 0; }
-    if (k == 12)  { _js_str("str"); return 0; }
-    if (k == 13)  { _js_str("template"); return 0; }
-    if (k == 21)  { _js_str("ident"); return 0; }
-    if (k == 22)  { _js_str("member"); return 0; }
-    if (k == 24)  { _js_str("index"); return 0; }
-    if (k == 25)  { _js_str("call"); return 0; }
-    if (k == 27)  { _js_str("new"); return 0; }
-    if (k == 28)  { _js_str("unary"); return 0; }
-    if (k == 29)  { _js_str("binary"); return 0; }
-    if (k == 30)  { _js_str("ternary"); return 0; }
-    if (k == 31)  { _js_str("assign"); return 0; }
-    if (k == 32)  { _js_str("arrow"); return 0; }
-    if (k == 33)  { _js_str("array"); return 0; }
-    if (k == 34)  { _js_str("object"); return 0; }
-    if (k == 35)  { _js_str("spread"); return 0; }
-    if (k == 36)  { _js_str("as"); return 0; }
-    if (k == 39)  { _js_str("paren"); return 0; }
-    if (k == 100) { _js_str("block"); return 0; }
-    if (k == 101) { _js_str("exprstmt"); return 0; }
-    if (k == 102) { _js_str("if"); return 0; }
-    if (k == 106) { _js_str("while"); return 0; }
-    if (k == 108) { _js_str("return"); return 0; }
-    if (k == 109) { _js_str("throw"); return 0; }
-    if (k == 114) { _js_str("switch"); return 0; }
-    if (k == 115) { _js_str("case"); return 0; }
-    if (k == 117) { _js_str("vardecl"); return 0; }
-    if (k == 200) { _js_str("function"); return 0; }
-    if (k == 201) { _js_str("class"); return 0; }
-    if (k == 204) { _js_str("binding"); return 0; }
-    if (k == 205) { _js_str("param"); return 0; }
-    if (k == 207) { _js_str("method"); return 0; }
-    if (k == 500) { _js_str("pat-ident"); return 0; }
-    if (k == 501) { _js_str("pat-object"); return 0; }
-    if (k == 502) { _js_str("pat-array"); return 0; }
-    if (k == 600) { _js_str("quasi"); return 0; }
-    if (k == 601) { _js_str("prop"); return 0; }
-    if (k == 602) { _js_str("shorthand"); return 0; }
-    if (k == 700) { _js_str("jsx"); return 0; }
-    if (k == 701) { _js_str("jsx-frag"); return 0; }
-    if (k == 704) { _js_str("jsx-attr"); return 0; }
-    if (k == 706) { _js_str("jsx-expr"); return 0; }
-    if (k == 707) { _js_str("jsx-text"); return 0; }
-    _js_str("k");
-    _js_dec(k);
+# Emit an object-literal property KEY (JSX attr name or object key) — bare if
+# it's a valid JS identifier, else quoted. Used for JSX attr -> object keys.
+fn _ej_attrkey(src, span): i64 {
+    if (_is_ident_span(src, span) == 1) {
+        _ej_span(src, span);
+    } else {
+        _ej(34); _ej_span(src, span); _ej(34);
+    }
     return 0;
 }
 
-# S-expr one node. Emits `(name <value children...>)`, recursing through
-# VALUE edges only — type subtrees (kinds 300-316, return-types, param
-# types, `as` target types) are skipped, mirroring what the v6.1.11
-# emitter strips. Leaf nodes print just `name`.
-fn _TS_SX(ts_base, idx): i64 {
-    if (idx < 0) { _js_str("nil"); return 0; }
-    # Revisit detection (tree invariant) — see _ts_walk_err. Track node ids
-    # in the idle parse stack (8192 slots); ids beyond that are untracked.
-    if (idx < 8192) {
-        # Already visited → overlapping lists (corruption). Flag and STOP
-        # recursing this branch so a corrupt tree can't run away / overflow.
-        if (load64(&_ts_cst + idx * 8) != 0) {
-            _ts_walk_err = 1;
-            _js_str("@dup");
-            return 0;
+# Emit a JSX text child as a JS string (trimmed; returns 1 if non-empty).
+# Whitespace-only text between elements is dropped (returns 0).
+fn _ej_jsx_text(src, span): i64 {
+    var st = _span_start(span);
+    var ln = _span_len(span);
+    var a = 0;
+    while (a < ln) {
+        var c = load8(src + st + a);
+        if (c == 32 || c == 9 || c == 10 || c == 13) { a = a + 1; } else { break; }
+    }
+    var b = ln;
+    while (b > a) {
+        var c2 = load8(src + st + b - 1);
+        if (c2 == 32 || c2 == 9 || c2 == 10 || c2 == 13) { b = b - 1; } else { break; }
+    }
+    if (b <= a) { return 0; }
+    _ej(34);                       # "
+    var i = a;
+    while (i < b) {
+        var c3 = load8(src + st + i);
+        if (c3 == 34 || c3 == 92) { _ej(92); _ej(c3); }   # escape " and \
+        elif (c3 == 10 || c3 == 9 || c3 == 13) { _ej(32); }
+        else { _ej(c3); }
+        i = i + 1;
+    }
+    _ej(34);
+    return 1;
+}
+
+# Lower a JSX element/fragment to `pragma(tag, props, ...children)`.
+fn _ej_jsx(ts_base, src, idx): i64 {
+    var k = TS_AST_KIND(ts_base, idx);
+    _ej_pragma();
+    _ej(40);                       # (
+    if (k == TS_AST_JSX_FRAGMENT) {
+        # Fragment -> pragma(null, null, ...children)
+        _ejs("null, null");
+        var fbody = TS_AST_PAYLOAD(ts_base, idx, 0);
+        _ej_jsx_children(ts_base, src, fbody);
+        _ej(41);
+        return 0;
+    }
+    # Tag: uppercase name -> component identifier; else quoted HTML tag.
+    var name_span = TS_AST_PAYLOAD(ts_base, idx, 0);
+    if (_is_upper_span(src, name_span) == 1) {
+        _ej_span(src, name_span);
+    } else {
+        _ej(34); _ej_span(src, name_span); _ej(34);
+    }
+    _ejs(", ");
+    # Props from attrs.
+    var attrs = TS_AST_PAYLOAD(ts_base, idx, 1);
+    _ej_jsx_props(ts_base, src, attrs);
+    # Children (only when not self-closing; payload[3] == 1 = self-close).
+    var selfclose = TS_AST_PAYLOAD(ts_base, idx, 3);
+    if (selfclose != 1) {
+        var body = TS_AST_PAYLOAD(ts_base, idx, 2);
+        _ej_jsx_children(ts_base, src, body);
+    }
+    _ej(41);                       # )
+    return 0;
+}
+
+# Emit the props object for a JSX element from its attrs children-offset.
+fn _ej_jsx_props(ts_base, src, off): i64 {
+    if (off <= 0) { _ejs("null"); return 0; }
+    var nc = TS_AST_NODE_COUNT(ts_base);
+    var at = off;
+    var any = 0;
+    var c = TS_AST_CHILDREN_GET(ts_base, at);
+    # First pass: any attrs at all?
+    if (c == 0 - 1) { _ejs("null"); return 0; }
+    _ejs("{ ");
+    var first = 1;
+    var guard = 0;
+    while (c != 0 - 1) {
+        if (c < 0 || c >= nc) { _js_walk_err = 1; return 0; }
+        if (guard >= 131072) { _js_walk_err = 1; return 0; }
+        if (first == 0) { _ejs(", "); }
+        first = 0;
+        var ak = TS_AST_KIND(ts_base, c);
+        if (ak == TS_AST_JSX_SPREAD_ATTR) {
+            _ejs("...");
+            var sx = TS_AST_PAYLOAD(ts_base, c, 0);
+            if (sx > 0) { _TS_JS(ts_base, src, sx); }
+        } else {
+            var aname = TS_AST_PAYLOAD(ts_base, c, 0);
+            var vkind = TS_AST_PAYLOAD(ts_base, c, 1);
+            var vval = TS_AST_PAYLOAD(ts_base, c, 2);
+            _ej_attrkey(src, aname);
+            _ejs(": ");
+            if (vkind == 1) { _ej_strlit(src, vval); }
+            elif (vkind == 2) { if (vval > 0) { _TS_JS(ts_base, src, vval); } else { _ejs("true"); } }
+            else { _ejs("true"); }
         }
+        at = at + 1;
+        guard = guard + 1;
+        c = TS_AST_CHILDREN_GET(ts_base, at);
+    }
+    _ejs(" }");
+    return 0;
+}
+
+# Emit JSX children as trailing pragma args (each prefixed with ", ").
+fn _ej_jsx_children(ts_base, src, off): i64 {
+    if (off <= 0) { return 0; }
+    var nc = TS_AST_NODE_COUNT(ts_base);
+    var at = off;
+    var guard = 0;
+    var c = TS_AST_CHILDREN_GET(ts_base, at);
+    while (c != 0 - 1) {
+        if (c < 0 || c >= nc) { _js_walk_err = 1; return 0; }
+        if (guard >= 131072) { _js_walk_err = 1; return 0; }
+        var ck = TS_AST_KIND(ts_base, c);
+        if (ck == TS_AST_JSX_TEXT) {
+            var tspan = TS_AST_SPAN(ts_base, c);
+            # peek: only emit separator if the text is non-empty
+            var save = _js_len;
+            _ejs(", ");
+            var emitted = _ej_jsx_text(src, tspan);
+            if (emitted == 0) { _js_len = save; }
+        } elif (ck == TS_AST_JSX_EXPR_CONTAINER) {
+            var ex = TS_AST_PAYLOAD(ts_base, c, 0);
+            if (ex > 0) { _ejs(", "); _TS_JS(ts_base, src, ex); }
+        } else {
+            _ejs(", ");
+            _ej_jsx(ts_base, src, c);
+        }
+        at = at + 1;
+        guard = guard + 1;
+        c = TS_AST_CHILDREN_GET(ts_base, at);
+    }
+    return 0;
+}
+
+# Emit a template literal verbatim: `quasi${expr}quasi...`.
+fn _ej_template(ts_base, src, idx): i64 {
+    _ej(96);                       # `
+    var qoff = TS_AST_PAYLOAD(ts_base, idx, 0);
+    var eoff = TS_AST_PAYLOAD(ts_base, idx, 1);
+    var nc = TS_AST_NODE_COUNT(ts_base);
+    var qi = qoff;
+    var ei = eoff;
+    var first = 1;
+    var guard = 0;
+    var q = TS_AST_CHILDREN_GET(ts_base, qi);
+    while (q != 0 - 1) {
+        if (q < 0 || q >= nc || guard >= 131072) { _js_walk_err = 1; return 0; }
+        # quasi text
+        _ej_span(src, TS_AST_SPAN(ts_base, q));
+        # interleave the matching expr (one fewer expr than quasis)
+        if (eoff > 0) {
+            var e = TS_AST_CHILDREN_GET(ts_base, ei);
+            if (e != 0 - 1 && e >= 0 && e < nc) {
+                _ejs("${");
+                _TS_JS(ts_base, src, e);
+                _ej(125);          # }
+                ei = ei + 1;
+            }
+        }
+        qi = qi + 1;
+        guard = guard + 1;
+        q = TS_AST_CHILDREN_GET(ts_base, qi);
+    }
+    _ej(96);                       # `
+    return 0;
+}
+
+# Emit one named-export / import specifier list, pruning type-only names.
+# Returns the count actually emitted.
+fn _ej_export_specs(ts_base, src, off): i64 {
+    if (off <= 0) { return 0; }
+    var nc = TS_AST_NODE_COUNT(ts_base);
+    var at = off;
+    var n = 0;
+    var guard = 0;
+    var c = TS_AST_CHILDREN_GET(ts_base, at);
+    while (c != 0 - 1) {
+        if (c < 0 || c >= nc || guard >= 131072) { _js_walk_err = 1; return 0; }
+        var iname = TS_AST_PAYLOAD(ts_base, c, 0);
+        var alias = TS_AST_PAYLOAD(ts_base, c, 1);
+        if (_is_type_name(src, iname) == 0) {
+            if (n > 0) { _ejs(", "); }
+            _ej_span(src, iname);
+            if (alias > 0) { _ejs(" as "); _ej_span(src, alias); }
+            n = n + 1;
+        }
+        at = at + 1;
+        guard = guard + 1;
+        c = TS_AST_CHILDREN_GET(ts_base, at);
+    }
+    return n;
+}
+
+# ================================================================
+# Main per-node JS emitter
+# ================================================================
+fn _TS_JS(ts_base, src, idx): i64 {
+    if (idx < 0) { return 0; }
+    # Revisit detection (tree invariant; reuses the idle parse stack).
+    if (idx < 8192) {
+        if (load64(&_ts_cst + idx * 8) != 0) { _js_walk_err = 1; return 0; }
         store64(&_ts_cst + idx * 8, 1);
     }
     var k = TS_AST_KIND(ts_base, idx);
+    var span = TS_AST_SPAN(ts_base, idx);
     var p0 = TS_AST_PAYLOAD(ts_base, idx, 0);
     var p1 = TS_AST_PAYLOAD(ts_base, idx, 1);
     var p2 = TS_AST_PAYLOAD(ts_base, idx, 2);
     var p3 = TS_AST_PAYLOAD(ts_base, idx, 3);
 
-    # Leaf value nodes — no children to walk.
-    if (k == 10 || k == 11 || k == 12 || k == 14 || k == 15 || k == 16
-    || k == 17 || k == 18 || k == 19 || k == 20 || k == 21 || k == 600
-    || k == 602 || k == 500 || k == 707) {
-        _TS_SX_NAME(k);
+    # ---- type-only declarations: emit nothing ----
+    if (k == TS_AST_DECL_INTERFACE || k == TS_AST_DECL_TYPE_ALIAS) { return 0; }
+
+    # ---- literals ----
+    if (k == TS_AST_EXPR_INT || k == TS_AST_EXPR_FLOAT || k == TS_AST_EXPR_REGEX) { _ej_span(src, span); return 0; }
+    if (k == TS_AST_EXPR_STRING) { _ej_strlit(src, span); return 0; }
+    if (k == TS_AST_EXPR_TEMPLATE) { _ej_template(ts_base, src, idx); return 0; }
+    if (k == TS_AST_EXPR_TRUE)  { _ejs("true"); return 0; }
+    if (k == TS_AST_EXPR_FALSE) { _ejs("false"); return 0; }
+    if (k == TS_AST_EXPR_NULL)  { _ejs("null"); return 0; }
+    if (k == TS_AST_EXPR_UNDEFINED) { _ejs("undefined"); return 0; }
+    if (k == TS_AST_EXPR_THIS)  { _ejs("this"); return 0; }
+    if (k == TS_AST_EXPR_SUPER) { _ejs("super"); return 0; }
+    if (k == TS_AST_EXPR_IDENT) { _ej_span(src, p0); return 0; }
+
+    # ---- expressions ----
+    if (k == TS_AST_EXPR_MEMBER) { _TS_JS(ts_base, src, p0); _ej(46); _ej_span(src, p1); return 0; }
+    if (k == TS_AST_EXPR_OPTIONAL_MEMBER) {
+        _TS_JS(ts_base, src, p0);
+        if (p2 == 1) { _ejs("?.["); _TS_JS(ts_base, src, p1); _ej(93); }
+        else { _ejs("?."); _ej_span(src, p1); }
+        return 0;
+    }
+    if (k == TS_AST_EXPR_INDEX) { _TS_JS(ts_base, src, p0); _ej(91); _TS_JS(ts_base, src, p1); _ej(93); return 0; }
+    if (k == TS_AST_EXPR_CALL) { _TS_JS(ts_base, src, p0); _ej(40); _ej_list(ts_base, src, p1, ", "); _ej(41); return 0; }
+    if (k == TS_AST_EXPR_OPTIONAL_CALL) { _TS_JS(ts_base, src, p0); _ejs("?.("); _ej_list(ts_base, src, p1, ", "); _ej(41); return 0; }
+    if (k == TS_AST_EXPR_NEW) {
+        _ejs("new "); _TS_JS(ts_base, src, p0);
+        _ej(40); _ej_list(ts_base, src, p1, ", "); _ej(41);
+        return 0;
+    }
+    if (k == TS_AST_EXPR_UNARY) { _ej_op(p0); _TS_JS(ts_base, src, p1); return 0; }
+    if (k == TS_AST_EXPR_BINARY) { _TS_JS(ts_base, src, p1); _ej(32); _ej_op(p0); _ej(32); _TS_JS(ts_base, src, p2); return 0; }
+    if (k == TS_AST_EXPR_TERNARY) { _TS_JS(ts_base, src, p0); _ejs(" ? "); _TS_JS(ts_base, src, p1); _ejs(" : "); _TS_JS(ts_base, src, p2); return 0; }
+    if (k == TS_AST_EXPR_ASSIGN) { _TS_JS(ts_base, src, p1); _ej(32); _ej_op(p0); _ej(32); _TS_JS(ts_base, src, p2); return 0; }
+    if (k == TS_AST_EXPR_ARROW) {
+        if (TS_AST_IS_ASYNC(ts_base, idx) == 1) { _ejs("async "); }
+        _ej_params(ts_base, src, p0);
+        _ejs(" => ");
+        var abody = p1;
+        var abk = TS_AST_KIND(ts_base, abody);
+        if (abk == TS_AST_EXPR_OBJECT) { _ej(40); _TS_JS(ts_base, src, abody); _ej(41); }
+        else { _TS_JS(ts_base, src, abody); }
+        return 0;
+    }
+    if (k == TS_AST_EXPR_ARRAY) { _ej(91); _ej_list(ts_base, src, p0, ", "); _ej(93); return 0; }
+    if (k == TS_AST_EXPR_OBJECT) {
+        var oc = TS_AST_CHILDREN_GET(ts_base, p0);
+        if (p0 <= 0 || oc == 0 - 1) { _ejs("{}"); return 0; }
+        _ejs("{ "); _ej_list(ts_base, src, p0, ", "); _ejs(" }");
+        return 0;
+    }
+    if (k == TS_AST_EXPR_SPREAD) { _ejs("..."); _TS_JS(ts_base, src, p0); return 0; }
+    if (k == TS_AST_EXPR_TYPE_ASSERT) { _TS_JS(ts_base, src, p0); return 0; }   # strip `as T`
+    if (k == TS_AST_EXPR_NON_NULL) { _TS_JS(ts_base, src, p0); return 0; }       # strip `!`
+    if (k == TS_AST_EXPR_POSTFIX) { _TS_JS(ts_base, src, p1); _ej_op(p0); return 0; }
+    if (k == TS_AST_EXPR_PAREN) { _ej(40); _TS_JS(ts_base, src, p0); _ej(41); return 0; }
+
+    # ---- property / object members ----
+    if (k == TS_AST_PROPERTY_ASSIGN) {
+        if (_is_node_ref(p0) == 1) { _ej(91); _TS_JS(ts_base, src, p0); _ej(93); }   # computed [expr]
+        else {
+            var st = _span_start(p0);
+            var q = 0;
+            if (st > 0) { q = load8(src + st - 1); }
+            if (q == 34 || q == 39) { _ej_strlit(src, p0); }   # string key — re-quote
+            else { _ej_span(src, p0); }
+        }
+        _ejs(": "); _TS_JS(ts_base, src, p1);
+        return 0;
+    }
+    if (k == TS_AST_SHORTHAND_PROP) { _ej_span(src, p0); return 0; }
+
+    # ---- patterns ----
+    if (k == TS_AST_PATTERN_IDENT) {
+        _ej_span(src, p0);
+        if (_is_node_ref(p1) == 1) { _ejs(": "); _TS_JS(ts_base, src, p1); }   # rename {a: b}
+        if (p2 > 0 && _is_node_ref(p2) == 1) { _ejs(" = "); _TS_JS(ts_base, src, p2); }
+        return 0;
+    }
+    if (k == TS_AST_PATTERN_OBJECT) { _ejs("{ "); _ej_list(ts_base, src, p0, ", "); _ejs(" }"); return 0; }
+    if (k == TS_AST_PATTERN_ARRAY) { _ej(91); _ej_list(ts_base, src, p0, ", "); _ej(93); return 0; }
+    if (k == TS_AST_PATTERN_REST) { _ejs("..."); _ej_span(src, p0); return 0; }
+    if (k == TS_AST_NONE) { return 0; }   # array hole
+
+    # ---- declarations ----
+    if (k == TS_AST_DECL_PARAM) {
+        if (p3 == 1) { _ejs("..."); }
+        if (_is_node_ref(p0) == 1) { _TS_JS(ts_base, src, p0); } else { _ej_span(src, p0); }
+        if (p2 > 0 && _is_node_ref(p2) == 1) { _ejs(" = "); _TS_JS(ts_base, src, p2); }
+        return 0;
+    }
+    if (k == TS_AST_DECL_VAR_BINDING) {
+        if (_is_node_ref(p0) == 1) { _TS_JS(ts_base, src, p0); } else { _ej_span(src, p0); }
+        if (p2 > 0 && _is_node_ref(p2) == 1) { _ejs(" = "); _TS_JS(ts_base, src, p2); }
+        return 0;
+    }
+    if (k == TS_AST_DECL_FUNCTION) {
+        if (TS_AST_IS_ASYNC(ts_base, idx) == 1) { _ejs("async "); }
+        _ejs("function "); _ej_span(src, p0);
+        _ej_params(ts_base, src, p1);
+        _ej(32); _TS_JS(ts_base, src, p3);
+        return 0;
+    }
+    if (k == TS_AST_DECL_METHOD) {
+        if (TS_AST_IS_ASYNC(ts_base, idx) == 1) { _ejs("async "); }
+        _ej_span(src, p0); _ej_params(ts_base, src, p1); _ej(32); _TS_JS(ts_base, src, p3);
+        return 0;
+    }
+    if (k == TS_AST_DECL_CONSTRUCTOR) {
+        _ejs("constructor"); _ej_params(ts_base, src, p1); _ej(32); _TS_JS(ts_base, src, p3);
+        return 0;
+    }
+    if (k == TS_AST_DECL_PROPERTY) {
+        _ej_span(src, p0);
+        if (p2 > 0 && _is_node_ref(p2) == 1) { _ejs(" = "); _TS_JS(ts_base, src, p2); }
+        _ej(59);
+        return 0;
+    }
+    if (k == TS_AST_DECL_CLASS) {
+        _ejs("class "); _ej_span(src, p0);
+        if (p2 > 0 && _is_node_ref(p2) == 1) { _ejs(" extends "); _TS_JS(ts_base, src, p2); }
+        _ejs(" {\n"); _ej_list(ts_base, src, p1, "\n"); _ejs("\n}");
         return 0;
     }
 
-    _js_str("(");
-    _TS_SX_NAME(k);
+    # ---- statements ----
+    if (k == TS_AST_STMT_BLOCK) { _ejs("{\n"); _ej_list(ts_base, src, p0, "\n"); _ejs("\n}"); return 0; }
+    if (k == TS_AST_STMT_EXPR) { _TS_JS(ts_base, src, p0); _ej(59); return 0; }
+    if (k == TS_AST_STMT_IF) {
+        _ejs("if ("); _TS_JS(ts_base, src, p0); _ejs(") "); _TS_JS(ts_base, src, p1);
+        if (_is_node_ref(p2) == 1) { _ejs(" else "); _TS_JS(ts_base, src, p2); }
+        return 0;
+    }
+    if (k == TS_AST_STMT_FOR) {
+        _ejs("for (");
+        if (_is_node_ref(p0) == 1) { _TS_JS(ts_base, src, p0); }
+        _ejs("; ");
+        if (_is_node_ref(p1) == 1) { _TS_JS(ts_base, src, p1); }
+        _ejs("; ");
+        if (_is_node_ref(p2) == 1) { _TS_JS(ts_base, src, p2); }
+        _ejs(") "); _TS_JS(ts_base, src, p3);
+        return 0;
+    }
+    if (k == TS_AST_STMT_FOR_OF) { _ejs("for ("); _TS_JS(ts_base, src, p0); _ejs(" of "); _TS_JS(ts_base, src, p1); _ejs(") "); _TS_JS(ts_base, src, p2); return 0; }
+    if (k == TS_AST_STMT_FOR_IN) { _ejs("for ("); _TS_JS(ts_base, src, p0); _ejs(" in "); _TS_JS(ts_base, src, p1); _ejs(") "); _TS_JS(ts_base, src, p2); return 0; }
+    if (k == TS_AST_STMT_WHILE) { _ejs("while ("); _TS_JS(ts_base, src, p0); _ejs(") "); _TS_JS(ts_base, src, p1); return 0; }
+    if (k == TS_AST_STMT_DO_WHILE) { _ejs("do "); _TS_JS(ts_base, src, p0); _ejs(" while ("); _TS_JS(ts_base, src, p1); _ejs(");"); return 0; }
+    if (k == TS_AST_STMT_RETURN) {
+        _ejs("return");
+        if (_is_node_ref(p0) == 1) { _ej(32); _TS_JS(ts_base, src, p0); }
+        _ej(59);
+        return 0;
+    }
+    if (k == TS_AST_STMT_THROW) { _ejs("throw "); _TS_JS(ts_base, src, p0); _ej(59); return 0; }
+    if (k == TS_AST_STMT_BREAK) {
+        _ejs("break");
+        if (p0 > 0) { _ej(32); _ej_span(src, p0); }
+        _ej(59);
+        return 0;
+    }
+    if (k == TS_AST_STMT_CONTINUE) { _ejs("continue;"); return 0; }
+    if (k == TS_AST_STMT_TRY) {
+        _ejs("try "); _TS_JS(ts_base, src, p0);
+        if (_is_node_ref(p1) == 1) { _TS_JS(ts_base, src, p1); }
+        if (_is_node_ref(p2) == 1) { _ejs(" finally "); _TS_JS(ts_base, src, p2); }
+        return 0;
+    }
+    if (k == TS_AST_STMT_CATCH_CLAUSE) {
+        _ejs(" catch");
+        if (p0 > 0) { _ej(40); _ej_span(src, p0); _ej(41); }
+        _ej(32); _TS_JS(ts_base, src, p1);
+        return 0;
+    }
+    if (k == TS_AST_STMT_SWITCH) { _ejs("switch ("); _TS_JS(ts_base, src, p0); _ejs(") {\n"); _ej_list(ts_base, src, p1, "\n"); _ejs("\n}"); return 0; }
+    if (k == TS_AST_STMT_SWITCH_CASE) {
+        if (_is_node_ref(p0) == 1) { _ejs("case "); _TS_JS(ts_base, src, p0); _ejs(": "); }
+        else { _ejs("default: "); }
+        _ej_list(ts_base, src, p1, "\n");
+        return 0;
+    }
+    if (k == TS_AST_STMT_VAR_DECL) {
+        _ej_varkind(p0); _ej(32); _ej_list(ts_base, src, p1, ", "); _ej(59);
+        return 0;
+    }
 
-    if (k == 1)        { _TS_SX_LIST(ts_base, p0); }                       # root: stmts
-    elif (k == 100)    { _TS_SX_LIST(ts_base, p0); }                       # block: stmts
-    elif (k == 101)    { _TS_SX_NODE_OPT(ts_base, p0); }                   # exprstmt
-    elif (k == 102)    { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p1); _TS_SX_NODE_OPT(ts_base, p2); }
-    elif (k == 106)    { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p1); }
-    elif (k == 108)    { _TS_SX_NODE_OPT(ts_base, p0); }                   # return
-    elif (k == 109)    { _TS_SX_NODE_OPT(ts_base, p0); }                   # throw
-    elif (k == 114)    { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_LIST(ts_base, p1); }   # switch: disc + cases
-    elif (k == 115)    { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_LIST(ts_base, p1); }   # case: test + stmts
-    elif (k == 117)    { _TS_SX_LIST(ts_base, p1); }                       # vardecl: bindings
-    elif (k == 204)    { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p2); } # binding: pattern + init (skip type p1)
-    elif (k == 205)    { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p2); } # param: name/pat + default (skip type p1)
-    elif (k == 22)     { _TS_SX_NODE_OPT(ts_base, p0); }                   # member: receiver (name p1 is span)
-    elif (k == 24)     { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p1); } # index
-    elif (k == 25)     { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_LIST(ts_base, p1); }   # call: callee + args
-    elif (k == 26)     { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_LIST(ts_base, p1); }   # optional-call
-    elif (k == 27)     { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_LIST(ts_base, p1); }   # new
-    elif (k == 28)     { _TS_SX_NODE_OPT(ts_base, p1); }                   # unary: operand (p0 op)
-    elif (k == 29)     { _TS_SX_NODE_OPT(ts_base, p1); _TS_SX_NODE_OPT(ts_base, p2); } # binary: lhs rhs (p0 op)
-    elif (k == 30)     { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p1); _TS_SX_NODE_OPT(ts_base, p2); } # ternary
-    elif (k == 31)     { _TS_SX_NODE_OPT(ts_base, p1); _TS_SX_NODE_OPT(ts_base, p2); } # assign: lhs rhs (p0 op)
-    elif (k == 32)     { _TS_SX_LIST(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p1); }   # arrow: params + body (skip rettype p2)
-    elif (k == 33)     { _TS_SX_LIST(ts_base, p0); }                       # array
-    elif (k == 34)     { _TS_SX_LIST(ts_base, p0); }                       # object
-    elif (k == 35)     { _TS_SX_NODE_OPT(ts_base, p0); }                   # spread
-    elif (k == 36)     { _TS_SX_NODE_OPT(ts_base, p0); }                   # as: expr (skip type p1)
-    elif (k == 37)     { _TS_SX_NODE_OPT(ts_base, p0); }                   # non-null
-    elif (k == 39)     { _TS_SX_NODE_OPT(ts_base, p0); }                   # paren
-    elif (k == 13)     { _TS_SX_LIST(ts_base, p0); _TS_SX_LIST(ts_base, p1); }       # template: quasis + exprs
-    elif (k == 601)    { _TS_SX_NODE_OPT(ts_base, p0); _TS_SX_NODE_OPT(ts_base, p1); } # prop: key + value
-    elif (k == 200)    { _TS_SX_LIST(ts_base, p1); _TS_SX_NODE_OPT(ts_base, p3); }   # function: params + body (skip rettype p2)
-    elif (k == 207)    { _TS_SX_LIST(ts_base, p1); _TS_SX_NODE_OPT(ts_base, p3); }   # method: params + body
-    elif (k == 201)    { _TS_SX_LIST(ts_base, p1); }                       # class: members (skip extends/implements — types)
-    elif (k == 501)    { _TS_SX_LIST(ts_base, p0); }                       # pat-object
-    elif (k == 502)    { _TS_SX_LIST(ts_base, p0); }                       # pat-array
-    elif (k == 700)    { _TS_SX_LIST(ts_base, p1); _TS_SX_LIST(ts_base, p2); }       # jsx: attrs + body
-    elif (k == 701)    { _TS_SX_LIST(ts_base, p0); }                       # jsx-frag: body
-    elif (k == 704)    { if (p1 == 2) { _TS_SX_NODE_OPT(ts_base, p2); } }  # jsx-attr: expr value (p1==2)
-    elif (k == 706)    { _TS_SX_NODE_OPT(ts_base, p0); }                   # jsx-expr container
+    # ---- modules ----
+    if (k == TS_AST_IMPORT) {
+        if (p2 == 1) { return 0; }   # `import type` — drop
+        _ejs("import ");
+        if (p1 > 0) {
+            # render specifiers then `from "src"`
+            _ej_import_specs(ts_base, src, p1);
+            _ejs(" from ");
+        }
+        _ej_strlit(src, p0); _ej(59);
+        return 0;
+    }
+    if (k == TS_AST_EXPORT) {
+        if (p2 == 1) { return 0; }   # `export type { ... }` — drop
+        if (p3 == 0) {
+            var dk = TS_AST_KIND(ts_base, p0);
+            if (dk == TS_AST_DECL_INTERFACE || dk == TS_AST_DECL_TYPE_ALIAS) { return 0; }
+            _ejs("export "); _TS_JS(ts_base, src, p0);
+            return 0;
+        }
+        # named export / re-export — prune type-only names
+        var save = _js_len;
+        _ejs("export { ");
+        var n = _ej_export_specs(ts_base, src, p0);
+        if (n == 0) { _js_len = save; return 0; }   # all pruned → drop
+        _ejs(" }");
+        if (p3 == 2) { _ejs(" from "); _ej_strlit(src, p1); }
+        _ej(59);
+        return 0;
+    }
+    if (k == TS_AST_EXPORT_DEFAULT) { _ejs("export default "); _TS_JS(ts_base, src, p0); return 0; }
+    if (k == TS_AST_EXPORT_ALL) {
+        _ejs("export * ");
+        if (p1 > 0) { _ejs("as "); _ej_span(src, p1); _ej(32); }
+        _ejs("from "); _ej_strlit(src, p0); _ej(59);
+        return 0;
+    }
 
-    _js_str(")");
+    # ---- JSX ----
+    if (k == TS_AST_JSX_ELEMENT || k == TS_AST_JSX_FRAGMENT) { _ej_jsx(ts_base, src, idx); return 0; }
+
     return 0;
 }
 
-# Raw node-table + children-region dump (bring-up aid; CYRIUS_TS_DUMP=1).
-fn _TS_RAW_DUMP(ts_base, src): i64 {
+# Emit import specifiers `Def, { a, b as c }, * as ns`.
+fn _ej_import_specs(ts_base, src, off): i64 {
+    if (off <= 0) { return 0; }
     var nc = TS_AST_NODE_COUNT(ts_base);
-    var cu = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_CHILDREN_USED);
-    _js_str("NODES="); _js_dec(nc);
-    _js_str(" CU="); _js_dec(cu); _js_str("\n");
+    var at = off;
+    var named_open = 0;
+    var any = 0;
+    var guard = 0;
+    var c = TS_AST_CHILDREN_GET(ts_base, at);
+    while (c != 0 - 1) {
+        if (c < 0 || c >= nc || guard >= 131072) { _js_walk_err = 1; return 0; }
+        var sk = TS_AST_KIND(ts_base, c);
+        if (sk == TS_AST_IMPORT_DEFAULT) {
+            if (any == 1) { _ejs(", "); }
+            _ej_span(src, TS_AST_PAYLOAD(ts_base, c, 0)); any = 1;
+        } elif (sk == TS_AST_IMPORT_NAMESPACE) {
+            if (any == 1) { _ejs(", "); }
+            _ejs("* as "); _ej_span(src, TS_AST_PAYLOAD(ts_base, c, 0)); any = 1;
+        } elif (sk == TS_AST_IMPORT_NAMED) {
+            if (named_open == 0) {
+                if (any == 1) { _ejs(", "); }
+                _ejs("{ "); named_open = 1;
+            } else { _ejs(", "); }
+            _ej_span(src, TS_AST_PAYLOAD(ts_base, c, 0));
+            var al = TS_AST_PAYLOAD(ts_base, c, 1);
+            if (al > 0) { _ejs(" as "); _ej_span(src, al); }
+            any = 1;
+        }
+        at = at + 1;
+        guard = guard + 1;
+        c = TS_AST_CHILDREN_GET(ts_base, at);
+    }
+    if (named_open == 1) { _ejs(" }"); }
+    return 0;
+}
+
+# ================================================================
+# Setup + entry
+# ================================================================
+
+# Collect interface + type-alias names (incl. exported ones) so named
+# exports can drop type-only specifiers.
+fn _collect_type_names(ts_base, src, root): i64 {
+    _type_count = 0;
+    var off = TS_AST_PAYLOAD(ts_base, root, 0);
+    if (off <= 0) { return 0; }
+    var nc = TS_AST_NODE_COUNT(ts_base);
+    var at = off;
+    var c = TS_AST_CHILDREN_GET(ts_base, at);
+    while (c != 0 - 1) {
+        if (c < 0 || c >= nc) { return 0; }
+        var k = TS_AST_KIND(ts_base, c);
+        var named = 0 - 1;
+        if (k == TS_AST_DECL_INTERFACE || k == TS_AST_DECL_TYPE_ALIAS) {
+            named = TS_AST_PAYLOAD(ts_base, c, 0);
+        } elif (k == TS_AST_EXPORT && TS_AST_PAYLOAD(ts_base, c, 3) == 0) {
+            var d = TS_AST_PAYLOAD(ts_base, c, 0);
+            var dk = TS_AST_KIND(ts_base, d);
+            if (dk == TS_AST_DECL_INTERFACE || dk == TS_AST_DECL_TYPE_ALIAS) {
+                named = TS_AST_PAYLOAD(ts_base, d, 0);
+            }
+        }
+        if (named >= 0 && _type_count < 512) {
+            store64(&_type_spans + _type_count * 8, named);
+            _type_count = _type_count + 1;
+        }
+        at = at + 1;
+        c = TS_AST_CHILDREN_GET(ts_base, at);
+    }
+    return 0;
+}
+
+# Any JSX in the tree? (decides whether to emit the prelude.)
+fn _has_jsx(ts_base): i64 {
+    var nc = TS_AST_NODE_COUNT(ts_base);
     var i = 0;
     while (i < nc) {
-        _js_str("n"); _js_dec(i);
-        _js_str(" k="); _js_dec(TS_AST_KIND(ts_base, i));
-        _js_str(" p0="); _js_dec(TS_AST_PAYLOAD(ts_base, i, 0));
-        _js_str(" p1="); _js_dec(TS_AST_PAYLOAD(ts_base, i, 1));
-        _js_str(" p2="); _js_dec(TS_AST_PAYLOAD(ts_base, i, 2));
-        _js_str(" p3="); _js_dec(TS_AST_PAYLOAD(ts_base, i, 3));
-        _js_str("\n");
+        var k = TS_AST_KIND(ts_base, i);
+        if (k == TS_AST_JSX_ELEMENT || k == TS_AST_JSX_FRAGMENT) { return 1; }
         i = i + 1;
     }
-    var at = 0;
-    _js_str("CH:");
-    while (at < cu) { _js_str(" "); _js_dec(TS_AST_CHILDREN_GET(ts_base, at)); at = at + 1; }
-    _js_str("\n");
     return 0;
 }
 
-# Entry: walk the parsed tree from ROOT, print its kind-S-expr + newline.
-fn TS_JS_EMIT(ts_base, src): i64 {
-    var dump = _read_env("CYRIUS_TS_DUMP");
-    if (dump != 0) {
-        if (load8(dump) == 49) { _TS_RAW_DUMP(ts_base, src); return 0; }
+# Emit the standalone hyperscript runtime (only when pragma is the default
+# `h` and JSX is present), so the output runs in a browser with no deps.
+fn _ej_prelude(): i64 {
+    _ejs("function h(t, p, ...c) {\n");
+    _ejs("  if (typeof t === \"function\") return t(Object.assign({}, p, { children: c }));\n");
+    _ejs("  const e = document.createElement(t);\n");
+    _ejs("  for (const k in (p || {})) {\n");
+    _ejs("    const v = p[k];\n");
+    _ejs("    if (k === \"className\") e.className = v;\n");
+    _ejs("    else if (k.slice(0, 2) === \"on\" && typeof v === \"function\") e.addEventListener(k.slice(2).toLowerCase(), v);\n");
+    _ejs("    else if (k in e) e[k] = v;\n");
+    _ejs("    else if (v != null && v !== false) e.setAttribute(k, v);\n");
+    _ejs("  }\n");
+    _ejs("  const add = (x) => { if (x == null || x === false || x === true) return; if (Array.isArray(x)) x.forEach(add); else e.append(x.nodeType ? x : String(x)); };\n");
+    _ejs("  c.forEach(add);\n");
+    _ejs("  return e;\n");
+    _ejs("}\n\n");
+    return 0;
+}
+
+# Flush the JS buffer to stdout (partial-write safe).
+fn _ej_flush(): i64 {
+    var w = 0;
+    while (w < _js_len) {
+        var n = syscall(SYS_WRITE, 1, _js_buf + w, _js_len - w);
+        if (n <= 0) { return 0; }
+        w = w + n;
     }
-    # Zero the visited scratch (idle parse stack) for the reachable nodes.
+    return 0;
+}
+
+# Entry: parse-result -> JS on stdout. Non-zero on a walk-integrity failure.
+fn TS_JS_EMIT(ts_base, src): i64 {
+    _js_buf = src + 0x71A000;
+    _js_len = 0;
+    _js_walk_err = 0;
+
+    # Pragma: CYRIUS_JSX_PRAGMA overrides the default `h` (and suppresses the
+    # prelude, since a custom pragma means the consumer brings its runtime).
+    store8(&_jsx_pragma, 104);     # 'h'
+    _jsx_pragma_len = 1;
+    _jsx_prelude = 1;
+    var penv = _read_env("CYRIUS_JSX_PRAGMA");
+    if (penv != 0) {
+        if (load8(penv) != 0) {
+            var pl = 0;
+            while (load8(penv + pl) != 0 && pl < 63) {
+                store8(&_jsx_pragma + pl, load8(penv + pl));
+                pl = pl + 1;
+            }
+            _jsx_pragma_len = pl;
+            _jsx_prelude = 0;
+        }
+    }
+
+    var root = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ROOT_NODE);
+
+    # Zero the revisit scratch for reachable nodes.
     var nc = TS_AST_NODE_COUNT(ts_base);
     var zlim = nc;
     if (zlim > 8192) { zlim = 8192; }
     var z = 0;
     while (z < zlim) { store64(&_ts_cst + z * 8, 0); z = z + 1; }
-    _ts_walk_err = 0;
-    var root = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ROOT_NODE);
-    _TS_SX(ts_base, root);
-    _js_str("\n");
-    if (_ts_walk_err == 1) {
+
+    _collect_type_names(ts_base, src, root);
+
+    if (_jsx_prelude == 1) {
+        if (_has_jsx(ts_base) == 1) { _ej_prelude(); }
+    }
+
+    # Emit each top-level statement on its own line.
+    var off = TS_AST_PAYLOAD(ts_base, root, 0);
+    if (off > 0) {
+        var at = off;
+        var save = 0;
+        var c = TS_AST_CHILDREN_GET(ts_base, at);
+        while (c != 0 - 1) {
+            if (c < 0 || c >= nc) { _js_walk_err = 1; c = 0 - 1; }
+            else {
+                save = _js_len;
+                _TS_JS(ts_base, src, c);
+                # Skip a blank line for stripped (type-only) statements.
+                if (_js_len > save) { _ej(10); }
+                at = at + 1;
+                c = TS_AST_CHILDREN_GET(ts_base, at);
+            }
+        }
+    }
+
+    _ej_flush();
+    if (_js_walk_err == 1) {
         syscall(SYS_WRITE, 2, "AST walk error: overlapping/corrupt children list\n", 50);
         return 1;
     }
     return 0;
 }
+

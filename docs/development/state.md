@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.10** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,012,184 B (+78,640 B @ 6.1.10 — 64 KB TS parse scratch + AST-walk tool; x86-only) |
+| **Version** | **6.1.11** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,036,848 B (+24,664 B @ 6.1.11 — TS/TSX→JS emitter replaces the walk tool; x86-only) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 593,376 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 805,376 B |
@@ -25,21 +25,18 @@
 | check.sh gates | 87/87 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~515 ms |
+| bench (every-release gate) | self_compile ~570 ms |
 
-> **Handoff (2026-06-08):** v6.1.10 ready for cut — TS children-list allocator fix
-> done + verified. `version-bump.sh 6.1.10` applied; user pushes/tags after CI. All
-> gates green: x86 cycc byte-identical self-host, check.sh **87/87** (new
-> `_ts_walk_gate`), all 169 tcyr exit-code clean, the walk gate is PROVEN to catch
-> a re-broken allocator (deliberate-break test → clean non-zero), cass/pi/ecb
-> cross-OS byte-identical, bench self_compile 515 ms / cycc 1,012,184 B.
-> **Phase D is a mini-arc**: v6.1.10 = the allocator-fix prereq (DONE); **v6.1.11 =
-> the real JS emitter** on the corrected AST (shape locked: pragma `h` + prelude,
-> type-strip + JSX-lower + ESM; reuses v6.1.10's per-kind walk in
-> `src/backend/js/emit.cyr` — currently an S-expr walk-validator, to be replaced by
-> the JS printer). Consumer: `secureyeoman/yeo-cy-test/web/app.tsx` (now parses +
-> walks correctly). **Possible v6.1.11 cleanup**: relocate the 64 KB TS scratch
-> (`_ts_cst`) from a static global to the ts_base heap to reclaim the +64 KB.
+> **Handoff (2026-06-08):** v6.1.11 ready for cut — **Phase D mini-arc COMPLETE**
+> (v6.1.10 allocator fix + v6.1.11 JS emitter). `version-bump.sh 6.1.11` applied;
+> user pushes/tags after CI. All gates green: x86 cycc byte-identical self-host,
+> check.sh **87/87** (`_ts_walk_gate` does emit→round-trip), all 169 tcyr clean,
+> the consumer `app.tsx` emits valid runnable JS (node --check + parse-ts
+> round-trip + stub-DOM run), cass/pi/ecb cross-OS byte-identical, bench
+> self_compile 570 ms / cycc 1,036,848 B. **Next = Phase E** (bayan/ganita carve,
+> v6.1.12–13). **Deferred polish** (no consumer ask): relocate the 64 KB `_ts_cst`
+> scratch to the ts_base heap to reclaim binary size; emitted JS is flat (valid,
+> un-indented); a `cyrius build --target=js` wrapper.
 >
 > **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — still pending an AGNOS
 > `--pie` harness): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |
@@ -121,12 +118,21 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   proven to catch a re-broken allocator); check.sh gate 87. TS frontend is
   x86-Linux-only. cycc +79 KB / self_compile +61 ms (new module; documented
   growth-tax). x86 self-host byte-identical; cass/pi/ecb green. See CHANGELOG [6.1.10].
+- **v6.1.11** — Phase D proper: **TS/TSX → JS emitter** (`cycc --emit-js` emits real
+  browser JS). AST-driven (`src/backend/js/emit.cyr`): type-strips interfaces/
+  aliases/annotations/`as`/`!`/generics/`?`; lowers JSX → `h(tag, props, ...kids)`
+  (pragma configurable via `CYRIUS_JSX_PRAGMA`, default `h`, + a standalone `h`
+  runtime prelude); ESM passthrough with type-only export pruning; verbatim
+  string/template literals. The consumer's **app.tsx emits valid runnable JS**
+  (node --check + `--parse-ts` round-trip + stub-DOM run all pass). `_ts_walk_gate`
+  upgraded to emit→round-trip. x86-Linux-only; cycc +24.7 KB. Closes the SY
+  `yeo-cy-test` ask. **Phase D mini-arc COMPLETE.** See CHANGELOG [6.1.11].
 
-**Next:** **v6.1.11** — Phase D proper: **TS/TSX → JS emitter** (`cycc --emit-js`
-emits real JS) on the now-correct AST — pragma `h` + optional prelude, type-strip
-+ JSX-lower + ESM passthrough (shape locked; reuses the v6.1.10 per-kind walk).
-Then E (bayan/ganita distfile carve, v6.1.12–13). The kernel-PIE gnoboot-boot
-validation + aarch64 kernel-PIE land when an AGNOS `--pie` harness exists.
+**Next:** **Phase E** — bayan distfile carve (v6.1.12) then ganita (v6.1.13); see
+[[project_bayan_ganita_carve_arc]]. The kernel-PIE gnoboot-boot validation +
+aarch64 kernel-PIE land when an AGNOS `--pie` harness exists. (Possible polish: a
+`cyrius build --target=js` wrapper + indentation in emitted JS — emitter is flat
+but valid; no consumer ask yet.)
 
 **Open / filed (v6.1.x):**
 - `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm

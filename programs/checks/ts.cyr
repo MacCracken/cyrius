@@ -162,15 +162,48 @@ fn _ts_lex_gate(): i64 {
     return 0;
 }
 
-# v6.1.10: the TS parser used to build a CORRUPT AST for nested lists
-# (call args, block stmts, object props, JSX attrs/children, ...) because
-# children-list RESERVE didn't advance the pool cursor, so sibling lists
-# overlapped. `cycc --emit-js` walks the AST through its value edges and
-# exits non-zero if any node is reached twice (overlap) or a list entry is
-# out of range — i.e. if a builder ever regresses to the old pattern. The
-# fixture exercises every list builder the bug touched.
+# Run `cycc --emit-js` on `fixture_path` (read via stdin) with stdout
+# captured to `out_path`. Returns the child exit code (0 = clean walk +
+# emit), or negative on a setup failure.
+fn _emit_js_to_file(fixture_path, out_path): i64 {
+    var fd = sys_open(fixture_path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var ofd = sys_open(out_path, 577, 420);   # O_WRONLY|O_CREAT|O_TRUNC | 0644
+    if (ofd < 0) { sys_close(fd); return 0 - 1; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(fd); sys_close(ofd); return 0 - 1; }
+    if (pid == 0) {
+        sys_dup2(fd, 0); sys_close(fd);
+        sys_dup2(ofd, 1); sys_close(ofd);
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[40];
+        store64(&argv,      CC_PATH);
+        store64(&argv + 8,  "--emit-js");
+        store64(&argv + 16, 0);
+        var envp[16];
+        store64(&envp, 0);
+        sys_execve(CC_PATH, &argv, &envp);
+        sys_exit(127);
+    }
+    sys_close(fd); sys_close(ofd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# v6.1.10 fixed the TS children-list allocator (sibling lists used to
+# overlap); v6.1.11 added the real TS/TSX→JS emitter on top. This gate is
+# both guards in one: `cycc --emit-js` walks the AST emitting JS and exits
+# non-zero on any overlap/out-of-range list (allocator regression), AND the
+# emitted JS is fed back through `cycc --parse-ts` (round-trip) — so a
+# malformed-emit regression also trips it. The fixture exercises every list
+# builder the allocator bug touched + every emit construct (type-strip, JSX
+# lowering, template, destructure, switch, ESM export pruning).
 fn _ts_walk_gate(): i64 {
-    var label = "cycc --emit-js walks the AST without overlap (v6.1.10 children-list allocator fix)";
+    var label = "cycc --emit-js: AST walk has no overlap + emitted JS round-trips (v6.1.10 fix + v6.1.11 emitter)";
     if (file_exists(CC_PATH) != 1) {
         _p("  skip: ");
         _p(CC_PATH);
@@ -179,15 +212,30 @@ fn _ts_walk_gate(): i64 {
         return 0;
     }
     var fix = _root_path("tests/fixtures/ts_emit/walk_nested.tsx");
-    var rc = _ts_mode_run(fix, "--emit-js");
-    if (rc != 0) {
+    var out = _tmp_path("emit_js_roundtrip_");
+    var rc1 = _emit_js_to_file(fix, out);
+    if (rc1 != 0) {
+        sys_unlink(out);
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
-        _p(": cycc --emit-js AST walk exit ");
-        print_num(rc);
+        _p(": cycc --emit-js exit ");
+        print_num(rc1);
         println(" (overlapping/corrupt children list — allocator regression)");
+        _check(label, 1);
+        return 1;
+    }
+    var rc2 = _parse_ts_run(out);
+    sys_unlink(out);
+    if (rc2 != 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": emitted JS failed to re-parse (--parse-ts exit ");
+        print_num(rc2);
+        println(") — emit regression");
         _check(label, 1);
         return 1;
     }
@@ -195,7 +243,7 @@ fn _ts_walk_gate(): i64 {
     _p(ANSI_GREEN);
     _p("PASS");
     _p(ANSI_RESET);
-    println(": nested call-args/block/object/array/JSX/template/switch/destructure lists all contiguous");
+    println(": nested lists contiguous; emitted JS (type-strip + JSX→h + ESM) round-trips clean");
     _check(label, 0);
     return 0;
 }

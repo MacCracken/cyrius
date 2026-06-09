@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.11] — 2026-06-08
+
+**v6.1.x slot 11 (Phase D): TS/TSX → JS emitter — `cycc --emit-js <file.tsx>`
+emits real browser JS.** The payoff of the v6.1.10 allocator fix: an AST-driven
+emitter walks the (now-walkable) tree and produces runnable JavaScript. Closes
+the long-standing SecureYeoman `yeo-cy-test` ask — Cyrius can now *build* a typed
+TS/TSX frontend, not just validate it. Phase D mini-arc complete.
+
+**Benchmark:** `self_compile 570 ms` (+55 ms vs 515 — growth-tax: the emitter is
+~600 LOC vs the walk-validator it replaced), `cycc 1,036,848 B` (+24,672 B; TS
+frontend is x86-Linux-only). check.sh 87/87 (the `_ts_walk_gate` now also
+round-trips the emitted JS).
+
+### Added
+
+- **`cycc --emit-js <file.tsx>` — AST-driven TS/TSX → JS emitter**
+  (`src/backend/js/emit.cyr`, on the v6.1.10 per-kind walk):
+  - **Type-strips** interfaces, type aliases, type annotations (param/return/
+    binding), `as T` casts, `x!` non-null, generic type-args, optional `?`.
+  - **Lowers JSX** to `pragma(tag, props, ...children)` — pragma configurable via
+    `CYRIUS_JSX_PRAGMA` (default `h`). Uppercase tags → component identifiers,
+    lowercase → quoted HTML strings; attrs → a props object (invalid-identifier
+    names like `data-id` quoted, `className` bare, `{expr}` values inlined,
+    spreads passed through); `{expr}` children inlined, whitespace-only JSX text
+    dropped. Self-closing handled.
+  - **Emits a standalone `h` runtime prelude** (default, when JSX is present and
+    no custom pragma) so the output runs in a browser with zero deps; a custom
+    `CYRIUS_JSX_PRAGMA` suppresses it (consumer brings the runtime).
+  - **Passes ESM through**, **pruning type-only names** from `export {}` (an
+    `export { Note, foo }` where `Note` is an interface/alias emits
+    `export { foo }`); drops `import type` / `export type` and type-only decls.
+  - Re-emits string/number/regex + template literals **verbatim** (template
+    `${}` interpolations recursed); object string-keys re-quoted, shorthand kept.
+  - Keeps the v6.1.10 revisit self-check, so `--emit-js` still exits non-zero on
+    a children-list regression.
+- **`_ts_walk_gate` upgraded to emit → round-trip** — emits
+  `tests/fixtures/ts_emit/walk_nested.tsx` to a temp file then re-parses it via
+  `--parse-ts`, so both an allocator regression (non-zero emit) and a
+  malformed-emit regression (round-trip parse failure) trip the gate.
+
+### Verified
+
+- The consumer's real `web/app.tsx` emits valid, runnable JS: **`node --check`
+  passes, round-trips through `--parse-ts`, and runs against a stub DOM** —
+  `NoteRow({id:7,body:"hello",…})` builds `<li class="note" data-id="7">` with a
+  `<span>hello</span>` child (the `h` runtime + JSX lowering are semantically
+  correct). All in-tree `ts_emit` fixtures emit + `node --check` + round-trip clean.
+- x86 self-host **byte-identical**; check.sh **87/87**; all **169 `.tcyr`** clean.
+- **Cross-OS on real hardware**: cass (Windows PE), pi (aarch64 native), ecb
+  (arm64 macOS) self-host byte-identical (TS frontend is x86-Linux-only; verified
+  per the "never skip cross-OS" rule).
+
 ## [6.1.10] — 2026-06-08
 
 **v6.1.x slot 10 (Phase D prereq): fix the TS/TSX parser's children-list
