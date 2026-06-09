@@ -73,8 +73,11 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.10** ✅ | **TS AST children-list allocator fix** (Phase D prereq) — the parser built a corrupt AST for nested lists (`RESERVE` didn't advance `used` → call-args/block/object/JSX sub-lists stomped each other; verified empirically). Restructured all value builders to deferred collect-then-contiguous-write (`TS_CST_PUSH`/`FLUSH`) + the `<T,>` trailing-comma parse fix + `cycc --emit-js` self-validating AST-walk (kind-S-expr; check.sh gate 87, proven to catch a re-broken allocator). x86-Linux-only; cycc +79 KB; cass/pi/ecb green. | D — frontend emit (prereq) |
 | **v6.1.11** ✅ | TS/TSX → JS emit (`cycc --emit-js`) — AST-driven emitter on the corrected AST: type-strip + JSX→`h(...)` (pragma `CYRIUS_JSX_PRAGMA`, default `h`, + standalone prelude) + ESM passthrough with type-only export pruning. Consumer `app.tsx` emits valid runnable JS (node --check + parse-ts round-trip + stub-DOM run); gate does emit→round-trip. x86-only; cycc +24.7 KB. **Phase D mini-arc complete.** | D — frontend emit |
 | **v6.1.12** ✅ | **agnos `getenv` HIGH-sev fix, packed with Phase D edges** (user "hotfix + small pack"): `lib/io.cyr` `getenv()` guards its 8 KB `/proc/self/environ` reader behind `#ifndef CYRIUS_TARGET_AGNOS` (it was compiled past the agnos early return → agnoshi #PF; verified it's `.bss` static, not a stack frame — `.bss` −8,208 B). **+** `cyrius build --target=js` CLI wrapper over `cycc --emit-js`. **+** indented JS output. **+** fixed a pre-existing bug: every `for`/`for-of`/`for-in` header emitted invalid JS (`;;`/`; of `/`; in `; silent since .10/.11) + gate guard + fixture coverage. pi/ach/ecb byte-identical; cass deferred (Defender quarantine-lock, box reset pending). | agnos fix + D edges |
-| **v6.1.13** | bayan distfile carve | E — stdlib carve |
-| **v6.1.14** | ganita distfile carve | E — stdlib carve |
+| **v6.1.13** ✅ | **agnos `fnptr` HIGH-sev fix (agnoshi)** — `lib/fnptr.cyr` `fncall0..8` had no `CYRIUS_TARGET_AGNOS` asm branch → every indirect call returned 0 on agnos → null allocator vtable → agnsh #PF after its banner. Added the agnos+x86 SysV branch in-place to each `fncallN` (the REAL root cause that .12's getenv fix was a layer off from). Emit A/B-verified (0→1 `call rax`); cycc flat (stdlib-only); ecb/cass green. | bug bandwidth |
+| **v6.1.14** ✅ | **agnos `argc()`/`argv()` HIGH-sev fix (bannermanor)** — the init-rsp capture (`call _agnos_capture_rsp`) sat in the entry epilogue, after `PARSE_PROG`, so any top-level statement that shifted rsp made it record a stale (zeroed) pointer. Moved the emission up to after `EMIT_GVAR_INITS` / before `PARSE_PROG` (mirrors the x86-macOS `_macho_capture_args` placement). Emit A/B-verified; cycc flat (`_TARGET_AGNOS`-gated); ecb/cass green. The issue's "Bug 2" (nested `syscall(60)` no-op) closed as consumer-side (agnos exit=0, not 60; use `SYS_EXIT`). | bug bandwidth |
+| **v6.1.15** ✅ | **TS/TSX→JS emitter `async`-on-wrong-node fix (secureyeoman/yeo-cy-test)** — an `async` function/method/arrow enclosing a nested arrow emitted `async` on the inner arrow + dropped it from the owner → bare `await` → invalid JS. Single ambient pending-async slot was consumed after body parse; the first nested arrow stole it. Added `TS_PS_TAKE_ASYNC`/`TS_AST_SET_ASYNC` (capture-at-entry, apply-after-push) across all 5 body-before-consume sites + emit-js regression scanner. cycc +512 B (TS frontend); ecb/cass green. | bug bandwidth |
+| **v6.1.16** 🔜 | bayan distfile carve | E — stdlib carve |
+| **v6.1.17** 🔜 | ganita distfile carve | E — stdlib carve |
 | *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):
@@ -223,8 +226,9 @@ calls (configurable pragma), pass ESM through. **Single-file emit only; a
 bundler is out of scope.** The expensive part (the full-fidelity TS/TSX
 parser) already exists — this is codegen on top. Active consumer pressure
 (SecureYeoman `yeo-cy-test`, which hand-maintains a parallel `web/app.js`
-stopgap today). May widen to a small mini-arc at slot entry. Issue:
-[`issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md);
+stopgap today). ✅ **SHIPPED** (v6.1.10/.11; `cyrius build --target=js` v6.1.12;
+`async` fix v6.1.15). Issue (resolved, archived):
+[`issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md);
 full write-up in [roadmap-future.md](roadmap-future.md).
 
 > **Framing note**: this is a *non-machine-code output target* for an

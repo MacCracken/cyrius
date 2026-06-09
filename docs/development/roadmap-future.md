@@ -76,8 +76,10 @@ scripting papercuts the same filing surfaced (those are near-term
 v6.0.x bug-bandwidth — see [roadmap.md](roadmap.md)). Notable framing:
 this is a *non-machine-code output target* for an assembly-up compiler,
 so its home minor is a deliberate open decision rather than an obvious
-v6.3.x language-refinements fit. Issue:
-[`issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/2026-05-27-yeo-cy-test-no-tsx-js-emit.md);
+v6.3.x language-refinements fit. ✅ **SHIPPED v6.1.10/.11** (Phase D — emitter on
+the corrected AST; surfaced via `cyrius build --target=js` v6.1.12; `async`-on-
+nested-arrow fix v6.1.15). Issue (resolved, archived):
+[`issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md);
 full write-up in `secureyeoman/yeo-cy-test/FINDINGS.md`.
 
 ---

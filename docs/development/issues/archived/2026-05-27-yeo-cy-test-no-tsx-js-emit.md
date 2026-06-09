@@ -6,7 +6,17 @@
 
 ## Status
 
-- **Main ask (TS→JS / JSX emit):** OPEN. Larger arc, minor TBD. See `roadmap-future.md`.
+> **RESOLVED — 2026-06-08 (the emit arc shipped).** The main ask is done:
+> `cycc --emit-js` (Phase D — v6.1.10 AST children-list allocator fix + v6.1.11
+> AST-driven emitter: type-strip + JSX→`h(...)` + ESM passthrough), surfaced
+> through `cyrius build --target=js` (v6.1.12) with indented output. Hardened
+> since: for/for-of/for-in header fix (v6.1.12) and the `async`-on-nested-arrow
+> fix (v6.1.15). The consumer `app.tsx` emits valid runnable JS (`node --check` +
+> `--parse-ts` round-trip + stub-DOM run). All three adjacent papercuts below
+> were already closed in v6.0.5. Archiving. See CHANGELOG [6.1.10]–[6.1.15].
+
+- **Main ask (TS→JS / JSX emit):** ✅ RESOLVED — shipped v6.1.10/.11, surfaced via
+  `cyrius build --target=js` v6.1.12, hardened through v6.1.15.
 - **Adjacent papercut #1 (`ts_test_runner` `cyc` truncation):** FIXED in v6.0.5 (four v6.0.0 rename-drift length args in `programs/ts_test_runner.cyr`). The "still exits 0" sub-claim didn't reproduce — `syscall(60, rc)` was already wired at line 254; the truncation was the user-visible bug. See CHANGELOG [6.0.5].
 - **Adjacent papercut #2 (`cyrius build` exits 0 on failure):** NOT REPRODUCED on v6.0.4 / .5. Empirical repro across `cmd_build`, `--strict`, `-q`, stdout-suppressed: every variant exits 1. `cmd_build` returns `compile()`'s result directly (unchanged since 2026-04-16). Likely a consumer shell wrapper masking the exit code. Locked in as an invariant via `_build_exit_nonzero_gate` (check.sh 81) so it can't silently regress.
 - **Adjacent papercut #3 (`--parse-ts <file>` blocks on stdin):** FIXED in v6.0.5. `src/main.cyr`'s cmdline parser now captures the next non-flag arg after `--parse-ts` / `--lex-ts` and opens it instead of reading stdin. Backward-compatible with `dup2(fd, 0)` callers. Locked in via `_ts_path_arg_gate` (check.sh 82). See CHANGELOG [6.0.5].
