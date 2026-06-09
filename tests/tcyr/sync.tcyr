@@ -1,0 +1,56 @@
+# sync.tcyr — coverage for lib/sync.cyr, the portable process-internal mutex
+# (issue 2026-06-09-no-portable-mutex-stdlib.md, from patra).
+#
+# The decisive property this guards is PORTABILITY: lib/sync.cyr must compile
+# and run on Linux (futex), Windows (SRWLOCK) and macOS (spinlock) WITHOUT
+# pulling in lib/thread.cyr's clone/trampoline machinery (which can't parse
+# under Win32). It deliberately does NOT include thread.cyr — that file also
+# defines mutex_* and would collide; the whole point is the lock standalone.
+#
+# Real concurrency for the Linux futex path is already covered by
+# atomics.tcyr / alloc_thread_safe.tcyr (identical mutex logic via thread.cyr).
+# Here we verify single-threaded behaviour on the running target: mutex_new
+# yields a usable cell, and lock/unlock pairs release correctly (a second lock
+# after unlock would block forever if release were broken).
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/atomic.cyr"
+include "lib/sync.cyr"
+
+fn test_mutex_basic() {
+    test_group("portable mutex new/lock/unlock");
+    var m = mutex_new();
+    assert_nonnull(m, "mutex_new returns a non-null cell");
+
+    # Two sequential lock/unlock cycles: the second lock can only be taken if
+    # the first unlock actually released — otherwise this deadlocks (test hang).
+    mutex_lock(m);
+    mutex_unlock(m);
+    mutex_lock(m);
+    mutex_unlock(m);
+    assert(1, "two sequential lock/unlock cycles completed (release works)");
+
+    # Tight loop to exercise the acquire/release fast-path many times.
+    var i = 0;
+    var n = 1000;
+    while (i < n) {
+        mutex_lock(m);
+        i = i + 1;
+        mutex_unlock(m);
+    }
+    assert_eq(i, n, "1000 lock/unlock cycles completed");
+}
+
+fn main() {
+    alloc_init();
+    test_mutex_basic();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

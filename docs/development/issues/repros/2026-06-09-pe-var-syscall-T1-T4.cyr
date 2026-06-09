@@ -1,0 +1,7 @@
+var w = 1;
+var fd2 = 2;
+syscall(1, 2,   "T1_lit_lit\n",     11);
+syscall(1, fd2, "T2_lit_varfd\n",   13);
+syscall(w, 2,   "T3_varnum_lit\n",  14);
+syscall(w, fd2, "T4_varnum_varfd\n",16);
+syscall(60, 0);

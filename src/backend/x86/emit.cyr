@@ -1579,6 +1579,102 @@ fn EMMAP_PE(S): i64 {
     return 0;
 }
 
+# ================================================================
+# v6.1.16 — Runtime PE syscall dispatch for NON-LITERAL numbers.
+#
+# The literal-number reroute above (`sc_num == N` cases in
+# parse_expr.cyr) is a compile-time pattern match: it only fires when
+# the first arg constant-folds. A consumer that holds the syscall
+# number in a `var` (the portable arch-dispatch idiom — sakshi's
+# `var _SK_SYS_WRITE = 1;`) leaves `sc_num == -1`, no case matches, and
+# the generic ESCPOPS path emits the Linux `0F 05` syscall instruction,
+# which faults / silently no-ops on Windows. Issue:
+# docs/development/issues/2026-06-09-pe-syscall-variable-number-not-rerouted.md
+#
+# Fix: when the number is non-literal, emit a runtime switch on it.
+# argc is fixed at the call site (only the NUMBER is dynamic), so we
+# only compare against the routable POSIX syscalls whose arity == argc,
+# branching to the SAME E*_PE sequence the literal path uses. The
+# number is still on the expr stack at [rsp + 8*(argc-1)] (deepest
+# push); `mov`/`cmp`/`jne` don't touch rsp, so each E*_PE sees the
+# identical entry-RSP state (and thus the identical Win64 16-alignment)
+# it gets on the literal path. Unknown number at this arity → rax = -38
+# (-ENOSYS) with the stack balanced, never `0F 05`.
+#
+# The 0xF0xx Win32-internal reroutes (process/threading/TLS/DXGI/…) are
+# DELIBERATELY excluded: they're emitted only as literal `syscall(0xF0NN,…)`
+# from the *_win.cyr stdlib and are never held in an arch-dispatch var,
+# so a runtime number is always a real Linux syscall number.
+# ================================================================
+
+# mov rax, [rsp+disp]  — load the (runtime) syscall number without
+# disturbing the args. disp = 8*(argc-1) ≤ 56, so the disp8 form fits.
+fn _pe_dyn_load(S, disp): i64 {
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, disp);
+    return 0;
+}
+
+# cmp rax, imm32 ; jne <next-candidate>.  Returns the EJCC patch offset
+# so the caller lands it past this candidate's block + jmp-done.
+fn _pe_dyn_cmp(S, num): i64 {
+    EB(S, 0x48); EB(S, 0x3D); EDISP32(S, num);   # cmp rax, imm32 (sign-ext)
+    return EJCC(S, 0x85);                        # jne rel32 (0F 85)
+}
+
+# No-match tail: drop all argc args and return -38 (-ENOSYS) in rax —
+# an honest error to the caller rather than the silent-no-op 0F 05.
+fn _pe_dyn_nomatch(S, argc): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 8 * argc);  # add rsp, 8*argc
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 38); # mov rax, -38
+    return 0;
+}
+
+# Emit the runtime switch. Returns 1 if argc is routable on PE, 0 if no
+# routable syscall has this arity (caller turns 0 into a hard compile
+# error — a var-number syscall of an unroutable arity is guaranteed
+# broken on Windows, so refuse it loudly instead of miscompiling).
+fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
+    var disp = 8 * (argc - 1);
+    if (argc == 4) {
+        _pe_dyn_load(S, disp);
+        var p0 = _pe_dyn_cmp(S, 0); EREAD_PE(S);  var d0 = EJMP0(S); EPATCH(S, p0);
+        var p1 = _pe_dyn_cmp(S, 1); EWRITE_PE(S); var d1 = EJMP0(S); EPATCH(S, p1);
+        var p2 = _pe_dyn_cmp(S, 2); EOPEN_PE(S);  var d2 = EJMP0(S); EPATCH(S, p2);
+        var p3 = _pe_dyn_cmp(S, 8); ELSEEK_PE(S); var d3 = EJMP0(S); EPATCH(S, p3);
+        _pe_dyn_nomatch(S, argc);
+        EPATCH(S, d0); EPATCH(S, d1); EPATCH(S, d2); EPATCH(S, d3);
+        return 1;
+    }
+    if (argc == 3) {
+        _pe_dyn_load(S, disp);
+        var q0 = _pe_dyn_cmp(S, 83);  ECREATEDIR_PE(S); var e0 = EJMP0(S); EPATCH(S, q0);
+        var q1 = _pe_dyn_cmp(S, 228); EGETTICKS_PE(S);  var e1 = EJMP0(S); EPATCH(S, q1);
+        _pe_dyn_nomatch(S, argc);
+        EPATCH(S, e0); EPATCH(S, e1);
+        return 1;
+    }
+    if (argc == 2) {
+        _pe_dyn_load(S, disp);
+        var r0 = _pe_dyn_cmp(S, 3);  ECLOSE_PE(S);   var f0 = EJMP0(S); EPATCH(S, r0);
+        var r1 = _pe_dyn_cmp(S, 87); EDELETEF_PE(S); var f1 = EJMP0(S); EPATCH(S, r1);
+        # exit(60): mirror the literal path (pop code, drop sc_nr, ExitProcess).
+        # EEXIT ends in int3 and never returns, so its jmp-done is dead but kept
+        # for uniform structure.
+        var r2 = _pe_dyn_cmp(S, 60); EPOPR(S); EDROPI64(S); EEXIT(S); var f2 = EJMP0(S); EPATCH(S, r2);
+        _pe_dyn_nomatch(S, argc);
+        EPATCH(S, f0); EPATCH(S, f1); EPATCH(S, f2);
+        return 1;
+    }
+    if (argc == 7) {
+        _pe_dyn_load(S, disp);
+        var g0 = _pe_dyn_cmp(S, 9); EMMAP_PE(S); var h0 = EJMP0(S); EPATCH(S, g0);
+        _pe_dyn_nomatch(S, argc);
+        EPATCH(S, h0);
+        return 1;
+    }
+    return 0;
+}
+
 # v5.11.23: emit Win64 mkdir: `syscall(83, path, mode)` →
 # CreateDirectoryW(lpPathName, lpSecurityAttributes). Drops `mode`
 # (Windows uses ACLs, not POSIX mode bits). Returns 0 on success,

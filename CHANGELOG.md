@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.16] — 2026-06-09
+
+**v6.1.x slot 16: a packed Windows-correctness release driven by ai-hwaccel /
+sakshi / patra consumer reports.** Three items: (1) the x86_64 release tarball
+never shipped the `cycc_win` PE cross-compiler — pinned-release consumers that
+`cyrius build --win` got "cycc_win missing from the Cyrius install" (sakshi CI
+blocker); (2) the PE `syscall()` reroute only fired for compile-time-literal
+numbers, so a number held in a `var` (the portable arch-dispatch idiom) silently
+emitted the Linux `0F 05` instruction — a silent no-op on Windows (all of
+sakshi's structured logging dropped); (3) the only stdlib mutex was trapped
+inside `thread.cyr`, which can't parse under Win32, so first-party libraries had
+no portable lock.
+
+**Benchmark:** `self_compile 478 ms` (vs 498 ms @ 6.1.15 — box noise),
+`cycc 1,041,136 B` (**+2,552 B** — the runtime PE syscall-dispatch emitter).
+check.sh **87/87**; all 170 `.tcyr` clean. Cross-OS self-host **byte-identical
+on cass (Windows PE32+) + ecb (macOS arm64)**, `sync.tcyr` green on both.
+
+### Fixed
+
+- **`cycc_win` now ships in the x86_64 release tarball (release-packaging gap;
+  sakshi/patra CI blocker).** `release.yml` built and shipped `cycc_aarch64` but
+  never `cycc_win`, even though it has been in `cyrius.cyml` `cross_bins` since
+  v6.0.50 and the local `install.sh` source-bootstrap path builds it. Every
+  published x86_64 tarball since v6.0.50 lacked it, so a pinned-release install
+  (`install.sh | sh -s -- <ver>`) had no `~/.cyrius/bin/cycc_win` and
+  `cyrius build --win` failed. Added the `CYRIUS_TARGET_WIN=1` cross-build + a
+  `bin/` copy + a PE32+ verify step, mirroring the cycc_aarch64 path (same class
+  as the v5.8.2 cycc_aarch64 packaging fix). NOTE: fixes future tarballs — a
+  6.1.16 cut is required before sakshi/patra can re-pin.
+
+- **PE `syscall(<var>, …)` now routes at runtime instead of silently
+  miscompiling (HIGH-sev; ai-hwaccel 2.3.9 / sakshi 2.2.x).** The literal
+  `sc_num ==` dispatch in `parse_expr.cyr` only matched a constant-folded first
+  arg; a non-literal number fell through to the generic `ESCPOPS` path and emitted
+  the x86_64 `0F 05` `syscall` instruction, which faults / silently no-ops on
+  Windows (for `rax=1`/write it returns silently — total, diagnostic-free output
+  loss). Added `EPE_SYSCALL_DYNAMIC` (`src/backend/x86/emit.cyr`): for a
+  non-literal number under `_TARGET_PE` it emits a `cmp`/`jne` switch on the
+  number (read from the expr stack without disturbing the args, so each `E*_PE`
+  emitter sees its usual entry-RSP/alignment) over the Windows-routable POSIX
+  syscalls of the call-site arity — read/write/open/close/lseek/mmap/exit/
+  mkdir/unlink/clock_gettime — branching to the same `E*_PE` sequence the literal
+  path uses. An unknown number at a routable arity returns `-38` (`-ENOSYS`)
+  rather than the silent `0F 05`; a var-number call whose arity matches no
+  routable syscall is now a hard compile error. The `0xF0xx` Win32-internal
+  reroutes are excluded (always emitted as literals). aarch64/cx get a stub for
+  symbol resolution (dead under `_TARGET_PE==0`). Verified on real `cass`: the
+  T1–T4 repro writes all four lines (T3/T4 were silent before). NOTE:
+  `nanosleep(35)` remains unrouted (separate pre-existing gap; now returns honest
+  `-38`) — sakshi's default stderr path (`write`+`clock_gettime`) is fully
+  functional.
+
+### Added
+
+- **`lib/sync.cyr` — portable process-internal mutex (patra consumer ask).**
+  `mutex_new` / `mutex_lock` / `mutex_unlock`, decoupled from `thread.cyr`'s
+  clone/futex/trampoline spawn machinery (which can't parse under Win32), selected
+  per-OS like `alloc.cyr`: Linux/aarch64 = SYS_FUTEX 2-state (blocks on
+  contention); Windows = SRWLOCK via the `0xF008/9/A` reroutes
+  (`lib/sync_windows.cyr`); macOS = `atomic_cas` spinlock (`lib/sync_macos.cyr`)
+  since macOS routes no futex/`__ulock`/`os_unfair_lock` primitive yet. Documented
+  acquire/release memory-ordering contract. `tests/tcyr/sync.tcyr` passes on Linux
+  x86, aarch64 (qemu), Windows (cass) and macOS (ecb). No trylock (Windows lacks a
+  routed `TryAcquire`); the macOS spinlock and a blocking macOS lock via `__ulock`
+  are follow-ons.
+
 ## [6.1.15] — 2026-06-08
 
 **v6.1.x slot 15: TS/TSX→JS emitter put `async` on the wrong node — an `async`

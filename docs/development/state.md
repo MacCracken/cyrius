@@ -14,37 +14,44 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.15** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,038,584 B (+512 B @ 6.1.15 — TS emitter per-node async capture; TS frontend is in cycc on x86-Linux) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 593,384 B |
+| **Version** | **6.1.16** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,041,136 B (+2,552 B @ 6.1.16 — runtime PE syscall-dispatch emitter `EPE_SYSCALL_DYNAMIC`) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 593,832 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 805,888 B |
+| **cycc_win** (PE32+ cross) | 808,960 B (+3,072 B @ 6.1.16 — same dispatch emitter compiled into cycc_win) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
-| tests | 169 `.tcyr` · 15 `.bcyr` |
-| stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~498 ms (box noise) |
+| tests | 170 `.tcyr` · 15 `.bcyr` |
+| stdlib | 93 `lib/*.cyr` (84 stdlib + 9 vendored deps) · 79 programs |
+| bench (every-release gate) | self_compile ~478 ms (box noise) |
 
-> **Handoff (2026-06-08):** v6.1.15 ready for cut — **TS/TSX→JS emitter put
-> `async` on the wrong node: an async function/method/arrow enclosing a nested
-> arrow (e.g. `xs.map(x=>…)`) emitted `async` on the INNER arrow and dropped it
-> from the owner → bare `await` → invalid JS.** Reported from secureyeoman /
-> yeo-cy-test (`app.tsx` async render() + .map). Root cause: the parser tracked
-> async in a single ambient pending slot, but DECL_FUNCTION / class+object method
-> parsers / paren-arrow parsed their BODY before consuming their own node, so the
-> first nested arrow stole the flag. Fix (`src/frontend/ts/parse.cyr`): added
-> `TS_PS_TAKE_ASYNC` (take-and-clear at each node-owner entry, before params/body)
-> + `TS_AST_SET_ASYNC` (apply after push); wired into all 5 body-before-consume
-> sites. Single-ident arrow already consumed before its body (unchanged).
-> Regression guard: `walk_nested.tsx` + `_emit_async_misplaced` node-free scanner
-> in the emit-js gate. `version-bump.sh 6.1.15` applied; user pushes/tags after
-> CI. Gates: x86 cycc byte-identical self-host (TS frontend IS in cycc → +512 B),
-> check.sh **87/87**, all 169 tcyr clean, **full async/arrow matrix emits valid
-> JS under `node --check`** (incl. expression-body async arrows). **Cross-OS BOTH
-> GREEN** — ecb `SELFHOST_OK`, cass `FC: no differences`. **Next = Phase E**
-> (bayan carve, then ganita).
+> **Handoff (2026-06-09):** v6.1.16 ready for cut — **packed Windows-correctness
+> release (ai-hwaccel / sakshi / patra reports), 3 items:**
+> (1) **`cycc_win` was missing from every x86_64 release tarball since v6.0.50**
+> — `release.yml` shipped `cycc_aarch64` but never `cycc_win`, so pinned-release
+> consumers' `cyrius build --win` failed ("cycc_win missing"); the sakshi CI
+> blocker. Fixed by adding the `CYRIUS_TARGET_WIN=1` cross-build + `bin/` copy +
+> PE32+ verify to `release.yml` (mirrors the v5.8.2 cycc_aarch64 fix). Fixes
+> FUTURE tarballs — sakshi/patra re-pin to 6.1.16 once cut.
+> (2) **PE `syscall(<var>, …)` silently miscompiled** — the literal-only reroute
+> let a var-number syscall emit Linux `0F 05` (silent no-op on Windows; dropped
+> all of sakshi's structured logging). Fixed with `EPE_SYSCALL_DYNAMIC`
+> (`src/backend/x86/emit.cyr`): runtime `cmp`/`jne` switch over routable POSIX
+> syscalls by arity → the literal path's `E*_PE` emitters; unknown→`-38`;
+> unroutable arity→hard error. aarch64/cx stub. Verified on cass (T1–T4 all write).
+> (3) **`lib/sync.cyr`** portable mutex (new/lock/unlock) decoupled from
+> `thread.cyr`: futex (Linux/aarch64) / SRWLOCK (Windows) / spinlock (macOS).
+> `tests/tcyr/sync.tcyr` green on all 4 targets.
+> `version-bump.sh 6.1.16` applied; **user pushes/tags after CI**. Gates: x86 cycc
+> byte-identical self-host (+2,552 B), check.sh **87/87**, all 170 tcyr clean,
+> bench self_compile 478 ms. **Cross-OS BOTH GREEN** — ecb `SELFHOST_OK`, cass
+> `SELFHOST_OK`, `sync.tcyr` passed on both. **Follow-ons (no consumer ask yet):**
+> route `nanosleep`/`__ulock` on macOS+PE for a blocking macOS lock + sakshi clock
+> calibration; a Windows `TryAcquireSRWLockExclusive` reroute for `mutex_trylock`.
+> **Next = Phase E** (bayan carve @ 6.1.17, then ganita @ 6.1.18 — pushed one slot
+> by this release).
 > **Sibling flagged (not fixed):** `lib/fdlopen.cyr` has the same Linux-only asm
 > gap but is the dlopen/ld.so/auxv path agnos static binaries never reach. **Deferred
 > polish** (no consumer ask): relocate the 64 KB `_ts_cst` scratch to the ts_base

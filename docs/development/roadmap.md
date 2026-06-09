@@ -76,8 +76,9 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.13** ✅ | **agnos `fnptr` HIGH-sev fix (agnoshi)** — `lib/fnptr.cyr` `fncall0..8` had no `CYRIUS_TARGET_AGNOS` asm branch → every indirect call returned 0 on agnos → null allocator vtable → agnsh #PF after its banner. Added the agnos+x86 SysV branch in-place to each `fncallN` (the REAL root cause that .12's getenv fix was a layer off from). Emit A/B-verified (0→1 `call rax`); cycc flat (stdlib-only); ecb/cass green. | bug bandwidth |
 | **v6.1.14** ✅ | **agnos `argc()`/`argv()` HIGH-sev fix (bannermanor)** — the init-rsp capture (`call _agnos_capture_rsp`) sat in the entry epilogue, after `PARSE_PROG`, so any top-level statement that shifted rsp made it record a stale (zeroed) pointer. Moved the emission up to after `EMIT_GVAR_INITS` / before `PARSE_PROG` (mirrors the x86-macOS `_macho_capture_args` placement). Emit A/B-verified; cycc flat (`_TARGET_AGNOS`-gated); ecb/cass green. The issue's "Bug 2" (nested `syscall(60)` no-op) closed as consumer-side (agnos exit=0, not 60; use `SYS_EXIT`). | bug bandwidth |
 | **v6.1.15** ✅ | **TS/TSX→JS emitter `async`-on-wrong-node fix (secureyeoman/yeo-cy-test)** — an `async` function/method/arrow enclosing a nested arrow emitted `async` on the inner arrow + dropped it from the owner → bare `await` → invalid JS. Single ambient pending-async slot was consumed after body parse; the first nested arrow stole it. Added `TS_PS_TAKE_ASYNC`/`TS_AST_SET_ASYNC` (capture-at-entry, apply-after-push) across all 5 body-before-consume sites + emit-js regression scanner. cycc +512 B (TS frontend); ecb/cass green. | bug bandwidth |
-| **v6.1.16** 🔜 | bayan distfile carve | E — stdlib carve |
-| **v6.1.17** 🔜 | ganita distfile carve | E — stdlib carve |
+| **v6.1.16** ✅ | **Windows-correctness pack (ai-hwaccel / sakshi / patra), 3 items.** (1) **`cycc_win` missing from x86_64 release tarball** since v6.0.50 — `release.yml` shipped cycc_aarch64 but never cycc_win → pinned-release `cyrius build --win` failed (sakshi CI blocker); added the WIN cross-build + bin/ copy + PE32+ verify (mirrors v5.8.2 cycc_aarch64 fix). (2) **PE `syscall(<var>,…)` silently miscompiled** (HIGH) — literal-only reroute let a var-number syscall emit Linux `0F 05` (silent no-op on Windows → all sakshi logging dropped); added `EPE_SYSCALL_DYNAMIC` runtime `cmp`/`jne` dispatch by arity → the literal `E*_PE` path, unknown→`-38`, unroutable-arity→hard error; aarch64/cx stub; T1–T4 verified on cass. (3) **`lib/sync.cyr`** portable mutex (futex/SRWLOCK/spinlock) decoupled from thread.cyr; `sync.tcyr` green on all 4 targets. cycc +2,552 B; ecb+cass `SELFHOST_OK`. | consumer pack |
+| **v6.1.17** 🔜 | bayan distfile carve | E — stdlib carve |
+| **v6.1.18** 🔜 | ganita distfile carve | E — stdlib carve |
 | *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):
@@ -236,7 +237,7 @@ full write-up in [roadmap-future.md](roadmap-future.md).
 > proves larger than one slot, ASK for the shape rather than re-slotting
 > ([[feedback_no_unilateral_scope_decisions]]).
 
-### Phase E — stdlib carve (v6.1.13 → v6.1.14)
+### Phase E — stdlib carve (v6.1.17 → v6.1.18)
 
 The bayan/ganita distfile carve — the second half of the stdlib
 clean-slate (the mabda fold shipped @ v6.0.45). After the carve, stdlib
@@ -244,13 +245,13 @@ stays primitives-only so bare-metal consumers (v6.2.x RISC-V / firmware)
 don't drag the data offshoots into kernel objects. Math primitives + regex
 stay stdlib. [[project_bayan_ganita_carve_arc]].
 
-#### v6.1.13 — bayan distfile carve
+#### v6.1.17 — bayan distfile carve
 
 Extract `json` / `toml` / `cyml` / `csv` / `base64` / `bigint` / `u128`
 from stdlib into the **bayan** sibling repo + `[deps.bayan]` resolution.
 Naming convention `bayan_<module>_*`.
 
-#### v6.1.14 — ganita distfile carve
+#### v6.1.18 — ganita distfile carve
 
 Extract `matrix` / `linalg` / advanced math from stdlib into the
 **ganita** sibling repo + `[deps.ganita]` resolution. Naming convention

@@ -3395,6 +3395,15 @@ string::strchr/2
 string::streq/2
 string::strlen/1
 string::strstr/2
+sync::mutex_lock/1
+sync::mutex_new/0
+sync::mutex_unlock/1
+sync_macos::mutex_lock/1
+sync_macos::mutex_new/0
+sync_macos::mutex_unlock/1
+sync_windows::mutex_lock/1
+sync_windows::mutex_new/0
+sync_windows::mutex_unlock/1
 syscalls_aarch64_linux::epoll_event_new/2
 syscalls_aarch64_linux::err_code/1
 syscalls_aarch64_linux::is_err/1

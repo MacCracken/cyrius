@@ -65,11 +65,27 @@ jobs:
           echo "cyrius tool: $(wc -c < ./build/cyrius) bytes"
           # Cross-compile aarch64 compiler for inclusion in x86_64 tarball
           cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
+          # v6.1.16: cross-compile the PE (Windows) compiler for inclusion in
+          # the x86_64 tarball too. cycc_win has been in cyrius.cyml cross_bins
+          # since v6.0.50 and the LOCAL install.sh source-bootstrap path builds
+          # it (scripts/install.sh:524), but the release tarball packaging was
+          # never taught to — so every published x86_64 tarball since v6.0.50
+          # shipped WITHOUT cycc_win, and pinned-release consumers (sakshi/patra
+          # CI) that `cyrius build --win` hit "cycc_win missing from the Cyrius
+          # install". Same class of gap as the cycc_aarch64 packaging fix at
+          # v5.8.2 below. Build from src/main_win.cyr with CYRIUS_TARGET_WIN=1
+          # (the x86 cycc emits a PE32+ cycc, runs on the Linux host, emits PE).
+          cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > ./build/cycc_win && chmod +x ./build/cycc_win
 
       - name: Verify x86_64 binary
         run: |
           file build/cycc | grep -q "ELF 64-bit.*x86-64" || { echo "ERROR: cycc not x86_64"; file build/cycc; exit 1; }
           echo "PASS: cycc is x86_64 ELF"
+          # v6.1.16: fail loud if the PE cross-compiler didn't build / isn't a
+          # PE32+ — a missing cycc_win is the packaging gap that broke pinned
+          # consumers silently (sakshi CI). Don't ship an x86_64 tarball without it.
+          file build/cycc_win | grep -q "PE32+ executable.*x86-64" || { echo "ERROR: cycc_win not PE32+"; file build/cycc_win; exit 1; }
+          echo "PASS: cycc_win is PE32+"
 
       - name: Package x86_64 tarball
         run: |
@@ -107,6 +123,10 @@ jobs:
           # now matches. Canonical upstream report:
           # yukti/docs/development/issues/2026-04-30-cyrius-cycc-aarch64-packaging.md.
           [ -f "build/cycc_aarch64" ] && cp "build/cycc_aarch64" "$STAGE/bin/"
+          # v6.1.16: ship the PE cross-compiler alongside cycc_aarch64 (built
+          # above). Without this, pinned-release installs have no cycc_win and
+          # `cyrius build --win` / the sakshi-CI cycc_win guard fail.
+          [ -f "build/cycc_win" ] && cp "build/cycc_win" "$STAGE/bin/"
           cp bootstrap/asm "$STAGE/bin/"
           for script in $SCRIPTS; do
             [ -f "scripts/$script" ] && cp "scripts/$script" "$STAGE/bin/"
