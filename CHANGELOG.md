@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.15] — 2026-06-08
+
+**v6.1.x slot 15: TS/TSX→JS emitter put `async` on the wrong node — an `async`
+function/method/arrow enclosing any nested arrow (e.g. `xs.map(x => …)`) emitted
+`async` on the *inner* arrow and dropped it from the owner, leaving a bare
+`await` → invalid JS.** Reported from the secureyeoman / yeo-cy-test probe
+session; `yeo-cy-test/web/app.tsx` hit it on the first `.map` inside an
+`async render()`. node-confirmed (`SyntaxError: await is only valid in async
+functions`).
+
+**Benchmark:** `self_compile 498 ms` (box noise vs 6.1.14), `cycc 1,038,584 B`
+(**+512 B** — the TS frontend is compiled into cycc on x86-Linux; the per-node
+async capture helpers + 5 call-site edits). check.sh **87/87**; all 169 `.tcyr`
+clean.
+
+### Fixed
+
+- **`async` now binds to the function node it was parsed on, not the first
+  nested arrow (HIGH-sev for the JS emitter, secureyeoman/yeo-cy-test).** The
+  TS parser tracked async via a single ambient `TS_PS_PENDING_ASYNC` slot
+  consumed onto a node by `TS_AST_CONSUME_ASYNC`. But `TS_PARSE_DECL_FUNCTION`,
+  the class/object method parsers, and the paren-arrow parser all parsed their
+  **body before** pushing+consuming their own node — so the first nested arrow
+  in the body ran `CONSUME_ASYNC` and stole the pending flag. The owner lost
+  `async`; the inner arrow gained a spurious one. **Fix:** added
+  `TS_PS_TAKE_ASYNC` (take-and-clear at a node-owner's entry, *before* params
+  and body — so a nested arrow in a default param or the body can't grab it) and
+  `TS_AST_SET_ASYNC` (apply to the node after push). Wired into all five
+  body-before-consume sites: `TS_PARSE_DECL_FUNCTION`, `TS_PARSE_ARROW_PAREN`,
+  both `TS_PARSE_CLASS_MEMBER` method sites (regular + get/set), and the
+  `TS_PARSE_OBJECT_LITERAL` method (a per-iteration local, never touching the
+  ambient slot). The single-ident arrow (`x => …`) already consumed *before* its
+  body, so it was correct and is unchanged. **Verified** across the full matrix
+  (async function / async class method / async object method / block-body async
+  arrow / **expression-body** async arrow), each with a nested `.map(arrow)`:
+  `async` stays on the owner, every nested arrow is plain, `node --check` passes.
+
+### Added
+
+- **Regression guard in the `cycc --emit-js` walk gate.** `walk_nested.tsx` gains
+  an `async function` / async class method / async arrow, each enclosing a plain
+  `.map(arrow)`; a new node-free scanner (`_emit_async_misplaced`) fails the gate
+  if the byte sequence `map(async` appears (every fixture `.map` callback is
+  plain, so that signature == the bug). The lenient `--parse-ts` round-trip can't
+  catch a bare `await`, so this is a dedicated substring check, parallel to the
+  v6.1.12 `_emit_has_bad_for` for-header scanner.
+
+### Verified
+
+- x86 cycc self-host **byte-identical** fixpoint; check.sh **87/87**; all
+  **169 `.tcyr`** clean (per-file exit-code loop). Reproducer + full async/arrow
+  matrix emit valid JS under `node --check`.
+
 ## [6.1.14] — 2026-06-08
 
 **v6.1.x slot 14: agnos `argc()`/`argv()` return 0/null in non-trivial programs

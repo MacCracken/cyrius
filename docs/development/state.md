@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.14** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,038,072 B (**flat** @ 6.1.14 — agnos init-rsp capture relocation; `_TARGET_AGNOS`-gated, no non-agnos change) |
+| **Version** | **6.1.15** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,038,584 B (+512 B @ 6.1.15 — TS emitter per-node async capture; TS frontend is in cycc on x86-Linux) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 593,384 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 805,888 B |
@@ -25,27 +25,26 @@
 | check.sh gates | 87/87 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~503 ms (box noise; cycc byte-identical work) |
+| bench (every-release gate) | self_compile ~498 ms (box noise) |
 
-> **Handoff (2026-06-08):** v6.1.14 ready for cut — **agnos `argc()`/`argv()`
-> returned 0/null in non-trivial programs: the init-rsp capture (`call
-> _agnos_capture_rsp`) was in the entry epilogue, AFTER `PARSE_PROG`, so any
-> top-level statement that shifted rsp made it record a stale (zeroed) entry-frame
-> pointer.** Fix (`src/main.cyr`): moved the capture emission UP to right after
-> `EMIT_GVAR_INITS` / before `PARSE_PROG` — the exact spot the x86-macOS
-> `_macho_capture_args` capture uses (after the `=0` gvar init so it isn't
-> clobbered, before top-level code so rsp == kernel init rsp). Capture fn itself
-> unchanged. `version-bump.sh 6.1.14` applied; user pushes/tags after CI. Gates:
-> x86 cycc byte-identical self-host (the change is `_TARGET_AGNOS`-gated → cycc
-> flat), check.sh **87/87**, all 169 tcyr clean (per-file exit-code loop),
-> **agnos `--agnos` emit A/B-verified** (capture call moves from after→before the
-> top-level statements; rsp unmoved at the capture site), bench self_compile
-> 503 ms (box noise) / cycc 1,038,072 B. **Cross-OS BOTH GREEN** — ecb
-> `SELFHOST_OK`, cass `FC: no differences` / `SELFHOST_OK`. **The issue's "Bug 2"
-> (nested `syscall(60,…)` no-op) was investigated and CLOSED as consumer-side**:
-> codegen is correct (`rax=60`, `rdi=137`), but agnos has no syscall 60 (exit=0);
-> agnos code must use `SYS_EXIT`, not a hardcoded 60. **Next = Phase E** (bayan
-> carve, then ganita).
+> **Handoff (2026-06-08):** v6.1.15 ready for cut — **TS/TSX→JS emitter put
+> `async` on the wrong node: an async function/method/arrow enclosing a nested
+> arrow (e.g. `xs.map(x=>…)`) emitted `async` on the INNER arrow and dropped it
+> from the owner → bare `await` → invalid JS.** Reported from secureyeoman /
+> yeo-cy-test (`app.tsx` async render() + .map). Root cause: the parser tracked
+> async in a single ambient pending slot, but DECL_FUNCTION / class+object method
+> parsers / paren-arrow parsed their BODY before consuming their own node, so the
+> first nested arrow stole the flag. Fix (`src/frontend/ts/parse.cyr`): added
+> `TS_PS_TAKE_ASYNC` (take-and-clear at each node-owner entry, before params/body)
+> + `TS_AST_SET_ASYNC` (apply after push); wired into all 5 body-before-consume
+> sites. Single-ident arrow already consumed before its body (unchanged).
+> Regression guard: `walk_nested.tsx` + `_emit_async_misplaced` node-free scanner
+> in the emit-js gate. `version-bump.sh 6.1.15` applied; user pushes/tags after
+> CI. Gates: x86 cycc byte-identical self-host (TS frontend IS in cycc → +512 B),
+> check.sh **87/87**, all 169 tcyr clean, **full async/arrow matrix emits valid
+> JS under `node --check`** (incl. expression-body async arrows). **Cross-OS BOTH
+> GREEN** — ecb `SELFHOST_OK`, cass `FC: no differences`. **Next = Phase E**
+> (bayan carve, then ganita).
 > **Sibling flagged (not fixed):** `lib/fdlopen.cyr` has the same Linux-only asm
 > gap but is the dlopen/ld.so/auxv path agnos static binaries never reach. **Deferred
 > polish** (no consumer ask): relocate the 64 KB `_ts_cst` scratch to the ts_base

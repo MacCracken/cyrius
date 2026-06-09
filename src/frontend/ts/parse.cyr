@@ -257,14 +257,34 @@ fn TS_AST_NODE_COUNT(ts_base): i64 {
 # `TS_PS_PENDING_ASYNC` is set by callers right before the AST_PUSH
 # for an async fn/arrow/method; the helper below reads + clears it
 # and ORs the bit into the SPAN.
-fn TS_AST_CONSUME_ASYNC(ts_base, idx): i64 {
-    var flag = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC);
-    if (flag == 0) { return 0; }
-    store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC, 0);
+fn TS_AST_SET_ASYNC(ts_base, idx): i64 {
     var span_addr = ts_base + TS_AST_NODES_OFF + idx * TS_AST_NODE_SIZE + 8;
     var cur_span = load64(span_addr);
     store64(span_addr, cur_span | 0x1000000000000);   # bit 48
     return 0;
+}
+
+fn TS_AST_CONSUME_ASYNC(ts_base, idx): i64 {
+    var flag = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC);
+    if (flag == 0) { return 0; }
+    store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC, 0);
+    TS_AST_SET_ASYNC(ts_base, idx);
+    return 0;
+}
+
+# v6.1.15: take-and-clear the pending-async flag at a node-owner's ENTRY,
+# returning it for the caller to apply to its OWN node after the body is
+# parsed. Without this, a function/method/arrow that parses its body before
+# pushing+consuming its node leaks its pending `async` to the FIRST nested
+# arrow in that body (the arrow's CONSUME_ASYNC grabs the still-set flag) —
+# producing `function outer(){ xs.map(async x=>..); await .. }` (async on the
+# wrong node, bare await → invalid JS). Capturing at entry binds `async` to
+# the node it was parsed on. See issue
+# 2026-06-08-yeo-cy-test-emit-js-async-nested-arrow + CHANGELOG [6.1.15].
+fn TS_PS_TAKE_ASYNC(ts_base): i64 {
+    var flag = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC);
+    store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC, 0);
+    return flag;
 }
 
 # Read the async flag back. Returns 1 if async, 0 otherwise.
@@ -654,6 +674,10 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) != TS_TOK_RBRACE) {
         var done = 0;
         while (done == 0) {
+            # v6.1.15: per-method async, bound to THIS object method's own
+            # node (not the ambient pending slot) so a nested arrow in the
+            # method body can't steal it. Reset each iteration.
+            var mo_async = 0;
             # Eat optional `async` / `get` / `set` modifier on object methods.
             # Only consume when followed by a name + ( or < (method shape).
             var pre_t = TS_PARSE_PEEK(ts_base);
@@ -662,7 +686,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                 var ahead2 = TS_PARSE_PEEK_AHEAD(ts_base, 2);
                 if (TS_IS_NAME_TOK(ahead1) == 1 || ahead1 == TS_TOK_STRING || ahead1 == TS_TOK_INT) {
                     if (ahead2 == TS_TOK_LPAREN || ahead2 == TS_TOK_LT) {
-                        if (pre_t == TS_TOK_KW_ASYNC) { store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_PENDING_ASYNC, 1); }
+                        if (pre_t == TS_TOK_KW_ASYNC) { mo_async = 1; }
                         TS_PARSE_CONSUME(ts_base);
                     }
                 }
@@ -749,7 +773,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                     if (mb_o < 0) { return 0 - 1; }
                     var mn_o = TS_AST_PUSH(ts_base, TS_AST_DECL_METHOD, key_span);
                     if (mn_o < 0) { return 0 - 1; }
-                    TS_AST_CONSUME_ASYNC(ts_base, mn_o);
+                    if (mo_async == 1) { TS_AST_SET_ASYNC(ts_base, mn_o); }
                     TS_AST_SET_PAYLOAD(ts_base, mn_o, 0, key_span);
                     TS_AST_SET_PAYLOAD(ts_base, mn_o, 1, mp_o);
                     TS_AST_SET_PAYLOAD(ts_base, mn_o, 2, mr_o);
@@ -2629,6 +2653,9 @@ fn TS_PARSE_ARROW_BODY(ts_base): i64 {
 # Paren arrow: `(params) => body` or `(params): T => body`. Caller
 # has confirmed via lookahead. Consumes the LPAREN here.
 fn TS_PARSE_ARROW_PAREN(ts_base): i64 {
+    # v6.1.15: take pending-async at entry (before params/body) so a nested
+    # arrow in this arrow's body can't steal it. See TS_PS_TAKE_ASYNC.
+    var arr_async = TS_PS_TAKE_ASYNC(ts_base);
     if (TS_PARSE_EXPECT(ts_base, TS_TOK_LPAREN) < 0) { return 0 - 1; }
     var params_off = TS_PARSE_ARROW_PARAMS(ts_base);
     if (params_off < 0) { return 0 - 1; }
@@ -2647,7 +2674,7 @@ fn TS_PARSE_ARROW_PAREN(ts_base): i64 {
     if (body < 0) { return 0 - 1; }
     var arrow = TS_AST_PUSH(ts_base, TS_AST_EXPR_ARROW, 0);
     if (arrow < 0) { return 0 - 1; }
-    TS_AST_CONSUME_ASYNC(ts_base, arrow);
+    if (arr_async == 1) { TS_AST_SET_ASYNC(ts_base, arrow); }
     TS_AST_SET_PAYLOAD(ts_base, arrow, 0, params_off);
     TS_AST_SET_PAYLOAD(ts_base, arrow, 1, body);
     TS_AST_SET_PAYLOAD(ts_base, arrow, 2, ret_type_node);
@@ -3340,6 +3367,10 @@ fn TS_PARSE_HERITAGE_LIST(ts_base): i64 {
 # `async` then `function`). For function expression caller passes
 # stmt_required=0 (name optional); for declaration stmt_required=1.
 fn TS_PARSE_DECL_FUNCTION(ts_base, name_required): i64 {
+    # v6.1.15: take the pending-async NOW (before params/body) so a nested
+    # arrow in a default param or the body can't steal it. Applied to this
+    # fn's own node below. See TS_PS_TAKE_ASYNC.
+    var fn_async = TS_PS_TAKE_ASYNC(ts_base);
     # Generator marker: `function*` / `function* name(...)`
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_STAR) {
         TS_PARSE_CONSUME(ts_base);
@@ -3377,7 +3408,7 @@ fn TS_PARSE_DECL_FUNCTION(ts_base, name_required): i64 {
     }
     var n = TS_AST_PUSH(ts_base, TS_AST_DECL_FUNCTION, name_v);
     if (n < 0) { return 0 - 1; }
-    TS_AST_CONSUME_ASYNC(ts_base, n);
+    if (fn_async == 1) { TS_AST_SET_ASYNC(ts_base, n); }
     TS_AST_SET_PAYLOAD(ts_base, n, 0, name_v);
     TS_AST_SET_PAYLOAD(ts_base, n, 1, params_off);
     TS_AST_SET_PAYLOAD(ts_base, n, 2, ret_t);
@@ -3616,6 +3647,10 @@ fn TS_PARSE_CLASS_MEMBER(ts_base): i64 {
         if (TS_PARSE_DECORATOR_LIST(ts_base) < 0) { return 0 - 1; }
     }
     TS_PARSE_SKIP_MODIFIERS(ts_base);
+    # v6.1.15: SKIP_MODIFIERS set the pending-async if it ate an `async`
+    # modifier; take it NOW (before params/body) so a nested arrow in the
+    # method body can't steal it. Applied to this member's own node below.
+    var mem_async = TS_PS_TAKE_ASYNC(ts_base);
     # Generator method marker: `*name()` (with optional async modifier
     # already eaten by SKIP_MODIFIERS).
     if (TS_PARSE_PEEK(ts_base) == TS_TOK_STAR) {
@@ -3661,7 +3696,7 @@ fn TS_PARSE_CLASS_MEMBER(ts_base): i64 {
             if (ab < 0) { return 0 - 1; }
             var an = TS_AST_PUSH(ts_base, TS_AST_DECL_METHOD, aname);
             if (an < 0) { return 0 - 1; }
-            TS_AST_CONSUME_ASYNC(ts_base, an);
+            if (mem_async == 1) { TS_AST_SET_ASYNC(ts_base, an); }
             TS_AST_SET_PAYLOAD(ts_base, an, 0, aname);
             TS_AST_SET_PAYLOAD(ts_base, an, 1, ap);
             TS_AST_SET_PAYLOAD(ts_base, an, 2, ar);
@@ -3717,7 +3752,7 @@ fn TS_PARSE_CLASS_MEMBER(ts_base): i64 {
         }
         var mn = TS_AST_PUSH(ts_base, TS_AST_DECL_METHOD, name_v);
         if (mn < 0) { return 0 - 1; }
-        TS_AST_CONSUME_ASYNC(ts_base, mn);
+        if (mem_async == 1) { TS_AST_SET_ASYNC(ts_base, mn); }
         TS_AST_SET_PAYLOAD(ts_base, mn, 0, name_v);
         TS_AST_SET_PAYLOAD(ts_base, mn, 1, mp);
         TS_AST_SET_PAYLOAD(ts_base, mn, 2, mr);

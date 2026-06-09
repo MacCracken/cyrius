@@ -30,4 +30,25 @@ function loops(arr: number[], o: object): void {
   }
 }
 
-export { row, loops };
+// v6.1.15: async must bind to the node it was parsed on, not migrate to the
+// first nested arrow. `asyncWithNestedArrow` must emit `async function` on the
+// OUTER and a PLAIN `.map` arrow inside (pre-fix the emitter moved `async`
+// onto the inner arrow, leaving a bare `await` → invalid JS). Also covers an
+// async class method and an async paren-arrow, both with nested arrows.
+async function asyncWithNestedArrow(): Promise<void> {
+  const xs = [1, 2, 3];
+  const ys = xs.map((n) => n + 1);
+  await Promise.resolve(ys);
+}
+class AsyncHolder {
+  async render(): Promise<void> {
+    const rows = [1, 2].map((m) => m * 2);
+    await Promise.resolve(rows);
+  }
+}
+const asyncArrow = async (n: number) => {
+  const w = [n].map((m) => m);
+  return await Promise.resolve(w);
+};
+
+export { row, loops, asyncWithNestedArrow, AsyncHolder, asyncArrow };
