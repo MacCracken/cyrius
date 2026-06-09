@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.13** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,038,072 B (**flat** @ 6.1.13 — agnos `fnptr` fix is stdlib-only, not in cycc) |
+| **Version** | **6.1.14** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,038,072 B (**flat** @ 6.1.14 — agnos init-rsp capture relocation; `_TARGET_AGNOS`-gated, no non-agnos change) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 593,384 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 805,888 B |
@@ -25,26 +25,27 @@
 | check.sh gates | 87/87 |
 | tests | 169 `.tcyr` · 15 `.bcyr` |
 | stdlib | 90 `lib/*.cyr` (81 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~479 ms |
+| bench (every-release gate) | self_compile ~503 ms (box noise; cycc byte-identical work) |
 
-> **Handoff (2026-06-08):** v6.1.13 ready for cut — **the REAL agnsh
-> banner-then-die fix: `lib/fnptr.cyr` `fncall0..8` had no `CYRIUS_TARGET_AGNOS`
-> branch → every indirect call returned 0 on agnos → null allocator vtable.**
-> This is the actual root cause that 6.1.12's `getenv` `.bss` fix was a layer off
-> from. Added the agnos+x86 SysV asm branch in-place to each `fncallN`
-> (byte-identical to its Linux block; offsets are frame-layout-coupled so no
-> shared helper). `version-bump.sh 6.1.13` applied; user pushes/tags after CI.
-> Gates: x86 cycc byte-identical self-host (post-bump — fnptr.cyr isn't in cycc,
-> so cycc is flat), check.sh **87/87**, all 169 tcyr clean (per-file exit-code
-> loop), **agnos `--agnos` emit A/B-verified: a `fncall2` program emits 0 `call
-> rax` before / 1 after the fix**, bench self_compile 479 ms / cycc 1,038,072 B
-> (flat). **Cross-OS: BOTH GREEN this slot** — ecb (macOS arm64) `SELFHOST_OK`
-> byte-identical, cass (Windows PE) `FC: no differences` / `SELFHOST_OK` (the
-> 6.1.12 Defender quarantine has since cleared). Expected: the change is `#ifdef
-> CYRIUS_TARGET_AGNOS`-gated, compiled out of every non-agnos build, so the
-> macOS/Windows cycc is unchanged; the agnos target is verified by the emit-level
-> A/B above (full QEMU+gnoboot agnsh smoke is agnoshi's harness, not in this
-> repo). **Next = Phase E** (bayan carve, now v6.1.14, then ganita).
+> **Handoff (2026-06-08):** v6.1.14 ready for cut — **agnos `argc()`/`argv()`
+> returned 0/null in non-trivial programs: the init-rsp capture (`call
+> _agnos_capture_rsp`) was in the entry epilogue, AFTER `PARSE_PROG`, so any
+> top-level statement that shifted rsp made it record a stale (zeroed) entry-frame
+> pointer.** Fix (`src/main.cyr`): moved the capture emission UP to right after
+> `EMIT_GVAR_INITS` / before `PARSE_PROG` — the exact spot the x86-macOS
+> `_macho_capture_args` capture uses (after the `=0` gvar init so it isn't
+> clobbered, before top-level code so rsp == kernel init rsp). Capture fn itself
+> unchanged. `version-bump.sh 6.1.14` applied; user pushes/tags after CI. Gates:
+> x86 cycc byte-identical self-host (the change is `_TARGET_AGNOS`-gated → cycc
+> flat), check.sh **87/87**, all 169 tcyr clean (per-file exit-code loop),
+> **agnos `--agnos` emit A/B-verified** (capture call moves from after→before the
+> top-level statements; rsp unmoved at the capture site), bench self_compile
+> 503 ms (box noise) / cycc 1,038,072 B. **Cross-OS BOTH GREEN** — ecb
+> `SELFHOST_OK`, cass `FC: no differences` / `SELFHOST_OK`. **The issue's "Bug 2"
+> (nested `syscall(60,…)` no-op) was investigated and CLOSED as consumer-side**:
+> codegen is correct (`rax=60`, `rdi=137`), but agnos has no syscall 60 (exit=0);
+> agnos code must use `SYS_EXIT`, not a hardcoded 60. **Next = Phase E** (bayan
+> carve, then ganita).
 > **Sibling flagged (not fixed):** `lib/fdlopen.cyr` has the same Linux-only asm
 > gap but is the dlopen/ld.so/auxv path agnos static binaries never reach. **Deferred
 > polish** (no consumer ask): relocate the 64 KB `_ts_cst` scratch to the ts_base

@@ -1577,6 +1577,23 @@ if (_init_km == 1) {
             if (_mcap_off >= 0) { ECALLTO(S, _mcap_off); }
         }
     }
+    # v6.1.14: agnos init-stack capture (Bug 1 — issue
+    # 2026-06-08-cyrius-agnos-argv-init-rsp-capture). Emit `call
+    # _agnos_capture_rsp` HERE — after EMIT_GVAR_INITS (so the
+    # `_agnos_init_rsp = 0` initializer already ran and won't clobber us) and
+    # BEFORE PARSE_PROG (so it runs while rsp still = the kernel init stack,
+    # ahead of ANY top-level statement that shifts rsp). The prior placement
+    # was the entry epilogue *after* PARSE_PROG — it captured a shifted rsp in
+    # non-trivial programs (`argc()==0` in bnrmr; correct in minimal ones).
+    # Mirrors the _macho_capture_args placement above. Gated _TARGET_AGNOS →
+    # emits nothing on other targets, cycc self-hosts byte-identical.
+    if (_TARGET_AGNOS == 1) {
+        var _acap_found = _find_fn_by_name(S, "_agnos_capture_rsp", 18);
+        if (_acap_found >= 0) {
+            var _acap_off = L64(S + 0x9CA000 + _acap_found * 8);
+            if (_acap_off >= 0) { ECALLTO(S, _acap_off); }
+        }
+    }
     # Parse main code (top-level statements)
     PARSE_PROG(S);
 }
@@ -1628,23 +1645,12 @@ if (_TARGET_EFI_APPLICATION == 1) {
     }
 }
 
-# v6.0.55: agnos init-stack capture. On the km==0 executable path nothing
-# moves rsp between e_entry and the auto-call to main below, so here — while
-# rsp still equals the kernel-supplied init rsp ([rsp]=argc, [rsp+8+i*8]=
-# argv[i], per agnos elf_load_from_file) — emit `call _agnos_capture_rsp`
-# (lib/args_agnos.cyr), which records rsp into _agnos_init_rsp so
-# args_init/argc/argv resolve. Mirrors the efi_main forward-call above.
-# Gated `_TARGET_AGNOS` → emits nothing on every other target, so cycc
-# self-hosts byte-identical. See CHANGELOG [6.0.55].
-if (_TARGET_AGNOS == 1) {
-    var _acap_found = _find_fn_by_name(S, "_agnos_capture_rsp", 18);
-    if (_acap_found >= 0) {
-        var _acap_off = L64(S + 0x9CA000 + _acap_found * 8);
-        if (_acap_off >= 0) {
-            ECALLTO(S, _acap_off);
-        }
-    }
-}
+# v6.0.55: agnos init-stack capture USED to live here (entry epilogue, just
+# before `call main`). v6.1.14 moved it UP to immediately after EMIT_GVAR_INITS
+# / before PARSE_PROG (next to the _macho_capture_args call) — the epilogue
+# placement captured a *shifted* rsp once any top-level statement in PARSE_PROG
+# moved it, so `argc()` read 0 in non-trivial agnos programs (bnrmr). See the
+# agnos block above and CHANGELOG [6.1.14].
 
 # v5.9.37: auto-call `main()` if defined and not already called.
 # Pre-fix sources with only `fn main() { ... }` (no trailing

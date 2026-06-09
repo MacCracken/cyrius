@@ -6,6 +6,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.14] — 2026-06-08
+
+**v6.1.x slot 14: agnos `argc()`/`argv()` return 0/null in non-trivial programs
+— the init-rsp capture was placed in the entry *epilogue*, after top-level code
+already shifted rsp.** Reported by the agnos session (bannermanor: `bnrmr agnos`
+saw `argc()==0`, printed usage instead of rendering — QEMU-reproduced on a real
+agnos 1.43.7 kernel). The filed issue bundled a second "bug" (exit-syscall
+no-op in nested fns) which on investigation is **not a cyrius defect** — see
+Notes.
+
+**Benchmark:** `self_compile 503 ms` (vs 479 @ 6.1.13 — +24 ms box noise; cycc
+does identical work for non-agnos targets), `cycc 1,038,072 B` (unchanged — the
+change relocates an already-emitted, `_TARGET_AGNOS`-gated `call`; cycc itself
+never compiles with that target). check.sh **87/87**; all 169 `.tcyr` clean.
+
+### Fixed
+
+- **agnos init-stack capture now runs before any top-level statement (HIGH-sev,
+  bannermanor).** `src/main.cyr` emitted `call _agnos_capture_rsp` in the entry
+  epilogue, *after* `PARSE_PROG` — so in any program whose top-level / module-init
+  code moves rsp, the capture recorded a shifted pointer (into the entry frame,
+  whose qword is 0) instead of the kernel init stack, and `argc()`/`argv(n)`
+  read `0`/null. Minimal programs (no top-level rsp movement) happened to capture
+  the right value, masking it. **Fix:** moved the `call _agnos_capture_rsp`
+  emission UP to immediately after `EMIT_GVAR_INITS` and *before* `PARSE_PROG` —
+  the exact placement the x86-macOS `_macho_capture_args` capture already uses,
+  and for the same reason (after the `_init_rsp = 0` gvar initializer so it isn't
+  clobbered; before top-level code so rsp still equals the kernel init rsp). The
+  capture fn itself (`lib/args_agnos.cyr`, `rbp+16` read) is unchanged — only the
+  *call-site timing* was wrong. **Emit-level A/B (real `--agnos` output):** in a
+  program with loose top-level statements, the old build placed the capture
+  *after* the top-level `call`s; the new build places it *before* them, with no
+  `sub rsp`/`push` between entry and the capture call (rsp == init rsp, verified
+  in the disassembly). Gated `_TARGET_AGNOS` → cycc self-hosts byte-identical.
+
+### Notes
+
+- **The issue's "Bug 2" (`syscall(60, …)` is a no-op in a nested function on
+  agnos) is NOT a cyrius codegen defect — closed as consumer-side.** The
+  disassembly shows the `syscall` builtin lowers *correctly*: `rax=60`,
+  `rdi=137`, then `syscall`. The problem is the number: **agnos has no syscall
+  60** (its table is 0–33; `exit` is syscall **0**, not Linux's 60), so the
+  kernel returns −1 and it's a silent no-op. It "works at top level" only because
+  cycc auto-emits `EEXIT` (which *does* translate to agnos exit 0) at the end of
+  top-level code, so the program exits via that with the last expression value.
+  agnos is a **source-level** syscall-numbering target (`lib/syscalls_x86_64_agnos.cyr`
+  redefines the `Sys` enum to agnos numbers — unlike the macOS/aarch64 backend
+  translation model), so agnos code must use `SYS_EXIT` (= 0), never a hardcoded
+  `60`. bannermanor fixes its call sites; no cyrius change.
+
+### Verified
+
+- agnos `--agnos` emit A/B: capture call moves from *after* top-level statements
+  (old) to *before* them (new); rsp unmoved at the capture site.
+- x86 cycc self-host **byte-identical** (change is `_TARGET_AGNOS`-gated);
+  check.sh **87/87**; all **169 `.tcyr`** clean (per-file exit-code loop).
+
 ## [6.1.13] — 2026-06-08
 
 **v6.1.x slot 13: the REAL agnsh-banner-then-die fix — `lib/fnptr.cyr`'s
