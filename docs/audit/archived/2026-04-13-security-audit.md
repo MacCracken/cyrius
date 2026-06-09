@@ -1,5 +1,12 @@
 # Cyrius Security Audit — 2026-04-13
 
+> **ARCHIVED — baseline audit, superseded.** The P0s (CVE-01/02/03) + CVE-05
+> (.65 tok_names mangle-path guard) + CVE-06 + CVE-07 (PIE, v6.1.6/.8) + CVE-08
+> (.41) all shipped; the P2/P3 tail (CVE-09…13) is tracked as roadmap items or
+> accepted design constraints. Kept as the security baseline of record — the next
+> full audit (per CLAUDE.md "Security Audit Process") supersedes it. Archived
+> 2026-06-09 (v6.1.18 doc sweep).
+
 **Auditor:** Claude (Opus 4.6)
 **Version:** cc3 4.2.1 (312,152 bytes)
 **Scope:** Compiler (cc3), build tool (cyrius), stdlib, bootstrap chain

@@ -965,9 +965,692 @@ sh tests/heapmap.sh              # Heap map overlap detection
 qemu-system-x86_64 -kernel build/agnos -serial stdio -display none
 ```
 
+## Targeting Windows (PE) (v6.1.16+)
+
+Cyrius compiles to Windows PE32+ (x86_64, win_amd64) from Linux or macOS via
+the `--win` cross-compilation flag. The compiler injects the `CYRIUS_TARGET_WIN=1`
+environment variable into the build pipeline, routing platform-specific code paths
+through Windows syscall reroutes (kernel32 and shell32 imports) instead of POSIX
+syscalls.
+
+### Cross-Building for Windows
+
+```sh
+# Cross-compile a Windows PE32+ executable from Linux/macOS
+cyrius build --win src/main.cyr build/myapp.exe
+
+# Or via the environment variable (useful in build scripts)
+CYRIUS_TARGET_WIN=1 cycc < src/main.cyr > build/myapp.exe
+```
+
+The output is a valid PE32+ executable that runs on Windows x86_64. The flag is
+mutually exclusive with `--agnos` (bare-metal kernel target) and `--aarch64`
+(ARM64 cross-compile); `--win` implies the x86_64 instruction set.
+
+### Conditional Compilation
+
+Use the `#ifdef CYRIUS_TARGET_WIN` preprocessor guard to write cross-platform
+code. The compiler defines exactly one of `CYRIUS_TARGET_LINUX`, `CYRIUS_TARGET_WIN`,
+or `CYRIUS_TARGET_MACOS` per build:
+
+```cyrius
+#ifdef CYRIUS_TARGET_WIN
+    # Windows-only code: use lib/args_win.cyr, lib/process_win.cyr, etc.
+    include "lib/process.cyr"  # dispatches to process_win.cyr internally
+#else
+    # POSIX code (Linux / macOS)
+    include "lib/process.cyr"  # dispatches to posix process.cyr
+#endif
+```
+
+The build tool auto-resolves Windows-specific variants from `lib/`:
+- `lib/fs_win.cyr` — directory enumeration (replaces getdents64)
+- `lib/args_win.cyr` — command-line parsing (GetCommandLineW + CommandLineToArgvW)
+- `lib/process_win.cyr` — process creation (CreateProcessW)
+- `lib/thread_win.cyr` — preemptive threading (CreateThread + SRWLOCK)
+- `lib/sync_windows.cyr` — mutex primitives
+- `lib/syscalls_windows.cyr` — kernel32 syscall numbers (0xF0xx reroutes)
+
+Consumer code includes `lib/io.cyr`, `lib/args.cyr`, `lib/process.cyr`, and
+`lib/thread.cyr` normally — the dispatcher (the parent module) selects the
+platform variant at compile time, so sources stay target-agnostic.
+
+### What Works on Windows PE (v6.1.16–v6.1.18)
+
+**Process Control**
+- `run(cmd, arg1, arg2)` — spawn a process and wait for exit → `Result(exit_code)`
+- `run_capture(cmd, arg1, arg2, buf, buflen)` — capture stdout/stderr → `Result(bytes)`
+- `spawn(cmd, arg1, arg2)` → `Result(handle)` — background process
+- `wait_pid(handle)` → `Result(exit_code)` — join spawned process
+- `exec_vec(args)`, `exec_capture(args, buf, buflen)`, `exec_env(args, env)` — vec-based forms
+- `exec_vec_str(args)`, `exec_capture_str(args, buf, buflen)`, `exec_env_str(args, env)` — Str fat-pointer forms
+
+All reroute to `CreateProcessW` with UTF-16LE command lines. Command arguments
+undergo full Unicode quoting via the real Windows `CommandLineToArgvW`, then
+convert back to UTF-8 for the cyrius API.
+
+**Threading & Synchronization**
+- `thread_create(fp, arg)` → thread handle (CreateThread)
+- `thread_join(handle)` → exit code
+- `gettid()` → current thread id (GetCurrentThreadId)
+- `mutex_new()`, `mutex_lock(m)`, `mutex_unlock(m)` — SRWLOCK (8-byte exclusive lock)
+- `chan_new(cap)`, `chan_send(ch, val)`, `chan_recv(ch)`, `chan_try_recv(ch)` — thread-safe FIFO ring
+
+Mutexes are preemptive-safe (block contending threads). Channel `recv` is
+non-blocking (returns 0 when empty); blocking variants require condition
+variables, not yet routed.
+
+**Command-Line Arguments & Environment**
+- `args_init()` — parse GetCommandLineW via the real CommandLineToArgvW
+- `argc()`, `argv(n)` — access parsed arguments (byte-identical to POSIX form)
+- Environment variables (`getenv`) read the parent's block on entry
+
+Full Unicode paths are supported; see *Limitations* below.
+
+**File I/O**
+- `file_open(path, flags, mode)` → fd
+- `file_read(fd, buf, len)` → bytes read
+- `file_write(fd, buf, len)` → bytes written
+- `file_close(fd)` — handle must be closed
+- `file_read_all(path, buf, buflen)` → bytes (wrapper)
+
+Opening files routes to Windows' `CreateFileW`; reading/writing use the real
+`ReadFile`/`WriteFile` (via 0xF001/0xF002 PE reroutes and the POSIX syscall
+interface dispatching them). Paths are widened from UTF-8 to UTF-16LE at call time.
+
+**Directory Enumeration** (v6.1.18+)
+- `dir_list(path)` → `vec` of `Str` filenames
+- `is_dir(path)` → 1 (directory) or 0 (not found / file)
+- `dir_walk(path, results)` — recursive enumeration (appends file paths to the `results` vec)
+
+These reroute to `FindFirstFileW`, `FindNextFileW`, `FindClose` (0xF016–0xF018),
+and `GetFileAttributesW` (0xF019) on Windows. Paths are converted to UTF-16LE
+with `/` translated to `\` for Windows naming. Results come back as UTF-8 Str.
+
+### Syscall Routing Model
+
+On Windows, syscalls do not map to a single kernel boundary. Instead, the compiler
+dispatches to kernel32 (or shell32) *reroutes* — compiler-emitted sequences that
+call imported DLL functions. Each reroute has a PE-internal syscall number
+(0xF0xx) that the compiler recognizes:
+
+```cyrius
+include "lib/syscalls.cyr"    # imports the reroute constants
+
+var h = syscall(3, handle);           # CloseHandle → syscall(3)
+var ec = syscall(60, 0);              # ExitProcess → syscall(60)
+var tid = syscall(61451);             # GetCurrentThreadId → 0xF00B
+```
+
+The dispatcher (`EPE_SYSCALL_DYNAMIC` in `src/backend/x86/emit.cyr`) interprets
+the syscall arity (number of arguments) and compares against a routing table:
+
+- **Arity 4** (read, write, open, seek): if syscall == 0 → read, == 1 → write, == 2 → open, == 8 → seek
+- **Arity 3** (mkdir, getticks, nanosleep): if syscall == 83 → mkdir, == 228 → getticks, == 35 → nanosleep
+- **Arity 2** (close, unlink, exit): if syscall == 3 → close, == 87 → unlink, == 60 → exit
+- **Arity 5** (getdents64, unsupported): returns -38 (-ENOSYS) — directory listing uses the arity-3 `FindFirstFileW` etc. instead
+- **Unknown arity**: returns -38
+
+Each routable pair emits the kernel32 call inline. Unknown syscalls return -38
+(ENOSYS), matching POSIX semantics, so code paths that are dead on Windows
+(e.g., POSIX fork/execve) can compile without routing them.
+
+### Win64 MS-x64 ABI Details
+
+Cyrius PE code follows the Microsoft x86_64 ABI precisely:
+
+- **Calling convention**: Arguments in RCX, RDX, R8, R9; excess on stack
+- **Return values**: RAX (64-bit), RDX:RAX (128-bit pair via multi-return)
+- **Shadow space**: 32 bytes (0x20) reserved by the caller above RSP
+- **Stack alignment**: 16-byte aligned on entry to any function (RSP % 16 == 0 at entry)
+- **Registers**: RAX, RCX, RDX, R8, R9, R10, R11 are volatile; RBX, RBP, RSI, RDI, R12–R15 preserved
+
+The cyrius entry point sets up a 0-aligned RSP (the PE loader enters with RSP ≡ 8,
+then the entry shim `sub rsp, 8`s to align). Cyrius function prologues and `callptr`
+calls maintain this invariant.
+
+### Limitations
+
+**Path Widening (v6.1.16–v6.1.18)**
+
+Paths are ASCII zero-extended to UTF-16LE — characters outside the ASCII range
+(0x00–0x7F) are not supported. This is sufficient for the toolchain's own
+cross-compile paths (e.g., `C:\cyrius\lib` vs `/usr/local/cyrius/lib`); Unicode
+install paths or filenames with non-ASCII characters will silently truncate or
+corrupt. This limitation applies to file open, directory listing, and process
+creation. A future release can implement full UTF-8 → UTF-16LE transcoding
+(surrogate pair handling, etc.).
+
+**UDP Sockets**
+
+`lib/socket.cyr` does not route UDP on PE. TCP is supported via the WinSock2 ABI
+(when a consumer demands it); UDP datagram dispatch to the Winsock API is tracked
+for a future release.
+
+**COM and Advanced Windows APIs**
+
+Direct COM object access (IDispatch, dual interfaces, type libraries) and DXGI
+graphics are not in scope. Cyrius compiles to a portable x64 binary, not a Windows
+.NET or UWP app. Advanced Windows features (WMI, registry, services, network
+authentication) require hand-coded interop layers or external helper binaries.
+
+The `callptr` builtin (v6.0.70+) enables COM vtable dispatch (`callptr(load64(load64(obj) + slot*8), obj, …)`),
+and `callptr` itself is Win64-ABI–correct (16-aligned on entry), so careful
+consumers can implement COM wrappers. See the `Function Pointers` section of
+this guide.
+
+### Example: Cross-Platform Argument Parsing
+
+```cyrius
+include "lib/string.cyr"
+include "lib/args.cyr"
+
+fn main() {
+    args_init();
+
+    var ac = argc();
+    if (ac < 2) {
+        println("usage: myprog <arg1> [arg2]");
+        syscall(60, 1);
+    }
+
+    var arg1 = argv(1);
+    var arg2 = 0;
+    if (ac >= 3) { arg2 = argv(2); }
+
+    println("arg1:");
+    println(arg1);
+    if (arg2 != 0) {
+        println("arg2:");
+        println(arg2);
+    }
+
+    return 0;
+}
+```
+
+Compiling with `cyrius build --win main.cyr main.exe` on Linux produces a
+Windows PE that calls `GetCommandLineW` and `CommandLineToArgvW`, parsing the
+full Windows quoting rules (`\"`, backslash escaping, etc.) and converting back
+to UTF-8 to match the POSIX API exactly. Same binary on Unix calls `/proc/self/cmdline`.
+
+### Example: Directory Listing and File I/O
+
+```cyrius
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+
+fn main() {
+    var entries = dir_list(str_from("tests/tcyr"));
+
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var name: Str = vec_get(entries, i);
+        var is_directory = is_dir(name);
+
+        if (is_directory == 1) {
+            print_str("DIR:  ");
+        } else {
+            print_str("FILE: ");
+        }
+        println(str_data(name));
+
+        i = i + 1;
+    }
+
+    return 0;
+}
+
+fn print_str(s) {
+    syscall(1, 1, s, strlen(s));
+}
+```
+
+On Windows PE, `dir_list("tests\\tcyr")` internally converts the path to
+UTF-16LE, calls `FindFirstFileW` and `FindNextFileW`, and returns UTF-8 Str
+entries. On Linux, it calls `getdents64`. The consumer code is identical.
+
+## Targeting AGNOS (ring-3 userspace) (v6.0.48)
+
+AGNOS is a ring-3 operating system kernel designed for secure, minimal userspace
+execution. Cyrius can cross-compile to AGNOS from any host (Linux, macOS, Windows),
+producing x86_64 ELF64 binaries that run as agnos ring-3 processes. Unlike hosted targets
+(Linux, macOS, Windows), agnos uses a distinct syscall ABI, explicit-length path arguments
+(no NUL-termination), and agnos-native open flags; the `#ifdef CYRIUS_TARGET_AGNOS`
+preprocessor guard exposes port-specific code paths in `lib/`.
+
+### Building for AGNOS
+
+```sh
+# Cross-compile to agnos from any host
+cyrius build --agnos src/main.cyr build/myapp
+
+# Equivalent: set the environment variable directly
+CYRIUS_TARGET_AGNOS=1 cycc < ...
+```
+
+The `--agnos` flag sets the `CYRIUS_TARGET_AGNOS` predefine, which gates the
+compiler's emit codegen: the program-exit epilogue emits `syscall(0)` (agnos `exit`,
+code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at entry
+`≥ 0x200000` (agnos user-range floor).
+
+### AGNOS Syscall ABI
+
+agnos defines a frozen syscall surface (numbers 0–33, agnos 1.41.x+). The register
+convention is x86_64 SysV (rax=number, rdi/rsi/rdx/r10=args 1–4, rax returns
+result ≥0 on success, -1 on error). Key differences from Linux:
+
+```
+# agnos syscall numbers — FROZEN (lib/syscalls_x86_64_agnos.cyr)
+SYS_EXIT = 0       (not Linux 60)
+SYS_WRITE = 1
+SYS_READ = 5
+SYS_OPEN = 7
+SYS_SPAWN = 3      (spawn in-memory ELF; no fork/exec)
+SYS_WAITPID = 4    (returns exit_code directly, not wait-status)
+SYS_MMAP = 27      (anonymous, 2 MB-granular, no hint support)
+```
+
+**Explicit lengths, no NUL assumption**: every path argument carries its length.
+`sys_open(name, namelen, flags)` — length is required, not derived from NUL.
+
+**agnos-native open flags** (`AO_*`, NOT Linux `O_*`):
+```
+AO_RDONLY = 0x0
+AO_WRONLY = 0x1
+AO_RDWR = 0x2
+AO_CREAT = 0x100
+AO_TRUNC = 0x200
+AO_APPEND = 0x400
+AO_DIRECTORY = 0x800
+```
+
+**4-argument convention** (for `rename`, `link`): argument 4 rides in r10 (not on
+the stack), following the FASTCALL variant of the SysV ABI. The compiler handles
+this automatically for `syscall(SYS_RENAME, a1, a2, a3, a4)`.
+
+**Return values**: ≥ 0 = success, -1 = error. agnos does NOT return -errno; instead,
+syscalls either fail with -1 or succeed. The `is_err(ret)` function checks this:
+```
+fn is_err(ret) { return ret < 0; }
+```
+
+### Ported Libraries
+
+Cyrius provides agnos-specific peers for core libraries, selected via
+`#ifdef CYRIUS_TARGET_AGNOS` in the dispatch files:
+
+```
+lib/syscalls.cyr          → lib/syscalls_x86_64_agnos.cyr
+lib/alloc.cyr             → lib/alloc_agnos.cyr
+lib/args.cyr              → lib/args_agnos.cyr
+lib/process.cyr           → lib/process_agnos.cyr
+lib/io.cyr (getenv)       → delegates to lib/args_agnos.cyr::_agnos_getenv
+```
+
+**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (0–33),
+with wrappers (`sys_write`, `sys_read`, `sys_open`, `sys_spawn`, `sys_waitpid`,
+`sys_mmap`, `sys_stat`, etc.) and the agnos `stat` / `getdents` record layouts.
+
+**`lib/alloc_agnos.cyr`**: bump allocator over agnos's `sys_mmap(27)` chunks
+(2 MB-granular, kernel-picked base, no hints). Successive mmaps are discontiguous;
+agnos reclaims all at process exit (no individual free). Mirrors the `alloc_*`
+API: `alloc_init`, `alloc(size)`, `alloc_reset`, `alloc_used`.
+
+**`lib/args_agnos.cyr`**: command-line argument + environment access via the
+agnos ring-3 init stack (ABI §4.6). The kernel stages `[rsp]=argc`, argv pointers,
+a NULL, envp, AT_NULL-only auxv. The cycc entry captures the init-rsp, so `argc()`,
+`argv(n)`, and `getenv(name)` read the cached rsp.
+
+**`lib/process_agnos.cyr`**: process spawn and wait. agnos has no fork/exec; instead,
+`sys_spawn(elf_addr, elf_size)` runs an in-memory ELF image (you must read the file
+into heap first). The wrappers are `run(cmd)`, `spawn(cmd)`, `wait_pid(pid)`, and
+variants like `exec_vec(args)`, `exec_capture` (capture is a stub — output goes to
+terminal). **Limitation**: `sys_spawn` takes no argv/envp, so spawned programs
+receive only their own name; arguments cannot be passed.
+
+### Conditional Compilation Pattern
+
+Guard agnos-specific or agnos-incompatible code with the preprocessor:
+
+```
+include "lib/syscalls.cyr"
+include "lib/args.cyr"
+
+fn main() {
+    #ifdef CYRIUS_TARGET_AGNOS
+        # agnos: explicit-length paths, AO_* flags
+        var fd = sys_open("/tmp/file", 10, AO_CREAT | AO_WRONLY);
+    #else
+        # Linux/macOS: NUL-terminated, O_* flags
+        var fd = sys_open("/tmp/file", 0, O_CREAT | O_WRONLY);
+    #endif
+    
+    if (is_err(fd)) { return 1; }
+    sys_write(fd, "hello\n", 6);
+    sys_close(fd);
+    return 0;
+}
+```
+
+Portable patterns to support all targets: use the dispatch files (`lib/syscalls.cyr`,
+`lib/alloc.cyr`, `lib/args.cyr`, `lib/process.cyr`), which handle the `#ifdef`
+branching internally. Avoid platform-specific syscall numbers, flags, or struct layouts.
+
+### Capabilities and Limitations
+
+**Works on agnos**:
+- Syscall wrappers (all 0–33)
+- Heap allocation (bump, 2 MB chunks)
+- File I/O (read, write, open, close, stat, getdents)
+- Process spawn and wait (in-memory ELF)
+- Arguments and environment variables
+- Pipes, epoll, signalfd, timerfd (the event loop primitives)
+- Signals (sigprocmask, kill, pause)
+- Filesystem (mkdir, rmdir, unlink, rename, link on ext2)
+- SIMD, function pointers, inline asm (same as Linux/macOS)
+
+**Does NOT work on agnos** (either frozen out of syscalls 0–33 or stubbed):
+- Process arguments to spawned programs (`sys_spawn` is elf_addr, elf_size only)
+- stdout/stderr redirection (`sys_dup` is a stub; pipe → spawn → wait works, but
+  output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
+- `getppid` (no getppid in frozen surface; returns 0)
+- `getuid` (always 0 / root)
+- `chmod` (no permission model; `sys_chmod` is a no-op stub returning 0)
+- Thread-local storage (not modeled in agnos ring-3)
+- Dynamic linking (`dlopen`, auxv machinery), only static binaries
+
+The agnos syscall surface is **frozen as of 1.41.x** per its `docs/development/agnos-userland-abi.md`
+protocol (§5): any number/signature change in that doc is authoritative, and this guide +
+`lib/syscalls_x86_64_agnos.cyr` must be updated in sync. See `docs/development/issues/` for
+follow-up arcs (e.g., "2026-06-03-agnos-followup-after-boot.md" covers the spawn-argv gap).
+
+## Position-Independent Executables (PIE) (v6.1.6)
+
+A position-independent executable (PIE) uses RIP-relative code and relocatable
+base addresses, allowing the kernel to load it at a random address under ASLR
+(Address Space Layout Randomization). Cyrius supports PIE on both x86_64 (v6.1.6)
+and aarch64 (v6.1.8), producing ET_DYN binaries with `p_vaddr=0` and
+base-relative entry points. The full tcyr test corpus runs correctly as
+ASLR-loaded PIE binaries on both architectures.
+
+Enable PIE via the `--pie` flag or `CYRIUS_PIE=1` environment variable:
+
+```sh
+cyrius build --pie src/main.cyr build/myapp       # x86_64 or aarch64
+# or
+CYRIUS_PIE=1 cyrius build src/main.cyr build/myapp
+```
+
+Non-PIE output is **byte-identical** across all corpus inputs — the feature
+is fully opt-in and inert when disabled (v6.1.5 vs v6.1.6 differential = zero
+drift across 338 corpus programs).
+
+### Architecture & Code Generation
+
+On **x86_64**, PIE uses `lea [rip+disp32]` for address calculations and rel32
+call-site fixups. The machinery reuses ~80% of the proven shared-object codegen
+path (`_IS_OBJ` in `src/backend/x86/emit.cyr`); only the ELF wrapper differs
+(ET_DYN + p_vaddr=0 instead of ET_EXEC). The resulting `.text` has **zero
+absolute `movabs`** instructions — all globals, strings, function pointers, and
+function calls resolve via RIP-relative offsets that adjust correctly at each ASLR load.
+
+On **aarch64**, PIE emits `adrp`+`add` pairs (2 instructions) instead of the
+3-instruction `movz`/`movk` absolute chain. The machinery is inherited from the
+byte-proven Mach-O PC-relative code (`FIXUP_ADRP_ADD` and `FIXUP_ADRP_LDR`),
+but the base computation is generalized: where Mach-O hardcoded `0x100004000`,
+ELF PIE uses `_entry_base(S)` (the load-bias-relative instruction VA), making
+the page-aligned base cancel in the adrp page-diff. The result is load-bias
+correct and ASLR-safe on every load.
+
+### Capabilities & Patterns
+
+PIE binaries safely handle:
+- Global variable access and address-taken globals (`&var`)
+- Function pointers, callbacks, and indirect dispatch (`fncallN`)
+- Interface/trait method dispatch via vtables stored in globals
+- Address-valued global initializers (`var gp = &foo;`)
+- Static string literals and global arrays
+
+Example:
+
+```cyrius
+var global_int = 42;
+var global_ptr = 0: i64;   # Will be filled with &fn_target
+
+fn fn_target() { return 1; }
+
+fn main() {
+    global_ptr = &fn_target;
+    var x = global_int;    # &var under ASLR load: RIP-relative
+    var r = fnc alloc(global_ptr);   # Indirect call at randomized base
+    return x;              # 42 — correct under any ASLR offset
+}
+```
+
+### Relationship to `shared` & Object Mode
+
+PIE reuses the `_IS_OBJ` codegen gate, which gates both shared-object emission
+(`kmode==2`) and PIE (`_pie_mode`). The distinction is:
+- **Object mode** (`shared;`): emits relocatable `.o` files with external symbol refs, processed by `ld` or `ld.lld`
+- **PIE mode** (`--pie`): emits standalone ET_DYN executables that fix up all relocations internally
+
+For `.so` emission, v6.1.9 additionally migrates from SysV `.hash` to `.gnu.hash`
+(the loader's O(1) Bloom-filter path), improving symbol resolution speed in
+dlopen'd libraries.
+
+### Kernel PIE (v6.1.7)
+
+The `kernel; --pie` form produces an ET_DYN kernel with RIP-relative `.text`
+and base-relative `e_entry` (`0xA8`), allowing a KASLR boot loader (AGNOS
+gnoboot) to slide the kernel to a random address. The kernel-PIE ELF wrapper
+is structurally validated (ET_DYN header, zero absolute `movabs`, RIP-relative
+code); non-PIE kernels remain **byte-identical to v6.1.6**. Live boot at a slid
+base awaits an AGNOS `--pie` harness (AGNOS is not yet pulling on it).
+
+### Limitations & Non-Support
+
+- PIE is userland-first (x86_64 v6.1.6, aarch64 v6.1.8)
+- Kernel-PIE is structurally complete but awaits AGNOS boot harness integration
+- Position-independent shared libraries (`.so` with `-fPIE`) are not a separate target;
+  `shared;` emits relocatable object files only
+- Non-PIE output is always available and carries no performance cost
+
+## TypeScript / TSX → JavaScript (`cycc --emit-js`)
+
+The `--emit-js` flag (v6.1.11+) emits browser-runnable JavaScript from TypeScript
+and TSX source, stripping types and lowering JSX to hyperscript calls. Single-file
+emission; no bundler. Run directly via `cycc --emit-js <file.tsx>` or surface
+through the CLI: `cyrius build --target=js <in.tsx> <out.js>`.
+
+```sh
+# Direct invocation
+cycc --emit-js app.tsx                  # JS → stdout
+
+# Via the build CLI
+cyrius build --target=js app.tsx app.js # x86-Linux-only
+```
+
+### Type Stripping
+
+The emitter walks the parsed AST and removes all TypeScript syntax:
+
+```typescript
+// Input TypeScript
+interface Config { host: string; port: number; }
+type Handler<T> = (x: T) => T;
+
+function process(c: Config, f: Handler<number>): number {
+    const x: number = c.port;
+    const y = f(x as any);
+    const z: string = y!.toString();
+    return z.length;
+}
+```
+
+```javascript
+// Emitted JavaScript
+function process(c, f) {
+    const x = c.port;
+    const y = f(x);
+    const z = y.toString();
+    return z.length;
+}
+```
+
+Strips: interfaces, type aliases, parameter/return/binding type annotations, `as T`
+type casts, `x!` non-null assertions, generic type arguments (`<T, U>`), and optional
+`?` markers.
+
+### JSX Lowering
+
+JSX syntax is lowered to hyperscript pragma calls. The pragma defaults to `h`
+and is configurable via the `CYRIUS_JSX_PRAGMA` environment variable.
+
+```typescript
+// Input TSX
+function NoteRow({ id, body }: Note): JSX.Element {
+    return (
+        <li className="note" data-id={id}>
+            <span>{body}</span>
+        </li>
+    );
+}
+```
+
+```javascript
+// Emitted JavaScript (default pragma `h`)
+function NoteRow({ id, body }) {
+    return h("li", { className: "note", "data-id": id }, h("span", null, body));
+}
+```
+
+Tag lowering: uppercase names become component identifiers (`<MyComp />`
+→ `MyComp(...)`); lowercase names become quoted HTML strings (`<div />` →
+`"div"`). Attributes become object keys — valid JS identifiers bare, others
+quoted (`className` bare, `data-id` quoted). `{expr}` values inlined, spreads
+(`{...obj}`) passed through. `{expr}` children inlined; whitespace-only JSX
+text dropped. Self-closing handled.
+
+### Standalone Hyperscript Runtime
+
+When JSX is present and using the default `h` pragma, the emitter prepends
+a ~12-line standalone `h` function so the output runs in a browser with zero
+dependencies. A custom `CYRIUS_JSX_PRAGMA` suppresses the prelude (consumer
+brings the runtime):
+
+```javascript
+function h(t, p, ...c) {
+  if (typeof t === "function") return t(Object.assign({}, p, { children: c }));
+  const e = document.createElement(t);
+  for (const k in (p || {})) {
+    const v = p[k];
+    if (k === "className") e.className = v;
+    else if (k.slice(0, 2) === "on" && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k in e) e[k] = v;
+    else if (v != null && v !== false) e.setAttribute(k, v);
+  }
+  const add = (x) => { if (x == null || x === false || x === true) return; if (Array.isArray(x)) x.forEach(add); else e.append(x.nodeType ? x : String(x)); };
+  c.forEach(add);
+  return e;
+}
+```
+
+Custom pragma (e.g., `React.createElement`):
+
+```sh
+CYRIUS_JSX_PRAGMA=React.createElement cycc --emit-js app.tsx
+# Prelude is suppressed; consumer imports React
+```
+
+### ESM Import/Export Pass-Through
+
+Named imports and exports pass through verbatim; type-only names are pruned:
+
+```typescript
+// Input
+interface Note { id: number; }
+export { Note, renderNote, printNote };
+import type { Config } from "./config";
+import { setup } from "./util";
+```
+
+```javascript
+// Emitted (Note filtered, import type dropped)
+export { renderNote, printNote };
+import { setup } from "./util";
+```
+
+`export type` declarations and `import type` statements are dropped entirely
+since they have no runtime meaning.
+
+### String / Template Literals
+
+String literals (single/double/backtick), number literals, and regex are
+re-emitted verbatim. Template literals preserve interpolations:
+
+```typescript
+const msg = `Hello, ${name}!`;
+const pattern = /foo(bar|baz)/g;
+```
+
+```javascript
+const msg = `Hello, ${name}!`;
+const pattern = /foo(bar|baz)/g;
+```
+
+Template literal `${}` expressions are recursively emitted, preserving nesting.
+
+### Indented Output
+
+(v6.1.12+) Structural indentation (2 spaces per level) is applied to block
+bodies (class, function, switch, control flow). Indentation is applied only
+at structural newlines, never inside verbatim strings or template content,
+so template literals carrying their own newlines are never re-indented:
+
+```javascript
+function outer() {
+  const parts = [1, 2, 3];
+  for (const x of parts) {
+    console.log(x);
+  }
+  switch (mode) {
+    case 1:
+      return `multiline
+template
+unchanged`;
+    default:
+      return null;
+  }
+}
+```
+
+### Validation
+
+The emitter keeps a walk-verification gate from v6.1.10: it exits non-zero
+if any node is reached twice (indicating a corrupted AST) or a list entry
+is out of range. The output is tested to round-trip through `node --check`
+(syntax validation) and a re-parse via `--parse-ts` (semantic consistency).
+
+### Platform & Build Support
+
+`cycc --emit-js` and `cyrius build --target=js` are **x86-Linux-only**
+(the TS frontend is not compiled for aarch64, Windows PE, or macOS). The
+standalone `cycc_aarch64` and `cycc_win` cross-compilers do not include
+the TS frontend.
+
+### Limitations
+
+- Single-file emission; no module bundling or tree-shaking
+- No JSX component props typing validation (TS type-checking is lost)
+- The TS parser is self-hosted (only in the `cycc` x86 binary)
+- No source maps
+
 ## Example Programs
 
-See `programs/` for 80 examples:
+See `programs/` for 79 examples:
 - **CLI tools**: cat, echo, head, wc, grep, hexdump, tail, tr, uniq, sort, basename, cols, count, toupper, rot13, rev, nl, seq, tee, yes, true, false
 - **Algorithms**: fizzbuzz, primes, sieve, collatz, ackermann, gcd, brainfuck, life, xor
 - **Data structures**: struct_list (linked list), alloctest (heap), strtype (fat strings)

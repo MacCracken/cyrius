@@ -1,5 +1,11 @@
 # Zero-call public stdlib fn audit — v5.11.21
 
+> **ARCHIVED — RESOLVED.** All 10 zero-internal-caller fns were retained
+> (each has documented external consumers — async_new→daimon,
+> niyama_bre_compile→cyim, sig_alg_name→libro, …); the "0 grep-callers ≠
+> safe-to-remove" principle was validated and no later audit re-challenged
+> them. Archived 2026-06-09 (v6.1.18 doc sweep).
+
 **Date**: 2026-05-11
 **Cyrius version**: 5.11.20 → 5.11.21
 **Driver**: v5.11.7 close-out lib refactor audit found 10 PUBLIC stdlib

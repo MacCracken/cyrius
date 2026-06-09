@@ -69,6 +69,6 @@ clobbered `gvar_toks` → CI SIGILL). Heap alloc (post-brk) is collision-free.
 
 - Fixed capacity limits (1,048,576 tokens, 8192 vars, 4096 functions, 512 `#derive` structs, 1024 globals)
 - Buffer overflow bugs are silent corruption — always add bounds checks
-- Relocating buffers requires two-step bootstrap (ADR documented in vidya)
+- Relocating buffers requires two-step bootstrap (see ADR-005: Two-Step Bootstrap for Compiler Changes)
 - Adjacent buffers with no guard bytes are time bombs (tok_names overflow, v0.9.2)
 - Heap consolidation (v2.1) saved 2MB by compacting scattered regions

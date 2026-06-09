@@ -1,5 +1,10 @@
 # Stdlib fn-name collision audit (v5.7.9)
 
+> **ARCHIVED — RESOLVED.** The one genuine collision (`patra json_build` →
+> `patra_json_build`) was renamed in CHANGELOG [5.7.9]; the other 65 were
+> `#ifdef` arch-conditional false positives, and a warn-on-duplicate-fn-name
+> check was added. Archived 2026-06-09 (v6.1.18 doc sweep).
+
 Date: 2026-04-26
 Cyrius version at audit: 5.7.8 (in-flight v5.7.9 work)
 Source of truth: `lib/*.cyr` after `cyrius deps` resolves the

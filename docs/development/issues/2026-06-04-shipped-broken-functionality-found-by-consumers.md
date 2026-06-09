@@ -1,5 +1,13 @@
 # Genuinely-broken shipped functionality, untracked — found by consumers, not our gates
 
+> **STATUS (2026-06-09): LIVE meta-issue — partially resolved.**
+> RESOLVED: A (TLS public-API stubs, .78–.83), B (arm64 macOS dir-walk EBADF,
+> .63), C (real-flow funcgate operational, .15), D1 (aarch64-Linux ESYSXLAT
+> gaps, .68), D3 (gate harness). **OPEN: D2** (Windows wrapper unported —
+> process spawn + dir-walk on PE; note the v6.1.18 `lib/fs_win.cyr` dir-listing
+> closed part of this) and **D4** (nanosleep on macho). Kept LIVE until D2+D4
+> close.
+
 - **Filed**: 2026-06-04
 - **Why this exists**: no gate ever ran the real consumer flow (`cyrius init` → `lib sync` → `build`
   → run; or actually exercising a shipped public API). So functional holes shipped green and were

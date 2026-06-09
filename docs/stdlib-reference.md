@@ -1084,6 +1084,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_accept_12` | `tls_native_accept_12(ctx, fd) → TLS_OK/err` | TLS 1.2 server handshake |
 | `tls_native_write` | `tls_native_write(ctx, buf, len) → n/err` | Send application data (plaintext → AEAD record) |
 | `tls_native_read` | `tls_native_read(ctx, buf, max) → n/err` | Receive application data (AEAD record → plaintext) |
+| `tls_native_close` | `tls_native_close(ctx) → TLS_OK/err` | Clean close handshake (sends close_notify alert) |
 
 **Configuration (pre-handshake):**
 
@@ -1093,6 +1094,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_set_verify` | `tls_native_set_verify(ctx, mode) → TLS_OK/err` | Peer-verification mode (`TLS_VERIFY_NONE`/`PEER`) |
 | `tls_native_set_ca_bundle` | `tls_native_set_ca_bundle(ctx, pem, len, is_der) → TLS_OK/err` | Install a custom CA bundle (PEM or DER) |
 | `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Load the system CA trust store |
+| `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
 
 **Introspection (post-handshake):**
 
@@ -1105,8 +1107,150 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_get_peer_cert_der` | `tls_native_get_peer_cert_der(ctx, buf, max) → len` | Peer leaf certificate DER |
 | `tls_native_get_peer_spki_der` | `tls_native_get_peer_spki_der(ctx, buf, max) → len` | Peer SubjectPublicKeyInfo DER |
 | `tls_native_get_last_error` | `tls_native_get_last_error(ctx) → code` | Last error (`TLS_ERR_*`) |
+| `tls_native_get_key_algo` | `tls_native_get_key_algo(ctx) → algo` | Peer's signature algorithm (ECDSA/RSA/Ed25519) |
+| `tls_native_get_group` | `tls_native_get_group(ctx) → group` | Selected ECDH group |
 
-The module additionally exposes ~70 lower-level **handshake** (`tls_native_client_*`/`tls_native_server_*`), **record-layer** (`tls_native_record_seal`/`_open`, `tls_native_aead_nonce`, `tls_native_cipher_*`), **key-schedule** (`tls_native_keysched_*`, `tls_native_transcript_*`, `tls_native_derive_key`/`_iv`), and **TLS 1.2** (`tls_native_12_prf`/`_master_secret`/`_key_block`/…) primitives that drive the handshake state machine and back `lib/tls.cyr`'s native path — see the source for the full surface.
+**Record layer:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_record_write_header` | `tls_native_record_write_header(buf, ct, version, length) → 5` | Write 5-byte TLSPlaintext/TLSCiphertext header |
+| `tls_native_record_read_header` | `tls_native_record_read_header(buf, buflen, ct_out, version_out, length_out) → 5/err` | Parse record header; extract type, version, length |
+| `tls_native_record_fragment_count` | `tls_native_record_fragment_count(plaintext_len) → count` | Number of fragments needed (max 16KB plaintext per fragment) |
+| `tls_native_record_aad` | `tls_native_record_aad(ct, version, length, aad_out5) → 5` | Generate 5-byte TLS 1.3 AAD from header fields |
+| `tls_native_record_aad_12` | `tls_native_record_aad_12(seq8, ct, version, length, aad_out13) → 13` | Generate 13-byte TLS 1.2 AAD (sequence ‖ type ‖ version ‖ length) |
+| `tls_native_record_seal` | `tls_native_record_seal(cipher, key, static_iv, seq8, inner_ct, inner, inner_len, out, out_max) → n/err` | Encrypt + authenticate plaintext into record (TLS 1.3) |
+| `tls_native_record_seal_12` | `tls_native_record_seal_12(cipher, key, iv, seq8, ct, plain, plain_len, out, out_max) → n/err` | Encrypt + authenticate plaintext into record (TLS 1.2 AEAD) |
+| `tls_native_record_open` | `tls_native_record_open(cipher, key, static_iv, seq8, record, record_len, out, out_max, out_ct) → n/err` | Decrypt + verify ciphertext record, extract content type (TLS 1.3) |
+| `tls_native_record_open_12` | `tls_native_record_open_12(cipher, key, iv, seq8, record, record_len, out, out_max, out_ct) → n/err` | Decrypt + verify ciphertext record, extract content type (TLS 1.2) |
+
+**AEAD & ciphersuite selection:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_aead_nonce` | `tls_native_aead_nonce(static_iv12, seq8, nonce_out12) → 12` | Compute 12-byte TLS 1.3 nonce: XOR(seq ‖ 0x00, static_iv) |
+| `tls_native_aead_nonce_12_gcm` | `tls_native_aead_nonce_12_gcm(salt4, explicit8, nonce_out12) → 12` | Compute 12-byte TLS 1.2 GCM nonce: salt ‖ explicit |
+| `tls_native_cipher_hash_algo` | `tls_native_cipher_hash_algo(cipher) → algo` | Hash algo for ciphersuite (TLS_HASH_SHA256/384) |
+| `tls_native_cipher_key_len` | `tls_native_cipher_key_len(cipher) → bytes` | AEAD key length (16 for AES-128, 32 for AES-256 or ChaCha20) |
+| `tls_native_cipher_iv_len` | `tls_native_cipher_iv_len(cipher) → 12` | Static IV length for TLS 1.3 AEAD (always 12) |
+| `tls_native_cipher_iv_len_12` | `tls_native_cipher_iv_len_12(cipher) → bytes` | IV/salt length for TLS 1.2 (4 for AES-GCM, 12 for ChaCha20) |
+| `tls_native_cipher_tag_len` | `tls_native_cipher_tag_len(cipher) → 16` | AEAD authentication tag length (always 16) |
+| `tls_native_cipher_supported` | `tls_native_cipher_supported(cipher) → 0/1` | Capability check (1 = supported by this build) |
+| `tls_native_cipher_select` | `tls_native_cipher_select(client_offers, n_offers, server_prefs, n_prefs) → cipher` | Select ciphersuite from client list using server preference order |
+| `tls_native_aead_to_wire_12` | `tls_native_aead_to_wire_12(aead_id, auth) → wire_id` | Map internal AEAD identity + auth algo to TLS 1.2 wire ciphersuite ID |
+
+**Key schedule (TLS 1.3):**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_keysched_new` | `tls_native_keysched_new(hash_algo) → handle` | Create key schedule for hash algo (TLS_HASH_SHA256/384) |
+| `tls_native_keysched_set_psk` | `tls_native_keysched_set_psk(ks, psk, psk_len) → TLS_OK/err` | Override PSK and recompute early secret (hash_len bytes) |
+| `tls_native_keysched_derive_handshake` | `tls_native_keysched_derive_handshake(ks, dhe, dhe_len, transcript) → TLS_OK/err` | Derive handshake + c/s hs-traffic secrets from DHE + transcript |
+| `tls_native_keysched_derive_master` | `tls_native_keysched_derive_master(ks, transcript) → TLS_OK/err` | Derive app-traffic + exporter + resumption secrets from transcript |
+| `tls_native_keysched_get_secret` | `tls_native_keysched_get_secret(ks, which, out) → len/err` | Read derived secret (early/hs/c-hs/s-hs/app/exporter/resumption) |
+| `tls_native_keysched_phase` | `tls_native_keysched_phase(ks) → phase` | Current phase (TLS_KSP_NONE/EARLY/HANDSHAKE/MASTER) |
+| `tls_native_key_update_secret` | `tls_native_key_update_secret(cipher, secret, secret_len, hash_algo, out) → len/err` | Derive next-gen secret for KeyUpdate post-handshake |
+
+**Transcript hashing:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_transcript_init` | `tls_native_transcript_init(hash_algo) → handle/0` | Create transcript state (SHA-256 or SHA-384) |
+| `tls_native_transcript_update` | `tls_native_transcript_update(state, data, len) → TLS_OK/err` | Hash serialized handshake message into transcript |
+| `tls_native_transcript_digest` | `tls_native_transcript_digest(state, digest_out) → len/err` | Finalize and return digest (32 for SHA-256, 48 for SHA-384) |
+| `tls_native_transcript_digest_len` | `tls_native_transcript_digest_len(state) → len/-1` | Get digest length without computing (32 or 48) |
+
+**Derive labels (HKDF-Expand-Label):**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_derive_key` | `tls_native_derive_key(sec, secret_len, hash_algo, key_out, key_len) → len/err` | Derive per-direction write key from secret |
+| `tls_native_derive_iv` | `tls_native_derive_iv(sec, secret_len, hash_algo, iv_out, iv_len) → len/err` | Derive per-direction write IV from secret (12 bytes for AEADs) |
+
+**TLS 1.2 PRF & key derivation:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_12_prf` | `tls_native_12_prf(cipher, sec, secret_len, label, label_len, seed, seed_len, out, out_len) → len/err` | PRF-SHA256/384 for key expansion, master secret, verify data |
+| `tls_native_12_master_secret` | `tls_native_12_master_secret(cipher, pre_master, pm_len, client_random, server_random, out48) → 48/err` | Derive master secret from pre-master + randoms |
+| `tls_native_12_master_secret_ems` | `tls_native_12_master_secret_ems(cipher, pre_master, pm_len, session_hash, sh_len, out48) → 48/err` | Derive master secret using Extended Master Secret (transcript hash) |
+| `tls_native_12_key_block_len` | `tls_native_12_key_block_len(cipher) → bytes/-1` | Bytes of key block needed (2*key_len + 2*iv_len for AEAD) |
+| `tls_native_12_key_block` | `tls_native_12_key_block(cipher, master48, client_random, server_random, out, out_len) → len/err` | Generate key block for record encryption keys + IVs |
+| `tls_native_12_partition_keys` | `tls_native_12_partition_keys(cipher, key_block, cw_key, sw_key, cw_iv, sw_iv) → TLS_OK/err` | Split key block into client/server write keys + IVs |
+| `tls_native_12_cipher_aead_identity` | `tls_native_12_cipher_aead_identity(wire_id) → aead` | Map TLS 1.2 wire ciphersuite ID to internal AEAD identity |
+| `tls_native_12_cipher_hash` | `tls_native_12_cipher_hash(wire_id) → algo` | Hash algo for TLS 1.2 ciphersuite (TLS_HASH_SHA256/384) |
+| `tls_native_12_cipher_auth` | `tls_native_12_cipher_auth(wire_id) → auth` | Auth algo (TLS12_AUTH_ECDSA/RSA) |
+| `tls_native_12_cipher_supported` | `tls_native_12_cipher_supported(wire_id) → 0/1` | Capability check for TLS 1.2 ciphersuite |
+
+**TLS 1.2 handshake messages:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_12_build_client_hello` | `tls_native_12_build_client_hello(ctx, out, out_max) → len/err` | Build ClientHello with extensions + ciphersuites |
+| `tls_native_12_verify_data` | `tls_native_12_verify_data(cipher, master48, label, label_len, handshake_hash, hh_len, out12) → 12/err` | Compute 12-byte verify_data for Finished message |
+| `tls_native_12_build_finished` | `tls_native_12_build_finished(ctx, label, out, out_max) → len/err` | Build Finished message with master secret + transcript hash |
+| `tls_native_12_verify_finished` | `tls_native_12_verify_finished(ctx, msg, msg_len, label) → TLS_OK/err` | Verify peer Finished message constant-time |
+| `tls_native_12_build_server_hello_done` | `tls_native_12_build_server_hello_done(out, out_max) → len/err` | Build ServerHelloDone (0-byte body handshake message) |
+| `tls_native_12_parse_server_hello_done` | `tls_native_12_parse_server_hello_done(msg, msg_len) → TLS_OK/err` | Parse ServerHelloDone (validates empty body) |
+| `tls_native_12_build_client_key_exchange` | `tls_native_12_build_client_key_exchange(client_eph_pub, out, out_max) → len/err` | Build ClientKeyExchange (ECDHE public key) |
+| `tls_native_12_parse_client_key_exchange` | `tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32) → 32/err` | Parse ClientKeyExchange, extract peer's ECDHE public key |
+| `tls_native_12_compute_premaster` | `tls_native_12_compute_premaster(ctx, peer_eph_pub32, out32) → 32/err` | Derive pre-master secret (ECDHE shared secret) |
+| `tls_native_12_derive_keys` | `tls_native_12_derive_keys(ctx, premaster, pm_len) → TLS_OK/err` | Derive master secret, key block, and install keys |
+| `tls_native_12_seal` | `tls_native_12_seal(ctx, ct, plain, plain_len, out, out_max) → len/err` | Encrypt + MAC plaintext into TLS 1.2 record |
+| `tls_native_12_open` | `tls_native_12_open(ctx, record, record_len, out, out_max, out_ct) → len/err` | Decrypt + verify TLS 1.2 record, extract plaintext + type |
+| `tls_native_12_build_server_flight` | `tls_native_12_build_server_flight(ctx, out, out_max) → len/err` | Build server flight (ServerHello + Certificate + done) |
+
+**Handshake (client side — TLS 1.3):**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_client_build_hello` | `tls_native_client_build_hello(ctx, out, out_max) → len/err` | Build ClientHello with x25519 + ECDSA/Ed25519 sig algs |
+| `tls_native_client_parse_server_hello` | `tls_native_client_parse_server_hello(ctx, sh, sh_len) → TLS_OK/err` | Parse ServerHello, derive handshake secrets (no HelloRetryRequest yet) |
+| `tls_native_client_open_handshake` | `tls_native_client_open_handshake(ctx, record, record_len, out, out_max, out_ct) → len/err` | Decrypt server handshake flight with handshake key |
+| `tls_native_client_recv_flight` | `tls_native_client_recv_flight(ctx, record, record_len) → TLS_OK/err` | Process server flight record (accumulate for reassembly) |
+| `tls_native_client_seal_handshake` | `tls_native_client_seal_handshake(ctx, inner, inner_len, out, out_max) → len/err` | Encrypt client handshake message with handshake key |
+| `tls_native_client_finish` | `tls_native_client_finish(ctx, out, out_max) → len/err` | Build + encrypt Finished message, transition to CONNECTED |
+| `tls_native_client_verify_chain` | `tls_native_client_verify_chain(ctx, now_unix) → TLS_OK/err` | Verify peer certificate chain against trust store |
+| `tls_native_client_verify_hostname` | `tls_native_client_verify_hostname(ctx) → TLS_OK/err` | Verify SNI host against server cert SubjectAltName |
+| `tls_native_client_parse_server_hello_12` | `tls_native_client_parse_server_hello_12(ctx, sh, sh_len) → TLS_OK/err` | Parse TLS 1.2 ServerHello + derive handshake secrets |
+
+**Handshake (server side — TLS 1.3):**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_server_load_creds` | `tls_native_server_load_creds(ctx) → TLS_OK/err` | Validate certificate chain + private key before accepting |
+| `tls_native_server_respond_hello` | `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max) → len/err` | Build ServerHello (or HelloRetryRequest) in response to ClientHello |
+| `tls_native_server_sent_hrr` | `tls_native_server_sent_hrr(ctx) → 0/1` | Check if last respond_hello was HelloRetryRequest (vs ServerHello) |
+| `tls_native_server_derive_handshake` | `tls_native_server_derive_handshake(ctx) → TLS_OK/err` | Derive handshake secrets from ECDHE + CH..SH transcript |
+| `tls_native_server_build_flight` | `tls_native_server_build_flight(ctx, out, out_max) → len/err` | Build server flight (EncryptedExtensions + Certificate + Finished) |
+| `tls_native_server_recv_client_certificate` | `tls_native_server_recv_client_certificate(ctx, msg, msg_len) → TLS_OK/err` | Process Certificate message, advance transcript + state |
+| `tls_native_server_recv_client_certverify` | `tls_native_server_recv_client_certverify(ctx, msg, msg_len) → TLS_OK/err` | Verify CertificateVerify signature (ECDSA-P256/Ed25519) |
+| `tls_native_server_recv_client_finished` | `tls_native_server_recv_client_finished(ctx, msg, msg_len) → TLS_OK/err` | Verify client Finished constant-time, transition to CONNECTED |
+| `tls_native_server_derive_master` | `tls_native_server_derive_master(ctx) → TLS_OK/err` | Derive application-traffic + exporter secrets post-Finished |
+| `tls_native_server_install_handshake_keys` | `tls_native_server_install_handshake_keys(ctx) → TLS_OK/err` | Install derived server/client hs-traffic keys (TLS 1.2) |
+| `tls_native_server_seal_handshake` | `tls_native_server_seal_handshake(ctx, inner, inner_len, out, out_max) → len/err` | Encrypt server handshake message with handshake key |
+| `tls_native_server_open_handshake` | `tls_native_server_open_handshake(ctx, record, record_len, out, out_max, out_ct) → len/err` | Decrypt client handshake flight with handshake key |
+| `tls_native_server_open_ticket` | `tls_native_server_open_ticket(ctx, blob, blob_len, out) → len/-1` | Decrypt session ticket, recover resumption secret |
+| `tls_native_server_new_session_ticket` | `tls_native_server_new_session_ticket(ctx, out, out_max) → len/err` | Build NewSessionTicket message (sealed resumption secret) |
+
+**Application data & record encryption:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_open_app` | `tls_native_open_app(cipher, key, static_iv, seq8, record, record_len, out, out_max) → len/err` | Decrypt application record (post-handshake) |
+| `tls_native_seal_app` | `tls_native_seal_app(cipher, key, static_iv, seq8, plain, plain_len, out, out_max) → len/err` | Encrypt application record (post-handshake) |
+| `tls_native_install_app_keys` | `tls_native_install_app_keys(ctx) → TLS_OK/err` | Install derived app-traffic keys into context |
+
+**Sequence & state tracking:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_seq_init` | `tls_native_seq_init(seq8) → 0` | Initialize sequence number to 0 |
+| `tls_native_seq_increment` | `tls_native_seq_increment(seq8) → 0` | Post-increment 8-byte sequence number (big-endian) |
+| `tls_native_handshake_write_header` | `tls_native_handshake_write_header(buf, type, length) → 4` | Write 4-byte handshake message header |
+| `tls_native_handshake_read_header` | `tls_native_handshake_read_header(buf, buflen, type_out, length_out) → 4/err` | Parse handshake header, extract type + body length |
+| `tls_native_ccs_record_write` | `tls_native_ccs_record_write(buf) → len` | Write ChangeCipherSpec record (legacy 1.2, middlebox compat in 1.3) |
+| `tls_native_psk_binder` | `tls_native_psk_binder(cipher, psk, psk_len, transcript, transcript_len, binder_out) → len/err` | Compute PSK binder for 0-RTT resumption |
 
 ### ws.cyr
 

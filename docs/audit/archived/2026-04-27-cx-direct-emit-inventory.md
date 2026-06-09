@@ -1,5 +1,9 @@
 # cyrius-x bytecode correctness — direct-emit inventory (v5.7.12)
 
+> **ARCHIVED — RESOLVED.** All 10 direct-x86-emit sites were guarded with
+> `_TARGET_CX` checks and a CYX round-trip gate was added to check.sh
+> (CHANGELOG [5.7.12]). Archived 2026-06-09 (v6.1.18 doc sweep).
+
 Date: 2026-04-27
 Cyrius version at audit: 5.7.11 (in-flight v5.7.12 work)
 Source of truth: `src/frontend/parse_*.cyr` after the v5.7.11

@@ -17,7 +17,7 @@ Build Cyrius from assembly up — no C compiler, no Rust, no LLVM, no libc in th
 
 ## Consequences
 
-- Bootstrap chain is longer (seed → cybs → cycc; bridge intermediate retired v5.11.66; top compiler renamed cc3 → cc5 at v5.0.0, cc5 → cycc at v6.0.0)
+- Bootstrap chain is longer (seed → cybs → cycc; bridge intermediate retired v5.11.66; the compiler binary renamed cc3 → cc5 (v5.0.0) → cycc (v6.0.0) — a name evolution, not separate compilers)
 - No access to libc functions — must implement everything from syscalls
 - Every new feature must work without external libraries
 - Self-hosting verification is mandatory after every compiler change
