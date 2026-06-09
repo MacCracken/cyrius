@@ -72,8 +72,9 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.9** ✅ | `.gnu.hash` migration + drop SysV `.hash` (Sub-arc C) — `EMITELF_SHARED` emits single-bucket `.gnu.hash` + `DT_GNU_HASH` matching `lib/dynlib.cyr::_gnu_hash_lookup` (loader was already gnu-hash-only; the SysV table was dead weight). x86-only; cycc byte-identical; cass/pi/ecb self-host | C — PIE / dynlink |
 | **v6.1.10** ✅ | **TS AST children-list allocator fix** (Phase D prereq) — the parser built a corrupt AST for nested lists (`RESERVE` didn't advance `used` → call-args/block/object/JSX sub-lists stomped each other; verified empirically). Restructured all value builders to deferred collect-then-contiguous-write (`TS_CST_PUSH`/`FLUSH`) + the `<T,>` trailing-comma parse fix + `cycc --emit-js` self-validating AST-walk (kind-S-expr; check.sh gate 87, proven to catch a re-broken allocator). x86-Linux-only; cycc +79 KB; cass/pi/ecb green. | D — frontend emit (prereq) |
 | **v6.1.11** ✅ | TS/TSX → JS emit (`cycc --emit-js`) — AST-driven emitter on the corrected AST: type-strip + JSX→`h(...)` (pragma `CYRIUS_JSX_PRAGMA`, default `h`, + standalone prelude) + ESM passthrough with type-only export pruning. Consumer `app.tsx` emits valid runnable JS (node --check + parse-ts round-trip + stub-DOM run); gate does emit→round-trip. x86-only; cycc +24.7 KB. **Phase D mini-arc complete.** | D — frontend emit |
-| **v6.1.12** | bayan distfile carve | E — stdlib carve |
-| **v6.1.13** | ganita distfile carve | E — stdlib carve |
+| **v6.1.12** ✅ | **agnos `getenv` HIGH-sev fix, packed with Phase D edges** (user "hotfix + small pack"): `lib/io.cyr` `getenv()` guards its 8 KB `/proc/self/environ` reader behind `#ifndef CYRIUS_TARGET_AGNOS` (it was compiled past the agnos early return → agnoshi #PF; verified it's `.bss` static, not a stack frame — `.bss` −8,208 B). **+** `cyrius build --target=js` CLI wrapper over `cycc --emit-js`. **+** indented JS output. **+** fixed a pre-existing bug: every `for`/`for-of`/`for-in` header emitted invalid JS (`;;`/`; of `/`; in `; silent since .10/.11) + gate guard + fixture coverage. pi/ach/ecb byte-identical; cass deferred (Defender quarantine-lock, box reset pending). | agnos fix + D edges |
+| **v6.1.13** | bayan distfile carve | E — stdlib carve |
+| **v6.1.14** | ganita distfile carve | E — stdlib carve |
 | *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):
@@ -209,7 +210,7 @@ filter pre-check over the SysV `.hash` chain walk, and PIE binaries going
 through `dlopen` / symbol resolution see the measurable difference. Drop
 SysV `.hash` once `.gnu.hash` is in place.
 
-### Phase D — TS/TSX → JS emit (v6.1.9)
+### Phase D — TS/TSX → JS emit (v6.1.10 → v6.1.11) ✅
 
 Pulled into the primary block ahead of the carve (user 2026-06-08). The
 Cyrius TS/TSX front-end **parses** real-world TS/TSX cleanly today
@@ -231,7 +232,7 @@ full write-up in [roadmap-future.md](roadmap-future.md).
 > proves larger than one slot, ASK for the shape rather than re-slotting
 > ([[feedback_no_unilateral_scope_decisions]]).
 
-### Phase E — stdlib carve (v6.1.10 → v6.1.11)
+### Phase E — stdlib carve (v6.1.13 → v6.1.14)
 
 The bayan/ganita distfile carve — the second half of the stdlib
 clean-slate (the mabda fold shipped @ v6.0.45). After the carve, stdlib
@@ -239,13 +240,13 @@ stays primitives-only so bare-metal consumers (v6.2.x RISC-V / firmware)
 don't drag the data offshoots into kernel objects. Math primitives + regex
 stay stdlib. [[project_bayan_ganita_carve_arc]].
 
-#### v6.1.10 — bayan distfile carve
+#### v6.1.13 — bayan distfile carve
 
 Extract `json` / `toml` / `cyml` / `csv` / `base64` / `bigint` / `u128`
 from stdlib into the **bayan** sibling repo + `[deps.bayan]` resolution.
 Naming convention `bayan_<module>_*`.
 
-#### v6.1.11 — ganita distfile carve
+#### v6.1.14 — ganita distfile carve
 
 Extract `matrix` / `linalg` / advanced math from stdlib into the
 **ganita** sibling repo + `[deps.ganita]` resolution. Naming convention
