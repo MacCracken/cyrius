@@ -1,0 +1,54 @@
+# dir_list_pe.cyr — Windows regression for the v6.1.18 directory-listing port.
+# Run on cass (in %USERPROFILE%\_cyaud, where the cross-os tarball extracts
+# src/ lib/ tests/win/ tests/tcyr/ VERSION); must exit 42.
+#
+# Before v6.1.18, dir_list/is_dir bottomed out on getdents64 (arity 5) which has
+# no PE route — they were no-ops on Windows (empty listing, is_dir always 0).
+# v6.1.18 ports them to FindFirstFileW/FindNextFileW/FindClose (dir_list) and
+# GetFileAttributesW (is_dir) via lib/fs_win.cyr. This asserts the real runtime
+# behavior on Windows: enumeration finds the known tests/win contents, and
+# is_dir distinguishes directory / file / missing. Distinct non-42 codes per
+# failed assertion (debuggable over headless SSH, like nanosleep_pe.cyr).
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/fs.cyr"
+
+# Byte-compare a cstr (str_data of a listing entry) against a literal.
+fn _name_eq(a, lit): i64 {
+    var i = 0;
+    while (i < 260) {
+        var ca = load8(a + i);
+        var cb = load8(lit + i);
+        if (ca != cb) { return 0; }
+        if (ca == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    # is_dir via GetFileAttributesW: directory / file / missing.
+    if (is_dir(str_from("tests/win")) != 1) { return 10; }   # a directory
+    if (is_dir(str_from("VERSION")) != 0) { return 11; }     # a file
+    if (is_dir(str_from("no_such_dir_xyz")) != 0) { return 12; } # missing
+
+    # dir_list via FindFirstFileW/FindNextFileW/FindClose.
+    var d = dir_list(str_from("tests/win"));
+    var n = vec_len(d);
+    if (n < 5) { return 20; }   # callptr/dxgi/nanosleep/var_syscall_arity/dir_list
+
+    # The listing must contain this very file (proves real entries, not garbage).
+    var i = 0;
+    var found = 0;
+    while (i < n) {
+        if (_name_eq(str_data(vec_get(d, i)), "dir_list_pe.cyr") == 1) { found = 1; }
+        i = i + 1;
+    }
+    if (found != 1) { return 30; }
+
+    return 42;
+}

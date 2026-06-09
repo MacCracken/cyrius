@@ -1459,6 +1459,29 @@ fn EGETENV_PE(S): i64 {
     return _pe_call_3arg_aligned(S, _pe_getenv_get());
 }
 
+# v6.1.18 — directory enumeration reroutes for lib/fs_win.cyr (the Windows
+# dir_list/is_dir port). All kernel32, marshalled through the existing aligned
+# helpers (no new asm). syscall(0xF016, wpattern, &finddata) → FindFirstFileW
+# (2 args), syscall(0xF017, hFind, &finddata) → FindNextFileW (2 args),
+# syscall(0xF018, hFind) → FindClose (1 arg), syscall(0xF019, wpath) →
+# GetFileAttributesW (1 arg). See CHANGELOG [6.1.18].
+fn EFINDFIRST_PE(S): i64 {
+    _pe_ensure_findfirst(S);
+    return _pe_call_2arg_aligned(S, _pe_findfirst_get());
+}
+fn EFINDNEXT_PE(S): i64 {
+    _pe_ensure_findnext(S);
+    return _pe_call_2arg_aligned(S, _pe_findnext_get());
+}
+fn EFINDCLOSE_PE(S): i64 {
+    _pe_ensure_findclose(S);
+    return _pe_srw_call_1arg(S, _pe_findclose_get());
+}
+fn EGETFATTR_PE(S): i64 {
+    _pe_ensure_getfattr(S);
+    return _pe_srw_call_1arg(S, _pe_getfattr_get());
+}
+
 # 3-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as the
 # 1/2-arg callers above). Stack on entry (top→bottom): [a3][a2][a1][sc_nr].
 # a1→rcx, a2→rdx, a3→r8 (Win64 integer arg order), then carve the 32 B shadow.

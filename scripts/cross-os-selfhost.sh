@@ -157,7 +157,8 @@ case "$HOST" in
       && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
+      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this
@@ -172,6 +173,10 @@ case "$HOST" in
     # v6.1.17 var-syscall-arity regression: a var-number syscall of an
     # UNROUTABLE arity (arity-5 getdents64) must emit a stack-balanced -38, NOT
     # hard-error the build (the 6.1.16 PE-tarball blocker) — must exit 42.
+    # v6.1.18 dir-listing regression: dir_list/is_dir now route to
+    # FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW (lib/fs_win.cyr);
+    # dir_list_pe.cyr enumerates tests\win + checks is_dir on a dir/file/missing
+    # path on real Windows — must exit 42.
     ;;
   ecb-install)
     # Packaging-rot guard (v6.0.38): build the real tarball via the same

@@ -1,5 +1,5 @@
 # sakshi.cyr — tracing, error handling, and structured logging for Cyrius
-# Bundled distribution of sakshi v2.2.8
+# Bundled distribution of sakshi v2.2.10
 # Source: https://github.com/MacCracken/sakshi
 # License: GPL-3.0-only
 #
@@ -185,28 +185,19 @@ fn _sk_clock_init(): i64 {
     var t0_ns = _sk_clock_now_ns_raw();
     var t0_ticks = _sk_now_ticks();
 
-    #ifdef CYRIUS_TARGET_WIN
-    # PE: nanosleep (35) is the one syscall sakshi uses that 6.1.16's runtime
-    # var-dispatch still does NOT route (it returns -38 / -ENOSYS on PE), so
-    # the Linux 10 ms sleep window is unavailable. Busy-spin on the
-    # (now var-dispatched) clock_gettime until ~10 ms of wall time has elapsed. The
-    # spin is bounded so a degenerate clock source can never hang init —
-    # if the bound trips, dn stays ~0 below and freq is left uncalibrated
-    # (timestamps degrade to 0 rather than the process spinning forever).
-    var target_ns = t0_ns + 10000000;
-    var spins: i64 = 0;
-    var now_ns = t0_ns;
-    while (now_ns < target_ns) {
-        if (spins > 200000000) { now_ns = target_ns; }
-        else { now_ns = _sk_clock_now_ns_raw(); spins = spins + 1; }
-    }
-    #else
-    # nanosleep(10 ms). timespec is { tv_sec, tv_nsec }.
-    var sleep_ts[2];
+    # nanosleep(10 ms). timespec is { tv_sec, tv_nsec } — two i64 = 16 bytes.
+    # var[N] is byte-sized in cyrius, so this must be [16], not [2]: a [2]
+    # reserves only 8 bytes and the tv_nsec store at +8 would land in the
+    # next stack local.
+    #
+    # Portable across Linux and Windows PE: the cyrius ≥ 6.1.17 pin routes
+    # nanosleep(35) to Sleep on PE. Earlier runtimes returned -ENOSYS on PE,
+    # which forced a now-removed clock_gettime busy-spin window here (and the
+    # GetTickCount64 fallback in _sk_now_ns) — both retired in v2.2.10.
+    var sleep_ts[16];
     store64(&sleep_ts, 0);
     store64(&sleep_ts + 8, 10000000);
     syscall(_SK_SYS_NANOSLEEP, &sleep_ts, 0);
-    #endif
 
     var t1_ticks = _sk_now_ticks();
     var t1_ns = _sk_clock_now_ns_raw();
@@ -243,22 +234,10 @@ fn _sk_clock_init(): i64 {
 # origin), but monotonicity and ns scaling are preserved — span elapsed
 # computation and event ordering are unaffected.
 fn _sk_now_ns(): i64 {
-    #ifdef CYRIUS_TARGET_WIN
-    # Windows PE: the rdtsc calibration window needs a sleep, but nanosleep(35)
-    # is the one syscall 6.1.16's runtime var-dispatch still doesn't route on PE
-    # (returns -38 — see issues/archive/2026-06-09-windows-pe-var-syscall-no-reroute.md).
-    # Sidestep calibration entirely: syscall(228, 0, 0) reroutes to
-    # GetTickCount64() (ms in rax); scale to ns. Coarse (ms) but monotonic,
-    # calibration-free, and crash-free. (All other sakshi syscalls now use the
-    # portable `var`-slot numbers — 6.1.16 dispatches them at runtime on PE.)
-    return syscall(228, 0, 0) * 1000000;
-    #endif
-    #ifndef CYRIUS_TARGET_WIN
     if (_sk_tsc_scale == 0) {
         _sk_clock_init();
     }
     return _sk_ticks_to_ns(_sk_now_ticks());
-    #endif
 }
 
 # Re-run the calibration loop and refresh _sk_tsc_freq_hz / _sk_tsc_scale.

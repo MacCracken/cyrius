@@ -835,6 +835,38 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.1.18: directory enumeration for lib/fs_win.cyr (dir_list/is_dir
+            # on Windows). 0xF016 FindFirstFileW(pattern,&data) / 0xF017
+            # FindNextFileW(h,&data) are 2-arg (argc==3); 0xF018 FindClose(h) /
+            # 0xF019 GetFileAttributesW(path) are 1-arg (argc==2).
+            if (sc_num == 61462) {
+                if (argc == 3) {
+                    EFINDFIRST_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61463) {
+                if (argc == 3) {
+                    EFINDNEXT_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61464) {
+                if (argc == 2) {
+                    EFINDCLOSE_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            if (sc_num == 61465) {
+                if (argc == 2) {
+                    EGETFATTR_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # v6.1.16: non-literal (var) syscall number. The `sc_num ==`
             # cases above only fire for a constant-folded first arg; a
             # number held in a `var` (the portable arch-dispatch idiom)
@@ -872,8 +904,8 @@ fn PARSE_FACTOR(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
-            440);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            519);
         }
         ESCPOPS(S, argc);
         _cfo = 0;

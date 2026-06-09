@@ -1004,6 +1004,8 @@ fs::path_basename/1
 fs::path_dirname/1
 fs::path_has_ext/2
 fs::path_join/2
+fs_win::dir_list/1
+fs_win::is_dir/1
 grp::grp_getgrgid/4
 grp::grp_getgrgid_r/4
 grp::grp_getgrnam/4

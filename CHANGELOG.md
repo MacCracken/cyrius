@@ -6,6 +6,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.18] — 2026-06-09
+
+**v6.1.x slot 18: Windows directory-listing port + sakshi 2.2.10 fold.** v6.1.17
+softened the unroutable-arity `getdents64` to an honest `-38` so the PE tarball
+could build, but left `dir_list`/`is_dir`/`dir_walk` returning empty on Windows —
+the "wrapper unported" gap. This is the real fix: the directory primitives now
+route to `FindFirstFileW`/`FindNextFileW`/`FindClose` (`dir_list`) and
+`GetFileAttributesW` (`is_dir`) on PE, so `cyrius test`/`tests`/`fuzz`, dep
+resolution, and the version manager actually enumerate directories on Windows.
+Done as its own slot (not folded into .17) per user — the gap isn't left hanging,
+it's the very next release. bayan carve → 6.1.19, ganita → 6.1.20.
+
+**Benchmark:** `self_compile 486 ms` (vs 486 ms @ 6.1.17 — flat), `cycc
+1,045,120 B` (**+2,248 B** — the four `E*_PE` find emitters + dispatch arms +
+import triples). check.sh **87/87** (api-surface snapshot updated: +`fs_win::dir_list/1`
++`fs_win::is_dir/1`); all 170 `.tcyr` clean (per-file exit loop 170/170). Cross-OS
+self-host **byte-identical on cass (Windows PE32+) + ecb (macOS arm64)**; new
+`tests/win/dir_list_pe.cyr` enumerates `tests\win` + checks `is_dir` on a
+dir/file/missing path → **exit 42 on real Windows**.
+
+### Added
+
+- **Windows directory enumeration (`lib/fs_win.cyr`).** Four new kernel32 IAT
+  reroutes — `0xF016` `FindFirstFileW`, `0xF017` `FindNextFileW`, `0xF018`
+  `FindClose`, `0xF019` `GetFileAttributesW` (`src/backend/pe/emit.cyr` import
+  triples + `EFINDFIRST_PE`/`EFINDNEXT_PE`/`EFINDCLOSE_PE`/`EGETFATTR_PE` in
+  `src/backend/x86/emit.cyr`, marshalled through the existing
+  `_pe_call_2arg_aligned`/`_pe_srw_call_1arg` helpers — no new hand-rolled asm;
+  literal dispatch arms in `parse_expr.cyr` + the routed-syscall warning string).
+  `lib/fs.cyr` includes `fs_win.cyr` under `#ifdef CYRIUS_TARGET_WIN` and excludes
+  its getdents64 `dir_list`/`is_dir` under `#ifndef CYRIUS_TARGET_WIN` (mirroring
+  `args.cyr`→`args_win.cyr`, `process.cyr`→`process_win.cyr`). `dir_walk` /
+  `dir_list_full` / `find_files` work transitively. `fs_win.cyr` is **self-contained**
+  (its own ASCII `_fs_widen` UTF-8→UTF-16 + full `_fs_narrow` UTF-16→UTF-8,
+  mirroring `_args_w2u8`) so `fs.cyr`'s dependency contract stays
+  string/alloc/str/vec/syscalls — no forced args.cyr/process.cyr include.
+  The **EXPLICIT** approach (vs transparently routing `getdents64(217)`) was chosen
+  because `getdents64` takes an fd while `FindFirstFileW` takes a path, and a
+  transparent shim would overload the fd slot (file HANDLE vs search HANDLE) +
+  need a synthetic-dirent serializer with per-fd state. PE-only — ELF/Mach-O/
+  aarch64 byte-identical (aarch64 `--strict` stubs added for the four emitters).
+  Closes `issues/2026-06-09-windows-dir-listing-findfirstfile-port.md`.
+
+### Changed
+
+- **Folded sakshi 2.2.8 → 2.2.10 into `lib/sakshi.cyr`** (byte-identical to dist).
+  2.2.9 fixed the `var sleep_ts[2]` timespec undersize (the roadmap P3); 2.2.10
+  drops the Windows clock-calibration busy-spin entirely — single-path
+  calibrated-rdtsc on every target now that 6.1.17 routes both `nanosleep(35)` and
+  `GetTickCount64(228)` on PE. Requires cyrius ≥ 6.1.17. `sakshi`/`sakshi_full`/
+  `preprocessor_past_cap` tcyr green.
+
+### Fixed
+
+- **PE routed-syscall warning string was truncated 3 bytes** (a v6.1.17 slip):
+  adding `,35` to the list grew it to 443 bytes but the `syscall(SYS_WRITE,…,440)`
+  length wasn't bumped, so the warning dropped its trailing `s.\n`. Corrected to
+  the exact byte length while extending it for the `0xF016-0xF019` reroutes.
+
 ## [6.1.17] — 2026-06-09
 
 **v6.1.x slot 17 (user-directed): sakshi 2.2.8 fold + PE `nanosleep(35)`

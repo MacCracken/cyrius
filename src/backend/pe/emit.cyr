@@ -528,6 +528,53 @@ fn _pe_ensure_getproc(S): i64 {
 }
 fn _pe_getproc_get(): i64 { return _pe_getproc_idx; }
 
+# v6.1.18 — directory enumeration for lib/fs.cyr's Windows branch
+# (lib/fs_win.cyr). kernel32!FindFirstFileW(LPCWSTR pattern→rcx,
+# LPWIN32_FIND_DATAW→rdx)→HANDLE (INVALID_HANDLE_VALUE=-1 on fail);
+# FindNextFileW(HANDLE→rcx, LPWIN32_FIND_DATAW→rdx)→BOOL (0=end);
+# FindClose(HANDLE→rcx)→BOOL; GetFileAttributesW(LPCWSTR→rcx)→DWORD attrs
+# (INVALID_FILE_ATTRIBUTES=0xFFFFFFFF; bit 0x10=FILE_ATTRIBUTE_DIRECTORY).
+# All kernel32. See issue 2026-06-09-windows-dir-listing-findfirstfile-port.md.
+var _pe_findfirst_ready = 0;
+var _pe_findfirst_idx   = 0;
+fn _pe_ensure_findfirst(S): i64 {
+    if (_pe_findfirst_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_findfirst_idx, "FindFirstFileW");
+    _pe_findfirst_ready = 1;
+    return 0;
+}
+fn _pe_findfirst_get(): i64 { return _pe_findfirst_idx; }
+
+var _pe_findnext_ready = 0;
+var _pe_findnext_idx   = 0;
+fn _pe_ensure_findnext(S): i64 {
+    if (_pe_findnext_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_findnext_idx, "FindNextFileW");
+    _pe_findnext_ready = 1;
+    return 0;
+}
+fn _pe_findnext_get(): i64 { return _pe_findnext_idx; }
+
+var _pe_findclose_ready = 0;
+var _pe_findclose_idx   = 0;
+fn _pe_ensure_findclose(S): i64 {
+    if (_pe_findclose_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_findclose_idx, "FindClose");
+    _pe_findclose_ready = 1;
+    return 0;
+}
+fn _pe_findclose_get(): i64 { return _pe_findclose_idx; }
+
+var _pe_getfattr_ready = 0;
+var _pe_getfattr_idx   = 0;
+fn _pe_ensure_getfattr(S): i64 {
+    if (_pe_getfattr_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getfattr_idx, "GetFileAttributesW");
+    _pe_getfattr_ready = 1;
+    return 0;
+}
+fn _pe_getfattr_get(): i64 { return _pe_getfattr_idx; }
+
 # v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
 # (lib/args_win.cyr) and cycc's own --version/--strict on Windows.
 # kernel32!GetCommandLineW() takes no args, returns the process's
