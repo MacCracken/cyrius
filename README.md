@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~924 KB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. 90 stdlib modules + 0 git deps (mabda folded into stdlib at 3.0.1; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 162 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 85 check.sh gates.
+~1.0 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). 90 stdlib modules + 0 git deps (mabda folded into stdlib at 3.0.1; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 169 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 87 check.sh gates.
 
 ## Install
 
@@ -91,16 +91,16 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **931,960 B** (~931 KB) x86_64 at v6.1.4 |
-| Cross compilers | `cycc_aarch64` 591,152 B, `cycc_win` 803,840 B (cross-built) |
+| Compiler (`cycc`) | **1,036,848 B** (~1.0 MB) x86_64 at v6.1.11 |
+| Cross compilers | `cycc_aarch64` 593,384 B, `cycc_win` 805,888 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
-| Bootstrap compiler (`cybs`) | **44,496 B** |
+| Bootstrap compiler (`cybs`) | **12,344 B** |
 | LSP server (`cyrius-lsp`) | **101,392 B** |
 | Linker (`cyrld`) | **902,184 B** |
 | External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded at 3.0.1) |
-| Tests | **162** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
-| Gates (`scripts/check.sh`) | **85** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, deps correct-lock at v6.0.2, str_from overload at v6.0.3) |
-| Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS aarch64 cross, UEFI Application emit, cyrius-x bytecode |
+| Tests | **169** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Gates (`scripts/check.sh`) | **87** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, PIE exec gate at v6.1.6, TS→JS emit/round-trip gate at v6.1.11) |
+| Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode |
 | Stdlib modules | **90** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
 | Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000), brk-final at 0x4D9D000 (~77.6 MB) |
@@ -126,9 +126,9 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 | Stage | Binary | Size |
 |-------|--------|------|
 | 1. Root of trust (committed) | `bootstrap/asm` | 29 KB |
-| 2. Bootstrap compiler | `cybs` | 44 KB |
-| 3. Full compiler | `cycc` | 906 KB |
-| 4. Linker | `cyrld` | 903 KB |
+| 2. Bootstrap compiler | `cybs` | 12 KB |
+| 3. Full compiler | `cycc` | 1.0 MB |
+| 4. Linker | `cyrld` | 902 KB |
 
 ### Language surface
 
@@ -231,7 +231,7 @@ src/
   frontend/
     lex.cyr             Lexer + preprocessor (include-once, #derive, #ifdef/#elif/#else/#ifndef/#ifplat)
     parse.cyr           Parser + codegen dispatch (split into parse_decl, parse_expr, parse_fn, parse_ctrl, ...)
-    ts/                 TypeScript frontend (lex + parse, .ts/.tsx → cyrius IR)
+    ts/                 TypeScript frontend (lex + parse + JS emit; .ts/.tsx → JS via `cycc --emit-js`)
 
   backend/x86/          x86_64 instruction emission, jump, fixup, ELF/PE/Mach-O
   backend/aarch64/      aarch64 emission (same structure)
@@ -246,8 +246,8 @@ src/
 
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
-  -> cybs (44,496 B compiler)
-    -> cycc (modular compiler + IR, 931,960 B at v6.1.4)
+  -> cybs (12,344 B compiler)
+    -> cycc (modular compiler + IR, 1,036,848 B at v6.1.11)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 

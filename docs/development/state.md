@@ -16,9 +16,9 @@
 |---|---|
 | **Version** | **6.1.11** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
 | **cycc** (x86_64 ELF) | 1,036,848 B (+24,664 B @ 6.1.11 — TS/TSX→JS emitter replaces the walk tool; x86-only) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 593,376 B |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 593,384 B |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 805,376 B |
+| **cycc_win** (PE32+ cross) | 805,888 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |

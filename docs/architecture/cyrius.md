@@ -98,7 +98,7 @@ conflated:
 - A **narrow-scope break** is cyrius's fault and must block a
   release. Codegen non-determinism, a broken optimizer, heap-order
   dependencies — these get caught by the 3-step fixpoint and by
-  `cycc == cc5b` checks and never ship.
+  `cycc == cycc` self-host checks and never ship.
 - A **broad-scope break** may be cyrius's fault (capability gap
   in our runtime, missing syscall wrapper, bad Mach-O shape) OR
   may be external (OS loader hardening, deprecated API). Either
