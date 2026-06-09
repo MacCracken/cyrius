@@ -155,13 +155,19 @@ case "$HOST" in
     # parse time and falsely reads 0 (feedback_windows_errorlevel_test_wrapper).
     ssh $SSHO cass 'cmd /c "cd /d %USERPROFILE%\_cyaud && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
+      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this
     # returned a corrupted 5 / AV'd. Guards the ECALLPTR_PE force-align. (The
     # full DXGI/COM demonstrator + AddRef/Release residual is tracked separately
     # — needs windbg on cass; see 2026-06-05-windows-com-vtable issue.)
+    # v6.1.17 PE nanosleep(35) routing: the NATIVE cycc.exe compiles a program
+    # that calls syscall(35,&ts,0) both literally and via a var-number, and
+    # measures elapsed wall time with GetTickCount64 (228) to prove the Sleep
+    # actually fired (must exit 42). Guards the ENANOSLEEP_PE emitter +
+    # EPE_SYSCALL_DYNAMIC argc==3 candidate (the v6.1.16 dispatch's nanosleep gap).
     ;;
   ecb-install)
     # Packaging-rot guard (v6.0.38): build the real tarball via the same

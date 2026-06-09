@@ -6,6 +6,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.17] — 2026-06-09
+
+**v6.1.x slot 17 (user-directed): sakshi 2.2.8 fold + PE `nanosleep(35)`
+routing — the deferred fold plus the one outstanding bug that completes the
+6.1.16 PE syscall-dispatch.** 6.1.16 shipped the runtime PE var-syscall dispatch
+(`EPE_SYSCALL_DYNAMIC`) but left `nanosleep(35)` as the one routable-arity gap —
+it returned an honest `-38`/`-ENOSYS`, which forced sakshi 2.2.8 to busy-spin on
+Windows for its TSC clock calibration. This routes it (the textbook
+"one bug ships complete" follow-on) and folds the sakshi 2.2.8 release that the
+6.1.16 Windows work unblocked. A survey of the six open issues + the two other
+sync/clock follow-ons found nothing else shippable-complete this slot (all are
+HELD-Intel-EOL, design-gated, downstream-owned, or un-asked features), so the
+batch is intentionally these two. The **bayan distfile carve** that was penciled
+for 6.1.17 shifts to 6.1.18 (ganita → 6.1.19).
+
+**Benchmark:** `self_compile 483 ms` (vs 478 ms @ 6.1.16 — single-patch
+growth-tax / box noise), `cycc 1,042,800 B` (**+1,664 B** — the `ENANOSLEEP_PE`
+emitter + the argc==3 dispatch candidate). check.sh **87/87**; all 170 `.tcyr`
+clean (per-file exit-code loop 170/170, no crashes). Cross-OS self-host
+**byte-identical on cass (Windows PE32+) + ecb (macOS arm64)**; the new
+`nanosleep_pe` PE regression compiles+runs on **real cass → exit 42** (proves the
+`Sleep` actually fired on both the literal and var-number paths, measured via
+`GetTickCount64`).
+
+### Fixed
+
+- **PE `nanosleep(35)` now routes to `kernel32!Sleep` (completes the 6.1.16 PE
+  var-syscall dispatch).** 6.1.16's `EPE_SYSCALL_DYNAMIC` routed the argc==3
+  POSIX family (mkdir/clock_gettime) but not `nanosleep`, so a `var`-number
+  `syscall(35, &req, &rem)` — the portable arch-dispatch idiom sakshi uses for
+  its 10 ms calibration window — returned `-38` on Windows, forcing a busy-spin.
+  Added `ENANOSLEEP_PE` (`src/backend/x86/emit.cyr`): it reads the Linux
+  `timespec` the pointer arg points at (`tv_sec` @ +0, `tv_nsec` @ +8), converts
+  to a flat `dwMilliseconds` (`tv_sec*1000 + tv_nsec/1e6`), and calls `Sleep`
+  through the existing `_pe_ensure_sleep`/`_pe_sleep_get` IAT machinery with the
+  rbx-anchored `and rsp,-16` 16-alignment (it can't reuse `_pe_srw_call_1arg`
+  verbatim — that pops the arg straight into `rcx`, but nanosleep must first
+  *load* the timespec). Wired into both the literal `sc_num==35` case and the
+  `EPE_SYSCALL_DYNAMIC` argc==3 candidate in `parse_expr.cyr`, and added `35` to
+  the routed-syscall warning string. PE-only — ELF/Mach-O/aarch64/cx
+  byte-identical (x86 cycc==cycc self-host unchanged; cycc itself never calls
+  nanosleep). New `tests/win/nanosleep_pe.cyr` (exercises literal + var paths,
+  asserts elapsed wall time via `GetTickCount64`) wired into the cass leg of
+  `scripts/cross-os-selfhost.sh`; verified on real Windows → exit 42.
+
+### Changed
+
+- **Folded sakshi 2.2.6 → 2.2.8 into `lib/sakshi.cyr`** (byte-identical to
+  `sakshi/dist/sakshi.cyr`). 2.2.8 adds the compile-time `#define SAKSHI_LEVEL
+  <0..5>` verbosity threshold (one knob that compiles out every level more
+  verbose than it via `#if SAKSHI_LEVEL >= n` — fully supported by the cyrius
+  preprocessor since v5.6.x, verified) plus the Windows clock-calibration
+  busy-spin stopgap and the UDP-not-on-PE note from the 2.2.7 work. Compiles
+  clean against the current stdlib; `sakshi.tcyr` (6), `sakshi_full.tcyr` (20),
+  `preprocessor_past_cap.tcyr` (4) all green. NOTE: 2.2.8's Windows path still
+  busy-spins (`#ifdef CYRIUS_TARGET_WIN`); a future sakshi 2.2.9 can drop it for
+  the now-routed `syscall(35,…)` — that edit lives upstream in sakshi (the
+  vendored copy is a fold, never hand-edited).
+
 ## [6.1.16] — 2026-06-09
 
 **v6.1.x slot 16: a packed Windows-correctness release driven by ai-hwaccel /

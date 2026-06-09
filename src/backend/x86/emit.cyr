@@ -1371,6 +1371,56 @@ fn ESLEEP_PE(S): i64 {
     return _pe_srw_call_1arg(S, _pe_sleep_get());
 }
 
+# syscall(35, &req, &rem) → Sleep(req-in-ms). v6.1.17 — completes the v6.1.16
+# PE var-syscall dispatch (nanosleep(35) was the one routable-arity gap, so a
+# `var`-number nanosleep returned -38/-ENOSYS and the portable arch-dispatch
+# idiom — sakshi's clock calibration — had to busy-spin on Windows). Linux
+# nanosleep takes a `struct timespec*` (req): [req+0]=tv_sec, [req+8]=tv_nsec;
+# Sleep takes a flat DWORD ms, so convert ms = tv_sec*1000 + tv_nsec/1e6. `rem`
+# (2nd arg) is ignored (Sleep is non-interruptible here — full sleep always
+# elapses). Reuses ESLEEP_PE's kernel32!Sleep import. Sub-ms requests round to
+# 0/1 ms — Sleep's own granularity, acceptable for calibration windows.
+#
+# Stack on entry (top→bottom): [rem] [req] [sc_nr=35] — argc=3. Can't reuse
+# _pe_srw_call_1arg: it pops the arg straight into rcx, but nanosleep must first
+# LOAD the timespec the ptr points at. Consumes all 3 slots (back to the
+# pre-syscall baseline), then the rbx-anchored and-rsp,-16 forces the Win64
+# 16-alignment at the CALL regardless of entry RSP.
+fn ENANOSLEEP_PE(S): i64 {
+    _pe_ensure_sleep(S);
+    var idx = _pe_sleep_get();
+
+    EB(S, 0x58);                                        # pop rax (rem ptr, ignored)
+    EB(S, 0x41); EB(S, 0x5B);                           # pop r11 (req timespec ptr)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+
+    # ms = tv_sec*1000 + tv_nsec/1_000_000.
+    EB(S, 0x49); EB(S, 0x8B); EB(S, 0x43); EB(S, 0x08); # mov rax, [r11+8] (tv_nsec)
+    EB(S, 0x31); EB(S, 0xD2);                           # xor edx, edx
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC1);              # mov rcx, 1000000
+    EB(S, 0x40); EB(S, 0x42); EB(S, 0x0F); EB(S, 0x00);
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xF1);              # div rcx (rax = tv_nsec/1e6)
+    EB(S, 0x49); EB(S, 0x8B); EB(S, 0x0B);              # mov rcx, [r11] (tv_sec)
+    EB(S, 0x48); EB(S, 0x69); EB(S, 0xC9);              # imul rcx, rcx, 1000
+    EB(S, 0xE8); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x48); EB(S, 0x01); EB(S, 0xC8);              # add rax, rcx (total ms)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (dwMilliseconds)
+
+    # Aligned 1-arg call to Sleep (rcx already set).
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+Sleep]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);              # xor rax, rax (nanosleep → 0)
+    return 0;
+}
+
 # syscall(0xF010, cmdline, &argc) → shell32!CommandLineToArgvW. 2 args
 # (lpCmdLine→rcx, *pNumArgs→rdx). Returns LPWSTR* (array of arg pointers)
 # in rax; *pNumArgs receives the count. v6.0.69 §3 — the first shell32
@@ -1649,8 +1699,9 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
         _pe_dyn_load(S, disp);
         var q0 = _pe_dyn_cmp(S, 83);  ECREATEDIR_PE(S); var e0 = EJMP0(S); EPATCH(S, q0);
         var q1 = _pe_dyn_cmp(S, 228); EGETTICKS_PE(S);  var e1 = EJMP0(S); EPATCH(S, q1);
+        var q2 = _pe_dyn_cmp(S, 35);  ENANOSLEEP_PE(S); var e2 = EJMP0(S); EPATCH(S, q2);
         _pe_dyn_nomatch(S, argc);
-        EPATCH(S, e0); EPATCH(S, e1);
+        EPATCH(S, e0); EPATCH(S, e1); EPATCH(S, e2);
         return 1;
     }
     if (argc == 2) {

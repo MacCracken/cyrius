@@ -14,11 +14,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.16** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,041,136 B (+2,552 B @ 6.1.16 — runtime PE syscall-dispatch emitter `EPE_SYSCALL_DYNAMIC`) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 593,832 B |
+| **Version** | **6.1.17** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,042,800 B (+1,664 B @ 6.1.17 — `ENANOSLEEP_PE` emitter + argc==3 dispatch candidate) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 594,016 B (+184 B @ 6.1.17 — `ENANOSLEEP_PE` aarch64 stub + shared parse branch) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 808,960 B (+3,072 B @ 6.1.16 — same dispatch emitter compiled into cycc_win) |
+| **cycc_win** (PE32+ cross) | 811,520 B (+2,560 B @ 6.1.17 — `ENANOSLEEP_PE` compiled into cycc_win) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
@@ -27,35 +27,37 @@
 | stdlib | 93 `lib/*.cyr` (84 stdlib + 9 vendored deps) · 79 programs |
 | bench (every-release gate) | self_compile ~478 ms (box noise) |
 
-> **Handoff (2026-06-09):** v6.1.16 ready for cut — **packed Windows-correctness
-> release (ai-hwaccel / sakshi / patra reports), 3 items:**
-> (1) **`cycc_win` was missing from every x86_64 release tarball since v6.0.50**
-> — `release.yml` shipped `cycc_aarch64` but never `cycc_win`, so pinned-release
-> consumers' `cyrius build --win` failed ("cycc_win missing"); the sakshi CI
-> blocker. Fixed by adding the `CYRIUS_TARGET_WIN=1` cross-build + `bin/` copy +
-> PE32+ verify to `release.yml` (mirrors the v5.8.2 cycc_aarch64 fix). Fixes
-> FUTURE tarballs — sakshi/patra re-pin to 6.1.16 once cut.
-> (2) **PE `syscall(<var>, …)` silently miscompiled** — the literal-only reroute
-> let a var-number syscall emit Linux `0F 05` (silent no-op on Windows; dropped
-> all of sakshi's structured logging). Fixed with `EPE_SYSCALL_DYNAMIC`
-> (`src/backend/x86/emit.cyr`): runtime `cmp`/`jne` switch over routable POSIX
-> syscalls by arity → the literal path's `E*_PE` emitters; unknown→`-38`;
-> unroutable arity→hard error. aarch64/cx stub. Verified on cass (T1–T4 all write).
-> (3) **`lib/sync.cyr`** portable mutex (new/lock/unlock) decoupled from
-> `thread.cyr`: futex (Linux/aarch64) / SRWLOCK (Windows) / spinlock (macOS).
-> `tests/tcyr/sync.tcyr` green on all 4 targets.
-> `version-bump.sh 6.1.16` applied; **user pushes/tags after CI**. Gates: x86 cycc
-> byte-identical self-host (+2,552 B), check.sh **87/87**, all 170 tcyr clean,
-> bench self_compile 478 ms. **Cross-OS BOTH GREEN** — ecb `SELFHOST_OK`, cass
-> `SELFHOST_OK`, `sync.tcyr` passed on both. **Follow-ons (no consumer ask yet):**
-> route `nanosleep`/`__ulock` on macOS+PE for a blocking macOS lock + sakshi clock
-> calibration; a Windows `TryAcquireSRWLockExclusive` reroute for `mutex_trylock`.
-> **Next = Phase E** (bayan carve @ 6.1.17, then ganita @ 6.1.18 — pushed one slot
-> by this release).
-> **Sibling flagged (not fixed):** `lib/fdlopen.cyr` has the same Linux-only asm
-> gap but is the dlopen/ld.so/auxv path agnos static binaries never reach. **Deferred
-> polish** (no consumer ask): relocate the 64 KB `_ts_cst` scratch to the ts_base
-> heap (the #3 pack candidate, held until after the carves).
+> **Handoff (2026-06-09):** v6.1.17 ready for cut — **user-directed: sakshi 2.2.8
+> fold + the one outstanding bug that completes the 6.1.16 PE syscall-dispatch.**
+> (1) **PE `nanosleep(35)` now routes to `kernel32!Sleep`** — 6.1.16's
+> `EPE_SYSCALL_DYNAMIC` routed the argc==3 family but left `nanosleep` returning
+> `-38`, forcing sakshi to busy-spin on Windows. Added `ENANOSLEEP_PE`
+> (`src/backend/x86/emit.cyr`): reads the `timespec` (sec@+0, nsec@+8), converts to
+> flat ms (`sec*1000 + nsec/1e6`), calls `Sleep` via the existing
+> `_pe_ensure_sleep`/`_pe_sleep_get` IAT path with the rbx-anchored 16-align (can't
+> reuse `_pe_srw_call_1arg` — must load the buffer first). Wired into both the
+> literal `sc_num==35` case and the `EPE_SYSCALL_DYNAMIC` argc==3 candidate; warning
+> string lists `35`; aarch64 stub added (the `--strict` symmetry the cohort needs).
+> PE-only — x86 cycc==cycc unchanged.
+> (2) **Folded sakshi 2.2.6 → 2.2.8** into `lib/sakshi.cyr` (byte-identical to
+> dist). 2.2.8 = compile-time `#define SAKSHI_LEVEL <0..5>` threshold (`#if >=`
+> supported since v5.6.x) + the Win busy-spin stopgap + UDP-not-on-PE note.
+> `sakshi`/`sakshi_full`/`preprocessor_past_cap` tcyr green.
+> `version-bump.sh 6.1.17` applied; **user pushes/tags after CI**. Gates: x86 cycc
+> byte-identical self-host (+1,664 B), check.sh **87/87**, all 170 tcyr clean
+> (per-file exit loop 170/170), bench self_compile 483 ms. **Cross-OS BOTH GREEN** —
+> ecb `SELFHOST_OK` (byte-identical, with the new aarch64 stub), cass `SELFHOST_OK` +
+> new `tests/win/nanosleep_pe.cyr` → **exit 42 on real Windows** (wired into the cass
+> leg of `cross-os-selfhost.sh`; proves the `Sleep` fired on both paths).
+> **Follow-on flagged to sakshi (not a cyrius bug):** 2.2.8's `var sleep_ts[2]`
+> timespec is only 8 B (`var[N]` is BYTE-sized) so the `nsec`@+8 write spills into
+> the next local — functional only because store + nanosleep-read hit the same
+> address; a future 2.2.9 should use `var sleep_ts[16]` AND can drop the Win
+> busy-spin for the now-routed `syscall(35,…)`. **Other sync/clock follow-ons NOT
+> taken** (no consumer ask / design-gated): macOS `__ulock` blocking lock (large
+> Mach-O GOT edit), Windows `TryAcquireSRWLockExclusive` for `mutex_trylock`,
+> sakshi-on-Darwin clock-shape (consumer-side). **Deferred polish:** relocate the
+> 64 KB `_ts_cst` scratch to the ts_base heap (held until after the carves).
 >
 > **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — still pending an AGNOS
 > `--pie` harness): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |
@@ -157,12 +159,30 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   loop binding kept its statement `;`); shipped silent in 6.1.10/.11 (consumer
   had no loops); `_ts_walk_gate` now scans for it + fixture coverage. See
   CHANGELOG [6.1.12].
+- **v6.1.13** — agnos `fnptr` HIGH-sev fix (agnoshi): `lib/fnptr.cyr` `fncall0..8`
+  had no `CYRIUS_TARGET_AGNOS` asm branch → indirect calls returned 0 → null
+  allocator vtable #PF. Added the agnos+x86 SysV branch in-place. cycc flat
+  (stdlib-only); ecb/cass green. See CHANGELOG [6.1.13].
+- **v6.1.14** — agnos `argc()`/`argv()` HIGH-sev fix (bannermanor): the init-rsp
+  capture sat in the entry epilogue (after `PARSE_PROG`) and recorded a stale
+  pointer; moved before `PARSE_PROG`. cycc flat (`_TARGET_AGNOS`-gated); ecb/cass
+  green. See CHANGELOG [6.1.14].
+- **v6.1.15** — TS/TSX→JS `async`-on-wrong-node fix (yeo-cy-test): the single
+  pending-async slot was stolen by the first nested arrow → bare `await`; added
+  `TS_PS_TAKE_ASYNC` capture-at-entry/apply-after-push. cycc +512 B; ecb/cass green.
+  See CHANGELOG [6.1.15].
+- **v6.1.16** — Windows-correctness pack (3 items): `cycc_win` missing from the
+  x86_64 release tarball since v6.0.50 (`release.yml` fix); PE `syscall(<var>,…)`
+  silent miscompile → `EPE_SYSCALL_DYNAMIC` runtime dispatch; `lib/sync.cyr`
+  portable mutex (futex/SRWLOCK/spinlock). cycc +2,552 B; ecb+cass `SELFHOST_OK`.
+  See CHANGELOG [6.1.16].
+- **v6.1.17** — sakshi 2.2.8 fold + PE `nanosleep(35)` routing (`ENANOSLEEP_PE`,
+  completing the 6.1.16 PE dispatch). cycc +1,664 B; ecb+cass green;
+  `tests/win/nanosleep_pe.cyr` → exit 42 on real Windows. See CHANGELOG [6.1.17].
 
-**Next:** **Phase E** — bayan distfile carve (v6.1.13) then ganita; see
+**Next:** **Phase E** — bayan distfile carve (v6.1.18) then ganita (v6.1.19); see
 [[project_bayan_ganita_carve_arc]]. The kernel-PIE gnoboot-boot validation +
-aarch64 kernel-PIE land when an AGNOS `--pie` harness exists. (Possible polish: a
-`cyrius build --target=js` wrapper + indentation in emitted JS — emitter is flat
-but valid; no consumer ask yet.)
+aarch64 kernel-PIE land when an AGNOS `--pie` harness exists.
 
 **Open / filed (v6.1.x):**
 - `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm

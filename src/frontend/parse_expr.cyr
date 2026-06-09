@@ -619,6 +619,16 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.1.17: syscall(35, &req, &rem) → Sleep(req ms). nanosleep —
+            # completes the v6.1.16 PE var-dispatch (35 was the routable-arity
+            # gap). ENANOSLEEP_PE reads the timespec and converts to flat ms.
+            if (sc_num == 35) {
+                if (argc == 3) {
+                    ENANOSLEEP_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             # v5.11.22: SYS_MKDIR (83) → CreateDirectoryW;
             # SYS_UNLINK (87) → DeleteFileW. ai-hwaccel 2.2.2
             # surfaced both via cache.cyr.
@@ -857,7 +867,7 @@ fn PARSE_FACTOR(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
             440);
         }
         ESCPOPS(S, argc);

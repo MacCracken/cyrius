@@ -1,0 +1,43 @@
+# nanosleep_pe.cyr — Windows regression for the v6.1.17 PE nanosleep(35)
+# routing. Run on cass; must exit 42.
+#
+# v6.1.16 added a runtime var-syscall dispatch on PE but left nanosleep(35)
+# unrouted (it returned -38/-ENOSYS), forcing the portable arch-dispatch idiom
+# (sakshi's TSC clock calibration) to busy-spin on Windows. v6.1.17 routes 35 →
+# kernel32!Sleep(ms) on BOTH the literal-number path (sc_num==35 → ENANOSLEEP_PE)
+# and the var-number runtime path (EPE_SYSCALL_DYNAMIC argc==3). This program
+# exercises both and measures elapsed wall time via GetTickCount64 (228, routed
+# since v6.1.16) to prove the sleep actually elapsed — not merely that the
+# dispatch didn't fault and return -38.
+#
+# timespec needs 16 bytes (tv_sec@0, tv_nsec@8). `var ts[N]` is BYTE-sized
+# (rounded up to 8), so `var ts[16]` is the two-i64 timespec; `var ts[2]` would
+# be only 8 bytes and the tv_nsec write at +8 would spill into the next local.
+
+var g_nano = 35;   # module-level var → IDENT load, never constant-folds, so it
+                   # forces the EPE_SYSCALL_DYNAMIC (var-number) path, mirroring
+                   # sakshi's `var _SK_SYS_NANOSLEEP = 35;` arch-dispatch slot.
+
+fn main(): i64 {
+    var ts[16];
+    store64(&ts, 0);
+    store64(&ts + 8, 100000000);    # tv_sec=0, tv_nsec=100ms
+
+    # ---- literal syscall(35, ...) → ENANOSLEEP_PE literal path ----
+    var t0 = syscall(228, 0, 0);    # GetTickCount64 → ms
+    var r1 = syscall(35, &ts, 0);
+    if (r1 != 0) { return 1; }
+    var d1 = syscall(228, 0, 0) - t0;
+    if (d1 < 40) { return 10; }     # a 100ms Sleep must show >= 40ms elapsed
+    if (d1 > 3000) { return 11; }   # sanity ceiling — no runaway spin
+
+    # ---- var-number syscall(g_nano, ...) → EPE_SYSCALL_DYNAMIC path ----
+    var t2 = syscall(228, 0, 0);
+    var r2 = syscall(g_nano, &ts, 0);
+    if (r2 != 0) { return 2; }
+    var d2 = syscall(228, 0, 0) - t2;
+    if (d2 < 40) { return 20; }
+    if (d2 > 3000) { return 21; }
+
+    return 42;
+}
