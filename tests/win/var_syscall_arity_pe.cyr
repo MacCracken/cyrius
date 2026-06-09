@@ -1,0 +1,25 @@
+# var_syscall_arity_pe.cyr — Windows regression for the v6.1.17 fix to the
+# 6.1.16 PE-tarball build-blocker. Run on cass; must exit 42.
+#
+# 6.1.16 added a runtime dispatch for var-number `syscall()` on PE, but made an
+# arity with NO routable syscall a HARD COMPILE ERROR. lib/fs.cyr's dir-listing
+# does `syscall(SYS_GETDENTS64, fd, buf, 4096, basep)` — arity 5 — which has no
+# PE route, so the wrapper (cbt/cyrius.cyr) refused to compile and the whole
+# Windows tarball build failed (6.1.16 never shipped a Windows tarball either).
+# v6.1.17 softened it: an unroutable arity emits a stack-balanced `-38`/-ENOSYS
+# (the same honest no-op an unknown NUMBER of a known arity gets) + a warning,
+# instead of refusing to compile a path that's almost always dead on Windows.
+#
+# This asserts the runtime behavior: an unroutable-arity var-number syscall
+# returns exactly -38 AND leaves the stack balanced (if it didn't, main couldn't
+# return 42 cleanly after two such calls).
+
+var g_unroutable = 217;   # getdents64: arity 5 (number + 4 args), no PE route
+
+fn main(): i64 {
+    var r = syscall(g_unroutable, 0, 0, 0, 0);
+    if (r != 0 - 38) { return 10; }
+    var r2 = syscall(g_unroutable, 1, 2, 3, 4);   # again, nonzero args
+    if (r2 != 0 - 38) { return 11; }
+    return 42;
+}

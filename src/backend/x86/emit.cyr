@@ -1679,10 +1679,12 @@ fn _pe_dyn_nomatch(S, argc): i64 {
     return 0;
 }
 
-# Emit the runtime switch. Returns 1 if argc is routable on PE, 0 if no
-# routable syscall has this arity (caller turns 0 into a hard compile
-# error — a var-number syscall of an unroutable arity is guaranteed
-# broken on Windows, so refuse it loudly instead of miscompiling).
+# Emit the runtime switch. Returns 1 if argc is routable on PE (cmp/jne over the
+# routable syscalls of this arity; unknown number → -38). Returns 2 if NO
+# routable syscall has this arity — emits an honest -38/-ENOSYS no-op
+# (stack-balanced) and the caller warns. (v6.1.17 softened this from a hard
+# error: the arity-5 getdents64 in lib/fs.cyr's dir-listing is a Linux-only path
+# dead on Windows, and refusing to compile it blocked the whole PE tarball.)
 fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
     var disp = 8 * (argc - 1);
     if (argc == 4) {
@@ -1723,7 +1725,15 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
         EPATCH(S, h0);
         return 1;
     }
-    return 0;
+    # v6.1.17: no routable syscall has this arity (e.g. `syscall(SYS_GETDENTS64,
+    # fd, buf, 4096, basep)` — argc==5 — in lib/fs.cyr's dir-listing). Do NOT
+    # hard-error: it's almost always a Linux-only path that's dead on Windows
+    # (which enumerates dirs via FindFirstFile, not a syscall), and refusing to
+    # *compile* it blocked the whole PE tarball build (6.1.16 release-blocker).
+    # Emit the honest `-38`/`-ENOSYS` no-op (stack-balanced — same as an unknown
+    # NUMBER of a known arity above) and return 2 so the caller warns.
+    _pe_dyn_nomatch(S, argc);
+    return 2;
 }
 
 # v5.11.23: emit Win64 mkdir: `syscall(83, path, mode)` →

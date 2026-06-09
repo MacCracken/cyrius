@@ -841,18 +841,23 @@ fn PARSE_FACTOR(S): i64 {
             # leaves sc_num == -1 and would otherwise fall through to the
             # `0F 05` Linux syscall below — a silent no-op / fault on
             # Windows. Emit a runtime switch over the routable syscalls of
-            # this arity instead. If no routable syscall has this arity the
-            # call is guaranteed-broken on PE, so hard-error rather than
-            # miscompile. See issue 2026-06-09-pe-syscall-variable-number-...
+            # this arity instead. v6.1.17: an arity with NO routable syscall
+            # (EPE_SYSCALL_DYNAMIC → 2) no longer hard-errors — that blocked the
+            # whole PE tarball build for a call almost always on a Linux-only
+            # path dead on Windows (e.g. `syscall(SYS_GETDENTS64, fd, buf, 4096,
+            # basep)` — arity 5 — in lib/fs.cyr's dir-listing; Windows enumerates
+            # dirs via FindFirstFile, not a syscall). It emits an honest
+            # -38/-ENOSYS there and we WARN rather than refuse to compile. See
+            # issue 2026-06-09-pe-syscall-variable-number-not-rerouted.md.
             if (sc_num < 0) {
-                if (EPE_SYSCALL_DYNAMIC(S, argc) == 1) {
-                    _cfo = 0;
-                    return 0;
+                var _dynrc = EPE_SYSCALL_DYNAMIC(S, argc);
+                if (_dynrc == 2) {
+                    syscall(SYS_WRITE, 2,
+                    "warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
+                    252);
                 }
-                syscall(SYS_WRITE, 2,
-                "error: syscall(<non-literal number>, ...) with this arg count has no Windows-routable syscall of that arity on CYRIUS_TARGET_WIN=1 - use a literal syscall number or guard the call with #ifdef CYRIUS_TARGET_WIN.\n",
-                211);
-                syscall(SYS_EXIT, 1);
+                _cfo = 0;
+                return 0;
             }
             # Non-mapped syscalls: emitting the generic ESCPOPS path
             # below would produce an `0F 05` syscall that faults

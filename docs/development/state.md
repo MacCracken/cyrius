@@ -15,8 +15,8 @@
 | | |
 |---|---|
 | **Version** | **6.1.17** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,042,800 B (+1,664 B @ 6.1.17 — `ENANOSLEEP_PE` emitter + argc==3 dispatch candidate) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 594,016 B (+184 B @ 6.1.17 — `ENANOSLEEP_PE` aarch64 stub + shared parse branch) |
+| **cycc** (x86_64 ELF) | 1,042,872 B (+1,736 B @ 6.1.17 — `ENANOSLEEP_PE` + argc==3 dispatch candidate + unroutable-arity softening) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 594,056 B (+224 B @ 6.1.17 — `ENANOSLEEP_PE` aarch64 stub + shared parse branches) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 811,520 B (+2,560 B @ 6.1.17 — `ENANOSLEEP_PE` compiled into cycc_win) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
@@ -43,12 +43,21 @@
 > dist). 2.2.8 = compile-time `#define SAKSHI_LEVEL <0..5>` threshold (`#if >=`
 > supported since v5.6.x) + the Win busy-spin stopgap + UDP-not-on-PE note.
 > `sakshi`/`sakshi_full`/`preprocessor_past_cap` tcyr green.
+> (3) **Unblocked the PE release tarball** (a 6.1.16 regression — never shipped a
+> Windows tarball either): 6.1.16's `EPE_SYSCALL_DYNAMIC` made a var-number
+> syscall of an *unroutable arity* a HARD COMPILE ERROR; `lib/fs.cyr`'s arity-5
+> `getdents64` made `cbt/cyrius.cyr` refuse to compile → `build-windows-tarball.sh`
+> failed. Softened to an honest stack-balanced `-38`/`-ENOSYS` + warning (the
+> treatment unknown *numbers* already got); `tests/win/var_syscall_arity_pe.cyr`
+> guards it. Surfaced when cutting .17 (`cross-os-selfhost` self-hosts cycc but
+> doesn't build the full tarball — the gap was in the release pipeline).
 > `version-bump.sh 6.1.17` applied; **user pushes/tags after CI**. Gates: x86 cycc
-> byte-identical self-host (+1,664 B), check.sh **87/87**, all 170 tcyr clean
-> (per-file exit loop 170/170), bench self_compile 483 ms. **Cross-OS BOTH GREEN** —
-> ecb `SELFHOST_OK` (byte-identical, with the new aarch64 stub), cass `SELFHOST_OK` +
-> new `tests/win/nanosleep_pe.cyr` → **exit 42 on real Windows** (wired into the cass
-> leg of `cross-os-selfhost.sh`; proves the `Sleep` fired on both paths).
+> byte-identical self-host (+1,736 B), check.sh **87/87**, all 170 tcyr clean
+> (per-file exit loop 170/170), bench self_compile 486 ms, **`build-windows-tarball.sh`
+> succeeds**. **Cross-OS BOTH GREEN** — ecb `SELFHOST_OK` (byte-identical, with the
+> new aarch64 stub), cass `SELFHOST_OK` + `tests/win/nanosleep_pe.cyr` +
+> `var_syscall_arity_pe.cyr` → **exit 42 on real Windows** (both wired into the
+> cass leg of `cross-os-selfhost.sh`).
 > **Follow-on flagged to sakshi (not a cyrius bug):** 2.2.8's `var sleep_ts[2]`
 > timespec is only 8 B (`var[N]` is BYTE-sized) so the `nsec`@+8 write spills into
 > the next local — functional only because store + nanosleep-read hit the same
@@ -177,14 +186,23 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   portable mutex (futex/SRWLOCK/spinlock). cycc +2,552 B; ecb+cass `SELFHOST_OK`.
   See CHANGELOG [6.1.16].
 - **v6.1.17** — sakshi 2.2.8 fold + PE `nanosleep(35)` routing (`ENANOSLEEP_PE`,
-  completing the 6.1.16 PE dispatch). cycc +1,664 B; ecb+cass green;
-  `tests/win/nanosleep_pe.cyr` → exit 42 on real Windows. See CHANGELOG [6.1.17].
+  completing the 6.1.16 PE dispatch) + **unblocked the PE release tarball** (6.1.16
+  made an unroutable-arity var-syscall a hard error → arity-5 getdents64 broke the
+  wrapper build; softened to -38+warning). cycc +1,736 B; ecb+cass green;
+  `nanosleep_pe` + `var_syscall_arity_pe` → exit 42 on real Windows;
+  `build-windows-tarball.sh` succeeds. See CHANGELOG [6.1.17].
 
-**Next:** **Phase E** — bayan distfile carve (v6.1.18) then ganita (v6.1.19); see
-[[project_bayan_ganita_carve_arc]]. The kernel-PIE gnoboot-boot validation +
+**Next:** **v6.1.18** — **Windows directory-listing FindFirstFile port** (make
+`dir_list`/`is_dir`/`dir_walk` work on Windows instead of the .17 `-38` stub; see
+`issues/2026-06-09-windows-dir-listing-findfirstfile-port.md`). Then **Phase E** —
+bayan carve (v6.1.19) then ganita (v6.1.20); see [[project_bayan_ganita_carve_arc]].
+The kernel-PIE gnoboot-boot validation +
 aarch64 kernel-PIE land when an AGNOS `--pie` harness exists.
 
 **Open / filed (v6.1.x):**
+- `2026-06-09-windows-dir-listing-findfirstfile-port.md` — **pinned v6.1.18.**
+  `dir_list`/`is_dir`/`dir_walk` return empty on Windows (the .17 `-38` stub for
+  arity-5 getdents64); the real fix routes to `FindFirstFileW`/`FindNextFileW`.
 - `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm
   `fstatat`/`utimensat`/`linkat`/`renameat` lack Darwin ESYSXLAT mappings
   (pre-existing; `sys_stat` was already broken there; Darwin lacks `utimensat`

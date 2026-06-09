@@ -17,18 +17,22 @@ Windows for its TSC clock calibration. This routes it (the textbook
 "one bug ships complete" follow-on) and folds the sakshi 2.2.8 release that the
 6.1.16 Windows work unblocked. A survey of the six open issues + the two other
 sync/clock follow-ons found nothing else shippable-complete this slot (all are
-HELD-Intel-EOL, design-gated, downstream-owned, or un-asked features), so the
-batch is intentionally these two. The **bayan distfile carve** that was penciled
-for 6.1.17 shifts to 6.1.18 (ganita → 6.1.19).
+HELD-Intel-EOL, design-gated, downstream-owned, or un-asked features). Cutting it
+then surfaced a **third, release-blocking item**: 6.1.16's hard-error on a
+var-number syscall of an unroutable arity broke the Windows tarball build itself
+(`lib/fs.cyr`'s arity-5 getdents64) — so neither 6.1.16 nor 6.1.17 could ship a
+Windows tarball until softened (see Fixed). The **bayan distfile carve** penciled
+for 6.1.17 shifts to **6.1.19** (the **Windows dir-listing FindFirstFile port**
+takes 6.1.18; ganita → 6.1.20).
 
-**Benchmark:** `self_compile 483 ms` (vs 478 ms @ 6.1.16 — single-patch
-growth-tax / box noise), `cycc 1,042,800 B` (**+1,664 B** — the `ENANOSLEEP_PE`
-emitter + the argc==3 dispatch candidate). check.sh **87/87**; all 170 `.tcyr`
-clean (per-file exit-code loop 170/170, no crashes). Cross-OS self-host
-**byte-identical on cass (Windows PE32+) + ecb (macOS arm64)**; the new
-`nanosleep_pe` PE regression compiles+runs on **real cass → exit 42** (proves the
-`Sleep` actually fired on both the literal and var-number paths, measured via
-`GetTickCount64`).
+**Benchmark:** `self_compile 486 ms` (vs 478 ms @ 6.1.16 — growth-tax / box
+noise), `cycc 1,042,872 B` (**+1,736 B** — the `ENANOSLEEP_PE` emitter + the
+argc==3 dispatch candidate + the unroutable-arity softening). check.sh
+**87/87**; all 170 `.tcyr` clean (per-file exit-code loop 170/170, no crashes).
+**`scripts/build-windows-tarball.sh` now succeeds** (was the 6.1.16
+release-blocker). Cross-OS self-host **byte-identical on cass (Windows PE32+) +
+ecb (macOS arm64)**; the new `nanosleep_pe` + `var_syscall_arity_pe` PE
+regressions compile+run on **real cass → exit 42**.
 
 ### Fixed
 
@@ -50,6 +54,27 @@ clean (per-file exit-code loop 170/170, no crashes). Cross-OS self-host
   nanosleep). New `tests/win/nanosleep_pe.cyr` (exercises literal + var paths,
   asserts elapsed wall time via `GetTickCount64`) wired into the cass leg of
   `scripts/cross-os-selfhost.sh`; verified on real Windows → exit 42.
+
+- **Unblocked the PE release tarball (6.1.16 regression — never shipped a
+  Windows tarball either).** 6.1.16's `EPE_SYSCALL_DYNAMIC` made a var-number
+  syscall of an arity with NO routable PE syscall a **hard compile error**
+  (intending to "refuse loudly rather than miscompile"). But `lib/fs.cyr`'s
+  directory-listing does `syscall(SYS_GETDENTS64, fd, buf, 4096, basep)` —
+  **arity 5** — so the `cyrius` wrapper (`cbt/cyrius.cyr`) refused to compile
+  under `CYRIUS_TARGET_WIN=1` and `scripts/build-windows-tarball.sh` failed (the
+  release-pipeline `build-windows` job, exit 1). The hard error was an
+  overcorrection: it conflated "this call can't work on Windows" with "refuse to
+  build for Windows at all," when the call is on a Linux-only path dead on
+  Windows (which enumerates directories via `FindFirstFile`, not a syscall).
+  Softened (`src/backend/x86/emit.cyr` + `parse_expr.cyr`): an unroutable arity
+  now emits the honest, stack-balanced `-38`/`-ENOSYS` (the same treatment an
+  unknown *number* of a known arity already got) + a compile **warning**, so the
+  build proceeds and the behavior is honest (not the pre-6.1.16 silent `0F 05`).
+  `tests/win/var_syscall_arity_pe.cyr` (arity-5 var syscall → `-38`,
+  stack-balanced; exit 42 on real cass) guards it. **Windows directory listing
+  itself stays a stub (returns empty) — the real `FindFirstFileW` port is its
+  own slot, v6.1.18** (`issues/2026-06-09-windows-dir-listing-findfirstfile-port.md`);
+  the bayan/ganita carve pushes to .19/.20.
 
 ### Changed
 

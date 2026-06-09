@@ -77,9 +77,10 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.14** ✅ | **agnos `argc()`/`argv()` HIGH-sev fix (bannermanor)** — the init-rsp capture (`call _agnos_capture_rsp`) sat in the entry epilogue, after `PARSE_PROG`, so any top-level statement that shifted rsp made it record a stale (zeroed) pointer. Moved the emission up to after `EMIT_GVAR_INITS` / before `PARSE_PROG` (mirrors the x86-macOS `_macho_capture_args` placement). Emit A/B-verified; cycc flat (`_TARGET_AGNOS`-gated); ecb/cass green. The issue's "Bug 2" (nested `syscall(60)` no-op) closed as consumer-side (agnos exit=0, not 60; use `SYS_EXIT`). | bug bandwidth |
 | **v6.1.15** ✅ | **TS/TSX→JS emitter `async`-on-wrong-node fix (secureyeoman/yeo-cy-test)** — an `async` function/method/arrow enclosing a nested arrow emitted `async` on the inner arrow + dropped it from the owner → bare `await` → invalid JS. Single ambient pending-async slot was consumed after body parse; the first nested arrow stole it. Added `TS_PS_TAKE_ASYNC`/`TS_AST_SET_ASYNC` (capture-at-entry, apply-after-push) across all 5 body-before-consume sites + emit-js regression scanner. cycc +512 B (TS frontend); ecb/cass green. | bug bandwidth |
 | **v6.1.16** ✅ | **Windows-correctness pack (ai-hwaccel / sakshi / patra), 3 items.** (1) **`cycc_win` missing from x86_64 release tarball** since v6.0.50 — `release.yml` shipped cycc_aarch64 but never cycc_win → pinned-release `cyrius build --win` failed (sakshi CI blocker); added the WIN cross-build + bin/ copy + PE32+ verify (mirrors v5.8.2 cycc_aarch64 fix). (2) **PE `syscall(<var>,…)` silently miscompiled** (HIGH) — literal-only reroute let a var-number syscall emit Linux `0F 05` (silent no-op on Windows → all sakshi logging dropped); added `EPE_SYSCALL_DYNAMIC` runtime `cmp`/`jne` dispatch by arity → the literal `E*_PE` path, unknown→`-38`, unroutable-arity→hard error; aarch64/cx stub; T1–T4 verified on cass. (3) **`lib/sync.cyr`** portable mutex (futex/SRWLOCK/spinlock) decoupled from thread.cyr; `sync.tcyr` green on all 4 targets. cycc +2,552 B; ecb+cass `SELFHOST_OK`. | consumer pack |
-| **v6.1.17** ✅ | **sakshi 2.2.8 fold + PE `nanosleep(35)` routing (user-directed)** — `ENANOSLEEP_PE` (`src/backend/x86/emit.cyr`) completes the 6.1.16 PE var-syscall dispatch (nanosleep was the one routable-arity gap → returned `-38`, forcing sakshi's Windows clock-calibration busy-spin); reads the `timespec` (sec@+0/nsec@+8) → `Sleep(ms)`, wired into both the literal `sc_num==35` case + the `EPE_SYSCALL_DYNAMIC` argc==3 candidate + aarch64 `--strict` stub. Folded sakshi 2.2.8 (compile-time `SAKSHI_LEVEL` threshold). PE-only — x86 cycc==cycc unchanged; cycc +1,664 B; ecb+cass `SELFHOST_OK`; new `tests/win/nanosleep_pe.cyr` → exit 42 on real Windows. A survey of the 6 open issues + the other sync/clock follow-ons found nothing else shippable-complete this slot. | consumer fold + bug |
-| **v6.1.18** 🔜 | bayan distfile carve (pushed from .17) | E — stdlib carve |
-| **v6.1.19** 🔜 | ganita distfile carve | E — stdlib carve |
+| **v6.1.17** ✅ | **sakshi 2.2.8 fold + PE `nanosleep(35)` routing (user-directed)** — `ENANOSLEEP_PE` (`src/backend/x86/emit.cyr`) completes the 6.1.16 PE var-syscall dispatch (nanosleep was the one routable-arity gap → returned `-38`, forcing sakshi's Windows clock-calibration busy-spin); reads the `timespec` (sec@+0/nsec@+8) → `Sleep(ms)`, wired into both the literal `sc_num==35` case + the `EPE_SYSCALL_DYNAMIC` argc==3 candidate + aarch64 `--strict` stub. Folded sakshi 2.2.8 (compile-time `SAKSHI_LEVEL` threshold). PE-only — x86 cycc==cycc unchanged; ecb+cass `SELFHOST_OK`; new `tests/win/nanosleep_pe.cyr` → exit 42 on real Windows. **Also unblocked the PE release tarball** (a 6.1.16 regression, never released): 6.1.16's `EPE_SYSCALL_DYNAMIC` made a var-number syscall of an *unroutable arity* a HARD COMPILE ERROR, and `lib/fs.cyr`'s `syscall(SYS_GETDENTS64, …)` (arity 5) made the wrapper refuse to compile → `build-windows-tarball.sh` failed. Softened to an honest stack-balanced `-38`/`-ENOSYS` + warning (the treatment unknown *numbers* already get); `tests/win/var_syscall_arity_pe.cyr` guards it. cycc +1,736 B total. | consumer fold + bugs |
+| **v6.1.18** 🔜 | **Windows directory-listing port** (FindFirstFileW/FindNextFileW) — make `dir_list`/`is_dir`/`dir_walk` actually work on Windows instead of the .17 `-38` stub (route `getdents64`/arity-5 + directory `open`). Closes the "wrapper unported" gap. See `issues/2026-06-09-windows-dir-listing-findfirstfile-port.md`. | bug bandwidth (Windows pillar) |
+| **v6.1.19** 🔜 | bayan distfile carve (pushed from .18) | E — stdlib carve |
+| **v6.1.20** 🔜 | ganita distfile carve | E — stdlib carve |
 | *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):
@@ -238,22 +239,23 @@ full write-up in [roadmap-future.md](roadmap-future.md).
 > proves larger than one slot, ASK for the shape rather than re-slotting
 > ([[feedback_no_unilateral_scope_decisions]]).
 
-### Phase E — stdlib carve (v6.1.18 → v6.1.19)
+### Phase E — stdlib carve (v6.1.19 → v6.1.20)
 
 The bayan/ganita distfile carve — the second half of the stdlib
 clean-slate (the mabda fold shipped @ v6.0.45). After the carve, stdlib
 stays primitives-only so bare-metal consumers (v6.2.x RISC-V / firmware)
 don't drag the data offshoots into kernel objects. Math primitives + regex
-stay stdlib. [[project_bayan_ganita_carve_arc]]. **Pushed one slot** by the
-user-directed v6.1.17 sakshi-fold + PE-nanosleep release (bayan .17 → .18).
+stay stdlib. [[project_bayan_ganita_carve_arc]]. **Pushed two slots** by the
+user-directed v6.1.17 sakshi-fold + PE-nanosleep release and the v6.1.18
+Windows directory-listing port (bayan .17 → .19).
 
-#### v6.1.18 — bayan distfile carve
+#### v6.1.19 — bayan distfile carve
 
 Extract `json` / `toml` / `cyml` / `csv` / `base64` / `bigint` / `u128`
 from stdlib into the **bayan** sibling repo + `[deps.bayan]` resolution.
 Naming convention `bayan_<module>_*`.
 
-#### v6.1.19 — ganita distfile carve
+#### v6.1.20 — ganita distfile carve
 
 Extract `matrix` / `linalg` / advanced math from stdlib into the
 **ganita** sibling repo + `[deps.ganita]` resolution. Naming convention
