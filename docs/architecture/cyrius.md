@@ -2,7 +2,7 @@
 
 > Sovereign, self-hosting systems language. Assembly up.
 
-> **Doc currency** (reviewed at v6.0.73; framing last reworked at the
+> **Doc currency** (reviewed at v6.1.18; framing last reworked at the
 > v5.11.63 sweep): the principles and self-hosting framing below are
 > durable across the v5.x → v6.x cycles.
 > Historical version anchors (cc3 era, v5.6.43 "as of" stamps) are
@@ -80,7 +80,7 @@ not control:
    ran exit=42 cleanly on macOS Sonoma may exit=1 on Sequoia not
    because our bytes changed but because dyld's posture did.
 
-**Status per platform (as of v5.6.43):**
+**Status per platform (as of v6.1.18):**
 
 | Target | Narrow scope | Broad scope | Notes |
 |--------|--------------|-------------|-------|
@@ -88,7 +88,7 @@ not control:
 | Linux aarch64 (cross) | ✅ | ✅ (cross-built binary runs on Pi) | `programs/checks/platform_aarch64.cyr` (via `scripts/check.sh`) gates the runtime path. |
 | Linux aarch64 (native self-host on Pi) | ✅ | ✅ | Closed at **v5.6.32** (1-line fix: missing `include "src/common/ir.cyr"` in `main_aarch64_native.cyr`). Earlier `_TARGET_MACHO` framing was stale shape from pre-v5.6.12 source. `programs/checks/platform_aarch64.cyr` is the active gate. |
 | macOS arm64 Mach-O | ✅ | ✅ | Closed at **v5.6.33** (gate fixture rewrite — no compiler regression existed; `fn main()` fixture never ran main() per cyrius's no-auto-main rule). `programs/checks/platform_win_macho.cyr` is the active gate. |
-| Windows 11 PE32+ | ✅ | ✅ | Closed at **v5.6.36** (gate fixture rewrite — same shape as v5.6.33; PE shape unchanged on Win11 24H2). `programs/checks/platform_win_macho.cyr` is the active gate. v5.6.31 separately fixed the HIGH_ENTROPY_VA `EREAD_PE`/`EWRITE_PE` DWORD-into-qword post-call read. |
+| Windows 11 PE32+ | ✅ | ✅ | Substantially complete as of **v6.1.18** — process creation, threading, TLS-via-args, env, file I/O, and **directory enumeration** (`lib/fs_win.cyr` + FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) all work; `EPE_SYSCALL_DYNAMIC` var-syscall dispatch + portable mutex + `cycc_win` in the release tarball (v6.1.16); `nanosleep(35)`→`Sleep` (v6.1.17). Self-host gate fixture closed at v5.6.36; `programs/checks/platform_win_macho.cyr` is the active gate. v5.6.31 fixed the HIGH_ENTROPY_VA `EREAD_PE`/`EWRITE_PE` DWORD-into-qword post-call read. |
 
 ### Why the distinction matters
 

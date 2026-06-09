@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.0 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). 90 stdlib modules + 0 git deps (mabda folded into stdlib at 3.0.1; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 169 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 87 check.sh gates.
+~1.05 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). 94 stdlib modules + 0 git deps (mabda folded into stdlib at 3.0.1; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 170 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 87 check.sh gates.
 
 ## Install
 
@@ -91,17 +91,17 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,038,584 B** (~1.0 MB) x86_64 at v6.1.15 |
-| Cross compilers | `cycc_aarch64` 593,384 B, `cycc_win` 805,888 B (cross-built) |
+| Compiler (`cycc`) | **1,045,120 B** (~1.05 MB) x86_64 at v6.1.18 |
+| Cross compilers | `cycc_aarch64` 594,848 B, `cycc_win` 814,592 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
 | Bootstrap compiler (`cybs`) | **12,344 B** |
 | LSP server (`cyrius-lsp`) | **101,392 B** |
 | Linker (`cyrld`) | **902,184 B** |
 | External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded at 3.0.1) |
-| Tests | **169** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Tests | **170** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
 | Gates (`scripts/check.sh`) | **87** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, PIE exec gate at v6.1.6, TS→JS emit/round-trip gate at v6.1.11) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode |
-| Stdlib modules | **90** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
+| Stdlib modules | **94** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
 | Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000), brk-final at 0x4D9D000 (~77.6 MB) |
 
@@ -169,7 +169,7 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (90 modules + 0 git deps)
+## Standard Library (94 modules + 0 git deps)
 
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
@@ -247,7 +247,7 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 1,038,584 B at v6.1.15)
+    -> cycc (modular compiler + IR, 1,045,120 B at v6.1.18)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 

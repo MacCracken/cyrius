@@ -261,4 +261,4 @@ syscall(60, exit_code);
 - [Language Guide](cyrius-guide.md) — complete reference
 - [Standard Library](../stdlib-reference.md) — every function documented
 - [Size comparisons](../size-comparisons.md) — exit42 across languages, compiler footprint
-- [Examples](../../programs/) — 80 working programs
+- [Examples](../../programs/) — 79 working programs

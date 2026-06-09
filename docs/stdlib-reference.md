@@ -598,24 +598,729 @@ sole rule type in 5.13).
 
 ---
 
-> **Coverage note**: this reference documents the most-used core
-> surface (~33 of ~90 modules). The remaining ~57 first-party modules in
-> `lib/*.cyr` are NOT yet documented here — including major shipped
-> surfaces:
-> - **network/TLS**: `net`, `http`, `ws`, `ws_server`, `tls`, and the
->   native **TLS 1.3 stack in `lib/tls_native.cyr`** (no OpenSSL).
-> - **concurrency**: `thread`, `thread_local`, `atomic`, `async`, `freelist`.
-> - **math/SIMD**: `math`, `simd` (`f64v2`/`f64v4`), `matrix`, `linalg`,
->   `bigint`, `u128`.
-> - **data**: `base64`, `csv`, `flags`, `chrono`, `log`.
-> - **crypto**: `sha1`, `keccak`, `ct`, `overflow`.
-> - **systems/FFI**: `mmap`, `dynlib`, `fdlopen`, `cffi`.
-> - **folded deps**: `sigil`, `sandhi`, `patra`, `sankoch`, `mabda`,
->   `niyama`, and other sibling modules.
+## Concurrency
+
+OS threads, atomics, async runtime, and portable locks.
+
+### thread.cyr
+
+OS thread creation and synchronization using clone/futex on Linux (v6.0.53: Windows threads are routed to lib/thread_win.cyr). Each thread gets its own stack via mmap and 4KB TLS block installed by the kernel at clone time.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `thread_create` | `thread_create(fp, arg) → ptr` | Create and spawn a thread running `fn(arg)`; returns thread struct pointer or 0 on failure |
+| `thread_join` | `thread_join(t) → 0/-1` | Block until thread completes; frees its stack |
+| `gettid` | `gettid() → i64` | Get current thread ID |
+| `mmap_stack` | `mmap_stack(size) → ptr` | Allocate thread stack via mmap (returns base or MAP_FAILED) |
+| `munmap_stack` | `munmap_stack(addr, size) → 0/-errno` | Free thread stack via munmap |
+| `mutex_new` | `mutex_new() → ptr` | Create a futex-based mutex (0=unlocked) |
+| `mutex_lock` | `mutex_lock(m) → 0` | Acquire mutex; blocks via futex when contended (acquire barrier) |
+| `mutex_unlock` | `mutex_unlock(m) → 0` | Release mutex; wakes one waiter (release barrier) |
+| `chan_new` | `chan_new(cap) → ptr` | Create bounded MPSC channel with capacity cap |
+| `chan_send` | `chan_send(ch, val) → 0/-1` | Send value to channel (blocks if full; returns -1 if closed) |
+| `chan_recv` | `chan_recv(ch) → val` | Receive from channel (blocks if empty; returns 0 if closed) |
+| `chan_try_recv` | `chan_try_recv(ch) → val/0` | Non-blocking receive (returns 0 if empty or closed) |
+| `chan_close` | `chan_close(ch) → 0` | Close channel; wakes all blocked receivers |
+
+### thread_local.cyr (v6.0.61)
+
+Per-thread slot storage (TLS) via CPU thread-pointer register (`%fs` on x86_64, `TPIDR_EL0` on aarch64). Provides 16 slots × 8 bytes per thread. On Windows uses Win32 TlsAlloc/TlsGetValue/TlsSetValue; on macOS uses process-global array (threads not supported); on Linux/aarch64 uses CPU register.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `thread_local_init` | `thread_local_init() → 1/0` | Install per-thread TLS block (worker threads installed automatically by kernel); returns 1 on success |
+| `thread_local_get` | `thread_local_get(slot) → i64` | Read value from slot (0 on fresh slots) |
+| `thread_local_set` | `thread_local_set(slot, val) → 0` | Write value to slot |
+
+### atomic.cyr
+
+Atomic memory primitives for concurrent code. Provides race-safe 8-byte load-modify-write and memory-ordering operations. Uses `lock cmpxchg`/`lock xadd`/`mfence` on x86_64; LL-SC loops + `dmb ish` on aarch64.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `atomic_load` | `atomic_load(ptr) → i64` | Atomic 8-byte load (aligned i64 loads are atomic on both arches) |
+| `atomic_store` | `atomic_store(ptr, val) → 0` | Atomic 8-byte store |
+| `atomic_cas` | `atomic_cas(ptr, expected, new) → 1/0` | Compare-and-swap; returns 1 if swapped, 0 if not (full memory barrier) |
+| `atomic_fetch_add` | `atomic_fetch_add(ptr, delta) → old` | Atomic increment; returns old value (pre-add; full memory barrier) |
+| `atomic_fence` | `atomic_fence() → 0` | Full memory barrier (`mfence` on x86; `dmb ish` on aarch64) |
+
+### sync.cyr (v6.1.16)
+
+Portable process-internal mutex with acquire/release memory ordering. Linux/aarch64 use futex 2-state lock; Windows uses SRWLOCK; macOS uses atomic_cas spinlock (no blocking futex available). Requires atomic.cyr + alloc.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `mutex_new` | `mutex_new() → ptr` | Create mutex (8-byte cell, 0=unlocked) |
+| `mutex_lock` | `mutex_lock(m) → 0` | Acquire mutex (blocking; acquire barrier; FUTEX_WAIT or spinlock) |
+| `mutex_unlock` | `mutex_unlock(m) → 0` | Release mutex (release barrier; FUTEX_WAKE or spinlock) |
+
+### async.cyr
+
+Cooperative async runtime with epoll event loop. Tasks are function pointers scheduled to run to completion or yield; supports timers (via timerfd) and I/O readiness (via epoll). Includes cancellation tokens (v5.11.15) for cooperative cancellation via atomic load/store.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `async_new` | `async_new() → rt` | Create new async runtime (epoll-based) |
+| `async_spawn` | `async_spawn(rt, fp, arg) → task` | Schedule task on runtime (function pointer + argument) |
+| `async_run` | `async_run(rt) → 0` | Run all spawned tasks to completion; blocks until done |
+| `async_sleep_ms` | `async_sleep_ms(ms) → 0/-1` | Sleep for ms milliseconds (via timerfd + epoll) |
+| `async_read` | `async_read(fd, buf, len) → n` | Non-blocking read via fcntl O_NONBLOCK |
+| `async_await_readable` | `async_await_readable(fd) → 0` | Block until fd readable via epoll |
+| `async_timeout` | `async_timeout(fp, arg, ms) → result/-1` | Run function with timeout (ms); uses fork/pipe/epoll |
+| `cancel_token_new` | `cancel_token_new() → tok` | Create cancellation token (0 = live) |
+| `cancel_token_signal` | `cancel_token_signal(tok) → 0/-1` | Signal cancellation (atomic_store) |
+| `cancel_token_check` | `cancel_token_check(tok) → 1/0` | Check if cancelled (atomic_load; 1 = cancelled) |
+
+### freelist.cyr (v6.0.75)
+
+Segregated free-list allocator with individual free (v6.0.52: explicit mmap.cyr include). Allocations rounded to size classes (16, 32, 64, 128, 256, 512, 1024, 2048, 4096 bytes); each class has a singly-linked free list. Large allocations (>4096) go directly to mmap/munmap. 16-byte header per block (next_free, size_class); returned pointer skips header.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `fl_init` | `fl_init() → 0` | Initialize freelist allocator (idempotent) |
+| `fl_alloc` | `fl_alloc(size) → ptr` | Allocate size bytes (rounded to class or mmap'd if >4096) |
+| `fl_free` | `fl_free(ptr) → 0` | Free pointer returned by fl_alloc (chains onto class free list) |
+| `fl_calloc` | `fl_calloc(size) → ptr` | Allocate and zero-fill size bytes |
+
+
+## Math & SIMD
+
+Scalar f64 math, SIMD vector types, matrices/linear algebra, and big numbers.
+
+### math.cyr
+
+Scalar f64 math: trigonometric (inverse on x86), hyperbolic, exponential, power, logarithmic, integer helpers (gcd, lcm, Fibonacci, binomial), and f64 parsing.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `f64_sinh` | `f64_sinh(x) → i64` | Hyperbolic sine |
+| `f64_cosh` | `f64_cosh(x) → i64` | Hyperbolic cosine |
+| `f64_tanh` | `f64_tanh(x) → i64` | Hyperbolic tangent |
+| `f64_pow` | `f64_pow(base, exp) → i64` | Power: base^exp |
+| `f64_clamp` | `f64_clamp(x, lo, hi) → i64` | Clamp x to [lo, hi] |
+| `f64_min` | `f64_min(a, b) → i64` | Minimum of two f64 values |
+| `f64_max` | `f64_max(a, b) → i64` | Maximum of two f64 values |
+| `f64_le` | `f64_le(a, b) → i64` | Less-than-or-equal (NaN-safe) |
+| `f64_ge` | `f64_ge(a, b) → i64` | Greater-than-or-equal (NaN-safe) |
+| `f64_asin` | `f64_asin(x) → i64` | Arcsine (x86 only) |
+| `f64_acos` | `f64_acos(x) → i64` | Arccosine (x86 only) |
+| `f64_atan2` | `f64_atan2(y, x) → i64` | Two-argument arctangent (x86 only) |
+| `f64_asinh` | `f64_asinh(x) → i64` | Inverse hyperbolic sine |
+| `f64_acosh` | `f64_acosh(x) → i64` | Inverse hyperbolic cosine |
+| `f64_atanh` | `f64_atanh(x) → i64` | Inverse hyperbolic tangent |
+| `f64_lerp` | `f64_lerp(a, b, t) → i64` | Linear interpolation |
+| `f64_hypot` | `f64_hypot(x, y) → i64` | Euclidean norm sqrt(x²+y²) |
+| `f64_sign` | `f64_sign(x) → i64` | Sign: -1.0, 0.0, or 1.0 |
+| `f64_trunc` | `f64_trunc(x) → i64` | Truncate toward zero |
+| `f64_fract` | `f64_fract(x) → i64` | Fractional part |
+| `gcd` | `gcd(a, b) → i64` | Greatest common divisor |
+| `lcm` | `lcm(a, b) → i64` | Least common multiple |
+| `fibonacci` | `fibonacci(n) → i64` | nth Fibonacci number (-1 if n > 92) |
+| `binomial` | `binomial(n, k) → i64` | Binomial coefficient C(n, k) |
+| `f64_parse` | `f64_parse(s) → i64` | Parse null-terminated string to f64 |
+| `f64_parse_ok` | `f64_parse_ok(s, out) → i64` | Parse with success flag |
+
+### simd.cyr
+
+Typed SIMD wrappers for f64v2 (2-lane) and f64v4 (4-lane) vectors. Each operation has value-form (non-PE targets) and pointer-form (universal) variants. Parser auto-routes `&x` calls to `_ptr` siblings.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `f64v2_make` | `f64v2_make(lo, hi) → f64v2` | Create f64v2 from two i64 bit patterns |
+| `f64v2_lo` | `f64v2_lo(v) → i64` | Extract low lane |
+| `f64v2_lo_ptr` | `f64v2_lo_ptr(p) → i64` | Extract low lane (pointer form) |
+| `f64v2_hi` | `f64v2_hi(v) → i64` | Extract high lane |
+| `f64v2_hi_ptr` | `f64v2_hi_ptr(p) → i64` | Extract high lane (pointer form) |
+| `f64v2_add` | `f64v2_add(a, b) → f64v2` | Packed-double addition |
+| `f64v2_add_ptr` | `f64v2_add_ptr(a, b) → f64v2` | Packed-double add (pointer form) |
+| `f64v2_sub` | `f64v2_sub(a, b) → f64v2` | Packed-double subtraction |
+| `f64v2_sub_ptr` | `f64v2_sub_ptr(a, b) → f64v2` | Packed-double subtract (pointer form) |
+| `f64v2_mul` | `f64v2_mul(a, b) → f64v2` | Packed-double multiply |
+| `f64v2_mul_ptr` | `f64v2_mul_ptr(a, b) → f64v2` | Packed-double multiply (pointer form) |
+| `f64v2_div` | `f64v2_div(a, b) → f64v2` | Packed-double divide |
+| `f64v2_div_ptr` | `f64v2_div_ptr(a, b) → f64v2` | Packed-double divide (pointer form) |
+| `f64v2_fmadd` | `f64v2_fmadd(a, b, c) → f64v2` | Fused multiply-add (a*b+c) |
+| `f64v2_fmadd_ptr` | `f64v2_fmadd_ptr(a, b, c) → f64v2` | Fused multiply-add (pointer form) |
+| `f64v2_dot` | `f64v2_dot(a, b) → i64` | Dot product |
+| `f64v2_dot_ptr` | `f64v2_dot_ptr(a, b) → i64` | Dot product (pointer form) |
+| `f64v2_scale` | `f64v2_scale(a, s) → f64v2` | Scalar multiply |
+| `f64v2_scale_ptr` | `f64v2_scale_ptr(a, s) → f64v2` | Scalar multiply (pointer form) |
+| `f64v2_abs` | `f64v2_abs(a) → f64v2` | Absolute value per lane |
+| `f64v2_abs_ptr` | `f64v2_abs_ptr(a) → f64v2` | Absolute value (pointer form) |
+| `f64v2_sqrt` | `f64v2_sqrt(a) → f64v2` | Square root per lane |
+| `f64v2_sqrt_ptr` | `f64v2_sqrt_ptr(a) → f64v2` | Square root (pointer form) |
+| `f64v4_make` | `f64v4_make(b0, b1, b2, b3) → f64v4` | Create f64v4 from four i64 bit patterns |
+| `f64v4_lane0` | `f64v4_lane0(v) → i64` | Extract lane 0 |
+| `f64v4_lane0_ptr` | `f64v4_lane0_ptr(p) → i64` | Extract lane 0 (pointer form) |
+| `f64v4_lane1` | `f64v4_lane1(v) → i64` | Extract lane 1 |
+| `f64v4_lane1_ptr` | `f64v4_lane1_ptr(p) → i64` | Extract lane 1 (pointer form) |
+| `f64v4_lane2` | `f64v4_lane2(v) → i64` | Extract lane 2 |
+| `f64v4_lane2_ptr` | `f64v4_lane2_ptr(p) → i64` | Extract lane 2 (pointer form) |
+| `f64v4_lane3` | `f64v4_lane3(v) → i64` | Extract lane 3 |
+| `f64v4_lane3_ptr` | `f64v4_lane3_ptr(p) → i64` | Extract lane 3 (pointer form) |
+| `f64v4_add` | `f64v4_add(a, b) → f64v4` | 4-lane packed-double add |
+| `f64v4_add_ptr` | `f64v4_add_ptr(a, b) → f64v4` | 4-lane add (pointer form) |
+| `f64v4_sub` | `f64v4_sub(a, b) → f64v4` | 4-lane packed-double subtract |
+| `f64v4_sub_ptr` | `f64v4_sub_ptr(a, b) → f64v4` | 4-lane subtract (pointer form) |
+| `f64v4_mul` | `f64v4_mul(a, b) → f64v4` | 4-lane packed-double multiply |
+| `f64v4_mul_ptr` | `f64v4_mul_ptr(a, b) → f64v4` | 4-lane multiply (pointer form) |
+| `f64v4_div` | `f64v4_div(a, b) → f64v4` | 4-lane packed-double divide |
+| `f64v4_div_ptr` | `f64v4_div_ptr(a, b) → f64v4` | 4-lane divide (pointer form) |
+| `f64v4_fmadd` | `f64v4_fmadd(a, b, c) → f64v4` | 4-lane fused multiply-add |
+| `f64v4_fmadd_ptr` | `f64v4_fmadd_ptr(a, b, c) → f64v4` | 4-lane FMA (pointer form) |
+| `f64v4_dot` | `f64v4_dot(a, b) → i64` | 4-lane dot product |
+| `f64v4_dot_ptr` | `f64v4_dot_ptr(a, b) → i64` | 4-lane dot product (pointer form) |
+| `f64v4_scale` | `f64v4_scale(a, s) → f64v4` | 4-lane scalar multiply |
+| `f64v4_scale_ptr` | `f64v4_scale_ptr(a, s) → f64v4` | 4-lane scalar multiply (pointer form) |
+| `f64v4_abs` | `f64v4_abs(a) → f64v4` | 4-lane absolute value |
+| `f64v4_abs_ptr` | `f64v4_abs_ptr(a) → f64v4` | 4-lane absolute value (pointer form) |
+| `f64v4_sqrt` | `f64v4_sqrt(a) → f64v4` | 4-lane square root |
+| `f64v4_sqrt_ptr` | `f64v4_sqrt_ptr(a) → f64v4` | 4-lane square root (pointer form) |
+
+### matrix.cyr
+
+Row-major dense matrix operations on f64 values (stored as i64 bit patterns). Requires alloc.cyr, fmt.cyr, string.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `mat_new` | `mat_new(rows, cols) → i64` | Create zero-filled rows×cols matrix |
+| `mat_rows` | `mat_rows(m) → i64` | Get number of rows |
+| `mat_cols` | `mat_cols(m) → i64` | Get number of columns |
+| `mat_get` | `mat_get(m, r, c) → i64` | Get element at (row, col) |
+| `mat_set` | `mat_set(m, r, c, val)` | Set element at (row, col) |
+| `mat_identity` | `mat_identity(n) → i64` | Create n×n identity matrix |
+| `mat_from` | `mat_from(rows, cols, data) → i64` | Create matrix from flat array |
+| `mat_add` | `mat_add(a, b) → i64` | Matrix addition (returns new) |
+| `mat_sub` | `mat_sub(a, b) → i64` | Matrix subtraction (returns new) |
+| `mat_scale` | `mat_scale(a, scalar) → i64` | Scalar multiply (returns new) |
+| `mat_mul` | `mat_mul(a, b) → i64` | Matrix multiply (a is m×k, b is k×n) |
+| `mat_transpose` | `mat_transpose(a) → i64` | Transpose matrix |
+| `mat_dot` | `mat_dot(a, b, n) → i64` | Dot product of two n-element arrays |
+| `mat_print` | `mat_print(m)` | Print matrix to stdout |
+
+### linalg.cyr
+
+Dense linear algebra on f64 matrices. Decompositions (LU, Cholesky, QR, SVD, eigendecomposition), solvers, and factorization utilities. Requires alloc.cyr, math.cyr, matrix.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `mat_copy` | `mat_copy(m) → i64` | Deep copy matrix |
+| `mat_neg` | `mat_neg(m) → i64` | Negate all elements |
+| `mat_row` | `mat_row(m, r) → i64` | Extract row as flat array |
+| `mat_col` | `mat_col(m, c) → i64` | Extract column as flat array |
+| `mat_set_row` | `mat_set_row(m, r, data)` | Overwrite row from array |
+| `mat_set_col` | `mat_set_col(m, c, data)` | Overwrite column from array |
+| `mat_submatrix` | `mat_submatrix(m, r0, c0, r1, c1) → i64` | Extract submatrix [r0..r1, c0..c1) |
+| `mat_frobenius` | `mat_frobenius(m) → i64` | Frobenius norm |
+| `mat_max_norm` | `mat_max_norm(m) → i64` | Infinity norm (max abs row sum) |
+| `mat_is_symmetric` | `mat_is_symmetric(m, tol) → 0/1` | Symmetry check within tolerance |
+| `mat_eq` | `mat_eq(a, b, tol) → 0/1` | Element-wise equality within tolerance |
+| `mat_trace` | `mat_trace(m) → i64` | Trace (sum of diagonal) |
+| `mat_lu` | `mat_lu(m, out_lu, out_piv) → i64` | LU decomposition with partial pivoting |
+| `mat_lu_solve` | `mat_lu_solve(lu, piv, b, out_x)` | Solve Ax=b from LU factors |
+| `mat_det` | `mat_det(m) → i64` | Determinant via LU |
+| `mat_inv` | `mat_inv(m) → i64` | Matrix inverse via LU (0 if singular) |
+| `mat_cholesky` | `mat_cholesky(m, out_l) → 0/1` | Cholesky factorization (SPD matrices) |
+| `mat_cholesky_solve` | `mat_cholesky_solve(l, b, out_x)` | Solve Ax=b from Cholesky factor |
+| `mat_qr` | `mat_qr(m, out_q, out_r)` | QR decomposition via Householder |
+| `mat_gaussian_elim` | `mat_gaussian_elim(aug) → 0/1` | Gaussian elimination on augmented matrix |
+| `mat_least_squares` | `mat_least_squares(a, b, out_x)` | Least-squares solve via QR |
+| `mat_eigen_sym` | `mat_eigen_sym(m, out_vals, out_vecs) → i64` | Eigendecomposition (symmetric) via Jacobi |
+| `mat_svd` | `mat_svd(m, out_u, out_sigma, out_vt)` | SVD via eigendecomposition |
+| `mat_pseudo_inv` | `mat_pseudo_inv(m) → i64` | Moore-Penrose pseudoinverse |
+| `mat_rank` | `mat_rank(m, tol) → i64` | Numerical rank (SVD-based) |
+| `mat_condition` | `mat_condition(m) → i64` | Condition number σ_max/σ_min (-1 if singular) |
+
+### bigint.cyr
+
+256-bit unsigned integer arithmetic (4×64-bit limbs, little-endian). Core operations: add, subtract, multiply, modular reduction, shift, compare, and hex conversion. Designed for elliptic-curve arithmetic (Ed25519, secp256k1). Requires alloc.cyr, string.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `u256_zero` | `u256_zero() → i64` | Create zero u256 |
+| `u256_from` | `u256_from(val) → i64` | Create u256 from u64 |
+| `u256_copy` | `u256_copy(dst, src)` | Copy u256 |
+| `u256_clone` | `u256_clone(a) → i64` | Clone u256 (allocates new) |
+| `u256_limb` | `u256_limb(a, i) → i64` | Get limb i |
+| `u256_set_limb` | `u256_set_limb(a, i, v)` | Set limb i |
+| `u256_is_zero` | `u256_is_zero(a) → 0/1` | Check if zero |
+| `u256_cmp` | `u256_cmp(a, b) → 1/0/-1` | Compare (1 if a>b, -1 if a<b, 0 if equal) |
+| `u256_eq` | `u256_eq(a, b) → 0/1` | Equality check |
+| `u256_add` | `u256_add(r, a, b) → i64` | Add (returns carry) |
+| `u256_sub` | `u256_sub(r, a, b) → i64` | Subtract (returns borrow) |
+| `u256_mul` | `u256_mul(r, a, b)` | Multiply (truncates to 256 bits) |
+| `u256_shl1` | `u256_shl1(r, a) → i64` | Left shift by 1 bit |
+| `u256_shr1` | `u256_shr1(r, a)` | Right shift by 1 bit |
+| `u256_mod` | `u256_mod(r, a, p)` | Modular reduction r = a mod p |
+| `u256_addmod` | `u256_addmod(r, a, b, p)` | Modular add (a+b) mod p |
+| `u256_submod` | `u256_submod(r, a, b, p)` | Modular subtract (a-b) mod p |
+| `u256_mulmod` | `u256_mulmod(r, a, b, p)` | Modular multiply (a*b) mod p |
+| `u256_to_hex` | `u256_to_hex(a) → i64` | Format as 64-char hex string |
+| `u256_from_hex` | `u256_from_hex(s) → i64` | Parse hex string to u256 |
+
+### u128.cyr
+
+128-bit unsigned integer helpers: construction, arithmetic (add, subtract, multiply), bitwise ops, shifts, comparisons, and division with modulo. Hardware fast-path for 64-bit divisors. Provides u64 modular arithmetic (mulmod, powmod) for cryptographic operations.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `u128_set` | `u128_set(dst, lo, hi)` | Set both limbs |
+| `u128_from_u64` | `u128_from_u64(dst, lo)` | Zero-extend u64 to u128 |
+| `u128_copy` | `u128_copy(dst, src)` | Copy 16 bytes |
+| `u128_lo` | `u128_lo(ptr) → i64` | Low 64-bit limb |
+| `u128_hi` | `u128_hi(ptr) → i64` | High 64-bit limb |
+| `u128_eq` | `u128_eq(a, b) → 0/1` | Byte-identical equality |
+| `u128_is_zero` | `u128_is_zero(ptr) → 0/1` | Zero test |
+| `u128_add` | `u128_add(dst, a, b)` | Addition (wraps at 2^128) |
+| `u128_sub` | `u128_sub(dst, a, b)` | Subtraction (wraps at 2^128) |
+| `u128_addeq` | `u128_addeq(dst, src)` | In-place add |
+| `u128_subeq` | `u128_subeq(dst, src)` | In-place subtract |
+| `u128_mul` | `u128_mul(dst, a, b)` | Multiply (wraps at 2^128) |
+| `u128_muleq` | `u128_muleq(dst, src)` | In-place multiply |
+| `u128_shl` | `u128_shl(dst, src, n)` | Left shift by n bits |
+| `u128_shr` | `u128_shr(dst, src, n)` | Logical right shift by n bits |
+| `u128_shleq` | `u128_shleq(dst, n)` | In-place left shift |
+| `u128_shreq` | `u128_shreq(dst, n)` | In-place right shift |
+| `u128_and` | `u128_and(dst, a, b)` | Bitwise AND |
+| `u128_or` | `u128_or(dst, a, b)` | Bitwise OR |
+| `u128_xor` | `u128_xor(dst, a, b)` | Bitwise XOR |
+| `u128_not` | `u128_not(dst, src)` | Bitwise NOT |
+| `u128_andeq` | `u128_andeq(dst, src)` | In-place AND |
+| `u128_oreq` | `u128_oreq(dst, src)` | In-place OR |
+| `u128_xoreq` | `u128_xoreq(dst, src)` | In-place XOR |
+| `u128_ugt` | `u128_ugt(a, b) → 0/1` | Unsigned greater-than |
+| `u128_uge` | `u128_uge(a, b) → 0/1` | Unsigned greater-or-equal |
+| `u128_ult` | `u128_ult(a, b) → 0/1` | Unsigned less-than |
+| `u128_ule` | `u128_ule(a, b) → 0/1` | Unsigned less-or-equal |
+| `u128_divmod` | `u128_divmod(qdst, rdst, a, b)` | Division with remainder (exits on division by zero) |
+| `u128_div` | `u128_div(dst, a, b)` | Quotient only |
+| `u128_mod` | `u128_mod(dst, a, b)` | Remainder only |
+| `u128_diveq` | `u128_diveq(dst, src)` | In-place divide |
+| `u128_modeq` | `u128_modeq(dst, src)` | In-place modulo |
+| `u64_mulmod` | `u64_mulmod(a, b, m) → i64` | (a*b) mod m (u64, hardware fast-path) |
+| `u64_powmod` | `u64_powmod(base, exp, m) → i64` | base^exp mod m (u64, square-and-multiply) |
+
+
+## Crypto
+
+Hashes and constant-time primitives. (x509/RSA/ECDSA live in the folded `sigil` dep; AEAD/key-schedule in `tls_native`.)
+
+### sha1.cyr (v5.6.13)
+
+SHA-1 message digest (FIPS 180-4). WARNING: SHA-1 is NOT collision-resistant (practical attacks since 2017). Use only for legacy interop (git object IDs, WebSocket handshake per RFC 6455, TLS 1.2 cipher names). For new code, prefer `lib/sigil.cyr` (SHA-256 / SHA-512) or `lib/keccak.cyr` (SHAKE-128 / SHAKE-256).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `sha1` | `sha1(data, len, digest_out) → 0` | Hash data[0..len) with FIPS 180-4 SHA-1, write 20-byte big-endian digest to digest_out (caller-allocated) |
+
+### keccak.cyr (v5.4.15)
+
+Keccak-f[1600] permutation and SHAKE-128 / SHAKE-256 extendable-output functions (FIPS 202). Pure reference implementation (64-bit lanes, no platform variants). Requires `lib/alloc.cyr` and `lib/string.cyr`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `shake128` | `shake128(msg, msglen, out, outlen) → 0` | XOF with rate 168 bytes; writes outlen bytes to out |
+| `shake256` | `shake256(msg, msglen, out, outlen) → 0` | XOF with rate 136 bytes; writes outlen bytes to out |
+
+### ct.cyr (v5.9.18)
+
+Constant-time primitives for cryptographic code. All comparisons and selections use mask-xor arithmetic with no data-dependent branches. Requires `lib/alloc.cyr` for `ct_eq_bytes_lens`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `ct_select` | `ct_select(cond, a, b) → i64` | Branchless select: return a if cond==0, b if cond==1 |
+| `ct_eq_bytes` | `ct_eq_bytes(a, b, n) → 0/1` | Branchless equality of a[0..n) and b[0..n); both buffers must be exactly n bytes |
+| `ct_eq_bytes_lens` | `ct_eq_bytes_lens(a, a_len, b, b_len) → 0/1` | Branchless equality with length checks; returns 0 immediately on length mismatch (length is NOT secret) |
+
+
+## Data & Encoding
+
+Encoding, parsing, time, flags, and logging.
+
+### base64.cyr
+
+RFC 4648 Base64 encoding/decoding (standard + URL-safe). Requires alloc.cyr, string.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `base64_encode` | `base64_encode(buf, len) → ptr` | Encode buffer to base64 string (null-terminated) |
+| `base64_decode` | `base64_decode(encoded, enc_len) → ptr` | Decode base64 to {data_ptr, length} pair |
+| `base64url_encode` | `base64url_encode(buf, len) → ptr` | Encode buffer to base64url (no padding, null-terminated) |
+| `base64url_decode` | `base64url_decode(encoded, enc_len) → ptr` | Decode base64url with optional padding, returns {data_ptr, length} pair |
+
+### csv.cyr
+
+RFC 4180 CSV parser and writer. Requires alloc.cyr, string.cyr, vec.cyr, str.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `csv_parse_line` | `csv_parse_line(line) → vec` | Parse CSV line into vec of field strings (handles quoted fields and escapes) |
+| `csv_escape` | `csv_escape(field) → ptr` | Escape field for CSV output (quotes if needed) |
+| `csv_write_line` | `csv_write_line(fields) → ptr` | Write vec of fields as CSV line (null-terminated string with trailing newline) |
+
+### chrono.cyr
+
+Time and duration utilities for wall-clock and monotonic clocks. Requires syscalls.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `clock_now_ns` | `clock_now_ns() → i64` | Current monotonic time in nanoseconds |
+| `clock_now_ms` | `clock_now_ms() → i64` | Current monotonic time in milliseconds |
+| `clock_epoch_secs` | `clock_epoch_secs() → i64` | Current wall-clock epoch seconds |
+| `clock_epoch_ns` | `clock_epoch_ns() → i64` | Current wall-clock epoch nanoseconds |
+| `sleep_ms` | `sleep_ms(ms)` | Sleep for ms milliseconds (portable across Linux/macOS/Windows) |
+| `dur_new` | `dur_new(secs, nsecs) → ptr` | Create duration struct {secs, nsecs} |
+| `dur_secs` | `dur_secs(d) → i64` | Get seconds component |
+| `dur_nsecs` | `dur_nsecs(d) → i64` | Get nanoseconds component |
+| `dur_to_ms` | `dur_to_ms(d) → i64` | Convert duration to total milliseconds |
+| `dur_to_ns` | `dur_to_ns(d) → i64` | Convert duration to total nanoseconds |
+| `dur_between` | `dur_between(start_ns, end_ns) → ptr` | Measure elapsed time as duration struct |
+| `is_leap_year` | `is_leap_year(y) → 0/1` | Check if year is leap |
+| `epoch_to_date` | `epoch_to_date(epoch) → ptr` | Convert epoch seconds to date struct {year, month, day, hour, min, sec} |
+| `iso8601` | `iso8601(epoch) → ptr` | Format epoch seconds as ISO-8601 string (null-terminated) |
+| `iso8601_now` | `iso8601_now() → ptr` | Format current time as ISO-8601 string |
+| `iso8601_parse` | `iso8601_parse(s) → i64` | Parse ISO-8601 string to epoch seconds, returns -1 on error |
+
+### flags.cyr
+
+getopt-long-shaped CLI flag parser with bool/int/string flag types. Requires alloc.cyr, string.cyr, fmt.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `flags_new` | `flags_new() → handle` | Allocate fresh flags context |
+| `flags_add_bool` | `flags_add_bool(h, short_ch, long_name, default_val, help) → idx` | Register bool flag, returns index |
+| `flags_add_int` | `flags_add_int(h, short_ch, long_name, default_val, help) → idx` | Register int flag, returns index |
+| `flags_add_str` | `flags_add_str(h, short_ch, long_name, default_val, help) → idx` | Register string flag, returns index |
+| `flags_parse` | `flags_parse(h, argc, argv) → 0/-1` | Parse argv[1..], returns 0 on success or -1 on error |
+| `flags_get_bool` | `flags_get_bool(h, idx) → 0/1` | Read bool flag value |
+| `flags_get_int` | `flags_get_int(h, idx) → i64` | Read int flag value |
+| `flags_get_str` | `flags_get_str(h, idx) → ptr` | Read string flag value (cstr) |
+| `flags_positional_count` | `flags_positional_count(h) → count` | Number of positional arguments captured |
+| `flags_positional` | `flags_positional(h, idx) → ptr` | Get positional arg at index (cstr), returns 0 if out of range |
+| `flags_error` | `flags_error(h) → code` | Last parse error code (FlagErr enum) |
+| `flags_print_help` | `flags_print_help(h)` | Print usage to stderr |
+
+### log.cyr
+
+Structured logging wrapper with level filtering (TRACE/DEBUG/INFO/WARN/ERROR/FATAL). Requires sakshi.cyr, string.cyr, fmt.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `log_init` | `log_init(level)` | Initialize logging with minimum level |
+| `log_level` | `log_level() → i64` | Get current log level |
+| `log_set_level` | `log_set_level(level)` | Set log level at runtime |
+| `log_enabled` | `log_enabled(level) → 0/1` | Check if level would be logged |
+| `log_trace` | `log_trace(msg)` | Log at TRACE level |
+| `log_debug` | `log_debug(msg)` | Log at DEBUG level |
+| `log_info` | `log_info(msg)` | Log at INFO level |
+| `log_warn` | `log_warn(msg)` | Log at WARN level |
+| `log_error` | `log_error(msg)` | Log at ERROR level |
+| `log_fatal` | `log_fatal(msg)` | Log at FATAL level (does not exit) |
+| `log_info_kv` | `log_info_kv(msg, key, val)` | Log with key=value context at INFO level |
+| `log_info_int` | `log_info_int(msg, key, val)` | Log with integer key=value at INFO level |
+
+
+## Collections (additional)
+
+### hashmap_fast.cyr
+
+SIMD-accelerated hash table with Swiss-table-inspired design (metadata + separate key/value arrays). Requires alloc.cyr, string.cyr, fnptr.cyr. **Status (v5.8.62): experimental, zero consumers—not in stdlib auto-prepend; use hashmap.cyr for production.**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `fhm_new` | `fhm_new() → handle` | Create new fast hashmap (initial capacity 16) |
+| `fhm_cap` | `fhm_cap(m) → i64` | Current capacity |
+| `fhm_count` | `fhm_count(m) → i64` | Number of occupied entries |
+| `fhm_size` | `fhm_size(m) → i64` | Alias for fhm_count |
+| `fhm_get` | `fhm_get(m, key) → i64` | Get value by key, returns 0 if not found |
+| `fhm_get_or` | `fhm_get_or(m, key, default_val) → i64` | Get value with default fallback |
+| `fhm_has` | `fhm_has(m, key) → 0/1` | Check if key exists |
+| `fhm_set` | `fhm_set(m, key, val)` | Set key-value pair (grows at 87.5% load) |
+| `fhm_delete` | `fhm_delete(m, key) → 0/1` | Delete key, returns 1 if found |
+| `fhm_keys` | `fhm_keys(m) → vec` | Get all keys as vec |
+| `fhm_values` | `fhm_values(m) → vec` | Get all values as vec |
+| `fhm_clear` | `fhm_clear(m)` | Clear all entries |
+
+
+## Networking — TLS & WebSockets
+
+Layered on `net.cyr`/`http.cyr` (above). TLS has a libssl façade + a sovereign native stack.
+
+### tls.cyr
+
+TLS client façade. Default backend wraps `libssl.so.3` (loaded via `fdlopen`-bootstrapped glibc `dlopen`); `tls_set_backend(TLS_BACKEND_NATIVE)` flips to the sovereign stack in `tls_native.cyr` (no OpenSSL). Requires fdlopen.cyr, net.cyr, mmap.cyr, dynlib.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_available` | `tls_available() → 1/0` | Is the active backend usable (native always; libssl checks dlopen) |
+| `tls_set_backend` | `tls_set_backend(backend) → 0/-1` | Select `TLS_BACKEND_LIBSSL` or `TLS_BACKEND_NATIVE` |
+| `tls_get_backend` | `tls_get_backend() → backend` | Active backend |
+| `tls_connect` | `tls_connect(sock, host) → ctx/0` | Wrap a connected socket in a TLS session (SNI = host) |
+| `tls_connect_with_ctx_hook` | `tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx) → ctx/0` | Connect with a pre-handshake hook (ALPN / verify customization) |
+| `tls_write` | `tls_write(ctx, buf, len) → n/-1` | Write plaintext through TLS |
+| `tls_read` | `tls_read(ctx, buf, maxlen) → n/-1` | Read plaintext from TLS |
+| `tls_close` | `tls_close(ctx) → 0` | Shut down and free the session |
+| `tls_set_alpn` | `tls_set_alpn(handle, protos, len) → 0/-1` | Set ALPN advertise list (OpenSSL wire format; call in the hook) |
+| `tls_set_verify` | `tls_set_verify(handle, mode, cb) → 0/-1` | Override peer-verification mode |
+| `tls_get_alpn_selected` | `tls_get_alpn_selected(ctx, buf, max) → len` | Negotiated ALPN protocol |
+| `tls_get_peer_spki_der` | `tls_get_peer_spki_der(ctx, buf, max) → len` | Peer SubjectPublicKeyInfo DER (HPKP pin target) |
+
+The façade also exposes **session resumption** (`tls_connect_alloc`/`tls_connect_complete`, `tls_get_session`/`tls_set_session`/`tls_session_free`, `tls_ctx_set_session_*_cb`, `tls_ctx_set_session_cache_mode`) and **TLS 1.3 0-RTT** (`tls_write_early_data`/`tls_read_early_data`/`tls_get_early_data_status`/`tls_ctx_set_max_early_data`, gated by `tls_supports_early_data`) — see the source for the full surface.
+
+### tls_native.cyr
+
+Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PKCS#1) / Ed25519 signatures; AES-128/256-GCM + ChaCha20-Poly1305; ALPN, SNI, Extended Master Secret, OS trust-store verification; server-flight reassembly; client + server. Live-interop-proven against Cloudflare + OpenSSL. Requires syscalls.cyr, alloc.cyr, sigil.cyr, thread.cyr, thread_local.cyr.
+
+**Connection lifecycle:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_available` | `tls_native_available() → 1` | Capability check (compile-time available) |
+| `tls_native_new_client` | `tls_native_new_client(host, host_len) → ctx` | Client context (SNI + hostname verification) |
+| `tls_native_new_server` | `tls_native_new_server(cert_chain, cert_len, key, key_len) → ctx` | Server context (cert chain + private key) |
+| `tls_native_connect` | `tls_native_connect(ctx, fd) → TLS_OK/err` | TLS 1.3 client handshake |
+| `tls_native_connect_12` | `tls_native_connect_12(ctx, fd) → TLS_OK/err` | TLS 1.2 client handshake |
+| `tls_native_accept` | `tls_native_accept(ctx, fd) → TLS_OK/err` | TLS 1.3 server handshake |
+| `tls_native_accept_12` | `tls_native_accept_12(ctx, fd) → TLS_OK/err` | TLS 1.2 server handshake |
+| `tls_native_write` | `tls_native_write(ctx, buf, len) → n/err` | Send application data (plaintext → AEAD record) |
+| `tls_native_read` | `tls_native_read(ctx, buf, max) → n/err` | Receive application data (AEAD record → plaintext) |
+
+**Configuration (pre-handshake):**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_set_alpn` | `tls_native_set_alpn(ctx, protos, len) → TLS_OK/err` | ALPN advertise list (OpenSSL wire format) |
+| `tls_native_set_verify` | `tls_native_set_verify(ctx, mode) → TLS_OK/err` | Peer-verification mode (`TLS_VERIFY_NONE`/`PEER`) |
+| `tls_native_set_ca_bundle` | `tls_native_set_ca_bundle(ctx, pem, len, is_der) → TLS_OK/err` | Install a custom CA bundle (PEM or DER) |
+| `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Load the system CA trust store |
+
+**Introspection (post-handshake):**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tls_native_get_state` | `tls_native_get_state(ctx) → state` | Connection state (`TLS_STATE_*`) |
+| `tls_native_get_cipher` | `tls_native_get_cipher(ctx) → suite` | Negotiated ciphersuite |
+| `tls_native_get_version` | `tls_native_get_version(ctx) → ver` | Negotiated version (`TLS_VERSION_1_2`/`1_3`) |
+| `tls_native_get_alpn_selected` | `tls_native_get_alpn_selected(ctx, buf, max) → len` | Negotiated ALPN |
+| `tls_native_get_peer_cert_der` | `tls_native_get_peer_cert_der(ctx, buf, max) → len` | Peer leaf certificate DER |
+| `tls_native_get_peer_spki_der` | `tls_native_get_peer_spki_der(ctx, buf, max) → len` | Peer SubjectPublicKeyInfo DER |
+| `tls_native_get_last_error` | `tls_native_get_last_error(ctx) → code` | Last error (`TLS_ERR_*`) |
+
+The module additionally exposes ~70 lower-level **handshake** (`tls_native_client_*`/`tls_native_server_*`), **record-layer** (`tls_native_record_seal`/`_open`, `tls_native_aead_nonce`, `tls_native_cipher_*`), **key-schedule** (`tls_native_keysched_*`, `tls_native_transcript_*`, `tls_native_derive_key`/`_iv`), and **TLS 1.2** (`tls_native_12_prf`/`_master_secret`/`_key_block`/…) primitives that drive the handshake state machine and back `lib/tls.cyr`'s native path — see the source for the full surface.
+
+### ws.cyr
+
+WebSocket client (RFC 6455): handshake upgrade, frame masking/unmasking, automatic ping→pong, and the close handshake. Requires net.cyr, base64.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `ws_new` | `ws_new(fd) → ws` | WebSocket handle from a connected socket |
+| `ws_connect` | `ws_connect(sock, path, host) → ws` | Perform the upgrade handshake |
+| `ws_fd` | `ws_fd(ws) → fd` | Underlying socket fd |
+| `ws_state` | `ws_state(ws) → state` | `WS_CONNECTING`/`OPEN`/`CLOSING`/`CLOSED` |
+| `ws_send_text` | `ws_send_text(ws, msg) → n` | Send a masked text message |
+| `ws_send_binary` | `ws_send_binary(ws, data, len) → n` | Send a masked binary message |
+| `ws_ping` | `ws_ping(ws) → n` | Send a ping frame |
+| `ws_recv_frame` | `ws_recv_frame(ws, opcode_out, len_out) → payload` | Receive a frame (auto-responds to ping) |
+| `ws_recv` | `ws_recv(ws) → payload` | Receive a text/binary message (0 on close) |
+| `ws_close` | `ws_close(ws) → 0` | Send close frame + shut down |
+
+### ws_server.cyr
+
+WebSocket server (RFC 6455). Integrates with http_server.cyr for upgrade handshake; after upgrade, handles frame I/O, masking, and control frames. Requires: alloc.cyr, string.cyr, fmt.cyr, str.cyr, syscalls.cyr, base64.cyr, sha1.cyr, net.cyr, tagged.cyr, http_server.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `ws_server_new` | `ws_server_new(fd) → ws` | Create handle for upgraded socket |
+| `ws_server_fd` | `ws_server_fd(ws) → fd` | Extract socket file descriptor |
+| `ws_server_state` | `ws_server_state(ws) → state` | Get connection state |
+| `ws_server_handshake` | `ws_server_handshake(cfd, req_buf, req_len) → ws/0` | Perform upgrade; reply 101 or 0 on failure |
+| `ws_server_recv_frame` | `ws_server_recv_frame(ws, payload_buf, max, opcode_out) → len/-1` | Receive frame and unmask |
+| `ws_server_recv` | `ws_server_recv(ws) → data/0` | Receive text/binary, handle ping/close |
+| `ws_server_send_text` | `ws_server_send_text(ws, msg)` | Send text message |
+| `ws_server_send_binary` | `ws_server_send_binary(ws, data, len)` | Send binary message |
+| `ws_server_send_ping` | `ws_server_send_ping(ws)` | Send ping frame |
+| `ws_server_send_pong` | `ws_server_send_pong(ws, data, len)` | Send pong (echo client ping payload) |
+| `ws_server_send_close` | `ws_server_send_close(ws, code, reason)` | Send close frame with code + reason |
+| `ws_server_send_frame` | `ws_server_send_frame(ws, opcode, data, len)` | Send raw frame |
+| `ws_server_close` | `ws_server_close(ws)` | Close handshake and free handle |
+
+
+## Systems & FFI (additional)
+
+Memory mapping, dynamic loading, C FFI, and Windows GPU enumeration. (`dynlib.cyr` is documented above.)
+
+### mmap.cyr
+
+Memory-mapped I/O via direct syscalls. Requires syscalls.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `cyr_mmap` | `cyr_mmap(addr, length, prot, flags, fd, offset) → addr/-1` | Map region; prot: PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4; flags: MAP_PRIVATE=2, MAP_SHARED=1, MAP_ANONYMOUS=32, MAP_FIXED=16 |
+| `cyr_munmap` | `cyr_munmap(addr, length) → 0` | Unmap region |
+| `cyr_mprotect` | `cyr_mprotect(addr, length, prot) → 0` | Change page protection |
+| `mmap_file_ro` | `mmap_file_ro(fd, length) → addr/0` | Map file read-only (MAP_PRIVATE) |
+| `mmap_file_rw` | `mmap_file_rw(fd, length) → addr/0` | Map file read-write (MAP_PRIVATE copy) |
+| `mmap_anon` | `mmap_anon(length) → addr/0` | Anonymous mapping (page-aligned malloc) |
+
+### fdlopen.cyr
+
+Foreign-dlopen: glibc function access from static cyrius binaries via ld.so bootstrap (x86_64 Linux only). Requires string.cyr, syscalls.cyr, mmap.cyr, dynlib.cyr, fnptr.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `fdlopen_state_size` | `fdlopen_state_size() → 256` | Bytes to allocate for state buffer |
+| `fdlopen_init` | `fdlopen_init(state) → -1/-6/-8` | Probe helper; use fdlopen_init_full for full orchestration |
+| `fdlopen_init_full` | `fdlopen_init_full(state) → 0 or negative` | Complete ld.so-entry dance; populates fn pointers on success |
+| `fdlopen_helper_available` | `fdlopen_helper_available() → 0/1` | Check if ~/.cyrius/dlopen-helper exists |
+| `dl_setjmp` | `dl_setjmp(buf) → 0/nonzero` | Capture x86_64 callee-saved state (128-byte jmp_buf) |
+| `dl_longjmp` | `dl_longjmp(buf, val)` | Restore state and jump (does not return) |
+| `fdlopen_slot` | `fdlopen_slot(state, offset) → fn*` | Get fn pointer at offset in state (0 if uninit) |
+| `fdlopen_dlopen` | `fdlopen_dlopen(state) → fn*` | Get real glibc dlopen |
+| `fdlopen_dlsym` | `fdlopen_dlsym(state) → fn*` | Get real glibc dlsym |
+| `fdlopen_dlclose` | `fdlopen_dlclose(state) → fn*` | Get real glibc dlclose |
+| `fdlopen_dlerror` | `fdlopen_dlerror(state) → fn*` | Get real glibc dlerror |
+| `fdlopen_getaddrinfo` | `fdlopen_getaddrinfo(state) → fn*` | Get real glibc getaddrinfo |
+| `fdlopen_freeaddrinfo` | `fdlopen_freeaddrinfo(state) → fn*` | Get real glibc freeaddrinfo |
+| `fdlopen_gai_strerror` | `fdlopen_gai_strerror(state) → fn*` | Get real glibc gai_strerror |
+| `fdlopen_strerror` | `fdlopen_strerror(state) → fn*` | Get real glibc strerror |
+| `fdlopen_setlocale` | `fdlopen_setlocale(state) → fn*` | Get real glibc setlocale |
+| `fdlopen_setenv` | `fdlopen_setenv(state) → fn*` | Get real glibc setenv |
+| `fdlopen_unsetenv` | `fdlopen_unsetenv(state) → fn*` | Get real glibc unsetenv |
+| `fdlopen_status` | `fdlopen_status(state) → 0/1/negative` | Query init status (1 = success, negative = error code) |
+
+### cffi.cyr
+
+C struct layout helpers for foreign struct interop (field offsets with C alignment/padding rules). Requires alloc.cyr.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `cffi_struct_new` | `cffi_struct_new() → layout` | Create new struct layout (supports ≤32 fields) |
+| `cffi_field` | `cffi_field(layout, typ) → offset` | Add field, return byte offset |
+| `cffi_field_struct` | `cffi_field_struct(layout, size, align) → offset` | Add nested struct field |
+| `cffi_field_array` | `cffi_field_array(layout, elem_type, count) → offset` | Add array field (count × elem_type) |
+| `cffi_field_count` | `cffi_field_count(layout) → n` | Get number of fields |
+| `cffi_offset` | `cffi_offset(layout, n) → offset/-1` | Get byte offset of field N |
+| `cffi_sizeof` | `cffi_sizeof(layout) → bytes` | Get total struct size (with tail padding) |
+| `cffi_max_align` | `cffi_max_align(layout) → bytes` | Get maximum field alignment |
+| `cffi_type_size` | `cffi_type_size(typ) → bytes` | Extract size from CFFI type constant |
+| `cffi_type_align` | `cffi_type_align(typ) → bytes` | Extract alignment from CFFI type constant |
+| `cffi_get8` | `cffi_get8(buf, layout, field) → u8` | Read u8 at field's offset |
+| `cffi_get16` | `cffi_get16(buf, layout, field) → u16` | Read u16 at field's offset |
+| `cffi_get32` | `cffi_get32(buf, layout, field) → u32` | Read u32 at field's offset |
+| `cffi_get64` | `cffi_get64(buf, layout, field) → u64` | Read u64 at field's offset |
+| `cffi_set8` | `cffi_set8(buf, layout, field, val)` | Write u8 at field's offset |
+| `cffi_set16` | `cffi_set16(buf, layout, field, val)` | Write u16 at field's offset |
+| `cffi_set32` | `cffi_set32(buf, layout, field, val)` | Write u32 at field's offset |
+| `cffi_set64` | `cffi_set64(buf, layout, field, val)` | Write u64 at field's offset |
+
+### dxgi.cyr
+
+DXGI GPU enumeration on Windows (PE/x86_64); dispatches COM vtable methods via callptr. Windows-only (CYRIUS_TARGET_WIN).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `dxgi_vram_bytes` | `dxgi_vram_bytes() → bytes` | Dedicated VRAM of primary GPU (index 0) via CreateDXGIFactory1 → EnumAdapters1 → GetDesc1 |
+| `dxgi_adapter_vram_bytes` | `dxgi_adapter_vram_bytes(index) → bytes` | Dedicated VRAM of adapter at index via DXGI COM dispatch |
+
+
+## Testing & Internal Tooling
+
+Test-framework helpers and internal audit/regression scaffolding.
+
+### test.cyr
+
+Table-driven test framework helpers. Include once to pull in lib/assert.cyr + lib/fnptr.cyr (the full unit-test stack).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `test_each` | `test_each(cases_vec, fp)` | Iterate through test cases (vec of pointers); call fp(case) for each |
+
+### audit_walk.cyr
+
+Internal tooling: shared format/lint walkers for cyrius audit + check. Skips symlinks and distlib bundles when traversing .cyr files.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `audit_fmt_walk` | `audit_fmt_walk(cyrfmt_path, dirs_vec)` | Run cyrfmt on every .cyr file; sets AW_FMT_FAIL, AW_FMT_SKIPPED, AW_FMT_FAIL_FILES |
+| `audit_lint_walk` | `audit_lint_walk(cyrlint_path, dirs_vec)` | Run cyrlint on every .cyr file; sums warnings into AW_LINT_TOTAL, AW_LINT_SKIPPED |
+| `str_starts_with_buf` | `str_starts_with_buf(buf, n, prefix) → 0/1` | Check if first n bytes of buf start with cstring prefix |
+
+### regression.cyr
+
+Testing-stdlib primitives: display formatting, buffer scanning, process execution, network probing, SSH cluster helpers. ~22 reusable verbs carved from programs/checks/.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `regression_print` | `regression_print(s)` | Write to stdout (no newline) |
+| `regression_section` | `regression_section(name)` | Print section header "── name ──\n" |
+| `regression_check` | `regression_check(name, exit_code) → exit_code` | Print PASS/FAIL line (0=PASS); returns exit_code |
+| `regression_buf_eq` | `regression_buf_eq(p, s, n) → 0/1` | Byte-level prefix compare |
+| `regression_count_substr` | `regression_count_substr(buf, n, needle) → count` | Count non-overlapping occurrences of cstring in buffer |
+| `regression_file_contains_substr` | `regression_file_contains_substr(path, substr) → 0/1` | Read file and check for substring |
+| `regression_pipe_to_bin_capture` | `regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp) → exit` | Pipe src to binary stdin; capture stdout to file; return exit code |
+| `regression_pipe_to_bin` | `regression_pipe_to_bin(bin_path, src_path, envp) → exit` | Thin wrapper: pipe to binary with /dev/null output |
+| `regression_run_with_timeout` | `regression_run_with_timeout(bin_path, timeout_ms, envp) → exit` | Fork+exec with wall-clock timeout (100ms poll); returns -2 on timeout |
+| `regression_exec_capture` | `regression_exec_capture(bin_path, buf, buflen, envp) → bytes` | Run binary, capture stdout; returns bytes read |
+| `regression_exec_run` | `regression_exec_run(bin_path, envp) → exit` | Run binary (no args), discard I/O; return exit code |
+| `regression_exec_with_arg_capture` | `regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp) → bytes` | Run binary with one arg, capture stdout |
+| `regression_exec_with_arg_capture_both` | `regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp) → bytes` | Run binary with arg, capture stdout+stderr |
+| `regression_network_probe` | `regression_network_probe(addr_ipv4, port, timeout_ms) → 0/1` | TCP reachability probe (non-blocking connect + poll) |
+| `regression_ssh_target` | `regression_ssh_target(env_name, default_name) → name` | Resolve SSH target (env override or default) |
+| `regression_ssh_skip_check` | `regression_ssh_skip_check(target) → 0/1` | Test SSH reachability via ssh -o BatchMode |
+| `regression_scp_to` | `regression_scp_to(target, local_path, remote_path, envp) → exit` | SCP local file to remote host |
+| `regression_ssh_remote_exit` | `regression_ssh_remote_exit(target, command, envp) → exit` | SSH remote command, discard I/O; return exit code |
+| `regression_ssh_remote_exec_capture` | `regression_ssh_remote_exec_capture(target, command, out_path, envp) → exit` | SSH remote command, capture stdout to file |
+| `regression_codesign_remote` | `regression_codesign_remote(target, remote_path, envp) → exit` | SSH remote: chmod +x && codesign -s - (macOS adhoc signing) |
+| `regression_exec_in_dir3` | `regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp) → exit` | Run binary with up to 3 args in cwd; capture stdout; trailing 0 args skipped |
+| `regression_exec_in_dir3_env` | `regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path, envp) → exit` | Variant of regression_exec_in_dir3 with extra environment variables |
+
+
+## Folded sibling distfiles
+
+These modules are byte-identical folds of sibling-repo distfiles (the
+sandhi pattern), vendored into `lib/<name>.cyr`. They are **opt-in** —
+`include "lib/<name>.cyr"` explicitly (not auto-prepended). Each has its
+own canonical API reference in its own repo; this table is a pointer. See
+[ecosystem.md](ecosystem.md) for fold versions/lineage.
+
+| Module | Folded dep | Domain |
+|--------|-----------|--------|
+| `lib/sandhi.cyr` | sandhi 1.4.2 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
+| `lib/sigil.cyr` | sigil 3.7.4 | Security / x509 / RSA / ECDSA — powers native TLS |
+| `lib/sakshi.cyr` | sakshi 2.2.10 | Tracing / structured logging |
+| `lib/patra.cyr` | patra 1.10.3 | Storage |
+| `lib/sankoch.cyr` | sankoch 2.2.5 | Compression |
+| `lib/yukti.cyr` | yukti 2.2.3 | Hardware enumeration |
+| `lib/vani.cyr` | vani 0.9.3 | Audio (ALSA PCM + ring buffer + mixer) |
+| `lib/niyama.cyr` | niyama 1.0.2 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
+| `lib/mabda.cyr` | mabda 3.0.1 | GPU / compute (AMD-native) |
+
+## Platform sub-modules
+
+Several modules dispatch to per-OS / per-arch sub-includes that are **not
+documented separately** — their public surface is the parent module's (above):
+
+- `args.cyr` → `args_win` / `args_macos` / `args_agnos`
+- `process.cyr` → `process_win` / `process_agnos`
+- `fs.cyr` → `fs_win` (Windows `dir_list`/`is_dir`/`dir_walk`, v6.1.18)
+- `sync.cyr` → `sync_windows` / `sync_macos`; `thread.cyr` → `thread_win`
+- `alloc.cyr` → `alloc_windows` / `alloc_macos` / `alloc_agnos`
+- `syscalls.cyr` → `syscalls_{x86_64,aarch64}_linux` / `syscalls_windows` / `syscalls_macos` / `syscalls_x86_64_agnos` / `syscalls_linux_common`
+
+---
+
+> **Coverage note**: this reference now documents the **core, concurrency,
+> math/SIMD, crypto, data/encoding, networking (TLS + WebSocket), systems/FFI,
+> and testing** surfaces — roughly **65 of 94 `lib/*.cyr` modules** (was ~33).
+> What remains undocumented here is so by design:
+> - **Folded sibling distfiles** (`sigil` / `sandhi` / `patra` / `sankoch` /
+>   `yukti` / `vani` / `niyama` / `mabda` / `sakshi`, listed above) — the
+>   canonical API for each lives in its own repo.
+> - **Platform sub-modules** (`*_win` / `*_macos` / `*_agnos` / `syscalls_*`) —
+>   their public surface is the parent module's.
+> - A few generated / internal files (e.g. `agnosys`, a bundled distribution).
 >
-> (Platform-variant internals — `*_macos`, `*_win`, `*_agnos`,
-> `syscalls_*` — are intentionally not listed as a public surface.)
-> Per-module API docs are tracked as their consumers stabilize; until
-> then the source files are the canonical signature reference
-> (`cyrdoc <file.cyr>` emits markdown from the doc-comment header on
-> every public fn).
+> For any fn not listed, the source files are the canonical signature reference
+> — `cyrdoc <file.cyr>` emits markdown from the doc-comment header on every
+> public fn.
