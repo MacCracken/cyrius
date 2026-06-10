@@ -6,6 +6,81 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.19] — 2026-06-09
+
+**v6.1.x slot 19: two TLS-stack bugs surfaced by sandhi 1.4.5 — fixed together.**
+Both came out of sandhi's "deprecate libssl, default to native" cutover (hoosh
+2.2.0 HTTPS gateway). The libssl backend was a latent process-killer; the native
+backend couldn't reach a common public host. Either alone blocked the cutover, so
+this slot ships **both** complete (one bug → one complete fix; packed release).
+Reslots the bayan carve → 6.1.20, ganita → 6.1.21.
+
+1. **libssl backend SIGSEGV (`lib/alloc.cyr` brk vs glibc arena).** The Linux
+   heap grew with raw `brk(2)`, a process-global resource glibc malloc's main
+   arena also owns. The default TLS backend loads `libssl.so.3`/`libcrypto.so.3`
+   via `lib/fdlopen.cyr` → glibc malloc; the first cyrius heap grow past its
+   reservation moved the break out from under glibc, and a later libssl call
+   deref'd a clobbered pointer → process SIGSEGV inside `libssl.so.3` (sandhi
+   reported it as a "TLS lifecycle bug"; it reproduced with **zero sandhi code**).
+   Fixed by moving the Linux heap off `brk` entirely onto **anonymous `mmap`**
+   (can't collide with glibc's arena), structured as a **chunk-based bump
+   allocator** mirroring `lib/alloc_agnos.cyr`: bump within a 256 MB chunk, mmap a
+   fresh chunk anywhere on overflow (brk's unbounded contiguous growth, without
+   the contiguity a single up-front reservation can't guarantee). A naïve
+   reserve-and-hint-grow first cut regressed `unicode_normconf` (alloc's >256 MB,
+   hinted grow's contiguity check failed → null → segfault); the chunk chain has
+   no contiguity requirement and passes. Closes
+   `issues/2026-06-09-brk-bump-heap-vs-fdlopen-libssl-malloc.md`.
+
+2. **Native backend chain-verify gap (`lib/tls_native.cyr`).** Reported as a
+   "handshake gap" (native reached 1.1.1.1 but not example.com); localized to
+   **certificate-chain verification**, not the handshake — both handshakes
+   complete. `tls_native_client_verify_chain` fed the server's wire intermediates
+   straight into sigil's `x509_verify_chain`, whose contract is a **rigid** path
+   (intermediates ARE the ordered path, every cert used). example.com (Cloudflare)
+   sends leaf + 3 intermediates whose top entry is the SSL.com root **cross-signed
+   by AAA** — an extra cert the rigid verify rejected on `_x509_issuer_matches`;
+   1.1.1.1 happened to send a clean leaf+1 chain, hence the asymmetry. Replaced
+   the rigid call with **path building** (RFC 5280 §6.1 / RFC 8446 §4.4.2): from
+   the leaf, anchor at the first trusted root that signs the current cert, else
+   follow one verified signing intermediate — extra / out-of-order / cross-signed
+   certs are simply unused. Every link is still signature-checked and only a
+   trusted, in-window CA root anchors (same security floor). Done cyrius-side
+   (`lib/tls_native.cyr`), not in vendored sigil. Closes
+   `issues/2026-06-09-native-tls-handshake-gap-public-servers.md`.
+
+**Benchmark:** `self_compile 489 ms` (vs 490 ms @ 6.1.18 — flat), `cycc
+1,045,688 B` (**+568 B** — the chunk-bump allocator is slightly larger than the
+brk path). check.sh **87/87**; all 170 `.tcyr` clean (per-file exit loop 170/170,
+incl. the >256 MB `unicode_normconf` that the first-cut grow regressed).
+Self-host **byte-identical** (two-step, heap change). **Allocator verified on
+x86_64 + aarch64 Linux** (qemu, 600 MB across multiple chunks + reset/reuse).
+Cross-OS self-host **byte-identical on ecb (macOS arm64) + cass (Windows PE32+)**
+— both alloc changes are `#ifdef CYRIUS_TARGET_LINUX`-gated so macOS/Windows cycc
+is byte-unaffected; the native-TLS fix is lib-only. **Live TLS:** native + libssl
+backends each connect to example.com, 1.1.1.1, google.com, github.com,
+cloudflare.com, wikipedia.org, letsencrypt.org, www.digicert.com, amazon.com
+(Google Trust Services / DigiCert / Let's Encrypt / SSL.com roots).
+
+### Fixed
+
+- **`lib/alloc.cyr` Linux heap: `brk(2)` → anonymous `mmap` chunk-bump
+  allocator.** Removes the process-global brk contention with glibc malloc that
+  made the `fdlopen` libssl TLS backend a latent SIGSEGV (and would bite any
+  future `dlopen` of a glibc consumer). Chunk-chain model (256 MB chunks, fresh
+  mmap on overflow, no contiguity requirement) preserves brk's effectively-
+  unbounded growth. `alloc_used()` now returns total-handed-out (was
+  `ptr - base`; identical within one chunk — `alloc`/`alloc_reset`/`arena_*`
+  semantics unchanged). Linux x86_64 + aarch64 only; macOS (`alloc_macos.cyr`) /
+  Windows (`alloc_windows.cyr`) / agnos (`alloc_agnos.cyr`) paths untouched.
+
+- **`lib/tls_native.cyr` native client: rigid chain verify → RFC 5280 path
+  building.** `tls_native_client_verify_chain` now builds the path from the leaf
+  upward, anchoring at any trusted root and ignoring extra / cross-signed / out-
+  of-order certs a real server includes, instead of requiring the wire
+  intermediates to be the exact ordered path. Unblocks native HTTPS against
+  Cloudflare-fronted hosts that ship a cross-signed root in the chain.
+
 ## [6.1.18] — 2026-06-09
 
 **v6.1.x slot 18: Windows directory-listing port + sakshi 2.2.10 fold.** v6.1.17

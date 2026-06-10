@@ -1,0 +1,66 @@
+# Repro: lib/alloc.cyr brk(2) bump-heap growth collides with glibc
+# malloc's brk arena, pulled in by lib/fdlopen.cyr loading libssl.
+#
+# Build (LIBSSL backend, the default):
+#   cyrius build docs/development/issues/repros/2026-06-09-brk-bump-vs-fdlopen-libssl.cyr /tmp/brk_repro
+#   /tmp/brk_repro            # SIGSEGV inside libssl on iter 3 (the 4th)
+#
+# Flip the leak from alloc() (brk) to mmap (anonymous) and the crash
+# DISAPPEARS — the smoking gun that it is brk-arena contention, not a
+# libssl bug. Set USE_MMAP = 1 below to see the clean run.
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+include "lib/net.cyr"
+include "lib/tls.cyr"
+
+fn say(m, n) { syscall(1, 1, m, n); return 0; }
+
+var USE_MMAP = 0;   # 0 = brk alloc() (CRASHES);  1 = mmap (clean)
+
+fn leak_touch(): i64 {
+    var p = 0;
+    if (USE_MMAP == 1) {
+        # PROT_READ|WRITE=3, MAP_PRIVATE|ANON=0x22, fd=-1
+        p = syscall(9, 0, 262145, 3, 0x22, 0 - 1, 0);
+    } else {
+        p = alloc(262145);          # 256 KB+1 into the brk bump heap, never freed
+    }
+    if (p == 0) { return 0; }
+    var i = 0;
+    while (i < 262145) { store8(p + i, 65); i = i + 4096; }   # touch every page
+    return p;
+}
+
+fn one_conn(ip, port, sni): i64 {
+    var fd_r = tcp_socket();
+    var fd = payload(fd_r);
+    if (fd < 0) { return 0; }
+    sock_connect(fd, ip, port);
+    var t = tls_connect(fd, sni);   # loads libssl via fdlopen -> glibc malloc brk arena
+    if (t != 0) { tls_close(t); }
+    sock_close(fd);
+    leak_touch();                   # grow cyrius's brk heap; crosses 1 MB ~iter 4
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    say("backend(0=libssl): ", 19); fmt_int(tls_get_backend()); say("\n", 1);
+    var ip = 1 | (1 << 8) | (1 << 16) | (1 << 24);  # 1.1.1.1
+    var i = 0;
+    while (i < 8) {
+        say("iter ", 5); fmt_int(i); say("\n", 1);
+        one_conn(ip, 443, "one.one.one.one");
+        i = i + 1;
+    }
+    say("DONE\n", 5);
+    return 0;
+}
+
+var exit_code = main();
+syscall(60, exit_code);

@@ -1,0 +1,64 @@
+# Repro: lib/tls_native.cyr handshake succeeds against some public
+# servers (1.1.1.1) but fails against others (example.com), at 6.1.18.
+#
+# Build NATIVE backend:
+#   cyrius build -D CYRIUS_TLS_NATIVE \
+#     docs/development/issues/repros/2026-06-09-native-tls-handshake-gap.cyr /tmp/native_gap
+#   /tmp/native_gap
+#
+# Observed (6.1.18):
+#   1.1.1.1      -> conn-ok   (native handshake completes)
+#   example.com  -> conn-fail (native handshake fails; both are Cloudflare)
+#
+# The SAME binary built WITHOUT -D CYRIUS_TLS_NATIVE (libssl backend)
+# connects to BOTH hosts. So this is a native-stack handshake gap, not
+# a network/DNS issue. Toggle HOST below.
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+include "lib/net.cyr"
+include "lib/tls.cyr"
+
+fn say(m, n) { syscall(1, 1, m, n); return 0; }
+
+# HOST: 0 = 1.1.1.1 / one.one.one.one (native OK)
+#       1 = example.com 172.66.147.243 (native FAILS)
+var HOST = 1;
+
+fn one_conn(ip, port, sni): i64 {
+    var fd_r = tcp_socket();
+    var fd = payload(fd_r);
+    if (fd < 0) { say("  socket-fail\n", 12); return 0; }
+    sock_connect(fd, ip, port);
+    var t = tls_connect(fd, sni);
+    if (t != 0) { tls_close(t); say("  conn-ok\n", 9); }
+    else { say("  conn-fail\n", 11); }
+    sock_close(fd);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    say("backend(1=native): ", 19); fmt_int(tls_get_backend()); say("\n", 1);
+    var ip = 1 | (1 << 8) | (1 << 16) | (1 << 24);     # 1.1.1.1
+    var sni = "one.one.one.one";
+    if (HOST == 1) {
+        ip = 172 | (66 << 8) | (147 << 16) | (243 << 24);  # example.com (Cloudflare)
+        sni = "example.com";
+    }
+    var i = 0;
+    while (i < 3) {
+        say("iter ", 5); fmt_int(i); say("\n", 1);
+        one_conn(ip, 443, sni);
+        i = i + 1;
+    }
+    say("DONE\n", 5);
+    return 0;
+}
+
+var exit_code = main();
+syscall(60, exit_code);

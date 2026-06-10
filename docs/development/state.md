@@ -14,49 +14,49 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.18** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,120 B (+2,248 B @ 6.1.18 — `FindFirstFileW`/`FindNextFileW`/`FindClose`/`GetFileAttributesW` emitters + dispatch + import triples) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 594,848 B (+792 B @ 6.1.18 — four `--strict` stubs + shared parse branches) |
+| **Version** | **6.1.19** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,688 B (+568 B @ 6.1.19 — `lib/alloc.cyr` brk→mmap chunk-bump allocator) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,384 B (+536 B @ 6.1.19 — same allocator change in its x86 runtime) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (+3,072 B @ 6.1.18 — the four find emitters compiled into cycc_win) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.19 — PE uses `alloc_windows.cyr`, not the Linux block) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
 | stdlib | 94 `lib/*.cyr` (85 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~486 ms (box noise) |
+| bench (every-release gate) | self_compile ~489 ms (box noise) |
 
-> **Handoff (2026-06-09):** v6.1.18 ready for cut — **Windows directory-listing
-> port + sakshi 2.2.10 fold** (the .17 follow-on, taken as its own slot per user).
-> (1) **`dir_list`/`is_dir`/`dir_walk` now work on Windows** (were empty/`-38`
-> stubs since .17). New `lib/fs_win.cyr` (included under `#ifdef CYRIUS_TARGET_WIN`;
-> the getdents64 bodies `#ifndef`'d out) drives four new kernel32 reroutes —
-> `0xF016` FindFirstFileW / `0xF017` FindNextFileW / `0xF018` FindClose / `0xF019`
-> GetFileAttributesW — registered in `src/backend/pe/emit.cyr`, emitted by
-> `EFINDFIRST_PE`/`EFINDNEXT_PE`/`EFINDCLOSE_PE`/`EGETFATTR_PE` (`x86/emit.cyr`, via
-> the existing `_pe_call_2arg_aligned`/`_pe_srw_call_1arg` helpers — no new asm),
-> dispatched from `parse_expr.cyr`. EXPLICIT (not transparent getdents64) because
-> getdents takes an fd, FindFirstFileW a path. `fs_win.cyr` is self-contained
-> (own `_fs_widen`/`_fs_narrow`) so `fs.cyr`'s deps stay string/alloc/str/vec/syscalls.
-> aarch64 `--strict` stubs added; api-surface snapshot updated (+`fs_win::dir_list/1`
-> +`fs_win::is_dir/1`).
-> (2) **Folded sakshi 2.2.8 → 2.2.10** (2.2.9 timespec P3 fix + 2.2.10 single-path
-> rdtsc, Windows busy-spin dropped now that .17 routes `nanosleep(35)`+`228`).
-> Also fixed a v6.1.17 slip: the PE routed-syscall warning string was truncated 3
-> bytes (the `,35` addition wasn't reflected in its `SYS_WRITE` length).
-> `version-bump.sh 6.1.18` applied; **user pushes/tags after CI**. Gates: x86 cycc
-> byte-identical self-host (+2,248 B), check.sh **87/87**, all 170 tcyr clean
-> (per-file exit loop 170/170), bench self_compile 486 ms. **Cross-OS BOTH GREEN** —
-> ecb `SELFHOST_OK` (byte-identical), cass `SELFHOST_OK` + `tests/win/dir_list_pe.cyr`
-> (enumerates `tests\win`, checks is_dir dir/file/missing) + the .17 PE regressions
-> → **exit 42 on real Windows**.
-> **Other sync/clock follow-ons NOT taken** (no consumer ask / design-gated): macOS
-> `__ulock` blocking lock, Windows `TryAcquireSRWLockExclusive` for `mutex_trylock`,
-> sakshi-on-Darwin clock-shape (consumer-side). `fs_win` path-widen is ASCII-only
-> (matches EOPEN_PE; non-ASCII dir PATHS won't round-trip — filenames do, via the
-> full `_fs_narrow`). **Deferred polish:** relocate the 64 KB `_ts_cst` scratch to
-> the ts_base heap (held until after the carves).
+> **Handoff (2026-06-09):** v6.1.19 ready for cut — **two TLS-stack bugs from
+> sandhi 1.4.5's libssl→native cutover, fixed together** (bayan carve reslotted →
+> 6.1.20, ganita → 6.1.21).
+> (1) **libssl backend SIGSEGV** (`issues/archived/2026-06-09-brk-bump-heap-vs-fdlopen-libssl-malloc.md`):
+> `lib/alloc.cyr`'s Linux heap grew via `brk(2)`, which glibc malloc's arena (pulled
+> in by `fdlopen`→libssl) also owns → first heap-grow clobbered the shared break →
+> process SIGSEGV inside `libssl.so.3` (reproduced with ZERO sandhi code). Fixed:
+> Linux heap is now an **anonymous-`mmap` chunk-bump allocator** (mirrors
+> `alloc_agnos.cyr` — 256 MB chunks, fresh mmap on overflow, no contiguity needed),
+> off `brk` entirely. A reserve+hint-grow first cut regressed `unicode_normconf`
+> (>256 MB → non-contiguous grow → null → segfault); the chunk chain has no
+> contiguity requirement.
+> (2) **Native backend chain-verify gap** (`issues/archived/2026-06-09-native-tls-handshake-gap-public-servers.md`):
+> reported as a handshake gap (native reached 1.1.1.1, not example.com); really
+> **cert-chain verification** — both handshakes complete. example.com (Cloudflare)
+> ships its SSL.com root cross-signed by AAA in the wire chain; sigil's rigid
+> `x509_verify_chain` rejected the extra cert. `tls_native_client_verify_chain` now
+> does **RFC 5280 §6.1 path building** (anchor at any trusted root, ignore
+> extra/cross-signed certs) — cyrius-side, NOT in vendored sigil.
+> `version-bump.sh 6.1.19` applied; **user pushes/tags after CI**. Gates: x86 cycc
+> byte-identical self-host (two-step, heap change; +568 B), check.sh **87/87**, all
+> 170 tcyr clean (per-file exit loop 170/170, incl. the >256 MB normconf), bench
+> self_compile 489 ms. Allocator verified on **x86_64 + aarch64 Linux** (qemu, 600 MB
+> across chunks + reset). **Cross-OS BOTH GREEN** — ecb `SELFHOST_OK`, cass
+> `SELFHOST_OK` (both alloc changes `CYRIUS_TARGET_LINUX`-gated → macOS/Windows cycc
+> byte-unaffected; native-TLS fix is lib-only). **Live TLS:** native + libssl each
+> connect to example.com/1.1.1.1/google/github/cloudflare/wikipedia/letsencrypt/
+> digicert/amazon. Repros kept under `issues/repros/` as regression artifacts.
+> **Deferred polish:** relocate the 64 KB `_ts_cst` scratch to the ts_base heap
+> (held until after the carves).
 >
 > **Kernel-PIE boot-test readiness** (the v6.1.7 wrapper — still pending an AGNOS
 > `--pie` harness): build an x86 PIE kernel with `cat <kernel.cyr with 'kernel;'> |
