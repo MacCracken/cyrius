@@ -69,8 +69,21 @@ fn sys_fchmodat(dirfd, path, mode, flags): i64 {
     return syscall(SYS_FCHMODAT, dirfd, path, mode, flags);
 }
 # utimensat(dirfd, path, times, flags) — set atime/mtime (NULL times = now; UTIME_OMIT to skip one).
+# Darwin has NO utimensat syscall (absent from MacOSX.sdk sys/syscall.h — only
+# setattrlist/setattrlistat exist). No in-tree consumer sets file times on macOS,
+# so rather than emit an unrouted svc 280 (→ garbage/SIGSYS) we return -ENOSYS
+# (Darwin 78) on the macОS build; a setattrlist(2)-based emulation is deferred
+# until a consumer needs it. The two-#ifdef form keeps syscall(280) out of the
+# Mach-O emit entirely (no "syscall not routed" warning). The arch-Linux ESYSXLAT
+# maps 280→88 (utimensat); only the Darwin syscall table lacks it.
+# See issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md, CHANGELOG [6.1.20].
 fn sys_utimensat(dirfd, path, times, flags): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
     return syscall(SYS_UTIMENSAT, dirfd, path, times, flags);
+    #endif
 }
 
 # ================================================================

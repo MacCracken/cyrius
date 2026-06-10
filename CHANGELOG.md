@@ -6,6 +6,70 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.20] — 2026-06-09
+
+**v6.1.x slot 20: sandhi 1.4.5 fold + macho-arm `*at()`/stat Darwin port.** Packs
+the sandhi consumer-side companion to 6.1.19's TLS fixes with the next standalone
+macOS-hardening bug.
+
+1. **Folded sandhi 1.4.4 → 1.4.5 into `lib/sandhi.cyr`** (byte-identical to dist).
+   1.4.5 makes the sovereign **native** TLS backend the default and relegates the
+   libssl fdlopen bridge to an explicit opt-in (the 6.1.19 fixes are what made that
+   safe) — adds `sandhi_tls_use_native` / `sandhi_tls_use_libssl` /
+   `sandhi_tls_backend` / `sandhi_tls_native_available` (api-surface snapshot
+   updated, +4). Also fixes a libssl-backend `SSL_SESSION` leak: the per-connection
+   session capture is now gated on `sandhi_session_cache_enabled()` (was
+   unconditional → one leaked session/request when the cache is off, the default).
+
+2. **macho-arm `*at()`/stat/link/rename Darwin syscall port.** On native arm64-macOS
+   (ecb), the aarch64-Linux stdlib's `sys_stat`/`sys_lstat`/`sys_fstatat` (262),
+   `sys_link`/`sys_linkat` (37), `sys_rename`/`sys_renameat` (38) and
+   `sys_utimensat` (280) hit `ESYSXLAT` entries that didn't exist → the svc ran with
+   a stale `x16` → wrong Darwin syscall (`rc -9/-14` on ecb). Added the missing
+   `_TARGET_MACHO == 2` renumbers in `src/backend/aarch64/emit.cyr` — **pure**
+   renumbers to the Darwin at-family (no arg-shift; dirfd/path layouts match):
+   `newfstatat 262→fstatat64 470`, `linkat 37→471`, `renameat 38→465` (numbers from
+   `MacOSX.sdk/usr/include/sys/syscall.h`, all llvm-mc `-arch arm64` verified) +
+   their `_macho_arm_routes` whitelist entries. `fstatat64` fills a Darwin `stat64`
+   struct whose field offsets differ from Linux's, so `syscalls_aarch64_linux.cyr`
+   now carries a `#ifdef CYRIUS_TARGET_MACOS` `Stat` enum (st_mode@4, st_size@96,
+   st_mtimespec@48 — empirically verified on ecb; the modern stat64 layout, unlike
+   x86-macOS's legacy st_size@72). Darwin has **no** `utimensat` syscall, so
+   `sys_utimensat` returns `-ENOSYS` (78) on the macOS build (two-`#ifdef` form so
+   svc 280 is never emitted there; setattrlist emulation deferred — no consumer).
+   Closes `issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md`.
+
+**Benchmark:** `self_compile 500 ms` (vs 489 ms @ 6.1.19 — box noise), `cycc
+1,045,688 B` (**unchanged** — the fix is in the aarch64 backend; x86 `cycc` is
+byte-identical). check.sh **87/87** (api-surface snapshot +4 sandhi fns); all 170
+`.tcyr` clean (per-file exit loop 170/170). x86 self-host **byte-identical** (and
+binary unchanged). **at-family verified on real hardware**: a stat/link/rename/
+utimensat harness returns the right values + Darwin struct fields (`st_size=5`,
+`st_mode=0100644`, valid `st_mtime`, `utimensat=-ENOSYS`) on **ecb (arm64-macOS)**;
+no regression on x86_64 + aarch64 Linux (qemu). Cross-OS self-host **byte-identical
+on ecb (macOS arm64, exercises the new ESYSXLAT in the macho cycc) + cass (Windows
+PE32+)**. sandhi 1.4.5 smoke-compiles + links on both TLS backends.
+
+### Changed
+
+- **Folded sandhi 1.4.5** into `lib/sandhi.cyr` (byte-identical to dist):
+  native-TLS-default backend selection API (`sandhi_tls_use_native`/`_use_libssl`/
+  `_backend`/`_native_available`) + a libssl `SSL_SESSION` leak fix (capture gated
+  on cache-enabled). Requires cyrius ≥ 6.1.19 (the native + brk/fdlopen fixes it
+  depends on).
+
+### Fixed
+
+- **`src/backend/aarch64/emit.cyr` + `lib/syscalls_aarch64_linux.cyr` +
+  `lib/syscalls_linux_common.cyr`: arm64-macOS `*at()` family port.** `sys_stat`/
+  `sys_lstat`/`sys_fstatat` (newfstatat 262→Darwin fstatat64 470), `sys_link`/
+  `sys_linkat` (37→471), `sys_rename`/`sys_renameat` (38→465) now route correctly on
+  macho-arm (were `rc -9/-14`), with a Darwin `stat64` `Stat` enum (`#ifdef
+  CYRIUS_TARGET_MACOS`) so field accessors read the right offsets. `sys_utimensat`
+  returns `-ENOSYS` on macOS (Darwin lacks the syscall). x86-Linux + aarch64-Linux
+  byte-identical (the new ESYSXLAT entries are `_TARGET_MACHO`-gated; the Linux
+  `Stat`/`utimensat` paths are unchanged).
+
 ## [6.1.19] — 2026-06-09
 
 **v6.1.x slot 19: two TLS-stack bugs surfaced by sandhi 1.4.5 — fixed together.**

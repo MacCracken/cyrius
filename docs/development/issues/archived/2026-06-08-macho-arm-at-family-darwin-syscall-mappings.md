@@ -1,5 +1,14 @@
 # macho-arm: POSIX *at()/stat/utimensat stdlib wrappers lack Darwin ESYSXLAT mappings
 
+> **RESOLVED v6.1.20** — added the `_TARGET_MACHO==2` ESYSXLAT renumbers
+> `newfstatat 262→fstatat64 470`, `linkat 37→471`, `renameat 38→465` (pure
+> renumbers, Darwin at-family; llvm-mc verified) + `_macho_arm_routes` entries; a
+> `#ifdef CYRIUS_TARGET_MACOS` `Stat` enum (st_mode@4, st_size@96, st_mtimespec@48,
+> empirically verified on ecb) so field accessors read the Darwin stat64 layout;
+> and `sys_utimensat`→`-ENOSYS` on macOS (Darwin has no utimensat; setattrlist
+> emulation deferred — no consumer). Verified on ecb: stat/link/rename return
+> correct values + struct fields. See CHANGELOG [6.1.20].
+
 - **Filed**: 2026-06-08 (v6.1.3, surfaced by the POSIX `*at()` family slot)
 - **Affects**: `src/backend/aarch64/emit.cyr` `ESYSXLAT` (the `_TARGET_MACHO == 2` branch), for native arm64-macOS (ecb) consumers of `lib/syscalls.cyr`.
 - **Severity**: Medium / latent. **PRE-EXISTING for `sys_stat`** (broken on macho-arm before this slot — no Darwin `newfstatat` mapping). No in-tree consumer calls these on macОS today, so nothing regresses; the toolchain/compiler itself does not use them. arm64-macOS is the supported macOS target (x86-macOS HELD).

@@ -2466,6 +2466,8 @@ sandhi::sandhi_stream_err/1
 sandhi::sandhi_stream_events/1
 sandhi::sandhi_stream_status/1
 sandhi::sandhi_stream_stopped/1
+sandhi::sandhi_tls_backend/0
+sandhi::sandhi_tls_native_available/0
 sandhi::sandhi_tls_policy_combine/2
 sandhi::sandhi_tls_policy_combine_a/3
 sandhi::sandhi_tls_policy_enforcement_available/0
@@ -2483,6 +2485,8 @@ sandhi::sandhi_tls_policy_new_trust_store/1
 sandhi::sandhi_tls_policy_new_trust_store_a/2
 sandhi::sandhi_tls_policy_pinned_hash/1
 sandhi::sandhi_tls_policy_trust_store/1
+sandhi::sandhi_tls_use_libssl/0
+sandhi::sandhi_tls_use_native/0
 sandhi::sandhi_trace_begin/1
 sandhi::sandhi_trace_depth/0
 sandhi::sandhi_trace_enable/1

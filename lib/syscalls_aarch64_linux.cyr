@@ -361,6 +361,29 @@ var LINUX_REBOOT_MAGIC2 = 672274793;
 # ...
 # Total = 128 bytes; we use STAT_BUFSZ = 144 (= max of both arches)
 # so consumer alloc/var sites stay arch-clean.
+#
+# This file is included for BOTH aarch64-Linux AND macho-arm (arm64-macOS); the
+# ESYSXLAT macho branch renumbers newfstatat(262)→Darwin fstatat64(470), which
+# fills a Darwin `struct stat64` whose field offsets differ from the Linux
+# generic-stat layout. So the Stat enum is per-OS (mirrors the OpenFlag split
+# above). Darwin arm64 offsets EMPIRICALLY verified on ecb (v6.1.20):
+# st_mode@4, st_size@96, st_mtimespec@48 (sec) / @56 (nsec). Note these differ
+# from x86-macOS's legacy-stat layout in syscalls_macos.cyr (st_size@72) — the
+# arm64 fstatat64 struct is the modern stat64 with birthtimespec.
+# See issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md.
+#ifdef CYRIUS_TARGET_MACOS
+enum Stat {
+    STAT_MODE = 4;
+    STAT_NLINK = 6;
+    STAT_UID = 16;
+    STAT_GID = 20;
+    STAT_SIZE = 96;
+    STAT_MTIME = 48;
+    STAT_MTIME_NSEC = 56;
+    STAT_BUFSZ = 144;
+}
+#endif
+#ifdef CYRIUS_TARGET_LINUX
 enum Stat {
     STAT_MODE = 16;
     STAT_NLINK = 20;
@@ -371,6 +394,7 @@ enum Stat {
     STAT_MTIME_NSEC = 96;
     STAT_BUFSZ = 144;
 }
+#endif
 
 # ================================================================
 # Syscall wrappers

@@ -14,47 +14,49 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.19** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,688 B (+568 B @ 6.1.19 — `lib/alloc.cyr` brk→mmap chunk-bump allocator) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,384 B (+536 B @ 6.1.19 — same allocator change in its x86 runtime) |
+| **Version** | **6.1.20** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,688 B (unchanged @ 6.1.20 — the at-family fix is in the aarch64 backend; x86 cycc byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,752 B (+368 B @ 6.1.20 — the 3 new macho-branch ESYSXLAT entries compiled in as dormant code) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.19 — PE uses `alloc_windows.cyr`, not the Linux block) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.20 — PE backend untouched) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
 | stdlib | 94 `lib/*.cyr` (85 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~489 ms (box noise) |
+| bench (every-release gate) | self_compile ~500 ms (box noise) |
 
-> **Handoff (2026-06-09):** v6.1.19 ready for cut — **two TLS-stack bugs from
-> sandhi 1.4.5's libssl→native cutover, fixed together** (bayan carve reslotted →
-> 6.1.20, ganita → 6.1.21).
-> (1) **libssl backend SIGSEGV** (`issues/archived/2026-06-09-brk-bump-heap-vs-fdlopen-libssl-malloc.md`):
-> `lib/alloc.cyr`'s Linux heap grew via `brk(2)`, which glibc malloc's arena (pulled
-> in by `fdlopen`→libssl) also owns → first heap-grow clobbered the shared break →
-> process SIGSEGV inside `libssl.so.3` (reproduced with ZERO sandhi code). Fixed:
-> Linux heap is now an **anonymous-`mmap` chunk-bump allocator** (mirrors
-> `alloc_agnos.cyr` — 256 MB chunks, fresh mmap on overflow, no contiguity needed),
-> off `brk` entirely. A reserve+hint-grow first cut regressed `unicode_normconf`
-> (>256 MB → non-contiguous grow → null → segfault); the chunk chain has no
-> contiguity requirement.
-> (2) **Native backend chain-verify gap** (`issues/archived/2026-06-09-native-tls-handshake-gap-public-servers.md`):
-> reported as a handshake gap (native reached 1.1.1.1, not example.com); really
-> **cert-chain verification** — both handshakes complete. example.com (Cloudflare)
-> ships its SSL.com root cross-signed by AAA in the wire chain; sigil's rigid
-> `x509_verify_chain` rejected the extra cert. `tls_native_client_verify_chain` now
-> does **RFC 5280 §6.1 path building** (anchor at any trusted root, ignore
-> extra/cross-signed certs) — cyrius-side, NOT in vendored sigil.
-> `version-bump.sh 6.1.19` applied; **user pushes/tags after CI**. Gates: x86 cycc
-> byte-identical self-host (two-step, heap change; +568 B), check.sh **87/87**, all
-> 170 tcyr clean (per-file exit loop 170/170, incl. the >256 MB normconf), bench
-> self_compile 489 ms. Allocator verified on **x86_64 + aarch64 Linux** (qemu, 600 MB
-> across chunks + reset). **Cross-OS BOTH GREEN** — ecb `SELFHOST_OK`, cass
-> `SELFHOST_OK` (both alloc changes `CYRIUS_TARGET_LINUX`-gated → macOS/Windows cycc
-> byte-unaffected; native-TLS fix is lib-only). **Live TLS:** native + libssl each
-> connect to example.com/1.1.1.1/google/github/cloudflare/wikipedia/letsencrypt/
-> digicert/amazon. Repros kept under `issues/repros/` as regression artifacts.
+> **Handoff (2026-06-09):** v6.1.20 ready for cut — **sandhi 1.4.5 fold + macho-arm
+> `*at()`/stat Darwin port** (bayan carve reslotted → 6.1.21, ganita → 6.1.22).
+> (1) **Folded sandhi 1.4.5** into `lib/sandhi.cyr` (byte-identical): native-TLS-
+> default backend-selection API (`sandhi_tls_use_native`/`_use_libssl`/`_backend`/
+> `_native_available`) — the consumer companion to 6.1.19's TLS fixes — plus a
+> libssl `SSL_SESSION` leak fix (capture gated on cache-enabled). api-surface
+> snapshot +4.
+> (2) **macho-arm `*at()`/stat/link/rename port** (`issues/archived/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md`):
+> on arm64-macOS the aarch64-Linux stdlib's `sys_stat`/`sys_lstat`/`sys_fstatat`
+> (262), `sys_link`/`sys_linkat` (37), `sys_rename`/`sys_renameat` (38),
+> `sys_utimensat` (280) hit unmapped `ESYSXLAT` slots → stale `x16` → wrong Darwin
+> syscall (`rc -9/-14` on ecb). Added the `_TARGET_MACHO==2` pure renumbers in
+> `src/backend/aarch64/emit.cyr` — `newfstatat 262→fstatat64 470`, `linkat 37→471`,
+> `renameat 38→465` (Darwin nums from MacOSX.sdk, llvm-mc `-arch arm64` verified) +
+> `_macho_arm_routes` whitelist. `fstatat64` fills a Darwin `stat64` struct, so
+> `syscalls_aarch64_linux.cyr` carries a `#ifdef CYRIUS_TARGET_MACOS` `Stat` enum
+> (st_mode@4, st_size@96, st_mtimespec@48 — empirically dumped on ecb). Darwin has
+> NO `utimensat` → `sys_utimensat` returns `-ENOSYS` on the macOS build (two-`#ifdef`
+> form keeps svc 280 out of the emit; setattrlist emulation deferred, no consumer).
+> `version-bump.sh 6.1.20` applied; **user pushes/tags after CI**. Gates: x86 cycc
+> byte-identical self-host (and binary **unchanged** — fix is aarch64-only), check.sh
+> **87/87** (api-surface +4), all 170 tcyr clean (per-file exit loop 170/170), bench
+> self_compile 500 ms. **at-family verified on real ecb** (stat/link/rename/utimensat
+> harness → `st_size=5`, `st_mode=0100644`, valid `st_mtime`, `utimensat=-ENOSYS`); no
+> regression on x86_64 + aarch64 Linux (qemu). **Cross-OS BOTH GREEN** — ecb
+> `SELFHOST_OK` (macho cycc bakes in the new ESYSXLAT), cass `SELFHOST_OK`. sandhi
+> 1.4.5 smoke-compiles + links on both TLS backends.
+> **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
+> constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
+> needs an upstream sandhi fix + re-fold, not in 1.4.5.
 > **Deferred polish:** relocate the 64 KB `_ts_cst` scratch to the ts_base heap
 > (held until after the carves).
 >
