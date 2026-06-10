@@ -4,8 +4,7 @@ include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
 include "lib/math.cyr"
-include "lib/matrix.cyr"
-include "lib/linalg.cyr"
+include "lib/ganita.cyr"
 
 alloc_init();
 
@@ -20,181 +19,181 @@ fn assert_f64_near(a, b, msg) {
 }
 
 # ── Tier 3: utilities ──
-test_group("mat_copy");
-var m1 = mat_new(2, 2);
-mat_set(m1, 0, 0, f(3)); mat_set(m1, 0, 1, f(7));
-mat_set(m1, 1, 0, f(1)); mat_set(m1, 1, 1, f(5));
-var m1c = mat_copy(m1);
-assert_f64_near(mat_get(m1c, 0, 1), f(7), "copy [0,1]");
-assert_eq(mat_rows(m1c), 2, "copy rows");
+test_group("ganita_mat_copy");
+var m1 = ganita_mat_new(2, 2);
+ganita_mat_set(m1, 0, 0, f(3)); ganita_mat_set(m1, 0, 1, f(7));
+ganita_mat_set(m1, 1, 0, f(1)); ganita_mat_set(m1, 1, 1, f(5));
+var m1c = ganita_mat_copy(m1);
+assert_f64_near(ganita_mat_get(m1c, 0, 1), f(7), "copy [0,1]");
+assert_eq(ganita_mat_rows(m1c), 2, "copy rows");
 
-test_group("mat_neg");
-var mn = mat_neg(m1);
-assert_f64_near(mat_get(mn, 0, 0), f64_neg(f(3)), "neg [0,0]");
+test_group("ganita_mat_neg");
+var mn = ganita_mat_neg(m1);
+assert_f64_near(ganita_mat_get(mn, 0, 0), f64_neg(f(3)), "neg [0,0]");
 
-test_group("mat_row/col");
-var row0 = mat_row(m1, 0);
+test_group("ganita_mat_row/col");
+var row0 = ganita_mat_row(m1, 0);
 assert_f64_near(load64(row0), f(3), "row0[0]");
 assert_f64_near(load64(row0 + 8), f(7), "row0[1]");
-var col1 = mat_col(m1, 1);
+var col1 = ganita_mat_col(m1, 1);
 assert_f64_near(load64(col1), f(7), "col1[0]");
 assert_f64_near(load64(col1 + 8), f(5), "col1[1]");
 
-test_group("mat_trace");
-assert_f64_near(mat_trace(m1), f(8), "trace 3+5");
+test_group("ganita_mat_trace");
+assert_f64_near(ganita_mat_trace(m1), f(8), "trace 3+5");
 
-test_group("mat_frobenius");
-var id2 = mat_identity(2);
-assert_f64_near(mat_frobenius(id2), f64_sqrt(f(2)), "frobenius I2");
+test_group("ganita_mat_frobenius");
+var id2 = ganita_mat_identity(2);
+assert_f64_near(ganita_mat_frobenius(id2), f64_sqrt(f(2)), "frobenius I2");
 
-test_group("mat_is_symmetric");
-var sym = mat_new(2, 2);
-mat_set(sym, 0, 0, f(4)); mat_set(sym, 0, 1, f(2));
-mat_set(sym, 1, 0, f(2)); mat_set(sym, 1, 1, f(3));
-assert_eq(mat_is_symmetric(sym, eps), 1, "symmetric yes");
-mat_set(sym, 1, 0, f(9));
-assert_eq(mat_is_symmetric(sym, eps), 0, "symmetric no");
+test_group("ganita_mat_is_symmetric");
+var sym = ganita_mat_new(2, 2);
+ganita_mat_set(sym, 0, 0, f(4)); ganita_mat_set(sym, 0, 1, f(2));
+ganita_mat_set(sym, 1, 0, f(2)); ganita_mat_set(sym, 1, 1, f(3));
+assert_eq(ganita_mat_is_symmetric(sym, eps), 1, "symmetric yes");
+ganita_mat_set(sym, 1, 0, f(9));
+assert_eq(ganita_mat_is_symmetric(sym, eps), 0, "symmetric no");
 
-test_group("mat_eq");
-var a2 = mat_identity(2);
-var b2 = mat_identity(2);
-assert_eq(mat_eq(a2, b2, eps), 1, "eq identity");
-mat_set(b2, 0, 0, f(2));
-assert_eq(mat_eq(a2, b2, eps), 0, "eq differ");
+test_group("ganita_mat_eq");
+var a2 = ganita_mat_identity(2);
+var b2 = ganita_mat_identity(2);
+assert_eq(ganita_mat_eq(a2, b2, eps), 1, "eq identity");
+ganita_mat_set(b2, 0, 0, f(2));
+assert_eq(ganita_mat_eq(a2, b2, eps), 0, "eq differ");
 
 # ── Tier 1: LU decomposition ──
-test_group("mat_lu 2x2");
+test_group("ganita_mat_lu 2x2");
 # A = [[4, 3], [6, 3]]
-var a = mat_new(2, 2);
-mat_set(a, 0, 0, f(4)); mat_set(a, 0, 1, f(3));
-mat_set(a, 1, 0, f(6)); mat_set(a, 1, 1, f(3));
-var lu = mat_new(2, 2);
+var a = ganita_mat_new(2, 2);
+ganita_mat_set(a, 0, 0, f(4)); ganita_mat_set(a, 0, 1, f(3));
+ganita_mat_set(a, 1, 0, f(6)); ganita_mat_set(a, 1, 1, f(3));
+var lu = ganita_mat_new(2, 2);
 var piv = alloc(16);
-var sign = mat_lu(a, lu, piv);
+var sign = ganita_mat_lu(a, lu, piv);
 assert(sign != 0, "lu not singular");
 
-test_group("mat_lu_solve");
+test_group("ganita_mat_lu_solve");
 # Solve Ax = [1, 0] (first column of inverse)
 var bvec = alloc(16);
 store64(bvec, f(1)); store64(bvec + 8, f(0));
 var xvec = alloc(16);
-mat_lu_solve(lu, piv, bvec, xvec);
+ganita_mat_lu_solve(lu, piv, bvec, xvec);
 # Verify A * x ≈ b
 var check0 = f64_add(f64_mul(f(4), load64(xvec)), f64_mul(f(3), load64(xvec + 8)));
 assert_f64_near(check0, f(1), "Ax=b check[0]");
 var check1 = f64_add(f64_mul(f(6), load64(xvec)), f64_mul(f(3), load64(xvec + 8)));
 assert_f64_near(check1, f(0), "Ax=b check[1]");
 
-test_group("mat_det");
+test_group("ganita_mat_det");
 # det([[4,3],[6,3]]) = 4*3 - 3*6 = -6
-assert_f64_near(mat_det(a), f64_neg(f(6)), "det 2x2");
+assert_f64_near(ganita_mat_det(a), f64_neg(f(6)), "det 2x2");
 
-test_group("mat_det 3x3");
-var a3 = mat_new(3, 3);
-mat_set(a3, 0, 0, f(1)); mat_set(a3, 0, 1, f(2)); mat_set(a3, 0, 2, f(3));
-mat_set(a3, 1, 0, f(0)); mat_set(a3, 1, 1, f(1)); mat_set(a3, 1, 2, f(4));
-mat_set(a3, 2, 0, f(5)); mat_set(a3, 2, 1, f(6)); mat_set(a3, 2, 2, f(0));
+test_group("ganita_mat_det 3x3");
+var a3 = ganita_mat_new(3, 3);
+ganita_mat_set(a3, 0, 0, f(1)); ganita_mat_set(a3, 0, 1, f(2)); ganita_mat_set(a3, 0, 2, f(3));
+ganita_mat_set(a3, 1, 0, f(0)); ganita_mat_set(a3, 1, 1, f(1)); ganita_mat_set(a3, 1, 2, f(4));
+ganita_mat_set(a3, 2, 0, f(5)); ganita_mat_set(a3, 2, 1, f(6)); ganita_mat_set(a3, 2, 2, f(0));
 # det = 1*(0-24) - 2*(0-20) + 3*(0-5) = -24+40-15 = 1
-assert_f64_near(mat_det(a3), f(1), "det 3x3");
+assert_f64_near(ganita_mat_det(a3), f(1), "det 3x3");
 
-test_group("mat_inv");
-var inv = mat_inv(a);
+test_group("ganita_mat_inv");
+var inv = ganita_mat_inv(a);
 assert(inv != 0, "inv not singular");
 # A * A^-1 should be I
-var prod = mat_mul(a, inv);
-assert_f64_near(mat_get(prod, 0, 0), f(1), "A*Ainv [0,0]");
-assert_f64_near(mat_get(prod, 0, 1), f(0), "A*Ainv [0,1]");
-assert_f64_near(mat_get(prod, 1, 0), f(0), "A*Ainv [1,0]");
-assert_f64_near(mat_get(prod, 1, 1), f(1), "A*Ainv [1,1]");
+var prod = ganita_mat_mul(a, inv);
+assert_f64_near(ganita_mat_get(prod, 0, 0), f(1), "A*Ainv [0,0]");
+assert_f64_near(ganita_mat_get(prod, 0, 1), f(0), "A*Ainv [0,1]");
+assert_f64_near(ganita_mat_get(prod, 1, 0), f(0), "A*Ainv [1,0]");
+assert_f64_near(ganita_mat_get(prod, 1, 1), f(1), "A*Ainv [1,1]");
 
-test_group("mat_cholesky");
+test_group("ganita_mat_cholesky");
 # A = [[4, 2], [2, 3]] — symmetric positive definite
-var spd = mat_new(2, 2);
-mat_set(spd, 0, 0, f(4)); mat_set(spd, 0, 1, f(2));
-mat_set(spd, 1, 0, f(2)); mat_set(spd, 1, 1, f(3));
-var low = mat_new(2, 2);
-var chol_ok = mat_cholesky(spd, low);
+var spd = ganita_mat_new(2, 2);
+ganita_mat_set(spd, 0, 0, f(4)); ganita_mat_set(spd, 0, 1, f(2));
+ganita_mat_set(spd, 1, 0, f(2)); ganita_mat_set(spd, 1, 1, f(3));
+var low = ganita_mat_new(2, 2);
+var chol_ok = ganita_mat_cholesky(spd, low);
 assert_eq(chol_ok, 1, "cholesky success");
 # L * L^T should equal A
-var lt = mat_transpose(low);
-var chol_prod = mat_mul(low, lt);
-assert_eq(mat_eq(spd, chol_prod, eps), 1, "LL^T = A");
+var lt = ganita_mat_transpose(low);
+var chol_prod = ganita_mat_mul(low, lt);
+assert_eq(ganita_mat_eq(spd, chol_prod, eps), 1, "LL^T = A");
 
-test_group("mat_cholesky_solve");
+test_group("ganita_mat_cholesky_solve");
 var cb = alloc(16);
 store64(cb, f(1)); store64(cb + 8, f(2));
 var cx = alloc(16);
-mat_cholesky_solve(low, cb, cx);
+ganita_mat_cholesky_solve(low, cb, cx);
 # Verify A * x ≈ b
 var cc0 = f64_add(f64_mul(f(4), load64(cx)), f64_mul(f(2), load64(cx + 8)));
 var cc1 = f64_add(f64_mul(f(2), load64(cx)), f64_mul(f(3), load64(cx + 8)));
 assert_f64_near(cc0, f(1), "cholesky solve [0]");
 assert_f64_near(cc1, f(2), "cholesky solve [1]");
 
-test_group("mat_qr");
+test_group("ganita_mat_qr");
 # A = [[1, -1], [1, 1]] — simple QR
-var qm = mat_new(2, 2);
-mat_set(qm, 0, 0, f(1)); mat_set(qm, 0, 1, f64_neg(f(1)));
-mat_set(qm, 1, 0, f(1)); mat_set(qm, 1, 1, f(1));
-var q = mat_new(2, 2);
-var r = mat_new(2, 2);
-mat_qr(qm, q, r);
+var qm = ganita_mat_new(2, 2);
+ganita_mat_set(qm, 0, 0, f(1)); ganita_mat_set(qm, 0, 1, f64_neg(f(1)));
+ganita_mat_set(qm, 1, 0, f(1)); ganita_mat_set(qm, 1, 1, f(1));
+var q = ganita_mat_new(2, 2);
+var r = ganita_mat_new(2, 2);
+ganita_mat_qr(qm, q, r);
 # Q * R should equal A
-var qr_prod = mat_mul(q, r);
-assert_eq(mat_eq(qm, qr_prod, eps), 1, "QR = A");
+var qr_prod = ganita_mat_mul(q, r);
+assert_eq(ganita_mat_eq(qm, qr_prod, eps), 1, "QR = A");
 # Q should be orthogonal: Q^T * Q = I
-var qtq = mat_mul(mat_transpose(q), q);
-assert_eq(mat_eq(qtq, mat_identity(2), eps), 1, "Q^T*Q = I");
+var qtq = ganita_mat_mul(ganita_mat_transpose(q), q);
+assert_eq(ganita_mat_eq(qtq, ganita_mat_identity(2), eps), 1, "Q^T*Q = I");
 
-test_group("mat_gaussian_elim");
+test_group("ganita_mat_gaussian_elim");
 # Solve 2x + 3y = 8, x + y = 3 → x=1, y=2
-var aug = mat_new(2, 3);
-mat_set(aug, 0, 0, f(2)); mat_set(aug, 0, 1, f(3)); mat_set(aug, 0, 2, f(8));
-mat_set(aug, 1, 0, f(1)); mat_set(aug, 1, 1, f(1)); mat_set(aug, 1, 2, f(3));
-assert_eq(mat_gaussian_elim(aug), 1, "gauss success");
-assert_f64_near(mat_get(aug, 0, 2), f(1), "gauss x=1");
-assert_f64_near(mat_get(aug, 1, 2), f(2), "gauss y=2");
+var aug = ganita_mat_new(2, 3);
+ganita_mat_set(aug, 0, 0, f(2)); ganita_mat_set(aug, 0, 1, f(3)); ganita_mat_set(aug, 0, 2, f(8));
+ganita_mat_set(aug, 1, 0, f(1)); ganita_mat_set(aug, 1, 1, f(1)); ganita_mat_set(aug, 1, 2, f(3));
+assert_eq(ganita_mat_gaussian_elim(aug), 1, "gauss success");
+assert_f64_near(ganita_mat_get(aug, 0, 2), f(1), "gauss x=1");
+assert_f64_near(ganita_mat_get(aug, 1, 2), f(2), "gauss y=2");
 
-test_group("mat_least_squares");
+test_group("ganita_mat_least_squares");
 # Overdetermined: 3 equations, 2 unknowns
 # x + y = 1, 2x + y = 2, x + 2y = 2  → least squares ~ x≈0.5, y≈0.5
-var ols = mat_new(3, 2);
-mat_set(ols, 0, 0, f(1)); mat_set(ols, 0, 1, f(1));
-mat_set(ols, 1, 0, f(2)); mat_set(ols, 1, 1, f(1));
-mat_set(ols, 2, 0, f(1)); mat_set(ols, 2, 1, f(2));
+var ols = ganita_mat_new(3, 2);
+ganita_mat_set(ols, 0, 0, f(1)); ganita_mat_set(ols, 0, 1, f(1));
+ganita_mat_set(ols, 1, 0, f(2)); ganita_mat_set(ols, 1, 1, f(1));
+ganita_mat_set(ols, 2, 0, f(1)); ganita_mat_set(ols, 2, 1, f(2));
 var ob = alloc(24);
 store64(ob, f(1)); store64(ob + 8, f(2)); store64(ob + 16, f(2));
 var ox = alloc(16);
-mat_least_squares(ols, ob, ox);
+ganita_mat_least_squares(ols, ob, ox);
 # Residuals should be small — check A^T * A * x ≈ A^T * b (normal equations)
-var ata = mat_mul(mat_transpose(ols), ols);
+var ata = ganita_mat_mul(ganita_mat_transpose(ols), ols);
 var atb_vec = alloc(16);
 var i = 0;
 while (i < 2) {
     var sum = f64_from(0);
     var j = 0;
     while (j < 3) {
-        sum = f64_add(sum, f64_mul(mat_get(ols, j, i), load64(ob + j * 8)));
+        sum = f64_add(sum, f64_mul(ganita_mat_get(ols, j, i), load64(ob + j * 8)));
         j = j + 1;
     }
     store64(atb_vec + i * 8, sum);
     i = i + 1;
 }
 # A^T*A*x should ≈ A^T*b
-var atax0 = f64_add(f64_mul(mat_get(ata, 0, 0), load64(ox)), f64_mul(mat_get(ata, 0, 1), load64(ox + 8)));
-var atax1 = f64_add(f64_mul(mat_get(ata, 1, 0), load64(ox)), f64_mul(mat_get(ata, 1, 1), load64(ox + 8)));
+var atax0 = f64_add(f64_mul(ganita_mat_get(ata, 0, 0), load64(ox)), f64_mul(ganita_mat_get(ata, 0, 1), load64(ox + 8)));
+var atax1 = f64_add(f64_mul(ganita_mat_get(ata, 1, 0), load64(ox)), f64_mul(ganita_mat_get(ata, 1, 1), load64(ox + 8)));
 assert_f64_near(atax0, load64(atb_vec), "least sq normal eq [0]");
 assert_f64_near(atax1, load64(atb_vec + 8), "least sq normal eq [1]");
 
 # ── Tier 2: eigendecomposition ──
-test_group("mat_eigen_sym 2x2");
+test_group("ganita_mat_eigen_sym 2x2");
 # Symmetric: [[2, 1], [1, 3]] eigenvalues ≈ 1.382, 3.618
-var esym = mat_new(2, 2);
-mat_set(esym, 0, 0, f(2)); mat_set(esym, 0, 1, f(1));
-mat_set(esym, 1, 0, f(1)); mat_set(esym, 1, 1, f(3));
+var esym = ganita_mat_new(2, 2);
+ganita_mat_set(esym, 0, 0, f(2)); ganita_mat_set(esym, 0, 1, f(1));
+ganita_mat_set(esym, 1, 0, f(1)); ganita_mat_set(esym, 1, 1, f(3));
 var evals = alloc(16);
-var evecs = mat_new(2, 2);
-var eiter = mat_eigen_sym(esym, evals, evecs);
+var evecs = ganita_mat_new(2, 2);
+var eiter = ganita_mat_eigen_sym(esym, evals, evecs);
 assert(eiter >= 0, "eigen converged");
 # Eigenvalues should sum to trace (2+3=5) and product to det (6-1=5)
 var esum = f64_add(load64(evals), load64(evals + 8));
@@ -202,92 +201,92 @@ assert_f64_near(esum, f(5), "eigenvalue sum = trace");
 var eprod = f64_mul(load64(evals), load64(evals + 8));
 assert_f64_near(eprod, f(5), "eigenvalue product = det");
 # V * diag(lambda) * V^T should reconstruct A
-var d_mat = mat_new(2, 2);
-mat_set(d_mat, 0, 0, load64(evals)); mat_set(d_mat, 1, 1, load64(evals + 8));
-var vt_e = mat_transpose(evecs);
-var recon = mat_mul(mat_mul(evecs, d_mat), vt_e);
-assert_eq(mat_eq(esym, recon, eps), 1, "V*D*V^T = A");
+var d_mat = ganita_mat_new(2, 2);
+ganita_mat_set(d_mat, 0, 0, load64(evals)); ganita_mat_set(d_mat, 1, 1, load64(evals + 8));
+var vt_e = ganita_mat_transpose(evecs);
+var recon = ganita_mat_mul(ganita_mat_mul(evecs, d_mat), vt_e);
+assert_eq(ganita_mat_eq(esym, recon, eps), 1, "V*D*V^T = A");
 
-test_group("mat_eigen_sym 3x3");
-var e3 = mat_new(3, 3);
-mat_set(e3, 0, 0, f(4)); mat_set(e3, 0, 1, f(1)); mat_set(e3, 0, 2, f(0));
-mat_set(e3, 1, 0, f(1)); mat_set(e3, 1, 1, f(3)); mat_set(e3, 1, 2, f(1));
-mat_set(e3, 2, 0, f(0)); mat_set(e3, 2, 1, f(1)); mat_set(e3, 2, 2, f(2));
+test_group("ganita_mat_eigen_sym 3x3");
+var e3 = ganita_mat_new(3, 3);
+ganita_mat_set(e3, 0, 0, f(4)); ganita_mat_set(e3, 0, 1, f(1)); ganita_mat_set(e3, 0, 2, f(0));
+ganita_mat_set(e3, 1, 0, f(1)); ganita_mat_set(e3, 1, 1, f(3)); ganita_mat_set(e3, 1, 2, f(1));
+ganita_mat_set(e3, 2, 0, f(0)); ganita_mat_set(e3, 2, 1, f(1)); ganita_mat_set(e3, 2, 2, f(2));
 var ev3 = alloc(24);
-var evec3 = mat_new(3, 3);
-mat_eigen_sym(e3, ev3, evec3);
+var evec3 = ganita_mat_new(3, 3);
+ganita_mat_eigen_sym(e3, ev3, evec3);
 var esum3 = f64_add(f64_add(load64(ev3), load64(ev3 + 8)), load64(ev3 + 16));
 assert_f64_near(esum3, f(9), "3x3 eigenvalue sum = trace");
 
 # ── Tier 2: SVD ──
-test_group("mat_svd 2x2");
-var svd_a = mat_new(2, 2);
-mat_set(svd_a, 0, 0, f(3)); mat_set(svd_a, 0, 1, f(0));
-mat_set(svd_a, 1, 0, f(0)); mat_set(svd_a, 1, 1, f(4));
-var svd_u = mat_new(2, 2);
+test_group("ganita_mat_svd 2x2");
+var svd_a = ganita_mat_new(2, 2);
+ganita_mat_set(svd_a, 0, 0, f(3)); ganita_mat_set(svd_a, 0, 1, f(0));
+ganita_mat_set(svd_a, 1, 0, f(0)); ganita_mat_set(svd_a, 1, 1, f(4));
+var svd_u = ganita_mat_new(2, 2);
 var svd_s = alloc(16);
-var svd_vt = mat_new(2, 2);
-mat_svd(svd_a, svd_u, svd_s, svd_vt);
+var svd_vt = ganita_mat_new(2, 2);
+ganita_mat_svd(svd_a, svd_u, svd_s, svd_vt);
 # Singular values of diagonal matrix are the diagonal values (sorted desc)
 var sv0 = load64(svd_s);
 var sv1 = load64(svd_s + 8);
 assert_f64_near(sv0, f(4), "svd sigma[0] = 4");
 assert_f64_near(sv1, f(3), "svd sigma[1] = 3");
 # U * diag(sigma) * V^T should reconstruct A
-var svd_diag = mat_new(2, 2);
-mat_set(svd_diag, 0, 0, sv0); mat_set(svd_diag, 1, 1, sv1);
-var svd_recon = mat_mul(mat_mul(svd_u, svd_diag), svd_vt);
-assert_eq(mat_eq(svd_a, svd_recon, eps), 1, "U*S*V^T = A");
+var svd_diag = ganita_mat_new(2, 2);
+ganita_mat_set(svd_diag, 0, 0, sv0); ganita_mat_set(svd_diag, 1, 1, sv1);
+var svd_recon = ganita_mat_mul(ganita_mat_mul(svd_u, svd_diag), svd_vt);
+assert_eq(ganita_mat_eq(svd_a, svd_recon, eps), 1, "U*S*V^T = A");
 
-test_group("mat_svd non-square");
+test_group("ganita_mat_svd non-square");
 # 3x2 matrix
-var svd_b = mat_new(3, 2);
-mat_set(svd_b, 0, 0, f(1)); mat_set(svd_b, 0, 1, f(0));
-mat_set(svd_b, 1, 0, f(0)); mat_set(svd_b, 1, 1, f(1));
-mat_set(svd_b, 2, 0, f(1)); mat_set(svd_b, 2, 1, f(1));
-var svd_u2 = mat_new(3, 2);
+var svd_b = ganita_mat_new(3, 2);
+ganita_mat_set(svd_b, 0, 0, f(1)); ganita_mat_set(svd_b, 0, 1, f(0));
+ganita_mat_set(svd_b, 1, 0, f(0)); ganita_mat_set(svd_b, 1, 1, f(1));
+ganita_mat_set(svd_b, 2, 0, f(1)); ganita_mat_set(svd_b, 2, 1, f(1));
+var svd_u2 = ganita_mat_new(3, 2);
 var svd_s2 = alloc(16);
-var svd_vt2 = mat_new(2, 2);
-mat_svd(svd_b, svd_u2, svd_s2, svd_vt2);
+var svd_vt2 = ganita_mat_new(2, 2);
+ganita_mat_svd(svd_b, svd_u2, svd_s2, svd_vt2);
 # Reconstruct: U * diag(sigma) * V^T
-var svd_d2 = mat_new(2, 2);
-mat_set(svd_d2, 0, 0, load64(svd_s2)); mat_set(svd_d2, 1, 1, load64(svd_s2 + 8));
-var svd_r2 = mat_mul(mat_mul(svd_u2, svd_d2), svd_vt2);
-assert_eq(mat_eq(svd_b, svd_r2, eps), 1, "SVD 3x2 reconstruct");
+var svd_d2 = ganita_mat_new(2, 2);
+ganita_mat_set(svd_d2, 0, 0, load64(svd_s2)); ganita_mat_set(svd_d2, 1, 1, load64(svd_s2 + 8));
+var svd_r2 = ganita_mat_mul(ganita_mat_mul(svd_u2, svd_d2), svd_vt2);
+assert_eq(ganita_mat_eq(svd_b, svd_r2, eps), 1, "SVD 3x2 reconstruct");
 
 # ── Tier 2: pseudoinverse ──
-test_group("mat_pseudo_inv");
+test_group("ganita_mat_pseudo_inv");
 # Pseudoinverse of [[1,0],[0,1],[1,1]] — overdetermined
-var pi_a = mat_new(3, 2);
-mat_set(pi_a, 0, 0, f(1)); mat_set(pi_a, 0, 1, f(0));
-mat_set(pi_a, 1, 0, f(0)); mat_set(pi_a, 1, 1, f(1));
-mat_set(pi_a, 2, 0, f(1)); mat_set(pi_a, 2, 1, f(1));
-var pinv = mat_pseudo_inv(pi_a);
+var pi_a = ganita_mat_new(3, 2);
+ganita_mat_set(pi_a, 0, 0, f(1)); ganita_mat_set(pi_a, 0, 1, f(0));
+ganita_mat_set(pi_a, 1, 0, f(0)); ganita_mat_set(pi_a, 1, 1, f(1));
+ganita_mat_set(pi_a, 2, 0, f(1)); ganita_mat_set(pi_a, 2, 1, f(1));
+var pinv = ganita_mat_pseudo_inv(pi_a);
 # A+ * A should be close to I (2x2)
-var apa = mat_mul(pinv, pi_a);
-assert_f64_near(mat_get(apa, 0, 0), f(1), "A+*A [0,0]");
-assert_f64_near(mat_get(apa, 0, 1), f(0), "A+*A [0,1]");
-assert_f64_near(mat_get(apa, 1, 0), f(0), "A+*A [1,0]");
-assert_f64_near(mat_get(apa, 1, 1), f(1), "A+*A [1,1]");
+var apa = ganita_mat_mul(pinv, pi_a);
+assert_f64_near(ganita_mat_get(apa, 0, 0), f(1), "A+*A [0,0]");
+assert_f64_near(ganita_mat_get(apa, 0, 1), f(0), "A+*A [0,1]");
+assert_f64_near(ganita_mat_get(apa, 1, 0), f(0), "A+*A [1,0]");
+assert_f64_near(ganita_mat_get(apa, 1, 1), f(1), "A+*A [1,1]");
 
 # ── Tier 2: rank + condition ──
-test_group("mat_rank");
-var rk_full = mat_identity(3);
-assert_eq(mat_rank(rk_full, eps), 3, "rank I3 = 3");
+test_group("ganita_mat_rank");
+var rk_full = ganita_mat_identity(3);
+assert_eq(ganita_mat_rank(rk_full, eps), 3, "rank I3 = 3");
 # Rank-deficient: row 2 = row 0 + row 1
-var rk_def = mat_new(3, 3);
-mat_set(rk_def, 0, 0, f(1)); mat_set(rk_def, 0, 1, f(0)); mat_set(rk_def, 0, 2, f(0));
-mat_set(rk_def, 1, 0, f(0)); mat_set(rk_def, 1, 1, f(1)); mat_set(rk_def, 1, 2, f(0));
-mat_set(rk_def, 2, 0, f(1)); mat_set(rk_def, 2, 1, f(1)); mat_set(rk_def, 2, 2, f(0));
-assert_eq(mat_rank(rk_def, eps), 2, "rank deficient = 2");
+var rk_def = ganita_mat_new(3, 3);
+ganita_mat_set(rk_def, 0, 0, f(1)); ganita_mat_set(rk_def, 0, 1, f(0)); ganita_mat_set(rk_def, 0, 2, f(0));
+ganita_mat_set(rk_def, 1, 0, f(0)); ganita_mat_set(rk_def, 1, 1, f(1)); ganita_mat_set(rk_def, 1, 2, f(0));
+ganita_mat_set(rk_def, 2, 0, f(1)); ganita_mat_set(rk_def, 2, 1, f(1)); ganita_mat_set(rk_def, 2, 2, f(0));
+assert_eq(ganita_mat_rank(rk_def, eps), 2, "rank deficient = 2");
 
-test_group("mat_condition");
-var cond_id = mat_condition(mat_identity(3));
+test_group("ganita_mat_condition");
+var cond_id = ganita_mat_condition(ganita_mat_identity(3));
 assert_f64_near(cond_id, f(1), "condition I = 1");
 # Well-conditioned diagonal
-var cond_d = mat_new(2, 2);
-mat_set(cond_d, 0, 0, f(4)); mat_set(cond_d, 1, 1, f(2));
-var cond_val = mat_condition(cond_d);
+var cond_d = ganita_mat_new(2, 2);
+ganita_mat_set(cond_d, 0, 0, f(4)); ganita_mat_set(cond_d, 1, 1, f(2));
+var cond_val = ganita_mat_condition(cond_d);
 assert_f64_near(cond_val, f(2), "condition diag(4,2) = 2");
 
 var result = assert_summary();

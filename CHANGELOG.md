@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.26] — 2026-06-10
+
+**v6.1.x slot 26: ganita distfile carve (Phase E, second half — closes the
+data/math stdlib carve).** Linear algebra (matrix + linalg) + the advanced half
+of `lib/math.cyr` split out into the **ganita** sibling repo (canonical
+`ganita_*` API), folded byte-identical into `lib/ganita.cyr` per the sandhi
+pattern. With bayan (v6.1.25) + ganita, stdlib is primitives-only.
+
+### Changed
+
+- **ganita carve (sandhi pattern).** `matrix` (14 fns) + `linalg` (26 fns — the
+  `mat_*` decomposition/solver suite: LU/det/inverse/Cholesky/QR/least-squares/
+  eigen-sym/SVD/pseudo-inverse) carved whole; the **13 advanced math fns**
+  (transcendental `sinh`/`cosh`/`tanh`/`pow`/`asin`/`acos`/`atan2`/`asinh`/
+  `acosh`/`atanh`/`hypot` + `fibonacci`/`binomial`) **split** out of
+  `lib/math.cyr`. All renamed `ganita_*` (rename-only — verified byte-identical
+  to the originals modulo the prefix). Folded into `lib/ganita.cyr` (ganita
+  1.0.0 distlib: 1,358 lines, 53 canonical + 53 alias). `lib/{matrix,linalg}.cyr`
+  deleted. **0 git deps preserved.** None of these were in `[deps].stdlib`
+  auto-prepend, so no auto-prepend ripple (unlike bayan).
+- **`lib/math.cyr` split**: stdlib keeps the primitives — F64 constants + basic
+  ops (min/max/clamp/le/ge/sign/trunc/fract/lerp) + `gcd`/`lcm` + `f64_parse` +
+  the `_f64_exp/ln/log2_polyfill` builtin-fallbacks. ganita's `math_advanced`
+  lowers `f64_exp`/`f64_ln` to those polyfills, so **ganita consumers keep stdlib
+  `math` in scope**. `gcd` (sigil's only math dep) STAYS → no crypto ripple.
+- **Back-compat aliases** (53): `mat_mul` → `ganita_mat_mul`, `f64_pow` →
+  `ganita_f64_pow`, `binomial` → `ganita_binomial`, … for the migration window.
+- cyrius-internal: ~9 test consumers migrated to `ganita_*` + `include
+  "lib/ganita.cyr"`. **cycc UNCHANGED** — self-hosts byte-identical (the compiler
+  has no dependency on matrix/linalg/advanced-math; no `#derive`-style change).
+
+### Migration (downstream — aliases bridge on re-pin)
+
+Code using the moved fns (`mat_*`, transcendental `f64_*`, `fibonacci`/
+`binomial`) swaps `include "lib/matrix.cyr"`/`"lib/linalg.cyr"` → `include
+"lib/ganita.cyr"` and keeps `lib/math.cyr` in scope (constants + polyfills). The
+aliases keep it building until call sites move to `ganita_*`.
+
+**Benchmark:** `self_compile 510 ms` (vs 493 ms @ 6.1.25 — box noise), `cycc
+1,045,752 B` (**unchanged** — ganita isn't compiled into cycc). check.sh
+**87/87**, all 170 `.tcyr` exit-0, api-surface regenerated (+ganita namespace).
+Self-host **byte-identical** (and ecb/cass `SELFHOST_OK`); fold byte-identical;
+ganita smoke exit-42 + tests 11/11.
+
 ## [6.1.25] — 2026-06-10
 
 **v6.1.x slot 25: bayan distfile carve (Phase E, first half) + `cyrius vet`/`deny`

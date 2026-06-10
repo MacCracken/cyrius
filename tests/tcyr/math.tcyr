@@ -3,6 +3,7 @@ include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/math.cyr"
+include "lib/ganita.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
@@ -46,7 +47,7 @@ assert_eq(f64_to(f64_lerp(f64_from(0), f64_from(10), f64_from(1))), 10, "lerp t=
 assert_eq(f64_to(f64_lerp(f64_from(0), f64_from(10), f64_div(f64_from(1), f64_from(2)))), 5, "lerp t=0.5");
 
 test_group("f64 hypot");
-assert_eq(f64_to(f64_hypot(f64_from(3), f64_from(4))), 5, "hypot 3-4-5");
+assert_eq(f64_to(ganita_f64_hypot(f64_from(3), f64_from(4))), 5, "hypot 3-4-5");
 
 test_group("f64 sign");
 assert(near(f64_sign(f64_from(42)), f64_from(1)) == 1, "sign pos");
@@ -65,19 +66,19 @@ assert_eq(gcd(0 - 12, 8), 4, "gcd negative");
 assert_eq(lcm(4, 6), 12, "lcm 4,6");
 assert_eq(lcm(0, 5), 0, "lcm 0");
 
-test_group("fibonacci");
-assert_eq(fibonacci(0), 0, "fib 0");
-assert_eq(fibonacci(1), 1, "fib 1");
-assert_eq(fibonacci(10), 55, "fib 10");
-assert_eq(fibonacci(20), 6765, "fib 20");
-assert_eq(fibonacci(93), 0 - 1, "fib overflow");
+test_group("ganita_fibonacci");
+assert_eq(ganita_fibonacci(0), 0, "fib 0");
+assert_eq(ganita_fibonacci(1), 1, "fib 1");
+assert_eq(ganita_fibonacci(10), 55, "fib 10");
+assert_eq(ganita_fibonacci(20), 6765, "fib 20");
+assert_eq(ganita_fibonacci(93), 0 - 1, "fib overflow");
 
-test_group("binomial");
-assert_eq(binomial(5, 2), 10, "C(5,2)");
-assert_eq(binomial(10, 0), 1, "C(n,0)");
-assert_eq(binomial(10, 10), 1, "C(n,n)");
-assert_eq(binomial(3, 5), 0, "C(3,5) invalid");
-assert_eq(binomial(20, 10), 184756, "C(20,10)");
+test_group("ganita_binomial");
+assert_eq(ganita_binomial(5, 2), 10, "C(5,2)");
+assert_eq(ganita_binomial(10, 0), 1, "C(n,0)");
+assert_eq(ganita_binomial(10, 10), 1, "C(n,n)");
+assert_eq(ganita_binomial(3, 5), 0, "C(3,5) invalid");
+assert_eq(ganita_binomial(20, 10), 184756, "C(20,10)");
 
 # v5.8.4: f64_log2 + _f64_log2_polyfill verification (phylax #1 unblock).
 # On x86 the parser dispatches f64_log2 to native x87 (fld1 fxch fyl2x).

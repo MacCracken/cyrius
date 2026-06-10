@@ -1,4 +1,4 @@
-# math_inverse_trig.tcyr — `f64_asin` / `f64_acos` / `f64_atan2`
+# math_inverse_trig.tcyr — `ganita_f64_asin` / `ganita_f64_acos` / `ganita_f64_atan2`
 # (v4.8.5-alpha5)
 #
 # Headline fix for abaco: atan2 quadrant correctness. abaco 1.1.0
@@ -10,6 +10,7 @@
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/math.cyr"
+include "lib/ganita.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
@@ -28,46 +29,46 @@ var F64_PI_6 = 0x3FE0_C152_382D_7365;   # π/6
 var F64_PI_3 = 0x3FF0_C152_382D_7365;   # π/3
 
 test_group("asin");
-assert_eq(near(f64_asin(0),        0),        1, "asin(0) = 0");
-assert_eq(near(f64_asin(F64_ONE),  F64_PI_2), 1, "asin(1) = π/2");
-assert_eq(near(f64_asin(F64_HALF), F64_PI_6), 1, "asin(½) = π/6");
-assert_eq(near(f64_asin(f64_neg(F64_ONE)), f64_neg(F64_PI_2)), 1,
+assert_eq(near(ganita_f64_asin(0),        0),        1, "asin(0) = 0");
+assert_eq(near(ganita_f64_asin(F64_ONE),  F64_PI_2), 1, "asin(1) = π/2");
+assert_eq(near(ganita_f64_asin(F64_HALF), F64_PI_6), 1, "asin(½) = π/6");
+assert_eq(near(ganita_f64_asin(f64_neg(F64_ONE)), f64_neg(F64_PI_2)), 1,
           "asin(−1) = −π/2");
 
 test_group("acos");
-assert_eq(near(f64_acos(F64_ONE), 0),        1, "acos(1) = 0");
-assert_eq(near(f64_acos(0),       F64_PI_2), 1, "acos(0) = π/2");
-assert_eq(near(f64_acos(F64_HALF), F64_PI_3), 1, "acos(½) = π/3");
-assert_eq(near(f64_acos(f64_neg(F64_ONE)), F64_PI), 1,
+assert_eq(near(ganita_f64_acos(F64_ONE), 0),        1, "acos(1) = 0");
+assert_eq(near(ganita_f64_acos(0),       F64_PI_2), 1, "acos(0) = π/2");
+assert_eq(near(ganita_f64_acos(F64_HALF), F64_PI_3), 1, "acos(½) = π/3");
+assert_eq(near(ganita_f64_acos(f64_neg(F64_ONE)), F64_PI), 1,
           "acos(−1) = π");
 
 test_group("atan2 quadrants");
 # Q1: (+, +) → atan(y/x), range (0, π/2)
-assert_eq(near(f64_atan2(F64_ONE, F64_ONE), F64_PI_4), 1,
+assert_eq(near(ganita_f64_atan2(F64_ONE, F64_ONE), F64_PI_4), 1,
           "atan2(1, 1) = π/4");
 # Q2: (+, −) → atan(y/x) + π, range (π/2, π)
 var three_pi_4 = f64_sub(F64_PI, F64_PI_4);
-assert_eq(near(f64_atan2(F64_ONE, f64_neg(F64_ONE)), three_pi_4), 1,
+assert_eq(near(ganita_f64_atan2(F64_ONE, f64_neg(F64_ONE)), three_pi_4), 1,
           "atan2(1, −1) = 3π/4");
 # Q3: (−, −) → atan(y/x) − π, range (−π, −π/2)
-assert_eq(near(f64_atan2(f64_neg(F64_ONE), f64_neg(F64_ONE)),
+assert_eq(near(ganita_f64_atan2(f64_neg(F64_ONE), f64_neg(F64_ONE)),
                f64_neg(three_pi_4)), 1,
           "atan2(−1, −1) = −3π/4");
 # Q4: (−, +) → atan(y/x), range (−π/2, 0)
-assert_eq(near(f64_atan2(f64_neg(F64_ONE), F64_ONE),
+assert_eq(near(ganita_f64_atan2(f64_neg(F64_ONE), F64_ONE),
                f64_neg(F64_PI_4)), 1,
           "atan2(−1, 1) = −π/4");
 
 test_group("atan2 axes + origin");
-assert_eq(f64_atan2(0, 0), 0, "atan2(0, 0) = 0 (convention)");
-assert_eq(near(f64_atan2(F64_ONE, 0),          F64_PI_2), 1,
+assert_eq(ganita_f64_atan2(0, 0), 0, "atan2(0, 0) = 0 (convention)");
+assert_eq(near(ganita_f64_atan2(F64_ONE, 0),          F64_PI_2), 1,
           "atan2(1, 0) = π/2");
-assert_eq(near(f64_atan2(f64_neg(F64_ONE), 0), f64_neg(F64_PI_2)), 1,
+assert_eq(near(ganita_f64_atan2(f64_neg(F64_ONE), 0), f64_neg(F64_PI_2)), 1,
           "atan2(−1, 0) = −π/2");
 # y = 0 axis: x > 0 → 0; x < 0 → π.
-assert_eq(near(f64_atan2(0, F64_ONE),          0),      1,
+assert_eq(near(ganita_f64_atan2(0, F64_ONE),          0),      1,
           "atan2(0, +x) = 0");
-assert_eq(near(f64_atan2(0, f64_neg(F64_ONE)), F64_PI), 1,
+assert_eq(near(ganita_f64_atan2(0, f64_neg(F64_ONE)), F64_PI), 1,
           "atan2(0, −x) = π");
 
 var _exit_code = assert_summary();

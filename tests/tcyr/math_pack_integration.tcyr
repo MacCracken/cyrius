@@ -14,6 +14,7 @@ include "lib/fnptr.cyr"
 include "lib/io.cyr"
 include "lib/bayan.cyr"
 include "lib/math.cyr"
+include "lib/ganita.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
@@ -43,17 +44,17 @@ assert_eq(f64_add(F64_HALF, F64_HALF), F64_ONE, "½ + ½ = 1");
 # -------- alpha5 + alpha6 — inverse trig / hyperbolic ------------
 test_group("inverse trig + hyperbolic round-trip");
 # sin(asin(½)) = ½ — sanity at exactly-rational input.
-assert_eq(near(f64_sin(f64_asin(F64_HALF)), F64_HALF), 1,
+assert_eq(near(f64_sin(ganita_f64_asin(F64_HALF)), F64_HALF), 1,
           "sin(asin(½)) = ½");
 # cosh(asinh(2))² − sinh(asinh(2))² = 1 (hyperbolic identity).
-var s = f64_asinh(F64_TWO);
-var c2 = f64_mul(f64_cosh(s), f64_cosh(s));
-var s2 = f64_mul(f64_sinh(s), f64_sinh(s));
+var s = ganita_f64_asinh(F64_TWO);
+var c2 = f64_mul(ganita_f64_cosh(s), ganita_f64_cosh(s));
+var s2 = f64_mul(ganita_f64_sinh(s), ganita_f64_sinh(s));
 assert_eq(near(f64_sub(c2, s2), F64_ONE), 1,
           "cosh² − sinh² = 1");
 # atan2(sin, cos) reconstructs the angle.
 var theta = F64_PI_4;
-var recon = f64_atan2(f64_sin(theta), f64_cos(theta));
+var recon = ganita_f64_atan2(f64_sin(theta), f64_cos(theta));
 assert_eq(near(recon, theta), 1, "atan2(sin θ, cos θ) = θ");
 
 # -------- alpha7 — ASCII case helpers ----------------------------

@@ -14,42 +14,41 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.25** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,752 B (+16 B @ 6.1.25 — 2 `#derive` emit strings `json_*`→`bayan_json_*`) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.25) |
+| **Version** | **6.1.26** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.26 — ganita is lib-only; cycc has no matrix/linalg/math dep) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.26) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.25) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.26) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
-| stdlib | 88 `lib/*.cyr` (bayan carve −7 +1 @ 6.1.25) · 79 programs |
-| bench (every-release gate) | self_compile ~506 ms (box noise) |
+| stdlib | 87 `lib/*.cyr` (bayan @.25 −7+1; ganita @.26 −2+1, math split) · 79 programs |
+| bench (every-release gate) | self_compile ~510 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.25 ready for cut — **bayan distfile carve**
-> (Phase E, first half; ganita → 6.1.26) **+ `cyrius vet`/`deny` ELF-emission fix.**
-> (1) **Carve:** json / toml / cyml / csv / base64 / bigint / u128 (3,352 lines,
-> 149 public fns, 0 cross-deps) extracted to the **bayan** sibling repo (bayan
-> 1.0.0), public fns prefixed `bayan_*` (rename-only), folded byte-identical into
-> `lib/bayan.cyr` (sandhi-pattern; the 7 `lib/<module>.cyr` deleted; `json`+`bigint`
-> removed from `[deps].stdlib`). **0 git deps preserved** (folded, not `[deps.bayan]`).
-> Back-compat aliases (`_compat`) export the legacy names for the downstream window.
-> (2) **cyrius-internal:** `#derive(Serialize)` deserialize templates emit
-> `bayan_json_*` (`src/frontend/lex_pp.cyr`); ~23 test/fixtures + `lib/tls_native.cyr`
-> (`bigint`→`bayan`, for sigil's `u256_*`) migrated. (3) **vet/deny fix:**
-> `cbt/commands.cyr` routed vet/deny to `cybs` (the asm compiler — emitted a stray
-> ELF) instead of `cyaudit`; fixed.
-> `version-bump.sh 6.1.25` to apply; **user pushes/tags after CI**. Gates: cycc
-> **self-host byte-identical** (+16 B, 2 emit strings), fold byte-identical, check.sh
-> **87/87**, all 170 tcyr exit-0 (per-file loop), api-surface regenerated (+149
-> `bayan_*`), bayan smoke exit-42 + tests 8/8. Adversarial verify (4-lens workflow):
-> no code bugs / no ud2 gaps.
-> **Downstream (aliases bridge; migrate on re-pin):** repos listing `json`/`bigint`
-> in `[deps].stdlib` (sigil/kybernet/bote/libro/argonaut/daimon/sandhi) get a
-> non-fatal `cyrius deps` copy error until they swap to bayan; `ws`/`sigil`/`patra`/
-> `tls` consumers must `include "lib/bayan.cyr"`. See CHANGELOG [6.1.25] Migration.
+> **Handoff (2026-06-10):** v6.1.26 ready for cut — **ganita distfile carve**
+> (Phase E, second half — CLOSES the stdlib data/math carve). matrix (14) +
+> linalg (26, `mat_*` decomposition/solver suite) carved whole; the **13 advanced
+> math fns** (transcendental + fibonacci/binomial) SPLIT out of `lib/math.cyr` →
+> the **ganita** sibling (ganita 1.0.0), all prefixed `ganita_*` (rename-only),
+> folded byte-identical into `lib/ganita.cyr` (1,358 lines; `lib/{matrix,linalg}.cyr`
+> deleted; `lib/math.cyr` trimmed to primitives — F64 constants + basic ops +
+> gcd/lcm + f64_parse + the `_f64_*_polyfill` builtin-fallbacks). **0 git deps
+> preserved.** Back-compat aliases (53). ~9 test consumers migrated to `ganita_*`.
+> **cycc UNCHANGED** — no compiler dep on matrix/linalg/advanced-math (self-hosts
+> byte-identical, no #derive-style change). **No ripple:** none of matrix/linalg/
+> math were auto-prepended; `gcd` (sigil's only math dep) STAYS in stdlib.
+> `version-bump.sh 6.1.26` to apply; **user pushes/tags after CI**. Gates: cycc
+> self-host **byte-identical (unchanged)**, fold byte-identical, check.sh **87/87**,
+> all 170 tcyr exit-0, api-surface regenerated (+ganita), ecb/cass `SELFHOST_OK`,
+> bench self_compile 510 ms, ganita smoke exit-42 + tests 11/11. Deterministic
+> verify: rename-only confirmed (0 diff lines), no orphaned ud2 callers.
+> **Downstream (aliases bridge; migrate on re-pin):** code using `mat_*` /
+> transcendental `f64_*` / `fibonacci`/`binomial` swaps `lib/matrix.cyr`/
+> `lib/linalg.cyr` includes → `lib/ganita.cyr` (keep `lib/math.cyr` for polyfills +
+> constants). Phase E (bayan .25 + ganita .26) DONE — stdlib is primitives-only.
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

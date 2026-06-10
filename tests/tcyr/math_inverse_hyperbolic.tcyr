@@ -1,4 +1,4 @@
-# math_inverse_hyperbolic.tcyr — `f64_asinh` / `acosh` / `atanh`
+# math_inverse_hyperbolic.tcyr — `ganita_f64_asinh` / `acosh` / `atanh`
 # (v4.8.5-alpha6)
 #
 # Round-trips + known identity points. The identity-based
@@ -8,6 +8,7 @@
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/math.cyr"
+include "lib/ganita.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
@@ -20,40 +21,40 @@ fn near(a, b) {
 
 test_group("asinh");
 # asinh(0) = 0
-assert_eq(near(f64_asinh(0), 0), 1, "asinh(0) = 0");
+assert_eq(near(ganita_f64_asinh(0), 0), 1, "asinh(0) = 0");
 # sinh(asinh(x)) = x for any x — round trip
-assert_eq(near(f64_sinh(f64_asinh(F64_ONE)), F64_ONE), 1,
+assert_eq(near(ganita_f64_sinh(ganita_f64_asinh(F64_ONE)), F64_ONE), 1,
           "sinh(asinh(1)) = 1");
-assert_eq(near(f64_sinh(f64_asinh(F64_TWO)), F64_TWO), 1,
+assert_eq(near(ganita_f64_sinh(ganita_f64_asinh(F64_TWO)), F64_TWO), 1,
           "sinh(asinh(2)) = 2");
 # asinh is odd: asinh(-x) = -asinh(x)
-assert_eq(near(f64_asinh(f64_neg(F64_ONE)),
-               f64_neg(f64_asinh(F64_ONE))), 1, "asinh odd");
+assert_eq(near(ganita_f64_asinh(f64_neg(F64_ONE)),
+               f64_neg(ganita_f64_asinh(F64_ONE))), 1, "asinh odd");
 
 test_group("acosh");
 # acosh(1) = 0
-assert_eq(near(f64_acosh(F64_ONE), 0), 1, "acosh(1) = 0");
+assert_eq(near(ganita_f64_acosh(F64_ONE), 0), 1, "acosh(1) = 0");
 # cosh(acosh(x)) = x for x ≥ 1
-assert_eq(near(f64_cosh(f64_acosh(F64_TWO)), F64_TWO), 1,
+assert_eq(near(ganita_f64_cosh(ganita_f64_acosh(F64_TWO)), F64_TWO), 1,
           "cosh(acosh(2)) = 2");
 # acosh is monotonic: acosh(2) > acosh(1) = 0.
-assert_eq(f64_gt(f64_acosh(F64_TWO), 0), 1, "acosh(2) > 0");
+assert_eq(f64_gt(ganita_f64_acosh(F64_TWO), 0), 1, "acosh(2) > 0");
 # cosh(acosh(2.5)) = 2.5
-assert_eq(near(f64_cosh(f64_acosh(F64_TWO_HALF)), F64_TWO_HALF), 1,
+assert_eq(near(ganita_f64_cosh(ganita_f64_acosh(F64_TWO_HALF)), F64_TWO_HALF), 1,
           "cosh(acosh(2.5)) = 2.5");
 
 test_group("atanh");
 # atanh(0) = 0
-assert_eq(near(f64_atanh(0), 0), 1, "atanh(0) = 0");
+assert_eq(near(ganita_f64_atanh(0), 0), 1, "atanh(0) = 0");
 # tanh(atanh(x)) = x for |x| < 1
-assert_eq(near(f64_tanh(f64_atanh(F64_HALF)), F64_HALF), 1,
+assert_eq(near(ganita_f64_tanh(ganita_f64_atanh(F64_HALF)), F64_HALF), 1,
           "tanh(atanh(½)) = ½");
 # atanh is odd: atanh(-x) = -atanh(x)
-assert_eq(near(f64_atanh(f64_neg(F64_HALF)),
-               f64_neg(f64_atanh(F64_HALF))), 1, "atanh odd");
+assert_eq(near(ganita_f64_atanh(f64_neg(F64_HALF)),
+               f64_neg(ganita_f64_atanh(F64_HALF))), 1, "atanh odd");
 # atanh sign: atanh(0.5) > 0, atanh(-0.5) < 0
-assert_eq(f64_gt(f64_atanh(F64_HALF), 0), 1, "atanh(½) > 0");
-assert_eq(f64_lt(f64_atanh(f64_neg(F64_HALF)), 0), 1, "atanh(−½) < 0");
+assert_eq(f64_gt(ganita_f64_atanh(F64_HALF), 0), 1, "atanh(½) > 0");
+assert_eq(f64_lt(ganita_f64_atanh(f64_neg(F64_HALF)), 0), 1, "atanh(−½) < 0");
 
 var _exit_code = assert_summary();
 syscall(60, _exit_code);

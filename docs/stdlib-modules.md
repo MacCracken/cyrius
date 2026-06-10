@@ -15,7 +15,8 @@ vendor at the patched tag, removed from `[deps]`):
 - **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
 - **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; ~6,664 lines)
 - **v6.0.x** — mabda 3.0.1 (GPU integration)
-- **v6.1.25** — bayan 1.0.0 (data-format & big-integer **carve** OUT of stdlib: json / toml / cyml / csv / base64 / bigint / u128 → `lib/bayan.cyr`, public fns renamed `bayan_*` with back-compat aliases; opt-in `include "lib/bayan.cyr"`). ganita (math domain) follows at v6.1.26.
+- **v6.1.25** — bayan 1.0.0 (data-format & big-integer **carve** OUT of stdlib: json / toml / cyml / csv / base64 / bigint / u128 → `lib/bayan.cyr`, public fns renamed `bayan_*` with back-compat aliases; opt-in `include "lib/bayan.cyr"`).
+- **v6.1.26** — ganita 1.0.0 (linear-algebra & advanced-math **carve**: matrix + linalg + the advanced half of math → `lib/ganita.cyr`, renamed `ganita_*` with aliases. Closes Phase E — the stdlib data/math carve).
 
 Mabda (GPU integration) folded into stdlib at 3.0.1 (v6.0.x,
 sandhi-pattern), removed from `[deps]`; with mabda vendored its
@@ -50,8 +51,9 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 | Types | tagged (Option), result (Result + ? operator; v5.8.28-.32), hashmap, hashmap_fast, trait, assert, bounds |
 | System | syscalls, callback, process, bench |
 | Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, freelist |
-| Data (math/regex) | regex, math, matrix, linalg (matrix/linalg are the ganita-carve candidates at v6.1.26) |
+| Math/regex (stdlib primitives) | regex, math (F64 constants + basic ops + gcd/lcm + f64_parse + f64-builtin polyfills) |
 | **Data formats + big-int (bayan)** | **bayan** — json / toml / cyml / csv / base64 / bigint (`u256`) / u128; folded v6.1.25, opt-in `include "lib/bayan.cyr"`; canonical `bayan_*` API + legacy aliases (`json_parse`, `u256_add`, …). Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must include bayan. |
+| **Linear algebra + advanced math (ganita)** | **ganita** — matrix (`ganita_mat_*`) + linalg (LU/det/inv/Cholesky/QR/least-squares/eigen/SVD) + advanced math (transcendental + fibonacci/binomial); folded v6.1.26, opt-in `include "lib/ganita.cyr"`; `ganita_*` + legacy aliases (`mat_mul`, `f64_pow`, …). Keep stdlib `math` in scope (f64-exp/ln polyfills). |
 | Unicode | unicode/categories, unicode/casefold, unicode/normalize (NFC/NFD/NFKC/NFKD), unicode/_decode |
 | Crypto | sha1, keccak, ct (constant-time primitives), overflow, **random** (kernel entropy via getrandom) |
 | Sandboxing | **security** (Landlock policy enums; v5.7.35) |

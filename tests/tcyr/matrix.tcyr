@@ -4,50 +4,50 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/vec.cyr"
 include "lib/math.cyr"
-include "lib/matrix.cyr"
+include "lib/ganita.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
 
-test_group("mat_new / mat_set / mat_get");
-var m = mat_new(3, 3);
+test_group("ganita_mat_new / ganita_mat_set / ganita_mat_get");
+var m = ganita_mat_new(3, 3);
 assert_nonnull(m, "new 3x3");
-mat_set(m, 0, 0, 1);
-mat_set(m, 0, 1, 2);
-mat_set(m, 0, 2, 3);
-mat_set(m, 1, 0, 4);
-mat_set(m, 1, 1, 5);
-mat_set(m, 1, 2, 6);
-mat_set(m, 2, 0, 7);
-mat_set(m, 2, 1, 8);
-mat_set(m, 2, 2, 9);
-assert_eq(mat_get(m, 0, 0), 1, "get 0,0");
-assert_eq(mat_get(m, 1, 1), 5, "get 1,1");
-assert_eq(mat_get(m, 2, 2), 9, "get 2,2");
-assert_eq(mat_get(m, 0, 2), 3, "get 0,2");
-assert_eq(mat_get(m, 2, 0), 7, "get 2,0");
+ganita_mat_set(m, 0, 0, 1);
+ganita_mat_set(m, 0, 1, 2);
+ganita_mat_set(m, 0, 2, 3);
+ganita_mat_set(m, 1, 0, 4);
+ganita_mat_set(m, 1, 1, 5);
+ganita_mat_set(m, 1, 2, 6);
+ganita_mat_set(m, 2, 0, 7);
+ganita_mat_set(m, 2, 1, 8);
+ganita_mat_set(m, 2, 2, 9);
+assert_eq(ganita_mat_get(m, 0, 0), 1, "get 0,0");
+assert_eq(ganita_mat_get(m, 1, 1), 5, "get 1,1");
+assert_eq(ganita_mat_get(m, 2, 2), 9, "get 2,2");
+assert_eq(ganita_mat_get(m, 0, 2), 3, "get 0,2");
+assert_eq(ganita_mat_get(m, 2, 0), 7, "get 2,0");
 
-test_group("mat_rows / mat_cols");
-assert_eq(mat_rows(m), 3, "rows");
-assert_eq(mat_cols(m), 3, "cols");
+test_group("ganita_mat_rows / ganita_mat_cols");
+assert_eq(ganita_mat_rows(m), 3, "rows");
+assert_eq(ganita_mat_cols(m), 3, "cols");
 
-test_group("mat_add");
-var a = mat_new(2, 2);
-var b = mat_new(2, 2);
-mat_set(a, 0, 0, 1); mat_set(a, 0, 1, 2);
-mat_set(a, 1, 0, 3); mat_set(a, 1, 1, 4);
-mat_set(b, 0, 0, 10); mat_set(b, 0, 1, 20);
-mat_set(b, 1, 0, 30); mat_set(b, 1, 1, 40);
-var c = mat_add(a, b);
-assert_eq(mat_get(c, 0, 0), 11, "add 0,0");
-assert_eq(mat_get(c, 1, 1), 44, "add 1,1");
+test_group("ganita_mat_add");
+var a = ganita_mat_new(2, 2);
+var b = ganita_mat_new(2, 2);
+ganita_mat_set(a, 0, 0, 1); ganita_mat_set(a, 0, 1, 2);
+ganita_mat_set(a, 1, 0, 3); ganita_mat_set(a, 1, 1, 4);
+ganita_mat_set(b, 0, 0, 10); ganita_mat_set(b, 0, 1, 20);
+ganita_mat_set(b, 1, 0, 30); ganita_mat_set(b, 1, 1, 40);
+var c = ganita_mat_add(a, b);
+assert_eq(ganita_mat_get(c, 0, 0), 11, "add 0,0");
+assert_eq(ganita_mat_get(c, 1, 1), 44, "add 1,1");
 
-test_group("mat_scale (f64)");
-var sf = mat_new(2, 2);
-mat_set(sf, 0, 0, f64_from(2));
-mat_set(sf, 1, 1, f64_from(4));
-var ss = mat_scale(sf, f64_from(3));
-assert_eq(f64_to(mat_get(ss, 0, 0)), 6, "scale 0,0");
-assert_eq(f64_to(mat_get(ss, 1, 1)), 12, "scale 1,1");
+test_group("ganita_mat_scale (f64)");
+var sf = ganita_mat_new(2, 2);
+ganita_mat_set(sf, 0, 0, f64_from(2));
+ganita_mat_set(sf, 1, 1, f64_from(4));
+var ss = ganita_mat_scale(sf, f64_from(3));
+assert_eq(f64_to(ganita_mat_get(ss, 0, 0)), 6, "scale 0,0");
+assert_eq(f64_to(ganita_mat_get(ss, 1, 1)), 12, "scale 1,1");
 
 var r = assert_summary();
