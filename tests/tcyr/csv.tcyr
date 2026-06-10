@@ -4,39 +4,42 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
-include "lib/csv.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
 
-test_group("csv_parse_line basic");
-var f1 = csv_parse_line("a,b,c");
+test_group("bayan_csv_parse_line basic");
+var f1 = bayan_csv_parse_line("a,b,c");
 assert_eq(vec_len(f1), 3, "3 fields");
 assert_eq(streq(vec_get(f1, 0), "a"), 1, "field 0");
 assert_eq(streq(vec_get(f1, 1), "b"), 1, "field 1");
 assert_eq(streq(vec_get(f1, 2), "c"), 1, "field 2");
 
 test_group("csv quoted fields");
-var f2 = csv_parse_line("\"hello, world\",plain,\"has \"\"quotes\"\"\"");
+var f2 = bayan_csv_parse_line("\"hello, world\",plain,\"has \"\"quotes\"\"\"");
 assert_eq(vec_len(f2), 3, "3 quoted");
 assert_eq(streq(vec_get(f2, 0), "hello, world"), 1, "comma in quotes");
 assert_eq(streq(vec_get(f2, 2), "has \"quotes\""), 1, "escaped quotes");
 
-test_group("csv_escape");
-assert_eq(streq(csv_escape("plain"), "plain"), 1, "no escape");
-assert_eq(streq(csv_escape("has,comma"), "\"has,comma\""), 1, "escape comma");
-assert_eq(streq(csv_escape("has\"quote"), "\"has\"\"quote\""), 1, "escape quote");
+test_group("bayan_csv_escape");
+assert_eq(streq(bayan_csv_escape("plain"), "plain"), 1, "no escape");
+assert_eq(streq(bayan_csv_escape("has,comma"), "\"has,comma\""), 1, "escape comma");
+assert_eq(streq(bayan_csv_escape("has\"quote"), "\"has\"\"quote\""), 1, "escape quote");
 
-test_group("csv_write_line");
+test_group("bayan_csv_write_line");
 var wf = vec_new();
 vec_push(wf, "a");
 vec_push(wf, "b,c");
 vec_push(wf, "d");
-var line = csv_write_line(wf);
+var line = bayan_csv_write_line(wf);
 assert_eq(streq(line, "a,\"b,c\",d\n"), 1, "write escaped");
 
 test_group("csv empty");
-var f3 = csv_parse_line("");
+var f3 = bayan_csv_parse_line("");
 assert_eq(vec_len(f3), 0, "empty has 0 fields");
 
 var r = assert_summary();

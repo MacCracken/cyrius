@@ -2,81 +2,84 @@
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
-include "lib/bigint.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
 
 test_group("u256 create");
-var z = u256_zero();
-assert_eq(u256_is_zero(z), 1, "zero is zero");
-var one = u256_from(1);
-assert_eq(u256_is_zero(one), 0, "one not zero");
-assert_eq(u256_limb(one, 0), 1, "limb0 = 1");
-assert_eq(u256_limb(one, 1), 0, "limb1 = 0");
+var z = bayan_u256_zero();
+assert_eq(bayan_u256_is_zero(z), 1, "zero is zero");
+var one = bayan_u256_from(1);
+assert_eq(bayan_u256_is_zero(one), 0, "one not zero");
+assert_eq(bayan_u256_limb(one, 0), 1, "limb0 = 1");
+assert_eq(bayan_u256_limb(one, 1), 0, "limb1 = 0");
 
 test_group("u256 compare");
-var a = u256_from(100);
-var b = u256_from(200);
-assert_eq(u256_cmp(a, b), 0 - 1, "100 < 200");
-assert_eq(u256_cmp(b, a), 1, "200 > 100");
-assert_eq(u256_cmp(a, a), 0, "self equal");
-assert_eq(u256_eq(a, a), 1, "eq self");
-assert_eq(u256_eq(a, b), 0, "neq diff");
+var a = bayan_u256_from(100);
+var b = bayan_u256_from(200);
+assert_eq(bayan_u256_cmp(a, b), 0 - 1, "100 < 200");
+assert_eq(bayan_u256_cmp(b, a), 1, "200 > 100");
+assert_eq(bayan_u256_cmp(a, a), 0, "self equal");
+assert_eq(bayan_u256_eq(a, a), 1, "eq self");
+assert_eq(bayan_u256_eq(a, b), 0, "neq diff");
 
 test_group("u256 add");
-var r = u256_zero();
-u256_add(r, u256_from(100), u256_from(200));
-assert_eq(u256_limb(r, 0), 300, "100+200=300");
+var r = bayan_u256_zero();
+bayan_u256_add(r, bayan_u256_from(100), bayan_u256_from(200));
+assert_eq(bayan_u256_limb(r, 0), 300, "100+200=300");
 # Add with high limb
-var big = u256_zero();
-u256_set_limb(big, 3, 1);
-var big2 = u256_clone(big);
-u256_add(r, big, big2);
-assert_eq(u256_limb(r, 3), 2, "high limb add");
+var big = bayan_u256_zero();
+bayan_u256_set_limb(big, 3, 1);
+var big2 = bayan_u256_clone(big);
+bayan_u256_add(r, big, big2);
+assert_eq(bayan_u256_limb(r, 3), 2, "high limb add");
 
 test_group("u256 sub");
-u256_sub(r, u256_from(200), u256_from(100));
-assert_eq(u256_limb(r, 0), 100, "200-100=100");
+bayan_u256_sub(r, bayan_u256_from(200), bayan_u256_from(100));
+assert_eq(bayan_u256_limb(r, 0), 100, "200-100=100");
 
 test_group("u256 mul");
-u256_mul(r, u256_from(7), u256_from(6));
-assert_eq(u256_limb(r, 0), 42, "7*6=42");
-u256_mul(r, u256_from(1000000), u256_from(1000000));
-assert_eq(u256_limb(r, 0), 1000000000000, "1M*1M");
+bayan_u256_mul(r, bayan_u256_from(7), bayan_u256_from(6));
+assert_eq(bayan_u256_limb(r, 0), 42, "7*6=42");
+bayan_u256_mul(r, bayan_u256_from(1000000), bayan_u256_from(1000000));
+assert_eq(bayan_u256_limb(r, 0), 1000000000000, "1M*1M");
 
 test_group("u256 shift");
-var v = u256_from(1);
-u256_shl1(r, v);
-assert_eq(u256_limb(r, 0), 2, "1<<1=2");
-u256_shr1(r, u256_from(4));
-assert_eq(u256_limb(r, 0), 2, "4>>1=2");
+var v = bayan_u256_from(1);
+bayan_u256_shl1(r, v);
+assert_eq(bayan_u256_limb(r, 0), 2, "1<<1=2");
+bayan_u256_shr1(r, bayan_u256_from(4));
+assert_eq(bayan_u256_limb(r, 0), 2, "4>>1=2");
 
 test_group("u256 mod");
-u256_mod(r, u256_from(17), u256_from(5));
-assert_eq(u256_limb(r, 0), 2, "17 mod 5 = 2");
+bayan_u256_mod(r, bayan_u256_from(17), bayan_u256_from(5));
+assert_eq(bayan_u256_limb(r, 0), 2, "17 mod 5 = 2");
 
 test_group("u256 addmod");
-u256_addmod(r, u256_from(4), u256_from(3), u256_from(5));
-assert_eq(u256_limb(r, 0), 2, "(4+3) mod 5 = 2");
+bayan_u256_addmod(r, bayan_u256_from(4), bayan_u256_from(3), bayan_u256_from(5));
+assert_eq(bayan_u256_limb(r, 0), 2, "(4+3) mod 5 = 2");
 # Carry-overflow case (regression: dropped 2^256 carry). p = P-256 group
 # order n (≈ 2^256 − 2^224); a = b = n−1, so a + b = 2n−2 overflows 2^256.
 # Correct (n−1)+(n−1) mod n = n−2. Pre-6.0.36 dropped the carry → wrong.
-var cn = u256_from_hex("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551");
-var cnm1 = u256_zero();
-u256_sub(cnm1, cn, u256_from(1));
-var cnm2 = u256_zero();
-u256_sub(cnm2, cn, u256_from(2));
-var cr = u256_zero();
-u256_addmod(cr, cnm1, cnm1, cn);
-assert_eq(u256_eq(cr, cnm2), 1, "(n-1)+(n-1) mod n = n-2 (2^256 carry honored)");
+var cn = bayan_u256_from_hex("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551");
+var cnm1 = bayan_u256_zero();
+bayan_u256_sub(cnm1, cn, bayan_u256_from(1));
+var cnm2 = bayan_u256_zero();
+bayan_u256_sub(cnm2, cn, bayan_u256_from(2));
+var cr = bayan_u256_zero();
+bayan_u256_addmod(cr, cnm1, cnm1, cn);
+assert_eq(bayan_u256_eq(cr, cnm2), 1, "(n-1)+(n-1) mod n = n-2 (2^256 carry honored)");
 
 test_group("u256 hex");
-var hex = u256_to_hex(u256_from(255));
+var hex = bayan_u256_to_hex(bayan_u256_from(255));
 assert_eq(streq(hex + 62, "ff"), 1, "255 = ff");
-var parsed = u256_from_hex("ff");
-assert_eq(u256_limb(parsed, 0), 255, "parse ff = 255");
-var parsed2 = u256_from_hex("100");
-assert_eq(u256_limb(parsed2, 0), 256, "parse 100 = 256");
+var parsed = bayan_u256_from_hex("ff");
+assert_eq(bayan_u256_limb(parsed, 0), 255, "parse ff = 255");
+var parsed2 = bayan_u256_from_hex("100");
+assert_eq(bayan_u256_limb(parsed2, 0), 256, "parse 100 = 256");
 
 var r2 = assert_summary();

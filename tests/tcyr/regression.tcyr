@@ -11,7 +11,10 @@ include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/freelist.cyr"
 include "lib/hashmap.cyr"
-include "lib/json.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/fnptr.cyr"
 
 # ================================================================

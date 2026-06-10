@@ -605,14 +605,19 @@ fn cmd_doc(arg1, arg2): i64 {
     return run_tool(cyrdoc, arg1, arg2, 0);
 }
 
+# vet / deny are dependency-audit passes implemented by the `cyaudit`
+# tool (programs/cyaudit.cyr) — NOT the compiler. These were mis-wired to
+# `cybs` (the asm bootstrap compiler), which has no vet/deny mode: it
+# ignored the argv, read stdin, and emitted a stray ELF to stdout. Route
+# to cyaudit. See CHANGELOG [6.1.25].
 fn cmd_vet(file): i64 {
-    var cybs = make_path(_tools_dir, "cybs");
-    return run_tool(cybs, "vet", file, 0);
+    var cyaudit = make_path(_tools_dir, "cyaudit");
+    return run_tool(cyaudit, "vet", file, 0);
 }
 
 fn cmd_deny(file): i64 {
-    var cybs = make_path(_tools_dir, "cybs");
-    return run_tool(cybs, "deny", file, 0);
+    var cyaudit = make_path(_tools_dir, "cyaudit");
+    return run_tool(cyaudit, "deny", file, 0);
 }
 
 # Cross-OS self-host gate (v6.0.33; all-4-hosts v6.0.45). The x86_64-Linux

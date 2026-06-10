@@ -18,23 +18,26 @@ include "lib/string.cyr"
 include "lib/str.cyr"
 include "lib/vec.cyr"
 include "lib/fmt.cyr"
-include "lib/toml.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
 
 # ── Helper: find a key's raw value string in a TOML doc ──
 # Returns the Str value for `key` in the first (unnamed) section,
-# or str_from("MISSING") if not found. Uses toml_get which does
+# or str_from("MISSING") if not found. Uses bayan_toml_get which does
 # Str-to-cstr equality via str_eq_cstr (streq on str_data would
 # walk off the non-NUL-terminated Str backing).
 fn find_value(doc, key) {
     var src = str_from(doc);
-    var sections = toml_parse(src);
+    var sections = bayan_toml_parse(src);
     if (vec_len(sections) == 0) { return str_from("MISSING"); }
     var sec = vec_get(sections, 0);
-    var pairs = toml_section_pairs(sec);
-    var v = toml_get(pairs, key);
+    var pairs = bayan_toml_section_pairs(sec);
+    var v = bayan_toml_get(pairs, key);
     if (v == 0) { return str_from("MISSING"); }
     return v;
 }

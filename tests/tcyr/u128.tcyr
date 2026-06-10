@@ -10,7 +10,10 @@
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
-include "lib/u128.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 
 alloc_init();
 
@@ -19,347 +22,347 @@ var z: u128 = 0;
 assert_eq(load64(&z), 0, "lo zero");
 assert_eq(load64(&z + 8), 0, "hi zero");
 
-test_group("u128_set / u128_lo / u128_hi");
+test_group("bayan_u128_set / bayan_u128_lo / bayan_u128_hi");
 var a: u128 = 0;
-u128_set(&a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
-assert_eq(u128_lo(&a), 0xDEADBEEFCAFEBABE, "lo readback");
-assert_eq(u128_hi(&a), 0x123456789ABCDEF0, "hi readback");
+bayan_u128_set(&a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
+assert_eq(bayan_u128_lo(&a), 0xDEADBEEFCAFEBABE, "lo readback");
+assert_eq(bayan_u128_hi(&a), 0x123456789ABCDEF0, "hi readback");
 
-test_group("u128_from_u64 zero-extends");
+test_group("bayan_u128_from_u64 zero-extends");
 var b: u128 = 0;
-u128_from_u64(&b, 42);
-assert_eq(u128_lo(&b), 42, "lo = 42");
-assert_eq(u128_hi(&b), 0, "hi = 0");
+bayan_u128_from_u64(&b, 42);
+assert_eq(bayan_u128_lo(&b), 42, "lo = 42");
+assert_eq(bayan_u128_hi(&b), 0, "hi = 0");
 
-test_group("u128_copy preserves both limbs");
+test_group("bayan_u128_copy preserves both limbs");
 var c: u128 = 0;
-u128_copy(&c, &a);
-assert_eq(u128_lo(&c), u128_lo(&a), "lo copied");
-assert_eq(u128_hi(&c), u128_hi(&a), "hi copied");
+bayan_u128_copy(&c, &a);
+assert_eq(bayan_u128_lo(&c), bayan_u128_lo(&a), "lo copied");
+assert_eq(bayan_u128_hi(&c), bayan_u128_hi(&a), "hi copied");
 
-test_group("u128_eq");
+test_group("bayan_u128_eq");
 var d: u128 = 0;
-u128_set(&d, 0xDEADBEEFCAFEBABE, 0x123456789ABCDEF0);
-assert_eq(u128_eq(&a, &d), 1, "a == d");
-assert_eq(u128_eq(&a, &b), 0, "a != b");
+bayan_u128_set(&d, 0xDEADBEEFCAFEBABE, 0x123456789ABCDEF0);
+assert_eq(bayan_u128_eq(&a, &d), 1, "a == d");
+assert_eq(bayan_u128_eq(&a, &b), 0, "a != b");
 
-test_group("u128_is_zero");
-assert_eq(u128_is_zero(&z), 1, "z is zero");
-assert_eq(u128_is_zero(&a), 0, "a not zero");
+test_group("bayan_u128_is_zero");
+assert_eq(bayan_u128_is_zero(&z), 1, "z is zero");
+assert_eq(bayan_u128_is_zero(&a), 0, "a not zero");
 var hi_only: u128 = 0;
-u128_set(&hi_only, 0, 1);
-assert_eq(u128_is_zero(&hi_only), 0, "hi-only not zero");
+bayan_u128_set(&hi_only, 0, 1);
+assert_eq(bayan_u128_is_zero(&hi_only), 0, "hi-only not zero");
 
 test_group("16-byte slot layout (alpha3 regression guard)");
 var g1: u128 = 0;
 var g2: u128 = 0;
 assert_eq(&g2 - &g1, 16, "consecutive u128 vars are 16 bytes apart");
 
-test_group("u128_add (alpha4)");
+test_group("bayan_u128_add (alpha4)");
 var add_a: u128 = 0;
 var add_b: u128 = 0;
 var add_r: u128 = 0;
 # 0 + 0 = 0
-u128_add(&add_r, &add_a, &add_b);
-assert_eq(u128_is_zero(&add_r), 1, "0 + 0 = 0");
+bayan_u128_add(&add_r, &add_a, &add_b);
+assert_eq(bayan_u128_is_zero(&add_r), 1, "0 + 0 = 0");
 # 1 + 1 = 2
-u128_set(&add_a, 1, 0);
-u128_set(&add_b, 1, 0);
-u128_add(&add_r, &add_a, &add_b);
-assert_eq(u128_lo(&add_r), 2, "1 + 1 lo = 2");
-assert_eq(u128_hi(&add_r), 0, "1 + 1 hi = 0");
+bayan_u128_set(&add_a, 1, 0);
+bayan_u128_set(&add_b, 1, 0);
+bayan_u128_add(&add_r, &add_a, &add_b);
+assert_eq(bayan_u128_lo(&add_r), 2, "1 + 1 lo = 2");
+assert_eq(bayan_u128_hi(&add_r), 0, "1 + 1 hi = 0");
 # 0xFFFF_FFFF_FFFF_FFFF + 1 = 2^64 (crosses limb boundary)
-u128_set(&add_a, 0xFFFF_FFFF_FFFF_FFFF, 0);
-u128_set(&add_b, 1, 0);
-u128_add(&add_r, &add_a, &add_b);
-assert_eq(u128_lo(&add_r), 0, "max_u64 + 1 lo = 0 (carry)");
-assert_eq(u128_hi(&add_r), 1, "max_u64 + 1 hi = 1");
+bayan_u128_set(&add_a, 0xFFFF_FFFF_FFFF_FFFF, 0);
+bayan_u128_set(&add_b, 1, 0);
+bayan_u128_add(&add_r, &add_a, &add_b);
+assert_eq(bayan_u128_lo(&add_r), 0, "max_u64 + 1 lo = 0 (carry)");
+assert_eq(bayan_u128_hi(&add_r), 1, "max_u64 + 1 hi = 1");
 # (2^64 - 1, 2^64 - 1) + (0, 1) = (2^64 - 1, 0) (hi wraps)
-u128_set(&add_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
-u128_set(&add_b, 0, 1);
-u128_add(&add_r, &add_a, &add_b);
-assert_eq(u128_lo(&add_r), 0xFFFF_FFFF_FFFF_FFFF, "wrap lo unchanged");
-assert_eq(u128_hi(&add_r), 0, "wrap hi = 0 (no carry out)");
+bayan_u128_set(&add_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
+bayan_u128_set(&add_b, 0, 1);
+bayan_u128_add(&add_r, &add_a, &add_b);
+assert_eq(bayan_u128_lo(&add_r), 0xFFFF_FFFF_FFFF_FFFF, "wrap lo unchanged");
+assert_eq(bayan_u128_hi(&add_r), 0, "wrap hi = 0 (no carry out)");
 # max_u128 + 1 = 0 (full wrap)
-u128_set(&add_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
-u128_set(&add_b, 1, 0);
-u128_add(&add_r, &add_a, &add_b);
-assert_eq(u128_is_zero(&add_r), 1, "max_u128 + 1 = 0");
+bayan_u128_set(&add_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
+bayan_u128_set(&add_b, 1, 0);
+bayan_u128_add(&add_r, &add_a, &add_b);
+assert_eq(bayan_u128_is_zero(&add_r), 1, "max_u128 + 1 = 0");
 
-test_group("u128_sub");
+test_group("bayan_u128_sub");
 var sub_a: u128 = 0;
 var sub_b: u128 = 0;
 var sub_r: u128 = 0;
 # 2 - 1 = 1
-u128_set(&sub_a, 2, 0);
-u128_set(&sub_b, 1, 0);
-u128_sub(&sub_r, &sub_a, &sub_b);
-assert_eq(u128_lo(&sub_r), 1, "2 - 1 lo = 1");
-assert_eq(u128_hi(&sub_r), 0, "2 - 1 hi = 0");
+bayan_u128_set(&sub_a, 2, 0);
+bayan_u128_set(&sub_b, 1, 0);
+bayan_u128_sub(&sub_r, &sub_a, &sub_b);
+assert_eq(bayan_u128_lo(&sub_r), 1, "2 - 1 lo = 1");
+assert_eq(bayan_u128_hi(&sub_r), 0, "2 - 1 hi = 0");
 # (0, 1) - (1, 0) = max_u64 (borrow across limb)
-u128_set(&sub_a, 0, 1);
-u128_set(&sub_b, 1, 0);
-u128_sub(&sub_r, &sub_a, &sub_b);
-assert_eq(u128_lo(&sub_r), 0xFFFF_FFFF_FFFF_FFFF, "borrow lo = max_u64");
-assert_eq(u128_hi(&sub_r), 0, "borrow hi = 0");
+bayan_u128_set(&sub_a, 0, 1);
+bayan_u128_set(&sub_b, 1, 0);
+bayan_u128_sub(&sub_r, &sub_a, &sub_b);
+assert_eq(bayan_u128_lo(&sub_r), 0xFFFF_FFFF_FFFF_FFFF, "borrow lo = max_u64");
+assert_eq(bayan_u128_hi(&sub_r), 0, "borrow hi = 0");
 # 0 - 1 = max_u128 (full wrap)
-u128_set(&sub_a, 0, 0);
-u128_set(&sub_b, 1, 0);
-u128_sub(&sub_r, &sub_a, &sub_b);
-assert_eq(u128_lo(&sub_r), 0xFFFF_FFFF_FFFF_FFFF, "0 - 1 lo = max_u64");
-assert_eq(u128_hi(&sub_r), 0xFFFF_FFFF_FFFF_FFFF, "0 - 1 hi = max_u64");
+bayan_u128_set(&sub_a, 0, 0);
+bayan_u128_set(&sub_b, 1, 0);
+bayan_u128_sub(&sub_r, &sub_a, &sub_b);
+assert_eq(bayan_u128_lo(&sub_r), 0xFFFF_FFFF_FFFF_FFFF, "0 - 1 lo = max_u64");
+assert_eq(bayan_u128_hi(&sub_r), 0xFFFF_FFFF_FFFF_FFFF, "0 - 1 hi = max_u64");
 # a + b - b == a (round-trip)
-u128_set(&sub_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
-u128_set(&sub_b, 0x1111_2222_3333_4444, 0x5555_6666_7777_8888);
+bayan_u128_set(&sub_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
+bayan_u128_set(&sub_b, 0x1111_2222_3333_4444, 0x5555_6666_7777_8888);
 var tmp: u128 = 0;
-u128_add(&tmp, &sub_a, &sub_b);
-u128_sub(&sub_r, &tmp, &sub_b);
-assert_eq(u128_eq(&sub_r, &sub_a), 1, "(a+b)-b == a");
+bayan_u128_add(&tmp, &sub_a, &sub_b);
+bayan_u128_sub(&sub_r, &tmp, &sub_b);
+assert_eq(bayan_u128_eq(&sub_r, &sub_a), 1, "(a+b)-b == a");
 
-test_group("u128_addeq / u128_subeq");
+test_group("bayan_u128_addeq / bayan_u128_subeq");
 var acc: u128 = 0;
 var one: u128 = 0;
-u128_set(&one, 1, 0);
-u128_set(&acc, 10, 0);
-u128_addeq(&acc, &one);
-assert_eq(u128_lo(&acc), 11, "10 += 1 = 11");
-u128_subeq(&acc, &one);
-u128_subeq(&acc, &one);
-assert_eq(u128_lo(&acc), 9, "11 -= 1 -= 1 = 9");
+bayan_u128_set(&one, 1, 0);
+bayan_u128_set(&acc, 10, 0);
+bayan_u128_addeq(&acc, &one);
+assert_eq(bayan_u128_lo(&acc), 11, "10 += 1 = 11");
+bayan_u128_subeq(&acc, &one);
+bayan_u128_subeq(&acc, &one);
+assert_eq(bayan_u128_lo(&acc), 9, "11 -= 1 -= 1 = 9");
 
-test_group("u128_mul (alpha5)");
+test_group("bayan_u128_mul (alpha5)");
 var m_a: u128 = 0;
 var m_b: u128 = 0;
 var m_r: u128 = 0;
 # 0 * anything = 0
-u128_set(&m_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
-u128_set(&m_b, 0, 0);
-u128_mul(&m_r, &m_a, &m_b);
-assert_eq(u128_is_zero(&m_r), 1, "x * 0 = 0");
+bayan_u128_set(&m_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
+bayan_u128_set(&m_b, 0, 0);
+bayan_u128_mul(&m_r, &m_a, &m_b);
+assert_eq(bayan_u128_is_zero(&m_r), 1, "x * 0 = 0");
 # 1 * x = x
-u128_set(&m_b, 1, 0);
-u128_mul(&m_r, &m_a, &m_b);
-assert_eq(u128_eq(&m_r, &m_a), 1, "1 * x = x");
+bayan_u128_set(&m_b, 1, 0);
+bayan_u128_mul(&m_r, &m_a, &m_b);
+assert_eq(bayan_u128_eq(&m_r, &m_a), 1, "1 * x = x");
 # 2 * 2 = 4
-u128_set(&m_a, 2, 0);
-u128_set(&m_b, 2, 0);
-u128_mul(&m_r, &m_a, &m_b);
-assert_eq(u128_lo(&m_r), 4, "2 * 2 lo = 4");
-assert_eq(u128_hi(&m_r), 0, "2 * 2 hi = 0");
+bayan_u128_set(&m_a, 2, 0);
+bayan_u128_set(&m_b, 2, 0);
+bayan_u128_mul(&m_r, &m_a, &m_b);
+assert_eq(bayan_u128_lo(&m_r), 4, "2 * 2 lo = 4");
+assert_eq(bayan_u128_hi(&m_r), 0, "2 * 2 hi = 0");
 # 2^32 * 2^32 = 2^64 (crosses limb boundary, pure chunk carry)
-u128_set(&m_a, 0x1_0000_0000, 0);
-u128_set(&m_b, 0x1_0000_0000, 0);
-u128_mul(&m_r, &m_a, &m_b);
-assert_eq(u128_lo(&m_r), 0, "2^32 * 2^32 lo = 0");
-assert_eq(u128_hi(&m_r), 1, "2^32 * 2^32 hi = 1");
+bayan_u128_set(&m_a, 0x1_0000_0000, 0);
+bayan_u128_set(&m_b, 0x1_0000_0000, 0);
+bayan_u128_mul(&m_r, &m_a, &m_b);
+assert_eq(bayan_u128_lo(&m_r), 0, "2^32 * 2^32 lo = 0");
+assert_eq(bayan_u128_hi(&m_r), 1, "2^32 * 2^32 hi = 1");
 # max_u64 * max_u64 = 2^128 - 2^65 + 1 = (1, max_u64 - 1)
-u128_set(&m_a, 0xFFFF_FFFF_FFFF_FFFF, 0);
-u128_set(&m_b, 0xFFFF_FFFF_FFFF_FFFF, 0);
-u128_mul(&m_r, &m_a, &m_b);
-assert_eq(u128_lo(&m_r), 1, "max_u64^2 lo = 1");
-assert_eq(u128_hi(&m_r), 0xFFFF_FFFF_FFFF_FFFE, "max_u64^2 hi = max_u64 - 1");
+bayan_u128_set(&m_a, 0xFFFF_FFFF_FFFF_FFFF, 0);
+bayan_u128_set(&m_b, 0xFFFF_FFFF_FFFF_FFFF, 0);
+bayan_u128_mul(&m_r, &m_a, &m_b);
+assert_eq(bayan_u128_lo(&m_r), 1, "max_u64^2 lo = 1");
+assert_eq(bayan_u128_hi(&m_r), 0xFFFF_FFFF_FFFF_FFFE, "max_u64^2 hi = max_u64 - 1");
 # (0, 1) * (0, 1) = (0, 0) — 2^64 * 2^64 = 2^128 wraps
-u128_set(&m_a, 0, 1);
-u128_set(&m_b, 0, 1);
-u128_mul(&m_r, &m_a, &m_b);
-assert_eq(u128_is_zero(&m_r), 1, "2^64 * 2^64 wraps to 0");
+bayan_u128_set(&m_a, 0, 1);
+bayan_u128_set(&m_b, 0, 1);
+bayan_u128_mul(&m_r, &m_a, &m_b);
+assert_eq(bayan_u128_is_zero(&m_r), 1, "2^64 * 2^64 wraps to 0");
 # Cross terms: (1, 1) * (2, 3) = (2, 5)
 # = (1 + 2^64) * (2 + 3*2^64) = 2 + 3*2^64 + 2*2^64 + 3*2^128
 # mod 2^128 = 2 + 5*2^64
-u128_set(&m_a, 1, 1);
-u128_set(&m_b, 2, 3);
-u128_mul(&m_r, &m_a, &m_b);
-assert_eq(u128_lo(&m_r), 2, "(1,1)*(2,3) lo = 2");
-assert_eq(u128_hi(&m_r), 5, "(1,1)*(2,3) hi = 5");
-# u128_muleq in-place
+bayan_u128_set(&m_a, 1, 1);
+bayan_u128_set(&m_b, 2, 3);
+bayan_u128_mul(&m_r, &m_a, &m_b);
+assert_eq(bayan_u128_lo(&m_r), 2, "(1,1)*(2,3) lo = 2");
+assert_eq(bayan_u128_hi(&m_r), 5, "(1,1)*(2,3) hi = 5");
+# bayan_u128_muleq in-place
 var sq: u128 = 0;
-u128_set(&sq, 7, 0);
+bayan_u128_set(&sq, 7, 0);
 var seven: u128 = 0;
-u128_set(&seven, 7, 0);
-u128_muleq(&sq, &seven);
-assert_eq(u128_lo(&sq), 49, "7 *= 7 = 49");
+bayan_u128_set(&seven, 7, 0);
+bayan_u128_muleq(&sq, &seven);
+assert_eq(bayan_u128_lo(&sq), 49, "7 *= 7 = 49");
 
-test_group("u128_shl (alpha6)");
+test_group("bayan_u128_shl (alpha6)");
 var s_a: u128 = 0;
 var s_r: u128 = 0;
 # shl 0 is identity
-u128_set(&s_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
-u128_shl(&s_r, &s_a, 0);
-assert_eq(u128_eq(&s_r, &s_a), 1, "shl 0 identity");
+bayan_u128_set(&s_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
+bayan_u128_shl(&s_r, &s_a, 0);
+assert_eq(bayan_u128_eq(&s_r, &s_a), 1, "shl 0 identity");
 # shl 1
-u128_set(&s_a, 1, 0);
-u128_shl(&s_r, &s_a, 1);
-assert_eq(u128_lo(&s_r), 2, "1 << 1 = 2");
+bayan_u128_set(&s_a, 1, 0);
+bayan_u128_shl(&s_r, &s_a, 1);
+assert_eq(bayan_u128_lo(&s_r), 2, "1 << 1 = 2");
 # shl 63: 1 << 63 = bit 63 of lo
-u128_shl(&s_r, &s_a, 63);
-assert_eq(u128_lo(&s_r), 0x8000_0000_0000_0000, "1 << 63 lo");
-assert_eq(u128_hi(&s_r), 0, "1 << 63 hi = 0");
+bayan_u128_shl(&s_r, &s_a, 63);
+assert_eq(bayan_u128_lo(&s_r), 0x8000_0000_0000_0000, "1 << 63 lo");
+assert_eq(bayan_u128_hi(&s_r), 0, "1 << 63 hi = 0");
 # shl 64: 1 << 64 crosses limb
-u128_shl(&s_r, &s_a, 64);
-assert_eq(u128_lo(&s_r), 0, "1 << 64 lo = 0");
-assert_eq(u128_hi(&s_r), 1, "1 << 64 hi = 1");
+bayan_u128_shl(&s_r, &s_a, 64);
+assert_eq(bayan_u128_lo(&s_r), 0, "1 << 64 lo = 0");
+assert_eq(bayan_u128_hi(&s_r), 1, "1 << 64 hi = 1");
 # shl 127: 1 << 127 = top bit of hi
-u128_shl(&s_r, &s_a, 127);
-assert_eq(u128_lo(&s_r), 0, "1 << 127 lo = 0");
-assert_eq(u128_hi(&s_r), 0x8000_0000_0000_0000, "1 << 127 hi");
+bayan_u128_shl(&s_r, &s_a, 127);
+assert_eq(bayan_u128_lo(&s_r), 0, "1 << 127 lo = 0");
+assert_eq(bayan_u128_hi(&s_r), 0x8000_0000_0000_0000, "1 << 127 hi");
 # shl 128: wraps to 0
-u128_shl(&s_r, &s_a, 128);
-assert_eq(u128_is_zero(&s_r), 1, "1 << 128 = 0");
+bayan_u128_shl(&s_r, &s_a, 128);
+assert_eq(bayan_u128_is_zero(&s_r), 1, "1 << 128 = 0");
 # shl that spills between limbs
-u128_set(&s_a, 0x8000_0000_0000_0001, 0);
-u128_shl(&s_r, &s_a, 1);
-assert_eq(u128_lo(&s_r), 2, "spill lo = 2");
-assert_eq(u128_hi(&s_r), 1, "spill hi = 1");
+bayan_u128_set(&s_a, 0x8000_0000_0000_0001, 0);
+bayan_u128_shl(&s_r, &s_a, 1);
+assert_eq(bayan_u128_lo(&s_r), 2, "spill lo = 2");
+assert_eq(bayan_u128_hi(&s_r), 1, "spill hi = 1");
 
-test_group("u128_shr");
+test_group("bayan_u128_shr");
 # shr 0 identity
-u128_set(&s_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
-u128_shr(&s_r, &s_a, 0);
-assert_eq(u128_eq(&s_r, &s_a), 1, "shr 0 identity");
+bayan_u128_set(&s_a, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0);
+bayan_u128_shr(&s_r, &s_a, 0);
+assert_eq(bayan_u128_eq(&s_r, &s_a), 1, "shr 0 identity");
 # shr 1 of max_u128 = (max_u64, 0x7FFF...)
-u128_set(&s_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
-u128_shr(&s_r, &s_a, 1);
-assert_eq(u128_lo(&s_r), 0xFFFF_FFFF_FFFF_FFFF, "max_u128 >> 1 lo");
-assert_eq(u128_hi(&s_r), 0x7FFF_FFFF_FFFF_FFFF, "max_u128 >> 1 hi (logical)");
+bayan_u128_set(&s_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
+bayan_u128_shr(&s_r, &s_a, 1);
+assert_eq(bayan_u128_lo(&s_r), 0xFFFF_FFFF_FFFF_FFFF, "max_u128 >> 1 lo");
+assert_eq(bayan_u128_hi(&s_r), 0x7FFF_FFFF_FFFF_FFFF, "max_u128 >> 1 hi (logical)");
 # Logical shift of negative-looking value must fill with 0, not 1
-u128_set(&s_a, 0, 0x8000_0000_0000_0000);
-u128_shr(&s_r, &s_a, 1);
-assert_eq(u128_hi(&s_r), 0x4000_0000_0000_0000, "high bit >> 1 logical");
+bayan_u128_set(&s_a, 0, 0x8000_0000_0000_0000);
+bayan_u128_shr(&s_r, &s_a, 1);
+assert_eq(bayan_u128_hi(&s_r), 0x4000_0000_0000_0000, "high bit >> 1 logical");
 # shr 64 brings hi into lo
-u128_set(&s_a, 0, 0xCAFE_BABE_DEAD_BEEF);
-u128_shr(&s_r, &s_a, 64);
-assert_eq(u128_lo(&s_r), 0xCAFE_BABE_DEAD_BEEF, "hi -> lo via shr 64");
-assert_eq(u128_hi(&s_r), 0, "shr 64 hi = 0");
+bayan_u128_set(&s_a, 0, 0xCAFE_BABE_DEAD_BEEF);
+bayan_u128_shr(&s_r, &s_a, 64);
+assert_eq(bayan_u128_lo(&s_r), 0xCAFE_BABE_DEAD_BEEF, "hi -> lo via shr 64");
+assert_eq(bayan_u128_hi(&s_r), 0, "shr 64 hi = 0");
 # shr 127 of top-bit-only gives 1
-u128_set(&s_a, 0, 0x8000_0000_0000_0000);
-u128_shr(&s_r, &s_a, 127);
-assert_eq(u128_lo(&s_r), 1, "top bit >> 127 = 1");
+bayan_u128_set(&s_a, 0, 0x8000_0000_0000_0000);
+bayan_u128_shr(&s_r, &s_a, 127);
+assert_eq(bayan_u128_lo(&s_r), 1, "top bit >> 127 = 1");
 # shr 128 = 0
-u128_shr(&s_r, &s_a, 128);
-assert_eq(u128_is_zero(&s_r), 1, "shr 128 = 0");
+bayan_u128_shr(&s_r, &s_a, 128);
+assert_eq(bayan_u128_is_zero(&s_r), 1, "shr 128 = 0");
 # shl then shr roundtrip
-u128_set(&s_a, 0xABCD, 0);
+bayan_u128_set(&s_a, 0xABCD, 0);
 var tmp2: u128 = 0;
-u128_shl(&tmp2, &s_a, 70);
-u128_shr(&s_r, &tmp2, 70);
-assert_eq(u128_eq(&s_r, &s_a), 1, "shl 70 then shr 70 roundtrip");
+bayan_u128_shl(&tmp2, &s_a, 70);
+bayan_u128_shr(&s_r, &tmp2, 70);
+assert_eq(bayan_u128_eq(&s_r, &s_a), 1, "shl 70 then shr 70 roundtrip");
 
 test_group("u128 bitwise");
 var bw_a: u128 = 0;
 var bw_b: u128 = 0;
 var bw_r: u128 = 0;
-u128_set(&bw_a, 0xFF00_FF00_FF00_FF00, 0xAAAA_AAAA_AAAA_AAAA);
-u128_set(&bw_b, 0x0F0F_0F0F_0F0F_0F0F, 0x5555_5555_5555_5555);
+bayan_u128_set(&bw_a, 0xFF00_FF00_FF00_FF00, 0xAAAA_AAAA_AAAA_AAAA);
+bayan_u128_set(&bw_b, 0x0F0F_0F0F_0F0F_0F0F, 0x5555_5555_5555_5555);
 # AND
-u128_and(&bw_r, &bw_a, &bw_b);
-assert_eq(u128_lo(&bw_r), 0x0F00_0F00_0F00_0F00, "and lo");
-assert_eq(u128_hi(&bw_r), 0, "and hi = 0 (A&5=0)");
+bayan_u128_and(&bw_r, &bw_a, &bw_b);
+assert_eq(bayan_u128_lo(&bw_r), 0x0F00_0F00_0F00_0F00, "and lo");
+assert_eq(bayan_u128_hi(&bw_r), 0, "and hi = 0 (A&5=0)");
 # OR
-u128_or(&bw_r, &bw_a, &bw_b);
-assert_eq(u128_lo(&bw_r), 0xFF0F_FF0F_FF0F_FF0F, "or lo");
-assert_eq(u128_hi(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "or hi = max_u64");
+bayan_u128_or(&bw_r, &bw_a, &bw_b);
+assert_eq(bayan_u128_lo(&bw_r), 0xFF0F_FF0F_FF0F_FF0F, "or lo");
+assert_eq(bayan_u128_hi(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "or hi = max_u64");
 # XOR
-u128_xor(&bw_r, &bw_a, &bw_b);
-assert_eq(u128_lo(&bw_r), 0xF00F_F00F_F00F_F00F, "xor lo");
-assert_eq(u128_hi(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "xor hi");
+bayan_u128_xor(&bw_r, &bw_a, &bw_b);
+assert_eq(bayan_u128_lo(&bw_r), 0xF00F_F00F_F00F_F00F, "xor lo");
+assert_eq(bayan_u128_hi(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "xor hi");
 # NOT
 var not_in: u128 = 0;
-u128_set(&not_in, 0, 0);
-u128_not(&bw_r, &not_in);
-assert_eq(u128_lo(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "~0 lo");
-assert_eq(u128_hi(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "~0 hi");
+bayan_u128_set(&not_in, 0, 0);
+bayan_u128_not(&bw_r, &not_in);
+assert_eq(bayan_u128_lo(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "~0 lo");
+assert_eq(bayan_u128_hi(&bw_r), 0xFFFF_FFFF_FFFF_FFFF, "~0 hi");
 # NOT involutive
-u128_not(&bw_r, &bw_a);
+bayan_u128_not(&bw_r, &bw_a);
 var bw_r2: u128 = 0;
-u128_not(&bw_r2, &bw_r);
-assert_eq(u128_eq(&bw_r2, &bw_a), 1, "~~x == x");
+bayan_u128_not(&bw_r2, &bw_r);
+assert_eq(bayan_u128_eq(&bw_r2, &bw_a), 1, "~~x == x");
 
 test_group("u128 unsigned compare (alpha7)");
 var c_a: u128 = 0;
 var c_b: u128 = 0;
 # equal
-u128_set(&c_a, 42, 0);
-u128_set(&c_b, 42, 0);
-assert_eq(u128_ugt(&c_a, &c_b), 0, "42 !ugt 42");
-assert_eq(u128_uge(&c_a, &c_b), 1, "42 uge 42");
-assert_eq(u128_ult(&c_a, &c_b), 0, "42 !ult 42");
+bayan_u128_set(&c_a, 42, 0);
+bayan_u128_set(&c_b, 42, 0);
+assert_eq(bayan_u128_ugt(&c_a, &c_b), 0, "42 !ugt 42");
+assert_eq(bayan_u128_uge(&c_a, &c_b), 1, "42 uge 42");
+assert_eq(bayan_u128_ult(&c_a, &c_b), 0, "42 !ult 42");
 # high bit (unsigned) comparisons
-u128_set(&c_a, 1, 0);
-u128_set(&c_b, 0xFFFF_FFFF_FFFF_FFFF, 0);
-assert_eq(u128_ugt(&c_b, &c_a), 1, "max_u64 ugt 1 (unsigned, not signed)");
-assert_eq(u128_ult(&c_a, &c_b), 1, "1 ult max_u64");
+bayan_u128_set(&c_a, 1, 0);
+bayan_u128_set(&c_b, 0xFFFF_FFFF_FFFF_FFFF, 0);
+assert_eq(bayan_u128_ugt(&c_b, &c_a), 1, "max_u64 ugt 1 (unsigned, not signed)");
+assert_eq(bayan_u128_ult(&c_a, &c_b), 1, "1 ult max_u64");
 # hi limb differs
-u128_set(&c_a, 0xFFFF_FFFF_FFFF_FFFF, 0);
-u128_set(&c_b, 0, 1);
-assert_eq(u128_ult(&c_a, &c_b), 1, "(max_u64, 0) < (0, 1)");
+bayan_u128_set(&c_a, 0xFFFF_FFFF_FFFF_FFFF, 0);
+bayan_u128_set(&c_b, 0, 1);
+assert_eq(bayan_u128_ult(&c_a, &c_b), 1, "(max_u64, 0) < (0, 1)");
 # both hi "negative" (bit 63 set)
-u128_set(&c_a, 0, 0x8000_0000_0000_0000);
-u128_set(&c_b, 0, 0xC000_0000_0000_0000);
-assert_eq(u128_ult(&c_a, &c_b), 1, "hi=0x80.. < 0xC0..");
+bayan_u128_set(&c_a, 0, 0x8000_0000_0000_0000);
+bayan_u128_set(&c_b, 0, 0xC000_0000_0000_0000);
+assert_eq(bayan_u128_ult(&c_a, &c_b), 1, "hi=0x80.. < 0xC0..");
 
-test_group("u128_divmod");
+test_group("bayan_u128_divmod");
 var d_a: u128 = 0;
 var d_b: u128 = 0;
 var d_q: u128 = 0;
 var d_r: u128 = 0;
 # 0 / 1 = (0, 0)
-u128_set(&d_b, 1, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_is_zero(&d_q), 1, "0/1 q = 0");
-assert_eq(u128_is_zero(&d_r), 1, "0/1 r = 0");
+bayan_u128_set(&d_b, 1, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_is_zero(&d_q), 1, "0/1 q = 0");
+assert_eq(bayan_u128_is_zero(&d_r), 1, "0/1 r = 0");
 # 42 / 5 = (8, 2)
-u128_set(&d_a, 42, 0);
-u128_set(&d_b, 5, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_lo(&d_q), 8, "42/5 q = 8");
-assert_eq(u128_lo(&d_r), 2, "42/5 r = 2");
+bayan_u128_set(&d_a, 42, 0);
+bayan_u128_set(&d_b, 5, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_lo(&d_q), 8, "42/5 q = 8");
+assert_eq(bayan_u128_lo(&d_r), 2, "42/5 r = 2");
 # 100 / 10 = (10, 0)
-u128_set(&d_a, 100, 0);
-u128_set(&d_b, 10, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_lo(&d_q), 10, "100/10 q = 10");
-assert_eq(u128_lo(&d_r), 0, "100/10 r = 0");
+bayan_u128_set(&d_a, 100, 0);
+bayan_u128_set(&d_b, 10, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_lo(&d_q), 10, "100/10 q = 10");
+assert_eq(bayan_u128_lo(&d_r), 0, "100/10 r = 0");
 # max_u128 / 1 = (max_u128, 0)
-u128_set(&d_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
-u128_set(&d_b, 1, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_eq(&d_q, &d_a), 1, "max/1 q = max");
-assert_eq(u128_is_zero(&d_r), 1, "max/1 r = 0");
+bayan_u128_set(&d_a, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF);
+bayan_u128_set(&d_b, 1, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_eq(&d_q, &d_a), 1, "max/1 q = max");
+assert_eq(bayan_u128_is_zero(&d_r), 1, "max/1 r = 0");
 # 2^64 / 2 = 2^63, r = 0
-u128_set(&d_a, 0, 1);
-u128_set(&d_b, 2, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_lo(&d_q), 0x8000_0000_0000_0000, "2^64/2 q = 2^63");
-assert_eq(u128_hi(&d_q), 0, "2^64/2 q hi = 0");
-assert_eq(u128_is_zero(&d_r), 1, "2^64/2 r = 0");
+bayan_u128_set(&d_a, 0, 1);
+bayan_u128_set(&d_b, 2, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_lo(&d_q), 0x8000_0000_0000_0000, "2^64/2 q = 2^63");
+assert_eq(bayan_u128_hi(&d_q), 0, "2^64/2 q hi = 0");
+assert_eq(bayan_u128_is_zero(&d_r), 1, "2^64/2 r = 0");
 # Divisor > dividend: q = 0, r = a
-u128_set(&d_a, 7, 0);
-u128_set(&d_b, 10, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_is_zero(&d_q), 1, "7/10 q = 0");
-assert_eq(u128_lo(&d_r), 7, "7/10 r = 7");
+bayan_u128_set(&d_a, 7, 0);
+bayan_u128_set(&d_b, 10, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_is_zero(&d_q), 1, "7/10 q = 0");
+assert_eq(bayan_u128_lo(&d_r), 7, "7/10 r = 7");
 # Large cross-limb: (0xDEAD_BEEF, 1) / 0x10000 = ((...), (...))
 # a = 0xDEAD_BEEF + 2^64 = 18446744077592317679
 # / 0x10000 = 281474976716918 remainder 0xBEEF
-u128_set(&d_a, 0xDEAD_BEEF, 1);
-u128_set(&d_b, 0x10000, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_lo(&d_r), 0xBEEF, "big div: r = 0xBEEF");
+bayan_u128_set(&d_a, 0xDEAD_BEEF, 1);
+bayan_u128_set(&d_b, 0x10000, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_lo(&d_r), 0xBEEF, "big div: r = 0xBEEF");
 # Round-trip: q*b + r == a
 var d_tmp: u128 = 0;
-u128_mul(&d_tmp, &d_q, &d_b);
-u128_addeq(&d_tmp, &d_r);
-assert_eq(u128_eq(&d_tmp, &d_a), 1, "q*b + r == a");
+bayan_u128_mul(&d_tmp, &d_q, &d_b);
+bayan_u128_addeq(&d_tmp, &d_r);
+assert_eq(bayan_u128_eq(&d_tmp, &d_a), 1, "q*b + r == a");
 
-test_group("u128_div / u128_mod convenience");
+test_group("bayan_u128_div / bayan_u128_mod convenience");
 var div_r: u128 = 0;
 var mod_r: u128 = 0;
-u128_set(&d_a, 101, 0);
-u128_set(&d_b, 7, 0);
-u128_div(&div_r, &d_a, &d_b);
-u128_mod(&mod_r, &d_a, &d_b);
-assert_eq(u128_lo(&div_r), 14, "101 / 7 = 14");
-assert_eq(u128_lo(&mod_r), 3, "101 % 7 = 3");
+bayan_u128_set(&d_a, 101, 0);
+bayan_u128_set(&d_b, 7, 0);
+bayan_u128_div(&div_r, &d_a, &d_b);
+bayan_u128_mod(&mod_r, &d_a, &d_b);
+assert_eq(bayan_u128_lo(&div_r), 14, "101 / 7 = 14");
+assert_eq(bayan_u128_lo(&mod_r), 3, "101 % 7 = 3");
 
 # ---- 4.8.5-alpha1: hardware fast-path for b_hi == 0 ------------
 # Direct coverage for the (u64 * u64) % u64 pipeline — the shape
@@ -367,82 +370,82 @@ assert_eq(u128_lo(&mod_r), 3, "101 % 7 = 3");
 # Exercises both sub-branches of the fast path:
 #   a_hi == 0: pure 64-bit div
 #   a_hi != 0: two-step hardware div via asm block
-test_group("u128_divmod fast-path (b_hi == 0)");
+test_group("bayan_u128_divmod fast-path (b_hi == 0)");
 
 # Sub-case 1: both halves fit in u64 (a_hi == 0).
-u128_set(&d_a, 77, 0);
-u128_set(&d_b, 13, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
-assert_eq(u128_lo(&d_q), 5, "77/13 q = 5");
-assert_eq(u128_lo(&d_r), 12, "77/13 r = 12");
+bayan_u128_set(&d_a, 77, 0);
+bayan_u128_set(&d_b, 13, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
+assert_eq(bayan_u128_lo(&d_q), 5, "77/13 q = 5");
+assert_eq(bayan_u128_lo(&d_r), 12, "77/13 r = 12");
 
 # Sub-case 2: 128-bit dividend, 64-bit divisor (a_hi != 0) — the
 # path that emits `div qword [rbp+disp8]`.
 # (2^64 + 5) / 7 — both halves meaningful.
-u128_set(&d_a, 5, 1);           # lo = 5, hi = 1  → value = 2^64 + 5
-u128_set(&d_b, 7, 0);
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
+bayan_u128_set(&d_a, 5, 1);           # lo = 5, hi = 1  → value = 2^64 + 5
+bayan_u128_set(&d_b, 7, 0);
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
 # 2^64 + 5 = 18446744073709551621. / 7 = 2635249153387078803, r = 0
-assert_eq(u128_lo(&d_q), 2635249153387078803, "(2^64+5)/7 q lo");
-assert_eq(u128_hi(&d_q), 0, "(2^64+5)/7 q hi");
-assert_eq(u128_lo(&d_r), 0, "(2^64+5)/7 r = 0");
+assert_eq(bayan_u128_lo(&d_q), 2635249153387078803, "(2^64+5)/7 q lo");
+assert_eq(bayan_u128_hi(&d_q), 0, "(2^64+5)/7 q hi");
+assert_eq(bayan_u128_lo(&d_r), 0, "(2^64+5)/7 r = 0");
 
 # (2^64 - 1) * (2^64 - 1) shape: max u64 squared, mod max-u64 prime.
 # Inline u64 product: 0xFFFFFFFFFFFFFFFE * 2^64 + 0x0000000000000001
-u128_set(&d_a, 0x0000000000000001, 0xFFFFFFFFFFFFFFFE);
-u128_set(&d_b, 0xFFFFFFFFFFFFFFFB, 0);   # largest u64 prime < 2^64
-u128_divmod(&d_q, &d_r, &d_a, &d_b);
+bayan_u128_set(&d_a, 0x0000000000000001, 0xFFFFFFFFFFFFFFFE);
+bayan_u128_set(&d_b, 0xFFFFFFFFFFFFFFFB, 0);   # largest u64 prime < 2^64
+bayan_u128_divmod(&d_q, &d_r, &d_a, &d_b);
 # Round-trip check.
-u128_mul(&d_tmp, &d_q, &d_b);
-u128_addeq(&d_tmp, &d_r);
-assert_eq(u128_eq(&d_tmp, &d_a), 1, "fast-path big: q*b + r == a");
+bayan_u128_mul(&d_tmp, &d_q, &d_b);
+bayan_u128_addeq(&d_tmp, &d_r);
+assert_eq(bayan_u128_eq(&d_tmp, &d_a), 1, "fast-path big: q*b + r == a");
 
-# mulmod-shape via u128_mul + u128_mod round trip.
+# mulmod-shape via bayan_u128_mul + bayan_u128_mod round trip.
 var mm_a: u128 = 0;
 var mm_b: u128 = 0;
 var mm_m: u128 = 0;
 var mm_prod: u128 = 0;
 var mm_rem: u128 = 0;
-u128_from_u64(&mm_a, 0xFFFFFFFF);
-u128_from_u64(&mm_b, 0xFFFFFFFF);
-u128_from_u64(&mm_m, 0xFFFFFFFB);
-u128_mul(&mm_prod, &mm_a, &mm_b);
-u128_mod(&mm_rem, &mm_prod, &mm_m);
+bayan_u128_from_u64(&mm_a, 0xFFFFFFFF);
+bayan_u128_from_u64(&mm_b, 0xFFFFFFFF);
+bayan_u128_from_u64(&mm_m, 0xFFFFFFFB);
+bayan_u128_mul(&mm_prod, &mm_a, &mm_b);
+bayan_u128_mod(&mm_rem, &mm_prod, &mm_m);
 # (2^32-1)^2 mod (2^32-5). Let m = 2^32-5, so 2^32 = m+5:
 #   (m+5-1)^2 = (m+4)^2 = m^2 + 8m + 16 → remainder = 16.
-assert_eq(u128_lo(&mm_rem), 16, "(2^32-1)^2 mod (2^32-5) = 16");
-assert_eq(u128_hi(&mm_rem), 0, "mulmod remainder fits in u64");
+assert_eq(bayan_u128_lo(&mm_rem), 16, "(2^32-1)^2 mod (2^32-5) = 16");
+assert_eq(bayan_u128_hi(&mm_rem), 0, "mulmod remainder fits in u64");
 
-# ---- 4.8.5-alpha2: u64_mulmod / u64_powmod helpers -------------
-test_group("u64_mulmod");
-assert_eq(u64_mulmod(7, 11, 13), 12, "7*11 mod 13 = 12");
-assert_eq(u64_mulmod(0, 123, 7), 0, "0*123 mod 7 = 0");
-assert_eq(u64_mulmod(1, 0, 7),   0, "1*0 mod 7 = 0");
+# ---- 4.8.5-alpha2: bayan_u64_mulmod / bayan_u64_powmod helpers -------------
+test_group("bayan_u64_mulmod");
+assert_eq(bayan_u64_mulmod(7, 11, 13), 12, "7*11 mod 13 = 12");
+assert_eq(bayan_u64_mulmod(0, 123, 7), 0, "0*123 mod 7 = 0");
+assert_eq(bayan_u64_mulmod(1, 0, 7),   0, "1*0 mod 7 = 0");
 # 2^32 * 2^32 mod (2^32-5) = 25  (since 2^32 ≡ 5 mod m, 5·5 = 25)
-assert_eq(u64_mulmod(4294967296, 4294967296, 4294967291), 25,
+assert_eq(bayan_u64_mulmod(4294967296, 4294967296, 4294967291), 25,
           "2^32·2^32 mod (2^32-5) = 25");
 # (2^32-1)^2 mod (2^32-5) = 16 (same as the u128 round-trip above)
-assert_eq(u64_mulmod(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFB), 16,
+assert_eq(bayan_u64_mulmod(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFB), 16,
           "(2^32-1)^2 mod (2^32-5) = 16");
 # Product that needs the 128-bit intermediate (overflows u64).
 # (2^50)·(2^50) = 2^100; mod (2^61 - 1) = a well-defined value.
 # 2^100 mod (2^61-1): 2^61 ≡ 1, so 2^100 = 2^(61+39) = 2^39.
-assert_eq(u64_mulmod(1 << 50, 1 << 50, (1 << 61) - 1), 1 << 39,
+assert_eq(bayan_u64_mulmod(1 << 50, 1 << 50, (1 << 61) - 1), 1 << 39,
           "2^100 mod (2^61-1) = 2^39");
 
-test_group("u64_powmod");
-assert_eq(u64_powmod(2, 10, 1000), 24, "2^10 mod 1000 = 24");
-assert_eq(u64_powmod(3, 7, 100),  87, "3^7 mod 100 = 87");
-assert_eq(u64_powmod(5, 0, 13),   1,  "5^0 mod 13 = 1");
-assert_eq(u64_powmod(7, 1, 13),   7,  "7^1 mod 13 = 7");
+test_group("bayan_u64_powmod");
+assert_eq(bayan_u64_powmod(2, 10, 1000), 24, "2^10 mod 1000 = 24");
+assert_eq(bayan_u64_powmod(3, 7, 100),  87, "3^7 mod 100 = 87");
+assert_eq(bayan_u64_powmod(5, 0, 13),   1,  "5^0 mod 13 = 1");
+assert_eq(bayan_u64_powmod(7, 1, 13),   7,  "7^1 mod 13 = 7");
 # Fermat sanity: a^(p-1) mod p = 1 for prime p and a not divisible by p.
-assert_eq(u64_powmod(2, 12, 13),  1,  "Fermat: 2^12 mod 13 = 1");
-assert_eq(u64_powmod(3, 16, 17),  1,  "Fermat: 3^16 mod 17 = 1");
+assert_eq(bayan_u64_powmod(2, 12, 13),  1,  "Fermat: 2^12 mod 13 = 1");
+assert_eq(bayan_u64_powmod(3, 16, 17),  1,  "Fermat: 3^16 mod 17 = 1");
 # m == 1 special case.
-assert_eq(u64_powmod(999, 999, 1), 0, "anything mod 1 = 0");
+assert_eq(bayan_u64_powmod(999, 999, 1), 0, "anything mod 1 = 0");
 # Large modulus, exercises the mulmod fast path on every step.
 # 2^20 mod (2^61-1) = 2^20 since 2^20 < 2^61-1.
-assert_eq(u64_powmod(2, 20, (1 << 61) - 1), 1 << 20,
+assert_eq(bayan_u64_powmod(2, 20, (1 << 61) - 1), 1 << 20,
           "2^20 mod (2^61-1) = 2^20");
 
 var _exit_code = assert_summary();

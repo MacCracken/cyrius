@@ -13,12 +13,12 @@
 #       byte-equal verify; cleanup via unlink.
 #   (5) `?` propagation chain — open + read + close in a
 #       Result-returning helper exits early on the first failure.
-#   (6) `json_parse_file_r` — Err(JsonIoErr) on missing file;
+#   (6) `bayan_json_parse_file_r` — Err(JsonIoErr) on missing file;
 #       Ok(vec) on a small synthetic JSON file written via
 #       `file_write_all_r`.
-#   (7) `toml_parse_file_r` — Err(TomlIoErr) on missing file;
+#   (7) `bayan_toml_parse_file_r` — Err(TomlIoErr) on missing file;
 #       Ok(sections) on a small synthetic TOML file.
-#   (8) `cyml_parse_file_r` — Err(CymlIoErr) on missing file;
+#   (8) `bayan_cyml_parse_file_r` — Err(CymlIoErr) on missing file;
 #       Ok(doc) on a small synthetic CYML file.
 #
 # v5.8.30 ships the *_r variants alongside the back-compat
@@ -34,9 +34,10 @@ include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/result.cyr"
 include "lib/io.cyr"
-include "lib/json.cyr"
-include "lib/toml.cyr"
-include "lib/cyml.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
@@ -115,45 +116,45 @@ var chain_err = _read_byte_count("/no/such/path/x");
 assert_eq(is_err_result(chain_err), 1, "chain on missing path is Err");
 assert_eq(load64(chain_err + 8), IoNotFound, "Err payload = IoNotFound");
 
-# ---- json_parse_file_r ----
+# ---- bayan_json_parse_file_r ----
 
-test_group("json_parse_file_r — Err(JsonIoErr) on missing file");
-var jerr = json_parse_file_r("/no/such/json/file");
+test_group("bayan_json_parse_file_r — Err(JsonIoErr) on missing file");
+var jerr = bayan_json_parse_file_r("/no/such/json/file");
 assert_eq(is_err_result(jerr), 1, "missing JSON file is Err");
 assert_eq(load64(jerr + 8), JsonIoErr, "payload = JsonIoErr");
 
-test_group("json_parse_file_r — Ok on synthetic file");
+test_group("bayan_json_parse_file_r — Ok on synthetic file");
 var jsrc = "{\"name\": \"cyrius\"}";
 file_write_all_r("/tmp/cyrius_v5_8_30_test.json", jsrc, strlen(jsrc));
-var jok = json_parse_file_r("/tmp/cyrius_v5_8_30_test.json");
+var jok = bayan_json_parse_file_r("/tmp/cyrius_v5_8_30_test.json");
 assert_eq(is_ok(jok), 1, "synthetic JSON file Ok");
 sys_unlink("/tmp/cyrius_v5_8_30_test.json");
 
-# ---- toml_parse_file_r ----
+# ---- bayan_toml_parse_file_r ----
 
-test_group("toml_parse_file_r — Err(TomlIoErr) on missing file");
-var terr = toml_parse_file_r("/no/such/toml/file");
+test_group("bayan_toml_parse_file_r — Err(TomlIoErr) on missing file");
+var terr = bayan_toml_parse_file_r("/no/such/toml/file");
 assert_eq(is_err_result(terr), 1, "missing TOML file is Err");
 assert_eq(load64(terr + 8), TomlIoErr, "payload = TomlIoErr");
 
-test_group("toml_parse_file_r — Ok on synthetic file");
+test_group("bayan_toml_parse_file_r — Ok on synthetic file");
 var tsrc = "[[entries]]\nname = \"cyrius\"\n";
 file_write_all_r("/tmp/cyrius_v5_8_30_test.toml", tsrc, strlen(tsrc));
-var tok = toml_parse_file_r("/tmp/cyrius_v5_8_30_test.toml");
+var tok = bayan_toml_parse_file_r("/tmp/cyrius_v5_8_30_test.toml");
 assert_eq(is_ok(tok), 1, "synthetic TOML file Ok");
 sys_unlink("/tmp/cyrius_v5_8_30_test.toml");
 
-# ---- cyml_parse_file_r ----
+# ---- bayan_cyml_parse_file_r ----
 
-test_group("cyml_parse_file_r — Err(CymlIoErr) on missing file");
-var cerr = cyml_parse_file_r("/no/such/cyml/file");
+test_group("bayan_cyml_parse_file_r — Err(CymlIoErr) on missing file");
+var cerr = bayan_cyml_parse_file_r("/no/such/cyml/file");
 assert_eq(is_err_result(cerr), 1, "missing CYML file is Err");
 assert_eq(load64(cerr + 8), CymlIoErr, "payload = CymlIoErr");
 
-test_group("cyml_parse_file_r — Ok on synthetic file");
+test_group("bayan_cyml_parse_file_r — Ok on synthetic file");
 var csrc = "title = \"hello\"\n---\n# Body markdown\n";
 file_write_all_r("/tmp/cyrius_v5_8_30_test.cyml", csrc, strlen(csrc));
-var cok = cyml_parse_file_r("/tmp/cyrius_v5_8_30_test.cyml");
+var cok = bayan_cyml_parse_file_r("/tmp/cyrius_v5_8_30_test.cyml");
 assert_eq(is_ok(cok), 1, "synthetic CYML file Ok");
 sys_unlink("/tmp/cyrius_v5_8_30_test.cyml");
 

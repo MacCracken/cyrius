@@ -51,12 +51,22 @@ scripts = ["cyrius-init.sh", "cyrius-port.sh", "cyrius-repl.sh", "cyrius-watch.s
 stdlib = [
     "syscalls", "string", "alloc", "str", "fmt", "vec",
     "hashmap", "io", "fs", "tagged", "process", "fnptr",
-    "chrono", "args", "freelist", "assert", "bench", "bigint",
-    "json",
+    "chrono", "args", "freelist", "assert", "bench",
     "unicode/_decode", "unicode/categories", "unicode/_categories_data",
     "unicode/casefold", "unicode/_casefold_data",
     "unicode/normalize", "unicode/_normalize_data",
 ]
+# v6.1.25 bayan carve (sandhi-pattern): json / toml / cyml / csv / base64 /
+# bigint / u128 were carved into the **bayan** sibling repo, renamed to the
+# canonical `bayan_*` API, and folded byte-identical into `lib/bayan.cyr`
+# (from bayan 1.0.0's `cyrius distlib` output). `json` + `bigint` were
+# REMOVED from the auto-prepend list above — like every other fold, bayan is
+# opt-in via explicit `include "lib/bayan.cyr"` (auto-prepend would push the
+# ~3.5 KLOC bundle into every consumer's preprocess_out buffer). Consumers
+# must also have `result` / `fnptr` / `io` in scope (the distlib bundle strips
+# includes; `result` in particular is NOT auto-prepended). `_compat.cyr`
+# inside the bundle forwards the legacy json_*/u256_*/etc. names during the
+# downstream migration window. See CHANGELOG [6.1.25] + bayan CHANGELOG [1.0.0].
 # v5.8.65 stdlib foldin (sandhi-pattern, per the v5.7.0 precedent):
 # sakshi 2.2.3, patra 1.10.3, sigil 3.5.6 (3.5.5→.6 at v6.0.13:
 # unblocks TLS Mini-arc A.4 — adds hmac_sha384 + hkdf_extract_sha384 +

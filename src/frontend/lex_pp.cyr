@@ -740,7 +740,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     op = op + PP_EMIT_STR(out, op, ");\nvar v = 0;\n");
     fi = 0;
     while (fi < field_count) {
-        op = op + PP_EMIT_STR(out, op, "v = json_get(pairs, str_from(\"");
+        op = op + PP_EMIT_STR(out, op, "v = bayan_json_get(pairs, str_from(\"");
         op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
         op = op + PP_EMIT_STR(out, op, "\"));\n");
         if (load8(S + 0x1FE000 + fi * 32) != 0) {
@@ -793,7 +793,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             } else {
                 op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
                 op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
-                op = op + PP_EMIT_STR(out, op, "_from_json(json_parse(v));\nmemcpy(ptr + ");
+                op = op + PP_EMIT_STR(out, op, "_from_json(bayan_json_parse(v));\nmemcpy(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ", np, ");
                 var tsz = 8;

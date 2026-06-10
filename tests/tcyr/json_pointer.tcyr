@@ -1,4 +1,4 @@
-# json_pointer.tcyr — v5.7.42 acceptance gate for json_v_pointer
+# json_pointer.tcyr — v5.7.42 acceptance gate for bayan_json_v_pointer
 # (RFC 6901). Pairs with json_engine.tcyr (tree builder),
 # json_pretty.tcyr (pretty-printer), json_stream.tcyr (streaming).
 #
@@ -14,7 +14,10 @@ include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/math.cyr"
-include "lib/json.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/test.cyr"   # transitively pulls in assert.cyr + fnptr.cyr
 
 alloc_init();
@@ -36,43 +39,43 @@ fn _check_ptr_int(c) {
     var path  = load64(c);
     var want  = load64(c + 8);
     var label = load64(c + 16);
-    assert_eq(json_v_int(json_v_pointer(rfc, path)), want, label);
+    assert_eq(bayan_json_v_int(bayan_json_v_pointer(rfc, path)), want, label);
     return 0;
 }
 
 # ── Empty pointer = whole document ───────────────────────────────────
 test_group("empty pointer = root");
-var doc1 = json_v_parse_str("{\"a\":1}", 7);
-assert_eq(json_v_pointer(doc1, str_from("")), doc1, "empty pointer returns root");
-assert_eq(json_v_pointer_cstr(doc1, str_data(str_from("")), 0), doc1, "explicit zero len");
+var doc1 = bayan_json_v_parse_str("{\"a\":1}", 7);
+assert_eq(bayan_json_v_pointer(doc1, str_from("")), doc1, "empty pointer returns root");
+assert_eq(bayan_json_v_pointer_cstr(doc1, str_data(str_from("")), 0), doc1, "explicit zero len");
 
 # ── Object key lookup ───────────────────────────────────────────────
 test_group("object key lookup");
-var doc2 = json_v_parse_str("{\"name\":\"alice\",\"age\":30}", 25);
-assert_eq(json_v_int(json_v_pointer(doc2, str_from("/age"))), 30, "/age = 30");
-assert(streq(str_data(json_v_str(json_v_pointer(doc2, str_from("/name")))), "alice") == 1, "/name = alice");
-assert_eq(json_v_pointer(doc2, str_from("/missing")), 0, "missing key = 0");
+var doc2 = bayan_json_v_parse_str("{\"name\":\"alice\",\"age\":30}", 25);
+assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc2, str_from("/age"))), 30, "/age = 30");
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(doc2, str_from("/name")))), "alice") == 1, "/name = alice");
+assert_eq(bayan_json_v_pointer(doc2, str_from("/missing")), 0, "missing key = 0");
 
 # ── Array index ─────────────────────────────────────────────────────
 test_group("array index");
-var doc3 = json_v_parse_str("[10,20,30]", 10);
-assert_eq(json_v_int(json_v_pointer(doc3, str_from("/0"))), 10, "/0 = 10");
-assert_eq(json_v_int(json_v_pointer(doc3, str_from("/2"))), 30, "/2 = 30");
-assert_eq(json_v_pointer(doc3, str_from("/3")), 0, "OOB index = 0");
+var doc3 = bayan_json_v_parse_str("[10,20,30]", 10);
+assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc3, str_from("/0"))), 10, "/0 = 10");
+assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc3, str_from("/2"))), 30, "/2 = 30");
+assert_eq(bayan_json_v_pointer(doc3, str_from("/3")), 0, "OOB index = 0");
 
 # Strict index form: leading zeros rejected
-assert_eq(json_v_pointer(doc3, str_from("/01")), 0, "/01 rejected (leading zero)");
-assert_eq(json_v_pointer(doc3, str_from("/-")), 0, "/- next-element rejected");
-assert_eq(json_v_pointer(doc3, str_from("/abc")), 0, "/abc not a number");
+assert_eq(bayan_json_v_pointer(doc3, str_from("/01")), 0, "/01 rejected (leading zero)");
+assert_eq(bayan_json_v_pointer(doc3, str_from("/-")), 0, "/- next-element rejected");
+assert_eq(bayan_json_v_pointer(doc3, str_from("/abc")), 0, "/abc not a number");
 
 # ── Deep nested mixed ───────────────────────────────────────────────
 test_group("deep nested mixed");
-var doc4 = json_v_parse_str("{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}", 51);
-assert_eq(json_v_int(json_v_pointer(doc4, str_from("/users/0/id"))), 1, "/users/0/id = 1");
-assert(streq(str_data(json_v_str(json_v_pointer(doc4, str_from("/users/0/name")))), "a") == 1, "/users/0/name = a");
-assert_eq(json_v_int(json_v_pointer(doc4, str_from("/users/1/id"))), 2, "/users/1/id = 2");
-assert_eq(json_v_pointer(doc4, str_from("/users/2/id")), 0, "OOB user = 0");
-assert_eq(json_v_pointer(doc4, str_from("/users/0/missing")), 0, "missing nested key = 0");
+var doc4 = bayan_json_v_parse_str("{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}", 51);
+assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc4, str_from("/users/0/id"))), 1, "/users/0/id = 1");
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(doc4, str_from("/users/0/name")))), "a") == 1, "/users/0/name = a");
+assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc4, str_from("/users/1/id"))), 2, "/users/1/id = 2");
+assert_eq(bayan_json_v_pointer(doc4, str_from("/users/2/id")), 0, "OOB user = 0");
+assert_eq(bayan_json_v_pointer(doc4, str_from("/users/0/missing")), 0, "missing nested key = 0");
 
 # ── RFC 6901 §5 examples ────────────────────────────────────────────
 test_group("RFC 6901 §5 examples");
@@ -88,24 +91,24 @@ test_group("RFC 6901 §5 examples");
 #   " ": 7,
 #   "m~n": 8
 # }
-rfc = json_v_obj_new();
-var arr = json_v_arr_new();
-json_v_arr_push(arr, json_v_str_new(str_from("bar")));
-json_v_arr_push(arr, json_v_str_new(str_from("baz")));
-json_v_obj_set(rfc, str_from("foo"), arr);
-json_v_obj_set(rfc, str_from(""),    json_v_int_new(0));
-json_v_obj_set(rfc, str_from("a/b"), json_v_int_new(1));
-json_v_obj_set(rfc, str_from("c%d"), json_v_int_new(2));
-json_v_obj_set(rfc, str_from("e^f"), json_v_int_new(3));
-json_v_obj_set(rfc, str_from("g|h"), json_v_int_new(4));
-json_v_obj_set(rfc, str_from("k\"l"), json_v_int_new(6));
-json_v_obj_set(rfc, str_from(" "),   json_v_int_new(7));
-json_v_obj_set(rfc, str_from("m~n"), json_v_int_new(8));
+rfc = bayan_json_v_obj_new();
+var arr = bayan_json_v_arr_new();
+bayan_json_v_arr_push(arr, bayan_json_v_str_new(str_from("bar")));
+bayan_json_v_arr_push(arr, bayan_json_v_str_new(str_from("baz")));
+bayan_json_v_obj_set(rfc, str_from("foo"), arr);
+bayan_json_v_obj_set(rfc, str_from(""),    bayan_json_v_int_new(0));
+bayan_json_v_obj_set(rfc, str_from("a/b"), bayan_json_v_int_new(1));
+bayan_json_v_obj_set(rfc, str_from("c%d"), bayan_json_v_int_new(2));
+bayan_json_v_obj_set(rfc, str_from("e^f"), bayan_json_v_int_new(3));
+bayan_json_v_obj_set(rfc, str_from("g|h"), bayan_json_v_int_new(4));
+bayan_json_v_obj_set(rfc, str_from("k\"l"), bayan_json_v_int_new(6));
+bayan_json_v_obj_set(rfc, str_from(" "),   bayan_json_v_int_new(7));
+bayan_json_v_obj_set(rfc, str_from("m~n"), bayan_json_v_int_new(8));
 
 # Outliers — different shapes, kept inline:
-assert_eq(json_v_pointer(rfc, str_from("")), rfc, "\"\" = whole doc");
-assert_eq(json_v_pointer(rfc, str_from("/foo")), arr, "/foo = arr");
-assert(streq(str_data(json_v_str(json_v_pointer(rfc, str_from("/foo/0")))), "bar") == 1, "/foo/0 = bar");
+assert_eq(bayan_json_v_pointer(rfc, str_from("")), rfc, "\"\" = whole doc");
+assert_eq(bayan_json_v_pointer(rfc, str_from("/foo")), arr, "/foo = arr");
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(rfc, str_from("/foo/0")))), "bar") == 1, "/foo/0 = bar");
 
 # Homogeneous (path → int) cases — table-driven via test_each.
 # Demonstrates the v5.7.43 lib/test.cyr API on a real corpus that
@@ -124,27 +127,27 @@ test_each(rfc_cases, &_check_ptr_int);
 # ── Error paths ─────────────────────────────────────────────────────
 test_group("error paths");
 # Pointer must start with '/' if non-empty.
-assert_eq(json_v_pointer(doc2, str_from("name")), 0, "no leading slash = 0");
-assert_eq(json_v_pointer(doc2, str_from("a/b")), 0, "no leading slash multi-part = 0");
+assert_eq(bayan_json_v_pointer(doc2, str_from("name")), 0, "no leading slash = 0");
+assert_eq(bayan_json_v_pointer(doc2, str_from("a/b")), 0, "no leading slash multi-part = 0");
 
 # Bad escape sequences.
-assert_eq(json_v_pointer(rfc, str_from("/m~xn")), 0, "/m~xn bad escape = 0");
-assert_eq(json_v_pointer(rfc, str_from("/~")), 0, "/~ trailing = 0");
-assert_eq(json_v_pointer(rfc, str_from("/~2")), 0, "/~2 unknown escape = 0");
+assert_eq(bayan_json_v_pointer(rfc, str_from("/m~xn")), 0, "/m~xn bad escape = 0");
+assert_eq(bayan_json_v_pointer(rfc, str_from("/~")), 0, "/~ trailing = 0");
+assert_eq(bayan_json_v_pointer(rfc, str_from("/~2")), 0, "/~2 unknown escape = 0");
 
 # Descend into scalar.
-var doc5 = json_v_parse_str("{\"a\":42}", 8);
-assert_eq(json_v_pointer(doc5, str_from("/a/x")), 0, "/a/x: can't descend into int = 0");
+var doc5 = bayan_json_v_parse_str("{\"a\":42}", 8);
+assert_eq(bayan_json_v_pointer(doc5, str_from("/a/x")), 0, "/a/x: can't descend into int = 0");
 
 # Null root.
-assert_eq(json_v_pointer(0, str_from("/a")), 0, "null root = 0");
+assert_eq(bayan_json_v_pointer(0, str_from("/a")), 0, "null root = 0");
 
 # Null pointer Str returns root (pragmatic identity).
-assert_eq(json_v_pointer(doc2, 0), doc2, "null Str pointer = root");
+assert_eq(bayan_json_v_pointer(doc2, 0), doc2, "null Str pointer = root");
 
 # ── Trailing slash → empty-key descent ──────────────────────────────
 test_group("trailing slash empty token");
-var doc6 = json_v_parse_str("{\"a\":{\"\":99}}", 13);
-assert_eq(json_v_int(json_v_pointer(doc6, str_from("/a/"))), 99, "/a/ = a[\"\"] = 99");
+var doc6 = bayan_json_v_parse_str("{\"a\":{\"\":99}}", 13);
+assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc6, str_from("/a/"))), 99, "/a/ = a[\"\"] = 99");
 
 var r = assert_summary();

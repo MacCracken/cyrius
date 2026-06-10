@@ -6,25 +6,28 @@ include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/math.cyr"
-include "lib/json.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 
 alloc_init();
 
 # Document with mixed nesting + an "a/b" key for the ~1 escape test
 # and an "m~n" key for the ~0 escape test.
-var doc = json_v_obj_new();
-var users = json_v_arr_new();
-var u0 = json_v_obj_new();
-json_v_obj_set(u0, str_from("id"),   json_v_int_new(1));
-json_v_obj_set(u0, str_from("name"), json_v_str_new(str_from("alice")));
-json_v_arr_push(users, u0);
-var u1 = json_v_obj_new();
-json_v_obj_set(u1, str_from("id"),   json_v_int_new(2));
-json_v_obj_set(u1, str_from("name"), json_v_str_new(str_from("bob")));
-json_v_arr_push(users, u1);
-json_v_obj_set(doc, str_from("users"), users);
-json_v_obj_set(doc, str_from("a/b"), json_v_int_new(42));
-json_v_obj_set(doc, str_from("m~n"), json_v_int_new(99));
+var doc = bayan_json_v_obj_new();
+var users = bayan_json_v_arr_new();
+var u0 = bayan_json_v_obj_new();
+bayan_json_v_obj_set(u0, str_from("id"),   bayan_json_v_int_new(1));
+bayan_json_v_obj_set(u0, str_from("name"), bayan_json_v_str_new(str_from("alice")));
+bayan_json_v_arr_push(users, u0);
+var u1 = bayan_json_v_obj_new();
+bayan_json_v_obj_set(u1, str_from("id"),   bayan_json_v_int_new(2));
+bayan_json_v_obj_set(u1, str_from("name"), bayan_json_v_str_new(str_from("bob")));
+bayan_json_v_arr_push(users, u1);
+bayan_json_v_obj_set(doc, str_from("users"), users);
+bayan_json_v_obj_set(doc, str_from("a/b"), bayan_json_v_int_new(42));
+bayan_json_v_obj_set(doc, str_from("m~n"), bayan_json_v_int_new(99));
 
 # Helper to print int result + newline; "MISS" for not-found.
 fn print_int_or_miss(v, label) {
@@ -32,27 +35,27 @@ fn print_int_or_miss(v, label) {
     print("=", 1);
     if (v == 0) { print("MISS\n", 5); return 0; }
     var b[24];
-    var l = fmt_int_buf(json_v_int(v), &b);
+    var l = fmt_int_buf(bayan_json_v_int(v), &b);
     store8(&b + l, 0);
     print(&b, l);
     print("\n", 1);
     return 0;
 }
 
-print_int_or_miss(json_v_pointer(doc, str_from("/users/0/id")),   "/users/0/id");
-print_int_or_miss(json_v_pointer(doc, str_from("/users/1/id")),   "/users/1/id");
-print_int_or_miss(json_v_pointer(doc, str_from("/users/9/id")),   "/users/9/id");
-print_int_or_miss(json_v_pointer(doc, str_from("/a~1b")),         "/a~1b");
-print_int_or_miss(json_v_pointer(doc, str_from("/m~0n")),         "/m~0n");
-print_int_or_miss(json_v_pointer(doc, str_from("/missing")),      "/missing");
-print_int_or_miss(json_v_pointer(doc, str_from("/users/0/id/x")), "/users/0/id/x");
+print_int_or_miss(bayan_json_v_pointer(doc, str_from("/users/0/id")),   "/users/0/id");
+print_int_or_miss(bayan_json_v_pointer(doc, str_from("/users/1/id")),   "/users/1/id");
+print_int_or_miss(bayan_json_v_pointer(doc, str_from("/users/9/id")),   "/users/9/id");
+print_int_or_miss(bayan_json_v_pointer(doc, str_from("/a~1b")),         "/a~1b");
+print_int_or_miss(bayan_json_v_pointer(doc, str_from("/m~0n")),         "/m~0n");
+print_int_or_miss(bayan_json_v_pointer(doc, str_from("/missing")),      "/missing");
+print_int_or_miss(bayan_json_v_pointer(doc, str_from("/users/0/id/x")), "/users/0/id/x");
 
-# String value: print the underlying bytes via json_v_str.
-var name = json_v_pointer(doc, str_from("/users/0/name"));
+# String value: print the underlying bytes via bayan_json_v_str.
+var name = bayan_json_v_pointer(doc, str_from("/users/0/name"));
 print("/users/0/name=", 14);
 if (name == 0) { print("MISS\n", 5); }
 else {
-    var s = json_v_str(name);
+    var s = bayan_json_v_str(name);
     print(str_data(s), str_len(s));
     print("\n", 1);
 }

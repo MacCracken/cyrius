@@ -6,6 +6,79 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.25] — 2026-06-10
+
+**v6.1.x slot 25: bayan distfile carve (Phase E, first half) + `cyrius vet`/`deny`
+ELF-emission fix.** The data-domain stdlib carve — json / toml / cyml / csv /
+base64 / bigint / u128 move out of cyrius stdlib into the **bayan** sibling repo
+(canonical `bayan_*` API), folded byte-identical back into `lib/bayan.cyr` per the
+sandhi pattern. After the carve, stdlib stays primitives-only so bare-metal
+consumers don't drag data-format code into kernel objects. ganita (math domain) is
+the sibling carve at v6.1.26.
+
+### Changed
+
+- **bayan carve (sandhi pattern).** The 7 modules (3,352 lines, 149 public fns,
+  zero cross-module deps) were extracted to `/home/macro/Repos/bayan` (bayan 1.0.0),
+  every public function prefixed `bayan_` (rename-only — verified byte-identical to
+  the originals modulo the prefix + stripped includes), and folded byte-identical
+  into `lib/bayan.cyr` (bayan's `cyrius distlib` output: 3,500 lines, 149 canonical
+  + 149 alias + 46 internal-helper fns). `lib/{json,toml,cyml,csv,base64,bigint,
+  u128}.cyr` deleted. `json` + `bigint` removed from the `[deps].stdlib` auto-prepend
+  list (they were the only 2 of the 7 there) — bayan is opt-in via `include
+  "lib/bayan.cyr"`, like every prior fold. **"0 git deps" preserved** (folded, not a
+  `[deps.bayan]` git dependency).
+- **Back-compat aliases.** The bundle's `_compat` section re-exports every legacy
+  name (`json_parse` → `bayan_json_parse`, `u256_add` → `bayan_u256_add`, …) so
+  downstream repos keep building unchanged until they re-pin + migrate. Deprecated;
+  removed once the ecosystem moves over.
+- **cyrius-internal migration to canonical `bayan_*`.** The `#derive(Serialize)`
+  emit-templates (`src/frontend/lex_pp.cyr`) now emit `bayan_json_get` /
+  `bayan_json_parse`; ~23 test/fixture consumers swapped `include "lib/<module>.cyr"`
+  → `lib/bayan.cyr` (+ `result`/`fnptr`/`io` prereqs) and call `bayan_*`. cycc
+  self-hosts **byte-identical** (the 2 emit-string changes are the only compiler
+  delta; +16 B).
+- **`lib/tls_native.cyr`** swapped `include "lib/bigint.cyr"` → `lib/bayan.cyr`:
+  sigil's ECDSA path calls the carved `u256_*`, satisfied by bayan's aliases. This
+  centrally fixes all 13 TLS tests + the live-TLS gate (they pull tls_native).
+  Consumers of `ws`/`ws_server`/`sigil`/`patra`/`tls` that previously relied on
+  `base64`/`bigint`/`json` being in scope must now include `lib/bayan.cyr`.
+
+### Fixed
+
+- **`cyrius vet` / `cyrius deny` emitted a stray ELF instead of auditing.** Both
+  were mis-wired (`cbt/commands.cyr`) to run `cybs` (the asm bootstrap *compiler*,
+  which has no vet/deny mode — it ignored the argv, read stdin, and compiled it to a
+  144-byte ELF on stdout) instead of the `cyaudit` tool. Routed to `cyaudit`; both
+  now produce dependency-audit output. Rename-rot from the cyrc→cybs era.
+
+### Migration (downstream — back-compat aliases bridge the window)
+
+Re-pinning a consumer to 6.1.25 keeps it **building** (the bundle's aliases export
+the old names), but each repo should migrate cleanly:
+
+- **`#derive(Serialize)` deserialize users:** the generated `<Type>_from_json` /
+  `_from_json_str` now call `bayan_json_parse` / `bayan_json_get` — so a program
+  that *deserializes* a `#derive(Serialize)` struct must `include "lib/bayan.cyr"`
+  (the *serialize* `_to_json` path is stdlib-only and needs nothing new).
+- **`ws` / `ws_server` / `sigil` / `patra` / `tls` consumers:** these modules call
+  carved fns (`base64_encode`, `u256_*`, `json_build`) and assume the consumer
+  supplies them — as they did before the carve. Replace your `include
+  "lib/base64.cyr"` / `lib/bigint.cyr` / `lib/json.cyr` with `include
+  "lib/bayan.cyr"`.
+- **Repos that list `json` or `bigint` in `[deps].stdlib`** (observed: sigil,
+  kybernet, bote, libro, argonaut, daimon, sandhi): those names no longer resolve
+  in cyrius — `cyrius deps` prints a non-fatal copy error (a stale local `lib/`
+  copy shadows it, so the build still succeeds). Replace `json`/`bigint` in
+  `[deps].stdlib` with the bayan fold + `include "lib/bayan.cyr"`, then migrate
+  call sites to `bayan_*` (or rely on the aliases through the deprecation window).
+
+**Benchmark:** `self_compile 493 ms` (vs ~506 ms @ 6.1.24 — box noise), `cycc
+1,045,752 B` (+16 B; 2 #derive emit strings). check.sh **87/87**, all 170 `.tcyr`
+exit-0 (per-file loop), api-surface snapshot regenerated (+149 `bayan_*`). Self-host
+**byte-identical** (and on **ecb (macOS arm64) + cass (Windows PE32+)** — both
+`SELFHOST_OK`); fold byte-identical (`lib/bayan.cyr` == bayan 1.0.0 `dist/bayan.cyr`).
+
 ## [6.1.24] — 2026-06-10
 
 **v6.1.x slot 24: LSP dive — hover support + keyword-highlight fix + cleanup.**

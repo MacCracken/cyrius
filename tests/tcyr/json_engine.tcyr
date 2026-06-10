@@ -3,8 +3,8 @@
 # obj), nesting, escape decoding (including \uXXXX surrogate pairs),
 # error reporting, and round-trip build.
 #
-# Backward compat: the existing flat-API json_parse / json_get /
-# json_get_int (used by kybernet, argonaut, libro) is exercised
+# Backward compat: the existing flat-API bayan_json_parse / bayan_json_get /
+# bayan_json_get_int (used by kybernet, argonaut, libro) is exercised
 # implicitly via tests/tcyr/regex.tcyr's existing json coverage —
 # this file only exercises the new json_v_* surface.
 
@@ -16,144 +16,147 @@ include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/math.cyr"
-include "lib/json.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
 
 # ── Primitive value parsing ──────────────────────────────────────────
 test_group("primitive values");
-assert_eq(json_v_is_null(json_v_parse_str("null", 4)), 1, "null");
-assert_eq(json_v_bool(json_v_parse_str("true", 4)),    1, "true");
-assert_eq(json_v_bool(json_v_parse_str("false", 5)),   0, "false");
-assert_eq(json_v_int(json_v_parse_str("0", 1)),        0, "0");
-assert_eq(json_v_int(json_v_parse_str("42", 2)),       42, "42");
-assert_eq(json_v_int(json_v_parse_str("-7", 2)),       0 - 7, "-7");
-assert_eq(json_v_int(json_v_parse_str("1234567890", 10)), 1234567890, "1234567890");
+assert_eq(bayan_json_v_is_null(bayan_json_v_parse_str("null", 4)), 1, "null");
+assert_eq(bayan_json_v_bool(bayan_json_v_parse_str("true", 4)),    1, "true");
+assert_eq(bayan_json_v_bool(bayan_json_v_parse_str("false", 5)),   0, "false");
+assert_eq(bayan_json_v_int(bayan_json_v_parse_str("0", 1)),        0, "0");
+assert_eq(bayan_json_v_int(bayan_json_v_parse_str("42", 2)),       42, "42");
+assert_eq(bayan_json_v_int(bayan_json_v_parse_str("-7", 2)),       0 - 7, "-7");
+assert_eq(bayan_json_v_int(bayan_json_v_parse_str("1234567890", 10)), 1234567890, "1234567890");
 
 # ── String parsing + escape decoding ─────────────────────────────────
 test_group("string escapes");
-var s1 = json_v_parse_str("\"hello\"", 7);
-assert(streq(str_data(json_v_str(s1)), "hello") == 1, "plain string");
+var s1 = bayan_json_v_parse_str("\"hello\"", 7);
+assert(streq(str_data(bayan_json_v_str(s1)), "hello") == 1, "plain string");
 
-var s2 = json_v_parse_str("\"a\\nb\"", 6);
-assert_eq(load8(str_data(json_v_str(s2)) + 0), 97, "a");
-assert_eq(load8(str_data(json_v_str(s2)) + 1), 10, "\\n → 0x0A");
-assert_eq(load8(str_data(json_v_str(s2)) + 2), 98, "b");
+var s2 = bayan_json_v_parse_str("\"a\\nb\"", 6);
+assert_eq(load8(str_data(bayan_json_v_str(s2)) + 0), 97, "a");
+assert_eq(load8(str_data(bayan_json_v_str(s2)) + 1), 10, "\\n → 0x0A");
+assert_eq(load8(str_data(bayan_json_v_str(s2)) + 2), 98, "b");
 
-var s3 = json_v_parse_str("\"q\\\"q\"", 6);
-assert_eq(load8(str_data(json_v_str(s3)) + 1), 34, "\\\" → 0x22");
+var s3 = bayan_json_v_parse_str("\"q\\\"q\"", 6);
+assert_eq(load8(str_data(bayan_json_v_str(s3)) + 1), 34, "\\\" → 0x22");
 
-var s4 = json_v_parse_str("\"\\\\\"", 4);
-assert_eq(load8(str_data(json_v_str(s4))), 92, "\\\\ → 0x5C");
+var s4 = bayan_json_v_parse_str("\"\\\\\"", 4);
+assert_eq(load8(str_data(bayan_json_v_str(s4))), 92, "\\\\ → 0x5C");
 
-var s5 = json_v_parse_str("\"\\u0041\"", 8);
-assert(streq(str_data(json_v_str(s5)), "A") == 1, "\\u0041 → A");
+var s5 = bayan_json_v_parse_str("\"\\u0041\"", 8);
+assert(streq(str_data(bayan_json_v_str(s5)), "A") == 1, "\\u0041 → A");
 
 # 2-byte UTF-8: é → C3 A9 (é)
-var s6 = json_v_parse_str("\"\\u00e9\"", 8);
-assert_eq(load8(str_data(json_v_str(s6))    ), 0xc3, "u00e9 byte 0");
-assert_eq(load8(str_data(json_v_str(s6)) + 1), 0xa9, "u00e9 byte 1");
+var s6 = bayan_json_v_parse_str("\"\\u00e9\"", 8);
+assert_eq(load8(str_data(bayan_json_v_str(s6))    ), 0xc3, "u00e9 byte 0");
+assert_eq(load8(str_data(bayan_json_v_str(s6)) + 1), 0xa9, "u00e9 byte 1");
 
 # 3-byte UTF-8: € → E2 82 AC (€)
-var s7 = json_v_parse_str("\"\\u20ac\"", 8);
-assert_eq(load8(str_data(json_v_str(s7))    ), 0xe2, "u20ac byte 0");
-assert_eq(load8(str_data(json_v_str(s7)) + 1), 0x82, "u20ac byte 1");
-assert_eq(load8(str_data(json_v_str(s7)) + 2), 0xac, "u20ac byte 2");
+var s7 = bayan_json_v_parse_str("\"\\u20ac\"", 8);
+assert_eq(load8(str_data(bayan_json_v_str(s7))    ), 0xe2, "u20ac byte 0");
+assert_eq(load8(str_data(bayan_json_v_str(s7)) + 1), 0x82, "u20ac byte 1");
+assert_eq(load8(str_data(bayan_json_v_str(s7)) + 2), 0xac, "u20ac byte 2");
 
 # 4-byte UTF-8 via surrogate pair: 😀 → 😀 (U+1F600)
-var s8 = json_v_parse_str("\"\\uD83D\\uDE00\"", 14);
-assert_eq(load8(str_data(json_v_str(s8))    ), 0xf0, "smiley b0");
-assert_eq(load8(str_data(json_v_str(s8)) + 1), 0x9f, "smiley b1");
-assert_eq(load8(str_data(json_v_str(s8)) + 2), 0x98, "smiley b2");
-assert_eq(load8(str_data(json_v_str(s8)) + 3), 0x80, "smiley b3");
+var s8 = bayan_json_v_parse_str("\"\\uD83D\\uDE00\"", 14);
+assert_eq(load8(str_data(bayan_json_v_str(s8))    ), 0xf0, "smiley b0");
+assert_eq(load8(str_data(bayan_json_v_str(s8)) + 1), 0x9f, "smiley b1");
+assert_eq(load8(str_data(bayan_json_v_str(s8)) + 2), 0x98, "smiley b2");
+assert_eq(load8(str_data(bayan_json_v_str(s8)) + 3), 0x80, "smiley b3");
 
 # ── Arrays ───────────────────────────────────────────────────────────
 test_group("arrays");
-var a1 = json_v_parse_str("[]", 2);
-assert_eq(json_v_is_arr(a1), 1, "empty array tag");
-assert_eq(json_v_arr_len(a1), 0, "empty array len 0");
+var a1 = bayan_json_v_parse_str("[]", 2);
+assert_eq(bayan_json_v_is_arr(a1), 1, "empty array tag");
+assert_eq(bayan_json_v_arr_len(a1), 0, "empty array len 0");
 
-var a2 = json_v_parse_str("[1,2,3]", 7);
-assert_eq(json_v_arr_len(a2), 3, "len 3");
-assert_eq(json_v_int(json_v_arr_get(a2, 0)), 1, "[0]=1");
-assert_eq(json_v_int(json_v_arr_get(a2, 2)), 3, "[2]=3");
+var a2 = bayan_json_v_parse_str("[1,2,3]", 7);
+assert_eq(bayan_json_v_arr_len(a2), 3, "len 3");
+assert_eq(bayan_json_v_int(bayan_json_v_arr_get(a2, 0)), 1, "[0]=1");
+assert_eq(bayan_json_v_int(bayan_json_v_arr_get(a2, 2)), 3, "[2]=3");
 
-var a3 = json_v_parse_str("[\"a\",\"b\",\"c\"]", 13);
-assert(streq(str_data(json_v_str(json_v_arr_get(a3, 1))), "b") == 1, "string array [1]=b");
+var a3 = bayan_json_v_parse_str("[\"a\",\"b\",\"c\"]", 13);
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_arr_get(a3, 1))), "b") == 1, "string array [1]=b");
 
-var a4 = json_v_parse_str("[1,\"two\",true,null]", 19);
-assert_eq(json_v_int(json_v_arr_get(a4, 0)), 1, "mixed [0] int");
-assert(streq(str_data(json_v_str(json_v_arr_get(a4, 1))), "two") == 1, "mixed [1] str");
-assert_eq(json_v_bool(json_v_arr_get(a4, 2)), 1, "mixed [2] bool");
-assert_eq(json_v_is_null(json_v_arr_get(a4, 3)), 1, "mixed [3] null");
+var a4 = bayan_json_v_parse_str("[1,\"two\",true,null]", 19);
+assert_eq(bayan_json_v_int(bayan_json_v_arr_get(a4, 0)), 1, "mixed [0] int");
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_arr_get(a4, 1))), "two") == 1, "mixed [1] str");
+assert_eq(bayan_json_v_bool(bayan_json_v_arr_get(a4, 2)), 1, "mixed [2] bool");
+assert_eq(bayan_json_v_is_null(bayan_json_v_arr_get(a4, 3)), 1, "mixed [3] null");
 
 # ── Objects ──────────────────────────────────────────────────────────
 test_group("objects");
-var o1 = json_v_parse_str("{}", 2);
-assert_eq(json_v_is_obj(o1), 1, "empty obj tag");
-assert_eq(json_v_obj_len(o1), 0, "empty obj len 0");
+var o1 = bayan_json_v_parse_str("{}", 2);
+assert_eq(bayan_json_v_is_obj(o1), 1, "empty obj tag");
+assert_eq(bayan_json_v_obj_len(o1), 0, "empty obj len 0");
 
-var o2 = json_v_parse_str("{\"k\":\"v\"}", 9);
-assert_eq(json_v_obj_len(o2), 1, "obj len 1");
-assert(streq(str_data(json_v_str(json_v_obj_get(o2, "k"))), "v") == 1, "k=v");
+var o2 = bayan_json_v_parse_str("{\"k\":\"v\"}", 9);
+assert_eq(bayan_json_v_obj_len(o2), 1, "obj len 1");
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_obj_get(o2, "k"))), "v") == 1, "k=v");
 
-var o3 = json_v_parse_str("{\"name\":\"alice\",\"age\":30,\"admin\":true}", 38);
-assert_eq(json_v_obj_len(o3), 3, "obj len 3");
-assert(streq(str_data(json_v_str(json_v_obj_get(o3, "name"))), "alice") == 1, "name");
-assert_eq(json_v_int(json_v_obj_get(o3, "age")), 30, "age=30");
-assert_eq(json_v_bool(json_v_obj_get(o3, "admin")), 1, "admin=true");
+var o3 = bayan_json_v_parse_str("{\"name\":\"alice\",\"age\":30,\"admin\":true}", 38);
+assert_eq(bayan_json_v_obj_len(o3), 3, "obj len 3");
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_obj_get(o3, "name"))), "alice") == 1, "name");
+assert_eq(bayan_json_v_int(bayan_json_v_obj_get(o3, "age")), 30, "age=30");
+assert_eq(bayan_json_v_bool(bayan_json_v_obj_get(o3, "admin")), 1, "admin=true");
 
 # Order preservation
-assert(streq(str_data(json_v_obj_key(o3, 0)), "name") == 1, "key 0 = name");
-assert(streq(str_data(json_v_obj_key(o3, 1)), "age") == 1, "key 1 = age");
-assert(streq(str_data(json_v_obj_key(o3, 2)), "admin") == 1, "key 2 = admin");
+assert(streq(str_data(bayan_json_v_obj_key(o3, 0)), "name") == 1, "key 0 = name");
+assert(streq(str_data(bayan_json_v_obj_key(o3, 1)), "age") == 1, "key 1 = age");
+assert(streq(str_data(bayan_json_v_obj_key(o3, 2)), "admin") == 1, "key 2 = admin");
 
 # Missing key → 0
-assert_eq(json_v_obj_get(o3, "missing"), 0, "missing key = 0");
+assert_eq(bayan_json_v_obj_get(o3, "missing"), 0, "missing key = 0");
 
 # ── Nested objects + arrays ──────────────────────────────────────────
 test_group("nesting");
-var n1 = json_v_parse_str("{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}", 51);
-var users = json_v_obj_get(n1, "users");
-assert_eq(json_v_is_arr(users), 1, "users is arr");
-assert_eq(json_v_arr_len(users), 2, "2 users");
-var u0 = json_v_arr_get(users, 0);
-assert_eq(json_v_int(json_v_obj_get(u0, "id")), 1, "users[0].id=1");
-assert(streq(str_data(json_v_str(json_v_obj_get(u0, "name"))), "a") == 1, "users[0].name");
-var u1 = json_v_arr_get(users, 1);
-assert_eq(json_v_int(json_v_obj_get(u1, "id")), 2, "users[1].id=2");
+var n1 = bayan_json_v_parse_str("{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}", 51);
+var users = bayan_json_v_obj_get(n1, "users");
+assert_eq(bayan_json_v_is_arr(users), 1, "users is arr");
+assert_eq(bayan_json_v_arr_len(users), 2, "2 users");
+var u0 = bayan_json_v_arr_get(users, 0);
+assert_eq(bayan_json_v_int(bayan_json_v_obj_get(u0, "id")), 1, "users[0].id=1");
+assert(streq(str_data(bayan_json_v_str(bayan_json_v_obj_get(u0, "name"))), "a") == 1, "users[0].name");
+var u1 = bayan_json_v_arr_get(users, 1);
+assert_eq(bayan_json_v_int(bayan_json_v_obj_get(u1, "id")), 2, "users[1].id=2");
 
-var n2 = json_v_parse_str("{\"a\":{\"b\":{\"c\":42}}}", 20);
-var inner = json_v_obj_get(json_v_obj_get(json_v_obj_get(n2, "a"), "b"), "c");
-assert_eq(json_v_int(inner), 42, "deep nested 3 levels");
+var n2 = bayan_json_v_parse_str("{\"a\":{\"b\":{\"c\":42}}}", 20);
+var inner = bayan_json_v_obj_get(bayan_json_v_obj_get(bayan_json_v_obj_get(n2, "a"), "b"), "c");
+assert_eq(bayan_json_v_int(inner), 42, "deep nested 3 levels");
 
 # ── Floats ───────────────────────────────────────────────────────────
 test_group("floats");
-var f1 = json_v_parse_str("3.14", 4);
-assert_eq(json_v_is_float(f1), 1, "3.14 is float");
+var f1 = bayan_json_v_parse_str("3.14", 4);
+assert_eq(bayan_json_v_is_float(f1), 1, "3.14 is float");
 
-var f2 = json_v_parse_str("-2.5", 4);
-assert_eq(json_v_is_float(f2), 1, "-2.5 is float");
+var f2 = bayan_json_v_parse_str("-2.5", 4);
+assert_eq(bayan_json_v_is_float(f2), 1, "-2.5 is float");
 
-var f3 = json_v_parse_str("1.5e2", 5);
-assert_eq(json_v_is_float(f3), 1, "1.5e2 is float (sci)");
+var f3 = bayan_json_v_parse_str("1.5e2", 5);
+assert_eq(bayan_json_v_is_float(f3), 1, "1.5e2 is float (sci)");
 
 # ── Build round-trip ────────────────────────────────────────────────
 test_group("build round-trip");
-var b1 = json_v_build(json_v_parse_str("[1,2,3]", 7));
+var b1 = bayan_json_v_build(bayan_json_v_parse_str("[1,2,3]", 7));
 assert(streq(str_data(b1), "[1,2,3]") == 1, "[1,2,3] round-trip");
 
-var b2 = json_v_build(json_v_parse_str("{\"k\":\"v\"}", 9));
+var b2 = bayan_json_v_build(bayan_json_v_parse_str("{\"k\":\"v\"}", 9));
 assert(streq(str_data(b2), "{\"k\":\"v\"}") == 1, "{k:v} round-trip");
 
-var b3 = json_v_build(json_v_parse_str("[true,false,null]", 17));
+var b3 = bayan_json_v_build(bayan_json_v_parse_str("[true,false,null]", 17));
 assert(streq(str_data(b3), "[true,false,null]") == 1, "primitives round-trip");
 
 # ── Build with escape re-encoding ───────────────────────────────────
 test_group("build escapes");
 # Construct: { "msg": "line1\nline2" }
-var obj_b = json_v_obj_new();
+var obj_b = bayan_json_v_obj_new();
 var msg_buf = alloc(16);
 store8(msg_buf, 108);     # l
 store8(msg_buf + 1, 105); # i
@@ -167,44 +170,44 @@ store8(msg_buf + 8, 110); # n
 store8(msg_buf + 9, 101); # e
 store8(msg_buf + 10, 50); # 2
 store8(msg_buf + 11, 0);
-json_v_obj_set(obj_b, str_from("msg"), json_v_str_new(str_new(msg_buf, 11)));
-var built = json_v_build(obj_b);
+bayan_json_v_obj_set(obj_b, str_from("msg"), bayan_json_v_str_new(str_new(msg_buf, 11)));
+var built = bayan_json_v_build(obj_b);
 assert(streq(str_data(built), "{\"msg\":\"line1\\nline2\"}") == 1, "newline re-escaped");
 
 # ── Errors ──────────────────────────────────────────────────────────
 test_group("errors");
-assert_eq(json_v_parse_str("{", 1), 0, "unterminated obj fails");
-assert_eq(json_v_parse_str("[1,", 3), 0, "trailing comma fails");
-assert_eq(json_v_parse_str("garbage", 7), 0, "garbage fails");
-assert_eq(json_v_parse_str("\"unterminated", 13), 0, "unterminated string");
-# After a failed parse, json_last_error_pos() is set.
-var _ = json_v_parse_str("[1,2,gar]", 9);
-assert(json_last_error_pos() > 0, "err pos after failure > 0");
+assert_eq(bayan_json_v_parse_str("{", 1), 0, "unterminated obj fails");
+assert_eq(bayan_json_v_parse_str("[1,", 3), 0, "trailing comma fails");
+assert_eq(bayan_json_v_parse_str("garbage", 7), 0, "garbage fails");
+assert_eq(bayan_json_v_parse_str("\"unterminated", 13), 0, "unterminated string");
+# After a failed parse, bayan_json_last_error_pos() is set.
+var _ = bayan_json_v_parse_str("[1,2,gar]", 9);
+assert(bayan_json_last_error_pos() > 0, "err pos after failure > 0");
 
 # Trailing junk
-assert_eq(json_v_parse_str("[1,2,3]xyz", 10), 0, "trailing junk fails");
+assert_eq(bayan_json_v_parse_str("[1,2,3]xyz", 10), 0, "trailing junk fails");
 
 # ── Type coercion ───────────────────────────────────────────────────
 test_group("coercion");
-var c_int = json_v_parse_str("42", 2);
-assert_eq(json_v_int(c_int), 42, "int as int");
+var c_int = bayan_json_v_parse_str("42", 2);
+assert_eq(bayan_json_v_int(c_int), 42, "int as int");
 # float of an int: 42.0
-# (we just verify json_v_float doesn't crash on an int)
-var as_f = json_v_float(c_int);
+# (we just verify bayan_json_v_float doesn't crash on an int)
+var as_f = bayan_json_v_float(c_int);
 assert(as_f != 0, "int → float bits non-zero");
 
 # bool of a non-bool is 0
-assert_eq(json_v_bool(c_int), 0, "int as bool = 0");
+assert_eq(bayan_json_v_bool(c_int), 0, "int as bool = 0");
 
 # str of a non-str is 0
-assert_eq(json_v_str(c_int), 0, "int as str = 0");
+assert_eq(bayan_json_v_str(c_int), 0, "int as str = 0");
 
 # ── Backward-compat with flat API ───────────────────────────────────
 test_group("flat API regression");
-var pairs = json_parse(str_from("{\"a\": \"x\", \"b\": \"y\"}"));
-assert_eq(str_eq_cstr(json_get(pairs, str_from("a")), "x"), 1, "flat get a");
-assert_eq(str_eq_cstr(json_get(pairs, str_from("b")), "y"), 1, "flat get b");
-var num_pairs = json_parse(str_from("{\"n\": 42}"));
-assert_eq(json_get_int(num_pairs, str_from("n")), 42, "flat get_int");
+var pairs = bayan_json_parse(str_from("{\"a\": \"x\", \"b\": \"y\"}"));
+assert_eq(str_eq_cstr(bayan_json_get(pairs, str_from("a")), "x"), 1, "flat get a");
+assert_eq(str_eq_cstr(bayan_json_get(pairs, str_from("b")), "y"), 1, "flat get b");
+var num_pairs = bayan_json_parse(str_from("{\"n\": 42}"));
+assert_eq(bayan_json_get_int(num_pairs, str_from("n")), 42, "flat get_int");
 
 var r = assert_summary();

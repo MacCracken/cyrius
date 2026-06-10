@@ -7,10 +7,10 @@
 #
 # Locks the regression floor for the `_a` variants added across
 # `lib/json.cyr` (12 fns: _jv_alloc_a + 5 leaf v_*_new_a +
-# v_arr_new_a + v_obj_new_a + _jv_pair_new_a + json_v_arr_push_a +
-# json_pair_new_a), `lib/toml.cyr` (toml_section_new_a +
-# toml_pair_new_a), `lib/cyml.cyr` (cyml_entry_new_a +
-# cyml_doc_new_a), `lib/http.cyr` (http_get_a partial migration —
+# v_arr_new_a + v_obj_new_a + _jv_pair_new_a + bayan_json_v_arr_push_a +
+# bayan_json_pair_new_a), `lib/toml.cyr` (bayan_toml_section_new_a +
+# bayan_toml_pair_new_a), `lib/cyml.cyr` (bayan_cyml_entry_new_a +
+# bayan_cyml_doc_new_a), `lib/http.cyr` (http_get_a partial migration —
 # routes the 64KB recv buffer + 32B response struct through the
 # supplied allocator; URL parsing + request build stay on default).
 #
@@ -20,7 +20,7 @@
 # Flagged as deferred.
 #
 # Coverage:
-#   (1) json — back-compat wrappers unchanged (json_v_int_new etc.)
+#   (1) json — back-compat wrappers unchanged (bayan_json_v_int_new etc.)
 #   (2) json — _a variants build a tagged tree using a single
 #       Allocator (typical per-request-arena pattern: build the
 #       whole doc inside an arena, reset clears all allocations).
@@ -37,9 +37,10 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/str.cyr"
 include "lib/vec.cyr"
-include "lib/json.cyr"
-include "lib/toml.cyr"
-include "lib/cyml.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/http.cyr"
 include "lib/assert.cyr"
 
@@ -48,24 +49,24 @@ alloc_init();
 # ---- json back-compat ----
 
 test_group("json — back-compat wrappers (call sites unchanged)");
-var ji = json_v_int_new(42);
+var ji = bayan_json_v_int_new(42);
 assert_eq(load64(ji), 2, "JTAG_INT = 2");
 assert_eq(load64(ji + 8), 42, "int payload");
-var jb = json_v_bool_new(1);
+var jb = bayan_json_v_bool_new(1);
 assert_eq(load64(jb), 1, "JTAG_BOOL = 1");
 assert_eq(load64(jb + 8), 1, "bool payload");
-var jn = json_v_null();
+var jn = bayan_json_v_null();
 assert_eq(load64(jn), 0, "JTAG_NULL = 0");
 
 # ---- json _a variants with arena_allocator (per-request pattern) ----
 
 test_group("json — _a variants build a tree inside an arena");
 var doc_arena = arena_allocator(8192);
-var int_a  = json_v_int_new_a(doc_arena, 100);
-var bool_a = json_v_bool_new_a(doc_arena, 0);
-var null_a = json_v_null_a(doc_arena);
-var arr_a  = json_v_arr_new_a(doc_arena);
-var obj_a  = json_v_obj_new_a(doc_arena);
+var int_a  = bayan_json_v_int_new_a(doc_arena, 100);
+var bool_a = bayan_json_v_bool_new_a(doc_arena, 0);
+var null_a = bayan_json_v_null_a(doc_arena);
+var arr_a  = bayan_json_v_arr_new_a(doc_arena);
+var obj_a  = bayan_json_v_obj_new_a(doc_arena);
 assert(int_a  != 0, "int_a allocated in arena");
 assert(bool_a != 0, "bool_a allocated in arena");
 assert(null_a != 0, "null_a allocated in arena");
@@ -74,10 +75,10 @@ assert(obj_a  != 0, "obj_a allocated in arena");
 assert_eq(load64(int_a + 8), 100, "int_a payload preserved");
 
 test_group("json — _a array push routes grow through arena");
-var jarr = json_v_arr_new_a(doc_arena);
+var jarr = bayan_json_v_arr_new_a(doc_arena);
 var ai = 0;
 while (ai < 30) {
-    json_v_arr_push_a(doc_arena, jarr, json_v_int_new_a(doc_arena, ai));
+    bayan_json_v_arr_push_a(doc_arena, jarr, bayan_json_v_int_new_a(doc_arena, ai));
     ai = ai + 1;
 }
 # Inner vec started at cap 16, grew at push 17 and again at push 33;
@@ -92,27 +93,27 @@ test_group("json — arena reset clears all the doc's allocations");
 reset_via(doc_arena);
 # Post-reset, the arena is empty; new allocations succeed at the
 # arena's base.
-var post_reset = json_v_int_new_a(doc_arena, 999);
+var post_reset = bayan_json_v_int_new_a(doc_arena, 999);
 assert(post_reset != 0, "post-reset alloc succeeds");
 
 # ---- json _a variants with fail_after_n_allocs ----
 
 test_group("json — OOM returns 0 from _a variants");
 var fa0 = fail_after_n_allocs(0);
-assert_eq(json_v_null_a(fa0),       0, "null_a OOM = 0");
-assert_eq(json_v_int_new_a(fa0, 5), 0, "int_a OOM = 0");
-assert_eq(json_v_str_new_a(fa0, 0), 0, "str_a OOM = 0");
+assert_eq(bayan_json_v_null_a(fa0),       0, "null_a OOM = 0");
+assert_eq(bayan_json_v_int_new_a(fa0, 5), 0, "int_a OOM = 0");
+assert_eq(bayan_json_v_str_new_a(fa0, 0), 0, "str_a OOM = 0");
 
 # arr_new_a allocates 2 (jv-cell + inner vec header + inner vec
 # data via vec_new_a) — actually 3. fail_after=2 lets jv-cell +
 # vec header through, fails on vec data → returns 0.
 var fa2 = fail_after_n_allocs(2);
-assert_eq(json_v_arr_new_a(fa2), 0, "arr_a OOM in vec data = 0");
+assert_eq(bayan_json_v_arr_new_a(fa2), 0, "arr_a OOM in vec data = 0");
 
-test_group("json_pair_new_a + _jv_pair_new_a");
+test_group("bayan_json_pair_new_a + _jv_pair_new_a");
 var bp = bump_allocator();
-var pair = json_pair_new_a(bp, "k", "v");
-assert(pair != 0, "json_pair_new_a Ok");
+var pair = bayan_json_pair_new_a(bp, "k", "v");
+assert(pair != 0, "bayan_json_pair_new_a Ok");
 # pair[+8] holds the value cstr pointer; deref to byte for the
 # 'v' content check.
 assert_eq(load8(load64(pair + 8)), 118, "value byte 0 = 'v' (118)");
@@ -121,22 +122,22 @@ assert_eq(load8(load64(pair + 8)), 118, "value byte 0 = 'v' (118)");
 
 test_group("toml — _a variants");
 var ta = arena_allocator(2048);
-var sec = toml_section_new_a(ta, "header", 0);
-var pair_t = toml_pair_new_a(ta, "key", "value");
-assert(sec != 0,    "toml_section_new_a Ok");
-assert(pair_t != 0, "toml_pair_new_a Ok");
-assert_eq(toml_section_name(sec), "header", "section name preserved");
-assert_eq(toml_pair_key(pair_t),  "key",    "pair key preserved");
+var sec = bayan_toml_section_new_a(ta, "header", 0);
+var pair_t = bayan_toml_pair_new_a(ta, "key", "value");
+assert(sec != 0,    "bayan_toml_section_new_a Ok");
+assert(pair_t != 0, "bayan_toml_pair_new_a Ok");
+assert_eq(bayan_toml_section_name(sec), "header", "section name preserved");
+assert_eq(bayan_toml_pair_key(pair_t),  "key",    "pair key preserved");
 
 # ---- cyml _a variants ----
 
 test_group("cyml — _a variants");
 var ca = arena_allocator(1024);
-var entry = cyml_entry_new_a(ca, "hp", 2, "bp", 2);
-var doc   = cyml_doc_new_a(ca);
-assert(entry != 0, "cyml_entry_new_a Ok");
-assert(doc   != 0, "cyml_doc_new_a Ok");
-assert_eq(cyml_entry_header_len(entry), 2, "entry header_len preserved");
+var entry = bayan_cyml_entry_new_a(ca, "hp", 2, "bp", 2);
+var doc   = bayan_cyml_doc_new_a(ca);
+assert(entry != 0, "bayan_cyml_entry_new_a Ok");
+assert(doc   != 0, "bayan_cyml_doc_new_a Ok");
+assert_eq(bayan_cyml_entry_header_len(entry), 2, "entry header_len preserved");
 
 # ---- http http_get_a — bad URL early-return alloc path ----
 

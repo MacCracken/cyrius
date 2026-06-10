@@ -16,7 +16,10 @@ include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/math.cyr"
 include "lib/fnptr.cyr"
-include "lib/json.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
 alloc_init();
@@ -79,18 +82,18 @@ fn cb_err(ctx, m, p) { _c_err = _c_err + 1; _last_err_pos = p; _trace(101); retu
 
 # Construct a handler with all 11 callbacks registered.
 fn _make_full_handler() {
-    var h = json_stream_handler_new(0);
-    json_stream_on(h, JS_EV_OBJECT_START, &cb_obj_start);
-    json_stream_on(h, JS_EV_OBJECT_END,   &cb_obj_end);
-    json_stream_on(h, JS_EV_ARRAY_START,  &cb_arr_start);
-    json_stream_on(h, JS_EV_ARRAY_END,    &cb_arr_end);
-    json_stream_on(h, JS_EV_KEY,          &cb_key);
-    json_stream_on(h, JS_EV_STRING,       &cb_str);
-    json_stream_on(h, JS_EV_INT,          &cb_int);
-    json_stream_on(h, JS_EV_FLOAT,        &cb_float);
-    json_stream_on(h, JS_EV_BOOL,         &cb_bool);
-    json_stream_on(h, JS_EV_NULL,         &cb_null);
-    json_stream_on(h, JS_EV_ERROR,        &cb_err);
+    var h = bayan_json_stream_handler_new(0);
+    bayan_json_stream_on(h, JS_EV_OBJECT_START, &cb_obj_start);
+    bayan_json_stream_on(h, JS_EV_OBJECT_END,   &cb_obj_end);
+    bayan_json_stream_on(h, JS_EV_ARRAY_START,  &cb_arr_start);
+    bayan_json_stream_on(h, JS_EV_ARRAY_END,    &cb_arr_end);
+    bayan_json_stream_on(h, JS_EV_KEY,          &cb_key);
+    bayan_json_stream_on(h, JS_EV_STRING,       &cb_str);
+    bayan_json_stream_on(h, JS_EV_INT,          &cb_int);
+    bayan_json_stream_on(h, JS_EV_FLOAT,        &cb_float);
+    bayan_json_stream_on(h, JS_EV_BOOL,         &cb_bool);
+    bayan_json_stream_on(h, JS_EV_NULL,         &cb_null);
+    bayan_json_stream_on(h, JS_EV_ERROR,        &cb_err);
     return h;
 }
 
@@ -98,56 +101,56 @@ _trace_buf = alloc(256);
 
 # ── Handler allocation + slot wiring ─────────────────────────────────
 test_group("handler allocation");
-var h0 = json_stream_handler_new(0);
+var h0 = bayan_json_stream_handler_new(0);
 assert(h0 != 0, "handler alloc");
-assert_eq(json_stream_on(h0, JS_EV_OBJECT_START, &cb_obj_start), 0, "set valid event");
-assert_eq(json_stream_on(h0, 0 - 1, &cb_obj_start), 0 - 1, "negative event_id rejected");
-assert_eq(json_stream_on(h0, JS_EV_COUNT, &cb_obj_start), 0 - 1, "out-of-range event_id rejected");
-assert_eq(json_stream_on(h0, 99, &cb_obj_start), 0 - 1, "very-out-of-range event_id rejected");
+assert_eq(bayan_json_stream_on(h0, JS_EV_OBJECT_START, &cb_obj_start), 0, "set valid event");
+assert_eq(bayan_json_stream_on(h0, 0 - 1, &cb_obj_start), 0 - 1, "negative event_id rejected");
+assert_eq(bayan_json_stream_on(h0, JS_EV_COUNT, &cb_obj_start), 0 - 1, "out-of-range event_id rejected");
+assert_eq(bayan_json_stream_on(h0, 99, &cb_obj_start), 0 - 1, "very-out-of-range event_id rejected");
 
 # ── Scalar-only inputs ──────────────────────────────────────────────
 test_group("scalar inputs");
 _reset();
 var h = _make_full_handler();
-assert_eq(json_stream_parse(str_data(str_from("42")), 2, h), 0, "int parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("42")), 2, h), 0, "int parses");
 assert_eq(_c_int, 1, "1 int event");
 assert_eq(_last_int, 42, "value = 42");
 assert_eq(_c_obj_start + _c_arr_start + _c_str + _c_bool + _c_null + _c_err, 0, "no other events");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("true")), 4, h), 0, "true parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("true")), 4, h), 0, "true parses");
 assert_eq(_c_bool, 1, "1 bool event");
 assert_eq(_last_bool, 1, "value = 1");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("false")), 5, h), 0, "false parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("false")), 5, h), 0, "false parses");
 assert_eq(_c_bool, 1, "1 bool event");
 assert_eq(_last_bool, 0, "value = 0");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("null")), 4, h), 0, "null parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("null")), 4, h), 0, "null parses");
 assert_eq(_c_null, 1, "1 null event");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("\"hello\"")), 7, h), 0, "string parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("\"hello\"")), 7, h), 0, "string parses");
 assert_eq(_c_str, 1, "1 string event");
 assert(streq(str_data(_last_str), "hello") == 1, "value = hello");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("3.14")), 4, h), 0, "float parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("3.14")), 4, h), 0, "float parses");
 assert_eq(_c_float, 1, "1 float event");
 assert_eq(_c_int, 0, "no int event for float");
 
 # ── Empty containers ────────────────────────────────────────────────
 test_group("empty containers");
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("{}")), 2, h), 0, "{} parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("{}")), 2, h), 0, "{} parses");
 assert_eq(_c_obj_start, 1, "obj_start");
 assert_eq(_c_obj_end, 1, "obj_end");
 assert_eq(_c_key, 0, "no keys");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("[]")), 2, h), 0, "[] parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("[]")), 2, h), 0, "[] parses");
 assert_eq(_c_arr_start, 1, "arr_start");
 assert_eq(_c_arr_end, 1, "arr_end");
 
@@ -155,7 +158,7 @@ assert_eq(_c_arr_end, 1, "arr_end");
 test_group("flat object");
 _reset();
 var src1 = "{\"name\":\"alice\",\"age\":30,\"admin\":true,\"x\":null}";
-assert_eq(json_stream_parse(str_data(str_from(src1)), strlen(src1), h), 0, "obj parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from(src1)), strlen(src1), h), 0, "obj parses");
 assert_eq(_c_obj_start, 1, "1 obj_start");
 assert_eq(_c_obj_end, 1, "1 obj_end");
 assert_eq(_c_key, 4, "4 keys");
@@ -172,7 +175,7 @@ _reset();
 # {"u":[1,2],"o":{"k":"v"}}
 # Expected trace: { k[ i i ] k { k s } }
 var src2 = "{\"u\":[1,2],\"o\":{\"k\":\"v\"}}";
-assert_eq(json_stream_parse(str_data(str_from(src2)), strlen(src2), h), 0, "nested parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from(src2)), strlen(src2), h), 0, "nested parses");
 store8(_trace_buf + _trace_len, 0);
 assert(streq(_trace_buf, "{k[ii]k{ks}}") == 1, "trace = {k[ii]k{ks}}");
 
@@ -182,7 +185,7 @@ _reset();
 # [{"id":1},{"id":2},{"id":3}]
 # Trace: [ { k i } { k i } { k i } ]
 var src3 = "[{\"id\":1},{\"id\":2},{\"id\":3}]";
-assert_eq(json_stream_parse(str_data(str_from(src3)), strlen(src3), h), 0, "arr of objs parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from(src3)), strlen(src3), h), 0, "arr of objs parses");
 assert_eq(_c_obj_start, 3, "3 obj_starts");
 assert_eq(_c_obj_end, 3, "3 obj_ends");
 assert_eq(_c_int, 3, "3 ints");
@@ -192,41 +195,41 @@ assert_eq(_last_int, 3, "last int = 3");
 # ── Error path: malformed input fires on_error ───────────────────────
 test_group("error path");
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("{")), 1, h), 0 - 1, "unterminated obj returns -1");
+assert_eq(bayan_json_stream_parse(str_data(str_from("{")), 1, h), 0 - 1, "unterminated obj returns -1");
 assert(_c_err >= 1, "on_error fired");
 assert(_last_err_pos >= 0, "err pos >= 0");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("[1,]")), 4, h), 0 - 1, "trailing comma rejected");
+assert_eq(bayan_json_stream_parse(str_data(str_from("[1,]")), 4, h), 0 - 1, "trailing comma rejected");
 assert(_c_err >= 1, "on_error fired on trailing comma");
 
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("garbage")), 7, h), 0 - 1, "garbage rejected");
+assert_eq(bayan_json_stream_parse(str_data(str_from("garbage")), 7, h), 0 - 1, "garbage rejected");
 assert(_c_err >= 1, "on_error fired on garbage");
 
 # Trailing content
 _reset();
-assert_eq(json_stream_parse(str_data(str_from("[1,2]xyz")), 8, h), 0 - 1, "trailing content rejected");
+assert_eq(bayan_json_stream_parse(str_data(str_from("[1,2]xyz")), 8, h), 0 - 1, "trailing content rejected");
 assert(_c_err >= 1, "on_error fired on trailing content");
 
 # ── Selective callbacks: unset slots are silent (no-op) ─────────────
 test_group("selective callbacks");
 _reset();
-var h_partial = json_stream_handler_new(0);
-json_stream_on(h_partial, JS_EV_INT, &cb_int);
+var h_partial = bayan_json_stream_handler_new(0);
+bayan_json_stream_on(h_partial, JS_EV_INT, &cb_int);
 # All other slots remain 0 — must NOT crash, must NOT bump counters.
-assert_eq(json_stream_parse(str_data(str_from("{\"a\":1,\"b\":[2,3]}")), 17, h_partial), 0, "partial handler parses");
+assert_eq(bayan_json_stream_parse(str_data(str_from("{\"a\":1,\"b\":[2,3]}")), 17, h_partial), 0, "partial handler parses");
 assert_eq(_c_int, 3, "3 ints fired");
 assert_eq(_c_obj_start, 0, "obj_start did not fire (slot=0)");
 assert_eq(_c_arr_start, 0, "arr_start did not fire (slot=0)");
 assert_eq(_c_key, 0, "key did not fire (slot=0)");
 
-# ── Convenience entry: json_stream_parse_str ────────────────────────
+# ── Convenience entry: bayan_json_stream_parse_str ────────────────────────
 test_group("convenience entries");
 _reset();
-assert_eq(json_stream_parse_str(str_from("[1,2,3]"), h), 0, "parse_str works");
+assert_eq(bayan_json_stream_parse_str(str_from("[1,2,3]"), h), 0, "parse_str works");
 assert_eq(_c_int, 3, "3 ints from parse_str");
 
-assert_eq(json_stream_parse_str(0, h), 0 - 1, "null Str returns -1");
+assert_eq(bayan_json_stream_parse_str(0, h), 0 - 1, "null Str returns -1");
 
 var r = assert_summary();

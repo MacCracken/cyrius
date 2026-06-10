@@ -6,13 +6,16 @@ include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/math.cyr"
-include "lib/json.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 
 alloc_init();
 
 var src = "{\"name\":\"alice\",\"tags\":[1,2],\"empty\":[]}";
-var v = json_v_parse_str(src, strlen(src));
-var pretty = json_v_build_pretty(v, 2);
+var v = bayan_json_v_parse_str(src, strlen(src));
+var pretty = bayan_json_v_build_pretty(v, 2);
 print(str_data(pretty), str_len(pretty));
 print("\n", 1);
 return 0;

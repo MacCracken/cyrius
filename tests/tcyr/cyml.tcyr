@@ -6,7 +6,10 @@ include "lib/vec.cyr"      # fmt.cyr uses vec_get; explicit include so it
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
-include "lib/cyml.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
 
 fn main() {
     alloc_init();
@@ -14,45 +17,45 @@ fn main() {
     # === Single-entry file ===
     test_group("single-entry");
     var s1 = "[meta]\nname = \"test\"\n\n---\n\nHello world.\n";
-    var d1 = cyml_parse(s1, strlen(s1));
-    assert_eq(cyml_doc_entry_count(d1), 1);
-    var e1 = cyml_doc_entry(d1, 0);
-    assert(cyml_entry_header_len(e1) > 0, "header has content");
-    assert(cyml_entry_body_len(e1) > 0, "body has content");
+    var d1 = bayan_cyml_parse(s1, strlen(s1));
+    assert_eq(bayan_cyml_doc_entry_count(d1), 1);
+    var e1 = bayan_cyml_doc_entry(d1, 0);
+    assert(bayan_cyml_entry_header_len(e1) > 0, "header has content");
+    assert(bayan_cyml_entry_body_len(e1) > 0, "body has content");
     # Body should be "Hello world." (trimmed)
-    assert_eq(cyml_entry_body_len(e1), 12);
-    assert(memeq(cyml_entry_body(e1), "Hello world.", 12), "body content");
+    assert_eq(bayan_cyml_entry_body_len(e1), 12);
+    assert(memeq(bayan_cyml_entry_body(e1), "Hello world.", 12), "body content");
 
     # === Single-entry, no body ===
     test_group("no-body");
     var s2 = "[meta]\nname = \"headeronly\"\n";
-    var d2 = cyml_parse(s2, strlen(s2));
-    assert_eq(cyml_doc_entry_count(d2), 0);
-    assert(cyml_doc_header_len(d2) > 0, "file header exists");
+    var d2 = bayan_cyml_parse(s2, strlen(s2));
+    assert_eq(bayan_cyml_doc_entry_count(d2), 0);
+    assert(bayan_cyml_doc_header_len(d2) > 0, "file header exists");
 
     # === Multi-entry file ===
     test_group("multi-entry");
     var s3 = "[topic]\nid = \"test\"\n\n[[entries]]\nname = \"first\"\n\n---\n\nFirst body.\n\n[[entries]]\nname = \"second\"\n\n---\n\nSecond body.\n";
-    var d3 = cyml_parse(s3, strlen(s3));
-    assert_eq(cyml_doc_entry_count(d3), 2);
+    var d3 = bayan_cyml_parse(s3, strlen(s3));
+    assert_eq(bayan_cyml_doc_entry_count(d3), 2);
     # File header
-    assert(cyml_doc_header_len(d3) > 0, "file header");
+    assert(bayan_cyml_doc_header_len(d3) > 0, "file header");
     # Entry 0
-    var e3a = cyml_doc_entry(d3, 0);
-    assert(cyml_entry_header_len(e3a) > 0, "entry 0 header");
-    assert_eq(cyml_entry_body_len(e3a), 11);
-    assert(memeq(cyml_entry_body(e3a), "First body.", 11), "entry 0 body");
+    var e3a = bayan_cyml_doc_entry(d3, 0);
+    assert(bayan_cyml_entry_header_len(e3a) > 0, "entry 0 header");
+    assert_eq(bayan_cyml_entry_body_len(e3a), 11);
+    assert(memeq(bayan_cyml_entry_body(e3a), "First body.", 11), "entry 0 body");
     # Entry 1
-    var e3b = cyml_doc_entry(d3, 1);
-    assert(cyml_entry_header_len(e3b) > 0, "entry 1 header");
-    assert_eq(cyml_entry_body_len(e3b), 12);
-    assert(memeq(cyml_entry_body(e3b), "Second body.", 12), "entry 1 body");
+    var e3b = bayan_cyml_doc_entry(d3, 1);
+    assert(bayan_cyml_entry_header_len(e3b) > 0, "entry 1 header");
+    assert_eq(bayan_cyml_entry_body_len(e3b), 12);
+    assert(memeq(bayan_cyml_entry_body(e3b), "Second body.", 12), "entry 1 body");
 
-    # === cyml_split convenience ===
-    test_group("cyml_split");
+    # === bayan_cyml_split convenience ===
+    test_group("bayan_cyml_split");
     var s4 = "key = \"val\"\n\n---\n\nMarkdown here.\n";
     var hp = 0; var hl = 0; var bp = 0; var bl = 0;
-    var ok = cyml_split(s4, strlen(s4), &hp, &hl, &bp, &bl);
+    var ok = bayan_cyml_split(s4, strlen(s4), &hp, &hl, &bp, &bl);
     assert_eq(ok, 1);
     assert(hl > 0, "split header");
     assert_eq(bl, 14);
@@ -61,11 +64,11 @@ fn main() {
     # === Multi-entry, entry without body ===
     test_group("entry-no-body");
     var s5 = "[[entries]]\nname = \"nodelim\"\ntags = [\"a\"]\n";
-    var d5 = cyml_parse(s5, strlen(s5));
-    assert_eq(cyml_doc_entry_count(d5), 1);
-    var e5 = cyml_doc_entry(d5, 0);
-    assert(cyml_entry_header_len(e5) > 0, "header-only entry");
-    assert_eq(cyml_entry_body_len(e5), 0);
+    var d5 = bayan_cyml_parse(s5, strlen(s5));
+    assert_eq(bayan_cyml_doc_entry_count(d5), 1);
+    var e5 = bayan_cyml_doc_entry(d5, 0);
+    assert(bayan_cyml_entry_header_len(e5) > 0, "header-only entry");
+    assert_eq(bayan_cyml_entry_body_len(e5), 0);
 
     # === Many entries — OOB stack-write regression (.79) ===
     # entry_starts is written at 8-byte stride; before the [256]→[2048] fix it
@@ -84,8 +87,8 @@ fn main() {
         mp = mp + mbl;
         mk = mk + 1;
     }
-    var dm = cyml_parse(mbuf, mp);
-    assert_eq(cyml_doc_entry_count(dm), 50);
+    var dm = bayan_cyml_parse(mbuf, mp);
+    assert_eq(bayan_cyml_doc_entry_count(dm), 50);
 
     syscall(60, assert_summary());
 }
