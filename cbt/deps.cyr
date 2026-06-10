@@ -366,6 +366,50 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
     str_builder_add_cstr(sb, mod_name);
     str_builder_add_cstr(sb, ".cyr");
     var src = str_data(str_builder_build(sb));
+
+    # Directory-family expansion (v6.1.x): a bare family name like "unicode" is a
+    # DIRECTORY (lib/unicode/*.cyr), not a single lib/unicode.cyr. When the
+    # <name>.cyr source is absent but <stdlib_dir>/<name>/ is a directory, resolve
+    # every .cyr inside it. Each accessor self-includes its data file, so the
+    # transitive scan below still fixes ordering. Fixes downstream consumers
+    # (e.g. niyama) declaring bare "unicode" in [deps].stdlib — previously this
+    # errored "cannot read lib/unicode.cyr" and dropped the whole family.
+    if (file_exists(src) == 0) {
+        var dsb = str_builder_new();
+        str_builder_add_cstr(dsb, stdlib_dir);
+        str_builder_add_cstr(dsb, "/");
+        str_builder_add_cstr(dsb, mod_name);
+        var dir_path = str_builder_build(dsb);   # dir_list takes a Str, not a cstr
+        var entries = dir_list(dir_path);
+        if (entries != 0) {
+            var n = vec_len(entries);
+            var ei = 0;
+            var expanded = 0;
+            while (ei < n) {
+                var es = vec_get(entries, ei);
+                ei = ei + 1;
+                var ed = str_data(es);
+                var el = str_len(es);
+                if (el >= 5) {
+                    if (memeq(ed + el - 4, ".cyr", 4) == 1) {
+                        var stem = el - 4;
+                        var subbuf = str_builder_new();
+                        str_builder_add_cstr(subbuf, mod_name);
+                        str_builder_add_cstr(subbuf, "/");
+                        var stemc = alloc(stem + 1);
+                        memcpy(stemc, ed, stem);
+                        store8(stemc + stem, 0);
+                        str_builder_add_cstr(subbuf, stemc);
+                        var sub_name = str_data(str_builder_build(subbuf));
+                        _dep_copy_stdlib_recursive(stdlib_dir, sub_name, is_top);
+                        expanded = 1;
+                    }
+                }
+            }
+            if (expanded == 1) { return 0; }
+        }
+    }
+
     var dst = make_path("lib", mod_name);
     var sb2 = str_builder_new();
     str_builder_add_cstr(sb2, dst);

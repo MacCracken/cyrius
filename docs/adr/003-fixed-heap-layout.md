@@ -30,14 +30,14 @@ two disagree, **`src/main.cyr` wins**. Major regions, in offset order:
 0x18C100  compiler state ~80 KB   scalars, struct / patch / jump tables, gvar_toks (0x198000), field tables (0x1FC000, v6.0.47)
 0x21A000  str_data        2 MB    string-literal bytes
 0x41A000  codebuf         3 MB    generated machine code
-0x71A000  output_buf      2 MB    ELF / Mach-O / PE output
 0x9BA000  fn tables     ~256 KB   4096 functions (names / offsets / params / inline / …)
 0x107B000 fixup_tbl      16 MB    1,048,576 fixup entries × 16 bytes
 0x2D7C000 tok_types       8 MB    1,048,576 token type slots
 0x357C000 tok_values      8 MB    1,048,576 token value slots
 0x3D7C000 tok_lines       8 MB    1,048,576 token line slots
 0x459D000 preprocess_out  8 MB    include / #derive expansion buffer
-0x4D9D000 brk-final     ~77.6 MB  heap end (v5.11.68 reorg; monotonic 0x0 → brk)
+0x4D9D000 output_buf     16 MB    ELF / Mach-O / PE output (heap-top; cap 2 MB → 16 MB v6.1.27)
+0x5D9D000 brk-final     ~93.6 MB  heap end (v6.1.27 output_buf relocate; monotonic 0x0 → brk)
 ```
 
 ### Preprocessing scratch (overlays `tok_types`, 0x13E000–0x23E000)

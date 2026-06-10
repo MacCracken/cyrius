@@ -46,6 +46,11 @@
 > sizes verified on real HW), bench self_compile 497 ms. **Proof:** a 2,163,984-byte
 > (2.06 MB) kitchen-sink binary compiled + ran (old cap would've errored); phylax
 > rebuilds clean at 1.73 MB. Phase E (bayan .25 + ganita .26) stays DONE.
+> **Deferred to v6.1.x closeout (heap-map audit, per Closeout Pass §4):** (1) re-sort
+> the `output_buf` comment line to its true heap-top position (it carries the correct
+> `0x4D9D000`/[16777216] + a RELOCATED note but is still physically listed mid-map);
+> (2) reclaim/reuse the **2 MB gap freed at `0x71A000`** (old output_buf slot). Both
+> cosmetic/optimization — no gate keys on them.
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

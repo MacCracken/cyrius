@@ -20,7 +20,7 @@ Memory and string operations on null-terminated C strings.
 
 ### alloc.cyr
 
-Bump allocator using Linux brk syscall. Call `alloc_init()` before any allocation.
+Bump allocator over anonymous-mmap chunks (v6.1.19; was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge). `alloc_init()` is idempotent (v6.1.23). Call it before any allocation.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -319,6 +319,11 @@ Vtable-based trait objects for polymorphic dispatch. Requires fnptr.cyr.
 
 ### json.cyr
 
+> **Carved into `lib/bayan.cyr` (bayan 1.0.0, v6.1.25).** JSON / TOML /
+> CYML / CSV / base64 / bigint / u128 now live in the `bayan` fold
+> (canonical `bayan_*` names; the names below are kept as legacy
+> aliases). No longer stdlib — `include "lib/bayan.cyr"`.
+
 Minimal JSON parser and builder.
 
 | Function | Signature | Description |
@@ -338,6 +343,9 @@ remain best-effort and don't have `_r` variants yet.
 
 ### toml.cyr
 
+> **Carved into `lib/bayan.cyr` (bayan 1.0.0, v6.1.25).** No longer
+> stdlib — `include "lib/bayan.cyr"` (legacy aliases retained).
+
 Minimal TOML parser for vidya-style content files.
 
 | Function | Signature | Description |
@@ -351,6 +359,9 @@ Minimal TOML parser for vidya-style content files.
 `enum TomlError { TomlIoErr; TomlParseErr; TomlOther; }`.
 
 ### cyml.cyr
+
+> **Carved into `lib/bayan.cyr` (bayan 1.0.0, v6.1.25).** No longer
+> stdlib — `include "lib/bayan.cyr"` (legacy aliases retained).
 
 CYML parser (TOML header + markdown body) used by vidya for
 content files.
@@ -779,6 +790,11 @@ Typed SIMD wrappers for f64v2 (2-lane) and f64v4 (4-lane) vectors. Each operatio
 
 ### matrix.cyr
 
+> **Carved into `lib/ganita.cyr` (ganita 1.0.0, v6.1.26).** Matrix +
+> linear-algebra now live in the `ganita` fold (canonical `ganita_*`
+> names; the `mat_*` names below are kept as legacy aliases). No longer
+> stdlib — `include "lib/ganita.cyr"`.
+
 Row-major dense matrix operations on f64 values (stored as i64 bit patterns). Requires alloc.cyr, fmt.cyr, string.cyr.
 
 | Function | Signature | Description |
@@ -799,6 +815,10 @@ Row-major dense matrix operations on f64 values (stored as i64 bit patterns). Re
 | `mat_print` | `mat_print(m)` | Print matrix to stdout |
 
 ### linalg.cyr
+
+> **Carved into `lib/ganita.cyr` (ganita 1.0.0, v6.1.26)** alongside
+> `matrix.cyr`. No longer stdlib — `include "lib/ganita.cyr"` (legacy
+> `mat_*` aliases retained).
 
 Dense linear algebra on f64 matrices. Decompositions (LU, Cholesky, QR, SVD, eigendecomposition), solvers, and factorization utilities. Requires alloc.cyr, math.cyr, matrix.cyr.
 
@@ -833,6 +853,9 @@ Dense linear algebra on f64 matrices. Decompositions (LU, Cholesky, QR, SVD, eig
 
 ### bigint.cyr
 
+> **Carved into `lib/bayan.cyr` (bayan 1.0.0, v6.1.25).** No longer
+> stdlib — `include "lib/bayan.cyr"` (legacy aliases retained).
+
 256-bit unsigned integer arithmetic (4×64-bit limbs, little-endian). Core operations: add, subtract, multiply, modular reduction, shift, compare, and hex conversion. Designed for elliptic-curve arithmetic (Ed25519, secp256k1). Requires alloc.cyr, string.cyr.
 
 | Function | Signature | Description |
@@ -859,6 +882,9 @@ Dense linear algebra on f64 matrices. Decompositions (LU, Cholesky, QR, SVD, eig
 | `u256_from_hex` | `u256_from_hex(s) → i64` | Parse hex string to u256 |
 
 ### u128.cyr
+
+> **Carved into `lib/bayan.cyr` (bayan 1.0.0, v6.1.25).** No longer
+> stdlib — `include "lib/bayan.cyr"` (legacy aliases retained).
 
 128-bit unsigned integer helpers: construction, arithmetic (add, subtract, multiply), bitwise ops, shifts, comparisons, and division with modulo. Hardware fast-path for 64-bit divisors. Provides u64 modular arithmetic (mulmod, powmod) for cryptographic operations.
 
@@ -939,6 +965,9 @@ Encoding, parsing, time, flags, and logging.
 
 ### base64.cyr
 
+> **Carved into `lib/bayan.cyr` (bayan 1.0.0, v6.1.25).** No longer
+> stdlib — `include "lib/bayan.cyr"` (legacy aliases retained).
+
 RFC 4648 Base64 encoding/decoding (standard + URL-safe). Requires alloc.cyr, string.cyr.
 
 | Function | Signature | Description |
@@ -949,6 +978,9 @@ RFC 4648 Base64 encoding/decoding (standard + URL-safe). Requires alloc.cyr, str
 | `base64url_decode` | `base64url_decode(encoded, enc_len) → ptr` | Decode base64url with optional padding, returns {data_ptr, length} pair |
 
 ### csv.cyr
+
+> **Carved into `lib/bayan.cyr` (bayan 1.0.0, v6.1.25).** No longer
+> stdlib — `include "lib/bayan.cyr"` (legacy aliases retained).
 
 RFC 4180 CSV parser and writer. Requires alloc.cyr, string.cyr, vec.cyr, str.cyr.
 
@@ -1439,6 +1471,8 @@ own canonical API reference in its own repo; this table is a pointer. See
 | `lib/vani.cyr` | vani 0.9.3 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/niyama.cyr` | niyama 1.0.2 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
 | `lib/mabda.cyr` | mabda 3.0.1 | GPU / compute (AMD-native) |
+| `lib/bayan.cyr` | bayan 1.0.0 | Data formats + big-int (json / toml / cyml / csv / base64 / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
+| `lib/ganita.cyr` | ganita 1.0.0 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial) — carved v6.1.26, `ganita_*` + legacy aliases |
 
 ## Platform sub-modules
 
@@ -1456,7 +1490,7 @@ documented separately** — their public surface is the parent module's (above):
 
 > **Coverage note**: this reference now documents the **core, concurrency,
 > math/SIMD, crypto, data/encoding, networking (TLS + WebSocket), systems/FFI,
-> and testing** surfaces — roughly **65 of 94 `lib/*.cyr` modules** (was ~33).
+> and testing** surfaces — roughly **65 of 87 `lib/*.cyr` modules** (was ~33).
 > What remains undocumented here is so by design:
 > - **Folded sibling distfiles** (`sigil` / `sandhi` / `patra` / `sankoch` /
 >   `yukti` / `vani` / `niyama` / `mabda` / `sakshi`, listed above) — the
