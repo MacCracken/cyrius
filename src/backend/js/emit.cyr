@@ -16,7 +16,7 @@
 # exits non-zero on a children-list regression (check.sh _ts_walk_gate).
 # CYRIUS_TS_DUMP=1 gives the raw node-table dump. See CHANGELOG [6.1.11].
 
-# ---- output buffer (src + 0x71A000 = the otherwise-idle output_buf) ----
+# ---- output buffer (src + 0x4D9D000 = the otherwise-idle output_buf) ----
 var _js_buf = 0;
 var _js_len = 0;
 var _js_walk_err = 0;          # revisit / out-of-range → non-zero exit
@@ -872,7 +872,7 @@ fn _ej_flush(): i64 {
 
 # Entry: parse-result -> JS on stdout. Non-zero on a walk-integrity failure.
 fn TS_JS_EMIT(ts_base, src): i64 {
-    _js_buf = src + 0x71A000;
+    _js_buf = src + 0x4D9D000;
     _js_len = 0;
     _js_walk_err = 0;
 

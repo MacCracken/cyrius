@@ -14,11 +14,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.26** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.26 — ganita is lib-only; cycc has no matrix/linalg/math dep) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.26) |
+| **Version** | **6.1.27** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.27 — binary output cap 2MB→16MB is heap-virtual; offset/size constants only) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.27) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.26) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.27) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
@@ -26,29 +26,26 @@
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
 | stdlib | 87 `lib/*.cyr` (bayan @.25 −7+1; ganita @.26 −2+1, math split) · 79 programs |
-| bench (every-release gate) | self_compile ~510 ms (box noise) |
+| heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
+| bench (every-release gate) | self_compile ~497 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.26 ready for cut — **ganita distfile carve**
-> (Phase E, second half — CLOSES the stdlib data/math carve). matrix (14) +
-> linalg (26, `mat_*` decomposition/solver suite) carved whole; the **13 advanced
-> math fns** (transcendental + fibonacci/binomial) SPLIT out of `lib/math.cyr` →
-> the **ganita** sibling (ganita 1.0.0), all prefixed `ganita_*` (rename-only),
-> folded byte-identical into `lib/ganita.cyr` (1,358 lines; `lib/{matrix,linalg}.cyr`
-> deleted; `lib/math.cyr` trimmed to primitives — F64 constants + basic ops +
-> gcd/lcm + f64_parse + the `_f64_*_polyfill` builtin-fallbacks). **0 git deps
-> preserved.** Back-compat aliases (53). ~9 test consumers migrated to `ganita_*`.
-> **cycc UNCHANGED** — no compiler dep on matrix/linalg/advanced-math (self-hosts
-> byte-identical, no #derive-style change). **No ripple:** none of matrix/linalg/
-> math were auto-prepended; `gcd` (sigil's only math dep) STAYS in stdlib.
-> `version-bump.sh 6.1.26` to apply; **user pushes/tags after CI**. Gates: cycc
-> self-host **byte-identical (unchanged)**, fold byte-identical, check.sh **87/87**,
-> all 170 tcyr exit-0, api-surface regenerated (+ganita), ecb/cass `SELFHOST_OK`,
-> bench self_compile 510 ms, ganita smoke exit-42 + tests 11/11. Deterministic
-> verify: rename-only confirmed (0 diff lines), no orphaned ud2 callers.
-> **Downstream (aliases bridge; migrate on re-pin):** code using `mat_*` /
-> transcendental `f64_*` / `fibonacci`/`binomial` swaps `lib/matrix.cyr`/
-> `lib/linalg.cyr` includes → `lib/ganita.cyr` (keep `lib/math.cyr` for polyfills +
-> constants). Phase E (bayan .25 + ganita .26) DONE — stdlib is primitives-only.
+> **Handoff (2026-06-10):** v6.1.27 ready for cut — **binary output cap 2 MB → 16 MB**
+> (phylax hit the 2 MB ELF-output wall pulling bayan; the carves mean consumers link
+> ever-larger folded bundles). `output_buf` was a fixed 2 MB region mid-heap
+> (`S+0x71A000`), tightly wedged in the monotonic map. **Relocated to the heap top**
+> (`S+0x4D9D000`, immediately after `preprocess_out`), **resized 2 MB → 16 MB**, heap
+> extended to `0x5D9D000` (brk Linux / mmap macOS / `0x5F00000` VirtualAlloc Windows);
+> 2 MB gap freed at `0x71A000`. Touched only `output_buf`'s ~19 refs + 6 heap-init
+> sizes (NOT the 50-region in-place shift). Cap checks `2097152 → 16777216` (x86
+> fixup ×3, macho ×2; aarch64/PE had no check — the bigger buffer closes a latent
+> silent-overflow there). **Cost is virtual-only** — `output_buf` is never memset
+> (lazy zero-fill / overcommit), so 16 MB reserves address space, not RAM; cycc size
+> unchanged (1,045,752 B). `version-bump.sh 6.1.27` to apply; **user pushes/tags after
+> CI**. Gates: **two-step self-host byte-identical** (heap change, a==b==c), check.sh
+> **87/87**, all 170 tcyr exit-0, **ecb+cass `SELFHOST_OK`** (per-target heap-init
+> sizes verified on real HW), bench self_compile 497 ms. **Proof:** a 2,163,984-byte
+> (2.06 MB) kitchen-sink binary compiled + ran (old cap would've errored); phylax
+> rebuilds clean at 1.73 MB. Phase E (bayan .25 + ganita .26) stays DONE.
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

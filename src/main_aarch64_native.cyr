@@ -49,7 +49,7 @@
 #                                        cap raised 2 MB → 8 MB. The 2 MB hole was
 #                                        absorbed by v5.11.68's full heap-map reorg.)
 #   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
-#   0x71A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43)
+#   0x4D9D000 output_buf    [16777216]   16MB ELF output — RELOCATED to heap-top from 0x71A000 (2MB→16MB) @ v6.1.27 phylax binary-cap
 #   (tok arrays RETIRED here v5.8.46 — see main.cyr for canonical layout;
 #    relocated to 0x2D7C000 / 0x357C000 / 0x3D7C000 with cap 1048576)
 #   0x91A000 struct_ftypes [16384]       64 structs × 32 fields
@@ -67,7 +67,7 @@
 #                                        Relocated here from 0x44A000 at v5.11.33
 #                                        + cap raised 2 MB → 8 MB. See
 #                                        CHANGELOG [5.11.33].
-#   0x4D9D000 brk                         ~77.6 MB total heap (post-v5.11.68 reorg — was ~86.6 MB pre-.68). v5.11.33 grew this
+#   0x5D9D000 brk                         ~93.6 MB total heap (+16MB output_buf @ v6.1.27) (post-v5.11.68 reorg — was ~86.6 MB pre-.68). v5.11.33 grew this
 #                                        from 0x459D000 / 78.6 MB at v5.10.40 by
 #                                        the 8 MB preprocess_out relocation;
 #                                        v5.10.40 grew from 0x457C000 / 78.5 MB
@@ -146,7 +146,7 @@ if (_vn > 0) {
 # aarch64 syscall numbers (no translation layer — native numbers)
 var S = syscall(SYS_BRK, 0);
 # brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
-syscall(SYS_BRK, S + 0x4D9D000);
+syscall(SYS_BRK, S + 0x5D9D000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
@@ -427,7 +427,7 @@ var olen = L64(S + 0x1903F8);
 var written = 0;
 var wgo = 1;
 while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x71A000 + written, olen - written);
+    var w = syscall(SYS_WRITE, 1, S + 0x4D9D000 + written, olen - written);
     if (w <= 0) { wgo = 0; }
     else {
         written = written + w;

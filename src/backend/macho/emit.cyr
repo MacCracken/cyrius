@@ -91,17 +91,17 @@ fn EMITMACHO_EXEC(S): i64 {
     var seg_vmsz = (seg_filesz + PAGE - 1) & (0 - PAGE);
 
     # Size check
-    if (content_sz > 2097152) {
+    if (content_sz > 16777216) {
         syscall(SYS_WRITE, 2, "error: Mach-O output too large (", 32);
         PRNUM(content_sz);
-        syscall(SYS_WRITE, 2, "/2097152)\n", 10);
+        syscall(SYS_WRITE, 2, "/16777216)\n", 11);
         syscall(SYS_EXIT, 1);
     }
 
     # ncmds=3: __PAGEZERO + __TEXT + LC_UNIXTHREAD
     # lc_total = 72 + 152 + 184 = 408
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var o = 0;
 
     # ================================================================
@@ -387,7 +387,7 @@ fn EMITMACHO_ARM64(S): i64 {
     var LINKEDIT_CONTENT_SIZE = INDIRECT_OFF + INDIRECT_SIZE - LINKEDIT_FILEOFF;
     var FILE_END = LINKEDIT_FILEOFF + LINKEDIT_CONTENT_SIZE;
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var o = 0;
 
     # ================================================================

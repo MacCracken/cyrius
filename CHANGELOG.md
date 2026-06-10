@@ -6,6 +6,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.27] — 2026-06-10
+
+**v6.1.x slot 27: binary output cap 2 MB → 16 MB** (phylax hit the 2 MB ELF-output
+wall pulling bayan; the bayan/ganita carves mean consumers increasingly link large
+folded bundles). The `output_buf` region was a fixed 2 MB mid-heap; this relocates
+it to the heap top and grows it 8×.
+
+### Changed
+
+- **`output_buf` relocated to the heap top + resized 2 MB → 16 MB.** It sat at
+  `S + 0x71A000` (2 MB), tightly wedged between `codebuf` and the monotonic region
+  map — growing it in place would have shifted 50+ regions. Instead it moves to
+  `S + 0x4D9D000` (immediately after `preprocess_out`), sized 16 MB, with the heap
+  extended to `0x5D9D000` (brk on Linux / mmap on macOS / `0x5F00000` VirtualAlloc
+  on Windows). A 2 MB gap is freed at the old `0x71A000`. Only `output_buf`'s own
+  ~19 references + the 6 heap-init sizes move; the rest of the map is unchanged.
+- **Binary-size cap raised 2,097,152 → 16,777,216** across all backends that check
+  it (x86 fixup ×3, Mach-O emit ×2). aarch64/PE had no explicit cap — the bigger
+  buffer also closes a latent silent-overflow there.
+- **Cost is virtual-only**: `output_buf` is never memset (the kernel lazily
+  zero-fills the overcommitted anonymous mapping), so only the actual binary size
+  is ever resident — 16 MB reserves address space, not RAM. cycc size unchanged
+  (1,045,752 B).
+
+**Verification:** two-step self-host **byte-identical** (heap change; a==b==c),
+check.sh **87/87**, all 170 `.tcyr` exit-0, **cross-OS ecb (macOS) + cass (Windows)
+`SELFHOST_OK`** (the per-target heap-init sizes verified on real hardware). **A
+2,163,984-byte (2.06 MB) binary compiled + ran** — exceeding the old 2 MB cap that
+would have errored "output too large"; phylax rebuilds clean. `self_compile 497 ms`.
+
 ## [6.1.26] — 2026-06-10
 
 **v6.1.x slot 26: ganita distfile carve (Phase E, second half — closes the

@@ -143,7 +143,7 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 
 ### Caps + heap
 
-ident buffer 256 KB (v5.11.18; was 128 KB), fn table 8192 (v5.11.19; was 4096), fixup table 1M (v5.7.7), input_buf 1 MB (v5.7.10), str_data 2 MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 256 KB (v5.7.36), aarch64 codebuf 3 MB (v5.7.34), preprocess buf 8 MB (v5.11.33).
+ident buffer 256 KB (v5.11.18; was 128 KB), fn table 8192 (v5.11.19; was 4096), fixup table 1M (v5.7.7), input_buf 1 MB (v5.7.10), str_data 2 MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 256 KB (v5.7.36), aarch64 codebuf 3 MB (v5.7.34), preprocess buf 8 MB (v5.11.33), binary output_buf 16 MB (v6.1.27; was 2 MB — relocated to heap-top).
 
 ## Build Tool (cyrius)
 

@@ -631,7 +631,7 @@ fn EMITELF(S): i64 {
     # ELF64 shdrs are 64 bytes each; align table to 8 bytes
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var op = 0;
     # ELF64 header (64 bytes)
     # e_ident: ELF magic + class64 + LE + version + ELFOSABI_NONE
@@ -786,7 +786,7 @@ fn EMITELF_KERNEL(S): i64 {
     # ELF64 shdrs are 64 bytes each; align table to 8 bytes
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var op = 0;
     # ELF64 header (64 bytes)
     S64(O + op, 0x00010102464C457F); op = op + 8;

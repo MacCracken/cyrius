@@ -107,12 +107,12 @@
 #                                        cap raised 2 MB → 8 MB. The 2 MB hole was
 #                                        absorbed by v5.11.68's full heap-map reorg.)
 #   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
-#   0x71A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43) (v3.5.2)
+#   0x4D9D000 output_buf    [16777216]   16MB ELF output — RELOCATED to heap-top from 0x71A000 (2MB→16MB) @ v6.1.27 phylax binary-cap (v3.5.2)
 #   (tok arrays RETIRED here v5.8.46 — see main.cyr for canonical layout;
 #    relocated to 0x2D7C000 / 0x357C000 / 0x3D7C000 with cap 1048576)
 #
 # --- Token arrays (v3.6.2 layout RETIRED v5.8.46) ---
-#   (was 0xB4A000 tok_types — code overlapped tok_types with output_buf at 0x71A000)
+#   (was 0xB4A000 tok_types — code overlapped tok_types with output_buf at 0x4D9D000)
 #   (was 0xD4A000 tok_values [2097152] 262144 entries × 8 bytes)
 #   (was 0xF4A000 tok_lines  [2097152] 262144 entries × 8 bytes)
 #   See main.cyr for the new layout (high block at 0x2D7C000, cap 1048576).
@@ -141,7 +141,7 @@
 #                                        Relocated here from 0x44A000 at v5.11.33
 #                                        + cap raised 2 MB → 8 MB. See
 #                                        CHANGELOG [5.11.33].
-#   0x4D9D000 brk-equivalent              ~77.6 MB. v5.11.68 grew this from
+#   0x5D9D000 brk-equivalent              ~93.6 MB (+16MB @ v6.1.27). v5.11.68 grew this from
 #                                        0x459D000 / 78.6 MB at v5.10.40 by the
 #                                        8 MB preprocess_out relocation;
 #                                        v5.10.40 grew from 0x457C000 / 78.5 MB
@@ -315,16 +315,16 @@ if (_vw != 0) {
 #     VirtualAlloc(0, 32MB, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
 #     The prot/flags/fd/offset are ignored by EMMAP_PE.
 # 32 MB covers the 21 MB heap with margin + page-alignment.
-# MMAP region sized at 0x4F00000 (79 MB) — covers the cyrius heap
+# MMAP region sized at 0x5F00000 (95 MB) — covers the cyrius heap
 # layout through preprocess_out (brk-equivalent at 0x4D9D000 /
 # ~77.6 MB) plus 1.4 MB page-alignment slack. Synced with
 # main.cyr's brk extension.
 # Lineage: 0x5800000 / 88 MB through v5.11.67 ← 0x5000000 / 80 MB
 # pre-v5.11.33 (preprocess_out cap raise 2 MB → 8 MB grew it 8 MB).
-# v5.11.68 full heap-map reorg shrunk MMAP 0x5800000 → 0x4F00000
+# v5.11.68 full heap-map reorg shrunk MMAP 0x5800000 → 0x4F00000 → 0x5F00000 @ v6.1.27
 # (-9.06 MB) tracking the brk reduction. PE EMMAP routes via
 # VirtualAlloc with prot/flags ignored.
-var S = syscall(SYS_MMAP, 0, 0x4F00000, 3, 0x22, 0 - 1, 0);
+var S = syscall(SYS_MMAP, 0, 0x5F00000, 3, 0x22, 0 - 1, 0);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
@@ -943,7 +943,7 @@ var olen = L64(S + 0x1903F8);
 var written = 0;
 var wgo = 1;
 while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x71A000 + written, olen - written);
+    var w = syscall(SYS_WRITE, 1, S + 0x4D9D000 + written, olen - written);
     if (w <= 0) { wgo = 0; }
     else {
         written = written + w;

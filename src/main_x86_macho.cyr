@@ -67,7 +67,7 @@ var _strict_mode = 0;
 # translated to BSD 197 by EMACHO_SYSXLAT at emit; flags 0x1002
 # (MAP_PRIVATE | MAP_ANON) reach the kernel as an immediate. Size
 # 0x4D9D000 matches main.cyr's brk extent.
-var S = syscall(9, 0, 0x4D9D000, 3, 0x1002, 0 - 1, 0);
+var S = syscall(9, 0, 0x5D9D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(SYS_WRITE, 2, "cycc_macho_x86: mmap heap init failed\n", 38);
     syscall(SYS_EXIT, 1);
@@ -475,7 +475,7 @@ var olen = L64(S + 0x1903F8);
 var written = 0;
 var wgo = 1;
 while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x71A000 + written, olen - written);
+    var w = syscall(SYS_WRITE, 1, S + 0x4D9D000 + written, olen - written);
     if (w <= 0) { wgo = 0; }
     else {
         written = written + w;

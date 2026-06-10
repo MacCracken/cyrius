@@ -38,7 +38,7 @@ var S = syscall(SYS_BRK, 0);
 # (0x207B000) and tok-block-start (0x2D7C000) is unused on this
 # path; kept for offset parity with main.cyr. See CHANGELOG
 # [5.11.68] for the full close shape.
-syscall(SYS_BRK, S + 0x4D9D000);
+syscall(SYS_BRK, S + 0x5D9D000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

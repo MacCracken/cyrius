@@ -280,14 +280,14 @@
 #
 # --- Large buffers ---
 #   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27 — was 1MB pre-v5.7.27; bumped to absorb cyrius-ts test-compile pressure (94% on ts_parse_p52-54 across v5.7.24-v5.7.26)) (v3.5.2). Pulled DOWN 2.24 MB at v5.11.68 to abut str_data end (was 0x64A000).
-#   0x71A000 output_buf    [2097152]     2MB ELF output (v5.6.43; was 1MB pre-v5.6.43) (v3.5.2).
+#   0x4D9D000 output_buf    [16777216]   16MB ELF output — RELOCATED to heap-top from 0x71A000 (2MB→16MB) @ v6.1.27 phylax binary-cap (v3.5.2).
 #                                        Pre-v5.8.46 tok_types ALSO lived here (overlap recycled
 #                                        the buffer post-lex for ELF emission); v5.8.46 relocated
 #                                        tok_types to the post-TS high block at 0x2D7C000 to
 #                                        free the cap for sandhi consumers — see below.
 #
 # --- Token arrays (v3.6.2 layout RETIRED v5.8.46) ---
-#   (was 0xB4A000 tok_types — note: comment was stale, code wrote at 0x71A000)
+#   (was 0xB4A000 tok_types — note: comment was stale, code wrote at 0x4D9D000)
 #   (was 0xD4A000 tok_values [2097152] 262144 entries × 8 bytes)
 #   (was 0xF4A000 tok_lines  [2097152] 262144 entries × 8 bytes)
 #   (262144-entry cap blocked sit v0.7.2 + every sandhi consumer named in the
@@ -343,7 +343,7 @@
 #                                        across the .68 reorg
 #
 # --- Token arrays RELOCATED here (v5.8.46) ---
-#   0x2D7C000 tok_types     [8388608]     1048576 entries × 8 bytes — was 0x71A000
+#   0x2D7C000 tok_types     [8388608]     1048576 entries × 8 bytes — was 0x4D9D000
 #                                        (overlap w/ output_buf, capped at 262144). Cap raise
 #                                        from 262144 → 1048576 (4×) sized to absorb sandhi
 #                                        consumers (sit v0.7.2 with sandhi in [deps].stdlib
@@ -383,7 +383,7 @@
 #                                        See CHANGELOG [5.11.33] +
 #                                        [5.11.68].
 #
-#   0x4D9D000 brk-final                   ~77.6 MB — heap end. v5.11.68
+#   0x5D9D000 brk-final                   ~93.6 MB — heap end (+16MB output_buf @ v6.1.27). v5.11.68
 #                                        full heap-map reorg shrunk brk
 #                                        by 9.06 MB (was 0x56AD000 /
 #                                        ~86.6 MB pre-.68). Layout is
@@ -602,7 +602,7 @@ if (_vn > 0) {
 # emit.cyr was missing too; both are needed). Linux mmap number 9 →
 # BSD 197 via EMACHO_SYSXLAT at emit. Size 0x4D9D000 matches the brk
 # extension below; flags MAP_ANON|MAP_PRIVATE = 0x1002.
-var S = syscall(9, 0, 0x4D9D000, 3, 0x1002, 0 - 1, 0);
+var S = syscall(9, 0, 0x5D9D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(1, 2, "cycc: mmap heap init failed\n", 27);
     syscall(60, 1);
@@ -613,7 +613,7 @@ var S = syscall(SYS_BRK, 0);
 # + 0xD81000 size, per src/frontend/ts/{lex,parse}.cyr design after
 # v5.7.2 P2.1). TS region is only TOUCHED in --lex-ts / --parse-ts
 # modes; the +13.5 MB brk extension is paid unconditionally.
-syscall(SYS_BRK, S + 0x4D9D000);
+syscall(SYS_BRK, S + 0x5D9D000);
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
@@ -1901,7 +1901,7 @@ var olen = L64(S + 0x1903F8);
 var written = 0;
 var wgo = 1;
 while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x71A000 + written, olen - written);
+    var w = syscall(SYS_WRITE, 1, S + 0x4D9D000 + written, olen - written);
     if (w <= 0) { wgo = 0; }
     else {
         written = written + w;

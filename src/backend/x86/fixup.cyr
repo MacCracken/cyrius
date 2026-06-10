@@ -72,7 +72,7 @@ fn FIXUP(S): i64 {
     var totvar = 0;
     var vi = 0;
     # Store prefix sums in scratch area (output_buf tail, safe — ELF not written yet)
-    var pfx = S + 0x71A000 + 131072;
+    var pfx = S + 0x4D9D000 + 131072;
     # v5.11.64: mirror prefix sums into the stable gvar_byte_off region
     # (S+0x1B0000) so EMIT_* paths can read them after output writing
     # passes 128KB into output_buf (where pfx-in-scratch would be
@@ -736,7 +736,7 @@ fn EMITELF_KERNEL(S): i64 {
     var shentsize = 40;
     var shstrndx = 4;
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var op = 0;
 
     # ---- ELF32 header (52 bytes) ----
@@ -932,7 +932,7 @@ fn EMITELF64_KERNEL(S): i64 {
     var shstrtab_foff = filesz;
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var op = 0;
 
     # ---- ELF64 header (64 bytes) ----
@@ -1070,10 +1070,10 @@ fn EMITELF_USER(S, etype): i64 {
     var spos = GSPOS(S);
     var filesz = 120 + cp + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);
-    if (filesz > 2097152) {
+    if (filesz > 16777216) {
         syscall(SYS_WRITE, 2, "error: output too large (", 25);
         PRNUM(filesz);
-        syscall(SYS_WRITE, 2, "/2097152 bytes)\n  code: ", 23);
+        syscall(SYS_WRITE, 2, "/16777216 bytes)\n  code: ", 24);
         PRNUM(cp);
         syscall(SYS_WRITE, 2, " data: ", 7);
         PRNUM(totvar);
@@ -1178,7 +1178,7 @@ fn EMITELF_USER(S, etype): i64 {
     # ELF64 shdrs are 64 bytes each; align table to 8 bytes
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var op = 0;
     # ELF header (64 bytes) — e_type from parameter
     S64(O + op, 0x00010102464C457F); op = op + 8;
@@ -1339,7 +1339,7 @@ fn EMITELF_SHARED(S): i64 {
     # and executes every `var x = EXPR;` top-level initializer.
     var init_cp_off = L64(S + 0x1903F8);
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
 
     # ---- Collect exported symbols (global fns with a real body) ----
     # Skip underscore-prefixed internal names. Store fi indices in a
@@ -1389,7 +1389,7 @@ fn EMITELF_SHARED(S): i64 {
     var filesz = dynamic_off + dynamic_size;
     filesz = (filesz + 7) & (0 - 8);
     var memsz = filesz + 4096;
-    if (filesz > 2097152) {
+    if (filesz > 16777216) {
         syscall(SYS_WRITE, 2, "error: .so output too large\n", 28);
         syscall(SYS_EXIT, 1);
     }
@@ -1579,7 +1579,7 @@ fn EMITELF_OBJ(S): i64 {
     var fcnt = GFCNT(S);
     var fnc = GFNC(S);
 
-    var O = S + 0x71A000;
+    var O = S + 0x4D9D000;
     var op = 0;
 
     # --- Allocate scratch via brk extension ---
@@ -1813,7 +1813,7 @@ fn EMITELF_OBJ(S): i64 {
     var num_shdrs = 7;  # null + .text + .data + .rodata + .symtab + .strtab + .rela.text
     var total_size = shdr_off + num_shdrs * 64;
 
-    if (total_size > 2097152) {
+    if (total_size > 16777216) {
         syscall(SYS_WRITE, 2, "error: .o output too large\n", 27);
         syscall(SYS_EXIT, 1);
     }
