@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.21] — 2026-06-09
+
+**v6.1.x slot 21: native TLS is now the no-flag default + sandhi 1.4.8 fold.**
+The culmination of the TLS arc — 6.1.19 made native crash-safe + able to reach
+public hosts, sandhi 1.4.5 made it sandhi's default, and this flips the
+**cyrius-level** polarity so native needs no flag at all.
+
+1. **Inverted `lib/tls.cyr` backend default** (issue
+   2026-06-09-invert-tls-backend-default-native-no-flag). The sovereign native
+   stack (`lib/tls_native.cyr`) is now compiled in and selected by **default** —
+   a plain `cyrius build` of a TLS program links native and `tls_get_backend()`
+   returns `TLS_BACKEND_NATIVE`. Build with **`-D CYRIUS_TLS_LIBSSL`** to opt OUT
+   to a libssl-only build (lighter — native + sigil not linked; the deprecated
+   libssl.so.3 fdlopen bridge is the only backend, `tls_set_backend(NATIVE)` →
+   -1). The ~16 `#ifdef CYRIUS_TLS_NATIVE` guards in `lib/tls.cyr` flipped to
+   `#ifndef CYRIUS_TLS_LIBSSL`. **Back-compat:** the legacy `-D CYRIUS_TLS_NATIVE`
+   flag is now a recognized **no-op alias** (native is already the default; the
+   guards are `CYRIUS_TLS_LIBSSL`-only, so the extra flag is harmless) — deprecated,
+   dropped once the ecosystem re-pins. The two libssl-bridge `.tcyr` tests
+   (`tls.tcyr`, `tls_early_data_status.tcyr`) now `#define CYRIUS_TLS_LIBSSL` to
+   keep testing the opt-out path. Trade-off (stated): the no-flag binary grows by
+   the native-stack size — the cost lands on the default, which is the right place
+   now that native is the recommended, crash-safe backend.
+
+2. **Re-folded sandhi 1.4.5 → 1.4.8** into `lib/sandhi.cyr` (byte-identical to
+   dist; api-surface snapshot +3). 1.4.8 already documents the
+   `-D CYRIUS_TLS_LIBSSL` opt-out convention, so the fold + flip land together;
+   sandhi can now drop its interim `-D CYRIUS_TLS_NATIVE` from CI/release once it
+   re-pins to this release.
+
+**Benchmark:** `self_compile 492 ms` (vs 500 ms @ 6.1.20 — box noise), `cycc
+1,045,688 B` (**unchanged** — `tls.cyr`/`sandhi.cyr` aren't compiled into cycc).
+x86 self-host **byte-identical** (and binary unchanged). check.sh **87/87**
+(api-surface +3 sandhi fns); all 170 `.tcyr` clean (per-file exit loop 170/170 —
+the 12 TLS tests pass under the new default: native-scaffold tests include
+`tls_native.cyr` directly, the two libssl tests opt out). **Polarity verified
+3-way**: no-flag → native (`get_backend=1`, `set_native=0`), `-D CYRIUS_TLS_LIBSSL`
+→ libssl (`get_backend=0`, `set_native=-1`, smaller), legacy `-D CYRIUS_TLS_NATIVE`
+→ native (no-op). **Live TLS both build modes**: native (no-flag) + libssl
+(`-D CYRIUS_TLS_LIBSSL`) each connect to example.com + 1.1.1.1. Cross-OS self-host
+**byte-identical on ecb (macOS arm64) + cass (Windows PE32+)** (lib-only flip; `src/`
+unchanged → cycc unaffected on every target).
+
+### Changed
+
+- **`lib/tls.cyr` default backend polarity INVERTED — native is the no-flag
+  default; `-D CYRIUS_TLS_LIBSSL` is the libssl-only opt-out.** Legacy
+  `-D CYRIUS_TLS_NATIVE` kept as a deprecated no-op alias. Unblocks sandhi (and any
+  consumer) from shipping native-by-default without threading a flag through every
+  build. `src/` (cycc) unchanged — self-host byte-identical on all targets.
+
+- **Re-folded sandhi 1.4.8** into `lib/sandhi.cyr` (was 1.4.5; byte-identical to
+  dist). Built for the inverted-default world it now documents.
+
 ## [6.1.20] — 2026-06-09
 
 **v6.1.x slot 20: sandhi 1.4.5 fold + macho-arm `*at()`/stat Darwin port.** Packs

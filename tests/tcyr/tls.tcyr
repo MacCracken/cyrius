@@ -11,6 +11,10 @@ include "lib/fnptr.cyr"
 include "lib/dynlib.cyr"
 # v5.6.37: tls.cyr routes libssl through fdlopen; callers must
 # include fdlopen.cyr before tls.cyr.
+# v6.1.21: native TLS is now the no-flag default — this is a libssl-bridge
+# test, so opt OUT to a libssl-only build (TLS_BACKEND_LIBSSL default; native
+# stack not compiled in). See issue 2026-06-09-invert-tls-backend-default.
+#define CYRIUS_TLS_LIBSSL
 include "lib/fdlopen.cyr"
 include "lib/tls.cyr"
 

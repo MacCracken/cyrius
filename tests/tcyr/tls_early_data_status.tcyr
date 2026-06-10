@@ -23,6 +23,9 @@ include "lib/syscalls.cyr"
 include "lib/mmap.cyr"
 include "lib/fnptr.cyr"
 include "lib/dynlib.cyr"
+# v6.1.21: native TLS is the no-flag default now; this is a libssl SSL_*
+# early-data symbol test → opt out to a libssl-only build.
+#define CYRIUS_TLS_LIBSSL
 include "lib/fdlopen.cyr"
 include "lib/tls.cyr"
 include "lib/test.cyr"

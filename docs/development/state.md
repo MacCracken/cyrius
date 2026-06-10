@@ -14,49 +14,44 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.20** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,688 B (unchanged @ 6.1.20 — the at-family fix is in the aarch64 backend; x86 cycc byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,752 B (+368 B @ 6.1.20 — the 3 new macho-branch ESYSXLAT entries compiled in as dormant code) |
+| **Version** | **6.1.21** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,688 B (unchanged @ 6.1.21 — lib-only TLS-default flip; `src/` untouched) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,752 B (unchanged @ 6.1.21) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.20 — PE backend untouched) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.21) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
 | stdlib | 94 `lib/*.cyr` (85 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~500 ms (box noise) |
+| bench (every-release gate) | self_compile ~492 ms (box noise) |
 
-> **Handoff (2026-06-09):** v6.1.20 ready for cut — **sandhi 1.4.5 fold + macho-arm
-> `*at()`/stat Darwin port** (bayan carve reslotted → 6.1.21, ganita → 6.1.22).
-> (1) **Folded sandhi 1.4.5** into `lib/sandhi.cyr` (byte-identical): native-TLS-
-> default backend-selection API (`sandhi_tls_use_native`/`_use_libssl`/`_backend`/
-> `_native_available`) — the consumer companion to 6.1.19's TLS fixes — plus a
-> libssl `SSL_SESSION` leak fix (capture gated on cache-enabled). api-surface
-> snapshot +4.
-> (2) **macho-arm `*at()`/stat/link/rename port** (`issues/archived/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md`):
-> on arm64-macOS the aarch64-Linux stdlib's `sys_stat`/`sys_lstat`/`sys_fstatat`
-> (262), `sys_link`/`sys_linkat` (37), `sys_rename`/`sys_renameat` (38),
-> `sys_utimensat` (280) hit unmapped `ESYSXLAT` slots → stale `x16` → wrong Darwin
-> syscall (`rc -9/-14` on ecb). Added the `_TARGET_MACHO==2` pure renumbers in
-> `src/backend/aarch64/emit.cyr` — `newfstatat 262→fstatat64 470`, `linkat 37→471`,
-> `renameat 38→465` (Darwin nums from MacOSX.sdk, llvm-mc `-arch arm64` verified) +
-> `_macho_arm_routes` whitelist. `fstatat64` fills a Darwin `stat64` struct, so
-> `syscalls_aarch64_linux.cyr` carries a `#ifdef CYRIUS_TARGET_MACOS` `Stat` enum
-> (st_mode@4, st_size@96, st_mtimespec@48 — empirically dumped on ecb). Darwin has
-> NO `utimensat` → `sys_utimensat` returns `-ENOSYS` on the macOS build (two-`#ifdef`
-> form keeps svc 280 out of the emit; setattrlist emulation deferred, no consumer).
-> `version-bump.sh 6.1.20` applied; **user pushes/tags after CI**. Gates: x86 cycc
-> byte-identical self-host (and binary **unchanged** — fix is aarch64-only), check.sh
-> **87/87** (api-surface +4), all 170 tcyr clean (per-file exit loop 170/170), bench
-> self_compile 500 ms. **at-family verified on real ecb** (stat/link/rename/utimensat
-> harness → `st_size=5`, `st_mode=0100644`, valid `st_mtime`, `utimensat=-ENOSYS`); no
-> regression on x86_64 + aarch64 Linux (qemu). **Cross-OS BOTH GREEN** — ecb
-> `SELFHOST_OK` (macho cycc bakes in the new ESYSXLAT), cass `SELFHOST_OK`. sandhi
-> 1.4.5 smoke-compiles + links on both TLS backends.
+> **Handoff (2026-06-09):** v6.1.21 ready for cut — **native TLS is now the no-flag
+> default + sandhi 1.4.8 fold** (bayan carve → 6.1.22, ganita → 6.1.23).
+> (1) **Inverted `lib/tls.cyr` backend polarity** (`issues/archived/2026-06-09-invert-tls-backend-default-native-no-flag.md`):
+> native (`lib/tls_native.cyr`) is compiled in + selected by DEFAULT; **`-D
+> CYRIUS_TLS_LIBSSL`** is the libssl-only opt-out. ~16 `#ifdef CYRIUS_TLS_NATIVE`
+> guards flipped to `#ifndef CYRIUS_TLS_LIBSSL`; `_tls_backend` defaults to 1
+> (native) unless libssl-only. Legacy `-D CYRIUS_TLS_NATIVE` is a recognized **no-op
+> alias** (guards are LIBSSL-only → harmless). The two libssl-bridge tcyr
+> (`tls.tcyr`, `tls_early_data_status.tcyr`) now `#define CYRIUS_TLS_LIBSSL` to keep
+> testing the opt-out. cycc does NOT include tls.cyr → `src/` unchanged, self-host
+> byte-identical on every target.
+> (2) **Re-folded sandhi 1.4.5 → 1.4.8** (byte-identical; api-surface +3). 1.4.8
+> already documents the `-D CYRIUS_TLS_LIBSSL` convention, so fold + flip land
+> together; sandhi can drop its interim `-D CYRIUS_TLS_NATIVE` once it re-pins.
+> `version-bump.sh 6.1.21` applied; **user pushes/tags after CI**. Gates: x86 cycc
+> byte-identical self-host (binary **unchanged** — lib-only flip), check.sh **87/87**
+> (api-surface +3), all 170 tcyr clean (per-file exit loop 170/170 — 12 TLS tests
+> green under the new default), bench self_compile 492 ms. **Polarity verified 3-way**
+> (no-flag→native get=1/set_native=0; `-D CYRIUS_TLS_LIBSSL`→libssl get=0/set_native=-1;
+> legacy `-D CYRIUS_TLS_NATIVE`→native no-op). **Live TLS both modes** (native +
+> libssl) connect to example.com + 1.1.1.1. **Cross-OS BOTH GREEN** — ecb + cass
+> `SELFHOST_OK`.
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
-> needs an upstream sandhi fix + re-fold, not in 1.4.5.
+> needs an upstream sandhi fix + re-fold.
 > **Deferred polish:** relocate the 64 KB `_ts_cst` scratch to the ts_base heap
 > (held until after the carves).
 >

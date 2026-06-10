@@ -2282,6 +2282,7 @@ sandhi::sandhi_http_options_get_allow_0rtt/1
 sandhi::sandhi_http_options_get_connect_ms/1
 sandhi::sandhi_http_options_get_pool/1
 sandhi::sandhi_http_options_get_read_ms/1
+sandhi::sandhi_http_options_get_tls_policy/1
 sandhi::sandhi_http_options_get_total_ms/1
 sandhi::sandhi_http_options_get_write_ms/1
 sandhi::sandhi_http_options_hops/1
@@ -2291,6 +2292,7 @@ sandhi::sandhi_http_options_new/0
 sandhi::sandhi_http_options_new_a/1
 sandhi::sandhi_http_options_pool/2
 sandhi::sandhi_http_options_read_ms/2
+sandhi::sandhi_http_options_tls_policy/2
 sandhi::sandhi_http_options_total_ms/2
 sandhi::sandhi_http_options_write_ms/2
 sandhi::sandhi_http_patch/4
@@ -2483,6 +2485,7 @@ sandhi::sandhi_tls_policy_new_pinned/1
 sandhi::sandhi_tls_policy_new_pinned_a/2
 sandhi::sandhi_tls_policy_new_trust_store/1
 sandhi::sandhi_tls_policy_new_trust_store_a/2
+sandhi::sandhi_tls_policy_pin_available/0
 sandhi::sandhi_tls_policy_pinned_hash/1
 sandhi::sandhi_tls_policy_trust_store/1
 sandhi::sandhi_tls_use_libssl/0
