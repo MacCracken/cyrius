@@ -51,6 +51,13 @@ the sibling carve at v6.1.26.
   which has no vet/deny mode — it ignored the argv, read stdin, and compiled it to a
   144-byte ELF on stdout) instead of the `cyaudit` tool. Routed to `cyaudit`; both
   now produce dependency-audit output. Rename-rot from the cyrc→cybs era.
+- **`cyrius init` scaffold generated an un-callable CI workflow.** The
+  `release.yml` template gates on `ci.yml` as a reusable workflow
+  (`uses: ./.github/workflows/ci.yml`), but the `ci.yml` template's `on:` block
+  only had `push`/`pull_request` — so GitHub rejected it (`workflow is not reusable
+  as it is missing a on.workflow_call trigger`). Added `workflow_call:` to the
+  `ci.yml` template (`programs/cyrius-init-templates/ci.yml`). Every freshly-`init`'d
+  repo's Release workflow now parses. (Surfaced by the bayan repo's CI.)
 
 ### Migration (downstream — back-compat aliases bridge the window)
 
