@@ -14,36 +14,43 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.23** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,736 B (+48 B @ 6.1.23 — the `alloc_init` idempotency guard, compiled into cycc) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (+48 B @ 6.1.23 — same guard) |
+| **Version** | **6.1.24** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,736 B (unchanged @ 6.1.24 — LSP-only slot; `src/` untouched) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.24) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.23 — `alloc_init` is DCE'd in the PE compiler; the `alloc_windows` guard still ships for Windows consumer programs) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.24) |
+| **cyrius-lsp** (language server) | 531,688 B (+hover + keyword-set refresh @ 6.1.24) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
 | stdlib | 94 `lib/*.cyr` (85 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~497 ms (box noise) |
+| bench (every-release gate) | self_compile ~506 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.23 ready for cut — **`alloc_init()` is now
-> idempotent** (`issues/archived/2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md`),
-> fixing the chunk-leak-on-recall footgun the 6.1.22 async work surfaced. Pre-fix
-> every `alloc_init()` after the first re-`mmap`'d a fresh heap reservation (256 MB
-> Linux/macOS, 16 MB Win, 2 MB agnos) + zeroed `_heap_used`, abandoning the live
-> heap — a per-thread VA leak via `lib/thread.cyr`'s per-thread `alloc_init()`. The
-> v6.1.19 brk→chunk switch lost the brk-era `alloc_init`'s effective idempotency.
-> One-line guard added to ALL FOUR allocators (`alloc.cyr` Linux, `alloc_macos.cyr`,
-> `alloc_agnos.cyr`, `alloc_windows.cyr`): `if (_heap_base != 0) return <base>`.
-> Free still via `alloc_reset()`. **This touches `lib/alloc.cyr` which IS compiled
-> into cycc** → heap change → two-step bootstrap verified (cycc==cc5b byte-identical,
-> triple-checked); cycc **+48 B** (the guard branch). check.sh **87/87**, all 170
-> tcyr clean (alloctest 4/4), bench self_compile 497 ms. **Idempotency verified
-> x86_64 + aarch64 Linux** (qemu: re-init no longer resets `alloc_used` / relocates
-> the bump pointer — `u2=208` not 104). 6.1.22 async arena-leak fix still holds (0 B
-> growth). **Cross-OS BOTH GREEN** — ecb `SELFHOST_OK` (`alloc_macos` guard in the
-> macho cycc), cass `SELFHOST_OK` (`alloc_windows` guard in the PE cycc).
+> **Handoff (2026-06-10):** v6.1.24 ready for cut — **LSP dive: hover + keyword-
+> highlight fix + cleanup** (`programs/cyrius-lsp.cyr`). bayan carve → 6.1.25,
+> ganita → 6.1.26.
+> (1) **Added `textDocument/hover`** (hoverProvider) — markdown Hover with symbol
+> kind + definition site, reusing the cross-file symbol table; new `handle_hover`
+> + `_lsp_kind_name`; check.sh LSP gate extended with hover asserts.
+> (2) **Fixed semantic-highlight keyword gap** — `secret` (+ `stack`/`union`/
+> `defer`/`sizeof`) were never colored as keywords (`_lsp_is_keyword` predated the
+> lexer's `LEXKW_EXT` reserved words). Added all five; verified via
+> `semanticTokens/full` (keyword token type 5). `kernel` intentionally excluded
+> (demoted to plain ident at v5.8.45). [This was the "bug fix of an open item"
+> for the slot — surfaced during the dive, not separately filed.]
+> (3) **Cleanup:** refreshed the stale file-header doc (listed only diagnostics);
+> renamed `find_cc5`→`find_cycc` / `_cc5_path`→`_cycc_path` (cc5→cycc was v6.0.0;
+> body already searched for cycc).
+> `version-bump.sh 6.1.24` applied; **user pushes/tags after CI**. Gates: x86 cycc
+> byte-identical self-host (binary **unchanged** — LSP is a program, `src/`
+> untouched), check.sh **87/87** (LSP gate +hover asserts), all 170 tcyr clean,
+> bench self_compile 506 ms. Hover + keyword coloring verified over JSON-RPC.
+> **Cross-OS BOTH GREEN** — ecb + cass `SELFHOST_OK`.
+> **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
+> constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
+> needs an upstream sandhi fix + re-fold.
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

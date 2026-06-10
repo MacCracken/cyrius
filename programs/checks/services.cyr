@@ -395,7 +395,7 @@ fn _lsp_frame(sb, json_body): i64 {
 }
 
 fn _lsp_definition_gate(): i64 {
-    var label = "cyrius-lsp definitionProvider + documentSymbol + cross-file indexing (v5.7.39)";
+    var label = "cyrius-lsp definitionProvider + documentSymbol + hover + cross-file indexing (v5.7.39, hover v6.1.24)";
     var lsp_path = _root_path("build/cyrius-lsp");
     if (file_exists(lsp_path) != 1) {
         _p("  ");
@@ -432,6 +432,12 @@ fn _lsp_definition_gate(): i64 {
     str_builder_add_cstr(sym1_sb, decl_path);
     str_builder_add_cstr(sym1_sb, "\"}}}");
     _lsp_frame(sb, str_data(str_builder_build(sym1_sb)));
+    # v6.1.24: hover on `foo_bar` (line 0, char 5) → "**fn** `foo_bar`".
+    var hov1_sb = str_builder_new();
+    str_builder_add_cstr(hov1_sb, "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(hov1_sb, decl_path);
+    str_builder_add_cstr(hov1_sb, "\"},\"position\":{\"line\":0,\"character\":5}}}");
+    _lsp_frame(sb, str_data(str_builder_build(hov1_sb)));
     _lsp_frame(sb, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}");
     var reqs1 = str_builder_build(sb);
     var out1 = alloc(out_cap);
@@ -452,6 +458,11 @@ fn _lsp_definition_gate(): i64 {
         "test4: documentSymbol missing 'foo_bar' name");
     fail = fail + _lsp_check_substr(out1, n1, "\"kind\":12",
         "test4b: documentSymbol kind != 12 (Function)");
+    # v6.1.24: hover capability + content.
+    fail = fail + _lsp_check_substr(out1, n1, "\"hoverProvider\":true",
+        "test4c: initialize did not advertise hoverProvider");
+    fail = fail + _lsp_check_substr(out1, n1, "**fn** `foo_bar`",
+        "test4d: hover response missing '**fn** `foo_bar`'");
 
     # ─ Phase 2: cross-file include. Generate includer.cyr at
     #   /tmp with absolute path to fixtures/lsp/included.cyr;

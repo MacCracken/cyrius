@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.24] — 2026-06-10
+
+**v6.1.x slot 24: LSP dive — hover support + keyword-highlight fix + cleanup.**
+A pass over `programs/cyrius-lsp.cyr` (the JSON-RPC language server) to add a
+missing feature, fix a real highlighting bug, and clear stale references.
+
+### Added
+
+- **`textDocument/hover` (hoverProvider).** Resting the cursor on an identifier
+  now shows a markdown Hover with the symbol's kind + definition site
+  (`**fn** \`foo_bar\`` / Defined at `path:line`), reusing the existing cross-file
+  symbol table (the same index that backs go-to-definition). New `handle_hover`
+  + `_lsp_kind_name`; advertised in `initialize`. The `check.sh` LSP gate now
+  asserts the capability + a real hover response.
+
+### Fixed
+
+- **Semantic-highlight keyword gap — `secret` (and `stack`/`union`/`defer`/
+  `sizeof`) were never colored as keywords.** `_lsp_is_keyword` predated these
+  reserved words (the lexer's `LEXKW_EXT` recognizes them), so editing
+  `secret var key[N];` left `secret` uncolored. Added all five; verified via the
+  `semanticTokens/full` response (the tokens now carry keyword type 5). `kernel`
+  is deliberately NOT added — it was demoted from reserved to a plain identifier
+  at v5.8.45.
+
+### Changed
+
+- **LSP cleanup:** refreshed the stale file-header doc (it listed only
+  diagnostics, but the server has done definition / documentSymbol / references /
+  semanticTokens since v5.7.39); renamed `find_cc5` → `find_cycc` / `_cc5_path` →
+  `_cycc_path` (the `cc5`→`cycc` binary rename was v6.0.0 — the function already
+  searched for `cycc`, only the name was stale).
+
+**Benchmark:** `self_compile 506 ms` (vs 497 ms @ 6.1.23 — box noise), `cycc
+1,045,736 B` (**unchanged** — the LSP is a program, not part of cycc). x86
+self-host **byte-identical** (and binary unchanged; `src/` untouched). check.sh
+**87/87** (the LSP gate extended with hover asserts — same gate count). all 170
+`.tcyr` clean (per-file exit loop 170/170). Hover + keyword coloring verified by
+driving the LSP over JSON-RPC (hover on `foo_bar` → `**fn** \`foo_bar\``;
+`secret`/`stack`/`sizeof` now emit keyword tokens). Cross-OS self-host
+**byte-identical on ecb (macOS arm64) + cass (Windows PE32+)**.
+
 ## [6.1.23] — 2026-06-10
 
 **v6.1.x slot 23: `alloc_init()` is idempotent — fixes the chunk-leak-on-recall
