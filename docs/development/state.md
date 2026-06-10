@@ -14,41 +14,44 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.21** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,688 B (unchanged @ 6.1.21 — lib-only TLS-default flip; `src/` untouched) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,752 B (unchanged @ 6.1.21) |
+| **Version** | **6.1.22** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,688 B (unchanged @ 6.1.22 — async/sandhi/sigil are lib-only; `src/` untouched) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,752 B (unchanged @ 6.1.22) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.21) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.22) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
 | stdlib | 94 `lib/*.cyr` (85 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~492 ms (box noise) |
+| bench (every-release gate) | self_compile ~504 ms (box noise) |
 
-> **Handoff (2026-06-09):** v6.1.21 ready for cut — **native TLS is now the no-flag
-> default + sandhi 1.4.8 fold** (bayan carve → 6.1.22, ganita → 6.1.23).
-> (1) **Inverted `lib/tls.cyr` backend polarity** (`issues/archived/2026-06-09-invert-tls-backend-default-native-no-flag.md`):
-> native (`lib/tls_native.cyr`) is compiled in + selected by DEFAULT; **`-D
-> CYRIUS_TLS_LIBSSL`** is the libssl-only opt-out. ~16 `#ifdef CYRIUS_TLS_NATIVE`
-> guards flipped to `#ifndef CYRIUS_TLS_LIBSSL`; `_tls_backend` defaults to 1
-> (native) unless libssl-only. Legacy `-D CYRIUS_TLS_NATIVE` is a recognized **no-op
-> alias** (guards are LIBSSL-only → harmless). The two libssl-bridge tcyr
-> (`tls.tcyr`, `tls_early_data_status.tcyr`) now `#define CYRIUS_TLS_LIBSSL` to keep
-> testing the opt-out. cycc does NOT include tls.cyr → `src/` unchanged, self-host
-> byte-identical on every target.
-> (2) **Re-folded sandhi 1.4.5 → 1.4.8** (byte-identical; api-surface +3). 1.4.8
-> already documents the `-D CYRIUS_TLS_LIBSSL` convention, so fold + flip land
-> together; sandhi can drop its interim `-D CYRIUS_TLS_NATIVE` once it re-pins.
-> `version-bump.sh 6.1.21` applied; **user pushes/tags after CI**. Gates: x86 cycc
-> byte-identical self-host (binary **unchanged** — lib-only flip), check.sh **87/87**
-> (api-surface +3), all 170 tcyr clean (per-file exit loop 170/170 — 12 TLS tests
-> green under the new default), bench self_compile 492 ms. **Polarity verified 3-way**
-> (no-flag→native get=1/set_native=0; `-D CYRIUS_TLS_LIBSSL`→libssl get=0/set_native=-1;
-> legacy `-D CYRIUS_TLS_NATIVE`→native no-op). **Live TLS both modes** (native +
-> libssl) connect to example.com + 1.1.1.1. **Cross-OS BOTH GREEN** — ecb + cass
+> **Handoff (2026-06-10):** v6.1.22 ready for cut — **async runtime leak fix +
+> sandhi 1.4.10 / sigil 3.7.8 folds** (bayan carve → 6.1.23, ganita → 6.1.24).
+> (1) **`lib/async.cyr` arena-aware runtime** (`issues/archived/2026-06-09-async-runtime-no-free-task-leak.md`):
+> the batched server pattern (sandhi `sandhi_server_run_async`, daimon
+> `serve_async`) recreates the runtime per batch and `async_new`/`async_spawn` leaked
+> the rt (40 B) + each task (32 B) into the no-free global bump → unbounded growth.
+> Added **`async_new_in(a)`** — rt + spawned tasks come from a caller-owned Allocator
+> (new rt slot @32). Server does `arena_allocator(cap)` + `async_new_in(arena)` +
+> `reset_via(arena)` per batch = **zero leak** (verified: 0 B global-bump growth over
+> 500 batches × 8 tasks, vs 148 KB for `async_new()`). `async_new()` unchanged
+> (wraps `async_new_in(default_alloc())`); **dropped its redundant `alloc_init()`**
+> which re-mmap'd a 256 MB chunk every call under the v6.1.19 chunk allocator
+> (separate footgun filed: `2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md`).
+> (2) **Folded sandhi 1.4.10 (was 1.4.8) + sigil 3.7.8 (was 3.7.7)** byte-identical;
+> api-surface +6. sigil is the native-TLS X.509/crypto chain — crypto/TLS test set
+> stays green, live native TLS still reaches example.com + 1.1.1.1.
+> `version-bump.sh 6.1.22` applied; **user pushes/tags after CI**. Gates: x86 cycc
+> byte-identical self-host (binary **unchanged** — all three are lib-only; `src/`
+> untouched), check.sh **87/87** (api-surface +6), all 170 tcyr clean (per-file exit
+> loop 170/170), bench self_compile 504 ms. **Cross-OS BOTH GREEN** — ecb + cass
 > `SELFHOST_OK`.
+> **NEW open issue (filed this slot, NOT fixed):** chunked `alloc_init()` re-mmaps a
+> 256 MB chunk on every recall (regression from the v6.1.19 brk→chunk switch) —
+> bites per-thread `alloc_init()` in `lib/thread.cyr`. 1-line idempotency guard;
+> needs its own slot (`issues/2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md`).
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

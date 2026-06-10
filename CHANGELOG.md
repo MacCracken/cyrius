@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.22] — 2026-06-10
+
+**v6.1.x slot 22: async runtime leak fix + sandhi 1.4.10 / sigil 3.7.8 folds.**
+
+1. **`lib/async.cyr` arena-aware runtime — fixes the per-connection task leak**
+   (issue 2026-06-09-async-runtime-no-free-task-leak, filed by sandhi 1.4.9's
+   `sandhi_server_run_async`; daimon `serve_async` hits the same shape). The
+   batched-cooperative server pattern recreates the runtime each batch
+   (`async_run` closes the runtime's epfd → single-use), and `async_new` +
+   `async_spawn` allocated the runtime (40 B) + every task (32 B) from the global
+   bump — which has **no free** — so a long-running accept loop grew without
+   bound (~32 B/conn + 32 B/batch). Added **`async_new_in(a)`**: the runtime and
+   its `async_spawn` task structs come from a caller-owned Allocator (the new
+   allocator slot in the rt struct). A server now does
+   `arena = arena_allocator(cap); rt = async_new_in(arena); …; async_run(rt);
+   reset_via(arena)` — **zero residual leak** (verified: global-bump growth = 0 B
+   over 500 batches × 8 tasks, vs the `async_new()` path's 148 KB). `async_new()`
+   is unchanged for existing callers (now a thin wrapper over
+   `async_new_in(default_alloc())`). **Also dropped the redundant `alloc_init()`
+   from `async_new()`** — with the v6.1.19 chunk allocator that recall re-mmap'd a
+   fresh 256 MB chunk every runtime creation (a separate latent footgun, filed as
+   `2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md`; lazy-init
+   covers heap bring-up). Closes the async leak issue.
+
+2. **Folded sandhi 1.4.8 → 1.4.10 + sigil 3.7.7 → 3.7.8** into `lib/sandhi.cyr` /
+   `lib/sigil.cyr` (byte-identical to dist; api-surface snapshot +6). sigil is the
+   X.509/crypto chain behind native TLS — the full crypto/TLS test set
+   (`tls12_*`, `tls_native_*`, `sha1`, `tls`) stays green and live native TLS
+   (cert-chain path build) still connects to example.com + 1.1.1.1.
+
+**Benchmark:** `self_compile 504 ms` (vs 492 ms @ 6.1.21 — box noise), `cycc
+1,045,688 B` (**unchanged** — `async.cyr`/`sandhi.cyr`/`sigil.cyr` aren't compiled
+into cycc). x86 self-host **byte-identical** (binary unchanged; `src/` untouched).
+check.sh **87/87** (api-surface +6); all 170 `.tcyr` clean (per-file exit loop
+170/170). Async leak fix verified (arena loop = 0 B global-bump growth over 500
+batches). Cross-OS self-host **byte-identical on ecb (macOS arm64) + cass (Windows
+PE32+)**.
+
+### Fixed
+
+- **`lib/async.cyr` runtime/task leak — arena-aware `async_new_in(allocator)`.**
+  Runtime + spawned task structs now come from a caller-owned Allocator (arena →
+  `reset_via` per batch = zero leak), instead of unconditionally leaking into the
+  no-free global bump. `async_new()`/`async_spawn()`/`async_run()` unchanged for
+  existing callers. Removed the per-`async_new` `alloc_init()` (a 256 MB-chunk
+  leak under the v6.1.19 chunk allocator).
+
+### Changed
+
+- **Folded sandhi 1.4.10** (was 1.4.8) + **sigil 3.7.8** (was 3.7.7) into
+  `lib/sandhi.cyr` / `lib/sigil.cyr`, byte-identical to dist.
+
 ## [6.1.21] — 2026-06-09
 
 **v6.1.x slot 21: native TLS is now the no-flag default + sandhi 1.4.8 fold.**

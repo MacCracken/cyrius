@@ -1,5 +1,14 @@
 # `lib/async.cyr` runtime + task structs leak (global bump, no free) — unbounded for a long-running accept loop
 
+> **RESOLVED v6.1.22** — added arena-aware `async_new_in(a)` (rt + spawned task
+> structs allocated from a caller-owned Allocator). A batched server uses
+> `arena_allocator(cap)` + `async_new_in(arena)` + `reset_via(arena)` per batch →
+> zero residual leak (verified: 0 B global-bump growth over 500 batches × 8 tasks,
+> vs 148 KB for `async_new()`). `async_new()`/`async_spawn()`/`async_run()`
+> unchanged for existing callers; the per-`async_new` `alloc_init()` (a 256 MB-chunk
+> leak under the v6.1.19 chunk allocator) was dropped. sandhi/daimon adopt
+> `async_new_in` in their next version. See CHANGELOG [6.1.22].
+
 - **Filed**: 2026-06-09
 - **Reporter**: sandhi (1.4.9 epoll-cooperative server `sandhi_server_run_async`; same shape daimon's `serve_async` already hits)
 - **Affects**: `lib/async.cyr` (`async_new` / `async_spawn` / `async_run`) on any long-running batched accept loop.

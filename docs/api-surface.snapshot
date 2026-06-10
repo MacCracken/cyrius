@@ -792,6 +792,7 @@ assert::fail_after_n_allocs/1
 assert::test_group/1
 async::async_await_readable/1
 async::async_new/0
+async::async_new_in/1
 async::async_read/3
 async::async_run/1
 async::async_sleep_ms/1
@@ -2421,6 +2422,7 @@ sandhi::sandhi_server_recv_request/3
 sandhi::sandhi_server_request_has_cl_te_conflict/2
 sandhi::sandhi_server_request_has_dup_smuggling_header/2
 sandhi::sandhi_server_run/4
+sandhi::sandhi_server_run_async/5
 sandhi::sandhi_server_run_opts/5
 sandhi::sandhi_server_send_204/2
 sandhi::sandhi_server_send_204_a/3
@@ -2951,7 +2953,11 @@ sigil::mstatus_name/1
 sigil::n384_reduce/2
 sigil::n_reduce/2
 sigil::p256_reduce/2
+sigil::p256_scalarmul_base/2
+sigil::p256_scalarmul_var/3
 sigil::p384_reduce/2
+sigil::p384_scalarmul_base/2
+sigil::p384_scalarmul_var/3
 sigil::pem_decode_certs/4
 sigil::pem_decode_privkey/5
 sigil::policy_allow_unsigned/1
