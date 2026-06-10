@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.05 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). 94 stdlib modules + 0 git deps (mabda folded into stdlib at 3.0.1; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 170 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 87 check.sh gates.
+~1.05 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 94 stdlib modules + 0 git deps (mabda folded into stdlib at 3.0.1; 7 sibling distfiles folded into stdlib — sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0). 170 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 87 check.sh gates.
 
 ## Install
 
@@ -91,11 +91,11 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,045,120 B** (~1.05 MB) x86_64 at v6.1.18 |
-| Cross compilers | `cycc_aarch64` 594,848 B, `cycc_win` 814,592 B (cross-built) |
+| Compiler (`cycc`) | **1,045,736 B** (~1.05 MB) x86_64 at v6.1.24 |
+| Cross compilers | `cycc_aarch64` 595,800 B, `cycc_win` 814,592 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
 | Bootstrap compiler (`cybs`) | **12,344 B** |
-| LSP server (`cyrius-lsp`) | **101,392 B** |
+| LSP server (`cyrius-lsp`) | **531,688 B** (definition / documentSymbol / references / semanticTokens / hover) |
 | Linker (`cyrld`) | **902,184 B** |
 | External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded at 3.0.1) |
 | Tests | **170** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
@@ -103,17 +103,17 @@ syscall(60, r);
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode |
 | Stdlib modules | **94** (7 distfiles folded byte-identical from sibling repos; see lineage below) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
-| Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000), brk-final at 0x4D9D000 (~77.6 MB) |
+| Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
 
 ### Toolchain size comparison
 
-Full Cyrius release toolchain (`~/.cyrius/bin/`) totals **3.72 MB** across the compiler, cross-compilers, linker, LSP, formatter, linter, doc tool, init scaffolder, port utility, and `cyrius` CLI dispatcher.
+Full Cyrius release toolchain (`~/.cyrius/bin/`) totals **~5.4 MB** across the compiler, three cross-compilers (aarch64 / Windows PE / native-aarch64), linker, LSP, formatter, linter, doc tool, init scaffolder, port utility, and `cyrius` CLI dispatcher.
 
 For order-of-magnitude context (approximate, per typical Linux distribution package sizes):
 
 | Toolchain | Approximate size | Notes |
 |-----------|------------------|-------|
-| **Cyrius** (full release toolchain) | **~3.7 MB** | Compiler + linker + LSP + fmt + lint + doc + cross-compilers + CLI |
+| **Cyrius** (full release toolchain) | **~5.4 MB** | Compiler + linker + LSP + fmt + lint + doc + 3 cross-compilers + CLI |
 | TCC (Tiny C Compiler, self-hosting) | ~500 KB | C compiler binary only; no LSP / linker / fmt |
 | `gcc` | ~150-200 MB | Compiler + dependencies; libc not included |
 | `rustc` | ~150 MB (binary) | + ~850 MB stdlib metadata |
@@ -171,50 +171,18 @@ Includes are auto-prepended — source files only need project-specific includes
 
 ## Standard Library (94 modules + 0 git deps)
 
-Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
-vendor at the patched tag, removed from `[deps]`):
+**94 `lib/*.cyr` modules** (85 first-party + 9 vendored sibling distfiles
+folded byte-identical, sandhi-pattern) with **0 git deps** — mabda folded
+at 3.0.1, dropping its transitive `agnosys` and leaving zero `[deps.*]`
+resolutions. Coverage spans core data structures, types (Option / Result),
+concurrency (thread / atomic / async), networking (sovereign native TLS 1.3,
+HTTP/2, WebSockets), crypto, Unicode (UAX #15 normalization), regex, GPU,
+and OS interop.
 
-- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy, ~10,500 lines)
-- v5.8.0 — `vani` (audio distlib; replaced inlined `lib/audio.cyr`)
-- **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
-- **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; ~6,664 lines)
-
-Mabda (GPU integration) folded into stdlib at 3.0.1 (v6.0.x,
-sandhi-pattern), removed from `[deps]`; with mabda vendored its
-transitive `agnosys` is no longer pulled, leaving zero `[deps.*]`
-git resolutions. v5.7.35 added `lib/random.cyr` (kernel entropy via
-getrandom) and `lib/security.cyr` (Landlock policy enums) as new
-first-party modules. v5.8.49–.52 + .60 added the
-`lib/unicode/` family (categories / casefold / NFC / NFD / NFKC
-/ NFKD per UAX #15 against Unicode 17.0.0). The compat-decomp
-data uses a 2-table IDX+DATA encoding (~87 KB total — 80%
-smaller than fixed-width would have been; per the v5.8.60 mid-
-slot redesign).
-
-| Category | Modules |
-|----------|---------|
-| Core | string, fmt, alloc, io, vec, str, args, fnptr, flags |
-| Types | tagged (Option), result (Result + ? operator; v5.8.28-.32), hashmap, hashmap_fast, trait, assert, bounds |
-| System | syscalls, callback, process, bench |
-| Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, freelist |
-| Data | json, toml, cyml, csv, base64, regex, math, matrix, linalg, bigint, u128 |
-| Unicode | unicode/categories, unicode/casefold, unicode/normalize (NFC/NFD/NFKC/NFKD), unicode/_decode |
-| Crypto | sha1, keccak, ct (constant-time primitives), overflow, **random** (kernel entropy via getrandom) |
-| Sandboxing | **security** (Landlock policy enums; v5.7.35) |
-| Network | net, http, ws, ws_server, tls, **sandhi** (HTTP/2 + RPC; folded v5.7.0) |
-| Regex | **niyama** (5 engines: bre / re2 / pcre / fuzzy / vim; folded v5.9.0) |
-| Filesystem | fs |
-| Audio | **vani** (ALSA PCM + ring buffer + mixer; folded v5.8.0, refolded v5.8.65) |
-| Logging | log (structured, over sakshi) |
-| Time | chrono |
-| Interop | mmap, dynlib, fdlopen (foreign-dlopen), cffi |
-| Identity | pwd, grp, shadow, pam |
-| Tracing | **sakshi** (folded v5.8.65) |
-| Database | **patra** (folded v5.8.65) |
-| Security | **sigil** (folded v5.8.65) |
-| Hardware | **yukti** (folded v5.8.65) |
-| Compression | **sankoch** (folded v5.8.65) |
-| GPU | **mabda** (folded v6.0.x at 3.0.1; opt-in `include "lib/mabda.cyr"`) |
+See **[docs/stdlib-modules.md](docs/stdlib-modules.md)** for the full
+categorized module index + fold-in lineage, and
+**[docs/stdlib-reference.md](docs/stdlib-reference.md)** for the per-function
+API reference.
 
 ## Compiler Architecture
 
@@ -247,7 +215,7 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 1,045,120 B at v6.1.18)
+    -> cycc (modular compiler + IR, 1,045,736 B at v6.1.24)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 
