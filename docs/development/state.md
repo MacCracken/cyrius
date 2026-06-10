@@ -14,44 +14,36 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.22** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,688 B (unchanged @ 6.1.22 — async/sandhi/sigil are lib-only; `src/` untouched) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,752 B (unchanged @ 6.1.22) |
+| **Version** | **6.1.23** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,736 B (+48 B @ 6.1.23 — the `alloc_init` idempotency guard, compiled into cycc) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (+48 B @ 6.1.23 — same guard) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.22) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.23 — `alloc_init` is DCE'd in the PE compiler; the `alloc_windows` guard still ships for Windows consumer programs) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
 | tests | 170 `.tcyr` · 15 `.bcyr` |
 | stdlib | 94 `lib/*.cyr` (85 stdlib + 9 vendored deps) · 79 programs |
-| bench (every-release gate) | self_compile ~504 ms (box noise) |
+| bench (every-release gate) | self_compile ~497 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.22 ready for cut — **async runtime leak fix +
-> sandhi 1.4.10 / sigil 3.7.8 folds** (bayan carve → 6.1.23, ganita → 6.1.24).
-> (1) **`lib/async.cyr` arena-aware runtime** (`issues/archived/2026-06-09-async-runtime-no-free-task-leak.md`):
-> the batched server pattern (sandhi `sandhi_server_run_async`, daimon
-> `serve_async`) recreates the runtime per batch and `async_new`/`async_spawn` leaked
-> the rt (40 B) + each task (32 B) into the no-free global bump → unbounded growth.
-> Added **`async_new_in(a)`** — rt + spawned tasks come from a caller-owned Allocator
-> (new rt slot @32). Server does `arena_allocator(cap)` + `async_new_in(arena)` +
-> `reset_via(arena)` per batch = **zero leak** (verified: 0 B global-bump growth over
-> 500 batches × 8 tasks, vs 148 KB for `async_new()`). `async_new()` unchanged
-> (wraps `async_new_in(default_alloc())`); **dropped its redundant `alloc_init()`**
-> which re-mmap'd a 256 MB chunk every call under the v6.1.19 chunk allocator
-> (separate footgun filed: `2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md`).
-> (2) **Folded sandhi 1.4.10 (was 1.4.8) + sigil 3.7.8 (was 3.7.7)** byte-identical;
-> api-surface +6. sigil is the native-TLS X.509/crypto chain — crypto/TLS test set
-> stays green, live native TLS still reaches example.com + 1.1.1.1.
-> `version-bump.sh 6.1.22` applied; **user pushes/tags after CI**. Gates: x86 cycc
-> byte-identical self-host (binary **unchanged** — all three are lib-only; `src/`
-> untouched), check.sh **87/87** (api-surface +6), all 170 tcyr clean (per-file exit
-> loop 170/170), bench self_compile 504 ms. **Cross-OS BOTH GREEN** — ecb + cass
-> `SELFHOST_OK`.
-> **NEW open issue (filed this slot, NOT fixed):** chunked `alloc_init()` re-mmaps a
-> 256 MB chunk on every recall (regression from the v6.1.19 brk→chunk switch) —
-> bites per-thread `alloc_init()` in `lib/thread.cyr`. 1-line idempotency guard;
-> needs its own slot (`issues/2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md`).
+> **Handoff (2026-06-10):** v6.1.23 ready for cut — **`alloc_init()` is now
+> idempotent** (`issues/archived/2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md`),
+> fixing the chunk-leak-on-recall footgun the 6.1.22 async work surfaced. Pre-fix
+> every `alloc_init()` after the first re-`mmap`'d a fresh heap reservation (256 MB
+> Linux/macOS, 16 MB Win, 2 MB agnos) + zeroed `_heap_used`, abandoning the live
+> heap — a per-thread VA leak via `lib/thread.cyr`'s per-thread `alloc_init()`. The
+> v6.1.19 brk→chunk switch lost the brk-era `alloc_init`'s effective idempotency.
+> One-line guard added to ALL FOUR allocators (`alloc.cyr` Linux, `alloc_macos.cyr`,
+> `alloc_agnos.cyr`, `alloc_windows.cyr`): `if (_heap_base != 0) return <base>`.
+> Free still via `alloc_reset()`. **This touches `lib/alloc.cyr` which IS compiled
+> into cycc** → heap change → two-step bootstrap verified (cycc==cc5b byte-identical,
+> triple-checked); cycc **+48 B** (the guard branch). check.sh **87/87**, all 170
+> tcyr clean (alloctest 4/4), bench self_compile 497 ms. **Idempotency verified
+> x86_64 + aarch64 Linux** (qemu: re-init no longer resets `alloc_used` / relocates
+> the bump pointer — `u2=208` not 104). 6.1.22 async arena-leak fix still holds (0 B
+> growth). **Cross-OS BOTH GREEN** — ecb `SELFHOST_OK` (`alloc_macos` guard in the
+> macho cycc), cass `SELFHOST_OK` (`alloc_windows` guard in the PE cycc).
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

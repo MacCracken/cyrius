@@ -165,6 +165,14 @@ fn _linux_new_chunk(min): i64 {
 # callable for explicitness; re-callable (re-mmaps a fresh first chunk — the
 # old chunks are abandoned, matching alloc_agnos.cyr / alloc_macos.cyr).
 fn alloc_init(): i64 {
+    # Idempotent (v6.1.23): once the heap is up, a re-call is a no-op returning the
+    # existing first-chunk base. Pre-fix, every recall mmap'd a FRESH 256 MB chunk
+    # + zeroed _heap_used, abandoning the live chunk — a 256 MB-VA leak per repeated
+    # caller (notably lib/thread.cyr's per-thread alloc_init). Callers that want to
+    # free everything use alloc_reset(). The brk-era alloc_init this replaced was
+    # effectively idempotent (re-brk to current break); the v6.1.19 brk→chunk switch
+    # lost that. See docs/development/issues/2026-06-09-chunked-alloc-init-not-idempotent-rechunks-on-recall.md.
+    if (_heap_base != 0) { return _heap_first_base; }
     var base = _linux_new_chunk(_LINUX_CHUNK);
     if (base == 0) {
         syscall(1, 2, "alloc_init: mmap failed\n", 24);

@@ -6,6 +6,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.23] — 2026-06-10
+
+**v6.1.x slot 23: `alloc_init()` is idempotent — fixes the chunk-leak-on-recall
+footgun** (issue 2026-06-09-chunked-alloc-init-not-idempotent, surfaced by the
+6.1.22 async work). Pre-fix, every `alloc_init()` call after the first re-`mmap`'d
+a fresh heap reservation (256 MB on Linux/macOS, 16 MB on Windows, 2 MB on agnos)
+and zeroed `_heap_used`, abandoning the live heap — a per-thread VA leak via
+`lib/thread.cyr`'s per-thread `alloc_init()` (and any repeated caller). The v6.1.19
+brk→chunk switch lost the brk-era `alloc_init`'s effective idempotency (re-`brk` to
+the current break allocated nothing). Added a one-line guard to all four
+allocators (`lib/alloc.cyr` Linux, `alloc_macos.cyr`, `alloc_agnos.cyr`,
+`alloc_windows.cyr`): `if (_heap_base != 0) return <base>` — a re-call is a no-op
+returning the existing base. Callers that want to free everything use
+`alloc_reset()` (unchanged). No behavior change for the single startup call every
+target makes — cycc self-hosts byte-identical (two-step, heap change).
+
+**Benchmark:** `self_compile 497 ms` (vs 504 ms @ 6.1.22 — box noise), `cycc
+1,045,736 B` (**+48 B** — the guard branch in `alloc_init`, compiled into cycc).
+**Two-step self-host byte-identical** (cycc compiles cc5b, cycc==cc5b, triple-
+checked — this is a heap change). check.sh **87/87**; all 170 `.tcyr` clean
+(per-file exit loop 170/170; `alloctest` 4/4). **Idempotency verified on x86_64 +
+aarch64 Linux** (qemu): a re-`alloc_init()` no longer resets `alloc_used()` or
+relocates the bump pointer (`u2=208` not 104; `p2` contiguous). The 6.1.22 async
+arena-leak fix still holds (0 B growth). Cross-OS self-host **byte-identical on ecb
+(macOS arm64 — `alloc_macos` guard in the macho cycc) + cass (Windows PE32+ —
+`alloc_windows` guard)**.
+
+### Fixed
+
+- **`alloc_init()` is now idempotent across all four allocators** (`lib/alloc.cyr`
+  Linux + `alloc_macos.cyr` + `alloc_agnos.cyr` + `alloc_windows.cyr`). A re-call
+  once the heap is up is a no-op instead of re-`mmap`/`VirtualAlloc`-ing a fresh
+  reservation + zeroing heap state. Removes the per-thread heap leak (`thread.cyr`
+  calls `alloc_init()` on every worker) and the `alloc_used()` reset-on-recall.
+  Restores the brk-era behavior the v6.1.19 chunk-allocator switch dropped.
+
 ## [6.1.22] — 2026-06-10
 
 **v6.1.x slot 22: async runtime leak fix + sandhi 1.4.10 / sigil 3.7.8 folds.**

@@ -1,5 +1,12 @@
 # `lib/alloc.cyr` Linux `alloc_init()` is not idempotent — every recall mmaps a fresh 256 MB chunk + resets heap state (regression from the v6.1.19 brk→chunk switch)
 
+> **RESOLVED v6.1.23** — added `if (_heap_base != 0) return <base>` to `alloc_init()`
+> in ALL FOUR allocators (`lib/alloc.cyr` Linux, `alloc_macos.cyr`,
+> `alloc_agnos.cyr`, `alloc_windows.cyr`); a re-call once the heap is up is a no-op.
+> Verified x86_64 + aarch64 (qemu): re-init no longer resets `alloc_used` /
+> relocates the bump pointer. Two-step self-host byte-identical (heap change; cycc
+> +48 B); cross-OS ecb + cass `SELFHOST_OK`. See CHANGELOG [6.1.23].
+
 - **Filed**: 2026-06-09 (surfaced while fixing the async runtime/task leak, v6.1.22)
 - **Affects**: `lib/alloc.cyr` Linux (`CYRIUS_TARGET_LINUX`) `alloc_init()`. Any code that calls `alloc_init()` more than once — notably `lib/thread.cyr` (per-thread init, lines ~167/271/314), `lib/thread_local.cyr` (82/187), `lib/sync_*.cyr`.
 - **Severity**: Medium (latent). No data corruption observed (old chunks stay mapped, so previously-handed-out pointers remain valid), but **each recall leaks a fresh 256 MB virtual chunk** (lazy-committed, so RSS cost is only touched pages) and **resets `_heap_used`/`_heap_first_base`** out from under any concurrent user. In a multi-threaded program where each worker thread calls `alloc_init()` on entry, that's one abandoned 256 MB VA reservation per thread + an `alloc_used()` that no longer reflects reality. The recall is also NOT under `_alloc_lock`, so the reset races concurrent `alloc()`.
