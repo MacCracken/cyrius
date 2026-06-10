@@ -14,43 +14,43 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.27** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.27 — binary output cap 2MB→16MB is heap-virtual; offset/size constants only) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.27) |
+| **Version** | **6.1.28** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.28 — lib/sys.cyr + unicode-resolver fix are lib/CLI-only) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.28) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.27) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.28) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
-| tests | 170 `.tcyr` · 15 `.bcyr` |
-| stdlib | 87 `lib/*.cyr` (bayan @.25 −7+1; ganita @.26 −2+1, math split) · 79 programs |
+| tests | 171 `.tcyr` · 15 `.bcyr` |
+| stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
 | bench (every-release gate) | self_compile ~497 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.27 ready for cut — **binary output cap 2 MB → 16 MB**
-> (phylax hit the 2 MB ELF-output wall pulling bayan; the carves mean consumers link
-> ever-larger folded bundles). `output_buf` was a fixed 2 MB region mid-heap
-> (`S+0x71A000`), tightly wedged in the monotonic map. **Relocated to the heap top**
-> (`S+0x4D9D000`, immediately after `preprocess_out`), **resized 2 MB → 16 MB**, heap
-> extended to `0x5D9D000` (brk Linux / mmap macOS / `0x5F00000` VirtualAlloc Windows);
-> 2 MB gap freed at `0x71A000`. Touched only `output_buf`'s ~19 refs + 6 heap-init
-> sizes (NOT the 50-region in-place shift). Cap checks `2097152 → 16777216` (x86
-> fixup ×3, macho ×2; aarch64/PE had no check — the bigger buffer closes a latent
-> silent-overflow there). **Cost is virtual-only** — `output_buf` is never memset
-> (lazy zero-fill / overcommit), so 16 MB reserves address space, not RAM; cycc size
-> unchanged (1,045,752 B). `version-bump.sh 6.1.27` to apply; **user pushes/tags after
-> CI**. Gates: **two-step self-host byte-identical** (heap change, a==b==c), check.sh
-> **87/87**, all 170 tcyr exit-0, **ecb+cass `SELFHOST_OK`** (per-target heap-init
-> sizes verified on real HW), bench self_compile 497 ms. **Proof:** a 2,163,984-byte
-> (2.06 MB) kitchen-sink binary compiled + ran (old cap would've errored); phylax
-> rebuilds clean at 1.73 MB. Phase E (bayan .25 + ganita .26) stays DONE.
-> **Deferred to v6.1.x closeout (heap-map audit, per Closeout Pass §4):** (1) re-sort
-> the `output_buf` comment line to its true heap-top position (it carries the correct
-> `0x4D9D000`/[16777216] + a RELOCATED note but is still physically listed mid-map);
-> (2) reclaim/reuse the **2 MB gap freed at `0x71A000`** (old output_buf slot). Both
-> cosmetic/optimization — no gate keys on them.
+> **Handoff (2026-06-10):** v6.1.28 ready for cut — **`lib/sys.cyr` system-introspection
+> + bare directory-family dep-resolution fix** (two items). (1) **`lib/sys.cyr`** —
+> uname/sysinfo/is_root + accessors + one-call `system_*` helpers, carved off agnosys's
+> hand-rolled `src/syscall.cyr`. Raw 0/-errno convention (process pid/uid stay on the
+> floor's `sys_get*`). Linux + AGNOS real (AGNOS sovereign 64-byte uname#34 / 40-byte
+> sysinfo#35); macOS/Windows `-ENOSYS`. Added `SYS_SYSINFO` to the floor (x86_64=99,
+> aarch64=179). Compiles on all 5 targets; `tests/tcyr/sys.tcyr` 11/11. (2) **Bare
+> directory-family stdlib deps** (`"unicode"` → `lib/unicode/*.cyr`) now resolve:
+> `cbt/deps.cyr` `_dep_copy_stdlib_recursive` `dir_list`s a `<name>/` directory when
+> `<name>.cyr` is absent. Fixes downstream niyama consumers (niyama lists bare
+> `"unicode"`) — e.g. chakshu. Explicit subpaths + missing-module errors unchanged.
+> `version-bump.sh 6.1.28` to apply; **user pushes/tags after CI**. Gates: cycc
+> **UNCHANGED** (self-hosts byte-identical — lib/CLI-only), check.sh **87/87**, all 171
+> tcyr exit-0, api-surface regenerated (+`sys::`), **ecb+cass `SELFHOST_OK`**, bench
+> self_compile 501 ms. unicode fix verified (bare `"unicode"` → 7 files; consumer
+> using `unicode_category` runs). **Follow-ons (not blocking):** agnosys can now drop
+> its `src/syscall.cyr` and consume `lib/sys.cyr` (agnosys-side, downstream); the
+> resolver's `dir_list` path could get an ecb/cass smoke (degrades gracefully —
+> explicit subpaths always work); lib/sys.cyr macOS/Windows uname/sysinfo (sysctl /
+> GlobalMemoryStatusEx) are `-ENOSYS` stubs for now. Phase E (bayan .25 + ganita .26)
+> stays DONE. **Still deferred to v6.1.x closeout (heap-map audit §4):** re-sort the
+> `output_buf` comment line + reclaim the 2 MB gap at `0x71A000` (from the .27 cap raise).
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

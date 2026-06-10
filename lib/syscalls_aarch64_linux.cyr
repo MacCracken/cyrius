@@ -113,6 +113,7 @@ enum SysNr {
     SYS_SYNC = 81;
     SYS_REBOOT = 142;
     SYS_UNAME = 160;
+    SYS_SYSINFO = 179;
 
     # Signals + sync primitives
     SYS_RT_SIGPROCMASK = 135;

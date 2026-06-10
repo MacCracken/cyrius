@@ -1,0 +1,51 @@
+# Test: lib/sys.cyr — system introspection (uname / sysinfo / is_root).
+# Linux x86_64 path (the test host). AGNOS/macOS/Windows paths are #ifdef-gated.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+include "lib/sys.cyr"
+
+alloc_init();
+
+test_group("uname");
+var uts[390];
+var ur = sys_uname(&uts);
+assert_eq(ur, 0, "sys_uname returns 0");
+var host_ok = (load8(uname_hostname(&uts)) != 0);
+assert_eq(host_ok, 1, "hostname is a non-empty cstring");
+var rel_ok = (load8(uname_release(&uts)) != 0);
+assert_eq(rel_ok, 1, "release is a non-empty cstring");
+var mach_ok = (load8(uname_machine(&uts)) != 0);
+assert_eq(mach_ok, 1, "machine is a non-empty cstring");
+
+test_group("sysinfo");
+var si[120];
+var sr = sys_sysinfo(&si);
+assert_eq(sr, 0, "sys_sysinfo returns 0");
+var up = sysinfo_uptime(&si);
+var up_ok = (up > 0);
+assert_eq(up_ok, 1, "uptime > 0");
+var tm = sysinfo_total_memory(&si);
+var tm_ok = (tm > 0);
+assert_eq(tm_ok, 1, "total memory > 0");
+var fm = sysinfo_free_memory(&si);
+var fm_ok = (fm >= 0);
+assert_eq(fm_ok, 1, "free memory >= 0");
+
+test_group("convenience");
+var su = system_uptime();
+var su_ok = (su > 0);
+assert_eq(su_ok, 1, "system_uptime() > 0");
+var stm = system_total_memory();
+var stm_ok = (stm > 0);
+assert_eq(stm_ok, 1, "system_total_memory() > 0");
+
+test_group("is_root");
+var ir = is_root();
+var ir_ok = (ir < 2);
+assert_eq(ir_ok, 1, "is_root() is 0 or 1");
+
+var r = assert_summary();

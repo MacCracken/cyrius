@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.28] — 2026-06-10
+
+**v6.1.x slot 28: `lib/sys.cyr` system-introspection module + bare directory-family
+dep resolution fix.** Two items.
+
+### Added
+
+- **`lib/sys.cyr` — system introspection** (uname / sysinfo / root check), carved
+  off agnosys's hand-rolled `src/syscall.cyr` so system libraries don't each
+  reimplement the struct plumbing. `sys_uname(out)` + `uname_hostname`/`_release`/
+  `_machine` accessors; `sys_sysinfo(out)` + `sysinfo_uptime`/`_total_memory`/
+  `_free_memory`/`_procs` (Linux mem_unit scaling) + one-call `system_uptime`/
+  `_total_memory`/`_free_memory`; `is_root()`. Raw return convention (0 / -errno),
+  matching the `lib/syscalls.cyr` floor — process pid/uid stay on the floor's
+  `sys_getpid`/`sys_getuid`/`sys_geteuid`. **Linux + AGNOS** are real (AGNOS uses
+  its sovereign 64-byte uname#34 / 40-byte sysinfo#35 structs); **macOS/Windows**
+  return `-ENOSYS` (sysctl / GlobalMemoryStatusEx not yet wired). Added
+  `SYS_SYSINFO` to the syscall floor (x86_64 = 99, aarch64 = 179; `SYS_UNAME`
+  already present). Compiles on all 5 targets; `tests/tcyr/sys.tcyr` (11 asserts).
+
+### Fixed
+
+- **Bare directory-family stdlib deps (e.g. `"unicode"`) didn't resolve.** The
+  resolver mapped a stdlib name `X` → `<stdlib_dir>/X.cyr`, but `unicode` is a
+  *directory* (`lib/unicode/*.cyr`), so a consumer listing bare `"unicode"` in
+  `[deps].stdlib` got `error: cannot read lib/unicode.cyr` and the whole family
+  was dropped. This broke any downstream consumer of **niyama** (whose manifest
+  lists bare `"unicode"`) — e.g. chakshu. `cbt/deps.cyr` `_dep_copy_stdlib_recursive`
+  now detects when `<name>.cyr` is absent but `<name>/` is a directory and
+  `dir_list`s it, resolving every `*.cyr` (the unicode accessors self-include their
+  data files, so the existing transitive scan still orders them). Explicit subpaths
+  (`unicode/categories`) and genuine-missing-module errors are unchanged.
+
+**Verification:** cycc **UNCHANGED** (self-hosts byte-identical — both changes are
+lib/CLI-only). check.sh **87/87**, all 171 `.tcyr` exit-0, api-surface regenerated
+(+`sys::` namespace), ecb/cass `SELFHOST_OK`, bench self_compile 501 ms. lib/sys.cyr
+compiles on x86_64 / aarch64 / Windows PE / macOS Mach-O / AGNOS; the unicode fix
+verified (bare `"unicode"` → 7 files; consumer using `unicode_category` runs).
+
 ## [6.1.27] — 2026-06-10
 
 **v6.1.x slot 27: binary output cap 2 MB → 16 MB** (phylax hit the 2 MB ELF-output

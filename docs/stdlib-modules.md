@@ -1,6 +1,6 @@
 # Standard Library — Module Index
 
-> Categorized inventory of the Cyrius standard library: **87 `lib/*.cyr`
+> Categorized inventory of the Cyrius standard library: **88 `lib/*.cyr`
 > modules** (vendored sibling distfiles folded byte-identical, sandhi-pattern)
 > with **0 git deps**. This is the *what-exists* map; for per-function
 > signatures see [`stdlib-reference.md`](stdlib-reference.md).
@@ -49,7 +49,7 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 |----------|---------|
 | Core | string, fmt, alloc, io, vec, str, args, fnptr, flags |
 | Types | tagged (Option), result (Result + ? operator; v5.8.28-.32), hashmap, hashmap_fast, trait, assert, bounds |
-| System | syscalls, callback, process, bench |
+| System | syscalls, callback, process, bench, **sys** (uname / sysinfo / is_root introspection; v6.1.28) |
 | Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, freelist |
 | Math/regex (stdlib primitives) | regex, math (F64 constants + basic ops + gcd/lcm + f64_parse + f64-builtin polyfills) |
 | **Data formats + big-int (bayan)** | **bayan** — json / toml / cyml / csv / base64 / bigint (`u256`) / u128; folded v6.1.25, opt-in `include "lib/bayan.cyr"`; canonical `bayan_*` API + legacy aliases (`json_parse`, `u256_add`, …). Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must include bayan. |
