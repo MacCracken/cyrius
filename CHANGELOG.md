@@ -6,6 +6,79 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.36] — 2026-06-11
+
+**v6.1.x slot 36 (Phase F — security hardening, pack F2): TLS-authn hardening —
+CVE-17 + CVE-18 + CVE-30 + CVE-19**, from the 2026-06-10 deep-dive
+([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md)).
+Each gap was premise-checked against current code (two premise-check assumptions
+were corrected: there is no raw-`alloc(256)` X509Cert bypass — the attestation
+`*_alloc` 256-byte buffers are reports/quotes, not certs; and sigil's entropy
+sites already fail-closed). The diff self-hosts byte-identical (cycc untouched —
+no `src/` changes), check.sh **89/89**, and was adversarially reviewed before cut.
+**sigil bumped 3.7.10 → 3.7.11 (distlib inliner fix) → 3.7.12 (x509 parse).**
+
+### Fixed
+- **CVE-17 — TLS certificate-chain verification ignored pathLen / keyUsage /
+  extendedKeyUsage.** sigil 3.7.12 now parses keyUsage + EKU into a grown
+  `X509Cert` (256 → 272 B; `x509_cert_key_usage`/`x509_cert_eku`) and enforces
+  pathLenConstraint in `x509_verify_chain` (the general walker, which also
+  verifies SEV-SNP/TDX/SGX attestation — serverAuth is deliberately NOT enforced
+  there). cyrius `tls_native_client_verify_chain` (the TLS path-builder) now
+  enforces, via the new fields: leaf keyUsage (digitalSignature|keyEncipherment|
+  keyAgreement) + serverAuth EKU, and per-signing-CA keyCertSign + pathLen
+  (`_tn_ca_signer_ok`). A leaf with a code-signing-only EKU, or a CA lacking
+  keyCertSign, or a pathLen-violating chain is now rejected; real chains
+  (Cloudflare leaf, attestation chains) still verify.
+- **CVE-18 — `tls_native_connect` returned a connected-but-UNVERIFIED channel;
+  the wrapper skipped hostname binding when `host==0`.** `connect`/`connect_12`
+  are now fail-closed (`_tn_connect_verify`): per the ctx verify mode they
+  verify the chain + hostname before returning `TLS_OK`, so a bare-metal/AGNOS
+  caller (which can't use the lib/tls.cyr wrapper) is verified by default.
+  `host==0` under verify is now an error. Added IPv4/IPv6 literal parsers +
+  **iPAddress-SAN (`0x87`) matching**, so a verified IP connection works by
+  matching the connect IP against the cert's iPAddress SAN (decided over the
+  reject-IP-connects alternative). The wrapper's redundant + buggy post-connect
+  verify was removed.
+- **CVE-30 — post-handshake records (NewSessionTicket / KeyUpdate) collapsed to
+  a false EOF.** `tls_native_read` now drains them in a bounded loop via
+  `_tn_open_record` (which surfaces the inner content type); NSTs are consumed,
+  KeyUpdate rotates the receive keys (and answers update_requested by rotating
+  send keys). The public `tls_native_open_app/5` is unchanged (a thin wrapper —
+  no API break). A standard TLS 1.3 server's immediate NST no longer reads as
+  EOF before any data; a 0-length application_data record (RFC 8446 §5.1) is
+  also drained, not treated as EOF.
+- **CVE-19 — fail-weak entropy.** `ws.cyr` (mask + Sec-WebSocket-Key) and
+  `sandhi.cyr` (DNS query-ID) routed `/dev/urandom`-with-weak-fallback
+  (uninitialized buffer / clock-ns TXID) through `sys_getrandom`, **fail-closed**
+  (Linux + macOS via getentropy). `tls_native_server_new_session_ticket`'s two
+  previously-unchecked `sys_getrandom` calls now fail-closed too (the only
+  unchecked callers). Fail-closed `sys_getrandom = -1` stubs added to the Windows
+  + AGNOS syscall peers so those targets compile + fail loudly rather than emit
+  weak values; the real Windows primitive (BCryptGenRandom/ProcessPrng) is a
+  tracked follow-on ([`issues/2026-06-11-windows-entropy-primitive.md`]).
+- **distlib inliner (sigil 3.7.11) — the dist bundle shipped un-inlined
+  `include "src/*.cyr"`.** sigil's `regen-dist.sh` was a dumb `cat`; the redundant
+  re-includes of `sha_ni`/`aes_ni` (legit for the sibling-checkout path) survived
+  into `dist/sigil.cyr` and only "worked" because pre-6.1.35 cyrius silently
+  skipped a missing include. 3.7.10 papered over it with `#ifndef` guards; 3.7.11
+  fixes the inliner to **strip** intra-bundle src-includes + asserts a
+  self-contained invariant (0 un-inlined includes). New cyrius systemic net: a
+  `_vendored_dist_selfcontained_gate` (check.sh) rejects any folded `lib/*.cyr`
+  that still carries a line-start `include "src/"`, regardless of the dep's own
+  tooling. (Cyrius's own `cyrius distlib` already strips includes.)
+
+**Verification:** cycc self-host **byte-identical** (1,049,856 B — F2 is
+stdlib-only, no compiler change); check.sh **89/89** (+1 = the dist-self-contained
+gate); **ecb + ach + pi + cass all `SELFHOST_OK`**; live Cloudflare TLS verifies
+end-to-end (CVE-18 verify + CVE-17 enforce + CVE-30 drain); hermetic
+negative-cert + IP-parser + entropy tests; sigil x509 + attestation suites green;
+cross-target compile (Linux/Windows/AGNOS) for the CVE-19 stubs. Benchmark:
+`self_compile ~529 ms` (box noise — cycc unchanged), `cycc 1,049,856 bytes`.
+Adversarially reviewed pre-cut (cve17/cve18 dimensions clean; 3 review-found gaps
+fixed: NST entropy, 0-length-record drain, dist-gate robustness). Closes the
+F2 pack. **user pushes/tags after CI.**
+
 ## [6.1.35] — 2026-06-11
 
 **v6.1.x slot 35 (Phase F — security hardening, pack F1b part 2): the remaining

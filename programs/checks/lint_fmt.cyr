@@ -509,12 +509,39 @@ fn _vendored_dist_selfcontained_gate(): i64 {
             var full = path_join(dir_str, name);
             var n = file_read_all(str_data(full), buf, cap - 1);
             if (n > 0) {
-                store8(buf + n, 0);
-                if (_find_bytes(buf, n, "\ninclude \"src/", 14) >= 0) {
-                    fail = 1;
-                    _p("    un-inlined `include \"src/` in lib/");
-                    print(str_data(name), str_len(name));
-                    _p("\n");
+                # Scan line by line: an `include "src/` directive at a line start
+                # (after optional leading whitespace) is the un-inlined dep-fold
+                # bug. Line-based — so an INDENTED or FIRST-LINE include is caught,
+                # while an in-comment mention (line starts with `#`) is not.
+                var pos = 0;
+                while (pos < n) {
+                    var le = pos;                       # find end of this line
+                    var scanning = 1;
+                    while (scanning == 1) {
+                        if (le >= n) { scanning = 0; }
+                        elif ((load8(buf + le) & 0xFF) == 10) { scanning = 0; }
+                        else { le = le + 1; }
+                    }
+                    var c = pos;                        # skip leading spaces/tabs
+                    var skipping = 1;
+                    while (skipping == 1) {
+                        if (c >= le) { skipping = 0; }
+                        else {
+                            var ch = load8(buf + c) & 0xFF;
+                            if (ch == 32) { c = c + 1; }
+                            elif (ch == 9) { c = c + 1; }
+                            else { skipping = 0; }
+                        }
+                    }
+                    if (le - c >= 13) {
+                        if (_buf_eq(buf + c, "include \"src/", 13) == 1) {
+                            fail = 1;
+                            _p("    un-inlined `include \"src/` in lib/");
+                            print(str_data(name), str_len(name));
+                            _p("\n");
+                        }
+                    }
+                    pos = le + 1;
                 }
             }
         }

@@ -3185,8 +3185,12 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     var age_add = alloc(4);
     if (nonce == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (age_add == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    sys_getrandom(nonce, 8, 0);
-    sys_getrandom(age_add, 4, 0);
+    # CVE-19 (v6.1.36): fail-closed — these were the only unchecked sys_getrandom
+    # callers; on a platform whose getrandom is unavailable (Windows/AGNOS stub
+    # → -1) the nonce/age_add would otherwise stay uninitialized = a predictable
+    # ticket. Never emit a weak NewSessionTicket.
+    if (sys_getrandom(nonce, 8, 0) != 8) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    if (sys_getrandom(age_add, 4, 0) != 4) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     var psk = alloc(TLS_MAX_DIGEST_LEN);
     if (psk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_hkdf_expand_label(rm, hlen, "resumption", 10, nonce, 8, hash_algo, psk, hlen) != TLS_OK) {
@@ -5643,9 +5647,14 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
         var n = _tn_open_record(ctx, inbuf, rl, plain, TLS_RECORD_MAX_PLAINTEXT, &ict);
         if (n < 0) { return n; }
         if (ict == TLS_CT_APPLICATION_DATA) {
-            if (n > maxlen) { return TLS_ERR_BUFFER_FULL; }
-            memcpy(buf, plain, n);
-            return n;
+            # A 0-length application_data record is legal (RFC 8446 §5.1) and is
+            # NOT end-of-stream — drain it and keep reading, so only a real
+            # close_notify returns 0. Non-empty data is delivered to the caller.
+            if (n > 0) {
+                if (n > maxlen) { return TLS_ERR_BUFFER_FULL; }
+                memcpy(buf, plain, n);
+                return n;
+            }
         }
         if (ict == TLS_CT_ALERT) { return 0; }   # close_notify → EOF
         if (ict == TLS_CT_HANDSHAKE) {
