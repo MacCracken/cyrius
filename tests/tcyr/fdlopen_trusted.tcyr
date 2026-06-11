@@ -1,8 +1,10 @@
 # Test: fdlopen_init_trusted (v6.1.29) — the setuid-safe helper trust check.
-# Verifies _fdlopen_verify_trusted accepts a root-owned regular file and REJECTS
-# symlinks / user-owned / missing paths, and that fdlopen_init_trusted fails
-# closed (-9 FDL_ERR_UNTRUSTED) when no root-owned system helper is present.
-# x86_64 Linux only (fdlopen is glibc-shaped).
+# fdlopen (foreign-dlopen) bootstraps host glibc, so it is x86_64-Linux only;
+# everywhere else (AGNOS / macOS / Windows / aarch64) it returns -6 (unsupported)
+# and the lstat/symlink primitives this test uses differ or are absent (the agnos
+# floor has no sys_symlink / lstat). So the full trust assertions are gated to
+# x86-Linux, and the off-platform behavior (-6) is asserted on its own path — the
+# test asserts on every target, never a hollow pass.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -13,6 +15,12 @@ include "lib/fdlopen.cyr"
 
 alloc_init();
 
+var st[256];
+var rc = fdlopen_init_trusted(&st);
+
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
+# ── x86_64 Linux: full trust check ──
 test_group("verify_trusted — accept root-owned regular file");
 # /etc/passwd: root-owned, regular, mode 644 (no group/other write) → trusted.
 var v_pw = _fdlopen_verify_trusted("/etc/passwd");
@@ -43,9 +51,23 @@ sys_unlink("/tmp/fdl_link_helper");
 test_group("init_trusted — fail closed");
 # No /usr/lib/cyrius/dlopen-helper in the test env → -9 (UNTRUSTED), never falls
 # back to the $HOME helper.
-var st[256];
-var rc = fdlopen_init_trusted(&st);
 var rc_untrusted = (rc == 0 - 9);
-assert_eq(rc_untrusted, 1, "init_trusted returns -9 (fail closed) with no system helper");
+assert_eq(rc_untrusted, 1, "x86-Linux: init_trusted returns -9 (fail closed) with no system helper");
+#endif
+#endif
+
+# ── Off x86-Linux: foreign-dlopen is unsupported → -6 ──
+#ifndef CYRIUS_TARGET_LINUX
+test_group("init_trusted — unsupported off-Linux");
+var rc_unsup1 = (rc == 0 - 6);
+assert_eq(rc_unsup1, 1, "non-Linux (agnos/macOS/Windows): init_trusted is unsupported (-6)");
+#endif
+#ifdef CYRIUS_TARGET_LINUX
+#ifndef CYRIUS_ARCH_X86
+test_group("init_trusted — unsupported on non-x86");
+var rc_unsup2 = (rc == 0 - 6);
+assert_eq(rc_unsup2, 1, "aarch64-Linux: init_trusted is unsupported (-6)");
+#endif
+#endif
 
 var r = assert_summary();
