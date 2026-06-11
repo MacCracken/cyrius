@@ -187,18 +187,32 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   timespec fix + 2.2.10 busy-spin drop). cycc +2,248 B; ecb+cass green;
   `tests/win/dir_list_pe.cyr` → exit 42 on real Windows. See CHANGELOG [6.1.18].
 
-**Next:** **Phase E** — bayan distfile carve (v6.1.19) then ganita (v6.1.20); see
-[[project_bayan_ganita_carve_arc]]. The kernel-PIE gnoboot-boot validation +
-aarch64 kernel-PIE land when an AGNOS `--pie` harness exists.
+- **v6.1.19–.31** (summary — full detail in [roadmap.md](roadmap.md) + CHANGELOG;
+  this file's per-release bullets above stop at .18): TLS/alloc/LSP band (brk→mmap
+  chunked alloc, cert path-build, **native-default flip @ .21**, async arena-leak
+  fix, LSP hover) · **bayan .25 / ganita .26** distfile carve (Phase E — stdlib
+  primitives-only) · output cap 2 MB→16 MB (.27) · `lib/sys.cyr` + dir-family
+  dep-resolution fix (.28) · `fdlopen_init_trusted` (.29) · x86-macOS argv prologue
+  (.30) · Ed25519 server certs (.31). roadmap.md is the authoritative slot list.
+
+**Next:** **Phase F — security hardening tail** (v6.1.32+), from the **2026-06-10
+deep-dive review** (`docs/audit/2026-06-10-deep-dive-review.md` — 40 verified
+findings, 13 issues). Packed releases: F1 silent-failure + dep-injection, F2
+TLS-authn, F3 memory-safety parity — then the dep-fold cycle-close → v6.2.0. See
+[roadmap.md](roadmap.md) Phase F. The kernel-PIE gnoboot-boot validation lands when
+the AGNOS `--pie` harness exists (filed upstream).
 
 **Open / filed (v6.1.x):**
-- `2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md` — macho-arm
-  `fstatat`/`utimensat`/`linkat`/`renameat` lack Darwin ESYSXLAT mappings
-  (pre-existing; `sys_stat` was already broken there; Darwin lacks `utimensat`
-  → needs design). openat/mkdirat/unlinkat/fchmodat work on macОS.
-- `stdlib-reference.md` covers ~33/90 lib modules (native TLS, SIMD, async,
-  base64/bigint, etc. undocumented) — human-led rewrite, flagged since v6.1.0.
-- x86-macho cycc self-compile (HELD, Intel EOL) — v6.1.x carry-in tail.
+- **2026-06-10 deep-dive issues** (`docs/development/issues/2026-06-10-*`, 13
+  trackers; CVE-14…31 + LEGAL-01). Phase F absorbs the urgent set (F1–F3); the rest
+  spread to v6.2.x+/bug-bandwidth. Audit: `docs/audit/2026-06-10-deep-dive-review.md`.
+- `stdlib-reference.md` covers ~65/88 lib modules — human-led rewrite, flagged since
+  v6.1.0 (~23 modules still undocumented).
+- x86-macho cycc self-compile (HELD, Intel EOL) + the broader x86-macOS
+  usable-toolchain arc tail (env/arch-detect/cycc-finding/issue-1/packaging) —
+  bug-bandwidth.
+- macho-arm `*at()`/stat ESYSXLAT — ✅ **fixed v6.1.20 + archived** (was listed here
+  as open; corrected 2026-06-10).
 
 ## Consumers
 

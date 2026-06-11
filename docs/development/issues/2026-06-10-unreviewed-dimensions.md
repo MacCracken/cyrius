@@ -65,7 +65,11 @@ default native-TLS stack with no RNG and unreviewed memory protections.
 **Action:** a focused AGNOS-target security pass (entropy, W^X, ASLR/PIE
 applicability, the alloc_agnos guard from
 [memory-safety-parity-gaps](2026-06-10-memory-safety-parity-gaps.md)) — coordinate
-the ABI parts upstream (cross-repo).
+the ABI parts upstream (cross-repo). Two AGNOS-side asks have been **filed
+upstream** in `agnos/docs/development/issue/`:
+`2026-06-10-cyrius-tls-entropy-syscall-gap.md` (the getrandom syscall) +
+`2026-06-10-cyrius-pie-boot-harness-ask.md` (kernel-PIE boot validation, the
+ASLR/PIE-applicability half).
 
 ## DX-02 — LSP / editor tooling tier unreviewed (the v7 onboarding surface)
 

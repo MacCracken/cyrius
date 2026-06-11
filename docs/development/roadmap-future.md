@@ -12,11 +12,14 @@ See [roadmap.md](roadmap.md) for the current active minor and
 
 ---
 
-## v6.1.x carry-in (from the v6.0.x → v6.1.0 closeout, 2026-06-07)
+## v6.1.x carry-in (from the v6.0.x → v6.1.0 closeout, 2026-06-07) — ✅ MOSTLY SHIPPED
 
 Surfaced by the v6.0.91 closeout judgment-pass workflow (heap/dead-code/
-refactor/code-review/security/downstream — all otherwise clean). These are
-concrete v6.1.x first-patch candidates, not speculative:
+refactor/code-review/security/downstream — all otherwise clean). **Status
+2026-06-10:** the first three shipped — `aarch64 EADDRA_IMM` @ v6.1.2,
+`_emit_fmt`/`_entry_base` hoist @ v6.1.4, DCE consolidation @ v6.1.5. The
+freed-scalar-holes reclaim (informational) stays a fill-as-you-go item. The
+original candidate write-ups are kept below for history:
 
 - **`aarch64 EADDRA_IMM` 12-bit mask** (latent codegen bug, **pre-existing**
   — reproduced at `affc8ac4`, not a .88–.90 regression). `add x0,x0,#imm12`
@@ -144,9 +147,12 @@ Two known commitments per CLAUDE.md "Version lives in `VERSION` +
 
 - **No binary rename at v7.0.0**. The v6.0.0 `cc5 → cycc` +
   `cyrc → cybs` rename was the LAST name-change penalty paid.
-- **build/cc3 drops at v7.0.0** per the prior-major-seed
-  retirement policy (cc3 stays through v6.x as the v5.0.0-era
-  historical anchor; retires at v6.x → v7.x bump).
+- **Prior-major slot rotates at v7.0.0**. **cc3 was already dropped at
+  v6.1.0** (corrected 2026-06-10 — earlier text here said "build/cc3 drops
+  at v7.0.0", which contradicted CLAUDE.md's "dropped at v6.1.0"; finding
+  RM-05). The prior-major slot now holds **cc5** (the last v5.x top
+  compiler); at v7.0.0 it rotates to the last v6.x `cycc` — same binary
+  name, so the slot effectively retires (no rename bridge).
 
 ---
 

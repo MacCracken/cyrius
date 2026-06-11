@@ -109,23 +109,31 @@ v6.0.x back-compat retirement + the v6.0.x → v6.1.x carry-ins. Pinned
 
 | Phase | Slots | Items |
 |---|---|---|
-| **A — housekeeping** | v6.1.1–.3 | back-compat symlink drop · `aarch64 EADDRA_IMM` >4095 fix · POSIX `*at()` family |
+| **A — housekeeping** | v6.1.1–.3 | back-compat symlink drop · `aarch64 EADDRA_IMM` >4095 fix · POSIX `*at()` family + ESYSXLAT collision fix |
 | **B — backend prep** | v6.1.4–.5 | `_TARGET_*` decl move + `_emit_fmt`/`_entry_base` hoist · DCE mark-and-sweep consolidation |
-| **C — PIE codegen** | v6.1.6–.8 | PIE x86_64 → PIE aarch64 → `.gnu.hash` migration + drop SysV `.hash` |
-| **D — frontend emit** | v6.1.9 | TS/TSX → JS emit (`cycc --emit-js`) |
-| **E — stdlib carve** | v6.1.10–.11 | bayan distfile carve · ganita distfile carve |
-| *(bug bandwidth)* | — | x86-macho cycc self-compile (HELD) · cyim regex unblock · Windows deps `--lock` hash |
+| **C — PIE codegen** | v6.1.6–.9 | PIE x86_64 → PIE aarch64 → `.gnu.hash` migration + drop SysV `.hash` |
+| **D — frontend emit** | v6.1.10–.12, .15 | TS-AST allocator fix · TS/TSX → JS emit (`cycc --emit-js`) · `--target=js` wrapper · `async`-node fix |
+| **agnos fixes** | v6.1.12–.14 | `getenv`/`fnptr`/`argc/argv` HIGH-sev agnos-target fixes (agnoshi/bannermanor) |
+| **Windows pillar** | v6.1.16–.18 | `cycc_win` tarball · PE var-syscall dispatch · `nanosleep` · `lib/sync.cyr` · dir-listing port |
+| **TLS/alloc/LSP** | v6.1.19–.24 | brk→mmap chunked alloc · cert path-build · native-default flip (.21) · async arena-leak fix · LSP hover |
+| **E — stdlib carve** | v6.1.25–.26 | bayan distfile carve · ganita distfile carve |
+| **infra/security** | v6.1.27–.31 | output cap 2 MB→16 MB · `lib/sys.cyr` + dep-resolver fix · `fdlopen_init_trusted` · x86-macOS argv prologue · Ed25519 server certs |
+| **F — security hardening tail** | v6.1.32+ | the 2026-06-10 deep-dive findings absorbed into the v6.1.x close (see below + [roadmap.md](roadmap.md)) |
 
-Primary expected ≈ **11 planned slots** + ~10 bug bandwidth. PIE is the
-headline (its AGNOS KASLR consumer is uncertain-timing); the Phase-B
-refactors are PIE prep (the `_emit_fmt` hoist needs the `_TARGET_*` decls
-moved, and PIE extends the same `emit.cyr`/`fixup.cyr`). Full slot detail,
-rationale, and the HELD-tail conditions live in
+Shipped well past the original ~11-slot estimate — and that's expected,
+not a budget breach: minors flex long (**v6.0.x ran to 91 patches**), and
+per user direction 2026-06-10 *"no worries about patch size, just hardening
+and adding features."* PIE was the headline (x86 + aarch64, the `.gnu.hash`
+dynamic-link cleanup tail); the TS→JS emit, Windows pillar, agnos-target
+fixes, native-TLS-default flip, and bayan/ganita carve packed in as the
+minor grew. **Phase F** is the new tail: the security-hardening arc from the
+2026-06-10 deep-dive review (`docs/audit/2026-06-10-deep-dive-review.md`),
+landing as packed releases before the cycle-close. Full slot detail lives in
 [roadmap.md](roadmap.md) — the authoritative active-minor view.
 
 ---
 
-## v6.2.x — Platform Expansion (Bare-metal + RISC-V rv64 + Native TLS)
+## v6.2.x — Platform Expansion (Bare-metal + RISC-V rv64)
 
 **Theme**: 4th platform peer (RISC-V rv64) + bare-metal target
 codification. Substantial new-code minor; substrate prerequisites
@@ -136,12 +144,27 @@ Per user direction 2026-05-19: "previous C items lets break up
 logically into prioritized proposals into 6.2.x and 6.3.x" —
 platform work (bottom-to-top priority) takes v6.2.x.
 
+> **Re-scoped 2026-06-10** (post deep-dive). The native-TLS stack that
+> originally anchored this minor **already shipped** — full TLS 1.2 + 1.3,
+> client + server, over sigil (v6.0.x), and it became the **default**
+> backend at v6.1.21 (libssl is opt-out via `-D CYRIUS_TLS_LIBSSL`). So the
+> ~12–15 phantom "native TLS" slots and the old "native TLS > RISC-V"
+> split-out framing are gone (the doc-drift finding RM-01,
+> [`issues/2026-06-10-roadmap-drift-and-stale-docs.md`](issues/2026-06-10-roadmap-drift-and-stale-docs.md)).
+> The one piece that did NOT ship — **kernel-freestanding TLS linkage** — is
+> re-homed below as a bare-metal acceptance deliverable (it's the
+> AGNOS-kernel goal's tracking home). The deep-dive's lower-severity
+> hardening items (supply-chain integrity, verification coverage, atomics
+> barriers, thread-stack guards) ride this minor's **bug-bandwidth** per the
+> 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
+> lands in the v6.1.x hardening tail (Phase F).
+
 ### v6.2.0 — Bare-metal target formalization
 
 Codify the ad-hoc bare-metal mode that agnos has been using
 since first boot into a first-class
 `--target bare-metal-x86_64-elf` (and aarch64 peer) triple.
-Six deliverables:
+Seven deliverables:
 
 1. Formal target triple (`<arch>-bare-metal-elf`)
 2. ELF no-libc output format (no PT_INTERP, no DT_NEEDED, no
@@ -155,19 +178,37 @@ Six deliverables:
 6. Inline assembly primitives for kernel work: `cli`/`sti`/`hlt`,
    port I/O (`in`/`out`), memory barriers (`mfence`/`lfence`/
    `sfence`), `cpuid`
+7. **Kernel-freestanding TLS linkage** (re-homed from the shipped
+   native-TLS arc) — a kernel object **links `lib/tls_native`
+   freestanding** (no `libssl`, no `dlopen`, no `ld.so`/glibc TCB) and
+   **passes the forbidden-module check**. The native stack already works
+   in userland; this proves it compiles + links into a bare-metal/kernel
+   object, which the libssl wrapper structurally cannot. This is the
+   **AGNOS-kernel goal's tracking home** in the active cycle (it was
+   previously tracked only inside the now-deleted TLS arc — finding RM-03).
 
 **Acceptance**: rebuilding the agnos kernel with `--target
 bare-metal-x86_64-elf` produces a byte-identical artifact to the
 current ad-hoc build; forbidden-module check errors clearly when
 bare-metal code pulls host-OS modules;
 `examples/firmware-hello.cyr` demonstrates the target outside
-of agnos.
+of agnos; **a kernel object links `tls_native` freestanding and a
+freestanding TLS handshake smoke runs in-kernel** (deliverable 7).
 
 **Important framing**: bare-metal is **formalization, not
-enablement**. The agnos kernel already builds and boots without
-this target; v6.2.0 is a QoL feature for future bare-metal
-Cyrius consumers (firmware, alt-kernels, embedded). It does NOT
-gate AGNOS MVP.
+enablement** for the existing agnos boot — the kernel already builds
+and boots without the formal triple. But deliverable 7 (freestanding
+TLS link) IS net-new capability the AGNOS-kernel flagship needs:
+in-kernel TLS is structurally impossible through the libssl wrapper, so
+it gates *in-kernel networking*, even though it does not gate the agnos
+MVP boot. Bare-metal is also a QoL feature for future bare-metal Cyrius
+consumers (firmware, alt-kernels, embedded).
+
+> **Cross-repo follow-on (filed):** full-binary kernel KASLR needs an
+> AGNOS `--pie` boot harness — cyrius shipped the kernel-PIE ET_DYN
+> wrapper (`EMITELF64_KERNEL`, v6.1.7); the harness ask is filed at
+> `agnos/docs/development/issue/2026-06-10-cyrius-pie-boot-harness-ask.md`.
+> Lands when the kernel team wires it; not v6.2.x-gating.
 
 ### v6.2.x — RISC-V rv64 backend
 
@@ -177,12 +218,20 @@ landed: typed-simd ABI (v5.x), REAL TYPE SYSTEM (v5.10.x),
 struct-byval ABI (v5.10.x), parser-to-emit named-op refactor
 (v5.11.x close).
 
+> **Hardware is in hand** (user 2026-06-10: *"I have a bunch of hardware
+> already; was waiting for RISC-V to do it"*). The rv64 box is the gating
+> resource the original plan flagged as a procurement risk (finding RM-04)
+> — it's already available, so the **real-hardware self-host gate is live
+> from the start** (no QEMU-only interim, no purchase decision blocking arc
+> entry). Wire it into the SSH verification fleet alongside pi/ecb/ach/cass
+> at arc open.
+
 **Scope**:
 - New backend: `src/backend/riscv64/{emit,jump,fixup}.cyr`
 - New stdlib syscall peer: `lib/syscalls_riscv64_linux.cyr`
 - New cross-entry: `src/main_riscv64.cyr`
-- New test runner: QEMU + HiFive Unmatched (or equivalent rv64
-  hardware) for self-host verify
+- New test runner: `qemu-riscv64-static` for the bring-up probes +
+  the **in-hand rv64 hardware over SSH** for the self-host verify
 - New CI matrix arm
 
 **Acceptance gates**:
@@ -191,91 +240,67 @@ struct-byval ABI (v5.10.x), parser-to-emit named-op refactor
 2. Single-syscall "exit 42" probe runs under
    `qemu-riscv64-static`.
 3. Hello-world via `sys_write` + `sys_exit` runs under QEMU.
-4. Self-host byte-identical on real rv64 hardware (hardware-
-   gated like the aarch64 ssh-pi check).
+4. Self-host byte-identical on the **in-hand real rv64 hardware**
+   (hardware-gated over SSH like the aarch64 ssh-pi check) — the
+   non-negotiable cross-OS self-host gate, on real silicon.
 5. `[release].cross_bins` in `cyrius.cyml` gets a
    `cycc_riscv64` entry.
 
-### v6.2.x — Native TLS stack (`lib/tls_native.cyr`)
+### Native TLS stack — ✅ SHIPPED (v6.0.x), default at v6.1.21
 
-Per user direction 2026-05-27: build a **sovereign, pure-Cyrius TLS
-stack** to replace the current `lib/tls.cyr`, which is a
-**`libssl.so.3` / `libcrypto.so.3` wrapper via the fdlopen bridge**
-(client-only; depends on a host OpenSSL + `ld.so`-bootstrapped glibc
-TCB). Two consumers now justify the arc (the ≥2-consumer threshold,
-[[project_testing_framework_split]]):
+The sovereign, pure-Cyrius TLS stack (`lib/tls_native.cyr`) that
+originally anchored this minor **shipped in v6.0.x** and became the
+**default** backend at v6.1.21 — full TLS 1.2 + 1.3, client + server,
+over sigil primitives (AES-128/256-GCM + ChaCha20-Poly1305; ECDSA
+P-256/P-384 + RSA PSS/PKCS#1 + Ed25519; X25519/ECDHE; EMS, ALPN, SNI +
+OS-trust-store verify; Ed25519 server-cert parse @ v6.1.31). Live
+Cloudflare HTTPS + OpenSSL interop proven; sandhi re-pointed onto it
+(1.4.x). `lib/tls.cyr` now defaults to native; libssl is opt-out via
+`-D CYRIUS_TLS_LIBSSL`.
 
-1. **The AGNOS kernel** — a freestanding/bare-metal kernel has **no
-   `libssl.so.3` to dlopen and no `ld.so`** to bootstrap the glibc TCB
-   the current wrapper requires, so the existing `tls.cyr` is
-   *structurally unusable* in-kernel. This is the forcing function.
-2. **sandhi** (`lib/sandhi.cyr`, folded at v5.7.0) — the larger
-   service-boundary wrapper that composes the stdlib network
-   primitives (`http`/`ws`/`tls`/`net`) into the full client+server
-   surface. Re-points onto the native stack.
+**What remains of the original arc, and where it now lives:**
+- **Kernel-freestanding link** → re-homed as **bare-metal deliverable 7**
+  (above) — the one piece that genuinely did not ship.
+- **TLS authn-hardening gaps** surfaced by the 2026-06-10 deep-dive — no
+  EKU(serverAuth)/keyUsage/pathLen enforcement, no revocation, a
+  connected-but-unverified-by-default native API (hostname skipped when
+  `host==0`), and post-handshake records (NST/KeyUpdate) collapsing to a
+  false EOF — land in the **v6.1.x hardening tail (Phase F)**, not here:
+  CVE-17/18/30,
+  [`issues/2026-06-10-tls-chain-verification-gaps.md`](issues/2026-06-10-tls-chain-verification-gaps.md)
+  + [`issues/2026-06-10-tls-post-handshake-false-eof.md`](issues/2026-06-10-tls-post-handshake-false-eof.md).
+  These are sovereignty + v7-public-release prerequisites for the default
+  backend.
+- **Entropy on the AGNOS target** — the native stack has no RNG source on
+  agnos (no getrandom syscall). Cyrius-side routing lands in Phase F
+  (CVE-19); the kernel syscall is filed upstream
+  (`agnos/docs/development/issue/2026-06-10-cyrius-tls-entropy-syscall-gap.md`).
 
-**Why v6.2.x**: the kernel consumer needs the **bare-metal target
-(v6.2.0)** to compile freestanding crypto + protocol code at all, so
-native TLS lands in the same minor, after the target formalizes.
+Memory pin: [[project_native_tls_arc_v6_2_x]] (now an arc retrospective).
 
-**Scope** (per user direction 2026-05-27): **TLS 1.2 + 1.3, client +
-server** — full parity with what the libssl wrapper exposes today,
-including 1.2 for older-peer interop.
+### Scope shape (v6.2.x)
 
-**Crypto base** — **stays in sigil**; the native TLS lib is a
-*protocol layer* (handshake state machine + record layer + ciphersuite
-negotiation + key schedule + X.509 chain-verify wiring) over sigil's
-primitives. sigil 3.4.x already ships AES-GCM / ECDSA-P256+P384 /
-X.509 / SHA-2 / HKDF / Ed25519 / RSA. The two genuine gaps for the
-modern TLS 1.3 `ChaCha20-Poly1305 + X25519` suite — **ChaCha20** and
-**X25519** — were added to **sigil's roadmap backlog 2026-05-27** with
-this arc as the forcing function. The kernel folds sigil in
-long-term the way it folds other select deps (per user analogy: a font
-lib; agnoshi as primary shell vs tortuga as emergency shell in the
-kernel codebase) — sigil is a kernel-folded crypto dep, not a
-TLS-internal vendored copy.
-
-**Sequencing within v6.2.x**: bare-metal target (v6.2.0) → sigil
-ChaCha20 + X25519 land (separate sigil minor, gated on this slot
-firming) → `lib/tls_native.cyr` record layer + handshake + cert verify
-→ sandhi re-point → kernel integration smoke.
-
-**Acceptance** (confirm shape at arc entry): native client handshakes
-against a real TLS 1.3 + TLS 1.2 peer (OpenSSL `s_server`); native
-server accepts a real client; X.509 chain verify via sigil; sandhi
-suite green on the native stack; kernel links `tls_native` freestanding
-(no `libssl`, no dlopen); `lib/tls.cyr` libssl path retained or retired
-per a decision at arc entry. Cross-arch propagation mandatory
-([[feedback_cross_arch_propagation_mandatory]]).
-
-Memory pin: [[project_native_tls_arc_v6_2_x]].
-
-### Slot estimate (v6.2.x)
-
-| Cluster | Slots |
+| Cluster | Indicative size |
 |---|---|
-| Bare-metal target formalization (6 deliverables) | ~8 |
-| RISC-V rv64 backend (new emit/jump/fixup + syscalls peer) | ~12 |
-| Native TLS stack (`tls_native.cyr` — 1.2+1.3 client+server over sigil) | ~12-15 |
-| Cross-arch test harness + CI matrix | ~3 |
-| Hardware self-host gate (HiFive Unmatched or equivalent) | ~2 |
-| **Total planned** | **~37-40** |
-| Bug bandwidth | ~10 |
-| **Budget** | **~47-50** |
+| Bare-metal target formalization (7 deliverables incl. kernel-freestanding TLS link) | ~9–10 |
+| RISC-V rv64 backend (new emit/jump/fixup + syscalls peer + real-hardware gate) | ~12–14 |
+| Cross-arch test harness + CI matrix + rv64 SSH-host wiring | ~3–4 |
+| Deep-dive hardening riding bug-bandwidth (supply-chain, verification, atomics, thread-stacks) | as surfaced |
 
-Now the **largest minor of the v6.x cycle** — bare-metal + RISC-V +
-native TLS is three substantial new-code arcs. Flexes well above the
-30 target per user direction "larger patch bandwidth like the last few
-minor cycles of 5.x."
+Sizes are indicative, **not a budget cap** — minors flex long (**v6.0.x
+ran to 91**) and the working rule (user 2026-06-10) is *"no worries about
+patch size, just hardening and adding features."* Removing the phantom
+native-TLS arc (~12–15 slots) makes this a **two-arc platform minor**
+(bare-metal + RISC-V), not the three-arc giant the stale plan described.
 
-**Priority within the minor** (user direction 2026-05-27): **native
-TLS > RISC-V**. Native TLS is kernel-critical and sovereignty-bearing
-(it removes the libssl external dependency and unblocks in-kernel TLS);
-RISC-V is a 4th platform peer — valuable but not as load-bearing. So if
-v6.2.x proves unwieldy at entry, **RISC-V is the flagged split-out
-candidate** to defer into its own later minor (e.g. v6.2.x tail or a
-dedicated platform minor) — TLS and bare-metal stay. Bare-metal stays
-because it's the compile prerequisite for in-kernel native TLS.
+**Priority within the minor** (revised 2026-06-10): native TLS already
+shipped, so the old "native TLS > RISC-V / RISC-V is the split-out
+candidate" call is **retired** — the budget pressure that made RISC-V a
+split risk is gone. Both arcs stay: **bare-metal first** (it carries the
+kernel-freestanding-TLS deliverable the AGNOS-kernel goal needs, and is
+the compile prerequisite for any in-kernel crypto), then **RISC-V** (the
+4th platform peer, now hardware-unblocked). No split planned;
+premise-check at arc entry per [[feedback_premise_check_at_slot_entry]].
 
 ---
 
@@ -287,6 +312,34 @@ explicitly (per 2026-05-12 tight-close).
 
 Per user direction 2026-05-19: language work (mid-priority,
 above ABI/perf) takes v6.3.x.
+
+### Phase 0 — substrate prerequisites (added 2026-06-10, deep-dive)
+
+The 2026-06-10 deep-dive found that the closures/generics work below
+**assumes substrates that don't currently exist or are broken**. Per user
+direction, these land as an explicit **phase 0 before any language
+feature** (issue:
+[`2026-06-10-monomorphization-substrate-prereqs.md`](issues/2026-06-10-monomorphization-substrate-prereqs.md)):
+
+1. **Revive the monomorphization substrate (AR-01)** — the only call-site
+   re-parse mechanism the no-AST single-pass design ever had, inline token
+   replay (`SFBS`/`SFBE`, `parse_fn.cyr:2226`), is **dead**: `_INLINE_OK=0`
+   on both x86 (`emit.cyr:166`) and aarch64 (`emit.cyr:2090`), disabled
+   after ARM metadata corruption. Generics have nothing to build on until
+   this is revived + hardened (prove on inline fns first, root-cause the
+   ARM corruption).
+2. **Order-independent call ABI (CO-01)** — forward calls read Str/SIMD
+   masks + struct-ret that are only written at fn-def parse, so a call
+   before its definition silently miscompiles with mask 0
+   (`parse_fn.cyr:730,949,2036`). Generic instantiations reference each
+   other in arbitrary order, so this MUST be fixed (fn-signature capture in
+   the pass-1 prescan) before monomorphization — and it's a public-v7 trap
+   regardless (C-style bottom-of-file definitions miscompile today).
+3. **Growable pressure tables (AR-02)** — migrate fn-tables / `fixup_tbl` /
+   codebuf to the proven `rp_vec` vec-backed recipe (v6.0.7 did this for
+   `ret_patches` byte-identical), because N monomorphs × per-instantiation
+   fn entries + codebuf + fixups will blow the fixed caps. Resolves the
+   fixup-cap split-brain (AR-03) as a side effect.
 
 ### Closures with lexical capture
 
@@ -312,9 +365,21 @@ acceptance only).
 
 **Scope**: type checker recognizes type parameters as
 concrete-at-instantiation; emit-time substitution generates
-per-monomorph code. Kavach was the original 1-vote consumer
-(per v5.x Language Refinements table); re-verify pressure at
-slot entry per [`feedback_premise_check_at_slot_entry`].
+per-monomorph code. **Builds on Phase 0** (token-replay revival +
+order-independent ABI + growable tables — none of which exist today).
+Kavach was the original 1-vote consumer (per v5.x Language Refinements
+table); re-verify pressure at slot entry per
+[`feedback_premise_check_at_slot_entry`].
+
+**Acceptance gates** (added 2026-06-10 — the deep-dive found the generics
+slot had *no* acceptance bar, unlike optional-deps): a **self_compile
+delta budget** (monomorphization must not blow compile time past a stated
+ceiling — and the v6.5.x perf-refactor lands two minors later, so this
+can't be deferred); **cap-headroom checks** on fn-tables / codebuf /
+`output_buf` with pre-sized raises (or the Phase-0 growable migration
+done first); and **instantiation dedup** (identical monomorphs emit once)
+as a correctness + size criterion. See
+[`issues/2026-06-10-monomorphization-substrate-prereqs.md`](issues/2026-06-10-monomorphization-substrate-prereqs.md).
 
 ### Language-level async/await syntax
 
@@ -410,18 +475,20 @@ transitive deps (Cargo's hardest semantic — defer to v6.4.x or
 later if pressure surfaces); per-feature CHANGELOG/version
 constraints; cross-package feature exports.
 
-### Slot estimate (v6.3.x)
+### Scope shape (v6.3.x)
 
-| Feature | Slots |
+| Cluster | Indicative size |
 |---|---|
+| **Phase 0 — substrate** (token-replay revival + order-independent ABI + growable tables) | ~5–7 |
 | Closures with lexical capture | ~7 |
-| Real generic instantiation | ~7 |
+| Real generic instantiation (on Phase 0) | ~7 |
 | Language-level async/await syntax | ~5 |
 | Required vs Optional Dependencies | ~5 |
 | Cross-feature integration + tcyr suite | ~3 |
-| **Total planned** | **~27** |
-| Bug bandwidth | ~10 |
-| **Budget** | **~37** |
+
+**Phase 0 is non-negotiable groundwork** — the deep-dive proved the
+generics arc has no working substrate without it. Sizes indicative, not a
+cap; minors flex long.
 
 ---
 
@@ -433,6 +500,19 @@ allocation upgrade + deferred peephole passes.
 Held-forward through v5.9.x / v5.10.x / v5.11.x. The
 *language-level* ABI work plus the regalloc-gated perf passes
 that have been waiting for cross-BB liveness data.
+
+> **Arc-open prerequisite (added 2026-06-10, deep-dive):** the **runtime
+> bench harness is blind** — an integer-µs truncation floor flat-lines
+> 37/42 micro-benches at exactly 1000 ns since 2026-04-16 (`bench.cyr:235`,
+> finding PF-01,
+> [`issues/2026-06-10-runtime-bench-suite-blind.md`](issues/2026-06-10-runtime-bench-suite-blind.md)).
+> The pinned "bench-delta evaluation" slot below **cannot measure**
+> regalloc / copy-prop / DSE wins with 1 µs resolution. Fix the harness
+> (fractional-µs print + the dead tool-compile loop + the 8 orphan `.bcyr`)
+> **before this arc opens**, or the perf work flies blind. Also decide the
+> regalloc substrate at arc entry (AR-04: extend the x86 byte-peephole vs.
+> activate real IR-level register allocation — the latter is the only path
+> to aarch64/riscv64 regalloc parity).
 
 ### Class B FFI / wgpu fncall6 ABI fix
 
@@ -506,6 +586,17 @@ more than 2 endpoints. Gradual-accretion vs one-patch-dominates
 determines whether bisection is even productive (gradual is the
 likelier shape given the work mix).
 
+> **Prerequisite (added 2026-06-10):** this audit is only meaningful once
+> the bench harness is fixed (PF-01 — the µs-resolution floor) and
+> per-phase attribution is captured (PF-03 — `CYRIUS_PROF` exists since
+> v5.10.0 but `bench-history.sh` never runs it, so 40+ runs since 06-08
+> hold zero phase data). Both land before/at v6.4.x; by v6.5.x entry the
+> cycle should have a phase-resolved self_compile trend, not just two
+> endpoints. Also fold the `alloc()` single-threaded fast-path (PF-02 —
+> the v6.0.64 unconditional spinlock cost ~3–6× on the dominant
+> single-threaded case) into the perf surface. Issue:
+> [`2026-06-10-runtime-bench-suite-blind.md`](issues/2026-06-10-runtime-bench-suite-blind.md).
+
 ### Slot estimate (v6.5.x)
 
 Open scope at v6.5.x slot entry — depends on the
@@ -517,19 +608,45 @@ to 40+ if the perf-refactor surface is wider than expected.
 
 ## What comes after v6.x
 
-v7.x scope is open. Two known commitments per CLAUDE.md "Version
+v7.x scope is open. Known commitments per CLAUDE.md "Version
 lives in `VERSION` + `--version`, never in binary names":
 
 - **No binary rename at v7.0.0**. The v6.0.0 `cc5 → cycc` +
   `cyrc → cybs` rename was the LAST name-change penalty paid.
   Future major bumps run `version-bump.sh` and ship; no rename,
   no downstream sweep, no vidya `cc?` residue.
-- **build/cc3 drops at v7.0.0** per the prior-major-seed
-  retirement policy (cc3 stays through v6.x as the
-  v5.0.0-era historical anchor; retires when v6.x → v7.x bump
-  removes the legacy back-compat surface).
+- **Prior-major slot rotates at v7.0.0**. **cc3 was already dropped at
+  v6.1.0** (corrected 2026-06-10 — the v6.0.0 cut should have rotated
+  cc3→cc5 but didn't, leaving cc3 a stale prior-PRIOR; v6.1.0 fixed it).
+  The prior-major slot now holds **cc5** (the last v5.x top compiler,
+  5.11.69). At v7.0.0 it rotates to the last v6.x `cycc` — same binary
+  name, so the slot effectively retires (no rename bridge). [Earlier
+  drafts here and in roadmap-future.md said "cc3 drops at v7.0.0" — that
+  was the RM-05 contradiction with CLAUDE.md; fixed.]
 
-Beyond that, v7.x is open territory. Likely candidates: more
-language refinements based on consumer pressure from v6.x ship;
-toolchain improvements (LSP / formatter / linter evolution);
-agnos v2.0 alignment if AGNOS's roadmap creates pull.
+### v7 public-release readiness gates (added 2026-06-10, deep-dive)
+
+The ~v7 public release ("Cyrius ONE") carries readiness debt the
+deep-dive surfaced that isn't otherwise tracked
+([`docs/audit/2026-06-10-deep-dive-review.md`](../audit/2026-06-10-deep-dive-review.md)):
+
+- **Licensing (LEGAL-01) — likely a hard blocker.** The GPL-3.0-only
+  stdlib is *source-included* into every consumer binary with no
+  Runtime-Library-Exception → arguably forces GPL on all downstream
+  binaries; and `sigil.cyr:533` elects the GPLv2-only leg of dual
+  BSD/GPLv2 code (GPLv2-only is GPL-3-incompatible). Needs legal review +
+  an RLE-style linking-exception decision before public release.
+- **Trust-story prerequisites (CVE-12/13/20/21).** Release signing +
+  bootstrap attestation — the shipped `cycc` is the de-facto trust root,
+  disjoint from the seed chain `bootstrap.sh` verifies, and releases are
+  unsigned with mutable-tag deps. The sovereignty story can't go public
+  like that.
+- **Diagnostics + debug-info** for strangers: no DWARF on any target,
+  crash-localization is x86-ELF-only, errors are first-error-exit with no
+  column/excerpt.
+- **stdlib-reference** covers ~65/88 modules — the rest need authoring.
+
+Beyond that, v7.x is open territory. Likely candidates: more language
+refinements based on consumer pressure from v6.x ship; toolchain
+improvements (LSP / formatter / linter evolution); agnos v2.0 alignment
+if AGNOS's roadmap creates pull.

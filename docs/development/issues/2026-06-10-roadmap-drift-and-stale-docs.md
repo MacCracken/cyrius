@@ -1,5 +1,18 @@
 # Roadmap drift + stale governance docs — RM-01…05
 
+> **STATUS (2026-06-10): MOSTLY RESOLVED — roadmap rewrite landed.** The
+> roadmap audit + rewrite addressed RM-01 (deleted the phantom v6.2.x TLS arc,
+> re-homed the kernel-freestanding-TLS deliverable into bare-metal), RM-03
+> (AGNOS-kernel goal now has a tracking home = bare-metal deliverable 7), RM-04
+> (rv64 hardware is in hand per user 2026-06-10 — dissolved, real-hardware gate
+> from the start), and RM-05 (cc3 contradiction fixed in roadmap_6.md +
+> roadmap-future.md; state.md "Next/Open" sections refreshed). **RM-02 remains
+> open**: the `threat-model.md` rewrite (libssl-default inverted, "No ASLR" vs
+> PIE, 131 KB vs 1 MB input, + the native-TLS Known Limitations) is a security
+> doc, not a roadmap doc — tracked in
+> [overdue-security-audit-cve-tail](2026-06-10-overdue-security-audit-cve-tail.md)
+> (Action 2). Archive this issue once RM-02 lands.
+
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Medium (doc-correctness, but high-leverage — it distorts v6.2.x
 planning before the minor opens)
@@ -52,8 +65,9 @@ consumer-gated indefinitely on an AGNOS `--pie` harness that doesn't exist
 
 **Fix:** when deleting the stale TLS arc, **re-home** the freestanding-link
 acceptance as a named v6.2.0 bare-metal deliverable (kernel object links
-tls_native + passes the forbidden-module check), and file the AGNOS `--pie`
-boot-harness ask upstream now (cross-repo — don't edit AGNOS here).
+tls_native + passes the forbidden-module check). The AGNOS `--pie` boot-harness
+ask (the other half of the kernel-PIE follow-on) has been **filed upstream**:
+`agnos/docs/development/issue/2026-06-10-cyrius-pie-boot-harness-ask.md`.
 
 ## RM-04 — RISC-V needs rv64 hardware absent from the fleet (P2)
 

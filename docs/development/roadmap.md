@@ -87,7 +87,9 @@ land only on consumer pressure or explicit user direction.
 | **v6.1.29** ✅ | **`fdlopen_init_trusted`** — setuid-safe foreign-dlopen (HIGH-sev; closes the shakti proposal). Resolves root-owned `/usr/lib/cyrius/dlopen-helper`, `lstat`-verifies (uid 0 / not symlink / not world-writable), never `$HOME`, fails closed `-9`. install.sh root-system-helper + threat-model trust row. Unblocks shakti 0.6.3. cycc unchanged; ecb/cass green. | security (consumer-blocking) |
 | **v6.1.30** ✅ | **x86-macOS argv prologue** — reserve r15 (regalloc cap 5→4) + park `mov r15,rsp` at the output landing + `args_macos` reads r15, all gated `_TARGET_MACHO==1`. The Intel-Mac tools now read argv (verified on `ach`). Phase 1 of the x86-macOS-usable arc; env/arch-detect/cycc-finding/issue-1/packaging remain. ecb/cass/ach SELFHOST_OK. | x86-macOS pillar (ach) |
 | **v6.1.31** ✅ | **Ed25519 server certs for native TLS** — fold sigil 3.7.9 (Ed25519 X.509 leaf-cert parse: sig-algid/SPKI/`_x509_verify_link`, RFC 8410). Root cause was sigil's ECDSA/RSA-only `x509_parse`, not the TLS layer. Closes the sit-filed issue; verified native loopback + OpenSSL `s_client` interop. cycc unchanged; ecb/cass green. | consumer bug (sit → sigil fold) |
-| *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated)**, macho-arm `*at()`/stat ESYSXLAT, x86-macho self-compile (HELD), cyim regex unblock. (Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
+| **v6.1.31** ✅ | **Ed25519 server certs for native TLS** (sigil 3.7.9 fold) — root cause was sigil's `x509_parse` (ECDSA/RSA-only), NOT the TLS layer; sigil 3.7.9 adds Ed25519 X.509 leaf-cert parse (RFC 8410, PureEd25519). Loopback + OpenSSL `s_client` interop verified. cycc unchanged. | TLS (sit-filed) |
+| **v6.1.32+** ⏳ | **Phase F — security hardening tail** (the 2026-06-10 deep-dive review). Packed releases absorbing the urgent findings before cycle-close — see the Phase F detail + slot estimate below. | F — hardening |
+| *(bug bandwidth)* | **kernel-PIE ELF (AGNOS KASLR — consumer-gated; `--pie` boot harness filed upstream)**, x86-macho self-compile (HELD), cyim regex unblock, x86-macOS arc tail (env / arch-detect / cycc-finding / issue-1 / packaging). (macho-arm `*at()`/stat ESYSXLAT ✅ fixed v6.1.20 + archived; Windows deps `--lock` hash ✅ done v6.0.85) | absorbed into bug bandwidth |
 
 **Why this order** (user lead choice = housekeeping → backend-prep → PIE):
 the housekeeping items (Phase A) are small, ready, and have concrete
@@ -245,27 +247,63 @@ full write-up in [roadmap-future.md](roadmap-future.md).
 > proves larger than one slot, ASK for the shape rather than re-slotting
 > ([[feedback_no_unilateral_scope_decisions]]).
 
-### Phase E — stdlib carve (v6.1.19 → v6.1.20)
+### Phase E — stdlib carve (v6.1.25 → v6.1.26) ✅
 
 The bayan/ganita distfile carve — the second half of the stdlib
 clean-slate (the mabda fold shipped @ v6.0.45). After the carve, stdlib
 stays primitives-only so bare-metal consumers (v6.2.x RISC-V / firmware)
 don't drag the data offshoots into kernel objects. Math primitives + regex
-stay stdlib. [[project_bayan_ganita_carve_arc]]. **Pushed two slots** by the
-user-directed v6.1.17 sakshi-fold + PE-nanosleep release and the v6.1.18
-Windows directory-listing port (bayan .17 → .19).
+stay stdlib. [[project_bayan_ganita_carve_arc]]. **Shipped .25/.26** —
+pushed back from the original .19/.20 by the user-directed sakshi/PE pack
+(.17/.18) and the TLS/alloc/LSP band (.19–.24).
 
-#### v6.1.19 — bayan distfile carve
+#### v6.1.25 — bayan distfile carve ✅
 
 Extract `json` / `toml` / `cyml` / `csv` / `base64` / `bigint` / `u128`
-from stdlib into the **bayan** sibling repo + `[deps.bayan]` resolution.
-Naming convention `bayan_<module>_*`.
+from stdlib into the **bayan** sibling repo + folded `lib/bayan.cyr`
+(`bayan_<module>_*` + back-compat aliases).
 
-#### v6.1.20 — ganita distfile carve
+#### v6.1.26 — ganita distfile carve ✅
 
 Extract `matrix` / `linalg` / advanced math from stdlib into the
-**ganita** sibling repo + `[deps.ganita]` resolution. Naming convention
-`ganita_<module>_*`.
+**ganita** sibling repo + folded `lib/ganita.cyr` (`ganita_<module>_*`).
+Closes Phase E — stdlib is primitives-only.
+
+---
+
+## Phase F — security hardening tail (v6.1.32+)
+
+The 2026-06-10 deep-dive review
+([`docs/audit/2026-06-10-deep-dive-review.md`](../audit/2026-06-10-deep-dive-review.md)
+— 40 adversarially-verified findings, 0 refuted, across 13 issues) surfaced a
+cluster of "loud failure silently turned into silent failure" bugs plus authn
+gaps in the now-default native TLS stack. Per user direction 2026-06-10, the
+**urgent set lands in the v6.1.x tail as packed releases before cycle-close**
+("bigger hardening chunk first"); the lower-severity / prerequisite items spread
+to v6.2.x bug-bandwidth and the later minors where they gate work ("urgent now,
+rest spread"). Patch count is not a constraint (v6.0.x ran to 91). Nominal
+packing — premise-check at slot entry, pack per
+[[feedback_one_bug_one_complete_fix]]:
+
+| Pack | Items | Issues |
+|---|---|---|
+| **F1 — silent-failure + dep-injection** | `_vec_die`/`_hm_die` recursion (CVE-22), `output_buf` cap unenforced on aarch64/PE/kernel (CVE-23), silent-bad-input (CVE-31), `check.sh` exit-masking (CO-02), x86-opt passes unguarded on aarch64/cx (CO-03) · `deps --verify`/`--lock` shell injection (CVE-14 — auto-runs every build), git arg-injection (CVE-15), absolute-path include (CVE-16) | [live-silent-failure-regressions](issues/2026-06-10-live-silent-failure-regressions.md) · [deps-resolver-injection-class](issues/2026-06-10-deps-resolver-injection-class.md) |
+| **F2 — TLS authn hardening** | chain-verify gaps: pathLen/EKU/keyUsage/revocation (CVE-17), connected-but-unverified default + `host==0` hostname skip (CVE-18), post-handshake NST/KeyUpdate false-EOF (CVE-30); entropy fail-weak cyrius-side: ws uninit mask + raw-`/dev/urandom`→`getrandom` routing (CVE-19 — the AGNOS getrandom syscall is filed upstream) | [tls-chain-verification-gaps](issues/2026-06-10-tls-chain-verification-gaps.md) · [tls-post-handshake-false-eof](issues/2026-06-10-tls-post-handshake-false-eof.md) · [entropy-failweak-paths](issues/2026-06-10-entropy-failweak-paths.md) |
+| **F3 — memory-safety parity** | locals 256-cap (CVE-24), `_sb_grow` OOM (CVE-25), `alloc_agnos` size guard (CVE-26), PE import-registry caps (CVE-27); aarch64 atomics barriers + unfenced vtable publish (CVE-28) | [memory-safety-parity-gaps](issues/2026-06-10-memory-safety-parity-gaps.md) · [unreviewed-dimensions](issues/2026-06-10-unreviewed-dimensions.md) |
+
+**Spread to v6.2.x+ / later minors** (NOT the v6.1.x tail, per "rest spread"):
+release/trust-chain integrity (CVE-20/21 — v6.2.x bug-bandwidth + v7 trust-story),
+verification coverage (VR-01…04 — VR-03 differential corpus gates v6.4.x), the
+blind bench harness (PF-01 — gates v6.4.x/v6.5.x, see
+[roadmap_6.md](roadmap_6.md)), the monomorphization substrate (AR-01/CO-01/AR-02 —
+v6.3.x phase-0), thread-stack guards (CVE-29 — v6.2.x), and the v7 readiness gates
+(LEGAL-01 licensing, diagnostics). The audit cadence + CVE-09…13 re-file is tracked
+at [overdue-security-audit-cve-tail](issues/2026-06-10-overdue-security-audit-cve-tail.md)
+— **this deep-dive IS the overdue full audit**.
+
+**Cycle-close after Phase F**: per [cycle-discipline.md](cycle-discipline.md), the
+final patch folds any deps that GA'd during the window (sandhi/sigil/etc.), then
+v6.2.0 opens.
 
 ---
 
@@ -278,22 +316,29 @@ direction ([[feedback_no_unilateral_scope_decisions]]), not as a pinned
 planned release.
 
 - **Kernel-PIE ELF for AGNOS KASLR** (deferred from v6.1.6 — see Phase C). The
-  RIP-relative codegen is done + proven via userland PIE; the remaining piece is the
-  `ET_DYN`+multiboot2 wrapper variant of `EMITELF64_KERNEL` (real `_start`,
-  `p_vaddr=0`). **Consumer-gated**: needs an AGNOS `--pie` boot harness to validate
-  (won't ship blind); AGNOS isn't pulling yet (data-only KASLR shipped @ v1.28.0).
-  Lands on the harness or explicit user direction. May ride v6.1.7 if the harness is
-  ready. [[project_v616_bugband_then_full_pie]].
+  RIP-relative codegen is done + proven via userland PIE, and the `ET_DYN`
+  `EMITELF64_KERNEL` wrapper (`p_vaddr=0`, `e_entry=0xA8`) **shipped v6.1.7** —
+  structurally validated but never boot-tested. **Consumer-gated** on an AGNOS
+  `--pie` boot harness to validate (won't ship blind). The harness ask is now
+  **filed upstream**:
+  `agnos/docs/development/issue/2026-06-10-cyrius-pie-boot-harness-ask.md` (the
+  kaslr-scope Option-A "once cyrius ships PIE" blocker is now met). AGNOS isn't
+  pulling yet (data-only KASLR @ v1.28.0). [[project_v616_bugband_then_full_pie]].
 - **x86-macho cycc self-compile** (layer-6 miscompile) — **HELD** (Apple
   Intel EOL); arm64-macOS is the supported macOS target. Revisited as a
   working item, not a blocker.
   [`issues/2026-06-02-macos-x86-release-no-compiler.md`](issues/2026-06-02-macos-x86-release-no-compiler.md),
   [`issues/2026-06-07-x86-macho-byte-array-literal-no-compile.md`](issues/2026-06-07-x86-macho-byte-array-literal-no-compile.md).
-- **macho-arm `*at()`/stat ESYSXLAT mappings** — `sys_stat`/`fstatat`/`linkat`/
-  `renameat`/`utimensat` lack Darwin ESYSXLAT entries on arm64-macOS (supported
-  platform; `sys_stat` pre-existing broken since v6.0.41). The cross-platform peer of
-  the v6.1.3 aarch64-Linux fix; `utimensat` needs a Darwin-design decision (no such
-  syscall). [`issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md`](issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md).
+- **x86-macOS usable-toolchain arc tail** (Phase 1 = argv prologue shipped
+  v6.1.30) — remaining `ach`-gated layers: env reading (`HOME`/uname),
+  the wrapper's aarch64 arch-default on macOS (detect x86 on Intel),
+  cycc-finding, issue-1 native miscompile (tools ship cross-built until fixed),
+  packaging. [`issues/2026-06-02-macos-x86-release-no-compiler.md`](issues/2026-06-02-macos-x86-release-no-compiler.md).
+- **macho-arm `*at()`/stat ESYSXLAT mappings** — ✅ **fixed v6.1.20 + archived**
+  (`newfstatat 262→fstatat64 470`, `linkat 37→471`, `renameat 38→465`, Darwin
+  `stat64` struct; `utimensat`→ENOSYS since Darwin has no such syscall). Repaired
+  `sys_stat` (broken on arm64-macOS since v6.0.41). Kept here only to mark it
+  resolved — issue archived, no longer a candidate.
 - **Cyim regex unblock** (mabda C6) — consumer-gated; land when cyim
   updates + re-tests against v6.x.
 - **`cyrius deps --lock` Windows-portable hash** — ✅ **DONE @ v6.0.85**
@@ -302,19 +347,27 @@ planned release.
 
 ---
 
-## Slot estimate (v6.1.x)
+## Actual shape (v6.1.x)
 
-| Phase | Slots |
+The original ~11-planned / ~21-budget estimate is **long past** — v6.1.x has
+shipped 31 releases and counting, which is expected, not a breach: minors flex
+long (**v6.0.x ran to 91**) and per user direction 2026-06-10 *"no worries about
+patch size, just hardening and adding features."*
+
+| Phase | Releases |
 |---|---|
-| A — housekeeping (symlink drop, EADDRA_IMM, POSIX `*at()`) | 3 |
-| B — backend-refactor prep (`_TARGET_*`/`_emit_fmt` hoist, DCE consolidation) | 2 |
-| C — PIE codegen (x86, aarch64, `.gnu.hash`) | 3 |
-| D — TS/TSX → JS emit | 1 |
-| E — stdlib carve (bayan, ganita) | 2 |
-| **Total planned (primary expected)** | **~11** |
-| Bug bandwidth (incl. the bug-bandwidth items above) | ~10 |
-| **Budget** | **~21** |
+| A — housekeeping | v6.1.1–.3 |
+| B — backend-refactor prep | v6.1.4–.5 |
+| C — PIE codegen + `.gnu.hash` | v6.1.6–.9 |
+| D — TS/TSX → JS emit | v6.1.10–.12, .15 |
+| agnos-target HIGH-sev fixes | v6.1.12–.14 |
+| Windows pillar | v6.1.16–.18 |
+| TLS/alloc/LSP | v6.1.19–.24 |
+| E — stdlib carve (bayan, ganita) | v6.1.25–.26 |
+| infra / security | v6.1.27–.31 |
+| **F — security hardening tail** (deep-dive) | **v6.1.32+** |
+| Bug bandwidth (x86-macOS arc tail · kernel-PIE · cyim · HELD) | ongoing |
 
-The primary block is the ~10 pinned slots above. The HELD/open-arc tail
-adds nothing to the planned count until pulled forward. Window stated at
-arc open and open to change ([[feedback_minor_window_at_arc_open]]).
+Phase F closes the minor (urgent deep-dive findings packed in, then the dep-fold
+cycle-close → v6.2.0). Window open to change
+([[feedback_minor_window_at_arc_open]]).

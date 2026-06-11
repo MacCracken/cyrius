@@ -44,6 +44,9 @@ currently safe.
 
 ## Status
 
-Filed 2026-06-10. The AGNOS-entropy half is cross-repo (kernel ABI) — see the
-AGNOS-security-model note in [unreviewed-dimensions](2026-06-10-unreviewed-dimensions.md);
-file the ABI ask upstream rather than editing AGNOS here.
+Filed 2026-06-10. The AGNOS-entropy half is cross-repo (kernel ABI) and has been
+**filed upstream**: `agnos/docs/development/issue/2026-06-10-cyrius-tls-entropy-syscall-gap.md`
+(asks the kernel for a `getrandom`-class syscall — the in-kernel RDRAND source
+already exists via `kaslr_seed`). The cyrius-side `lib/random.cyr` AGNOS branch +
+ws/sandhi/sigil rerouting land once the kernel assigns the syscall number. See
+also the AGNOS-security-model note in [unreviewed-dimensions](2026-06-10-unreviewed-dimensions.md).
