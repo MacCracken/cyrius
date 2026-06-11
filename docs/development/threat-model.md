@@ -18,7 +18,7 @@
 | User input (compiled programs) | Untrusted — may contain arbitrary code |
 | Syscall interface (Linux kernel) | Trusted — OS provides memory isolation |
 | Generated binaries | Untrusted until verified — self-hosting proves compiler correctness |
-| `~/.cyrius/dlopen-helper` (v5.6.37+) | Trusted — built by `install.sh` from cyrius source; used by `fdlopen.cyr` to bootstrap real glibc for libssl bridge. Missing helper = TLS / libssl features disabled at runtime, not a security risk. |
+| `~/.cyrius/dlopen-helper` (v5.6.37+) | Trusted **for non-setuid callers only** — built by `install.sh` from cyrius source; used by `fdlopen.cyr` to bootstrap real glibc for libssl bridge. Missing helper = TLS / libssl features disabled at runtime, not a security risk. **⚠ NOT trusted for setuid-root callers:** the path resolves inside the *invoking user's* `$HOME`, which a non-root caller of a setuid binary owns and can replace — `fdlopen` would then `execve` it **as root** (arbitrary root code execution). Setuid consumers (e.g. shakti) MUST use `fdlopen_init_trusted()` (v6.1.29), which resolves the root-owned `/usr/lib/cyrius/dlopen-helper`, `lstat`-verifies it (regular file, uid 0, not symlink, not group/other-writable), never consults `$HOME`, and fails closed (`FDL_ERR_UNTRUSTED` = -9). |
 | Linked `libssl.so.3` / `libcrypto.so.3` (default backend, when `tls_available() == 1`) | System-trusted — the host's OpenSSL. Stdlib `lib/tls.cyr` is a thin bridge; OpenSSL CVEs apply transitively when used. **Built with `-D CYRIUS_TLS_NATIVE` there is NO libssl dependency** — TLS runs on the in-tree native stack (`lib/tls_native.cyr` + sigil crypto/x509), so OpenSSL CVEs do not apply. |
 
 ## Attack Surface

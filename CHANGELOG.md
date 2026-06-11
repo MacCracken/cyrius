@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.29] — 2026-06-10
+
+**v6.1.x slot 29: `fdlopen_init_trusted` — setuid-safe foreign-dlopen** (HIGH-sev
+security; closes the shakti proposal `2026-06-02-fdlopen-helper-trust-for-setuid-
+consumers`). The `fdlopen` helper resolved inside the *invoking user's* `$HOME`
+(`~/.cyrius/dlopen-helper`) — fine for ordinary callers, but a **setuid-root**
+consumer (shakti = "sudo for AGNOS") runs with `euid=0` and `$HOME=/home/mallory`,
+so an unprivileged invoker could replace the helper and have it `execve`'d **as
+root** = arbitrary root code execution. shakti therefore couldn't use `fdlopen` at
+all, blocking its NSS (LDAP/sssd) + remote-policy-fetch work.
+
+### Added
+
+- **`fdlopen_init_trusted(state)`** (`lib/fdlopen.cyr`) — resolves the **root-owned
+  system helper** `/usr/lib/cyrius/dlopen-helper` and refuses it unless it is a
+  regular file owned by uid 0, **not a symlink** (verified via `lstat`, not `stat`),
+  and not group/other-writable. The caller's `$HOME` copy is **never consulted**.
+  Returns `FDL_ERR_UNTRUSTED` (-9) when no trusted helper is found — callers fail
+  closed (treat NSS/TLS as unavailable). `fdlopen_init` / `fdlopen_init_full` are
+  unchanged for non-privileged consumers. x86_64 Linux only (foreign-dlopen is
+  glibc-shaped). `tests/tcyr/fdlopen_trusted.tcyr` (5 asserts: root-owned accepted;
+  symlink / user-owned / missing rejected; fail-closed `-9`).
+- **`scripts/install.sh`** — when installing as root, also builds the helper at
+  `/usr/lib/cyrius/dlopen-helper` (root:root, 0755); non-root installs note that
+  setuid consumers need `sudo sh install.sh` for the trusted helper.
+- **`docs/development/threat-model.md`** — the `~/.cyrius/dlopen-helper` trust row
+  is now qualified: trusted for non-setuid callers only; setuid callers must use
+  `fdlopen_init_trusted`.
+
+**Verification:** cycc **UNCHANGED** (self-hosts byte-identical — `fdlopen` isn't in
+cycc). check.sh **87/87**, all 172 `.tcyr` exit-0, api-surface regenerated
+(+`fdlopen::fdlopen_init_trusted`), ecb/cass `SELFHOST_OK`, bench self_compile
+513 ms. Unblocks shakti 0.6.3 (NSS + remote policy) — shakti-side migration is
+downstream.
+
 ## [6.1.28] — 2026-06-10
 
 **v6.1.x slot 28: `lib/sys.cyr` system-introspection module + bare directory-family

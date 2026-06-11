@@ -14,43 +14,40 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.28** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.28 — lib/sys.cyr + unicode-resolver fix are lib/CLI-only) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.28) |
+| **Version** | **6.1.29** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.29 — fdlopen_init_trusted is lib-only; not in cycc) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.28) |
+| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
-| tests | 171 `.tcyr` · 15 `.bcyr` |
+| tests | 172 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
 | bench (every-release gate) | self_compile ~497 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.28 ready for cut — **`lib/sys.cyr` system-introspection
-> + bare directory-family dep-resolution fix** (two items). (1) **`lib/sys.cyr`** —
-> uname/sysinfo/is_root + accessors + one-call `system_*` helpers, carved off agnosys's
-> hand-rolled `src/syscall.cyr`. Raw 0/-errno convention (process pid/uid stay on the
-> floor's `sys_get*`). Linux + AGNOS real (AGNOS sovereign 64-byte uname#34 / 40-byte
-> sysinfo#35); macOS/Windows `-ENOSYS`. Added `SYS_SYSINFO` to the floor (x86_64=99,
-> aarch64=179). Compiles on all 5 targets; `tests/tcyr/sys.tcyr` 11/11. (2) **Bare
-> directory-family stdlib deps** (`"unicode"` → `lib/unicode/*.cyr`) now resolve:
-> `cbt/deps.cyr` `_dep_copy_stdlib_recursive` `dir_list`s a `<name>/` directory when
-> `<name>.cyr` is absent. Fixes downstream niyama consumers (niyama lists bare
-> `"unicode"`) — e.g. chakshu. Explicit subpaths + missing-module errors unchanged.
-> `version-bump.sh 6.1.28` to apply; **user pushes/tags after CI**. Gates: cycc
-> **UNCHANGED** (self-hosts byte-identical — lib/CLI-only), check.sh **87/87**, all 171
-> tcyr exit-0, api-surface regenerated (+`sys::`), **ecb+cass `SELFHOST_OK`**, bench
-> self_compile 501 ms. unicode fix verified (bare `"unicode"` → 7 files; consumer
-> using `unicode_category` runs). **Follow-ons (not blocking):** agnosys can now drop
-> its `src/syscall.cyr` and consume `lib/sys.cyr` (agnosys-side, downstream); the
-> resolver's `dir_list` path could get an ecb/cass smoke (degrades gracefully —
-> explicit subpaths always work); lib/sys.cyr macOS/Windows uname/sysinfo (sysctl /
-> GlobalMemoryStatusEx) are `-ENOSYS` stubs for now. Phase E (bayan .25 + ganita .26)
-> stays DONE. **Still deferred to v6.1.x closeout (heap-map audit §4):** re-sort the
-> `output_buf` comment line + reclaim the 2 MB gap at `0x71A000` (from the .27 cap raise).
+> **Handoff (2026-06-10):** v6.1.29 ready for cut — **`fdlopen_init_trusted` setuid-safe
+> foreign-dlopen** (HIGH-sev security; closes the shakti proposal). The `fdlopen` helper
+> resolved inside the *invoking user's* `$HOME` — a setuid-root consumer (shakti) would
+> `execve` a non-root-replaceable helper AS ROOT (priv-esc). New `fdlopen_init_trusted(state)`
+> (`lib/fdlopen.cyr`) resolves the **root-owned** `/usr/lib/cyrius/dlopen-helper`,
+> `lstat`-verifies it (regular file, uid 0, NOT symlink, not group/other-writable), NEVER
+> consults `$HOME`, fails closed `FDL_ERR_UNTRUSTED`(-9). `fdlopen_init`/`_init_full`
+> unchanged. `install.sh` installs the root-owned system helper when run as root.
+> `threat-model.md` trust row qualified. x86-Linux only. `tests/tcyr/fdlopen_trusted.tcyr`
+> 5/5 (symlink/user-owned/missing rejected; root-owned accepted; fail-closed). Proposal
+> `git mv`'d to `proposals/archived/`. `version-bump.sh 6.1.29` to apply; **user pushes/
+> tags after CI**. Gates: cycc **UNCHANGED** (self-hosts byte-identical — fdlopen not in
+> cycc), check.sh **87/87**, all 172 tcyr exit-0, api-surface (+`fdlopen_init_trusted`),
+> **ecb+cass `SELFHOST_OK`**, bench self_compile 513 ms. **Unblocks shakti 0.6.3** (NSS
+> LDAP/sssd + remote policy) — shakti-side migration to `fdlopen_init_trusted` is
+> downstream. **Follow-on (.28, still open):** agnosys can drop its `src/syscall.cyr` for
+> `lib/sys.cyr`; the dep-resolver `dir_list` path could get an ecb/cass smoke. Phase E
+> (bayan .25 + ganita .26) stays DONE. **Still deferred to v6.1.x closeout (heap-map audit
+> §4):** re-sort the `output_buf` comment line + reclaim the 2 MB gap at `0x71A000` (.27).
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

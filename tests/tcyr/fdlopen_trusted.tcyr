@@ -1,0 +1,51 @@
+# Test: fdlopen_init_trusted (v6.1.29) — the setuid-safe helper trust check.
+# Verifies _fdlopen_verify_trusted accepts a root-owned regular file and REJECTS
+# symlinks / user-owned / missing paths, and that fdlopen_init_trusted fails
+# closed (-9 FDL_ERR_UNTRUSTED) when no root-owned system helper is present.
+# x86_64 Linux only (fdlopen is glibc-shaped).
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+include "lib/fdlopen.cyr"
+
+alloc_init();
+
+test_group("verify_trusted — accept root-owned regular file");
+# /etc/passwd: root-owned, regular, mode 644 (no group/other write) → trusted.
+var v_pw = _fdlopen_verify_trusted("/etc/passwd");
+assert_eq(v_pw, 1, "/etc/passwd is trusted (root:root regular, not world-writable)");
+
+test_group("verify_trusted — reject untrusted");
+# Missing path → lstat fails → not trusted.
+var v_miss = _fdlopen_verify_trusted("/nonexistent/cyrius/helper");
+assert_eq(v_miss, 0, "missing path is not trusted");
+
+# A user-owned regular file (we create it) → uid != 0 → not trusted.
+var fd = sys_open("/tmp/fdl_user_helper", 0x41, 0x1A4);  # O_WRONLY|O_CREAT, 0644
+sys_write(fd, "x", 1);
+sys_close(fd);
+var v_user = _fdlopen_verify_trusted("/tmp/fdl_user_helper");
+assert_eq(v_user, 0, "user-owned file is not trusted");
+
+# A symlink (even pointing at a root file) → lstat sees S_IFLNK → not trusted.
+sys_unlink("/tmp/fdl_link_helper");
+sys_symlink("/etc/passwd", "/tmp/fdl_link_helper");
+var v_link = _fdlopen_verify_trusted("/tmp/fdl_link_helper");
+assert_eq(v_link, 0, "symlink is not trusted (lstat, not followed)");
+
+# cleanup
+sys_unlink("/tmp/fdl_user_helper");
+sys_unlink("/tmp/fdl_link_helper");
+
+test_group("init_trusted — fail closed");
+# No /usr/lib/cyrius/dlopen-helper in the test env → -9 (UNTRUSTED), never falls
+# back to the $HOME helper.
+var st[256];
+var rc = fdlopen_init_trusted(&st);
+var rc_untrusted = (rc == 0 - 9);
+assert_eq(rc_untrusted, 1, "init_trusted returns -9 (fail closed) with no system helper");
+
+var r = assert_summary();

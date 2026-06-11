@@ -632,6 +632,27 @@ if [ -n "$_DLOPEN_HELPER_SRC" ]; then
     # a host libc upgrade without needing the original checkout.
     mkdir -p "$CYRIUS_HOME/versions/$VERSION/bin"
     cp "$_DLOPEN_HELPER_SRC" "$CYRIUS_HOME/versions/$VERSION/bin/dlopen-helper.c"
+
+    # v6.1.29 — trusted system helper for setuid-root consumers (e.g. shakti).
+    # The $CYRIUS_HOME copy lives in the invoking user's $HOME, which a non-root
+    # caller of a setuid binary can replace — so fdlopen_init_trusted() refuses
+    # it and resolves a ROOT-OWNED system path instead. Install that path here
+    # when we have the privilege (running as root); otherwise note how to get it.
+    if [ -n "$_CC" ]; then
+        if [ "$(id -u)" = "0" ]; then
+            mkdir -p /usr/lib/cyrius
+            if "$_CC" -O2 -fPIE -pie -o /usr/lib/cyrius/dlopen-helper \
+                "$_DLOPEN_HELPER_SRC" -ldl 2>/dev/null; then
+                chown root:root /usr/lib/cyrius/dlopen-helper 2>/dev/null || true
+                chmod 0755 /usr/lib/cyrius/dlopen-helper
+                info "trusted system dlopen-helper installed: /usr/lib/cyrius/dlopen-helper (root:root 0755)"
+            else
+                warn "system dlopen-helper compile failed — fdlopen_init_trusted will report FDL_ERR_UNTRUSTED"
+            fi
+        else
+            info "skipping /usr/lib/cyrius/dlopen-helper (not root); setuid consumers (fdlopen_init_trusted) need 'sudo sh install.sh' for the trusted helper"
+        fi
+    fi
 fi
 
 # ── Setup PATH ──

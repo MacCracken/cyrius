@@ -1,3 +1,13 @@
+> ✅ **RESOLVED — shipped v6.1.29.** `fdlopen_init_trusted()` lands in
+> `lib/fdlopen.cyr`: resolves the root-owned `/usr/lib/cyrius/dlopen-helper`,
+> `lstat`-verifies it (regular file, uid 0, not symlink, not group/other-writable),
+> never consults `$HOME`, and fails closed (`FDL_ERR_UNTRUSTED` = -9). `install.sh`
+> installs the root-owned system helper when run as root; `threat-model.md`'s trust
+> row is qualified for setuid callers. Implements option 1 (system path) + option 2
+> (ownership/mode/non-symlink enforcement) from "What shakti needs". Option 3 (hash
+> pinning) NOT done — a root-owned non-writable path closes the vector without it.
+> shakti 0.6.3 (NSS + remote policy) is unblocked; shakti-side migration is downstream.
+
 # fdlopen: a trusted helper path for setuid consumers
 
 **Filed:** 2026-06-02 by shakti (AGNOS privilege-escalation tool)

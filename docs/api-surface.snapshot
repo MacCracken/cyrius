@@ -1202,6 +1202,7 @@ fdlopen::fdlopen_getaddrinfo/1
 fdlopen::fdlopen_helper_available/0
 fdlopen::fdlopen_init/1
 fdlopen::fdlopen_init_full/1
+fdlopen::fdlopen_init_trusted/1
 fdlopen::fdlopen_setenv/1
 fdlopen::fdlopen_setlocale/1
 fdlopen::fdlopen_slot/2
