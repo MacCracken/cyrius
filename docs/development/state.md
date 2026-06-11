@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.33** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,046,320 B (+600 B @ 6.1.33 — CVE-16 absolute-include reject guard in lex.cyr) |
+| **Version** | **6.1.34** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,046,480 B (+160 B @ 6.1.34 — CO-03 aarch64 gates on DSE/LASE/#regalloc) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -27,28 +27,32 @@
 | tests | 173 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
-| bench (every-release gate) | self_compile ~523 ms (box noise) |
+| bench (every-release gate) | self_compile ~506 ms (box noise) |
 
-> **Handoff (2026-06-11):** v6.1.33 ready for cut — **dep-resolver / include injection
-> class (CVE-14/15/16)**, Phase F pack F1a (2026-06-10 deep-dive). Three shell-injection
-> sinks the CVE-01/02 fixes left open, all converted to argv `execve` (no shell):
-> **CVE-14** (P0-class) — `_sha256sum_file` ran `sha256sum <path>` via `/bin/sh -c`, and
-> `cmd_deps_lock` auto-runs on every build hashing `dir_list` filenames → now
-> `/usr/bin/env sha256sum <path>` with path as a distinct argv element. **CVE-15** —
-> `git clone` shell string + `sys_system` → argv `execve` with a `--` separator (a
-> leading-`-` url/tag can't become a git flag). **CVE-16** — absolute includes
-> (`include "/…/.ssh/id_rsa"`) now rejected in `lex.cyr::READFILE` unless
-> `CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1`. **VERIFIED:** cycc self-host byte-identical
-> (1,046,320 B, +600 B); check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**; bench
-> 523 ms. CVE-14 hash-correctness + injection-safety (`a;touch PWNED;b.cyr` hashed, no
-> exec) proven; CVE-15 git-clone runs via argv; CVE-16 reject + override + normal compile
-> all pass. Issue archived. **user pushes/tags after CI.**
+> **Handoff (2026-06-11):** v6.1.34 ready for cut — **two live silent-failure
+> regressions, CVE-22 + CO-03** (Phase F pack F1b part 1, 2026-06-10 deep-dive).
+> **CVE-22** — `_vec_die`/`_hm_die` (`lib/vec.cyr`, `lib/hashmap.cyr`) infinitely
+> self-recursed on every non-AGNOS target (v6.0.56 regressed `syscall(60,1)` → calling
+> the die fn itself), so OOB/OOM aborts SIGSEGV'd instead of `exit(1)`. Restored
+> `syscall(60,1)` (backend translates 60 per target; AGNOS keeps `syscall(0,1)`).
+> **CO-03** — `DSE_PASS` + the LASE loop (`parse_fn.cyr`) scan codebuf for x86 opcodes
+> `48 89 85`/`48 8B 85` and NOP-patch, but ran with NO `_AARCH64_BACKEND` gate → could
+> corrupt aarch64 instruction words; the explicit `#regalloc` `SFRA` likewise lacked the
+> arch gate the AUTO path has. Gated both on `_AARCH64_BACKEND == 0` (matching the
+> compaction pass). **VERIFIED:** x86 codegen unchanged → cycc self-host byte-identical
+> (1,046,480 B); aarch64 now skips the peephole (was a no-op on the compiler's own code)
+> → **pi `SELFHOST_OK`**; check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**; bench
+> 506 ms. **user pushes/tags after CI.**
 >
-> **Phase F NEXT (F1b):** live-silent-failure regressions — `_vec_die`/`_hm_die`
-> infinite recursion (CVE-22), `output_buf` cap unenforced on aarch64/PE/kernel emitters
-> (CVE-23), silent-bad-input (CVE-31), check.sh exit-masking (CO-02), x86-opt passes
-> unguarded on aarch64/cx (CO-03). Then F2 (TLS-authn CVE-17/18/30 + entropy CVE-19) /
-> F3 (memory-safety parity CVE-24..28). See [roadmap.md](roadmap.md) Phase F.
+> **Phase F NEXT (F1b part 2):** **CVE-23** `output_buf` 16 MB cap unenforced on the
+> aarch64-ELF / PE / x86-kernel emitters (needs per-emitter PRE-write guards — the heap
+> overrun happens during emit, before the single flush point, so a flush-time guard is
+> too late); **CVE-31** frontend input validation (missing-include = 0 bytes silent,
+> unknown-ASCII dropped, `file_map>128` — the loud-error parts + the `file_map` heap
+> relocation); **CO-02** check.sh tcyr exit-masking (propagate exit status from
+> `regression_exec_capture` — may turn check.sh red on a hidden failure, the point).
+> Then F2 (TLS-authn CVE-17/18/30 + entropy CVE-19) / F3 (memory-safety parity
+> CVE-24..28). See [roadmap.md](roadmap.md) Phase F.
 >
 > **Carry-forward (.32 agnos fix):** run-on-agnos `argc=4` was NOT verified locally —
 > `cyrius build --agnos` on this box sets the `#ifdef` but not the runtime `_TARGET_AGNOS`

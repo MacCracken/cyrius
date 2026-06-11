@@ -1,5 +1,17 @@
 # Live silent-failure regressions (fix-now cluster) — CVE-22/23/31, CO-02/03
 
+> **STATUS: PARTIALLY RESOLVED.** **✅ CVE-22 + CO-03 shipped v6.1.34** (F1b pt1):
+> `_vec_die`/`_hm_die` self-recursion → restored `syscall(60,1)`; DSE/LASE/#regalloc
+> x86 byte-passes gated on `_AARCH64_BACKEND==0`. **⏳ Still open (F1b pt2, → v6.1.35):**
+> CVE-23 (`output_buf` 16 MB cap unenforced on the aarch64-ELF / PE / x86-kernel
+> emitters — needs per-emitter PRE-write guards; the overrun happens during emit,
+> not at the single flush point), CVE-31 (frontend input validation: missing-include
+> = 0 bytes silent + unknown-ASCII dropped loud errors, + the `file_map>128` heap
+> relocation — note the READFILE return-convention change to distinguish open-fail
+> from empty), CO-02 (`check.sh` tcyr exit-masking — propagate exit status from
+> `regression_exec_capture`; may turn check.sh red on a hidden failure, which is the
+> point). Archive when pt2 lands.
+
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** cycc / stdlib 6.1.31

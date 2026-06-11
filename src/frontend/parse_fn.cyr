@@ -1409,7 +1409,12 @@ fn PARSE_FN_DEF(S): i64 {
     if (_TARGET_MACHO == 1) { _ra_cap = 4; }
     if (_TARGET_AGNOS == 1) { _ra_cap = 4; }
     if (_regalloc_pending == 1) {
-        if (_has_inline_asm == 0) { SFRA(S, fi, _ra_cap); }
+        # CO-03 (v6.1.34): #regalloc is x86-only (the post-body byte-peephole
+        # picker). The AUTO path gates on `_AARCH64_BACKEND == 0` above; the
+        # explicit-`#regalloc` path did NOT — add the gate so an annotated fn on
+        # aarch64 doesn't reach the x86 picker (`_cur_fn_regalloc` stays 0 → the
+        # picker self-skips).
+        if (_has_inline_asm == 0) { if (_AARCH64_BACKEND == 0) { SFRA(S, fi, _ra_cap); } }
         else {
             syscall(SYS_WRITE, 2, "warning:", 8);
             FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -2310,12 +2315,18 @@ fn PARSE_FN_DEF(S): i64 {
     EREGALLOC_RESTORE(S, _cur_fn_regalloc);
     # Emit epilogue
     EFNEPI(S);
-    DSE_PASS(S, fn_start);
-    # LASE: eliminate store+load pairs where the load is NOT a jump target
+    # CO-03 (v6.1.34): DSE + LASE are x86 byte-pattern passes — they scan codebuf
+    # for `48 89 85`/`48 8B 85` windows and NOP-patch. On aarch64 (a 4-byte ISA)
+    # those bytes can match instruction words and corrupt them, so gate to x86,
+    # matching the compaction pass below (also `_AARCH64_BACKEND == 0`-gated). The
+    # compiler's own aarch64 code doesn't hit the pattern in-tree, but a consumer's
+    # could (silent miscompile).
+    if (_AARCH64_BACKEND == 0) { DSE_PASS(S, fn_start); }
+    # LASE: eliminate store+load pairs where the load is NOT a jump target (x86-only)
     var lase_cp = GCP(S);
     var lase_i = fn_start;
     var lase_count = 0;
-    while (lase_i + 14 <= lase_cp) {
+    while (_AARCH64_BACKEND == 0 && lase_i + 14 <= lase_cp) {
         # Detect store (7 bytes): 48 89 85 XX XX XX XX
         if (load8(S + 0x41A000 + lase_i) == 0x48) {
             if (load8(S + 0x41A000 + lase_i + 1) == 0x89) {

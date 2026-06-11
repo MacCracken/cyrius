@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.34] — 2026-06-11
+
+**v6.1.x slot 34 (Phase F — security hardening, pack F1b part 1): two live
+silent-failure regressions — CVE-22 + CO-03.** From the 2026-06-10 deep-dive
+([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md)).
+Both are "a loud failure was silently turned into a silent failure," neither
+biting in-tree yet because no test exercises the path.
+
+### Fixed
+- **CVE-22 — `_vec_die`/`_hm_die` infinitely self-recursed on every non-AGNOS
+  target.** v6.0.56 (commit `4bc39019`) replaced a working `syscall(60,1)` with a
+  target dispatch whose `#ifndef CYRIUS_TARGET_AGNOS` branch called the die fn
+  *itself* (`lib/vec.cyr`, `lib/hashmap.cyr`). So on Linux/macOS/Windows every
+  fatal stdlib abort (vec/map OOB, capacity overflow, push-OOM) unwound into
+  unbounded recursion = stack-overflow SIGSEGV instead of a clean `exit(1)` —
+  the diagnostic printed, but the exit mechanism was broken. Restored
+  `syscall(60, 1)` (the backend translates 60 to the per-target exit; AGNOS keeps
+  its own `syscall(0,1)` branch). cycc unaffected (no lib includes).
+- **CO-03 — x86 byte-pattern opt passes ran unguarded on aarch64.** `DSE_PASS`
+  and the LASE loop (`src/frontend/parse_fn.cyr`) scan codebuf for x86 opcodes
+  `48 89 85`/`48 8B 85` and overwrite 7-byte windows with `0x90` — but they ran
+  with **no `_AARCH64_BACKEND` gate** (unlike the compaction pass), so on aarch64
+  a 4-byte instruction word matching those bytes could be silently NOP-corrupted.
+  Also the explicit-`#regalloc` path set `SFRA` without the arch gate the AUTO
+  path has. Gated DSE/LASE + the `#regalloc` `SFRA` on `_AARCH64_BACKEND == 0`
+  (matching the compaction pass); `_cur_fn_regalloc` then stays 0 on aarch64 so
+  the byte-rewriting picker self-skips.
+
+**Verification:** x86 codegen unchanged (the gates are no-ops on x86) → cycc
+self-host **byte-identical** (1,046,480 B); aarch64 output now skips the
+peephole (was a no-op on the compiler's own code) → **pi `SELFHOST_OK`**;
+check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**. **user pushes/tags after
+CI.** Phase F continues — F1b part 2 (CVE-23 emitter caps · CVE-31 frontend
+input validation · CO-02 check.sh exit-masking) next.
+
 ## [6.1.33] — 2026-06-11
 
 **v6.1.x slot 33 (Phase F — security hardening, pack F1a): dep-resolver / include
