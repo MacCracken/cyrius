@@ -1,10 +1,15 @@
 # Test: fdlopen_init_trusted (v6.1.29) — the setuid-safe helper trust check.
 # fdlopen (foreign-dlopen) bootstraps host glibc, so it is x86_64-Linux only;
-# everywhere else (AGNOS / macOS / Windows / aarch64) it returns -6 (unsupported)
-# and the lstat/symlink primitives this test uses differ or are absent (the agnos
-# floor has no sys_symlink / lstat). So the full trust assertions are gated to
-# x86-Linux, and the off-platform behavior (-6) is asserted on its own path — the
-# test asserts on every target, never a hollow pass.
+# everywhere else (AGNOS / macOS / Windows / aarch64) it returns -6 (unsupported).
+# The full trust assertions are gated to x86-Linux; the off-platform behavior (-6)
+# is asserted on its own path — the test asserts on every target.
+#
+# ROOT-SAFE: the x86-Linux block runs both as a normal user (local) and as ROOT
+# (the CI "Test (AGNOS)" job runs x86-Linux binaries inside the agnosticos
+# container with --user root). So rejection tests use mode/type checks (which a
+# root-created temp file still fails), NOT ownership (a root-created file is uid 0
+# and would be wrongly trusted), and the positive case manufactures a root-owned
+# file when running as root / falls back to /etc/passwd otherwise.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -21,31 +26,52 @@ var rc = fdlopen_init_trusted(&st);
 #ifdef CYRIUS_TARGET_LINUX
 #ifdef CYRIUS_ARCH_X86
 # ── x86_64 Linux: full trust check ──
-test_group("verify_trusted — accept root-owned regular file");
-# /etc/passwd: root-owned, regular, mode 644 (no group/other write) → trusted.
-var v_pw = _fdlopen_verify_trusted("/etc/passwd");
-assert_eq(v_pw, 1, "/etc/passwd is trusted (root:root regular, not world-writable)");
 
-test_group("verify_trusted — reject untrusted");
-# Missing path → lstat fails → not trusted.
+test_group("verify_trusted — accept a root-owned regular file");
+var euid = sys_geteuid();
+if (euid == 0) {
+    # Running as root (CI agnos container): manufacture a root-owned 0644 file.
+    var gfd = sys_open("/tmp/fdl_good_helper", 0x41, 0x1A4);  # O_WRONLY|O_CREAT
+    sys_write(gfd, "x", 1);
+    sys_close(gfd);
+    sys_chmod("/tmp/fdl_good_helper", 0x1A4);                 # 0644 (defeat umask)
+    var v_good = _fdlopen_verify_trusted("/tmp/fdl_good_helper");
+    assert_eq(v_good, 1, "root-owned 0644 regular file is trusted");
+    sys_unlink("/tmp/fdl_good_helper");
+}
+if (euid != 0) {
+    # Non-root (local dev): /etc/passwd is root:root, regular, 644.
+    var v_pw = _fdlopen_verify_trusted("/etc/passwd");
+    assert_eq(v_pw, 1, "/etc/passwd is trusted (root:root regular, not world-writable)");
+}
+
+test_group("verify_trusted — reject untrusted (root-safe: mode/type, not uid)");
+# Missing → lstat fails → rejected.
 var v_miss = _fdlopen_verify_trusted("/nonexistent/cyrius/helper");
 assert_eq(v_miss, 0, "missing path is not trusted");
 
-# A user-owned regular file (we create it) → uid != 0 → not trusted.
-var fd = sys_open("/tmp/fdl_user_helper", 0x41, 0x1A4);  # O_WRONLY|O_CREAT, 0644
-sys_write(fd, "x", 1);
-sys_close(fd);
-var v_user = _fdlopen_verify_trusted("/tmp/fdl_user_helper");
-assert_eq(v_user, 0, "user-owned file is not trusted");
+# A directory → not a regular file (S_IFDIR) → rejected.
+var v_dir = _fdlopen_verify_trusted("/tmp");
+assert_eq(v_dir, 0, "a directory is not trusted (not a regular file)");
 
-# A symlink (even pointing at a root file) → lstat sees S_IFLNK → not trusted.
+# A world/other-writable file → rejected by the mode check (a writable helper is
+# replaceable, which is the whole threat). chmod 0666 AFTER create to defeat umask.
+# Deterministic regardless of who owns it — so it holds as root in CI too.
+var wfd = sys_open("/tmp/fdl_ww_helper", 0x41, 0x1B6);  # O_WRONLY|O_CREAT
+sys_write(wfd, "x", 1);
+sys_close(wfd);
+sys_chmod("/tmp/fdl_ww_helper", 0x1B6);                 # 0666
+var v_ww = _fdlopen_verify_trusted("/tmp/fdl_ww_helper");
+assert_eq(v_ww, 0, "world-writable file is not trusted (mode check)");
+
+# A symlink → lstat sees S_IFLNK (not followed) → rejected, whatever it points at.
 sys_unlink("/tmp/fdl_link_helper");
-sys_symlink("/etc/passwd", "/tmp/fdl_link_helper");
+sys_symlink("/tmp/fdl_ww_helper", "/tmp/fdl_link_helper");
 var v_link = _fdlopen_verify_trusted("/tmp/fdl_link_helper");
 assert_eq(v_link, 0, "symlink is not trusted (lstat, not followed)");
 
 # cleanup
-sys_unlink("/tmp/fdl_user_helper");
+sys_unlink("/tmp/fdl_ww_helper");
 sys_unlink("/tmp/fdl_link_helper");
 
 test_group("init_trusted — fail closed");
