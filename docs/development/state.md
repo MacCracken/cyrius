@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.30** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,896 B (+144 B @ 6.1.30 — x86-macho argv prologue: r15 reserve + park, gated _TARGET_MACHO==1) |
+| **Version** | **6.1.31** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,896 B (unchanged @ 6.1.31 — sigil 3.7.9 fold is lib-only; sigil not in cycc) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -24,28 +24,32 @@
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 87/87 |
-| tests | 172 `.tcyr` · 15 `.bcyr` |
+| tests | 173 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
 | bench (every-release gate) | self_compile ~497 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.30 ready for cut — **x86-macOS argv prologue** (phase 1
-> of the x86-macOS-usable-toolchain arc; issue `2026-06-02-macos-x86-release-no-compiler`).
-> cycc self-hosts byte-identical on Intel (`ach`), but the `cyrius` wrapper + tools got
-> `argc=0` (fell to help) — the `_macho_init_rsp` GLOBAL capture is wiped by its own
-> gvar-init, and macho `.bss` isn't zero-filled (uninit global = garbage). Fix = **reserve
-> r15** (mirror arm64 x28): `parse_fn.cyr` caps regalloc 5→4 on `_TARGET_MACHO==1`;
-> `main.cyr` + `main_x86_macho.cyr` emit `mov r15, rsp` as the first landing instr
-> (identical → cross==native); `args_macos.cyr` `argc`/`argv` read r15. cycc ignores r15
-> (stdin). `version-bump.sh 6.1.30` to apply; **user pushes/tags after CI**. Gates: Linux
-> self-host **byte-identical**, check.sh **87/87**, **ecb+cass+ach `SELFHOST_OK`** (ach
-> r1==r2, cross==native), bench self_compile 498 ms, cycc +144 B (gated). **VERIFIED on
-> `ach`:** the wrapper reads argv (probe filenames came from the command line). All gated
-> `_TARGET_MACHO==1` — ELF/arm64-macho/PE untouched. **REMAINING x86-macOS arc (follow-up
-> slots, ach-gated):** (1) env reading (`_read_env`/`_macho_fill_environ` → HOME/uname);
-> (2) the wrapper's aarch64 arch-default on macOS (`cbt/cyrius.cyr set_arch` — detect x86
-> on Intel); (3) cycc-finding; (4) **issue-1** native miscompile (built a broken 323 KB
-> wrapper vs 610 KB cross-built — tools ship cross-built until fixed); (5) packaging.
+> **Handoff (2026-06-10):** v6.1.31 ready for cut — **Ed25519 server certs for native TLS**
+> (fold sigil 3.7.9; closes the sit-filed issue `2026-06-10-tls-native-ed25519-server-cert-accept-fails`).
+> `sit serve --tls` with an Ed25519 cert failed (ECDSA worked). Root cause was NOT the TLS
+> layer (`tls_native` CertVerify sign+verify already handled Ed25519) but **sigil's X.509
+> parser was ECDSA/RSA-only** → server `load_creds` rejected the cert (`x509_parse`→
+> CERT_INVALID) before the handshake. (The prior Ed25519 test paired an Ed25519 *key* with
+> a P-256 *cert*, so a real Ed25519 **cert** was never parsed — the workflow corrected the
+> premise; I localized via repro→load_creds→x509_parse.) **sigil 3.7.9** adds Ed25519 X.509
+> leaf-cert support (RFC 8410: sig-algid OID, SPKI 32-byte pubkey `X509_CURVE_ED25519`,
+> `_x509_verify_link` PureEd25519); folded into `lib/sigil.cyr` (3.7.4→3.7.9). cycc UNCHANGED.
+> `version-bump.sh 6.1.31` to apply; **user pushes/tags after CI**. Gates: check.sh **87/87**,
+> all **173** tcyr exit-0 (+`tls_native_ed25519.tcyr`), cycc byte-identical, **ecb/cass
+> `SELFHOST_OK`**, bench 507 ms. **VERIFIED:** native loopback (5/5) + **OpenSSL `s_client`
+> interop** (`Peer signature type: ed25519`, TLS 1.3, server accepted; only verify error =
+> self-signed chain-trust). sigil suite 54/54. **Unblocks sit** (broaden TLS CI to Ed25519).
+>
+> **Still OPEN — x86-macOS-usable arc (.30 shipped phase 1 = argv prologue; follow-up slots,
+> ach-gated):** (1) env (`_read_env`/`_macho_fill_environ` → HOME/uname); (2) wrapper's
+> aarch64 arch-default on macOS (`cbt/cyrius.cyr set_arch` — detect x86 on Intel); (3)
+> cycc-finding; (4) **issue-1** native miscompile (broken 323 KB wrapper vs 610 KB
+> cross-built — ship cross-built until fixed); (5) packaging.
 > **Follow-on (.28, still open):** agnosys can drop `src/syscall.cyr` for `lib/sys.cyr`.
 > Phase E (bayan .25 + ganita .26) stays DONE. **Still deferred to v6.1.x closeout (heap-map
 > audit §4):** re-sort the `output_buf` comment line + reclaim the 2 MB gap at `0x71A000` (.27).

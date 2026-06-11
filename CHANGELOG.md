@@ -6,6 +6,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.31] — 2026-06-10
+
+**v6.1.x slot 31: Ed25519 server certificates for native TLS** (fold sigil 3.7.9;
+closes the sit-filed issue `2026-06-10-tls-native-ed25519-server-cert-accept-fails`).
+`sit serve --tls` with an Ed25519 leaf cert failed the handshake (ECDSA P-256
+worked). The root cause was NOT the TLS layer — `tls_native`'s CertVerify sign +
+verify already handled Ed25519 — but **sigil's X.509 parser was ECDSA/RSA-only**, so
+the server's `load_creds` rejected the Ed25519 cert (`x509_parse` → CERT_INVALID)
+*before* the handshake ran. (The one prior Ed25519 test paired an Ed25519 *key* with
+a P-256 *cert*, so a real Ed25519 **cert** had never been parsed.)
+
+### Changed
+- **Folded sigil 3.7.4 → 3.7.9** (`lib/sigil.cyr`): Ed25519 X.509 leaf-cert support
+  (RFC 8410) — `_xp_parse_sig_algid` (id-Ed25519 OID `2b6570`), `_xp_parse_spki`
+  (raw 32-byte pubkey → `X509_CURVE_ED25519`, on-curve check skipped),
+  `_x509_verify_link` (PureEd25519 via `ed25519_verify` over the raw TBS), +
+  `X509_SIG_ED25519`. Existing ECDSA/RSA paths untouched; cycc UNCHANGED (sigil
+  isn't in the compiler).
+
+### Added
+- `tests/tcyr/tls_native_ed25519.tcyr` — full TLS 1.3 handshake (native client ↔
+  native server) with an Ed25519 server cert over a socketpair.
+
+**Verification:** the Ed25519 handshake works end-to-end — native loopback (5/5)
+**and OpenSSL `s_client` interop** (`Peer signature type: ed25519`, TLS 1.3, server
+accepted; the only verify error being the self-signed chain-trust = our CertVerify
+signature accepted, exactly like the ECDSA case). sigil 3.7.9 suite 54/54 (real-cert
+parse + self-sig verify + tampered-sig reject). cyrius: check.sh **87/87**, all 173
+tcyr exit-0, cycc byte-identical, **ecb/cass `SELFHOST_OK`**, bench 507 ms.
+**Unblocks sit** — it can broaden its TLS CI smoke to Ed25519 server certs.
+
 ## [6.1.30] — 2026-06-10
 
 **v6.1.x slot 30: x86-macOS argv prologue — the tools can finally read their

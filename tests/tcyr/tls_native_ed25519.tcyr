@@ -1,0 +1,60 @@
+# tls_native_ed25519.tcyr — v6.1.31
+# Ed25519 SERVER cert end-to-end: our native client ↔ our native server over a
+# socketpair, with an Ed25519 leaf cert (the server signs CertificateVerify with
+# scheme ed25519 = 0x0807, PureEdDSA over the raw transcript content; the client
+# verifies it). Mirrors tls_wrapper_native.tcyr (which uses ECDSA P-256). Filed
+# from sit v0.8.8 (`sit serve --tls` with an Ed25519 cert failed the handshake);
+# see issues/2026-06-10-tls-native-ed25519-server-cert-accept-fails.md.
+# Cert/key are openssl-generated Ed25519 (cert DER 320 B, PKCS#8 key DER 48 B).
+#define CYRIUS_TLS_NATIVE
+include "lib/fdlopen.cyr"
+include "lib/tls_native.cyr"
+include "lib/tls.cyr"
+include "lib/assert.cyr"
+
+test_group("tls_native Ed25519 server cert (.31)");
+
+# Ed25519 self-signed leaf for CN=127.0.0.1 (cert DER 320 B; PKCS#8 key 48 B,
+# OID 1.3.101.112 + 32-byte seed).
+var cert = hex_decode("3082013c3081efa00302010202146f270712a3903ffd2c16beb02b1ddac6d8ec2e31300506032b657030143112301006035504030c093132372e302e302e31301e170d3236303631313034333035395a170d3236303631323034333035395a30143112301006035504030c093132372e302e302e31302a300506032b6570032100b83296da752a714efff5d1ac23384bd55e1d3e7a09b52d9f5aa3b248cb52388fa3533051301d0603551d0e04160414da1359a574f0e44c08a2c4a0953feb245e258069301f0603551d23041830168014da1359a574f0e44c08a2c4a0953feb245e258069300f0603551d130101ff040530030101ff300506032b6570034100e37e115584d6d72ae3adf09fff610f2ee2771691b853b5e3be1558e3738cf032fa239b682be3faf4b4d2ef30e31da3729de0913837f93ef3b5cc305c35c3380a", 640);
+var key = hex_decode("302e020100300506032b657004220420ea5da8171db67e4e169e246d8f7223ee88110129914478f8b49ffc898780df10", 96);
+
+# Disable peer verification of the self-signed test cert (still exercises the
+# full CertVerify SIGNATURE path on the server + signature VERIFY on the client;
+# only the chain-trust step is skipped).
+fn vhook(hctx, handle): i64 { tls_set_verify(handle, 0, 0); return 0; }
+
+var fds[8];
+sys_socketpair(1, 1, 0, &fds);
+var fdp = load64(&fds);
+var sfd = fdp & 0xFFFFFFFF;
+var cfd = (fdp >> 32) & 0xFFFFFFFF;
+
+var pid = sys_fork();
+if (pid == 0) {
+    sys_close(sfd);
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    var ctx = tls_connect_with_ctx_hook(cfd, "localhost", &vhook, 0);
+    if (ctx == 0) { sys_exit(10); }
+    if (tls_write(ctx, "hello-ed25519", 13) != 13) { sys_exit(11); }
+    var rb[64];
+    if (tls_read(ctx, &rb, 64) != 9) { sys_exit(12); }
+    if (_tn_ct_eq(&rb, "ack-nativ", 9) != 1) { sys_exit(13); }
+    tls_close(ctx);
+    sys_close(cfd);
+    sys_exit(0);
+}
+
+sys_close(cfd);
+var srv = tls_native_new_server(cert, 320, key, 48);
+tls_native_server_load_creds(srv);
+assert_eq(tls_native_accept(srv, sfd), TLS_OK, "native server accepts client with Ed25519 cert");
+var sb[64];
+assert_eq(tls_native_read(srv, &sb, 64), 13, "server reads app data (Ed25519 handshake completed)");
+assert_eq(_tn_ct_eq(&sb, "hello-ed25519", 13), 1, "client write decrypts server-side");
+assert_eq(tls_native_write(srv, "ack-nativ", 9), 9, "server responds");
+var st[4];
+sys_waitpid(pid, &st, 0);
+assert_eq((load64(&st) >> 8) & 0xFF, 0, "client verified Ed25519 CertVerify + closed (child exit 0)");
+
+var r = assert_summary();
