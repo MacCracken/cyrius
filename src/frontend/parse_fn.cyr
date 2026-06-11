@@ -1399,8 +1399,14 @@ fn PARSE_FN_DEF(S): i64 {
             }
         }
     }
+    # v6.1.30: x86-macho reserves r15 for the parked argv base (the entry emits
+    # `mov r15, rsp`), so cap regalloc at 4 callee-saved regs (rbx/r12/r13/r14)
+    # on that target — never assign a 5th hot local to r15. ELF / arm64 / PE keep
+    # 5. Gated on _TARGET_MACHO==1 (x86 Mach-O only; arm64 Mach-O is ==2).
+    var _ra_cap = 5;
+    if (_TARGET_MACHO == 1) { _ra_cap = 4; }
     if (_regalloc_pending == 1) {
-        if (_has_inline_asm == 0) { SFRA(S, fi, 5); }
+        if (_has_inline_asm == 0) { SFRA(S, fi, _ra_cap); }
         else {
             syscall(SYS_WRITE, 2, "warning:", 8);
             FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -1410,7 +1416,7 @@ fn PARSE_FN_DEF(S): i64 {
         }
         _regalloc_pending = 0;
     }
-    elif (_auto_enable == 1) { SFRA(S, fi, 5); _ra_auto_count = _ra_auto_count + 1; }
+    elif (_auto_enable == 1) { SFRA(S, fi, _ra_cap); _ra_auto_count = _ra_auto_count + 1; }
     # v5.6.3: transfer any pending `#must_use` onto fn_flags[fi] bit 0.
     # Clear unconditionally (same stale-flag argument as #regalloc).
     if (_must_use_pending == 1) {

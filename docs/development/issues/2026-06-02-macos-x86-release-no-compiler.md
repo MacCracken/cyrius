@@ -1,5 +1,28 @@
 # 2026-06-02 — x86_64-macOS: cycc SIGSYS's on real compiles (runtime arc, not just packaging)
 
+> **★ v6.1.30 (argv prologue DONE — verified on ach):** the "layer 6 / tools argv"
+> blocker is FIXED. cycc self-hosts byte-identical on Intel (re-confirmed `ach`
+> SELFHOST_OK); the tools (`cyrius` wrapper + cyrfmt/lint/doc) got `argc=0` because
+> the `_macho_init_rsp` **global** capture is wiped by its own gvar-init (and macho
+> `.bss` isn't zero-filled → an uninit global is garbage). Fix = **reserve r15**
+> (mirror arm64 x28): `parse_fn.cyr` caps regalloc 5→4 on `_TARGET_MACHO==1`;
+> `main.cyr` + `main_x86_macho.cyr` emit `mov r15, rsp` as the first landing instr
+> (identical → cross==native); `args_macos.cyr` `argc`/`argv` read r15. Verified on
+> `ach`: the wrapper now reads argv (probe filenames came from the command line).
+> Linux self-host byte-identical, check.sh 87/87, ecb/cass/ach SELFHOST_OK. See
+> CHANGELOG [6.1.30].
+>
+> **REMAINING LAYERS (the x86-macOS-usable arc — follow-up slots, all ach-gated):**
+> (1) **env** — `_read_env`/`_macho_fill_environ` return nothing on x86-macho, so
+> `HOME` isn't read (`_home`→`/root`); wire them to the new r15 base. (2) **arch
+> default** — `cbt/cyrius.cyr` `set_arch(ARCH_AARCH64)` fires on macOS (assumes
+> Apple Silicon) → the wrapper picked `[aarch64]`/`cycc_aarch64`; detect x86 on
+> Intel (needs uname/env from layer 1). (3) **cycc-finding** on x86-macho. (4)
+> **issue-1 native miscompile** (own file `2026-06-07-x86-macho-byte-array...`) —
+> the NATIVE macho cycc miscompiles complex code: it built a broken 323 KB wrapper
+> vs the correct 610 KB cross-built one. So tools must ship cross-built until issue-1
+> is fixed. (5) **packaging** (`build-macos-x86-tarball.sh` + install.sh + release.yml).
+
 > **Status update v6.0.58 (premise-check + build):** the cycc RUNTIME half is DONE — x86 Mach-O cycc
 > self-hosts byte-identical + `return 42`→42 on real Intel hardware (`ach`), per the .43-.45 work. The
 > remaining work was assumed to be "just packaging," but BUILDING the tarball revealed it is NOT: the

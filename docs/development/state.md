@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.29** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,752 B (unchanged @ 6.1.29 — fdlopen_init_trusted is lib-only; not in cycc) |
+| **Version** | **6.1.30** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,896 B (+144 B @ 6.1.30 — x86-macho argv prologue: r15 reserve + park, gated _TARGET_MACHO==1) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -29,25 +29,26 @@
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
 | bench (every-release gate) | self_compile ~497 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.29 ready for cut — **`fdlopen_init_trusted` setuid-safe
-> foreign-dlopen** (HIGH-sev security; closes the shakti proposal). The `fdlopen` helper
-> resolved inside the *invoking user's* `$HOME` — a setuid-root consumer (shakti) would
-> `execve` a non-root-replaceable helper AS ROOT (priv-esc). New `fdlopen_init_trusted(state)`
-> (`lib/fdlopen.cyr`) resolves the **root-owned** `/usr/lib/cyrius/dlopen-helper`,
-> `lstat`-verifies it (regular file, uid 0, NOT symlink, not group/other-writable), NEVER
-> consults `$HOME`, fails closed `FDL_ERR_UNTRUSTED`(-9). `fdlopen_init`/`_init_full`
-> unchanged. `install.sh` installs the root-owned system helper when run as root.
-> `threat-model.md` trust row qualified. x86-Linux only. `tests/tcyr/fdlopen_trusted.tcyr`
-> 5/5 (symlink/user-owned/missing rejected; root-owned accepted; fail-closed). Proposal
-> `git mv`'d to `proposals/archived/`. `version-bump.sh 6.1.29` to apply; **user pushes/
-> tags after CI**. Gates: cycc **UNCHANGED** (self-hosts byte-identical — fdlopen not in
-> cycc), check.sh **87/87**, all 172 tcyr exit-0, api-surface (+`fdlopen_init_trusted`),
-> **ecb+cass `SELFHOST_OK`**, bench self_compile 513 ms. **Unblocks shakti 0.6.3** (NSS
-> LDAP/sssd + remote policy) — shakti-side migration to `fdlopen_init_trusted` is
-> downstream. **Follow-on (.28, still open):** agnosys can drop its `src/syscall.cyr` for
-> `lib/sys.cyr`; the dep-resolver `dir_list` path could get an ecb/cass smoke. Phase E
-> (bayan .25 + ganita .26) stays DONE. **Still deferred to v6.1.x closeout (heap-map audit
-> §4):** re-sort the `output_buf` comment line + reclaim the 2 MB gap at `0x71A000` (.27).
+> **Handoff (2026-06-10):** v6.1.30 ready for cut — **x86-macOS argv prologue** (phase 1
+> of the x86-macOS-usable-toolchain arc; issue `2026-06-02-macos-x86-release-no-compiler`).
+> cycc self-hosts byte-identical on Intel (`ach`), but the `cyrius` wrapper + tools got
+> `argc=0` (fell to help) — the `_macho_init_rsp` GLOBAL capture is wiped by its own
+> gvar-init, and macho `.bss` isn't zero-filled (uninit global = garbage). Fix = **reserve
+> r15** (mirror arm64 x28): `parse_fn.cyr` caps regalloc 5→4 on `_TARGET_MACHO==1`;
+> `main.cyr` + `main_x86_macho.cyr` emit `mov r15, rsp` as the first landing instr
+> (identical → cross==native); `args_macos.cyr` `argc`/`argv` read r15. cycc ignores r15
+> (stdin). `version-bump.sh 6.1.30` to apply; **user pushes/tags after CI**. Gates: Linux
+> self-host **byte-identical**, check.sh **87/87**, **ecb+cass+ach `SELFHOST_OK`** (ach
+> r1==r2, cross==native), bench self_compile 498 ms, cycc +144 B (gated). **VERIFIED on
+> `ach`:** the wrapper reads argv (probe filenames came from the command line). All gated
+> `_TARGET_MACHO==1` — ELF/arm64-macho/PE untouched. **REMAINING x86-macOS arc (follow-up
+> slots, ach-gated):** (1) env reading (`_read_env`/`_macho_fill_environ` → HOME/uname);
+> (2) the wrapper's aarch64 arch-default on macOS (`cbt/cyrius.cyr set_arch` — detect x86
+> on Intel); (3) cycc-finding; (4) **issue-1** native miscompile (built a broken 323 KB
+> wrapper vs 610 KB cross-built — tools ship cross-built until fixed); (5) packaging.
+> **Follow-on (.28, still open):** agnosys can drop `src/syscall.cyr` for `lib/sys.cyr`.
+> Phase E (bayan .25 + ganita .26) stays DONE. **Still deferred to v6.1.x closeout (heap-map
+> audit §4):** re-sort the `output_buf` comment line + reclaim the 2 MB gap at `0x71A000` (.27).
 > **NOT fixed (separate, still OPEN):** sandhi's own Darwin non-blocking-connect
 > constants (`issues/2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) —
 > needs an upstream sandhi fix + re-fold.

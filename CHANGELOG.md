@@ -6,6 +6,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.30] — 2026-06-10
+
+**v6.1.x slot 30: x86-macOS argv prologue — the tools can finally read their
+arguments.** First phase of the x86-macOS-usable-toolchain arc (issue
+`2026-06-02-macos-x86-release-no-compiler`). cycc itself self-hosts byte-identical
+on Intel (`ach`), but the `cyrius` wrapper + cyrfmt/lint/doc got `argc=0` and fell
+to the help banner — because the prior `_macho_init_rsp` **global** capture is wiped
+by its own gvar-init (and macho `.bss` isn't zero-filled, so an uninit global is
+garbage). Both dead ends; the fix is a **reserved register**, mirroring arm64's x28.
+
+### Fixed
+
+- **x86-macho argv** — reserve **r15** for the parked init-stack pointer:
+  - `src/frontend/parse_fn.cyr`: cap auto/explicit regalloc at **4** callee-saved
+    regs (rbx/r12/r13/r14) on `_TARGET_MACHO==1` so no hot local is ever assigned
+    to r15 (ELF / arm64-macho / PE keep 5).
+  - `src/main.cyr` + `src/main_x86_macho.cyr`: emit `mov r15, rsp` (`49 89 E7`) as
+    the **first landing instruction** (the entry jmp preserves rsp, so it captures
+    `[rsp]=argc` / inline argv before any frame push). Identical in both drivers so
+    cross == native stays byte-identical.
+  - `lib/args_macos.cyr`: `argc`/`argv` read r15 via `_macho_argv_base` (inline
+    `mov rax, r15`), unifying with the arm64 path. cycc itself ignores r15 (stdin).
+
+**Verification:** Linux self-host **byte-identical**, check.sh **87/87**,
+**ecb + cass + ach all `SELFHOST_OK`** (ach self-host byte-identical r1==r2,
+cross==native). On `ach` the `cyrius` wrapper now reads `argv` (built a probe whose
+filenames came straight from the command line). bench self_compile 498 ms; cycc
++144 B (the gated emit/cap code). All changes gated to `_TARGET_MACHO==1` — ELF /
+arm64-macho / PE untouched.
+
+**Still open (x86-macOS-usable arc — follow-up slots):** env reading
+(`_read_env`/`_macho_fill_environ` on x86-macho → `HOME`/uname), the wrapper's
+aarch64 arch-default on macOS (must detect x86 on Intel), cycc-finding, the
+separate **issue-1** native-cycc miscompile (it produced a broken 323 KB wrapper
+vs the correct 610 KB cross-built one), and release packaging. See the issue.
+
 ## [6.1.29] — 2026-06-10
 
 **v6.1.x slot 29: `fdlopen_init_trusted` — setuid-safe foreign-dlopen** (HIGH-sev

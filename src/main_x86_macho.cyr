@@ -400,6 +400,14 @@ SMOD(S, 0);
 # Patch jmp to land here (start of main code)
 EPATCH(S, jmp_patch);
 
+# v6.1.30: x86-macho argv — park the init rsp in r15 (reserved from regalloc, see
+# parse_fn.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The
+# entry jmp preserves rsp, so here rsp is still the init stack ([rsp]=argc, inline
+# argv/envp) — captured before the gvar-inits / EFNPRO below push anything. r15 is
+# never clobbered, so it survives into argc()/argv()/_read_env. cycc ignores it.
+# MUST match main.cyr's macho park byte-for-byte (cross == native self-host).
+E3(S, 0xE78949);  # mov r15, rsp   (49 89 E7)
+
 # Emit enum initializations FIRST (before gvar inits)
 var gvar_save_ti = GTI(S);
 STI(S, 0);

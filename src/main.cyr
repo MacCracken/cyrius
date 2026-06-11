@@ -1468,6 +1468,15 @@ SMOD(S, 0);
 # Patch jmp to land here (start of main code)
 EPATCH(S, jmp_patch);
 
+# v6.1.30: x86-macho argv — park the init rsp in r15 (reserved from regalloc, see
+# parse_fn.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The entry
+# jmp preserves rsp, so here rsp is still the init stack ([rsp]=argc, inline
+# argv/envp) — captured before EMIT_GVAR_INITS / EFNPRO below push anything. r15 is
+# never clobbered, so it survives into argc()/argv()/_read_env. cycc ignores it.
+# MUST match main_x86_macho.cyr's macho park byte-for-byte (cross == native).
+# _TARGET_MACHO==1 is x86 Mach-O (==2 is arm64, which has its own x28 prologue).
+if (_TARGET_MACHO == 1) { E3(S, 0xE78949); }   # mov r15, rsp   (49 89 E7)
+
 # v5.11.52: under CYRIUS_TARGET_EFI=1, save firmware-supplied entry
 # args (RCX = ImageHandle, RDX = SystemTable per UEFI MS x64 ABI)
 # into callee-saved R14/R15 BEFORE any user emit fires. EMIT_GVAR_INITS
