@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.33] — 2026-06-11
+
+**v6.1.x slot 33 (Phase F — security hardening, pack F1a): dep-resolver / include
+injection class — CVE-14/15/16.** From the 2026-06-10 deep-dive
+([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md));
+closes [`issues/.../2026-06-10-deps-resolver-injection-class.md`]. Three
+shell-injection sinks the CVE-01/02 fixes left open — converted to argv `execve`
+(no shell), the right shape the original audit recommended.
+
+### Fixed
+- **CVE-14 (P0-class) — `_sha256sum_file` Linux branch built `sha256sum <path>`
+  and ran it via `/bin/sh -c`** with no metacharacter validation (`cbt/deps.cyr`).
+  This sink is reached by `cmd_deps_lock`, which **auto-runs on every `cyrius
+  deps`/`build`** (it hashes `dir_list` filenames), so a lockfile path or a
+  resolved-dep filename with shell metacharacters ran arbitrary commands. Now
+  execs `/usr/bin/env sha256sum <path>` with `path` as a **distinct argv element**
+  — verified: a file literally named `a;touch PWNED;b.cyr` is hashed without
+  executing `touch`, and the hash matches system `sha256sum`. (Windows already
+  used the safe `exec_capture` argv path.)
+- **CVE-15 — dep `git clone` built a `/bin/sh` string + `sys_system`.** The CVE-01
+  denylist rejects `;|\`$&()` but **not space or a leading `-`**, so
+  `git = "-c protocol.ext.allow=always --upload-pack=… ext::sh …"` became
+  positional git args → local RCE. Now execs `git` via argv with a **`--`
+  separator** before the url/dir positionals, so a url/tag beginning with `-`
+  can't be read as a git flag. (The metachar denylist is kept as defense-in-depth.)
+- **CVE-16 — absolute include paths were accepted** (`src/frontend/lex.cyr`
+  `READFILE`). The CVE-02 fix landed only the `..`-traversal half; a hostile
+  `.cyr` could `include "/home/u/.ssh/id_rsa"` and surface the contents via error
+  text / output. Now **rejects leading-`/` paths** unless
+  `CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1` (mirrors `CYRIUS_ALLOW_PARENT_INCLUDES`). The
+  `CYRIUS_HOME` lib fallback opens its absolute path directly (not via the guard),
+  so it's unaffected.
+
+**Verification:** cycc self-hosts byte-identical (1,046,320 B, +600 B for the
+CVE-16 guard); check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**. CVE-14
+hash-correctness + injection-safety proven; CVE-15 git-clone runs via argv;
+CVE-16 reject + override + normal-compile all verified. **user pushes/tags after
+CI.** Phase F continues (live-silent-failure regressions next).
+
 ## [6.1.32] — 2026-06-11
 
 **v6.1.x slot 32 (Phase F — security/correctness hardening tail): agnos argv

@@ -1,4 +1,13 @@
-# Dep-resolver / include injection class — CVE-14/15/16
+# Dep-resolver / include injection class — CVE-14/15/16 — ✅ RESOLVED v6.1.33
+
+> **RESOLVED (2026-06-11, v6.1.33).** All three sinks converted to argv `execve`
+> (no shell): CVE-14 `_sha256sum_file` → `/usr/bin/env sha256sum <path>` (path a
+> distinct argv element; verified `a;touch PWNED;b.cyr` hashed without exec, hash
+> matches system `sha256sum`); CVE-15 `git clone` → argv `execve` with a `--`
+> separator (leading-`-` url/tag can't become a flag); CVE-16 absolute includes
+> rejected in `lex.cyr::READFILE` unless `CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1`. cycc
+> self-host byte-identical; check.sh 87/87; ecb+cass+pi `SELFHOST_OK`. See
+> CHANGELOG [6.1.33].
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Critical (CVE-14 is P0-class)

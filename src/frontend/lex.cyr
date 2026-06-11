@@ -635,6 +635,29 @@ fn READFILE(path, dst, maxsz): i64 {
             pi += 1;
         }
     }
+    # CVE-16 (v6.1.33): reject absolute include paths (leading '/') UNLESS
+    # CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 — completes the CVE-02 spec (the v4.x fix
+    # landed only the '..' half). A hostile `.cyr` could `include "/home/u/.ssh/id_rsa"`
+    # and surface the contents via error text / embedded output. The CYRIUS_HOME
+    # lib fallback below builds its own absolute path and opens it directly (not
+    # through this guard), so it is unaffected.
+    var _allow_abs = _read_env("CYRIUS_ALLOW_ABSOLUTE_INCLUDES");
+    var allow_abs = 0;
+    if (_allow_abs != 0) {
+        if (load8(_allow_abs) == 49 && load8(_allow_abs + 1) == 0) {
+            allow_abs = 1;
+        }
+    }
+    if (allow_abs == 0) {
+        if (load8(path) == 47) {
+            syscall(SYS_WRITE, 2, "error: absolute include path rejected: ", 39);
+            var alen = 0;
+            while (load8(path + alen) != 0) { alen += 1; }
+            syscall(SYS_WRITE, 2, path, alen);
+            syscall(SYS_WRITE, 2, " (set CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit)\n", 50);
+            return 0;
+        }
+    }
     var fd = 0;
     if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, path, 0, 0); }
     else { fd = syscall(SYS_OPEN, 0 - 100, path, 0, 0); }

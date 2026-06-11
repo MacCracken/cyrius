@@ -713,23 +713,41 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         errors += 1;
                     }
                     if (git_ok == 1) {
-                        var cmd_sb = str_builder_new();
-                        str_builder_add_cstr(cmd_sb, "git clone --depth 1 -q ");
+                        # CVE-15 (v6.1.33): clone via ARGV — no /bin/sh string, no
+                        # sys_system. Each field is a distinct argv element AND a
+                        # `--` separates options from the url/dir positionals, so a
+                        # url/tag beginning with `-` can't be read as a git flag
+                        # (the `-c …ext::sh` / `--upload-pack=…` arg-injection class
+                        # the metachar denylist above misses — space + leading `-`
+                        # aren't blocked). `/usr/bin/env` resolves git via PATH.
+                        var gargv[128];   # N BYTES: up to ~12 ptrs (96 B) + slack
+                        var gai = 0;
+                        store64(&gargv + gai * 8, "env");       gai = gai + 1;
+                        store64(&gargv + gai * 8, "git");       gai = gai + 1;
+                        store64(&gargv + gai * 8, "clone");     gai = gai + 1;
+                        store64(&gargv + gai * 8, "--depth");   gai = gai + 1;
+                        store64(&gargv + gai * 8, "1");         gai = gai + 1;
+                        store64(&gargv + gai * 8, "-q");        gai = gai + 1;
                         if (dep_tag != 0) {
-                            str_builder_add_cstr(cmd_sb, "-b ");
-                            str_builder_add_cstr(cmd_sb, dep_tag);
-                            str_builder_add_cstr(cmd_sb, " ");
+                            store64(&gargv + gai * 8, "-b");    gai = gai + 1;
+                            store64(&gargv + gai * 8, dep_tag); gai = gai + 1;
                         }
-                        str_builder_add_cstr(cmd_sb, dep_git);
-                        str_builder_add_cstr(cmd_sb, " ");
-                        str_builder_add_cstr(cmd_sb, clone_dir);
-                        var cmd = str_data(str_builder_build(cmd_sb));
+                        store64(&gargv + gai * 8, "--");        gai = gai + 1;
+                        store64(&gargv + gai * 8, dep_git);     gai = gai + 1;
+                        store64(&gargv + gai * 8, clone_dir);   gai = gai + 1;
+                        store64(&gargv + gai * 8, 0);
                         if (_verbose == 1) {
-                            sys_write(STDERR_FD, "  git: ", 7);
-                            sys_write(STDERR_FD, cmd, strlen(cmd));
+                            sys_write(STDERR_FD, "  git clone: ", 13);
+                            sys_write(STDERR_FD, dep_git, strlen(dep_git));
                             sys_write(STDERR_FD, "\n", 1);
                         }
-                        sys_system(cmd);
+                        var gpid = sys_fork();
+                        if (gpid == 0) {
+                            sys_execve("/usr/bin/env", &gargv, _envp);
+                            sys_exit(127);
+                        }
+                        var gsb[1];
+                        sys_waitpid(gpid, &gsb, 0);
                     }
                 }
                 dep_path = clone_dir;
@@ -1309,12 +1327,14 @@ fn _sha256sum_file(path): i64 {
     store8(whash + 64, 0);
     return whash;
     #endif
-    # Shell out to sha256sum — available on all Linux
-    var cmd_sb = str_builder_new();
-    str_builder_add_cstr(cmd_sb, "sha256sum ");
-    str_builder_add_cstr(cmd_sb, path);
-    var cmd = str_data(str_builder_build(cmd_sb));
-
+    # CVE-14 (v6.1.33): exec sha256sum via ARGV — `path` is a DISTINCT argv
+    # element, never concatenated into a `/bin/sh -c` string, so a lockfile path
+    # or a resolved-dep filename containing shell metacharacters can't run
+    # commands. This sink is reached by `cmd_deps_lock`, which auto-runs on every
+    # `cyrius deps`/`build` (it hashes `dir_list` filenames), so the prior shell
+    # string was the broad CVE-01-class hole the deep-dive flagged. `/usr/bin/env`
+    # does the PATH lookup for sha256sum with the real environ. (Windows already
+    # uses the safe `exec_capture` argv path above.)
     var tmpf = "/tmp/cyrius_sha_out";
     var pid = sys_fork();
     if (pid == 0) {
@@ -1322,11 +1342,11 @@ fn _sha256sum_file(path): i64 {
         sys_dup2(ofd, 1);
         sys_close(ofd);
         var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
-        store64(&argv, "/bin/sh");
-        store64(&argv + 8, "-c");
-        store64(&argv + 16, cmd);
+        store64(&argv, "env");
+        store64(&argv + 8, "sha256sum");
+        store64(&argv + 16, path);
         store64(&argv + 24, 0);
-        sys_execve("/bin/sh", &argv, _envp);
+        sys_execve("/usr/bin/env", &argv, _envp);
         sys_exit(127);
     }
     var sb[1];
