@@ -1053,6 +1053,10 @@ fn _pe_layout(S): i64 {
         _pe_image_size = (_pe_reloc_rva + _pe_reloc_vsize + 0xFFF) & (0 - 0x1000);
     }
 
+    # CVE-23: enforce the 16 MB output_buf cap once the final on-disk image
+    # size is known (covers both _pe_image_file_size computation paths) —
+    # EMITPE_EXEC writes the whole image to S+0x4D9D000 with no internal guard.
+    _check_output_cap(S, _pe_image_file_size);
     return 0;
 }
 

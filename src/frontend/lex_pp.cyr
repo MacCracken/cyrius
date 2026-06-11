@@ -1610,6 +1610,14 @@ fn PP_PASS(S): i64 {
                                 store8(out + op, 34); op = op + 1;
                                 store8(out + op, 10); op = op + 1;
                                 var nr = READFILE(fname, out + op, 8388608 - op);
+                                if (nr < 0) {
+                                    syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
+                                    var _ifl = 0;
+                                    while (load8(fname + _ifl) != 0) { _ifl = _ifl + 1; }
+                                    syscall(SYS_WRITE, 2, fname, _ifl);
+                                    syscall(SYS_WRITE, 2, "\n", 1);
+                                    syscall(SYS_EXIT, 1);
+                                }
                                 op = op + nr;
                                 had_include = 1;
                             }
@@ -1974,6 +1982,14 @@ fn PP_IFDEF_PASS(S): i64 {
                                     store8(out + op, 34); op = op + 1;
                                     store8(out + op, 10); op = op + 1;
                                     var nr = READFILE(fname, out + op, 8388608 - op);
+                                    if (nr < 0) {
+                                        syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
+                                        var _ifl = 0;
+                                        while (load8(fname + _ifl) != 0) { _ifl = _ifl + 1; }
+                                        syscall(SYS_WRITE, 2, fname, _ifl);
+                                        syscall(SYS_WRITE, 2, "\n", 1);
+                                        syscall(SYS_EXIT, 1);
+                                    }
                                     op = op + nr;
                                     had_new_include = 1;
                                 }
@@ -2067,6 +2083,14 @@ fn PP_REF_PASS(S): i64 {
                     store8(rfn + rfi, 0);
                     while (ip < bl) { if (load8(S + ip) == 10) { ip = ip + 1; break; } ip = ip + 1; }
                     var rnr = READFILE(rfn, S + 0x191800, 16384);
+                    if (rnr < 0) {
+                        syscall(SYS_WRITE, 2, "error: cannot open #ref file: ", 30);
+                        var _rfl = 0;
+                        while (load8(rfn + _rfl) != 0) { _rfl = _rfl + 1; }
+                        syscall(SYS_WRITE, 2, rfn, _rfl);
+                        syscall(SYS_WRITE, 2, "\n", 1);
+                        syscall(SYS_EXIT, 1);
+                    }
                     # Inline: emit var declarations for each key-value line
                     var ri = 0;
                     while (ri < rnr) {

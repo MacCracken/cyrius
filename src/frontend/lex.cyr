@@ -3,16 +3,22 @@
 # ================================================================
 
 # File map: tracks #@file markers for file:line error messages.
-# S+0x19A100: entry count (8 bytes)
-# S+0x19A108: entries[128], each 24 bytes: (start_line, line_count, fname_offset)
-# S+0x19D000: filename strings (4KB scratch)
+# CVE-31 (v6.1.35): relocated into the freed 0x71A000 band (the old 2 MB
+# output_buf slot, vacated when .27 moved output_buf to heap-top) so the cap
+# could grow 128 → 1024 without colliding with file_map_str; the TS frontend's
+# scratch starts at 0x800000, so we stay below it.
+# S+0x71A000: entry count (8 bytes)              (was 0x19A100)
+# S+0x71A040: entries[1024], each 24 bytes: (start_line, line_count, fname_offset)  (was 0x19A108[128])
+# S+0x721000: filename strings (32 KB scratch)   (was 0x19D000[4 KB])
 
 var _fm_count = 0;
 var _fm_str_pos = 0;
+var _fm_overflowed = 0;
 
 fn FM_BUILD(S): i64 {
     _fm_count = 0;
     _fm_str_pos = 0;
+    _fm_overflowed = 0;
     var buf = S + 0x459D000;
     var bl = GBL(S);
     var line = 1;
@@ -25,18 +31,28 @@ fn FM_BUILD(S): i64 {
                 var fend = fstart;
                 while (fend < bl && load8(buf + fend) != 34) { fend = fend + 1; }
                 var flen = fend - fstart;
-                if (_fm_count < 128 && flen > 0) {
-                    store64(S + 0x19A108 + _fm_count * 24, line + 1);
-                    store64(S + 0x19A108 + _fm_count * 24 + 8, 0);
-                    store64(S + 0x19A108 + _fm_count * 24 + 16, _fm_str_pos);
-                    var fi = 0;
-                    while (fi < flen) {
-                        store8(S + 0x19D000 + _fm_str_pos + fi, load8(buf + fstart + fi));
-                        fi = fi + 1;
+                if (flen > 0) {
+                    if (_fm_count < 1024 && _fm_str_pos + flen + 1 <= 32768) {
+                        store64(S + 0x71A040 + _fm_count * 24, line + 1);
+                        store64(S + 0x71A040 + _fm_count * 24 + 8, 0);
+                        store64(S + 0x71A040 + _fm_count * 24 + 16, _fm_str_pos);
+                        var fi = 0;
+                        while (fi < flen) {
+                            store8(S + 0x721000 + _fm_str_pos + fi, load8(buf + fstart + fi));
+                            fi = fi + 1;
+                        }
+                        store8(S + 0x721000 + _fm_str_pos + flen, 0);
+                        _fm_str_pos = _fm_str_pos + flen + 1;
+                        _fm_count = _fm_count + 1;
+                    } else {
+                        # CVE-31: past the cap (or str scratch full), drop the marker
+                        # but warn ONCE — silently dropping mis-attributes file:line in
+                        # later error messages on big multi-include consumer builds.
+                        if (_fm_overflowed == 0) {
+                            syscall(SYS_WRITE, 2, "warning: file map full (1024 entries) -- file:line attribution truncated past here\n", 83);
+                            _fm_overflowed = 1;
+                        }
                     }
-                    store8(S + 0x19D000 + _fm_str_pos + flen, 0);
-                    _fm_str_pos = _fm_str_pos + flen + 1;
-                    _fm_count = _fm_count + 1;
                 }
             }
         }
@@ -46,34 +62,34 @@ fn FM_BUILD(S): i64 {
     # Second: compute line counts from start_line gaps
     var i = 0;
     while (i < _fm_count) {
-        var start = load64(S + 0x19A108 + i * 24);
+        var start = load64(S + 0x71A040 + i * 24);
         var next_start = 0;
         if (i + 1 < _fm_count) {
-            next_start = load64(S + 0x19A108 + (i + 1) * 24);
-            store64(S + 0x19A108 + i * 24 + 8, next_start - start - 1);
+            next_start = load64(S + 0x71A040 + (i + 1) * 24);
+            store64(S + 0x71A040 + i * 24 + 8, next_start - start - 1);
         } else {
             # Last file: count remaining lines to EOF
-            store64(S + 0x19A108 + i * 24 + 8, line - start);
+            store64(S + 0x71A040 + i * 24 + 8, line - start);
         }
         i = i + 1;
     }
-    store64(S + 0x19A100, _fm_count);
+    store64(S + 0x71A000, _fm_count);
     return 0;
 }
 
 # Look up file:line for an expanded line number. Prints to stderr.
 # Returns 1 if found, 0 if fallback to raw line number.
 fn FM_LOOKUP(S, expanded_line): i64 {
-    var cnt = load64(S + 0x19A100);
+    var cnt = load64(S + 0x71A000);
     if (cnt == 0) { PRNUM(expanded_line); return 0; }
     # Find which file contains this line
     var i = 0;
     while (i < cnt) {
-        var start = load64(S + 0x19A108 + i * 24);
-        var lines = load64(S + 0x19A108 + i * 24 + 8);
+        var start = load64(S + 0x71A040 + i * 24);
+        var lines = load64(S + 0x71A040 + i * 24 + 8);
         if (expanded_line >= start && expanded_line < start + lines) {
-            var foff = load64(S + 0x19A108 + i * 24 + 16);
-            var fptr = S + 0x19D000 + foff;
+            var foff = load64(S + 0x71A040 + i * 24 + 16);
+            var fptr = S + 0x721000 + foff;
             var flen = 0;
             while (load8(fptr + flen) != 0) { flen = flen + 1; }
             syscall(SYS_WRITE, 2, fptr, flen);
@@ -677,7 +693,11 @@ fn READFILE(path, dst, maxsz): i64 {
                         } } } }
         }
     }
-    if (fd < 0) { return 0; }
+    # CVE-31: distinguish open-fail from a legitimately-empty file. Return -1
+    # when the path could not be opened (after the CYRIUS_HOME/lib fallback);
+    # the PP include sites hard-error on -1. A successfully-opened empty file
+    # still returns 0 (a valid, silent no-op include).
+    if (fd < 0) { return 0 - 1; }
     var total = 0;
     var rgo = 1;
     while (rgo == 1) {
@@ -1681,6 +1701,22 @@ fn LEX(S): i64 {
                                                                                                                                 if (lo < 10) { store8(S, 48 + lo); } else { store8(S, 87 + lo); }
                                                                                                                                 syscall(SYS_WRITE, 2, S, 1);
                                                                                                                                 syscall(SYS_WRITE, 2, ") -- only ASCII allowed in source (UTF-8 ok in strings)\n", 56);
+                                                                                                                                syscall(SYS_EXIT, 1);
+                                                                                                                            }
+                                                                                                                            else {
+                                                                                                                                # CVE-31: a stray ASCII byte (`$`, backtick, a control char, ...) that
+                                                                                                                                # matched no token was silently skipped, changing program meaning with
+                                                                                                                                # no diagnostic -- error now (mirrors the >127 non-ASCII reject above).
+                                                                                                                                syscall(SYS_WRITE, 2, "error:", 6);
+                                                                                                                                PRNUM(GCLINE(S));
+                                                                                                                                syscall(SYS_WRITE, 2, ": unexpected character (0x", 26);
+                                                                                                                                var hi2 = c >> 4;
+                                                                                                                                var lo2 = c & 15;
+                                                                                                                                if (hi2 < 10) { store8(S, 48 + hi2); } else { store8(S, 87 + hi2); }
+                                                                                                                                syscall(SYS_WRITE, 2, S, 1);
+                                                                                                                                if (lo2 < 10) { store8(S, 48 + lo2); } else { store8(S, 87 + lo2); }
+                                                                                                                                syscall(SYS_WRITE, 2, S, 1);
+                                                                                                                                syscall(SYS_WRITE, 2, ")\n", 2);
                                                                                                                                 syscall(SYS_EXIT, 1);
                                                                                                                             }
                                                                                                                             p = p + 1;

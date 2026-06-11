@@ -80,6 +80,18 @@ var ENVP_COUNT = 0;
 # original call semantics — execve gets an empty environment.
 var EMPTY_ENVP = 0;
 
+# CO-02 (v6.1.35): the exit code of the most recent `_exec_capture_clean`,
+# captured via regression_exec_capture_status. Gates read this so a tcyr that
+# segfaults before printing its summary (or exits nonzero after "0 failed") is
+# recorded as a FAIL locally — matching ci.yml's `$ec`-AND-count check. Was the
+# CO-02 false-green: check.sh's "87/87" could be claimed over a hidden crash.
+var _last_exec_ec = 0;
+# CO-02: 1 if the most recent _exec_capture_clean child was killed by a signal
+# (crashed). Output-comparison gates fail on THIS (a crash), not on a normal
+# nonzero exit — output-only fixtures legitimately exit with their last value
+# (e.g. 152). TCYR gates fail on _last_exec_ec (the exit-0-on-pass contract).
+var _last_exec_sig = 0;
+
 # Convenience: print null-terminated c-string to stdout (no newline).
 # ================================================================
 # v6.0.90: programs/check.cyr split into programs/checks/. This is the
@@ -379,6 +391,10 @@ fn _run_regression_gates(): i64 {
 
     _section("String-escape rejects");
     _string_escape_rejects_gate();
+    println("");
+
+    _section("input-validation rejects (CVE-31)");
+    _input_validation_rejects_gate();
     println("");
 
     _section("match coverage check (DCE-dead fn determinism; v5.9.24)");

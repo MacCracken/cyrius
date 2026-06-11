@@ -408,7 +408,7 @@ fn _derive_serialize_primitive_gate(): i64 {
 
     var expected = "{\"x\":11,\"y\":22,\"z\":33}";
     var elen = strlen(expected);
-    if (n < elen) {
+    if (n < elen || _last_exec_sig != 0) {   # CO-02: also fail on crash (signal)
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");
@@ -492,7 +492,7 @@ fn _inline_asm_discard_gate(): i64 {
         var buf = alloc(cap);
         var n = _exec_capture_clean(bin, buf, cap);
         sys_unlink(bin);
-        if (n != 16) {
+        if (n != 16 || _last_exec_sig != 0) {   # CO-02: also fail on crash (signal)
             _p("    ");
             _p(ANSI_RED);
             _p("FAIL");

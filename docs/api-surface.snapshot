@@ -2292,6 +2292,7 @@ regression::regression_check/2
 regression::regression_codesign_remote/3
 regression::regression_count_substr/3
 regression::regression_exec_capture/4
+regression::regression_exec_capture_status/5
 regression::regression_exec_in_dir3/7
 regression::regression_exec_in_dir3_env/8
 regression::regression_exec_run/2

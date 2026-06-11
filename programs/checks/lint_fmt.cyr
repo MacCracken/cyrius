@@ -458,6 +458,33 @@ fn _string_escape_rejects_gate(): i64 {
     return fail;
 }
 
+# CVE-31 (v6.1.35): the compiler must LOUDLY reject broken input it used to
+# silently accept — an unrecognized ASCII byte that matched no token (was
+# skipped) and a missing include file (was a 0-byte expansion surfacing only as
+# downstream undefined-fn warnings). Mirrors _string_escape_rejects_gate.
+fn _input_validation_rejects_gate(): i64 {
+    var fail = 0;
+    # CVE-31b — stray ASCII byte (`$`) outside strings/comments is an error.
+    # _input_rejects_subcase asserts BOTH the message AND a nonzero exit, so a
+    # future print-then-exit-0 regression can't slip the reject past the gate.
+    fail = fail + _input_rejects_subcase("stray-ascii-dollar",
+        "fn main(): i64 { var x = 5 $ 3; return x; }",
+        "unexpected character");
+    # CVE-31a — a missing include is a hard error, not a silent empty expansion.
+    fail = fail + _input_rejects_subcase("missing-include",
+        "include \"zzqq_no_such_include_file.cyr\";\nfn main(): i64 { return 0; }",
+        "cannot open include file");
+    if (fail == 0) {
+        _p("  ");
+        _p(ANSI_GREEN);
+        _p("PASS");
+        _p(ANSI_RESET);
+        println(": input-validation reject cases (2/2)");
+    }
+    _check("lex/PP reject stray ASCII byte + missing include (CVE-31; v6.1.35)", fail);
+    return fail;
+}
+
 fn _format_gate(): i64 {
     _section("Format");
     if (CYRFMT_PATH == 0) {

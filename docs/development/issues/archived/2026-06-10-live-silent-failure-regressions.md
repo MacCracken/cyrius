@@ -1,16 +1,36 @@
 # Live silent-failure regressions (fix-now cluster) — CVE-22/23/31, CO-02/03
 
-> **STATUS: PARTIALLY RESOLVED.** **✅ CVE-22 + CO-03 shipped v6.1.34** (F1b pt1):
+> **STATUS: RESOLVED.** **✅ CVE-22 + CO-03 shipped v6.1.34** (F1b pt1):
 > `_vec_die`/`_hm_die` self-recursion → restored `syscall(60,1)`; DSE/LASE/#regalloc
-> x86 byte-passes gated on `_AARCH64_BACKEND==0`. **⏳ Still open (F1b pt2, → v6.1.35):**
-> CVE-23 (`output_buf` 16 MB cap unenforced on the aarch64-ELF / PE / x86-kernel
-> emitters — needs per-emitter PRE-write guards; the overrun happens during emit,
-> not at the single flush point), CVE-31 (frontend input validation: missing-include
-> = 0 bytes silent + unknown-ASCII dropped loud errors, + the `file_map>128` heap
-> relocation — note the READFILE return-convention change to distinguish open-fail
-> from empty), CO-02 (`check.sh` tcyr exit-masking — propagate exit status from
-> `regression_exec_capture`; may turn check.sh red on a hidden failure, which is the
-> point). Archive when pt2 lands.
+> x86 byte-passes gated on `_AARCH64_BACKEND==0`. **✅ F1b pt2 — code complete + green,
+> lands as v6.1.35 (cut pending):**
+> - **CVE-23** — one shared `_check_output_cap` in `backend/common/runtime.cyr`
+>   (mirrors the x86 top-3-vars diagnostic) called from the 5 unguarded ELF/PE writers
+>   (aarch64 EMITELF + both EMITELF_KERNELs + the x86 kernel emitters + `_pe_layout`).
+>   A pre-cut adversarial review caught that the ELF guards checked PT_LOAD `filesz`,
+>   not the true on-disk size — the `.shstrtab` + section-header table sits past
+>   `filesz`, leaving a ~370 B (ELF64) / ~240 B (ELF32) overrun window just under
+>   16 MB. Fixed to pass `shdr_off + shnum*shentsize` (the `EMITELF_OBJ` convention)
+>   on every ELF emitter, incl. the **pre-existing** x86 `EMITELF_USER` path that
+>   shared the slack. `EMITELF_SHARED` (no section headers) + PE were already correct.
+> - **CVE-31** — (a) missing-include is now a hard error (READFILE returns -1 on
+>   open-fail vs 0 on empty; the PP include sites fail loud); (b) unrecognized ASCII
+>   bytes error in the lexer's final else; (c) `file_map` relocated to the freed
+>   `0x71A000` band, cap 128→1024 + str 4KB→32KB + warn-once/str-overflow guards.
+>   **The strict-include change surfaced that sigil's fold left redundant
+>   `include "src/sha_ni.cyr"`/`aes_ni.cyr` directives (silent-skip dependency);
+>   fixed in sigil 3.7.10 (`#ifndef`-guarded includes) + re-vendored.**
+> - **CO-02** — `regression_exec_capture_status` surfaces exit code + a signal flag;
+>   tcyr gates fail on any nonzero exit, output/codegen gates fail on a crash (signal)
+>   only. New negative-compile gate `_input_validation_rejects_gate` — its
+>   `_input_rejects_subcase` (added per the same review) asserts the compiler
+>   **exited nonzero**, not just that the message printed.
+>
+> **Verification:** x86 self-host byte-identical (1,049,856 B); check.sh **88/88**;
+> aarch64 (pi) + PE (cass) + Mach-O (ecb/ach) all `SELFHOST_OK` (cross-OS re-run
+> after the guard fix). The two review-found gaps (CVE-23 true-size guard, CO-02
+> exit assertion) were both fixed pre-cut — neither was reachable by self-host
+> (cycc's own output is far below 16 MB and exits cleanly). Archived at cut.
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High

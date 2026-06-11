@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.34** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,046,480 B (+160 B @ 6.1.34 — CO-03 aarch64 gates on DSE/LASE/#regalloc) |
+| **Version** | **6.1.35** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,049,856 B (+3,376 B @ 6.1.35 — CVE-23 shared `_check_output_cap` guard incl. true-size (shdr) arithmetic + CVE-31 `file_map` 128→1024 / str 4KB→32KB) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -23,36 +23,43 @@
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
-| check.sh gates | 87/87 |
+| check.sh gates | 88/88 (+1 @ 6.1.35 — `_input_validation_rejects_gate`) |
 | tests | 173 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
-| heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
-| bench (every-release gate) | self_compile ~506 ms (box noise) |
+| heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; brk-final `0x5D9D000` (~93.6 MB virtual) |
+| bench (every-release gate) | self_compile ~556 ms (vs ~506 ms @ .34 — box noise + 3.4 KB growth) |
 
-> **Handoff (2026-06-11):** v6.1.34 ready for cut — **two live silent-failure
-> regressions, CVE-22 + CO-03** (Phase F pack F1b part 1, 2026-06-10 deep-dive).
-> **CVE-22** — `_vec_die`/`_hm_die` (`lib/vec.cyr`, `lib/hashmap.cyr`) infinitely
-> self-recursed on every non-AGNOS target (v6.0.56 regressed `syscall(60,1)` → calling
-> the die fn itself), so OOB/OOM aborts SIGSEGV'd instead of `exit(1)`. Restored
-> `syscall(60,1)` (backend translates 60 per target; AGNOS keeps `syscall(0,1)`).
-> **CO-03** — `DSE_PASS` + the LASE loop (`parse_fn.cyr`) scan codebuf for x86 opcodes
-> `48 89 85`/`48 8B 85` and NOP-patch, but ran with NO `_AARCH64_BACKEND` gate → could
-> corrupt aarch64 instruction words; the explicit `#regalloc` `SFRA` likewise lacked the
-> arch gate the AUTO path has. Gated both on `_AARCH64_BACKEND == 0` (matching the
-> compaction pass). **VERIFIED:** x86 codegen unchanged → cycc self-host byte-identical
-> (1,046,480 B); aarch64 now skips the peephole (was a no-op on the compiler's own code)
-> → **pi `SELFHOST_OK`**; check.sh **87/87**; **ecb + cass + pi `SELFHOST_OK`**; bench
-> 506 ms. **user pushes/tags after CI.**
+> **Handoff (2026-06-11):** v6.1.35 ready for cut — the remaining **three live
+> silent-failure regressions, CVE-23 + CVE-31 + CO-02** (Phase F pack F1b part 2,
+> 2026-06-10 deep-dive — completes the F1b cluster opened in v6.1.34).
+> **CVE-23** — the 16 MB `output_buf` cap was enforced only at the single x86-ELF
+> flush point; the aarch64-ELF, both `EMITELF_KERNEL`s, the x86-kernel emitters and
+> the PE `_pe_layout` writer overran silently during emit. One shared
+> `_check_output_cap(S, filesz)` (`src/backend/common/runtime.cyr`) now pre-write-guards
+> all five. **CVE-31** — (a) missing-include read as 0 bytes silent → `READFILE` returns
+> `-1` on open-fail vs `0` on empty, PP include sites fail loud; (b) unrecognized
+> ASCII/control bytes errored in the lexer's final `else`; (c) `file_map` relocated to
+> the freed `0x71A000` band, cap 128→1024 + str 4KB→32KB + warn-once/str-overflow guards.
+> The strict-include change surfaced sigil's redundant `include "src/sha_ni.cyr"`/`aes_ni.cyr`
+> (silent-skip dep) → fixed in **sigil 3.7.10** (`#ifndef`-guarded) + re-vendored.
+> **CO-02** — `check.sh` masked tcyr non-zero exits; `regression_exec_capture_status`
+> now surfaces exit code + a signal flag (tcyr gates fail on any non-zero, output/codegen
+> on a crash only) + new negative-compile gate `_input_validation_rejects_gate`.
+> An adversarial multi-agent review of the diff (pre-cut) caught two latent gaps
+> self-host can't reach: the CVE-23 ELF guards checked PT_LOAD `filesz` not the
+> true on-disk size (section-header table sits past it → ~370 B overrun window
+> just under 16 MB) — fixed to `shdr_off + shnum*shentsize` on all ELF emitters
+> incl. the pre-existing x86 `EMITELF_USER` path; and the CVE-31 reject gate only
+> grepped stderr, now asserts a nonzero exit (`_input_rejects_subcase`).
+> **VERIFIED:** x86 self-host byte-identical (1,049,856 B); check.sh **88/88**;
+> **ecb + ach + pi + cass all `SELFHOST_OK`** (real-hardware, re-run after the
+> guard fix); bench ~556 ms. **user pushes/tags after CI.**
 >
-> **Phase F NEXT (F1b part 2):** **CVE-23** `output_buf` 16 MB cap unenforced on the
-> aarch64-ELF / PE / x86-kernel emitters (needs per-emitter PRE-write guards — the heap
-> overrun happens during emit, before the single flush point, so a flush-time guard is
-> too late); **CVE-31** frontend input validation (missing-include = 0 bytes silent,
-> unknown-ASCII dropped, `file_map>128` — the loud-error parts + the `file_map` heap
-> relocation); **CO-02** check.sh tcyr exit-masking (propagate exit status from
-> `regression_exec_capture` — may turn check.sh red on a hidden failure, the point).
-> Then F2 (TLS-authn CVE-17/18/30 + entropy CVE-19) / F3 (memory-safety parity
-> CVE-24..28). See [roadmap.md](roadmap.md) Phase F.
+> **Phase F NEXT (F1b complete):** F2 (TLS-authn CVE-17/18/30 + entropy CVE-19) /
+> F3 (memory-safety parity CVE-24..28). See [roadmap.md](roadmap.md) Phase F.
+> Newly filed downstream (OPEN, not in this slot):
+> [`issues/2026-06-11-thoth-lib-sync-ignores-deps-stdlib.md`](issues/2026-06-11-thoth-lib-sync-ignores-deps-stdlib.md)
+> — `cyrius lib sync` copies the full pin snapshot instead of honoring `[deps].stdlib` (Low).
 >
 > **Carry-forward (.32 agnos fix):** run-on-agnos `argc=4` was NOT verified locally —
 > `cyrius build --agnos` on this box sets the `#ifdef` but not the runtime `_TARGET_AGNOS`

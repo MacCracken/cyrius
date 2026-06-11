@@ -257,6 +257,77 @@ fn RECFIX(S, idx): i64 {
     return 0;
 }
 
+# v6.1.35 (CVE-23): shared 16 MB output_buf cap guard. The 16 MB output
+# region at S+0x4D9D000 (brk-final 0x5D9D000) was cap-checked inline only in
+# the x86 EMITELF_USER/SHARED/OBJ + Mach-O writers; the aarch64 ELF emitter,
+# both kernel-ELF emitters, and the PE writer wrote past it unchecked. The
+# overrun happens DURING emit, before the single flush point, so a flush-time
+# guard is too late — each writer calls this with the TRUE final on-disk size
+# (the section-header table sits past the PT_LOAD filesz, so the arg is
+# shdr_off + shnum*shentsize, NOT filesz — a filesz-only check left a
+# ~370 B/ELF64 (~240 B/ELF32) window just under 16 MB; mirror EMITELF_OBJ)
+# BEFORE its first output_buf store. Mirrors EMITELF_USER's top-3-largest-vars
+# diagnostic (so the user learns which `var buf[N]` blew the budget). Exits 1
+# on overflow; a no-op for in-cap output → byte-identical valid builds. Kernel
+# images (the AGNOS authorship goal + v6.2.x bare-metal) were exactly the
+# unguarded path. See CHANGELOG [6.1.35].
+fn _check_output_cap(S, filesz): i64 {
+    if (filesz > 16777216) {
+        syscall(SYS_WRITE, 2, "error: output too large (", 25);
+        PRNUM(filesz);
+        syscall(SYS_WRITE, 2, "/16777216 bytes)", 16);
+        var vcount = GVCNT(S);
+        var top1_sz = 0; var top1_ix = 0 - 1;
+        var top2_sz = 0; var top2_ix = 0 - 1;
+        var top3_sz = 0; var top3_ix = 0 - 1;
+        var vi = 0;
+        while (vi < vcount) {
+            var vsz = L64(S + 0x12A000 + vi * 8);
+            if (vsz > top1_sz) {
+                top3_sz = top2_sz; top3_ix = top2_ix;
+                top2_sz = top1_sz; top2_ix = top1_ix;
+                top1_sz = vsz; top1_ix = vi;
+            } elif (vsz > top2_sz) {
+                top3_sz = top2_sz; top3_ix = top2_ix;
+                top2_sz = vsz; top2_ix = vi;
+            } elif (vsz > top3_sz) {
+                top3_sz = vsz; top3_ix = vi;
+            }
+            vi = vi + 1;
+        }
+        if (top1_ix >= 0) {
+            syscall(SYS_WRITE, 2, "\n  largest vars:\n    ", 21);
+            PRNUM(top1_sz);
+            syscall(SYS_WRITE, 2, " bytes: ", 8);
+            var nptr = S + 0x60000 + L64(S + 0x11A000 + top1_ix * 8);
+            var nlen = 0;
+            while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
+            syscall(SYS_WRITE, 2, nptr, nlen);
+            if (top2_ix >= 0) {
+                syscall(SYS_WRITE, 2, "\n    ", 5);
+                PRNUM(top2_sz);
+                syscall(SYS_WRITE, 2, " bytes: ", 8);
+                nptr = S + 0x60000 + L64(S + 0x11A000 + top2_ix * 8);
+                nlen = 0;
+                while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
+                syscall(SYS_WRITE, 2, nptr, nlen);
+            }
+            if (top3_ix >= 0) {
+                syscall(SYS_WRITE, 2, "\n    ", 5);
+                PRNUM(top3_sz);
+                syscall(SYS_WRITE, 2, " bytes: ", 8);
+                nptr = S + 0x60000 + L64(S + 0x11A000 + top3_ix * 8);
+                nlen = 0;
+                while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
+                syscall(SYS_WRITE, 2, nptr, nlen);
+            }
+        }
+        syscall(SYS_WRITE, 2, "\n  tip: heap-allocate large var buf[N] arrays (alloc(N) + pointer)\n", 67);
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
 # ================================================================
 # DCE shared probes (v6.1.5) — hoisted from the byte-identical copies
 # in x86/fixup.cyr + aarch64/fixup.cyr. The mark-and-sweep reachability

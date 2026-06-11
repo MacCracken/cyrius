@@ -273,12 +273,25 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
 # Run `bin_path` (no args), capture stdout into `buf[0..buflen)`,
 # discard stderr. Returns bytes captured (>= 0) or 0 on
 # fork/open failure. envp threaded through.
-fn regression_exec_capture(bin_path, buf, buflen, envp): i64 {
+# v6.1.35 (CO-02): the exit-status-aware core. `status_out` points to TWO i64
+# slots: [0] = exit code (stdlib convention: 0..127 normal, 128+sig on signal,
+# -1 on fork/open/exec failure), [1] = 1 if the child was killed by a signal
+# (a crash), else 0. The split lets a caller distinguish a normal nonzero exit
+# (an output-only fixture returning its last value, e.g. 152) from a crash —
+# a single 128+sig code can't (exit(152) aliases signal 24). This closes
+# CO-02: the check.sh tcyr gate waited but never read status, so a tcyr that
+# crashed before its summary, or exited nonzero after "0 failed", was recorded
+# as PASS. `regression_exec_capture` keeps its bytes-only public contract below.
+fn regression_exec_capture_status(bin_path, buf, buflen, envp, status_out): i64 {
     var out_path = _regression_tmp_path("audit_xc_");
     var out_fd = sys_open(out_path, 577, 420);
-    if (out_fd < 0) { return 0; }
+    if (out_fd < 0) { store64(status_out, 0 - 1); store64(status_out + 8, 0); return 0; }
     var pid = sys_fork();
-    if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
+    if (pid < 0) {
+        sys_close(out_fd); sys_unlink(out_path);
+        store64(status_out, 0 - 1); store64(status_out + 8, 0);
+        return 0;
+    }
     if (pid == 0) {
         sys_dup2(out_fd, 1);
         sys_close(out_fd);
@@ -295,10 +308,25 @@ fn regression_exec_capture(bin_path, buf, buflen, envp): i64 {
     sys_close(out_fd);
     var stbuf[1];
     sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    var code = 0 - 1;
+    var sig = 0;
+    if (WIFEXITED(status) == 1) { code = WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { code = 128 + WTERMSIG(status); sig = 1; }
+    store64(status_out, code);
+    store64(status_out + 8, sig);
     var total = file_read_all(out_path, buf, buflen);
     sys_unlink(out_path);
     if (total < 0) { return 0; }
     return total;
+}
+
+# Run `bin_path` (no args), capture stdout into `buf[0..buflen)`, discard
+# stderr. Returns bytes captured (>= 0) or 0 on fork/open failure; the exit
+# status is discarded (use regression_exec_capture_status to observe it).
+fn regression_exec_capture(bin_path, buf, buflen, envp): i64 {
+    var _st[16];
+    return regression_exec_capture_status(bin_path, buf, buflen, envp, &_st);
 }
 
 # Run `bin_path` (no args), discard stdout + stderr. Returns

@@ -6,6 +6,71 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.35] — 2026-06-11
+
+**v6.1.x slot 35 (Phase F — security hardening, pack F1b part 2): the remaining
+three live silent-failure regressions — CVE-23 + CVE-31 + CO-02.** Completes the
+F1b cluster opened in v6.1.34 from the 2026-06-10 deep-dive
+([`docs/audit/2026-06-10-deep-dive-review.md`](docs/audit/2026-06-10-deep-dive-review.md));
+closes [`issues/.../2026-06-10-live-silent-failure-regressions.md`]. Same theme:
+a loud failure had been silently turned into a silent one.
+
+### Fixed
+- **CVE-23 — the 16 MB `output_buf` cap was enforced only at the single x86-ELF
+  flush point**, leaving the aarch64-ELF, the two `EMITELF_KERNEL` emitters, the
+  x86-kernel emitters and the PE `_pe_layout` writer to overrun the buffer
+  silently during emit. Added one shared `_check_output_cap` in
+  `src/backend/common/runtime.cyr` (mirrors the x86 top-3-largest-vars
+  diagnostic) and called it as a **pre-write guard** from every previously
+  unguarded ELF/PE writer, so an over-cap artifact now errors loudly on every
+  target instead of corrupting memory past the buffer.
+  - **Guards check the TRUE on-disk size, not the PT_LOAD `filesz`.** An
+    adversarial review of this diff caught that every ELF emitter writes a
+    `.shstrtab` + section-header table *past* `filesz` — so a `filesz`-only
+    check left a ~370 B (ELF64) / ~240 B (ELF32) overrun window for a program
+    landing just under exactly 16 MB. Each guard now passes
+    `shdr_off + shnum*shentsize` (the `EMITELF_OBJ` convention). The same
+    `filesz` slack existed on the **pre-existing** x86 `EMITELF_USER` path (the
+    most-exercised emitter, shipping since the cap was introduced) — closed in
+    the same pass. `EMITELF_SHARED` (`e_shoff=0`, no section headers) and the
+    PE writer (`_pe_image_file_size`) were already correct.
+- **CVE-31 — frontend input validation (three sinks).** (a) A missing `include`
+  file read back as **0 bytes and was silently treated as empty** — `READFILE`
+  now returns `-1` on open-fail (vs `0` on a genuinely empty file) and the PP
+  include sites (`src/frontend/lex.cyr`, `lex_pp.cyr`) **fail loud** on `-1`.
+  (b) Unrecognized non-ASCII / control bytes fell through the lexer's final
+  `else` and were **dropped silently**; they now raise a lex error. (c) The
+  `file_map` table was relocated into the freed `0x71A000` heap band and grown
+  (cap **128 → 1024**, per-entry string **4 KB → 32 KB**) with warn-once +
+  string-overflow guards, so a large include graph no longer silently truncates.
+  - The strict-include change **surfaced a latent silent-skip dependency**:
+    sigil's fold left redundant `include "src/sha_ni.cyr"` / `aes_ni.cyr`
+    directives that had been quietly no-op'd. Fixed upstream in **sigil 3.7.10**
+    (`#ifndef`-guarded includes) and re-vendored (`lib/sigil.cyr`).
+- **CO-02 — `check.sh` masked tcyr non-zero exits.** `regression_exec_capture`
+  discarded the child's exit status, so a tcyr that printed "passed" on stdout
+  but exited non-zero (or crashed) counted as green — the exact gap the
+  `feedback_run_ci_exit_check_before_green` note warns about. New
+  `regression_exec_capture_status` surfaces the **exit code + a signal flag**;
+  tcyr gates now fail on any non-zero exit, and the output/codegen gates fail on
+  a crash (signal) only. Added a negative-compile gate
+  `_input_validation_rejects_gate` so the CVE-31 loud-failure paths are
+  regression-covered — and (per the same review) it uses a stricter
+  `_input_rejects_subcase` that asserts the compiler **exited nonzero**, not
+  merely that the message printed, so a future print-then-exit-0 regression
+  can't slip the reject past the gate.
+
+**Verification:** x86 self-host **byte-identical** (1,049,856 B, +3,376 B vs
+6.1.34 — the shared cap guard + larger `file_map` + the true-size guard
+arithmetic); check.sh **88/88** (was 87/87; +1 = the input-validation reject
+gate); **ecb + ach + pi + cass all `SELFHOST_OK`** (real-hardware byte-identical,
+cross-OS gate re-run after the guard fix). Benchmark: `self_compile ~556 ms`
+(vs ~506 ms @ 6.1.34 — box noise + the 3.4 KB growth), `cycc 1,049,856 bytes`.
+The CVE-23 guard-correctness and CO-02 gate-strictness fixes were both found by
+an adversarial multi-agent review of the diff *before* cut — neither was
+caught by byte-identical self-host (the compiler's own output is far below
+16 MB and exits cleanly). Closes the F1b cluster. **user pushes/tags after CI.**
+
 ## [6.1.34] — 2026-06-11
 
 **v6.1.x slot 34 (Phase F — security hardening, pack F1b part 1): two live

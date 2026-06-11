@@ -6,8 +6,15 @@
 # All lib includes + the 18 globals + the dispatcher/driver live in
 # programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
 
+# CO-02: capture stdout AND the child's exit code (into _last_exec_ec) so the
+# tcyr/output gates can fail on a crash-before-summary or nonzero-after-pass —
+# the bytes-only return is unchanged, so existing callers keep working.
 fn _exec_capture_clean(bin_path, buf, buflen): i64 {
-    return regression_exec_capture(bin_path, buf, buflen, EMPTY_ENVP);
+    var _st[16];
+    var n = regression_exec_capture_status(bin_path, buf, buflen, EMPTY_ENVP, &_st);
+    _last_exec_ec = load64(&_st);
+    _last_exec_sig = load64(&_st + 8);
+    return n;
 }
 
 fn _file_contains_substr(path, substr): i64 {

@@ -735,6 +735,10 @@ fn EMITELF_KERNEL(S): i64 {
     var shnum = 5;
     var shentsize = 40;
     var shstrndx = 4;
+    # CVE-23 (v6.1.35 follow-up): cap-check the TRUE on-disk size incl. the
+    # shnum×shentsize (5×40) ELF32 section-header table past filesz. Mirror
+    # EMITELF_OBJ — a filesz-only check left a ~240 B overrun window. See CHANGELOG.
+    _check_output_cap(S, shdr_off + shnum * shentsize);
 
     var O = S + 0x4D9D000;
     var op = 0;
@@ -931,6 +935,9 @@ fn EMITELF64_KERNEL(S): i64 {
     var shstrtab_size = 30;
     var shstrtab_foff = filesz;
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
+    # CVE-23 (v6.1.35 follow-up): cap-check the TRUE on-disk size incl. the
+    # 5×64 ELF64 section-header table past filesz. Mirror EMITELF_OBJ. See CHANGELOG.
+    _check_output_cap(S, shdr_off + 5 * 64);
 
     var O = S + 0x4D9D000;
     var op = 0;
@@ -1070,9 +1077,14 @@ fn EMITELF_USER(S, etype): i64 {
     var spos = GSPOS(S);
     var filesz = 120 + cp + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);
-    if (filesz > 16777216) {
+    # CVE-23 (v6.1.35 follow-up): cap-check the TRUE on-disk size — the 30-byte
+    # .shstrtab + 5×64 ELF64 section-header table sit past filesz (see shdr_off
+    # below), so a filesz-only check left a ~370 B overrun window just under
+    # 16 MB on this (the most-exercised) user-binary path too. Mirror EMITELF_OBJ.
+    var final_sz = ((filesz + 30 + 7) & (0 - 8)) + 5 * 64;
+    if (final_sz > 16777216) {
         syscall(SYS_WRITE, 2, "error: output too large (", 25);
-        PRNUM(filesz);
+        PRNUM(final_sz);
         syscall(SYS_WRITE, 2, "/16777216 bytes)\n  code: ", 24);
         PRNUM(cp);
         syscall(SYS_WRITE, 2, " data: ", 7);

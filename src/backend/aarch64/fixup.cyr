@@ -630,6 +630,10 @@ fn EMITELF(S): i64 {
     var shstrtab_foff = filesz;
     # ELF64 shdrs are 64 bytes each; align table to 8 bytes
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
+    # CVE-23 (v6.1.35 follow-up): cap-check the TRUE on-disk size — the 5×64
+    # section-header table sits past filesz, so a filesz-only check left a
+    # ~370 B overrun window just under 16 MB. Mirror EMITELF_OBJ. See CHANGELOG.
+    _check_output_cap(S, shdr_off + 5 * 64);
 
     var O = S + 0x4D9D000;
     var op = 0;
@@ -785,6 +789,9 @@ fn EMITELF_KERNEL(S): i64 {
     var shstrtab_foff = filesz;
     # ELF64 shdrs are 64 bytes each; align table to 8 bytes
     var shdr_off = (shstrtab_foff + shstrtab_size + 7) & (0 - 8);
+    # CVE-23 (v6.1.35 follow-up): cap-check the TRUE on-disk size incl. the
+    # 5×64 section-header table past filesz. Mirror EMITELF_OBJ. See CHANGELOG.
+    _check_output_cap(S, shdr_off + 5 * 64);
 
     var O = S + 0x4D9D000;
     var op = 0;
