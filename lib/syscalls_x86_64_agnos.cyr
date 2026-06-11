@@ -241,3 +241,13 @@ fn is_err(ret): i64 {
     if (ret < 0) { return 1; }
     return 0;
 }
+
+# CVE-19 (v6.1.36): fail-CLOSED entropy on AGNOS userspace. The AGNOS kernel
+# getrandom syscall is filed upstream and not in this frozen ABI yet; until it
+# lands, return -1 so random_bytes() (and its ws/sandhi/sigil consumers) fail
+# loudly rather than yield weak entropy. NEVER add a clock/uninitialized
+# fallback. See issues/2026-06-11-windows-entropy-primitive.md + the upstream
+# AGNOS getrandom request.
+fn sys_getrandom(buf, len, flags): i64 {
+    return 0 - 1;
+}

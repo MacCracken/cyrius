@@ -300,15 +300,11 @@ fn _tls_native_alloc(sock, host, hook_fp, hook_ctx): i64 {
 
 fn _tls_native_complete(ctx): i64 {
     var nctx = load64(ctx);
+    # CVE-18 (v6.1.36): tls_native_connect is now fail-closed — it verifies the
+    # chain (to a trusted root) AND the hostname (dNSName or iPAddress SAN) per
+    # the ctx verify mode before returning TLS_OK, so the wrapper no longer
+    # re-verifies (and no longer skips hostname binding when host==0).
     if (tls_native_connect(nctx, load64(ctx + 16)) != TLS_OK) { return 0; }
-    # connect() does NOT auto-verify — enforce the peer-verification contract
-    # (chain to a trusted root + SNI hostname) unless verify is NONE.
-    if (load64(nctx + TLS_CTX_OFF_VERIFY) != TLS_VERIFY_NONE) {
-        if (tls_native_client_verify_chain(nctx, syscall(201, 0)) != TLS_OK) { return 0; }
-        if (load64(nctx + TLS_CTX_OFF_HOST) != 0) {
-            if (tls_native_client_verify_hostname(nctx) != TLS_OK) { return 0; }
-        }
-    }
     return 1;
 }
 #endif

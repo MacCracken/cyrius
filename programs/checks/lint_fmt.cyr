@@ -485,6 +485,45 @@ fn _input_validation_rejects_gate(): i64 {
     return fail;
 }
 
+# CVE-17 / distlib net (v6.1.36): a vendored dist bundle (a folded dep in
+# lib/*.cyr) MUST be self-contained — no `include "src/*.cyr"` referencing a
+# src/ tree that is absent at the consumer. sigil 3.7.11's `regen-dist.sh`
+# dumb-`cat` shipped un-inlined includes (the `#ifndef` guards papered over it);
+# fixed at the source in sigil 3.7.12, but this gate is the SYSTEMIC net so ANY
+# future dep fold that ships un-inlined src-includes fails loudly here,
+# regardless of the dep's own dist tooling. (Cyrius's own `cyrius distlib`
+# already strips includes.) The leading `\n` in the needle matches a line-start
+# directive only, so in-comment mentions of `include "src/..."` don't trip it.
+fn _vendored_dist_selfcontained_gate(): i64 {
+    _section("Vendored dist self-containment (distlib)");
+    var dir = _root_path("lib");
+    var dir_str = str_from(dir);
+    var entries = dir_list(dir_str);
+    var cap = 4194304;                          # 4 MB (largest fold ~715 KB)
+    var buf = alloc(cap);
+    var fail = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var name = vec_get(entries, i);
+        if (path_has_ext(name, str_from(".cyr")) == 1) {
+            var full = path_join(dir_str, name);
+            var n = file_read_all(str_data(full), buf, cap - 1);
+            if (n > 0) {
+                store8(buf + n, 0);
+                if (_find_bytes(buf, n, "\ninclude \"src/", 14) >= 0) {
+                    fail = 1;
+                    _p("    un-inlined `include \"src/` in lib/");
+                    print(str_data(name), str_len(name));
+                    _p("\n");
+                }
+            }
+        }
+        i = i + 1;
+    }
+    _check("vendored lib/*.cyr self-contained (no un-inlined `include \"src/\"`)", fail);
+    return fail;
+}
+
 fn _format_gate(): i64 {
     _section("Format");
     if (CYRFMT_PATH == 0) {

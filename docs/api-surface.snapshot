@@ -3496,7 +3496,9 @@ sigil::x25519_base/2
 sigil::x509_cert_alloc/0
 sigil::x509_cert_alloc_into/1
 sigil::x509_cert_curve/1
+sigil::x509_cert_eku/1
 sigil::x509_cert_is_ca/1
+sigil::x509_cert_key_usage/1
 sigil::x509_cert_not_after/1
 sigil::x509_cert_not_before/1
 sigil::x509_cert_path_len/1
@@ -3793,6 +3795,7 @@ syscalls_macos::sys_unlink/1
 syscalls_windows::sys_brk/1
 syscalls_windows::sys_close/1
 syscalls_windows::sys_exit/1
+syscalls_windows::sys_getrandom/3
 syscalls_windows::sys_lseek/3
 syscalls_windows::sys_mmap/6
 syscalls_windows::sys_munmap/2
@@ -3813,6 +3816,7 @@ syscalls_x86_64_agnos::sys_epoll_wait/3
 syscalls_x86_64_agnos::sys_exit/1
 syscalls_x86_64_agnos::sys_getdents/3
 syscalls_x86_64_agnos::sys_getpid/0
+syscalls_x86_64_agnos::sys_getrandom/3
 syscalls_x86_64_agnos::sys_getuid/0
 syscalls_x86_64_agnos::sys_kill/2
 syscalls_x86_64_agnos::sys_link/4

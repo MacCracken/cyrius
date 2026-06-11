@@ -282,6 +282,10 @@ enum TlsSignatureScheme {
 var TLS_RECORD_HEADER_LEN = 5;
 var TLS_RECORD_MAX_PLAINTEXT = 16384;             # 2^14, §5.1
 var TLS_RECORD_MAX_CIPHERTEXT = 16640;            # 16384 + 256, §5.2
+# CVE-30 (v6.1.36): max post-handshake records (NewSessionTicket / KeyUpdate)
+# tls_native_read drains before yielding to the caller — bounds a peer that
+# floods post-handshake messages instead of sending application data.
+var TLS_POST_HANDSHAKE_DRAIN_MAX = 32;
 var TLS_AEAD_NONCE_LEN = 12;                      # 96-bit per §5.3
 var TLS_AEAD_TAG_LEN = 16;                        # Poly1305 + GCM both 128-bit
 var TLS_SEQ_NUM_LEN = 8;                          # 64-bit counter
@@ -1195,7 +1199,7 @@ ct, ct_len, tag, pt_out): i64 {
 # control block; +136..+255 is reserved for the read/write key
 # material, sequence numbers, and I/O buffers Mini-arcs B-D append.
 
-var TLS_CTX_LEN          = 456;   # 57 i64 slots; room for B-D growth
+var TLS_CTX_LEN          = 472;   # 59 i64 slots (+2 @ v6.1.36 CVE-30: app-traffic secrets)
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -1271,6 +1275,11 @@ var TLS_CTX_OFF_ALPN_SEL      = 440; # ALPN: ptr to [u8 len][proto] the peer sel
 var TLS_CTX_OFF_SERVER_INTERS = 448; # client: ptr to [count][interm0 ptr]... the server's
 # intermediate certs in TLS (leaf→root) order, or 0. SET by the cert-chain parser;
 # READ (reversed) by verify_chain. (.78 trust-store + intermediate-chain walk)
+# v6.1.36 (CVE-30): the current application-traffic secrets, retained so a
+# post-handshake KeyUpdate (RFC 8446 §7.2) can derive secret_{N+1}. SET by
+# install_app_keys; rotated in place by _tn_rotate_recv_keys/_tn_rotate_send_keys.
+var TLS_CTX_OFF_SRV_APP_SECRET = 456; # server application-traffic secret ptr
+var TLS_CTX_OFF_CLI_APP_SECRET = 464; # client application-traffic secret ptr
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -2002,6 +2011,7 @@ fn tls_native_install_app_keys(ctx): i64 {
     tls_native_derive_iv(ss, hlen, hash_algo, siv, iv_len);
     store64(ctx + TLS_CTX_OFF_SRV_APP_KEY, sk);
     store64(ctx + TLS_CTX_OFF_SRV_APP_IV, siv);
+    store64(ctx + TLS_CTX_OFF_SRV_APP_SECRET, ss);   # CVE-30: retain for KeyUpdate
     var cs = alloc(TLS_MAX_DIGEST_LEN);
     if (cs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_APPLICATION, cs) < 0) {
@@ -2015,6 +2025,7 @@ fn tls_native_install_app_keys(ctx): i64 {
     tls_native_derive_iv(cs, hlen, hash_algo, civ, iv_len);
     store64(ctx + TLS_CTX_OFF_CLI_APP_KEY, ck);
     store64(ctx + TLS_CTX_OFF_CLI_APP_IV, civ);
+    store64(ctx + TLS_CTX_OFF_CLI_APP_SECRET, cs);   # CVE-30: retain for KeyUpdate
     tls_native_seq_init(ctx + TLS_CTX_OFF_SRV_APP_SEQ);
     tls_native_seq_init(ctx + TLS_CTX_OFF_CLI_APP_SEQ);
     return TLS_OK;
@@ -2048,25 +2059,30 @@ fn tls_native_seal_app(ctx, buf, len, out, out_max): i64 {
     return _tn_seal_ct(ctx, TLS_CT_APPLICATION_DATA, buf, len, out, out_max);
 }
 
-# Open a protected application-data record from the peer (read with the
-# PEER's application-traffic key). Returns the application-data length
-# (inner content type 23), `TLS_ERR_ALERT` for an alert record, 0 for a
-# post-handshake handshake record (NewSessionTicket / KeyUpdate — full
-# handling later), or a negative error (TLS_ERR_DECRYPT on a bad tag).
-fn tls_native_open_app(ctx, record, record_len, out, out_max): i64 {
+# Internal record-open: decrypt one peer record (with the PEER's
+# application-traffic key), write the decrypted inner content type to
+# `out_inner_ct` (0 to ignore), and return the decrypted plaintext length for
+# application data (inner ct 23) AND post-handshake handshake records (inner ct
+# 22 — NewSessionTicket / KeyUpdate), 0 for a close_notify alert (clean EOF),
+# `TLS_ERR_ALERT` for any other alert, or a negative error (TLS_ERR_DECRYPT on a
+# bad tag). v6.1.36 (CVE-30): surfacing the inner content type lets
+# tls_native_read drain post-handshake records instead of treating them as EOF.
+# The public tls_native_open_app/5 wrapper below preserves the original
+# "handshake → 0" contract so the stdlib surface is unchanged.
+fn _tn_open_record(ctx, record, record_len, out, out_max, out_inner_ct): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_VERSION) == TLS_VERSION_1_2) {
         var oct12 = 0;
         var n12 = tls_native_12_open(ctx, record, record_len, out, out_max, &oct12);
         if (n12 < 0) { return n12; }
-        if (oct12 == TLS_CT_APPLICATION_DATA) { return n12; }
+        if (out_inner_ct != 0) { store64(out_inner_ct, oct12); }
         if (oct12 == TLS_CT_ALERT) {
             # close_notify (description byte 0) = clean shutdown → EOF (0); any
             # other alert is an error.
             if (n12 >= 2) { if ((load8(out + 1) & 0xFF) == 0) { return 0; } }
             return TLS_ERR_ALERT;
         }
-        return 0;
+        return n12;
     }
     var key = load64(ctx + TLS_CTX_OFF_CLI_APP_KEY);
     var iv = load64(ctx + TLS_CTX_OFF_CLI_APP_IV);
@@ -2081,14 +2097,141 @@ fn tls_native_open_app(ctx, record, record_len, out, out_max): i64 {
     var n = tls_native_record_open(load64(ctx + TLS_CTX_OFF_CIPHER), key, iv,
     ctx + seqoff, record, record_len, out, out_max, &oct);
     if (n < 0) { return n; }
-    if (oct == TLS_CT_APPLICATION_DATA) { return n; }
+    if (out_inner_ct != 0) { store64(out_inner_ct, oct); }
     if (oct == TLS_CT_ALERT) {
         # close_notify (description byte 0) = clean shutdown → EOF (0); any
         # other alert is an error.
         if (n >= 2) { if ((load8(out + 1) & 0xFF) == 0) { return 0; } }
         return TLS_ERR_ALERT;
     }
-    return 0;
+    return n;
+}
+
+# Public 5-arg open: decrypt one peer record into `out`. Returns the
+# application-data length (inner ct 23), 0 for a close_notify OR a
+# post-handshake handshake record (the original EOF-ish contract), `TLS_ERR_ALERT`
+# for a fatal alert, or a negative TLS_ERR_*. v6.1.36: a thin wrapper over
+# _tn_open_record (which tls_native_read uses directly to distinguish the two and
+# drain post-handshake records). Kept at arity 5 — the stdlib surface is unchanged.
+fn tls_native_open_app(ctx, record, record_len, out, out_max): i64 {
+    var ict = 0;
+    var n = _tn_open_record(ctx, record, record_len, out, out_max, &ict);
+    if (n <= 0) { return n; }                    # error (<0) or close_notify (0)
+    if (ict == TLS_CT_HANDSHAKE) { return 0; }   # original: post-handshake → 0
+    return n;                                      # application data
+}
+
+# ================================================================
+# Post-handshake messages (RFC 8446 §4.6) — CVE-30
+# ================================================================
+# Rotate the PEER's (receive-direction) application-traffic keys after a
+# KeyUpdate: secret_{N+1} = HKDF-Expand-Label(secret_N, "traffic upd", ...),
+# re-derive key+IV, reset the receive sequence to 0. A client rotates the
+# server keys; a server rotates the client keys.
+fn _tn_rotate_recv_keys(ctx): i64 {
+    var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
+    var hash_algo = tls_native_cipher_hash_algo(cipher);
+    var hlen = _tn_hash_len(hash_algo);
+    var key_len = tls_native_cipher_key_len(cipher);
+    var iv_len = tls_native_cipher_iv_len(cipher);
+    var secoff = TLS_CTX_OFF_CLI_APP_SECRET;
+    var keyoff = TLS_CTX_OFF_CLI_APP_KEY;
+    var ivoff = TLS_CTX_OFF_CLI_APP_IV;
+    var seqoff = TLS_CTX_OFF_CLI_APP_SEQ;
+    if (load64(ctx + TLS_CTX_OFF_ROLE) == TLS_ROLE_CLIENT) {
+        secoff = TLS_CTX_OFF_SRV_APP_SECRET;
+        keyoff = TLS_CTX_OFF_SRV_APP_KEY;
+        ivoff = TLS_CTX_OFF_SRV_APP_IV;
+        seqoff = TLS_CTX_OFF_SRV_APP_SEQ;
+    }
+    return _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len);
+}
+
+# Rotate OUR (send-direction) keys — used after sending a KeyUpdate.
+fn _tn_rotate_send_keys(ctx): i64 {
+    var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
+    var hash_algo = tls_native_cipher_hash_algo(cipher);
+    var hlen = _tn_hash_len(hash_algo);
+    var key_len = tls_native_cipher_key_len(cipher);
+    var iv_len = tls_native_cipher_iv_len(cipher);
+    var secoff = TLS_CTX_OFF_SRV_APP_SECRET;
+    var keyoff = TLS_CTX_OFF_SRV_APP_KEY;
+    var ivoff = TLS_CTX_OFF_SRV_APP_IV;
+    var seqoff = TLS_CTX_OFF_SRV_APP_SEQ;
+    if (load64(ctx + TLS_CTX_OFF_ROLE) == TLS_ROLE_CLIENT) {
+        secoff = TLS_CTX_OFF_CLI_APP_SECRET;
+        keyoff = TLS_CTX_OFF_CLI_APP_KEY;
+        ivoff = TLS_CTX_OFF_CLI_APP_IV;
+        seqoff = TLS_CTX_OFF_CLI_APP_SEQ;
+    }
+    return _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len);
+}
+
+# Shared rotation core: advance the secret at `secoff`, re-derive key/IV,
+# reset the sequence at `seqoff`. Stores fresh allocations (the old key/IV/
+# secret are abandoned to the bump arena).
+fn _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len): i64 {
+    var oldsec = load64(ctx + secoff);
+    if (oldsec == 0) { return TLS_ERR_PROTOCOL; }
+    var newsec = alloc(TLS_MAX_DIGEST_LEN);
+    if (newsec == 0) { return TLS_ERR_OOM; }
+    if (tls_native_key_update_secret(oldsec, hlen, hash_algo, newsec) < 0) {
+        return TLS_ERR_INTERNAL;
+    }
+    var nk = alloc(key_len);
+    var niv = alloc(iv_len);
+    if (nk == 0) { return TLS_ERR_OOM; }
+    if (niv == 0) { return TLS_ERR_OOM; }
+    tls_native_derive_key(newsec, hlen, hash_algo, nk, key_len);
+    tls_native_derive_iv(newsec, hlen, hash_algo, niv, iv_len);
+    store64(ctx + secoff, newsec);
+    store64(ctx + keyoff, nk);
+    store64(ctx + ivoff, niv);
+    tls_native_seq_init(ctx + seqoff);
+    return TLS_OK;
+}
+
+# Send a KeyUpdate (RFC 8446 §4.6.3) with the given request_update byte,
+# then rotate our send keys. Used to answer a peer KeyUpdate(update_requested).
+fn _tn_send_key_update(ctx, request_update): i64 {
+    var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
+    var msg[8];                                   # 4-byte header + 1-byte body
+    tls_native_handshake_write_header(&msg, TLS_HS_KEY_UPDATE, 1);
+    store8(&msg + TLS_HANDSHAKE_HEADER_LEN, request_update & 0xFF);
+    var rec = alloc(64);
+    if (rec == 0) { return TLS_ERR_OOM; }
+    var rn = _tn_seal_ct(ctx, TLS_CT_HANDSHAKE, &msg, TLS_HANDSHAKE_HEADER_LEN + 1, rec, 64);
+    if (rn < 0) { return rn; }
+    if (_tn_sock_write_all(fd, rec, rn) < 0) { return TLS_ERR_IO; }
+    return _tn_rotate_send_keys(ctx);
+}
+
+# Handle one record's worth of post-handshake handshake messages. Consumes
+# (and ignores) NewSessionTicket; for KeyUpdate, rotates the receive keys and
+# — when the peer set update_requested — answers with our own KeyUpdate and
+# rotates our send keys. Returns TLS_OK or a negative error.
+fn _tn_handle_post_handshake(ctx, msg, msg_len): i64 {
+    var pos = 0;
+    while (pos + TLS_HANDSHAKE_HEADER_LEN <= msg_len) {
+        var htype = load8(msg + pos) & 0xFF;
+        var blen = _tn_be24_r(msg + pos + 1);
+        var body = msg + pos + TLS_HANDSHAKE_HEADER_LEN;
+        if (pos + TLS_HANDSHAKE_HEADER_LEN + blen > msg_len) { return TLS_OK; }
+        if (htype == TLS_HS_KEY_UPDATE) {
+            var req = 0;
+            if (blen >= 1) { req = load8(body) & 0xFF; }
+            var rr = _tn_rotate_recv_keys(ctx);
+            if (rr < 0) { return rr; }
+            if (req == 1) {
+                var sr = _tn_send_key_update(ctx, 0);
+                if (sr < 0) { return sr; }
+            }
+        }
+        # NewSessionTicket + any other type: consume and ignore (no session
+        # resumption yet; RFC 8446 §4.6.1 lets a client discard tickets).
+        pos = pos + TLS_HANDSHAKE_HEADER_LEN + blen;
+    }
+    return TLS_OK;
 }
 
 # Derive the next-generation application-traffic secret for KeyUpdate
@@ -4467,6 +4610,8 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     var vr = tls_native_12_verify_finished(ctx, sfin, sfinlen, "server finished");
     if (vr != TLS_OK) { return _tn_ctx_fail(ctx, vr); }
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
+    var cvr = _tn_connect_verify(ctx);   # CVE-18: fail-closed chain + hostname
+    if (cvr != TLS_OK) { return cvr; }
     return TLS_OK;
 }
 
@@ -4786,6 +4931,23 @@ fn tls_native_set_ca_system(ctx): i64 {
     return tls_native_set_ca_bundle(ctx, buf, total, 0);
 }
 
+# CVE-17 (v6.1.36): a CA that signs the next link down must, if it carries a
+# keyUsage extension, assert keyCertSign (0x04); and its pathLenConstraint (if
+# set, != -1) must permit `below` intermediate CAs beneath it toward the leaf.
+# `below` is the path-build depth at which this CA signs (0 = it directly signs
+# the leaf). Uses the sigil 3.7.12 keyUsage/pathLen fields. Returns 1 if OK.
+fn _tn_ca_signer_ok(ca, below): i64 {
+    var ku = x509_cert_key_usage(ca);
+    if (ku != 0) {                          # keyUsage present
+        if ((ku & 0x04) == 0) { return 0; } # keyCertSign required to sign certs
+    }
+    var pl = x509_cert_path_len(ca);
+    if (pl != (0 - 1)) {                     # pathLenConstraint set
+        if (below > pl) { return 0; }
+    }
+    return 1;
+}
+
 # Client: verify the server's certificate chain by PATH BUILDING (v6.1.19,
 # RFC 5280 §6.1 / RFC 8446 §4.4.2). `now_unix` is the validation time (the
 # caller supplies it — no in-stdlib clock wrapper yet). Returns TLS_OK on a
@@ -4820,6 +4982,18 @@ fn tls_native_client_verify_chain(ctx, now_unix): i64 {
     if (leaf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
     if (rootset == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
     if (_x509_in_window(leaf, now_unix) == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    # CVE-17 (v6.1.36): the leaf must permit TLS server identity. keyUsage (if
+    # present) must allow digitalSignature | keyEncipherment | keyAgreement
+    # (0xA8); extendedKeyUsage (if present) must include serverAuth (or anyEKU).
+    # 0 = extension absent → RFC 5280 imposes no restriction.
+    var lku = x509_cert_key_usage(leaf);
+    if (lku != 0) {
+        if ((lku & 0xA8) == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    }
+    var leku = x509_cert_eku(leaf);
+    if (leku != 0) {
+        if ((leku & 0x01) == 0) { return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID); }
+    }
     var inters = load64(ctx + TLS_CTX_OFF_SERVER_INTERS);
     var ni = 0;
     if (inters != 0) { ni = load64(inters); }
@@ -4834,7 +5008,11 @@ fn tls_native_client_verify_chain(ctx, now_unix): i64 {
             if (_x509_issuer_matches(cur, R) == 1) {
                 if (_x509_in_window(R, now_unix) == 1) {
                     if (x509_cert_is_ca(R) == 1) {
-                        if (_x509_verify_link(cur, R) == 1) { return TLS_OK; }
+                        if (_x509_verify_link(cur, R) == 1) {
+                            # CVE-17: the anchoring root must assert keyCertSign
+                            # (if it has keyUsage) + honor pathLen for `depth`.
+                            if (_tn_ca_signer_ok(R, depth) == 1) { return TLS_OK; }
+                        }
                     }
                 }
             }
@@ -4849,7 +5027,11 @@ fn tls_native_client_verify_chain(ctx, now_unix): i64 {
                 if (_x509_issuer_matches(cur, P) == 1) {
                     if (x509_cert_is_ca(P) == 1) {
                         if (_x509_in_window(P, now_unix) == 1) {
-                            if (_x509_verify_link(cur, P) == 1) { nextp = P; ii = ni; }
+                            if (_x509_verify_link(cur, P) == 1) {
+                                # CVE-17: signing intermediate must assert
+                                # keyCertSign + honor pathLen for `depth`.
+                                if (_tn_ca_signer_ok(P, depth) == 1) { nextp = P; ii = ni; }
+                            }
                         }
                     }
                 }
@@ -4940,8 +5122,142 @@ fn _tn_host_match(dns, dns_len, host, host_len): i64 {
     return _tn_ci_eq(dns, host, dns_len);
 }
 
-# Walk a cert DER to its SubjectAltName extension and match `host`
-# against the dNSName entries. Returns 1 on a match, 0 otherwise.
+# Hex digit value (0-15) or -1. CVE-18: used by the IPv6 literal parser.
+fn _tn_hexval(c): i64 {
+    if (c >= 0x30) { if (c <= 0x39) { return c - 0x30; } }       # 0-9
+    if (c >= 0x61) { if (c <= 0x66) { return c - 0x61 + 10; } }  # a-f
+    if (c >= 0x41) { if (c <= 0x46) { return c - 0x41 + 10; } }  # A-F
+    return 0 - 1;
+}
+
+# CVE-18 (v6.1.36): parse an IPv4 dotted-decimal literal (`host`/`host_len`)
+# into 4 network-order bytes at `out`. Returns 4 on success, 0 if not a
+# well-formed IPv4 literal. Used for iPAddress-SAN matching of IP connects.
+fn _tn_parse_ipv4(host, host_len, out): i64 {
+    var octet = 0;
+    var digits = 0;
+    var count = 0;
+    var i = 0;
+    while (i < host_len) {
+        var c = load8(host + i) & 0xFF;
+        if (c == 0x2E) {                        # '.'
+            if (digits == 0) { return 0; }
+            if (count >= 3) { return 0; }
+            store8(out + count, octet & 0xFF);
+            count = count + 1;
+            octet = 0;
+            digits = 0;
+        } else {
+            if (c < 0x30) { return 0; }
+            if (c > 0x39) { return 0; }
+            octet = octet * 10 + (c - 0x30);
+            if (octet > 255) { return 0; }
+            digits = digits + 1;
+            if (digits > 3) { return 0; }
+        }
+        i = i + 1;
+    }
+    if (digits == 0) { return 0; }
+    if (count != 3) { return 0; }
+    store8(out + 3, octet & 0xFF);
+    return 4;
+}
+
+# Parse colon-separated 16-bit hex groups of an IPv6 literal segment into
+# `out` (network order, max `max_bytes`). Returns bytes written or -1.
+fn _tn_ipv6_groups(s, slen, out, max_bytes): i64 {
+    var written = 0;
+    var group = 0;
+    var ghas = 0;
+    var i = 0;
+    while (i < slen) {
+        var c = load8(s + i) & 0xFF;
+        if (c == 0x3A) {                        # ':'
+            if (ghas == 0) { return 0 - 1; }
+            if (written + 2 > max_bytes) { return 0 - 1; }
+            store8(out + written, (group >> 8) & 0xFF);
+            store8(out + written + 1, group & 0xFF);
+            written = written + 2;
+            group = 0;
+            ghas = 0;
+        } else {
+            var hv = _tn_hexval(c);
+            if (hv < 0) { return 0 - 1; }
+            group = (group << 4) | hv;
+            if (group > 0xFFFF) { return 0 - 1; }
+            ghas = 1;
+        }
+        i = i + 1;
+    }
+    if (ghas == 1) {
+        if (written + 2 > max_bytes) { return 0 - 1; }
+        store8(out + written, (group >> 8) & 0xFF);
+        store8(out + written + 1, group & 0xFF);
+        written = written + 2;
+    }
+    return written;
+}
+
+# CVE-18: parse an IPv6 literal into 16 bytes at `out`. Supports one `::`
+# zero-compression. Returns 16 on success, 0 otherwise. (Embedded-IPv4 form
+# `::ffff:1.2.3.4` is not handled — vanishingly rare in iPAddress SANs.)
+fn _tn_parse_ipv6(host, host_len, out): i64 {
+    var z = 0;
+    while (z < 16) { store8(out + z, 0); z = z + 1; }
+    var dpos = 0 - 1;                            # index of "::" or -1
+    var i = 0;
+    while (i + 1 < host_len) {
+        if ((load8(host + i) & 0xFF) == 0x3A) {
+            if ((load8(host + i + 1) & 0xFF) == 0x3A) {
+                if (dpos >= 0) { return 0; }      # only one "::" allowed
+                dpos = i;
+            }
+        }
+        i = i + 1;
+    }
+    if (dpos < 0) {
+        if (_tn_ipv6_groups(host, host_len, out, 16) != 16) { return 0; }
+        return 16;
+    }
+    var head_len = dpos;
+    var tail_start = dpos + 2;
+    var tail_len = host_len - tail_start;
+    var hb = 0;
+    if (head_len > 0) {
+        hb = _tn_ipv6_groups(host, head_len, out, 16);
+        if (hb < 0) { return 0; }
+    }
+    var tailbuf[16];
+    var tb = 0;
+    if (tail_len > 0) {
+        tb = _tn_ipv6_groups(host + tail_start, tail_len, &tailbuf, 16 - hb);
+        if (tb < 0) { return 0; }
+    }
+    if (hb + tb > 16) { return 0; }
+    var k = 0;
+    while (k < tb) {
+        store8(out + (16 - tb) + k, load8(&tailbuf + k) & 0xFF);
+        k = k + 1;
+    }
+    return 16;
+}
+
+# CVE-18: parse `host` as an IP literal into `out`. Returns the byte length
+# (4 for IPv4, 16 for IPv6) or 0 if `host` is a domain name, not an IP.
+fn _tn_parse_ip_literal(host, host_len, out): i64 {
+    var has_colon = 0;
+    var i = 0;
+    while (i < host_len) {
+        if ((load8(host + i) & 0xFF) == 0x3A) { has_colon = 1; i = host_len; }
+        else { i = i + 1; }
+    }
+    if (has_colon == 1) { return _tn_parse_ipv6(host, host_len, out); }
+    return _tn_parse_ipv4(host, host_len, out);
+}
+
+# Walk a cert DER to its SubjectAltName extension and match `host` against the
+# dNSName entries (RFC 6125), and — CVE-18 (v6.1.36) — the iPAddress entries
+# when `host` is an IP literal. Returns 1 on a match, 0 otherwise.
 fn _tn_cert_san_match(der, der_len, host, host_len): i64 {
     var cp = 0;
     var cl = 0;
@@ -5003,6 +5319,17 @@ fn _tn_cert_san_match(der, der_len, host, host_len): i64 {
                                 if (ntag == 0x82) {
                                     if (_tn_host_match(der + ncp, ncl, host, host_len) == 1) { return 1; }
                                 }
+                                if (ntag == 0x87) {
+                                    # iPAddress SAN (CVE-18): match the raw 4/16
+                                    # octets when `host` is an IP literal.
+                                    var ipb[16];
+                                    var iplen = _tn_parse_ip_literal(host, host_len, &ipb);
+                                    if (iplen > 0) {
+                                        if (ncl == iplen) {
+                                            if (_tn_ct_eq(der + ncp, &ipb, iplen) == 1) { return 1; }
+                                        }
+                                    }
+                                }
                                 np = ncp + ncl;
                             }
                             return 0;
@@ -5052,9 +5379,34 @@ fn tls_native_set_version_range(ctx, min_ver, max_ver): i64 {
     return TLS_OK;
 }
 
+# CVE-18 (v6.1.36): wall-clock for cert-window validation. syscall(201, 0) is
+# time(2) on Linux; the backend ESYSXLAT-renumbers it per target (matches the
+# lib/tls.cyr wrapper's existing time source).
+fn _tn_now_unix(): i64 {
+    return syscall(201, 0);
+}
+
+# CVE-18 (v6.1.36): fail-closed peer verification, run by connect() BEFORE it
+# yields a CONNECTED channel — so a bare-metal/AGNOS caller (which can't use the
+# lib/tls.cyr wrapper) is verified by default, not connected-but-unverified.
+# TLS_VERIFY_NONE opts out (testing / pinned peer). Otherwise the chain MUST
+# verify to a trusted root, and — a TLS identity with no name to bind to is
+# meaningless — a host MUST be set and match a dNSName or iPAddress SAN. An IP
+# connection sets the IP literal as the host (iPAddress-SAN matched).
+fn _tn_connect_verify(ctx): i64 {
+    if (load64(ctx + TLS_CTX_OFF_VERIFY) == TLS_VERIFY_NONE) { return TLS_OK; }
+    var cr = tls_native_client_verify_chain(ctx, _tn_now_unix());
+    if (cr != TLS_OK) { return cr; }
+    if (load64(ctx + TLS_CTX_OFF_HOST) == 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_CERT_HOSTNAME_MISMATCH);
+    }
+    return tls_native_client_verify_hostname(ctx);
+}
+
 # Client-side: perform the handshake over `sock_fd` (caller-managed
 # TCP socket, already connect()'d). Blocking; returns TLS_OK when
-# handshake completes, or a negative TLS_ERR_* on failure.
+# handshake completes AND (CVE-18) the peer verifies per the ctx verify
+# mode, or a negative TLS_ERR_* on failure.
 fn tls_native_connect(ctx, sock_fd): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     # A 1.2-pinned ctx (max_ver == 1.2) routes to the TLS 1.2 driver.
@@ -5097,6 +5449,8 @@ fn tls_native_connect(ctx, sock_fd): i64 {
     # Install application-traffic keys (client_finish derived the master).
     var ik = tls_native_install_app_keys(ctx);
     if (ik != TLS_OK) { return ik; }
+    var vr = _tn_connect_verify(ctx);   # CVE-18: fail-closed chain + hostname
+    if (vr != TLS_OK) { return vr; }
     return TLS_OK;
 }
 
@@ -5263,18 +5617,44 @@ fn tls_native_write(ctx, buf, len): i64 {
 
 # Receive up to `maxlen` bytes into `buf`. Returns bytes read (>=0;
 # 0 means peer-initiated close_notify), or a negative TLS_ERR_*.
+# v6.1.36 (CVE-30): drains post-handshake records (NewSessionTicket /
+# KeyUpdate, RFC 8446 §4.6) that arrive interleaved with application data,
+# instead of returning 0 (false EOF) on the first one. A standard TLS 1.3
+# server (OpenSSL/nginx) sends a NewSessionTicket immediately after the
+# handshake; before this, the first read collapsed to EOF before any data.
 fn tls_native_read(ctx, buf, maxlen): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_STATE) != TLS_STATE_CONNECTED) { return TLS_ERR_PROTOCOL; }
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    var inbuf = alloc(cap);
+    # One allocation holds the ciphertext [0..cap) AND a full-size plaintext
+    # scratch [cap..) — handshake records must decrypt into a max-size buffer
+    # (a large NewSessionTicket would trip TLS_ERR_BUFFER_FULL against a small
+    # caller `maxlen` and consume the AEAD sequence, wedging the connection).
+    var inbuf = alloc(cap + TLS_RECORD_MAX_PLAINTEXT);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var rl = _tn_sock_read_record_skip_ccs(fd, inbuf, cap);
-    if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    # open_app returns the app-data length, 0 for a post-handshake
-    # handshake record (NewSessionTicket / KeyUpdate), or TLS_ERR_ALERT.
-    return tls_native_open_app(ctx, inbuf, rl, buf, maxlen);
+    var plain = inbuf + cap;
+    var guard = 0;
+    while (guard < TLS_POST_HANDSHAKE_DRAIN_MAX) {
+        guard = guard + 1;
+        var rl = _tn_sock_read_record_skip_ccs(fd, inbuf, cap);
+        if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+        var ict = 0;
+        var n = _tn_open_record(ctx, inbuf, rl, plain, TLS_RECORD_MAX_PLAINTEXT, &ict);
+        if (n < 0) { return n; }
+        if (ict == TLS_CT_APPLICATION_DATA) {
+            if (n > maxlen) { return TLS_ERR_BUFFER_FULL; }
+            memcpy(buf, plain, n);
+            return n;
+        }
+        if (ict == TLS_CT_ALERT) { return 0; }   # close_notify → EOF
+        if (ict == TLS_CT_HANDSHAKE) {
+            var hr = _tn_handle_post_handshake(ctx, plain, n);
+            if (hr < 0) { return _tn_ctx_fail(ctx, hr); }
+        }
+        # any other inner type: drain and continue
+    }
+    return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);   # too many post-handshake records
 }
 
 # Send a close_notify alert (RFC 5246 §7.2.1 / RFC 8446 §6.1), then mark the

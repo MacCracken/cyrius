@@ -397,6 +397,9 @@ fn _run_regression_gates(): i64 {
     _input_validation_rejects_gate();
     println("");
 
+    _vendored_dist_selfcontained_gate();
+    println("");
+
     _section("match coverage check (DCE-dead fn determinism; v5.9.24)");
     _match_coverage_dce_gate();
     println("");

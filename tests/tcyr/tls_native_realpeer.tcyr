@@ -48,18 +48,15 @@ if (sys_connect(fd, &sa, 16) != 0) {
         var req = "GET / HTTP/1.1\r\nHost: one.one.one.one\r\nConnection: close\r\n\r\n";
         tls_write(ctx, req, strlen(req));
         var resp = alloc(16384);
-        var n = 0;
-        var tries = 0;
-        while (tries < 8) {                       # loop past NewSessionTicket records (return 0)
-            n = tls_read(ctx, resp, 16384);
-            if (n > 0) { tries = 8; }
-            if (n < 0) { tries = 8; }
-            tries = tries + 1;
-        }
+        # CVE-30 (v6.1.36): tls_read now drains the server's post-handshake
+        # NewSessionTicket internally, so the FIRST read returns application
+        # data. This test used to loop up to 8 times, treating each NST's
+        # 0-return as a non-EOF — that caller-side workaround is gone.
+        var n = tls_read(ctx, resp, 16384);
         if (n <= 0) {
             assert_eq(1, 1, "live peer sent no response — skipped");
         } else {
-            assert_eq(_tn_ct_eq(resp, "HTTP/1.1 ", 9), 1, "LIVE HTTPS: valid HTTP/1.1 response over native TLS");
+            assert_eq(_tn_ct_eq(resp, "HTTP/1.1 ", 9), 1, "LIVE HTTPS: HTTP/1.1 response on FIRST native-TLS read (NST drained internally)");
         }
         tls_close(ctx);
     }
