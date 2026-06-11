@@ -6,6 +6,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.32] — 2026-06-11
+
+**v6.1.x slot 32 (Phase F — security/correctness hardening tail): agnos argv
+capture moved to the entry landing — `argc()==0` for `var r = main();` entries.**
+Closes attn11's issue `2026-06-10-cyrius-agnos-capture-after-gvar-init-call`.
+`run /bin/attn11 --steps 50 --save /ck.ckpt` under agnsh launched attn11 but
+trained the default 2000 steps and never saved — `argc()==0` inside `main()`,
+though the same flags worked on Linux. Same HIGH-sev "CLI flags silently ignored
+on agnos" symptom the v6.1.14 fix addressed, one entry shape deeper.
+
+### Fixed
+- **agnos init-stack capture ran AFTER a call-bearing gvar initializer.** The
+  scaffold-standard entry `var r = main(); sys_exit(r);` makes `main()` a **gvar
+  initializer** — `cycc` emits its `call main` inside the `EMIT_GVAR_INITS` block
+  (`src/main.cyr`). The v6.1.14 placement emitted `call _agnos_capture_rsp`
+  *after* `EMIT_GVAR_INITS`, so for that shape `main()` ran with `_agnos_init_rsp`
+  still 0 → `argc()==0`. (v6.1.14's bnrmr validation used a non-call-initializer
+  entry, so it held there.) **Fix: park the init rsp in callee-saved r15 at the
+  entry LANDING** — the first runtime instruction, before any gvar-init code —
+  exactly mirroring the v6.1.30 x86-macho fix. r15 is reserved from regalloc
+  (`parse_fn.cyr` caps the pool at 4 on `_TARGET_AGNOS==1`, as for
+  `_TARGET_MACHO==1`); `lib/args_agnos.cyr` reads r15 via `_agnos_argv_base()`.
+  The landing park is immune to any gvar-init call. Replaces the
+  `call _agnos_capture_rsp` scheme + the `_agnos_init_rsp` global.
+
+### Changed
+- `lib/args_agnos.cyr` — `argc()`/`argv()`/`_agnos_getenv()` read the r15-parked
+  init rsp via `_agnos_argv_base()` (inline `mov rax, r15`) instead of the
+  `_agnos_init_rsp` global; dropped `_agnos_capture_rsp` + the global. Comment
+  fixes in `lib/io.cyr` + `lib/args_macos.cyr` (the latter's `_macho_capture_args`
+  path has been vestigial since v6.1.30's r15 read).
+
+**Verification:** `_TARGET_AGNOS`-gated → x86/aarch64/PE/macho codegen unaffected;
+**cycc self-hosts byte-identical** (1,045,720 B, −176 B). check.sh **87/87**.
+**Emit-verified (A/B):** with `CYRIUS_TARGET_AGNOS=1`, `mov r15, rsp` (`49 89 E7`)
+is the **first instruction at the entry landing**, ahead of the gvar-init
+`call main`; a non-agnos build emits zero parks (correctly gated). Full agnos
+end-to-end (run-on-agnos `argc=4`) rides the consumer build (attn11/agnoshi) +
+ecb/cass cross-host per the workflow — **user pushes/tags after CI**.
+
 ## [6.1.31] — 2026-06-10
 
 **v6.1.x slot 31: Ed25519 server certificates for native TLS** (fold sigil 3.7.9;

@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.31** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,045,896 B (unchanged @ 6.1.31 — sigil 3.7.9 fold is lib-only; sigil not in cycc) |
+| **Version** | **6.1.32** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,045,720 B (−176 B @ 6.1.32 — agnos argv r15 park replaces the call-capture path; net smaller) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -27,23 +27,32 @@
 | tests | 173 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); brk-final `0x5D9D000` (~93.6 MB virtual) |
-| bench (every-release gate) | self_compile ~497 ms (box noise) |
+| bench (every-release gate) | self_compile ~493 ms (box noise) |
 
-> **Handoff (2026-06-10):** v6.1.31 ready for cut — **Ed25519 server certs for native TLS**
-> (fold sigil 3.7.9; closes the sit-filed issue `2026-06-10-tls-native-ed25519-server-cert-accept-fails`).
-> `sit serve --tls` with an Ed25519 cert failed (ECDSA worked). Root cause was NOT the TLS
-> layer (`tls_native` CertVerify sign+verify already handled Ed25519) but **sigil's X.509
-> parser was ECDSA/RSA-only** → server `load_creds` rejected the cert (`x509_parse`→
-> CERT_INVALID) before the handshake. (The prior Ed25519 test paired an Ed25519 *key* with
-> a P-256 *cert*, so a real Ed25519 **cert** was never parsed — the workflow corrected the
-> premise; I localized via repro→load_creds→x509_parse.) **sigil 3.7.9** adds Ed25519 X.509
-> leaf-cert support (RFC 8410: sig-algid OID, SPKI 32-byte pubkey `X509_CURVE_ED25519`,
-> `_x509_verify_link` PureEd25519); folded into `lib/sigil.cyr` (3.7.4→3.7.9). cycc UNCHANGED.
-> `version-bump.sh 6.1.31` to apply; **user pushes/tags after CI**. Gates: check.sh **87/87**,
-> all **173** tcyr exit-0 (+`tls_native_ed25519.tcyr`), cycc byte-identical, **ecb/cass
-> `SELFHOST_OK`**, bench 507 ms. **VERIFIED:** native loopback (5/5) + **OpenSSL `s_client`
-> interop** (`Peer signature type: ed25519`, TLS 1.3, server accepted; only verify error =
-> self-signed chain-trust). sigil suite 54/54. **Unblocks sit** (broaden TLS CI to Ed25519).
+> **Handoff (2026-06-11):** v6.1.32 ready for cut — **agnos argv capture moved to the
+> entry landing** (Phase F hardening tail; closes attn11's issue
+> `2026-06-10-cyrius-agnos-capture-after-gvar-init-call`). `argc()==0` on agnos for the
+> scaffold-standard `var r = main(); sys_exit(r);` entry: `var r = main()` is a gvar
+> initializer, so cycc emits its `call main` INSIDE `EMIT_GVAR_INITS`, and the v6.1.14
+> `call _agnos_capture_rsp` (emitted AFTER that block) ran too late → main() executed with
+> `_agnos_init_rsp` still 0. **Fix mirrors v6.1.30 x86-macho: park the init rsp in r15 at
+> the entry LANDING** (first instr, before gvar-inits); reserve r15 from regalloc
+> (`parse_fn.cyr` cap 5→4 on `_TARGET_AGNOS==1`); `lib/args_agnos.cyr` reads r15 via
+> `_agnos_argv_base()`; dropped the `_agnos_capture_rsp` fn + `_agnos_init_rsp` global.
+> All `_TARGET_AGNOS`-gated → x86/aarch64/PE/macho codegen unaffected. **VERIFIED:** cycc
+> self-hosts byte-identical (1,045,720 B, −176 B); check.sh **87/87**; bench 493 ms;
+> **ecb + cass + pi `SELFHOST_OK`**. **Emit-verified (A/B):** with `CYRIUS_TARGET_AGNOS=1`,
+> `mov r15, rsp` (`49 89 E7`) is the FIRST landing instruction, ahead of the gvar-init
+> `call main`; non-agnos emits zero parks (gated).
+> **⚠ NOT verified locally — run-on-agnos `argc=4`:** `cyrius build --agnos` IN THIS SANDBOX
+> sets the `#ifdef` (agnos args compile) but the runtime `_TARGET_AGNOS` env didn't reach
+> cycc's `_read_env`, so the emit gate stayed off and no park emitted via the wrapper
+> (pre-existing — it suppressed the OLD capture identically; the DIRECT
+> `env CYRIUS_TARGET_AGNOS=1 cycc` path emits correctly). attn11's real build DOES set the
+> runtime gate (it hit the capture-too-late symptom), so the fix applies there. **Confirm
+> `argc=4` on a real attn11/agnoshi build, and investigate the wrapper env-passing
+> separately** (possible `cyrius build --agnos` env-propagation gap on this box).
+> **user pushes/tags after CI.**
 >
 > **Still OPEN — x86-macOS-usable arc (.30 shipped phase 1 = argv prologue; follow-up slots,
 > ach-gated):** (1) env (`_read_env`/`_macho_fill_environ` → HOME/uname); (2) wrapper's

@@ -1476,6 +1476,15 @@ EPATCH(S, jmp_patch);
 # MUST match main_x86_macho.cyr's macho park byte-for-byte (cross == native).
 # _TARGET_MACHO==1 is x86 Mach-O (==2 is arm64, which has its own x28 prologue).
 if (_TARGET_MACHO == 1) { E3(S, 0xE78949); }   # mov r15, rsp   (49 89 E7)
+# v6.1.32: agnos argv — same SysV init stack as x86-macho ([rsp]=argc, inline
+# argv/envp), same r15 park at the landing. Done HERE (before EMIT_GVAR_INITS)
+# so a call-bearing top-level initializer `var r = main();` — emitted INSIDE the
+# gvar-init block — can't run main() before the capture. The old v6.1.14 `call
+# _agnos_capture_rsp` was emitted AFTER EMIT_GVAR_INITS (below), so for that
+# entry shape main() ran with _agnos_init_rsp still 0 → argc()==0 (attn11 issue
+# 2026-06-10-cyrius-agnos-capture-after-gvar-init-call). r15 is reserved from
+# regalloc (parse_fn.cyr cap on _TARGET_AGNOS==1); lib/args_agnos.cyr reads it.
+if (_TARGET_AGNOS == 1) { E3(S, 0xE78949); }   # mov r15, rsp   (49 89 E7)
 
 # v5.11.52: under CYRIUS_TARGET_EFI=1, save firmware-supplied entry
 # args (RCX = ImageHandle, RDX = SystemTable per UEFI MS x64 ABI)
@@ -1586,23 +1595,13 @@ if (_init_km == 1) {
             if (_mcap_off >= 0) { ECALLTO(S, _mcap_off); }
         }
     }
-    # v6.1.14: agnos init-stack capture (Bug 1 — issue
-    # 2026-06-08-cyrius-agnos-argv-init-rsp-capture). Emit `call
-    # _agnos_capture_rsp` HERE — after EMIT_GVAR_INITS (so the
-    # `_agnos_init_rsp = 0` initializer already ran and won't clobber us) and
-    # BEFORE PARSE_PROG (so it runs while rsp still = the kernel init stack,
-    # ahead of ANY top-level statement that shifts rsp). The prior placement
-    # was the entry epilogue *after* PARSE_PROG — it captured a shifted rsp in
-    # non-trivial programs (`argc()==0` in bnrmr; correct in minimal ones).
-    # Mirrors the _macho_capture_args placement above. Gated _TARGET_AGNOS →
-    # emits nothing on other targets, cycc self-hosts byte-identical.
-    if (_TARGET_AGNOS == 1) {
-        var _acap_found = _find_fn_by_name(S, "_agnos_capture_rsp", 18);
-        if (_acap_found >= 0) {
-            var _acap_off = L64(S + 0x9CA000 + _acap_found * 8);
-            if (_acap_off >= 0) { ECALLTO(S, _acap_off); }
-        }
-    }
+    # v6.1.32: the agnos init-rsp capture moved UP to the entry landing (the r15
+    # park next to the x86-macho one). The v6.1.14 `call _agnos_capture_rsp` that
+    # used to be HERE ran AFTER EMIT_GVAR_INITS, so a `var r = main();` gvar
+    # initializer (emitted inside the gvar-init block) executed main() before the
+    # capture → argc()==0 (attn11 issue
+    # 2026-06-10-cyrius-agnos-capture-after-gvar-init-call). The landing park is
+    # immune to that. See the park above + lib/args_agnos.cyr.
     # Parse main code (top-level statements)
     PARSE_PROG(S);
 }
@@ -1655,11 +1654,12 @@ if (_TARGET_EFI_APPLICATION == 1) {
 }
 
 # v6.0.55: agnos init-stack capture USED to live here (entry epilogue, just
-# before `call main`). v6.1.14 moved it UP to immediately after EMIT_GVAR_INITS
-# / before PARSE_PROG (next to the _macho_capture_args call) — the epilogue
-# placement captured a *shifted* rsp once any top-level statement in PARSE_PROG
-# moved it, so `argc()` read 0 in non-trivial agnos programs (bnrmr). See the
-# agnos block above and CHANGELOG [6.1.14].
+# before `call main`). v6.1.14 moved it up to after EMIT_GVAR_INITS / before
+# PARSE_PROG. v6.1.32 moved it UP AGAIN to the entry LANDING (an r15 park, before
+# EMIT_GVAR_INITS) — the after-gvar-init placement still ran behind a
+# call-bearing `var r = main();` initializer (main() executed during the
+# gvar-init block, before the capture → argc()==0). The landing park is immune.
+# See the r15 park near the top of main code + CHANGELOG [6.1.32].
 
 # v5.9.37: auto-call `main()` if defined and not already called.
 # Pre-fix sources with only `fn main() { ... }` (no trailing

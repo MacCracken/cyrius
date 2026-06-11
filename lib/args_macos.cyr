@@ -48,8 +48,9 @@ fn _macho_argv_base() {
 
 # x86-macОS: record the init-stack pointer. cycc emits `call
 # _macho_capture_args` from the entry epilogue (the EJMP0 landing site) while
-# rsp still = the init rsp — before any other call — exactly as it emits
-# `call _agnos_capture_rsp` before `call main` (lib/args_agnos.cyr). The `call`
+# rsp still = the init rsp — before any other call. (v6.1.32: agnos moved to an
+# r15 landing park, lib/args_agnos.cyr; this _macho_capture_args path is itself
+# vestigial — _macho_argv_base reads r15 since v6.1.30.) The `call`
 # pushed the return address (8 bytes) and EFNPRO pushed rbp (8 bytes), so the
 # init rsp is rbp + 16. `var ir = 0` only touches rax, so the stack pointer is
 # undisturbed up to the asm. Identical shape to args_agnos.cyr — macOS x86_64

@@ -266,7 +266,7 @@ fn file_write_all_r(path, buf, len): Result {
 fn getenv(name): i64 {
     # agnos has no /proc/self/environ; the kernel stages envp on the exec init
     # stack (agnos 1.43.2). Delegate to args_agnos.cyr's _agnos_getenv, which
-    # owns the _agnos_init_rsp capture (forward fn ref — io.cyr precedes args in
+    # reads the r15-parked init rsp (forward fn ref — io.cyr precedes args in
     # the stdlib include order). See ABI §4.6. v6.0.87.
     #ifdef CYRIUS_TARGET_AGNOS
     return _agnos_getenv(name);

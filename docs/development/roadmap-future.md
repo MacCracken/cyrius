@@ -99,7 +99,7 @@ at each cycle-open per [`feedback_premise_check_at_slot_entry`].
 | **Hardware 128-bit div-mod** | Medium | Stays unpinned. abaco / sigil work around via u128 shifts; not blocking. Pull forward if a real perf regression surfaces. |
 | **Phase 3-full varargs** (`va_arg` for structs-by-value + nested) | Medium | Phase 3-min shipped v5.5.36. Stays unpinned — niche. Most consumers use array-of-args pattern instead. |
 | **cycc per-block scoping** | Medium | Stays unpinned. Function-scope works for current consumer base; promote when a real refactor surfaces the pain point. |
-| **Incremental compilation** | High | Stays unpinned. Whole-program self-host is fast (<400 ms at v6.0.0). Incremental adds complexity for cyrius-style projects without proportional payoff. Reconsider when cycc self-host time crosses ~2 sec. |
+| **Incremental compilation** | High | Stays **watching**. Whole-program self-host is fast (~500 ms @ v6.1.x). Reconsider when cycc self-host crosses ~2 sec — and per user 2026-06-11, **the next few arcs (v6.2.x–v6.4.x) will inform the timing**: PIE/RISC-V/generics growth plus the (currently blind, PF-01) bench harness once fixed will show whether self-host is approaching the threshold. Don't pin now; let those arcs report. Same posture for the **bus-factor / institutional-memory** question (vidya + memory-pins live outside the repo) — revisit as those arcs land. |
 
 ---
 
@@ -122,21 +122,29 @@ or design driver materializes.
 
 ---
 
-## ~v7.0 — Public release ("Cyrius ONE")
+## ~v7.0 — Public release ("Cyrius ONE") — FULL-PUBLIC IS AN OPEN QUESTION
 
-The first book on Cyrius, written from Vidya + first-party
-documentation, published alongside the public release (Amazon /
-Packt or similar). Held back from v6.0.0 so the language surface
-is stable before the manuscript lands. Exact version TBD; lands
-with whatever version the public release cuts on (current guess:
-v7).
+**Reframed 2026-06-11** (user): "sovereign and usage — whether its full public
+is still in question." Sovereign + usable is the committed direction; a *full
+public* release (the book on Amazon/Packt + an installer aimed at strangers) is
+**not a decided commitment**. Keep the manuscript + public launch as a *possible*
+v7 shape, a watching item — not a gate.
 
-**Why the version is uncertain**: depends on how much language
-work earns its way into v6.x (closures + generics + async are
-pinned to v6.3.x; further refinements may flow from v6.x consumer
-filings). The manuscript fixes a "stable point" — when the
-language stops accumulating substantial new surface, the book
-becomes writeable.
+Two things follow:
+- **v6.x grows much more before any v7.0.0 bump** (user 2026-06-11) — see
+  roadmap_6.md "What comes after v6.x". v7 is further out than earlier framing
+  implied; the language can keep accumulating surface across additional v6.x
+  minors.
+- **The usability/adoption debt is worth paying regardless** of whether it ever
+  goes fully public — diagnostics, debug-info, stdlib-reference coverage, the
+  GPL linking-exception question all make the toolchain better for the *existing*
+  ecosystem too. Tracked in roadmap_6.md "Usability / adoption readiness" + the
+  2026-06-10 deep-dive audit.
+
+**If/when a public release is decided**, the book ("written from Vidya +
+first-party docs") fixes a "stable point" — when the language stops accumulating
+substantial new surface. That point is now expected later in (or after) the v6.x
+cycle, not at a near-term v7.
 
 ---
 

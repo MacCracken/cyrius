@@ -159,6 +159,38 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
+### Phase 0 (v6.2.x opening) — growable-region foundation
+
+**Lands first, before bare-metal + RISC-V** (user direction 2026-06-11: pull
+this earlier than the v6.3.x arc). Migrate the three pressure tables —
+fn-tables, `fixup_tbl`, and codebuf — from fixed heap regions to vec-backed
+`rp_vec` storage, using the recipe **proven byte-identical at v6.0.7** (the
+`ret_patches` → `rp_vec` migration; output embeds no compiler heap addresses
+and allocation order is input-deterministic, so self-host stays byte-identical).
+
+**Why now, why first:**
+- **Ahead of backend #7.** RISC-V (below) is the 7th backend; landing growable
+  tables *before* it means the new backend inherits the vec-backed pattern
+  instead of re-duplicating the fixed-cap pattern that would then need a second
+  migration. Pay the structural cost once.
+- **Ends the cap-raise treadmill.** Fixed caps have been raised ~1/minor
+  (str_data / codebuf / `output_buf` 2 MB→16 MB @ .27); generics (v6.3.x) would
+  blow them N× per instantiation. Growable storage removes the recurring
+  cap-bump and the class of silent overruns the deep-dive found on unguarded
+  emitters.
+- **Resolves the heap-registry rot (AR-03).** The fixup-cap split-brain
+  (262144 vs 1048576, ~12 MB unreachable), stale fn-table labels, and the
+  undocumented overlapping region all clean up as part of the migration.
+- **De-risks v6.3.x.** It was originally v6.3.x Phase-0 groundwork; pulling it
+  into v6.2.x-open means the language arc opens onto already-growable tables.
+
+**Keeps the fixed map for scalars/scratch** (perf-positive — no per-access
+indirection where it isn't needed). Structural multi-backend change → ecb/cass +
+the in-hand rv64 self-host reverify. Issues:
+[`2026-06-10-monomorphization-substrate-prereqs.md`](issues/2026-06-10-monomorphization-substrate-prereqs.md)
+(AR-02) + [`2026-06-10-memory-safety-parity-gaps.md`](issues/2026-06-10-memory-safety-parity-gaps.md)
+(AR-03).
+
 ### v6.2.0 — Bare-metal target formalization
 
 Codify the ad-hoc bare-metal mode that agnos has been using
@@ -282,6 +314,7 @@ Memory pin: [[project_native_tls_arc_v6_2_x]] (now an arc retrospective).
 
 | Cluster | Indicative size |
 |---|---|
+| **Phase 0 — growable-region foundation** (fn-tables / fixup_tbl / codebuf → rp_vec; lands first, before backend #7) | ~5–7 |
 | Bare-metal target formalization (7 deliverables incl. kernel-freestanding TLS link) | ~9–10 |
 | RISC-V rv64 backend (new emit/jump/fixup + syscalls peer + real-hardware gate) | ~12–14 |
 | Cross-arch test harness + CI matrix + rv64 SSH-host wiring | ~3–4 |
@@ -317,9 +350,11 @@ above ABI/perf) takes v6.3.x.
 
 The 2026-06-10 deep-dive found that the closures/generics work below
 **assumes substrates that don't currently exist or are broken**. Per user
-direction, these land as an explicit **phase 0 before any language
-feature** (issue:
-[`2026-06-10-monomorphization-substrate-prereqs.md`](issues/2026-06-10-monomorphization-substrate-prereqs.md)):
+direction, these land as an explicit **phase 0 before any language feature**
+(issue:
+[`2026-06-10-monomorphization-substrate-prereqs.md`](issues/2026-06-10-monomorphization-substrate-prereqs.md)).
+The third substrate (growable tables) was **pulled forward to v6.2.x opening**
+(user 2026-06-11) so it's already in place; the two below remain here:
 
 1. **Revive the monomorphization substrate (AR-01)** — the only call-site
    re-parse mechanism the no-AST single-pass design ever had, inline token
@@ -335,11 +370,12 @@ feature** (issue:
    other in arbitrary order, so this MUST be fixed (fn-signature capture in
    the pass-1 prescan) before monomorphization — and it's a public-v7 trap
    regardless (C-style bottom-of-file definitions miscompile today).
-3. **Growable pressure tables (AR-02)** — migrate fn-tables / `fixup_tbl` /
-   codebuf to the proven `rp_vec` vec-backed recipe (v6.0.7 did this for
-   `ret_patches` byte-identical), because N monomorphs × per-instantiation
-   fn entries + codebuf + fixups will blow the fixed caps. Resolves the
-   fixup-cap split-brain (AR-03) as a side effect.
+3. **Growable pressure tables (AR-02)** — ✅ **moved to v6.2.x opening** (user
+   2026-06-11). Migrates fn-tables / `fixup_tbl` / codebuf to the proven
+   `rp_vec` recipe so generics don't blow the fixed caps N× per instantiation.
+   Lands as the v6.2.x growable-region foundation (before backend #7), not here
+   — so v6.3.x opens onto already-growable tables. This phase only *confirms*
+   they're in place before monomorphization stresses them.
 
 ### Closures with lexical capture
 
@@ -608,6 +644,12 @@ to 40+ if the perf-refactor surface is wider than expected.
 
 ## What comes after v6.x
 
+**v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
+**grows further before any major bump** — v6.2.x–v6.5.x are pinned, but more
+v6.x minors can follow (consumer pressure, language refinements, platform work)
+before v7.0.0. v7 is *further out* than the original "6 minors" framing implied;
+don't treat v6.5.x as the cycle's hard end.
+
 v7.x scope is open. Known commitments per CLAUDE.md "Version
 lives in `VERSION` + `--version`, never in binary names":
 
@@ -624,18 +666,23 @@ lives in `VERSION` + `--version`, never in binary names":
   drafts here and in roadmap-future.md said "cc3 drops at v7.0.0" — that
   was the RM-05 contradiction with CLAUDE.md; fixed.]
 
-### v7 public-release readiness gates (added 2026-06-10, deep-dive)
+### Usability / adoption readiness (added 2026-06-10; reframed 2026-06-11)
 
-The ~v7 public release ("Cyrius ONE") carries readiness debt the
-deep-dive surfaced that isn't otherwise tracked
+**Whether v7 is a *full public* release is an open question** (user 2026-06-11:
+"sovereign and usage — whether its full public is still in question"). Sovereign
++ usable is the committed direction; a public launch ("Cyrius ONE" book +
+installer aimed at strangers) is **NOT a fixed gate**. So treat the debt below
+as **usability/adoption readiness** — worth paying to make the toolchain
+pleasant for more users (the existing ecosystem included) — and de-coupled from
+any committed public-launch date. The deep-dive surfaced it
 ([`docs/audit/2026-06-10-deep-dive-review.md`](../audit/2026-06-10-deep-dive-review.md)):
 
-- **Licensing (LEGAL-01) — likely a hard blocker.** The GPL-3.0-only
-  stdlib is *source-included* into every consumer binary with no
-  Runtime-Library-Exception → arguably forces GPL on all downstream
-  binaries; and `sigil.cyr:533` elects the GPLv2-only leg of dual
-  BSD/GPLv2 code (GPLv2-only is GPL-3-incompatible). Needs legal review +
-  an RLE-style linking-exception decision before public release.
+- **Licensing (LEGAL-01) — a hard blocker *if/when* it goes public** (and worth
+  resolving regardless). The GPL-3.0-only stdlib is *source-included* into every
+  consumer binary with no Runtime-Library-Exception → arguably forces GPL on all
+  downstream binaries; and `sigil.cyr:533` elects the GPLv2-only leg of dual
+  BSD/GPLv2 code (GPLv2-only is GPL-3-incompatible). Needs legal review + an
+  RLE-style linking-exception decision.
 - **Trust-story prerequisites (CVE-12/13/20/21).** Release signing +
   bootstrap attestation — the shipped `cycc` is the de-facto trust root,
   disjoint from the seed chain `bootstrap.sh` verifies, and releases are
