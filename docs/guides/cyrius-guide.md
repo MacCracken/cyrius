@@ -46,9 +46,36 @@ Octal uses digits `0`–`7`; a `8` or `9` ends the literal. (There is no
 
 ```
 var x = 10;            # Global or local (context-dependent)
-var buf[256];           # Byte array — 256 BYTES (rounded up to 8), not 256 i64 slots
+var buf[256];          # Bare array — see byte-vs-slot note below
+var slots: i64[256];   # Element-typed array — 256 i64 SLOTS (2048 bytes), anywhere
 x = x + 1;             # Reassignment
 ```
+
+### Arrays: byte vs slot sizing (v6.2.1)
+
+`var a: T[N]` declares a fixed array of **N elements of type T** — the
+unambiguous, recommended form. The reserved size is `N * sizeof(T)`
+(rounded up to 8), identical in function scope and at top level:
+
+| Spelling          | Reserved bytes      | Use for                       |
+|-------------------|---------------------|-------------------------------|
+| `var a: i64[N]`   | `N * 8`             | **slot arrays** (the `store64(&a + i*8, …)` idiom) |
+| `var a: i32[N]`   | `N * 4`             | packed 32-bit data            |
+| `var a: u8[N]`    | `N`                 | byte buffers (explicit)       |
+| `var a: u128[N]`  | `N * 16`            | 128-bit lanes                 |
+
+The **bare** `var a[N]` keeps its historical, scope-dependent meaning and
+is best reserved for byte buffers:
+
+- **in a function:** `N` **bytes** (rounded up to 8) — `var iv[12]` is a
+  12-byte buffer.
+- **at top level:** `N` **i64 slots** (`N * 8` bytes) — `var table[16]` is
+  128 bytes.
+
+> **Footgun (fixed by the explicit form):** writing a *function-local*
+> `var a[4]` with the slot idiom `store64(&a + i*8, …)` runs off its 8-byte
+> backing — the array only holds 1 slot, not 4. Declare slot arrays as
+> `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1].
 
 ## Functions
 

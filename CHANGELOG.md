@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.1] — 2026-06-12
+
+**v6.2.1 — element-typed arrays (`var a: T[N]`) + daimon-class slot-array
+sweep.** Resolves the address-taken-local-array byte-vs-slot footgun (daimon
+1.2.6: a per-slot `store64(&parts + i*8)` into a function-local `var parts[4]`
+ran off its 8-byte backing and silently corrupted the next static object — every
+HTTP route 404'd, and it only surfaced when deleting *dead code* shifted the
+layout). The fix is a new spelling plus a full audit of the exposed surface.
+
+### Added
+- **Element-typed fixed arrays `var a: T[N]`** — N elements of type T, reserved
+  `N * sizeof(T)` bytes **identically in function and top-level scope**. The
+  unambiguous slot/typed form: `i64[N]` = N i64 **slots** (the `store64(&a + i*8)`
+  idiom, the fix for the footgun), `u8[N]` = N bytes, `i32[N]`/`u32[N]` = 4N, etc.
+  Widths i8..i64 / u8..u64 / u128. Bare `var a[N]` keeps its legacy per-scope
+  meaning (N bytes in a fn, N i64 slots at top level — best reserved for byte
+  buffers). **Pure frontend change**: the element width threads through
+  `scalar_type` (in-fn `PARSE_ARRAY`) / `ann_scalar` (top-level `PARSE_GVAR_ARR`)
+  into the `0x12A000` var-size table, so every backend (x86 / aarch64 / macho / pe
+  / cx) inherits it by summing that table — zero backend edits. u8/u16/u32/u64
+  element-width detection added (signed-only before) so `u64[N]` can't silently
+  under-size. `tests/tcyr/element_typed_array.tcyr` (11 cases).
+
+### Fixed
+- **Daimon-class slot-array audit — 10 cyrius-owned sites** (a fan-out audit
+  confirmed 17 total; the 7 ecosystem-stdlib sites are patched in source + held for
+  re-fold, see below):
+  - **Compiler (5):** `PARSE_SWITCH`/`PARSE_MATCH` jump tables (`ends`×3 +
+    `seen_vcnt`) were `[256]` = 256 bytes = **32 usable slots**, so a switch/match
+    with >32 arms overran into adjacent compiler statics; `_fc_simd_table[24]` (24-B
+    stride records) overran past the **first** SIMD arg. All → `i64[N]`. cycc's own
+    source has no >32-arm construct, so these self-hosted by luck for years.
+  - **Native stdlib (5):** `regex` `splits`/`splits2` (`sn >= 64` guard intended 64
+    slots, had 8), `pwd`/`grp` `field_starts` (1 slot, used as 7/4), `net` `sa`
+    sockaddr (8 B, needed 16). → `i64[N]` / sized byte buffer.
+- Migrating cycc's own internal arrays required the **two-step bootstrap**
+  (`stage_b == stage_c`, not `stage_a == stage_b`) — the old build/cycc byte-sizes
+  the new `i64[N]` annotation. +7,328 B for the resized internal tables.
+
+### Held for release (ecosystem stdlibs — patched in source, awaiting re-fold)
+- 8 daimon-class sites in **sigil** (sgx/snp/tdx attestation cert chains — 6;
+  source check found one the vendored-fold audit missed), **sakshi** (`ts[2]`
+  timespec, hot path), **agnosys** (`bc_buf[8]` fmt scratch) patched in each lib's
+  *source* repo (sigil/sakshi → `i64[N]` ⟹ `cyrius.cyml` pin ≥ 6.2.1; agnosys →
+  byte-bump). Held for each lib's release + re-fold — see
+  `docs/development/issues/2026-06-12-ecosystem-lib-daimon-class-refold.md`.
+
+### Verified
+- Self-host byte-identical (x86 one-step + two-step internal-array fixpoint);
+  check.sh **89/89**; **cross-OS 4/4** (pi/ecb/ach/cass `SELFHOST_OK`); differential
+  corpus 252/252; tcyr 175/175 (+`element_typed_array`, +40-case switch);
+  cross-arch aarch64 (qemu) + PE (wine) exit-42.
+- **Bench (gate):** self_compile **509 ms** (≈+12 ms growth-tax vs 6.2.0's ~497 —
+  the resized internal tables, not a hot-path regression); cycc **1,063,800 B**
+  (+8,016 B: +688 feature + +7,328 internal-array resize).
+
 ## [6.2.0] — 2026-06-12
 
 **v6.2.0 — Platform Expansion minor opens.** The v6.1.x "Backend Codegen

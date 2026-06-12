@@ -1,0 +1,75 @@
+# v6.2.1: element-typed fixed arrays `var a: T[N]` = N elements of T.
+# The unambiguous SLOT spelling — `var a: i64[N]` reserves N i64 slots
+# (8N bytes) both in-fn and top-level, fixing the address-taken-local
+# slot-idiom footgun (issue 2026-06-11, daimon: a per-slot
+# `store64(&parts + i*8)` into a byte-sized `var parts[4]` ran off the
+# 8-byte backing into the next static object). Bare `var a[N]` keeps its
+# documented behavior (in-fn: N bytes; top-level: N slots).
+#
+# Method: locals are laid out sequentially in static storage, so the
+# byte gap between an array and the next-declared array == the first
+# array's reserved byte size. That gap is the deterministic proof of the
+# reserved capacity (independent of incidental neighbor placement).
+
+include "lib/assert.cyr"
+
+# --- in-fn reserved sizes (gap == byte capacity) ---
+fn gap_i64()  { var a: i64[4]; var z[1]; return &z - &a; }   # 4 slots  -> 32
+fn gap_bare() { var a[4];      var z[1]; return &z - &a; }   # legacy bytes -> 8
+fn gap_i32()  { var a: i32[4]; var z[1]; return &z - &a; }   # 4 * 4    -> 16
+fn gap_i16()  { var a: i16[4]; var z[1]; return &z - &a; }   # 4 * 2    -> 8
+fn gap_u8()   { var a: u8[16]; var z[1]; return &z - &a; }   # 16 bytes -> 16
+fn gap_u32()  { var a: u32[4]; var z[1]; return &z - &a; }   # 4 * 4    -> 16
+fn gap_u64()  { var a: u64[3]; var z[1]; return &z - &a; }   # 3 * 8    -> 24
+
+# --- daimon class: all 4 slots of an i64[4] are in-bounds; a sentinel
+#     declared immediately after must survive every slot write ---
+fn slot_roundtrip() {
+    var a: i64[4];
+    var sentinel[1];
+    store64(&sentinel, 999);
+    store64(&a + 0, 11);
+    store64(&a + 8, 22);
+    store64(&a + 16, 33);
+    store64(&a + 24, 44);          # 4th slot — in-bounds for i64[4]
+    var got = load64(&a) + load64(&a + 8) + load64(&a + 16) + load64(&a + 24);
+    return got + load64(&sentinel); # 110 + 999 = 1109 iff sentinel intact
+}
+
+# --- bare local byte buffer still works at byte granularity ---
+fn byte_buffer() {
+    var b[8];
+    store8(&b + 0, 7);
+    store8(&b + 7, 9);
+    return load8(&b + 0) + load8(&b + 7);   # 16
+}
+
+# --- top-level element-typed arrays ---
+var g_i64: i64[4];
+var g_i64_after = 55;
+var g_u8: u8[16];
+var g_u8_after = 66;
+
+fn top_i64_gap() { return &g_i64_after - &g_i64; }   # 4 slots -> 32
+fn top_u8_gap()  { return &g_u8_after - &g_u8; }      # 16 bytes -> 16
+
+test_group("in-fn element-typed array reserved sizes");
+assert_eq(gap_i64(), 32, "i64[4] reserves 4 slots (32 bytes)");
+assert_eq(gap_bare(), 8, "bare [4] keeps legacy byte sizing (8 bytes)");
+assert_eq(gap_i32(), 16, "i32[4] reserves 16 bytes");
+assert_eq(gap_i16(), 8, "i16[4] reserves 8 bytes");
+assert_eq(gap_u8(), 16, "u8[16] reserves 16 bytes");
+assert_eq(gap_u32(), 16, "u32[4] reserves 16 bytes");
+assert_eq(gap_u64(), 24, "u64[3] reserves 24 bytes");
+
+test_group("daimon class fixed via slot spelling");
+assert_eq(slot_roundtrip(), 1109, "all 4 i64[4] slots in-bounds; neighbor intact");
+
+test_group("bare local byte buffer unchanged");
+assert_eq(byte_buffer(), 16, "byte-granularity buffer still works");
+
+test_group("top-level element-typed arrays");
+assert_eq(top_i64_gap(), 32, "top-level i64[4] reserves 32 bytes");
+assert_eq(top_u8_gap(), 16, "top-level u8[16] reserves 16 bytes");
+
+var rc = assert_summary();

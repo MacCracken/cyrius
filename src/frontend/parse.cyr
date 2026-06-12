@@ -239,7 +239,7 @@ fn PARSE_SWITCH(S): i64 {
         var table_cp = ESWITCH_DISPATCH_TABLE(S, range);
         var ti = 0;
         # Parse case bodies, patching table entries
-        var ends[256];
+        var ends: i64[256];   # v6.2.1: 256 jump-end slots (was bare [256]=256B=32 slots → OOB at >32 cases)
         var ec = 0;
         var default_cp = 0 - 1;   # filled in when `default:` is parsed
         var sgo = 1;
@@ -310,7 +310,7 @@ fn PARSE_SWITCH(S): i64 {
         for (var ei = 0; ei < ec; ei = ei + 1) { EPATCH(S, load64(&ends + ei * 8)); }
     } else {
         # === CHAIN PATH (original) ===
-        var ends[256];
+        var ends: i64[256];   # v6.2.1: 256 jump-end slots (see table-path note above)
         var ec = 0;
         var sgo = 1;
         while (sgo == 1) {
@@ -373,7 +373,7 @@ fn PARSE_MATCH(S): i64 {
     S64(S + 0x12A000 + midx * 8, 8);
     SVCNT(S, midx + 1);
     EVSTORE(S, midx);
-    var ends[256];
+    var ends: i64[256];   # v6.2.1: 256 match-arm jump-end slots (was [256]=32 slots → OOB at >32 arms)
     var ec = 0;
     # v5.8.22 bite #2 — exhaustive-match coverage tracking. When the
     # arm's pattern is a bare-or-payloaded variant of an enum, look
@@ -394,7 +394,7 @@ fn PARSE_MATCH(S): i64 {
     # 256 cap matches the per-match arm budget; beyond that no
     # dedup (rare-edge tolerated). Linear scan is O(N²) but
     # typical match has 2-10 arms so cost is negligible.
-    var seen_vcnt[256];
+    var seen_vcnt: i64[256];   # v6.2.1: matches the `seen_count < 256` guard (was [256]=32 slots → OOB at >32 unique variants)
     var seen_count = 0;
     var mgo = 1;
     while (mgo == 1) {

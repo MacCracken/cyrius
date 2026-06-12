@@ -7,7 +7,7 @@
 # LOC under ~1500. Included by parse.cyr at the same textual position
 # the original content lived; self-host byte-identical.
 
-fn PARSE_ARRAY(S, noff): i64 {
+fn PARSE_ARRAY(S, noff, ew): i64 {
     STI(S, GTI(S) + 1);  # consume [
     # v5.10.48: accept either NUM literal OR an IDENT that resolves
     # to a compile-time-known enum constant (via enum_const_val at
@@ -50,7 +50,16 @@ fn PARSE_ARRAY(S, noff): i64 {
     # the last match, so the current function's array shadows previous ones.
     var vcnt = GVCNT(S);
     S64(S + 0x11A000 + vcnt * 8, noff);
+    # v6.2.1: element-typed fixed array `var a: T[N]` reserves
+    # N elements of T. `ew` is the element width in bytes (from the
+    # `: T` annotation: i8/u8=1 … i64/u64=8, u128=16). ew==0 is the
+    # bare `var a[N]` form — keep the legacy "N bytes rounded to 8"
+    # local convention. `i64[N]` (ew==8) is the unambiguous SLOT
+    # spelling that fixes the address-taken-local slot-idiom footgun
+    # (issue 2026-06-11; daimon). All backends inherit the byte size
+    # from this 0x12A000 table. See CHANGELOG [6.2.1].
     var aligned = (asz + 7) & (0 - 8);
+    if (ew > 0) { aligned = (asz * ew + 7) & (0 - 8); }
     S64(S + 0x12A000 + vcnt * 8, aligned);
     SVCNT(S, vcnt + 1);
     # v5.11.62: accumulate the array's byte cost into the current fn's
@@ -538,7 +547,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     return 0;
 }
 
-fn PARSE_GVAR_ARR(S, noff, sti): i64 {
+fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
     STI(S, GTI(S) + 1);
     # v5.10.48: top-level array-size NUM-or-enum-const-ident — same
     # rule as the in-fn PARSE_ARRAY above. Closes the var-bracket
@@ -568,7 +577,15 @@ fn PARSE_GVAR_ARR(S, noff, sti): i64 {
             ERR_EXPECT(S, 1);
         }
     }
-    var sz = sz_raw * 8;
+    # v6.2.1: element-typed top-level array `var g: T[N]` reserves
+    # N * sizeof(T) bytes. `ew` is the element width from the `: T`
+    # annotation (ann_scalar). ew==0 is the bare `var g[N]` form —
+    # keep the legacy N-i64-SLOTS top-level convention (ew=8). So
+    # `var g: u8[N]` = N bytes, `var g: i64[N]` = 8N, bare = 8N.
+    # The byte-list `= {..}` cap below stays in bytes (= sz).
+    var ar_ew = ew;
+    if (ar_ew < 1) { ar_ew = 8; }
+    var sz = sz_raw * ar_ew;
     if (sz < 8) { sz = 8; }
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);
@@ -651,10 +668,17 @@ fn PARSE_GVAR_REG(S): i64 {
             if (PEEKT(S) == 2) {
                 var ann_sn = PEEKV(S);
                 var ann_tn = L64(S + 0x60000 + ann_sn);
+                # v6.2.1: unsigned widths (u8/u16/u32/u64) added alongside
+                # the signed ones so top-level `var g: u64[N]` element-sizes
+                # like the in-fn path. u128 = 0x38323175.
                 if (ann_tn & 0xFFFF == 0x3869) { ann_scalar = 1; }
+                elif (ann_tn & 0xFFFF == 0x3875) { ann_scalar = 1; }
                 elif (ann_tn & 0xFFFFFF == 0x363169) { ann_scalar = 2; }
+                elif (ann_tn & 0xFFFFFF == 0x363175) { ann_scalar = 2; }
                 elif (ann_tn & 0xFFFFFF == 0x323369) { ann_scalar = 4; }
+                elif (ann_tn & 0xFFFFFF == 0x323375) { ann_scalar = 4; }
                 elif (ann_tn & 0xFFFFFF == 0x343669) { ann_scalar = 8; }
+                elif (ann_tn & 0xFFFFFF == 0x343675) { ann_scalar = 8; }
                 elif (ann_tn & 0xFFFFFFFF == 0x38323175) { ann_scalar = 16; }
                 else { ann_sid = FINDSTRUCT(S, ann_sn); }
             }
@@ -666,7 +690,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # gvar_toks so EMIT_GVAR_INITS replays it at top-level emit time
     # (pass-1 emits get skipped by the entry-jmp patch).
     if (PEEKT(S) == 28) {
-        PARSE_GVAR_ARR(S, noff, sti);
+        PARSE_GVAR_ARR(S, noff, sti, ann_scalar);
         return 0;
     }
     # Check for struct init after =: var p = StructName { ... }
@@ -1084,12 +1108,22 @@ fn PARSE_VAR(S): i64 {
         } else {
             if (PEEKT(S) == 2) {
                 var lann = PEEKV(S);
-                # Check scalar types: i8, i16, i32, i64
+                # Check scalar types: i8/u8, i16/u16, i32/u32, i64/u64.
+                # v6.2.1: unsigned widths added so element-typed arrays
+                # `var a: u64[N]` size correctly (8N) instead of silently
+                # under-reserving as bytes — the same footgun class this
+                # slot closes. u-bytes: u8=0x3875 u16=0x363175 u32=0x323375
+                # u64=0x343675 (LE name load; see the slice-elt detector
+                # above). Zero existing u-scalar usage → self-host neutral.
                 var ltname = L64(S + 0x60000 + lann);
                 if (ltname & 0xFFFF == 0x3869) { scalar_type = 1; }
+                elif (ltname & 0xFFFF == 0x3875) { scalar_type = 1; }
                 elif (ltname & 0xFFFFFF == 0x363169) { scalar_type = 2; }
+                elif (ltname & 0xFFFFFF == 0x363175) { scalar_type = 2; }
                 elif (ltname & 0xFFFFFF == 0x323369) { scalar_type = 4; }
+                elif (ltname & 0xFFFFFF == 0x323375) { scalar_type = 4; }
                 elif (ltname & 0xFFFFFF == 0x343669) { scalar_type = 8; }
+                elif (ltname & 0xFFFFFF == 0x343675) { scalar_type = 8; }
                 # v5.10.28 — `f64v2` value type (16-byte). Detected
                 # here at var-decl parsing so `var v: f64v2;` triggers
                 # the 2-slot stack-local allocation path below. Encoded
@@ -1559,9 +1593,11 @@ fn PARSE_VAR(S): i64 {
         STI(S, GTI(S) + 1);                         # consume ';'
         return 0;
     }
-    # Check for array: var buf[N];
+    # Check for array: var buf[N];  (v6.2.1: `var buf: T[N]` passes the
+    # element width via scalar_type so i64[N] reserves N slots, etc.;
+    # bare `var buf[N]` has scalar_type==0 → legacy byte sizing.)
     if (PEEKT(S) == 28) {
-        PARSE_ARRAY(S, noff);
+        PARSE_ARRAY(S, noff, scalar_type);
         return 0;
     }
     # expect EQ

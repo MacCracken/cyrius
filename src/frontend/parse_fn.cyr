@@ -996,7 +996,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # SIMD arg's (named_lli, simd_pc, class) so the second pass can
     # emit ELOAD_F64V2_TO_XMM / _F64V4_TO_XMM at the call site.
     var _fc_simd_mask = L64(_fnt_simdmask + fi * 8);
-    var _fc_simd_table[24];   # 8 args × 3 i64s = 24 slots
+    var _fc_simd_table: i64[24];   # 8 args × 3 i64s = 24 slots (v6.2.1: i64[24]=192B; bare [24] was 24B → OOB past arg 0)
     var _fc_simd_count = 0;
     var _fc_simd_pc_caller = 0;
     var _fc_int_argc = 0;

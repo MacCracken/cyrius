@@ -219,7 +219,7 @@ fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     # Build sockaddr_in inline (avoid alloc — net_connect_nb is
     # called from regression / probe code that runs without an
     # allocator). 16 bytes on the stack via a local array.
-    var sa[3];
+    var sa[16];   # v6.2.1: 16-byte sockaddr_in (was [3]=8 bytes → store64(&sa+8) ran 8B OOB)
     #ifdef CYRIUS_TARGET_MACOS
     store8(&sa,      16);                                   # sin_len (BSD)
     store8(&sa + 1,  2);                                    # sin_family AF_INET

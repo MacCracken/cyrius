@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.0** (v6.2.x cycle — **Platform Expansion** OPENS; v6.1.x Backend-Codegen-Multi-Arc closed at .41. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,055,784 B (+5,176 B @ 6.2.0 — Phase-0 growable infra: `_fixup_*`/`_fnt_*`/`_codebuf_*` gvars + 3 grow fns + 7-driver inits, growth-tax spread ~1.7 KB/migration) |
+| **Version** | **6.2.1** (v6.2.x cycle — **Platform Expansion**; element-typed `var a: T[N]` arrays + daimon-class slot-array sweep. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -28,9 +28,34 @@
 | tests | 174 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~497 ms (flat @ 6.2.0 — growable adds O(1) per-append cap-checks; grow/relocate paths cold) |
+| bench (every-release gate) | self_compile ~509 ms (+12 ms @ 6.2.1 — growth-tax from the resized internal tables, not a hot-path regression; cycc +8,016 B) |
 
-> **Handoff (2026-06-12):** **v6.2.0 CUT — Platform Expansion opens with Phase 0 COMPLETE.**
+> **Handoff (2026-06-12):** **v6.2.1 CUT — element-typed arrays `var a: T[N]` +
+> daimon-class slot-array sweep.** Resolves the address-taken-local byte-vs-slot
+> footgun (daimon route-404). **Added** `var a: T[N]` = N elements of T, sized
+> `N*sizeof(T)` identically in fn + top-level scope — `i64[N]` is the unambiguous
+> SLOT spelling (fixes the `store64(&a+i*8)` idiom), `u8[N]` an explicit byte
+> buffer; widths i8..i64/u8..u64/u128. Pure frontend: element width → `0x12A000`
+> var-size table → every backend inherits it (zero backend edits). **Fixed** 10
+> cyrius-owned daimon-class sites a fan-out audit confirmed (17 total): 5 in cycc
+> itself (`PARSE_SWITCH`/`PARSE_MATCH` `ends`×3+`seen_vcnt` capped at 32 not 256
+> slots; `_fc_simd_table` OOB past arg 0) + 5 native stdlib (`regex`
+> splits/splits2, `pwd`/`grp` field_starts, `net` sa sockaddr) → `i64[N]`.
+> Migrating cycc's own arrays needed the **two-step bootstrap** (stage_b==stage_c).
+> **Held for release:** 8 ecosystem-stdlib sites patched in *source* (sigil ×6
+> attestation cert-chains — the source check caught one the fold-audit missed;
+> sakshi `ts` timespec hot-path; agnosys `bc_buf` fmt) → re-fold after each lib
+> releases ([`issues/2026-06-12-ecosystem-lib-daimon-class-refold.md`](issues/2026-06-12-ecosystem-lib-daimon-class-refold.md)).
+> **VERIFIED:** self-host byte-identical (1-step x86 + 2-step internal); check.sh
+> 89/89; cross-OS 4/4 (pi/ecb/ach/cass `SELFHOST_OK`); differential 252/252; tcyr
+> 175/175 (+`element_typed_array`, +40-case switch); cross-arch aarch64(qemu)+PE(wine)
+> exit-42; bench self_compile 509 ms / cycc 1,063,800 B. Issue archived.
+> **NEXT:** ecosystem-lib re-fold (above) once sigil/sakshi/agnosys release;
+> remaining v6.2.x — bare-metal + RISC-V rv64. **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-12):** **v6.2.0 CUT — Platform Expansion opens with Phase 0 COMPLETE.**
 > Four bites: (1) **`fixup_tbl` → growable** (`_fixup_base`/grow, 64M-entry ceiling); (2)
 > **`cyrius init` CI/release** aligned to the patra/sigil toolchain workflow (canonical
 > `install.sh` one-liner replacing the hand-rolled curl+tar+cp; release publishes a
