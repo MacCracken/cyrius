@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.37** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,049,968 B (+112 B @ 6.1.37 — const chained-multiply fold fix: clear `_cfo` after runtime EIMUL) |
+| **Version** | **6.1.38** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,050,704 B (+736 B @ 6.1.38 — F3 memory-safety guards: PE-import caps, fixup-cap unify, jump off-by-one) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -25,50 +25,49 @@
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | 3.7.12 (3.7.11 distlib inliner fix + 3.7.12 x509 keyUsage/EKU/pathLen) |
-| tests | 173 `.tcyr` · 15 `.bcyr` |
+| tests | 174 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; brk-final `0x5D9D000` (~93.6 MB virtual) |
-| bench (every-release gate) | self_compile ~556 ms (vs ~506 ms @ .34 — box noise + 3.4 KB growth) |
+| bench (every-release gate) | self_compile ~496 ms (vs ~557 ms @ .37 — box-quietness variance; +880 B F3 growth, no regression) |
 
-> **Handoff (2026-06-11):** v6.1.37 cut — **const chained-multiply miscompile**
-> (cyrius-doom report). `A * B * C` with const A,B silently folded to `B * C`
-> (first operand dropped: `320*200*4`→800). Premise-check corrected the scope:
-> NOT agnos-only — all targets (x86/agnos/aarch64). Root cause: shared
-> `src/frontend/parse_expr.cyr` multiply loop left `_cfo` set after PARSE_FACTOR
-> re-armed const-fold tracking on a const RHS, so the next `*` const-folded off
-> the stale RHS + rewound the code, discarding the runtime EIMUL. Fix: clear
-> `_cfo` after the runtime EIMUL in the three `_cfo==1` sub-branches (mirrors the
-> correct outer-else/div/mod). **VERIFIED:** self-host byte-identical fixpoint
-> (cycc +112 B → 1,049,968 B); check.sh 89/89; ecb/ach/pi/cass SELFHOST_OK;
-> x86+agnos+aarch64(qemu) repro fixed; regression `const_chained_multiply_fold.tcyr`
-> 8/8. **user pushes/tags after CI.**
+> **Handoff (2026-06-12):** v6.1.38 cut — **Phase F pack F3: memory-safety parity,
+> CVE-25/26/27/28 + AR-03** (2026-06-10 deep-dive; **5 of 6 — CVE-24 deferred**).
+> **CVE-26** agnos `alloc()` pre-lock size guards (neg `size`→backward bump→overlap)
+> + local `ALLOC_MAX`. **CVE-25** `_sb_grow` propagates OOM rc; 5 str-builders abort
+> via `_sb_die()`. **CVE-28** aarch64 atomics had NO barrier (bare `ldxr`/`stxr`; the
+> `dmb ish` docs claimed was never emitted) → `ldaxr`/`stlxr` acquire/release (1-bit
+> opcode change `0x7C`→`0xFC`, branch offsets intact) + `default_alloc` vtable-publish
+> fence. **CVE-27** PE import-registry count+name-buffer bounds (arrays already
+> 256/4096 — global `var x[N]`=N i64 slots; the "32 slots" comments were wrong,
+> corrected). **AR-03** fixup cap 4× under its 16 MiB region since v5.7.7 — unified 10
+> checks 262144→1048576 (+GFCNT diagnostics, main_win even staler at 16384);
+> `jump_target_tbl` off-by-one fixed in ALL 4 accessors (EJMP/EPATCH writers `<1023`,
+> IS_JUMP_TARGET+compaction readers clamp the 1024 sentinel).
+> **CVE-24 DEFERRED** — the audit premise was wrong: `SFLC`/`local_cnt` counts
+> stack-frame *slots* not variables (a `stack var buf[N]` registers N/8 fillers), so a
+> count cap breaks sanctioned large frames (`stack_var.tcyr::big_frame` 16 KB). The
+> naive guard was implemented then reverted; real fix re-scoped to
+> [`issues/2026-06-12-locals-table-slot-indexed-overflow.md`](issues/2026-06-12-locals-table-slot-indexed-overflow.md).
+> **VERIFIED:** self-host byte-identical x86+aarch64(qemu)+PE(wine); ecb/ach/pi/cass
+> `SELFHOST_OK`; CVE-28 on REAL pi (atomics.tcyr 4-thread, `ldaxr`/`stlxr`
+> disasm-confirmed `c85ffc04`/`c805fc02`); check.sh 89/89; 4-dim
+> adversarial-review-the-diff caught the jump fix touching only 1 of 4 accessors
+> (self-host-invisible @ 1023+ targets; v6.1.35 CVE-23 class) + the post-bump
+> `big_frame` regression that surfaced the CVE-24 mis-scope. cycc +736 B → 1,050,704 B;
+> bench self_compile ~496 ms. **user pushes/tags after CI.**
 >
 > ---
 >
-> **Prior (2026-06-11):** v6.1.36 cut — **Phase F pack F2: TLS-authn hardening,
-> CVE-17 + CVE-18 + CVE-30 + CVE-19** (2026-06-10 deep-dive). Stdlib-only (no
-> `src/` change → cycc byte-identical). **CVE-17** — TLS chain ignored
-> pathLen/keyUsage/EKU; sigil 3.7.12 parses keyUsage+EKU (X509Cert 256→272) +
-> enforces pathLen in `x509_verify_chain`; cyrius `tls_native_client_verify_chain`
-> enforces leaf keyUsage/serverAuth-EKU + per-CA keyCertSign/pathLen
-> (`_tn_ca_signer_ok`). **CVE-18** — `tls_native_connect`/`_12` fail-closed
-> (`_tn_connect_verify`: chain+hostname before TLS_OK, host==0 under verify =
-> error); added IPv4/IPv6 parsers + iPAddress-SAN matching. **CVE-30** —
-> `tls_native_read` drains NST/KeyUpdate (`_tn_open_record` surfaces inner ct;
-> KeyUpdate rotates recv/send keys); `open_app/5` unchanged (no API break);
-> 0-length app record drains not EOF. **CVE-19** — ws/sandhi → `sys_getrandom`
-> fail-closed; `tls_native_server_new_session_ticket`'s 2 unchecked calls
-> fail-closed; Win/AGNOS get `sys_getrandom=-1` stubs (compile + fail-closed;
-> real Windows BCrypt primitive filed). **distlib** — sigil 3.7.11 `regen-dist.sh`
-> strips `include "src/*.cyr"` (the dumb-cat dist bug the 3.7.10 `#ifndef` guards
-> papered over) + self-contained invariant; cyrius `_vendored_dist_selfcontained_gate`
-> is the systemic net. **VERIFIED:** cycc self-host byte-identical (1,049,856 B);
-> check.sh **89/89**; ecb+ach+pi+cass `SELFHOST_OK`; live Cloudflare verifies
-> end-to-end; hermetic negative-cert/IP/entropy tests; sigil x509+attestation
-> green; cross-target compile (Linux/Win/AGNOS); adversarially reviewed pre-cut
-> (cve17/cve18 clean; 3 review gaps fixed). bench ~529 ms. **user pushes/tags after CI.**
+> **Prior (2026-06-11):** v6.1.37 cut — **const chained-multiply miscompile**
+> (cyrius-doom). `A*B*C` with const A,B folded to `B*C` (first operand dropped,
+> `320*200*4`→800). Premise-check: NOT agnos-only — all targets. Shared
+> `parse_expr.cyr` left `_cfo` set after PARSE_FACTOR re-armed const-fold on a const
+> RHS, so the next `*` folded off the stale RHS + rewound, discarding the runtime
+> EIMUL; fix clears `_cfo` after the EIMUL in the 3 `_cfo==1` sub-branches. Self-host
+> byte-identical; 89/89; ecb/ach/pi/cass SELFHOST_OK; regression
+> `const_chained_multiply_fold.tcyr` 8/8.
 >
-> **Phase F NEXT (F1+F2 complete):** F3 (memory-safety parity CVE-24..28).
+> **Phase F COMPLETE (F1+F2+F3 shipped):** next is the dep-fold cycle-close → v6.2.0.
 > See [roadmap.md](roadmap.md) Phase F. Open downstream (Low, not a slot):
 > [`issues/2026-06-11-thoth-lib-sync-ignores-deps-stdlib.md`](issues/2026-06-11-thoth-lib-sync-ignores-deps-stdlib.md);
 > follow-on filed: [`issues/2026-06-11-windows-entropy-primitive.md`](issues/2026-06-11-windows-entropy-primitive.md) (Win/AGNOS real CSPRNG).

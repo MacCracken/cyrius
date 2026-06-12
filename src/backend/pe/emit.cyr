@@ -124,8 +124,8 @@ var _pe_image_file_size    = 0;  # on-disk bytes (what FIXUP reads from 0x1903F8
 # kernel32.dll for the foreseeable future; a multi-DLL table is a
 # later extension.
 
-var _pe_imp_name_buf[512];       # C-string scratch; ~32 avg-length names
-var _pe_imp_name_offs[256];      # 32 slots × 8 bytes
+var _pe_imp_name_buf[512];       # 4096 B (512 i64 slots) packed C-strings; bounded in _pe_imp_add
+var _pe_imp_name_offs[256];      # 256 entries (256 i64 slots); bounded in _pe_imp_add
 var _pe_imp_count          = 0;
 var _pe_imp_buf_pos        = 0;
 
@@ -229,6 +229,21 @@ fn _pe_wpad(O, off, align): i64 {
 # auto-discovery from kernel32-wrapper calls).
 
 fn _pe_imp_add(name): i64 {
+    # CVE-27 (v6.1.38): bounds-check before writing. _pe_imp_name_offs is 256 i64
+    # slots and _pe_imp_name_buf holds 4096 bytes (global `var x[N]` = N i64 slots,
+    # so [256]=256 entries and [512]=4096 B — the "32 slots" comments were wrong).
+    # With no guard, >256 imports or >4096 B of packed names silently corrupt the
+    # adjacent _pe_imp_dll / _pe_pending_* globals. Cap loudly instead.
+    var nlen = 0;
+    while (load8(name + nlen) != 0) { nlen = nlen + 1; }
+    if (_pe_imp_count >= 256) {
+        syscall(SYS_WRITE, 2, "error: too many PE imports (max 256)\n", 37);
+        syscall(SYS_EXIT, 1);
+    }
+    if (_pe_imp_buf_pos + nlen + 1 > 4096) {
+        syscall(SYS_WRITE, 2, "error: PE import name buffer full (4096 B)\n", 43);
+        syscall(SYS_EXIT, 1);
+    }
     S64(&_pe_imp_name_offs + _pe_imp_count * 8, _pe_imp_buf_pos);
     var i = 0;
     var c = load8(name);
@@ -256,8 +271,8 @@ fn _pe_imp_add(name): i64 {
 # For v5.4.6, user-declared imports all resolve against
 # kernel32.dll; multi-DLL support is a v5.4.7+ item.
 
-var _pe_pending_imp_buf[512];     # packed C-strings (symbol names)
-var _pe_pending_imp_offs[256];    # 32 slots × 8-byte offsets
+var _pe_pending_imp_buf[512];     # 4096 B (512 i64 slots) packed C-strings; bounded in _pe_pending_imp_add
+var _pe_pending_imp_offs[256];    # 256 entries (256 i64 slots); bounded in _pe_pending_imp_add
 var _pe_pending_imp_count = 0;
 var _pe_pending_imp_pos   = 0;
 
@@ -733,6 +748,20 @@ fn _pe_tlsset_get(): i64 { return _pe_tlsset_idx; }
 # iterates the buffer and forwards each entry to `_pe_imp_add`
 # after placing `ExitProcess` at imp_idx=0.
 fn _pe_pending_imp_add(S, name): i64 {
+    # CVE-27 (v6.1.38): bounds-check (see _pe_imp_add). _pe_pending_imp_offs is 256
+    # i64 slots and _pe_pending_imp_buf holds 4096 bytes; an unbounded run of
+    # `#pe_import` directives (or one huge symbol) would otherwise overflow into
+    # the neighbouring registry globals at parse time.
+    var nlen = 0;
+    while (load8(name + nlen) != 0) { nlen = nlen + 1; }
+    if (_pe_pending_imp_count >= 256) {
+        syscall(SYS_WRITE, 2, "error: too many #pe_import directives (max 256)\n", 48);
+        syscall(SYS_EXIT, 1);
+    }
+    if (_pe_pending_imp_pos + nlen + 1 > 4096) {
+        syscall(SYS_WRITE, 2, "error: #pe_import name buffer full (4096 B)\n", 44);
+        syscall(SYS_EXIT, 1);
+    }
     S64(&_pe_pending_imp_offs + _pe_pending_imp_count * 8,
     _pe_pending_imp_pos);
     var i = 0;
@@ -757,9 +786,9 @@ fn _pe_pending_imp_add(S, name): i64 {
 # where IAT_RVA = _pe_idata_rva + _pe_iat_sub_off + imp_idx * 8.
 fn _pe_iat_fixup_add(S, coff, imp_idx): i64 {
     var fc = GFCNT(S);
-    if (fc >= 262144) {
+    if (fc >= 1048576) {
         syscall(SYS_WRITE, 2,
-        "error: fixup table full (262144)\n", 33);
+        "error: fixup table full (1048576)\n", 34);
         syscall(SYS_EXIT, 1);
     }
     var faddr = S + 0x107B000 + fc * 16;

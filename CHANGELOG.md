@@ -6,6 +6,83 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.38] — 2026-06-12
+
+**v6.1.x slot 38: F3 memory-safety parity pack** — five hardening bites from the
+2026-06-10 deep-dive audit (CVE-25/26/27/28 + AR-03), closing silent
+out-of-bounds / missing-barrier gaps across the agnos allocator, the str-builder,
+the aarch64 atomics, the PE import registry, and the fixup-table cap. No public
+API-surface change — every guard is on an underscore-private fn; `alloc` /
+`atomic_*` / `str_builder_*` signatures are unchanged. (CVE-24, the sixth audit
+item, was deferred — see below.)
+
+### Fixed
+- **CVE-26 — agnos `alloc()` accepted negative / oversized sizes**
+  (`lib/alloc_agnos.cyr`). The Linux/macOS/Windows allocators reject `size<=0` and
+  `size>ALLOC_MAX` before the lock; the agnos peer did not, so a negative `size`
+  made `asz` negative, the `_heap_ptr+asz>_heap_end` overflow check stayed false,
+  and the bump pointer moved **backward** into already-handed-out memory. Added the
+  same pre-lock guards + `ALLOC_MAX=0x10000000` (defined locally — alloc.cyr's
+  lives inside the `#ifdef CYRIUS_TARGET_LINUX` block, out of scope for this
+  standalone peer).
+- **CVE-25 — str-builder dropped allocator OOM** (`lib/str.cyr`). `_sb_grow`
+  discarded its return code and the five builders (`str_builder_add` / `_add_cstr`
+  / `putc` / `_add_int` / `_add_byte`) wrote on regardless. `_sb_grow` now returns
+  `_sb_grow_a(default_alloc(),…)` (0=ok / -1=OOM) and each builder aborts via a new
+  `_sb_die()` (mirrors `_vec_die`) on failure instead of corrupting the heap.
+- **CVE-28 — aarch64 atomics had no memory barrier** (`lib/atomic.cyr`,
+  `lib/alloc.cyr`). `atomic_cas` / `atomic_fetch_add` used bare `ldxr` / `stxr`
+  LL-SC loops with NO barrier — the `dmb ish` the docs claimed was never emitted —
+  so a peer thread could observe a CAS-published pointer before the pointee's
+  writes. Switched to `ldaxr` / `stlxr` (acquire/release exclusive): a single-bit
+  opcode change (`0x7C`→`0xFC`, the o0 bit) that keeps the instruction count and so
+  leaves the relative branch offsets untouched (inserting `dmb` would have broken
+  them). Added an explicit `atomic_fence()` before the `default_alloc` vtable
+  CAS-publish for unambiguous publish-after-init ordering on every arch.
+- **CVE-27 — PE import registry had no bounds check** (`src/backend/pe/emit.cyr`).
+  `_pe_imp_add` / `_pe_pending_imp_add` appended names/offsets with no guard; >256
+  imports or >4096 B of packed names silently overran neighbouring globals. Added
+  count (`>=256`) + name-buffer (`+nlen+1>4096`) guards. The arrays already hold
+  256 entries / 4096 B — global `var x[N]` is N i64 slots — so the old "32 slots"
+  comments were wrong and are corrected.
+- **AR-03 — fixup-table cap was 4× under its region; jump-target table
+  off-by-one.** The `fixup_tbl` region at `0x107B000` is 16 MiB (1048576×16, grown
+  v5.7.7) but the ten cap checks in x86/aarch64/PE/runtime still read `262144` (the
+  cx backend was already 1048576), spuriously rejecting big programs the region had
+  room for. Unified all ten + the `GFCNT` capacity diagnostics (`main.cyr` /
+  `main_win.cyr` — the latter even staler at `16384`). Separately, `jump_target_tbl`
+  (`0x19E008`, 1023 usable slots before `jump_src_cnt` at `0x1A0000`) was written
+  past its end at slot 1023: both writers (`EJMP` / `EPATCH`, `x86/jump.cyr`) now
+  cap at `<1023` and both readers (`IS_JUMP_TARGET` + the NOP-compaction shift,
+  `parse_fn.cyr`) clamp the 1024 overflow-sentinel to 1023. Documented the table in
+  the `main.cyr` heap map.
+
+**Verification:** self-host **byte-identical** on x86 + aarch64 (qemu) + PE (wine);
+**cross-OS gate `SELFHOST_OK` on all four real hosts** (pi / ecb / ach / cass —
+re-run after the review fix); **CVE-28 validated on real aarch64 silicon**
+(`atomics.tcyr` 4-thread contention on pi) with `ldaxr` / `stlxr` disasm-confirmed
+(`c85ffc04` / `c805fc02`); check.sh **89/89**. A four-dimension
+adversarial-review-the-diff workflow caught that the AR-03 jump off-by-one fix
+initially touched only **1 of the table's 4 accessors** — self-host-invisible (only
+bites at 1023+ jump targets, which cycc never reaches; same class as v6.1.35
+CVE-23) — all four now corrected. Bench `self_compile ~496 ms` (no regression),
+cycc **+736 B → 1,050,704 B**. `tests/tcyr/atomics.tcyr` header updated for CVE-28.
+**user pushes/tags after CI.**
+
+### Deferred
+- **CVE-24 (per-fn locals "no cap")** — re-scoped out of this pack. The audit's
+  premise ("locals registration has no cap → add a count guard") was wrong:
+  `SFLC` / `local_cnt` counts **stack-frame slots, not variables** — a
+  `stack var buf[N]` registers N/8 per-slot filler entries, so the slot-indexed
+  tables (`fn_local_names` / `local_depths` 256 slots, `local_types` /
+  `local_slice_widths` 576) are *already* overflowed (benignly) by large stack
+  frames; a committed test (`stack_var.tcyr`'s `big_frame`, a 16 KB `__chkstk`
+  frame → ~2000 slots) legitimately exceeds them. A naive count cap breaks such
+  sanctioned code; the real fix is a redesign (grow the four slot-indexed local
+  tables + cap at the real capacity — a heap-map change — or stop registering
+  per-slot fillers in the name/depth/type tables). Tracked in
+  [`issues/2026-06-12-locals-table-slot-indexed-overflow.md`](docs/development/issues/2026-06-12-locals-table-slot-indexed-overflow.md).
+
 ## [6.1.37] — 2026-06-11
 
 **v6.1.x slot 37: const chained-multiply miscompile (silent wrong codegen).**

@@ -891,7 +891,7 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));
         syscall(SYS_WRITE, 2, " / 8192\n",        8);
         syscall(SYS_WRITE, 2, "  fixup_table: ", 15); PRNUM(GFCNT(S));
-        syscall(SYS_WRITE, 2, " / 16384\n",       9);
+        syscall(SYS_WRITE, 2, " / 1048576\n",       11);
         syscall(SYS_WRITE, 2, "  string_data: ", 15); PRNUM(GSPOS(S));
         syscall(SYS_WRITE, 2, " / 2097152\n",    11);
         syscall(SYS_WRITE, 2, "  code_size:   ", 15); PRNUM(GCP(S));
@@ -921,11 +921,11 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GVCNT(S));
         syscall(SYS_WRITE, 2, "/8192) — too many globals + locals\n", 35);
     }
-    if (GFCNT(S) * 100 / 16384 >= 85) {
+    if (GFCNT(S) * 100 / 1048576 >= 85) {
         syscall(SYS_WRITE, 2, "warning: fixup_table at ", 24);
-        PRNUM(GFCNT(S) * 100 / 16384);
+        PRNUM(GFCNT(S) * 100 / 1048576);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFCNT(S));
-        syscall(SYS_WRITE, 2, "/16384) — too many cross-fn refs\n", 33);
+        syscall(SYS_WRITE, 2, "/1048576) — too many cross-fn refs\n", 37);
     }
     if (GSPOS(S) * 100 / 2097152 >= 85) {
         syscall(SYS_WRITE, 2, "warning: string_data at ", 24);

@@ -77,4 +77,19 @@ proven contention. Pairs with the growable-table migration in
 
 ## Status
 
-Filed 2026-06-10. Medium cluster; good fit for a v6.2.x hardening band.
+Filed 2026-06-10. **Four of five RESOLVED v6.1.38 (Phase F pack F3):** CVE-25
+(`_sb_grow` OOM propagation + `_sb_die`), CVE-26 (`alloc_agnos` pre-lock size
+guards + local `ALLOC_MAX`), CVE-27 (PE import-registry count+name-buffer
+bounds; the "32-slot" premise was a wrong comment — global `var x[N]`=N i64
+slots, so the arrays already held 256/4096), and AR-03 (fixup cap unified
+262144→1048576 to match its 16 MiB region; `jump_target_tbl` off-by-one fixed
+across all 4 accessors). Self-host byte-identical x86/aarch64/PE; ecb/ach/pi/cass
+`SELFHOST_OK`; check.sh 89/89; adversarial-review-the-diff caught the jump fix
+initially touching only 1 of 4 accessors. See CHANGELOG [6.1.38].
+
+**CVE-24 RE-SCOPED + DEFERRED.** The audit premise here ("locals registration
+has no cap → add a count guard") was wrong — `SFLC`/`local_cnt` counts
+stack-frame *slots*, not variables, so a naive cap breaks sanctioned large stack
+frames (`stack_var.tcyr::big_frame`'s 16 KB `__chkstk` frame). The real fix is a
+redesign. Tracked in
+[`2026-06-12-locals-table-slot-indexed-overflow.md`](../2026-06-12-locals-table-slot-indexed-overflow.md).

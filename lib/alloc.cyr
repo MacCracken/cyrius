@@ -621,6 +621,13 @@ fn default_alloc(): i64 {
     # store path is correct (single-threaded VM).
     if (_default_allocator == 0) {
         var a = bump_allocator();
+        # CVE-28 (v6.1.38): fence so the 40-byte vtable's writes are committed
+        # before the pointer is CAS-published — a peer thread observing the
+        # published pointer must see the fully-built vtable, not stale slots.
+        # (atomic_cas now also uses stlxr release on aarch64, but the explicit
+        # fence makes the publish-after-init ordering unambiguous on every arch;
+        # no-op on cx. This is the once-per-process lazy-init path.)
+        atomic_fence();
         #ifdef CYRIUS_ARCH_X86
         atomic_cas(&_default_allocator, 0, a);
         return _default_allocator;

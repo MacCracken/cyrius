@@ -115,8 +115,14 @@
 #                                        stores (1<<63)|val per variant; read
 #                                        by PARSE_FACTOR to const-fold enum
 #                                        identifiers at parse time (v5.5.2)
+#   0x19E000  jump_target_cnt[8]          v5.6.x: per-fn count of LASE jump targets (x86-only)
+#   0x19E008  jump_target_tbl[8184]       1023 × 8B target CPs — the count above shares the
+#                                        8 KB [0x19E000..0x1A0000) budget, so the entries hold
+#                                        1023, NOT 1024 (AR-03 v6.1.38: x86/jump.cyr guards jtc<1023;
+#                                        the prior jtc<1024 wrote slot 1023 into jump_src_cnt below).
 #   0x1A0000  jump_src_cnt  [8]           v5.6.27: per-fn count of recorded disp32 source CPs
-#   0x1A0008  jump_src_tbl  [8192]        v5.6.27: 1024 × 8B disp32 CP entries.
+#   0x1A0008  jump_src_tbl  [8192]        v5.6.27: 1024 × 8B disp32 CP entries (count is separate
+#                                        at 0x1A0000, so these get the full [8192] — no off-by-one).
 #                                        Reset at fn start. Populated by EJCC/EJMP/EJMP0/ECALLTO.
 #                                        Read by compact_nops to remap intra-fn jump disps.
 #   0x1A2008  nop_run_cnt   [8]           v5.6.27: per-fn count of NOP runs
@@ -1857,7 +1863,7 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));
         syscall(SYS_WRITE, 2, " / 8192\n",        8);
         syscall(SYS_WRITE, 2, "  fixup_table: ", 15); PRNUM(GFCNT(S));
-        syscall(SYS_WRITE, 2, " / 262144\n",      10);
+        syscall(SYS_WRITE, 2, " / 1048576\n",      11);
         syscall(SYS_WRITE, 2, "  string_data: ", 15); PRNUM(GSPOS(S));
         syscall(SYS_WRITE, 2, " / 2097152\n",    11);
         syscall(SYS_WRITE, 2, "  code_size:   ", 15); PRNUM(GCP(S));
@@ -1887,11 +1893,11 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GVCNT(S));
         syscall(SYS_WRITE, 2, "/8192) — too many globals + locals\n", 35);
     }
-    if (GFCNT(S) * 100 / 262144 >= 85) {
+    if (GFCNT(S) * 100 / 1048576 >= 85) {
         syscall(SYS_WRITE, 2, "warning: fixup_table at ", 24);
-        PRNUM(GFCNT(S) * 100 / 262144);
+        PRNUM(GFCNT(S) * 100 / 1048576);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFCNT(S));
-        syscall(SYS_WRITE, 2, "/262144) — too many cross-fn refs\n", 34);
+        syscall(SYS_WRITE, 2, "/1048576) — too many cross-fn refs\n", 37);
     }
     if (GSPOS(S) * 100 / 2097152 >= 85) {
         syscall(SYS_WRITE, 2, "warning: string_data at ", 24);

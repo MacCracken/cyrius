@@ -3,9 +3,16 @@
 # Pre-v5.5.31 `lib/thread.cyr::mutex_lock` had a racy load+store
 # fast-path — two threads could both observe state 0 and both
 # "acquire" the lock. v5.5.31 ships inline-asm primitives (x86
-# `lock cmpxchg` / `lock xadd` / `mfence`; aarch64 `ldxr`/`stxr`
-# LL-SC loops + `dmb ish`) and makes mutex CAS-based for
-# correctness-by-construction.
+# `lock cmpxchg` / `lock xadd` / `mfence`; aarch64 LL-SC loops)
+# and makes mutex CAS-based for correctness-by-construction.
+#
+# CVE-28 (v6.1.38): the aarch64 LL-SC loops used bare `ldxr`/`stxr`
+# with NO barrier (the `dmb ish` the docs once claimed was never
+# emitted), so a peer thread could see a CAS-published pointer before
+# the pointee's writes. Now `ldaxr`/`stlxr` (acquire/release exclusive)
+# — same instruction count, single-bit opcode change, branch offsets
+# unchanged. The contention tests below exercise the functional path;
+# the ordering is verified by disasm (ldaxr/stlxr emitted).
 #
 # Coverage:
 #   1. atomic_load / atomic_store round-trip

@@ -34,6 +34,15 @@ substrate for the v6.3.x async arc.
 aarch64 `cas`/`fetch_add` bodies to honor the documented contract, and add a
 release fence before the `default_alloc` vtable CAS-publish. Verify on pi.
 
+**RESOLVED v6.1.38 (Phase F pack F3).** `atomic_cas`/`atomic_fetch_add` switched
+from bare `ldxr`/`stxr` to `ldaxr`/`stlxr` (acquire/release exclusive — ARMv8.0-A
+safe, no LSE needed; a 1-bit opcode change so the LL-SC branch offsets are
+untouched, vs `dmb` which would have shifted them). Added `atomic_fence()` before
+the `default_alloc` vtable CAS-publish. Docs corrected (the old "full barriers"
+claim over-promised a `dmb ish` that was never emitted). **Verified on real pi**
+(atomics.tcyr 4-thread contention) + `ldaxr`/`stlxr` disasm-confirmed. See
+CHANGELOG [6.1.38].
+
 ## CVE-29 — thread stacks have no guard page; stack probe PE-only (P3)
 
 `mmap_stack` maps the whole stack `PROT_READ|PROT_WRITE` with no `PROT_NONE`

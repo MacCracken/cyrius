@@ -1249,6 +1249,10 @@ fn DSE_PASS(S, fn_start): i64 {
 # Check if a codebuf offset is a jump target (recorded by EPATCH)
 fn IS_JUMP_TARGET(S, off): i64 {
     var jtc = L64(S + 0x19E000);
+    # AR-03 (v6.1.38): only 1023 slots are valid (0x19E008..0x1A0000); EJMP's
+    # overflow path bumps the count to the 1024 sentinel, so clamp before reading
+    # — slot 1023 is jump_src_cnt, not a recorded target.
+    if (jtc > 1023) { jtc = 1023; }
     var i = 0;
     while (i < jtc) {
         if (L64(S + 0x19E008 + i * 8) == off) { return 1; }
@@ -2817,7 +2821,9 @@ fn PARSE_FN_DEF(S): i64 {
                     # Stage 3: shift jump-target table entries (used by LASE
                     # / BB analysis at IR>0; harmless to update at IR=0).
                     var _jtc = L64(S + 0x19E000);
-                    if (_jtc > 1024) { _jtc = 1024; }
+                    # AR-03 (v6.1.38): clamp to 1023 valid slots (the 1024 sentinel
+                    # from EJMP's overflow path would shift jump_src_cnt at 0x1A0000).
+                    if (_jtc > 1023) { _jtc = 1023; }
                     var _jti = 0;
                     while (_jti < _jtc) {
                         var _jta = S + 0x19E008 + _jti * 8;

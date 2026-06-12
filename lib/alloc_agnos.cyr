@@ -22,6 +22,12 @@ var _heap_used = 0;        # total bytes handed out since last init/reset
 # agnos mmap granularity: 2 MB.
 var AGNOS_CHUNK = 0x200000;
 
+# CVE-26 (v6.1.38): max single allocation (256 MB), mirroring the Linux/Windows/
+# macOS peers (alloc.cyr/alloc_windows.cyr/alloc_macos.cyr all = 0x10000000).
+# Defined here because this peer is compiled standalone for CYRIUS_TARGET_AGNOS —
+# the alloc.cyr ALLOC_MAX is inside the CYRIUS_TARGET_LINUX block, out of scope.
+var ALLOC_MAX = 0x10000000;
+
 # Round `n` up to the next 2 MB multiple (agnos mmap granularity).
 fn _agnos_round_2mb(n): i64 {
     return (n + (AGNOS_CHUNK - 1)) & (0 - AGNOS_CHUNK);
@@ -59,6 +65,13 @@ fn alloc_init(): i64 {
 # on overflow, mmaps a new chunk big enough for the request. Returns the
 # pointer, or 0 on out-of-memory.
 fn alloc(size): i64 {
+    # CVE-26 (v6.1.38): reject negative/oversized BEFORE alignment + the lock —
+    # the other 3 backends do this. A negative `size` makes `asz` negative, so
+    # the `_heap_ptr + asz > _heap_end` overflow check is false and the bump
+    # pointer moves BACKWARD → overlaps already-handed-out memory. Pure (no
+    # shared state) so it's validated outside the lock; bad calls never contend.
+    if (size <= 0) { return 0; }
+    if (size > ALLOC_MAX) { return 0; }
     var asz = (size + 7) & (0 - 8);   # local — outside the v6.0.64 lock
     # --- critical section (shared chunk state + _agnos_new_chunk) ---
     _alloc_lock_acquire();

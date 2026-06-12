@@ -42,12 +42,16 @@ fn EJMP(S, target): i64 {
         S64(S + 0x1A0000, _jsc + 1);
     }
     # Record jump target (CVE-09: warn on overflow)
+    # AR-03 (v6.1.38): the table is 0x19E000..0x1A0000 (8 KB) with the count in
+    # the first 8 B, so the entries at 0x19E008 hold only 1023 slots (8184/8),
+    # not 1024 — at jtc=1023 the write landed at 0x1A0000 = jump_src_cnt, the
+    # next region. Cap at 1023; warn (LASE off) when the 1023rd is reached.
     var jtc = L64(S + 0x19E000);
-    if (jtc < 1024) {
+    if (jtc < 1023) {
         S64(S + 0x19E008 + jtc * 8, target);
         S64(S + 0x19E000, jtc + 1);
-    } elif (jtc == 1024) {
-        syscall(SYS_WRITE, 2, "warning: jump target table full (1024) — LASE disabled for this function\n", 73);
+    } elif (jtc == 1023) {
+        syscall(SYS_WRITE, 2, "warning: jump target table full (1023) — LASE disabled for this function\n", 75);
         S64(S + 0x19E000, jtc + 1);
     }
     return 0;
@@ -83,8 +87,11 @@ fn EPATCH(S, off): i64 {
     var addr = S + 0x41A000 + off;
     S64(addr, (L64(addr) >> 32 << 32) | (rel & 0xFFFFFFFF));
     # Record jump target
+    # AR-03 (v6.1.38): cap at 1023 like EJMP — the table at 0x19E008 holds only
+    # 1023 slots before jump_src_cnt at 0x1A0000 (the count eats the first 8 B of
+    # the 8 KB budget). jtc<1024 here wrote slot 1023 into jump_src_cnt.
     var jtc = L64(S + 0x19E000);
-    if (jtc < 1024) {
+    if (jtc < 1023) {
         S64(S + 0x19E008 + jtc * 8, cp);
         S64(S + 0x19E000, jtc + 1);
     }
