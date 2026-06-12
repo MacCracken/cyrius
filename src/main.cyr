@@ -88,18 +88,31 @@
 #       overflowed the old 256/576-slot tables. Grown to 16384 slots (128 KB frames) each + capped in
 #       SFLC. See the 0x5D9D000 block below. ---
 #
-# --- Function tables (relocated v4.7.1 — caps raised 2048 → 4096) ---
-#   0x9BA000 fn_names      [32768]       4096 function name offsets
-#   0x9CA000 fn_offsets    [32768]       4096 function code offsets
-#   0x9DA000 fn_params     [32768]       4096 function param counts
-#   0x9EA000 fn_body_start [32768]       4096 inline body start
-#   0x9FA000 fn_body_end   [32768]       4096 inline body end
-#   0xA0A000 fn_inline     [32768]       4096 inline flags
-#   0xA1A000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
-#   0xA2A000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
-# Function tables live back-to-back in the 256 KB band ending at
-# 0x92A000 (the IR region's start). Sized for 4096 fns × 8 bytes per
-# field × 8 fields.
+# --- Function tables (GROWABLE as of v6.2.0 — Phase 0 / AR-03) ---
+# These are the INITIAL bases (8192 slots × 8 B each); REGFN relocates the
+# whole family off-heap + rehashes the name-hash when the count would exceed
+# the cap (ceiling 32768). Accessed by the `_fnt_*` gvars, NOT these literal
+# offsets — see util.cyr for the family + grow.
+#   0x93A000 fn_param_cstring_mask  _fnt_cstrmask
+#   0x94A000 fn_param_result_mask   _fnt_resmask
+#   0x95A000 fn_param_option_mask   _fnt_optmask
+#   0x96A000 fn_param_tagged_mask   _fnt_tagmask
+#   0x97A000 fn_overload_str        _fnt_ovstr
+#   0x98A000 fn_overload_int        _fnt_ovint
+#   0x99A000 fn_overload_cstr       _fnt_ovcstr
+#   0x9AA000 fn_param_simd_mask     _fnt_simdmask
+#   0x9BA000 fn_names               _fnt_names
+#   0x9CA000 fn_offsets             _fnt_offsets
+#   0x9DA000 fn_params              _fnt_params
+#   0x9EA000 fn_body_start          _fnt_bodystart
+#   0x9FA000 fn_body_end            _fnt_bodyend
+#   0xA0A000 fn_inline              _fnt_inline
+#   0xA1A000 fn_param_str_mask      _fnt_strmask
+#   0xA2A000 fn_code_end            _fnt_codeend
+#   0x110000 fn_name_hash (2 B/slot) _fnt_namehash  (grow → rehash)
+#   0x114000 fn_start_hash (2 B/slot) _fnt_starthash (rebuilt per fixup)
+# Initial bases live back-to-back in the band ending at 0x92A000 (the IR
+# region's start). Cap 8192 initially → byte-identical under the old cap.
 #
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
@@ -655,6 +668,29 @@ rp_vec = vec_new();
 # cap = the old hard cap; GFCNT grows it 2x via alloc() once full (util.cyr).
 _fixup_base = S + 0x107B000;
 _fixup_cap = 1048576;
+# Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
+# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# the family + rehashes when the count would exceed it). See util.cyr.
+_fnt_cstrmask = S + 0x93A000;
+_fnt_resmask = S + 0x94A000;
+_fnt_optmask = S + 0x95A000;
+_fnt_tagmask = S + 0x96A000;
+_fnt_ovstr = S + 0x97A000;
+_fnt_ovint = S + 0x98A000;
+_fnt_ovcstr = S + 0x99A000;
+_fnt_simdmask = S + 0x9AA000;
+_fnt_names = S + 0x9BA000;
+_fnt_offsets = S + 0x9CA000;
+_fnt_params = S + 0x9DA000;
+_fnt_bodystart = S + 0x9EA000;
+_fnt_bodyend = S + 0x9FA000;
+_fnt_inline = S + 0xA0A000;
+_fnt_strmask = S + 0xA1A000;
+_fnt_codeend = S + 0xA2A000;
+_fnt_namehash = S + 0x110000;
+_fnt_starthash = S + 0x114000;
+_fnt_hash_mask = 8191;
+_fnt_cap = 8192;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating
@@ -1465,7 +1501,7 @@ while (topgo == 1) {
                                             # callee-saved-reg state to. Leaving the flag armed would
                                             # leak it to whichever fn lands next.
                                             if (_regalloc_pending == 1) { _regalloc_pending = 0; }
-                                            S64(S + 0x9CA000 + stub_fi * 8, GCP(S));
+                                            S64(_fnt_offsets + stub_fi * 8, GCP(S));
                                             # Emit stub: xor eax, eax; ret (3 bytes)
                                             EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
                                             # Skip function body tokens
@@ -1595,9 +1631,9 @@ if (_prof_on == 1) { _prof_gvar_end = _prof_clock_ns(); }
 var wfi = 0;
 var wfc = GFNC(S);
 while (wfi < wfc) {
-    if (L64(S + 0x9CA000 + wfi * 8) < 0) {
+    if (L64(_fnt_offsets + wfi * 8) < 0) {
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(S + 0x9BA000 + wfi * 8));
+        PRSTR(S + 0x60000 + L64(_fnt_names + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -1619,7 +1655,7 @@ if (_init_km == 1) {
     if (_TARGET_MACHO == 1) {
         var _mcap_found = _find_fn_by_name(S, "_macho_capture_args", 19);
         if (_mcap_found >= 0) {
-            var _mcap_off = L64(S + 0x9CA000 + _mcap_found * 8);
+            var _mcap_off = L64(_fnt_offsets + _mcap_found * 8);
             if (_mcap_off >= 0) { ECALLTO(S, _mcap_off); }
         }
     }
@@ -1666,7 +1702,7 @@ if (_TARGET_EFI_APPLICATION == 1) {
     # above; v5.11.52 shipped the open-coded version.
     var _efm_found = _find_fn_by_name(S, "efi_main", 8);
     if (_efm_found >= 0) {
-        var _efm_off = L64(S + 0x9CA000 + _efm_found * 8);
+        var _efm_off = L64(_fnt_offsets + _efm_found * 8);
         if (_efm_off >= 0) {
             # v5.11.54: byte-literal restore + RSP-adjust replaced
             # with named ops (parallel to the save above).
@@ -1713,7 +1749,7 @@ if (_epi_km_pre == 0) {
     # as the efi_main lookup below; both collapse to one helper.
     var _main_found = _find_fn_by_name(S, "main", 4);
     if (_main_found >= 0) {
-        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
+        var _main_off = L64(_fnt_offsets + _main_found * 8);
         if (_main_off >= 0) {
             ECALLTO(S, _main_off);
         }
@@ -1894,9 +1930,9 @@ if (_stats_env != 0) {
 # Suppressed under CYRIUS_STATS=1 (already shown above) and under
 # `--version` short-circuit (handled before this point).
 if (_stats_env == 0) {
-    if (GFNC(S) * 100 / 8192 >= 85) {
+    if (GFNC(S) * 100 / _fnt_cap >= 85) {
         syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
-        PRNUM(GFNC(S) * 100 / 8192);
+        PRNUM(GFNC(S) * 100 / _fnt_cap);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
         syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 45);
     }

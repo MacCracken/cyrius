@@ -1097,7 +1097,7 @@ fn PARSE_FACTOR(S): i64 {
         SSDEP(S, 0);
         # Emit function prologue
         var cl_jmp = EJMP0(S);
-        S64(S + 0x9CA000 + clfi * 8, GCP(S));
+        S64(_fnt_offsets + clfi * 8, GCP(S));
         EFNPRO(S);
         # Parse params until |
         var clpc = 0;
@@ -1117,7 +1117,7 @@ fn PARSE_FACTOR(S): i64 {
                 else { cpgo = 0; }
             }
         }
-        S64(S + 0x9DA000 + clfi * 8, clpc);
+        S64(_fnt_params + clfi * 8, clpc);
         if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
         STI(S, GTI(S) + 1);  # consume closing |
         ESUBRSP(S, GFLC(S));
@@ -1784,7 +1784,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
     ECALLPOPS(S, 2);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
-    var ofoff = L64(S + 0x9CA000 + ofi * 8);
+    var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, 2);
@@ -1813,7 +1813,7 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     var fi = FINDFN(S, np);
     if (fi < 0) { fi = REGFN(S, np); }
     ECALLPOPS(S, 2);
-    var foff = L64(S + 0x9CA000 + fi * 8);
+    var foff = L64(_fnt_offsets + fi * 8);
     if (foff >= 0) { ECALLTO(S, foff); }
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, 2);

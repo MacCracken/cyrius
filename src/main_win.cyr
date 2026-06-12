@@ -344,6 +344,29 @@ rp_vec = vec_new();
 # cap = the old hard cap; GFCNT grows it 2x via alloc() once full (util.cyr).
 _fixup_base = S + 0x107B000;
 _fixup_cap = 1048576;
+# Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
+# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# the family + rehashes when the count would exceed it). See util.cyr.
+_fnt_cstrmask = S + 0x93A000;
+_fnt_resmask = S + 0x94A000;
+_fnt_optmask = S + 0x95A000;
+_fnt_tagmask = S + 0x96A000;
+_fnt_ovstr = S + 0x97A000;
+_fnt_ovint = S + 0x98A000;
+_fnt_ovcstr = S + 0x99A000;
+_fnt_simdmask = S + 0x9AA000;
+_fnt_names = S + 0x9BA000;
+_fnt_offsets = S + 0x9CA000;
+_fnt_params = S + 0x9DA000;
+_fnt_bodystart = S + 0x9EA000;
+_fnt_bodyend = S + 0x9FA000;
+_fnt_inline = S + 0xA0A000;
+_fnt_strmask = S + 0xA1A000;
+_fnt_codeend = S + 0xA2A000;
+_fnt_namehash = S + 0x110000;
+_fnt_starthash = S + 0x114000;
+_fnt_hash_mask = 8191;
+_fnt_cap = 8192;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating
@@ -744,7 +767,7 @@ while (topgo == 1) {
                                             # callee-saved-reg state to. Leaving the flag armed would
                                             # leak it to whichever fn lands next.
                                             if (_regalloc_pending == 1) { _regalloc_pending = 0; }
-                                            S64(S + 0x9CA000 + stub_fi * 8, GCP(S));
+                                            S64(_fnt_offsets + stub_fi * 8, GCP(S));
                                             # Emit stub: xor eax, eax; ret (3 bytes)
                                             EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
                                             # Skip function body tokens
@@ -807,9 +830,9 @@ STI(S, gvar_save_ti);
 var wfi = 0;
 var wfc = GFNC(S);
 while (wfi < wfc) {
-    if (L64(S + 0x9CA000 + wfi * 8) < 0) {
+    if (L64(_fnt_offsets + wfi * 8) < 0) {
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(S + 0x9BA000 + wfi * 8));
+        PRSTR(S + 0x60000 + L64(_fnt_names + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -833,7 +856,7 @@ var _epi_km_pre = L64(S + 0x18FCA0);
 if (_epi_km_pre == 0) {
     var _main_found = _find_fn_by_name(S, "main", 4);
     if (_main_found >= 0) {
-        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
+        var _main_off = L64(_fnt_offsets + _main_found * 8);
         if (_main_off >= 0) {
             ECALLTO(S, _main_off);
         }
@@ -912,9 +935,9 @@ if (_stats_env != 0) {
 # Suppressed under CYRIUS_STATS=1 (already shown above) and under
 # `--version` short-circuit (handled before this point).
 if (_stats_env == 0) {
-    if (GFNC(S) * 100 / 8192 >= 85) {
+    if (GFNC(S) * 100 / _fnt_cap >= 85) {
         syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
-        PRNUM(GFNC(S) * 100 / 8192);
+        PRNUM(GFNC(S) * 100 / _fnt_cap);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
         syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 45);
     }

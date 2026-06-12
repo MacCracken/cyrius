@@ -215,7 +215,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         ECALLPOPS(S, argc);
         var mfi = FINDFN(S, mname);
         if (mfi < 0) { mfi = REGFN(S, mname); }
-        var mfoff = L64(S + 0x9CA000 + mfi * 8);
+        var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
         ECALLCLEAN(S, argc);
@@ -1258,7 +1258,7 @@ fn PARSE_VAR(S): i64 {
                             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
                             STI(S, GTI(S) + 1);  # consume ')'
                             ECALLPOPS(S, _f2w_argc);
-                            var _f2w_target = L64(S + 0x9CA000 + _f2c_look_fi * 8);
+                            var _f2w_target = L64(_fnt_offsets + _f2c_look_fi * 8);
                             if (_f2w_target >= 0) { ECALLTO(S, _f2w_target); }
                             else { ECALLFIX(S, _f2c_look_fi); }
                             ECALLCLEAN(S, _f2w_argc);
@@ -1332,7 +1332,7 @@ fn PARSE_VAR(S): i64 {
                             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
                             STI(S, GTI(S) + 1);  # consume ')'
                             ECALLPOPS(S, _f4w_argc);
-                            var _f4w_target = L64(S + 0x9CA000 + _f4c_look_fi * 8);
+                            var _f4w_target = L64(_fnt_offsets + _f4c_look_fi * 8);
                             if (_f4w_target >= 0) { ECALLTO(S, _f4w_target); }
                             else { ECALLFIX(S, _f4c_look_fi); }
                             ECALLCLEAN(S, _f4w_argc);
@@ -1474,7 +1474,7 @@ fn PARSE_VAR(S): i64 {
         if (_AARCH64_BACKEND == 1) {
             EFLADDR_X8(S, asv_named);
         }
-        var asv_fn_target = L64(S + 0x9CA000 + asv_fi * 8);
+        var asv_fn_target = L64(_fnt_offsets + asv_fi * 8);
         if (asv_fn_target >= 0) { ECALLTO(S, asv_fn_target); }
         else { ECALLFIX(S, asv_fi); }
         ECALLCLEAN(S, asv_argc);
@@ -1549,7 +1549,7 @@ fn PARSE_VAR(S): i64 {
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
         STI(S, GTI(S) + 1);                         # consume ')'
         ECALLPOPS(S, asp_argc);
-        var asp_fn_target = L64(S + 0x9CA000 + asp_fi * 8);
+        var asp_fn_target = L64(_fnt_offsets + asp_fi * 8);
         if (asp_fn_target >= 0) { ECALLTO(S, asp_fn_target); }
         else { ECALLFIX(S, asp_fi); }
         ECALLCLEAN(S, asp_argc);

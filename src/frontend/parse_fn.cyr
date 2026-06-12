@@ -41,11 +41,11 @@ fn FNV1A_NOFF(S, noff): i64 {
 # avg ~1.5 probes to insert.
 fn _REGFN_HASH(S, noff, fi): i64 {
     var h = FNV1A_NOFF(S, noff);
-    var slot = h & 8191;
-    while (load16(S + 0x110000 + slot * 2) != 0) {
-        slot = (slot + 1) & 8191;
+    var slot = h & _fnt_hash_mask;
+    while (load16(_fnt_namehash + slot * 2) != 0) {
+        slot = (slot + 1) & _fnt_hash_mask;
     }
-    store16(S + 0x110000 + slot * 2, fi + 1);
+    store16(_fnt_namehash + slot * 2, fi + 1);
     return 0;
 }
 
@@ -89,18 +89,59 @@ fn _OVERLOAD_SUFFIX(S, noff): i64 {
     return 0;
 }
 
+# Grow the fn-table family 2x: realloc + copy all 16 parallel 8 B/slot tables,
+# realloc the start-hash (rebuilt each fixup, so no copy needed), then rebuild
+# the name-hash at the new size and re-insert every live entry. Old buffers leak
+# (cycc is short-lived). Ceiling 32768 — the 2 B hash slots store fi+1 (so the
+# index must stay < 65536) and the live[] DCE bitmap is fixed at live[4096] =
+# 32768 bits. v6.2.0 Phase 0 / AR-03. See util.cyr for the gvar family.
+fn _fnt_grow(S): i64 {
+    var nc = _fnt_cap * 2;
+    if (nc > 32768) {
+        syscall(SYS_WRITE, 2, "error: too many functions (max 32768)\n", 38);
+        syscall(SYS_EXIT, 1);
+    }
+    var oc = _fnt_cap;
+    _fnt_cstrmask  = _fnt_copy_table(_fnt_cstrmask,  oc, nc);
+    _fnt_resmask   = _fnt_copy_table(_fnt_resmask,   oc, nc);
+    _fnt_optmask   = _fnt_copy_table(_fnt_optmask,   oc, nc);
+    _fnt_tagmask   = _fnt_copy_table(_fnt_tagmask,   oc, nc);
+    _fnt_ovstr     = _fnt_copy_table(_fnt_ovstr,     oc, nc);
+    _fnt_ovint     = _fnt_copy_table(_fnt_ovint,     oc, nc);
+    _fnt_ovcstr    = _fnt_copy_table(_fnt_ovcstr,    oc, nc);
+    _fnt_simdmask  = _fnt_copy_table(_fnt_simdmask,  oc, nc);
+    _fnt_names     = _fnt_copy_table(_fnt_names,     oc, nc);
+    _fnt_offsets   = _fnt_copy_table(_fnt_offsets,   oc, nc);
+    _fnt_params    = _fnt_copy_table(_fnt_params,    oc, nc);
+    _fnt_bodystart = _fnt_copy_table(_fnt_bodystart, oc, nc);
+    _fnt_bodyend   = _fnt_copy_table(_fnt_bodyend,   oc, nc);
+    _fnt_inline    = _fnt_copy_table(_fnt_inline,    oc, nc);
+    _fnt_strmask   = _fnt_copy_table(_fnt_strmask,   oc, nc);
+    _fnt_codeend   = _fnt_copy_table(_fnt_codeend,   oc, nc);
+    # start-hash is rebuilt from scratch each fixup pass — just give it a
+    # cap-sized buffer (contents irrelevant; the fixup clear loop zeroes it).
+    _fnt_starthash = alloc(nc * 2);
+    # name-hash: fresh zeroed buffer at the new mask, then re-insert all live fns.
+    _fnt_namehash = alloc(nc * 2);
+    _fnt_hash_mask = nc - 1;
+    _fnt_cap = nc;
+    var i = 0;
+    while (i < oc) {
+        _REGFN_HASH(S, L64(_fnt_names + i * 8), i);
+        i = i + 1;
+    }
+    return 0;
+}
+
 # Register new function, return index
 fn REGFN(S, noff): i64 {
     var fc = GFNC(S);
-    if (fc >= 8192) {
-        syscall(SYS_WRITE, 2, "error: function table full (", 28);
-        PRNUM(fc);
-        syscall(SYS_WRITE, 2, "/8192) — split into separate compilation units\n", 49);
-        syscall(SYS_EXIT, 1);
-    }
-    S64(S + 0x9BA000 + fc * 8, noff);
-    S64(S + 0x9CA000 + fc * 8, 0 - 1);
-    S64(S + 0x9DA000 + fc * 8, 0);
+    # Grow the fn-table family the moment the count would exceed the cap (the
+    # writes below append slot fc). _fnt_cap==0 guards any pre-init call.
+    if (_fnt_cap != 0 && fc >= _fnt_cap) { _fnt_grow(S); }
+    S64(_fnt_names + fc * 8, noff);
+    S64(_fnt_offsets + fc * 8, 0 - 1);
+    S64(_fnt_params + fc * 8, 0);
     SFNC(S, fc + 1);
     _REGFN_HASH(S, noff, fc);
     # v5.10.25 — auto-register overload mapping in BOTH directions
@@ -136,7 +177,7 @@ fn REGFN(S, noff): i64 {
     if (_ov_kind == 0) {
         var _rv_efi = 0;
         while (_rv_efi < fc) {
-            var _rv_en = L64(S + 0x9BA000 + _rv_efi * 8);
+            var _rv_en = L64(_fnt_names + _rv_efi * 8);
             var _rv_ep = S + 0x60000 + _rv_en;
             var _rv_elen = 0;
             while (load8(_rv_ep + _rv_elen) != 0) { _rv_elen = _rv_elen + 1; }
@@ -156,14 +197,14 @@ fn REGFN(S, noff): i64 {
                         if (load8(_rv_ep + _ov_my_len + 1) == 115) {
                             if (load8(_rv_ep + _ov_my_len + 2) == 116) {
                                 if (load8(_rv_ep + _ov_my_len + 3) == 114) {
-                                    S64(S + 0x97A000 + fc * 8, _rv_efi + 1);
+                                    S64(_fnt_ovstr + fc * 8, _rv_efi + 1);
                                 }
                             }
                         }
                         if (load8(_rv_ep + _ov_my_len + 1) == 105) {
                             if (load8(_rv_ep + _ov_my_len + 2) == 110) {
                                 if (load8(_rv_ep + _ov_my_len + 3) == 116) {
-                                    S64(S + 0x98A000 + fc * 8, _rv_efi + 1);
+                                    S64(_fnt_ovint + fc * 8, _rv_efi + 1);
                                 }
                             }
                         }
@@ -173,7 +214,7 @@ fn REGFN(S, noff): i64 {
                             if (load8(_rv_ep + _ov_my_len + 2) == 115) {
                                 if (load8(_rv_ep + _ov_my_len + 3) == 116) {
                                     if (load8(_rv_ep + _ov_my_len + 4) == 114) {
-                                        S64(S + 0x99A000 + fc * 8, _rv_efi + 1);
+                                        S64(_fnt_ovcstr + fc * 8, _rv_efi + 1);
                                     }
                                 }
                             }
@@ -194,16 +235,16 @@ fn REGFN(S, noff): i64 {
 # lookups (the >99% hot path) hit the hash and return immediately.
 fn FINDFN(S, noff): i64 {
     var h = FNV1A_NOFF(S, noff);
-    var slot = h & 8191;
+    var slot = h & _fnt_hash_mask;
     var probes = 0;
-    while (probes < 8192) {
-        var stored = load16(S + 0x110000 + slot * 2);
-        if (stored == 0) { probes = 8192; }
+    while (probes < _fnt_cap) {
+        var stored = load16(_fnt_namehash + slot * 2);
+        if (stored == 0) { probes = _fnt_cap; }
         else {
             var fi = stored - 1;
-            var sn = L64(S + 0x9BA000 + fi * 8);
+            var sn = L64(_fnt_names + fi * 8);
             if (STREQ(S, sn, noff) == 1) { return fi; }
-            slot = (slot + 1) & 8191;
+            slot = (slot + 1) & _fnt_hash_mask;
             probes = probes + 1;
         }
     }
@@ -353,7 +394,7 @@ fn PARSE_RETURN(S): i64 {
                             }
                             if (tcargc > 6) {
                                 # >6 args: normal call (stack args clobbered by tail call epilogue)
-                                var foff2 = L64(S + 0x9CA000 + tcfi * 8);
+                                var foff2 = L64(_fnt_offsets + tcfi * 8);
                                 if (foff2 >= 0) { ECALLTO(S, foff2); }
                                 else { ECALLFIX(S, tcfi); }
                                 ECALLCLEAN(S, tcargc);
@@ -769,10 +810,10 @@ fn PARSE_FNCALL(S, noff): i64 {
         var _od_str_sid = _STR_SID(S);
         if (_od_str_sid > 0) {
             if (_od_arg_typ == 0 - _od_str_sid) {
-                var _od_str_target = L64(S + 0x97A000 + fi * 8);
+                var _od_str_target = L64(_fnt_ovstr + fi * 8);
                 if (_od_str_target > 0) {
                     fi = _od_str_target - 1;
-                    noff = L64(S + 0x9BA000 + fi * 8);
+                    noff = L64(_fnt_names + fi * 8);
                 }
             }
         }
@@ -795,10 +836,10 @@ fn PARSE_FNCALL(S, noff): i64 {
             # it while keeping `println`/`log_info`/… (i64 return) routing.
             # See CHANGELOG [6.0.3].
             if (GFRS(S, fi) == 0 - 8) {
-                var _od_int_target = L64(S + 0x98A000 + fi * 8);
+                var _od_int_target = L64(_fnt_ovint + fi * 8);
                 if (_od_int_target > 0) {
                     fi = _od_int_target - 1;
-                    noff = L64(S + 0x9BA000 + fi * 8);
+                    noff = L64(_fnt_names + fi * 8);
                 }
             }
         }
@@ -841,7 +882,7 @@ fn PARSE_FNCALL(S, noff): i64 {
             var _po_fi = _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
             if (_po_fi >= 0) {
                 fi = _po_fi;
-                noff = L64(S + 0x9BA000 + fi * 8);
+                noff = L64(_fnt_names + fi * 8);
             }
         }
     }
@@ -889,7 +930,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     }
     if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) {
                 # INLINE PATH: replay function body tokens at call site
-                var pc = L64(S + 0x9DA000 + fi * 8);
+                var pc = L64(_fnt_params + fi * 8);
                 var saved_flc = GFLC(S);
                 # Allocate fresh frame slots for callee params
                 var p0_slot = saved_flc;
@@ -946,7 +987,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # ESTORESTACKPARM compensates for the reversed register assignment.
     # Auto-coerce string literals to Str for params annotated : Str.
     var argc = 0;
-    var smask = L64(S + 0xA1A000 + fi * 8);
+    var smask = L64(_fnt_strmask + fi * 8);
     # v5.10.38 — caller-side SIMD-arg routing. Read the callee's
     # per-fn SIMD mask (2 bits per param: 00 int, 01 f64v2, 10 f64v4).
     # When non-zero, value-form SIMD args get loaded into XMM/V regs
@@ -954,7 +995,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # PCMPE) doesn't trample SIMD state. Scratch table records each
     # SIMD arg's (named_lli, simd_pc, class) so the second pass can
     # emit ELOAD_F64V2_TO_XMM / _F64V4_TO_XMM at the call site.
-    var _fc_simd_mask = L64(S + 0x9AA000 + fi * 8);
+    var _fc_simd_mask = L64(_fnt_simdmask + fi * 8);
     var _fc_simd_table[24];   # 8 args × 3 i64s = 24 slots
     var _fc_simd_count = 0;
     var _fc_simd_pc_caller = 0;
@@ -1042,7 +1083,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # a Str-as-pointer triggered a false warning). Now
                 # the warning only fires when the param is EXPLICITLY
                 # asking for cstring semantics.
-                var _tc_cmask = L64(S + 0x93A000 + fi * 8);
+                var _tc_cmask = L64(_fnt_cstrmask + fi * 8);
                 if (_tc_cmask & (1 << argc)) {
                     var _tc_arg_noff = PEEKV(S);
                     var _tc_typ = 0;
@@ -1099,7 +1140,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     EPUSHR(S);
                     ECALLPOPS(S, 1);
                     if (sf_fi >= 0) {
-                        var sfoff = L64(S + 0x9CA000 + sf_fi * 8);
+                        var sfoff = L64(_fnt_offsets + sf_fi * 8);
                         if (sfoff >= 0) { ECALLTO(S, sfoff); }
                         else { ECALLFIX(S, sf_fi); }
                     }
@@ -1142,7 +1183,7 @@ fn PARSE_FNCALL(S, noff): i64 {
         }
         _fc_si = _fc_si + 1;
     }
-    var foff = L64(S + 0x9CA000 + fi * 8);
+    var foff = L64(_fnt_offsets + fi * 8);
     if (foff >= 0) {
         ECALLTO(S, foff);
     } else {
@@ -1303,7 +1344,7 @@ fn PARSE_FN_DEF(S): i64 {
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
     else {
-        var _dup_off = L64(S + 0x9CA000 + fi * 8);
+        var _dup_off = L64(_fnt_offsets + fi * 8);
         if (_dup_off >= 0) {
             syscall(SYS_WRITE, 2, "warning:", 8);
             FM_LOOKUP(S, GTLINE(S, GTI(S)));
@@ -1693,7 +1734,7 @@ fn PARSE_FN_DEF(S): i64 {
     }
     STI(S, _rs_save_ti);
     # Set fn offset to current CP
-    S64(S + 0x9CA000 + fi * 8, GCP(S));
+    S64(_fnt_offsets + fi * 8, GCP(S));
     # Save compiler state
     var saved_lv = GLVAR(S);
     SINFN(S, 1);
@@ -2043,20 +2084,20 @@ fn PARSE_FN_DEF(S): i64 {
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    S64(S + 0x9DA000 + fi * 8, pc);
+    S64(_fnt_params + fi * 8, pc);
     # Store Str param mask — bit N set = param N is : Str
-    S64(S + 0xA1A000 + fi * 8, str_mask);
+    S64(_fnt_strmask + fi * 8, str_mask);
     # v5.10.24 — Phase 2 param-type masks. Same per-fn shape as
     # str_mask; PARSE_FNCALL reads them for call-site type checks.
-    S64(S + 0x93A000 + fi * 8, cstring_mask);
-    S64(S + 0x94A000 + fi * 8, result_mask);
-    S64(S + 0x95A000 + fi * 8, option_mask);
-    S64(S + 0x96A000 + fi * 8, tagged_mask);
+    S64(_fnt_cstrmask + fi * 8, cstring_mask);
+    S64(_fnt_resmask + fi * 8, result_mask);
+    S64(_fnt_optmask + fi * 8, option_mask);
+    S64(_fnt_tagmask + fi * 8, tagged_mask);
     # v5.10.38 — typed-simd Phase 10. Per-fn SIMD-param mask: 2 bits
     # per param at offset pc*2. Default 0 means no SIMD params (legacy
     # behavior); non-zero triggers caller-side XMM-routing in
     # PARSE_FNCALL.
-    S64(S + 0x9AA000 + fi * 8, simd_mask);
+    S64(_fnt_simdmask + fi * 8, simd_mask);
     # v5.5.36 Phase 2b — optional `: StructName` return-type annotation:
     # `fn make(): Point { ... return p; }`. Sets fn_ret_sid[fi] = sid;
     # PARSE_RETURN + call-site consult it to emit the Win64 hidden-RCX /

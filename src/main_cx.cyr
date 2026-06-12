@@ -46,6 +46,29 @@ _HEAP_INIT_SCRATCH(S);
 # v6.0.7 — init alloc and assign rp_vec (return-patch storage).
 alloc_init();
 rp_vec = vec_new();
+# Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
+# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# the family + rehashes when the count would exceed it). See util.cyr.
+_fnt_cstrmask = S + 0x93A000;
+_fnt_resmask = S + 0x94A000;
+_fnt_optmask = S + 0x95A000;
+_fnt_tagmask = S + 0x96A000;
+_fnt_ovstr = S + 0x97A000;
+_fnt_ovint = S + 0x98A000;
+_fnt_ovcstr = S + 0x99A000;
+_fnt_simdmask = S + 0x9AA000;
+_fnt_names = S + 0x9BA000;
+_fnt_offsets = S + 0x9CA000;
+_fnt_params = S + 0x9DA000;
+_fnt_bodystart = S + 0x9EA000;
+_fnt_bodyend = S + 0x9FA000;
+_fnt_inline = S + 0xA0A000;
+_fnt_strmask = S + 0xA1A000;
+_fnt_codeend = S + 0xA2A000;
+_fnt_namehash = S + 0x110000;
+_fnt_starthash = S + 0x114000;
+_fnt_hash_mask = 8191;
+_fnt_cap = 8192;
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;

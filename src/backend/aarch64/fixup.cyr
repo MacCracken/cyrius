@@ -89,7 +89,7 @@ fn FIXUP(S): i64 {
         var idx = raw & 0x00FFFFFFFFFFFFFF;
         if (ftype == 2) {
             # Function call: patch BL rel26
-            var target = L64(S + 0x9CA000 + idx * 8);
+            var target = L64(_fnt_offsets + idx * 8);
             # v5.6.29-1: undef-fn sentinel — see x86 fixup.cyr:217 for the
             # full rationale (sandhi M2 silent-loop incident). aarch64 form:
             # replace the 4-byte BL with `UDF #0` (0x00000000), which is
@@ -117,13 +117,13 @@ fn FIXUP(S): i64 {
                 #     addresses (MOVZ-chain) point past `__text` at
                 #     runtime. (v5.9.39 Bug B fix; v5.9.38 shipped the
                 #     `lib/fnptr.cyr` macOS-branch companion as Fix A.)
-                var ftarget = L64(S + 0x9CA000 + idx * 8) + entry;
+                var ftarget = L64(_fnt_offsets + idx * 8) + entry;
                 if (_TARGET_MACHO == 2 || _pie_mode == 1) { FIXUP_ADRP_ADD(S, coff, ftarget); }
                 else { FIXUP_MOV(S, coff, ftarget); }
             }
             else { if (ftype == 4) {
                     # Tail call: patch B rel26 (not BL — no link register update)
-                    var target = L64(S + 0x9CA000 + idx * 8);
+                    var target = L64(_fnt_offsets + idx * 8);
                     # v5.6.29-1: undef sentinel → UDF #0 (see ftype==2 above).
                     if (target < 0) {
                         var pu4 = S + 0x41A000 + coff;
@@ -245,7 +245,7 @@ fn FIXUP(S): i64 {
     # bits = 8192 fn cap, matching the parse_fn.cyr REGFN ceiling.
     # v6.0.4: was 512/4096 — a >4096-fn unit overflowed live[] with an
     # OOB stack write (latent on both arches). See CHANGELOG [6.0.4].
-    var live[1024];
+    var live[4096];
     var ci = 0;
     while (ci < 1024) { store8(&live + ci, 0); ci = ci + 1; }
     # Build fn_start → fi+1 hash table at 0x114000 (16 KB region
@@ -255,20 +255,20 @@ fn FIXUP(S): i64 {
     # probes. Region zero-init from prior heap state isn't
     # guaranteed; explicit per-slot reset.
     var sh_clr = 0;
-    while (sh_clr < 8192) {
-        store16(S + 0x114000 + sh_clr * 2, 0);
+    while (sh_clr < _fnt_cap) {
+        store16(_fnt_starthash + sh_clr * 2, 0);
         sh_clr = sh_clr + 1;
     }
     var sh_i = 0;
     while (sh_i < fnc) {
-        var sh_start = L64(S + 0x9CA000 + sh_i * 8);
+        var sh_start = L64(_fnt_offsets + sh_i * 8);
         if (sh_start >= 0) {
             var sh_h = (sh_start * 0x9E3779B97F4A7C15) >> 16;
-            var sh_slot = sh_h & 8191;
-            while (load16(S + 0x114000 + sh_slot * 2) != 0) {
-                sh_slot = (sh_slot + 1) & 8191;
+            var sh_slot = sh_h & _fnt_hash_mask;
+            while (load16(_fnt_starthash + sh_slot * 2) != 0) {
+                sh_slot = (sh_slot + 1) & _fnt_hash_mask;
             }
-            store16(S + 0x114000 + sh_slot * 2, sh_i + 1);
+            store16(_fnt_starthash + sh_slot * 2, sh_i + 1);
         }
         sh_i = sh_i + 1;
     }
@@ -280,7 +280,7 @@ fn FIXUP(S): i64 {
         var t3r = L64(t3a + 8);
         if ((t3r >> 56) == 3) {
             var t3idx = t3r & 0x00FFFFFFFFFFFFFF;
-            if (t3idx < 8192) {
+            if (t3idx < 32768) {
                 store8(&live + (t3idx >> 3), load8(&live + (t3idx >> 3)) | (1 << (t3idx & 7)));
             }
         }
@@ -344,7 +344,7 @@ fn FIXUP(S): i64 {
         while (pfi < fnc) {
             var phl = load8(&live + (pfi >> 3)) & (1 << (pfi & 7));
             if (phl != 0) {
-                var pfs = L64(S + 0x9CA000 + pfi * 8);
+                var pfs = L64(_fnt_offsets + pfi * 8);
                 var pfe = GFNE(S, pfi);
                 if (pfs >= 0 && pfe > pfs) {
                     var pscn = pfs;
@@ -393,7 +393,7 @@ fn FIXUP(S): i64 {
     var dce_bytes = 0;
     var dwi = 0;
     while (dwi < fnc) {
-        var dfoff = L64(S + 0x9CA000 + dwi * 8);
+        var dfoff = L64(_fnt_offsets + dwi * 8);
         if (dfoff >= 0) {
             var is_live = load8(&live + (dwi >> 3)) & (1 << (dwi & 7));
             if (is_live == 0) {
@@ -440,12 +440,12 @@ fn FIXUP(S): i64 {
         if (dce_verbose == 1) {
             var dni = 0;
             while (dni < fnc) {
-                var dnoff = L64(S + 0x9CA000 + dni * 8);
+                var dnoff = L64(_fnt_offsets + dni * 8);
                 if (dnoff >= 0) {
                     var dn_live = load8(&live + (dni >> 3)) & (1 << (dni & 7));
                     if (dn_live == 0) {
                         syscall(SYS_WRITE, 2, "  dead: ", 8);
-                        PRSTR(S + 0x60000 + L64(S + 0x9BA000 + dni * 8));
+                        PRSTR(S + 0x60000 + L64(_fnt_names + dni * 8));
                         syscall(SYS_WRITE, 2, "\n", 1);
                     }
                 }
@@ -469,7 +469,7 @@ fn FIXUP(S): i64 {
         var u59_uftype = u59_uraw >> 56;
         var u59_uidx = u59_uraw & 0x00FFFFFFFFFFFFFF;
         if (u59_uftype == 2 || u59_uftype == 3) {
-            var u59_utarget = L64(S + 0x9CA000 + u59_uidx * 8);
+            var u59_utarget = L64(_fnt_offsets + u59_uidx * 8);
             if (u59_utarget == 0 - 1) {
                 # v6.1.5: host-scan hoisted to common/runtime.cyr (_dce_host_fn).
                 var u59_host = _dce_host_fn(S, u59_ucoff, fnc);
@@ -479,7 +479,7 @@ fn FIXUP(S): i64 {
                     if (u59_lb == 0) { u59_skip = 1; }
                 }
                 if (u59_skip == 0) {
-                    var u59_ufnoff = L64(S + 0x9BA000 + u59_uidx * 8);
+                    var u59_ufnoff = L64(_fnt_names + u59_uidx * 8);
                     syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
                     var u59_unptr = S + 0x60000 + u59_ufnoff;
                     var u59_unlen = 0;
@@ -488,7 +488,7 @@ fn FIXUP(S): i64 {
                     syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
                     undef_count = undef_count + 1;
                 }
-                S64(S + 0x9CA000 + u59_uidx * 8, 0 - 2);
+                S64(_fnt_offsets + u59_uidx * 8, 0 - 2);
             }
         }
         u59_ufi = u59_ufi + 1;

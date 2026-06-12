@@ -180,6 +180,29 @@ rp_vec = vec_new();
 # cap = the old hard cap; GFCNT grows it 2x via alloc() once full (util.cyr).
 _fixup_base = S + 0x107B000;
 _fixup_cap = 1048576;
+# Phase 0 (v6.2.0): growable fn-tables — bases start AT the original fixed
+# offsets, mask 8191, cap 8192 (byte-identical under the old cap; REGFN grows
+# the family + rehashes when the count would exceed it). See util.cyr.
+_fnt_cstrmask = S + 0x93A000;
+_fnt_resmask = S + 0x94A000;
+_fnt_optmask = S + 0x95A000;
+_fnt_tagmask = S + 0x96A000;
+_fnt_ovstr = S + 0x97A000;
+_fnt_ovint = S + 0x98A000;
+_fnt_ovcstr = S + 0x99A000;
+_fnt_simdmask = S + 0x9AA000;
+_fnt_names = S + 0x9BA000;
+_fnt_offsets = S + 0x9CA000;
+_fnt_params = S + 0x9DA000;
+_fnt_bodystart = S + 0x9EA000;
+_fnt_bodyend = S + 0x9FA000;
+_fnt_inline = S + 0xA0A000;
+_fnt_strmask = S + 0xA1A000;
+_fnt_codeend = S + 0xA2A000;
+_fnt_namehash = S + 0x110000;
+_fnt_starthash = S + 0x114000;
+_fnt_hash_mask = 8191;
+_fnt_cap = 8192;
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;
@@ -424,7 +447,7 @@ if (_epi_km_pre == 0) {
     var _main_fi = 0;
     var _main_found = 0 - 1;
     while (_main_fi < _main_fc) {
-        var _main_noff = L64(S + 0x9BA000 + _main_fi * 8);
+        var _main_noff = L64(_fnt_names + _main_fi * 8);
         if (load8(S + 0x60000 + _main_noff)     == 109) {
             if (load8(S + 0x60000 + _main_noff + 1) == 97) {
                 if (load8(S + 0x60000 + _main_noff + 2) == 105) {
@@ -440,7 +463,7 @@ if (_epi_km_pre == 0) {
         _main_fi = _main_fi + 1;
     }
     if (_main_found >= 0) {
-        var _main_off = L64(S + 0x9CA000 + _main_found * 8);
+        var _main_off = L64(_fnt_offsets + _main_found * 8);
         if (_main_off >= 0) {
             ECALLTO(S, _main_off);
         }

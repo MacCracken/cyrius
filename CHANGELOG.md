@@ -29,6 +29,25 @@ v6.2.0 opens the **Platform Expansion** cycle (see
   footgun; undefined-fn-call → hard-error) tracked in `roadmap_6.md`.
 
 ### Changed
+- **Phase 0 — fn-tables migrated to growable storage (AR-03).** The function
+  metadata was a fixed family of 16 parallel 8 B/slot tables (names, offsets,
+  param counts, the str/cstr/result/option/tagged/simd masks, overload maps,
+  body offsets, code-end) at `S+0x93A000..0xA2A000` plus two cap-sized 2 B/slot
+  hashes (`fn_name_hash` @0x110000 built at parse, `fn_start_hash` @0x114000
+  rebuilt each fixup), all hard-capped at **8192 fns — and cycc itself is at
+  6486 (79 %)**, with the cap error telling consumers to "split into compilation
+  units." Each table + hash now lives behind a relocatable `_fnt_*` base with a
+  single `_fnt_cap` source of truth (replacing an 8192 magic-number scattered
+  across 6 subsystems); `REGFN` grows the family 2× and rehashes the name-hash
+  the moment the count would exceed the cap, ceilinged at 32768 (the 2 B hash
+  slots store `fi+1`). The `live[]` DCE bitmap in x86/aarch64 fixup was widened
+  `live[1024]→[4096]` (8192→32768 fn-liveness bits) to match. Bases/mask/cap
+  start at the original offsets/8191/8192 → byte-identical under the old cap.
+  Verified six ways: byte-identical self-host (1,055,832 B); differential corpus
+  vs the pre-migration cycc (9/9 identical — relocation is logic-preserving);
+  a cap-64 cycc forced ~7 grows+rehashes during a real 6486-fn self-compile and
+  produced byte-identical output on **both** x86 and aarch64 (forced-grow on real
+  ARM via pi); check.sh 89/89; cross-OS 4/4 (pi/ecb/ach/cass `SELFHOST_OK`).
 - **Phase 0 — `fixup_tbl` migrated to growable storage (AR-03).** The fixup
   table (relocation records, 16 B each) was a fixed 1,048,576-entry region at
   `S+0x107B000` with ten per-writer `fc >= 1048576` hard-error checks scattered

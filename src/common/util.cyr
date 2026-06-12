@@ -127,6 +127,51 @@ fn SSPOS(S, v): i64 { S64(S + 0x18FCC8, v); return 0; }
 fn GFNC(S): i64 { return L64(S + 0x18DA00); }
 fn SFNC(S, v): i64 { S64(S + 0x18DA00, v); return 0; }
 
+# Phase 0 (v6.2.0): growable fn-tables. The function metadata was a FIXED family
+# of 16 parallel 8 B/slot tables at S+0x93A000..0xA2A000 plus two cap-sized 2 B/slot
+# hashes (fn_name_hash @0x110000 built at parse, fn_start_hash @0x114000 rebuilt each
+# fixup), all hard-capped at 8192 fns — and cycc itself is at ~6500 (79% full; the
+# cap error literally tells consumers to "split into compilation units"). Each table
+# + hash gets a relocatable base behind a single `_fnt_cap` source of truth; REGFN
+# grows the family 2x (and rehashes the name-hash) when the count would exceed the
+# cap, ceilinged at 32768 (the 2 B hash slot stores fi+1, so fi+1 <= 65535). Bases
+# start AT the original offsets, mask at 8191, cap at 8192 → byte-identical under the
+# old cap. Inited per-driver after the heap is up (the cx backend inits too — it
+# shares REGFN/the data tables; only its emit differs). The live[] DCE bitmap in
+# x86/aarch64 fixup is fixed-sized to the 32768 ceiling (live[4096]) rather than
+# grown — it is rebuilt per pass and never relocates.
+var _fnt_cstrmask = 0;    # 0x93A000 fn_param_cstring_mask
+var _fnt_resmask = 0;     # 0x94A000 fn_param_result_mask
+var _fnt_optmask = 0;     # 0x95A000 fn_param_option_mask
+var _fnt_tagmask = 0;     # 0x96A000 fn_param_tagged_mask
+var _fnt_ovstr = 0;       # 0x97A000 fn_overload_str
+var _fnt_ovint = 0;       # 0x98A000 fn_overload_int
+var _fnt_ovcstr = 0;      # 0x99A000 fn_overload_cstr
+var _fnt_simdmask = 0;    # 0x9AA000 fn_param_simd_mask
+var _fnt_names = 0;       # 0x9BA000 fn_names (noff)
+var _fnt_offsets = 0;     # 0x9CA000 fn_offsets (code start)
+var _fnt_params = 0;      # 0x9DA000 fn_params (param count)
+var _fnt_bodystart = 0;   # 0x9EA000 fn_body_start
+var _fnt_bodyend = 0;     # 0x9FA000 fn_body_end
+var _fnt_inline = 0;      # 0xA0A000 fn_inline
+var _fnt_strmask = 0;     # 0xA1A000 fn_param_str_mask
+var _fnt_codeend = 0;     # 0xA2A000 fn_code_end
+var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
+var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
+var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
+var _fnt_cap = 0;
+# Copy an 8 B/slot table's live oc entries into a fresh nc-slot buffer. The tail
+# (oc..nc) is zeroed by alloc's fresh mmap pages — new fn slots default 0, which is
+# exactly what REGFN's mask/overload/body tables expect (they're only written when
+# a fn actually has that property).
+fn _fnt_copy_table(old, oc, nc): i64 {
+    var nb = alloc(nc * 8);
+    var i = 0;
+    var b = oc * 8;
+    while (i < b) { store64(nb + i, load64(old + i)); i = i + 8; }
+    return nb;
+}
+
 # v5.11.37: relocated from parse_fn.cyr to util.cyr so that
 # backend emit.cyr files (included before parse_*.cyr in
 # main_*.cyr) can resolve C-string-named functions — e.g.
@@ -138,7 +183,7 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
     var fc = GFNC(S);
     var fi = 0;
     while (fi < fc) {
-        var sn = L64(S + 0x9BA000 + fi * 8);
+        var sn = L64(_fnt_names + fi * 8);
         var i = 0;
         var eq = 1;
         while (i < str_len) {
@@ -180,17 +225,17 @@ fn SFLC(S, v): i64 {
 # were FREED at v6.0.88 (dead init writes removed) — see CHANGELOG [6.0.88].
 # Inline metadata accessors (GFBE getter removed — unused;
 # SFBE is the only direction the inliner needs.)
-fn GFBS(S, fi): i64 { return L64(S + 0x9EA000 + fi * 8); }
-fn SFBS(S, fi, v): i64 { S64(S + 0x9EA000 + fi * 8, v); return 0; }
-fn SFBE(S, fi, v): i64 { S64(S + 0x9FA000 + fi * 8, v); return 0; }
-fn GFINL(S, fi): i64 { return L64(S + 0xA0A000 + fi * 8); }
-fn SFINL(S, fi, v): i64 { S64(S + 0xA0A000 + fi * 8, v); return 0; }
+fn GFBS(S, fi): i64 { return L64(_fnt_bodystart + fi * 8); }
+fn SFBS(S, fi, v): i64 { S64(_fnt_bodystart + fi * 8, v); return 0; }
+fn SFBE(S, fi, v): i64 { S64(_fnt_bodyend + fi * 8, v); return 0; }
+fn GFINL(S, fi): i64 { return L64(_fnt_inline + fi * 8); }
+fn SFINL(S, fi, v): i64 { S64(_fnt_inline + fi * 8, v); return 0; }
 # Fn code-end offset (v4.4.0 DCE). Set at end of PARSE_FN_DEF to the GCP
 # where the fn body finishes. Paired with fn code starts at 0x1C4000.
 # 0 means "not recorded" (fn was registered but never defined, or emitted
 # via a path that bypasses the recording site).
-fn GFNE(S, fi): i64 { return L64(S + 0xA2A000 + fi * 8); }
-fn SFNE(S, fi, v): i64 { S64(S + 0xA2A000 + fi * 8, v); return 0; }
+fn GFNE(S, fi): i64 { return L64(_fnt_codeend + fi * 8); }
+fn SFNE(S, fi, v): i64 { S64(_fnt_codeend + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 2b — per-fn struct return ID. 0 = scalar return,
 # sid = returns StructName. Set by PARSE_FN when signature has
@@ -523,7 +568,7 @@ fn _find_fn_by_name(S, name_cstr, name_len): i64 {
     var fc = GFNC(S);
     var fi = 0;
     while (fi < fc) {
-        var noff = L64(S + 0x9BA000 + fi * 8);
+        var noff = L64(_fnt_names + fi * 8);
         var eq = 1;
         var ci = 0;
         while (ci < name_len) {

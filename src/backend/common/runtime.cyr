@@ -347,14 +347,14 @@ fn _check_output_cap(S, filesz): i64 {
 # return; same termination, same result.
 fn _dce_hash_lookup(S, tgt): i64 {
     var h = (tgt * 0x9E3779B97F4A7C15) >> 16;
-    var slot = h & 8191;
+    var slot = h & _fnt_hash_mask;
     var probes = 0;
-    while (probes < 8192) {
-        var stored = load16(S + 0x114000 + slot * 2);
+    while (probes < _fnt_cap) {
+        var stored = load16(_fnt_starthash + slot * 2);
         if (stored == 0) { return 0 - 1; }
         var fi = stored - 1;
-        if (L64(S + 0x9CA000 + fi * 8) == tgt) { return fi; }
-        slot = (slot + 1) & 8191;
+        if (L64(_fnt_offsets + fi * 8) == tgt) { return fi; }
+        slot = (slot + 1) & _fnt_hash_mask;
         probes = probes + 1;
     }
     return 0 - 1;
@@ -370,7 +370,7 @@ fn _dce_hash_lookup(S, tgt): i64 {
 fn _dce_host_fn(S, coff, fnc): i64 {
     var fj = 0;
     while (fj < fnc) {
-        var fs = L64(S + 0x9CA000 + fj * 8);
+        var fs = L64(_fnt_offsets + fj * 8);
         if (fs >= 0) {
             var fe = GFNE(S, fj);
             if (fe > fs && coff >= fs && coff < fe) { return fj; }
