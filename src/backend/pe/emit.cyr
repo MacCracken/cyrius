@@ -1097,7 +1097,7 @@ fn EMITPE_EXEC(S): i64 {
     var O = S + 0x4D9D000;
     var o = 0;
     var cp = GCP(S);
-    var cb = S + 0x41A000;       # codebuf base
+    var cb = _codebuf_base;       # codebuf base
     var imp_count = _pe_imp_count;
     var dd_idx = 0;
     var ii = 0;

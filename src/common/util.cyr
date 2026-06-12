@@ -172,6 +172,34 @@ fn _fnt_copy_table(old, oc, nc): i64 {
     return nb;
 }
 
+# Phase 0 (v6.2.0): growable codebuf. The generated machine code lived in a FIXED
+# 3 MB region at S+0x41A000 (the cx bytecode backend keeps its own separate 512 KB
+# region at 0x54A000), hard-capped — cyrius-ts test compiles hit 94 %. EB appends
+# bytes here; the disp32 patch sites do an 8 B read-modify-write at cp (4 B past the
+# 4 B slot) and the DSE/LASE peephole passes read+patch already-emitted code in
+# place — all reach codebuf through `_codebuf_base`, re-derived fresh each access,
+# so a relocation is transparent (the bytes are copied, offsets preserved). EB grows
+# 2x when cp nears the cap, with a 64 B guard band so the disp32 RMW (and any byte
+# advanced past the EB cap-check) never crosses the buffer end. Ceiling 64 MiB (the
+# 16 MB output cap bounds real code well under it). Inited per-driver after the heap
+# is up; `_codebuf_cap==0` guards any pre-init call. Byte-identical under the old cap.
+var _codebuf_base = 0;
+var _codebuf_cap = 0;
+fn _codebuf_grow(S): i64 {
+    var nc = _codebuf_cap * 2;
+    if (nc > 67108864) {
+        syscall(SYS_WRITE, 2, "error: codebuf exceeds 64 MiB (program too large)\n", 50);
+        syscall(SYS_EXIT, 1);
+    }
+    var nb = alloc(nc);
+    var used = GCP(S);
+    var i = 0;
+    while (i < used) { store64(nb + i, load64(_codebuf_base + i)); i = i + 8; }
+    _codebuf_base = nb;
+    _codebuf_cap = nc;
+    return 0;
+}
+
 # v5.11.37: relocated from parse_fn.cyr to util.cyr so that
 # backend emit.cyr files (included before parse_*.cyr in
 # main_*.cyr) can resolve C-string-named functions — e.g.

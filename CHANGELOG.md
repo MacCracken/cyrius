@@ -29,6 +29,24 @@ v6.2.0 opens the **Platform Expansion** cycle (see
   footgun; undefined-fn-call → hard-error) tracked in `roadmap_6.md`.
 
 ### Changed
+- **Phase 0 — codebuf migrated to growable storage (AR-03); Phase 0 complete.**
+  The generated machine code lived in a fixed 3 MB region at `S+0x41A000`
+  (the cx bytecode backend keeps its own separate 512 KB region at 0x54A000),
+  hard-capped — cyrius-ts test compiles hit 94 %. Now `_codebuf_base`/`_codebuf_cap`
+  with `EB` relocating the buffer off-heap (2×, 64 MiB ceiling) when `cp` nears
+  the cap, behind a 64 B guard band so the disp32 read-modify-write patch sites
+  (which write 4 B past the slot and bypass the per-byte cap-check) never cross
+  the buffer end. Safe because every codebuf access — `EB`, the immediate-use
+  disp32 captures, and the DSE/LASE/regalloc peephole passes that read+patch
+  already-emitted code in place — reaches the buffer through `_codebuf_base`,
+  re-derived fresh, so a relocation is transparent. Verified: byte-identical
+  self-host (1,055,784 B); differential corpus 7/7 (incl. the cx driver);
+  a cap-8 KB cycc forced ~7 relocations during self-compile → byte-identical
+  output on **both** x86 and aarch64 (forced-grow on real ARM via pi); check.sh
+  89/89 (the aarch64-EB-cap gate updated to assert the growable invariant);
+  cross-OS 4/4 (pi/ecb/ach/cass `SELFHOST_OK`). With fixup_tbl + fn-tables + codebuf
+  all growable, the **Phase-0 growable-region foundation is complete** — the
+  language arc opens onto already-growable pressure tables.
 - **Phase 0 — fn-tables migrated to growable storage (AR-03).** The function
   metadata was a fixed family of 16 parallel 8 B/slot tables (names, offsets,
   param counts, the str/cstr/result/option/tagged/simd masks, overload maps,
@@ -74,6 +92,15 @@ v6.2.0 opens the **Platform Expansion** cycle (see
   file (single source of truth) with `cyrius.cyml` deriving via
   `version = "${file:VERSION}"`. Verified end-to-end: `cyrius init` (bin + lib)
   produces a project that builds + runs.
+
+### Benchmarks
+- `self_compile` **497 ms** (within the prior 497–528 ms noise band — no
+  regression; the three growable migrations add only O(1) per-append cap-checks,
+  and the grow/relocate paths are cold during normal compiles).
+- `cycc` size **1,055,784 B** (was 1,050,608 B at v6.1.41 → **+5,176 B / +0.49 %**),
+  growth-tax for the growable infra (`_fixup_*`/`_fnt_*`/`_codebuf_*` gvars + grow
+  fns + 7-driver inits) spread across the three migrations (~1.7 KB each; no single
+  bite dominates → growth-tax, not a regression). Run via `scripts/bench-history.sh`.
 
 ## [6.1.41] — 2026-06-12
 

@@ -367,6 +367,11 @@ _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 8191;
 _fnt_cap = 8192;
+# Phase 0 (v6.2.0): growable codebuf — base at the original 3 MB region,
+# cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
+# when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
+_codebuf_base = S + 0x41A000;
+_codebuf_cap = 3145728;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating
@@ -965,9 +970,9 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GSPOS(S));
         syscall(SYS_WRITE, 2, "/2097152 bytes)\n", 16);
     }
-    if (GCP(S) * 100 / 3145728 >= 85) {
+    if (GCP(S) * 100 / _codebuf_cap >= 85) {
         syscall(SYS_WRITE, 2, "warning: code buffer at ", 24);
-        PRNUM(GCP(S) * 100 / 3145728);
+        PRNUM(GCP(S) * 100 / _codebuf_cap);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GCP(S));
         syscall(SYS_WRITE, 2, "/3145728 bytes)\n", 16);
     }

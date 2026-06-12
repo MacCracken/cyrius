@@ -591,7 +591,7 @@ fn ir_apply_lase(S): i64 {
             if (sz > 0 && sz < 16) {
                 var j = 0;
                 while (j < sz) {
-                    store8(S + 0x41A000 + cp_start + j, 0x90);
+                    store8(_codebuf_base + cp_start + j, 0x90);
                     j = j + 1;
                 }
                 bytes = bytes + sz;
@@ -656,7 +656,7 @@ fn _ir_emovi_size(v): i64 {
 # emovi_size). Caller must ensure span >= emovi_size.
 fn _ir_write_emovi_at(S, off, v, span): i64 {
     var sz = _ir_emovi_size(v);
-    var base = S + 0x41A000 + off;
+    var base = _codebuf_base + off;
     if (v == 0) {
         # xor eax, eax (31 C0)
         store8(base, 0x31);
@@ -1286,7 +1286,7 @@ fn ir_dead_block_elim(S): i64 {
             if (sz > 0 && sz < 4096) {
                 var j = 0;
                 while (j < sz) {
-                    store8(S + 0x41A000 + cp_start + j, 0x90);
+                    store8(_codebuf_base + cp_start + j, 0x90);
                     j = j + 1;
                 }
                 bytes = bytes + sz;

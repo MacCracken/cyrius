@@ -181,7 +181,7 @@ fn FIXUP(S): i64 {
             # `e8 XX XX XX XX` with `0F 0B 0F 0B 90` (ud2; ud2; nop) so the
             # failure is a SIGILL at the call site, loud and localisable.
             if (target < 0) {
-                var pu = S + 0x41A000 + coff - 1;
+                var pu = _codebuf_base + coff - 1;
                 store8(pu + 0, 0x0F);
                 store8(pu + 1, 0x0B);
                 store8(pu + 2, 0x0F);
@@ -189,7 +189,7 @@ fn FIXUP(S): i64 {
                 store8(pu + 4, 0x90);
             } else {
                 var rel = target - coff - 4;
-                var pa = S + 0x41A000 + coff;
+                var pa = _codebuf_base + coff;
                 S64(pa, (L64(pa) >> 32 << 32) | (rel & 0xFFFFFFFF));
             }
         }
@@ -209,10 +209,10 @@ fn FIXUP(S): i64 {
                 }
                 if (kmode == 2 || _pie_mode == 1) {
                     var rel3 = tgt3 - (entry + coff + 4);
-                    var p3 = S + 0x41A000 + coff;
+                    var p3 = _codebuf_base + coff;
                     S64(p3, (L64(p3) >> 32 << 32) | (rel3 & 0xFFFFFFFF));
                 } else {
-                    S64(S + 0x41A000 + coff, tgt3);
+                    S64(_codebuf_base + coff, tgt3);
                 }
             }
             else { if (ftype == 1) {
@@ -227,10 +227,10 @@ fn FIXUP(S): i64 {
                     }
                     if (kmode == 2 || _pie_mode == 1) {
                         var rel1 = tgt1 - (entry + coff + 4);
-                        var p1 = S + 0x41A000 + coff;
+                        var p1 = _codebuf_base + coff;
                         S64(p1, (L64(p1) >> 32 << 32) | (rel1 & 0xFFFFFFFF));
                     } else {
-                        S64(S + 0x41A000 + coff, tgt1);
+                        S64(_codebuf_base + coff, tgt1);
                     }
                 }
                 else { if (ftype == 4) {
@@ -243,7 +243,7 @@ fn FIXUP(S): i64 {
                         # text_rva + coff + 4 (coff points at the disp32; +4 skips it).
                         var iat_rva = _pe_idata_rva + _pe_iat_sub_off + _pe_iat_slot(idx) * 8;
                         var rel4 = iat_rva - (_pe_text_rva + coff + 4);
-                        var p4 = S + 0x41A000 + coff;
+                        var p4 = _codebuf_base + coff;
                         S64(p4, (L64(p4) >> 32 << 32) | (rel4 & 0xFFFFFFFF));
                     }
                     else {
@@ -259,10 +259,10 @@ fn FIXUP(S): i64 {
                             }
                             if (kmode == 2 || _pie_mode == 1) {
                                 var rel0 = tgt0 - (entry + coff + 4);
-                                var p0 = S + 0x41A000 + coff;
+                                var p0 = _codebuf_base + coff;
                                 S64(p0, (L64(p0) >> 32 << 32) | (rel0 & 0xFFFFFFFF));
                             } else {
-                                S64(S + 0x41A000 + coff, tgt0);
+                                S64(_codebuf_base + coff, tgt0);
                             }
                         }
                     } } } }
@@ -352,7 +352,7 @@ fn FIXUP(S): i64 {
     #   roots for address-taken fns.
     # Pass B (propagate): worklist until fixpoint.
     #   For each E8 call with a live host, mark the target live.
-    var b_base = S + 0x41A000;
+    var b_base = _codebuf_base;
     # v5.10.41: build fn_start → fi+1 hash table at 0x114000 ONCE before
     # the DCE byte-scan passes. Replaces the two O(N²) linear scans in
     # seed (line ~412) and propagate (line ~465) — each previously walked
@@ -521,18 +521,18 @@ fn FIXUP(S): i64 {
                 #       normally-emitted fn even when (a) and (b) miss.
                 if (dfend > dfoff && dfoff >= 1) {
                     var safe = 0;
-                    if (load8(S + 0x41A000 + dfoff - 1) == 0xC3) { safe = 1; }
+                    if (load8(_codebuf_base + dfoff - 1) == 0xC3) { safe = 1; }
                     if (safe == 0 && dfoff >= 5) {
-                        if (load8(S + 0x41A000 + dfoff - 5) == 0xE9) {
-                            var rel32 = load32(S + 0x41A000 + dfoff - 4);
+                        if (load8(_codebuf_base + dfoff - 5) == 0xE9) {
+                            var rel32 = load32(_codebuf_base + dfoff - 4);
                             if (rel32 >= 0x80000000) { rel32 = rel32 - 0x100000000; }
                             if (dfoff + rel32 >= dfend) { safe = 1; }
                         }
                     }
                     # (c) Epilogue C9 C3 at fn_end - 2
                     if (safe == 0 && dfend >= 2) {
-                        if (load8(S + 0x41A000 + dfend - 2) == 0xC9) {
-                            if (load8(S + 0x41A000 + dfend - 1) == 0xC3) { safe = 1; }
+                        if (load8(_codebuf_base + dfend - 2) == 0xC9) {
+                            if (load8(_codebuf_base + dfend - 1) == 0xC3) { safe = 1; }
                         }
                     }
                     if (safe == 1) {
@@ -547,7 +547,7 @@ fn FIXUP(S): i64 {
                         var valid = 1;
                         var vp = dfoff;
                         while (vp < dfend) {
-                            var ilen = DECODE_LEN(S + 0x41A000, vp);
+                            var ilen = DECODE_LEN(_codebuf_base, vp);
                             if (ilen == 0) { valid = 0; vp = dfend; }
                             else { vp = vp + ilen; }
                         }
@@ -560,7 +560,7 @@ fn FIXUP(S): i64 {
                             if (dce_enabled == 1) {
                                 var nop_i = dfoff;
                                 while (nop_i < dfend) {
-                                    store8(S + 0x41A000 + nop_i, 0x90);
+                                    store8(_codebuf_base + nop_i, 0x90);
                                     nop_i = nop_i + 1;
                                 }
                             }
@@ -784,7 +784,7 @@ fn EMITELF_KERNEL(S): i64 {
 
     # ---- Code ----
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
     # ---- Variable (bss) zeros ----
     var bss_o = op;
     i = 0;
@@ -993,7 +993,7 @@ fn EMITELF64_KERNEL(S): i64 {
 
     # ---- Code ----
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
     # ---- Variable (.bss) zeros — included in p_filesz, marked SHT_NOBITS ----
     var bss_o = op;
     i = 0;
@@ -1214,7 +1214,7 @@ fn EMITELF_USER(S, etype): i64 {
     S64(O + op, 0x0000000000001000); op = op + 8;
     # Code
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
     # Variable data (zeroed)
     var bss_o = op;
     i = 0;
@@ -1457,7 +1457,7 @@ fn EMITELF_SHARED(S): i64 {
 
     # ---- Code ----
     var ci = 0;
-    while (ci < cp) { store8(O + code_off + ci, load8(S + 0x41A000 + ci)); ci = ci + 1; }
+    while (ci < cp) { store8(O + code_off + ci, load8(_codebuf_base + ci)); ci = ci + 1; }
 
     # ---- Data (zeroed already by the fill above) + string data ----
     var si = 0;
@@ -1852,7 +1852,7 @@ fn EMITELF_OBJ(S): i64 {
 
     # --- Write .text section ---
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
 
     # --- Write .data section (zeroed) ---
     var bss_o = op;

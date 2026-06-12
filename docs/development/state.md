@@ -15,7 +15,7 @@
 | | |
 |---|---|
 | **Version** | **6.2.0** (v6.2.x cycle — **Platform Expansion** OPENS; v6.1.x Backend-Codegen-Multi-Arc closed at .41. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,050,608 B (−256 B @ 6.1.41 — closeout: dead GFVA removed + Mach-O cap / security-reject / IR-counter fixes) |
+| **cycc** (x86_64 ELF) | 1,055,784 B (+5,176 B @ 6.2.0 — Phase-0 growable infra: `_fixup_*`/`_fnt_*`/`_codebuf_*` gvars + 3 grow fns + 7-driver inits, growth-tax spread ~1.7 KB/migration) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -28,21 +28,25 @@
 | tests | 174 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~497 ms (flat @ .41 — closeout; dead-code floor 63→62) |
+| bench (every-release gate) | self_compile ~497 ms (flat @ 6.2.0 — growable adds O(1) per-append cap-checks; grow/relocate paths cold) |
 
-> **Handoff (2026-06-12):** **v6.2.0 — Platform Expansion minor OPENS.** v6.1.x
-> ("Backend Codegen Multi-Arc") closed at .41 (41 patches: PIE, TS→JS, bayan/ganita
-> carve, native-TLS-default, Phase-F CVE-14..31 + AR-03, CVE-24 local-table reloc,
-> the closeout). Version bumped to 6.2.0 (cycc 1,050,608 B, self-host byte-identical).
-> Opens the Platform Expansion cycle (roadmap_6.md): **Phase 0 growable-region
-> foundation FIRST** — migrate fn-tables/`fixup_tbl`/codebuf → vec-backed `rp_vec`
-> (byte-identical, per the v6.0.7 ret_patches→rp_vec recipe; ends the cap-raise
-> treadmill, resolves AR-03's fixup split-brain, de-risks v6.3.x generics), then
-> bare-metal + RISC-V rv64. **FIRST BITE proposed: `fixup_tbl` → rp_vec** (cleanest of
-> the 3 — single (codepos, var_idx) table via RECFIX, AR-03 cap cleanup already done;
-> internal scratch not in the output → byte-identical). **v6.2.0 is NOT a release
-> until the first Phase-0 code bite lands (per "minor-open needs code"). Awaiting go
-> on the first-bite scope.** **user pushes/tags after CI.**
+> **Handoff (2026-06-12):** **v6.2.0 CUT — Platform Expansion opens with Phase 0 COMPLETE.**
+> Four bites: (1) **`fixup_tbl` → growable** (`_fixup_base`/grow, 64M-entry ceiling); (2)
+> **`cyrius init` CI/release** aligned to the patra/sigil toolchain workflow (canonical
+> `install.sh` one-liner replacing the hand-rolled curl+tar+cp; release publishes a
+> `git archive` source tarball + `SHA256SUMS` so scaffolds are dep-consumable; `VERSION`
+> file as single source of truth + `version = "${file:VERSION}"`); (3) **fn-tables →
+> growable** (16 parallel tables + 2 cap-sized hashes + the `live[]` DCE bitmap → `_fnt_*`/
+> single `_fnt_cap`, grow+rehash, 32768 ceiling — cycc was at **79 %** of the 8192 cap);
+> (4) **codebuf → growable** (`_codebuf_base`/grow, 64 MiB ceiling, 64 B guard-band for the
+> disp32 RMW; cx's separate 0x54A000 stays fixed). **Phase-0 growable-region foundation
+> COMPLETE** — ends the cap-raise treadmill + AR-03 split-brain; the v6.3.x generics arc
+> opens onto already-growable tables. cycc 1,055,784 B (+5,176 B growth-tax). Each migration
+> verified 6 ways: byte-identical self-host + differential corpus + forced-grow on x86 AND
+> real-ARM (pi) + check.sh 89/89 (aarch64-EB-cap gate updated to the growable invariant) +
+> cross-OS 4/4 (pi/ecb/ach/cass `SELFHOST_OK`). bench self_compile ~497 ms (flat). Remaining
+> v6.2.x: bare-metal target formalization + RISC-V rv64 (inherits the growable pattern).
+> **user pushes/tags after CI.**
 >
 > ---
 >

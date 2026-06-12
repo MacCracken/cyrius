@@ -1250,27 +1250,27 @@ fn DSE_PASS(S, fn_start): i64 {
     var dse_cp = GCP(S);
     var dse_i = fn_start;
     while (dse_i + 14 < dse_cp) {
-        if (load8(S + 0x41A000 + dse_i) == 0x48) {
-            if (load8(S + 0x41A000 + dse_i + 1) == 0x89) {
-                if (load8(S + 0x41A000 + dse_i + 2) == 0x85) {
-                    var dse_off = load32(S + 0x41A000 + dse_i + 3);
+        if (load8(_codebuf_base + dse_i) == 0x48) {
+            if (load8(_codebuf_base + dse_i + 1) == 0x89) {
+                if (load8(_codebuf_base + dse_i + 2) == 0x85) {
+                    var dse_off = load32(_codebuf_base + dse_i + 3);
                     var dse_j = dse_i + 7;
                     var dse_skip = 0;
-                    if (load8(S + 0x41A000 + dse_j) == 0x31) { dse_skip = 2; }
-                    elif (load8(S + 0x41A000 + dse_j) == 0xB8) { dse_skip = 5; }
-                    elif (load8(S + 0x41A000 + dse_j) == 0x48) {
-                        if (load8(S + 0x41A000 + dse_j + 1) == 0xB8) { dse_skip = 10; }
+                    if (load8(_codebuf_base + dse_j) == 0x31) { dse_skip = 2; }
+                    elif (load8(_codebuf_base + dse_j) == 0xB8) { dse_skip = 5; }
+                    elif (load8(_codebuf_base + dse_j) == 0x48) {
+                        if (load8(_codebuf_base + dse_j + 1) == 0xB8) { dse_skip = 10; }
                     }
                     if (dse_skip > 0) {
                         var dse_next = dse_j + dse_skip;
                         if (dse_next + 7 <= dse_cp) {
-                            if (load8(S + 0x41A000 + dse_next) == 0x48) {
-                                if (load8(S + 0x41A000 + dse_next + 1) == 0x89) {
-                                    if (load8(S + 0x41A000 + dse_next + 2) == 0x85) {
-                                        if (load32(S + 0x41A000 + dse_next + 3) == dse_off) {
+                            if (load8(_codebuf_base + dse_next) == 0x48) {
+                                if (load8(_codebuf_base + dse_next + 1) == 0x89) {
+                                    if (load8(_codebuf_base + dse_next + 2) == 0x85) {
+                                        if (load32(_codebuf_base + dse_next + 3) == dse_off) {
                                             var dse_ni = dse_i;
                                             while (dse_ni < dse_j) {
-                                                store8(S + 0x41A000 + dse_ni, 0x90);
+                                                store8(_codebuf_base + dse_ni, 0x90);
                                                 dse_ni = dse_ni + 1;
                                             }
                                         }
@@ -2373,21 +2373,21 @@ fn PARSE_FN_DEF(S): i64 {
     var lase_count = 0;
     while (_AARCH64_BACKEND == 0 && lase_i + 14 <= lase_cp) {
         # Detect store (7 bytes): 48 89 85 XX XX XX XX
-        if (load8(S + 0x41A000 + lase_i) == 0x48) {
-            if (load8(S + 0x41A000 + lase_i + 1) == 0x89) {
-                if (load8(S + 0x41A000 + lase_i + 2) == 0x85) {
+        if (load8(_codebuf_base + lase_i) == 0x48) {
+            if (load8(_codebuf_base + lase_i + 1) == 0x89) {
+                if (load8(_codebuf_base + lase_i + 2) == 0x85) {
                     # Check for load at exactly store+7: 48 8B 85 XX XX XX XX (same offset)
                     var lj = lase_i + 7;
-                    if (load8(S + 0x41A000 + lj) == 0x48) {
-                        if (load8(S + 0x41A000 + lj + 1) == 0x8B) {
-                            if (load8(S + 0x41A000 + lj + 2) == 0x85) {
-                                if (load32(S + 0x41A000 + lase_i + 3) == load32(S + 0x41A000 + lj + 3)) {
+                    if (load8(_codebuf_base + lj) == 0x48) {
+                        if (load8(_codebuf_base + lj + 1) == 0x8B) {
+                            if (load8(_codebuf_base + lj + 2) == 0x85) {
+                                if (load32(_codebuf_base + lase_i + 3) == load32(_codebuf_base + lj + 3)) {
                                     # Same offset — check if load is a jump target
                                     if (IS_JUMP_TARGET(S, lj) == 0) {
                                         # Safe to eliminate — NOP the 7-byte load
                                         var ln = lj;
                                         while (ln < lj + 7) {
-                                            store8(S + 0x41A000 + ln, 0x90);
+                                            store8(_codebuf_base + ln, 0x90);
                                             ln += 1;
                                         }
                                         lase_count += 1;
@@ -2451,14 +2451,14 @@ fn PARSE_FN_DEF(S): i64 {
                 }
                 var ra_s = ra_start;
                 while (ra_s + 7 <= ra_end) {
-                    if (load8(S + 0x41A000 + ra_s) == 0x48) {
-                        var ra_op1 = load8(S + 0x41A000 + ra_s + 1);
+                    if (load8(_codebuf_base + ra_s) == 0x48) {
+                        var ra_op1 = load8(_codebuf_base + ra_s + 1);
                         if (ra_op1 == 0x8B || ra_op1 == 0x89) {
-                            if (load8(S + 0x41A000 + ra_s + 2) == 0x85) {
+                            if (load8(_codebuf_base + ra_s + 2) == 0x85) {
                                 # Decode disp32 → local idx. Only [rbp+neg]
                                 # slots are user locals; positive disps are
                                 # stack args above rbp and ignored.
-                                var ra_d = load32(S + 0x41A000 + ra_s + 3);
+                                var ra_d = load32(_codebuf_base + ra_s + 3);
                                 # Sign-extend the 32-bit signed disp.
                                 if (ra_d >= 0x80000000) { ra_d = ra_d - 0x100000000; }
                                 if (ra_d < 0) {
@@ -2674,10 +2674,10 @@ fn PARSE_FN_DEF(S): i64 {
                         var ps_disp32 = ps_disp & 0xFFFFFFFF;
                         var ps_sp = ra_start;
                         while (ps_sp + 7 <= ra_end) {
-                            if (load8(S + 0x41A000 + ps_sp + 2) == 0x85) {
-                                if (load32(S + 0x41A000 + ps_sp + 3) == ps_disp32) {
-                                    var ps_px1 = load8(S + 0x41A000 + ps_sp);
-                                    var ps_px2 = load8(S + 0x41A000 + ps_sp + 1);
+                            if (load8(_codebuf_base + ps_sp + 2) == 0x85) {
+                                if (load32(_codebuf_base + ps_sp + 3) == ps_disp32) {
+                                    var ps_px1 = load8(_codebuf_base + ps_sp);
+                                    var ps_px2 = load8(_codebuf_base + ps_sp + 1);
                                     var ps_ok = 0;
                                     if (ps_px1 == 0x48) {
                                         if (ps_px2 == 0x8B) { ps_ok = 1; }
@@ -2746,19 +2746,19 @@ fn PARSE_FN_DEF(S): i64 {
                     var ra_p_max = ai_last + 7;
                     if (ra_p_max > ra_end) { ra_p_max = ra_end; }
                     while (ra_p + 7 <= ra_p_max) {
-                        if (load8(S + 0x41A000 + ra_p) == 0x48) {
-                            var op1 = load8(S + 0x41A000 + ra_p + 1);
-                            if (load8(S + 0x41A000 + ra_p + 2) == 0x85) {
-                                if (load32(S + 0x41A000 + ra_p + 3) == hot_disp32) {
+                        if (load8(_codebuf_base + ra_p) == 0x48) {
+                            var op1 = load8(_codebuf_base + ra_p + 1);
+                            if (load8(_codebuf_base + ra_p + 2) == 0x85) {
+                                if (load32(_codebuf_base + ra_p + 3) == hot_disp32) {
                                     if (op1 == 0x8B) {
                                         # mov rax,[rbp+disp] → mov rax,REG; 4-byte NOP
-                                        store8(S + 0x41A000 + ra_p + 0, lb0);
-                                        store8(S + 0x41A000 + ra_p + 1, lb1);
-                                        store8(S + 0x41A000 + ra_p + 2, lb2);
-                                        store8(S + 0x41A000 + ra_p + 3, 0x0F);
-                                        store8(S + 0x41A000 + ra_p + 4, 0x1F);
-                                        store8(S + 0x41A000 + ra_p + 5, 0x40);
-                                        store8(S + 0x41A000 + ra_p + 6, 0x00);
+                                        store8(_codebuf_base + ra_p + 0, lb0);
+                                        store8(_codebuf_base + ra_p + 1, lb1);
+                                        store8(_codebuf_base + ra_p + 2, lb2);
+                                        store8(_codebuf_base + ra_p + 3, 0x0F);
+                                        store8(_codebuf_base + ra_p + 4, 0x1F);
+                                        store8(_codebuf_base + ra_p + 5, 0x40);
+                                        store8(_codebuf_base + ra_p + 6, 0x00);
                                         # v5.6.27: record NOP run at ra_p+3, len 4
                                         var _nrc_l = L64(S + 0x1A2008);
                                         if (_nrc_l < 1024) {
@@ -2769,13 +2769,13 @@ fn PARSE_FN_DEF(S): i64 {
                                     }
                                     if (op1 == 0x89) {
                                         # mov [rbp+disp],rax → mov REG,rax; 4-byte NOP
-                                        store8(S + 0x41A000 + ra_p + 0, sb0);
-                                        store8(S + 0x41A000 + ra_p + 1, sb1);
-                                        store8(S + 0x41A000 + ra_p + 2, sb2);
-                                        store8(S + 0x41A000 + ra_p + 3, 0x0F);
-                                        store8(S + 0x41A000 + ra_p + 4, 0x1F);
-                                        store8(S + 0x41A000 + ra_p + 5, 0x40);
-                                        store8(S + 0x41A000 + ra_p + 6, 0x00);
+                                        store8(_codebuf_base + ra_p + 0, sb0);
+                                        store8(_codebuf_base + ra_p + 1, sb1);
+                                        store8(_codebuf_base + ra_p + 2, sb2);
+                                        store8(_codebuf_base + ra_p + 3, 0x0F);
+                                        store8(_codebuf_base + ra_p + 4, 0x1F);
+                                        store8(_codebuf_base + ra_p + 5, 0x40);
+                                        store8(_codebuf_base + ra_p + 6, 0x00);
                                         # v5.6.27: record NOP run at ra_p+3, len 4
                                         var _nrc_s = L64(S + 0x1A2008);
                                         if (_nrc_s < 1024) {
@@ -2819,7 +2819,7 @@ fn PARSE_FN_DEF(S): i64 {
                     var _ji = 0;
                     while (_ji < _jsn) {
                         var _src_cp = L64(S + 0x1A0008 + _ji * 8);
-                        var _da = S + 0x41A000 + _src_cp;
+                        var _da = _codebuf_base + _src_cp;
                         var _disp = load8(_da) | (load8(_da + 1) << 8) | (load8(_da + 2) << 16) | (load8(_da + 3) << 24);
                         if (_disp >= 0x80000000) { _disp = _disp - 0x100000000; }
                         var _tgt_cp = _src_cp + 4 + _disp;
@@ -2918,7 +2918,7 @@ fn PARSE_FN_DEF(S): i64 {
                             }
                         }
                         if (_skip == 0) {
-                            store8(S + 0x41A000 + _wp, load8(S + 0x41A000 + _rp));
+                            store8(_codebuf_base + _wp, load8(_codebuf_base + _rp));
                             _wp = _wp + 1;
                             _rp = _rp + 1;
                         }

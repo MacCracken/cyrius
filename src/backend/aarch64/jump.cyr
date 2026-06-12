@@ -44,7 +44,7 @@ fn EJMP0(S): i64 {
 fn EPATCH(S, off): i64 {
     var cp = GCP(S);
     var delta = (cp - off) / 4;  # offset in instructions
-    var addr = S + 0x41A000 + off;
+    var addr = _codebuf_base + off;
     var insn = L64(addr) & 0xFFFFFFFF;
     var patched = 0;
     if ((insn >> 24) == 0x54) {

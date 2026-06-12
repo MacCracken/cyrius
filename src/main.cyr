@@ -306,7 +306,7 @@
 #                                        headroom absorbed in the closeout shift.
 #
 # --- Large buffers ---
-#   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27 — was 1MB pre-v5.7.27; bumped to absorb cyrius-ts test-compile pressure (94% on ts_parse_p52-54 across v5.7.24-v5.7.26)) (v3.5.2). Pulled DOWN 2.24 MB at v5.11.68 to abut str_data end (was 0x64A000).
+#   0x41A000 codebuf       [3145728]     3MB generated machine code — INITIAL base only; GROWABLE as of v6.2.0 (Phase 0): `_codebuf_base`/`_codebuf_cap`, EB relocates off-heap (2x, 64 MiB ceiling) when cp nears the cap — see util.cyr _codebuf_grow. (v5.7.27 — was 1MB pre-v5.7.27; bumped to absorb cyrius-ts test-compile pressure (94% on ts_parse_p52-54 across v5.7.24-v5.7.26)) (v3.5.2). Pulled DOWN 2.24 MB at v5.11.68 to abut str_data end (was 0x64A000).
 #   0x4D9D000 output_buf    [16777216]   16MB ELF output — RELOCATED to heap-top from 0x71A000 (2MB→16MB) @ v6.1.27 phylax binary-cap (v3.5.2).
 #                                        Pre-v5.8.46 tok_types ALSO lived here (overlap recycled
 #                                        the buffer post-lex for ELF emission); v5.8.46 relocated
@@ -691,6 +691,11 @@ _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 8191;
 _fnt_cap = 8192;
+# Phase 0 (v6.2.0): growable codebuf — base at the original 3 MB region,
+# cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
+# when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
+_codebuf_base = S + 0x41A000;
+_codebuf_cap = 3145728;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating
@@ -1960,9 +1965,9 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GSPOS(S));
         syscall(SYS_WRITE, 2, "/2097152 bytes)\n", 16);
     }
-    if (GCP(S) * 100 / 3145728 >= 85) {
+    if (GCP(S) * 100 / _codebuf_cap >= 85) {
         syscall(SYS_WRITE, 2, "warning: code buffer at ", 24);
-        PRNUM(GCP(S) * 100 / 3145728);
+        PRNUM(GCP(S) * 100 / _codebuf_cap);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GCP(S));
         syscall(SYS_WRITE, 2, "/3145728 bytes)\n", 16);
     }

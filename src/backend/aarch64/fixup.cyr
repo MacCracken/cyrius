@@ -95,11 +95,11 @@ fn FIXUP(S): i64 {
             # replace the 4-byte BL with `UDF #0` (0x00000000), which is
             # the architecture's permanently-undefined encoding → SIGILL.
             if (target < 0) {
-                var pu = S + 0x41A000 + coff;
+                var pu = _codebuf_base + coff;
                 S64(pu, (L64(pu) >> 32 << 32) | 0);
             } else {
                 var rel = (target - coff) / 4;
-                var pa = S + 0x41A000 + coff;
+                var pa = _codebuf_base + coff;
                 var insn = 0x94000000 | (rel & 0x3FFFFFF);
                 S64(pa, (L64(pa) >> 32 << 32) | (insn & 0xFFFFFFFF));
             }
@@ -126,11 +126,11 @@ fn FIXUP(S): i64 {
                     var target = L64(_fnt_offsets + idx * 8);
                     # v5.6.29-1: undef sentinel → UDF #0 (see ftype==2 above).
                     if (target < 0) {
-                        var pu4 = S + 0x41A000 + coff;
+                        var pu4 = _codebuf_base + coff;
                         S64(pu4, (L64(pu4) >> 32 << 32) | 0);
                     } else {
                         var rel = (target - coff) / 4;
-                        var pa = S + 0x41A000 + coff;
+                        var pa = _codebuf_base + coff;
                         var insn = 0x14000000 | (rel & 0x3FFFFFF);
                         S64(pa, (L64(pa) >> 32 << 32) | (insn & 0xFFFFFFFF));
                     }
@@ -291,7 +291,7 @@ fn FIXUP(S): i64 {
     # (outside all fn bodies). Like x86, this over-approximates
     # (intra-fn B jumps that happen to target a fn_start are kept
     # alive — safe for DCE).
-    var b_base = S + 0x41A000;
+    var b_base = _codebuf_base;
     if (dce_dbg == 1) {
         syscall(SYS_WRITE, 2, "[dce] aarch64 seed begin fnc=", 29);
         PRNUM(fnc);
@@ -402,11 +402,11 @@ fn FIXUP(S): i64 {
                 if (dfend > dfoff && dfoff >= 4) {
                     var safe = 0;
                     # (a) Preceding instruction is RET — no fallthrough.
-                    if (load32(S + 0x41A000 + dfoff - 4) == 0xD65F03C0) { safe = 1; }
+                    if (load32(_codebuf_base + dfoff - 4) == 0xD65F03C0) { safe = 1; }
                     # (b) Body ends with RET — combined with the byte-
                     #     scan confirming no callers, no byte executes.
                     if (safe == 0 && dfend >= 4) {
-                        if (load32(S + 0x41A000 + dfend - 4) == 0xD65F03C0) { safe = 1; }
+                        if (load32(_codebuf_base + dfend - 4) == 0xD65F03C0) { safe = 1; }
                     }
                     if (safe == 1) {
                         dce_bytes = dce_bytes + (dfend - dfoff);
@@ -414,10 +414,10 @@ fn FIXUP(S): i64 {
                             var nop_i = dfoff;
                             while (nop_i + 4 <= dfend) {
                                 # Write NOP (0xD503201F) little-endian.
-                                store8(S + 0x41A000 + nop_i + 0, 0x1F);
-                                store8(S + 0x41A000 + nop_i + 1, 0x20);
-                                store8(S + 0x41A000 + nop_i + 2, 0x03);
-                                store8(S + 0x41A000 + nop_i + 3, 0xD5);
+                                store8(_codebuf_base + nop_i + 0, 0x1F);
+                                store8(_codebuf_base + nop_i + 1, 0x20);
+                                store8(_codebuf_base + nop_i + 2, 0x03);
+                                store8(_codebuf_base + nop_i + 3, 0xD5);
                                 nop_i = nop_i + 4;
                             }
                         }
@@ -525,11 +525,11 @@ fn FIXUP_ADRP_ADD(S, coff, addr): i64 {
     var page_diff = target_page - pc_page;
     var immlo = page_diff & 0x3;
     var immhi = (page_diff >> 2) & 0x7FFFF;
-    var adrp_base = S + 0x41A000 + coff;
+    var adrp_base = _codebuf_base + coff;
     var adrp_insn = L64(adrp_base) & 0xFFFFFFFF;
     adrp_insn = (adrp_insn & 0x9F00001F) | (immlo << 29) | (immhi << 5);
     S64(adrp_base, (L64(adrp_base) >> 32 << 32) | (adrp_insn & 0xFFFFFFFF));
-    var add_base = S + 0x41A000 + coff + 4;
+    var add_base = _codebuf_base + coff + 4;
     var add_insn = L64(add_base) & 0xFFFFFFFF;
     var low12 = addr & 0xFFF;
     add_insn = (add_insn & 0xFFC003FF) | (low12 << 10);
@@ -553,11 +553,11 @@ fn FIXUP_ADRP_LDR(S, coff, addr): i64 {
     var page_diff = target_page - pc_page;
     var immlo = page_diff & 0x3;
     var immhi = (page_diff >> 2) & 0x7FFFF;
-    var adrp_base = S + 0x41A000 + coff;
+    var adrp_base = _codebuf_base + coff;
     var adrp_insn = L64(adrp_base) & 0xFFFFFFFF;
     adrp_insn = (adrp_insn & 0x9F00001F) | (immlo << 29) | (immhi << 5);
     S64(adrp_base, (L64(adrp_base) >> 32 << 32) | (adrp_insn & 0xFFFFFFFF));
-    var ldr_base = S + 0x41A000 + coff + 4;
+    var ldr_base = _codebuf_base + coff + 4;
     var ldr_insn = L64(ldr_base) & 0xFFFFFFFF;
     var scaled = (addr & 0xFFF) >> 3;
     ldr_insn = (ldr_insn & 0xFFC003FF) | (scaled << 10);
@@ -571,7 +571,7 @@ fn FIXUP_ADRP_LDR(S, coff, addr): i64 {
 #   MOVK xN, #mid16, LSL 16  (offset +4)
 #   MOVK xN, #hi16, LSL 32   (offset +8)
 fn FIXUP_MOV(S, coff, addr): i64 {
-    var base = S + 0x41A000 + coff;
+    var base = _codebuf_base + coff;
     var lo = addr & 0xFFFF;
     var mid = (addr >> 16) & 0xFFFF;
     var hi = (addr >> 32) & 0xFFFF;
@@ -664,7 +664,7 @@ fn EMITELF(S): i64 {
     S64(O + op, 0x0000000000010000); op = op + 8;
     # Code
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
     # Variable data
     var bss_o = op;
     i = 0;
@@ -840,7 +840,7 @@ fn EMITELF_KERNEL(S): i64 {
     op = op + 4;
     # Code
     var i = 0;
-    while (i < cp) { store8(O + op, load8(S + 0x41A000 + i)); op = op + 1; i = i + 1; }
+    while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
     # Variable data
     var bss_o = op;
     i = 0;

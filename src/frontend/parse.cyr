@@ -254,7 +254,7 @@ fn PARSE_SWITCH(S): i64 {
                 # Patch table entry: table[val - min] = body_cp - table_cp
                 var body_cp = GCP(S);
                 var toff = (val - case_min) * 4 + table_cp;
-                var ta = S + 0x41A000 + toff;
+                var ta = _codebuf_base + toff;
                 var trel = body_cp - table_cp;
                 S64(ta, (L64(ta) >> 32 << 32) | (trel & 0xFFFFFFFF));
                 # Parse case body
@@ -299,7 +299,7 @@ fn PARSE_SWITCH(S): i64 {
         if (default_cp >= 0) { gap_rel = default_cp - table_cp; }
         ti = 0;
         while (ti <= range) {
-            var te = S + 0x41A000 + table_cp + ti * 4;
+            var te = _codebuf_base + table_cp + ti * 4;
             if (load32(te) == 0) {
                 S64(te, (L64(te) >> 32 << 32) | (gap_rel & 0xFFFFFFFF));
             }
@@ -809,7 +809,7 @@ fn PARSE_STMT(S): i64 {
         var prev_brk = L64(S + 0x18F840);
         var brk_off = EJMP0(S);
         # Store prev break offset in this jmp's rel32 field (chain link)
-        var brk_addr = S + 0x41A000 + brk_off;
+        var brk_addr = _codebuf_base + brk_off;
         S64(brk_addr, (L64(brk_addr) >> 32 << 32) | (prev_brk & 0xFFFFFFFF));
         S64(S + 0x18F840, brk_off);
         return 0;

@@ -182,11 +182,21 @@ platform work (bottom-to-top priority) takes v6.2.x.
 
 ### Phase 0 (v6.2.x opening) — growable-region foundation
 
-**Lands first, before bare-metal + RISC-V** (user direction 2026-06-11: pull
-this earlier than the v6.3.x arc). Migrate the three pressure tables —
-fn-tables, `fixup_tbl`, and codebuf — from fixed heap regions to vec-backed
-`rp_vec` storage, using the recipe **proven byte-identical at v6.0.7** (the
-`ret_patches` → `rp_vec` migration; output embeds no compiler heap addresses
+**✅ COMPLETE (v6.2.0).** All three pressure tables migrated to growable storage,
+each byte-identical + forced-grow-verified (x86 + aarch64) + cross-OS 4/4:
+`fixup_tbl` (16 MiB region → `_fixup_base`/grow, 64M-entry ceiling), **fn-tables**
+(16 parallel tables + 2 cap-sized hashes + `live[]` bitmap → `_fnt_*`/`_fnt_cap`,
+grow+rehash, 32768 ceiling; cycc was at 79 % of the 8192 cap), and **codebuf**
+(3 MB → `_codebuf_base`/grow, 64 MiB ceiling, guard-band for the disp32 RMW).
+The pattern used is a relocatable-base + 2×-grow per family (not the literal
+`rp_vec` vec abstraction, but the same byte-identical, input-deterministic
+property as the v6.0.7 `ret_patches` migration) — see `CHANGELOG [6.2.0]`.
+
+**Original framing — lands first, before bare-metal + RISC-V** (user direction
+2026-06-11: pull this earlier than the v6.3.x arc). Migrate the three pressure
+tables — fn-tables, `fixup_tbl`, and codebuf — from fixed heap regions to
+vec-backed `rp_vec` storage, using the recipe **proven byte-identical at v6.0.7**
+(the `ret_patches` → `rp_vec` migration; output embeds no compiler heap addresses
 and allocation order is input-deterministic, so self-host stays byte-identical).
 
 **Why now, why first:**

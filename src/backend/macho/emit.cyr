@@ -187,7 +187,7 @@ fn EMITMACHO_EXEC(S): i64 {
     # Code (from codebuf)
     # ================================================================
     var i = 0;
-    while (i < cp) { store8(O + o, load8(S + 0x41A000 + i)); o = o + 1; i = i + 1; }
+    while (i < cp) { store8(O + o, load8(_codebuf_base + i)); o = o + 1; i = i + 1; }
 
     # ================================================================
     # Variable data (zeroed — matches ELF layout)
@@ -631,7 +631,7 @@ fn EMITMACHO_ARM64(S): i64 {
     # __text page — code + optional __cstring, padded to page boundary.
     # ================================================================
     var i = 0;
-    while (i < cp) { store8(O + o, load8(S + 0x41A000 + i)); o = o + 1; i = i + 1; }
+    while (i < cp) { store8(O + o, load8(_codebuf_base + i)); o = o + 1; i = i + 1; }
     # Pad code to 4-byte alignment (matches FIXUP's acp, which determines
     # the string addresses).
     while ((o - CODE_OFF) < code_aligned) { store8(O + o, 0); o = o + 1; }

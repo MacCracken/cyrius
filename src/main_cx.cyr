@@ -69,6 +69,11 @@ _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 8191;
 _fnt_cap = 8192;
+# Phase 0 (v6.2.0): growable codebuf — base at the original 3 MB region,
+# cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
+# when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
+_codebuf_base = S + 0x41A000;
+_codebuf_cap = 3145728;
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;
