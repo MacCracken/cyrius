@@ -262,7 +262,7 @@ fn RECFIX(S, idx): i64 {
 }
 
 # v6.1.35 (CVE-23): shared 16 MB output_buf cap guard. The 16 MB output
-# region at S+0x4D9D000 (brk-final 0x5D9D000) was cap-checked inline only in
+# region at S+0x4D9D000 (output_buf end 0x5D9D000; brk-final 0x5E1D000) was cap-checked inline only in
 # the x86 EMITELF_USER/SHARED/OBJ + Mach-O writers; the aarch64 ELF emitter,
 # both kernel-ELF emitters, and the PE writer wrote past it unchecked. The
 # overrun happens DURING emit, before the single flush point, so a flush-time

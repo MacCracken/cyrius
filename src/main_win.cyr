@@ -146,7 +146,9 @@
 #                                        CHANGELOG [5.11.33].
 #   0x5D9D000 local tables (CVE-24 v6.1.40) 4×128 KB per-fn slot-indexed tables → end 0x5E1D000 (the
 #                                        0x5F00000 VirtualAlloc below already covers them)
-#   0x5D9D000 brk-equivalent              ~93.6 MB (+16MB @ v6.1.27). v5.11.68 grew this from
+#   0x5E1D000 brk-equivalent              ~94.1 MB (+512 KB local-table relocation @ v6.1.40;
+#                                        +16MB output_buf @ v6.1.27). 0x5F00000 VirtualAlloc (95 MB,
+#                                        ~908 KB headroom) covers it. v5.11.68 grew this from
 #                                        0x459D000 / 78.6 MB at v5.10.40 by the
 #                                        8 MB preprocess_out relocation;
 #                                        v5.10.40 grew from 0x457C000 / 78.5 MB

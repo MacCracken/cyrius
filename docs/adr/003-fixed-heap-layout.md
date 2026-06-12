@@ -37,7 +37,8 @@ two disagree, **`src/main.cyr` wins**. Major regions, in offset order:
 0x3D7C000 tok_lines       8 MB    1,048,576 token line slots
 0x459D000 preprocess_out  8 MB    include / #derive expansion buffer
 0x4D9D000 output_buf     16 MB    ELF / Mach-O / PE output (heap-top; cap 2 MB → 16 MB v6.1.27)
-0x5D9D000 brk-final     ~93.6 MB  heap end (v6.1.27 output_buf relocate; monotonic 0x0 → brk)
+0x5D9D000 local tables  512 KB    4 slot-indexed per-fn tables × 128 KB (relocated here @ v6.1.40, CVE-24)
+0x5E1D000 brk-final     ~94.1 MB  heap end (v6.1.40 local-table relocate; v6.1.27 output_buf; monotonic 0x0 → brk)
 ```
 
 ### Preprocessing scratch (overlays `tok_types`, 0x13E000–0x23E000)

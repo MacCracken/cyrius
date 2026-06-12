@@ -1989,7 +1989,7 @@ fn EMITELF(S): i64 {
         # users get a clear error pointing at the right compiler.
         syscall(SYS_WRITE, 2,
         "error: CYRIUS_MACHO_ARM=1 requires the aarch64 backend. Use ./build/cycc_aarch64, not ./build/cycc.\n",
-        103);
+        100);
         syscall(SYS_EXIT, 1);
     }
     if (fmt == 3) {

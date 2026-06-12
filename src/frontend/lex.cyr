@@ -645,7 +645,10 @@ fn READFILE(path, dst, maxsz): i64 {
                     while (load8(path + plen) != 0) { plen += 1; }
                     syscall(SYS_WRITE, 2, path, plen);
                     syscall(SYS_WRITE, 2, " (set CYRIUS_ALLOW_PARENT_INCLUDES=1 to permit)\n", 48);
-                    return 0;
+                    # CVE-02/CO-02 (v6.1.41): return -1 so the PP's `nr < 0` guards fire
+                    # SYS_EXIT — a rejected hostile include must FAIL the build, not be
+                    # treated as a silent empty include (exit 0 after printing 'error:').
+                    return 0 - 1;
                 }
             }
             pi += 1;
@@ -671,7 +674,8 @@ fn READFILE(path, dst, maxsz): i64 {
             while (load8(path + alen) != 0) { alen += 1; }
             syscall(SYS_WRITE, 2, path, alen);
             syscall(SYS_WRITE, 2, " (set CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit)\n", 50);
-            return 0;
+            # CVE-16/CO-02 (v6.1.41): return -1 (fatal) — see the parent-include reject.
+            return 0 - 1;
         }
     }
     var fd = 0;

@@ -5,9 +5,9 @@
 #
 # Memory layout (all relative to S):
 #   0xA3A000  ir_nodes    [4MB]   262144 nodes × 16 bytes
-#   0xE3A000  ir_blocks   [256KB] 8192 blocks × 32 bytes
-#   0xF3A000 ir_state    [4KB]   counters + current state
-#   0xF3B000 ir_edges    [64KB]  8192 edges × 8 bytes
+#   0xE3A000  ir_blocks   [1MB]   32768 blocks × 32 bytes
+#   0xF3A000 ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB/ECNT/ENABLED @ 0xF3A000..028)
+#   0xF3B000 ir_edges    [256KB] 32768 edges × 8 bytes
 #
 # IRNode (16 bytes):
 #   +0: opcode (i16) + flags (i16) packed in low 32 bits
@@ -156,14 +156,18 @@ fn _IR_REC(S, op, fl, a1, a2): i64 {
 
 fn IR_NCNT(S): i64 { return L64(S + 0xF3A000); }
 fn IR_SNCNT(S, v): i64 { S64(S + 0xF3A000, v); return 0; }
-fn IR_BCNT(S): i64 { return L64(S + 0x174A008); }
-fn IR_SBCNT(S, v): i64 { S64(S + 0x174A008, v); return 0; }
-fn IR_CURBB(S): i64 { return L64(S + 0x174A010); }
-fn IR_SCURBB(S, v): i64 { S64(S + 0x174A010, v); return 0; }
-fn IR_ECNT(S): i64 { return L64(S + 0x174A018); }
-fn IR_SECNT(S, v): i64 { S64(S + 0x174A018, v); return 0; }
-fn IR_ENABLED(S): i64 { return L64(S + 0x174A020); }
-fn IR_SENABLE(S, v): i64 { S64(S + 0x174A020, v); return 0; }
+# v6.1.41: these 4 IR-state counters were stranded at 0x174A0xx — INSIDE the
+# fixup_tbl region (0x107B000+fc*16; fixup entry 446208 lands at 0x174A000), so
+# at ≥446k fixups with CYRIUS_IR enabled they collided. Moved into the documented
+# ir_state region [0xF3A000,0xF3B000) alongside IR_NCNT (0xF3A000).
+fn IR_BCNT(S): i64 { return L64(S + 0xF3A008); }
+fn IR_SBCNT(S, v): i64 { S64(S + 0xF3A008, v); return 0; }
+fn IR_CURBB(S): i64 { return L64(S + 0xF3A010); }
+fn IR_SCURBB(S, v): i64 { S64(S + 0xF3A010, v); return 0; }
+fn IR_ECNT(S): i64 { return L64(S + 0xF3A018); }
+fn IR_SECNT(S, v): i64 { S64(S + 0xF3A018, v); return 0; }
+fn IR_ENABLED(S): i64 { return L64(S + 0xF3A020); }
+fn IR_SENABLE(S, v): i64 { S64(S + 0xF3A020, v); return 0; }
 
 # ================================================================
 # IR node read/write

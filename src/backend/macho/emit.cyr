@@ -90,13 +90,12 @@ fn EMITMACHO_EXEC(S): i64 {
     var seg_filesz = code_off + content_sz;
     var seg_vmsz = (seg_filesz + PAGE - 1) & (0 - PAGE);
 
-    # Size check
-    if (content_sz > 16777216) {
-        syscall(SYS_WRITE, 2, "error: Mach-O output too large (", 32);
-        PRNUM(content_sz);
-        syscall(SYS_WRITE, 2, "/16777216)\n", 11);
-        syscall(SYS_EXIT, 1);
-    }
+    # Size check — CVE-23 parity (v6.1.41): the true max on-disk write offset is
+    # seg_filesz (code_off=4096 header prefix + content_sz), not content_sz alone —
+    # the old check left a ~4 KB slack window past the 16 MB output_buf (the same
+    # filesz-slack class CVE-23 closed for EMITELF_USER). Use the shared cap, which
+    # also reports the top-3 offending vars.
+    _check_output_cap(S, seg_filesz);
 
     # ncmds=3: __PAGEZERO + __TEXT + LC_UNIXTHREAD
     # lc_total = 72 + 152 + 184 = 408
@@ -295,10 +294,10 @@ fn EMITMACHO_ARM64(S): i64 {
         data_pages = (totvar + PAGE - 1) / PAGE;
         if (data_pages < 1) { data_pages = 1; }
     }
-    if (code_aligned > 16777216) {
-        syscall(SYS_WRITE, 2, "error: Mach-O ARM64 code too large (> 16MB)\n", 44);
-        syscall(SYS_EXIT, 1);
-    }
+    # CVE-23 parity (v6.1.41): the code-only cap moved to the real FILE_END check
+    # below (after the full segment layout is known) — `var buf[N]` globals (totvar,
+    # materialized on disk) + strings + __LINKEDIT were unbounded, so a large-globals
+    # program overran output_buf into the v6.1.40 local tables at 0x5D9D000.
 
     # __cstring offsets inside __TEXT.
     var CSTRING_OFF_REL = code_aligned;
@@ -386,6 +385,10 @@ fn EMITMACHO_ARM64(S): i64 {
     var INDIRECT_SIZE = 28;                # 7 indirect syms × 4 bytes
     var LINKEDIT_CONTENT_SIZE = INDIRECT_OFF + INDIRECT_SIZE - LINKEDIT_FILEOFF;
     var FILE_END = LINKEDIT_FILEOFF + LINKEDIT_CONTENT_SIZE;
+
+    # CVE-23 parity (v6.1.41): cap on the TRUE max on-disk offset (code + totvar
+    # globals + strings + __LINKEDIT), before the first output_buf store below.
+    _check_output_cap(S, FILE_END);
 
     var O = S + 0x4D9D000;
     var o = 0;

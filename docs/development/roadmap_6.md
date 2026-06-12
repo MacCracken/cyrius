@@ -159,6 +159,24 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
+### Codegen correctness (v6.2.x opening — HIGH, fix before platform work)
+
+Bottom-to-top / correctness-first: a HIGH-severity silent-corruption codegen bug
+lands at the opening, ahead of the platform + growable work.
+
+- **Address-taken fixed local array under-reserves static backing (off-by-one
+  slot).** A `var a[N]` whose address escapes is promoted to static storage but
+  reserved `(N-1)*8` bytes, so the in-bounds write to slot `N-1` corrupts the next
+  static datum. **Confirmed on cycc 6.1.41** (silent static-memory corruption). In
+  daimon 1.2.6 it 404'd *every* HTTP route, layout-sensitively — a dead-code
+  removal shifted the static layout so an IP-octet `var parts[4]` buffer landed on
+  sandhi's `" "` literal, and the 4th-octet write overwrote the space the request
+  parser searched for. daimon shipped a workaround (inline octet compute); any
+  other address-taken `var a[N]` with a last-slot write stays exposed until cycc
+  reserves the full `N*8`. Filed by daimon (consumer); cyrius-side tracking +
+  repro confirmation:
+  [`issues/2026-06-11-addr-taken-local-array-static-underreserve.md`](issues/2026-06-11-addr-taken-local-array-static-underreserve.md).
+
 ### Phase 0 (v6.2.x opening) — growable-region foundation
 
 **Lands first, before bare-metal + RISC-V** (user direction 2026-06-11: pull

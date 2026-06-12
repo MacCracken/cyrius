@@ -623,8 +623,9 @@ if (_vn > 0) {
 # any output (the x86 driver previously paid this unconditionally, so the
 # x86 Mach-O cycc never compiled on-device — only the syscall ABV xlat in
 # emit.cyr was missing too; both are needed). Linux mmap number 9 →
-# BSD 197 via EMACHO_SYSXLAT at emit. Size 0x4D9D000 matches the brk
-# extension below; flags MAP_ANON|MAP_PRIVATE = 0x1002.
+# BSD 197 via EMACHO_SYSXLAT at emit. Size 0x5E1D000 (~94.1 MB) matches
+# main.cyr's brk top below (output_buf 16 MB @ v6.1.27 + local tables
+# +512 KB @ v6.1.40); flags MAP_ANON|MAP_PRIVATE = 0x1002.
 var S = syscall(9, 0, 0x5E1D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(1, 2, "cycc: mmap heap init failed\n", 28);

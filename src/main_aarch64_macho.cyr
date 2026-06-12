@@ -159,9 +159,10 @@ if (_vn > 0) {
 # gets translated to BSD 197 (_mmap) by ESYSXLAT at emit time; the flag
 # value 0x1002 (MAP_PRIVATE | MAP_ANON on macOS) is baked in as an
 # immediate, so it reaches the kernel unchanged at runtime.
-# Size 0x4D9D000 (~86.6 MB) matches main.cyr's brk through the v5.11.33
-# preprocess_out relocation. Was 0x459D000 (~78.6 MB) pre-v5.11.33;
-# 0x457C000 (~78.5 MB) pre-v5.10.40.
+# Size 0x5E1D000 (~94.1 MB) matches main.cyr's brk top (output_buf 16 MB
+# @ v6.1.27 + local tables +512 KB @ v6.1.40). Was 0x4D9D000 (~86.6 MB)
+# through the v5.11.33 preprocess_out relocation; 0x459D000 (~78.6 MB)
+# pre-v5.11.33; 0x457C000 (~78.5 MB) pre-v5.10.40.
 var S = syscall(9, 0, 0x5E1D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(SYS_WRITE, 2, "cycc_macho: mmap heap init failed\n", 34);

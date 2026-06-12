@@ -166,7 +166,6 @@ fn SFRS(S, fi, v): i64 { S64(S + 0x15A000 + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 3 — per-fn variadic marker. 0 = fixed-arity;
 # 1 = `fn f(a, ...)` (ellipsis terminator on the param list).
-fn GFVA(S, fi): i64 { return L64(S + 0x16A000 + fi * 8); }
 fn SFVA(S, fi, v): i64 { S64(S + 0x16A000 + fi * 8, v); return 0; }
 # Per-fn #regalloc flag (v4.8.4-alpha4). 0 = default ABI, 1 = opt-in
 # to callee-saved hot-local allocation. Set when `#regalloc` precedes
@@ -586,7 +585,8 @@ fn ERR_MSG(S, msg, len): i64 {
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
-# IR state at S+0x174A008..S+0xF3A000 + global-var-init slots) to
+# IR state at S+0xF3A000..S+0xF3A028 (5 counters; relocated out of the
+# fixup_tbl-overlapping 0x174A0xx band @ v6.1.41) + global-var-init slots) to
 # zero, with two sentinel-value exceptions:
 #   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
 #   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
@@ -619,10 +619,10 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     # IR state (cycc — gated by CYRIUS_IR=1 env at runtime; init
     # unconditionally so the gate read sees zero, not garbage)
     S64(S + 0xF3A000, 0);    # ir_node_count
-    S64(S + 0x174A008, 0);    # ir_block_count
-    S64(S + 0x174A010, 0);    # ir_cur_block (current BB index)
-    S64(S + 0x174A018, 0);    # ir_edge_count
-    S64(S + 0x174A020, 0);    # ir_enabled (0=off, 1=on)
+    S64(S + 0xF3A008, 0);    # ir_block_count   (v6.1.41: was 0x174A008, inside fixup_tbl)
+    S64(S + 0xF3A010, 0);    # ir_cur_block     (v6.1.41: was 0x174A010)
+    S64(S + 0xF3A018, 0);    # ir_edge_count    (v6.1.41: was 0x174A018)
+    S64(S + 0xF3A020, 0);    # ir_enabled       (v6.1.41: was 0x174A020)
     # Struct state
     S64(S + 0x18F830, 0);
     # Condition patch state

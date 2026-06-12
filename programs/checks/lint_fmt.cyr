@@ -480,14 +480,20 @@ fn _input_validation_rejects_gate(): i64 {
     fail = fail + _input_rejects_subcase("stack-frame-overflow",
         "fn big() { stack var buf[200000]; store8(&buf + 0, 1); return load8(&buf + 0); }\nfn main(): i64 { return big(); }",
         "too many stack slots");
+    # CVE-16/CVE-02 (v6.1.41) — a rejected hostile include (absolute / parent-traversal)
+    # must FAIL the build (nonzero exit), not print 'error:' then exit 0 as a silent
+    # empty include. The reject returns -1 so the PP's `nr < 0` guards fire SYS_EXIT.
+    fail = fail + _input_rejects_subcase("absolute-include-reject",
+        "include \"/etc/passwd\";\nfn main(): i64 { return 0; }",
+        "absolute include path rejected");
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": input-validation reject cases (3/3)");
+        println(": input-validation reject cases (4/4)");
     }
-    _check("lex/PP reject stray ASCII + missing include + oversized frame (CVE-31/CVE-24)", fail);
+    _check("lex/PP reject stray ASCII + missing/absolute include + oversized frame (CVE-31/24/16)", fail);
     return fail;
 }
 
