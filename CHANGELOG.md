@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.2] — 2026-06-12
+
+**v6.2.2 — aarch64/macOS annotation-token codegen fix + ecosystem stdlib fold-in.**
+A frontend repair that unblocks `bayan` (and any annotated stdlib module) on
+aarch64 + macOS, landed together with the re-fold of the whole released stdlib
+set onto their 6.2.1-pinned versions.
+
+### Fixed
+- **aarch64 + macOS `unexpected enum` on annotated stdlib modules — the
+  pass-1/pass-2 annotation-token desync (same class as the v5.8.21 `#io` fix,
+  which only landed x86-side).** `src/main.cyr` consumes the fn-attribute
+  annotation tokens `#regalloc` (109), `#must_use` (122), `#deprecated` (124),
+  `#pure` (125), `#io` (126), `#alloc` (127) in **both** its pass-1 pre-scan and
+  pass-2 parse loops; the three sibling compiler entry points never got those
+  cases. So an annotated fn at the top of a stdlib module (e.g. `bayan`'s
+  `#pure fn bayan_u128_eq`) dropped each scanner into its catchall
+  (`scan = 0` / `topgo = 0`), terminating the loop early and leaving the next
+  `enum` (bayan's `TomlError`) unregistered → `error: unexpected enum`. Fixed by
+  porting the annotation-consume into all three forks, in **both** passes:
+  - `src/main_aarch64.cyr` (aarch64-linux ELF cross)
+  - `src/main_aarch64_macho.cyr` (macOS arm64)
+  - `src/main_x86_macho.cyr` (macOS x86_64)
+
+  aarch64/macOS gate the `#pure`/`#io`/`#alloc` optimizations off (CO-03), so the
+  forks consume-and-ignore the tokens (no `_*_pending` machinery); x86_64 Linux
+  (`main.cyr`) is unchanged. Surgical: non-annotated codegen is **byte-identical**
+  to pre-fix (verified by diffing cross-compiler output). Filed
+  `docs/development/issues/2026-06-12-main-aarch64-pass1-missing-annotation-tokens-unexpected-enum.md`
+  (thoth/sandhi, bring-up to macOS/aarch64). **Verified:** the issue's minimal
+  repro + a `bayan`-via-`[deps]` program build clean on aarch64 and run exit-0
+  under qemu; x86 self-host byte-identical; check.sh 89/89; cross-OS self-host
+  byte-identical on all four hosts (pi/ecb/ach/cass `SELFHOST_OK`); bench
+  self_compile 498 ms / cycc 1,063,800 B (flat — fix is in the cross forks, not
+  x86 cycc).
+
+### Changed
+- **Ecosystem stdlib fold-in — all 12 vendored `lib/*.cyr` refreshed to their
+  released 6.2.1-pinned versions** (the ecosystem-wide pin sweep landed in the
+  siblings; this folds the byte-identical released dists back in):
+  agnosys 1.2.6→1.4.2, sandhi 1.4.10→1.4.11, sankoch 2.2.5→2.3.1,
+  niyama 1.0.2→1.0.5, bayan 1.0.0→1.0.1, ganita 1.0.0→1.0.1,
+  patra 1.10.3→1.11.1, yukti 2.2.3→2.2.5, vani 0.9.3→0.9.5,
+  sigil 3.7.12→3.7.13, mabda 3.0.1→3.0.2, sakshi 2.2.10→2.3.0. Each fold is
+  self-contained (zero `include "src/"`). Public-API surface re-snapshotted
+  (`docs/api-surface.snapshot`, 4236 fns): +26 added (new sigil/bayan/sakshi
+  surface), −1 removed (`yukti::sys_stat/2`, dropped in yukti's released 2.2.x —
+  the fold was lagging at 2.2.3).
+
 ## [6.2.1] — 2026-06-12
 
 **v6.2.1 — element-typed arrays (`var a: T[N]`) + daimon-class slot-array

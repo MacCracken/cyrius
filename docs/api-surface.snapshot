@@ -1,4 +1,5 @@
 agnosys::agnosys_checked_syscall/1
+agnosys::agnosys_cstr_starts_with/2
 agnosys::agnosys_free_memory/0
 agnosys::agnosys_fsync/1
 agnosys::agnosys_fsync/1
@@ -6,9 +7,15 @@ agnosys::agnosys_geteuid/0
 agnosys::agnosys_getpid/0
 agnosys::agnosys_gettid/0
 agnosys::agnosys_getuid/0
+agnosys::agnosys_is_hex_char/1
+agnosys::agnosys_is_name_char/1
 agnosys::agnosys_is_root/0
+agnosys::agnosys_json_emit_cstr_or_null/2
+agnosys::agnosys_read_fd_to_str/2
 agnosys::agnosys_rename/2
 agnosys::agnosys_rename/2
+agnosys::agnosys_run_capture/4
+agnosys::agnosys_run_checked/2
 agnosys::agnosys_total_memory/0
 agnosys::agnosys_uname/1
 agnosys::agnosys_uptime/0
@@ -2316,6 +2323,10 @@ result::is_ok/1
 result::result_print/1
 result::result_unwrap/1
 result::result_unwrap_or/2
+sakshi::sakshi_aring_clear/0
+sakshi::sakshi_aring_event_count/0
+sakshi::sakshi_aring_len/0
+sakshi::sakshi_aring_read_raw/2
 sakshi::sakshi_clear_emit_hook/0
 sakshi::sakshi_clock_recalibrate/0
 sakshi::sakshi_debug/2
@@ -2332,6 +2343,7 @@ sakshi::sakshi_info/2
 sakshi::sakshi_ipv4/4
 sakshi::sakshi_is_err/1
 sakshi::sakshi_is_ok/1
+sakshi::sakshi_output_atomic_ring/0
 sakshi::sakshi_output_buffer/0
 sakshi::sakshi_output_file/1
 sakshi::sakshi_output_file_close/0
@@ -2817,6 +2829,9 @@ sankoch::decompress/5
 sankoch::deflate_bytes_consumed/0
 sankoch::deflate_compress/4
 sankoch::deflate_compress_level/5
+sankoch::deflate_dec_finish/1
+sankoch::deflate_dec_init/2
+sankoch::deflate_dec_write/3
 sankoch::deflate_decompress/4
 sankoch::deflate_decompress_dict/6
 sankoch::deflate_enc_finish/1
@@ -2826,6 +2841,9 @@ sankoch::deflate_enc_write/3
 sankoch::detect_format/2
 sankoch::gzip_compress/4
 sankoch::gzip_compress_level/5
+sankoch::gzip_dec_finish/1
+sankoch::gzip_dec_init/2
+sankoch::gzip_dec_write/3
 sankoch::gzip_decompress/4
 sankoch::gzip_enc_finish/1
 sankoch::gzip_enc_init/3
@@ -2843,6 +2861,9 @@ sankoch::huff_decode_litlen/1
 sankoch::lz4_compress/4
 sankoch::lz4_decompress/4
 sankoch::lz4f_compress/4
+sankoch::lz4f_dec_finish/1
+sankoch::lz4f_dec_init/2
+sankoch::lz4f_dec_write/3
 sankoch::lz4f_decompress/4
 sankoch::lz4f_enc_finish/1
 sankoch::lz4f_enc_init/2
@@ -2854,7 +2875,9 @@ sankoch::stream_buffered/1
 sankoch::stream_compress_finish/1
 sankoch::stream_compress_init/4
 sankoch::stream_decompress_finish/3
+sankoch::stream_decompress_finish_inc/1
 sankoch::stream_decompress_init/1
+sankoch::stream_decompress_init_inc/3
 sankoch::stream_reset/1
 sankoch::stream_write/3
 sankoch::xxhash32/2
@@ -2863,6 +2886,9 @@ sankoch::xxhash32_init/0
 sankoch::xxhash32_update/3
 sankoch::zlib_compress/4
 sankoch::zlib_compress_level/5
+sankoch::zlib_dec_finish/1
+sankoch::zlib_dec_init/2
+sankoch::zlib_dec_write/3
 sankoch::zlib_decompress/4
 sankoch::zlib_decompress_dict/6
 sankoch::zlib_enc_finish/1
@@ -4208,4 +4234,3 @@ ws_server::ws_server_send_pong/3
 ws_server::ws_server_send_text/2
 ws_server::ws_server_state/1
 yukti::str_starts_with_cstr/2
-yukti::sys_stat/2

@@ -1,6 +1,14 @@
 # `main_aarch64.cyr` pass-1 scanner never got the v5.8.21 annotation-token fix → `#pure`/`#io`/`#alloc` cause `error: unexpected enum` on aarch64/macOS
 
 **Filed:** 2026-06-12
+**Status:** **RESOLVED v6.2.2** — ported the annotation-token consume (109/122/124/
+125/126/127) into BOTH pass-1 and pass-2 of all three non-x86 entry points
+(`main_aarch64.cyr`, `main_aarch64_macho.cyr`, `main_x86_macho.cyr`). The original
+diagnosis fingered pass-1 only; pass-2 needed it too (that's where the error
+actually fires once pass-1 is fixed). Verified: issue repro + bayan-via-deps build
+clean on aarch64 (qemu exit-0), x86 self-host byte-identical, check.sh 89/89,
+cross-OS self-host 4/4 (pi/ecb/ach/cass `SELFHOST_OK`). aarch64/macOS gate the opts
+off (CO-03) so the forks consume-and-ignore (no `_*_pending`). See CHANGELOG [6.2.2].
 **Severity:** **HIGH** — blocks **all** aarch64 + macOS builds for any consumer
 that includes a stdlib module carrying a `#pure` / `#io` / `#alloc` annotation
 (notably **`bayan`**, the data-domain module). x86_64-linux is unaffected. No

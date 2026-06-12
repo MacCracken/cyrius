@@ -356,6 +356,28 @@ while (scan == 1) {
             else { if (PEEKT(S) == 40) { PARSE_STRUCT_DEF(S); }
                 else { if (PEEKT(S) == 101) { PARSE_UNION_DEF(S); }
                     else { if (PEEKT(S) == 3) { PARSE_GVAR_REG(S); }
+                        # v6.2.2: pass-1 must consume fn-attribute annotation tokens
+                        # 109 #regalloc / 122 #must_use / 124 #deprecated / 125 #pure /
+                        # 126 #io / 127 #alloc — exactly as main.cyr:1150-1165 does.
+                        # Pre-fix this aarch64 scanner had no case for them, so an
+                        # annotated fn (e.g. bayan's `#pure fn bayan_u128_eq`) fell into
+                        # the catchall `else { scan = 0; }`, terminating pass-1 early and
+                        # leaving the following enum (bayan's `TomlError`) unregistered →
+                        # `error: unexpected enum`. Pass 2 arms the pending flags
+                        # generically, so consume silently here.
+                        else { if (PEEKT(S) == 109) { STI(S, GTI(S) + 1); }
+                            else { if (PEEKT(S) == 122) { STI(S, GTI(S) + 1); }
+                                else { if (PEEKT(S) == 124) {
+                                        STI(S, GTI(S) + 1);
+                                        if (PEEKT(S) == 10) {
+                                            STI(S, GTI(S) + 1);
+                                            if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
+                                            if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+                                        }
+                                    }
+                                    else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
+                                        else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
+                                            else { if (PEEKT(S) == 127) { STI(S, GTI(S) + 1); }
                         else { if (PEEKT(S) == 32) {
                                 STI(S, GTI(S) + 1);
                                 STI(S, GTI(S) + 1);
@@ -399,7 +421,7 @@ while (scan == 1) {
                                                     }
                                                 }
                                             }
-                                            else { scan = 0; } } } } } } } } } } }
+                                            else { scan = 0; } } } } } } } } } } } } } } } } }
 }
 
 # Reset module for pass 2
@@ -445,6 +467,26 @@ while (topgo == 1) {
                                 STI(S, GTI(S) + 1);
                                 if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                             }
+                            # v6.2.2: consume fn-attribute annotation tokens 109/122/124/
+                            # 125/126/127 in pass-2 too (aarch64 gates off the #pure/#io/
+                            # #alloc/#regalloc opts per CO-03, so just skip the token — no
+                            # pending flags). Without this, a top-level `#pure` fell to
+                            # `else { topgo = 0; }`, ending pass-2, and the trailing enum
+                            # tripped `unexpected enum`. Mirror of main.cyr:1377-1391
+                            # (minus the _*_pending sets aarch64 doesn't use).
+                            else { if (PEEKT(S) == 109) { STI(S, GTI(S) + 1); }
+                                else { if (PEEKT(S) == 122) { STI(S, GTI(S) + 1); }
+                                    else { if (PEEKT(S) == 124) {
+                                            STI(S, GTI(S) + 1);
+                                            if (PEEKT(S) == 10) {
+                                                STI(S, GTI(S) + 1);
+                                                if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
+                                                if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+                                            }
+                                        }
+                                        else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
+                                            else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
+                                                else { if (PEEKT(S) == 127) { STI(S, GTI(S) + 1); }
                             else { if (PEEKT(S) == 32) {
                                     PARSE_FN_DEF(S);
                                 }
@@ -454,7 +496,7 @@ while (topgo == 1) {
                                     }
                                     else { if (PEEKT(S) == 77) { PARSE_IMPL(S); }
                                         else { if (PEEKT(S) == 78) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
-                                            else { topgo = 0; } } } } } } } } } } }
+                                            else { topgo = 0; } } } } } } } } } } } } } } } } }
 }
 
 # Reset module

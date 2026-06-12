@@ -14,9 +14,9 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.1** (v6.2.x cycle — **Platform Expansion**; element-typed `var a: T[N]` arrays + daimon-class slot-array sweep. See [roadmap_6.md](roadmap_6.md)) |
+| **Version** | **6.2.2** (v6.2.x cycle — **Platform Expansion**; aarch64/macOS annotation-token codegen fix + ecosystem stdlib fold-in. See [roadmap_6.md](roadmap_6.md)) |
 | **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
 | **cyrius-lsp** (language server) | 531,688 B |
@@ -24,13 +24,36 @@
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
-| sigil fold | 3.7.12 (3.7.11 distlib inliner fix + 3.7.12 x509 keyUsage/EKU/pathLen) |
+| sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
+| stdlib fold (@6.2.2) | agnosys 1.4.2 · sandhi 1.4.11 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.1 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.0.2 · sakshi 2.3.0 (all on the 6.2.1 pin) |
 | tests | 174 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~509 ms (+12 ms @ 6.2.1 — growth-tax from the resized internal tables, not a hot-path regression; cycc +8,016 B) |
+| bench (every-release gate) | self_compile ~498 ms (flat @ 6.2.2 — fix is in the aarch64/macho cross forks, x86 cycc byte-identical; cycc 1,063,800 B unchanged) |
 
-> **Handoff (2026-06-12):** **v6.2.1 CUT — element-typed arrays `var a: T[N]` +
+> **Handoff (2026-06-12):** **v6.2.2 CUT — aarch64/macOS annotation-token codegen
+> fix + ecosystem stdlib fold-in.** **Fixed** the pass-1/pass-2 annotation-token
+> desync (same class as the v5.8.21 `#io` fix that only landed x86-side): the three
+> non-x86 compiler entry points (`main_aarch64.cyr`, `main_aarch64_macho.cyr`,
+> `main_x86_macho.cyr`) never consumed the fn-attribute tokens 109/122/124/125/126/127,
+> so an annotated fn (bayan's `#pure fn bayan_u128_eq`) terminated each scan loop
+> early and the next `enum` (bayan's `TomlError`) tripped `error: unexpected enum` —
+> blocking `bayan` (and any annotated stdlib) on aarch64+macOS. Ported the consume
+> into all three forks, both passes; aarch64/macOS gate the opts off so they
+> consume-and-ignore (no `_*_pending`). x86 `main.cyr` untouched → x86 cycc
+> byte-identical. **Changed** — re-folded all 12 vendored `lib/*.cyr` to their
+> released 6.2.1-pinned versions (agnosys 1.4.2, sandhi 1.4.11, sankoch 2.3.1,
+> niyama 1.0.5, bayan 1.0.1, ganita 1.0.1, patra 1.11.1, yukti 2.2.5, vani 0.9.5,
+> sigil 3.7.13, mabda 3.0.2, sakshi 2.3.0); api-surface re-snapshotted (4236 fns,
+> +26/−1). **VERIFIED:** issue repro + bayan-via-deps build clean on aarch64
+> (qemu exit-0); x86 self-host byte-identical; check.sh 89/89; cross-OS self-host
+> byte-identical 4/4 (pi/ecb/ach/cass `SELFHOST_OK`); bench self_compile 498 ms /
+> cycc 1,063,800 B (flat). Issue `2026-06-12-main-aarch64-pass1-missing-annotation
+> -tokens-unexpected-enum.md` resolved. **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-12):** **v6.2.1 CUT — element-typed arrays `var a: T[N]` +
 > daimon-class slot-array sweep.** Resolves the address-taken-local byte-vs-slot
 > footgun (daimon route-404). **Added** `var a: T[N]` = N elements of T, sized
 > `N*sizeof(T)` identically in fn + top-level scope — `i64[N]` is the unambiguous
