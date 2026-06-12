@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.0] — 2026-06-12
+
+**v6.2.0 — Platform Expansion minor opens.** The v6.1.x "Backend Codegen
+Multi-Arc" cycle closed at v6.1.41 (41 patches): userland PIE codegen, the TS/TSX→JS
+emitter, the **bayan/ganita stdlib carve** (data-format + math out of the kernel
+path), **native-TLS-as-default** (.21), the **Phase-F security-hardening pack**
+(CVE-14…31 + AR-03), the **CVE-24** per-fn local-table relocation + cap, and the
+pre-v6.2.0 closeout (3-dimension audit → 3 fixed residuals + a full doc/vidya
+sync). cycc self-host 1,050,608 B; check.sh 89/89; ecb/ach/pi/cass `SELFHOST_OK`;
+bootstrap closure reproducible.
+
+v6.2.0 opens the **Platform Expansion** cycle (see
+[`roadmap_6.md`](docs/development/roadmap_6.md)):
+- **Phase 0 — growable-region foundation** (opens first): migrate the fixed-size
+  pressure tables (fn-tables, `fixup_tbl`, codebuf) to vec-backed (`rp_vec`)
+  storage using the byte-identical recipe proven at v6.0.7, so the language arc
+  opens onto already-growable tables.
+- **Bare-metal target formalization** + the **RISC-V rv64** backend (4th platform
+  peer).
+- Carried **Language-Refinements** (the local-array byte-vs-slot convention
+  footgun; undefined-fn-call → hard-error) tracked in `roadmap_6.md`.
+
+First code bite (Phase 0) lands this slot — see below.
+
 ## [6.1.41] — 2026-06-12
 
 **v6.1.x slot 41: pre-v6.2.0 closeout hardening.** A closeout audit (adversarial

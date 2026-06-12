@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.41** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **Version** | **6.2.0** (v6.2.x cycle — **Platform Expansion** OPENS; v6.1.x Backend-Codegen-Multi-Arc closed at .41. See [roadmap_6.md](roadmap_6.md)) |
 | **cycc** (x86_64 ELF) | 1,050,608 B (−256 B @ 6.1.41 — closeout: dead GFVA removed + Mach-O cap / security-reject / IR-counter fixes) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
@@ -30,7 +30,23 @@
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | bench (every-release gate) | self_compile ~497 ms (flat @ .41 — closeout; dead-code floor 63→62) |
 
-> **Handoff (2026-06-12):** v6.1.41 cut — **pre-v6.2.0 closeout hardening** (3-dimension
+> **Handoff (2026-06-12):** **v6.2.0 — Platform Expansion minor OPENS.** v6.1.x
+> ("Backend Codegen Multi-Arc") closed at .41 (41 patches: PIE, TS→JS, bayan/ganita
+> carve, native-TLS-default, Phase-F CVE-14..31 + AR-03, CVE-24 local-table reloc,
+> the closeout). Version bumped to 6.2.0 (cycc 1,050,608 B, self-host byte-identical).
+> Opens the Platform Expansion cycle (roadmap_6.md): **Phase 0 growable-region
+> foundation FIRST** — migrate fn-tables/`fixup_tbl`/codebuf → vec-backed `rp_vec`
+> (byte-identical, per the v6.0.7 ret_patches→rp_vec recipe; ends the cap-raise
+> treadmill, resolves AR-03's fixup split-brain, de-risks v6.3.x generics), then
+> bare-metal + RISC-V rv64. **FIRST BITE proposed: `fixup_tbl` → rp_vec** (cleanest of
+> the 3 — single (codepos, var_idx) table via RECFIX, AR-03 cap cleanup already done;
+> internal scratch not in the output → byte-identical). **v6.2.0 is NOT a release
+> until the first Phase-0 code bite lands (per "minor-open needs code"). Awaiting go
+> on the first-bite scope.** **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-12):** v6.1.41 cut — **pre-v6.2.0 closeout hardening** (3-dimension
 > closeout audit caught 3 residuals the per-slot reviews missed). **(P1) Mach-O
 > output-cap parity** — CVE-23 (v6.1.35) missed both `EMITMACHO_*` writers (capped
 > code only, not `var buf[N]` globals/strings/__LINKEDIT); a large-globals macOS
