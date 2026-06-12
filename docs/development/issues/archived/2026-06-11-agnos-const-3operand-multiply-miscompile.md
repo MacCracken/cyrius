@@ -5,6 +5,42 @@
 **Affects:** cycc **6.1.29 and 6.1.35** (both confirmed). `--agnos` target only — the Linux/x86_64 target folds the same expression correctly.
 **Reported by:** cyrius-doom (consumer). On cycc 6.1.35; need a release with the `--agnos` const-fold fix to drop the workaround.
 
+> **STATUS: ROOT-CAUSED + FIXED (cyrius-side), pending v6.1.37 cut.**
+>
+> **Scope correction (premise-checked directly):** the defect is **NOT
+> `--agnos`-specific** — it reproduces identically on the **Linux/x86_64** and
+> **aarch64** targets too. The fold bug lives in the *shared* frontend
+> (`src/frontend/parse_expr.cyr`), which is target-independent; both targets
+> emit `mov 320; push; mov 200; pop rcx; imul; shl 2` correctly *after* the fix
+> and the wrong `B << 2` before it. The consumer's "Linux is correct (256000)"
+> was a misdiagnosis of the minimal **enum** repro (it's wrong on Linux too);
+> cyrius-doom's real code likely const-folded `SCREEN_WIDTH * SCREEN_HEIGHT`
+> from `#define`/literal sources that *do* fold correctly, while a `var` or enum
+> operand triggers the runtime-`imul` path that has the bug.
+>
+> **Confirmed root cause (not the consumer's speculation):** the bug is the
+> **const-fold tracking state (`_cfo`)**, NOT a register-allocation drop. In
+> `PARSE_EXPR`'s multiply loop, when the LHS is a tracked constant (`_cfo==1`,
+> e.g. `A`) and the RHS is itself a const (enum `B` or a NUM that overflowed the
+> small-fold), the branch sets `_cfo = 0` then calls `PARSE_FACTOR(RHS)` — which
+> **re-arms** `_cfo`/`_cfp`/`_cfv` on the const RHS. It commits a runtime
+> `EIMUL` (A*B=64000) but leaves the stale tracking. The next `* C` then
+> const-folds off the stale RHS (`B * C`) and `SCP`-rewinds the code pointer to
+> the RHS's `EMOVI`, **discarding the A*B `EIMUL`** → `A * B * C` becomes
+> `B * C`. (`(A*B)*4`, `enum*lit*lit`, `var*var*lit` and 2-operand all worked
+> because they don't hit this stale-tracking-then-fold sequence.)
+>
+> **Fix:** clear `_cfo` *after* the runtime `EIMUL` (and on the `_TRY_MUL_BY_POW2`
+> success path) in the three `_cfo==1` sub-branches — mirroring the already-correct
+> outer-else / div / mod paths. ~6 lines in `src/frontend/parse_expr.cyr`.
+>
+> **Verified:** repro fixed on x86 + `--agnos` (identical multiply codegen) +
+> aarch64 (qemu); cycc self-host **byte-identical fixpoint** (cycc's own source
+> has no `enum*enum*C`, so it converged in one step; +112 B); ecb/ach/pi/cass
+> `SELFHOST_OK`; check.sh **89/89**; new regression `tests/tcyr/const_chained_multiply_fold.tcyr`
+> (8 cases, all targets). The consumer's 0.29.1 workaround can be dropped once
+> v6.1.37 ships.
+
 ## Summary
 
 A **compile-time-constant 3-operand chained integer multiply** — `A * B * C` where all

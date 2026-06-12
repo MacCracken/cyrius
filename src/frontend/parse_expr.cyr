@@ -1626,26 +1626,32 @@ fn PARSE_TERM(S): i64 {
                             } else {
                                 # v5.6.7 O2: cfr overflowed — try shl
                                 # strength-reduction before falling to imul.
+                                # (v6.1.37: also clear _cfo AFTER — PARSE_FACTOR
+                                # may re-arm it on a const RHS.)
                                 _cfo = 0;
                                 ESPILL(S);
-                                if (_TRY_MUL_BY_POW2(S) == 0) {
-                                    PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S);
-                                }
+                                if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
+                                else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                             }
                         }
                         else {
                             _cfo = 0;
                             ESPILL(S);
-                            if (_TRY_MUL_BY_POW2(S) == 0) {
-                                PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S);
-                            }
+                            if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
+                            else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                         }
                     } else {
+                        # The RHS may itself be an enum/NUM const — PARSE_FACTOR
+                        # re-arms const-fold tracking (_cfo/_cfp/_cfv). After this
+                        # runtime EIMUL we MUST re-clear _cfo, or the NEXT `*`
+                        # const-folds off the stale RHS and rewinds the code,
+                        # DROPPING this product (`A * B * 4` → `B * 4` = 800).
+                        # Mirrors the outer-else path. See issue 2026-06-11
+                        # agnos-const-3operand-multiply-miscompile (all targets).
                         _cfo = 0;
                         ESPILL(S);
-                        if (_TRY_MUL_BY_POW2(S) == 0) {
-                            PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S);
-                        }
+                        if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
+                        else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                     }
                 } else {
                     # v5.6.7 O2: ESPILL LHS, then try strength-reduction

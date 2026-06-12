@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.36** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,049,856 B (unchanged @ 6.1.36 — F2 is stdlib-only, no compiler change) |
+| **Version** | **6.1.37** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,049,968 B (+112 B @ 6.1.37 — const chained-multiply fold fix: clear `_cfo` after runtime EIMUL) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -30,7 +30,22 @@
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; brk-final `0x5D9D000` (~93.6 MB virtual) |
 | bench (every-release gate) | self_compile ~556 ms (vs ~506 ms @ .34 — box noise + 3.4 KB growth) |
 
-> **Handoff (2026-06-11):** v6.1.36 cut — **Phase F pack F2: TLS-authn hardening,
+> **Handoff (2026-06-11):** v6.1.37 cut — **const chained-multiply miscompile**
+> (cyrius-doom report). `A * B * C` with const A,B silently folded to `B * C`
+> (first operand dropped: `320*200*4`→800). Premise-check corrected the scope:
+> NOT agnos-only — all targets (x86/agnos/aarch64). Root cause: shared
+> `src/frontend/parse_expr.cyr` multiply loop left `_cfo` set after PARSE_FACTOR
+> re-armed const-fold tracking on a const RHS, so the next `*` const-folded off
+> the stale RHS + rewound the code, discarding the runtime EIMUL. Fix: clear
+> `_cfo` after the runtime EIMUL in the three `_cfo==1` sub-branches (mirrors the
+> correct outer-else/div/mod). **VERIFIED:** self-host byte-identical fixpoint
+> (cycc +112 B → 1,049,968 B); check.sh 89/89; ecb/ach/pi/cass SELFHOST_OK;
+> x86+agnos+aarch64(qemu) repro fixed; regression `const_chained_multiply_fold.tcyr`
+> 8/8. **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-11):** v6.1.36 cut — **Phase F pack F2: TLS-authn hardening,
 > CVE-17 + CVE-18 + CVE-30 + CVE-19** (2026-06-10 deep-dive). Stdlib-only (no
 > `src/` change → cycc byte-identical). **CVE-17** — TLS chain ignored
 > pathLen/keyUsage/EKU; sigil 3.7.12 parses keyUsage+EKU (X509Cert 256→272) +

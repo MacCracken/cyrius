@@ -1,0 +1,23 @@
+# const_chained_multiply_fold.tcyr — chained const multiply must not drop the
+# first operand. Regression for the 2026-06-11 cyrius-doom report: `A * B * C`
+# where A,B are enum constants const-folded to `B * C` (first operand dropped,
+# e.g. 320*200*4 → 800). Root cause: the runtime-EIMUL path in PARSE_EXPR left
+# _cfo set after PARSE_FACTOR re-armed it on a const RHS, so the next `*`
+# const-folded off the stale RHS and rewound the code. Affected ALL targets
+# (the report's "agnos-only" was a misdiagnosis). See parse_expr.cyr.
+include "lib/assert.cyr"
+
+enum Dim { A = 320; B = 200; C = 7; }
+
+fn main(): i64 {
+    assert_eq(A * B, 64000, "2-operand enum fold");
+    assert_eq(A * B * 4, 256000, "enum*enum*pow2 (the reported 320*200*4)");
+    assert_eq(A * B * 3, 192000, "enum*enum*non-pow2");
+    assert_eq(A * B * C, 448000, "enum*enum*enum");
+    assert_eq(A * B * 4 * 2, 512000, "4-operand enum chain");
+    assert_eq(C * A * B, 448000, "enum*enum*enum (reordered)");
+    assert_eq((A * B) * 4, 256000, "explicit-paren control");
+    assert_eq(A * 200 * 4, 256000, "enum*lit*lit control");
+    var r = assert_summary();
+    return r;
+}

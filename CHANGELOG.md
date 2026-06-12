@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.37] — 2026-06-11
+
+**v6.1.x slot 37: const chained-multiply miscompile (silent wrong codegen).**
+Reported by cyrius-doom (AGNOS port — a `320*200*4` framebuffer size folded to
+**800**, dropping the first operand → a 256 KB writer into an 800-byte buffer →
+heap corruption). Filed as `--agnos`-specific; **premise-checking corrected the
+scope — it reproduces on every target** (x86_64 / agnos / aarch64), and the
+consumer's "register-allocation drop" speculation was wrong.
+
+### Fixed
+- **A chained constant multiply `A * B * C` where the first two operands are
+  const (enum members, or NUMs that overflow the small-fold) silently computed
+  `B * C` — the first operand dropped** (`320*200*4` → `800`, not `256000`).
+  Root cause in the shared frontend `src/frontend/parse_expr.cyr` multiply loop:
+  when the LHS is a tracked constant (`_cfo==1`) and the RHS is *itself* a const,
+  the branch cleared `_cfo` then called `PARSE_FACTOR(RHS)`, which **re-armed**
+  `_cfo`/`_cfp`/`_cfv` on the RHS. It committed the runtime `EIMUL` (`A*B`) but
+  left the stale tracking, so the next `*` const-folded off the stale RHS and
+  `SCP`-rewound the code pointer to the RHS's `EMOVI`, **discarding the `A*B`
+  EIMUL**. Fix: clear `_cfo` *after* the runtime `EIMUL` (and on the
+  `_TRY_MUL_BY_POW2` success path) in the three `_cfo==1` sub-branches — mirroring
+  the already-correct outer-else / div / mod paths. `(A*B)*4`, `enum*lit*lit`,
+  `var*var*lit`, and 2-operand multiplies were unaffected and stay so. Target-
+  independent (the bug + fix are in shared parse code) — confirmed fixed on
+  x86 + agnos (identical emitted `imul;shl`) + aarch64 (qemu).
+
+**Verification:** cycc self-host **byte-identical fixpoint** (cycc's own source
+has no `enum*enum*C`, so it converged in one step; cycc +112 B → 1,049,968 B);
+check.sh **89/89**; **ecb + ach + pi + cass all `SELFHOST_OK`** (codegen change —
+mandatory cross-OS); new regression `tests/tcyr/const_chained_multiply_fold.tcyr`
+(8 cases across the fold shapes); bench `self_compile ~520 ms`. The cyrius-doom
+0.29.1 workaround can be dropped. **user pushes/tags after CI.**
+
 ## [6.1.36] — 2026-06-11
 
 **v6.1.x slot 36 (Phase F — security hardening, pack F2): TLS-authn hardening —
