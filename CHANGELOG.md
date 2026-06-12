@@ -6,6 +6,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.39] — 2026-06-12
+
+**v6.1.x slot 39: diagnostic `syscall` byte-length audit.** Swept all 539
+`syscall(SYS_WRITE, …, "…", LEN)` strings in `src/` + `lib/` for hand-counted
+length errors and fixed the 27 with a wrong `LEN`. (Flagged during the v6.1.38 F3
+review, which noted 2; the full sweep found 27.) No public API-surface change.
+
+### Fixed
+- **27 miscounted diagnostic message lengths.** 16 were em-dash undercounts —
+  UTF-8 `—` is 3 bytes but was counted as 1, so `LEN` was too small and the
+  message **truncated** (often dropping the trailing `s\n`, so consecutive
+  warnings ran together). 11 others were off-by-one, including a few
+  **over-counts** where `LEN` > the true byte length, making `write(2)` **read
+  past the string literal** into adjacent `.rodata` (garbage appended to the
+  message). Each `LEN` is now the exact UTF-8 byte length (`\n` = 1 byte, `—` = 3).
+  Sites span `aarch64/emit.cyr`, `macho/emit.cyr`, `x86/emit.cyr`,
+  `x86/fixup.cyr`, `common/ir.cyr`, `common/util.cyr`, `lex.cyr`, `lex_pp.cyr`,
+  `parse.cyr`, `parse_fn.cyr`, `main.cyr`, `main_aarch64_macho.cyr`,
+  `main_win.cyr`. Data-only (length immediates) → no codegen change.
+
+**Verification:** the audit (regex extract + escape-aware byte count) re-runs to
+**0 mismatches**; cycc self-hosts **byte-identical** (1,050,704 B, unchanged —
+data-only); check.sh **89/89**; **ecb + ach + pi + cass `SELFHOST_OK`** (several
+fixes are in the aarch64/macho/win emit paths); bench `self_compile ~510 ms`
+(flat). Issue
+[`2026-06-12-diagnostic-syscall-byte-length-audit.md`](docs/development/issues/2026-06-12-diagnostic-syscall-byte-length-audit.md)
+notes a permanent check.sh gate to prevent recurrence (follow-up). **user
+pushes/tags after CI.**
+
 ## [6.1.38] — 2026-06-12
 
 **v6.1.x slot 38: F3 memory-safety parity pack** — five hardening bites from the

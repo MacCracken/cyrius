@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.38** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,050,704 B (+736 B @ 6.1.38 — F3 memory-safety guards: PE-import caps, fixup-cap unify, jump off-by-one) |
+| **Version** | **6.1.39** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,050,704 B (unchanged @ 6.1.39 — diagnostic byte-length audit is data-only; +736 B @ 6.1.38 F3 guards) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -28,9 +28,28 @@
 | tests | 174 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; brk-final `0x5D9D000` (~93.6 MB virtual) |
-| bench (every-release gate) | self_compile ~496 ms (vs ~557 ms @ .37 — box-quietness variance; +880 B F3 growth, no regression) |
+| bench (every-release gate) | self_compile ~510 ms (flat @ .39 — data-only audit; ~496 ms @ .38) |
 
-> **Handoff (2026-06-12):** v6.1.38 cut — **Phase F pack F3: memory-safety parity,
+> **Handoff (2026-06-12):** v6.1.39 cut — **diagnostic `syscall` byte-length audit.**
+> Swept all 539 `syscall(SYS_WRITE,…,"…",LEN)` strings in src/+lib/; fixed **27**
+> with a wrong `LEN` (16 em-dash undercounts — UTF-8 `—`=3 B counted as 1 →
+> truncated message; 11 off-by-one incl. a few over-counts → `write` over-reads
+> adjacent `.rodata`). Each `LEN` now the exact byte count. Data-only (length
+> immediates) → cycc byte-identical, **size unchanged** 1,050,704 B. **VERIFIED:**
+> re-audit 0 mismatches; self-host byte-identical; check.sh 89/89; ecb/ach/pi/cass
+> `SELFHOST_OK` (fixes touch aarch64/macho/win emit paths); bench ~510 ms (flat).
+> Issue [`2026-06-12-diagnostic-syscall-byte-length-audit.md`](issues/2026-06-12-diagnostic-syscall-byte-length-audit.md)
+> notes a permanent recurrence-prevention check.sh gate (follow-up).
+> **NEXT (queued, v6.1.40):** CVE-24 grow-and-cap — premise-check showed it's a
+> fragile **75+-ref heap relocation** (the 4 slot-indexed local tables must move to
+> a fresh 256 KB block; macro tables block in-place growth; direct slot reads +
+> `lex_pp` file-scratch alias are special cases). Its own slot, not a fold-in.
+> [`2026-06-12-locals-table-slot-indexed-overflow.md`](issues/2026-06-12-locals-table-slot-indexed-overflow.md).
+> **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-12):** v6.1.38 cut — **Phase F pack F3: memory-safety parity,
 > CVE-25/26/27/28 + AR-03** (2026-06-10 deep-dive; **5 of 6 — CVE-24 deferred**).
 > **CVE-26** agnos `alloc()` pre-lock size guards (neg `size`→backward bump→overlap)
 > + local `ALLOC_MAX`. **CVE-25** `_sb_grow` propagates OOM rc; 5 str-builders abort
