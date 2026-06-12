@@ -151,7 +151,7 @@ fn EB(S, b): i64 {
     if (cp >= 3145728) {
         syscall(SYS_WRITE, 2, "error: codebuf overflow (", 25);
         PRNUM(cp);
-        syscall(SYS_WRITE, 2, "/3145728 bytes) — program too large for single compilation\n", 60);
+        syscall(SYS_WRITE, 2, "/3145728 bytes) — program too large for single compilation\n", 61);
         syscall(SYS_EXIT, 1);
     }
     store8(S + 0x41A000 + cp, b & 0xFF);
@@ -1423,7 +1423,7 @@ fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
         disp_lo = disp_lo - _cur_fn_ret_stash;
     }
     if (disp_lo < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of LDUR Q imm9 range on aarch64\n", 67);
+        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of LDUR Q imm9 range on aarch64\n", 66);
         syscall(SYS_EXIT, 1);
     }
     var off_lo = disp_lo & 0x1FF;
@@ -1443,7 +1443,7 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
         disp_lo = disp_lo - _cur_fn_ret_stash;
     }
     if (disp_lo < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of STUR Q imm9 range on aarch64\n", 67);
+        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of STUR Q imm9 range on aarch64\n", 66);
         syscall(SYS_EXIT, 1);
     }
     var off_lo = disp_lo & 0x1FF;

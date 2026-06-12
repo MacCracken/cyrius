@@ -1085,7 +1085,7 @@ fn EMITELF_USER(S, etype): i64 {
     if (final_sz > 16777216) {
         syscall(SYS_WRITE, 2, "error: output too large (", 25);
         PRNUM(final_sz);
-        syscall(SYS_WRITE, 2, "/16777216 bytes)\n  code: ", 24);
+        syscall(SYS_WRITE, 2, "/16777216 bytes)\n  code: ", 25);
         PRNUM(cp);
         syscall(SYS_WRITE, 2, " data: ", 7);
         PRNUM(totvar);

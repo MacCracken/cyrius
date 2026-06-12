@@ -296,7 +296,7 @@ fn EMITMACHO_ARM64(S): i64 {
         if (data_pages < 1) { data_pages = 1; }
     }
     if (code_aligned > 16777216) {
-        syscall(SYS_WRITE, 2, "error: Mach-O ARM64 code too large (> 16MB)\n", 45);
+        syscall(SYS_WRITE, 2, "error: Mach-O ARM64 code too large (> 16MB)\n", 44);
         syscall(SYS_EXIT, 1);
     }
 

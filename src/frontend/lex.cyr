@@ -640,7 +640,7 @@ fn READFILE(path, dst, maxsz): i64 {
         while (load8(path + pi) != 0) {
             if (load8(path + pi) == 46 && load8(path + pi + 1) == 46) {
                 if (pi == 0 || load8(path + pi - 1) == 47) {
-                    syscall(SYS_WRITE, 2, "error: path traversal rejected: ", 31);
+                    syscall(SYS_WRITE, 2, "error: path traversal rejected: ", 32);
                     var plen = 0;
                     while (load8(path + plen) != 0) { plen += 1; }
                     syscall(SYS_WRITE, 2, path, plen);
@@ -896,7 +896,7 @@ fn NPOS_GUARD(S, need): i64 {
     if (np + need >= 261872) {
         syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
         PRNUM(np);
-        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce included modules or split into separate units\n", 70);
+        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce included modules or split into separate units\n", 72);
         syscall(SYS_EXIT, 1);
     }
     return 0;
@@ -912,7 +912,7 @@ fn LEXID(S, p, npos): i64 {
     if (npos >= 261872) {
         syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
         PRNUM(npos);
-        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce included modules or split into separate units\n", 70);
+        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce included modules or split into separate units\n", 72);
         syscall(SYS_EXIT, 1);
     }
     var bl = GBL(S);

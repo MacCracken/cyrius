@@ -613,7 +613,7 @@ if (_vn > 0) {
 # extension below; flags MAP_ANON|MAP_PRIVATE = 0x1002.
 var S = syscall(9, 0, 0x5D9D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
-    syscall(1, 2, "cycc: mmap heap init failed\n", 27);
+    syscall(1, 2, "cycc: mmap heap init failed\n", 28);
     syscall(60, 1);
 }
 #else
@@ -1879,19 +1879,19 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
         PRNUM(GFNC(S) * 100 / 8192);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 44);
+        syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 45);
     }
     if (GNPOS(S) * 100 / 262144 >= 85) {
         syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
         PRNUM(GNPOS(S) * 100 / 262144);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GNPOS(S));
-        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce includes or split soon\n", 47);
+        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce includes or split soon\n", 49);
     }
     if (GVCNT(S) * 100 / 8192 >= 85) {
         syscall(SYS_WRITE, 2, "warning: var_table at ", 22);
         PRNUM(GVCNT(S) * 100 / 8192);
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GVCNT(S));
-        syscall(SYS_WRITE, 2, "/8192) — too many globals + locals\n", 35);
+        syscall(SYS_WRITE, 2, "/8192) — too many globals + locals\n", 37);
     }
     if (GFCNT(S) * 100 / 1048576 >= 85) {
         syscall(SYS_WRITE, 2, "warning: fixup_table at ", 24);

@@ -95,7 +95,7 @@ fn REGFN(S, noff): i64 {
     if (fc >= 8192) {
         syscall(SYS_WRITE, 2, "error: function table full (", 28);
         PRNUM(fc);
-        syscall(SYS_WRITE, 2, "/8192) — split into separate compilation units\n", 48);
+        syscall(SYS_WRITE, 2, "/8192) — split into separate compilation units\n", 49);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x9BA000 + fc * 8, noff);
@@ -1067,7 +1067,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                             PRSTR(S + 0x60000 + _tc_arg_noff);
                             syscall(SYS_WRITE, 2, ") for raw bytes, str_println(", 29);
                             PRSTR(S + 0x60000 + _tc_arg_noff);
-                            syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 47);
+                            syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 46);
                         }
                     }
                 }
@@ -1424,7 +1424,7 @@ fn PARSE_FN_DEF(S): i64 {
             FM_LOOKUP(S, GTLINE(S, GTI(S)));
             syscall(SYS_WRITE, 2, ": '", 3);
             PRSTR(S + 0x60000 + noff);
-            syscall(SYS_WRITE, 2, "': #regalloc skipped — fn contains inline asm (hardcoded stack offsets)\n", 72);
+            syscall(SYS_WRITE, 2, "': #regalloc skipped — fn contains inline asm (hardcoded stack offsets)\n", 74);
         }
         _regalloc_pending = 0;
     }

@@ -843,7 +843,7 @@ fn PARSE_STMT(S): i64 {
         # Store {block_start, end_jmp, flag_local} triple (24 bytes per entry)
         var dci = L64(S + 0x1AC020);
         if (dci >= 64) {
-            syscall(SYS_WRITE, 2, "error: too many defer blocks (max 64)\n", 37);
+            syscall(SYS_WRITE, 2, "error: too many defer blocks (max 64)\n", 38);
             syscall(SYS_EXIT, 1);
         }
         S64(S + 0x1AC028 + dci * 24, dstart);

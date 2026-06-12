@@ -22,7 +22,7 @@ fn SCP(S, v): i64 { S64(S + 0x18C108, v); return 0; }
 fn GVCNT(S): i64 { return L64(S + 0x18C110); }
 fn SVCNT(S, v): i64 {
     if (v >= 8192) {
-        syscall(SYS_WRITE, 2, "error: variable table full (8192) — too many globals+enums+arrays\n", 66);
+        syscall(SYS_WRITE, 2, "error: variable table full (8192) — too many globals+enums+arrays\n", 68);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x18C110, v);
@@ -53,7 +53,7 @@ fn SVENUMID(S, vi, v): i64 { S64(S + 0x204000 + vi * 8, v); return 0; }
 fn GENUMC(S): i64 { return L64(S + 0x214000); }
 fn SENUMC(S, v): i64 {
     if (v >= 1024) {
-        syscall(SYS_WRITE, 2, "error: enum table full (1024) — too many enum decls\n", 53);
+        syscall(SYS_WRITE, 2, "error: enum table full (1024) — too many enum decls\n", 54);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x214000, v);

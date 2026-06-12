@@ -223,7 +223,7 @@ fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xE3A000 + bi * 32 + 24) >> 32) 
 fn ir_bb_new(S): i64 {
     var bi = IR_BCNT(S);
     if (bi >= 32768) {
-        syscall(SYS_WRITE, 2, "error: IR block table full\n", 28);
+        syscall(SYS_WRITE, 2, "error: IR block table full\n", 27);
         syscall(SYS_EXIT, 1);
     }
     var ni = IR_NCNT(S);
@@ -244,7 +244,7 @@ fn ir_set_bb(S, bi): i64 {
 fn ir_emit(S, op, flags, arg1, arg2): i64 {
     var ni = IR_NCNT(S);
     if (ni >= 262144) {
-        syscall(SYS_WRITE, 2, "error: IR node buffer full\n", 28);
+        syscall(SYS_WRITE, 2, "error: IR node buffer full\n", 27);
         syscall(SYS_EXIT, 1);
     }
     _ir_set_node(S, ni, _ir_pack_op(op, flags), arg1, arg2);

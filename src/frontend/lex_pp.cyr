@@ -269,7 +269,7 @@ fn PP_ALREADY_INCLUDED(S, fname): i64 {
 fn PP_MARK_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
     if (cnt >= 256) {
-        syscall(SYS_WRITE, 2, "error: include-once table full (256 files) — split compilation unit\n", 67);
+        syscall(SYS_WRITE, 2, "error: include-once table full (256 files) — split compilation unit\n", 70);
         syscall(SYS_EXIT, 1);
     }
     var p = S + 0x1C0000 + cnt * 128;
@@ -490,7 +490,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
                     # seen in the wild (agnos Process @ 22); past that, fail
                     # loud.
                     if (fc >= 256) {
-                        syscall(SYS_WRITE, 2, "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n", 92);
+                        syscall(SYS_WRITE, 2, "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n", 95);
                         syscall(SYS_EXIT, 1);
                     }
                     var fni = 0;

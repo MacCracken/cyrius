@@ -163,7 +163,7 @@ if (_vn > 0) {
 # 0x457C000 (~78.5 MB) pre-v5.10.40.
 var S = syscall(9, 0, 0x5D9D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
-    syscall(SYS_WRITE, 2, "cycc_macho: mmap heap init failed\n", 33);
+    syscall(SYS_WRITE, 2, "cycc_macho: mmap heap init failed\n", 34);
     syscall(SYS_EXIT, 1);
 }
 
