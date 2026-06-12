@@ -2,7 +2,7 @@
 
 **Scope** — the **whole v6.x cycle** (cycle-open 2026-05-19). This is
 the cycle-level reference: framing, per-minor budgeting, and the
-remaining minors v6.1.x → v6.5.x. The **current active minor** is
+remaining minors v6.2.x → v6.5.x. The **current active minor** is
 broken out in detail in [roadmap.md](roadmap.md); items beyond the
 cycle (v7.0+ aspirations, unpinned language refinements, speculative
 work) live in [roadmap-future.md](roadmap-future.md). v5.x history and
@@ -97,11 +97,12 @@ consolidation).
 
 ---
 
-## v6.1.x — Backend Codegen Multi-Arc
+## v6.1.x — Backend Codegen Multi-Arc — ✅ COMPLETE (v6.1.0 → v6.1.41)
 
-> **Active minor.** [roadmap.md](roadmap.md) is the authoritative,
-> slot-by-slot view; the section below is the cycle-level summary kept
-> here for the v6.x overview. When the two disagree, roadmap.md wins.
+> **Closed minor.** Shipped to v6.1.41; v6.2.0 opened the cut 2026-06-12.
+> The section below is the cycle-level summary; per-patch detail is the
+> [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. The active minor is
+> now **v6.2.x** ([roadmap.md](roadmap.md)).
 
 **Theme**: position-independent codegen + dynamic-link migration +
 v6.0.x back-compat retirement + the v6.0.x → v6.1.x carry-ins. Pinned
@@ -159,18 +160,50 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
+### Shipped so far (v6.2.0 → v6.2.2)
+
+- **v6.2.0** ✅ — Phase 0 growable-region foundation (fixup_tbl / fn-tables /
+  codebuf → relocatable-base + 2×-grow) + `cyrius init` CI/release alignment.
+- **v6.2.1** ✅ — element-typed fixed arrays `var a: T[N]` (the `i64[N]` slot
+  spelling resolving the address-taken-local byte-vs-slot footgun) + daimon-class
+  slot-array sweep (10 cyrius-owned sites).
+- **v6.2.2** ✅ — aarch64/macOS annotation-token codegen fix (pass-1 + pass-2
+  consume across the 3 non-x86 forks; unblocks `bayan` on aarch64/macOS) +
+  ecosystem stdlib fold-in (all 12 vendored `lib/*.cyr` → released 6.2.1-pinned
+  versions; api-surface 4236 fns).
+
+Remaining v6.2.x arcs: **bare-metal target formalization** (then) **RISC-V rv64**
+— see the active [roadmap.md](roadmap.md) pinned sequence.
+
+### Frontend / DX hardening (v6.2.x later line — pulled in 2026-06-12)
+
+- **DRY the four pass-1/pass-2 top-level scanners** (`main.cyr` +
+  `main_aarch64.cyr` / `main_aarch64_macho.cyr` / `main_x86_macho.cyr`). The
+  v6.2.2 `unexpected enum` fix was the **3rd instance** of a new top-level token
+  desyncing across forks (`#io` v5.8.20, `#pure` v6.2.2). Each fork hand-maintains
+  a parallel pass-1 pre-scan + pass-2 parse loop; the next annotation token or
+  top-level construct will desync again. Extract the token-dispatch into a shared
+  `common/`-hosted helper (mirror the v6.1.4/.5 hoist pattern). Logic-preserving →
+  byte-identical self-host on all 4 hosts is the gate. MEDIUM (DX /
+  recurring-bug-class). [[project_v622_annotation_fork_desync]].
+- **Undefined-function call should hard-error, not emit `ud2`** (carried — see
+  below; reachable undefined-fn → hard error, dead stubs stay warnings).
+
 ### Language Refinements — convention decisions (v6.3.x band; substrate-gated)
 
-- **Local-array byte-vs-slot convention footgun.** A *local* `var a[N]` is N BYTES
-  (rounded to 8); a *global* is N i64 SLOTS (N*8). Address-taken local fixed arrays
-  written per-slot (`store64(&a + i*8)` — the global idiom) overflow into the next
-  static object. **Re-diagnosed 2026-06-12** (disasm: `var parts[4]` gets 8 bytes,
-  the documented N-bytes local size — NOT the `(N-1)*8` off-by-one the daimon report
-  inferred; cycc is working-as-documented). It bit daimon 1.2.6 hard (silent static
-  corruption → every route 404'd; worked around with inline compute). A deliberate
-  decision — unify the convention (local = N slots?) or lint the idiom + audit
-  stdlib/consumers — NOT a reactive v6.1.x codegen patch (that would silently change
-  the byte-buffer convention). MEDIUM (DX/footgun).
+- **Local-array byte-vs-slot convention footgun.** *Largely resolved at v6.2.1* —
+  the new `var a: T[N]` element-typed spelling (`i64[N]` = N slots, `u8[N]` = N
+  bytes) gives the unambiguous slot form for the `store64(&a + i*8)` idiom, and
+  the .1 daimon-class sweep fixed the 10 cyrius-owned sites. **Remaining decision:**
+  the *bare* `var a[N]` convention (local = N BYTES rounded to 8; global = N i64
+  SLOTS, N*8) is still a latent footgun — an address-taken bare local written
+  per-slot overflows the next static object. **Re-diagnosed 2026-06-12** (disasm:
+  `var parts[4]` gets 8 bytes, the documented N-bytes local size — NOT the
+  `(N-1)*8` off-by-one the daimon report inferred; cycc is working-as-documented).
+  It bit daimon 1.2.6 hard (silent static corruption → every route 404'd). Decide:
+  lint the bare-local address-taken-per-slot idiom, or audit stdlib/consumers for
+  remaining bare-array slot writes — NOT a reactive codegen patch (would silently
+  change the byte-buffer convention). MEDIUM (DX/footgun).
   [`issues/2026-06-11-addr-taken-local-array-static-underreserve.md`](issues/2026-06-11-addr-taken-local-array-static-underreserve.md).
 - **Undefined-function call should hard-error, not emit `ud2`.** Today a call to a
   missing fn compiles with `exit 0` + a warning, then SIGILLs at runtime — so a
