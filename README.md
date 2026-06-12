@@ -91,7 +91,7 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,050,608 B** (~1.05 MB) x86_64 at v6.1.41 |
+| Compiler (`cycc`) | **1,055,784 B** (~1.05 MB) x86_64 at v6.2.0 |
 | Cross compilers | `cycc_aarch64` 595,800 B, `cycc_win` 814,592 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
 | Bootstrap compiler (`cybs`) | **12,344 B** |
@@ -143,7 +143,9 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 
 ### Caps + heap
 
-ident buffer 256 KB (v5.11.18; was 128 KB), fn table 8192 (v5.11.19; was 4096), fixup table 1M (v5.7.7), input_buf 1 MB (v5.7.10), str_data 2 MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 256 KB (v5.7.36), aarch64 codebuf 3 MB (v5.7.34), preprocess buf 8 MB (v5.11.33), binary output_buf 16 MB (v6.1.27; was 2 MB — relocated to heap-top).
+ident buffer 256 KB (v5.11.18; was 128 KB), input_buf 1 MB (v5.7.10), str_data 2 MB (v5.8.59), token arrays 1M-entry (v5.8.46), distlib per-module 256 KB (v5.7.36), preprocess buf 8 MB (v5.11.33), binary output_buf 16 MB (v6.1.27; was 2 MB — relocated to heap-top).
+
+**Growable as of v6.2.0 (Phase 0).** The three former pressure tables are no longer fixed caps — they relocate off-heap and double on demand, ending the cap-raise treadmill: **fn-tables** (was 8192-fn fixed → grow+rehash, 32768 ceiling), **fixup table** (was 1M fixed → grow, 64M-entry ceiling), **codebuf** (was 3 MB fixed → grow, 64 MiB ceiling; the cx bytecode backend keeps its own 512 KB region).
 
 ## Build Tool (cyrius)
 
@@ -215,7 +217,7 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 1,050,608 B at v6.1.41)
+    -> cycc (modular compiler + IR, 1,055,784 B at v6.2.0)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 

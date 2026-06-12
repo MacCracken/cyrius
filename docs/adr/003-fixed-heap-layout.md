@@ -6,7 +6,28 @@
 
 ## Decision
 
-Use fixed-offset heap arrays allocated via a single `brk` syscall. No malloc, no free, no dynamic resizing within a compilation run.
+Use fixed-offset heap arrays allocated via a single `brk` syscall (an
+anonymous-mmap chunk allocator since v6.1.19). No malloc, no free, no dynamic
+resizing within a compilation run — **with the v6.2.0 exception noted below**.
+
+## Status Update — v6.2.0 (Phase 0: growable pressure tables)
+
+Three regions outgrew the fixed-cap model and were migrated to **growable**
+storage, ending the cap-raise treadmill (the fixup table alone was bumped
+16K → 32K → 262K → 1M across v5.x). Each keeps its original offset as the
+*initial* base, then relocates off-heap (`alloc()`) and doubles on demand:
+
+- **fixup_tbl** — `_fixup_base` / `_fixup_grow`, 64M-entry ceiling
+- **fn-tables** (16 parallel tables + the `fn_name`/`fn_start` hashes + the
+  `live[]` DCE bitmap) — `_fnt_*` behind a single `_fnt_cap`, grow + rehash,
+  32,768 ceiling
+- **codebuf** — `_codebuf_base` / `_codebuf_grow`, 64 MiB ceiling (the cx
+  bytecode backend keeps its own fixed 512 KB region)
+
+The fixed-layout rationale (determinism, auditability, no allocator in the hot
+path) **still holds for the remaining regions**; the growable tables stay
+input-deterministic (allocation order is a pure function of the input), so
+self-host remains byte-identical. See `CHANGELOG [6.2.0]` and `util.cyr`.
 
 ## Rationale
 
@@ -29,9 +50,9 @@ two disagree, **`src/main.cyr` wins**. Major regions, in offset order:
 0x14A000  fn_regalloc    64 KB    per-fn #regalloc flags
 0x18C100  compiler state ~80 KB   scalars, struct / patch / jump tables, gvar_toks (0x198000), field tables (0x1FC000, v6.0.47)
 0x21A000  str_data        2 MB    string-literal bytes
-0x41A000  codebuf         3 MB    generated machine code
-0x9BA000  fn tables     ~256 KB   4096 functions (names / offsets / params / inline / …)
-0x107B000 fixup_tbl      16 MB    1,048,576 fixup entries × 16 bytes
+0x41A000  codebuf         3 MB    generated machine code (INITIAL base — growable @ v6.2.0, 64 MiB ceiling)
+0x9BA000  fn tables     ~256 KB   INITIAL base — growable @ v6.2.0 (8192 → 32,768 ceiling; names / offsets / params / masks / …)
+0x107B000 fixup_tbl      16 MB    INITIAL base — growable @ v6.2.0 (1,048,576 → 64M-entry ceiling)
 0x2D7C000 tok_types       8 MB    1,048,576 token type slots
 0x357C000 tok_values      8 MB    1,048,576 token value slots
 0x3D7C000 tok_lines       8 MB    1,048,576 token line slots
@@ -68,7 +89,7 @@ clobbered `gvar_toks` → CI SIGILL). Heap alloc (post-brk) is collision-free.
 
 ## Consequences
 
-- Fixed capacity limits (1,048,576 tokens, 8192 vars, 4096 functions, 512 `#derive` structs, 1024 globals)
+- Fixed capacity limits remain for tokens (1,048,576), vars (8192), `#derive` structs (512), globals (1024); **fn-tables, fixup_tbl, and codebuf are growable since v6.2.0** (see Status Update above)
 - Buffer overflow bugs are silent corruption — always add bounds checks
 - Relocating buffers requires two-step bootstrap (see ADR-005: Two-Step Bootstrap for Compiler Changes)
 - Adjacent buffers with no guard bytes are time bombs (tok_names overflow, v0.9.2)

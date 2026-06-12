@@ -15,7 +15,7 @@ The core type is the 64-bit integer (see ADR-002): strings are pointers (which a
 Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
 
 ### Is it fast?
-The compiler self-compiles in ~497 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.05 MB output, measured at v6.1.41 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~480–500 ms as growth-tax over the v6.0.x–v6.1.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler self-compiles in ~497 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.05 MB output, measured at v6.2.0 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~480–500 ms as growth-tax over the v6.0.x–v6.2.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 
@@ -31,11 +31,18 @@ The compiler hit unexpected syntax. Common causes:
 ### "error: duplicate var at token N"
 Two `var` declarations with the same name in the same function. Cyrius has no block scoping — all vars in a function share one scope. Rename the duplicate.
 
-### "error: fixup table full"
-Too many variable / function references in one compilation. The cap has been raised three times across v5.x (16K → 32K → 262K at v5.7.1 → 1M at v5.7.7). If you hit the 1M cap, the source genuinely needs splitting — or file an issue and we'll consider the fourth bump (which would convert to a dynamic vec; see roadmap §"fixup table dynamic conversion").
-- Run `cyrius capacity --check src/main.cyr` to see how close you are to each cap
-- Split into smaller files compiled separately
-- Reduce the number of includes
+### fixup / function / code-buffer capacity
+As of **v6.2.0 (Phase 0)** the three former pressure tables are **growable** —
+they relocate off-heap and double on demand, ending the cap-raise treadmill that
+ran through v5.x (the fixup table alone went 16K → 32K → 262K → 1M):
+- **fixup table** — grows to a 64M-entry ceiling (was a fixed 1M cap; the old
+  `error: fixup table full` no longer fires)
+- **fn-tables** — grow + rehash to a 32,768-function ceiling (was a fixed 8192 cap)
+- **codebuf** — grows to a 64 MiB ceiling (was a fixed 3 MB cap)
+
+You'd only hit a ceiling on a genuinely pathological compilation. `cyrius capacity
+--check src/main.cyr` still reports headroom; splitting into separately-compiled
+units remains the fallback for the rare ceiling case.
 
 ### Program exits with wrong code
 Exit codes are truncated to 0-255 (Linux limitation). Use `print_num()` or `fmt_int()` to display values larger than 255.
@@ -66,8 +73,8 @@ String literals are null-terminated, but if you're building strings manually, ma
 2. For loop step must be simple assignment (`i = i + 1`)
 3. Exit codes truncated to 0-255
 4. Max ~64 global vars with initializers (use enums for constants)
-5. Max 1M fixup entries per compilation (v5.7.7; was 1024 pre-v5.x — `cyrius capacity --check` to monitor)
-6. Max 4096 functions per compilation (was 256 pre-v5.x; raised to 4096 in alpha series)
+5. Fixup entries: growable since v6.2.0, 64M-entry ceiling (was a fixed 1M cap — `cyrius capacity --check` to monitor headroom)
+6. Functions per compilation: growable since v6.2.0, 32,768 ceiling (was a fixed 8192 cap)
 7. No negative literals — use `(0 - N)` instead of `-N`
 8. `default`, `match`, `in` are keywords — don't use as variable names
 9. Block closures (`|x| { ... }`) only work inside functions, not at global scope
