@@ -159,10 +159,11 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
-### Codegen correctness (v6.2.x opening — HIGH, fix before platform work)
+### Codegen correctness — pulled into the v6.1.x tail (v6.1.42, BEFORE v6.2.0)
 
-Bottom-to-top / correctness-first: a HIGH-severity silent-corruption codegen bug
-lands at the opening, ahead of the platform + growable work.
+Per user 2026-06-12: a HIGH-severity silent-corruption codegen bug is fixed as the
+**next v6.1.x patch (v6.1.42), before the v6.2.0 minor** — correctness-first,
+ahead of the platform/growable work. So v6.2.x opens with this already closed.
 
 - **Address-taken fixed local array under-reserves static backing (off-by-one
   slot).** A `var a[N]` whose address escapes is promoted to static storage but
@@ -176,6 +177,7 @@ lands at the opening, ahead of the platform + growable work.
   reserves the full `N*8`. Filed by daimon (consumer); cyrius-side tracking +
   repro confirmation:
   [`issues/2026-06-11-addr-taken-local-array-static-underreserve.md`](issues/2026-06-11-addr-taken-local-array-static-underreserve.md).
+  → scheduled **v6.1.42** ([roadmap.md](roadmap.md)).
 
 ### Phase 0 (v6.2.x opening) — growable-region foundation
 

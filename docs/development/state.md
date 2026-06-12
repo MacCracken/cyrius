@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.40** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,050,864 B (+160 B @ 6.1.40 — CVE-24 SFLC slot cap; local tables relocated to heap-top + grown) |
+| **Version** | **6.1.41** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,050,608 B (−256 B @ 6.1.41 — closeout: dead GFVA removed + Mach-O cap / security-reject / IR-counter fixes) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -28,9 +28,32 @@
 | tests | 174 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~497 ms (flat @ .40 — +160 B cap; ~510 ms @ .39) |
+| bench (every-release gate) | self_compile ~497 ms (flat @ .41 — closeout; dead-code floor 63→62) |
 
-> **Handoff (2026-06-12):** v6.1.40 cut — **CVE-24: per-fn local-table overflow (grow + cap).**
+> **Handoff (2026-06-12):** v6.1.41 cut — **pre-v6.2.0 closeout hardening** (3-dimension
+> closeout audit caught 3 residuals the per-slot reviews missed). **(P1) Mach-O
+> output-cap parity** — CVE-23 (v6.1.35) missed both `EMITMACHO_*` writers (capped
+> code only, not `var buf[N]` globals/strings/__LINKEDIT); a large-globals macOS
+> program overran output_buf into the .40 local tables at `0x5D9D000` → silent heap
+> corruption. Both now use `_check_output_cap` on the true on-disk size. **(P2)
+> security-reject return code** — path-traversal/absolute include rejects `return 0`
+> → PP treated as empty include → `include "/etc/passwd"` exited **0**; now `-1`
+> (fatal). New reject-gate case (4/4). **(P1·latent) IR counters** relocated out of
+> fixup_tbl (`0x174A0xx`→`ir_state 0xF3A0xx`; collided at ≥446k fixups+CYRIUS_IR).
+> Cleanup: byte-length over-count `fixup.cyr:1992` the .39 single-line regex missed
+> (multi-line scan now clean); dead `GFVA` removed (63→62, −256 B); stale heap-map
+> comments. **VERIFIED:** fixpoint converged (1,050,608 B); macho cross-compilers
+> build; check.sh 89/89; ecb/ach/pi/cass `SELFHOST_OK` (Slot 1 on macOS); bench
+> ~497 ms. **NEXT (v6.1.42, before the v6.2.0 minor — user 2026-06-12):** fix the
+> daimon-reported **address-taken local-array static under-reservation** (HIGH;
+> `var a[N]` escaping → static reserves `(N-1)*8` not `N*8`, corrupts the adjacent
+> literal; confirmed on .41) —
+> [`issues/2026-06-11-addr-taken-local-array-static-underreserve.md`](issues/2026-06-11-addr-taken-local-array-static-underreserve.md).
+> **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-12):** v6.1.40 cut — **CVE-24: per-fn local-table overflow (grow + cap).**
 > Closes the 6th/final F3 item (deferred from .38 after the audit premise proved
 > wrong). `SFLC`/`local_cnt` counts stack-frame SLOTS not vars (a `stack var buf[N]`
 > registers N/8 fillers), so the 4 slot-indexed tables (fn_local_names/depths 256,

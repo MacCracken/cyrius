@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.41] — 2026-06-12
+
+**v6.1.x slot 41: pre-v6.2.0 closeout hardening.** A closeout audit (adversarial
+security re-review of Phase F + heap-map audit + dead-code sweep) surfaced three
+real residuals the per-slot reviews had missed, plus cleanup. No public
+API-surface change.
+
+### Fixed
+- **Mach-O output-cap parity (P1) — `_check_output_cap` on the true on-disk size.**
+  CVE-23 (v6.1.35) migrated every ELF/PE writer to the shared 16 MB output_buf cap
+  on the true file size, but the two Mach-O emitters were missed: `EMITMACHO_ARM64`
+  capped only code size (excluding `var buf[N]` globals, strings, `__LINKEDIT`) and
+  `EMITMACHO_EXEC` checked `content_sz` without the 4 KB header prefix (a filesz
+  slack window). A large-globals macOS program (e.g. 4 MB code + 14 MB globals)
+  overran output_buf by ~2 MB — and the v6.1.40 local-table relocation put those
+  tables at `0x5D9D000`, exactly where the overrun lands → silent heap corruption.
+  Both now call `_check_output_cap(S, …)` (`seg_filesz` / `FILE_END`) before the
+  first store. Self-host-invisible (cycc's own Mach-O output is far under 16 MB).
+- **Security-reject return code (P2) — a rejected hostile include now fails the
+  build.** The path-traversal (CVE-02) and absolute-path (CVE-16) include rejects in
+  `lex.cyr` `return 0`, which the preprocessor treated as a successfully-opened
+  *empty* include — so `include "/etc/passwd"` printed `error: … rejected` but the
+  build **exited 0** (the CO-02 exit-masking class, re-opened on the security path).
+  Both now `return -1`, firing the PP's existing `nr < 0` SYS_EXIT guards.
+  Confidentiality was never at risk (the file is never read) — build-integrity. New
+  `_input_validation_rejects_gate` case (4/4).
+- **IR-state counters relocated out of the fixup_tbl region (P1, latent).** Four IR
+  builder counters (`IR_BCNT`/`CURBB`/`ECNT`/`ENABLED`) were stranded at `0x174A0xx`
+  — inside `fixup_tbl` (`0x107B000 + fc*16`; fixup entry 446208 lands at
+  `0x174A000`), so at ≥446 k fixups with `CYRIUS_IR` enabled they collided. Moved
+  into the documented `ir_state` region (`0xF3A008`/`010`/`018`/`020`) alongside
+  `IR_NCNT`. Latent — never the production self-host path (byte-identical).
+
+### Changed
+- The v6.1.39 diagnostic byte-length audit's "0 mismatches" missed one over-count
+  at `x86/fixup.cyr:1992` (a multi-line-formatted `syscall` that escaped the
+  single-line regex; LEN 103 → true 100) — fixed, and re-confirmed clean with a
+  multi-line-aware scan (the one remaining flagged literal, `main.cyr:780` LEN=1, is
+  an intentional 1-byte newline write).
+- Removed the dead `GFVA` getter (the one genuinely-unreferenced fn of the 63;
+  `SFVA` stays) — unreachable-fn floor 63 → 62, cycc −256 B. Corrected stale
+  `ir.cyr` / per-target heap-map size+address comments left by the v6.1.27 + v6.1.40
+  relocations.
+
+**Verification:** self-host **fixpoint converged** (1,050,608 B); both Mach-O
+cross-compilers build (`_check_output_cap` resolves on the macho path); check.sh
+**89/89** (reject gate 4/4); **ecb + ach + pi + cass `SELFHOST_OK`** (Slot 1
+confirmed on the macOS hosts); hostile-include repros exit non-zero; multi-line
+byte-length scan clean; bench `self_compile ~497 ms` (flat). **NEXT (v6.1.42,
+before v6.2.0):** the daimon-reported address-taken-local-array static
+under-reservation (HIGH; codegen). **user pushes/tags after CI.**
+
 ## [6.1.40] — 2026-06-12
 
 **v6.1.x slot 40: CVE-24 — per-fn local-table overflow (grow + cap).** Closes the
