@@ -28,7 +28,33 @@ v6.2.0 opens the **Platform Expansion** cycle (see
 - Carried **Language-Refinements** (the local-array byte-vs-slot convention
   footgun; undefined-fn-call → hard-error) tracked in `roadmap_6.md`.
 
-First code bite (Phase 0) lands this slot — see below.
+### Changed
+- **Phase 0 — `fixup_tbl` migrated to growable storage (AR-03).** The fixup
+  table (relocation records, 16 B each) was a fixed 1,048,576-entry region at
+  `S+0x107B000` with ten per-writer `fc >= 1048576` hard-error checks scattered
+  across x86/aarch64/PE/runtime that spuriously rejected big programs. Replaced
+  with a `_fixup_base`/`_fixup_cap` pair grown in place by `_fixup_grow` (doubles
+  the buffer off the heap, copies live entries) the instant `GFCNT()` reaches the
+  cap — so the writers never cap-check. Initial cap unchanged (1,048,576 at the
+  same offset → byte-identical self-host), with a 64M-entry runaway ceiling. The
+  cx backend keeps its own fixed region (never inits `_fixup_cap`; the
+  `_fixup_cap != 0` guard leaves it untouched). Verified: byte-identical
+  self-host (1,050,640 B); a cap-64 cycc forced ~70 k entries' worth of grows
+  during self-compile and produced byte-identical output to the no-grow
+  reference; check.sh 89/89.
+- **`cyrius init` CI/release scaffolding aligned to the proper toolchain
+  workflow** (patra / sigil reference). The generated `.github/workflows/`
+  templates hand-rolled the installer (`curl -sLO … tar … cp -r`) and the
+  release workflow shipped only `build/*` — no source tarball or `SHA256SUMS`,
+  so a scaffolded project could not be consumed as a dependency (the resolver
+  fetches `<name>-<tag>.tar.gz` + verifies sha256). Now: both ci.yml + release.yml
+  install via the canonical `scripts/install.sh | CYRIUS_VERSION=… sh` one-liner;
+  release.yml does a VERSION+cyrius.cyml+tag consistency check, extracts the
+  tagged `CHANGELOG.md` section into the release body, and publishes a
+  `git archive` source tarball + `SHA256SUMS`. Scaffold now writes a `VERSION`
+  file (single source of truth) with `cyrius.cyml` deriving via
+  `version = "${file:VERSION}"`. Verified end-to-end: `cyrius init` (bin + lib)
+  produces a project that builds + runs.
 
 ## [6.1.41] — 2026-06-12
 

@@ -1,6 +1,6 @@
 [package]
 name = "{PROJ}"
-version = "0.1.0"
+version = "${file:VERSION}"
 description = "{DESCRIPTION}"
 license = "GPL-3.0-only"
 language = "cyrius"

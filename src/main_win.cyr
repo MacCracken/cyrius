@@ -82,9 +82,10 @@
 #   0xA0A000 fn_inline     [32768]       4096 inline flags
 #   0xA1A000 fn_param_str_mask [32768]   4096 Str-param bitmasks (v3.6.0)
 #   0xA2A000 fn_code_end   [32768]       4096 fn code END offsets (v4.4.0)
-# Tables relocated past the runtime fixup_tbl (at 0x107B000 × 16 B × 262144 = 4 MiB,
-# old comment about 16384 obsolete (v5.7.1 bumped to 262144) Fits exactly in the 256 KB between that
-# end and brk's top at 0xA3A000.
+# These fn-metadata tables sit at 0xA1A000/0xA2A000, BELOW the runtime
+# fixup_tbl base (0x107B000). The fixup_tbl is GROWABLE as of v6.2.0
+# (Phase 0 / AR-03): initial 1048576 × 16 B = 16 MiB at 0x107B000, then
+# _fixup_grow doubles it off the heap — see runtime.cyr RECFIX.
 #
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
@@ -339,6 +340,10 @@ _HEAP_INIT_SCRATCH(S);
 # v6.0.7 — init alloc and assign rp_vec (return-patch storage).
 alloc_init();
 rp_vec = vec_new();
+# Phase 0 (v6.2.0): growable fixup table — base = the existing 0x107B000 region,
+# cap = the old hard cap; GFCNT grows it 2x via alloc() once full (util.cyr).
+_fixup_base = S + 0x107B000;
+_fixup_cap = 1048576;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating

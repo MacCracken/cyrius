@@ -82,7 +82,7 @@ fn FIXUP(S): i64 {
     var fcnt = GFCNT(S);
     var fi = 0;
     while (fi < fcnt) {
-        var faddr = S + 0x107B000 + fi * 16;
+        var faddr = _fixup_base + fi * 16;
         var coff = L64(faddr);
         var raw = L64(faddr + 8);
         var ftype = raw >> 56;
@@ -276,7 +276,7 @@ fn FIXUP(S): i64 {
     # can dispatch indirectly in ways the static call graph misses.
     var t3i = 0;
     while (t3i < fcnt_pre) {
-        var t3a = S + 0x107B000 + t3i * 16;
+        var t3a = _fixup_base + t3i * 16;
         var t3r = L64(t3a + 8);
         if ((t3r >> 56) == 3) {
             var t3idx = t3r & 0x00FFFFFFFFFFFFFF;
@@ -463,7 +463,7 @@ fn FIXUP(S): i64 {
     # with code 1 on any reachable undef ref.
     var u59_ufi = 0;
     while (u59_ufi < fcnt_pre) {
-        var u59_ufaddr = S + 0x107B000 + u59_ufi * 16;
+        var u59_ufaddr = _fixup_base + u59_ufi * 16;
         var u59_ucoff = L64(u59_ufaddr);
         var u59_uraw = L64(u59_ufaddr + 8);
         var u59_uftype = u59_uraw >> 56;

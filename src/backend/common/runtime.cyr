@@ -236,25 +236,20 @@ fn _prof_clock_ns(): i64 {
 }
 
 # Record a fixup entry — append (codepos, var_idx) to the fixup
-# table at S + 0x107B000. Cap 1048576 entries (16 bytes each →
-# 16 MiB region). AR-03 (v6.1.38): the region was grown to 1048576
-# in v5.7.7 but the x86/aarch64/PE/runtime checks lagged at a stale
-# 262144 (¼ the region), spuriously rejecting big programs the region
-# had room for; unified up to match the region + cx backend. Pre-
-# collapse: x86 + aarch64 had byte-identical bodies modulo the error
-# message — aarch64 also printed the count via PRNUM. Unified to use
-# the PRNUM variant.
-# Note: cx/emit.cyr has its own RECFIX (also cap 1048576, region
-# 0x150B000) — different storage layout, same ceiling.
+# table at _fixup_base. AR-03 (v6.2.0): the table is now GROWABLE —
+# GFCNT() doubles _fixup_base/_fixup_cap (via _fixup_grow) the moment
+# the count reaches the cap, so the writers never cap-check. Initial
+# cap is 1048576 (16 MiB at S+0x107B000); _fixup_grow alloc()s a fresh
+# 2× buffer off the heap and copies the live entries, up to a 64M-entry
+# runaway ceiling. This retired the 10 per-writer `fc >= 1048576` hard-
+# error checks that spuriously rejected big programs (the v6.1.38 cap-
+# unification was the last fixed-region patch before this migration).
+# Note: cx/emit.cyr has its own RECFIX (fixed cap 1048576, region
+# 0x150B000) — it never inits _fixup_cap, so the `_fixup_cap != 0`
+# guard in GFCNT leaves the cx path on its original fixed storage.
 fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
-    if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (", 25);
-        PRNUM(fc);
-        syscall(SYS_WRITE, 2, "/1048576)\n", 10);
-        syscall(SYS_EXIT, 1);
-    }
-    var addr = S + 0x107B000 + fc * 16;
+    var addr = _fixup_base + fc * 16;
     S64(addr, GCP(S));
     S64(addr + 8, idx);
     SFCNT(S, fc + 1);

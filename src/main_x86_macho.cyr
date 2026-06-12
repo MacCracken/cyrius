@@ -80,6 +80,10 @@ _HEAP_INIT_SCRATCH(S);
 # init alloc and assign rp_vec (return-patch storage).
 alloc_init();
 rp_vec = vec_new();
+# Phase 0 (v6.2.0): growable fixup table — base = the existing 0x107B000 region,
+# cap = the old hard cap; GFCNT grows it 2x via alloc() once full (util.cyr).
+_fixup_base = S + 0x107B000;
+_fixup_cap = 1048576;
 
 # Read input (1 MB input_buf)
 var bl = 0;

@@ -75,8 +75,45 @@ fn STI(S, v): i64 { S64(S + 0x18C120, v); return 0; }
 fn GNPOS(S): i64 { return L64(S + 0x18C128); }
 fn SNPOS(S, v): i64 { S64(S + 0x18C128, v); return 0; }
 
-# Fixup count (moved to make room for 1024-entry fixup table)
-fn GFCNT(S): i64 { return L64(S + 0x18FCA8); }
+# Phase 0 (v6.2.0): growable fixup table. The fixup entries — (codepos, var_idx)
+# pairs, 16 B each — lived in a FIXED 16 MiB region at S+0x107B000 hard-capped at
+# 1048576 (the cap AR-03 unified + the deep-dive flagged as a silent-overrun risk).
+# `_fixup_base` starts AT that region and `_fixup_cap` at the old cap, so for any
+# program under the old cap nothing changes (byte-identical); GFCNT grows the
+# backing 2x via alloc() the moment the count would exceed it, ending the
+# cap-raise treadmill. Inited in each per-target driver after the heap is up.
+var _fixup_base = 0;
+var _fixup_cap = 0;
+# Grow the fixup backing 2x: alloc a new region, copy the used entries, repoint
+# _fixup_base (the old region is leaked — cycc is a short-lived process). Uses a
+# RAW count read (L64, not GFCNT) to avoid re-entering the grow check.
+fn _fixup_grow(S): i64 {
+    var nc = _fixup_cap * 2;
+    # Runaway guard (replaces the old hard 1048576 cap with a generous ceiling —
+    # 64M entries = 1 GiB; no real program reaches it, but a pathological input
+    # can't grow unbounded into OOM).
+    if (nc > 67108864) {
+        syscall(SYS_WRITE, 2, "error: fixup table exceeds 64M entries\n", 39);
+        syscall(SYS_EXIT, 1);
+    }
+    var nb = alloc(nc * 16);
+    var used = L64(S + 0x18FCA8) * 16;
+    var i = 0;
+    while (i < used) { store64(nb + i, load64(_fixup_base + i)); i = i + 8; }
+    _fixup_base = nb;
+    _fixup_cap = nc;
+    return 0;
+}
+# Fixup count. GFCNT is called right before every fixup write (writers do
+# `fc = GFCNT(S)` then write slot fc), so the grow-when-full check lives here —
+# one global compare per call; readers (count < cap) never trigger it.
+fn GFCNT(S): i64 {
+    var c = L64(S + 0x18FCA8);
+    # _fixup_cap==0 → growable fixup not inited (the cx backend keeps its own
+    # fixed 0x150B000 table; also guards any pre-init call) → skip the grow.
+    if (_fixup_cap != 0 && c >= _fixup_cap) { _fixup_grow(S); }
+    return c;
+}
 fn SFCNT(S, v): i64 { S64(S + 0x18FCA8, v); return 0; }
 # Last var index
 fn GLVAR(S): i64 { return L64(S + 0x18FCB0); }

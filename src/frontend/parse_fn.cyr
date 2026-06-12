@@ -2806,7 +2806,7 @@ fn PARSE_FN_DEF(S): i64 {
                     var _fcn = GFCNT(S);
                     var _fi = _fc0;
                     while (_fi < _fcn) {
-                        var _fa = S + 0x107B000 + _fi * 16;
+                        var _fa = _fixup_base + _fi * 16;
                         var _fcp = L64(_fa);
                         var _fsh = 0;
                         var _ni2 = 0;

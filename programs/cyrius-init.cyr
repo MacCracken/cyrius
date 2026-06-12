@@ -395,12 +395,16 @@ fn main() {
     sys_mkdir(_join(name, ".github/workflows"), 493);
 
     var fail = 0;
-    # 8 no-expansion templates (still rendered through the same
+    # 9 no-expansion templates (still rendered through the same
     # path — the {KEY} substitution is a no-op when no placeholders
     # are present).
     if (_render_and_write(templates_dir, "gitignore",            name, ".gitignore",                       name, cyrius_ver, description) != 0) { fail = fail + 1; }
     if (_render_and_write(templates_dir, "license",              name, "LICENSE",                          name, cyrius_ver, description) != 0) { fail = fail + 1; }
     if (_render_and_write(templates_dir, "changelog.md",         name, "CHANGELOG.md",                     name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    # VERSION file = single source of truth; cyrius.cyml derives via
+    # version = "${file:VERSION}". The release workflow checks both ==
+    # the pushed tag (proper toolchain pattern — patra / sigil).
+    if (_render_and_write(templates_dir, "version",              name, "VERSION",                          name, cyrius_ver, description) != 0) { fail = fail + 1; }
     if (_render_and_write(templates_dir, "ci.yml",               name, ".github/workflows/ci.yml",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
     if (_render_and_write(templates_dir, "release.yml",          name, ".github/workflows/release.yml",    name, cyrius_ver, description) != 0) { fail = fail + 1; }
     if (_render_and_write(templates_dir, "adr-template.md",      name, "docs/adr/template.md",             name, cyrius_ver, description) != 0) { fail = fail + 1; }

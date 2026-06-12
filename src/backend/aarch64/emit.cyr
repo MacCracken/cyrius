@@ -516,11 +516,7 @@ fn EVADDR(S, idx): i64 {
 # String address
 fn ESADDR(S, soff): i64 {
     var fc = GFCNT(S);
-    if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
-        syscall(SYS_EXIT, 1);
-    }
-    var faddr = S + 0x107B000 + fc * 16;
+    var faddr = _fixup_base + fc * 16;
     S64(faddr, GCP(S));
     S64(faddr + 8, (1 << 56) | soff);
     SFCNT(S, fc + 1);
@@ -879,11 +875,7 @@ fn EMACHO_EXIT_ARM(S): i64 {
     EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
     # Record ftype=5 __got-ref fixup at the adrp that follows.
     var fc = GFCNT(S);
-    if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
-        syscall(SYS_EXIT, 1);
-    }
-    var faddr = S + 0x107B000 + fc * 16;
+    var faddr = _fixup_base + fc * 16;
     S64(faddr, GCP(S));
     S64(faddr + 8, (5 << 56) | 0);  # ftype=5, __got slot idx=0 (_exit)
     SFCNT(S, fc + 1);
@@ -899,11 +891,7 @@ fn EMACHO_EXIT_ARM(S): i64 {
 # slot 0 reuses FIXUP_ADRP_ADD.
 fn _EMACHO_BLR_GOT(S, slot): i64 {
     var fc = GFCNT(S);
-    if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
-        syscall(SYS_EXIT, 1);
-    }
-    var faddr = S + 0x107B000 + fc * 16;
+    var faddr = _fixup_base + fc * 16;
     S64(faddr, GCP(S));
     S64(faddr + 8, (5 << 56) | slot);
     SFCNT(S, fc + 1);
@@ -1186,11 +1174,7 @@ fn ECALLFIX(S, fnidx): i64 {
     var poff = GCP(S);
     EW(S, 0x94000000);  # bl +0 (placeholder)
     var fc = GFCNT(S);
-    if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
-        syscall(SYS_EXIT, 1);
-    }
-    var faddr = S + 0x107B000 + fc * 16;
+    var faddr = _fixup_base + fc * 16;
     S64(faddr, poff);
     S64(faddr + 8, (2 << 56) | fnidx);
     SFCNT(S, fc + 1);
@@ -1944,11 +1928,7 @@ fn ETAILJMP(S, fnidx): i64 {
     var poff = GCP(S);
     EW(S, 0x14000000);  # B placeholder
     var fc = GFCNT(S);
-    if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
-        syscall(SYS_EXIT, 1);
-    }
-    var faddr = S + 0x107B000 + fc * 16;
+    var faddr = _fixup_base + fc * 16;
     S64(faddr, poff);
     S64(faddr + 8, (4 << 56) | fnidx);
     SFCNT(S, fc + 1);

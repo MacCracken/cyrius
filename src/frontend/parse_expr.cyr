@@ -363,7 +363,7 @@ fn PARSE_FACTOR(S): i64 {
             }
             # Register the function-address fixup (common to both
             # backends — only the placeholder bytes differ).
-            var fnaddr = S + 0x107B000 + fc * 16;
+            var fnaddr = _fixup_base + fc * 16;
             # v5.11.36 path-A: parser-to-emit named-op refactor.
             # Dispatch + fixup record + SFCNT all live in
             # <backend>/emit.cyr::ELOAD_FN_ADDR.
@@ -1152,7 +1152,7 @@ fn PARSE_FACTOR(S): i64 {
             syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
             syscall(SYS_EXIT, 1);
         }
-        var clfaddr = S + 0x107B000 + clfc * 16;
+        var clfaddr = _fixup_base + clfc * 16;
         # v5.11.36 path-A: closure-fn-addr uses the same named op
         # as `&fn_name` — identical emit shape, same fixup type.
         ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
