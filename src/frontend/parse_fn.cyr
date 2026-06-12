@@ -245,7 +245,7 @@ fn FINDLOCAL(S, noff): i64 {
     var i = lc - 1;
     # Search backward so inner scope shadows outer
     while (i >= 0) {
-        var sn = L64(S + 0x191000 + i * 8);
+        var sn = L64(S + 0x5D9D000 + i * 8);
         if (sn >= 0) { if (STREQ(S, sn, noff) == 1) { return i; } }
         i = i - 1;
     }
@@ -915,8 +915,8 @@ fn PARSE_FNCALL(S, noff): i64 {
                 var inl_packed = GFINL(S, fi);
                 var pn0 = inl_packed & 0xFFFFFFFF;
                 var pn1 = (inl_packed >> 32) & 0xFFFFFFFF;
-                if (pc >= 1) { S64(S + 0x191000 + p0_slot * 8, pn0); SLDEP(S, p0_slot, GSDEP(S)); }
-                if (pc >= 2) { S64(S + 0x191000 + p1_slot * 8, pn1); SLDEP(S, p1_slot, GSDEP(S)); }
+                if (pc >= 1) { S64(S + 0x5D9D000 + p0_slot * 8, pn0); SLDEP(S, p0_slot, GSDEP(S)); }
+                if (pc >= 2) { S64(S + 0x5D9D000 + p1_slot * 8, pn1); SLDEP(S, p1_slot, GSDEP(S)); }
                 # Save state and replay body tokens
                 var saved_ti = GTI(S);
                 var saved_rpc = vec_len(rp_vec);
@@ -935,8 +935,8 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # Restore token index
                 STI(S, saved_ti);
                 # Invalidate temporary param locals
-                if (pc >= 1) { S64(S + 0x191000 + p0_slot * 8, 0 - 1); }
-                if (pc >= 2) { S64(S + 0x191000 + p1_slot * 8, 0 - 1); }
+                if (pc >= 1) { S64(S + 0x5D9D000 + p0_slot * 8, 0 - 1); }
+                if (pc >= 2) { S64(S + 0x5D9D000 + p1_slot * 8, 0 - 1); }
                 return 0;
             } } }
     # NORMAL CALL PATH
@@ -1965,7 +1965,7 @@ fn PARSE_FN_DEF(S): i64 {
                 var simd_j = 0;
                 while (simd_j < simd_slots - 1) {
                     var simd_fi = GFLC(S);
-                    S64(S + 0x191000 + simd_fi * 8, 0 - 1);  # anon
+                    S64(S + 0x5D9D000 + simd_fi * 8, 0 - 1);  # anon
                     SLDEP(S, simd_fi, 0);
                     SLTYPE(S, simd_fi, 0);
                     SFLC(S, simd_fi + 1);
@@ -1973,7 +1973,7 @@ fn PARSE_FN_DEF(S): i64 {
                 }
                 # Named slot (deepest disp; where &v resolves).
                 var simd_named = GFLC(S);
-                S64(S + 0x191000 + simd_named * 8, pnoff);
+                S64(S + 0x5D9D000 + simd_named * 8, pnoff);
                 SLDEP(S, simd_named, 0);
                 SLTYPE(S, simd_named, 0 - simd_sid);
                 SFLC(S, simd_named + 1);
@@ -1998,7 +1998,7 @@ fn PARSE_FN_DEF(S): i64 {
             } else {
                 # Int-class param — legacy single-slot path.
                 var li = GFLC(S);
-                S64(S + 0x191000 + li * 8, pnoff);
+                S64(S + 0x5D9D000 + li * 8, pnoff);
                 SLDEP(S, li, 0);
                 # v5.10.1: explicit SLTYPE clear for untyped params. The
                 # LTYPE table at S+0x192200 isn't cleared per-fn (only
@@ -2257,8 +2257,8 @@ fn PARSE_FN_DEF(S): i64 {
             }
         }
         if (can_inline == 1) {
-            if (pc == 2) { SFINL(S, fi, (L64(S + 0x191008) << 32) | (L64(S + 0x191000) & 0xFFFFFFFF)); }
-            elif (pc == 1) { SFINL(S, fi, L64(S + 0x191000)); }
+            if (pc == 2) { SFINL(S, fi, (L64(S + 0x5D9D008) << 32) | (L64(S + 0x5D9D000) & 0xFFFFFFFF)); }
+            elif (pc == 1) { SFINL(S, fi, L64(S + 0x5D9D000)); }
             elif (pc == 0) { SFINL(S, fi, 1); }
         } else { SFINL(S, fi, 0); }
     }

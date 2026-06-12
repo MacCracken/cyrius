@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.40] — 2026-06-12
+
+**v6.1.x slot 40: CVE-24 — per-fn local-table overflow (grow + cap).** Closes the
+sixth and final item of the F3 memory-safety pack (deferred from v6.1.38 after the
+audit's premise turned out wrong), and with it the urgent set of the 2026-06-10
+deep-dive audit. No public API-surface change.
+
+### Fixed
+- **CVE-24 — a large stack frame silently overflowed the per-fn local tables.**
+  `SFLC` / `local_cnt` counts **stack-frame slots, not variables** — a
+  `stack var buf[N]` registers N/8 per-slot filler entries — so the four
+  slot-indexed tables (`fn_local_names`/`local_depths` 256 slots,
+  `local_types`/`local_slice_widths` 576) were silently overrun by any frame
+  larger than ~2 KB (e.g. `stack_var.tcyr`'s 16 KB `big_frame` wrote ~2000 slots
+  into the neighbouring tables — benign for simple functions, a latent
+  miscompile for complex ones). The naive count cap first attempted in v6.1.38
+  broke that sanctioned test and was reverted; this is the real fix. The four
+  tables are **relocated to the heap top** (`0x5D9D000` / `0x5DBD000` /
+  `0x5DDD000` / `0x5DFD000`, appended above `output_buf` to avoid any internal
+  gap-collision) and **grown to 16384 slots (128 KB frames) each**; the S-region
+  size is bumped `0x5D9D000`→`0x5E1D000` (+512 KB) in all seven driver heap-init
+  sites (`brk` / `mmap` / cx; main_win was already `0x5F00000`). `SFLC` now caps
+  the slot count at 16384, firing a loud error before the overflowing write
+  instead of corrupting adjacent memory. ~46 `fn_local_names` references + 6
+  accessor references were relocated across `parse_ctrl`/`parse`/`parse_decl`/
+  `parse_expr`/`parse_fn`/`util`; the `lex_pp` 16 KB file-read scratch that
+  time-shared `0x191800` is untouched (the three parse-time tables moving away
+  only *reduced* the overlap).
+
+**Verification:** self-host **byte-identical** (1,050,864 B, +160 B for the cap);
+**cross-OS 4/4 `SELFHOST_OK`** (pi/ecb/ach/cass — the per-target heap-size bumps
+verified on real hardware, the failure mode being an unmapped table → immediate
+self-host crash); `stack_var.tcyr` **4/4** (the 16 KB `big_frame` now round-trips
+instead of overflowing); a new `_input_validation_rejects_gate` case (3/3) asserts
+a 200 KB `stack var` is loudly capped; check.sh **89/89**; bench `self_compile
+~497 ms` (flat). Heap-map docs synced (the canonical map in `main.cyr` + the four
+per-target driver maps). Issue
+[`2026-06-12-locals-table-slot-indexed-overflow.md`](docs/development/issues/archived/2026-06-12-locals-table-slot-indexed-overflow.md)
+resolved (option 1 — grow + cap; option 2, removing the per-slot fillers, remains
+the cleaner long-term design but was not needed). **user pushes/tags after CI.**
+
 ## [6.1.39] — 2026-06-12
 
 **v6.1.x slot 39: diagnostic `syscall` byte-length audit.** Swept all 539

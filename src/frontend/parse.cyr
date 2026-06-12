@@ -685,7 +685,7 @@ fn PARSE_STMT(S): i64 {
         # Flag local (initialized to 0 in prologue; set to 1 when this
         # declaration is reached at runtime).
         var sflag = GFLC(S);
-        S64(S + 0x191000 + sflag * 8, 0);
+        S64(S + 0x5D9D000 + sflag * 8, 0);
         SLDEP(S, sflag, GSDEP(S));
         SLTYPE(S, sflag, 0);
         SFLC(S, sflag + 1);
@@ -770,7 +770,7 @@ fn PARSE_STMT(S): i64 {
         var stk_j = 0;
         while (stk_j < stk_nslots - 1) {
             var stk_li = GFLC(S);
-            S64(S + 0x191000 + stk_li * 8, 0 - 1);
+            S64(S + 0x5D9D000 + stk_li * 8, 0 - 1);
             SLDEP(S, stk_li, GSDEP(S));
             SLTYPE(S, stk_li, 0);
             SFLC(S, stk_li + 1);
@@ -779,7 +779,7 @@ fn PARSE_STMT(S): i64 {
         # Named slot at the deepest frame offset — this is where
         # `&buf` and `buf` resolve via FINDLOCAL.
         var stk_named = GFLC(S);
-        S64(S + 0x191000 + stk_named * 8, stk_noff);
+        S64(S + 0x5D9D000 + stk_named * 8, stk_noff);
         SLDEP(S, stk_named, GSDEP(S));
         SLTYPE(S, stk_named, 0);
         SFLC(S, stk_named + 1);
@@ -822,7 +822,7 @@ fn PARSE_STMT(S): i64 {
         if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
         # Allocate hidden local for defer flag (initialized to 0 in prologue)
         var dflag = GFLC(S);
-        S64(S + 0x191000 + dflag * 8, 0);
+        S64(S + 0x5D9D000 + dflag * 8, 0);
         SLDEP(S, dflag, GSDEP(S));
         SLTYPE(S, dflag, 0);
         SFLC(S, dflag + 1);

@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.1.39** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
-| **cycc** (x86_64 ELF) | 1,050,704 B (unchanged @ 6.1.39 — diagnostic byte-length audit is data-only; +736 B @ 6.1.38 F3 guards) |
+| **Version** | **6.1.40** (v6.1.x cycle — Backend Codegen Multi-Arc; see [roadmap.md](roadmap.md)) |
+| **cycc** (x86_64 ELF) | 1,050,864 B (+160 B @ 6.1.40 — CVE-24 SFLC slot cap; local tables relocated to heap-top + grown) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 595,800 B (unchanged @ 6.1.29) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
@@ -27,10 +27,32 @@
 | sigil fold | 3.7.12 (3.7.11 distlib inliner fix + 3.7.12 x509 keyUsage/EKU/pathLen) |
 | tests | 174 `.tcyr` · 15 `.bcyr` |
 | stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
-| heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; brk-final `0x5D9D000` (~93.6 MB virtual) |
-| bench (every-release gate) | self_compile ~510 ms (flat @ .39 — data-only audit; ~496 ms @ .38) |
+| heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
+| bench (every-release gate) | self_compile ~497 ms (flat @ .40 — +160 B cap; ~510 ms @ .39) |
 
-> **Handoff (2026-06-12):** v6.1.39 cut — **diagnostic `syscall` byte-length audit.**
+> **Handoff (2026-06-12):** v6.1.40 cut — **CVE-24: per-fn local-table overflow (grow + cap).**
+> Closes the 6th/final F3 item (deferred from .38 after the audit premise proved
+> wrong). `SFLC`/`local_cnt` counts stack-frame SLOTS not vars (a `stack var buf[N]`
+> registers N/8 fillers), so the 4 slot-indexed tables (fn_local_names/depths 256,
+> types/slice 576) silently overran on any frame >~2 KB. Fix: **relocate** all 4 to
+> the heap top (`0x5D9D000`/`0x5DBD000`/`0x5DDD000`/`0x5DFD000`, appended above
+> output_buf) + **grow to 16384 slots (128 KB frames)** each; S-region size bumped
+> `0x5D9D000`→`0x5E1D000` (+512 KB) in all 7 driver heap-init sites (main_win already
+> `0x5F00000`); `SFLC` caps at 16384 (loud error vs silent overflow). ~46
+> fn_local_names + 6 accessor refs relocated; the `lex_pp` 16 KB file-scratch sharing
+> `0x191800` is untouched. **VERIFIED:** self-host byte-identical (+160 B);
+> ecb/ach/pi/cass `SELFHOST_OK` (per-target heap bumps on real hardware — a missed
+> bump → unmapped table → instant self-host crash); `stack_var.tcyr` 4/4 (16 KB
+> big_frame round-trips, was a silent overflow); new reject-gate case (3/3) caps a
+> 200 KB stack var; check.sh 89/89; bench ~497 ms. Heap-map docs synced; issue
+> archived. **F3 PACK COMPLETE (6/6); the 2026-06-10 deep-dive urgent set is done.**
+> **NEXT:** dep-fold cycle-close → v6.2.0; bug bandwidth as filed. (Follow-up noted:
+> a permanent check.sh gate for syscall-write byte-lengths, from the .39 audit.)
+> **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-12):** v6.1.39 cut — **diagnostic `syscall` byte-length audit.**
 > Swept all 539 `syscall(SYS_WRITE,…,"…",LEN)` strings in src/+lib/; fixed **27**
 > with a wrong `LEN` (16 em-dash undercounts — UTF-8 `—`=3 B counted as 1 →
 > truncated message; 11 off-by-one incl. a few over-counts → `write` over-reads

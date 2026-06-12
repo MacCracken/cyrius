@@ -304,7 +304,7 @@ fn PARSE_FOR(S): i64 {
                 store8(S + 0x60000 + fiidx_noff, 95); store8(S + 0x60000 + fiidx_noff + 1, 105);
                 store8(S + 0x60000 + fiidx_noff + 2, 0);
                 SNPOS(S, fiidx_noff + 3);
-                S64(S + 0x191000 + fili * 8, fiidx_noff);
+                S64(S + 0x5D9D000 + fili * 8, fiidx_noff);
                 SLDEP(S, fili, GSDEP(S));
                 SLTYPE(S, fili, 0);
                 EMOVI(S, 0);
@@ -312,7 +312,7 @@ fn PARSE_FOR(S): i64 {
                 SFLC(S, fili + 1);
                 # Item var
                 var fiitem = GFLC(S);
-                S64(S + 0x191000 + fiitem * 8, finoff);
+                S64(S + 0x5D9D000 + fiitem * 8, finoff);
                 SLDEP(S, fiitem, GSDEP(S));
                 SLTYPE(S, fiitem, 0);
                 EMOVI(S, 0);
@@ -390,7 +390,7 @@ fn PARSE_FOR(S): i64 {
             # RANGE for-in (.. already consumed, is_range==1)
             # rax has start value from PEXPR above
             var fili = GFLC(S);
-            S64(S + 0x191000 + fili * 8, finoff);
+            S64(S + 0x5D9D000 + fili * 8, finoff);
             SLDEP(S, fili, GSDEP(S));
             SLTYPE(S, fili, 0);
             EFLSTORE(S, fili);

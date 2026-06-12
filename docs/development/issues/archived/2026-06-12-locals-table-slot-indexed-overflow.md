@@ -62,5 +62,19 @@ frames are effectively unbounded (`stack var buf[1_000_000]`).
 
 ## Status
 
-OPEN. CVE-25/26/27/28 + AR-03 shipped in v6.1.38; CVE-24 deferred here. Needs a
-scoping decision (option 1 vs 2) before implementation.
+**RESOLVED v6.1.40 — option 1 (grow + cap).** The four slot-indexed local tables
+(`fn_local_names`/`local_depths`/`local_types`/`local_slice_widths`) were relocated
+from the cramped `0x191000`/`0x191800`/`0x192200`/`0x193400` band (256/576 slots) to
+the heap top at `0x5D9D000`/`0x5DBD000`/`0x5DDD000`/`0x5DFD000` and **grown to 16384
+slots (128 KB frames) each** (+512 KB heap, top `0x5D9D000`→`0x5E1D000`; the S-region
+`brk`/`mmap`/`VirtualAlloc` size bumped in all 7 driver sites — main_win was already
+`0x5F00000` and needed none). `SFLC` now caps the per-fn slot count at 16384, firing
+loudly before the overflowing write. The `lex_pp` 16 KB file-scratch that
+time-shared `0x191800` is untouched (the three parse-time tables moved away, only
+*reducing* the overlap). **Verified:** self-host byte-identical x86 + cross-OS
+`SELFHOST_OK` on pi/ecb/ach/cass (the per-target heap bumps); `stack_var.tcyr`'s
+16 KB `big_frame` round-trips; a 200 000-byte (25 000-slot) frame is loudly capped;
+check.sh 89/89. ~46 fn_local_names refs + 6 accessor refs relocated across
+parse_ctrl/parse/parse_decl/parse_expr/parse_fn/util. cycc +160 B. See CHANGELOG
+[6.1.40]. (Option 2 — removing the per-slot fillers — remains the cleaner long-term
+design but was not needed.)

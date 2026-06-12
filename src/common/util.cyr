@@ -124,7 +124,19 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
 fn GINFN(S): i64 { return L64(S + 0x18DA08); }
 fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
 fn GFLC(S): i64 { return L64(S + 0x18DA10); }
-fn SFLC(S, v): i64 { S64(S + 0x18DA10, v); return 0; }
+# CVE-24 (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
+# (a `stack var buf[N]` registers N/8 fillers), and the four slot-indexed local
+# tables — fn_local_names/local_depths/local_types/local_slice_widths, relocated
+# to S+0x5D9D000.. (4×128 KB) — hold 16384 slots each. Fire before the
+# 16384th-slot write overflows the table.
+fn SFLC(S, v): i64 {
+    if (v >= 16384) {
+        syscall(SYS_WRITE, 2, "error: too many stack slots in one function (max 16384)\n", 56);
+        syscall(SYS_EXIT, 1);
+    }
+    S64(S + 0x18DA10, v);
+    return 0;
+}
 # GRPC/SRPC retired at v6.0.7 — return-patch storage moved off the fixed
 # 256-slot array at S + 0x18DA20 and onto rp_vec (lib/vec.cyr). The 2 KB
 # array region [0x18DA20..0x18E220) and the counter slot at S + 0x18E220
@@ -232,8 +244,8 @@ fn STLINE(S, ti, v): i64 { S64(S + 0x3D7C000 + ti * 8, v); return 0; }
 # Block scoping
 fn GSDEP(S): i64 { return L64(S + 0x18FCC0); }
 fn SSDEP(S, v): i64 { S64(S + 0x18FCC0, v); return 0; }
-fn GLDEP(S, li): i64 { return L64(S + 0x191800 + li * 8); }
-fn SLDEP(S, li, v): i64 { S64(S + 0x191800 + li * 8, v); return 0; }
+fn GLDEP(S, li): i64 { return L64(S + 0x5DBD000 + li * 8); }
+fn SLDEP(S, li, v): i64 { S64(S + 0x5DBD000 + li * 8, v); return 0; }
 
 # Expression type tracking
 fn GESTYPE(S): i64 { return L64(S + 0x1903D8); }
@@ -261,7 +273,7 @@ fn SCOPE_POP(S): i64 {
     while (si >= 0) {
         if (GLDEP(S, si) >= dep) {
             # Mark as dead so FINDLOCAL won't match
-            S64(S + 0x191000 + si * 8, 0 - 1);
+            S64(S + 0x5D9D000 + si * 8, 0 - 1);
         }
         si = si - 1;
     }
@@ -272,8 +284,8 @@ fn SCOPE_POP(S): i64 {
 # Pointer scale tracking (0 = not a pointer, >0 = element size in bytes)
 fn GPSC(S): i64 { return L64(S + 0x18F890); }
 fn SPSC(S, v): i64 { S64(S + 0x18F890, v); return 0; }
-fn GLTYPE(S, li): i64 { return L64(S + 0x192200 + li * 8); }
-fn SLTYPE(S, li, v): i64 { S64(S + 0x192200 + li * 8, v); return 0; }
+fn GLTYPE(S, li): i64 { return L64(S + 0x5DDD000 + li * 8); }
+fn SLTYPE(S, li, v): i64 { S64(S + 0x5DDD000 + li * 8, v); return 0; }
 
 # v5.8.14 §6 — TYPE_SLICE element-type tracking.
 # Parallel-array stash for slice-typed locals: 576 entries × 8B,
@@ -282,8 +294,8 @@ fn SLTYPE(S, li, v): i64 { S64(S + 0x192200 + li * 8, v); return 0; }
 # 4=u32, 8=i64/ptr, 16=u128). Read by §7 bounds-aware indexing
 # (`s[i]` lowering picks load*/store* width from this) and §8
 # dot-syntax field access (.ptr returns pointer-to-element type).
-fn GSLICE_W(S, li): i64 { return L64(S + 0x193400 + li * 8); }
-fn SSLICE_W(S, li, w): i64 { S64(S + 0x193400 + li * 8, w); return 0; }
+fn GSLICE_W(S, li): i64 { return L64(S + 0x5DFD000 + li * 8); }
+fn SSLICE_W(S, li, w): i64 { S64(S + 0x5DFD000 + li * 8, w); return 0; }
 
 # (TWIDTH type-width helper removed — every call site now inlines
 # the byte-width decision directly for single-dispatch code paths.)

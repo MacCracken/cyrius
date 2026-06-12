@@ -474,14 +474,20 @@ fn _input_validation_rejects_gate(): i64 {
     fail = fail + _input_rejects_subcase("missing-include",
         "include \"zzqq_no_such_include_file.cyr\";\nfn main(): i64 { return 0; }",
         "cannot open include file");
+    # CVE-24 (v6.1.40) — a function whose stack frame exceeds the 16384-slot local
+    # tables (a >128 KB `stack var`) is loudly capped in SFLC, not silently
+    # overflowed into the neighbouring slot-indexed tables.
+    fail = fail + _input_rejects_subcase("stack-frame-overflow",
+        "fn big() { stack var buf[200000]; store8(&buf + 0, 1); return load8(&buf + 0); }\nfn main(): i64 { return big(); }",
+        "too many stack slots");
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": input-validation reject cases (2/2)");
+        println(": input-validation reject cases (3/3)");
     }
-    _check("lex/PP reject stray ASCII byte + missing include (CVE-31; v6.1.35)", fail);
+    _check("lex/PP reject stray ASCII + missing include + oversized frame (CVE-31/CVE-24)", fail);
     return fail;
 }
 

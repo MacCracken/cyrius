@@ -266,7 +266,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         var lf_lli = 0 - 2 - idx;
         var lf_is_ptr = 1;
         if (lf_lli > 0) {
-            if (L64(S + 0x191000 + (lf_lli - 1) * 8) == 0 - 1) { lf_is_ptr = 0; }
+            if (L64(S + 0x5D9D000 + (lf_lli - 1) * 8) == 0 - 1) { lf_is_ptr = 0; }
         }
         if (lf_is_ptr == 1) {
             # Pointer-to-struct: load the slot's value into rax,
@@ -378,7 +378,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         var fs_lli = 0 - 2 - idx;
         var fs_is_ptr = 1;
         if (fs_lli > 0) {
-            if (L64(S + 0x191000 + (fs_lli - 1) * 8) == 0 - 1) { fs_is_ptr = 0; }
+            if (L64(S + 0x5D9D000 + (fs_lli - 1) * 8) == 0 - 1) { fs_is_ptr = 0; }
         }
         if (fs_is_ptr == 1) {
             EFLLOAD(S, fs_lli);
@@ -965,7 +965,7 @@ fn PARSE_VAR(S): i64 {
         if (GINFN(S) == 1) {
             # Register first local
             var li1 = GFLC(S);
-            S64(S + 0x191000 + li1 * 8, noff);
+            S64(S + 0x5D9D000 + li1 * 8, noff);
             SLDEP(S, li1, GSDEP(S));
             SLTYPE(S, li1, 0);
             EFLSTORE(S, li1);
@@ -974,7 +974,7 @@ fn PARSE_VAR(S): i64 {
             EMOVRA_RDX(S);
             # Register second local
             var li2 = GFLC(S);
-            S64(S + 0x191000 + li2 * 8, noff2);
+            S64(S + 0x5D9D000 + li2 * 8, noff2);
             SLDEP(S, li2, GSDEP(S));
             SLTYPE(S, li2, 0);
             EFLSTORE(S, li2);
@@ -1161,7 +1161,7 @@ fn PARSE_VAR(S): i64 {
         var sv_j = 0;
         while (sv_j < sv_nslots - 1) {
             var sv_li = GFLC(S);
-            S64(S + 0x191000 + sv_li * 8, 0 - 1);
+            S64(S + 0x5D9D000 + sv_li * 8, 0 - 1);
             SLDEP(S, sv_li, GSDEP(S));
             SLTYPE(S, sv_li, 0);
             SFLC(S, sv_li + 1);
@@ -1169,7 +1169,7 @@ fn PARSE_VAR(S): i64 {
         }
         # Named slot with struct-type marker (ltype = -sid)
         var sv_named = GFLC(S);
-        S64(S + 0x191000 + sv_named * 8, noff);
+        S64(S + 0x5D9D000 + sv_named * 8, noff);
         SLDEP(S, sv_named, GSDEP(S));
         SLTYPE(S, sv_named, 0 - sv_sid);
         SFLC(S, sv_named + 1);
@@ -1224,13 +1224,13 @@ fn PARSE_VAR(S): i64 {
                         }
                         # Filler slot (hi half = &x+8)
                         var _f2c_fill = GFLC(S);
-                        S64(S + 0x191000 + _f2c_fill * 8, 0 - 1);
+                        S64(S + 0x5D9D000 + _f2c_fill * 8, 0 - 1);
                         SLDEP(S, _f2c_fill, GSDEP(S));
                         SLTYPE(S, _f2c_fill, 0);
                         SFLC(S, _f2c_fill + 1);
                         # Named slot (lo half = &x+0)
                         var _f2c_named = GFLC(S);
-                        S64(S + 0x191000 + _f2c_named * 8, noff);
+                        S64(S + 0x5D9D000 + _f2c_named * 8, noff);
                         SLDEP(S, _f2c_named, GSDEP(S));
                         SLTYPE(S, _f2c_named, 0 - 20);
                         SFLC(S, _f2c_named + 1);
@@ -1299,7 +1299,7 @@ fn PARSE_VAR(S): i64 {
                         var _f4c_fj = 0;
                         while (_f4c_fj < 3) {
                             var _f4c_fi = GFLC(S);
-                            S64(S + 0x191000 + _f4c_fi * 8, 0 - 1);
+                            S64(S + 0x5D9D000 + _f4c_fi * 8, 0 - 1);
                             SLDEP(S, _f4c_fi, GSDEP(S));
                             SLTYPE(S, _f4c_fi, 0);
                             SFLC(S, _f4c_fi + 1);
@@ -1307,7 +1307,7 @@ fn PARSE_VAR(S): i64 {
                         }
                         # Named slot (lo = &x+0, deepest disp)
                         var _f4c_named = GFLC(S);
-                        S64(S + 0x191000 + _f4c_named * 8, noff);
+                        S64(S + 0x5D9D000 + _f4c_named * 8, noff);
                         SLDEP(S, _f4c_named, GSDEP(S));
                         SLTYPE(S, _f4c_named, 0 - 21);
                         SFLC(S, _f4c_named + 1);
@@ -1411,14 +1411,14 @@ fn PARSE_VAR(S): i64 {
         var asv_j = 0;
         while (asv_j < asv_nslots - 1) {
             var asv_li = GFLC(S);
-            S64(S + 0x191000 + asv_li * 8, 0 - 1);
+            S64(S + 0x5D9D000 + asv_li * 8, 0 - 1);
             SLDEP(S, asv_li, GSDEP(S));
             SLTYPE(S, asv_li, 0);
             SFLC(S, asv_li + 1);
             asv_j = asv_j + 1;
         }
         var asv_named = GFLC(S);
-        S64(S + 0x191000 + asv_named * 8, noff);
+        S64(S + 0x5D9D000 + asv_named * 8, noff);
         SLDEP(S, asv_named, GSDEP(S));
         SLTYPE(S, asv_named, 0 - asv_sid);
         SFLC(S, asv_named + 1);
@@ -1503,14 +1503,14 @@ fn PARSE_VAR(S): i64 {
         var asp_j = 0;
         while (asp_j < asp_nslots - 1) {
             var asp_li = GFLC(S);
-            S64(S + 0x191000 + asp_li * 8, 0 - 1);
+            S64(S + 0x5D9D000 + asp_li * 8, 0 - 1);
             SLDEP(S, asp_li, GSDEP(S));
             SLTYPE(S, asp_li, 0);
             SFLC(S, asp_li + 1);
             asp_j = asp_j + 1;
         }
         var asp_named = GFLC(S);
-        S64(S + 0x191000 + asp_named * 8, noff);
+        S64(S + 0x5D9D000 + asp_named * 8, noff);
         SLDEP(S, asp_named, GSDEP(S));
         SLTYPE(S, asp_named, 0 - asp_sid);
         SFLC(S, asp_named + 1);
@@ -1668,14 +1668,14 @@ fn PARSE_VAR(S): i64 {
             # High-half slot (allocated first, higher address) —
             # nameless, tracks no scope. This is where addr+8
             # lands once we install the canonical slot below.
-            S64(S + 0x191000 + li * 8, 0);
+            S64(S + 0x5D9D000 + li * 8, 0);
             SLDEP(S, li, 0);
             SLTYPE(S, li, 0);
             SSLICE_W(S, li, 0);
             # Canonical (lower-address) slot — this is what the
             # name resolves to; EFLADDR returns its address.
             var li_canon = li + 1;
-            S64(S + 0x191000 + li_canon * 8, noff);
+            S64(S + 0x5D9D000 + li_canon * 8, noff);
             SLDEP(S, li_canon, GSDEP(S));
             SLTYPE(S, li_canon, 0);
             SSLICE_W(S, li_canon, slice_elt_w);
@@ -1706,7 +1706,7 @@ fn PARSE_VAR(S): i64 {
             EFLSTORE(S, li_canon);     # init canonical slot (slice .ptr / u128 low u64) — safe from regalloc patching because slice_set / slice_ptr take &s via EFLADDR, marking the canonical slot address-taken
             SFLC(S, li_canon + 1);
         } else {
-            S64(S + 0x191000 + li * 8, noff);
+            S64(S + 0x5D9D000 + li * 8, noff);
             SLDEP(S, li, GSDEP(S));
             if (scalar_type > 0) {
                 if (scalar_type < 8) {

@@ -67,7 +67,9 @@
 #                                        Relocated here from 0x44A000 at v5.11.33
 #                                        + cap raised 2 MB → 8 MB. See
 #                                        CHANGELOG [5.11.33].
-#   0x5D9D000 brk                         ~93.6 MB total heap (+16MB output_buf @ v6.1.27) (post-v5.11.68 reorg — was ~86.6 MB pre-.68). v5.11.33 grew this
+#   0x5D9D000 local tables (CVE-24 v6.1.40) 4×128 KB per-fn slot-indexed tables (fn_local_names/
+#                                        depths/types/slice; relocated from 0x191000) → top 0x5E1D000
+#   0x5E1D000 brk                         ~94.1 MB total heap (+512 KB local-table reloc @ v6.1.40; +16MB output_buf @ v6.1.27) (post-v5.11.68 reorg — was ~86.6 MB pre-.68). v5.11.33 grew this
 #                                        from 0x459D000 / 78.6 MB at v5.10.40 by
 #                                        the 8 MB preprocess_out relocation;
 #                                        v5.10.40 grew from 0x457C000 / 78.5 MB
@@ -146,7 +148,7 @@ if (_vn > 0) {
 # aarch64 syscall numbers (no translation layer — native numbers)
 var S = syscall(SYS_BRK, 0);
 # brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
-syscall(SYS_BRK, S + 0x5D9D000);
+syscall(SYS_BRK, S + 0x5E1D000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

@@ -79,7 +79,8 @@
 #                                        Relocated here from 0x44A000 at v5.11.33
 #                                        + cap raised 2 MB → 8 MB. See
 #                                        CHANGELOG [5.11.33].
-#   0x5D9D000 brk-equivalent              ~93.6 MB total heap (+16MB output_buf @ v6.1.27) (post-v5.11.68 reorg — was ~86.6 MB pre-.68). v5.11.33 grew this
+#   0x5D9D000 local tables (CVE-24 v6.1.40) 4×128 KB per-fn slot-indexed tables → top 0x5E1D000
+#   0x5E1D000 brk-equivalent              ~94.1 MB total heap (+512 KB local-table reloc @ v6.1.40; +16MB output_buf @ v6.1.27) (post-v5.11.68 reorg — was ~86.6 MB pre-.68). v5.11.33 grew this
 #                                        from 0x459D000 / 78.6 MB at v5.10.40 by
 #                                        the 8 MB preprocess_out relocation;
 #                                        v5.10.40 grew from 0x457C000 / 78.5 MB
@@ -161,7 +162,7 @@ if (_vn > 0) {
 # Size 0x4D9D000 (~86.6 MB) matches main.cyr's brk through the v5.11.33
 # preprocess_out relocation. Was 0x459D000 (~78.6 MB) pre-v5.11.33;
 # 0x457C000 (~78.5 MB) pre-v5.10.40.
-var S = syscall(9, 0, 0x5D9D000, 3, 0x1002, 0 - 1, 0);
+var S = syscall(9, 0, 0x5E1D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(SYS_WRITE, 2, "cycc_macho: mmap heap init failed\n", 34);
     syscall(SYS_EXIT, 1);

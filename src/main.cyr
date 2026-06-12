@@ -77,11 +77,16 @@
 #
 # --- Preprocessor + local var state ---
 #   0x190500  include_fname [256]         preprocessor filename scratch
-#   0x191000  fn_local_names              local variable names
-#   0x191800  local_depths  [512]         scope depths per local
+#   0x191000  (FREED v6.1.40)             was fn_local_names → relocated+grown to 0x5D9D000 (CVE-24)
+#   0x191800  lex_pp file-scratch [16KB]  READFILE deps-file scratch (was ALSO local_depths, which moved
+#                                        to 0x5DBD000 @ v6.1.40 — they time-shared this band)
 #   0x192000  macro tables                16 macros (names, offsets, bodies)
-#   0x192200  local_types                 local variable type tracking (576 entries × 8B → ends 0x193400)
-#   0x193400  local_slice_widths          v5.8.14 §6 — slice element widths (576 × 8B → ends 0x194600)
+#   0x192200  (FREED v6.1.40)             was local_types → relocated to 0x5DDD000
+#   0x193400  (FREED v6.1.40)             was local_slice_widths → relocated to 0x5DFD000
+#   --- the 4 slot-indexed per-fn local tables RELOCATED to the heap top @ 0x5D9D000 (CVE-24 v6.1.40):
+#       indexed by stack-frame SLOT (a `stack var buf[N]` registers N/8 fillers), so a large stack array
+#       overflowed the old 256/576-slot tables. Grown to 16384 slots (128 KB frames) each + capped in
+#       SFLC. See the 0x5D9D000 block below. ---
 #
 # --- Function tables (relocated v4.7.1 — caps raised 2048 → 4096) ---
 #   0x9BA000 fn_names      [32768]       4096 function name offsets
@@ -392,7 +397,16 @@
 #                                        See CHANGELOG [5.11.33] +
 #                                        [5.11.68].
 #
-#   0x5D9D000 brk-final                   ~93.6 MB — heap end (+16MB output_buf @ v6.1.27). v5.11.68
+#   --- per-fn local tables, relocated here + grown @ v6.1.40 (CVE-24); see the local-var note above ---
+#   0x5D9D000 fn_local_names    [131072]  16384 local-name slots × 8B (was 0x191000/256). SFLC caps the
+#                                        per-fn slot count at 16384 (= 128 KB stack frame) — a `stack var
+#                                        buf[N]` registers N/8 fillers, so large arrays overran the old table.
+#   0x5DBD000 local_depths      [131072]  16384 scope-depth slots × 8B (was 0x191800)
+#   0x5DDD000 local_types       [131072]  16384 type slots × 8B (was 0x192200)
+#   0x5DFD000 local_slice_widths[131072]  16384 slice-width slots × 8B (was 0x193400) → ends 0x5E1D000
+#
+#   0x5E1D000 brk-final                   ~94.1 MB — heap end (+512 KB local-table relocation @ v6.1.40;
+#                                        +16MB output_buf @ v6.1.27). v5.11.68
 #                                        full heap-map reorg shrunk brk
 #                                        by 9.06 MB (was 0x56AD000 /
 #                                        ~86.6 MB pre-.68). Layout is
@@ -611,7 +625,7 @@ if (_vn > 0) {
 # emit.cyr was missing too; both are needed). Linux mmap number 9 →
 # BSD 197 via EMACHO_SYSXLAT at emit. Size 0x4D9D000 matches the brk
 # extension below; flags MAP_ANON|MAP_PRIVATE = 0x1002.
-var S = syscall(9, 0, 0x5D9D000, 3, 0x1002, 0 - 1, 0);
+var S = syscall(9, 0, 0x5E1D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(1, 2, "cycc: mmap heap init failed\n", 28);
     syscall(60, 1);
@@ -622,7 +636,7 @@ var S = syscall(SYS_BRK, 0);
 # + 0xD81000 size, per src/frontend/ts/{lex,parse}.cyr design after
 # v5.7.2 P2.1). TS region is only TOUCHED in --lex-ts / --parse-ts
 # modes; the +13.5 MB brk extension is paid unconditionally.
-syscall(SYS_BRK, S + 0x5D9D000);
+syscall(SYS_BRK, S + 0x5E1D000);
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
