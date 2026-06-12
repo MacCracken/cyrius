@@ -8,7 +8,7 @@ section tracks the per-release add history; this file is the
 
 | Platform | Format | Status |
 |----------|--------|--------|
-| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~1.05 MB (1,045,752 B at v6.1.27 — 16 MB binary-output cap raise + bayan/ganita stdlib carves; x86-only); 3-step bootstrap byte-identical. |
+| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~1.05 MB (1,050,608 B at v6.1.41 — 16 MB binary-output cap raise + bayan/ganita stdlib carves; x86-only); 3-step bootstrap byte-identical. |
 | Linux aarch64 | ELF | **✅ Narrow + Broad** — cross-build byte-identity + native self-host on Pi 4 (repaired v5.6.32). Three libs (`lib/hashmap_fast`, `lib/u128`, `lib/mabda`) still contain ungated x86 asm — arch-gating queued. |
 | cyrius-x bytecode | .cyx | **✅ Narrow** — clean CYX bytecode (path B, v5.7.12); literal-arg propagation pinned v5.7.x patch slot. |
 | macOS x86_64 | Mach-O | **⏸️ Parity-track** (Apple Intel EOL) — cycc DOES self-host byte-identical on real Intel hardware (`ach`), verified every slot via `cross-os-selfhost.sh ach`. Kept parity-only; arm64 (`ecb`) is the primary/promised macOS target. |

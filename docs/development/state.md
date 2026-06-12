@@ -44,10 +44,15 @@
 > (multi-line scan now clean); dead `GFVA` removed (63→62, −256 B); stale heap-map
 > comments. **VERIFIED:** fixpoint converged (1,050,608 B); macho cross-compilers
 > build; check.sh 89/89; ecb/ach/pi/cass `SELFHOST_OK` (Slot 1 on macOS); bench
-> ~497 ms. **NEXT (v6.1.42, before the v6.2.0 minor — user 2026-06-12):** fix the
-> daimon-reported **address-taken local-array static under-reservation** (HIGH;
-> `var a[N]` escaping → static reserves `(N-1)*8` not `N*8`, corrupts the adjacent
-> literal; confirmed on .41) —
+> ~497 ms. **NEXT (v6.1.42 = closeout doc-sync pass):** vidya/doc currency refresh
+> (version-bump.sh doesn't touch vidya — the two GONE-file stdlib entries base64/csv→
+> bayan are FIXED; version refs .27→.41 pending), downstream cyrius.cyml pin check
+> (informational only — deps adjust downstream, not a cyrius issue), doc-health
+> ledger, bootstrap-closure verify. **The daimon "static under-reservation" was
+> RE-DIAGNOSED 2026-06-12** (disasm: `var parts[4]` = 8 bytes = the documented N-bytes
+> *local* convention, NOT a `(N-1)*8` off-by-one; daimon's `store64(&local+i*8)` uses
+> the *global* N-slots idiom on a local) → working-as-documented MEDIUM DX footgun,
+> moved to **v6.2.x Language Refinements**, NOT a v6.1.42 codegen fix —
 > [`issues/2026-06-11-addr-taken-local-array-static-underreserve.md`](issues/2026-06-11-addr-taken-local-array-static-underreserve.md).
 > **user pushes/tags after CI.**
 >

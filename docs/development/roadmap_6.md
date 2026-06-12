@@ -159,25 +159,26 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
-### Codegen correctness — pulled into the v6.1.x tail (v6.1.42, BEFORE v6.2.0)
+### Language Refinements — convention decisions (v6.3.x band; substrate-gated)
 
-Per user 2026-06-12: a HIGH-severity silent-corruption codegen bug is fixed as the
-**next v6.1.x patch (v6.1.42), before the v6.2.0 minor** — correctness-first,
-ahead of the platform/growable work. So v6.2.x opens with this already closed.
-
-- **Address-taken fixed local array under-reserves static backing (off-by-one
-  slot).** A `var a[N]` whose address escapes is promoted to static storage but
-  reserved `(N-1)*8` bytes, so the in-bounds write to slot `N-1` corrupts the next
-  static datum. **Confirmed on cycc 6.1.41** (silent static-memory corruption). In
-  daimon 1.2.6 it 404'd *every* HTTP route, layout-sensitively — a dead-code
-  removal shifted the static layout so an IP-octet `var parts[4]` buffer landed on
-  sandhi's `" "` literal, and the 4th-octet write overwrote the space the request
-  parser searched for. daimon shipped a workaround (inline octet compute); any
-  other address-taken `var a[N]` with a last-slot write stays exposed until cycc
-  reserves the full `N*8`. Filed by daimon (consumer); cyrius-side tracking +
-  repro confirmation:
+- **Local-array byte-vs-slot convention footgun.** A *local* `var a[N]` is N BYTES
+  (rounded to 8); a *global* is N i64 SLOTS (N*8). Address-taken local fixed arrays
+  written per-slot (`store64(&a + i*8)` — the global idiom) overflow into the next
+  static object. **Re-diagnosed 2026-06-12** (disasm: `var parts[4]` gets 8 bytes,
+  the documented N-bytes local size — NOT the `(N-1)*8` off-by-one the daimon report
+  inferred; cycc is working-as-documented). It bit daimon 1.2.6 hard (silent static
+  corruption → every route 404'd; worked around with inline compute). A deliberate
+  decision — unify the convention (local = N slots?) or lint the idiom + audit
+  stdlib/consumers — NOT a reactive v6.1.x codegen patch (that would silently change
+  the byte-buffer convention). MEDIUM (DX/footgun).
   [`issues/2026-06-11-addr-taken-local-array-static-underreserve.md`](issues/2026-06-11-addr-taken-local-array-static-underreserve.md).
-  → scheduled **v6.1.42** ([roadmap.md](roadmap.md)).
+- **Undefined-function call should hard-error, not emit `ud2`.** Today a call to a
+  missing fn compiles with `exit 0` + a warning, then SIGILLs at runtime — so a
+  missing lib (e.g. a consumer that didn't migrate to a carved sibling like bayan)
+  produces a "successful" build of a crashing binary, and is repeatedly misdiagnosed
+  as a toolchain/runtime bug. Make a *reachable* undefined-fn call a hard compile
+  error (keep genuinely-dead undefined stubs as warnings so the cass self-host's
+  `fmt_int_buf` doesn't break). High DX value — ends the silent-ud2/SIGILL class.
 
 ### Phase 0 (v6.2.x opening) — growable-region foundation
 
