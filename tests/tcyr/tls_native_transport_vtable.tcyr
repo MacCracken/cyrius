@@ -1,0 +1,71 @@
+# Covers the v6.2.4 pluggable transport vtable (Option C). tls_native's socket
+# I/O leaf helpers (_tn_sock_write_all / _tn_sock_read_full) and the wall-clock
+# (_tn_now_unix) route through the module-global fn-pointers installed by
+# tls_native_set_transport. A hermetic in-memory CAPTURE transport (no socket,
+# no syscall) proves the dispatch end-to-end; clearing it (0,0,0) restores the
+# default sys_read/sys_write/_tn_now_unix path (the freestanding-TLS / bare-metal
+# kernel hook). The default path itself is covered by tls_native_scaffold +
+# the check.sh TLS live round-trip (this test only proves the indirection).
+
+include "lib/assert.cyr"
+include "lib/tls_native.cyr"
+
+# --- in-memory capture transport (handle arg is ignored) ---
+var _vt_wbuf = 0;   # bytes tls_native writes land here
+var _vt_wpos = 0;
+var _vt_rbuf = 0;   # bytes tls_native reads are served from here
+var _vt_rpos = 0;
+var _vt_rlen = 0;
+
+# write(handle, buf, n): capture n bytes. Returns n (matches sys_write sense).
+fn _vt_write(handle, buf, n): i64 {
+    memcpy(_vt_wbuf + _vt_wpos, buf, n);
+    _vt_wpos = _vt_wpos + n;
+    return n;
+}
+# read(handle, buf, n): serve up to n preloaded bytes; -1 when drained (EOF).
+fn _vt_read(handle, buf, n): i64 {
+    var avail = _vt_rlen - _vt_rpos;
+    if (avail <= 0) { return 0 - 1; }
+    var take = n;
+    if (take > avail) { take = avail; }
+    memcpy(buf, _vt_rbuf + _vt_rpos, take);
+    _vt_rpos = _vt_rpos + take;
+    return take;
+}
+# now(): a fixed sentinel so we can prove the now-plug fired.
+fn _vt_now(): i64 { return 1700000000; }
+
+_vt_wbuf = alloc(256);
+_vt_rbuf = alloc(256);
+
+test_group("install custom transport");
+assert_eq(tls_native_set_transport(&_vt_read, &_vt_write, &_vt_now), 0, "set_transport returns TLS_OK");
+
+test_group("write routes through the vtable (not raw sys_write)");
+var wr = _tn_sock_write_all(99, "HELLO", 5);     # fd=99 is ignored by the capture
+assert_eq(wr, 5, "_tn_sock_write_all returns len");
+assert_eq(_vt_wpos, 5, "custom write_fn captured 5 bytes");
+assert_eq(load8(_vt_wbuf), 72, "captured[0] == 'H'");
+assert_eq(load8(_vt_wbuf + 4), 79, "captured[4] == 'O'");
+
+test_group("read routes through the vtable (not raw sys_read)");
+memcpy(_vt_rbuf, "WORLD!", 6);
+_vt_rlen = 6;
+_vt_rpos = 0;
+var rdbuf = alloc(16);
+var rr = _tn_sock_read_full(99, rdbuf, 6);
+store8(rdbuf + 6, 0);
+assert_eq(rr, 6, "_tn_sock_read_full returns n");
+assert_streq(rdbuf, "WORLD!", "custom read_fn served the bytes");
+
+test_group("wall-clock routes through the vtable");
+assert_eq(_tn_now_unix(), 1700000000, "custom now_fn used by _tn_now_unix");
+
+test_group("clearing restores the default transport");
+assert_eq(tls_native_set_transport(0, 0, 0), 0, "clear returns TLS_OK");
+assert_eq(_tn_tx_read, 0, "read_fn reset to default (sys_read)");
+assert_eq(_tn_tx_write, 0, "write_fn reset to default (sys_write)");
+assert_eq(_tn_tx_now, 0, "now_fn reset to default (_tn_now_unix body)");
+
+var rc = assert_summary();

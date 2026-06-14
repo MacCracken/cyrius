@@ -5383,14 +5383,68 @@ fn tls_native_set_version_range(ctx, min_ver, max_ver): i64 {
     return TLS_OK;
 }
 
+# ----------------------------------------------------------------
+# Pluggable transport (v6.2.4, Option C)
+# ----------------------------------------------------------------
+# tls_native's socket I/O bottoms out at sys_read/sys_write (the two leaf
+# helpers below) + the _tn_now_unix wall-clock. A MODULE-GLOBAL transport
+# vtable lets a freestanding host (the AGNOS bare-metal kernel doing
+# kernel-freestanding TLS) swap those three for its own implementations
+# WITHOUT a real socket/syscall — the kernel plugs its TCP send/recv + RTC.
+#
+# Why global, not per-ctx: the transport IMPLEMENTATION is process-wide (one
+# kernel TCP stack), while the per-connection HANDLE still flows through the
+# existing TLS_CTX_OFF_SOCK_FD slot (passed verbatim as the leaf helper's `fd`
+# arg — an fd for sockets, an opaque handle for a custom transport). So one
+# global vtable + the existing per-conn handle already covers a multi-connection
+# kernel TLS server. Going global also means ZERO change to the 25 _tn_sock_*
+# call sites — the leaf helpers + _tn_now_unix are the only edits, so a missed
+# site (the untyped-cyrius silent-miscompile risk) is impossible by construction.
+#
+# 0 in any slot = "use the built-in default" (sys_read / sys_write / the
+# per-target _tn_now_unix body) — so the default path is byte-identical to
+# pre-6.2.4. A per-ctx override is a future enhancement if heterogeneous
+# simultaneous transports are ever needed (they aren't for kernel TLS).
+var _tn_tx_read = 0;    # fn-ptr: read(handle, buf, n)  → bytes (>0) / <=0 on EOF/err
+var _tn_tx_write = 0;   # fn-ptr: write(handle, buf, n) → bytes (>0) / <=0 on err
+var _tn_tx_now = 0;     # fn-ptr: now()                 → wall-clock Unix seconds (0=unknown)
+
+# Install a custom transport (any arg 0 = keep that built-in default). The
+# per-connection handle is supplied as the `sock_fd` arg to connect/accept
+# (stored at TLS_CTX_OFF_SOCK_FD) and handed verbatim to read_fn/write_fn.
+# Returns TLS_OK.
+#
+# Contract (this is a process-global fn-pointer config, not per-ctx — the
+# documented single-transport-per-process model):
+#   - read_fn(handle, buf, n)  → bytes (>0), or <=0 on EOF/error (sys_read sense)
+#   - write_fn(handle, buf, n) → bytes (>0), or <=0 on error (sys_write sense)
+#   - now_fn()                 → wall-clock Unix seconds (0 = unknown)
+#   - Pass VALID fn-pointers — like any fn-pointer vtable (cf. the allocator
+#     vtable), a garbage/freed address is undefined behavior; there is no way to
+#     validate an arbitrary address is a real fn.
+#   - Set ONCE, after new_client/new_server and BEFORE connect/accept; do not
+#     swap mid-handshake (the read/write/now used by an in-flight handshake are
+#     read live from these globals). The bare-metal kernel sets it once at init.
+#   - A coherent set is the caller's responsibility: e.g. a custom read that
+#     polls against a custom now's deadline paired with a blocking default write
+#     can stall — keep the transport's read/write/clock semantics consistent.
+fn tls_native_set_transport(read_fn, write_fn, now_fn): i64 {
+    _tn_tx_read = read_fn;
+    _tn_tx_write = write_fn;
+    _tn_tx_now = now_fn;
+    return TLS_OK;
+}
+
 # CVE-18 (v6.1.36): wall-clock for cert-window validation. syscall(201, 0) is
 # time(2) on Linux; the backend ESYSXLAT-renumbers it per target (matches the
 # lib/tls.cyr wrapper's existing time source). v6.2.3: AGNOS has no time(2)
 # in its syscall surface — route to time_unix(#46, RTC-derived Unix seconds).
 # Returns 0 if the RTC is unreadable; sigil's _x509_in_window treats now==0 as
 # "skip the window check", so a dead RTC degrades to unchecked validity rather
-# than rejecting every cert.
+# than rejecting every cert. v6.2.4: a custom transport's now() (if installed)
+# takes precedence — the freestanding-TLS clock hook.
 fn _tn_now_unix(): i64 {
+    if (_tn_tx_now != 0) { return fncall0(_tn_tx_now); }
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_time_unix();
     #endif
@@ -5471,11 +5525,15 @@ fn tls_native_connect(ctx, sock_fd): i64 {
 # Socket record I/O (.22)
 # ----------------------------------------------------------------
 # Read exactly `n` bytes from `fd` into `buf` (loops over partial
-# reads). Returns n, or a negative TLS_ERR_* on EOF / error.
+# reads). Returns n, or a negative TLS_ERR_* on EOF / error. v6.2.4: reads
+# through the transport vtable — _tn_tx_read if installed, else the default
+# sys_read (byte-identical to pre-6.2.4). `fd` is the per-conn handle.
 fn _tn_sock_read_full(fd, buf, n): i64 {
+    var rf = _tn_tx_read;
+    if (rf == 0) { rf = &sys_read; }
     var got = 0;
     while (got < n) {
-        var r = sys_read(fd, buf + got, n - got);
+        var r = fncall3(rf, fd, buf + got, n - got);
         if (r <= 0) { return TLS_ERR_IO; }
         got = got + r;
     }
@@ -5514,11 +5572,15 @@ fn _tn_sock_read_record_skip_ccs(fd, buf, buf_max): i64 {
 }
 
 # Write all `len` bytes of `buf` to `fd` (loops over partial writes).
-# Returns len, or TLS_ERR_IO.
+# Returns len, or TLS_ERR_IO. v6.2.4: writes through the transport vtable —
+# _tn_tx_write if installed, else the default sys_write (byte-identical to
+# pre-6.2.4). `fd` is the per-conn handle.
 fn _tn_sock_write_all(fd, buf, len): i64 {
+    var wf = _tn_tx_write;
+    if (wf == 0) { wf = &sys_write; }
     var sent = 0;
     while (sent < len) {
-        var w = sys_write(fd, buf + sent, len - sent);
+        var w = fncall3(wf, fd, buf + sent, len - sent);
         if (w <= 0) { return TLS_ERR_IO; }
         sent = sent + w;
     }

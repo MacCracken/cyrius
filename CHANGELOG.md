@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.4] — 2026-06-14
+
+**v6.2.4 — TLS transport-vtable refactor (Option C), the kernel-freestanding-TLS
+enabler.** Decouples `tls_native` from raw `sys_read`/`sys_write`/`_tn_now_unix`
+so a freestanding host (the AGNOS bare-metal kernel) can plug its own TCP
+send/recv + RTC clock without a socket/syscall. Deferred from 6.2.3; lands
+before the bare-metal slot so kernel-freestanding TLS inherits a clean swappable
+transport. **Strictly logic-preserving** — the default path is behaviorally
+identical to pre-6.2.4 (verified: the full TLS test suite stays green).
+
+### Added
+- **Module-global transport vtable + `tls_native_set_transport(read_fn,
+  write_fn, now_fn)`.** Three fn-pointer globals (`_tn_tx_read`/`_write`/`_now`)
+  the two leaf I/O helpers (`_tn_sock_read_full`/`_tn_sock_write_all`) and
+  `_tn_now_unix` dispatch through; `0` in any slot = the built-in default
+  (`&sys_read` / `&sys_write` / the per-target `_tn_now_unix` body). The
+  per-connection handle still flows through the existing `TLS_CTX_OFF_SOCK_FD`
+  slot (passed verbatim as the leaf helper's `fd`), so one global vtable + the
+  per-conn handle covers a multi-connection kernel TLS server.
+  - **Why global, not per-ctx:** the transport *implementation* is process-wide
+    (one kernel TCP stack); going global means **zero change to the 25
+    `_tn_sock_*` call sites** — only the 2 leaf helpers + `_tn_now_unix` change,
+    so a missed site (the untyped-cyrius silent-miscompile risk that bit 6.2.3's
+    `sock_connect`) is impossible by construction. The TLS 1.2 driver, app-data
+    read/write, KeyUpdate, and flight-reassembly all route through the same leaf
+    helpers, so they're covered for free. A per-ctx override is a future
+    enhancement if heterogeneous simultaneous transports are ever needed (they
+    aren't for kernel TLS). The setter documents the contract (valid fn-ptrs,
+    set once before connect, coherent set).
+- **`tests/tcyr/tls_native_transport_vtable.tcyr`** — hermetic dispatch proof: a
+  custom in-memory capture transport (no socket) confirms write/read/now all
+  route through the vtable, and clearing `(0,0,0)` restores the defaults.
+
+### Changed
+- `_tn_sock_read_full`/`_tn_sock_write_all` leaf sys_read/sys_write → `fncall3`
+  through the vtable (lazy-default to `&sys_read`/`&sys_write`); `_tn_now_unix`
+  consults `_tn_tx_now` before its per-target body. The CA-bundle **file** I/O
+  (`tls_native_set_ca_system`'s sys_read/sys_close) is correctly **not** routed
+  (it's a file, not the transport socket). api-surface +1 (`tls_native_set_transport`,
+  non-breaking; 4258 total).
+
+### Verified
+- **Logic-preserving:** every TLS gate green on the default path —
+  `tls_native_scaffold` (full TLS 1.3 handshake over socketpair),
+  `tls_native_realpeer` (live 1.1.1.1:443), all `tls12_*` (the 1.2 driver),
+  `tls_wrapper_native`, plus the new `tls_native_transport_vtable` (12/12).
+- x86 self-host **byte-identical** (cycc 1,063,800 B — tls_native isn't in the
+  compiler); check.sh 89/89; tls_native still cross-builds for agnos.
+- **4-agent adversarial review:** no real code bugs. Confirmed the 6.2.3 agnos
+  tagged-fd→#49 routing is preserved through the 6.2.4 default
+  (`fncall3(&sys_read, tagged_fd, …)` still hits the agnos `sys_read` routing),
+  fncall arity correct (fncall3 for the 3-arg syscalls, fncall0 for now), and
+  the default path byte-identical. The flagged global-model footguns (garbage
+  fn-ptr, mid-handshake reset, mixed default/custom) are inherent fn-ptr-config
+  contract items (cf. the allocator vtable) and not hazards for the
+  single-transport, single-threaded kernel consumer — captured in the setter's
+  doc contract.
+- Cross-OS self-host byte-identical **pi / ecb / cass** (`SELFHOST_OK`); ach
+  (Intel Mac) DNS-unreachable this cut (CI covers macOS-x86).
+- bench self_compile ~511 ms / cycc 1,063,800 B (flat). **NEXT (v6.2.5):**
+  the full `tls_native.cyr` module split + cleanup (the 5,786-line monolith).
+
 ## [6.2.3] — 2026-06-14
 
 **v6.2.3 — AGNOS net / entropy / wall-clock syscall peer (the TLS + net-tools
