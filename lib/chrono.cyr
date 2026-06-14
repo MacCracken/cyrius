@@ -26,10 +26,14 @@ fn clock_now_ms(): i64 {
     return clock_now_ns() / 1000000;
 }
 
-# Get current epoch seconds (wall clock)
+# Get current epoch seconds (wall clock). v6.2.3: agnos now has a real
+# wall clock via time_unix(#46, RTC-derived) — returns whole Unix seconds
+# (no sub-second), or 0 if the RTC is mid-update/unreadable (callers treat
+# 0 as "unknown", not epoch; sigil's _x509_in_window skips the cert window
+# when now==0). This is what tls_native's cert-validity check binds to.
 fn clock_epoch_secs(): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    return 0;
+    return sys_time_unix();
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var ts[16];
@@ -38,10 +42,12 @@ fn clock_epoch_secs(): i64 {
     #endif
 }
 
-# Get current epoch nanoseconds (wall clock)
+# Get current epoch nanoseconds (wall clock). v6.2.3: agnos derives ns from
+# the whole-second time_unix(#46) — sub-second resolution is unavailable
+# (RTC granularity), so the low 9 digits are always zero. 0 stays "unknown".
 fn clock_epoch_ns(): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    return 0;
+    return sys_time_unix() * 1000000000;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var ts[16];

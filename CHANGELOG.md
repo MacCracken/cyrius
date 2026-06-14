@@ -6,6 +6,94 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.3] — 2026-06-14
+
+**v6.2.3 — AGNOS net / entropy / wall-clock syscall peer (the TLS + net-tools
+enabler).** Mirrors the eleven ring-3 syscalls AGNOS 1.45.0–1.45.4 froze
+(#45–#55) into the `CYRIUS_TARGET_AGNOS` stdlib peer, plus the socket-model
+adapter and threading serial-fallback that let `tls_native` / `http` /
+`net` / `dig` / `yo` actually build for agnos. The numbers are AGNOS-owned and
+frozen; cyrius mirrors them (same pattern as the FS-syscall peer at 6.0.55/56).
+Pure stdlib + agnos-`#ifdef`-gated → **x86 cycc byte-identical, self-host
+unchanged**. Option A (surgical adapter) per user direction; the Option C
+transport-vtable refactor is pinned for 6.2.4.
+
+### Added
+- **`lib/syscalls_x86_64_agnos.cyr` — the 1.45.x net band (#45–#55).** New
+  `enum SysNrAgnosNet` + wrappers: `sys_time_unix` (#46), `sys_sock_connect`
+  (#47), `sys_sock_send`/`recv`/`close` (#48–#50), `sys_udp_bind`/`send`/`recv`/
+  `unbind` (#51–#54), `sys_icmp_echo` (#55). #52 `len` and #53 `addr_out` ride
+  the 4-arg `a4=r10` convention (the same lowering `sys_rename`/`sys_link`
+  already use — **no codegen change**; `EPOPR10` = `pop r10` was verified in the
+  emit). Each wrapper's arg order + return contract checked against the kernel
+  dispatch (`agnos/kernel/core/syscall.cyr:1482-1711`).
+- **Socket fd↔conn_id adapter (Option A).** AGNOS has no BSD `socket()`/
+  `connect(fd,sa)` — `sock_connect`(#47) does both and yields a small `conn_id`
+  (0..7). To keep `tls_native`/`http`/`net` **source-identical** across targets
+  (they all bottom out at `sys_read`/`sys_write`/`sys_close` on an fd), callers
+  get a **tagged fd** (`AGNOS_SOCK_TAG`=1<<30 | slot); an 8-slot table maps slot
+  → conn_id, and the agnos `sys_read`/`sys_write`/`sys_close` route tagged fds to
+  #49/#48/#50. The agnos `sys_read` is a blocking poll that translates AGNOS's
+  inverted recv sense (0 = WOULD_BLOCK, −1 = EOF) back to the Linux blocking-read
+  contract callers expect, bounded by a `time_unix`(#46) deadline + hlt-count
+  backstop.
+- **`lib/thread_agnos.cyr` — single-threaded threading serial fallback** (a
+  discovered prerequisite: `tls_native` → `sigil` → `thread.cyr`, and the frozen
+  agnos ABI has no `clone`/`futex`). Mirrors the `process.cyr`→`process_win.cyr`
+  pattern: `thread_create` runs the body inline via `fncall1`, `mutex_*` are
+  no-ops, `chan_*` is a lock-free FIFO ring. **TLS isolation:** `thread_create`
+  saves/zeros/restores the thread-local slots around the inline body — emulating
+  the fresh zeroed block a real `CLONE_SETTLS` worker gets — so a worker's
+  `thread_local` writes (e.g. sigil's `crypto_bank_set(worker_bank)`) can't leak
+  into the main thread and corrupt its `cbank()==0` scratch-lane invariant.
+  `lib/thread.cyr` routes `#ifdef CYRIUS_TARGET_AGNOS → thread_agnos.cyr`;
+  `lib/thread_local.cyr` gains an agnos branch (process-global `_tlocal_agnos`,
+  mirroring the macOS single-threaded model).
+- **`scripts/agnos-crossbuild-gate.sh` net/TLS probe.** A standing rot-guard
+  (CI + standalone) that cross-builds a program exercising the full surface
+  (`net` + `http` + `tls_native`, entropy/clock/TCP/UDP/ICMP) for agnos and
+  asserts a valid agnos ELF — the compiler-on-the-target check, not hello-world.
+
+### Changed
+- **`sys_getrandom` un-fail-closed on AGNOS (was CVE-19 fail-closed, v6.1.36).**
+  Now `syscall(45, …)` (Zen RDRAND, bounded retry, never a zeroed buffer —
+  landed AGNOS 1.45.0), restoring real entropy to `random_bytes()` and its
+  `ws`/`sandhi`/`sigil`/`tls_native` consumers on agnos. The fail-closed
+  contract is unchanged on every other target (the stub lives only in the
+  agnos peer; Windows CSPRNG stays open in
+  `issues/2026-06-11-windows-entropy-primitive.md`).
+- **`lib/chrono.cyr`** — `clock_epoch_secs`/`clock_epoch_ns` agnos branch now
+  reads `time_unix`(#46, RTC-derived whole Unix seconds; 0 = unknown, not
+  epoch) instead of returning a fixed 0.
+- **`lib/net.cyr`** — agnos branches: `tcp_socket` reserves a tagged slot;
+  `sock_connect`/`net_connect_nb` byte-swap the network-order addr to the kernel
+  `ip4()` form and call #47 (blocking; AGNOS has no non-blocking connect). The
+  BSD UDP/server shims (`udp_socket`/`sock_bind`/`sock_listen`/`sock_accept`)
+  fail loud on agnos (UDP goes through the raw `sys_udp_*` wrappers; inbound TCP
+  is Phase B) rather than emit invalid BSD syscalls.
+- **`lib/tls_native.cyr`** — `_tn_now_unix` (cert-validity window) routes to
+  `sys_time_unix`(#46) on agnos; the Linux `syscall(201)` path is unchanged.
+- api-surface snapshot re-snapshotted (+21 public fns, non-breaking; 4257 total).
+
+### Verified
+- x86 self-host **byte-identical** (cycc 1,063,800 B unchanged — pure stdlib);
+  check.sh **89/89**; agnos cross-build gate PASS (probe + **net/TLS peer** +
+  agnoshi → valid agnos ELF); emit-inspected #45–#55 (0x2d–0x37) incl. `a4=r10`
+  for #52/#53, and `sock_connect` emitting #47 (not BSD #42) with zero
+  Linux-only socket syscalls (41/42/72/7/55) on the reachable agnos path.
+- **Adversarial diff review (13 agents)** caught two real bugs pre-cut — a
+  missing `sock_connect` agnos branch and the `thread_create` TLS-leak corruption
+  — both fixed and independently re-verified against the sigil batch code.
+- Cross-OS self-host **byte-identical on pi / ecb / cass** (`SELFHOST_OK`); ach
+  (Intel Mac) unreachable this cut (CI matrix covers macOS-x86; cycc is
+  byte-identical on the other three incl. ecb macOS-arm64).
+- bench self_compile ~511 ms (flat — measurement noise; zero patches touch
+  cycc) / cycc 1,063,800 B.
+- Filed `issues/2026-06-14-sandhi-nonblocking-connect-not-agnos-ported.md`
+  (vendored sandhi's own non-blocking connect uses fcntl/getsockopt; not on the
+  6.2.3 tls/http/dig path — a separate sandhi-source fix + re-fold when needed).
+  Resolves proposal `2026-06-14-agnos-net-entropy-clock-syscalls.md`.
+
 ## [6.2.2] — 2026-06-12
 
 **v6.2.2 — aarch64/macOS annotation-token codegen fix + ecosystem stdlib fold-in.**

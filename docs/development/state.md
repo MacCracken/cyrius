@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.2** (v6.2.x cycle — **Platform Expansion**; aarch64/macOS annotation-token codegen fix + ecosystem stdlib fold-in. See [roadmap_6.md](roadmap_6.md)) |
+| **Version** | **6.2.3** (v6.2.x cycle — **Platform Expansion**; AGNOS net/entropy/clock syscall peer #45–#55 + socket adapter + threading serial-fallback — the TLS/net-tools-on-agnos enabler. See [roadmap_6.md](roadmap_6.md)) |
 | **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
@@ -27,11 +27,46 @@
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
 | stdlib fold (@6.2.2) | agnosys 1.4.2 · sandhi 1.4.11 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.1 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.0.2 · sakshi 2.3.0 (all on the 6.2.1 pin) |
 | tests | 174 `.tcyr` · 15 `.bcyr` |
-| stdlib | 88 `lib/*.cyr` (+`lib/sys.cyr` @.28 system-introspection) · 79 programs |
+| stdlib | 89 `lib/*.cyr` (+`lib/thread_agnos.cyr` @.23 agnos threading serial-fallback) · 79 programs · api-surface 4257 fns (+21 @.23, non-breaking) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~498 ms (flat @ 6.2.2 — fix is in the aarch64/macho cross forks, x86 cycc byte-identical; cycc 1,063,800 B unchanged) |
+| bench (every-release gate) | self_compile ~511 ms (flat @ 6.2.3 — pure stdlib + agnos-`#ifdef`-gated, x86 cycc byte-identical; cycc 1,063,800 B unchanged; the ~498→511 is measurement noise, zero patches touch cycc) |
 
-> **Handoff (2026-06-12):** **v6.2.2 CUT — aarch64/macOS annotation-token codegen
+> **Handoff (2026-06-14):** **v6.2.3 CUT — AGNOS net/entropy/clock syscall peer
+> (#45–#55), the TLS + net-tools-on-agnos enabler.** Mirrored the eleven ring-3
+> syscalls AGNOS 1.45.0–1.45.4 froze into `lib/syscalls_x86_64_agnos.cyr`
+> (`sys_time_unix`#46, `sock_*`#47–50, `udp_*`#51–54, `icmp_echo`#55; **un-fail-
+> closed `sys_getrandom`→#45**). **No codegen change** — the 4-arg `a4=r10`
+> convention (`sys_rename`/`link` already use it) lowers #52/#53; emit-verified
+> (`pop r10`). **Option A** (per user; Option C transport-vtable refactor pinned
+> for **v6.2.4**): a tagged-fd↔conn_id 8-slot table routes the BSD-shaped
+> `net`/`tls_native`/`http` (all bottom out at `sys_read`/`write`/`close`) onto
+> AGNOS's conn_id socket model, keeping consumers **source-identical**; the agnos
+> `sys_read` blocking-polls AGNOS's inverted recv sense (0=WOULD_BLOCK,−1=EOF)
+> back to Linux read semantics. `chrono.clock_epoch_secs`→#46; `tls_native
+> ._tn_now_unix`→#46. **Discovered prereq (committed through):** `tls_native`→
+> `sigil`→`thread.cyr` and agnos has no clone/futex, so added
+> `lib/thread_agnos.cyr` — single-threaded serial fallback (inline `thread_create`,
+> no-op mutex, FIFO chan) mirroring `thread_win`/macOS, **with TLS save/zero/
+> restore around the inline body** (emulates a real `CLONE_SETTLS` worker's fresh
+> block so a worker's `thread_local` write can't leak past join and corrupt
+> sigil's main-thread crypto bank). `net.cyr` BSD UDP/server shims fail-loud on
+> agnos (UDP→raw `sys_udp_*`; inbound TCP = Phase B). **VERIFIED:** x86 self-host
+> byte-identical (cycc 1,063,800 B, pure stdlib); check.sh 89/89; agnos
+> cross-build gate PASS (probe + **new net/TLS peer probe** + agnoshi); emit
+> #45–#55 + #47-not-#42 + zero Linux socket syscalls on agnos path; **13-agent
+> adversarial review caught 2 real bugs (missing `sock_connect` agnos branch +
+> `thread_create` TLS-leak) — both fixed + re-verified**; cross-OS self-host
+> byte-identical **pi/ecb/cass** (`SELFHOST_OK`), **ach unreachable this cut**
+> (CI covers macOS-x86; cycc byte-identical on the other 3 incl ecb macOS-arm64);
+> bench self_compile ~511 ms (flat). Proposal
+> `2026-06-14-agnos-net-entropy-clock-syscalls.md` resolved; filed
+> `2026-06-14-sandhi-nonblocking-connect-not-agnos-ported.md` (vendored, off the
+> 6.2.3 path). **NEXT (v6.2.4):** Option C TLS transport-vtable refactor (also
+> unblocks the bare-metal kernel-freestanding-TLS slot). **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-12):** **v6.2.2 CUT — aarch64/macOS annotation-token codegen
 > fix + ecosystem stdlib fold-in.** **Fixed** the pass-1/pass-2 annotation-token
 > desync (same class as the v5.8.21 `#io` fix that only landed x86-side): the three
 > non-x86 compiler entry points (`main_aarch64.cyr`, `main_aarch64_macho.cyr`,

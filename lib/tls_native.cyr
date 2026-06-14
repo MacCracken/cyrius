@@ -5385,9 +5385,18 @@ fn tls_native_set_version_range(ctx, min_ver, max_ver): i64 {
 
 # CVE-18 (v6.1.36): wall-clock for cert-window validation. syscall(201, 0) is
 # time(2) on Linux; the backend ESYSXLAT-renumbers it per target (matches the
-# lib/tls.cyr wrapper's existing time source).
+# lib/tls.cyr wrapper's existing time source). v6.2.3: AGNOS has no time(2)
+# in its syscall surface — route to time_unix(#46, RTC-derived Unix seconds).
+# Returns 0 if the RTC is unreadable; sigil's _x509_in_window treats now==0 as
+# "skip the window check", so a dead RTC degrades to unchecked validity rather
+# than rejecting every cert.
 fn _tn_now_unix(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_time_unix();
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     return syscall(201, 0);
+    #endif
 }
 
 # CVE-18 (v6.1.36): fail-closed peer verification, run by connect() BEFORE it

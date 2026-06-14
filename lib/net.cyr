@@ -60,18 +60,59 @@ fn INADDR_ANY(): i64 { return 0; }
 # Loopback address 127.0.0.1 in network byte order
 fn INADDR_LOOPBACK(): i64 { return 0x0100007F; }
 
-# Create a TCP socket. Returns Result(fd).
+#ifdef CYRIUS_TARGET_AGNOS
+# v6.2.3: AGNOS adapter (Option A). AGNOS has no BSD socket()/connect(fd,sa)
+# model — sock_connect(#47) does both and yields a small conn_id (0..7),
+# carried as a TAGGED fd by the syscall peer so this file's send/recv/close
+# (which bottom out at sys_write/sys_read/sys_close) stay source-identical;
+# the peer routes tagged fds to #48/#49/#50. Only tcp_socket + sock_connect
+# need an agnos body. Server-side (bind/listen/accept) belongs to AGNOS
+# Phase B (inbound TCP), a separate concern from this client peer; those
+# keep their POSIX bodies and simply aren't reachable on the client path.
+#
+# Byte-swap a 32-bit value: net.cyr's `addr` is network-byte-order packed
+# (sockaddr sin_addr; INADDR_LOOPBACK = 0x0100007F), but AGNOS #47 wants the
+# kernel ip4() form (oct1<<24)|…|oct4 (0x7F000001) — the two are bswap32 of
+# each other.
+fn _agnos_bswap32(x): i64 {
+    var b0 = x & 0xFF;
+    var b1 = (x >> 8) & 0xFF;
+    var b2 = (x >> 16) & 0xFF;
+    var b3 = (x >> 24) & 0xFF;
+    return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+}
+#endif
+
+# Create a TCP socket. Returns Result(fd). On AGNOS the "fd" is a tagged
+# placeholder handle (a reserved conn slot); the real conn_id is assigned by
+# sock_connect (#47 does socket()+connect() in one).
 fn tcp_socket() : Result {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var afd = _agnos_sock_open();
+    if (afd < 0) { return Err(1); }   # 8-slot conn table full
+    return Ok(afd);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var fd = syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return Err(0 - fd); }
     return Ok(fd);
+    #endif
 }
 
-# Create a UDP socket. Returns Result(fd).
+# Create a UDP socket. Returns Result(fd). v6.2.3: AGNOS does NOT model BSD
+# UDP sockets — its datagram surface is a listener table (udp_bind #51 →
+# listener_id, udp_send/recv #52/#53). Agnos UDP consumers (dig/DNS) call the
+# raw sys_udp_* wrappers directly (see lib/syscalls_x86_64_agnos.cyr), so this
+# BSD shim fails loud on agnos rather than emitting an invalid socket() (#41).
 fn udp_socket() : Result {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return Err(1);   # use sys_udp_bind/send/recv/unbind (#51-#54) on agnos
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var fd = syscall(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) { return Err(0 - fd); }
     return Ok(fd);
+    #endif
 }
 
 # Set socket option SO_REUSEADDR
@@ -103,37 +144,68 @@ fn sock_set_recv_timeout(fd, secs, usecs): i64 {
     return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, tv, 16);
 }
 
-# Bind socket to address:port. Returns Result(0).
+# Bind socket to address:port. Returns Result(0). Server-side (bind/listen/
+# accept) is AGNOS Phase B (inbound TCP) — the ring-3 listen/accept surface
+# isn't exposed yet — so these fail loud on agnos rather than emit invalid
+# BSD syscalls. See proposal 2026-06-14-agnos-net-entropy-clock-syscalls.md.
 fn sock_bind(fd, addr, port) : Result {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return Err(1);   # AGNOS Phase B (inbound TCP) — not exposed to ring 3 yet
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var sa = sockaddr_in(addr, port);
     var r = syscall(SYS_BIND, fd, sa, 16);
     if (r < 0) { return Err(0 - r); }
     return Ok(0);
+    #endif
 }
 
-# Listen on socket. Returns Result(0).
+# Listen on socket. Returns Result(0). AGNOS Phase B — see sock_bind.
 fn sock_listen(fd, backlog) : Result {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return Err(1);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var r = syscall(SYS_LISTEN, fd, backlog);
     if (r < 0) { return Err(0 - r); }
     return Ok(0);
+    #endif
 }
 
-# Accept a connection. Returns Result(client_fd).
+# Accept a connection. Returns Result(client_fd). AGNOS Phase B — see sock_bind.
 fn sock_accept(fd) : Result {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return Err(1);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var client_addr = alloc(16);
     var addrlen = alloc(4);
     store32(addrlen, 16);
     var cfd = syscall(SYS_ACCEPT, fd, client_addr, addrlen);
     if (cfd < 0) { return Err(0 - cfd); }
     return Ok(cfd);
+    #endif
 }
 
 # Connect to address:port. Returns Result(0).
 fn sock_connect(fd, addr, port) : Result {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS sock_connect(#47) does socket()+connect() in one and yields a
+    # conn_id, bound to the reserved fd slot. `addr` is network-byte-order
+    # packed (sockaddr sin_addr; INADDR_LOOPBACK 0x0100007F), but #47 wants the
+    # kernel ip4() form (oct1<<24)|…|oct4 (0x7F000001) — byte-swap it. src_port
+    # 0 → kernel auto-assigns ephemeral. Blocks ~8s polling for the SYN-ACK.
+    var conn = sys_sock_connect(_agnos_bswap32(addr), port, 0);
+    if (conn < 0) { return Err(1); }
+    _agnos_sock_bind(fd, conn);
+    return Ok(0);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var sa = sockaddr_in(addr, port);
     var r = syscall(SYS_CONNECT, fd, sa, 16);
     if (r < 0) { return Err(0 - r); }
     return Ok(0);
+    #endif
 }
 
 # Send data on socket. Returns Result(bytes_sent).
@@ -211,6 +283,18 @@ var _NET_CONN_NB_TIMEOUT = 0 - 2;
 # `_NET_CONN_NB_ERR` (-1) on fcntl/connect/getsockopt failure.
 # Restores blocking mode on every exit path.
 fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no non-blocking connect — sock_connect(#47) blocks ~8s (kernel-
+    # fixed) polling for the SYN-ACK, itself a bounded-timeout connect. The
+    # fcntl/poll/getsockopt/connect dance below is Linux-only (syscalls
+    # 72/7/55/42, absent from the agnos ABI), so route to the blocking #47 path;
+    # timeout_ms is advisory here. 0 connected, _NET_CONN_NB_ERR on full/timeout/RST.
+    var aconn = sys_sock_connect(_agnos_bswap32(addr), port, 0);
+    if (aconn < 0) { return _NET_CONN_NB_ERR; }
+    _agnos_sock_bind(fd, aconn);
+    return _NET_CONN_NB_OK;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     # Save current flags so we can restore blocking mode on every exit path.
     var saved_flags = syscall(72, fd, 3, 0);                # F_GETFL
     if (saved_flags < 0) { return _NET_CONN_NB_ERR; }
@@ -259,6 +343,7 @@ fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     # subsequent recv/send behave normally.
     syscall(72, fd, 4, saved_flags);                        # F_SETFL <saved>
     return result;
+    #endif
 }
 
 # === Simple TCP server pattern ===

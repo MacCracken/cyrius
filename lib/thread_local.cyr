@@ -51,6 +51,14 @@ var TLOCAL_MAX_SLOTS = 16;
 var _tlocal_macos[128];     # TLOCAL_MAX_SLOTS (16) * 8 bytes, zero-init .bss
 #endif
 
+# v6.2.3: AGNOS is single-threaded (thread_agnos.cyr runs bodies inline; no
+# %fs/TPIDR thread-pointer install at ring 3 in the frozen ABI). Like the
+# macOS path, a process-global slot array is race-free — there is only one
+# thread. Mirrors sigil's crypto-bank contract (slot 0, fresh slot reads 0).
+#ifdef CYRIUS_TARGET_AGNOS
+var _tlocal_agnos[128];     # TLOCAL_MAX_SLOTS (16) * 8 bytes, zero-init
+#endif
+
 #ifndef CYRIUS_TARGET_WIN
 # Install `tls` as the current thread's thread-pointer register base.
 # x86_64: syscall(158, ARCH_SET_FS=0x1002, tls)
@@ -79,6 +87,9 @@ fn thread_local_init(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return 1;     # process-global _tlocal_macos is zero-init .bss; nothing to install
     #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 1;     # process-global _tlocal_agnos is zero-init; nothing to install
+    #endif
     alloc_init();
     var tls = alloc(TLOCAL_BLOCK_SIZE);
     if (tls == 0) { return 0; }
@@ -97,6 +108,9 @@ fn thread_local_get(slot): i64 {
     var ret = 0;
     #ifdef CYRIUS_TARGET_MACOS
     return load64(&_tlocal_macos + slot * 8);
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    return load64(&_tlocal_agnos + slot * 8);
     #endif
     #ifdef CYRIUS_ARCH_X86
     asm {
@@ -123,6 +137,10 @@ fn thread_local_get(slot): i64 {
 fn thread_local_set(slot, val): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     store64(&_tlocal_macos + slot * 8, val);
+    return 0;
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    store64(&_tlocal_agnos + slot * 8, val);
     return 0;
     #endif
     #ifdef CYRIUS_ARCH_X86

@@ -21,7 +21,18 @@
 include "lib/thread_win.cyr"
 #endif
 
+# v6.2.3: AGNOS has no clone/futex in its frozen syscall surface (the
+# cooperative-iron single-core model — true threads wait on the 1.46.x
+# kstacks), so route to a single-threaded SERIAL fallback, exactly as the
+# Windows path routes to thread_win.cyr. thread_agnos.cyr runs thread bodies
+# inline and makes mutexes no-ops — correct (if unparallelized) for the
+# spawn-workers-then-join throughput model sigil's crypto batch uses.
+#ifdef CYRIUS_TARGET_AGNOS
+include "lib/thread_agnos.cyr"
+#endif
+
 #ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 
 # mmap.cyr supplies the PROT_READ/PROT_WRITE enum for the thread-stack mmap
 # below (explicit since v6.0.52; previously free-rode on alloc.cyr's Linux
@@ -423,4 +434,5 @@ fn chan_try_recv(ch): i64 {
     return result;
 }
 
+#endif
 #endif
