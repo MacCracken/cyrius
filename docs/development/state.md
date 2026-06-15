@@ -322,10 +322,16 @@
 > slide the single PT_LOAD, jump to `base + 0xA8`. gnoboot-boot validation +
 > aarch64 kernel-PIE remain the consumer-gated follow-ons.
 
-## v6.1.x — active cycle (Backend Codegen Multi-Arc)
+## v6.1.x — CLOSED (Backend Codegen Multi-Arc)
 
-Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
-[roadmap_6.md](roadmap_6.md).
+> **v6.1.x closed at .41; v6.2.x is the active cycle** — see *Current state* +
+> the handoff above. The per-release detail below is retained for convenience
+> but is canonical in [CHANGELOG.md](../../CHANGELOG.md) +
+> [completed-phases.md](completed-phases.md); still-open carry-ins live in
+> [roadmap.md](roadmap.md). (This block is a candidate to trim to a pointer at
+> the next state consolidation.)
+
+Whole-v6.x cycle: [roadmap_6.md](roadmap_6.md).
 
 **Shipped (all 2026-06-08):**
 - **v6.1.0** — clean cycle cut: roadmap split into 3 tiers (roadmap.md active /
@@ -452,19 +458,19 @@ Phase plan + slot detail: [roadmap.md](roadmap.md). Whole-v6.x cycle:
   dep-resolution fix (.28) · `fdlopen_init_trusted` (.29) · x86-macOS argv prologue
   (.30) · Ed25519 server certs (.31). roadmap.md is the authoritative slot list.
 
-**Next:** **Phase F — security hardening tail** (v6.1.32+), from the **2026-06-10
+**Phase F — security hardening tail (SHIPPED v6.1.32–.41)**, from the **2026-06-10
 deep-dive review** (`docs/audit/2026-06-10-deep-dive-review.md` — 40 verified
 findings, 13 issues). Packed releases: F1 silent-failure + dep-injection, F2
-TLS-authn, F3 memory-safety parity — then the dep-fold cycle-close → v6.2.0. See
-[roadmap.md](roadmap.md) Phase F. The kernel-PIE gnoboot-boot validation lands when
-the AGNOS `--pie` harness exists (filed upstream).
+TLS-authn, F3 memory-safety parity — then the dep-fold cycle-close that opened
+v6.2.0. The kernel-PIE gnoboot-boot validation remains consumer-gated on the
+AGNOS `--pie` harness (filed upstream).
 
 **Open / filed (v6.1.x):**
 - **2026-06-10 deep-dive issues** (`docs/development/issues/2026-06-10-*`, 13
   trackers; CVE-14…31 + LEGAL-01). Phase F absorbs the urgent set (F1–F3); the rest
   spread to v6.2.x+/bug-bandwidth. Audit: `docs/audit/2026-06-10-deep-dive-review.md`.
-- `stdlib-reference.md` covers ~65/88 lib modules — human-led rewrite, flagged since
-  v6.1.0 (~23 modules still undocumented).
+- `stdlib-reference.md` covers ~65/95 lib modules — human-led rewrite, flagged since
+  v6.1.0 (~30 modules still undocumented).
 - x86-macho cycc self-compile (HELD, Intel EOL) + the broader x86-macOS
   usable-toolchain arc tail (env/arch-detect/cycc-finding/issue-1/packaging) —
   bug-bandwidth.
