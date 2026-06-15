@@ -14,24 +14,49 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.10** (v6.2.x cycle — **Platform Expansion**; Darwin IPv6 socket surface for `lib/net.cyr` + the pre-existing aarch64-Linux INET ESYSXLAT gap it surfaced + sandhi 1.6.1 fold. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,063,792 B (+8 B @ 6.2.10 — `6.2.10` version string only, x86 codegen unchanged; −16 B @ 6.2.9 dead debug bytes) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 616,496 B (+1,192 B @ 6.2.10 — aarch64-Linux ESYSXLAT socket/fcntl/poll renumbers + version string; +~20 KB @ 6.2.2 annotation-token consume) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10 aarch64 emit fix — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | 836,096 B (rebuilt @ 6.2.10; size flat — PE 512 B file-alignment absorbs the +8 version-string bytes) |
+| **Version** | **6.2.11** (v6.2.x cycle — **Platform Expansion**; sandhi 1.6.2 fold (closes the macOS nb-connect arc) + a compiler guardrail against silent constant-value collisions (issue 2026-06-14). See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,064,864 B (+1,072 B @ 6.2.11 — the `CHKDUPVAL` constant-collision guardrail; version string flat, `6.2.11`≡`6.2.10` length) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 617,568 B (+1,072 B @ 6.2.11 — the guardrail, a frontend change in every backend; +1,192 B @ 6.2.10 aarch64-Linux ESYSXLAT socket/fcntl/poll) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10 aarch64 emit fix + 6.2.11 guardrail — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.11 (guardrail frontend change; PE file-alignment may keep the on-disk size flat) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.2 · **sandhi 1.6.1** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.1.1 · sakshi 2.3.0 (sandhi refold @.10 — v4 nb-connect + per-op timeout now compose stdlib; v6/listen adoption is its follow-on) |
+| stdlib fold | agnosys 1.4.2 · **sandhi 1.6.2** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.1.1 · sakshi 2.3.0 (sandhi refold @.11 — v6/listen now compose stdlib; all 8 Linux-only socket constants deleted; macOS nb-connect arc closed) |
 | tests | 178 `.tcyr` (+`net_v6_connect` @.10 — Darwin v6 layout + nb-connect, runs on x86/ecb/pi) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4346 fns (+5 @.10 — `net::sockaddr_in6`/`net_connect_nb6`/`net_connect_sa_nb`/`sock_set_nonblocking`/`sock_clear_nonblocking`, additions-only) |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4346 fns (sandhi 1.6.2 fold @.11 removed only `_`-prefixed internals — count flat; +5 @.10 net v6 surface) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~505 ms (flat @ 6.2.10 — lib + aarch64-emit changes don't touch the x86 compiler; cycc 1,063,792 B, +8 version string, self-host byte-identical) |
+| bench (every-release gate) | self_compile ~515 ms (+~10 ms / +2% @ 6.2.11 — the guardrail's per-symbol `FINDVAR` scan; growth-tax for one correctness feature, not a regression; cycc 1,064,864 B, +1,072, self-host byte-identical) |
 
-> **Handoff (2026-06-15):** **v6.2.10 CUT — Darwin IPv6 socket surface for
+> **Handoff (2026-06-15):** **v6.2.11 CUT — sandhi 1.6.2 fold + constant-collision
+> compiler guardrail.** Two-bite release. **sandhi 1.6.2** adopts 6.2.10's
+> v6-on-Darwin net surface in its IPv6 connect + server listen socket and deletes
+> its hand-rolled v6 shims + all 8 Linux-only raw socket constants — closing the
+> macOS nb-connect arc (`2026-06-06` archived; fully resolved). **Guardrail**
+> (issue 2026-06-14): `CHKDUPVAL` in `src/frontend/parse_types.cyr`, called at the
+> enum-member + literal-`var` registration sites, warns when a data symbol is
+> redefined with a CONFLICTING compile-time value (the silent-corruption class —
+> owl/patra `TK_IDENT`, net `SYS_SOCKET`). WARN-only; value-identical + single
+> defs silent; `#ifdef` variants don't collide (PREPROCESS strips inactive
+> branches). Closes the silent-corruption half of 2026-06-14; the lib-side cleanup
+> (namespace `ERR_*`, drop hardcoded `SYS_*`) stays OPEN (per-lib source work).
+> **Third backlog pick (x86-macOS byte-array `2026-06-07`) was verified ALREADY
+> FIXED** on real `ach` (premise-check: 26/26 + 5 more parser-heavy tests green;
+> stale since .87) — closed, no code change. **VERIFIED:** check.sh **89/89**;
+> self-host byte-identical (guardrail is stderr-only); cross-OS **SELFHOST_OK
+> ecb/pi/cass**; guardrail test matrix green + surfaces net `SYS_*` collisions on
+> real aarch64 (issue Bucket 2); 0 false positives on the x86 corpus. bench
+> self_compile ~505→~515 ms (+2%, guardrail FINDVAR scan — growth-tax); cycc
+> 1,064,864 B. api-surface flat (sandhi removed only internals). **NEXT:** the
+> remaining v6.2.x pins — bare-metal target formalization + RISC-V rv64; and the
+> 2026-06-14 lib-side constant cleanup. **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-15):** **v6.2.10 CUT — Darwin IPv6 socket surface for
 > `lib/net.cyr` + the aarch64-Linux INET path it surfaced.** Fulfils sandhi's filed
 > consumer request (`2026-06-15-cyrius-net-v6-darwin.md`): stdlib now exposes a
 > Darwin-correct IPv6 + non-blocking surface — per-target `AF_INET6` (Darwin 30 /

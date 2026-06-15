@@ -729,6 +729,8 @@ fn PARSE_GVAR_REG(S): i64 {
     var sit_lit = 0;
     var sit_val = 0;
     var sit_shadow = 0;
+    var chk_lit = 0;    # v6.2.11: `= NUM ;` literal for the collision guardrail
+    var chk_has = 0;
     if (FINDVAR(S, noff) >= 0) { sit_shadow = 1; }
     if (PEEKT(S) == 4) {
         STI(S, GTI(S) + 1);
@@ -753,6 +755,11 @@ fn PARSE_GVAR_REG(S): i64 {
         # cxvm startup. Skipping the runtime store would leave them
         # zero. Keep the runtime-store path for cx; static-init is
         # an x86 / aarch64 / MachO / PE optimization.
+        # v6.2.11: capture a `= NUM ;` literal for the collision guardrail,
+        # INDEPENDENT of the static-init opt below (which deliberately skips
+        # shadowing redefinitions — but a collision warning must fire EXACTLY on
+        # those). Read-only (PEEKV, no STI advance); does not affect codegen.
+        if (PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 5) { chk_lit = PEEKV(S); chk_has = 1; }
         if (_TARGET_CX != 1 && sit_shadow == 0 && PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 5) {
             var lit = PEEKV(S);
             if (lit != 0) {
@@ -762,6 +769,12 @@ fn PARSE_GVAR_REG(S): i64 {
         }
     }
     STI(S, save_peek);  # restore
+    # v6.2.11: flag a conflicting-value redefinition (issue 2026-06-14) when this
+    # global has a `= NUM ;` literal AND shadows a prior def, BEFORE it's
+    # registered so FINDVAR sees only prior defs. Mirrors the enum-member site in
+    # parse_types.cyr. Gated on the shadow so the common non-colliding case skips
+    # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
+    if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
     # Register
     var vcnt = GVCNT(S);
     S64(S + 0x11A000 + vcnt * 8, noff);

@@ -7,7 +7,24 @@
 > "last definition wins" — and whichever consumer's translation unit pulls both
 > modules silently gets one module's value substituted into the other's code.
 >
-> **Status:** filed for triage. The motivating instance (below) is already fixed
+> **Status (2026-06-15): PARTIAL — compiler guardrail (rec #2) shipped in cyrius
+> 6.2.11; lib-side cleanup (rec #1) still OPEN.** cycc now **warns** on a
+> duplicate `var`/enum-member data symbol redefined with a *conflicting*
+> compile-time value (`CHKDUPVAL` in `src/frontend/parse_types.cyr`, called at the
+> enum-member + literal-`var` registration sites) — mirroring the duplicate-`fn`
+> warning. Verified it fires on the `ERR_*` (enum↔enum) and `SYS_*` (var↔enum)
+> classes and is silent on value-identical / single defs; on aarch64 it already
+> flags `net` `SYS_SOCKET`/`CONNECT`/`BIND`/`LISTEN`/`SETSOCKOPT` colliding with
+> `syscalls_aarch64_linux` (Bucket 2). This closes the **silent-corruption** half:
+> a future collision like the owl/patra `TK_IDENT` bug now warns at compile time
+> instead of producing wrong output. **Still OPEN:** rec #1 — the actual
+> duplications (namespace each lib's `ERR_*`; drop the hardcoded `SYS_*` from
+> `net`/`fs`/`patra`/`bench`/`yukti` to reference `syscalls_*`). That's per-lib
+> source work + re-fold (ecosystem repos), tracked separately from this guardrail.
+> Limitation: a prior `var X = 0` (literal-zero) is not compared (0x1EC000==0 is
+> indistinguishable from uninitialised); the dangerous cases are enum/nonzero.
+>
+> **Status (filed):** triage. The motivating instance (below) is already fixed
 > downstream; this issue tracks the *stdlib/lib-side* duplications so the same
 > footgun stops recurring.
 

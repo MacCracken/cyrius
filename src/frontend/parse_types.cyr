@@ -335,6 +335,10 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
             elif (emit_code == 0) {
                 # Pass 1: register variant as global var
                 var vcnt = GVCNT(S);
+                # v6.2.11: flag a conflicting-value redefinition of this name
+                # (issue 2026-06-14) BEFORE registering it, so FINDVAR sees only
+                # prior defs. Pass-1-only (emit_code==0) → no double-warn.
+                CHKDUPVAL(S, vnoff, val);
                 S64(S + 0x11A000 + vcnt * 8, vnoff);
                 S64(S + 0x12A000 + vcnt * 8, 8);
                 # v5.5.2: record enum variant's compile-time value in the
@@ -528,4 +532,58 @@ fn FINDVAR(S, noff): i64 {
         vi = vi - 1;
     }
     return 0 - 1;
+}
+
+# v6.2.11: constant-collision guardrail (issue 2026-06-14). cyrius has a FLAT
+# data-symbol namespace and silently lets the LAST definition of a name win.
+# When two co-linked modules define the same name with DIFFERENT compile-time
+# values (e.g. patra `enum TokType { TK_IDENT = 2 }` vs vyakarana `var TK_IDENT
+# = 0`, or net `var SYS_SOCKET = 41` vs syscalls `enum { SYS_SOCKET = 198 }`),
+# whichever loses gets the other's value substituted into its code with no
+# warning — the owl/patra `TK_IDENT`-aliases-`TK_EOF` corruption. This mirrors
+# the duplicate-`fn` warning (parse_fn.cyr) for data symbols: called at the
+# enum-member + literal-`var` registration sites with the NEW name+value BEFORE
+# the new entry is written, so FINDVAR sees only PRIOR definitions. The prior's
+# compile-time value comes from the enum-const-fold table (0x1D8000, sign bit =
+# "is enum const") or, for a literal-init global, the static-init table
+# (0x1EC000). #ifdef platform variants never collide here — PREPROCESS strips
+# the inactive branch before registration, so only the active value is seen.
+# WARN only — never blocks the build. This is a best-effort lint that catches
+# the dangerous two-module collisions (one def per module); it deliberately
+# under-fires (false-negatives only, never false-positives) in these cases:
+#   - a prior literal-init-to-ZERO global is indistinguishable from an
+#     uninitialised 0x1EC000 slot, so a `var X = 0` prior is not compared (the
+#     dangerous SYS_*/ERR_* cases are enum or nonzero);
+#   - value-identical redefinitions are silent (intended);
+#   - a PRIOR at gvar index >= 1024 is invisible (inherits the enum-const-fold
+#     cap; cycc self-host registers ~773, fully under it — large consumer
+#     stacks like http+tls can exceed it);
+#   - a 3rd+ link in a chained LITERAL redefinition can miss (a shadowing
+#     literal global doesn't re-record its value in 0x1EC000, so the next def
+#     compares against 0); enum chains are fully caught (0x1D8000 is always
+#     written). cx target records no literal values (0x1EC000 unused there).
+fn CHKDUPVAL(S, noff, newval): i64 {
+    var pi = FINDVAR(S, noff);
+    if (pi < 0) { return 0; }
+    if (pi >= 1024) { return 0; }   # beyond the enum-const fold table; skip
+    var pecv = L64(S + 0x1D8000 + pi * 8);
+    var pval = 0;
+    var phas = 0;
+    if (pecv < 0) {                   # sign bit set → prior is an enum const
+        pval = pecv & 0x7FFFFFFFFFFFFFFF;
+        phas = 1;
+    } else {
+        var plit = L64(S + 0x1EC000 + pi * 8);   # prior literal-init global
+        if (plit != 0) { pval = plit; phas = 1; }
+    }
+    if (phas == 1) {
+        if (pval != newval) {
+            syscall(SYS_WRITE, 2, "warning:", 8);
+            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
+            PRSTR(S + 0x60000 + noff);
+            syscall(SYS_WRITE, 2, "' redefined with conflicting value (last definition wins)\n", 58);
+        }
+    }
+    return 0;
 }

@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.11] — 2026-06-15
+
+**v6.2.11 — sandhi 1.6.2 fold (closes the macOS nb-connect arc) + a compiler
+guardrail against silent constant-value collisions.** The sandhi fold completes
+the ecosystem loop opened in 6.2.10: sandhi 1.6.2 composes the v6-on-Darwin
+primitives and deletes its hand-rolled duplicates. The guardrail (issue
+2026-06-14) is the systemic fix for the silent-data-symbol-collision class — the
+same class as the `net SYS_SOCKET` collision 6.2.10 worked around and the
+owl/patra `TK_IDENT` corruption. A backlogged x86-macOS byte-array issue picked
+up for this slot turned out to be **already fixed** (premise-check on real
+hardware — see Fixed).
+
+### Added
+- **Constant-collision guardrail** (`src/frontend/parse_types.cyr` `CHKDUPVAL` +
+  two call sites). cycc now emits `warning: duplicate symbol 'X' redefined with
+  conflicting value (last definition wins)` when a data symbol (enum member or
+  global `var X = NUM;`) is registered with a name that already exists with a
+  **different** compile-time value — mirroring the existing duplicate-`fn`
+  warning. Prior value is read from the enum-const-fold table (0x1D8000, sign-bit
+  marker) or the static-init literal table (0x1EC000); the check runs before the
+  new symbol is registered so it sees only prior defs. **WARN-only — never blocks
+  a build.** Value-identical redefinitions and single defs stay silent; `#ifdef`
+  platform variants never collide (PREPROCESS strips the inactive branch first).
+  This closes the *silent-corruption* half of issue 2026-06-14 — a collision like
+  the owl/patra `TK_IDENT`-aliases-`TK_EOF` bug now warns at compile time instead
+  of miscompiling. (The lib-side cleanup — namespacing `ERR_*`, dropping hardcoded
+  `SYS_*` — remains open as per-lib source work.) Limitation: a prior literal-zero
+  global isn't compared (0x1EC000==0 ≡ uninitialised); the dangerous cases are
+  enum/nonzero, fully covered.
+
+### Changed
+- **Vendored stdlib refold** — `lib/sandhi.cyr` 1.6.1→**1.6.2** (clean
+  `cyrius distlib` fold; byte-identical to `sandhi/dist/`, no hand-edits).
+  sandhi 1.6.2 adopts cyrius 6.2.10's `sockaddr_in6` / `net_connect_sa_nb` /
+  `sock_set_nonblocking` for its IPv6 connect + server listen socket and **deletes
+  its hand-rolled v6 shims + all 8 Linux-only raw socket constants** — no Linux-only
+  socket constant remains in sandhi. **Fully closes**
+  `2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md` (both the IPv4/timeout
+  halves at 1.6.1 and the IPv6/listen halves at 1.6.2). api-surface unchanged
+  (removed symbols are `_`-prefixed internals, not tracked).
+
+### Fixed
+- **x86-macOS byte-array-literal compile (`2026-06-07`, was OPEN/HELD) — verified
+  already resolved, no code change.** Re-tested on real Intel-macOS (`ach`) while
+  picking it up: the x86-Mach-O cycc now compiles AND runs `byte_array_literal.tcyr`
+  26/26 (was `compile rc=126` at .87), with `element_typed_array` 11/11,
+  `gvar_static_init` 11/11, `enum_generics` 31/31, `enums` 10/10, `exhaustive_match`
+  10/10 all green. The general parse-state corruption no longer reproduces — fixed
+  by intervening x86-macho runtime-state work (most plausibly the v6.1.30 argv/`r15`
+  prologue). Issue closed + archived. (Premise-check caught a stale OPEN issue.)
+
+### Verified
+- `check.sh` **89/89**; x86_64 self-host byte-identical (the guardrail is
+  stderr-only — no codegen change); cross-OS self-host byte-identical **ecb / pi /
+  cass** (`SELFHOST_OK`); `net_v6_connect.tcyr` 17/17 on x86 + ecb + pi.
+- Guardrail test matrix: fires on enum↔enum (`ERR_*`), var↔enum (`SYS_SOCKET`,
+  both orders), var↔var conflicts; silent on value-identical + single-def. On real
+  **aarch64 (pi)** it correctly surfaces `net` `SYS_SOCKET`/`CONNECT`/`BIND`/`LISTEN`/
+  `SETSOCKOPT` colliding with `syscalls_aarch64_linux` (issue 2026-06-14 Bucket 2);
+  cycc's own source is collision-free (0 self-warnings) and the full x86 check.sh
+  corpus surfaced 0 dup-warnings (no false positives / noise).
+- bench `self_compile` ~505→**~515 ms** (+~10 ms, +2% — the guardrail's per-symbol
+  `FINDVAR` scan; growth-tax for one correctness feature, not a regression); `cycc`
+  1,063,792→**1,064,864 B** (+1,072, the guardrail). `cycc_aarch64` rebuilt.
+  tests 178 `.tcyr` (no new test — guardrail covered by synthetic probes +
+  the aarch64 corpus surfacing).
+
 ## [6.2.10] — 2026-06-15
 
 **v6.2.10 — Darwin IPv6 socket surface for `lib/net.cyr` (fulfils sandhi's
