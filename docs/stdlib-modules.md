@@ -1,6 +1,6 @@
 # Standard Library — Module Index
 
-> Categorized inventory of the Cyrius standard library: **88 `lib/*.cyr`
+> Categorized inventory of the Cyrius standard library: **95 `lib/*.cyr`
 > modules** (vendored sibling distfiles folded byte-identical, sandhi-pattern)
 > with **0 git deps**. This is the *what-exists* map; for per-function
 > signatures see [`stdlib-reference.md`](stdlib-reference.md).
@@ -41,7 +41,10 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 - v6.0.x — `lib/tls_native.cyr`, the sovereign native TLS 1.3 stack
   (client + server, sigil-backed X.509 chain verification). The **default**
   TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the
-  libssl bridge).
+  libssl bridge). v6.2.4 added a pluggable transport vtable
+  (`tls_native_set_transport`); v6.2.5 split the 5,857-line monolith into a
+  302-line hub + 6 focused modules (`tls_native_{lowlevel,keysched,ctx,hs13,
+  hs12,conn}.cyr`) — logic-preserving, the public API is unchanged.
 
 ## Categories
 

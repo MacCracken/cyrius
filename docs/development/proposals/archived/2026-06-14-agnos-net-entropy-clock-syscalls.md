@@ -1,5 +1,14 @@
 # CYRIUS_TARGET_AGNOS peer: net / entropy / wall-clock syscalls (the TLS + net-tools enabler)
 
+> **RESOLVED — shipped in cyrius v6.2.3 (2026-06-14).** The #45–#55 net/entropy/
+> wall-clock syscall peer landed in `lib/syscalls_x86_64_agnos.cyr` (+ the
+> socket fd↔conn_id adapter in `lib/net.cyr`, `sys_getrandom` un-fail-closed,
+> `lib/chrono.cyr`/`tls_native` wall-clock, and the discovered threading
+> prereq `lib/thread_agnos.cyr`). `http`/`net`/`dig`/`yo` + `tls_native` now
+> build for `CYRIUS_TARGET_AGNOS`. Phase B (inbound-TCP telnet servers) + the
+> `owl`→`sit` transitive port remain future work, tracked separately (not this
+> proposal's deliverable). See CHANGELOG [6.2.3]. Archived 2026-06-14.
+
 **Filed:** 2026-06-14 during AGNOS 1.45.x (TLS → HTTPS → `ark`-fetch arc; cuts 1.45.0–1.45.4)
 **Severity:** Stdlib peer gap — `tls_native`, `http`, `net`, and the AGNOS network-tools family (`yo`/`dig`/`whirl`) cannot run on AGNOS because the `CYRIUS_TARGET_AGNOS` stdlib peer has no entropy, no wall-clock, and no socket transport. The AGNOS kernel just exposed all of these as ring-3 syscalls (#45–#54); cyrius owes the mirroring wrappers.
 **Affects:** `lib/syscalls_x86_64_agnos.cyr` (the agnos syscall peer — already carries a fail-closed `sys_getrandom` stub waiting for exactly this), `lib/chrono.cyr` (agnos wall-clock branch), `lib/net.cyr` (the socket model — see the **model-mismatch** section; this is the one non-mechanical item), and the consumers `lib/tls_native.cyr` / `lib/http.cyr`.

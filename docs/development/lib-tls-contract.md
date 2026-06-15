@@ -24,16 +24,19 @@ long as existing verbs keep their semantics.
 
 ## Transport model
 
-As of v6.0.x there are **two** transports behind one contract:
+Since the v6.1.21 native-default flip there are **two** transports behind one
+contract:
 
-1. **libssl 3.x** loaded via `lib/fdlopen.cyr` — the **default** backend
-   (see `lib/tls.cyr` header for the rationale — minimal `%fs` TCB stub
-   deadlocks libssl's pthread init at first `SSL_CTX_new`).
-2. **The sovereign native cyrius TLS stack** (`lib/tls_native.cyr`) — opt-in,
-   selected by building with `-D CYRIUS_TLS_NATIVE`. No libssl/OpenSSL
-   dependency; crypto + x509 are in-tree (sigil). Shipped across .74–.83
-   (TLS 1.2 + 1.3, ECDSA P-256/P-384 + RSA + Ed25519, AES-128/256-GCM +
-   ChaCha20, OS trust-store + SNI verification, live-Cloudflare-proven).
+1. **The sovereign native cyrius TLS stack** (`lib/tls_native.cyr`) — the
+   **default** backend since v6.1.21. No libssl/OpenSSL dependency; crypto +
+   x509 are in-tree (sigil). Shipped across .74–.83 (TLS 1.2 + 1.3, ECDSA
+   P-256/P-384 + RSA + Ed25519, AES-128/256-GCM + ChaCha20, OS trust-store +
+   SNI verification, live-Cloudflare-proven). As of v6.2.5 it is structured as a
+   hub + 6 modules (`tls_native_{lowlevel,keysched,ctx,hs13,hs12,conn}.cyr`).
+2. **libssl 3.x** loaded via `lib/fdlopen.cyr` — now **opt-out**, re-selected by
+   building with `-D CYRIUS_TLS_LIBSSL` (see `lib/tls.cyr` header for the
+   rationale — minimal `%fs` TCB stub deadlocks libssl's pthread init at first
+   `SSL_CTX_new`).
 
 `lib/tls.cyr` dispatches on `_tls_backend`; the verb contract below is
 identical for both. Consumers MUST treat the transport as **opaque**:

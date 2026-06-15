@@ -18,7 +18,7 @@
 | **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 814,592 B (unchanged @ 6.1.29) |
+| **cycc_win** (PE32+ cross) | 836,096 B (refreshed @ 6.2.5 version-bump rebuild) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
@@ -26,7 +26,7 @@
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
 | stdlib fold (@6.2.2) | agnosys 1.4.2 · sandhi 1.4.11 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.1 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.0.2 · sakshi 2.3.0 (all on the 6.2.1 pin) |
-| tests | 175 `.tcyr` (+`tls_native_transport_vtable` @.24) · 15 `.bcyr` |
+| tests | 176 `.tcyr` (+`tls_native_transport_vtable` @.24) · 15 `.bcyr` · 5 `.fcyr` |
 | stdlib | 95 `lib/*.cyr` (+6 @.25 `tls_native_{lowlevel,keysched,ctx,hs13,hs12,conn}.cyr` — tls_native split) · 79 programs · api-surface 4258 fns (113 tls_native fns relocated, name+arity unchanged) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | bench (every-release gate) | self_compile ~512 ms (flat @ 6.2.5 — pure stdlib reorg, not in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |

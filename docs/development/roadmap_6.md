@@ -68,7 +68,8 @@ two-binary rename ceremony (v6.0.0) and shipped:
   PSS/PKCS#1 + Ed25519; AES-128/256-GCM + ChaCha20-Poly1305; EMS, ALPN,
   OS trust-store + SNI verification. Live Cloudflare HTTPS + OpenSSL
   interop proven. `lib/tls.cyr` re-backed onto it behind
-  `CYRIUS_TLS_NATIVE` (libssl stays the default backend). sandhi 1.4.x
+  `CYRIUS_TLS_NATIVE` (libssl was still the default backend then; native
+  became the default at v6.1.21, libssl opt-out). sandhi 1.4.x
   rewired off raw libssl onto typed verbs.
 - **AGNOS userspace target** (`CYRIUS_TARGET_AGNOS`) — new ring-3
   compile target + `lib/syscalls_*_agnos.cyr` ABI peer; agnoshi
