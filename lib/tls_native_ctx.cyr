@@ -20,7 +20,7 @@
 # control block; +136..+255 is reserved for the read/write key
 # material, sequence numbers, and I/O buffers Mini-arcs B-D append.
 
-var TLS_CTX_LEN          = 472;   # 59 i64 slots (+2 @ v6.1.36 CVE-30: app-traffic secrets)
+var TLS_CTX_LEN          = 480;   # 60 i64 slots (+1 @ v6.2.8: CERT_REQUESTED, mTLS client-auth)
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -82,8 +82,8 @@ var TLS_CTX_OFF_CA_ROOT       = 408; # client: parsed trust-anchor cert (.29)
 var TLS_CTX_OFF_MASTER12      = 416; # TLS 1.2: ptr to the 48-byte master_secret (.74)
 # — 1.2 has no HKDF keysched object, so both
 # Finished verify_data computations need a home
-# for the master here. 432/440 stay free
-# within TLS_CTX_LEN=448.
+# for the master here. (Offsets continue contiguously
+# below to CERT_REQUESTED=472; TLS_CTX_LEN=480.)
 var TLS_CTX_OFF_USE_EMS       = 424; # TLS 1.2 Extended Master Secret (RFC 7627, .77):
 # 1 = EMS negotiated, 0 = legacy. READ by
 # derive_keys; SET/cleared by the CH/SH parsers.
@@ -101,6 +101,7 @@ var TLS_CTX_OFF_SERVER_INTERS = 448; # client: ptr to [count][interm0 ptr]... th
 # install_app_keys; rotated in place by _tn_rotate_recv_keys/_tn_rotate_send_keys.
 var TLS_CTX_OFF_SRV_APP_SECRET = 456; # server application-traffic secret ptr
 var TLS_CTX_OFF_CLI_APP_SECRET = 464; # client application-traffic secret ptr
+var TLS_CTX_OFF_CERT_REQUESTED = 472; # v6.2.8 client: 1 if server sent a CertificateRequest (mTLS client-auth)
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the

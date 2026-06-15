@@ -456,10 +456,12 @@ fn tls_native_connect(ctx, sock_fd): i64 {
     if (frl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
     var rf = tls_native_client_recv_flight(ctx, inbuf, frl);
     if (rf != TLS_OK) { return rf; }
-    # Verify the server Finished + send the client Finished.
-    var fin = alloc(256);
+    # Verify the server Finished + send the client second flight. v6.2.8: this
+    # may include the client Certificate + CertificateVerify (mTLS client-auth)
+    # ahead of the Finished, so size for a cert chain (was 256 — Finished-only).
+    var fin = alloc(20480);
     if (fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var finn = tls_native_client_finish(ctx, fin, 256);
+    var finn = tls_native_client_finish(ctx, fin, 20480);
     if (finn < 0) { return finn; }
     if (_tn_sock_write_all(sock_fd, fin, finn) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
     # Install application-traffic keys (client_finish derived the master).
@@ -611,6 +613,38 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     if (dm != TLS_OK) { return dm; }
     var ak = tls_native_install_app_keys(ctx);
     if (ak != TLS_OK) { return ak; }
+    # v6.2.8: mTLS client-auth receive. When we requested a client cert
+    # (VERIFY != NONE → CertificateRequest in our flight), the client's second
+    # flight is [Certificate, CertificateVerify,] Finished — each its own
+    # record. Read + verify the Certificate (+ CertificateVerify when the client
+    # presented a non-empty cert) before the Finished. With VERIFY == NONE this
+    # block is skipped and the flight is Finished-only (byte-identical to before).
+    if (load64(ctx + TLS_CTX_OFF_VERIFY) != TLS_VERIFY_NONE) {
+        var ccrl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+        if (ccrl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+        var cmsg = alloc(8192);
+        if (cmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+        var ccct = 0;
+        var cmsg_len = tls_native_server_open_handshake(ctx, inbuf, ccrl, cmsg, 8192, &ccct);
+        if (cmsg_len < 0) { return cmsg_len; }
+        if (ccct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+        var rcc = tls_native_server_recv_client_certificate(ctx, cmsg, cmsg_len);
+        if (rcc != TLS_OK) { return rcc; }
+        # CertificateVerify only if the client presented a non-empty cert
+        # (recv_client_certificate stores the leaf at CLIENT_CERT, else leaves 0).
+        if (load64(ctx + TLS_CTX_OFF_CLIENT_CERT) != 0) {
+            var cvrl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+            if (cvrl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+            var cvmsg = alloc(2048);
+            if (cvmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+            var cvct = 0;
+            var cvmsg_len = tls_native_server_open_handshake(ctx, inbuf, cvrl, cvmsg, 2048, &cvct);
+            if (cvmsg_len < 0) { return cvmsg_len; }
+            if (cvct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+            var rcv = tls_native_server_recv_client_certverify(ctx, cvmsg, cvmsg_len);
+            if (rcv != TLS_OK) { return rcv; }
+        }
+    }
     # Read + open the client's (encrypted) Finished.
     var crl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (crl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }

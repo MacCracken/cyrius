@@ -75,7 +75,7 @@ default native-TLS stack with no RNG and unreviewed memory protections.
 applicability, the alloc_agnos guard from
 [memory-safety-parity-gaps](2026-06-10-memory-safety-parity-gaps.md)) — coordinate
 the ABI parts upstream (cross-repo). Two AGNOS-side asks have been **filed
-upstream** in `agnos/docs/development/issue/`:
+upstream** in `agnos/docs/development/issues/`:
 `2026-06-10-cyrius-tls-entropy-syscall-gap.md` (the getrandom syscall) +
 `2026-06-10-cyrius-pie-boot-harness-ask.md` (kernel-PIE boot validation, the
 ASLR/PIE-applicability half).

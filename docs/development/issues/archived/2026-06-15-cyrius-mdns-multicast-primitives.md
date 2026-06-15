@@ -135,3 +135,12 @@ the last untracked upstream item in sandhi's Batch A.
   upstream-claims verification pass confirmed the primitives are still absent
   and flagged this as the one Batch-A item lacking a proper cyrius-side
   coordination doc.
+
+## Resolution (cyrius 6.2.7, 2026-06-15)
+
+RESOLVED cyrius-side. `lib/net.cyr` gained the helper surface sandhi preferred:
+`net_join_multicast` / `net_drop_multicast` / `net_set_multicast_{ttl,loop,if}` /
+`sock_reuseport`, with a per-target `IpOpt` enum + `SO_REUSEPORT` (Linux 32-36/15,
+Darwin 9-13/512 — live-verified on ecb's Xcode SDK; `ip_mreq` byte-identical 8 B).
+AGNOS returns -1 (unsupported) so the QU-bit unicast path stays the agnos
+fallback. sandhi-side QM wire-up is sandhi's follow-up. See CHANGELOG [6.2.7].

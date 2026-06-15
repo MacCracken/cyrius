@@ -304,7 +304,7 @@ consumers (firmware, alt-kernels, embedded).
 > **Cross-repo follow-on (filed):** full-binary kernel KASLR needs an
 > AGNOS `--pie` boot harness — cyrius shipped the kernel-PIE ET_DYN
 > wrapper (`EMITELF64_KERNEL`, v6.1.7); the harness ask is filed at
-> `agnos/docs/development/issue/2026-06-10-cyrius-pie-boot-harness-ask.md`.
+> `agnos/docs/development/issues/2026-06-10-cyrius-pie-boot-harness-ask.md`.
 > Lands when the kernel team wires it; not v6.2.x-gating.
 
 ### v6.2.x — RISC-V rv64 backend
@@ -371,7 +371,7 @@ Cloudflare HTTPS + OpenSSL interop proven; sandhi re-pointed onto it
 - **Entropy on the AGNOS target** — the native stack has no RNG source on
   agnos (no getrandom syscall). Cyrius-side routing lands in Phase F
   (CVE-19); the kernel syscall is filed upstream
-  (`agnos/docs/development/issue/2026-06-10-cyrius-tls-entropy-syscall-gap.md`).
+  (`agnos/docs/development/issues/2026-06-10-cyrius-tls-entropy-syscall-gap.md`).
 
 Memory pin: [[project_native_tls_arc_v6_2_x]] (now an arc retrospective).
 

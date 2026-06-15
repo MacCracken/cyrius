@@ -1596,6 +1596,56 @@ fn tls_native_set_ca_system(ctx): i64 {
     return tls_native_set_ca_bundle(ctx, buf, total, 0);
 }
 
+# v6.2.8: mTLS client-auth — install the CLIENT's own certificate so it can
+# present it when a server sends a CertificateRequest. The wire Certificate
+# message sends raw DER (`_tn_build_certificate` reads CERT_CHAIN), so a PEM
+# input (is_der==0) is decoded to its leaf DER via `pem_decode_certs` first;
+# DER input (is_der==1) is stored verbatim. Parses the leaf via `_tn_load_cert`.
+# Pair with `tls_native_set_client_key`; CREDS_LOADED is set once both halves
+# are in. CLIENT role only. Returns TLS_OK / negative TLS_ERR_*. See issue
+# 2026-05-22-cyrius-native-tls-in-6.0.x.md (the mTLS half of the residual).
+fn tls_native_set_client_cert(ctx, cert, cert_len, is_der): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) { return TLS_ERR_PROTOCOL; }
+    if (cert == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (cert_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    var der = cert;
+    var dlen = cert_len;
+    if (is_der == 0) {
+        # PEM → first (leaf) DER cert.
+        var chain = alloc(TLS_CA_MAX_ROOTS * 16);
+        if (chain == 0) { return TLS_ERR_OOM; }
+        var n = pem_decode_certs(cert, cert_len, chain, TLS_CA_MAX_ROOTS);
+        if (n < 1) { return TLS_ERR_CERT_INVALID; }
+        der = load64(chain);
+        dlen = load64(chain + 8);
+    }
+    store64(ctx + TLS_CTX_OFF_CERT_CHAIN, der);
+    store64(ctx + TLS_CTX_OFF_CERT_LEN, dlen);
+    var cr = _tn_load_cert(ctx);
+    if (cr != TLS_OK) { return cr; }
+    if (load64(ctx + TLS_CTX_OFF_KEY_MAT) != 0) { store64(ctx + TLS_CTX_OFF_CREDS_LOADED, 1); }
+    return TLS_OK;
+}
+
+# v6.2.8: mTLS client-auth — install the CLIENT's own private key (the signer
+# for the client CertificateVerify). `_tn_load_privkey` auto-detects PEM (0x2D)
+# vs DER and the algorithm (Ed25519 / ECDSA P-256 / P-384; RSA-PSS signing is
+# not yet wired in sigil → TLS_ERR_KEY_UNSUPPORTED). CLIENT role only. Pair with
+# `tls_native_set_client_cert`. Returns TLS_OK / negative TLS_ERR_*.
+fn tls_native_set_client_key(ctx, key, key_len): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) { return TLS_ERR_PROTOCOL; }
+    if (key == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (key_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    store64(ctx + TLS_CTX_OFF_KEY, key);
+    store64(ctx + TLS_CTX_OFF_KEY_LEN, key_len);
+    var kr = _tn_load_privkey(ctx);
+    if (kr != TLS_OK) { return kr; }
+    if (load64(ctx + TLS_CTX_OFF_LEAF_CERT) != 0) { store64(ctx + TLS_CTX_OFF_CREDS_LOADED, 1); }
+    return TLS_OK;
+}
+
 # CVE-17 (v6.1.36): a CA that signs the next link down must, if it carries a
 # keyUsage extension, assert keyCertSign (0x04); and its pathLenConstraint (if
 # set, != -1) must permit `below` intermediate CAs beneath it toward the leaf.

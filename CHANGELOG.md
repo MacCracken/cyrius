@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.8] — 2026-06-15
+
+**v6.2.8 — native TLS trust-store + mTLS client-auth (closes the 2026-05-22
+native-TLS residual) + sandhi/mabda dep refresh.** The last open item against
+sandhi's `2026-05-22-cyrius-native-tls-in-6.0.x.md` was typed native `SSL_CTX_*`
+equivalents so native trust-store / mTLS **enforce** (not just fail closed) —
+the prerequisite for sandhi retiring its remaining `tls_dlsym` callers. Both
+halves shipped: trust-store wrappers (already backed by `tls_native`) and a full
+TLS 1.3 client-auth send path (net-new). Deps refreshed: **sandhi 1.5.3→1.5.5**,
+**mabda 3.0.4→3.1.0** (both non-breaking). None of this is in `cycc` — x86
+self-host byte-identical.
+
+### Added
+- **`lib/tls.cyr` typed trust/mTLS wrappers** — `tls_ctx_load_verify_locations`,
+  `tls_ctx_set_verify_paths`, `tls_ctx_use_certificate_file`,
+  `tls_ctx_use_private_key_file`. Backend-agnostic: native ENFORCES (trust store
+  via `tls_native_set_ca_bundle`/`set_ca_system` + chain-walk; mTLS via the new
+  client-auth path); libssl routes to the `SSL_CTX_*` symbols. Return **1=success
+  / ≤0=failure** (OpenSSL convention — sandhi's `apply.cyr` already checks `!= 1`),
+  so sandhi can swap its `tls_dlsym("SSL_CTX_*")` callers onto these with no
+  behaviour change.
+- **`lib/tls_native_*` mTLS client-auth (TLS 1.3 §4.4)** — a `tls_native`
+  **client now presents its own certificate** when a server sends a
+  CertificateRequest: new `tls_native_set_client_cert` / `tls_native_set_client_key`
+  setters (PEM/DER, reusing the role-agnostic cred parsers); `tls_native_client_finish`
+  emits client `Certificate` + `CertificateVerify` (parameterized `_tn_build_cert_verify`
+  with the "TLS 1.3, client CertificateVerify" label) ahead of the Finished, each
+  a sealed record with a distinct AEAD nonce; the transcript feeds in order so the
+  Finished MAC spans `CH..clientCertVerify`. The **server side is wired into
+  `tls_native_accept`** to read + verify the client Cert+CV (signature) when it
+  requested auth. ECDSA-P256/P384 + Ed25519 (RSA-PSS signing awaits sigil). New
+  ctx slot `CERT_REQUESTED` (`TLS_CTX_LEN` 472→480).
+- **`tests/tcyr/tls_native_mtls_client.tcyr`** — client↔server mTLS loopback:
+  client presents its cert via the typed wrappers, server requests + verifies it
+  (positive), and strict `FAIL_IF_NO_PEER_CERT` rejects a no-cert client
+  (negative + empty-Certificate path). 9/9.
+
+### Changed
+- **Vendored stdlib refold** — `lib/sandhi.cyr` 1.5.3→1.5.5, `lib/mabda.cyr`
+  3.0.4→3.1.0 (plain `cp dist→lib`; api-surface additions only, zero breaking
+  removals). sandhi 1.5.5 still resolves the `SSL_CTX_*` set via `tls_dlsym`
+  (retiring onto the new typed wrappers is sandhi's follow-up slot).
+
+### Verified
+- `tests/tcyr/tls_native_mtls_client.tcyr` 9/9; existing TLS suites unchanged
+  (ed25519 5/5, wrapper_native 9/9, tls12_handshake 21/21, transport_vtable
+  12/12 — the no-mTLS path is byte-identical). `check.sh` **89/89** (177 `.tcyr`,
+  +1). Compiles on x86_64 Linux, the `CYRIUS_TLS_LIBSSL` libssl-only variant,
+  the Mach-O target, and `--agnos`; agnos gate 4/4.
+- Adversarial security review (7 agents): **no auth-bypass, no AEAD nonce reuse,
+  no buffer overflow**; client/server CertificateVerify content + transcript
+  ordering byte-identical; strict-mode (`FAIL_IF_NO_PEER_CERT`) enforced. Fixes
+  applied from the review: P-384 client-CV verify added on the server (was an
+  asymmetric interop gap, fail-closed); the server-only-verifies-CV-signature
+  (not client-chain-trust) limitation documented at
+  `tls_native_server_recv_client_certificate` + tracked as a follow-up.
+- api-surface 4334 → 4340 public fns (additions only, non-breaking). bench
+  `self_compile` ~513 ms / `cycc` **1,063,800 B unchanged** (TLS isn't in the
+  compiler). cross-OS self-host byte-identical **ecb / pi / cass** (`SELFHOST_OK`).
+
 ## [6.2.7] — 2026-06-15
 
 **v6.2.7 — sandhi-driven stdlib AGNOS-completeness pass + IPv4 multicast + dep

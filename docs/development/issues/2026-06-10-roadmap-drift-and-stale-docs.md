@@ -67,7 +67,7 @@ consumer-gated indefinitely on an AGNOS `--pie` harness that doesn't exist
 acceptance as a named v6.2.0 bare-metal deliverable (kernel object links
 tls_native + passes the forbidden-module check). The AGNOS `--pie` boot-harness
 ask (the other half of the kernel-PIE follow-on) has been **filed upstream**:
-`agnos/docs/development/issue/2026-06-10-cyrius-pie-boot-harness-ask.md`.
+`agnos/docs/development/issues/2026-06-10-cyrius-pie-boot-harness-ask.md`.
 
 ## RM-04 — RISC-V needs rv64 hardware absent from the fleet (P2)
 

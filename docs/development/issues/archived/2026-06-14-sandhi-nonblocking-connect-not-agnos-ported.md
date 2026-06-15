@@ -54,3 +54,11 @@ output — do NOT hand-edit the vendored copy; see
   branches; proposal `2026-06-14-agnos-net-entropy-clock-syscalls.md`.
 - The v5.10.11 net_connect_nb consolidation (sandhi + regression shared
   primitive) — sandhi kept a private duplicate.
+
+## Resolution (cyrius 6.2.7, 2026-06-15)
+
+RESOLVED via the sandhi 1.5.3 refold. sandhi's C1 work (1.5.1) wrapped
+`_sandhi_conn_connect_nb_a` + every raw fcntl/getsockopt socket-syscall site in
+`#ifdef CYRIUS_TARGET_AGNOS` / `#ifndef` guards; folding sandhi 1.4.11 → 1.5.3
+into `lib/sandhi.cyr` brings those guards in (verified: nb-connect fn guarded at
+1627, getsockopt sites inside the `#ifndef AGNOS` blocks). See CHANGELOG [6.2.7].

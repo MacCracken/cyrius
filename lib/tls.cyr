@@ -151,6 +151,12 @@ var _fn_SSL_CTX_free = 0;
 var _fn_SSL_CTX_set_default_verify_paths = 0;
 var _fn_SSL_CTX_set_verify = 0;
 var _fn_SSL_CTX_set_alpn_protos = 0;
+# v6.2.8: pre-handshake trust-store + mTLS config symbols (the residual of
+# 2026-05-22-cyrius-native-tls-in-6.0.x.md). Soft-resolved (NOT in the
+# minimum-viable hard-bail set) — a consumer fails closed if libssl lacks them.
+var _fn_SSL_CTX_load_verify_locations = 0;
+var _fn_SSL_CTX_use_certificate_file = 0;
+var _fn_SSL_CTX_use_PrivateKey_file = 0;
 var _fn_SSL_new = 0;
 var _fn_SSL_free = 0;
 var _fn_SSL_set_fd = 0;
@@ -230,6 +236,9 @@ fn _tls_init(): i64 {
     _fn_SSL_CTX_set_default_verify_paths = fncall2(fn_dlsym, h, "SSL_CTX_set_default_verify_paths");
     _fn_SSL_CTX_set_verify               = fncall2(fn_dlsym, h, "SSL_CTX_set_verify");
     _fn_SSL_CTX_set_alpn_protos          = fncall2(fn_dlsym, h, "SSL_CTX_set_alpn_protos");
+    _fn_SSL_CTX_load_verify_locations    = fncall2(fn_dlsym, h, "SSL_CTX_load_verify_locations");
+    _fn_SSL_CTX_use_certificate_file     = fncall2(fn_dlsym, h, "SSL_CTX_use_certificate_file");
+    _fn_SSL_CTX_use_PrivateKey_file      = fncall2(fn_dlsym, h, "SSL_CTX_use_PrivateKey_file");
     _fn_SSL_new                          = fncall2(fn_dlsym, h, "SSL_new");
     _fn_SSL_free                         = fncall2(fn_dlsym, h, "SSL_free");
     _fn_SSL_set_fd                       = fncall2(fn_dlsym, h, "SSL_set_fd");
@@ -370,6 +379,88 @@ fn tls_set_verify(handle, mode, callback): i64 {
     if (_fn_SSL_CTX_set_verify == 0) { return 0 - 1; }
     fncall3(_fn_SSL_CTX_set_verify, handle, mode, callback);
     return 0;
+}
+
+# ---- Typed pre-handshake trust-store + mTLS config verbs (v6.2.8) ----
+# The residual of docs/development/issues/2026-05-22-cyrius-native-tls-in-6.0.x.md:
+# backend-agnostic replacements for sandhi's remaining `tls_dlsym("SSL_CTX_*")`
+# trust/mTLS callers (src/tls_policy/apply.cyr). Native ENFORCES via the
+# tls_native trust-store + client-auth machinery; libssl routes to the SSL_CTX_*
+# symbols. Contract: return **1 = success**, <=0 = failure (OpenSSL convention,
+# which sandhi already checks with `!= 1`); native TLS_OK(0) maps to 1. The
+# `handle` is the bare native ctx (or SSL_CTX* under libssl) the hook receives.
+
+# Load a custom CA trust store from `cafile` (PEM). `capath` (per-directory
+# store) is honoured only under libssl — native has no directory store, so the
+# native path slurps `cafile` and installs it via the CA bundle. Returns 1/0/-1.
+fn tls_ctx_load_verify_locations(handle, cafile, capath): i64 {
+    if (handle == 0) { return 0 - 1; }
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) {
+        var cap = 1048576;
+        var buf = alloc(cap);
+        if (buf == 0) { return 0; }
+        var n = file_read_all(cafile, buf, cap);
+        if (n <= 0) { return 0; }
+        if (tls_native_set_ca_bundle(handle, buf, n, 0) == TLS_OK) { return 1; }
+        return 0;
+    }
+    #endif
+    if (_fn_SSL_CTX_load_verify_locations == 0) { return 0 - 1; }
+    return fncall3(_fn_SSL_CTX_load_verify_locations, handle, cafile, capath);
+}
+
+# Trust the OS default CA store (system trust paths). Returns 1/0/-1.
+fn tls_ctx_set_verify_paths(handle): i64 {
+    if (handle == 0) { return 0 - 1; }
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) {
+        if (tls_native_set_ca_system(handle) == TLS_OK) { return 1; }
+        return 0;
+    }
+    #endif
+    if (_fn_SSL_CTX_set_default_verify_paths == 0) { return 0 - 1; }
+    return fncall1(_fn_SSL_CTX_set_default_verify_paths, handle);
+}
+
+# mTLS: present the client's own certificate. `type` = SSL_FILETYPE_PEM(1) /
+# SSL_FILETYPE_ASN1(2 = DER). Pair with tls_ctx_use_private_key_file. Returns 1/0/-1.
+fn tls_ctx_use_certificate_file(handle, path, type): i64 {
+    if (handle == 0) { return 0 - 1; }
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) {
+        var cap = 65536;
+        var buf = alloc(cap);
+        if (buf == 0) { return 0; }
+        var n = file_read_all(path, buf, cap);
+        if (n <= 0) { return 0; }
+        var is_der = 0;
+        if (type == 2) { is_der = 1; }
+        if (tls_native_set_client_cert(handle, buf, n, is_der) == TLS_OK) { return 1; }
+        return 0;
+    }
+    #endif
+    if (_fn_SSL_CTX_use_certificate_file == 0) { return 0 - 1; }
+    return fncall3(_fn_SSL_CTX_use_certificate_file, handle, path, type);
+}
+
+# mTLS: install the client's own private key. `type` as above (native auto-
+# detects PEM vs DER by content). Returns 1/0/-1.
+fn tls_ctx_use_private_key_file(handle, path, type): i64 {
+    if (handle == 0) { return 0 - 1; }
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) {
+        var cap = 65536;
+        var buf = alloc(cap);
+        if (buf == 0) { return 0; }
+        var n = file_read_all(path, buf, cap);
+        if (n <= 0) { return 0; }
+        if (tls_native_set_client_key(handle, buf, n) == TLS_OK) { return 1; }
+        return 0;
+    }
+    #endif
+    if (_fn_SSL_CTX_use_PrivateKey_file == 0) { return 0 - 1; }
+    return fncall3(_fn_SSL_CTX_use_PrivateKey_file, handle, path, type);
 }
 
 # ---- Typed peer-introspection verbs (.82, Mini-arc E) ----

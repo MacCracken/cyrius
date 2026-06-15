@@ -365,6 +365,21 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     var ee_total = TLS_HANDSHAKE_HEADER_LEN + ml;
     tls_native_transcript_update(ts, plain + pos, ee_total);
     pos = pos + ee_total;
+    # v6.2.8: CertificateRequest (mTLS) — optional, between EE and the server
+    # Certificate (RFC 8446 §4.3.2). When present, record that the server wants
+    # client auth (client_finish then sends a client Certificate + CertificateVerify),
+    # feed the transcript, and skip past it. The peek is idempotent — with no CR
+    # it reads the Certificate header, doesn't match, and leaves `pos` for the
+    # Certificate parse below to re-read.
+    if (tls_native_handshake_read_header(plain + pos, plen - pos, &mt, &ml) < 0) {
+        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+    }
+    if (mt == TLS_HS_CERTIFICATE_REQUEST) {
+        var cr_total = TLS_HANDSHAKE_HEADER_LEN + ml;
+        tls_native_transcript_update(ts, plain + pos, cr_total);
+        store64(ctx + TLS_CTX_OFF_CERT_REQUESTED, 1);
+        pos = pos + cr_total;
+    }
     # Certificate
     if (tls_native_handshake_read_header(plain + pos, plen - pos, &mt, &ml) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
@@ -534,7 +549,43 @@ fn tls_native_client_finish(ctx, out, out_max): i64 {
     # Derive master + application-traffic secrets over CH..serverFinished.
     var dm = tls_native_keysched_derive_master(ks, ts);
     if (dm != TLS_OK) { return _tn_ctx_fail(ctx, dm); }
-    # Build + seal the client Finished over CH..serverFinished.
+    # v6.2.8: mTLS client-auth — if the server sent a CertificateRequest, emit
+    # the client Certificate (+ CertificateVerify when we hold a cert) BEFORE the
+    # Finished, each as its own sealed handshake record under the client
+    # handshake key, feeding the transcript in order so the Finished MAC (th2
+    # below) spans CH..clientCertVerify (RFC 8446 §4.4). With no CertificateRequest
+    # `off` stays 0 and the Finished path below is byte-identical to a non-mTLS
+    # handshake. See issue 2026-05-22-cyrius-native-tls-in-6.0.x.md.
+    var off = 0;
+    if (load64(ctx + TLS_CTX_OFF_CERT_REQUESTED) == 1) {
+        var mbuf = alloc(16384);
+        if (mbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+        var have_cert = 0;
+        if (load64(ctx + TLS_CTX_OFF_CERT_CHAIN) != 0) { have_cert = 1; }
+        var cm = 0;
+        if (have_cert == 1) {
+            cm = _tn_build_certificate(ctx, mbuf, 16384);
+        } else {
+            cm = _tn_build_empty_certificate(mbuf, 16384);
+        }
+        if (cm < 0) { return _tn_ctx_fail(ctx, cm); }
+        tls_native_transcript_update(ts, mbuf, cm);
+        var cmr = tls_native_client_seal_handshake(ctx, mbuf, cm, out + off, out_max - off);
+        if (cmr < 0) { return cmr; }
+        off = off + cmr;
+        # CertificateVerify only when a real cert was presented; signs the
+        # transcript digest through the client Certificate (the digest is taken
+        # inside the builder — after the Cert update above, before the CV update).
+        if (have_cert == 1) {
+            var cv = _tn_build_cert_verify(ctx, mbuf, 16384, "TLS 1.3, client CertificateVerify", 33);
+            if (cv < 0) { return _tn_ctx_fail(ctx, cv); }
+            tls_native_transcript_update(ts, mbuf, cv);
+            var cvr = tls_native_client_seal_handshake(ctx, mbuf, cv, out + off, out_max - off);
+            if (cvr < 0) { return cvr; }
+            off = off + cvr;
+        }
+    }
+    # Build + seal the client Finished over CH..serverFinished (+ clientCert/CV).
     var c_chs = alloc(TLS_MAX_DIGEST_LEN);
     if (c_chs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, c_chs) < 0) {
@@ -557,11 +608,11 @@ fn tls_native_client_finish(ctx, out, out_max): i64 {
     } else {
         hmac_sha256(c_fk, hlen, th2, hlen, vd);
     }
-    var rl = tls_native_client_seal_handshake(ctx, finmsg, TLS_HANDSHAKE_HEADER_LEN + hlen, out, out_max);
+    var rl = tls_native_client_seal_handshake(ctx, finmsg, TLS_HANDSHAKE_HEADER_LEN + hlen, out + off, out_max - off);
     if (rl < 0) { return rl; }
     tls_native_transcript_update(ts, finmsg, TLS_HANDSHAKE_HEADER_LEN + hlen);
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
-    return rl;
+    return off + rl;
 }
 
 # ================================================================
@@ -1348,12 +1399,27 @@ fn _tn_build_certificate(ctx, out, out_max): i64 {
     return total;
 }
 
+# v6.2.8: build an EMPTY Certificate message (RFC 8446 §4.4.2) — the client's
+# response to a CertificateRequest when it has no certificate to present.
+# Skipping the message entirely is a protocol violation; an empty cert_list is
+# the correct "I have no cert" signal (and no CertificateVerify follows).
+fn _tn_build_empty_certificate(out, out_max): i64 {
+    var body_len = 1 + 3;                              # empty context + empty cert_list len
+    var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
+    if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
+    tls_native_handshake_write_header(out, TLS_HS_CERTIFICATE, body_len);
+    var p = out + TLS_HANDSHAKE_HEADER_LEN;
+    store8(p, 0); p = p + 1;                           # certificate_request_context<0>
+    _tn_be24_w(p, 0);                                  # certificate_list length = 0
+    return total;
+}
+
 # Build CertificateVerify (RFC 8446 §4.4.3): sign the transcript hash
 # (CH..Certificate) with the server key. content = 0x20*64 ++
 # "TLS 1.3, server CertificateVerify" ++ 0x00 ++ Transcript-Hash.
 # ECDSA → DER signature (sigil hashes the content internally with the
 # scheme's hash); Ed25519 → 64-byte PureEdDSA over the content.
-fn _tn_build_cert_verify(ctx, out, out_max): i64 {
+fn _tn_build_cert_verify(ctx, out, out_max, label, label_len): i64 {
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var algo = load64(ctx + TLS_CTX_OFF_KEY_ALGO);
     var kmat = load64(ctx + TLS_CTX_OFF_KEY_MAT);
@@ -1361,18 +1427,20 @@ fn _tn_build_cert_verify(ctx, out, out_max): i64 {
     if (kmat == 0) { return TLS_ERR_KEY_UNSUPPORTED; }
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
-    # Build the signed content.
-    var content = alloc(64 + 33 + 1 + 48);
+    # Build the signed content: 0x20*64 ++ label ++ 0x00 ++ Transcript-Hash.
+    # v6.2.8: `label` is "TLS 1.3, server CertificateVerify" (server) or
+    # "TLS 1.3, client CertificateVerify" (client mTLS) — both 33 bytes.
+    var content = alloc(64 + label_len + 1 + TLS_MAX_DIGEST_LEN);
     if (content == 0) { return TLS_ERR_OOM; }
     var i = 0;
     while (i < 64) { store8(content + i, 0x20); i = i + 1; }
-    memcpy(content + 64, "TLS 1.3, server CertificateVerify", 33);
-    store8(content + 97, 0);
+    memcpy(content + 64, label, label_len);
+    store8(content + 64 + label_len, 0);
     var th = alloc(TLS_MAX_DIGEST_LEN);
     if (th == 0) { return TLS_ERR_OOM; }
     tls_native_transcript_digest(ts, th);
-    memcpy(content + 98, th, hlen);
-    var content_len = 98 + hlen;
+    memcpy(content + 64 + label_len + 1, th, hlen);
+    var content_len = 64 + label_len + 1 + hlen;
     # Sign per key algorithm.
     var sig = alloc(128);
     if (sig == 0) { return TLS_ERR_OOM; }
@@ -1486,7 +1554,7 @@ fn tls_native_server_build_flight(ctx, out, out_max): i64 {
     tls_native_transcript_update(ts, p, n);
     p = p + n; remain = remain - n;
     # CertificateVerify (signs the transcript through Certificate)
-    n = _tn_build_cert_verify(ctx, p, remain);
+    n = _tn_build_cert_verify(ctx, p, remain, "TLS 1.3, server CertificateVerify", 33);
     if (n < 0) { return _tn_ctx_fail(ctx, n); }
     tls_native_transcript_update(ts, p, n);
     p = p + n; remain = remain - n;
@@ -1544,6 +1612,18 @@ fn _tn_ct_eq(a, b, n): i64 {
 # and store it for CertificateVerify. An empty cert_list is allowed
 # unless the verify mode is FAIL_IF_NO_PEER_CERT. Advances the
 # transcript and the state machine (RECV_CERT).
+#
+# v6.2.8 SCOPE LIMITATION — server-side client-auth verifies the client
+# CertificateVerify SIGNATURE (proof-of-possession of the presented leaf's key),
+# NOT the client cert's chain-to-CA trust. `TLS_VERIFY_PEER` therefore means
+# "the client proved it holds the key for whatever leaf it sent", NOT "the leaf
+# is signed by a trusted CA" — any syntactically-valid (even self-signed) leaf
+# is accepted as an identity. Operators requiring trusted-client enforcement
+# must gate on the captured leaf out-of-band. Full client-chain-trust (running
+# the leaf through tls_native_client_verify_chain against a server-set client-CA
+# bundle) is a tracked follow-up (issue 2026-05-22-cyrius-native-tls-in-6.0.x.md
+# log). The CLIENT-present path (sandhi's mTLS use case) is unaffected — that is
+# the peer server's verification.
 fn tls_native_server_recv_client_certificate(ctx, msg, msg_len): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var ht = 0;
@@ -1622,10 +1702,16 @@ fn tls_native_server_recv_client_certverify(ctx, msg, msg_len): i64 {
     if (scheme == TLS_SIG_ECDSA_SECP256R1_SHA256) {
         ok = ecdsa_p256_verify_der(pk, content, content_len, sig, sig_len);
     } else {
-        if (scheme == TLS_SIG_ED25519) {
-            ok = ed25519_verify(pk, content, content_len, sig);
+        if (scheme == TLS_SIG_ECDSA_SECP384R1_SHA384) {
+            # v6.2.8: P-384 client cert — symmetric with the client CV builder
+            # (which can sign P-384) so a P-384 client certificate authenticates.
+            ok = _tn_ecdsa_p384_verify_der(pk, content, content_len, sig, sig_len);
         } else {
-            return _tn_ctx_fail(ctx, TLS_ERR_KEY_UNSUPPORTED);
+            if (scheme == TLS_SIG_ED25519) {
+                ok = ed25519_verify(pk, content, content_len, sig);
+            } else {
+                return _tn_ctx_fail(ctx, TLS_ERR_KEY_UNSUPPORTED);
+            }
         }
     }
     if (ok != 1) { return _tn_ctx_fail(ctx, TLS_ERR_AUTHN); }

@@ -116,3 +116,15 @@ agnos *consumer* build (sit) needs the cascade resolved.
   stale-vendored and that `async.cyr`'s `SYS_EPOLL_CREATE1` is the next
   cascade layer. Earlier sandhi 1.5.1 / 1.5.2 notes that called this the
   "`mmap` `CLONE_VM` stub" are superseded by this file.
+
+## Resolution (cyrius 6.2.7, 2026-06-15)
+
+RESOLVED cyrius-side. The §2 `async.cyr` `SYS_EPOLL_CREATE1` gap + the full agnos
+cascade it pointed at: `async.cyr` peer-split → `async_agnos.cyr`; `net.cyr`
+`sock_reuse`/`sock_set_recv_timeout`/`sock_shutdown` agnos-guarded (were silently
+mis-dispatching to #54/#48); `regression.cyr` peer-split → `regression_agnos.cyr`;
+`ws.cyr` raw `syscall(0/1)` → `sys_read`/`sys_write`. §1 (stale vendored
+`thread.cyr`) cleared by the sandhi 1.5.3 refold. Full sandhi-bundle `--agnos`
+probe: zero agnos-specific undefined symbols. Remaining host-side test-module
+gaps tracked in `agnos/docs/development/issues/2026-06-15-cyrius-stdlib-missing-syscalls.md`.
+See CHANGELOG [6.2.7].

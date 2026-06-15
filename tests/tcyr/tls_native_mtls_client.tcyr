@@ -1,0 +1,104 @@
+# tls_native_mtls_client.tcyr — v6.2.8
+# mTLS client-auth end-to-end: our native server REQUESTS a client cert
+# (TLS_VERIFY_PEER → CertificateRequest), our native client PRESENTS one through
+# the v6.2.8 typed wrappers (tls_ctx_use_certificate_file / _use_private_key_file
+# → tls_native_set_client_cert / _set_client_key), the client signs the client
+# CertificateVerify ("TLS 1.3, client CertificateVerify"), and the server
+# verifies that signature against the client leaf. Closes the mTLS half of the
+# residual in docs/development/issues/2026-05-22-cyrius-native-tls-in-6.0.x.md.
+# Cert/key are the Ed25519 self-signed pair from tls_native_ed25519.tcyr (the
+# same pair serves as both the server cert and the client cert here).
+#define CYRIUS_TLS_NATIVE
+include "lib/fdlopen.cyr"
+include "lib/tls_native.cyr"
+include "lib/tls.cyr"
+include "lib/assert.cyr"
+
+test_group("tls_native mTLS client-auth (v6.2.8)");
+
+# Ed25519 self-signed leaf for CN=127.0.0.1 (cert DER 320 B; PKCS#8 key 48 B).
+var cert = hex_decode("3082013c3081efa00302010202146f270712a3903ffd2c16beb02b1ddac6d8ec2e31300506032b657030143112301006035504030c093132372e302e302e31301e170d3236303631313034333035395a170d3236303631323034333035395a30143112301006035504030c093132372e302e302e31302a300506032b6570032100b83296da752a714efff5d1ac23384bd55e1d3e7a09b52d9f5aa3b248cb52388fa3533051301d0603551d0e04160414da1359a574f0e44c08a2c4a0953feb245e258069301f0603551d23041830168014da1359a574f0e44c08a2c4a0953feb245e258069300f0603551d130101ff040530030101ff300506032b6570034100e37e115584d6d72ae3adf09fff610f2ee2771691b853b5e3be1558e3738cf032fa239b682be3faf4b4d2ef30e31da3729de0913837f93ef3b5cc305c35c3380a", 640);
+var key = hex_decode("302e020100300506032b657004220420ea5da8171db67e4e169e246d8f7223ee88110129914478f8b49ffc898780df10", 96);
+
+# Write the client cert + key DER to temp files so the test drives the real
+# sandhi-facing wrapper path (file_read_all → native client-cert setters).
+fn _dump(path, buf, n): i64 {
+    var fd = sys_open(path, 577, 420);   # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    if (fd < 0) { return 0 - 1; }
+    sys_write(fd, buf, n);
+    sys_close(fd);
+    return 0;
+}
+
+# Client hook (fires on the native ctx pre-handshake): accept the self-signed
+# SERVER cert + present our own client cert via the typed wrappers.
+fn chook(hctx, handle): i64 {
+    tls_set_verify(handle, 0, 0);                                   # accept self-signed server cert
+    tls_ctx_use_certificate_file(handle, "/tmp/_mtls_c.der", 2);    # type 2 = DER
+    tls_ctx_use_private_key_file(handle, "/tmp/_mtls_k.der", 2);
+    return 0;
+}
+
+assert_eq(_dump("/tmp/_mtls_c.der", cert, 320), 0, "wrote client cert DER");
+assert_eq(_dump("/tmp/_mtls_k.der", key, 48), 0, "wrote client key DER");
+
+var fds[8];
+sys_socketpair(1, 1, 0, &fds);
+var fdp = load64(&fds);
+var sfd = fdp & 0xFFFFFFFF;
+var cfd = (fdp >> 32) & 0xFFFFFFFF;
+
+var pid = sys_fork();
+if (pid == 0) {
+    sys_close(sfd);
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    var ctx = tls_connect_with_ctx_hook(cfd, "localhost", &chook, 0);
+    if (ctx == 0) { sys_exit(10); }
+    if (tls_write(ctx, "hello-mtls", 10) != 10) { sys_exit(11); }
+    var rb[64];
+    if (tls_read(ctx, &rb, 64) != 9) { sys_exit(12); }
+    if (_tn_ct_eq(&rb, "ack-nativ", 9) != 1) { sys_exit(13); }
+    tls_close(ctx);
+    sys_close(cfd);
+    sys_exit(0);
+}
+
+sys_close(cfd);
+var srv = tls_native_new_server(cert, 320, key, 48);
+tls_native_set_verify(srv, TLS_VERIFY_PEER);   # request + verify a client cert
+tls_native_server_load_creds(srv);
+assert_eq(tls_native_accept(srv, sfd), TLS_OK, "server accepts (client presented + signed its cert)");
+assert_neq(load64(srv + TLS_CTX_OFF_CLIENT_CERT), 0, "server captured the client leaf cert (mTLS)");
+var sb[64];
+assert_eq(tls_native_read(srv, &sb, 64), 10, "server reads app data (mTLS handshake completed)");
+assert_eq(_tn_ct_eq(&sb, "hello-mtls", 10), 1, "client write decrypts server-side");
+assert_eq(tls_native_write(srv, "ack-nativ", 9), 9, "server responds");
+var st[4];
+sys_waitpid(pid, &st, 0);
+assert_eq((load64(&st) >> 8) & 0xFF, 0, "client completed mTLS handshake + closed (child exit 0)");
+
+# --- Negative: strict mTLS (FAIL_IF_NO_PEER_CERT) MUST reject a client that
+# presents no certificate. Also live-tests the empty-Certificate client path. ---
+fn chook_nocert(hctx, handle): i64 { tls_set_verify(handle, 0, 0); return 0; }   # no client cert configured
+var fds2[8];
+sys_socketpair(1, 1, 0, &fds2);
+var fdp2 = load64(&fds2);
+var sfd2 = fdp2 & 0xFFFFFFFF;
+var cfd2 = (fdp2 >> 32) & 0xFFFFFFFF;
+var pid2 = sys_fork();
+if (pid2 == 0) {
+    sys_close(sfd2);
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    tls_connect_with_ctx_hook(cfd2, "localhost", &chook_nocert, 0);   # sends an empty Certificate
+    sys_close(cfd2);
+    sys_exit(0);
+}
+sys_close(cfd2);
+var srv2 = tls_native_new_server(cert, 320, key, 48);
+tls_native_set_verify(srv2, TLS_VERIFY_FAIL_IF_NO_PEER_CERT);   # require a client cert
+tls_native_server_load_creds(srv2);
+assert_neq(tls_native_accept(srv2, sfd2), TLS_OK, "strict mTLS rejects a client presenting no certificate");
+var st2[4];
+sys_waitpid(pid2, &st2, 0);
+
+var r = assert_summary();

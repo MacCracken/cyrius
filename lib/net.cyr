@@ -29,6 +29,7 @@ enum SockOpt {
     SOL_SOCKET = 0xFFFF;
     SO_REUSEADDR = 0x0004;
     SO_RCVTIMEO = 0x1006;
+    SO_SNDTIMEO = 0x1005;    # Darwin send timeout (xnu sys/socket.h)
     SO_ERROR = 0x1007;
     SO_REUSEPORT = 0x0200;   # v6.2.7 — Darwin SO_REUSEPORT (coexist on mDNS 5353)
 }
@@ -52,6 +53,7 @@ enum SockOpt {
     SOL_SOCKET = 1;
     SO_REUSEADDR = 2;
     SO_RCVTIMEO = 20;
+    SO_SNDTIMEO = 21;        # Linux send timeout (asm-generic/socket.h)
     SO_ERROR = 4;
     SO_REUSEPORT = 15;       # v6.2.7 — Linux SO_REUSEPORT
 }
@@ -191,6 +193,31 @@ fn sock_set_recv_timeout(fd, secs, usecs): i64 {
     store64(tv + 8, usecs);
     #endif
     return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, tv, 16);
+    #endif
+}
+
+# Set the per-socket SEND timeout (SO_SNDTIMEO). A blocking write() on this
+# fd returns EWOULDBLOCK after `secs.usecs` once the kernel send buffer is
+# full, instead of parking the worker indefinitely. The send-side counterpart
+# to sock_set_recv_timeout: SO_RCVTIMEO alone leaves a slowloris-read peer
+# (one that connects but never drains its receive window) able to stall a
+# worker inside write(). Same struct timeval layout / per-target dispatch.
+fn sock_set_send_timeout(fd, secs, usecs): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no SO_SNDTIMEO (SYS_SETSOCKOPT=54 mis-dispatches). The send
+    # deadline is enforced by the syscall peer's poll path; no-op here. v6.2.7.
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var tv = alloc(16);
+    memset(tv, 0, 16);
+    store64(tv, secs);
+    #ifdef CYRIUS_TARGET_MACOS
+    store32(tv + 8, usecs);
+    #else
+    store64(tv + 8, usecs);
+    #endif
+    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_SNDTIMEO, tv, 16);
     #endif
 }
 

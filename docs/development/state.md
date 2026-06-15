@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.7** (v6.2.x cycle — **Platform Expansion**; sandhi-driven stdlib AGNOS-completeness pass — async/net/regression/ws peers + IPv4 multicast primitives; sandhi/mabda/patra refold. See [roadmap_6.md](roadmap_6.md)) |
+| **Version** | **6.2.8** (v6.2.x cycle — **Platform Expansion**; native TLS trust-store + mTLS client-auth — typed `tls_ctx_*` wrappers + TLS 1.3 client Certificate/CertificateVerify send (closes the 2026-05-22 native-TLS residual); sandhi/mabda refold. See [roadmap_6.md](roadmap_6.md)) |
 | **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
@@ -25,13 +25,39 @@
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.2 · **sandhi 1.5.3** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · **patra 1.11.2** · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · **mabda 3.0.4** · sakshi 2.3.0 (sandhi/patra/mabda refold @.7; rest on the 6.2.1 pin) |
-| tests | 176 `.tcyr` (+`tls_native_transport_vtable` @.24) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` (+2 @.7 `async_agnos.cyr`/`regression_agnos.cyr` — AGNOS peers) · 79 programs · api-surface 4306 fns (+46 @.7 net multicast +6 / async_agnos +8 / regression_agnos +15 / mabda refold +17, all non-breaking) |
+| stdlib fold | agnosys 1.4.2 · **sandhi 1.5.5** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · **mabda 3.1.0** · sakshi 2.3.0 (sandhi/mabda refold @.8; rest on the 6.2.1 pin) |
+| tests | 177 `.tcyr` (+`tls_native_mtls_client` @.8 — mTLS client-auth loopback) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4340 fns (+6 @.8 `tls_ctx_{load_verify_locations,set_verify_paths,use_certificate_file,use_private_key_file}` + `tls_native_set_client_{cert,key}`, non-breaking) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~509 ms (flat @ 6.2.7 — stdlib-only AGNOS-peer/multicast/refold change, not in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |
+| bench (every-release gate) | self_compile ~513 ms (flat @ 6.2.8 — stdlib-only TLS mTLS/wrapper/refold change, not in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |
 
-> **Handoff (2026-06-15):** **v6.2.7 CUT — sandhi-driven stdlib AGNOS-completeness
+> **Handoff (2026-06-15):** **v6.2.8 CUT — native TLS trust-store + mTLS
+> client-auth.** Closes the residual of sandhi's `2026-05-22-cyrius-native-tls-in-6.0.x.md`
+> (the last open native-TLS item): typed native `SSL_CTX_*` equivalents so native
+> trust-store / mTLS **enforce**. **Trust-store half:** `lib/tls.cyr` gained
+> `tls_ctx_load_verify_locations` / `tls_ctx_set_verify_paths` /
+> `tls_ctx_use_certificate_file` / `tls_ctx_use_private_key_file` — backend-agnostic
+> (native via `tls_native_set_ca_bundle`/`set_ca_system`; libssl via dlsym), return
+> 1=success (sandhi's `!= 1` contract). **mTLS half (net-new):** a `tls_native`
+> CLIENT now presents its own cert (TLS 1.3 client `Certificate` + `CertificateVerify`
+> in `tls_native_client_finish`; new `tls_native_set_client_cert`/`set_client_key`;
+> parameterized `_tn_build_cert_verify` for the client label), and the server side is
+> wired into `tls_native_accept` to read+verify it. ECDSA-P256/P384 + Ed25519. New
+> ctx slot `CERT_REQUESTED` (LEN 472→480). **VERIFIED:** `tls_native_mtls_client.tcyr`
+> 9/9 (client↔server loopback, positive + strict-`FAIL_IF_NO_PEER_CERT`-rejects);
+> existing TLS suites byte-identical (no-mTLS path unchanged); check.sh **89/89**;
+> compiles Linux/libssl-variant/Mach-O/agnos; agnos gate 4/4; api-surface 4306→4340
+> (additions only); bench ~513 ms flat / cycc 1,063,800 B byte-identical; cross-OS
+> **SELFHOST_OK ecb/pi/cass**. 7-agent adversarial security review: no auth-bypass /
+> nonce-reuse / overflow; P-384 client-CV verify added + the server-CV-signature-only
+> (not client-chain-trust) limitation documented + tracked. Deps refold sandhi
+> 1.5.3→1.5.5, mabda 3.0.4→3.1.0. sandhi retiring its `tls_dlsym` callers onto the
+> typed wrappers is its follow-up slot. **NEXT:** the remaining v6.2.x pins —
+> bare-metal target formalization + RISC-V rv64. **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-15):** **v6.2.7 CUT — sandhi-driven stdlib AGNOS-completeness
 > pass + IPv4 multicast + dep refresh.** sandhi filed two issues at its 1.5.3
 > close: (1) `thread-agnos-clone-dispatch` — `lib/async.cyr`'s `SYS_EPOLL_CREATE1`
 > is the next `--agnos` blocker after `thread.cyr`, and asked for a *systematic
