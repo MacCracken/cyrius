@@ -42,19 +42,27 @@ assert_agnos_elf() {
 }
 
 # 1. In-tree probe — exercises the agnos peer surface that's bitten us before:
-#    args (entry rsp capture), getenv (envp walk, v6.0.87), alloc, syscalls.
+#    args (entry rsp capture), getenv (envp walk, v6.0.87), alloc, syscalls,
+#    plus chrono's monotonic-clock + sleep binding (#40/#41, v6.2.6 — guards
+#    the stale-stub regression that made every agnos timing/poll consumer
+#    re-roll a direct-syscall workaround; issue 2026-06-14-chrono-agnos-...).
 cat > /tmp/_agnos_gate.cyr <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
 include "lib/io.cyr"
 include "lib/args.cyr"
+include "lib/chrono.cyr"
 fn main(): i64 {
     var h = getenv("HOME");          # envp walk on agnos (1.43.2 ABI §4.6)
     if (h == 0) { return 1; }
     var n = argc();                   # entry init-rsp capture
     if (n < 1) { return 2; }
-    return load8(h);
+    var t0 = clock_now_ms();          # uptime_ms #40 (monotonic, was fixed-0 pre-6.2.6)
+    sleep_ms(1);                       # sleep_ms #41 (real sleep, was no-op pre-6.2.6)
+    var us = sys_uptime_ms();          # raw wrapper (#40)
+    var sl = sys_sleep_ms(0);          # raw wrapper (#41); ms<=0 guarded in chrono
+    return load8(h) + (t0 - t0) + (us - us) + sl;
 }
 CYR
 build/cyrius build --agnos /tmp/_agnos_gate.cyr /tmp/_agnos_gate.out >/dev/null 2>&1 \

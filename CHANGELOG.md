@@ -6,6 +6,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.6] — 2026-06-14
+
+**v6.2.6 — chrono's AGNOS monotonic-clock + sleep bound to the real kernel
+syscalls.** `lib/chrono.cyr`'s AGNOS branches for monotonic time and sleep
+were fixed-zero / no-op stubs, predicated on the obsolete "AGNOS has no
+monotonic / sleep syscall in the frozen 0-33 surface" assumption — but AGNOS
+has had `uptime_ms` (#40) and `sleep_ms` (#41) since kernel 1.43.x (the
+cyrius-doom frame clock / pacing primitives). The stubs meant **monotonic time
+read 0** and **`sleep_ms` busy-spun** on AGNOS, forcing every timing/poll
+consumer (the v6.2.5 `dig`/`yo` net-tool backends) to re-roll a direct-syscall
+workaround. This binds chrono to the real syscalls so consumers use the
+portable API. Wall-clock (`clock_epoch_secs/_ns` → `time_unix` #46) was already
+correct since v6.2.3 — this is the **monotonic + sleep** counterpart.
+Surfaced by the AGNOS net-tool ports (issue
+`2026-06-14-chrono-agnos-monotonic-sleep-stale-stubs.md`).
+
+### Added
+- **`lib/syscalls_x86_64_agnos.cyr`** — `sys_uptime_ms()` (#40, monotonic ms
+  since boot; 100 Hz → 10 ms resolution) + `sys_sleep_ms(ms)` (#41, blocks ~ms)
+  wrappers, in a new `SysNrAgnosTimer` enum (the 1.43.x timing band, older than
+  the #45–#55 net band, not yet wrapped there). Mirrors the kernel ABI 1:1, same
+  register convention as the rest of the peer.
+
+### Changed
+- **`lib/chrono.cyr`** AGNOS branches now point at the real syscalls:
+  - `clock_now_ns()` → `sys_uptime_ms() * 1000000` (ms→ns; low 6 digits zero at
+    the 10 ms tick, same sub-tick-zero shape as the wall-clock `clock_epoch_ns`
+    note). `clock_now_ms()` derives from it for free — **monotonic time now
+    advances on AGNOS** (was fixed 0).
+  - `sleep_ms()` → an AGNOS branch calling `sys_sleep_ms(ms)` (guards `ms<=0`),
+    replacing the no-op fall-through — **a real sleep on AGNOS** (a poll loop
+    that calls it no longer busy-spins).
+
+### Verified
+- New AGNOS emit inspected: `sys_uptime_ms`/`sys_sleep_ms` wrapper sites emit
+  `mov eax,40; syscall` / `mov eax,41; …; syscall` (confirmed in the produced
+  agnos ELF). `agnos-crossbuild-gate.sh` extended with a chrono monotonic/sleep
+  probe (guards against re-stubbing) — **3/3 PASS** (in-tree probe + #45–#55 net
+  peer + agnoshi).
+- x86 self-host **byte-identical** (cycc 1,063,800 B — chrono isn't in the
+  compiler); `check.sh` **89/89** (api-surface re-baselined: 4260 public fns,
+  +2 non-breaking); cross-OS self-host byte-identical **ecb / pi / cass**
+  (`SELFHOST_OK`).
+- bench self_compile ~510 ms / cycc 1,063,800 B (flat — stdlib-only change,
+  zero compiler delta).
+- The `dig`/`yo` AGNOS backends keep their direct-syscall workaround for now;
+  migrating them to the portable `chrono`/`sys_uptime_ms`/`sys_sleep_ms` API is
+  the consumer-repo (AGNOS-side) agent's follow-up.
+
 ## [6.2.5] — 2026-06-14
 
 **v6.2.5 — `tls_native.cyr` module split + cleanup.** The 5,857-line monolith

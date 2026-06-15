@@ -3860,6 +3860,7 @@ syscalls_x86_64_agnos::sys_rename/4
 syscalls_x86_64_agnos::sys_rmdir/2
 syscalls_x86_64_agnos::sys_signalfd/3
 syscalls_x86_64_agnos::sys_sigprocmask/3
+syscalls_x86_64_agnos::sys_sleep_ms/1
 syscalls_x86_64_agnos::sys_sock_close/1
 syscalls_x86_64_agnos::sys_sock_connect/3
 syscalls_x86_64_agnos::sys_sock_recv/3
@@ -3876,6 +3877,7 @@ syscalls_x86_64_agnos::sys_udp_send/4
 syscalls_x86_64_agnos::sys_udp_unbind/1
 syscalls_x86_64_agnos::sys_umount/0
 syscalls_x86_64_agnos::sys_unlink/2
+syscalls_x86_64_agnos::sys_uptime_ms/0
 syscalls_x86_64_agnos::sys_waitpid/1
 syscalls_x86_64_agnos::sys_write/3
 syscalls_x86_64_linux::epoll_event_new/2
