@@ -2127,6 +2127,8 @@ mmap::mmap_file_rw/2
 net::INADDR_ANY/0
 net::INADDR_LOOPBACK/0
 net::net_connect_nb/4
+net::net_connect_nb6/4
+net::net_connect_sa_nb/4
 net::net_drop_multicast/3
 net::net_join_multicast/3
 net::net_set_multicast_if/2
@@ -2134,6 +2136,7 @@ net::net_set_multicast_loop/2
 net::net_set_multicast_ttl/2
 net::sock_accept/1
 net::sock_bind/3
+net::sock_clear_nonblocking/2
 net::sock_close/1
 net::sock_connect/3
 net::sock_listen/2
@@ -2141,10 +2144,12 @@ net::sock_recv/3
 net::sock_reuse/1
 net::sock_reuseport/1
 net::sock_send/3
+net::sock_set_nonblocking/1
 net::sock_set_recv_timeout/3
 net::sock_set_send_timeout/3
 net::sock_shutdown/2
 net::sockaddr_in/2
+net::sockaddr_in6/2
 net::tcp_socket/0
 net::udp_socket/0
 niyama::niyama_bre_compile/1

@@ -22,7 +22,15 @@ var SYS_SHUTDOWN = 48;
 # Linux numbers below to BSD), but these option/flag CONSTANTS are passed to the
 # kernel verbatim, so they must carry the Darwin values directly.
 # See 2026-06-04-macos-net-socket-syscalls-unported.md.
+# v6.2.10: AF_INET is 2 on both; AF_INET6 DIFFERS — Linux 10, Darwin (xnu
+# sys/socket.h) 30. Per-target so v6 sockets/sockaddrs are correct on Mach-O
+# (the backend SYSXLAT translates syscall NUMBERS, not this address-family
+# constant). See docs/development/issues/2026-06-15-cyrius-net-v6-darwin.md.
+#ifdef CYRIUS_TARGET_MACOS
+enum SockDomain { AF_INET = 2; AF_INET6 = 30; }
+#else
 enum SockDomain { AF_INET = 2; AF_INET6 = 10; }
+#endif
 enum SockType { SOCK_STREAM = 1; SOCK_DGRAM = 2; }
 #ifdef CYRIUS_TARGET_MACOS
 enum SockOpt {
@@ -88,6 +96,30 @@ fn sockaddr_in(addr, port): i64 {
     store8(sa + 3, port & 0xFF);
     # Address: 4 bytes
     store32(sa + 4, addr);
+    return sa;
+}
+
+# v6.2.10: Build a sockaddr_in6 (28 bytes) from a 16-byte IPv6 address (pointed
+# to by `addr16`, network byte order) + host-order `port`. Parallels
+# sockaddr_in's Darwin length-byte split: Linux has u16 sin6_family@0; Darwin
+# (BSD) has sin6_len(u8=28)@0 + sin6_family(u8=30)@1. Layout: family@0/1,
+# port@2 (NBO), flowinfo@4 (0), addr@8 (16 B), scope_id@24 (0).
+# See docs/development/issues/2026-06-15-cyrius-net-v6-darwin.md.
+fn sockaddr_in6(addr16, port): i64 {
+    var sa = alloc(28);
+    memset(sa, 0, 28);
+    #ifdef CYRIUS_TARGET_MACOS
+    store8(sa, 28);                  # sin6_len (BSD)
+    store8(sa + 1, AF_INET6);        # sin6_family (u8) = 30
+    #else
+    store16(sa, AF_INET6);           # Linux sin6_family (u16) = 10
+    #endif
+    store8(sa + 2, (port >> 8) & 0xFF);
+    store8(sa + 3, port & 0xFF);
+    # flowinfo @4 stays 0 (memset). 16-byte address @8.
+    store64(sa + 8,  load64(addr16));
+    store64(sa + 16, load64(addr16 + 8));
+    # scope_id @24 stays 0 (memset).
     return sa;
 }
 
@@ -470,15 +502,12 @@ fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     return _NET_CONN_NB_OK;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    # Save current flags so we can restore blocking mode on every exit path.
-    var saved_flags = syscall(72, fd, 3, 0);                # F_GETFL
-    if (saved_flags < 0) { return _NET_CONN_NB_ERR; }
-    syscall(72, fd, 4, saved_flags | _NET_O_NONBLOCK);      # F_SETFL O_NONBLOCK
-
-    # Build sockaddr_in inline (avoid alloc — net_connect_nb is
-    # called from regression / probe code that runs without an
-    # allocator). 16 bytes on the stack via a local array.
-    var sa[16];   # v6.2.1: 16-byte sockaddr_in (was [3]=8 bytes → store64(&sa+8) ran 8B OOB)
+    # Build sockaddr_in inline (avoid alloc — net_connect_nb runs from
+    # regression / probe code without an allocator), then delegate the
+    # fcntl/poll/getsockopt dance to net_connect_sa_nb. v6.2.10: the body was
+    # extracted to net_connect_sa_nb so net_connect_nb6 + sandhi's v6 path
+    # share one implementation (behaviour for v4 is unchanged).
+    var sa[16];   # 16-byte sockaddr_in
     #ifdef CYRIUS_TARGET_MACOS
     store8(&sa,      16);                                   # sin_len (BSD)
     store8(&sa + 1,  2);                                    # sin_family AF_INET
@@ -488,36 +517,105 @@ fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     store16(&sa + 2, ((port & 0xFF) << 8) | ((port >> 8) & 0xFF));
     store32(&sa + 4, addr);
     store64(&sa + 8, 0);
+    return net_connect_sa_nb(fd, &sa, 16, timeout_ms);
+    #endif
+}
 
+# v6.2.10: Non-blocking connect with an ALREADY-BUILT sockaddr (`sa`, `salen`
+# bytes) — the generic core of net_connect_nb, also used by net_connect_nb6 and
+# composable by consumers that build their own sockaddr (e.g. sandhi's IPv6
+# path, retiring its hand-rolled Linux-only fcntl/poll dance). Sets O_NONBLOCK,
+# connect()s, polls POLLOUT for `timeout_ms` on EINPROGRESS, reads back SO_ERROR,
+# and restores blocking mode on every exit path. Returns _NET_CONN_NB_OK /
+# _NET_CONN_NB_TIMEOUT / _NET_CONN_NB_ERR. Syscall numbers (72/42/7/55) are
+# Mach-O-translated by the backend SYSXLAT; the flag/opt VALUES come from the
+# platform-branched _NET_O_NONBLOCK / _NET_EINPROGRESS / SOL_SOCKET / SO_ERROR.
+fn net_connect_sa_nb(fd, sa, salen, timeout_ms): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no fcntl / connect-by-sockaddr (and is IPv4-only via the #47
+    # tagged adapter); callers use net_connect_nb for v4. Fail closed here.
+    return _NET_CONN_NB_ERR;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var saved_flags = syscall(72, fd, 3, 0);                # F_GETFL
+    if (saved_flags < 0) { return _NET_CONN_NB_ERR; }
+    syscall(72, fd, 4, saved_flags | _NET_O_NONBLOCK);      # F_SETFL O_NONBLOCK
     var result = _NET_CONN_NB_ERR;
-    var cr = syscall(42, fd, &sa, 16);                      # connect
+    var cr = syscall(42, fd, sa, salen);                    # connect
     if (cr == 0) {
-        # Immediate connect (e.g. localhost) — no poll needed.
-        result = _NET_CONN_NB_OK;
+        result = _NET_CONN_NB_OK;                           # immediate (localhost)
     } else { if (cr == 0 - _NET_EINPROGRESS) {
-            # EINPROGRESS — connect in flight. Wait via poll.
             var pfd[1];
             store32(&pfd,     fd);
             store16(&pfd + 4, 4);                           # POLLOUT
             store16(&pfd + 6, 0);                           # revents
             var pr = syscall(7, &pfd, 1, timeout_ms);       # poll
             if (pr > 0) {
-                # poll fired — readback SO_ERROR to confirm.
                 var sb[1];
                 var slen[1];
                 store32(&sb,   0);
                 store32(&slen, 4);
-                syscall(55, fd, SOL_SOCKET, SO_ERROR, &sb, &slen);  # getsockopt SOL_SOCKET SO_ERROR
+                syscall(55, fd, SOL_SOCKET, SO_ERROR, &sb, &slen);  # getsockopt SO_ERROR
                 if (load32(&sb) == 0) { result = _NET_CONN_NB_OK; }
             } else { if (pr == 0) {
                     result = _NET_CONN_NB_TIMEOUT;
                 } }
         } }
-
-    # Restore blocking mode on every exit path so the caller's
-    # subsequent recv/send behave normally.
-    syscall(72, fd, 4, saved_flags);                        # F_SETFL <saved>
+    syscall(72, fd, 4, saved_flags);                        # F_SETFL <saved> — restore blocking
     return result;
+    #endif
+}
+
+# v6.2.10: IPv6 non-blocking connect — `addr16` is a ptr to the 16-byte v6
+# address (network byte order), `port` host-order. Builds a Darwin/Linux-correct
+# sockaddr_in6 on the stack and delegates to net_connect_sa_nb. AGNOS is
+# IPv4-only → fail closed. Returns the same _NET_CONN_NB_* sentinels.
+fn net_connect_nb6(fd, addr16, port, timeout_ms): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return _NET_CONN_NB_ERR;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var sa[28];   # 28-byte sockaddr_in6
+    var z = 0;
+    while (z < 28) { store8(&sa + z, 0); z = z + 1; }
+    #ifdef CYRIUS_TARGET_MACOS
+    store8(&sa,      28);                                   # sin6_len (BSD)
+    store8(&sa + 1,  AF_INET6);                             # sin6_family (u8) = 30
+    #else
+    store16(&sa,     AF_INET6);                             # Linux sin6_family (u16) = 10
+    #endif
+    store8(&sa + 2, (port >> 8) & 0xFF);
+    store8(&sa + 3, port & 0xFF);
+    store64(&sa + 8,  load64(addr16));                      # v6 addr (16 B) @8
+    store64(&sa + 16, load64(addr16 + 8));
+    return net_connect_sa_nb(fd, &sa, 28, timeout_ms);
+    #endif
+}
+
+# v6.2.10: Exported O_NONBLOCK toggles so consumers (e.g. a server's accept-loop
+# listen socket) compose the platform-correct flag instead of hardcoding a Linux
+# value. sock_set_nonblocking returns the SAVED flags (pass to
+# sock_clear_nonblocking to restore), or <0 on F_GETFL failure. AGNOS sockets
+# are blocking with no fcntl → no-op (returns 0).
+fn sock_set_nonblocking(fd): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var saved = syscall(72, fd, 3, 0);                      # F_GETFL
+    if (saved < 0) { return saved; }
+    syscall(72, fd, 4, saved | _NET_O_NONBLOCK);            # F_SETFL O_NONBLOCK
+    return saved;
+    #endif
+}
+
+# Restore the flags captured by sock_set_nonblocking. AGNOS: no-op.
+fn sock_clear_nonblocking(fd, saved): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return syscall(72, fd, 4, saved);                       # F_SETFL <saved>
     #endif
 }
 
