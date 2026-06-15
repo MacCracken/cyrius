@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.4** (v6.2.x cycle — **Platform Expansion**; TLS transport-vtable refactor (Option C) — swappable `tls_native` transport for kernel-freestanding TLS. See [roadmap_6.md](roadmap_6.md)) |
+| **Version** | **6.2.5** (v6.2.x cycle — **Platform Expansion**; `tls_native.cyr` module split — 5,857-line monolith → thin hub + 6 focused modules, strictly logic-preserving. See [roadmap_6.md](roadmap_6.md)) |
 | **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
@@ -27,11 +27,35 @@
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
 | stdlib fold (@6.2.2) | agnosys 1.4.2 · sandhi 1.4.11 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.1 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.0.2 · sakshi 2.3.0 (all on the 6.2.1 pin) |
 | tests | 175 `.tcyr` (+`tls_native_transport_vtable` @.24) · 15 `.bcyr` |
-| stdlib | 89 `lib/*.cyr` (+`lib/thread_agnos.cyr` @.23 agnos threading serial-fallback) · 79 programs · api-surface 4258 fns (+1 @.24 `tls_native_set_transport`, non-breaking) |
+| stdlib | 95 `lib/*.cyr` (+6 @.25 `tls_native_{lowlevel,keysched,ctx,hs13,hs12,conn}.cyr` — tls_native split) · 79 programs · api-surface 4258 fns (113 tls_native fns relocated, name+arity unchanged) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~511 ms (flat @ 6.2.4 — tls_native refactor isn't in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |
+| bench (every-release gate) | self_compile ~512 ms (flat @ 6.2.5 — pure stdlib reorg, not in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |
 
-> **Handoff (2026-06-14):** **v6.2.4 CUT — TLS transport-vtable refactor
+> **Handoff (2026-06-14):** **v6.2.5 CUT — `tls_native.cyr` module split.** The
+> 5,857-line monolith → a 302-line include-hub (deps + shared enums/consts) + 6
+> focused modules: `_lowlevel` (299, wire/record/transcript), `_keysched` (588,
+> 1.3 key schedule + ciphersuite registries), `_ctx` (237, ctx + new_client/
+> server), `_hs13` (1,930, full TLS 1.3), `_hs12` (1,712, full TLS 1.2), `_conn`
+> (806, verify + the 6.2.4 transport vtable + connect/accept + I/O + getters).
+> **STRICTLY logic-preserving via ORDER-PRESERVING block moves:** each module is
+> a contiguous slice included at its original position, so the preprocessed text
+> is unchanged. **PROVEN byte-identical:** concatenating the 6 slices reproduces
+> the pre-split file exactly (`cmp` clean) → the compiler sees identical code by
+> construction. **VERIFIED:** scaffold 448/448 + realpeer + tls12_* + vtable +
+> live round-trip all green; x86 self-host byte-identical (cycc 1,063,800 B —
+> tls not in cycc); check.sh 89/89; compiles x86+agnos+aarch64; cross-OS
+> byte-identical pi/ecb/cass; **downstream `cyrius deps` pulls all 6 new files
+> via the transitive include-scan (verified end-to-end with a simulated
+> consumer build)**; api-surface 113 tls fns relocated, name+arity UNCHANGED
+> (bare-fn-set diff empty), re-baselined. Documented 2 public fns the per-file
+> cyrdoc surfaced (`tls_native_client_recv_flight`, `tls_native_seal_app`).
+> bench ~512 ms flat. **v6.2.x TLS arc (vtable→split) COMPLETE.** **NEXT:** the
+> remaining v6.2.x pins — bare-metal target formalization (consumes the 6.2.4
+> transport vtable for kernel-freestanding TLS) + RISC-V rv64. **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-14):** **v6.2.4 CUT — TLS transport-vtable refactor
 > (Option C), the kernel-freestanding-TLS enabler.** Decoupled `tls_native` from
 > raw `sys_read`/`sys_write`/`_tn_now_unix` so the AGNOS bare-metal kernel can
 > plug its own TCP send/recv + RTC. **MODULE-GLOBAL vtable** (3 fn-ptr globals

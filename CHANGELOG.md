@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.5] — 2026-06-14
+
+**v6.2.5 — `tls_native.cyr` module split + cleanup.** The 5,857-line monolith
+(a maintainability liability — a missed I/O site is a silent hole, cf. the
+6.2.3 `sock_connect` near-miss) is carved into a thin include-hub + six focused
+modules. **Strictly logic-preserving** — pure fn-relocation, proven
+byte-identical, zero behavior change.
+
+### Changed
+- **`lib/tls_native.cyr` (5,857 → 302-line hub)** now holds the dep tree +
+  shared enums/error-codes/record-constants, then includes the six modules **in
+  original order** so the preprocessed text is unchanged:
+  - `lib/tls_native_lowlevel.cyr` (299) — BE wire helpers, record framing,
+    sequence/nonce, handshake framing, transcript hash
+  - `lib/tls_native_keysched.cyr` (588) — TLS 1.3 key schedule + 1.3/1.2
+    ciphersuite registries
+  - `lib/tls_native_ctx.cyr` (237) — ctx layout, `new_client`/`new_server`,
+    ctx public API
+  - `lib/tls_native_hs13.cyr` (1,930) — full TLS 1.3 client + server handshake,
+    app-data, post-handshake (KeyUpdate), 1.3 record protection
+  - `lib/tls_native_hs12.cyr` (1,712) — full TLS 1.2 record + PRF + handshake
+    driver
+  - `lib/tls_native_conn.cyr` (806) — hostname/SAN verify, the 6.2.4 transport
+    vtable, `connect`/`accept`, app I/O, getters
+- Documented two public fns that lacked a leading doc comment
+  (`tls_native_client_recv_flight`, `tls_native_seal_app`) — surfaced by the
+  per-file cyrdoc check after the move (genuine cleanup, inert comments).
+- api-surface re-baselined: the 113 tls_native public fns are **unchanged in
+  name + arity** — only their module(file) prefix moved (proven: the bare
+  fn/arity set diffs empty); 4258 total, no public-API change. Downstream
+  `cyrius deps` pulls the six new files automatically via the transitive
+  include-scan (verified end-to-end with a simulated consumer build).
+
+### Verified
+- **PURE MOVE proven byte-identical:** reconstructing the original by
+  concatenating the six slices reproduces the pre-split file exactly (`cmp`
+  clean) — the compiler sees identical text, so the build is equivalent by
+  construction.
+- All TLS gates green: `tls_native_scaffold` (full 1.3+1.2 handshake, **448/448**),
+  `tls_native_realpeer` (live 1.1.1.1), `tls12_*`, `tls_native_transport_vtable`,
+  check.sh TLS live round-trip.
+- x86 self-host **byte-identical** (cycc 1,063,800 B — tls_native isn't in the
+  compiler); check.sh **89/89**; the split compiles for x86 + agnos + aarch64
+  (`--aarch64`); cross-OS self-host byte-identical **pi / ecb / cass**
+  (`SELFHOST_OK`); downstream `cyrius deps` + build of a TLS consumer succeeds.
+- bench self_compile ~512 ms / cycc 1,063,800 B (flat — pure stdlib reorg).
+
 ## [6.2.4] — 2026-06-14
 
 **v6.2.4 — TLS transport-vtable refactor (Option C), the kernel-freestanding-TLS
