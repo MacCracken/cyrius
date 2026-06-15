@@ -25,11 +25,45 @@ var SYS_SHUTDOWN = 48;
 enum SockDomain { AF_INET = 2; AF_INET6 = 10; }
 enum SockType { SOCK_STREAM = 1; SOCK_DGRAM = 2; }
 #ifdef CYRIUS_TARGET_MACOS
-enum SockOpt { SOL_SOCKET = 0xFFFF; SO_REUSEADDR = 0x0004; SO_RCVTIMEO = 0x1006; SO_ERROR = 0x1007; }
+enum SockOpt {
+    SOL_SOCKET = 0xFFFF;
+    SO_REUSEADDR = 0x0004;
+    SO_RCVTIMEO = 0x1006;
+    SO_ERROR = 0x1007;
+    SO_REUSEPORT = 0x0200;   # v6.2.7 — Darwin SO_REUSEPORT (coexist on mDNS 5353)
+}
+# v6.2.7: Darwin/BSD IPv4 multicast sockopt numbers (xnu netinet/in.h). These
+# DIFFER from Linux (9-13 vs 32-36) — verified live on ecb Xcode MacOSX.sdk.
+# IPPROTO_IP=0 on both. struct ip_mreq is byte-identical 8 B across OSes; only
+# the option NUMBERS need per-target dispatch. See
+# docs/development/issues/2026-06-15-cyrius-mdns-multicast-primitives.md.
+enum IpOpt {
+    IPPROTO_IP = 0;
+    IP_MULTICAST_IF = 9;
+    IP_MULTICAST_TTL = 10;
+    IP_MULTICAST_LOOP = 11;
+    IP_ADD_MEMBERSHIP = 12;
+    IP_DROP_MEMBERSHIP = 13;
+}
 var _NET_O_NONBLOCK = 0x0004;
 var _NET_EINPROGRESS = 36;
 #else
-enum SockOpt { SOL_SOCKET = 1; SO_REUSEADDR = 2; SO_RCVTIMEO = 20; SO_ERROR = 4; }
+enum SockOpt {
+    SOL_SOCKET = 1;
+    SO_REUSEADDR = 2;
+    SO_RCVTIMEO = 20;
+    SO_ERROR = 4;
+    SO_REUSEPORT = 15;       # v6.2.7 — Linux SO_REUSEPORT
+}
+# v6.2.7: Linux IPv4 multicast sockopt numbers (uapi/linux/in.h).
+enum IpOpt {
+    IPPROTO_IP = 0;
+    IP_MULTICAST_IF = 32;
+    IP_MULTICAST_TTL = 33;
+    IP_MULTICAST_LOOP = 34;
+    IP_ADD_MEMBERSHIP = 35;
+    IP_DROP_MEMBERSHIP = 36;
+}
 var _NET_O_NONBLOCK = 2048;
 var _NET_EINPROGRESS = 115;
 #endif
@@ -117,9 +151,17 @@ fn udp_socket() : Result {
 
 # Set socket option SO_REUSEADDR
 fn sock_reuse(fd): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no setsockopt — Linux SYS_SETSOCKOPT=54 collides with agnos
+    # #54=SYS_UDP_UNBIND (silent mis-dispatch). Server-side reuse is AGNOS
+    # Phase B (inbound TCP), unreached on the client path; no-op success. v6.2.7.
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var val = alloc(4);
     store32(val, 1);
     return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, val, 4);
+    #endif
 }
 
 # Set the per-socket receive timeout (SO_RCVTIMEO). Blocking recv() on
@@ -128,6 +170,13 @@ fn sock_reuse(fd): i64 {
 # can pin an accept-loop worker. Closes bote 1.9.5 audit H5
 # (see CHANGELOG [5.11.13]).
 fn sock_set_recv_timeout(fd, secs, usecs): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no SO_RCVTIMEO (and SYS_SETSOCKOPT=54 mis-dispatches to agnos
+    # #54=SYS_UDP_UNBIND). The recv deadline is enforced by the syscall peer's
+    # _agnos_sock_recv_block poll instead; no-op here. v6.2.7.
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     # Linux struct timeval is {tv_sec, tv_usec} — both i64 on 64-bit
     # Linux (16 bytes total). Kernel reads 16 bytes; padding doesn't
     # matter because both fields are 64-bit.
@@ -142,6 +191,7 @@ fn sock_set_recv_timeout(fd, secs, usecs): i64 {
     store64(tv + 8, usecs);
     #endif
     return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, tv, 16);
+    #endif
 }
 
 # Bind socket to address:port. Returns Result(0). Server-side (bind/listen/
@@ -229,7 +279,105 @@ fn sock_close(fd): i64 {
 
 # Shutdown socket (0=read, 1=write, 2=both)
 fn sock_shutdown(fd, how): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no half-close: Linux SYS_SHUTDOWN=48 collides with agnos
+    # #48=SYS_SOCK_SEND (silent mis-dispatch — would inject a send!). The conn
+    # closes fully via sock_close(#50); shutdown is a no-op here. v6.2.7.
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     return syscall(SYS_SHUTDOWN, fd, how);
+    #endif
+}
+
+# === IPv4 multicast + port reuse (v6.2.7) ===
+# Typed helpers so consumers compose a portable verb instead of hand-rolling
+# the per-OS sockopt numbers + ip_mreq struct (mirrors the 1.4.2 tls_get_*
+# wrapper retirement). Group/iface args are network-byte-order uint32 (same
+# shape as sockaddr_in's addr field; INADDR_ANY = 0 for iface). All return
+# 0 / -errno. AGNOS has no IGMP/setsockopt surface, so each is a clean
+# "unsupported" (-1) — sandhi's mDNS resolver degrades to the QU-bit unicast
+# path. macOS/Linux dispatch the right option numbers via the per-target IpOpt
+# / SockOpt enums above. Spec:
+# docs/development/issues/2026-06-15-cyrius-mdns-multicast-primitives.md.
+
+# Allow multiple sockets to bind the same port (mDNS: coexist with the host's
+# mDNS daemon on 5353). Returns 0 / -errno; -1 on agnos (no setsockopt).
+fn sock_reuseport(fd): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var optval[4];
+    store32(&optval, 1);
+    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEPORT, &optval, 4);
+    #endif
+}
+
+# Join IPv4 multicast group `group` on interface `iface` (0 = INADDR_ANY).
+# struct ip_mreq is { imr_multiaddr@0, imr_interface@4 } = 8 bytes, identical
+# on Linux/Darwin. Returns 0 / -errno; -1 on agnos.
+fn net_join_multicast(fd, group, iface): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var mreq[8];
+    store32(&mreq, group);
+    store32(&mreq + 4, iface);
+    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, 8);
+    #endif
+}
+
+# Leave IPv4 multicast group `group` on interface `iface`. -1 on agnos.
+fn net_drop_multicast(fd, group, iface): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var mreq[8];
+    store32(&mreq, group);
+    store32(&mreq + 4, iface);
+    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, 8);
+    #endif
+}
+
+# Set the multicast hop limit (mDNS: 255 to route, 1 for link-local). Passed
+# as a 4-byte int — accepted by both Linux and modern Darwin. -1 on agnos.
+fn net_set_multicast_ttl(fd, ttl): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var optval[4];
+    store32(&optval, ttl);
+    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_TTL, &optval, 4);
+    #endif
+}
+
+# Enable/disable local loopback of sent multicast (`on`: 1/0). -1 on agnos.
+fn net_set_multicast_loop(fd, on): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var optval[4];
+    store32(&optval, on);
+    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_LOOP, &optval, 4);
+    #endif
+}
+
+# Select the outgoing interface for multicast sends (`iface` = network-byte-
+# order local iface address; 0 = kernel default). -1 on agnos.
+fn net_set_multicast_if(fd, iface): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var optval[4];
+    store32(&optval, iface);
+    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_IF, &optval, 4);
+    #endif
 }
 
 # v5.10.11 — Non-blocking connect with bounded timeout.

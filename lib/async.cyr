@@ -21,6 +21,18 @@
 # iteration. Pair with `chan_try_recv` (lib/thread.cyr) for the
 # progress channel side. See CHANGELOG [5.11.15].
 
+# v6.2.7: AGNOS has no epoll_create1 / fcntl / clone-fork / wait4 in its frozen
+# syscall surface, and async is a SERVER-path runtime unused on the agnos
+# CLIENT target (inbound TCP is AGNOS Phase B; sit is a client). Route to a
+# serial/blocking peer, exactly as thread.cyr → thread_agnos.cyr (v6.2.3). The
+# cancel-token API at the bottom stays SHARED (atomic-only, portable). Resolves
+# docs/development/issues/2026-06-15-cyrius-thread-agnos-clone-dispatch.md §2.
+#ifdef CYRIUS_TARGET_AGNOS
+include "lib/async_agnos.cyr"
+#endif
+
+#ifndef CYRIUS_TARGET_AGNOS
+
 # Task states
 var TASK_READY = 0;
 var TASK_WAITING = 1;
@@ -192,8 +204,12 @@ fn async_timeout(fp, arg, ms): i64 {
     return 0 - 1;
 }
 
+#endif
+
 # ================================================================
-# Cancellation tokens (v5.11.15)
+# Cancellation tokens (v5.11.15) — SHARED across all targets (atomic-only,
+# portable; no epoll/fork). Defined OUTSIDE the agnos guard so bote/sandhi
+# streaming-dispatch cancellation works on AGNOS too.
 # ================================================================
 # Minimum viable shape for the bote streaming-dispatch flow:
 #   transport thread:

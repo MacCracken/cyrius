@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.6** (v6.2.x cycle — **Platform Expansion**; chrono AGNOS monotonic-clock + sleep bound to real kernel syscalls #40/#41 — was fixed-0/no-op stubs. See [roadmap_6.md](roadmap_6.md)) |
+| **Version** | **6.2.7** (v6.2.x cycle — **Platform Expansion**; sandhi-driven stdlib AGNOS-completeness pass — async/net/regression/ws peers + IPv4 multicast primitives; sandhi/mabda/patra refold. See [roadmap_6.md](roadmap_6.md)) |
 | **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
@@ -25,13 +25,43 @@
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold (@6.2.2) | agnosys 1.4.2 · sandhi 1.4.11 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.1 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.0.2 · sakshi 2.3.0 (all on the 6.2.1 pin) |
+| stdlib fold | agnosys 1.4.2 · **sandhi 1.5.3** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · **patra 1.11.2** · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · **mabda 3.0.4** · sakshi 2.3.0 (sandhi/patra/mabda refold @.7; rest on the 6.2.1 pin) |
 | tests | 176 `.tcyr` (+`tls_native_transport_vtable` @.24) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 95 `lib/*.cyr` (+6 @.25 `tls_native_{lowlevel,keysched,ctx,hs13,hs12,conn}.cyr` — tls_native split) · 79 programs · api-surface 4260 fns (+2 @.6 `sys_uptime_ms`/`sys_sleep_ms`, non-breaking) |
+| stdlib | 97 `lib/*.cyr` (+2 @.7 `async_agnos.cyr`/`regression_agnos.cyr` — AGNOS peers) · 79 programs · api-surface 4306 fns (+46 @.7 net multicast +6 / async_agnos +8 / regression_agnos +15 / mabda refold +17, all non-breaking) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~510 ms (flat @ 6.2.6 — stdlib-only chrono/syscall change, not in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |
+| bench (every-release gate) | self_compile ~509 ms (flat @ 6.2.7 — stdlib-only AGNOS-peer/multicast/refold change, not in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |
 
-> **Handoff (2026-06-14):** **v6.2.6 CUT — chrono AGNOS monotonic-clock + sleep
+> **Handoff (2026-06-15):** **v6.2.7 CUT — sandhi-driven stdlib AGNOS-completeness
+> pass + IPv4 multicast + dep refresh.** sandhi filed two issues at its 1.5.3
+> close: (1) `thread-agnos-clone-dispatch` — `lib/async.cyr`'s `SYS_EPOLL_CREATE1`
+> is the next `--agnos` blocker after `thread.cyr`, and asked for a *systematic
+> agnos-completeness pass*; (2) `mdns-multicast-primitives` — `lib/net.cyr` lacks
+> IPv4 multicast. An adversarial audit walked the whole sandhi-from-source
+> `--agnos` bundle and found the full cascade. **FIX:** `async.cyr` peer-split →
+> `async_agnos.cyr` (serial; agnos has no epoll_create1/fcntl/fork/wait4);
+> `net.cyr` gained IPv4 multicast helpers (`net_join_multicast` + `sock_reuseport`
+> + per-target `IpOpt`, Darwin consts live-checked on ecb) **and** AGNOS guards on
+> `sock_reuse`/`sock_set_recv_timeout`/`sock_shutdown` (raw #54/#48 silently
+> mis-dispatched to udp_unbind/sock_send); `regression.cyr` peer-split →
+> `regression_agnos.cyr` (fork+exec fail-closed) + portable `regression_network_probe`
+> (raw `syscall(41)` was `SYS_SLEEP_MS` on agnos); `ws.cyr` raw `syscall(0/1)` →
+> `sys_read`/`sys_write` (agnos `syscall(0)`=`SYS_EXIT` — read was a process-kill
+> landmine). **Refold:** sandhi 1.4.11→1.5.3 (its C1/C2 guards the 20 SYS_FCNTL
+> sites), mabda 3.0.2→3.0.4, patra 1.11.1→1.11.2 — zero breaking removals.
+> **VERIFIED:** full sandhi-bundle `--agnos` probe has **zero agnos-specific
+> undefined symbols** (residual `fdlopen_*`/`sakshi_span_*` warnings are identical
+> on Linux = probe-include completeness); check.sh **89/89**; api-surface 4260→4306
+> (additions only); agnos gate 4/4 (new probe 1c); compiles on Linux/Mach-O/agnos;
+> bench ~509 ms flat / cycc 1,063,800 B byte-identical; cross-OS **SELFHOST_OK
+> ecb/pi/cass**. AGNOS kernel-gaps filed upstream
+> (`agnos/docs/development/issues/2026-06-15-cyrius-stdlib-missing-syscalls.md`).
+> Remaining agnos-completeness (host-side test modules beyond the sandhi consumer
+> bundle) tracked there. **NEXT:** the remaining v6.2.x pins — bare-metal target
+> formalization + RISC-V rv64. **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-14):** **v6.2.6 CUT — chrono AGNOS monotonic-clock + sleep
 > bound to the real kernel syscalls.** `lib/chrono.cyr`'s AGNOS branches for
 > monotonic time + sleep were fixed-0 / no-op stubs (the obsolete "no monotonic/
 > sleep syscall in the frozen 0-33 surface" assumption) — but AGNOS has had

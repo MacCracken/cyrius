@@ -102,11 +102,11 @@ fn ws_connect(sock, path, host): i64 {
     var key[32];
     var req = _ws_handshake_request(path, host, &key);
     if (req == 0) { store64(ws + 8, WS_CLOSED); return ws; }   # CVE-19: no entropy → fail closed
-    syscall(1, sock, req, strlen(req));
+    sys_write(sock, req, strlen(req));
 
     # Read response (simplified — check for 101)
     var resp[512];
-    var n = syscall(0, sock, &resp, 511);
+    var n = sys_read(sock, &resp, 511);
     if (n <= 0) { store64(ws + 8, WS_CLOSED); return ws; }
     store8(&resp + n, 0);
 
@@ -163,7 +163,7 @@ fn _ws_send_frame(ws, opcode, data, len): i64 {
     hlen = hlen + 4;
 
     # Send header
-    syscall(1, fd, &hdr, hlen);
+    sys_write(fd, &hdr, hlen);
 
     # Mask and send payload
     var masked = alloc(len);
@@ -173,7 +173,7 @@ fn _ws_send_frame(ws, opcode, data, len): i64 {
         store8(masked + i, load8(data + i) ^ mb);
         i = i + 1;
     }
-    syscall(1, fd, masked, len);
+    sys_write(fd, masked, len);
     return len;
 }
 
@@ -198,7 +198,7 @@ fn ws_recv_frame(ws, opcode_out, len_out): i64 {
     if (ws_state(ws) != WS_OPEN) { return 0; }
     var fd = ws_fd(ws);
     var hdr[2];
-    var n = syscall(0, fd, &hdr, 2);
+    var n = sys_read(fd, &hdr, 2);
     if (n < 2) { store64(ws + 8, WS_CLOSED); return 0; }
 
     var opcode = load8(&hdr) & 0x0F;
@@ -208,11 +208,11 @@ fn ws_recv_frame(ws, opcode_out, len_out): i64 {
 
     if (plen == 126) {
         var ext[2];
-        syscall(0, fd, &ext, 2);
+        sys_read(fd, &ext, 2);
         plen = (load8(&ext) << 8) | load8(&ext + 1);
     } elif (plen == 127) {
         var ext[8];
-        syscall(0, fd, &ext, 8);
+        sys_read(fd, &ext, 8);
         var _e4 = load8(&ext + 4) << 24;
         var _e5 = load8(&ext + 5) << 16;
         var _e6 = load8(&ext + 6) << 8;
@@ -224,14 +224,14 @@ fn ws_recv_frame(ws, opcode_out, len_out): i64 {
     var mask = 0;
     if (masked == 1) {
         var mk[4];
-        syscall(0, fd, &mk, 4);
+        sys_read(fd, &mk, 4);
         mask = load8(&mk) | (load8(&mk + 1) << 8) | (load8(&mk + 2) << 16) | (load8(&mk + 3) << 24);
     }
 
     # Read payload
     var payload = alloc(plen + 1);
     if (plen > 0) {
-        syscall(0, fd, payload, plen);
+        sys_read(fd, payload, plen);
     }
 
     # Unmask if needed

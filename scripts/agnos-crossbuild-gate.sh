@@ -107,6 +107,51 @@ build/cyrius build --agnos /tmp/_agnos_net_gate.cyr /tmp/_agnos_net_gate.out >/d
 assert_agnos_elf /tmp/_agnos_net_gate.out
 echo "PASS: CYRIUS_TARGET_AGNOS net/entropy/clock/TLS peer (#45-#55) -> valid agnos ELF"
 
+# 1c. async serial-peer + net multicast/sockopt guards (v6.2.7). Anti-rot for
+#     the sandhi-filed cascade: lib/async.cyr's agnos peer-split (async_agnos.cyr
+#     — agnos has no epoll_create1/fcntl/fork/wait4; async is server-path,
+#     unused on the client) and lib/net.cyr's agnos guards on the sockopt/shutdown
+#     fns (Linux SYS_SETSOCKOPT=54 / SYS_SHUTDOWN=48 silently mis-dispatch to
+#     agnos #54=UDP_UNBIND / #48=SOCK_SEND) + the new IPv4 multicast helpers
+#     (unsupported→-1 on agnos). If async loses its peer this fails to compile
+#     (SYS_EPOLL_CREATE1 undefined). Compile-only. See issues
+#     2026-06-15-cyrius-thread-agnos-clone-dispatch.md + -mdns-multicast-primitives.md.
+cat > /tmp/_agnos_async_gate.cyr <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/async.cyr"
+fn _w(a): i64 { return a + 1; }
+fn main(): i64 {
+    var rt = async_new();                            # agnos serial peer (no epoll)
+    if (rt == 0) { return 1; }
+    async_spawn(rt, &_w, 41);
+    async_run(rt);
+    var tok = cancel_token_new();                     # shared (atomic-only) on agnos
+    cancel_token_signal(tok);
+    var c = cancel_token_check(tok);
+    var sr = tcp_socket();
+    if (is_err_result(sr) == 1) { return 2; }
+    var fd = payload(sr);
+    sock_reuse(fd);                                   # agnos no-op (was #54 mis-dispatch)
+    sock_reuseport(fd);                               # agnos unsupported (-1)
+    net_set_multicast_ttl(fd, 255);                   # agnos unsupported (-1)
+    net_set_multicast_loop(fd, 0);
+    net_join_multicast(fd, 0xFB0000E0, INADDR_ANY()); # 224.0.0.251; -1 on agnos
+    net_drop_multicast(fd, 0xFB0000E0, INADDR_ANY());
+    sock_shutdown(fd, 2);                             # agnos no-op (was #48 mis-dispatch)
+    sock_close(fd);
+    return c;
+}
+CYR
+build/cyrius build --agnos /tmp/_agnos_async_gate.cyr /tmp/_agnos_async_gate.out >/dev/null 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS async-peer / net-multicast-guard probe did not compile (async peer-split or net.cyr agnos guard regression)"; exit 1; }
+assert_agnos_elf /tmp/_agnos_async_gate.out
+echo "PASS: CYRIUS_TARGET_AGNOS async serial-peer + net multicast/sockopt guards -> valid agnos ELF"
+
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then

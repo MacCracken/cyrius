@@ -6,6 +6,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.7] — 2026-06-15
+
+**v6.2.7 — sandhi-driven stdlib AGNOS-completeness pass + IPv4 multicast + dep
+refresh.** Resolves two issues sandhi filed against cyrius at its 1.5.3 close,
+and the deeper cascade they pointed at. Issue 1 (`thread-agnos-clone-dispatch`)
+named `lib/async.cyr`'s raw `SYS_EPOLL_CREATE1` as the next AGNOS-compile blocker
+after `thread.cyr` (already fixed v6.2.3) and explicitly asked for a **systematic
+stdlib agnos-completeness pass**, not a point-fix — so an adversarial audit walked
+the whole sandhi-from-source `--agnos` bundle and found the full cascade: `async`,
+three mis-dispatching `net.cyr` fns, `regression.cyr` (a hard compile blocker, in
+sandhi's `[deps].stdlib`), and `ws.cyr` (a silent `read→exit` mis-dispatch). Issue
+2 (`mdns-multicast-primitives`) asked for IPv4 multicast primitives so sandhi's
+mDNS resolver can add a QM (multicast-response) path. All resolved here. Deps that
+moved since the v6.2.2 fold are refreshed: **sandhi 1.4.11→1.5.3** (its C1/C2 work
+guards the 20 `SYS_FCNTL` sites — clears that cascade layer), **mabda 3.0.2→3.0.4**,
+**patra 1.11.1→1.11.2**. None of this is in `cycc` — x86 self-host byte-identical.
+
+### Added
+- **`lib/async_agnos.cyr`** — AGNOS serial/blocking peer for `async.cyr` (AGNOS
+  has no `epoll_create1`/`fcntl`/`fork`/`wait4`; async is a server-path runtime
+  unused on the AGNOS client target). `async.cyr` now `#ifdef CYRIUS_TARGET_AGNOS
+  → include` it, exactly as `thread.cyr → thread_agnos.cyr` (v6.2.3). The
+  cancel-token API stays SHARED (atomic-only, portable) so bote/sandhi streaming
+  cancellation works on AGNOS too. `async_sleep_ms` uses the real `sleep_ms` (#41).
+- **`lib/net.cyr` IPv4 multicast primitives** — `sock_reuseport`,
+  `net_join_multicast`, `net_drop_multicast`, `net_set_multicast_ttl`,
+  `net_set_multicast_loop`, `net_set_multicast_if`, a per-target `IpOpt` enum
+  (`IPPROTO_IP`/`IP_MULTICAST_{IF,TTL,LOOP}`/`IP_{ADD,DROP}_MEMBERSHIP`) and
+  `SO_REUSEPORT` on `SockOpt`. Linux values 32–36/15 and Darwin values 9–13/512
+  (verified live on ecb's Xcode MacOSX.sdk); `struct ip_mreq` is byte-identical
+  8 B across OSes. AGNOS returns a clean "unsupported" (-1) so sandhi's mDNS
+  degrades to the existing QU-bit unicast path. Spec:
+  `docs/development/issues/2026-06-15-cyrius-mdns-multicast-primitives.md`.
+- **`lib/regression_agnos.cyr`** — AGNOS fail-closed peer for `regression.cyr`'s
+  fork+exec process/SSH verbs (AGNOS has no `fork`/`dup2`/`execve`/`chdir`; the
+  POSIX fork+redirect+exec model can't map onto the in-memory-ELF `spawn` #3),
+  mirroring `process.cyr → process_agnos.cyr`.
+- **`scripts/agnos-crossbuild-gate.sh`** — probe 1c (async serial-peer + net
+  multicast/sockopt guards) — anti-rot guard so the async peer-split + net.cyr
+  AGNOS guards can't silently regress (4/4 PASS).
+
+### Changed
+- **`lib/net.cyr`** — `sock_reuse` / `sock_set_recv_timeout` / `sock_shutdown`
+  now guard AGNOS: their raw `SYS_SETSOCKOPT`=54 / `SYS_SHUTDOWN`=48 **silently
+  mis-dispatch** on AGNOS (#54=`udp_unbind`, #48=`sock_send`). They no-op (return
+  0) on AGNOS — the server path is Phase B (unreached); the recv deadline is
+  enforced by the syscall peer's poll loop.
+- **`lib/ws.cyr`** — raw `syscall(0,…)`/`syscall(1,…)` reads/writes replaced with
+  the portable `sys_read`/`sys_write` wrappers (route tagged socket fds via
+  #48/#49 on AGNOS). On AGNOS `syscall(0,…)`=`SYS_EXIT` — every ws read was a
+  `read→exit(fd)` process-termination landmine; identical behaviour on Linux.
+- **`lib/regression.cyr`** — fork+exec verbs routed to the AGNOS peer (above);
+  `regression_network_probe` made portable (the raw `syscall(41)`=socket
+  mis-dispatched to `SYS_SLEEP_MS` on AGNOS → now `tcp_socket()` + the
+  agnos-guarded `net_connect_nb`). Linux body byte-identical.
+- **Vendored stdlib refold** — `lib/sandhi.cyr` 1.4.11→1.5.3, `lib/mabda.cyr`
+  3.0.2→3.0.4, `lib/patra.cyr` 1.11.1→1.11.2 (plain `cp dist→lib`; zero breaking
+  public-symbol removals). mabda 3.0.4 intentionally evolved
+  `native_texture_create_2d_rgba8` (added a `va_base` param for its texture-VA
+  feature); cyrius doesn't call it, so the refold is safe — recorded via the
+  api-surface `--update`.
+
+### Verified
+- Full sandhi-bundle `--agnos` probe: **zero agnos-specific undefined symbols**
+  (the only residual warnings — `fdlopen_*`/`sakshi_span_*` — appear identically
+  on the Linux bundle, i.e. probe-include completeness, not an AGNOS gap).
+- `check.sh` **89/89**; api-surface re-baselined **4260 → 4306** public fns
+  (additions only, non-breaking — net +6, async_agnos +8, regression_agnos +15,
+  mabda +17). bench `self_compile` ~509 ms (flat) / `cycc` **1,063,800 B
+  unchanged** — none of these libs are in the compiler, so x86 self-host is
+  byte-identical.
+- async + net.cyr + regression.cyr + ws.cyr compile clean on x86_64 Linux, the
+  Mach-O (macOS) target, and `--agnos`; agnos cross-build gate 4/4 PASS.
+- AGNOS kernel-side gaps filed upstream:
+  `agnos/docs/development/issues/2026-06-15-cyrius-stdlib-missing-syscalls.md`
+  (the missing fork/exec/setsockopt/multicast primitives + the Linux↔AGNOS
+  syscall-number collision hazard — informational; cyrius fail-closes on all).
+
 ## [6.2.6] — 2026-06-14
 
 **v6.2.6 — chrono's AGNOS monotonic-clock + sleep bound to the real kernel
