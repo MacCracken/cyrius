@@ -6,6 +6,92 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.10] — 2026-06-15
+
+**v6.2.10 — Darwin IPv6 socket surface for `lib/net.cyr` (fulfils sandhi's
+consumer request) + the aarch64-Linux INET path it surfaced.** sandhi filed
+`2026-06-15-cyrius-net-v6-darwin.md` asking stdlib to expose a Darwin-correct
+IPv6 + non-blocking surface it could compose (it can't fix its macOS v6 connect
+without one — No-FFI / compose-don't-reimplement). This ships that surface. While
+verifying it on the **real pi** via the cross-OS lib-test, the new test exposed a
+**pre-existing** (v6.0.59-era) bug: net.cyr's entire INET path was broken on
+native aarch64-Linux because its x86 socket syscall numbers were ESYSXLAT-renumbered
+**only for Mach-O**, never for aarch64-Linux. Per the cross-arch-propagation rule
+that fix is folded into this release too (it's the same gap, one target over).
+
+### Added
+- **`lib/net.cyr` IPv6 + non-blocking surface** (the full set sandhi requested):
+  - per-target `SockDomain.AF_INET6` — Linux/AGNOS **10**, Darwin **30** (xnu
+    `sys/socket.h`), under `#ifdef CYRIUS_TARGET_MACOS` (the SYSXLAT translates
+    syscall *numbers*, not this address-family *constant*);
+  - `sockaddr_in6(addr16, port)` — 28-byte sockaddr, Darwin-branched `sin6_len`@0
+    + `sin6_family`@1 (BSD) vs Linux `u16 sin6_family`@0, port@2 NBO;
+  - `net_connect_sa_nb(fd, sa, salen, timeout_ms)` — the generic, already-built-
+    sockaddr core extracted from `net_connect_nb` (v4 behaviour unchanged), and
+    `net_connect_nb6(fd, addr16, port, timeout_ms)` (builds a v6 sockaddr inline,
+    allocator-free, delegates to it);
+  - `sock_set_nonblocking(fd)` / `sock_clear_nonblocking(fd, saved)` — exported
+    O_NONBLOCK toggles so a server listen socket composes the platform-correct
+    flag instead of hardcoding Linux `0x800`.
+  - api-surface 4341→**4346** (5 new `net::` exports, additions-only — `net_connect_nb6`,
+    `net_connect_sa_nb`, `sockaddr_in6`, `sock_set_nonblocking`, `sock_clear_nonblocking`).
+- **`tests/tcyr/net_v6_connect.tcyr`** — sockaddr_in6 layout (target-aware), the
+  O_NONBLOCK toggles, a `net_connect_nb6` ::1 loopback, and a `net_connect_nb` v4
+  regression (proves the `net_connect_sa_nb` extraction is behaviour-identical).
+
+### Fixed
+- **aarch64-Linux INET path (pre-existing, found by the pi cross-OS lib-test).**
+  `lib/net.cyr` issues x86 socket syscall *numbers* and relies on the aarch64
+  backend `ESYSXLAT` to renumber them, but those renumbers lived **only** in the
+  `_TARGET_MACHO==2` branch (added v6.0.59). On native ARM Linux every net.cyr
+  INET call hit the wrong syscall — `socket 41`→`pivot_root` (-EPERM),
+  `fcntl 72`→`pselect6`, `poll 7`→`fsetxattr` — so `tcp_socket` / `net_connect_nb`
+  / the new v6 surface were silently dead, and `chrono.cyr sleep_ms` (also
+  `poll(7,…)`) never slept. **`src/backend/aarch64/emit.cyr`** now mirrors the
+  socket family into the aarch64-Linux ESYSXLAT branch: pure `movz x8` renumbers
+  for socket 41→198, connect 42→203, accept 43→202, shutdown 48→210, bind 49→200,
+  listen 50→201, getsockname 51→204, setsockopt 54→208, getsockopt 55→209,
+  fcntl 72→25; plus a **`poll 7 → ppoll 73` arg-shift** (aarch64 has no `poll(2)`)
+  that converts the int-ms timeout in `x2` to a `{tv_sec,tv_nsec}` timespec on
+  scratch below `sp` (the `svc` fires immediately after ESYSXLAT, so no `sp`
+  adjust is owed), zeroes the sigmask/sigsetsize args, and passes NULL for ms<0.
+  Encodings assembled + verified with `aarch64-linux-gnu-as`. Also fixes
+  `sleep_ms` on aarch64-Linux (same root cause). See
+  `2026-06-15-cyrius-net-v6-darwin.md`.
+
+### Changed
+- **Vendored stdlib refold** — `lib/sandhi.cyr` 1.6.0→**1.6.1** (clean
+  `cyrius distlib` fold of the 1.6.1 repo; byte-identical to `sandhi/dist/`, no
+  hand-edits): sandhi's v4 nb-connect now composes stdlib `net_connect_nb` and
+  its per-op timeout composes `sock_set_recv/send_timeout` (closing the v4 +
+  SO_RCVTIMEO halves of `2026-06-06`). sandhi adopting the **v6** surface above
+  in its `_sandhi_conn_*` v6 path + server listen socket is the consumer's
+  follow-on slot (tracked sandhi-side).
+- **`lib/net.cyr` doc comments** — corrected `net_connect_nb`'s contract note (the
+  flag/poll restore now lives in `net_connect_sa_nb`), documented the new
+  aarch64-Linux SYSXLAT renumbers at the point of use, and cross-linked the two
+  sockaddr_in6 layouts (builder + `net_connect_nb6` inline) as a drift guard
+  (from the slot's adversarial review).
+
+### Verified
+- `net_v6_connect.tcyr`: **17/17 on x86_64 Linux**, on **ecb (real macOS arm64)**
+  via the cross-OS lib-test — the Darwin `sin6_len=28`/`AF_INET6=30` layout +
+  `O_NONBLOCK=0x0004` asserts actually executed on the Mac, not compile-only — and
+  on **pi (real aarch64 Linux)**, which was *failing before this slot's backend fix*.
+- `poll→ppoll` validated: poll(1500ms) blocks ~1.5 s (tv_sec=1 + tv_nsec=5e8),
+  poll(0ms) returns immediately (qemu-aarch64).
+- `check.sh` **89/89**; x86_64 `cycc` byte-identical (the aarch64 backend is not
+  in the x86 build); **aarch64-Linux self-host byte-identical** (the ESYSXLAT
+  change reproduces itself); cross-OS self-host byte-identical **ecb / pi / cass**
+  (`SELFHOST_OK`, re-verified on the shipped 6.2.10 binaries). bench
+  `self_compile` ~505 ms; shipped `cycc` **1,063,792 B** (+8 vs 6.2.9 — the
+  longer `6.2.10` version string only; lib + aarch64-emit changes don't touch the
+  x86 compiler), `cycc_aarch64` 615,304→**616,496 B** (the ESYSXLAT socket/poll
+  additions). tests 177→**178 `.tcyr`** (+`net_v6_connect`).
+- 17-agent adversarial review of the diff: net surface fundamentally correct,
+  sandhi 1.6.1 a clean byte-identical fold, the v6 deferral a legitimately-scoped
+  consumer follow-on (not a silent half-fix). Nits folded (see Changed).
+
 ## [6.2.9] — 2026-06-15
 
 **v6.2.9 — sandhi 1.6.0 / mabda 3.1.1 fold + diagnostic byte-length audit closed.**

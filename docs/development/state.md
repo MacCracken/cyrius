@@ -14,24 +14,57 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.9** (v6.2.x cycle — **Platform Expansion**; sandhi 1.6.0 / mabda 3.1.1 fold — sandhi retired its `tls_dlsym` callers onto the 6.2.8 `tls_ctx_*` wrappers — + diagnostic byte-length audit closed. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,063,784 B (−16 B @ 6.2.9 — dead bytes removed from a `main.cyr` debug literal; +8,016 B @ 6.2.1 the `T[N]` element-width frontend + slot-table resize) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
-| **cycc_win** (PE32+ cross) | 836,096 B (refreshed @ 6.2.5 version-bump rebuild) |
+| **Version** | **6.2.10** (v6.2.x cycle — **Platform Expansion**; Darwin IPv6 socket surface for `lib/net.cyr` + the pre-existing aarch64-Linux INET ESYSXLAT gap it surfaced + sandhi 1.6.1 fold. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,063,792 B (+8 B @ 6.2.10 — `6.2.10` version string only, x86 codegen unchanged; −16 B @ 6.2.9 dead debug bytes) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | 616,496 B (+1,192 B @ 6.2.10 — aarch64-Linux ESYSXLAT socket/fcntl/poll renumbers + version string; +~20 KB @ 6.2.2 annotation-token consume) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10 aarch64 emit fix — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | 836,096 B (rebuilt @ 6.2.10; size flat — PE 512 B file-alignment absorbs the +8 version-string bytes) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.2 · **sandhi 1.6.0** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · **mabda 3.1.1** · sakshi 2.3.0 (sandhi/mabda refold @.9 — sandhi adopted the 6.2.8 `tls_ctx_*` wrappers; rest on the 6.2.1 pin) |
-| tests | 177 `.tcyr` (+`tls_native_mtls_client` @.8 — mTLS client-auth loopback) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4341 fns (+1 @.9 mabda 3.1.1 fold; diagnostic byte-length audit closed — 425 SYS_WRITE sites, 0 miscounts) |
+| stdlib fold | agnosys 1.4.2 · **sandhi 1.6.1** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.1.1 · sakshi 2.3.0 (sandhi refold @.10 — v4 nb-connect + per-op timeout now compose stdlib; v6/listen adoption is its follow-on) |
+| tests | 178 `.tcyr` (+`net_v6_connect` @.10 — Darwin v6 layout + nb-connect, runs on x86/ecb/pi) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4346 fns (+5 @.10 — `net::sockaddr_in6`/`net_connect_nb6`/`net_connect_sa_nb`/`sock_set_nonblocking`/`sock_clear_nonblocking`, additions-only) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~506 ms (flat @ 6.2.9 — dep fold + a 1-line debug-literal trim; cycc 1,063,784 B, −16 B, self-host byte-identical) |
+| bench (every-release gate) | self_compile ~505 ms (flat @ 6.2.10 — lib + aarch64-emit changes don't touch the x86 compiler; cycc 1,063,792 B, +8 version string, self-host byte-identical) |
 
-> **Handoff (2026-06-15):** **v6.2.9 CUT — sandhi 1.6.0 / mabda 3.1.1 fold +
+> **Handoff (2026-06-15):** **v6.2.10 CUT — Darwin IPv6 socket surface for
+> `lib/net.cyr` + the aarch64-Linux INET path it surfaced.** Fulfils sandhi's filed
+> consumer request (`2026-06-15-cyrius-net-v6-darwin.md`): stdlib now exposes a
+> Darwin-correct IPv6 + non-blocking surface — per-target `AF_INET6` (Darwin 30 /
+> Linux 10), `sockaddr_in6` (28 B, BSD `sin6_len`), `net_connect_nb6` +
+> `net_connect_sa_nb` (the extracted generic core of `net_connect_nb`, v4
+> unchanged), `sock_set/clear_nonblocking`. **Folded-in fix (the user's call to do
+> it now, not defer):** verifying the new test on the **real pi** exposed a
+> pre-existing (v6.0.59-era) bug — net.cyr issues x86 socket syscall NUMBERS and
+> relied on `ESYSXLAT` to renumber them, but those renumbers existed ONLY in the
+> `_TARGET_MACHO==2` branch, never aarch64-Linux, so the entire INET path
+> (tcp_socket / connect / the v6 surface) AND `chrono.cyr sleep_ms` were silently
+> broken on native ARM (socket 41→pivot_root, fcntl 72→pselect6, poll 7→fsetxattr).
+> `src/backend/aarch64/emit.cyr` now mirrors the socket family into the
+> aarch64-Linux ESYSXLAT branch (socket/connect/accept/shutdown/bind/listen/
+> getsockname/setsockopt/getsockopt/fcntl pure renumbers + a `poll 7→ppoll 73`
+> timespec arg-shift; encodings assembled with `aarch64-linux-gnu-as`). Dep refold
+> **sandhi 1.6.0→1.6.1** (v4 nb-connect + per-op timeout now compose stdlib; v6 +
+> listen-socket adoption is sandhi's follow-on slot). **VERIFIED:** check.sh
+> **89/89**; x86 self-host byte-identical (aarch64 backend not in the x86 build);
+> aarch64-Linux self-host byte-identical; cross-OS **SELFHOST_OK ecb/pi/cass** on
+> the shipped 6.2.10 binaries; `net_v6_connect.tcyr` 17/17 on x86 + **ecb (real
+> macOS, Darwin constants executed)** + **pi (real aarch64, was failing pre-fix)**;
+> `poll→ppoll` validated (1500 ms→~1.5 s, 0 ms→immediate). 17-agent adversarial
+> review: surface correct, sandhi fold clean byte-identical, v6 deferral a
+> legitimately-scoped consumer follow-on (not a half-fix). api-surface 4341→4346
+> (additions only). bench self_compile ~505 ms. **NEXT:** the remaining v6.2.x
+> pins — bare-metal target formalization + RISC-V rv64. **user pushes/tags after
+> CI.** (Stale tracked `build/cycc-native-aarch64` predates this emit fix — refresh
+> via `cyrius pulsar` when next on ARM; not a gate.)
+>
+> ---
+>
+> **Prior (2026-06-15):** **v6.2.9 CUT — sandhi 1.6.0 / mabda 3.1.1 fold +
 > diagnostic byte-length audit closed.** Maintenance release. **sandhi 1.6.0** is
 > the consumer half of the 6.2.8 mTLS work: it retired its `tls_dlsym("SSL_CTX_*")`
 > callers onto the typed `tls_ctx_*` wrappers (7 call sites now; its 5 removed

@@ -7,12 +7,12 @@
 
 | | Run 1 | Run 2 | Run 3 |
 |---|---|---|---|
-| **Date** | `2026-06-15T18:17:01Z` | `2026-06-15T19:19:32Z` | `2026-06-15T20:11:54Z` |
-| **Commit** | `b9e555fb` | `67f05175` | `1da26d0f` |
+| **Date** | `2026-06-15T19:19:32Z` | `2026-06-15T20:11:54Z` | `2026-06-15T20:54:30Z` |
+| **Commit** | `67f05175` | `1da26d0f` | `a5427434` |
 
 ## alloc
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
 | 1KB | 1us | 1us | 1us | - |
 | 64B | 1us | 1us | 1us | - |
@@ -21,14 +21,14 @@
 
 ## compiler
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
-| self_compile | 513ms | 506ms | 493ms | -4.0% |
-| trivial | 2ms | 2ms | 2ms | -0.3% |
+| self_compile | 506ms | 493ms | 505ms | -0.2% |
+| trivial | 2ms | 2ms | 2ms | +2.2% |
 
 ## float
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
 | f64_add | 1us | 1us | 1us | - |
 | f64_div | 1us | 1us | 1us | - |
@@ -40,7 +40,7 @@
 
 ## fmt
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
 | hex | 1us | 1us | 1us | - |
 | int_large | 1us | 1us | 1us | - |
@@ -51,7 +51,7 @@
 
 ## hashmap
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
 | delete | 2us | 2us | 2us | - |
 | has | 1us | 1us | 1us | - |
@@ -61,13 +61,13 @@
 
 ## size
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
-| cc5_bytes | 1ms | 1ms | 1ms | -0.0% |
+| cc5_bytes | 1ms | 1ms | 1ms | - |
 
 ## string
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
 | memchr_64 | 1us | 1us | 1us | - |
 | memcpy_64 | 1us | 1us | 1us | - |
@@ -80,7 +80,7 @@
 
 ## tagged
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
 | chain | 1us | 1us | 1us | - |
 | Err | 1us | 1us | 1us | - |
@@ -92,13 +92,13 @@
 
 ## vec
 
-| Benchmark | `b9e555fb` | `67f05175` | `1da26d0f` | Delta |
+| Benchmark | `67f05175` | `1da26d0f` | `a5427434` | Delta |
 |---|---|---|---|---|
 | find_100 | 1us | 1us | 1us | - |
 | get | 1us | 1us | 1us | - |
 | push_10 | 1us | 1us | 1us | - |
 | push_100 | 3us | 3us | 3us | - |
-| push_1000 | 20us | 21us | 20us | - |
+| push_1000 | 21us | 20us | 22us | +4.8% |
 
 ---
 

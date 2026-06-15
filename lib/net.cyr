@@ -104,6 +104,9 @@ fn sockaddr_in(addr, port): i64 {
 # sockaddr_in's Darwin length-byte split: Linux has u16 sin6_family@0; Darwin
 # (BSD) has sin6_len(u8=28)@0 + sin6_family(u8=30)@1. Layout: family@0/1,
 # port@2 (NBO), flowinfo@4 (0), addr@8 (16 B), scope_id@24 (0).
+# NOTE: net_connect_nb6 inlines this exact 28-byte layout (it must stay
+# allocator-free, so it can't call this alloc-based builder) — keep the two in
+# lock-step if the layout ever changes (e.g. populating sin6_scope_id).
 # See docs/development/issues/2026-06-15-cyrius-net-v6-darwin.md.
 fn sockaddr_in6(addr16, port): i64 {
     var sa = alloc(28);
@@ -474,7 +477,10 @@ fn net_set_multicast_if(fd, iface): i64 {
 #
 # Uses the Linux-x86_64 syscall numbers (fcntl=72, poll=7, getsockopt=55,
 # connect=42). On Mach-O these are translated to BSD by the backend SYSXLAT
-# (ESYSXLAT / EMACHO_SYSXLAT: 72→92, 7→230, 55→118, 42→98) — v6.0.59. The
+# (ESYSXLAT / EMACHO_SYSXLAT: 72→92, 7→230, 55→118, 42→98) — v6.0.59; v6.2.10
+# added the matching aarch64-Linux ESYSXLAT renumbers (socket 41→198, connect
+# 42→203, fcntl 72→25, poll 7→ppoll 73 w/ timespec shift, …), without which the
+# raw x86 numbers mis-routed on native ARM (socket→pivot_root). The
 # Darwin-specific flag/option values (O_NONBLOCK, EINPROGRESS, SOL_SOCKET,
 # SO_ERROR) are passed verbatim, so they come from the platform-branched
 # constants above (_NET_O_NONBLOCK / _NET_EINPROGRESS / SockOpt). Linux:
@@ -488,7 +494,9 @@ var _NET_CONN_NB_TIMEOUT = 0 - 2;
 # block above for full contract; returns 0 on connected,
 # `_NET_CONN_NB_TIMEOUT` (-2) on poll timeout,
 # `_NET_CONN_NB_ERR` (-1) on fcntl/connect/getsockopt failure.
-# Restores blocking mode on every exit path.
+# Restores blocking mode on every exit path — the flag/poll dance now lives in
+# net_connect_sa_nb (which this delegates to as of v6.2.10), so the restore
+# happens there, not inline here.
 fn net_connect_nb(fd, addr, port, timeout_ms): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no non-blocking connect — sock_connect(#47) blocks ~8s (kernel-
@@ -568,7 +576,8 @@ fn net_connect_sa_nb(fd, sa, salen, timeout_ms): i64 {
 
 # v6.2.10: IPv6 non-blocking connect — `addr16` is a ptr to the 16-byte v6
 # address (network byte order), `port` host-order. Builds a Darwin/Linux-correct
-# sockaddr_in6 on the stack and delegates to net_connect_sa_nb. AGNOS is
+# sockaddr_in6 on the stack (same layout as sockaddr_in6() — inlined here to stay
+# allocator-free; keep both in sync) and delegates to net_connect_sa_nb. AGNOS is
 # IPv4-only → fail closed. Returns the same _NET_CONN_NB_* sentinels.
 fn net_connect_nb6(fd, addr16, port, timeout_ms): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
