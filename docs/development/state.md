@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.8** (v6.2.x cycle — **Platform Expansion**; native TLS trust-store + mTLS client-auth — typed `tls_ctx_*` wrappers + TLS 1.3 client Certificate/CertificateVerify send (closes the 2026-05-22 native-TLS residual); sandhi/mabda refold. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,063,800 B (+8,016 B @ 6.2.1 — +688 the `T[N]` element-width frontend; +7,328 resizing 5 cycc-internal slot tables `ends`/`seen_vcnt`/`_fc_simd_table` to `i64[N]`) |
+| **Version** | **6.2.9** (v6.2.x cycle — **Platform Expansion**; sandhi 1.6.0 / mabda 3.1.1 fold — sandhi retired its `tls_dlsym` callers onto the 6.2.8 `tls_ctx_*` wrappers — + diagnostic byte-length audit closed. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,063,784 B (−16 B @ 6.2.9 — dead bytes removed from a `main.cyr` debug literal; +8,016 B @ 6.2.1 the `T[N]` element-width frontend + slot-table resize) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | 615,304 B (+~20 KB @ 6.2.2 — pass-1/pass-2 annotation-token consume in main_aarch64.cyr) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled) |
 | **cycc_win** (PE32+ cross) | 836,096 B (refreshed @ 6.2.5 version-bump rebuild) |
@@ -25,13 +25,35 @@
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.2 · **sandhi 1.5.5** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · **mabda 3.1.0** · sakshi 2.3.0 (sandhi/mabda refold @.8; rest on the 6.2.1 pin) |
+| stdlib fold | agnosys 1.4.2 · **sandhi 1.6.0** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · **mabda 3.1.1** · sakshi 2.3.0 (sandhi/mabda refold @.9 — sandhi adopted the 6.2.8 `tls_ctx_*` wrappers; rest on the 6.2.1 pin) |
 | tests | 177 `.tcyr` (+`tls_native_mtls_client` @.8 — mTLS client-auth loopback) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4340 fns (+6 @.8 `tls_ctx_{load_verify_locations,set_verify_paths,use_certificate_file,use_private_key_file}` + `tls_native_set_client_{cert,key}`, non-breaking) |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4341 fns (+1 @.9 mabda 3.1.1 fold; diagnostic byte-length audit closed — 425 SYS_WRITE sites, 0 miscounts) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~513 ms (flat @ 6.2.8 — stdlib-only TLS mTLS/wrapper/refold change, not in cycc; x86 cycc byte-identical, 1,063,800 B unchanged) |
+| bench (every-release gate) | self_compile ~506 ms (flat @ 6.2.9 — dep fold + a 1-line debug-literal trim; cycc 1,063,784 B, −16 B, self-host byte-identical) |
 
-> **Handoff (2026-06-15):** **v6.2.8 CUT — native TLS trust-store + mTLS
+> **Handoff (2026-06-15):** **v6.2.9 CUT — sandhi 1.6.0 / mabda 3.1.1 fold +
+> diagnostic byte-length audit closed.** Maintenance release. **sandhi 1.6.0** is
+> the consumer half of the 6.2.8 mTLS work: it retired its `tls_dlsym("SSL_CTX_*")`
+> callers onto the typed `tls_ctx_*` wrappers (7 call sites now; its 5 removed
+> symbols are the `_sandhi_apply_*_fp` dlsym caches — all `_`-prefixed internals,
+> not public). **mabda 3.1.1** patch fold. **Byte-length audit**
+> (`2026-06-12-diagnostic-syscall-byte-length-audit.md`) resolved: its 27 sites
+> were already fixed in a prior release (stale-open); a UTF-8/DOTALL re-derivation
+> across all 425 `syscall(SYS_WRITE,…,LEN)` sites found one more the original
+> single-line audit missed — `main.cyr:825`, a multi-line `"\n        "` debug
+> literal with `LEN=1` (cleaned to `"\n"`; runtime unchanged). Audit now provably
+> clean (425 sites, 0 miscounts) → archived. cycc 1,063,800→1,063,784 B (−16).
+> **VERIFIED:** check.sh 89/89; self-host byte-identical; cross-OS **SELFHOST_OK
+> ecb/pi/cass**; bench ~506 ms; api-surface 4340→4341 (additions only). Also filed
+> sandhi's macOS non-blocking-connect gap sandhi-side
+> (`sandhi/docs/issues/2026-06-06-macos-nonblocking-connect.md` — was only tracked
+> cyrius-side; sandhi-side fix is the consumer's follow-up). **NEXT:** the
+> remaining v6.2.x pins — bare-metal target formalization + RISC-V rv64. **user
+> pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-15):** **v6.2.8 CUT — native TLS trust-store + mTLS
 > client-auth.** Closes the residual of sandhi's `2026-05-22-cyrius-native-tls-in-6.0.x.md`
 > (the last open native-TLS item): typed native `SSL_CTX_*` equivalents so native
 > trust-store / mTLS **enforce**. **Trust-store half:** `lib/tls.cyr` gained

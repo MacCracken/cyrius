@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.9] — 2026-06-15
+
+**v6.2.9 — sandhi 1.6.0 / mabda 3.1.1 fold + diagnostic byte-length audit closed.**
+A maintenance release: refold the two moved deps and close a stale open issue.
+sandhi 1.6.0 is the consumer-side half of the 6.2.8 mTLS work — it **retired its
+`tls_dlsym("SSL_CTX_*")` callers onto the typed `tls_ctx_*` wrappers** 6.2.8
+shipped (the ecosystem loop closed). The byte-length audit
+(`2026-06-12-diagnostic-syscall-byte-length-audit.md`) is resolved: its 27
+documented sites were already corrected in a prior release (the issue was never
+archived), and a UTF-8/DOTALL re-derivation across all 425
+`syscall(SYS_WRITE, …, LEN)` sites found + fixed **one more the original
+single-line audit couldn't see** — leaving the audit provably clean.
+
+### Changed
+- **Vendored stdlib refold** — `lib/sandhi.cyr` 1.5.5→**1.6.0**, `lib/mabda.cyr`
+  3.1.0→**3.1.1** (plain `cp dist→lib`; api-surface +1 public fn, zero breaking
+  removals). sandhi 1.6.0's 5 removed symbols are all `_`-prefixed internals
+  (`_sandhi_apply_*_fp` / `_sandhi_apply_resolve_fns`) — its retired dlsym caches,
+  now replaced by 7 call sites to the 6.2.8 `tls_ctx_*` wrappers.
+- **`src/main.cyr`** — the `_tp_*` token-probe debug trace emitted a multi-line
+  `"\n        "` literal (newline + 8 source-indent spaces) with `LEN=1`; the
+  embedded indentation was never written but tripped the byte-length invariant.
+  Cleaned to `"\n"` so the literal is self-consistent (runtime unchanged — still
+  writes a single `\n`). Closes the last straggler in the diagnostic byte-length
+  audit; cycc 1,063,800→1,063,784 B (−16, the removed dead bytes).
+
+### Verified
+- Diagnostic byte-length sweep (UTF-8-accurate, DOTALL/multi-line-aware):
+  **425 `syscall(SYS_WRITE)`-with-length sites scanned, 0 miscounted** — the
+  audit (`2026-06-12-diagnostic-syscall-byte-length-audit.md`) is complete and
+  archived.
+- `check.sh` **89/89**; x86 self-host byte-identical (new `cycc` == `cycc`, the
+  `main.cyr` change is deterministic); cross-OS self-host byte-identical
+  **ecb / pi / cass** (`SELFHOST_OK`). bench `self_compile` ~506 ms / `cycc`
+  **1,063,784 B**. api-surface 4340→4341 (additions only, non-breaking).
+- sandhi's macOS non-blocking-connect gap (Darwin socket constants;
+  cyrius-filed `2026-06-06-sandhi-nonblocking-connect-not-darwin-ported.md`) was
+  untracked in the sandhi repo — now filed sandhi-side at
+  `sandhi/docs/issues/2026-06-06-macos-nonblocking-connect.md` (sandhi-side fix
+  is the consumer's follow-up; plain-transport, separate from the TLS work).
+
 ## [6.2.8] — 2026-06-15
 
 **v6.2.8 — native TLS trust-store + mTLS client-auth (closes the 2026-05-22

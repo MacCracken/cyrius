@@ -63,3 +63,17 @@ this class can't recur.
 OPEN. Several sites are in compiler `src/` (incl. `aarch64`/`macho`/`win` cross
 targets) → the fix is a compiler change and needs the cross-OS self-host gate
 even though it's data-only.
+
+## Resolution (cyrius 6.2.9, 2026-06-15)
+
+CLOSED. The 27 documented sites were corrected in a prior release (this issue was
+never archived). A UTF-8-accurate, **DOTALL/multi-line-aware** re-derivation
+(scanning all 425 `syscall(SYS_WRITE, …, LEN)` sites in `src/`) confirmed those
+27 are fixed AND surfaced **one more the original single-line audit could not
+see**: `src/main.cyr:825` — a multi-line `"\n        "` debug literal (newline +
+8 source-indent spaces) with `LEN=1` (the indentation was never written but broke
+the LEN==true-byte-length invariant). Cleaned to `"\n"` (runtime unchanged).
+Sweep now reports **425 sites, 0 miscounts** — the audit is complete. cycc
+self-hosts byte-identical at 1,063,784 B (−16). See CHANGELOG [6.2.9].
+(Lesson reaffirmed: re-derive with a DOTALL/byte-accurate sweep, don't trust a
+single-line regex — cf. the v6.1.41 closeout note.)

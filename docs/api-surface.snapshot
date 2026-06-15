@@ -1825,6 +1825,7 @@ mabda::native_render_pipeline_pack/5
 mabda::native_rt_create_2d_rgba8/4
 mabda::native_rt_release_2d_rgba8/2
 mabda::native_rt_size_2d_rgba8/2
+mabda::native_sdma_build_copy_linear/4
 mabda::native_sh_reg_offset/1
 mabda::native_surface_mark_master_owned/2
 mabda::native_syncobj_create/2

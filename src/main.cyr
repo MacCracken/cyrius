@@ -822,8 +822,7 @@ if (_ts_parse_only_mode == 1) {
         _emit_decimal(_tp_cur);
         syscall(SYS_WRITE, 2, " err_idx=", 9);
         _emit_decimal(_tp_etok);
-        syscall(SYS_WRITE, 2, "
-        ", 1);
+        syscall(SYS_WRITE, 2, "\n", 1);
         syscall(SYS_EXIT, 1);
     }
     syscall(SYS_EXIT, 0);
