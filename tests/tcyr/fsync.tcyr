@@ -1,0 +1,34 @@
+# fsync.tcyr — sys_fsync / sys_fdatasync durability wrappers (v6.2.14).
+# The wrapper exists to hide the per-arch number (74 x86_64 / 82 aarch64); a raw
+# syscall(74) on aarch64 would hit sched_yield (returns 0 → a silently-fake fsync),
+# so this asserts a real success on a freshly-written file. Linux-only (x86 + pi).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("sys_fsync / sys_fdatasync");
+
+    var path = "/tmp/_cyrius_fsync_test.tmp";
+    var fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);   # 0644
+    assert(fd >= 0, "tmp file opened for write");
+
+    var msg = "durable\n";
+    var w = sys_write(fd, msg, 8);
+    assert_eq(w, 8, "wrote 8 bytes");
+
+    var r = sys_fsync(fd);
+    assert_eq(r, 0, "sys_fsync returns 0 (real flush, not sched_yield)");
+    var r2 = sys_fdatasync(fd);
+    assert_eq(r2, 0, "sys_fdatasync returns 0");
+
+    sys_close(fd);
+    sys_unlink(path);
+
+    var rr = assert_summary();
+    return rr;
+}
+var rc = main();
+syscall(60, rc);

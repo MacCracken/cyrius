@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.14] — 2026-06-16
+
+**v6.2.14 — fsync/fdatasync stdlib wrappers + mabda 3.2.3; native-float &
+protobuf roadmapped.** A light slot: the tiny fsync proposal lands, mabda
+refolds, and the two larger proposals are planned (not started) per maintainer
+direction.
+
+### Added
+- **`sys_fsync` / `sys_fdatasync`** (proposal 2026-05-20) — the durability half
+  of the atomic `write-tmp + fsync + rename` pattern, as bare wrappers so
+  consumers stop hardcoding the per-arch number. `lib/syscalls_x86_64_linux.cyr`
+  (FSYNC=74, FDATASYNC=75 + wrappers) and `lib/syscalls_aarch64_linux.cyr`. **The
+  aarch64 catch:** the native fsync number is 82, but **82 is x86 `rename`**, which
+  the aarch64 ESYSXLAT already remaps 82→128 (renameat) — so emitting 82 directly
+  made `sys_fsync(fd)` call `renameat` and return `-EFAULT` (caught on real pi).
+  Fix (the established "emit the x86 number, let ESYSXLAT renumber" convention):
+  the aarch64 enum emits **74/75** and `src/backend/aarch64/emit.cyr` adds
+  **74→82 / 75→83** ESYSXLAT entries, placed **after** the rename(82→128) entry so
+  the fsync output isn't re-captured. `tests/tcyr/fsync.tcyr` is the committed
+  regression (PASS on x86 + real pi).
+- **`tests/tcyr/fsync.tcyr`** — asserts `sys_fsync`/`sys_fdatasync` return 0 on a
+  freshly-written file (not the silent-`sched_yield` failure the wrapper prevents).
+
+### Changed
+- **Vendored stdlib refold:** `lib/mabda.cyr` 3.2.2→**3.2.3** (clean dist fold, 0
+  `include "src/"`). api-surface 4388→**4407** (+20; mabda evolved
+  `native_gfx9_sampler_descriptor` /4→/5 — a signature change, recorded).
+
+### Roadmap (planned, not started — per maintainer direction)
+- **Native float arithmetic — Tier A** (proposal 2026-06-16). Direction chosen:
+  first-class `f64`/`f32` types + operators + literals + int↔float casts (SSE2/NEON),
+  NOT the Tier-B stdlib-intrinsic stopgap. Roadmapped into the **v6.3.x language
+  band** (`roadmap_6.md`) as 5 bites across releases (type+literals → arithmetic →
+  comparisons → aarch64 NEON → f32/conversions); substrate-independent of the
+  closures/generics Phase 0. **No code this slot** — roadmap only.
+- **`lib/protobuf.cyr`** (proto3 wire codec, proposal 2026-06-10) — its own future
+  slot, tracked in `roadmap-future.md`. The fsync proposal is archived (shipped);
+  native-float + protobuf proposals stay in `proposals/` as the detailed specs the
+  roadmap references.
+
+### Verified
+- `fsync.tcyr` **PASS on x86_64 Linux + real pi (aarch64)** (the 74→82 ESYSXLAT
+  resolves the rename-82 collision); `check.sh` **89/89** (api-surface snapshot
+  regenerated to 4407); x86_64 self-host byte-identical (the fsync ESYSXLAT is in
+  the aarch64 backend, not the x86 compiler); aarch64 self-host byte-identical
+  (qemu + pi); cross-OS self-host byte-identical **ecb / pi / cass**. bench
+  `self_compile` ~527 ms / `cycc` **1,066,104 B** (both flat — no x86-compiler change).
+
 ## [6.2.13] — 2026-06-16
 
 **v6.2.13 — the monotonic/wall clock works on macOS AND Windows now + sigil 3.8.0.**

@@ -492,6 +492,50 @@ CPS-transformed state machines over the existing epoll runtime.
 Same runtime semantics, sugarier surface. Pairs with closures
 (capture state across await points).
 
+### Native float arithmetic (f64/f32 type + operators) — Tier A
+
+Filed 2026-06-16 (`proposals/2026-06-16-native-float-arithmetic.md`); **direction
+chosen: Tier A** (first-class float types, not the Tier-B stdlib-intrinsic stopgap)
+— user 2026-06-16, **to be broken into manageable bites across a few releases,
+roadmapped now, not started yet**. Today Cyrius has NO first-class floating point:
+the only float facilities are hand-rolled inline-asm SSE2 blocks (mabda's
+`f64_to_f32`/`f32_to_f64`/`int_ratio_to_f32`), which are fragile (hard-coded
+`[rbp-N]` frame offsets), x86-64-only (dead on aarch64), and unreviewable. Every
+real-number consumer hits it — mabda (GPU transforms/blit/color/NDC), bijli (EM
+sim), rasa/ranga (image filters); portability to aarch64 is hard-blocked.
+
+**End state:** `f64` (and optionally `f32`) as real types with `+ - * / < > <= >=
+== !=`, float literals (`1.5`, `0.03125`), int↔float casts — the compiler emitting
+the target's FP instructions (SSE2 on x86-64, NEON on aarch64). mabda then deletes
+all three asm shims. **Substrate-independent** — orthogonal to the closures/generics
+Phase 0 above (it's a primitive type, not a monomorphization consumer), so it can
+sequence on its own.
+
+Suggested bite breakdown (one logical bite per release; refine at arc-open):
+
+1. **f64 type + literals + casts (x86-64).** Lex float literals (`1.5`, exponent
+   forms) to IEEE-754 bit patterns; `f64` as a type (8-byte, lives in xmm for ops,
+   bit-pattern in the i64 slot at rest); `i64→f64` (`cvtsi2sd`) and `f64→i64`
+   (`cvttsd2si`) casts; load/store/move. No arithmetic yet — just the type + values
+   round-tripping. (Mirrors how the i64 core was bootstrapped: representation first.)
+2. **f64 arithmetic (x86-64).** `+ - * /` → `addsd/subsd/mulsd/divsd`; unary `-`.
+   Register allocation for xmm0–xmm7 (or a minimal xmm spill model over the existing
+   stack-slot scheme). This is the bite that unblocks mabda's `int_ratio_to_f32`.
+3. **f64 comparisons (x86-64).** `< > <= >= == !=` → `ucomisd` + `setcc`/branch;
+   NaN-ordering decisions documented. Then mabda's scalar shims are deletable on x86.
+4. **aarch64 NEON codegen.** Port bites 1–3 to aarch64 (`scvtf`/`fcvtzs`,
+   `fadd/fsub/fmul/fdiv`, `fcmp`), verified byte-identical self-host + run on real pi.
+   This is the portability payoff — the whole point Tier A beats the SSE2-only shims.
+   (Same cross-arch discipline as the v6.2.10 ESYSXLAT / v6.2.13 clock ports.)
+5. **f32 + conversions + other backends.** `f32` type + `f64↔f32` (`cvtsd2ss`/
+   `fcvt`), promote mabda's conversions into the language, Mach-O/PE FP paths, and
+   the `cx` bytecode backend's float ops. mabda deletes its last shim; close the
+   proposal.
+
+ADR note: this is the measured-need float exception to the i64-first core tenet
+(cf. [`project_adr_002_i64_core_tenet_simd_exception`]) — scalar f64 first; packed
+SIMD (`f64v2`/`f64v4`) stays a separate, narrowly-justified track.
+
 ### Required vs Optional Dependencies
 
 Today: `cyrius.cyml` has no required/optional distinction. Every
@@ -584,6 +628,7 @@ constraints; cross-package feature exports.
 | Closures with lexical capture | ~7 |
 | Real generic instantiation (on Phase 0) | ~7 |
 | Language-level async/await syntax | ~5 |
+| **Native float arithmetic (f64/f32, Tier A)** — 5 bites across releases (type+literals → arith → cmp → aarch64 NEON → f32/conversions) | ~5 |
 | Required vs Optional Dependencies | ~5 |
 | Cross-feature integration + tcyr suite | ~3 |
 

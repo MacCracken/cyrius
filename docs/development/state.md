@@ -14,24 +14,45 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.13** (v6.2.x cycle — **Platform Expansion**; macOS+Windows monotonic/wall clock fix (issue 2026-06-16; `clock_gettime`/228 + the Windows twin) + sigil 3.8.0. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,066,104 B (+600 B @ 6.2.13 — the `0xF01B` GetSystemTimeAsFileTime PE reroute; version string flat, `6.2.13`≡`6.2.12` length) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.13 (parse_expr.cyr reroute dispatch is in every backend; clock fix is stdlib-only) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.13 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.13 (adds the `0xF01B` GetSystemTimeAsFileTime reroute — the Windows wall-clock; monotonic reuses GetTickCount64. Plus the 6.2.12 ProcessPrng CSPRNG) |
+| **Version** | **6.2.14** (v6.2.x cycle — **Platform Expansion**; `sys_fsync`/`sys_fdatasync` wrappers + mabda 3.2.3; native-float Tier A + protobuf roadmapped (not started). See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,066,104 B (flat @ 6.2.14 — the fsync ESYSXLAT is in the aarch64 backend, not the x86 compiler; version string flat, `6.2.14`≡`6.2.13`) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.14 (+ESYSXLAT 74→82/75→83 for fsync/fdatasync — the aarch64-native 82/83 collide with x86 rename) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.14 (unchanged from .13 — fsync is Linux-only; PE keeps the 0xF01B clock + ProcessPrng reroutes) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · **sigil 3.8.0** · mabda 3.2.2 · sakshi 2.3.0 (sigil 3.8.0 fold @.13; all 12 libs current) |
-| tests | 180 `.tcyr` (+`clock_monotonic` @.13 — clock advance + wall-clock, runs x86/ecb/pi/cass; +`getrandom` @.12) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4388 fns** (+1 net @.13 sigil 3.8.0: +2 added, `p256_scalarmul_var` /3→/4 signature change) |
+| stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.3** · sakshi 2.3.0 (mabda 3.2.3 fold @.14; all 12 libs current) |
+| tests | 181 `.tcyr` (+`fsync` @.14 — sys_fsync/fdatasync, runs x86/pi; +`clock_monotonic` @.13; +`getrandom` @.12) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4407 fns** (+19 net @.14 mabda 3.2.3: +20 added, `native_gfx9_sampler_descriptor` /4→/5 signature change) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~529 ms @ 6.2.13 (+7 ms, noise — the 0xF01B reroute is dead on the x86 self-compile path; cycc 1,066,104 B, +600, self-host byte-identical) |
+| bench (every-release gate) | self_compile ~527 ms @ 6.2.14 (flat — no x86-compiler change; cycc 1,066,104 B; self-host byte-identical) |
 
-> **Handoff (2026-06-16):** **v6.2.13 CUT — macOS + Windows clock fix + sigil 3.8.0.**
+> **Handoff (2026-06-16):** **v6.2.14 CUT — fsync wrappers + mabda 3.2.3; native-float
+> & protobuf roadmapped.** Light slot. **`sys_fsync`/`sys_fdatasync`** (proposal
+> 2026-05-20) added as bare wrappers (x86 74/75). **aarch64 catch:** native fsync is
+> 82, but 82 is x86 rename (ESYSXLAT remaps 82→128) → emitting 82 made sys_fsync call
+> renameat → -EFAULT (caught on real pi). Fix: aarch64 emits the x86 74/75 + new
+> ESYSXLAT 74→82/75→83 in `src/backend/aarch64/emit.cyr`, placed AFTER the rename
+> entry so the output isn't re-captured. `fsync.tcyr` PASS x86 + real pi. **mabda
+> 3.2.2→3.2.3** fold (api-surface 4388→4407; `native_gfx9_sampler_descriptor` /4→/5).
+> **Roadmapped (no code, maintainer direction):** native-float **Tier A** (f64/f32
+> type+operators) → v6.3.x language band as 5 bites (`roadmap_6.md`); protobuf
+> (lib/protobuf.cyr) → its own slot (`roadmap-future.md`). The fsync proposal is
+> archived; native-float + protobuf proposals stay in `proposals/` as specs.
+> **VERIFIED:** check.sh **89/89** (api-surface 4407); x86 self-host byte-identical
+> (fsync ESYSXLAT is aarch64-only); aarch64 self-host byte-identical (qemu+pi);
+> cross-OS **SELFHOST_OK ecb/pi/cass**. cycc 1,066,104 B (flat). **NEXT:** remaining
+> v6.2.x pins — bare-metal target + RISC-V rv64; then the v6.3.x language arc opens
+> (Phase-0 substrate, then closures/generics/async + native-float). **user
+> pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-16):** **v6.2.13 CUT — macOS + Windows clock fix + sigil 3.8.0.**
 > Issue 2026-06-16: `chrono`/`bench` hard-coded the Linux `clock_gettime` (228) +
 > read the `&ts` buffer → dead on arm64-macOS (clock_now_ns=0 over a 50 ms sleep;
 > `cyrius bench` all zeros). The arm64 Mach-O backend routes 228 → libSystem

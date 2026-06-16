@@ -806,6 +806,13 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF104191F); EW(S, 0x54000041); EW(S, 0xD28009E8);
     # utimensat 280→88: cmp x8,#280; b.ne +8; movz x8,#88
     EW(S, 0xF104611F); EW(S, 0x54000041); EW(S, 0xD2800B08);
+    # v6.2.14: fsync/fdatasync. lib/syscalls_aarch64_linux.cyr emits the x86 numbers
+    # (74/75) — the aarch64-native 82/83 collide (82 is x86 rename, remapped 82→128
+    # above). Pure renumbers (both take just fd). MUST be LAST: fsync produces x8=82,
+    # and placing it after the rename(82→128) cmp prevents that re-capture (same
+    # ordering rule as the at-family above). See proposal 2026-05-20.
+    EW(S, 0xF101291F); EW(S, 0x54000041); EW(S, 0xD2800A48);  # fsync     74→82
+    EW(S, 0xF1012D1F); EW(S, 0x54000041); EW(S, 0xD2800A68);  # fdatasync 75→83
     return 0;
 }
 

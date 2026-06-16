@@ -103,6 +103,18 @@ at each cycle-open per [`feedback_premise_check_at_slot_entry`].
 
 ---
 
+## Stdlib libs (consumer-filed proposals)
+
+Discrete stdlib additions filed by ecosystem consumers; each is its own slot when
+pulled (no urgency — every consumer has a working fallback today).
+
+| Lib | Filed by | Effort | Status / Notes |
+|---|---|---|---|
+| **`lib/protobuf.cyr`** (proto3 wire encode/decode) | hoosh (OTLP/OpenTelemetry span export) | Medium | Its own slot (user 2026-06-16). Minimal proto3 wire codec — length-delimited messages, no `.proto` compiler. Pure Cyrius, no syscalls. hoosh ships OTLP/**JSON** today (works), but most collectors + gRPC/proto3 interop default to protobuf. See `proposals/2026-06-10-protobuf-lib.md`. |
+| ~~`sys_fsync`/`sys_fdatasync`~~ | hapi (atomic manifest edits) | — | ✅ **Shipped v6.2.14** — bare wrappers in `syscalls_x86_64_linux.cyr` (74/75) + `syscalls_aarch64_linux.cyr` (emit x86 74/75, ESYSXLAT → 82/83). Proposal archived. |
+
+---
+
 ## Speculative type-system work
 
 Long-horizon items that go beyond the v6.3.x Language Refinements
