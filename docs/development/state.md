@@ -14,24 +14,46 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.12** (v6.2.x cycle — **Platform Expansion**; stdlib fold sweep + Windows CSPRNG (ProcessPrng PE reroute, issue 2026-06-11) + `cyrius audit` split. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,065,504 B (+640 B @ 6.2.12 — the `0xF01A` ProcessPrng PE reroute; version string flat, `6.2.12`≡`6.2.11` length) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | ~618,2xx B (rebuilt @ 6.2.12 — the parse_expr.cyr reroute dispatch is in every backend; +1,072 B @ 6.2.11 guardrail) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.12 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.12 (the ProcessPrng PE reroute + `_pe_layout` 4th-DLL fix; the entropy primitive makes ws/sandhi/`random_bytes` functional on Windows — sigil/tls_native still read `/dev/urandom`, filed) |
+| **Version** | **6.2.13** (v6.2.x cycle — **Platform Expansion**; macOS+Windows monotonic/wall clock fix (issue 2026-06-16; `clock_gettime`/228 + the Windows twin) + sigil 3.8.0. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,066,104 B (+600 B @ 6.2.13 — the `0xF01B` GetSystemTimeAsFileTime PE reroute; version string flat, `6.2.13`≡`6.2.12` length) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.13 (parse_expr.cyr reroute dispatch is in every backend; clock fix is stdlib-only) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.13 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.13 (adds the `0xF01B` GetSystemTimeAsFileTime reroute — the Windows wall-clock; monotonic reuses GetTickCount64. Plus the 6.2.12 ProcessPrng CSPRNG) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
-| sigil fold | **3.7.14** (@6.2.12 latest; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | **agnosys 1.4.3** · **sandhi 1.6.3** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · **sigil 3.7.14** · **mabda 3.2.2** · sakshi 2.3.0 (fold sweep @.12 — all 12 libs current; mabda 3.2 minor) |
-| tests | 179 `.tcyr` (+`getrandom` @.12 — cross-platform CSPRNG primitive, runs on cass via lib-test) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4387 fns** (+41 net @.12 fold sweep: +42 added, mabda `native_render_handles_write` /4→/5 signature change) |
+| sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
+| stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · **sigil 3.8.0** · mabda 3.2.2 · sakshi 2.3.0 (sigil 3.8.0 fold @.13; all 12 libs current) |
+| tests | 180 `.tcyr` (+`clock_monotonic` @.13 — clock advance + wall-clock, runs x86/ecb/pi/cass; +`getrandom` @.12) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4388 fns** (+1 net @.13 sigil 3.8.0: +2 added, `p256_scalarmul_var` /3→/4 signature change) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~522 ms @ 6.2.12 (+7 ms vs .11, noise — PE reroute dead on the x86 self-compile path; cycc 1,065,504 B, +640, self-host byte-identical) |
+| bench (every-release gate) | self_compile ~529 ms @ 6.2.13 (+7 ms, noise — the 0xF01B reroute is dead on the x86 self-compile path; cycc 1,066,104 B, +600, self-host byte-identical) |
 
-> **Handoff (2026-06-15):** **v6.2.12 CUT — stdlib fold sweep + Windows CSPRNG
+> **Handoff (2026-06-16):** **v6.2.13 CUT — macOS + Windows clock fix + sigil 3.8.0.**
+> Issue 2026-06-16: `chrono`/`bench` hard-coded the Linux `clock_gettime` (228) +
+> read the `&ts` buffer → dead on arm64-macOS (clock_now_ns=0 over a 50 ms sleep;
+> `cyrius bench` all zeros). The arm64 Mach-O backend routes 228 → libSystem
+> `_clock_gettime_nsec_np`, which RETURNS ns in the register (no `&ts` fill) with
+> Darwin clock ids (MONOTONIC=6/REALTIME=0). Added `#ifdef CYRIUS_TARGET_MACOS`
+> branches taking the return value. **Verifying the regression on cass surfaced the
+> Windows twin** (same class) — folded in (user's call): monotonic via the existing
+> GetTickCount64 route (×1e6), wall-clock via a **new PE reroute `0xF01B` →
+> GetSystemTimeAsFileTime** (FILETIME→Unix epoch). Clock now works x86-Linux /
+> arm64-macOS / aarch64-Linux / Windows; **x86-macOS (Intel) stays dead** (228
+> unrouted there; HELD/EOL — documented). Also: `bench.now_ns` `var ts[2]`→`[16]`
+> (OOB read, review-caught); sigil 3.7.14→**3.8.0** (api-surface 4387→4388,
+> `p256_scalarmul_var` /3→/4). **VERIFIED:** `clock_monotonic.tcyr` (committed)
+> PASS on x86 + **real ecb + pi + cass**; check.sh **89/89**; self-host
+> byte-identical; cross-OS **SELFHOST_OK ecb/pi/cass**. cycc 1,066,104 B (+600).
+> **NEXT:** remaining v6.2.x pins — bare-metal target + RISC-V rv64; 2026-06-14
+> lib-side constant cleanup; 2026-06-15 sigil Windows-entropy (sigil repo). **user
+> pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-15):** **v6.2.12 CUT — stdlib fold sweep + Windows CSPRNG
 > (codegen) + `cyrius audit` split.** Three bites. **Fold sweep:** agnosys
 > 1.4.2→1.4.3, sandhi 1.6.2→1.6.3, sigil 3.7.13→3.7.14, mabda 3.1.1→3.2.2 (all
 > byte-identical dist folds; api-surface 4346→4387, mabda

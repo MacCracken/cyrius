@@ -719,6 +719,22 @@ fn _pe_ensure_procprng(S): i64 {
 }
 fn _pe_procprng_get(): i64 { return _pe_procprng_idx; }
 
+# v6.2.13 — kernel32!GetSystemTimeAsFileTime for the Windows wall-clock
+# (chrono.clock_epoch_secs/ns). `void GetSystemTimeAsFileTime(LPFILETIME)` fills
+# an 8-byte FILETIME (100ns ticks since 1601-01-01) at the pointer arg; the
+# stdlib converts to Unix epoch. 1-arg kernel32 (id 0), lazily registered on the
+# first syscall(0xF01B). The monotonic clock reuses the existing GetTickCount64
+# (228) route; this is only for the wall-clock. See 2026-06-16 clock issue.
+var _pe_getsystime_ready = 0;
+var _pe_getsystime_idx   = 0;
+fn _pe_ensure_getsystime(S): i64 {
+    if (_pe_getsystime_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getsystime_idx, "GetSystemTimeAsFileTime");
+    _pe_getsystime_ready = 1;
+    return 0;
+}
+fn _pe_getsystime_get(): i64 { return _pe_getsystime_idx; }
+
 # v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
 var _pe_getcurtid_ready = 0;
 var _pe_getcurtid_idx   = 0;

@@ -1,0 +1,30 @@
+# clock_monotonic.tcyr — chrono.clock_now_ns() must actually advance.
+# A 50 ms sleep must measure as a positive, bounded delta on every target.
+# Regression for 2026-06-16 (clock_gettime/syscall-228 dead on arm64-macOS).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/chrono.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("clock_now_ns monotonic advance");
+    var a = clock_now_ns();
+    sleep_ms(50);
+    var b = clock_now_ns();
+    var delta_ms = (b - a) / 1000000;
+    assert(delta_ms >= 30, "clock_now_ns advances >= 30ms across a 50ms sleep (not a dead clock)");
+    assert(delta_ms <= 2000, "clock_now_ns advance is bounded (< 2s) — sane units");
+
+    # Wall-clock path (clock_epoch_secs → Darwin CLOCK_REALTIME=0 on macOS): a
+    # plausible post-2023 Unix epoch, not the dead-clock 0.
+    test_group("clock_epoch_secs wall clock");
+    var now = clock_epoch_secs();
+    assert(now > 1700000000, "clock_epoch_secs is a plausible Unix epoch (> 2023-11), not a dead 0");
+
+    var r = assert_summary();
+    return r;
+}
+var rc = main();
+syscall(60, rc);

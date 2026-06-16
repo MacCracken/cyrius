@@ -3353,7 +3353,7 @@ sigil::n384_reduce/2
 sigil::n_reduce/2
 sigil::p256_reduce/2
 sigil::p256_scalarmul_base/2
-sigil::p256_scalarmul_var/3
+sigil::p256_scalarmul_var/4
 sigil::p384_reduce/2
 sigil::p384_scalarmul_base/2
 sigil::p384_scalarmul_var/3
@@ -3390,6 +3390,7 @@ sigil::pt384_scalarmul/3
 sigil::pt384_set_infinity/1
 sigil::pt384_to_affine/3
 sigil::pt_add/3
+sigil::pt_add_mixed/4
 sigil::pt_alloc/0
 sigil::pt_copy/2
 sigil::pt_cswap/3

@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.13] — 2026-06-16
+
+**v6.2.13 — the monotonic/wall clock works on macOS AND Windows now + sigil 3.8.0.**
+The asked repair (issue 2026-06-16: `clock_gettime`/syscall-228 dead on arm64-macOS)
+turned out to have a Windows twin — verifying the regression on cass surfaced the
+same dead clock there — so (at your call) both are fixed.
+
+### Fixed
+- **macOS clock (issue 2026-06-16).** `chrono.clock_now_ns`/`clock_epoch_secs`/
+  `clock_epoch_ns` + `bench.now_ns` hard-coded the Linux `clock_gettime` (syscall
+  228, Linux `CLOCK_MONOTONIC=1`/`REALTIME=0`) and read the `&ts` timespec — dead on
+  arm64-macOS (clock_now_ns returned 0 over a 50 ms sleep; `cyrius bench` read all
+  zeros). The arm64 Mach-O backend routes syscall(228) to libSystem
+  `_clock_gettime_nsec_np(clock_id)`, which **returns ns in the register** (does NOT
+  fill `&ts`) and uses **Darwin clock ids** (`MONOTONIC=6`, `REALTIME=0`). Added
+  `#ifdef CYRIUS_TARGET_MACOS` branches that take the return value with the Darwin id.
+  Verified on real **ecb**.
+- **Windows clock (folded — same class, found by the cass regression run).** chrono/
+  bench got a `#ifdef CYRIUS_TARGET_WIN` branch: monotonic via the existing
+  `GetTickCount64` route (ms ×1e6 → ns), and wall-clock via a **new PE reroute
+  `0xF01B` → `kernel32!GetSystemTimeAsFileTime`** (`src/backend/pe/emit.cyr`
+  `_pe_ensure_getsystime`, `x86/emit.cyr` `EGETSYSTIME_PE`, `parse_expr.cyr` dispatch),
+  converting the FILETIME (100 ns ticks since 1601) to the Unix epoch. Verified on
+  real **cass** + wine. Clock now works on x86-Linux / arm64-macOS / aarch64-Linux /
+  Windows. **x86-macOS (Intel) clock stays dead** — 228 is unrouted in the x86-Mach-O
+  backend (pre-existing; that arch is HELD/EOL, see 2026-06-02). Documented in-source.
+- **`lib/bench.cyr` `now_ns`** — `var ts[2]` → `var ts[16]`: the Linux path writes a
+  16-byte timespec and reads `&ts+8`, so the 2-byte array was an out-of-bounds read
+  (sibling of the sakshi `ts[2]→ts[16]` fix). Surfaced by the slot's review.
+
+### Added
+- **`tests/tcyr/getrandom.tcyr`** is joined by **`tests/tcyr/clock_monotonic.tcyr`** —
+  asserts `clock_now_ns` advances ≥30 ms across a 50 ms sleep AND `clock_epoch_secs`
+  is a plausible post-2023 epoch (not a dead 0). Runs on x86 + the cross-OS lib-test
+  (PASS on ecb/pi/cass); the committed regression for this class.
+
+### Changed
+- **Vendored stdlib refold:** `lib/sigil.cyr` 3.7.14→**3.8.0** (clean dist fold, 0
+  `include "src/"`). api-surface 4387→**4388** (+2; sigil evolved
+  `p256_scalarmul_var` /3→/4 — a 3-arg→4-arg signature change, recorded). All other
+  ecosystem libs already current.
+
+### Verified
+- `tests/tcyr/clock_monotonic.tcyr`: **PASS on x86_64 Linux + real ecb (arm64-macOS) +
+  real pi (aarch64-Linux) + real cass (Windows)** (was FAIL on ecb/cass pre-fix). PE
+  imports `GetTickCount64` + `GetSystemTimeAsFileTime`. `check.sh` **89/89** (api-surface
+  4388); x86_64 self-host byte-identical (the 0xF01B path is dead on non-PE targets);
+  cross-OS self-host byte-identical **ecb / pi / cass**. bench `self_compile` ~529 ms
+  (+7 ms, noise — the 0xF01B reroute is dead on the x86 self-compile path) / `cycc`
+  **1,066,104 B** (+600, the GetSystemTimeAsFileTime reroute). 12-agent review:
+  clock fix correct; it surfaced the x86-macho non-coverage (HELD, documented) + the
+  bench OOB (fixed) + the Windows twin (folded).
+
 ## [6.2.12] — 2026-06-15
 
 **v6.2.12 — stdlib fold sweep + a real Windows CSPRNG (codegen) + `cyrius audit`
