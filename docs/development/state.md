@@ -14,24 +14,53 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.11** (v6.2.x cycle — **Platform Expansion**; sandhi 1.6.2 fold (closes the macOS nb-connect arc) + a compiler guardrail against silent constant-value collisions (issue 2026-06-14). See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,064,864 B (+1,072 B @ 6.2.11 — the `CHKDUPVAL` constant-collision guardrail; version string flat, `6.2.11`≡`6.2.10` length) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | 617,568 B (+1,072 B @ 6.2.11 — the guardrail, a frontend change in every backend; +1,192 B @ 6.2.10 aarch64-Linux ESYSXLAT socket/fcntl/poll) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10 aarch64 emit fix + 6.2.11 guardrail — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.11 (guardrail frontend change; PE file-alignment may keep the on-disk size flat) |
+| **Version** | **6.2.12** (v6.2.x cycle — **Platform Expansion**; stdlib fold sweep + Windows CSPRNG (ProcessPrng PE reroute, issue 2026-06-11) + `cyrius audit` split. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,065,504 B (+640 B @ 6.2.12 — the `0xF01A` ProcessPrng PE reroute; version string flat, `6.2.12`≡`6.2.11` length) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | ~618,2xx B (rebuilt @ 6.2.12 — the parse_expr.cyr reroute dispatch is in every backend; +1,072 B @ 6.2.11 guardrail) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.12 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.12 (the ProcessPrng PE reroute + `_pe_layout` 4th-DLL fix; the entropy primitive makes ws/sandhi/`random_bytes` functional on Windows — sigil/tls_native still read `/dev/urandom`, filed) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
-| sigil fold | 3.7.13 (@6.2.2 ecosystem fold-in: json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.2 · **sandhi 1.6.2** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.7.13 · mabda 3.1.1 · sakshi 2.3.0 (sandhi refold @.11 — v6/listen now compose stdlib; all 8 Linux-only socket constants deleted; macOS nb-connect arc closed) |
-| tests | 178 `.tcyr` (+`net_v6_connect` @.10 — Darwin v6 layout + nb-connect, runs on x86/ecb/pi) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface 4346 fns (sandhi 1.6.2 fold @.11 removed only `_`-prefixed internals — count flat; +5 @.10 net v6 surface) |
+| sigil fold | **3.7.14** (@6.2.12 latest; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
+| stdlib fold | **agnosys 1.4.3** · **sandhi 1.6.3** · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · **sigil 3.7.14** · **mabda 3.2.2** · sakshi 2.3.0 (fold sweep @.12 — all 12 libs current; mabda 3.2 minor) |
+| tests | 179 `.tcyr` (+`getrandom` @.12 — cross-platform CSPRNG primitive, runs on cass via lib-test) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4387 fns** (+41 net @.12 fold sweep: +42 added, mabda `native_render_handles_write` /4→/5 signature change) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~515 ms (+~10 ms / +2% @ 6.2.11 — the guardrail's per-symbol `FINDVAR` scan; growth-tax for one correctness feature, not a regression; cycc 1,064,864 B, +1,072, self-host byte-identical) |
+| bench (every-release gate) | self_compile ~522 ms @ 6.2.12 (+7 ms vs .11, noise — PE reroute dead on the x86 self-compile path; cycc 1,065,504 B, +640, self-host byte-identical) |
 
-> **Handoff (2026-06-15):** **v6.2.11 CUT — sandhi 1.6.2 fold + constant-collision
+> **Handoff (2026-06-15):** **v6.2.12 CUT — stdlib fold sweep + Windows CSPRNG
+> (codegen) + `cyrius audit` split.** Three bites. **Fold sweep:** agnosys
+> 1.4.2→1.4.3, sandhi 1.6.2→1.6.3, sigil 3.7.13→3.7.14, mabda 3.1.1→3.2.2 (all
+> byte-identical dist folds; api-surface 4346→4387, mabda
+> `native_render_handles_write` /4→/5). **Windows CSPRNG (the codegen pick, issue
+> 2026-06-11):** `sys_getrandom` was a fail-closed `-1` stub on Windows; now it
+> composes **bcryptprimitives.dll!ProcessPrng** via a new `0xF01A` PE reroute (DLL
+> id 3 in `pe/emit.cyr`, `EPROCPRNG_PE` in `x86/emit.cyr`, dispatch in
+> `parse_expr.cyr`), returning len/-1 with NO weak fallback (CVE-19). **Load-bearing
+> fix:** `_pe_layout`'s DLL-grouping loop was `while (dll < 3)` and never emitted
+> the 4th DLL's import descriptor → ProcessPrng IAT slot unbound; bumped to `< 4`.
+> Verified by `tests/tcyr/getrandom.tcyr` (committed) on **wine + real Windows (cass)**,
+> imports show bcryptprimitives!ProcessPrng. Unblocks the `sys_getrandom`-routed
+> consumers (ws masking, sandhi DNS TXID, random_bytes) — NOT sigil/tls_native
+> (they read `/dev/urandom` directly → filed `2026-06-15-sigil-windows-entropy-not-via-getrandom.md`).
+> **Issue 2026-06-11 FULLY CLOSED** (Windows ProcessPrng + AGNOS getrandom — the
+> AGNOS half already landed at agnos 1.45.0, syscall #45; its "stub" premise was
+> stale). **`cyrius audit` split:** default =
+> local item suite (check.sh); `--internal=platform-check` = check.sh + cross-OS
+> hardware self-host (the prior full behavior). cbt-only (the `cyrius` CLI), no
+> cycc impact. **VERIFIED:** check.sh **89/89** (snapshot regen 4387); self-host
+> byte-identical; cross-OS **SELFHOST_OK ecb/pi/cass**; `cyrius audit` default runs
+> check.sh with 0 cross-OS sections. cycc 1,065,504 B (+640). **NEXT:** remaining
+> v6.2.x pins — bare-metal target + RISC-V rv64; 2026-06-14 lib-side constant
+> cleanup. **sandhi 1.6.3 folded (was held for release; user confirmed released).**
+> **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-15):** **v6.2.11 CUT — sandhi 1.6.2 fold + constant-collision
 > compiler guardrail.** Two-bite release. **sandhi 1.6.2** adopts 6.2.10's
 > v6-on-Darwin net surface in its IPv6 connect + server listen socket and deletes
 > its hand-rolled v6 shims + all 8 Linux-only raw socket constants — closing the

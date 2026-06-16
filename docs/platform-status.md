@@ -47,6 +47,7 @@ Run during CLAUDE.md step 11 (vidya / docs sync) at every minor:
       row with the landing version.
 - [ ] Cross-check pinned future targets against
       [roadmap.md](development/roadmap.md) — no version-skew.
-- [ ] Re-verify SSH-wired hosts by running `cyrius audit` (runs the
-      cross-OS self-host across ach/ecb/pi/cass via
+- [ ] Re-verify SSH-wired hosts by running `cyrius audit --internal=platform-check`
+      (v6.2.12: plain `cyrius audit` is now the local item suite only; the cross-OS
+      self-host across ach/ecb/pi/cass moved behind `--internal=platform-check`) via
       `scripts/cross-os-selfhost.sh`).

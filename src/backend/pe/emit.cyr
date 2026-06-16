@@ -137,8 +137,8 @@ var _pe_imp_buf_pos        = 0;
 # map a flat imp_idx → its physical IAT slot. kernel32 MUST be id 0:
 # ExitProcess is imp_idx 0 and EEXIT hardcodes IAT slot 0, so kernel32
 # (id 0) is laid out first → ExitProcess stays at physical slot 0.
-# DLL ids: 0=kernel32, 1=shell32, 2=dxgi. With a single DLL the
-# grouped layout is byte-identical to the old hardcoded path.
+# DLL ids: 0=kernel32, 1=shell32, 2=dxgi, 3=bcryptprimitives. With a single
+# DLL the grouped layout is byte-identical to the old hardcoded path.
 var _pe_imp_dll[256];            # imp_idx → dll_id (u8 per slot)
 var _pe_pending_imp_dll[256];    # pending_idx → dll_id (u8 per slot)
 var _pe_iat_pos[256];            # imp_idx → physical IAT/ILT slot (u64, 32 slots)
@@ -152,6 +152,7 @@ var _pe_dll_count          = 0;  # number of distinct DLLs actually imported fro
 fn _pe_dll_name(id): i64 {
     if (id == 1) { return "shell32.dll"; }
     if (id == 2) { return "dxgi.dll"; }
+    if (id == 3) { return "bcryptprimitives.dll"; }
     return "kernel32.dll";
 }
 
@@ -701,6 +702,23 @@ fn _pe_ensure_createdxgi(S): i64 {
 }
 fn _pe_createdxgi_get(): i64 { return _pe_createdxgi_idx; }
 
+# v6.2.12 — bcryptprimitives.dll!ProcessPrng (dll_id 3), the modern dependency-
+# light Win32 CSPRNG. `BOOL ProcessPrng(PBYTE pbData, SIZE_T cbData)` fills the
+# buffer with cryptographically-secure bytes and returns nonzero on success
+# (it does not fail in practice). The 4th import DLL — exercises the same
+# multi-DLL IAT foundation as dxgi (id 2). Backs lib/syscalls_windows.cyr's
+# sys_getrandom, replacing the fail-closed -1 stub. NO weak fallback (CVE-19).
+# See issue 2026-06-11-windows-entropy-primitive.md.
+var _pe_procprng_ready = 0;
+var _pe_procprng_idx   = 0;
+fn _pe_ensure_procprng(S): i64 {
+    if (_pe_procprng_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_procprng_idx, "ProcessPrng", 3);
+    _pe_procprng_ready = 1;
+    return 0;
+}
+fn _pe_procprng_get(): i64 { return _pe_procprng_idx; }
+
 # v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
 var _pe_getcurtid_ready = 0;
 var _pe_getcurtid_idx   = 0;
@@ -869,7 +887,7 @@ fn _pe_layout(S): i64 {
     var dn = 0;
     var dnl = 0;
     _pe_dll_count = 0;
-    while (dll < 3) {
+    while (dll < 4) {   # v6.2.12: 4th DLL (bcryptprimitives id 3 — ProcessPrng); was <3 (kernel32/shell32/dxgi)
         dll_has = 0;
         first_phys = phys;
         k = 0;

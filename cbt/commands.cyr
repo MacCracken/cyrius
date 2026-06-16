@@ -737,9 +737,17 @@ fn _cross_os_selfhost(): i64 {
     return 0;
 }
 
-fn cmd_audit(): i64 {
+# v6.2.12: split. `cyrius audit` (default) runs the LOCAL item suite — check.sh's
+# fmt/lint walk + format + the full .tcyr suite + every gate ("all items like
+# fmt/lint/doc/…"). The cross-OS REAL-hardware self-host (ecb/ach/pi/cass +
+# install gates) is the heavier maintainer/release verification — it needs the
+# wired SSH verification hosts — so it now lives behind
+# `cyrius audit --internal=platform-check`, which is the full gate this command
+# used to be (local suite + platform self-host). See issue/CHANGELOG [6.2.12].
+fn cmd_audit(platform_check): i64 {
     var script = make_path(_scripts_dir, "check.sh");
     var check_rc = run_script(script, 0, 0);
+    if (platform_check == 0) { return check_rc; }
     var cross_rc = _cross_os_selfhost();
     if (check_rc != 0) { return check_rc; }
     return cross_rc;

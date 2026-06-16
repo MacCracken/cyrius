@@ -4,6 +4,18 @@
 - **Source**: carved out of CVE-19 (entropy fail-weak paths) during F2 / v6.1.36. The Phase-F decision was "fix Linux/macOS now, file the Windows primitive as a follow-on."
 - **Affects**: `lib/syscalls_windows.cyr`, `lib/syscalls_x86_64_agnos.cyr` — `sys_getrandom`; all entropy consumers (`lib/ws.cyr`, `lib/sandhi.cyr`, `lib/sigil.cyr` keypair/nonce/salt sites, `lib/tls_native.cyr`) on those targets.
 - **Severity**: **Medium** — fail-CLOSED, not fail-weak. On Windows/AGNOS the affected operations now error loudly (no weak/uninitialized entropy is emitted), but CSPRNG-dependent features (native TLS, websocket masking, DNS TXID, sigil keygen) are **non-functional** on those targets until a real source lands.
+- **Status (2026-06-15): RESOLVED (both targets) — closed.** The CSPRNG *primitive* now exists on
+  every target. **Windows (cyrius 6.2.12):** `lib/syscalls_windows.cyr` `sys_getrandom` composes
+  **bcryptprimitives.dll!ProcessPrng** via a new `0xF01A` PE reroute (DLL id 3 in `src/backend/pe/emit.cyr`
+  `_pe_ensure_procprng`/`_pe_dll_name`, `src/backend/x86/emit.cyr` `EPROCPRNG_PE`, `src/frontend/parse_expr.cyr`
+  dispatch); returns `len`/`-1`, no weak fallback (CVE-19). Required a `_pe_layout` fix (`while (dll < 3)`
+  → `< 4` so the 4th DLL's import descriptor is emitted). Verified: `tests/tcyr/getrandom.tcyr` PASSES on
+  **real Windows (cass)** + wine; PE imports `bcryptprimitives.dll!ProcessPrng`. **AGNOS:** already
+  resolved — a real kernel `getrandom` (syscall #45, Zen RDRAND) landed at **agnos 1.45.0**, and the
+  vendored `lib/syscalls_x86_64_agnos.cyr` `sys_getrandom` calls it (no longer a `-1` stub; the issue's
+  AGNOS premise had gone stale). **Follow-on (separate issue):** `lib/sigil.cyr` + `lib/tls_native.cyr`
+  read `/dev/urandom` directly instead of routing through `sys_getrandom`, so their keygen/nonce paths
+  stay non-functional on Windows — tracked in `2026-06-15-sigil-windows-entropy-not-via-getrandom.md`.
 - **Status (2026-06-11): OPEN.**
 
 ## Background

@@ -1506,6 +1506,15 @@ fn ECREATEDXGI_PE(S): i64 {
     return _pe_call_2arg_aligned(S, _pe_createdxgi_get());
 }
 
+# syscall(0xF01A, pbData, cbData) → bcryptprimitives!ProcessPrng. 2 args
+# (PBYTE→rcx, SIZE_T→rdx). Returns BOOL (nonzero=success) in rax — the Windows
+# CSPRNG for lib/syscalls_windows.cyr's sys_getrandom (replacing the -1 stub).
+# v6.2.12 — see 2026-06-11-windows-entropy-primitive.md.
+fn EPROCPRNG_PE(S): i64 {
+    _pe_ensure_procprng(S);
+    return _pe_call_2arg_aligned(S, _pe_procprng_get());
+}
+
 # v6.0.65: stub for the macho-ARM syscall-routed query (real impl in
 # src/backend/aarch64/emit.cyr next to ESYSXLAT). parse_expr.cyr references it
 # for the _TARGET_MACHO==2 whitelist warning; that path is dead on x86, so this

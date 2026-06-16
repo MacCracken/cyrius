@@ -58,7 +58,8 @@ fn usage(): i64 {
     println("  port <rust-project>             scaffold from Rust project");
     println("");
     println("Quality:");
-    println("  audit                           full check: self-host, test, fmt, lint");
+    println("  audit                           local item suite (check.sh: fmt/lint/format/tests)");
+    println("    --internal=platform-check     + cross-OS self-host on REAL hw (ecb/ach/pi/cass)");
     println("  fuzz                            run fuzz/*.fcyr harnesses");
     println("  fmt <file.cyr> [--check]        format code");
     println("  lint <file.cyr>                 static analysis");
@@ -687,7 +688,15 @@ fn main(): i64 {
     }
 
     if (streq(cmd, "audit") == 1) {
-        return cmd_audit();
+        # v6.2.12: default runs the local item suite (check.sh); the cross-OS
+        # real-hardware platform self-host is opt-in via --internal=platform-check.
+        var _apc = 0;
+        var _aai = cmd_idx + 1;
+        while (_aai < argc()) {
+            if (streq(argv(_aai), "--internal=platform-check") == 1) { _apc = 1; }
+            _aai = _aai + 1;
+        }
+        return cmd_audit(_apc);
     }
 
     if (streq(cmd, "fuzz") == 1) {

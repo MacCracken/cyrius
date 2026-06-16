@@ -6,6 +6,75 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.12] — 2026-06-15
+
+**v6.2.12 — stdlib fold sweep + a real Windows CSPRNG (codegen) + `cyrius audit`
+split.** Three bites: refold four ecosystem libs to latest, give Windows a
+working entropy primitive (the codegen pick — a new PE import reroute), and
+reshape `cyrius audit` so the everyday local suite and the heavy cross-OS
+platform gate are separate commands.
+
+### Added
+- **Windows CSPRNG — `bcryptprimitives.dll!ProcessPrng` via a new `0xF01A` PE
+  reroute** (issue 2026-06-11). `lib/syscalls_windows.cyr` `sys_getrandom` was a
+  fail-closed `-1` stub; it now fills the buffer with cryptographically-secure
+  bytes via ProcessPrng (the modern, dependency-light Win32 CSPRNG), returning
+  `len` on success / `-1` on the (practically-never) failure — **no weak
+  fallback** (CVE-19). New backend plumbing: `src/backend/pe/emit.cyr` adds DLL
+  id 3 = `bcryptprimitives.dll` + `_pe_ensure_procprng`/`_pe_procprng_get` (the
+  4th import DLL); `src/backend/x86/emit.cyr` `EPROCPRNG_PE` (2-arg Win64 call,
+  `pbData`→rcx/`cbData`→rdx); `src/frontend/parse_expr.cyr` dispatch
+  `syscall(0xF01A,…)`. This makes the **`sys_getrandom`-routed** consumers work on
+  Windows: websocket masking (`lib/ws.cyr`), sandhi's DNS TXID (`lib/sandhi.cyr`),
+  and the `random_bytes` primitive (`lib/random.cyr`). (NB: `lib/sigil.cyr` and
+  `lib/tls_native.cyr` gather entropy by reading `/dev/urandom` directly — *not*
+  `sys_getrandom` — so their keygen/nonce paths remain non-functional on Windows;
+  that's a separate sigil-repo gap, now filed as
+  `2026-06-15-sigil-windows-entropy-not-via-getrandom.md`.) **The load-bearing
+  fix:** `_pe_layout`'s DLL-grouping loop was `while (dll < 3)` (kernel32/shell32/
+  dxgi) — it never emitted the 4th DLL's import descriptor, so the ProcessPrng IAT
+  slot was unbound; bumped to `< 4`.
+- **`tests/tcyr/getrandom.tcyr`** — committed cross-platform regression for the
+  CSPRNG primitive (returns len, buffer nonzero, two draws differ). Runs on x86 +
+  the cross-OS lib-test (PASS on real Windows/cass — the ProcessPrng path); closes
+  the "no committed test for the Windows getrandom path" gap.
+
+### Fixed
+- Windows entropy is no longer fail-closed-dark (above). **This fully closes issue
+  2026-06-11** — its AGNOS half is *also* resolved: AGNOS got a real kernel
+  `getrandom` (syscall #45, Zen RDRAND) at **agnos 1.45.0**, and the vendored
+  `lib/syscalls_x86_64_agnos.cyr` `sys_getrandom` already calls it (it was no longer
+  a `-1` stub — the issue's AGNOS premise had gone stale). So the CSPRNG *primitive*
+  now exists on every target; the remaining work is the sigil/tls_native consumers
+  routing through it (filed separately).
+
+### Changed
+- **`cyrius audit` split.** `cyrius audit` (default) now runs the **local item
+  suite** — `check.sh`'s fmt/lint walk + format + the full `.tcyr` suite + every
+  gate. The cross-OS **REAL-hardware** self-host (ecb/ach/pi/cass + install
+  gates) — which needs the wired SSH verification hosts — moved behind
+  **`cyrius audit --internal=platform-check`** (the full gate this command used to
+  be). `cbt/commands.cyr` `cmd_audit(platform_check)` + `cbt/cyrius.cyr` flag
+  parse + help. (cbt is the `cyrius` CLI, not `cycc` — no self-host impact.)
+- **Vendored stdlib refold (latest):** `lib/agnosys.cyr` 1.4.2→**1.4.3**,
+  `lib/sandhi.cyr` 1.6.2→**1.6.3** (the macOS v6/listen adoption’s release cut),
+  `lib/sigil.cyr` 3.7.13→**3.7.14**, `lib/mabda.cyr` 3.1.1→**3.2.2**. All clean
+  `cyrius distlib` folds (byte-identical to each repo’s `dist/`, 0 `include "src/"`
+  directives). api-surface 4346→**4387** (+42 fns; mabda 3.2 evolved
+  `native_render_handles_write` /4→/5 — added a `tex_h` param — recorded as the 1
+  signature change).
+
+### Verified
+- Windows CSPRNG: a `sys_getrandom` test (returns `len`, buffer nonzero, two
+  draws differ) **exits 42 on wine AND real Windows (cass)**; PE imports show
+  `bcryptprimitives.dll!ProcessPrng`; a plain PE program still imports only
+  kernel32 (lazy registration). `check.sh` **89/89** (api-surface snapshot
+  regenerated to 4387); x86_64 self-host byte-identical (the 0xF01A path is dead
+  on non-PE targets); cross-OS self-host byte-identical **ecb / pi / cass**
+  (`SELFHOST_OK`). `cyrius audit` (default) runs `check.sh` with **0** cross-OS
+  sections (the split works). bench `self_compile` ~522 ms (+7 ms vs .11, noise — PE reroute is dead on the x86 self-compile path) / `cycc`
+  **1,065,504 B** (+640, the PE reroute).
+
 ## [6.2.11] — 2026-06-15
 
 **v6.2.11 — sandhi 1.6.2 fold (closes the macOS nb-connect arc) + a compiler

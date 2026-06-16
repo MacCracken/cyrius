@@ -13,7 +13,8 @@ After install, `cyrius build foo.cyr foo && ./foo` works directly.
 > **NOTE (v6.0.38):** before v6.0.38 this tarball shipped only a
 > `smoke.macho` toy binary and **no compiler** — every macOS arm64
 > install was empty. The release packaging plus a real-install
-> verification gate (`cyrius audit`, run on real Apple Silicon) were
+> verification gate (`cyrius audit --internal=platform-check`, run on real
+> Apple Silicon; v6.2.12 moved the cross-OS/install gate behind that flag) were
 > added in v6.0.38 so this can't regress unnoticed. See CHANGELOG.
 
 ## Status
