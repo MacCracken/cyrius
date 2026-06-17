@@ -496,8 +496,13 @@ Same runtime semantics, sugarier surface. Pairs with closures
 
 Filed 2026-06-16 (`proposals/2026-06-16-native-float-arithmetic.md`); **direction
 chosen: Tier A** (first-class float types, not the Tier-B stdlib-intrinsic stopgap)
-— user 2026-06-16, **to be broken into manageable bites across a few releases,
-roadmapped now, not started yet**. Today Cyrius has NO first-class floating point:
+— user 2026-06-16. **THIS IS THE v6.2.x "math mini-arc"** (user). **The user leads
+its scope and release-slicing** — how much lands per patch, and how many releases
+it spans, is the user's call set per-slot; it is NOT pre-decided here (the whole
+arc could land in one patch or span several). The bite list below is a *menu* of
+the work, not a release schedule. (It was briefly mis-filed under the v6.3.x
+language band at v6.2.14 — an error, never authorized; corrected v6.2.18.)
+Today Cyrius has NO first-class floating point:
 the only float facilities are hand-rolled inline-asm SSE2 blocks (mabda's
 `f64_to_f32`/`f32_to_f64`/`int_ratio_to_f32`), which are fragile (hard-coded
 `[rbp-N]` frame offsets), x86-64-only (dead on aarch64), and unreviewable. Every
@@ -511,7 +516,15 @@ all three asm shims. **Substrate-independent** — orthogonal to the closures/ge
 Phase 0 above (it's a primitive type, not a monomorphization consumer), so it can
 sequence on its own.
 
-Suggested bite breakdown (one logical bite per release; refine at arc-open):
+**STATUS (v6.2.18 corrected review):** the proposal's "no first-class float" premise
+was outdated. Bites **1–4's f64 work already shipped** (~v5.8+): float literals,
+`f64_add/sub/mul/div`, `f64_lt/gt/eq`, `f64_sqrt/abs/floor/ceil/round/atan/sin/cos/
+exp/ln`, AND the int↔f64 casts `f64_from`/`f64_to` — **on x86 AND aarch64**. The real
+gap was **f32**. **v6.2.18 added the f32 conversions** `f32_from`(f64→f32)/`f32_to`
+(f32→f64), x86+aarch64. **v6.2.19 = mabda fold-in** (delete its 3 shims). Still open
+from bite 5 (user's call per-slot): a named `f64`/`f32` *type* (annotations/typecheck),
+cx-backend scalar float, IEEE-754-direct literals (the current literal uses runtime
+numer/denom division). The list below is the original menu, kept for reference:
 
 1. **f64 type + literals + casts (x86-64).** Lex float literals (`1.5`, exponent
    forms) to IEEE-754 bit patterns; `f64` as a type (8-byte, lives in xmm for ops,

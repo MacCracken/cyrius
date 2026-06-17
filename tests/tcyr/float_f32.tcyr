@@ -1,0 +1,36 @@
+# float_f32.tcyr — native f32 conversion builtins (v6.2.18 math mini-arc).
+# f32_from(x): f64 → f32 bit pattern (cvtsd2ss / fcvt s,d).
+# f32_to(x):   f32 bit pattern → f64 (cvtss2sd / fcvt d,s).
+# Scalar f64 (literals, f64_add/sub/mul/div, f64_from/f64_to int casts) already
+# existed; this slot adds the f32 leg — the mabda int_ratio_to_f32 unblock.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("f32_from — f64 → IEEE-754 single bit pattern");
+    assert_eq(f32_from(0.0), 0x00000000, "0.0 → 0x00000000");
+    assert_eq(f32_from(0.5), 0x3F000000, "0.5 → 0x3F000000");
+    assert_eq(f32_from(1.0), 0x3F800000, "1.0 → 0x3F800000");
+    assert_eq(f32_from(2.0), 0x40000000, "2.0 → 0x40000000");
+
+    test_group("f32_to — f32 bits → f64, round-trip");
+    assert_eq(f32_to(0x3F000000), 0.5, "0x3F000000 → f64 0.5");
+    assert_eq(f32_to(f32_from(0.5)), 0.5, "0.5 round-trips f64→f32→f64");
+    assert_eq(f32_to(f32_from(1.0)), 1.0, "1.0 round-trips");
+
+    test_group("int-ratio → f32 (mabda int_ratio_to_f32 unblock)");
+    assert_eq(f32_from(f64_div(f64_from(1), f64_from(1))), 0x3F800000, "1/1 → 1.0f");
+    assert_eq(f32_from(f64_div(f64_from(1), f64_from(2))), 0x3F000000, "1/2 → 0.5f");
+    assert_eq(f32_from(f64_div(f64_from(2), f64_from(64))), 0x3D000000, "2/64 → 0.03125f");
+
+    var r = assert_summary();
+    return r;
+}
+var rc = main();
+syscall(60, rc);

@@ -2111,6 +2111,22 @@ fn EMIT_FLOAT_LIT(S, fval): i64 {
     EW(S, 0x9E660000);         # fmov x0, d0    — x0 = f64 bit pattern
     return 0;
 }
+
+# f32_from(x): f64 (bit pattern in x0) → f32 (bit pattern in w0). v6.2.18.
+fn EF32_FROM(S): i64 {
+    EW(S, 0x9E670000);   # fmov d0, x0
+    EW(S, 0x1E624000);   # fcvt s0, d0    — narrow double → single
+    EW(S, 0x1E260000);   # fmov w0, s0    — w0 = f32 bits (zero-extends x0)
+    return 0;
+}
+
+# f32_to(x): f32 (bit pattern in w0) → f64 (bit pattern in x0). v6.2.18.
+fn EF32_TO(S): i64 {
+    EW(S, 0x1E270000);   # fmov s0, w0
+    EW(S, 0x1E22C000);   # fcvt d0, s0    — widen single → double
+    EW(S, 0x9E660000);   # fmov x0, d0    — x0 = f64 bits
+    return 0;
+}
 # Expression spill stubs
 fn ESPILL(S): i64 { EPUSHR(S); return 0; }
 fn EUNSPILL(S): i64 { EPOPR(S); return 0; }

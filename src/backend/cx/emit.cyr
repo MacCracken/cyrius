@@ -792,6 +792,8 @@ fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = 
 # Float stubs (not supported in bytecode yet)
 fn EMIT_FLOAT_LIT(S, v): i64 { EMOVI(S, v); return 0; }
 fn EMIT_F64_BINOP(S, op): i64 { return 0; }
+fn EF32_FROM(S): i64 { return 0; }   # v6.2.18: cx has no scalar float (stub, like EMIT_F64_BINOP)
+fn EF32_TO(S): i64 { return 0; }
 fn EI2F(S): i64 { return 0; }
 fn EF2I(S): i64 { return 0; }
 # v5.7.11: PF64BIN / PF64CMP now defined in parse_expr.cyr (the

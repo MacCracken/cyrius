@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.18] — 2026-06-17
+
+**v6.2.18 — native-float math mini-arc opens: f32 conversion builtins.** First slot
+of the v6.2.x **math mini-arc** (the native-float proposal — corrected back into
+v6.2.x from a v6.2.14 mis-filing under v6.3.x; the user leads the arc's scope and
+release-slicing). A **corrected review** of the proposal found Cyrius is far ahead
+of the proposal's premise — so this arc is tight, not a from-scratch float build.
+
+### Corrected review (what already existed vs the real gap)
+- **Scalar f64 already works on x86 AND aarch64**, shipped incrementally since ~v5.8:
+  float literals (`1.5`, lex token 61 → `EMIT_FLOAT_LIT`), `f64_add/sub/mul/div`
+  (tokens 62–65 → `EMIT_F64_BINOP`, SSE2/NEON), `f64_lt/gt/eq`, `f64_sqrt/abs/floor/
+  ceil/round/atan/sin/cos/exp/ln`, and **int↔f64 casts** `f64_from(n)` (i64→f64,
+  `cvtsi2sd`/`scvtf`) + `f64_to(x)` (f64→i64, `cvttsd2si`/`fcvtzs`). `lib/math.cyr`
+  is a full f64 library on top. The proposal's "no first-class float / all hand-rolled
+  asm" was written from mabda's seat and is outdated for f64.
+- **The real gap was f32** — zero `f32`/`cvtsd2ss` in the compiler. mabda's 3 shims
+  (`f64_to_f32`/`f32_to_f64`/`int_ratio_to_f32`) are an f32 gap, not an f64 one.
+
+### Added
+- **`f32_from(x)`** — f64 → f32 bit pattern (`cvtsd2ss` on x86, `fcvt s,d` on aarch64).
+- **`f32_to(x)`** — f32 bit pattern → f64 (`cvtss2sd` on x86, `fcvt d,s` on aarch64).
+- Wired end-to-end: lexer keyword tokens 131/132, `parse_expr` dispatch, `EF32_FROM`/
+  `EF32_TO` in the x86 + aarch64 backends (cx is a stub — no scalar float there).
+  Naming mirrors the existing `f64_from`/`f64_to` convention (f64 is the implied
+  partner type). Now `int_ratio_to_f32(n,d)` is expressible in pure builtins:
+  `f32_from(f64_div(f64_from(n), f64_from(d)))` — no inline asm.
+- `tests/tcyr/float_f32.tcyr` — 10 asserts: `f32_from` vectors (0.5→`0x3F000000`,
+  1.0→`0x3F800000`, 2.0→`0x40000000`), `f32_to` round-trips, and the mabda int-ratio
+  vectors (1/2→`0x3F000000`, 2/64→`0x3D000000`, 1/1→`0x3F800000`).
+
+### Roadmap
+- The **mabda fold-in is v6.2.19** (followup): mabda deletes its 3 float shims and
+  uses the new builtins — it can only do so once v6.2.18 ships as a released
+  toolchain. (B/C/D from the plan — named f64/f32 type, cx scalar float, IEEE-754
+  direct literals — are not in this arc.)
+
+### Verified
+- check.sh **89/89**; the new cycc self-hosts byte-identical (x86 fixpoint). The
+  compiler change self-hosts byte-identical on **ecb (arm64-macOS / Mach-O) + pi
+  (aarch64-Linux)**, with `float_f32.tcyr` PASS on both (f32 via the `fcvt` NEON path
+  on ecb/pi, SSE2 `cvtsd2ss`/`cvtss2sd` on x86). aarch64 `fcvt`/`fmov` encodings were
+  verified against `aarch64-linux-gnu-as`; x86 against `as`. **cass UNREACHABLE this
+  run** (mDNS flake) — the PE f32 path is the same x86 `float.cyr` SSE2 emit verified
+  on x86 Linux, and the cycc.exe self-host is covered by CI's Windows lane on push.
+  cycc **1,067,400 B** (+1,296, the f32 builtins); api-surface 4526 (flat — builtins
+  aren't lib fns). bench `self_compile` **515 ms** (flat).
+
 ## [6.2.17] — 2026-06-17
 
 **v6.2.17 — Darwin file-output fix (lib/io.cyr + sakshi 2.3.2) + new `lib/protobuf.cyr`

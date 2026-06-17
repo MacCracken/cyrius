@@ -68,6 +68,24 @@ fn EMIT_FLOAT_LIT(S, fval): i64 {
     return 0;
 }
 
+# f32_from(x): f64 (bit pattern in rax) → f32 (bit pattern in eax). v6.2.18.
+# movq xmm0, rax; cvtsd2ss xmm0, xmm0; movd eax, xmm0 (zero-extends rax).
+fn EF32_FROM(S): i64 {
+    EMOVQ_X0_A(S);
+    EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5A); EB(S, 0xC0);   # cvtsd2ss xmm0, xmm0
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x7E); EB(S, 0xC0);   # movd eax, xmm0
+    return 0;
+}
+
+# f32_to(x): f32 (bit pattern in eax) → f64 (bit pattern in rax). v6.2.18.
+# movd xmm0, eax; cvtss2sd xmm0, xmm0; movq rax, xmm0.
+fn EF32_TO(S): i64 {
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC0);   # movd xmm0, eax
+    EB(S, 0xF3); EB(S, 0x0F); EB(S, 0x5A); EB(S, 0xC0);   # cvtss2sd xmm0, xmm0
+    EMOVQ_A_X0(S);
+    return 0;
+}
+
 # ================================================================
 # SIMD — SSE2 packed f64 batch operations
 # ================================================================

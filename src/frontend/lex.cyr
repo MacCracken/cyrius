@@ -1070,11 +1070,15 @@ fn LEXID(S, p, npos): i64 {
     }
     if (klen == 6) {
         if (kw & 0xFFFFFFFFFFFF == 0x6E6C5F343666) { ADDTOK(S, 86, 0); return p; }
+        # "f32_to" → token 132 (f32→f64, cvtss2sd). v6.2.18 native-float math arc.
+        if (kw & 0xFFFFFFFFFFFF == 0x6F745F323366) { ADDTOK(S, 132, 0); return p; }
     }
     # "continue" = 0x65756E69746E6F63 (8 bytes)
     if (klen == 8) {
         if (kw == 0x65756E69746E6F63) { ADDTOK(S, 52, 0); return p; }
         if (kw == 0x6D6F72665F343666) { ADDTOK(S, 66, 0); return p; }
+        # "f32_from" → token 131 (f64→f32, cvtsd2ss). v6.2.18 native-float math arc.
+        if (kw == 0x6D6F72665F323366) { ADDTOK(S, 131, 0); return p; }
         if (kw == 0x747271735F343666) { ADDTOK(S, 79, 0); return p; }
         if (kw == 0x6C6965635F343666) { ADDTOK(S, 82, 0); return p; }
         if (kw == 0x32676F6C5F343666) { ADDTOK(S, 87, 0); return p; }

@@ -14,11 +14,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.17** (v6.2.x cycle — **Platform Expansion**; Darwin file-output fix (io.cyr + sakshi 2.3.2) + new `lib/protobuf.cyr` proto3 wire codec. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,066,104 B (flat @ 6.2.17 — io.cyr/protobuf/sakshi are lib-only, no compiler-source change; binary byte-identical to 6.2.16) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | unchanged @ 6.2.17 (byte-identical — lib-only; was rebuilt @ 6.2.14 with the fsync ESYSXLAT 74→82/75→83) |
+| **Version** | **6.2.18** (v6.2.x cycle — **Platform Expansion**; native-float **math mini-arc** opens: `f32_from`/`f32_to` conversion builtins (mabda int_ratio unblock). See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,067,400 B** (+1,296 @ 6.2.18 — the f32 conversion builtins; first compiler-binary change since the v6.2.x folds. self-host byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.18 (+`EF32_FROM`/`EF32_TO` NEON `fcvt s,d`/`fcvt d,s` — verified via aarch64-as) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | unchanged @ 6.2.17 (byte-identical — lib-only; PE keeps the 0xF01B clock + ProcessPrng reroutes) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.18 (+`EF32_FROM`/`EF32_TO` — shares the x86 `float.cyr` SSE2 cvtsd2ss/cvtss2sd) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
@@ -26,12 +26,32 @@
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
 | stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · sankoch 2.4.3 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · mabda 3.2.5 · **sakshi 2.3.2** (sakshi Darwin file-output flag fix @.17; all 12 libs current) |
-| tests | 183 `.tcyr` (+`protobuf` @.17 — proto3 wire codec, 42 asserts; +`bench_elapsed` @.15; +`fsync` @.14) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` (+`protobuf.cyr` @.17) · 79 programs · api-surface **4526 fns** (4509→4526 @.17: +17 `protobuf::pb_*`; io.cyr O_* change is var-only, untracked) |
+| tests | 184 `.tcyr` (+`float_f32` @.18 — f32 conversion builtins, 10 asserts; +`protobuf` @.17; +`bench_elapsed` @.15) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4526 fns** (flat @.18 — `f32_from`/`f32_to` are compiler builtins/keywords, not lib fns, so untracked by api-surface) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile **525 ms** @ 6.2.17 (flat — no compiler change; cycc 1,066,104 B; self-host byte-identical) |
+| bench (every-release gate) | self_compile **515 ms** @ 6.2.18 (flat; cycc 1,067,400 B +1,296 for the f32 builtins; self-host byte-identical) |
 
-> **Handoff (2026-06-17):** **v6.2.17 CUT — Darwin file-output fix + new
+> **Handoff (2026-06-17):** **v6.2.18 CUT — native-float math mini-arc opens (f32
+> conversions).** The math mini-arc (native-float proposal) — **corrected back into
+> v6.2.x** from a v6.2.14 mis-filing under v6.3.x; the **user leads the arc's scope +
+> slicing**. A corrected review found scalar f64 ALREADY works on x86+aarch64 (literals,
+> f64_add/sub/mul/div, f64_lt/gt/eq, f64_sqrt/abs/floor/…, AND int↔f64 casts
+> `f64_from`/`f64_to`) — the proposal's "no float" premise was outdated. The real gap
+> was **f32**: added `f32_from` (f64→f32, cvtsd2ss / fcvt s,d) + `f32_to` (f32→f64,
+> cvtss2sd / fcvt d,s) builtins — lexer tokens 131/132, parse_expr dispatch, x86 +
+> aarch64 emit (cx stub). Now `int_ratio_to_f32` is pure builtins
+> `f32_from(f64_div(f64_from(n),f64_from(d)))`. `float_f32.tcyr` (10 asserts incl.
+> mabda vectors 1/2→0x3F000000, 2/64→0x3D000000). **VERIFIED:** check.sh 89/89; x86
+> self-host fixpoint; **ecb (Mach-O) + pi (aarch64-Linux) SELFHOST_OK + float_f32 PASS**;
+> aarch64 encodings checked vs aarch64-as; **cass UNREACHABLE** (mDNS — PE f32 = same
+> x86 SSE2 emit, CI-covered). cycc 1,067,400 B (+1,296, first compiler-binary change
+> since the v6.2.x folds). **NEXT: v6.2.19 = mabda fold-in** (delete its 3 float shims,
+> use the new builtins — needs .18 released first). Further math-arc bites (named
+> f64/f32 type, cx scalar float, IEEE-754 literals) are the user's call per-slot.
+>
+> ---
+>
+> **Prior (2026-06-17):** **v6.2.17 CUT — Darwin file-output fix + new
 > `lib/protobuf.cyr`.** (1) The arm64-macOS file-output bug (found cross-OS-verifying
 > v6.2.16) had **two** Darwin-O_* causes: **lib/io.cyr** redefined O_* with Linux
 > values after including syscalls.cyr (whose per-arch peer already has the right
