@@ -1,5 +1,19 @@
 # Runtime bench suite is blind — PF-01/02/03
 
+> **PF-01 RESOLVED — v6.2.15.** (1) `_fmt_time` now prints a zero-padded 3-digit
+> fraction in the µs branch (and s/ms for consistency) via `_fmt_pad3`, so sub-2µs
+> benches show real resolution (e.g. `mulmod/binary_slow 1.466us`, not the pinned
+> `1us`) and `bench-history.sh` parses them exactly (`1.050us`→1050ns, padding
+> verified). (2) The tool-compile loop guard was checking `programs/${tool}.bcyr`
+> (never exists) — fixed to `programs/${tool}.cyr` and `cybs` dropped; `compiler/
+> {cyrfmt,cyrlint,cyrdoc,ark}` are now recorded. (3) The 8 orphan `.bcyr`
+> (str/freelist/interning/keccak/mulmod/regalloc/shortcircuit/switch) are wired
+> into Tiers 1–3 and now produce history (bench_mulmod's stale `lib/u128.cyr`
+> include was repointed to `lib/bayan.cyr` after the v6.1.25 carve). A full run now
+> appends 86 entries (was ~42). **PF-02** (alloc CAS-lock single-threaded fast
+> path) and **PF-03** (per-release phase attribution) remain OPEN — must land
+> before v6.4.x. See CHANGELOG [6.2.15].
+
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High (it silently defeats the "benchmark every release" gate and
 blocks the v6.4.x/v6.5.x perf arcs from measuring their own wins)

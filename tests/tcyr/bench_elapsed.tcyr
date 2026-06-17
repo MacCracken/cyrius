@@ -1,0 +1,38 @@
+# bench_elapsed.tcyr — lib/bench.cyr must measure a real elapsed interval, not 0.
+# Regression for 2026-06-16 (yantra): bench.now_ns used `syscall(SYS_CLOCK_GETTIME,…)`
+# with a `var` syscall number, which does not const-fold, so the macOS __got reroute
+# and Windows IAT reroute for syscall(228) never fired → a raw bad syscall returned -9
+# → every bench_start/stop elapsed collapsed to 0 on arm64-macOS (and Windows). The
+# fix passes a literal 228. This guards the bench measurement layer on every target.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/chrono.cyr"
+include "lib/bench.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("bench measures a sleep (not a dead 0)");
+    var b = bench_new("sleep50");
+    bench_start(b);
+    sleep_ms(50);
+    var elapsed_ms = bench_stop(b) / 1000000;
+    assert(elapsed_ms >= 30, "bench_stop elapsed >= 30ms across a 50ms sleep (not the dead-clock 0)");
+    assert(elapsed_ms <= 2000, "bench elapsed is bounded (< 2s) — sane ns units, real clock");
+
+    test_group("bench now_ns advances");
+    var t0 = now_ns();
+    sleep_ms(20);
+    var t1 = now_ns();
+    assert(t1 > t0, "now_ns advances across a sleep (monotonic, live)");
+
+    var r = assert_summary();
+    return r;
+}
+var rc = main();
+syscall(60, rc);

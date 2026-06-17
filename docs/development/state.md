@@ -14,11 +14,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.14** (v6.2.x cycle — **Platform Expansion**; `sys_fsync`/`sys_fdatasync` wrappers + mabda 3.2.3; native-float Tier A + protobuf roadmapped (not started). See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,066,104 B (flat @ 6.2.14 — the fsync ESYSXLAT is in the aarch64 backend, not the x86 compiler; version string flat, `6.2.14`≡`6.2.13`) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.14 (+ESYSXLAT 74→82/75→83 for fsync/fdatasync — the aarch64-native 82/83 collide with x86 rename) |
+| **Version** | **6.2.15** (v6.2.x cycle — **Platform Expansion**; bench-tooling hardening: macOS/Windows bench-zero fix + PF-01 µs-resolution. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,066,104 B (flat @ 6.2.15 — bench-zero + PF-01 are stdlib/tooling-only, no compiler-source change; binary byte-identical to 6.2.14) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | unchanged @ 6.2.15 (byte-identical — bench fix is in `lib/bench.cyr`, not the backend; was rebuilt @ 6.2.14 with the fsync ESYSXLAT 74→82/75→83) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.14 (unchanged from .13 — fsync is Linux-only; PE keeps the 0xF01B clock + ProcessPrng reroutes) |
+| **cycc_win** (PE32+ cross) | unchanged @ 6.2.15 (byte-identical — bench fix is stdlib-only; PE keeps the 0xF01B clock + ProcessPrng reroutes) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
@@ -26,12 +26,35 @@
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
 | stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.3** · sakshi 2.3.0 (mabda 3.2.3 fold @.14; all 12 libs current) |
-| tests | 181 `.tcyr` (+`fsync` @.14 — sys_fsync/fdatasync, runs x86/pi; +`clock_monotonic` @.13; +`getrandom` @.12) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4407 fns** (+19 net @.14 mabda 3.2.3: +20 added, `native_gfx9_sampler_descriptor` /4→/5 signature change) |
+| tests | 182 `.tcyr` (+`bench_elapsed` @.15 — bench measures a sleep, runs x86/ecb/cass/pi; +`fsync` @.14; +`clock_monotonic` @.13; +`getrandom` @.12) · 15 `.bcyr` (all 15 now in bench-history tiers @.15; 8 orphans wired) · 5 `.fcyr` |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4407 fns** (flat @.15 — `bench._fmt_pad3` added but private/untracked; public surface unchanged) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~527 ms @ 6.2.14 (flat — no x86-compiler change; cycc 1,066,104 B; self-host byte-identical) |
+| bench (every-release gate) | self_compile **531 ms** @ 6.2.15 (flat — no compiler change; cycc 1,066,104 B; self-host byte-identical). **86 entries/run** now (was ~42 — PF-01 wired 8 orphan `.bcyr` + 4 tool compiles; µs benches show real fractional resolution) |
 
-> **Handoff (2026-06-16):** **v6.2.14 CUT — fsync wrappers + mabda 3.2.3; native-float
+> **Handoff (2026-06-16):** **v6.2.15 CUT — bench-tooling hardening.** Single-theme
+> slot. (1) **macOS/Windows bench-zero** (yantra, issue 2026-06-16): `bench.now_ns`
+> used `syscall(SYS_CLOCK_GETTIME,…)` with a **`var`** number; the macOS `__got`
+> /Windows IAT reroute for `syscall(228)` is keyed on a **compile-time literal**
+> (`parse_expr.cyr:453` folds only `_cfo==1`), so a `var` → `sc_num=-1` → no reroute
+> → raw Darwin `svc 228` returned a constant **-9** → every `bench_*` elapsed=0.
+> Linux immune (svc 228 IS clock_gettime there). Fix: **literal `228`** at each
+> `now_ns` site (mirrors `chrono.clock_now_ns`); root-caused by printing live values
+> on ecb (issue's `bench_new`/alloc hypothesis was wrong). (2) **PF-01**
+> (2026-06-10-runtime-bench-suite-blind): `_fmt_time` µs branch now prints a padded
+> 3-digit fraction (`_fmt_pad3`) — no more 1000ns floor; dead tool-compile loop
+> fixed (`.bcyr`→`.cyr`, cybs dropped); 8 orphan `.bcyr` wired into tiers (mulmod's
+> stale u128 include → bayan). PF-02/PF-03 remain for v6.4.x. **VERIFIED:**
+> `bench_elapsed.tcyr` PASS on real **ecb/cass/pi** + x86; check.sh **89/89**; x86 +
+> aarch64 self-host byte-identical (compiler untouched — stdlib-only fix); cross-OS
+> **SELFHOST_OK ecb/pi/cass**. cycc 1,066,104 B (flat). Class follow-on (yukti/sakshi
+> `var`-clock) filed: `2026-06-16-var-syscall-number-defeats-macho-pe-reroute.md`.
+> **NEXT:** remaining v6.2.x pins — bare-metal target + RISC-V rv64; then the v6.3.x
+> language arc opens (Phase-0 substrate, then closures/generics/async + native-float).
+> **user pushes/tags after CI.**
+>
+> ---
+>
+> **Prior (2026-06-16):** **v6.2.14 CUT — fsync wrappers + mabda 3.2.3; native-float
 > & protobuf roadmapped.** Light slot. **`sys_fsync`/`sys_fdatasync`** (proposal
 > 2026-05-20) added as bare wrappers (x86 74/75). **aarch64 catch:** native fsync is
 > 82, but 82 is x86 rename (ESYSXLAT remaps 82→128) → emitting 82 made sys_fsync call

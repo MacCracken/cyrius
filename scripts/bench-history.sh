@@ -95,7 +95,10 @@ run_bench() {
 # ── Tier 1: Core stdlib ──
 echo "--- Tier 1: Core stdlib ---"
 run_bench "$REPO_ROOT/benches/bench_string.bcyr"
+run_bench "$REPO_ROOT/benches/bench_str.bcyr"
 run_bench "$REPO_ROOT/benches/bench_alloc.bcyr"
+run_bench "$REPO_ROOT/benches/bench_freelist.bcyr"
+run_bench "$REPO_ROOT/benches/bench_interning.bcyr"
 run_bench "$REPO_ROOT/benches/bench_vec.bcyr"
 
 if [ "$TIER" = "--tier1" ]; then
@@ -105,13 +108,15 @@ if [ "$TIER" = "--tier1" ]; then
     exit 0
 fi
 
-# ── Tier 2: Data structures ──
+# ── Tier 2: Data structures & compute ──
 echo ""
-echo "--- Tier 2: Data structures ---"
+echo "--- Tier 2: Data structures & compute ---"
 run_bench "$REPO_ROOT/benches/bench_hashmap.bcyr"
 run_bench "$REPO_ROOT/benches/bench_fmt.bcyr"
 run_bench "$REPO_ROOT/benches/bench_tagged.bcyr"
 run_bench "$REPO_ROOT/benches/bench_float.bcyr"
+run_bench "$REPO_ROOT/benches/bench_keccak.bcyr"
+run_bench "$REPO_ROOT/benches/bench_mulmod.bcyr"
 
 if [ "$TIER" = "--tier2" ]; then
     echo ""
@@ -123,6 +128,12 @@ fi
 # ── Tier 3: Compiler/toolchain ──
 echo ""
 echo "--- Tier 3: Compiler/toolchain ---"
+
+# Codegen-quality benches — measure the RUNTIME of compiled code patterns the
+# v6.4.x regalloc/copy-prop arc targets. Run via run_bench (they emit "name: Xns avg").
+run_bench "$REPO_ROOT/benches/bench_regalloc.bcyr"
+run_bench "$REPO_ROOT/benches/bench_shortcircuit.bcyr"
+run_bench "$REPO_ROOT/benches/bench_switch.bcyr"
 
 # Compiler self-compile timing (direct, no fork overhead)
 bench_cmd() {
@@ -167,9 +178,12 @@ if [ -f "$REPO_ROOT/build/cycc" ]; then
     printf "  %-35s %d bytes\n" "size/cycc" "$local_cc5_size"
 fi
 
-# Tool compile times
-for tool in cyrfmt cyrlint cyrdoc cybs ark; do
-    if [ -f "$REPO_ROOT/programs/${tool}.bcyr" ]; then
+# Tool compile times. v6.2.15 (PF-01): the guard checked programs/${tool}.bcyr,
+# which never exists (programs/ holds .cyr — the .cyr→.bcyr split landed at
+# 4563d3fe), so this loop NEVER ran. Check the .cyr that actually gets compiled.
+# cybs dropped: it's the bootstrap compiler, not a programs/ tool.
+for tool in cyrfmt cyrlint cyrdoc ark; do
+    if [ -f "$REPO_ROOT/programs/${tool}.cyr" ]; then
         bench_cmd "compiler/${tool}" "cat $REPO_ROOT/programs/${tool}.cyr | $CC > /dev/null"
     fi
 done

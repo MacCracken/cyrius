@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.15] — 2026-06-16
+
+**v6.2.15 — bench-tooling hardening: macOS/Windows bench-zero fix + PF-01
+resolution.** A single-theme slot fixing the benchmark measurement layer end to
+end — the yantra-filed macOS bench-zero (root-caused to a `var` syscall number, NOT
+`bench_new`/alloc) plus the PF-01 micro-bench resolution floor.
+
+### Fixed
+- **macOS/Windows `cyrius bench` read 0** (issue 2026-06-16, found by yantra
+  mobile-parity on Ecbatana). `bench.now_ns` called `syscall(SYS_CLOCK_GETTIME, …)`
+  with a **`var`** syscall number. The macOS `__got` clock reroute (`syscall(228)`
+  → `_clock_gettime_nsec_np`) and the Windows IAT reroute are keyed on a
+  **compile-time literal** — `parse_expr.cyr:453` sets `sc_num` only when the first
+  arg const-folds (`_cfo == 1`). A `var` does not fold → `sc_num = -1` → no reroute
+  → a raw Darwin `svc 228` (a different BSD call) returned a constant **-9**, so
+  every `now_ns()` was -9, `e - s == 0`, and all `bench_*` elapsed collapsed to 0.
+  Linux was immune (svc 228 there genuinely IS `clock_gettime` — why CI stayed
+  green; the silent `var`-case has no warning either, `parse_expr.cyr:477` gates on
+  `sc_num >= 0`). **Fix:** literal `228` at each `now_ns` call site (macOS +
+  Windows + Linux), mirroring `chrono.clock_now_ns`, which always used the literal
+  and was fine — same path, different spelling. Root-caused by printing the live
+  `now_ns` values on real hardware (the issue's `bench_new`/alloc hypothesis was
+  wrong). `tests/tcyr/bench_elapsed.tcyr` is the regression; the broader
+  `var`-number-on-macho/PE class (yukti/sakshi) is filed in
+  `2026-06-16-var-syscall-number-defeats-macho-pe-reroute.md`.
+- **PF-01 — micro-bench resolution floor** (issue 2026-06-10-runtime-bench-suite-blind):
+  - `_fmt_time`'s µs branch printed integer µs (no fraction), pinning every sub-2µs
+    bench at exactly 1000–2000 ns since 2026-04-16 — a codegen regression in the
+    very range the v6.4.x perf arc targets was invisible. Now prints a
+    **zero-padded 3-digit fraction** via a new `_fmt_pad3` helper (µs→ns, and s/ms
+    for consistency, fixing a shared leading-zero bug): `mulmod/binary_slow
+    1.466us` (was `1us`), and `bench-history.sh` parses it exactly (padding
+    verified: `1.050us`→1050 ns, not the unpadded 1500).
+  - The tool-compile loop guard checked `programs/${tool}.bcyr` (never exists since
+    the `.cyr`→`.bcyr` split at 4563d3fe) → the loop never ran. Fixed to
+    `programs/${tool}.cyr`; `cybs` dropped (bootstrap compiler, not a programs/
+    tool). `compiler/{cyrfmt,cyrlint,cyrdoc,ark}` are now recorded.
+  - The 8 orphan `.bcyr` with no history (str/freelist/interning/keccak/mulmod/
+    regalloc/shortcircuit/switch) are wired into Tiers 1–3. A full run now appends
+    **86 entries** (was ~42). **PF-02** (alloc CAS-lock single-threaded fast path)
+    and **PF-03** (per-release phase attribution) remain open for v6.4.x.
+
+### Changed
+- **`benches/bench_mulmod.bcyr`** — repointed its stale `include "lib/u128.cyr"` to
+  `lib/bayan.cyr` (u128 / `u64_mulmod` / `u64_powmod` moved there in the v6.1.25
+  bayan carve), so the bench compiles again and rejoins the Tier 2 history.
+
+### Verified
+- `bench_elapsed.tcyr` **PASS on real hardware: ecb (arm64-macOS), cass (Windows
+  PE), pi (aarch64-Linux)** + x86_64 Linux — `now_ns` advances and `bench_stop`
+  measures a real interval everywhere the clock is routed (x86-macOS/ach `228`
+  stays HELD/unrouted, unchanged by this fix). `check.sh` **89/89**; x86_64 +
+  aarch64 self-host byte-identical (compiler unchanged — the fix is stdlib-only);
+  cross-OS self-host **ecb / pi / cass** byte-identical. bench `self_compile`
+  **531 ms** / `cycc` **1,066,104 B** (flat — no compiler change).
+
 ## [6.2.14] — 2026-06-16
 
 **v6.2.14 — fsync/fdatasync stdlib wrappers + mabda 3.2.3; native-float &

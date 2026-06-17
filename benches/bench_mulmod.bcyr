@@ -30,7 +30,7 @@ include "lib/alloc.cyr"
 include "lib/vec.cyr"
 include "lib/fnptr.cyr"
 include "lib/bench.cyr"
-include "lib/u128.cyr"
+include "lib/bayan.cyr"   # u128_* / u64_mulmod / u64_powmod moved here in the v6.1.25 bayan carve (was lib/u128.cyr)
 
 # Reference: double-and-add binary mulmod. No hardware div, no u128
 # intermediate. This is the shape abaco's ntheory.cyr had before
