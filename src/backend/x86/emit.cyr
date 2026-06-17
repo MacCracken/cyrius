@@ -2336,6 +2336,14 @@ fn EF64_CMP(S, tok): i64 {
     if (tok == 68) { EB(S, 0x0F); EB(S, 0x94); EB(S, 0xC0); }  # sete al
     if (tok == 69) { EB(S, 0x0F); EB(S, 0x92); EB(S, 0xC0); }  # setb al  (ordered <)
     if (tok == 70) { EB(S, 0x0F); EB(S, 0x97); EB(S, 0xC0); }  # seta al  (ordered >)
+    # v6.2.19: f64 comparison-operator sugar (ops 17-22 == != < > <= >=).
+    # ucomisd a,b flags: a<b→CF, a==b→ZF. Matches the f64_lt/gt/eq builtin semantics.
+    if (tok == 17) { EB(S, 0x0F); EB(S, 0x94); EB(S, 0xC0); }  # ==  sete
+    if (tok == 18) { EB(S, 0x0F); EB(S, 0x95); EB(S, 0xC0); }  # !=  setne
+    if (tok == 19) { EB(S, 0x0F); EB(S, 0x92); EB(S, 0xC0); }  # <   setb
+    if (tok == 20) { EB(S, 0x0F); EB(S, 0x97); EB(S, 0xC0); }  # >   seta
+    if (tok == 21) { EB(S, 0x0F); EB(S, 0x96); EB(S, 0xC0); }  # <=  setbe
+    if (tok == 22) { EB(S, 0x0F); EB(S, 0x93); EB(S, 0xC0); }  # >=  setae
     EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);  # movzx eax, al
     return 0;
 }

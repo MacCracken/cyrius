@@ -14,24 +14,44 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.18** (v6.2.x cycle — **Platform Expansion**; native-float **math mini-arc** opens: `f32_from`/`f32_to` conversion builtins (mabda int_ratio unblock). See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,067,400 B** (+1,296 @ 6.2.18 — the f32 conversion builtins; first compiler-binary change since the v6.2.x folds. self-host byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.18 (+`EF32_FROM`/`EF32_TO` NEON `fcvt s,d`/`fcvt d,s` — verified via aarch64-as) |
+| **Version** | **6.2.19** (v6.2.x cycle — **Platform Expansion**; math mini-arc bite 2: **named `f64` type + operator/comparison sugar**; f32 type-only; mabda 3.2.6 / sandhi 1.6.5 folds. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (+2,288 @ 6.2.19 — f64 operator/comparison dispatch + EF64_CMP ops 17-22; self-host byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.19 (+EF64_CMP cset le/ge/ne for the f64 comparison operators — verified via aarch64-as) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.18 (+`EF32_FROM`/`EF32_TO` — shares the x86 `float.cyr` SSE2 cvtsd2ss/cvtss2sd) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.19 (shares the x86 f64 operator/EF64_CMP dispatch) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · sankoch 2.4.3 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · mabda 3.2.5 · **sakshi 2.3.2** (sakshi Darwin file-output flag fix @.17; all 12 libs current) |
-| tests | 184 `.tcyr` (+`float_f32` @.18 — f32 conversion builtins, 10 asserts; +`protobuf` @.17; +`bench_elapsed` @.15) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4526 fns** (flat @.18 — `f32_from`/`f32_to` are compiler builtins/keywords, not lib fns, so untracked by api-surface) |
+| stdlib fold | agnosys 1.4.3 · **sandhi 1.6.5** · sankoch 2.4.3 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.6** · sakshi 2.3.2 (mabda 3.2.6 uses the f32 builtins + sandhi 1.6.5 folded @.19; all 12 libs current) |
+| tests | 185 `.tcyr` (+`float_named` @.19 — f64 type/operators/comparisons, 21 asserts; +`float_f32` @.18; +`protobuf` @.17) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4549 fns** (4526→4549 @.19: +23 mabda 3.2.6 + sandhi 1.6.5; `f64`/`f32` are compiler keywords/types, untracked) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile **515 ms** @ 6.2.18 (flat; cycc 1,067,400 B +1,296 for the f32 builtins; self-host byte-identical) |
+| bench (every-release gate) | self_compile **521 ms** @ 6.2.19 (flat; cycc 1,069,688 B +2,288 for the f64 operator/comparison dispatch; self-host byte-identical) |
 
-> **Handoff (2026-06-17):** **v6.2.18 CUT — native-float math mini-arc opens (f32
+> **Handoff (2026-06-17):** **v6.2.19 CUT — named f64 type + operator/comparison
+> sugar (math mini-arc bite 2) + mabda 3.2.6 / sandhi 1.6.5 folds.** `var x: f64`
+> (global + local) now tags the var f64; `+ − * /` route to EMIT_F64_BINOP and
+> `< > <= >= == !=` to EF64_CMP (real f64 compare — verified on negatives, NOT
+> integer-bit ordering), on x86 (SSE2) + aarch64 (NEON), with correct precedence.
+> Reuses the existing GESTYPE/SESTYPE typed-operator infra; literals + conversion
+> builtins propagate result types. **f32 = type-only** (annotation + f32_from/f32_to;
+> no f32 arithmetic — stays untyped in expressions). Fixed a collision where `f64`'s
+> 3-byte prefix hijacked f64v2/f64v4 (moved the f64/f32 checks after the SIMD ones).
+> mabda 3.2.6 folded (now uses the v6.2.18 f32 builtins — real-consumer validation);
+> sandhi 1.6.5 folded. api-surface 4526→4549. **VERIFIED:** check.sh 89/89; self-host
+> fixpoint; ecb + pi SELFHOST_OK + float_named.tcyr (21 asserts) PASS; cass UNREACHABLE
+> (mDNS — x86 path verified on x86, CI-covered); f64v2/v4 + i64 regression-free. cycc
+> 1,069,688 B (+2,288). **NEXT: math-arc "fuller annotations" bites** (stricter
+> f64/f32 typecheck, f32 arithmetic, cx scalar float, IEEE-754-direct literals) —
+> user's call per-slot. Also: **v6.2.20 = review cyrius fmt's file-size cutoff**
+> (large files escape format reporting; issue 2026-06-17-fmt-check-file-size-cutoff).
+>
+> ---
+>
+> **Prior (2026-06-17):** **v6.2.18 CUT — native-float math mini-arc opens (f32
 > conversions).** The math mini-arc (native-float proposal) — **corrected back into
 > v6.2.x** from a v6.2.14 mis-filing under v6.3.x; the **user leads the arc's scope +
 > slicing**. A corrected review found scalar f64 ALREADY works on x86+aarch64 (literals,

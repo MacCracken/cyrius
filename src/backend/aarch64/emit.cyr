@@ -1206,6 +1206,14 @@ fn EF64_CMP(S, tok): i64 {
     if (tok == 68) { EW(S, 0x9A9F17E0); }  # cset x0, eq
     if (tok == 69) { EW(S, 0x9A9F57E0); }  # cset x0, mi  (ordered <)
     if (tok == 70) { EW(S, 0x9A9FD7E0); }  # cset x0, gt  (ordered >)
+    # v6.2.19: f64 comparison-operator sugar (ops 17-22). Ordered conditions —
+    # matches the x86 setcc + the f64_lt/gt/eq builtin semantics.
+    if (tok == 17) { EW(S, 0x9A9F17E0); }  # ==  cset eq
+    if (tok == 18) { EW(S, 0x9A9F07E0); }  # !=  cset ne
+    if (tok == 19) { EW(S, 0x9A9F57E0); }  # <   cset mi
+    if (tok == 20) { EW(S, 0x9A9FD7E0); }  # >   cset gt
+    if (tok == 21) { EW(S, 0x9A9FC7E0); }  # <=  cset le
+    if (tok == 22) { EW(S, 0x9A9FB7E0); }  # >=  cset ge
     return 0;
 }
 

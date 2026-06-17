@@ -2047,13 +2047,25 @@ fn PCMPE(S): i64 {
     var op = PEEKT(S);
     if (op >= 17) {
         if (op <= 22) {
+            # v6.2.19: f64 comparison-operator sugar. Capture the lhs type BEFORE
+            # parsing the rhs (PEXPR(rhs) overwrites the expr-state-type). For an
+            # f64 lhs, route to EF64_CMP (ucomisd/fcmp + setcc) instead of the
+            # integer ESETCC; the operand setup (lhs→rcx, rhs on stack + in rax)
+            # mirrors PF64CMP's. Result is an i64 boolean (SESTYPE 0).
+            var cmpst = GESTYPE(S);
             STI(S, GTI(S) + 1);
             _cfo = 0;
             EPUSHR(S);
             PEXPR(S);
-            EMOVCA(S);
-            EPOPR(S);
-            ESETCC(S, op);
+            if (cmpst == F64_TYID) {
+                EPOPC(S); EPUSHR(S);
+                EF64_CMP(S, op);
+                SESTYPE(S, 0);
+            } else {
+                EMOVCA(S);
+                EPOPR(S);
+                ESETCC(S, op);
+            }
             _cfo = 0;
         }
     }

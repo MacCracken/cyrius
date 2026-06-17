@@ -35,6 +35,20 @@ fn main(): i64 {
     assert_eq(f64_to(g_half + g_two), 2, "0.5 + 2.0 = 2.5 -> 2");
     assert_eq(f64_to(g_two * g_two), 4, "2.0 * 2.0 = 4.0");
 
+    test_group("f64 comparison operators");
+    var p: f64 = 1.5;
+    var q: f64 = 2.5;
+    var c1 = p < q;       assert_eq(c1, 1, "1.5 < 2.5");
+    var c2 = q < p;       assert_eq(c2, 0, "2.5 < 1.5 is false");
+    var c3 = p == p;      assert_eq(c3, 1, "1.5 == 1.5");
+    var c4 = p != q;      assert_eq(c4, 1, "1.5 != 2.5");
+    var c5 = p <= 1.5;    assert_eq(c5, 1, "1.5 <= 1.5");
+    var c6 = q >= p;      assert_eq(c6, 1, "2.5 >= 1.5");
+    # negatives — real f64 compare, NOT integer-bit ordering
+    var neg: f64 = 0.0 - 1.5;
+    var c7 = neg < 1.0;          assert_eq(c7, 1, "-1.5 < 1.0");
+    var c8 = neg < (0.0 - 2.0);  assert_eq(c8, 0, "-1.5 < -2.0 is false");
+
     test_group("f32 type + conversions (type-only)");
     var px: f32 = f32_from(0.5);
     assert_eq(px, 0x3F000000, "f32 var holds 0.5f bits");

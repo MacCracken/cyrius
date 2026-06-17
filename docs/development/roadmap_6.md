@@ -521,10 +521,13 @@ was outdated. Bites **1–4's f64 work already shipped** (~v5.8+): float literal
 `f64_add/sub/mul/div`, `f64_lt/gt/eq`, `f64_sqrt/abs/floor/ceil/round/atan/sin/cos/
 exp/ln`, AND the int↔f64 casts `f64_from`/`f64_to` — **on x86 AND aarch64**. The real
 gap was **f32**. **v6.2.18 added the f32 conversions** `f32_from`(f64→f32)/`f32_to`
-(f32→f64), x86+aarch64. **v6.2.19 = mabda fold-in** (delete its 3 shims). Still open
-from bite 5 (user's call per-slot): a named `f64`/`f32` *type* (annotations/typecheck),
-cx-backend scalar float, IEEE-754-direct literals (the current literal uses runtime
-numer/denom division). The list below is the original menu, kept for reference:
+(f32→f64), x86+aarch64. **v6.2.19 added the named `f64` type + operator/comparison
+sugar** (`var x: f64`; `+ − * / < > <= >= == !=` lower to the f64 builtins, x86+aarch64;
+f32 type-only) and folded mabda 3.2.6 (deletes its f32 shims — validates v6.2.18) +
+sandhi 1.6.5. Still open ("fuller annotations", user's call per-slot): stricter
+f64/f32 typecheck, f32 arithmetic, cx-backend scalar float, IEEE-754-direct literals
+(the current literal uses runtime numer/denom division). The list below is the
+original menu, kept for reference:
 
 1. **f64 type + literals + casts (x86-64).** Lex float literals (`1.5`, exponent
    forms) to IEEE-754 bit patterns; `f64` as a type (8-byte, lives in xmm for ops,

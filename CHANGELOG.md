@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.19] — 2026-06-17
+
+**v6.2.19 — named f64 type + operator sugar (math mini-arc bite 2) + mabda 3.2.6 /
+sandhi 1.6.5 folds.** Second math-arc bite: a first-class `f64` type whose `+ − * /`
+and comparisons lower to the f64 builtins, so float math reads like math instead of
+`f64_add(f64_mul(...))`. f32 stays type-only this bite (fuller annotations are a
+later bite, per the arc plan). mabda's fold validates the v6.2.18 f32 builtins.
+
+### Added
+- **Named `f64` type with operator sugar.** `var x: f64` (global + local) tags the
+  variable f64 in the var-type table; `parse_expr`/`PARSE_TERM` route `+ − * /` on
+  f64 operands to `EMIT_F64_BINOP` (SSE2 on x86, NEON on aarch64) with correct
+  precedence (`2.0 + 3.0 * 4.0 = 14`), and `PCMPE` routes `< > <= >= == !=` to
+  `EF64_CMP` (ucomisd/fcmp + setcc) — real f64 comparison, NOT integer-bit ordering
+  (verified on negatives: `-1.5 < 1.0` true, `-2.0 > -3.0` true, x86 + aarch64).
+  Float literals + the conversion builtins (`f64_from`→f64, `f64_to`→i64,
+  `f32_to`→f64) propagate their result type so it flows through expressions. Reuses
+  the existing typed-operator-dispatch infra (`GESTYPE`/`SESTYPE`); the i64 + struct
+  + f64v2/f64v4 SIMD operator paths are untouched.
+- **`f32` type (type-only).** `var x: f32` annotation + the `f32_from`/`f32_to`
+  conversions; no f32 arithmetic (convert to f64 to compute) — f32 stays untyped in
+  expressions so it never reaches the operator dispatch.
+- `tests/tcyr/float_named.tcyr` — 21 asserts: literal/global/local f64 arithmetic +
+  precedence, all six comparisons incl. negatives, f32 type + round-trip.
+
+### Changed
+- **mabda 3.2.5 → 3.2.6** (uses the v6.2.18 f32 builtins; inline-asm float shims
+  gone — real-consumer validation) + **sandhi 1.6.3 → 1.6.5** folds. api-surface
+  4526 → **4549** (+23, mabda/sandhi). `f64`/`f32` are compiler keywords/types, not
+  lib fns, so untracked by api-surface.
+
+### Fixed
+- The new `f64` recognition's 3-byte prefix was hijacking `f64v2`/`f64v4` (their
+  low 3 bytes are also "f64"); moved the f64/f32 type-name checks **after** the
+  6-byte SIMD checks. f64v2/f64v4 SIMD tests pass again.
+
+### Roadmap
+- mabda's f32 fold-in landed here (it was release-ready). Remaining math-arc bites
+  (the "fuller annotations": stricter f64/f32 typecheck, f32 arithmetic, cx-backend
+  scalar float, IEEE-754-direct literals) stay sequenced — user's call per-slot.
+
+### Verified
+- check.sh **89/89**; self-host fixpoint (the compiler change reproduces
+  byte-identical). Cross-OS on real hardware: **ecb (arm64-macOS) + pi
+  (aarch64-Linux) SELFHOST_OK + float_named.tcyr PASS** — f64 arithmetic + all six
+  comparisons (incl. negatives `-1.5 < 1.0` true, `-2.0 > -3.0` true) work via SSE2
+  (x86) and NEON (aarch64); aarch64 `cset le/ge/ne` checked vs `aarch64-linux-gnu-as`.
+  **cass UNREACHABLE this run** (mDNS flake) — the f64 operator/compare path is the
+  x86 SSE2 emit verified on x86, and cycc.exe self-host is CI-covered. f64v2/f64v4
+  SIMD + i64/struct paths regression-free. cycc **1,069,688 B** (+2,288); bench
+  `self_compile` 521 ms. mabda 3.2.6 compiles + runs in-tree (validating the v6.2.18
+  f32 builtins in a real consumer).
+
 ## [6.2.18] — 2026-06-17
 
 **v6.2.18 — native-float math mini-arc opens: f32 conversion builtins.** First slot
