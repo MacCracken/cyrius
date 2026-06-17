@@ -1,5 +1,25 @@
 # 2026-06-17 — `lib/io.cyr` O_* open-flags are Linux values, not translated for Darwin (file writes fail on arm64-macOS)
 
+> **RESOLVED — v6.2.17.** Root-cause correction: the `sakshi_full.tcyr` failure had
+> **TWO** Darwin-O_* causes, not just io.cyr (this issue's original attribution was
+> incomplete):
+> 1. **`lib/io.cyr`** redefined O_CREAT/O_TRUNC/O_APPEND with Linux values *after*
+>    including syscalls.cyr (whose per-arch peer already has the correct per-target
+>    values), so on Darwin the Linux `64` overrode the right `0x200` (last-def-wins).
+>    Fix: io.cyr now defines O_* **only on agnos** (whose peer exposes `AO_*`, not
+>    `O_*`, and file_open bridges O_*→AO_*); every other target uses the syscalls
+>    peer's correct per-target O_*. Verified on real arm64-macOS: `file_write_all` +
+>    `file_read_all` round-trip (the file is created and read back). `tests/tcyr/io.tcyr`
+>    now gates it cross-OS.
+> 2. **`sakshi/src/output.cyr`** (sakshi's OWN file sink — it can't pull io.cyr,
+>    foundation-layer rule) hard-coded the Linux literal `1089`
+>    (`O_WRONLY|O_CREAT|O_APPEND`). Fix in **sakshi 2.3.2**: per-target literal —
+>    `521` (0x209) on macOS, `1089` elsewhere. `sakshi_full.tcyr` now passes 20/20 on
+>    arm64-macOS. (The io.cyr fix alone did NOT make sakshi_full pass — sakshi never
+>    used io.cyr's file_open.)
+>
+> Linux/Windows unaffected (their O_* values are unchanged). See CHANGELOG [6.2.17].
+
 > **Class:** PRE-EXISTING (found 2026-06-17 while cross-OS-verifying the v6.2.16
 > sakshi fold on ecb — NOT introduced by it; sakshi 2.3.0 fails identically). Not a
 > v6.2.16 regression.

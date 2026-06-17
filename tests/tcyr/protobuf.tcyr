@@ -1,0 +1,152 @@
+# protobuf.tcyr — lib/protobuf.cyr proto3 wire codec: canonical vectors + round-trips.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/protobuf.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # --- canonical: field 1, varint 150  ->  08 96 01 (the proto3 docs example) ---
+    test_group("varint field canonical (08 96 01)");
+    var sb1 = str_builder_new();
+    pb_write_int(sb1, 1, 150);
+    var b1 = load64(sb1);
+    assert_eq(load64(sb1 + 8), 3, "field1 varint 150 is 3 bytes");
+    assert_eq(load8(b1 + 0), 0x08, "byte0 = tag 0x08");
+    assert_eq(load8(b1 + 1), 0x96, "byte1 = 0x96");
+    assert_eq(load8(b1 + 2), 0x01, "byte2 = 0x01");
+
+    # --- bare varints: 0 -> 00, 300 -> AC 02 ---
+    test_group("bare varint vectors + round-trip");
+    var sb0 = str_builder_new();
+    pb_write_varint(sb0, 0);
+    assert_eq(load64(sb0 + 8), 1, "varint 0 is 1 byte");
+    assert_eq(load8(load64(sb0) + 0), 0x00, "varint 0 = 00");
+
+    var sb3 = str_builder_new();
+    pb_write_varint(sb3, 300);
+    var b3 = load64(sb3);
+    assert_eq(load8(b3 + 0), 0xAC, "varint 300 byte0 = AC");
+    assert_eq(load8(b3 + 1), 0x02, "varint 300 byte1 = 02");
+    var v300 = 0;
+    var np3 = pb_read_varint(b3, 0, load64(sb3 + 8), &v300);
+    assert_eq(v300, 300, "varint 300 round-trips");
+    assert_eq(np3, 2, "varint 300 consumed 2 bytes");
+
+    # --- negative int64 emits the full 10-byte u64 form ---
+    test_group("negative int64 = 10-byte varint");
+    var sbn = str_builder_new();
+    pb_write_varint(sbn, 0 - 1);
+    assert_eq(load64(sbn + 8), 10, "-1 is a 10-byte varint");
+    var vn = 0;
+    pb_read_varint(load64(sbn), 0, 10, &vn);
+    assert_eq(vn, 0 - 1, "-1 round-trips");
+
+    # --- zigzag (sint) ---
+    test_group("zigzag");
+    assert_eq(pb_zigzag(0), 0, "zigzag 0 = 0");
+    assert_eq(pb_zigzag(0 - 1), 1, "zigzag -1 = 1");
+    assert_eq(pb_zigzag(1), 2, "zigzag 1 = 2");
+    assert_eq(pb_zigzag(0 - 2), 3, "zigzag -2 = 3");
+    assert_eq(pb_unzigzag(pb_zigzag(0 - 12345)), 0 - 12345, "zigzag round-trip -12345");
+    assert_eq(pb_unzigzag(pb_zigzag(987654321)), 987654321, "zigzag round-trip +987654321");
+
+    # --- string field: field 2 "testing" -> 12 07 74 65 73 74 69 6e 67 ---
+    test_group("string field + decode");
+    var sbs = str_builder_new();
+    pb_write_string(sbs, 2, "testing");
+    var bs = load64(sbs);
+    var lens = load64(sbs + 8);
+    assert_eq(lens, 9, "string field is 9 bytes (tag+len+7)");
+    assert_eq(load8(bs + 0), 0x12, "tag field2 LEN = 0x12");
+    assert_eq(load8(bs + 1), 0x07, "len = 7");
+    assert_eq(load8(bs + 2), 116, "data[0] = 't'");
+    var sfld = 0;
+    var swt = 0;
+    var sp = pb_read_tag(bs, 0, lens, &sfld, &swt);
+    assert_eq(sfld, 2, "decoded field number 2");
+    assert_eq(swt, PB_WIRE_LEN, "decoded wire type LEN");
+    var dptr = 0;
+    var dlen = 0;
+    var sp2 = pb_read_bytes(bs, sp, lens, &dptr, &dlen);
+    assert_eq(dlen, 7, "decoded bytes len 7");
+    assert_eq(sp2, 9, "consumed the whole field");
+    assert_eq(load8(dptr + 6), 103, "decoded data[6] = 'g'");
+
+    # --- fixed64 little-endian ---
+    test_group("fixed64 / fixed32 little-endian");
+    var sbf = str_builder_new();
+    pb_write_fixed64(sbf, 1, 0x0102030405060708);
+    var bf = load64(sbf);
+    assert_eq(load8(bf + 0), 0x09, "fixed64 tag (field1 I64) = 0x09");
+    assert_eq(load8(bf + 1), 0x08, "LE byte0 = 0x08");
+    assert_eq(load8(bf + 8), 0x01, "LE byte7 = 0x01");
+    var fout = 0;
+    var fp = pb_read_fixed(bf, 1, 9, 8, &fout);
+    assert_eq(fout, 0x0102030405060708, "fixed64 round-trips");
+    assert_eq(fp, 9, "fixed64 consumed 9");
+
+    var sb32 = str_builder_new();
+    pb_write_fixed32(sb32, 2, 0xDEADBEEF);
+    var b32 = load64(sb32);
+    assert_eq(load8(b32 + 0), 0x15, "fixed32 tag (field2 I32) = 0x15");
+    var f32 = 0;
+    pb_read_fixed(b32, 1, 5, 4, &f32);
+    assert_eq(f32, 0xDEADBEEF, "fixed32 round-trips");
+
+    # --- nested message: outer field 3 wraps inner {field1 varint 150} ---
+    test_group("nested message");
+    var inner = str_builder_new();
+    pb_write_int(inner, 1, 150);
+    var outer = str_builder_new();
+    pb_write_message(outer, 3, inner);
+    var bo = load64(outer);
+    var leno = load64(outer + 8);
+    assert_eq(load8(bo + 0), 0x1A, "nested tag (field3 LEN) = 0x1A");
+    assert_eq(load8(bo + 1), 0x03, "nested submsg len = 3");
+    var nfld = 0;
+    var nwt = 0;
+    var op = pb_read_tag(bo, 0, leno, &nfld, &nwt);
+    assert_eq(nfld, 3, "outer field 3");
+    var nptr = 0;
+    var nlen = 0;
+    var op2 = pb_read_bytes(bo, op, leno, &nptr, &nlen);
+    assert_eq(nlen, 3, "inner message is 3 bytes");
+    var ifld = 0;
+    var iwt = 0;
+    var ip = pb_read_tag(nptr, 0, 3, &ifld, &iwt);
+    var ival = 0;
+    pb_read_varint(nptr, ip, 3, &ival);
+    assert_eq(ifld, 1, "inner field 1");
+    assert_eq(ival, 150, "inner field1 value 150");
+
+    # --- skip unknown field (forward-compat) ---
+    test_group("skip unknown field");
+    var sbk = str_builder_new();
+    pb_write_int(sbk, 5, 999);
+    var bk = load64(sbk);
+    var lenk = load64(sbk + 8);
+    var kf = 0;
+    var kw = 0;
+    var kp = pb_read_tag(bk, 0, lenk, &kf, &kw);
+    var ksp = pb_skip(bk, kp, lenk, kw);
+    assert_eq(ksp, lenk, "skip varint field consumes it whole");
+
+    # --- truncation guard: a varint with continuation bit but no more bytes -> -1 ---
+    test_group("truncation guard");
+    var tbuf[2];
+    store8(&tbuf, 0x80);    # continuation set, but end after 1 byte
+    var tv = 0;
+    var trc = pb_read_varint(&tbuf, 0, 1, &tv);
+    assert_eq(trc, 0 - 1, "truncated varint returns -1");
+
+    var r = assert_summary();
+    return r;
+}
+var rc = main();
+syscall(60, rc);

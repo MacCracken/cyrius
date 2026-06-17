@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.17] — 2026-06-17
+
+**v6.2.17 — Darwin file-output fix (lib/io.cyr + sakshi 2.3.2) + new `lib/protobuf.cyr`
+(proto3 wire codec).** Clears the deck before the math mini-arc: resolves the
+pre-existing arm64-macOS file-output bug found during the v6.2.16 cross-OS pass,
+and lands the protobuf lib (previously slotted standalone) alongside it.
+
+### Fixed
+- **File output works on arm64-macOS** (issue 2026-06-17). Had **two** Darwin O_*
+  root causes:
+  - **`lib/io.cyr`** redefined `O_CREAT`/`O_TRUNC`/`O_APPEND` with Linux values
+    (`64`/`512`/`1024`) *after* including `syscalls.cyr` — whose per-arch peer
+    already defines the correct per-target values — so on Darwin the Linux `64`
+    overrode the right `0x200` (last-def-wins; the compiler's CHKDUPVAL even warned
+    "conflicting value"). io.cyr now defines O_* **only on agnos** (whose peer
+    exposes `AO_*` not `O_*`, and `file_open` bridges O_*→AO_*); every other target
+    uses the syscalls peer's correct per-target O_*. Verified on real arm64-macOS:
+    `file_write_all`/`file_read_all` round-trip (the file is created + read back).
+  - **sakshi 2.3.0 → 2.3.2** — sakshi's own file sink (`sakshi_output_file`, which
+    can't pull io.cyr under the foundation-layer rule) hard-coded the Linux literal
+    `1089`. Now per-target: `521` (0x209) on macOS, `1089` elsewhere.
+    `sakshi_full.tcyr` now passes 20/20 on arm64-macOS (was 19/1).
+
+### Added
+- **`lib/protobuf.cyr`** — minimal **proto3 wire-format** encode/decode (proposal
+  2026-06-10; the OTLP/gRPC stdlib gap). Pure Cyrius, no syscalls: encode appends
+  to a `str_builder`, decode is `load8` + pointer math. Covers the wire subset
+  proto3 messages use — varint (wire 0, incl. zigzag sint + the 10-byte negative
+  int64 form), fixed64/fixed32 (wire 1/5, little-endian), length-delimited (wire 2:
+  string/bytes/**nested message**), tags, and unknown-field skip — all with
+  truncation guards on decode. 17 public `pb_*` fns. No `.proto` codegen (build
+  messages by hand). `tests/tcyr/protobuf.tcyr` covers the canonical vectors
+  (field-1 varint 150 = `08 96 01`, `300` = `AC 02`, string "testing", zigzag,
+  nested) + encode→decode round-trips — 42 assertions. (NB: cyrius `>>` is logical,
+  so the varint loop terminates for any u64 without masking; zigzag, which needs an
+  arithmetic shift, uses an explicit sign value.)
+
+### Changed
+- api-surface 4509 → **4526** (+17, all `protobuf::pb_*`; the io.cyr change is
+  var-only — untracked). sakshi re-fold 2.3.1 → 2.3.2.
+
+### Verified
+- check.sh **89/89** (api-surface regenerated to 4526); x86 + aarch64 self-host
+  byte-identical (compiler unchanged — io.cyr/protobuf/sakshi are all lib-only).
+  Cross-OS on real hardware: **ecb (arm64-macOS)** SELFHOST_OK + `io.tcyr` 9/9 (the
+  io.cyr O_* fix — io.tcyr never ran on macOS before; its flock groups are now
+  guarded Linux-only) + `sakshi_full.tcyr` 20/20 (was 19/1) + `protobuf.tcyr` PASS,
+  plus a `file_write_all`/`file_read_all` round-trip probe (file created + read
+  back); **pi (aarch64-Linux)** SELFHOST_OK + `protobuf.tcyr` PASS. **cass
+  UNREACHABLE this run** (mDNS flake) — no real gap: io.cyr's Windows O_* are
+  unchanged values, sakshi's Windows path is unchanged (1089), and protobuf is
+  pure-Cyrius (verified on ecb/pi/x86). bench `self_compile` ~525 ms / `cycc`
+  1,066,104 B (flat). sakshi 2.3.2 ships with its own CHANGELOG entry + green CI.
+
 ## [6.2.16] — 2026-06-17
 
 **v6.2.16 — var-syscall-clock follow-on (yukti + sakshi source fixes) + mabda

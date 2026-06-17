@@ -9,7 +9,10 @@ alloc_init();
 
 test_group("file_open / file_write / file_read / file_close");
 var path = "/tmp/cyrius_io_test";
-var fd = file_open(path, 577, 0x1ED);
+# O_WRONLY|O_CREAT|O_TRUNC — use the symbols, NOT a hardcoded literal: the bits
+# differ on Darwin (this gates the lib/io.cyr per-target O_* fix, issue 2026-06-17;
+# the old literal 577 was Linux-only and the open failed on arm64-macOS).
+var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
 assert_eq(fd >= 0, 1, "open for write");
 var n = file_write(fd, "test data", 9);
 assert_eq(n, 9, "write 9");
@@ -35,6 +38,12 @@ var buf2 = alloc(64);
 var rn = file_read_all(path, buf2, 63);
 assert_eq(rn, 9, "read_all");
 
+# flock (syscall 73) + the locked-append helpers are Linux-only: flock has a
+# different BSD number on macOS that ESYSXLAT doesn't translate, so lib/io.cyr
+# gates file_lock/unlock/trylock/append_locked behind #ifdef CYRIUS_TARGET_LINUX.
+# Guard the same here so the rest of the io suite runs (and gates the O_* fix) on
+# macOS/Windows too.
+#ifdef CYRIUS_TARGET_LINUX
 test_group("file_lock / file_unlock");
 var lockpath = "/tmp/cyrius_lock_test";
 var lfd = file_open(lockpath, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
@@ -58,7 +67,7 @@ file_unlock(tfd);
 file_close(tfd);
 
 test_group("file_append_locked");
-syscall(87, lockpath);
+sys_unlink(lockpath);
 file_append_locked(lockpath, "line1\n", 6);
 file_append_locked(lockpath, "line2\n", 6);
 var abuf = alloc(64);
@@ -66,9 +75,10 @@ var an = file_read_all(lockpath, abuf, 63);
 assert_eq(an, 12, "append 12 bytes");
 store8(abuf + an, 0);
 assert_eq(streq(abuf, "line1\nline2\n"), 1, "append content");
+sys_unlink(lockpath);
+#endif
 
-# Cleanup
-syscall(87, path);
-syscall(87, lockpath);
+# Cleanup (portable — sys_unlink routes per-target)
+sys_unlink(path);
 
 var r = assert_summary();

@@ -1,5 +1,5 @@
 # sakshi.cyr — tracing, error handling, and structured logging for Cyrius
-# Bundled distribution of sakshi v2.3.1
+# Bundled distribution of sakshi v2.3.2
 # Source: https://github.com/MacCracken/sakshi
 # License: GPL-3.0-only
 #
@@ -529,10 +529,19 @@ var _sk_file_fd: i64 = 0 - 1;
 
 # Open a file for append-mode logging. Returns fd or negative on error.
 # path must be a trusted, hardcoded or config-derived value — no user input.
-# flags: O_WRONLY | O_CREAT | O_APPEND = 1 | 64 | 1024 = 1089
-# mode: 0644 = 0x1A4
+# flags = O_WRONLY | O_CREAT | O_APPEND. These bits DIFFER on Darwin, so the
+# literal must be per-target — a Linux 1089 passed to Darwin's open() is the
+# wrong flag set and the file is never created (cyrius issue 2026-06-17):
+#   Linux/Windows:  1 | 64    | 1024  = 1089  (0x441)
+#   Darwin (macOS): 1 | 0x200 | 0x8   = 521   (0x209)
+# mode: 0644 = 0x1A4 (same on all targets).
 fn sakshi_output_file(path): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var fd = _sk_open(path, 521, 0x1A4);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     var fd = _sk_open(path, 1089, 0x1A4);
+    #endif
     if (fd < 0) { return fd; }
     _sk_file_fd = fd;
     _sk_output_target = SK_OUT_FILE;
