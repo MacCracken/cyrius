@@ -1,5 +1,5 @@
 # sakshi.cyr — tracing, error handling, and structured logging for Cyrius
-# Bundled distribution of sakshi v2.3.0
+# Bundled distribution of sakshi v2.3.1
 # Source: https://github.com/MacCracken/sakshi
 # License: GPL-3.0-only
 #
@@ -35,15 +35,17 @@
 # `cyrius build --aarch64`. Pre-v2.2.2 the numbers were inlined as bare
 # integers, so the aarch64 binary called the wrong syscall (silent UB).
 
+# clock_gettime / nanosleep are NOT defined here: their reroute-required numbers
+# (228 / 35) must be LITERALS at the call site (clock.cyr) — a `var`/named constant
+# does not const-fold, so the macOS/Windows reroute silently fails (cyrius issue
+# 2026-06-16-var-syscall-number-defeats-macho-pe-reroute).
 #ifdef CYRIUS_ARCH_X86
 var _SK_SYS_WRITE         = 1;
 var _SK_SYS_OPEN          = 2;
 var _SK_SYS_CLOSE         = 3;
-var _SK_SYS_NANOSLEEP     = 35;
 var _SK_SYS_SOCKET        = 41;
 var _SK_SYS_SENDTO        = 44;
 var _SK_SYS_EXIT          = 60;
-var _SK_SYS_CLOCK_GETTIME = 228;
 #endif
 
 #ifdef CYRIUS_ARCH_AARCH64
@@ -52,8 +54,6 @@ var _SK_SYS_OPENAT        = 56;
 var _SK_SYS_CLOSE         = 57;
 var _SK_SYS_WRITE         = 64;
 var _SK_SYS_EXIT          = 93;
-var _SK_SYS_NANOSLEEP     = 101;
-var _SK_SYS_CLOCK_GETTIME = 113;
 var _SK_SYS_SOCKET        = 198;
 var _SK_SYS_SENDTO        = 206;
 var _SK_AT_FDCWD          = 0 - 100;
@@ -167,10 +167,24 @@ fn _sk_clock_panic(msg, len): i64 {
 # Inlines the same syscall the v2.1.x _sk_now_ns used so the calibration
 # anchor is in the same time base as a non-cycle-counter implementation.
 fn _sk_clock_now_ns_raw(): i64 {
-    var ts[16];   # timespec {tv_sec, tv_nsec} = 16 bytes; was [2]=8B (byte-sized) → clock_gettime's 16-B write + load64(&ts+8) ran 8 B OOB. The sibling of the v2.2.9 sleep_ts[2] fix.
-    var ret = syscall(_SK_SYS_CLOCK_GETTIME, 4, &ts);
+    var ts[16];   # {tv_sec,tv_nsec} = 16 B (var[N] byte-sized; [2] would OOB the +8 store).
+    # The syscall NUMBER 228 MUST be a literal — a `var`/named constant does not
+    # const-fold, so the macOS __got reroute and the Windows IAT reroute never fire
+    # and a raw bad syscall results (returned -9 / garbage). cyrius issue 2026-06-16.
+    # Only reached on the x86 calibration path (aarch64 uses CNTFRQ_EL0, no syscall).
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows: syscall(228) → kernel32!GetTickCount64 → ms since boot in the return
+    # register (NOT &ts); ×1e6 = ns. Coarse (~15 ms tick), but it is the only
+    # monotonic reference the PE reroute set provides for TSC calibration.
+    return syscall(228, 4, &ts) * 1000000;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    # Linux: clock_gettime(MONOTONIC_RAW=4) fills the timespec. (x86-macOS is HELD —
+    # 228 is unrouted on x86-macho; arm64-macOS never reaches here.)
+    var ret = syscall(228, 4, &ts);
     if (ret < 0) { return 0; }
     return load64(&ts) * 1000000000 + load64(&ts + 8);
+    #endif
 }
 
 # One-shot init: panic if invariant TSC is absent, then calibrate freq with
@@ -196,10 +210,14 @@ fn _sk_clock_init(): i64 {
     # nanosleep(35) to Sleep on PE. Earlier runtimes returned -ENOSYS on PE,
     # which forced a now-removed clock_gettime busy-spin window here (and the
     # GetTickCount64 fallback in _sk_now_ns) — both retired in v2.2.10.
+    # The number 35 MUST be a literal — a `var` does not const-fold, so the PE
+    # reroute (and the macOS reroute) never fires (cyrius issue 2026-06-16). The
+    # old `_SK_SYS_NANOSLEEP` var silently defeated exactly the PE routing this
+    # comment relies on.
     var sleep_ts[16];
     store64(&sleep_ts, 0);
     store64(&sleep_ts + 8, 10000000);
-    syscall(_SK_SYS_NANOSLEEP, &sleep_ts, 0);
+    syscall(35, &sleep_ts, 0);
 
     var t1_ticks = _sk_now_ticks();
     var t1_ns = _sk_clock_now_ns_raw();

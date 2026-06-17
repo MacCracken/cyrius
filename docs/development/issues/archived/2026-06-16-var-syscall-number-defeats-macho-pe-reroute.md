@@ -1,5 +1,18 @@
 # 2026-06-16 — a `var` syscall NUMBER silently defeats the macOS/Windows reroute (class)
 
+> **RESOLVED — v6.2.16.** Both remaining instances fixed at their source repos +
+> re-folded: **yukti 2.2.6** (event/device_db CLOCK_REALTIME timestamps now use
+> stdlib `chrono.clock_epoch_secs()`; dead `SYS_CLOCK_GETTIME` removed) and
+> **sakshi 2.3.1** (x86 TSC-calibration `clock_gettime`/`nanosleep` now use literal
+> `228`/`35`; `_sk_clock_now_ns_raw` takes the GetTickCount64 return on Windows;
+> dead `_SK_SYS_*` consts removed; the `sakshi.tcyr` nanosleep probe fixed to
+> literal 35 + `nap[16]`). The literal-228/35 routing was proven cross-OS in v6.2.15
+> (`bench_elapsed` on ecb/cass/pi). The compiler-side guardrail/const-fold options
+> below were considered and left for a future minor (a blanket warning would be
+> noisy with false positives on ESYSXLAT-covered var syscalls; const-folding global
+> int-literal vars is a frontend change out of a lib-fold slot's scope). See
+> CHANGELOG [6.2.16].
+
 > **Class:** the macOS `__got` libcall reroutes and the Windows IAT reroutes for
 > "Linux-numbered" syscalls (`parse_expr.cyr`, e.g. `syscall(228)`→
 > `_clock_gettime_nsec_np`, `syscall(35)`→`Sleep`, `syscall(1)`→`WriteFile`) are

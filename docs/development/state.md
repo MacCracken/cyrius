@@ -14,24 +14,48 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.15** (v6.2.x cycle — **Platform Expansion**; bench-tooling hardening: macOS/Windows bench-zero fix + PF-01 µs-resolution. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | 1,066,104 B (flat @ 6.2.15 — bench-zero + PF-01 are stdlib/tooling-only, no compiler-source change; binary byte-identical to 6.2.14) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | unchanged @ 6.2.15 (byte-identical — bench fix is in `lib/bench.cyr`, not the backend; was rebuilt @ 6.2.14 with the fsync ESYSXLAT 74→82/75→83) |
+| **Version** | **6.2.16** (v6.2.x cycle — **Platform Expansion**; var-syscall-clock follow-on: yukti 2.2.6 + sakshi 2.3.1 source fixes; mabda 3.2.5 / sankoch 2.4.3 folds. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | 1,066,104 B (flat @ 6.2.16 — all four changes are lib-only folds, no compiler-source change; binary byte-identical to 6.2.15) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | unchanged @ 6.2.16 (byte-identical — lib-only folds; was rebuilt @ 6.2.14 with the fsync ESYSXLAT 74→82/75→83) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | unchanged @ 6.2.15 (byte-identical — bench fix is stdlib-only; PE keeps the 0xF01B clock + ProcessPrng reroutes) |
+| **cycc_win** (PE32+ cross) | unchanged @ 6.2.16 (byte-identical — lib-only folds; PE keeps the 0xF01B clock + ProcessPrng reroutes) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · sankoch 2.3.1 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.5 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.3** · sakshi 2.3.0 (mabda 3.2.3 fold @.14; all 12 libs current) |
-| tests | 182 `.tcyr` (+`bench_elapsed` @.15 — bench measures a sleep, runs x86/ecb/cass/pi; +`fsync` @.14; +`clock_monotonic` @.13; +`getrandom` @.12) · 15 `.bcyr` (all 15 now in bench-history tiers @.15; 8 orphans wired) · 5 `.fcyr` |
-| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4407 fns** (flat @.15 — `bench._fmt_pad3` added but private/untracked; public surface unchanged) |
+| stdlib fold | agnosys 1.4.3 · sandhi 1.6.3 · **sankoch 2.4.3** · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · **yukti 2.2.6** · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.5** · **sakshi 2.3.1** (mabda/sankoch folds + yukti/sakshi var-clock source fixes @.16; all 12 libs current) |
+| tests | 182 `.tcyr` (+`bench_elapsed` @.15; +`fsync` @.14; +`clock_monotonic` @.13) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 97 `lib/*.cyr` · 79 programs · api-surface **4509 fns** (4407→4509 @.16: +102 from mabda 3.2.5's GFX9 encoder `gfx9_*`; 0 removed — yukti/sakshi dropped only vars/enum-consts, not tracked public fns) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile **531 ms** @ 6.2.15 (flat — no compiler change; cycc 1,066,104 B; self-host byte-identical). **86 entries/run** now (was ~42 — PF-01 wired 8 orphan `.bcyr` + 4 tool compiles; µs benches show real fractional resolution) |
+| bench (every-release gate) | self_compile **512 ms** @ 6.2.16 (flat — no compiler change; cycc 1,066,104 B; self-host byte-identical) |
 
-> **Handoff (2026-06-16):** **v6.2.15 CUT — bench-tooling hardening.** Single-theme
+> **Handoff (2026-06-17):** **v6.2.16 CUT — var-syscall-clock follow-on + mabda/
+> sankoch folds.** Closes the 2026-06-16 `var`-syscall-number class (filed v6.2.15).
+> Two ecosystem-lib SOURCE fixes + re-fold: **yukti 2.2.6** — CLOCK_REALTIME
+> timestamps (event/device_db ×3) used a `var` `syscall(SYS_CLOCK_GETTIME,0,&ts)` →
+> no reroute on macOS/Windows + read `&ts`; now delegate to `chrono.clock_epoch_secs()`
+> (dead `SYS_CLOCK_GETTIME` removed). **sakshi 2.3.1** — x86 TSC-calibration
+> `clock_gettime`/`nanosleep` used `var` numbers (defeating the PE routing the
+> comment relied on); now literals `228`/`35` + GetTickCount64 return on Windows;
+> dead `_SK_SYS_*` removed; test nanosleep→literal + `nap[16]`. sakshi CI lint
+> upgraded to auto-discover + fail-on-warning. Both use the literal-228/35 pattern
+> proven cross-OS in v6.2.15. Folds: **mabda 3.2.3→3.2.5** (+102 fns, GFX9 encoder),
+> **sankoch 2.3.1→2.4.3** (dists regen-diffed FRESH first). api-surface 4407→**4509**.
+> **VERIFIED:** check.sh **89/89**; x86+aarch64 self-host byte-identical (lib-only);
+> cross-OS **pi SELFHOST_OK + sakshi/sakshi_full 2/2**, **ecb SELFHOST_OK + sakshi
+> PASS** (spans/clock advancing); **cass UNREACHABLE this run** (mDNS — routing
+> proven v6.2.15 + sakshi's wine CI). cycc 1,066,104 B (flat). **Found-not-fixed
+> (pre-existing, filed):** `lib/io.cyr` O_* are Linux values w/ no Darwin xlat →
+> sakshi_full file-out fails on arm64-macOS (2.3.0 fails identically — NOT a .16
+> regression); `2026-06-17-io-cyr-o-flags-not-darwin-translated.md`. **NEXT:**
+> remaining v6.2.x pins — bare-metal target + RISC-V rv64; io.cyr Darwin O_* xlat;
+> then the v6.3.x language arc opens.
+>
+> ---
+>
+> **Prior (2026-06-16):** **v6.2.15 CUT — bench-tooling hardening.** Single-theme
 > slot. (1) **macOS/Windows bench-zero** (yantra, issue 2026-06-16): `bench.now_ns`
 > used `syscall(SYS_CLOCK_GETTIME,…)` with a **`var`** number; the macOS `__got`
 > /Windows IAT reroute for `syscall(228)` is keyed on a **compile-time literal**

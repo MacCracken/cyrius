@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.16] — 2026-06-17
+
+**v6.2.16 — var-syscall-clock follow-on (yukti + sakshi source fixes) + mabda
+3.2.5 / sankoch 2.4.3 folds.** Closes the 2026-06-16 `var`-syscall-number class
+filed in v6.2.15: two ecosystem libs hand-rolled clock syscalls with a `var`
+number that silently defeats the macOS/Windows reroute. Fixed at their source
+repos + re-folded. Plus two routine stdlib refolds.
+
+### Fixed
+- **yukti 2.2.5 → 2.2.6** (source fix + re-fold). The CLOCK_REALTIME timestamps in
+  `src/event.cyr` + `src/device_db.cyr` (×3) called `syscall(SYS_CLOCK_GETTIME, 0,
+  &ts)` with a **`var`** number → no reroute on macOS/Windows, and they read `&ts`
+  (which the Darwin/Windows clock paths don't fill). All now delegate to stdlib
+  `chrono.clock_epoch_secs()` (cross-platform-correct since 6.2.13). Dead
+  `SYS_CLOCK_GETTIME` removed from `src/syscalls.cyr` (both arches).
+- **sakshi 2.3.0 → 2.3.1** (source fix + re-fold). The x86 TSC-calibration
+  `clock_gettime`/`nanosleep` (`_sk_clock_now_ns_raw`, calibration window) used
+  `var` numbers (`_SK_SYS_CLOCK_GETTIME`/`_SK_SYS_NANOSLEEP`) — silently defeating
+  the very PE nanosleep routing the calibration comment relied on. Now **literals**
+  (`228`/`35`); `_sk_clock_now_ns_raw` takes the GetTickCount64 return on Windows
+  (the reroute returns ms in the register, not the timespec). Dead consts removed;
+  the `tests/tcyr/sakshi.tcyr` nanosleep probe fixed to literal `35` + `nap[16]`
+  (was the byte-sized `[2]` OOB the production path had already fixed). **sakshi
+  CI: the lint step now auto-discovers all source/test/dist files and fails on any
+  warning** (was a hardcoded list that exited 0 on warnings — wouldn't have caught
+  a regression in an edited file; now mirrors yukti's gate).
+- Both fixes adopt the literal-228/35 pattern proven cross-OS in v6.2.15
+  (`bench_elapsed` on ecb/cass/pi). Linux was immune (svc 228/35 are the real
+  syscalls there). The class issue is archived RESOLVED.
+
+### Changed
+- **mabda 3.2.3 → 3.2.5** fold (+102 public fns — mostly the new GFX9 instruction
+  encoder `gfx9_*`). **sankoch 2.3.1 → 2.4.3** fold. Both dists regenerated and
+  diffed FRESH (regen == committed) before folding. api-surface 4407 → **4509**
+  (+102 added, 0 removed; the yukti/sakshi removals are vars/enum-consts, not
+  tracked public fns).
+
+### Verified
+- check.sh **89/89** (api-surface snapshot regenerated to 4509); x86 + aarch64
+  self-host **byte-identical** (compiler unchanged — all four are lib-only folds);
+  the four folds compile + run in-tree (`large_source` / `sakshi` tcyr). Cross-OS:
+  **pi (aarch64-Linux) SELFHOST_OK + sakshi + sakshi_full 2/2 PASS**; **ecb
+  (arm64-macOS) SELFHOST_OK + sakshi PASS**, spans/clock verified advancing
+  (`[EXIT] test_op (8708ns)`); **cass UNREACHABLE this run** (mDNS flake — the
+  literal-228/35 PE routing is proven by v6.2.15 + sakshi's own wine CI gate).
+  bench `self_compile` ~512 ms / `cycc` **1,066,104 B** (flat). yukti 2.2.6 +
+  sakshi 2.3.1 ship with their own CHANGELOG entries + green CI (lint/dist-sync/
+  version-consistency).
+- **Found-not-fixed (pre-existing, filed):** `sakshi_full.tcyr` fails its file-out
+  assertion on arm64-macOS — `lib/io.cyr` uses Linux O_* values with no Darwin
+  translation (Darwin `O_CREAT` is `0x200`, not `64`); sakshi 2.3.0 fails
+  identically, so NOT a v6.2.16 regression. Tracked in
+  `2026-06-17-io-cyr-o-flags-not-darwin-translated.md`.
+
 ## [6.2.15] — 2026-06-16
 
 **v6.2.15 — bench-tooling hardening: macOS/Windows bench-zero fix + PF-01
