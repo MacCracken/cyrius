@@ -660,6 +660,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var psc = 0;
     var ann_sid = 0;
     var ann_scalar = 0;
+    var ann_float = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for `var x: f64`/`f32`
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); psc = 8; STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
@@ -679,6 +680,8 @@ fn PARSE_GVAR_REG(S): i64 {
                 elif (ann_tn & 0xFFFFFF == 0x323375) { ann_scalar = 4; }
                 elif (ann_tn & 0xFFFFFF == 0x343669) { ann_scalar = 8; }
                 elif (ann_tn & 0xFFFFFF == 0x343675) { ann_scalar = 8; }
+                elif (ann_tn & 0xFFFFFF == 0x343666) { ann_float = F64_TYID; }
+                elif (ann_tn & 0xFFFFFF == 0x323366) { ann_float = F32_TYID; }
                 elif (ann_tn & 0xFFFFFFFF == 0x38323175) { ann_scalar = 16; }
                 else { ann_sid = FINDSTRUCT(S, ann_sn); }
             }
@@ -782,7 +785,12 @@ fn PARSE_GVAR_REG(S): i64 {
         S64(S + 0x12A000 + vcnt * 8, STRUCTSZ(S, ssid - 1));
         SVTYPE(S, vcnt, ssid);
     } else {
-        if (ann_scalar > 0) {
+        if (ann_float != 0) {
+            # f64/f32: 8-byte slot (f64 bit pattern, or f32 bits in the low 32);
+            # SVTYPE marks it so PEXPR/PARSE_TERM route operators to EMIT_F64_BINOP.
+            S64(S + 0x12A000 + vcnt * 8, 8);
+            SVTYPE(S, vcnt, ann_float);
+        } elif (ann_scalar > 0) {
             if (ann_scalar < 8) {
                 S64(S + 0x12A000 + vcnt * 8, ann_scalar);
                 SVTYPE(S, vcnt, ann_scalar);
@@ -1026,6 +1034,7 @@ fn PARSE_VAR(S): i64 {
     # Optional type annotation: var x: type = ... or var x: *type = ...
     var pscale = 0;
     var scalar_type = 0;
+    var lfloat = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for local `var x: f64`/`f32`
     var slice_elt_w = 0;  # v5.8.14 §6: element width for slice<T>/[T] (0 = not a slice)
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);  # consume :
@@ -1157,6 +1166,10 @@ fn PARSE_VAR(S): i64 {
                 elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003476343666) {
                     pscale = 0 - 21;
                 }
+                # f64/f32 scalar — MUST come after f64v2/f64v4 (their low 3 bytes
+                # are also "f64", so the 6-byte SIMD checks must match first).
+                elif (ltname & 0xFFFFFF == 0x343666) { lfloat = F64_TYID; }
+                elif (ltname & 0xFFFFFF == 0x323366) { lfloat = F32_TYID; }
                 else {
                     var lsid = FINDSTRUCT(S, lann);
                     if (lsid > 0) { pscale = 0 - lsid; }
@@ -1757,7 +1770,12 @@ fn PARSE_VAR(S): i64 {
         } else {
             S64(S + 0x5D9D000 + li * 8, noff);
             SLDEP(S, li, GSDEP(S));
-            if (scalar_type > 0) {
+            if (lfloat != 0) {
+                # f64/f32 local: tag the slot's type so access SESTYPEs it; store
+                # the 8-byte value (f64 bits, or f32 bits in the low 32).
+                SLTYPE(S, li, lfloat);
+                EFLSTORE(S, li);
+            } elif (scalar_type > 0) {
                 if (scalar_type < 8) {
                     SLTYPE(S, li, scalar_type);
                     EFLSTORE_W(S, li, scalar_type);
@@ -1796,7 +1814,13 @@ fn PARSE_VAR(S): i64 {
     } else {
         var vcnt = GVCNT(S);
         S64(S + 0x11A000 + vcnt * 8, noff);
-        if (scalar_type > 0) {
+        if (lfloat != 0) {
+            # f64/f32 local: 8-byte slot + float type marker → PEXPR/PARSE_TERM
+            # route operators to EMIT_F64_BINOP (f32 type-only, converted via f32_*).
+            S64(S + 0x12A000 + vcnt * 8, 8);
+            SVTYPE(S, vcnt, lfloat);
+            EVSTORE(S, vcnt);
+        } elif (scalar_type > 0) {
             if (scalar_type < 8) {
                 S64(S + 0x12A000 + vcnt * 8, scalar_type);
                 SVTYPE(S, vcnt, scalar_type);

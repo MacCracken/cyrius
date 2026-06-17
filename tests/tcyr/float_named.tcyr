@@ -1,0 +1,48 @@
+# float_named.tcyr — named f64 type + operator sugar (v6.2.19 math mini-arc).
+# `var x: f64` declares a float; `+ - * /` on f64 operands lower to the
+# EMIT_F64_BINOP builtin (SSE2 on x86, NEON on aarch64) instead of integer ops.
+# f32 is type-only (annotation + f32_from/f32_to conversions; no f32 arithmetic).
+# (f64 comparison-operator sugar is a later bite — use f64_lt/gt/eq meanwhile.)
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+# f64 globals
+var g_half: f64 = 0.5;
+var g_two:  f64 = 2.0;
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("f64 literal operators + precedence");
+    assert_eq(f64_to(1.5 + 2.0), 3, "1.5 + 2.0 = 3.5 -> 3");
+    assert_eq(f64_to(5.0 - 1.5), 3, "5.0 - 1.5 = 3.5 -> 3");
+    assert_eq(f64_to(2.0 * 3.5), 7, "2.0 * 3.5 = 7.0");
+    assert_eq(f64_to(10.0 / 4.0), 2, "10.0 / 4.0 = 2.5 -> 2");
+    assert_eq(f64_to(2.0 + 3.0 * 4.0), 14, "precedence: 2 + 3*4 = 14");
+
+    test_group("local f64 vars");
+    var x: f64 = 2.5;
+    var y: f64 = 4.0;
+    assert_eq(f64_to(x * y), 10, "x*y = 10.0");
+    assert_eq(f64_to(x * y - 1.0), 9, "x*y - 1.0 = 9.0");
+    assert_eq(f64_to(x + y + 0.5), 7, "x + y + 0.5 = 7.0");
+
+    test_group("global f64 vars");
+    assert_eq(f64_to(g_half + g_two), 2, "0.5 + 2.0 = 2.5 -> 2");
+    assert_eq(f64_to(g_two * g_two), 4, "2.0 * 2.0 = 4.0");
+
+    test_group("f32 type + conversions (type-only)");
+    var px: f32 = f32_from(0.5);
+    assert_eq(px, 0x3F000000, "f32 var holds 0.5f bits");
+    assert_eq(f32_to(px), 0.5, "f32_to(px) -> f64 0.5");
+    assert_eq(f64_to(f32_to(px) + 1.5), 2, "f32->f64 then f64 add: 0.5 + 1.5 = 2.0");
+
+    var r = assert_summary();
+    return r;
+}
+var rc = main();
+syscall(60, rc);

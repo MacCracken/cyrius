@@ -22,7 +22,15 @@
 fn GSTC(S): i64 { return L64(S + 0x18F830); }
 fn SSTC(S, v): i64 { S64(S + 0x18F830, v); return 0; }
 
-# Get/set struct_id for global variable at index vi
+# Get/set struct_id for global variable at index vi.
+# v6.2.18+ math mini-arc: scalar f64/f32 reuse the var-type slot with high
+# sentinel codes (distinct from struct ids, which are small positives). A var
+# of these types is 8-byte-stored (the f64 bit pattern, or the f32 bits in the
+# low 32) so the existing `vt>0 && size==8` value-load path applies; PEXPR /
+# PARSE_TERM route operators on F64_TYID to the EMIT_F64_BINOP builtin (f32 is
+# type-only — converted via f32_from/f32_to, no f32 arithmetic).
+var F64_TYID = 0x40000001;
+var F32_TYID = 0x40000002;
 fn GVTYPE(S, vi): i64 { return L64(S + 0x13A000 + vi * 8); }
 fn SVTYPE(S, vi, v): i64 { S64(S + 0x13A000 + vi * 8, v); return 0; }
 

@@ -106,7 +106,7 @@ fn PARSE_FACTOR(S): i64 {
         ENOTR(S);
         return 0;
     }
-    if (typ == 61) { var fval = PEEKV(S); STI(S, GTI(S) + 1); EMIT_FLOAT_LIT(S, fval); return 0; }
+    if (typ == 61) { var fval = PEEKV(S); STI(S, GTI(S) + 1); EMIT_FLOAT_LIT(S, fval); SESTYPE(S, F64_TYID); return 0; }
     # sizeof(Type) — compile-time constant (detected as IDENT "sizeof")
     if (typ == 2) { if (L64(S + 0x60000 + PEEKV(S)) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
             STI(S, GTI(S) + 1);
@@ -260,6 +260,14 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 } }
                 var lt = GLTYPE(S, li);
+                # v6.2.19 math arc: f64/f32 locals — load the 8-byte value and tag
+                # the expression f64/f32 so PEXPR/PARSE_TERM route operators to the
+                # f64 builtins (skip the SPSC pointer-scale + sub-word paths below).
+                if (lt == F64_TYID) { SESTYPE(S, F64_TYID); EFLLOAD(S, li); return 0; }
+                # f32 is type-only: load the 8-byte value but DON'T propagate F32 as
+                # an expr-type (no f32 arithmetic — convert via f32_to to f64 first).
+                # Leaving it untyped (0) keeps F32 out of the operator dispatch.
+                if (lt == F32_TYID) { EFLLOAD(S, li); SESTYPE(S, 0); return 0; }
                 SPSC(S, lt);
                 # Width-correct load for scalar types (1=i8, 2=i16, 4=i32)
                 if (lt > 0) { if (lt <= 8) { SEXW(S, lt); EFLLOAD_W(S, li, lt); return 0; } }
@@ -1521,8 +1529,8 @@ fn PARSE_TERM(S): i64 {
     # polyfill-call / hard-error, cx is no-op. parse_expr.cyr is
     # arch-agnostic for these ops.
     if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 0; } }
-    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EI2F(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF2I(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 0; } }
     if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
@@ -1542,8 +1550,8 @@ fn PARSE_TERM(S): i64 {
     # f32_from(x): f64 → f32 bit pattern (cvtsd2ss). f32_to(x): f32 → f64 (cvtss2sd).
     # v6.2.18 native-float math arc. Backend emit takes the value in rax, returns
     # the converted bits in rax (full move/cvt/move sequence lives per-arch).
-    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
     if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
@@ -1633,7 +1641,8 @@ fn PARSE_TERM(S): i64 {
         if (typ == 8) {
             var mulst = GESTYPE(S);
             STI(S, GTI(S) + 1);
-            if (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3); }
+            if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
+            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3); }
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
                 if (_cfo == 1) {
@@ -1691,7 +1700,8 @@ fn PARSE_TERM(S): i64 {
         else { if (typ == 9) {
                 var divst = GESTYPE(S);
                 STI(S, GTI(S) + 1);
-                if (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3); }
+                if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
+                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3); }
                 else {
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
                             var crv = PEEKV(S);
@@ -1862,7 +1872,8 @@ fn PEXPR(S): i64 {
         if (typ == 6) {
             var addst = GESTYPE(S);
             STI(S, GTI(S) + 1);
-            if (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3); _cfo = 0; }
+            if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
+            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3); _cfo = 0; }
             else {
                 # Fold only if right side is a plain literal (not followed by * / % << >>)
                 var add_can_fold = 0;
@@ -1888,7 +1899,8 @@ fn PEXPR(S): i64 {
         else { if (typ == 7) {
                 var subst = GESTYPE(S);
                 STI(S, GTI(S) + 1);
-                if (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3); _cfo = 0; }
+                if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
+                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3); _cfo = 0; }
                 else {
                     var sub_can_fold = 0;
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
