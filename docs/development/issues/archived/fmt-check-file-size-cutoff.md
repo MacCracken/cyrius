@@ -1,7 +1,37 @@
 # 2026-06-17 — `cyrius fmt` (format check) has a file-size cutoff that drops large files from reporting
 
 > **Target:** v6.2.20 (user 2026-06-17 — "review of fmt check and its file size max
-> cut offs from reporting as a part of 6.2.20"). Triage; not started.
+> cut offs from reporting as a part of 6.2.20"). **RESOLVED v6.2.20.**
+
+## Resolution (v6.2.20)
+
+The cutoff was **not** ~128 KB and not a `check.sh` size guard — it was the
+input-buffer cap in the tools themselves: `programs/cyrfmt.cyr` and
+`programs/cyrlint.cyr` each `alloc(524288)` (512 KB) and call
+`file_read_all(path, buf, 524288)`. `file_read_all` stops at `maxlen` and returns
+`total`, so a file larger than 512 KB was **silently truncated** — cyrfmt/cyrlint
+format/lint-checked only the first 512 KB and reported a clean pass on the
+(partial) buffer. The file that actually hit it was the folded `lib/mabda.cyr`
+(~834 KB), so ~322 KB of mabda went unchecked every gate run.
+
+Fix (both tools):
+1. **Raised the cap 512 KB → 1028 KB** (`var _MAX_FILE = 1052672;`, one named
+   constant per tool — no more 4-site magic-number drift). Covers the largest
+   real file today (mabda ~834 KB) with headroom; non-vendored source tops out at
+   ~160 KB (`src/backend/x86/emit.cyr`). User chose 1028 KB "to be safe."
+2. **Fail loud on truncation.** `file_read_all` returning `n >= _MAX_FILE` means
+   the file hit the ceiling and the tail was dropped, so both tools now print
+   `file too large to format-check/lint (>1028KB) — raise _MAX_FILE` and exit 1
+   instead of silently checking a truncated buffer. Applies the "no silent caps —
+   fail loud, don't skip" principle to the fmt/lint gates.
+
+Verified: `cyrfmt --check lib/mabda.cyr` now reads all 834 KB and reports clean
+(was truncated at 512 KB); a synthetic 1.1 MB file trips the fail-loud guard in
+both tools (exit 1). Tool binaries rebuilt into `build/` + `~/.cyrius/bin/`.
+
+---
+
+## Original triage
 
 ## Problem
 

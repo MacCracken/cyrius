@@ -21,6 +21,12 @@ var _out_buf: i64 = 0;
 var _out_pos: i64 = 0;
 var _check_mode: i64 = 0;
 var _write_mode: i64 = 0;
+# Max file size cyrfmt will read/format in one pass (1028KB). Largest real
+# source today is ~160KB; vendored stdlib bundles (mabda ~834KB) are the real
+# floor. file_read_all() caps at this; a file that hits the ceiling is flagged
+# fail-loud below rather than silently format-checked on a truncated buffer.
+# See CHANGELOG [6.2.20].
+var _MAX_FILE: i64 = 1052672;
 
 # Emit len bytes from ptr. --check / --write both route to the in-memory
 # output buffer; default (to-stdout) path issues a direct syscall(1, …).
@@ -199,16 +205,24 @@ fn main(): i64 {
         }
     }
 
-    var buf = alloc(524288);
+    var buf = alloc(_MAX_FILE);
     var path = argv(file_arg);
-    var n = file_read_all(path, buf, 524288);
+    var n = file_read_all(path, buf, _MAX_FILE);
     if (n <= 0) {
         println("cyrfmt: cannot read file");
         return 1;
     }
+    # Fail loud on a truncated read: file_read_all stops at _MAX_FILE, so
+    # n == _MAX_FILE means the file is at/over the cap and the tail was
+    # dropped. Format-checking a truncated buffer would silently pass (or
+    # spuriously fail mid-token) — surface it instead of guessing.
+    if (n >= _MAX_FILE) {
+        println("cyrfmt: file too large to format-check (>1028KB) — raise _MAX_FILE");
+        return 1;
+    }
 
     if (_check_mode == 1) {
-        _out_buf = alloc(524288);
+        _out_buf = alloc(_MAX_FILE);
         _out_pos = 0;
         format_file(buf, n);
         # Compare formatted output against original
@@ -218,7 +232,7 @@ fn main(): i64 {
     }
 
     if (_write_mode == 1) {
-        _out_buf = alloc(524288);
+        _out_buf = alloc(_MAX_FILE);
         _out_pos = 0;
         format_file(buf, n);
         # Short-circuit: skip the write if input already matches formatted

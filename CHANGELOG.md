@@ -6,6 +6,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.20] — 2026-06-17
+
+**v6.2.20 — cyrfmt/cyrlint file-size cap 512 KB → 1028 KB + fail-loud truncation
+guard; patra 1.11.4 / sandhi 1.6.7 / mabda 3.2.7 folds.** The fmt/lint gates were
+**silently truncating** large files: `programs/cyrfmt.cyr` and
+`programs/cyrlint.cyr` each `alloc(524288)` (512 KB) and read via
+`file_read_all(path, buf, 524288)`, which stops at `maxlen` and returns the
+truncated length. The file that actually tripped it is the folded `lib/mabda.cyr`
+(~834 KB) — ~322 KB went format/lint-**unchecked** every run while the gate reported
+a clean pass. Same silent-cap class as the `.39` byte-length / em-dash misses.
+
+### Fixed
+- **cyrfmt/cyrlint no longer silently truncate large files.** Raised the
+  input-buffer cap **512 KB → 1028 KB** (`var _MAX_FILE = 1052672;`, one named
+  constant per tool — kills the 4-site magic-number drift in cyrfmt). Covers the
+  largest real file today (`lib/mabda.cyr` ~834 KB) with headroom; non-vendored
+  source tops out at ~160 KB (`src/backend/x86/emit.cyr`). Both tools now **fail
+  loud** when a read hits the ceiling (`n >= _MAX_FILE`) — printing `file too large
+  to format-check/lint (>1028KB) — raise _MAX_FILE` and exiting 1 instead of
+  checking a truncated buffer. Verified: `cyrfmt --check lib/mabda.cyr` now reads
+  all 834 KB and reports clean (was truncated at 512 KB); a synthetic 1.1 MB file
+  trips the guard in both tools. Resolves the v6.2.20 fmt-cutoff item.
+
+### Changed
+- **patra 1.11.2 → 1.11.4**, **sandhi 1.6.5 → 1.6.7**, **mabda 3.2.6 → 3.2.7**
+  folds (FRESH dists regen-diffed, vendored, snapshot-refreshed). api-surface
+  4549 → **4565** (+16: sandhi +12, mabda +6/−4, patra +2; scoped entirely to the
+  folded modules).
+
+### Notes
+- Compiler `src/` untouched this slot — cycc self-hosts **byte-identical** at
+  **1,069,688 B** (flat vs 6.2.19) on x86_64 + **ecb** (macOS arm64) + **pi**
+  (aarch64-Linux) + **cass** (Windows PE); all four self-host green. bench
+  self_compile ~548 ms (wall-clock jitter on a non-quiet box; binary identical).
+  check.sh **89/89**.
+
 ## [6.2.19] — 2026-06-17
 
 **v6.2.19 — named f64 type + operator sugar (math mini-arc bite 2) + mabda 3.2.6 /

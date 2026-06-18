@@ -14,24 +14,43 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.19** (v6.2.x cycle — **Platform Expansion**; math mini-arc bite 2: **named `f64` type + operator/comparison sugar**; f32 type-only; mabda 3.2.6 / sandhi 1.6.5 folds. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (+2,288 @ 6.2.19 — f64 operator/comparison dispatch + EF64_CMP ops 17-22; self-host byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.19 (+EF64_CMP cset le/ge/ne for the f64 comparison operators — verified via aarch64-as) |
+| **Version** | **6.2.20** (v6.2.x cycle — **Platform Expansion**; cyrfmt/cyrlint file-size cap 512 KB → 1028 KB + fail-loud truncation guard; patra 1.11.4 / sandhi 1.6.7 / mabda 3.2.7 folds. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.20 — compiler `src/` untouched; self-host byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | unchanged @ 6.2.20 (no compiler-src change this slot) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.19 (shares the x86 f64 operator/EF64_CMP dispatch) |
+| **cycc_win** (PE32+ cross) | unchanged @ 6.2.20 (no compiler-src change this slot) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.3 · **sandhi 1.6.5** · sankoch 2.4.3 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.2 · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.6** · sakshi 2.3.2 (mabda 3.2.6 uses the f32 builtins + sandhi 1.6.5 folded @.19; all 12 libs current) |
+| stdlib fold | agnosys 1.4.3 · **sandhi 1.6.7** · sankoch 2.4.3 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · **patra 1.11.4** · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.7** · sakshi 2.3.2 (patra/sandhi/mabda folded @.20; all 12 libs current) |
 | tests | 185 `.tcyr` (+`float_named` @.19 — f64 type/operators/comparisons, 21 asserts; +`float_f32` @.18; +`protobuf` @.17) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4549 fns** (4526→4549 @.19: +23 mabda 3.2.6 + sandhi 1.6.5; `f64`/`f32` are compiler keywords/types, untracked) |
+| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4565 fns** (4549→4565 @.20: +16 from sandhi/mabda/patra folds; scoped to those modules) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile **521 ms** @ 6.2.19 (flat; cycc 1,069,688 B +2,288 for the f64 operator/comparison dispatch; self-host byte-identical) |
+| bench (every-release gate) | self_compile **~548 ms** @ 6.2.20 (wall-clock jitter on a non-quiet box; cycc 1,069,688 B flat — compiler byte-identical) |
 
-> **Handoff (2026-06-17):** **v6.2.19 CUT — named f64 type + operator/comparison
+> **Handoff (2026-06-17):** **v6.2.20 CUT — cyrfmt/cyrlint silent-truncation fix
+> (cap 512 KB → 1028 KB + fail-loud) + patra 1.11.4 / sandhi 1.6.7 / mabda 3.2.7
+> folds.** The fmt/lint gates were silently truncating files >512 KB: cyrfmt &
+> cyrlint `alloc(524288)` + `file_read_all(.., 524288)`, which stops at maxlen, so
+> `lib/mabda.cyr` (~834 KB) had ~322 KB format/lint-unchecked while the gate
+> reported clean. Raised the buffer cap to **1028 KB** (`_MAX_FILE = 1052672`, one
+> named const per tool) — covers mabda + headroom (non-vendored src tops at ~160 KB)
+> — and made both tools **fail loud** (`n >= _MAX_FILE` → "file too large … raise
+> _MAX_FILE", exit 1) instead of truncating. User chose 1028 KB "to be safe … until
+> I get some refactors going to clean up [mabda]." patra/sandhi/mabda folded fresh;
+> api-surface 4549 → 4565. **VERIFIED:** check.sh 89/89; x86 self-host fixpoint;
+> **ecb + pi + cass all SELFHOST_OK byte-identical** (compiler src untouched, so
+> cross-bins flat); mabda now format-checks clean at full 834 KB; synthetic 1.1 MB
+> trips the fail-loud guard. cycc 1,069,688 B (flat). Issue archived. **NEXT: math-arc
+> "fuller annotations" bites** (stricter f64/f32 typecheck, f32 arithmetic, cx scalar
+> float, IEEE-754-direct literals) — user's call per-slot.
+>
+> ---
+>
+> **Prior (2026-06-17):** **v6.2.19 CUT — named f64 type + operator/comparison
 > sugar (math mini-arc bite 2) + mabda 3.2.6 / sandhi 1.6.5 folds.** `var x: f64`
 > (global + local) now tags the var f64; `+ − * /` route to EMIT_F64_BINOP and
 > `< > <= >= == !=` to EF64_CMP (real f64 compare — verified on negatives, NOT
@@ -51,7 +70,7 @@
 >
 > ---
 >
-> **Prior (2026-06-17):** **v6.2.18 CUT — native-float math mini-arc opens (f32
+> **Earlier (2026-06-17):** **v6.2.18 CUT — native-float math mini-arc opens (f32
 > conversions).** The math mini-arc (native-float proposal) — **corrected back into
 > v6.2.x** from a v6.2.14 mis-filing under v6.3.x; the **user leads the arc's scope +
 > slicing**. A corrected review found scalar f64 ALREADY works on x86+aarch64 (literals,

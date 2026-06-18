@@ -1579,6 +1579,7 @@ mabda::frame_resources_track_texture/2
 mabda::gfx9_abi_assign/2
 mabda::gfx9_abi_binding_sgpr/2
 mabda::gfx9_abi_builtin_reg/3
+mabda::gfx9_abi_lid_count/1
 mabda::gfx9_abi_num_bindings/1
 mabda::gfx9_abi_sgpr_base/1
 mabda::gfx9_abi_tgid_x/1
@@ -1608,7 +1609,7 @@ mabda::gfx9_reg/2
 mabda::gfx9_reg_lastuse/2
 mabda::gfx9_regalloc/9
 mabda::gfx9_rsrc1/2
-mabda::gfx9_rsrc2/4
+mabda::gfx9_rsrc2/6
 mabda::gfx9_sgpr/1
 mabda::gfx9_vgpr/1
 mabda::gfx9_waitcnt/5
@@ -1831,6 +1832,7 @@ mabda::native_ctx_fence_addr/1
 mabda::native_ctx_fence_handle/1
 mabda::native_ctx_fence_va/1
 mabda::native_ctx_free/2
+mabda::native_ctx_free_texture_va/2
 mabda::native_ctx_ib_addr/1
 mabda::native_ctx_ib_handle/1
 mabda::native_ctx_ib_va/1
@@ -2073,9 +2075,9 @@ mabda::shader_cache_get_spirv/3
 mabda::shader_cache_new/0
 mabda::shader_cache_set/3
 mabda::shader_cache_set_spirv/4
-mabda::spirv_build_const_table/4
-mabda::spirv_build_decoration_table/4
-mabda::spirv_build_type_table/4
+mabda::spirv_build_const_table/5
+mabda::spirv_build_decoration_table/5
+mabda::spirv_build_type_table/5
 mabda::spirv_const_type/2
 mabda::spirv_const_value/2
 mabda::spirv_count_instructions/2
@@ -2396,6 +2398,7 @@ patra::patra_hdr_write_nosync/2
 patra::patra_init/0
 patra::patra_insert_row/10
 patra::patra_json_build/6
+patra::patra_last_insert_id/1
 patra::patra_lock_ex/1
 patra::patra_lock_sh/1
 patra::patra_open/1
@@ -2415,6 +2418,7 @@ patra::patra_result_get_text_len/3
 patra::patra_result_read_bytes/5
 patra::patra_result_read_text/5
 patra::patra_rollback/1
+patra::patra_rows_affected/1
 patra::patra_set_sync_mode/2
 patra::patra_unlock/1
 patra::pg_alloc/0
@@ -2900,6 +2904,15 @@ sandhi::sandhi_retry_max_attempts/2
 sandhi::sandhi_retry_max_backoff_ms/2
 sandhi::sandhi_retry_new/0
 sandhi::sandhi_retry_new_a/1
+sandhi::sandhi_route_param/2
+sandhi::sandhi_route_param_a/3
+sandhi::sandhi_route_param_count/1
+sandhi::sandhi_route_param_int/2
+sandhi::sandhi_route_params_init/1
+sandhi::sandhi_router_add/4
+sandhi::sandhi_router_dispatch/6
+sandhi::sandhi_router_new/1
+sandhi::sandhi_router_new_a/3
 sandhi::sandhi_rpc_body/1
 sandhi::sandhi_rpc_body_len/1
 sandhi::sandhi_rpc_call/4
@@ -2948,9 +2961,12 @@ sandhi::sandhi_server_path_segment_a/3
 sandhi::sandhi_server_recv_request/3
 sandhi::sandhi_server_request_has_cl_te_conflict/2
 sandhi::sandhi_server_request_has_dup_smuggling_header/2
+sandhi::sandhi_server_route_match/3
+sandhi::sandhi_server_router_handler/4
 sandhi::sandhi_server_run/4
 sandhi::sandhi_server_run_async/5
 sandhi::sandhi_server_run_opts/5
+sandhi::sandhi_server_run_pooled/5
 sandhi::sandhi_server_send_204/2
 sandhi::sandhi_server_send_204_a/3
 sandhi::sandhi_server_send_chunk/3

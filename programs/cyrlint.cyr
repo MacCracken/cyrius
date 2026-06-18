@@ -12,6 +12,10 @@ include "lib/args.cyr"
 
 var _warnings = 0;
 var _errors = 0;
+# Max file size cyrlint reads in one pass (1028KB); mirrors cyrfmt's _MAX_FILE.
+# A file that hits the ceiling is flagged fail-loud rather than linted on a
+# silently-truncated buffer. See CHANGELOG [6.2.20].
+var _MAX_FILE = 1052672;
 
 fn warn(line, msg): i64 {
     syscall(1, 2, "  warn line ", 12);
@@ -683,10 +687,15 @@ fn main(): i64 {
     syscall(1, 1, path, strlen(path));
     syscall(1, 1, " ===\n", 5);
 
-    var buf = alloc(524288);
-    var n = file_read_all(path, buf, 524288);
+    var buf = alloc(_MAX_FILE);
+    var n = file_read_all(path, buf, _MAX_FILE);
     if (n <= 0) {
         println("cyrlint: cannot read file");
+        return 1;
+    }
+    # Fail loud on a truncated read (see cyrfmt _MAX_FILE rationale).
+    if (n >= _MAX_FILE) {
+        println("cyrlint: file too large to lint (>1028KB) — raise _MAX_FILE");
         return 1;
     }
 
