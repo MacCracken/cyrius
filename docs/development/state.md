@@ -14,11 +14,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.20** (v6.2.x cycle — **Platform Expansion**; cyrfmt/cyrlint file-size cap 512 KB → 1028 KB + fail-loud truncation guard; patra 1.11.4 / sandhi 1.6.7 / mabda 3.2.7 folds. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.20 — compiler `src/` untouched; self-host byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | unchanged @ 6.2.20 (no compiler-src change this slot) |
+| **Version** | **6.2.21** (v6.2.x cycle — **Platform Expansion**; aarch64 imm12-mask codegen class fix: EADDIMM_X1 struct-field offsets + EPATCHFRAME stack frames >= 4096; + api_surface / gen_unicode silent-buffer-cap tail. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.21 — x86 backend untouched; aarch64-only codegen fix; self-host byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.21 (+4 B/prologue from EPATCHFRAME's 2-slot frame-size reserve; EADDIMM_X1/EPATCHFRAME imm12 fix — verified via aarch64-as + qemu + pi/ecb self-host) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | unchanged @ 6.2.20 (no compiler-src change this slot) |
+| **cycc_win** (PE32+ cross) | unchanged @ 6.2.21 (x86/PE backend untouched by the aarch64 fix; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
@@ -26,12 +26,36 @@
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
 | stdlib fold | agnosys 1.4.3 · **sandhi 1.6.7** · sankoch 2.4.3 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · **patra 1.11.4** · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.7** · sakshi 2.3.2 (patra/sandhi/mabda folded @.20; all 12 libs current) |
-| tests | 185 `.tcyr` (+`float_named` @.19 — f64 type/operators/comparisons, 21 asserts; +`float_f32` @.18; +`protobuf` @.17) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4565 fns** (4549→4565 @.20: +16 from sandhi/mabda/patra folds; scoped to those modules) |
+| tests | 186 `.tcyr` (+`aarch64_imm12_frame_field` @.21 — >=4096B frame survives a call, EPATCHFRAME guard; +`float_named` @.19; +`float_f32` @.18; +`protobuf` @.17) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4565 fns** (flat @.21 — no lib changes; api_surface tool buffers raised 512 KB→1 MB / 8192→16384 slots + fail-loud) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile **~548 ms** @ 6.2.20 (wall-clock jitter on a non-quiet box; cycc 1,069,688 B flat — compiler byte-identical) |
+| bench (every-release gate) | self_compile jitter @ 6.2.21 (loaded box; cycc 1,069,688 B flat — x86 binary byte-identical) |
 
-> **Handoff (2026-06-17):** **v6.2.20 CUT — cyrfmt/cyrlint silent-truncation fix
+> **Handoff (2026-06-17):** **v6.2.21 CUT — aarch64 imm12-mask codegen class
+> (EADDIMM_X1 struct-field offsets + EPATCHFRAME stack frames >= 4096) + the
+> api_surface / gen_unicode silent-buffer-cap tail.** AArch64 ADD/SUB-imm carries a
+> 12-bit immediate; two emitters masked their operand with no guard, silently
+> corrupting any value >= 4096 (same class as the v6.0.91 `EADDRA_IMM` fix).
+> `EADDIMM_X1` (struct field offsets) and `EPATCHFRAME` (prologue frame size) both
+> now use the lo + hi-LSL#12 split; `ESUBRSP` reserves 2 prologue slots (+4 B/fn).
+> The epilogue is fp-based (`mov sp, x29`) so it needed no change. A class sweep
+> confirmed the other 3 imm12 sites guarded. **Self-host-invisible** (cycc's offsets/
+> frames are small; 256-field struct cap + array globalization keep source from
+> reaching >= 4096), so it's a latent consumer-facing bug — proven via aarch64-as
+> encodings, OLD-vs-NEW disasm differentials, qemu runtime differential, AND a new
+> `aarch64_imm12_frame_field.tcyr` that fails on aarch64 without the fix. Folded the
+> silent-buffer-cap tail the .20 fmt review surfaced: api_surface `_push_entry`
+> overflow guard + caps 512 KB→1 MB / 8192→16384 slots + SNAPSHOT_BUF 256 KB→1 MB;
+> gen_unicode 5 UCD-read truncation guards. **VERIFIED:** check.sh 89/89; x86
+> self-host byte-identical (cycc flat 1,069,688 B — x86 backend untouched);
+> **pi + ecb SELFHOST_OK + aarch64_imm12_frame_field.tcyr PASS on real hardware**
+> (native aarch64 cycc byte-identical despite +4 B/prologue); cass SELFHOST_OK.
+> **NEXT: math-arc "fuller annotations" bites** (stricter f64/f32 typecheck, f32
+> arithmetic, cx scalar float, IEEE-754-direct literals) — user's call per-slot.
+>
+> ---
+>
+> **Prior (2026-06-17):** **v6.2.20 CUT — cyrfmt/cyrlint silent-truncation fix
 > (cap 512 KB → 1028 KB + fail-loud) + patra 1.11.4 / sandhi 1.6.7 / mabda 3.2.7
 > folds.** The fmt/lint gates were silently truncating files >512 KB: cyrfmt &
 > cyrlint `alloc(524288)` + `file_read_all(.., 524288)`, which stops at maxlen, so
@@ -70,7 +94,7 @@
 >
 > ---
 >
-> **Earlier (2026-06-17):** **v6.2.18 CUT — native-float math mini-arc opens (f32
+> **Prior (2026-06-17):** **v6.2.18 CUT — native-float math mini-arc opens (f32
 > conversions).** The math mini-arc (native-float proposal) — **corrected back into
 > v6.2.x** from a v6.2.14 mis-filing under v6.3.x; the **user leads the arc's scope +
 > slicing**. A corrected review found scalar f64 ALREADY works on x86+aarch64 (literals,

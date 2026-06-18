@@ -21,14 +21,15 @@ refactor/code-review/security/downstream — all otherwise clean). **Status
 freed-scalar-holes reclaim (informational) stays a fill-as-you-go item. The
 original candidate write-ups are kept below for history:
 
-- **`aarch64 EADDRA_IMM` 12-bit mask** (latent codegen bug, **pre-existing**
-  — reproduced at `affc8ac4`, not a .88–.90 regression). `add x0,x0,#imm12`
-  masks the operand to 12 bits, so a byte-array literal `> 4096` elements
-  silently corrupts (at offset 4096, `4096 & 0xFFF == 0` → no-op add → byte
-  lands at `&var+0`). Reached only via the peephole's correct `disp >= 4096`
-  legacy fallback. Doesn't bite in-tree (no brace-literal byte array > 4096).
-  Fix: a `> 4095` path (chunked add-imm12 or movz/movk + add-reg). Issue:
-  [`issues/2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md`](issues/2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md).
+- **`aarch64` ADD/SUB-immediate 12-bit-mask class — CLOSED.** `EADDRA_IMM` was
+  fixed at v6.0.91 (three-way split); the two remaining unguarded siblings
+  (`EADDIMM_X1` struct-field offsets, `EPATCHFRAME` prologue frame size) were
+  swept and fixed at **v6.2.21**, and the other imm12 sites (`ESTOREB_IMM`,
+  `ELOAD_LOCAL_ADDR`) confirmed guarded. All latent (cycc's own offsets/frames
+  are small; 256-field struct cap + array globalization keep source < 4096), so
+  none bit in-tree — guarded by `tests/tcyr/aarch64_imm12_frame_field.tcyr` +
+  disasm differentials. Original write-up (historical):
+  [`issues/archived/2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md`](issues/archived/2026-06-07-aarch64-eaddra-imm-12bit-mask-over-4095.md).
 - **Hoist `_emit_fmt` / `_entry_base` to a shared home** — the v6.0.89
   first-bite left these byte-identical-duplicated in `x86/fixup.cyr` +
   `aarch64/fixup.cyr` deliberately. The hoist is BLOCKED by the single-pass

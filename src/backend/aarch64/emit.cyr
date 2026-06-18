@@ -457,10 +457,24 @@ fn EVADDR_X1(S, idx): i64 {
 # so EMIT_GVAR_INITS can hoist the base on every backend. See CHANGELOG [6.0.88].
 fn _EVRCX(S, idx): i64 { return EVADDR_X1(S, idx); }
 
-# Add immediate to x1
+# Add immediate to x1. ADD-immediate carries only a 12-bit imm (optionally
+# LSL #12), so the bare `val & 0xFFF` silently corrupted field/array offsets
+# >= 4096 (the last unguarded sibling of the EADDRA_IMM imm12-mask class;
+# callers pass struct fld_off / array byte-offset, which a consumer can push
+# past 4095 — self-host-invisible since cycc's own offsets are small). Mirror
+# EADDRA_IMM's three-way split. See CHANGELOG [6.2.21].
 fn EADDIMM_X1(S, val): i64 {
-    # add x1, x1, #val (imm12)
-    EW(S, 0x91000021 | ((val & 0xFFF) << 10));
+    if (val < 4096) {
+        EW(S, 0x91000021 | (val << 10));                       # add x1, x1, #val
+    } elif (val <= 0xFFFFFF) {
+        var _lo = val & 0xFFF;
+        if (_lo != 0) { EW(S, 0x91000021 | (_lo << 10)); }     # add x1, x1, #lo
+        EW(S, 0x91400021 | (((val >> 12) & 0xFFF) << 10));     # add x1, x1, #hi, LSL #12
+    } else {
+        EW(S, 0xD2800010 | ((val & 0xFFFF) << 5));             # movz x16, #(val & 0xFFFF)
+        EW(S, 0xF2A00010 | (((val >> 16) & 0xFFFF) << 5));     # movk x16, #(val>>16), LSL #16
+        EW(S, 0x8B100021);                                     # add x1, x1, x16
+    }
     return 0;
 }
 
@@ -1002,7 +1016,12 @@ fn EFNPRO(S): i64 {
 # Emit sub sp, sp, #imm — returns patch offset
 fn ESUBRSP(S): i64 {
     var patch = GCP(S);
-    EW(S, 0xD10003FF);  # sub sp, sp, #0 (placeholder, imm12 in bits [21:10])
+    # Reserve TWO slots so EPATCHFRAME can encode frames >= 4096 as
+    # `sub #lo ; sub #hi, LSL #12` (ADD/SUB-imm caps imm at 4095). Small
+    # frames NOP slot2. +4 bytes/prologue vs the old single-slot reserve —
+    # the cost of closing the frame-size imm12-mask bug. See CHANGELOG [6.2.21].
+    EW(S, 0xD10003FF);  # sub sp, sp, #0 (placeholder slot1 — lo / full)
+    EW(S, 0xD10003FF);  # sub sp, sp, #0 (placeholder slot2 — hi, LSL #12 / NOP)
     return patch;
 }
 
@@ -1886,14 +1905,25 @@ fn ESTRUCT_BYVAL_COPY(S, src_disp, stash_disp, aligned): i64 {
     return 0;
 }
 
-# Patch frame size: sub sp, sp, #N at the prologue
+# Patch frame size into the two prologue slots reserved by ESUBRSP.
+# ADD/SUB-immediate carries only a 12-bit imm (optionally LSL #12), so the
+# old single-slot `size & 0xFFF` silently masked frames >= 4096 — at exactly
+# 4096 -> `sub sp, sp, #0` (no allocation) -> silent stack corruption. The
+# epilogue restores sp via `mov sp, x29` (frame-pointer-based), so it needs no
+# matching change. slot1 = sub #lo, slot2 = sub #hi, LSL #12 — covers frames up
+# to 0xFFFFFF (16 MB); small frames NOP slot2. See CHANGELOG [6.2.21].
 fn EPATCHFRAME(S, patch, size): i64 {
-    # Read the SUB instruction and patch imm12
     var addr = _codebuf_base + patch;
-    var insn = L64(addr) & 0xFFFFFFFF;
-    # Clear imm12 (bits [21:10]) and set new value
-    insn = (insn & 0xFFC003FF) | ((size & 0xFFF) << 10);
-    S64(addr, (L64(addr) >> 32 << 32) | (insn & 0xFFFFFFFF));
+    var slot1 = 0;
+    var slot2 = 0;
+    if (size < 4096) {
+        slot1 = 0xD10003FF | (size << 10);                    # sub sp, sp, #size
+        slot2 = 0xD503201F;                                   # nop
+    } else {
+        slot1 = 0xD10003FF | ((size & 0xFFF) << 10);          # sub sp, sp, #lo
+        slot2 = 0xD14003FF | (((size >> 12) & 0xFFF) << 10);  # sub sp, sp, #hi, LSL #12
+    }
+    S64(addr, (slot1 & 0xFFFFFFFF) | ((slot2 & 0xFFFFFFFF) << 32));
     return 0;
 }
 

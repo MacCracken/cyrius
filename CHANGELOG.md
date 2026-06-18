@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.21] — 2026-06-17
+
+**v6.2.21 — aarch64 ADD/SUB-immediate 12-bit-mask codegen class (EADDIMM_X1
+struct-field offsets + EPATCHFRAME stack frames) + the api_surface / gen_unicode
+silent-buffer-cap tail.** AArch64 ADD/SUB-immediate carries only a 12-bit immediate
+(optionally LSL #12). Two emitters masked their operand to 12 bits with no guard,
+so any value >= 4096 silently corrupted — the same class as the v6.0.91-fixed
+`EADDRA_IMM`. Self-host-invisible (cycc's own offsets/frames are small; structs cap
+at 256 fields and large arrays globalize), consumer-facing. Found + closed via a
+deliberate class sweep of every imm12 site in the aarch64 backend.
+
+### Fixed
+- **`EADDIMM_X1` (struct-field offset add) masked offsets >= 4096.** Callers pass
+  struct field byte-offsets; a field at offset >= 4096 (reachable via nested
+  structs) had its `add x1, x1, #off` masked to `off & 0xFFF`, addressing the wrong
+  field. Now uses the proven three-way split: `add #off` (< 4096) / `add #lo ; add
+  #hi, LSL #12` (< 16 MB) / `movz/movk x16 ; add x1, x1, x16`. Disasm differential:
+  for a field at offset 4096, OLD emitted `add x1, #0x0` (read the wrong field),
+  NEW emits `add x1, #0x1, lsl #12`.
+- **`EPATCHFRAME` (prologue frame-size patch) masked frames >= 4096.** A function
+  with a >= 4096-byte stack frame got `sub sp, sp, #(size & 0xFFF)` — at exactly
+  4096, `sub sp, sp, #0` (NO allocation) → stack corruption once the frame is used
+  across a call. `ESUBRSP` now reserves **two** prologue slots and `EPATCHFRAME`
+  emits `sub #lo ; sub #hi, LSL #12` (small frames NOP slot2). The epilogue restores
+  `sp` via `mov sp, x29` (frame-pointer-based), so it needed no change. Costs +4
+  bytes per aarch64 prologue; the native aarch64 cycc still self-hosts byte-identical
+  on pi + ecb. Disasm differential (600-local fn, 4800-byte frame): OLD `sub sp,
+  #0x2c0` (704, under-allocates by exactly 4096), NEW `sub sp,#0x2c0; sub sp,#0x1,
+  lsl #12` (4800). Runtime differential under qemu-aarch64: old compiler's binary
+  exits non-zero (high locals clobbered by a callee), fixed binary exits 0.
+- **Class sweep:** the other three aarch64 imm12 sites are confirmed guarded —
+  `EADDRA_IMM` (three-way split, v6.0.91), `ESTOREB_IMM` (`disp >= 4096` → legacy
+  fallback), `ELOAD_LOCAL_ADDR` (movz/movk path for `disp_abs > 4095`).
+- **`tests/tcyr/aarch64_imm12_frame_field.tcyr`** — builds a >= 4096-byte frame and
+  forces a callee-overlap; passes on x86 + aarch64-with-fix, FAILS on aarch64
+  without the fix (verified under qemu + on pi/ecb hardware). EADDIMM_X1's >= 4096
+  path isn't runtime-observable from source (256-field struct cap, no multi-level
+  field writes), so it's disasm-verified above.
+- **api_surface silent-overflow tail (same class as the .20 fmt fix).**
+  `_push_entry` had NO bounds check and would silently overflow `ENTRIES_BUF`
+  (512 KB) / the 8192-slot offset+length tables → heap corruption / undetected
+  surface drift on a real CI gate. Raised to 1 MB / 16384 slots + fail-loud guards.
+  `SNAPSHOT_BUF` (the snapshot-readback buffer) raised 256 KB → 1 MB + fail-loud on
+  truncation. (Source-file scanning already uses a 2 MB buffer since v6.0.53.)
+- **gen_unicode_data UCD reads** — `DerivedGeneralCategory.txt` buffer 512 KB → 1 MB,
+  and **fail-loud truncation guards added to all five UCD reads** (UnicodeData /
+  CaseFolding / CompositionExclusions / DerivedGeneralCategory) so a future Unicode
+  release that outgrows a buffer can't silently generate partial tables.
+
+### Notes
+- x86 backend + frontend untouched — `build/cycc` (x86) self-hosts **byte-identical**
+  at **1,069,688 B** (flat vs 6.2.20); cycc_aarch64 / native-aarch64 grow +4 B/fn
+  (the extra prologue slot) yet self-host byte-identical on **pi** + **ecb**. **cass**
+  (Windows PE/x86) SELFHOST_OK (x86 backend unaffected). check.sh **89/89**. bench
+  self_compile timing is jitter (loaded box; binary identical).
+
 ## [6.2.20] — 2026-06-17
 
 **v6.2.20 — cyrfmt/cyrlint file-size cap 512 KB → 1028 KB + fail-loud truncation

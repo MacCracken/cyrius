@@ -42,6 +42,19 @@ var ENTRIES_OFFS = 0;
 var ENTRIES_LENS = 0;
 var ENTRIES_COUNT = 0;
 var ENTRIES_BUF_USED = 0;
+# Snapshot accumulator caps. At ~4.5k fns the buffer sits near 200 KB and the
+# entry tables near 4.5k/16k slots, growing ~16 entries/fold — so these had
+# headroom, but `_push_entry` did NO bounds check and would SILENTLY OVERFLOW
+# (heap corruption -> undetected api-surface drift on a real CI gate). Raised
+# 512 KB -> 1 MB / 8192 -> 16384 slots and added a fail-loud guard. Same
+# silent-cap class as the v6.2.20 fmt fix. See CHANGELOG [6.2.21].
+var ENTRIES_BUF_CAP = 1048576;
+var ENTRIES_MAX = 16384;
+# Snapshot-file read buffer (the committed snapshot, ~130 KB, read back for the
+# diff). Source-file scanning uses a separate 2 MB `filebuf` (v6.0.53). Raised
+# 256 KB -> 1 MB + fail-loud so a grown snapshot can't silently truncate into a
+# false diff.
+var SNAPSHOT_CAP = 1048576;
 
 fn _reset_entries(): i64 {
     ENTRIES_COUNT = 0;
@@ -51,6 +64,16 @@ fn _reset_entries(): i64 {
 
 # Append "module::name/arity" to ENTRIES_BUF; record offset+len.
 fn _push_entry(module_off, module_len, name_off, name_len, arity): i64 {
+    # Fail loud rather than silently overflow the fixed buffers. Worst-case
+    # entry = module + "::" + name + "/" + up-to-24-digit arity; +64 covers it.
+    if (ENTRIES_COUNT >= ENTRIES_MAX) {
+        syscall(SYS_WRITE, 2, "error: api-surface entry table full (raise ENTRIES_MAX)\n", 55);
+        syscall(60, 3);
+    }
+    if (ENTRIES_BUF_USED + module_len + name_len + 64 > ENTRIES_BUF_CAP) {
+        syscall(SYS_WRITE, 2, "error: api-surface buffer full (raise ENTRIES_BUF_CAP)\n", 54);
+        syscall(60, 3);
+    }
     var off = ENTRIES_BUF_USED;
     var i = 0;
     while (i < module_len) {
@@ -505,7 +528,12 @@ fn _print_entries(fd) {
 }
 
 fn _read_snapshot(path) {
-    return file_read_all(path, SNAPSHOT_BUF, 262144);
+    var n = file_read_all(path, SNAPSHOT_BUF, SNAPSHOT_CAP);
+    if (n >= SNAPSHOT_CAP) {
+        syscall(SYS_WRITE, 2, "error: api-surface snapshot too large to read (raise SNAPSHOT_CAP)\n", 66);
+        syscall(60, 3);
+    }
+    return n;
 }
 
 fn _diff_against_snapshot(snapshot_bytes) {
@@ -613,10 +641,10 @@ fn main() {
     alloc_init();
     args_init();
 
-    SNAPSHOT_BUF = alloc(262144);
-    ENTRIES_BUF = alloc(524288);
-    ENTRIES_OFFS = alloc(65536);
-    ENTRIES_LENS = alloc(65536);
+    SNAPSHOT_BUF = alloc(SNAPSHOT_CAP);
+    ENTRIES_BUF = alloc(ENTRIES_BUF_CAP);     # 1 MB (was 512 KB); guarded in _push_entry
+    ENTRIES_OFFS = alloc(ENTRIES_MAX * 8);    # 16384 slots (was 8192)
+    ENTRIES_LENS = alloc(ENTRIES_MAX * 8);
 
     var update_mode = 0;
     # v5.9.11: --scope=project (agnosys 1.0.11 follow-up review).

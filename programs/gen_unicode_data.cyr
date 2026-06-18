@@ -282,10 +282,17 @@ fn _parse_cat_line(buf, line_start, content_end_off, out_start, out_end, out_cat
 }
 
 fn gen_categories(): i64 {
-    var src_buf = alloc(524288);
-    var src_len = file_read_all("tests/data/ucd/DerivedGeneralCategory.txt", src_buf, 524287);
+    # 1 MB buffer (was 512 KB); DerivedGeneralCategory.txt is ~271 KB and grows
+    # each Unicode release. Fail loud on truncation instead of generating tables
+    # from a partial file. See CHANGELOG [6.2.21].
+    var src_buf = alloc(1048576);
+    var src_len = file_read_all("tests/data/ucd/DerivedGeneralCategory.txt", src_buf, 1048575);
     if (src_len < 0) {
         syscall(SYS_WRITE, 2, "error: cannot read tests/data/ucd/DerivedGeneralCategory.txt\n", 61);
+        return 1;
+    }
+    if (src_len >= 1048575) {
+        syscall(SYS_WRITE, 2, "error: DerivedGeneralCategory.txt too large for buffer\n", 55);
         return 1;
     }
 
@@ -648,9 +655,11 @@ fn gen_casefold(): i64 {
     var ud_buf = alloc(4194304);
     var ud_len = file_read_all("tests/data/ucd/UnicodeData.txt", ud_buf, 4194303);
     if (ud_len < 0) { return 1; }
+    if (ud_len >= 4194303) { syscall(SYS_WRITE, 2, "error: UnicodeData.txt too large for buffer\n", 44); return 1; }
     var cf_buf = alloc(262144);
     var cf_len = file_read_all("tests/data/ucd/CaseFolding.txt", cf_buf, 262143);
     if (cf_len < 0) { return 1; }
+    if (cf_len >= 262143) { syscall(SYS_WRITE, 2, "error: CaseFolding.txt too large for buffer\n", 44); return 1; }
 
     # Simple case maps: field 12=upper, 13=lower, 14=title.
     var upper_pairs = alloc(8192 * 16);
@@ -1011,9 +1020,11 @@ fn gen_normalize(): i64 {
     var ud_buf = alloc(4194304);
     var ud_len = file_read_all("tests/data/ucd/UnicodeData.txt", ud_buf, 4194303);
     if (ud_len < 0) { return 1; }
+    if (ud_len >= 4194303) { syscall(SYS_WRITE, 2, "error: UnicodeData.txt too large for buffer\n", 44); return 1; }
     var ce_buf = alloc(65536);
     var ce_len = file_read_all("tests/data/ucd/CompositionExclusions.txt", ce_buf, 65535);
     if (ce_len < 0) { return 1; }
+    if (ce_len >= 65535) { syscall(SYS_WRITE, 2, "error: CompositionExclusions.txt too large for buffer\n", 54); return 1; }
 
     var ccc_recs = alloc(2048 * 16);
     var canon_recs = alloc(4096 * 32);
