@@ -101,3 +101,13 @@ stdlib = [
 #
 # Mabda fold completed at 3.0.1 (see the note above) — no [deps.mabda]
 # git entry; lib/mabda.cyr is the vendored, opt-in distfile.
+#
+# Yantra folded at 1.0.0 (v6.2.26): the UI/end-to-end TESTING lib (WebDriver +
+# Appium + Chromium-CDP RPC). Vendored byte-identical into lib/yantra.cyr from
+# its dist (regenerated via `cyrius distlib` at the 1.0.0 tag). OPT-IN, NOT
+# auto-prepended (it's a test harness, not a core stdlib — most consumers don't
+# need it). It REQUIRES its dep chain in order — net / ws / bayan / sandhi / tls
+# (+ dynlib / fdlopen / mmap) / sakshi / sigil — so a consumer lists them ahead
+# of `yantra` in [deps].stdlib (yantra references sigil's SIG_ALG_ED25519
+# constant + sandhi/sakshi fns, so the deps are required, not just runtime).
+# Re-fold at the next patched tag rather than git-resolve at consume time.
