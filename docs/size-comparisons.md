@@ -4,7 +4,7 @@
 > languages and platforms. Referenced by external articles and the
 > agnosticos project. Updated as new compiler versions ship.
 >
-> **Last measured**: 2026-06-14, at Cyrius v6.2.5 (Cyrius self-host figures; the
+> **Last measured**: 2026-06-18, at Cyrius v6.2.22 (Cyrius self-host figures; the
 > comparison-tool sizes below are from the 2026-05-03 sweep).
 > **Methodology**: `int main() { return 42; }` (or language equivalent — all
 > sources are ≤ 4 lines), no external dependencies, default invocation
@@ -15,7 +15,7 @@
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** | cycc 6.2.5 | `echo 'syscall(60, 42);' \| cycc` | **504** | 1× |
+| **Cyrius** | cycc 6.2.22 | `echo 'syscall(60, 42);' \| cycc` | **504** | 1× |
 | Zig | 0.15.2 `-OReleaseSmall` | `zig build-exe -OReleaseSmall` | 4,840 | 10× |
 | Zig | 0.15.2 `-OReleaseSmall` Windows PE | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 9× |
 | C (GCC) | gcc 15.2.1 `-O2 -s` | `gcc -O2 -s` | 14,248 | 28× |
@@ -34,7 +34,7 @@
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
 | **Cyrius** | cycc_win 6.2.0 native (on Windows) | `cycc_win.exe < exit42.cyr` | **1,536** | 1× |
-| **Cyrius** | cycc 6.2.5 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | 1,536 | 1× (byte-identical to native) |
+| **Cyrius** | cycc 6.2.22 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | 1,536 | 1× (byte-identical to native) |
 | Zig | 0.15.2 `-OReleaseSmall` | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 3× |
 | Go | go 1.26.2 `-s -w` | `GOOS=windows GOARCH=amd64 go build -ldflags="-s -w"` | 1,492,992 | 972× |
 | Go | go 1.26.2 default | `GOOS=windows GOARCH=amd64 go build` | 2,265,600 | 1,475× |
@@ -77,8 +77,8 @@ kernel emit (v5.11.43) / DCE-aware reachability filter cross-arch
 (v5.11.59) / Windows process/thread/TLS/env/file-I-O/directory-enumeration
 (v6.1.16–v6.1.18) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cycc (Linux ELF): **1,063,800 B** (v6.2.5)
-- cycc_aarch64 (Linux aarch64 cross): **615,304 B** (v6.2.5; the
+- Cyrius cycc (Linux ELF): **1,069,688 B** (v6.2.22)
+- cycc_aarch64 (Linux aarch64 cross): **621,680 B** (v6.2.22; the
   v5.11.59 full DCE bitmap pass for aarch64 fixup.cyr — mirroring the
   x86 path since v5.10.x — accounts for the bulk over earlier v5.11.x)
 - cycc_win (Windows PE cross): **827,904 B** (v6.2.0; PE format

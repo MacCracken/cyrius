@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.05 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 95 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.0.1; **bayan 1.0.0 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.0 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`). 176 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 89 check.sh gates.
+~1.07 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 98 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.0.1; **bayan 1.0.0 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.0 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`). 187 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 89 check.sh gates.
 
 ## Install
 
@@ -91,17 +91,17 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,063,800 B** (~1.06 MB) x86_64 at v6.2.5 |
-| Cross compilers | `cycc_aarch64` 615,304 B, `cycc_win` 836,096 B (cross-built) |
+| Compiler (`cycc`) | **1,069,688 B** (~1.07 MB) x86_64 at v6.2.22 |
+| Cross compilers | `cycc_aarch64` 621,680 B, `cycc_win` 844,288 B (cross-built) |
 | Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
 | Bootstrap compiler (`cybs`) | **12,344 B** |
 | LSP server (`cyrius-lsp`) | **531,688 B** (definition / documentSymbol / references / semanticTokens / hover) |
 | Linker (`cyrld`) | **902,184 B** |
 | External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded at 3.0.1) |
-| Tests | **176** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Tests | **187** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
 | Gates (`scripts/check.sh`) | **89** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, PIE exec gate at v6.1.6, TS→JS emit/round-trip gate at v6.1.11) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode |
-| Stdlib modules | **95** (distfiles folded byte-identical; bayan 1.0.0 @ v6.1.25 → `lib/bayan.cyr`, ganita 1.0.0 @ v6.1.26 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
+| Stdlib modules | **98** (distfiles folded byte-identical; bayan 1.0.0 @ v6.1.25 → `lib/bayan.cyr`, ganita 1.0.0 @ v6.1.26 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
 | Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
 
@@ -171,9 +171,9 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (95 modules + 0 git deps)
+## Standard Library (98 modules + 0 git deps)
 
-**95 `lib/*.cyr` modules** (first-party + vendored sibling distfiles
+**98 `lib/*.cyr` modules** (first-party + vendored sibling distfiles
 folded byte-identical, sandhi-pattern) with **0 git deps** — mabda folded
 at 3.0.1, dropping its transitive `agnosys` and leaving zero `[deps.*]`
 resolutions. Coverage spans core data structures, types (Option / Result),
@@ -217,7 +217,7 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 1,063,800 B at v6.2.5)
+    -> cycc (modular compiler + IR, 1,069,688 B at v6.2.22)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 

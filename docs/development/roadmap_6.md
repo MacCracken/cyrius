@@ -161,7 +161,7 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
-### Shipped so far (v6.2.0 → v6.2.2)
+### Shipped so far (v6.2.0 → v6.2.22 — representative; see state.md for the full per-patch handoff log)
 
 - **v6.2.0** ✅ — Phase 0 growable-region foundation (fixup_tbl / fn-tables /
   codebuf → relocatable-base + 2×-grow) + `cyrius init` CI/release alignment.
