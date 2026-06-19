@@ -1,5 +1,10 @@
 # Ecosystem-stdlib daimon-class fixes — patched in source, held for release + re-fold
 
+> **✅ RESOLVED — ready to archive (`git mv` → `issues/archived/`).** The
+> maintainable-lib half is done (sigil 3.9.0 `i64[4]` cert slots + sakshi 2.4.0
+> `var ts[16]`, both absorbed @ .24); the agnosys part is moot (frozen 1.4.3,
+> upstream repo decomposed → agnodrm, being retired). Nothing left to track.
+
 > **MOSTLY RESOLVED (verified at v6.2.24) — sigil + sakshi absorbed; agnosys
 > frozen.** The held source patches landed via the v6.2.23/.24 fold refreshes:
 > **sigil 3.9.0** has the `i64[4]` cert-pointer slots in `sgx_quote_verify_full_into`/

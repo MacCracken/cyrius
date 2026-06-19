@@ -1,5 +1,15 @@
 # Roadmap drift + stale governance docs — RM-01…05
 
+> **UPDATE 2026-06-19 (v6.2.25 internal doc-state sweep):** the recurring
+> internal half is freshly addressed — **state.md trimmed 1,015 → ~185 lines**
+> (handoff log + v6.1.x list → pointers; open carry-ins lifted), **roadmap.md**
+> realized-shape + shipped v6.2.6–.25 summary row (it had read as if nothing past
+> .5 shipped), **roadmap_6.md** stamp/mislabel/f64-band fixes, **doc-health.md**
+> anchors → .25. **Still owed (the only open remainder):** the **user-facing**
+> README / guides / vidya version+size+count stamps lag at the v6.2.22 full
+> doc-staleness sweep — a .23–.25 user-facing refresh is the next (separate)
+> doc-health pass. Keep open until that lands.
+
 > **STATUS (2026-06-10): MOSTLY RESOLVED — roadmap rewrite landed.** The
 > roadmap audit + rewrite addressed RM-01 (deleted the phantom v6.2.x TLS arc,
 > re-homed the kernel-freestanding-TLS deliverable into bare-metal), RM-03

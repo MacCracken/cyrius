@@ -1,5 +1,11 @@
 # `tls_native` server ctx is not arena-aware and is never freed — per-connection RSS growth on a long-running TLS server
 
+> **✅ RESOLVED v6.2.25 — ready to archive (`git mv` → `issues/archived/`).**
+> Shipped: `tls_native_new_server_in(arena, …)` + the `_tn_alloc`/`_tn_alloc_a`/
+> `_tn_ks_alloc`/`_tn_arena` choke-points routing ~95 per-connection allocs +
+> `tls_accept_alloc_in` + the hermetic `tls_native_server_arena_flat_rss.tcyr` +
+> sigil 3.9.1. See CHANGELOG [6.2.25]. Original tracking note retained below.
+
 > **PINNED → v6.2.25 (committed).** Deliberately NOT bundled into v6.2.24 (which
 > shipped the `tls_accept` wrapper). A v6.2.24 premise-check confirmed this is the
 > **full-depth-or-nothing** case: a correct fix requires threading a per-connection

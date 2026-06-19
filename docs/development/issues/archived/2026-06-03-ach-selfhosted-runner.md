@@ -1,5 +1,12 @@
 # Replace the GitHub macos-13 x86-macOS CI job with a self-hosted `ach` runner
 
+> **⏸ PARKED → archived 2026-06-19; residual folded into the x86-macOS carry-in
+> (state.md *Open carry-ins*).** The core landed (v6.0.65): the x86 Mach-O cycc
+> self-hosts byte-identical on real `ach` — the authoritative rot-proof gate,
+> GREEN + HARD. The only tail (flip the funcgate SOFT → HARD) waits on the held
+> x86-macho argv/init work, which is Apple-Intel-EOL backlog tracked as the
+> x86-macOS usable-toolchain carry-in. No standalone slot needed.
+
 **Filed:** 2026-06-03
 **Severity:** P2 (CI reliability)
 **Status:** IN PROGRESS — `macho-x86-native` job landed v6.0.65 (`.github/workflows/ci.yml`); runner

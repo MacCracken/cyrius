@@ -1,5 +1,13 @@
 # Genuinely-broken shipped functionality, untracked — found by consumers, not our gates
 
+> **✅ RESOLVED — ready to archive (`git mv` → `issues/archived/`).** All A–D
+> items now shipped: **D2** closed (Windows `process_win.cyr` spawn .51 +
+> `fs_win.cyr` dir-walk .18) and **D4** closed (macho nanosleep → `chrono.cyr`
+> Darwin `__semwait` path, CHANGELOG [6.0.65]/[6.2.6]; sub-issue archived) —
+> verified 2026-06-19 against source. A/B/C/D1/D3 were already resolved. The
+> standing "found-by-ports" guard continues in
+> `2026-06-10-verification-coverage-gaps.md` (the pinned .28 slot).
+
 > **STATUS (2026-06-09): LIVE meta-issue — partially resolved.**
 > RESOLVED: A (TLS public-API stubs, .78–.83), B (arm64 macOS dir-walk EBADF,
 > .63), C (real-flow funcgate operational, .15), D1 (aarch64-Linux ESYSXLAT
