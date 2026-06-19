@@ -1,0 +1,56 @@
+# tls_native_server_arena_flat_rss.tcyr — v6.2.25
+#
+# Proves the tls_native server-ctx arena leak fix (2026-06-18-tls-native-
+# server-ctx-not-arena-aware): a long-running accept loop that draws its
+# per-connection state from a caller-provided arena has FLAT RSS. Two invariants:
+#   1. After reset_via(a), arena_used returns to base — the whole connection
+#      footprint (ctx + keysched secrets + transcript hash ctx + ...) is reclaimed.
+#   2. Each connection's peak arena_used is IDENTICAL (constant, not growing) —
+#      i.e. RSS does not accumulate across connections.
+# Hermetic (no sockets): drives the arena-routed constructors directly
+# (tls_native_new_server_in / keysched_new_in / transcript_init_in). A missed
+# routing site (alloc → global bump instead of the arena) would shrink the
+# measured per-connection footprint, so first_peak > base also guards coverage.
+
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    var a = arena_allocator(131072);          # ONE arena for the whole loop
+    assert_neq(a, 0, "arena_allocator created");
+    var ar = allocator_state(a);              # raw arena (for arena_used)
+    var base = arena_used(ar);
+
+    # Caller-owned cert/key refs (NOT in the arena — they outlive a reset).
+    var cert = alloc(64);
+    var key = alloc(64);
+
+    var first_peak = 0;
+    var i = 0;
+    while (i < 50) {
+        var ctx = tls_native_new_server_in(a, cert, 64, key, 64);
+        assert_neq(ctx, 0, "new_server_in allocates a ctx from the arena");
+        var ks = tls_native_keysched_new_in(a, TLS_HASH_SHA256);
+        assert_neq(ks, 0, "keysched_new_in allocates from the arena");
+        var ts = tls_native_transcript_init_in(a, TLS_HASH_SHA256);
+        assert_neq(ts, 0, "transcript_init_in allocates from the arena");
+
+        var peak = arena_used(ar);
+        if (i == 0) { first_peak = peak; }
+        # FLAT: every connection's arena footprint is identical (no growth).
+        assert_eq(peak, first_peak, "per-connection arena footprint is constant");
+
+        reset_via(a);
+        # The whole connection footprint is reclaimed.
+        assert_eq(arena_used(ar), base, "reset_via rewinds the arena to base");
+        i = i + 1;
+    }
+
+    # Coverage guard: the per-connection allocations actually landed in the arena
+    # (footprint grew above base) — a regression that left a site on the global
+    # bump would shrink first_peak toward base.
+    assert_neq(first_peak, base, "per-connection allocations land in the arena");
+
+    var r = assert_summary();
+    return r;
+}

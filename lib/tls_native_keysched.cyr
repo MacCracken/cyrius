@@ -23,7 +23,8 @@
 # that much; max single TLS expansion is the digest itself (48 bytes
 # for SHA-384). Buffer caps:
 var TLS_HKDF_LABEL_BUF_LEN = 512;     # HkdfLabel.length(2) + label(≤256) + ctx(≤256)
-var TLS_KEYSCHED_STATE_LEN = 96;      # 12 i64 slots — see layout below
+var TLS_KEYSCHED_STATE_LEN = 104;     # 13 i64 slots (+1 @ v6.2.25: ALLOC) — see layout below
+var TLS_KS_OFF_ALLOC       = 96;      # v6.2.25 Allocator handle (0=global bump); derive fns route through it
 var TLS_MAX_DIGEST_LEN = 48;          # SHA-384
 
 # Key schedule "which sec" identifiers (for keysched_get_secret).
@@ -46,7 +47,7 @@ var TLS_KSP_EARLY     = 1;
 var TLS_KSP_HANDSHAKE = 2;
 var TLS_KSP_MASTER    = 3;
 
-# State layout (96 bytes total, 12 i64 slots — indexed by offset):
+# State layout (104 bytes total, 13 i64 slots — indexed by offset):
 #   +0   hash_algo (0=sha256, 1=sha384)
 #   +8   hash_len (32 or 48)
 #   +16  phase (TLS_KSP_*)
@@ -59,6 +60,7 @@ var TLS_KSP_MASTER    = 3;
 #   +72  server_application_secret ptr
 #   +80  exporter_master_secret ptr
 #   +88  resumption_master_secret ptr
+#   +96  alloc (Allocator handle, 0=global bump) — v6.2.25
 
 # ----------------------------------------------------------------
 # HKDF-Expand-Label (RFC 8446 §7.1)
@@ -79,9 +81,11 @@ ctx, ctx_len, hash_algo, out, out_len): i64 {
     if (label_len + 6 > 255) { return TLS_ERR_INVALID_PARAM; }
     if (ctx_len > 255) { return TLS_ERR_INVALID_PARAM; }
 
-    # Build the HkdfLabel into a scratch buffer.
-    var info = alloc(TLS_HKDF_LABEL_BUF_LEN);
-    if (info == 0) { return TLS_ERR_OOM; }
+    # Build the HkdfLabel into a stack scratch buffer (v6.2.25: was a per-call
+    # alloc on the global bump — called for every expand-label, so a per-handshake
+    # leak on a long-running server; the bytes never escape this fn).
+    var infobuf[512];   # == TLS_HKDF_LABEL_BUF_LEN (array size must be a literal)
+    var info = &infobuf;
     # uint16 length BE
     _tn_be16_w(info, out_len);
     var pos = 2;
@@ -131,9 +135,11 @@ transcript_state, out): i64 {
     var hash_len = tls_native_transcript_digest_len(transcript_state);
     if (hash_len < 0) { return TLS_ERR_INVALID_PARAM; }
 
-    # Compute Transcript-Hash(Messages) into a scratch buffer.
-    var th = alloc(TLS_MAX_DIGEST_LEN);
-    if (th == 0) { return TLS_ERR_OOM; }
+    # Compute Transcript-Hash(Messages) into a stack scratch buffer (v6.2.25:
+    # was a per-Derive-Secret alloc on the global bump → per-handshake leak;
+    # the digest never escapes this fn).
+    var thbuf[48];   # == TLS_MAX_DIGEST_LEN (array size must be a literal)
+    var th = &thbuf;
     tls_native_transcript_digest(transcript_state, th);
 
     return tls_native_hkdf_expand_label(sec, secret_len, label, label_len,
@@ -153,8 +159,18 @@ fn _tn_hkdf_extract(salt, salt_len, ikm, ikm_len, hash_algo, prk_out): i64 {
 # Derive-Secret(., "derived", "") which always hashes the empty
 # message list. Allocates the sigil hash ctx; caller owns the
 # returned tn-transcript state (16 bytes) and the underlying ctx.
+fn _tn_empty_transcript_in(a, hash_algo): i64 {
+    return tls_native_transcript_init_in(a, hash_algo);
+}
 fn _tn_empty_transcript(hash_algo): i64 {
-    return tls_native_transcript_init(hash_algo);
+    return _tn_empty_transcript_in(0, hash_algo);
+}
+
+# Per-keyschedule alloc choke-point: routes through the allocator stashed on the
+# keysched state (TLS_KS_OFF_ALLOC) — so derive_handshake/derive_master secrets
+# land in the connection arena. 0 = global bump.
+fn _tn_ks_alloc(ks, n): i64 {
+    return _tn_alloc_a(load64(ks + TLS_KS_OFF_ALLOC), n);
 }
 
 # ----------------------------------------------------------------
@@ -165,13 +181,16 @@ fn _tn_empty_transcript(hash_algo): i64 {
 # TLS_HASH_SHA384. Computes the Early Secret with PSK = 0^HashLen (no
 # PSK case — call tls_native_keysched_set_psk first to override).
 # Returns the state handle (>0) or 0 on OOM / invalid algo.
-fn tls_native_keysched_new(hash_algo): i64 {
+# v6.2.25: arena-parameterized. `a` (Allocator handle, 0=global bump) backs the
+# state struct + every secret derived from it (stashed at TLS_KS_OFF_ALLOC so the
+# derive fns route through _tn_ks_alloc). a==0 is byte-identical to the old ctor.
+fn tls_native_keysched_new_in(a, hash_algo): i64 {
     if (hash_algo != TLS_HASH_SHA256) {
         if (hash_algo != TLS_HASH_SHA384) { return 0; }
     }
     var hash_len = TLS_HASH_SHA256_LEN;
     if (hash_algo == TLS_HASH_SHA384) { hash_len = TLS_HASH_SHA384_LEN; }
-    var st = alloc(TLS_KEYSCHED_STATE_LEN);
+    var st = _tn_alloc_a(a, TLS_KEYSCHED_STATE_LEN);
     if (st == 0) { return 0; }
     # Zero all slots.
     var z = 0;
@@ -179,18 +198,24 @@ fn tls_native_keysched_new(hash_algo): i64 {
     store64(st,      hash_algo);
     store64(st + 8,  hash_len);
     store64(st + 16, TLS_KSP_NONE);
+    store64(st + TLS_KS_OFF_ALLOC, a);   # stash AFTER the zero loop
     # Compute Early Secret = HKDF-Extract(0, PSK).
     # No-PSK case: PSK = HashLen zero bytes. Salt is also 0 (length 0).
-    var zero_psk = alloc(hash_len);
+    var zero_psk = _tn_ks_alloc(st, hash_len);
     if (zero_psk == 0) { return 0; }
     var i = 0;
     while (i < hash_len) { store8(zero_psk + i, 0); i = i + 1; }
-    var early = alloc(hash_len);
+    var early = _tn_ks_alloc(st, hash_len);
     if (early == 0) { return 0; }
     _tn_hkdf_extract(0, 0, zero_psk, hash_len, hash_algo, early);
     store64(st + 24, early);
     store64(st + 16, TLS_KSP_EARLY);
     return st;
+}
+
+# Global-bump key-schedule ctor (the a==0 case of tls_native_keysched_new_in).
+fn tls_native_keysched_new(hash_algo): i64 {
+    return tls_native_keysched_new_in(0, hash_algo);
 }
 
 # Override the PSK and recompute the Early Secret. Must be called
@@ -225,28 +250,28 @@ fn tls_native_keysched_derive_handshake(ks, dhe, dhe_len, transcript): i64 {
 
     # Derive-Secret(early, "derived", "") — the empty-transcript
     # bridge to the next HKDF-Extract.
-    var derived = alloc(hash_len);
+    var derived = _tn_ks_alloc(ks, hash_len);
     if (derived == 0) { return TLS_ERR_OOM; }
-    var empty_th = _tn_empty_transcript(hash_algo);
+    var empty_th = _tn_empty_transcript_in(load64(ks + TLS_KS_OFF_ALLOC), hash_algo);
     if (empty_th == 0) { return TLS_ERR_OOM; }
     var drc = tls_native_derive_secret(early, hash_len, "derived", 7, empty_th, derived);
     if (drc != TLS_OK) { return drc; }
 
     # Handshake Secret = HKDF-Extract(derived, DHE).
-    var hs = alloc(hash_len);
+    var hs = _tn_ks_alloc(ks, hash_len);
     if (hs == 0) { return TLS_ERR_OOM; }
     _tn_hkdf_extract(derived, hash_len, dhe, dhe_len, hash_algo, hs);
     store64(ks + 32, hs);
 
     # client_handshake_traffic_secret = Derive-Secret(hs, "c hs traffic", CH through SH)
-    var chs = alloc(hash_len);
+    var chs = _tn_ks_alloc(ks, hash_len);
     if (chs == 0) { return TLS_ERR_OOM; }
     var rc1 = tls_native_derive_secret(hs, hash_len, "c hs traffic", 12, transcript, chs);
     if (rc1 != TLS_OK) { return rc1; }
     store64(ks + 48, chs);
 
     # server_handshake_traffic_secret = Derive-Secret(hs, "s hs traffic", CH through SH)
-    var shs = alloc(hash_len);
+    var shs = _tn_ks_alloc(ks, hash_len);
     if (shs == 0) { return TLS_ERR_OOM; }
     var rc2 = tls_native_derive_secret(hs, hash_len, "s hs traffic", 12, transcript, shs);
     if (rc2 != TLS_OK) { return rc2; }
@@ -278,40 +303,40 @@ fn tls_native_keysched_derive_master(ks, transcript): i64 {
     var hs = load64(ks + 32);
 
     # Derive-Secret(hs, "derived", "") bridge.
-    var derived = alloc(hash_len);
+    var derived = _tn_ks_alloc(ks, hash_len);
     if (derived == 0) { return TLS_ERR_OOM; }
-    var empty_th = _tn_empty_transcript(hash_algo);
+    var empty_th = _tn_empty_transcript_in(load64(ks + TLS_KS_OFF_ALLOC), hash_algo);
     if (empty_th == 0) { return TLS_ERR_OOM; }
     var drc = tls_native_derive_secret(hs, hash_len, "derived", 7, empty_th, derived);
     if (drc != TLS_OK) { return drc; }
 
     # Master Secret = HKDF-Extract(derived, 0^HashLen).
-    var zero = alloc(hash_len);
+    var zero = _tn_ks_alloc(ks, hash_len);
     if (zero == 0) { return TLS_ERR_OOM; }
     var zi = 0;
     while (zi < hash_len) { store8(zero + zi, 0); zi = zi + 1; }
-    var ms = alloc(hash_len);
+    var ms = _tn_ks_alloc(ks, hash_len);
     if (ms == 0) { return TLS_ERR_OOM; }
     _tn_hkdf_extract(derived, hash_len, zero, hash_len, hash_algo, ms);
     store64(ks + 40, ms);
 
     # Four Derive-Secret() taps off the master sec.
-    var cas = alloc(hash_len);
+    var cas = _tn_ks_alloc(ks, hash_len);
     if (cas == 0) { return TLS_ERR_OOM; }
     tls_native_derive_secret(ms, hash_len, "c ap traffic", 12, transcript, cas);
     store64(ks + 64, cas);
 
-    var sas = alloc(hash_len);
+    var sas = _tn_ks_alloc(ks, hash_len);
     if (sas == 0) { return TLS_ERR_OOM; }
     tls_native_derive_secret(ms, hash_len, "s ap traffic", 12, transcript, sas);
     store64(ks + 72, sas);
 
-    var em = alloc(hash_len);
+    var em = _tn_ks_alloc(ks, hash_len);
     if (em == 0) { return TLS_ERR_OOM; }
     tls_native_derive_secret(ms, hash_len, "exp master", 10, transcript, em);
     store64(ks + 80, em);
 
-    var rm = alloc(hash_len);
+    var rm = _tn_ks_alloc(ks, hash_len);
     if (rm == 0) { return TLS_ERR_OOM; }
     tls_native_derive_secret(ms, hash_len, "res master", 10, transcript, rm);
     store64(ks + 88, rm);

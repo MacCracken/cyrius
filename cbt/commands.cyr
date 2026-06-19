@@ -744,10 +744,66 @@ fn _cross_os_selfhost(): i64 {
 # wired SSH verification hosts — so it now lives behind
 # `cyrius audit --internal=platform-check`, which is the full gate this command
 # used to be (local suite + platform self-host). See issue/CHANGELOG [6.2.12].
-fn cmd_audit(platform_check): i64 {
+# v6.2.25: the PROJECT quality sweep — `cyrius audit` (default). Composes the
+# CLI's own tools (cyrfmt/cyrlint/cyrdoc via the audit_walk walkers + cmd_tests +
+# cmd_bench) over the current project, so it works in ANY cyrius project without
+# scripts/check.sh. Returns non-zero if fmt/lint/docs/tests fail (bench is a
+# non-fatal perf measurement). This is what `cyrius audit` was always meant to be;
+# the cyrius-internal full gate is `audit --internal` → check.sh.
+fn _audit_sweep(): i64 {
+    var rc = 0;
+    # Source dirs to fmt/lint/doc-walk (whichever exist in this project).
+    var dirs = vec_new();
+    if (is_dir(str_from("lib")) == 1) { vec_push(dirs, str_from("lib")); }
+    if (is_dir(str_from("src")) == 1) { vec_push(dirs, str_from("src")); }
+    if (is_dir(str_from("programs")) == 1) { vec_push(dirs, str_from("programs")); }
+    if (vec_len(dirs) == 0) { vec_push(dirs, str_from(".")); }
+
+    var cyrfmt = make_path(_tools_dir, "cyrfmt");
+    var cyrlint = make_path(_tools_dir, "cyrlint");
+    var cyrdoc = make_path(_tools_dir, "cyrdoc");
+
+    _status("── fmt ──");
+    if (file_exists(cyrfmt) == 1) {
+        audit_fmt_walk(cyrfmt, dirs);
+        if (AW_FMT_FAIL > 0) { println("  FAIL: files need reformatting (cyrius fmt -w)"); rc = 1; }
+        else { println("  ok: format clean"); }
+    } else { println("  skip: cyrfmt not built"); }
+
+    _status("── lint ──");
+    if (file_exists(cyrlint) == 1) {
+        audit_lint_walk(cyrlint, dirs);
+        if (AW_LINT_TOTAL > 0) { sys_write(STDOUT_FD, "  ", 2); print_num(AW_LINT_TOTAL); println(" lint warnings"); rc = 1; }
+        else { println("  ok: lint clean"); }
+    } else { println("  skip: cyrlint not built"); }
+
+    _status("── docs ──");
+    if (file_exists(cyrdoc) == 1) {
+        audit_doc_walk(cyrdoc, dirs);
+        if (AW_DOC_TOTAL > 0) { sys_write(STDOUT_FD, "  ", 2); print_num(AW_DOC_TOTAL); println(" undocumented public fns"); rc = 1; }
+        else { println("  ok: docs complete"); }
+    } else { println("  skip: cyrdoc not built"); }
+
+    _status("── tests ──");
+    var tdir = "tests/tcyr";
+    if (is_dir(str_from(tdir)) == 0) { tdir = "tests"; }
+    if (is_dir(str_from(tdir)) == 1) {
+        if (cmd_tests(tdir) != 0) { rc = 1; }
+    } else { println("  skip: no tests/ directory"); }
+
+    _status("── bench ──");
+    cmd_bench(0);   # perf measurement — non-fatal
+
+    return rc;
+}
+
+# `cyrius audit` dispatcher. mode: 0 = project sweep (default), 1 = the
+# cyrius-internal scripts/check.sh, 2 = check.sh + cross-OS platform self-host.
+fn cmd_audit(mode): i64 {
+    if (mode == 0) { return _audit_sweep(); }
     var script = make_path(_scripts_dir, "check.sh");
     var check_rc = run_script(script, 0, 0);
-    if (platform_check == 0) { return check_rc; }
+    if (mode == 1) { return check_rc; }
     var cross_rc = _cross_os_selfhost();
     if (check_rc != 0) { return check_rc; }
     return cross_rc;

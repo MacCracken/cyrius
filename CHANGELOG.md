@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.25] — 2026-06-19
+
+**v6.2.25 — `tls_native` server-ctx arena/flat-RSS fix (full-depth) + sigil 3.9.1.**
+A long-running native-TLS server leaked every accepted connection's state on the
+process-global bump (ctx + handshake buffers + keysched secrets + transcript hash
+ctx + per-record AEAD scratch + traffic keys + session tickets), so RSS grew
+unbounded over the process lifetime (issue
+2026-06-18-tls-native-server-ctx-not-arena-aware). v6.2.25 makes a server accept
+loop **flat-RSS**: every per-connection allocation draws from a caller-provided
+arena that the loop `reset_via()`s per connection. All stdlib-only / `#ifdef`-free
+→ x86 cycc byte-identical (flat **1,069,688 B**); self_compile **525 ms** (flat).
+check.sh **89/89**; cross-OS self-host **pi/ecb/cass**; api-surface **4932 →
+4939** (+7: the `_in` ctors / `set_alloc` / `sha384_init_into` / `audit_doc_walk`;
+**0 removals**).
+
+- **Allocator-handle stash + choke-points.** New `TLS_CTX_OFF_ALLOC` ctx slot
+  (ctx 480→488) holds an `lib/alloc.cyr` Allocator (0 = global bump), stashed by
+  `tls_native_new_server_in(a, …)` (mirroring the v6.1.22 `async_new_in`
+  precedent). A `_tn_alloc(ctx, n)` choke-point (+ `_tn_alloc_a(a,n)` for the
+  ctx-less keysched/transcript, `_tn_ks_alloc(ks,n)` reading a `+96` keysched
+  stash slot, and `_tn_arena(ctx)` for sigil's `x509_*_into(arena)`) routes every
+  per-connection alloc — the v6.2.4 transport-vtable "one helper, zero call-site
+  churn" shape. `a==0` is byte-identical to pre-6.2.25 (the full TLS suite —
+  scaffold/ed25519/mTLS/ALPN/1.2/realpeer — stays green).
+- **~95 per-connection allocs routed** across `tls_native_conn` (accept/read/write
+  record buffers incl. the 33 KB read buf), `tls_native_keysched` (the HKDF secret
+  tree + `keysched_new_in`), `tls_native_lowlevel` (`transcript_init_in` +
+  stack-local digest clone), `tls_native_hs13`/`hs12` (the full 1.3 + 1.2 server
+  handshake: hellos, ephemeral keys, install_handshake/app_keys, cert/CertVerify/
+  Finished, session tickets, KeyUpdate, the x509 leaf-cert via `x509_cert_alloc_into`).
+  Pure within-call scratch went **stack-local** (HKDF `info`/`th`, the transcript
+  clone, `record_seal`'s per-record 16 KB plaintext buffer, the p384 verify `r‖s`).
+- **`tls_accept_alloc_in(a, …)`** exposes the arena via the v6.2.24 server wrapper;
+  a server loop does `arena_allocator(cap)` once and `reset_via(a)` per connection.
+- **Adversarial review caught 8 missed-routing sites** (install_handshake_keys,
+  `record_seal`, KeyUpdate rotation, session-ticket psk/ticket, the 1.2 accept
+  buffer, the privkey material, the ALPN string, a stale comment) that the initial
+  conversion pass left leaking — all fixed before the cut, plus 2 more found in a
+  follow-up sweep (`x509_cert_alloc`, p384 verify). **Zero use-after-reset hazards**
+  (the dangerous lifetime class is clean — the STEK/cert-refs/etc. are all
+  per-connection or caller-owned). Proven by a hermetic `tls_native_server_arena_
+  flat_rss.tcyr` (252 asserts: `arena_used` returns to base after every
+  `reset_via`, per-connection footprint constant).
+- **sigil 3.9.1 fold** (the cross-repo half): `sha384_init_into` (the SHA-384
+  transcript hash ctx was leaking via `fl_alloc(208)`; now drawn from the arena)
+  + `ecdsa_p256_verify_der`'s `raw_sig` → stack. Both behavior-preserving; all
+  sigil tests green.
+- **`cyrius audit` semantics fixed** (the long-intended shape, finally wired —
+  it had regressed to invoking `~/.cyrius/bin/check.sh`, which isn't installed,
+  so `cyrius audit` outside the repo died with `script not found`). Default
+  `cyrius audit` is now the **project quality sweep** — fmt / lint / docs /
+  tests / bench over the current project, composing the CLI's own tools (the
+  `audit_walk` walkers + `cmd_tests`/`cmd_bench`), working in **any** cyrius
+  project with no `scripts/check.sh` dependency. `cyrius audit --internal` runs
+  the cyrius-internal `check.sh`; `--internal=platform-check` adds the cross-OS
+  real-hardware self-host. New `audit_doc_walk` + `_aw_parse_undoc` in
+  `lib/audit_walk.cyr` (cyrdoc writes per-fn markers to stderr, so the walk
+  parses the `"X documented, Y undocumented"` stdout summary). Exit is non-zero
+  if fmt/lint/docs/tests fail; bench is a non-fatal perf measurement.
+
 ## [6.2.24] — 2026-06-19
 
 **v6.2.24 — TLS server-handshake contract (`tls_accept`) + cross-target SYS_*

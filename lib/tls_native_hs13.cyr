@@ -221,8 +221,11 @@ fn tls_native_client_open_handshake(ctx, record, record_len, out, out_max, out_c
 # into a 96-byte buffer (each left-padded to 48) with sigil's _ecdsa_der_int_w.
 # `pk` is the 96-byte affine Qx||Qy. Returns 1 (valid) / 0 (invalid/malformed).
 fn _tn_ecdsa_p384_verify_der(pk, msg, msg_len, sig_der, sig_der_len): i64 {
-    var raw = alloc(96);
-    if (raw == 0) { return 0; }
+    # v6.2.25: stack-local r||s scratch (was a per-call global-bump alloc, hit per
+    # mTLS p384 client-CertificateVerify) — consumed by ecdsa_p384_verify before
+    # return. Mirrors the sigil ecdsa_p256_verify_der secret-var fix.
+    var rawbuf[96];
+    var raw = &rawbuf;
     memset(raw, 0, 96);
     var off = _ecdsa_der_int_w(sig_der, 2, sig_der_len, raw, 48);
     if (off < 0) { return 0; }
@@ -637,13 +640,13 @@ fn tls_native_install_app_keys(ctx): i64 {
     var key_len = tls_native_cipher_key_len(cipher);
     var iv_len = tls_native_cipher_iv_len(cipher);
     var hlen = _tn_hash_len(hash_algo);
-    var ss = alloc(TLS_MAX_DIGEST_LEN);
+    var ss = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (ss == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_APPLICATION, ss) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var sk = alloc(key_len);
-    var siv = alloc(iv_len);
+    var sk = _tn_alloc(ctx, key_len);
+    var siv = _tn_alloc(ctx, iv_len);
     if (sk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (siv == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_derive_key(ss, hlen, hash_algo, sk, key_len);
@@ -651,13 +654,13 @@ fn tls_native_install_app_keys(ctx): i64 {
     store64(ctx + TLS_CTX_OFF_SRV_APP_KEY, sk);
     store64(ctx + TLS_CTX_OFF_SRV_APP_IV, siv);
     store64(ctx + TLS_CTX_OFF_SRV_APP_SECRET, ss);   # CVE-30: retain for KeyUpdate
-    var cs = alloc(TLS_MAX_DIGEST_LEN);
+    var cs = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (cs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_APPLICATION, cs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var ck = alloc(key_len);
-    var civ = alloc(iv_len);
+    var ck = _tn_alloc(ctx, key_len);
+    var civ = _tn_alloc(ctx, iv_len);
     if (ck == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (civ == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_derive_key(cs, hlen, hash_algo, ck, key_len);
@@ -815,13 +818,13 @@ fn _tn_rotate_send_keys(ctx): i64 {
 fn _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len): i64 {
     var oldsec = load64(ctx + secoff);
     if (oldsec == 0) { return TLS_ERR_PROTOCOL; }
-    var newsec = alloc(TLS_MAX_DIGEST_LEN);
+    var newsec = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (newsec == 0) { return TLS_ERR_OOM; }
     if (tls_native_key_update_secret(oldsec, hlen, hash_algo, newsec) < 0) {
         return TLS_ERR_INTERNAL;
     }
-    var nk = alloc(key_len);
-    var niv = alloc(iv_len);
+    var nk = _tn_alloc(ctx, key_len);
+    var niv = _tn_alloc(ctx, iv_len);
     if (nk == 0) { return TLS_ERR_OOM; }
     if (niv == 0) { return TLS_ERR_OOM; }
     tls_native_derive_key(newsec, hlen, hash_algo, nk, key_len);
@@ -840,7 +843,7 @@ fn _tn_send_key_update(ctx, request_update): i64 {
     var msg[8];                                   # 4-byte header + 1-byte body
     tls_native_handshake_write_header(&msg, TLS_HS_KEY_UPDATE, 1);
     store8(&msg + TLS_HANDSHAKE_HEADER_LEN, request_update & 0xFF);
-    var rec = alloc(64);
+    var rec = _tn_alloc(ctx, 64);
     if (rec == 0) { return TLS_ERR_OOM; }
     var rn = _tn_seal_ct(ctx, TLS_CT_HANDSHAKE, &msg, TLS_HANDSHAKE_HEADER_LEN + 1, rec, 64);
     if (rn < 0) { return rn; }
@@ -913,6 +916,7 @@ fn tls_native_new_server_in(a, cert_chain, cert_len, key, key_len): i64 {
     return ctx;
 }
 
+# Global-bump server ctor (the a==0 case of tls_native_new_server_in).
 fn tls_native_new_server(cert_chain, cert_len, key, key_len): i64 {
     return tls_native_new_server_in(0, cert_chain, cert_len, key, key_len);
 }
@@ -938,7 +942,7 @@ fn _tn_load_privkey(ctx): i64 {
     var key_len = load64(ctx + TLS_CTX_OFF_KEY_LEN);
     if (key == 0) { return TLS_ERR_INVALID_PARAM; }
     if (key_len <= 0) { return TLS_ERR_INVALID_PARAM; }
-    var kmat = alloc(48);
+    var kmat = _tn_alloc(ctx, 48);
     if (kmat == 0) { return TLS_ERR_OOM; }
     var algo = SIG_PRIVKEY_UNKNOWN;
     var klen = 0;
@@ -989,9 +993,11 @@ fn _tn_load_cert(ctx): i64 {
     var cert_len = load64(ctx + TLS_CTX_OFF_CERT_LEN);
     if (cert == 0) { return TLS_ERR_INVALID_PARAM; }
     if (cert_len <= 0) { return TLS_ERR_INVALID_PARAM; }
-    var leaf = x509_cert_alloc();
+    # v6.2.25: parse the leaf into the per-connection arena (272 B/handshake leak
+    # otherwise). _tn_arena(ctx)==0 → global bump (byte-identical to a==0).
+    var leaf = x509_cert_alloc_into(_tn_arena(ctx));
     if (leaf == 0) { return TLS_ERR_OOM; }
-    if (x509_parse(cert, cert_len, leaf) != 1) { return TLS_ERR_CERT_INVALID; }
+    if (x509_parse_into(cert, cert_len, leaf, _tn_arena(ctx)) != 1) { return TLS_ERR_CERT_INVALID; }
     store64(ctx + TLS_CTX_OFF_LEAF_CERT, leaf);
     return TLS_OK;
 }
@@ -1075,7 +1081,7 @@ fn _tn_find_ext(ext_ptr, ext_len, want_type, out_dp, out_dl): i64 {
 # each. Returns a newly-alloc'd `[u8 len][proto]` copy of the match (the
 # TLS_CTX_OFF_ALPN_SEL format), or 0 if there is no overlap / either list is
 # malformed. All reads are bounds-checked against the untrusted client list.
-fn _tn_select_alpn(server_list, server_len, client_list, client_len): i64 {
+fn _tn_select_alpn(ctx, server_list, server_len, client_list, client_len): i64 {
     var sp = 0;
     while (sp < server_len) {
         var sl = load8(server_list + sp) & 0xFF;
@@ -1090,7 +1096,7 @@ fn _tn_select_alpn(server_list, server_len, client_list, client_len): i64 {
             if (cp + cl > client_len) { return 0; }      # truncated → stop
             if (sl == cl) {
                 if (_tn_ct_eq(server_list + sp, client_list + cp, sl) == 1) {
-                    var out = alloc(1 + sl);
+                    var out = _tn_alloc(ctx, 1 + sl);
                     if (out == 0) { return 0; }
                     store8(out, sl);
                     memcpy(out + 1, server_list + sp, sl);
@@ -1124,7 +1130,7 @@ fn _tn_server_negotiate_alpn(ctx, ext_ptr, ext_total): i64 {
     if (cdl < 2) { return TLS_OK; }                       # no ProtocolNameList length
     var clist_len = _tn_be16_r(cdp);
     if (clist_len + 2 > cdl) { return TLS_OK; }           # malformed → no negotiation
-    var sel = _tn_select_alpn(off + 2, _tn_be16_r(off), cdp + 2, clist_len);
+    var sel = _tn_select_alpn(ctx, off + 2, _tn_be16_r(off), cdp + 2, clist_len);
     if (sel != 0) { store64(ctx + TLS_CTX_OFF_ALPN_SEL, sel); }
     return TLS_OK;
 }
@@ -1177,7 +1183,7 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
     var pos = 0;
     if (2 + TLS_RANDOM_LEN + 1 > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
     pos = pos + 2;                                  # legacy_version
-    var crand = alloc(TLS_RANDOM_LEN);
+    var crand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (crand == 0) { return TLS_ERR_OOM; }
     memcpy(crand, body + pos, TLS_RANDOM_LEN);
     store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
@@ -1187,7 +1193,7 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
     if (sid_len > 32) { return TLS_ERR_BAD_HANDSHAKE; }
     if (pos + sid_len > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
     if (sid_len > 0) {
-        var sid = alloc(sid_len);
+        var sid = _tn_alloc(ctx, sid_len);
         if (sid == 0) { return TLS_ERR_OOM; }
         memcpy(sid, body + pos, sid_len);
         store64(ctx + TLS_CTX_OFF_SESSION_ID, sid);
@@ -1249,9 +1255,9 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
 fn _tn_gen_ephemeral_x25519(ctx): i64 {
     var peer = load64(ctx + TLS_CTX_OFF_PEER_PUB);
     if (peer == 0) { return TLS_ERR_INTERNAL; }
-    var priv = alloc(32);
-    var epub = alloc(32);
-    var dhe = alloc(32);
+    var priv = _tn_alloc(ctx, 32);
+    var epub = _tn_alloc(ctx, 32);
+    var dhe = _tn_alloc(ctx, 32);
     if (priv == 0) { return TLS_ERR_OOM; }
     if (epub == 0) { return TLS_ERR_OOM; }
     if (dhe == 0) { return TLS_ERR_OOM; }
@@ -1372,12 +1378,12 @@ fn tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max): i64 {
     # ServerHello path. Init transcript for the negotiated cipher and
     # feed the ClientHello in.
     var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
-    var ts = tls_native_transcript_init(tls_native_cipher_hash_algo(cipher));
+    var ts = tls_native_transcript_init_in(load64(ctx + TLS_CTX_OFF_ALLOC), tls_native_cipher_hash_algo(cipher));
     if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
     tls_native_transcript_update(ts, ch_msg, TLS_HANDSHAKE_HEADER_LEN + blen);
     # Server random + ephemeral keypair + ECDHE.
-    var srand = alloc(TLS_RANDOM_LEN);
+    var srand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (sys_getrandom(srand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
@@ -1427,7 +1433,7 @@ fn tls_native_server_derive_handshake(ctx): i64 {
     if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
     if (dhe == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
     var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
-    var ks = tls_native_keysched_new(tls_native_cipher_hash_algo(cipher));
+    var ks = tls_native_keysched_new_in(load64(ctx + TLS_CTX_OFF_ALLOC), tls_native_cipher_hash_algo(cipher));
     if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     var rc = tls_native_keysched_derive_handshake(ks, dhe, TLS_X25519_KEY_LEN, ts);
     if (rc != TLS_OK) { return _tn_ctx_fail(ctx, rc); }
@@ -1522,19 +1528,19 @@ fn _tn_build_cert_verify(ctx, out, out_max, label, label_len): i64 {
     # Build the signed content: 0x20*64 ++ label ++ 0x00 ++ Transcript-Hash.
     # v6.2.8: `label` is "TLS 1.3, server CertificateVerify" (server) or
     # "TLS 1.3, client CertificateVerify" (client mTLS) — both 33 bytes.
-    var content = alloc(64 + label_len + 1 + TLS_MAX_DIGEST_LEN);
+    var content = _tn_alloc(ctx, 64 + label_len + 1 + TLS_MAX_DIGEST_LEN);
     if (content == 0) { return TLS_ERR_OOM; }
     var i = 0;
     while (i < 64) { store8(content + i, 0x20); i = i + 1; }
     memcpy(content + 64, label, label_len);
     store8(content + 64 + label_len, 0);
-    var th = alloc(TLS_MAX_DIGEST_LEN);
+    var th = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (th == 0) { return TLS_ERR_OOM; }
     tls_native_transcript_digest(ts, th);
     memcpy(content + 64 + label_len + 1, th, hlen);
     var content_len = 64 + label_len + 1 + hlen;
     # Sign per key algorithm.
-    var sig = alloc(128);
+    var sig = _tn_alloc(ctx, 128);
     if (sig == 0) { return TLS_ERR_OOM; }
     var sig_len = 0;
     var scheme = 0;
@@ -1547,8 +1553,8 @@ fn _tn_build_cert_verify(ctx, out, out_max, label, label_len): i64 {
             scheme = TLS_SIG_ECDSA_SECP384R1_SHA384;
         } else {
             if (algo == SIG_PRIVKEY_ED25519) {
-                var sk64 = alloc(64);
-                var pk32 = alloc(32);
+                var sk64 = _tn_alloc(ctx, 64);
+                var pk32 = _tn_alloc(ctx, 32);
                 if (sk64 == 0) { return TLS_ERR_OOM; }
                 if (pk32 == 0) { return TLS_ERR_OOM; }
                 ed25519_keypair(kmat, sk64, pk32);
@@ -1585,17 +1591,17 @@ fn _tn_build_finished(ctx, out, out_max): i64 {
     if (ks == 0) { return TLS_ERR_PROTOCOL; }
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
-    var shs = alloc(TLS_MAX_DIGEST_LEN);
+    var shs = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (shs == 0) { return TLS_ERR_OOM; }
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, shs) < 0) {
         return TLS_ERR_PROTOCOL;
     }
-    var fk = alloc(TLS_MAX_DIGEST_LEN);
+    var fk = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (fk == 0) { return TLS_ERR_OOM; }
     if (tls_native_hkdf_expand_label(shs, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }
-    var th = alloc(TLS_MAX_DIGEST_LEN);
+    var th = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (th == 0) { return TLS_ERR_OOM; }
     tls_native_transcript_digest(ts, th);
     var total = TLS_HANDSHAKE_HEADER_LEN + hlen;
@@ -1743,9 +1749,10 @@ fn tls_native_server_recv_client_certificate(ctx, msg, msg_len): i64 {
     if (pos + 3 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     var cert_len = _tn_be24_r(body + pos); pos = pos + 3;
     if (pos + cert_len > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    var leaf = x509_cert_alloc();
+    # v6.2.25: parse the mTLS client leaf into the per-connection arena.
+    var leaf = x509_cert_alloc_into(_tn_arena(ctx));
     if (leaf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (x509_parse(body + pos, cert_len, leaf) != 1) {
+    if (x509_parse_into(body + pos, cert_len, leaf, _tn_arena(ctx)) != 1) {
         return _tn_ctx_fail(ctx, TLS_ERR_CERT_INVALID);
     }
     store64(ctx + TLS_CTX_OFF_CLIENT_CERT, leaf);
@@ -1778,10 +1785,10 @@ fn tls_native_server_recv_client_certverify(ctx, msg, msg_len): i64 {
     var sig = body + 4;
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var hlen = tls_native_transcript_digest_len(ts);
-    var th = alloc(TLS_MAX_DIGEST_LEN);
+    var th = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (th == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_transcript_digest(ts, th);
-    var content = alloc(64 + 33 + 1 + 48);
+    var content = _tn_alloc(ctx, 64 + 33 + 1 + 48);
     if (content == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var i = 0;
     while (i < 64) { store8(content + i, 0x20); i = i + 1; }
@@ -1833,20 +1840,20 @@ fn tls_native_server_recv_client_finished(ctx, msg, msg_len): i64 {
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
     if (blen != hlen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    var chs = alloc(TLS_MAX_DIGEST_LEN);
+    var chs = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (chs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, chs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var fk = alloc(TLS_MAX_DIGEST_LEN);
+    var fk = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_hkdf_expand_label(chs, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
-    var th = alloc(TLS_MAX_DIGEST_LEN);
+    var th = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (th == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_transcript_digest(ts, th);
-    var expected = alloc(TLS_MAX_DIGEST_LEN);
+    var expected = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (expected == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (hash_algo == TLS_HASH_SHA384) {
         hmac_sha384(fk, hlen, th, hlen, expected);
@@ -1896,7 +1903,7 @@ fn tls_native_server_derive_master(ctx): i64 {
 fn _tn_ctx_stek(ctx): i64 {
     var stek = load64(ctx + TLS_CTX_OFF_STEK);
     if (stek != 0) { return stek; }
-    stek = alloc(32);
+    stek = _tn_alloc(ctx, 32);
     if (stek == 0) { return 0; }
     if (sys_getrandom(stek, 32, 0) != 32) { return 0; }
     store64(ctx + TLS_CTX_OFF_STEK, stek);
@@ -1945,13 +1952,13 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
-    var rm = alloc(TLS_MAX_DIGEST_LEN);
+    var rm = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (rm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_RESUMPTION_MASTER, rm) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var nonce = alloc(8);
-    var age_add = alloc(4);
+    var nonce = _tn_alloc(ctx, 8);
+    var age_add = _tn_alloc(ctx, 4);
     if (nonce == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (age_add == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     # CVE-19 (v6.1.36): fail-closed — these were the only unchecked sys_getrandom
@@ -1960,14 +1967,14 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     # ticket. Never emit a weak NewSessionTicket.
     if (sys_getrandom(nonce, 8, 0) != 8) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     if (sys_getrandom(age_add, 4, 0) != 4) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    var psk = alloc(TLS_MAX_DIGEST_LEN);
+    var psk = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (psk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_hkdf_expand_label(rm, hlen, "resumption", 10, nonce, 8, hash_algo, psk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     var stek = _tn_ctx_stek(ctx);
     if (stek == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    var ticket = alloc(TLS_TICKET_OVERHEAD + hlen);
+    var ticket = _tn_alloc(ctx, TLS_TICKET_OVERHEAD + hlen);
     if (ticket == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ticket_len = _tn_ticket_seal(stek, psk, hlen, ticket);
     if (ticket_len < 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
@@ -2050,8 +2057,14 @@ fn tls_native_record_seal(cipher, key, static_iv, seq8, inner_ct, inner, inner_l
     if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
     var wh = tls_native_record_write_header(out, TLS_CT_APPLICATION_DATA, 0x0303, rec_len);
     if (wh < 0) { return wh; }
-    var pt = alloc(inner_len + 1);
-    if (pt == 0) { return TLS_ERR_OOM; }
+    # v6.2.25: per-record plaintext scratch on the STACK (was a global-bump
+    # alloc per sealed record — the highest-rate leak on a long-running server,
+    # one per app-data record up to ~16 KB). inner_len <= TLS_RECORD_MAX_PLAINTEXT
+    # (guarded above via rec_len <= TLS_RECORD_MAX_CIPHERTEXT), and pt is consumed
+    # by aead_encrypt before return, so the fixed 16385-B frame is sound. This is
+    # a ctx-less generic primitive (no arena to thread) → stack-local is the fit.
+    var ptbuf[16385];   # TLS_RECORD_MAX_PLAINTEXT + 1 (array size must be a literal)
+    var pt = &ptbuf;
     memcpy(pt, inner, inner_len);
     store8(pt + inner_len, inner_ct);
     var nonce[12];

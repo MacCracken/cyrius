@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.24** (v6.2.x cycle — **Platform Expansion**; TLS server-handshake contract (`tls_accept`) + cross-target SYS_* dedup (net/fs `NSYS_`/`FSYS_` + macho aarch64 socket xlat) + cyrlint agnos-ABI rule + mabda 3.2.14. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.24 — tls/net/cyrlint changes are stdlib/`#ifdef`-guarded; the emit.cyr socket-xlat is aarch64-backend only → x86 cycc byte-identical) |
+| **Version** | **6.2.25** (v6.2.x cycle — **Platform Expansion**; `tls_native` server-ctx arena/flat-RSS fix (full-depth, ~95 per-connection allocs routed via `_tn_alloc`/`_tn_arena` choke-points + stack-locals; `tls_accept_alloc_in` public entry) + sigil 3.9.1 + `cyrius audit` = project sweep (was wrongly wired to check.sh). See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.25 — tls_native/audit_walk/cbt changes are stdlib/tooling, not in the compiler; cycc self-hosts byte-identical) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **622,112 B** (@ 6.2.24 — macho `ESYSXLAT` aarch64 socket-family→Darwin + **aarch64-Linux getdents64 217→61** (funcgate fix); the v6.2.x line's first aarch64-codegen change; **pi-verified** (dir-walk + two-step self-host) + qemu; ecb/cass SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.24 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
 | **cycc_win** (PE32+ cross) | rebuilt @ 6.2.24 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
@@ -24,14 +24,39 @@
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
-| sigil fold | **3.9.0** (@6.2.23 latest, minor — absorbs agnosys helpers + LUKS/attestation surface; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
+| sigil fold | **3.9.1** (@6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack, both for the TLS per-connection arena/flat-RSS fix; @6.2.23 3.9.0 absorbs agnosys helpers + LUKS/attestation surface) |
 | stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · sigil 3.9.0 · **mabda 3.2.14** · sakshi 2.4.0 (**mabda 3.2.12→3.2.14 @.24** — the WIP that was unreleased at .23 is now a real tag; 0 symbol removals) |
 | tests | 187 `.tcyr` (no new tcyr @.24 — tls_accept native path covered by existing TLS suites + agnos gate; libssl branch verified by adversarial review; +`tls_native_alpn` @.22) · 15 `.bcyr` · 5 `.fcyr` |
 | stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4932 fns** (+23 @.24 — +3 `tls_accept*`, +20 mabda 3.2.14; 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **6/6** (+probe **1e** @.23 — fs dir-listing: getdents #29 + AO_DIRECTORY 0x800 emit-inspect) |
-| bench (every-release gate) | self_compile **522 ms** @ 6.2.24 (within jitter of .23's 515 ms; x86 cycc 1,069,688 B flat — emit.cyr change is aarch64-only, no x86 perf delta) |
+| bench (every-release gate) | self_compile **525 ms** @ 6.2.25 (within jitter of .24's 522 ms; x86 cycc 1,069,688 B flat — tls_native/audit changes are stdlib/tooling, no compiler/x86 perf delta) |
 
+> **Handoff (2026-06-19c):** **v6.2.25 CUT — `tls_native` server-ctx
+> arena/flat-RSS fix (full-depth) + sigil 3.9.1 + `cyrius audit` semantics fix.**
+> A long-running native-TLS server leaked every accepted connection on the
+> global bump (ctx + handshake/record buffers + keysched secrets + transcript
+> hash + traffic keys + tickets) → unbounded RSS. Fixed: `TLS_CTX_OFF_ALLOC`
+> stashes an `lib/alloc.cyr` Allocator (0=global) via `tls_native_new_server_in`,
+> and `_tn_alloc`/`_tn_alloc_a`/`_tn_ks_alloc`/`_tn_arena` choke-points route
+> ~95 per-connection allocs across conn/keysched/lowlevel/hs13/hs12 (+ the x509
+> leaf via `x509_cert_alloc_into`); pure within-call scratch went stack-local
+> (`record_seal`'s per-record 16 KB, HKDF info/th, transcript clone, p384 sig).
+> `tls_accept_alloc_in(a, …)` exposes it → a server loop `arena_allocator(cap)`
+> once + `reset_via(a)` per connection = flat RSS. `a==0` byte-identical (full
+> TLS suite green). **Adversarial review (ultracode) caught 8 missed-routing
+> leaks** the first conversion pass left (incl. the per-record `record_seal`) +
+> 2 more found in sweep (x509, p384); **zero use-after-reset hazards.** Proven
+> by hermetic `tls_native_server_arena_flat_rss.tcyr` (252 asserts: arena_used
+> → base after every reset_via, constant per-connection footprint). sigil 3.9.1
+> folded (`sha384_init_into` + ecdsa `raw_sig`→stack). **`cyrius audit` fixed**
+> (was wired to the uninstalled `~/.cyrius/bin/check.sh` → `script not found`):
+> default is now the **project sweep** (fmt/lint/docs/tests/bench, any repo);
+> `--internal`=check.sh; `--internal=platform-check`=+cross-OS. New
+> `audit_doc_walk` parses cyrdoc's stdout summary (per-fn markers → stderr).
+> **check.sh 89/89; cross-OS self-host pi/ecb/cass green; cycc byte-identical
+> 1,069,688 B; api-surface 4939 (+7).** Next slot: user's call.
+>
 > **Handoff (2026-06-19b):** **v6.2.24 CUT — TLS server-handshake contract
 > (`tls_accept`) + cross-target SYS_* dedup + cyrlint agnos-ABI rule + mabda
 > 3.2.14.** Follow-up to .23 (user: "more issues + deferred items"). **(1)

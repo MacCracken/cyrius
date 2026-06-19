@@ -762,8 +762,11 @@ fn tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx): i64 {
 # their lifetime through tls_accept_complete.
 # ====================================================================
 #ifndef CYRIUS_TLS_LIBSSL
-fn _tls_native_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
-    var nctx = tls_native_new_server(load64(creds), load64(creds + 8), load64(creds + 16), load64(creds + 24));
+# v6.2.25: `a` (Allocator handle, 0 = global bump) backs the native ctx + every
+# per-connection handshake alloc AND this 40-B shim, so a server loop reset_via(a)s
+# the whole connection footprint → flat RSS. a==0 is byte-identical to .24.
+fn _tls_native_accept_alloc_in(a, sock, creds, hook_fp, hook_ctx): i64 {
+    var nctx = tls_native_new_server_in(a, load64(creds), load64(creds + 8), load64(creds + 16), load64(creds + 24));
     if (nctx == 0) { return 0; }
     # creds must be loaded BEFORE the handshake (fail-fast on bad cert/key).
     if (tls_native_server_load_creds(nctx) != TLS_OK) { return 0; }
@@ -773,12 +776,16 @@ fn _tls_native_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
     if (hook_fp != 0) {
         if (fncall2(hook_fp, hook_ctx, nctx) != 0) { return 0; }
     }
-    var ctx = alloc(40);
+    var ctx = _tn_alloc_a(a, 40);
     store64(ctx, nctx);
     store64(ctx + 8, 0);
     store64(ctx + 16, sock);
     store64(ctx + 24, TLS_BACKEND_NATIVE);
     return ctx;
+}
+
+fn _tls_native_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
+    return _tls_native_accept_alloc_in(0, sock, creds, hook_fp, hook_ctx);
 }
 
 fn _tls_native_accept_complete(ctx): i64 {
@@ -863,6 +870,31 @@ fn tls_accept(sock, cert, cert_len, key, key_len): i64 {
     if (ctx == 0) { return 0; }
     if (tls_accept_complete(ctx) != 1) { tls_close(ctx); return 0; }
     return ctx;
+}
+
+# v6.2.25: arena-backed server-accept (flat-RSS). `a` is an Allocator handle
+# (lib/alloc.cyr — e.g. arena_allocator(cap)). The ctx + the whole per-connection
+# native handshake/record footprint + the shim draw from `a`, so a server loop
+# can reclaim it all with one reset_via(a) per connection:
+#
+#   var a = arena_allocator(131072);            # once (mTLS-1.3 worst case)
+#   while (accept) {
+#       var c = tls_accept_alloc_in(a, sock, &creds, hook, 0);
+#       if (tls_accept_complete(c) == 1) { ...serve...; }
+#       tls_close(c);
+#       reset_via(a);                            # rewind → flat RSS
+#   }
+#
+# Use arena_new/arena_allocator ONCE (not per connection — arena_free doesn't
+# munmap); reset_via (NOT alloc_reset) between connections. The arena cap must
+# cover the worst single handshake, since reset only fires between connections.
+# The libssl backend manages its own memory, so `a` doesn't apply there — it
+# routes to the global tls_accept_alloc. tls_accept_alloc is the a==0 wrapper.
+fn tls_accept_alloc_in(a, sock, creds, hook_fp, hook_ctx): i64 {
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) { return _tls_native_accept_alloc_in(a, sock, creds, hook_fp, hook_ctx); }
+    #endif
+    return tls_accept_alloc(sock, creds, hook_fp, hook_ctx);
 }
 
 # Write through TLS session

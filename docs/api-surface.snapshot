@@ -821,6 +821,7 @@ atomic::atomic_fence/0
 atomic::atomic_fetch_add/2
 atomic::atomic_load/1
 atomic::atomic_store/2
+audit_walk::audit_doc_walk/2
 audit_walk::audit_fmt_walk/2
 audit_walk::audit_lint_walk/2
 audit_walk::str_starts_with_buf/3
@@ -3961,6 +3962,7 @@ sigil::sha256_update/3
 sigil::sha384/3
 sigil::sha384_finalize/2
 sigil::sha384_init/0
+sigil::sha384_init_into/1
 sigil::sha384_update/3
 sigil::sha512/3
 sigil::sha512_bsig0/1
@@ -4626,6 +4628,7 @@ thread_win::thread_create/2
 thread_win::thread_join/1
 tls::tls_accept/5
 tls::tls_accept_alloc/4
+tls::tls_accept_alloc_in/5
 tls::tls_accept_complete/1
 tls::tls_available/0
 tls::tls_close/1
@@ -4678,6 +4681,7 @@ tls_native_conn::tls_native_write/3
 tls_native_ctx::tls_native_available/0
 tls_native_ctx::tls_native_new_client/2
 tls_native_ctx::tls_native_server_transition/2
+tls_native_ctx::tls_native_set_alloc/2
 tls_native_hs12::tls_native_12_build_client_hello/3
 tls_native_hs12::tls_native_12_build_client_key_exchange/3
 tls_native_hs12::tls_native_12_build_finished/4
@@ -4727,6 +4731,7 @@ tls_native_hs13::tls_native_get_key_algo/1
 tls_native_hs13::tls_native_install_app_keys/1
 tls_native_hs13::tls_native_key_update_secret/4
 tls_native_hs13::tls_native_new_server/4
+tls_native_hs13::tls_native_new_server_in/5
 tls_native_hs13::tls_native_open_app/5
 tls_native_hs13::tls_native_psk_binder/6
 tls_native_hs13::tls_native_record_open/9
@@ -4760,6 +4765,7 @@ tls_native_keysched::tls_native_keysched_derive_handshake/4
 tls_native_keysched::tls_native_keysched_derive_master/2
 tls_native_keysched::tls_native_keysched_get_secret/3
 tls_native_keysched::tls_native_keysched_new/1
+tls_native_keysched::tls_native_keysched_new_in/2
 tls_native_keysched::tls_native_keysched_phase/1
 tls_native_keysched::tls_native_keysched_set_psk/3
 tls_native_lowlevel::tls_native_aead_nonce/3
@@ -4774,6 +4780,7 @@ tls_native_lowlevel::tls_native_seq_init/1
 tls_native_lowlevel::tls_native_transcript_digest/2
 tls_native_lowlevel::tls_native_transcript_digest_len/1
 tls_native_lowlevel::tls_native_transcript_init/1
+tls_native_lowlevel::tls_native_transcript_init_in/2
 tls_native_lowlevel::tls_native_transcript_update/3
 trait::default_vtable/1
 trait::display/1

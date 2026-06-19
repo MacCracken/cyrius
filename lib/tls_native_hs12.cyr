@@ -615,7 +615,7 @@ fn _tn_parse_certificate_12(ctx, body, blen): i64 {
 # 64-byte PureEdDSA). Writes the TLS SignatureScheme via `scheme_out`;
 # returns the signature length (>0) or a negative TLS_ERR_*.
 fn _tn_12_sign_kex_params(ctx, params36, sig_out, sig_max, scheme_out): i64 {
-    var content = alloc(100);
+    var content = _tn_alloc(ctx, 100);
     if (content == 0) { return TLS_ERR_OOM; }
     memcpy(content,      load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM), 32);
     memcpy(content + 32, load64(ctx + TLS_CTX_OFF_SERVER_RANDOM), 32);
@@ -633,8 +633,8 @@ fn _tn_12_sign_kex_params(ctx, params36, sig_out, sig_max, scheme_out): i64 {
             store64(scheme_out, TLS_SIG_ECDSA_SECP384R1_SHA384);
         } else {
             if (algo == SIG_PRIVKEY_ED25519) {
-                var sk64 = alloc(64);
-                var pk32 = alloc(32);
+                var sk64 = _tn_alloc(ctx, 64);
+                var pk32 = _tn_alloc(ctx, 32);
                 if (sk64 == 0) { return TLS_ERR_OOM; }
                 if (pk32 == 0) { return TLS_ERR_OOM; }
                 ed25519_keypair(kmat, sk64, pk32);
@@ -665,7 +665,7 @@ fn _tn_12_build_server_kex(ctx, out, out_max): i64 {
     _tn_be16_w(body + 1, TLS_GROUP_X25519);            # namedcurve
     store8(body + 3, 32);                              # ECPoint length
     memcpy(body + 4, epub, 32);                        # raw 32-byte u-coord
-    var sig = alloc(128);
+    var sig = _tn_alloc(ctx, 128);
     if (sig == 0) { return TLS_ERR_OOM; }
     var scheme = 0;
     var sig_len = _tn_12_sign_kex_params(ctx, body, sig, 128, &scheme);
@@ -788,8 +788,8 @@ fn tls_native_ccs_record_write(out): i64 {
 # pub is known) and the client at ClientKeyExchange (server pub known
 # but the DH happens later, in compute_premaster). Returns TLS_OK or an error.
 fn _tn_gen_ephemeral_x25519_pub_only(ctx): i64 {
-    var priv = alloc(32);
-    var epub = alloc(32);
+    var priv = _tn_alloc(ctx, 32);
+    var epub = _tn_alloc(ctx, 32);
     if (priv == 0) { return TLS_ERR_OOM; }
     if (epub == 0) { return TLS_ERR_OOM; }
     if (sys_getrandom(priv, 32, 0) != 32) { return TLS_ERR_INTERNAL; }
@@ -831,7 +831,7 @@ fn tls_native_12_compute_premaster(ctx, peer_eph_pub32, out32): i64 {
 # Returns TLS_OK or a negative TLS_ERR_*.
 fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
-    var master = alloc(TLS12_MASTER_SECRET_LEN);
+    var master = _tn_alloc(ctx, TLS12_MASTER_SECRET_LEN);
     if (master == 0) { return TLS_ERR_OOM; }
     if (load64(ctx + TLS_CTX_OFF_USE_EMS) == 1) {
         # Extended Master Secret (RFC 7627): master derives from the
@@ -864,7 +864,7 @@ fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
     var sr = load64(ctx + TLS_CTX_OFF_SERVER_RANDOM);
     var kb_len = tls_native_12_key_block_len(identity);
     if (kb_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
-    var kb = alloc(kb_len);
+    var kb = _tn_alloc(ctx, kb_len);
     if (kb == 0) { return TLS_ERR_OOM; }
     if (tls_native_12_key_block(identity, master, cr, sr, kb, kb_len) != TLS_OK) {
         return TLS_ERR_INTERNAL;
@@ -873,10 +873,10 @@ fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
     var iv_len = tls_native_cipher_iv_len_12(identity);
     if (key_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
     if (iv_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
-    var cw_key = alloc(key_len);
-    var sw_key = alloc(key_len);
-    var cw_iv = alloc(iv_len);
-    var sw_iv = alloc(iv_len);
+    var cw_key = _tn_alloc(ctx, key_len);
+    var sw_key = _tn_alloc(ctx, key_len);
+    var cw_iv = _tn_alloc(ctx, iv_len);
+    var sw_iv = _tn_alloc(ctx, iv_len);
     if (cw_key == 0) { return TLS_ERR_OOM; }
     if (sw_key == 0) { return TLS_ERR_OOM; }
     if (cw_iv == 0) { return TLS_ERR_OOM; }
@@ -908,7 +908,7 @@ fn tls_native_12_build_finished(ctx, label, out, out_max): i64 {
     var master = load64(ctx + TLS_CTX_OFF_MASTER12);
     if (ts == 0) { return TLS_ERR_PROTOCOL; }
     if (master == 0) { return TLS_ERR_PROTOCOL; }
-    var hh = alloc(TLS_MAX_DIGEST_LEN);
+    var hh = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (hh == 0) { return TLS_ERR_OOM; }
     var hh_len = tls_native_transcript_digest(ts, hh);
     if (hh_len < 0) { return TLS_ERR_INTERNAL; }
@@ -940,7 +940,7 @@ fn tls_native_12_verify_finished(ctx, msg, msg_len, label): i64 {
     var master = load64(ctx + TLS_CTX_OFF_MASTER12);
     if (ts == 0) { return TLS_ERR_PROTOCOL; }
     if (master == 0) { return TLS_ERR_PROTOCOL; }
-    var hh = alloc(TLS_MAX_DIGEST_LEN);
+    var hh = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (hh == 0) { return TLS_ERR_OOM; }
     var hh_len = tls_native_transcript_digest(ts, hh);
     if (hh_len < 0) { return TLS_ERR_INTERNAL; }
@@ -1054,7 +1054,7 @@ fn _tn_ch_is_tls13(ch_msg, ch_len): i64 {
 # negative TLS_ERR_*.
 fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     if (blen < 2 + 32 + 1) { return TLS_ERR_BAD_HANDSHAKE; }
-    var crand = alloc(TLS_RANDOM_LEN);
+    var crand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (crand == 0) { return TLS_ERR_OOM; }
     memcpy(crand, body + 2, 32);
     store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
@@ -1318,7 +1318,7 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (chosen < 0) { return _tn_ctx_fail(ctx, chosen); }
     store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
     store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
-    var srand = alloc(TLS_RANDOM_LEN);
+    var srand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (sys_getrandom(srand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
@@ -1327,15 +1327,15 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     var er = _tn_gen_ephemeral_x25519_pub_only(ctx);
     if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
-    var ts = tls_native_transcript_init(tls_native_cipher_hash_algo(identity));
+    var ts = tls_native_transcript_init_in(load64(ctx + TLS_CTX_OFF_ALLOC), tls_native_cipher_hash_algo(identity));
     if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
     tls_native_transcript_update(ts, ch_msg, TLS_HANDSHAKE_HEADER_LEN + blen);
-    var flight = alloc(4096);
+    var flight = _tn_alloc(ctx, 4096);
     if (flight == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var fl = tls_native_12_build_server_flight(ctx, flight, 4096);
     if (fl < 0) { return _tn_ctx_fail(ctx, fl); }
-    var flrec = alloc(fl + TLS_RECORD_HEADER_LEN);
+    var flrec = _tn_alloc(ctx, fl + TLS_RECORD_HEADER_LEN);
     if (flrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(flrec, TLS_CT_HANDSHAKE, 0x0303, fl);
     memcpy(flrec + TLS_RECORD_HEADER_LEN, flight, fl);
@@ -1343,14 +1343,14 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
         return _tn_ctx_fail(ctx, TLS_ERR_IO);
     }
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    var inbuf = alloc(cap);
+    var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
     if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
     var cke_msg = inbuf + TLS_RECORD_HEADER_LEN;
     var cke_len = rl - TLS_RECORD_HEADER_LEN;
-    var client_pub = alloc(32);
+    var client_pub = _tn_alloc(ctx, 32);
     if (client_pub == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var cr2 = tls_native_12_parse_client_key_exchange(cke_msg, cke_len, client_pub);
     if (cr2 != TLS_OK) { return _tn_ctx_fail(ctx, cr2); }
@@ -1358,7 +1358,7 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     # 33-byte body), not the record payload — a peer that pads/coalesces
     # the record would otherwise desync the transcript vs the client.
     tls_native_transcript_update(ts, cke_msg, TLS_HANDSHAKE_HEADER_LEN + 33);
-    var pm = alloc(32);
+    var pm = _tn_alloc(ctx, 32);
     if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var pr2 = tls_native_12_compute_premaster(ctx, client_pub, pm);
     if (pr2 != TLS_OK) { return _tn_ctx_fail(ctx, pr2); }
@@ -1366,7 +1366,7 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
     var crl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (crl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    var cfin = alloc(64);
+    var cfin = _tn_alloc(ctx, 64);
     if (cfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var fct = 0;
     var cfinlen = tls_native_12_open(ctx, inbuf, crl, cfin, 64, &fct);
@@ -1374,15 +1374,15 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (fct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
     var vr = tls_native_12_verify_finished(ctx, cfin, cfinlen, "client finished");
     if (vr != TLS_OK) { return _tn_ctx_fail(ctx, vr); }
-    var ccs = alloc(8);
+    var ccs = _tn_alloc(ctx, 8);
     if (ccs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ccsn = tls_native_ccs_record_write(ccs);
     if (_tn_sock_write_all(sock_fd, ccs, ccsn) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    var fin = alloc(64);
+    var fin = _tn_alloc(ctx, 64);
     if (fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finn = tls_native_12_build_finished(ctx, "server finished", fin, 64);
     if (finn < 0) { return _tn_ctx_fail(ctx, finn); }
-    var finrec = alloc(finn + 64);
+    var finrec = _tn_alloc(ctx, finn + 64);
     if (finrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finreclen = tls_native_12_seal(ctx, TLS_CT_HANDSHAKE, fin, finn, finrec, finn + 64);
     if (finreclen < 0) { return _tn_ctx_fail(ctx, finreclen); }
@@ -1398,7 +1398,7 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
 fn tls_native_accept_12(ctx, sock_fd): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    var inbuf = alloc(cap);
+    var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
@@ -1418,26 +1418,26 @@ fn tls_native_server_install_handshake_keys(ctx): i64 {
     var key_len = tls_native_cipher_key_len(cipher);
     var iv_len = tls_native_cipher_iv_len(cipher);
     var hlen = _tn_hash_len(hash_algo);
-    var ss = alloc(TLS_MAX_DIGEST_LEN);
+    var ss = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (ss == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, ss) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var sk = alloc(key_len);
-    var siv = alloc(iv_len);
+    var sk = _tn_alloc(ctx, key_len);
+    var siv = _tn_alloc(ctx, iv_len);
     if (sk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (siv == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_derive_key(ss, hlen, hash_algo, sk, key_len);
     tls_native_derive_iv(ss, hlen, hash_algo, siv, iv_len);
     store64(ctx + TLS_CTX_OFF_SRV_HS_KEY, sk);
     store64(ctx + TLS_CTX_OFF_SRV_HS_IV, siv);
-    var cs = alloc(TLS_MAX_DIGEST_LEN);
+    var cs = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (cs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, cs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var ck = alloc(key_len);
-    var civ = alloc(iv_len);
+    var ck = _tn_alloc(ctx, key_len);
+    var civ = _tn_alloc(ctx, iv_len);
     if (ck == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (civ == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_derive_key(cs, hlen, hash_algo, ck, key_len);
