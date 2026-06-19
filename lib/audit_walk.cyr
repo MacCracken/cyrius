@@ -116,11 +116,36 @@ fn str_starts_with_buf(buf, n, prefix): i64 {
     return 0;
 }
 
-# Walk one directory and emit (name, dtype) pairs into two parallel
-# vecs. Names are str_from'd. Skips "." and "..". Cyrius port of the
-# getdents64 loop in lib/fs.cyr's dir_list, but exposes d_type so
-# the walker can skip DT_LNK entries.
+# Portable (non-Linux) dir lister: delegate to fs.cyr's cross-platform
+# dir_list (FindFirstFileW on Windows, getdirentries on macOS, agnos getdents)
+# and mark every entry DT_REG (8). No d_type, so the DT_LNK skip is dropped —
+# that is a Linux `cyrius deps` vendored-symlink concern, and the audit sweep is
+# read-only (fmt --check / lint / doc --check), so there is no write-through-
+# symlink risk; _aw_is_distlib_bundle still skips vendored bundles by content.
+fn _aw_dir_list_portable(path, out_names, out_dtypes): i64 {
+    var names = dir_list(path);
+    var i = 0;
+    while (i < vec_len(names)) {
+        vec_push(out_names, vec_get(names, i));
+        vec_push(out_dtypes, 8);   # DT_REG
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Walk one directory and emit (name, dtype) pairs into two parallel vecs. Names
+# are str_from'd. Skips "." and "..". On Linux (x86/aarch64) uses getdents64
+# directly so it can expose d_type and skip DT_LNK; SYS_GETDENTS64 is Linux-only
+# (and the Linux dirent byte offsets differ from macOS), so Windows / macOS /
+# agnos route through the portable lister above. (Added cross-platform at v6.2.25
+# when `cyrius audit` began including this walker — the CLI cross-compiles to PE.)
 fn _aw_dir_list_typed(path, out_names, out_dtypes): i64 {
+    # Linux x86/aarch64 only — the getdents64 block (and SYS_GETDENTS64) must be
+    # #ifndef'd OUT of the PE / Mach-O / agnos compiles, since the early-`return`
+    # below does NOT stop the compiler from type-checking code that follows it.
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_AGNOS
     var fd = sys_open(str_data(path), O_RDONLY, 0);
     if (fd < 0) { return 0; }
     var buf = alloc(4096);
@@ -151,6 +176,11 @@ fn _aw_dir_list_typed(path, out_names, out_dtypes): i64 {
     }
     sys_close(fd);
     return 0;
+    #endif
+    #endif
+    #endif
+    # Windows / macOS / agnos (also the unreachable tail on Linux): cross-platform.
+    return _aw_dir_list_portable(path, out_names, out_dtypes);
 }
 
 # Returns 1 if `name` (Str) ends with ".cyr".

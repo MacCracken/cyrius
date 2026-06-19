@@ -64,7 +64,13 @@ check.sh **89/89**; cross-OS self-host **pi/ecb/cass**; api-surface **4932 →
   real-hardware self-host. New `audit_doc_walk` + `_aw_parse_undoc` in
   `lib/audit_walk.cyr` (cyrdoc writes per-fn markers to stderr, so the walk
   parses the `"X documented, Y undocumented"` stdout summary). Exit is non-zero
-  if fmt/lint/docs/tests fail; bench is a non-fatal perf measurement.
+  if fmt/lint/docs/tests fail; bench is a non-fatal perf measurement. Because the
+  CLI (`cbt/cyrius.cyr`) now includes `audit_walk`, its `_aw_dir_list_typed`
+  getdents64 walker was made cross-platform — the Linux `SYS_GETDENTS64` block is
+  `#ifndef`-guarded out of the PE / Mach-O / agnos compiles (an `#ifdef`
+  early-`return` does NOT stop the compiler type-checking the code after it), with
+  Windows/macOS/agnos delegating to fs.cyr's portable `dir_list`. Verified the CLI
+  cross-compiles for `CYRIUS_TARGET_WIN`/`_AARCH64`/`_MACOS`.
 
 ## [6.2.24] — 2026-06-19
 
