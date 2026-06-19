@@ -14,23 +14,52 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.22** (v6.2.x cycle — **Platform Expansion**; AGNOS server-socket peer #56/#57 + tls_native server-side ALPN (RFC 7301) + sankoch 2.4.4 agnos-compat fold. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.22 — all three bites stdlib-only; only the embedded `--version` string changed; self-host byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.22 (version-string refresh by version-bump; .21 EADDIMM_X1/EPATCHFRAME imm12 codegen unchanged) |
+| **Version** | **6.2.23** (v6.2.x cycle — **Platform Expansion**; agnos cross-target stdlib pack — fs dir-listing (getdents #29 + AO_DIRECTORY) + sysinfo consolidation + tls_native CA-load sys_open fix — and 5-lib dependency fold refresh. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.23 — all bites stdlib-only/`#ifdef`-guarded; only the embedded `--version` string changed; self-host byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.23 (version-string refresh by version-bump; codegen unchanged — agnos changes are `#ifdef`-guarded stdlib) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.22 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.23 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
-| sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.3 · **sandhi 1.6.7** · **sankoch 2.4.4** · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.4 · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · mabda 3.2.7 · sakshi 2.3.2 (**sankoch 2.4.4 @.22** — agnos-compat lock no-op; MUST release alongside this cut; all 12 libs current) |
-| tests | 187 `.tcyr` (+`tls_native_alpn` @.22 — RFC 7301 server-side ALPN, server-pref + no-overlap; +`aarch64_imm12_frame_field` @.21; +`float_named` @.19; +`float_f32` @.18; +`protobuf` @.17) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4567 fns** (+2 @.22 — `sys_sock_listen`/`sys_sock_accept`; the ALPN + listen-adapter helpers are `_`-prefixed) |
+| sigil fold | **3.9.0** (@6.2.23 latest, minor — absorbs agnosys helpers + LUKS/attestation surface; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
+| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · **patra 1.12.0** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.0** · **mabda 3.2.12** · **sakshi 2.4.0** (**@.23** — 5-lib refresh; mabda folded from the released 3.2.12 tag, not the dirty v3.2.14-WIP working dist; 0 symbol removals) |
+| tests | 187 `.tcyr` (no new tcyr @.23 — agnos paths are compile-only-gated via `agnos-crossbuild-gate.sh`; +`tls_native_alpn` @.22; +`aarch64_imm12_frame_field` @.21) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4909 fns** (+342 @.23 — the 5-lib fold; +`sys_gettid`/`sys_geteuid`; 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile ~538 ms @ 6.2.22 (jitter — ran concurrent with cross-OS SSH; cycc 1,069,688 B flat, codegen byte-identical, so no real perf delta) |
+| agnos gate | **6/6** (+probe **1e** @.23 — fs dir-listing: getdents #29 + AO_DIRECTORY 0x800 emit-inspect) |
+| bench (every-release gate) | self_compile **515 ms** @ 6.2.23 (within jitter of .22's ~538 ms; cycc 1,069,688 B flat, stdlib-only, no real perf delta) |
 
+> **Handoff (2026-06-19):** **v6.2.23 CUT — agnos cross-target stdlib pack + 5-lib
+> dependency fold.** Reviewed the latest filed issues; user picked the agnos-ABI
+> cluster + sysinfo. Three stdlib fixes + the fold; all `#ifdef`-guarded or
+> stdlib-only → **cycc x86 byte-identical (flat 1,069,688 B)**. **(1)**
+> `tls_native_set_ca_system` opened CA bundles with raw `sys_open(path,0,0)` (Linux
+> shape) → on agnos the `0`=namelen=0 → zero roots → **all verifying HTTPS dead on
+> agnos**; routed through io.cyr `file_open` (Linux/macOS byte-identical). **(2)**
+> `fs.cyr` `dir_list`/`is_dir` agnos branch: getdents **#29** (3-arg) + sovereign
+> dirent §4.2. **A P0 was caught by the ultracode adversarial review** (read vs the
+> agnos kernel source): the first cut opened dirs with `flags=0`, but the kernel's
+> `ext2_open()` rejects dir inodes — only **`AO_DIRECTORY` (0x800)** routes to
+> `ext2_open_dir()` → the getdents-capable fd. Without it dir_list was empty +
+> is_dir always 0, invisible to self-host AND a compile-only gate. Fixed; gate
+> probe **1e** now emit-inspects getdents 0x1d + the 0x800 flag. **(3)** sysinfo
+> ask was **~90% pre-existing in `lib/sys.cyr` (v6.1.28)** — closed the gap (agnos
+> `SYS_UNAME=34`/`SYS_SYSINFO=35` consts, `sys_geteuid`, portable `sys_gettid`).
+> **Fold:** sandhi 1.6.8 · patra 1.12.0 · sigil 3.9.0 · mabda 3.2.12 · sakshi 2.4.0.
+> mabda folded from the **3.2.12 TAG** (working dist was dirty v3.2.14-WIP). sigil
+> 3.9.0's new `luks_write_keyfile` referenced `O_EXCL` (undefined on agnos) → added
+> to io.cyr's agnos `O_*`. **agnosys PINNED 1.4.3** (repo decomposed → agnodrm).
+> **VERIFIED:** check.sh **89/89**; x86 + pi self-host byte-identical; agnos gate
+> **6/6**; cross-OS **ecb/cass/pi** green; api-surface 4567→**4909** (0 removals);
+> self_compile 515 ms (flat). **STILL OPEN:** the `2026-06-18-stdlib-native-agnos-abi-fs`
+> structural asks (`xopen` wrappers + cyrlint rule + ~58 raw-sys_open sites incl.
+> sigil luks) — issue kept active. **user pushes/tags after CI.**
+>
+> ---
+>
 > **Handoff (2026-06-18):** **v6.2.22 CUT — AGNOS server-socket peer (#56/#57) +
 > tls_native server-side ALPN (RFC 7301) + sankoch 2.4.4 agnos-compat fold.** Three
 > bites toward the AGNOS closed-beta "server base" sweep (agora/descent/sandhi/web

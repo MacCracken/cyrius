@@ -1,5 +1,21 @@
 # Request: stdlib system-info surface (sysinfo / uname / process-identity), cross-target
 
+> **RESOLVED (landed, targeting v6.2.23).** Premise-check found the surface was
+> **already ~90% shipped** in `lib/sys.cyr` (carved off agnosys's syscall.cyr at
+> v6.1.28) — `sys_uname`+`uname_hostname/release/machine`, `sys_sysinfo`+
+> `sysinfo_uptime/total_memory/free_memory/procs` with the exact per-target AGNOS
+> (40-byte/64-byte) vs Linux (120-byte/390-byte) struct divergence, the Linux
+> mem_unit saturating-multiply, and `is_root`. v6.2.23 closed the remaining gap:
+> (1) added `SYS_UNAME=34`/`SYS_SYSINFO=35` to the agnos peer's `SysNrAgnos` enum
+> and switched sys.cyr's agnos branches from the bare `34`/`35` literals to the
+> named consts (the "sharp edge" this issue called out); (2) added `sys_geteuid`
+> to the agnos peer (routes to getuid) so the name is uniform across targets;
+> (3) added a portable `sys_gettid` to sys.cyr (agnos→getpid, Linux→SYS_GETTID,
+> macOS/Windows→-ENOSYS, matching the file's existing not-wired convention).
+> Downstream `sigil/src/sysinfo.cyr` can now retire onto `lib/sys.cyr`. Verified:
+> agnos gate, check.sh 89/89, cross-OS pi/ecb/cass. NOTE the agnosys upstream repo
+> is gone (decomposed → agnodrm), so `lib/agnosys.cyr` stays pinned at 1.4.3.
+
 **Filed:** 2026-06-19
 **Type:** stdlib value-add request (NOT a bug)
 **Origin:** the agnosys → agnodrm decomposition. agnosys's `syscall.cyr` carries a

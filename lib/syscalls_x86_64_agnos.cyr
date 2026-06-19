@@ -54,6 +54,8 @@ enum SysNrAgnos {
     SYS_RENAME = 31;               # rename(old, oldlen, new, newlen) → 0 / -1  (uses a4=r10)
     SYS_LINK = 32;                 # link(target, targetlen, linkpath, linkpathlen) → 0 / -1 (a4)
     SYS_STAT = 33;                 # stat(path, pathlen, statbuf) → 0 / -1
+    SYS_UNAME = 34;                # uname(buf, len=64) → 0; 4×16-byte fields (§4.3)
+    SYS_SYSINFO = 35;             # sysinfo(buf, len=40) → 0; 5×u64, byte-direct (§4.4)
 }
 
 # ================================================================
@@ -279,6 +281,11 @@ fn sys_pause(): i64 { return syscall(SYS_PAUSE); }
 
 # Return the current uid (stub: always 0 / root).
 fn sys_getuid(): i64 { return syscall(SYS_GETUID); }
+
+# Effective uid. agnos has no separate euid (capability-gated, not euid-perms),
+# so it routes to getuid — giving the portable `sys_geteuid` surface (present in
+# the Linux/macOS peers) a uniform agnos definition. See lib/sys.cyr is_root.
+fn sys_geteuid(): i64 { return syscall(SYS_GETUID); }
 
 # Halt the machine (does not return).
 fn sys_reboot(): i64 { return syscall(SYS_REBOOT); }

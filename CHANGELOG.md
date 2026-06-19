@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.23] — 2026-06-19
+
+**v6.2.23 — agnos cross-target stdlib pack (fs dir-listing + sysinfo + TLS CA
+load) + dependency fold refresh (sandhi/patra/sigil/mabda/sakshi).** All
+stdlib-only → cycc x86 byte-identical (flat **1,069,688 B**); self_compile
+**515 ms** (within jitter of .22's ~538 ms, no perf delta). check.sh **89/89**,
+agnos cross-build gate **6/6**, cross-OS self-host **pi/ecb/cass** green,
+api-surface re-snapshotted **4567 → 4909** public fns (+342 from the fold, **0
+removals**).
+
+- **`tls_native_set_ca_system` agnos `sys_open` ABI fix (HTTPS-blocker).** The OS
+  trust-store loader opened its four CA-bundle candidate paths with raw
+  `sys_open(path, 0, 0)` — the Linux `(path, flags, mode)` shape. On
+  `CYRIUS_TARGET_AGNOS` `sys_open` is `(name, namelen, flags)`, so the `0` read as
+  `namelen=0` → every candidate opened a zero-length filename → `TLS_ERR_IO`, ctx
+  built with **zero roots**, and the fail-closed verify rejected every chain →
+  **all verifying HTTPS clients dead on agnos**. Now routes through io.cyr's
+  per-target `file_open` bridge (agnos: `strlen` + `O_*→AO_*`; Linux/macOS:
+  pass-through, byte-identical). `_tls_native_alloc`'s ignored return was
+  deliberately left (the ctx hook fires *after* set_ca_system, so whirl's
+  verify-none-via-hook path depends on alloc surviving a CA-load failure).
+  (issue 2026-06-18-tls-native-set-ca-system-agnos-sys-open-abi.)
+- **`lib/fs.cyr` `dir_list` / `is_dir` agnos branch.** Both ran Linux assumptions
+  on agnos (getdents64 **#217** 4-arg + Linux dirent64). Added a
+  `#ifdef CYRIUS_TARGET_AGNOS` branch: getdents **#29** (3-arg, no `basep`) + the
+  sovereign reclen-delimited dirent (§4.2: reclen u16@0, type u8@2, namelen u8@3,
+  ino u32@4, name@8 — **not** NUL-terminated → `str_from_buf(name, namelen)`).
+  **A P0 caught by adversarial review** (read against the agnos kernel source):
+  the first cut opened with `flags=0`, but the kernel routes a non-`0x800` open to
+  `ext2_open()`, which rejects directory inodes (`mode&0xF000 != 0x8000` → -1,
+  `ext2.cyr:1872`); only **`AO_DIRECTORY` (0x800)** reaches `ext2_open_dir()` →
+  the `VFS_EXT2_DIR` fd that getdents(#29) consumes (`syscall.cyr:586`). Without
+  it dir_list returned empty + is_dir returned 0 for every directory — invisible
+  to self-host (never opens a dir on agnos) **and** to a compile-only gate. Fixed
+  to pass `AO_DIRECTORY`; new gate probe **1e** emit-inspects getdents `0x1d` +
+  the `0x800` flag. (issue 2026-06-18-stdlib-native-agnos-abi-fs, partial — the
+  stdlib-wide `xopen` wrapper + cyrlint rule remain open.)
+- **System-info surface consolidation (sysinfo / uname / process-identity).** The
+  requested cross-target surface was **already ~90 % shipped** in `lib/sys.cyr`
+  (carved off agnosys at v6.1.28). Closed the remaining gap: added
+  `SYS_UNAME=34`/`SYS_SYSINFO=35` to the agnos peer's `SysNrAgnos` enum and
+  switched sys.cyr's agnos branches off the bare `34`/`35` literals onto the named
+  consts; added `sys_geteuid` to the agnos peer (routes to getuid — uniform name
+  across targets); added a portable `sys_gettid` (agnos→getpid, Linux→SYS_GETTID,
+  macOS/Windows→-ENOSYS, the file's existing not-wired convention). Downstream
+  `sigil/src/sysinfo.cyr` can retire onto this. (issue
+  2026-06-19-stdlib-sysinfo-uname-process-identity-cross-target.)
+- **`lib/io.cyr` agnos `O_*` completeness — `O_EXCL`.** The sigil 3.9.0 fold
+  surfaced a cross-target gap: sigil's new `luks_write_keyfile` (Audit F-3)
+  references `O_EXCL`, which the agnos `O_*` set (`O_RDONLY`..`O_APPEND`) did not
+  define → agnos builds pulling sigil failed to compile. Added `O_EXCL = 128` to
+  io.cyr's neutral agnos masks (agnos has no exclusive-create AO_* bit, so
+  `file_open` does not map it; bit 128 is clear of the bridge masks).
+- **Dependency fold refresh:** sandhi 1.6.7 → **1.6.8**, patra 1.11.4 → **1.12.0**,
+  sigil 3.8.0 → **3.9.0** (absorbs agnosys helpers + LUKS/attestation surface),
+  mabda 3.2.7 → **3.2.12**, sakshi 2.3.2 → **2.4.0**. mabda was folded from the
+  **released 3.2.12 tag** (`git show 3.2.12:dist/mabda.cyr`), not its local
+  working `dist/` which carried unreleased v3.2.14 WIP. **agnosys stays pinned at
+  1.4.3** — its upstream repo was decomposed (→ agnodrm); the value-add migrated
+  into sigil 3.9.0 + `lib/sys.cyr`. Vendored-dist self-contained gate green; 0
+  symbol removals across the fold.
+
 ## [6.2.22] — 2026-06-18
 
 **v6.2.22 — AGNOS server-socket peer (#56/#57) + tls_native server-side ALPN +

@@ -1,5 +1,17 @@
 # tls_native_set_ca_system uses the Linux sys_open ABI — fails on agnos
 
+> **RESOLVED (landed, targeting v6.2.23).** `tls_native_set_ca_system`
+> (`lib/tls_native_hs12.cyr`) now opens the four CA-bundle candidate paths via
+> io.cyr's per-target `file_open` bridge instead of raw `sys_open(path, 0, 0)`.
+> On agnos `file_open` computes `strlen(path)` + maps `O_*→AO_*`; on Linux/macOS
+> it passes `(path, O_RDONLY, mode)` straight through (byte-identical to the old
+> behavior — cycc x86 self-host unchanged). The `_tls_native_alloc` ignored-return
+> was deliberately NOT changed: the hook (`tls_connect_with_ctx_hook`) fires
+> *after* set_ca_system, so whirl's verify-none-via-hook path depends on alloc
+> surviving a CA-load failure; hard-failing would regress it. The ABI fix makes
+> the load succeed on agnos, removing the confusing-failure scenario. Verified:
+> agnos cross-build gate (tls_native compiles), check.sh 89/89, cross-OS pi/ecb/cass.
+
 **Filed:** 2026-06-18
 **Component:** `lib/tls_native_hs12.cyr` — `tls_native_set_ca_system`
 **Severity:** breaks **all** verifying HTTPS clients on `CYRIUS_TARGET_AGNOS`

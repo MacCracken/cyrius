@@ -1593,10 +1593,18 @@ fn tls_native_set_ca_system(ctx): i64 {
     var cap = 1048576;                          # 1 MiB; system bundles are ~250 KB
     var buf = alloc(cap);
     if (buf == 0) { return TLS_ERR_OOM; }
-    var fd = sys_open("/etc/ssl/cert.pem", 0, 0);                          # macOS, Arch
-    if (fd < 0) { fd = sys_open("/etc/ssl/certs/ca-certificates.crt", 0, 0); }   # Debian/Ubuntu
-    if (fd < 0) { fd = sys_open("/etc/pki/tls/certs/ca-bundle.crt", 0, 0); }     # RHEL/Fedora
-    if (fd < 0) { fd = sys_open("/etc/ssl/ca-bundle.pem", 0, 0); }               # openSUSE
+    # v6.2.23: open through io.cyr's `file_open` per-target bridge, NOT raw
+    # `sys_open`. On CYRIUS_TARGET_AGNOS sys_open is (name, namelen, flags) —
+    # a raw `sys_open(path, 0, 0)` reads the `0` as namelen=0, opens a
+    # zero-length filename, fails every candidate, and the ctx is built with
+    # zero roots (the failure is then swallowed by `_tls_native_alloc`, which
+    # ignores this fn's return — see 2026-06-18-tls-native-set-ca-system-agnos-
+    # sys-open-abi.md). `file_open` computes strlen + maps O_*→AO_* on agnos and
+    # passes (path, O_RDONLY, mode) straight through on Linux/macOS.
+    var fd = file_open("/etc/ssl/cert.pem", 0, 0);                          # macOS, Arch
+    if (fd < 0) { fd = file_open("/etc/ssl/certs/ca-certificates.crt", 0, 0); }   # Debian/Ubuntu
+    if (fd < 0) { fd = file_open("/etc/pki/tls/certs/ca-bundle.crt", 0, 0); }     # RHEL/Fedora
+    if (fd < 0) { fd = file_open("/etc/ssl/ca-bundle.pem", 0, 0); }               # openSUSE
     if (fd < 0) { return TLS_ERR_IO; }
     var total = 0;
     var rdone = 0;

@@ -1,5 +1,31 @@
 # cyrius-native stdlib agnos ABI gaps (fs.cyr) + a stdlib-wide portable wrapper
 
+> **PARTIALLY RESOLVED (landed, targeting v6.2.23) — fs.cyr done; structural
+> asks still OPEN.** The 5 `fs.cyr` sites are fixed: `dir_list`/`is_dir` now have
+> a `#ifdef CYRIUS_TARGET_AGNOS` branch using getdents **#29** (3-arg) + the
+> sovereign reclen-delimited dirent parse (§4.2: reclen@0/type@2/namelen@3/ino@4/
+> name@8, non-NUL-terminated → `str_from_buf`), and the agnos `sys_open`
+> `(name, namelen, flags)` ABI. **A v6.2.23 adversarial review caught a P0 in the
+> first cut**: the opens used `flags=0`, but the agnos kernel routes a non-`0x800`
+> open to `ext2_open()` which rejects directory inodes (`mode != 0x8000` → -1),
+> so every dir open died (dir_list empty, is_dir always 0). Fixed to pass
+> **`AO_DIRECTORY` (0x800)** so the kernel routes to `ext2_open_dir()`
+> (`agnos/kernel/core/syscall.cyr:586`). A new agnos-gate probe (1e) emit-inspects
+> getdents #29 + the 0x800 flag to guard against rot. Also during the same slot,
+> the **sigil 3.9.0 fold** surfaced a related gap — `luks_write_keyfile` references
+> `O_EXCL`, undefined on agnos — fixed by adding `O_EXCL` to io.cyr's neutral
+> agnos `O_*` set (`feedback_stdlib_self_sufficient_constants`).
+>
+> **STILL OPEN (the "stdlib-wide structural fix" section below):** (1) the
+> length-carrying portable wrapper set (`xopen`/`xstat`/`xunlink`/`xgetdents`)
+> promoted to the base syscalls layer; (2) the cyrlint rule flagging
+> unguarded `sys_open(<expr>, <int-literal>, …)` / raw `syscall(SYS_GETDENTS64…)`;
+> (3) the other raw-`sys_open(path,<linux-flags>,mode)` sites the audit counted
+> (~58 across tls/agnosys/patra **and now sigil's luks_write_keyfile**, which uses
+> raw sys_open with Linux args — harmless on agnos in practice since LUKS keyfile
+> writing is Linux-disk-only, but it's another instance of this class). These
+> remain tracked here; they were NOT in the v6.2.23 scope.
+
 **Filed:** 2026-06-18
 **Scope:** cyrius-NATIVE stdlib only — `lib/fs.cyr`. (`lib/tls_native_hs12.cyr` is
 covered by `2026-06-18-tls-native-set-ca-system-agnos-sys-open-abi.md`.)

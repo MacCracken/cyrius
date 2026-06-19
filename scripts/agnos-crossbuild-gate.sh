@@ -194,6 +194,43 @@ if command -v objdump >/dev/null 2>&1; then
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS server-socket peer (#56/#57) -> valid agnos ELF + emits sock_listen/sock_accept"
 
+# 1e. Filesystem dir-listing peer (v6.2.23). Guards the agnos branch added to
+#     lib/fs.cyr's dir_list/is_dir: the agnos sys_open (name, namelen, flags)
+#     ABI + getdents #29 (3-arg) + the sovereign reclen-delimited dirent parse
+#     (§4.2), replacing the Linux getdents64 #217 / dirent64 assumptions that
+#     silently mis-ran on agnos (agnoshi `ls` + owl dep-fs). Without the branch
+#     these rot back to Linux numbers on agnos. Compile-only + an emit-inspect
+#     that the reachable getdents lowers to syscall 29 (0x1d), NOT the Linux
+#     217 (0xd9). Real dir behavior is validated on agnos hardware (whirl
+#     ext2 + agnoshi ls), not here. See 2026-06-18-stdlib-native-agnos-abi-fs.md.
+cat > /tmp/_agnos_fs_gate.cyr <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fs.cyr"
+fn main(): i64 {
+    var p = str_from("/");
+    var d = is_dir(p);                # agnos sys_open (name,namelen,flags) + getdents #29
+    var entries = dir_list(p);         # agnos dirent §4.2 parse (reclen@0/namelen@3/name@8)
+    return d + vec_len(entries) - d - vec_len(entries);
+}
+CYR
+build/cyrius build --agnos /tmp/_agnos_fs_gate.cyr /tmp/_agnos_fs_gate.out >/dev/null 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS fs dir-listing peer did not compile (fs.cyr agnos getdents/dirent branch regression)"; exit 1; }
+assert_agnos_elf /tmp/_agnos_fs_gate.out
+if command -v objdump >/dev/null 2>&1; then
+    fdis=$(objdump -d -M intel /tmp/_agnos_fs_gate.out 2>/dev/null)
+    echo "$fdis" | grep -qE 'mov +eax,0x1d\b' || { echo "FAIL: fs probe emits no syscall 29 (agnos getdents rotted to Linux #217?)"; exit 1; }
+    # AO_DIRECTORY(0x800) MUST be the open flag: without it the agnos kernel
+    # routes to ext2_open() which rejects a directory inode (-1), so dir_list
+    # returns empty + is_dir returns 0 for every dir. This guards the exact
+    # P0 the v6.2.23 adversarial review caught (open flags=0 was dead on agnos).
+    echo "$fdis" | grep -qE 'mov +e[a-z]+,0x800\b' || { echo "FAIL: fs probe does not pass AO_DIRECTORY(0x800) to sys_open (dir opens dead on agnos)"; exit 1; }
+fi
+echo "PASS: CYRIUS_TARGET_AGNOS fs dir-listing peer (getdents #29 + AO_DIRECTORY open + dirent §4.2) -> valid agnos ELF"
+
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then

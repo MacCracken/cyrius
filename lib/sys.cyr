@@ -35,7 +35,7 @@ enum SysUtsConst { UTS_SIZE = 390; }
 # Fill a caller-provided utsname buffer (>= UTS_SIZE bytes). Returns 0 / -errno.
 fn sys_uname(out): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    return syscall(34, out, 64);
+    return syscall(SYS_UNAME, out, 64);   # v6.2.23: named const, was literal 34
     #endif
     #ifdef CYRIUS_TARGET_LINUX
     return syscall(SYS_UNAME, out);
@@ -75,7 +75,7 @@ enum SysInfoConst { SYSINFO_SIZE = 120; }
 # Fill a caller-provided sysinfo buffer (>= SYSINFO_SIZE bytes). Returns 0 / -errno.
 fn sys_sysinfo(out): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    return syscall(35, out, 40);
+    return syscall(SYS_SYSINFO, out, 40);   # v6.2.23: named const, was literal 35
     #endif
     #ifdef CYRIUS_TARGET_LINUX
     return syscall(SYS_SYSINFO, out);
@@ -154,6 +154,34 @@ fn system_free_memory(): i64 {
     var r = sys_sysinfo(&buf);
     if (r < 0) { return r; }
     return sysinfo_free_memory(&buf);
+}
+
+# ================================================================
+# Process identity (cross-target wrappers)
+# ================================================================
+# sys_getpid / sys_getuid / sys_geteuid are the floor's raw per-target wrappers
+# (lib/syscalls.cyr); v6.2.23 added sys_geteuid to the agnos peer so the name is
+# uniform across all targets (agnos routes euid→getuid). gettid is the one
+# identity verb with no portable floor wrapper, so it lives here.
+#
+# Thread id. agnos is single-threaded (no separate tid concept) → routes to
+# getpid; Linux issues SYS_GETTID. macOS (Darwin's thread-id is __thread_selfid,
+# NOT the Linux-numbered SYS_GETTID the macOS peer mis-copies) and Windows
+# (GetCurrentThreadId, no raw-syscall path) are not yet wired → -ENOSYS, the
+# same "not wired" convention sys_uname/sys_sysinfo use for these targets above.
+fn sys_gettid(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_getpid();
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    return syscall(SYS_GETTID);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 38;   # ENOSYS — Darwin __thread_selfid not yet wired
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 38;   # ENOSYS — Windows GetCurrentThreadId not yet wired
+    #endif
 }
 
 # ================================================================

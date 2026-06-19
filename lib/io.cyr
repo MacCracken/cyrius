@@ -44,6 +44,12 @@ var O_RDWR = 2;
 var O_CREAT = 64;
 var O_TRUNC = 512;
 var O_APPEND = 1024;
+# v6.2.23: O_EXCL completes the neutral O_* set so agnos-bound consumers that
+# reference it compile (sigil 3.9.0's luks_write_keyfile — Audit F-3 — uses
+# O_WRONLY|O_CREAT|O_TRUNC|O_EXCL). agnos has no exclusive-create AO_* bit, so
+# file_open below does NOT map it (the exclusive semantic degrades to a plain
+# create on agnos); bit 128 is clear of file_open's bridge masks (3/64/512/1024).
+var O_EXCL = 128;
 #endif
 
 # flock modes
