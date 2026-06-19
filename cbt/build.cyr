@@ -62,6 +62,11 @@ fn _emit_js(source, output): i64 {
 # If _defines vec is set, prepend #define lines to a temp file first.
 fn compile(source, output): i64 {
     var cc = current_cc();
+    # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
+    # cross-compiler (the same env knobs apply — kernel_mode + ELF64 kernel).
+    if (_baremetal_aa == 1) {
+        if (file_exists(_cc_arm) == 1) { cc = _cc_arm; }
+    }
     if (cc == 0) {
         _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
         return 1;
@@ -219,6 +224,7 @@ fn compile(source, output): i64 {
         if (_strict_pin == 1) { sp_extra = sp_extra + 1; }
         if (_agnos_target == 1) { sp_extra = sp_extra + 1; }
         if (_win_target == 1) { sp_extra = sp_extra + 1; }
+        if (_baremetal_target == 1) { sp_extra = sp_extra + 2; }   # CYRIUS_KERNEL + CYRIUS_ELF64_KERNEL
         if (sp_extra > 0) {
             var sp_count = 0;
             while (load64(_envp + sp_count * 8) != 0) { sp_count = sp_count + 1; }
@@ -232,6 +238,10 @@ fn compile(source, output): i64 {
             if (_strict_pin == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_STRICT_PIN=1"); sp_ni = sp_ni + 1; }
             if (_agnos_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_AGNOS=1"); sp_ni = sp_ni + 1; }
             if (_win_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_WIN=1"); sp_ni = sp_ni + 1; }
+            if (_baremetal_target == 1) {
+                store64(sp_envp + sp_ni * 8, "CYRIUS_KERNEL=1"); sp_ni = sp_ni + 1;
+                store64(sp_envp + sp_ni * 8, "CYRIUS_ELF64_KERNEL=1"); sp_ni = sp_ni + 1;
+            }
             store64(sp_envp + sp_ni * 8, 0);
             sys_execve(cc, &argv, sp_envp);
         } else {

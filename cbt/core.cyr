@@ -66,6 +66,13 @@ var _win_target = 0;
 # build.cyr), not an env-injected emit target like --agnos/--win. x86-Linux-only
 # (the TS frontend is x86-Linux-only). See CHANGELOG [6.1.12].
 var _js_target = 0;
+# v6.2.27: `cyrius build --target=<arch>-bare-metal-elf` — the first-class
+# bare-metal triple. A NAMED front-end over the existing kmode (`kernel;`) +
+# CYRIUS_ELF64_KERNEL env knobs: build.cyr injects CYRIUS_KERNEL=1 (forces
+# kernel_mode so no source `kernel;` is needed) + CYRIUS_ELF64_KERNEL=1. The
+# `_aa` variant routes to the aarch64 cross-compiler. See roadmap .27 (D1).
+var _baremetal_target = 0;
+var _baremetal_aa = 0;
 
 # ================================================================
 # Output helpers — consistent error/warn/info/status

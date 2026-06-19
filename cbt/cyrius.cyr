@@ -294,6 +294,25 @@ fn main(): i64 {
                 _js_target = 1;
                 ai = ai + 1;
             }
+            elif (streq(argv(ai), "--target=x86_64-bare-metal-elf") == 1) {
+                # v6.2.27: first-class bare-metal triple. build.cyr injects
+                # CYRIUS_KERNEL=1 (forces kernel_mode) + CYRIUS_ELF64_KERNEL=1.
+                # _skip_deps: a freestanding kernel must NOT auto-prepend the
+                # userland stdlib (io.cyr/sys_* assume syscalls that don't exist
+                # on bare metal) — the kernel source includes freestanding libs
+                # explicitly. (D4 no-runtime-assumptions.)
+                _baremetal_target = 1;
+                _skip_deps = 1;
+                ai = ai + 1;
+            }
+            elif (streq(argv(ai), "--target=aarch64-bare-metal-elf") == 1) {
+                # v6.2.27: aarch64 bare-metal triple → routes to the aarch64
+                # cross-compiler (cc_arm) with the same kernel-mode env knobs.
+                _baremetal_target = 1;
+                _baremetal_aa = 1;
+                _skip_deps = 1;
+                ai = ai + 1;
+            }
             else {
                 # An unrecognized token that LOOKS like a flag (`-…`) must
                 # NOT fall through into positional parsing — that shifts

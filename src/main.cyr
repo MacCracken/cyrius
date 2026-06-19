@@ -1051,6 +1051,17 @@ S64(S + 0x18DA10, 0);       # local_cnt
 S64(S + 0x18F830, 0);       # struct_count
 S64(S + 0x18F888, 0);       # extra_patch_cnt
 S64(S + 0x18FCA0, 0);       # kernel_mode
+# v6.2.27: the `--target=<arch>-bare-metal-elf` triple forces kernel mode from
+# the CLI (CYRIUS_KERNEL=1) so a bare-metal build needs no source `kernel;`
+# directive — the triple is the complete bare-metal declaration. Default unset →
+# kernel_mode stays 0 → cycc byte-identical. The `kernel;` dispatch (PARSE_PROG)
+# only ever SETS it to 1, so forcing it here composes (never reset to 0).
+var _kern_env = _read_env("CYRIUS_KERNEL");
+if (_kern_env != 0) {
+    if (load8(_kern_env) == 49 && load8(_kern_env + 1) == 0) {
+        S64(S + 0x18FCA0, 1);
+    }
+}
 S64(S + 0x18FCB8, 1);       # cur_line (starts at 1)
 S64(S + 0x18FCC0, 0);       # scope_depth
 S64(S + 0x1903D8, 0);       # expr_stype
