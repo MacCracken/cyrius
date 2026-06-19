@@ -755,6 +755,14 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF100CD1F); EW(S, 0x54000041); EW(S, 0xD2801988);  # getsockname 51→204
     EW(S, 0xF100D91F); EW(S, 0x54000041); EW(S, 0xD2801A08);  # setsockopt  54→208
     EW(S, 0xF100DD1F); EW(S, 0x54000041); EW(S, 0xD2801A28);  # getsockopt  55→209
+    # v6.2.24: getdents64 — the v6.2.24 fs.cyr SYS_*→FSYS_ dedup made fs.cyr emit
+    # the x86 number 217 (was the peer's a64 61 via the pre-dedup collision), but
+    # this branch (unlike the macho one, which maps both 217→344 + 61→344) never
+    # had a 217→61 renumber — so `cyrius lib sync`'s dir-walk hit syscall 217
+    # (a64: not getdents) and vendored nothing. Same self-host-blind class as the
+    # v6.2.10 socket renumbers; caught by the aarch64 funcgate. cmp x8,#217 =
+    # 0xF103651F; movz x8,#61 = 0xD28007A8.
+    EW(S, 0xF103651F); EW(S, 0x54000041); EW(S, 0xD28007A8);  # getdents64  217→61
     EW(S, 0xF101211F); EW(S, 0x54000041); EW(S, 0xD2800328);  # fcntl       72→25
     # poll 7 → ppoll 73 + timespec arg-shift. aarch64-Linux has no poll(2)
     # (7=fsetxattr); x86 poll(fds,nfds,timeout_ms) →

@@ -48,7 +48,16 @@ mabda 3.2.14; **0 removals**).
   Darwin maps (198→97 / 203→98 / 200→104 / 201→106 / 208→105), mirroring the
   existing x86 + getdents64 dual-map. Encodings cross-verified against the proven
   x86 rows + adversarially reviewed; x86 cycc byte-identical (aarch64 backend
-  only). (issue 2026-06-14-stdlib-constant-value-collisions, Bucket 2.)
+  only). The same dedup needed an **aarch64-Linux** `getdents64 217→61` ESYSXLAT
+  renumber: `fs.cyr`'s `FSYS_GETDENTS64` emits the x86 number 217 (was the peer's
+  a64 61 via the pre-dedup collision), but that branch — unlike the socket
+  renumbers (v6.2.10) and the macho getdents (v6.0.63) — never mapped it, so
+  `cyrius lib sync`'s dir-walk hit syscall 217 (not getdents on a64) and vendored
+  nothing. **Self-host-blind** (cycc reads by path, never dir-walks), so check.sh's
+  pi gate missed it; **caught by the aarch64 funcgate CI job**, then fixed and
+  **verified on real pi hardware** (dir-walk exit 99 fixed / 0 broken; two-step
+  self-host s2==s3 byte-identical) + qemu-aarch64. (issue
+  2026-06-14-stdlib-constant-value-collisions, Bucket 2.)
 - **cyrlint raw-`sys_open`-flags rule.** Flags `sys_open(<path>, <int-literal>, …)`
   — the Linux ABI shape that breaks on agnos (`sys_open` is `(name, namelen,
   flags)`; the v6.2.23 `tls_native_set_ca_system` + sigil `luks_write_keyfile`

@@ -16,7 +16,7 @@
 |---|---|
 | **Version** | **6.2.24** (v6.2.x cycle — **Platform Expansion**; TLS server-handshake contract (`tls_accept`) + cross-target SYS_* dedup (net/fs `NSYS_`/`FSYS_` + macho aarch64 socket xlat) + cyrlint agnos-ABI rule + mabda 3.2.14. See [roadmap_6.md](roadmap_6.md)) |
 | **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.24 — tls/net/cyrlint changes are stdlib/`#ifdef`-guarded; the emit.cyr socket-xlat is aarch64-backend only → x86 cycc byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | **622,384 B** (+352 B @ 6.2.24 — the macho `ESYSXLAT` aarch64 socket-family→Darwin maps, the v6.2.x line's first aarch64-codegen change; cass/ecb SELFHOST_OK) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | **622,112 B** (@ 6.2.24 — macho `ESYSXLAT` aarch64 socket-family→Darwin + **aarch64-Linux getdents64 217→61** (funcgate fix); the v6.2.x line's first aarch64-codegen change; **pi-verified** (dir-walk + two-step self-host) + qemu; ecb/cass SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.24 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
 | **cycc_win** (PE32+ cross) | rebuilt @ 6.2.24 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
@@ -53,7 +53,15 @@
 > api-surface 4909→4932 (0 removals); self_compile 522 ms. **NOTE:** the macho
 > socket-xlat is encoding-verified + adversarially reviewed + compile/ecb-self-host
 > green, but full **net-on-Darwin runtime** is sandhi's acceptance (check.sh's ecb
-> gate doesn't exercise sockets). **PINNED → v6.2.25:** the tls_native server-ctx
+> gate doesn't exercise sockets). **POST-CUT FUNCGATE FIX (pi-verified):** the
+> aarch64 funcgate caught that the fs.cyr `FSYS_GETDENTS64=217` dedup emitted an
+> **untranslated 217 on aarch64-Linux** (the branch had socket+macho-getdents
+> renumbers but never `217→61`), so `cyrius lib sync`'s dir-walk vendored nothing.
+> Self-host-blind (cycc never dir-walks → check.sh's pi gate missed it). Fixed by
+> adding `getdents64 217→61` to the aarch64-Linux ESYSXLAT; **verified on real pi**
+> (dir-walk exit 99 fixed / 0 broken; two-step self-host s2==s3 byte-identical) +
+> qemu-aarch64. LESSON: the dir-walk path needs a real aarch64 run (qemu or pi),
+> NOT just the self-host gate. **PINNED → v6.2.25:** the tls_native server-ctx
 > **arena/RSS-leak** (full-depth arena + sigil source patch + re-fold). **NEXT after
 > .25:** the ecosystem-dedup arc (ERR_* namespacing + xopen wrappers + vendored
 > SYS_* migrations). **user pushes/tags after CI.**
