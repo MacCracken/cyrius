@@ -552,7 +552,7 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    var inbuf = alloc(cap);
+    var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     # ClientHello (plaintext handshake record).
     var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
@@ -575,13 +575,13 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     if (load64(ctx + TLS_CTX_OFF_MAX_VER) == TLS_VERSION_1_2) {
         return _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len);
     }
-    var sh = alloc(2048);
+    var sh = _tn_alloc(ctx, 2048);
     if (sh == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var sh_len = tls_native_server_respond_hello(ctx, ch_msg, ch_len, sh, 2048);
     if (sh_len < 0) { return sh_len; }
     if (tls_native_server_sent_hrr(ctx) == 1) { return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED); }
     # Send ServerHello as a plaintext handshake record.
-    var shrec = alloc(sh_len + TLS_RECORD_HEADER_LEN);
+    var shrec = _tn_alloc(ctx, sh_len + TLS_RECORD_HEADER_LEN);
     if (shrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(shrec, TLS_CT_HANDSHAKE, 0x0303, sh_len);
     memcpy(shrec + TLS_RECORD_HEADER_LEN, sh, sh_len);
@@ -597,11 +597,11 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     var rc = tls_native_server_transition(ctx, TLS_EV_RECV_CH);
     if (rc != TLS_OK) { return rc; }
     # Build + seal + send the server flight (one protected record).
-    var flight = alloc(4096);
+    var flight = _tn_alloc(ctx, 4096);
     if (flight == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var fl_len = tls_native_server_build_flight(ctx, flight, 4096);
     if (fl_len < 0) { return fl_len; }
-    var flrec = alloc(fl_len + 64);
+    var flrec = _tn_alloc(ctx, fl_len + 64);
     if (flrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var flrec_len = tls_native_server_seal_handshake(ctx, flight, fl_len, flrec, fl_len + 64);
     if (flrec_len < 0) { return flrec_len; }
@@ -622,7 +622,7 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     if (load64(ctx + TLS_CTX_OFF_VERIFY) != TLS_VERIFY_NONE) {
         var ccrl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
         if (ccrl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-        var cmsg = alloc(8192);
+        var cmsg = _tn_alloc(ctx, 8192);
         if (cmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
         var ccct = 0;
         var cmsg_len = tls_native_server_open_handshake(ctx, inbuf, ccrl, cmsg, 8192, &ccct);
@@ -635,7 +635,7 @@ fn tls_native_accept(ctx, sock_fd): i64 {
         if (load64(ctx + TLS_CTX_OFF_CLIENT_CERT) != 0) {
             var cvrl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
             if (cvrl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-            var cvmsg = alloc(2048);
+            var cvmsg = _tn_alloc(ctx, 2048);
             if (cvmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
             var cvct = 0;
             var cvmsg_len = tls_native_server_open_handshake(ctx, inbuf, cvrl, cvmsg, 2048, &cvct);
@@ -648,7 +648,7 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     # Read + open the client's (encrypted) Finished.
     var crl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (crl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    var finmsg = alloc(512);
+    var finmsg = _tn_alloc(ctx, 512);
     if (finmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finct = 0;
     var fin_len = tls_native_server_open_handshake(ctx, inbuf, crl, finmsg, 512, &finct);
@@ -665,7 +665,7 @@ fn tls_native_write(ctx, buf, len): i64 {
     if (load64(ctx + TLS_CTX_OFF_STATE) != TLS_STATE_CONNECTED) { return TLS_ERR_PROTOCOL; }
     if (len > TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_INVALID_PARAM; }   # caller fragments
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
-    var rec = alloc(len + 64);
+    var rec = _tn_alloc(ctx, len + 64);
     if (rec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var rn = tls_native_seal_app(ctx, buf, len, rec, len + 64);
     if (rn < 0) { return rn; }
@@ -689,7 +689,7 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
     # scratch [cap..) — handshake records must decrypt into a max-size buffer
     # (a large NewSessionTicket would trip TLS_ERR_BUFFER_FULL against a small
     # caller `maxlen` and consume the AEAD sequence, wedging the connection).
-    var inbuf = alloc(cap + TLS_RECORD_MAX_PLAINTEXT);
+    var inbuf = _tn_alloc(ctx, cap + TLS_RECORD_MAX_PLAINTEXT);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var plain = inbuf + cap;
     var guard = 0;
@@ -738,7 +738,7 @@ fn tls_native_close(ctx): i64 {
         var alert[2];
         store8(&alert, TLS_ALERT_WARNING);              # level (ignored in 1.3)
         store8(&alert + 1, 0);                          # description 0 = close_notify
-        var rec = alloc(64);
+        var rec = _tn_alloc(ctx, 64);
         if (rec != 0) {
             var rn = _tn_seal_ct(ctx, TLS_CT_ALERT, &alert, 2, rec, 64);
             if (rn > 0) {

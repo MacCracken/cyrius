@@ -20,7 +20,7 @@
 # control block; +136..+255 is reserved for the read/write key
 # material, sequence numbers, and I/O buffers Mini-arcs B-D append.
 
-var TLS_CTX_LEN          = 480;   # 60 i64 slots (+1 @ v6.2.8: CERT_REQUESTED, mTLS client-auth)
+var TLS_CTX_LEN          = 488;   # 61 i64 slots (+1 @ v6.2.25: ALLOC; +1 @ v6.2.8: CERT_REQUESTED)
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -102,6 +102,9 @@ var TLS_CTX_OFF_SERVER_INTERS = 448; # client: ptr to [count][interm0 ptr]... th
 var TLS_CTX_OFF_SRV_APP_SECRET = 456; # server application-traffic secret ptr
 var TLS_CTX_OFF_CLI_APP_SECRET = 464; # client application-traffic secret ptr
 var TLS_CTX_OFF_CERT_REQUESTED = 472; # v6.2.8 client: 1 if server sent a CertificateRequest (mTLS client-auth)
+var TLS_CTX_OFF_ALLOC          = 480; # v6.2.25 Allocator handle for per-connection allocs (0 = global bump).
+                                      # A server accept loop passes arena_allocator(cap) via new_server_in
+                                      # and reset_via()s it per connection → flat RSS. See _tn_alloc.
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -115,8 +118,15 @@ var TLS_EV_RECV_FINISHED = 4;   # received peer Finished
 # Allocate + zero-init a context for `role`, applying handshake
 # defaults: state INIT, verify NONE, version range 1.2..1.3.
 # Returns the ctx pointer (>0) or 0 on OOM.
-fn _tn_ctx_new(role): i64 {
-    var ctx = alloc(TLS_CTX_LEN);
+# v6.2.25: arena-parameterized ctor. `a` is an Allocator handle (lib/alloc.cyr,
+# 0 = global bump). When non-zero, the ctx struct AND every per-connection alloc
+# routed through `_tn_alloc(ctx,...)` draw from `a`, so a server accept loop can
+# reset_via(a) per connection → flat RSS. The arena is stashed AFTER the zero
+# loop (which would otherwise clear it). a==0 is byte-identical to the old ctor.
+fn _tn_ctx_new_in(a, role): i64 {
+    var ctx = 0;
+    if (a == 0) { ctx = alloc(TLS_CTX_LEN); }
+    if (a != 0) { ctx = alloc_via(a, TLS_CTX_LEN); }
     if (ctx == 0) { return 0; }
     var i = 0;
     while (i < TLS_CTX_LEN) {
@@ -128,7 +138,30 @@ fn _tn_ctx_new(role): i64 {
     store64(ctx + TLS_CTX_OFF_VERIFY,  TLS_VERIFY_NONE);
     store64(ctx + TLS_CTX_OFF_MIN_VER, TLS_VERSION_1_2);
     store64(ctx + TLS_CTX_OFF_MAX_VER, TLS_VERSION_1_3);
+    store64(ctx + TLS_CTX_OFF_ALLOC,   a);
     return ctx;
+}
+
+fn _tn_ctx_new(role): i64 {
+    return _tn_ctx_new_in(0, role);
+}
+
+# Per-connection allocation choke-point (v6.2.25). Routes through the ctx's
+# stashed Allocator when set, else the global bump — the v6.2.4 transport-vtable
+# "one helper, zero call-site churn" pattern. Every per-connection alloc on the
+# server handshake/record path goes through here so reset_via(arena) reclaims it.
+fn _tn_alloc(ctx, n): i64 {
+    var a = load64(ctx + TLS_CTX_OFF_ALLOC);
+    if (a == 0) { return alloc(n); }
+    return alloc_via(a, n);
+}
+
+# Attach an Allocator to an already-constructed ctx (for callers that
+# new_server() then set the per-connection arena). 0 resets to the global bump.
+fn tls_native_set_alloc(ctx, a): i64 {
+    if (ctx == 0) { return 0 - 1; }
+    store64(ctx + TLS_CTX_OFF_ALLOC, a);
+    return 0;
 }
 
 # Record a fatal error: stash it in LAST_ERR and drive the ctx to the

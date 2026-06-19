@@ -893,18 +893,28 @@ fn tls_native_key_update_secret(sec, sec_len, hash_algo, out): i64 {
 # Returns: ctx handle (>0) on success, 0 on invalid args or OOM.
 # .15 stores the cert/key as opaque refs (not copied, not parsed) —
 # the DER decode + key-format detection lands in .16.
-fn tls_native_new_server(cert_chain, cert_len, key, key_len): i64 {
+# v6.2.25: arena-parameterized server ctor. `a` is an Allocator handle
+# (0 = global bump). The ctx + every per-connection alloc routed through
+# _tn_alloc draws from `a`, so a server accept loop reset_via(a)s it per
+# connection → flat RSS. tls_native_new_server is the a==0 thin wrapper
+# (byte-identical to pre-6.2.25). cert/key are caller-owned refs (the arena
+# does NOT own them; they outlive a reset).
+fn tls_native_new_server_in(a, cert_chain, cert_len, key, key_len): i64 {
     if (cert_chain == 0) { return 0; }
     if (cert_len <= 0) { return 0; }
     if (key == 0) { return 0; }
     if (key_len <= 0) { return 0; }
-    var ctx = _tn_ctx_new(TLS_ROLE_SERVER);
+    var ctx = _tn_ctx_new_in(a, TLS_ROLE_SERVER);
     if (ctx == 0) { return 0; }
     store64(ctx + TLS_CTX_OFF_CERT_CHAIN, cert_chain);
     store64(ctx + TLS_CTX_OFF_CERT_LEN,   cert_len);
     store64(ctx + TLS_CTX_OFF_KEY,        key);
     store64(ctx + TLS_CTX_OFF_KEY_LEN,    key_len);
     return ctx;
+}
+
+fn tls_native_new_server(cert_chain, cert_len, key, key_len): i64 {
+    return tls_native_new_server_in(0, cert_chain, cert_len, key, key_len);
 }
 
 # ================================================================
