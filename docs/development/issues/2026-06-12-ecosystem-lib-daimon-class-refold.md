@@ -1,5 +1,14 @@
 # Ecosystem-stdlib daimon-class fixes — patched in source, held for release + re-fold
 
+> **MOSTLY RESOLVED (verified at v6.2.24) — sigil + sakshi absorbed; agnosys
+> frozen.** The held source patches landed via the v6.2.23/.24 fold refreshes:
+> **sigil 3.9.0** has the `i64[4]` cert-pointer slots in `sgx_quote_verify_full_into`/
+> `snp_report_verify_full_into`/`tdx_quote_verify_full_into` (old byte-array form
+> gone); **sakshi 2.4.0** uses `var ts[16]` (16-byte two-i64 form, the OOB `ts[2]`
+> gone). **agnosys** stays at the frozen 1.4.3 fold (upstream repo decomposed →
+> agnodrm; can't be re-folded) — its part is moot as agnosys is being retired.
+> Kept OPEN only to track the agnosys retirement; the maintainable-lib half is done.
+
 **Filed:** 2026-06-12 · **Parent:** v6.2.1 element-typed-array / addr-taken-local
 slot-idiom fix ([`2026-06-11-addr-taken-local-array-static-underreserve.md`](2026-06-11-addr-taken-local-array-static-underreserve.md))
 **Status:** HELD FOR RELEASE — source patches applied in each lib's repo; awaiting

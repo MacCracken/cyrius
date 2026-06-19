@@ -5,7 +5,7 @@
 # Path operations, directory listing, file info.
 
 # Linux getdents64 syscall
-var SYS_GETDENTS64 = 217;
+var FSYS_GETDENTS64 = 217;
 
 # Directory entry header: d_ino(8) + d_off(8) + d_reclen(2) + d_type(1) + d_name(...)
 var DT_REG = 8;
@@ -150,7 +150,7 @@ fn dir_list(path): i64 {
     store64(basep, 0);
     var rgo = 1;
     while (rgo == 1) {
-        var n = syscall(SYS_GETDENTS64, fd, buf, 4096, basep);
+        var n = syscall(FSYS_GETDENTS64, fd, buf, 4096, basep);
         if (n <= 0) { rgo = 0; }
         else {
             var pos = 0;
@@ -227,7 +227,7 @@ fn is_dir(path): i64 {
     var buf = alloc(4096);
     var basep = alloc(8);
     store64(basep, 0);
-    var n = syscall(SYS_GETDENTS64, fd, buf, 4096, basep);
+    var n = syscall(FSYS_GETDENTS64, fd, buf, 4096, basep);
     sys_close(fd);
     if (n >= 0) { return 1; }
     return 0;

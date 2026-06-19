@@ -6,6 +6,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.24] — 2026-06-19
+
+**v6.2.24 — TLS server-handshake contract (`tls_accept`) + cross-target SYS_*
+dedup + cyrlint agnos-ABI rule + mabda 3.2.14.** The AGNOS "server base" theme:
+let a Cyrius TLS server ride the backend-dispatched contract instead of the
+native primitives, and kill a latent aarch64 socket break on the same net path.
+x86 cycc byte-identical (flat **1,069,688 B**); `cycc_aarch64` +352 B (the macho
+socket-xlat below); self_compile **522 ms** (flat). check.sh **89/89**; cross-OS
+self-host **pi/ecb/cass**; api-surface **4909 → 4932** (+3 `tls_accept*`, +20
+mabda 3.2.14; **0 removals**).
+
+- **`tls_accept` server-handshake wrapper (`lib/tls.cyr`).** The symmetric mirror
+  of the client `tls_connect_alloc`/`_complete`/`tls_connect` trio, backend-
+  dispatched: `tls_accept_alloc(sock, creds, hook_fp, hook_ctx)` (creds = a 4-slot
+  `[cert, cert_len, key, key_len]` struct of DER buffers, packed so the staged form
+  stays within the 6-register ABI with its config hook) + `tls_accept_complete` +
+  the `tls_accept(sock, cert, cert_len, key, key_len)` convenience. **Native
+  branch**: `tls_native_new_server` + `server_load_creds` (before accept,
+  fail-fast) → the 40-byte shim sandhi hand-rolls today. **libssl branch**: in-
+  memory DER load via `SSL_CTX_use_certificate_ASN1` + `d2i_AutoPrivateKey` +
+  `SSL_CTX_use_PrivateKey` + `SSL_accept` (5 new soft-resolved `_tls_init`
+  symbols). A 3-dimension adversarial review of the untestable libssl path caught
+  + fixed **two real bugs**: an unguarded `SSL_CTX_use_PrivateKey` null-fn-ptr call
+  (violating the fail-closed contract) and an `EVP_PKEY` leak (the
+  `d2i_AutoPrivateKey` reference was never freed after the up-reffing
+  `use_PrivateKey`; `EVP_PKEY_free` was also resolved only in
+  `_tls_resolve_introspect`, never on this path — now resolved in `_tls_init`).
+  sandhi migrates `_sandhi_server_tls_handshake` onto this. (issue
+  2026-06-18-lib-tls-cyr-no-server-handshake-wrapper.)
+- **Cross-target `SYS_*` dedup (net.cyr / fs.cyr) + macho aarch64 socket xlat.**
+  `lib/net.cyr` hardcoded the x86 socket numbers as `var SYS_SOCKET=41` etc.,
+  colliding with the canonical arch-aware `syscalls_*` peer (value-identical on
+  x86_64, value-*different* on aarch64 — a latent break + a `CHKDUPVAL` warning).
+  The 5 genuinely-colliding ones (`SOCKET`/`CONNECT`/`BIND`/`LISTEN`/`SETSOCKOPT`)
+  are renamed net-private (`NSYS_*`, x86-canonical values kept for the backend
+  ESYSXLAT); `SYS_ACCEPT`/`SYS_SHUTDOWN` stay (peer-missing, never collided).
+  `fs.cyr`'s `SYS_GETDENTS64` → `FSYS_GETDENTS64` (the peer owns the canonical
+  one). Because consumers (yukti/sandhi) now resolve the bare names to the peer's
+  **aarch64** numbers, the macho `ESYSXLAT` gained the aarch64 socket-family →
+  Darwin maps (198→97 / 203→98 / 200→104 / 201→106 / 208→105), mirroring the
+  existing x86 + getdents64 dual-map. Encodings cross-verified against the proven
+  x86 rows + adversarially reviewed; x86 cycc byte-identical (aarch64 backend
+  only). (issue 2026-06-14-stdlib-constant-value-collisions, Bucket 2.)
+- **cyrlint raw-`sys_open`-flags rule.** Flags `sys_open(<path>, <int-literal>, …)`
+  — the Linux ABI shape that breaks on agnos (`sys_open` is `(name, namelen,
+  flags)`; the v6.2.23 `tls_native_set_ca_system` + sigil `luks_write_keyfile`
+  class). Comment-aware (skips the explanatory comments that mention the pattern)
+  and emitted as an **informational note**, not a gate-failing warning — the ~40
+  pre-existing host-only sites (test/tool infra) are legitimate, so this raises
+  visibility for an agnos port without breaking the build. (issue
+  2026-06-18-stdlib-native-agnos-abi-fs, the cyrius-owned structural half; the
+  `xopen` wrapper set + vendored-lib migrations remain in the ecosystem-dedup arc.)
+- **Dependency fold: mabda 3.2.12 → 3.2.14** (the working dist that was unreleased
+  WIP at .23 is now a real tag; GPU_CONTEXT_SIZE 168 + IB-slot cursor).
+- **Verify-and-close:** `2026-06-15-sigil-windows-entropy` RESOLVED (the sigil 3.9.0
+  fold routes entropy through `random_bytes`; archived). `2026-06-12-daimon-refold`
+  noted (sigil 3.9.0 + sakshi 2.4.0 absorbed the `i64[N]` fixes; agnosys frozen).
+  The `tls_native` **server-ctx arena/RSS-leak** (2026-06-18) is **pinned →
+  v6.2.25** as its own complete fix (full arena-threaded; needs a sigil source
+  patch + re-fold).
+
 ## [6.2.23] — 2026-06-19
 
 **v6.2.23 — agnos cross-target stdlib pack (fs dir-listing + sysinfo + TLS CA

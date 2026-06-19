@@ -7,12 +7,12 @@
 # Requires: agnosys/syscalls.cyr, alloc.cyr, tagged.cyr
 
 # Syscall numbers
-var SYS_SOCKET = 41;
-var SYS_CONNECT = 42;
+var NSYS_SOCKET = 41;
+var NSYS_CONNECT = 42;
 var SYS_ACCEPT = 43;
-var SYS_BIND = 49;
-var SYS_LISTEN = 50;
-var SYS_SETSOCKOPT = 54;
+var NSYS_BIND = 49;
+var NSYS_LISTEN = 50;
+var NSYS_SETSOCKOPT = 54;
 var SYS_SHUTDOWN = 48;
 
 # Socket constants. AF_INET / SOCK_* are the same on Linux and Darwin; the
@@ -171,7 +171,7 @@ fn tcp_socket() : Result {
     return Ok(afd);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var fd = syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0);
+    var fd = syscall(NSYS_SOCKET, AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return Err(0 - fd); }
     return Ok(fd);
     #endif
@@ -187,7 +187,7 @@ fn udp_socket() : Result {
     return Err(1);   # use sys_udp_bind/send/recv/unbind (#51-#54) on agnos
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var fd = syscall(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0);
+    var fd = syscall(NSYS_SOCKET, AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) { return Err(0 - fd); }
     return Ok(fd);
     #endif
@@ -196,7 +196,7 @@ fn udp_socket() : Result {
 # Set socket option SO_REUSEADDR
 fn sock_reuse(fd): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    # AGNOS has no setsockopt — Linux SYS_SETSOCKOPT=54 collides with agnos
+    # AGNOS has no setsockopt — Linux NSYS_SETSOCKOPT=54 collides with agnos
     # #54=SYS_UDP_UNBIND (silent mis-dispatch). Server-side reuse is AGNOS
     # Phase B (inbound TCP), unreached on the client path; no-op success. v6.2.7.
     return 0;
@@ -204,7 +204,7 @@ fn sock_reuse(fd): i64 {
     #ifndef CYRIUS_TARGET_AGNOS
     var val = alloc(4);
     store32(val, 1);
-    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, val, 4);
+    return syscall(NSYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, val, 4);
     #endif
 }
 
@@ -215,7 +215,7 @@ fn sock_reuse(fd): i64 {
 # (see CHANGELOG [5.11.13]).
 fn sock_set_recv_timeout(fd, secs, usecs): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    # AGNOS has no SO_RCVTIMEO (and SYS_SETSOCKOPT=54 mis-dispatches to agnos
+    # AGNOS has no SO_RCVTIMEO (and NSYS_SETSOCKOPT=54 mis-dispatches to agnos
     # #54=SYS_UDP_UNBIND). The recv deadline is enforced by the syscall peer's
     # _agnos_sock_recv_block poll instead; no-op here. v6.2.7.
     return 0;
@@ -234,7 +234,7 @@ fn sock_set_recv_timeout(fd, secs, usecs): i64 {
     #else
     store64(tv + 8, usecs);
     #endif
-    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, tv, 16);
+    return syscall(NSYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, tv, 16);
     #endif
 }
 
@@ -246,7 +246,7 @@ fn sock_set_recv_timeout(fd, secs, usecs): i64 {
 # worker inside write(). Same struct timeval layout / per-target dispatch.
 fn sock_set_send_timeout(fd, secs, usecs): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    # AGNOS has no SO_SNDTIMEO (SYS_SETSOCKOPT=54 mis-dispatches). The send
+    # AGNOS has no SO_SNDTIMEO (NSYS_SETSOCKOPT=54 mis-dispatches). The send
     # deadline is enforced by the syscall peer's poll path; no-op here. v6.2.7.
     return 0;
     #endif
@@ -259,7 +259,7 @@ fn sock_set_send_timeout(fd, secs, usecs): i64 {
     #else
     store64(tv + 8, usecs);
     #endif
-    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_SNDTIMEO, tv, 16);
+    return syscall(NSYS_SETSOCKOPT, fd, SOL_SOCKET, SO_SNDTIMEO, tv, 16);
     #endif
 }
 
@@ -278,7 +278,7 @@ fn sock_bind(fd, addr, port) : Result {
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var sa = sockaddr_in(addr, port);
-    var r = syscall(SYS_BIND, fd, sa, 16);
+    var r = syscall(NSYS_BIND, fd, sa, 16);
     if (r < 0) { return Err(0 - r); }
     return Ok(0);
     #endif
@@ -295,7 +295,7 @@ fn sock_listen(fd, backlog) : Result {
     return Ok(0);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var r = syscall(SYS_LISTEN, fd, backlog);
+    var r = syscall(NSYS_LISTEN, fd, backlog);
     if (r < 0) { return Err(0 - r); }
     return Ok(0);
     #endif
@@ -352,7 +352,7 @@ fn sock_connect(fd, addr, port) : Result {
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var sa = sockaddr_in(addr, port);
-    var r = syscall(SYS_CONNECT, fd, sa, 16);
+    var r = syscall(NSYS_CONNECT, fd, sa, 16);
     if (r < 0) { return Err(0 - r); }
     return Ok(0);
     #endif
@@ -410,7 +410,7 @@ fn sock_reuseport(fd): i64 {
     #ifndef CYRIUS_TARGET_AGNOS
     var optval[4];
     store32(&optval, 1);
-    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEPORT, &optval, 4);
+    return syscall(NSYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEPORT, &optval, 4);
     #endif
 }
 
@@ -425,7 +425,7 @@ fn net_join_multicast(fd, group, iface): i64 {
     var mreq[8];
     store32(&mreq, group);
     store32(&mreq + 4, iface);
-    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, 8);
+    return syscall(NSYS_SETSOCKOPT, fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, 8);
     #endif
 }
 
@@ -438,7 +438,7 @@ fn net_drop_multicast(fd, group, iface): i64 {
     var mreq[8];
     store32(&mreq, group);
     store32(&mreq + 4, iface);
-    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, 8);
+    return syscall(NSYS_SETSOCKOPT, fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, 8);
     #endif
 }
 
@@ -451,7 +451,7 @@ fn net_set_multicast_ttl(fd, ttl): i64 {
     #ifndef CYRIUS_TARGET_AGNOS
     var optval[4];
     store32(&optval, ttl);
-    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_TTL, &optval, 4);
+    return syscall(NSYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_TTL, &optval, 4);
     #endif
 }
 
@@ -463,7 +463,7 @@ fn net_set_multicast_loop(fd, on): i64 {
     #ifndef CYRIUS_TARGET_AGNOS
     var optval[4];
     store32(&optval, on);
-    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_LOOP, &optval, 4);
+    return syscall(NSYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_LOOP, &optval, 4);
     #endif
 }
 
@@ -476,7 +476,7 @@ fn net_set_multicast_if(fd, iface): i64 {
     #ifndef CYRIUS_TARGET_AGNOS
     var optval[4];
     store32(&optval, iface);
-    return syscall(SYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_IF, &optval, 4);
+    return syscall(NSYS_SETSOCKOPT, fd, IPPROTO_IP, IP_MULTICAST_IF, &optval, 4);
     #endif
 }
 

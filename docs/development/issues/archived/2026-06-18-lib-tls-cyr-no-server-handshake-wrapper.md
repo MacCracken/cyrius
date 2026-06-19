@@ -1,5 +1,19 @@
 # `lib/tls.cyr` has no server-side handshake wrapper (`tls_accept` / `tls_new_server`) — only the client side is on the contract
 
+> **RESOLVED (v6.2.24).** Added the backend-dispatched server trio mirroring the
+> client: `tls_accept_alloc(sock, creds, hook_fp, hook_ctx)` (creds = a 4-slot
+> `[cert, cert_len, key, key_len]` DER struct, packed so the hooked staged form
+> stays ≤6 args) → `tls_accept_complete` → `tls_accept(sock, cert, cert_len, key,
+> key_len)`. Native branch wraps `tls_native_new_server`+`server_load_creds`+
+> `tls_native_accept` in the 40-byte shim consumers hand-roll today; libssl branch
+> does in-memory DER load (`SSL_CTX_use_certificate_ASN1` + `d2i_AutoPrivateKey` +
+> `SSL_CTX_use_PrivateKey` + `SSL_accept`). ALPN/verify config rides the hook on
+> the backend ctx (as the client does). An adversarial review of the libssl path
+> caught + fixed a null-fn-ptr guard gap + an EVP_PKEY leak pre-cut. sandhi
+> migrates `_sandhi_server_tls_handshake` onto `tls_accept`. The sibling per-conn
+> ctx RSS leak (2026-06-18-tls-native-server-ctx-not-arena-aware) is pinned →
+> v6.2.25.
+
 **Discovered:** 2026-06-18 during sandhi 1.6.8 server-side TLS (sandhi can now serve HTTPS).
 **Severity:** Low/Medium — no functional gap (server TLS works), but an **asymmetry in the `tls_*` contract**: consumers must reach past `lib/tls.cyr` into the `tls_native_*` backend to do a server handshake, which couples them to the native backend and breaks the backend-swap transparency the contract exists to provide.
 **Affects:** `lib/tls.cyr` at 6.2.22. Client role unaffected.

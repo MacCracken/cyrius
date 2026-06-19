@@ -654,6 +654,18 @@ fn ESYSXLAT(S): i64 {
         EW(S, 0xF100C91F); EW(S, 0x54000041); EW(S, 0xD2800D50);  # listen     50→106
         EW(S, 0xF100D91F); EW(S, 0x54000041); EW(S, 0xD2800D30);  # setsockopt 54→105
         EW(S, 0xF100DD1F); EW(S, 0x54000041); EW(S, 0xD2800ED0);  # getsockopt 55→118
+        # v6.2.24: aarch64-Linux socket numbers → Darwin. The .59 port mapped only
+        # the x86 numbers (41-55), but after the v6.2.24 net/fs SYS_* dedup,
+        # consumers that reference the canonical syscalls_aarch64_linux peer (yukti,
+        # sandhi) issue the aarch64 numbers (198/200/201/203/208), which the macho
+        # backend never mapped → stale x16 + garbage fd on Darwin. Same x86+aarch64
+        # dual-map shape as getdents64 below (v6.0.63). Darwin targets identical to
+        # the x86 rows above; only the cmp input differs.
+        EW(S, 0xF103191F); EW(S, 0x54000041); EW(S, 0xD2800C30);  # socket    198→97
+        EW(S, 0xF1032D1F); EW(S, 0x54000041); EW(S, 0xD2800C50);  # connect   203→98
+        EW(S, 0xF103211F); EW(S, 0x54000041); EW(S, 0xD2800D10);  # bind      200→104
+        EW(S, 0xF103251F); EW(S, 0x54000041); EW(S, 0xD2800D50);  # listen    201→106
+        EW(S, 0xF103411F); EW(S, 0x54000041); EW(S, 0xD2800D30);  # setsockopt 208→105
         EW(S, 0xF1001D1F); EW(S, 0x54000041); EW(S, 0xD2801CD0);  # poll        7→230
         # v6.0.60: dir enumeration — Linux getdents64 (x86 217) → Darwin
         # getdirentries64 (344). Darwin takes a 4th basep out-param; fs.cyr

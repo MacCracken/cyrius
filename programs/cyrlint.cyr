@@ -29,6 +29,24 @@ fn warn(line, msg): i64 {
     return 0;
 }
 
+# v6.2.24: informational note (NOT a warning) — surfaced but does NOT increment
+# `_warnings`, so it never fails the lint gate (which keys on the "N warnings"
+# summary). Used by the raw-sys_open-flags rule: the pattern is worth flagging
+# for an agnos port, but the ~40 pre-existing host-only sites (regression/process
+# /args test infra) are legitimate on the host, so this raises visibility without
+# breaking the build. See 2026-06-18-stdlib-native-agnos-abi-fs.md.
+var _sysopen_notes = 0;
+fn note_sysopen(line): i64 {
+    syscall(1, 2, "  note line ", 12);
+    var nb2[24];
+    var nl2 = fmt_int_buf(line, &nb2);
+    syscall(1, 2, &nb2, nl2);
+    var m = ": raw sys_open w/ literal flags - agnos sys_open is (name,namelen,flags); prefer io.cyr file_open or strlen(path) on agnos-bound paths\n";
+    syscall(1, 2, m, strlen(m));
+    _sysopen_notes += 1;
+    return 0;
+}
+
 # === Deferral-language policy (sigil idea, 2026-06-04) ===
 # Flag deferred / broken-work markers in source that are NOT cross-referenced by   #skip-lint
 # a tracking pointer (CHANGELOG / issue / roadmap / version). A bare `# TODO` or
@@ -195,6 +213,69 @@ fn lint_file(buf, total): i64 {
                     }
                     ic += 1;
                 }
+            }
+
+            # === Rule: raw sys_open with a literal flags arg (agnos ABI footgun) ===
+            # agnos sys_open is (name, namelen, flags) — NOT Linux (path, flags,
+            # mode). A bare integer-literal 2nd arg (`sys_open(p, 0, 0)`) is read as
+            # namelen=0 on agnos → opens a zero-length name → every call fails (the
+            # tls_native_set_ca_system + sigil luks_write_keyfile class). Correct
+            # code passes O_RDONLY (a name) on Linux or strlen(path) (a call) on
+            # agnos — never a digit. Route through io.cyr's file_open per-target
+            # bridge. See 2026-06-18-stdlib-native-agnos-abi-fs.md.
+            # only scan the CODE portion (up to the first '#') so explanatory
+            # comments that mention sys_open(...) aren't flagged.
+            var code_end = eol;
+            var ce = pos;
+            while (ce < eol) {
+                if (load8(buf + ce) == 35) { code_end = ce; ce = eol; }
+                ce += 1;
+            }
+            var so = pos;
+            while (so + 9 <= code_end) {
+                if (memeq(buf + so, "sys_open(", 9) == 1) {
+                    # not preceded by an identifier char (skip file_open / _sys_open)
+                    var pre_ok = 1;
+                    if (so > 0) {
+                        var pc2 = load8(buf + so - 1);
+                        if (pc2 == 95) { pre_ok = 0; }
+                        if (pc2 >= 48) { if (pc2 <= 57) { pre_ok = 0; } }
+                        if (pc2 >= 65) { if (pc2 <= 90) { pre_ok = 0; } }
+                        if (pc2 >= 97) { if (pc2 <= 122) { pre_ok = 0; } }
+                    }
+                    if (pre_ok == 1) {
+                        # find the first comma at the sys_open( paren depth
+                        var k = so + 9;
+                        var depth = 1;
+                        var cpos = 0 - 1;
+                        while (k < eol) {
+                            var ch = load8(buf + k);
+                            if (ch == 40) { depth += 1; }
+                            if (ch == 41) { depth -= 1; }
+                            if (ch == 44) { if (depth == 1) { if (cpos < 0) { cpos = k; } } }
+                            k += 1;
+                        }
+                        if (cpos >= 0) {
+                            # skip spaces after the comma; flag if the 2nd arg is a digit
+                            var a2 = cpos + 1;
+                            var seen = 0;
+                            while (a2 < eol) {
+                                if (seen == 0) {
+                                    var fc = load8(buf + a2);
+                                    if (fc != 32) {
+                                        seen = 1;
+                                        if (fc >= 48) { if (fc <= 57) {
+                                            note_sysopen(lineno);
+                                        } }
+                                    }
+                                }
+                                a2 += 1;
+                            }
+                        }
+                    }
+                    so = eol;
+                }
+                so += 1;
             }
 
         }

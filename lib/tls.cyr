@@ -157,6 +157,14 @@ var _fn_SSL_CTX_set_alpn_protos = 0;
 var _fn_SSL_CTX_load_verify_locations = 0;
 var _fn_SSL_CTX_use_certificate_file = 0;
 var _fn_SSL_CTX_use_PrivateKey_file = 0;
+# v6.2.24: libssl SERVER-side symbols for the tls_accept wrapper (in-memory DER
+# creds — the form the native backend takes — so the wrapper signature is
+# backend-uniform). Soft-resolved (server-irrelevant on a client-only libssl).
+var _fn_TLS_server_method = 0;
+var _fn_SSL_CTX_use_certificate_ASN1 = 0;   # (ctx, len, der) — DER leaf, in-memory
+var _fn_d2i_AutoPrivateKey = 0;             # (a, &der, len) → EVP_PKEY*, auto-detect type
+var _fn_SSL_CTX_use_PrivateKey = 0;         # (ctx, pkey)
+var _fn_SSL_accept = 0;                      # (ssl) — server handshake
 var _fn_SSL_new = 0;
 var _fn_SSL_free = 0;
 var _fn_SSL_set_fd = 0;
@@ -267,6 +275,18 @@ fn _tls_init(): i64 {
     # max-early-data probe (sandhi 1.3.2 client-side 0-RTT).
     _fn_SSL_get_early_data_status        = fncall2(fn_dlsym, h, "SSL_get_early_data_status");
     _fn_SSL_SESSION_get_max_early_data   = fncall2(fn_dlsym, h, "SSL_SESSION_get_max_early_data");
+    # v6.2.24 — server-side symbols for tls_accept (in-memory DER creds + SSL_accept).
+    # Soft-resolved; a client-only libssl simply leaves these 0 and the server
+    # wrapper fails closed (returns 0) rather than hard-bailing _tls_init.
+    _fn_TLS_server_method                = fncall2(fn_dlsym, h, "TLS_server_method");
+    _fn_SSL_CTX_use_certificate_ASN1     = fncall2(fn_dlsym, h, "SSL_CTX_use_certificate_ASN1");
+    _fn_d2i_AutoPrivateKey               = fncall2(fn_dlsym, h, "d2i_AutoPrivateKey");
+    _fn_SSL_CTX_use_PrivateKey           = fncall2(fn_dlsym, h, "SSL_CTX_use_PrivateKey");
+    _fn_SSL_accept                       = fncall2(fn_dlsym, h, "SSL_accept");
+    # EVP_PKEY_free for the d2i_AutoPrivateKey reference in tls_accept_alloc —
+    # _tls_resolve_introspect() also resolves it, but tls_accept_alloc doesn't
+    # call that, so resolve it here too (idempotent) to avoid a silent leak.
+    _fn_EVP_PKEY_free_v                  = fncall2(fn_dlsym, h, "EVP_PKEY_free");
 
     # Minimum viable set — bail if any critical symbol missing
     if (_fn_TLS_client_method == 0) { return 0; }
@@ -723,6 +743,125 @@ fn tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx): i64 {
     var ctx = tls_connect_alloc(sock, host, hook_fp, hook_ctx);
     if (ctx == 0) { return 0; }
     if (tls_connect_complete(ctx) != 1) { tls_close(ctx); return 0; }
+    return ctx;
+}
+
+# ====================================================================
+# Server-side handshake wrapper (v6.2.24) — the symmetric mirror of the
+# client tls_connect_alloc / tls_connect_complete / tls_connect trio, so a
+# TLS *server* consumer rides the backend-dispatched contract instead of
+# reaching past it into the tls_native_* primitives (the asymmetry issue
+# 2026-06-18-lib-tls-cyr-no-server-handshake-wrapper). The I/O verbs
+# (tls_write/read/close) already operate on the shim for either role.
+#
+# creds is a 4-slot struct [cert@0, cert_len@8, key@16, key_len@24] — DER
+# buffers, the form tls_native_new_server takes. Packed into one pointer (vs
+# 4 positional args) so tls_accept_alloc stays within the 6-register ABI with
+# its hook pair, mirroring how the client passes a single `host`. The cert/key
+# buffers are referenced (not copied) until the handshake — the caller owns
+# their lifetime through tls_accept_complete.
+# ====================================================================
+#ifndef CYRIUS_TLS_LIBSSL
+fn _tls_native_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
+    var nctx = tls_native_new_server(load64(creds), load64(creds + 8), load64(creds + 16), load64(creds + 24));
+    if (nctx == 0) { return 0; }
+    # creds must be loaded BEFORE the handshake (fail-fast on bad cert/key).
+    if (tls_native_server_load_creds(nctx) != TLS_OK) { return 0; }
+    # Hook fires on the native ctx (opaque handle) post-setup / pre-accept —
+    # the home for tls_set_alpn / client-cert-verify config, exactly as the
+    # client hook fires on nctx in _tls_native_alloc.
+    if (hook_fp != 0) {
+        if (fncall2(hook_fp, hook_ctx, nctx) != 0) { return 0; }
+    }
+    var ctx = alloc(40);
+    store64(ctx, nctx);
+    store64(ctx + 8, 0);
+    store64(ctx + 16, sock);
+    store64(ctx + 24, TLS_BACKEND_NATIVE);
+    return ctx;
+}
+
+fn _tls_native_accept_complete(ctx): i64 {
+    if (tls_native_accept(load64(ctx), load64(ctx + 16)) != TLS_OK) { return 0; }
+    return 1;
+}
+#endif
+
+# Phase 1: build a server ctx from DER cert/key (+ optional config hook), return
+# the standard backend shim (40B native [nctx,0,sock,NATIVE] / 24B libssl
+# [ssl_ctx,ssl,sock]) or 0. Configure ALPN/verify in the hook, then drive the
+# handshake with tls_accept_complete.
+fn tls_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) { return _tls_native_accept_alloc(sock, creds, hook_fp, hook_ctx); }
+    #endif
+    _tls_init();
+    if (_tls_ok == 0) { return 0; }
+    if (_fn_TLS_server_method == 0) { return 0; }   # client-only libssl: fail closed
+    var method = fncall0(_fn_TLS_server_method);
+    if (method == 0) { return 0; }
+    var ssl_ctx = fncall1(_fn_SSL_CTX_new, method);
+    if (ssl_ctx == 0) { return 0; }
+    # In-memory DER creds (vs the path-based SSL_CTX_use_*_file): leaf cert via
+    # *_ASN1, private key via d2i_AutoPrivateKey (auto-detects RSA/EC/Ed25519).
+    if (_fn_SSL_CTX_use_certificate_ASN1 == 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    if (fncall3(_fn_SSL_CTX_use_certificate_ASN1, ssl_ctx, load64(creds + 8), load64(creds)) != 1) {
+        fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0;
+    }
+    if (_fn_d2i_AutoPrivateKey == 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    # d2i_AutoPrivateKey advances its 2nd arg, so pass the address of a cell
+    # holding the DER pointer (not the pointer directly).
+    var pcell = alloc(8);
+    store64(pcell, load64(creds + 16));
+    var pkey = fncall3(_fn_d2i_AutoPrivateKey, 0, pcell, load64(creds + 24));
+    if (pkey == 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    if (_fn_SSL_CTX_use_PrivateKey == 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    var pk_rc = fncall2(_fn_SSL_CTX_use_PrivateKey, ssl_ctx, pkey);
+    # SSL_CTX_use_PrivateKey up-refs the key, so release our d2i_AutoPrivateKey
+    # reference on EVERY path (success + failure) — else one EVP_PKEY leaks per
+    # accepted connection (matches the tls_get_peer_spki_der convention).
+    if (_fn_EVP_PKEY_free_v != 0) { fncall1(_fn_EVP_PKEY_free_v, pkey); }
+    if (pk_rc != 1) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    # Hook on the bare SSL_CTX (ALPN / verify / extra chain), mirroring client.
+    if (hook_fp != 0) {
+        if (fncall2(hook_fp, hook_ctx, ssl_ctx) != 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    }
+    var ssl = fncall1(_fn_SSL_new, ssl_ctx);
+    if (ssl == 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    fncall2(_fn_SSL_set_fd, ssl, sock);
+    var ctx = alloc(24);
+    store64(ctx, ssl_ctx);
+    store64(ctx + 8, ssl);
+    store64(ctx + 16, sock);
+    return ctx;
+}
+
+# Phase 2: drive the server handshake over the shim's socket. 1 on success, 0 on
+# failure (caller tls_close()s the ctx). Mirrors tls_connect_complete.
+fn tls_accept_complete(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) { return _tls_native_accept_complete(ctx); }
+    #endif
+    var ssl = load64(ctx + 8);
+    if (ssl == 0) { return 0; }
+    if (_fn_SSL_accept == 0) { return 0; }   # client-only libssl: fail closed
+    if (fncall1(_fn_SSL_accept, ssl) != 1) { return 0; }
+    return 1;
+}
+
+# Convenience: accept + complete in one call (no config hook). Mirrors
+# tls_connect. cert/key are DER buffers; for ALPN/verify config use
+# tls_accept_alloc with a hook + tls_accept_complete.
+fn tls_accept(sock, cert, cert_len, key, key_len): i64 {
+    var creds: i64[4];
+    store64(&creds, cert);
+    store64(&creds + 8, cert_len);
+    store64(&creds + 16, key);
+    store64(&creds + 24, key_len);
+    var ctx = tls_accept_alloc(sock, &creds, 0, 0);
+    if (ctx == 0) { return 0; }
+    if (tls_accept_complete(ctx) != 1) { tls_close(ctx); return 0; }
     return ctx;
 }
 

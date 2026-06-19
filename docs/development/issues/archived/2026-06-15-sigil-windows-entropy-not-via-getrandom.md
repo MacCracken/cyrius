@@ -1,5 +1,12 @@
 # sigil (and tls_native) gather entropy via `/dev/urandom` directly — non-functional on Windows even after the v6.2.12 CSPRNG
 
+> **RESOLVED (verified at v6.2.24).** The sigil 3.9.0 fold (landed v6.2.23) routes
+> all entropy through `_sigil_random_fill` → `random_bytes` (per-target
+> getrandom/getentropy/ProcessPrng); the direct `/dev/urandom` open is gone — the
+> only `/dev/urandom` mentions remaining in `lib/sigil.cyr` are comments
+> documenting the replaced path (lines 4204/4206/22102). Closed by the upstream
+> sigil fix + re-fold; no cyrius-side code needed at .24.
+
 - **Filed**: 2026-06-15 (surfaced by the v6.2.12 adversarial review of the Windows ProcessPrng work).
 - **Affects**: `lib/sigil.cyr` (folded from the sigil repo) — every keygen/nonce/blinding entropy site; transitively `lib/tls_native.cyr` (TLS nonces) which leans on sigil. **Windows (PE) only.** Linux/macOS/aarch64/AGNOS unaffected (they have `/dev/urandom`).
 - **Severity**: **Medium** — fail-CLOSED, not fail-weak. On Windows these paths `file_open("/dev/urandom")` → `<0` → return `0`/`-1` (no weak entropy emitted — the CVE-19 invariant holds), but sigil RSA/Ed25519/ML-DSA keygen + RSA-PSS nonce/blinding and native-TLS nonces are **unusable** on Windows.

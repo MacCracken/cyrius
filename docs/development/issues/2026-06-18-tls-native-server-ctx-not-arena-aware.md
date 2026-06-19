@@ -1,5 +1,18 @@
 # `tls_native` server ctx is not arena-aware and is never freed — per-connection RSS growth on a long-running TLS server
 
+> **PINNED → v6.2.25 (committed).** Deliberately NOT bundled into v6.2.24 (which
+> shipped the `tls_accept` wrapper). A v6.2.24 premise-check confirmed this is the
+> **full-depth-or-nothing** case: a correct fix requires threading a per-connection
+> arena through `tls_native_new_server` + `tls_native_accept` + the keysched/
+> transcript HKDF derivations + sigil's `x509_cert_alloc`/ECDHE scratch (~100+
+> `alloc()`→`alloc_via()` across 6 modules **plus a sigil source patch + re-fold**),
+> NOT a surface-only ctor or a no-op `free()` over the global bump. The bar for
+> .25: `tls_native_new_server_in(arena, …)` (mirroring the v6.1.22 `async_new_in`
+> precedent) with the full per-handshake footprint drawn from the arena, so a
+> server loop `reset_via(arena)` per connection → flat RSS. sandhi documents the
+> leak as a known limitation today (no regression from deferring). The `tls_accept`
+> wrapper (v6.2.24) is the public surface that will expose the chosen ctor.
+
 **Discovered:** 2026-06-18 during sandhi 1.6.8 server-side TLS (`sandhi_server_run_pooled_tls`).
 **Severity:** Medium — a long-running `tls_native` **server** leaks per accepted connection: RSS grows unbounded over the lifetime of the process. No correctness impact on serving; the ceiling is memory.
 **Affects:** `lib/tls_native_hs13.cyr` (`tls_native_new_server`), `lib/tls_native_conn.cyr` (`tls_native_accept` / `tls_native_close`), 6.2.22. The client side has the same allocator but is bounded in practice by connection pooling; the server cannot pool inbound connections, so it is exposed.

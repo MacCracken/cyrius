@@ -14,24 +14,52 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.23** (v6.2.x cycle — **Platform Expansion**; agnos cross-target stdlib pack — fs dir-listing (getdents #29 + AO_DIRECTORY) + sysinfo consolidation + tls_native CA-load sys_open fix — and 5-lib dependency fold refresh. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.23 — all bites stdlib-only/`#ifdef`-guarded; only the embedded `--version` string changed; self-host byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.23 (version-string refresh by version-bump; codegen unchanged — agnos changes are `#ifdef`-guarded stdlib) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.23 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
+| **Version** | **6.2.24** (v6.2.x cycle — **Platform Expansion**; TLS server-handshake contract (`tls_accept`) + cross-target SYS_* dedup (net/fs `NSYS_`/`FSYS_` + macho aarch64 socket xlat) + cyrlint agnos-ABI rule + mabda 3.2.14. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.24 — tls/net/cyrlint changes are stdlib/`#ifdef`-guarded; the emit.cyr socket-xlat is aarch64-backend only → x86 cycc byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | **622,384 B** (+352 B @ 6.2.24 — the macho `ESYSXLAT` aarch64 socket-family→Darwin maps, the v6.2.x line's first aarch64-codegen change; cass/ecb SELFHOST_OK) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.24 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.24 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.9.0** (@6.2.23 latest, minor — absorbs agnosys helpers + LUKS/attestation surface; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · **patra 1.12.0** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.0** · **mabda 3.2.12** · **sakshi 2.4.0** (**@.23** — 5-lib refresh; mabda folded from the released 3.2.12 tag, not the dirty v3.2.14-WIP working dist; 0 symbol removals) |
-| tests | 187 `.tcyr` (no new tcyr @.23 — agnos paths are compile-only-gated via `agnos-crossbuild-gate.sh`; +`tls_native_alpn` @.22; +`aarch64_imm12_frame_field` @.21) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4909 fns** (+342 @.23 — the 5-lib fold; +`sys_gettid`/`sys_geteuid`; 0 removals) |
+| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · sigil 3.9.0 · **mabda 3.2.14** · sakshi 2.4.0 (**mabda 3.2.12→3.2.14 @.24** — the WIP that was unreleased at .23 is now a real tag; 0 symbol removals) |
+| tests | 187 `.tcyr` (no new tcyr @.24 — tls_accept native path covered by existing TLS suites + agnos gate; libssl branch verified by adversarial review; +`tls_native_alpn` @.22) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4932 fns** (+23 @.24 — +3 `tls_accept*`, +20 mabda 3.2.14; 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **6/6** (+probe **1e** @.23 — fs dir-listing: getdents #29 + AO_DIRECTORY 0x800 emit-inspect) |
-| bench (every-release gate) | self_compile **515 ms** @ 6.2.23 (within jitter of .22's ~538 ms; cycc 1,069,688 B flat, stdlib-only, no real perf delta) |
+| bench (every-release gate) | self_compile **522 ms** @ 6.2.24 (within jitter of .23's 515 ms; x86 cycc 1,069,688 B flat — emit.cyr change is aarch64-only, no x86 perf delta) |
 
+> **Handoff (2026-06-19b):** **v6.2.24 CUT — TLS server-handshake contract
+> (`tls_accept`) + cross-target SYS_* dedup + cyrlint agnos-ABI rule + mabda
+> 3.2.14.** Follow-up to .23 (user: "more issues + deferred items"). **(1)
+> `tls_accept` server wrapper** in lib/tls.cyr — backend-dispatched mirror of the
+> client trio; native (40-byte shim sandhi hand-rolls) + libssl (in-memory DER via
+> `*_ASN1`/`d2i_AutoPrivateKey`). An **adversarial review of the untestable libssl
+> path caught 2 real bugs** (unguarded `SSL_CTX_use_PrivateKey` null-ptr + EVP_PKEY
+> leak; `EVP_PKEY_free` wasn't resolved in `_tls_init`). **(2) SYS_* dedup** —
+> net.cyr's 5 colliding socket nums → `NSYS_*` (x86-canonical kept for ESYSXLAT),
+> fs.cyr `SYS_GETDENTS64`→`FSYS_`; `SYS_ACCEPT`/`SYS_SHUTDOWN` kept (peer-missing,
+> never collided — over-renaming them broke `net_v6_connect.tcyr`, caught + fixed).
+> Since consumers now resolve bare names to the peer's **aarch64** numbers, the
+> **macho ESYSXLAT** gained the aarch64 socket family→Darwin (198→97 etc.) — the
+> v6.2.x line's first aarch64-codegen change (+352 B cycc_aarch64; x86 cycc
+> byte-identical). **(3) cyrlint rule** flags raw `sys_open(<path>,<literal>,…)` —
+> comment-aware + an **informational note** (non-gate-failing: ~40 pre-existing
+> host-only sites are legit). **(4) mabda 3.2.14** fold. **VERIFIED:** check.sh
+> **89/89**; x86 self-host byte-identical; agnos gate 6/6; cross-OS pi/ecb/cass;
+> api-surface 4909→4932 (0 removals); self_compile 522 ms. **NOTE:** the macho
+> socket-xlat is encoding-verified + adversarially reviewed + compile/ecb-self-host
+> green, but full **net-on-Darwin runtime** is sandhi's acceptance (check.sh's ecb
+> gate doesn't exercise sockets). **PINNED → v6.2.25:** the tls_native server-ctx
+> **arena/RSS-leak** (full-depth arena + sigil source patch + re-fold). **NEXT after
+> .25:** the ecosystem-dedup arc (ERR_* namespacing + xopen wrappers + vendored
+> SYS_* migrations). **user pushes/tags after CI.**
+>
+> ---
+>
 > **Handoff (2026-06-19):** **v6.2.23 CUT — agnos cross-target stdlib pack + 5-lib
 > dependency fold.** Reviewed the latest filed issues; user picked the agnos-ABI
 > cluster + sysinfo. Three stdlib fixes + the fold; all `#ifdef`-guarded or
