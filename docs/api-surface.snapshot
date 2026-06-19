@@ -4158,8 +4158,10 @@ syscalls_x86_64_agnos::sys_rmdir/2
 syscalls_x86_64_agnos::sys_signalfd/3
 syscalls_x86_64_agnos::sys_sigprocmask/3
 syscalls_x86_64_agnos::sys_sleep_ms/1
+syscalls_x86_64_agnos::sys_sock_accept/1
 syscalls_x86_64_agnos::sys_sock_close/1
 syscalls_x86_64_agnos::sys_sock_connect/3
+syscalls_x86_64_agnos::sys_sock_listen/1
 syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
 syscalls_x86_64_agnos::sys_spawn/2

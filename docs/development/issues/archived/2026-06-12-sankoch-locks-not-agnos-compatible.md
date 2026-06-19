@@ -70,3 +70,26 @@ Option (a) for sankoch is the ask here.
 - repo: kii 1.0.0, `cyrius.cyml` pin 6.1.14 (lib/ vendored from 6.2.0 — `_sankoch_lock` byte-identical across both)
 - FAIL: `cyrius build --agnos src/main.cyr build/kii_agnos` → the `CLONE_VM` error above
 - OK:   `cyrius build src/main.cyr build/kii` → clean host build
+
+## Resolution — v6.2.22 (2026-06-18, sankoch 2.4.4)
+
+**RESOLVED via Option (a), with a corrected root-cause.** `_sankoch_lock` /
+`_sankoch_unlock` no-op under `CYRIUS_TARGET_AGNOS` (sankoch 2.4.4, re-folded into
+cyrius `lib/sankoch.cyr` byte-identical). sankoch now references no `mutex_*` on
+agnos, so it builds `--agnos` self-sufficiently — even for a consumer that does not
+pull `thread.cyr`.
+
+**Premise correction (cyrius v6.2.22 adversarial review).** This filing's
+"`thread.cyr → mmap.cyr → CLONE_VM` would warn-and-ud2" describes the **pre-v6.2.3**
+`thread.cyr`. The current `thread.cyr` already self-guards agnos: `#ifdef
+CYRIUS_TARGET_AGNOS → include "lib/thread_agnos.cyr"` (no-op mutexes), with the
+`mmap.cyr`/CLONE_VM body behind `#ifndef CYRIUS_TARGET_AGNOS`. So the sankoch fix is
+the sankoch-layer counterpart (self-sufficiency / defense-in-depth), **not** a crash
+preventer. Empirically: a consumer on current cyrius stdlib + sankoch 2.4.4 builds
+`--agnos` clean (exit 0, no `CLONE_VM`).
+
+**kii follow-up (consumer-side).** kii's own `--agnos` repro still fails because kii
+vendors **stale** stdlib — its `thread.cyr` predates the v6.2.3 agnos selector. kii
+must `cyrius deps`-refresh against released cyrius 6.2.22 + sankoch 2.4.4 to pick up
+the current `thread.cyr` + the no-op locks. (cyrius-side is complete; this is the
+consumer's refresh.)

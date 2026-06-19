@@ -136,10 +136,12 @@ fn INADDR_LOOPBACK(): i64 { return 0x0100007F; }
 # model — sock_connect(#47) does both and yields a small conn_id (0..7),
 # carried as a TAGGED fd by the syscall peer so this file's send/recv/close
 # (which bottom out at sys_write/sys_read/sys_close) stay source-identical;
-# the peer routes tagged fds to #48/#49/#50. Only tcp_socket + sock_connect
-# need an agnos body. Server-side (bind/listen/accept) belongs to AGNOS
-# Phase B (inbound TCP), a separate concern from this client peer; those
-# keep their POSIX bodies and simply aren't reachable on the client path.
+# the peer routes tagged fds to #48/#49/#50. tcp_socket + sock_connect drive
+# the CLIENT path; the SERVER path (sock_bind/listen/accept) wires onto the
+# kernel sock_listen#56 / sock_accept#57 band (agnos 1.45.5/.6) via the
+# listen↔fd adapter in the syscall peer (v6.2.22) — bind stashes the port,
+# listen issues #56, accept issues #57 + wraps the accepted conn_id as a fresh
+# tagged fd that rides the same #48/#49/#50 path.
 #
 # Byte-swap a 32-bit value: net.cyr's `addr` is network-byte-order packed
 # (sockaddr sin_addr; INADDR_LOOPBACK = 0x0100007F), but AGNOS #47 wants the
@@ -152,6 +154,11 @@ fn _agnos_bswap32(x): i64 {
     var b3 = (x >> 24) & 0xFF;
     return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
 }
+
+# v6.2.22: sock_accept returns Err(_NET_EAGAIN) when a non-blocking #57 finds no
+# connection pending, matching a Linux non-blocking accept's -EAGAIN (11) so a
+# server's accept poll-loop stays source-identical across targets.
+var _NET_EAGAIN = 11;
 #endif
 
 # Create a TCP socket. Returns Result(fd). On AGNOS the "fd" is a tagged
@@ -256,13 +263,18 @@ fn sock_set_send_timeout(fd, secs, usecs): i64 {
     #endif
 }
 
-# Bind socket to address:port. Returns Result(0). Server-side (bind/listen/
-# accept) is AGNOS Phase B (inbound TCP) — the ring-3 listen/accept surface
-# isn't exposed yet — so these fail loud on agnos rather than emit invalid
-# BSD syscalls. See proposal 2026-06-14-agnos-net-entropy-clock-syscalls.md.
+# Bind socket to address:port. Returns Result(0). On AGNOS the server path
+# (bind/listen/accept) wires onto the kernel sock_listen#56 / sock_accept#57
+# band (agnos 1.45.5/.6) via the listen↔fd adapter in the syscall peer: bind
+# stashes the port, sock_listen issues #56, sock_accept issues #57 + wraps the
+# accepted conn_id. See 2026-06-18-agnos-server-socket-peer.md.
 fn sock_bind(fd, addr, port) : Result {
     #ifdef CYRIUS_TARGET_AGNOS
-    return Err(1);   # AGNOS Phase B (inbound TCP) — not exposed to ring 3 yet
+    # AGNOS merges bind+listen into sock_listen(#56); bind just stashes the port
+    # for sock_listen to issue with. addr is ignored — the kernel binds the
+    # single NIC, ip is unused. v6.2.22.
+    _agnos_listen_stash_port(fd, port);
+    return Ok(0);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var sa = sockaddr_in(addr, port);
@@ -275,7 +287,12 @@ fn sock_bind(fd, addr, port) : Result {
 # Listen on socket. Returns Result(0). AGNOS Phase B — see sock_bind.
 fn sock_listen(fd, backlog) : Result {
     #ifdef CYRIUS_TARGET_AGNOS
-    return Err(1);
+    # Issue sock_listen(#56) on the port stashed by sock_bind (the kernel merges
+    # bind+listen → a listen_id, stored in the fd's adapter slot). backlog is
+    # advisory on AGNOS — the kernel's 8-conn-slot table caps it. v6.2.22.
+    var r = _agnos_listen_start(fd);
+    if (r < 0) { return Err(1); }   # port in use / kernel conn table full
+    return Ok(0);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var r = syscall(SYS_LISTEN, fd, backlog);
@@ -287,7 +304,28 @@ fn sock_listen(fd, backlog) : Result {
 # Accept a connection. Returns Result(client_fd). AGNOS Phase B — see sock_bind.
 fn sock_accept(fd) : Result {
     #ifdef CYRIUS_TARGET_AGNOS
-    return Err(1);
+    # AGNOS sock_accept(#57) is NON-BLOCKING: it drives net_poll (advancing the
+    # inbound SYN→ESTABLISHED handshake) then tcp_accept, returning the next
+    # established conn_id or -1 (none pending). Map the listen fd → listen_id,
+    # issue #57; on -1 return Err(_NET_EAGAIN) so the server poll-loops (matches
+    # a Linux non-blocking accept). On success wrap the conn_id in a FRESH tagged
+    # fd via the client-band adapter — the accepted conn then transparently uses
+    # sock_send#48 / sock_recv#49 / sock_close#50. v6.2.22.
+    var lid = _agnos_fd_listen(fd);
+    if (lid < 0) { return Err(1); }              # fd isn't a LISTEN socket
+    var cid = sys_sock_accept(lid);
+    if (cid < 0) { return Err(_NET_EAGAIN); }    # none pending — WOULD_BLOCK
+    var cfd = _agnos_sock_open();
+    if (cfd < 0) {
+        # #57 COMMITS the accept kernel-side (the conn is ESTABLISHED + marked
+        # accepted, never re-handed-out). If our 8-slot fd table is full we must
+        # reap that conn (#50) or it leaks one of the kernel's 8 conn slots
+        # forever — over a server's life that exhausts the kernel table. v6.2.22.
+        sys_sock_close(cid);
+        return Err(1);
+    }
+    _agnos_sock_bind(cfd, cid);
+    return Ok(cfd);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var client_addr = alloc(16);

@@ -381,7 +381,11 @@ fn _tn_build_server_hello_12(ctx, out, out_max, want_ecpf): i64 {
     if (want_ecpf == 1) { ecpf_ext = 6; }
     var ems_ext = 0;
     if (ems == 1) { ems_ext = 4; }                     # RFC 7627 — echo iff client offered
-    var ext_block = 5 + ecpf_ext + ems_ext;            # renegotiation_info(5) + ec_point_formats + EMS
+    # ALPN (RFC 7301): echo the protocol negotiated during ClientHello parse.
+    var alpn_sel = load64(ctx + TLS_CTX_OFF_ALPN_SEL);
+    var alpn_ext = 0;
+    if (alpn_sel != 0) { alpn_ext = 4 + 2 + 1 + (load8(alpn_sel) & 0xFF); }
+    var ext_block = 5 + ecpf_ext + ems_ext + alpn_ext; # renegotiation_info(5) + ec_point_formats + EMS + ALPN
     var body_len = 2 + 32 + 1 + sid_len + 2 + 1 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
     if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
@@ -409,6 +413,14 @@ fn _tn_build_server_hello_12(ctx, out, out_max, want_ecpf): i64 {
     if (ems == 1) {
         _tn_be16_w(p, TLS_EXT_EXTENDED_MASTER_SECRET); p = p + 2;   # RFC 7627 echo (empty)
         _tn_be16_w(p, 0); p = p + 2;
+    }
+    if (alpn_sel != 0) {
+        var aplen = load8(alpn_sel) & 0xFF;
+        _tn_be16_w(p, TLS_EXT_ALPN); p = p + 2;
+        _tn_be16_w(p, 2 + 1 + aplen); p = p + 2;        # extension_data length
+        _tn_be16_w(p, 1 + aplen); p = p + 2;            # ProtocolNameList length
+        store8(p, aplen); p = p + 1;                    # protocol name length
+        memcpy(p, alpn_sel + 1, aplen); p = p + aplen;  # the selected protocol
     }
     return total;
 }
@@ -1081,6 +1093,9 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
                 var el = 0;
                 var got = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
                 if (got == 1) { store64(ctx + TLS_CTX_OFF_USE_EMS, 1); }
+                # ALPN (RFC 7301): negotiate against the server's configured
+                # list; _tn_build_server_hello_12 emits the result. Lenient.
+                _tn_server_negotiate_alpn(ctx, body + pos, ext_total);
             }
         }
     }

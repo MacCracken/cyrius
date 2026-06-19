@@ -1058,6 +1058,67 @@ fn _tn_find_ext(ext_ptr, ext_len, want_type, out_dp, out_dl): i64 {
     return 0;
 }
 
+# Server-side ALPN selection (RFC 7301 §3.2, .NN). Walk the SERVER's
+# preference list and return the first protocol the CLIENT also offered —
+# server preference wins. Both args are 1-byte-length-prefixed protocol-name
+# sequences (`[len][name][len][name]...`); `server_len`/`client_len` bound
+# each. Returns a newly-alloc'd `[u8 len][proto]` copy of the match (the
+# TLS_CTX_OFF_ALPN_SEL format), or 0 if there is no overlap / either list is
+# malformed. All reads are bounds-checked against the untrusted client list.
+fn _tn_select_alpn(server_list, server_len, client_list, client_len): i64 {
+    var sp = 0;
+    while (sp < server_len) {
+        var sl = load8(server_list + sp) & 0xFF;
+        sp = sp + 1;
+        if (sl == 0) { return 0; }                       # malformed server list
+        if (sp + sl > server_len) { return 0; }          # truncated → stop
+        var cp = 0;
+        while (cp < client_len) {
+            var cl = load8(client_list + cp) & 0xFF;
+            cp = cp + 1;
+            if (cl == 0) { return 0; }                   # malformed client list
+            if (cp + cl > client_len) { return 0; }      # truncated → stop
+            if (sl == cl) {
+                if (_tn_ct_eq(server_list + sp, client_list + cp, sl) == 1) {
+                    var out = alloc(1 + sl);
+                    if (out == 0) { return 0; }
+                    store8(out, sl);
+                    memcpy(out + 1, server_list + sp, sl);
+                    return out;                          # first server-preferred match
+                }
+            }
+            cp = cp + cl;
+        }
+        sp = sp + sl;
+    }
+    return 0;                                              # no common protocol
+}
+
+# Server-side ALPN negotiation entry point, shared by the 1.3 + 1.2
+# ClientHello parsers. If the server was configured with an ALPN list
+# (tls_native_set_alpn → TLS_CTX_OFF_ALPN_OFFER) AND the client offered an
+# `application_layer_protocol_negotiation` extension, intersect the two and
+# stash the selected protocol at TLS_CTX_OFF_ALPN_SEL (read back by the EE /
+# ServerHello builder, and by tls_native_get_alpn_selected). `ext_ptr`/
+# `ext_total` is the ClientHello's extension block. Lenient: no server config,
+# no client offer, or a malformed ALPN ext → no selection (TLS_OK), exactly as
+# the client-side ALPN path is lenient. The client offer's `[be16 list-len]`
+# prefix is stripped before intersection; the server offer's matching `[be16]`
+# (set_alpn's stored prefix) is stripped too.
+fn _tn_server_negotiate_alpn(ctx, ext_ptr, ext_total): i64 {
+    var off = load64(ctx + TLS_CTX_OFF_ALPN_OFFER);
+    if (off == 0) { return TLS_OK; }                      # server didn't configure ALPN
+    var cdp = 0;
+    var cdl = 0;
+    if (_tn_find_ext(ext_ptr, ext_total, TLS_EXT_ALPN, &cdp, &cdl) != 1) { return TLS_OK; }
+    if (cdl < 2) { return TLS_OK; }                       # no ProtocolNameList length
+    var clist_len = _tn_be16_r(cdp);
+    if (clist_len + 2 > cdl) { return TLS_OK; }           # malformed → no negotiation
+    var sel = _tn_select_alpn(off + 2, _tn_be16_r(off), cdp + 2, clist_len);
+    if (sel != 0) { store64(ctx + TLS_CTX_OFF_ALPN_SEL, sel); }
+    return TLS_OK;
+}
+
 # Scan a KeyShareClientHello (uint16 list-length + KeyShareEntry*) for
 # an x25519 entry; store the 32-byte pubkey ptr via out_pub. Returns
 # 1 found / 0 absent / -1 malformed.
@@ -1140,6 +1201,10 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
     pos = pos + 2;
     if (pos + ext_total > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
     var ext_ptr = body + pos;
+    # ALPN (RFC 7301): negotiate now, before the key_share early-returns below —
+    # this is the only point we hold the client's full extension block. Stores
+    # the chosen protocol at TLS_CTX_OFF_ALPN_SEL for _tn_build_ee to emit.
+    _tn_server_negotiate_alpn(ctx, ext_ptr, ext_total);
     var ks_dp = 0;
     var ks_dl = 0;
     var fks = _tn_find_ext(ext_ptr, ext_total, TLS_EXT_KEY_SHARE, &ks_dp, &ks_dl);
@@ -1366,13 +1431,30 @@ fn _tn_hash_len(hash_algo): i64 {
     return 32;
 }
 
-# Build EncryptedExtensions (empty extension block) as a handshake
-# message into `out`. Returns the message length or TLS_ERR_BUFFER_FULL.
-fn _tn_build_ee(out, out_max): i64 {
-    var total = TLS_HANDSHAKE_HEADER_LEN + 2;
+# Build EncryptedExtensions as a handshake message into `out`. Emits a
+# single ALPN extension (RFC 7301) when one was negotiated during ClientHello
+# parse (TLS_CTX_OFF_ALPN_SEL set by _tn_server_negotiate_alpn); otherwise an
+# empty extension block. Returns the message length or TLS_ERR_BUFFER_FULL.
+fn _tn_build_ee(ctx, out, out_max): i64 {
+    var sel = load64(ctx + TLS_CTX_OFF_ALPN_SEL);
+    var alpn_ext = 0;
+    if (sel != 0) {
+        # ext_type(2) + ext_len(2) + ProtocolNameList_len(2) + name_len(1) + name
+        alpn_ext = 4 + 2 + 1 + (load8(sel) & 0xFF);
+    }
+    var total = TLS_HANDSHAKE_HEADER_LEN + 2 + alpn_ext;
     if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
-    tls_native_handshake_write_header(out, TLS_HS_ENCRYPTED_EXTENSIONS, 2);
-    _tn_be16_w(out + TLS_HANDSHAKE_HEADER_LEN, 0);   # extensions<0..> = empty
+    tls_native_handshake_write_header(out, TLS_HS_ENCRYPTED_EXTENSIONS, 2 + alpn_ext);
+    var p = out + TLS_HANDSHAKE_HEADER_LEN;
+    _tn_be16_w(p, alpn_ext); p = p + 2;                  # extensions<0..alpn_ext>
+    if (sel != 0) {
+        var plen = load8(sel) & 0xFF;
+        _tn_be16_w(p, TLS_EXT_ALPN); p = p + 2;
+        _tn_be16_w(p, 2 + 1 + plen); p = p + 2;          # extension_data length
+        _tn_be16_w(p, 1 + plen); p = p + 2;              # ProtocolNameList length
+        store8(p, plen); p = p + 1;                      # protocol name length
+        memcpy(p, sel + 1, plen); p = p + plen;          # the selected protocol
+    }
     return total;
 }
 
@@ -1536,8 +1618,8 @@ fn tls_native_server_build_flight(ctx, out, out_max): i64 {
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var p = out;
     var remain = out_max;
-    # EncryptedExtensions
-    var n = _tn_build_ee(p, remain);
+    # EncryptedExtensions (carries the negotiated ALPN protocol, if any)
+    var n = _tn_build_ee(ctx, p, remain);
     if (n < 0) { return _tn_ctx_fail(ctx, n); }
     tls_native_transcript_update(ts, p, n);
     p = p + n; remain = remain - n;

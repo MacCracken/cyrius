@@ -112,10 +112,14 @@ enum SysNrAgnosTimer {
 
 # ================================================================
 # 1.45.x net / entropy / wall-clock band — the TLS + net-tools
-# enabler (agnos 1.45.0–1.45.4). NOT part of the frozen 0-33 surface;
-# mirrors agnos/kernel/core/syscall.cyr's #45–#55 dispatch. The
+# enabler (agnos 1.45.0–1.45.6). NOT part of the frozen 0-33 surface;
+# mirrors agnos/kernel/core/syscall.cyr's #45–#57 dispatch. The
 # register ABI is unchanged (rax=num, rdi/rsi/rdx/r10 = a1..a4); #52/#53
-# ride a4=r10. See proposal 2026-06-14-agnos-net-entropy-clock-syscalls.md.
+# ride a4=r10. The CLIENT band (#45–#55) landed 1.45.0–1.45.4; the SERVER
+# band (#56/#57, both 1-arg) landed 1.45.5 (sock_listen/sock_accept) +
+# 1.45.6 (LISTEN-slot reclaim hardening). See proposal
+# 2026-06-14-agnos-net-entropy-clock-syscalls.md +
+# 2026-06-18-agnos-server-socket-peer.md.
 # ================================================================
 enum SysNrAgnosNet {
     SYS_GETRANDOM = 45;    # getrandom(buf, len, flags) → bytes / 0 (len<=0) / -1 (bad range)
@@ -123,12 +127,14 @@ enum SysNrAgnosNet {
     SYS_SOCK_CONNECT = 47; # sock_connect(dst_ip, dst_port, src_port) → conn_id 0..7 / -1; BLOCKS ~8s
     SYS_SOCK_SEND = 48;    # sock_send(conn_id, buf, len) → bytes (≤len) / -1; BLOCKS
     SYS_SOCK_RECV = 49;    # sock_recv(conn_id, buf, maxlen) → bytes / 0=WOULD_BLOCK / -1=EOF (inverted from Linux)
-    SYS_SOCK_CLOSE = 50;   # sock_close(conn_id) → 0 / -1
+    SYS_SOCK_CLOSE = 50;   # sock_close(conn_id|listen_id) → 0/-1; on a LISTEN slot reaps children (1.45.6)
     SYS_UDP_BIND = 51;     # udp_bind(port) → listener_id 0..7 / -1
     SYS_UDP_SEND = 52;     # udp_send(dst_ip, (sport<<16)|dport, buf, len[=a4]) → bytes / 0 / -1
     SYS_UDP_RECV = 53;     # udp_recv(listener_id, buf, maxlen, addr_out[=a4]) → bytes / 0=none / -1
     SYS_UDP_UNBIND = 54;   # udp_unbind(listener_id) → 0 / -1
     SYS_ICMP_ECHO = 55;    # icmp_echo(dst_ip) → RTT ms (≥0) / -1; BLOCKS ~3s
+    SYS_SOCK_LISTEN = 56;  # sock_listen(port) → listen_id 0..7 / -1; merges bind+listen, non-blocking (1.45.5)
+    SYS_SOCK_ACCEPT = 57;  # sock_accept(listen_id) → conn_id / -1 (WOULD_BLOCK / bad id); non-blocking (1.45.5)
 }
 
 # ----------------------------------------------------------------
@@ -148,6 +154,18 @@ enum SysNrAgnosNet {
 var AGNOS_SOCK_TAG = 0x40000000;
 var _agnos_conn_tbl: i64[8];
 var _agnos_conn_ready = 0;
+# v6.2.22: server-socket adapter (sock_listen#56 / sock_accept#57). A LISTEN
+# socket reuses the SAME fd-slot allocator + tag as a client conn, but its slot
+# holds a kernel listen_id in _agnos_listen_tbl (listen_id+1; 0 = not a listen
+# socket) rather than a conn_id in _agnos_conn_tbl. The conn_tbl slot of a listen
+# socket stays -1 (reserved) so (a) _agnos_fd_conn returns -1 → sys_read/sys_write
+# on a listen fd fail-loud instead of mis-#48/#49-ing, and (b) _agnos_sock_open
+# won't reallocate it. _agnos_listen_port stashes the bind() port for listen() to
+# issue #56 with (the kernel merges bind+listen). sock_accept allocates a FRESH
+# conn fd-slot for each accepted conn_id → it rides the existing #48/#49/#50 path.
+# See 2026-06-18-agnos-server-socket-peer.md.
+var _agnos_listen_tbl: i64[8];
+var _agnos_listen_port: i64[8];
 # recv-poll bounds: a wall-clock deadline (#46) plus a hlt-count
 # backstop for when the RTC is unreadable (time_unix → 0).
 var AGNOS_SOCK_RECV_TIMEOUT_S = 30;
@@ -196,9 +214,19 @@ fn sys_read(fd, buf, count): i64 {
 fn sys_close(fd): i64 {
     if (_agnos_is_sock_fd(fd) == 1) {
         var slot = fd & 7;
-        var v = load64(&_agnos_conn_tbl + slot * 8);
-        store64(&_agnos_conn_tbl + slot * 8, 0);   # free the slot
-        if (v > 0) { return syscall(SYS_SOCK_CLOSE, v - 1); }
+        # v6.2.22: free ALL server-socket state for the slot uniformly, then
+        # issue the right kernel close. Clearing listen_port + listen_tbl on
+        # EVERY socket-fd close (not just the listen path) stops a recycled slot
+        # from inheriting a stale port: a bind-without-listen — or a bind then a
+        # FAILED listen — close used to leave listen_port set, so the next user
+        # that listened without re-binding would silently mis-listen on it.
+        var lv = load64(&_agnos_listen_tbl + slot * 8);   # listen_id+1, or 0
+        var v = load64(&_agnos_conn_tbl + slot * 8);      # conn_id+1, -1, or 0
+        store64(&_agnos_listen_tbl + slot * 8, 0);
+        store64(&_agnos_listen_port + slot * 8, 0);
+        store64(&_agnos_conn_tbl + slot * 8, 0);
+        if (lv > 0) { return syscall(SYS_SOCK_CLOSE, lv - 1); }   # LISTEN: reaps children (1.45.6)
+        if (v > 0) { return syscall(SYS_SOCK_CLOSE, v - 1); }     # client/accepted conn: FIN
         return 0;
     }
     return syscall(SYS_CLOSE, fd);
@@ -360,6 +388,17 @@ fn sys_sock_recv(conn_id, buf, maxlen): i64 { return syscall(SYS_SOCK_RECV, conn
 # Close a conn (#50; FIN+ACK if established) + free its buffers. 0, or -1.
 fn sys_sock_close(conn_id): i64 { return syscall(SYS_SOCK_CLOSE, conn_id); }
 
+# Server-socket band (#56/#57, agnos 1.45.5/.6). Both 1-arg, non-blocking.
+# net.cyr's sock_bind/listen/accept compose these via the listen↔fd adapter
+# below. See 2026-06-18-agnos-server-socket-peer.md.
+# sock_listen(port): merge bind+listen on a local TCP port → listen_id 0..7,
+# or -1 (port already bound / kernel conn table full).
+fn sys_sock_listen(port): i64 { return syscall(SYS_SOCK_LISTEN, port); }
+# sock_accept(listen_id): drive net_poll then tcp_accept → the next ESTABLISHED
+# conn_id 0..7 (a normal conn for #48/#49/#50), or -1 (none pending = WOULD_BLOCK
+# / bad listen_id).
+fn sys_sock_accept(listen_id): i64 { return syscall(SYS_SOCK_ACCEPT, listen_id); }
+
 # Raw UDP (dig / DNS). #52 packs both ports into arg2 (src<<16|dst) and
 # rides `len` on a4=r10; #53 rides the optional 16-byte `addr_out` on
 # a4=r10 (peer src_ip@+0, src_port@+8; pass 0 to skip). recv: 0 = none
@@ -387,7 +426,12 @@ fn sys_icmp_echo(dst_ip): i64 { return syscall(SYS_ICMP_ECHO, dst_ip); }
 fn _agnos_conn_init(): i64 {
     if (_agnos_conn_ready != 0) { return 0; }
     var i = 0;
-    while (i < 8) { store64(&_agnos_conn_tbl + i * 8, 0); i = i + 1; }
+    while (i < 8) {
+        store64(&_agnos_conn_tbl + i * 8, 0);
+        store64(&_agnos_listen_tbl + i * 8, 0);   # v6.2.22: server-socket tables
+        store64(&_agnos_listen_port + i * 8, 0);
+        i = i + 1;
+    }
     _agnos_conn_ready = 1;
     return 0;
 }
@@ -429,6 +473,43 @@ fn _agnos_fd_conn(fd): i64 {
     _agnos_conn_init();
     var slot = fd & 7;
     var v = load64(&_agnos_conn_tbl + slot * 8);
+    if (v <= 0) { return 0 - 1; }
+    return v - 1;
+}
+
+# v6.2.22: server-socket adapter helpers — net.cyr's sock_bind/listen/accept
+# compose these. Indexed by the tagged fd's slot (fd & 7), the same fd-slot
+# space the client adapter uses.
+
+# sock_bind: stash the local port so sock_listen can issue #56 with it (the
+# kernel merges bind+listen, so bind itself does no syscall). Returns 0.
+fn _agnos_listen_stash_port(fd, port): i64 {
+    _agnos_conn_init();
+    var slot = fd & 7;
+    store64(&_agnos_listen_port + slot * 8, port);
+    return 0;
+}
+
+# sock_listen: issue sock_listen(#56) on the stashed port and store listen_id+1
+# in the slot's listen table (marking it a LISTEN socket). Returns 0, or -1
+# (port in use / kernel conn table full). The conn_tbl slot stays -1 so the
+# listen fd never routes a read/write to #48/#49.
+fn _agnos_listen_start(fd): i64 {
+    _agnos_conn_init();
+    var slot = fd & 7;
+    var port = load64(&_agnos_listen_port + slot * 8);
+    var lid = syscall(SYS_SOCK_LISTEN, port);
+    if (lid < 0) { return 0 - 1; }
+    store64(&_agnos_listen_tbl + slot * 8, lid + 1);
+    return 0;
+}
+
+# Resolve a tagged listen fd to its kernel listen_id, or -1 if the slot isn't a
+# LISTEN socket (used by sock_accept to map the fd back to its id before #57).
+fn _agnos_fd_listen(fd): i64 {
+    _agnos_conn_init();
+    var slot = fd & 7;
+    var v = load64(&_agnos_listen_tbl + slot * 8);
     if (v <= 0) { return 0 - 1; }
     return v - 1;
 }

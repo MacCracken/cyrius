@@ -14,23 +14,53 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.21** (v6.2.x cycle — **Platform Expansion**; aarch64 imm12-mask codegen class fix: EADDIMM_X1 struct-field offsets + EPATCHFRAME stack frames >= 4096; + api_surface / gen_unicode silent-buffer-cap tail. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.21 — x86 backend untouched; aarch64-only codegen fix; self-host byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.21 (+4 B/prologue from EPATCHFRAME's 2-slot frame-size reserve; EADDIMM_X1/EPATCHFRAME imm12 fix — verified via aarch64-as + qemu + pi/ecb self-host) |
+| **Version** | **6.2.22** (v6.2.x cycle — **Platform Expansion**; AGNOS server-socket peer #56/#57 + tls_native server-side ALPN (RFC 7301) + sankoch 2.4.4 agnos-compat fold. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.22 — all three bites stdlib-only; only the embedded `--version` string changed; self-host byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | rebuilt @ 6.2.22 (version-string refresh by version-bump; .21 EADDIMM_X1/EPATCHFRAME imm12 codegen unchanged) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.14 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | unchanged @ 6.2.21 (x86/PE backend untouched by the aarch64 fix; cass SELFHOST_OK) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.22 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
 | check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.8.0** (@6.2.13 latest, minor; @6.2.2 json dropped + bigint→bayan + 6 attestation cert-arrays → `i64[4]`) |
-| stdlib fold | agnosys 1.4.3 · **sandhi 1.6.7** · sankoch 2.4.3 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · **patra 1.11.4** · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · **mabda 3.2.7** · sakshi 2.3.2 (patra/sandhi/mabda folded @.20; all 12 libs current) |
-| tests | 186 `.tcyr` (+`aarch64_imm12_frame_field` @.21 — >=4096B frame survives a call, EPATCHFRAME guard; +`float_named` @.19; +`float_f32` @.18; +`protobuf` @.17) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4565 fns** (flat @.21 — no lib changes; api_surface tool buffers raised 512 KB→1 MB / 8192→16384 slots + fail-loud) |
+| stdlib fold | agnosys 1.4.3 · **sandhi 1.6.7** · **sankoch 2.4.4** · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.11.4 · yukti 2.2.6 · vani 0.9.5 · sigil 3.8.0 · mabda 3.2.7 · sakshi 2.3.2 (**sankoch 2.4.4 @.22** — agnos-compat lock no-op; MUST release alongside this cut; all 12 libs current) |
+| tests | 187 `.tcyr` (+`tls_native_alpn` @.22 — RFC 7301 server-side ALPN, server-pref + no-overlap; +`aarch64_imm12_frame_field` @.21; +`float_named` @.19; +`float_f32` @.18; +`protobuf` @.17) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4567 fns** (+2 @.22 — `sys_sock_listen`/`sys_sock_accept`; the ALPN + listen-adapter helpers are `_`-prefixed) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| bench (every-release gate) | self_compile jitter @ 6.2.21 (loaded box; cycc 1,069,688 B flat — x86 binary byte-identical) |
+| bench (every-release gate) | self_compile ~538 ms @ 6.2.22 (jitter — ran concurrent with cross-OS SSH; cycc 1,069,688 B flat, codegen byte-identical, so no real perf delta) |
 
+> **Handoff (2026-06-18):** **v6.2.22 CUT — AGNOS server-socket peer (#56/#57) +
+> tls_native server-side ALPN (RFC 7301) + sankoch 2.4.4 agnos-compat fold.** Three
+> bites toward the AGNOS closed-beta "server base" sweep (agora/descent/sandhi/web
+> *accepting* connections). **Bite 1:** wired `lib/net.cyr`'s `sock_bind`/`sock_listen`/
+> `sock_accept` onto the kernel `sock_listen#56`/`sock_accept#57` band (agnos 1.45.5/.6)
+> via a **listen↔fd adapter** in `lib/syscalls_x86_64_agnos.cyr` (mirrors the v6.2.3
+> conn↔fd adapter — bind stashes the port, listen issues #56, accept issues #57 +
+> wraps the conn_id as a fresh tagged #48/#49/#50 fd; #57 non-blocking → `Err(EAGAIN)`
+> poll-loop). 1-arg syscalls → **no codegen change**. Gate probe **1d** (compile +
+> emit-inspect `syscall(56/57)`). **Bite 2:** tls_native server ALPN — 1.3 EE + 1.2
+> ServerHello parse-offer / select (server-pref, RFC 7301 §3.2, bounds-checked) / emit;
+> reused `TLS_CTX_OFF_ALPN_SEL` + the existing accessor (no ctx change). `openssl
+> s_client -alpn` now negotiates `http/1.1` (was "No ALPN"). **Bite 3:** sankoch 2.4.4 —
+> locks no-op on agnos (self-sufficient; no `mutex_*` ref). **4-dimension adversarial
+> review: 4 findings, 4 confirmed, 0 refuted** — caught + fixed **2 REAL agnos bugs** a
+> compile-only gate misses (verified vs the agnos kernel source): (1) accept **leaked
+> the just-#57'd kernel conn** on a full 8-slot fd table → now reaps via #50; (2)
+> `sys_close` left `_agnos_listen_port` stale → now all 3 slot tables clear uniformly.
+> Plus 2 doc-accuracy fixes (sankoch's "ud2/CLONE_VM" premise was stale — current
+> `thread.cyr` self-guards agnos since v6.2.3; the fix is self-sufficiency, not a crash
+> fix). **VERIFIED:** check.sh **89/89** (api-surface 4565→4567); x86 self-host
+> byte-identical (stdlib-only; cycc flat 1,069,688 B); agnos gate **1/1b/1c/1d+agnoshi**
+> PASS; cross-OS **SELFHOST_OK ecb/cass/pi**; `tls_native_alpn` 9/9 + OpenSSL 3.6.2
+> interop; existing TLS suites green. **NEXT: math-arc "fuller annotations" bites —
+> user's call per-slot. ALSO: sankoch 2.4.4 must be RELEASED alongside this cut (cyrius
+> vendors it); kii's own `--agnos` build needs a `cyrius deps` refresh — its vendored
+> `thread.cyr` predates the v6.2.3 agnos selector.** **user pushes/tags after CI.**
+>
+> ---
+>
 > **Handoff (2026-06-17):** **v6.2.21 CUT — aarch64 imm12-mask codegen class
 > (EADDIMM_X1 struct-field offsets + EPATCHFRAME stack frames >= 4096) + the
 > api_surface / gen_unicode silent-buffer-cap tail.** AArch64 ADD/SUB-imm carries a

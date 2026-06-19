@@ -6,6 +6,72 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.22] — 2026-06-18
+
+**v6.2.22 — AGNOS server-socket peer (#56/#57) + tls_native server-side ALPN +
+sankoch 2.4.4 agnos-compat fold.** Three bites toward the AGNOS closed-beta
+"server base" sweep (agora / descent / sandhi / web *accepting* connections).
+
+- **AGNOS server-socket peer (kernel `sock_listen#56` / `sock_accept#57`).** The
+  one piece between "the AGNOS kernel can `accept()`" and "a Cyrius service
+  compiled `--agnos` can `accept()`" — the closed-beta Phase-1 gate. `lib/net.cyr`'s
+  `sock_bind`/`sock_listen`/`sock_accept` were fail-loud `Err(1)` stubs ("AGNOS
+  Phase B — not exposed yet"); the kernel landed the surface at agnos 1.45.5
+  (sock_listen/accept) + 1.45.6 (LISTEN-slot reclaim hardening). Wired a
+  **listen_id↔fd adapter** in `lib/syscalls_x86_64_agnos.cyr` (two new tables
+  `_agnos_listen_tbl`/`_agnos_listen_port`, raw `sys_sock_listen`/`sys_sock_accept`
+  wrappers, `_agnos_listen_stash_port`/`_agnos_listen_start`/`_agnos_fd_listen`)
+  mirroring the v6.2.3 conn_id↔tagged-fd adapter: `sock_bind` stashes the port,
+  `sock_listen` issues `#56` (kernel merges bind+listen → a listen_id), `sock_accept`
+  issues `#57` and **wraps the accepted conn_id in a fresh tagged fd** so it rides
+  the existing `#48`/`#49`/`#50` path. `#57` is non-blocking → `Err(EAGAIN=11)` on
+  none-pending so the server poll-loops. Both `#56`/`#57` are 1-arg → **no codegen
+  change** (x86/aarch64/macOS/PE cycc byte-identical). New `agnos-crossbuild-gate.sh`
+  probe **1d** compiles a server + emit-inspects that `sock_listen`/`sock_accept`
+  lower to `syscall(56/57)` (not a stub). A 4-dimension adversarial review caught
+  **two real bugs** a compile-only/single-connection gate misses (both verified
+  against the agnos kernel source): (1) `sock_accept` **leaked the just-`#57`'d
+  kernel conn** when the cyrius 8-slot fd table was full — `#57` commits the accept
+  kernel-side, so a dropped `cid` orphaned an 8-slot kernel conn forever; now reaps
+  it (`#50`) on the full-table path; (2) `sys_close`'s non-listen path left
+  `_agnos_listen_port` stale → a recycled slot could silently mis-listen on the old
+  port; now every socket-fd close zeroes all three slot tables uniformly.
+- **`tls_native` server-side ALPN negotiation (RFC 7301).** `tls_native_set_alpn`
+  was client-only: a server set an ALPN list, got `TLS_OK`, and **never negotiated**
+  (h2-over-TLS unreachable; silent footgun). Added the server path: the 1.3 + 1.2
+  ClientHello parsers (`_tn_parse_client_hello` / `_tn_12_parse_client_hello`) call a
+  shared `_tn_server_negotiate_alpn` that intersects the client's offer with the
+  server's configured list via `_tn_select_alpn` (**server-preference order**, RFC
+  7301 §3.2, all reads bounds-checked vs the untrusted client list) and stashes the
+  choice at `TLS_CTX_OFF_ALPN_SEL`; the EncryptedExtensions builder (`_tn_build_ee`,
+  now `ctx`-parameterized) emits it for 1.3, `_tn_build_server_hello_12` for 1.2. The
+  existing `tls_native_get_alpn_selected` accessor already read `ALPN_SEL` and
+  documented "or that we selected (for servers)" — **reused as-is, no ctx LEN change**.
+  New `tls_native_alpn.tcyr` (server-preference + no-overlap, 9/9); the issue's exact
+  repro (`openssl s_client -alpn http/1.1`) now reports **`ALPN protocol: http/1.1`**
+  (was "No ALPN negotiated") against OpenSSL 3.6.2.
+- **sankoch 2.4.3 → 2.4.4 fold** — `_sankoch_lock`/`_sankoch_unlock` no-op under
+  `CYRIUS_TARGET_AGNOS` so sankoch references no `mutex_*` on agnos and is
+  self-sufficient (builds `--agnos` even without `thread.cyr`). cyrius's `thread.cyr`
+  already self-guards agnos (→ `thread_agnos.cyr` no-op mutexes) as of v6.2.3, so this
+  is the sankoch-layer counterpart, **not** a crash fix (the adversarial review
+  corrected the original issue's stale "ud2/CLONE_VM" premise). Non-agnos behaviour is
+  byte-identical. Surfaced by kii (first agnos consumer of sankoch); **note: kii's own
+  `--agnos` build additionally needs a `cyrius deps` refresh** — its vendored
+  `thread.cyr` predates the v6.2.3 agnos selector (consumer follow-up).
+
+**VERIFIED:** check.sh **89/89** (api-surface 4565→**4567**: +`sys_sock_listen`/
+`sys_sock_accept`; ALPN helpers are `_`-prefixed); x86 self-host byte-identical (all
+three bites stdlib-only — cycc untouched); agnos cross-build gate **1/1b/1c/1d +
+agnoshi** all PASS + emit-inspect `syscall(56/57)`; cross-OS **SELFHOST_OK
+ecb/cass/pi** byte-identical; `tls_native_alpn` PASS + OpenSSL 3.6.2 ALPN interop;
+existing TLS suites (ed25519/scaffold/tls12/transport_vtable) green; sankoch fold
+byte-identical to its 2.4.4 dist. **4-dimension adversarial review: 4 findings raised,
+4 confirmed, 0 refuted** — 2 real agnos bugs fixed pre-cut, 2 doc-accuracy fixes
+(sankoch premise). cycc 1,069,688 B (flat). **NEXT: math-arc "fuller annotations"
+bites** — user's call per-slot. **sankoch 2.4.4 must be released alongside this cut;
+kii re-folds post-release.**
+
 ## [6.2.21] — 2026-06-17
 
 **v6.2.21 — aarch64 ADD/SUB-immediate 12-bit-mask codegen class (EADDIMM_X1

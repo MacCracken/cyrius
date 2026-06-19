@@ -152,6 +152,48 @@ build/cyrius build --agnos /tmp/_agnos_async_gate.cyr /tmp/_agnos_async_gate.out
 assert_agnos_elf /tmp/_agnos_async_gate.out
 echo "PASS: CYRIUS_TARGET_AGNOS async serial-peer + net multicast/sockopt guards -> valid agnos ELF"
 
+# 1d. Server-socket peer (#56/#57, agnos 1.45.5/.6; v6.2.22). Guards the
+#     listen<->fd adapter in lib/net.cyr + lib/syscalls_x86_64_agnos.cyr: the
+#     server path (sock_bind stashes the port, sock_listen issues #56,
+#     sock_accept issues #57 + wraps the accepted conn_id as a fresh tagged
+#     #48/#49/#50 fd) that was fail-loud Err(1) before the kernel exposed
+#     inbound TCP. Without this, the old "AGNOS Phase B" stubs could silently
+#     rot back. Compile-only + an emit-inspect that the reachable sock_listen/
+#     sock_accept lower to syscalls 56/57 (NOT a stub) — real accept/echo
+#     behavior is validated on agnos hardware (QEMU tcp-listen-smoke), not here.
+#     See 2026-06-18-agnos-server-socket-peer.md.
+cat > /tmp/_agnos_server_gate.cyr <<'CYR'
+include "lib/net.cyr"
+fn main(): i64 {
+    var sr = tcp_socket();                            # reserve a conn slot
+    if (is_err_result(sr) == 1) { return 1; }
+    var lfd = payload(sr);
+    sock_reuse(lfd);                                  # agnos no-op
+    var b = sock_bind(lfd, INADDR_ANY(), 8080);       # stash port
+    if (is_err_result(b) == 1) { return 2; }
+    var l = sock_listen(lfd, 8);                       # #56 sock_listen
+    if (is_err_result(l) == 1) { return 3; }
+    var ar = sock_accept(lfd);                         # #57 sock_accept (+ wrap conn)
+    if (is_err_result(ar) == 1) { return 4; }
+    var cfd = payload(ar);
+    var buf = alloc(256);
+    sock_recv(cfd, buf, 256);                          # #49 via tagged conn fd
+    sock_send(cfd, buf, 4);                            # #48
+    sock_close(cfd);                                   # #50 conn
+    sock_close(lfd);                                   # #50 listen-reap
+    return 0;
+}
+CYR
+build/cyrius build --agnos /tmp/_agnos_server_gate.cyr /tmp/_agnos_server_gate.out >/dev/null 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS server-socket peer did not compile (#56/#57 / listen-fd adapter regression)"; exit 1; }
+assert_agnos_elf /tmp/_agnos_server_gate.out
+if command -v objdump >/dev/null 2>&1; then
+    sdis=$(objdump -d -M intel /tmp/_agnos_server_gate.out 2>/dev/null)
+    echo "$sdis" | grep -qE 'mov +eax,0x38\b' || { echo "FAIL: server probe emits no syscall 56 (sock_listen rotted to a stub?)"; exit 1; }
+    echo "$sdis" | grep -qE 'mov +eax,0x39\b' || { echo "FAIL: server probe emits no syscall 57 (sock_accept rotted to a stub?)"; exit 1; }
+fi
+echo "PASS: CYRIUS_TARGET_AGNOS server-socket peer (#56/#57) -> valid agnos ELF + emits sock_listen/sock_accept"
+
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then
