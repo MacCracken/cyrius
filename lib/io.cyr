@@ -88,6 +88,76 @@ fn file_open(path: cstring, flags, mode): i64 {
     #endif
 }
 
+# ── v6.2.26: portable length-carrying syscall wrapper set ──────────────────
+# The agnos ABI bridge promoted as a named set so callers never hand-roll the
+# raw `sys_*`. agnos `sys_*` carry an explicit byte length + reorder flags, so a
+# raw Linux-shaped `sys_open(path, O_RDONLY, 0)` lands O_RDONLY in `namelen` → a
+# silent ABI miscompile (no ud2) that breaks every file op off Linux. These
+# bridge once; the cyrlint `xsys` rule (informational) nudges raw sites here.
+# See 2026-06-18-stdlib-native-agnos-abi-fs.md. (The `#ifdef` per-target split
+# must wrap the platform-specific BLOCK — an early `return` does NOT stop the
+# compiler type-checking code that follows it; see the v6.2.25 audit_walk note.)
+
+# Open a regular file (namelen-bridged via file_open). 0644 default create mode
+# (ignored on agnos). Directory opens (AO_DIRECTORY) stay in fs.cyr's dir_list.
+fn xopen(path, flags): i64 {
+    return file_open(path, flags, 0x1A4);
+}
+
+# Unlink a path. agnos is length-carrying: (path, pathlen).
+fn xunlink(path): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var an = 0;
+    while (load8(path + an) != 0) { an = an + 1; }
+    return sys_unlink(path, an);
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return -1;   # Windows: no POSIX unlink (DeleteFileW — not wired; no consumer)
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_WIN
+    return sys_unlink(path);
+    #endif
+    #endif
+}
+
+# stat a path into `buf`. agnos is length-carrying: (path, pathlen, statbuf).
+fn xstat(path, buf): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var sn = 0;
+    while (load8(path + sn) != 0) { sn = sn + 1; }
+    return sys_stat(path, sn, buf);
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return -1;   # Windows: no POSIX stat (GetFileAttributesExW — not wired; no consumer)
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_WIN
+    return sys_stat(path, buf);
+    #endif
+    #endif
+}
+
+# Read directory entries into `buf` (raw bytes; caller parses the per-target
+# dirent record — agnos §4.2 differs structurally from Linux dirent64). agnos
+# getdents #29 (3-arg) / Linux+macOS getdents64 217 (4th `basep` arg ignored on
+# Linux, used by macOS getdirentries). Windows has no getdents — use dir_list.
+fn xgetdents(fd, buf, n): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_getdents(fd, buf, n);
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return -1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_WIN
+    var basep[8];
+    store64(&basep, 0);
+    return syscall(SYS_GETDENTS64, fd, buf, n, &basep);
+    #endif
+    #endif
+}
+
 # Close a file descriptor
 fn file_close(fd): i64 {
     return sys_close(fd);

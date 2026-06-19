@@ -50,6 +50,53 @@ fn _agnos_emit_gate(): i64 {
     _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
     println(": CYRIUS_TARGET_AGNOS — valid ELF64, entry ≥ 0x200000, agnos exit syscall(0) (no Linux-60)");
     _check(label, 0);
+    return _agnos_xsys_gate();
+}
+
+# v6.2.26: agnos emit-inspect for the io.cyr x* substrate (xopen/xstat/xunlink/
+# xgetdents). Compiles agnos_xsys_probe.cyr for agnos and asserts (a) it is a
+# valid agnos ELF64 (so the x* #ifdef branches all compile for agnos — a broken
+# branch, e.g. an unguarded SYS_GETDENTS64, fails the compile like the v6.2.25
+# audit_walk PE break) and (b) the Linux getdents64 (#217 = `mov eax,217`) did
+# NOT leak into the emit (xgetdents took the agnos getdents-#29 branch). Separate
+# from _agnos_emit_gate because the x* probe pulls io.cyr (~16 KB), large enough
+# that the whole-binary no-Linux-60 scan would coincidentally match — so this gate
+# does NOT scan for exit-60, only the targeted getdents-217 leak. See
+# 2026-06-18-stdlib-native-agnos-abi-fs.md.
+fn _agnos_xsys_gate(): i64 {
+    var label = "CYRIUS_TARGET_AGNOS x* substrate (io.cyr xopen/xstat/xunlink/xgetdents) — valid agnos ELF + getdents #29 (no Linux-217) (v6.2.26)";
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = _agnos_compile_to_buf(_root_path("programs/agnos_xsys_probe.cyr"), buf, cap, "agnos_xsys_probe");
+    if (n <= 0) { _check(label, 1); return 1; }
+    if (load8(buf) != 0x7F || load8(buf + 1) != 0x45 || load8(buf + 2) != 0x4C || load8(buf + 3) != 0x46) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos x* probe output is not an ELF"); _check(label, 1); return 1;
+    }
+    if (load8(buf + 4) != 2) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos x* probe not ELF64"); _check(label, 1); return 1;
+    }
+    var j = 0;
+    var found_linux_getdents = 0;
+    while (j < n - 4) {
+        if (load8(buf + j) == 0xB8) {
+            if (load8(buf + j + 1) == 0xD9) {
+                if (load8(buf + j + 2) == 0) { if (load8(buf + j + 3) == 0) { if (load8(buf + j + 4) == 0) {
+                    found_linux_getdents = 1;
+                } } }
+            }
+        }
+        j = j + 1;
+    }
+    if (found_linux_getdents == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": agnos x* binary contains Linux getdents64 (mov eax,217) — io.cyr xgetdents agnos #29 branch leaked?");
+        _check(label, 1); return 1;
+    }
+    _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+    println(": CYRIUS_TARGET_AGNOS x* substrate — valid agnos ELF64, xgetdents emits getdents #29 (no Linux-217)");
+    _check(label, 0);
     return 0;
 }
 

@@ -41,9 +41,27 @@ fn note_sysopen(line): i64 {
     var nb2[24];
     var nl2 = fmt_int_buf(line, &nb2);
     syscall(1, 2, &nb2, nl2);
-    var m = ": raw sys_open w/ literal flags - agnos sys_open is (name,namelen,flags); prefer io.cyr file_open or strlen(path) on agnos-bound paths\n";
+    var m = ": raw sys_open w/ literal flags - agnos sys_open is (name,namelen,flags); prefer io.cyr's xopen / file_open (or xstat/xunlink/xgetdents) portable wrappers on agnos-bound paths\n";
     syscall(1, 2, m, strlen(m));
     _sysopen_notes += 1;
+    return 0;
+}
+
+# v6.2.26: raw getdents syscall (per-target number/arity footgun). Linux
+# getdents64 #217 (4-arg, basep) vs agnos getdents #29 (3-arg) vs macOS
+# getdirentries — a raw `syscall(SYS_GETDENTS…)` only works on the target it was
+# written for. Informational (the correct bridge sites in io.cyr/fs.cyr will note
+# here too, like the sys_open rule's ~40 host-only sites). See the agnos-fs-abi
+# issue; prefer io.cyr's `xgetdents` on agnos-bound dir code.
+var _getdents_notes = 0;
+fn note_rawgetdents(line): i64 {
+    syscall(1, 2, "  note line ", 12);
+    var gb[24];
+    var gl = fmt_int_buf(line, &gb);
+    syscall(1, 2, &gb, gl);
+    var gm = ": raw getdents syscall - number/arity differ per target (agnos #29 3-arg, Linux 217 4-arg); prefer io.cyr's xgetdents on agnos-bound dir code\n";
+    syscall(1, 2, gm, strlen(gm));
+    _getdents_notes += 1;
     return 0;
 }
 
@@ -277,6 +295,24 @@ fn lint_file(buf, total): i64 {
                 }
                 so += 1;
             }
+
+            # === Rule: raw getdents syscall (per-target number/arity, v6.2.26) ===
+            # Flag when the code region holds BOTH `syscall(` and a `…SYS_GETDENTS`
+            # number — catching the per-target alias family (`SYS_GETDENTS`,
+            # `SYS_GETDENTS64`, and the `FSYS_`/`NSYS_`-prefixed forms, e.g. fs.cyr's
+            # `syscall(FSYS_GETDENTS64,…)`) which a literal `syscall(SYS_GETDENTS`
+            # prefix match would miss. The both-present test skips the `var …SYS_
+            # GETDENTS… = N` const defs (no `syscall(`). Reuses code_end (the comment
+            # boundary computed for the sys_open rule).
+            var has_syscall = 0;
+            var has_getdents = 0;
+            var gso = pos;
+            while (gso < code_end) {
+                if (gso + 8 <= code_end) { if (memeq(buf + gso, "syscall(", 8) == 1) { has_syscall = 1; } }
+                if (gso + 12 <= code_end) { if (memeq(buf + gso, "SYS_GETDENTS", 12) == 1) { has_getdents = 1; } }
+                gso += 1;
+            }
+            if (has_syscall == 1) { if (has_getdents == 1) { note_rawgetdents(lineno); } }
 
         }
 

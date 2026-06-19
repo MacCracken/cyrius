@@ -4,6 +4,10 @@
 # verifies the agnos exit epilogue (`syscall(0)`, NOT Linux `60`/`0xB8 0x3C`)
 # and a valid ELF64 at entry ≥ 0x200000 (agnos's user-range floor).
 # Mirrors programs/efi_probe.cyr's role for the EFI gate. See CHANGELOG [6.0.49].
+#
+# Kept MINIMAL on purpose: the no-Linux-60 check byte-scans the whole binary, so
+# a larger probe risks a coincidental `0xB8 0x3C 00 00 00` match. The io.cyr x*
+# substrate is exercised by its own `agnos_xsys_probe.cyr` + `_agnos_xsys_gate`.
 include "lib/syscalls.cyr"
 
 fn main() {

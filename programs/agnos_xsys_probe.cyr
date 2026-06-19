@@ -1,0 +1,19 @@
+# agnos_xsys_probe — exercises io.cyr's portable x* wrapper substrate
+# (xopen/xstat/xunlink/xgetdents) for the CYRIUS_TARGET_AGNOS emit gate
+# (`_agnos_xsys_gate` in programs/checks/ts.cyr). Compile-only + emit-inspect:
+# cross-built for agnos and read, never run. Proves the x* #ifdef branches all
+# compile for agnos (a broken/unguarded branch fails the compile, like the
+# v6.2.25 audit_walk PE break) and that xgetdents took the agnos getdents-#29
+# branch (no Linux getdents64 #217 leak). See
+# 2026-06-18-stdlib-native-agnos-abi-fs.md. v6.2.26.
+include "lib/io.cyr"
+
+fn main() {
+    var dbuf[256];
+    var fd = xopen("/dev/null", 0);
+    var st[144];
+    xstat("/dev/null", &st);
+    xgetdents(fd, &dbuf, 256);
+    xunlink("/tmp/_agnos_xsys_nonexistent");
+    return 42;
+}
