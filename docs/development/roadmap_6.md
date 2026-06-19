@@ -161,7 +161,7 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
-### Shipped so far (v6.2.0 → v6.2.22 — representative; see state.md for the full per-patch handoff log)
+### Shipped so far (v6.2.0 → v6.2.25 — representative; see [CHANGELOG.md](../../CHANGELOG.md) + state.md for the full per-patch detail)
 
 - **v6.2.0** ✅ — Phase 0 growable-region foundation (fixup_tbl / fn-tables /
   codebuf → relocatable-base + 2×-grow) + `cyrius init` CI/release alignment.
@@ -171,7 +171,16 @@ platform work (bottom-to-top priority) takes v6.2.x.
 - **v6.2.2** ✅ — aarch64/macOS annotation-token codegen fix (pass-1 + pass-2
   consume across the 3 non-x86 forks; unblocks `bayan` on aarch64/macOS) +
   ecosystem stdlib fold-in (all 12 vendored `lib/*.cyr` → released 6.2.1-pinned
-  versions; api-surface 4236 fns).
+  versions; api-surface 4236 fns at .2).
+- **v6.2.3 → .25** ✅ — the broad platform/stdlib/TLS line that became the realized
+  middle of the minor: AGNOS syscall completeness (net/entropy/clock peer +
+  server-socket #56/#57 + ALPN, fs/sysinfo), native-float math (`f64` type +
+  operators, .18/.19), native-TLS hardening (trust-store/mTLS, `tls_accept` server
+  wrapper, per-connection arena/flat-RSS + sigil 3.9.1), Darwin/Windows platform
+  surface, stdlib folds, aarch64 imm12-mask codegen (.21), and CLI tooling
+  (`cyrius audit` project sweep, .25). Per-slot detail in
+  [CHANGELOG.md](../../CHANGELOG.md) + [state.md](state.md). **api-surface now
+  4939 fns**, cycc 1,069,688 B, check.sh 89/89.
 
 Remaining v6.2.x arcs: **bare-metal target formalization** (then) **RISC-V rv64**
 — see the active [roadmap.md](roadmap.md) pinned sequence.
@@ -256,7 +265,7 @@ the in-hand rv64 self-host reverify. Issues:
 (AR-02) + [`2026-06-10-memory-safety-parity-gaps.md`](issues/2026-06-10-memory-safety-parity-gaps.md)
 (AR-03).
 
-### v6.2.0 — Bare-metal target formalization
+### v6.2.x — Bare-metal target formalization
 
 Codify the ad-hoc bare-metal mode that agnos has been using
 since first boot into a first-class
@@ -494,6 +503,12 @@ Same runtime semantics, sugarier surface. Pairs with closures
 
 ### Native float arithmetic (f64/f32 type + operators) — Tier A
 
+> **✅ SHIPPED v6.2.18 (f32 conversions) + v6.2.19 (named `f64` type + operators)** —
+> this is a v6.2.x arc (the "math mini-arc"), not future v6.3.x work; it sits under
+> the v6.3.x heading only for historical filing. The menu below is retained as the
+> arc's design record. Any remaining bites are bug-bandwidth follow-ons, not a
+> pinned v6.3.x sequence.
+
 Filed 2026-06-16 (`proposals/2026-06-16-native-float-arithmetic.md`); **direction
 chosen: Tier A** (first-class float types, not the Tier-B stdlib-intrinsic stopgap)
 — user 2026-06-16. **THIS IS THE v6.2.x "math mini-arc"** (user). **The user leads
@@ -578,7 +593,7 @@ platform axes):
      `[deps.<name>]` blocks (e.g. `target = "windows"`,
      `target = "aarch64"`, `target = "bare-metal"`)
    - Matches existing cross-arch story (`_TARGET_PE` / aarch64
-     emit paths). Bare-metal target (v6.2.0) and RISC-V backend
+     emit paths). Bare-metal target (v6.2.x) and RISC-V backend
      (v6.2.x) immediately benefit — kernel objects skip
      non-applicable userland deps without `#ifdef` gymnastics
 3. **Axes combine** — a dep can be both feature-gated AND
