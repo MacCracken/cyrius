@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.26] — 2026-06-19
+
+**v6.2.26 — agnos-fs ABI substrate (portable `x*` wrappers + cyrlint rule +
+emit-inspect gate) + mabda 3.3.0 + yantra 1.0.0 (new stdlib fold).** All
+stdlib/tooling — x86 cycc byte-identical (flat **1,069,688 B**); self_compile
+**517 ms** (flat). check.sh **89→90** (new agnos x* gate); cross-OS pi/ecb/cass;
+api-surface **4939 → 5034** (+95: 4 `io::x*` + 20 mabda + 71 yantra; **0
+removals**).
+
+- **agnos-fs ABI substrate** (closes the cyrius-native half of
+  `2026-06-18-stdlib-native-agnos-abi-fs`). agnos `sys_*` carry an explicit byte
+  length + reorder flags, so a raw Linux-shaped `sys_open(path, O_RDONLY, 0)`
+  lands `O_RDONLY` in `namelen` → a silent ABI miscompile (no ud2) off Linux. New
+  portable **`xopen` / `xstat` / `xunlink` / `xgetdents`** in `lib/io.cyr` bridge
+  the agnos ABI once (mirroring `file_open`), `#ifdef`-gated per target (agnos
+  namelen / Linux+macOS passthrough / Windows guarded stub — the guard wraps the
+  BLOCK, since an early `return` does not stop the compiler type-checking later
+  code, per the v6.2.25 audit_walk lesson). Compiles on all 5 targets; cycc
+  self-hosts byte-identical (the new fns DCE out — cycc doesn't call them).
+- **cyrlint getdents rule** + the `sys_open` rule's message now point at the
+  `x*` set. The getdents arm flags raw `syscall(…SYS_GETDENTS…)` per-target
+  footguns (informational, non-gate-failing). Adversarial review caught + fixed
+  two rule bugs: it missed fs.cyr's `FSYS_GETDENTS64` alias (now matches the
+  `FSYS_`/`NSYS_` family via a both-`syscall(`-and-`SYS_GETDENTS` test that still
+  skips const-defs), and it self-matched its own message string (reworded).
+- **agnos x* emit-inspect gate** (new, `_agnos_xsys_gate`): cross-builds
+  `agnos_xsys_probe.cyr` for agnos and asserts a valid agnos ELF + that
+  `xgetdents` took the getdents-#29 branch (no Linux getdents64 #217 leak). Kept
+  separate from the minimal exit-60 gate — the io.cyr-pulling x* probe is large
+  enough (~16 KB) that the whole-binary no-Linux-60 scan would coincidentally
+  match. **Premise-check:** the issue's "~58 sites" are mostly vendored
+  (agnosys/patra/sigil → upstream) or Linux-only or already fixed (fs.cyr @.23),
+  so this slot is the preventative cure, not a migration.
+- **mabda 3.3.0 fold** (from the tag's `dist/mabda.cyr`, +735 lines: asset/png
+  loader + native/wgpu backends). Deps unchanged (chitra/samvada were already
+  3.2.14 deps).
+- **yantra 1.0.0 — NEW stdlib fold.** The UI / end-to-end testing lib (WebDriver
+  + Appium + Chromium-CDP RPC), vendored byte-identical into `lib/yantra.cyr`
+  from `cyrius distlib` at the 1.0.0 tag (self-contained, 0 includes). **OPT-IN,
+  not auto-prepended** (a test harness, not a core stdlib): a consumer lists its
+  dep chain — net / ws / bayan / sandhi / tls (+ dynlib / fdlopen / mmap) /
+  sakshi / sigil — ahead of `yantra` in `[deps].stdlib` (yantra requires those
+  deps: it references sigil's `SIG_ALG_ED25519` constant + sandhi/sakshi fns).
+  Verified compiles + runs via `cyrius deps`. Registered in `cyrius.cyml`; the
+  vendored-dist self-containment gate auto-covers it.
+
 ## [6.2.25] — 2026-06-19
 
 **v6.2.25 — `tls_native` server-ctx arena/flat-RSS fix (full-depth) + sigil 3.9.1.**

@@ -14,24 +14,49 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.25** (v6.2.x cycle — **Platform Expansion**; `tls_native` server-ctx arena/flat-RSS fix (full-depth, ~95 per-connection allocs routed via `_tn_alloc`/`_tn_arena` choke-points + stack-locals; `tls_accept_alloc_in` public entry) + sigil 3.9.1 + `cyrius audit` = project sweep (was wrongly wired to check.sh). See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.25 — tls_native/audit_walk/cbt changes are stdlib/tooling, not in the compiler; cycc self-hosts byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | **622,112 B** (rebuilt @ 6.2.25, size unchanged — no aarch64-backend change since the .24 macho `ESYSXLAT` aarch64 socket-family→Darwin + aarch64-Linux getdents64 217→61 funcgate fix; **pi-verified** (dir-walk + two-step self-host) + qemu; ecb/cass SELFHOST_OK) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.25 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.25 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
+| **Version** | **6.2.26** (v6.2.x cycle — **Platform Expansion**; agnos-fs ABI substrate (portable `xopen`/`xstat`/`xunlink`/`xgetdents` + cyrlint getdents rule + agnos x* emit-inspect gate) + mabda 3.3.0 + **yantra 1.0.0 — new stdlib fold (UI/E2E testing: WebDriver/Appium/CDP)**. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.26 — the x* substrate / cyrlint / folds are stdlib/tooling, not in the compiler; the new io.cyr x* fns DCE out (cycc doesn't call them); cycc self-hosts byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | **622,112 B** (rebuilt @ 6.2.26, size unchanged — no aarch64-backend change since the .24 macho `ESYSXLAT` aarch64 socket-family→Darwin + aarch64-Linux getdents64 217→61 funcgate fix; **pi-verified** (dir-walk + two-step self-host) + qemu; ecb/cass SELFHOST_OK) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.26 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.26 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
-| check.sh gates | 89/89 (+1 @ 6.1.36 — `_vendored_dist_selfcontained_gate`) |
+| check.sh gates | **90/90** (+1 @ 6.2.26 — `_agnos_xsys_gate` (agnos x* substrate emit-inspect); +1 @ 6.1.36 `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.9.1** (@6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack, both for the TLS per-connection arena/flat-RSS fix; @6.2.23 3.9.0 absorbs agnosys helpers + LUKS/attestation surface) |
-| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.1** · **mabda 3.2.14** · sakshi 2.4.0 (**sigil 3.9.0→3.9.1 @.25** — sha384_init_into + ecdsa raw_sig→stack for the TLS arena fix) |
-| tests | **188** `.tcyr` (+`tls_native_server_arena_flat_rss` @.25 — hermetic flat-RSS proof, 252 asserts) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | 98 `lib/*.cyr` · 79 programs · api-surface **4939 fns** (+7 @.25 — the `_in` ctors / `set_alloc` / `sha384_init_into` / `audit_doc_walk`; 0 removals) |
+| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.1** · **mabda 3.3.0** · sakshi 2.4.0 · **yantra 1.0.0** (**@.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
+| tests | **188** `.tcyr` (no new tcyr @.26 — the agnos x* substrate is verified by the new `_agnos_xsys_gate` emit-inspect, not a tcyr; +`tls_native_server_arena_flat_rss` @.25) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | **99** `lib/*.cyr` (+yantra @.26) · 79 programs · api-surface **5034 fns** (+95 @.26 — 4 `io::x*` + 20 mabda 3.3.0 + 71 yantra 1.0.0; 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| agnos gate | **6/6** (+probe **1e** @.23 — fs dir-listing: getdents #29 + AO_DIRECTORY 0x800 emit-inspect) |
-| bench (every-release gate) | self_compile **525 ms** @ 6.2.25 (within jitter of .24's 522 ms; x86 cycc 1,069,688 B flat — tls_native/audit changes are stdlib/tooling, no compiler/x86 perf delta) |
+| agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
+| bench (every-release gate) | self_compile **517 ms** @ 6.2.26 (within jitter of .25's 525 ms; x86 cycc 1,069,688 B flat — x* substrate / cyrlint / folds are stdlib/tooling, no compiler/x86 perf delta) |
 
+> **Handoff (2026-06-19d):** **v6.2.26 CUT — agnos-fs ABI substrate + mabda
+> 3.3.0 + yantra 1.0.0 (new stdlib fold).** Closes the cyrius-native half of
+> `2026-06-18-stdlib-native-agnos-abi-fs`: agnos `sys_*` carry an explicit byte
+> length + reorder flags, so a raw Linux-shaped `sys_open(path,O_RDONLY,0)` lands
+> O_RDONLY in `namelen` → silent ABI miscompile off Linux. New portable
+> **`xopen`/`xstat`/`xunlink`/`xgetdents`** in `lib/io.cyr` bridge the agnos ABI
+> once (mirror `file_open`), `#ifdef`-gated per target (agnos namelen /
+> Linux+macOS passthrough / Win guarded stub — the guard wraps the BLOCK, the
+> v6.2.25 audit_walk lesson). cyrlint getdents rule (informational) + the new
+> **`_agnos_xsys_gate`** emit-inspect (valid agnos ELF + getdents-#29, no
+> Linux-217 leak; kept separate from the exit-60 gate since the io.cyr-pulling
+> probe is big enough to coincidentally match a whole-binary exit-60 scan).
+> **Premise-check:** the "~58 sites" are mostly vendored (upstream) / Linux-only
+> / already-fixed (fs.cyr @.23) → preventative cure, not a migration. Adversarial
+> review: substrate ABI + guards CLEAN; 2 cyrlint rule bugs (FSYS_ alias
+> false-neg + message self-match) caught + fixed. **mabda 3.3.0** folded
+> (asset/png + native/wgpu; deps unchanged). **yantra 1.0.0 NEW fold** — the
+> UI/E2E testing lib (WebDriver/Appium/CDP), vendored byte-identical via `cyrius
+> distlib` at the 1.0.0 tag, self-contained, OPT-IN (requires net/ws/bayan/
+> sandhi/tls/sakshi/sigil dep chain — references sigil's SIG_ALG_ED25519
+> constant); verified compiles+runs via `cyrius deps`; registered in cyrius.cyml.
+> **check.sh 90/90 (+`_agnos_xsys_gate`); cross-OS pi/ecb/cass; cycc
+> byte-identical 1,069,688 B; api-surface 4939→5034 (+95, 0 removals); bench
+> 517 ms flat.** Next pinned: .27 bare-metal target formalization.
+>
 > **Handoff (2026-06-19c):** **v6.2.25 CUT — `tls_native` server-ctx
 > arena/flat-RSS fix (full-depth) + sigil 3.9.1 + `cyrius audit` semantics fix.**
 > A long-running native-TLS server leaked every accepted connection on the
