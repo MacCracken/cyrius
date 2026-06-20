@@ -87,9 +87,14 @@ assert_eq(ganita_binomial(20, 10), 184756, "C(20,10)");
 test_group("f64 log2 (v5.8.4 phylax #1 unblock)");
 assert_eq(f64_to(f64_log2(f64_from(1))), 0, "log2(1) = 0");
 assert_eq(f64_to(f64_log2(f64_from(2))), 1, "log2(2) = 1");
-assert_eq(f64_to(f64_log2(f64_from(8))), 3, "log2(8) = 3");
-assert_eq(f64_to(f64_log2(f64_from(1024))), 10, "log2(1024) = 10");
-assert_eq(f64_to(f64_log2(f64_from(65536))), 16, "log2(65536) = 16");
+# v6.2.29: round before truncating — on aarch64 f64_log2 dispatches to the
+# ln(x)/ln(2) polyfill (2.999… for log2(8)) where x86 uses exact x87 fyl2x; these
+# only ever ran green because fyl2x is exact. f64_round makes them arch-independent
+# (the native-dispatch analogue of the polyfill assertions below). Surfaced by the
+# VR-01 full-tcyr-on-arm64 gate.
+assert_eq(f64_to(f64_round(f64_log2(f64_from(8)))), 3, "log2(8) = 3");
+assert_eq(f64_to(f64_round(f64_log2(f64_from(1024)))), 10, "log2(1024) = 10");
+assert_eq(f64_to(f64_round(f64_log2(f64_from(65536)))), 16, "log2(65536) = 16");
 
 # Direct polyfill — exercises the v5.8.4 math regardless of arch.
 # log2(8) = ln(8) * (1/ln(2)) = 2.079... * 1.4427... ≈ 3.0. Two-step

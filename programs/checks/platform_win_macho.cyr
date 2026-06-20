@@ -80,6 +80,66 @@ fn _check_macho_magic_fail(b0, b1, b2, b3): i64 {
     return 0;
 }
 
+# v6.2.29 (VR / the .25-class gate): the CLI (cbt/cyrius.cyr) is itself
+# cross-compiled to PE / Mach-O / aarch64 at release-tarball time — but the v6.2.25
+# Windows break (a raw SYS_GETDENTS64 pulled into the CLI via a lib include) proved
+# check.sh's cross-OS gate only self-hosts cycc, NEVER the CLI. This gate closes
+# that exact window: pipe cbt/cyrius.cyr through each cross target and assert a
+# valid, correctly-formatted binary. One unguarded host-only syscall in any
+# CLI-reachable lib turns this red here, not in a downstream Windows CI run.
+fn _cli_cross_check(env_kv, cc_path, m0, m1, tname): i64 {
+    if (file_exists(cc_path) != 1) {
+        _p("    skip "); _p(tname); println(": compiler not built");
+        return 0;
+    }
+    var src = _root_path("cbt/cyrius.cyr");
+    var out = _tmp_path("audit_cli_cross_");
+    var rc = 0;
+    if (env_kv == 0) { rc = _self_host_pipe(src, cc_path, out); }
+    else { rc = _self_host_pipe_env(src, cc_path, out, env_kv); }
+    if (rc != 0) {
+        sys_unlink(out);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(tname); _p(" CLI cross-compile rc="); print_num(rc); println("");
+        return 1;
+    }
+    var sz = _file_size(out);
+    var magic_buf[1];
+    var fd = sys_open(out, 0, 0);
+    if (fd >= 0) { sys_read(fd, &magic_buf, 4); sys_close(fd); }
+    sys_unlink(out);
+    if (sz < 200000) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(tname); _p(" CLI too small ("); print_num(sz); println(" B)");
+        return 1;
+    }
+    var b0 = load8(&magic_buf);
+    var b1 = load8(&magic_buf + 1);
+    if (b0 != m0 || b1 != m1) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(tname); _p(" wrong magic ("); print_num(b0); _p(" "); print_num(b1); println(")");
+        return 1;
+    }
+    _p("    "); _p(ANSI_GREEN); _p("ok"); _p(ANSI_RESET);
+    _p(": "); _p(tname); _p(" CLI ("); print_num(sz); println(" B)");
+    return 0;
+}
+
+fn _cli_cross_compile_gate(): i64 {
+    var label = "CLI (cbt/cyrius.cyr) cross-compiles clean: PE / Mach-O / aarch64 (v6.2.29 — the .25-class gate)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: build/cycc not built"); println("");
+        _check(label, 0);
+        return 0;
+    }
+    var fail = 0;
+    fail = fail + _cli_cross_check("CYRIUS_TARGET_WIN=1", CC_PATH, 0x4D, 0x5A, "PE");      # MZ
+    fail = fail + _cli_cross_check("CYRIUS_MACHO=1", CC_PATH, 0xCF, 0xFA, "Mach-O");        # CF FA ED FE
+    fail = fail + _cli_cross_check(0, _root_path("build/cycc_aarch64"), 0x7F, 0x45, "aarch64-ELF");   # 7F 'E'
+    _check(label, fail);
+    return 0;
+}
+
 fn _win_build_gate(): i64 {
     var label = "CYRIUS_TARGET_WIN cross-builds the stdlib into valid PE32+ console (v6.0.50; closure + emit guard)";
     var cap = 262144;

@@ -296,6 +296,10 @@ fn _run_regression_gates(): i64 {
     _macho_cross_build_gate();
     println("");
 
+    _section("CLI cross-compile (the .25-class gate)");
+    _cli_cross_compile_gate();
+    println("");
+
     _section("Inline-asm discard-result");
     _inline_asm_discard_gate();
     println("");
@@ -572,6 +576,10 @@ fn _run_regression_gates(): i64 {
 
     _section("smoke discovery");
     _smoke_discovery_gate();
+    println("");
+
+    _section("fuzz harnesses");
+    _fuzz_harness_gate();
     println("");
 
     _section("lsp definition");

@@ -21,11 +21,23 @@
 
 include "lib/assert.cyr"
 
+# v6.2.29: the ISR terminator is arch-specific (x86 iretq / aarch64 eret). The
+# .28 test hardcoded iretq → it failed to compile on aarch64 (caught by the new
+# VR-01 arm-native tcyr gate). Arch-conditional so it exercises #naked on BOTH forks.
+#ifdef CYRIUS_ARCH_AARCH64
+#naked fn isr_probe() {
+    asm {
+        eret
+    }
+}
+#endif
+#ifndef CYRIUS_ARCH_AARCH64
 #naked fn isr_probe() {
     asm {
         iretq
     }
 }
+#endif
 
 fn main(): i64 {
     # &isr_probe = the IDT-style address reference that keeps the naked ISR alive

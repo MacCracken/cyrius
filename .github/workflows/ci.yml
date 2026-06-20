@@ -201,6 +201,27 @@ jobs:
           done
           echo "$pass passed, $fail failed"
           test $fail -eq 0
+      - name: Fuzz harnesses (VR-02, v6.2.29)
+        run: |
+          # cyrius fuzz runs the fuzz/*.fcyr harnesses — was in no gate (vestigial,
+          # free to rot). Exits non-zero if any harness fails to compile or fails.
+          ./build/cyrius fuzz
+      - name: CLI cross-compile (the .25-class gate, v6.2.29)
+        run: |
+          # cbt/cyrius.cyr cross-compiles to PE / Mach-O / aarch64 — the exact
+          # surface the v6.2.25 Windows break slipped through (a raw host-only
+          # syscall in a CLI-reachable lib). Turns red HERE per-PR, not at release.
+          set -e
+          cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
+          chk() { # $1=label $2=file $3=expected-hex-magic(2 bytes)
+            sz=$(wc -c < "$2"); test "$sz" -gt 200000 || { echo "FAIL: $1 too small ($sz B)"; exit 1; }
+            m=$(head -c2 "$2" | od -An -tx1 | tr -d ' \n')
+            test "$m" = "$3" || { echo "FAIL: $1 wrong magic (got $m, want $3)"; exit 1; }
+            echo "ok: $1 CLI ($sz B)"
+          }
+          env CYRIUS_TARGET_WIN=1 ./build/cycc < cbt/cyrius.cyr > /tmp/cli_win   && chk PE          /tmp/cli_win   4d5a
+          env CYRIUS_MACHO=1      ./build/cycc < cbt/cyrius.cyr > /tmp/cli_macho && chk Mach-O      /tmp/cli_macho cffa
+          ./build/cycc_aarch64               < cbt/cyrius.cyr > /tmp/cli_a64   && chk aarch64-ELF /tmp/cli_a64   7f45
       - name: Regression — _cyrius_init STB_GLOBAL in object; mode (v5.4.9)
         run: |
           # Mabda's GPU integration links a cyrius `.o` into a
@@ -522,7 +543,7 @@ jobs:
     name: aarch64 Native Self-Host
     needs: [aarch64]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 8   # fail-loud on a hang, never the 6h default
+    timeout-minutes: 20   # +tcyr corpus (190 compile+run) @ v6.2.29 VR-01; fail-loud on a hang
     steps:
       - uses: actions/checkout@v4   # full repo: scripts/cbt/programs/lib for the functional gate
       - name: Download native aarch64 cycc
@@ -554,6 +575,42 @@ jobs:
           export CYRIUS_HOME="$HOME/_fg_a64"
           sh scripts/funcgate-stage.sh build/cycc_native_a64 build/cyrius_a64 "$CYRIUS_HOME"
           sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_fg_a64_work" "$CYRIUS_HOME"
+      - name: Test suite (.tcyr) — full corpus on NATIVE arm64 (VR-01, v6.2.29)
+        run: |
+          # The first on-hardware tcyr coverage beyond self-host + funcgate — the
+          # "found by ports/consumers" gap. Mirrors the x86 loop (cat | cycc, the
+          # tcyr are self-contained) with the NATIVE cycc_native_a64, run natively.
+          #   SKIP  = x86-only by compiler design (won't compile on aarch64).
+          #   XFAIL = known aarch64 bugs tracked in
+          #           docs/development/issues/2026-06-19-aarch64-tcyr-failures.md.
+          # An unexpected PASS is flagged loudly so a fixed bug gets un-xfail'd; the
+          # gate fails ONLY on a non-xfail test failing (regression / new failure).
+          chmod +x a64/cycc_native_a64
+          CC=a64/cycc_native_a64
+          SKIP="math_pack_integration"
+          XFAIL="hashmap_ext process math_inverse_trig u128 fdlopen io result_stdlib_pass2 syscalls_at_family tls_native_scaffold"
+          pass=0; fail=0; xfail=0; xpass=0; skip=0
+          for t in tests/tcyr/*.tcyr; do
+            name=$(basename "$t" .tcyr)
+            case " $SKIP " in *" $name "*) skip=$((skip+1)); continue;; esac
+            isx=0; case " $XFAIL " in *" $name "*) isx=1;; esac
+            bin="/tmp/at_$name"
+            if cat "$t" | $CC > "$bin" 2>/dev/null && chmod +x "$bin"; then
+              out=$("$bin" 2>&1); ec=$?
+              f=$(printf '%s' "$out" | grep -oE '[0-9]+ failed' | tail -1 | grep -oE '^[0-9]+')
+              bad=0; [ "$ec" -ne 0 ] && bad=1; [ "${f:-0}" -gt 0 ] && bad=1
+            else
+              bad=1; ec="compile"
+            fi
+            rm -f "$bin"
+            if [ $bad -eq 1 ]; then
+              if [ $isx -eq 1 ]; then xfail=$((xfail+1)); else echo "  FAIL: $name ($ec)"; fail=$((fail+1)); fi
+            else
+              if [ $isx -eq 1 ]; then echo "  XPASS: $name — FIXED? remove from XFAIL"; xpass=$((xpass+1)); else pass=$((pass+1)); fi
+            fi
+          done
+          echo "tcyr-native: $pass pass / $fail fail / $xfail xfail / $xpass xpass / $skip skip (of $(ls tests/tcyr/*.tcyr | wc -l))"
+          test $fail -eq 0
 
   # ── macOS Mach-O ──
   macho:

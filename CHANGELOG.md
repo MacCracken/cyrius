@@ -6,6 +6,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.29] — 2026-06-19
+
+**v6.2.29 — VR-01/VR-02 verification fold** (from `2026-06-10-verification-coverage-gaps`).
+Closes the gaps that let real breaks slip through to consumers (the .25 Windows
+break, the macOS rot). **No `src/` change** — cycc flat at 1,071,888 B; this is
+tests/gates/CI. check.sh **90 → 92 gates**.
+
+- **VR-02 — `cyrius fuzz` is now a gate.** It ran the `fuzz/*.fcyr` harnesses but
+  was wired into NO standing gate (vestigial, free to rot). Added a check.sh gate
+  (`_fuzz_harness_gate`, asserts exit 0 + "0 failed") AND a per-PR ci.yml step.
+- **CLI cross-compile gate — the exact .25-class hole.** The CLI (`cbt/cyrius.cyr`)
+  is cross-compiled to PE/Mach-O/aarch64 only at release-tarball time; the .25 break
+  (a raw `SYS_GETDENTS64` pulled into the CLI via a lib include) proved check.sh's
+  cross-OS gate self-hosts *cycc* but never the *CLI*. New gate (check.sh
+  `_cli_cross_compile_gate` + a ci.yml step) pipes `cbt/cyrius.cyr` through each
+  cross target and asserts valid magic (PE `4d5a` / Mach-O `cffa` / ELF `7f45`).
+- **VR-01 — the full `.tcyr` suite now runs on REAL arm64** (the `aarch64-native`
+  CI job, native `cycc_native_a64`). First on-hardware tcyr coverage beyond
+  self-host + funcgate — and it immediately did its job: **of 190 tests, 180 pass,
+  but 9 fail on real arm64** (verified on pi, not qemu), incl. **4 crashes**
+  (`hashmap_ext`/`process` SIGSEGV, `math_inverse_trig`/`u128` SIGILL). The exact
+  "found by ports" class. Per the user's call, the gate ships now over the 180
+  passing (anti-rot value immediately), with the 9 **xfail'd + tracked**
+  (`issues/2026-06-19-aarch64-tcyr-failures.md` — clear as a follow-on arc; the
+  gate flags an unexpected PASS) and the 1 x86-only test (`math_pack_integration`,
+  uses `f64_sin`) skip-listed.
+  - **Fixed in-slot:** `math` (the log2 assertions truncated the aarch64
+    `ln/ln2` polyfill's 2.999… where x86's exact `fyl2x` gave 3 — wrapped in
+    `f64_round`); `naked_fn_attribute` (my .28 test hardcoded x86 `iretq` →
+    arch-conditional `iretq`/`eret`).
+  - **Real-hardware validation mattered:** qemu masked a failure (a data-file
+    staging artifact) AND falsely failed a qemu-only artifact — neither would have
+    produced a correct gate from the qemu sweep alone. The XFAIL list is pi-verified.
+
 ## [6.2.28] — 2026-06-19
 
 **v6.2.28 — bare-metal target formalization, RUNTIME HALF** (closes the 2-release

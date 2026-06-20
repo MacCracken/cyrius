@@ -148,6 +148,36 @@ fn _linker_gate_cleanup(a, b, c, d): i64 {
     return 0;
 }
 
+# v6.2.29 (VR-02): `cyrius fuzz` runs the fuzz/*.fcyr harnesses but was wired into
+# NO standing gate — vestigial, free to rot. This makes it a check.sh gate: run it,
+# assert exit 0 AND "0 failed". Seconds of runtime; catches a harness that stops
+# compiling or starts failing (the cheapest half of VR-02).
+fn _fuzz_harness_gate(): i64 {
+    var label = "cyrius fuzz: all fuzz/*.fcyr harnesses compile + pass (v6.2.29 VR-02)";
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built");
+        println("");
+        _check(label, 0);
+        return 0;
+    }
+    var fail = 0;
+    var out = _tmp_path("audit_fuzz_harness_");
+    var ec = _exec_in_dir(ROOT_PATH, cyrius_bin, "fuzz", out);
+    if (ec != 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": 'cyrius fuzz' exited "); print_num(ec); println(" (expected 0)");
+        fail = fail + 1;
+    } else { if (_file_contains_substr(out, "0 failed") != 1) {
+            _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+            println(": 'cyrius fuzz' did not report '0 failed'");
+            fail = fail + 1;
+        } }
+    sys_unlink(out);
+    _check(label, fail);
+    return 0;
+}
+
 fn _smoke_discovery_gate(): i64 {
     var label = "cyrius smoke discovers .smcyr + fail-fast bailout (v5.7.38)";
     var cyrius_bin = _root_path("build/cyrius");

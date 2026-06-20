@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.28** (v6.2.x cycle — **Platform Expansion**; bare-metal target formalization **RUNTIME HALF** (closes the .27+.28 arc): `#naked` ISRs writable (`asm{iretq}`/`asm{eret}`; the .27 "no inline asm" belief was WRONG — `asm{}` always existed) + D5 kernel-freestanding TLS entropy vtable + **D7 a REAL QEMU kernel boot gate** + D6 entry-VA exposed. 6 review findings folded (P1: the boot gate wasn't wired into CI). See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,888 B** (−16 @ 6.2.28, flat — the runtime half is mostly stdlib/gates/CI; the only compiler deltas are the 1-line `#naked` DCE-force + the guard-message `strlen`→literal fix; cycc self-hosts byte-identical) |
+| **Version** | **6.2.29** (v6.2.x cycle — **Platform Expansion**; VR-01/VR-02 verification fold — close the found-by-consumers gaps: **full `.tcyr` suite now runs on REAL arm64** (aarch64-native CI job) — measured a 9-bug aarch64 debt (4 crashes), xfail'd+tracked, gate ships green over 180 passing; `cyrius fuzz` → a check.sh gate + CI step; **CLI cross-compile gate** (the .25-class hole). See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,888 B** (FLAT @ 6.2.29 — NO `src/` change this release; the verification fold is tests/gates/CI only, cycc untouched, self-hosts byte-identical) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,264 B** (rebuilt @ 6.2.28 — the one-line `eret` mnemonic added to ASM_MNEMONIC (`0x74657265 → 0xD69F03E0`) for aarch64 `#naked` ISR returns; x86 cycc byte-identical) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.28 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.28 — shared `parse_fn.cyr` guard-message fix only; PE backend untouched; cass SELFHOST_OK) |
@@ -23,15 +23,36 @@
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
-| check.sh gates | **90/90 + the D7 boot gate** (@.28 — a full-run post-step `scripts/qemu-boot-gate.sh`: ELF64 shape-verify x86+aarch64 + a REAL QEMU boot of the ELF32 kernel asserting serial "AGNOS"; also a new `bare-metal-boot` CI job so it runs in CI, not just locally — `CYRIUS_REQUIRE_BOOT=1` fails-not-skips a qemu-less runner) |
+| check.sh gates | **92/92 + the D7 boot gate** (+2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64, the .25-class gate) + `_fuzz_harness_gate` (cyrius fuzz → exit 0 + "0 failed"); both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
+| aarch64 native tcyr | **180 pass / 9 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job now runs the FULL tcyr corpus on real arm64; 9 real-arm64 bugs xfail'd+tracked (`2026-06-19-aarch64-tcyr-failures.md`, 4 crashes), `math_pack_integration` skip (x86-only f64_sin); pi-verified) |
 | sigil fold | **3.9.1** (@6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack, both for the TLS per-connection arena/flat-RSS fix; @6.2.23 3.9.0 absorbs agnosys helpers + LUKS/attestation surface) |
 | stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.1** · **mabda 3.3.0** · sakshi 2.4.0 · **yantra 1.0.0** (**@.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
 | tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
 | stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5035 fns** (+1 @.28 — `tls_native_set_entropy`; `_tn_rand_bytes` is underscore-private; 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **520 ms** @ 6.2.28 (within jitter of .27's 518 ms; x86 cycc 1,071,904 → **1,071,888 B**, −16 — the runtime half is mostly stdlib/CI/gates, near-zero compiler delta) |
+| bench (every-release gate) | self_compile **~520 ms** @ 6.2.29 (within jitter; x86 cycc **1,071,888 B FLAT** — .29 has no `src/` change, zero compiler/perf delta by construction) |
 
+> **Handoff (2026-06-19g):** **v6.2.29 CUT — VR-01/VR-02 verification fold** (no
+> `src/` change — tests/gates/CI; cycc FLAT). **VR-02:** `cyrius fuzz` → a check.sh
+> gate (`_fuzz_harness_gate`) + a ci.yml step (was vestigial, in no gate).
+> **CLI cross-compile gate** (`_cli_cross_compile_gate` + ci.yml step): pipes
+> `cbt/cyrius.cyr` through PE/Mach-O/aarch64 + asserts magic — the EXACT .25-class
+> hole (check.sh's cross-OS only self-hosted cycc, never the CLI). **VR-01:** the
+> aarch64-native CI job now runs the FULL `.tcyr` corpus on REAL arm64 (first
+> on-hardware tcyr coverage beyond self-host+funcgate). It measured a real
+> aarch64 debt: **of 190, 180 pass, 9 fail on real arm64** (4 crashes:
+> hashmap_ext/process SIGSEGV, math_inverse_trig/u128 SIGILL) — "found by ports"
+> class. User's call: **gate now over the 180**, 9 xfail'd+tracked
+> (`2026-06-19-aarch64-tcyr-failures.md` — a follow-on arc; gate flags an
+> unexpected PASS), 1 x86-only skipped (`math_pack_integration`/f64_sin). Fixed
+> in-slot: `math` (log2 polyfill rounding → f64_round), `naked_fn_attribute` (my
+> .28 x86 `iretq` → arch-conditional). **Real-hardware validation was decisive** —
+> qemu masked a failure AND falsely-failed a qemu-only artifact; the xfail list is
+> pi-verified (180 pass / 9 xfail / 0 xpass on pi). check.sh **92/92** + boot gate.
+> **NEXT pinned: .30 CVE-21 → deps-modules → RISC-V**; plus the aarch64-debt arc
+> (9 bugs) to clear incrementally.
+>
 > **Handoff (2026-06-19f):** **v6.2.28 CUT — bare-metal target formalization,
 > RUNTIME HALF** (closes the .27+.28 arc). A premise-check overturned the .27
 > belief that `#naked` was a partial feature: cyrius has had inline asm (`asm{}` +
