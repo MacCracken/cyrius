@@ -308,6 +308,20 @@ fn ESADDR(S, soff): i64 {
     return 0;
 }
 
+# [grow] emit fn address: mov rax, <abs fn vaddr> with type-3 fixup. cycc DOES
+# call fn-pointers (allocator vtable) at startup, so &fn must be the real
+# address (0x400078 + fn_offset), not a placeholder.
+fn EFNADDR(S, fi): i64 {
+    E2(S, 0xB848);
+    var fc = GFCNT(S);
+    var faddr = S + 0x5100000 + fc * 16;
+    S64(faddr, GCP(S));
+    S64(faddr + 8, (3 << 56) | fi);
+    SFCNT(S, fc + 1);
+    E8(S, 0);
+    return 0;
+}
+
 # emit syscall pops for N args then syscall
 fn ESCPOPS(S, n): i64 {
     if (n >= 7) { EPOPR9(S); }
@@ -1166,11 +1180,10 @@ fn PARSE_FACTOR(S): i64 {
         }
         var aidx = FINDVAR(S, anoff);
         if (aidx >= 0) { EVADDR(S, aidx); return 0; }
-        # [grow] &function — fn pointer. Only alloc.cyr's vtable allocators
-        # (bump/arena/test) take fn addresses, and cycc never calls them (it
-        # uses alloc() directly), so they're dead-but-compiled — a placeholder
-        # address parses and is never dereferenced.
-        if (FINDFN(S, anoff) >= 0) { EMOVI(S, 0); return 0; }
+        # [grow] &function — fn pointer (cycc calls these via the allocator
+        # vtable at startup, so the real address is required, not a placeholder).
+        var afn = FINDFN(S, anoff);
+        if (afn >= 0) { EFNADDR(S, afn); return 0; }
         ERR(S);
         return 0;
     }
@@ -2423,20 +2436,24 @@ fn FIXUP(S): i64 {
             var pa = S + 0x2000000 + coff;
             S64(pa, (L64(pa) >> 32 << 32) | (rel & 0xFFFFFFFF));
         }
-        else { if (ftype == 1) {
-                # String address: dbase + totvar + string_offset
-                S64(S + 0x2000000 + coff, dbase + totvar + idx);
+        else { if (ftype == 3) {
+                # [grow] fn absolute address: code base 0x400078 + fn offset
+                S64(S + 0x2000000 + coff, 0x400078 + L64(S + 0x5050000 + idx * 8));
             }
-            else {
-                # Variable address (type 0)
-                var cumul = 0;
-                vi = 0;
-                while (vi < idx) {
-                    cumul = cumul + L64(S + 0x5010000 + vi * 8);
-                    vi = vi + 1;
+            else { if (ftype == 1) {
+                    # String address: dbase + totvar + string_offset
+                    S64(S + 0x2000000 + coff, dbase + totvar + idx);
                 }
-                S64(S + 0x2000000 + coff, dbase + cumul);
-            } }
+                else {
+                    # Variable address (type 0)
+                    var cumul = 0;
+                    vi = 0;
+                    while (vi < idx) {
+                        cumul = cumul + L64(S + 0x5010000 + vi * 8);
+                        vi = vi + 1;
+                    }
+                    S64(S + 0x2000000 + coff, dbase + cumul);
+                } } }
         fi = fi + 1;
     }
     # Store data_size
