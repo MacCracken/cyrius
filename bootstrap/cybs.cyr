@@ -55,7 +55,7 @@
 #   0x93830  return_patches   [512 bytes, 64 slots * 8]
 #   0x93A30  return_patch_count [8 bytes]
 #   0x93A38  main_jmp_patch   [8 bytes]
-#   0x93A40  fn_local_names   [512 bytes, 64 slots * 8]
+#   0x1000000 fn_local_names  [relocated to 16MB region — cycc-scale local arrays]
 #   0x93C40  fn_local_sizes   [512 bytes, 64 slots * 8]
 #   0x93E40  scratch          [256 bytes]
 #
@@ -94,9 +94,10 @@ sys_init:
     xor rdi, rdi
     syscall
     mov r15, rax
-    # brk(r15 + 0xA1000) — extend by 448KB
+    # brk(r15 + 0x8000000) — extend by 128MB (cycc-scale tables live in the
+    # high region; kernel allocates pages lazily on first write)
     mov rdi, r15
-    add rdi, 0xA1000
+    add rdi, 0x8000000
     mov rax, 12
     syscall
     xor r14, r14
@@ -1290,7 +1291,7 @@ find_fnl_loop:
     push rcx
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x93A40
+    add rsi, 0x1000000
     add rsi, rcx
     mov rax, [rsi]
     pop rcx
@@ -2513,7 +2514,7 @@ parse_fn_param:
     push rax
     shl rax, 3
     mov rsi, r15
-    add rsi, 0x93A40
+    add rsi, 0x1000000
     add rsi, rax
     mov [rsi], rcx        # fn_local_names[count] = name offset
     pop rax               # rax = local index (unshifted)
@@ -2841,7 +2842,7 @@ parse_var_stmt_local:
     push rcx
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x93A40
+    add rsi, 0x1000000
     add rsi, rcx
     mov [rsi], r8        # fn_local_names[count] = name offset
     pop rcx              # unshifted count = local index
@@ -3033,7 +3034,7 @@ reg_la_fill:
     mov rax, rcx
     shl rax, 3
     mov rsi, r15
-    add rsi, 0x93A40
+    add rsi, 0x1000000
     add rsi, rax
     mov [rsi], rdx
     pop rax
@@ -3045,7 +3046,7 @@ reg_la_fill_done:
     sub rax, 1
     shl rax, 3
     mov rsi, r15
-    add rsi, 0x93A40
+    add rsi, 0x1000000
     add rsi, rax
     mov [rsi], r8        # name at highest index
     mov rax, r9
