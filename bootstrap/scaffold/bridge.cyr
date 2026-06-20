@@ -40,7 +40,7 @@
 #   0x1E2000  tok_values [262144]      32768 token value slots
 #   0x122000 brk
 #
-# State vars (S + 0x18C100):
+# State vars (S + 0x5200010):
 #   +0  BL       input length
 #   +8  CP       code position (r13 equivalent)
 #   +16 VCNT     variable count (r14 equivalent)
@@ -54,7 +54,7 @@
 #   13=LBRACE 14=RBRACE 15=IF 16=WHILE 17=EQEQ 18=NEQ
 #   19=LT 20=GT 21=LTE 22=GTE 23=ELSE 31=COMMA 32=FN 33=RETURN
 #
-# Function state (S + 0x18C200):
+# Function state (S + 0x5040000):
 #   fn_names[1024]     S+0x18C200  128*8
 #   fn_offsets[1024]   S+0x18CA00  128*8
 #   fn_params[1024]    S+0x18D200  128*8
@@ -100,44 +100,62 @@ fn L64(a): i64 {
 # STATE ACCESSORS
 # ================================================================
 
-fn GBL(S): i64 { return L64(S + 0x18C100); }
-fn SBL(S, v): i64 { S64(S + 0x18C100, v); return 0; }
-fn GCP(S): i64 { return L64(S + 0x18C108); }
-fn SCP(S, v): i64 { S64(S + 0x18C108, v); return 0; }
-fn GVCNT(S): i64 { return L64(S + 0x18C110); }
-fn SVCNT(S, v): i64 { S64(S + 0x18C110, v); return 0; }
-fn GTCNT(S): i64 { return L64(S + 0x18C118); }
-fn STCNT(S, v): i64 { S64(S + 0x18C118, v); return 0; }
-fn GTI(S): i64 { return L64(S + 0x18C120); }
-fn STI(S, v): i64 { S64(S + 0x18C120, v); return 0; }
-fn GNPOS(S): i64 { return L64(S + 0x18C128); }
-fn SNPOS(S, v): i64 { S64(S + 0x18C128, v); return 0; }
+fn GBL(S): i64 { return L64(S + 0x5200010); }
+fn SBL(S, v): i64 { S64(S + 0x5200010, v); return 0; }
+fn GCP(S): i64 { return L64(S + 0x5200018); }
+fn SCP(S, v): i64 { S64(S + 0x5200018, v); return 0; }
+fn GVCNT(S): i64 { return L64(S + 0x5200020); }
+fn SVCNT(S, v): i64 { S64(S + 0x5200020, v); return 0; }
+fn GTCNT(S): i64 { return L64(S + 0x5200028); }
+fn STCNT(S, v): i64 { S64(S + 0x5200028, v); return 0; }
+fn GTI(S): i64 { return L64(S + 0x5200030); }
+fn STI(S, v): i64 { S64(S + 0x5200030, v); return 0; }
+fn GNPOS(S): i64 { return L64(S + 0x5200038); }
+fn SNPOS(S, v): i64 { S64(S + 0x5200038, v); return 0; }
 
 # Fixup count
-fn GFCNT(S): i64 { return L64(S + 0x18C000); }
-fn SFCNT(S, v): i64 { S64(S + 0x18C000, v); return 0; }
+fn GFCNT(S): i64 { return L64(S + 0x5200000); }
+fn SFCNT(S, v): i64 { S64(S + 0x5200000, v); return 0; }
 # Last var index
-fn GLVAR(S): i64 { return L64(S + 0x18C008); }
-fn SLVAR(S, v): i64 { S64(S + 0x18C008, v); return 0; }
+fn GLVAR(S): i64 { return L64(S + 0x5200008); }
+fn SLVAR(S, v): i64 { S64(S + 0x5200008, v); return 0; }
 # String pos
-fn GSPOS(S): i64 { return L64(S + 0x70000); }
-fn SSPOS(S, v): i64 { S64(S + 0x70000, v); return 0; }
+fn GSPOS(S): i64 { return L64(S + 0x5200070); }
+fn SSPOS(S, v): i64 { S64(S + 0x5200070, v); return 0; }
 
 # Function state accessors
-fn GFNC(S): i64 { return L64(S + 0x18DA00); }
-fn SFNC(S, v): i64 { S64(S + 0x18DA00, v); return 0; }
-fn GINFN(S): i64 { return L64(S + 0x18DA08); }
-fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
-fn GFLC(S): i64 { return L64(S + 0x18DA10); }
-fn SFLC(S, v): i64 { S64(S + 0x18DA10, v); return 0; }
-fn GSVC(S): i64 { return L64(S + 0x18DA18); }
-fn SSVC(S, v): i64 { S64(S + 0x18DA18, v); return 0; }
-fn GRPC(S): i64 { return L64(S + 0x18DC20); }
-fn SRPC(S, v): i64 { S64(S + 0x18DC20, v); return 0; }
+fn GFNC(S): i64 { return L64(S + 0x5200040); }
+fn SFNC(S, v): i64 { S64(S + 0x5200040, v); return 0; }
+fn GINFN(S): i64 { return L64(S + 0x5200048); }
+fn SINFN(S, v): i64 { S64(S + 0x5200048, v); return 0; }
+fn GFLC(S): i64 { return L64(S + 0x5200050); }
+fn SFLC(S, v): i64 { S64(S + 0x5200050, v); return 0; }
+fn GSVC(S): i64 { return L64(S + 0x5200058); }
+fn SSVC(S, v): i64 { S64(S + 0x5200058, v); return 0; }
+fn GRPC(S): i64 { return L64(S + 0x5200060); }
+fn SRPC(S, v): i64 { S64(S + 0x5200060, v); return 0; }
 
+# [grow] decimal print to stderr (scratch at S+0x5328000, free band).
+fn PUTNUM(S, n): i64 {
+    if (n == 0) { store8(S + 0x5328000, 48); syscall(1, 2, S + 0x5328000, 1); return 0; }
+    var neg = 0;
+    if (n < 0) { neg = 1; n = 0 - n; }
+    var i = 32;
+    while (n > 0) { i = i - 1; store8(S + 0x5328000 + i, 48 + (n % 10)); n = n / 10; }
+    if (neg == 1) { i = i - 1; store8(S + 0x5328000 + i, 45); }
+    syscall(1, 2, S + 0x5328000 + i, 32 - i);
+    return 0;
+}
 fn ERR(S): i64 {
-
-    syscall(1, 2, "syntax error\n", 13); syscall(60, 1);
+    # [grow] diagnostic: token index + type + value at the failure point.
+    syscall(1, 2, "syntax error @tok ", 18);
+    PUTNUM(S, GTI(S));
+    syscall(1, 2, " type ", 6);
+    PUTNUM(S, PEEKT(S));
+    syscall(1, 2, " val ", 5);
+    PUTNUM(S, PEEKV(S));
+    syscall(1, 2, "\n", 1);
+    syscall(60, 1);
     return 0;
 }
 
@@ -147,7 +165,7 @@ fn ERR(S): i64 {
 
 fn EB(S, b): i64 {
     var cp = GCP(S);
-    store8(S + 0x20000 + cp, b & 0xFF);
+    store8(S + 0x2000000 + cp, b & 0xFF);
     SCP(S, cp + 1);
     return 0;
 }
@@ -231,7 +249,7 @@ fn EPOPR9(S): i64 { E2(S, 0x5941); return 0; }
 # Record fixup: (codebuf_offset=CP, var_index) in fixup table
 fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
-    var addr = S + 0x18A000 + fc * 16;
+    var addr = S + 0x5100000 + fc * 16;
     S64(addr, GCP(S));
     S64(addr + 8, idx);
     SFCNT(S, fc + 1);
@@ -268,7 +286,7 @@ fn EVADDR(S, idx): i64 {
 fn ESADDR(S, soff): i64 {
     E2(S, 0xB848);
     var fc = GFCNT(S);
-    var faddr = S + 0x18A000 + fc * 16;
+    var faddr = S + 0x5100000 + fc * 16;
     S64(faddr, GCP(S));
     S64(faddr + 8, (1 << 56) | soff);
     SFCNT(S, fc + 1);
@@ -301,8 +319,8 @@ fn EEXIT(S): i64 {
 # TOKEN ACCESS
 # ================================================================
 
-fn TOKTYP(S, i): i64 { return L64(S + 0x1A2000 + i * 8); }
-fn TOKVAL(S, i): i64 { return L64(S + 0x1E2000 + i * 8); }
+fn TOKTYP(S, i): i64 { return L64(S + 0x4000000 + i * 8); }
+fn TOKVAL(S, i): i64 { return L64(S + 0x4800000 + i * 8); }
 fn PEEKT(S): i64 { return TOKTYP(S, GTI(S)); }
 fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
 
@@ -325,7 +343,7 @@ fn EJMP(S, target): i64 {
     var cp = GCP(S);
     var rel = target - cp - 4;
     # Write rel32 via read-modify-write
-    var addr = S + 0x20000 + cp;
+    var addr = S + 0x2000000 + cp;
     S64(addr, (L64(addr) >> 32 << 32) | (rel & 0xFFFFFFFF));
     SCP(S, cp + 4);
     return 0;
@@ -343,7 +361,7 @@ fn EJMP0(S): i64 {
 fn EPATCH(S, off): i64 {
     var cp = GCP(S);
     var rel = cp - off - 4;
-    var addr = S + 0x20000 + off;
+    var addr = S + 0x2000000 + off;
     S64(addr, (L64(addr) >> 32 << 32) | (rel & 0xFFFFFFFF));
     return 0;
 }
@@ -355,8 +373,8 @@ fn EPATCH(S, off): i64 {
 # Store a token
 fn ADDTOK(S, typ, val): i64 {
     var tc = GTCNT(S);
-    S64(S + 0x1A2000 + tc * 8, typ);
-    S64(S + 0x1E2000 + tc * 8, val);
+    S64(S + 0x4000000 + tc * 8, typ);
+    S64(S + 0x4800000 + tc * 8, val);
     STCNT(S, tc + 1);
     return 0;
 }
@@ -421,62 +439,100 @@ fn ISINCLUDE(S, pos, bl): i64 {
 # Preprocess: expand include directives in-place.
 # Uses S+0 as input, S+0x190000 as temp (64KB scratch for file reads).
 # Builds expanded source into a new buffer, then copies back.
-fn PREPROCESS(S): i64 {
-    var bl = GBL(S);
-    # Use 0x190000 as expanded output buffer (reuse part of brk heap)
-    var out = S + 0x191000;
-    var op = 0;
+# [grow] Recursive include preprocessor with include-once. main.cyr's 31-file
+# transitive closure needs recursion (single-level couldn't reach nested
+# includes like parse.cyr -> parse_expr.cyr). Expands into the 16 MB band at
+# 0x1000000, then copies back to source (S+0, 16 MB). State:
+#   0x5318000 include-once count   0x5318008 expand output cursor
+#   0x5320000 + depth*0x1000  per-depth filename scratch
+#   0x5330000 include-once filename table (256 B/entry)
+#   0x5400000 + depth*0x200000 per-depth file-read scratch (2 MB/level)
+fn PP_STREQ(a, b): i64 {
+    var i = 0; var go = 1; var res = 1;
+    while (go == 1) {
+        var ca = load8(a + i); var cb = load8(b + i);
+        if (ca != cb) { res = 0; go = 0; }
+        else { if (ca == 0) { go = 0; } else { i = i + 1; } }
+    }
+    return res;
+}
+fn PP_SEEN(S, fname): i64 {
+    var cnt = L64(S + 0x5318000);
+    var i = 0; var found = 0;
+    while (i < cnt) {
+        if (PP_STREQ(S + 0x5330000 + i * 256, fname) == 1) { found = 1; }
+        i = i + 1;
+    }
+    return found;
+}
+fn PP_MARK(S, fname): i64 {
+    var cnt = L64(S + 0x5318000);
+    var i = 0;
+    while (load8(fname + i) != 0) {
+        store8(S + 0x5330000 + cnt * 256 + i, load8(fname + i));
+        i = i + 1;
+    }
+    store8(S + 0x5330000 + cnt * 256 + i, 0);
+    S64(S + 0x5318000, cnt + 1);
+    return 0;
+}
+# Scan src[0..srclen); append non-include bytes to the expand buffer; on an
+# `include "file"` at line start, read the file and recurse into it.
+fn PP_EXPAND(S, src, srclen, depth): i64 {
+    var out = S + 0x1000000;
     var ip = 0;
-    while (ip < bl) {
-        var c = load8(S + ip);
-        # Check for include at start of line (or start of file)
-        if (ISINCLUDE(S, ip, bl) == 1) {
+    while (ip < srclen) {
+        # Only treat `include` as a directive at the start of a line — the word
+        # appears in comments ("Included by ...") throughout the closure.
+        var is_inc = 0;
+        if (ip == 0) { if (ISINCLUDE(src, ip, srclen) == 1) { is_inc = 1; } }
+        else { if (load8(src + ip - 1) == 10) { if (ISINCLUDE(src, ip, srclen) == 1) { is_inc = 1; } } }
+        if (is_inc == 1) {
             ip = ip + 8;
-            # Expect opening "
-            if (load8(S + ip) == 34) {
+            if (load8(src + ip) == 34) {
                 ip = ip + 1;
-                # Extract filename into temp null-terminated
-                var fname = S + 0x190000;
+                var fname = S + 0x5320000 + depth * 0x1000;
                 var fi = 0;
                 var fgo = 1;
                 while (fgo == 1) {
-                    if (ip >= bl) { fgo = 0; }
-                    if (fgo == 1) {
-                        var fc = load8(S + ip);
+                    if (ip >= srclen) { fgo = 0; }
+                    else {
+                        var fc = load8(src + ip);
                         if (fc == 34) { ip = ip + 1; fgo = 0; }
-                        else {
-                            store8(fname + fi, fc);
-                            fi = fi + 1;
-                            ip = ip + 1;
-                        }
+                        else { store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
                     }
                 }
                 store8(fname + fi, 0);
-                # Skip to end of line
                 var sgo = 1;
                 while (sgo == 1) {
-                    if (ip >= bl) { sgo = 0; }
-                    if (sgo == 1) {
-                        if (load8(S + ip) == 10) { ip = ip + 1; sgo = 0; }
-                        else { ip = ip + 1; }
-                    }
+                    if (ip >= srclen) { sgo = 0; }
+                    else { if (load8(src + ip) == 10) { ip = ip + 1; sgo = 0; } else { ip = ip + 1; } }
                 }
-                # Read file into output buffer
-                var nr = READFILE(fname, out + op, 131072 - op);
-                op = op + nr;
+                if (PP_SEEN(S, fname) == 0) {
+                    PP_MARK(S, fname);
+                    var scratch = S + 0x5400000 + depth * 0x200000;
+                    var nr = READFILE(fname, scratch, 0x200000);
+                    if (nr > 0) { PP_EXPAND(S, scratch, nr, depth + 1); }
+                }
             }
         } else {
-            store8(out + op, c);
-            op = op + 1;
+            var op = L64(S + 0x5318008);
+            store8(out + op, load8(src + ip));
+            S64(S + 0x5318008, op + 1);
             ip = ip + 1;
         }
     }
-    # Copy expanded source back to S+0
+    return 0;
+}
+fn PREPROCESS(S): i64 {
+    var bl = GBL(S);
+    S64(S + 0x5318000, 0);    # include-once count
+    S64(S + 0x5318008, 0);    # expand output cursor
+    PP_EXPAND(S, S, bl, 0);   # source lives at S+0 (depth 0)
+    var op = L64(S + 0x5318008);
+    var out = S + 0x1000000;
     var ci = 0;
-    while (ci < op) {
-        store8(S + ci, load8(out + ci));
-        ci = ci + 1;
-    }
+    while (ci < op) { store8(S + ci, load8(out + ci)); ci = ci + 1; }
     SBL(S, op);
     return 0;
 }
@@ -543,17 +599,17 @@ fn LEXID(S, p, npos): i64 {
         if (go == 1) {
             var c = load8(S + p);
             if (ISALNUM(c) == 1) {
-                store8(S + 0x50000 + npos, c);
+                store8(S + 0x2800000 + npos, c);
                 npos = npos + 1;
                 p = p + 1;
             } else { go = 0; }
         }
     }
-    store8(S + 0x50000 + npos, 0);
+    store8(S + 0x2800000 + npos, 0);
     npos = npos + 1;
     SNPOS(S, npos);
     # Check keywords
-    var kw = L64(S + 0x50000 + ws);
+    var kw = L64(S + 0x2800000 + ws);
     var klen = npos - ws - 1;
     if (klen == 2) {
         if (kw & 0xFFFF == 0x6669) { ADDTOK(S, 15, 0); return p; }
@@ -715,23 +771,23 @@ fn LEX(S): i64 {
                                                                                                                                     p = p + 1;
                                                                                                                                     var ec = load8(S + p);
                                                                                                                                     p = p + 1;
-                                                                                                                                    if (ec == 110) { store8(S + 0x69000 + spos, 10); }
+                                                                                                                                    if (ec == 110) { store8(S + 0x2C00000 + spos, 10); }
                                                                                                                                     else {
-                                                                                                                                        if (ec == 116) { store8(S + 0x69000 + spos, 9); }
+                                                                                                                                        if (ec == 116) { store8(S + 0x2C00000 + spos, 9); }
                                                                                                                                         else {
-                                                                                                                                            if (ec == 48) { store8(S + 0x69000 + spos, 0); }
+                                                                                                                                            if (ec == 48) { store8(S + 0x2C00000 + spos, 0); }
                                                                                                                                             else {
-                                                                                                                                                if (ec == 92) { store8(S + 0x69000 + spos, 92); }
+                                                                                                                                                if (ec == 92) { store8(S + 0x2C00000 + spos, 92); }
                                                                                                                                                 else {
-                                                                                                                                                    if (ec == 34) { store8(S + 0x69000 + spos, 34); }
-                                                                                                                                                    else { store8(S + 0x69000 + spos, ec); }
+                                                                                                                                                    if (ec == 34) { store8(S + 0x2C00000 + spos, 34); }
+                                                                                                                                                    else { store8(S + 0x2C00000 + spos, ec); }
                                                                                                                                                 }
                                                                                                                                             }
                                                                                                                                         }
                                                                                                                                     }
                                                                                                                                     spos = spos + 1;
                                                                                                                                 } else {
-                                                                                                                                    store8(S + 0x69000 + spos, sc);
+                                                                                                                                    store8(S + 0x2C00000 + spos, sc);
                                                                                                                                     spos = spos + 1;
                                                                                                                                     p = p + 1;
                                                                                                                                 }
@@ -767,18 +823,18 @@ fn LEX(S): i64 {
 #   0x18E830  struct_fnames[512]   4096 bytes — field name offsets (32 structs * 16 fields)
 #   0x18F830  struct_count         8 bytes
 
-fn GSTC(S): i64 { return L64(S + 0x18F830); }
-fn SSTC(S, v): i64 { S64(S + 0x18F830, v); return 0; }
+fn GSTC(S): i64 { return L64(S + 0x5090000); }
+fn SSTC(S, v): i64 { S64(S + 0x5090000, v); return 0; }
 
 # Get/set struct_id for global variable at index vi
-fn GVTYPE(S, vi): i64 { return L64(S + 0x18DE30 + vi * 8); }
-fn SVTYPE(S, vi, v): i64 { S64(S + 0x18DE30 + vi * 8, v); return 0; }
+fn GVTYPE(S, vi): i64 { return L64(S + 0x5020000 + vi * 8); }
+fn SVTYPE(S, vi, v): i64 { S64(S + 0x5020000 + vi * 8, v); return 0; }
 
 # Register a new struct, return index (1-based, 0 = not a struct)
 fn REGSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
-    S64(S + 0x18E630 + sc * 8, noff);
-    S64(S + 0x18E830 + sc * 8, 0);
+    S64(S + 0x5080000 + sc * 8, noff);
+    S64(S + 0x5088000 + sc * 8, 0);
     SSTC(S, sc + 1);
     return sc + 1;
 }
@@ -788,7 +844,7 @@ fn FINDSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     var i = 0;
     while (i < sc) {
-        var sn = L64(S + 0x18E630 + i * 8);
+        var sn = L64(S + 0x5080000 + i * 8);
         if (STREQ(S, sn, noff) == 1) { return i + 1; }
         i = i + 1;
     }
@@ -797,21 +853,21 @@ fn FINDSTRUCT(S, noff): i64 {
 
 # Add field to struct (0-based struct index si)
 fn ADDFIELD(S, si, fnoff): i64 {
-    var fc = L64(S + 0x18E830 + si * 8);
-    S64(S + 0x18E830 + si * 128 + fc * 8, fnoff);
-    S64(S + 0x18E830 + si * 8, fc + 1);
+    var fc = L64(S + 0x5088000 + si * 8);
+    S64(S + 0x5088000 + si * 128 + fc * 8, fnoff);
+    S64(S + 0x5088000 + si * 8, fc + 1);
     return 0;
 }
 
 # Get field count for struct (0-based index)
-fn GETFCOUNT(S, si): i64 { return L64(S + 0x18E830 + si * 8); }
+fn GETFCOUNT(S, si): i64 { return L64(S + 0x5088000 + si * 8); }
 
 # Find field index in struct (0-based struct index), return field index or -1
 fn FINDFIELD(S, si, fnoff): i64 {
     var fc = GETFCOUNT(S, si);
     var i = 0;
     while (i < fc) {
-        var fn_off = L64(S + 0x18E830 + si * 128 + i * 8);
+        var fn_off = L64(S + 0x5088000 + si * 128 + i * 8);
         if (STREQ(S, fn_off, fnoff) == 1) { return i; }
         i = i + 1;
     }
@@ -847,8 +903,8 @@ fn STREQ(S, a, b): i64 {
     var i = 0;
     var go = 1;
     while (go == 1) {
-        var ca = load8(S + 0x50000 + a + i);
-        var cb = load8(S + 0x50000 + b + i);
+        var ca = load8(S + 0x2800000 + a + i);
+        var cb = load8(S + 0x2800000 + b + i);
         if (ca != cb) { return 0; }
         if (ca == 0) { return 1; }
         i = i + 1;
@@ -861,7 +917,7 @@ fn FINDVAR(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = 0;
     while (vi < vcnt) {
-        var stored = L64(S + 0x58000 + vi * 8);
+        var stored = L64(S + 0x5000000 + vi * 8);
         if (STREQ(S, stored, noff) == 1) { return vi; }
         vi = vi + 1;
     }
@@ -871,17 +927,17 @@ fn FINDVAR(S, noff): i64 {
 # [grow] enum constant table. brk heap extends to 0x800000; tok_values end at
 # ~0x222000, so this band is free. const_noffs/const_values/const_count.
 fn REGCONST(S, noff, val): i64 {
-    var cc = L64(S + 0x260000);
-    S64(S + 0x250000 + cc * 8, noff);
-    S64(S + 0x258000 + cc * 8, val);
-    S64(S + 0x260000, cc + 1);
+    var cc = L64(S + 0x5310000);
+    S64(S + 0x5300000 + cc * 8, noff);
+    S64(S + 0x5308000 + cc * 8, val);
+    S64(S + 0x5310000, cc + 1);
     return 0;
 }
 fn FINDCONST(S, noff): i64 {
-    var cc = L64(S + 0x260000);
+    var cc = L64(S + 0x5310000);
     var i = 0;
     while (i < cc) {
-        var sn = L64(S + 0x250000 + i * 8);
+        var sn = L64(S + 0x5300000 + i * 8);
         if (STREQ(S, sn, noff) == 1) { return i; }
         i = i + 1;
     }
@@ -940,7 +996,7 @@ fn PARSE_FACTOR(S): i64 {
         }
         # [grow] enum constant -> emit its value as an immediate
         var ci = FINDCONST(S, noff);
-        if (ci >= 0) { EMOVI(S, L64(S + 0x258000 + ci * 8)); return 0; }
+        if (ci >= 0) { EMOVI(S, L64(S + 0x5308000 + ci * 8)); return 0; }
         # Variable load — check local first if in function
         if (GINFN(S) == 1) {
             var li = FINDLOCAL(S, noff);
@@ -970,7 +1026,7 @@ fn PARSE_FACTOR(S): i64 {
                 # lea rax, [rbp - offset]
                 E3(S, 0x858D48);
                 var adisp = 0 - ((ali + 1) * 8);
-                var aaddr = S + 0x20000 + GCP(S);
+                var aaddr = S + 0x2000000 + GCP(S);
                 S64(aaddr, (L64(aaddr) >> 32 << 32) | (adisp & 0xFFFFFFFF));
                 SCP(S, GCP(S) + 4);
                 return 0;
@@ -1255,9 +1311,9 @@ fn PARSE_ARRAY(S, noff): i64 {
     if (PEEKT(S) != 5) { ERR(S); }
     STI(S, GTI(S) + 1);  # consume ;
     var vcnt = GVCNT(S);
-    S64(S + 0x58000 + vcnt * 8, noff);
+    S64(S + 0x5000000 + vcnt * 8, noff);
     var aligned = (asz + 7) & (0 - 8);
-    S64(S + 0x58800 + vcnt * 8, aligned);
+    S64(S + 0x5010000 + vcnt * 8, aligned);
     SVCNT(S, vcnt + 1);
     return 0;
 }
@@ -1334,8 +1390,8 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     var sz = fc * 8;
     # Register variable with struct size
     var vcnt = GVCNT(S);
-    S64(S + 0x58000 + vcnt * 8, noff);
-    S64(S + 0x58800 + vcnt * 8, sz);
+    S64(S + 0x5000000 + vcnt * 8, noff);
+    S64(S + 0x5010000 + vcnt * 8, sz);
     SVTYPE(S, vcnt, sid);
     # Emit each field: evaluate expr, store at var_addr + field_offset
     var fi = 0;
@@ -1401,13 +1457,13 @@ fn PARSE_VAR(S): i64 {
     # Check if inside function → local variable
     if (GINFN(S) == 1) {
         var li = GFLC(S);
-        S64(S + 0x18DC30 + li * 8, noff);
+        S64(S + 0x5078000 + li * 8, noff);
         EFLSTORE(S, li);
         SFLC(S, li + 1);
     } else {
         var vcnt = GVCNT(S);
-        S64(S + 0x58000 + vcnt * 8, noff);
-        S64(S + 0x58800 + vcnt * 8, 8);
+        S64(S + 0x5000000 + vcnt * 8, noff);
+        S64(S + 0x5010000 + vcnt * 8, 8);
         EVSTORE(S, vcnt);
         SLVAR(S, vcnt);
         SVCNT(S, vcnt + 1);
@@ -1540,9 +1596,9 @@ fn PARSE_WHILE(S): i64 {
 # Register new function, return index
 fn REGFN(S, noff): i64 {
     var fc = GFNC(S);
-    S64(S + 0x18C200 + fc * 8, noff);
-    S64(S + 0x18CA00 + fc * 8, 0 - 1);
-    S64(S + 0x18D200 + fc * 8, 0);
+    S64(S + 0x5040000 + fc * 8, noff);
+    S64(S + 0x5050000 + fc * 8, 0 - 1);
+    S64(S + 0x5060000 + fc * 8, 0);
     SFNC(S, fc + 1);
     return fc;
 }
@@ -1552,7 +1608,7 @@ fn FINDFN(S, noff): i64 {
     var fc = GFNC(S);
     var i = 0;
     while (i < fc) {
-        var sn = L64(S + 0x18C200 + i * 8);
+        var sn = L64(S + 0x5040000 + i * 8);
         if (STREQ(S, sn, noff) == 1) { return i; }
         i = i + 1;
     }
@@ -1585,7 +1641,7 @@ fn ECALLTO(S, target): i64 {
     EB(S, 0xE8);
     var cp = GCP(S);
     var rel = target - cp - 4;
-    var addr = S + 0x20000 + cp;
+    var addr = S + 0x2000000 + cp;
     S64(addr, (L64(addr) >> 32 << 32) | (rel & 0xFFFFFFFF));
     SCP(S, cp + 4);
     return 0;
@@ -1598,7 +1654,7 @@ fn ECALLFIX(S, fnidx): i64 {
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
     # Record fixup: type=2 in high bits | fn_index
     var fc = GFCNT(S);
-    var faddr = S + 0x18A000 + fc * 16;
+    var faddr = S + 0x5100000 + fc * 16;
     S64(faddr, poff);
     S64(faddr + 8, (2 << 56) | fnidx);
     SFCNT(S, fc + 1);
@@ -1646,7 +1702,7 @@ fn ECALLCLEAN(S, n): i64 {
 # Store parameter register to [rbp - offset]
 # Helper: emit disp32 at current CP
 fn EDISP32(S, disp): i64 {
-    var addr = S + 0x20000 + GCP(S);
+    var addr = S + 0x2000000 + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
     SCP(S, GCP(S) + 4);
     return 0;
@@ -1689,7 +1745,7 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
 fn EFLLOAD(S, idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     E3(S, 0x858B48);
-    var addr = S + 0x20000 + GCP(S);
+    var addr = S + 0x2000000 + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
     SCP(S, GCP(S) + 4);
     return 0;
@@ -1699,7 +1755,7 @@ fn EFLLOAD(S, idx): i64 {
 fn EFLSTORE(S, idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     E3(S, 0x858948);
-    var addr = S + 0x20000 + GCP(S);
+    var addr = S + 0x2000000 + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
     SCP(S, GCP(S) + 4);
     return 0;
@@ -1710,7 +1766,7 @@ fn FINDLOCAL(S, noff): i64 {
     var lc = GFLC(S);
     var i = 0;
     while (i < lc) {
-        var sn = L64(S + 0x18DC30 + i * 8);
+        var sn = L64(S + 0x5078000 + i * 8);
         if (STREQ(S, sn, noff) == 1) { return i; }
         i = i + 1;
     }
@@ -1730,7 +1786,7 @@ fn PARSE_RETURN(S): i64 {
     # Emit jmp to epilogue (record as return patch)
     var rp = EJMP0(S);
     var rpc = GRPC(S);
-    S64(S + 0x18DA20 + rpc * 8, rp);
+    S64(S + 0x5070000 + rpc * 8, rp);
     SRPC(S, rpc + 1);
     return 0;
 }
@@ -1757,7 +1813,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     if (fi < 0) {
         fi = REGFN(S, noff);
     }
-    var foff = L64(S + 0x18CA00 + fi * 8);
+    var foff = L64(S + 0x5050000 + fi * 8);
     if (foff >= 0) {
         ECALLTO(S, foff);
     } else {
@@ -1777,7 +1833,7 @@ fn PARSE_FN_DEF(S): i64 {
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
     # Set fn offset to current CP
-    S64(S + 0x18CA00 + fi * 8, GCP(S));
+    S64(S + 0x5050000 + fi * 8, GCP(S));
     # Save compiler state
     SSVC(S, GVCNT(S));
     var saved_lv = GLVAR(S);
@@ -1798,7 +1854,7 @@ fn PARSE_FN_DEF(S): i64 {
             var pnoff = PEEKV(S);
             STI(S, GTI(S) + 1);
             var li = GFLC(S);
-            S64(S + 0x18DC30 + li * 8, pnoff);
+            S64(S + 0x5078000 + li * 8, pnoff);
             # Only emit register params now (0-5)
             if (pc < 6) {
                 ESTOREPARM(S, pc, li, 0);
@@ -1815,7 +1871,7 @@ fn PARSE_FN_DEF(S): i64 {
     # leaving the return-type IDENT before `{`. Consume + ignore it (the scaffold,
     # like cybs, treats every fn as returning i64).
     if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
-    S64(S + 0x18D200 + fi * 8, pc);
+    S64(S + 0x5060000 + fi * 8, pc);
     # Emit stack param stores (7+) now that we know total pc
     if (pc > 6) {
         var spi = 6;
@@ -1834,7 +1890,7 @@ fn PARSE_FN_DEF(S): i64 {
     var rpc = GRPC(S);
     var ri = 0;
     while (ri < rpc) {
-        EPATCH(S, L64(S + 0x18DA20 + ri * 8));
+        EPATCH(S, L64(S + 0x5070000 + ri * 8));
         ri = ri + 1;
     }
     # Emit epilogue
@@ -1842,7 +1898,7 @@ fn PARSE_FN_DEF(S): i64 {
     # Patch frame size
     var flc = GFLC(S);
     var fsz = (flc * 8 + 15) & (0 - 16);
-    var pa = S + 0x20000 + frame_patch;
+    var pa = S + 0x2000000 + frame_patch;
     S64(pa, (L64(pa) >> 32 << 32) | (fsz & 0xFFFFFFFF));
     # Restore state
     SVCNT(S, GSVC(S));
@@ -2020,43 +2076,43 @@ fn FIXUP(S): i64 {
     var totvar = 0;
     var vi = 0;
     while (vi < vcnt) {
-        totvar = totvar + L64(S + 0x58800 + vi * 8);
+        totvar = totvar + L64(S + 0x5010000 + vi * 8);
         vi = vi + 1;
     }
     # Walk fixup table
     var fcnt = GFCNT(S);
     var fi = 0;
     while (fi < fcnt) {
-        var faddr = S + 0x18A000 + fi * 16;
+        var faddr = S + 0x5100000 + fi * 16;
         var coff = L64(faddr);
         var raw = L64(faddr + 8);
         var ftype = raw >> 56;
         var idx = raw & 0x00FFFFFFFFFFFFFF;
         if (ftype == 2) {
             # Function call — patch rel32
-            var target = L64(S + 0x18CA00 + idx * 8);
+            var target = L64(S + 0x5050000 + idx * 8);
             var rel = target - coff - 4;
-            var pa = S + 0x20000 + coff;
+            var pa = S + 0x2000000 + coff;
             S64(pa, (L64(pa) >> 32 << 32) | (rel & 0xFFFFFFFF));
         }
         else { if (ftype == 1) {
                 # String address: dbase + totvar + string_offset
-                S64(S + 0x20000 + coff, dbase + totvar + idx);
+                S64(S + 0x2000000 + coff, dbase + totvar + idx);
             }
             else {
                 # Variable address (type 0)
                 var cumul = 0;
                 vi = 0;
                 while (vi < idx) {
-                    cumul = cumul + L64(S + 0x58800 + vi * 8);
+                    cumul = cumul + L64(S + 0x5010000 + vi * 8);
                     vi = vi + 1;
                 }
-                S64(S + 0x20000 + coff, dbase + cumul);
+                S64(S + 0x2000000 + coff, dbase + cumul);
             } }
         fi = fi + 1;
     }
     # Store data_size
-    S64(S + 0x70008, totvar);
+    S64(S + 0x5200078, totvar);
     return 0;
 }
 
@@ -2066,14 +2122,14 @@ fn FIXUP(S): i64 {
 
 fn EMITELF(S): i64 {
     var cp = GCP(S);
-    var totvar = L64(S + 0x70008);
+    var totvar = L64(S + 0x5200078);
     var spos = GSPOS(S);
     var filesz = 120 + cp + totvar + spos;
     # Align to 8
     filesz = (filesz + 7) & (0 - 8);
     var memsz = filesz + 4096;
     # Write ELF to output_buf at S+0x6A000
-    var O = S + 0x6A000;
+    var O = S + 0x3000000;
     var op = 0;
     # ELF header (64 bytes) — as qwords
     S64(O + op, 0x00010102464C457F); op = op + 8;
@@ -2096,7 +2152,7 @@ fn EMITELF(S): i64 {
     # Code (cp bytes)
     var i = 0;
     while (i < cp) {
-        store8(O + op, load8(S + 0x20000 + i));
+        store8(O + op, load8(S + 0x2000000 + i));
         op = op + 1;
         i = i + 1;
     }
@@ -2110,7 +2166,7 @@ fn EMITELF(S): i64 {
     # String data
     i = 0;
     while (i < spos) {
-        store8(O + op, load8(S + 0x69000 + i));
+        store8(O + op, load8(S + 0x2C00000 + i));
         op = op + 1;
         i = i + 1;
     }
@@ -2119,7 +2175,7 @@ fn EMITELF(S): i64 {
         store8(O + op, 0);
         op = op + 1;
     }
-    S64(S + 0x5C130, op);
+    S64(S + 0x5200080, op);
     return 0;
 }
 
@@ -2133,35 +2189,35 @@ fn EMITELF(S): i64 {
 # The bridge was retired as dead code (only ever compiled, never run), so this
 # latent under-allocation never surfaced. Bumped to 8MB for headroom.
 var S = syscall(12, 0);
-syscall(12, S + 0x800000);
+syscall(12, S + 0x8000000);
 
 # Zero state
-S64(S + 0x18C100, 0);
-S64(S + 0x18C108, 0);
-S64(S + 0x18C110, 0);
-S64(S + 0x18C118, 0);
-S64(S + 0x18C120, 0);
-S64(S + 0x18C128, 0);
-S64(S + 0x18C000, 0);
-S64(S + 0x18C008, 0 - 1);
-S64(S + 0x70000, 0);
+S64(S + 0x5200010, 0);
+S64(S + 0x5200018, 0);
+S64(S + 0x5200020, 0);
+S64(S + 0x5200028, 0);
+S64(S + 0x5200030, 0);
+S64(S + 0x5200038, 0);
+S64(S + 0x5200000, 0);
+S64(S + 0x5200008, 0 - 1);
+S64(S + 0x5200070, 0);
 # Function state
-S64(S + 0x18DA00, 0);
-S64(S + 0x18DA08, 0);
-S64(S + 0x18DA10, 0);
-S64(S + 0x18DC20, 0);
+S64(S + 0x5200040, 0);
+S64(S + 0x5200048, 0);
+S64(S + 0x5200050, 0);
+S64(S + 0x5200060, 0);
 # Struct state
-S64(S + 0x18F830, 0);
+S64(S + 0x5090000, 0);
 
 # Read input
 var bl = 0;
 var done = 0;
 while (done == 0) {
-    var n = syscall(0, 0, S + bl, 131072 - bl);
+    var n = syscall(0, 0, S + bl, 16777216 - bl);   # [grow] source region is 16 MB
     if (n <= 0) { done = 1; }
     else {
         bl = bl + n;
-        if (bl >= 131072) { done = 1; }
+        if (bl >= 16777216) { done = 1; }
     }
 }
 SBL(S, bl);
@@ -2201,6 +2257,6 @@ EEXIT(S);
 # Fixup + ELF + write
 FIXUP(S);
 EMITELF(S);
-var olen = L64(S + 0x5C130);
-syscall(1, 1, S + 0x6A000, olen);
+var olen = L64(S + 0x5200080);
+syscall(1, 1, S + 0x3000000, olen);
 syscall(60, 0);
