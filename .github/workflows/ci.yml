@@ -1289,3 +1289,30 @@ jobs:
             test -f "$doc" || { echo "missing: $doc"; exit 1; }
           done
           echo "all documentation present"
+
+  # ── Bare-metal Kernel Boot (D7, v6.2.28) ──
+  # A REAL QEMU boot of the kernel built via the bare-metal triple. This is the
+  # anti-rot gate the macho port never had: a green checkmark must mean the kernel
+  # actually executed, not merely that it compiled. CYRIUS_REQUIRE_BOOT=1 makes a
+  # qemu-less runner FAIL rather than skip-as-green (the placebo this gate kills).
+  bare-metal-boot:
+    name: Bare-metal Kernel Boot
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install qemu-system-x86
+        run: |
+          # full-system emulation (qemu-system-x86_64) — NOT qemu-user-static.
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+      - name: Build cycc + aarch64 cross + cyrius CLI
+        run: |
+          chmod +x build/cycc
+          cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
+          cat cbt/cyrius.cyr | ./build/cycc > ./build/cyrius && chmod +x ./build/cyrius
+      - name: Boot the kernel under QEMU
+        env:
+          CYRIUS_REQUIRE_BOOT: 1
+        run: sh scripts/qemu-boot-gate.sh

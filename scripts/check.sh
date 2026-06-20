@@ -44,4 +44,16 @@ if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_
     chmod +x "$CHECK_BIN"
 fi
 
-exec "$CHECK_BIN" "$@"
+# Run the cyrius gate suite. On a targeted run (a suite name was passed),
+# exec it directly — the bare-metal boot gate is a full-run-only capstone.
+if [ $# -gt 0 ]; then
+    exec "$CHECK_BIN" "$@"
+fi
+"$CHECK_BIN"
+
+# v6.2.28 D7: the bare-metal kernel BOOT gate — a real QEMU execution of the
+# kernel built via the formalized triple. This anti-rots the v6.2.27 kernel
+# codegen the way the macho port never was (a green checkmark is not
+# verification; the kernel actually running IS). Visibly skips when qemu is
+# absent rather than masquerading as green.
+sh "$ROOT/scripts/qemu-boot-gate.sh"

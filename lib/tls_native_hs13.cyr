@@ -19,13 +19,13 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     var epub = alloc(32);
     if (priv == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (epub == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (sys_getrandom(priv, 32, 0) != 32) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    if (_tn_rand_bytes(priv, 32) != 32) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     x25519_base(priv, epub);
     store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
     store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
     var crand = alloc(TLS_RANDOM_LEN);
     if (crand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (sys_getrandom(crand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
+    if (_tn_rand_bytes(crand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
@@ -1261,7 +1261,7 @@ fn _tn_gen_ephemeral_x25519(ctx): i64 {
     if (priv == 0) { return TLS_ERR_OOM; }
     if (epub == 0) { return TLS_ERR_OOM; }
     if (dhe == 0) { return TLS_ERR_OOM; }
-    if (sys_getrandom(priv, 32, 0) != 32) { return TLS_ERR_INTERNAL; }
+    if (_tn_rand_bytes(priv, 32) != 32) { return TLS_ERR_INTERNAL; }
     x25519_base(priv, epub);
     x25519(priv, peer, dhe);
     store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
@@ -1385,7 +1385,7 @@ fn tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max): i64 {
     # Server random + ephemeral keypair + ECDHE.
     var srand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (sys_getrandom(srand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
+    if (_tn_rand_bytes(srand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     store64(ctx + TLS_CTX_OFF_SERVER_RANDOM, srand);
@@ -1905,7 +1905,7 @@ fn _tn_ctx_stek(ctx): i64 {
     if (stek != 0) { return stek; }
     stek = _tn_alloc(ctx, 32);
     if (stek == 0) { return 0; }
-    if (sys_getrandom(stek, 32, 0) != 32) { return 0; }
+    if (_tn_rand_bytes(stek, 32) != 32) { return 0; }
     store64(ctx + TLS_CTX_OFF_STEK, stek);
     return stek;
 }
@@ -1914,7 +1914,7 @@ fn _tn_ctx_stek(ctx): i64 {
 # STEK: out = IV(12) ‖ tag(16) ‖ ciphertext. Returns the blob length.
 fn _tn_ticket_seal(stek, secret_in, secret_in_len, out): i64 {
     var iv = out;
-    if (sys_getrandom(iv, TLS_TICKET_IV_LEN, 0) != TLS_TICKET_IV_LEN) { return 0 - 1; }
+    if (_tn_rand_bytes(iv, TLS_TICKET_IV_LEN) != TLS_TICKET_IV_LEN) { return 0 - 1; }
     var tag = out + TLS_TICKET_IV_LEN;
     var ct = out + TLS_TICKET_OVERHEAD;
     aes_gcm_encrypt(stek, iv, 0, 0, secret_in, secret_in_len, ct, tag);
@@ -1965,8 +1965,8 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     # callers; on a platform whose getrandom is unavailable (Windows/AGNOS stub
     # → -1) the nonce/age_add would otherwise stay uninitialized = a predictable
     # ticket. Never emit a weak NewSessionTicket.
-    if (sys_getrandom(nonce, 8, 0) != 8) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    if (sys_getrandom(age_add, 4, 0) != 4) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    if (_tn_rand_bytes(nonce, 8) != 8) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    if (_tn_rand_bytes(age_add, 4) != 4) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     var psk = _tn_alloc(ctx, TLS_MAX_DIGEST_LEN);
     if (psk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (tls_native_hkdf_expand_label(rm, hlen, "resumption", 10, nonce, 8, hash_algo, psk, hlen) != TLS_OK) {

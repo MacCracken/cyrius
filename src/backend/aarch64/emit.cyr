@@ -1965,6 +1965,7 @@ fn ASM_MNEMONIC(S): i64 {
     elif (mnem & 0xFFFFFF == 0x627369) { EW(S, 0xD50330DF); }                  # isb
     elif (mnem & 0xFFFFFF == 0x706F6E) { EW(S, 0xD503201F); }                  # nop
     elif (mnem & 0xFFFFFF == 0x746572) { EW(S, 0xD65F03C0); }                  # ret
+    elif (mnem & 0xFFFFFFFF == 0x74657265) { EW(S, 0xD69F03E0); }              # eret (v6.2.28 — exception return for aarch64 #naked ISR handlers; mirrors x86 iretq)
     elif (mnem == 0x6F6C5F6D61726170) { ASM_PARAM_LOAD(S, noff); }             # param_load(reg,idx)
     else {
         syscall(SYS_WRITE, 2, "error:", 6);

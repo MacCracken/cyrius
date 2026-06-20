@@ -304,8 +304,7 @@ fn PARSE_RETURN(S): i64 {
     # to a non-existent epilogue and fall through into the next fn. A naked ISR
     # must self-terminate in asm (iretq/eret) — reject `return` in its body.
     if (_cur_fn_naked == 1) {
-        var _nrm = "return not allowed in a #naked fn; its body must self-terminate in asm (iretq/eret)";
-        ERR_MSG(S, _nrm, strlen(_nrm));
+        ERR_MSG(S, "return is not allowed in a #naked fn (body must end in asm: iretq/eret)", 71);
     }
     STI(S, GTI(S) + 1);
     # Check for tail call: return IDENT(args);
@@ -2109,8 +2108,7 @@ fn PARSE_FN_DEF(S): i64 {
     # receives its state on the interrupt stack frame, not as args.
     if (_cur_fn_naked == 1) {
         if (pc > 0) {
-            var _npm = "a #naked fn cannot have parameters (an ISR receives no args); declare it as ()";
-            ERR_MSG(S, _npm, strlen(_npm));
+            ERR_MSG(S, "a #naked fn cannot have parameters (an ISR takes no args)", 57);
         }
     }
     # Store Str param mask — bit N set = param N is : Str

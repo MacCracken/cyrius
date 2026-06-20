@@ -1,17 +1,34 @@
 # #naked fn — incomplete safety guards + no inline-asm path for real ISRs
 
-> **OPEN — follow-up to v6.2.27 (the bare-metal frontend half).** v6.2.27 shipped
-> the `#naked` *attribute* (frameless emit: no prologue/epilogue/frame, token 133)
-> with its 3 critical bugs fixed (the f64v_dot token-128 collision, the DCE-stub
-> `_naked_pending`-leak SIGSEGV, and — separately — the aarch64-triple wrong-arch
-> fallback). The adversarial review (19 agents, 8 confirmed) surfaced that `#naked`
-> is a **partial building block**, not a finished ISR feature. The remaining work
-> is pinned to the **v6.2.28 bare-metal runtime half**, where real ISRs first get
-> exercised (the boot gate + the AGNOS kernel IDT).
+> **RESOLVED in v6.2.28 (parts 1 + 2) — only the cosmetic part-3 residuals remain.**
+> v6.2.27 shipped the `#naked` *attribute* (frameless emit, token 133) with 3
+> critical bugs fixed but believed `#naked` a partial building block. **The .27
+> premise was wrong**: a v6.2.28 premise-check found cyrius has had inline asm
+> (`asm{}` blocks, the `iretq` mnemonic) all along — the only gap was the aarch64
+> `eret` mnemonic. v6.2.28 fixed both open parts:
+>
+> - **Part 1 (safety guards) — FIXED.** The guards now fire: (a) a DCE force makes
+>   a `#naked` fn always-reachable (`src/main.cyr`, `if (_naked_pending==1)
+>   { dce_reachable=1; }`) so a non-underscore address-taken ISR is no longer
+>   stubbed-and-bypassed; (b) the guards' `ERR_MSG(S, msg, strlen(msg))` was
+>   *segfaulting silently* — `strlen` lives in `lib/string.cyr`, which the compiler
+>   does not include, so the call hit an undefined fn and the guard aborted with no
+>   message. Rewrote both guards to a string-literal + hardcoded byte-count (the
+>   working `ERR_MSG` pattern). A `#naked` fn with a param or a `return` now hard-
+>   errors with a clear message; verified by negative probes.
+> - **Part 2 (inline asm) — was never missing.** `asm{}` + `iretq` shipped; added
+>   the one-line aarch64 `eret` mnemonic (`src/backend/aarch64/emit.cyr` ASM_MNEMONIC,
+>   `0x74657265 → EW 0xD69F03E0`). A real ISR is now writable on both arches:
+>   `#naked fn isr() { asm { iretq } }` (x86) / `{ asm { eret } }` (aarch64).
+>   `tests/tcyr/naked_fn_attribute.tcyr` updated to a real `asm{iretq}` ISR.
+>
+> Only the **part-3** cosmetic residuals below remain (macho/PE no-op,
+> ELF64-inert-on-aarch64) — low priority; archive this issue once those are
+> addressed or explicitly deferred.
 
-**Filed:** 2026-06-19
-**Parent:** v6.2.27 D3 (`#naked`). **Pinned to:** v6.2.28 (runtime half).
-**Severity:** P2 (safety guards) + the inline-asm prereq (blocks usable ISRs).
+**Filed:** 2026-06-19 · **Resolved (parts 1+2):** v6.2.28
+**Parent:** v6.2.27 D3 (`#naked`).
+**Severity:** ~~P2~~ → resolved; part-3 residuals are P3 cosmetic.
 
 ## 1. Safety guards don't fire on DCE-stubbed naked fns (review P2 ×2)
 

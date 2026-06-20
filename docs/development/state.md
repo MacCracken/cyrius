@@ -14,24 +14,50 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.27** (v6.2.x cycle — **Platform Expansion**; bare-metal target formalization **FRONTEND HALF** (a 2-release arc; runtime/boot half = .28): `--target=<arch>-bare-metal-elf` triple (forces kmode via `CYRIUS_KERNEL=1`, freestanding no-libc ELF) + `#naked` fn-attribute (token 133, frameless ISR emit). 3 review P1s fixed. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,904 B** (+2,216 @ 6.2.27 — the bare-metal frontend IS in the compiler: `#naked` token-133 handling + the `CYRIUS_KERNEL`/`kernel_mode` reads + the prologue/epilogue gating; feature growth, cycc self-hosts byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | **624,264 B** (rebuilt @ 6.2.27 — FIRST aarch64 compiler change since .24: the `CYRIUS_KERNEL` force-kmode read + the `#naked` token-133 consume/arm; **default byte-identical** (env unset → kmode 0); aarch64 `#naked` skips the prologue too) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.27 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.27 — defensive `#naked` token-133 consume in main_win pass-1; PE backend untouched; cass SELFHOST_OK) |
+| **Version** | **6.2.28** (v6.2.x cycle — **Platform Expansion**; bare-metal target formalization **RUNTIME HALF** (closes the .27+.28 arc): `#naked` ISRs writable (`asm{iretq}`/`asm{eret}`; the .27 "no inline asm" belief was WRONG — `asm{}` always existed) + D5 kernel-freestanding TLS entropy vtable + **D7 a REAL QEMU kernel boot gate** + D6 entry-VA exposed. 6 review findings folded (P1: the boot gate wasn't wired into CI). See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,888 B** (−16 @ 6.2.28, flat — the runtime half is mostly stdlib/gates/CI; the only compiler deltas are the 1-line `#naked` DCE-force + the guard-message `strlen`→literal fix; cycc self-hosts byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | **624,264 B** (rebuilt @ 6.2.28 — the one-line `eret` mnemonic added to ASM_MNEMONIC (`0x74657265 → 0xD69F03E0`) for aarch64 `#naked` ISR returns; x86 cycc byte-identical) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.28 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.28 — shared `parse_fn.cyr` guard-message fix only; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
 | **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
-| check.sh gates | **90/90** (+1 @ 6.2.26 — `_agnos_xsys_gate` (agnos x* substrate emit-inspect); +1 @ 6.1.36 `_vendored_dist_selfcontained_gate`) |
+| check.sh gates | **90/90 + the D7 boot gate** (@.28 — a full-run post-step `scripts/qemu-boot-gate.sh`: ELF64 shape-verify x86+aarch64 + a REAL QEMU boot of the ELF32 kernel asserting serial "AGNOS"; also a new `bare-metal-boot` CI job so it runs in CI, not just locally — `CYRIUS_REQUIRE_BOOT=1` fails-not-skips a qemu-less runner) |
 | sigil fold | **3.9.1** (@6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack, both for the TLS per-connection arena/flat-RSS fix; @6.2.23 3.9.0 absorbs agnosys helpers + LUKS/attestation surface) |
 | stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.1** · **mabda 3.3.0** · sakshi 2.4.0 · **yantra 1.0.0** (**@.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
-| tests | **189** `.tcyr` (+`naked_fn_attribute` @.27 — the #naked fork-desync + DCE-stub gate, compiled on all forks via cross-OS) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | **99** `lib/*.cyr` (+yantra @.26) · 79 programs · api-surface **5034 fns** (+95 @.26 — 4 `io::x*` + 20 mabda 3.3.0 + 71 yantra 1.0.0; 0 removals) |
+| tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5035 fns** (+1 @.28 — `tls_native_set_entropy`; `_tn_rand_bytes` is underscore-private; 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **518 ms** @ 6.2.27 (within jitter of .26's 517 ms; x86 cycc 1,069,688 → **1,071,904 B**, +2,216 — the bare-metal frontend is in the compiler, feature growth not regression) |
+| bench (every-release gate) | self_compile **520 ms** @ 6.2.28 (within jitter of .27's 518 ms; x86 cycc 1,071,904 → **1,071,888 B**, −16 — the runtime half is mostly stdlib/CI/gates, near-zero compiler delta) |
 
+> **Handoff (2026-06-19f):** **v6.2.28 CUT — bare-metal target formalization,
+> RUNTIME HALF** (closes the .27+.28 arc). A premise-check overturned the .27
+> belief that `#naked` was a partial feature: cyrius has had inline asm (`asm{}` +
+> the `iretq` mnemonic) all along — only the aarch64 `eret` mnemonic was missing.
+> **`#naked` completion:** (1) a DCE force (`src/main.cyr`, `if (_naked_pending==1)
+> { dce_reachable=1; }`) so an address-taken ISR is never DCE-stubbed-and-bypassed;
+> (2) the param/return guards were aborting SILENTLY — `ERR_MSG(...,strlen(msg))`
+> called `strlen` (in `lib/string.cyr`, NOT compiler-included) → undefined-fn
+> segfault before the message; rewrote to literal+byte-count; (3) the 1-line aarch64
+> `eret` mnemonic. Real ISRs now writable: `#naked fn isr() { asm { iretq } }` /
+> `{ asm { eret } }`. **D5** kernel-freestanding TLS entropy: `_tn_tx_rand` +
+> `tls_native_set_entropy` + `_tn_rand_bytes` leaf over all **11** getrandom sites
+> (hs13×8/hs12×3 — roadmap's "12" was stale); new `tls_native_entropy_vtable.tcyr`.
+> **D7** the capstone — `scripts/qemu-boot-gate.sh` REALLY BOOTS the kernel under
+> QEMU (`boot_serial.cyr` → "AGNOS" on serial) + ELF64 shape-checks both arches;
+> wired into check.sh AND a new `bare-metal-boot` CI job. **D6** entry/load-base VA
+> exposed via the triple build (gate-asserted both arches); base-settability
+> deferred (`issues/2026-06-19-kernel-load-base-settable.md`). **Adversarial review
+> (18 agents, 6 confirmed, all folded):** the P1 was that the boot gate wasn't wired
+> into ANY workflow + CI had `qemu-user-static` not `qemu-system-x86` — the exact
+> placebo the gate exists to kill; fixed. **check.sh 90/90 + boot gate (real
+> "AGNOS"); cross-OS pi/ecb/cass; cycc self-hosts byte-identical 1,071,888 B (−16);
+> bench 520 ms; api-surface 5035 (+1).** `#naked` issue resolved (parts 1+2; only P3
+> cosmetic residuals remain). The bare-metal arc (.27 frontend + .28 runtime) is
+> COMPLETE. Next pinned: .29 verification fold → .30 CVE-21 → deps-modules → RISC-V.
+>
 > **Handoff (2026-06-19e):** **v6.2.27 CUT — bare-metal target formalization,
 > FRONTEND HALF** (a 2-release arc, split contiguous after a premise-check; the
 > runtime/boot half is .28). **D1** `--target=<arch>-bare-metal-elf` triple

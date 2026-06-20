@@ -71,6 +71,21 @@ fn cmd_build(source, output): i64 {
         # helper (also used by run_binary for test/run/bench/fuzz/doctest).
         _macho_codesign(output);
         println("OK");
+        # v6.2.28 D6: expose the kernel entry/load-base VA via the triple. A
+        # freestanding kernel's loader/linker contract is the ELF e_entry the
+        # emitter writes; surface it so a consumer (agnos's boot, a GRUB cfg, a
+        # linker script) knows where the kernel lands without reverse-engineering
+        # _entry_base. The qemu-boot-gate asserts the x86 value (0x1000a8), so a
+        # drift between this line and the real e_entry fails D7. A non-canonical
+        # load base (env-settable) is deferred — 1 MiB / 0x40000000 are the
+        # canonical multiboot/AArch64 bases and no consumer needs another yet.
+        if (_baremetal_target == 1) {
+            if (_baremetal_aa == 1) {
+                println("  kernel: entry 0x40000078, load base 0x40000000 (aarch64 ELF64)");
+            } else {
+                println("  kernel: entry 0x1000a8, load base 0x100000 (x86_64 ELF64 multiboot2)");
+            }
+        }
     } else {
         println("FAIL");
     }

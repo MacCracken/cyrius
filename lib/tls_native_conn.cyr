@@ -357,6 +357,7 @@ fn tls_native_set_version_range(ctx, min_ver, max_ver): i64 {
 var _tn_tx_read = 0;    # fn-ptr: read(handle, buf, n)  → bytes (>0) / <=0 on EOF/err
 var _tn_tx_write = 0;   # fn-ptr: write(handle, buf, n) → bytes (>0) / <=0 on err
 var _tn_tx_now = 0;     # fn-ptr: now()                 → wall-clock Unix seconds (0=unknown)
+var _tn_tx_rand = 0;    # fn-ptr: rand(buf, n)          → bytes filled (==n on success); v6.2.28 entropy hook
 
 # Install a custom transport (any arg 0 = keep that built-in default). The
 # per-connection handle is supplied as the `sock_fd` arg to connect/accept
@@ -384,6 +385,18 @@ fn tls_native_set_transport(read_fn, write_fn, now_fn): i64 {
     return TLS_OK;
 }
 
+# v6.2.28: install a custom entropy source — the last freestanding-TLS hook (the
+# transport vtable covers read/write/now; this covers randomness). SEPARATE from
+# tls_native_set_transport so the existing 3-arg signature + its lib/tls.cyr
+# callers + vidya examples stay stable. rand_fn(buf, n) must fill n bytes and
+# return n on success (the getrandom contract; the 11 handshake call sites check
+# `!= n`). A bare-metal kernel installs its CSPRNG here at init; default 0 routes
+# to the platform sys_getrandom. Set ONCE before connect/accept. Returns TLS_OK.
+fn tls_native_set_entropy(rand_fn): i64 {
+    _tn_tx_rand = rand_fn;
+    return TLS_OK;
+}
+
 # CVE-18 (v6.1.36): wall-clock for cert-window validation. syscall(201, 0) is
 # time(2) on Linux; the backend ESYSXLAT-renumbers it per target (matches the
 # lib/tls.cyr wrapper's existing time source). v6.2.3: AGNOS has no time(2)
@@ -400,6 +413,18 @@ fn _tn_now_unix(): i64 {
     #ifndef CYRIUS_TARGET_AGNOS
     return syscall(201, 0);
     #endif
+}
+
+# v6.2.28: the entropy leaf every TLS-handshake getrandom site funnels through.
+# A custom rand_fn (if installed) takes precedence — the freestanding-TLS entropy
+# hook; default 0 routes to the platform sys_getrandom wrapper (identical
+# signature on every target: linux_common/windows/agnos, with macOS getentropy
+# normalizing 0→len). Returns the byte count, exactly like sys_getrandom, so each
+# call site keeps its own `!= requested` failure check + failure-return shape.
+fn _tn_rand_bytes(buf, n): i64 {
+    var rf = _tn_tx_rand;
+    if (rf == 0) { rf = &sys_getrandom; }
+    return fncall3(rf, buf, n, 0);
 }
 
 # CVE-18 (v6.1.36): fail-closed peer verification, run by connect() BEFORE it

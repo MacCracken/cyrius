@@ -1,0 +1,41 @@
+# Covers the v6.2.28 pluggable entropy hook — the 4th transport-vtable slot. The
+# TLS 1.3/1.2 handshake's 11 getrandom sites all funnel through _tn_rand_bytes,
+# which routes to the fn-pointer installed by tls_native_set_entropy (default 0 →
+# the platform sys_getrandom). This is the LAST freestanding-TLS hook: a bare-metal
+# kernel with no syscall surface installs its CSPRNG here. A deterministic CAPTURE
+# rand proves the dispatch end-to-end and that a short fill still surfaces (so each
+# call site's `!= requested` check keeps biting); clearing restores the default
+# getrandom path. The default path itself is covered by the TLS live round-trips.
+
+include "lib/assert.cyr"
+include "lib/tls_native.cyr"
+
+# custom rand(buf, n): fill with a known ramp (byte i == i & 0xFF), return n.
+fn _et_rand(buf, n): i64 {
+    var i = 0;
+    while (i < n) { store8(buf + i, i & 255); i = i + 1; }
+    return n;
+}
+# a rand that under-fills by one — proves _tn_rand_bytes returns the short count
+# so the call sites' `!= requested` failure check still fires.
+fn _et_short(buf, n): i64 { return n - 1; }
+
+test_group("install custom entropy");
+assert_eq(tls_native_set_entropy(&_et_rand), 0, "set_entropy returns TLS_OK");
+
+test_group("rand routes through the vtable (not raw sys_getrandom)");
+var b = alloc(16);
+assert_eq(_tn_rand_bytes(b, 8), 8, "_tn_rand_bytes returns n");
+assert_eq(load8(b), 0, "filled[0] == 0 (custom ramp)");
+assert_eq(load8(b + 7), 7, "filled[7] == 7 — proves OUR rand_fn ran, not getrandom");
+
+test_group("a short fill surfaces (the != requested check still bites)");
+assert_eq(tls_native_set_entropy(&_et_short), 0, "swap to short rand");
+assert_eq(_tn_rand_bytes(b, 8), 7, "_tn_rand_bytes returns the short count");
+
+test_group("clearing restores the default getrandom path");
+assert_eq(tls_native_set_entropy(0), 0, "clear returns TLS_OK");
+assert_eq(_tn_tx_rand, 0, "rand_fn reset to default (sys_getrandom)");
+assert_eq(_tn_rand_bytes(b, 8), 8, "default getrandom fills 8 bytes");
+
+var rc = assert_summary();

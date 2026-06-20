@@ -279,7 +279,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     }
     var crand = alloc(TLS_RANDOM_LEN);
     if (crand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (sys_getrandom(crand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
+    if (_tn_rand_bytes(crand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
@@ -792,7 +792,7 @@ fn _tn_gen_ephemeral_x25519_pub_only(ctx): i64 {
     var epub = _tn_alloc(ctx, 32);
     if (priv == 0) { return TLS_ERR_OOM; }
     if (epub == 0) { return TLS_ERR_OOM; }
-    if (sys_getrandom(priv, 32, 0) != 32) { return TLS_ERR_INTERNAL; }
+    if (_tn_rand_bytes(priv, 32) != 32) { return TLS_ERR_INTERNAL; }
     x25519_base(priv, epub);
     store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
     store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
@@ -1320,7 +1320,7 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
     var srand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (sys_getrandom(srand, TLS_RANDOM_LEN, 0) != TLS_RANDOM_LEN) {
+    if (_tn_rand_bytes(srand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     store64(ctx + TLS_CTX_OFF_SERVER_RANDOM, srand);

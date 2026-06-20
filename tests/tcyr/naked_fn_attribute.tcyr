@@ -1,30 +1,37 @@
-# naked_fn_attribute.tcyr — v6.2.27
+# naked_fn_attribute.tcyr — v6.2.27 (#naked attribute), completed v6.2.28
 #
-# Gates the #naked fn-attribute (bare-metal interrupt-handler emit: NO
-# prologue/epilogue/frame). Covers three things the v6.2.27 review surfaced:
+# Gates the #naked fn-attribute — frameless interrupt-handler emit (no
+# prologue/epilogue/frame), token 133. What this covers:
 #  1. Annotation-fork-desync: token 133 (#naked; 128 was already f64v_dot) must be
 #     consumed in pass-1 + pass-2 of ALL forks, else a #naked fn drops into a
 #     fork's catchall → "unexpected enum" on that target. check.sh compiles this
 #     corpus on x86 + cross-OS (ecb/cass/pi), so a missed fork fails the build there.
-#  2. The DCE-stub leak (review P1): a NON-underscore, unreferenced #naked fn that
-#     gets DCE-stubbed must clear _naked_pending so the NEXT live fn (here, main)
-#     is still framed — else main is emitted frameless and faults on rbp-relative
-#     arg-home stores against rbp=0 (SIGSEGV). `isr_probe` (no leading underscore)
-#     is DCE-eligible, so it exercises the stub path; main returning 0 below proves
-#     it kept its prologue.
-#  3. The safe naked contract (review P2): a #naked fn is paramless (an ISR gets no
-#     args) and contains no `return` (its body must self-terminate in asm — cyrius
-#     has no inline asm yet, so the body is empty here; #naked is the prologue-skip
-#     building block, full ISRs await inline-asm). A param or `return` is a hard
-#     compile error (verified manually at the cut).
+#  2. A REAL ISR body: `asm { iretq }` — v6.2.28 corrected the v6.2.27 "cyrius has
+#     no inline asm" mistake (asm{} blocks + the iretq mnemonic shipped long ago;
+#     aarch64 eret was the only gap, added at .28). So #naked + asm{} = a writable
+#     interrupt handler: frameless emit, body self-terminates in iretq/eret.
+#  3. The DCE survival: isr_probe is non-underscore + referenced only by address
+#     (&isr_probe below — an ISR goes in the IDT by address, never called), which
+#     the DCE bitmap would normally stub. v6.2.28 forces a #naked fn reachable so
+#     its real body emits AND its safety guards run.
+#  4. The safety guards (verified manually + by negative probes at the cut): a
+#     #naked fn with a parameter -> hard error "a #naked fn cannot have parameters";
+#     a `return` in a #naked fn -> hard error "return is not allowed in a #naked fn".
+#     A valid naked ISR is paramless, returns nothing, ends in asm.
 
 include "lib/assert.cyr"
 
 #naked fn isr_probe() {
+    asm {
+        iretq
+    }
 }
 
 fn main(): i64 {
-    assert_eq(1, 1, "main keeps its frame after a DCE-stubbed non-underscore #naked fn (review P1)");
+    # &isr_probe = the IDT-style address reference that keeps the naked ISR alive
+    # through DCE while never calling it; main keeps its own frame either way.
+    var idt_slot = &isr_probe;
+    assert_neq(idt_slot, 0, "a #naked ISR with an asm{iretq} body emits + is address-referencable");
     var r = assert_summary();
     return r;
 }

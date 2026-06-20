@@ -4699,6 +4699,7 @@ tls_native_conn::tls_native_get_peer_spki_der/3
 tls_native_conn::tls_native_get_state/1
 tls_native_conn::tls_native_get_version/1
 tls_native_conn::tls_native_read/3
+tls_native_conn::tls_native_set_entropy/1
 tls_native_conn::tls_native_set_transport/3
 tls_native_conn::tls_native_set_version_range/3
 tls_native_conn::tls_native_write/3

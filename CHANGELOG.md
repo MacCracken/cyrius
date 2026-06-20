@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.28] — 2026-06-19
+
+**v6.2.28 — bare-metal target formalization, RUNTIME HALF** (closes the 2-release
+arc opened at .27). The runtime/validation surface: real ISRs, kernel-freestanding
+TLS entropy, the entry-VA contract, and — the capstone — a REAL kernel boot. A
+premise-check overturned the .27 belief that `#naked` was a partial feature:
+cyrius has had inline asm (`asm{}` + the `iretq` mnemonic) all along. cycc
+**1,071,904 → 1,071,888 B** (−16, flat); self_compile **520 ms**. check.sh
+**90/90 + the new boot gate**; cross-OS pi/ecb/cass.
+
+- **`#naked` completion** (closes `issues/2026-06-19-naked-fn-safety-and-inline-asm.md`
+  parts 1+2). (a) A DCE force (`src/main.cyr`, `if (_naked_pending==1)
+  { dce_reachable=1; }`) makes a `#naked` fn always-parsed, so an address-taken ISR
+  is no longer stubbed-and-bypassed and its safety guards run. (b) The param/return
+  guards were aborting *silently* — `ERR_MSG(S, msg, strlen(msg))` called `strlen`,
+  which lives in `lib/string.cyr` (NOT included by the compiler) → undefined-fn
+  segfault before the message printed; rewrote to a string-literal + byte-count
+  (the working pattern). A `#naked` fn with a parameter or a `return` now hard-errors
+  with a clear message. (c) Added the one-line aarch64 `eret` mnemonic
+  (`ASM_MNEMONIC`, `0x74657265 → EW 0xD69F03E0`). **Real ISRs are now writable:**
+  `#naked fn isr() { asm { iretq } }` (x86) / `{ asm { eret } }` (aarch64).
+- **D5 — kernel-freestanding TLS entropy.** The last freestanding hook (the v6.2.4
+  transport vtable covered read/write/now, not randomness): a 4th module-global
+  `_tn_tx_rand` + a separate `tls_native_set_entropy(rand_fn)` installer + a
+  `_tn_rand_bytes` leaf, funneling **all 11** raw getrandom sites (hs13×8 / hs12×3 —
+  corrected from the roadmap's stale "12"; default 0 → `sys_getrandom`). Each site
+  keeps its own `!= requested` failure check. New `tls_native_entropy_vtable.tcyr`
+  (9/9) + the 15 existing TLS tests pass.
+- **D7 — the kernel BOOT gate** (`scripts/qemu-boot-gate.sh`). Builds
+  `programs/boot_serial.cyr` via the triple (ELF64 multiboot2, shape-verified
+  x86 + aarch64) AND plain (ELF32 multiboot1, **booted under QEMU**), asserting the
+  kernel writes "AGNOS" to serial. This is the anti-rot gate the macho port never
+  had — a green checkmark must mean the kernel *executed*. Wired into check.sh AND
+  a new `bare-metal-boot` CI job (qemu-system-x86; `CYRIUS_REQUIRE_BOOT=1` so a
+  qemu-less runner FAILS rather than skips-as-green).
+- **D6 — kernel entry/load-base VA exposed via the triple.** The build reports
+  `kernel: entry 0x1000a8, load base 0x100000` (x86) / `0x40000078 / 0x40000000`
+  (aarch64), gate-asserted against the real ELF (both arches). Full base-*settability*
+  deferred (`issues/2026-06-19-kernel-load-base-settable.md`) — no consumer needs a
+  non-canonical base, and it is an all-or-nothing 5-site change.
+- **Adversarial review (18 agents, 6 confirmed) — all folded.** The P1 was the
+  sharpest: the boot gate I wrote to defeat rot **was never wired into CI**
+  (check.sh is invoked by no workflow), and CI installed `qemu-user-static` not
+  `qemu-system-x86` — the exact placebo the gate exists to kill. Fixed (the CI job
+  above). Also: the gate now shape-checks the aarch64 entry (was un-gated → silent
+  drift), bounds+aligns the multiboot2 scan, and its timeout comment is honest.
+
 ## [6.2.27] — 2026-06-19
 
 **v6.2.27 — bare-metal target formalization, FRONTEND HALF** (a 2-release arc;
