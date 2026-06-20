@@ -482,14 +482,19 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19)
 
       - name: Install Cyrius toolchain
         run: |
           CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep 'cyrius *= *"' cyrius.cyml 2>/dev/null | head -1 | sed 's/.*"\(.*\)"/\1/')}"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          TARBALL="cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          BASE="https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION"
+          curl -sfLO "$BASE/$TARBALL"
+          # CVE-21: verify the published .sha256 fail-closed before extracting.
+          curl -sfLO "$BASE/$TARBALL.sha256" || { echo "could not fetch $TARBALL.sha256 - refusing unverified toolchain"; exit 1; }
+          sha256sum -c "$TARBALL.sha256" || { echo "checksum mismatch for $TARBALL - aborting"; exit 1; }
+          tar xzf "$TARBALL"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
           mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
           cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
@@ -510,7 +515,7 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19)
       - name: Check required docs
         run: |
           for doc in README.md CHANGELOG.md VERSION LICENSE cyrius.cyml; do
@@ -540,7 +545,7 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19)
 
       - name: Verify version
         run: |
@@ -552,8 +557,13 @@ jobs:
         run: |
           CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep 'cyrius *= *"' cyrius.cyml 2>/dev/null | head -1 | sed 's/.*"\(.*\)"/\1/')}"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          TARBALL="cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          BASE="https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION"
+          curl -sfLO "$BASE/$TARBALL"
+          # CVE-21: verify the published .sha256 fail-closed before extracting.
+          curl -sfLO "$BASE/$TARBALL.sha256" || { echo "could not fetch $TARBALL.sha256 - refusing unverified toolchain"; exit 1; }
+          sha256sum -c "$TARBALL.sha256" || { echo "checksum mismatch for $TARBALL - aborting"; exit 1; }
+          tar xzf "$TARBALL"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
           mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
           cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
@@ -569,7 +579,7 @@ jobs:
           cyrius build src/main.cyr build/${{ github.event.repository.name }}
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (pinned 2026-06-19)
         with:
           generate_release_notes: true
           files: build/*

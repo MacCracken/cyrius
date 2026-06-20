@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.07 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 98 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.0.1; **bayan 1.0.0 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.0 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`). 187 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 89 check.sh gates.
+~1.07 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 99 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.4.2; **bayan 1.0.0 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.0 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.0 at v6.2.26** — UI/E2E testing into `lib/yantra.cyr`). 190 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 92 check.sh gates + QEMU boot gate.
 
 ## Install
 
@@ -91,13 +91,13 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,069,688 B** (~1.07 MB) x86_64 at v6.2.22 |
-| Cross compilers | `cycc_aarch64` 621,680 B, `cycc_win` 844,288 B (cross-built) |
-| Seed binary (`asm`) | **29,016 B** (root of trust, committed to repo) |
+| Compiler (`cycc`) | **1,071,936 B** (~1.07 MB) x86_64 at v6.2.29 |
+| Cross compilers | `cycc_aarch64` 624,552 B, `cycc_win` 845,824 B (cross-built) |
+| Seed binary (`asm`) | **29,016 B** (source-level root of trust, committed to repo) |
 | Bootstrap compiler (`cybs`) | **12,344 B** |
 | LSP server (`cyrius-lsp`) | **531,688 B** (definition / documentSymbol / references / semanticTokens / hover) |
 | Linker (`cyrld`) | **902,184 B** |
-| External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded at 3.0.1) |
+| External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded, now 3.4.2) |
 | Tests | **187** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
 | Gates (`scripts/check.sh`) | **89** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, PIE exec gate at v6.1.6, TS→JS emit/round-trip gate at v6.1.11) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode |
@@ -125,7 +125,7 @@ Per-binary sizes for the Cyrius single-pipeline compile path:
 
 | Stage | Binary | Size |
 |-------|--------|------|
-| 1. Root of trust (committed) | `bootstrap/asm` | 29 KB |
+| 1. Root of trust (source) | `bootstrap/asm` | 29 KB |
 | 2. Bootstrap compiler | `cybs` | 12 KB |
 | 3. Full compiler | `cycc` | 1.0 MB |
 | 4. Linker | `cyrld` | 902 KB |
@@ -217,9 +217,17 @@ src/
 ```
 bootstrap/asm (29,016 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 1,069,688 B at v6.2.22)
+    -> cycc (modular compiler + IR, 1,071,936 B at v6.2.29)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
+
+> **Trust root, precisely (CVE-20):** `bootstrap/asm` is the *source-level*
+> root — `bootstrap.sh` rebuilds `cybs` and verifies the asm↔cybs closure.
+> But release/install builds compile `src/main.cyr` with the **committed
+> `build/cycc`**, which the seed does not yet reproduce, so the committed
+> `cycc` is the de-facto trust root for installed toolchains. v6.2.31 adds a
+> CI job reconstructing `cycc` from the seed (seed→cybs→cycc) and asserting
+> equality, making it machine-derivable. See [SECURITY.md](SECURITY.md).
 
 > The chain shortened at v5.11.66 — `src/bridge.cyr` (2,005 LoC standalone
 > Phase 4 compiler) retired after audit confirmed it was never in any

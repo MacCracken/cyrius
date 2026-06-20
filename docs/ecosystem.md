@@ -34,7 +34,7 @@ git entries (see Live deps below).
 | `lib/yukti.cyr` | v5.8.65 | yukti 2.2.3 | Hardware enumeration |
 | `lib/sankoch.cyr` | v5.8.65 | sankoch 2.2.5 | Compression |
 | `lib/niyama.cyr` | **v5.9.0** (2026-05-06) | niyama 1.0.2 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |
-| `lib/mabda.cyr` | **v6.0.45** | mabda 3.0.1 | GPU/compute (AMD-native GA) |
+| `lib/mabda.cyr` | **v6.0.45** (refold v6.2.30) | mabda 3.4.2 | GPU/compute (AMD-native GA; array textures + cubemaps + BC arrays + render-target VA fixes) |
 | `lib/bayan.cyr` | **v6.1.25** | bayan 1.0.0 | Data formats + big-int (json / toml / cyml / csv / base64 / bigint `u256` / u128). **Carve** out of stdlib: public fns renamed `bayan_*` + legacy aliases. Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must `include "lib/bayan.cyr"`. |
 | `lib/ganita.cyr` | **v6.1.26** | ganita 1.0.0 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial). **Carve** out of stdlib (closes Phase E): renamed `ganita_*` + legacy aliases. Keep stdlib `math` in scope (f64-exp/ln polyfills + F64 constants). |
 
@@ -45,8 +45,9 @@ explicit `[deps.*]` git entries — every former dep is now a folded
 distlib (see table above). `[deps].stdlib` is the auto-prepend list
 only, not git resolution.
 
-- **mabda** — folded byte-identical into `lib/mabda.cyr` at 3.0.1
-  (removed from `[deps]`; opt-in via `include "lib/mabda.cyr"`).
+- **mabda** — folded byte-identical into `lib/mabda.cyr` (carved at 3.0.1
+  / v6.0.45; **now 3.4.2 @ v6.2.30**) — removed from `[deps]`; opt-in via
+  `include "lib/mabda.cyr"`.
 - **agnosys** — was transitive via mabda's git resolution; with mabda
   vendored it is no longer pulled (re-add `[deps.agnosys]` if a
   consumer needs it).

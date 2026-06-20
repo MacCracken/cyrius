@@ -31,6 +31,12 @@ var _dep_includes = 0;
 #               sections still need to be walked. BFS drain in cmd_deps.
 var _dep_visited = 0;
 var _dep_queue = 0;
+# CVE-21 (v6.2.30): vec<cstr> of resolved git-dep commit pins accumulated
+# during cmd_deps. Each entry: "commit\t<40hex>\t<name>\t<git>\t<tag>".
+# cmd_deps_lock appends them to cyrius.lock (after the per-file hash lines);
+# resolution verifies a TAGGED dep's freshly-resolved HEAD against the prior
+# lock to detect a force-pushed/repointed tag or a poisoned cached clone.
+var _dep_commit_lines = 0;
 var _build_modules = 0;
 # v5.7.8: when set, compile() skips the manifest-dep auto-prepend.
 # Used by `cyrius check` (default-on) and `cyrius build --no-deps`.

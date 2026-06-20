@@ -7,30 +7,33 @@
 > bridge to system libraries (libssl, libc) via the v5.6.37
 > fdlopen-bootstrapped helper — see Trust Boundaries below.
 >
-> **Last reviewed**: 2026-06-06 (v6.0.83) — adds the sovereign native TLS backend.
+> **Last reviewed**: 2026-06-19 (v6.2.30) — RM-02 correction: native TLS is the
+> *default* backend (since v6.1.21, not opt-in), PIE/ASLR ships (since v6.1.6),
+> the input buffer is 1 MB (not 131 KB), and the binary-release trust root is
+> the committed `build/cycc` (CVE-20).
 
 ## Trust Boundaries
 
 | Boundary | Trust Level |
 |----------|-------------|
-| 29KB seed binary (bootstrap/asm) | Root of trust — auditable, committed, byte-exact |
+| 29KB seed binary (bootstrap/asm) | **Source-level** root of trust — auditable, committed, byte-exact. **(CVE-20)** the seed verifies the asm↔cybs closure but does not yet rebuild `cycc`, so the trust root for *binary releases* is the committed `build/cycc`; a seed→cybs→cycc reconstruction CI (v6.2.31) makes it machine-derivable. |
 | Source code (src/, lib/, programs/) | Trusted — developer-controlled |
 | User input (compiled programs) | Untrusted — may contain arbitrary code |
 | Syscall interface (Linux kernel) | Trusted — OS provides memory isolation |
 | Generated binaries | Untrusted until verified — self-hosting proves compiler correctness |
 | `~/.cyrius/dlopen-helper` (v5.6.37+) | Trusted **for non-setuid callers only** — built by `install.sh` from cyrius source; used by `fdlopen.cyr` to bootstrap real glibc for libssl bridge. Missing helper = TLS / libssl features disabled at runtime, not a security risk. **⚠ NOT trusted for setuid-root callers:** the path resolves inside the *invoking user's* `$HOME`, which a non-root caller of a setuid binary owns and can replace — `fdlopen` would then `execve` it **as root** (arbitrary root code execution). Setuid consumers (e.g. shakti) MUST use `fdlopen_init_trusted()` (v6.1.29), which resolves the root-owned `/usr/lib/cyrius/dlopen-helper`, `lstat`-verifies it (regular file, uid 0, not symlink, not group/other-writable), never consults `$HOME`, and fails closed (`FDL_ERR_UNTRUSTED` = -9). |
-| Linked `libssl.so.3` / `libcrypto.so.3` (default backend, when `tls_available() == 1`) | System-trusted — the host's OpenSSL. Stdlib `lib/tls.cyr` is a thin bridge; OpenSSL CVEs apply transitively when used. **Built with `-D CYRIUS_TLS_NATIVE` there is NO libssl dependency** — TLS runs on the in-tree native stack (`lib/tls_native.cyr` + sigil crypto/x509), so OpenSSL CVEs do not apply. |
+| Linked `libssl.so.3` / `libcrypto.so.3` (**opt-in** legacy backend, `-D CYRIUS_TLS_LIBSSL`) | System-trusted — the host's OpenSSL. **Default builds use the in-tree native stack** (`lib/tls_native.cyr` + sigil crypto/x509) and have NO libssl dependency, so OpenSSL CVEs do not apply. They apply transitively only when the bridge is explicitly opted into with `-D CYRIUS_TLS_LIBSSL` (default polarity inverted at v6.1.21). |
 
 ## Attack Surface
 
 | Area | Risk | Mitigation |
 |------|------|------------|
-| **Buffer overflow in compiler** | Malicious input overflows tok_names, codebuf, or fixup table | Bounds checks on ADDTOK (65536), LEXID (65000), fixup (1024) |
+| **Buffer overflow in compiler** | Malicious input overflows tok_names, codebuf, or fixup table | Bounds checks on ADDTOK (1,048,576), LEXID dedup (16,384), and the **growable** fixup table (×2 grow, 64 MiB ceiling, v6.2.0) |
 | **Heap layout corruption** | Adjacent buffers overflow silently | Guard checks, documented HEAP MAP, P-1 hardening |
 | **Preprocessor path traversal** | `include "../../../etc/passwd"` reads arbitrary files | `READFILE` in `lib/lex.cyr` rejects `..` path components by default; `CYRIUS_ALLOW_PARENT_INCLUDES=1` env override exists for sibling-dep projects (bote pattern) and is auto-set by `cyrius build` when resolving relative-path deps. CVE-02 hardening, shipped v5.x. |
 | **Integer overflow in alloc** | Large allocation wraps to small size | brk return value checked; returns 0 on failure |
 | **Code injection via inline asm** | `asm { ... }` emits arbitrary bytes | By design — asm is a power tool, not a vulnerability |
-| **Denial of service** | Extremely large source files | Input buffer capped at 131KB; token array at 65536 |
+| **Denial of service** | Extremely large source files | Input buffer capped at 1 MB (v3.6.7); preprocess-out 8 MB (v5.11.33); token array at 1,048,576 (v5.8.46) |
 | **Supply chain** | Compromised compiler binary | **Narrow-scope self-hosting verification**: the compiler must produce byte-identical output when recompiling its own source (3-step fixpoint `cc_a → cc_b → cc_c; b == c`; pre-v5 this was `cc3 == cc3`, now `cycc → cycc_b → cycc_c`). This invariant is check.sh-enforced on every commit across all active targets. **Note on scope**: this mitigates trusting-trust attacks against the compiler's own codegen only. It does NOT address platform-loader tolerance of the emitted binary (a separate "broad-scope" property — see `docs/architecture/cyrius.md` §"Self-hosting: two scopes of byte-identity"). |
 | **Bootstrap trust** | Trusting the committed 29KB seed | Diverse double compilation possible; seed is auditable |
 
@@ -40,7 +43,7 @@
 |-----------|--------|-------------|
 | No memory safety | Buffer overflows in user programs possible | Ownership/borrow checker (v1.0+) |
 | No stack canaries | Stack smashing undetected | Compiler-inserted canaries (future) |
-| No ASLR | Predictable memory layout | Polymorphic codegen (post-v1.0) |
+| PIE/ASLR is opt-in | Non-PIE binaries have a predictable layout | **PIE codegen shipped v6.1.6** — `--pie` / `CYRIUS_PIE=1` emits `ET_DYN` so the loader applies ASLR (x86_64 + aarch64 userland). Default output is still non-PIE `ET_EXEC`; pass `--pie` for ASLR. |
 | No sandboxing | Generated binaries have full syscall access | Sandbox-aware borrow checker (post-v1.0) |
 | Fixed-size arrays | Compiler crashes on capacity overflow | Dynamic allocation or larger fixed sizes |
 
@@ -64,14 +67,15 @@ Disclosure: 90-day coordinated
 
 ## Stdlib TLS surface (v5.7.0+; native backend v6.0.74–.83)
 
-`lib/tls.cyr` has two backends behind one verb contract. **Default:** brokers
-TLS 1.2/1.3 via OpenSSL's `libssl.so.3` (below). **Opt-in (`-D CYRIUS_TLS_NATIVE`):**
-the sovereign native stack `lib/tls_native.cyr` — TLS 1.2 + 1.3, auth via ECDSA
-P-256/P-384 + RSA (PSS / PKCS#1 v1.5) + Ed25519, AES-128/256-GCM + ChaCha20-Poly1305,
-EMS, ALPN, OS trust-store + intermediate-chain + SNI-hostname verification, server-flight
-reassembly — no OpenSSL, crypto/x509 in-tree (sigil). Backend-agnostic peer-introspection
-verbs `tls_get_alpn_selected` / `tls_get_peer_spki_der` (v6.0.82). Live-Cloudflare- +
-OpenSSL-interop-proven. The libssl-bridge surface (legacy):
+`lib/tls.cyr` has two backends behind one verb contract. **Default (since
+v6.1.21, no flag):** the sovereign native stack `lib/tls_native.cyr` — TLS 1.2 +
+1.3, auth via ECDSA P-256/P-384 + RSA (PSS / PKCS#1 v1.5) + Ed25519,
+AES-128/256-GCM + ChaCha20-Poly1305, EMS, ALPN, OS trust-store +
+intermediate-chain + SNI-hostname verification, server-flight reassembly — no
+OpenSSL, crypto/x509 in-tree (sigil). Backend-agnostic peer-introspection verbs
+`tls_get_alpn_selected` / `tls_get_peer_spki_der` (v6.0.82). Live-Cloudflare- +
+OpenSSL-interop-proven. **Opt-in (`-D CYRIUS_TLS_LIBSSL`):** the legacy
+libssl-bridge surface (below):
 
 `lib/tls.cyr` brokers TLS 1.2/1.3 via OpenSSL's `libssl.so.3`,
 bootstrapped through fdlopen for correct pthread TCB layout

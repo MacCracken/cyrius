@@ -11,7 +11,16 @@ Do **not** open public issues for security vulnerabilities.
 Cyrius is a systems language compiler. Security-relevant areas:
 
 - **Compiler correctness**: codegen bugs that produce wrong behavior
-- **Bootstrap chain integrity**: the 29KB seed binary is the root of trust
+- **Bootstrap chain integrity**: the 29 KB seed (`bootstrap/asm`) is the
+  *source-level* root of trust — `bootstrap/bootstrap.sh` rebuilds `cybs` from
+  the seed and verifies the asm↔cybs closure. **Note (CVE-20):** the trust
+  root for **binary releases** is the *committed* `build/cycc` — release builds
+  compile `src/main.cyr` with it, and the seed does not (yet) rebuild `cycc`
+  itself. A periodic CI job that reconstructs `cycc` from the seed
+  (seed→cybs→cycc) and asserts equality with the committed binary — landing in
+  v6.2.31 — makes the committed `cycc` machine-derivable rather than asserted.
+  Until then, treat `build/cycc` as the de-facto trust root for installed
+  toolchains.
 - **Kernel code**: AGNOS kernel memory safety, interrupt handling, syscall validation
 - **Build tool (cyrius)**: fork/exec security, path handling
 - **Package manager (ark)**: package verification, database integrity

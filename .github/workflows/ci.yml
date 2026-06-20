@@ -20,7 +20,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup compiler
         run: chmod +x build/cycc
       - name: Build x86_64 compiler from source
@@ -58,7 +58,7 @@ jobs:
     name: Check & Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup
         run: |
           chmod +x build/cycc
@@ -110,7 +110,7 @@ jobs:
     name: Supply Chain
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup
         run: |
           chmod +x build/cycc
@@ -131,7 +131,7 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Scan for dangerous patterns
         run: |
           if grep -r 'syscall(59' lib/ 2>/dev/null | grep -v process.cyr | grep -v agnosys; then
@@ -145,13 +145,13 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup compiler
         run: chmod +x build/cycc
       - name: Benchmark suite (tier 1+2)
         run: sh scripts/bench-history.sh --tier2
       - name: Upload benchmark artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: benchmarks
           path: |
@@ -165,7 +165,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup compiler
         run: |
           chmod +x build/cycc
@@ -393,7 +393,7 @@ jobs:
       image: ghcr.io/maccracken/agnosticos:2026.3.31
       options: --user root
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup compiler
         run: |
           chmod +x build/cycc
@@ -453,7 +453,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Install qemu-user
         run: |
           # Swap Azure Ubuntu mirror to canonical — azure.archive.ubuntu.com
@@ -526,7 +526,7 @@ jobs:
           file /tmp/a64_out/cycc_native_a64 | grep -q "ARM aarch64" || { echo "ERROR: cycc_native_a64 not aarch64 ELF"; exit 1; }
           tar czf /tmp/a64_out/_src.tgz src lib VERSION
           echo "staged cycc_native_a64 (main_aarch64_native.cyr): $(wc -c < /tmp/a64_out/cycc_native_a64) bytes"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: aarch64-native-binaries
           path: /tmp/a64_out/
@@ -545,9 +545,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20   # +tcyr corpus (190 compile+run) @ v6.2.29 VR-01; fail-loud on a hang
     steps:
-      - uses: actions/checkout@v4   # full repo: scripts/cbt/programs/lib for the functional gate
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19) — full repo: scripts/cbt/programs/lib for the functional gate
       - name: Download native aarch64 cycc
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: aarch64-native-binaries
           path: ./a64
@@ -615,7 +615,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup compiler
         run: |
           chmod +x build/cycc
@@ -665,7 +665,7 @@ jobs:
           sh scripts/build-macos-x86-tarball.sh /tmp/macho_x86_out >/dev/null
           ls -la /tmp/macho_x86_out/cyrius-*-x86_64-macos.tar.gz
       - name: Upload x86 Mach-O binaries for native run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: macho-x86-binaries
           path: /tmp/macho_x86_out/
@@ -680,7 +680,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup cross-compiler
         run: |
           chmod +x build/cycc
@@ -753,7 +753,7 @@ jobs:
           sh scripts/build-macos-arm64-tarball.sh /tmp/macho_arm_out >/dev/null
           ls -la /tmp/macho_arm_out/cyrius-*-aarch64-macos.tar.gz
       - name: Upload arm64 Mach-O binaries for native run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: macho-arm64-binaries
           path: /tmp/macho_arm_out/
@@ -769,9 +769,9 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 10   # self-host + the folded-in functional gate
     steps:
-      - uses: actions/checkout@v4   # scripts/funcgate-posix.sh + install.sh + VERSION for the functional gate
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19) — scripts/funcgate-posix.sh + install.sh + VERSION for the functional gate
       - name: Download arm64 Mach-O binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: macho-arm64-binaries
           path: ./macho-arm64
@@ -875,9 +875,9 @@ jobs:
     runs-on: [self-hosted, macOS, X64]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Download x86 Mach-O binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: macho-x86-binaries
           path: ./macho-x86
@@ -933,7 +933,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Setup compiler
         run: chmod +x build/cycc
       - name: Compile exit-code PE32+ test binaries
@@ -1222,7 +1222,7 @@ jobs:
           tar czf /tmp/win_out/_src.tgz src lib VERSION
           echo "staged cycc.exe: $(wc -c < /tmp/win_out/cycc.exe) bytes"
       - name: Upload PE32+ binaries for native run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: windows-pe-binaries
           path: /tmp/win_out/
@@ -1238,9 +1238,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 8   # fail-loud on a hang, never the 6h default
     steps:
-      - uses: actions/checkout@v4   # for scripts/funcgate-win.ps1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19) — for scripts/funcgate-win.ps1
       - name: Download PE32+ binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: windows-pe-binaries
           path: ./win
@@ -1320,7 +1320,7 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Build cyrdoc
         run: |
           chmod +x build/cycc
@@ -1354,7 +1354,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Install qemu-system-x86
         run: |
           # full-system emulation (qemu-system-x86_64) — NOT qemu-user-static.

@@ -588,6 +588,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var dep_git = 0;
             var dep_tag = 0;
             var dep_modules = 0;
+            # CVE-21 (v6.2.30): cleared if a tagged dep's resolved commit
+            # disagrees with the lock — gates the module copy so poisoned
+            # content never lands in lib/.
+            var dep_pin_ok = 1;
             while (si < n) {
                 if (load8(buf + si) == 91 && load8(buf + si + 1) != 91) {
                     if (memeq(buf + si, "[deps.", 6) != 1 && memeq(buf + si, "[build", 6) != 1 && memeq(buf + si, "[package", 8) != 1) {
@@ -652,6 +656,12 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     need_clone = 1;
                 }
             }
+            # CVE-21 (v6.2.30) NOTE: a dep that supplies BOTH git/tag AND an
+            # existing `path =` override resolves from the local path with no
+            # clone, so the commit-pin verify below (which lives in the
+            # need_clone branch) is intentionally bypassed — a local path
+            # override is operator-controlled and has no remote tag to pin.
+            # The git/tag fields are inert in that case.
             if (need_clone == 1) {
                 var clone_sb = str_builder_new();
                 if (_home != 0) {
@@ -751,9 +761,68 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     }
                 }
                 dep_path = clone_dir;
+                # CVE-21 (v6.2.30): pin the resolved commit for a TAGGED dep.
+                # The tag is meant to be immutable, so on every resolve (fresh
+                # clone OR reused cache) we enforce THREE things against the lock
+                # and the checkout, gating the module copy via dep_pin_ok:
+                #   1. a corrupt/truncated pin line for this dep → fail closed
+                #      (don't silently TOFU-re-pin over corruption);
+                #   2. HEAD must equal the locked commit → catches a force-pushed
+                #      / repointed tag (the core CVE-21 threat);
+                #   3. the working tree must match HEAD → catches an in-place
+                #      edit of a cached checkout (snapshot-ping-pong write-through
+                #      / local tamper) that leaves HEAD on the pinned SHA.
+                # No-tag deps intentionally float (track a branch HEAD) so they
+                # are not pinned. POSIX-only (mirrors the clone).
+                if (dep_tag != 0) {
+                    var _head = _git_head_sha(clone_dir);
+                    if (_head != 0) {
+                        var _exp = _lock_commit_lookup(dep_name, dep_git, dep_tag);
+                        if (_exp == -1) {
+                            sys_write(STDERR_FD, "error: corrupt commit-pin line for dep '", 40);
+                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                            sys_write(STDERR_FD, "' in cyrius.lock — refusing (delete cyrius.lock to re-pin intentionally).\n", 73);
+                            dep_pin_ok = 0;
+                            errors = errors + 1;
+                        } elif (_exp != 0 && _cstr_eq(_exp, _head) == 0) {
+                            sys_write(STDERR_FD, "error: commit-pin mismatch for dep '", 36);
+                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                            sys_write(STDERR_FD, "' tag '", 7);
+                            sys_write(STDERR_FD, dep_tag, strlen(dep_tag));
+                            sys_write(STDERR_FD, "': cyrius.lock pins ", 20);
+                            sys_write(STDERR_FD, _exp, strlen(_exp));
+                            sys_write(STDERR_FD, " but the tag now resolves to ", 29);
+                            sys_write(STDERR_FD, _head, strlen(_head));
+                            sys_write(STDERR_FD, " (force-pushed/repointed tag) — refusing. Delete cyrius.lock to re-pin intentionally.\n", 85);
+                            dep_pin_ok = 0;
+                            errors = errors + 1;
+                        } elif (_git_worktree_clean(clone_dir) == 0) {
+                            sys_write(STDERR_FD, "error: cached checkout for dep '", 31);
+                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                            sys_write(STDERR_FD, "' has local modifications (working tree != HEAD ", 48);
+                            sys_write(STDERR_FD, _head, strlen(_head));
+                            sys_write(STDERR_FD, ") — refusing tampered cache. Remove the cached clone and re-resolve.\n", 68);
+                            dep_pin_ok = 0;
+                            errors = errors + 1;
+                        } else {
+                            var _cl = str_builder_new();
+                            str_builder_add_cstr(_cl, "commit\t");
+                            str_builder_add_cstr(_cl, _head);
+                            str_builder_add_cstr(_cl, "\t");
+                            str_builder_add_cstr(_cl, dep_name);
+                            str_builder_add_cstr(_cl, "\t");
+                            str_builder_add_cstr(_cl, dep_git);
+                            str_builder_add_cstr(_cl, "\t");
+                            str_builder_add_cstr(_cl, dep_tag);
+                            if (_dep_commit_lines != 0) {
+                                vec_push(_dep_commit_lines, str_data(str_builder_build(_cl)));
+                            }
+                        }
+                    }
+                }
             }
             var dep_had_success = 0;
-            if (dep_path != 0 && dep_modules != 0) {
+            if (dep_path != 0 && dep_modules != 0 && dep_pin_ok == 1) {
                 var mi = 0;
                 while (mi < vec_len(dep_modules)) {
                     var mod_path = vec_get(dep_modules, mi);
@@ -899,6 +968,7 @@ fn cmd_deps(): i64 {
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();
     _dep_queue = vec_new();
+    _dep_commit_lines = vec_new();   # CVE-21 (v6.2.30): git-dep commit pins
 
     # === Phase 1: stdlib deps ===
     # Find: stdlib = ["string", "fmt", ...]
@@ -1363,6 +1433,153 @@ fn _sha256sum_file(path): i64 {
     return hash;
 }
 
+# CVE-21 (v6.2.30) — cstr equality (length-checked memeq).
+fn _cstr_eq(a, b): i64 {
+    var la = strlen(a);
+    if (la != strlen(b)) { return 0; }
+    return memeq(a, b, la);
+}
+
+# CVE-21 (v6.2.30) — capture the commit `git -C <clone_dir> rev-parse HEAD`
+# resolves to. Returns a pointer to a NUL-terminated 40-char lowercase-hex
+# string, or 0 on failure / not-a-repo. POSIX-only (mirrors the dep clone,
+# which already uses fork/execve); the git-dep flow does not run on native
+# Windows. Mirrors `_sha256sum_file`'s capture-via-tmpfile pattern.
+fn _git_head_sha(clone_dir): i64 {
+    var tmpf = "/tmp/cyrius_githead_out";
+    var pid = sys_fork();
+    if (pid == 0) {
+        var ofd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+        sys_dup2(ofd, 1);
+        sys_close(ofd);
+        # Silence stderr so a non-repo dir doesn't pollute the user's output.
+        var efd = sys_open("/dev/null", O_WRONLY, 0);
+        if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        var argv[64];   # N BYTES: 7 ptrs need 56 B
+        store64(&argv, "env");
+        store64(&argv + 8, "git");
+        store64(&argv + 16, "-C");
+        store64(&argv + 24, clone_dir);
+        store64(&argv + 32, "rev-parse");
+        store64(&argv + 40, "HEAD");
+        store64(&argv + 48, 0);
+        sys_execve("/usr/bin/env", &argv, _envp);
+        sys_exit(127);
+    }
+    var sb[1];
+    sys_waitpid(pid, &sb, 0);
+    var buf = alloc(128);
+    var nn = file_read_all(tmpf, buf, 127);
+    sys_unlink(tmpf);
+    if (nn < 40) { return 0; }
+    var sha = alloc(41);
+    memcpy(sha, buf, 40);
+    store8(sha + 40, 0);
+    # Sanity: all 40 chars must be hex (0-9a-fA-F), else not a valid SHA.
+    var hi = 0;
+    while (hi < 40) {
+        var hc = load8(sha + hi);
+        var ishex = 0;
+        if (hc >= 48 && hc <= 57) { ishex = 1; }
+        if (hc >= 97 && hc <= 102) { ishex = 1; }
+        if (hc >= 65 && hc <= 70) { ishex = 1; }
+        if (ishex == 0) { return 0; }
+        hi = hi + 1;
+    }
+    return sha;
+}
+
+# CVE-21 (v6.2.30) — returns 1 iff `git -C <dir> diff-index --quiet HEAD`
+# exits 0 (the working tree matches HEAD), else 0 (dirty, signalled, or git
+# error). Closes the in-place-tamper / snapshot-ping-pong write-through gap a
+# bare `rev-parse HEAD` pin misses: an edit to a tracked .cyr that never touches
+# .git leaves HEAD on the pinned SHA, so the SHA check alone would pass. A fresh
+# clone's tree is always clean, so this is a no-op cost on the happy path.
+# POSIX-only (mirrors the dep clone).
+fn _git_worktree_clean(clone_dir): i64 {
+    var pid = sys_fork();
+    if (pid == 0) {
+        var nfd = sys_open("/dev/null", O_WRONLY, 0);
+        if (nfd >= 0) { sys_dup2(nfd, 1); sys_dup2(nfd, 2); sys_close(nfd); }
+        var argv[64];   # N BYTES: 8 ptrs need 64 B
+        store64(&argv, "env");
+        store64(&argv + 8, "git");
+        store64(&argv + 16, "-C");
+        store64(&argv + 24, clone_dir);
+        store64(&argv + 32, "diff-index");
+        store64(&argv + 40, "--quiet");
+        store64(&argv + 48, "HEAD");
+        store64(&argv + 56, 0);
+        sys_execve("/usr/bin/env", &argv, _envp);
+        sys_exit(127);
+    }
+    var wst[8];
+    sys_waitpid(pid, &wst, 0);
+    var st = load64(&wst);
+    if ((st & 127) != 0) { return 0; }          # killed by signal → distrust
+    if (((st >> 8) & 255) != 0) { return 0; }   # non-zero exit → dirty / error
+    return 1;
+}
+
+# CVE-21 (v6.2.30) — look up the previously-locked commit SHA for a dep,
+# keyed on (name, git, tag) so a deliberate tag bump in cyrius.cyml does not
+# false-trip (different tag → no match → re-pin). Returns a NUL-terminated SHA
+# pointer, 0 if the lock has no matching commit line, or -1 if a commit line
+# FOR THIS dep name is present but malformed/truncated (fewer than the 4
+# tab-delimited fields) — the caller fails closed instead of silently TOFU-
+# re-pinning a corrupted pin.
+fn _lock_commit_lookup(name, git, tag): i64 {
+    if (file_exists("cyrius.lock") == 0) { return 0; }
+    var cap = 65536;
+    var lbuf = alloc(cap);
+    var ln = file_read_all("cyrius.lock", lbuf, cap - 1);
+    if (ln <= 0) { return 0; }
+    store8(lbuf + ln, 0);
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lbuf + le) != 10) { le = le + 1; }
+        # Commit line marker: "commit" + TAB (0x09).
+        if (le - pos > 7 && memeq(lbuf + pos, "commit", 6) == 1 && load8(lbuf + pos + 6) == 9) {
+            var p = pos + 7;
+            # `well` stays 1 only if each of the 3 internal field separators
+            # (sha|name, name|git, git|tag) is actually a tab — a truncated line
+            # leaves it 0 and is treated as corruption when the name matches.
+            var well = 1;
+            var sha_s = p;
+            while (p < le && load8(lbuf + p) != 9) { p = p + 1; }
+            var sha_e = p;
+            if (p < le) { p = p + 1; } else { well = 0; }
+            var name_s = p;
+            while (p < le && load8(lbuf + p) != 9) { p = p + 1; }
+            var name_e = p;
+            if (p < le) { p = p + 1; } else { well = 0; }
+            var git_s = p;
+            while (p < le && load8(lbuf + p) != 9) { p = p + 1; }
+            var git_e = p;
+            if (p < le) { p = p + 1; } else { well = 0; }
+            var tag_s = p;
+            var tag_e = le;
+            var nm_ok = 0;
+            if (name_e - name_s == strlen(name) && memeq(lbuf + name_s, name, name_e - name_s) == 1) { nm_ok = 1; }
+            if (nm_ok == 1 && well == 0) { return -1; }   # corrupt pin for this dep → fail closed
+            var gt_ok = 0;
+            if (git_e - git_s == strlen(git) && memeq(lbuf + git_s, git, git_e - git_s) == 1) { gt_ok = 1; }
+            var tg_ok = 0;
+            if (tag_e - tag_s == strlen(tag) && memeq(lbuf + tag_s, tag, tag_e - tag_s) == 1) { tg_ok = 1; }
+            if (nm_ok == 1 && gt_ok == 1 && tg_ok == 1) {
+                var slen = sha_e - sha_s;
+                var out = alloc(slen + 1);
+                memcpy(out, lbuf + sha_s, slen);
+                store8(out + slen, 0);
+                return out;
+            }
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
 # v6.0.2 — is this invocation running inside the cyrius source repo
 # itself? Signal: `[package] name = "cyrius"` in cwd's cyrius.cyml.
 # Used to skip lock generation here — cyrius authors its own `lib/`
@@ -1468,17 +1685,43 @@ fn cmd_deps_lock(): i64 {
     # (recursively). See _deps_lock_dir for the v5.11.8-era root cause.
     var lock_fd = sys_open("cyrius.lock", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (lock_fd < 0) { _err("cannot create cyrius.lock"); return 1; }
+    # CVE-21 (v6.2.30): write the resolved git-dep commit pins FIRST (one
+    # "commit\t<sha>\t<name>\t<git>\t<tag>" line each), BEFORE the per-file
+    # content hashes, so they always fall inside _lock_commit_lookup's 64 KB
+    # read window even when a large project's hash section grows past it.
+    # cmd_deps_verify skips these lines; resolution checks them.
+    var _cc = 0;
+    if (_dep_commit_lines != 0) {
+        var _ci = 0;
+        while (_ci < vec_len(_dep_commit_lines)) {
+            var _line = vec_get(_dep_commit_lines, _ci);
+            sys_write(lock_fd, _line, strlen(_line));
+            sys_write(lock_fd, "\n", 1);
+            _ci = _ci + 1;
+            _cc = _cc + 1;
+        }
+    }
     var count = _deps_lock_dir("lib", lock_fd);
     sys_close(lock_fd);
     sys_write(STDOUT_FD, "cyrius.lock: ", 13);
     fmt_int(count);
-    println(" deps locked");
+    sys_write(STDOUT_FD, " deps locked", 12);
+    if (_cc > 0) {
+        sys_write(STDOUT_FD, ", ", 2);
+        fmt_int(_cc);
+        sys_write(STDOUT_FD, " commit-pinned", 14);
+    }
+    println("");
     return 0;
 }
 
 fn cmd_deps_verify(): i64 {
-    var buf = alloc(8192);
-    var n = file_read_all("cyrius.lock", buf, 8191);
+    # CVE-21 (v6.2.30): 64 KB read window (was 8 KB). The old 8 KB cap silently
+    # stopped verifying file-hash lines past the cutoff for any lock >8 KB
+    # (real downstream locks already exceed it) — and the commit-pin lines now
+    # prepended by cmd_deps_lock ate into that budget. Match _lock_commit_lookup.
+    var buf = alloc(65536);
+    var n = file_read_all("cyrius.lock", buf, 65535);
     if (n <= 0) {
         _err("no cyrius.lock found — run cyrius deps first");
         return 1;
@@ -1489,6 +1732,13 @@ fn cmd_deps_verify(): i64 {
     var fail = 0;
     var pos = 0;
     while (pos < n) {
+        # CVE-21 (v6.2.30): skip commit-pin lines ("commit\t<sha>\t...") — those
+        # are verified during resolution, not by this file-content-hash check.
+        if (pos + 7 <= n && memeq(buf + pos, "commit", 6) == 1 && load8(buf + pos + 6) == 9) {
+            while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+            pos = pos + 1;
+            continue;
+        }
         # Parse line: 64-char hash, 2 spaces, path, newline
         if (pos + 66 >= n) { break; }
         var expected_hash = buf + pos;

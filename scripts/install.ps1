@@ -25,6 +25,7 @@
 param(
     [string]$Tarball = "",
     [string]$Stage   = "",
+    [string]$Sha256  = "",
     [switch]$NoPath
 )
 $ErrorActionPreference = "Stop"
@@ -35,6 +36,28 @@ $CyriusHome = if ($env:CYRIUS_HOME) { $env:CYRIUS_HOME } else { Join-Path $env:U
 if (-not $Stage) {
     if (-not $Tarball) { throw "provide -Tarball <path.tar.gz> or -Stage <dir>" }
     if (-not (Test-Path $Tarball)) { throw "tarball not found: $Tarball" }
+
+    # CVE-21 (v6.2.30): verify the tarball checksum fail-closed before extract.
+    # Pre-fix install.ps1 had NO hash check. Accept an explicit -Sha256 <hex>,
+    # else a "<tarball>.sha256" sidecar (the release publishes one next to every
+    # artifact; sha256sum format is "<hex>  <name>" so take the first token).
+    # Refuse to extract an unverified tarball.
+    $expected = $Sha256
+    if (-not $expected) {
+        $sidecar = "$Tarball.sha256"
+        if (Test-Path $sidecar) {
+            $expected = ((Get-Content $sidecar -Raw).Trim() -split '\s+')[0]
+        }
+    }
+    if (-not $expected) {
+        throw "no checksum for $Tarball (pass -Sha256 <hex> or place $Tarball.sha256 beside it) - refusing to install unverified tarball"
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $Tarball).Hash
+    if ($actual -ine $expected) {
+        throw "checksum mismatch for $Tarball (expected $expected, got $actual) - aborting"
+    }
+    Write-Host "checksum verified"
+
     $tmp = Join-Path $env:TEMP ("cyrius-install-" + [System.Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     # tar.exe ships in System32 on Windows 10 1803+; the release tarball is .tar.gz.

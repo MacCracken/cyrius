@@ -67,6 +67,24 @@ info() { printf "  ${GREEN}>${RESET} %s\n" "$1"; }
 warn() { printf "  ${YELLOW}!${RESET} %s\n" "$1"; }
 err()  { printf "  ${RED}x${RESET} %s\n" "$1" >&2; exit 1; }
 
+# CVE-21 (v6.2.30): portable, fail-closed checksum verify. Returns 0 on a
+# verified match, non-zero on mismatch, and 2 when no SHA-256 tool exists (a
+# box that cannot verify must not silently install). $1 = a sha256sum-format
+# checksum file ("<hex>  <name>"); run from the directory holding the file.
+# macOS ships `shasum` not `sha256sum`, so the prior bare `sha256sum -c` would
+# fail there and fall through to the old "continuing anyway" path.
+_verify_checksum() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum -c "$1" > /dev/null 2>&1
+    elif command -v shasum > /dev/null 2>&1; then
+        shasum -a 256 -c "$1" > /dev/null 2>&1
+    elif command -v gsha256sum > /dev/null 2>&1; then
+        gsha256sum -c "$1" > /dev/null 2>&1
+    else
+        return 2
+    fi
+}
+
 # ── Detect platform ──
 
 case "$ARCH" in
@@ -359,20 +377,51 @@ installed=0
 _got_tarball=0
 if [ -n "${CYRIUS_INSTALL_TARBALL:-}" ] && [ -f "$CYRIUS_INSTALL_TARBALL" ]; then
     info "installing from local tarball: $CYRIUS_INSTALL_TARBALL"
+    # CVE-21 (v6.2.30): if a .sha256 sidecar sits next to the explicit local
+    # tarball, verify it fail-closed; absent a sidecar this trusted offline
+    # hook proceeds (it points at a file the operator built/placed themselves).
+    if [ -f "${CYRIUS_INSTALL_TARBALL}.sha256" ]; then
+        _lt_dir=$(dirname "$CYRIUS_INSTALL_TARBALL")
+        _lt_base=$(basename "$CYRIUS_INSTALL_TARBALL")
+        cd "$_lt_dir"
+        if _verify_checksum "${_lt_base}.sha256"; then
+            cd - > /dev/null
+            info "checksum verified (local sidecar)"
+        else
+            _lt_vc=$?
+            cd - > /dev/null
+            if [ "$_lt_vc" -eq 2 ]; then
+                err "no SHA-256 tool found (need sha256sum, shasum, or gsha256sum) — cannot verify $CYRIUS_INSTALL_TARBALL; refusing."
+            else
+                err "checksum mismatch for $CYRIUS_INSTALL_TARBALL — aborting."
+            fi
+        fi
+    fi
     cp "$CYRIUS_INSTALL_TARBALL" "$TMPDIR/$TARBALL"
     _got_tarball=1
 else
     info "downloading Cyrius ${VERSION}..."
     if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}" -o "$TMPDIR/$TARBALL" 2>/dev/null; then
-        # Verify checksum if available
-        if curl -sSfL "${DOWNLOAD_URL}/${TARBALL}.sha256" -o "$TMPDIR/checksum" 2>/dev/null; then
-            cd "$TMPDIR"
-            if sha256sum -c checksum > /dev/null 2>&1; then
-                info "checksum verified"
-            else
-                warn "checksum mismatch — continuing anyway"
-            fi
+        # CVE-21 (v6.2.30): the published .sha256 is REQUIRED and the match is
+        # fail-closed. Pre-fix this fetched the sidecar "if available" and on a
+        # mismatch printed "continuing anyway" then installed the tarball
+        # regardless — the advisory-integrity hole the sovereignty stance exists
+        # to remove. A missing sidecar or a mismatch now aborts the install.
+        if ! curl -sSfL "${DOWNLOAD_URL}/${TARBALL}.sha256" -o "$TMPDIR/checksum" 2>/dev/null; then
+            err "could not fetch ${TARBALL}.sha256 — refusing to install an unverified release (set CYRIUS_INSTALL_TARBALL=<local-tarball> for an explicit offline install)."
+        fi
+        cd "$TMPDIR"
+        if _verify_checksum checksum; then
             cd - > /dev/null
+            info "checksum verified"
+        else
+            _vc=$?
+            cd - > /dev/null
+            if [ "$_vc" -eq 2 ]; then
+                err "no SHA-256 tool found (need sha256sum, shasum, or gsha256sum) — cannot verify ${TARBALL}; refusing to install unverified."
+            else
+                err "checksum mismatch for ${TARBALL} — aborting (corrupted or tampered download)."
+            fi
         fi
         _got_tarball=1
     fi
@@ -452,8 +501,12 @@ if [ "$installed" -eq 0 ]; then
     # No tarball — bootstrap from source
     warn "no prebuilt release found, bootstrapping from source..."
     cd "$TMPDIR"
-    git clone --depth 1 --branch "$VERSION" "https://github.com/${REPO}.git" cyrius 2>/dev/null || \
-        git clone --depth 1 "https://github.com/${REPO}.git" cyrius
+    # CVE-21 (v6.2.30): clone the immutable tag ONLY. Pre-fix, a failed tag
+    # clone silently fell back to `git clone --depth 1` (the default branch /
+    # untrusted HEAD), so a missing/renamed/force-pushed tag installed `main`
+    # instead of the requested release. A tag-clone failure is now fatal.
+    git clone --depth 1 --branch "$VERSION" "https://github.com/${REPO}.git" cyrius 2>/dev/null \
+        || err "could not clone tag ${VERSION} from ${REPO} (refusing to fall back to the default branch — untrusted HEAD). Verify the tag exists."
     cd cyrius
 
     sh bootstrap/bootstrap.sh

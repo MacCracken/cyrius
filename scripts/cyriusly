@@ -54,7 +54,14 @@ case "${1:-help}" in
         # is consumed and discarded before the pipe). Pre-fix the
         # env var leaked into curl-only and `sh` ran install.sh
         # without seeing it → resolved "latest" from GitHub API.
-        curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh" | CYRIUS_VERSION="$2" sh
+        #
+        # CVE-21 (v6.2.30): fetch install.sh from the immutable TAG ($2),
+        # not the mutable `main` branch. Pre-fix, a main-branch compromise
+        # instantly hit every `cyriusly install` even when pinning a tag —
+        # the installer and the release it installs now come from the same
+        # immutable ref. ($2 is always a concrete version here; the empty
+        # check above already rejected the no-arg form.)
+        curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/$2/scripts/install.sh" | CYRIUS_VERSION="$2" sh
         ;;
 
     setup)

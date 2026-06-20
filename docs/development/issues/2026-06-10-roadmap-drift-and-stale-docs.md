@@ -16,12 +16,15 @@
 > (AGNOS-kernel goal now has a tracking home = bare-metal deliverable 7), RM-04
 > (rv64 hardware is in hand per user 2026-06-10 — dissolved, real-hardware gate
 > from the start), and RM-05 (cc3 contradiction fixed in roadmap_6.md +
-> roadmap-future.md; state.md "Next/Open" sections refreshed). **RM-02 remains
-> open**: the `threat-model.md` rewrite (libssl-default inverted, "No ASLR" vs
-> PIE, 131 KB vs 1 MB input, + the native-TLS Known Limitations) is a security
-> doc, not a roadmap doc — tracked in
-> [overdue-security-audit-cve-tail](2026-06-10-overdue-security-audit-cve-tail.md)
-> (Action 2). Archive this issue once RM-02 lands.
+> roadmap-future.md; state.md "Next/Open" sections refreshed). **RM-02 RESOLVED
+> (v6.2.30):** `threat-model.md` corrected — native TLS is the default backend
+> (since v6.1.21), PIE/ASLR ships (since v6.1.6), input buffer is 1 MB, the
+> Known-Limitations "No ASLR" row replaced, the libssl trust-boundary row flipped
+> to opt-in, and the CVE-20 binary-trust-root nuance added; last-reviewed →
+> v6.2.30. The README user-facing version/size/count stamp lag was also refreshed
+> this slot (→ v6.2.29 / 1,071,936 B / 99 modules / 190 tcyr / 92 gates). **All
+> RM items now resolved — archive this issue.** (Remaining user-facing lag =
+> guides + vidya stamps, tracked in doc-health.md, not an RM item.)
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Medium (doc-correctness, but high-leverage — it distorts v6.2.x

@@ -19,7 +19,7 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
 
       - name: Verify version consistency
         run: |
@@ -144,7 +144,7 @@ jobs:
           mkdir -p dist
           mv "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256" dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-x86_64
           path: dist/
@@ -155,7 +155,7 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
       - name: Install qemu-user
         run: |
           # Swap Azure Ubuntu mirror to canonical — azure.archive.ubuntu.com
@@ -207,7 +207,7 @@ jobs:
           mkdir -p dist
           mv "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256" dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-aarch64
           path: dist/
@@ -218,7 +218,7 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
 
       - name: Build macOS compiler + tools
         run: |
@@ -276,7 +276,7 @@ jobs:
           mkdir -p dist
           mv "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256" dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-macos
           path: dist/
@@ -295,7 +295,7 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
 
       - name: Build macOS arm64 tarball
         run: |
@@ -308,7 +308,7 @@ jobs:
           chmod +x build/cycc
           sh scripts/build-macos-arm64-tarball.sh dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-macos-arm64
           path: dist/
@@ -323,7 +323,7 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
 
       # v6.0.85: single source of truth — build-windows-tarball.sh is what both
       # this release job AND the `cyrius audit` cass install gate run, so the
@@ -335,7 +335,7 @@ jobs:
           chmod +x build/cycc
           sh scripts/build-windows-tarball.sh dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-windows
           path: dist/
@@ -346,29 +346,29 @@ jobs:
     needs: [build-x86, build-aarch64, build-macos, build-macos-arm64, build-windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-x86_64
           path: dist/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-aarch64
           path: dist/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-macos
           path: dist/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-macos-arm64
           path: dist/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (pinned 2026-06-19, latest-in-major)
         with:
           name: release-windows
           path: dist/
@@ -377,7 +377,7 @@ jobs:
         run: cp scripts/install.sh dist/
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (pinned 2026-06-19, latest-in-major)
         with:
           name: "Cyrius ${{ github.ref_name }}"
           generate_release_notes: true

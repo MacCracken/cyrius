@@ -62,5 +62,19 @@ full commit SHAs (comment naming the version).
 
 Filed 2026-06-10. Folds the aging CVE-12/13 from the archived audit. Run the
 overdue full audit before v6.2.0 (see
-[overdue-security-audit-cve-tail](2026-06-10-overdue-security-audit-cve-tail.md))
-and land the signing/attestation as v7 trust-story prerequisites.
+[overdue-security-audit-cve-tail](2026-06-10-overdue-security-audit-cve-tail.md)).
+
+**Scheduled as a 2-release arc (user 2026-06-19):**
+- **v6.2.30 — integrity + pinning:** flip `install.sh:373` warn→err + require
+  `.sha256` on the network path; add `.sha256` verify to `ci.sh` + `install.ps1`;
+  fetch the installer from `/refs/tags/<v>/` and make tag-clone failure fatal;
+  record the resolved **commit SHA** per dep in `cyrius.lock` + verify on
+  re-resolve (`cbt/deps.cyr`); pin all GitHub Actions to full commit SHAs; **+**
+  CVE-20 doc reframe (trust root = `build/cycc`, reframe CVE-12); **+** RM-02
+  threat-model.md fix + mabda 3.3.0→3.4.2 fold (packed into the same release).
+- **v6.2.31 — signing + reconstruction:** detached signing
+  (minisign/signify `SHA256SUMS` out-of-band, verified in all 3 installers,
+  closes CVE-13); periodic CI job reconstructing `cycc` from the seed
+  (seed→cybs→cycc) asserting equality with the committed `build/cycc` (makes the
+  CVE-20 trust root machine-derivable). *This was previously deferred to "v7
+  trust-story prerequisites"; pulled into v6.2.x per user direction.*

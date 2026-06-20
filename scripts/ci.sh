@@ -28,6 +28,35 @@ curl -sfL "$URL" -o "/tmp/$TARBALL" || {
     exit 1
 }
 
+# CVE-21 (v6.2.30): verify the published .sha256 sidecar fail-closed before
+# extracting. Pre-fix, ci.sh curl'd + untarred with NO integrity check at all —
+# a CI pipeline installing an unverified toolchain is the supply-chain hole the
+# sovereignty stance exists to remove. macOS runners ship `shasum`, not
+# `sha256sum`, so try both.
+echo "  verifying checksum..."
+curl -sfL "${URL}.sha256" -o "/tmp/${TARBALL}.sha256" || {
+    echo "error: could not fetch ${URL}.sha256 — refusing to install unverified tarball"
+    rm -f "/tmp/$TARBALL"
+    exit 1
+}
+(
+    cd /tmp
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum -c "${TARBALL}.sha256" > /dev/null 2>&1
+    elif command -v shasum > /dev/null 2>&1; then
+        shasum -a 256 -c "${TARBALL}.sha256" > /dev/null 2>&1
+    else
+        echo "error: no SHA-256 tool (sha256sum/shasum) — cannot verify" >&2
+        exit 1
+    fi
+) || {
+    echo "error: checksum mismatch (or no verifier) for $TARBALL — aborting"
+    rm -f "/tmp/$TARBALL" "/tmp/${TARBALL}.sha256"
+    exit 1
+}
+echo "  checksum verified"
+rm -f "/tmp/${TARBALL}.sha256"
+
 tar xzf "/tmp/$TARBALL" -C "$CYRIUS_HOME"
 rm -f "/tmp/$TARBALL"
 
