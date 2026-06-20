@@ -397,21 +397,43 @@ fn tls_native_set_entropy(rand_fn): i64 {
     return TLS_OK;
 }
 
-# CVE-18 (v6.1.36): wall-clock for cert-window validation. syscall(201, 0) is
-# time(2) on Linux; the backend ESYSXLAT-renumbers it per target (matches the
-# lib/tls.cyr wrapper's existing time source). v6.2.3: AGNOS has no time(2)
-# in its syscall surface — route to time_unix(#46, RTC-derived Unix seconds).
-# Returns 0 if the RTC is unreadable; sigil's _x509_in_window treats now==0 as
-# "skip the window check", so a dead RTC degrades to unchecked validity rather
-# than rejecting every cert. v6.2.4: a custom transport's now() (if installed)
-# takes precedence — the freestanding-TLS clock hook.
+# CVE-18 (v6.1.36): wall-clock for cert-window validation. Mirrors
+# lib/chrono.cyr's clock_epoch_secs — clock_gettime(CLOCK_REALTIME) (#228, which
+# the backend ESYSXLAT renumbers per target: a64-Linux 228→113, Darwin/Windows
+# rerouted). The earlier syscall(201,0)=time(2) was an x86-ONLY leak: 201 is NOT
+# in any ESYSXLAT table, so on aarch64 (and macOS arm64) svc x8=201 is listen(2),
+# returning a NEGATIVE errno that read as a pre-epoch "now" → every cert looked
+# not-yet-valid → CERT_INVALID. v6.2.3: AGNOS has no clock_gettime — route to
+# time_unix(#46, RTC-derived Unix seconds). Returns 0 if the RTC is unreadable;
+# sigil's _x509_in_window treats now==0 as "skip the window check", so a dead RTC
+# degrades to unchecked validity rather than rejecting every cert. v6.2.4: a
+# custom transport's now() (if installed) takes precedence — the freestanding-TLS
+# clock hook.
 fn _tn_now_unix(): i64 {
     if (_tn_tx_now != 0) { return fncall0(_tn_tx_now); }
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_time_unix();
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    return syscall(201, 0);
+    var ts[16];
+    #ifdef CYRIUS_TARGET_MACOS
+    # Darwin CLOCK_REALTIME=0; syscall(228) reroutes to _clock_gettime_nsec_np,
+    # which RETURNS ns since epoch (does not fill the buffer) → /1e9 = seconds.
+    return syscall(228, 0, &ts) / 1000000000;
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows has no clock_gettime — GetSystemTimeAsFileTime (PE reroute 0xF01B)
+    # fills a FILETIME (100ns ticks since 1601-01-01 UTC); /1e7 then subtract the
+    # 1601→1970 gap (11644473600 s) for Unix epoch seconds.
+    syscall(0xF01B, &ts);
+    return load64(&ts) / 10000000 - 11644473600;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_WIN
+    syscall(228, 0, &ts);   # 0 = CLOCK_REALTIME
+    return load64(&ts);
+    #endif
+    #endif
     #endif
 }
 

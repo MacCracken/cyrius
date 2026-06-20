@@ -1,17 +1,37 @@
 # aarch64 stdlib/codegen failures surfaced by the VR-01 full-tcyr-on-arm64 gate
 
-> **OPEN — a tracked aarch64-correctness arc.** v6.2.29 added the VR-01 gate that
-> runs the FULL .tcyr suite on real arm64 (the `aarch64-native` CI job) — the first
-> time on-hardware tcyr coverage existed beyond cycc self-host + funcgate. It
-> immediately measured a real debt: **9 of 190 tests fail on real aarch64** (verified
-> on pi, NOT just qemu — same cross-built binaries run natively). This is the exact
-> "found by ports/consumers" class. The user's call (2026-06-19) was: **ship the
-> gate now with these xfail'd + tracked, clear the debt as a follow-on arc.** They
-> are listed in the gate's `XFAIL` skip-list (`.github/workflows/ci.yml`,
-> `bare-metal`/`aarch64-native` job) — when one is fixed, remove it from that list
-> (the gate flags an unexpected PASS).
+> **MOSTLY RESOLVED (8 of 9 + the native-fork root cause) — gate HARD + GREEN on
+> real pi: 188 pass / 0 fail / 1 xfail / 1 skip.** v6.2.29's VR-01 gate measured a
+> real aarch64 debt; the user's call was to FIX THE WHOLE BATCH as the next release,
+> not soft-gate it. Done bar one:
+>
+> - **Class A — `main_aarch64_native.cyr` was a stale fork — FIXED.** It had zero
+>   annotation-token handling (124 lines behind the cross fork), so every
+>   annotation-using lib (bayan `#pure`, the `#derive` family) hit "unexpected enum"
+>   under the NATIVE compiler — the actual CI red, which my cross-compiler pi
+>   validation MISSED. Fixed by splicing the cross fork's pass-1 + pass-2 dispatch
+>   loops in wholesale (can't silently drift again). Self-hosts byte-identical.
+> - **Class B — 8 of 9 backend bugs FIXED** (root-caused by a 9-agent workflow, all
+>   the same x86-leak class). Verified on real pi:
+>   - `u128`, `hashmap_ext` (SIGILL/SIGSEGV): unguarded x86 `asm{}` in lib/bayan.cyr
+>     + lib/hashmap_fast.cyr emitted x86 bytes into aarch64 `.text` → `#ifdef
+>     CYRIUS_ARCH_X86` guard + portable fallbacks.
+>   - `process`, `io`, `syscalls_at_family`: missing aarch64-Linux ESYSXLAT renumbers
+>     (`src/backend/aarch64/emit.cyr`) — pipe 22→pipe2 59, flock 73→32, faccessat
+>     269→48 (+ `SYS_FACCESSAT 48→269` in syscalls_aarch64_linux.cyr).
+>   - `tls_native_scaffold`: `_tn_now_unix` x86-only `syscall(201)=time` → portable
+>     `clock_gettime`.
+>   - `math_inverse_trig`, `result_stdlib_pass2`: latent x86-exact TEST bugs
+>     (`#ifdef CYRIUS_ARCH_X86` guard on the x86-only ganita inverse-trig; portable
+>     `sys_getuid()` for the hardcoded `syscall(102)`).
+> - **The 1 remaining xfail — `fdlopen`** (see below). Its `dl_setjmp`/`dl_longjmp`
+>   need to be `#naked` register-param fns: on aarch64 the caller's sp is
+>   `x29 + frame_size` (not x86's fixed `rbp+16`), so a non-naked hardcoded-offset
+>   version corrupts the stack. Blocked by the v6.2.28 "no params on #naked" guard —
+>   a focused follow-up (relax the guard for register-passed params + the asm), NOT
+>   a rush. Gate `XFAIL="fdlopen"`.
 
-**Filed:** 2026-06-19 · **Parent:** v6.2.29 VR-01. **Severity:** P1.
+**Filed:** 2026-06-19 · **Parent:** v6.2.29 VR-01. **Severity:** P1 (mostly cleared).
 
 > **UPDATE (2026-06-19, post-cut): there are TWO distinct debt classes, and the
 > VR-01 CI gate is now SOFT (`ci.yml` aarch64-native tcyr step) until both clear.**

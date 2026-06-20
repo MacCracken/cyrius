@@ -72,9 +72,11 @@ assert_eq(load64(sm_null + 8), DynlibNotFound, "payload = DynlibNotFound");
 
 # ---- pwd ----
 
-# Get the calling uid via syscall(102) = getuid (x86_64) — present
-# on every Linux. Used to drive a self-lookup that's guaranteed Ok.
-var my_uid = syscall(102);
+# Get the calling uid via the portable sys_getuid() wrapper. (The old hardcoded
+# syscall(102) is the x86_64 getuid number; aarch64 getuid is 174 — the bare
+# number returned a bogus uid on arm, surfaced by the VR-01 arm-native gate.)
+# Used to drive a self-lookup that's guaranteed Ok.
+var my_uid = sys_getuid();
 
 test_group("pwd_getpwuid_r — Ok for caller's own uid");
 var pw1[56];

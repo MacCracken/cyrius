@@ -69,7 +69,16 @@ enum SysNr {
     SYS_SYMLINKAT = 36;     # → sys_symlink (AT_FDCWD)
     SYS_READLINKAT = 78;    # → sys_readlink (AT_FDCWD)
     SYS_FCHMODAT = 53;      # → sys_chmod (AT_FDCWD)
-    SYS_FACCESSAT = 48;     # → sys_access (AT_FDCWD)
+    # faccessat uses the X86 number 269 (not aarch64-native 48), renumbered
+    # 269→48 by ESYSXLAT — the aarch64-native 48 COLLIDES with ESYSXLAT's
+    # x86 shutdown(48→210) entry (lib/net.cyr issues raw x86 shutdown(48),
+    # added v6.2.10). A stdlib syscall(48) meant as faccessat was wrongly
+    # remapped to setsockopt(210) → -EBADF, so EVERY sys_access() check on
+    # native aarch64 returned -9. Same collision class as newfstatat(262→79)
+    # / utimensat(280→88) above. x86 faccessat(269) and aarch64 faccessat(48)
+    # share the (dirfd,path,mode) arg layout, so the 269→48 entry is a pure
+    # renumber. See feedback_aarch64_esysxlat_syscall_number_collision.
+    SYS_FACCESSAT = 269;    # x86 faccessat → ESYSXLAT 269→48 (collision-free)
     # v6.1.3 — at-family peers missing until now (kriya M2). linkat(37) +
     # renameat(38) are aarch64-native (no ESYSXLAT collision → pass through).
     SYS_LINKAT = 37;        # → sys_link (AT_FDCWD, flags=0)

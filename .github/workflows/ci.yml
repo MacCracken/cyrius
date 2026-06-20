@@ -575,20 +575,17 @@ jobs:
           export CYRIUS_HOME="$HOME/_fg_a64"
           sh scripts/funcgate-stage.sh build/cycc_native_a64 build/cyrius_a64 "$CYRIUS_HOME"
           sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_fg_a64_work" "$CYRIUS_HOME"
-      - name: Test suite (.tcyr) — full corpus on NATIVE arm64 (VR-01, v6.2.29 — SOFT)
+      - name: Test suite (.tcyr) — full corpus on NATIVE arm64 (VR-01)
         run: |
-          # The first on-hardware tcyr coverage beyond self-host + funcgate — the
-          # "found by ports/consumers" gap. Runs the full corpus through the NATIVE
-          # cycc_native_a64 (what ARM users actually run) and executes natively.
-          # SOFT for now (see the exit logic below): it surfaced that the native
-          # aarch64 compiler lags the cross-compiler, a debt too large to hard-gate
-          # yet. SKIP = x86-only by design; XFAIL = the cross-compiler's known
-          # failures (under-counts the native fork). All tracked in
+          # The first on-hardware tcyr coverage beyond self-host + funcgate — runs
+          # the full corpus through the NATIVE cycc_native_a64 (what ARM users
+          # actually run) and executes natively. HARD. SKIP = x86-only by design;
+          # XFAIL = backend bugs tracked in
           # docs/development/issues/2026-06-19-aarch64-tcyr-failures.md.
           chmod +x a64/cycc_native_a64
           CC=a64/cycc_native_a64
           SKIP="math_pack_integration"
-          XFAIL="hashmap_ext process math_inverse_trig u128 fdlopen io result_stdlib_pass2 syscalls_at_family tls_native_scaffold"
+          XFAIL="fdlopen"
           pass=0; fail=0; xfail=0; xpass=0; skip=0
           for t in tests/tcyr/*.tcyr; do
             name=$(basename "$t" .tcyr)
@@ -610,15 +607,7 @@ jobs:
             fi
           done
           echo "tcyr-native: $pass pass / $fail fail / $xfail xfail / $xpass xpass / $skip skip (of $(ls tests/tcyr/*.tcyr | wc -l))"
-          # SOFT GATE (v6.2.29): the NATIVE aarch64 compiler (cycc_native_a64, from
-          # main_aarch64_native.cyr) LAGS the cross-compiler (cycc_aarch64) — it can't
-          # yet compile several stdlib-feature tests (derive / bayan / serde), and the
-          # XFAIL list above was measured with the cross-compiler so it under-counts.
-          # That stale-native-fork debt (tracked in 2026-06-19-aarch64-tcyr-failures.md)
-          # is too large to hard-gate today. Report loudly, do NOT block CI. Flip back
-          # to `test $fail -eq 0` once the native fork reaches cross-compiler parity.
-          if [ $fail -gt 0 ]; then echo "::warning::VR-01 SOFT: $fail aarch64-native failures — non-blocking, tracked (native fork lags cross)"; fi
-          exit 0
+          test $fail -eq 0
 
   # ── macOS Mach-O ──
   macho:

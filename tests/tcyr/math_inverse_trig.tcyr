@@ -28,6 +28,11 @@ fn near(a, b) {
 var F64_PI_6 = 0x3FE0_C152_382D_7365;   # π/6
 var F64_PI_3 = 0x3FF0_C152_382D_7365;   # π/3
 
+# v6.2.x: ganita_f64_asin/acos/atan2 are #ifdef CYRIUS_ARCH_X86 in lib/ganita.cyr
+# (they build on the x86-only f64_atan / x87 fpatan; an aarch64 polyfill is a
+# reserved future stdlib slot). Guard the test to match — surfaced by the VR-01
+# arm-native tcyr gate (the unguarded calls became udf #0 → SIGILL on aarch64).
+#ifdef CYRIUS_ARCH_X86
 test_group("asin");
 assert_eq(near(ganita_f64_asin(0),        0),        1, "asin(0) = 0");
 assert_eq(near(ganita_f64_asin(F64_ONE),  F64_PI_2), 1, "asin(1) = π/2");
@@ -70,6 +75,7 @@ assert_eq(near(ganita_f64_atan2(0, F64_ONE),          0),      1,
           "atan2(0, +x) = 0");
 assert_eq(near(ganita_f64_atan2(0, f64_neg(F64_ONE)), F64_PI), 1,
           "atan2(0, −x) = π");
+#endif
 
 var _exit_code = assert_summary();
 syscall(60, _exit_code);
