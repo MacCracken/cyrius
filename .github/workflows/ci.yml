@@ -247,6 +247,14 @@ jobs:
           env CYRIUS_TARGET_WIN=1 ./build/cycc < cbt/cyrius.cyr > /tmp/cli_win   && chk PE          /tmp/cli_win   4d5a
           env CYRIUS_MACHO=1      ./build/cycc < cbt/cyrius.cyr > /tmp/cli_macho && chk Mach-O      /tmp/cli_macho cffa
           ./build/cycc_aarch64               < cbt/cyrius.cyr > /tmp/cli_a64   && chk aarch64-ELF /tmp/cli_a64   7f45
+          # v6.2.32: also exercise the main_win.cyr PE DRIVER (cc_win) compiling a
+          # bayan/annotation-bearing program — the exact path the v6.2.31 windows
+          # tarball break slipped through. The gate above uses the x86 frontend
+          # (CYRIUS_TARGET_WIN=1), NOT main_win.cyr; main_win.cyr had dropped the
+          # 122/124/125/126/127 annotation tokens, so cyrsign→bayan hit "unexpected
+          # enum" only when built via cc_win (release-only, never per-PR).
+          cat src/main_win.cyr | ./build/cycc > /tmp/cc_win && chmod +x /tmp/cc_win
+          cat programs/cyrsign.cyr | /tmp/cc_win > /tmp/cyrsign_pe && chk cyrsign-via-cc_win /tmp/cyrsign_pe 4d5a
       - name: Regression — _cyrius_init STB_GLOBAL in object; mode (v5.4.9)
         run: |
           # Mabda's GPU integration links a cyrius `.o` into a

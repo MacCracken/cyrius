@@ -526,7 +526,20 @@ while (scan == 1) {
                         # pass 2 re-reads the same token stream and arms the pending flag
                         # then. (v4.8.4-alpha4 kept the pass-1 consume unchanged so a
                         # stale flag can't leak from pass 1 into pass 2.)
-                        else { if (PEEKT(S) == 109 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked consume (defensive — #naked is bare-metal-ELF-only, never PE, but the fork-desync lesson says mirror the token in every fork's pass-1)
+                        # v6.2.32: full annotation-token set consumed in pass 1 —
+                        # 109 #regalloc / 122 #must_use / 124 #deprecated / 125 #pure /
+                        # 126 #io / 127 / 133 #naked. main_win.cyr previously consumed
+                        # only 109+133, so a PE consumer of an annotation-bearing lib
+                        # (bayan via cyrsign) hit "unexpected enum" — the next enum went
+                        # unregistered. The other 5 forks already had the full set;
+                        # this is the last fork to mirror it. See project_v622_annotation_fork_desync.
+                        else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 124 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133) {
+                                    if (PEEKT(S) == 124) {
+                                        # #deprecated carries an optional ("message") — consume it so it can't dangle.
+                                        STI(S, GTI(S) + 1);
+                                        if (PEEKT(S) == 10) { STI(S, GTI(S) + 1); if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); } if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); } }
+                                    } else { STI(S, GTI(S) + 1); }
+                                }
                             else { if (PEEKT(S) == 32) {
                                     # Skip fn definition (just advance past it)
                                     STI(S, GTI(S) + 1);  # consume FN
@@ -702,7 +715,19 @@ while (topgo == 1) {
                             # definition picks it up in REGFN. PARSE_FN_DEF transfers the flag
                             # to fn_regalloc[fi] and clears _regalloc_pending. The DCE stub
                             # path below also clears the flag (dead fns don't need tracking).
-                            else { if (PEEKT(S) == 109) { _regalloc_pending = 1; STI(S, GTI(S) + 1); }
+                            # v6.2.32: full annotation-token set consumed in pass 2 too
+                            # (see the pass-1 note). PE keeps 109 → _regalloc_pending;
+                            # 122/124/125/126/127/133 are consume-and-ignore (their opts/
+                            # diagnostics are gated off on the PE backend, CO-03) — the
+                            # point is to keep the token stream in sync so the next enum
+                            # registers. #deprecated (124) consumes its optional ("msg").
+                            else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 124 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133) {
+                                    if (PEEKT(S) == 109) { _regalloc_pending = 1; }
+                                    if (PEEKT(S) == 124) {
+                                        STI(S, GTI(S) + 1);
+                                        if (PEEKT(S) == 10) { STI(S, GTI(S) + 1); if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); } if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); } }
+                                    } else { STI(S, GTI(S) + 1); }
+                                }
                                 else { if (PEEKT(S) == 32) {
                                         # DCE: check bitmap for reference to this function name.
                                         # Skip DCE for module-scoped or underscore-named functions.
