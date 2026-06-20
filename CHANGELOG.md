@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.31] — 2026-06-20
+
+**v6.2.31 — CVE-20/21 trust-chain integrity, part 2: sovereign release signing +
+trust-root attestation.** Closes the CVE-20/21 arc inside v6.2.x with cyrius's
+OWN crypto — no external `minisign`/`gpg`. cycc **byte-identical** (1,071,936 B —
+every change is a new program / scripts / CI / docs / the sigil re-fold; nothing
+touches `src/`); check.sh **92/92**; self_compile ~513 ms (flat); cross-OS
+pi/ecb/cass `SELFHOST_OK`. Two-round adversarial review (33 agents): **10 findings
+fixed**, 1 hardening follow-on filed.
+
+### Security — CVE-13 CLOSED (releases are now signed, sovereignly)
+- **`cyrsign`** (`programs/cyrsign.cyr`) — a standalone Ed25519
+  signer/verifier over **sigil's in-tree curve** (`keygen` / `sign` / `verify`).
+  Builds + signs/verifies on all four targets (ELF / PE / Mach-O / aarch64), 0
+  undefined-fn warnings. Fails closed on a CSPRNG failure (never emits a
+  zero key); secret read from `$CYRIUS_RELEASE_SK` (off-argv); secret material
+  in `secret var` (zeroized).
+- **Release CI signs** `SHA256SUMS` with the just-built cyrsign and **self-verifies**
+  against the committed public key before publishing; **fail-closed** if
+  `CYRIUS_RELEASE_SK` is unset (no silent unsigned publish). cyrsign now ships in
+  **all five** release tarballs (closed the verify≠ship gap on aarch64-linux +
+  x86-macOS).
+- **All three installers** (`install.sh` / `ci.sh` / `install.ps1`) verify the
+  Ed25519 signature on the **upgrade/CI path** (using a trusted *pre-existing*
+  cyrsign — never the one inside the tarball being installed), fail-closed;
+  first-install floor stays HTTPS + `.sha256` (TOFU). Public key committed at
+  `keys/cyrius-release.ed25519.pub` + embedded in the installers; manual path is
+  `cyrsign verify`.
+- **sigil 3.9.2** folded — routed luks's two raw `getrandom` syscalls through
+  sigil's portable `_sigil_random_fill` (per-target getrandom/getentropy/
+  **ProcessPrng**), which is what unblocked cyrsign on PE (Windows). Re-folded
+  byte-identical.
+
+### Security — CVE-20 interim attestation (scope-honest)
+- **`trust-root-attest`** CI job (`scripts/build-cycc-verify.sh`): asserts the
+  committed `build/cycc` is a byte-identical **self-host fixpoint** (compiles its
+  own source → fixpoint → equals the committed binary). This catches accidental
+  **artifact drift** + non-self-reproducing tampering. It does **NOT** defeat a
+  self-reproducing (Thompson "trusting-trust") tamper — the committed binary is
+  its own root. Full trusting-trust resistance needs an independent root: the
+  literal `seed → cybs → bridge → cycc` derivation, tracked as a separate
+  bridge-restoration arc (user-prioritized before the deps-modules item). Docs
+  (SECURITY.md / README / threat-model) reframed accordingly.
+
+### Fixed (adversarial review)
+- cyrsign: keygen fail-closed on entropy failure (was a silent all-zero key);
+  exact-64-byte signature read (was silently truncating); OOM-guard the file
+  read; secret-var zeroization of the seed/expanded key.
+- release CI: ship cyrsign on all 5 platforms; fail-closed on missing signing key.
+- Corrected the CVE-20 attestation overclaim (it is fixpoint/drift, not "diverse
+  double compilation" / "tamper cannot match source") across ci.yml + 3 docs.
+- Filed the client-side anti-downgrade floor (rollback protection) as a P3
+  hardening follow-on (`2026-06-20-signature-downgrade-floor.md`).
+
 ## [6.2.30] — 2026-06-20
 
 **v6.2.30 — CVE-21 trust-chain integrity, part 1: fail-closed release path + immutable pins.**
