@@ -1710,12 +1710,19 @@ fn PARSE_VAR(S): i64 {
         if (sid > 0) { PARSE_STRUCT_INIT(S, noff, sid); return 0; }
     }
     if (infn == 1) {
-        # local scalar (only reached in pass B during fn compilation)
+        # local scalar. [grow] FLAT local scope: a redeclared name (cyrius permits
+        # it across mutually-exclusive blocks — e.g. FIXUP's `var totvar` in BOTH
+        # the object-mode branch and the main path) must REUSE its slot. Else the
+        # init writes a fresh slot while later reads (FINDLOCAL = first match) hit
+        # the original slot -> uninitialized stack garbage. Find-or-allocate.
         PARSE_EXPR(S);
-        var li = GFLC(S);
-        S64(S + 0x5078000 + li * 8, noff);
+        var li = FINDLOCAL(S, noff);
+        if (li < 0) {
+            li = GFLC(S);
+            S64(S + 0x5078000 + li * 8, noff);
+            SFLC(S, li + 1);
+        }
         EFLSTORE(S, li);
-        SFLC(S, li + 1);
     } else {
         if (pass == 1) {
             # pass A: register the global (name + 8-byte slot); skip its init expr.
