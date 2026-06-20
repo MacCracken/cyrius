@@ -2098,6 +2098,36 @@ lexer_id_end:
     pop rcx
     je lexer_id_is_enum
 
+    # for (brick)
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFF
+    push rbx
+    mov rbx, 0x00726F66    # for
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_for
+
+    # break / continue (brick)
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFFFFFF
+    push rbx
+    mov rbx, 0x006B61657262   # break
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_break
+    push rcx
+    mov rcx, rax
+    push rbx
+    mov rbx, 0x65756E69746E6F63  # continue (full 8 bytes)
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_continue
+
     # load/store 16/32/64 (brick)
     push rcx
     mov rcx, rax
@@ -2223,6 +2253,19 @@ lexer_id_is_store32:
     jmp lexer_loop
 lexer_id_is_store64:
     mov rax, 65
+    call lexer_emit_kw
+    jmp lexer_loop
+
+lexer_id_is_for:
+    mov rax, 53
+    call lexer_emit_kw
+    jmp lexer_loop
+lexer_id_is_break:
+    mov rax, 54
+    call lexer_emit_kw
+    jmp lexer_loop
+lexer_id_is_continue:
+    mov rax, 55
     call lexer_emit_kw
     jmp lexer_loop
 
@@ -2626,8 +2669,14 @@ parse_statement:
     je parse_if_stmt
     cmp rax, 16          # WHILE
     je parse_while_stmt
+    cmp rax, 53          # FOR
+    je parse_for_stmt
     cmp rax, 33          # RETURN
     je parse_return_stmt
+    cmp rax, 54          # BREAK
+    je parse_break_stmt
+    cmp rax, 55          # CONTINUE
+    je parse_continue_stmt
 
     # expression statement: syscall(...); store8(...); etc.
     cmp rax, 24          # SYSCALL
@@ -3128,6 +3177,10 @@ parse_while_stmt:
     jne parse_err
     inc r11
 
+    # loop_push: continue -> loop_top (re-check cond)
+    mov rax, r9
+    call loop_push
+
     # parse body
     call parse_program
 
@@ -3145,11 +3198,308 @@ parse_while_stmt:
     mov rax, r8
     call patch_rel32
 
+    # loop_pop: patch breaks -> here (loop exit)
+    call loop_pop
+
     # restore last_var_idx
     mov rsi, r15
     add rsi, 0x92008
     mov [rsi], rbx
 
+    pop rbx
+    pop r9
+    pop r8
+    ret
+
+# ── for/break/continue brick: loop-context stack ──
+# Loop stack @ 0x94000 (zero-init by brk): loop_sp · 0x94008 cont_tgt[16]
+#   · 0x94088 brk_base[16] · 0x94108 brk_cnt · 0x94110 brk_patches[512]
+# emit_jmp0: emit "jmp rel32" placeholder, return patch offset in rax.
+emit_jmp0:
+    push rsi
+    push rbx
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0xE9
+    mov [rsi], rax
+    inc r13
+    mov rbx, r13
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    xor rax, rax
+    mov [rsi], rax
+    add r13, 4
+    mov rax, rbx
+    pop rbx
+    pop rsi
+    ret
+
+# loop_push: rax = continue target. Push a loop frame.
+loop_push:
+    push rcx
+    push rdx
+    push rsi
+    mov rsi, r15
+    add rsi, 0x94000
+    mov rcx, [rsi]       # sp
+    mov rdx, rcx
+    shl rdx, 3
+    mov rsi, r15
+    add rsi, 0x94008
+    add rsi, rdx
+    mov [rsi], rax       # cont_tgt[sp] = target
+    mov rsi, r15
+    add rsi, 0x94108
+    mov rax, [rsi]       # brk_cnt
+    mov rsi, r15
+    add rsi, 0x94088
+    add rsi, rdx
+    mov [rsi], rax       # brk_base[sp] = brk_cnt
+    inc rcx
+    mov rsi, r15
+    add rsi, 0x94000
+    mov [rsi], rcx       # sp++
+    pop rsi
+    pop rdx
+    pop rcx
+    ret
+
+# loop_pop: patch all break jumps of innermost loop to here, pop frame.
+loop_pop:
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push r8
+    mov rsi, r15
+    add rsi, 0x94000
+    mov rcx, [rsi]
+    sub rcx, 1           # rcx = sp (innermost frame)
+    mov rdx, rcx
+    shl rdx, 3
+    mov rsi, r15
+    add rsi, 0x94088
+    add rsi, rdx
+    mov r8, [rsi]        # r8 = base (counter)
+    mov rsi, r15
+    add rsi, 0x94108
+    mov rdx, [rsi]       # rdx = cnt
+loop_pop_patch:
+    cmp r8, rdx
+    jge loop_pop_done
+    push rdx
+    mov rdx, r8
+    shl rdx, 3
+    mov rsi, r15
+    add rsi, 0x94110
+    add rsi, rdx
+    mov rax, [rsi]       # brk_patches[i]
+    pop rdx
+    push rdx
+    push r8
+    call patch_rel32
+    pop r8
+    pop rdx
+    inc r8
+    jmp loop_pop_patch
+loop_pop_done:
+    mov rdx, rcx
+    shl rdx, 3
+    mov rsi, r15
+    add rsi, 0x94088
+    add rsi, rdx
+    mov rax, [rsi]       # base
+    mov rsi, r15
+    add rsi, 0x94108
+    mov [rsi], rax       # brk_cnt = base
+    mov rsi, r15
+    add rsi, 0x94000
+    mov [rsi], rcx       # loop_sp = sp
+    pop r8
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
+    ret
+
+# emit_break: emit jmp placeholder, record in brk_patches.
+emit_break:
+    push rcx
+    push rdx
+    push rsi
+    call emit_jmp0       # rax = patch
+    mov rsi, r15
+    add rsi, 0x94108
+    mov rcx, [rsi]       # cnt
+    mov rdx, rcx
+    shl rdx, 3
+    mov rsi, r15
+    add rsi, 0x94110
+    add rsi, rdx
+    mov [rsi], rax       # brk_patches[cnt] = patch
+    inc rcx
+    mov rsi, r15
+    add rsi, 0x94108
+    mov [rsi], rcx       # brk_cnt++
+    pop rsi
+    pop rdx
+    pop rcx
+    ret
+
+# emit_continue: emit jmp to innermost loop's continue target.
+emit_continue:
+    push rax
+    push rcx
+    push rsi
+    mov rsi, r15
+    add rsi, 0x94000
+    mov rcx, [rsi]
+    sub rcx, 1
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x94008
+    add rsi, rcx
+    mov rax, [rsi]       # cont_tgt[sp]
+    call emit_jmp_to
+    pop rsi
+    pop rcx
+    pop rax
+    ret
+
+# break; / continue; statement handlers
+parse_break_stmt:
+    inc r11              # consume BREAK
+    call emit_break
+    call peek_tok_type
+    cmp rax, 5           # SEMI
+    jne parse_err
+    inc r11
+    ret
+parse_continue_stmt:
+    inc r11              # consume CONTINUE
+    call emit_continue
+    call peek_tok_type
+    cmp rax, 5           # SEMI
+    jne parse_err
+    inc r11
+    ret
+
+# for-loop step: IDENT = EXPR  (assignment, no trailing ;)
+parse_for_step:
+    push r8
+    push r9
+    call peek_tok_value
+    mov r8, rax
+    inc r11              # consume IDENT
+    call peek_tok_type
+    cmp rax, 4           # EQ
+    jne parse_err
+    inc r11
+    call parse_expr      # value -> rax
+    push rax
+    mov rsi, r15
+    add rsi, 0x93818     # in_function
+    mov rax, [rsi]
+    cmp rax, 1
+    pop rax
+    je parse_for_step_local
+    push rax
+    mov rax, r8
+    call find_var_index
+    mov r9, rax
+    pop rax
+    mov rax, r9
+    call emit_var_store
+    push rsi
+    mov rsi, r15
+    add rsi, 0x92008
+    mov [rsi], r9
+    pop rsi
+    pop r9
+    pop r8
+    ret
+parse_for_step_local:
+    push rax
+    mov rax, r8
+    call find_fn_local_index
+    mov r9, rax
+    pop rax
+    mov rax, r9
+    call emit_fn_var_store
+    pop r9
+    pop r8
+    ret
+
+# for (INIT; COND; STEP) { BODY } — no-token-replay lowering.
+# Temps @ 0x94B10 cp_cond · 0x94B18 body_skip · 0x94B20 cp_step (live only across
+# the non-nested STEP region; the body re-reads cp_step from the loop stack).
+parse_for_stmt:
+    push r8              # r8 = exit_patch (survives body via nested push)
+    push r9
+    push rbx            # rbx = saved last_var_idx
+    inc r11              # consume FOR
+    mov rsi, r15
+    add rsi, 0x92008
+    mov rbx, [rsi]
+    call peek_tok_type
+    cmp rax, 10          # (
+    jne parse_err
+    inc r11
+    call parse_statement # INIT (consumes its own ;)
+    mov rsi, r15
+    add rsi, 0x94B10
+    mov [rsi], r13       # cp_cond = r13
+    call parse_or_value  # COND -> 0/1
+    call emit_cmp_rax_0
+    mov rax, 0x84        # je exit
+    call emit_jcc
+    mov r8, rax          # exit_patch
+    call peek_tok_type
+    cmp rax, 5           # ;
+    jne parse_err
+    inc r11
+    call emit_jmp0       # body_skip
+    mov rsi, r15
+    add rsi, 0x94B18
+    mov [rsi], rax
+    mov rsi, r15
+    add rsi, 0x94B20
+    mov [rsi], r13       # cp_step = r13
+    call parse_for_step  # STEP (no ;)
+    call peek_tok_type
+    cmp rax, 11          # )
+    jne parse_err
+    inc r11
+    mov rsi, r15
+    add rsi, 0x94B10
+    mov rax, [rsi]
+    call emit_jmp_to     # jmp cp_cond
+    mov rsi, r15
+    add rsi, 0x94B18
+    mov rax, [rsi]
+    call patch_rel32     # body starts here
+    call peek_tok_type
+    cmp rax, 13          # {
+    jne parse_err
+    inc r11
+    mov rsi, r15
+    add rsi, 0x94B20
+    mov rax, [rsi]
+    call loop_push       # continue -> cp_step
+    call parse_program   # BODY
+    call peek_tok_type
+    cmp rax, 14          # }
+    jne parse_err
+    inc r11
+    call emit_continue   # after body, jmp cp_step (from loop stack)
+    mov rax, r8
+    call patch_rel32     # patch exit
+    call loop_pop        # breaks -> here
+    mov rsi, r15
+    add rsi, 0x92008
+    mov [rsi], rbx
     pop rbx
     pop r9
     pop r8
