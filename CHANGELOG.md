@@ -8,37 +8,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.2.29] — 2026-06-19
 
-**v6.2.29 — VR-01/VR-02 verification fold** (from `2026-06-10-verification-coverage-gaps`).
-Closes the gaps that let real breaks slip through to consumers (the .25 Windows
-break, the macOS rot). **No `src/` change** — cycc flat at 1,071,888 B; this is
-tests/gates/CI. check.sh **90 → 92 gates**.
+**v6.2.29 — VR-01/VR-02 verification fold + the aarch64-correctness batch it forced.**
+The verification fold (from `2026-06-10-verification-coverage-gaps`) closes the gaps
+that let real breaks reach consumers (the .25 Windows break, the macOS rot) — and its
+new VR-01 gate immediately did its job: running the full `.tcyr` suite on REAL arm64
+surfaced that the language was effectively **broken on ARM**. The whole batch was
+fixed IN-SLOT (the gate's first red run is what tied it to .29). cycc
+**1,071,888 → 1,071,936 B** (+48 — the only x86-compiler change is the `#naked`
+register-param gate in `parse_fn.cyr`). check.sh **90 → 92 gates**; the arm-native
+gate is HARD + GREEN — **189 pass / 0 fail / 0 xfail / 1 skip** on real pi.
 
-- **VR-02 — `cyrius fuzz` is now a gate.** It ran the `fuzz/*.fcyr` harnesses but
-  was wired into NO standing gate (vestigial, free to rot). Added a check.sh gate
-  (`_fuzz_harness_gate`, asserts exit 0 + "0 failed") AND a per-PR ci.yml step.
-- **CLI cross-compile gate — the exact .25-class hole.** The CLI (`cbt/cyrius.cyr`)
-  is cross-compiled to PE/Mach-O/aarch64 only at release-tarball time; the .25 break
-  (a raw `SYS_GETDENTS64` pulled into the CLI via a lib include) proved check.sh's
-  cross-OS gate self-hosts *cycc* but never the *CLI*. New gate (check.sh
-  `_cli_cross_compile_gate` + a ci.yml step) pipes `cbt/cyrius.cyr` through each
-  cross target and asserts valid magic (PE `4d5a` / Mach-O `cffa` / ELF `7f45`).
-- **VR-01 — the full `.tcyr` suite now runs on REAL arm64** (the `aarch64-native`
-  CI job, native `cycc_native_a64`). First on-hardware tcyr coverage beyond
-  self-host + funcgate — and it immediately did its job: **of 190 tests, 180 pass,
-  but 9 fail on real arm64** (verified on pi, not qemu), incl. **4 crashes**
-  (`hashmap_ext`/`process` SIGSEGV, `math_inverse_trig`/`u128` SIGILL). The exact
-  "found by ports" class. Per the user's call, the gate ships now over the 180
-  passing (anti-rot value immediately), with the 9 **xfail'd + tracked**
-  (`issues/2026-06-19-aarch64-tcyr-failures.md` — clear as a follow-on arc; the
-  gate flags an unexpected PASS) and the 1 x86-only test (`math_pack_integration`,
-  uses `f64_sin`) skip-listed.
-  - **Fixed in-slot:** `math` (the log2 assertions truncated the aarch64
-    `ln/ln2` polyfill's 2.999… where x86's exact `fyl2x` gave 3 — wrapped in
-    `f64_round`); `naked_fn_attribute` (my .28 test hardcoded x86 `iretq` →
-    arch-conditional `iretq`/`eret`).
-  - **Real-hardware validation mattered:** qemu masked a failure (a data-file
-    staging artifact) AND falsely failed a qemu-only artifact — neither would have
-    produced a correct gate from the qemu sweep alone. The XFAIL list is pi-verified.
+- **VR-02 — `cyrius fuzz` is now a gate** (check.sh `_fuzz_harness_gate` + a ci.yml
+  step; was vestigial, free to rot).
+- **CLI cross-compile gate — the exact .25-class hole** (check.sh
+  `_cli_cross_compile_gate` + a ci.yml step): pipes `cbt/cyrius.cyr` through
+  PE/Mach-O/aarch64 and asserts magic (`4d5a`/`cffa`/`7f45`). check.sh's cross-OS gate
+  self-hosted *cycc* but never the *CLI* — the surface the .25 raw-`SYS_GETDENTS64`
+  break slipped through.
+- **VR-01 — the full `.tcyr` suite now runs on REAL arm64** (the `aarch64-native` CI
+  job, native `cycc_native_a64`). First on-hardware tcyr coverage beyond self-host +
+  funcgate. It measured a real debt and the batch CLEARED it. The validation lesson:
+  the first pass validated with the x86-hosted CROSS compiler, which masked the
+  biggest bug — always run the native binary ARM users actually run.
+
+  **The aarch64-correctness batch (all fixed in-slot):**
+  - **Root cause — `main_aarch64_native.cyr` was a stale 6th fork**, 124 lines behind
+    the cross fork with ZERO annotation handling. Every annotation-using lib (bayan
+    `#pure`, the `#derive` family) hit "unexpected enum" under the native compiler —
+    the actual CI red. Fixed by splicing the cross fork's pass-1/pass-2 dispatch loops
+    in wholesale (can't silently drift again); self-hosts byte-identical.
+  - **9 backend bugs (the x86-leak class):** unguarded x86 `asm{}` in
+    `lib/hashmap_fast.cyr` + bayan's u128 ops emitted x86 bytes into aarch64 `.text`
+    (SIGILL/SIGSEGV) → `#ifdef CYRIUS_ARCH_X86` guards + portable fallbacks; missing
+    aarch64-Linux ESYSXLAT renumbers (`backend/aarch64/emit.cyr`: pipe 22→pipe2 59,
+    flock 73→32, faccessat 269→48) for `process`/`io`/`syscalls_at_family`;
+    `tls_native_scaffold` x86-only `syscall(201)=time` → `clock_gettime`; two x86-exact
+    TEST bugs — `math`/`math_inverse_trig` (polyfill rounding / `#ifdef` guard on the
+    x86-only ganita inverse-trig) and `result_stdlib_pass2` (hardcoded
+    `syscall(102)`→`sys_getuid()`).
+  - **`fdlopen` — aarch64 setjmp/longjmp.** `dl_setjmp`/`dl_longjmp` rewritten as
+    `#naked` register-param fns: no prologue, so at entry `x0`/`rdi`=buf and the live
+    sp + return address ARE the caller's (aarch64's caller-sp is `x29+frame_size`, not
+    x86's fixed `rbp+16` — no framed version can capture it). This earned a real
+    feature: **`#naked` now supports up to 6 register-passed parameters** (`parse_fn.cyr`
+    gates the param-home store + relaxes the .28 "no params on #naked" guard).
+  - **bayan u128 fix, source-first (no fold-lag):** fixed in the bayan source repo
+    (`src/u128.cyr`), **released as bayan 1.0.2**, and re-folded into `lib/bayan.cyr`
+    via `cyrius distlib`. u128 118/0 on both arches.
+  - The 1 skip is `math_pack_integration` (x86-only `f64_sin` by compiler design).
+  - **Real-hardware validation mattered:** qemu masked a real failure AND falsely
+    failed a qemu-only artifact — neither would have produced a correct gate from the
+    qemu sweep alone. The result is pi-verified.
 
 ## [6.2.28] — 2026-06-19
 
