@@ -1083,7 +1083,10 @@ fn PARSE_TERM(S): i64 {
     return 0;
 }
 
-fn PARSE_EXPR(S): i64 {
+# [grow] Renamed from PARSE_EXPR: the additive + bitwise level (+ - & | ^).
+# The new top-level PARSE_EXPR below layers comparison / && / || on top so that
+# comparisons and logical ops produce VALUES (0/1) usable in any expression.
+fn PARSE_ADD(S): i64 {
     PARSE_TERM(S);
     var go = 1;
     while (go == 1) {
@@ -1108,6 +1111,81 @@ fn PARSE_EXPR(S): i64 {
                         }
                         else { go = 0; }
                     } } } }
+    }
+    return 0;
+}
+
+# [grow] cmp rax,rcx already done by caller; set rax = (cc) ? 1 : 0 via setcc + movzx.
+# op: 17 == / 18 != / 19 < / 20 > / 21 <= / 22 >= (signed).
+fn ESETCC(S, op): i64 {
+    if (op == 17) { E3(S, 0xC0940F); }       # sete  al
+    else { if (op == 18) { E3(S, 0xC0950F); }   # setne al
+    else { if (op == 19) { E3(S, 0xC09C0F); }   # setl  al
+    else { if (op == 20) { E3(S, 0xC09F0F); }   # setg  al
+    else { if (op == 21) { E3(S, 0xC09E0F); }   # setle al
+    else { E3(S, 0xC09D0F); } } } } }            # setge al
+    E3(S, 0xC0B60F);                              # movzx eax, al  (zero-extends to rax)
+    return 0;
+}
+
+# [grow] comparison level: ADD [ (==|!=|<|>|<=|>=) ADD ] -> 0/1 value.
+fn PARSE_CMP(S): i64 {
+    PARSE_ADD(S);
+    var op = PEEKT(S);
+    if (op >= 17) { if (op <= 22) {
+        STI(S, GTI(S) + 1);
+        EPUSHR(S);
+        PARSE_ADD(S);
+        EMOVCA(S);      # rcx = rhs
+        EPOPR(S);       # rax = lhs
+        ECMPR(S);       # cmp rax, rcx
+        ESETCC(S, op);  # rax = (lhs op rhs) ? 1 : 0
+    } }
+    return 0;
+}
+
+# [grow] short-circuit logical AND (53). Result 0/1.
+fn PARSE_AND(S): i64 {
+    PARSE_CMP(S);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 53) {
+            STI(S, GTI(S) + 1);
+            ETESTAZ(S);
+            var pf = EJCC(S, 0x84);   # je: lhs false -> result 0
+            PARSE_CMP(S);
+            ETESTAZ(S);
+            var pf2 = EJCC(S, 0x84);  # je: rhs false -> result 0
+            EMOVI(S, 1);
+            var pe = EJMP0(S);
+            EPATCH(S, pf);
+            EPATCH(S, pf2);
+            EMOVI(S, 0);
+            EPATCH(S, pe);
+        } else { go = 0; }
+    }
+    return 0;
+}
+
+# [grow] top-level expression: short-circuit logical OR (54). Result 0/1.
+fn PARSE_EXPR(S): i64 {
+    PARSE_AND(S);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 54) {
+            STI(S, GTI(S) + 1);
+            ETESTAZ(S);
+            var pt = EJCC(S, 0x85);   # jne: lhs true -> result 1
+            PARSE_AND(S);
+            ETESTAZ(S);
+            var pt2 = EJCC(S, 0x85);  # jne: rhs true -> result 1
+            EMOVI(S, 0);
+            var pe = EJMP0(S);
+            EPATCH(S, pt);
+            EPATCH(S, pt2);
+            EMOVI(S, 1);
+            EPATCH(S, pe);
+        } else { go = 0; }
     }
     return 0;
 }
@@ -1303,24 +1381,13 @@ fn PARSE_ASSIGN(S): i64 {
 
 # Parse condition: expr OP expr — emit cmp + inverted jcc, return patch offset
 fn ECOND(S): i64 {
+    # [grow] condition = any expression, tested against zero. PARSE_EXPR now
+    # yields 0/1 for comparisons / && / ||, so `if (a && b)`, `if (flag)`,
+    # `if (a == 1)`, `if (a == 1 && b == 2)` all work uniformly. Jump past the
+    # body when the condition is false (rax == 0).
     PARSE_EXPR(S);
-    EPUSHR(S);
-    var op = PEEKT(S);
-    STI(S, GTI(S) + 1);
-    PARSE_EXPR(S);
-    EMOVCA(S);
-    EPOPR(S);
-    ECMPR(S);
-    # Inverted jump: == -> jne(0x85), != -> je(0x84), < -> jge(0x8D),
-    #   > -> jle(0x8E), <= -> jg(0x8F), >= -> jl(0x8C)
-    if (op == 17) { return EJCC(S, 0x85); }
-    if (op == 18) { return EJCC(S, 0x84); }
-    if (op == 19) { return EJCC(S, 0x8D); }
-    if (op == 20) { return EJCC(S, 0x8E); }
-    if (op == 21) { return EJCC(S, 0x8F); }
-    if (op == 22) { return EJCC(S, 0x8C); }
-    ERR(S);
-    return 0;
+    ETESTAZ(S);
+    return EJCC(S, 0x84);   # je: condition false -> skip body
 }
 
 # Parse elif chain
@@ -1690,6 +1757,10 @@ fn PARSE_FN_DEF(S): i64 {
     }
     if (PEEKT(S) != 11) { ERR(S); }
     STI(S, GTI(S) + 1);
+    # [grow] typed return `fn f(): i64` — the lexer drops `:` (catch-all skip),
+    # leaving the return-type IDENT before `{`. Consume + ignore it (the scaffold,
+    # like cybs, treats every fn as returning i64).
+    if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
     S64(S + 0x18D200 + fi * 8, pc);
     # Emit stack param stores (7+) now that we know total pc
     if (pc > 6) {
