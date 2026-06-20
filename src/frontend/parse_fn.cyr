@@ -2089,8 +2089,12 @@ fn PARSE_FN_DEF(S): i64 {
                 if (_cur_fn_ret_stash > 0) {
                     if (_AARCH64_BACKEND == 0) { _pp_shift = 1; }
                 }
-                if (int_pc + _pp_shift < 6) {
-                    ESTOREPARM(S, int_pc + _pp_shift, li, 0);
+                # v6.2.x: a #naked fn takes args in registers only — there is no
+                # rbp frame to home them into (the asm body reads x0../rdi.. directly).
+                if (_cur_fn_naked == 0) {
+                    if (int_pc + _pp_shift < 6) {
+                        ESTOREPARM(S, int_pc + _pp_shift, li, 0);
+                    }
                 }
                 SFLC(S, li + 1);
                 int_pc = int_pc + 1;
@@ -2103,12 +2107,13 @@ fn PARSE_FN_DEF(S): i64 {
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
     S64(_fnt_params + fi * 8, pc);
-    # v6.2.27 (review P2): a #naked fn must be paramless. Params emit rbp-relative
-    # arg-home stores, but a naked fn has no rbp frame (rbp=0 → fault). An ISR
-    # receives its state on the interrupt stack frame, not as args.
+    # v6.2.x: a #naked fn may take up to 6 register-passed params (the arg-home
+    # stores are gated above, so they stay in x0../rdi.. for the asm body — e.g.
+    # dl_setjmp(buf) / dl_longjmp(buf,val)). 7+ params spill to the stack, which a
+    # frameless fn can't reach, so reject those.
     if (_cur_fn_naked == 1) {
-        if (pc > 0) {
-            ERR_MSG(S, "a #naked fn cannot have parameters (an ISR takes no args)", 57);
+        if (pc > 6) {
+            ERR_MSG(S, "a #naked fn can have at most 6 register-passed parameters", 57);
         }
     }
     # Store Str param mask — bit N set = param N is : Str

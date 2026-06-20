@@ -1,9 +1,9 @@
 # aarch64 stdlib/codegen failures surfaced by the VR-01 full-tcyr-on-arm64 gate
 
-> **MOSTLY RESOLVED (8 of 9 + the native-fork root cause) — gate HARD + GREEN on
-> real pi: 188 pass / 0 fail / 1 xfail / 1 skip.** v6.2.29's VR-01 gate measured a
-> real aarch64 debt; the user's call was to FIX THE WHOLE BATCH as the next release,
-> not soft-gate it. Done bar one:
+> **RESOLVED — 9 of 9 + the native-fork root cause. Gate HARD + GREEN on real pi:
+> 189 pass / 0 fail / 0 xfail / 1 skip (`math_pack_integration`, x86-only `f64_sin`).**
+> v6.2.29's VR-01 gate measured a real aarch64 debt; the user's call was to FIX THE
+> WHOLE BATCH, not soft-gate it. Done:
 >
 > - **Class A — `main_aarch64_native.cyr` was a stale fork — FIXED.** It had zero
 >   annotation-token handling (124 lines behind the cross fork), so every
@@ -24,12 +24,16 @@
 >   - `math_inverse_trig`, `result_stdlib_pass2`: latent x86-exact TEST bugs
 >     (`#ifdef CYRIUS_ARCH_X86` guard on the x86-only ganita inverse-trig; portable
 >     `sys_getuid()` for the hardcoded `syscall(102)`).
-> - **The 1 remaining xfail — `fdlopen`** (see below). Its `dl_setjmp`/`dl_longjmp`
->   need to be `#naked` register-param fns: on aarch64 the caller's sp is
->   `x29 + frame_size` (not x86's fixed `rbp+16`), so a non-naked hardcoded-offset
->   version corrupts the stack. Blocked by the v6.2.28 "no params on #naked" guard —
->   a focused follow-up (relax the guard for register-passed params + the asm), NOT
->   a rush. Gate `XFAIL="fdlopen"`.
+> - **`fdlopen` — FIXED.** `dl_setjmp`/`dl_longjmp` are now `#naked` register-param
+>   fns: no prologue → at entry `x0`/`rdi`=buf and the live sp + return address ARE
+>   the caller's (solving aarch64's `x29+frame_size` caller-sp problem that no fixed
+>   offset can reach). Two parts: (1) compiler — gate the param-home store for
+>   `#naked` (`src/frontend/parse_fn.cyr`) + relax the v6.2.28 guard from "no params"
+>   to "≤6 register-passed params"; cycc self-hosts byte-identical (it uses no
+>   `#naked`, so inert). (2) `lib/fdlopen.cyr` — the x86 + aarch64 setjmp/longjmp asm
+>   (encodings assembled + verified with `as` / `aarch64-linux-gnu-as`) + non-Linux
+>   `mov 0; ret` stubs (fdlopen cross-compiles clean for PE/Mach-O). x86 40/0,
+>   aarch64 33/0 on pi.
 
 **Filed:** 2026-06-19 · **Parent:** v6.2.29 VR-01. **Severity:** P1 (mostly cleared).
 

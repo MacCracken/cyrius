@@ -585,7 +585,7 @@ jobs:
           chmod +x a64/cycc_native_a64
           CC=a64/cycc_native_a64
           SKIP="math_pack_integration"
-          XFAIL="fdlopen"
+          XFAIL=""
           pass=0; fail=0; xfail=0; xpass=0; skip=0
           for t in tests/tcyr/*.tcyr; do
             name=$(basename "$t" .tcyr)
