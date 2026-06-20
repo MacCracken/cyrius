@@ -2780,17 +2780,21 @@ parse_var_stmt:
     mov r8, rax          # r8 = name offset
     inc r11
 
-    # check: = (regular var) or [ (array)
+    # check: : (typed) / [ (bare array) / = (scalar)
     call peek_tok_type
-    cmp rax, 28          # LBRACKET
-    je parse_array_decl
+    cmp rax, 50          # COLON (typed var/array — brick)
+    je parse_var_typed
+    cmp rax, 28          # LBRACKET (bare array)
+    je parse_var_bare_array
     cmp rax, 4           # EQ
     jne parse_err
+parse_var_eq:
     inc r11
 
     # parse expression — emits code, result in rax at runtime
     call parse_expr
 
+parse_var_after_expr:
     # check if inside a function
     push rax
     mov rsi, r15
@@ -2905,6 +2909,156 @@ parse_array_decl:
 
     pop r9
     pop r8
+    ret
+
+# ── typed vars + local/typed arrays (brick) ──
+# parse_var_bare_array: `var a[N]` (N bytes)
+parse_var_bare_array:
+    mov r9, 0            # scale 0 = bare (N bytes)
+    jmp parse_array_common
+
+# parse_var_typed: `var x: TYPE ...`  (COLON already peeked)
+parse_var_typed:
+    inc r11              # consume COLON
+    call peek_tok_type
+    cmp rax, 2           # type IDENT
+    jne parse_err
+    inc r11              # consume type name (ignored — cybs is untyped internally)
+    call peek_tok_type
+    cmp rax, 28          # [ -> typed array
+    je parse_var_typed_array
+    cmp rax, 4           # = -> typed scalar init
+    je parse_var_eq
+    cmp rax, 5           # ; -> typed scalar no-init
+    je parse_var_typed_noinit
+    jmp parse_err
+parse_var_typed_array:
+    mov r9, 1            # scale 1 = typed (N*8 bytes, i64-sized; over-alloc safe)
+    jmp parse_array_common
+parse_var_typed_noinit:
+    call emit_xor_rax_rax   # value 0
+    jmp parse_var_after_expr
+
+# parse_array_common: r8=name, r9 scale flag (0=N bytes, 1=N*8). At LBRACKET.
+parse_array_common:
+    inc r11              # consume [
+    call peek_tok_type
+    cmp rax, 1           # NUM
+    jne parse_err
+    call peek_tok_value
+    mov rbx, rax         # rbx = N
+    inc r11
+    call peek_tok_type
+    cmp rax, 29          # ]
+    jne parse_err
+    inc r11
+    call peek_tok_type
+    cmp rax, 5           # ;
+    jne parse_err
+    inc r11
+    cmp r9, 1
+    jne parse_array_common_size
+    shl rbx, 3           # typed: size = N*8
+parse_array_common_size:
+    mov rsi, r15
+    add rsi, 0x93818     # in_function
+    mov rax, [rsi]
+    cmp rax, 1
+    je parse_array_common_local
+    # global array: register var_noffs / var_sizes (aligned to 8)
+    mov rcx, r14
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x58000
+    add rsi, rcx
+    mov [rsi], r8
+    mov rax, rbx
+    add rax, 7
+    and rax, -8
+    mov rsi, r15
+    add rsi, 0x58800
+    add rsi, rcx
+    mov [rsi], rax
+    inc r14
+    pop r9
+    pop r8
+    ret
+parse_array_common_local:
+    call reg_local_array
+    pop r9
+    pop r8
+    ret
+
+# reg_local_array: r8=name, rbx=size bytes. Reserve ceil(size/8) frame slots,
+# register name at the HIGHEST reserved index (so &name = base, since locals at
+# [rbp-(idx+1)*8] grow down), fill interior slots with "" (name's NUL terminator)
+# so find_fn_local_index never false-matches them, advance fn_local_count.
+reg_local_array:
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push r9
+    push r10
+    mov rax, rbx
+    add rax, 7
+    shr rax, 3
+    mov r10, rax         # r10 = slots
+    mov rsi, r15
+    add rsi, 0x93820
+    mov r9, [rsi]        # r9 = li (base local index)
+    mov rcx, 0
+reg_la_strlen:
+    mov rsi, r15
+    add rsi, 0x50000
+    add rsi, r8
+    add rsi, rcx
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 0
+    je reg_la_strlen_done
+    inc rcx
+    jmp reg_la_strlen
+reg_la_strlen_done:
+    mov rdx, r8
+    add rdx, rcx         # rdx = filler offset (name's NUL -> "")
+    mov rcx, r9
+    mov rax, r9
+    add rax, r10
+    sub rax, 1           # rax = highest index (array-name slot)
+reg_la_fill:
+    cmp rcx, rax
+    jge reg_la_fill_done
+    push rax
+    mov rax, rcx
+    shl rax, 3
+    mov rsi, r15
+    add rsi, 0x93A40
+    add rsi, rax
+    mov [rsi], rdx
+    pop rax
+    inc rcx
+    jmp reg_la_fill
+reg_la_fill_done:
+    mov rax, r9
+    add rax, r10
+    sub rax, 1
+    shl rax, 3
+    mov rsi, r15
+    add rsi, 0x93A40
+    add rsi, rax
+    mov [rsi], r8        # name at highest index
+    mov rax, r9
+    add rax, r10
+    mov rsi, r15
+    add rsi, 0x93820
+    mov [rsi], rax       # fn_local_count += slots
+    pop r10
+    pop r9
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
     ret
 
 # ── IDENT = expr ; ──
