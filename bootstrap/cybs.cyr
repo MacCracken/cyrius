@@ -2098,6 +2098,17 @@ lexer_id_end:
     pop rcx
     je lexer_id_is_enum
 
+    # elif (brick)
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFFFF
+    push rbx
+    mov rbx, 0x000066696C65    # elif
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_elif
+
     # for (brick)
     push rcx
     mov rcx, rax
@@ -2256,6 +2267,10 @@ lexer_id_is_store64:
     call lexer_emit_kw
     jmp lexer_loop
 
+lexer_id_is_elif:
+    mov rax, 56
+    call lexer_emit_kw
+    jmp lexer_loop
 lexer_id_is_for:
     mov rax, 53
     call lexer_emit_kw
@@ -3032,10 +3047,11 @@ parse_assign_semi:
 
 # ── if (expr OP expr) { stmts } [else { stmts }] ──
 parse_if_stmt:
+    inc r11              # consume IF
+parse_if_clause:         # parse ( cond ) { body } [elif/else]; keyword consumed
     push r8
     push r9
     push rbx
-    inc r11              # consume IF
 
     # save last_var_idx
     mov rsi, r15
@@ -3074,14 +3090,28 @@ parse_if_stmt:
     jne parse_err
     inc r11
 
-    # check for else
+    # check for elif / else
     call peek_tok_type
+    cmp rax, 56          # ELIF?
+    je parse_if_elif
     cmp rax, 23          # ELSE?
     je parse_if_else
 
     # no else: patch condition-false jump to here
     mov rax, r8
     call patch_rel32
+    jmp parse_if_done
+
+parse_if_elif:
+    # elif == else { if ... }: skip-jmp past chain, cond-false -> elif, recurse
+    call emit_jmp0
+    mov rbx, rax         # rbx = skip-jmp patch
+    mov rax, r8
+    call patch_rel32     # cond-false -> start of elif clause
+    inc r11              # consume ELIF
+    call parse_if_clause # recurse: elif's ( cond ) { body } [elif/else]
+    mov rax, rbx
+    call patch_rel32     # skip-jmp -> end of whole chain
     jmp parse_if_done
 
 parse_if_else:
