@@ -492,47 +492,157 @@ fn PP_MARK(S, fname): i64 {
 }
 # Scan src[0..srclen); append non-include bytes to the expand buffer; on an
 # `include "file"` at line start, read the file and recurse into it.
+# [grow] conditional-compilation directive detectors (read from base `b`).
+fn ISIFDEF(b, pos, bl): i64 {
+    if (pos + 7 >= bl) { return 0; }
+    if (load8(b + pos) != 35) { return 0; }
+    if (load8(b + pos + 1) != 105) { return 0; }
+    if (load8(b + pos + 2) != 102) { return 0; }
+    if (load8(b + pos + 3) != 100) { return 0; }   # 'd'
+    if (load8(b + pos + 4) != 101) { return 0; }
+    if (load8(b + pos + 5) != 102) { return 0; }
+    if (load8(b + pos + 6) != 32) { return 0; }
+    return 1;
+}
+fn ISIFNDEF(b, pos, bl): i64 {
+    if (pos + 8 >= bl) { return 0; }
+    if (load8(b + pos) != 35) { return 0; }
+    if (load8(b + pos + 1) != 105) { return 0; }
+    if (load8(b + pos + 2) != 102) { return 0; }
+    if (load8(b + pos + 3) != 110) { return 0; }   # 'n'
+    if (load8(b + pos + 4) != 100) { return 0; }
+    if (load8(b + pos + 5) != 101) { return 0; }
+    if (load8(b + pos + 6) != 102) { return 0; }
+    if (load8(b + pos + 7) != 32) { return 0; }
+    return 1;
+}
+fn ISELSE(b, pos, bl): i64 {
+    if (pos + 5 > bl) { return 0; }
+    if (load8(b + pos) != 35) { return 0; }
+    if (load8(b + pos + 1) != 101) { return 0; }
+    if (load8(b + pos + 2) != 108) { return 0; }   # 'l'
+    if (load8(b + pos + 3) != 115) { return 0; }
+    if (load8(b + pos + 4) != 101) { return 0; }
+    return 1;
+}
+fn ISENDIF(b, pos, bl): i64 {
+    if (pos + 6 > bl) { return 0; }
+    if (load8(b + pos) != 35) { return 0; }
+    if (load8(b + pos + 1) != 101) { return 0; }
+    if (load8(b + pos + 2) != 110) { return 0; }   # 'n'
+    if (load8(b + pos + 3) != 100) { return 0; }
+    if (load8(b + pos + 4) != 105) { return 0; }
+    if (load8(b + pos + 5) != 102) { return 0; }
+    return 1;
+}
+fn PP_SKIPLINE(b, pos, bl): i64 {
+    while (pos < bl) {
+        if (load8(b + pos) == 10) { return pos + 1; }
+        pos = pos + 1;
+    }
+    return pos;
+}
+fn PP_SKIPWS(b, pos, bl): i64 {
+    while (pos < bl) {
+        var c = load8(b + pos);
+        if (c != 32) { if (c != 9) { return pos; } }
+        pos = pos + 1;
+    }
+    return pos;
+}
+# cycc predefines CYRIUS_ARCH_X86 + CYRIUS_TARGET_LINUX for the default x86_64
+# Linux build. All symbols share the "CYRIUS_" prefix; distinguish on the bytes
+# after it — ARCH_X86: [7]='A',[12]='X'(88); TARGET_LINUX: [7]='T',[14]='L'(76).
+fn PP_DEFINED(b, pos): i64 {
+    var c7 = load8(b + pos + 7);
+    if (c7 == 65) { if (load8(b + pos + 12) == 88) { return 1; } return 0; }
+    if (c7 == 84) { if (load8(b + pos + 14) == 76) { return 1; } return 0; }
+    return 0;
+}
+# Conditional stack: 0x531A000 depth, 0x531A008 saved-emit[], 0x531A208 cond[],
+# 0x531A500 current emit flag.
+fn PP_COND_PUSH(S, cond): i64 {
+    var sp = L64(S + 0x531A000);
+    S64(S + 0x531A008 + sp * 8, L64(S + 0x531A500));
+    S64(S + 0x531A208 + sp * 8, cond);
+    if (cond == 0) { S64(S + 0x531A500, 0); }
+    S64(S + 0x531A000, sp + 1);
+    return 0;
+}
+fn PP_COND_ELSE(S): i64 {
+    var sp = L64(S + 0x531A000) - 1;
+    var saved = L64(S + 0x531A008 + sp * 8);
+    var cond = L64(S + 0x531A208 + sp * 8);
+    if (saved == 1) { if (cond == 0) { S64(S + 0x531A500, 1); } else { S64(S + 0x531A500, 0); } }
+    else { S64(S + 0x531A500, 0); }
+    return 0;
+}
+fn PP_COND_POP(S): i64 {
+    var sp = L64(S + 0x531A000) - 1;
+    S64(S + 0x531A500, L64(S + 0x531A008 + sp * 8));
+    S64(S + 0x531A000, sp);
+    return 0;
+}
 fn PP_EXPAND(S, src, srclen, depth): i64 {
     var out = S + 0x1000000;
     var ip = 0;
     while (ip < srclen) {
-        # Only treat `include` as a directive at the start of a line — the word
-        # appears in comments ("Included by ...") throughout the closure.
-        var is_inc = 0;
-        if (ip == 0) { if (ISINCLUDE(src, ip, srclen) == 1) { is_inc = 1; } }
-        else { if (load8(src + ip - 1) == 10) { if (ISINCLUDE(src, ip, srclen) == 1) { is_inc = 1; } } }
-        if (is_inc == 1) {
-            ip = ip + 8;
-            if (load8(src + ip) == 34) {
-                ip = ip + 1;
-                var fname = S + 0x5320000 + depth * 0x1000;
-                var fi = 0;
-                var fgo = 1;
-                while (fgo == 1) {
-                    if (ip >= srclen) { fgo = 0; }
-                    else {
-                        var fc = load8(src + ip);
-                        if (fc == 34) { ip = ip + 1; fgo = 0; }
-                        else { store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
-                    }
-                }
-                store8(fname + fi, 0);
-                var sgo = 1;
-                while (sgo == 1) {
-                    if (ip >= srclen) { sgo = 0; }
-                    else { if (load8(src + ip) == 10) { ip = ip + 1; sgo = 0; } else { ip = ip + 1; } }
-                }
-                if (PP_SEEN(S, fname) == 0) {
-                    PP_MARK(S, fname);
-                    var scratch = S + 0x5400000 + depth * 0x200000;
-                    var nr = READFILE(fname, scratch, 0x200000);
-                    if (nr > 0) { PP_EXPAND(S, scratch, nr, depth + 1); }
-                }
+        var ls = 0;
+        if (ip == 0) { ls = 1; } else { if (load8(src + ip - 1) == 10) { ls = 1; } }
+        var handled = 0;
+        if (ls == 1) {
+            var dip = PP_SKIPWS(src, ip, srclen);   # directives may be indented
+            if (ISIFDEF(src, dip, srclen) == 1) {
+                PP_COND_PUSH(S, PP_DEFINED(src, dip + 7));
+                ip = PP_SKIPLINE(src, ip, srclen); handled = 1;
             }
-        } else {
-            var op = L64(S + 0x5318008);
-            store8(out + op, load8(src + ip));
-            S64(S + 0x5318008, op + 1);
+            else { if (ISIFNDEF(src, dip, srclen) == 1) {
+                PP_COND_PUSH(S, 1 - PP_DEFINED(src, dip + 8));
+                ip = PP_SKIPLINE(src, ip, srclen); handled = 1;
+            }
+            else { if (ISELSE(src, dip, srclen) == 1) {
+                PP_COND_ELSE(S); ip = PP_SKIPLINE(src, ip, srclen); handled = 1;
+            }
+            else { if (ISENDIF(src, dip, srclen) == 1) {
+                PP_COND_POP(S); ip = PP_SKIPLINE(src, ip, srclen); handled = 1;
+            }
+            else { if (ISINCLUDE(src, dip, srclen) == 1) {
+                handled = 1;
+                if (L64(S + 0x531A500) == 1) {
+                    ip = dip + 8;
+                    if (load8(src + ip) == 34) {
+                        ip = ip + 1;
+                        var fname = S + 0x5320000 + depth * 0x1000;
+                        var fi = 0;
+                        var fgo = 1;
+                        while (fgo == 1) {
+                            if (ip >= srclen) { fgo = 0; }
+                            else {
+                                var fc = load8(src + ip);
+                                if (fc == 34) { ip = ip + 1; fgo = 0; }
+                                else { store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
+                            }
+                        }
+                        store8(fname + fi, 0);
+                        ip = PP_SKIPLINE(src, ip, srclen);
+                        if (PP_SEEN(S, fname) == 0) {
+                            PP_MARK(S, fname);
+                            var scratch = S + 0x5400000 + depth * 0x200000;
+                            var nr = READFILE(fname, scratch, 0x200000);
+                            if (nr > 0) { PP_EXPAND(S, scratch, nr, depth + 1); }
+                        }
+                    }
+                } else {
+                    ip = PP_SKIPLINE(src, ip, srclen);
+                }
+            } } } } }
+        }
+        if (handled == 0) {
+            if (L64(S + 0x531A500) == 1) {
+                var op = L64(S + 0x5318008);
+                store8(out + op, load8(src + ip));
+                S64(S + 0x5318008, op + 1);
+            }
             ip = ip + 1;
         }
     }
@@ -542,6 +652,8 @@ fn PREPROCESS(S): i64 {
     var bl = GBL(S);
     S64(S + 0x5318000, 0);    # include-once count
     S64(S + 0x5318008, 0);    # expand output cursor
+    S64(S + 0x531A000, 0);    # #ifdef nesting depth
+    S64(S + 0x531A500, 1);    # emit flag = on
     PP_EXPAND(S, S, bl, 0);   # source lives at S+0 (depth 0)
     var op = L64(S + 0x5318008);
     var out = S + 0x1000000;
