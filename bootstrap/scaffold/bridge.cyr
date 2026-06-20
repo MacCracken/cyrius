@@ -2129,6 +2129,39 @@ fn PARSE_STMT(S): i64 {
             PARSE_FIELD_STORE(S, noff);
             return 0;
         }
+        # [grow] compound assignment: IDENT (+|-|*|||&)= expr  ->  x = x OP expr.
+        # Lexed as OP then '=' (two tokens). Closure uses += -= *= |= &=.
+        var op0 = PEEKT(S);
+        if (TOKTYP(S, GTI(S) + 1) == 4) {
+            var iscomp = 0;
+            if (op0 == 6) { iscomp = 1; }
+            if (op0 == 7) { iscomp = 1; }
+            if (op0 == 8) { iscomp = 1; }
+            if (op0 == 35) { iscomp = 1; }
+            if (op0 == 27) { iscomp = 1; }
+            if (iscomp == 1) {
+                STI(S, GTI(S) + 1);   # consume OP
+                STI(S, GTI(S) + 1);   # consume =
+                var ci = 0 - 1;
+                var isloc = 0;
+                if (GINFN(S) == 1) { ci = FINDLOCAL(S, noff); if (ci >= 0) { isloc = 1; } }
+                if (isloc == 0) { ci = FINDVAR(S, noff); if (ci < 0) { ERR(S); } }
+                if (isloc == 1) { EFLLOAD(S, ci); } else { EVLOAD(S, ci); }
+                EPUSHR(S);
+                PARSE_EXPR(S);
+                EMOVCA(S);
+                EPOPR(S);
+                if (op0 == 6) { EADDR(S); }
+                else { if (op0 == 7) { ESUBR(S); }
+                    else { if (op0 == 8) { EIMUL(S); }
+                        else { if (op0 == 35) { EORR(S); }
+                            else { EANDR(S); } } } }
+                if (isloc == 1) { EFLSTORE(S, ci); } else { EVSTORE(S, ci); SLVAR(S, ci); }
+                if (PEEKT(S) != 5) { ERR(S); }
+                STI(S, GTI(S) + 1);
+                return 0;
+            }
+        }
         # assignment: already consumed IDENT
         if (PEEKT(S) != 4) { ERR(S); }
         STI(S, GTI(S) + 1);
