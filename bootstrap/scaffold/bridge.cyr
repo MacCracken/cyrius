@@ -322,6 +322,26 @@ fn EFNADDR(S, fi): i64 {
     return 0;
 }
 
+# [grow] asm pseudo-op param_load(reg, idx) -> mov reg, [rbp-(idx+1)*8].
+# atomic.cyr uses it (NOT dead: default_allocator -> atomic_cas at startup).
+# Params live at the scaffold's local slots [rbp-(idx+1)*8]. reg name at
+# tok_names+rnoff; x86 atomic uses rdi/rax/rcx (aarch64 x0.. are #ifdef-excluded).
+fn EPARAMLOAD(S, rnoff, idx): i64 {
+    var c1 = load8(S + 0x2800000 + rnoff + 1);   # 2nd char of reg name
+    var c2 = load8(S + 0x2800000 + rnoff + 2);   # 3rd char
+    var modrm = 0x85;                              # rax
+    if (c1 == 99) { modrm = 0x8D; }                # rcx
+    if (c1 == 100) { if (c2 == 120) { modrm = 0x95; } else { modrm = 0xBD; } }   # rdx / rdi
+    if (c1 == 115) { modrm = 0xB5; }               # rsi
+    EB(S, 0x48); EB(S, 0x8B); EB(S, modrm);        # REX.W 8B /r
+    var disp = 0 - ((idx + 1) * 8);
+    EB(S, disp & 0xFF);
+    EB(S, (disp >> 8) & 0xFF);
+    EB(S, (disp >> 16) & 0xFF);
+    EB(S, (disp >> 24) & 0xFF);
+    return 0;
+}
+
 # emit syscall pops for N args then syscall
 fn ESCPOPS(S, n): i64 {
     if (n >= 7) { EPOPR9(S); }
@@ -2268,26 +2288,24 @@ fn PARSE_STMT(S): i64 {
                     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                 }
                 else { if (PEEKT(S) == 2) {
-                        # [grow] asm pseudo-op like param_load(reg, idx). The only
-                        # symbolic asm in the closure; used by fnptr/atomic, which
-                        # cycc never calls (no fn-pointers/atomics in its source),
-                        # so these fns are dead-but-compiled — parse past + emit
-                        # nothing (a dead body's exact bytes don't matter).
-                        STI(S, GTI(S) + 1);   # consume IDENT
-                        if (PEEKT(S) == 10) {
-                            var pd = 0;
-                            var sg = 1;
-                            while (sg == 1) {
-                                var tt = PEEKT(S);
-                                if (tt == 12) { sg = 0; }
-                                else {
-                                    STI(S, GTI(S) + 1);
-                                    if (tt == 10) { pd = pd + 1; }
-                                    else { if (tt == 11) { pd = pd - 1; if (pd == 0) { sg = 0; } } }
-                                }
-                            }
-                        }
+                        # [grow] param_load(reg, idx) — the only asm pseudo-op in the
+                        # closure (atomic.cyr, reached via default_allocator->atomic_cas
+                        # at startup). Emit mov reg, [rbp-(idx+1)*8].
+                        STI(S, GTI(S) + 1);   # consume 'param_load'
+                        if (PEEKT(S) != 10) { ERR(S); }
+                        STI(S, GTI(S) + 1);   # (
+                        if (PEEKT(S) != 2) { ERR(S); }
+                        var prn = PEEKV(S);   # reg name offset
+                        STI(S, GTI(S) + 1);
+                        if (PEEKT(S) != 31) { ERR(S); }   # ,
+                        STI(S, GTI(S) + 1);
+                        if (PEEKT(S) != 1) { ERR(S); }    # idx
+                        var pix = PEEKV(S);
+                        STI(S, GTI(S) + 1);
+                        if (PEEKT(S) != 11) { ERR(S); }   # )
+                        STI(S, GTI(S) + 1);
                         if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                        EPARAMLOAD(S, prn, pix);
                     }
                     else { ERR(S); } }
             }
