@@ -69,6 +69,47 @@ The base-OS libs are agnos-destined; Linux is the transitional bootstrap host.
 agnos is the destination target, so cross-target ABI safety should be enforced by
 the stdlib + lint, not discovered one failed syscall at a time.
 
+## 2026-06-20 update — agnos `lseek`#58/`flock`#59 landed (kernel); descent surfaces the full persistence-chain gap
+
+A second server-stage consumer hit this class hard. The **descent (MUD) port to agnos**
+(`agnosticos/docs/development/planning/server-app-ports.md`) re-attempted
+`cyrius build --agnos` and the M6 persistence/crypto chain (`libro → sigil → patra →
+sakshi`) **fails at compile** with **~10 agnos-undefined syscall symbols** — a larger,
+concrete instance of this issue's class (it dies at `lib/patra.cyr:113 undefined variable
+'SYS_LSEEK'` before any descent src):
+
+- `patra`  → `SYS_LSEEK`, `SYS_FLOCK`, `SYS_FDATASYNC`, `SYS_FUTEX`
+- `sigil`  → `SYS_ACCESS`
+- `sakshi` → `SYS_CLOCK_GETTIME`, `SYS_NANOSLEEP`, `SYS_OPENAT`, `SYS_SENDTO`, `SYS_SOCKET`
+
+**Kernel half now DONE — unblocks the seek-based storage on agnos.** agnos gained
+**`lseek`#58** + **`flock`#59** (agnos 1.46.x, 2026-06-20 — `kernel/core/syscall.cyr` +
+`vfs.cyr`; `lseek(fd,offset,whence)` repositions the `VFS_EXT2_FILE` cursor; `flock(fd,op)`
+is BSD advisory whole-file locking, inode-keyed, non-blocking + released on close#6/exit;
+`FLOCK_SELFTEST` green). So the **cyrius stdlib half** is now actionable here:
+
+1. **`lib/syscalls_x86_64_agnos.cyr`** — ✅ **DONE (2026-06-20)**: added `SYS_LSEEK = 58` /
+   `SYS_FLOCK = 59` to `SysNrAgnos` + `fn sys_lseek(fd, off, whence)` / `fn sys_flock(fd, op)`
+   wrappers (mirror the #45-57 band). This resolves patra's *referenced-but-undefined*
+   `SYS_LSEEK` (patra dispatches the peer's `SYS_LSEEK` → agnos kernel #58, ABI-correct).
+   (patra's *self-defined* `SYS_FLOCK = 73` / `SYS_FDATASYNC = 75` are Linux numbers — those
+   are fixed in the **patra repo** below, not here.)
+2. **Portable `xlseek`/`xflock`** in the wrapper set (ask #1 above) so patra/sakshi call them
+   target-agnostically. The cyrlint rule (ask #2) **already names `SYS_LSEEK`/`SYS_FDATASYNC`**.
+
+**The other 6 symbols** want agnos mappings/stubs in the agnos peer (or the portable
+wrappers): `CLOCK_GETTIME`→`uptime_ms`#40/RTC; `NANOSLEEP`→`sleep_ms`#41; `OPENAT`→`open`#7
+`(name,namelen,flags)`; `ACCESS`→stat#33 or stub; `SENDTO`/`SOCKET` (sakshi net-logging)→the
+agnos `sock_*` band or no-op (network logging is plausibly Linux-only); `FDATASYNC`→`sync`#12
+(whole-FS); `FUTEX`→no-op on single-core agnos.
+
+**Consumer-repo fixes** (the per-lib agnos `#ifdef CYRIUS_TARGET_AGNOS` branches): per the
+"filed in THEIR repos" note above, **patra** (`patra/docs/development/issues/2026-06-18-agnos-cross-target-abi.md`,
+extend it with the lseek#58/flock#59/fdatasync/futex branches now that the kernel provides
+them) + **new sigil + sakshi** issues, all of which vendor back via `cyrius distlib`. This
+cyrius issue tracks the **stdlib-layer** half (the `syscalls_x86_64_agnos.cyr` constants +
+wrappers + the portable set + the lint rule).
+
 ## Verify
 `agnos/scripts/whirl-smoke.sh` (QEMU + virtio-net + SLIRP) exercises the agnos FS +
 TLS paths end-to-end — the harness that surfaced this audit.

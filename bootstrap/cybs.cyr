@@ -1986,6 +1986,17 @@ lexer_id_end:
     pop rcx
     je lexer_id_is_return
 
+    # "enum\0" = 0x006D756E65 (5 bytes) — v6.2.x cybs-grow brick 1 (enum const namespace)
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFFFF
+    push rbx
+    mov rbx, 0x006D756E65
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_enum
+
     # regular identifier
     mov rcx, r10
     shl rcx, 3
@@ -2043,6 +2054,11 @@ lexer_id_is_fn:
 
 lexer_id_is_return:
     mov rax, 33
+    call lexer_emit_kw
+    jmp lexer_loop
+
+lexer_id_is_enum:
+    mov rax, 40          # ENUM keyword token (v6.2.x cybs-grow brick 1)
     call lexer_emit_kw
     jmp lexer_loop
 

@@ -56,6 +56,10 @@ enum SysNrAgnos {
     SYS_STAT = 33;                 # stat(path, pathlen, statbuf) → 0 / -1
     SYS_UNAME = 34;                # uname(buf, len=64) → 0; 4×16-byte fields (§4.3)
     SYS_SYSINFO = 35;             # sysinfo(buf, len=40) → 0; 5×u64, byte-direct (§4.4)
+    SYS_LSEEK = 58;               # lseek(fd, offset, whence) → new pos / -1; whence 0=SET/1=CUR/2=END
+                                  #   (agnos 1.46.x — repositions the VFS_EXT2_FILE cursor). Linux peer = 8.
+    SYS_FLOCK = 59;               # flock(fd, op) → 0 / -1; op SH=1/EX=2/UN=8 (+NB=4); inode-keyed advisory
+                                  #   lock, non-blocking (contended → -1), released on close#6 + exit (agnos 1.46.x). Linux peer = 73.
 }
 
 # ================================================================
@@ -245,6 +249,17 @@ fn sys_chmod(path, mode): i64 { return 0; }
 # (a3) lands with 1.41.2 mount-routing — passing it now is forward-
 # compatible (kernel ignores a3 until then). Explicit length, no NUL.
 fn sys_open(name, namelen, flags): i64 { return syscall(SYS_OPEN, name, namelen, flags); }
+
+# lseek(fd, offset, whence) — reposition a VFS_EXT2_FILE cursor (agnos 1.46.x).
+# whence 0=SEEK_SET / 1=SEEK_CUR / 2=SEEK_END. Returns the new absolute pos / -1.
+# Same arg order as Linux lseek (the agnos kernel handler reads a1/a2/a3), so a
+# raw `syscall(SYS_LSEEK, fd, off, whence)` is ABI-correct on agnos too.
+fn sys_lseek(fd, off, whence): i64 { return syscall(SYS_LSEEK, fd, off, whence); }
+
+# flock(fd, op) — advisory whole-file lock (agnos 1.46.x). op = LOCK_SH(1) /
+# LOCK_EX(2) / LOCK_UN(8) (+ LOCK_NB(4)). Returns 0 / -1. NON-BLOCKING on agnos
+# (contended → -1 WOULD_BLOCK; the caller poll-spins), released on close#6 + exit.
+fn sys_flock(fd, op): i64 { return syscall(SYS_FLOCK, fd, op); }
 
 # Duplicate `fd` (stub: returns `fd` unchanged today).
 fn sys_dup(fd): i64 { return syscall(SYS_DUP, fd); }
