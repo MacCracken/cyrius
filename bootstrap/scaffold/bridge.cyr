@@ -1429,44 +1429,102 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
 }
 
 # Parse: var IDENT = expr ;
+# [grow] three-pass top-level skip helpers. The pass flag lives at S+0x5318020:
+#   1 = pass A (register globals/enums/structs), 2 = pass B (compile fns),
+#   3 = pass C (emit entry sequence: global inits + bare top-level statements).
+fn SKIP_TO_SEMI(S): i64 {
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { go = 0; }
+        else { STI(S, GTI(S) + 1); if (t == 5) { go = 0; } }
+    }
+    return 0;
+}
+# Skip one top-level statement: a `;`-terminated stmt, or a balanced { } block
+# (if/while/for bodies). else/elif clauses skip as their own follow-on stmts.
+fn SKIP_STMT(S): i64 {
+    var depth = 0;   # brace depth
+    var pd = 0;      # paren depth — a for-loop's `;` live inside ( ), not stmt ends
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { go = 0; }
+        else {
+            STI(S, GTI(S) + 1);
+            if (t == 10) { pd = pd + 1; }
+            else { if (t == 11) { pd = pd - 1; }
+                else { if (t == 13) { depth = depth + 1; }
+                    else { if (t == 14) { depth = depth - 1; if (depth == 0) { go = 0; } }
+                        else { if (t == 5) { if (depth == 0) { if (pd == 0) { go = 0; } } } } } } }
+        }
+    }
+    return 0;
+}
+# Skip a definition: keyword (fn/enum/struct) then its balanced { } body.
+fn SKIP_DEF(S): i64 {
+    STI(S, GTI(S) + 1);   # consume the keyword
+    var go = 1;
+    while (go == 1) { var t = PEEKT(S); if (t == 13) { go = 0; } else { if (t == 12) { go = 0; } else { STI(S, GTI(S) + 1); } } }
+    var depth = 0;
+    var b = 1;
+    while (b == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { b = 0; }
+        else {
+            STI(S, GTI(S) + 1);
+            if (t == 13) { depth = depth + 1; }
+            else { if (t == 14) { depth = depth - 1; if (depth == 0) { b = 0; } } }
+        }
+    }
+    return 0;
+}
+
 fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
-    # expect IDENT
     if (PEEKT(S) != 2) { ERR(S); }
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
-    # Check for array: var buf[N];
+    var infn = GINFN(S);
+    var pass = L64(S + 0x5318020);
+    # Array: var buf[N];
     if (PEEKT(S) == 28) {
-        PARSE_ARRAY(S, noff);
+        if (infn == 1) { PARSE_ARRAY(S, noff); return 0; }   # local array
+        if (pass == 1) { PARSE_ARRAY(S, noff); return 0; }   # pass A: register global array
+        SKIP_TO_SEMI(S);                                      # pass C: already registered
         return 0;
     }
-    # expect EQ
     if (PEEKT(S) != 4) { ERR(S); }
-    STI(S, GTI(S) + 1);
-    # Check for struct init: var p = StructName { expr, expr, ... };
+    STI(S, GTI(S) + 1);   # consume =
+    # struct init (cycc source uses none; harmless to keep)
     if (PEEKT(S) == 2) {
         var sn = PEEKV(S);
         var sid = FINDSTRUCT(S, sn);
-        if (sid > 0) {
-            PARSE_STRUCT_INIT(S, noff, sid);
-            return 0;
-        }
+        if (sid > 0) { PARSE_STRUCT_INIT(S, noff, sid); return 0; }
     }
-    # parse expression (scalar)
-    PARSE_EXPR(S);
-    # Check if inside function → local variable
-    if (GINFN(S) == 1) {
+    if (infn == 1) {
+        # local scalar (only reached in pass B during fn compilation)
+        PARSE_EXPR(S);
         var li = GFLC(S);
         S64(S + 0x5078000 + li * 8, noff);
         EFLSTORE(S, li);
         SFLC(S, li + 1);
     } else {
-        var vcnt = GVCNT(S);
-        S64(S + 0x5000000 + vcnt * 8, noff);
-        S64(S + 0x5010000 + vcnt * 8, 8);
-        EVSTORE(S, vcnt);
-        SLVAR(S, vcnt);
-        SVCNT(S, vcnt + 1);
+        if (pass == 1) {
+            # pass A: register the global (name + 8-byte slot); skip its init expr.
+            var vcnt = GVCNT(S);
+            S64(S + 0x5000000 + vcnt * 8, noff);
+            S64(S + 0x5010000 + vcnt * 8, 8);
+            SVCNT(S, vcnt + 1);
+            SKIP_TO_SEMI(S);
+            return 0;
+        }
+        # pass C: emit the init into the already-registered slot.
+        var idx = FINDVAR(S, noff);
+        if (idx < 0) { ERR(S); }
+        PARSE_EXPR(S);
+        EVSTORE(S, idx);
+        SLVAR(S, idx);
     }
     if (PEEKT(S) != 5) { ERR(S); }
     STI(S, GTI(S) + 1);
@@ -2233,23 +2291,53 @@ EB(S, 0xE9);
 var jmp_patch = GCP(S);
 EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
-# Parse struct defs, then fn defs
+# [grow] THREE-PASS top-level. main.cyr interleaves enum/var/fn/exec-stmt and
+# fns forward-reference globals defined later, so:
+#   Pass A: register ALL globals/enums/structs (skip fns + statements).
+#   Pass B: compile ALL fn bodies into the fn region (skip everything else).
+#   Pass C: emit the entry sequence — global inits + bare top-level statements
+#           in source order (skip fn/enum/struct defs).
+# Pass A — declarations
+S64(S + 0x5318020, 1);
 STI(S, 0);
-var topgo = 1;
-while (topgo == 1) {
-    if (PEEKT(S) == 40) { PARSE_STRUCT_DEF(S); }
-    else { if (PEEKT(S) == 32) { PARSE_FN_DEF(S); }
-        else { if (PEEKT(S) == 57) { PARSE_ENUM(S); }
-            else { topgo = 0; } } }
+var pa = 1;
+while (pa == 1) {
+    var ta = PEEKT(S);
+    if (ta == 12) { pa = 0; }
+    else { if (ta == 32) { SKIP_DEF(S); }           # skip fn body (no globals inside)
+        else { if (ta == 40) { PARSE_STRUCT_DEF(S); }
+            else { if (ta == 57) { PARSE_ENUM(S); }
+                else { if (ta == 3) { PARSE_VAR(S); }   # register global var
+                    else { STI(S, GTI(S) + 1); } } } } }  # advance 1 — descend into
+}                                                          # top-level if/while/for blocks
+                                                           # so their `var`s register too
+# Pass B — fn bodies
+S64(S + 0x5318020, 2);
+STI(S, 0);
+var pb = 1;
+while (pb == 1) {
+    var tb = PEEKT(S);
+    if (tb == 12) { pb = 0; }
+    else { if (tb == 32) { PARSE_FN_DEF(S); }   # compile fn body
+        else { STI(S, GTI(S) + 1); } }          # advance 1 — skip all non-fn content
+}
+# Patch jmp to land here (start of the entry sequence)
+EPATCH(S, jmp_patch);
+# Pass C — entry sequence
+S64(S + 0x5318020, 3);
+STI(S, 0);
+var pcc = 1;
+while (pcc == 1) {
+    var tc = PEEKT(S);
+    if (tc == 12) { pcc = 0; }
+    else { if (tc == 32) { SKIP_DEF(S); }
+        else { if (tc == 40) { SKIP_DEF(S); }
+            else { if (tc == 57) { SKIP_DEF(S); }
+                else { PARSE_STMT(S); } } } }
 }
 
-# Patch jmp to land here (start of main code)
-EPATCH(S, jmp_patch);
-
-# Parse main code (top-level statements)
-PARSE_PROG(S);
-
-# Exit epilogue — load last var
+# Exit epilogue — load last var (scaffold test programs exit-with-last-var;
+# main.cyr exits earlier via its own top-level syscall(SYS_EXIT, ...)).
 var lv = GLVAR(S);
 if (lv >= 0) { EVLOAD(S, lv); }
 EEXIT(S);
