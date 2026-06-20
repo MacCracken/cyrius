@@ -76,10 +76,12 @@ overdue full audit before v6.2.0 (see
   standalone tool over sigil's in-tree **ed25519**, NOT external minisign —
   sovereignty) signs `SHA256SUMS`; pubkey committed + in SECURITY.md; the 3
   installers verify on the upgrade/CI path. Closes **CVE-13**. **(b)** a
-  reproducibility-attestation CI job (diverse double compilation: clean-checkout
-  self-host fixpoint + pi/ecb/cass each reproduce `cycc` byte-identical) — the
-  **INTERIM** CVE-20 mitigation: proves the committed `cycc` is
-  reproducible-from-source. It does NOT make `cycc` *derivable from the seed*.
+  self-host-**fixpoint** attestation CI job (`trust-root-attest`: the committed
+  `cycc` compiles its own source → that output recompiles to itself → equals the
+  committed binary) — the **INTERIM** CVE-20 mitigation: catches accidental
+  artifact **drift** + non-self-reproducing tampers. It does **NOT** defeat a
+  self-reproducing (Thompson "trusting-trust") tamper, nor make `cycc` *derivable
+  from the seed* — both require the bridge arc below.
 - **🔴 Post-.31 (MAJOR; user-prioritized BEFORE the deps-modules item) — the
   REAL CVE-20 fix: seed→cycc bridge restoration.** `seed → cybs → asm` is real
   (assembly-level) but **`cybs → cycc` does not exist** — `cybs` is an assembler

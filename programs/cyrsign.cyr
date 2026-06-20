@@ -111,6 +111,7 @@ fn _cs_usage() {
 fn _cs_read_file(path, out_len): i64 {
     var cap = 16777216;
     var buf = alloc(cap);
+    if (buf == 0) { store64(out_len, 0); return 0; }   # OOM → clean IO error, not a NULL write
     var n = file_read_all(path, buf, cap - 1);
     if (n < 0) { store64(out_len, 0); return 0; }
     if (n >= cap - 1) { _cs_err("file too large (>16 MB cap)"); store64(out_len, 0); return 0; }
@@ -122,9 +123,15 @@ fn _cs_read_file(path, out_len): i64 {
 # ── keygen ──
 
 fn _cs_keygen(): i64 {
-    var sk[64];   # seed (0..32) || pk (32..64)
+    secret var sk[64];   # seed (0..32) || pk (32..64) — secret material, zeroized on exit
     var pk[32];
-    ed25519_generate_keypair(&sk, &pk);
+    # CVE-13 (v6.2.31): fail closed on a CSPRNG failure. ed25519_generate_keypair
+    # returns 0 and leaves sk/pk all-ZERO if entropy gather fails — emitting that
+    # as the "seed" would hand out a deterministic, attacker-known signing key.
+    if (ed25519_generate_keypair(&sk, &pk) != 1) {
+        _cs_err("entropy failure — refusing to emit a zero keypair");
+        return 2;
+    }
     var seedhex[80];
     var pubhex[80];
     _cs_bytes_to_hex(&sk, 32, &seedhex);   # the seed is the first 32 bytes of sk
@@ -141,10 +148,10 @@ fn _cs_sign(): i64 {
     var file = argv(2);
     var skenv = getenv("CYRIUS_RELEASE_SK");
     if (skenv == 0) { _cs_err("CYRIUS_RELEASE_SK not set (64-hex Ed25519 seed)"); return 2; }
-    var seed[32];
+    secret var seed[32];   # raw private seed — zeroized on exit
     var sl = _cs_hex_to_bytes(skenv, strlen(skenv), &seed);
     if (sl != 32) { _cs_err("CYRIUS_RELEASE_SK must be exactly 64 hex chars (32-byte seed)"); return 2; }
-    var sk[64];
+    secret var sk[64];     # expanded signing key — zeroized on exit
     var pk[32];
     ed25519_keypair(&seed, &sk, &pk);
 
@@ -193,9 +200,10 @@ fn _cs_verify(): i64 {
     var pk[32];
     if (_cs_hex_to_bytes(&pubraw + hp, 64, &pk) != 32) { _cs_err("bad public key hex"); return 2; }
 
-    # signature: exactly 64 raw bytes
-    var sig[64];
-    var sn = file_read_all(sigf, &sig, 64);
+    # signature: exactly 64 raw bytes (read 65 so a 65+-byte file fails the
+    # ==64 check rather than being silently truncated to its first 64 bytes).
+    var sig[65];
+    var sn = file_read_all(sigf, &sig, 65);
     if (sn != 64) { _cs_err("signature file must be exactly 64 bytes"); return 1; }
 
     var flen[1];

@@ -191,6 +191,11 @@ jobs:
           mkdir -p "$STAGE/bin" "$STAGE/lib"
 
           cp build/cycc_aarch64 "$STAGE/bin/cycc"
+          # cyrsign (Ed25519 release verifier) built for aarch64 via the cross-
+          # compiler so install/upgrade can verify signatures here too (CVE-13,
+          # v6.2.31). Fail loud if it isn't a real aarch64 ELF.
+          cat programs/cyrsign.cyr | ./build/cycc_aarch64 > "$STAGE/bin/cyrsign"
+          file "$STAGE/bin/cyrsign" | grep -q "ARM aarch64" || { echo "ERROR: cyrsign not aarch64"; file "$STAGE/bin/cyrsign"; exit 1; }
           # Build cyrius tool for aarch64 tarball (x86 binary — runs on host for cross builds)
           if [ -f "build/cyrius" ]; then cp build/cyrius "$STAGE/bin/"; fi
           cp scripts/cyrius-init.sh "$STAGE/bin/" 2>/dev/null || true
@@ -228,7 +233,9 @@ jobs:
           # Cross-compile: cycc itself as a Mach-O binary
           # (The Mach-O cycc won't self-host on Linux — it's for macOS)
           # Instead, compile key tools for macOS
-          for tool in cyrfmt cyrlint cyrdoc; do
+          # cyrsign included so install/upgrade can verify Ed25519 release
+          # signatures on x86_64-macOS too (CVE-13, v6.2.31).
+          for tool in cyrfmt cyrlint cyrdoc cyrsign; do
             if [ -f "programs/${tool}.cyr" ]; then
               cat programs/${tool}.cyr | CYRIUS_MACHO=1 /tmp/cc5_fresh > ./build/${tool}_macho 2>/dev/null
               echo "${tool}_macho: $(wc -c < ./build/${tool}_macho) bytes"
@@ -385,8 +392,8 @@ jobs:
           ( cd dist && : > SHA256SUMS && for f in *.tar.gz.sha256; do [ -e "$f" ] && cat "$f" >> SHA256SUMS; done )
           [ -s dist/SHA256SUMS ] || { echo "error: no per-tarball .sha256 to aggregate"; exit 1; }
           if [ -z "${CYRIUS_RELEASE_SK}" ]; then
-            echo "::warning::CYRIUS_RELEASE_SK not set — publishing UNSIGNED (SHA256SUMS only). Set the secret to enable Ed25519 signing (CVE-13)."
-            exit 0
+            echo "error: CYRIUS_RELEASE_SK not set — refusing to publish an UNSIGNED release (CVE-13). Set the signing secret (or, for an intentionally-unsigned line, remove this gate deliberately)."
+            exit 1
           fi
           # Sign with the just-built cyrsign from the linux artifact (dogfood; no bootstrap).
           LX=$(ls dist/cyrius-*-x86_64-linux.tar.gz | head -1)

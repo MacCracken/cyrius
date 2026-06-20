@@ -39,7 +39,7 @@ cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE
 cp "$WORK/$STAGE/bin/cycc" "$WORK/$STAGE/bin/cycc_aarch64"
 # Wrapper + quality tools, cross-emitted to arm64 Mach-O.
 cat cbt/cyrius.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cyrius"
-for tool in cyrfmt cyrlint cyrdoc cyrius-init; do
+for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign; do
     cat "programs/${tool}.cyr" | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/${tool}"
 done
 # Version manager + prompt helper + scaffolding shims. The cyrius wrapper looks
@@ -52,7 +52,7 @@ chmod +x "$WORK/$STAGE/bin"/*
 
 # Validate every Mach-O binary (magic cffaedfe, cputype 0x0100000C) —
 # refuse to package a non-arm64 / empty artifact.
-for b in cycc cycc_aarch64 cyrius cyrfmt cyrlint cyrdoc cyrius-init; do
+for b in cycc cycc_aarch64 cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign; do
     f="$WORK/$STAGE/bin/$b"
     magic=$(xxd -l4 -p "$f" | tr -d ' \n')
     cput=$(xxd -s4 -l4 -p "$f" | tr -d ' \n')
