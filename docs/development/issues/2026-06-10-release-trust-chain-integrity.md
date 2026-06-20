@@ -64,17 +64,30 @@ Filed 2026-06-10. Folds the aging CVE-12/13 from the archived audit. Run the
 overdue full audit before v6.2.0 (see
 [overdue-security-audit-cve-tail](2026-06-10-overdue-security-audit-cve-tail.md)).
 
-**Scheduled as a 2-release arc (user 2026-06-19):**
-- **v6.2.30 — integrity + pinning:** flip `install.sh:373` warn→err + require
-  `.sha256` on the network path; add `.sha256` verify to `ci.sh` + `install.ps1`;
-  fetch the installer from `/refs/tags/<v>/` and make tag-clone failure fatal;
-  record the resolved **commit SHA** per dep in `cyrius.lock` + verify on
-  re-resolve (`cbt/deps.cyr`); pin all GitHub Actions to full commit SHAs; **+**
-  CVE-20 doc reframe (trust root = `build/cycc`, reframe CVE-12); **+** RM-02
-  threat-model.md fix + mabda 3.3.0→3.4.2 fold (packed into the same release).
-- **v6.2.31 — signing + reconstruction:** detached signing
-  (minisign/signify `SHA256SUMS` out-of-band, verified in all 3 installers,
-  closes CVE-13); periodic CI job reconstructing `cycc` from the seed
-  (seed→cybs→cycc) asserting equality with the committed `build/cycc` (makes the
-  CVE-20 trust root machine-derivable). *This was previously deferred to "v7
-  trust-story prerequisites"; pulled into v6.2.x per user direction.*
+**Scheduled across THREE arcs (user 2026-06-19/20):**
+- **v6.2.30 — integrity + pinning (SHIPPED):** flip `install.sh:373` warn→err +
+  require `.sha256` on the network path; add `.sha256` verify to `ci.sh` +
+  `install.ps1`; fetch the installer from `/refs/tags/<v>/` and make tag-clone
+  failure fatal; record the resolved **commit SHA** per dep in `cyrius.lock` +
+  verify on re-resolve (`cbt/deps.cyr`); pin all GitHub Actions to full commit
+  SHAs; **+** CVE-20 doc reframe (trust root = `build/cycc`, reframe CVE-12);
+  **+** RM-02 threat-model.md fix + mabda 3.3.0→3.4.2 fold.
+- **v6.2.31 — sovereign signing + reproducibility attestation:** `cyrsign` (a
+  standalone tool over sigil's in-tree **ed25519**, NOT external minisign —
+  sovereignty) signs `SHA256SUMS`; pubkey committed + in SECURITY.md; the 3
+  installers verify on the upgrade/CI path. Closes **CVE-13**. **(b)** a
+  reproducibility-attestation CI job (diverse double compilation: clean-checkout
+  self-host fixpoint + pi/ecb/cass each reproduce `cycc` byte-identical) — the
+  **INTERIM** CVE-20 mitigation: proves the committed `cycc` is
+  reproducible-from-source. It does NOT make `cycc` *derivable from the seed*.
+- **🔴 Post-.31 (MAJOR; user-prioritized BEFORE the deps-modules item) — the
+  REAL CVE-20 fix: seed→cycc bridge restoration.** `seed → cybs → asm` is real
+  (assembly-level) but **`cybs → cycc` does not exist** — `cybs` is an assembler
+  and can't parse `src/main.cyr`; the committed `build/cycc` blob is the de-facto
+  trust root nobody re-derives. Restore the retired ladder rung
+  (`src/bridge.cyr`-class, ~2000 LoC, dropped v5.11.66): a minimal cyrius
+  compiler that **cybs/asm can build AND that can compile modern `src/main.cyr`**,
+  making the literal **`seed → cybs → bridge → cycc`** chain executable +
+  machine-checkable ("the way we did it before"). Supersedes the .31 attestation.
+  Multi-slot; gate = a clean machine derives `cycc` byte-identical from the 29 KB
+  seed + source. *This is the only thing that fully closes CVE-20.*

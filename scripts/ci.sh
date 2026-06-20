@@ -57,6 +57,34 @@ curl -sfL "${URL}.sha256" -o "/tmp/${TARBALL}.sha256" || {
 echo "  checksum verified"
 rm -f "/tmp/${TARBALL}.sha256"
 
+# CVE-13 (v6.2.31): if a trusted cyrsign is present (a prior install on PATH /
+# in $CYRIUS_HOME/bin — the upgrade path), also verify the sovereign Ed25519
+# signature over SHA256SUMS against the pinned public key, then confirm this
+# tarball matches the SIGNED manifest line. Fail-closed. A fresh CI box with no
+# prior cyrsign / an unsigned release falls back to the HTTPS + .sha256 floor.
+CYRIUS_RELEASE_PUBKEY="adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
+BASE="https://github.com/MacCracken/cyrius/releases/download/${VERSION}"
+_cs=""
+if command -v cyrsign > /dev/null 2>&1; then _cs="cyrsign"
+elif [ -x "$CYRIUS_HOME/bin/cyrsign" ]; then _cs="$CYRIUS_HOME/bin/cyrsign"; fi
+if [ -n "$_cs" ] && curl -sfL "${BASE}/SHA256SUMS" -o /tmp/SHA256SUMS 2>/dev/null \
+        && curl -sfL "${BASE}/SHA256SUMS.sig" -o /tmp/SHA256SUMS.sig 2>/dev/null; then
+    printf '%s\n' "$CYRIUS_RELEASE_PUBKEY" > /tmp/cyrius-release.pub
+    grep "  ${TARBALL}$" /tmp/SHA256SUMS > /tmp/cyrius_tsum 2>/dev/null || true
+    if "$_cs" verify /tmp/SHA256SUMS /tmp/SHA256SUMS.sig /tmp/cyrius-release.pub > /dev/null 2>&1 \
+            && [ -s /tmp/cyrius_tsum ] \
+            && ( cd /tmp && { sha256sum -c cyrius_tsum > /dev/null 2>&1 || shasum -a 256 -c cyrius_tsum > /dev/null 2>&1; } ); then
+        echo "  signature verified (Ed25519)"
+    else
+        echo "error: release signature verification FAILED for $VERSION — aborting" >&2
+        rm -f "/tmp/$TARBALL" /tmp/SHA256SUMS /tmp/SHA256SUMS.sig /tmp/cyrius-release.pub /tmp/cyrius_tsum
+        exit 1
+    fi
+    rm -f /tmp/SHA256SUMS /tmp/SHA256SUMS.sig /tmp/cyrius-release.pub /tmp/cyrius_tsum
+else
+    echo "  signature check skipped (no prior cyrsign / unsigned release)"
+fi
+
 tar xzf "/tmp/$TARBALL" -C "$CYRIUS_HOME"
 rm -f "/tmp/$TARBALL"
 

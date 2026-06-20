@@ -58,6 +58,35 @@ if (-not $Stage) {
     }
     Write-Host "checksum verified"
 
+    # CVE-13 (v6.2.31): if a trusted cyrsign.exe is available (a prior install on
+    # PATH or in <home>\bin) AND a signed SHA256SUMS(.sig) sits next to the
+    # tarball, verify the sovereign Ed25519 signature and that this tarball
+    # matches the SIGNED manifest hash. Fail-closed; skip if absent (the SHA256
+    # check above is the floor). Keep ASCII-only (PS 5.1 ANSI codepage).
+    $pub = "adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
+    $sums = Join-Path (Split-Path -Parent (Resolve-Path $Tarball)) "SHA256SUMS"
+    $sumsSig = "$sums.sig"
+    $cyrsign = $null
+    $cmd = Get-Command cyrsign.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $cyrsign = $cmd.Source }
+    elseif (Test-Path (Join-Path $CyriusHome "bin\cyrsign.exe")) { $cyrsign = Join-Path $CyriusHome "bin\cyrsign.exe" }
+    if ($cyrsign -and (Test-Path $sums) -and (Test-Path $sumsSig)) {
+        $pubfile = Join-Path $env:TEMP ("cyrius-release-" + [System.Guid]::NewGuid().ToString("N") + ".pub")
+        Set-Content -Path $pubfile -Value $pub -NoNewline
+        & $cyrsign verify $sums $sumsSig $pubfile | Out-Null
+        $sigok = ($LASTEXITCODE -eq 0)
+        Remove-Item $pubfile -ErrorAction SilentlyContinue
+        if (-not $sigok) { throw "release signature verification FAILED - refusing" }
+        $tname = Split-Path -Leaf $Tarball
+        $line = (Get-Content $sums | Where-Object { $_ -match ("\s" + [regex]::Escape($tname) + "$") } | Select-Object -First 1)
+        if (-not $line) { throw "tarball $tname not in signed SHA256SUMS - refusing" }
+        $signedHash = ($line -split '\s+')[0]
+        if ($actual -ine $signedHash) { throw "tarball hash != signed manifest hash - refusing" }
+        Write-Host "signature verified (Ed25519)"
+    } else {
+        Write-Host "signature check skipped (no prior cyrsign.exe / unsigned tarball)"
+    }
+
     $tmp = Join-Path $env:TEMP ("cyrius-install-" + [System.Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     # tar.exe ships in System32 on Windows 10 1803+; the release tarball is .tar.gz.

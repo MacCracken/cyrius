@@ -1,0 +1,226 @@
+# cyrsign — sovereign release signer/verifier (CVE-13, v6.2.31).
+#
+# Detached Ed25519 signatures over a file (in practice the release SHA256SUMS),
+# using cyrius's OWN crypto (sigil's in-tree ed25519) — NO external minisign /
+# signify / gpg. This keeps release signing inside "own the toolchain": the
+# signer, the verifier, and the curve implementation are all cyrius.
+#
+# Usage:
+#   cyrsign keygen
+#       Generate a fresh Ed25519 keypair. Prints two lines:
+#         seed <64-hex>     # the 32-byte secret SEED — store as the CI secret
+#         pub  <64-hex>     # the 32-byte public key  — commit it in-repo
+#       The seed (not the expanded 64-byte sk) is the secret: sk derives from it.
+#
+#   CYRIUS_RELEASE_SK=<64-hex-seed> cyrsign sign <file>
+#       Sign <file> with the seed from $CYRIUS_RELEASE_SK (kept off argv so the
+#       secret never lands in the process table). Writes <file>.sig (64 raw bytes).
+#
+#   cyrsign verify <file> <file.sig> <pubkeyfile>
+#       Verify the detached signature against the public key in <pubkeyfile>
+#       (the first 64 hex chars). Exit 0 = valid, 1 = INVALID, 2 = usage/IO error.
+#
+# Built raw (cat programs/cyrsign.cyr | build/cycc) like every program, so it
+# carries sigil's full transitive dep set explicitly — no cyrius.cyml resolution.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/slice.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/fmt.cyr"
+include "lib/hashmap.cyr"
+include "lib/tagged.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/args.cyr"
+include "lib/assert.cyr"
+include "lib/chrono.cyr"
+include "lib/process.cyr"
+include "lib/bench.cyr"
+include "lib/ct.cyr"
+include "lib/random.cyr"
+include "lib/thread_local.cyr"
+include "lib/thread.cyr"
+include "lib/keccak.cyr"
+include "lib/bayan.cyr"
+include "lib/sigil.cyr"
+
+# ── hex codec (self-contained; sigil's hex_* are crypto-internal) ──
+
+fn _cs_hexval(c): i64 {
+    if (c >= 48 && c <= 57)  { return c - 48; }   # 0-9
+    if (c >= 97 && c <= 102) { return c - 87; }   # a-f
+    if (c >= 65 && c <= 70)  { return c - 55; }   # A-F
+    return -1;
+}
+
+# Decode `hexlen` hex chars at `hex` into `out`. Returns #bytes, or -1 on an
+# odd length or a non-hex char.
+fn _cs_hex_to_bytes(hex, hexlen, out): i64 {
+    if (hexlen % 2 != 0) { return -1; }
+    var i = 0;
+    while (i < hexlen) {
+        var hi = _cs_hexval(load8(hex + i));
+        var lo = _cs_hexval(load8(hex + i + 1));
+        if (hi < 0 || lo < 0) { return -1; }
+        store8(out + i / 2, (hi << 4) | lo);
+        i = i + 2;
+    }
+    return hexlen / 2;
+}
+
+# Encode `len` bytes into `out` as 2*len lowercase hex chars + NUL.
+fn _cs_bytes_to_hex(bytes, len, out): i64 {
+    var hexchars = "0123456789abcdef";
+    var i = 0;
+    while (i < len) {
+        var b = load8(bytes + i);
+        store8(out + i * 2,     load8(hexchars + ((b >> 4) & 15)));
+        store8(out + i * 2 + 1, load8(hexchars + (b & 15)));
+        i = i + 1;
+    }
+    store8(out + len * 2, 0);
+    return len * 2;
+}
+
+# Count leading hex chars at `p` (cap at `max`).
+fn _cs_hex_run(p, max): i64 {
+    var n = 0;
+    while (n < max && _cs_hexval(load8(p + n)) >= 0) { n = n + 1; }
+    return n;
+}
+
+fn _cs_err(msg) {
+    sys_write(2, "cyrsign: ", 9);
+    sys_write(2, msg, strlen(msg));
+    sys_write(2, "\n", 1);
+}
+
+fn _cs_usage() {
+    sys_write(2, "usage: cyrsign keygen | sign <file> | verify <file> <file.sig> <pubkeyfile>\n", 75);
+}
+
+# Read a whole file into a freshly-allocated buffer. Returns the buffer ptr;
+# *out_len receives the length. Returns 0 (and sets len 0) on read failure or
+# if the file would exceed the 16 MB cap (fail-loud, never silently truncate).
+fn _cs_read_file(path, out_len): i64 {
+    var cap = 16777216;
+    var buf = alloc(cap);
+    var n = file_read_all(path, buf, cap - 1);
+    if (n < 0) { store64(out_len, 0); return 0; }
+    if (n >= cap - 1) { _cs_err("file too large (>16 MB cap)"); store64(out_len, 0); return 0; }
+    store8(buf + n, 0);
+    store64(out_len, n);
+    return buf;
+}
+
+# ── keygen ──
+
+fn _cs_keygen(): i64 {
+    var sk[64];   # seed (0..32) || pk (32..64)
+    var pk[32];
+    ed25519_generate_keypair(&sk, &pk);
+    var seedhex[80];
+    var pubhex[80];
+    _cs_bytes_to_hex(&sk, 32, &seedhex);   # the seed is the first 32 bytes of sk
+    _cs_bytes_to_hex(&pk, 32, &pubhex);
+    sys_write(1, "seed ", 5); sys_write(1, &seedhex, 64); sys_write(1, "\n", 1);
+    sys_write(1, "pub  ", 5); sys_write(1, &pubhex, 64);  sys_write(1, "\n", 1);
+    return 0;
+}
+
+# ── sign ──
+
+fn _cs_sign(): i64 {
+    if (argc() < 3) { _cs_usage(); return 2; }
+    var file = argv(2);
+    var skenv = getenv("CYRIUS_RELEASE_SK");
+    if (skenv == 0) { _cs_err("CYRIUS_RELEASE_SK not set (64-hex Ed25519 seed)"); return 2; }
+    var seed[32];
+    var sl = _cs_hex_to_bytes(skenv, strlen(skenv), &seed);
+    if (sl != 32) { _cs_err("CYRIUS_RELEASE_SK must be exactly 64 hex chars (32-byte seed)"); return 2; }
+    var sk[64];
+    var pk[32];
+    ed25519_keypair(&seed, &sk, &pk);
+
+    var flen[1];
+    var buf = _cs_read_file(file, &flen);
+    if (buf == 0) { _cs_err("cannot read file to sign"); return 1; }
+
+    var sig[64];
+    ed25519_sign(&sk, buf, load64(&flen), &sig);
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, file);
+    str_builder_add_cstr(sb, ".sig");
+    var sigpath = str_data(str_builder_build(sb));
+    var fd = sys_open(sigpath, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    if (fd < 0) { _cs_err("cannot open .sig for writing"); return 1; }
+    sys_write(fd, &sig, 64);
+    sys_close(fd);
+    sys_write(1, "signed ", 7); sys_write(1, file, strlen(file));
+    sys_write(1, " -> ", 4); sys_write(1, sigpath, strlen(sigpath)); sys_write(1, "\n", 1);
+    return 0;
+}
+
+# ── verify ──
+
+fn _cs_verify(): i64 {
+    if (argc() < 5) { _cs_usage(); return 2; }
+    var file = argv(2);
+    var sigf = argv(3);
+    var pubf = argv(4);
+
+    # public key: first 64 hex chars of the pubkey file (accepts a bare hex
+    # line or a trailing newline; ignores any leading "pub " label by scanning
+    # to the first hex run of length >= 64).
+    var pubraw[512];
+    var pn = file_read_all(pubf, &pubraw, 511);
+    if (pn <= 0) { _cs_err("cannot read pubkey file"); return 2; }
+    store8(&pubraw + pn, 0);
+    var hp = 0;
+    while (hp < pn && _cs_hex_run(&pubraw + hp, pn - hp) < 64) {
+        # advance past a non-hex / too-short run to the next candidate
+        while (hp < pn && _cs_hexval(load8(&pubraw + hp)) >= 0) { hp = hp + 1; }
+        while (hp < pn && _cs_hexval(load8(&pubraw + hp)) < 0)  { hp = hp + 1; }
+    }
+    if (hp >= pn) { _cs_err("no 64-hex public key found in pubkey file"); return 2; }
+    var pk[32];
+    if (_cs_hex_to_bytes(&pubraw + hp, 64, &pk) != 32) { _cs_err("bad public key hex"); return 2; }
+
+    # signature: exactly 64 raw bytes
+    var sig[64];
+    var sn = file_read_all(sigf, &sig, 64);
+    if (sn != 64) { _cs_err("signature file must be exactly 64 bytes"); return 1; }
+
+    var flen[1];
+    var buf = _cs_read_file(file, &flen);
+    if (buf == 0) { _cs_err("cannot read file to verify"); return 1; }
+
+    if (ed25519_verify(&pk, buf, load64(&flen), &sig) == 1) {
+        sys_write(1, "signature OK\n", 13);
+        return 0;
+    }
+    sys_write(2, "cyrsign: signature INVALID\n", 27);
+    return 1;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    if (argc() < 2) { _cs_usage(); return 2; }
+    var cmd = argv(1);
+    if (streq(cmd, "keygen") == 1) { return _cs_keygen(); }
+    if (streq(cmd, "sign") == 1)   { return _cs_sign(); }
+    if (streq(cmd, "verify") == 1) { return _cs_verify(); }
+    _cs_usage();
+    return 2;
+}
+
+var _rc = main();
+syscall(60, _rc);

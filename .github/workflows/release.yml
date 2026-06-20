@@ -376,6 +376,29 @@ jobs:
       - name: Add standalone installer
         run: cp scripts/install.sh dist/
 
+      - name: Sign release checksums (sovereign Ed25519 — CVE-13, v6.2.31)
+        env:
+          CYRIUS_RELEASE_SK: ${{ secrets.CYRIUS_RELEASE_SK }}
+        run: |
+          set -e
+          # Aggregate every per-tarball .sha256 into one SHA256SUMS.
+          ( cd dist && : > SHA256SUMS && for f in *.tar.gz.sha256; do [ -e "$f" ] && cat "$f" >> SHA256SUMS; done )
+          [ -s dist/SHA256SUMS ] || { echo "error: no per-tarball .sha256 to aggregate"; exit 1; }
+          if [ -z "${CYRIUS_RELEASE_SK}" ]; then
+            echo "::warning::CYRIUS_RELEASE_SK not set — publishing UNSIGNED (SHA256SUMS only). Set the secret to enable Ed25519 signing (CVE-13)."
+            exit 0
+          fi
+          # Sign with the just-built cyrsign from the linux artifact (dogfood; no bootstrap).
+          LX=$(ls dist/cyrius-*-x86_64-linux.tar.gz | head -1)
+          tar xzf "$LX" -C /tmp
+          CYRSIGN=$(find /tmp -type f -name cyrsign | head -1)
+          chmod +x "$CYRSIGN"
+          "$CYRSIGN" sign dist/SHA256SUMS
+          # Fail-closed self-check: the secret MUST match the committed public key.
+          "$CYRSIGN" verify dist/SHA256SUMS dist/SHA256SUMS.sig keys/cyrius-release.ed25519.pub
+          cp keys/cyrius-release.ed25519.pub dist/
+          echo "signed + self-verified SHA256SUMS (Ed25519)"
+
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (pinned 2026-06-19, latest-in-major)
         with:

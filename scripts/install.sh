@@ -19,6 +19,10 @@ set -e
 CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 REPO="MacCracken/cyrius"
 VERSION="${CYRIUS_VERSION:-}"
+# CVE-13 (v6.2.31): the release Ed25519 public key — the signature trust anchor.
+# Canonical copy: keys/cyrius-release.ed25519.pub. install.sh ships from the
+# immutable tag, so it carries the pubkey for the version it installs.
+CYRIUS_RELEASE_PUBKEY="adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
 ARCH=$(uname -m)
 
 # v5.4.18: --refresh-only mode. Skips tarball fetch / source bootstrap
@@ -83,6 +87,29 @@ _verify_checksum() {
     else
         return 2
     fi
+}
+
+# CVE-13 (v6.2.31): verify the release's sovereign Ed25519 signature over
+# SHA256SUMS using a TRUSTED, PRE-EXISTING cyrsign (a prior install on PATH or
+# in $CYRIUS_HOME/bin) — the upgrade path. Deliberately NOT the cyrsign inside
+# the tarball being installed (a malicious tarball verifying itself is circular).
+# Chains: (1) signature over SHA256SUMS valid for our pinned pubkey, then (2)
+# this tarball's checksum is present in the now-authenticated SHA256SUMS.
+# Returns 0 verified, 1 mismatch (fail-closed), 2 no trusted verifier / no sig
+# published (skip — first-install TOFU floor is the HTTPS + .sha256 above).
+_verify_signature() {
+    _cs=""
+    if command -v cyrsign > /dev/null 2>&1; then _cs="cyrsign"
+    elif [ -x "$CYRIUS_HOME/bin/cyrsign" ]; then _cs="$CYRIUS_HOME/bin/cyrsign"
+    else return 2; fi
+    curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS"     -o "$TMPDIR/SHA256SUMS"     2>/dev/null || return 2
+    curl -sSfL "${DOWNLOAD_URL}/SHA256SUMS.sig" -o "$TMPDIR/SHA256SUMS.sig" 2>/dev/null || return 2
+    printf '%s\n' "$CYRIUS_RELEASE_PUBKEY" > "$TMPDIR/release.pub"
+    "$_cs" verify "$TMPDIR/SHA256SUMS" "$TMPDIR/SHA256SUMS.sig" "$TMPDIR/release.pub" > /dev/null 2>&1 || return 1
+    grep "  ${TARBALL}$" "$TMPDIR/SHA256SUMS" > "$TMPDIR/tarball_sum" 2>/dev/null || return 1
+    [ -s "$TMPDIR/tarball_sum" ] || return 1
+    ( cd "$TMPDIR" && _verify_checksum tarball_sum ) || return 1
+    return 0
 }
 
 # ── Detect platform ──
@@ -421,6 +448,21 @@ else
                 err "no SHA-256 tool found (need sha256sum, shasum, or gsha256sum) — cannot verify ${TARBALL}; refusing to install unverified."
             else
                 err "checksum mismatch for ${TARBALL} — aborting (corrupted or tampered download)."
+            fi
+        fi
+        # CVE-13 (v6.2.31): if a trusted prior cyrsign is present (upgrade path),
+        # additionally verify the release Ed25519 signature; fail-closed on a bad
+        # signature. First install has no prior verifier → the HTTPS + .sha256
+        # above is the floor (TOFU); the signature guards every later upgrade and
+        # manual `cyrsign verify`.
+        if _verify_signature; then
+            info "signature verified (Ed25519)"
+        else
+            _vs=$?
+            if [ "$_vs" -eq 1 ]; then
+                err "release signature verification FAILED for ${VERSION} — refusing (tampered SHA256SUMS or wrong key)."
+            else
+                info "signature check skipped (no prior cyrsign / unsigned release; integrity is HTTPS + SHA256)"
             fi
         fi
         _got_tarball=1

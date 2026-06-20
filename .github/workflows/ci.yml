@@ -53,6 +53,26 @@ jobs:
           cat programs/cyaudit.cyr | ./build/cycc > ./build/cyaudit && chmod +x ./build/cyaudit
           cat programs/ark.cyr | ./build/cycc > ./build/ark && chmod +x ./build/ark
 
+  # ── CVE-20: trust-root attestation (v6.2.31) ──
+  # The committed build/cycc — NOT the 29 KB seed — is the de-facto trust root
+  # (CVE-20: cybs is an assembler and cannot rebuild cycc; the literal seed->cycc
+  # bridge is a separately-pinned arc). This job is the INTERIM machine
+  # attestation: from a fresh checkout it rebuilds cycc from source and asserts
+  # (1) a byte-identical self-host fixpoint AND (2) equality with the COMMITTED
+  # build/cycc (scripts/build-cycc-verify.sh invariant 3) — so a tampered
+  # committed binary cannot match source. Together with the per-OS "cycc
+  # reproduces itself" jobs (x86 / aarch64 / macOS x2 / Windows), this is diverse
+  # double compilation. See SECURITY.md + the release-trust-chain-integrity issue.
+  trust-root-attest:
+    name: Trust-root attestation (CVE-20)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
+      - name: Reproduce + attest committed cycc from source
+        run: |
+          chmod +x build/cycc
+          sh scripts/build-cycc-verify.sh
+
   # ── Check & Format ──
   check:
     name: Check & Format
