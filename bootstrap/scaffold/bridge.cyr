@@ -146,14 +146,28 @@ fn PUTNUM(S, n): i64 {
     syscall(1, 2, S + 0x5328000 + i, 32 - i);
     return 0;
 }
+# [grow] print a NUL-terminated tok_names string to stderr.
+fn PUTSTR(S, off): i64 {
+    var i = 0;
+    while (load8(S + 0x2800000 + off + i) != 0) { i = i + 1; }
+    syscall(1, 2, S + 0x2800000 + off, i);
+    return 0;
+}
 fn ERR(S): i64 {
-    # [grow] diagnostic: token index + type + value at the failure point.
+    # [grow] diagnostic: token index + type + (name if IDENT) + previous token.
     syscall(1, 2, "syntax error @tok ", 18);
     PUTNUM(S, GTI(S));
     syscall(1, 2, " type ", 6);
     PUTNUM(S, PEEKT(S));
-    syscall(1, 2, " val ", 5);
-    PUTNUM(S, PEEKV(S));
+    if (PEEKT(S) == 2) { syscall(1, 2, " name '", 7); PUTSTR(S, PEEKV(S)); syscall(1, 2, "'", 1); }
+    var pt = TOKTYP(S, GTI(S) - 1);
+    syscall(1, 2, " | prev type ", 13);
+    PUTNUM(S, pt);
+    if (pt == 2) { syscall(1, 2, " '", 2); PUTSTR(S, TOKVAL(S, GTI(S) - 1)); syscall(1, 2, "'", 1); }
+    var pt2 = TOKTYP(S, GTI(S) - 2);
+    syscall(1, 2, " | prev2 type ", 14);
+    PUTNUM(S, pt2);
+    if (pt2 == 2) { syscall(1, 2, " '", 2); PUTSTR(S, TOKVAL(S, GTI(S) - 2)); syscall(1, 2, "'", 1); }
     syscall(1, 2, "\n", 1);
     syscall(60, 1);
     return 0;
@@ -1039,8 +1053,13 @@ fn PARSE_FACTOR(S): i64 {
             }
         }
         var aidx = FINDVAR(S, anoff);
-        if (aidx < 0) { ERR(S); }
-        EVADDR(S, aidx);
+        if (aidx >= 0) { EVADDR(S, aidx); return 0; }
+        # [grow] &function — fn pointer. Only alloc.cyr's vtable allocators
+        # (bump/arena/test) take fn addresses, and cycc never calls them (it
+        # uses alloc() directly), so they're dead-but-compiled — a placeholder
+        # address parses and is never dereferenced.
+        if (FINDFN(S, anoff) >= 0) { EMOVI(S, 0); return 0; }
+        ERR(S);
         return 0;
     }
     if (typ == 30) {
@@ -1493,11 +1512,48 @@ fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);
     var infn = GINFN(S);
     var pass = L64(S + 0x5318020);
-    # Array: var buf[N];
+    # [grow] typed decl `var x: TYPE` / `var x: TYPE[N]` — the lexer dropped `:`,
+    # leaving the type IDENT. Consume it; `typed` selects i64-slot (x8) array sizing.
+    var typed = 0;
+    if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); typed = 1; }
+    # Array: var buf[N]  /  var a: TYPE[N]
     if (PEEKT(S) == 28) {
-        if (infn == 1) { PARSE_ARRAY(S, noff); return 0; }   # local array
-        if (pass == 1) { PARSE_ARRAY(S, noff); return 0; }   # pass A: register global array
-        SKIP_TO_SEMI(S);                                      # pass C: already registered
+        STI(S, GTI(S) + 1);   # consume [
+        if (PEEKT(S) != 1) { ERR(S); }
+        var an = PEEKV(S);
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 29) { ERR(S); }
+        STI(S, GTI(S) + 1);   # consume ]
+        if (PEEKT(S) != 5) { ERR(S); }
+        STI(S, GTI(S) + 1);   # consume ;
+        if (infn == 1) {
+            # LOCAL array: reserve frame slots. typed i64[N] -> N slots;
+            # untyped [N] (bytes) -> ceil(N/8) slots. Register the name at the
+            # HIGHEST reserved index so &name = the array's base (lowest address),
+            # and &name + i*8 walks UP through the reserved slots (locals grow down).
+            var slots = an;
+            if (typed == 0) { slots = (an + 7) / 8; }
+            if (slots < 1) { slots = 1; }
+            var li = GFLC(S);
+            S64(S + 0x5078000 + (li + slots - 1) * 8, noff);
+            var nl = 0;
+            while (load8(S + 0x2800000 + noff + nl) != 0) { nl = nl + 1; }
+            var sent = noff + nl;   # NUL sentinel: interior slots never match a real name
+            var k = li;
+            while (k < li + slots - 1) { S64(S + 0x5078000 + k * 8, sent); k = k + 1; }
+            SFLC(S, li + slots);
+            return 0;
+        }
+        # GLOBAL array — register in pass A only (size in bytes; typed -> N*8).
+        if (pass == 1) {
+            var vcnt = GVCNT(S);
+            S64(S + 0x5000000 + vcnt * 8, noff);
+            var bytes = an;
+            if (typed == 1) { bytes = an * 8; }
+            var aligned = (bytes + 7) & (0 - 8);
+            S64(S + 0x5010000 + vcnt * 8, aligned);
+            SVCNT(S, vcnt + 1);
+        }
         return 0;
     }
     if (PEEKT(S) != 4) { ERR(S); }
@@ -2081,10 +2137,34 @@ fn PARSE_STMT(S): i64 {
         while (ago == 1) {
             if (PEEKT(S) == 14) { ago = 0; }
             else {
-                if (PEEKT(S) != 1) { ERR(S); }
-                EB(S, PEEKV(S) & 0xFF);
-                STI(S, GTI(S) + 1);
-                if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                if (PEEKT(S) == 1) {
+                    EB(S, PEEKV(S) & 0xFF);   # raw byte
+                    STI(S, GTI(S) + 1);
+                    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                }
+                else { if (PEEKT(S) == 2) {
+                        # [grow] asm pseudo-op like param_load(reg, idx). The only
+                        # symbolic asm in the closure; used by fnptr/atomic, which
+                        # cycc never calls (no fn-pointers/atomics in its source),
+                        # so these fns are dead-but-compiled — parse past + emit
+                        # nothing (a dead body's exact bytes don't matter).
+                        STI(S, GTI(S) + 1);   # consume IDENT
+                        if (PEEKT(S) == 10) {
+                            var pd = 0;
+                            var sg = 1;
+                            while (sg == 1) {
+                                var tt = PEEKT(S);
+                                if (tt == 12) { sg = 0; }
+                                else {
+                                    STI(S, GTI(S) + 1);
+                                    if (tt == 10) { pd = pd + 1; }
+                                    else { if (tt == 11) { pd = pd - 1; if (pd == 0) { sg = 0; } } }
+                                }
+                            }
+                        }
+                        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                    }
+                    else { ERR(S); } }
             }
         }
         STI(S, GTI(S) + 1);
