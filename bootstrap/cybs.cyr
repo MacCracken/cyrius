@@ -2126,8 +2126,15 @@ parser:
 parse_fn_defs:
     call peek_tok_type
     cmp rax, 32          # FN
-    jne parse_fn_defs_done
+    je parse_fn_defs_fn
+    cmp rax, 40          # ENUM (v6.2.x cybs-grow brick 1) — top-level enum decl
+    je parse_fn_defs_enum
+    jmp parse_fn_defs_done
+parse_fn_defs_fn:
     call parse_fn_def
+    jmp parse_fn_defs
+parse_fn_defs_enum:
+    call parse_enum_def
     jmp parse_fn_defs
 parse_fn_defs_done:
 
@@ -3143,6 +3150,124 @@ parse_term_shr:
     jmp parse_term_loop
 
 # ── Factor: NUMBER | IDENT | ( expr ) ──
+# ── enum NAME { ID = INT; ... }  (v6.2.x cybs-grow brick 1) ──
+# Registers each ID as an integer constant (name->value). const table:
+#   0x94000 const_noffs [name offsets into tok_names]; 0x94800 const_values;
+#   0x95000 const_count. (heap is zeroed by brk, so const_count starts 0.)
+parse_enum_def:
+    push r8
+    push r9
+    inc r11              # consume ENUM
+    call peek_tok_type
+    cmp rax, 2           # IDENT (enum name) — consumed + ignored
+    jne parse_err
+    inc r11
+    call peek_tok_type
+    cmp rax, 13          # LBRACE
+    jne parse_err
+    inc r11
+parse_enum_member:
+    call peek_tok_type
+    cmp rax, 14          # RBRACE -> done
+    je parse_enum_done
+    cmp rax, 2           # IDENT (member name)
+    jne parse_err
+    call peek_tok_value
+    mov r8, rax          # r8 = member name offset
+    inc r11
+    call peek_tok_type
+    cmp rax, 4           # EQ
+    jne parse_err
+    inc r11
+    call peek_tok_type
+    cmp rax, 1           # NUM
+    jne parse_err
+    call peek_tok_value
+    mov r9, rax          # r9 = value
+    inc r11
+    call peek_tok_type
+    cmp rax, 5           # SEMI
+    jne parse_err
+    inc r11
+    # register: const_noffs[count]=r8, const_values[count]=r9, count++
+    push rcx
+    mov rsi, r15
+    add rsi, 0x95000
+    mov rcx, [rsi]       # const_count
+    push rcx
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x94000
+    add rsi, rcx
+    mov [rsi], r8
+    pop rcx
+    push rcx
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x94800
+    add rsi, rcx
+    mov [rsi], r9
+    pop rcx
+    inc rcx
+    mov rsi, r15
+    add rsi, 0x95000
+    mov [rsi], rcx       # const_count++
+    pop rcx
+    jmp parse_enum_member
+parse_enum_done:
+    inc r11              # consume RBRACE
+    pop r9
+    pop r8
+    ret
+
+# find_const_index: rax = lookup name offset -> rax = index, or -1 if not a const.
+# Mirrors find_var_index but over the const table (count at 0x95000).
+find_const_index:
+    push r8
+    push r9
+    push rcx
+    mov r8, rax
+    xor r9, r9
+find_const_loop:
+    mov rsi, r15
+    add rsi, 0x95000
+    mov rax, [rsi]       # const_count
+    cmp r9, rax
+    jge find_const_undef
+    mov rcx, r9
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x94000
+    add rsi, rcx
+    mov rax, [rsi]       # const_noffs[r9]
+    push r8
+    push r9
+    mov rdi, r15
+    add rdi, 0x50000
+    add rdi, rax
+    mov rsi, r15
+    add rsi, 0x50000
+    add rsi, r8
+    call strcmp
+    pop r9
+    pop r8
+    cmp rax, 0
+    je find_const_found
+    inc r9
+    jmp find_const_loop
+find_const_found:
+    mov rax, r9
+    pop rcx
+    pop r9
+    pop r8
+    ret
+find_const_undef:
+    mov rax, -1
+    pop rcx
+    pop r9
+    pop r8
+    ret
+
 parse_factor:
     call peek_tok_type
 
@@ -3185,6 +3310,25 @@ parse_factor_ident:
     call peek_tok_type
     cmp rax, 10          # LPAREN
     je parse_factor_fn_call
+
+    # enum const? (v6.2.x brick 1) — resolve to immediate before var-load.
+    # const_count is 0 unless an enum was parsed, so this is a no-op (-> var
+    # load) for existing programs (e.g. asm.cyr), keeping the seed closure intact.
+    mov rax, r8
+    call find_const_index
+    cmp rax, -1
+    je parse_factor_ident_notconst
+    mov rcx, rax
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x94800     # const_values[idx]
+    add rsi, rcx
+    mov rax, [rsi]
+    call emit_mov_rax_imm64
+    pop r9
+    pop r8
+    ret
+parse_factor_ident_notconst:
 
     # variable load — check in_function
     mov rsi, r15
