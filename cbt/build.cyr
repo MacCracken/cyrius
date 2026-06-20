@@ -64,8 +64,14 @@ fn compile(source, output): i64 {
     var cc = current_cc();
     # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
     # cross-compiler (the same env knobs apply — kernel_mode + ELF64 kernel).
+    # HARD-ERROR if cycc_aarch64 is absent (review P1) — never silently fall
+    # through to the x86 cycc and build an x86 kernel for an aarch64 target.
     if (_baremetal_aa == 1) {
         if (file_exists(_cc_arm) == 1) { cc = _cc_arm; }
+        else {
+            _err_ctx("aarch64-bare-metal-elf requested but cycc_aarch64 not found; build it via `cyrius pulsar` (or CI/install)", _cc_arm);
+            return 1;
+        }
     }
     if (cc == 0) {
         _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");

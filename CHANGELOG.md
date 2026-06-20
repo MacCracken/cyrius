@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.27] — 2026-06-19
+
+**v6.2.27 — bare-metal target formalization, FRONTEND HALF** (a 2-release arc;
+the runtime/boot half is .28). The CLI + frontend surface for first-class
+bare-metal targets, formalizing the ad-hoc `kernel;`/kmode mechanism AGNOS has
+used since first boot. cycc **1,069,688 → 1,071,904 B** (+2,216 — the bare-metal
+frontend IS in the compiler: `#naked` handling + the `CYRIUS_KERNEL` reads +
+prologue gating; feature growth, self-hosts byte-identical); self_compile
+**518 ms** (flat). check.sh **90/90**; cross-OS pi/ecb/cass.
+
+- **D1 — `--target=<arch>-bare-metal-elf` triple** (x86_64 + aarch64). A named
+  front-end over kmode: the CLI injects `CYRIUS_KERNEL=1` (a new env read in
+  main.cyr / main_aarch64.cyr that forces `kernel_mode` so no source `kernel;` is
+  needed — default unset → cycc byte-identical) + `CYRIUS_ELF64_KERNEL=1`, and
+  sets `_skip_deps` (a freestanding kernel must NOT auto-prepend the
+  syscall-assuming userland stdlib). Byte-identical to the source `kernel;`
+  mechanism it formalizes.
+- **D2/D4 — no-libc freestanding ELF**: the triple's output is a clean single
+  PT_LOAD with no PT_INTERP / PT_DYNAMIC (verified both arches).
+- **D3 — `#naked` fn-attribute** (token 133): frameless emit for interrupt
+  handlers — skips prologue/epilogue/frame/regalloc-save-restore. Skips the
+  prologue on x86 (−48 B) and aarch64 (−24 B); mirrored across all 6 `main_*`
+  forks (the annotation-fork-desync class, now its 4th instance).
+- **Adversarial review (19 agents, 8 confirmed) — all 3 P1s fixed:** (1) token
+  128 **collided with the `f64v_dot` SIMD builtin** → renumbered `#naked` to 133
+  (f64v_dot verified intact); (2) a DCE-stubbed `#naked` fn leaked
+  `_naked_pending` into the next live fn → it was emitted **frameless and
+  SIGSEGV'd** → reset the flag in the DCE-stub path (repro now exits cleanly); (3)
+  `--target=aarch64-bare-metal-elf` **silently built an x86 kernel** when
+  cycc_aarch64 was absent → now `set_arch(ARCH_AARCH64)` + hard-error.
+- **`#naked` is the prologue-skip *attribute*, a building block — NOT a finished
+  ISR feature** (honest scope, review P2s): a real ISR body must end in
+  `iretq`/`eret`, and cyrius has **no inline asm yet**, so usable ISRs await an
+  inline-asm path; the param/return safety guards don't yet fire on DCE-stubbed
+  naked fns. Both are filed
+  (`issues/2026-06-19-naked-fn-safety-and-inline-asm.md`) and **pinned to v6.2.28**
+  (where the boot gate + AGNOS IDT first exercise real ISRs).
+
 ## [6.2.26] — 2026-06-19
 
 **v6.2.26 — agnos-fs ABI substrate (portable `x*` wrappers + cyrlint rule +

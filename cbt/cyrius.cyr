@@ -308,6 +308,10 @@ fn main(): i64 {
             elif (streq(argv(ai), "--target=aarch64-bare-metal-elf") == 1) {
                 # v6.2.27: aarch64 bare-metal triple → routes to the aarch64
                 # cross-compiler (cc_arm) with the same kernel-mode env knobs.
+                # set_arch so current_cc()/arch_name() agree with the target —
+                # else (review P1) a missing cycc_aarch64 silently falls through
+                # to the x86 cycc and builds an x86 kernel labelled [x86_64].
+                set_arch(ARCH_AARCH64);
                 _baremetal_target = 1;
                 _baremetal_aa = 1;
                 _skip_deps = 1;

@@ -1275,6 +1275,28 @@ fn LEX(S): i64 {
                                         }
                                         continue;
                                     } } } } } }
+                # v6.2.27: #naked — fn-attribute marking an interrupt-handler /
+                # naked fn: the backend emits NO prologue/epilogue/frame, so the
+                # body is the raw ISR (x86 ends with iretq, aarch64 eret).
+                # bytes: 23 6E 61 6B 65 64 = "#naked" (6 chars)
+                if (p + 5 < bl) {
+                    if (load8(S + 0x459D000 + p + 1) == 110) {
+                        if (load8(S + 0x459D000 + p + 2) == 97) {
+                            if (load8(S + 0x459D000 + p + 3) == 107) {
+                                if (load8(S + 0x459D000 + p + 4) == 101) {
+                                    if (load8(S + 0x459D000 + p + 5) == 100) {
+                                        ADDTOK(S, 133, 0);   # token 133 = HASH_NAKED (128 is f64v_dot — collision fix, review P1)
+                                        p = p + 6;
+                                        while (p < bl) {
+                                            var wcn = load8(S + 0x459D000 + p);
+                                            if (wcn == 32 || wcn == 9 || wcn == 10 || wcn == 13) {
+                                                if (wcn == 10) { SCLINE(S, GCLINE(S) + 1); }
+                                                p = p + 1;
+                                            }
+                                            else { break; }
+                                        }
+                                        continue;
+                                    } } } } } }
                 # Check for #pe_import (v5.4.6) — PE32+ kernel32 symbol
                 # registration directive. Parser consumes (dll, symbol)
                 # string-literal args and forwards to the pe emitter's

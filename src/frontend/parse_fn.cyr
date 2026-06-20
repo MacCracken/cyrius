@@ -300,6 +300,13 @@ fn FINDLOCAL(S, noff): i64 {
 # Parse return expr ;  (uses PCMPE so return a == b; works)
 # Tail call optimization: return fn(args); → epilogue + jmp fn
 fn PARSE_RETURN(S): i64 {
+    # v6.2.27 (review P2): a #naked fn emits no epilogue, so a `return` would jump
+    # to a non-existent epilogue and fall through into the next fn. A naked ISR
+    # must self-terminate in asm (iretq/eret) — reject `return` in its body.
+    if (_cur_fn_naked == 1) {
+        var _nrm = "return not allowed in a #naked fn; its body must self-terminate in asm (iretq/eret)";
+        ERR_MSG(S, _nrm, strlen(_nrm));
+    }
     STI(S, GTI(S) + 1);
     # Check for tail call: return IDENT(args);
     # Pattern: next token is IDENT, followed by LPAREN
@@ -1505,6 +1512,13 @@ fn PARSE_FN_DEF(S): i64 {
         S64(S + 0x17A000 + fi * 8, _prev_a | 32);
         _alloc_pending = 0;
     }
+    # v6.2.27: #naked — record for this fn so the prologue/epilogue/frame emit
+    # below is skipped (the body is the raw ISR). Reset at PARSE_FN_DEF end.
+    if (_naked_pending == 1) {
+        _cur_fn_naked = 1;
+        _naked_pending = 0;
+    }
+    else { _cur_fn_naked = 0; }
     _cur_fn_is_pure = (L64(S + 0x17A000 + fi * 8) >> 3) & 1;
     # v4.8.4-alpha5: mirror fn_regalloc[fi] into _cur_fn_regalloc so
     # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
@@ -1749,9 +1763,14 @@ fn PARSE_FN_DEF(S): i64 {
     S64(S + 0x1A0000, 0);  # v5.6.27: jump_src_cnt = 0 (per-fn compaction)
     S64(S + 0x1A2008, 0);  # v5.6.27: nop_run_cnt = 0
     S64(S + 0x1A6010, GFCNT(S));  # v5.6.27: fn_start_fcnt baseline
-    # Emit prologue
-    EFNPRO(S);
-    var frame_patch = ESUBRSP(S);
+    # Emit prologue (v6.2.27: #naked skips it — the body is the raw ISR; no
+    # rbp frame, no `sub rsp`. frame_patch stays 0 so the EPATCHFRAME at fn end
+    # is also skipped (nothing to patch) — the "dangling frame_patch" guard.)
+    var frame_patch = 0;
+    if (_cur_fn_naked == 0) {
+        EFNPRO(S);
+        frame_patch = ESUBRSP(S);
+    }
     # v4.8.4-alpha6: save rbx into its reserved slot at [rbp-8]. Must
     # v4.9.1: save callee-saved registers into reserved slots.
     # rbx→[rbp-8], r12→[rbp-16], r13→[rbp-24], r14→[rbp-32], r15→[rbp-40].
@@ -1773,7 +1792,7 @@ fn PARSE_FN_DEF(S): i64 {
     # enable regalloc → `_cur_fn_regalloc >= 1` never fires) but
     # defensive against future scheduling changes.
     # v5.11.35 path-A: dispatch lives in <backend>/emit.cyr.
-    EREGALLOC_SAVE(S, _cur_fn_regalloc);
+    if (_cur_fn_naked == 0) { EREGALLOC_SAVE(S, _cur_fn_regalloc); }   # v6.2.27: #naked has no frame to save rbx into
     # v5.5.36 Phase 2b — stash the hidden retptr into the reserved
     # slot immediately after regalloc saves. ABI register varies:
     #   x86 SysV → RDI (pidx=0); x86 Win64 → RCX (pidx=0 with the
@@ -2085,6 +2104,15 @@ fn PARSE_FN_DEF(S): i64 {
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
     S64(_fnt_params + fi * 8, pc);
+    # v6.2.27 (review P2): a #naked fn must be paramless. Params emit rbp-relative
+    # arg-home stores, but a naked fn has no rbp frame (rbp=0 → fault). An ISR
+    # receives its state on the interrupt stack frame, not as args.
+    if (_cur_fn_naked == 1) {
+        if (pc > 0) {
+            var _npm = "a #naked fn cannot have parameters (an ISR receives no args); declare it as ()";
+            ERR_MSG(S, _npm, strlen(_npm));
+        }
+    }
     # Store Str param mask — bit N set = param N is : Str
     S64(_fnt_strmask + fi * 8, str_mask);
     # v5.10.24 — Phase 2 param-type masks. Same per-fn shape as
@@ -2357,9 +2385,13 @@ fn PARSE_FN_DEF(S): i64 {
     }
     # v4.9.1: restore callee-saved registers (reverse order of save).
     # v5.11.35 path-A: dispatch lives in <backend>/emit.cyr.
-    EREGALLOC_RESTORE(S, _cur_fn_regalloc);
-    # Emit epilogue
-    EFNEPI(S);
+    # v6.2.27: #naked emits NO regalloc restore + NO epilogue — the ISR body
+    # ends with its own return (iretq / eret), not a `mov rsp,rbp; pop rbp; ret`.
+    if (_cur_fn_naked == 0) {
+        EREGALLOC_RESTORE(S, _cur_fn_regalloc);
+        # Emit epilogue
+        EFNEPI(S);
+    }
     # CO-03 (v6.1.34): DSE + LASE are x86 byte-pattern passes — they scan codebuf
     # for `48 89 85`/`48 8B 85` windows and NOP-patch. On aarch64 (a 4-byte ISA)
     # those bytes can match instruction words and corrupt them, so gate to x86,
@@ -2944,7 +2976,8 @@ fn PARSE_FN_DEF(S): i64 {
     # saves and regular locals).
     if (_cur_fn_ret_stash > 0) { flc = flc + 1; }
     var fsz = (flc * 8 + 15) & (0 - 16);
-    EPATCHFRAME(S, frame_patch, fsz);
+    # v6.2.27: #naked emitted no ESUBRSP (frame_patch stayed 0) → nothing to patch.
+    if (_cur_fn_naked == 0) { EPATCHFRAME(S, frame_patch, fsz); }
     # Record fn code end (v4.4.0 DCE) — this is GCP after epilogue + LASE + frame patch.
     # Paired with fn_start at 0x1C4000[fi], the [start, end) range bounds the emitted
     # body bytes for this fn, usable by the FIXUP pass to NOP dead functions safely.
@@ -2955,6 +2988,7 @@ fn PARSE_FN_DEF(S): i64 {
     # v4.8.4-alpha5: clear #regalloc mirror so nested/sibling fns without
     # the directive don't inherit it.
     _cur_fn_regalloc = 0;
+    _cur_fn_naked = 0;   # v6.2.27: reset #naked for the next fn
     # v5.5.36 Phase 2b — same for the ret-stash flag + sid mirror.
     _cur_fn_ret_stash = 0;
     _cur_fn_ret_sid = 0;

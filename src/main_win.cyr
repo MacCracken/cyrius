@@ -526,7 +526,7 @@ while (scan == 1) {
                         # pass 2 re-reads the same token stream and arms the pending flag
                         # then. (v4.8.4-alpha4 kept the pass-1 consume unchanged so a
                         # stale flag can't leak from pass 1 into pass 2.)
-                        else { if (PEEKT(S) == 109) { STI(S, GTI(S) + 1); }
+                        else { if (PEEKT(S) == 109 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked consume (defensive — #naked is bare-metal-ELF-only, never PE, but the fork-desync lesson says mirror the token in every fork's pass-1)
                             else { if (PEEKT(S) == 32) {
                                     # Skip fn definition (just advance past it)
                                     STI(S, GTI(S) + 1);  # consume FN

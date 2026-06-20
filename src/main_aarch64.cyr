@@ -273,6 +273,17 @@ if (_pie_env_early != 0) {
         _pie_mode = 1;
     }
 }
+# v6.2.27: --target=aarch64-bare-metal-elf forces kernel_mode from the CLI
+# (CYRIUS_KERNEL=1) — the aarch64 mirror of the main.cyr force-kmode. Injected
+# before any pass/emit reads kernel_mode (read at the EMITELF site). State is
+# BRK-zeroed (no explicit init), so default unset → kernel_mode 0 →
+# cycc_aarch64 byte-identical. The `kernel;` dispatch only SETS it → composes.
+var _kern_env_a = _read_env("CYRIUS_KERNEL");
+if (_kern_env_a != 0) {
+    if (load8(_kern_env_a) == 49 && load8(_kern_env_a + 1) == 0) {
+        S64(S + 0x18FCA0, 1);
+    }
+}
 if (_is_macho_arm_build == 1) {
     PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
 } else {
@@ -377,7 +388,7 @@ while (scan == 1) {
                                     }
                                     else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                         else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                            else { if (PEEKT(S) == 127) { STI(S, GTI(S) + 1); }
+                                            else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked (consume-and-ignore)
                         else { if (PEEKT(S) == 32) {
                                 STI(S, GTI(S) + 1);
                                 STI(S, GTI(S) + 1);
@@ -486,7 +497,7 @@ while (topgo == 1) {
                                         }
                                         else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                                else { if (PEEKT(S) == 127) { STI(S, GTI(S) + 1); }
+                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { if (PEEKT(S) == 133) { _naked_pending = 1; } STI(S, GTI(S) + 1); }   # v6.2.27: arm #naked (aarch64 skips prologue too, via the shared parse_fn.cyr gating)
                             else { if (PEEKT(S) == 32) {
                                     PARSE_FN_DEF(S);
                                 }

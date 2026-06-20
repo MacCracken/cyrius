@@ -14,11 +14,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.26** (v6.2.x cycle — **Platform Expansion**; agnos-fs ABI substrate (portable `xopen`/`xstat`/`xunlink`/`xgetdents` + cyrlint getdents rule + agnos x* emit-inspect gate) + mabda 3.3.0 + **yantra 1.0.0 — new stdlib fold (UI/E2E testing: WebDriver/Appium/CDP)**. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,069,688 B** (flat @ 6.2.26 — the x* substrate / cyrlint / folds are stdlib/tooling, not in the compiler; the new io.cyr x* fns DCE out (cycc doesn't call them); cycc self-hosts byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | **622,112 B** (rebuilt @ 6.2.26, size unchanged — no aarch64-backend change since the .24 macho `ESYSXLAT` aarch64 socket-family→Darwin + aarch64-Linux getdents64 217→61 funcgate fix; **pi-verified** (dir-walk + two-step self-host) + qemu; ecb/cass SELFHOST_OK) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.26 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | rebuilt @ 6.2.26 (version-string refresh; PE backend untouched; cass SELFHOST_OK) |
+| **Version** | **6.2.27** (v6.2.x cycle — **Platform Expansion**; bare-metal target formalization **FRONTEND HALF** (a 2-release arc; runtime/boot half = .28): `--target=<arch>-bare-metal-elf` triple (forces kmode via `CYRIUS_KERNEL=1`, freestanding no-libc ELF) + `#naked` fn-attribute (token 133, frameless ISR emit). 3 review P1s fixed. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,904 B** (+2,216 @ 6.2.27 — the bare-metal frontend IS in the compiler: `#naked` token-133 handling + the `CYRIUS_KERNEL`/`kernel_mode` reads + the prologue/epilogue gating; feature growth, cycc self-hosts byte-identical) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | **624,264 B** (rebuilt @ 6.2.27 — FIRST aarch64 compiler change since .24: the `CYRIUS_KERNEL` force-kmode read + the `#naked` token-133 consume/arm; **default byte-identical** (env unset → kmode 0); aarch64 `#naked` skips the prologue too) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.27 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.27 — defensive `#naked` token-133 consume in main_win pass-1; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
@@ -26,12 +26,39 @@
 | check.sh gates | **90/90** (+1 @ 6.2.26 — `_agnos_xsys_gate` (agnos x* substrate emit-inspect); +1 @ 6.1.36 `_vendored_dist_selfcontained_gate`) |
 | sigil fold | **3.9.1** (@6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack, both for the TLS per-connection arena/flat-RSS fix; @6.2.23 3.9.0 absorbs agnosys helpers + LUKS/attestation surface) |
 | stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · bayan 1.0.1 · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.1** · **mabda 3.3.0** · sakshi 2.4.0 · **yantra 1.0.0** (**@.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
-| tests | **188** `.tcyr` (no new tcyr @.26 — the agnos x* substrate is verified by the new `_agnos_xsys_gate` emit-inspect, not a tcyr; +`tls_native_server_arena_flat_rss` @.25) · 15 `.bcyr` · 5 `.fcyr` |
+| tests | **189** `.tcyr` (+`naked_fn_attribute` @.27 — the #naked fork-desync + DCE-stub gate, compiled on all forks via cross-OS) · 15 `.bcyr` · 5 `.fcyr` |
 | stdlib | **99** `lib/*.cyr` (+yantra @.26) · 79 programs · api-surface **5034 fns** (+95 @.26 — 4 `io::x*` + 20 mabda 3.3.0 + 71 yantra 1.0.0; 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **517 ms** @ 6.2.26 (within jitter of .25's 525 ms; x86 cycc 1,069,688 B flat — x* substrate / cyrlint / folds are stdlib/tooling, no compiler/x86 perf delta) |
+| bench (every-release gate) | self_compile **518 ms** @ 6.2.27 (within jitter of .26's 517 ms; x86 cycc 1,069,688 → **1,071,904 B**, +2,216 — the bare-metal frontend is in the compiler, feature growth not regression) |
 
+> **Handoff (2026-06-19e):** **v6.2.27 CUT — bare-metal target formalization,
+> FRONTEND HALF** (a 2-release arc, split contiguous after a premise-check; the
+> runtime/boot half is .28). **D1** `--target=<arch>-bare-metal-elf` triple
+> (x86_64 + aarch64): a named front-end over the ad-hoc `kernel;`/kmode — the CLI
+> injects `CYRIUS_KERNEL=1` (a new env read in main.cyr/main_aarch64.cyr forcing
+> `kernel_mode` at S+0x18FCA0, so no source `kernel;` is needed; default unset →
+> byte-identical) + `CYRIUS_ELF64_KERNEL=1` + `_skip_deps` (freestanding: no
+> userland-stdlib auto-prepend). Byte-identical to the source `kernel;` mechanism.
+> **D2/D4** the output is a clean no-libc ELF (single PT_LOAD, no PT_INTERP/
+> DYNAMIC, both arches). **D3** `#naked` fn-attribute (frameless ISR emit; token
+> **133**) — skips prologue/epilogue/frame on x86 (−48 B) + aarch64 (−24 B),
+> mirrored across all 6 main_* forks (annotation-fork-desync 4th instance).
+> **Adversarial review (19 agents, 8 confirmed) — all 3 P1s fixed:** (1) token
+> 128 **collided with the f64v_dot SIMD builtin** → renumbered #naked to 133; (2)
+> a DCE-stubbed #naked fn leaked `_naked_pending` → the next fn emitted frameless
+> + **SIGSEGV** → reset in the DCE-stub path; (3) `--target=aarch64-bare-metal-elf`
+> **silently built an x86 kernel** when cycc_aarch64 absent → `set_arch` +
+> hard-error. **`#naked` is the prologue-skip ATTRIBUTE, a building block — NOT a
+> finished ISR feature**: cyrius has no inline asm (so a real ISR body ending in
+> iretq/eret isn't writable yet) + the param/return guards don't fire on
+> DCE-stubbed fns → both **FILED** (`2026-06-19-naked-fn-safety-and-inline-asm.md`)
+> + **PINNED to .28** (where the boot gate + AGNOS IDT exercise real ISRs).
+> **check.sh 90/90; cross-OS pi/ecb/cass; cycc self-hosts byte-identical
+> 1,071,904 B (+2,216 feature growth); bench 518 ms.** Next: .28 (bare-metal
+> runtime half). **Also added to the v6.2.x roadmap before RISC-V:** a
+> deps-modules/groupings item (stdlib → standard deps).
+>
 > **Handoff (2026-06-19d):** **v6.2.26 CUT — agnos-fs ABI substrate + mabda
 > 3.3.0 + yantra 1.0.0 (new stdlib fold).** Closes the cyrius-native half of
 > `2026-06-18-stdlib-native-agnos-abi-fs`: agnos `sys_*` carry an explicit byte

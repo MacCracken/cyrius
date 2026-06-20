@@ -1,0 +1,30 @@
+# naked_fn_attribute.tcyr — v6.2.27
+#
+# Gates the #naked fn-attribute (bare-metal interrupt-handler emit: NO
+# prologue/epilogue/frame). Covers three things the v6.2.27 review surfaced:
+#  1. Annotation-fork-desync: token 133 (#naked; 128 was already f64v_dot) must be
+#     consumed in pass-1 + pass-2 of ALL forks, else a #naked fn drops into a
+#     fork's catchall → "unexpected enum" on that target. check.sh compiles this
+#     corpus on x86 + cross-OS (ecb/cass/pi), so a missed fork fails the build there.
+#  2. The DCE-stub leak (review P1): a NON-underscore, unreferenced #naked fn that
+#     gets DCE-stubbed must clear _naked_pending so the NEXT live fn (here, main)
+#     is still framed — else main is emitted frameless and faults on rbp-relative
+#     arg-home stores against rbp=0 (SIGSEGV). `isr_probe` (no leading underscore)
+#     is DCE-eligible, so it exercises the stub path; main returning 0 below proves
+#     it kept its prologue.
+#  3. The safe naked contract (review P2): a #naked fn is paramless (an ISR gets no
+#     args) and contains no `return` (its body must self-terminate in asm — cyrius
+#     has no inline asm yet, so the body is empty here; #naked is the prologue-skip
+#     building block, full ISRs await inline-asm). A param or `return` is a hard
+#     compile error (verified manually at the cut).
+
+include "lib/assert.cyr"
+
+#naked fn isr_probe() {
+}
+
+fn main(): i64 {
+    assert_eq(1, 1, "main keeps its frame after a DCE-stubbed non-underscore #naked fn (review P1)");
+    var r = assert_summary();
+    return r;
+}

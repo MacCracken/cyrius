@@ -331,7 +331,7 @@ while (scan == 1) {
                                     }
                                     else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                         else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                            else { if (PEEKT(S) == 127) { STI(S, GTI(S) + 1); }
+                                            else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked (consume-and-ignore)
                         else { if (PEEKT(S) == 32) {
                                 STI(S, GTI(S) + 1);
                                 STI(S, GTI(S) + 1);
@@ -436,7 +436,7 @@ while (topgo == 1) {
                                         }
                                         else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                                else { if (PEEKT(S) == 127) { STI(S, GTI(S) + 1); }
+                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked (consume-and-ignore)
                             else { if (PEEKT(S) == 32) {
                                     PARSE_FN_DEF(S);
                                 }
