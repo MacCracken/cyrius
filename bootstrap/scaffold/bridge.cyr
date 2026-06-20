@@ -563,10 +563,14 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFF == 0x00726176) { ADDTOK(S, 3, 0); return p; }
         # "asm" = 0x006D7361
         if (kw & 0xFFFFFFFF == 0x006D7361) { ADDTOK(S, 48, 0); return p; }
+        # [grow] "for" = 0x00726F66 -> token 55
+        if (kw & 0xFFFFFFFF == 0x00726F66) { ADDTOK(S, 55, 0); return p; }
     }
     if (klen == 4) {
         if (kw & 0xFFFFFFFF == 0x65736C65) { ADDTOK(S, 23, 0); return p; }
         if (kw & 0xFFFFFFFF == 0x66696C65) { ADDTOK(S, 50, 0); return p; }
+        # [grow] "enum" = 0x6D756E65 -> token 57
+        if (kw & 0xFFFFFFFF == 0x6D756E65) { ADDTOK(S, 57, 0); return p; }
     }
     if (klen == 5) {
         if (kw & 0xFFFFFFFFFF == 0x00656C696877) { ADDTOK(S, 16, 0); return p; }
@@ -864,6 +868,53 @@ fn FINDVAR(S, noff): i64 {
     return 0 - 1;
 }
 
+# [grow] enum constant table. brk heap extends to 0x800000; tok_values end at
+# ~0x222000, so this band is free. const_noffs/const_values/const_count.
+fn REGCONST(S, noff, val): i64 {
+    var cc = L64(S + 0x260000);
+    S64(S + 0x250000 + cc * 8, noff);
+    S64(S + 0x258000 + cc * 8, val);
+    S64(S + 0x260000, cc + 1);
+    return 0;
+}
+fn FINDCONST(S, noff): i64 {
+    var cc = L64(S + 0x260000);
+    var i = 0;
+    while (i < cc) {
+        var sn = L64(S + 0x250000 + i * 8);
+        if (STREQ(S, sn, noff) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# enum NAME { ID = INT; ... } — register each ID as an integer constant.
+fn PARSE_ENUM(S): i64 {
+    STI(S, GTI(S) + 1);              # consume ENUM
+    if (PEEKT(S) != 2) { ERR(S); }   # enum name (consumed + ignored)
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 13) { ERR(S); }  # {
+    STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 14) { go = 0; }
+        else {
+            if (PEEKT(S) != 2) { ERR(S); }
+            var noff = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 4) { ERR(S); }   # =
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 1) { ERR(S); }   # NUM
+            var val = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 5) { ERR(S); }   # ;
+            STI(S, GTI(S) + 1);
+            REGCONST(S, noff, val);
+        }
+    }
+    STI(S, GTI(S) + 1);              # consume }
+    return 0;
+}
+
 fn PARSE_FACTOR(S): i64 {
     var typ = PEEKT(S);
     if (typ == 1) {
@@ -887,6 +938,9 @@ fn PARSE_FACTOR(S): i64 {
             PARSE_FIELD_LOAD(S, noff);
             return 0;
         }
+        # [grow] enum constant -> emit its value as an immediate
+        var ci = FINDCONST(S, noff);
+        if (ci >= 0) { EMOVI(S, L64(S + 0x258000 + ci * 8)); return 0; }
         # Variable load — check local first if in function
         if (GINFN(S) == 1) {
             var li = FINDLOCAL(S, noff);
@@ -1797,11 +1851,67 @@ fn PARSE_FN_DEF(S): i64 {
     return 0;
 }
 
+# [grow] for-loop step: `IDENT = EXPR` or `IDENT(...)` with NO trailing `;`
+# (the step ends at `)`). Mirrors PARSE_STMT's assignment path minus the semi.
+fn PARSE_STEP(S): i64 {
+    if (PEEKT(S) != 2) { ERR(S); }
+    var noff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 10) { PARSE_FNCALL(S, noff); return 0; }
+    if (PEEKT(S) != 4) { ERR(S); }
+    STI(S, GTI(S) + 1);
+    PARSE_EXPR(S);
+    var idx = 0 - 1;
+    if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
+    if (idx >= 0) { EFLSTORE(S, idx); }
+    else {
+        idx = FINDVAR(S, noff);
+        if (idx < 0) { ERR(S); }
+        EVSTORE(S, idx);
+        SLVAR(S, idx);
+    }
+    return 0;
+}
+
+# [grow] for (INIT; COND; STEP) { BODY }. Lowered with jumps in source order
+# (no token replay): cond -> [jmp body] -> step -> [jmp cond] -> body -> [jmp step].
+fn PARSE_FOR(S): i64 {
+    STI(S, GTI(S) + 1);             # consume FOR
+    var saved_lv = GLVAR(S);
+    if (PEEKT(S) != 10) { ERR(S); }
+    STI(S, GTI(S) + 1);             # consume (
+    PARSE_STMT(S);                  # INIT (consumes its own ;)
+    var cp_cond = GCP(S);
+    PARSE_EXPR(S);                  # COND -> rax
+    ETESTAZ(S);
+    var end_patch = EJCC(S, 0x84);  # cond false -> exit loop
+    if (PEEKT(S) != 5) { ERR(S); }
+    STI(S, GTI(S) + 1);             # consume ;
+    var body_skip = EJMP0(S);       # first pass jumps over STEP into BODY
+    var cp_step = GCP(S);
+    PARSE_STEP(S);                  # STEP (no trailing ;)
+    if (PEEKT(S) != 11) { ERR(S); }
+    STI(S, GTI(S) + 1);             # consume )
+    EJMP(S, cp_cond);               # after STEP, re-check COND
+    EPATCH(S, body_skip);           # BODY starts here
+    if (PEEKT(S) != 13) { ERR(S); }
+    STI(S, GTI(S) + 1);             # consume {
+    PARSE_PROG(S);
+    if (PEEKT(S) != 14) { ERR(S); }
+    STI(S, GTI(S) + 1);             # consume }
+    EJMP(S, cp_step);               # after BODY, run STEP
+    EPATCH(S, end_patch);
+    SLVAR(S, saved_lv);
+    return 0;
+}
+
 fn PARSE_STMT(S): i64 {
     var typ = PEEKT(S);
     if (typ == 3) { PARSE_VAR(S); return 0; }
     if (typ == 15) { PARSE_IF(S); return 0; }
     if (typ == 16) { PARSE_WHILE(S); return 0; }
+    if (typ == 55) { PARSE_FOR(S); return 0; }
+    if (typ == 57) { PARSE_ENUM(S); return 0; }
     if (typ == 33) { PARSE_RETURN(S); return 0; }
     # asm { byte; byte; ... } — emit raw bytes (compile-time constants)
     if (typ == 48) {
@@ -2073,7 +2183,8 @@ var topgo = 1;
 while (topgo == 1) {
     if (PEEKT(S) == 40) { PARSE_STRUCT_DEF(S); }
     else { if (PEEKT(S) == 32) { PARSE_FN_DEF(S); }
-        else { topgo = 0; } }
+        else { if (PEEKT(S) == 57) { PARSE_ENUM(S); }
+            else { topgo = 0; } } }
 }
 
 # Patch jmp to land here (start of main code)
