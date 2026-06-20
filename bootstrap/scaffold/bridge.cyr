@@ -632,6 +632,8 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFF == 0x00656C696877) { ADDTOK(S, 16, 0); return p; }
         # "load8" = 0x00003864616F6C
         if (kw & 0xFFFFFFFFFF == 0x003864616F6C) { ADDTOK(S, 25, 0); return p; }
+        # [grow] "break" = 0x6B61657262 -> token 58
+        if (kw & 0xFFFFFFFFFF == 0x6B61657262) { ADDTOK(S, 58, 0); return p; }
     }
     if (klen == 6) {
         # "return" = 0x006E7275746572
@@ -656,6 +658,10 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFFFFFF == 0x323365726F7473) { ADDTOK(S, 46, 0); return p; }
         # "store64" = 0x343665726F7473
         if (kw & 0xFFFFFFFFFFFFFF == 0x343665726F7473) { ADDTOK(S, 47, 0); return p; }
+    }
+    # [grow] "continue" = 0x65756E69746E6F63 (full 8-byte qword) -> token 59
+    if (klen == 8) {
+        if (kw == 0x65756E69746E6F63) { ADDTOK(S, 59, 0); return p; }
     }
     ADDTOK(S, 2, ws);
     return p;
@@ -1627,6 +1633,39 @@ fn PARSE_IF(S): i64 {
 }
 
 # Parse: while (cond) { stmts }
+# [grow] loop-context stack for break/continue (innermost loop). State band:
+#   0x5318030 loop_sp · 0x5318040 cont_tgt[16] · 0x53180C0 brk_base[16]
+#   0x5318140 brk_cnt · 0x5318148 brk_patches[512]
+fn LOOP_PUSH(S, cont_target): i64 {
+    var sp = L64(S + 0x5318030);
+    S64(S + 0x5318040 + sp * 8, cont_target);
+    S64(S + 0x53180C0 + sp * 8, L64(S + 0x5318140));   # break base = current brk_cnt
+    S64(S + 0x5318030, sp + 1);
+    return 0;
+}
+fn LOOP_POP(S): i64 {
+    var sp = L64(S + 0x5318030) - 1;
+    var base = L64(S + 0x53180C0 + sp * 8);
+    var cnt = L64(S + 0x5318140);
+    var i = base;
+    while (i < cnt) { EPATCH(S, L64(S + 0x5318148 + i * 8)); i = i + 1; }   # breaks -> loop exit
+    S64(S + 0x5318140, base);
+    S64(S + 0x5318030, sp);
+    return 0;
+}
+fn EMIT_BREAK(S): i64 {
+    var p = EJMP0(S);
+    var cnt = L64(S + 0x5318140);
+    S64(S + 0x5318148 + cnt * 8, p);
+    S64(S + 0x5318140, cnt + 1);
+    return 0;
+}
+fn EMIT_CONTINUE(S): i64 {
+    var sp = L64(S + 0x5318030) - 1;
+    EJMP(S, L64(S + 0x5318040 + sp * 8));
+    return 0;
+}
+
 fn PARSE_WHILE(S): i64 {
     STI(S, GTI(S) + 1);  # consume WHILE
     var saved_lv = GLVAR(S);
@@ -1638,11 +1677,13 @@ fn PARSE_WHILE(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR(S); }
     STI(S, GTI(S) + 1);
+    LOOP_PUSH(S, loop_top);   # continue -> re-check cond
     PARSE_PROG(S);
     if (PEEKT(S) != 14) { ERR(S); }
     STI(S, GTI(S) + 1);
     EJMP(S, loop_top);
     EPATCH(S, patch);
+    LOOP_POP(S);              # break -> here (loop exit)
     SLVAR(S, saved_lv);
     return 0;
 }
@@ -2010,11 +2051,13 @@ fn PARSE_FOR(S): i64 {
     EPATCH(S, body_skip);           # BODY starts here
     if (PEEKT(S) != 13) { ERR(S); }
     STI(S, GTI(S) + 1);             # consume {
+    LOOP_PUSH(S, cp_step);          # continue -> run STEP
     PARSE_PROG(S);
     if (PEEKT(S) != 14) { ERR(S); }
     STI(S, GTI(S) + 1);             # consume }
     EJMP(S, cp_step);               # after BODY, run STEP
     EPATCH(S, end_patch);
+    LOOP_POP(S);                    # break -> here (loop exit)
     SLVAR(S, saved_lv);
     return 0;
 }
@@ -2026,6 +2069,8 @@ fn PARSE_STMT(S): i64 {
     if (typ == 16) { PARSE_WHILE(S); return 0; }
     if (typ == 55) { PARSE_FOR(S); return 0; }
     if (typ == 57) { PARSE_ENUM(S); return 0; }
+    if (typ == 58) { STI(S, GTI(S) + 1); EMIT_BREAK(S); if (PEEKT(S) != 5) { ERR(S); } STI(S, GTI(S) + 1); return 0; }     # break;
+    if (typ == 59) { STI(S, GTI(S) + 1); EMIT_CONTINUE(S); if (PEEKT(S) != 5) { ERR(S); } STI(S, GTI(S) + 1); return 0; }  # continue;
     if (typ == 33) { PARSE_RETURN(S); return 0; }
     # asm { byte; byte; ... } — emit raw bytes (compile-time constants)
     if (typ == 48) {
