@@ -14,11 +14,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.29** (v6.2.x cycle — **Platform Expansion**; VR-01/VR-02 verification fold + **the aarch64-correctness batch it forced**: the new full-`.tcyr`-on-REAL-arm64 gate surfaced the language was broken on ARM (stale `main_aarch64_native.cyr` fork + 9 backend bugs + fdlopen) — **all fixed in-slot**, gate HARD+GREEN 189/0/0; bayan u128 fix → **bayan 1.0.2** re-fold. Plus `cyrius fuzz`→gate + the CLI cross-compile gate (.25-class hole). See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (+48 @ 6.2.29 — the ONLY x86-compiler delta is the `#naked` register-param gate in `parse_fn.cyr` (gate the param-home store + relax the .28 no-params guard, for fdlopen's setjmp/longjmp). The aarch64 ESYSXLAT renumbers + the native-fork dispatch splice don't touch x86 cycc; self-hosts byte-identical) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | **624,264 B** (rebuilt @ 6.2.28 — the one-line `eret` mnemonic added to ASM_MNEMONIC (`0x74657265 → 0xD69F03E0`) for aarch64 `#naked` ISR returns; x86 cycc byte-identical) |
+| **Version** | **6.2.30** (v6.2.x cycle — **Platform Expansion**; **CVE-21 trust-chain integrity part 1** — fail-closed installers (`install.sh`/`ci.sh`/`install.ps1` require + verify the `.sha256`; tag-not-main installer fetch), dep **commit-SHA pinning** in `cyrius.lock` (force-push / cache-tamper / corrupt-line all fail closed), all GitHub Actions SHA-pinned, **+ the scaffolded-project CI templates hardened** (the review's lone P1). + CVE-20 trust-root doc reframe + RM-02 threat-model fix + mabda 3.3.0→3.4.2 fold. CLI/scripts/docs/fold only — `src/` untouched → cycc byte-identical. Part 2 (signing + seed→cybs→cycc reconstruction CI) is **.31**. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.30 — the slot is entirely CLI (`cbt/`) + scripts + docs + the opt-in mabda fold; nothing touches `src/`, so cycc self-hosts byte-identical to .29) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.28 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
-| **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.28 — shared `parse_fn.cyr` guard-message fix only; PE backend untouched; cass SELFHOST_OK) |
+| **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | 12,344 B |
@@ -28,11 +28,30 @@
 | sigil fold | **3.9.1** (@6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack, both for the TLS per-connection arena/flat-RSS fix; @6.2.23 3.9.0 absorbs agnosys helpers + LUKS/attestation surface) |
 | stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.1** · **mabda 3.4.2** · sakshi 2.4.0 · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
 | tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5035 fns** (+1 @.28 — `tls_native_set_entropy`; `_tn_rand_bytes` is underscore-private; 0 removals) |
+| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5055 fns** (+20 net @.30 — the mabda 3.3.0→3.4.2 fold surface: 22 added / 2 signature-changed (array-texture + render-target fns). cbt/ commit-pin helpers are not tracked — api-surface scans src/+lib/ only, not cbt/) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **~520 ms** @ 6.2.29 (within jitter; x86 cycc **1,071,936 B**, +48 — the lone x86-compiler change is the `#naked` param-store gate; negligible perf delta) |
+| bench (every-release gate) | self_compile **508 ms** @ 6.2.30 (flat vs .29's ~520 ms, within jitter; x86 cycc **1,071,936 B** unchanged — CLI-only slot, no perf delta) |
 
+> **Handoff (2026-06-20):** **v6.2.30 CUT — CVE-21 trust-chain integrity, part 1**
+> (CVE-20/21 is a 2-release arc; part 2 = .31 detached signing + the seed→cybs→cycc
+> reconstruction CI). Entirely CLI / scripts / docs / fold — `src/` untouched, **cycc
+> byte-identical** (1,071,936 B). Shipped: installers fail-closed on the `.sha256`
+> (`install.sh` warn→err + require sidecar, portable `_verify_checksum`; `ci.sh` +
+> `install.ps1` gained verification; `cyriusly` fetches from `/refs/tags/<v>/`, not
+> main; tag-clone-fatal); `cbt/deps.cyr` records the resolved **commit SHA** per
+> tagged dep (written first in `cyrius.lock`) + refuses force-pushed tag / tampered
+> cache (worktree≠HEAD) / corrupt pin line, gating the module copy; all GitHub
+> Actions SHA-pinned; **the `cyrius port`/`init` scaffolded-CI templates hardened**
+> (verify + pin — the review's lone P1, re-opened the hole one layer down). + CVE-20
+> doc reframe (trust root = committed `build/cycc`) + RM-02 threat-model fix (closes
+> the last RM item) + **mabda 3.3.0→3.4.2** fold (it moved 3.4.1→3.4.2 mid-slot via a
+> sibling cut). `cmd_deps_verify` lock-read 8 KB→64 KB. **Adversarial review:
+> 25 agents, 8 confirmed + all fixed, 13 dismissed.** VERIFIED: check.sh **92/92** +
+> boot gate · cycc self-host byte-identical · CLI cross-compiles PE/Mach-O/aarch64 ·
+> cross-OS **pi/ecb/cass all SELFHOST_OK** · self_compile 508 ms · api-surface
+> 5035→5055. User cuts/tags after CI.
+>
 > **Handoff (2026-06-19g):** **v6.2.29 CUT — VR-01/VR-02 verification fold** (no
 > `src/` change — tests/gates/CI; cycc FLAT). **VR-02:** `cyrius fuzz` → a check.sh
 > gate (`_fuzz_harness_gate`) + a ci.yml step (was vestigial, in no gate).

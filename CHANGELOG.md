@@ -6,6 +6,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.30] — 2026-06-20
+
+**v6.2.30 — CVE-21 trust-chain integrity, part 1: fail-closed release path + immutable pins.**
+First of a 2-release arc (CVE-20/21; part 2 = .31 detached signing + the seed→cybs→cycc
+reconstruction CI). Closes the advisory-or-mutable links in the install / dep / CI supply
+chain — the exact surface the "own the trust chain, no external governance" stance exists to
+remove. cycc **byte-identical** (1,071,936 B — every change is CLI / scripts / docs / fold,
+none touch `src/`); check.sh **92/92**; self_compile **508 ms** (flat); cross-OS pi/ecb/cass
+all `SELFHOST_OK`. **+ RM-02** threat-model fix **+ mabda 3.3.0→3.4.2** fold. Adversarial
+review (25 agents): **8 findings confirmed + fixed** (13 dismissed).
+
+### Security — CVE-21 (release / dep integrity was advisory or mutable)
+- **Installers fail-closed on checksums.** `install.sh` aborts on a checksum mismatch (was
+  "continuing anyway") and now REQUIRES the published `.sha256` sidecar on the network path;
+  a portable `_verify_checksum` helper tries sha256sum / shasum / gsha256sum (macOS lacks
+  `sha256sum`). `ci.sh` + `install.ps1` gained `.sha256` verification (both had **none**;
+  `install.ps1` adds a `-Sha256` param + `Get-FileHash`).
+- **Installer fetched from the tag, not `main`.** `cyriusly install <v>` curls `install.sh`
+  from `/refs/tags/<v>/`; `install.sh`'s source-bootstrap tag-clone failure is now fatal (no
+  silent fall to the default branch / untrusted HEAD).
+- **Dep commit-pinning** (`cbt/deps.cyr`). `cyrius.lock` records the resolved **commit SHA**
+  per tagged dep (written ahead of the per-file hashes); on re-resolve the resolver refuses a
+  **force-pushed / repointed tag** (HEAD ≠ lock), an **in-place-tampered cache** (working tree
+  ≠ HEAD), and a **corrupt / truncated pin line** — each clears `dep_pin_ok` so poisoned
+  content never reaches `lib/`, and the lock is preserved (not overwritten) on a violation.
+  No-tag deps intentionally float. `cmd_deps_verify` skips the pin lines.
+- **All GitHub Actions pinned to full commit SHAs** (`ci.yml` + `release.yml`):
+  `actions/checkout@v4`, `upload-artifact@v4`, `download-artifact@v4`,
+  `softprops/action-gh-release@v2` → `@<40-hex>` (comment names the version).
+- **Scaffolded-project CI templates hardened** (`cyrius port` / `cyrius init` emit them): the
+  generated `ci.yml` / `release.yml` now fetch + verify the `.sha256` fail-closed before
+  extracting and pin their actions to SHAs — they previously re-opened the install hole one
+  layer down in every scaffolded project (the review's lone P1).
+
+### Security — CVE-20 (trust-root reframe)
+- Documented that the committed `build/cycc`, **not** the 29 KB seed, is the de-facto trust
+  root for binary releases (the seed verifies only the asm↔cybs closure; nothing rebuilds cycc
+  from it). SECURITY.md, README bootstrap chain, threat-model.md trust boundary; CVE-12
+  reframed. The seed→cybs→cycc reconstruction CI that makes `cycc` machine-derivable lands at
+  **v6.2.31**.
+
+### Fixed — RM-02 (threat-model.md was wrong on security facts; closes the last open RM item)
+- Native TLS is the **default** backend since v6.1.21 (was "default = libssl, opt-in native");
+  PIE / ASLR **ships** since v6.1.6 (was "No ASLR" — `--pie` / `CYRIUS_PIE=1` → ET_DYN);
+  input buffer **1 MB**, preprocess-out **8 MB**, token array **1,048,576**, LEXID dedup
+  16,384, growable fixup table (were 131 KB / 2 MB / 65536 / 65000 / 1024).
+
+### Changed
+- **mabda 3.3.0 → 3.4.2** fold (`lib/mabda.cyr`, vendored byte-identical): 2D array textures +
+  cubemaps, native BC tiled arrays, wgpu draw-time layer selection, the `F64_*`→`MABDA_F64_*`
+  rename (fixes a collision with the `math` stdlib), and render-target 64 KiB VA-map align +
+  per-context RT VA bump. api-surface 5035 → **5055**.
+- `cmd_deps_verify` reads the lockfile into a 64 KB buffer (was 8 KB — silently dropped
+  trailing hash lines for any lock > 8 KB; real downstream locks already exceed it).
+- User-facing doc stamps refreshed (README / doc-health → cycc 1,071,936 B, 99 modules,
+  190 .tcyr, 92 gates + boot gate).
+
 ## [6.2.29] — 2026-06-19
 
 **v6.2.29 — VR-01/VR-02 verification fold + the aarch64-correctness batch it forced.**
