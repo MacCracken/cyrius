@@ -563,6 +563,68 @@ emit_store8_op:
     pop rsi
     ret
 
+# ── load/store 16/32/64 brick ──
+emit_load64:             # mov rax, [rax] = 48 8B 00
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0x008B48
+    mov [rsi], rax
+    add r13, 3
+    pop rsi
+    ret
+emit_load32:             # mov eax, [rax] = 8B 00  (zero-extends to rax)
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0x008B
+    mov [rsi], rax
+    add r13, 2
+    pop rsi
+    ret
+emit_load16:             # movzx rax, word [rax] = 48 0F B7 00
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0x00B70F48
+    mov [rsi], rax
+    add r13, 4
+    pop rsi
+    ret
+emit_store64:            # mov [rcx], rax = 48 89 01
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0x018948
+    mov [rsi], rax
+    add r13, 3
+    pop rsi
+    ret
+emit_store32:            # mov [rcx], eax = 89 01
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0x0189
+    mov [rsi], rax
+    add r13, 2
+    pop rsi
+    ret
+emit_store16:            # mov [rcx], ax = 66 89 01
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0x018966
+    mov [rsi], rax
+    add r13, 3
+    pop rsi
+    ret
+
 # emit_xor_rax_rax: emit "xor rax, rax" = 48 31 C0
 emit_xor_rax_rax:
     push rsi
@@ -1383,6 +1445,8 @@ lexer_not_letter:
     je lexer_rbracket
     cmp rax, 44
     je lexer_comma
+    cmp rax, 58          # ':' COLON (typed-return / typed-var brick)
+    je lexer_colon
     cmp rax, 34
     je lexer_string
 
@@ -1549,8 +1613,24 @@ lexer_rbrace:
     jmp lexer_skip
 
 lexer_ampersand:
-    mov rax, 27
+    mov rcx, r8
+    inc rcx
+    cmp rcx, r12
+    jge lexer_amp_single
+    mov rsi, r15
+    add rsi, rcx
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 38          # second '&' -> &&
+    je lexer_andand
+lexer_amp_single:
+    mov rax, 27          # AMPERSAND
     call lexer_emit_simple
+    jmp lexer_skip
+lexer_andand:
+    mov rax, 51          # ANDAND (&& brick)
+    call lexer_emit_simple
+    inc r8               # skip second '&'
     jmp lexer_skip
 
 lexer_lbracket:
@@ -1568,6 +1648,11 @@ lexer_comma:
     call lexer_emit_simple
     jmp lexer_skip
 
+lexer_colon:
+    mov rax, 50          # COLON (typed-return / typed-var brick)
+    call lexer_emit_simple
+    jmp lexer_skip
+
 # ── Bitwise / modulo tokens ��─
 
 lexer_percent:
@@ -1576,8 +1661,24 @@ lexer_percent:
     jmp lexer_skip
 
 lexer_pipe:
+    mov rcx, r8
+    inc rcx
+    cmp rcx, r12
+    jge lexer_pipe_single
+    mov rsi, r15
+    add rsi, rcx
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 124         # second '|' -> ||
+    je lexer_oror
+lexer_pipe_single:
     mov rax, 35          # PIPE
     call lexer_emit_simple
+    jmp lexer_skip
+lexer_oror:
+    mov rax, 52          # OROR (|| brick)
+    call lexer_emit_simple
+    inc r8               # skip second '|'
     jmp lexer_skip
 
 lexer_caret:
@@ -1997,6 +2098,59 @@ lexer_id_end:
     pop rcx
     je lexer_id_is_enum
 
+    # load/store 16/32/64 (brick)
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFFFFFFFF
+    push rbx
+    mov rbx, 0x00363164616F6C   # load16
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_load16
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFFFFFFFF
+    push rbx
+    mov rbx, 0x00323364616F6C   # load32
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_load32
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFFFFFFFF
+    push rbx
+    mov rbx, 0x00343664616F6C   # load64
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_load64
+    push rcx
+    mov rcx, rax
+    push rbx
+    mov rbx, 0x00363165726F7473  # store16
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_store16
+    push rcx
+    mov rcx, rax
+    push rbx
+    mov rbx, 0x00323365726F7473  # store32
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_store32
+    push rcx
+    mov rcx, rax
+    push rbx
+    mov rbx, 0x00343665726F7473  # store64
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_store64
+
     # regular identifier
     mov rcx, r10
     shl rcx, 3
@@ -2044,6 +2198,31 @@ lexer_id_is_load8:
 
 lexer_id_is_store8:
     mov rax, 26
+    call lexer_emit_kw
+    jmp lexer_loop
+
+lexer_id_is_load16:
+    mov rax, 60
+    call lexer_emit_kw
+    jmp lexer_loop
+lexer_id_is_load32:
+    mov rax, 61
+    call lexer_emit_kw
+    jmp lexer_loop
+lexer_id_is_load64:
+    mov rax, 62
+    call lexer_emit_kw
+    jmp lexer_loop
+lexer_id_is_store16:
+    mov rax, 63
+    call lexer_emit_kw
+    jmp lexer_loop
+lexer_id_is_store32:
+    mov rax, 64
+    call lexer_emit_kw
+    jmp lexer_loop
+lexer_id_is_store64:
+    mov rax, 65
     call lexer_emit_kw
     jmp lexer_loop
 
@@ -2336,6 +2515,17 @@ parse_fn_params_done:
     mov [rsi], rax       # fn_params[r9] = param_count
     pop rcx
 
+    # optional return type:  : TYPE  (typed-return brick — consume + ignore)
+    call peek_tok_type
+    cmp rax, 50          # COLON
+    jne parse_fn_no_rettype
+    inc r11              # consume COLON
+    call peek_tok_type
+    cmp rax, 2           # IDENT (return type name)
+    jne parse_err
+    inc r11              # consume type IDENT
+parse_fn_no_rettype:
+
     # expect LBRACE
     call peek_tok_type
     cmp rax, 13
@@ -2445,6 +2635,18 @@ parse_statement:
     cmp rax, 26          # STORE8
     je parse_expr_stmt
     cmp rax, 25          # LOAD8
+    je parse_expr_stmt
+    cmp rax, 60          # LOAD16
+    je parse_expr_stmt
+    cmp rax, 61          # LOAD32
+    je parse_expr_stmt
+    cmp rax, 62          # LOAD64
+    je parse_expr_stmt
+    cmp rax, 63          # STORE16
+    je parse_expr_stmt
+    cmp rax, 64          # STORE32
+    je parse_expr_stmt
+    cmp rax, 65          # STORE64
     je parse_expr_stmt
 
     jmp parse_err
@@ -2953,10 +3155,190 @@ parse_while_stmt:
     pop r8
     ret
 
+# ── &&/|| brick: comparisons-as-values (setcc) + short-circuit booleans ──
+# emit_cmp_rax_0: emit "cmp rax, 0" = 48 83 F8 00
+emit_cmp_rax_0:
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0x00F88348
+    mov [rsi], rax
+    add r13, 4
+    pop rsi
+    ret
+
+# emit_setcc_al: emit "setcc al; movzx rax, al". rax = 3-byte setcc-al literal.
+emit_setcc_al:
+    push rsi
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov [rsi], rax       # setcc al (3 bytes)
+    add r13, 3
+    mov rsi, r15
+    add rsi, 0x59000
+    add rsi, r13
+    mov rax, 0xC0B60F48  # movzx rax, al
+    mov [rsi], rax
+    add r13, 4
+    pop rsi
+    ret
+
+# parse_cmp_value: parse_expr [ (== != < > <= >=) parse_expr -> setcc 0/1 ]
+# Leaves a boolean (0/1) or the raw value in rax (via generated code).
+parse_cmp_value:
+    push r8
+    call parse_expr
+    call emit_push_rax
+    call peek_tok_type
+    mov r8, rax
+    cmp r8, 17
+    je pcv_iscmp
+    cmp r8, 18
+    je pcv_iscmp
+    cmp r8, 19
+    je pcv_iscmp
+    cmp r8, 20
+    je pcv_iscmp
+    cmp r8, 21
+    je pcv_iscmp
+    cmp r8, 22
+    je pcv_iscmp
+    jmp pcv_noop
+pcv_iscmp:
+    inc r11
+    call parse_expr
+    call emit_mov_rcx_rax
+    call emit_pop_rax
+    call emit_cmp_rax_rcx
+    cmp r8, 17
+    je pcv_eq
+    cmp r8, 18
+    je pcv_ne
+    cmp r8, 19
+    je pcv_lt
+    cmp r8, 20
+    je pcv_gt
+    cmp r8, 21
+    je pcv_le
+    jmp pcv_ge
+pcv_eq:
+    mov rax, 0x00C0940F  # sete al
+    jmp pcv_setcc
+pcv_ne:
+    mov rax, 0x00C0950F  # setne al
+    jmp pcv_setcc
+pcv_lt:
+    mov rax, 0x00C09C0F  # setl al
+    jmp pcv_setcc
+pcv_gt:
+    mov rax, 0x00C09F0F  # setg al
+    jmp pcv_setcc
+pcv_le:
+    mov rax, 0x00C09E0F  # setle al
+    jmp pcv_setcc
+pcv_ge:
+    mov rax, 0x00C09D0F  # setge al
+pcv_setcc:
+    call emit_setcc_al
+    pop r8
+    ret
+pcv_noop:
+    call emit_pop_rax    # restore left value (push/pop balanced)
+    pop r8
+    ret
+
+# parse_and_value: parse_cmp_value ( && parse_cmp_value )*  — short-circuit
+parse_and_value:
+    call parse_cmp_value
+parse_and_loop:
+    call peek_tok_type
+    cmp rax, 51          # ANDAND
+    jne parse_and_done
+    inc r11
+    call emit_cmp_rax_0  # if current is 0, skip rest (stays 0)
+    mov rax, 0x84        # je
+    call emit_jcc
+    push rax
+    call parse_cmp_value
+    pop rax
+    call patch_rel32
+    jmp parse_and_loop
+parse_and_done:
+    ret
+
+# parse_or_value: parse_and_value ( || parse_and_value )*  — short-circuit
+parse_or_value:
+    call parse_and_value
+parse_or_loop:
+    call peek_tok_type
+    cmp rax, 52          # OROR
+    jne parse_or_done
+    inc r11
+    call emit_cmp_rax_0  # if current is nonzero, skip rest (stays truthy)
+    mov rax, 0x85        # jne
+    call emit_jcc
+    push rax
+    call parse_and_value
+    pop rax
+    call patch_rel32
+    jmp parse_or_loop
+parse_or_done:
+    ret
+
 # emit_condition: parse "expr OP expr", emit comparison + inverted jcc
 # Returns patch offset in rax.
 emit_condition:
     push r8
+    push r9
+    push r10
+    # scan ahead: does this condition contain && or || before the matching RPAREN?
+    mov r9, r11          # scan cursor
+    mov r10, 0           # paren depth
+emit_cond_scan:
+    push rsi
+    mov rsi, r15
+    add rsi, 0x10000     # tok_types base
+    mov rax, r9
+    shl rax, 3
+    add rsi, rax
+    mov rax, [rsi]       # tok_types[r9]
+    pop rsi
+    cmp rax, 12          # EOF
+    je emit_cond_simple
+    cmp rax, 51          # ANDAND
+    je emit_cond_bool
+    cmp rax, 52          # OROR
+    je emit_cond_bool
+    cmp rax, 10          # LPAREN
+    je emit_cond_scan_lp
+    cmp rax, 11          # RPAREN
+    je emit_cond_scan_rp
+    inc r9
+    jmp emit_cond_scan
+emit_cond_scan_lp:
+    inc r10
+    inc r9
+    jmp emit_cond_scan
+emit_cond_scan_rp:
+    cmp r10, 0
+    je emit_cond_simple  # matching RPAREN at depth 0 — no &&/|| in this condition
+    sub r10, 1
+    inc r9
+    jmp emit_cond_scan
+emit_cond_bool:
+    pop r10
+    pop r9
+    call parse_or_value  # materialize 0/1 (or truthy) in rax
+    call emit_cmp_rax_0
+    mov rax, 0x84        # je (jump if condition false)
+    call emit_jcc        # returns patch offset
+    pop r8
+    ret
+emit_cond_simple:
+    pop r10
+    pop r9
 
     # parse left expression
     call parse_expr
@@ -3287,6 +3669,18 @@ parse_factor:
     je parse_factor_load8
     cmp rax, 26          # STORE8
     je parse_factor_store8
+    cmp rax, 60          # LOAD16
+    je parse_factor_load16
+    cmp rax, 61          # LOAD32
+    je parse_factor_load32
+    cmp rax, 62          # LOAD64
+    je parse_factor_load64
+    cmp rax, 63          # STORE16
+    je parse_factor_store16
+    cmp rax, 64          # STORE32
+    je parse_factor_store32
+    cmp rax, 65          # STORE64
+    je parse_factor_store64
     cmp rax, 37          # TILDE (~)
     je parse_factor_bnot
 
@@ -3619,6 +4013,110 @@ parse_factor_store8:
     call emit_xor_rax_rax # return 0
     call peek_tok_type
     cmp rax, 11          # RPAREN
+    jne parse_err
+    inc r11
+    ret
+
+# ── load/store 16/32/64 parse handlers (brick) ──
+parse_factor_load64:
+    inc r11
+    call peek_tok_type
+    cmp rax, 10
+    jne parse_err
+    inc r11
+    call parse_expr
+    call peek_tok_type
+    cmp rax, 11
+    jne parse_err
+    inc r11
+    call emit_load64
+    ret
+parse_factor_load32:
+    inc r11
+    call peek_tok_type
+    cmp rax, 10
+    jne parse_err
+    inc r11
+    call parse_expr
+    call peek_tok_type
+    cmp rax, 11
+    jne parse_err
+    inc r11
+    call emit_load32
+    ret
+parse_factor_load16:
+    inc r11
+    call peek_tok_type
+    cmp rax, 10
+    jne parse_err
+    inc r11
+    call parse_expr
+    call peek_tok_type
+    cmp rax, 11
+    jne parse_err
+    inc r11
+    call emit_load16
+    ret
+parse_factor_store64:
+    inc r11
+    call peek_tok_type
+    cmp rax, 10
+    jne parse_err
+    inc r11
+    call parse_expr
+    call emit_push_rax
+    call peek_tok_type
+    cmp rax, 31
+    jne parse_err
+    inc r11
+    call parse_expr
+    call emit_pop_rcx
+    call emit_store64
+    call emit_xor_rax_rax
+    call peek_tok_type
+    cmp rax, 11
+    jne parse_err
+    inc r11
+    ret
+parse_factor_store32:
+    inc r11
+    call peek_tok_type
+    cmp rax, 10
+    jne parse_err
+    inc r11
+    call parse_expr
+    call emit_push_rax
+    call peek_tok_type
+    cmp rax, 31
+    jne parse_err
+    inc r11
+    call parse_expr
+    call emit_pop_rcx
+    call emit_store32
+    call emit_xor_rax_rax
+    call peek_tok_type
+    cmp rax, 11
+    jne parse_err
+    inc r11
+    ret
+parse_factor_store16:
+    inc r11
+    call peek_tok_type
+    cmp rax, 10
+    jne parse_err
+    inc r11
+    call parse_expr
+    call emit_push_rax
+    call peek_tok_type
+    cmp rax, 31
+    jne parse_err
+    inc r11
+    call parse_expr
+    call emit_pop_rcx
+    call emit_store16
+    call emit_xor_rax_rax
+    call peek_tok_type
+    cmp rax, 11
     jne parse_err
     inc r11
     ret

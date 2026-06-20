@@ -960,7 +960,8 @@ fn LEX(S): i64 {
                                                                                                                             }
                                                                                                                         }
                                                                                                                     }
-                                                                                                                    SSPOS(S, spos);
+                                                                                                                    store8(S + 0x2C00000 + spos, 0);
+                                                                                                                    SSPOS(S, spos + 1);
                                                                                                                     var slen = spos - sstart;
                                                                                                                     ADDTOK(S, 30, (sstart << 16) | slen);
                                                                                                                 }
