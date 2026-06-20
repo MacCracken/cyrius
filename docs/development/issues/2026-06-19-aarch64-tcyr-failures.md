@@ -11,10 +11,39 @@
 > `bare-metal`/`aarch64-native` job) — when one is fixed, remove it from that list
 > (the gate flags an unexpected PASS).
 
-**Filed:** 2026-06-19 · **Parent:** v6.2.29 VR-01. **Severity:** P1 (4 crashes
-affect the AArch64 platform broadly — the same arch the AGNOS kernel targets).
-**Repro for any one:** `build/cyrius build --aarch64 tests/tcyr/<name>.tcyr /tmp/b
-&& qemu-aarch64 /tmp/b` (or run on real arm64). All 9 PASS on x86_64.
+**Filed:** 2026-06-19 · **Parent:** v6.2.29 VR-01. **Severity:** P1.
+
+> **UPDATE (2026-06-19, post-cut): there are TWO distinct debt classes, and the
+> VR-01 CI gate is now SOFT (`ci.yml` aarch64-native tcyr step) until both clear.**
+> My initial pi validation used the x86-hosted CROSS compiler (`cycc_aarch64`);
+> the CI uses the NATIVE compiler (`cycc_native_a64`, from `main_aarch64_native.cyr`),
+> which exposed a second, larger class I missed:
+
+## Class A — `main_aarch64_native.cyr` is a STALE 6th FORK (the primary CI cause)
+
+The native compiler handles **ZERO annotation tokens** — `grep 'PEEKT(S) == 12[0-9]|13[0-9]'`
+returns nothing, where `main_aarch64.cyr` (the cross fork) handles 122/124/125/126/127/133
+(`#must_use`/`#deprecated`/`#pure`/`#io`/`#alloc`/`#naked`). It is **124 lines behind**
+(471 vs 595). So ANY test whose libs use an annotation hits `unexpected enum` on the
+native compiler — e.g. `bayan.cyr` uses `#pure` (125), so **base64 / bigint / csv /
+cyml** and the `#derive` tests (`derive_serialize_*`, `alloc_serdes`) all fail to
+COMPILE natively (they compile fine via the cross compiler — that's why pi-via-cross
+missed them). The annotation gap is the same fork-desync class fixed for the other 5
+forks at v6.2.27, but this fork was never on that list.
+
+**Fix (a fork-parity arc):** (1) mirror the annotation-token consume from
+`main_aarch64.cyr` into `main_aarch64_native.cyr`'s pass-1 + pass-2 dispatches (the
+mechanical part — unblocks the annotation tests); (2) audit the remaining ~118 lines
+of drift for other missing features (it lags more than just annotations). The native
+self-host PASSES (byte-identical, qemu-verified) — the fork compiles ITSELF, just not
+newer-feature consumer code. NB: the CI "aarch native self-host fails" report was the
+whole job going red on the (then-hard) tcyr loop, not the self-host step.
+
+## Class B — shared aarch64 backend/codegen bugs (affect cross AND native)
+
+**Repro:** `build/cyrius build --aarch64 tests/tcyr/<name>.tcyr /tmp/b &&
+qemu-aarch64 /tmp/b` (or real arm64). These fail on BOTH compilers — real backend
+bugs. All PASS on x86_64.
 
 ## Crashes (SIGSEGV / SIGILL) — P1, likely codegen
 
