@@ -104,16 +104,16 @@ sys_init:
     xor r13, r13         # code_pos = 0
     # zero fixup_count
     mov rsi, r15
-    add rsi, 0x92000
+    add rsi, 0x7600010
     xor rax, rax
     mov [rsi], rax
     # zero string_pos
     mov rsi, r15
-    add rsi, 0x6A000
+    add rsi, 0x7600000
     mov [rsi], rax
     # zero fn_count
     mov rsi, r15
-    add rsi, 0x93810
+    add rsi, 0x7600020
     mov [rsi], rax
     # zero in_function
     add rsi, 8
@@ -123,7 +123,7 @@ sys_init:
     mov [rsi], rax
     # zero return_patch_count
     mov rsi, r15
-    add rsi, 0x93A30
+    add rsi, 0x7600040
     mov [rsi], rax
     ret
 
@@ -151,7 +151,7 @@ write_output:
     mov rax, 1
     mov rdi, 1
     mov rsi, r15
-    add rsi, 0x70000
+    add rsi, 0x4C00000
     mov rdx, r13
     syscall
     ret
@@ -175,7 +175,7 @@ sys_exit_err:
 emit_2bytes:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov [rsi], rax
     add r13, 2
@@ -186,7 +186,7 @@ emit_2bytes:
 emit_8bytes:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov [rsi], rax
     add r13, 8
@@ -221,7 +221,7 @@ emit_mov_rcx_imm64:
 emit_push_rax:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x50
     mov [rsi], rax
@@ -233,7 +233,7 @@ emit_push_rax:
 emit_pop_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x59
     mov [rsi], rax
@@ -245,7 +245,7 @@ emit_pop_rcx:
 emit_mov_rcx_rax:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC18948
     mov [rsi], rax
@@ -257,7 +257,7 @@ emit_mov_rcx_rax:
 emit_pop_rax:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x58
     mov [rsi], rax
@@ -269,7 +269,7 @@ emit_pop_rax:
 emit_add_rax_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC80148
     mov [rsi], rax
@@ -281,7 +281,7 @@ emit_add_rax_rcx:
 emit_sub_rax_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC82948
     mov [rsi], rax
@@ -293,7 +293,7 @@ emit_sub_rax_rcx:
 emit_imul_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE9F748
     mov [rsi], rax
@@ -311,7 +311,7 @@ emit_cqo:
 emit_idiv_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xF9F748
     mov [rsi], rax
@@ -323,7 +323,7 @@ emit_idiv_rcx:
 emit_mov_rax_mem_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x018B48
     mov [rsi], rax
@@ -335,7 +335,7 @@ emit_mov_rax_mem_rcx:
 emit_mov_mem_rcx_rax:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x018948
     mov [rsi], rax
@@ -347,7 +347,7 @@ emit_mov_mem_rcx_rax:
 emit_cmp_rax_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC83948
     mov [rsi], rax
@@ -359,7 +359,7 @@ emit_cmp_rax_rcx:
 emit_mov_rdi_rax:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC78948
     mov [rsi], rax
@@ -382,14 +382,14 @@ emit_jcc:
     mov rbx, rax         # save condition byte
     # emit 0F
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x0F
     mov [rsi], rax
     inc r13
     # emit condition byte
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov [rsi], rbx
     inc r13
@@ -397,7 +397,7 @@ emit_jcc:
     mov rbx, r13
     # emit placeholder rel32 = 0
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     xor rax, rax
     mov [rsi], rax
@@ -417,7 +417,7 @@ emit_jmp_to:
     mov rbx, rax         # target
     # emit E9
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE9
     mov [rsi], rax
@@ -430,7 +430,7 @@ emit_jmp_to:
     and rax, 0xFFFFFFFF   # mask to 4 bytes
     # read-modify-write rel32
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rcx, [rsi]        # existing qword
     shr rcx, 32
@@ -455,7 +455,7 @@ patch_rel32:
     sub rax, 4            # rel32 = code_pos - (offset + 4)
     # Read-modify-write: load existing qword, replace low 4 bytes, write back
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, rbx
     mov rcx, [rsi]       # existing qword
     # clear low 4 bytes of rcx
@@ -509,13 +509,13 @@ record_fixup_rbx:
     push rax
     # load fixup_count
     mov rsi, r15
-    add rsi, 0x92000
+    add rsi, 0x7600010
     mov rax, [rsi]
     mov rcx, rax         # rcx = count
     # fixup_table[count*2] = r13 (codebuf offset of imm64)
     shl rax, 4           # *16 (each entry is 2 qwords)
     mov rsi, r15
-    add rsi, 0x90000
+    add rsi, 0x6200000
     add rsi, rax
     mov [rsi], r13       # store codebuf offset
     # fixup_table[count*2 + 1] = rbx (var index)
@@ -524,7 +524,7 @@ record_fixup_rbx:
     # increment fixup count
     inc rcx
     mov rsi, r15
-    add rsi, 0x92000
+    add rsi, 0x7600010
     mov [rsi], rcx
     pop rax
     pop rcx
@@ -543,7 +543,7 @@ emit_exit_epilogue:
 emit_load8:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     # 48 0F B6 00 = 4 bytes
     mov rax, 0x00B60F48
@@ -556,7 +556,7 @@ emit_load8:
 emit_store8_op:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x0188
     mov [rsi], rax
@@ -568,7 +568,7 @@ emit_store8_op:
 emit_load64:             # mov rax, [rax] = 48 8B 00
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x008B48
     mov [rsi], rax
@@ -578,7 +578,7 @@ emit_load64:             # mov rax, [rax] = 48 8B 00
 emit_load32:             # mov eax, [rax] = 8B 00  (zero-extends to rax)
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x008B
     mov [rsi], rax
@@ -588,7 +588,7 @@ emit_load32:             # mov eax, [rax] = 8B 00  (zero-extends to rax)
 emit_load16:             # movzx rax, word [rax] = 48 0F B7 00
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x00B70F48
     mov [rsi], rax
@@ -598,7 +598,7 @@ emit_load16:             # movzx rax, word [rax] = 48 0F B7 00
 emit_store64:            # mov [rcx], rax = 48 89 01
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x018948
     mov [rsi], rax
@@ -608,7 +608,7 @@ emit_store64:            # mov [rcx], rax = 48 89 01
 emit_store32:            # mov [rcx], eax = 89 01
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x0189
     mov [rsi], rax
@@ -618,7 +618,7 @@ emit_store32:            # mov [rcx], eax = 89 01
 emit_store16:            # mov [rcx], ax = 66 89 01
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x018966
     mov [rsi], rax
@@ -630,7 +630,7 @@ emit_store16:            # mov [rcx], ax = 66 89 01
 emit_xor_rax_rax:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC03148
     mov [rsi], rax
@@ -646,7 +646,7 @@ emit_xor_rax_rax:
 emit_and_rax_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC82148
     mov [rsi], rax
@@ -658,7 +658,7 @@ emit_and_rax_rcx:
 emit_or_rax_rcx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC80948
     mov [rsi], rax
@@ -670,7 +670,7 @@ emit_or_rax_rcx:
 emit_xor_rax_rcx_op:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC83148
     mov [rsi], rax
@@ -682,7 +682,7 @@ emit_xor_rax_rcx_op:
 emit_shl_rax_cl:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE0D348
     mov [rsi], rax
@@ -694,7 +694,7 @@ emit_shl_rax_cl:
 emit_shr_rax_cl:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE8D348
     mov [rsi], rax
@@ -706,7 +706,7 @@ emit_shr_rax_cl:
 emit_not_rax:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xD0F748
     mov [rsi], rax
@@ -718,7 +718,7 @@ emit_not_rax:
 emit_mov_rax_rdx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xD08948
     mov [rsi], rax
@@ -770,7 +770,7 @@ emit_string_addr:
 emit_pop_rdi:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x5F
     mov [rsi], rax
@@ -783,7 +783,7 @@ emit_pop_rsi:
     push rsi
     push rbx
     mov rbx, r15
-    add rbx, 0x59000
+    add rbx, 0x3C00000
     add rbx, r13
     mov rax, 0x5E
     mov [rbx], rax
@@ -796,7 +796,7 @@ emit_pop_rsi:
 emit_pop_rdx:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x5A
     mov [rsi], rax
@@ -808,7 +808,7 @@ emit_pop_rdx:
 emit_pop_r10:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x5A41
     mov [rsi], rax
@@ -820,7 +820,7 @@ emit_pop_r10:
 emit_pop_r8:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x5841
     mov [rsi], rax
@@ -832,7 +832,7 @@ emit_pop_r8:
 emit_pop_r9:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x5941
     mov [rsi], rax
@@ -848,7 +848,7 @@ emit_pop_r9:
 emit_push_rbp:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x55
     mov [rsi], rax
@@ -860,7 +860,7 @@ emit_push_rbp:
 emit_mov_rbp_rsp:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE58948
     mov [rsi], rax
@@ -875,7 +875,7 @@ emit_sub_rsp_imm32:
     push rbx
     mov rbx, rax         # save frame size
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xEC8148
     mov [rsi], rax
@@ -884,7 +884,7 @@ emit_sub_rsp_imm32:
     push r13
     # write imm32
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     # read-modify-write for 4-byte value
     mov rax, [rsi]
@@ -903,7 +903,7 @@ emit_sub_rsp_imm32:
 emit_leave_ret:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC3C9
     mov [rsi], rax
@@ -921,14 +921,14 @@ emit_fn_var_load:
     neg rax               # disp32 = -(index+1)*8
     mov rbx, rax
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x858B48
     mov [rsi], rax
     add r13, 3
     # write disp32 (read-modify-write)
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, [rsi]
     shr rax, 32
@@ -951,13 +951,13 @@ emit_fn_var_store:
     neg rax
     mov rbx, rax
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x858948
     mov [rsi], rax
     add r13, 3
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, [rsi]
     shr rax, 32
@@ -980,13 +980,13 @@ emit_fn_var_addr:
     neg rax
     mov rbx, rax
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x858D48
     mov [rsi], rax
     add r13, 3
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, [rsi]
     shr rax, 32
@@ -1049,13 +1049,13 @@ emit_sp_r9:
 
 emit_sp_write:
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov [rsi], rax
     add r13, 3
     # write disp32
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, [rsi]
     shr rax, 32
@@ -1075,7 +1075,7 @@ emit_sp_done:
 emit_call_placeholder:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE8
     mov [rsi], rax
@@ -1083,7 +1083,7 @@ emit_call_placeholder:
     mov rax, r13          # patch offset = where rel32 starts
     push rax
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     xor rax, rax
     mov [rsi], rax
@@ -1099,7 +1099,7 @@ emit_call_to:
     push rbx
     mov rbx, rax         # target
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE8
     mov [rsi], rax
@@ -1111,7 +1111,7 @@ emit_call_to:
     sub rax, rcx
     and rax, 0xFFFFFFFF
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rcx, [rsi]
     shr rcx, 32
@@ -1187,24 +1187,24 @@ register_fn:
     push rcx
     # load fn_count
     mov rsi, r15
-    add rsi, 0x93810
+    add rsi, 0x7600020
     mov rcx, [rsi]
     # store name at fn_names[count]
     push rcx
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x92010
+    add rsi, 0x7200000
     add rsi, rcx
     mov [rsi], rax
     # set fn_offsets[count] = -1 (not yet defined)
     mov rsi, r15
-    add rsi, 0x92810
+    add rsi, 0x7300000
     add rsi, rcx
     mov rax, -1
     mov [rsi], rax
     # set fn_params[count] = 0
     mov rsi, r15
-    add rsi, 0x93010
+    add rsi, 0x7400000
     add rsi, rcx
     xor rax, rax
     mov [rsi], rax
@@ -1214,7 +1214,7 @@ register_fn:
     inc rax
     push rcx
     mov rsi, r15
-    add rsi, 0x93810
+    add rsi, 0x7600020
     mov [rsi], rax
     pop rax               # return index
     pop rcx
@@ -1230,7 +1230,7 @@ find_fn_index:
     mov r8, rax           # name to find
     # load fn_count
     mov rsi, r15
-    add rsi, 0x93810
+    add rsi, 0x7600020
     mov r9, [rsi]
     xor rcx, rcx
 find_fn_loop:
@@ -1239,7 +1239,7 @@ find_fn_loop:
     push rcx
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x92010
+    add rsi, 0x7200000
     add rsi, rcx
     mov rax, [rsi]
     pop rcx
@@ -1248,10 +1248,10 @@ find_fn_loop:
     push r9
     push rcx
     mov rdi, r15
-    add rdi, 0x50000
+    add rdi, 0x3400000
     add rdi, rax
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, r8
     call strcmp
     pop rcx
@@ -1282,7 +1282,7 @@ find_fn_local_index:
     push rcx
     mov r8, rax
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov r9, [rsi]         # fn_local_count
     xor rcx, rcx
 find_fnl_loop:
@@ -1299,10 +1299,10 @@ find_fnl_loop:
     push r9
     push rcx
     mov rdi, r15
-    add rdi, 0x50000
+    add rdi, 0x3400000
     add rdi, rax
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, r8
     call strcmp
     pop rcx
@@ -1338,19 +1338,19 @@ record_fixup_at:
     push rdx
     mov rdx, rax
     mov rsi, r15
-    add rsi, 0x92000
+    add rsi, 0x7600010
     mov rax, [rsi]
     mov rcx, rax
     shl rax, 4
     mov rsi, r15
-    add rsi, 0x90000
+    add rsi, 0x6200000
     add rsi, rax
     mov [rsi], rdx
     add rsi, 8
     mov [rsi], rbx
     inc rcx
     mov rsi, r15
-    add rsi, 0x92000
+    add rsi, 0x7600010
     mov [rsi], rcx
     pop rdx
     pop rcx
@@ -1713,7 +1713,7 @@ lexer_string:
     # save start offset in string_data
     push rbx
     mov rsi, r15
-    add rsi, 0x6A000
+    add rsi, 0x7600000
     mov rbx, [rsi]       # rbx = current string_pos
     push rcx
     mov rcx, rbx          # rcx = start offset
@@ -1734,7 +1734,7 @@ lexer_str_loop:
 
     # regular character: copy to string_data
     mov rsi, r15
-    add rsi, 0x69000
+    add rsi, 0x5C00000
     add rsi, rbx
     movb [rsi], rax
     inc rbx
@@ -1778,7 +1778,7 @@ lexer_esc_0:
 
 lexer_str_store:
     mov rsi, r15
-    add rsi, 0x69000
+    add rsi, 0x5C00000
     add rsi, rbx
     movb [rsi], rax
     inc rbx
@@ -1805,19 +1805,19 @@ lexer_str_done:
     mov rcx, r10
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x10000
+    add rsi, 0x1400000
     add rsi, rcx
     pop rax
     mov [rsi], rax        # tok_types[r10] = 30
     pop rax               # packed value
     mov rsi, r15
-    add rsi, 0x30000
+    add rsi, 0x2400000
     add rsi, rcx
     mov [rsi], rax        # tok_values[r10] = (offset << 16) | length
     inc r10
     # update string_pos
     mov rsi, r15
-    add rsi, 0x6A000
+    add rsi, 0x7600000
     mov [rsi], rbx
     pop rcx
     pop rbx
@@ -1828,12 +1828,12 @@ lexer_emit_simple:
     mov rcx, r10
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x10000
+    add rsi, 0x1400000
     add rsi, rcx
     pop rax
     mov [rsi], rax
     mov rsi, r15
-    add rsi, 0x30000
+    add rsi, 0x2400000
     add rsi, rcx
     xor rax, rax
     mov [rsi], rax
@@ -1930,12 +1930,12 @@ lexer_num_done:
     mov rcx, r10
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x10000
+    add rsi, 0x1400000
     add rsi, rcx
     mov rax, 1
     mov [rsi], rax
     mov rsi, r15
-    add rsi, 0x30000
+    add rsi, 0x2400000
     add rsi, rcx
     mov [rsi], rbx
     inc r10
@@ -1968,7 +1968,7 @@ lexer_id_check3:
     jmp lexer_id_end
 lexer_id_copy:
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, r9
     mov [rsi], rax
     inc r9
@@ -1978,7 +1978,7 @@ lexer_id_copy:
 lexer_id_end:
     # null-terminate
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, r9
     xor rax, rax
     mov [rsi], rax
@@ -1986,7 +1986,7 @@ lexer_id_end:
 
     # check keywords: "var", "if", "while"
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, rbx
     mov rax, [rsi]
 
@@ -2197,12 +2197,12 @@ lexer_id_end:
     mov rcx, r10
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x10000
+    add rsi, 0x1400000
     add rsi, rcx
     mov rax, 2
     mov [rsi], rax
     mov rsi, r15
-    add rsi, 0x30000
+    add rsi, 0x2400000
     add rsi, rcx
     mov [rsi], rbx
     inc r10
@@ -2305,12 +2305,12 @@ lexer_emit_kw:
     mov rcx, r10
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x10000
+    add rsi, 0x1400000
     add rsi, rcx
     pop rax
     mov [rsi], rax
     mov rsi, r15
-    add rsi, 0x30000
+    add rsi, 0x2400000
     add rsi, rcx
     xor rax, rax
     mov [rsi], rax
@@ -2334,14 +2334,14 @@ parser:
     xor r11, r11
     # store last_var_idx = -1
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov rax, -1
     mov [rsi], rax
 
     # Emit jmp placeholder over function bodies
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE9
     mov [rsi], rax
@@ -2349,11 +2349,11 @@ parser:
     # save patch offset at main_jmp_patch
     mov rax, r13
     mov rsi, r15
-    add rsi, 0x93A38
+    add rsi, 0x7600048
     mov [rsi], rax
     # emit placeholder rel32
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     xor rax, rax
     mov [rsi], rax
@@ -2378,7 +2378,7 @@ parse_fn_defs_done:
 
     # Patch the initial jmp to land here (start of main code)
     mov rsi, r15
-    add rsi, 0x93A38
+    add rsi, 0x7600048
     mov rax, [rsi]
     call patch_rel32
 
@@ -2387,7 +2387,7 @@ parse_fn_defs_done:
 
     # Exit epilogue
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov rax, [rsi]
     cmp rax, -1
     je parser_no_vars
@@ -2439,34 +2439,34 @@ parse_fn_def_exists:
     mov rcx, r9
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x92810
+    add rsi, 0x7300000
     add rsi, rcx
     mov [rsi], r13
     pop rcx
 
     # save compiler state
     mov rsi, r15
-    add rsi, 0x93828
+    add rsi, 0x7600038
     mov [rsi], r14       # saved_var_count = r14
     # save last_var_idx
     push rsi
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov rbx, [rsi]       # save current last_var_idx
     pop rsi
     # set in_function = 1
     mov rsi, r15
-    add rsi, 0x93818
+    add rsi, 0x7600028
     mov rax, 1
     mov [rsi], rax
     # zero fn_local_count
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     xor rax, rax
     mov [rsi], rax
     # zero return_patch_count
     mov rsi, r15
-    add rsi, 0x93A30
+    add rsi, 0x7600040
     mov [rsi], rax
 
     # emit prologue: push rbp; mov rbp, rsp; sub rsp, <placeholder>
@@ -2477,7 +2477,7 @@ parse_fn_def_exists:
     # save frame_size_patch offset at 0x93E40 (scratch)
     push rsi
     mov rsi, r15
-    add rsi, 0x93E40
+    add rsi, 0x7600050
     mov [rsi], rax
     pop rsi
 
@@ -2489,7 +2489,7 @@ parse_fn_def_exists:
 
     # use heap scratch at 0x93E48 for param_count to avoid stack issues
     mov rsi, r15
-    add rsi, 0x93E48
+    add rsi, 0x7600058
     xor rax, rax
     mov [rsi], rax        # param_count = 0
 
@@ -2507,7 +2507,7 @@ parse_fn_param:
 
     # get fn_local_count
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov rax, [rsi]        # rax = fn_local_count (= local var index)
 
     # store name in fn_local_names[fn_local_count]
@@ -2523,21 +2523,21 @@ parse_fn_param:
     push rax              # save local index
     mov rbx, rax          # rbx = local var index for offset computation
     mov rsi, r15
-    add rsi, 0x93E48
+    add rsi, 0x7600058
     mov rax, [rsi]        # rax = param index
     call emit_store_param
     pop rax               # restore local index
 
     # increment param_count
     mov rsi, r15
-    add rsi, 0x93E48
+    add rsi, 0x7600058
     mov rcx, [rsi]
     inc rcx
     mov [rsi], rcx
 
     # increment fn_local_count
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov rax, [rsi]
     inc rax
     mov [rsi], rax
@@ -2563,12 +2563,12 @@ parse_fn_params_done:
     mov rcx, r9
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x93010
+    add rsi, 0x7400000
     add rsi, rcx
     # load param_count from scratch
     push rsi
     mov rsi, r15
-    add rsi, 0x93E48
+    add rsi, 0x7600058
     mov rax, [rsi]
     pop rsi
     mov [rsi], rax       # fn_params[r9] = param_count
@@ -2603,7 +2603,7 @@ parse_fn_no_rettype:
     # patch all return jumps to land here (epilogue)
     push rcx
     mov rsi, r15
-    add rsi, 0x93A30
+    add rsi, 0x7600040
     mov rcx, [rsi]       # return_patch_count
     xor rax, rax
 parse_fn_patch_returns:
@@ -2613,7 +2613,7 @@ parse_fn_patch_returns:
     push rcx
     shl rax, 3
     mov rsi, r15
-    add rsi, 0x93830
+    add rsi, 0x7500000
     add rsi, rax
     mov rax, [rsi]       # return_patches[i]
     call patch_rel32
@@ -2630,20 +2630,20 @@ parse_fn_patch_done:
     # patch frame size
     push rsi
     mov rsi, r15
-    add rsi, 0x93E40
+    add rsi, 0x7600050
     mov rax, [rsi]       # frame_size_patch offset
     pop rsi
     push rsi
     # compute frame size = fn_local_count * 8, aligned to 16
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov rcx, [rsi]
     shl rcx, 3            # local_count * 8
     add rcx, 15
     and rcx, -16          # align to 16
     # patch the imm32 at frame_size_patch
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, rax
     push rax
     mov rax, [rsi]
@@ -2657,15 +2657,15 @@ parse_fn_patch_done:
 
     # restore compiler state
     mov rsi, r15
-    add rsi, 0x93828
+    add rsi, 0x7600038
     mov r14, [rsi]       # restore var count
     # restore last_var_idx
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov [rsi], rbx       # rbx was saved earlier
     # set in_function = 0
     mov rsi, r15
-    add rsi, 0x93818
+    add rsi, 0x7600028
     xor rax, rax
     mov [rsi], rax
 
@@ -2728,31 +2728,31 @@ parse_return_stmt:
     push rsi
     push rbx
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE9
     mov [rsi], rax
     inc r13
     mov rbx, r13         # patch offset
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     xor rax, rax
     mov [rsi], rax
     add r13, 4
     # record in return_patches
     mov rsi, r15
-    add rsi, 0x93A30
+    add rsi, 0x7600040
     mov rax, [rsi]       # return_patch_count
     mov rcx, rax
     shl rax, 3
     mov rsi, r15
-    add rsi, 0x93830
+    add rsi, 0x7500000
     add rsi, rax
     mov [rsi], rbx       # return_patches[count] = patch offset
     inc rcx
     mov rsi, r15
-    add rsi, 0x93A30
+    add rsi, 0x7600040
     mov [rsi], rcx
     pop rbx
     pop rsi
@@ -2799,7 +2799,7 @@ parse_var_after_expr:
     # check if inside a function
     push rax
     mov rsi, r15
-    add rsi, 0x93818
+    add rsi, 0x7600028
     mov rax, [rsi]
     cmp rax, 1
     pop rax
@@ -2809,12 +2809,12 @@ parse_var_after_expr:
     mov rcx, r14
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x58000
+    add rsi, 0x6000000
     add rsi, rcx
     mov [rsi], r8
 
     mov rsi, r15
-    add rsi, 0x58800
+    add rsi, 0x6100000
     add rsi, rcx
     mov rax, 8
     mov [rsi], rax
@@ -2824,7 +2824,7 @@ parse_var_after_expr:
 
     push rsi
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov rax, r14
     mov [rsi], rax
     pop rsi
@@ -2837,7 +2837,7 @@ parse_var_stmt_local:
     # store name in fn_local_names
     push rcx
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov rcx, [rsi]       # fn_local_count
     push rcx
     shl rcx, 3
@@ -2851,7 +2851,7 @@ parse_var_stmt_local:
     call emit_fn_var_store
     # increment fn_local_count
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov rax, [rsi]
     inc rax
     mov [rsi], rax
@@ -2893,7 +2893,7 @@ parse_array_decl:
     mov rcx, r14
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x58000
+    add rsi, 0x6000000
     add rsi, rcx
     mov [rsi], r8
 
@@ -2902,7 +2902,7 @@ parse_array_decl:
     add rax, 7
     and rax, -8
     mov rsi, r15
-    add rsi, 0x58800
+    add rsi, 0x6100000
     add rsi, rcx
     mov [rsi], rax
 
@@ -2962,7 +2962,7 @@ parse_array_common:
     shl rbx, 3           # typed: size = N*8
 parse_array_common_size:
     mov rsi, r15
-    add rsi, 0x93818     # in_function
+    add rsi, 0x7600028     # in_function
     mov rax, [rsi]
     cmp rax, 1
     je parse_array_common_local
@@ -2970,14 +2970,14 @@ parse_array_common_size:
     mov rcx, r14
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x58000
+    add rsi, 0x6000000
     add rsi, rcx
     mov [rsi], r8
     mov rax, rbx
     add rax, 7
     and rax, -8
     mov rsi, r15
-    add rsi, 0x58800
+    add rsi, 0x6100000
     add rsi, rcx
     mov [rsi], rax
     inc r14
@@ -3006,12 +3006,12 @@ reg_local_array:
     shr rax, 3
     mov r10, rax         # r10 = slots
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov r9, [rsi]        # r9 = li (base local index)
     mov rcx, 0
 reg_la_strlen:
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, r8
     add rsi, rcx
     mov rax, [rsi]
@@ -3052,7 +3052,7 @@ reg_la_fill_done:
     mov rax, r9
     add rax, r10
     mov rsi, r15
-    add rsi, 0x93820
+    add rsi, 0x7600030
     mov [rsi], rax       # fn_local_count += slots
     pop r10
     pop r9
@@ -3088,7 +3088,7 @@ parse_assign_stmt:
     # check if inside function
     push rax
     mov rsi, r15
-    add rsi, 0x93818
+    add rsi, 0x7600028
     mov rax, [rsi]
     cmp rax, 1
     pop rax
@@ -3104,7 +3104,7 @@ parse_assign_stmt:
     call emit_var_store
     push rsi
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov [rsi], r9
     pop rsi
     jmp parse_assign_semi
@@ -3169,7 +3169,7 @@ parse_assign_fn_emit:
     mov rcx, r9
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x92810
+    add rsi, 0x7300000
     add rsi, rcx
     mov rax, [rsi]
     pop rcx
@@ -3210,7 +3210,7 @@ parse_if_clause:         # parse ( cond ) { body } [elif/else]; keyword consumed
 
     # save last_var_idx
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov r9, [rsi]
 
     # expect LPAREN
@@ -3277,14 +3277,14 @@ parse_if_else:
     # emit_jmp_placeholder: emit E9 + 4-byte placeholder
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE9
     mov [rsi], rax
     inc r13
     mov rbx, r13         # rbx = patch offset for skip-else jmp
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     xor rax, rax
     mov [rsi], rax
@@ -3317,7 +3317,7 @@ parse_if_else:
 parse_if_done:
     # restore last_var_idx
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov [rsi], r9
 
     pop rbx
@@ -3334,7 +3334,7 @@ parse_while_stmt:
 
     # save last_var_idx
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov rbx, [rsi]
 
     # save loop top position
@@ -3388,7 +3388,7 @@ parse_while_stmt:
 
     # restore last_var_idx
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov [rsi], rbx
 
     pop rbx
@@ -3404,14 +3404,14 @@ emit_jmp0:
     push rsi
     push rbx
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xE9
     mov [rsi], rax
     inc r13
     mov rbx, r13
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     xor rax, rax
     mov [rsi], rax
@@ -3427,24 +3427,24 @@ loop_push:
     push rdx
     push rsi
     mov rsi, r15
-    add rsi, 0x94000
+    add rsi, 0x1100000
     mov rcx, [rsi]       # sp
     mov rdx, rcx
     shl rdx, 3
     mov rsi, r15
-    add rsi, 0x94008
+    add rsi, 0x1100008
     add rsi, rdx
     mov [rsi], rax       # cont_tgt[sp] = target
     mov rsi, r15
-    add rsi, 0x94108
+    add rsi, 0x1100108
     mov rax, [rsi]       # brk_cnt
     mov rsi, r15
-    add rsi, 0x94088
+    add rsi, 0x1100088
     add rsi, rdx
     mov [rsi], rax       # brk_base[sp] = brk_cnt
     inc rcx
     mov rsi, r15
-    add rsi, 0x94000
+    add rsi, 0x1100000
     mov [rsi], rcx       # sp++
     pop rsi
     pop rdx
@@ -3459,17 +3459,17 @@ loop_pop:
     push rsi
     push r8
     mov rsi, r15
-    add rsi, 0x94000
+    add rsi, 0x1100000
     mov rcx, [rsi]
     sub rcx, 1           # rcx = sp (innermost frame)
     mov rdx, rcx
     shl rdx, 3
     mov rsi, r15
-    add rsi, 0x94088
+    add rsi, 0x1100088
     add rsi, rdx
     mov r8, [rsi]        # r8 = base (counter)
     mov rsi, r15
-    add rsi, 0x94108
+    add rsi, 0x1100108
     mov rdx, [rsi]       # rdx = cnt
 loop_pop_patch:
     cmp r8, rdx
@@ -3478,7 +3478,7 @@ loop_pop_patch:
     mov rdx, r8
     shl rdx, 3
     mov rsi, r15
-    add rsi, 0x94110
+    add rsi, 0x1100110
     add rsi, rdx
     mov rax, [rsi]       # brk_patches[i]
     pop rdx
@@ -3493,14 +3493,14 @@ loop_pop_done:
     mov rdx, rcx
     shl rdx, 3
     mov rsi, r15
-    add rsi, 0x94088
+    add rsi, 0x1100088
     add rsi, rdx
     mov rax, [rsi]       # base
     mov rsi, r15
-    add rsi, 0x94108
+    add rsi, 0x1100108
     mov [rsi], rax       # brk_cnt = base
     mov rsi, r15
-    add rsi, 0x94000
+    add rsi, 0x1100000
     mov [rsi], rcx       # loop_sp = sp
     pop r8
     pop rsi
@@ -3516,17 +3516,17 @@ emit_break:
     push rsi
     call emit_jmp0       # rax = patch
     mov rsi, r15
-    add rsi, 0x94108
+    add rsi, 0x1100108
     mov rcx, [rsi]       # cnt
     mov rdx, rcx
     shl rdx, 3
     mov rsi, r15
-    add rsi, 0x94110
+    add rsi, 0x1100110
     add rsi, rdx
     mov [rsi], rax       # brk_patches[cnt] = patch
     inc rcx
     mov rsi, r15
-    add rsi, 0x94108
+    add rsi, 0x1100108
     mov [rsi], rcx       # brk_cnt++
     pop rsi
     pop rdx
@@ -3539,12 +3539,12 @@ emit_continue:
     push rcx
     push rsi
     mov rsi, r15
-    add rsi, 0x94000
+    add rsi, 0x1100000
     mov rcx, [rsi]
     sub rcx, 1
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x94008
+    add rsi, 0x1100008
     add rsi, rcx
     mov rax, [rsi]       # cont_tgt[sp]
     call emit_jmp_to
@@ -3585,7 +3585,7 @@ parse_for_step:
     call parse_expr      # value -> rax
     push rax
     mov rsi, r15
-    add rsi, 0x93818     # in_function
+    add rsi, 0x7600028     # in_function
     mov rax, [rsi]
     cmp rax, 1
     pop rax
@@ -3599,7 +3599,7 @@ parse_for_step:
     call emit_var_store
     push rsi
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov [rsi], r9
     pop rsi
     pop r9
@@ -3626,7 +3626,7 @@ parse_for_stmt:
     push rbx            # rbx = saved last_var_idx
     inc r11              # consume FOR
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov rbx, [rsi]
     call peek_tok_type
     cmp rax, 10          # (
@@ -3634,7 +3634,7 @@ parse_for_stmt:
     inc r11
     call parse_statement # INIT (consumes its own ;)
     mov rsi, r15
-    add rsi, 0x94B10
+    add rsi, 0x1100B10
     mov [rsi], r13       # cp_cond = r13
     call parse_or_value  # COND -> 0/1
     call emit_cmp_rax_0
@@ -3647,10 +3647,10 @@ parse_for_stmt:
     inc r11
     call emit_jmp0       # body_skip
     mov rsi, r15
-    add rsi, 0x94B18
+    add rsi, 0x1100B18
     mov [rsi], rax
     mov rsi, r15
-    add rsi, 0x94B20
+    add rsi, 0x1100B20
     mov [rsi], r13       # cp_step = r13
     call parse_for_step  # STEP (no ;)
     call peek_tok_type
@@ -3658,11 +3658,11 @@ parse_for_stmt:
     jne parse_err
     inc r11
     mov rsi, r15
-    add rsi, 0x94B10
+    add rsi, 0x1100B10
     mov rax, [rsi]
     call emit_jmp_to     # jmp cp_cond
     mov rsi, r15
-    add rsi, 0x94B18
+    add rsi, 0x1100B18
     mov rax, [rsi]
     call patch_rel32     # body starts here
     call peek_tok_type
@@ -3670,7 +3670,7 @@ parse_for_stmt:
     jne parse_err
     inc r11
     mov rsi, r15
-    add rsi, 0x94B20
+    add rsi, 0x1100B20
     mov rax, [rsi]
     call loop_push       # continue -> cp_step
     call parse_program   # BODY
@@ -3683,7 +3683,7 @@ parse_for_stmt:
     call patch_rel32     # patch exit
     call loop_pop        # breaks -> here
     mov rsi, r15
-    add rsi, 0x92008
+    add rsi, 0x7600018
     mov [rsi], rbx
     pop rbx
     pop r9
@@ -3695,7 +3695,7 @@ parse_for_stmt:
 emit_cmp_rax_0:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0x00F88348
     mov [rsi], rax
@@ -3707,12 +3707,12 @@ emit_cmp_rax_0:
 emit_setcc_al:
     push rsi
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov [rsi], rax       # setcc al (3 bytes)
     add r13, 3
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, r13
     mov rax, 0xC0B60F48  # movzx rax, al
     mov [rsi], rax
@@ -3834,7 +3834,7 @@ emit_condition:
 emit_cond_scan:
     push rsi
     mov rsi, r15
-    add rsi, 0x10000     # tok_types base
+    add rsi, 0x1400000     # tok_types base
     mov rax, r9
     shl rax, 3
     add rsi, rax
@@ -4109,25 +4109,25 @@ parse_enum_member:
     # register: const_noffs[count]=r8, const_values[count]=r9, count++
     push rcx
     mov rsi, r15
-    add rsi, 0x95000
+    add rsi, 0x1201000
     mov rcx, [rsi]       # const_count
     push rcx
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x94000
+    add rsi, 0x1200000
     add rsi, rcx
     mov [rsi], r8
     pop rcx
     push rcx
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x94800
+    add rsi, 0x1200800
     add rsi, rcx
     mov [rsi], r9
     pop rcx
     inc rcx
     mov rsi, r15
-    add rsi, 0x95000
+    add rsi, 0x1201000
     mov [rsi], rcx       # const_count++
     pop rcx
     jmp parse_enum_member
@@ -4147,23 +4147,23 @@ find_const_index:
     xor r9, r9
 find_const_loop:
     mov rsi, r15
-    add rsi, 0x95000
+    add rsi, 0x1201000
     mov rax, [rsi]       # const_count
     cmp r9, rax
     jge find_const_undef
     mov rcx, r9
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x94000
+    add rsi, 0x1200000
     add rsi, rcx
     mov rax, [rsi]       # const_noffs[r9]
     push r8
     push r9
     mov rdi, r15
-    add rdi, 0x50000
+    add rdi, 0x3400000
     add rdi, rax
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, r8
     call strcmp
     pop r9
@@ -4250,7 +4250,7 @@ parse_factor_ident:
     mov rcx, rax
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x94800     # const_values[idx]
+    add rsi, 0x1200800     # const_values[idx]
     add rsi, rcx
     mov rax, [rsi]
     call emit_mov_rax_imm64
@@ -4261,7 +4261,7 @@ parse_factor_ident_notconst:
 
     # variable load — check in_function
     mov rsi, r15
-    add rsi, 0x93818
+    add rsi, 0x7600028
     mov rax, [rsi]
     cmp rax, 1
     je parse_factor_ident_local
@@ -4326,7 +4326,7 @@ parse_factor_fn_emit:
     mov rcx, r9
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x92810
+    add rsi, 0x7300000
     add rsi, rcx
     mov rax, [rsi]
     pop rcx
@@ -4376,7 +4376,7 @@ parse_factor_addr:
     inc r11
     # check in_function
     mov rsi, r15
-    add rsi, 0x93818
+    add rsi, 0x7600028
     mov rax, [rsi]
     cmp rax, 1
     je parse_factor_addr_local
@@ -4672,17 +4672,17 @@ find_var_loop:
     mov rcx, r9
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x58000
+    add rsi, 0x6000000
     add rsi, rcx
     mov rax, [rsi]
     # compare strings
     push r8
     push r9
     mov rdi, r15
-    add rdi, 0x50000
+    add rdi, 0x3400000
     add rdi, rax
     mov rsi, r15
-    add rsi, 0x50000
+    add rsi, 0x3400000
     add rsi, r8
     call strcmp
     pop r9
@@ -4724,7 +4724,7 @@ peek_tok_type:
     mov rcx, r11
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x10000
+    add rsi, 0x1400000
     add rsi, rcx
     mov rax, [rsi]
     pop rsi
@@ -4737,7 +4737,7 @@ peek_tok_value:
     mov rcx, r11
     shl rcx, 3
     mov rsi, r15
-    add rsi, 0x30000
+    add rsi, 0x2400000
     add rsi, rcx
     mov rax, [rsi]
     pop rsi
@@ -4776,7 +4776,7 @@ fixup_sum_sizes:
     mov rax, rcx
     shl rax, 3
     mov rsi, r15
-    add rsi, 0x58800
+    add rsi, 0x6100000
     add rsi, rax
     mov rax, [rsi]
     add rdi, rax
@@ -4787,7 +4787,7 @@ fixup_sum_done:
 
     # Walk fixup table
     mov rsi, r15
-    add rsi, 0x92000
+    add rsi, 0x7600010
     mov rcx, [rsi]       # rcx = fixup count
     xor rbx, rbx         # rbx = fixup index
 
@@ -4799,7 +4799,7 @@ fixup_loop:
     mov rax, rbx
     shl rax, 4           # *16
     mov rsi, r15
-    add rsi, 0x90000
+    add rsi, 0x6200000
     add rsi, rax
     push rcx
     mov rcx, [rsi]       # rcx = codebuf offset
@@ -4840,7 +4840,7 @@ fixup_var_offset:
     mov rsi, rcx
     shl rsi, 3
     add rsi, r15
-    add rsi, 0x58800
+    add rsi, 0x6100000
     push rax
     mov rax, [rsi]
     mov rdx, rax
@@ -4887,7 +4887,7 @@ fixup_fn_call:
     mov rax, rbx
     shl rax, 3
     mov rsi, r15
-    add rsi, 0x92810
+    add rsi, 0x7300000
     add rsi, rax
     mov rax, [rsi]       # rax = fn entry codebuf offset
     pop rcx
@@ -4900,7 +4900,7 @@ fixup_fn_call:
     pop rdx
     # write 4-byte rel32 (read-modify-write)
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, rcx
     push rdx
     mov rdx, [rsi]
@@ -4917,7 +4917,7 @@ fixup_fn_call:
 fixup_write:
     # patch codebuf at offset rcx with address in rax
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     add rsi, rcx
     mov [rsi], rax
 
@@ -4931,7 +4931,7 @@ fixup_done:
     # store total_var_bytes in rdi for emit_elf
     # Save it at a known location: 0x6A008 (data_size)
     mov rsi, r15
-    add rsi, 0x6A008
+    add rsi, 0x7600008
     mov [rsi], rdi
     pop rdi
     pop rdx
@@ -4955,12 +4955,12 @@ emit_elf:
 
     # Load total_var_bytes from data_size (set by fixup_vars)
     mov rsi, r15
-    add rsi, 0x6A008
+    add rsi, 0x7600008
     mov rdi, [rsi]       # rdi = total_var_bytes
 
     # Load string_pos (total string bytes)
     mov rsi, r15
-    add rsi, 0x6A000
+    add rsi, 0x7600000
     mov rcx, [rsi]       # rcx = string_pos
 
     # total file size = 120 (headers) + code_size + total_var_bytes + string_bytes
@@ -4977,7 +4977,7 @@ emit_elf:
     push rdi
     push rcx
     mov rdi, r15
-    add rdi, 0x70000
+    add rdi, 0x4C00000
     mov rsi, elf_template
     mov rdx, 15
     call memcpy_qwords
@@ -4986,20 +4986,20 @@ emit_elf:
 
     # patch p_flags to RWX
     mov rsi, r15
-    add rsi, 0x70000
+    add rsi, 0x4C00000
     add rsi, 64
     mov rax, 0x0000000700000001
     mov [rsi], rax
 
     # patch p_filesz
     mov rsi, r15
-    add rsi, 0x70000
+    add rsi, 0x4C00000
     add rsi, 96
     mov [rsi], rbx
 
     # patch p_memsz (filesz + extra page)
     mov rsi, r15
-    add rsi, 0x70000
+    add rsi, 0x4C00000
     add rsi, 104
     mov rax, rbx
     add rax, 4096
@@ -5009,10 +5009,10 @@ emit_elf:
     push rdi
     push rcx
     mov rdi, r15
-    add rdi, 0x70000
+    add rdi, 0x4C00000
     add rdi, 120
     mov rsi, r15
-    add rsi, 0x59000
+    add rsi, 0x3C00000
     mov rdx, r13
     add rdx, 7
     shr rdx, 3
@@ -5024,7 +5024,7 @@ emit_elf:
     push rdi
     push rcx
     mov rsi, r15
-    add rsi, 0x70000
+    add rsi, 0x4C00000
     add rsi, 120
     add rsi, r13          # past code
     # zero total_var_bytes + string_bytes, rounded up to qwords
@@ -5050,7 +5050,7 @@ emit_zero_done:
     push rcx
     push rdi
     mov rdi, r15
-    add rdi, 0x70000
+    add rdi, 0x4C00000
     add rdi, 120
     add rdi, r13          # past code
     # rdi needs total_var_bytes added
@@ -5058,20 +5058,20 @@ emit_zero_done:
     push rax
     # Get total_var_bytes from saved location
     mov rsi, r15
-    add rsi, 0x6A008
+    add rsi, 0x7600008
     mov rax, [rsi]
     add rdi, rax          # past vars
 
     # source = string_data at r15+0x69000
     mov rsi, r15
-    add rsi, 0x69000
+    add rsi, 0x5C00000
     # count = string_pos
     mov rsi, r15
-    add rsi, 0x6A000
+    add rsi, 0x7600000
     mov rdx, [rsi]        # rdx = string_pos (byte count)
     # copy bytes (use qword copy, rounded up)
     mov rsi, r15
-    add rsi, 0x69000
+    add rsi, 0x5C00000
     add rdx, 7
     shr rdx, 3            # qword count
     call memcpy_qwords
