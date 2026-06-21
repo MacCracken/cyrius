@@ -1456,6 +1456,12 @@ lexer_str_done:
     mov [rsi], rax        # tok_values[r10] = (offset << 16) | length
     inc r10
     mov rsi, r15
+    add rsi, 0x5C00000
+    add rsi, rbx
+    xor rax, rax
+    movb [rsi], rax       # NUL-terminate the string in string_data
+    inc rbx               # advance string_pos past the NUL
+    mov rsi, r15
     add rsi, 0x7600000
     mov [rsi], rbx
     pop rcx
@@ -4417,10 +4423,6 @@ find_var_found:
     pop r8
     ret
 find_var_undef:
-    mov rdi, r15
-    add rdi, 0x3400000
-    add rdi, r8
-    call dbg_write_str
     mov rax, 1
     mov rdi, 2
     mov rsi, err_undef
@@ -4431,117 +4433,12 @@ find_var_undef:
     pop r8
     jmp sys_exit_err
 parse_err:
-    push r8
-    push r9
-    mov r9, r11
-    sub r9, 40
-    cmp r9, 0
-    jge perr_dbg_loop
-    xor r9, r9
-perr_dbg_loop:
-    cmp r9, r11
-    jg perr_dbg_done
-    mov rsi, r15
-    add rsi, 0x1400000   # tok_types
-    mov rax, r9
-    shl rax, 3
-    add rsi, rax
-    mov rax, [rsi]
-    cmp rax, 2           # IDENT
-    je perr_dbg_name
-    cmp rax, 30          # STRING
-    je perr_dbg_name
-    jmp perr_dbg_next
-perr_dbg_name:
-    mov rsi, r15
-    add rsi, 0x2400000   # tok_values
-    mov rax, r9
-    shl rax, 3
-    add rsi, rax
-    mov r8, [rsi]        # name offset
-    mov rdi, r15
-    add rdi, 0x3400000
-    add rdi, r8
-    call dbg_write_str
-perr_dbg_next:
-    inc r9
-    jmp perr_dbg_loop
-perr_dbg_done:
-    pop r9
-    pop r8
-    mov rax, r11
-    call dbg_raw8        # cursor r11
-    mov rsi, r15
-    add rsi, 0x1400000
-    mov rax, r11
-    shl rax, 3
-    add rsi, rax
-    mov rax, [rsi]
-    call dbg_raw8        # tok_types[r11]
-    mov rax, r12
-    call dbg_raw8        # input length r12
-    mov rax, r10
-    call dbg_raw8        # token count r10
     mov rax, 1
     mov rdi, 2
     mov rsi, err_syntax
     mov rdx, 13
     syscall
     jmp sys_exit_err
-dbg_raw8:
-    push rsi
-    push rdi
-    push rdx
-    push rcx
-    push r11
-    mov rsi, r15
-    add rsi, 0x7700020
-    mov [rsi], rax
-    mov rax, 1
-    mov rdi, 2
-    mov rdx, 8
-    syscall
-    pop r11
-    pop rcx
-    pop rdx
-    pop rdi
-    pop rsi
-    ret
-
-dbg_write_str:
-    push rax
-    push rdi
-    push rsi
-    push rdx
-    push rcx
-    push r11
-    xor rdx, rdx
-dws_len:
-    mov rsi, rdi
-    add rsi, rdx
-    mov rax, [rsi]
-    and rax, 0xFF
-    cmp rax, 0
-    je dws_write
-    add rdx, 1
-    jmp dws_len
-dws_write:
-    mov rsi, rdi
-    mov rax, 1
-    mov rdi, 2
-    syscall
-    mov rax, 1
-    mov rdi, 2
-    mov rsi, dbg_space
-    mov rdx, 1
-    syscall
-    pop r11
-    pop rcx
-    pop rdx
-    pop rsi
-    pop rdi
-    pop rax
-    ret
 peek_tok_type:
     push rcx
     push rsi
@@ -5491,8 +5388,6 @@ err_syntax:
     db "syntax error\n"
 err_undef:
     db "undefined variable\n"
-dbg_space:
-    db " "
 pp_pat_include:
     db "include "
 pp_pat_ifdef:
