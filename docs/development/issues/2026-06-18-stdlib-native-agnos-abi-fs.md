@@ -16,15 +16,27 @@
 > `O_EXCL`, undefined on agnos — fixed by adding `O_EXCL` to io.cyr's neutral
 > agnos `O_*` set (`feedback_stdlib_self_sufficient_constants`).
 >
-> **STILL OPEN (the "stdlib-wide structural fix" section below):** (1) the
-> length-carrying portable wrapper set (`xopen`/`xstat`/`xunlink`/`xgetdents`)
-> promoted to the base syscalls layer; (2) the cyrlint rule flagging
-> unguarded `sys_open(<expr>, <int-literal>, …)` / raw `syscall(SYS_GETDENTS64…)`;
-> (3) the other raw-`sys_open(path,<linux-flags>,mode)` sites the audit counted
-> (~58 across tls/agnosys/patra **and now sigil's luks_write_keyfile**, which uses
-> raw sys_open with Linux args — harmless on agnos in practice since LUKS keyfile
-> writing is Linux-disk-only, but it's another instance of this class). These
-> remain tracked here; they were NOT in the v6.2.23 scope.
+> **RESOLVED in v6.2.33 — structural asks closed + the descent-port consumer
+> gaps fixed.** (1) The portable wrapper set is now COMPLETE: `xopen`/`xstat`/
+> `xunlink`/`xgetdents` (v6.2.26) + **`xlseek`/`xflock` (v6.2.33)** in `lib/io.cyr`
+> — `xlseek` is portable as-is (`SYS_LSEEK` is peer-carried on every target),
+> `xflock` centralizes the per-target flock number (only the agnos peer carries
+> `SYS_FLOCK`), and `programs/agnos_xsys_probe.cyr` exercises both under the
+> `_agnos_xsys_gate`. (2) The cyrlint rule flags the genuinely non-portable
+> patterns — raw `sys_open(<expr>,<int-literal>,…)` (ABI) + raw
+> `syscall(…SYS_GETDENTS…)` (number/arity). **`SYS_LSEEK`/`SYS_FLOCK`/
+> `SYS_GETRANDOM` are deliberately NOT flagged**: post-.32 they are peer-carried /
+> wrapper-portable, so flagging them would false-positive on the now-correct
+> patra code. (3) The descent-MUD-port consumer gaps were fixed at the source:
+> **patra 1.12.2** (file.cyr flock/fdatasync agnos `#ifdef`; wal.cyr dropped the
+> hardcoded Linux `SYS_GETRANDOM = 318`) and **sakshi 2.4.1** (precedence agnos
+> syscall branch — `CYRIUS_ARCH_X86` is predefined even on agnos, so the Linux
+> branch silently won; `_sk_open` agnos namelen+AO mapping; BSD socket/sendto
+> guarded), both released + re-folded byte-identical. **sigil:** premise-checked
+> out of scope (agnos build clean; its only `sys_access` is Linux-disk LUKS).
+> The ~58 raw-`sys_open` sites the audit counted were the v6.2.26 premise-check
+> finding (mostly vendored / Linux-only / already-fixed) — the substrate + lint
+> are the preventative cure, not a migration.
 
 **Filed:** 2026-06-18
 **Scope:** cyrius-NATIVE stdlib only — `lib/fs.cyr`. (`lib/tls_native_hs12.cyr` is

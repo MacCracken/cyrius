@@ -158,6 +158,42 @@ fn xgetdents(fd, buf, n): i64 {
     #endif
 }
 
+# Reposition the fd offset (whence 0=SET / 1=CUR / 2=END). SYS_LSEEK is carried
+# in every syscall peer (Linux #8, aarch64 #62, macos #8, agnos #58), so this is
+# portable as written — no per-target branch needed.
+fn xlseek(fd, off, whence): i64 {
+    return syscall(SYS_LSEEK, fd, off, whence);
+}
+
+# Advisory whole-file lock (op: LOCK_SH=1 / LOCK_EX=2 / LOCK_UN=8, +LOCK_NB=4).
+# Unlike lseek, flock's number is NOT carried uniformly in the peers (only the
+# agnos peer exposes SYS_FLOCK), so the per-target number is centralized here —
+# a caller using xflock can never hand-roll a Linux #73 that traps off-Linux
+# (the agnos-ABI footgun this wrapper set exists to end). Windows has no flock.
+fn xflock(fd, op): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_flock(fd, op);                  # agnos kernel #59 (inode-keyed advisory)
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return -1;                                 # Windows: no flock (LockFileEx — not wired)
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return syscall(92, fd, op);                # BSD flock
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_X86
+    return syscall(73, fd, op);                # Linux x86_64 flock
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    return syscall(32, fd, op);                # Linux aarch64 (generic unistd) flock
+    #endif
+    #endif
+    #endif
+    #endif
+}
+
 # Close a file descriptor
 fn file_close(fd): i64 {
     return sys_close(fd);

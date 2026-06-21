@@ -1,5 +1,5 @@
 # sakshi.cyr — tracing, error handling, and structured logging for Cyrius
-# Bundled distribution of sakshi v2.4.0
+# Bundled distribution of sakshi v2.4.1
 # Source: https://github.com/MacCracken/sakshi
 # License: GPL-3.0-only
 #
@@ -39,6 +39,21 @@
 # (228 / 35) must be LITERALS at the call site (clock.cyr) — a `var`/named constant
 # does not const-fold, so the macOS/Windows reroute silently fails (cyrius issue
 # 2026-06-16-var-syscall-number-defeats-macho-pe-reroute).
+# AGNOS (ring-3) is x86_64 but NOT Linux: its syscall numbers and `open` ABI
+# differ, and `CYRIUS_ARCH_X86` is predefined on every x86 build (agnos
+# included), so the agnos branch must come FIRST and the Linux branches must be
+# excluded under it — otherwise agnos silently took the Linux numbers (open #2,
+# close #3, exit #60 → agnos getpid/spawn/undefined) and corrupted every log.
+# agnos has no BSD sockets (socket/sendto), so UDP transport is unavailable here
+# (output.cyr returns -1 → caller keeps stderr).
+#ifdef CYRIUS_TARGET_AGNOS
+var _SK_SYS_WRITE         = 1;
+var _SK_SYS_OPEN          = 7;
+var _SK_SYS_CLOSE         = 6;
+var _SK_SYS_EXIT          = 0;
+#endif
+
+#ifndef CYRIUS_TARGET_AGNOS
 #ifdef CYRIUS_ARCH_X86
 var _SK_SYS_WRITE         = 1;
 var _SK_SYS_OPEN          = 2;
@@ -58,16 +73,31 @@ var _SK_SYS_SOCKET        = 198;
 var _SK_SYS_SENDTO        = 206;
 var _SK_AT_FDCWD          = 0 - 100;
 #endif
+#endif
 
-# open(path, flags, mode) — arity-stable wrapper. x86_64 calls `open`;
-# aarch64 calls `openat(AT_FDCWD, path, flags, mode)`. Returns fd or
+# open(path, flags, mode) — arity-stable wrapper. x86_64 Linux calls `open`;
+# aarch64 calls `openat(AT_FDCWD, path, flags, mode)`; agnos `open` is
+# (name, namelen, flags) with AO_* bits (differ from Linux O_*), so compute the
+# byte length and remap the flags (mirrors lib/io.cyr file_open). Returns fd or
 # negative errno.
 fn _sk_open(path, flags, mode): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var n = 0;
+    while (load8(path + n) != 0) { n = n + 1; }
+    var ao = 0;
+    if ((flags & 3) != 0) { ao = ao | 0x1; }        # O_WRONLY/O_RDWR -> AO_WRONLY
+    if ((flags & 64) != 0) { ao = ao | 0x100; }     # O_CREAT  -> AO_CREAT
+    if ((flags & 512) != 0) { ao = ao | 0x200; }    # O_TRUNC  -> AO_TRUNC
+    if ((flags & 1024) != 0) { ao = ao | 0x400; }   # O_APPEND -> AO_APPEND
+    return syscall(_SK_SYS_OPEN, path, n, ao);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     #ifdef CYRIUS_ARCH_X86
     return syscall(_SK_SYS_OPEN, path, flags, mode);
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     return syscall(_SK_SYS_OPENAT, _SK_AT_FDCWD, path, flags, mode);
+    #endif
     #endif
 }
 
@@ -855,6 +885,12 @@ var _sk_udp_addr[16];
 # ip: 32-bit IPv4 address in network byte order
 # port: 16-bit port in host byte order
 fn sakshi_output_udp(ip, port): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # agnos has no BSD socket/sendto syscalls — UDP log transport is unavailable.
+    # Return error so the caller keeps the current stderr/file target.
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     # socket(AF_INET=2, SOCK_DGRAM=2, 0)
     var fd = syscall(_SK_SYS_SOCKET, 2, 2, 0);
     if (fd < 0) { return fd; }
@@ -869,6 +905,7 @@ fn sakshi_output_udp(ip, port): i64 {
 
     _sk_output_target = SK_OUT_UDP;
     return fd;
+    #endif
 }
 
 # Close UDP socket, revert to stderr
@@ -899,7 +936,9 @@ fn _sk_write_udp_event(ts, level, category, msg, msg_len): i64 {
     _sk_memcpy(&pkt + 12, msg, pkt_msg_len);
 
     var total = 12 + pkt_msg_len;
+    #ifndef CYRIUS_TARGET_AGNOS
     syscall(_SK_SYS_SENDTO, _sk_udp_fd, &pkt, total, 0, &_sk_udp_addr, 16);
+    #endif
     return 0;
 }
 

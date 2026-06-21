@@ -41,7 +41,7 @@ fn note_sysopen(line): i64 {
     var nb2[24];
     var nl2 = fmt_int_buf(line, &nb2);
     syscall(1, 2, &nb2, nl2);
-    var m = ": raw sys_open w/ literal flags - agnos sys_open is (name,namelen,flags); prefer io.cyr's xopen / file_open (or xstat/xunlink/xgetdents) portable wrappers on agnos-bound paths\n";
+    var m = ": raw sys_open w/ literal flags - agnos sys_open is (name,namelen,flags); prefer io.cyr's xopen / file_open (or xstat/xunlink/xgetdents/xlseek/xflock) portable wrappers on agnos-bound paths\n";
     syscall(1, 2, m, strlen(m));
     _sysopen_notes += 1;
     return 0;

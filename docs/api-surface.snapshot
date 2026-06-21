@@ -1467,7 +1467,9 @@ io::file_write_all_r/3
 io::file_write_r/3
 io::getenv/1
 io::print/2
+io::xflock/2
 io::xgetdents/3
+io::xlseek/3
 io::xopen/2
 io::xstat/2
 io::xunlink/1
