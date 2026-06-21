@@ -40,7 +40,12 @@
 > stage and the bare name wasn't `$PATH`-resolved (ENOENT → exit 127). Fixed to
 > `/bin/sh -c`+forwarded environ (POSIX), `cmd /s /c`+inherited env (Win), and
 > documented the no-shell limitation (agnos) — **committed separately as the
-> `fixing cyriusly install` bite (021c0d09)**. The backend review packed two real
+> `fixing cyriusly install` bite (021c0d09)**. **Also fixed `scripts/install.sh`'s
+> staleness check** (it compared `build/<bin>` only vs its DIRECT source, so a
+> `lib/*.cyr` change never rebuilt dependent program bins → shipped a stale
+> cyriusly even with the source fix committed; now also rebuilds when any `.cyr`
+> under the bin's include roots is newer — `lib` for program bins, `lib src` for
+> cycc_aarch64). The backend review packed two real
 > codegen repairs: **(1) x86-macOS `getdents64` (P1)** — `src/backend/x86/emit.cyr`
 > `_msx(217)` used `cmp rax,imm8`, and 217=0xD9 sign-extends to −39 so the
 > `getdents64→getdirentries64` (Darwin 344) translation never matched → raw 217 →

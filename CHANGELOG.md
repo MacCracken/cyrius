@@ -35,6 +35,17 @@ self_compile 512 ms (flat); cross-OS `ach`/`ecb`/`cass`/`pi` all `SELFHOST_OK`.*
   (`sys_spawn` takes no argv/pipe), so pipelines aren't representable — best-effort
   first-token spawn; the heavy verbs aren't available there.
 
+### Build fix — `install.sh` staleness check ignored transitive lib deps
+- `scripts/install.sh` `_rebuild_stale` compared `build/<bin>` only against its
+  **direct** source (`programs/<bin>.cyr`), so a `lib/*.cyr` fix left the binary
+  looking fresh and `--refresh-only` never rebuilt it — version-bump shipped a
+  still-broken `cyriusly` even though the `exec_cmd` fix was committed (it lives
+  in `lib/process.cyr`, not `programs/cyriusly.cyr`). Now also rebuilds when any
+  `.cyr` under the bin's include roots is newer than the binary (`lib` for
+  program bins/`cyrius`, `lib src` for `cycc_aarch64`; `cycc_win` already rebuilds
+  unconditionally). Conservative — an unrelated stdlib touch rebuilds all bins —
+  but never ships stale.
+
 ### Codegen fix — x86-macOS `getdents64` silently mistranslated (P1)
 - `src/backend/x86/emit.cyr` (`EMACHO_SYSXLAT`): `_msx(S, 217, …)` emitted
   `cmp rax, imm8`, but `217 = 0xD9` sign-extends to `-39`, so the

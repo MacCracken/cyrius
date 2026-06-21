@@ -163,17 +163,30 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     #   - cross_bins "cycc_aarch64" → src/main_aarch64.cyr
     #   - cross_bins <other>      → src/main_<arch>.cyr (future-proof)
     #
-    # Staleness rule: rebuild if binary is missing OR source mtime is
-    # newer than binary mtime (`-nt`). Errors are surfaced (no
-    # `2>/dev/null` swallow) — if cycc emits warnings we want them
-    # visible so the next stale-binary trap doesn't take six bumps
-    # to discover.
+    # Staleness rule: rebuild if binary is missing OR ANY dependency mtime is
+    # newer than binary mtime. Dependencies = the direct `$source` PLUS every
+    # `.cyr` under the bin's include roots ($3, default "lib"; cross bins add
+    # "src"). v6.2.34: the pre-fix rule only compared the binary against its
+    # DIRECT source — so a `lib/*.cyr` fix left `build/<bin>` looking fresh vs
+    # its unchanged `programs/<bin>.cyr` and was never rebuilt. That shipped a
+    # still-broken `cyriusly` (the exec_cmd /bin/sh fix lived in lib/process.cyr,
+    # not programs/cyriusly.cyr) even though `--refresh-only`'s contract is "no
+    # stale binary." Resolving exact transitive includes in POSIX sh is fragile,
+    # so we treat the whole include root as the dep set — conservative (an
+    # unrelated lib touch rebuilds all bins) but never ships stale. Errors are
+    # surfaced (no `2>/dev/null` swallow) so cycc warnings stay visible.
     _rebuild_stale() {
         local target="$1"
         local source="$2"
+        local deproots="${3:-lib}"
         [ -f "$source" ] || return 0
         if [ -x "build/$target" ] && [ "build/$target" -nt "$source" ]; then
-            return 0
+            # Direct source is older than the binary; check include-root deps.
+            local newer_dep
+            newer_dep=$(find $deproots -name '*.cyr' -newer "build/$target" -print -quit 2>/dev/null)
+            if [ -z "$newer_dep" ]; then
+                return 0
+            fi
         fi
         if [ ! -x "build/cycc" ]; then
             warn "build/cycc missing — cannot rebuild $target from $source; falling back to existing binary"
@@ -211,7 +224,7 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     done
     for cbin in $_R_CROSS; do
         case "$cbin" in
-            cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" ;;
+            cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" "lib src" ;;
             cycc-native-aarch64)
                 # v6.0.7 — native aarch64 self-host. Built by piping
                 # src/main_aarch64_native.cyr through build/cycc_aarch64
