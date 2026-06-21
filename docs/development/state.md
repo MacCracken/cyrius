@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.32** (v6.2.x cycle — **Platform Expansion**; **CVE-20 RESOLVED — `seed → cybs → cycc` self-hosts BYTE-IDENTICAL, no bridge rung**: `cybs` (`bootstrap/cybs.cyr`) was grown to compile all of `src/main.cyr` directly (not a restored bridge — fewer rungs); seed→cybs→gen1→gen2==build/cycc (fixpoint, gen2==gen3). New `scripts/seed-derive-cycc.sh` is the **closure** leg (given the committed asm root), wired into the `trust-root-attest` CI job; `bootstrap/verify.sh` (Rust-seed→asm, offline) is the **independent** leg — full trusting-trust resistance = both. + trust-doc honesty pass (precise two-leg framing, no "diverse double compilation" overclaim) + pre-commit `e_machine` arch guard + `bootstrap/asm` guard + api-surface snapshot refresh 5055→5057 (2 pre-existing agnos syscall fns) + `lib/syscalls_x86_64_agnos.cyr` reformat + README count fixes. `src/` untouched → cycc byte-identical. **CVE-20/21 arc now fully closed** (.30 pinning, .31 signing, .32 derivation). See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.32 — version-string stamp only; nothing touches `src/`, so cycc self-hosts byte-identical AND is seed-derivable from `bootstrap/asm`) |
+| **Version** | **6.2.33** (v6.2.x cycle — **Platform Expansion**; **AGNOS stdlib syscall-ABI pack** — closes `2026-06-18-stdlib-native-agnos-abi-fs`. The descent (MUD) agnos port re-surfaced the class: **patra 1.12.1→1.12.2** (flock #59 / lseek #58 from the peer, fdatasync→whole-FS sync #12, dropped hardcoded Linux `SYS_GETRANDOM=318`) + **sakshi 2.4.0→2.4.1** (precedence agnos branch — `CYRIUS_ARCH_X86` is predefined even on agnos so the Linux branch silently won → open#2/close#3/exit#60 corruption; `_sk_open` namelen+AO map; BSD socket/sendto guarded), both released + re-folded byte-identical. **`lib/io.cyr` xlseek/xflock** complete the portable x* wrapper set (xflock centralizes the per-target flock number; xlseek is peer-portable). sigil premise-checked OUT of scope. **Lib-only — `src/` untouched → cycc byte-identical.** See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.33 — lib-only slot, `src/` untouched, so cycc self-hosts byte-identical AND is seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
@@ -26,13 +26,36 @@
 | check.sh gates | **92/92 + the D7 boot gate** (+2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64, the .25-class gate) + `_fuzz_harness_gate` (cyrius fuzz → exit 0 + "0 failed"); both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
 | aarch64 native tcyr | **189 pass / 0 fail / 0 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job runs the FULL tcyr corpus on real arm64. It surfaced a stale-native-fork + 9-bug debt; **all fixed in-slot** (`2026-06-19-aarch64-tcyr-failures.md` RESOLVED), gate HARD + GREEN. `math_pack_integration` skip = x86-only f64_sin; pi-verified) |
 | sigil fold | **3.9.2** (@6.2.31 — luks raw `getrandom` syscall → `_sigil_random_fill` portable boundary so sigil/cyrsign cross-compile to PE; @6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack for the TLS arena/flat-RSS fix) |
-| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · patra 1.12.0 · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · sakshi 2.4.0 · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
+| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · **patra 1.12.2** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
 | tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5055 fns** (+20 net @.30 — the mabda 3.3.0→3.4.2 fold surface: 22 added / 2 signature-changed (array-texture + render-target fns). cbt/ commit-pin helpers are not tracked — api-surface scans src/+lib/ only, not cbt/) |
+| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5059 fns** (+2 @.33 — `io::xlseek/3` + `io::xflock/2`, 0 removals; was 5057 @.32 +2 agnos syscall fns, 5055 @.30) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **508 ms** @ 6.2.30 (flat vs .29's ~520 ms, within jitter; x86 cycc **1,071,936 B** unchanged — CLI-only slot, no perf delta) |
+| bench (every-release gate) | self_compile **512 ms** @ 6.2.33 (flat vs .30's 508 ms, within jitter; x86 cycc **1,071,936 B** unchanged — lib-only slot, no perf delta) |
 
+> **Handoff (2026-06-20):** **v6.2.33 CUT — AGNOS stdlib syscall-ABI pack**
+> (closes `2026-06-18-stdlib-native-agnos-abi-fs`). The descent (MUD) agnos port
+> re-surfaced this class. Fixed at the source in two ecosystem libs + completed
+> the `lib/io.cyr` x* wrapper family — **lib-only, `src/` untouched → cycc
+> byte-identical 1,071,936 B.** **patra 1.12.2:** file.cyr agnos `#ifdef` (flock
+> #59 / lseek #58 from the peer, no redefine; fdatasync→whole-FS sync #12);
+> wal.cyr dropped hardcoded Linux `SYS_GETRANDOM=318` (collided w/ agnos peer #45,
+> redundant on Linux → peer-provided everywhere). **sakshi 2.4.1:** root cause
+> `CYRIUS_ARCH_X86` is predefined on EVERY x86 build incl. agnos, so agnos
+> silently took the Linux branch (open#2/close#3/exit#60 → getpid/spawn/undefined
+> log corruption); added a precedence `#ifdef CYRIUS_TARGET_AGNOS` branch
+> (write#1/open#7/close#6/exit#0), `_sk_open` namelen+`O_*→AO_*` map, BSD
+> socket/sendto guarded (UDP transport → -1, keeps stderr). Both **released +
+> re-folded byte-identical**. **`xlseek`/`xflock`** added to `lib/io.cyr` (issue
+> ask #1 — wrapper set now complete; `xflock` centralizes the per-target flock
+> number, `xlseek` peer-portable); `agnos_xsys_probe` exercises both. cyrlint
+> message updated — deliberately NOT flagging `SYS_LSEEK`/`SYS_FLOCK`/
+> `SYS_GETRANDOM` (now peer/wrapper-portable → would false-positive on the fixed
+> patra). **sigil premise-checked OUT of scope** (agnos build clean; only
+> `sys_access` = Linux-disk LUKS). **VERIFIED:** check.sh **92/92** · cycc
+> self-host byte-identical 1,071,936 B · cross-OS **pi/ecb/cass SELFHOST_OK** ·
+> bench self_compile 512 ms · api-surface 5057→**5059**. User pushes/tags after CI.
+>
 > **Handoff (2026-06-20):** **v6.2.30 CUT — CVE-21 trust-chain integrity, part 1**
 > (CVE-20/21 is a 2-release arc; part 2 = .31 detached signing + the seed→cybs→cycc
 > reconstruction CI). Entirely CLI / scripts / docs / fold — `src/` untouched, **cycc

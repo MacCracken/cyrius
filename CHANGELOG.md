@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.33] — 2026-06-20
+
+**v6.2.33 — AGNOS stdlib syscall-ABI pack: patra/sakshi consumer fixes + the
+portable wrapper set completed (closes `2026-06-18-stdlib-native-agnos-abi-fs`).**
+The descent (MUD) port to agnos re-surfaced this class: seek-based storage and
+structured logging hardcoded Linux syscall numbers that collide with the agnos
+peer or take the wrong branch on the agnos target. Fixed at the source in the
+two ecosystem libs (released + re-folded byte-identical) and completed the
+`lib/io.cyr` `x*` wrapper family. **Lib-only slot — `src/` untouched, so cycc is
+byte-identical (1,071,936 B); check.sh 92/92; self_compile 512 ms (flat vs .30's
+508, jitter); cross-OS pi/ecb/cass `SELFHOST_OK`.**
+
+### AGNOS consumer fixes (released upstream, re-folded)
+- **patra 1.12.1 → 1.12.2.** `src/file.cyr` gained an `#ifdef CYRIUS_TARGET_AGNOS`
+  branch: agnos `flock` (#59) + `lseek` (#58) come from the cyrius syscall peer
+  (not redefined → no duplicate-symbol shadow); agnos has no per-fd `fdatasync`,
+  so durability maps to whole-FS `sync` #12. `src/wal.cyr` dropped the hardcoded
+  `SYS_GETRANDOM = 318` (Linux x86_64) — it collided with the agnos peer's #45
+  (last-def-wins → trap) and was redundant on Linux; getrandom now resolves from
+  the peer on every target (Linux #318 / aarch64 #278 / macos #318 / agnos #45).
+- **sakshi 2.4.0 → 2.4.1.** Root cause: `CYRIUS_ARCH_X86` is predefined on *every*
+  x86 build (agnos included), so the agnos target silently fell into sakshi's
+  Linux branch and called `open` #2 / `close` #3 / `exit` #60 (agnos
+  getpid/spawn/undefined → log corruption). Added a precedence
+  `#ifdef CYRIUS_TARGET_AGNOS` branch (`write` #1, `open` #7, `close` #6,
+  `exit` #0) ahead of the Linux/aarch64 branches (now `#ifndef
+  CYRIUS_TARGET_AGNOS`); `_sk_open` agnos path computes the byte length + remaps
+  `O_*` → `AO_*` for agnos `open(name, namelen, flags)`. BSD `socket`/`sendto`
+  guarded — agnos UDP log transport returns -1 → caller keeps stderr/file.
+- **sigil** — premise-checked OUT of scope (agnos build clean; its only
+  `sys_access` use is Linux-disk LUKS).
+
+### Portable wrapper set completed (issue ask #1)
+- **`lib/io.cyr` — `xlseek`/`xflock`** join `xopen`/`xstat`/`xunlink`/`xgetdents`
+  (v6.2.26). `xlseek` is portable as-is (`SYS_LSEEK` is peer-carried on every
+  target). `xflock` centralizes the per-target flock number (only the agnos peer
+  exposes `SYS_FLOCK`) so a caller can never hand-roll a Linux #73 that traps
+  off-Linux. `programs/agnos_xsys_probe.cyr` exercises both under the
+  `_agnos_xsys_gate`.
+- **cyrlint** — recommendation message updated to name the full wrapper set.
+  Deliberately did **not** add `SYS_LSEEK`/`SYS_FLOCK`/`SYS_GETRANDOM` flags:
+  post-.32 those are peer-carried / wrapper-portable, so flagging them would
+  false-positive on the now-correct patra code. The genuinely non-portable
+  patterns (raw `sys_open` ABI, raw getdents number/arity) stay flagged.
+
+### Misc
+- api-surface 5057 → 5059 (`io::xlseek/3`, `io::xflock/2`; 0 removals).
+
 ## [6.2.32] — 2026-06-20
 
 **v6.2.32 — CVE-20 RESOLVED: `seed → cybs → cycc` self-hosts byte-identical (no
