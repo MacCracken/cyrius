@@ -2520,6 +2520,10 @@ pvs_g_emit:
     jmp parse_var_stmt_semi
 parse_var_stmt_local:
     push rcx
+    mov rax, r8
+    call find_fn_local_index
+    cmp rax, -1
+    jne pvsl_store       # name already a local in this fn -> reuse its slot (rax = index)
     mov rsi, r15
     add rsi, 0x7600030
     mov rcx, [rsi]       # fn_local_count
@@ -2529,14 +2533,14 @@ parse_var_stmt_local:
     add rsi, 0x1000000
     add rsi, rcx
     mov [rsi], r8        # fn_local_names[count] = name offset
-    pop rcx              # unshifted count = local index
-    mov rax, rcx
-    call emit_fn_var_store
     mov rsi, r15
     add rsi, 0x7600030
-    mov rax, [rsi]
-    inc rax
-    mov [rsi], rax
+    mov rcx, [rsi]
+    inc rcx
+    mov [rsi], rcx       # fn_local_count++
+    pop rax              # rax = old count = new index
+pvsl_store:
+    call emit_fn_var_store
     pop rcx
 parse_var_stmt_semi:
     call peek_tok_type
