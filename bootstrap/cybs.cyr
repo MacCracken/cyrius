@@ -77,6 +77,7 @@
 _start:
     call sys_init
     call read_input
+    call preprocess
     call lexer
     call parser
     call fixup_vars
@@ -94,10 +95,11 @@ sys_init:
     xor rdi, rdi
     syscall
     mov r15, rax
-    # brk(r15 + 0x8000000) — extend by 128MB (cycc-scale tables live in the
-    # high region; kernel allocates pages lazily on first write)
+    # brk(r15 + 0x10000000) — extend by 256MB (cycc-scale tables @0x1000000+,
+    # preprocessor expand buf @0x8000000, per-depth read scratch @0x9000000;
+    # kernel allocates pages lazily on first write)
     mov rdi, r15
-    add rdi, 0x8000000
+    add rdi, 0x10000000
     mov rax, 12
     syscall
     xor r14, r14
@@ -1319,16 +1321,12 @@ find_fnl_found:
     pop r8
     ret
 find_fnl_undef:
-    # undefined local variable
-    mov rax, 1
-    mov rdi, 2
-    mov rsi, err_undef
-    mov rdx, 19
-    syscall
+    # not a local — return -1 so callers fall back to global lookup
     pop rcx
     pop r9
     pop r8
-    jmp sys_exit_err
+    mov rax, -1
+    ret
 
 # record_fixup_at: record fixup with explicit codebuf offset.
 # rax = codebuf offset, rbx = type_and_index.
@@ -2110,6 +2108,17 @@ lexer_id_end:
     pop rcx
     je lexer_id_is_elif
 
+    # asm (brick)
+    push rcx
+    mov rcx, rax
+    and rcx, 0xFFFFFFFF
+    push rbx
+    mov rbx, 0x006D7361    # asm
+    cmp rcx, rbx
+    pop rbx
+    pop rcx
+    je lexer_id_is_asm
+
     # for (brick)
     push rcx
     mov rcx, rax
@@ -2272,6 +2281,10 @@ lexer_id_is_elif:
     mov rax, 56
     call lexer_emit_kw
     jmp lexer_loop
+lexer_id_is_asm:
+    mov rax, 57
+    call lexer_emit_kw
+    jmp lexer_loop
 lexer_id_is_for:
     mov rax, 53
     call lexer_emit_kw
@@ -2330,7 +2343,203 @@ lexer_eof:
 # PARSER — runtime code emission
 # ================================================================
 
+# ── 3-pass driver helpers (brick #21) ──
+# skip_one_item: consume one top-level item (brace-balanced, else/elif-aware).
+skip_one_item:
+    push rbx
+    xor rbx, rbx         # brace depth
+skip_item_loop:
+    call peek_tok_type
+    cmp rax, 12          # EOF
+    je skip_item_done
+    inc r11              # consume token
+    cmp rax, 13          # LBRACE
+    je skip_item_lb
+    cmp rax, 14          # RBRACE
+    je skip_item_rb
+    cmp rax, 5           # SEMI
+    je skip_item_semi
+    jmp skip_item_loop
+skip_item_lb:
+    add rbx, 1
+    jmp skip_item_loop
+skip_item_rb:
+    sub rbx, 1
+    cmp rbx, 0
+    jne skip_item_loop
+    call peek_tok_type
+    cmp rax, 23          # ELSE -> continue skipping its block
+    je skip_item_cont
+    cmp rax, 56          # ELIF
+    je skip_item_cont
+    jmp skip_item_done
+skip_item_cont:
+    inc r11
+    jmp skip_item_loop
+skip_item_semi:
+    cmp rbx, 0
+    je skip_item_done
+    jmp skip_item_loop
+skip_item_done:
+    pop rbx
+    ret
+
+# find_var_or_neg: rax = name offset -> rax = global var index or -1 (no error).
+find_var_or_neg:
+    push r8
+    push r9
+    push rcx
+    push rsi
+    push rdi
+    mov r8, rax
+    xor r9, r9
+fvn_loop:
+    cmp r9, r14
+    jge fvn_no
+    mov rcx, r9
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x6000000   # var_noffs
+    add rsi, rcx
+    mov rax, [rsi]       # var_noffs[i]
+    push r8
+    push r9
+    push rcx
+    mov rdi, r15
+    add rdi, 0x3400000   # tok_names
+    add rdi, r8
+    mov rsi, r15
+    add rsi, 0x3400000
+    add rsi, rax
+    call strcmp
+    pop rcx
+    pop r9
+    pop r8
+    cmp rax, 0
+    je fvn_yes
+    add r9, 1
+    jmp fvn_loop
+fvn_yes:
+    mov rax, r9
+    pop rdi
+    pop rsi
+    pop rcx
+    pop r9
+    pop r8
+    ret
+fvn_no:
+    mov rax, -1
+    pop rdi
+    pop rsi
+    pop rcx
+    pop r9
+    pop r8
+    ret
+
+# shallow_fn: register fn name (if new), skip its body. (pass 0)
+shallow_fn:
+    push r8
+    inc r11              # consume FN
+    call peek_tok_value
+    mov r8, rax          # name
+    mov rax, r8
+    call find_fn_index
+    cmp rax, -1
+    jne shallow_fn_skip
+    mov rax, r8
+    call register_fn
+shallow_fn_skip:
+    inc r11              # consume IDENT
+    call skip_one_item   # skip ( ) [: T] { body }
+    pop r8
+    ret
+
+# shallow_global: register global var (name + size), skip the decl. (pass 0)
+shallow_global:
+    push r8
+    push r9
+    inc r11              # consume VAR
+    call peek_tok_value
+    mov r8, rax          # name
+    inc r11              # consume IDENT
+    call peek_tok_type
+    cmp rax, 28          # LBRACKET (bare array)
+    je shallow_g_brk
+    cmp rax, 50          # COLON (typed)
+    je shallow_g_col
+    mov r9, 8            # scalar
+    jmp shallow_g_reg
+shallow_g_brk:
+    inc r11              # consume [
+    call peek_tok_value
+    mov r9, rax          # N bytes
+    jmp shallow_g_reg
+shallow_g_col:
+    inc r11              # consume :
+    inc r11              # consume type IDENT
+    call peek_tok_type
+    cmp rax, 28          # typed array [N]
+    je shallow_g_colarr
+    mov r9, 8
+    jmp shallow_g_reg
+shallow_g_colarr:
+    inc r11              # consume [
+    call peek_tok_value
+    shl rax, 3           # *8 (i64)
+    mov r9, rax
+shallow_g_reg:
+    mov rax, r8
+    call find_var_or_neg
+    cmp rax, -1
+    jne shallow_g_done   # already registered
+    push rcx
+    mov rcx, r14
+    shl rcx, 3
+    mov rsi, r15
+    add rsi, 0x6000000
+    add rsi, rcx
+    mov [rsi], r8        # var_noffs[r14] = name
+    mov rax, r9
+    add rax, 7
+    and rax, -8
+    mov rsi, r15
+    add rsi, 0x6100000
+    add rsi, rcx
+    mov [rsi], rax       # var_sizes[r14] = aligned size
+    pop rcx
+    inc r14
+shallow_g_done:
+    call skip_one_item   # consume rest of decl to ;
+    pop r9
+    pop r8
+    ret
+
 parser:
+    # ── PASS 0: register all fns / enums / globals (no codegen) ──
+    xor r11, r11
+pass0_loop:
+    call peek_tok_type
+    cmp rax, 12          # EOF
+    je pass0_done
+    cmp rax, 32          # FN
+    je pass0_fn
+    cmp rax, 40          # ENUM
+    je pass0_enum
+    cmp rax, 3           # VAR
+    je pass0_var
+    call skip_one_item   # top-level statement -> skip (emitted in pass 2)
+    jmp pass0_loop
+pass0_fn:
+    call shallow_fn
+    jmp pass0_loop
+pass0_enum:
+    call parse_enum_def
+    jmp pass0_loop
+pass0_var:
+    call shallow_global
+    jmp pass0_loop
+pass0_done:
+
     xor r11, r11
     # store last_var_idx = -1
     mov rsi, r15
@@ -2360,30 +2569,42 @@ parser:
     add r13, 4
     pop rsi
 
-    # Parse all fn definitions
+    # ── PASS 1: compile fn bodies (skip everything else; fns/globals pre-registered) ──
 parse_fn_defs:
     call peek_tok_type
+    cmp rax, 12          # EOF
+    je parse_fn_defs_done
     cmp rax, 32          # FN
     je parse_fn_defs_fn
-    cmp rax, 40          # ENUM (v6.2.x cybs-grow brick 1) — top-level enum decl
-    je parse_fn_defs_enum
-    jmp parse_fn_defs_done
+    call skip_one_item   # ENUM/VAR/statement -> skip (pass 0 registered; pass 2 emits)
+    jmp parse_fn_defs
 parse_fn_defs_fn:
     call parse_fn_def
     jmp parse_fn_defs
-parse_fn_defs_enum:
-    call parse_enum_def
-    jmp parse_fn_defs
 parse_fn_defs_done:
 
-    # Patch the initial jmp to land here (start of main code)
+    # Patch the initial jmp to land here (start of entry code)
     mov rsi, r15
     add rsi, 0x7600048
     mov rax, [rsi]
     call patch_rel32
 
-    # Parse main code (top-level statements)
-    call parse_program
+    # ── PASS 2: emit entry — global var inits + top-level statements (skip fns/enums) ──
+    xor r11, r11
+pass2_loop:
+    call peek_tok_type
+    cmp rax, 12          # EOF
+    je pass2_done
+    cmp rax, 32          # FN
+    je pass2_skip
+    cmp rax, 40          # ENUM
+    je pass2_skip
+    call parse_statement
+    jmp pass2_loop
+pass2_skip:
+    call skip_one_item
+    jmp pass2_loop
+pass2_done:
 
     # Exit epilogue
     mov rsi, r15
@@ -2687,6 +2908,8 @@ parse_statement:
     je parse_while_stmt
     cmp rax, 53          # FOR
     je parse_for_stmt
+    cmp rax, 57          # ASM
+    je parse_asm_block
     cmp rax, 33          # RETURN
     je parse_return_stmt
     cmp rax, 54          # BREAK
@@ -2805,31 +3028,35 @@ parse_var_after_expr:
     pop rax
     je parse_var_stmt_local
 
-    # ── global variable ──
+    # ── global variable (find-or-register: 3-pass reuses pass-0's slot) ──
+    mov rax, r8
+    call find_var_or_neg
+    cmp rax, -1
+    jne pvs_g_emit
+    # not registered yet -> register at r14 (scalar size 8)
     mov rcx, r14
     shl rcx, 3
     mov rsi, r15
     add rsi, 0x6000000
     add rsi, rcx
     mov [rsi], r8
-
     mov rsi, r15
     add rsi, 0x6100000
     add rsi, rcx
     mov rax, 8
     mov [rsi], rax
-
     mov rax, r14
+    inc r14
+pvs_g_emit:
+    # rax = slot index; emit the init store (runtime value in rax-at-runtime)
+    push rax
     call emit_var_store
-
+    pop rax
     push rsi
     mov rsi, r15
     add rsi, 0x7600018
-    mov rax, r14
-    mov [rsi], rax
+    mov [rsi], rax       # last_var_idx = slot
     pop rsi
-
-    inc r14
     jmp parse_var_stmt_semi
 
 parse_var_stmt_local:
@@ -3114,10 +3341,25 @@ parse_assign_local:
     push rax
     mov rax, r8
     call find_fn_local_index
+    cmp rax, -1
+    je pal_global
     mov r9, rax
     pop rax
     mov rax, r9
     call emit_fn_var_store
+    jmp parse_assign_semi
+pal_global:
+    pop rax
+    mov rax, r8
+    call find_var_index
+    mov r9, rax
+    mov rax, r9
+    call emit_var_store
+    push rsi
+    mov rsi, r15
+    add rsi, 0x7600018
+    mov [rsi], r9
+    pop rsi
     jmp parse_assign_semi
 
 parse_assign_is_fn_call:
@@ -3571,6 +3813,134 @@ parse_continue_stmt:
     inc r11
     ret
 
+# asm_reg_modrm: r8 = reg name offset -> rax = modrm for "mov reg, [rbp+disp32]"
+asm_reg_modrm:
+    push rsi
+    mov rsi, r15
+    add rsi, 0x3400000   # tok_names
+    add rsi, r8
+    mov rax, [rsi]
+    and rax, 0xFFFFFF    # first 3 chars
+    cmp rax, 0x786172    # rax
+    je arm_rax
+    cmp rax, 0x786372    # rcx
+    je arm_rcx
+    cmp rax, 0x786472    # rdx
+    je arm_rdx
+    cmp rax, 0x697372    # rsi
+    je arm_rsi
+    cmp rax, 0x696472    # rdi
+    je arm_rdi
+    jmp parse_err        # unsupported reg in asm param_load
+arm_rax:
+    mov rax, 0x85
+    jmp arm_done
+arm_rcx:
+    mov rax, 0x8D
+    jmp arm_done
+arm_rdx:
+    mov rax, 0x95
+    jmp arm_done
+arm_rsi:
+    mov rax, 0xB5
+    jmp arm_done
+arm_rdi:
+    mov rax, 0xBD
+arm_done:
+    pop rsi
+    ret
+
+# asm { } block (brick): param_load(reg, idx); and raw 0xNN; bytes.
+parse_asm_block:
+    push r8
+    push r9
+    inc r11              # consume ASM
+    call peek_tok_type
+    cmp rax, 13          # {
+    jne parse_err
+    inc r11
+asm_blk_loop:
+    call peek_tok_type
+    cmp rax, 14          # }
+    je asm_blk_done
+    cmp rax, 1           # NUM -> raw byte
+    je asm_blk_raw
+    cmp rax, 2           # IDENT -> param_load(...)
+    je asm_blk_pload
+    jmp parse_err
+asm_blk_raw:
+    call peek_tok_value
+    push rsi
+    mov rsi, r15
+    add rsi, 0x3C00000   # codebuf
+    add rsi, r13
+    mov [rsi], rax
+    inc r13
+    pop rsi
+    inc r11              # consume NUM
+    call peek_tok_type
+    cmp rax, 5           # ;
+    jne parse_err
+    inc r11
+    jmp asm_blk_loop
+asm_blk_pload:
+    inc r11              # consume IDENT (param_load)
+    call peek_tok_type
+    cmp rax, 10          # (
+    jne parse_err
+    inc r11
+    call peek_tok_value
+    mov r8, rax          # reg name offset
+    inc r11              # consume reg IDENT
+    call peek_tok_type
+    cmp rax, 31          # ,
+    jne parse_err
+    inc r11
+    call peek_tok_value
+    mov r9, rax          # idx
+    inc r11              # consume NUM
+    call peek_tok_type
+    cmp rax, 11          # )
+    jne parse_err
+    inc r11
+    call peek_tok_type
+    cmp rax, 5           # ;
+    jne parse_err
+    inc r11
+    # emit: mov reg, [rbp-(idx+1)*8] = 48 8B <modrm> <disp32>
+    call asm_reg_modrm   # rax = modrm (from r8)
+    push rbx
+    mov rbx, rax
+    shl rbx, 16
+    mov rax, 0x8B48
+    or rax, rbx          # 0x48, 0x8B, modrm
+    push rsi
+    mov rsi, r15
+    add rsi, 0x3C00000
+    add rsi, r13
+    mov [rsi], rax
+    add r13, 3
+    pop rsi
+    pop rbx
+    # disp32 = -(idx+1)*8
+    mov rax, r9
+    add rax, 1
+    shl rax, 3
+    neg rax
+    push rsi
+    mov rsi, r15
+    add rsi, 0x3C00000
+    add rsi, r13
+    mov [rsi], rax
+    add r13, 4
+    pop rsi
+    jmp asm_blk_loop
+asm_blk_done:
+    inc r11              # consume }
+    pop r9
+    pop r8
+    ret
+
 # for-loop step: IDENT = EXPR  (assignment, no trailing ;)
 parse_for_step:
     push r8
@@ -3609,10 +3979,27 @@ parse_for_step_local:
     push rax
     mov rax, r8
     call find_fn_local_index
+    cmp rax, -1
+    je pfsl_global
     mov r9, rax
     pop rax
     mov rax, r9
     call emit_fn_var_store
+    pop r9
+    pop r8
+    ret
+pfsl_global:
+    pop rax
+    mov rax, r8
+    call find_var_index
+    mov r9, rax
+    mov rax, r9
+    call emit_var_store
+    push rsi
+    mov rsi, r15
+    add rsi, 0x7600018
+    mov [rsi], r9
+    pop rsi
     pop r9
     pop r8
     ret
@@ -3725,7 +4112,6 @@ emit_setcc_al:
 parse_cmp_value:
     push r8
     call parse_expr
-    call emit_push_rax
     call peek_tok_type
     mov r8, rax
     cmp r8, 17
@@ -3742,6 +4128,7 @@ parse_cmp_value:
     je pcv_iscmp
     jmp pcv_noop
 pcv_iscmp:
+    call emit_push_rax
     inc r11
     call parse_expr
     call emit_mov_rcx_rax
@@ -3780,7 +4167,6 @@ pcv_setcc:
     pop r8
     ret
 pcv_noop:
-    call emit_pop_rax    # restore left value (push/pop balanced)
     pop r8
     ret
 
@@ -4277,7 +4663,16 @@ parse_factor_ident_notconst:
 parse_factor_ident_local:
     mov rax, r8
     call find_fn_local_index
+    cmp rax, -1
+    je pfil_global
     call emit_fn_var_load
+    pop r9
+    pop r8
+    ret
+pfil_global:
+    mov rax, r8
+    call find_var_index
+    call emit_var_load
     pop r9
     pop r8
     ret
@@ -4350,7 +4745,7 @@ parse_factor_fn_fixup:
 
 parse_factor_paren:
     inc r11              # consume LPAREN
-    call parse_expr
+    call parse_or_value  # full boolean/comparison expr (handles (a>=b), (x&&y))
     call peek_tok_type
     cmp rax, 11          # RPAREN
     jne parse_err
@@ -4390,7 +4785,15 @@ parse_factor_addr_local:
     # local: emit lea rax, [rbp - offset]
     mov rax, r8
     call find_fn_local_index
+    cmp rax, -1
+    je pfal_global
     call emit_fn_var_addr
+    pop r8
+    ret
+pfal_global:
+    mov rax, r8
+    call find_var_index
+    call emit_var_addr
     pop r8
     ret
 
@@ -5150,6 +5553,605 @@ strcmp_neq:
     ret
 
 # ================================================================
+# Preprocessor (brick #16): recursive `include` + #ifdef family.
+# Runs after read_input, before lexer. State/buffers (high region):
+#   0x7700000 out_cursor  0x7700008 once_count
+#   0x7700010 cond_depth  0x7700018 emit_flag
+#   0x7710000 once_table (256B/entry)  0x7720000 name_scratch (+depth*0x1000)
+#   0x7740000 cond_saved[]  0x7748000 cond_cond[]  (8B/level)
+#   0x8000000 expand_buf  0x9000000 read_scratch (+depth*0x200000)
+# CYRIUS_ARCH_X86 + CYRIUS_TARGET_LINUX predefined (default x86_64 Linux build).
+# ================================================================
+
+# pp_match: rdi=ptr, rsi=pat, rdx=len -> rax 1/0. Preserves rdi/rsi/rdx/rcx/rbx.
+pp_match:
+    push rdi
+    push rsi
+    push rdx
+    push rbx
+pp_match_loop:
+    cmp rdx, 0
+    je pp_match_yes
+    mov rax, [rdi]
+    and rax, 0xFF
+    mov rbx, [rsi]
+    and rbx, 0xFF
+    cmp rax, rbx
+    jne pp_match_no
+    add rdi, 1
+    add rsi, 1
+    sub rdx, 1
+    jmp pp_match_loop
+pp_match_yes:
+    mov rax, 1
+    jmp pp_match_end
+pp_match_no:
+    xor rax, rax
+pp_match_end:
+    pop rbx
+    pop rdx
+    pop rsi
+    pop rdi
+    ret
+
+# pp_defined: rdi = symbol-start ptr -> rax 1/0
+pp_defined:
+    push rsi
+    mov rsi, rdi
+    add rsi, 7
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 65          # 'A' -> CYRIUS_ARCH_...
+    je pp_def_arch
+    cmp rax, 84          # 'T' -> CYRIUS_TARGET_...
+    je pp_def_target
+    xor rax, rax
+    pop rsi
+    ret
+pp_def_arch:
+    mov rsi, rdi
+    add rsi, 12
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 88          # 'X' -> ARCH_X86
+    je pp_def_yes
+    xor rax, rax
+    pop rsi
+    ret
+pp_def_target:
+    mov rsi, rdi
+    add rsi, 14
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 76          # 'L' -> TARGET_LINUX
+    je pp_def_yes
+    xor rax, rax
+    pop rsi
+    ret
+pp_def_yes:
+    mov rax, 1
+    pop rsi
+    ret
+
+# pp_cond_push: rdi = cond (1/0)
+pp_cond_push:
+    push rsi
+    push rbx
+    push rdx
+    mov rsi, r15
+    add rsi, 0x7700010
+    mov rbx, [rsi]       # sp = cond_depth
+    mov rsi, r15
+    add rsi, 0x7700018
+    mov rdx, [rsi]       # emit
+    mov rsi, r15
+    add rsi, 0x7740000
+    mov rax, rbx
+    shl rax, 3
+    add rsi, rax
+    mov [rsi], rdx       # saved[sp] = emit
+    mov rsi, r15
+    add rsi, 0x7748000
+    mov rax, rbx
+    shl rax, 3
+    add rsi, rax
+    mov [rsi], rdi       # cond[sp] = cond
+    cmp rdi, 0
+    jne pp_cpush_skip
+    mov rsi, r15
+    add rsi, 0x7700018
+    xor rax, rax
+    mov [rsi], rax       # emit = 0
+pp_cpush_skip:
+    mov rsi, r15
+    add rsi, 0x7700010
+    add rbx, 1
+    mov [rsi], rbx       # cond_depth = sp+1
+    pop rdx
+    pop rbx
+    pop rsi
+    ret
+
+# pp_cond_else: flip emit per saved/cond at top
+pp_cond_else:
+    push rsi
+    push rbx
+    push rdx
+    push rcx
+    mov rsi, r15
+    add rsi, 0x7700010
+    mov rbx, [rsi]
+    sub rbx, 1           # sp
+    mov rsi, r15
+    add rsi, 0x7740000
+    mov rax, rbx
+    shl rax, 3
+    add rsi, rax
+    mov rdx, [rsi]       # saved
+    mov rsi, r15
+    add rsi, 0x7748000
+    mov rax, rbx
+    shl rax, 3
+    add rsi, rax
+    mov rcx, [rsi]       # cond
+    xor rax, rax         # emit default 0
+    cmp rdx, 1
+    jne pp_celse_set
+    cmp rcx, 0
+    jne pp_celse_set
+    mov rax, 1
+pp_celse_set:
+    mov rsi, r15
+    add rsi, 0x7700018
+    mov [rsi], rax
+    pop rcx
+    pop rdx
+    pop rbx
+    pop rsi
+    ret
+
+# pp_cond_pop: emit = saved[sp]; cond_depth = sp
+pp_cond_pop:
+    push rsi
+    push rbx
+    mov rsi, r15
+    add rsi, 0x7700010
+    mov rbx, [rsi]
+    sub rbx, 1
+    mov rsi, r15
+    add rsi, 0x7740000
+    mov rax, rbx
+    shl rax, 3
+    add rsi, rax
+    mov rax, [rsi]
+    mov rsi, r15
+    add rsi, 0x7700018
+    mov [rsi], rax       # emit = saved[sp]
+    mov rsi, r15
+    add rsi, 0x7700010
+    mov [rsi], rbx       # cond_depth = sp
+    pop rbx
+    pop rsi
+    ret
+
+# pp_seen: rdi = fname -> rax 1/0 (in once_table). Preserves rdi.
+pp_seen:
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    mov rsi, r15
+    add rsi, 0x7700008
+    mov rcx, [rsi]       # once_count
+    xor rdx, rdx
+pp_seen_loop:
+    cmp rdx, rcx
+    jge pp_seen_no
+    mov rsi, r15
+    add rsi, 0x7710000
+    mov rax, rdx
+    shl rax, 8           # *256
+    add rsi, rax         # entry addr
+    push rcx
+    push rdx
+    push rdi
+    push rsi
+    call strcmp          # rdi=fname, rsi=entry -> rax 0 if equal
+    pop rsi
+    pop rdi
+    pop rdx
+    pop rcx
+    cmp rax, 0
+    je pp_seen_yes
+    add rdx, 1
+    jmp pp_seen_loop
+pp_seen_no:
+    xor rax, rax
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    ret
+pp_seen_yes:
+    mov rax, 1
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    ret
+
+# pp_mark: rdi = fname -> copy into once_table[once_count], NUL-term, count++
+pp_mark:
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    mov rsi, r15
+    add rsi, 0x7700008
+    mov rcx, [rsi]       # once_count
+    mov rsi, r15
+    add rsi, 0x7710000
+    mov rax, rcx
+    shl rax, 8
+    add rsi, rax         # dest entry
+    xor rdx, rdx         # i
+pp_mark_loop:
+    mov r8, rdi
+    add r8, rdx
+    mov rax, [r8]
+    and rax, 0xFF
+    cmp rax, 0
+    je pp_mark_done
+    mov r8, rsi
+    add r8, rdx
+    mov [r8], rax
+    add rdx, 1
+    jmp pp_mark_loop
+pp_mark_done:
+    mov r8, rsi
+    add r8, rdx
+    xor rax, rax
+    mov [r8], rax        # NUL
+    add rcx, 1
+    mov rsi, r15
+    add rsi, 0x7700008
+    mov [rsi], rcx       # once_count++
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    ret
+
+# pp_readfile: rdi=path, rsi=dest -> rax bytes (-1 on open fail).
+pp_readfile:
+    push rbx
+    push r8
+    push r9
+    push rsi
+    mov rax, 2           # SYS_OPEN
+    mov rsi, 0           # O_RDONLY
+    mov rdx, 0
+    syscall
+    pop rsi
+    cmp rax, 0
+    jl pp_rf_fail
+    mov rbx, rax         # fd
+    mov r8, rsi          # dest
+    xor r9, r9           # total
+pp_rf_loop:
+    mov rax, 0           # SYS_READ
+    mov rdi, rbx
+    mov rsi, r8
+    add rsi, r9
+    mov rdx, 0x100000
+    syscall
+    cmp rax, 0
+    jle pp_rf_eof
+    add r9, rax
+    jmp pp_rf_loop
+pp_rf_eof:
+    mov rax, 3           # SYS_CLOSE
+    mov rdi, rbx
+    syscall
+    mov rax, r9
+    pop r9
+    pop r8
+    pop rbx
+    ret
+pp_rf_fail:
+    mov rax, -1
+    pop r9
+    pop r8
+    pop rbx
+    ret
+
+# pp_do_include: r8=src, r9=srclen, rbx=depth, r10=dip. Parse "fname", once-check,
+# read file, recurse pp_expand. Preserves r8/r9/rbx/r10/rcx/rdx/rdi/rsi.
+pp_do_include:
+    push rcx
+    push rdx
+    push rdi
+    push rsi
+    push r8
+    push r9
+    push r10
+    push rbx
+    mov rdi, r15
+    add rdi, 0x7720000
+    mov rax, rbx
+    shl rax, 12
+    add rdi, rax         # rdi = name buf
+    mov rdx, r10
+    add rdx, 8           # pos = dip+8 (expect '"')
+    mov rsi, r8
+    add rsi, rdx
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 34
+    jne pp_doinc_ret
+    add rdx, 1           # first fname char
+    xor rcx, rcx         # fi
+pp_doinc_fl:
+    cmp rdx, r9
+    jge pp_doinc_fld
+    mov rsi, r8
+    add rsi, rdx
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 34
+    je pp_doinc_fld
+    mov rsi, rdi
+    add rsi, rcx
+    mov [rsi], rax
+    add rcx, 1
+    add rdx, 1
+    jmp pp_doinc_fl
+pp_doinc_fld:
+    mov rsi, rdi
+    add rsi, rcx
+    xor rax, rax
+    mov [rsi], rax       # NUL-term name
+    call pp_seen         # rdi=name
+    cmp rax, 1
+    je pp_doinc_ret
+    mov rdi, r15
+    add rdi, 0x7720000
+    mov rax, rbx
+    shl rax, 12
+    add rdi, rax
+    call pp_mark
+    mov rsi, r15
+    add rsi, 0x9000000
+    mov rax, rbx
+    shl rax, 21          # *0x200000
+    add rsi, rax         # dest scratch
+    mov rdi, r15
+    add rdi, 0x7720000
+    mov rax, rbx
+    shl rax, 12
+    add rdi, rax         # path
+    push rsi
+    call pp_readfile     # rax = bytes
+    pop rsi              # dest
+    cmp rax, 0
+    jle pp_doinc_ret
+    mov r8, rsi          # child src
+    mov r9, rax          # child len
+    add rbx, 1           # child depth
+    call pp_expand
+pp_doinc_ret:
+    pop rbx
+    pop r10
+    pop r9
+    pop r8
+    pop rsi
+    pop rdi
+    pop rdx
+    pop rcx
+    ret
+
+# pp_expand: r8=src, r9=srclen, rbx=depth. Recursive byte scan -> expand_buf.
+pp_expand:
+    push rcx
+    push rdx
+    push rdi
+    push rsi
+    push r10
+    xor rcx, rcx         # ip
+pp_exp_loop:
+    cmp rcx, r9
+    jge pp_exp_done
+    cmp rcx, 0
+    je pp_exp_linestart
+    mov rsi, r8
+    add rsi, rcx
+    sub rsi, 1
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 10
+    jne pp_exp_emit
+pp_exp_linestart:
+    mov r10, rcx         # dip (skipws)
+pp_exp_sw:
+    cmp r10, r9
+    jge pp_exp_dipdone
+    mov rsi, r8
+    add rsi, r10
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 32
+    je pp_exp_sw_adv
+    cmp rax, 9
+    je pp_exp_sw_adv
+    jmp pp_exp_dipdone
+pp_exp_sw_adv:
+    add r10, 1
+    jmp pp_exp_sw
+pp_exp_dipdone:
+    mov rsi, r8
+    add rsi, r10
+    mov rax, [rsi]
+    and rax, 0xFF
+    cmp rax, 35          # '#'
+    jne pp_exp_try_include
+    mov rdi, r8
+    add rdi, r10
+    add rdi, 1
+    mov rsi, pp_pat_ifdef
+    mov rdx, 6
+    call pp_match
+    cmp rax, 1
+    je pp_exp_ifdef
+    mov rdi, r8
+    add rdi, r10
+    add rdi, 1
+    mov rsi, pp_pat_ifndef
+    mov rdx, 7
+    call pp_match
+    cmp rax, 1
+    je pp_exp_ifndef
+    mov rdi, r8
+    add rdi, r10
+    add rdi, 1
+    mov rsi, pp_pat_else
+    mov rdx, 4
+    call pp_match
+    cmp rax, 1
+    je pp_exp_else
+    mov rdi, r8
+    add rdi, r10
+    add rdi, 1
+    mov rsi, pp_pat_endif
+    mov rdx, 5
+    call pp_match
+    cmp rax, 1
+    je pp_exp_endif
+    jmp pp_exp_emit      # '#' but not a directive -> emit (comment)
+pp_exp_ifdef:
+    mov rdi, r8
+    add rdi, r10
+    add rdi, 7
+    call pp_defined
+    mov rdi, rax
+    call pp_cond_push
+    jmp pp_exp_skipline
+pp_exp_ifndef:
+    mov rdi, r8
+    add rdi, r10
+    add rdi, 8
+    call pp_defined
+    mov rdi, 1
+    sub rdi, rax
+    call pp_cond_push
+    jmp pp_exp_skipline
+pp_exp_else:
+    call pp_cond_else
+    jmp pp_exp_skipline
+pp_exp_endif:
+    call pp_cond_pop
+    jmp pp_exp_skipline
+pp_exp_try_include:
+    mov rdi, r8
+    add rdi, r10
+    mov rsi, pp_pat_include
+    mov rdx, 8
+    call pp_match
+    cmp rax, 1
+    jne pp_exp_emit
+    mov rsi, r15
+    add rsi, 0x7700018
+    mov rax, [rsi]
+    cmp rax, 1
+    jne pp_exp_skipline  # emit off -> skip line
+    call pp_do_include
+    jmp pp_exp_skipline
+pp_exp_skipline:
+    cmp rcx, r9
+    jge pp_exp_loop
+    mov rsi, r8
+    add rsi, rcx
+    mov rax, [rsi]
+    and rax, 0xFF
+    add rcx, 1
+    cmp rax, 10
+    jne pp_exp_skipline
+    jmp pp_exp_loop
+pp_exp_emit:
+    mov rsi, r15
+    add rsi, 0x7700018
+    mov rax, [rsi]
+    cmp rax, 1
+    jne pp_exp_emit_adv
+    mov rsi, r15
+    add rsi, 0x7700000
+    mov rdx, [rsi]       # out_cursor
+    mov rsi, r8
+    add rsi, rcx
+    mov rax, [rsi]
+    and rax, 0xFF
+    mov rsi, r15
+    add rsi, 0x8000000
+    add rsi, rdx
+    mov [rsi], rax       # expand_buf[out] = src[ip]
+    add rdx, 1
+    mov rsi, r15
+    add rsi, 0x7700000
+    mov [rsi], rdx       # out_cursor++
+pp_exp_emit_adv:
+    add rcx, 1
+    jmp pp_exp_loop
+pp_exp_done:
+    pop r10
+    pop rsi
+    pop rdi
+    pop rdx
+    pop rcx
+    ret
+
+# preprocess: init state, expand from input_buf, copy back, set new length.
+preprocess:
+    mov rsi, r15
+    add rsi, 0x7700000
+    xor rax, rax
+    mov [rsi], rax       # out_cursor = 0
+    mov rsi, r15
+    add rsi, 0x7700008
+    mov [rsi], rax       # once_count = 0
+    mov rsi, r15
+    add rsi, 0x7700010
+    mov [rsi], rax       # cond_depth = 0
+    mov rsi, r15
+    add rsi, 0x7700018
+    mov rax, 1
+    mov [rsi], rax       # emit = 1
+    mov r8, r15          # src = input_buf (r15+0)
+    mov r9, r12          # srclen = input length
+    xor rbx, rbx         # depth = 0
+    call pp_expand
+    mov rsi, r15
+    add rsi, 0x7700000
+    mov r9, [rsi]        # new length = out_cursor
+    xor rcx, rcx
+pp_pre_copy:
+    cmp rcx, r9
+    jge pp_pre_done
+    mov rsi, r15
+    add rsi, 0x8000000
+    add rsi, rcx
+    mov rax, [rsi]
+    and rax, 0xFF
+    mov rsi, r15
+    add rsi, rcx
+    mov [rsi], rax       # input_buf[i] = expand_buf[i]
+    add rcx, 1
+    jmp pp_pre_copy
+pp_pre_done:
+    mov r12, r9          # input length = expanded length
+    ret
+
+# ================================================================
 # CONSTANT DATA
 # ================================================================
 
@@ -5175,3 +6177,14 @@ err_syntax:
 
 err_undef:
     db "undefined variable\n"
+
+pp_pat_include:
+    db "include "
+pp_pat_ifdef:
+    db "ifdef "
+pp_pat_ifndef:
+    db "ifndef "
+pp_pat_else:
+    db "else"
+pp_pat_endif:
+    db "endif"
