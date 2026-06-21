@@ -871,7 +871,10 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 7,  0x20000E6);   # poll        7 → 230
     # v6.0.60: dir enumeration — getdents64 217 → getdirentries64 344 (0x158).
     # fs.cyr passes the 4th basep out-param (Linux ignores it). Parity w/ arm64.
-    _msx(S, 217, 0x2000158);  # getdents64 217 → getdirentries64 344
+    # MUST use _msx32: 217 > 127, so the `cmp rax, imm8` in _msx sign-extends
+    # 0xD9 → -39 and the translation never fires (raw 217 → SIGSYS on Darwin,
+    # silent broken dir-listing — self-host-blind, "found by ports" class).
+    _msx32(S, 217, 0x2000158);  # getdents64 217 → getdirentries64 344
     # v6.0.75: getrandom 318 → Darwin getentropy 500 (cross-arch parity with
     # the aarch64 ESYSXLAT). 318 > 255 → needs the imm32 cmp (_msx32). The
     # 0-on-success → byte-count return is normalized in sys_getrandom (stdlib),

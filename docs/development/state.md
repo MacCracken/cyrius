@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.33** (v6.2.x cycle — **Platform Expansion**; **AGNOS stdlib syscall-ABI pack** — closes `2026-06-18-stdlib-native-agnos-abi-fs`. The descent (MUD) agnos port re-surfaced the class: **patra 1.12.1→1.12.2** (flock #59 / lseek #58 from the peer, fdatasync→whole-FS sync #12, dropped hardcoded Linux `SYS_GETRANDOM=318`) + **sakshi 2.4.0→2.4.1** (precedence agnos branch — `CYRIUS_ARCH_X86` is predefined even on agnos so the Linux branch silently won → open#2/close#3/exit#60 corruption; `_sk_open` namelen+AO map; BSD socket/sendto guarded), both released + re-folded byte-identical. **`lib/io.cyr` xlseek/xflock** complete the portable x* wrapper set (xflock centralizes the per-target flock number; xlseek is peer-portable). sigil premise-checked OUT of scope. **Lib-only — `src/` untouched → cycc byte-identical.** See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.33 — lib-only slot, `src/` untouched, so cycc self-hosts byte-identical AND is seed-derivable from `bootstrap/asm`) |
+| **Version** | **6.2.34** (v6.2.x cycle — **Platform Expansion**; **`cyriusly` shell-out repair + 2 codegen fixes**. `exec_cmd` never ran a shell (space-split + bare-token `execve`) → every `cyriusly` heavy verb (install/update/setup/…) was a silent no-op; fixed to `/bin/sh -c`+environ (POSIX) / `cmd /s /c` (Win) / doc (agnos). The backend review then found: **x86-macOS `getdents64` (P1)** — `_msx(217)` `cmp rax,imm8` sign-extended 0xD9→-39 so the Darwin translation never fired → `SIGSYS` on every dir listing (→ `_msx32`); **aarch64 EPOP (P3 latent)** — `EPOPR*` family encoded pre-index 0xF8410FE0 vs post-index comments (→ 0xF84107E0). **`src/` touched → build/cycc regenerated; getdents fix PROVEN on real x86 Darwin (ach: old=SIGSYS/140, new=lists/3).** See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.34 — `src/` x86+aarch64 emit changed but `_msx→_msx32` is same-size + aarch64 EPOP is dead/DCE'd → no size delta; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
@@ -31,8 +31,31 @@
 | stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5059 fns** (+2 @.33 — `io::xlseek/3` + `io::xflock/2`, 0 removals; was 5057 @.32 +2 agnos syscall fns, 5055 @.30) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **512 ms** @ 6.2.33 (flat vs .30's 508 ms, within jitter; x86 cycc **1,071,936 B** unchanged — lib-only slot, no perf delta) |
+| bench (every-release gate) | self_compile **512 ms** @ 6.2.34 (FLAT vs .33's 512 ms; x86 cycc **1,071,936 B** unchanged — codegen fixes are size-neutral) |
 
+> **Handoff (2026-06-21):** **v6.2.34 CUT — `cyriusly` shell-out repair + 2
+> codegen fixes.** A fresh Arch-Linux install hit `cyriusly install` doing
+> nothing: `exec_cmd` (lib/process.cyr) space-split the cmdline and `execve`'d the
+> bare first token → `curl … | CYRIUS_VERSION=<v> sh` lost the pipe/env-assign/2nd
+> stage and the bare name wasn't `$PATH`-resolved (ENOENT → exit 127). Fixed to
+> `/bin/sh -c`+forwarded environ (POSIX), `cmd /s /c`+inherited env (Win), and
+> documented the no-shell limitation (agnos) — **committed separately as the
+> `fixing cyriusly install` bite (021c0d09)**. The backend review packed two real
+> codegen repairs: **(1) x86-macOS `getdents64` (P1)** — `src/backend/x86/emit.cyr`
+> `_msx(217)` used `cmp rax,imm8`, and 217=0xD9 sign-extends to −39 so the
+> `getdents64→getdirentries64` (Darwin 344) translation never matched → raw 217 →
+> `SIGSYS` on every dir listing (self-host-blind, "found by ports"); routed via
+> `_msx32` (imm32 cmp, the getrandom-318 path). **PROVEN on real x86 Darwin
+> (`ach`):** old binary SIGSYS (exit 140), fixed binary lists the dir (exit 3).
+> Closes live half of `2026-06-02-macos-x86-release-no-compiler`. **(2) aarch64
+> EPOP (P3 latent)** — `src/backend/aarch64/emit.cyr` `EPOPRDI/SI/DX/R10/R8/R9`
+> encoded pre-index `0xF8410FE0` vs their post-index comments; dead in the aarch64
+> build (only x86 twins called) but corrected to `0xF84107E0|N` (matches `EPOPR`).
+> **VERIFIED:** check.sh **92/92** + boot gate · build/cycc regenerated, self-host
+> byte-identical **1,071,936 B** · cross-OS **ach/ecb/cass/pi all SELFHOST_OK** ·
+> bench self_compile **512 ms** (flat) · api-surface unchanged. User pushes/tags
+> after CI.
+>
 > **Handoff (2026-06-20):** **v6.2.33 CUT — AGNOS stdlib syscall-ABI pack**
 > (closes `2026-06-18-stdlib-native-agnos-abi-fs`). The descent (MUD) agnos port
 > re-surfaced this class. Fixed at the source in two ecosystem libs + completed

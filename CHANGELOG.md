@@ -6,6 +6,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.34] — 2026-06-21
+
+**v6.2.34 — `cyriusly` shell-out repair + two codegen fixes (x86-macOS
+`getdents64` mistranslation, aarch64 EPOP pre/post-index).** A fresh install on
+Arch Linux surfaced that `cyriusly install` (and `update`/`uninstall`/`setup`/
+`cmdtools`) did nothing — `exec_cmd` never ran a shell. The fix exposed a backend
+review that found a real x86-macOS miscompile (silent `SIGSYS` on every directory
+listing) and a latent aarch64 encoding bug. **`src/` changed (x86 + aarch64 emit)
+→ build/cycc regenerated; cycc byte-identical 1,071,936 B; check.sh 92/92;
+self_compile 512 ms (flat); cross-OS `ach`/`ecb`/`cass`/`pi` all `SELFHOST_OK`.**
+
+### `cyriusly` heavy verbs were no-ops (lib/process*)
+- **`exec_cmd` now runs a real shell.** It space-split the command line and
+  `execve`'d the bare first token directly — so `curl … | CYRIUS_VERSION=<v> sh`
+  ran as `execve("curl", …,"|","CYRIUS_VERSION=…","sh")`: the bare name wasn't
+  `$PATH`-resolved (`ENOENT` → child `exit(127)`), and the pipe / inline
+  assignment / second stage were lost as literal argv. `cyriusly install <v>`
+  printed `Installing…` and silently did nothing (latent since the v5.11.10 port;
+  only the shell script `scripts/cyriusly` ever worked).
+- **POSIX (`lib/process.cyr`):** execs `/bin/sh -c "<cmdline>"` and forwards the
+  parent environment (new `_read_environ_envp`, reading `/proc/self/environ`) so
+  pipes/`$()`/`VAR=`/`$PATH` work and `install.sh` sees `HOME`/`PATH`. Verified:
+  `cyriusly update` now resolves the GitHub tag + `~/.cyrius/current`.
+- **Windows (`lib/process_win.cyr`):** execs `cmd /s /c "<cmdline>"` inheriting
+  the parent env.
+- **agnos (`lib/process_agnos.cyr`):** documented that agnos has no shell
+  (`sys_spawn` takes no argv/pipe), so pipelines aren't representable — best-effort
+  first-token spawn; the heavy verbs aren't available there.
+
+### Codegen fix — x86-macOS `getdents64` silently mistranslated (P1)
+- `src/backend/x86/emit.cyr` (`EMACHO_SYSXLAT`): `_msx(S, 217, …)` emitted
+  `cmp rax, imm8`, but `217 = 0xD9` sign-extends to `-39`, so the
+  `getdents64 → getdirentries64` (Darwin 344) translation **never fired** and the
+  raw Linux number `217` reached the macOS `syscall` → `SIGSYS` on every directory
+  listing. `217` was the only call site in the 128–255 gap; routed through
+  `_msx32` (`cmp rax, imm32`), matching the existing getrandom-318 path.
+  Self-host-blind (cycc never lists a dir) — the "found by ports" class. **Proven
+  on real x86 Darwin (`ach`):** old binary `SIGSYS` (exit 140), fixed binary lists
+  the directory (exit 3). Closes the live half of
+  `2026-06-02-macos-x86-release-no-compiler`.
+
+### Codegen fix — aarch64 EPOP pre/post-index (P3, latent)
+- `src/backend/aarch64/emit.cyr`: the `EPOPRDI`/`RSI`/`RDX`/`R10`/`R8`/`R9` family
+  encoded `0xF8410FE0` = pre-indexed `ldr xN, [sp, #16]!`, contradicting their
+  post-index comments (reads `sp+16`, fails to free the slot). Dead in the aarch64
+  build (only the x86 twins are called), so never bit — corrected to
+  `0xF84107E0|N` (matching `EPOPR`) so the family is right if ever wired to
+  aarch64 syscall-arg pops.
+
 ## [6.2.33] — 2026-06-20
 
 **v6.2.33 — AGNOS stdlib syscall-ABI pack: patra/sakshi consumer fixes + the

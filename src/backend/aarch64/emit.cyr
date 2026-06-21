@@ -410,12 +410,18 @@ fn ESYSCALL(S): i64 {
 # === Syscall argument pops ===
 # On aarch64, syscall args are x0-x5 (already in the right regs from Cyrius calling convention)
 # Pop from stack into x0-x5 in reverse order
-fn EPOPRDI(S): i64 { EW(S, 0xF8410FE0); return 0; }  # ldr x0, [sp], #16
-fn EPOPRSI(S): i64 { EW(S, 0xF8410FE1); return 0; }  # ldr x1, [sp], #16
-fn EPOPRDX(S): i64 { EW(S, 0xF8410FE2); return 0; }  # ldr x2, [sp], #16
-fn EPOPR10(S): i64 { EW(S, 0xF8410FE3); return 0; }  # ldr x3, [sp], #16 (arg4)
-fn EPOPR8(S): i64 { EW(S, 0xF8410FE4); return 0; }   # ldr x4, [sp], #16 (arg5)
-fn EPOPR9(S): i64 { EW(S, 0xF8410FE5); return 0; }   # ldr x5, [sp], #16
+# Post-indexed `ldr xN, [sp], #16` = 0xF84107E0|N (index bits [11:10]=01).
+# Pre-v6.2.34 these encoded 0xF8410FE0 ([11:10]=11) = PRE-indexed
+# `ldr xN, [sp, #16]!`, which reads sp+16 (wrong slot) AND writes sp back —
+# contradicting the comments. Latent only (unreferenced in the aarch64 build;
+# the called twins live in backend/x86), corrected here so the family is right
+# if ever wired to aarch64 syscall-arg pops. Matches EPOPR (0xF84107E0).
+fn EPOPRDI(S): i64 { EW(S, 0xF84107E0); return 0; }  # ldr x0, [sp], #16
+fn EPOPRSI(S): i64 { EW(S, 0xF84107E1); return 0; }  # ldr x1, [sp], #16
+fn EPOPRDX(S): i64 { EW(S, 0xF84107E2); return 0; }  # ldr x2, [sp], #16
+fn EPOPR10(S): i64 { EW(S, 0xF84107E3); return 0; }  # ldr x3, [sp], #16 (arg4)
+fn EPOPR8(S): i64 { EW(S, 0xF84107E4); return 0; }   # ldr x4, [sp], #16 (arg5)
+fn EPOPR9(S): i64 { EW(S, 0xF84107E5); return 0; }   # ldr x5, [sp], #16
 
 # === PIE-safe PC-relative addressing (Mach-O ARM) ===
 # ADRP xN, #0 — placeholder, page-diff patched by FIXUP_ADRP_ADD.
@@ -977,10 +983,10 @@ fn EEXIT(S): i64 {
 # FIXUP_ADRP_LDR in aarch64/fixup.cyr.
 fn EMACHO_EXIT_ARM(S): i64 {
     # EPOPR is the verified post-indexed pop into x0 (encoding 0xF84107E0).
-    # The EPOPRDI/SI/DX/R10/R8/R9 family at lines 216-221 uses 0xF8410FE0
-    # which is actually PRE-indexed (`[sp, #16]!`) — comments there lie.
-    # They're unreferenced elsewhere so the latent bug hasn't bitten; left
-    # as-is pending a proper audit.
+    # The EPOPRDI/SI/DX/R10/R8/R9 family was corrected to true post-index
+    # (0xF84107E0|N) in v6.2.34 — the prior 0xF8410FE0 was PRE-indexed and
+    # contradicted its comments (latent only; the family is unreferenced in
+    # the aarch64 build).
     EPOPR(S);                      # ldr x0, [sp], #16 — exit code (arg1, top of stack)
     EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
     # Record ftype=5 __got-ref fixup at the adrp that follows.
