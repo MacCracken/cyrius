@@ -382,15 +382,22 @@ fn exec_env_str(args, env): i64 {
     return _win_wait_close(&pi);
 }
 
-# Build an args vec from a space-separated command string + run it.
+# Run a shell command line through `cmd /s /c "<cmdline>"` so pipes,
+# redirects, and `&&` work, and inherit the parent's environment (wenv=0)
+# so PATH/USERPROFILE reach the child. `/s` strips ONLY the outermost quote
+# pair, so the inner cmdline reaches cmd intact (same rule used by
+# _win_compile_spawn). Pre-v6.2.34 this space-split the cmdline and ran the
+# bare first token via CreateProcessW directly — shell metacharacters became
+# literal argv and nothing piped. See CHANGELOG; mirrors the POSIX
+# /bin/sh -c fix in lib/process.cyr.
 fn exec_cmd(cmdline): i64 {
-    var args = vec_new();
-    var parts = str_split(str_from(cmdline), 32);
-    var pi = 0;
-    while (pi < vec_len(parts)) {
-        var part = vec_get(parts, pi);
-        vec_push(args, str_data(part));
-        pi = pi + 1;
-    }
-    return exec_vec(args);
+    var wbuf = alloc(16384);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /s /c \"");
+    o = _w_append_cstr(wbuf, o, cmdline);
+    o = _w_append_cstr(wbuf, o, "\"");
+    _w_terminate(wbuf, o);
+    var pi[24];
+    if (_win_create_process(wbuf, 0, 0, &pi) == 0) { return 0 - 1; }
+    return _win_wait_close(&pi);
 }
