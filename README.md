@@ -93,15 +93,15 @@ syscall(60, r);
 |--------|-------|
 | Compiler (`cycc`) | **1,071,936 B** (~1.07 MB) x86_64 at v6.2.29 |
 | Cross compilers | `cycc_aarch64` 624,552 B, `cycc_win` 845,824 B (cross-built) |
-| Seed binary (`asm`) | **29,016 B** (source-level root of trust, committed to repo) |
-| Bootstrap compiler (`cybs`) | **12,344 B** |
+| Seed binary (`asm`) | **29,024 B** (committed binary root of trust; re-derivable from `archive/seed/` via `bootstrap/verify.sh`) |
+| Bootstrap compiler (`cybs`) | **21,066 B** (compiles all of `src/main.cyr`) |
 | LSP server (`cyrius-lsp`) | **531,688 B** (definition / documentSymbol / references / semanticTokens / hover) |
 | Linker (`cyrld`) | **902,184 B** |
 | External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded, now 3.4.2) |
-| Tests | **187** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
-| Gates (`scripts/check.sh`) | **89** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, PIE exec gate at v6.1.6, TS→JS emit/round-trip gate at v6.1.11) |
+| Tests | **190** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
+| Gates (`scripts/check.sh`) | **92** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, PIE exec gate at v6.1.6, TS→JS emit/round-trip gate at v6.1.11, QEMU kernel boot gate at v6.2.28) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode |
-| Stdlib modules | **98** (distfiles folded byte-identical; bayan 1.0.0 @ v6.1.25 → `lib/bayan.cyr`, ganita 1.0.0 @ v6.1.26 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
+| Stdlib modules | **99** (distfiles folded byte-identical; bayan 1.0.0 @ v6.1.25 → `lib/bayan.cyr`, ganita 1.0.0 @ v6.1.26 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
 | Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
 
@@ -171,7 +171,7 @@ modules = ["dist/mabda.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}` (e.g. `lib/mabda_types.cyr`).
 Includes are auto-prepended — source files only need project-specific includes.
 
-## Standard Library (98 modules + 0 git deps)
+## Standard Library (99 modules + 0 git deps)
 
 **98 `lib/*.cyr` modules** (first-party + vendored sibling distfiles
 folded byte-identical, sandhi-pattern) with **0 git deps** — mabda folded
@@ -215,19 +215,28 @@ src/
 ### Bootstrap Chain
 
 ```
-bootstrap/asm (29,016 B committed binary -- root of trust)
-  -> cybs (12,344 B compiler)
+bootstrap/asm (29,024 B committed binary -- root of trust)
+  -> cybs (21,066 B compiler)
     -> cycc (modular compiler + IR, 1,071,936 B at v6.2.29)
       -> cycc_aarch64, cycc_win_cross, cycc_macho, cycc_cx (cross-compilers)
 ```
 
-> **Trust root, precisely (CVE-20):** `bootstrap/asm` is the *source-level*
-> root — `bootstrap.sh` rebuilds `cybs` and verifies the asm↔cybs closure.
-> But release/install builds compile `src/main.cyr` with the **committed
-> `build/cycc`**, which the seed does not yet reproduce, so the committed
-> `cycc` is the de-facto trust root for installed toolchains. v6.2.31 adds a
-> CI job reconstructing `cycc` from the seed (seed→cybs→cycc) and asserting
-> equality, making it machine-derivable. See [SECURITY.md](SECURITY.md).
+> **Trust root, precisely (CVE-20 — resolved 2026-06-20):** `bootstrap/asm` is
+> the *committed binary* root, backed by two distinct checks. (1)
+> `bootstrap/verify.sh` re-derives `bootstrap/asm` from the archived **Rust
+> seed** (`archive/seed/`) and checks byte-identity — the independent leg that
+> makes the asm binary itself trustworthy; it needs rustc/cargo, so it runs
+> **offline**, not in CI. (2) Given that asm binary, `scripts/seed-derive-cycc.sh`
+> proves `build/cycc` descends from it with no bridge rung: asm assembles
+> `cybs`, `cybs` reproduces asm (closure) and compiles `src/main.cyr` → gen1,
+> gen1 → gen2 == `build/cycc` (self-host fixpoint, gen2 == gen3). So `cycc` is
+> machine-derivable from the seed in two hops — the **closure** leg is validated
+> in CI (`trust-root-attest`), the **asm-from-Rust-source** leg offline by
+> `verify.sh`; full trusting-trust resistance needs both. (The CVE-20 completing
+> fix: `cybs`'s string lexer wasn't NUL-terminating literals, so the
+> preprocessor's macro-hash over-read and the Linux `#ifdef` block was dropped —
+> the alloc fns went undefined and the generated `cycc` trapped.) See
+> [SECURITY.md](SECURITY.md).
 
 > The chain shortened at v5.11.66 — `src/bridge.cyr` (2,005 LoC standalone
 > Phase 4 compiler) retired after audit confirmed it was never in any

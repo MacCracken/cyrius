@@ -824,11 +824,12 @@ any committed public-launch date. The deep-dive surfaced it
   downstream binaries; and `sigil.cyr:533` elects the GPLv2-only leg of dual
   BSD/GPLv2 code (GPLv2-only is GPL-3-incompatible). Needs legal review + an
   RLE-style linking-exception decision.
-- **Trust-story prerequisites (CVE-12/13/20/21).** Release signing +
-  bootstrap attestation — the shipped `cycc` is the de-facto trust root,
-  disjoint from the seed chain `bootstrap.sh` verifies, and releases are
-  unsigned with mutable-tag deps. The sovereignty story can't go public
-  like that.
+- **Trust-story prerequisites (CVE-12/13/20/21) — RESOLVED.** Sovereign
+  release signing (`cyrsign` Ed25519, .31) + integrity/pinning (.30) +
+  **seed→cycc derivation** (`build/cycc` is machine-derivable from the 29 KB
+  seed, byte-identical, 2026-06-20). The shipped `cycc` is now seed-derived
+  (no longer a blob disjoint from the seed chain), releases are signed, deps
+  are commit-pinned. The sovereignty story holds.
 - **Diagnostics + debug-info** for strangers: no DWARF on any target,
   crash-localization is x86-ELF-only, errors are first-error-exit with no
   column/excerpt.

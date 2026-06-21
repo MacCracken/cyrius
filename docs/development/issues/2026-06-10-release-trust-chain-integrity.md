@@ -12,6 +12,16 @@ several advisory-only or mutable links a sovereignty stance is meant to remove.
 
 ## CVE-20 — shipped `cycc` is the de-facto trust root, disjoint from the seed (P2)
 
+> **RESOLVED 2026-06-20.** `build/cycc` is now machine-derivable from the 29 KB
+> seed — with NO bridge rung. Instead of restoring `src/bridge.cyr`, `cybs`
+> (`bootstrap/cybs.cyr`) was grown to compile all of `src/main.cyr` directly:
+> seed→cybs→gen1→gen2 == `build/cycc` (fixpoint gen2==gen3). Completing fix: a
+> missing string-NUL-terminator in cybs's lexer. Enforced by
+> `scripts/seed-derive-cycc.sh` + the `trust-root-attest` CI job. seed
+> 29,016→29,024 B, cybs 12,344→21,066 B, Rust-seed-verified, SHA256SUMS updated.
+> CVE-21/12/13 also resolved (.30/.31). This issue is fully closed — archive at
+> next slot close.
+
 `SECURITY.md:14` + `README.md:96/128/216` assert the 29 KB seed (`bootstrap/asm`)
 is the "root of trust", but `bootstrap.sh:29-53` only produces **cybs + asm** and
 verifies the asm↔cybs closure — it never produces cycc. `release.yml:36-38` runs

@@ -4544,6 +4544,7 @@ syscalls_x86_64_agnos::sys_epoll_create/0
 syscalls_x86_64_agnos::sys_epoll_ctl/3
 syscalls_x86_64_agnos::sys_epoll_wait/3
 syscalls_x86_64_agnos::sys_exit/1
+syscalls_x86_64_agnos::sys_flock/2
 syscalls_x86_64_agnos::sys_getdents/3
 syscalls_x86_64_agnos::sys_geteuid/0
 syscalls_x86_64_agnos::sys_getpid/0
@@ -4552,6 +4553,7 @@ syscalls_x86_64_agnos::sys_getuid/0
 syscalls_x86_64_agnos::sys_icmp_echo/1
 syscalls_x86_64_agnos::sys_kill/2
 syscalls_x86_64_agnos::sys_link/4
+syscalls_x86_64_agnos::sys_lseek/3
 syscalls_x86_64_agnos::sys_mkdir/2
 syscalls_x86_64_agnos::sys_mmap/1
 syscalls_x86_64_agnos::sys_mount/0

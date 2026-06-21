@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.32] — 2026-06-20
+
+**v6.2.32 — CVE-20 RESOLVED: `seed → cybs → cycc` self-hosts byte-identical (no
+bridge rung) + trust-chain tooling/doc honesty + release hygiene.** The ~29 KB
+seed now machine-derives the committed `cycc` in two hops — `cybs`
+(`bootstrap/cybs.cyr`, hand-written x86 asm) was grown to compile ALL of
+`src/main.cyr` directly, rather than restoring the retired `src/bridge.cyr`
+(fewer rungs = the sovereignty win). cycc **byte-identical** (1,071,936 B —
+nothing touches `src/`); check.sh **92/92**; self_compile 516 ms (flat vs .31's
+~513). 16-agent adversarial review: **11 findings fixed** (a trust-claim
+overclaim cluster + stale README counts).
+
+### Bootstrap / trust chain — CVE-20 RESOLVED
+- `seed → cybs → cycc` reproduces `build/cycc` byte-identical: `bootstrap/asm`
+  assembles `cybs`; `cybs` reproduces the seed (closure) + compiles
+  `src/main.cyr` → gen1; gen1 → gen2 == `build/cycc` (self-host fixpoint,
+  gen2 == gen3). Completing fix: a missing NUL-terminator in `cybs`'s string
+  lexer (had broken the preprocessor macro-hash → dropped the Linux `#ifdef`
+  block → undefined `alloc` → `ud2` trap). Seed regenerated 29,016 → 29,024 B
+  (the +8 B NUL fix), Rust-seed-verified via `bootstrap/verify.sh`;
+  `bootstrap/SHA256SUMS` updated. cybs binary 12,344 → 21,066 B.
+- **`scripts/seed-derive-cycc.sh`** (new) — the seed→cycc **closure** check
+  (given the committed asm root), wired into the `trust-root-attest` CI job
+  alongside the `build-cycc-verify.sh` self-host-fixpoint backstop.
+- **`scripts/hooks/pre-commit`** — fixed the guarded set (was the stale
+  `build/cybs` / `build/cc3`; now `build/cycc` + `build/cc5` +
+  `build/cycc-native-aarch64` + `bootstrap/asm`) and added an ELF `e_machine`
+  arch check (x86_64 `3e00` vs aarch64 `b700` — the 4-byte magic alone can't
+  tell them apart).
+
+### Docs — trust-state honesty (no overclaim) + stale-count fixes
+- README / SECURITY.md / state.md / roadmap.md / roadmap_6.md + 2 CVE-20 issue
+  files: precise **two-leg** trust framing — `seed-derive-cycc.sh` is
+  **single-root closure** validation (trusts the committed asm binary); the
+  **independent** asm re-derivation from the Rust seed (`archive/seed/`) is
+  `bootstrap/verify.sh` (offline, not in CI). Full trusting-trust resistance
+  needs both legs. (Caught by the review — the earlier wording overstated
+  "diverse double compilation".)
+- README metric fixes: gates 89 → **92**, `.tcyr` 187 → **190**, stdlib modules
+  98 → **99** (reconciled to `state.md` + actual file counts).
+- `bootstrap/scaffold/bridge.cyr` (the readable-cyrius proof-of-concept that
+  de-risked the derivation) marked for deletion **after the v6.2.33 tag** — kept
+  through .33 as the recovery reference if the chain ever regresses
+  (`git checkout v6.2.33 -- …`).
+
+### Tooling / release hygiene
+- `lib/syscalls_x86_64_agnos.cyr` reformatted (cyrfmt flat-continuation-indent).
+- `docs/api-surface.snapshot` refreshed 5,055 → **5,057** fns — cleared
+  pre-existing drift: `syscalls_x86_64_agnos::sys_flock/2` + `sys_lseek/3` were
+  added in earlier agnos work without `--update`. Non-breaking additions; the
+  surface is unchanged by the reformat (verified against the original file).
+
 ## [6.2.31] — 2026-06-20
 
 **v6.2.31 — CVE-20/21 trust-chain integrity, part 2: sovereign release signing +

@@ -1,5 +1,10 @@
 # ================================================================
 # SCAFFOLDING — NOT part of the trust chain. Do not ship.
+# >>> MARKED FOR DELETION after the v6.2.33 tag (user 2026-06-20). cybs now
+#     stands alone — seed->cybs->cycc reproduces build/cycc byte-identical, so
+#     this scaffold has served its purpose. Kept ONLY through .33 as the recovery
+#     reference: `git checkout v6.2.33 -- bootstrap/scaffold/bridge.cyr` if the
+#     seed->cybs->cycc chain ever regresses. Pinned in docs/development/roadmap.md.
 # ================================================================
 # This is the retired src/bridge.cyr (deleted in 33927b5c, v5.11.66),
 # recovered as a DEVELOPMENT SCAFFOLD to grow cybs toward compiling

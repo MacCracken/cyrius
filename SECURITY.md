@@ -11,23 +11,30 @@ Do **not** open public issues for security vulnerabilities.
 Cyrius is a systems language compiler. Security-relevant areas:
 
 - **Compiler correctness**: codegen bugs that produce wrong behavior
-- **Bootstrap chain integrity**: the 29 KB seed (`bootstrap/asm`) is the
-  *source-level* root of trust — `bootstrap/bootstrap.sh` rebuilds `cybs` from
-  the seed and verifies the asm↔cybs closure. **Note (CVE-20):** the trust root
-  for **binary releases** is the *committed* `build/cycc` — release builds
-  compile `src/main.cyr` with it, and `cybs` (an assembler) cannot rebuild
-  `cycc`, so the seed does not derive it. **v6.2.31** adds an interim, scope-honest
-  attestation — the `trust-root-attest` CI job asserts the committed `build/cycc`
-  is a byte-identical **self-host fixpoint** (it compiles its own source, that
-  output recompiles to itself, and equals the committed binary). That catches
-  accidental **artifact drift** and non-self-reproducing tampering. It does **not**
-  defeat a self-reproducing (Thompson "trusting-trust") tamper — the committed
-  binary is its own root, so a self-perpetuating backdoor is a stable fixpoint
-  that passes. **Full** trusting-trust resistance needs an *independent* root
-  (diverse double compilation from the seed/cybs bridge or another compiler) —
-  the *literal* `seed → cybs → bridge → cycc` derivation that makes `cycc`
-  seed-*derivable*, which is the separately-tracked bridge-restoration arc. Until
-  it lands, `build/cycc` is the de-facto trust root, attested only against drift.
+- **Bootstrap chain integrity**: the ~29 KB `bootstrap/asm` binary is the
+  committed root of trust, backed by **two distinct checks** — don't conflate
+  them:
+  1. **Independent re-derivation of the asm root** (`bootstrap/verify.sh`):
+     rebuilds `bootstrap/asm` from the archived **Rust seed** (`archive/seed/`)
+     via a different toolchain and checks byte-identity. This is the diverse leg
+     that makes the asm binary itself trustworthy (not self-attesting). It needs
+     rustc/cargo, so it is **offline / out-of-band** — run it on a clean machine;
+     it is **not** in normal CI (no Rust on the build path).
+  2. **Closure from the trusted asm root** (`scripts/seed-derive-cycc.sh`):
+     given the committed asm binary, proves `build/cycc` descends from it with
+     NO bridge rung — asm assembles `cybs` (`bootstrap/cybs.cyr`); `cybs`
+     reproduces the asm binary (closure); `cybs` compiles `src/main.cyr` → gen1;
+     gen1 → gen2 == `build/cycc` (self-host fixpoint, gen2 == gen3).
+  **CVE-20 (resolved 2026-06-20):** `build/cycc` is now machine-derivable from
+  the seed (it used to be a disjoint blob nobody re-derived). The
+  `trust-root-attest` CI job runs the **closure** check (`seed-derive-cycc.sh`)
+  plus a self-host-fixpoint drift backstop (`build-cycc-verify.sh`) — it does
+  **not** run `verify.sh`. Full trusting-trust resistance = **both legs**: a
+  backdoor in `build/cycc` would have to live in the committed asm binary
+  (caught by `verify.sh` re-deriving asm from the Rust source) or in the
+  hand-auditable `cybs.cyr` / `main.cyr` source. (The CVE-20 completing fix was a
+  missing NUL-terminator in cybs's string lexer, which had broken the
+  preprocessor macro-hash and dropped the Linux `#ifdef` block.)
 - **Kernel code**: AGNOS kernel memory safety, interrupt handling, syscall validation
 - **Build tool (cyrius)**: fork/exec security, path handling
 - **Package manager (ark)**: package verification, database integrity

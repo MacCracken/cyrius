@@ -1,7 +1,7 @@
 #!/bin/sh
 # Cyrius pre-commit hook — refuse to commit a contaminated build artifact.
 #
-# build/cycc (and build/cybs / build/cc3) are git-tracked compiler binaries.
+# build/cycc (and build/cc5 / build/cycc-native-aarch64 / bootstrap/asm) are git-tracked binaries.
 # They have been silently overwritten with foreign binaries multiple times
 # (v5.11.28/29, v5.11.43, v5.11.45) when a release-prep script cp'd a
 # sibling-repo binary over them right before commit. The check.cyr
@@ -24,7 +24,7 @@ _size() {
 
 status=0
 
-for bin in build/cycc build/cybs build/cc3; do
+for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
     [ -e "$bin" ] || continue
     # Only inspect artifacts staged in this commit.
     git diff --cached --quiet -- "$bin" 2>/dev/null && continue
@@ -37,8 +37,8 @@ for bin in build/cycc build/cybs build/cc3; do
         continue
     fi
 
-    # 2. ELF magic (the tracked artifacts are x86_64 Linux ELF). Catches a
-    #    wrong-platform binary (Mach-O/PE) cp'd over them.
+    # 2. ELF magic — every tracked artifact here is ELF. Catches a Mach-O/PE
+    #    binary cp'd over them.
     magic=$(dd if="$bin" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
     if [ "$magic" != "7f454c46" ]; then
         _fail "$bin is not an ELF binary (magic=$magic) — wrong-platform artifact? refusing commit"
@@ -46,7 +46,22 @@ for bin in build/cycc build/cybs build/cc3; do
         continue
     fi
 
-    # 3. Size sanity — the cyrius compiler binaries sit in a known band.
+    # 3. ELF e_machine (bytes 18-19, little-endian) — the 4-byte magic is
+    #    identical across arches, so verify the actual ISA: x86_64 (3e00) for
+    #    cycc/cc5/asm, aarch64 (b700) for cycc-native-aarch64. Catches an
+    #    aarch64 binary cp'd over an x86 slot (or vice-versa) — same magic.
+    emach=$(dd if="$bin" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case "$bin" in
+        build/cycc-native-aarch64) want=b700 ;;
+        *)                         want=3e00 ;;
+    esac
+    if [ "$emach" != "$want" ]; then
+        _fail "$bin ELF e_machine=$emach, expected $want (wrong architecture cp'd over it?) — refusing commit"
+        status=1
+        continue
+    fi
+
+    # 4. Size sanity — each binary sits in a known band.
     size=$(_size "$bin")
     case "$bin" in
         build/cycc)
@@ -55,7 +70,13 @@ for bin in build/cycc build/cybs build/cc3; do
                 status=1
             fi
             ;;
-        build/cybs|build/cc3)
+        bootstrap/asm)
+            if [ "$size" -lt 20000 ] || [ "$size" -gt 40000 ]; then
+                _fail "bootstrap/asm size ${size}B outside the expected 20K–40K range (seed binary) — refusing commit"
+                status=1
+            fi
+            ;;
+        build/cc5|build/cycc-native-aarch64)
             if [ "$size" -lt 100000 ] || [ "$size" -gt 1500000 ]; then
                 _fail "$bin size ${size}B outside the expected 100K–1.5M range — refusing commit"
                 status=1

@@ -14,15 +14,15 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.31** (v6.2.x cycle — **Platform Expansion**; **CVE-20/21 trust-chain integrity part 2** — **sovereign Ed25519 release signing**: `cyrsign` (over sigil 3.9.2's in-tree curve, no external minisign) signs `SHA256SUMS`; release CI signs+self-verifies fail-closed; cyrsign ships in all 5 tarballs; `install.sh`/`ci.sh`/`install.ps1` verify on the upgrade/CI path (CVE-13 closed). + CVE-20 `trust-root-attest` CI (self-host **fixpoint/drift** check — NOT trusting-trust; the literal seed→cycc bridge is the held arc, pinned BEFORE deps-modules). New program/scripts/CI/docs + sigil re-fold only — `src/` untouched → cycc byte-identical. **Part 1 was .30.** See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.31 — the slot is a new program (`cyrsign`) + scripts/CI/docs + the sigil 3.9.2 re-fold; nothing touches `src/`, so cycc self-hosts byte-identical to .30) |
+| **Version** | **6.2.32** (v6.2.x cycle — **Platform Expansion**; **CVE-20 RESOLVED — `seed → cybs → cycc` self-hosts BYTE-IDENTICAL, no bridge rung**: `cybs` (`bootstrap/cybs.cyr`) was grown to compile all of `src/main.cyr` directly (not a restored bridge — fewer rungs); seed→cybs→gen1→gen2==build/cycc (fixpoint, gen2==gen3). New `scripts/seed-derive-cycc.sh` is the **closure** leg (given the committed asm root), wired into the `trust-root-attest` CI job; `bootstrap/verify.sh` (Rust-seed→asm, offline) is the **independent** leg — full trusting-trust resistance = both. + trust-doc honesty pass (precise two-leg framing, no "diverse double compilation" overclaim) + pre-commit `e_machine` arch guard + `bootstrap/asm` guard + api-surface snapshot refresh 5055→5057 (2 pre-existing agnos syscall fns) + `lib/syscalls_x86_64_agnos.cyr` reformat + README count fixes. `src/` untouched → cycc byte-identical. **CVE-20/21 arc now fully closed** (.30 pinning, .31 signing, .32 derivation). See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.32 — version-string stamp only; nothing touches `src/`, so cycc self-hosts byte-identical AND is seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.28 compiler changes — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source**) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | 531,688 B |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
-| **cybs** (bootstrap compiler) | 12,344 B |
-| **seed** (`bootstrap/asm`, root of trust) | 29,016 B |
+| **cybs** (bootstrap compiler) | **21,066 B** (@2026-06-20 — grew from 12,344 B to compile ALL of `src/main.cyr`; **seed→cybs→cycc now reproduces build/cycc byte-identical** — the CVE-20 self-host restoration. cybs(main.cyr)=gen1, gen1(main.cyr)=gen2=build/cycc, fixpoint holds) |
+| **seed** (`bootstrap/asm`, root of trust) | **29,024 B** (@2026-06-20 — +8 B from the cybs string-lexer NUL-terminator fix that completed the self-host; regenerated as cybs(asm.cyr), Rust-seed-verified via `bootstrap/verify.sh`, `bootstrap/SHA256SUMS` updated) |
 | check.sh gates | **92/92 + the D7 boot gate** (+2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64, the .25-class gate) + `_fuzz_harness_gate` (cyrius fuzz → exit 0 + "0 failed"); both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
 | aarch64 native tcyr | **189 pass / 0 fail / 0 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job runs the FULL tcyr corpus on real arm64. It surfaced a stale-native-fork + 9-bug debt; **all fixed in-slot** (`2026-06-19-aarch64-tcyr-failures.md` RESOLVED), gate HARD + GREEN. `math_pack_integration` skip = x86-only f64_sin; pi-verified) |
 | sigil fold | **3.9.2** (@6.2.31 — luks raw `getrandom` syscall → `_sigil_random_fill` portable boundary so sigil/cyrsign cross-compile to PE; @6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack for the TLS arena/flat-RSS fix) |
@@ -294,13 +294,17 @@ and stdlib.
 ## Bootstrap chain
 
 ```
-bootstrap/asm (29 KB committed binary — root of trust)
+bootstrap/asm (29,024 B committed binary — root of trust)
   → cybs (bootstrap compiler; formerly cyrc, renamed v6.0.0)
     → cycc (modular compiler + IR; formerly cc5, renamed v6.0.0)
       → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
       → cycc_win (Windows PE32+ cross-compiler)
 
 (bridge.cyr — the old intermediate stage — was retired at v5.11.66.)
-No Rust. No LLVM. No Python. Just sh + Linux x86_64.
+seed→cybs→cycc reproduces build/cycc BYTE-IDENTICAL (2026-06-20, CVE-20
+resolved, no bridge rung). Enforced: scripts/seed-derive-cycc.sh.
+No Rust* . No LLVM. No Python. Just sh + Linux x86_64.
+  (* Rust seed in archive/seed/ rebuilds the asm seed itself — one-time
+     deep verification via bootstrap/verify.sh; not on the build path.)
 Build: sh bootstrap/bootstrap.sh
 ```

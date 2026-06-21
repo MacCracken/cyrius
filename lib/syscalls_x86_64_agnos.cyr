@@ -57,9 +57,9 @@ enum SysNrAgnos {
     SYS_UNAME = 34;                # uname(buf, len=64) → 0; 4×16-byte fields (§4.3)
     SYS_SYSINFO = 35;             # sysinfo(buf, len=40) → 0; 5×u64, byte-direct (§4.4)
     SYS_LSEEK = 58;               # lseek(fd, offset, whence) → new pos / -1; whence 0=SET/1=CUR/2=END
-                                  #   (agnos 1.46.x — repositions the VFS_EXT2_FILE cursor). Linux peer = 8.
+    #   (agnos 1.46.x — repositions the VFS_EXT2_FILE cursor). Linux peer = 8.
     SYS_FLOCK = 59;               # flock(fd, op) → 0 / -1; op SH=1/EX=2/UN=8 (+NB=4); inode-keyed advisory
-                                  #   lock, non-blocking (contended → -1), released on close#6 + exit (agnos 1.46.x). Linux peer = 73.
+    #   lock, non-blocking (contended → -1), released on close#6 + exit (agnos 1.46.x). Linux peer = 73.
 }
 
 # ================================================================
