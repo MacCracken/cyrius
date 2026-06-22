@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.34** (v6.2.x cycle — **Platform Expansion**; **`cyriusly` shell-out repair + 2 codegen fixes**. `exec_cmd` never ran a shell (space-split + bare-token `execve`) → every `cyriusly` heavy verb (install/update/setup/…) was a silent no-op; fixed to `/bin/sh -c`+environ (POSIX) / `cmd /s /c` (Win) / doc (agnos). The backend review then found: **x86-macOS `getdents64` (P1)** — `_msx(217)` `cmp rax,imm8` sign-extended 0xD9→-39 so the Darwin translation never fired → `SIGSYS` on every dir listing (→ `_msx32`); **aarch64 EPOP (P3 latent)** — `EPOPR*` family encoded pre-index 0xF8410FE0 vs post-index comments (→ 0xF84107E0). **`src/` touched → build/cycc regenerated; getdents fix PROVEN on real x86 Darwin (ach: old=SIGSYS/140, new=lists/3).** See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.34 — `src/` x86+aarch64 emit changed but `_msx→_msx32` is same-size + aarch64 EPOP is dead/DCE'd → no size delta; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
+| **Version** | **6.2.35** (v6.2.x cycle — **Platform Expansion**; **M6 persistence chain on AGNOS — patra 1.12.3 fold + the real agnos-mutex fix**. Folds patra 1.12.3 (WAL salt `time`#201→`time_unix`#46) and closes the `libro→sigil→patra→sakshi` `--agnos` gap. The filed fix (inert `SYS_FUTEX`/`FUTEX_*` constants in the agnos peer, "C1") was premise-checked + adversarially verified **dead** vs patra 1.12.3 — its only referent (raw `syscall(SYS_FUTEX)` in stale patra ≤1.11.x's `_patra_lock`) is gone in 1.12.x (now `mutex_lock()`, a fn; undefined fns → `ud2` warn, only undefined *constants* hard-error). The **actual** gap: `lib/sync.cyr` had no `CYRIUS_TARGET_AGNOS` mutex backend, so patra's unconditional `mutex_new()` in `patra_init` was a silent `ud2`/SIGILL on agnos. Fixed with an agnos no-op mutex branch (single-core cooperative-iron; real lock awaits agnos preemptive MT) + a fail-closed `sys_access` stub (C2) for sigil's probes. **lib-only — `src/` untouched, cycc self-hosts byte-identical.** See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.35 — lib-only release, `src/` untouched; only the version-string stamp differs from .34; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
@@ -26,13 +26,44 @@
 | check.sh gates | **92/92 + the D7 boot gate** (+2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64, the .25-class gate) + `_fuzz_harness_gate` (cyrius fuzz → exit 0 + "0 failed"); both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
 | aarch64 native tcyr | **189 pass / 0 fail / 0 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job runs the FULL tcyr corpus on real arm64. It surfaced a stale-native-fork + 9-bug debt; **all fixed in-slot** (`2026-06-19-aarch64-tcyr-failures.md` RESOLVED), gate HARD + GREEN. `math_pack_integration` skip = x86-only f64_sin; pi-verified) |
 | sigil fold | **3.9.2** (@6.2.31 — luks raw `getrandom` syscall → `_sigil_random_fill` portable boundary so sigil/cyrsign cross-compile to PE; @6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack for the TLS arena/flat-RSS fix) |
-| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · **patra 1.12.2** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
+| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · **patra 1.12.3** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
 | tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5059 fns** (+2 @.33 — `io::xlseek/3` + `io::xflock/2`, 0 removals; was 5057 @.32 +2 agnos syscall fns, 5055 @.30) |
+| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5063 fns** (+4 @.35 — `sync::mutex_{new,lock,unlock}` agnos-branch copies + `syscalls_x86_64_agnos::sys_access/2`, 0 removals; was 5059 @.33) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| agnos gate | **7/7** (+probe **x*** @.26 — io.cyr xopen/xstat/xunlink/xgetdents emit-inspect: valid agnos ELF + getdents #29, no Linux-217; +probe 1e @.23 — fs dir-listing getdents #29 + AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **512 ms** @ 6.2.34 (FLAT vs .33's 512 ms; x86 cycc **1,071,936 B** unchanged — codegen fixes are size-neutral) |
+| agnos gate | **8/8** (+probe **1f** @.35 — `sync.cyr` agnos no-op mutex + `sys_access` stub: asserts both are genuinely *defined*, FAILs on the silent-undefined→`ud2` class a plain compile-check misses; negative-tested; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
+| bench (every-release gate) | self_compile **524 ms** @ 6.2.35 (vs .34's 512 ms — measurement jitter: cycc is byte-identical, lib-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
 
+> **Handoff (2026-06-21):** **v6.2.35 CUT — M6 chain on AGNOS: patra 1.12.3 fold
+> + the *real* agnos-mutex fix.** Triggered by patra 1.12.3 (WAL salt
+> `time`#201→`time_unix`#46) needing a fold, and issue
+> `2026-06-21-agnos-peer-m6-chain-syscalls.md` asking to close the
+> `libro→sigil→patra→sakshi` `--agnos` gap. Premise-checking the issue's "C1"
+> (add inert `SYS_FUTEX`/`FUTEX_*` to the agnos peer) found it **dead** for the
+> version we ship + masking a real bug — confirmed by an adversarial multi-agent
+> verification pass (worktree-isolated). **Root cause:** descent's `--agnos` error
+> came from its **stale patra 1.11.2** pin, whose `_patra_lock` used `SYS_FUTEX` as
+> a raw *constant* (undefined constants hard-error). patra 1.12.x replaced it with
+> `mutex_lock()` (a fn — undefined fns compile to a `ud2`/SIGILL stub + warning, no
+> hard error), so once 1.12.3 is folded, nothing on agnos references the futex
+> constants. **The actual gap:** `lib/sync.cyr` had no `CYRIUS_TARGET_AGNOS` mutex
+> backend (only WIN/MACOS/LINUX), and patra includes `sync.cyr` not `thread.cyr`,
+> so `mutex_new`/`lock`/`unlock` were undefined on agnos → `patra_init()`'s
+> *unconditional* `mutex_new()` was a silent runtime SIGILL. **Fixes:** (1)
+> `lib/sync.cyr` new agnos `#ifdef` no-op mutex (single-core cooperative-iron; user
+> 2026-06-21: no-op is correct until agnos gets preemptive MT); (2)
+> `lib/syscalls_x86_64_agnos.cyr` fail-closed `sys_access` stub (C2) for sigil's
+> ~20 existence probes; (3) `lib/patra.cyr` 1.12.2→1.12.3 byte-identical re-fold;
+> (4) new agnos gate **probe 1f** asserting both are genuinely defined (negative-
+> tested); (5) api-surface snapshot +4. **C1 deliberately NOT added** (dead code).
+> **VERIFIED:** lib-only (`src/` untouched) → cycc self-hosts byte-identical
+> **1,071,936 B** + matches tracked build/cycc · check.sh **92/92** · agnos gate
+> **8/8** · patra+sigil compile `--agnos` with ZERO undefined-fn warnings · bench
+> self_compile **524 ms** (jitter; byte-identical binary). **Cross-OS NOT re-run:
+> cycc byte-identical (cross-OS self-host == .34's verified-green ach/ecb/cass/pi)
+> and all changes are `#ifdef CYRIUS_TARGET_AGNOS`-gated — cannot reach mac/Win
+> codepaths.** **Downstream:** descent should bump its patra pin 1.11.2→1.12.3 (the
+> issue's own Action; not a cyrius change). User pushes/tags after CI.
+>
 > **Handoff (2026-06-21):** **v6.2.34 CUT — `cyriusly` shell-out repair + 2
 > codegen fixes.** A fresh Arch-Linux install hit `cyriusly install` doing
 > nothing: `exec_cmd` (lib/process.cyr) space-split the cmdline and `execve`'d the

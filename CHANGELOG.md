@@ -6,6 +6,81 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.35] — 2026-06-21
+
+**v6.2.35 — M6 persistence chain on AGNOS: patra 1.12.3 fold + the *real*
+agnos-mutex fix (not the filed one).** Folds patra 1.12.3 (the WAL salt-fallback
+`time` #201 → `time_unix` #46 agnos fix) and closes the
+`libro→sigil→patra→sakshi` chain's `--agnos` gap surfaced by
+[`2026-06-21-agnos-peer-m6-chain-syscalls.md`]. Premise-checking the issue's
+recommended fix found it rested on a wrong mechanism — so this ships the
+root-cause fix instead. **lib-only — `src/` untouched → cycc byte-identical
+1,071,936 B; self-hosts byte-identical; check.sh 92/92; agnos gate 8/8;
+self_compile 524 ms (vs .34 512 ms — measurement jitter, same byte-identical
+binary).** Cross-OS self-host unchanged (cycc byte-identical; all changes are
+`#ifdef CYRIUS_TARGET_AGNOS`-gated and cannot reach the macOS/Windows codepaths).
+
+### patra 1.12.3 stdlib re-fold
+- **`lib/patra.cyr` 1.12.2 → 1.12.3** (byte-identical from patra's regenerated
+  dist). 1.12.3 routes the WAL salt-fallback wall-clock from Linux `time()` #201
+  to agnos `time_unix` #46 under `#ifdef CYRIUS_TARGET_AGNOS` (Linux/macos/aarch64
+  byte-identical). This fold ALSO removes the last raw `syscall(SYS_FUTEX, …)` from
+  any agnos-reachable patra path — patra ≤1.11.x called the futex *constant* raw in
+  `_patra_lock`, which is what made stale-pinned consumers fail `--agnos` (see below).
+
+### The real agnos-mutex gap (the issue's C1 was dead code)
+The issue recommended adding inert futex constants (`SYS_FUTEX`/`FUTEX_*`) to the
+agnos syscall peer ("C1"), claiming patra's mutex path needs them to compile
+`--agnos`. Verified (incl. an adversarial multi-agent pass) that this is wrong for
+the version we ship:
+- **Why C1 was filed:** descent pins **patra 1.11.2**, whose `_patra_lock` calls
+  `syscall(SYS_FUTEX, …)` with `SYS_FUTEX` as a bare *constant*. cycc hard-errors on
+  undefined *constants* → `undefined variable 'SYS_FUTEX'`. Real error, real
+  observation — but it is a **stale-pin** symptom.
+- **Why C1 is dead for us:** patra 1.12.x replaced that raw syscall with
+  `mutex_lock(_patra_mtx)` — a *function*. cycc compiles undefined *functions*
+  silently (warning + a `ud2`/SIGILL stub at the call site), only undefined
+  *constants* hard-error. So once patra is folded at 1.12.3 (this release), nothing
+  on agnos references the futex constants — C1 would be permanent dead code. The
+  issue's own "re-bundle patra 1.12.3" action deletes the reference C1 exists for.
+- **The actual bug C1 masked:** `lib/sync.cyr` had **no `CYRIUS_TARGET_AGNOS`
+  branch** (only WIN/MACOS/LINUX), and patra includes `sync.cyr` (not `thread.cyr`),
+  so patra's `mutex_new`/`mutex_lock`/`mutex_unlock` were **undefined on agnos → `ud2`
+  stubs**. `patra_init()` calls `mutex_new()` *unconditionally* — so patra_init
+  itself would SIGILL at runtime on agnos. Inert constants would have shipped the
+  latent crash under a "fixed" label.
+
+### Fixes shipped
+- **`lib/sync.cyr` — new `#ifdef CYRIUS_TARGET_AGNOS` no-op mutex backend.**
+  `mutex_new()` allocates the `MUTEX_SIZE` cell (non-null so callers' null-checks
+  behave); `mutex_lock`/`mutex_unlock` are no-ops. Correct on single-core
+  "cooperative-iron" agnos (frozen syscall surface has no futex/clone; threads run
+  serially per `thread_agnos.cyr`, so there is never a contender). A real blocking
+  lock awaits agnos gaining preemptive multithreading. cycc does **not** include
+  `sync.cyr`, so this is byte-identical-safe for self-host.
+- **`lib/syscalls_x86_64_agnos.cyr` — `sys_access(path, mode)` stub** (fail-closed
+  `return 0 - 1`). sigil's ~20 `sys_access(path, 0)` TPM/IMA/secureboot/cert
+  existence probes are reached at runtime; none of those paths exist on agnos, so
+  "absent" is correct, and a fail-closed security probe must report absent rather
+  than SIGILL. Documents the `SYS_STAT` #33 upgrade path for a future consumer that
+  needs existence-true. (The issue's "C1" futex constants were intentionally NOT
+  added — dead code; see above.)
+- **`scripts/agnos-crossbuild-gate.sh` — new probe 1f.** Compiles an agnos program
+  using `mutex_new`/`mutex_lock`/`mutex_unlock` + `sys_access` and FAILS if cycc
+  reports any of them undefined. Guards the silent-undefined class specifically: a
+  plain "does it compile" check exits 0 on this regression (undefined fn → warning +
+  `ud2`), so the probe asserts the symbols are genuinely *defined*. Negative-tested
+  (removing the sync.cyr branch makes the gate fail with the exact signature).
+  agnos gate 7/7 → **8/8**.
+- **`docs/api-surface.snapshot` +4** (5059 → 5063): `sync::mutex_new/0`,
+  `sync::mutex_lock/1`, `sync::mutex_unlock/1` (agnos-branch copies), and
+  `syscalls_x86_64_agnos::sys_access/2`.
+
+### Downstream note
+- **descent should bump its patra pin 1.11.2 → 1.12.3** (the issue's own Action);
+  that, plus this release, removes its need for any futex-constant workaround. Not a
+  cyrius change.
+
 ## [6.2.34] — 2026-06-21
 
 **v6.2.34 — `cyriusly` shell-out repair + two codegen fixes (x86-macOS

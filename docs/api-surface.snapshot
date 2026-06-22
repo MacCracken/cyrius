@@ -4394,7 +4394,10 @@ string::streq/2
 string::strlen/1
 string::strstr/2
 sync::mutex_lock/1
+sync::mutex_lock/1
 sync::mutex_new/0
+sync::mutex_new/0
+sync::mutex_unlock/1
 sync::mutex_unlock/1
 sync_macos::mutex_lock/1
 sync_macos::mutex_new/0
@@ -4539,6 +4542,7 @@ syscalls_x86_64_agnos::WIFEXITED/1
 syscalls_x86_64_agnos::WIFSIGNALED/1
 syscalls_x86_64_agnos::WTERMSIG/1
 syscalls_x86_64_agnos::is_err/1
+syscalls_x86_64_agnos::sys_access/2
 syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_close/1
 syscalls_x86_64_agnos::sys_dup/1

@@ -331,6 +331,16 @@ fn sys_getdents(dir_fd, buf, bufsize): i64 { return syscall(SYS_GETDENTS, dir_fd
 # Returns 0, or -1.
 fn sys_stat(path, pathlen, statbuf): i64 { return syscall(SYS_STAT, path, pathlen, statbuf); }
 
+# agnos has no access(2). sigil's ~20 call sites all probe TPM / IMA /
+# secureboot / cert paths with mode=0 (F_OK), none of which exist on
+# agnos, and treat !=0 as absent — so report absent for every probe.
+# `mode` is ignored (agnos has no ring-3 permission model). Fail-closed:
+# a security probe that cannot confirm presence must report absent.
+# UPGRADE PATH (consumer needing existence-true on agnos): strlen(path),
+# then `syscall(SYS_STAT, path, len, scratch) == 0 ? 0 : -1` with a
+# ≥STAT_BUFSZ scratch buffer. (issue 2026-06-21 C2.)
+fn sys_access(path, mode): i64 { return 0 - 1; }
+
 # Rename `old`→`new` within one filesystem (4-arg: a4 rides r10 §1a).
 fn sys_rename(old, oldlen, new, newlen): i64 { return syscall(SYS_RENAME, old, oldlen, new, newlen); }
 

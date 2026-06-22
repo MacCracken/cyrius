@@ -231,6 +231,38 @@ if command -v objdump >/dev/null 2>&1; then
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS fs dir-listing peer (getdents #29 + AO_DIRECTORY open + dirent §4.2) -> valid agnos ELF"
 
+# 1f. sync.cyr agnos mutex backend + sys_access stub (v6.2.35). Both guard the
+#     SILENT-undefined class: cycc lowers a call to an undefined function to a
+#     ud2 (SIGILL) stub + a *warning* (not an error) and still exits 0 — so a
+#     plain "does it compile" check PASSES a regression here. Before v6.2.35,
+#     sync.cyr had no CYRIUS_TARGET_AGNOS branch, so patra's unconditional
+#     mutex_new() (patra_init) compiled green but trapped at runtime on agnos;
+#     sigil's sys_access() probes were the same. This probe references all four
+#     symbols and FAILS if cycc reports ANY of them undefined. See
+#     2026-06-21-agnos-peer-m6-chain-syscalls.md (the no-op-mutex resolution).
+cat > /tmp/_agnos_sync_gate.cyr <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/atomic.cyr"
+include "lib/alloc.cyr"
+include "lib/sync.cyr"
+fn main(): i64 {
+    var m = mutex_new();              # sync.cyr agnos no-op mutex (was undefined pre-6.2.35)
+    mutex_lock(m);
+    mutex_unlock(m);
+    var a = sys_access("/dev/tpmrm0", 0);  # agnos sys_access stub (fail-closed -1)
+    return (m - m) + (a + 1);
+}
+CYR
+build/cyrius build --agnos /tmp/_agnos_sync_gate.cyr /tmp/_agnos_sync_gate.out >/tmp/_agnos_sync_gate.log 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS sync/access probe did not compile"; cat /tmp/_agnos_sync_gate.log; exit 1; }
+if grep -q "undefined function 'mutex_\|undefined function 'sys_access" /tmp/_agnos_sync_gate.log; then
+    echo "FAIL: agnos mutex/sys_access undefined (sync.cyr agnos branch or peer sys_access stub regressed -> ud2/SIGILL at runtime):"
+    grep "undefined function" /tmp/_agnos_sync_gate.log
+    exit 1
+fi
+assert_agnos_elf /tmp/_agnos_sync_gate.out
+echo "PASS: CYRIUS_TARGET_AGNOS sync.cyr no-op mutex + sys_access stub -> defined (no ud2 stub) + valid agnos ELF"
+
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then
