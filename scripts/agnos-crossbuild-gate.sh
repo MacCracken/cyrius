@@ -263,6 +263,46 @@ fi
 assert_agnos_elf /tmp/_agnos_sync_gate.out
 echo "PASS: CYRIUS_TARGET_AGNOS sync.cyr no-op mutex + sys_access stub -> defined (no ud2 stub) + valid agnos ELF"
 
+# 1g. io.cyr file-lock helpers (v6.2.36). Same silent-undefined class as 1f:
+#     file_lock/file_unlock/file_trylock/file_lock_shared/file_append_locked were
+#     CYRIUS_TARGET_LINUX-only + raw syscall(73), so undefined -> ud2/SIGILL stubs
+#     on agnos (descent's persist_init -> libro FileStore -> file_append_locked
+#     trapped at BOOT). Now routed through xflock (#59) + xlseek SEEK_END (agnos
+#     AO_APPEND is a kernel TODO). FAILS if cycc reports any helper undefined, and
+#     asserts the agnos flock number #59 (0x3b) is emitted (a regression to raw
+#     #73 or a dropped helper is caught). See 2026-06-21-agnos-io-flock-helpers.md.
+cat > /tmp/_agnos_flock_gate.cyr <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+fn main(): i64 {
+    var fd = file_open("/tmp/_agnos_flock_probe", O_WRONLY | O_CREAT, 0x1A4);
+    file_lock(fd);            # xflock LOCK_EX -> agnos SYS_FLOCK #59
+    file_lock_shared(fd);
+    file_trylock(fd);
+    file_unlock(fd);
+    file_close(fd);
+    return file_append_locked("/tmp/_agnos_flock_probe", "x", 1);  # open + lock + xlseek SEEK_END + write
+}
+CYR
+build/cyrius build --agnos /tmp/_agnos_flock_gate.cyr /tmp/_agnos_flock_gate.out >/tmp/_agnos_flock_gate.log 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS io flock probe did not compile"; cat /tmp/_agnos_flock_gate.log; exit 1; }
+if grep -q "undefined function 'file_" /tmp/_agnos_flock_gate.log; then
+    echo "FAIL: agnos io file-lock helper undefined (io.cyr lock group regressed to Linux-only -> ud2/SIGILL at runtime):"
+    grep "undefined function" /tmp/_agnos_flock_gate.log
+    exit 1
+fi
+assert_agnos_elf /tmp/_agnos_flock_gate.out
+if command -v objdump >/dev/null 2>&1; then
+    objdump -d -M intel /tmp/_agnos_flock_gate.out 2>/dev/null | grep -qE 'mov +e[a-z]+,0x3b\b' \
+        || { echo "FAIL: io flock probe emits no SYS_FLOCK #59 (0x3b) — agnos flock rotted to raw Linux #73?"; exit 1; }
+fi
+echo "PASS: CYRIUS_TARGET_AGNOS io.cyr file-lock helpers (xflock #59 + xlseek SEEK_END) -> defined + valid agnos ELF"
+
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then

@@ -352,6 +352,98 @@ struct-byval ABI (v5.10.x), parser-to-emit named-op refactor
 5. `[release].cross_bins` in `cyrius.cyml` gets a
    `cycc_riscv64` entry.
 
+### v6.2.x — Dependency model: modules + module groupings (the granularity foundation)
+
+The flat `[deps] stdlib = [list]` evolves into first-class **standard
+deps** with **module granularity** + named **module groupings**, so a
+consumer pulls *exactly the modules it needs* instead of `include`-ing a
+hand-vendored monolith whole and hand-ordering its transitive chain.
+This is **lever 1 of two**; the **profile/feature scoping layer is lever 2
+(v6.3.x — "Required vs Optional Dependencies" below)**. Land the
+granularity/grouping *foundation* here; the gating *layer* there.
+
+**Why this is the long-term shape (user 2026-06-21 — "right over fast"):**
+the two levers compound. Granularity shrinks *what each project pulls*;
+profile-scoping restricts *which contexts pull it*. Together they shrink
+every project AND its dependencies — and because a downstream consumer
+inherits its deps' size, a smaller cyrius/sigil/mabda makes *every project
+built on them* smaller and faster to compile, recursively down the
+ecosystem. Picking the cheaper contamination-only fix (lever 2 alone)
+would have solved the immediate rosnet ask but left the bloat lever — and
+its cascading downstream win — on the table. The foundation is the payoff.
+
+**Grounded reality (verified 2026-06-21; informs the sequencing):**
+- **The 2 MB cap that originally forced opt-in is gone** — `preprocess_out`
+  is **8 MB** since v5.11.33 (`lex_pp.cyr:1612/1711/...`). mabda (1.11 MB) +
+  sigil (881 KB) + patra (204 KB) all fit; descent includes three monoliths
+  whole and still builds. So **bloat is a latent/scaling concern, not a live
+  failure** — the granularity win is long-term leverage, not firefighting.
+- **The LIVE pain is ordering, not bytes.** descent's `cyrius.cyml` hand-
+  maintains a **29-element ordered `stdlib` list** + a 25-line contract
+  comment: *"Omitting one is a runtime SIGILL, not a build error";
+  "ct/keccak/random MUST precede the sigil include."* Always-on path.
+- **Folds are flat textual concats — NOT sub-includable today.**
+  `lib/mabda.cyr` = 63 modules concatenated with `# --- name ---` *comment*
+  markers, **zero** `include`/`#ifdef` guards (distlib strips includes,
+  `commands.cyr:1515`). True per-module extraction therefore requires
+  distlib to **first** emit per-module files + an index (producer-side
+  rework) — you cannot pull part of a monolith as it exists.
+- **Named deps get NO transitive include resolution** — only `stdlib`
+  entries get the recursive `include "lib/` walk (`deps.cyr:436-498`); a
+  `[deps.NAME] modules=[...]` entry is a whole-file copy (`deps.cyr:825-908`),
+  so the consumer rediscovers + hand-declares each transitive symbol dep.
+- **Producer-side profiles already exist** (`[lib.gpu]` → separate
+  `dist/<pkg>-gpu.cyr`, `commands.cyr:1346`); the missing half is
+  *consumer-side* scoping — that's lever 2's job (v6.3.x).
+
+**Plan of attack** — a **pre-planned 1–2 release arc** (phases land as
+bites; the heavier Phase C may take the 2nd release — a decision made
+*now*, not a reactive split):
+
+- **Phase A — transitive auto-resolve + topological ordering (lead; cheap;
+  kills the live pain).** Each fold declares its stdlib-leaf + sibling-dep
+  requirements (dep metadata / index); `cyrius deps` merges and emits the
+  prepend in **dependency order**. Consumers declare *what they need*, not a
+  hand-ordered chain — the SIGILL-on-omission trap dies. CLI-only
+  (`cbt/deps.cyr`), self-host untouched. **This is the highest value-per-
+  effort move and should ship first.**
+- **Phase B — named module groupings.** A `[groups]` section
+  (`crypto = ["sigil:ed25519", "sigil:sha256", "sigil:keccak"]`), expanded
+  at resolve time. Makes the de-facto bayan/ganita/sandhi/sigil bundles an
+  *explicit* grouping mechanism — and creates the **addressable sub-units**
+  the v6.3.x feature layer (`gpu = [...]`) needs to name.
+- **Phase C — module-granular extraction (heavier; the bloat lever).**
+  `cyrius distlib --modular` emits `dist/<pkg>/<module>.cyr` per module +
+  an `index.cyml` (capturing the `include` lines currently stripped); the
+  resolver pulls exact sub-modules in topological order. Keep the flat
+  single-file mode for back-compat. This is the producer-rework that the
+  "pull part of a monolith" question requires; **may be its own release.**
+- **Phase D — dissolve the "stdlib" category + migrate the flagship.**
+  Reframe `[deps].stdlib` as a default group (`std = [...]`, `stdlib`
+  aliases for back-compat). Migrate **descent** off its 29-element hand
+  list + 3 whole-monolith includes as the acceptance proof. Bump the
+  256-file include-once cap (`lex_pp.cyr:272`) if granularity splits folds
+  past it.
+
+**Acceptance bar**:
+- `cycc` self-hosts byte-identical (CLI-only change; cycc includes no folds).
+- Pre-existing manifests (no `[groups]`, flat `stdlib`/`modules=`) resolve
+  **byte-identical** to today (same back-compat bar v6.3.x sets).
+- descent resolves the same symbol set with **no hand-ordered list** and no
+  SIGILL-on-omission.
+- One vidya `language.cyml` entry per new surface (`[groups]`, `module:`
+  syntax, `--modular`); a field-note on resolve-time transitive ordering.
+
+**Explicitly deferred to v6.3.x (lever 2)**: the `profile=`/`target=`/
+`optional=`/`[features]` *scoping* layer ("Required vs Optional
+Dependencies" below). It gates *which contexts* see a dep and names the
+sub-units this arc makes addressable — it builds **on** this foundation,
+not before it. (Carry-forward note: rosnet currently dodges GPU-bundle
+contamination by pulling mabda *off-manifest* — invisible to `cyrius deps`.
+If that workaround bites before v6.3.x, the bare `profile=` gate is a small,
+self-contained pull-forward that rides the existing resolve→prepend hooks;
+surface it, don't fold it in silently.)
+
 ### Native TLS stack — ✅ SHIPPED (v6.0.x), default at v6.1.21
 
 The sovereign, pure-Cyrius TLS stack (`lib/tls_native.cyr`) that
@@ -391,6 +483,7 @@ Memory pin: [[project_native_tls_arc_v6_2_x]] (now an arc retrospective).
 | **Phase 0 — growable-region foundation** (fn-tables / fixup_tbl / codebuf → rp_vec; lands first, before backend #7) | ~5–7 |
 | Bare-metal target formalization (7 deliverables incl. kernel-freestanding TLS link) | ~9–10 |
 | RISC-V rv64 backend (new emit/jump/fixup + syscalls peer + real-hardware gate) | ~12–14 |
+| **Dependency model — modules + module groupings** (lever 1 foundation: Phase A transitive-resolve/ordering + B groupings ≈ 1 release; Phase C distlib per-module extraction may be a 2nd) | ~6–10 |
 | Cross-arch test harness + CI matrix + rv64 SSH-host wiring | ~3–4 |
 | Deep-dive hardening riding bug-bandwidth (supply-chain, verification, atomics, thread-stacks) | as surfaced |
 
@@ -568,6 +661,18 @@ ADR note: this is the measured-need float exception to the i64-first core tenet
 SIMD (`f64v2`/`f64v4`) stays a separate, narrowly-justified track.
 
 ### Required vs Optional Dependencies
+
+> **This is LEVER 2 — the scoping layer that builds ON the v6.2.x
+> "Dependency model — modules + module groupings" foundation (lever 1,
+> above).** Granularity (lever 1) shrinks *what* a consumer pulls;
+> profile/feature/target gating (this section) restricts *which contexts*
+> pull it. They compound (user 2026-06-21, "right over fast" — see the
+> two-lever rationale in the lever-1 section): a smaller cyrius/sigil/mabda
+> makes every downstream consumer smaller and faster, recursively. Do NOT
+> land this before lever 1: a feature like `crypto = ["sigil:ed25519"]` can
+> only name sub-units once lever 1 has made them addressable. Profile-scoped
+> consumer includes (the rosnet `lib.gpu`/`lib.cpu` ask) are the first
+> concrete consumer of this layer and stay pinned here at v6.3.x.
 
 Today: `cyrius.cyml` has no required/optional distinction. Every
 entry in `[deps].stdlib = [...]` auto-prepends; every `[deps.<name>]`

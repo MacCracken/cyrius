@@ -236,41 +236,58 @@ fn file_write_all(path, buf, len): i64 {
     return written;
 }
 
-# flock gated to Linux: syscall 73 is flock on Linux, different BSD
-# number on macOS; ESYSXLAT doesn't translate. See CHANGELOG [5.5.16].
-#ifdef CYRIUS_TARGET_LINUX
-# Exclusive file lock (blocking). Use for append-only logs, audit chains.
+# File-lock helpers — portable via xflock, which centralizes the per-target
+# flock number (agnos #59 / macOS BSD #92 / Linux x86 #73 / aarch64 #32; Windows
+# unsupported → -1). These were CYRIUS_TARGET_LINUX-only + raw `syscall(73)`
+# (CHANGELOG [5.5.16]: 73 is flock only on x86-Linux), so they were undefined →
+# ud2/SIGILL stubs on agnos + macOS, AND wrong-numbered on aarch64-Linux. That
+# trapped descent's persist_init at boot on agnos (libro FileStore →
+# file_append_locked). Routing through xflock fixes all four targets at once.
+# NOTE on agnos: flock there is advisory + NON-blocking (a contended LOCK_EX
+# returns -1, no kernel wait); single-process consumers see no contention, and a
+# blocking poll-spin is the caller's job if it ever runs multi-process.
+# (issue 2026-06-21-agnos-io-flock-helpers.md.)
+
+# Exclusive file lock (blocking on Linux/macOS; non-blocking on agnos — see note).
 fn file_lock(fd): i64 {
-    return syscall(73, fd, LOCK_EX);
+    return xflock(fd, LOCK_EX);
 }
 
 # Release file lock.
 fn file_unlock(fd): i64 {
-    return syscall(73, fd, LOCK_UN);
+    return xflock(fd, LOCK_UN);
 }
 
 # Non-blocking exclusive lock. Returns 0 on success, -1 if already locked.
 fn file_trylock(fd): i64 {
-    return syscall(73, fd, LOCK_EX | LOCK_NB);
+    return xflock(fd, LOCK_EX | LOCK_NB);
 }
 
 # Shared (read) lock. Multiple readers, no writers.
 fn file_lock_shared(fd): i64 {
-    return syscall(73, fd, LOCK_SH);
+    return xflock(fd, LOCK_SH);
 }
 
-# Append data to a file with exclusive lock (atomic append).
-# Opens with O_APPEND, locks, writes, unlocks, closes.
+# Append data to a file under an exclusive lock. Linux/macOS use kernel-atomic
+# O_APPEND (robust even against non-cooperating writers); agnos's kernel does NOT
+# honor AO_APPEND yet (agnos syscall.cyr:614 "AO_APPEND TODO"), so there the
+# LOCK_EX hold makes an explicit SEEK_END (xlseek #58) + write atomic instead.
 fn file_append_locked(path, buf, len): i64 {
-    var fd = file_open(path, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
+    var flags = O_WRONLY | O_CREAT;
+    #ifndef CYRIUS_TARGET_AGNOS
+    flags = flags | O_APPEND;
+    #endif
+    var fd = file_open(path, flags, 0x1A4);
     if (fd < 0) { return fd; }
     file_lock(fd);
+    #ifdef CYRIUS_TARGET_AGNOS
+    xlseek(fd, 0, 2);                  # SEEK_END — agnos AO_APPEND is a kernel TODO
+    #endif
     var n = file_write(fd, buf, len);
     file_unlock(fd);
     file_close(fd);
     return n;
 }
-#endif
 
 # Check if file exists (try to open read-only)
 fn file_exists(path): i64 {

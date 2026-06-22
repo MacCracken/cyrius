@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.36] — 2026-06-21
+
+**v6.2.36 — `io.cyr` file-lock helpers go portable (agnos boot-trap fix).**
+`file_lock` / `file_unlock` / `file_trylock` / `file_lock_shared` /
+`file_append_locked` were `CYRIUS_TARGET_LINUX`-only + raw `syscall(73)`, so on
+agnos (and macOS) they were undefined → `ud2`/SIGILL trap stubs, and on
+aarch64-Linux they emitted the wrong number (#73 is flock only on x86). descent's
+`persist_init()` (libro FileStore → `file_append_locked`) hit them **at boot**,
+before any login. Same silent-undefined-on-agnos class as v6.2.35's mutex.
+**lib-only — `src/` untouched → cycc byte-identical 1,071,936 B; self-hosts
+byte-identical; check.sh 92/92; agnos gate 9/9; api-surface unchanged (5063);
+self_compile 516 ms (vs .35 524 — noise, same binary).** From
+[`2026-06-21-agnos-io-flock-helpers.md`].
+
+### Fixed
+- **`lib/io.cyr` — the five file-lock helpers now route through `xflock`.** The
+  v6.2.33 `xflock` wrapper already centralizes the per-target flock number
+  (agnos `SYS_FLOCK` #59 / macOS BSD #92 / Linux x86 #73 / aarch64 #32; Windows
+  unsupported → -1). Dropping the `CYRIUS_TARGET_LINUX` guard and delegating to
+  `xflock` fixes **all four targets at once** — agnos + macOS (were undefined →
+  `ud2`) and aarch64-Linux (was the wrong raw #73). x86-Linux is byte-identical
+  (`xflock` → `syscall(73)`). Documented: agnos flock is advisory + non-blocking
+  (a contended `LOCK_EX` returns -1, no kernel wait) — single-process consumers
+  see no contention; a blocking poll-spin is the caller's job if it ever runs
+  multi-process.
+- **`file_append_locked` — agnos uses explicit `xlseek` SEEK_END under the lock.**
+  Linux/macOS keep kernel-atomic `O_APPEND` (robust even vs non-cooperating
+  writers); the agnos kernel does **not** honor `AO_APPEND` yet (verified:
+  `agnos/kernel/core/syscall.cyr:614` "AO_APPEND TODO"), so there the `LOCK_EX`
+  hold makes an explicit `xlseek(fd, 0, SEEK_END)` + write atomic instead.
+
+### Tests / gates
+- **`scripts/agnos-crossbuild-gate.sh` — new probe 1g.** Compiles an agnos
+  program exercising all five lock helpers + `file_append_locked` and FAILS if
+  cycc reports any undefined, plus asserts `SYS_FLOCK` #59 (0x3b) is emitted (a
+  regression to raw #73 or a dropped helper is caught — a plain "does it compile"
+  check would pass it, since undefined fn → warning + `ud2`, not an error).
+  Negative-tested. agnos gate 8/8 → **9/9** (7 in-tree probes + 2 check.sh agnos
+  gates).
+
+### Downstream note
+- **descent** picks this up by re-vendoring (`cyrius deps`) at 6.2.36 — its
+  `--agnos` build then drops the three `undefined function` warnings and
+  `persist_init` no longer trap-stubs (clearing the path to the QEMU
+  server-socket smoke). Not a cyrius change.
+
 ## [6.2.35] — 2026-06-21
 
 **v6.2.35 — M6 persistence chain on AGNOS: patra 1.12.3 fold + the *real*

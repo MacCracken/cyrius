@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.35** (v6.2.x cycle — **Platform Expansion**; **M6 persistence chain on AGNOS — patra 1.12.3 fold + the real agnos-mutex fix**. Folds patra 1.12.3 (WAL salt `time`#201→`time_unix`#46) and closes the `libro→sigil→patra→sakshi` `--agnos` gap. The filed fix (inert `SYS_FUTEX`/`FUTEX_*` constants in the agnos peer, "C1") was premise-checked + adversarially verified **dead** vs patra 1.12.3 — its only referent (raw `syscall(SYS_FUTEX)` in stale patra ≤1.11.x's `_patra_lock`) is gone in 1.12.x (now `mutex_lock()`, a fn; undefined fns → `ud2` warn, only undefined *constants* hard-error). The **actual** gap: `lib/sync.cyr` had no `CYRIUS_TARGET_AGNOS` mutex backend, so patra's unconditional `mutex_new()` in `patra_init` was a silent `ud2`/SIGILL on agnos. Fixed with an agnos no-op mutex branch (single-core cooperative-iron; real lock awaits agnos preemptive MT) + a fail-closed `sys_access` stub (C2) for sigil's probes. **lib-only — `src/` untouched, cycc self-hosts byte-identical.** See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.35 — lib-only release, `src/` untouched; only the version-string stamp differs from .34; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
+| **Version** | **6.2.36** (v6.2.x cycle — **Platform Expansion**; **`io.cyr` file-lock helpers go portable — agnos boot-trap fix**. `file_lock`/`file_unlock`/`file_trylock`/`file_lock_shared`/`file_append_locked` were `CYRIUS_TARGET_LINUX`-only + raw `syscall(73)` → undefined `ud2`/SIGILL stubs on agnos+macOS, wrong number on aarch64. descent's `persist_init` (libro FileStore → `file_append_locked`) trapped at BOOT. Routed through the v6.2.33 `xflock` wrapper (#59 agnos / #92 macOS / #73 x86 / #32 aarch64) — fixes all four targets; x86-Linux byte-identical. `file_append_locked` keeps kernel-atomic `O_APPEND` on Linux/macOS, uses explicit `xlseek` SEEK_END under the lock on agnos (kernel `AO_APPEND` is a TODO — `agnos/kernel/core/syscall.cyr:614`). Same silent-undefined class as .35's mutex. **lib-only — `src/` untouched, cycc self-hosts byte-identical.** See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.36 — lib-only release, `src/` untouched; only the version-string stamp differs from .35; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
@@ -30,9 +30,34 @@
 | tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
 | stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5063 fns** (+4 @.35 — `sync::mutex_{new,lock,unlock}` agnos-branch copies + `syscalls_x86_64_agnos::sys_access/2`, 0 removals; was 5059 @.33) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| agnos gate | **8/8** (+probe **1f** @.35 — `sync.cyr` agnos no-op mutex + `sys_access` stub: asserts both are genuinely *defined*, FAILs on the silent-undefined→`ud2` class a plain compile-check misses; negative-tested; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **524 ms** @ 6.2.35 (vs .34's 512 ms — measurement jitter: cycc is byte-identical, lib-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
+| agnos gate | **9/9** (+probe **1g** @.36 — `io.cyr` file-lock helpers via `xflock`: asserts all five *defined* + `SYS_FLOCK` #59 emitted, FAILs on the silent-undefined→`ud2` regression a plain compile-check misses; negative-tested; +probe **1f** @.35 — `sync.cyr` no-op mutex + `sys_access` stub; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
+| bench (every-release gate) | self_compile **516 ms** @ 6.2.36 (vs .35's 524 ms — measurement jitter: cycc is byte-identical, lib-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
 
+> **Handoff (2026-06-21):** **v6.2.36 CUT — `io.cyr` file-lock helpers go
+> portable (agnos boot-trap fix).** Open-window kernel kickback from the descent
+> agnos port (`2026-06-21-agnos-io-flock-helpers.md`). The five file-lock helpers
+> (`file_lock`/`file_unlock`/`file_trylock`/`file_lock_shared`/
+> `file_append_locked`) were `CYRIUS_TARGET_LINUX`-only + raw `syscall(73)`, so on
+> agnos+macOS they were undefined → `ud2`/SIGILL stubs, and on aarch64-Linux they
+> emitted the wrong number (#73 is x86-only flock). descent's `persist_init`
+> (libro FileStore → `file_append_locked`) trapped at BOOT. **Fix:** route all
+> five through the v6.2.33 `xflock` wrapper (centralizes #59 agnos / #92 macOS /
+> #73 x86 / #32 aarch64) — fixes four targets at once; x86-Linux byte-identical.
+> `file_append_locked` keeps kernel-atomic `O_APPEND` on Linux/macOS, uses
+> explicit `xlseek` SEEK_END under the lock on agnos (premise-checked: the agnos
+> kernel does NOT honor `AO_APPEND` — `agnos/kernel/core/syscall.cyr:614` "AO_APPEND
+> TODO"). Premise-checked for siblings: `net.cyr`'s raw `syscall(72)` fcntl is
+> already agnos-guarded (fail-closed) — no other unguarded site. Same
+> silent-undefined class as .35's mutex. New agnos gate **probe 1g** (asserts the
+> helpers are defined + #59 emitted; negative-tested). **VERIFIED:** lib-only
+> (`src/` untouched) → cycc self-hosts byte-identical **1,071,936 B** + matches
+> tracked build/cycc · check.sh **92/92** · agnos gate **9/9** · all 4 targets
+> compile the helpers with ZERO undefined-fn · bench self_compile **516 ms**
+> (jitter) · api-surface unchanged (5063). **Cross-OS NOT re-run** (cycc
+> byte-identical; the only behavioral change is `#ifdef CYRIUS_TARGET_AGNOS`-gated
+> + the x86-Linux path is byte-identical). **Downstream:** descent re-vendors via
+> `cyrius deps` at 6.2.36 to pick it up. User pushes/tags after CI.
+>
 > **Handoff (2026-06-21):** **v6.2.35 CUT — M6 chain on AGNOS: patra 1.12.3 fold
 > + the *real* agnos-mutex fix.** Triggered by patra 1.12.3 (WAL salt
 > `time`#201→`time_unix`#46) needing a fold, and issue
