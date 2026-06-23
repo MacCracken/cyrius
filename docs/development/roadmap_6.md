@@ -733,7 +733,7 @@ target = "windows"          # win-shell feature gates further
   resolve
 - `programs/cyrius_build.cyr` — `--features` / `--no-default-features`
   CLI surface, target detection passthrough
-- Existing consumers (sakshi/patra/sigil/mabda/agnosys/etc.) —
+- Existing consumers (sakshi/patra/sigil/mabda/etc.) —
   audit `[deps]` for entries that should become optional once the
   schema is available; consumer migration is opt-in (omitted
   `optional` defaults to required, preserving today's behavior)

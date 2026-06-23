@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.36** (v6.2.x cycle — **Platform Expansion**; **`io.cyr` file-lock helpers go portable — agnos boot-trap fix**. `file_lock`/`file_unlock`/`file_trylock`/`file_lock_shared`/`file_append_locked` were `CYRIUS_TARGET_LINUX`-only + raw `syscall(73)` → undefined `ud2`/SIGILL stubs on agnos+macOS, wrong number on aarch64. descent's `persist_init` (libro FileStore → `file_append_locked`) trapped at BOOT. Routed through the v6.2.33 `xflock` wrapper (#59 agnos / #92 macOS / #73 x86 / #32 aarch64) — fixes all four targets; x86-Linux byte-identical. `file_append_locked` keeps kernel-atomic `O_APPEND` on Linux/macOS, uses explicit `xlseek` SEEK_END under the lock on agnos (kernel `AO_APPEND` is a TODO — `agnos/kernel/core/syscall.cyr:614`). Same silent-undefined class as .35's mutex. **lib-only — `src/` untouched, cycc self-hosts byte-identical.** See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.36 — lib-only release, `src/` untouched; only the version-string stamp differs from .35; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
+| **Version** | **6.2.37** (v6.2.x cycle — **Platform Expansion**; **`lib/agnosys.cyr` RETIRED from the stdlib** — continues the `lib/sys.cyr` carve. The latest agnos-filed issue (agnosys `security_*` fns ungated → `--agnos` hard-errors on `SYS_LANDLOCK_*`) premise-checked as **under-scoped** (8 consts / 11 fns hard-error, not 3) and the symptom of a **stale pre-decomposition 1.4.3 snapshot**: the real agnosys decomposed → **agnodrm 1.4.4** + folds (trust→sigil, security/mac/audit→kavach, pam→aegis, logging→sakshi, Linux-eccentric→agnodrm), and cyrius's only surviving role (uname/sysinfo) is already native in `lib/sys.cyr` (v6.1.28/v6.2.23). **Fix (user's call): deleted the 10,198-line module** (736 public fns) rather than gate/partial-drop. **lib-only — `src/` untouched, cycc self-hosts byte-identical; api-surface 5063→4327.** Consumer rewire (chakshu/mihi) FILED. See [roadmap_6.md](roadmap_6.md)) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.37 — lib-only release, `src/` untouched; only the version-string stamp differs from .36; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
@@ -26,13 +26,42 @@
 | check.sh gates | **92/92 + the D7 boot gate** (+2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64, the .25-class gate) + `_fuzz_harness_gate` (cyrius fuzz → exit 0 + "0 failed"); both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
 | aarch64 native tcyr | **189 pass / 0 fail / 0 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job runs the FULL tcyr corpus on real arm64. It surfaced a stale-native-fork + 9-bug debt; **all fixed in-slot** (`2026-06-19-aarch64-tcyr-failures.md` RESOLVED), gate HARD + GREEN. `math_pack_integration` skip = x86-only f64_sin; pi-verified) |
 | sigil fold | **3.9.2** (@6.2.31 — luks raw `getrandom` syscall → `_sigil_random_fill` portable boundary so sigil/cyrsign cross-compile to PE; @6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack for the TLS arena/flat-RSS fix) |
-| stdlib fold | agnosys 1.4.3 (**PINNED — upstream repo decomposed → agnodrm; no further bumps**) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · **patra 1.12.3** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
+| stdlib fold | ~~agnosys~~ **RETIRED @.37** (the stale pre-decomposition 1.4.3 snapshot deleted — its surviving uname/sysinfo role is native in `lib/sys.cyr`; the rest decomposed → agnodrm/sigil/kavach/aegis/sakshi) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · **patra 1.12.3** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
 | tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | **99** `lib/*.cyr` · 79 programs · api-surface **5063 fns** (+4 @.35 — `sync::mutex_{new,lock,unlock}` agnos-branch copies + `syscalls_x86_64_agnos::sys_access/2`, 0 removals; was 5059 @.33) |
+| stdlib | **98** `lib/*.cyr` (−1 @.37 — `agnosys.cyr` retired) · 79 programs · api-surface **4327 fns** (−736 @.37 — the entire `agnosys::` surface removed with the module; was 5063 @.36) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **9/9** (+probe **1g** @.36 — `io.cyr` file-lock helpers via `xflock`: asserts all five *defined* + `SYS_FLOCK` #59 emitted, FAILs on the silent-undefined→`ud2` regression a plain compile-check misses; negative-tested; +probe **1f** @.35 — `sync.cyr` no-op mutex + `sys_access` stub; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
 | bench (every-release gate) | self_compile **516 ms** @ 6.2.36 (vs .35's 524 ms — measurement jitter: cycc is byte-identical, lib-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
 
+> **Handoff (2026-06-22):** **v6.2.37 CUT — `lib/agnosys.cyr` RETIRED from the
+> stdlib (continues the `lib/sys.cyr` carve).** Reviewed the latest agnos-filed
+> issue (`2026-06-22-agnosys-stdlib-security-fns-not-agnos-gated.md`: agnosys's
+> Linux-MAC `security_*` fns ungated → `--agnos` builds hard-error on
+> `SYS_LANDLOCK_*`). **Premise-check overturned the issue's framing:** it was
+> under-scoped (8 constants / 11 fns hard-error, not 3 — landlock PLUS
+> `O_RDONLY/O_WRONLY/O_CREAT/O_TRUNC/O_EXCL` in mac/pam/audit/ima/tpm/luks), and the
+> **entire region lines 998–10198 (289 fns / 17 subsystems) was ungated Linux-only**
+> dead code. Root cause: cyrius's `lib/agnosys.cyr` was a **stale pre-decomposition
+> 1.4.3 snapshot** — the real agnosys decomposed (2026-06-18 plan, executed) into
+> **agnodrm 1.4.4** + folds (trust→sigil, security/mac/audit→kavach, pam→aegis,
+> logging→sakshi, Linux-eccentric→agnodrm). cyrius's only surviving role
+> (uname/sysinfo) is already native in `lib/sys.cyr` (the v6.1.28/v6.2.23 carve this
+> arc started from). **Fix (user's call — "retire entirely, delete now"):** deleted
+> `lib/agnosys.cyr` (10,198 lines / 736 public fns); regenerated
+> `docs/api-surface.snapshot` (5063→**4327**); pruned the active install snapshot.
+> **VERIFIED:** lib-only (`src/` untouched) → cycc self-hosts byte-identical
+> **1,071,936 B** + matches tracked build/cycc · check.sh **92/92** + boot gate ·
+> agnos gate green · cross-OS **ecb + cass SELFHOST_OK** (pi covered by the
+> byte-identical-cycc invariant — a lib deletion can't touch codegen) · self_compile
+> **549 ms** (vs .36's 516 — jitter; cycc byte-identical). **Consumer
+> rewire (chakshu/mihi → `lib/sys.cyr`) FILED:**
+> agnodrm `issues/2026-06-22-cyrius-agnosys-retired-consumer-rewire.md` (the
+> decomposition's home repo owns it, not cyrius) — INTERIM: chakshu's `cyrius deps`
+> (it lists `"agnosys"` in stdlib) breaks until it rewires; mihi/iam unaffected
+> (git-dep core). **NEXT (user, gated on other module fixes): separate `lib/sys.cyr`
+> → per-system `lib/sys/agnos.cyr` etc.** vidya agnosys knowledge-base entries
+> (`agnosys_patterns` etc.) deferred to v6.3.0 closeout. User pushes/tags after CI.
+>
 > **Handoff (2026-06-21):** **v6.2.36 CUT — `io.cyr` file-lock helpers go
 > portable (agnos boot-trap fix).** Open-window kernel kickback from the descent
 > agnos port (`2026-06-21-agnos-io-flock-helpers.md`). The five file-lock helpers
@@ -369,6 +398,16 @@ Tracked in [roadmap.md](roadmap.md) (active) / [roadmap-future.md](roadmap-futur
   ~58 raw `sys_open` sites (incl. sigil luks); issue active (from the .23 handoff).
 - **`stdlib-reference.md`** — ~65/95 lib modules documented (human-led).
 - **Windows/AGNOS real CSPRNG** — `issues/2026-06-11-windows-entropy-primitive.md`.
+- **agnosys retirement — consumer rewire** (@.37) — chakshu/mihi → `lib/sys.cyr`;
+  tracked in **agnodrm** `issues/2026-06-22-cyrius-agnosys-retired-consumer-rewire.md`
+  (the decomposition's home repo, not cyrius); chakshu's `cyrius deps` is broken
+  until it drops the stdlib entry.
+- **`lib/sys.cyr` per-system separation** (watching, user 2026-06-22) — split the
+  cross-target `lib/sys.cyr` into `lib/sys/agnos.cyr` etc. **once the other module
+  fixes are in.** The natural continuation of the agnosys→`lib/sys.cyr` carve.
+- **vidya agnosys knowledge-base cleanup** (v6.3.0 closeout) — `agnosys_patterns`
+  entry + ecosystem `agnosys (20 modules)` listing in `vidya/.../ecosystem.cyml`
+  are stale post-retirement; refresh at the next minor's vidya sync.
 
 ## v6.1.x — CLOSED (Backend Codegen Multi-Arc)
 
@@ -380,7 +419,7 @@ pointer 2026-06-19.)
 
 ## Consumers
 
-AGNOS kernel, agnostik (58 tests), agnosys (20 modules), argonaut (424
+AGNOS kernel, agnostik (58 tests), agnodrm (device/DRM core, ex-agnosys), argonaut (424
 tests), sakshi, sigil (206 tests), libro (240 tests), shravan (audio),
 cyrius-doom, bsp, mabda, kybernet (140 tests), hadara (329 tests),
 ai-hwaccel (491 tests). All AGNOS ecosystem projects depend on the compiler

@@ -1,3 +1,21 @@
+> **RESOLVED (v6.2.37) — by RETIREMENT, not gating/dropping the 3 fns.**
+> Premise-check found this issue **under-scoped**: the reachable-on-agnos
+> hard-error set is **8 constants across 11 fns** (the landlock trio PLUS
+> `O_RDONLY/O_WRONLY/O_CREAT/O_TRUNC/O_EXCL` in `mac_read_file`/`mac_write_file`/
+> `audit_read_proc_events`/`pam_*`/`luks_write_keyfile`/`ima_*`/`tpm_seal`), and the
+> **entire region lines 998–10198 (289 fns / 17 subsystems) is ungated Linux-only**.
+> So the issue's Option B (drop 3 fns) would leave the `--agnos` build broken on the
+> O_* hard-errors. Root cause: cyrius's `lib/agnosys.cyr` was a **stale
+> pre-decomposition snapshot** (frozen 1.4.3) — the real agnosys decomposed into
+> agnodrm 1.4.4 + folds (trust→sigil, security/mac/audit→kavach, pam→aegis,
+> logging→sakshi, Linux-eccentric→agnodrm), and cyrius's only surviving role
+> (uname/sysinfo) is already native in `lib/sys.cyr` (v6.1.28/v6.2.23). **Fix:
+> deleted `lib/agnosys.cyr` from the stdlib entirely** (user's call, 2026-06-22).
+> cycc self-hosts byte-identical (lib-only); check.sh 92/92; api-surface 5063→4327.
+> **Consumer rewire (chakshu/mihi) tracked in agnodrm
+> `issues/2026-06-22-cyrius-agnosys-retired-consumer-rewire.md`** (the
+> decomposition's home repo owns the ecosystem rewire, not cyrius).
+
 # agnosys stdlib module: `security_*` fns not `CYRIUS_TARGET_AGNOS`-gated → breaks agnos builds
 
 **Filed:** 2026-06-22 · **Component:** cyrius stdlib `lib/agnosys.cyr` (agnosys v1.4.3) · **Severity:** blocks `--agnos` builds of agnosys consumers · **Driver:** hands-off surface (filed by the agnos/agnosticos side per the cyrius hands-off rule)
@@ -27,6 +45,22 @@ cd /home/macro/Repos/chakshu && cyrius build --agnos src/main.cyr build/chakshu_
 | `security_create_namespace` | 1237 | `SYS_UNSHARE` (1244) |
 
 AGNOS has none of Landlock, seccomp-BPF, or namespaces (all Linux LSM/process facilities); FS confinement / syscall filtering / isolation on AGNOS are the **capability layer's** job.
+
+## Also missing on agnos: the `O_*` open-flag constants
+
+The agnos-build gap extends beyond the `SYS_*` syscalls to the bare **open flags**. The agnos syscall peer (`lib/syscalls_x86_64_agnos.cyr`) defines the AGNOS-native `AO_*` set (`AO_RDONLY=0x0` / `AO_WRONLY=0x1` / `AO_RDWR=0x2` / `AO_CREAT=0x100` / `AO_TRUNC=0x200` / `AO_APPEND=0x400` / `AO_DIRECTORY=0x800`) but **NOT** the bare `O_RDONLY` / `O_WRONLY` / `O_CREAT` / `O_TRUNC` / `O_EXCL` names (those live only in `syscalls_x86_64_linux.cyr` / `syscalls_macos.cyr`). So any agnos-targeted code referencing `O_*` directly — the Landlock `sys_open(path, O_PATH|O_CLOEXEC, …)` path, or any `open()` with `O_CREAT|O_TRUNC|O_EXCL` — is **undefined on agnos**, the same undefined-symbol class as the `SYS_*` gap above. This is a **prerequisite** for the Landlock fix below (its `sys_open` uses the open-flag surface) and for any agnos consumer doing file create/truncate.
+
+**⚠ The values do NOT all coincide — a naive `#ifdef`-define-`O_*`-to-Linux-values is wrong:**
+
+| flag | Linux | agnos `AO_*` | match? |
+|------|-------|--------------|--------|
+| `O_RDONLY` | 0 | `AO_RDONLY` 0x0 | ✅ |
+| `O_WRONLY` | 1 | `AO_WRONLY` 0x1 | ✅ |
+| `O_TRUNC`  | 512 (0x200) | `AO_TRUNC` 0x200 | ✅ |
+| `O_CREAT`  | **64 (0x40)** | **`AO_CREAT` 0x100** | ❌ differ |
+| `O_EXCL`   | **128 (0x80)** | **(no `AO_*` peer)** | ❌ none |
+
+Defining `O_CREAT`/`O_EXCL` to Linux values on agnos passes the **wrong bits** to agnos `open` (which reads `0x100` = CREAT). **Fix:** define the `O_*` names under `#ifdef CYRIUS_TARGET_AGNOS` mapping to the `AO_*` semantics (`O_CREAT`→0x100, `O_TRUNC`→0x200, `O_RDONLY`→0, `O_WRONLY`→1; **decide `O_EXCL`** — agnos `open` has no exclusive-create flag in the §3.3 `AO_*` table yet, so either add one or map it to a documented no-op/error), OR translate the Linux `O_*` bits → `AO_*` at the `open` boundary — the **`lib/sakshi.cyr`** `O_CREAT`(64)→`AO_CREAT`(0x100) / `O_TRUNC`(512)→`AO_TRUNC`(0x200) mapping is the working precedent.
 
 ## Fix — two options
 

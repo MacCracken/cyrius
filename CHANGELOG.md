@@ -6,6 +6,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.37] — 2026-06-22
+
+**v6.2.37 — `lib/agnosys.cyr` retired from the stdlib (continues the `lib/sys.cyr`
+carve).** Reviewing the latest agnos-filed issue
+([`2026-06-22-agnosys-stdlib-security-fns-not-agnos-gated.md`]: agnosys's Linux-MAC
+`security_*` fns ungated → `--agnos` builds hard-error on `SYS_LANDLOCK_*`), a
+premise-check **overturned the issue's framing.** It was under-scoped — the
+reachable-on-agnos hard-error set is **8 constants across 11 fns** (the landlock
+trio PLUS `O_RDONLY`/`O_WRONLY`/`O_CREAT`/`O_TRUNC`/`O_EXCL` in
+`mac_read_file`/`mac_write_file`/`audit_read_proc_events`/`pam_*`/
+`luks_write_keyfile`/`ima_*`/`tpm_seal`), and the **entire region lines 998–10198
+(289 fns / 17 subsystems) was ungated Linux-only** dead code — so the issue's
+Option B (drop 3 fns) would have left `--agnos` broken on the O_* hard-errors. Root
+cause: cyrius's `lib/agnosys.cyr` was a **stale pre-decomposition 1.4.3 snapshot.**
+The real agnosys decomposed (the approved+executed 2026-06-18 `agnosys → agnodrm`
+plan) into **agnodrm 1.4.4** + folds — trust/firmware → sigil, security/mac/audit →
+kavach, pam → aegis, logging → sakshi, Linux-eccentric (bootloader/update/netns/
+fuse/journald) → agnodrm — and cyrius's only surviving role (uname/sysinfo) is
+already native in `lib/sys.cyr` (the v6.1.28 + v6.2.23 carve this arc started from).
+**Fix (user's call — "retire entirely, delete now"): deleted `lib/agnosys.cyr`**
+(10,198 lines / 736 public fns) rather than gate or partially-drop it.
+**lib-only — `src/` untouched → cycc byte-identical 1,071,936 B; self-hosts
+byte-identical; check.sh 92/92 + boot gate; agnos gate green; api-surface
+5063 → 4327 (−736, the entire `agnosys::` surface).**
+
+### Removed
+- **`lib/agnosys.cyr` — deleted from the stdlib** (99 → 98 `lib/*.cyr`). It was the
+  frozen pre-decomposition 1.4.3 snapshot of a module whose every subsystem had
+  already moved to its proper home (agnodrm/sigil/kavach/aegis/sakshi). No cyrius
+  build/test/gate included it; cycc never did. Its surviving uname/sysinfo value-add
+  lives natively in `lib/sys.cyr`. `docs/api-surface.snapshot` regenerated
+  (−736 `agnosys::` entries); active install snapshot (`~/.cyrius/lib`) pruned.
+
+### Filed (downstream — cyrius files, owners land)
+- **agnodrm `issues/2026-06-22-cyrius-agnosys-retired-consumer-rewire.md`** (the
+  decomposition's home repo owns the ecosystem rewire, not cyrius) — the only
+  stdlib-resolved
+  consumer is **chakshu** (lists `"agnosys"` in its `cyrius.cyml` `stdlib`); its
+  `cyrius deps` breaks until it rewires to `lib/sys.cyr` (or the git-dep core
+  pattern mihi/iam already use). The root rewire is **mihi**'s bundle
+  (`agnosys_uname` → `sys_uname`; note the Result-vs-raw return-shape difference).
+  mihi/iam are git-dep (`dist/agnosys-core.cyr` @ tag 1.4.0) and unaffected by the
+  cyrius deletion.
+
+### Noted (deferred)
+- **`lib/sys.cyr` → per-system separation** (`lib/sys/agnos.cyr`, …) is the next
+  step *after the other module fixes land* (user, 2026-06-22). vidya agnosys
+  knowledge-base entries refreshed at the v6.3.0 closeout.
+
 ## [6.2.36] — 2026-06-21
 
 **v6.2.36 — `io.cyr` file-lock helpers go portable (agnos boot-trap fix).**
