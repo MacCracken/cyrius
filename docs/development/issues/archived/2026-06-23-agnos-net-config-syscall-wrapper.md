@@ -1,3 +1,8 @@
+> **RESOLVED v6.2.39** — `SYS_NET_CONFIG=61` + `sys_net_config(field)` + 4 typed
+> getters (`sys_net_ip`/`_netmask`/`_gateway`/`_dns_server`) added to
+> `lib/syscalls_x86_64_agnos.cyr` (kernel-verified at `syscall.cyr:1826`). Consumers
+> (taar/yo/whirl/dig) can now drop the raw `syscall(61,3)`. See CHANGELOG [6.2.39].
+
 # Add a `sys_net_config` wrapper for the new AGNOS `net_config` syscall (#61) so net-tool consumers stop calling raw `syscall(61, …)`
 
 **Filed:** 2026-06-23 (by the agnos/taar/yo net-tools cohort — agnos 1.45.16 added the

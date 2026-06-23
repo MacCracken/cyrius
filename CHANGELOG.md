@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.39] — 2026-06-23
+
+**v6.2.39 — agnos syscall-peer wrappers (net_config #61 + signal constants) + the
+fail-OPEN safety hole the sweep surfaced.** A bottom-priority agnos-portability batch,
+kernel-verified against `agnos/kernel/core/syscall.cyr` (the number authority). **lib +
+gate only — `src/` untouched → cycc byte-identical 1,071,936 B; self-hosts
+byte-identical; check.sh 92/92 + boot gate; agnos gate 9/9 (+probe 1h); tcyr 191/0;
+api-surface 4334 → 4342 (+8, non-breaking); cross-OS ecb + cass `SELFHOST_OK`; bench
+self_compile 501 ms (jitter — cycc byte-identical).** Reviewed via a 4-agent
+kernel-verified premise-check workflow.
+
+### Fixed
+- **Core safety checks fail-OPEN on agnos — guarded (`result.cyr`, `bounds.cyr`,
+  `overflow.cyr`).** `result_unwrap`-on-`Err`, `bounds.cyr` violations, and `overflow.cyr`
+  checked-arithmetic panics aborted via a bare `syscall(60, …)` with **no agnos guard**.
+  On agnos #60 is an undefined syscall number (kernel returns -1, no termination), so the
+  intended fail-CLOSED abort silently became **fail-OPEN** — execution continued past the
+  violated invariant with bad data (`result.cyr` is transitively core: tagged/io/http/
+  tls_native). These were the same `syscall(60)` exit class that `vec/str/hashmap/tagged.cyr`
+  already guard — three core safety modules were missed. Now use the established
+  target-aware idiom (`#ifdef CYRIUS_TARGET_AGNOS syscall(0,…) #else syscall(60,…)`);
+  `overflow.cyr` factors a shared `_overflow_die()`. Host abort behavior unchanged
+  (verified: overflow → exit 57, bounds → exit 1, no continuation); agnos branch compiles
+  + the `#ifndef` branch is identical to before on Linux/macOS/Windows (cycc byte-identical).
+  Surfaced by the v6.2.39 cross-lib sweep, not a filed issue.
+
+### Added
+- **`net_config` #61 wrapper + getters (`lib/syscalls_x86_64_agnos.cyr`).**
+  `SYS_NET_CONFIG=61` + `sys_net_config(field)` + 4 typed getters (`sys_net_ip`/
+  `_netmask`/`_gateway`/`_dns_server`). Kernel-verified at `agnos/kernel/core/syscall.cyr:1826`
+  (field 0-3 → packed IPv4, -1 on bad field). Lets a ring-3 resolver target the DHCP-leased
+  on-subnet DNS instead of an off-subnet public IP. Unblocks the taar/yo/whirl/dig cohort
+  (all on raw `syscall(61,3)` today) to drop the bare number — **on Linux #61 is `wait4`**,
+  so the wrapper contains the overlap hazard in the agnos-only peer. Closes
+  `2026-06-23-agnos-net-config-syscall-wrapper.md` (filed by the agnos net-tools cohort).
+- **Signal-number constants + sigset wrappers (agnos peer).** `SIGHUP=1…SIGPWR=30`,
+  `SIG_BLOCK/UNBLOCK/SETMASK`, `SFD_NONBLOCK/CLOEXEC`, and `sigset_new/add/has`. The
+  *mechanism* (`sys_kill`/`sys_sigprocmask`/`sys_signalfd`) was already present; agnos
+  lacked the userland numbers the Linux/macOS/aarch64 peers carry — a **hard link error**
+  blocking thoth/t-ron's `--agnos` lane (`undefined variable 'SIGHUP'`). Kernel-verified
+  Linux/POSIX numbering (`SIGCHLD=17` hard-coded in the kernel). **Load-bearing
+  correctness:** agnos `sigset_add` uses `1<<signum` — NOT the Linux peer's
+  `1<<(signum-1)` — because the agnos kernel mask is bit-per-signal-NUMBER (`kill#16` sets
+  `1<<sig`; `signalfd#18` returns the bit position AS the signal number); a blind mirror
+  would silently desync signalfd matching. Resolves
+  `agnos/.../2026-06-23-cyrius-agnos-peer-missing-signal-number-constants.md`.
+- **New agnos gate probe (1h)** in `scripts/agnos-crossbuild-gate.sh` — asserts the signal
+  constants + sigset wrappers + net_config #61 are *defined* (not ud2 stubs) and emit the
+  correct number (61=0x3d), per the DEFINED-not-just-compiles discipline.
+
+### Deferred (filed)
+- **`2026-06-23-agnos-portability-sweep-residuals.md`** — the sweep's lower-priority finds:
+  (1) `sakshi.cyr` clock calibration mis-dispatches on agnos (`CYRIUS_ARCH_X86`
+  predefined-on-agnos trap; reachable, degraded-not-crash) → **fold fix in `~/Repos/sakshi`**;
+  (2) latent landmines not reachable on agnos (`mmap`/`dynlib`/`fdlopen`/`yantra`) → defensive
+  `#ifndef AGNOS` gates; (3) **winsize #60 deferred** — #60 collides with the Linux-exit
+  signature the `_agnos_emit_gate` scans for, and winsize has no cyrius consumer; add it only
+  with a gate fix.
+
+### Housekeeping
+- Archived `2026-06-23-agnos-net-config-syscall-wrapper.md` (resolved this release).
+
 ## [6.2.38] — 2026-06-23
 
 **v6.2.38 — stdlib fold refresh (patra / sandhi / bayan) + `panic`/`assert_fatal`

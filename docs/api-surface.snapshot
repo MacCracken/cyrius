@@ -3813,6 +3813,9 @@ syscalls_x86_64_agnos::WIFEXITED/1
 syscalls_x86_64_agnos::WIFSIGNALED/1
 syscalls_x86_64_agnos::WTERMSIG/1
 syscalls_x86_64_agnos::is_err/1
+syscalls_x86_64_agnos::sigset_add/2
+syscalls_x86_64_agnos::sigset_has/2
+syscalls_x86_64_agnos::sigset_new/0
 syscalls_x86_64_agnos::sys_access/2
 syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_close/1
@@ -3835,6 +3838,11 @@ syscalls_x86_64_agnos::sys_mkdir/2
 syscalls_x86_64_agnos::sys_mmap/1
 syscalls_x86_64_agnos::sys_mount/0
 syscalls_x86_64_agnos::sys_munmap/2
+syscalls_x86_64_agnos::sys_net_config/1
+syscalls_x86_64_agnos::sys_net_dns_server/0
+syscalls_x86_64_agnos::sys_net_gateway/0
+syscalls_x86_64_agnos::sys_net_ip/0
+syscalls_x86_64_agnos::sys_net_netmask/0
 syscalls_x86_64_agnos::sys_open/3
 syscalls_x86_64_agnos::sys_pause/0
 syscalls_x86_64_agnos::sys_pipe/1

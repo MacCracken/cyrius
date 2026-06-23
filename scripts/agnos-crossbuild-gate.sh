@@ -303,6 +303,50 @@ if command -v objdump >/dev/null 2>&1; then
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS io.cyr file-lock helpers (xflock #59 + xlseek SEEK_END) -> defined + valid agnos ELF"
 
+# 1h. signal constants + sigset wrappers + net_config #61 (v6.2.39).
+#     SILENT-undefined class again: an undefined CONST (SIGHUP / SYS_NET_CONFIG)
+#     hard-errors, but an undefined sigset_*/sys_net_* FN lowers to a ud2 stub
+#     (exit-0 compile, SIGILL at runtime). This probe references every new symbol
+#     and FAILS if cycc reports any undefined, pins net_config's kernel number
+#     (61=0x3d), and asserts the POSIX signal numbering the agnos kernel
+#     hard-codes (SIGCHLD=17). (winsize #60 is intentionally NOT wrapped — #60
+#     collides with the Linux-exit signature the _agnos_emit_gate scans for.) From
+#     2026-06-23-agnos-net-config-syscall-wrapper.md +
+#     2026-06-23-cyrius-agnos-peer-missing-signal-number-constants.md.
+cat > /tmp/_agnos_signet_gate.cyr <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+fn main(): i64 {
+    if (SYS_NET_CONFIG != 61) { return 1; }   # pin kernel number (undefined const hard-errors)
+    if (SIGCHLD != 17) { return 1; }          # agnos kernel hard-codes POSIX numbering
+    # signal mask: agnos kernel is bit-per-signal-NUMBER (1<<sig), NOT 1<<(sig-1)
+    var m = sigset_new();
+    sigset_add(m, SIGHUP);
+    sigset_add(m, SIGCHLD);
+    var pm = sys_sigprocmask(SIG_BLOCK, m, 0);
+    var fd = sys_signalfd(0 - 1, m, SFD_NONBLOCK);
+    var dns = sys_net_dns_server();
+    var ip = sys_net_ip();
+    var nm = sys_net_netmask();
+    var gw = sys_net_gateway();
+    var nc = sys_net_config(0);
+    return sigset_has(m, SIGCHLD) + pm + fd + dns + ip + nm + gw + nc;
+}
+CYR
+build/cyrius build --agnos /tmp/_agnos_signet_gate.cyr /tmp/_agnos_signet_gate.out >/tmp/_agnos_signet_gate.log 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS signal/net_config probe did not compile (peer const/wrapper regression)"; cat /tmp/_agnos_signet_gate.log; exit 1; }
+if grep -q "undefined function 'sys_net_\|undefined function 'sigset_" /tmp/_agnos_signet_gate.log; then
+    echo "FAIL: agnos signal/net_config wrapper undefined (peer regressed to ud2/SIGILL stub at runtime):"
+    grep "undefined function" /tmp/_agnos_signet_gate.log
+    exit 1
+fi
+assert_agnos_elf /tmp/_agnos_signet_gate.out
+if command -v objdump >/dev/null 2>&1; then
+    ndis=$(objdump -d -M intel /tmp/_agnos_signet_gate.out 2>/dev/null)
+    echo "$ndis" | grep -qE 'mov +eax,0x3d\b' || { echo "FAIL: probe emits no SYS_NET_CONFIG #61 (0x3d) — net_config rotted to a stub?"; exit 1; }
+fi
+echo "PASS: CYRIUS_TARGET_AGNOS signal constants + sigset wrappers (1<<sig) + net_config #61 -> defined + correct number + valid agnos ELF"
+
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then
