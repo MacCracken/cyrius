@@ -594,6 +594,42 @@ CPS-transformed state machines over the existing epoll runtime.
 Same runtime semantics, sugarier surface. Pairs with closures
 (capture state across await points).
 
+### Opt-in bounds-checked memory primitives (`store*` / `load*`) — safety hardening
+
+Added 2026-06-22 (user) — from a downstream report: *"Cyrius has no bounds
+checks: an out-of-range `store64` silently corrupts the heap."*
+
+**Today**: `store64` / `store32` / `store8` (and the `load*` family) lower to a
+**raw `mov`** (`src/frontend/parse_fn.cyr:2561` — *"store = mov reg, rax"*) with
+**zero validation**. An out-of-range `store64(addr, val)` silently writes over
+whatever the address lands on (another allocation, a fixed heap region, code), and
+the corruption surfaces far from its cause. Bounds checking exists only at the
+**library level** — `lib/vec.cyr` `vec_get`/`vec_set` abort on OOB (`idx < 0` /
+`idx >= len` → `_vec_die`), `lib/alloc.cyr` arena bounds, the v5.0.1 alloc/vec
+overflow guards, the v6.1.38 CVE-24..28 slot-array hardening. Downstream code that
+reaches for the raw primitives directly (the common idiom for hand-rolled
+structs/buffers) gets no net.
+
+**Scope**: an **opt-in** hardening mode — a compiler switch (`CYRIUS_BOUNDS=1`
+and/or a `#bounds` pragma, mirroring the existing `CYRIUS_DCE` / `CYRIUS_PIE`
+env/flag switches) — that emits a guard before each raw `store*` / `load*`:
+validate the target address is inside a known-valid region (heap-map live regions
+/ allocator metadata) and abort with a `_vec_die`-style diagnostic (offending op +
+address + nearest region) instead of corrupting silently. **OFF by default** —
+always-on checks on every memory op would be a large self_compile + runtime tax and
+cut against the assembly-up tenet (raw stores stay raw in release builds). The
+value is a development / CI sanitizer downstream users flip on to catch corruption
+at its source.
+
+**Open design questions** (decide at slot entry, premise-check first per
+[`feedback_premise_check_at_slot_entry`]): (1) **granularity** — whole-heap `brk`
+bounds (cheap, coarse) vs. per-allocation metadata (precise, costly); (2) **guard
+shape** — frontend-inlined compare vs. a runtime `_bounds_check` leaf (size vs.
+speed); (3) **bare-metal interaction** — `--target=*-bare-metal-elf` has no
+allocator metadata, so the mode is likely whole-region-only or a hard-error there.
+Extends the existing memory-safety line (v5.0.1 → v6.1.38 CVE-24..28 → this);
+helps downstream consumers without changing release-build codegen.
+
 ### Native float arithmetic (f64/f32 type + operators) — Tier A
 
 > **✅ SHIPPED v6.2.18 (f32 conversions) + v6.2.19 (named `f64` type + operators)** —
