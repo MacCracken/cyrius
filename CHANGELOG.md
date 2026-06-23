@@ -6,6 +6,88 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.38] — 2026-06-23
+
+**v6.2.38 — stdlib fold refresh (patra / sandhi / bayan) + `panic`/`assert_fatal`
+fail-loud primitives + `&fn` discoverability note.** A packed lib + docs release:
+three non-breaking stdlib folds (zero public-surface removals) plus two
+consumer-filed stdlib gaps closed. **lib/docs only — `src/` untouched → cycc
+byte-identical 1,071,936 B; self-hosts byte-identical; check.sh 92/92 + boot gate;
+tcyr 190 → 191 (0 fail, per-file exit-code loop clean); api-surface 4327 → 4334
+(+7, non-breaking); cross-OS ecb + cass `SELFHOST_OK`; bench self_compile 508 ms
+(jitter — cycc byte-identical).** Reviewed via an 11-agent premise-check workflow;
+the meatier P2 call-arity issue was triaged doable-as-a-warning and **deferred to
+its own focused slot** (user 2026-06-23) — pinned in `roadmap.md`.
+
+### Added
+- **`panic(msg)` + `assert_fatal(cond, msg)` in `lib/assert.cyr`** — the fail-loud
+  runtime-guard primitives the stdlib was missing. `assert()` is a *test-harness*
+  check (print-and-continue, tallied by `assert_summary`); `panic()` prints
+  `panic: <msg>` to stderr (fd 2) then `sys_exit(1)` — it STOPS the process, for
+  runtime precondition guards where continuing past a violated invariant corrupts
+  memory in a no-bounds-checking language. `assert_fatal(cond, msg)` panics iff
+  `cond` is false. Portable: `sys_exit` dispatches per target (Linux/macOS/aarch64
+  via `linux_common`, SYS_EXIT 60/93; agnos 0; Windows `ExitProcess`) — verified by
+  cross-compiling a forced-reachable panic probe on all 5 target ABIs. Required
+  adding `include "lib/syscalls.cyr"` to `assert.cyr` (it used raw `syscall(1,2,…)`
+  with no SYS_EXIT in scope; double-include-safe). New `tests/tcyr/assert_fatal.tcyr`
+  locks in the non-aborting paths + cross-target `sys_exit` resolution. Closes
+  `2026-06-22-stdlib-assert-no-fatal-panic.md` (filed by tarka 0.8.0, which had
+  hand-rolled an 8-line `guard()`). `assert::panic/1` + `assert::assert_fatal/2`
+  added to the api-surface snapshot.
+
+### Changed
+- **`lib/patra.cyr` fold 1.12.3 → 1.12.4** — single Windows syscall-ABI fix:
+  `_wal_gen_salts` drew CSPRNG salts via raw `syscall(SYS_GETRANDOM, …)`, which does
+  not link on `--win` (no raw getrandom syscall); now `#ifdef CYRIUS_TARGET_WIN →
+  sys_getrandom` (ProcessPrng), `#else` keeps the peer-supplied syscall. **No
+  public-surface change** (216 fns identical); Linux/macOS/aarch64/agnos behavior
+  byte-identical.
+- **`lib/sandhi.cyr` fold 1.6.8 → 1.6.12** — internal thread-safety + refactors,
+  **no public API change** (482 public fns identical; +7 private helpers): a per-call
+  request context replaces 4 racing module globals in the buffered HTTP client (thoth
+  concurrent workers); the server-TLS handshake migrated onto the backend-agnostic
+  `lib/tls.cyr` contract + a per-connection arena; two-socket mDNS QU `.local` resolver
+  (RFC 6762) + agnos-aware availability.
+- **`lib/bayan.cyr` fold 1.0.2 → 1.0.3** — JSON value + streaming parsers made
+  reentrant/thread-safe: the lexer cursor moved out of three process globals into a
+  per-call 40-byte parser-state struct (thoth parallel MCP parsing clobbered cursors).
+  **Non-breaking** — public parse entrypoints keep identical signatures; +5 public
+  reentrant fns (`bayan_json_v_parse_ctx`, `…_ctx_str`, `bayan_json_state_error`,
+  `…_pos`, `bayan_json_parse_state_size`); signature churn is confined to `_jp_*` /
+  `_js_*` internals no cyrius consumer references. All ~24 bayan-touching tcyr green
+  (per-file exit-code verified); bayan consumers `lib/tls_native.cyr` + `cyrsign`
+  intact. `cyrius.cyml` fold-comment bumped 1.0.2 → 1.0.3.
+
+### Docs
+- **`lib/fnptr.cyr` header — "Obtaining a function pointer" note added.** The file
+  documented the *calling* side (`fncall0..8`, full per-target ABI) exhaustively but
+  never how to *obtain* an `fp` — so a consumer who pins a toolchain snapshot (ships
+  `lib/` only, no `docs/` / `tests/`) hit a misleading `undefined variable` on a bare
+  `fn_name`, with nothing in reach pointing to `&`. Added the `var fp = &fn_name;`
+  idiom (+ `fncallN` / `callptr` v6.0.70+) at the exact place a consumer reaching for
+  `fncallN` is already looking. Comments-only → cycc byte-identical. Closes
+  `2026-06-23-bayan-fnptr-address-of-undiscoverable.md` (filed during bayan 1.0.3).
+
+### Housekeeping
+- Archived resolved issue filings to `issues/archived/`:
+  `2026-06-19-aarch64-tcyr-failures.md` (resolved in-slot at v6.2.29 — every claimed
+  fix premise-verified live this review), plus the two this release resolves
+  (`2026-06-22-stdlib-assert-no-fatal-panic.md`,
+  `2026-06-23-bayan-fnptr-address-of-undiscoverable.md`).
+
+### Deferred (pinned)
+- **Call-site arity check** (`2026-06-23-call-arity-no-check.md`, P2 silent-miscompile,
+  filed by tentib) — premise-confirmed (repro returns 30, no diagnostic) and triaged
+  **doable as a non-fatal warning** in the shared `PARSE_FNCALL`, but with carve-outs
+  the filing under-scoped (backward-refs only — forward refs have `pc=0` and false-fire
+  556× building cycc; enum variant constructors; user variadics need a new `GFVA` getter;
+  `syscall` is already a separate path) and **4 real latent arity bugs the probe surfaced**
+  that a hard error would break first (`lib/sigil.cyr:735 run_capture` 2-vs-5 [upstream
+  fix + refold], compiler-internal `parse_expr.cyr:1151 ESUBRSP` 2-vs-1,
+  `cyml.tcyr assert_eq`, `v5104_inference.tcyr str_builder_new`). **Deferred to its own
+  focused slot** (user 2026-06-23) — pinned in `roadmap.md`.
+
 ## [6.2.37] — 2026-06-22
 
 **v6.2.37 — `lib/agnosys.cyr` retired from the stdlib (continues the `lib/sys.cyr`

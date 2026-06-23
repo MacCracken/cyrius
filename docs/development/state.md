@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.37** (v6.2.x cycle — **Platform Expansion**; **`lib/agnosys.cyr` RETIRED from the stdlib** — continues the `lib/sys.cyr` carve. The latest agnos-filed issue (agnosys `security_*` fns ungated → `--agnos` hard-errors on `SYS_LANDLOCK_*`) premise-checked as **under-scoped** (8 consts / 11 fns hard-error, not 3) and the symptom of a **stale pre-decomposition 1.4.3 snapshot**: the real agnosys decomposed → **agnodrm 1.4.4** + folds (trust→sigil, security/mac/audit→kavach, pam→aegis, logging→sakshi, Linux-eccentric→agnodrm), and cyrius's only surviving role (uname/sysinfo) is already native in `lib/sys.cyr` (v6.1.28/v6.2.23). **Fix (user's call): deleted the 10,198-line module** (736 public fns) rather than gate/partial-drop. **lib-only — `src/` untouched, cycc self-hosts byte-identical; api-surface 5063→4327.** Consumer rewire (chakshu/mihi) FILED. See [roadmap_6.md](roadmap_6.md)) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.37 — lib-only release, `src/` untouched; only the version-string stamp differs from .36; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
+| **Version** | **6.2.38** (v6.2.x cycle — **Platform Expansion**; **stdlib fold refresh + fail-loud `panic`/`assert_fatal` + `&fn` doc note**. Packed lib+docs release: folds patra 1.12.3→1.12.4 (Win getrandom ABI), sandhi 1.6.8→1.6.12 (thread-safety/refactor), bayan 1.0.2→1.0.3 (reentrant JSON parsers) — all **non-breaking** (0 public-surface removals); + `panic(msg)`/`assert_fatal(cond,msg)` in `lib/assert.cyr` (tarka-filed, portable `sys_exit`); + `lib/fnptr.cyr` "obtaining a fn pointer" header note (bayan-filed). **lib/docs only — `src/` untouched → cycc byte-identical; api-surface 4327→4334 (+7).** Meatier P2 call-arity issue triaged doable-as-warning, **deferred to its own focused slot** (user) — pinned in [roadmap.md](roadmap.md). See CHANGELOG [6.2.38]) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.38 — lib/docs-only release, `src/` untouched; only the version-string stamp differs from .37; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
@@ -26,13 +26,37 @@
 | check.sh gates | **92/92 + the D7 boot gate** (+2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64, the .25-class gate) + `_fuzz_harness_gate` (cyrius fuzz → exit 0 + "0 failed"); both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
 | aarch64 native tcyr | **189 pass / 0 fail / 0 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job runs the FULL tcyr corpus on real arm64. It surfaced a stale-native-fork + 9-bug debt; **all fixed in-slot** (`2026-06-19-aarch64-tcyr-failures.md` RESOLVED), gate HARD + GREEN. `math_pack_integration` skip = x86-only f64_sin; pi-verified) |
 | sigil fold | **3.9.2** (@6.2.31 — luks raw `getrandom` syscall → `_sigil_random_fill` portable boundary so sigil/cyrsign cross-compile to PE; @6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack for the TLS arena/flat-RSS fix) |
-| stdlib fold | ~~agnosys~~ **RETIRED @.37** (the stale pre-decomposition 1.4.3 snapshot deleted — its surviving uname/sysinfo role is native in `lib/sys.cyr`; the rest decomposed → agnodrm/sigil/kavach/aegis/sakshi) · **sandhi 1.6.8** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.2** · ganita 1.0.1 · **patra 1.12.3** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
-| tests | **190** `.tcyr` (+`tls_native_entropy_vtable` @.28 — the D5 entropy-hook dispatch/short-fill/default; `naked_fn_attribute` updated @.28 to a real `asm{iretq}` ISR) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | **98** `lib/*.cyr` (−1 @.37 — `agnosys.cyr` retired) · 79 programs · api-surface **4327 fns** (−736 @.37 — the entire `agnosys::` surface removed with the module; was 5063 @.36) |
+| stdlib fold | ~~agnosys~~ **RETIRED @.37** (the stale pre-decomposition 1.4.3 snapshot deleted — its surviving uname/sysinfo role is native in `lib/sys.cyr`; the rest decomposed → agnodrm/sigil/kavach/aegis/sakshi) · **sandhi 1.6.12** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.3** · ganita 1.0.1 · **patra 1.12.4** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.38 — patra 1.12.3→1.12.4 (Win `_wal_gen_salts` getrandom ABI), sandhi 1.6.8→1.6.12 (per-call reqctx thread-safety + tls.cyr-contract server handshake + 2-socket mDNS), bayan 1.0.2→1.0.3 (reentrant JSON value+streaming parsers, +5 public `_ctx` fns) — all non-breaking; @.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
+| tests | **191** `.tcyr` (+`assert_fatal` @.38 — the non-aborting `assert_fatal(true)` paths + cross-target `sys_exit` resolution lock-in; +`tls_native_entropy_vtable` @.28) · 15 `.bcyr` · 5 `.fcyr` |
+| stdlib | **98** `lib/*.cyr` (−1 @.37 — `agnosys.cyr` retired) · 79 programs · api-surface **4334 fns** (+7 @.38 — `assert::panic/1` + `assert::assert_fatal/2` + bayan's 5 reentrant `bayan_json_*_ctx`/state fns; non-breaking, 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **9/9** (+probe **1g** @.36 — `io.cyr` file-lock helpers via `xflock`: asserts all five *defined* + `SYS_FLOCK` #59 emitted, FAILs on the silent-undefined→`ud2` regression a plain compile-check misses; negative-tested; +probe **1f** @.35 — `sync.cyr` no-op mutex + `sys_access` stub; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **516 ms** @ 6.2.36 (vs .35's 524 ms — measurement jitter: cycc is byte-identical, lib-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
+| bench (every-release gate) | self_compile **508 ms** @ 6.2.38 (vs .37's 549 / .36's 516 — measurement jitter: cycc is byte-identical, a lib/docs-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
 
+> **Handoff (2026-06-23):** **v6.2.38 CUT — stdlib fold refresh + fail-loud
+> `panic`/`assert_fatal` + `&fn` doc note.** A packed lib+docs release assembled
+> from a review of the latest issue queue (11-agent premise-check workflow). **Folds
+> (all non-breaking, 0 public-surface removals):** patra 1.12.3→1.12.4 (`_wal_gen_salts`
+> Win `getrandom` ABI `#ifdef`), sandhi 1.6.8→1.6.12 (per-call reqctx thread-safety +
+> `tls.cyr`-contract server handshake + 2-socket mDNS QU), bayan 1.0.2→1.0.3 (reentrant
+> JSON value+streaming parsers via per-call state struct; +5 public `_ctx`/state fns).
+> **New primitives:** `panic(msg)` + `assert_fatal(cond,msg)` in `lib/assert.cyr`
+> (tarka-filed `2026-06-22-stdlib-assert-no-fatal-panic.md`; portable `sys_exit` —
+> added `include "lib/syscalls.cyr"`; new `tests/tcyr/assert_fatal.tcyr`). **Doc:**
+> `lib/fnptr.cyr` "obtaining a fn pointer" (`&fn`) header note (bayan-filed
+> `2026-06-23-bayan-fnptr-address-of-undiscoverable.md`). **VERIFIED:** lib/docs-only
+> (`src/` untouched) → cycc self-hosts byte-identical **1,071,936 B** + matches tracked
+> build/cycc · check.sh **92/92** + boot gate (twice — pre-bump + post-bump) · tcyr
+> **191/0** + per-file exit-code loop ALL-ZERO (bayan JSON consumers intact) ·
+> api-surface 4327→**4334** (+7, non-breaking, snapshot regenerated) · cross-OS **ecb +
+> cass SELFHOST_OK** · `panic`/`sys_exit` cross-compiles on all 5 target ABIs
+> (Linux/macOS/Win/agnos/aarch64) · self_compile **508 ms** (jitter; cycc byte-identical).
+> **Resolved issues archived** (aarch64-tcyr [.29], panic, fnptr-doc). **DEFERRED
+> (user's call): P2 call-arity check → its own focused slot** (warning-first +
+> carve-outs + 4 found latent bugs incl. an upstream sigil `run_capture` 2-vs-5 and a
+> compiler-internal `ESUBRSP` 2-vs-1) — pinned in `roadmap.md` §"Next items". User
+> pushes/tags after CI.
+>
 > **Handoff (2026-06-22):** **v6.2.37 CUT — `lib/agnosys.cyr` RETIRED from the
 > stdlib (continues the `lib/sys.cyr` carve).** Reviewed the latest agnos-filed
 > issue (`2026-06-22-agnosys-stdlib-security-fns-not-agnos-gated.md`: agnosys's

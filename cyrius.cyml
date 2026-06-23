@@ -59,7 +59,7 @@ stdlib = [
 # v6.1.25 bayan carve (sandhi-pattern): json / toml / cyml / csv / base64 /
 # bigint / u128 were carved into the **bayan** sibling repo, renamed to the
 # canonical `bayan_*` API, and folded byte-identical into `lib/bayan.cyr`
-# (currently bayan 1.0.2's `cyrius distlib` output; originally carved at 1.0.0).
+# (currently bayan 1.0.3's `cyrius distlib` output; originally carved at 1.0.0).
 # `json` + `bigint` were
 # REMOVED from the auto-prepend list above — like every other fold, bayan is
 # opt-in via explicit `include "lib/bayan.cyr"` (auto-prepend would push the

@@ -1,0 +1,27 @@
+# assert_fatal / panic — fail-loud runtime guard primitives (v6.2.38).
+# Issue: 2026-06-22-stdlib-assert-no-fatal-panic.md (filed by tarka 0.8.0).
+#
+# panic(msg) prints to stderr then sys_exit(1) (ABORTS); assert_fatal(cond,
+# msg) panics iff cond is false. The aborting path exits the process, so it
+# cannot be asserted in-process — this test covers the NON-aborting paths and,
+# critically, locks in that both primitives COMPILE and link with `sys_exit`
+# resolved on EVERY target (macos routes via linux_common; Windows =
+# ExitProcess). The cross-arch tcyr runs then catch a per-target SYS_EXIT
+# regression that a single-host build would miss.
+include "lib/assert.cyr"
+
+test_group("assert_fatal / panic");
+
+# assert_fatal with a TRUE condition must NOT abort — returns 0 and continues.
+var a = assert_fatal(1, "assert_fatal(true) does not abort");
+assert_eq(a, 0, "assert_fatal(true) returns 0");
+
+# A (true) comparison condition passes through the same way.
+var cond = 2 > 1;
+var b = assert_fatal(cond, "assert_fatal(2>1) does not abort");
+assert_eq(b, 0, "assert_fatal(2>1) returns 0");
+
+# Reaching here at all proves execution continued past both guards.
+assert(1 == 1, "execution continued past the assert_fatal guards");
+
+var r = assert_summary();

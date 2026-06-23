@@ -51,6 +51,7 @@ args_win::args_init/0
 args_win::argv/1
 assert::assert/2
 assert::assert_eq/3
+assert::assert_fatal/2
 assert::assert_gt/3
 assert::assert_gte/3
 assert::assert_lt/3
@@ -60,6 +61,7 @@ assert::assert_nonnull/2
 assert::assert_streq/3
 assert::assert_summary/0
 assert::fail_after_n_allocs/1
+assert::panic/1
 assert::test_group/1
 async::async_await_readable/1
 async::async_new/0
@@ -128,6 +130,9 @@ bayan::bayan_json_pair_new_a/3
 bayan::bayan_json_parse/1
 bayan::bayan_json_parse_file/1
 bayan::bayan_json_parse_file_r/1
+bayan::bayan_json_parse_state_size/0
+bayan::bayan_json_state_error/1
+bayan::bayan_json_state_error_pos/1
 bayan::bayan_json_stream_handler_new/1
 bayan::bayan_json_stream_on/3
 bayan::bayan_json_stream_parse/3
@@ -166,6 +171,8 @@ bayan::bayan_json_v_obj_new_a/1
 bayan::bayan_json_v_obj_set/3
 bayan::bayan_json_v_obj_val/2
 bayan::bayan_json_v_parse/1
+bayan::bayan_json_v_parse_ctx/3
+bayan::bayan_json_v_parse_ctx_str/2
 bayan::bayan_json_v_parse_str/2
 bayan::bayan_json_v_pointer/2
 bayan::bayan_json_v_pointer_cstr/3
