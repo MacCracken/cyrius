@@ -8,14 +8,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.2.39] — 2026-06-23
 
-**v6.2.39 — agnos syscall-peer wrappers (net_config #61 + signal constants) + the
-fail-OPEN safety hole the sweep surfaced.** A bottom-priority agnos-portability batch,
-kernel-verified against `agnos/kernel/core/syscall.cyr` (the number authority). **lib +
-gate only — `src/` untouched → cycc byte-identical 1,071,936 B; self-hosts
-byte-identical; check.sh 92/92 + boot gate; agnos gate 9/9 (+probe 1h); tcyr 191/0;
-api-surface 4334 → 4342 (+8, non-breaking); cross-OS ecb + cass `SELFHOST_OK`; bench
-self_compile 501 ms (jitter — cycc byte-identical).** Reviewed via a 4-agent
-kernel-verified premise-check workflow.
+**v6.2.39 — agnos syscall-peer wrappers (net_config #61 + winsize #60 + signal
+constants) + the fail-OPEN safety hole the sweep surfaced.** A bottom-priority
+agnos-portability batch, kernel-verified against `agnos/kernel/core/syscall.cyr` (the
+number authority). **lib + gate only — `src/` untouched → cycc byte-identical
+1,071,936 B; self-hosts byte-identical; check.sh 92/92 + boot gate; agnos gate 9/9
+(+probe 1h); tcyr 191/0; api-surface 4334 → 4343 (+9, non-breaking); cross-OS ecb + cass
+`SELFHOST_OK`; bench self_compile 500 ms (jitter — cycc byte-identical).** Reviewed via a
+4-agent kernel-verified premise-check workflow.
 
 ### Fixed
 - **Core safety checks fail-OPEN on agnos — guarded (`result.cyr`, `bounds.cyr`,
@@ -41,6 +41,15 @@ kernel-verified premise-check workflow.
   (all on raw `syscall(61,3)` today) to drop the bare number — **on Linux #61 is `wait4`**,
   so the wrapper contains the overlap hazard in the agnos-only peer. Closes
   `2026-06-23-agnos-net-config-syscall-wrapper.md` (filed by the agnos net-tools cohort).
+- **`winsize` #60 wrapper (`SYS_WINSIZE=60` + `sys_winsize()`).** Kernel-verified
+  ((cols<<16)|rows / -1, no args). Consumed by agnsh / darshana tty sizing / kii / the
+  desktop terminal grid. **#60 == the Linux exit number**, which previously made the
+  `_agnos_emit_gate` (`programs/checks/ts.cyr`) false-positive (it byte-scans agnos
+  binaries for `mov eax,60` as a leaked-Linux-exit signature). **Fixed the gate, not the
+  feature:** the emit gate's probe (`programs/agnos_emit_probe.cyr`) is now
+  peer-independent (raw `syscall`, no `include "lib/syscalls.cyr"`), so the compiler's
+  EEXIT is the *only* possible source of `mov eax,60` and the scan stays precise while
+  agnos legitimately uses #60. (winsize emit is asserted present by the wrapper gate 1h.)
 - **Signal-number constants + sigset wrappers (agnos peer).** `SIGHUP=1…SIGPWR=30`,
   `SIG_BLOCK/UNBLOCK/SETMASK`, `SFD_NONBLOCK/CLOEXEC`, and `sigset_new/add/has`. The
   *mechanism* (`sys_kill`/`sys_sigprocmask`/`sys_signalfd`) was already present; agnos
@@ -53,17 +62,16 @@ kernel-verified premise-check workflow.
   would silently desync signalfd matching. Resolves
   `agnos/.../2026-06-23-cyrius-agnos-peer-missing-signal-number-constants.md`.
 - **New agnos gate probe (1h)** in `scripts/agnos-crossbuild-gate.sh` — asserts the signal
-  constants + sigset wrappers + net_config #61 are *defined* (not ud2 stubs) and emit the
-  correct number (61=0x3d), per the DEFINED-not-just-compiles discipline.
+  constants + sigset wrappers + net_config #61 + winsize #60 are *defined* (not ud2 stubs)
+  and emit the correct numbers (61=0x3d, 60=0x3c), per the DEFINED-not-just-compiles
+  discipline. `_agnos_emit_gate` reworked to a peer-independent probe (see winsize above).
 
 ### Deferred (filed)
 - **`2026-06-23-agnos-portability-sweep-residuals.md`** — the sweep's lower-priority finds:
   (1) `sakshi.cyr` clock calibration mis-dispatches on agnos (`CYRIUS_ARCH_X86`
   predefined-on-agnos trap; reachable, degraded-not-crash) → **fold fix in `~/Repos/sakshi`**;
   (2) latent landmines not reachable on agnos (`mmap`/`dynlib`/`fdlopen`/`yantra`) → defensive
-  `#ifndef AGNOS` gates; (3) **winsize #60 deferred** — #60 collides with the Linux-exit
-  signature the `_agnos_emit_gate` scans for, and winsize has no cyrius consumer; add it only
-  with a gate fix.
+  `#ifndef AGNOS` gates.
 
 ### Housekeeping
 - Archived `2026-06-23-agnos-net-config-syscall-wrapper.md` (resolved this release).

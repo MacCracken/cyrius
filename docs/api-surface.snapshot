@@ -3873,6 +3873,7 @@ syscalls_x86_64_agnos::sys_umount/0
 syscalls_x86_64_agnos::sys_unlink/2
 syscalls_x86_64_agnos::sys_uptime_ms/0
 syscalls_x86_64_agnos::sys_waitpid/1
+syscalls_x86_64_agnos::sys_winsize/0
 syscalls_x86_64_agnos::sys_write/3
 syscalls_x86_64_linux::epoll_event_new/2
 syscalls_x86_64_linux::err_code/1

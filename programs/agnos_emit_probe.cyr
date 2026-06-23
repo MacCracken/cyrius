@@ -1,16 +1,21 @@
 # agnos_emit_probe — exercises the AGNOS ring-3 ABI so `_agnos_emit_gate`
 # (programs/checks/ts.cyr) can assert that `CYRIUS_TARGET_AGNOS=1` emits a valid
-# agnos binary: a `write`(syscall 1) to stdout + a non-zero exit, so the gate
-# verifies the agnos exit epilogue (`syscall(0)`, NOT Linux `60`/`0xB8 0x3C`)
-# and a valid ELF64 at entry ≥ 0x200000 (agnos's user-range floor).
-# Mirrors programs/efi_probe.cyr's role for the EFI gate. See CHANGELOG [6.0.49].
+# agnos binary: a `write`(syscall 1) to stdout + a non-zero exit via the
+# COMPILER's exit emission (EEXIT), so the gate verifies the agnos exit epilogue
+# is `syscall(0)`, NOT Linux `60`/`0xB8 0x3C`, and a valid ELF64 at entry ≥
+# 0x200000 (agnos's user-range floor). See CHANGELOG [6.0.49].
 #
-# Kept MINIMAL on purpose: the no-Linux-60 check byte-scans the whole binary, so
-# a larger probe risks a coincidental `0xB8 0x3C 00 00 00` match. The io.cyr x*
-# substrate is exercised by its own `agnos_xsys_probe.cyr` + `_agnos_xsys_gate`.
-include "lib/syscalls.cyr"
-
-fn main() {
-    sys_write(STDOUT_FD, "agnos-ok\n", 9);
-    return 42;
+# PEER-INDEPENDENT BY DESIGN — do NOT `include "lib/syscalls.cyr"` here.
+# This gate tests the COMPILER's exit emission, not the syscall peer. The
+# no-Linux-60 check byte-scans the whole binary for `mov eax,60` (`B8 3C ...`),
+# and **agnos legitimately has syscall #60 = `winsize`** (a real wrapper in the
+# peer: `sys_winsize`). Pulling the peer in would put a legitimate `mov eax,60`
+# (winsize) in the binary and false-positive this gate — which is exactly the
+# v6.2.39 bug. Using only raw `syscall(...)` here keeps the EEXIT the sole
+# possible source of `mov eax,60`, so the scan is precise. Peer wrapper emit
+# (winsize #60 / net_config #61 / signals) is covered by
+# scripts/agnos-crossbuild-gate.sh probe 1h.
+fn main(): i64 {
+    syscall(1, 1, "agnos-ok\n", 9);   # raw write(stdout) — agnos #1, no peer include
+    return 42;                         # non-zero exit via the compiler's agnos EEXIT (syscall 0)
 }

@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.39** (v6.2.x cycle — **Platform Expansion**; **agnos syscall-peer wrappers + fail-OPEN safety fix**. Bottom-priority agnos batch, kernel-verified vs `agnos/kernel/core/syscall.cyr`: net_config #61 (`sys_net_config` + 4 getters; unblocks taar/yo/whirl/dig) + signal constants/sigset wrappers (`SIGHUP…SIGPWR`, `1<<sig` agnos convention; unblocks thoth/t-ron `--agnos` link). **Plus the sweep's real find:** `result`/`bounds`/`overflow` aborted via unguarded `syscall(60)` → no-op'd on agnos → core safety checks silently **fail-OPEN**; now target-aware guarded. **lib + gate only — `src/` untouched → cycc byte-identical; api-surface 4334→4342 (+8, non-breaking).** winsize #60 deferred (collides with the Linux-exit gate signature; no consumer) — residuals filed. See CHANGELOG [6.2.39]) |
+| **Version** | **6.2.39** (v6.2.x cycle — **Platform Expansion**; **agnos syscall-peer wrappers + fail-OPEN safety fix**. Bottom-priority agnos batch, kernel-verified vs `agnos/kernel/core/syscall.cyr`: net_config #61 (`sys_net_config` + 4 getters; unblocks taar/yo/whirl/dig) + **winsize #60** (`sys_winsize`; agnsh/darshana/kii/desktop) + signal constants/sigset wrappers (`SIGHUP…SIGPWR`, `1<<sig` agnos convention; unblocks thoth/t-ron `--agnos` link). **Plus the sweep's real find:** `result`/`bounds`/`overflow` aborted via unguarded `syscall(60)` → no-op'd on agnos → core safety checks silently **fail-OPEN**; now target-aware guarded. **Gate fix (not feature drop):** #60==Linux-exit number false-positived `_agnos_emit_gate` — fixed by making its emit probe peer-independent (no syscall-peer include) so the compiler EEXIT is the sole `mov eax,60` source. **lib + gate only — `src/` untouched → cycc byte-identical; api-surface 4334→4343 (+9, non-breaking).** See CHANGELOG [6.2.39]) |
 | **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.39 — lib/gate-only release, `src/` untouched; only the version-string stamp differs from .38; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
@@ -28,9 +28,9 @@
 | sigil fold | **3.9.2** (@6.2.31 — luks raw `getrandom` syscall → `_sigil_random_fill` portable boundary so sigil/cyrsign cross-compile to PE; @6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack for the TLS arena/flat-RSS fix) |
 | stdlib fold | ~~agnosys~~ **RETIRED @.37** (the stale pre-decomposition 1.4.3 snapshot deleted — its surviving uname/sysinfo role is native in `lib/sys.cyr`; the rest decomposed → agnodrm/sigil/kavach/aegis/sakshi) · **sandhi 1.6.12** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.3** · ganita 1.0.1 · **patra 1.12.4** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.38 — patra 1.12.3→1.12.4 (Win `_wal_gen_salts` getrandom ABI), sandhi 1.6.8→1.6.12 (per-call reqctx thread-safety + tls.cyr-contract server handshake + 2-socket mDNS), bayan 1.0.2→1.0.3 (reentrant JSON value+streaming parsers, +5 public `_ctx` fns) — all non-breaking; @.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
 | tests | **191** `.tcyr` (+`assert_fatal` @.38 — the non-aborting `assert_fatal(true)` paths + cross-target `sys_exit` resolution lock-in; +`tls_native_entropy_vtable` @.28) · 15 `.bcyr` · 5 `.fcyr` |
-| stdlib | **98** `lib/*.cyr` (−1 @.37 — `agnosys.cyr` retired) · 79 programs · api-surface **4342 fns** (+8 @.39 — agnos peer `sigset_new/add/has` + `sys_net_config` + 4 net getters; +7 @.38 — `panic`/`assert_fatal` + bayan reentrant; all non-breaking, 0 removals) |
+| stdlib | **98** `lib/*.cyr` (−1 @.37 — `agnosys.cyr` retired) · 79 programs · api-surface **4343 fns** (+9 @.39 — agnos peer `sigset_new/add/has` + `sys_net_config` + 4 net getters + `sys_winsize`; +7 @.38 — `panic`/`assert_fatal` + bayan reentrant; all non-breaking, 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
-| agnos gate | **9/9** (+probe **1h** @.39 — signal constants + sigset wrappers (`1<<sig`) + `net_config` #61: asserts all *defined* (not ud2 stubs) + `SYS_NET_CONFIG==61`/`0x3d` emitted + `SIGCHLD==17`; +probe **1g** @.36 — `io.cyr` file-lock helpers via `xflock` (`SYS_FLOCK` #59); +probe **1f** @.35 — `sync.cyr` no-op mutex + `sys_access` stub; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
+| agnos gate | **9/9** (+probe **1h** @.39 — signal constants + sigset wrappers (`1<<sig`) + `net_config` #61 + `winsize` #60: asserts all *defined* (not ud2 stubs) + `SYS_NET_CONFIG==61`/`0x3d` + `SYS_WINSIZE==60`/`0x3c` emitted + `SIGCHLD==17`; `_agnos_emit_gate` reworked peer-independent so #60 doesn't false-positive; +probe **1g** @.36 — `io.cyr` file-lock helpers via `xflock` (`SYS_FLOCK` #59); +probe **1f** @.35 — `sync.cyr` no-op mutex + `sys_access` stub; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
 | bench (every-release gate) | self_compile **501 ms** @ 6.2.39 (vs .38's 508 / .37's 549 — measurement jitter: cycc is byte-identical, a lib/gate-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
 
 > **Handoff (2026-06-23):** **v6.2.39 CUT — agnos syscall-peer wrappers + the
@@ -49,16 +49,18 @@
 > bounds→1). New agnos gate **probe 1h** (DEFINED-not-stub + 0x3d). **VERIFIED:** lib +
 > gate only (`src/` untouched) → cycc byte-identical **1,071,936 B** + matches tracked
 > build/cycc · check.sh **92/92** + boot gate (pre+post bump) · agnos gate **9/9** ·
-> tcyr **191/0** · api-surface 4334→**4342** (+8, non-breaking, snapshot regenerated) ·
+> tcyr **191/0** · api-surface 4334→**4343** (+9, non-breaking, snapshot regenerated) ·
 > cross-OS **ecb + cass SELFHOST_OK** · result/bounds/overflow cross-compile
-> macOS/Win/agnos · self_compile **501 ms** (jitter). **winsize #60 DEFERRED** — #60
-> collides with the Linux-exit signature `_agnos_emit_gate` scans for, and it has no
-> cyrius consumer (note left in the peer). **Residuals FILED**
+> macOS/Win/agnos · self_compile **500 ms** (jitter). **winsize #60 INCLUDED**
+> (`sys_winsize` — agnsh/darshana/kii/desktop). #60 == the Linux exit number, which
+> false-positived `_agnos_emit_gate` — **fixed the GATE, not the feature:** the emit
+> probe (`programs/agnos_emit_probe.cyr`) is now peer-independent (no syscall-peer
+> include, raw `syscall`), so the compiler EEXIT is the sole `mov eax,60` source and the
+> leaked-exit scan stays precise while agnos uses #60. **Residuals FILED**
 > (`2026-06-23-agnos-portability-sweep-residuals.md`): sakshi clock-calibration
 > (`CYRIUS_ARCH_X86`-on-agnos trap → fold fix) + non-reachable landmines
-> (mmap/dynlib/fdlopen/yantra → defensive `#ifndef AGNOS` gates) + winsize-needs-gate-fix.
-> **call-arity (P2) still pinned** to its own focused slot (roadmap §"Next items").
-> User pushes/tags after CI.
+> (mmap/dynlib/fdlopen/yantra → defensive `#ifndef AGNOS` gates). **call-arity (P2)
+> still pinned** to its own focused slot (roadmap §"Next items"). User pushes/tags after CI.
 >
 > **Handoff (2026-06-23):** **v6.2.38 CUT — stdlib fold refresh + fail-loud
 > `panic`/`assert_fatal` + `&fn` doc note.** A packed lib+docs release assembled

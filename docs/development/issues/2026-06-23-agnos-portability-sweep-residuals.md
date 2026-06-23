@@ -45,15 +45,11 @@ them (agnos is static-only / these are host dynamic-linking / desktop modules):
 (fail-closed on agnos) so an accidental agnos include can't mis-dispatch. Defense-in-depth,
 not urgent — no agnos program reaches these today.
 
-## 3. winsize #60 — deferred (needs a gate fix first) — SPECULATIVE
+## (resolved in .39) winsize #60
 
-agnos kernel #60 = `winsize()` ((cols<<16)|rows). Deliberately NOT wrapped in .39:
-**#60 is also the Linux exit number**, and `_agnos_emit_gate` (`programs/checks/ts.cyr`)
-scans agnos binaries for `mov eax,60` (`B8 3C 00 00 00`) as a leaked-Linux-exit
-signature. That gate is reliable **only while no agnos code emits syscall(60)** — adding
-`sys_winsize` permanently muddies leaked-exit detection. No cyrius consumer needs it
-(`darshana` `tty_winsize` is Linux-ioctl-only, no agnos branch). **Add `SYS_WINSIZE=60` +
-`sys_winsize` ONLY alongside a gate fix** that distinguishes a legitimate winsize#60 call
-from a leaked exit epilogue (e.g. verify the exit path specifically rather than scanning
-the whole binary for `mov eax,60`). See the NOTE left in `lib/syscalls_x86_64_agnos.cyr`
-after `SYS_FLOCK`.
+winsize #60 **shipped in v6.2.39** (`SYS_WINSIZE=60` + `sys_winsize`) — consumed by
+agnsh / darshana tty sizing / kii / the desktop. The `_agnos_emit_gate` collision (#60
+== the Linux exit number) was fixed by making the emit gate's probe peer-independent
+(`programs/agnos_emit_probe.cyr` no longer includes the syscall peer), so the compiler's
+EEXIT is the sole `mov eax,60` source and the scan stays precise while agnos uses #60.
+No longer a residual.

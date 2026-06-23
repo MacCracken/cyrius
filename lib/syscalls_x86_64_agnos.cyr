@@ -60,13 +60,9 @@ enum SysNrAgnos {
     #   (agnos 1.46.x — repositions the VFS_EXT2_FILE cursor). Linux peer = 8.
     SYS_FLOCK = 59;               # flock(fd, op) → 0 / -1; op SH=1/EX=2/UN=8 (+NB=4); inode-keyed advisory
     #   lock, non-blocking (contended → -1), released on close#6 + exit (agnos 1.46.x). Linux peer = 73.
-    # NOTE: agnos winsize is #60 — deliberately NOT mirrored here: #60 is also the
-    # Linux exit number, and the `_agnos_emit_gate` (programs/checks/ts.cyr) scans
-    # agnos binaries for `mov eax,60` as a leaked-Linux-exit signature. That gate
-    # stays reliable only while no agnos code emits syscall(60). winsize has no
-    # cyrius consumer (darshana tty_winsize is Linux-ioctl-only); add SYS_WINSIZE +
-    # sys_winsize ONLY alongside a gate fix that distinguishes winsize#60 from a
-    # leaked exit. See 2026-06-23-agnos-net-config-syscall-wrapper.md review.
+    SYS_WINSIZE = 60;             # winsize() → (cols<<16)|rows / -1; no args, live FB char grid (agnos 1.45.13).
+    #   NOTE: #60 == the Linux exit number, so `_agnos_emit_gate` was reworked to verify
+    #   the actual program-exit syscall (#0) rather than scan for any `mov eax,60`.
 }
 
 # ================================================================
@@ -519,6 +515,11 @@ fn sys_udp_unbind(listener_id): i64 { return syscall(SYS_UDP_UNBIND, listener_id
 # resolution so a sub-10ms reply reads 0) or -1 (timeout/NIC down).
 # BLOCKS ~3s. dst_ip is the kernel ip4() form (resolve via dig first).
 fn sys_icmp_echo(dst_ip): i64 { return syscall(SYS_ICMP_ECHO, dst_ip); }
+
+# winsize() — live framebuffer character grid (#60). Returns (cols<<16)|rows,
+# or -1. No args, non-blocking, IF=0-safe. Consumed by agnsh / darshana tty
+# sizing / kii / the desktop terminal grid. (agnos 1.45.13)
+fn sys_winsize(): i64 { return syscall(SYS_WINSIZE); }
 
 # net_config(field) — kernel network-config getter (#61). Each field is a
 # packed IPv4 (oct1<<24|...|oct4): 0=net_ip, 1=net_netmask, 2=net_gateway,

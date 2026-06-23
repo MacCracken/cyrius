@@ -30,6 +30,15 @@ fn _agnos_emit_gate(): i64 {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         _p(": agnos probe entry "); print_num(entry); println(" < 0x200000 (agnos user-range floor)"); _check(label, 1); return 1;
     }
+    # Scan for a leaked Linux exit (`mov eax,60` = B8 3C 00 00 00) anywhere in the
+    # binary. PRECISE only because agnos_emit_probe.cyr is peer-independent (no
+    # `include "lib/syscalls.cyr"`): agnos syscall #60 is a LEGITIMATE syscall
+    # (`winsize`, wrapped by sys_winsize in the peer), so a peer-pulling binary
+    # would carry a `mov eax,60` that is winsize, NOT a leaked exit. Keeping the
+    # probe peer-free makes the compiler's EEXIT the sole possible source, so
+    # `mov eax,60` here ⇒ the agnos exit regressed to Linux syscall(60). (v6.2.39 —
+    # this gate was false-positiving on the winsize#60 wrapper; fixed by decoupling
+    # the emit probe from the peer, not by dropping winsize.)
     var i = 0;
     var found_linux_exit = 0;
     while (i < n - 4) {
