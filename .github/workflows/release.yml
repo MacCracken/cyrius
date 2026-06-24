@@ -134,6 +134,13 @@ jobs:
           cp scripts/ci.sh "$STAGE/bin/" 2>/dev/null || true
           chmod +x "$STAGE/bin"/*
 
+          # v6.2.40: ship the native scaffolder's templates so `cyrius init`
+          # / `cyrius port` (the cyrius-init binary, staged via the bins loop)
+          # work from a prebuilt tarball — install.sh copies them to
+          # versions/<v>/programs/, where the binary resolves them.
+          mkdir -p "$STAGE/programs"
+          cp -r programs/cyrius-init-templates "$STAGE/programs/"
+
           sh scripts/release-lib.sh "$STAGE/lib"
           cp VERSION LICENSE "$STAGE/"
           cp scripts/install.sh "$STAGE/"
@@ -198,9 +205,17 @@ jobs:
           file "$STAGE/bin/cyrsign" | grep -q "ARM aarch64" || { echo "ERROR: cyrsign not aarch64"; file "$STAGE/bin/cyrsign"; exit 1; }
           # Build cyrius tool for aarch64 tarball (x86 binary — runs on host for cross builds)
           if [ -f "build/cyrius" ]; then cp build/cyrius "$STAGE/bin/"; fi
-          cp scripts/cyrius-init.sh "$STAGE/bin/" 2>/dev/null || true
+          # v6.2.40: native scaffolder, cross-built for aarch64 (matches
+          # cycc/cyrsign in this tarball). Replaces the retired
+          # cyrius-init.sh shim. Fail loud if it isn't a real aarch64 ELF.
+          cat programs/cyrius-init.cyr | ./build/cycc_aarch64 > "$STAGE/bin/cyrius-init"
+          file "$STAGE/bin/cyrius-init" | grep -q "ARM aarch64" || { echo "ERROR: cyrius-init not aarch64"; file "$STAGE/bin/cyrius-init"; exit 1; }
           cp scripts/cyriusly "$STAGE/bin/"
           chmod +x "$STAGE/bin"/*
+
+          # Native scaffolder templates (see x86 job).
+          mkdir -p "$STAGE/programs"
+          cp -r programs/cyrius-init-templates "$STAGE/programs/"
 
           sh scripts/release-lib.sh "$STAGE/lib"
           cp VERSION LICENSE "$STAGE/"
@@ -235,7 +250,7 @@ jobs:
           # Instead, compile key tools for macOS
           # cyrsign included so install/upgrade can verify Ed25519 release
           # signatures on x86_64-macOS too (CVE-13, v6.2.31).
-          for tool in cyrfmt cyrlint cyrdoc cyrsign; do
+          for tool in cyrfmt cyrlint cyrdoc cyrsign cyrius-init; do
             if [ -f "programs/${tool}.cyr" ]; then
               cat programs/${tool}.cyr | CYRIUS_MACHO=1 /tmp/cc5_fresh > ./build/${tool}_macho 2>/dev/null
               echo "${tool}_macho: $(wc -c < ./build/${tool}_macho) bytes"
@@ -270,6 +285,11 @@ jobs:
           # Version manager
           cp scripts/cyriusly "$STAGE/bin/"
           chmod +x "$STAGE/bin/cyriusly"
+
+          # v6.2.40: native scaffolder templates (cyrius-init_macho staged
+          # above) — so `cyrius init` / `cyrius port` work on macOS x86.
+          mkdir -p "$STAGE/programs"
+          cp -r programs/cyrius-init-templates "$STAGE/programs/"
 
           # Include macOS-specific stdlib
           sh scripts/release-lib.sh "$STAGE/lib"

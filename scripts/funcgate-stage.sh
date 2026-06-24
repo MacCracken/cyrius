@@ -23,9 +23,16 @@ cp "$CYCC"   "$H/versions/$V/bin/cycc"
 cp "$CYRIUS" "$H/versions/$V/bin/cyrius"
 [ -f scripts/cyriusly ] && cp scripts/cyriusly "$H/versions/$V/bin/" || true
 
-# Helper scripts the wrapper shells out to (cyrius-init.sh for `init`, etc.).
+# v6.2.40: `cyrius init` / `cyrius port` are the native cyrius-init binary
+# (no bash shims). Build it with the staged cycc so the functional gate
+# exercises the shipped scaffolder, not a stale dev copy. Fail loud — a
+# missing scaffolder must red the gate, not silently skip (the macOS-rot
+# placebo lesson).
+cat programs/cyrius-init.cyr | "$CYCC" > "$H/versions/$V/bin/cyrius-init"
+
+# Remaining helper scripts the wrapper still shells out to.
 # Same lookup as install.sh: scripts/shims/ first, then flat scripts/.
-for s in cyrius-init.sh cyrius-port.sh cyrius-repl.sh cyrius-watch.sh cyrius-prompt-info; do
+for s in cyrius-repl.sh cyrius-watch.sh cyrius-prompt-info; do
     if   [ -f "scripts/shims/$s" ]; then cp "scripts/shims/$s" "$H/versions/$V/bin/"
     elif [ -f "scripts/$s" ];       then cp "scripts/$s"       "$H/versions/$V/bin/"
     fi

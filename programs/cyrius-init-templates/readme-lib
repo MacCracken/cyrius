@@ -1,0 +1,17 @@
+# {PROJ}
+
+Library written in [Cyrius](https://github.com/MacCracken/cyrius).
+Re-exported as `dist/{PROJ}.cyr` via `cyrius distlib`.
+
+## Build
+
+```sh
+cyrius deps                                              # resolve stdlib deps
+cyrius build programs/smoke.cyr build/{PROJ}-smoke         # compile-link smoke
+cyrius distlib                                           # produce dist/{PROJ}.cyr
+cyrius test                                              # run tests/*.tcyr
+```
+
+## License
+
+GPL-3.0-only

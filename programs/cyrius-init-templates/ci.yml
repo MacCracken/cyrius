@@ -16,7 +16,7 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned — CVE-21)
 
       - name: Install Cyrius toolchain
         # The cyrius.cyml [package].cyrius pin is the single source of
@@ -39,7 +39,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p build
-          cyrius build src/main.cyr build/${{ github.event.repository.name }}
+          cyrius build {CI_SRC} build/{CI_OUT}
 
       - name: Test
         # v5.6.28: bare `cyrius test` picks up the [build].test entry

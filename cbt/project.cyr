@@ -1,52 +1,45 @@
 # ================================================================
-# Project commands
+# Project commands — native scaffolder dispatch
 # ================================================================
+#
+# v6.2.40: the bash shims (scripts/shims/cyrius-init.sh,
+# cyrius-port.sh) are DELETED. `cyrius init` and `cyrius port` are
+# now served ENTIRELY by the native scaffolder binary
+# programs/cyrius-init.cyr (built as build/cyrius-init →
+# ~/.cyrius/bin/cyrius-init). There is no fallback path. Port mode is
+# selected by prepending the internal `--__mode=port` sentinel; both
+# modes share the same binary + template tree. The full flag tail is
+# forwarded verbatim via run_tool_argvtail (run_tool's 3-arg cap used
+# to silently drop flags). See programs/cyrius-init.cyr.
 
-fn cmd_init(name): i64 {
-    # v5.9.28 part 1: try cyrius-init binary first (greenfield
-    # --bin shape only). Bash fallback handles --lib / bare /
-    # in-place / flag matrix until v5.9.29 lands the rest.
-    # Binary signals fall-through with exit code 2 (deferred-
-    # feature use), 0 = success, 1 = real failure.
-    var bin = "./build/cyrius-init";
-    if (file_exists(bin) == 0) { bin = make_path(_home, "bin/cyrius-init"); }
-    if (file_exists(bin) == 1) {
-        var rc = run_tool(bin, name, 0, 0);
-        if (rc != 2) { return rc; }
-    }
-    var script = make_path(_scripts_dir, "shims/cyrius-init.sh");
-    if (file_exists(script) == 0) {
-        script = make_path(_home, "bin/cyrius-init.sh");
-    }
-    return run_script(script, name, 0);
+# Resolve the scaffolder as a sibling of cycc/the other tools.
+# _tools_dir (set by find_tools) is ./build in dev or ~/.cyrius/bin in
+# an install — so this resolves correctly from any working directory,
+# not just the repo. Fall back to the explicit dev/install paths.
+fn _scaffolder_path(): i64 {
+    var bin = make_path(_tools_dir, "cyrius-init");
+    if (file_exists(bin) == 1) { return bin; }
+    bin = "./build/cyrius-init";
+    if (file_exists(bin) == 1) { return bin; }
+    return make_path(_home, "bin/cyrius-init");
 }
 
-fn cmd_init_args(arg1, arg2): i64 {
-    # Two-arg form covers `cyrius init <flag> <name>` patterns.
-    # v5.9.29: cyrius-init binary handles `--lib` and
-    # `--description=<v>`. Anything else (--language /
-    # --agent / --cmtools / --dry-run / in-place / 3+ args)
-    # exits 2 → fall back to bash. The binary's own arg parser
-    # is the source of truth for what's supported; this layer
-    # just forwards both args.
-    var bin = "./build/cyrius-init";
-    if (file_exists(bin) == 0) { bin = make_path(_home, "bin/cyrius-init"); }
-    if (file_exists(bin) == 1) {
-        var rc = run_tool(bin, arg1, arg2, 0);
-        if (rc != 2) { return rc; }
+# `cyrius init <args...>` — forward argv[start..] to the scaffolder.
+fn cmd_init(start): i64 {
+    var bin = _scaffolder_path();
+    if (file_exists(bin) == 0) {
+        _err_ctx("cyrius-init scaffolder not found — run `cyrius pulsar` or reinstall", bin);
+        return 1;
     }
-    var script = make_path(_scripts_dir, "shims/cyrius-init.sh");
-    if (file_exists(script) == 0) {
-        script = make_path(_home, "bin/cyrius-init.sh");
-    }
-    return run_script(script, arg1, arg2);
+    return run_tool_argvtail(bin, start, 0);
 }
 
-fn cmd_port(arg): i64 {
-    var script = make_path(_scripts_dir, "shims/cyrius-port.sh");
-    if (file_exists(script) == 0) {
-        script = make_path(_scripts_dir, "cyrius-port.sh");
+# `cyrius port <args...>` — same binary, port mode (sentinel prepended).
+fn cmd_port(start): i64 {
+    var bin = _scaffolder_path();
+    if (file_exists(bin) == 0) {
+        _err_ctx("cyrius-init scaffolder not found — run `cyrius pulsar` or reinstall", bin);
+        return 1;
     }
-    return run_script(script, arg, 0);
+    return run_tool_argvtail(bin, start, "--__mode=port");
 }
-

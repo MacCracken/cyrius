@@ -24,6 +24,7 @@ var _cyrius_resolved = 0;
 var _verbose = 0;
 var _quiet = 0;
 var _dry_run = 0;
+var _lib_sync_full = 0;   # v6.2.40: `cyrius lib sync --full` opt-in (whole snapshot)
 var _dep_includes = 0;
 # v5.7.14: transitive dep resolution state.
 # _dep_visited: vec<cstr> of dep names already resolved (closest-wins skip).

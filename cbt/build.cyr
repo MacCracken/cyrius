@@ -392,6 +392,45 @@ fn run_tool(tool, arg1, arg2, arg3): i64 {
     return 1;
 }
 
+# Like run_tool but forwards the CLI's own argv tail (argv[from_idx..])
+# verbatim, optionally prepending `sentinel`. Used by the native
+# scaffolder dispatch (cmd_init / cmd_port) so the full flag matrix
+# reaches programs/cyrius-init.cyr intact — run_tool caps at 3 args,
+# which silently dropped flags like `cyrius init --lib --description=x name`.
+# Inherits the real environment (_envp, populated by load_environ) so the
+# scaffolder's getenv (HOME / CYRIUS_HOME / XDG_CONFIG_HOME / CYRIUS_VER /
+# PWD) resolves. v6.2.40 (init/port native-port slot).
+fn run_tool_argvtail(tool, from_idx, sentinel): i64 {
+    if (file_exists(tool) == 0) {
+        _err_ctx("tool not found", tool);
+        return 1;
+    }
+    var pid = sys_fork();
+    if (pid == 0) {
+        var n = argc();
+        var extra = 1;                       # tool slot
+        if (sentinel != 0) { extra = 2; }    # tool + sentinel
+        var av = alloc((n - from_idx + extra + 1) * 8);
+        var ai = 0;
+        store64(av + ai * 8, tool); ai = ai + 1;
+        if (sentinel != 0) { store64(av + ai * 8, sentinel); ai = ai + 1; }
+        var i = from_idx;
+        while (i < n) {
+            store64(av + ai * 8, argv(i));
+            ai = ai + 1;
+            i = i + 1;
+        }
+        store64(av + ai * 8, 0);
+        sys_execve(tool, av, _envp);
+        sys_exit(127);
+    }
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 1;
+}
+
 # Run a shell script
 # v5.10.48 defensive guard: surface a clean error when the script
 # doesn't exist rather than silently invoking `/bin/sh <missing>`

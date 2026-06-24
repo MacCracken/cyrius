@@ -49,14 +49,14 @@ fn usage(): i64 {
     println("  check [--with-deps] <src.cyr>  syntax check (default: standalone)");
     println("  self                            self-hosting check (cycc==cycc)");
     println("  clean                           remove build/ contents");
-    println("  lib sync [--dry-run]            copy snapshot lib/*.cyr → ./lib/ (sync to pin)");
+    println("  lib sync [--dry-run] [--full]   vendor declared [deps].stdlib from pin (--full = whole snapshot)");
     println("");
     println("Project:");
-    println("  init <name>                     scaffold a new project");
+    println("  init [--lib|--agent|--cmtools|--dry-run] <name | .>   scaffold a new project");
     println("  deps [--no-lock|--verify]       resolve [deps.NAME] from cyrius.cyml into lib/");
     println("  update                          re-resolve all deps to latest tags");
     println("  package                         create .ark distributable");
-    println("  port <rust-project>             scaffold from Rust project");
+    println("  port [--dry-run] <rust-project> scaffold from a Rust project (→ rust-old/)");
     println("");
     println("Quality:");
     println("  audit                           project sweep: fmt/lint/docs/tests/bench");
@@ -500,11 +500,16 @@ fn main(): i64 {
     if (streq(cmd, "lib") == 1) {
         if (argc() > cmd_idx + 1) {
             if (streq(argv(cmd_idx + 1), "sync") == 1) {
-                if (argc() > cmd_idx + 2 && streq(argv(cmd_idx + 2), "--dry-run") == 1) { _dry_run = 1; }
+                var li = cmd_idx + 2;
+                while (li < argc()) {
+                    if (streq(argv(li), "--dry-run") == 1) { _dry_run = 1; }
+                    elif (streq(argv(li), "--full") == 1) { _lib_sync_full = 1; }
+                    li = li + 1;
+                }
                 return cmd_lib_sync();
             }
         }
-        println("Usage: cyrius lib sync [--dry-run]");
+        println("Usage: cyrius lib sync [--dry-run] [--full]");
         return 1;
     }
 
@@ -539,13 +544,10 @@ fn main(): i64 {
 
     # --- Project commands ---
     if (streq(cmd, "init") == 1) {
-        if (argc() < 3) {
-            println("Usage: cyrius init [--dry-run] <project-name>");
-            return 1;
-        }
-        # Pass all remaining args (handles --dry-run + name)
-        if (argc() >= 4) { return cmd_init_args(argv(2), argv(3)); }
-        return cmd_init(argv(2));
+        # Forward the full flag tail to the native scaffolder
+        # (programs/cyrius-init.cyr). No bash fallback. The binary
+        # prints its own usage on no/invalid args.
+        return cmd_init(cmd_idx + 1);
     }
 
     if (streq(cmd, "deps") == 1) {
@@ -600,23 +602,9 @@ fn main(): i64 {
     }
 
     if (streq(cmd, "port") == 1) {
-        if (argc() < 3) {
-            println("Usage: cyrius port [--dry-run] <rust-project-path>");
-            return 1;
-        }
-        var port_arg = argv(2);
-        if (streq(port_arg, "--dry-run") == 1) {
-            if (argc() < 4) { println("Usage: cyrius port [--dry-run] <path>"); return 1; }
-            _dry_run = 1;
-            port_arg = argv(3);
-        }
-        if (_dry_run == 1) {
-            sys_write(STDOUT_FD, "dry-run: would port ", 20);
-            sys_write(STDOUT_FD, port_arg, strlen(port_arg));
-            sys_write(STDOUT_FD, " to Cyrius\n", 11);
-            return 0;
-        }
-        return cmd_port(port_arg);
+        # Forward the full flag tail to the native scaffolder in port
+        # mode (--__mode=port sentinel prepended). No bash fallback.
+        return cmd_port(cmd_idx + 1);
     }
 
     if (streq(cmd, "header") == 1) {

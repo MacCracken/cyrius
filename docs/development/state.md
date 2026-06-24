@@ -14,8 +14,8 @@
 
 | | |
 |---|---|
-| **Version** | **6.2.39** (v6.2.x cycle — **Platform Expansion**; **agnos syscall-peer wrappers + fail-OPEN safety fix**. Bottom-priority agnos batch, kernel-verified vs `agnos/kernel/core/syscall.cyr`: net_config #61 (`sys_net_config` + 4 getters; unblocks taar/yo/whirl/dig) + **winsize #60** (`sys_winsize`; agnsh/darshana/kii/desktop) + signal constants/sigset wrappers (`SIGHUP…SIGPWR`, `1<<sig` agnos convention; unblocks thoth/t-ron `--agnos` link). **Plus the sweep's real find:** `result`/`bounds`/`overflow` aborted via unguarded `syscall(60)` → no-op'd on agnos → core safety checks silently **fail-OPEN**; now target-aware guarded. **Gate fix (not feature drop):** #60==Linux-exit number false-positived `_agnos_emit_gate` — fixed by making its emit probe peer-independent (no syscall-peer include) so the compiler EEXIT is the sole `mov eax,60` source. **lib + gate only — `src/` untouched → cycc byte-identical; api-surface 4334→4343 (+9, non-breaking).** See CHANGELOG [6.2.39]) |
-| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.39 — lib/gate-only release, `src/` untouched; only the version-string stamp differs from .38; self-hosts byte-identical, seed-derivable from `bootstrap/asm`) |
+| **Version** | **6.2.40** (v6.2.x cycle — **Platform Expansion**; **`cyrius init` + `cyrius port` go FULLY native — both bash shims deleted**. Completes the half-done v5.9.28 port (which slid the easy path into `programs/cyrius-init.cyr` + punted in-place/flag-matrix/all-of-port back to bash, and wasn't even in `[release].bins`). One native scaffolder serves the whole surface; `scripts/shims/cyrius-{init,port}.sh` `git rm`'d, no fallback. Packed: **sandhi 1.6.13** fold + **`cyrius lib sync` scopes to declared `[deps].stdlib`** (thoth filing RESOLVED; `--full` opt-in + dry-run counter fix) + a **found-by-ports** Apple-Silicon `sys_rename` fix (`AT_FDCWD` is −2 on Darwin, not Linux's −100 — arm64 port-move was a no-op on ecb). **`src/` untouched → cycc byte-identical 1,071,936 B; check.sh 92/92 + boot; `cyrius init`+`port` verified on REAL Darwin arm64 (ecb); api-surface unchanged (init/port are programs + cbt, not lib/src).** See CHANGELOG [6.2.40]; PRIOR: **6.2.39** agnos syscall-peer wrappers + fail-OPEN safety fix. Bottom-priority agnos batch, kernel-verified vs `agnos/kernel/core/syscall.cyr`: net_config #61 (`sys_net_config` + 4 getters; unblocks taar/yo/whirl/dig) + **winsize #60** (`sys_winsize`; agnsh/darshana/kii/desktop) + signal constants/sigset wrappers (`SIGHUP…SIGPWR`, `1<<sig` agnos convention; unblocks thoth/t-ron `--agnos` link). **Plus the sweep's real find:** `result`/`bounds`/`overflow` aborted via unguarded `syscall(60)` → no-op'd on agnos → core safety checks silently **fail-OPEN**; now target-aware guarded. **Gate fix (not feature drop):** #60==Linux-exit number false-positived `_agnos_emit_gate` — fixed by making its emit probe peer-independent (no syscall-peer include) so the compiler EEXIT is the sole `mov eax,60` source. **lib + gate only — `src/` untouched → cycc byte-identical; api-surface 4334→4343 (+9, non-breaking).** See CHANGELOG [6.2.39]) |
+| **cycc** (x86_64 ELF) | **1,071,936 B** (FLAT @ 6.2.40 — `src/` untouched (init/port = `programs/` + `cbt/`; the `AT_FDCWD` fix + sandhi are lib-only); only the version-string stamp differs from .39; self-hosts byte-identical fixpoint, seed-derivable from `bootstrap/asm`) |
 | **cycc_aarch64** (x86-host cross, emits aarch64) | **624,552 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; backend untouched; pi SELFHOST_OK) |
 | **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
 | **cycc_win** (PE32+ cross) | **845,824 B** (rebuilt @ 6.2.30 version-bump — version-string stamp only; PE backend untouched; cass SELFHOST_OK) |
@@ -26,13 +26,58 @@
 | check.sh gates | **92/92 + the D7 boot gate** (+2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64, the .25-class gate) + `_fuzz_harness_gate` (cyrius fuzz → exit 0 + "0 failed"); both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
 | aarch64 native tcyr | **189 pass / 0 fail / 0 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job runs the FULL tcyr corpus on real arm64. It surfaced a stale-native-fork + 9-bug debt; **all fixed in-slot** (`2026-06-19-aarch64-tcyr-failures.md` RESOLVED), gate HARD + GREEN. `math_pack_integration` skip = x86-only f64_sin; pi-verified) |
 | sigil fold | **3.9.2** (@6.2.31 — luks raw `getrandom` syscall → `_sigil_random_fill` portable boundary so sigil/cyrsign cross-compile to PE; @6.2.25 — `sha384_init_into` alloc-free + `ecdsa_p256_verify_der` `raw_sig`→stack for the TLS arena/flat-RSS fix) |
-| stdlib fold | ~~agnosys~~ **RETIRED @.37** (the stale pre-decomposition 1.4.3 snapshot deleted — its surviving uname/sysinfo role is native in `lib/sys.cyr`; the rest decomposed → agnodrm/sigil/kavach/aegis/sakshi) · **sandhi 1.6.12** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.3** · ganita 1.0.1 · **patra 1.12.4** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.38 — patra 1.12.3→1.12.4 (Win `_wal_gen_salts` getrandom ABI), sandhi 1.6.8→1.6.12 (per-call reqctx thread-safety + tls.cyr-contract server handshake + 2-socket mDNS), bayan 1.0.2→1.0.3 (reentrant JSON value+streaming parsers, +5 public `_ctx` fns) — all non-breaking; @.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
+| stdlib fold | ~~agnosys~~ **RETIRED @.37** (the stale pre-decomposition 1.4.3 snapshot deleted — its surviving uname/sysinfo role is native in `lib/sys.cyr`; the rest decomposed → agnodrm/sigil/kavach/aegis/sakshi) · **sandhi 1.6.13** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.3** · ganita 1.0.1 · **patra 1.12.4** · yukti 2.2.6 · vani 0.9.5 · **sigil 3.9.2** · **mabda 3.4.2** · **sakshi 2.4.1** · **yantra 1.0.0** (**@.38 — patra 1.12.3→1.12.4 (Win `_wal_gen_salts` getrandom ABI), sandhi 1.6.8→1.6.12 (per-call reqctx thread-safety + tls.cyr-contract server handshake + 2-socket mDNS), bayan 1.0.2→1.0.3 (reentrant JSON value+streaming parsers, +5 public `_ctx` fns) — all non-breaking; @.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
 | tests | **191** `.tcyr` (+`assert_fatal` @.38 — the non-aborting `assert_fatal(true)` paths + cross-target `sys_exit` resolution lock-in; +`tls_native_entropy_vtable` @.28) · 15 `.bcyr` · 5 `.fcyr` |
 | stdlib | **98** `lib/*.cyr` (−1 @.37 — `agnosys.cyr` retired) · 79 programs · api-surface **4343 fns** (+9 @.39 — agnos peer `sigset_new/add/has` + `sys_net_config` + 4 net getters + `sys_winsize`; +7 @.38 — `panic`/`assert_fatal` + bayan reentrant; all non-breaking, 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **9/9** (+probe **1h** @.39 — signal constants + sigset wrappers (`1<<sig`) + `net_config` #61 + `winsize` #60: asserts all *defined* (not ud2 stubs) + `SYS_NET_CONFIG==61`/`0x3d` + `SYS_WINSIZE==60`/`0x3c` emitted + `SIGCHLD==17`; `_agnos_emit_gate` reworked peer-independent so #60 doesn't false-positive; +probe **1g** @.36 — `io.cyr` file-lock helpers via `xflock` (`SYS_FLOCK` #59); +probe **1f** @.35 — `sync.cyr` no-op mutex + `sys_access` stub; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **501 ms** @ 6.2.39 (vs .38's 508 / .37's 549 — measurement jitter: cycc is byte-identical, a lib/gate-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
+| bench (every-release gate) | self_compile **505 ms** @ 6.2.40 (vs .39's 501 / .38's 508 — measurement jitter: cycc is byte-identical, a programs/cbt/lib-only release cannot affect self_compile; x86 cycc **1,071,936 B** unchanged) |
 
+> **Handoff (2026-06-24):** **v6.2.40 CUT — `cyrius init` + `cyrius port` go
+> FULLY native; both bash shims DELETED.** Finishes the sovereignty port the
+> half-done v5.9.28 attempt left open: that one slid the easy path (greenfield
+> `--bin`/`--lib`) into `programs/cyrius-init.cyr` and punted the hard half
+> (in-place, `--language`/`--agent`/`--cmtools`/`--dry-run`, stdlib vendoring,
+> **all of `port`**) back to bash — and the native binary wasn't in
+> `[release].bins`, so `cyrius init` *always* fell through to the shim. Now ONE
+> native scaffolder (`programs/cyrius-init.cyr`; port via internal
+> `--__mode=port` sentinel) serves the whole surface;
+> `scripts/shims/cyrius-{init,port}.sh` are `git rm`'d, no fallback.
+> Dispatcher rewired (`run_tool_argvtail` forwards the full flag tail — fixes
+> the 3-arg `run_tool` cap that dropped flags + a `cmd_idx` global-flag
+> mis-slice); `cyrius-init` added to `[release].bins`; install/release/funcgate
+> plumbing ships the binary + `programs/cyrius-init-templates/`; the
+> `deps_init.cyr` init/port gates drive the native binary. **Packed:** (1)
+> **sandhi 1.6.12→1.6.13** (`SandhiConnOff` server/client enum-offset collision
+> → `SANDHI_SRVCONN_OFF_*`; re-folded byte-identical). (2) **`cyrius lib sync`
+> scopes to declared `[deps].stdlib`** + per-OS peer closure (thoth filing
+> `2026-06-11` RESOLVED + archived; `--full` opt-in; dry-run counter fix). (3)
+> **FOUND-BY-PORTS Apple-Silicon `sys_rename` fix** — arm64 macOS routes
+> `sys_rename`→`renameat(AT_FDCWD)`, and `AT_FDCWD` was Linux's −100, but
+> Darwin's is **−2** → invalid dirfd → `cyrius port`'s `rust-old/` move was a
+> silent no-op on ecb. `lib/syscalls_linux_common.cyr` now `#ifdef
+> CYRIUS_TARGET_MACOS` −2 / else −100 (lib-only, cycc byte-identical; also
+> unblocks `linkat`/`fstatat`-with-`AT_FDCWD` on Apple Silicon; x86 macOS
+> uses bare `rename(128)`, unaffected). (4) Three corrupt scaffolder templates
+> the golden differential caught (`examples-gitkeep` `EXEOF` leak, `src-test-cyr`
+> bash trailer, `proj-fcyr` missing `syscall(60,r)`). **VERIFIED:** `src/`
+> untouched → cycc byte-identical **1,071,936 B** + self-host fixpoint ·
+> check.sh **92/92** + boot gate · golden differential (init bin/lib/full/
+> in-place/dry-run + port real/dry-run — docs/src/tests/manifest byte-match;
+> CI/manifest intentionally improved) · funcgate end-to-end (init→sync→deps→
+> build→run) · **`cyrius init` + `cyrius port` PROVEN on REAL Darwin arm64
+> (ecb)** — the AT_FDCWD fix verified there (rename rc 0, files move) · scaffolder
+> cross-compiles clean to PE / Mach-O (x86+arm64) / aarch64-ELF · bench
+> self_compile **505 ms** (jitter). **Cross-OS note:** ecb verified directly
+> (new macOS behavior + the rename fix); cass/pi NOT re-run — cycc is
+> byte-identical (no `src/` change) so their self-host == .39's verified-green,
+> and `AT_FDCWD` is unchanged on non-macho. **Windows `cyrius init`/`port`
+> remains unsupported** (never shipped — no shim in the Windows tarball; the
+> scaffolder cross-compiles to PE but Windows fs/getenv needs a cass run — a
+> pre-existing gap, NOT a regression). vidya field-note for the AT_FDCWD-Darwin
+> gotcha + the native init/port deferred to the v6.3.0 closeout vidya sync.
+> User pushes/tags after CI.
+>
 > **Handoff (2026-06-23):** **v6.2.39 CUT — agnos syscall-peer wrappers + the
 > fail-OPEN safety hole the sweep surfaced.** Bottom-priority agnos batch (user:
 > "agnos wrappers prioritize"), kernel-verified vs `agnos/kernel/core/syscall.cyr`

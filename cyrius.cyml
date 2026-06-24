@@ -17,7 +17,7 @@ output = "build/cc5"
 # hardcoded lists was never updated. Now: add a binary here, every
 # consumer picks it up automatically.
 [release]
-bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner", "cyrsign"]
+bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner", "cyrsign", "cyrius-init"]
 cross_bins = ["cycc_aarch64", "cycc_win", "cycc-native-aarch64"]
 # v5.11.10: scripts/cyriusly retired from release.scripts — replaced by
 # programs/cyriusly.cyr in bins (cyrius binary handles all verbs; heavy
@@ -25,7 +25,12 @@ cross_bins = ["cycc_aarch64", "cycc_win", "cycc-native-aarch64"]
 # in tree as `sh scripts/cyriusly` backend for the `setup` / `cmdtools`
 # verbs that still call into it transparently; v5.12.x or later may
 # fully native-port those paths.
-scripts = ["cyrius-init.sh", "cyrius-port.sh", "cyrius-repl.sh", "cyrius-watch.sh", "cyrius-prompt-info"]
+# v6.2.40: cyrius-init.sh / cyrius-port.sh RETIRED — `cyrius init` and
+# `cyrius port` are now the native programs/cyrius-init.cyr binary
+# (in bins above; port mode via the --__mode=port sentinel). Both bash
+# shims were deleted; there is no fallback. The scaffolding templates
+# ship as programs/cyrius-init-templates/ (copied to versions/<v>/programs/).
+scripts = ["cyrius-repl.sh", "cyrius-watch.sh", "cyrius-prompt-info"]
 
 # v5.7.50: stdlib auto-prepend list. Required so cyrius's own `cyrius
 # bench` / `cyrius test` / `cyrius build` runs include the stdlib

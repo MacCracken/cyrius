@@ -1,10 +1,20 @@
-# `cyrius lib sync` ignores `[deps].stdlib` — copies the full pin snapshot into `./lib/` — OPEN
+# `cyrius lib sync` ignores `[deps].stdlib` — copies the full pin snapshot into `./lib/` — RESOLVED (v6.2.40)
 
 - **Filed**: 2026-06-11
 - **Reporter**: thoth (downstream consumer; sovereign agentic coding TUI). Surfaced while vendoring the avatara dist bundle (roadmap M5), which added exactly one new stdlib dep (`math`).
 - **Affects**: `cyrius lib sync` — `cmd_lib_sync`, `cbt/commands.cyr:419-481`. Current cycc **6.1.34**; the command has copied the full snapshot unconditionally since its introduction (v5.11.58), so this is long-standing, not a recent regression.
 - **Severity**: **Low** (design gap / ergonomics — no build failure; the extra files are inert on disk). But the declared-deps contract is *silently ineffective* for the vendored-lib path, and the workaround is manual and easy to forget, so it quietly bloats committed trees.
-- **Status (2026-06-11): OPEN.**
+- **Status: RESOLVED 2026-06-24 (v6.2.40).** `cyrius lib sync` now scopes to
+  the project's declared `[deps].stdlib`, expanded to its per-OS peer closure
+  (the `<module>_<os>.cyr` naming convention IS the peer map — no hardcoded
+  table needed), so a curated committed `./lib/` stays curated. `--full` keeps
+  the whole-snapshot behavior; a project with no `[deps].stdlib` declaration
+  also falls back to full (never an empty `lib/`). The `--dry-run` counter bug
+  is fixed (counts in both modes). `cbt/commands.cyr` `cmd_lib_sync` + new
+  `_libsync_declared_mods` / `_libsync_wanted`; `--full` flag in `cbt/cyrius.cyr`
+  + `_lib_sync_full` in `cbt/core.cyr`. Verified: declaring 8 modules vendors
+  19 files (declared + peers); `--full` restores all 98; dry-run reports the
+  real count; funcgate (init→sync→deps→build) green.
 - **Discovered:** 2026-06-11 during thoth M5 (the avatara seam), adding `math` to `[deps].stdlib` and running `cyrius lib sync` to pull it.
 
 ## Summary

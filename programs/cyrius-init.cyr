@@ -1,64 +1,77 @@
-# cyrius-init.cyr — cyrius project scaffolder.
+# cyrius-init.cyr — cyrius project scaffolder (init + port).
 #
-# Sovereignty port of scripts/cyrius-init.sh, originally pinned
-# to v5.9.14 but rescheduled to v5.9.28 after the v5.9.x cycle's
-# emergent consumer-filed work consumed earlier slots.
+# FULLY native scaffolder. v6.2.40: completed the sovereignty port —
+# this single binary now implements the ENTIRE `cyrius init` and
+# `cyrius port` surface that used to live in scripts/shims/cyrius-init.sh
+# and scripts/shims/cyrius-port.sh. Both bash shims are DELETED; there is
+# no fallback path. The CLI dispatcher (cbt/project.cyr) invokes this
+# binary for `cyrius init <...>` and, with a leading `--__mode=port`
+# sentinel, for `cyrius port <...>`.
 #
-# v5.9.28 (part 1): greenfield `--bin` path; 14 essential
-# templates externalized to programs/cyrius-init-templates/.
-# v5.9.29 (this slot): `--lib` shape + `--description=` flag.
-#
-# Still deferred to follow-ups:
-#   - In-place mode (`cyrius init .`)
-#   - Full flag matrix (--language / --agent / --cmtools /
-#     --dry-run)
-#   - Remaining ~10 templates (doc tree, CLAUDE.md, README
-#     variants, getting-started)
-#   - cyrius-port.sh sovereignty port (shares this scaffold's
-#     template-substitution layer)
-#
-# The cbt/cyrius.cyr dispatcher routes unsupported flag combos
-# to scripts/cyrius-init.sh as fallback (signalled by exit 2).
+# init feature set (matches the retired bash 1:1):
+#   --bin (default) / --lib shapes, --description=<v>, --language=none|rust,
+#   --agent[=preset], --cmtools[=name], --dry-run, in-place mode (`.`),
+#   greenfield dir-exists guard, the toolchain-version cascade, stdlib
+#   vendoring (lib/*.cyr copy), and the starship cmtools integration.
+# port feature set:
+#   --language=<lang> (rust; others decline), --dry-run, Cargo.toml +
+#   rust-old/ preconditions, Rust LOC count, move-to-rust-old/, the full
+#   doc-tree + CI scaffold.
 #
 # Template substitution: data files under
-# `programs/cyrius-init-templates/` carry `{KEY}` placeholders
-# (e.g. `{PROJ}`, `{CYRIUS_VER}`, `{DESCRIPTION}`). The
-# `_subst_template` helper does single-pass byte-walk replacement
-# against a fixed set of known keys.
+# `programs/cyrius-init-templates/` carry `{KEY}` placeholders. The render
+# pass walks each byte and replaces `{KEY}` from the module-level _sv_*
+# context globals (set once per scaffold before any render). Known keys:
+#   {PROJ} {DESCRIPTION} {CYRIUS_VER} {DATE} {PROJ_TYPE} {BUILD_HINT}
+#   {RUST_LOC} {CI_SRC} {CI_OUT}
+# ci.yml / release.yml use {CI_SRC}/{CI_OUT} so --lib swaps the build
+# target without a post-render edit (the bash sed pass is gone). Both the
+# init and port CI templates already carry `workflow_call:` + the
+# scripts/install.sh-based toolchain install + pinned actions (CVE-21).
 
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/io.cyr"
+include "lib/fs.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/args.cyr"
 include "lib/syscalls.cyr"
+include "lib/chrono.cyr"
 
 # ────────────────────────────────────────────────────────────
-# Path helpers
+# Substitution context (render reads these globals)
+# ────────────────────────────────────────────────────────────
+var _sv_proj    = 0;
+var _sv_desc    = 0;
+var _sv_ver     = 0;
+var _sv_date    = 0;
+var _sv_ptype   = 0;
+var _sv_bhint   = 0;
+var _sv_rustloc = 0;
+var _sv_ci_src  = 0;
+var _sv_ci_out  = 0;
+
+# ────────────────────────────────────────────────────────────
+# tiny IO helpers
+# ────────────────────────────────────────────────────────────
+fn _print(s) { sys_write(1, s, strlen(s)); }
+fn _eprint(s) { sys_write(2, s, strlen(s)); }
+
+# ────────────────────────────────────────────────────────────
+# Path resolution
 # ────────────────────────────────────────────────────────────
 
-# Read /proc/self/exe via readlink to find the cyrius-init binary
-# location → resolve `programs/cyrius-init-templates/` next to it
-# in the repo, OR `~/.cyrius/share/cyrius-init-templates/` in the
-# install snapshot. v5.9.28: dev-mode only (repo-local). Install-
-# snapshot path lands at v5.9.29 once the install pipeline knows
-# to copy the template tree.
-fn _resolve_templates_dir(argv0): i64 {
+# Resolve THIS binary's real path (symlinks followed).
+fn _self_path(argv0): i64 {
     var buf = alloc(4096);
     var n = 0;
     #ifdef CYRIUS_TARGET_MACOS
-    # macОS has no /proc/self/exe, and argv0 is the UNRESOLVED `~/.cyrius/bin`
-    # symlink path (→ root `~/.cyrius`, where templates/VERSION do NOT live —
-    # they're in versions/<v>/). Resolve the REAL binary path through the
-    # symlink via open(argv0) + fcntl(F_GETPATH) — the same Darwin trick the
-    # v6.0.41 cwd fix uses (no getcwd on Darwin). That yields
-    # ~/.cyrius/versions/<v>/bin/cyrius-init → root versions/<v>, where the
-    # bundled templates + VERSION live. v6.0.60.
+    # macОS has no /proc/self/exe; resolve via open(argv0)+fcntl(F_GETPATH=50).
     var afd = sys_open(argv0, 0, 0);
     if (afd >= 0) {
-        var gr = syscall(72, afd, 50, buf);   # fcntl(fd, F_GETPATH=50, buf)
+        var gr = syscall(72, afd, 50, buf);
         sys_close(afd);
         if (gr >= 0) { n = strlen(buf); }
     }
@@ -69,10 +82,8 @@ fn _resolve_templates_dir(argv0): i64 {
         n = l0;
     }
     #else
-    # Linux: /proc/self/exe is the resolved binary path (symlinks followed).
     n = sys_readlink("/proc/self/exe", buf, 4095);
     if (n <= 0) {
-        # Fall back to argv0 — best effort.
         var l = strlen(argv0);
         if (l >= 4095) { l = 4095; }
         memcpy(buf, argv0, l);
@@ -80,154 +91,276 @@ fn _resolve_templates_dir(argv0): i64 {
     }
     #endif
     store8(buf + n, 0);
-    # Walk back to last `/` to get the bin's directory.
+    return buf;
+}
+
+# <bin-dir>/<name> — a sibling of this binary (e.g. cycc).
+fn _sibling_path(argv0, name): i64 {
+    var p = _self_path(argv0);
+    var n = strlen(p);
     var i = n - 1;
     while (i >= 0) {
-        if (load8(buf + i) == 47) { break; }
+        if (load8(p + i) == 47) { break; }
         i = i - 1;
     }
     if (i < 0) { return 0; }
-    # Strip `/cyrius-init` to get the bin dir; from there `..` is
-    # the repo root. Templates live at
-    # `<repo-root>/programs/cyrius-init-templates/`.
-    store8(buf + i, 0);
-    # buf now holds the bin dir (e.g. `/path/to/repo/build`).
-    # Walk back to find the parent (strip the final dir component).
+    store8(p + i + 1, 0);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, p);
+    str_builder_add_cstr(sb, name);
+    return str_data(str_builder_build(sb));
+}
+
+# templates dir = <root>/programs/cyrius-init-templates (root = bin's
+# grandparent, in both dev `build/` and install `versions/<v>/bin/`).
+fn _resolve_templates_dir(argv0): i64 {
+    var p = _self_path(argv0);
+    var n = strlen(p);
+    var i = n - 1;
+    while (i >= 0) {
+        if (load8(p + i) == 47) { break; }
+        i = i - 1;
+    }
+    if (i < 0) { return 0; }
+    store8(p + i, 0);            # strip /cyrius-init  → bin dir
     var j = i - 1;
     while (j >= 0) {
-        if (load8(buf + j) == 47) { break; }
+        if (load8(p + j) == 47) { break; }
         j = j - 1;
     }
     if (j < 0) { return 0; }
-    store8(buf + j, 0);
-    # buf now holds the repo root.
+    store8(p + j, 0);            # strip /<bindir>     → root
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, buf);
+    str_builder_add_cstr(sb, p);
     str_builder_add_cstr(sb, "/programs/cyrius-init-templates");
     return str_data(str_builder_build(sb));
 }
 
-# Read VERSION file from `<repo>/VERSION` (sibling of bin/build/
-# / scripts/). Returns null-terminated cstring or 0 if missing.
-fn _read_repo_version(templates_dir): i64 {
-    # templates_dir = <repo>/programs/cyrius-init-templates
-    # VERSION       = <repo>/VERSION
+# <root> = templates_dir with /programs/cyrius-init-templates stripped.
+fn _root_of(templates_dir): i64 {
     var buf = alloc(4096);
     var l = strlen(templates_dir);
+    if (l >= 4095) { l = 4095; }
     memcpy(buf, templates_dir, l);
-    # Walk back two `/` segments: strip cyrius-init-templates,
-    # then programs.
-    var k = 0;
+    store8(buf + l, 0);
     var i = l - 1;
-    while (i >= 0 && k < 2) {
-        if (load8(buf + i) == 47) { k = k + 1; }
-        if (k < 2) { i = i - 1; }
+    var k = 0;
+    while (i >= 0) {
+        if (load8(buf + i) == 47) {
+            k = k + 1;
+            if (k == 2) { break; }
+        }
+        i = i - 1;
     }
     if (i < 0) { return 0; }
     store8(buf + i, 0);
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, buf);
-    str_builder_add_cstr(sb, "/VERSION");
-    var version_path = str_data(str_builder_build(sb));
+    return buf;
+}
 
-    var fd = sys_open(version_path, 0, 0);
+# Read <root>/VERSION (sibling of programs/). Trimmed cstring or 0.
+fn _read_repo_version(templates_dir): i64 {
+    var root = _root_of(templates_dir);
+    if (root == 0) { return 0; }
+    var path = _join(root, "VERSION");
+    return _read_trimmed_line(path);
+}
+
+# Read a file's first line, trimmed of trailing CR/LF/space. Empty→0.
+fn _read_trimmed_line(path): i64 {
+    var fd = sys_open(path, 0, 0);
     if (fd < 0) { return 0; }
-    var vbuf = alloc(64);
-    var vn = sys_read(fd, vbuf, 63);
+    var vbuf = alloc(128);
+    var vn = sys_read(fd, vbuf, 127);
     sys_close(fd);
     if (vn <= 0) { return 0; }
-    # Trim trailing newline / whitespace.
     while (vn > 0) {
         var c = load8(vbuf + vn - 1);
-        if (c == 10) { vn = vn - 1; }
-        else { if (c == 13) { vn = vn - 1; }
-            else { if (c == 32) { vn = vn - 1; }
-                else { break; } } }
+        if (c == 10 || c == 13 || c == 32 || c == 9) { vn = vn - 1; }
+        else { break; }
     }
+    # also stop at first embedded newline
+    var m = 0;
+    while (m < vn) {
+        if (load8(vbuf + m) == 10) { vn = m; break; }
+        m = m + 1;
+    }
+    if (vn <= 0) { return 0; }
     store8(vbuf + vn, 0);
     return vbuf;
 }
 
-# ────────────────────────────────────────────────────────────
-# Template substitution
-# ────────────────────────────────────────────────────────────
+# Current working directory: $PWD (portable) else getcwd(2) else ".".
+fn _cwd_path(): i64 {
+    var p = getenv("PWD");
+    if (p != 0) { if (strlen(p) > 0) { return p; } }
+    #ifndef CYRIUS_TARGET_WIN
+    var buf = alloc(4096);
+    var n = syscall(SYS_GETCWD, buf, 4096);
+    if (n > 0) { return buf; }
+    #endif
+    return ".";
+}
 
-# Read template file at <templates_dir>/<name> + substitute
-# placeholders. Returns a cstring buffer with the rendered text,
-# or 0 if the template can't be read.
-#
-# Placeholder grammar: `{KEY}` is replaced by looking up KEY in
-# the (proj_name, cyrius_ver, description) triple. Unknown keys
-# pass through unchanged.
-fn _render_template(templates_dir, name, proj_name, cyrius_ver, description) {
-    var path_sb = str_builder_new();
-    str_builder_add_cstr(path_sb, templates_dir);
-    str_builder_add_cstr(path_sb, "/");
-    str_builder_add_cstr(path_sb, name);
-    var path = str_data(str_builder_build(path_sb));
+fn _basename_cstr(cstr): i64 {
+    return str_data(path_basename(str_from(cstr)));
+}
 
+# ────────────────────────────────────────────────────────────
+# Toolchain version cascade
+#   env CYRIUS_VER → <root>/VERSION → sibling `cycc --version`
+#   → $CYRIUS_HOME(/$HOME/.cyrius)/current → 0.
+# NEVER hardcode a fallback (stale fallbacks seed ancient pins).
+# ────────────────────────────────────────────────────────────
+fn _detect_version(templates_dir, argv0): i64 {
+    var v = getenv("CYRIUS_VER");
+    if (v != 0) { if (strlen(v) > 0) { return v; } }
+    v = _read_repo_version(templates_dir);
+    if (v != 0) { return v; }
+    v = _cycc_version_probe(argv0);
+    if (v != 0) { return v; }
+    var home = getenv("CYRIUS_HOME");
+    var hbase = 0;
+    if (home != 0) { if (strlen(home) > 0) { hbase = home; } }
+    if (hbase == 0) {
+        var h = getenv("HOME");
+        if (h != 0) { if (strlen(h) > 0) { hbase = _join(h, ".cyrius"); } }
+    }
+    if (hbase != 0) {
+        v = _read_trimmed_line(_join(hbase, "current"));
+        if (v != 0) { return v; }
+    }
+    return 0;
+}
+
+# Run the sibling `cycc --version`, return the first [0-9.] run found.
+fn _cycc_version_probe(argv0): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var cycc = _sibling_path(argv0, "cycc");
+    if (cycc == 0) { return 0; }
+    if (file_exists(cycc) == 0) { return 0; }
+    var pipefd[16];
+    if (sys_pipe(&pipefd) < 0) { return 0; }
+    var rfd = load32(&pipefd);
+    var wfd = load32(&pipefd + 4);
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(rfd); sys_close(wfd); return 0; }
+    if (pid == 0) {
+        sys_close(rfd);
+        sys_dup2(wfd, 1);
+        sys_close(wfd);
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 2); sys_close(dn); }
+        var av[32];
+        store64(&av, cycc);
+        store64(&av + 8, "--version");
+        store64(&av + 16, 0);
+        var ev[8];
+        store64(&ev, 0);
+        sys_execve(cycc, &av, &ev);
+        sys_exit(127);
+    }
+    sys_close(wfd);
+    var buf = alloc(256);
+    var total = 0;
+    var go = 1;
+    while (go == 1) {
+        var n = sys_read(rfd, buf + total, 255 - total);
+        if (n <= 0) { go = 0; }
+        else {
+            total = total + n;
+            if (total >= 255) { go = 0; }
+        }
+    }
+    sys_close(rfd);
+    var sb[2];
+    sys_waitpid(pid, &sb, 0);
+    store8(buf + total, 0);
+    var i = 0;
+    while (i < total) {
+        var c = load8(buf + i);
+        if (c >= 48 && c <= 57) { break; }
+        i = i + 1;
+    }
+    if (i >= total) { return 0; }
+    var out = alloc(64);
+    var oi = 0;
+    while (i < total && oi < 63) {
+        var c = load8(buf + i);
+        if ((c >= 48 && c <= 57) || c == 46) { store8(out + oi, c); oi = oi + 1; i = i + 1; }
+        else { break; }
+    }
+    store8(out + oi, 0);
+    if (oi == 0) { return 0; }
+    return out;
+    #endif
+}
+
+# ────────────────────────────────────────────────────────────
+# Template render + write
+# ────────────────────────────────────────────────────────────
+fn _subst_lookup(keyptr, keylen): i64 {
+    if (keylen == 4) {
+        if (memeq(keyptr, "PROJ", 4) == 1) { return _sv_proj; }
+        if (memeq(keyptr, "DATE", 4) == 1) { return _sv_date; }
+    }
+    if (keylen == 11) {
+        if (memeq(keyptr, "DESCRIPTION", 11) == 1) { return _sv_desc; }
+    }
+    if (keylen == 10) {
+        if (memeq(keyptr, "CYRIUS_VER", 10) == 1) { return _sv_ver; }
+        if (memeq(keyptr, "BUILD_HINT", 10) == 1) { return _sv_bhint; }
+    }
+    if (keylen == 9) {
+        if (memeq(keyptr, "PROJ_TYPE", 9) == 1) { return _sv_ptype; }
+    }
+    if (keylen == 8) {
+        if (memeq(keyptr, "RUST_LOC", 8) == 1) { return _sv_rustloc; }
+    }
+    if (keylen == 6) {
+        if (memeq(keyptr, "CI_SRC", 6) == 1) { return _sv_ci_src; }
+        if (memeq(keyptr, "CI_OUT", 6) == 1) { return _sv_ci_out; }
+    }
+    return 0;
+}
+
+# Read <templates_dir>/<name>, substitute {KEY}. Rendered cstring or 0.
+fn _render_template(templates_dir, name): i64 {
+    var path = _join(templates_dir, name);
     var fd = sys_open(path, 0, 0);
     if (fd < 0) {
-        syscall(SYS_WRITE, 2, "error: missing template '", 25);
-        sys_write(2, name, strlen(name));
-        syscall(SYS_WRITE, 2, "'\n", 2);
+        _eprint("error: missing template '");
+        _eprint(name);
+        _eprint("'\n");
         return 0;
     }
-    var cap = 65536;
+    var cap = 1048576;
     var raw = alloc(cap);
     var n = sys_read(fd, raw, cap - 1);
     sys_close(fd);
-    if (n <= 0) { return 0; }
+    if (n < 0) { return 0; }
     store8(raw + n, 0);
 
     var out = str_builder_new();
     var i = 0;
     while (i < n) {
         var c = load8(raw + i);
-        if (c == 123) {
-            # `{` — look for closing `}` within next 32 bytes.
+        if (c == 123) {                       # '{'
             var j = i + 1;
             var found = 0;
-            while (j < n && j < i + 32) {
-                if (load8(raw + j) == 125) { found = 1; break; }
+            while (j < n && j < i + 33) {
+                if (load8(raw + j) == 125) { found = 1; break; }   # '}'
                 j = j + 1;
             }
             if (found == 1) {
-                var key_len = j - i - 1;
-                # Resolve the key.
-                var sub = 0;
-                if (key_len == 4) {
-                    if (memeq(raw + i + 1, "PROJ", 4) == 1) {
-                        sub = proj_name;
-                    }
-                }
-                if (sub == 0) {
-                    if (key_len == 11) {
-                        if (memeq(raw + i + 1, "CYRIUS_VER", 10) == 1) {
-                            sub = cyrius_ver;
-                        }
-                    }
-                }
-                if (sub == 0) {
-                    if (key_len == 10) {
-                        if (memeq(raw + i + 1, "CYRIUS_VER", 10) == 1) {
-                            sub = cyrius_ver;
-                        }
-                    }
-                }
-                if (sub == 0) {
-                    if (key_len == 11) {
-                        if (memeq(raw + i + 1, "DESCRIPTION", 11) == 1) {
-                            sub = description;
-                        }
-                    }
-                }
+                var klen = j - i - 1;
+                var sub = _subst_lookup(raw + i + 1, klen);
                 if (sub != 0) {
                     str_builder_add_cstr(out, sub);
                     i = j + 1;
                 } else {
-                    # Unknown key — emit literal `{` and keep
-                    # walking from i+1.
                     str_builder_add_byte(out, 123);
                     i = i + 1;
                 }
@@ -243,22 +376,7 @@ fn _render_template(templates_dir, name, proj_name, cyrius_ver, description) {
     return str_data(str_builder_build(out));
 }
 
-# ────────────────────────────────────────────────────────────
-# Filesystem ops
-# ────────────────────────────────────────────────────────────
-
-# Write `content` (cstring) to `path`, creating parent dirs as
-# needed. Returns 0 on success, -1 on any failure.
-fn _write_file(path, content) {
-    var fd = sys_open(path, 577, 420);    # O_WRONLY|O_CREAT|O_TRUNC, 0644
-    if (fd < 0) { return 0 - 1; }
-    var len = strlen(content);
-    sys_write(fd, content, len);
-    sys_close(fd);
-    return 0;
-}
-
-fn _join(parent, child) {
+fn _join(parent, child): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, parent);
     str_builder_add_cstr(sb, "/");
@@ -266,207 +384,740 @@ fn _join(parent, child) {
     return str_data(str_builder_build(sb));
 }
 
-# Render template + write to <proj>/<rel_path>. Returns 0 on
-# success, -1 on render or write failure.
-fn _render_and_write(templates_dir, tpl_name, proj_root, rel_path, proj_name, cyrius_ver, description) {
-    var content = _render_template(templates_dir, tpl_name, proj_name, cyrius_ver, description);
+# Write cstring content to path (O_WRONLY|O_CREAT|O_TRUNC, 0644). 0/-1.
+fn _write_file(path, content): i64 {
+    var fd = sys_open(path, 577, 420);
+    if (fd < 0) { return 0 - 1; }
+    sys_write(fd, content, strlen(content));
+    sys_close(fd);
+    return 0;
+}
+
+# Render tpl and write to proj_root/rel (always — clobber). 0/-1.
+fn _rw(templates_dir, tpl, proj_root, rel): i64 {
+    var content = _render_template(templates_dir, tpl);
     if (content == 0) { return 0 - 1; }
-    var dst = _join(proj_root, rel_path);
+    return _write_file(_join(proj_root, rel), content);
+}
+
+# Skip-if-exists variant (in-place mode). Prints a skip line.
+fn _rw_wia(templates_dir, tpl, proj_root, rel, inplace): i64 {
+    var dst = _join(proj_root, rel);
+    if (inplace == 1) {
+        if (file_exists(dst) == 1) {
+            _print("  skip: "); _print(dst); _print(" (already exists)\n");
+            return 0;
+        }
+    }
+    var content = _render_template(templates_dir, tpl);
+    if (content == 0) { return 0 - 1; }
     return _write_file(dst, content);
 }
 
 # ────────────────────────────────────────────────────────────
-# Main
+# Filesystem
+# ────────────────────────────────────────────────────────────
+fn _mkdir(proj_root, rel) { sys_mkdir(_join(proj_root, rel), 493); }
+
+# Stream-copy src→dst (handles large stdlib files). 0/-1.
+fn _copy_file(src, dst): i64 {
+    var infd = sys_open(src, 0, 0);
+    if (infd < 0) { return 0 - 1; }
+    var outfd = sys_open(dst, 577, 420);
+    if (outfd < 0) { sys_close(infd); return 0 - 1; }
+    var buf = alloc(65536);
+    var go = 1;
+    while (go == 1) {
+        var n = sys_read(infd, buf, 65536);
+        if (n <= 0) { go = 0; }
+        else { sys_write(outfd, buf, n); }
+    }
+    sys_close(infd);
+    sys_close(outfd);
+    return 0;
+}
+
+fn _count_newlines(path): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    var buf = alloc(65536);
+    var c = 0;
+    var go = 1;
+    while (go == 1) {
+        var n = sys_read(fd, buf, 65536);
+        if (n <= 0) { go = 0; }
+        else {
+            var k = 0;
+            while (k < n) {
+                if (load8(buf + k) == 10) { c = c + 1; }
+                k = k + 1;
+            }
+        }
+    }
+    sys_close(fd);
+    return c;
+}
+
+# ISO date YYYY-MM-DD (first 10 bytes of iso8601_now()).
+fn _iso_date(): i64 {
+    var s = iso8601_now();
+    var d = alloc(11);
+    memcpy(d, s, 10);
+    store8(d + 10, 0);
+    return d;
+}
+
+# ────────────────────────────────────────────────────────────
+# stdlib vendoring
 # ────────────────────────────────────────────────────────────
 
-fn main() {
-    alloc_init();
-    args_init();
-
-    var argc_n = argc();
-    if (argc_n < 2) {
-        syscall(SYS_WRITE, 2, "Usage: cyrius-init [--lib] [--description=<desc>] <project-name>\n", 65);
-        syscall(SYS_WRITE, 2, "  (in-place mode, --language/--agent/--cmtools/--dry-run still route to scripts/cyrius-init.sh)\n", 95);
-        syscall(SYS_EXIT, 1);
+# Resolve the source lib dir: $CYRIUS_HOME(/$HOME/.cyrius)/versions/<cur>/lib
+# else <root>/lib. cstring path or 0.
+fn _vendor_lib_src(templates_dir): i64 {
+    var home = getenv("CYRIUS_HOME");
+    var hbase = 0;
+    if (home != 0) { if (strlen(home) > 0) { hbase = home; } }
+    if (hbase == 0) {
+        var h = getenv("HOME");
+        if (h != 0) { if (strlen(h) > 0) { hbase = _join(h, ".cyrius"); } }
     }
+    if (hbase != 0) {
+        var cur = _read_trimmed_line(_join(hbase, "current"));
+        if (cur != 0) {
+            var vp = _join(_join(_join(hbase, "versions"), cur), "lib");
+            if (is_dir(str_from(vp)) == 1) { return vp; }
+        }
+    }
+    var root = _root_of(templates_dir);
+    if (root != 0) {
+        var rl = _join(root, "lib");
+        if (is_dir(str_from(rl)) == 1) { return rl; }
+    }
+    return 0;
+}
 
-    # Parse args: positional NAME + --lib/--bin + --description=<v>.
-    # v5.9.29: any unsupported flag exits 2 → dispatcher falls
-    # through to bash. Flag-matrix expansion (--language / --agent
-    # / --cmtools / --dry-run) lives in the bash side until a
-    # follow-up slot ports it.
+# Count *.cyr entries in a dir (Str vec).
+fn _count_cyr(entries): i64 {
+    var c = 0;
+    var i = 0;
+    var dotcyr = str_from(".cyr");
+    while (i < vec_len(entries)) {
+        if (str_ends_with(vec_get(entries, i), dotcyr) == 1) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn _vendor_stdlib(templates_dir, proj_root, inplace): i64 {
+    _print("Vendoring Cyrius stdlib...\n");
+    var src = _vendor_lib_src(templates_dir);
+    if (src == 0) {
+        _print("  warn: Cyrius stdlib not found, lib/ will be empty\n");
+        return 0;
+    }
+    var libdst = _join(proj_root, "lib");
+    var srcStr = str_from(src);
+    var dstStr = str_from(libdst);
+    var entries = dir_list(srcStr);
+    var dotcyr = str_from(".cyr");
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var nameStr = vec_get(entries, i);
+        if (str_ends_with(nameStr, dotcyr) == 1) {
+            var dstf = str_data(path_join(dstStr, nameStr));
+            var doit = 1;
+            if (inplace == 1) { if (file_exists(dstf) == 1) { doit = 0; } }
+            if (doit == 1) {
+                _copy_file(str_data(path_join(srcStr, nameStr)), dstf);
+            }
+        }
+        i = i + 1;
+    }
+    return _count_cyr(dir_list(dstStr));
+}
+
+# ────────────────────────────────────────────────────────────
+# cmtools (starship)
+# ────────────────────────────────────────────────────────────
+fn _cmtools(cmtools): i64 {
+    if (streq(cmtools, "starship") == 1 || streq(cmtools, "all") == 1) {
+        return _cmtools_starship();
+    }
+    _print("  note: unknown cmtools preset '");
+    _print(cmtools);
+    _print("', available: starship\n");
+    return 0;
+}
+
+fn _cmtools_starship(): i64 {
+    var base = getenv("XDG_CONFIG_HOME");
+    var confdir = 0;
+    if (base != 0) { if (strlen(base) > 0) { confdir = base; } }
+    if (confdir == 0) {
+        var h = getenv("HOME");
+        if (h == 0) { return 0; }
+        confdir = _join(h, ".config");
+    }
+    var conf = _join(confdir, "starship.toml");
+    if (file_exists(conf) == 0) {
+        _print("  starship: no config found at "); _print(conf); _print(" (skipped)\n");
+        return 0;
+    }
+    var buf = alloc(131072);
+    var n = file_read_all(conf, buf, 131071);
+    if (n < 0) { n = 0; }
+    store8(buf + n, 0);
+    if (strstr(buf, "custom.cyrius") != 0) {
+        _print("  starship: Cyrius segment already configured\n");
+        return 0;
+    }
+    var block = "\n[custom.cyrius]\ncommand = \"cyrius version 2>/dev/null | awk '{print $2}'\"\nwhen = \"test -f cyrius.cyml -o -f cyrius.toml\"\nsymbol = \"\xF0\x9D\x95\xAE\"\nstyle = \"bg:teal\"\nformat = '[[ $symbol( $output) ](fg:base bg:teal)]($style)'\ndetect_files = [\"cyrius.cyml\", \"cyrius.toml\"]\n";
+    file_append_locked(conf, block, strlen(block));
+    _print("  starship: added Cyrius segment to "); _print(conf); _print("\n");
+    return 0;
+}
+
+# ────────────────────────────────────────────────────────────
+# init usage / dry-run
+# ────────────────────────────────────────────────────────────
+fn _init_usage() {
+    _print("Usage: cyrius init [flags] <project-name | .>\n");
+    _print("\n");
+    _print("Creates a new Cyrius project with:\n");
+    _print("  cyrius.cyml    project manifest + deps\n");
+    _print("  src/main.cyr   entry point\n");
+    _print("  src/test.cyr   test file\n");
+    _print("  lib/           resolved stdlib (via cyrius deps)\n");
+    _print("  scripts/       build + test\n");
+    _print("  docs, CI, version files\n");
+    _print("\n");
+    _print("Options:\n");
+    _print("  --lib              emit library-shape scaffold (entry=programs/smoke.cyr,\n");
+    _print("                     [lib] modules=[src/main.cyr], src/main.cyr header-only)\n");
+    _print("  --bin              emit binary-shape scaffold (default; existing behavior)\n");
+    _print("  --language=<x>     source-language posture (none|rust); default none\n");
+    _print("                     none — greenfield (in-place safe; skips existing files)\n");
+    _print("                     rust — declines; use 'cyrius port <path>'\n");
+    _print("  --dry-run          show what would be created without writing\n");
+    _print("  --agent            create a CLAUDE.md for generic Cyrius projects\n");
+    _print("  --agent=<preset>   create a CLAUDE.md from a preset (agnos, claude)\n");
+    _print("  --cmtools          install CLI tool integrations (default: starship)\n");
+    _print("  --cmtools=<name>   install specific tool (starship)\n");
+    _print("\n");
+    _print("Targets:\n");
+    _print("  cyrius init my-proj                 \xE2\x86\x92 create ./my-proj/ (errors if exists)\n");
+    _print("  cyrius init --language=none .       \xE2\x86\x92 scaffold INTO current dir (skip-existing)\n");
+    _print("  cyrius init --language=none my-proj \xE2\x86\x92 if my-proj/ exists, scaffold in-place\n");
+}
+
+fn _init_dry_run(disp, proj, shape_lib, inplace, agent, agent_seen) {
+    if (inplace == 1) {
+        _print("Dry run: cyrius init --language=none "); _print(disp); _print(" (in-place, skip-existing)\n");
+    } else {
+        _print("Dry run: cyrius init "); _print(disp); _print("\n");
+    }
+    _print("\n");
+    _print("Would create (skip if exists in in-place mode):\n");
+    _print("  "); _print(disp); _print("/\n");
+    _print("  "); _print(disp); _print("/.gitignore\n");
+    _print("  "); _print(disp); _print("/LICENSE                  (GPL-3.0-only)\n");
+    _print("  "); _print(disp); _print("/README.md\n");
+    _print("  "); _print(disp); _print("/CHANGELOG.md\n");
+    _print("  "); _print(disp); _print("/VERSION                  (0.1.0)\n");
+    _print("  "); _print(disp); _print("/cyrius.cyml              (pins Cyrius version, deps, build entry)\n");
+    if (shape_lib == 1) {
+        _print("  "); _print(disp); _print("/src/main.cyr           (library module — header only)\n");
+        _print("  "); _print(disp); _print("/programs/smoke.cyr     (compile-link smoke)\n");
+    } else {
+        _print("  "); _print(disp); _print("/src/main.cyr\n");
+        _print("  "); _print(disp); _print("/src/test.cyr\n");
+    }
+    _print("  "); _print(disp); _print("/tests/"); _print(proj); _print(".tcyr   (test suite)\n");
+    _print("  "); _print(disp); _print("/tests/"); _print(proj); _print(".bcyr   (benchmarks)\n");
+    _print("  "); _print(disp); _print("/tests/"); _print(proj); _print(".fcyr   (fuzz harness)\n");
+    _print("  "); _print(disp); _print("/.github/workflows/ci.yml\n");
+    _print("  "); _print(disp); _print("/.github/workflows/release.yml\n");
+    if (agent_seen == 1) {
+        _print("  "); _print(disp); _print("/CLAUDE.md                (agent preset: "); _print(agent); _print(")\n");
+    }
+    _print("\n");
+    _print("Empty dirs created: src/ lib/ build/ tests/ docs/development/ .github/workflows/\n");
+    _print("\n");
+    if (shape_lib == 1) {
+        _print("After init, run: cd "); _print(disp); _print(" && cyrius deps && cyrius build programs/smoke.cyr build/"); _print(proj); _print("-smoke\n");
+    } else {
+        _print("After init, run: cd "); _print(disp); _print(" && cyrius deps && cyrius build src/main.cyr build/"); _print(proj); _print("\n");
+    }
+}
+
+# ────────────────────────────────────────────────────────────
+# init driver
+# ────────────────────────────────────────────────────────────
+fn _run_init(start): i64 {
+    var argc_n = argc();
     var name = 0;
     var shape_lib = 0;
+    var dry = 0;
+    var agent = 0;
+    var agent_seen = 0;
+    var cmtools = 0;
+    var cmtools_seen = 0;
+    var language = "none";
     var description = 0;
-    var ai = 1;
+
+    var ai = start;
     while (ai < argc_n) {
         var a = argv(ai);
         var alen = strlen(a);
-        if (alen >= 2 && load8(a) == 45) {
-            # Flag.
-            if (memeq(a, "--lib", 5) == 1 && alen == 5) {
-                shape_lib = 1;
-            } else { if (memeq(a, "--bin", 5) == 1 && alen == 5) {
-                shape_lib = 0;
-            } else { if (memeq(a, "--description=", 14) == 1 && alen > 14) {
-                description = a + 14;
-            } else {
-                syscall(SYS_WRITE, 2, "cyrius-init: unsupported flag — falling through to bash\n", 56);
-                syscall(SYS_EXIT, 2);
-            } } }
+        if (alen >= 1 && load8(a) == 45) {
+            if (streq(a, "--dry-run") == 1) { dry = 1; }
+            elif (streq(a, "--agent") == 1) { agent = "generic"; agent_seen = 1; }
+            elif (alen > 8 && memeq(a, "--agent=", 8) == 1) { agent = a + 8; agent_seen = 1; }
+            elif (streq(a, "--cmtools") == 1) { cmtools = "starship"; cmtools_seen = 1; }
+            elif (alen > 10 && memeq(a, "--cmtools=", 10) == 1) { cmtools = a + 10; cmtools_seen = 1; }
+            elif (alen > 11 && memeq(a, "--language=", 11) == 1) { language = a + 11; }
+            elif (streq(a, "--language") == 1) { _print("error: --language requires a value (none|rust)\n"); return 1; }
+            elif (alen > 14 && memeq(a, "--description=", 14) == 1) { description = a + 14; }
+            elif (streq(a, "--description") == 1) { _print("error: --description requires a value\n"); return 1; }
+            elif (streq(a, "--lib") == 1) { shape_lib = 1; }
+            elif (streq(a, "--bin") == 1) { shape_lib = 0; }
+            else { _print("Unknown flag: "); _print(a); _print("\n"); return 1; }
         } else {
-            if (name != 0) {
-                syscall(SYS_WRITE, 2, "cyrius-init: multiple positional args — falling through to bash\n", 64);
-                syscall(SYS_EXIT, 2);
-            }
             name = a;
         }
         ai = ai + 1;
     }
-    if (name == 0) {
-        syscall(SYS_WRITE, 2, "cyrius-init: no project name given\n", 35);
-        syscall(SYS_EXIT, 1);
+
+    if (streq(language, "rust") == 1) {
+        _print("error: --language=rust is for rust\xE2\x86\x92cyrius migration; use:\n");
+        _print("  cyrius port ");
+        if (name != 0) { _print(name); } else { _print("<path-to-rust-project>"); }
+        _print("\n");
+        return 1;
     }
-
-    # In-place mode (`cyrius init .`) deferred. Fail fast so
-    # caller knows to use the bash fallback.
-    if (strlen(name) == 1) {
-        if (load8(name) == 46) {
-            syscall(SYS_WRITE, 2, "cyrius-init: in-place mode (`.`) deferred — falling through to bash\n", 69);
-            syscall(SYS_EXIT, 2);
-        }
+    if (streq(language, "none") == 0) {
+        _print("error: unsupported --language="); _print(language); _print(" (supported: none, rust)\n");
+        _print("  none — greenfield scaffold (default; in-place safe)\n");
+        _print("  rust — see 'cyrius port <path>'\n");
+        return 1;
     }
+    if (name == 0) { _init_usage(); return 1; }
 
-    # Reject names with `/` (subdirs).
-    var ni = 0;
-    var nlen = strlen(name);
-    while (ni < nlen) {
-        if (load8(name + ni) == 47) {
-            syscall(SYS_WRITE, 2, "cyrius-init: project name with `/` not supported — falling through to bash\n", 76);
-            syscall(SYS_EXIT, 2);
-        }
-        ni = ni + 1;
-    }
-
-    # Reject if target dir already exists (greenfield-only in
-    # v5.9.28 part 1). file_exists returns 1 for files OR dirs.
-    if (file_exists(name) == 1) {
-        syscall(SYS_WRITE, 2, "error: directory '", 18);
-        sys_write(2, name, nlen);
-        syscall(SYS_WRITE, 2, "' already exists (in-place mode pending v5.9.29)\n", 49);
-        syscall(SYS_EXIT, 1);
-    }
-
-    # Resolve template dir + cyrius version.
-    var templates_dir = _resolve_templates_dir(argv(0));
-    if (templates_dir == 0) {
-        syscall(SYS_WRITE, 2, "error: cannot resolve templates dir from argv[0]\n", 49);
-        syscall(SYS_EXIT, 1);
-    }
-
-    var cyrius_ver = _read_repo_version(templates_dir);
-    if (cyrius_ver == 0) {
-        # Fall back to env / install snapshot. v5.9.28 keeps it
-        # simple — fail and let the bash fallback take over.
-        syscall(SYS_WRITE, 2, "cyrius-init: VERSION lookup failed (cascade pending v5.9.29) — falling through to bash\n", 87);
-        syscall(SYS_EXIT, 2);
-    }
-
-    # Description: --description=<v> from arg parse; default
-    # placeholder if absent.
-    if (description == 0) {
-        var desc_sb = str_builder_new();
-        str_builder_add_cstr(desc_sb, name);
-        str_builder_add_cstr(desc_sb, " — TODO");
-        description = str_data(str_builder_build(desc_sb));
-    }
-
-    # Create project skeleton. Common dirs for both shapes; lib
-    # adds programs/ for the smoke entry.
-    sys_mkdir(name, 493);
-    sys_mkdir(_join(name, "src"), 493);
-    sys_mkdir(_join(name, "tests"), 493);
-    sys_mkdir(_join(name, "docs"), 493);
-    if (shape_lib == 1) { sys_mkdir(_join(name, "programs"), 493); }
-    sys_mkdir(_join(name, "docs/adr"), 493);
-    sys_mkdir(_join(name, "docs/architecture"), 493);
-    sys_mkdir(_join(name, "docs/examples"), 493);
-    sys_mkdir(_join(name, ".github"), 493);
-    sys_mkdir(_join(name, ".github/workflows"), 493);
-
-    var fail = 0;
-    # 9 no-expansion templates (still rendered through the same
-    # path — the {KEY} substitution is a no-op when no placeholders
-    # are present).
-    if (_render_and_write(templates_dir, "gitignore",            name, ".gitignore",                       name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "license",              name, "LICENSE",                          name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "changelog.md",         name, "CHANGELOG.md",                     name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    # VERSION file = single source of truth; cyrius.cyml derives via
-    # version = "${file:VERSION}". The release workflow checks both ==
-    # the pushed tag (proper toolchain pattern — patra / sigil).
-    if (_render_and_write(templates_dir, "version",              name, "VERSION",                          name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "ci.yml",               name, ".github/workflows/ci.yml",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "release.yml",          name, ".github/workflows/release.yml",    name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "adr-template.md",      name, "docs/adr/template.md",             name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "architecture-readme.md", name, "docs/architecture/README.md",    name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    if (_render_and_write(templates_dir, "examples-gitkeep",     name, "docs/examples/.gitkeep",           name, cyrius_ver, description) != 0) { fail = fail + 1; }
-
-    # 6 with-expansion templates ({PROJ}, {CYRIUS_VER}, {DESCRIPTION}).
-    # Shape-conditional: --lib swaps cyrius.cyml + src/main.cyr +
-    # adds programs/smoke.cyr (compile-link proof, mabda/sigil
-    # convention); --bin keeps the v5.9.28 default + writes
-    # src/test.cyr.
-    if (shape_lib == 1) {
-        if (_render_and_write(templates_dir, "cyrius-cyml-lib", name, "cyrius.cyml",          name, cyrius_ver, description) != 0) { fail = fail + 1; }
-        if (_render_and_write(templates_dir, "main-cyr-lib",    name, "src/main.cyr",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
-        if (_render_and_write(templates_dir, "smoke-cyr",       name, "programs/smoke.cyr",   name, cyrius_ver, description) != 0) { fail = fail + 1; }
+    # in-place vs greenfield
+    var inplace = 0;
+    var proj = 0;
+    var disp = 0;
+    var proj_root = 0;
+    if (strlen(name) == 1 && load8(name) == 46) {
+        inplace = 1;
+        var cwd = _cwd_path();
+        disp = cwd;
+        proj = _basename_cstr(cwd);
+        proj_root = ".";
     } else {
-        if (_render_and_write(templates_dir, "cyrius-cyml-bin", name, "cyrius.cyml",          name, cyrius_ver, description) != 0) { fail = fail + 1; }
-        if (_render_and_write(templates_dir, "main-cyr-bin",    name, "src/main.cyr",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
-        if (_render_and_write(templates_dir, "src-test-cyr",    name, "src/test.cyr",         name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    }
-    # tests/<name>.tcyr / .bcyr / .fcyr — basename varies. Build
-    # paths inline.
-    var tcyr_sb = str_builder_new();
-    str_builder_add_cstr(tcyr_sb, "tests/");
-    str_builder_add_cstr(tcyr_sb, name);
-    str_builder_add_cstr(tcyr_sb, ".tcyr");
-    if (_render_and_write(templates_dir, "proj-tcyr",            name, str_data(str_builder_build(tcyr_sb)),    name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    var bcyr_sb = str_builder_new();
-    str_builder_add_cstr(bcyr_sb, "tests/");
-    str_builder_add_cstr(bcyr_sb, name);
-    str_builder_add_cstr(bcyr_sb, ".bcyr");
-    if (_render_and_write(templates_dir, "proj-bcyr",            name, str_data(str_builder_build(bcyr_sb)),    name, cyrius_ver, description) != 0) { fail = fail + 1; }
-    var fcyr_sb = str_builder_new();
-    str_builder_add_cstr(fcyr_sb, "tests/");
-    str_builder_add_cstr(fcyr_sb, name);
-    str_builder_add_cstr(fcyr_sb, ".fcyr");
-    if (_render_and_write(templates_dir, "proj-fcyr",            name, str_data(str_builder_build(fcyr_sb)),    name, cyrius_ver, description) != 0) { fail = fail + 1; }
-
-    if (fail > 0) {
-        syscall(SYS_WRITE, 2, "cyrius-init: ", 13);
-        # No PRNUM equivalent in this scope; bash equiv would be
-        # `printf "%d failed templates\n" $fail`. Skipping count
-        # for v5.9.28 — caller can grep for "failed".
-        syscall(SYS_WRITE, 2, "one or more templates failed to render\n", 39);
-        syscall(SYS_EXIT, 1);
+        disp = name;
+        proj = _basename_cstr(name);
+        proj_root = name;
     }
 
-    # Success message — mirrors the bash version's tail.
-    var shape_label = "--bin shape";
-    if (shape_lib == 1) { shape_label = "--lib shape"; }
-    var ok_sb = str_builder_new();
-    str_builder_add_cstr(ok_sb, "Created ");
-    str_builder_add_cstr(ok_sb, name);
-    str_builder_add_cstr(ok_sb, "/ (cyrius ");
-    str_builder_add_cstr(ok_sb, cyrius_ver);
-    str_builder_add_cstr(ok_sb, ", ");
-    str_builder_add_cstr(ok_sb, shape_label);
-    str_builder_add_cstr(ok_sb, "; v5.9.29 — in-place / --language / --agent / --cmtools / --dry-run still via bash fallback)\n");
-    var ok = str_data(str_builder_build(ok_sb));
-    sys_write(1, ok, strlen(ok));
+    if (dry == 1) { _init_dry_run(disp, proj, shape_lib, inplace, agent, agent_seen); return 0; }
 
+    if (inplace == 0 && file_exists(name) == 1) {
+        _print("ERROR: directory '"); _print(name); _print("' already exists\n");
+        _print("  hint: cd "); _print(name); _print(" && cyrius init --language=none .\n");
+        return 1;
+    }
+
+    if (inplace == 1) {
+        _print("Initializing Cyrius project in-place: "); _print(proj); _print(" ("); _print(disp); _print(")\n");
+    } else {
+        _print("Creating Cyrius project: "); _print(proj); _print("\n");
+    }
+
+    var templates_dir = _resolve_templates_dir(argv(0));
+    if (templates_dir == 0) { _eprint("error: cannot resolve templates dir from argv[0]\n"); return 1; }
+    var ver = _detect_version(templates_dir, argv(0));
+    if (ver == 0) { _eprint("  error: no cyrius toolchain detected — install first or set CYRIUS_VER\n"); return 1; }
+
+    var desc = description;
+    if (desc == 0) {
+        var db = str_builder_new();
+        str_builder_add_cstr(db, proj);
+        str_builder_add_cstr(db, " \xE2\x80\x94 TODO");
+        desc = str_data(str_builder_build(db));
+    }
+
+    # substitution context
+    _sv_proj = proj;
+    _sv_desc = desc;
+    _sv_ver = ver;
+    _sv_date = _iso_date();
+    _sv_rustloc = "0";
+    if (shape_lib == 1) {
+        _sv_ptype = "Library";
+        var bh = str_builder_new();
+        str_builder_add_cstr(bh, "cyrius build programs/smoke.cyr build/");
+        str_builder_add_cstr(bh, proj);
+        str_builder_add_cstr(bh, "-smoke");
+        _sv_bhint = str_data(str_builder_build(bh));
+        _sv_ci_src = "programs/smoke.cyr";
+        _sv_ci_out = "${{ github.event.repository.name }}-smoke";
+    } else {
+        _sv_ptype = "Binary";
+        var bh = str_builder_new();
+        str_builder_add_cstr(bh, "cyrius build src/main.cyr build/");
+        str_builder_add_cstr(bh, proj);
+        _sv_bhint = str_data(str_builder_build(bh));
+        _sv_ci_src = "src/main.cyr";
+        _sv_ci_out = "${{ github.event.repository.name }}";
+    }
+
+    # directory tree
+    sys_mkdir(proj_root, 493);
+    _mkdir(proj_root, "src");
+    _mkdir(proj_root, "lib");
+    _mkdir(proj_root, "build");
+    _mkdir(proj_root, "tests");
+    if (shape_lib == 1) { _mkdir(proj_root, "programs"); }
+    _mkdir(proj_root, "docs");
+    _mkdir(proj_root, "docs/adr");
+    _mkdir(proj_root, "docs/architecture");
+    _mkdir(proj_root, "docs/guides");
+    _mkdir(proj_root, "docs/examples");
+    _mkdir(proj_root, "docs/development");
+    _mkdir(proj_root, ".github");
+    _mkdir(proj_root, ".github/workflows");
+
+    # files (skip-if-exists in in-place mode)
+    _rw_wia(templates_dir, "version", proj_root, "VERSION", inplace);
+    _rw_wia(templates_dir, "gitignore", proj_root, ".gitignore", inplace);
+    _rw_wia(templates_dir, "license", proj_root, "LICENSE", inplace);
+    _rw_wia(templates_dir, "changelog.md", proj_root, "CHANGELOG.md", inplace);
+    if (shape_lib == 1) {
+        _rw_wia(templates_dir, "readme-lib", proj_root, "README.md", inplace);
+        _rw_wia(templates_dir, "cyrius-cyml-lib", proj_root, "cyrius.cyml", inplace);
+        _rw_wia(templates_dir, "main-cyr-lib", proj_root, "src/main.cyr", inplace);
+        _rw_wia(templates_dir, "smoke-cyr", proj_root, "programs/smoke.cyr", inplace);
+    } else {
+        _rw_wia(templates_dir, "readme-bin", proj_root, "README.md", inplace);
+        _rw_wia(templates_dir, "cyrius-cyml-bin", proj_root, "cyrius.cyml", inplace);
+        _rw_wia(templates_dir, "main-cyr-bin", proj_root, "src/main.cyr", inplace);
+        _rw_wia(templates_dir, "src-test-cyr", proj_root, "src/test.cyr", inplace);
+    }
+    _rw_wia(templates_dir, "proj-tcyr", proj_root, _tests_rel(proj, ".tcyr"), inplace);
+    _rw_wia(templates_dir, "proj-bcyr", proj_root, _tests_rel(proj, ".bcyr"), inplace);
+    _rw_wia(templates_dir, "proj-fcyr", proj_root, _tests_rel(proj, ".fcyr"), inplace);
+    _rw_wia(templates_dir, "ci.yml", proj_root, ".github/workflows/ci.yml", inplace);
+    _rw_wia(templates_dir, "release.yml", proj_root, ".github/workflows/release.yml", inplace);
+    _rw_wia(templates_dir, "adr-readme", proj_root, "docs/adr/README.md", inplace);
+    _rw_wia(templates_dir, "adr-template.md", proj_root, "docs/adr/template.md", inplace);
+    _rw_wia(templates_dir, "architecture-readme.md", proj_root, "docs/architecture/README.md", inplace);
+    if (shape_lib == 1) {
+        _rw_wia(templates_dir, "getting-started-lib", proj_root, "docs/guides/getting-started.md", inplace);
+    } else {
+        _rw_wia(templates_dir, "getting-started-bin", proj_root, "docs/guides/getting-started.md", inplace);
+    }
+    _rw_wia(templates_dir, "examples-gitkeep", proj_root, "docs/examples/.gitkeep", inplace);
+    _rw_wia(templates_dir, "state-md", proj_root, "docs/development/state.md", inplace);
+    _rw_wia(templates_dir, "roadmap-md", proj_root, "docs/development/roadmap.md", inplace);
+
+    # CLAUDE.md (default since v5.7.16; --agent preset is deprecated/no-op)
+    if (agent_seen == 1) {
+        if (streq(agent, "generic") == 0 && streq(agent, "agnos") == 0 && streq(agent, "claude") == 0) {
+            _print("  note: --agent="); _print(agent); _print(" — preset is deprecated; the default CLAUDE.md template applies regardless\n");
+        }
+    }
+    _rw_wia(templates_dir, "claude-md", proj_root, "CLAUDE.md", inplace);
+
+    # cmtools
+    if (cmtools_seen == 1) { _cmtools(cmtools); }
+
+    # vendor stdlib
+    var lib_count = _vendor_stdlib(templates_dir, proj_root, inplace);
+
+    # done
+    _print("\n");
+    if (inplace == 1) {
+        _print("Initialized "); _print(disp); _print(" (in-place, --language=none)\n");
+    } else {
+        _print("Created "); _print(disp); _print("/\n");
+    }
+    _print("  "); _print(str_data(str_from_int(lib_count))); _print(" stdlib modules vendored\n");
+    if (shape_lib == 1) {
+        _print("  src/main.cyr — library module (header)\n");
+        _print("  programs/smoke.cyr — compile-link smoke\n");
+    } else {
+        _print("  src/main.cyr — entry point\n");
+        _print("  src/test.cyr — test file\n");
+    }
+    _print("\n");
+    _print("Next steps:\n");
+    if (inplace == 0) { _print("  cd "); _print(disp); _print("\n"); }
+    _print("  cyrius deps\n");
+    if (shape_lib == 1) {
+        _print("  cyrius build programs/smoke.cyr build/"); _print(proj); _print("-smoke\n");
+        _print("  cyrius distlib    # produce dist/"); _print(proj); _print(".cyr\n");
+    } else {
+        _print("  cyrius build src/main.cyr build/"); _print(proj); _print("\n");
+    }
+    _print("  cyrius test\n");
     return 0;
+}
+
+fn _tests_rel(proj, ext): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "tests/");
+    str_builder_add_cstr(sb, proj);
+    str_builder_add_cstr(sb, ext);
+    return str_data(str_builder_build(sb));
+}
+
+# ────────────────────────────────────────────────────────────
+# port usage / dry-run / move
+# ────────────────────────────────────────────────────────────
+fn _port_usage() {
+    _print("Usage: cyrius port [--language=<lang>] [--dry-run] <path-to-project>\n");
+    _print("\n");
+    _print("Options:\n");
+    _print("  --language=<x>  source language being ported FROM (default: rust)\n");
+    _print("                  supported: rust  (future: go, python, …)\n");
+    _print("  --dry-run       show what would be moved/created without writing\n");
+    _print("\n");
+    _print("Greenfield (no source to port) \xE2\x86\x92 use 'cyrius init [--language=none] <name>'\n");
+}
+
+fn _count_rust_loc(target): i64 {
+    var srcdir = _join(target, "src");
+    if (is_dir(str_from(srcdir)) == 0) { return 0; }
+    var files = find_files(str_from(srcdir), str_from(".rs"));
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(files)) {
+        total = total + _count_newlines(str_data(vec_get(files, i)));
+        i = i + 1;
+    }
+    return total;
+}
+
+fn _port_dry_run(name, loc) {
+    _print("Dry run: cyrius port "); _print(name); _print("\n");
+    _print("\n");
+    _print("Would move to rust-old/:\n");
+    _print("  src/, Cargo.toml, Cargo.lock, tests/, benches/ etc.\n");
+    _print("  Rust source: "); _print(str_data(str_from_int(loc))); _print(" lines\n");
+    _print("\n");
+    _print("Would create:\n");
+    _print("  src/main.cyr              (entry point skeleton)\n");
+    _print("  cyrius.cyml               ([package] + [build] + [deps])\n");
+    _print("  cyrius.cyml [package].cyrius = \""); _print(_sv_ver); _print("\"  (pins toolchain version)\n");
+    _print("  .github/workflows/ci.yml\n");
+    _print("  .github/workflows/release.yml\n");
+    _print("\n");
+    _print("After port: cyrius build src/main.cyr build/"); _print(name); _print("\n");
+}
+
+fn _port_move(target) {
+    var ro = _join(target, "rust-old");
+    var items = vec_new();
+    vec_push(items, "src");
+    vec_push(items, "benches");
+    vec_push(items, "examples");
+    vec_push(items, "fuzz");
+    vec_push(items, "tests");
+    vec_push(items, "supply-chain");
+    vec_push(items, "include");
+    vec_push(items, "py");
+    vec_push(items, "Cargo.toml");
+    vec_push(items, "Cargo.lock");
+    vec_push(items, "rust-toolchain.toml");
+    vec_push(items, "deny.toml");
+    vec_push(items, "codecov.yml");
+    vec_push(items, "Makefile");
+    vec_push(items, "bench-history.csv");
+    vec_push(items, "benchmarks.md");
+    vec_push(items, "target");
+    vec_push(items, "rust_out");
+    var i = 0;
+    while (i < vec_len(items)) {
+        var it = vec_get(items, i);
+        var srcp = _join(target, it);
+        if (file_exists(srcp) == 1) {
+            sys_rename(srcp, _join(ro, it));
+        }
+        i = i + 1;
+    }
+}
+
+# ────────────────────────────────────────────────────────────
+# port driver
+# ────────────────────────────────────────────────────────────
+fn _run_port(start): i64 {
+    var argc_n = argc();
+    var dry = 0;
+    var language = "rust";
+    var target = 0;
+
+    var ai = start;
+    while (ai < argc_n) {
+        var a = argv(ai);
+        var alen = strlen(a);
+        if (alen >= 1 && load8(a) == 45) {
+            if (streq(a, "--dry-run") == 1) { dry = 1; }
+            elif (alen > 11 && memeq(a, "--language=", 11) == 1) { language = a + 11; }
+            elif (streq(a, "--language") == 1) { _print("error: --language requires a value (rust)\n"); return 1; }
+            else { _print("Unknown flag: "); _print(a); _print("\n"); return 1; }
+        } else {
+            target = a;
+        }
+        ai = ai + 1;
+    }
+
+    if (target == 0 || is_dir(str_from(target)) == 0) {
+        _port_usage();
+        return 1;
+    }
+
+    if (streq(language, "rust") == 1) {
+        # ok
+    } elif (streq(language, "none") == 1) {
+        _print("error: --language=none has no source to port\n");
+        _print("  hint: use 'cyrius init --language=none "); _print(target); _print("' for greenfield scaffold\n");
+        return 1;
+    } elif (streq(language, "go") == 1 || streq(language, "python") == 1 || streq(language, "c") == 1 || streq(language, "cpp") == 1 || streq(language, "zig") == 1 || streq(language, "ocaml") == 1 || streq(language, "haskell") == 1) {
+        _print("error: --language="); _print(language); _print(" not yet supported (planned for future v5.6.x)\n");
+        _print("  currently supported: rust\n");
+        return 1;
+    } else {
+        _print("error: unsupported --language="); _print(language); _print(" (supported: rust)\n");
+        return 1;
+    }
+
+    var name = _basename_cstr(target);
+    if (streq(name, ".") == 1 || strlen(name) == 0) { name = _basename_cstr(_cwd_path()); }
+
+    if (file_exists(_join(target, "Cargo.toml")) == 0) {
+        _print("error: no Cargo.toml found in "); _print(target); _print(" (--language=rust expects a Rust project)\n");
+        return 1;
+    }
+    if (file_exists(_join(target, "rust-old")) == 1) {
+        _print("error: rust-old/ already exists — project may already be ported\n");
+        return 1;
+    }
+
+    var loc = _count_rust_loc(target);
+
+    # version (needed by dry-run for the pin line)
+    var templates_dir = _resolve_templates_dir(argv(0));
+    if (templates_dir == 0) { _eprint("error: cannot resolve templates dir from argv[0]\n"); return 1; }
+    var ver = _detect_version(templates_dir, argv(0));
+    if (ver == 0) { _eprint("  error: no cyrius toolchain detected — install first or set CYRIUS_VER\n"); return 1; }
+    _sv_ver = ver;
+
+    if (dry == 1) { _port_dry_run(name, loc); return 0; }
+
+    _print("=== Porting "); _print(name); _print(" to Cyrius ===\n");
+    _print("  Rust source: "); _print(str_data(str_from_int(loc))); _print(" lines\n");
+
+    # move rust → rust-old/
+    sys_mkdir(_join(target, "rust-old"), 493);
+    _port_move(target);
+    _print("  Moved Rust to rust-old/\n");
+    var locbuf = str_builder_new();
+    str_builder_add_cstr(locbuf, str_data(str_from_int(loc)));
+    str_builder_add_cstr(locbuf, "\n");
+    _write_file(_join(_join(target, "rust-old"), "LINES_OF_RUST.txt"), str_data(str_builder_build(locbuf)));
+
+    # structure
+    _mkdir(target, "src");
+    _mkdir(target, "tests");
+    _mkdir(target, "build");
+    _mkdir(target, "docs");
+    _mkdir(target, "docs/adr");
+    _mkdir(target, "docs/architecture");
+    _mkdir(target, "docs/guides");
+    _mkdir(target, "docs/examples");
+    _mkdir(target, "docs/development");
+    _mkdir(target, ".github");
+    _mkdir(target, ".github/workflows");
+
+    # substitution context
+    _sv_proj = name;
+    _sv_date = _iso_date();
+    _sv_rustloc = str_data(str_from_int(loc));
+    _sv_ptype = "Port (Rust \xE2\x86\x92 Cyrius)";
+    _sv_ci_src = "src/main.cyr";
+    _sv_ci_out = "${{ github.event.repository.name }}";
+
+    _rw(templates_dir, "main-cyr-port", target, "src/main.cyr");
+    _print("  Created src/main.cyr\n");
+    _rw(templates_dir, "cyrius-cyml-port", target, "cyrius.cyml");
+    _print("  Created cyrius.cyml\n");
+
+    _rw(templates_dir, "adr-readme", target, "docs/adr/README.md");
+    _rw(templates_dir, "adr-template.md", target, "docs/adr/template.md");
+    _rw(templates_dir, "architecture-readme.md", target, "docs/architecture/README.md");
+    _rw(templates_dir, "getting-started-port", target, "docs/guides/getting-started.md");
+    _rw(templates_dir, "examples-gitkeep", target, "docs/examples/.gitkeep");
+    _rw(templates_dir, "state-md-port", target, "docs/development/state.md");
+    _rw(templates_dir, "roadmap-md-port", target, "docs/development/roadmap.md");
+    _rw(templates_dir, "claude-md-port", target, "CLAUDE.md");
+    _print("  Created docs/ tree (adr/architecture/guides/examples/development) + CLAUDE.md\n");
+
+    # .gitignore: create if absent, else append the port-specific lines.
+    var gi = _join(target, ".gitignore");
+    if (file_exists(gi) == 0) {
+        _rw(templates_dir, "gitignore-port", target, ".gitignore");
+        _print("  Created .gitignore\n");
+    } else {
+        var gbuf = alloc(131072);
+        var gn = file_read_all(gi, gbuf, 131071);
+        if (gn < 0) { gn = 0; }
+        store8(gbuf + gn, 0);
+        if (strstr(gbuf, "rust-old/target") == 0) {
+            var add = "\n# Cyrius port\n/rust-old/target/\n/build/\n";
+            file_append_locked(gi, add, strlen(add));
+            _print("  Appended /rust-old/target/ and /build/ to existing .gitignore\n");
+        }
+    }
+
+    _rw(templates_dir, "ci.yml", target, ".github/workflows/ci.yml");
+    _print("  Created .github/workflows/ci.yml\n");
+    _rw(templates_dir, "release.yml", target, ".github/workflows/release.yml");
+    _print("  Created .github/workflows/release.yml\n");
+
+    _rw(templates_dir, "proj-tcyr", target, _tests_rel(name, ".tcyr"));
+    _print("  Created tests/"); _print(name); _print(".tcyr\n");
+    _rw(templates_dir, "proj-bcyr", target, _tests_rel(name, ".bcyr"));
+    _print("  Created tests/"); _print(name); _print(".bcyr\n");
+    _rw(templates_dir, "proj-fcyr", target, _tests_rel(name, ".fcyr"));
+    _print("  Created tests/"); _print(name); _print(".fcyr\n");
+
+    _print("\n");
+    _print("=== "); _print(name); _print(" ready for porting ===\n");
+    _print("  Rust (rust-old/): "); _print(str_data(str_from_int(loc))); _print(" lines\n");
+    _print("  Cyrius (src/):    skeleton + test + bench + fuzz\n");
+    _print("  Toolchain:        "); _print(ver); _print(" (cyrius.cyml)\n");
+    _print("\n");
+    _print("Next steps:\n");
+    _print("  1. Read rust-old/src/ to understand the API\n");
+    _print("  2. Port module by module into src/main.cyr\n");
+    _print("  3. Add deps to cyrius.cyml as needed\n");
+    _print("  4. Build: cyrius build src/main.cyr build/"); _print(name); _print("\n");
+    _print("  5. Test:  cyrius test tests/"); _print(name); _print(".tcyr\n");
+    _print("  6. Bench: cyrius bench tests/"); _print(name); _print(".bcyr\n");
+    return 0;
+}
+
+# ────────────────────────────────────────────────────────────
+# entry
+# ────────────────────────────────────────────────────────────
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    if (argc() >= 2) {
+        if (streq(argv(1), "--__mode=port") == 1) { return _run_port(2); }
+    }
+    return _run_init(1);
 }
 
 var ec = main();

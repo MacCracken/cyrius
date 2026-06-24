@@ -42,12 +42,12 @@ cat cbt/cyrius.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cyrius"
 for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign; do
     cat "programs/${tool}.cyr" | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/${tool}"
 done
-# Version manager + prompt helper + scaffolding shims. The cyrius wrapper looks
-# for cyrius-init (binary, preferred) and the cyrius-{init,port,repl}.sh shims in
-# <home>/bin. v6.0.58: they were missing from the macOS tarball, so `cyrius
-# init`/`port`/`repl` failed "script not found" even though install was fine.
+# Version manager + prompt helper + repl shim. v6.2.40: `cyrius init` and
+# `cyrius port` are the native cyrius-init binary (built above), so the
+# cyrius-init.sh / cyrius-port.sh shims are gone — only cyrius-repl.sh
+# remains as a shell shim.
 cp scripts/cyriusly scripts/cyrius-prompt-info "$WORK/$STAGE/bin/"
-cp scripts/shims/cyrius-init.sh scripts/shims/cyrius-port.sh scripts/shims/cyrius-repl.sh "$WORK/$STAGE/bin/"
+cp scripts/shims/cyrius-repl.sh "$WORK/$STAGE/bin/"
 chmod +x "$WORK/$STAGE/bin"/*
 
 # Validate every Mach-O binary (magic cffaedfe, cputype 0x0100000C) —

@@ -9,9 +9,3 @@ fn main() {
 
 var r = main();
 syscall(SYS_EXIT, r);
-EOF
-fi
-
-# === tests/test.tcyr ===
-# (tests/ already created by the top-level mkdir block above)
-write_if_absent "$NAME/tests/{PROJ}.tcyr" << EOF

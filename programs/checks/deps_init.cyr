@@ -163,10 +163,12 @@ fn _deps_lock_gate(): i64 {
     return fail;
 }
 
-fn _scaffold_init(scratch_dir, init_script, flag, name): i64 {
+# v6.2.40: drives the native scaffolder binary (build/cyrius-init)
+# directly — the bash shims are gone. `scaffolder` is the binary path.
+fn _scaffold_init(scratch_dir, scaffolder, flag, name): i64 {
     sys_mkdir(scratch_dir, 493);
     var out = _tmp_path("audit_init_out_");
-    var ec = _exec_in_dir3(scratch_dir, "/bin/sh", init_script, flag, name, out);
+    var ec = _exec_in_dir3(scratch_dir, scaffolder, flag, name, 0, out);
     sys_unlink(out);
     if (ec != 0) { return 0; }
     var sb = str_builder_new();
@@ -178,7 +180,7 @@ fn _scaffold_init(scratch_dir, init_script, flag, name): i64 {
 
 fn _init_lib_bin_gate(): i64 {
     var label = "cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)";
-    var init_script = _root_path("scripts/cyrius-init.sh");
+    var init_script = _root_path("build/cyrius-init");
     if (file_exists(init_script) != 1) {
         _p("  skip: ");
         _p(init_script);
@@ -316,7 +318,7 @@ fn _init_lib_bin_gate(): i64 {
     var c3 = _join(scratch, "case3");
     sys_mkdir(c3, 493);
     var c3_out = _tmp_path("audit_init_c3_");
-    var ec_c3 = _exec_in_dir3(c3, "/bin/sh", init_script, "bareproj", 0, c3_out);
+    var ec_c3 = _exec_in_dir3(c3, init_script, "bareproj", 0, 0, c3_out);
     sys_unlink(c3_out);
     if (ec_c3 != 0) {
         _p("    ");
@@ -369,16 +371,10 @@ fn _init_lib_bin_gate(): i64 {
 
 fn _init_doctree_gate(): i64 {
     var label = "cyrius init/port emit adr/architecture/guides/examples/development + CLAUDE.md (v5.7.16)";
-    var init_script = _root_path("scripts/cyrius-init.sh");
-    var port_script = _root_path("scripts/cyrius-port.sh");
+    # v6.2.40: native scaffolder binary; port mode via --__mode=port.
+    var init_script = _root_path("build/cyrius-init");
     if (file_exists(init_script) != 1) {
-        _p("  skip: scripts/cyrius-init.sh missing");
-        println("");
-        _check(label, 0);
-        return 0;
-    }
-    if (file_exists(port_script) != 1) {
-        _p("  skip: scripts/cyrius-port.sh missing");
+        _p("  skip: build/cyrius-init missing");
         println("");
         _check(label, 0);
         return 0;
@@ -439,7 +435,7 @@ fn _init_doctree_gate(): i64 {
     var c3 = _join(scratch, "case3");
     sys_mkdir(c3, 493);
     var c3_out = _tmp_path("audit_init_dt_c3_");
-    var ec_c3 = _exec_in_dir3(c3, "/bin/sh", init_script, "bareproj", 0, c3_out);
+    var ec_c3 = _exec_in_dir3(c3, init_script, "bareproj", 0, 0, c3_out);
     sys_unlink(c3_out);
     if (ec_c3 != 0) {
         _p("    ");
@@ -462,7 +458,7 @@ fn _init_doctree_gate(): i64 {
     _write_file(_join(c4, "src/main.rs"), "fn main() {}\n");
     _write_file(_join(c4, "Cargo.toml"), "[package]\nname = \"portproj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
     var c4_out = _tmp_path("audit_init_dt_c4_");
-    var ec_c4 = _exec_in_dir3(_join(scratch, "case4"), "/bin/sh", port_script, c4, 0, c4_out);
+    var ec_c4 = _exec_in_dir3(_join(scratch, "case4"), init_script, "--__mode=port", c4, 0, c4_out);
     sys_unlink(c4_out);
     if (ec_c4 != 0) {
         _p("    ");

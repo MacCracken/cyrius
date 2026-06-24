@@ -1,0 +1,31 @@
+# Build output
+/build/
+/rust-old/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Core dumps
+*.core
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Coverage
+/coverage/
+*.profraw
+*.profdata

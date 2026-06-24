@@ -420,13 +420,84 @@ fn cmd_self(): i64 {
     return 1;
 }
 
-# v5.11.58: `cyrius lib sync` — copy ~/.cyrius/versions/<X>/lib/
-# *.cyr files into ./lib/. Closes the third-remediation gap from
-# iron-boot papercut filing Item 4. Pre-existing options were
-# "delete ./lib/" (destructive — may break project-local libs)
-# and `CYRIUS_NO_WARN_SHADOW_LIB=1` (silences without fixing).
-# `lib sync` overwrites local copies with the snapshot for
-# pin-faithful builds.
+# v6.2.40: parse `[deps].stdlib = [...]` from the cwd's cyrius.cyml,
+# returning a vec of declared module-name cstrings (or 0 if absent).
+# Key-boundary-aware (mirrors cmd_deps' Phase-1 search) so a comment
+# mentioning "stdlib" or a `[lib] modules = [...]` array isn't matched.
+# Reuses _parse_toml_str_array (cbt/deps.cyr).
+fn _libsync_declared_mods(): i64 {
+    if (file_exists("cyrius.cyml") == 0) { return 0; }
+    var buf = alloc(32768);
+    var n = file_read_all("cyrius.cyml", buf, 32767);
+    if (n <= 0) { return 0; }
+    var si = 0;
+    while (si < n) {
+        if (memeq(buf + si, "stdlib", 6) == 1) {
+            var pre_ok = 1;
+            if (si > 0) {
+                var pc = load8(buf + si - 1);
+                if (pc >= 48 && pc <= 57)  { pre_ok = 0; }
+                if (pc >= 65 && pc <= 90)  { pre_ok = 0; }
+                if (pc >= 97 && pc <= 122) { pre_ok = 0; }
+                if (pc == 95)              { pre_ok = 0; }
+                if (pre_ok == 1) {
+                    var ls = si;
+                    while (ls > 0) {
+                        if (load8(buf + ls - 1) == 10) { break; }
+                        ls = ls - 1;
+                    }
+                    while (ls < si) {
+                        var wc = load8(buf + ls);
+                        if (wc == 35) { pre_ok = 0; break; }
+                        if (wc != 32 && wc != 9) { break; }
+                        ls = ls + 1;
+                    }
+                }
+            }
+            if (pre_ok == 1 && si + 6 < n && (load8(buf + si + 6) == 32 || load8(buf + si + 6) == 61)) {
+                return _parse_toml_str_array(buf, n, si);
+            }
+        }
+        si = si + 1;
+    }
+    return 0;
+}
+
+# v6.2.40: is snapshot file `name` (e.g. "sync_macos.cyr") wanted given
+# the declared module set? Matches the declared stem exactly OR as a
+# per-OS peer (`<decl>_*.cyr`) — e.g. declared "sync" pulls sync.cyr +
+# sync_macos.cyr + sync_windows.cyr; "syscalls" pulls
+# syscalls_x86_64_linux.cyr etc. (the "40 declared → 56 files" expansion
+# the thoth filing documents). No transitive include-following — that's
+# `cyrius deps`' job; `lib sync` vendors exactly the declared set.
+fn _libsync_wanted(name, declared): i64 {
+    var nlen = strlen(name);
+    if (nlen <= 4) { return 0; }
+    if (memeq(name + nlen - 4, ".cyr", 4) == 0) { return 0; }
+    var stem = nlen - 4;
+    var di = 0;
+    while (di < vec_len(declared)) {
+        var d = vec_get(declared, di);
+        var dl = strlen(d);
+        if (dl == stem && memeq(name, d, dl) == 1) { return 1; }
+        if (dl < stem && memeq(name, d, dl) == 1 && load8(name + dl) == 95) { return 1; }
+        di = di + 1;
+    }
+    return 0;
+}
+
+# v5.11.58: `cyrius lib sync` — vendor the pin snapshot's stdlib into
+# ./lib/. Closes the third-remediation gap from the iron-boot papercut
+# filing Item 4 (alternatives were destructive "delete ./lib/" or the
+# silencing CYRIUS_NO_WARN_SHADOW_LIB=1). Overwrites local copies with
+# the snapshot for pin-faithful builds.
+#
+# v6.2.40 (thoth filing 2026-06-11): scope to the project's declared
+# `[deps].stdlib` (+ per-OS peers) by default, so a curated committed
+# ./lib/ isn't blown up to the full ~88-module snapshot on every sync.
+# `--full` keeps the whole-snapshot behavior; a project with no
+# `[deps].stdlib` declaration also falls back to full (so it never ends
+# up with an empty lib/).
 #
 # Source version: cyrius.cyml [package].cyrius pin if present,
 # else the wrapper's own _VERSION_TOOLCHAIN. Snapshot must
@@ -451,6 +522,13 @@ fn cmd_lib_sync(): i64 {
     if (is_dir(str_from("lib")) == 0) {
         sys_mkdir("lib", 0x1ED);
     }
+    # Scope to declared [deps].stdlib (+ per-OS peers) unless --full.
+    # No declaration → full copy (a curated empty lib/ is never the intent).
+    var declared = 0;
+    if (_lib_sync_full == 0) {
+        declared = _libsync_declared_mods();
+        if (declared != 0) { if (vec_len(declared) == 0) { declared = 0; } }
+    }
     var entries = dir_list(str_from(src_dir));
     var li = 0;
     var copied = 0;
@@ -471,13 +549,19 @@ fn cmd_lib_sync(): i64 {
             }
         }
         if (is_cyr == 1) {
-            var src_path = make_path(src_dir, name);
-            var dst_path = make_path("lib", name);
-            if (_dry_run == 1) {
-                sys_write(STDOUT_FD, "  would sync: ", 14);
-                println(dst_path);
-            } else {
-                _dep_copy_file(src_path, dst_path);
+            var want = 1;
+            if (declared != 0) { want = _libsync_wanted(name, declared); }
+            if (want == 1) {
+                var src_path = make_path(src_dir, name);
+                var dst_path = make_path("lib", name);
+                if (_dry_run == 1) {
+                    sys_write(STDOUT_FD, "  would sync: ", 14);
+                    println(dst_path);
+                } else {
+                    _dep_copy_file(src_path, dst_path);
+                }
+                # v6.2.40: count in BOTH modes — pre-fix the dry-run
+                # summary always printed 0 (counter lived in the else).
                 copied = copied + 1;
             }
         }
@@ -491,7 +575,11 @@ fn cmd_lib_sync(): i64 {
         sys_write(STDOUT_FD, " — copied ", 12);
     }
     fmt_int(copied);
-    println(" .cyr files");
+    if (declared != 0) {
+        println(" .cyr files (declared [deps].stdlib subset; --full for whole snapshot)");
+    } else {
+        println(" .cyr files (full snapshot)");
+    }
     return 0;
 }
 

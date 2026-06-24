@@ -6,6 +6,101 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.40] — 2026-06-24
+
+**v6.2.40 — `cyrius init` + `cyrius port` go FULLY native; both bash shims
+deleted.** Completes the sovereignty port the half-done v5.9.28 attempt left
+unfinished — that one slid the *easy* path (greenfield `--bin`/`--lib`) into
+`programs/cyrius-init.cyr` and punted the *hard* half (in-place, `--language`/
+`--agent`/`--cmtools`/`--dry-run`, stdlib vendoring, **all of `port`**) right
+back to bash, and the native binary wasn't even in `[release].bins` so `cyrius
+init` *always* fell through to the shim in practice. Now the single native
+scaffolder serves the entire surface of both commands; `scripts/shims/cyrius-init.sh`
+(36 KB) + `cyrius-port.sh` (21 KB) are **`git rm`'d** — there is no fallback.
+Packed with the sandhi 1.6.13 fold, the thoth `lib sync` scoping fix, and a
+**found-by-ports** Apple-Silicon `rename` bug the new port surfaced on real
+hardware (ecb). **`src/` untouched → cycc byte-identical 1,071,936 B; self-hosts
+byte-identical; check.sh 92/92 + boot gate; `cyrius init` + `cyrius port`
+verified on REAL Darwin arm64 (ecb); bench self_compile 505 ms (jitter).**
+
+### Added
+- **Native `cyrius init` + `cyrius port` — the complete surface
+  (`programs/cyrius-init.cyr`, one binary, port mode via an internal
+  `--__mode=port` sentinel).** init: `--bin`(default)/`--lib`, `--description=`,
+  `--language=none|rust`, `--agent[=preset]`, `--cmtools[=name]`, `--dry-run`,
+  in-place (`.`), the toolchain-version cascade (env → repo/snapshot `VERSION` →
+  sibling `cycc --version` → `~/.cyrius/current`), sovereign stdlib vendoring
+  (`dir_list` + chunked copy — no `cp` shell-out), and the starship `cmtools`
+  integration. port: `--language=<lang>` (rust; others decline), `--dry-run`,
+  Cargo.toml/`rust-old/` preconditions, recursive Rust-LOC count, move-to-`rust-old/`,
+  full doc-tree + CI scaffold. Output verified byte-for-byte against the retired
+  bash via a golden differential (docs/src/tests/manifest identical; CI/manifest
+  intentionally *improved*). Added to `cyrius.cyml [release].bins` so it actually
+  ships + installs; cross-compiles clean to PE / Mach-O (x86+arm64) / aarch64-ELF.
+- **`run_tool_argvtail` (`cbt/build.cyr`)** — forwards the CLI's full argv tail to
+  the scaffolder (with an optional prepended sentinel), inheriting the real
+  environment. Replaces the 3-arg-capped `run_tool` path that silently dropped
+  flags like `cyrius init --lib --description=x name`, and fixes a latent bug
+  where global flags (`cyrius -v init …`) mis-sliced the args (now `cmd_idx+1`).
+- **9 scaffolder templates externalized** (`programs/cyrius-init-templates/`):
+  `readme-bin`/`readme-lib`, `claude-md`/`claude-md-port`, `adr-readme`,
+  `getting-started-{bin,lib,port}`, `state-md`/`state-md-port`,
+  `roadmap-md`/`roadmap-md-port`, `cyrius-cyml-port`, `main-cyr-port`,
+  `gitignore-port`. The `{KEY}` substitution engine grew to 9 keys
+  (`+{DATE}` via `lib/chrono.cyr` `iso8601`, `{PROJ_TYPE}`, `{BUILD_HINT}`,
+  `{RUST_LOC}`, `{CI_SRC}`/`{CI_OUT}` so the lib-shape build line is a
+  substitution, not a `sed` post-edit).
+- **`cyrius lib sync --full`** (`cbt/cyrius.cyr` + `_lib_sync_full`) — opt-in for
+  the whole-snapshot mirror; the default now scopes (below).
+
+### Changed
+- **`cyrius lib sync` scopes to declared `[deps].stdlib`** (thoth filing
+  `2026-06-11`, RESOLVED). Default vendors only the declared modules + their
+  per-OS peer closure (the `<module>_<os>.cyr` naming convention IS the peer
+  map — no hardcoded table); a curated committed `./lib/` stays curated instead
+  of bloating to the full ~88-module snapshot. `--full` keeps the old behavior;
+  no `[deps].stdlib` → full (never an empty `lib/`). Also fixed the `--dry-run`
+  counter (always printed 0 — counted only in the non-dry-run branch).
+  `cmd_lib_sync` + new `_libsync_declared_mods` / `_libsync_wanted`.
+- **Scaffolded `ci.yml` / `release.yml` consolidated + hardened.** Both init and
+  port now emit the modern template: `workflow_call:` (release gates on CI),
+  `scripts/install.sh`-based toolchain install (NOT hand-rolled `curl+tar+cp` —
+  the exact anti-pattern the old bash heredocs shipped), pinned `actions/checkout`
+  + `softprops/action-gh-release` SHAs (CVE-21), and `${file:VERSION}` manifest.
+- **sandhi 1.6.12 → 1.6.13** (`lib/sandhi.cyr`, re-folded byte-identical from the
+  1.6.13 `cyrius distlib` output). Client connections silently lost their socket
+  fd to a `SandhiConnOff` server/client enum-offset symbol collision; the server
+  struct's offsets are namespaced `SANDHI_SRVCONN_OFF_*`. `src/server/mod.cyr` only.
+- Install/release plumbing updated for the binary + template tree: `scripts/install.sh`
+  (`[release].bins`), `scripts/funcgate-stage.sh` (builds + stages the native
+  scaffolder so the functional gate exercises it — no silent skip),
+  `scripts/build-macos-{arm64,x86}-tarball.sh`, `.github/workflows/release.yml`
+  (x86/aarch64/macos jobs ship `cyrius-init` + `programs/cyrius-init-templates/`),
+  and the `programs/checks/deps_init.cyr` init/port gates drive the native binary.
+
+### Fixed
+- **Apple-Silicon `sys_rename` was broken (`AT_FDCWD` = Linux −100 on Darwin) —
+  `lib/syscalls_linux_common.cyr`.** FOUND BY PORTS on ecb: `cyrius port`'s
+  `rust-old/` move was a silent no-op on arm64 macOS. Root cause — arm64 macОS
+  pulls `syscalls_aarch64_linux.cyr`, whose `sys_rename` routes through
+  `renameat(AT_FDCWD, …)`, and the pure-renumber at-family (`renameat 38→465`,
+  `linkat 37→471`, `newfstatat 262→470`) passes `AT_FDCWD` straight through to
+  the Darwin syscall — but Darwin's `AT_FDCWD` is **−2**, not Linux's −100, so
+  −100 was an invalid dirfd (EBADF). `AT_FDCWD` is now `#ifdef CYRIUS_TARGET_MACOS`
+  −2 / else −100. Pre-existing latent bug (the native port is the first shipped
+  caller; bash used shell `mv`); also unblocks `linkat`/`fstatat`-with-`AT_FDCWD`
+  for any future Apple-Silicon caller. x86 macOS unaffected (bare `rename(128)`).
+  cycc byte-identical (lib-only). Proven on ecb: rename rc 0, files move.
+- **Three corrupt scaffolder templates** the golden differential exposed (the
+  half-done native binary would have shipped them): `examples-gitkeep` carried a
+  literal `EXEOF` heredoc marker (should be empty), `src-test-cyr` had a leaked
+  bash heredoc trailer (`EOF`/`fi`/`write_if_absent …`), and `proj-fcyr` was
+  missing its closing `syscall(60, r);`.
+
+### Removed
+- **`scripts/shims/cyrius-init.sh` + `scripts/shims/cyrius-port.sh`** — retired;
+  `cyrius init`/`port` are native. `cyrius-repl.sh` is the lone remaining shim.
+
 ## [6.2.39] — 2026-06-23
 
 **v6.2.39 — agnos syscall-peer wrappers (net_config #61 + winsize #60 + signal

@@ -17,7 +17,7 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned — CVE-21)
 
       - name: Verify version consistency
         # VERSION is the single source of truth; cyrius.cyml derives it
@@ -52,7 +52,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p build
-          cyrius build src/main.cyr build/${{ github.event.repository.name }}
+          cyrius build {CI_SRC} build/{CI_OUT}
 
       - name: Extract changelog
         # Pull the tagged section out of CHANGELOG.md for the release body.
@@ -75,7 +75,7 @@ jobs:
             || sha256sum "$NAME-$TAG.tar.gz" > SHA256SUMS
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (pinned — CVE-21)
         with:
           name: "${{ github.event.repository.name }} ${{ github.ref_name }}"
           body_path: /tmp/release-body.md
