@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.44] — 2026-06-25
+
+**v6.2.44 — CVE-29 thread-stack guard page + cross-arch `_PE`/Mach-O stub
+completeness.** A small reactive slot: one real memory-safety fix and three
+latent cross-arch dangling-ref fixes that a (deferred) undefined-fn hard-error
+spike surfaced. **x86 compiler `src/` untouched → cycc byte-identical
+1,073,560 B (modulo the version string); self-hosts byte-identical; check.sh
+92/92 + boot gate; 4-host byte-identical self-host (x86 + pi + ecb + cass all
+SELFHOST_OK); self_compile 513 ms.**
+
+### Fixed
+- **CVE-29 — thread stacks now have a `PROT_NONE` guard page** (`lib/thread.cyr`).
+  `mmap_stack` mapped the whole stack RW with no guard, so a stack overflow ran
+  off the low (downward-growing) end and silently scribbled the adjacent
+  allocator region (the global 256 MB chunk arena) instead of faulting. Now
+  over-maps one extra page and `cyr_mprotect(…, PROT_NONE)`s it at the bottom;
+  overflow SIGSEGVs at a defined boundary. `munmap_stack` widened to free the
+  guard. x86_64 + aarch64-Linux only (WIN/AGNOS use the serial-thread fallback,
+  which never calls `mmap_stack`). 5 thread suites (39 assertions) pass
+  unchanged; verified on pi. From `2026-06-10-unreviewed-dimensions` (CVE-29).
+- **Cross-arch `_PE` / Mach-O emit-stub completeness** — three dead-branch
+  dangling refs that warned on every aarch64 cross-build (and would be FATAL
+  under `--strict`), latent since v6.2.12/.13:
+  - `src/backend/aarch64/emit.cyr`: added `EPROCPRNG_PE` (ProcessPrng CSPRNG,
+    v6.2.12) + `EGETSYSTIME_PE` (GetSystemTimeAsFileTime, v6.2.13) stubs —
+    completes the `_PE` stub cohort (was 36 of x86's 38; the two were added to
+    `x86/emit.cyr` + the shared `parse_expr.cyr` Windows-magic-syscall dispatch
+    but never stubbed on aarch64). Same dead-branch justification as the v6.0.54
+    `ECREATEDIR_PE`/`EDELETEF_PE` fix.
+  - `src/main_aarch64_native.cyr`: added an `EMITMACHO_ARM64` native-only stub.
+    The native aarch64-Linux fork omits `macho/emit.cyr`, but the shared
+    `aarch64/fixup.cyr` keeps a runtime `if (_emit_fmt==2) EMITMACHO_ARM64()`
+    branch (dead on native-Linux). The cross + macho forks define the real fn;
+    this resolves the symbol without pulling in the Mach-O emitter.
+  - api-surface 4343 → 4344 (`main_aarch64_native::EMITMACHO_ARM64/1`;
+    `_PE` names dedup against the existing x86 defs). Non-breaking addition.
+
+### Deferred
+- **Undefined-fn reachable-call hard-error → the dependency-model arc.**
+  Designed (hard-error by default + `--allow-undef` downgrade), implemented
+  across all 6 native forks, and verified working in this slot — then pulled
+  back out: a *default* hard-error breaks 21/192 tcyr **and loosely-coupled
+  consumer builds** (e.g. mabda-without-samvada) because the stdlib's
+  cross-module refs aren't always resolved. That is exactly what the
+  dependency-model lever-1 work (transitive auto-resolve) fixes, so the
+  hard-error becomes safe to default-on only with it. The 3 cross-arch stubs
+  above are this spike's surfaced byproduct. Full design + blast-radius writeup:
+  `docs/development/issues/2026-06-25-undefined-fn-reachable-call-hard-error.md`,
+  pinned to the dependency-model slot in `roadmap.md`.
+- **Filed two follow-on tooling issues** (both medium, with documented
+  false-positive exposure on existing code — not the small reactive bites first
+  estimated): the permanent syscall-write byte-length DOTALL gate (543 sites)
+  and the bare-local-array slot-write lint (21 intentional `&a + i*8` sites).
+  See `docs/development/issues/2026-06-25-syscall-write-byte-length-gate.md` +
+  `…-bare-local-array-slot-write-lint.md`.
+
 ## [6.2.43] — 2026-06-25
 
 **v6.2.43 — stdlib-refold arc close: agnos clock + ERR_* collision namespacing

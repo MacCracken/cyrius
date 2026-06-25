@@ -112,6 +112,17 @@ var rp_vec = 0;
 include "src/frontend/parse.cyr"
 include "src/backend/aarch64/fixup.cyr"
 
+# v6.2.44: the native aarch64-Linux fork omits macho/emit.cyr (Mach-O is
+# not a native-Linux output), but the shared aarch64/fixup.cyr keeps a
+# runtime `if (_emit_fmt==2) EMITMACHO_ARM64()` dispatch branch — dead
+# here (emit_fmt is never 2 on native-Linux). The cross + macho forks
+# define the real fn via their macho include; this native-only stub
+# resolves the symbol (silences the cross-build "undefined function"
+# warning; FATAL under --strict) without pulling in the Mach-O emitter.
+# Same dead-branch justification as aarch64/emit.cyr's _PE stub cohort.
+# See CHANGELOG [6.2.44].
+fn EMITMACHO_ARM64(S): i64 { return 0; }
+
 # ================================================================
 # MAIN
 # ================================================================

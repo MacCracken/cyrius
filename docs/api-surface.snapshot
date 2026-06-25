@@ -1617,6 +1617,7 @@ mabda::wgpu_texture_view_descriptor_level/4
 mabda::wgpu_texture_view_release/1
 mabda::workgroups_1d/2
 mabda::workgroups_2d/5
+main_aarch64_native::EMITMACHO_ARM64/1
 math::f64_clamp/3
 math::f64_fract/1
 math::f64_ge/2

@@ -57,17 +57,34 @@ var THREAD_TLS_SIZE = 4096;
 # Thread struct: { tid: i64, stack_base: i64, stack_size: i64 } = 24 bytes
 var THREAD_SIZE = 24;
 
-# Allocate stack via mmap (returns base address or MAP_FAILED)
+# CVE-29: one PROT_NONE guard page below each thread stack. Stacks grow
+# DOWN, so an overflow runs off the LOW end; without a guard it silently
+# scribbles whatever the allocator handed out just below (the global
+# 256 MB chunk arena) instead of faulting. 4096 = one page on x86_64 +
+# aarch64 (16 KB on some Apple-arm64, but threading there is the serial
+# fallback, so this path is Linux-only). See CHANGELOG [6.2.44].
+var THREAD_GUARD_SIZE = 4096;
+
+# Allocate stack via mmap (returns USABLE base, or <0 on failure).
+# CVE-29: over-maps one extra page and mprotects it PROT_NONE at the low
+# (overflow) end; a stack overflow then SIGSEGVs instead of corrupting the
+# adjacent allocator region. Usable stack = [base+GUARD, base+GUARD+size).
 fn mmap_stack(size): i64 {
     var prot = PROT_READ | PROT_WRITE;
     var flags = MAP_PRIVATE | MAP_ANONYMOUS;
-    var r = syscall(SYS_MMAP, 0, size, prot, flags, 0 - 1, 0);
-    return r;
+    var base = syscall(SYS_MMAP, 0, size + THREAD_GUARD_SIZE, prot, flags, 0 - 1, 0);
+    if (base < 0) { return base; }
+    # mprotect the bottom page to PROT_NONE (portable wrapper: syscall 10,
+    # ESYSXLAT-renumbered on aarch64; no-op on agnos, which never reaches
+    # this path — it uses the serial fallback).
+    cyr_mprotect(base, THREAD_GUARD_SIZE, PROT_NONE);
+    return base + THREAD_GUARD_SIZE;
 }
 
-# Free stack via munmap
+# Free stack via munmap. `addr` is the usable base returned by mmap_stack;
+# the guard page sits one page below it, so unmap the whole region.
 fn munmap_stack(addr, size): i64 {
-    return syscall(SYS_MUNMAP, addr, size);
+    return syscall(SYS_MUNMAP, addr - THREAD_GUARD_SIZE, size + THREAD_GUARD_SIZE);
 }
 
 # Issue the CLONE syscall and dispatch the child branch entirely
