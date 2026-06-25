@@ -1,4 +1,14 @@
-# sigil `certpin_core` calls `run_capture` with the wrong (old argv-array) signature — cert-pin-via-openssl is broken
+# sigil `certpin_core` calls `run_capture` with the wrong (old argv-array) signature — cert-pin-via-openssl is broken — RESOLVED
+
+> **RESOLVED v6.2.42** (sigil 3.9.3 fold; CHANGELOG [6.2.42]). Fixed upstream in
+> sigil `src/certpin_core.cyr`: the obsolete 2-arg `run_capture(cmd, argv)` call
+> → the current 5-arg `run_capture(cmd, arg1, arg2, buf, buflen)` (`sh -c
+> <pipeline>` → capture into a dedicated output buffer, read `Ok(bytes_read)`,
+> NUL-terminate, strip newline). sigil bumped 3.9.2 → 3.9.3 (released + tagged),
+> then folded byte-identical into `lib/sigil.cyr`. Verified: the fold compiles
+> arity-clean (the `run_capture` 2-vs-5 warning is gone), cross-compiles to
+> PE/aarch64, check.sh 92/92, cycc byte-identical, 4-host self-host green. See
+> sigil CHANGELOG [3.9.3].
 
 **Discovered:** 2026-06-24 by the v6.2.41 call-arity check (issue
 `2026-06-23-call-arity-no-check`) while self-compiling the ecosystem.

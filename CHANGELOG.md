@@ -6,6 +6,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.42] — 2026-06-25
+
+**v6.2.42 — sigil 3.9.3 fold: certpin `run_capture` signature fix.** The first
+of the stdlib-refold issues surfaced by the v6.2.41 call-arity check. sigil's
+`certpin_compute_spki_pin` called an obsolete argv-array `run_capture(cmd, argv)`
+— binding 2 of 5 args and treating `Ok(bytes_read)` as an output pointer — so
+its openssl SPKI-pin computation was silently broken. Fixed upstream in
+**sigil 3.9.3** (the current 5-arg positional `run_capture(cmd, arg1, arg2, buf,
+buflen)` with a dedicated output buffer; released + tagged), then folded
+byte-identical here. **lib-only fold → `src/` untouched → cycc byte-identical
+1,073,560 B; self-hosts byte-identical; check.sh 92/92 + boot gate; the fold
+compiles arity-clean (the `run_capture` warning is gone) + cross-compiles to
+PE / aarch64; 4-host byte-identical self-host (x86 + ecb + cass + pi); bench
+self_compile 531 ms (jitter — cycc is byte-identical to .41's, so a lib-only fold
+cannot affect it; the single-run history band is 500–549 ms).** Closes
+`2026-06-24-sigil-certpin-run-capture-signature-mismatch`. The other two
+stdlib-refold items (sakshi agnos-clock guard + the ERR_*/SYS_* constant-collision
+namespacing) are scoped to v6.2.43.
+
+### Changed
+- **sigil fold 3.9.2 → 3.9.3** (`lib/sigil.cyr`, vendored byte-identical from
+  sigil's released dist). Sole delta: `certpin_compute_spki_pin` now uses the
+  5-arg `run_capture` API correctly (was a 2-arg obsolete-API call that never
+  worked). No public API change; api-surface unchanged. See sigil CHANGELOG
+  [3.9.3].
+
 ## [6.2.41] — 2026-06-24
 
 **v6.2.41 — silent-correctness hardening: call-site arity check + IEEE-754

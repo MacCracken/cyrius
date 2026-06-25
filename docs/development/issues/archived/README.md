@@ -22,6 +22,7 @@ cross-reference the CHANGELOG entry that closed them.
 | [`2026-06-24-f64-le-nan-comparison-returns-true.md`](./2026-06-24-f64-le-nan-comparison-returns-true.md) | prajna: `f64_le(NaN,x)` returned true — float `<=`/`==`/`<`/`!=` + the `f64_lt`/`f64_eq` builtins ignored the IEEE unordered (parity) flag. | **v6.2.41** — `EF64_CMP` folds `setnp`/`setp` (x86) + `cset le`→`ls` (aarch64); IEEE-correct on x86 + real ARM (41/41 probe). |
 | [`2026-06-10-release-trust-chain-integrity.md`](./2026-06-10-release-trust-chain-integrity.md) | CVE-20/21 release trust-chain: installer fail-open, unpinned deps/Actions, no signing, no seed→cycc derivation. | **v6.2.30/.31 + 2026-06-20** — fail-closed installers, `cyrius.lock` SHA-pins, SHA-pinned Actions, `cyrsign` Ed25519, seed→cybs→cycc byte-identical. (Archived v6.2.41 housekeeping.) |
 | [`2026-06-10-roadmap-drift-and-stale-docs.md`](./2026-06-10-roadmap-drift-and-stale-docs.md) | RM-01…05 roadmap/governance doc drift (phantom TLS arc, stale threat-model, cc3-drop contradiction, etc.). | **v6.2.25 doc sweep (2026-06-19)** — all five RM items corrected. (Archived v6.2.41 housekeeping.) |
+| [`2026-06-24-sigil-certpin-run-capture-signature-mismatch.md`](./2026-06-24-sigil-certpin-run-capture-signature-mismatch.md) | sigil `certpin_core` called the obsolete 2-arg `run_capture(cmd, argv)` (vs the 5-arg API) → cert-pin-via-openssl silently broken; surfaced by the v6.2.41 arity check. | **v6.2.42** — fixed upstream in **sigil 3.9.3** (5-arg `run_capture` + output buffer), folded byte-identical. |
 
 ## Archival conventions
 
