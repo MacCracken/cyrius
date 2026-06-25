@@ -1,4 +1,13 @@
-# agnos-portability sweep residuals (v6.2.39) — sakshi clock, defensive landmine gates, winsize-needs-gate-fix
+# agnos-portability sweep residuals (v6.2.39) — sakshi clock, defensive landmine gates, winsize-needs-gate-fix — RESOLVED
+
+> **RESOLVED v6.2.43** (CHANGELOG [6.2.43]). Part 1 (sakshi clock): fixed
+> upstream in **sakshi 2.4.2** — agnos reads `uptime_ms` (#40) directly instead
+> of calibrating the TSC against the undefined `syscall(228)`/`syscall(35)`;
+> folded byte-identical. Part 2 (landmine gates): `lib/mmap.cyr`,
+> `lib/dynlib.cyr`, `lib/fdlopen.cyr` got `#ifdef CYRIUS_TARGET_AGNOS`
+> fail-closed gates (native, no refold) so the raw Linux syscalls can't
+> mis-dispatch on agnos. Part 3 (winsize) shipped at v6.2.39. Verified: agnos
+> compiles clean (no mis-dispatch), non-agnos byte-identical, 4-host self-host.
 
 **Filed:** 2026-06-23 (cyrius-side, during the v6.2.39 agnos-wrapper batch review).
 **Severity:** mixed — one MEDIUM reachable degradation (sakshi), several LOW latent

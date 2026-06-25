@@ -1,4 +1,14 @@
-# 2026-06-14 — stdlib/lib constant-name collisions with conflicting values (silent under co-link)
+# 2026-06-14 — stdlib/lib constant-name collisions with conflicting values (silent under co-link) — RESOLVED
+
+> **RESOLVED v6.2.43** (CHANGELOG [6.2.43]). rec #2 (compiler guardrail
+> `CHKDUPVAL`) shipped v6.2.11. rec #1 (lib-side namespacing): the live
+> `ERR_*` collision — sigil `ERR_IO=6` vs yukti `ERR_IO=14` — fixed upstream by
+> namespacing **sigil 3.9.4** (`SIGIL_ERR_*`, 15 consts) + **yukti 2.2.7**
+> (`YUKTI_ERR_*`, 16 consts), both folded byte-identical. The other cited
+> collisions were already resolved: patra `TK_*` → `SQLT_*`, and net `SYS_*` →
+> namespaced `NSYS_*` (v6.2.24, deliberately kept for ESYSXLAT). cyrius itself
+> references neither lib's error enums; downstream consumers of the bare names
+> update to the prefixed forms (documented in each lib's CHANGELOG).
 
 > **Class:** two modules in `cyrius/lib/` define the **same symbol name** with
 > **different integer values**. Because cyrius has a flat symbol namespace and

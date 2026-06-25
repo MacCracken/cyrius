@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.43] — 2026-06-25
+
+**v6.2.43 — stdlib-refold arc close: agnos clock + ERR_* collision namespacing
++ agnos landmine gates.** Closes the two remaining stdlib-refold issues the
+v6.2.41 arity check / v6.2.39 agnos sweep surfaced. **lib-only → `src/`
+untouched → cycc byte-identical 1,073,560 B; self-hosts byte-identical; check.sh
+92/92 + boot gate; 4-host byte-identical self-host (x86 + ecb + cass + pi); the
+agnos gates compile clean on agnos with no mis-dispatch.**
+
+### Changed
+- **sakshi fold 2.4.1 → 2.4.2** — agnos clock fix. `clock.cyr` ran the x86 TSC
+  calibration path on agnos (`CYRIUS_ARCH_X86` is predefined there), calling
+  `syscall(228)` (clock_gettime, out of agnos's frozen range → garbage) and
+  `syscall(35)` (= agnos `sysinfo`, not nanosleep) → bogus ns scaling. Fixed
+  upstream: agnos reads `uptime_ms` (#40) directly (skips the rdtsc TSC — the
+  100 Hz tick is too coarse to calibrate a GHz counter), mirroring `chrono.cyr`.
+- **sigil fold 3.9.3 → 3.9.4** — `SIGIL_ERR_*` namespacing (BREAKING upstream).
+  sigil's `ERR_*` (incl. `ERR_IO = 6`) collided with yukti's `ERR_IO = 14` under
+  the flat symbol namespace; all 15 sigil error constants → `SIGIL_ERR_*`.
+- **yukti fold 2.2.6 → 2.2.7** — `YUKTI_ERR_*` namespacing (BREAKING upstream).
+  all 16 yukti error constants → `YUKTI_ERR_*`. cyrius itself references neither
+  lib's error enums directly (uses them as opaque libs), so the fold is
+  non-breaking here; downstream consumers of the bare names must update.
+  Resolves `2026-06-14-stdlib-constant-value-collisions` (patra `TK_*`→`SQLT_*`
+  and net `SYS_*`→`NSYS_*` were already done; the `CHKDUPVAL` compiler guardrail
+  shipped 6.2.11).
+
+### Fixed
+- **agnos landmine gates (native): `lib/mmap.cyr`, `lib/dynlib.cyr`,
+  `lib/fdlopen.cyr`.** Raw Linux `syscall(NN)` sites with no agnos guard would
+  mis-dispatch on agnos (e.g. mmap #9 → mkdir). Added `#ifdef
+  CYRIUS_TARGET_AGNOS` fail-closed gates: `cyr_mmap`→-1 / `cyr_munmap`/
+  `cyr_mprotect`→0; `dynlib_open`/`dynlib_read_auxv`/`dynlib_bootstrap_tls`→
+  fail (agnos is static-only, no dynamic linking); the 5 `fdlopen` unguarded-
+  syscall fns→fail (Linux-host-only foreign-glibc dlopen). LOW/defensive — no
+  agnos consumer reaches these; purely additive `#ifdef` (non-agnos
+  byte-identical). Closes `2026-06-23-agnos-portability-sweep-residuals`.
+
 ## [6.2.42] — 2026-06-25
 
 **v6.2.42 — sigil 3.9.3 fold: certpin `run_capture` signature fix.** The first
