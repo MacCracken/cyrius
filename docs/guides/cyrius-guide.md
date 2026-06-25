@@ -1677,7 +1677,7 @@ the TS frontend.
 
 ## Example Programs
 
-See `programs/` for 79 examples:
+See `programs/` for 81 examples:
 - **CLI tools**: cat, echo, head, wc, grep, hexdump, tail, tr, uniq, sort, basename, cols, count, toupper, rot13, rev, nl, seq, tee, yes, true, false
 - **Algorithms**: fizzbuzz, primes, sieve, collatz, ackermann, gcd, brainfuck, life, xor
 - **Data structures**: struct_list (linked list), alloctest (heap), strtype (fat strings)
@@ -1688,7 +1688,7 @@ See `programs/` for 79 examples:
 
 ```
 bootstrap/asm (29KB seed)
-  → cybs (~12 KB bootstrap compiler)
+  → cybs (~21 KB bootstrap compiler)
     → cycc (modular compiler + IR)
       → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
       → cycc_win    (Windows PE32+ cross-compiler)

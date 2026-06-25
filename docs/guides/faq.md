@@ -6,7 +6,7 @@
 A self-hosting systems language that bootstraps from a 29KB binary. No Rust, no LLVM, no Python. Designed to write the AGNOS operating system kernel.
 
 ### What can I build with it?
-CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 Mach-O), or Windows (x86_64 PE32+) — all three self-host cycc byte-identical. See `programs/` for 79 examples.
+CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 Mach-O), or Windows (x86_64 PE32+) — all three self-host cycc byte-identical. See `programs/` for 81 examples.
 
 ### How is everything i64?
 The core type is the 64-bit integer (see ADR-002): strings are pointers (which are integers), and structs are contiguous memory accessed via integer offsets. This simplifies the compiler enormously while still being practical for systems code. The one deliberate, narrow exception is math hot paths — scalar `f64` floats plus the `f64v2`/`f64v4` SIMD vector types (`lib/math.cyr`, `lib/simd.cyr`) — which are bit-pattern values, not a full float type system. Everything else is an i64.
@@ -15,7 +15,7 @@ The core type is the 64-bit integer (see ADR-002): strings are pointers (which a
 Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
 
 ### Is it fast?
-The compiler self-compiles in ~512 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.07 MB output, measured at v6.2.22 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~480–500 ms as growth-tax over the v6.0.x–v6.2.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler self-compiles in ~512 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.07 MB output, measured at v6.2.43 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~480–500 ms as growth-tax over the v6.0.x–v6.2.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 
